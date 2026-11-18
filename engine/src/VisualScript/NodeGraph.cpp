@@ -1032,8 +1032,10 @@ bool ParseQuoted(const std::string& field, std::string& out) {
 
 std::unique_ptr<NodeGraph> NodeGraph::Parse(const std::string& savedText, std::string* error) {
     // A quick block is one node in the file; it runs as the ordinary nodes it stands for (QuickBlocks.hpp).
-    const std::string text = ExpandQuickBlocks(savedText);
+    std::vector<std::pair<int, int>> blockRanges;
+    const std::string text = ExpandQuickBlocks(savedText, &blockRanges);
     auto graph = std::make_unique<NodeGraph>();
+    graph->m_blockRanges = std::move(blockRanges);
     std::unordered_map<int, int> fileToGraph; // file id -> graph id
 
     struct PendingExec { int from, pin, to; };

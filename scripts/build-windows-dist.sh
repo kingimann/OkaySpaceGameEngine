@@ -95,9 +95,17 @@ cmake -S . -B "$BUILD_DIR" \
       -DOKAY_BUILD_TESTS=OFF -DOKAY_BUILD_SANDBOX=OFF \
       -DOKAY_BUILD_LAUNCHER=ON -DOKAY_BUILD_PLAYER=ON -DOKAY_BUILD_EDITOR=ON \
       -DOKAY_USE_ASSIMP=ON \
+      -DOKAY_BUILD_XBOX_UWP=ON \
       -DCMAKE_PREFIX_PATH="$SDL2_MINGW_PREFIX" \
       -DCMAKE_FIND_ROOT_PATH="/usr/x86_64-w64-mingw32;$SDL2_MINGW_PREFIX" \
       "${EXTRA[@]}"
+# Our own model readers are the default since 2026-11-17; Assimp (and ufbx, always built) must stay in the release as their
+# fallback and as what OKAY_THIRD_PARTY=1 switches back to. Refuse a tree whose cache lost Assimp.
+if ! grep -q '^OKAY_USE_ASSIMP:BOOL=ON$' "$BUILD_DIR/CMakeCache.txt"; then
+    echo "refused: $BUILD_DIR is configured without Assimp (OKAY_USE_ASSIMP is not ON): the model-reader fallback and OKAY_THIRD_PARTY=1 need it" >&2
+    exit 1
+fi
+echo "Model readers: own by default, Assimp + ufbx compiled in as the fallback (OKAY_THIRD_PARTY=1 switches back)."
 # The configured tree too (a stale cache keeps old -D values). This also checks the BUILT result: the cache must say libsodium
 # is in the build (OKAY_SODIUM_IN_BUILD=ON) and the compiler flags must carry OKAY_HAVE_SODIUM and not OKAY_OWN_CRYPTO. The
 # programs are Windows .exe files and cannot run on this Linux host, so the program's own startup line (--binary) is not
@@ -181,6 +189,7 @@ node_playground
 obj_texture_paths
 own_readers
 own_wav
+perf
 physics
 physics2d
 player
@@ -204,6 +213,26 @@ for d in $EXAMPLE_DIRS; do
 done
 # The texture the obj_texture_paths cubes name (the same starter file that ships in Assets/Textures).
 cp assets/textures/grid.png "$OUT_DIR/examples/obj_texture_paths/"
+
+# EXPERIMENTAL Xbox (UWP) one-click build: the editor's "Xbox (exp.)" button needs these sources next to it (xbox-src): the UWP app,
+# the helper tools, the PowerShell steps and the headers they include. docs/xbox_uwp.md. Never built or run on Windows (unverified).
+XBOX_SRC="$OUT_DIR/xbox-src"
+mkdir -p "$XBOX_SRC/platform" "$XBOX_SRC/scripts" "$XBOX_SRC/engine"
+cp -r platform/xbox_uwp "$XBOX_SRC/platform/"
+rm -rf "$XBOX_SRC/platform/xbox_uwp/tests"
+cp scripts/xbox-check-sdk.ps1 scripts/xbox-compile-shaders.ps1 scripts/xbox-sign.ps1 scripts/xbox-install-local.ps1 "$XBOX_SRC/scripts/"
+cp -r engine/include "$XBOX_SRC/engine/"
+mkdir -p "$XBOX_SRC/engine/src/Graphics" "$XBOX_SRC/engine/src/Core"   # okay-xbox-export (-MinimalTest) compiles the engine's image code for the placeholder PNGs
+# Engine mode (-EngineMode) compiles the whole engine for UWP: it needs the engine sources, its CMake list (read at configure time) and shared/.
+cp -r engine/src "$XBOX_SRC/engine/" && cp engine/CMakeLists.txt "$XBOX_SRC/engine/" && cp -r shared "$XBOX_SRC/"
+# The UWP engine reads the root CMakeLists.txt at configure time for the ON defaults of the own model readers (engine/uwp_own_readers.cmake). No engine/third_party:
+# ufbx is not compiled for UWP (our own FBX reader is the only one), so it is not shipped here.
+cp CMakeLists.txt "$XBOX_SRC/"
+cp engine/src/Graphics/Image.cpp "$XBOX_SRC/engine/src/Graphics/"
+cp engine/src/Core/ImageDecode.cpp engine/src/Core/ImageDecodeJpeg.cpp engine/src/Core/ImageWrite.cpp engine/src/Core/ImageDecodeInternal.hpp "$XBOX_SRC/engine/src/Core/"
+[ -f "$XBOX_SRC/CMakeLists.txt" ] && [ -f "$XBOX_SRC/platform/xbox_uwp/engine/uwp_own_readers.cmake" ] || { echo "error: xbox-src is missing the root CMakeLists.txt or uwp_own_readers.cmake (the UWP engine reads them)" >&2; exit 1; }
+[ ! -e "$XBOX_SRC/engine/third_party" ] || { echo "error: xbox-src must not carry engine/third_party (no third-party code in the Xbox build)" >&2; exit 1; }
+[ -f "$XBOX_SRC/platform/xbox_uwp/app/CMakeLists.txt" ] || { echo "error: xbox-src did not get the UWP app" >&2; exit 1; }
 [ -s "$OUT_DIR/examples/vehicle/vehicle_test.okayscene" ] || { echo "error: examples/vehicle/vehicle_test.okayscene did not make it into the distribution" >&2; exit 1; }
 [ -s "$OUT_DIR/examples/ui_text/ui_text.okayscene" ] || { echo "error: examples/ui_text/ui_text.okayscene did not make it into the distribution" >&2; exit 1; }
 

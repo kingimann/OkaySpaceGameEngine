@@ -1,5 +1,6 @@
 #include "okay/Core/SafeCast.hpp"
 #include "okay/Scene/UIGallery.hpp"
+#include "okay/Scene/UIStyleLib.hpp"
 #include "okay/Components/UIWidgetsMore.hpp"
 #include "okay/Scripting/OkayScriptVM.hpp"
 #include "okay/Components/VisualScriptComponent.hpp"
@@ -4275,6 +4276,7 @@ struct OkayScriptVM::Impl {
         };
         b["define_action"]    = [define](std::vector<Value>& a) { return define(a, false); };
         b["define_direction"] = [define](std::vector<Value>& a) { return define(a, true); };
+        b["reset_controls"] = [](std::vector<Value>&) { InputActions::Reset(); return Value{}; };   // every action back to its defaults (the Controls screen's Reset button)
         b["rebind"] = [](std::vector<Value>& a) {
             return Value{a.size() >= 2 && InputActions::Rebind(a[0].AsString(), a[1].AsString())};
         };
@@ -5432,6 +5434,41 @@ struct OkayScriptVM::Impl {
             th->ApplyPreset(p);
             th->Apply();
             UIGallery::StyleGalleryExtras(*s, th);   // the UI Gallery's slots, insets and Glass blobs follow too
+            return Value{1.0f};
+        };
+        // ui_set_look("Pause Menu", "Neon"): put one of the 54 looks (and optional style, size, density) on one screen or widget and everything under
+        // it. There is no scene-wide theme. Returns 1, or 0 for an unknown name or look.
+        b["ui_set_look"] = [sceneOf](std::vector<Value>& a) {
+            Scene* s = sceneOf();
+            GameObject* g = (s && a.size() >= 2) ? s->Find(a[0].AsString()) : nullptr;
+            if (!g) return Value{0.0f};
+            return Value{UIStyleLib::ApplyLook(g, a[1].AsString(), a.size() >= 3 ? a[2].AsString() : std::string(), a.size() >= 4 ? a[3].AsString() : std::string(),
+                                               a.size() >= 5 ? a[4].AsString() : std::string()) ? 1.0f : 0.0f};
+        };
+        // The global theme was removed (looks are per screen and per widget). An old script that calls ui_set_theme keeps running: it logs a line
+        // and does nothing.
+        b["ui_set_theme"] = [](std::vector<Value>&) {
+            static bool told = false;
+            if (!told) { told = true; Log::Warning("[ui] ui_set_theme is gone: looks are per screen or widget now. Use ui_set_look(\"Screen name\", \"Look name\")."); }
+            return Value{0.0f};
+        };
+        // ui_look_sound("Neon", "click") is the sound name a look uses for hover, click or open ("" when it names none).
+        b["ui_look_sound"] = [](std::vector<Value>& a) -> Value {
+            if (a.size() < 2) return Value{std::string()};
+            return Value{UIStyleLib::ThemeSound(a[0].AsString(), a[1].AsString())};
+        };
+        // ui_set_style("Play", "Neon Pill") gives a widget a named look from the style library now; optional 3rd and 4th arguments are the
+        // size (xs..xl) and the density (compact..spacious).
+        b["ui_set_style"] = [sceneOf](std::vector<Value>& a) {
+            Scene* s = sceneOf();
+            GameObject* g = (s && a.size() >= 2) ? s->Find(a[0].AsString()) : nullptr;
+            if (!g || !UIStyleLib::FindStyle(a[1].AsString())) return Value{0.0f};
+            auto* sv = g->GetComponent<UIStyleVariant>();
+            if (!sv) sv = g->AddComponent<UIStyleVariant>();
+            sv->style = a[1].AsString();
+            if (a.size() >= 3) sv->styleSize = a[2].AsString();
+            if (a.size() >= 4) sv->styleDensity = a[3].AsString();
+            UIStyleLib::ApplyStyle(g, UIStyleLib::SpecOf(sv->style, sv->styleSize.empty() ? "m" : sv->styleSize, sv->styleDensity.empty() ? "cosy" : sv->styleDensity), UIStyleLib::PaletteFor(sv));
             return Value{1.0f};
         };
         // ui_set_rich("Label", true): read [color=...] [b] [i] [size=N] tags in that text (screen or world text).

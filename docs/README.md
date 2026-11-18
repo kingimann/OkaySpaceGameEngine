@@ -3,6 +3,8 @@
 Pages are grouped by what you are trying to do. New here? Start with
 [making_a_game.md](making_a_game.md).
 
+Pictures and screenshots are not stored in the repository (owner rule, 2026-11-17); docs describe them in words.
+
 ## Get started
 - [try_it.md](try_it.md): the owner's page: everything that can be tried in the Windows release (zip or installer) today, with exact steps and what you should see, and what cannot be tried yet.
 - [THIRD_PARTY.md](THIRD_PARTY.md): what is custom code and which outside libraries we build on, with licences.

@@ -11,6 +11,8 @@ concurrency:
   group: ci-${{ github.event.pull_request.number || github.sha }}
   cancel-in-progress: true
 
+# Job time limits: the shared runners are often queued and slow (apt downloads alone took 5-10 minutes on busy days), so
+# the short limits (15/20/30 minutes) were cancelling healthy jobs (PR #969: 'Anti-cheat tests with libsodium' hit 15 minutes).
 jobs:
   build-and-test:
     name: Build & test (Ubuntu)
@@ -19,7 +21,9 @@ jobs:
     # editor builds are their own jobs below so they run in parallel with this one.
     # This job builds and runs the unit tests (about 800). The sandbox and example programs are built by the
     # "player" job and the launcher by the "editor" job, so nothing is left unbuilt (docs/automated_testing.md "CI speed").
-    timeout-minutes: 90
+    # 150, not 90: on a busy runner with a cold or partial compiler cache this job takes 90 minutes or more (PR #1000
+    # finished in 89m42s, and #960 and #969 were cancelled by the old 90 minute limit while still running tests).
+    timeout-minutes: 150
     env:
       CCACHE_DIR: ${{ github.workspace }}/.ccache
       # No CCACHE_BASEDIR: it makes ccache hand the compiler relative source paths, so __FILE__ is relative
@@ -188,7 +192,7 @@ jobs:
     name: Export a game and check its visual scripts (Ubuntu)
     needs: [player, editor]
     runs-on: ubuntu-latest
-    timeout-minutes: 15
+    timeout-minutes: 40
     steps:
       - uses: actions/checkout@v6
 
@@ -397,7 +401,7 @@ jobs:
   own-http:
     name: Own HTTP client (OKAY_OWN_HTTP=ON, TLS tests required)
     runs-on: ubuntu-latest
-    timeout-minutes: 15
+    timeout-minutes: 40
     steps:
       - uses: actions/checkout@v6
 
@@ -509,7 +513,7 @@ jobs:
   anticheat-crypto-nosodium:
     name: Anti-cheat crypto without libsodium (Ubuntu)
     runs-on: ubuntu-latest
-    timeout-minutes: 30
+    timeout-minutes: 45
     steps:
       - uses: actions/checkout@v6
 
@@ -657,7 +661,7 @@ jobs:
     name: Windows export check
     needs: windows-cross
     runs-on: windows-latest
-    timeout-minutes: 20
+    timeout-minutes: 40
     steps:
       - uses: actions/checkout@v6
 
@@ -692,7 +696,7 @@ jobs:
   windows-restart:
     name: Windows updater restart
     runs-on: windows-latest
-    timeout-minutes: 30
+    timeout-minutes: 45
     steps:
       - uses: actions/checkout@v6
 
@@ -784,7 +788,7 @@ jobs:
   sql-tests:
     name: SQL row-level-security tests (Postgres)
     runs-on: ubuntu-latest
-    timeout-minutes: 15
+    timeout-minutes: 40
     services:
       postgres:
         image: postgres:16
@@ -826,7 +830,7 @@ jobs:
   ticket-and-script-tests:
     name: Ticket function, update signing and account server tests
     runs-on: ubuntu-latest
-    timeout-minutes: 15
+    timeout-minutes: 40
     steps:
       - uses: actions/checkout@v6
 
@@ -873,7 +877,7 @@ jobs:
   anticheat-crypto:
     name: Anti-cheat tests with libsodium (Ubuntu)
     runs-on: ubuntu-latest
-    timeout-minutes: 15
+    timeout-minutes: 40
     env:
       CCACHE_DIR: ${{ github.workspace }}/.ccache
       CCACHE_COMPRESS: "1"

@@ -91,20 +91,25 @@ release job or the installer build for this change.
 | 16 | Main menu bar clean-up: one Examples, Edit clipboard commands, GameObject categories, View, Help | The bar at the top of `Tools\OkayEngine.exe` | New in this change; see section 16 for what was and was not seen |
 | 17 | Hierarchy right-click menus: Create Child with every category, Add Component, Select Same Type, "Delete 3 Objects" | Right-click in the Hierarchy panel of `Tools\OkayEngine.exe` | New in this change; see section 17 |
 | ac-cheat-sim | Anti-cheat: watch the server catch a cheater (cheat simulator), ban list, audit log | `OkaySpacePlayer.exe --server --cheat-sim --log cheat_sim.txt` (Tools folder), then open the log | New in this change; tested headless on Linux over loopback; Windows and a real network unverified |
+| content-delivery | Downloadable game content: signed models, textures, scripts and data that an exported game fetches (off by default) | `okay-content.exe` in `Tools/`, or `content.okayconfig` / `OKAY_CONTENT_URL` for the player | Built; Linux-tested only |
+| editor-fps | Editor frame-time overlay and speed switches | Editor menu **View > Rendering**: Frame-time overlay, Frame rate limit, Slow down when idle, Viewport resolution, Performance mode. Heavy test scenes: `examples\perf\` | New in this change. Real Direct3D 11 numbers on a Windows machine are unverified; sent back by the owner |
 | fast1 | Fast release: one workflow dispatch, no version-bump PR | GitHub: Actions > "Fast release" > Run workflow (tick dry_run first); a change adds `dist/changelog.d/<id>.txt` | Built and tested offline with fake data; never run on GitHub; off until `FAST_RELEASE_ENABLED=1` |
 | hygiene1 | Account address and key in one config file; no built programs in git | Nothing to open: build or release as usual, optional key rotation in Supabase | Verified on Linux (tests, configure); no release or Windows run |
 | input | Input upgrade: input playground, rumble patterns, vibration setting, key positions (AZERTY) | Editor: File > Open, `examples\input\input_playground.okayscene`, then Play | Tested headless on Linux; nothing run on Windows or with a real controller or AZERTY keyboard |
 | one-controller | One Player Controller for first and third person; no Humanoid or separate First and Third Person entries | Editor: GameObject > Player, Add Component > Gameplay, File > New Project (First and Third Person) | Tests run on Linux only; not run in a real editor or on Windows |
 | security-sec1 | Security plan SEC1: script file paths, update signature status, relay caps, reactions SQL | examples\security_paths\script_paths.okayscene (Play, read Console); Settings > About and Help > About line; SQL and relay are owner steps | Tests on Linux only; editor/launcher lines not run; nothing on Windows or real Supabase |
 | vpa | Multi-window panels start cleanly on every video driver | `Tools\OkayEngine.exe`: drag a panel tab outside the editor | Linux only (Xvfb, a build with assertions on); Windows unverified |
+| xbox-uwp | Xbox One export (EXPERIMENTAL, UNVERIFIED): one-click build (check, export, compile, shaders, pack, sign, install), own .appx packer, engine mode | File > Build Settings > platform "Xbox (exp.)" > Build Xbox package | Linux-tested only |
 | 7n | Every own replacement in one table: the switch, the sample, how to tell it is on, and what is missing | section 7n below and `docs/own_flip_proposal.md` | Table is new. Read from the code and from CI logs, not run on Windows |
-| 8 | Own model readers (off by default) | `OKAY_OWN_STACK=1` or `OKAY_OWN_<FMT>=1`, `examples\own_readers` | Switch works on a release; see the table |
+| 8 | Own model readers: **the default** since 2026-11-17 (`OKAY_THIRD_PARTY=1` = back to Assimp / ufbx) | import anything; `examples\own_readers`; `OKAY_THIRD_PARTY=1` or `OKAY_OWN_<FMT>=0` to go back | Not in a release yet (branch `claude2/own-readers-integration`); Linux tests only, Windows unverified |
 | 9 | Own WAV decoder (off by default) | `OKAY_OWN_WAV=1`, `examples\own_wav` | Switch works; no log line |
 | 10 | Own HTTP client (off by default) | none | **Cannot be tried on Windows** |
 | 11 | Own platform layer (off by default) | `OKAY_PLATFORM_BACKEND=own` | Unverified on Windows, never run there |
 | 12 | OkayUI instead of Dear ImGui (off by default) | `OKAY_UI_BACKEND=okayui` | Unverified, only a few screens |
 | 13 | Own crypto | none, on purpose | **Cannot and must not be tried** |
 | 15 | One shared inflate (zlib/gzip) decoder: PNG, `.blend`, FBX, `.x`, `.zgl`, 3MF/AMF, HTTP gzip | open a PNG texture; `examples\own_readers\cube_gzip.blend`, `cube_compressed_arrays.fbx` | PNG always on; the readers need their switch; HTTP gzip is Linux only |
+| 15b | Blender reader applies Mirror and Subdivision Surface modifiers (off by default, like the reader) | `OKAY_OWN_BLEND=1`, `examples\own_readers\mirror_subdiv_box.blend` | Tests only (Linux); not run in a Windows editor |
+| 15c | Blender reader: Subdivision Surface options of Blender 2.9+ (UV Smooth, Boundary Smooth keep corners, limit surface, creases by DeRose's rules) | `OKAY_OWN_BLEND=1`, `examples\own_readers\subsurf_options_42.blend` | Tests only (Linux); synthetic file, not written by Blender |
 | ci1 | CI and release speed-up: how to tell it worked | GitHub Actions (not in the Windows release) | Unverified until a real CI run |
 
 ---
@@ -348,9 +353,6 @@ measurement in [visual_script_category_audit.md](visual_script_category_audit.md
 Screenshots (headless renders: the real Add Node panel code drawn with ImGui's software renderer and its default font, so
 the font and window frame differ from the editor):
 
-* [Numbers open, with its subcategories and the hover description](images/vs_palette_topics.png)
-* [Typing `weather`: nine nodes, all in Weather & Fog](images/vs_palette_search_weather.png)
-* [The Events section folded away](images/vs_palette_folded_section.png)
 
 Status: the topic list, the rule that every node has exactly one place, the size limits, the search words for old topic
 names and the favourites keys are checked by `tests/test_vs_categories.cpp` (compiled and run with g++ on Linux). The
@@ -570,7 +572,7 @@ and Standard Folders, Duplicate of a selection and the tags a menu lists are tes
 (`editor/LaunchFile.cpp`) is tested on Linux against fake programs on PATH (`launch_file`): a hostile file name reaches the program as one untouched argument and program and script types are
 refused before anything starts; its Windows half (`ShellExecuteW`) was only compile-checked with the MinGW cross compiler. **Unverified:** everything you see in the real window (drawing, tooltips, the Move to... and Properties
 windows, the Explorer, Notepad and default-app launches on Windows, the tree's expand and collapse, the panel following a renamed folder). Nothing here was run on Windows. The changed editor files (`editor/main.cpp`, `ProjectPanelUI.cpp`, `ProjectMenuDraw.cpp`, `ProjectBrowser.cpp`, `ContentEditors.cpp`, `LaunchFile.cpp`) were compiled with `-fsyntax-only` on Linux with the editor's real flags (no error; `main.cpp` has older warnings of its own) and the launcher, the panel and the menu drawing also with the MinGW Windows cross compiler; the editor was not linked or started.
-**Pictures:** `docs/images/project_menus/*.png` (listed in `docs/project_panel.md`) are headless renders, **not screenshots of the editor window**: the real item lists and the real menu drawing code, drawn by Dear ImGui into a software surface with ImGui's default look and font (`tools/project_menu_shots.cpp`). The editor itself could not be built and run on the machine that wrote this, so there is no screenshot of the real window; the OkayUI panels have no Project panel, so there is no second copy of this menu to keep in step.
+**Pictures:** a picture folder (pictures are no longer stored in the repository) (listed in `docs/project_panel.md`) are headless renders, **not screenshots of the editor window**: the real item lists and the real menu drawing code, drawn by Dear ImGui into a software surface with ImGui's default look and font (`tools/project_menu_shots.cpp`). The editor itself could not be built and run on the machine that wrote this, so there is no screenshot of the real window; the OkayUI panels have no Project panel, so there is no second copy of this menu to keep in step.
 
 ## 7j. Nameplates that show their own character, and a sign with rich text
 
@@ -618,7 +620,7 @@ inside the card at any size of the window.
 World Space UI object: the Game view and the player draw it; whether the Scene view previews it is unverified. The sign uses
 the 8x8 pixel font (no new font system). A big `[size]` run does not change how a line is wrapped or centred.
 
-**Pictures** (headless renders through the same UI pass as the game, not a real window; they are in `docs/images/ui_text/`;
+**Pictures** (headless renders through the same UI pass as the game, not a real window; they are in a picture folder (pictures are no longer stored in the repository);
 the test `ui_text_shots` makes the "after" ones again, the two "before" ones are the unmerged branches' own renders):
 
 | File | What it shows |
@@ -679,7 +681,7 @@ with two handles, input boxes with rules (email, number range, password and repe
    Range Slider** or **Input Field with Validation**, **Layout & Overlays > Aspect Ratio Box**.
 
 **What you should see.** A red ring and a sentence appear only after typing a wrong value; the range handles stop at each
-other; the blue frame is 16:9 at every window shape. Pictures: `docs/images/ui_library/`.
+other; the blue frame is 16:9 at every window shape. Pictures: a picture folder (pictures are no longer stored in the repository).
 
 **Status.** Logic and the shipped scene are tested headless (`ui_library`, `ui_library_example`: 179 checks, run on Linux).
 The pictures are software renders (`ui_library_shots`), not a real window. The editor menu entries and Inspector panels
@@ -812,7 +814,6 @@ ones grey, contacts red, joints orange.
 
 **Screenshots (headless Linux software renders of the same scene, not the editor window; camera and look differ from the editor):**
 
-* [Start of Play](images/physics/playground_0.png), [after 1.2 s](images/physics/playground_1.png), [after 3 s](images/physics/playground_2.png), [after 8 s](images/physics/playground_3.png)
 
 **Status.** Tested headless on Linux (`tests/test_physics_deep_*.cpp`: manifold, solver, bugs, improved, save, more; the existing physics, joint, hinge,
 ragdoll, vehicle, destructible, controller and net-prediction tests stay green). The playground was played headless for 10 seconds and the
@@ -899,7 +900,7 @@ stairs down hop, a jump from the platform loses its speed, and every frame costs
 Settings you can now change and that are saved: select the player, the **Player Controller** panel, **Step Offset** and **Slope
 Limit** (first and third person).
 
-**Pictures** (headless software render, flat shading, no signs or water shine, made by `tests/render_course.cpp`): `docs/images/player_course/` (`02_ramps.png`, `07_f3_player_lines_on_30_degree_ramp.png` shows the F3 lines as the 8x8 font draws them; the real F3 panel was not seen).
+**Pictures** (headless software render, flat shading, no signs or water shine, made by `tests/render_course.cpp`): a picture folder (pictures are no longer stored in the repository) (`02_ramps.png`, `07_f3_player_lines_on_30_degree_ramp.png` shows the F3 lines as the 8x8 font draws them; the real F3 panel was not seen).
 
 **Checks run here (Linux, headless)**: `tests/test_player_deep.cpp` (860 checks, each fails with `OKAY_OLD_PLAYER=1`),
 `tests/test_player_course.cpp` (the shipped file is what the code writes, and a player walks stations 1, 3, 7), and the older player,
@@ -951,7 +952,7 @@ feel with a real pad, whether the preset numbers feel right (they were chosen by
 **What it is.** Your own arm in first person (the player in the First Person starter). Before: no arm unless you held
 something, then a floating skin block, and a left click did nothing. Now: a hand and forearm in your shirt colour, always in
 view at the lower right, a left click swings it, and other players see the whole body. Before and after pictures:
-`docs/images/fp_hand/before/` and `docs/images/fp_hand/after/` (headless renders: left your camera, middle a camera in
+a picture folder (pictures are no longer stored in the repository) and a picture folder (pictures are no longer stored in the repository) (headless renders: left your camera, middle a camera in
 front of the player, right a camera at the side). Details: [fp_hand.md](fp_hand.md).
 
 **How to try it (Windows release).**
@@ -978,7 +979,7 @@ modeling; no code, models or assets from other projects. Design: `docs/guided_mo
 
 **Status.** The generation, the rebuild rules, the files and undo are tested on Linux (`ctest -R guided_modeling`, about
 600 checks). The editor page (`editor/GuidedPanel.cpp`) compiles but nobody has opened it in a real window yet, and
-nothing here ran on Windows. Pictures in `docs/images/guided_modeling/` are headless software renders of the generated
+nothing here ran on Windows. Pictures in a picture folder (pictures are no longer stored in the repository) are headless software renders of the generated
 meshes (our own small rasteriser), not screenshots of the editor.
 
 **Try it (the example scene).**
@@ -1041,7 +1042,7 @@ to one of them (it is in the Modeling window; the exact tab is unverified), or o
 
 
 **More modeling tools (same example folder).** Open `examples\modeling_tools\spin_path_curve.okayscene`. You should see a blue **Spun Vase**, a **Bent Horn**
-(a box with a curved horn pulled out of its top) and a row of small cubes called **Curve Array** following a curve. `docs/images/modeling_more/spin_path_curve.png` is a
+(a box with a curved horn pulled out of its top) and a row of small cubes called **Curve Array** following a curve. a picture folder (pictures are no longer stored in the repository) is a
 headless software render of it.
 1. **Array Along Curve.** Click **Curve Array**. In the Inspector find **Modifiers**: the first one is *Array Along Curve*, with a time like `0.05 ms` under its name.
    Drag one of the curve points: the cubes follow. Press **Wave** or **Helix** or **Arc**: the row takes that shape. Untick **Follow the curve**: the cubes stop turning.
@@ -1085,7 +1086,7 @@ headless software render of it.
 4. **Reduce Polygons.** Click the **Wrap Target** sphere (many triangles), Edit Mesh, set **Reduce to %** to 25, Ctrl+K, type `reduce`, Enter: the Console shows the triangle count dropping to about a quarter and the sphere still looks round.
 5. **Mesh library.** Use **Save as Mesh Asset** on a model, then Modeling > Import page > **Mesh library**: it appears (press Refresh); **Add** puts a copy in the scene.
 
-**Picture.** `docs/images/modeling_more/material_slots.png` is a headless software render of the example scene (not a GPU render, not the editor window).
+**Picture.** a picture folder (pictures are no longer stored in the repository) is a headless software render of the example scene (not a GPU render, not the editor window).
 
 **What was and was not checked.** The tests `modeling_more` and `modeling_more_scene` ran on Linux (slots through scene save/load, `.okaymesh` files,
 the software renderer drawing each slot's colour and picture, Repair Mesh, Spin, Extrude Along Path, Array Along Curve, measuring, snapping, the library, the dissolve/weld/delete fixes). Nobody has clicked these buttons in the real
@@ -1105,7 +1106,7 @@ model is an ordinary mesh, parts have names, and rebuilding never overwrites you
 **Status.** Generation and rebuild rules are tested on Linux (`ctest -R guided_architecture`, about 1400 checks:
 every design sound and closed, parts never overlap, every setting at its limits, a fuzz, swapping windows, door and roof of a
 building, your edits and your own additions surviving). The page itself was never opened in a real window; nothing ran on Windows.
-Pictures in `docs/images/guided_modeling/architecture_*.png` and `building_part_swap_before_after.png` are headless renders of the
+Pictures in a picture folder (pictures are no longer stored in the repository) and `building_part_swap_before_after.png` are headless renders of the
 generated meshes, not editor screenshots.
 
 **Try it.**
@@ -1137,8 +1138,8 @@ every guided model: **Detail** (Low, Medium, High, Ultra) with the triangle coun
 **Status.** Tested on Linux (`ctest -R "guided_vehicles|guided_detail"`: about 2300 and 980 checks: every design sound, parts never
 overlap, every setting at its limits, fuzz, swapping wheels, headlights and bumpers, your edits surviving, the triangle counts and
 level changes). The page was never opened in a real window; nothing ran on Windows. Pictures
-(`docs/images/guided_modeling/vehicle_*.png`, `vehicles_*.png`, `detail_*.png`) are headless renders of the generated meshes by our own
-small rasteriser (the detail pictures show triangle edges), not editor screenshots. Motorcycle pictures: `docs/images/guided_modeling/motorcycles_side_views.png` and `motorcycles_three_quarter.png` (Medium detail). The motorcycles are still blocky at Medium: tubes, boxes and simple profiles, not shaped like real tanks and engines.
+(a picture folder (pictures are no longer stored in the repository), `vehicles_*.png`, `detail_*.png`) are headless renders of the generated meshes by our own
+small rasteriser (the detail pictures show triangle edges), not editor screenshots. Motorcycle pictures: a picture folder (pictures are no longer stored in the repository) and `motorcycles_three_quarter.png` (Medium detail). The motorcycles are still blocky at Medium: tubes, boxes and simple profiles, not shaped like real tanks and engines.
 
 **Try it.**
 
@@ -1174,7 +1175,7 @@ The editor's Detail slider, Variation and check, and Remove/Add back controls co
 
 **Status.** Tested on Linux (`ctest -R guided_characters`, about 2000 checks: every design of every part sound and non-overlapping, every
 setting at its limits, fuzz, swapping hands, hair, hats, proportions, creature body plans, your edits and your own additions surviving). The page
-was never opened in a real window; nothing ran on Windows. Pictures (`docs/images/guided_modeling/characters_*.png` sheets and
+was never opened in a real window; nothing ran on Windows. Pictures (a picture folder (pictures are no longer stored in the repository) sheets and
 `character_<type>_<design>.png`, 26 files, plus `detail_human.png`) are headless renders by our own small rasteriser, not editor screenshots.
 Humans from Medium up are organic (lofted body, separate face parts); robots and creatures are blocky; spiders and insects have crude legs. Style, hair and clothes pictures: `characters_styles.png` (realistic, stylised low poly, cartoon, blocky at Medium and High) and `characters_hairstyles.png` (13 hairstyles from behind and the side). A human can be given a skeleton and skin weights (see step 8). What is checked: `ctest -R guided_animation`.
 
@@ -1205,7 +1206,7 @@ Humans from Medium up are organic (lofted body, separate face parts); robots and
 
 **What it is.** Seven environment templates on the Modeling window's **Guided** page, same rules as 7zg to 7zk: every one is a set of named parts that can be given another design, with a **Seed** setting for the random-looking shapes (the same seed always gives the same tree), the **Detail** level (Low to Ultra), Randomise within style, the model check and the save-as-template round trip.
 
-**Status.** Tested on Linux (`ctest -R "guided_environment|guided_detail|guided_quality"`): every start design of every template is sound at all four Detail levels; the road and hedge follow a path you draw; every setting at its limits; fuzz; swapping designs; your edits surviving. Picture: `docs/images/guided_modeling/environment_overview.png` (every start design, headless render by our own small rasteriser, not an editor screenshot). Rocks, plants and the street lamp parts are not always one connected piece by design (pebbles, flower beds).
+**Status.** Tested on Linux (`ctest -R "guided_environment|guided_detail|guided_quality"`): every start design of every template is sound at all four Detail levels; the road and hedge follow a path you draw; every setting at its limits; fuzz; swapping designs; your edits surviving. Picture: a picture folder (pictures are no longer stored in the repository) (every start design, headless render by our own small rasteriser, not an editor screenshot). Rocks, plants and the street lamp parts are not always one connected piece by design (pebbles, flower beds).
 
 **Try it.**
 
@@ -1221,7 +1222,7 @@ Humans from Medium up are organic (lofted body, separate face parts); robots and
 
 **What it is.** Four prop templates on the **Guided** page (category Props), same rules and the same Detail, Randomise, model check and template controls.
 
-**Status.** Tested on Linux (`ctest -R "guided_quality|guided_detail|guided"`): every start design of the four templates is one connected, sound object at all four Detail levels, every start is different, every slot has designs that change the model, 1000 random seeds per template without a failure. Picture: `docs/images/guided_modeling/props_overview.png` (headless render).
+**Status.** Tested on Linux (`ctest -R "guided_quality|guided_detail|guided"`): every start design of the four templates is one connected, sound object at all four Detail levels, every start is different, every slot has designs that change the model, 1000 random seeds per template without a failure. Picture: a picture folder (pictures are no longer stored in the repository) (headless render).
 
 **Try it.**
 
@@ -1285,7 +1286,7 @@ a few centimetres off the back (a design choice); `guided_pictures` renders were
 **Steps.** Open the Modeling window and follow these.
 
 More new steps (same branch):
-- **Curves and bevel weights example**: File > Open `examples\modeling_tools\curves_bevel.okayscene` (picture: `docs/images/modeling_more/curves_bevel.png`). You see a pipe, a flat ribbon, a swept square tube and a cube with only its top edges rounded, with three hint lines on screen. Press Play to look at it, Stop to edit. Select the cube, open Edit Mesh: its top edges are drawn green (bevel weights).
+- **Curves and bevel weights example**: File > Open `examples\modeling_tools\curves_bevel.okayscene` (picture: a picture folder (pictures are no longer stored in the repository)). You see a pipe, a flat ribbon, a swept square tube and a cube with only its top edges rounded, with three hint lines on screen. Press Play to look at it, Stop to edit. Select the cube, open Edit Mesh: its top edges are drawn green (bevel weights).
 - **Coloured edges**: in Edit Mesh, creased edges are pink and bevel-weighted edges are green. Select two edges, Ctrl+K, type "crease" or "bevel weight", run Set; the colours appear at once. Clear removes them.
 - **Quad Remesh**: add a Sphere, open Modeling > Edit Mesh, set "Quads target" to 300, press Ctrl+K and run "Quad Remesh". The Console says how many triangles became how many quads, and the sphere is now made of quads (switch on the wireframe to see them). Undo brings the old mesh back. Limits: it does not follow flow lines; slots, vertex colours and UVs are dropped.
 - **Reference images are saved**: Import page > Reference images: add a PNG, save the scene, reopen it: the picture plane is still there (path, plane, size, opacity, flip, visible).
@@ -1296,7 +1297,7 @@ More new steps (same branch):
 
 **What it is.** The 3D modeler can now give faces to numbered material slots. Each slot has a colour, and changing a slot's colour
 
-**Status.** The engine side is covered by the Linux tests `modeling_more`, `modeling_more_scene` and `modeling_fuzz` (headless). The editor buttons and menus here were not compiled with the editor on Linux and not clicked in the Windows editor; the Direct3D 11/12 and OpenGL per-slot drawing never ran on a GPU. The picture `docs/images/modeling_more/curves_bevel.png` is a headless software render.
+**Status.** The engine side is covered by the Linux tests `modeling_more`, `modeling_more_scene` and `modeling_fuzz` (headless). The editor buttons and menus here were not compiled with the editor on Linux and not clicked in the Windows editor; the Direct3D 11/12 and OpenGL per-slot drawing never ran on a GPU. The picture a picture folder (pictures are no longer stored in the repository) is a headless software render.
 
 ## 7zr. Damaged prefab variants and deep project folders
 
@@ -1380,7 +1381,7 @@ Where: the menu bar at the top of the editor, `Tools\OkayEngine.exe` (or start t
 6. The **Window** and **Engine** menus are gone: their items were duplicates (Items, Loot & Recipes is in View > Editors & Tools; Build
    Settings is in File) or moved (Check for Updates to Help).
 
-Screenshots of the real editor (built and run on Linux, in a virtual display; not Windows): [docs/images/editor_menus/](images/editor_menus/)
+Screenshots of the real editor (built and run on Linux, in a virtual display; not Windows): a picture folder (pictures are no longer stored in the repository)
 (`file.png`, `file_examples.png`, `file_play_save_greyed.png`, `edit_undo_named.png`, `gameobject.png`, `view.png`, `help.png`). What was and
 was not clicked is listed in [editor_menus.md](editor_menus.md) section 3b; "Checks run for this change" is at the end of section 17.
 
@@ -1403,7 +1404,7 @@ Where: the **Hierarchy** panel (left side by default). Map and the Existing / Ga
 7. Right-click the empty space under the rows: Create Empty, the eight Create categories, Paste, Select All, Deselect, Expand All, Collapse All,
    Sort A-Z. The **[+]** button at the top has Create Empty, Create Empty Child, Group Selected and the same categories.
 
-Screenshots of the real editor (Linux, virtual display): [docs/images/editor_menus/](images/editor_menus/) (`hierarchy_row_menu.png`,
+Screenshots of the real editor (Linux, virtual display): a picture folder (pictures are no longer stored in the repository) (`hierarchy_row_menu.png`,
 `hierarchy_create_child.png`, `hierarchy_create_child_result.png`, `hierarchy_three_selected.png`, `hierarchy_same_type_reason.png`,
 `hierarchy_add_component.png`, `hierarchy_empty_space.png`).
 
@@ -1479,6 +1480,46 @@ next to each other. `hp 10` and `hp 9` stay two rows. The pill counts still coun
 **Status.** Logic tested headless (`test_debug_console`, 136 checks, run on Linux). `editor/ConsolePanel.cpp` and
 `editor/main.cpp` were NOT compiled (no SDL in this environment); the button and label are unverified until you look.
 
+## content-delivery. Downloadable game content (off by default, Windows first)
+
+An exported game can download updated **data and scripts** (models, textures, animations, scenes, audio, dialogue, Visual Script
+and OkayScript files) from a folder or a server. Never code or programs. Full description: `docs/content_delivery.md`.
+Nothing changes in a game unless a content URL is set. Not tested on Windows or an Xbox yet.
+
+You need a Windows PC with the release folder (the `Tools` folder holds `okay-content.exe`), Git Bash or WSL for the
+publish script (only for step 6), and Python 3 once to make a key.
+
+1. **Make a key.** In a terminal in the repo: `python3 scripts/sign_index.py genkey`. It prints a seed (private: keep it, never
+   share it) and a public key. Write them down for the steps below (`SEED` and `PUB`).
+2. **Make a content folder** (for example `C:\test\content-v1`) holding a few real files, in the same layout your game uses:
+   `models\ship.obj`, `scripts\boss.okayvs` (copy a graph saved by the Visual Script editor), `strings.okayloc`.
+3. **Sign it.** `set OKAY_CONTENT_SIGNING_SEED=SEED` then
+   `okay-content.exe make-manifest C:\test\content-v1 --game mygame --version 1`. You should see "wrote content.manifest ... and
+   content.manifest.sig". Then `okay-content.exe verify C:\test\content-v1 --keys PUB --game mygame` should say `OK`.
+   Try a file named `run.exe` in the folder: make-manifest must refuse it.
+4. **Download it like a player.** `okay-content.exe sync C:\test\content-v1 C:\test\player-content --game mygame --keys PUB`.
+   You should see each file, then `status=updated ... downloaded=3`. Run it again: `status=up-to-date`, nothing downloaded.
+   Change one file, make version 2 (`--version 2`), sync again: only the changed file downloads.
+5. **Try a bad key.** Repeat the sync with a different public key: it must refuse and `C:\test\player-content\current.txt` must not
+   appear (or stay at the old version).
+6. **Use it in a game.** Build a game with Build Game, put a text file `content.okayconfig` beside `OkaySpacePlayer.exe` (next to the
+   game's `_Data` folder) with
+   ```
+   url=file:///C:/test/content-v1
+   game=mygame
+   keys=PUB
+   ```
+   (or set the environment variables `OKAY_CONTENT_URL`, `OKAY_CONTENT_GAME`, `OKAY_CONTENT_KEYS`). Start the game. The game's log
+   (the player prints it at start-up; a development build also writes it to `game.log`) shows `content: updated, serving downloaded content version 1`. A downloaded
+   `strings.okayloc`, `items.okayitems`, `weapons.okayweapon`, a scene named in the scene list, a UI image or an `.obj` mesh now
+   wins over the installed one. With no `content.okayconfig` and no variable the game is unchanged.
+7. **Publish for real (optional).** With Git Bash and a Supabase service key in `SUPABASE_SERVICE_KEY`:
+   `OKAY_CONTENT_SIGNING_SEED=SEED scripts/publish-content.sh C:/test/content-v1 --game mygame --version 3`. It prints the
+   `url=` line to use. `DRY_RUN=1` checks everything and uploads nothing.
+
+Tests (Linux): `ctest -R "content_"` and `ctest -R publish_content`. Not verified: Windows, a real bucket, the Xbox app (its
+network transport is a stub that says so).
+
 ## Remove from list and Delete project (launcher Create page)
 
 **Where.** Launcher > **Create**. Your projects are the folders inside the **Projects** folder next to `OkaySpace.exe`
@@ -1533,6 +1574,40 @@ Three bug fixes from issue #888 (findings 74, 75 and 78). Nothing new to click; 
 
 **Checked:** `test_data_load_checks` (headless, Linux). **Not checked:** the editor windows above (the editor was
 not built for this change); anything on Windows.
+
+## editor-fps. Editor frame-time overlay and speed switches
+
+**What it is.** A small window inside the editor that shows your FPS, the frame time in milliseconds, a graph of the last
+120 frames, and where each frame goes (3D view, panels, ImGui, present, Play mode). Plus a few switches to make the editor
+cheaper. All switches are off until you turn them on. Guide: `docs/editor_performance.md`.
+
+**Steps (read the numbers).**
+1. Open the editor (`Tools\OkayEngine.exe`). Open a project, or use **File > Open Scene** and pick `<install folder>\examples\perf\many_lights.okayscene`.
+2. Open the menu **View**, then **Rendering**. Click **Frame-time overlay**. A window called "Frame time" appears at the top right.
+   Drag it where you like. It stays open the next time you start the editor.
+3. Leave the mouse over the Scene view for a few seconds, then orbit the camera (hold the right mouse button and move).
+4. Read the top line (FPS and ms) and the bars below it. The bar that is longest is where the time goes.
+5. Press **Copy report** in the overlay. Paste it into a message to us. That is the number to send back. Also say your
+   graphics card and the window size, and whether the line "Renderer:" in the overlay says "Direct3D 11 (GPU, direct to the view)".
+6. For more detail, press **Open Profiler** (or **View > Rendering > Profiler window**).
+
+**Steps (try the switches).** All in **View > Rendering**, each takes effect at once. Look at the overlay after each one.
+1. **Viewport resolution** > **75%** then **50%**: the 3D view gets a little softer and the "3D view render" bar shrinks.
+2. **Performance mode (Scene view)**: the Scene view loses ambient occlusion, bloom and edge smoothing; the Game view does not change.
+3. **Frame rate limit** > **120 FPS**: the FPS settles near 120 and a new bar "Frame limiter sleep" shows the time slept on purpose.
+   The overlay also says what the frame costs without the sleep ("possible FPS").
+4. **Slow down when idle**: take your hands off the mouse and keyboard for a second: FPS drops to the idle rate (30 by default)
+   and the GPU rests. Move the mouse: full speed again. It never slows down while the game is playing.
+5. Turn each switch off again to compare.
+
+**What you should see.** The overlay's numbers move when you change a switch. The sections add up to the frame time
+(the line "Not timed" is what no timer covers).
+
+**Status.** Logic tested headless on Linux (`test_editor_perf`: section maths, history numbers, idle and limiter decisions,
+scale, performance mode). The editor was built and started on Linux with a virtual screen and SDL's software 2D renderer: the
+frame limiter was seen working (a 10 FPS cap gave 99.7 ms frames with a "Frame limiter sleep" section) and the sections add up.
+The overlay window was drawn only with the profiler data path (not looked at on screen), no scene viewport was exercised, and
+nothing was run on Windows or a real GPU, so the Direct3D 11 numbers are unverified until you send the report.
 
 ## fast1. Fast release: one dispatch, no version-bump PR
 
@@ -1697,6 +1772,35 @@ settings. The Console says "Added Player Controller (View: Both ...)" when you u
 **Status.** Unverified in a real editor and on Windows. Tests run on Linux: `one_controller` (an old-format Humanoid scene and
 an old First plus Third scene load as one Player Controller and keep their settings), `templates_work` (one template, old titles
 still build, Humanoid gone), `scene_cameras`, `player_controller`, `view_upgrade`.
+
+## Importing a `.raw` file with several groups no longer crashes (bug fix, branch `claude2/own-readers-speed-3`, not released yet)
+
+The Windows release reads `.raw` (raw triangle text) through Assimp, and Assimp 5.4.3 breaks on a file with two or more groups
+of triangles: the import crashed. Such a file now goes to our own RAW reader. To try it once released: save this as `two.raw`
+
+```
+first
+0 0 0  1 0 0  0 1 0
+second
+0 0 1  1 0 1  0 1 1
+```
+
+and import it in the editor. Expect two parts (`first`, `second`) and a log line "... more than one group of triangles, which
+Assimp 5.4.3's RAW importer cannot read safely; reading it with our own RAW reader". A `.raw` file with one group still goes to
+Assimp. Not tried on Windows (checked on Linux in a build with Assimp). Details: `docs/own_raw_reader.md`.
+
+## Model reader bench: our readers against Assimp (developer tool, Linux)
+
+Not in the Windows release: it needs a build with `-DOKAY_USE_ASSIMP=ON` and Assimp's test files. On a Linux checkout:
+
+1. Configure with `-DOKAY_USE_ASSIMP=ON -DOKAY_BUILD_TESTS=ON` and build `bench_model_readers`.
+2. `OKAY_MODEL_CORPUS=<assimp v5.4.3 checkout>/test build/tests/bench_model_readers --format dae` prints one row per Collada
+   file (our read time and peak heap against Assimp's, the full import with each) and a summary line saying "met" or "NOT
+   met". Leave out `--format` for every reader (about half an hour).
+3. `--digest` prints a hash of our output per file (it must not change when only speed work was done); `--compare` lists
+   where our reader and Assimp disagree on counts and bounds.
+
+What to expect and the latest numbers: `docs/own_readers_speed.md`.
 
 ## Scene view: the selected object's name sits on its object (bug fix)
 
@@ -1880,6 +1984,37 @@ ran in both backends without stopping, and with the change a Project tab dragged
 intermittent stop seen before under Xvfb was SDL falling back to the `offscreen` driver when the X server was not ready yet.
 Unverified: Windows (not built or run here), a real Wayland session.
 
+## xbox-uwp. Xbox One (experimental, Developer Mode) export
+
+**Read this first: the triangle-test package was built, installed and run on a Windows 11 PC on 2026-11-18 (Visual Studio 2026, MSVC 14.52, toolset v145, Windows SDK 10.0.26100.0); nothing has run on an Xbox, and the editor button, the gamepad, suspend/resume and engine mode are not verified.** It makes a UWP package for an Xbox One in Developer Mode, not a native console game. Full text: `docs/xbox_uwp.md`; audit: `docs/xbox_uwp_audit.md`.
+
+What to do (needs a Windows PC and a release built with `-DOKAY_BUILD_XBOX_UWP=ON`, which `build-windows-dist.sh` sets; it also ships `xbox-src` next to the editor):
+
+1. **Once:** install Visual Studio 2022 (free Community edition) with the workload "Universal Windows Platform development", its C++ UWP tools and a Windows 10/11 SDK.
+2. Open the editor, **File > Build Settings**, click **Xbox (exp.)** at the top. You should see an orange "EXPERIMENTAL and UNVERIFIED" line, the limits text, the tools list (found / MISSING with the install step), and the package name, version and publisher. A missing required tool greys the button with a tooltip; **Check again** re-checks.
+3. Leave **Engine mode** unticked the first time (a triangle test, the safest). Tick **Also install on this PC afterwards** if you want it on this PC. Press **Build Xbox package**.
+4. Watch the page: a step list (Check the Windows tools, Export, Set up the UWP app build, Compile the UWP app, Put the program into the package, Compile the shaders, Pack and check the .appx, Sign, Install) with a status per step and a live log. **Cancel build** stops it. If a step fails you get a plain message and the first error lines: send us those.
+5. If you ticked install, Windows shows **one** administrator (UAC) prompt: accept it. Then start the app from the Start menu: you should see a dark window with a coloured triangle (the background turns green once a pad is connected; left stick moves it, A centres it, B exits).
+6. The result is `<output>\<name>_<version>_x64.appx` (signed with a test certificate from PowerShell + SignTool: the page says so) and `OkaySpaceXbox-test.cer` (public part only).
+7. **Engine mode** (EXPERIMENTAL): tick it and build again to try running your exported game (`package\Data`): 3D scene, scripts, physics, gamepad and keyboard. The 2D / UI layer is not drawn. It has never been compiled with Microsoft's compiler, so a compile error is likely: the page then tells you to untick it. Please send the first error lines.
+8. **No editor with the Xbox tab yet?** One command from a source checkout or `xbox-src`:
+   `powershell -ExecutionPolicy Bypass -File scripts\build-xbox-uwp.ps1 -SourceRoot . -ExportDir .\xbox-test -MinimalTest -SkipInstall`
+   It writes a test export, builds, packs and signs it (progress lines `[1/9]` ... `[9/9]`). On a failure it prints the step and the last 15 lines of output; send us `xbox-test\build.log`.
+9. **Engine mode round 2 (EXPERIMENTAL, nobody has compiled it with Microsoft's compiler):**
+   `powershell -ExecutionPolicy Bypass -File scripts\build-xbox-uwp.ps1 -SourceRoot . -ExportDir .\xbox-engine -MinimalTest -EngineMode -SkipInstall`
+   builds the real engine into the app and a tiny scene (a cube, a camera and a UI panel with a text label) into the package. The compile is long. If it works the installed app shows an orange cube in a blue sky and a dark UI panel with "Hello Xbox (UI layer)"; B closes it. Suspend/resume (Xbox button and back) writes `saves\xbox_suspend.okayslot` in the app's LocalState. If it fails, send `xbox-engine\build.log` (the failing step and its last lines are printed).
+10. For the console: `docs/xbox_uwp.md`, "Deploy to an Xbox in Developer Mode" (Device Portal upload).
+
+Checks you can run without Windows: `ctest -R xbox_uwp` (needs `-DOKAY_BUILD_XBOX_UWP=ON -DOKAY_BUILD_TESTS=ON`) runs the Linux tests: the old package/packer tests, `xbox_uwp_runtime` (shader bundle, display, lifecycle, pad mapping, paths, audio conversion, the backend over a fake host, the build plan and runner, the API audit, game config), `xbox_uwp_audit` (no forbidden UWP API in the engine sources the UWP target compiles) and `xbox_uwp_sources_cmake`.
+
+Verified on Windows (owner, 2026-11-18, the `-MinimalTest` command): the whole script, MakeAppx accepting our package, signing, install and the triangle on a PC. Verified on Linux: everything in the tests. Not verified: the editor page drawing and one-click button, the gamepad, suspend/resume, engine mode, the console. The `Microsoft.VCLibs` install line printed at the end is optional and may fail harmlessly with 0x80073D02 when the framework is in use.
+
+**Own code instead of third-party libraries (2026-11-18, UNVERIFIED on Windows):** the Xbox build links no SDL, Dear ImGui, Assimp, ufbx or libsodium; `docs/xbox_uwp_thirdparty.md` has the table. What you can try:
+
+* Open any export's `README_XBOX.txt` (made by Build Xbox package or `-MinimalTest`): it has a "Third-party code in this build" paragraph, including "own crypto, not independently reviewed; for experiments only; do not ship".
+* In a source checkout or `xbox-src` (needs the Windows PC set-up above): `powershell -ExecutionPolicy Bypass -File scripts\build-xbox-uwp.ps1 -SourceRoot . -ExportDir .\xbox-engine -MinimalTest -EngineMode -SkipInstall -Http own` builds engine mode with our own HTTP client (plain `http://` only). Add `-OwnCrypto` to switch on our own packet encryption (the script prints a yellow warning; never for a release). Without these two options you get Windows.Web.Http and no packet encryption.
+* Without Windows: `ctest -R xbox_uwp` now also runs `xbox_uwp_models` (17 sample models through our own readers only, with the UWP defines) and the HTTP choice tests; `ctest -R release_refuses_own_crypto` shows the release guard refusing `OKAY_XBOX_OWN_CRYPTO`.
+
 ## Switches that are off by default (own code)
 
 CLAUDE.md rule 17 and `docs/own_stack_rollout.md`: our own code exists beside the third-party library, off by default,
@@ -1933,6 +2068,7 @@ Checked by reading the code and the CI logs on 2026-11-15. Nothing here was run 
 | BVH, SMD, MD5, MS3D, ASE, Blender | `OKAY_OWN_<FMT>=1` | **none** | `readers=own(<fmt>)` | no sample |
 | 3MF, AMF, X3D, DXF, LWO, MD2, MD3, IRRMESH, B3D, X | `OKAY_OWN_<FMT>=1` | **none** | `readers=own(<fmt>)` | no sample |
 | AC3D, OGRE, XGL, IRR, NFF, TER, MDC, HMP, CSM, Q3D, RAW, IQM, COB, NDO, PMX, LWS | `OKAY_OWN_<FMT>=1` | **none** | **nothing**: they are not in the stack line and no log line says which reader ran | no sample and no way to tell |
+| OGRE binary, ZAE, `.xml` (gap batch) | `OKAY_OWN_OGREBIN=1`, `OKAY_OWN_ZAE=1`, `OKAY_OWN_XML=1` | `examples\own_readers\cube.mesh`, `cube.zae`, `cube_irrmesh.xml` | **nothing** (same as the row above) | no way to tell |
 | STL and PLY first | build option `OKAY_PREFER_OWN_READERS` only | none | nothing | no run-time switch, no sample, no sign |
 | WAV | `OKAY_OWN_WAV=1` (`0` = old) | `examples\own_wav\own_wav_test.okayscene` with `mulaw_tone.wav` | you hear it: old = buzzy, own = a clean 440 Hz tone | no startup word, no log line |
 | Own HTTP | Linux builds only: `OKAY_OWN_HTTP=1` | none | `http=own` (Linux) | cannot be tried on the Windows download |
@@ -1946,6 +2082,23 @@ and PLY, no import log line) are "Step 0" of the proposal. Until they are closed
 at the top (rule 4a).
 
 ### 8. Own model readers
+
+* **Now the default (owner approval 2026-11-17; branch `claude2/own-readers-integration`, not in a release yet).** Every model
+  format that has a reader of ours is read by it with nothing set: FBX, COLLADA, Blender, 3DS, STL, PLY, `.x` and about 40 more
+  (not NDO: that reader refuses every file). Assimp and ufbx are still in the program: a file ours refuses goes to them.
+  **Steps, once a release has it:**
+  1. Start `Tools\OkayEngine.exe` with nothing set. **File > Import Model...**, choose `examples\own_readers\cube.off`. A white
+     cube appears and the **Console** says `model import '...cube.off': read by the own OFF reader in ... ms`.
+     **Help > About OkaySpace** says `readers=own(fbx,dae,3ds,...)+assimp`.
+  2. Close it. In a Command Prompt: `set OKAY_THIRD_PARTY=1`, then start `Tools\OkayEngine.exe` from that window. Import the same
+     file: the same cube, and the Console says `read by Assimp in ... ms`. About says `readers=ufbx+assimp`. This is the way back
+     for **every** model format (only the exact value `1` counts).
+  3. Close it, `set OKAY_THIRD_PARTY=`, `set OKAY_OWN_OFF=0`, start again and import: `read by Assimp` for `.off` only; any other
+     format is still ours. `OKAY_OWN_FBX=0` sends FBX back to ufbx; `OKAY_OWN_STL=0` / `OKAY_OWN_PLY=0` work for STL and PLY.
+  4. If a model looks wrong with ours and right with `OKAY_THIRD_PARTY=1`, that is a bug in our reader: please report the file.
+  Checked on Linux by `own_dispatch_c`, `own_dispatch_d`, `own_dispatch_gap`, `own_stack`, `own_stack_third_party` and
+  `model_readers`; **nothing here was run on Windows** and no editor window was opened (unverified).
+* The text below is from before the switch, when every reader had to be switched on; the variables still work the same way.
 
 * **Variables.** `OKAY_OWN_STACK=1` turns on all of them (plus the settings below). Or one at a time: `OKAY_OWN_FBX`,
   `OKAY_OWN_COLLADA` (.dae), `OKAY_OWN_3DS`, `OKAY_OWN_BVH`, `OKAY_OWN_OFF`, `OKAY_OWN_SMD`, `OKAY_OWN_MD5`,
@@ -1963,13 +2116,33 @@ at the top (rule 4a).
      `readers=own(off)+assimp` (with `OKAY_OWN_STACK=1`: a long `own(fbx,dae,3ds,...)` list).
   2. **File > Import Model...** and choose `examples\own_readers\cube.off`. A white unit cube appears in the scene.
   3. Close the editor, start it again with no variable, import the same file: you get the same cube, read by Assimp.
-* **How you can tell it is really ours.** Only the About popup or startup line (`own(off)`). There is no per-import
-  log line saying which reader ran, and the two readers give the same cube here (the corpus comparisons in
-  `docs/own_stack_rollout.md` say how closely they agree). Honest gap: a "read with the built-in OFF reader" Console
-  line on import would close this; it does not exist. Without Assimp in a build, a format whose own reader is off fails
+* **How you can tell it is really ours.** Since 2026-11-16 (branch `claude2/own-readers-gap-2`, not in a release yet) every
+  import writes one line in the **Console**: `model import '...cube.off': read by the own OFF reader in 0.05 ms (whole
+  import 0.40 ms)`. Without the variable the same import says `read by Assimp in ...`. If ours refuses a file and Assimp
+  reads it, the line says `read by Assimp (the own OFF reader refused it: <why>)`. FBX says `ufbx` or `the own FBX reader`,
+  glTF `the own glTF reader`. Before that change only the About popup or startup line (`own(off)`) told you. Tested on
+  Linux by `lwo_reader` (the line for a `.lxo` import); the Console showing it is **unverified** (no editor window was
+  opened). Without Assimp in a build, a format whose own reader is off fails
   with `no OFF reader enabled: our own reader is off by default (set OKAY_OWN_OFF=1 ...)`; the Windows release has
   Assimp, so you will not see that message.
 * **More sample files** for other formats are under `tests\data\models` in a source checkout (not in the release).
+* **The "Assimp gap" readers (2026-11-16, off by default)**: OGRE binary meshes, ZAE archives and `.xml` model files. Each has
+  a cube in `examples\own_readers`, written by our own `scripts/gen_gap_fixtures.py` (no outside source):
+  * **OGRE binary `.mesh`**: `set OKAY_OWN_OGREBIN=1`, start the editor, **File > Import Model...**, choose
+    `examples\own_readers\cube.mesh`. A unit cube appears (12 triangles, material `Cube/White`; no `.material` file ships, so
+    it is the default white). `docs/own_ogre_reader.md`.
+  * **ZAE (COLLADA in a ZIP)**: `set OKAY_OWN_ZAE=1`, import `examples\own_readers\cube.zae`. A red unit cube appears.
+    For a ZAE with textures inside, ours writes each image next to the `.zae` as `<name>_zae_<file>`. `docs/own_zae_reader.md`.
+  * **`.xml` (Irrlicht scene or mesh, COLLADA, XGL, OGRE XML by the root element)**: `set OKAY_OWN_XML=1`, import
+    `examples\own_readers\cube_irrmesh.xml`. A green unit cube appears. `docs/own_xml_reader.md`.
+  * **Modo `.lxo`** (added on branch `claude2/own-readers-gap-2`, not in a release yet): `set OKAY_OWN_LXO=1`, import
+    `examples\own_readers\cube.lxo`. A **blue** unit cube appears (material `Blue`, colour 0.2 / 0.4 / 0.9, from the file's
+    material item). The Console line says `read by the own LXO reader`. Without the variable Assimp reads it: the same cube,
+    but **grey** (Assimp does not read Modo's material items) and the line says `read by Assimp`. `docs/own_lwo_reader.md`,
+    section LXO.
+  * Without the variable the same files are read by Assimp (the Windows release has it), so you see the same cube (grey for
+    `.lxo`); the Console line on each import names the reader (see above). Checked on Linux by the `own_dispatch_gap` test (all
+    four samples read as 12 triangles, area 6); **not run on Windows**.
 
 ### 9. Own WAV decoder
 
@@ -2072,6 +2245,61 @@ streams it compared with an independent slow decoder and ends with `ok:`.
 `own_http_inflate`, `png_hint`, and the existing `image_decoder`, `blend_reader`, `3mf_reader`, `amf_reader`, `fbx_reader`,
 `fbx_hostile`, `x_reader`, `xgl_reader`, `own_http` tests. **Unverified:** every editor step above (nothing here opens a
 real editor window), anything on Windows, real-world files other than our own samples.
+
+### 15b. Blender files: Mirror and Subdivision Surface modifiers are applied
+
+**What it is.** Our own `.blend` reader (off by default, `OKAY_OWN_BLEND=1`) used to show a Blender model as it is stored,
+without its modifiers, so a model with a Subdivision Surface looked blocky and a mirrored model showed only one half.
+Now it applies the two modifiers Assimp applies, Mirror and Subdivision Surface, in the order of the modifier stack. Any
+other modifier (Array, Boolean, Solidify, ...) is skipped and named in one log line, for example
+`modifier 'Array' (Array) not applied (not supported) on 1 object(s)`.
+
+**Steps.**
+1. `set OKAY_OWN_BLEND=1`, start the editor (`Tools\OkayEngine.exe`).
+2. **File > Import Model...**, choose `examples\own_readers\mirror_subdiv_box.blend` (our own test file, written by
+   `scripts/gen_blend_fixtures.py`, not by Blender). It stores half a box (one side open) with Mirror, Array and
+   Subdivision Surface level 1.
+3. You should see one closed, rounded box, symmetric left to right (the mirror filled in the missing half and the
+   subdivision rounded it), 80 triangles. One bottom edge on each side stays straight (it has a crease). The console
+   or log shows the warning about the Array modifier.
+4. If you have Blender files with Subdivision Surface or Mirror of your own, import them the same way: the result should
+   look like Blender's viewport (the subdivision level used is the higher of the viewport and render levels).
+
+**What to expect if it is off** (`OKAY_OWN_BLEND` not set): Assimp reads the file, as before.
+
+**Status.** Verified here (Linux, headless): `blend_modifiers` (hand-computed results, the sample file, the four Assimp
+test files with modifiers: triangle counts equal Assimp's on `SuzanneSubdiv_252`, `yxa_1` and `HUMAN`), `blend_reader`,
+`blend_hostile`, `model_corpus`, ASan and UBSan runs. **Unverified:** the editor steps (no window opened), anything on
+Windows, real Blender 2.8+ files (the corpus files are Blender 2.49 to 2.60), and Blender's own output (no Blender run).
+
+### 15c. Blender files: the Subdivision Surface options of Blender 2.9+
+
+**What it is.** Blender 2.9 and later give the Subdivision Surface modifier more options. Our `.blend` reader (off by
+default, `OKAY_OWN_BLEND=1`) now reads and applies them: **UV Smooth** (which UV points stay put: none, corners, junctions,
+concave corners, boundaries, or all smoothed), **Boundary Smooth: Keep Corners** (an open mesh keeps its corners),
+**Use Limit Surface** (on by default in Blender: the points are moved onto the final smooth surface, so the shape is a
+little rounder than plain subdivision) and **Use Creases** (creased edges stay sharp for some levels, by the rules of the
+DeRose 1998 paper). Files older than 2.9 behave as before.
+
+**Steps.**
+1. `set OKAY_OWN_BLEND=1`, start the editor (`Tools\OkayEngine.exe`).
+2. **File > Import Model...**, choose `examples\own_readers\subsurf_options_42.blend` (our own test file in the Blender
+   4.2 layout, written by `scripts/gen_blend_fixtures.py`, **not** by Blender). It stores a flat 3 x 3 grid of points with
+   the middle point raised, one creased edge, and a Subdivision Surface with 2 levels, limit surface on, UV Smooth
+   "Keep Corners" and Boundary Smooth "Keep Corners".
+3. You should see a square sheet with a smooth bump in the middle, 128 triangles. Its four corners are exactly at the
+   corners of the original square (keep corners); without that option they would be pulled in. The edge from the bump to
+   the middle of one side is sharper than the rest (the crease). A texture applied to it covers the whole square to its corners.
+4. Your own Blender 2.9+ files with these options can be imported the same way.
+
+**What to expect if it is off** (`OKAY_OWN_BLEND` not set): Assimp reads the file (Assimp does not read these options).
+
+**Status.** Verified here (Linux, headless): `blend_modifiers` (limit positions checked against hand-computed values and
+against each other across levels, every UV mode, keep corners, the paper's crease rules, the three new fixture files
+against the same steps done by hand), `blend_reader`, `blend_hostile`, `blend_fixtures_check`, `model_corpus`.
+**Unverified:** the editor steps (no window opened), anything on Windows, and above all real Blender 2.9+ files: the field
+names and option values are from memory of Blender's file format (a `.blend` file names its fields but does not say
+what the option numbers mean) and no real file with these options was available.
 
 ## 7s. Sandbox fps: read where the time goes (F3) and the dig-time fix
 

@@ -1,6 +1,7 @@
 // The in-game UI pass and its drawing helpers, moved verbatim from the player's main
 // loop (player/main.cpp) onto the ui2d::Painter interface. See UIRenderer.hpp.
 #include "okay/UI/UIRenderer.hpp"
+#include "okay/UI/UIIconDraw.hpp"   // "icon:name" pictures: our own vector icons
 #include "okay/UI/UIWidgetsMoreDraw.hpp"
 #include "okay/UI/UIFontPolicy.hpp"
 #include "okay/UI/UIFrameTransform.hpp"
@@ -15,6 +16,8 @@
 #include <cstdint>
 #include <cstdio>
 #include <limits>
+#include <unordered_map>
+#include <utility>
 #include <string>
 #include <vector>
 
@@ -78,6 +81,8 @@ public:
         m_in.Geometry(t, m_verts.data(), nv, idx, ni);
     }
     void MissingTexture(const std::string& path, const Rect& where) override { m_in.MissingTexture(path, where); }
+    void SetImageFilter(bool linear) override { m_in.SetImageFilter(linear); }
+    void SetTextureFilter(Tex t, bool linear) override { m_in.SetTextureFilter(t, linear); }
     Tex UploadAtlas(const Image& page, int pageIndex, Tex existing) override { return m_in.UploadAtlas(page, pageIndex, existing); }
 
 private:
@@ -148,7 +153,10 @@ struct FloatRun {
             Rect q{(int)std::lround(x), (int)std::lround(y), (int)std::lround(w), (int)std::lround(h)};
             if (q.w > 0 && q.h > 0) ren->FillRect(&q);
         } else {
-            FRect q{x, y, w, h};
+            // A hundredth of a device pixel of bias, as in FillCoverage: a software renderer truncates float rects, and x / S * S can land just below x,
+            // which left a one-pixel gap between neighbouring strips (hairlines across gradient bars and panels at 3x).
+            const float S = g_uiDeviceScale > 0.05f ? g_uiDeviceScale : 1.0f;
+            FRect q{x + 0.01f / S, y + 0.01f / S, w + 0.01f / S, h + 0.01f / S};
             ren->FillRectF(&q);
         }
         on = false;
@@ -435,7 +443,7 @@ void FillUIShadow(Painter& ren, const Rect& r, UIShape shape, float radius,
 
 
 // --- Small raster helpers for the minimap (filled circle / ring / triangle). ----
-void MMFillCircle(Painter& r, int cx, int cy, int rad, RGBA col) {
+static void MMFillCircleHard(Painter& r, int cx, int cy, int rad, RGBA col) {
     if (rad < 1) rad = 1;
     r.SetDrawColor(col.r, col.g, col.b, col.a);
     for (int dy = -rad; dy <= rad; ++dy) {
@@ -443,7 +451,7 @@ void MMFillCircle(Painter& r, int cx, int cy, int rad, RGBA col) {
         r.DrawLine(cx - dx, cy + dy, cx + dx, cy + dy);
     }
 }
-void MMDrawRing(Painter& r, int cx, int cy, int rad, int width, RGBA col) {
+static void MMDrawRingHard(Painter& r, int cx, int cy, int rad, int width, RGBA col) {
     if (rad < 1) rad = 1;
     if (width < 1) width = 1;
     r.SetDrawColor(col.r, col.g, col.b, col.a);
@@ -456,7 +464,7 @@ void MMDrawRing(Painter& r, int cx, int cy, int rad, int width, RGBA col) {
         prevx = x; prevy = y;
     }
 }
-void MMFillTriangle(Painter& r, Point a, Point b, Point c, RGBA col) {
+static void MMFillTriangleHard(Painter& r, Point a, Point b, Point c, RGBA col) {
     r.SetDrawColor(col.r, col.g, col.b, col.a);
     int minY = std::min({a.y, b.y, c.y}), maxY = std::max({a.y, b.y, c.y});
     auto edgeX = [](Point p, Point q, int y, float& x) -> bool {
@@ -476,21 +484,164 @@ void MMFillTriangle(Painter& r, Point a, Point b, Point c, RGBA col) {
         }
     }
 }
-// A line segment with thickness, drawn as a filled quad (for minimap roads/walls).
+
+// --- Resolution-independent fills for the small shapes (filled circle / ring / triangle /
+// thick line / convex polygon: minimap, joystick, check marks). They are described in logical
+// pixels but rasterised on the DEVICE pixel grid (logical size x the canvas scale), with
+// analytic coverage, so a magnified canvas shows a smooth edge instead of logical-pixel blocks.
+namespace {
+struct CovRun { int x, w; std::uint8_t a; };
+inline bool SameRuns(const std::vector<CovRun>& a, const std::vector<CovRun>& b) {
+    if (a.size() != b.size()) return false;
+    for (std::size_t i = 0; i < a.size(); ++i)
+        if (a[i].x != b[i].x || a[i].w != b[i].w || a[i].a != b[i].a) return false;
+    return true;
+}
+float EdgeCov(float d) { const float c = 0.5f - d; return c < 0.0f ? 0.0f : (c > 1.0f ? 1.0f : c); }
+
+// Fill the logical bounds [lx0,lx1]x[ly0,ly1] with `col` scaled by cov(devX, devY) (pixel centre,
+// device pixels, 0..1). Runs of the same alpha become one rect; identical rows are merged.
+template <class Cov>
+void FillCoverage(Painter& r, float lx0, float ly0, float lx1, float ly1, RGBA col, Cov cov) {
+    const float S = g_uiDeviceScale > 0.05f ? g_uiDeviceScale : 1.0f;
+    if (!(lx1 > lx0) || !(ly1 > ly0) || col.a == 0) return;
+    float fx0 = lx0 * S - 1.0f, fy0 = ly0 * S - 1.0f, fx1 = lx1 * S + 1.0f, fy1 = ly1 * S + 1.0f;
+    if (r.IsClipEnabled()) {
+        Rect c; r.GetClipRect(&c);
+        fx0 = std::max(fx0, (float)c.x * S); fy0 = std::max(fy0, (float)c.y * S);
+        fx1 = std::min(fx1, (float)(c.x + c.w) * S); fy1 = std::min(fy1, (float)(c.y + c.h) * S);
+    }
+    constexpr float kLim = 16384.0f;
+    fx0 = std::max(fx0, -kLim); fy0 = std::max(fy0, -kLim); fx1 = std::min(fx1, kLim); fy1 = std::min(fy1, kLim);
+    const int X0 = (int)std::floor(fx0), Y0 = (int)std::floor(fy0), X1 = (int)std::ceil(fx1), Y1 = (int)std::ceil(fy1);
+    if (X1 <= X0 || Y1 <= Y0) return;
+    const bool unit = std::fabs(S - 1.0f) < 1e-4f;
+    auto flush = [&](const std::vector<CovRun>& runs, int y, int h) {
+        for (const CovRun& u : runs) {
+            if (u.a == 0) continue;
+            r.SetDrawColor(col.r, col.g, col.b, u.a);
+            if (unit) { Rect q{u.x, y, u.w, h}; r.FillRect(&q); }
+            else {
+                // A hundredth of a device pixel of bias keeps a software renderer that truncates float
+                // rects from losing a whole pixel to rounding error (x / S * S can land just below x).
+                FRect q{((float)u.x + 0.01f) / S, ((float)y + 0.01f) / S, ((float)u.w + 0.01f) / S, ((float)h + 0.01f) / S};
+                r.FillRectF(&q);
+            }
+        }
+    };
+    std::vector<CovRun> prev, cur;
+    int prevY = Y0, prevH = 0;
+    for (int y = Y0; y < Y1; ++y) {
+        cur.clear();
+        for (int x = X0; x < X1; ++x) {
+            const float cv = cov((float)x + 0.5f, (float)y + 0.5f);
+            const int al = (int)(cv * (float)col.a + 0.5f);
+            const std::uint8_t a8 = (std::uint8_t)(al < 0 ? 0 : (al > 255 ? 255 : al));
+            if (!cur.empty() && cur.back().a == a8 && cur.back().x + cur.back().w == x) ++cur.back().w;
+            else cur.push_back(CovRun{x, 1, a8});
+        }
+        if (prevH > 0 && SameRuns(prev, cur)) { ++prevH; continue; }
+        if (prevH > 0) flush(prev, prevY, prevH);
+        prev.swap(cur); prevY = y; prevH = 1;
+    }
+    if (prevH > 0) flush(prev, prevY, prevH);
+}
+
+// Convex polygon coverage (vertices in device pixels): the product-free "1 - sum of what each edge
+// cuts off" estimate, exact for straight edges and for thin strips.
+struct ConvexCov {
+    std::vector<float> ax, ay, nx, ny;   // edge start and outward unit normal
+    explicit ConvexCov(const std::vector<std::pair<float, float>>& v) {
+        float area2 = 0.0f;
+        for (std::size_t i = 0; i < v.size(); ++i) {
+            const auto& p = v[i]; const auto& q = v[(i + 1) % v.size()];
+            area2 += p.first * q.second - q.first * p.second;
+        }
+        const float sgn = area2 >= 0.0f ? 1.0f : -1.0f;   // outward normal side for either winding
+        for (std::size_t i = 0; i < v.size(); ++i) {
+            const auto& p = v[i]; const auto& q = v[(i + 1) % v.size()];
+            const float ex = q.first - p.first, ey = q.second - p.second;
+            const float len = std::sqrt(ex * ex + ey * ey);
+            if (len < 1e-5f) continue;
+            ax.push_back(p.first); ay.push_back(p.second);
+            nx.push_back(sgn * ey / len); ny.push_back(-sgn * ex / len);
+        }
+    }
+    float operator()(float x, float y) const {
+        float cut = 0.0f;
+        for (std::size_t i = 0; i < ax.size(); ++i) {
+            const float d = (x - ax[i]) * nx[i] + (y - ay[i]) * ny[i];
+            cut += 1.0f - EdgeCov(d);
+            if (cut >= 1.0f) return 0.0f;
+        }
+        return 1.0f - cut;
+    }
+};
+
+void FillConvexSmooth(Painter& r, const std::vector<std::pair<float, float>>& logical, RGBA col) {
+    if (logical.size() < 3) return;
+    const float S = g_uiDeviceScale > 0.05f ? g_uiDeviceScale : 1.0f;
+    std::vector<std::pair<float, float>> dev;
+    float minx = logical[0].first, maxx = minx, miny = logical[0].second, maxy = miny;
+    for (const auto& q : logical) {
+        dev.push_back({q.first * S, q.second * S});
+        minx = std::min(minx, q.first); maxx = std::max(maxx, q.first);
+        miny = std::min(miny, q.second); maxy = std::max(maxy, q.second);
+    }
+    FillCoverage(r, minx, miny, maxx, maxy, col, ConvexCov(dev));
+}
+} // namespace
+
+void MMFillCircle(Painter& r, int cx, int cy, int rad, RGBA col) {
+    if (!g_uiSmoothEdges) { MMFillCircleHard(r, cx, cy, rad, col); return; }
+    if (rad < 1) rad = 1;
+    const float S = g_uiDeviceScale > 0.05f ? g_uiDeviceScale : 1.0f;
+    const float mx = ((float)cx + 0.5f) * S, my = ((float)cy + 0.5f) * S, R = ((float)rad + 0.5f) * S;
+    FillCoverage(r, (float)cx + 0.5f - (float)rad - 0.5f, (float)cy + 0.5f - (float)rad - 0.5f,
+                 (float)cx + 0.5f + (float)rad + 0.5f, (float)cy + 0.5f + (float)rad + 0.5f, col,
+                 [=](float x, float y) { return EdgeCov(std::sqrt((x - mx) * (x - mx) + (y - my) * (y - my)) - R); });
+}
+void MMDrawRing(Painter& r, int cx, int cy, int rad, int width, RGBA col) {
+    if (!g_uiSmoothEdges) { MMDrawRingHard(r, cx, cy, rad, width, col); return; }
+    if (rad < 1) rad = 1;
+    if (width < 1) width = 1;
+    const float S = g_uiDeviceScale > 0.05f ? g_uiDeviceScale : 1.0f;
+    const float mx = ((float)cx + 0.5f) * S, my = ((float)cy + 0.5f) * S;
+    const float mid = ((float)rad + 0.5f) * S, half = (float)width * 0.5f * S;
+    const float ext = (float)rad + 0.5f + (float)width * 0.5f;
+    FillCoverage(r, (float)cx + 0.5f - ext, (float)cy + 0.5f - ext, (float)cx + 0.5f + ext, (float)cy + 0.5f + ext, col,
+                 [=](float x, float y) {
+                     const float d = std::fabs(std::sqrt((x - mx) * (x - mx) + (y - my) * (y - my)) - mid) - half;
+                     return EdgeCov(d);
+                 });
+}
+void MMFillTriangle(Painter& r, Point a, Point b, Point c, RGBA col) {
+    if (!g_uiSmoothEdges) { MMFillTriangleHard(r, a, b, c, col); return; }
+    FillConvexSmooth(r, {{(float)a.x, (float)a.y}, {(float)b.x, (float)b.y}, {(float)c.x, (float)c.y}}, col);
+}
+// A line segment with thickness (butt ends), for minimap roads/walls and check marks.
 void MMThickLine(Painter& r, float x0, float y0, float x1, float y1, float width, RGBA col) {
     float dx = x1 - x0, dy = y1 - y0, len = std::sqrt(dx*dx + dy*dy);
     if (len < 1e-3f) return;
     float nx = -dy / len * width * 0.5f, ny = dx / len * width * 0.5f;
-    Point a{(int)(x0+nx),(int)(y0+ny)}, b{(int)(x1+nx),(int)(y1+ny)},
+    if (!g_uiSmoothEdges) {
+        Point a{(int)(x0+nx),(int)(y0+ny)}, b{(int)(x1+nx),(int)(y1+ny)},
               c{(int)(x1-nx),(int)(y1-ny)}, d{(int)(x0-nx),(int)(y0-ny)};
-    MMFillTriangle(r, a, b, c, col); MMFillTriangle(r, a, c, d, col);
+        MMFillTriangleHard(r, a, b, c, col); MMFillTriangleHard(r, a, c, d, col);
+        return;
+    }
+    FillConvexSmooth(r, {{x0 + nx, y0 + ny}, {x1 + nx, y1 + ny}, {x1 - nx, y1 - ny}, {x0 - nx, y0 - ny}}, col);
 }
-// Fill a simple (convex) polygon by fanning triangles from the first vertex.
+// Fill a simple (convex) polygon: one coverage pass, so no seams between fan triangles.
 void MMFillPoly(Painter& r, const std::vector<Point>& pts, RGBA col) {
-    for (std::size_t i = 1; i + 1 < pts.size(); ++i)
-        MMFillTriangle(r, pts[0], pts[i], pts[i+1], col);
+    if (!g_uiSmoothEdges) {
+        for (std::size_t i = 1; i + 1 < pts.size(); ++i) MMFillTriangleHard(r, pts[0], pts[i], pts[i+1], col);
+        return;
+    }
+    std::vector<std::pair<float, float>> v;
+    for (const Point& q : pts) v.push_back({(float)q.x, (float)q.y});
+    FillConvexSmooth(r, v, col);
 }
-
 
 // Draw a string with a TTF font (a textured glyph quad per character), tinted by col.
 void DrawTtfText(Painter& r, okay::TtfFont* f, const std::string& text,
@@ -670,9 +821,55 @@ void DrawUIText(Painter& r, const std::string& text, float ox, float oy,
 // it on its line, so any font lines up. The lines advance like DrawUIText's, except that a line is as tall as the
 // largest [size] on it (RichLineScales): the line below starts under the big run instead of the big run climbing over
 // the line above, and a smaller run sits on its line's bottom. (oy is the top of the first line.)
+// The pictures an inline [icon=name] draws (okay/UI/RichText.hpp): a path to an image, else an item from the item
+// database (its own icon when it has one, else a tile in its rarity or a hash colour with its first letter).
+void DrawRichIcon(Painter& r, const std::string& name, float x, float y, float cell, RGBA tint) {
+    if (const std::string vname = uilib::IconNameOf(name); !vname.empty()) {   // [icon=icon:heart]: one of our vector icons
+        if (DrawVectorIcon(r, vname, (int)x, (int)y, (int)cell, tint, g_uiDeviceScale)) return;
+    }
+    const bool isPath = name.find('.') != std::string::npos || name.find('/') != std::string::npos;
+    const std::string id = isPath ? std::string() : okay::ItemDatabase::Get().Resolve(name);
+    std::string path = isPath ? name : okay::ItemIconOf("", id).path;
+    if (!path.empty()) {
+        if (Tex t = r.LoadTexture(path)) {
+            FRect dst{x, y, cell, cell};
+            r.SetTextureAlphaMod(t, tint.a);
+            r.CopyF(t, nullptr, &dst);
+            return;
+        }
+    }
+    const okay::ItemDefinition* d = id.empty() ? nullptr : okay::ItemDatabase::Get().Find(id);
+    unsigned h = 2166136261u;
+    for (unsigned char c : name) { h ^= c; h *= 16777619u; }
+    std::uint8_t cr = (std::uint8_t)(70 + (h & 0x7F)), cg = (std::uint8_t)(70 + ((h >> 7) & 0x7F)), cb = (std::uint8_t)(70 + ((h >> 14) & 0x7F));
+    if (d && d->hasRarityColor) { cr = (std::uint8_t)(d->rarityColor.r * 255); cg = (std::uint8_t)(d->rarityColor.g * 255); cb = (std::uint8_t)(d->rarityColor.b * 255); }
+    const float in = cell > 6.0f ? 1.0f : 0.0f;
+    FRect box{x + in, y + in, cell - in * 2.0f, cell - in * 2.0f};
+    r.SetDrawColor(cr, cg, cb, tint.a);
+    r.FillRectF(&box);
+    std::string letter(1, '?');
+    const std::string& src = (d && !d->name.empty()) ? d->name : name;
+    for (char c : src) if (std::isalnum((unsigned char)c)) { letter.assign(1, (char)std::toupper((unsigned char)c)); break; }
+    const float px = cell / (float)Font8x8::Height * 0.8f;
+    DrawUIText(r, letter, x + (cell - 8.0f * px) * 0.5f, y + (cell - 8.0f * px) * 0.5f, px, RGBA{255, 255, 255, tint.a});
+}
+
+// The rectangles of the links the last draw of a text produced, per text object, in the space the text was drawn in.
+std::unordered_map<const okay::GameObject*, std::vector<RichLinkRect>>& RichLinkTable() {
+    static thread_local std::unordered_map<const okay::GameObject*, std::vector<RichLinkRect>> t;
+    return t;
+}
+const std::vector<RichLinkRect>& RichLinksOf(const okay::GameObject* go) {
+    static const std::vector<RichLinkRect> none;
+    auto& t = RichLinkTable();
+    auto it = t.find(go);
+    return it == t.end() ? none : it->second;
+}
+
 void DrawRichRuns(Painter& r, const std::string& disp, const std::vector<okay::RichStyle>& styles,
                   float ox, float oy, float px, RGBA base, float letterSp, float lineSp, bool italic,
-                  bool bold, float boldOff, TtfFont* ttf) {
+                  bool bold, float boldOff, TtfFont* ttf,
+                  const std::vector<std::string>* links = nullptr, const std::vector<std::string>* icons = nullptr, std::vector<RichLinkRect>* linkRects = nullptr) {
     TtfFont* f = FontForText(ttf ? ttf : g_uiDefaultFont, disp);
     const float logicalH = px * (float)Font8x8::Height;
     const float deviceH = logicalH * (g_uiDeviceScale > 0.05f ? g_uiDeviceScale : 1.0f);
@@ -711,8 +908,29 @@ void DrawRichRuns(Painter& r, const std::string& disp, const std::vector<okay::R
             const bool it = italic || runStyle.italic;
             // Every run sits on the bottom of its line: the line is as tall as its largest run (S), a smaller run starts lower.
             const float ry = y + (S - s) * (float)Font8x8::Height * px;
-            DrawUIText(r, run, cx, ry, rpx, col, letterSp, lineSp, it, false, RGBA{0, 0, 0, 0}, ttf, bold || runStyle.bold);
-            cx += UITextW(run, rpx) + letterSp * rpx * (float)okay::utf8::Length(run);
+            float runW, inkW = 0.0f;
+            if (runStyle.icon >= 0 && icons && (std::size_t)runStyle.icon < icons->size()) {   // [icon=...]: one glyph cell, drawn as a picture
+                const float cell = (float)Font8x8::Height * rpx;
+                runW = cell + rpx * 2.0f;                                   // a little air after the picture
+                DrawRichIcon(r, (*icons)[(std::size_t)runStyle.icon], cx, ry, cell, col.a ? RGBA{255, 255, 255, col.a} : base);
+            } else {
+                DrawUIText(r, run, cx, ry, rpx, col, letterSp, lineSp, it, false, RGBA{0, 0, 0, 0}, ttf, bold || runStyle.bold);
+                runW = UITextW(run, rpx) + letterSp * rpx * (float)okay::utf8::Length(run);
+                if (runStyle.underline || runStyle.link >= 0) {
+                    std::string shown = run;                                // the space that joins a run to the next is not underlined
+                    while (!shown.empty() && shown.back() == ' ') shown.pop_back();
+                    inkW = UITextW(shown, rpx) + letterSp * rpx * (float)okay::utf8::Length(shown);
+                }
+                if (runStyle.underline) {
+                    const float uy = ry + (float)Font8x8::Height * rpx + 1.0f;
+                    r.SetDrawColor(col.r, col.g, col.b, col.a);
+                    FRect line{cx, uy, inkW, rpx > 1.5f ? 2.0f : 1.0f};
+                    r.FillRectF(&line);
+                }
+            }
+            if (runStyle.link >= 0 && links && linkRects && (std::size_t)runStyle.link < links->size())
+                linkRects->push_back(RichLinkRect{cx, ry, inkW > 0.0f ? inkW : runW, (float)Font8x8::Height * rpx + 3.0f, (*links)[(std::size_t)runStyle.link]});
+            cx += runW;
             cxAt = end;
         };
         for (std::size_t i = 0; i < line.size();) {
@@ -904,6 +1122,12 @@ public:
         m_r = r; m_g = g; m_b = b; m_a = a;
         m_in.SetDrawColor(r, g, b, a);
     }
+    // A float rect (the one-device-pixel runs of every anti-aliased shape) goes straight through when no UI Frame transform is active. Without this the
+    // base class turned it into a whole-pixel rect and every soft edge became a block as wide as the canvas scale.
+    void FillRectF(const FRect* r) override {
+        if (!m_on) { m_in.FillRectF(r); return; }
+        Painter::FillRectF(r);
+    }
     void FillRect(const Rect* r) override {
         if (!m_on || !r) { m_in.FillRect(r); return; }
         float x = (float)r->x, y = (float)r->y, w = (float)r->w, h = (float)r->h;
@@ -977,6 +1201,8 @@ public:
         m_in.Geometry(t, m_verts.data(), nv, idx, ni);
     }
     void MissingTexture(const std::string& path, const Rect& where) override { m_in.MissingTexture(path, where); }
+    void SetImageFilter(bool linear) override { m_in.SetImageFilter(linear); }
+    void SetTextureFilter(Tex t, bool linear) override { m_in.SetTextureFilter(t, linear); }
     Tex UploadAtlas(const Image& page, int pageIndex, Tex existing) override { return m_in.UploadAtlas(page, pageIndex, existing); }
 
 private:
@@ -1119,7 +1345,8 @@ static void RenderSceneUIImpl(Scene& scene, Painter& target, int w, int h, const
         p.SetScale(sc, sc);
         w = (int)std::lround(uiFullW / sc); h = (int)std::lround(uiFullH / sc);
     };
-    g_uiSmoothEdges = scene.uiFont != "pixel";
+    g_uiSmoothEdges = UISmoothFilteringFor(scene.uiFont);   // smooth edges + linear images, unless pixel-art
+    p.SetImageFilter(g_uiSmoothEdges);
     g_uiDeviceScale = 1.0f;
     auto uiMouse = [&]() { Vec2 m = Input::MousePosition(); return Vec2{m.x / uiScaleCur, m.y / uiScaleCur}; };
     for (const UIItem& _it : cache.items) {
@@ -1222,6 +1449,12 @@ static void RenderSceneUIImpl(Scene& scene, Painter& target, int w, int h, const
             FillUIShadow(p, sh, im->shape, im->cornerRadius,
                          im->shadowColor, im->shadowSoftness, op, im->cornerMask);
         }
+        if (const std::string vname = uilib::IconNameOf(im->texture); !vname.empty()) {   // a vector icon: drawn square, centred, tinted
+            const int side = std::min(r.w, r.h);
+            auto b8 = [](float v) { int i = (int)(v * 255.0f + 0.5f); return (std::uint8_t)(i < 0 ? 0 : i > 255 ? 255 : i); };
+            DrawVectorIcon(p, vname, r.x + (r.w - side) / 2, r.y + (r.h - side) / 2, side, RGBA{b8(im->color.r), b8(im->color.g), b8(im->color.b), b8(im->color.a * op)}, g_uiDeviceScale);
+            continue;
+        }
         Tex tex = p.LoadTexture(im->texture);
         if (tex) {
             p.SetTextureColorMod(tex, (std::uint8_t)(im->color.r * 255), (std::uint8_t)(im->color.g * 255),
@@ -1267,14 +1500,26 @@ static void RenderSceneUIImpl(Scene& scene, Painter& target, int w, int h, const
                                      im->shape == UIShape::Circle || im->shape == UIShape::Pill;
                 if (rounded && dst.w > 2 && dst.h > 2) {
                     std::vector<FPoint> pts;
+                    std::vector<FPoint> nrm;   // outward direction at each point (for the soft edge)
+                    const float S = g_uiDeviceScale > 0.05f ? g_uiDeviceScale : 1.0f;
+                    // Enough segments that a curve stays within a tenth of a device pixel of the true
+                    // shape at any zoom (the old fixed 48 / 9 per corner showed facets when magnified).
+                    auto arcSteps = [&](float radLogical) {
+                        const float rd = std::max(1.0f, radLogical * S);
+                        const float step = 2.0f * std::acos(std::max(0.0f, 1.0f - 0.1f / rd));
+                        return std::clamp((int)std::ceil(1.5707963f / std::max(step, 0.01f)), 4, 64);
+                    };
                     const float x0 = (float)dst.x, y0 = (float)dst.y, ww = (float)dst.w, hh = (float)dst.h;
                     if (im->shape == UIShape::Circle) {
-                        for (int k = 0; k < 48; ++k) {
-                            const float a = k / 48.0f * 6.2831853f;
+                        const int n = g_uiSmoothEdges ? 4 * arcSteps(std::max(ww, hh) * 0.5f) : 48;
+                        for (int k = 0; k < n; ++k) {
+                            const float a = k / (float)n * 6.2831853f;
                             pts.push_back({x0 + ww * 0.5f + std::cos(a) * ww * 0.5f, y0 + hh * 0.5f + std::sin(a) * hh * 0.5f});
+                            nrm.push_back({std::cos(a), std::sin(a)});
                         }
                     } else {
                         float rad = im->shape == UIShape::Pill ? std::min(ww, hh) * 0.5f : std::min(im->cornerRadius, std::min(ww, hh) * 0.5f);
+                        const int steps = g_uiSmoothEdges ? arcSteps(rad) : 8;
                         const float cx[4] = {x0 + ww - rad, x0 + ww - rad, x0 + rad, x0 + rad};
                         const float cy[4] = {y0 + rad, y0 + hh - rad, y0 + hh - rad, y0 + rad};
                         const int bits[4] = {UICornerTR, UICornerBR, UICornerBL, UICornerTL};
@@ -1282,25 +1527,53 @@ static void RenderSceneUIImpl(Scene& scene, Painter& target, int w, int h, const
                             const float r0 = (im->cornerMask & bits[c]) ? rad : 0.0f;
                             const float ccx = r0 > 0 ? cx[c] : (c == 0 || c == 1 ? x0 + ww : x0);
                             const float ccy = r0 > 0 ? cy[c] : (c == 1 || c == 2 ? y0 + hh : y0);
-                            for (int k = 0; k <= 8; ++k) {
-                                const float a = (-90.0f + c * 90.0f + k * 11.25f) * 0.01745329f;
+                            for (int k = 0; k <= steps; ++k) {
+                                const float a = (-90.0f + c * 90.0f + k * (90.0f / (float)steps)) * 0.01745329f;
                                 pts.push_back({ccx + std::cos(a) * r0, ccy + std::sin(a) * r0});
+                                nrm.push_back({std::cos(a), std::sin(a)});
                             }
                         }
                     }
                     const RGBA vc{255, 255, 255, 255};
                     std::vector<Vertex> vx;
-                    vx.push_back({{x0 + ww * 0.5f, y0 + hh * 0.5f}, vc, {0.5f, 0.5f}});
-                    for (const auto& q : pts) {
-                        float u = (q.x - x0) / ww, v = (q.y - y0) / hh;
+                    // The software renderer reads the texel at floor(u * width), so a coordinate of exactly 1.0 reads one texel past the last row or
+                    // column (heap garbage: a few grey pixels at the bottom/right tip of a round picture that changed from render to render). Keep
+                    // coordinates a quarter texel inside the picture.
+                    int texW = 0, texH = 0;
+                    p.QueryTexture(tex, &texW, &texH);
+                    const float uMax = texW > 0 ? 1.0f - 0.25f / (float)texW : 1.0f, vMax = texH > 0 ? 1.0f - 0.25f / (float)texH : 1.0f;
+                    auto uvOf = [&](float qx, float qy) {
+                        float u = std::clamp((qx - x0) / ww, 0.0f, 1.0f), v = std::clamp((qy - y0) / hh, 0.0f, 1.0f);   // the soft edge sits just outside the picture: clamp, never wrap
                         if (im->flipX) u = 1.0f - u;
                         if (im->flipY) v = 1.0f - v;
-                        vx.push_back({q, vc, {u, v}});
-                    }
+                        return FPoint{std::min(u, uMax), std::min(v, vMax)};
+                    };
+                    vx.push_back({{x0 + ww * 0.5f, y0 + hh * 0.5f}, vc, {0.5f, 0.5f}});
+                    for (const auto& q : pts) vx.push_back({q, vc, uvOf(q.x, q.y)});
                     std::vector<int> ix;
                     const int n = (int)pts.size();
-                    for (int k = 0; k < n; ++k) { ix.push_back(0); ix.push_back(1 + k); ix.push_back(1 + (k + 1) % n); }
+                    auto same = [&](int a, int b) { return std::fabs(pts[a].x - pts[b].x) < 1e-3f && std::fabs(pts[a].y - pts[b].y) < 1e-3f; };   // a corner with no radius repeats a point: no zero-area triangles
+                    for (int k = 0; k < n; ++k) { if (same(k, (k + 1) % n)) continue; ix.push_back(0); ix.push_back(1 + k); ix.push_back(1 + (k + 1) % n); }
+                    // The picture is drawn first, then its soft edge as a second call: the software renderer draws nothing when a fan with
+                    // see-through ring vertices is sent in one call.
                     p.Geometry(tex, vx.data(), (int)vx.size(), ix.data(), (int)ix.size());
+                    ix.clear();
+                    if (g_uiSmoothEdges) {   // a one-device-pixel soft edge: the picture fades out instead of stair-stepping
+                        const RGBA vz{255, 255, 255, 0};
+                        for (int k = 0; k < n; ++k) {
+                            const float qx = pts[k].x + nrm[k].x / S, qy = pts[k].y + nrm[k].y / S;
+                            vx.push_back({{qx, qy}, vz, uvOf(qx, qy)});
+                        }
+                        for (int k = 0; k < n; ++k) {
+                            const int k1 = (k + 1) % n;
+                            if (same(k, k1)) continue;
+                            // A straight edge (the same outward direction at both ends) lies on the pixel grid and needs no soft edge; only the curves get one.
+                            if (std::fabs(nrm[k].x - nrm[k1].x) < 1e-4f && std::fabs(nrm[k].y - nrm[k1].y) < 1e-4f) continue;
+                            ix.push_back(1 + k); ix.push_back(1 + n + k); ix.push_back(1 + k1);
+                            ix.push_back(1 + k1); ix.push_back(1 + n + k); ix.push_back(1 + n + k1);
+                        }
+                    }
+                    if (!ix.empty()) p.Geometry(tex, vx.data(), (int)vx.size(), ix.data(), (int)ix.size());
                 } else {
                     p.CopyEx(tex, nullptr, &dst, 0.0, nullptr, flip);
                 }
@@ -1754,6 +2027,12 @@ static void RenderSceneUIImpl(Scene& scene, Painter& target, int w, int h, const
             p.SetDrawColor((std::uint8_t)(mm->routeColor.r*255), (std::uint8_t)(mm->routeColor.g*255),
                                    (std::uint8_t)(mm->routeColor.b*255), (std::uint8_t)(mm->routeColor.a*255*op));
             int rw = (int)mm->routeWidth; if (rw < 1) rw = 1;
+            if (g_uiSmoothEdges) {
+                MMThickLine(p, (float)cx, (float)cy, o.x + rmx, o.y + rmy, (float)rw,
+                            RGBA{(std::uint8_t)(mm->routeColor.r*255), (std::uint8_t)(mm->routeColor.g*255),
+                                 (std::uint8_t)(mm->routeColor.b*255), (std::uint8_t)(mm->routeColor.a*255*op)});
+                return;
+            }
             for (int t = -(rw/2); t <= rw/2; ++t)
                 p.DrawLine(cx, cy+t, (int)(o.x+rmx), (int)(o.y+rmy)+t);
         };
@@ -1864,6 +2143,12 @@ static void RenderSceneUIImpl(Scene& scene, Painter& target, int w, int h, const
             int segs = 48; float rr = cr->circleRadius, ct = cr->circleThickness < 1 ? 1 : cr->circleThickness;
             p.SetDrawColor((std::uint8_t)(cr->circleColor.r*255), (std::uint8_t)(cr->circleColor.g*255),
                                    (std::uint8_t)(cr->circleColor.b*255), (std::uint8_t)(cr->circleColor.a*255*op));
+            if (g_uiSmoothEdges) {   // one anti-aliased ring at the device resolution
+                RGBA cc{(std::uint8_t)(cr->circleColor.r*255), (std::uint8_t)(cr->circleColor.g*255),
+                        (std::uint8_t)(cr->circleColor.b*255), (std::uint8_t)(cr->circleColor.a*255*op)};
+                MMDrawRing(p, (int)cx, (int)cy, (int)(rr + ct * 0.5f), (int)ct, cc);
+                ct = 0;
+            }
             for (float t = 0; t < ct; t += 1.0f) {
                 float ring = rr + t;
                 for (int i = 0; i < segs; ++i) {
@@ -1892,7 +2177,8 @@ static void RenderSceneUIImpl(Scene& scene, Painter& target, int w, int h, const
         float op = _slot.opacity;
         Vec2 o = UIResolveOrigin(up.get(), (float)w, (float)h);
         enterScroll(up.get(), o);
-        Rect bg{(int)o.x, (int)o.y, (int)sl->size.x, (int)sl->size.y};
+        const float trackW = sl->TrackWidth();   // the value readout has its own space to the right of the track
+        Rect bg{(int)o.x, (int)o.y, (int)trackW, (int)sl->size.y};
         FillUIShape(p, bg, sl->trackShape, sl->cornerRadius,
                     sl->background, sl->background, false, false, op);
         float f = sl->Fraction();
@@ -1902,9 +2188,9 @@ static void RenderSceneUIImpl(Scene& scene, Painter& target, int w, int h, const
             int kh = (int)(sl->size.x * sl->knobSize);
             kn = {(int)o.x - 2, (int)(o.y + sl->size.y * (1.0f - f)) - kh / 2, (int)sl->size.x + 4, kh};
         } else {
-            fl = {(int)o.x, (int)o.y, (int)(sl->size.x * f), (int)sl->size.y};
+            fl = {(int)o.x, (int)o.y, (int)(trackW * f), (int)sl->size.y};
             int kw = (int)(sl->size.y * sl->knobSize);
-            kn = {(int)(o.x + sl->size.x * f) - kw / 2, (int)o.y - 2, kw, (int)sl->size.y + 4};
+            kn = {(int)(o.x + trackW * f) - kw / 2, (int)o.y - 2, kw, (int)sl->size.y + 4};
         }
         // grok/ui-options: a fill gradient only when asked; otherwise the old solid fill.
         FillUIShape(p, fl, sl->trackShape, sl->cornerRadius,
@@ -1922,10 +2208,11 @@ static void RenderSceneUIImpl(Scene& scene, Painter& target, int w, int h, const
             float px = 2.0f;
             RGBA tc{(std::uint8_t)(sl->textColor.r * 255), (std::uint8_t)(sl->textColor.g * 255),
                          (std::uint8_t)(sl->textColor.b * 255), (std::uint8_t)(sl->textColor.a * 255 * op)};
-            // Inside the track. Drawing past the right edge hung "0.80" off the card.
+            // In its own space at the right end of the box, never over the track (a vertical slider has no room, so it keeps the old place).
             const float tw = UITextW(vbuf, px);
             float tx = o.x + sl->size.x - tw - 4.0f;
-            if (tx < o.x + 2.0f) tx = o.x + 2.0f;
+            if (!sl->vertical) { const float space = sl->size.x - trackW; tx = o.x + trackW + (space - tw) * 0.5f; if (tx < o.x + trackW + 2.0f) tx = o.x + trackW + 2.0f; }
+            else if (tx < o.x + 2.0f) tx = o.x + 2.0f;
             DrawUIText(p, vbuf, tx, o.y + (sl->size.y - Font8x8::Height * px) * 0.5f, px, tc);
         }
         if (!sl->interactable) { Rect dr{(int)o.x, (int)o.y, (int)sl->size.x, (int)sl->size.y};
@@ -2138,11 +2425,27 @@ static void RenderSceneUIImpl(Scene& scene, Painter& target, int w, int h, const
         // takes the remaining space. Press shifts content down slightly.
         float shift = btn->PressShift() * bk;
         float isz = (!btn->icon.empty() && btn->iconSize > 0.0f) ? btn->iconSize * bk : 0.0f;
+        // Icon and label are centred as one group (not the icon at the edge and the label centred in what is left) when both fit.
+        float groupIconX = -1.0f, groupLabelX = -1.0f;
+        if (isz > 0.0f && !btn->label.empty() && !UIButtonTextChild(up.get())) {
+            const float gpx = btn->fontScale * bk * UITextScale();
+            okay::TtfFont* gf = okay::FontForText(btn->fontPath.empty() ? g_uiDefaultFont : okay::GetFont(btn->fontPath), btn->label);
+            const float gtw = UIMeasureText(gf, btn->label, gpx), gap = 8.0f * bk, total = isz + gap + gtw;
+            if (total <= bsz.x - 8.0f * bk) {
+                const float sx = o.x + (bsz.x - total) * 0.5f;
+                groupIconX = btn->iconRight ? sx + gtw + gap : sx;
+                groupLabelX = btn->iconRight ? sx : sx + isz + gap;
+            }
+        }
         if (isz > 0.0f) {
-            Tex itex = p.LoadTexture(btn->icon);
-            float ix = btn->iconRight ? (o.x + bsz.x - isz - 8.0f * bk) : (o.x + 8.0f * bk);
+            const std::string vname = uilib::IconNameOf(btn->icon);
+            Tex itex = vname.empty() ? p.LoadTexture(btn->icon) : nullptr;
+            float ix = groupIconX >= 0.0f ? groupIconX : btn->iconRight ? (o.x + bsz.x - isz - 8.0f * bk) : (o.x + 8.0f * bk);
             Rect ir{(int)ix, (int)(o.y + (bsz.y - isz) * 0.5f + shift), (int)isz, (int)isz};
-            if (itex) { p.SetTextureColorMod(itex, 255, 255, 255); p.SetTextureAlphaMod(itex, 255);
+            if (!vname.empty()) {   // a vector icon in the label colour
+                auto b8 = [](float v) { int i = (int)(v * 255.0f + 0.5f); return (std::uint8_t)(i < 0 ? 0 : i > 255 ? 255 : i); };
+                DrawVectorIcon(p, vname, ir.x, ir.y, ir.w, RGBA{b8(btn->textColor.r), b8(btn->textColor.g), b8(btn->textColor.b), b8(btn->textColor.a * op)}, g_uiDeviceScale);
+            } else if (itex) { p.SetTextureColorMod(itex, 255, 255, 255); p.SetTextureAlphaMod(itex, 255);
                         p.Copy(itex, nullptr, &ir); }
             else p.MissingTexture(btn->icon, ir);
         }
@@ -2155,7 +2458,7 @@ static void RenderSceneUIImpl(Scene& scene, Painter& target, int w, int h, const
             float tw = UIMeasureText(fnt, btn->label, px);
             float left  = o.x + (isz > 0.0f && !btn->iconRight ? isz + 12.0f * bk : 0.0f);
             float right = o.x + bsz.x - (isz > 0.0f && btn->iconRight ? isz + 12.0f * bk : 0.0f);
-            float tx = left + ((right - left) - tw) * 0.5f;
+            float tx = groupLabelX >= 0.0f ? groupLabelX : left + ((right - left) - tw) * 0.5f;
             float ty = o.y + (bsz.y - Font8x8::Height * px) * 0.5f + shift;
             Color tcc = btn->CurrentTextColor();
             RGBA tc{(std::uint8_t)(tcc.r * 255), (std::uint8_t)(tcc.g * 255), (std::uint8_t)(tcc.b * 255), (std::uint8_t)(tcc.a * 255 * op)};
@@ -2231,7 +2534,9 @@ static void RenderSceneUIImpl(Scene& scene, Painter& target, int w, int h, const
         }
         if (tr->richText && tr->screenSpace && RichTextHasTags(tr->text)) {
             const okay::RichText rt = okay::ParseRichText(tr->text);
-            DrawRichRuns(p, disp, rt.styles, o.x, o.y, ps, col, ls, lp, it, tr->bold, fo, fnt);
+            std::vector<RichLinkRect> rects;
+            DrawRichRuns(p, disp, rt.styles, o.x, o.y, ps, col, ls, lp, it, tr->bold, fo, fnt, &rt.links, &rt.icons, &rects);
+            if (rects.empty()) RichLinkTable().erase(up.get()); else RichLinkTable()[up.get()] = std::move(rects);
         } else {
             DrawUIText(p, disp, o.x, o.y, ps, col, ls, lp, it, tr->gradient, c2, fnt, tr->bold);
         }
@@ -2570,7 +2875,11 @@ static void RenderSceneUIImpl(Scene& scene, Painter& target, int w, int h, const
         p.FillRect(&box);
         const float px = kb->textSize * UITextScale(), ty = o.y + (kb->size.y - Font8x8::Height * px) * 0.5f;
         DrawUIText(p, kb->action, o.x + 8.0f, ty, px, col(kb->textColor));
-        const std::string keyText = kb->IsListening() ? std::string(kb->ListenPrompt()) : "[" + kb->KeyLabel() + "]";
+        std::string keyText = kb->IsListening() ? std::string(kb->ListenPrompt()) : "[" + kb->KeyLabel() + "]";
+        if (kb->IsListening()) {   // the prompt takes the place of the key on the right, and shortens until it no longer touches the action name
+            const float room = kb->size.x - 24.0f - UITextW(kb->action, px);
+            if (UITextW(keyText, px) > room) keyText = UITextW("Press key", px) <= room ? "Press key" : (UITextW("...", px) <= room ? "..." : "");
+        }
         const RGBA kc = col(kb->IsListening() ? kb->listenColor : kb->keyColor);
         DrawUIText(p, keyText, o.x + kb->size.x - 8.0f - UITextW(keyText, px), ty, px, kc);
         if (kb->IsListening()) {

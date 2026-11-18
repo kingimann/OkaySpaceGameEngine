@@ -3,6 +3,7 @@
 // Written from the public description of the FBX object model; no third-party code.
 #include "okay/Core/SafeCast.hpp"
 #include "okay/Render/FbxReader.hpp"
+#include "okay/Core/ThirdParty.hpp"
 
 #include <algorithm>
 #include <array>
@@ -1081,7 +1082,11 @@ namespace {
 int g_own = -1;   // -1: not decided yet
 }
 bool OwnReaderEnabled() {
+#if defined(OKAY_XBOX_UWP)
+    return true;   // the Xbox UWP build has no ufbx: our reader is the only one (OKAY_OWN_FBX / OKAY_THIRD_PARTY cannot switch it off)
+#endif
     if (g_own >= 0) return g_own != 0;
+    if (okay::ThirdPartyForced()) { g_own = 0; return false; }   // OKAY_THIRD_PARTY=1: ufbx for every FBX file
 #ifdef OKAY_OWN_FBX_DEFAULT
     bool v = true;
 #else

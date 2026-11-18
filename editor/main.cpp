@@ -8,6 +8,7 @@
 // window — used in CI where there's no display.
 #define IMGUI_DEFINE_MATH_OPERATORS
 #include "EditorState.hpp"
+#include "EditorPerf.hpp"            // frame-time maths, idle throttle, viewport scale, performance mode (tests/test_editor_perf.cpp)
 #include "SaveBeforePrompt.hpp"         // the Save-before-Play/Stop/Open prompt's order: stop first, then save (#888)
 #include "ObjectRef.hpp"         // GUID-held object references that survive undo / scene rebuilds
 #include "OwnStack.hpp"   // OKAY_OWN_STACK=1 dogfood switch + the one-line startup stack report
@@ -35,6 +36,14 @@
 #include "WeaponEditor.hpp"            // the Weapons window (weapon definitions)
 #include "okay/Core/Utf8.hpp"
 #include "okay/Core/BuildPipeline.hpp"   // the build pipeline: layout, dependency walk, manifest, report, zip
+#if defined(OKAY_XBOX_UWP)               // EXPERIMENTAL Xbox One Developer Mode (UWP) export: platform/xbox_uwp, docs/xbox_uwp.md
+#include "XboxExport.hpp"
+#include "XboxSdkProbe.hpp"
+#include "XboxBuildHost.hpp"   // one-click build: plan, runner, host (pure)
+#if defined(_WIN32)
+#include "XboxProcess.hpp"     // Windows process spawning for the runner (UNVERIFIED)
+#endif
+#endif
 #include "okay/Core/BuildInfo.hpp"
 #include "okay/Core/Clock.hpp"        // ClockSet: the channels the Tween Animation inspector offers
 #include <cstdio>
@@ -107,6 +116,9 @@
 #include "InspectorPanel.hpp"           // reference fields, generic component card, undo for every field, prefab changes
 #include "PrefabEdit.hpp"               // prefab actions: revert / apply / variants / unpack, with undo
 #include "InspectorModel.hpp"           // Hierarchy filter, drag-drop reparenting, mixed values (ImGui-free)
+#include "UIMenuModel.hpp"               // GameObject > UI as data (groups, tips)
+#include "UIGalleryWindow.hpp"           // the UI Gallery window (Browse All UI...)
+#include "okay/Scene/UIScreens.hpp"      // ready-made screens as data, and the Starter Pack
 #include "UIRuntimeTools.hpp"            // UI themes + runtime UI widgets, File > Examples > UI Gallery
 #include "UIInspectorOverlay.hpp"       // modal / context menu / keybind inspectors
 #include "UIInspectorWidgetsMore.hpp"   // search, date, files, accordion, crumbs, pages, skeleton, sheet
@@ -1049,7 +1061,15 @@ int g_ssaa = 1;   // 3D anti-aliasing: 1 = off (FXAA still on), 2 = 2x supersamp
                   // OFF by default for speed: 2x supersample renders 4x the pixels,
                   // which tanked FPS (badly on HiDPI displays). Cheap FXAA still
                   // smooths edges; turn 2x on in View > 3D Anti-aliasing if wanted.
+extern bool g_showGame;   // (defined with the panel flags below)
 float g_renderScale = 1.0f;  // 3D view render resolution (1.0 = native; lower = faster, softer)
+// View > Rendering: editor frame rate and cost switches (okay::editor::perf in EditorPerf.hpp). All off by default; remembered in okay_settings.txt.
+int   g_fpsCapEditor = 0;       // 0 = no cap; else the editor sleeps out the rest of each frame
+bool  g_idleThrottle = false;   // slow to g_idleFps while nothing is clicked, typed or playing
+int   g_idleFps = 30;
+bool  g_perfMode = false;       // cheaper Scene-view rendering (no AO / bloom / FXAA / supersampling, one small shadow cascade)
+bool  g_showPerfOverlay = false; // the frame-time overlay (FPS, ms graph, where the frame went)
+double g_secSinceInput = 0.0;   // seconds since the last click / key / wheel / touch (for the idle throttle)
 bool g_autoPerf = true;  // auto-drop supersampling when the scene gets heavy
 bool g_vsync = false;    // the VSync in effect (resolved from g_vsyncMode at start-up and when the setting changes)
 int  g_aaMode = 0, g_vsyncMode = 0;   // 0 Auto (default), 1 Off, 2 On (see AutoPerf.hpp); saved as "aamode" / "vsyncmode"
@@ -1146,8 +1166,27 @@ SDL_Texture* Render3DTexture(const Scene& scene, const Mat4& vp, const Vec3& eye
     // Render at a fraction of the panel resolution when render scale < 1: the
     // texture is drawn STRETCHED to the panel, so a smaller buffer upscales for
     // free (linear filtered) — a near-linear FPS win for the software renderer.
-    float scale = g_renderScale < 0.25f ? 0.25f : (g_renderScale > 1.0f ? 1.0f : g_renderScale);
+    const bool perfView = g_perfMode && slot == 0;   // performance mode is for the Scene view only
+    float scale = okay::editor::perf::EffectiveScale(g_renderScale, perfView);
     int ss = g_ssaa;
+    // Performance mode: cheaper switches for this render only; put back on every way out of the function.
+    struct PerfModeGuard {
+        okay::editor::perf::ViewKnobs saved; bool on = false; int* ssaa = nullptr; int savedSsaa = 1;
+        PerfModeGuard(bool active, int& ssaaRef, bool changeShadowSize) {
+            if (!active) return;
+            on = true; ssaa = &ssaaRef; savedSsaa = ssaaRef;
+            saved = {ShadowsEnabled(), ShadowMapResolution(), ShadowCascades(), SSAOEnabled(), BloomEnabled(), FXAAEnabled(), ssaaRef};
+            const auto c = okay::editor::perf::Cheaper(saved, changeShadowSize);
+            ShadowMapResolution() = c.shadowResolution; ShadowCascades() = c.shadowCascades;
+            SSAOEnabled() = c.ssao; BloomEnabled() = c.bloom; FXAAEnabled() = c.fxaa;
+        }
+        ~PerfModeGuard() {
+            if (!on) return;
+            ShadowMapResolution() = saved.shadowResolution; ShadowCascades() = saved.shadowCascades;
+            SSAOEnabled() = saved.ssao; BloomEnabled() = saved.bloom; FXAAEnabled() = saved.fxaa;
+        }
+    } perfGuard(perfView, g_ssaa, !g_showGame);   // (g_ssaa itself is never changed: ss below is the local copy)
+    if (perfView) ss = 1;
     int rw = (int)(w * scale); if (rw < 1) rw = 1;
     int rh = (int)(h * scale); if (rh < 1) rh = 1;
     // Cap the offscreen 3D buffer's long edge. The viewport is rendered to a texture
@@ -1272,7 +1311,7 @@ SDL_Texture* Render3DTexture(const Scene& scene, const Mat4& vp, const Vec3& eye
         SDL_SetTextureScaleMode(g_view3DTex[slot], SDL_ScaleModeLinear);  // smooth upscale
         g_view3DW[slot] = rw; g_view3DH[slot] = rh; g_view3DIsTarget[slot] = false;
     }
-    SDL_UpdateTexture(g_view3DTex[slot], nullptr, px, rw * 4);
+    { OKAY_PROFILE("Render3D.Upload"); SDL_UpdateTexture(g_view3DTex[slot], nullptr, px, rw * 4); }
     return g_view3DTex[slot];
 }
 
@@ -2497,6 +2536,11 @@ void LoadSettings() {
         // Old "vsync" / "ssaa" lines were written for everyone (default or not), so they are ignored: everyone starts on Auto.
         else if (k == "smoothframetime") g_smoothFrameTime = (v != 0);
         else if (k == "renderscalepct") g_renderScale = (v < 25 ? 25 : (v > 100 ? 100 : v)) / 100.0f;
+        else if (k == "editorfpscap") g_fpsCapEditor = v < 0 ? 0 : (v > 1000 ? 1000 : v);
+        else if (k == "idlethrottle") g_idleThrottle = (v != 0);
+        else if (k == "idlefps") g_idleFps = v < 5 ? 5 : (v > 240 ? 240 : v);
+        else if (k == "perfmode") g_perfMode = (v != 0);
+        else if (k == "perfoverlay") g_showPerfOverlay = (v != 0);
         else if (k == "showgizmos") g_showGizmos = (v != 0);
         else if (k == "showvolumes") oked::g_showVolumes = (v != 0);
         else if (k == "volumelabels") oked::g_showVolumeLabels = (v != 0);
@@ -2566,6 +2610,11 @@ void SaveSettings() {
       << "smoothframetime " << (g_smoothFrameTime ? 1 : 0) << "\n"
       << "aamode "     << g_aaMode << "\n"
       << "renderscalepct " << (int)(g_renderScale * 100 + 0.5f) << "\n"
+      << "editorfpscap " << g_fpsCapEditor << "\n"
+      << "idlethrottle " << (g_idleThrottle ? 1 : 0) << "\n"
+      << "idlefps " << g_idleFps << "\n"
+      << "perfmode " << (g_perfMode ? 1 : 0) << "\n"
+      << "perfoverlay " << (g_showPerfOverlay ? 1 : 0) << "\n"
       << "showgizmos " << (g_showGizmos ? 1 : 0) << "\n"
       << "showvolumes " << (oked::g_showVolumes ? 1 : 0) << "\n"
       << "volumelabels " << (oked::g_showVolumeLabels ? 1 : 0) << "\n"
@@ -2834,6 +2883,17 @@ bool  g_showBuildGame = false;
 char  g_buildDirBuf[256] = "build/MyGame";
 char  g_buildNameBuf[128] = "MyGame";
 std::string g_buildStatus;
+#if defined(OKAY_XBOX_UWP)
+// One-click Xbox build (platform/xbox_uwp/XboxBuildPlan.hpp). UNVERIFIED on Windows: the steps have never run there.
+bool g_xboxExportOk = false;                       // set by the Xbox export block below
+std::vector<std::string> g_xboxExportWarnings;
+std::unique_ptr<okay::xbox::XboxBuildHost> g_xboxHost;
+std::unique_ptr<okay::xbox::BuildRunner> g_xboxRunner;
+bool g_xboxInstall = false;
+bool g_xboxEngineMode = false;                     // link the engine and run the exported game (EXPERIMENTAL)                        // "Install on this PC" (one administrator prompt)
+bool g_xboxShowRunner = false;
+std::string g_xboxSignerLabel, g_xboxSourceRoot, g_xboxAppx;
+#endif
 bool  g_openBuildResult = false;
 bool  g_vsBuildWantedRun = false;         // "Build & Run" was pressed when visual-script errors stopped the build
 std::vector<std::string> g_vsBuildErrors;  // errors that stopped the last Build (see Problems)
@@ -2898,6 +2958,9 @@ static void LoadBuildProfilesFrom(const std::string& dir) {
         std::snprintf(g_buildNameBuf, sizeof(g_buildNameBuf), "%s", live.productName.c_str());
         std::snprintf(g_buildDirBuf, sizeof(g_buildDirBuf), "%s", live.outputDir.c_str());
         g_buildPlatform = live.platform;
+#if !defined(OKAY_XBOX_UWP)
+        if (g_buildPlatform > 3) g_buildPlatform = 0;   // a profile saved by a build with the Xbox target
+#endif
         for (std::size_t i = 0; i < g_buildProfiles.size(); ++i) if (g_buildProfiles[i].name == sel) g_buildProfileSel = (int)i;
     }
 }
@@ -4848,7 +4911,7 @@ std::string ExportForPlatform(EditorState& ed, const std::string& outDir,
 
     // Web preloads a 'game/' folder; Android expects app/src/main/assets — either
     // way it's just our scene + config + assets.
-    fs::path data = dir / (target == 2 ? "assets" : "game");
+    fs::path data = dir / (target == 2 ? "assets" : target == 4 ? fs::path("package") / "Data" : fs::path("game"));
     fs::create_directories(data, ec);
     if (!SceneSerializer::SaveToFile(ed.scene(), (data / "game.okayscene").string()))
         return "Failed to write game.okayscene.";
@@ -4873,6 +4936,17 @@ std::string ExportForPlatform(EditorState& ed, const std::string& outDir,
     }
     CopyLocalizationFiles(ed, data.u8string());   // strings.okayloc and its languages' fonts
 
+#if defined(OKAY_XBOX_UWP)
+    if (target == 4) {   // ---- Xbox One Developer Mode (UWP), EXPERIMENTAL and UNVERIFIED: manifest, assets, notes beside package/Data ----
+        okay::xbox::ExportInputs xi;
+        xi.gameName = gameName; xi.company = opt.company; xi.version = opt.version; xi.bundleId = opt.bundleId; xi.iconPath = opt.iconPath;
+        const okay::xbox::ExportResult xr = okay::xbox::WritePackage(dir.string(), xi);
+        g_xboxExportOk = xr.ok; g_xboxExportWarnings = xr.warnings;
+        std::string msg = xr.message;
+        for (const std::string& w : xr.warnings) msg += " Warning: " + w;
+        return msg;
+    }
+#endif
     if (target == 1) {   // ---- Web (Emscripten / WebGL) ----
         std::ofstream sh((dir / "build-web.sh").string());
         sh << "#!/usr/bin/env bash\n"
@@ -6394,182 +6468,342 @@ void UIStyleBar(EditorState& ed, Component* c) {
     ImGui::Spacing();
 }
 
-// The widget list shared by Create > UI and the UI view's "+ Add" button: plain
-// widgets, launcher-look kit pieces and whole prebuilt screens.
-void DrawUIWidgetItems(EditorState& ed, bool& created) {
-    auto addUI = [&](const char* nm, auto build) {
-        GameObject* parent = UIAddParent(ed);
-        GameObject* g = ed.CreateEmpty(nm);
-        build(g);
-        if (parent) g->transform->SetParent(parent->transform, /*worldPositionStays=*/false);
-        // Spawn centered (on screen, or in the panel it went into) so it's visible.
-        UIRect r = GetUIRect(g);
-        if (r.valid && r.anchorPtr && r.position) { *r.anchorPtr = UIAnchor::Center; *r.position = {0, 0}; }
-        ConvertToUIFrame(g);   // new widgets are placed by a UI Frame
-        ed.Select(g); ed.dirty = true; created = true;
+// GameObject > UI (and the UI view's "+ Add" button). The menu itself is DATA: editor/UIMenuModel.hpp lists the eight groups, every item with
+// a one-sentence tip, and a last entry "Browse All UI..." that opens the UI Gallery. The ready-made screens come from the screen registry
+// (okay/Scene/UIScreens.hpp), one submenu per section. This function draws that list and RunUIMenuItem runs the ids.
+// A widget goes inside the selected panel, else under the scene's Canvas, which is made (with an Event System) the first time it is needed,
+// so nobody has to know about Canvas before adding a button.
+GameObject* MakeUIWidget(EditorState& ed, const char* nm, const std::function<void(GameObject*)>& build) {
+    GameObject* parent = UIAddParent(ed);
+    GameObject* g = ed.CreateEmpty(nm);
+    build(g);
+    if (parent) g->transform->SetParent(parent->transform, /*worldPositionStays=*/false);
+    // Spawn centered (on screen, or in the panel it went into) so it's visible.
+    UIRect r = GetUIRect(g);
+    if (r.valid && r.anchorPtr && r.position) { *r.anchorPtr = UIAnchor::Center; *r.position = {0, 0}; }
+    ConvertToUIFrame(g);   // new widgets are placed by a UI Frame
+    ed.Select(g); ed.dirty = true;
+    return g;
+}
+
+// Runs one id of oked::uimenu::UIMenu. Returns true when it did something (an object was added or a window opened).
+bool RunUIMenuItem(EditorState& ed, const std::string& id, const std::string& label, bool& created) {
+    using namespace okay::UITemplates;
+    using BuildFn = void (*)(GameObject*);
+    auto widget = [&](const char* nm, const std::function<void(GameObject*)>& build) { ed.PushUndo(); MakeUIWidget(ed, nm, build); created = true; ConsoleLog("Added UI: " + label); return true; };
+    auto kit = [&](GameObject* (*fn)(okay::Scene&, GameObject*)) {
+        ed.PushUndo(); GameObject* g = fn(ed.scene(), UIAddParent(ed)); ed.Select(g); ed.dirty = true; created = true; ConsoleLog("Added UI: " + label); return true;
     };
-    if (ImGui::BeginMenu("Basic")) {
-        if (ImGui::MenuItem("Button"))       { addUI("Button",    [](GameObject* g){ g->AddComponent<UIButton>(); }); MakeButtonTextChild(ed, ed.selected()); }
-        if (ImGui::MenuItem("Panel"))        addUI("Panel",       [](GameObject* g){ g->AddComponent<UIPanel>(); });
-        if (ImGui::MenuItem("Image"))        addUI("Image",       [](GameObject* g){ g->AddComponent<UIImage>(); });
-        if (ImGui::MenuItem("Raw Image"))    addUI("RawImage",    [](GameObject* g){ g->AddComponent<UIRawImage>(); });
-        if (ImGui::MenuItem("Safe Area"))    addUI("Safe Area",   [](GameObject* g){ g->AddComponent<UISafeArea>(); });
-        if (ImGui::IsItemHovered()) ImGui::SetTooltip("A full-screen container that keeps its widgets clear of phone notches and home bars.");
-        if (ImGui::IsItemHovered()) ImGui::SetTooltip("A texture through a UV rect: show part of it, tile it or scroll it.");
-        if (ImGui::MenuItem("Text"))         addUI("Text",        [](GameObject* g){ auto* t = g->AddComponent<TextRenderer>(); t->screenSpace = true; t->pixelSize = 2.0f; t->align = 1; });
-        ImGui::EndMenu();
+    auto screen = [&](GameObject* (*fn)(okay::Scene&)) {
+        ed.PushUndo(); GameObject* g = fn(ed.scene()); HideOtherMenus(ed, g); ed.Select(g); ConsoleLog("Added UI: " + label); ed.dirty = true; created = true; return true;
+    };
+    auto sceneUI = [&](const std::function<GameObject*()>& make) { ed.PushUndo(); GameObject* g = make(); ed.Select(g); ed.dirty = true; created = true; ConsoleLog("Added UI: " + label); return true; };
+    okay::Scene& sc = ed.scene();
+    if (id.rfind("ui.scr.", 0) == 0) {   // a ready-made screen from the registry
+        const std::string sid = id.substr(7);
+        ed.PushUndo();
+        std::string look, style;
+        okay::editor::CurrentScreenLook(look, style);   // the look and style picked in the UI Gallery (none by default)
+        GameObject* g = okay::UIScreens::Build(sc, sid, 0, look, style);
+        if (!g) return false;
+        HideOtherMenus(ed, g); ed.Select(g); ed.dirty = true; created = true;
+        ConsoleLog("Added UI: " + label + " (more layouts: UI Gallery)");
+        return true;
     }
-    if (ImGui::BeginMenu("Controls")) {
-        if (ImGui::MenuItem("Slider"))       addUI("Slider",      [](GameObject* g){ g->AddComponent<UISlider>(); });
-        if (ImGui::MenuItem("Range Slider")) addUI("Range Slider", oked::BuildUIRangeSlider);
-        if (ImGui::MenuItem("Virtual Joystick")) addUI("Virtual Joystick", [](GameObject* g){ g->AddComponent<VirtualJoystick>(); });
-        if (ImGui::MenuItem("D-Pad"))        addUI("D-Pad",       [](GameObject* g){ g->AddComponent<TouchDPad>(); });
-        if (ImGui::MenuItem("Touch Button")) addUI("Touch Button", [](GameObject* g){ g->AddComponent<TouchButton>(); });
-        if (ImGui::MenuItem("Toggle"))       addUI("Toggle",      [](GameObject* g){ g->AddComponent<UIToggle>(); });
-        if (ImGui::MenuItem("Stepper"))      addUI("Stepper",     [](GameObject* g){ g->AddComponent<UIStepper>(); });
-        if (ImGui::MenuItem("Rating"))       addUI("Rating",      [](GameObject* g){ g->AddComponent<UIRating>(); });
-        if (ImGui::MenuItem("Tabs"))         addUI("Tabs",        [](GameObject* g){ g->AddComponent<UITabs>(); });
-        if (ImGui::MenuItem("Input Field"))  addUI("InputField",  [](GameObject* g){ g->AddComponent<UIInputField>(); });
-        if (ImGui::MenuItem("Input Field with Validation")) addUI("ValidatedInput", oked::BuildUIInputValidation);
-        if (ImGui::MenuItem("Dropdown"))     addUI("Dropdown",    [](GameObject* g){ g->AddComponent<UIDropdown>(); });
-        if (ImGui::MenuItem("Draggable"))    addUI("Draggable",   [](GameObject* g){ g->AddComponent<UIImage>(); g->AddComponent<UIDraggable>(); });
-        if (ImGui::MenuItem("Drop Target"))  addUI("DropTarget",  [](GameObject* g){ g->AddComponent<UIPanel>(); g->AddComponent<UIDropTarget>(); });
-        ImGui::EndMenu();
+    if (id == "ui.looks") { okay::editor::OpenUIGalleryWindow(); ConsoleLog("UI Gallery: pick a Screen, then its Look and Style; screens added from GameObject > UI use them."); return true; }
+    if (id == "ui.browse") {
+        okay::editor::SetUIGalleryAdder([](EditorState& e, const std::string& wid) { bool c = false; return RunUIMenuItem(e, wid, wid, c); });
+        okay::editor::OpenUIGalleryWindow();
+        return true;
     }
-    if (ImGui::BeginMenu("HUD")) {
-        if (ImGui::MenuItem("Progress Bar")) addUI("ProgressBar", [](GameObject* g){ g->AddComponent<UIProgressBar>(); });
-        if (ImGui::MenuItem("Radial Progress")) addUI("Radial",   [](GameObject* g){ g->AddComponent<UIRadialProgress>(); });
-        if (ImGui::MenuItem("Minimap"))      addUI("Minimap",     [](GameObject* g){ g->AddComponent<Minimap>(); });
-        if (ImGui::MenuItem("Crosshair"))    addUI("Crosshair",   [](GameObject* g){ g->AddComponent<Crosshair>(); });
-        if (ImGui::MenuItem("Color Picker")) addUI("ColorPicker", [](GameObject* g){ g->AddComponent<UIColorPicker>()->Rebuild(); }); // grok/ui-color
-        if (ImGui::MenuItem("Slot Grid"))    addUI("SlotGrid",   [](GameObject* g){ g->AddComponent<UISlotGrid>()->Rebuild(); }); // grok/ui-hud
-        if (ImGui::MenuItem("Tooltip"))      addUI("Tooltip",     [](GameObject* g){ g->AddComponent<UIPanel>(); g->AddComponent<UITooltip>(); });
-        ImGui::EndMenu();
-    }
-    if (ImGui::BeginMenu("Layout & Overlays")) {   // (was "Layout": the editor's panel layouts have a Layout menu of their own, in View)
-        if (ImGui::MenuItem("Scroll View"))  addUI("ScrollView",  [](GameObject* g){ g->AddComponent<UIScrollView>(); });
-        if (ImGui::MenuItem("Layout Group")) addUI("Layout",      [](GameObject* g){ g->AddComponent<UILayoutGroup>(); });
-        if (ImGui::MenuItem("Flex Box"))     addUI("FlexBox",     oked::BuildUIFlexBox);
-        if (ImGui::MenuItem("Aspect Ratio Box")) addUI("AspectBox", oked::BuildUIAspectRatio);
-        if (ImGui::MenuItem("Masked Panel")) addUI("Mask",        oked::BuildUIMaskedPanel);
-        if (ImGui::MenuItem("List View"))    addUI("ListView",    oked::BuildUIListView);
-        ImGui::Separator();
-        if (ImGui::MenuItem("Modal Dialog")) addUI("Dialog",      oked::BuildUIModalDialog);
-        if (ImGui::MenuItem("Toast Stack"))  addUI("Toasts",      oked::BuildUIToast);   // grok/ui-toast
-        if (ImGui::MenuItem("Context Menu Panel")) addUI("ContextPanel", oked::BuildUIContextMenu);
-        if (ImGui::MenuItem("Keybind Field")) addUI("Keybind",    oked::BuildUIKeybindField);
-        ImGui::EndMenu();
-    }
-    if (ImGui::BeginMenu("App")) {
-        if (ImGui::MenuItem("Search Bar"))         addUI("Search Bar",  oked::BuildUISearchBar);
-        if (ImGui::MenuItem("Date and Time"))      addUI("Date and Time", oked::BuildUIDateTimePicker);
-        if (ImGui::MenuItem("File Picker"))        addUI("File Picker", oked::BuildUIFilePicker);
-        if (ImGui::MenuItem("Accordion"))          addUI("Accordion",   oked::BuildUIAccordion);
-        if (ImGui::MenuItem("Breadcrumbs"))        addUI("Breadcrumbs", oked::BuildUIBreadcrumbs);
-        if (ImGui::MenuItem("Pagination"))         addUI("Pagination",  oked::BuildUIPagination);
-        if (ImGui::MenuItem("Skeleton"))           addUI("Skeleton",    oked::BuildUISkeleton);
-        if (ImGui::MenuItem("Bottom Sheet"))       addUI("Bottom Sheet", oked::BuildUIBottomSheet);
-        ImGui::EndMenu();
-    }
-    // Launcher-look building blocks: each is a small ready-styled group you can
-    // restyle. They go inside the selected panel/card when there is one.
-    if (ImGui::BeginMenu("Kit (launcher look)")) {
-        auto kit = [&](const char* label, const char* tip, auto fn) {
-            if (ImGui::MenuItem(label)) {
-                ed.PushUndo();
-                GameObject* g = fn(ed.scene(), UIAddParent(ed));
-                ed.Select(g); ed.dirty = true; created = true;
-                ConsoleLog(std::string("Added UI: ") + label);
-            }
-            if (tip && ImGui::IsItemHovered()) ImGui::SetTooltip("%s", tip);
-        };
-        using namespace okay::UITemplates;
-        kit("Card",             "A raised rounded card: caption, title, text and an action button.", &AddCard);
-        kit("Heading",          "A caption over a big title with the accent underline.", &AddHeading);
-        kit("List Row",         "Avatar + name + status, with a badge on the right (player lists, friends).", &AddListRow);
-        kit("Badge",            "A pill tag (\"Ready\", \"3 / 4\", \"New\").", &AddBadge);
-        kit("Avatar",           "A coloured circle with an initial.", &AddAvatar);
-        kit("Divider",          "A 1 px hairline.", &AddDivider);
-        ImGui::Separator();
-        kit("Primary Button",   "The accent call-to-action button.", [](okay::Scene& s, GameObject* p) { return AddButtonOfKind(s, p, ButtonKind::Primary); });
-        kit("Secondary Button", "A quieter button for other actions.", [](okay::Scene& s, GameObject* p) { return AddButtonOfKind(s, p, ButtonKind::Secondary); });
-        kit("Danger Button",    "A red button for destructive actions.", [](okay::Scene& s, GameObject* p) { return AddButtonOfKind(s, p, ButtonKind::Danger); });
-        kit("Ghost Button",     "A text-only button (Cancel, Back).", [](okay::Scene& s, GameObject* p) { return AddButtonOfKind(s, p, ButtonKind::Ghost); });
-        ImGui::Separator();
-        kit("Switch",           "An on/off switch.", &AddSwitch);
-        kit("Spinner",          "A busy spinner (loading, searching).", &AddSpinner);
-        kit("Notification",     "A toast that slides in at the top-right.", &AddNotification);
-        ImGui::EndMenu();
-    }
-    // Prebuilt, fully-editable UI screens. Drop one in, then customize it or save
-    // it as a reusable prefab ("Save Selected as UI").
-    if (ImGui::BeginMenu("Prebuilt Screens")) {
-        auto add = [&](const char* label, GameObject* (*fn)(okay::Scene&)) {
-            if (ImGui::MenuItem(label)) {
-                ed.PushUndo();
-                GameObject* g = fn(ed.scene());
-                HideOtherMenus(ed, g);
-                ed.Select(g);
-                ConsoleLog(std::string("Added UI: ") + label); ed.dirty = true; created = true;
-            }
-        };
-        ImGui::TextDisabled("Menus");
-        add("Main Menu",            &okay::UITemplates::AddMainMenu);
-        add("Pause Menu",           &okay::UITemplates::AddPauseMenu);
-        add("Settings",             &okay::UITemplates::AddSettings);
-        add("Save Slots",           &okay::UITemplates::AddSaveSlots);
-        add("Confirm Dialog",       &okay::UITemplates::AddConfirmDialog);
-        add("UI Notify",            &okay::UITemplates::AddUINotify);   // grok/ui-toast
-        if (ImGui::BeginMenu("Loading Screens")) {
-            ImGui::TextDisabled("UI you can edit (bar follows `loading`)");
-            add("Loading Screen",      &okay::UITemplates::AddLoadingScreen);
-            add("Minimal",             &okay::UITemplates::AddLoadingMinimal);
-            add("Card",                &okay::UITemplates::AddLoadingCard);
-            add("Splash (logo)",       &okay::UITemplates::AddLoadingSplash);
-            add("Cinematic",           &okay::UITemplates::AddLoadingCinematic);
-            ImGui::Separator();
-            ImGui::TextDisabled("Automatic overlay (shows on Play, times itself)");
-            static const char* kOverlay[] = {"Classic", "Minimal", "Cinematic", "Splash", "Card", "Corner", "Ring"};
-            for (int li = 0; li < (int)okay::LoadingScreen::Layout::Count; ++li) {
-                if (ImGui::MenuItem((std::string(kOverlay[li]) + " overlay").c_str())) {
-                    ed.PushUndo();
-                    GameObject* g = ed.scene().CreateGameObject("Loading Screen");
-                    auto* ls = g->AddComponent<okay::LoadingScreen>();
-                    okay::ApplyLoadingPreset(*ls, (okay::LoadingScreen::Layout)li);
-                    ls->tips = {"Tip: hold Shift to sprint.", "Tip: press Esc to pause."};
-                    ls->tipInterval = 2.5f;
-                    ed.Select(g);
-                    ConsoleLog(std::string("Added a ") + kOverlay[li] + " loading screen (pick another look in the Inspector)");
-                    ed.dirty = true; created = true;
-                }
-                if (ImGui::IsItemHovered()) ImGui::SetTooltip("A LoadingScreen component: covers the game when the scene starts\n(or call Begin(\"NextLevel\")), fills its bar, then reveals or loads a scene.");
-            }
-            ImGui::EndMenu();
+    if (id == "ui.starter") { return sceneUI([&] { std::string look, style; okay::editor::CurrentScreenLook(look, style); GameObject* g = okay::UIScreens::BuildStarterPack(sc, look, style); ConsoleLog("Starter Pack: only the Main Menu shows; press Play, then click Play, Settings, Pause..."); return g; }); }
+    // --- Basics
+    if (id == "ui.text")    return widget("Text", [](GameObject* g) { auto* t = g->AddComponent<TextRenderer>(); t->screenSpace = true; t->pixelSize = 2.0f; t->align = 1; });
+    if (id == "ui.button")  { widget("Button", [](GameObject* g) { g->AddComponent<UIButton>(); }); MakeButtonTextChild(ed, ed.selected()); return true; }
+    if (id == "ui.image")   return widget("Image", [](GameObject* g) { g->AddComponent<UIImage>(); });
+    if (id == "ui.panel")   return widget("Panel", [](GameObject* g) { g->AddComponent<UIPanel>(); });
+    if (id == "ui.rawimage") return widget("RawImage", [](GameObject* g) { g->AddComponent<UIRawImage>(); });
+    if (id == "ui.divider") return kit(&AddDivider);
+    // --- Input
+    if (id == "ui.inputfield")     return widget("InputField", [](GameObject* g) { g->AddComponent<UIInputField>(); });
+    if (id == "ui.validatedinput") return widget("ValidatedInput", oked::BuildUIInputValidation);
+    if (id == "ui.slider")         return widget("Slider", [](GameObject* g) { g->AddComponent<UISlider>(); });
+    if (id == "ui.rangeslider")    return widget("Range Slider", oked::BuildUIRangeSlider);
+    if (id == "ui.toggle")         return widget("Toggle", [](GameObject* g) { g->AddComponent<UIToggle>(); });
+    if (id == "ui.switch")         return kit(&AddSwitch);
+    if (id == "ui.radio") return sceneUI([&] {
+        GameObject* row = okay::UITemplates::detail::Group(sc, UIAddParent(ed), "Radio Buttons");
+        const char* n[] = {"Easy", "Normal", "Hard"};
+        for (int i = 0; i < 3; ++i) {
+            GameObject* r = okay::UITemplates::detail::Child(sc, row, n[i]);
+            auto* t = r->AddComponent<UIToggle>();
+            t->anchor = UIAnchor::TopLeft; t->position = {24.0f, 24.0f + i * 36.0f}; t->size = {24, 24};
+            t->style = UIToggle::Style::Radio; t->radioGroup = "Choice"; t->label = n[i]; t->on = (i == 1);
         }
-        ImGui::Separator();
-        ImGui::TextDisabled("In game");
-        add("HUD (health + score)", &okay::UITemplates::AddHUD);
-        add("Health Bar",           &okay::UITemplates::AddHealthBar);
-        add("Dialog Box",           &okay::UITemplates::AddDialogBox);
-        add("Notification",         &okay::UITemplates::AddNotificationScreen);
-        add("UI Showcase",          &okay::UITemplates::AddUIShowcase);   // grok/ui-theme
-        add("Shop",                 &okay::UITemplates::AddShop);
-        add("Game Over",            &okay::UITemplates::AddGameOver);
-        ImGui::Separator();
-        ImGui::TextDisabled("Multiplayer");
-        add("Lobby",                &okay::UITemplates::AddLobby);
-        add("Scoreboard",           &okay::UITemplates::AddScoreboard);
-        add("Leaderboard",          &okay::UITemplates::AddLeaderboard);
-        add("Matchmaking",          &okay::UITemplates::AddMatchmaking);
-        add("UI Color",             &okay::UITemplates::AddUIColor); // grok/ui-color
-        add("UI HUD",               &okay::UITemplates::AddUIHUD); // grok/ui-hud
-        add("UI Controls",          &okay::UITemplates::AddUIControls);   // grok/ui-controls
-        add("UI Notify",            &okay::UITemplates::AddUINotify);   // grok/ui-toast
-        add("UI Options",           &okay::UITemplates::AddUIOptions);   // grok/ui-options
-        ImGui::Separator();
-        oked::DrawUIAddMenuExtras(ed, UIAddParent(ed), created);   // window, radio buttons, damage numbers, nameplate, inventory, dialogue
-        ImGui::EndMenu();
+        return row; });
+    if (id == "ui.dropdown")    return widget("Dropdown", [](GameObject* g) { g->AddComponent<UIDropdown>(); });
+    if (id == "ui.stepper")     return widget("Stepper", [](GameObject* g) { g->AddComponent<UIStepper>(); });
+    if (id == "ui.rating")      return widget("Rating", [](GameObject* g) { g->AddComponent<UIRating>(); });
+    if (id == "ui.colorpicker") return widget("ColorPicker", [](GameObject* g) { g->AddComponent<UIColorPicker>()->Rebuild(); });
+    if (id == "ui.keybind")     return widget("Keybind", oked::BuildUIKeybindField);
+    if (id == "ui.searchbar")   return widget("Search Bar", oked::BuildUISearchBar);
+    if (id == "ui.datetime")    return widget("Date and Time", oked::BuildUIDateTimePicker);
+    if (id == "ui.filepicker")  return widget("File Picker", oked::BuildUIFilePicker);
+    if (id == "ui.formgroup")   return widget("Form Group", oked::BuildUIFormGroup);
+    // --- Layout
+    if (id == "ui.layoutgroup") return widget("Layout", [](GameObject* g) { g->AddComponent<UILayoutGroup>(); });
+    if (id == "ui.scrollview")  return widget("ScrollView", [](GameObject* g) { g->AddComponent<UIScrollView>(); });
+    if (id == "ui.tabs")        return widget("Tabs", [](GameObject* g) { g->AddComponent<UITabs>(); });
+    if (id == "ui.accordion")   return widget("Accordion", oked::BuildUIAccordion);
+    if (id == "ui.flexbox")     return widget("FlexBox", oked::BuildUIFlexBox);
+    if (id == "ui.aspectbox")   return widget("AspectBox", oked::BuildUIAspectRatio);
+    if (id == "ui.mask")        return widget("Mask", oked::BuildUIMaskedPanel);
+    if (id == "ui.safearea")    return widget("Safe Area", [](GameObject* g) { g->AddComponent<UISafeArea>(); });
+    if (id == "ui.draggable")   return widget("Draggable", [](GameObject* g) { g->AddComponent<UIImage>(); g->AddComponent<UIDraggable>(); });
+    if (id == "ui.droptarget")  return widget("DropTarget", [](GameObject* g) { g->AddComponent<UIPanel>(); g->AddComponent<UIDropTarget>(); });
+    if (id == "ui.canvas")      { ed.PushUndo(); ed.Select(ed.CreateEmpty("Canvas")); ed.selected()->AddComponent<Canvas>()->screenMatch = Canvas::ScreenMatch::Expand; ed.dirty = true; created = true; return true; }
+    if (id == "ui.eventsystem") { ed.PushUndo(); ed.Select(ed.CreateEmpty("EventSystem")); ed.selected()->AddComponent<EventSystem>(); ed.dirty = true; created = true; return true; }
+    // --- Game
+    if (id == "ui.progressbar") return widget("ProgressBar", [](GameObject* g) { g->AddComponent<UIProgressBar>(); });
+    if (id == "ui.hotbar")      return widget("SlotGrid", [](GameObject* g) { g->AddComponent<UISlotGrid>()->Rebuild(); });
+    if (id == "ui.minimap")     return widget("Minimap", [](GameObject* g) { g->AddComponent<Minimap>(); });
+    if (id == "ui.crosshair")   return widget("Crosshair", [](GameObject* g) { g->AddComponent<Crosshair>(); });
+    if (id == "ui.ammo")        return widget("Ammo Counter", oked::BuildUIAmmoCounter);
+    if (id == "ui.compass")     return widget("Compass", oked::BuildUICompass);
+    if (id == "ui.objective")   return widget("Objective Tracker", oked::BuildUIObjectiveTracker);
+    if (id == "ui.prompt")      return widget("Interaction Prompt", oked::BuildUIInteractionPrompt);
+    if (id == "ui.killfeed")    return widget("Kill Feed", oked::BuildUIKillFeed);
+    if (id == "ui.damage")      return sceneUI([&] { GameObject* g = okay::UITemplates::detail::Child(sc, UIAddParent(ed), "Damage Numbers"); g->AddComponent<UIDamageNumbers>(); return g; });
+    if (id == "ui.nameplate")   return sceneUI([&] { return UIGallery::AddNameplate(sc, false); });
+    if (id == "ui.nameplateworld") return sceneUI([&] {
+        GameObject* plate = UIGallery::AddNameplate(sc, true);
+        if (GameObject* sel = ed.selected(); sel && sel != plate && sel->transform) {
+            plate->transform->SetParent(sel->transform, false);
+            if (okay::uiowner::Find(plate) == sel) {            // a character: the plate hangs above it
+                float up = 1.3f;
+                if (auto* sr = sel->GetComponent<SpriteRenderer>()) up = sr->size.y * 0.5f + 0.25f;
+                plate->transform->localPosition = {0.0f, up, 0.0f};
+            } else plate->transform->SetParent(nullptr, false);   // not a character: leave the plate where it was made
+        }
+        return plate; });
+    if (id == "ui.worldlabel")  { ed.PushUndo(); ed.Select(ed.CreateEmpty("WorldLabel")); ed.selected()->AddComponent<WorldUI>(); ed.dirty = true; created = true; return true; }
+    if (id == "ui.abilityicon") return widget("Ability", oked::BuildUIAbilityIcon);
+    if (id == "ui.itemcard")    return widget("Item Card", oked::BuildUIItemTooltipCard);
+    if (id == "ui.radialmenu")  return widget("Radial Menu", oked::BuildUIRadialMenu);
+    if (id == "ui.radialprogress") return widget("Radial", [](GameObject* g) { g->AddComponent<UIRadialProgress>(); });
+    if (id == "ui.joystick")    return widget("Virtual Joystick", [](GameObject* g) { g->AddComponent<VirtualJoystick>(); });
+    if (id == "ui.dpad")        return widget("D-Pad", [](GameObject* g) { g->AddComponent<TouchDPad>(); });
+    if (id == "ui.touchbutton") return widget("Touch Button", [](GameObject* g) { g->AddComponent<TouchButton>(); });
+    // --- Data & Lists
+    if (id == "ui.listview")    return widget("ListView", oked::BuildUIListView);
+    if (id == "ui.datatable")   return widget("Data Table", oked::BuildUIDataTable);
+    if (id == "ui.treeview")    return widget("Tree View", oked::BuildUITreeView);
+    if (id == "ui.boundlist")   return widget("Bound List", oked::BuildUIBoundList);
+    if (id == "ui.boundslider") return widget("Bound Slider", oked::BuildUIBoundSlider);
+    if (id == "ui.visibleif")   return widget("Visible If", oked::BuildUIVisibleIf);
+    if (id == "ui.hotreload")   return widget("Hot Reload", oked::BuildUIHotReload);
+    if (id == "ui.pagination")  return widget("Pagination", oked::BuildUIPagination);
+    if (id == "ui.breadcrumbs") return widget("Breadcrumbs", oked::BuildUIBreadcrumbs);
+    if (id == "ui.skeleton")    return widget("Skeleton", oked::BuildUISkeleton);
+    if (id == "ui.menubar")     return widget("Menu Bar", oked::BuildUIMenuBar);
+    if (id == "ui.toolbar")     return widget("Toolbar", oked::BuildUIToolbar);
+    // --- Windows & Pop-ups
+    if (id == "ui.dialog")      return widget("Dialog", oked::BuildUIModalDialog);
+    if (id == "ui.toast")       return widget("Toasts", oked::BuildUIToast);
+    if (id == "ui.notice")      return kit(&AddNotification);
+    if (id == "ui.tooltip")     return widget("Tooltip", [](GameObject* g) { g->AddComponent<UIPanel>(); g->AddComponent<UITooltip>(); });
+    if (id == "ui.contextmenu") return widget("ContextPanel", oked::BuildUIContextMenu);
+    if (id == "ui.window")      return sceneUI([&] {
+        GameObject* w = UIGallery::AddWindow(sc, UIAddParent(ed), "Window", "Window", {200, 140}, {320, 220});
+        okay::UITemplates::detail::Text(sc, w, "Body", "Put your content here.", UIAnchor::TopLeft, {16, 52}, {288, 40}, 14.0f, slate::Dim());
+        return w; });
+    if (id == "ui.wizard")      return widget("Wizard", oked::BuildUIWizard);
+    if (id == "ui.bottomsheet") return widget("Bottom Sheet", oked::BuildUIBottomSheet);
+    if (id == "ui.spinner")     return kit(&AddSpinner);
+    // --- Ready-made pieces
+    if (id == "ui.card")        return kit(&AddCard);
+    if (id == "ui.heading")     return kit(&AddHeading);
+    if (id == "ui.listrow")     return kit(&AddListRow);
+    if (id == "ui.badge")       return kit(&AddBadge);
+    if (id == "ui.avatar")      return kit(&AddAvatar);
+    if (id == "ui.btn.primary")   return kit([](okay::Scene& s, GameObject* p) { return AddButtonOfKind(s, p, ButtonKind::Primary); });
+    if (id == "ui.btn.secondary") return kit([](okay::Scene& s, GameObject* p) { return AddButtonOfKind(s, p, ButtonKind::Secondary); });
+    if (id == "ui.btn.danger")    return kit([](okay::Scene& s, GameObject* p) { return AddButtonOfKind(s, p, ButtonKind::Danger); });
+    if (id == "ui.btn.ghost")     return kit([](okay::Scene& s, GameObject* p) { return AddButtonOfKind(s, p, ButtonKind::Ghost); });
+    if (id == "ui.inventory.mc") {
+
+            // The items live on the player (selected or tagged "Player") so its Crafting,
+            // Consumables and StructureBuilder find them; only the UI goes under the Canvas.
+            GameObject* player = (ed.selected() && ed.selected()->tag == "Player") ? ed.selected()
+                                                                                     : ed.scene().FindWithTag("Player");
+            GameObject* root = EnsureUIRoot(ed);   // inventories are UI → live under the Canvas
+            GameObject* g = ed.CreateEmpty("Inventory");
+            GameObject* holder = player ? player : g;
+            auto* inv = holder->GetComponent<Inventory>();
+            if (!inv) {
+                inv = holder->AddComponent<Inventory>();
+                inv->capacity = 36;   // 9 hotbar + 27 backpack, like Minecraft (= the UI's slots)
+                inv->Add("Dirt", 64); inv->Add("Stone", 64); inv->Add("Wood", 32);
+                inv->Add("Torch", 16); inv->Add("Sword", 1);
+            }
+            auto* iu = g->AddComponent<InventoryUI>();
+            if (player) iu->inventoryTarget = player->name;
+            if (root) g->transform->SetParent(root->transform, false);
+            ed.Select(g); ed.dirty = true; created = true;
+        
+        return true;
     }
+    if (id == "ui.inventory.grid") {
+
+            GameObject* root = EnsureUIRoot(ed);   // UI → under the Canvas
+            GameObject* g = ed.CreateEmpty("GridInventory");
+            auto* gi = g->AddComponent<GridInventory>();
+            gi->cols = 8; gi->rows = 6; gi->title = "Backpack";
+            gi->AddItem("Rifle", 2, 6, 1, 4.0f);
+            gi->AddItem("Backpack", 3, 3, 1, 1.0f);
+            gi->AddItem("Beans", 1, 1, 2, 0.4f);
+            gi->AddItem("Bandage", 1, 1, 3, 0.1f);
+            gi->AddItem("Water", 1, 2, 1, 0.6f);
+            g->AddComponent<GridInventoryUI>();
+            if (root) g->transform->SetParent(root->transform, false);
+            ed.Select(g); ed.dirty = true; created = true;
+        
+        return true;
+    }
+    if (id == "ui.inventory.unturned") {
+
+            // Everything lives under ONE tidy "Unturned Inventory" group so the
+            // hierarchy stays clean: a Player (body grid + screen UI) with a worn
+            // Vest and Backpack as children, and a single Loot Crate beside it.
+            GameObject* group = ed.CreateEmpty("Unturned Inventory");
+            GameObject* player = ed.CreateEmpty("Player");
+            player->transform->SetParent(group->transform, false);
+            auto* body = player->AddComponent<GridInventory>();
+            body->cols = 5; body->rows = 2; body->title = "Pockets"; body->category = "Pockets";
+            body->toggleKey = 'i';
+            body->AddItem("Knife", 1, 2, 1, 0.3f);
+            body->AddItem("Map", 2, 2, 1, 0.1f);
+            auto* screen = player->AddComponent<GridInventoryUI>();
+            screen->multiContainer = true; screen->nearbyRange = 4.0f;
+
+            auto worn = [&](const char* name, const char* cat, int c, int rr) {
+                GameObject* w = ed.CreateEmpty(name);
+                w->transform->SetParent(player->transform, false);
+                auto* gi = w->AddComponent<GridInventory>();
+                gi->cols = c; gi->rows = rr; gi->title = name; gi->category = cat; gi->toggleKey = 0;
+                return gi;
+            };
+            worn("Vest", "Vest", 5, 2)->AddItem("Mag", 1, 2, 3, 0.2f);
+            auto* pack = worn("Backpack", "Backpack", 6, 5);
+            pack->weightLimit = 30.0f;
+            pack->AddItem("Rifle", 2, 5, 1, 4.0f);
+            pack->AddItem("Water", 1, 2, 1, 0.6f);
+            pack->AddItem("Beans", 1, 1, 2, 0.4f);
+
+            GameObject* crate = ed.CreateEmpty("Loot Crate");
+            crate->transform->SetParent(group->transform, false);
+            crate->transform->localPosition = {2.0f, 0.0f, 0.0f};   // 2m away → in the Nearby column
+            auto* ci = crate->AddComponent<GridInventory>();
+            ci->cols = 5; ci->rows = 4; ci->title = "Loot Crate"; ci->worldItem = true; ci->toggleKey = 0;
+            ci->AddItem("Ammo", 1, 1, 30, 0.5f); ci->AddItem("Scope", 1, 2, 1, 0.3f); ci->AddItem("Medkit", 2, 2, 1, 1.2f);
+
+            ed.Select(player); ed.dirty = true; created = true;
+        
+        return true;
+    }
+    if (id == "ui.document") {
+
+            GameObject* root = EnsureUIRoot(ed);
+            GameObject* g = ed.CreateEmpty("UIDocument");
+            auto* doc = g->AddComponent<UIDocument>();
+            doc->markup =
+                "panel pos=40,40 size=360,240 color=30,36,52,220\n"
+                "  text \"MY GAME\" pos=70,70 size=5\n"
+                "  button \"Play\" pos=70,170 size=300,60 anchor=topleft\n";
+            if (root) g->transform->SetParent(root->transform, false);
+            doc->Rebuild(); ed.scene().Update(0.0f);
+            ed.Select(g); ed.dirty = true; created = true;
+        
+        return true;
+    }
+    if (id == "ui.saveprefab") {
+        if (!ed.selected()) { ConsoleLog("Select the UI first (a Canvas, or a menu Panel with its children), then save it.", 1); return false; }
+        namespace fs = std::filesystem;
+            fs::path assets = ed.projectDir().empty() ? fs::path("Assets") : fs::path(ed.projectDir()) / "Assets";
+            fs::path dir = assets / "UI"; std::error_code ec; fs::create_directories(dir, ec);
+            SavePrefabInto(ed.selected(), dir);
+            created = true;
+        return true;
+    }
+    if (id.rfind("ui.w3d.", 0) == 0) {   // 3D UI: each widget is its own standalone object in the world (a WorldSpaceUI marker), not under the Canvas
+        auto add3d = [&](const char* nm, auto build) {
+                GameObject* g = ed.CreateEmpty(nm);
+                build(g);
+                g->AddComponent<WorldSpaceUI>();
+                if (g->transform) g->transform->localPosition = ed.camTarget;
+                ed.Select(g); ed.dirty = true; created = true;
+            };
+        const std::string w = id.substr(7);
+        ed.PushUndo();
+        if (w == "button") add3d("Button3D", [](GameObject* g){ auto* b = g->AddComponent<UIButton>(); b->anchor = UIAnchor::Center; b->position = {0,0}; b->size = {220, 80}; b->label = "Button"; b->fontScale = 3.0f; });
+        else if (w == "text") add3d("Text3D", [](GameObject* g){ auto* t = g->AddComponent<TextRenderer>(); t->screenSpace = true; t->pixelSize = 3.0f; t->align = 1; t->anchor = UIAnchor::Center; });
+        else if (w == "panel") add3d("Panel3D", [](GameObject* g){ auto* p = g->AddComponent<UIPanel>(); p->anchor = UIAnchor::Center; p->position = {0,0}; });
+        else if (w == "image") add3d("Image3D", [](GameObject* g){ auto* im = g->AddComponent<UIImage>(); im->anchor = UIAnchor::Center; im->position = {0,0}; });
+        else return false;
+        return true;
+    }
+    // --- Automatic loading overlays
+    if (id.rfind("ui.o.", 0) == 0) {
+        const int li = std::atoi(id.c_str() + 5);
+        static const char* kOverlay[] = {"Classic", "Minimal", "Cinematic", "Splash", "Card", "Corner", "Ring"};
+        if (li < 0 || li >= (int)okay::LoadingScreen::Layout::Count) return false;
+        ed.PushUndo();
+        GameObject* g = ed.scene().CreateGameObject("Loading Screen");
+        auto* ls = g->AddComponent<okay::LoadingScreen>();
+        okay::ApplyLoadingPreset(*ls, (okay::LoadingScreen::Layout)li);
+        ls->tips = {"Tip: hold Shift to sprint.", "Tip: press Esc to pause."};
+        ls->tipInterval = 2.5f;
+        ed.Select(g);
+        ConsoleLog(std::string("Added a ") + kOverlay[li] + " loading screen (pick another look in the Inspector)");
+        ed.dirty = true; created = true;
+        return true;
+    }
+    (void)screen;
+    return false;
+}
+
+// The ready-made screens, grouped by the registry's sections, for the menu model.
+const std::vector<oked::uimenu::ScreenGroup>& UIScreenGroups() {
+    static const std::vector<oked::uimenu::ScreenGroup> groups = [] {
+        std::vector<oked::uimenu::ScreenGroup> v;
+        for (const okay::UIScreens::Section& sec : okay::UIScreens::Sections()) {
+            oked::uimenu::ScreenGroup g; g.name = sec.name; g.tip = sec.tip;
+            for (const okay::UIScreens::Def& d : okay::UIScreens::Screens())
+                if (d.section == sec.id) g.items.push_back({d.id, d.name, d.desc});
+            if (!g.items.empty()) v.push_back(std::move(g));
+        }
+        return v;
+    }();
+    return groups;
+}
+
+void DrawUIWidgetItems(EditorState& ed, bool& created) {
+    static const std::vector<oked::menubar::Entry> menu = oked::uimenu::UIMenu(UIScreenGroups());
+    std::function<void(const std::vector<oked::menubar::Entry>&)> draw = [&](const std::vector<oked::menubar::Entry>& es) {
+        for (const auto& e : es) {
+            using oked::menubar::Kind;
+            if (e.kind == Kind::Separator) { ImGui::Separator(); continue; }
+            if (e.kind == Kind::Submenu) {
+                const bool open = ImGui::BeginMenu(e.label.c_str());
+                if (!e.tip.empty() && ImGui::IsItemHovered()) ImGui::SetTooltip("%s", e.tip.c_str());
+                if (open) { draw(e.children); ImGui::EndMenu(); }
+                continue;
+            }
+            if (ImGui::MenuItem(e.label.c_str())) RunUIMenuItem(ed, e.id, e.label, created);
+            if (!e.tip.empty() && ImGui::IsItemHovered()) ImGui::SetTooltip("%s", e.tip.c_str());
+        }
+    };
+    draw(menu);
 }
 
 // Defined with the Animation window further down; entering Play must clear the
@@ -6732,7 +6966,7 @@ static bool* MenuFlag(const std::string& id) {
         {"tool.animation", &g_showAnimation}, {"tool.animator", &g_showAnimatorGraph}, {"tool.timeline", &g_showTimeline},
         {"tool.navigation", &g_showNavigation}, {"tool.dialogue", &g_showDialogue}, {"tool.behaviortree", &g_showBehaviorTree},
         {"tool.modeling", &g_showModeling}, {"tool.uveditor", &g_showUVEditor}, {"tool.spriteeditor", &g_showSpriteEditor},
-        {"tool.uieditor", &g_showUIEditor}, {"tool.uitheme", &g_showUIThemer}, {"tool.items", &g_showItemDatabase},
+        {"tool.uieditor", &g_showUIEditor}, {"tool.uigallery", &okay::editor::UIGalleryOpenFlag()}, {"tool.uitheme", &g_showUIThemer}, {"tool.items", &g_showItemDatabase},
         {"tool.weapons", &g_showWeapons}, {"tool.localization", &g_showLocalization}, {"tool.inputactions", &g_showInputActions}, {"view.uionly", &g_uiOnlyMode},
     };
     for (const auto& f : kFlags) if (id == f.first) return f.second;
@@ -6997,6 +7231,38 @@ static void DrawRenderingMenuItems(EditorState& ed) {
     // Multi-window panels are always on now (drag a tab to a second monitor) — no toggle.
     if (ImGui::MenuItem("Auto performance", nullptr, &g_autoPerf)) SaveSettings();
     if (ImGui::IsItemHovered()) ImGui::SetTooltip("Automatically drop anti-aliasing when the scene\nhas many models, to keep the editor smooth.");
+    // Editor frame rate: see the numbers, then pick what helps (docs/editor_performance.md; okay::editor::perf).
+    ImGui::Separator();
+    if (ImGui::MenuItem("Frame-time overlay", nullptr, &g_showPerfOverlay)) SaveSettings();
+    if (ImGui::IsItemHovered()) ImGui::SetTooltip("A small window with FPS, frame time, a graph of the last frames and where the frame goes\n(3D view, panels, ImGui, present). Its Copy report button puts the numbers on the clipboard.");
+    if (ImGui::MenuItem("Profiler window", nullptr, &g_showProfiler)) SaveSettings();
+    if (ImGui::BeginMenu("Viewport resolution")) {
+        const int pcts[] = {100, 75, 50, 35};
+        for (int p : pcts) {
+            char lb[40]; std::snprintf(lb, sizeof(lb), p == 100 ? "100%% (native)" : "%d%%", p);
+            if (ImGui::MenuItem(lb, nullptr, (int)(g_renderScale * 100 + 0.5f) == p)) { g_renderScale = p / 100.0f; SaveSettings(); }
+        }
+        ImGui::TextDisabled("The 3D view is drawn smaller and stretched.");
+        ImGui::EndMenu();
+    }
+    if (ImGui::BeginMenu("Frame rate limit")) {
+        const int caps[] = {0, 60, 90, 120, 144, 240};
+        for (int c : caps) {
+            char lb[32]; if (c == 0) std::snprintf(lb, sizeof(lb), "Off (as fast as it goes)"); else std::snprintf(lb, sizeof(lb), "%d FPS", c);
+            if (ImGui::MenuItem(lb, nullptr, g_fpsCapEditor == c)) { g_fpsCapEditor = c; SaveSettings(); }
+        }
+        ImGui::TextDisabled("A limit makes the editor sleep, which frees the GPU and CPU.");
+        ImGui::EndMenu();
+    }
+    if (ImGui::MenuItem("Slow down when idle", nullptr, &g_idleThrottle)) SaveSettings();
+    if (ImGui::IsItemHovered()) ImGui::SetTooltip("When nothing is clicked or typed for a moment (and the game is not playing),\nthe editor drops to %d FPS so it stops burning the GPU. It speeds up again at once on any input.", g_idleFps);
+    if (ImGui::BeginMenu("Idle frame rate")) {
+        const int rates[] = {15, 20, 30, 60};
+        for (int r : rates) { char lb[24]; std::snprintf(lb, sizeof(lb), "%d FPS", r); if (ImGui::MenuItem(lb, nullptr, g_idleFps == r)) { g_idleFps = r; SaveSettings(); } }
+        ImGui::EndMenu();
+    }
+    if (ImGui::MenuItem("Performance mode (Scene view)", nullptr, &g_perfMode)) SaveSettings();
+    if (ImGui::IsItemHovered()) ImGui::SetTooltip("Cheaper Scene view only (the Game view and your builds keep the scene's own look):\nno ambient occlusion, bloom, FXAA or supersampling, render scale at most 75%%,\nand one small shadow cascade while the Game panel is closed.");
 }
 
 // ---- Creators shared by GameObject > Create, the Hierarchy menus and the Scene view's right-click menu (and its search box). ----
@@ -7228,129 +7494,9 @@ static void DrawCreateSlot(EditorState& ed, const std::string& id, GameObject* p
     } else if (id == "create.ui") {
         // Widgets go under the scene's Canvas (made, plus an Event System, if
         // missing), or inside the selected panel; see DrawUIWidgetItems.
-        DrawUIWidgetItems(ed, created);
-        ImGui::Separator();
-        if (ImGui::MenuItem("Canvas"))       { ed.Select(ed.CreateEmpty("Canvas"));   ed.selected()->AddComponent<Canvas>()->screenMatch = Canvas::ScreenMatch::Expand; ed.dirty = true; created = true; }
-        if (ImGui::MenuItem("Event System")) { ed.Select(ed.CreateEmpty("EventSystem")); ed.selected()->AddComponent<EventSystem>();  ed.dirty = true; created = true; }
-        if (ImGui::MenuItem("World Label (3D)")) { ed.Select(ed.CreateEmpty("WorldLabel")); ed.selected()->AddComponent<WorldUI>(); ed.dirty = true; created = true; }
-        if (ImGui::IsItemHovered()) ImGui::SetTooltip("In-world UI: a label/marker that floats over a 3D point (nameplates, health bars). Shows in the Game view + built game.");
-        if (ImGui::MenuItem("Inventory (Minecraft-style)")) {
-            // The items live on the player (selected or tagged "Player") so its Crafting,
-            // Consumables and StructureBuilder find them; only the UI goes under the Canvas.
-            GameObject* player = (ed.selected() && ed.selected()->tag == "Player") ? ed.selected()
-                                                                                     : ed.scene().FindWithTag("Player");
-            GameObject* root = EnsureUIRoot(ed);   // inventories are UI → live under the Canvas
-            GameObject* g = ed.CreateEmpty("Inventory");
-            GameObject* holder = player ? player : g;
-            auto* inv = holder->GetComponent<Inventory>();
-            if (!inv) {
-                inv = holder->AddComponent<Inventory>();
-                inv->capacity = 36;   // 9 hotbar + 27 backpack, like Minecraft (= the UI's slots)
-                inv->Add("Dirt", 64); inv->Add("Stone", 64); inv->Add("Wood", 32);
-                inv->Add("Torch", 16); inv->Add("Sword", 1);
-            }
-            auto* iu = g->AddComponent<InventoryUI>();
-            if (player) iu->inventoryTarget = player->name;
-            if (root) g->transform->SetParent(root->transform, false);
-            ed.Select(g); ed.dirty = true; created = true;
-        }
-        if (ImGui::IsItemHovered()) ImGui::SetTooltip("Ready hotbar + backpack (1-9 / wheel to select, E to open), with sample items. The Inventory goes on the selected or \"Player\"-tagged object, so crafting and consumables there use it.");
-        if (ImGui::MenuItem("Grid Inventory (DayZ/Unturned-style)")) {
-            GameObject* root = EnsureUIRoot(ed);   // UI → under the Canvas
-            GameObject* g = ed.CreateEmpty("GridInventory");
-            auto* gi = g->AddComponent<GridInventory>();
-            gi->cols = 8; gi->rows = 6; gi->title = "Backpack";
-            gi->AddItem("Rifle", 2, 6, 1, 4.0f);
-            gi->AddItem("Backpack", 3, 3, 1, 1.0f);
-            gi->AddItem("Beans", 1, 1, 2, 0.4f);
-            gi->AddItem("Bandage", 1, 1, 3, 0.1f);
-            gi->AddItem("Water", 1, 2, 1, 0.6f);
-            g->AddComponent<GridInventoryUI>();
-            if (root) g->transform->SetParent(root->transform, false);
-            ed.Select(g); ed.dirty = true; created = true;
-        }
-        if (ImGui::IsItemHovered()) ImGui::SetTooltip("A grid bag where items take up w×h cells; press I in Play to open and drag items around. Comes with sample loot.");
-        if (ImGui::MenuItem("Unturned Inventory (worn bags + nearby loot)")) {
-            // Everything lives under ONE tidy "Unturned Inventory" group so the
-            // hierarchy stays clean: a Player (body grid + screen UI) with a worn
-            // Vest and Backpack as children, and a single Loot Crate beside it.
-            GameObject* group = ed.CreateEmpty("Unturned Inventory");
-            GameObject* player = ed.CreateEmpty("Player");
-            player->transform->SetParent(group->transform, false);
-            auto* body = player->AddComponent<GridInventory>();
-            body->cols = 5; body->rows = 2; body->title = "Pockets"; body->category = "Pockets";
-            body->toggleKey = 'i';
-            body->AddItem("Knife", 1, 2, 1, 0.3f);
-            body->AddItem("Map", 2, 2, 1, 0.1f);
-            auto* screen = player->AddComponent<GridInventoryUI>();
-            screen->multiContainer = true; screen->nearbyRange = 4.0f;
-
-            auto worn = [&](const char* name, const char* cat, int c, int rr) {
-                GameObject* w = ed.CreateEmpty(name);
-                w->transform->SetParent(player->transform, false);
-                auto* gi = w->AddComponent<GridInventory>();
-                gi->cols = c; gi->rows = rr; gi->title = name; gi->category = cat; gi->toggleKey = 0;
-                return gi;
-            };
-            worn("Vest", "Vest", 5, 2)->AddItem("Mag", 1, 2, 3, 0.2f);
-            auto* pack = worn("Backpack", "Backpack", 6, 5);
-            pack->weightLimit = 30.0f;
-            pack->AddItem("Rifle", 2, 5, 1, 4.0f);
-            pack->AddItem("Water", 1, 2, 1, 0.6f);
-            pack->AddItem("Beans", 1, 1, 2, 0.4f);
-
-            GameObject* crate = ed.CreateEmpty("Loot Crate");
-            crate->transform->SetParent(group->transform, false);
-            crate->transform->localPosition = {2.0f, 0.0f, 0.0f};   // 2m away → in the Nearby column
-            auto* ci = crate->AddComponent<GridInventory>();
-            ci->cols = 5; ci->rows = 4; ci->title = "Loot Crate"; ci->worldItem = true; ci->toggleKey = 0;
-            ci->AddItem("Ammo", 1, 1, 30, 0.5f); ci->AddItem("Scope", 1, 2, 1, 0.3f); ci->AddItem("Medkit", 2, 2, 1, 1.2f);
-
-            ed.Select(player); ed.dirty = true; created = true;
-        }
-        if (ImGui::IsItemHovered()) ImGui::SetTooltip("One tidy 'Unturned Inventory' group: a Player with a worn Vest + Backpack and a single nearby Loot Crate. Press I in Play; drag loot across bags.");
-        if (ImGui::MenuItem("UI Document"))  {
-            GameObject* root = EnsureUIRoot(ed);
-            GameObject* g = ed.CreateEmpty("UIDocument");
-            auto* doc = g->AddComponent<UIDocument>();
-            doc->markup =
-                "panel pos=40,40 size=360,240 color=30,36,52,220\n"
-                "  text \"MY GAME\" pos=70,70 size=5\n"
-                "  button \"Play\" pos=70,170 size=300,60 anchor=topleft\n";
-            if (root) g->transform->SetParent(root->transform, false);
-            doc->Rebuild(); ed.scene().Update(0.0f);
-            ed.Select(g); ed.dirty = true; created = true;
-        }
-        // Save the selected UI subtree as a reusable prefab under Assets/UI, so you
-        // can drop your own custom UI back into any scene from the Project panel.
-        if (ImGui::MenuItem("Save Selected as UI", nullptr, false, ed.selected() != nullptr)) {
-            namespace fs = std::filesystem;
-            fs::path assets = ed.projectDir().empty() ? fs::path("Assets") : fs::path(ed.projectDir()) / "Assets";
-            fs::path dir = assets / "UI"; std::error_code ec; fs::create_directories(dir, ec);
-            SavePrefabInto(ed.selected(), dir);
-            created = true;
-        }
-        if (ImGui::IsItemHovered(ImGuiHoveredFlags_AllowWhenDisabled))
-            ImGui::SetTooltip("%s", ed.selected() ? "Save the selected UI (e.g. a Canvas or a menu Panel + its children) as a reusable .okayprefab in Assets/UI.\nDrop it from the Project panel into any scene to reuse it."
-                                                  : "Select the UI first (a Canvas, or a menu Panel with its children), then save it as a reusable .okayprefab in Assets/UI.");
-        ImGui::Separator();
-        // 3D UI: each widget is its own standalone object in the world (a
-        // WorldSpaceUI marker), NOT under the 2D Canvas. Placed at the camera focus.
-        if (ImGui::BeginMenu("3D UI (in-world)")) {
-            auto add3d = [&](const char* nm, auto build) {
-                GameObject* g = ed.CreateEmpty(nm);
-                build(g);
-                g->AddComponent<WorldSpaceUI>();
-                if (g->transform) g->transform->localPosition = ed.camTarget;
-                ed.Select(g); ed.dirty = true; created = true;
-            };
-            if (ImGui::MenuItem("Button")) add3d("Button3D", [](GameObject* g){ auto* b = g->AddComponent<UIButton>(); b->anchor = UIAnchor::Center; b->position = {0,0}; b->size = {220, 80}; b->label = "Button"; b->fontScale = 3.0f; });
-            if (ImGui::MenuItem("Text"))   add3d("Text3D",   [](GameObject* g){ auto* t = g->AddComponent<TextRenderer>(); t->screenSpace = true; t->pixelSize = 3.0f; t->align = 1; t->anchor = UIAnchor::Center; });
-            if (ImGui::MenuItem("Panel"))  add3d("Panel3D",  [](GameObject* g){ auto* p = g->AddComponent<UIPanel>(); p->anchor = UIAnchor::Center; p->position = {0,0}; });
-            if (ImGui::MenuItem("Image"))  add3d("Image3D",  [](GameObject* g){ auto* im = g->AddComponent<UIImage>(); im->anchor = UIAnchor::Center; im->position = {0,0}; });
-            ImGui::EndMenu();
-        }
+        DrawUIWidgetItems(ed, created);   // everything GameObject > UI offers, as data: editor/UIMenuModel.hpp
     }
+
     const bool grew = ed.scene().Objects().size() > before;
     if (created || grew) ed.Achievement("FIRST_OBJECT");
     if (grew && ed.selected()) ed.Select(ed.selected());   // the creators set the active object; make it the whole selection so its row lights up
@@ -18536,23 +18682,34 @@ void DrawFileDialogs(EditorState& ed) {
         if (g_build.height < 240) g_build.height = 240;
         if (g_build.fpsCap < 0)   g_build.fpsCap = 0;
 
+#if defined(OKAY_XBOX_UWP)
+        if (g_xboxRunner) g_xboxRunner->Tick();   // keep the one-click Xbox build moving whichever page is shown
+#endif
         // ---- Target platform first ----
         // Target platform: Desktop ships a Windows .exe; Web/Android export a
         // ready-to-build project (the editor can't run Emscripten / the Android NDK
         // itself, so it lays down the data + build script + instructions).
+        #if defined(OKAY_XBOX_UWP)
+        const int kPlatCount = 5;
+        const char* plats[] = {"Desktop (Windows .exe)", "Web (WebGL / WASM)", "Android (project)", "Dedicated Server", "Xbox One (experimental, Developer Mode)"};
+#else
+        const int kPlatCount = 4;
         const char* plats[] = {"Desktop (Windows .exe)", "Web (WebGL / WASM)", "Android (project)", "Dedicated Server"};
+#endif
         {   // Segmented platform picker (clearer than a dropdown for a few options).
-            const char* platShort[] = {"Desktop", "Web", "Android", "Server"};
+            const char* platShort[] = {"Desktop", "Web", "Android", "Server", "Xbox (exp.)"};
             const char* platTip[] = {
                 "Build a runnable Windows .exe right here.",
                 "Export game data + an Emscripten build script/README;\nfinish the build with Emscripten (WebGL / WASM).",
                 "Export an Android Studio project;\nfinish the build with Android Studio + NDK.",
                 "A headless multiplayer server for Linux or Windows: the game runs with no window\n"
                 "and players connect to it. Comes with server.cfg, start scripts, a one-command\n"
-                "deploy to a Linux VPS, a Dockerfile and a README."};
+                "deploy to a Linux VPS, a Dockerfile and a README.",
+                "EXPERIMENTAL, UNVERIFIED. A UWP package folder for an Xbox One in Developer Mode.\n"
+                "Not a native console game, not for publishing, never tested on hardware."};
             ImGui::TextDisabled("Platform");
             ImGui::SameLine();
-            for (int pi = 0; pi < 4; ++pi) {
+            for (int pi = 0; pi < kPlatCount; ++pi) {
                 if (pi) ImGui::SameLine(0, 2);
                 bool on = g_buildPlatform == pi;
                 if (on) {
@@ -18560,7 +18717,7 @@ void DrawFileDialogs(EditorState& ed) {
                     ImGui::PushStyleColor(ImGuiCol_ButtonHovered, AccentCol(1.0f));
                     ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(1, 1, 1, 1));
                 }
-                if (ImGui::Button(platShort[pi], ImVec2(86, 0))) g_buildPlatform = pi;
+                if (ImGui::Button(platShort[pi], ImVec2(pi == 4 ? 100 : 86, 0))) g_buildPlatform = pi;
                 if (on) ImGui::PopStyleColor(3);
                 if (ImGui::IsItemHovered()) ImGui::SetTooltip("%s", platTip[pi]);
             }
@@ -18590,8 +18747,15 @@ void DrawFileDialogs(EditorState& ed) {
                 if (ImGui::Selectable(labels[k], s_buildSec == ids[k], 0, ImVec2(0, ImGui::GetTextLineHeight() + 12))) s_buildSec = ids[k];
                 if (ImGui::IsItemHovered()) ImGui::SetTooltip("%s", tips[k]);
             }
+        } else if (g_buildPlatform == 4) {   // Xbox (experimental): Scenes, Player (name, version, icon), Xbox
+            if (s_buildSec != 0 && s_buildSec != 1 && s_buildSec != 7) s_buildSec = 7;
+            const int ids[] = {0, 1, 7};
+            const char* labels[] = {"Scenes", "Player", "Xbox"};
+            for (int k = 0; k < 3; ++k) {
+                if (ImGui::Selectable(labels[k], s_buildSec == ids[k], 0, ImVec2(0, ImGui::GetTextLineHeight() + 12))) s_buildSec = ids[k];
+            }
         } else {
-            if (s_buildSec == 6) s_buildSec = 0;
+            if (s_buildSec == 6 || s_buildSec == 7) s_buildSec = 0;
             for (int si = 0; si < IM_ARRAYSIZE(kBuildSecs); ++si) {
                 if (ImGui::Selectable(kBuildSecs[si], s_buildSec == si, 0, ImVec2(0, ImGui::GetTextLineHeight() + 12))) s_buildSec = si;
                 if (ImGui::IsItemHovered()) ImGui::SetTooltip("%s", kBuildSecTips[si]);
@@ -18674,6 +18838,63 @@ void DrawFileDialogs(EditorState& ed) {
                 if (ImGui::IsItemHovered()) ImGui::SetTooltip("Without a list: also bundle every .okayscene in Assets (the open scene starts the game).");
             }
         }
+#if defined(OKAY_XBOX_UWP)
+        if (s_buildSec == 7) {   // ---- Xbox One Developer Mode (UWP), EXPERIMENTAL ----
+            SectionHeader("Xbox One (experimental, Developer Mode)");
+            ImGui::TextColored(ImVec4(1.0f, 0.75f, 0.3f, 1.0f), "EXPERIMENTAL and UNVERIFIED. Never built on Windows, never run on an Xbox.");
+            ImGui::TextWrapped("%s", okay::xbox::kLimitationsText);
+            ImGui::Spacing();
+            const okay::xbox::SdkReport& s_xboxSdk = okay::xbox::CachedSdkReport(ImGui::Button("Check again"));
+            ImGui::TextWrapped("%s", s_xboxSdk.message.c_str());
+            for (const okay::xbox::SdkItem& it : s_xboxSdk.items) {
+                ImGui::TextColored(it.found ? ImVec4(0.4f, 0.9f, 0.4f, 1) : (it.required ? ImVec4(1.0f, 0.45f, 0.4f, 1) : ImVec4(0.7f, 0.7f, 0.7f, 1)),
+                                   "%s  %s", it.found ? "found  " : (it.required ? "MISSING" : "missing (optional)"), it.name.c_str());
+                if (!it.detail.empty()) { ImGui::SameLine(); ImGui::TextDisabled("%s", it.detail.c_str()); }
+                if (!it.found && it.required) ImGui::TextDisabled("    %s", it.install.c_str());
+            }
+            ImGui::Spacing();
+            okay::xbox::ExportInputs xi;
+            xi.gameName = g_buildNameBuf; xi.company = g_build.company; xi.version = g_build.version; xi.bundleId = g_build.bundleId;
+            const okay::xbox::ManifestOptions xm = okay::xbox::ManifestFrom(xi);
+            ImGui::TextDisabled("Package name %s  |  version %s  |  publisher %s", xm.identityName.c_str(), okay::xbox::NormalizeVersion(xm.version).c_str(), xm.publisher.c_str());
+            std::vector<std::string> xw;
+            for (const std::string& pr : okay::xbox::ValidateManifest(xm, &xw)) ImGui::TextColored(ImVec4(1.0f, 0.45f, 0.4f, 1), "%s", pr.c_str());
+            if (!g_build.icon[0]) ImGui::TextDisabled("No project icon: tile images will be generated PLACEHOLDERS (set one under Player).");
+            ImGui::Spacing();
+            ImGui::TextWrapped("The big button below does everything in one go: check the tools, export, compile the UWP app, compile the shaders, pack and sign. "
+                               "Signing uses: %s. The test certificate is made on this PC; its private key stays in your Windows certificate store.", okay::xbox::SignerLabel(okay::xbox::Signer::PowerShellSignTool));
+            ImGui::Checkbox("Engine mode: run my game inside the app (EXPERIMENTAL)", &g_xboxEngineMode);
+            ImGui::TextDisabled(g_xboxEngineMode ? "Links the engine and runs package\\Data. The engine has never been compiled with Microsoft's UWP compiler, so this may fail to build."
+                                                 : "Off: the app only draws a test triangle and reads the pad (proves the package works).");
+            ImGui::Checkbox("Also install on this PC afterwards", &g_xboxInstall);
+            if (g_xboxInstall) ImGui::TextDisabled("Windows will show ONE administrator (UAC) prompt near the end; accept it. Decline it and everything else is kept.");
+            if (g_xboxRunner) {   // the log panel: per-step status, streamed output, cancel
+                namespace xb = okay::xbox;
+                g_xboxRunner->Tick();
+                ImGui::Separator();
+                const auto& st = g_xboxRunner->Status(); const auto& sp = g_xboxRunner->Steps();
+                for (std::size_t i = 0; i < sp.size(); ++i) {
+                    const ImVec4 col = st[i] == xb::StepStatus::Done ? ImVec4(0.4f, 0.9f, 0.4f, 1) : st[i] == xb::StepStatus::Failed ? ImVec4(1, 0.45f, 0.4f, 1)
+                                     : st[i] == xb::StepStatus::Running ? ImVec4(1, 0.85f, 0.3f, 1) : ImVec4(0.65f, 0.65f, 0.65f, 1);
+                    ImGui::TextColored(col, "%-9s %s", xb::StatusName(st[i]), sp[i].title.c_str());
+                }
+                if (g_xboxRunner->Running() && ImGui::Button("Cancel build")) g_xboxRunner->Cancel();
+                if (g_xboxRunner->Succeeded()) {
+                    ImGui::TextColored(ImVec4(0.4f, 0.9f, 0.4f, 1), "Finished. Package: %s", g_xboxAppx.c_str());
+                    const std::string who = g_xboxRunner->Fact("SIGNER"); ImGui::TextDisabled("Signed with: %s", who.empty() ? g_xboxSignerLabel.c_str() : who.c_str());
+                    ImGui::TextDisabled("UNVERIFIED: nothing here has run on Windows or an Xbox yet. Tell us what you see.");
+                } else if (g_xboxRunner->Finished()) {
+                    ImGui::PushTextWrapPos(560.0f); ImGui::TextColored(ImVec4(1, 0.45f, 0.4f, 1), "%s", g_xboxRunner->FailureMessage().c_str()); ImGui::PopTextWrapPos();
+                }
+                if (ImGui::BeginChild("##xboxlog", ImVec2(560, 180), true)) {
+                    for (const xb::LogLine& l : g_xboxRunner->Log())
+                        ImGui::TextColored(l.cls == xb::LineClass::Error ? ImVec4(1, 0.5f, 0.45f, 1) : l.cls == xb::LineClass::Warning ? ImVec4(1, 0.8f, 0.4f, 1) : ImVec4(0.8f, 0.8f, 0.8f, 1), "%s", l.text.c_str());
+                    if (g_xboxRunner->Running()) ImGui::SetScrollHereY(1.0f);
+                }
+                ImGui::EndChild();
+            }
+        }
+#endif
         if (s_buildSec == 6) {   // ---- Dedicated server ----
             SectionHeader("Dedicated Server");
             ImGui::TextDisabled("The game runs headless (no window or GPU) and players connect to it over UDP.\n"
@@ -18997,7 +19218,7 @@ void DrawFileDialogs(EditorState& ed) {
         ImGui::SameLine();
         // Footer buttons, right-aligned (dialog convention): Cancel, then the
         // green primary Build/Export in the corner.
-        const char* buildLabel = (g_buildPlatform == 0 || g_buildPlatform == 3) ? "Build" : "Export";
+        const char* buildLabel = (g_buildPlatform == 0 || g_buildPlatform == 3) ? "Build" : (g_buildPlatform == 4 ? "Build Xbox package" : "Export");
         const float bw = 120.0f;
         const bool  desktop = (g_buildPlatform == 0);
         // Cancel, [Build & Run], Build/Export — right-aligned. Build & Run only
@@ -19019,7 +19240,15 @@ void DrawFileDialogs(EditorState& ed) {
         ImGui::PushStyleColor(ImGuiCol_Button, ImVec4(0.18f, 0.55f, 0.25f, 1.0f));
         ImGui::PushStyleColor(ImGuiCol_ButtonHovered, ImVec4(0.24f, 0.70f, 0.32f, 1.0f));
         ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(1, 1, 1, 1));
+#if defined(OKAY_XBOX_UWP)
+        const bool xboxBlocked = g_buildPlatform == 4 && (!okay::xbox::CachedSdkReport().available || (g_xboxRunner && g_xboxRunner->Running()));
+        ImGui::BeginDisabled(xboxBlocked);
+#endif
         if (ImGui::Button(buildLabel, ImVec2(bw, 0))) doBuild = true;
+#if defined(OKAY_XBOX_UWP)
+        ImGui::EndDisabled();
+        if (xboxBlocked && ImGui::IsItemHovered(ImGuiHoveredFlags_AllowWhenDisabled)) ImGui::SetTooltip("Xbox export is unavailable: a required Windows tool is missing (see the Xbox page).");
+#endif
         ImGui::PopStyleColor(3);
         if (g_vsBuildRetry) { doBuild = true; doRun = g_vsBuildRetry == 2; g_vsBuildRetry = 0; }
         else if (doBuild) {
@@ -19075,12 +19304,41 @@ void DrawFileDialogs(EditorState& ed) {
           } else if (g_buildPlatform != 0) {
             builder::Options wo;
             wo.company = g_build.company; wo.version = g_build.version;
-            wo.width = g_build.width; wo.height = g_build.height; wo.bundleId = g_build.bundleId;
+            wo.width = g_build.width; wo.height = g_build.height; wo.bundleId = g_build.bundleId; wo.iconPath = g_build.icon;
             g_buildReport = builder::BuildReport{};
             g_buildStatus = builder::ExportForPlatform(ed, g_buildDirBuf, g_buildNameBuf, wo, g_buildPlatform);
-            g_openBuildResult = true;
             ConsoleLog("Export (" + std::string(plats[g_buildPlatform]) + "): " + g_buildStatus);
+#if defined(OKAY_XBOX_UWP)
+            if (g_buildPlatform == 4) {   // one click: SDK check, export, compile, shaders, pack, sign, (install). The popup stays open and shows the log.
+                namespace xb = okay::xbox;
+                xb::ExportInputs xi; xi.gameName = g_buildNameBuf; xi.company = g_build.company; xi.version = g_build.version; xi.bundleId = g_build.bundleId;
+                const xb::ManifestOptions xm = xb::ManifestFrom(xi);
+                xb::PlanInputs pi; pi.sdk = xb::CachedSdkReport(); pi.fs = xb::RealFs();
+                g_xboxSourceRoot = xb::FindSourceRoot(pi.fs, OkayExeDir(), std::getenv("OKAY_SOURCE_ROOT") ? std::getenv("OKAY_SOURCE_ROOT") : "");
+                pi.sourceRoot = g_xboxSourceRoot; pi.exportDir = g_buildDirBuf; pi.subject = xm.publisher; pi.installOnThisPc = g_xboxInstall; pi.engineMode = g_xboxEngineMode;
+                pi.appxPath = (std::filesystem::path(g_buildDirBuf) / (xm.identityName + "_" + xb::NormalizeVersion(xm.version) + "_x64.appx")).string();
+                g_xboxAppx = pi.appxPath; g_xboxSignerLabel = xb::SignerLabel(pi.signer);
+                xb::BuildHostConfig hc; hc.sdkAvailable = pi.sdk.available; hc.exportOk = g_xboxExportOk; hc.exportMessage = g_buildStatus;
+                hc.exportWarnings = g_xboxExportWarnings; hc.exportDir = g_buildDirBuf; hc.appxPath = pi.appxPath; hc.configuration = pi.configuration;
+#if defined(_WIN32)
+                hc.spawn = xb::SpawnWindowsProcess;
+#endif
+                g_xboxHost.reset(new xb::XboxBuildHost(hc));
+                if (g_xboxSourceRoot.empty()) {
+                    g_buildStatus = "Xbox build: the Xbox build files were not found. They ship in the xbox-src folder next to the editor (or set OKAY_SOURCE_ROOT to a source checkout). The game data was exported.";
+                    g_openBuildResult = true; ImGui::CloseCurrentPopup();
+                } else {
+                    g_xboxRunner.reset(new xb::BuildRunner(xb::PlanBuild(pi), *g_xboxHost));
+                    g_xboxRunner->Start(); g_xboxShowRunner = true; s_buildSec = 7;
+                }
+            } else {
+                g_openBuildResult = true;
+                ImGui::CloseCurrentPopup();
+            }
+#else
+            g_openBuildResult = true;
             ImGui::CloseCurrentPopup();
+#endif
           } else {
             builder::Options o = builder::OptionsFromSettings(g_build, g_project);
             o.dryRun = g_buildDryRun;
@@ -20904,20 +21162,24 @@ void DrawHierarchy(EditorState& ed) {
             // The name stops before the eye, the lock and the error badge.
             char cnt[16] = ""; if (childCount > 0) std::snprintf(cnt, sizeof(cnt), "  (%d)", childCount);
             const std::string tail = std::string(cnt) + (node->active ? "" : "  (off)");
-            const bool diag = ObjectHasDiag(node);
-            const float nameRoom = ImGui::GetContentRegionAvail().x
+            // A row scrolled out of the panel is not drawn, so its decorations (icon, badges, eye, lock, the width fitting of its
+            // name) are skipped: in a big scene most rows are out of view and this was most of the Hierarchy's per-frame cost.
+            // (The row still goes through TreeNodeEx below, so open / closed state and the keyboard order stay right.)
+            const bool rowShown = ImGui::IsRectVisible(ImVec2(ImGui::GetContentRegionAvail().x, ImGui::GetFrameHeight()));
+            const bool diag = rowShown && ObjectHasDiag(node);
+            const float nameRoom = rowShown ? ImGui::GetContentRegionAvail().x
                 - (ImGui::GetFontSize() + ImGui::GetStyle().FramePadding.x * 2.0f)
                 - ImGui::CalcTextSize("     ").x
                 - ImGui::CalcTextSize(tail.c_str()).x
                 - kHierEyeW * 2.0f - 8.0f
-                - (diag ? 22.0f : 0.0f);
-            const std::string shown = EllipsizeToWidth(node->name, nameRoom);
+                - (diag ? 22.0f : 0.0f) : 0.0f;
+            const std::string shown = rowShown ? EllipsizeToWidth(node->name, nameRoom) : node->name;
             bool open = ImGui::TreeNodeEx(node, flags, "     %s%s", shown.c_str(), tail.c_str());
             if (shown != node->name && ImGui::IsItemHovered()) ImGui::SetTooltip("%s", node->name.c_str());
             if (dim || prefabRoot) ImGui::PopStyleColor();
             ImVec2 rowMin = ImGui::GetItemRectMin(), rowMax = ImGui::GetItemRectMax();
             if (revealSel == node && !ImGui::IsItemVisible()) ImGui::SetScrollHereY(0.4f);   // selected in the Scene view: scroll to it
-            {   // drawn type icon in the leading space (after the tree arrow zone)
+            if (rowShown) {   // drawn type icon in the leading space (after the tree arrow zone)
                 float isz = ImGui::GetFontSize();
                 float ax = isz + ImGui::GetStyle().FramePadding.x * 2.0f;   // arrow width
                 const ImVec2 ip(rowMin.x + ax, rowMin.y + (rowMax.y - rowMin.y - isz) * 0.5f);
@@ -20929,14 +21191,14 @@ void DrawHierarchy(EditorState& ed) {
             if (ed.IsSelected(node))
                 ImGui::GetWindowDrawList()->AddRectFilled(
                     rowMin, ImVec2(rowMin.x + 3.0f, rowMax.y), ImGui::GetColorU32(AccentCol(1.0f)));
-            {   // badges only where the name leaves room
+            if (rowShown) {   // badges only where the name leaves room
                 const float labelEnd = rowMin.x + ImGui::GetFontSize() + ImGui::GetStyle().FramePadding.x * 2.0f +
                                        ImGui::CalcTextSize(("     " + shown + tail).c_str()).x + 8.0f;
                 HierComponentBadges(node, rowMin, ImVec2(rowMax.x - kHierEyeW * 2.0f, rowMax.y), labelEnd);
+                DrawObjectDiagMarker(node, rowMin, rowMax);
+                HierEye(node, rowMin, rowMax);
+                HierLock(node, ImGui::IsItemHovered(), rowMin, rowMax);
             }
-            DrawObjectDiagMarker(node, rowMin, rowMax);
-            HierEye(node, rowMin, rowMax);
-            HierLock(node, ImGui::IsItemHovered(), rowMin, rowMax);
             float mx = ImGui::GetIO().MousePos.x;
             bool inEye  = mx >= rowMax.x - kHierEyeW && mx <= rowMax.x;
             bool inLock = mx >= rowMax.x - kHierEyeW * 2.0f && mx < rowMax.x - kHierEyeW;
@@ -40940,6 +41202,18 @@ void DrawInspector(EditorState& ed) {
             if (ImGui::DragInt("Selected##ucp", &sel, 0.1f, 0, std::max(0, cp->Count() - 1))) { cp->SetValue(sel); ed.dirty = true; }
             oked::FieldTip("Selected##ucp");
             AnchorCombo("Anchor##ucp", cp->anchor, ed);
+            if (ImGui::Checkbox("Advanced (hue square, value and alpha sliders)##ucp", &cp->advanced)) { cp->SetAdvanced(cp->advanced); ed.dirty = true; }   // UI library slice 3
+            oked::FieldTip("Advanced (hue square, value and alpha sliders)##ucp");
+            if (cp->advanced) {
+                float h = cp->hue, sa = cp->sat, va = cp->val, al = cp->alpha;
+                bool edit = ImGui::DragFloat("Hue##ucp", &h, 1.0f, 0.0f, 360.0f);
+                edit = ImGui::DragFloat("Saturation##ucp", &sa, 0.005f, 0.0f, 1.0f) || edit;
+                edit = ImGui::DragFloat("Value##ucp", &va, 0.005f, 0.0f, 1.0f) || edit;
+                edit = ImGui::DragFloat("Alpha##ucp", &al, 0.005f, 0.0f, 1.0f) || edit;
+                if (edit) { cp->SetHSVA(h, sa, va, al); ed.dirty = true; }
+                if (ImGui::DragFloat("Square size##ucp", &cp->squareSize, 1.0f, 48.0f, 400.0f)) ed.dirty = true;
+                ImGui::TextDisabled("Colour now: %s   (script: Hex(), SetHSVA(h, s, v, a))", cp->Hex().c_str());
+            }
             cp->Rebuild();
             for (int i = 0; i < cp->Count(); ++i) {
                 Color c = cp->swatches[(std::size_t)i];
@@ -42261,6 +42535,26 @@ void DrawInspector(EditorState& ed) {
             if (item(!go->GetComponent<UIPagination>(), "UI Pagination")) { go->AddComponent<UIPagination>(); ed.dirty = true; }
             if (item(!go->GetComponent<UISkeleton>(), "UI Skeleton")) { go->AddComponent<UISkeleton>(); ed.dirty = true; }
             if (item(!go->GetComponent<UIBottomSheet>(), "UI Bottom Sheet")) { go->AddComponent<UIBottomSheet>(); ed.dirty = true; }
+            if (item(!go->GetComponent<UIMenuBar>(), "UI Menu Bar")) { go->AddComponent<UIMenuBar>(); ed.dirty = true; }
+            if (item(!go->GetComponent<UIToolbar>(), "UI Toolbar")) { go->AddComponent<UIToolbar>(); ed.dirty = true; }
+            if (item(!go->GetComponent<UITreeView>(), "UI Tree View")) { go->AddComponent<UITreeView>(); ed.dirty = true; }
+            if (item(!go->GetComponent<UIDataTable>(), "UI Data Table")) { go->AddComponent<UIDataTable>(); ed.dirty = true; }
+            if (item(!go->GetComponent<UIWizard>(), "UI Wizard")) { go->AddComponent<UIWizard>(); ed.dirty = true; }
+            if (item(!go->GetComponent<UIFormGroup>(), "UI Form Group")) { go->AddComponent<UIFormGroup>()->Rebuild(); ed.dirty = true; }
+            if (item(!go->GetComponent<UIBind>(), "UI Bind (widget <-> variable)")) { go->AddComponent<UIBind>(); ed.dirty = true; }
+            if (item(!go->GetComponent<UIVisibleIf>(), "UI Visible If (show from a condition)")) { go->AddComponent<UIVisibleIf>(); ed.dirty = true; }
+            if (item(!go->GetComponent<UIListBind>() && go->GetComponent<UIListView>(), "UI List Bind (array -> list)")) { go->AddComponent<UIListBind>(); ed.dirty = true; }
+            if (item(!go->GetComponent<UIHotReload>(), "UI Hot Reload (watch a UI file)")) { go->AddComponent<UIHotReload>(); ed.dirty = true; }
+            if (item(!go->GetComponent<UIFocusHint>(), "UI Focus Hint (tab order, links)")) { go->AddComponent<UIFocusHint>(); ed.dirty = true; }
+            if (item(!go->GetComponent<UIRichLinks>() && go->GetComponent<TextRenderer>(), "UI Rich Links (clickable [url] text)")) { go->AddComponent<UIRichLinks>(); ed.dirty = true; }
+            if (item(!go->GetComponent<UIRadialMenu>(), "UI Radial Menu")) { go->AddComponent<UIRadialMenu>(); ed.dirty = true; }
+            if (item(!go->GetComponent<UIKillFeed>(), "UI Kill Feed")) { go->AddComponent<UIKillFeed>(); ed.dirty = true; }
+            if (item(!go->GetComponent<UIAmmoCounter>(), "UI Ammo Counter")) { go->AddComponent<UIAmmoCounter>(); ed.dirty = true; }
+            if (item(!go->GetComponent<UIInteractionPrompt>(), "UI Interaction Prompt")) { go->AddComponent<UIInteractionPrompt>(); ed.dirty = true; }
+            if (item(!go->GetComponent<UIObjectiveTracker>(), "UI Objective Tracker")) { go->AddComponent<UIObjectiveTracker>(); ed.dirty = true; }
+            if (item(!go->GetComponent<UICompass>(), "UI Compass")) { go->AddComponent<UICompass>(); ed.dirty = true; }
+            if (item(!go->GetComponent<UIItemTooltipCard>(), "UI Item Tooltip Card")) { go->AddComponent<UIItemTooltipCard>(); ed.dirty = true; }
+            if (item(!go->GetComponent<UIAbilityIcon>() && go->GetComponent<UIRadialProgress>(), "UI Ability Icon (on a Radial Progress)")) { go->AddComponent<UIAbilityIcon>(); ed.dirty = true; }
             if (item(!go->GetComponent<UIRangeSlider>(), "UI Range Slider (two handles)")) { go->AddComponent<UIRangeSlider>(); ed.dirty = true; }
             if (item(!go->GetComponent<UIAspectRatio>(), "UI Aspect Ratio (keeps a shape)")) { go->AddComponent<UIAspectRatio>(); ed.dirty = true; }
             if (item(!go->GetComponent<UIInputValidator>() && go->GetComponent<UIInputField>(), "UI Input Validator (rules for an input field)")) { go->AddComponent<UIInputValidator>(); ed.dirty = true; }
@@ -48592,6 +48886,73 @@ void DrawUIThemer(EditorState& ed) {
     ImGui::End();
 }
 
+// The frame-time overlay (View > Rendering > Frame-time overlay): FPS and frame time over the last frames, a graph, and where
+// the newest frames went (okay::editor::perf::Break over the profiler's own scopes; same data as the Profiler window, in a
+// small panel you can leave open). "Copy report" puts a plain-text version on the clipboard to send back.
+void DrawPerfOverlay(EditorState& ed) {
+    namespace perf = okay::editor::perf;
+    okay::Profiler& P = okay::Prof();
+    ImGui::SetNextWindowPos(ImVec2(ImGui::GetMainViewport()->WorkPos.x + ImGui::GetMainViewport()->WorkSize.x - 12.0f,
+                                   ImGui::GetMainViewport()->WorkPos.y + 36.0f), ImGuiCond_FirstUseEver, ImVec2(1.0f, 0.0f));
+    ImGui::SetNextWindowBgAlpha(0.88f);
+    const bool open = ImGui::Begin("Frame time###PerfOverlay", &g_showPerfOverlay,
+                                   ImGuiWindowFlags_AlwaysAutoResize | ImGuiWindowFlags_NoFocusOnAppearing | ImGuiWindowFlags_NoNav);
+    if (!g_showPerfOverlay) SaveSettings();   // closed with its X
+    if (!open) { ImGui::End(); return; }
+    const int n = P.Count();
+    const int kStatFrames = 120, kBreakFrames = 30;
+    static std::vector<double> ms; static std::vector<float> plot;
+    ms.clear(); plot.clear();
+    for (int i = std::max(0, n - kStatFrames); i < n; ++i) { ms.push_back(P.FrameAt(i).total); plot.push_back((float)P.FrameAt(i).total); }
+    const perf::HistoryStats st = perf::Stats(ms);
+    // Average of the newest frames, section by section (one frame jumps around too much to read).
+    perf::Breakdown avg;
+    int bn = 0;
+    for (int i = std::max(0, n - kBreakFrames); i < n; ++i) {
+        const perf::Breakdown b = perf::Break(P.FrameAt(i));
+        for (int k = 0; k < (int)perf::Section::Count; ++k) avg.ms[k] += b.ms[k];
+        avg.total += b.total; ++bn;
+    }
+    if (bn > 0) { for (int k = 0; k < (int)perf::Section::Count; ++k) avg.ms[k] /= bn; avg.total /= bn; }
+    const double sleepMs = avg.ms[(int)perf::Section::Sleep];
+    const double workMs = avg.total - sleepMs;   // what the frame costs without the on-purpose sleep
+    ImVec4 col = st.fps >= 100.0 ? ImVec4(0.45f, 0.85f, 0.55f, 1) : st.fps >= 60.0 ? ImVec4(0.95f, 0.80f, 0.35f, 1) : ImVec4(0.95f, 0.45f, 0.40f, 1);
+    ImGui::TextColored(col, "%.0f FPS", st.fps);
+    ImGui::SameLine(); ImGui::TextDisabled("%.2f ms avg   95%%: %.2f   worst: %.2f   1%% low: %.0f FPS", st.avgMs, st.p95Ms, st.worstMs, st.lowFps);
+    if (sleepMs > 0.05 && workMs > 0.0) ImGui::TextDisabled("Without the limiter's sleep: %.2f ms = %.0f FPS possible", workMs, 1000.0 / workMs);
+    if (!P.enabled || n < 2) ImGui::TextDisabled("Collecting frames ...");
+    if (!plot.empty()) {
+        const float top = (float)std::max(16.7, st.worstMs * 1.1);
+        char ov[48]; std::snprintf(ov, sizeof(ov), "last %d frames, top %.0f ms", (int)plot.size(), (double)top);
+        ImGui::PlotLines("##perfms", plot.data(), (int)plot.size(), 0, ov, 0.0f, top, ImVec2(360, 56));
+    }
+    ImGui::Separator();
+    ImGui::TextDisabled("Where the frame goes (average of the last %d frames)", bn);
+    int order[(int)perf::Section::Count];
+    for (int k = 0; k < (int)perf::Section::Count; ++k) order[k] = k;
+    std::sort(order, order + (int)perf::Section::Count, [&](int a, int b) { return avg.ms[a] > avg.ms[b]; });
+    for (int oi = 0; oi < (int)perf::Section::Count; ++oi) {
+        const int k = order[oi];
+        if (avg.ms[k] < 0.005 && k != (int)perf::Section::Viewport3D) continue;
+        const float share = avg.total > 0.0 ? (float)(avg.ms[k] / avg.total) : 0.0f;
+        char lb[40]; std::snprintf(lb, sizeof(lb), "%.2f ms  %.0f%%", avg.ms[k], (double)share * 100.0);
+        ImGui::ProgressBar(share, ImVec2(150, 0), lb);
+        ImGui::SameLine(); ImGui::TextUnformatted(perf::SectionName((perf::Section)k));
+    }
+    ImGui::Separator();
+    ImGui::TextDisabled("Renderer: %s", okay::FrameOverlay::RendererName().c_str());
+    ImGui::TextDisabled("Scene view %dx%d, scale %.2f%s", g_lastSceneW, g_lastSceneH, (double)perf::EffectiveScale(g_renderScale, g_perfMode), g_perfMode ? ", performance mode" : "");
+    if (ImGui::Button("Copy report")) {
+        const std::string rep = perf::Report(st, bn > 0 ? avg : perf::Break(P.Displayed()), okay::FrameOverlay::RendererName().c_str(), ed.isPlaying(),
+                                              g_lastSceneW, g_lastSceneH, perf::EffectiveScale(g_renderScale, g_perfMode), g_perfMode, g_fpsCapEditor, g_idleThrottle);
+        ImGui::SetClipboardText(rep.c_str());
+        ConsoleLog("Frame-time report copied to the clipboard.");
+    }
+    ImGui::SameLine();
+    if (ImGui::Button("Open Profiler")) g_showProfiler = true;
+    ImGui::End();
+}
+
 // Advanced CPU/GPU profiler. A frame/CPU/GPU timeline you can pause and
 // scrub, a stacked CPU-category area (Scripts / Physics / Render / Other), per-section
 // self/total/calls/%-of-frame with min/avg/max over the window, live draw stats, and
@@ -50768,7 +51129,7 @@ int main(int argc, char** argv) {
             }
         }
         static const bool kPerfDump = std::getenv("OKAY_PERF_DUMP") != nullptr;   // dev: print frame breakdown to stdout
-        okay::Prof().enabled = g_showProfiler || kPerfDump || (g_gameStatsOverlay && ed.isPlaying());   // the Game view Stats overlay lists ms per system   // gate timers; set before BeginFrame/Tick this frame
+        okay::Prof().enabled = g_showProfiler || g_showPerfOverlay || kPerfDump || (g_gameStatsOverlay && ed.isPlaying());   // the Game view Stats overlay lists ms per system   // gate timers; set before BeginFrame/Tick this frame
         okay::Prof().BeginFrame();
         // Pick up the background update check when it finishes (once).
         if (!g_autoCheckDone && g_updateCheck.valid() &&
@@ -50801,6 +51162,12 @@ int main(int argc, char** argv) {
                 SDL_GetKeyboardFocus() == nullptr && SDL_GetMouseFocus() == window)
                 SDL_SetWindowInputFocus(window);
             s_prevViewports = vps;
+        }
+        {   // seconds since the last event of any kind (the idle throttle reads this; the first frame counts as just now)
+            static Uint64 s_lastInput = okay::platform::PerfCounter();
+            g_secSinceInput = (double)(okay::platform::PerfCounter() - s_lastInput) / (double)okay::platform::PerfFrequency();
+            SDL_PumpEvents();
+            if (SDL_HasEvents(SDL_FIRSTEVENT, SDL_LASTEVENT)) { s_lastInput = okay::platform::PerfCounter(); g_secSinceInput = 0.0; }
         }
         SDL_Event e;
         while (SDL_PollEvent(&e)) {
@@ -50890,6 +51257,7 @@ int main(int argc, char** argv) {
             }
         }
 
+        okay::Prof().Begin("Editor.Update");   // closed before the window title below (nothing in between leaves the loop body early)
         Uint64 now = okay::platform::PerfCounter();
         float dt = (float)((now - last) / (double)okay::platform::PerfFrequency());
         last = now;
@@ -51425,6 +51793,7 @@ int main(int argc, char** argv) {
             }
         }
 
+        okay::Prof().End();
         // Keep the window title in sync with the scene + dirty state.
         std::string title = "OkaySpace Editor  -  ";
         if (!ed.projectDir().empty()) title += std::filesystem::path(ed.projectDir()).filename().string() + "  /  ";
@@ -51444,8 +51813,7 @@ int main(int argc, char** argv) {
         else
             ImGui::GetIO().ConfigFlags |= ImGuiConfigFlags_NavEnableKeyboard;
 
-        ImGui_ImplSDLRenderer2_NewFrame();
-        ImGui_ImplSDL2_NewFrame();
+        { OKAY_PROFILE("ImGui.NewFrame"); ImGui_ImplSDLRenderer2_NewFrame(); ImGui_ImplSDL2_NewFrame(); }
         // Skinned meshes deform on the GPU when the Direct3D 11 renderer draws the
         // views (one upload of the bind pose, bone matrices per frame) instead of
         // every vertex on the CPU + a full mesh re-upload each frame.
@@ -52107,8 +52475,10 @@ int main(int argc, char** argv) {
         { OKAY_PROFILE("UI.MaterialEditor"); DrawMaterialEditor(ed); }
         { OKAY_PROFILE("UI.GameView"); if (g_showGame)      DrawGameView(ed); }
         { OKAY_PROFILE("UI.Profiler"); if (g_showProfiler)  DrawProfiler(ed); }
+        { OKAY_PROFILE("UI.PerfOverlay"); if (g_showPerfOverlay) DrawPerfOverlay(ed); }
         { OKAY_PROFILE("UI.Inspector"); if (g_showInspector) DrawInspector(ed); }
         DrawFpHandsPreviewWindow(ed);
+        okay::editor::DrawUIGalleryWindow(ed);   // UI Gallery: GameObject > UI > Browse All UI...
         { OKAY_PROFILE("UI.Console"); if (g_showConsole)   DrawConsole(); }
         { OKAY_PROFILE("UI.CrashLog"); if (g_showCrashLog)  DrawCrashLog(); }
         { OKAY_PROFILE("UI.AudioMixer"); if (g_showAudioMixer) DrawAudioMixer(); }
@@ -52220,7 +52590,7 @@ int main(int argc, char** argv) {
                 for (ImTextureData* tx : *mdd->Textures)
                     if (tx->Status != ImTextureStatus_OK)
                         ImGui_ImplSDLRenderer2_UpdateTexture(tx);
-            OkayRenderDrawData(mdd, renderer, nullptr);
+            { OKAY_PROFILE("ImGui.Draw"); OkayRenderDrawData(mdd, renderer, nullptr); }   // (this multi-window branch is the default one: it was not timed, so its cost showed as "not timed")
         } else {
             { OKAY_PROFILE("ImGui.Draw"); ImGui_ImplSDLRenderer2_RenderDrawData(ImGui::GetDrawData(), renderer); }
         }
@@ -52331,6 +52701,15 @@ int main(int argc, char** argv) {
             else if (ViewportsSupported() && ImGui::GetFrameCount() > 1) io.ConfigFlags |= ImGuiConfigFlags_ViewportsEnable;
         }
 
+        {   // Frame limiter and idle throttle (View > Rendering; both off by default): sleep out the rest of the frame budget.
+            const okay::editor::perf::PacingSettings ps{g_fpsCapEditor, g_idleThrottle, g_idleFps, 0.75};
+            const double target = okay::editor::perf::TargetFps(ps, ed.isPlaying(), ImGui::IsAnyMouseDown(), g_secSinceInput);
+            if (target > 0.0) {
+                const double elapsed = (double)(okay::platform::PerfCounter() - g_frameT0) / (double)okay::platform::PerfFrequency();
+                const double wait = okay::editor::perf::SleepSeconds(target, elapsed);
+                if (wait >= 0.001) { OKAY_PROFILE("Pacing.Sleep"); SDL_Delay((Uint32)(wait * 1000.0)); }
+            }
+        }
         {   // Close out the profiler frame (total wall time incl. present).
             Uint64 f1 = okay::platform::PerfCounter();
             double frameMs = (double)(f1 - g_frameT0) / (double)okay::platform::PerfFrequency() * 1000.0;

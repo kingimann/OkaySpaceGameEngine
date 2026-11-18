@@ -1,4 +1,5 @@
 #include "okay/Scene/Scene.hpp"
+#include "okay/Scene/ComponentCache.hpp"
 #include "okay/Inventory/InventoryPersistence.hpp"
 #include "okay/VisualScript/VsVariables.hpp"
 #include "okay/Scripting/NextScriptVM.hpp"
@@ -440,7 +441,18 @@ void Scene::Update(float deltaTime) {
 
     {
         OKAY_PROFILE("Scripts.Update");
+        // A click that shows a screen must not also click the button that appears under the pointer (a "Give up" button over a Game Over
+        // screen's "Try again"): on a frame where the mouse goes down, a component that was switched off when the frame began is left
+        // for the next frame. Only those frames pay for the snapshot.
+        std::vector<char> wasOn;
+        if (Input::GetMouseButtonDown(0)) {
+            wasOn.reserve(m_active.size());
+            for (Component* c : m_active) wasOn.push_back(c && c->gameObject && c->gameObject->ActiveInHierarchy() ? 1 : 0);
+        }
+        std::size_t activeIndex = 0;
         for (Component* c : m_active) {
+            const std::size_t at = activeIndex++;
+            if (!wasOn.empty() && at < wasOn.size() && !wasOn[at]) continue;
             if (c && c->enabled && c->gameObject && c->gameObject->ActiveInHierarchy()) {
                 if (!c->m_started) {   // switched on since it joined: its Start comes first
                     if (!StartComponent(c)) continue;   // its OnEnable removed/destroyed it: it is gone
@@ -605,7 +617,7 @@ void ShowPose(Transform* t, PoseHistory& h, bool stepped, float alpha) {
 }
 
 void CarryParents(Scene& scene, float frameDt) {
-    for (Rigidbody3D* rb : scene.FindObjectsOfType<Rigidbody3D>()) {
+    for (Rigidbody3D* rb : CachedComponents<Rigidbody3D>(scene)) {
         if (!rb->transform || rb->bodyType == Rigidbody3D::BodyType::Static) continue;
         Vec3 spin;
         const Vec3 add = ParentDetachVelocity(rb->parentCarry, rb->transform->Parent(),
@@ -616,7 +628,7 @@ void CarryParents(Scene& scene, float frameDt) {
             rb->WakeUp();
         }
     }
-    for (Rigidbody2D* rb : scene.FindObjectsOfType<Rigidbody2D>()) {
+    for (Rigidbody2D* rb : CachedComponents<Rigidbody2D>(scene)) {
         if (!rb->transform || rb->bodyType == Rigidbody2D::BodyType::Static) continue;
         Vec3 spin;
         const Vec3 add = ParentDetachVelocity(rb->parentCarry, rb->transform->Parent(),
@@ -691,8 +703,8 @@ void Scene::StepPhysics(float deltaTime) {
         m_physicsSteps = 1; m_physicsAlpha = 0.0f;
         return;
     }
-    const auto bodies3 = FindObjectsOfType<Rigidbody3D>();
-    const auto bodies2 = FindObjectsOfType<Rigidbody2D>();
+    const auto bodies3 = CachedComponents<Rigidbody3D>(*this);
+    const auto bodies2 = CachedComponents<Rigidbody2D>(*this);
     if (interpolatePhysics) {
         for (Rigidbody3D* rb : bodies3) if (rb->transform) RestorePose(rb->transform, rb->poseHistory);
         for (Rigidbody2D* rb : bodies2) if (rb->transform) RestorePose(rb->transform, rb->poseHistory);

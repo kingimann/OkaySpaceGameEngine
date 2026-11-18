@@ -50,6 +50,7 @@ target_link_libraries(okay_imgui PUBLIC ${OKAY_SDL_LIB})
 target_compile_options(okay_imgui PRIVATE -w) # silence third-party warnings
 
 add_executable(okay-editor main.cpp EditorState.cpp FpHandsWindow.cpp
+    UIGalleryWindow.cpp                                                # the UI Gallery window (search every UI part, preview it, add it)
     AnimatorWindow.cpp                                                 # the Animator window (state-machine graph)
     TimelineWindow.cpp                                                 # the Timeline window (cutscene sequences)
     NavigationWindow.cpp                                               # the Navigation window (navmesh bake + overlays)
@@ -132,4 +133,11 @@ endif()
 # Headless self-test of the editor's (non-GUI) logic for CI.
 if(OKAY_BUILD_TESTS)
     add_test(NAME editor COMMAND okay-editor --selftest)
+endif()
+
+# EXPERIMENTAL Xbox One Developer Mode (UWP) export entry in File > Build Settings. OFF unless -DOKAY_BUILD_XBOX_UWP=ON
+# (docs/xbox_uwp.md). Header-only: nothing to link.
+if(OKAY_BUILD_XBOX_UWP)
+    target_compile_definitions(okay-editor PRIVATE OKAY_XBOX_UWP=1)
+    target_include_directories(okay-editor PRIVATE ${CMAKE_SOURCE_DIR}/platform/xbox_uwp)
 endif()

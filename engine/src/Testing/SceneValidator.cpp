@@ -166,7 +166,7 @@ std::string JoinPath(const std::string& dir, const std::string& rel) {
 
 bool SceneValidator::AssetExists(const std::string& path, const ValidatorOptions& o) {
     if (path.empty()) return true;
-    if (path.rfind("proc:", 0) == 0 || path.find("://") != std::string::npos) return true;   // built in / remote
+    if (path.rfind("proc:", 0) == 0 || path.rfind("icon:", 0) == 0 || path.find("://") != std::string::npos) return true;   // built in / remote
     if (path[0] == '@') return true;   // a picture made in memory (a terrain's baked layers)
     auto exists = [&](const std::string& p) { return o.fileExists ? o.fileExists(p) : DiskFileExists(p); };
     const std::string rel = Slashes(path);

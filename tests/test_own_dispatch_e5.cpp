@@ -98,6 +98,7 @@ int main() {
     // one switch per format: the .lws and .mot extensions share OKAY_OWN_LWS, and the other formats' switches do not move them
     {
         SetImportBackend("*", ImportBackend::Default);
+        const ImportBackend nffBefore = EffectiveImportBackend(".nff");   // NFF's own default (ours since 2026-11-17); the PMX / LWS switches must not move it
         TestSetEnv("OKAY_OWN_LWS", "1");
         CHECK(EffectiveImportBackend(".lws") == ImportBackend::Own && EffectiveImportBackend(".mot") == ImportBackend::Own && EffectiveImportBackend(".LWS") == ImportBackend::Own);
         TestSetEnv("OKAY_OWN_PMX", "0");   // pinned off so that a -DOKAY_OWN_PMX=ON build still has PMX off here
@@ -106,7 +107,7 @@ int main() {
         TestUnsetEnv("OKAY_OWN_LWS");
         TestSetEnv("OKAY_OWN_PMX", "1");
         TestSetEnv("OKAY_OWN_LWS", "0");
-        CHECK(EffectiveImportBackend(".pmx") == ImportBackend::Own && EffectiveImportBackend(".lws") != ImportBackend::Own && EffectiveImportBackend(".nff") != ImportBackend::Own && EffectiveImportBackend(".obj") == ImportBackend::Own);
+        CHECK(EffectiveImportBackend(".pmx") == ImportBackend::Own && EffectiveImportBackend(".lws") != ImportBackend::Own && EffectiveImportBackend(".nff") == nffBefore && EffectiveImportBackend(".obj") == ImportBackend::Own);
         TestUnsetEnv("OKAY_OWN_PMX");
         TestUnsetEnv("OKAY_OWN_LWS");
     }

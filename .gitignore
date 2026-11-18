@@ -67,3 +67,6 @@ dist/*.so
 dist/*.dylib
 dist/*.zip
 build-win-dist/
+
+# Pictures and screenshots are not stored in the repository (owner rule, 2026-11-17)
+docs/images/

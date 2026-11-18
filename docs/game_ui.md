@@ -279,6 +279,31 @@ function update(dt) {
 Press **F1** in a development build (Build Settings > Development build) to see the Test UI panel and a sample **Lobby**
 built from these blocks (`shared/OkayTestPanel.hpp` has the code).
 
+## Crisp at any size
+
+The UI is laid out in reference units and drawn at the real pixel size of the screen, so it stays sharp when the
+window is big, the screen is high resolution, a Scale With Screen Size canvas scales up, or you zoom the editor view.
+Nothing is drawn small and then stretched.
+
+- **Text:** the TrueType face is baked at (font size x canvas scale) pixels, anti-aliased, one cached size per step
+  (every whole size up to 32 px, then about 6% steps, so dragging the zoom does not bake hundreds of sizes).
+- **Shapes:** rounded boxes, pills, circles, borders and shadows were already anti-aliased. Circles, rings, triangles,
+  thick lines and polygons (minimap, joystick, check marks, the crosshair ring, route lines) are now rasterised on the
+  device pixel grid with analytic coverage (`MMFillCircle`, `MMDrawRing`, `MMFillTriangle`, `MMThickLine`,
+  `MMFillPoly` in `UI/UIRenderer.cpp`): one pixel of soft edge at any scale, no logical-pixel blocks.
+- **Pictures:** sampled linearly when drawn bigger or smaller than they are (`Painter::SetImageFilter`); the batcher's
+  image atlas repeats edge pixels into its gutter and keeps pieces of a picture (9-slice, sprite sheets) from picking up
+  their neighbours when scaled. Round pictures (circle, rounded corners) use enough segments for any zoom and a one-pixel
+  soft edge.
+- **UI filtering setting:** Smooth is the default. Pixel-art (hard shape edges, nearest-neighbour pictures, the 8x8 bitmap
+  text) is the scene's UI font set to "pixel" (Lighting window, UI Font). Escape hatch if something looks wrong:
+  start with the environment variable `OKAY_UI_FILTER=pixel` (hard edges and nearest pictures again) or
+  `OKAY_UI_FILTER=smooth` (smooth even for a pixel-art scene).
+- **Not changed:** the 8x8 bitmap font that overlays draw outside the UI pass (inventory, crafting, F1 panel) and widgets
+  turned or scaled by a UI Frame (their rectangles are drawn as geometry without a soft edge).
+
+Try it: `docs/try_it.md` crisp1. Tests: `test_ui_crisp` (needs no window; measures text, ring and picture sharpness).
+
 ## Theming
 
 `OkayUI::Style()` returns the live theme; change colours or sizes in place.

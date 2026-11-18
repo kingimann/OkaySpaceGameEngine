@@ -1,5 +1,11 @@
 # Model import: who reads which format
 
+> **2026-11-17: the model readers are flipped.** The owner approved ("start switching them so i can test them out"). Every
+> `OKAY_OWN_<FMT>` model reader option, `OKAY_OWN_FBX` and `OKAY_PREFER_OWN_READERS` (STL, PLY) are ON by default (NDO stays
+> OFF: a seam). Assimp and ufbx stay compiled in as the fallback. Ways back at run time: `OKAY_OWN_<FMT>=0` for one format,
+> `OKAY_THIRD_PARTY=1` for all of them (`okay::ThirdPartyForced()`, `engine/include/okay/Core/ThirdParty.hpp`). Details:
+> `docs/own_code_roadmap.md`, "Model readers: our own are the default". Tested on Linux only; Windows unverified.
+
 All model files come in through one door, `okay::ImportModel` (one merged mesh) and
 `okay::ImportModelScene` (a node hierarchy with materials, skins and clips), both in
 `okay/Render/ModelImport.hpp`. This page says which reader handles which format and how
@@ -52,6 +58,15 @@ format at a time. The plan is in `docs/own_code_roadmap.md`.
 
 ## The seam
 
+**Which reader ran.** Every `ImportModelScene` (the editor's **File > Import Model...**, a drop on the viewport, the Project
+panel) logs one Info line when it is done, shown in the editor's Console:
+`model import '<file>': read by the own LXO reader in 0.04 ms (whole import 0.11 ms)`. The reader is "the own <FMT> reader"
+(the name from the `OKAY_OWN_<FMT>` table, or OBJ / STL / PLY / glTF), "Assimp", "Assimp (the own <FMT> reader refused it:
+<why>)" when ours said no and Assimp read the file, "ufbx", or "the own FBX reader". The first time is the reading alone
+(`ImportModelData`), the second the whole import with the scene objects; FBX and glTF give only the whole time. A failed
+import logs `model import '<file>': no reader could read it (...)` with the same times. Set in `ModelImport.cpp` (`g_readBy`, `g_readMs`,
+thread-local); tested by `lwo_reader` (suite "lxo: the import seam").
+
 `okay/Render/ModelData.hpp` holds our own result type, `ImportedModel` (nodes, mesh parts, materials, bone
 weights, clips) and the one entry point `ImportModelData(path, out, backend, flatten, err)`.
 Assimp's own headers are included in exactly one file, `engine/src/Render/ModelImportAssimp.cpp`
@@ -100,6 +115,7 @@ Choosing a backend, per format (`.obj`, `.stl`, `.ply`, `.dae`, `.3ds`, `.bvh`, 
 * **X3D** (`engine/src/Render/X3dReader.cpp`, off by default, `OKAY_OWN_X3D`): XML encoding: Transform / Group / Switch / LOD with DEF and USE, Shape with Material and ImageTexture, IndexedFaceSet (normals, UVs, crease angle), IndexedTriangleSet, TriangleSet, Box, Sphere, Cylinder, Cone, Extrusion; unread nodes named in the notes. Details, limits and what was checked against real files in `docs/own_x3d_reader.md`.
 * **DXF** (`engine/src/Render/DxfReader.cpp`, off by default, `OKAY_OWN_DXF`): ASCII DXF: 3DFACE, polyface and polygon-mesh POLYLINE, MESH, blocks and INSERT; one node per layer; lines, arcs, text and the rest counted by name in the notes. Details, limits and what was checked against real files in `docs/own_dxf_reader.md`.
 * **LWO** (`engine/src/Render/LwoReader.cpp`, off by default, `OKAY_OWN_LWO`): LWO2 and LWO1 (LWOB): layers, points, polygons, surfaces, per-point and per-corner UVs, the first UV image map; shaders, envelopes, projected maps and the rest named in the notes. Details, limits and what was checked against real files in `docs/own_lwo_reader.md`.
+* **LXO** (Modo, `.lxo`; the same `LwoReader.cpp`, off by default, its own switch `OKAY_OWN_LXO`, slot 46): LWO2 geometry chunks, materials from the `MATR` polygon tags and Modo's shader tree (colour, diffuse amount, transparency, smoothing angle), Modo's `NORM` vertex normals. `docs/own_lwo_reader.md`, section LXO.
 * **What a reader did not read is said.** `ImportedModel::notes` lists it one line each, and `ImportModelData` logs every line as a warning. For Collada that covers: lines, line strips, geometry that is not a mesh, numbers written with a decimal comma (read, and said), vertex colours, UV sets after the first, morph (blend shape) controllers (the base mesh is imported), `<skew>` and `<lookat>`, animation channels whose target element or sid is not found, whose value count does not match, or whose keys are out of time order, interpolation other than LINEAR and STEP (read as linear), cameras and lights, malformed skins (the mesh is then imported unskinned), vertices with more than four weights, and skin joints that are not nodes of the scene.
 
 ## Tests
@@ -137,6 +153,10 @@ Blender (`.blend`), MDL, LightWave scenes (`.lws`), AC3D and the rest of the Ass
 ## Collada: what is proven and what is not
 
 Our reader was checked on fixtures we wrote and, in an Assimp build, against Assimp on those; since then it has also been run on 26 files from real exporters (`docs/model_corpus.md`: 24 read, two have no mesh) and compared with Assimp built from source, which found and fixed six bugs (deep node chains, decimal commas, UTF-16, triangle strips and fans, concave polygons, named takes). It stays off by default until more exporters have been tried, Windows has run it, and the owner approves.
+
+Material binding: a primitive's `material` symbol is looked up in its instance's `<bind_material>`. A primitive without a
+`material` attribute (optional in COLLADA; the result is "application defined") gets the instance's material when exactly one
+is bound, and none when several are (found on the corpus file `human.zae`, 2026-11-16).
 
 Known gaps: no morph targets, no `lines` / `linestrips`, no vertex colours or second UV set, no embedded texture data, no physics, kinematics or `extra` techniques other than a bump texture, polygons with holes keep only the outer ring (a hole written as one bridged ring is triangulated correctly), BEZIER/HERMITE/CARDINAL/BSPLINE curves are flattened to straight lines between keys (tangents are ignored), STEP is approximated by a 0.1 ms ramp, rotation is interpolated as a quaternion between the sampled keys, not as the file's angle, so very dense or very fast rotations are only as exact as the key spacing, a target sid is matched against the first node with that id so instanced nodes share one animation, animated materials, visibility and camera or light channels are not read, no COLLADA 1.5 `<instance_effect>` parameter overrides, and normals under non-uniform scale in flattened mode use the plain upper 3x3 matrix. With `<library_animation_clips>` present, animations no clip names are not imported.
 

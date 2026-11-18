@@ -10,7 +10,8 @@
 //   test_model_corpus --one <reader> <file> print one TSV result line (used by the comparison scripts)
 //   test_model_corpus --list <reader> <dir> print the result line of every file below <dir> for that reader
 // readers: fbx-own, fbx-ufbx, dae, 3ds, bvh, obj, stl, ply, gltf (gltf covers .gltf and .glb), off, smd, md5, md5anim, ms3d, ase, 3mf, amf, x3d, dxf, lwo, blend, md2, md3, irrmesh, b3d, x,
-// ac (.ac .acc .ac3d), ogre (.mesh.xml), xgl (.xgl .zgl), irr (.irr), nff (.nff .enff), ter (.ter)
+// ac (.ac .acc .ac3d), ogre (.mesh.xml), xgl (.xgl .zgl), irr (.irr), nff (.nff .enff), ter (.ter), q3d (.q3o .q3s), lws (.lws),
+// ogrebin (.mesh), zae (.zae), xml (.xml other than .mesh.xml), lxo (.lxo, Modo; read by the LWO reader)
 #include "test_framework.hpp"
 #include <Okay.hpp>
 #include "okay/Render/FbxReader.hpp"
@@ -67,6 +68,12 @@ static const char* ExtOf(const std::string& reader) {
     if (reader == "irr") return ".irr";
     if (reader == "nff") return ".nff";
     if (reader == "ter") return ".ter";
+    if (reader == "q3d") return ".q3o";
+    if (reader == "lws") return ".lws";
+    if (reader == "ogrebin") return ".mesh";
+    if (reader == "zae") return ".zae";
+    if (reader == "xml") return ".xml";
+    if (reader == "lxo") return ".lxo";
     return reader == "dae" ? ".dae" : reader == "3ds" ? ".3ds" : reader == "bvh" ? ".bvh" : reader == "obj" ? ".obj" :
            reader == "stl" ? ".stl" : reader == "ply" ? ".ply" : reader == "gltf" ? ".gltf" :
            reader == "3mf" ? ".3mf" : reader == "amf" ? ".amf" : reader == "x3d" ? ".x3d" : reader == "dxf" ? ".dxf" : reader == "lwo" ? ".lwo" : reader == "blend" ? ".blend" : ".fbx";
@@ -75,15 +82,16 @@ static bool ExtMatches(const std::string& reader, std::string ext, std::string n
     for (char& c : ext) c = (char)std::tolower((unsigned char)c);
     for (char& c : name) c = (char)std::tolower((unsigned char)c);
     if (reader == "ogre") return name.size() >= 9 && name.compare(name.size() - 9, 9, ".mesh.xml") == 0;
+    if (reader == "xml" && name.size() >= 9 && name.compare(name.size() - 9, 9, ".mesh.xml") == 0) return false;   // those are the OGRE reader's
     return ext == ExtOf(reader) || (reader == "gltf" && ext == ".glb") || (reader == "ac" && (ext == ".acc" || ext == ".ac3d")) ||
-           (reader == "xgl" && ext == ".zgl") || (reader == "nff" && ext == ".enff");
+           (reader == "xgl" && ext == ".zgl") || (reader == "nff" && ext == ".enff") || (reader == "q3d" && ext == ".q3s");
 }
 // the readers added in batch B (3MF, AMF, X3D, DXF, LWO)
 static bool IsBatchBReader(const std::string& r) { return r == "3mf" || r == "amf" || r == "x3d" || r == "dxf" || r == "lwo"; }
 // the readers added in batch C (MD2, MD3, IRRMESH, B3D, DirectX .x)
 static bool IsBatchCReader(const std::string& r) { return r == "md2" || r == "md3" || r == "irrmesh" || r == "b3d" || r == "x"; }
 // the readers added in batch D (AC3D, OGRE XML, XGL / ZGL, Irrlicht scene, NFF)
-static bool IsBatchDReader(const std::string& r) { return r == "ac" || r == "ogre" || r == "xgl" || r == "irr" || r == "nff" || r == "ter"; }   // ter: the Terragen reader, measured the same way
+static bool IsBatchDReader(const std::string& r) { return r == "ac" || r == "ogre" || r == "xgl" || r == "irr" || r == "nff" || r == "ter" || r == "q3d" || r == "lws" || r == "ogrebin" || r == "zae" || r == "xml" || r == "lxo"; }   // ter (Terragen), q3d (Quick3D) and lws (LightWave scenes): measured the same way
 static bool IsRawReader(const std::string& r) { return IsBatchCReader(r) || IsBatchDReader(r) || r == "dae" || r == "3ds" || r == "bvh" || r == "obj" || r == "stl" || r == "ply" || r == "off" || r == "smd" || r == "md5" || r == "md5anim" || r == "ms3d" || r == "ase" || IsBatchBReader(r) || r == "blend"; }
 // readers added after the first corpus pass also record textures, nodes, UV and normal presence
 static bool IsMeasuredReader(const std::string& r) { return IsBatchCReader(r) || IsBatchDReader(r) || r == "obj" || r == "stl" || r == "ply" || r == "off" || r == "smd" || r == "md5" || r == "md5anim" || r == "ms3d" || r == "ase" || IsBatchBReader(r) || r == "blend"; }
@@ -100,7 +108,8 @@ static CorpusStats MeasureFile(const std::string& reader, const std::string& pat
         fbx::SetOwnReaderEnabled(false);
     } else if (IsRawReader(reader)) {
         SetImportBackend(ExtOf(reader), ImportBackend::Own);
-        if (reader == "irr") { SetImportBackend(".irrmesh", ImportBackend::Own); SetImportBackend(".x", ImportBackend::Own); }   // the meshes a scene names are read through the seam: ours
+        if (reader == "irr" || reader == "xml") { SetImportBackend(".irrmesh", ImportBackend::Own); SetImportBackend(".x", ImportBackend::Own); }   // the meshes a scene names are read through the seam: ours
+        if (reader == "lws") SetImportBackend(".lwo", ImportBackend::Own);
         ImportedModel im; std::string e;
         if (!ImportModelData(path, im, ImportBackend::Own, false, &e)) { s.err = e; return s; }
         s.materials = (int)im.materials.size();

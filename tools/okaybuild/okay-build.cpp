@@ -7,11 +7,16 @@
 #include <algorithm>
 #include <atomic>
 #include <cctype>
+#include <cmath>
 #include <chrono>
 #include <cstdio>
 #include <cstdlib>
 #include <cerrno>
 #include <cstring>
+#ifndef _WIN32
+#include <sys/resource.h>
+#include <sys/wait.h>
+#endif
 #include <filesystem>
 #include <fstream>
 #include <functional>
@@ -21,6 +26,7 @@
 #include <unordered_map>
 #include <sstream>
 #include <stdexcept>
+#include <regex>
 #include <string>
 #include <vector>
 #ifdef _WIN32
@@ -45,6 +51,7 @@
 #endif
 
 namespace fs = std::filesystem;
+#include "cmake_reader.hpp"
 using std::string;
 using std::string_view;
 using std::vector;
@@ -68,10 +75,10 @@ static std::wstring widePath(const string& p) {
     }
     return widen(s);
 }
-static int gHashMu = 0, gStateMu = 0;
+static int gHashMu = 0, gStateMu = 0, gPoolMu = 0;
 #define OK_LOCK(name, mu) int name = ((void)(mu), 0); (void)name
 #else
-static std::mutex gHashMu, gStateMu;
+static std::mutex gHashMu, gStateMu, gPoolMu;
 #define OK_LOCK(name, mu) std::lock_guard<std::mutex> name(mu)
 #endif
 
@@ -81,15 +88,38 @@ struct Fail : std::runtime_error { using std::runtime_error::runtime_error; };
 struct Toolchain {
     string name = "gcc", cc = "gcc", cxx = "g++", ld, ar = "ar", obj = ".o", exe, libp = "lib", libs = ".a";
     vector<string> flags, linkFlags; size_t rspThreshold = 30000; bool msvc = false; bool rspUtf16 = false;
+    bool pathMap = false; // path_map = on: absolute source/include paths plus -ffile-prefix-map, so __FILE__ does not depend on the checkout folder
+    bool autoPick = false; vector<string> setKeys; // 'toolchain auto'; tool fields the manifest set by hand
 };
+static bool applyPreset(Toolchain& c, const string& name) {
+    Toolchain d; d.flags = c.flags; d.linkFlags = c.linkFlags; d.rspThreshold = c.rspThreshold; d.autoPick = c.autoPick; d.setKeys = c.setKeys;
+    if (name == "gcc") {}
+    else if (name == "clang") { d.cc = "clang"; d.cxx = "clang++"; }
+    else if (name == "mingw") { d.cc = "x86_64-w64-mingw32-gcc-win32"; d.cxx = "x86_64-w64-mingw32-g++-win32"; d.ar = "x86_64-w64-mingw32-ar"; d.exe = ".exe"; }
+    else if (name == "msvc") { d.cc = "cl.exe"; d.cxx = "cl.exe"; d.ld = "link.exe"; d.ar = "lib.exe"; d.obj = ".obj"; d.exe = ".exe"; d.libp = ""; d.libs = ".lib"; d.msvc = true; d.rspUtf16 = true; }
+    else return false;
+    d.name = name; c = d; return true;
+}
 struct PoolDecl { string name; int depth = 1; int line = 0; };
 struct RawAction {
-    string dir, cmd, output, depfile, pool; vector<string> inputs, after, outputs; bool restat = false; int memory = 0; int line = 0;
+    string dir, cmd, output, depfile, pool, salt; vector<string> inputs, after, outputs; bool restat = false; int memory = 0; int line = 0;
+    vector<std::pair<string, string>> partials; // importer outputs: written as FIRST, renamed to SECOND on success
+};
+// An importer maps a file pattern to a command line; one action per matching file (expanded when the graph is planned).
+struct ImporterDecl {
+    string name, pattern, output, cmd, depfile, pool; vector<string> inputs, settings; int line = 0;
 };
 struct Target {
+    string outName; // output_name: the program's file name when it differs from the target name (CMake's OUTPUT_NAME)
+    string libKind; // "" static archive, "shared" (.so, linked with -shared, -fPIC, found through an rpath), "object" (an archive that is linked whole, like CMake's OBJECT libraries)
     string name; bool isLib = false; bool isTest = false; int line = 0; string pool;
     vector<string> sources, includes, exportIncludes, defines, flags, linkFlags, libs, deps, needs, runtime, assets;
+    // per-file additions (CMake's set_source_files_properties): {source path, word}
+    vector<std::pair<string, string>> fileFlags, fileDefines, fileIncludes;
 };
+// A ctest-style test (from CMake's add_test): a command line whose first word may be a target name (then it is the built program),
+// an optional working folder, a time limit, "will_fail" (the test passes when the command fails) and a return code that means skipped.
+struct CTestDecl { string name; int line = 0; vector<string> cmd, needs; string cwd; long long timeout = 0; bool willFail = false; int skipCode = -1; bool serial = false; vector<string> env, labels, depends; };
 struct ConfigBlock {
     string name; int line = 0; int optimize = -1; int debug = -1;
     vector<string> flags, linkFlags, defines;
@@ -103,29 +133,38 @@ struct PackageDecl {
     string name, path, version; int line = 0;
     vector<std::pair<string, string>> depends;
 };
+// A source tree to download, pinned: a git commit (40 hex digits) or a tarball with its SHA-256. Only `okay-build fetch` downloads; a build never does.
+struct FetchDecl { string name, git, commit, url, sha256, dir; int strip = 1; int line = 0; };
 struct DistDecl {
     bool on = false; string dir = "dist", launcher, dll, readme, version, textures, fonts;
     vector<string> tools, examples;
 };
 struct Manifest {
-    Toolchain tc; string outdir = "build"; vector<Target> targets; vector<RawAction> actions; vector<PoolDecl> pools;
+    bool accountDefines = false; // account_defines = on: add OKAY_DEFAULT_ACCOUNT_URL/KEY from the environment or config/public-account.json
+    Toolchain tc; string outdir = "build", objSub; // objSub: "CONFIG/" when outdir has {config}
+     vector<Target> targets; vector<RawAction> actions; vector<ImporterDecl> importers; vector<PoolDecl> pools;
     vector<ConfigBlock> configs; vector<OptionDecl> options; vector<CondBlock> conds; vector<PackageDecl> packages;
-    DistDecl dist;
+    DistDecl dist; vector<CTestDecl> ctests; vector<FetchDecl> fetches;
     bool hasBuildfile = false; string buildCmd, buildDepfile; vector<string> buildInputs; int buildLine = 0;
 };
 
 // split on whitespace; "double quoted" words may contain spaces
 static vector<string> tokens(const string& line) {
     vector<string> t; string cur; bool inq = false, have = false;
-    for (char c : line) {
-        if (c == '"') { inq = !inq; have = true; }
+    for (size_t i = 0; i < line.size(); ++i) {
+        char c = line[i];
+        if (c == '\\' && i + 1 < line.size() && line[i + 1] == '"') { cur += '"'; ++i; have = true; } // \" is a literal quote
+        else if (c == '"') { inq = !inq; have = true; }
         else if (!inq && isspace((unsigned char)c)) { if (have) { t.push_back(cur); cur.clear(); have = false; } }
         else { cur += c; have = true; }
     }
     if (have) t.push_back(cur);
     return t;
 }
-static string qtok(const string& s) { return s.find_first_of(" \t") == string::npos && !s.empty() ? s : "\"" + s + "\""; }
+static string qtok(const string& s) {
+    string e; for (char c : s) { if (c == '"') e += "\\\""; else e += c; } // a literal quote is written \"
+    return s.find_first_of(" \t") == string::npos && !s.empty() ? e : "\"" + e + "\"";
+}
 
 // '#' starts a comment only outside quotes. A cmd line is kept whole, because the command text
 // itself may contain '#' (a preprocessor line, a quoted path). A trailing comment on a cmd line
@@ -148,7 +187,7 @@ static Manifest parseManifest(const string& file) {
     std::ifstream in(file);
     if (!in) throw Fail("cannot open manifest " + file);
     Manifest m; string line; int ln = 0;
-    enum { TOP, TC, TARGET, ACTION, POOL, BUILDFILE, CONFIG, COND, PACKAGE, DIST } mode = TOP;
+    enum { TOP, TC, TARGET, ACTION, POOL, BUILDFILE, CONFIG, COND, PACKAGE, DIST, IMPORTER, CTEST, FETCH } mode = TOP;
     auto err = [&](const string& msg) { return Fail(file + ":" + std::to_string(ln) + ": " + msg); };
     auto oneFlag = [&](const vector<string>& v, const string& k) {
         if (v.size() != 1) throw err(k + " takes one value");
@@ -160,26 +199,21 @@ static Manifest parseManifest(const string& file) {
         ++ln;
         if (!isCmdLine(line)) line = stripComment(line);
         auto t = tokens(line); if (t.empty()) continue;
-        if ((mode == ACTION || mode == BUILDFILE) && t[0] == "cmd") { // raw rest of line, kept exactly
+        if ((mode == ACTION || mode == BUILDFILE || mode == IMPORTER) && t[0] == "cmd") { // raw rest of line, kept exactly
             auto p = line.find('='); if (p == string::npos) throw err("expected: cmd = command");
             size_t b = line.find_first_not_of(" \t", p + 1); string cmd = b == string::npos ? "" : line.substr(b);
             while (!cmd.empty() && isspace((unsigned char)cmd.back())) cmd.pop_back();
-            (mode == ACTION ? m.actions.back().cmd : m.buildCmd) = cmd; continue;
+            (mode == ACTION ? m.actions.back().cmd : mode == IMPORTER ? m.importers.back().cmd : m.buildCmd) = cmd; continue;
         }
         if (t[0] == "end") { if (mode == TOP) throw err("'end' outside a block"); mode = TOP; continue; }
         if (mode == TOP) {
             if (t[0] == "outdir" && t.size() == 3 && t[1] == "=") { m.outdir = t[2]; continue; }
+            if (t[0] == "account_defines" && t.size() == 3 && t[1] == "=") { if (t[2] != "on" && t[2] != "off") throw err("account_defines wants on or off"); m.accountDefines = t[2] == "on"; continue; }
             if (t[0] == "toolchain") {
                 mode = TC; Toolchain& c = m.tc;
                 if (t.size() > 1) {
-                    c.name = t[1];
-                    if (t[1] == "gcc") {}
-                    else if (t[1] == "clang") { c.cc = "clang"; c.cxx = "clang++"; }
-                    else if (t[1] == "mingw") { c.cc = "x86_64-w64-mingw32-gcc-win32"; c.cxx = "x86_64-w64-mingw32-g++-win32";
-                                                c.ar = "x86_64-w64-mingw32-ar"; c.exe = ".exe"; }
-                    else if (t[1] == "msvc") { c.cc = "cl.exe"; c.cxx = "cl.exe"; c.ld = "link.exe"; c.ar = "lib.exe";
-                                               c.obj = ".obj"; c.exe = ".exe"; c.libp = ""; c.libs = ".lib"; c.msvc = true; c.rspUtf16 = true; }
-                    else throw err("unknown toolchain preset '" + t[1] + "' (gcc, clang, mingw, msvc)");
+                    if (t[1] == "auto") { c.autoPick = true; c.name = "auto"; }
+                    else if (!applyPreset(c, t[1])) throw err("unknown toolchain preset '" + t[1] + "' (auto, gcc, clang, mingw, msvc)");
                 }
                 continue;
             }
@@ -193,6 +227,11 @@ static Manifest parseManifest(const string& file) {
                 if (m.hasBuildfile) throw err("only one buildfile block is allowed");
                 m.hasBuildfile = true; m.buildLine = ln; mode = BUILDFILE; continue;
             }
+            if (t[0] == "importer") {
+                if (t.size() != 2) throw err("expected: importer NAME");
+                for (auto& i : m.importers) if (i.name == t[1]) throw err("duplicate importer '" + t[1] + "'");
+                ImporterDecl d; d.name = t[1]; d.line = ln; m.importers.push_back(d); mode = IMPORTER; continue;
+            }
             if (t[0] == "action") { m.actions.push_back(RawAction()); m.actions.back().line = ln; mode = ACTION; continue; }
             if (t[0] == "dist") {
                 if (m.dist.on) throw err("only one dist block is allowed");
@@ -203,10 +242,20 @@ static Manifest parseManifest(const string& file) {
                 for (auto& p : m.packages) if (p.name == t[1]) throw err("duplicate package '" + t[1] + "'");
                 PackageDecl p; p.name = t[1]; p.line = ln; m.packages.push_back(p); mode = PACKAGE; continue;
             }
+            if (t[0] == "fetch") {
+                if (t.size() != 2) throw err("expected: fetch NAME");
+                for (auto& x : m.fetches) if (x.name == t[1]) throw err("duplicate fetch '" + t[1] + "'");
+                FetchDecl f; f.name = t[1]; f.line = ln; f.dir = "_deps/" + t[1] + "-src"; m.fetches.push_back(f); mode = FETCH; continue;
+            }
+            if (t[0] == "ctest") {
+                if (t.size() != 2) throw err("expected: ctest NAME");
+                for (auto& x : m.ctests) if (x.name == t[1]) throw err("duplicate ctest '" + t[1] + "'");
+                CTestDecl c; c.name = t[1]; c.line = ln; m.ctests.push_back(c); mode = CTEST; continue;
+            }
             if (t[0] == "target") {
-                if (t.size() != 3 || (t[2] != "exe" && t[2] != "lib")) throw err("expected: target NAME exe|lib");
+                if (t.size() != 3 || (t[2] != "exe" && t[2] != "lib" && t[2] != "shared" && t[2] != "object")) throw err("expected: target NAME exe|lib|shared|object");
                 for (auto& x : m.targets) if (x.name == t[1]) throw err("duplicate target '" + t[1] + "'");
-                Target x; x.name = t[1]; x.isLib = t[2] == "lib"; x.line = ln; m.targets.push_back(x); mode = TARGET; continue;
+                Target x; x.name = t[1]; x.isLib = t[2] != "exe"; x.libKind = t[2] == "shared" || t[2] == "object" ? t[2] : string(); x.line = ln; m.targets.push_back(x); mode = TARGET; continue;
             }
             if (t[0] == "option") {
                 if (t.size() < 5 || t[3] != "=") throw err("expected: option NAME bool|int|string = VALUE");
@@ -242,13 +291,14 @@ static Manifest parseManifest(const string& file) {
         vector<string> v(t.begin() + 2, t.end()); string k = t[0];
         auto add = [&](vector<string>& d) { d.insert(d.end(), v.begin(), v.end()); };
         if (mode == TC) {
-            Toolchain& c = m.tc; auto one = [&](string& d) { if (v.size() != 1 && !(v.empty() && (k == "exe_suffix" || k == "lib_prefix"))) throw err(k + " takes one value"); d = v.empty() ? "" : v[0]; };
+            Toolchain& c = m.tc; auto one = [&](string& d) { c.setKeys.push_back(k); if (v.size() != 1 && !(v.empty() && (k == "exe_suffix" || k == "lib_prefix"))) throw err(k + " takes one value"); d = v.empty() ? "" : v[0]; };
             if (k == "cc") one(c.cc); else if (k == "cxx") one(c.cxx); else if (k == "ld") one(c.ld); else if (k == "ar") one(c.ar);
             else if (k == "obj_suffix") one(c.obj); else if (k == "exe_suffix") one(c.exe);
             else if (k == "lib_prefix") one(c.libp); else if (k == "lib_suffix") one(c.libs);
             else if (k == "flags") add(c.flags); else if (k == "link_flags") add(c.linkFlags);
             else if (k == "rsp_threshold") { if (v.size() != 1) throw err("rsp_threshold takes one value"); c.rspThreshold = (size_t)atoll(v[0].c_str()); }
             else if (k == "rsp_utf16") c.rspUtf16 = oneFlag(v, "rsp_utf16");
+            else if (k == "path_map") c.pathMap = oneFlag(v, "path_map");
             else throw err("unknown toolchain key '" + k + "'");
         } else if (mode == POOL) {
             PoolDecl& p = m.pools.back();
@@ -267,6 +317,15 @@ static Manifest parseManifest(const string& file) {
             else if (k == "memory") { if (v.size() != 1) throw err("memory takes one value"); x.memory = atoi(v[0].c_str()); if (x.memory < 0) throw err("memory must be 0 or more"); }
             else if (k == "inputs") add(x.inputs); else if (k == "after") add(x.after);
             else throw err("unknown action key '" + k + "'");
+        } else if (mode == IMPORTER) {
+            ImporterDecl& x = m.importers.back();
+            if (k == "pattern") { if (v.size() != 1) throw err("pattern takes one value"); x.pattern = v[0]; }
+            else if (k == "output") { if (v.size() != 1) throw err("output takes one value"); x.output = v[0]; }
+            else if (k == "depfile") { if (v.size() != 1) throw err("depfile takes one value"); x.depfile = v[0]; }
+            else if (k == "pool") { if (v.size() != 1) throw err("pool takes one value"); x.pool = v[0]; }
+            else if (k == "inputs") add(x.inputs);
+            else if (k == "settings") add(x.settings);
+            else throw err("unknown importer key '" + k + "'");
         } else if (mode == BUILDFILE) {
             if (k == "inputs") add(m.buildInputs);
             else if (k == "depfile") { if (v.size() != 1) throw err("depfile takes one value"); m.buildDepfile = v[0]; }
@@ -295,6 +354,25 @@ static Manifest parseManifest(const string& file) {
             else if (k == "version") { if (v.size() != 1) throw err("version takes one value"); p.version = v[0]; }
             else if (k == "depend") { if (v.size() != 2) throw err("depend takes a package name and a version"); p.depends.push_back({v[0], v[1]}); }
             else throw err("unknown package key '" + k + "'");
+        } else if (mode == FETCH) {
+            FetchDecl& f = m.fetches.back();
+            if (v.size() != 1) throw err(k + " takes one value");
+            if (k == "git") f.git = v[0]; else if (k == "commit") f.commit = v[0]; else if (k == "url") f.url = v[0]; else if (k == "sha256") f.sha256 = v[0];
+            else if (k == "dir") f.dir = v[0]; else if (k == "strip") f.strip = atoi(v[0].c_str());
+            else throw err("unknown fetch key '" + k + "'");
+        } else if (mode == CTEST) {
+            CTestDecl& c = m.ctests.back();
+            if (k == "cmd") { for (auto& w : v) c.cmd.push_back(w); }
+            else if (k == "needs") { for (auto& w : v) c.needs.push_back(w); }
+            else if (k == "cwd") { if (v.size() != 1) throw err("cwd takes one value"); c.cwd = v[0]; }
+            else if (k == "timeout") { if (v.size() != 1 || v[0].empty() || v[0].find_first_not_of("0123456789") != string::npos) throw err("timeout takes whole seconds"); c.timeout = atoll(v[0].c_str()); }
+            else if (k == "will_fail") c.willFail = oneFlag(v, "will_fail");
+            else if (k == "serial") c.serial = oneFlag(v, "serial");
+            else if (k == "env") { for (auto& w : v) { if (w.find('=') == string::npos || w[0] == '=') throw err("env wants NAME=VALUE words"); c.env.push_back(w); } }
+            else if (k == "labels") { for (auto& w : v) c.labels.push_back(w); }
+            else if (k == "depends") { for (auto& w : v) c.depends.push_back(w); }
+            else if (k == "skip_code") { if (v.size() != 1) throw err("skip_code takes one number"); c.skipCode = atoi(v[0].c_str()); }
+            else throw err("unknown ctest key '" + k + "'");
         } else if (mode == DIST) {
             DistDecl& d = m.dist;
             if (k == "dir") { if (v.size() != 1) throw err("dir takes one value"); d.dir = v[0]; }
@@ -318,6 +396,12 @@ static Manifest parseManifest(const string& file) {
             else if (k == "assets") add(x.assets);
             else if (k == "pool") { if (v.size() != 1) throw err("pool takes one value"); x.pool = v[0]; }
             else if (k == "test") x.isTest = oneFlag(v, "test");
+            else if (k == "output_name") { if (v.size() != 1) throw err("output_name takes one value"); x.outName = v[0]; }
+            else if (k == "file_flag" || k == "file_define" || k == "file_include") {
+                if (v.size() < 2) throw err(k + " takes a source path and then one or more words");
+                auto& dst = k == "file_flag" ? x.fileFlags : k == "file_define" ? x.fileDefines : x.fileIncludes;
+                for (size_t i = 1; i < v.size(); ++i) dst.push_back({v[0], v[i]});
+            }
             else throw err("unknown target key '" + k + "'");
         }
     }
@@ -325,6 +409,20 @@ static Manifest parseManifest(const string& file) {
     for (auto& a : m.actions) {
         if (a.cmd.empty()) throw Fail(file + ":" + std::to_string(a.line) + ": action has no cmd");
         if (a.restat && a.output.empty() && a.outputs.empty()) throw Fail(file + ":" + std::to_string(a.line) + ": restat action has no output");
+    }
+    for (auto& i : m.importers) {
+        string w = file + ":" + std::to_string(i.line) + ": importer '" + i.name + "' ";
+        if (i.pattern.empty()) throw Fail(w + "has no pattern");
+        if (i.output.empty()) throw Fail(w + "has no output");
+        if (i.cmd.empty()) throw Fail(w + "has no cmd");
+        if (i.output.find("{input}") == string::npos && i.output.find("{stem}") == string::npos && i.output.find("{name}") == string::npos)
+            throw Fail(w + "output must use {stem}, {name} or {input}, or every file would write the same output");
+    }
+    for (auto& f : m.fetches) {
+        string w = file + ":" + std::to_string(f.line) + ": fetch '" + f.name + "' ";
+        if (f.git.empty() == f.url.empty()) throw Fail(w + "needs either git (with commit) or url (with sha256)");
+        if (!f.git.empty() && f.commit.empty()) throw Fail(w + "has git but no commit");
+        if (!f.url.empty() && f.sha256.empty()) throw Fail(w + "has url but no sha256");
     }
     if (m.hasBuildfile && m.buildCmd.empty()) throw Fail(file + ":" + std::to_string(m.buildLine) + ": buildfile has no cmd");
     for (auto& t : m.targets) if (t.isTest && t.isLib) throw Fail(file + ":" + std::to_string(t.line) + ": test target '" + t.name + "' is a library");
@@ -420,12 +518,18 @@ static bool hashFile(string_view pv, FileSig& out) {
 }
 static void forgetHash(const string& p) { OK_LOCK(l, gHashMu); gCache.erase(p); }
 static string hashStr(const string& s) { return hex64(fnv(s.data(), s.size())); }
-static string hashArgv(const vector<string>& a) { uint64_t h = 1469598103934665603ull; for (auto& s : a) { h = fnv(s.data(), s.size(), h); h = fnv("\0", 1, h); } return hex64(h); }
+static const string& normRootValue() { static const string root = fs::current_path().generic_string(); return root; }
+static string normRoot(string s) { // the checkout folder as a fixed word, so moving the tree does not change a command's hash
+    static const string root = fs::current_path().generic_string();
+    size_t at = 0; while (!root.empty() && (at = s.find(root, at)) != string::npos) { s.replace(at, root.size(), "\x01R"); at += 2; }
+    return s;
+}
+static string hashArgv(const vector<string>& a) { uint64_t h = 1469598103934665603ull; for (auto& s0 : a) { string s = normRoot(s0); h = fnv(s.data(), s.size(), h); h = fnv("\0", 1, h); } return hex64(h); }
 
 // ---------------------------------------------------------------- graph
 struct Action {
     int id = 0; string kind, desc, output, depfile, dir, rawCmd, pool; vector<string> argv, inputs, outputs, waitFor;
-    vector<int> deps, rdeps; string target; size_t rspHead = 0, rspThreshold = 0; string cmdHash; bool restat = false; int memory = 0;
+    vector<int> deps, rdeps; vector<std::pair<string, string>> partials; string salt; string target; size_t rspHead = 0, rspThreshold = 0; string cmdHash; bool restat = false; int memory = 0;
 };
 struct Graph { vector<Action> acts; vector<std::pair<string, int>> targetFinal; };
 static string gBuildDir = ".";
@@ -436,6 +540,12 @@ static string resolve(const string& dir, const string& p) {
 }
 
 static string quote(const string& s) { return s.find_first_of(" \"'$\\") == string::npos ? s : "'" + s + "'"; }
+// Values that must never be printed or written to a file we produce (the account key and URL). Filled by account_defines.
+static vector<string> gSecrets;
+static string redact(string s) {
+    for (auto& v : gSecrets) { if (v.empty()) continue; size_t at = 0; while ((at = s.find(v, at)) != string::npos) { s.replace(at, v.size(), "<hidden>"); at += 8; } }
+    return s;
+}
 static string joined(const vector<string>& a) { string r; for (auto& s : a) { if (!r.empty()) r += ' '; r += quote(s); } return r; }
 
 static string spellMsvc(const string& f, bool link) {
@@ -455,7 +565,76 @@ static bool msvcLinkerIsCl(const string& ld) {
     if (b.size() > 4 && b.compare(b.size() - 4, 4, ".exe") == 0) b.resize(b.size() - 4);
     return b == "cl";
 }
+// ---- importers: a file pattern -> one command per matching file
+static bool globMatch(const char* p, const char* s) { // '*' any run, '?' one character; no slashes inside a name
+    if (!*p) return !*s;
+    if (*p == '*') { for (const char* q = s;; ++q) { if (globMatch(p + 1, q)) return true; if (!*q) return false; } }
+    if (*s && (*p == '?' || *p == *s)) return globMatch(p + 1, s + 1);
+    return false;
+}
+struct ImportHit { string path, relDir; };
+static vector<ImportHit> importerFiles(const string& pattern) {
+    string base, namePat; bool deep = false;
+    size_t st = pattern.find("**");
+    if (st != string::npos) {
+        deep = true; base = pattern.substr(0, st); namePat = pattern.substr(st + 2);
+        while (!base.empty() && base.back() == '/') base.pop_back();
+        while (!namePat.empty() && namePat[0] == '/') namePat.erase(0, 1);
+        if (namePat.empty()) namePat = "*";
+    } else {
+        size_t sl = pattern.find_last_of('/');
+        base = sl == string::npos ? "" : pattern.substr(0, sl); namePat = sl == string::npos ? pattern : pattern.substr(sl + 1);
+    }
+    vector<ImportHit> hits; std::error_code ec;
+    fs::path root = base.empty() ? fs::path(".") : fs::path(base);
+    if (!fs::is_directory(root, ec)) return hits;
+    auto take = [&](const fs::path& f) {
+        if (!globMatch(namePat.c_str(), f.filename().string().c_str())) return;
+        string rel = fs::relative(f.parent_path(), root, ec).generic_string(); if (rel == ".") rel.clear();
+        string path = base.empty() ? f.filename().generic_string() : (base + "/" + (rel.empty() ? "" : rel + "/") + f.filename().generic_string());
+        hits.push_back({path, rel});
+    };
+    if (deep) { for (fs::recursive_directory_iterator it(root, ec), e; !ec && it != e; it.increment(ec)) if (it->is_regular_file(ec)) take(it->path()); }
+    else for (fs::directory_iterator it(root, ec), e; !ec && it != e; it.increment(ec)) if (it->is_regular_file(ec)) take(it->path());
+    std::sort(hits.begin(), hits.end(), [](const ImportHit& a, const ImportHit& b) { return a.path < b.path; });
+    return hits;
+}
+static string fillTemplate(string t, const std::vector<std::pair<string, string>>& kv) {
+    for (auto& [k, v] : kv) {
+        string key = "{" + k + "}";
+        if (v.empty() && k == "dir") { for (size_t p; (p = t.find(key + "/")) != string::npos;) t.erase(p, key.size() + 1); }
+        for (size_t p = 0; (p = t.find(key, p)) != string::npos; p += v.size()) t.replace(p, key.size(), v);
+    }
+    return t;
+}
+static vector<RawAction> expandImporters(const Manifest& m) {
+    vector<RawAction> out;
+    for (auto& im : m.importers) {
+        string settings = joined(im.settings);
+        for (auto& h : importerFiles(im.pattern)) {
+            fs::path in(h.path);
+            vector<std::pair<string, string>> kv = {{"input", h.path}, {"name", in.filename().string()}, {"stem", in.stem().string()},
+                {"ext", in.extension().string().empty() ? "" : in.extension().string().substr(1)}, {"dir", h.relDir}};
+            RawAction r; r.line = im.line; r.pool = im.pool; r.inputs = im.inputs; r.inputs.push_back(h.path);
+            r.output = fillTemplate(im.output, kv);
+            if (r.output == h.path) throw Fail("importer '" + im.name + "': output would overwrite its input " + h.path);
+            fs::path op(r.output);
+            string partial = (op.parent_path() / (op.stem().string() + ".partial" + op.extension().string())).generic_string();
+            if (!im.depfile.empty()) r.depfile = fillTemplate(im.depfile, kv);
+            vector<std::pair<string, string>> cv;
+            for (auto& x : kv) cv.push_back({x.first, x.first == "input" ? quote(x.second) : x.second});
+            cv.push_back({"output", quote(partial)}); cv.push_back({"depfile", quote(r.depfile)}); cv.push_back({"settings", settings});
+            r.cmd = fillTemplate(im.cmd, cv);
+            r.partials.push_back({partial, r.output});
+            r.salt = "importer " + im.name + "\nsettings " + settings;
+            out.push_back(r);
+        }
+    }
+    return out;
+}
+
 static Graph plan(const Manifest& m, const vector<string>& want) {
+    vector<RawAction> raws = m.actions; { auto more = expandImporters(m); raws.insert(raws.end(), more.begin(), more.end()); }
     std::map<string, const Target*> byName;
     for (auto& t : m.targets) byName[t.name] = &t;
     for (auto& t : m.targets) {
@@ -482,7 +661,7 @@ static Graph plan(const Manifest& m, const vector<string>& want) {
     for (auto& t : m.targets) if (col[t.name] == 0) visit(t.name);
 
     Graph g; std::map<string, int> finalAct;
-    auto outPath = [&](const Target& t) { return under(m.outdir + "/" + (t.isLib ? m.tc.libp + t.name + m.tc.libs : t.name + m.tc.exe)); };
+    auto outPath = [&](const Target& t) { return under(m.outdir + "/" + (t.isLib ? m.tc.libp + (t.outName.empty() ? t.name : t.outName) + (t.libKind == "shared" && !m.tc.msvc ? string(".so") : m.tc.libs) : (t.outName.empty() ? t.name : t.outName) + m.tc.exe)); };
     std::set<string> done; vector<string> order;
     std::function<void(const string&)> post = [&](const string& n) { if (!done.insert(n).second) return; for (auto& d : byName[n]->deps) post(d); order.push_back(n); };
     for (auto& t : m.targets) post(t.name);
@@ -493,24 +672,36 @@ static Graph plan(const Manifest& m, const vector<string>& want) {
         for (auto& d : t.deps) go(d);
         std::reverse(po.begin(), po.end()); return po;
     };
+    auto linkClosure = [&](const Target& t) { // like transitive(), but a shared library carries its own dependencies, so we stop below it
+        vector<string> po; std::set<string> seen;
+        std::function<void(const string&)> go = [&](const string& n) { if (!seen.insert(n).second) return; if (byName[n]->libKind != "shared") for (auto& d : byName[n]->deps) go(d); po.push_back(n); };
+        for (auto& d : t.deps) go(d);
+        std::reverse(po.begin(), po.end()); return po;
+    };
     std::set<string> produced; // outputs of raw actions, so a generated source need not exist yet
-    for (auto& r : m.actions) {
+    for (auto& r : raws) {
         if (!r.output.empty()) produced.insert(resolve(r.dir, r.output));
         for (auto& o : r.outputs) produced.insert(resolve(r.dir, o));
     }
     auto add = [&](Action a) { a.id = (int)g.acts.size(); g.acts.push_back(a); return a.id; };
+    // {bin} in a definition, flag or include folder means <build dir>/<outdir>/ctest (what CMake calls CMAKE_BINARY_DIR in the `cmake` command's manifests)
+    string binTree = fs::absolute(under(m.outdir + "/ctest")).lexically_normal().generic_string();
+    auto fixBin = [&](string w) { for (size_t at; (at = w.find("{bin}")) != string::npos;) w.replace(at, 5, binTree); return w; };
     for (auto& n : order) {
         const Target& t = *byName[n]; vector<string> libs = transitive(t);
         vector<string> objs; vector<int> objActs; vector<string> needKeys;
         for (auto& nd : t.needs) needKeys.push_back(resolve("", nd));
         for (auto& s : t.sources) {
             string srcKey = resolve("", s);
-            if (!produced.count(srcKey) && !fs::exists(s)) throw Fail("target '" + t.name + "': source '" + s + "' does not exist");
+            if (!produced.count(srcKey) && !fs::exists(s)) {
+                string hint; for (auto& f : m.fetches) if (s.compare(0, f.dir.size() + 1, f.dir + "/") == 0) hint = " (it comes from fetch '" + f.name + "': run okay-build fetch " + f.name + ")";
+                throw Fail("target '" + t.name + "': source '" + s + "' does not exist" + hint);
+            }
             bool isC = fs::path(s).extension() == ".c";
             string rel = fs::path(s).lexically_normal().generic_string();
             for (size_t p; (p = rel.find("..")) != string::npos;) rel.replace(p, 2, "__");
             Action a; a.kind = "CC"; a.target = t.name; a.desc = s;
-            a.output = under(".okaybuild/obj/" + t.name + "/" + rel + m.tc.obj); a.depfile = a.output + ".d"; a.inputs = {srcKey}; a.outputs = {a.output};
+            a.output = under(".okaybuild/obj/" + m.objSub + t.name + "/" + rel + m.tc.obj); a.depfile = a.output + ".d"; a.inputs = {srcKey}; a.outputs = {a.output};
             a.waitFor = needKeys; if (produced.count(srcKey)) a.waitFor.push_back(srcKey);
             if (m.tc.msvc) {
                 a.argv.push_back(isC ? m.tc.cc : m.tc.cxx);
@@ -520,23 +711,40 @@ static Graph plan(const Manifest& m, const vector<string>& want) {
                 for (auto& i : t.includes) a.argv.push_back("/I" + i);
                 for (auto& i : t.exportIncludes) a.argv.push_back("/I" + i);
                 for (auto& l : libs) for (auto& i : byName[l]->exportIncludes) a.argv.push_back("/I" + i);
-                for (auto& d : t.defines) a.argv.push_back("/D" + d);
+                for (auto& d : t.defines) a.argv.push_back("/D" + fixBin(d));
+                for (auto& pf : t.fileIncludes) if (pf.first == s) a.argv.push_back("/I" + pf.second);
+                for (auto& pf : t.fileDefines) if (pf.first == s) a.argv.push_back("/D" + fixBin(pf.second));
+                for (auto& pf : t.fileFlags) if (pf.first == s) a.argv.push_back(spellMsvc(pf.second, false));
                 a.argv.push_back("/c"); a.argv.push_back("/Fo" + a.output); a.argv.push_back(s);
                 a.rspHead = 1; a.rspThreshold = m.tc.rspThreshold;
             } else {
                 a.argv.push_back(isC ? m.tc.cc : m.tc.cxx);
                 for (auto& f : m.tc.flags) a.argv.push_back(f);
-                for (auto& f : t.flags) a.argv.push_back(f);
+                if (t.libKind == "shared") a.argv.push_back("-fPIC");
+                for (auto& f : t.flags) { if (isC && (f.rfind("-std=c++", 0) == 0 || f.rfind("-std=gnu++", 0) == 0)) continue; a.argv.push_back(f); } // a C++ standard does not apply to a C file
                 for (auto& i : t.includes) a.argv.push_back("-I" + i);
                 for (auto& i : t.exportIncludes) a.argv.push_back("-I" + i);
                 for (auto& l : libs) for (auto& i : byName[l]->exportIncludes) a.argv.push_back("-I" + i);
-                for (auto& d : t.defines) a.argv.push_back("-D" + d);
+                for (auto& d : t.defines) a.argv.push_back("-D" + fixBin(d));
+                for (auto& pf : t.fileIncludes) if (pf.first == s) a.argv.push_back("-I" + pf.second);
+                for (auto& pf : t.fileDefines) if (pf.first == s) a.argv.push_back("-D" + fixBin(pf.second));
+                for (auto& pf : t.fileFlags) if (pf.first == s) a.argv.push_back(pf.second);
                 for (auto& x : {string("-MMD"), string("-MF"), a.depfile, string("-MT"), a.output, string("-c"), s, string("-o"), a.output}) a.argv.push_back(x);
+                if (m.tc.pathMap) { // spell the sources and include folders absolutely and map the checkout folder to a fixed name
+                    string root = fs::current_path().generic_string();
+                    auto absOf = [&](const string& p) { return (p.empty() || p[0] == '/' || (p.size() > 1 && p[1] == ':')) ? p : root + "/" + p; };
+                    for (size_t i = 1; i < a.argv.size(); ++i) {
+                        string& w = a.argv[i];
+                        if (w.rfind("-I", 0) == 0 && w.size() > 2) w = "-I" + absOf(w.substr(2));
+                        else if (w == "-c" && i + 1 < a.argv.size()) a.argv[i + 1] = absOf(a.argv[i + 1]);
+                    }
+                    a.argv.insert(a.argv.begin() + 1, "-ffile-prefix-map=" + root + "=/okay-src");
+                }
             }
             objs.push_back(a.output); objActs.push_back(add(a));
         }
         Action a; a.target = t.name; a.output = outPath(t); a.outputs = {a.output}; a.deps = objActs; a.inputs = objs; a.desc = a.output; a.rspThreshold = m.tc.rspThreshold; a.pool = t.pool; a.waitFor = needKeys;
-        if (t.isLib) {
+        if (t.isLib && t.libKind != "shared") {
             a.kind = "AR";
             if (m.tc.msvc) { a.argv = {m.tc.ar, "/nologo", "/OUT:" + a.output}; a.rspHead = 3; }
             else { a.argv = {m.tc.ar, "rcs", a.output}; a.rspHead = 3; }
@@ -546,12 +754,20 @@ static Graph plan(const Manifest& m, const vector<string>& want) {
             string linker = m.tc.ld.empty() ? m.tc.cxx : m.tc.ld;
             a.argv = {linker}; a.rspHead = 1;
             if (m.tc.msvc) a.argv.push_back("/nologo");
+            if (t.libKind == "shared" && !m.tc.msvc) a.argv.push_back("-shared");
+            if (t.libKind == "shared" && !m.tc.msvc) a.argv.push_back("-Wl,-soname," + fs::path(a.output).filename().string()); // so a program records "libX.so", not the path we linked with
             for (auto& o : objs) a.argv.push_back(o);
             for (auto& f : m.tc.linkFlags) a.argv.push_back(m.tc.msvc ? spellMsvc(f, true) : f);
             for (auto& f : t.linkFlags) a.argv.push_back(m.tc.msvc ? spellMsvc(f, true) : f);
-            vector<string> sys = t.libs;
-            for (auto& l : libs) { a.argv.push_back(outPath(*byName[l])); a.inputs.push_back(outPath(*byName[l])); a.deps.push_back(finalAct[l]);
-                                   for (auto& s : byName[l]->libs) sys.push_back(s); }
+            vector<string> sys = t.libs; std::set<string> rpaths;
+            for (auto& l : linkClosure(t)) {
+                bool whole = byName[l]->libKind == "object" && !m.tc.msvc, shared = byName[l]->libKind == "shared" && !m.tc.msvc;
+                if (whole) a.argv.push_back("-Wl,--whole-archive");
+                a.argv.push_back(outPath(*byName[l])); a.inputs.push_back(outPath(*byName[l])); a.deps.push_back(finalAct[l]);
+                if (whole) a.argv.push_back("-Wl,--no-whole-archive");
+                if (shared) rpaths.insert(fs::absolute(fs::path(outPath(*byName[l])).parent_path()).lexically_normal().generic_string());
+                for (auto& s : byName[l]->libs) sys.push_back(s); }
+            for (auto& r : rpaths) a.argv.push_back("-Wl,-rpath," + r); // the loader finds our shared libraries beside the build output
             for (auto& s : sys) a.argv.push_back(m.tc.msvc ? s + ".lib" : "-l" + s);
             if (m.tc.msvc && (msvcLinkerIsCl(linker) || linker == m.tc.cc || linker == m.tc.cxx)) { a.argv.push_back("/Fe" + a.output); }
             else if (m.tc.msvc) { a.argv.push_back("/OUT:" + a.output); }
@@ -562,8 +778,8 @@ static Graph plan(const Manifest& m, const vector<string>& want) {
     // raw actions (imported commands and generators): `cd DIR && CMD` through sh.
     // Every declared output is an edge source. `after` names the spelling used in the manifest.
     std::map<string, int> byOut, byRawName;
-    for (auto& r : m.actions) {
-        Action a; a.kind = "RUN"; a.dir = r.dir; a.rawCmd = r.cmd; a.pool = r.pool; a.restat = r.restat; a.memory = r.memory;
+    for (auto& r : raws) {
+        Action a; a.kind = "RUN"; a.partials = r.partials; a.salt = r.salt; a.dir = r.dir; a.rawCmd = r.cmd; a.pool = r.pool; a.restat = r.restat; a.memory = r.memory;
         vector<string> outs;
         if (!r.output.empty()) outs.push_back(resolve(r.dir, r.output));
         for (auto& o : r.outputs) { string p = resolve(r.dir, o); if (std::find(outs.begin(), outs.end(), p) == outs.end()) outs.push_back(p); }
@@ -590,9 +806,9 @@ static Graph plan(const Manifest& m, const vector<string>& want) {
             if (it->second != a.id) a.deps.push_back(it->second);
         }
     }
-    for (size_t i = 0; i < m.actions.size(); ++i) {
-        Action& a = g.acts[g.acts.size() - m.actions.size() + i];
-        for (auto& x : m.actions[i].after) { auto it = byRawName.find(x); if (it == byRawName.end()) throw Fail("action '" + a.desc + "': 'after' names unknown action '" + x + "'"); a.deps.push_back(it->second); }
+    for (size_t i = 0; i < raws.size(); ++i) {
+        Action& a = g.acts[g.acts.size() - raws.size() + i];
+        for (auto& x : raws[i].after) { auto it = byRawName.find(x); if (it == byRawName.end()) throw Fail("action '" + a.desc + "': 'after' names unknown action '" + x + "'"); a.deps.push_back(it->second); }
     }
     // cycle check on the final graph (Kahn)
     { vector<int> indeg(g.acts.size()); vector<vector<int>> out(g.acts.size());
@@ -614,7 +830,7 @@ static Graph plan(const Manifest& m, const vector<string>& want) {
         for (auto& tf : g.targetFinal) if (keep[tf.second]) h.targetFinal.push_back({tf.first, remap[tf.second]});
         g = h;
     }
-    for (auto& a : g.acts) { a.rdeps.clear(); a.cmdHash = a.rawCmd.empty() ? hashArgv(a.argv) : hashStr(a.dir + "\n" + a.rawCmd); }
+    for (auto& a : g.acts) { a.rdeps.clear(); a.cmdHash = a.rawCmd.empty() ? hashArgv(a.argv) : hashStr(a.dir + "\n" + a.rawCmd + (a.salt.empty() ? "" : "\n" + a.salt)); }
     for (auto& a : g.acts) for (int d : a.deps) g.acts[d].rdeps.push_back(a.id);
     return g;
 }
@@ -642,7 +858,7 @@ static vector<string> parseDepfile(const string& path) {
 // ---------------------------------------------------------------- state
 struct Rec { string cmd; vector<std::pair<string_view, FileSig>> inputs, produced; };
 static std::deque<string> gPool;
-static string_view poolStr(const char* s, size_t n) { gPool.emplace_back(s, n); return gPool.back(); }
+static string_view poolStr(const char* s, size_t n) { OK_LOCK(l, gPoolMu); gPool.emplace_back(s, n); return gPool.back(); } // workers call this at the same time
 static uint64_t parseHex64(const char* s, size_t n) {
     uint64_t h = 0;
     for (size_t i = 0; i < n && i < 16; ++i) {
@@ -770,6 +986,16 @@ static void loadState() {
     std::ifstream j(journalPath(), std::ios::binary); string l; Rec* cur = nullptr;
     while (std::getline(j, l)) ingestStateLine(l, cur);
 }
+// A file whose bytes still match its record but whose size or mtime moved (an object restored from the cache, a touch)
+// gets its new stamp written back, so the next run trusts size+mtime and does not read the file again.
+static int refreshStamps() {
+    int n = 0;
+    for (auto& [o, r] : gState) for (auto& [p, sg] : r.inputs) {
+        auto it = gCache.find(string(p));
+        if (it != gCache.end() && it->second.hash == sg.hash && (it->second.mtime != sg.mtime || it->second.size != sg.size)) { sg = it->second; ++n; }
+    }
+    return n;
+}
 static void saveState() {
     fs::create_directories(under(".okaybuild"));
     std::unordered_map<string, uint32_t> id;
@@ -859,6 +1085,7 @@ static bool dirty(const Action& a, string& why) {
 
 // ---------------------------------------------------------------- running commands
 static long long nowNs();
+static thread_local long gLastPeakKb = 0; // peak memory of the last command this thread ran, in KiB (0 = not measured)
 #ifdef _WIN32
 struct Live {
     HANDLE proc = nullptr;
@@ -988,8 +1215,13 @@ static int waitChild(pid_t pid) {
         struct timespec ts; ts.tv_sec = 0; ts.tv_nsec = 20000000; nanosleep(&ts, nullptr);
     }
 }
-static int runCmd(const vector<string>& argv, string& out, bool stream = false) {
+static thread_local vector<string> gChildEnv; // ctest: NAME=VALUE words the next runCmd child gets
+static thread_local string gChildCwd; // ctest: the folder the next runCmd child starts in (empty = keep ours)
+static int runCmd(const vector<string>& argv, string& out, bool stream = false, long long timeoutNs = 0) {
+    gLastPeakKb = 0;
     auto child = [&]() {
+        for (auto& e : gChildEnv) { auto eq = e.find('='); setenv(e.substr(0, eq).c_str(), e.substr(eq + 1).c_str(), 1); }
+        if (!gChildCwd.empty() && chdir(gChildCwd.c_str()) != 0) { dprintf(2, "okay-build: cannot enter '%s': %s\n", gChildCwd.c_str(), strerror(errno)); _exit(127); }
         vector<char*> av; for (auto& s : argv) av.push_back(const_cast<char*>(s.c_str())); av.push_back(nullptr);
         execvp(av[0], av.data()); dprintf(2, "okay-build: cannot run '%s': %s\n", av[0] ? av[0] : "(none)", strerror(errno)); _exit(127);
     };
@@ -1004,13 +1236,19 @@ static int runCmd(const vector<string>& argv, string& out, bool stream = false) 
     if (pid == 0) { setpgid(0, 0); dup2(fd[1], 1); dup2(fd[1], 2); close(fd[0]); close(fd[1]); child(); }
     setpgid(pid, pid);
     close(fd[1]); fcntl(fd[0], F_SETFL, O_NONBLOCK);
+    long long startedAt = timeoutNs ? nowNs() : 0;
     for (;;) {
         pollfd pf{}; pf.fd = fd[0]; pf.events = POLLIN; poll(&pf, 1, 20);
         for (;;) { char b[4096]; ssize_t n = read(fd[0], b, sizeof b); if (n > 0) out.append(b, (size_t)n); else break; }
-        int st = 0; pid_t r = waitpid(pid, &st, WNOHANG);
-        if (r == pid) { close(fd[0]); return WIFEXITED(st) ? WEXITSTATUS(st) : 128; }
+        int st = 0; struct rusage ru{}; pid_t r = wait4(pid, &st, WNOHANG, &ru);
+        if (r == pid) { gLastPeakKb = ru.ru_maxrss; close(fd[0]); return WIFEXITED(st) ? WEXITSTATUS(st) : 128; } // Linux reports ru_maxrss in KiB
         if (r < 0 && errno != EINTR) { close(fd[0]); return 128; }
         if (gCancel.load()) { kill(-pid, SIGTERM); kill(pid, SIGTERM); while (waitpid(pid, &st, 0) < 0 && errno == EINTR) {} close(fd[0]); return 130; }
+        if (timeoutNs && nowNs() - startedAt > timeoutNs) {
+            kill(-pid, SIGKILL); kill(pid, SIGKILL); while (waitpid(pid, &st, 0) < 0 && errno == EINTR) {}
+            for (;;) { char b[4096]; ssize_t n = read(fd[0], b, sizeof b); if (n > 0) out.append(b, (size_t)n); else break; }
+            close(fd[0]); return 124;
+        }
     }
 }
 static int captureStdout(const vector<string>& argv, string& out, string& err) {
@@ -1160,6 +1398,35 @@ static void ensureJobserver(int jobs) {
 #endif
     gJobOn = true;
 }
+// ---- Measured memory. On POSIX each command's peak resident size comes from wait4 (the kernel's own figure, covering the
+// command and the children it waited for). It is saved per step in .okaybuild/memory ("okaybuild-memory 1", then
+// "output<TAB>KiB"), and a later run with --memory-mb N uses it as that step's memory (in MiB, rounded up, at most N) when the
+// manifest did not declare one. Not measured on Windows. A cache hit runs nothing, so it measures nothing and keeps the old value.
+static int gMemMb = 0;
+static std::map<string, long> gPeaks;     // measured in this run
+static std::map<string, long> loadMemory() {
+    std::map<string, long> m; std::ifstream f(under(".okaybuild/memory")); string l;
+    if (!std::getline(f, l) || l != "okaybuild-memory 1") return m;
+    while (std::getline(f, l)) { auto t = l.rfind('\t'); if (t != string::npos) m[l.substr(0, t)] = atol(l.c_str() + t + 1); }
+    return m;
+}
+static void saveMemory() {
+    if (gPeaks.empty()) return;
+    auto m = loadMemory(); for (auto& kv : gPeaks) m[kv.first] = kv.second;
+    fs::create_directories(under(".okaybuild")); string tmp = under(".okaybuild/memory.tmp");
+    { std::ofstream f(tmp, std::ios::trunc); f << "okaybuild-memory 1\n"; for (auto& kv : m) f << kv.first << "\t" << kv.second << "\n"; }
+    fs::rename(tmp, under(".okaybuild/memory"));
+}
+static void applyMeasuredMemory(Graph& g) {
+    if (gMemMb <= 0) return;
+    gMemLimit = gMemMb;
+    auto m = loadMemory();
+    for (auto& a : g.acts) {
+        if (a.memory > 0) continue;
+        auto it = m.find(a.output.empty() ? a.desc : a.output); if (it == m.end() || it->second <= 0) continue;
+        long mb = (it->second + 1023) / 1024; a.memory = (int)std::min<long>(mb, gMemMb);
+    }
+}
 static void rejectOversized(const Graph& g) {
     if (gMemLimit <= 0) return;
     for (auto& a : g.acts) if (a.memory > gMemLimit)
@@ -1213,35 +1480,182 @@ static vector<string> preprocessArgv(const Action& a) {
     }
     return p;
 }
-static string cacheDirOf(const string& key) { return under(".okaybuild/cache/" + key); }
+static string gCacheDir; // --cache-dir or OKAY_CACHE_DIR: one cache shared by many build trees
+static void putLeCache(string& b, uint64_t v, int bytes) { for (int i = 0; i < bytes; ++i) b += (char)((v >> (8 * i)) & 0xff); }
+
+// ---- Compressed cache entries (--cache-compress). Our own byte-oriented LZ77 format "OKLZ", written from the general idea of
+// replacing repeated byte runs with (distance, length) pairs. Layout: "OKLZ", u64 original size, u64 FNV-1a of the original, then
+// sequences. A sequence is a token byte (high nibble = literal count, low nibble = match length - 4; a nibble of 15 continues in
+// following bytes that are added until one is below 255), the literal bytes, then (unless the output is already complete) a
+// 2-byte little-endian distance (1..65535) back into the output. Matches are at least 4 bytes and may overlap their own output.
+// The hash only detects damage. Decoding checks every length, so a bad file is an error and never a crash.
+static void lzLen(string& o, size_t n) { while (n >= 255) { o += (char)255; n -= 255; } o += (char)n; }
+static string lzPack(const string& in) {
+    string o = "OKLZ"; putLeCache(o, in.size(), 8); putLeCache(o, fnv(in.data(), in.size()), 8);
+    const size_t n = in.size(); vector<uint32_t> table(1u << 16, 0xffffffffu);
+    auto at4 = [&](size_t i) { uint32_t v; memcpy(&v, in.data() + i, 4); return v; };
+    auto hash4 = [&](size_t i) { return (uint32_t)((at4(i) * 2654435761u) >> 16); };
+    size_t i = 0, litStart = 0;
+    auto emit = [&](size_t litEnd, size_t mlen, size_t dist) {
+        size_t lits = litEnd - litStart;
+        unsigned char tok = (unsigned char)((lits >= 15 ? 15 : lits) << 4);
+        if (mlen) tok |= (unsigned char)((mlen - 4) >= 15 ? 15 : (mlen - 4));
+        o += (char)tok;
+        if (lits >= 15) lzLen(o, lits - 15);
+        o.append(in, litStart, lits);
+        if (mlen) { o += (char)(dist & 0xff); o += (char)(dist >> 8); if (mlen - 4 >= 15) lzLen(o, mlen - 4 - 15); }
+    };
+    while (i + 4 <= n) {
+        uint32_t h = hash4(i), cand = table[h]; table[h] = (uint32_t)i;
+        if (cand != 0xffffffffu && i - cand <= 65535 && at4(cand) == at4(i)) {
+            size_t len = 4; while (i + len < n && in[cand + len] == in[i + len]) ++len;
+            emit(i, len, i - cand);
+            i += len; litStart = i;
+            continue;
+        }
+        ++i;
+    }
+    if (litStart < n) emit(n, 0, 0);
+    return o;
+}
+// Returns false for a damaged or unknown block.
+static bool lzUnpack(const string& in, string& out) {
+    out.clear(); if (in.size() < 20 || in.compare(0, 4, "OKLZ") != 0) return false;
+    size_t at = 4; uint64_t size = 0, want = 0;
+    for (int k = 0; k < 8; ++k) size |= (uint64_t)(unsigned char)in[at + k] << (8 * k);
+    at += 8; for (int k = 0; k < 8; ++k) want |= (uint64_t)(unsigned char)in[at + k] << (8 * k); at += 8;
+    if (size > (1ull << 32)) return false;
+    out.reserve((size_t)size);
+    auto readLen = [&](size_t& len) { for (;;) { if (at >= in.size()) return false; unsigned char b = (unsigned char)in[at++]; len += b; if (b != 255) return true; } };
+    while (out.size() < size) {
+        if (at >= in.size()) return false;
+        unsigned char tok = (unsigned char)in[at++]; size_t lits = tok >> 4, mlen = tok & 15;
+        if (lits == 15 && !readLen(lits)) return false;
+        if (lits > in.size() - at || lits > size - out.size()) return false;
+        out.append(in, at, lits); at += lits;
+        if (out.size() == size) break;
+        if (at + 2 > in.size()) return false;
+        size_t dist = (unsigned char)in[at] | ((size_t)(unsigned char)in[at + 1] << 8); at += 2;
+        if (mlen == 15 && !readLen(mlen)) return false;
+        mlen += 4;
+        if (dist == 0 || dist > out.size() || mlen > size - out.size()) return false;
+        size_t from = out.size() - dist; for (size_t k = 0; k < mlen; ++k) out += out[from + k]; // byte by byte: it may overlap itself
+    }
+    return out.size() == size && fnv(out.data(), out.size()) == want;
+}
+static bool gCacheCompress = false; // --cache-compress: store new entries compressed (reading handles both)
+static string cacheRoot() { return gCacheDir.empty() ? under(".okaybuild/cache") : gCacheDir; }
+static string cacheDirOf(const string& key) { return cacheRoot() + "/" + key; }
+static long long fileSizeOf(const string& p) { std::error_code ec; auto n = fs::file_size(p, ec); return ec ? -1 : (long long)n; }
+// The key must not depend on where the object goes: leave out the values of -o, -MF, -MT and the cl /Fo form.
+static string hashArgvForCache(const vector<string>& a) {
+    uint64_t h = 1469598103934665603ull;
+    for (size_t i = 0; i < a.size(); ++i) {
+        const string s = normRoot(a[i]);
+        if ((s == "-o" || s == "-MF" || s == "-MT") && i + 1 < a.size()) { ++i; continue; }
+        if (s.rfind("/Fo", 0) == 0 || s.rfind("/Fd", 0) == 0) continue;
+        h = fnv(s.data(), s.size(), h); h = fnv("\0", 1, h);
+    }
+    return hex64(h);
+}
+// An entry is usable only when meta names this key and both stored files still have the recorded size.
+// A truncated or half-written entry is removed and counts as a miss.
+static bool cacheEntryOkAt(const string& dir, const string& key, bool needDep, bool removeBad) {
+    std::ifstream in(dir + "/meta"); string l1, l2, l3, l4;
+    bool ok = in && std::getline(in, l1) && std::getline(in, l2) && std::getline(in, l3) && std::getline(in, l4);
+    if (ok) ok = l1 == "okaybuild-cache 2" && l2 == key && fileSizeOf(dir + "/obj") == atoll(l3.c_str());
+    if (ok && needDep) ok = fileSizeOf(dir + "/dep") == atoll(l4.c_str()) && atoll(l4.c_str()) >= 0;
+    if (!ok && removeBad && fs::exists(dir)) { std::error_code ec; fs::remove_all(dir, ec); }
+    return ok;
+}
+static bool cacheEntryOk(const string& key, bool needDep) { return cacheEntryOkAt(cacheDirOf(key), key, needDep, true); }
+// ---- Shared-folder "remote" tier (--remote-cache DIR or OKAY_REMOTE_CACHE). Same keys and entry layout as the local cache:
+// DIR/<key>/{meta,obj,dep}. A local miss looks there and copies a good entry into the local cache; a new local entry is copied
+// there (unless --remote-cache-readonly). Entries are built beside the final name and renamed in, so a reader never sees half an
+// entry; a bad remote entry is ignored (never deleted by a reader) and replaced by the next push. A folder, not a network.
+static string gRemoteDir; static bool gRemoteReadOnly = false;
+static std::atomic<int> gRemoteSeq{0};
+static bool copyEntryDir(const string& from, const string& to) { // to must not exist; built as to.tmpPID_N then renamed
+    std::error_code ec; string tmp = to + ".tmp" + std::to_string(nowNs()) + "_" + std::to_string(gRemoteSeq++);
+    fs::remove_all(tmp, ec); fs::create_directories(tmp, ec);
+    for (const char* f : {"obj", "dep", "meta"}) { if (fs::exists(from + "/" + f, ec)) { fs::copy_file(from + "/" + f, tmp + "/" + f, fs::copy_options::overwrite_existing, ec); if (ec) { fs::remove_all(tmp, ec); return false; } } }
+    fs::rename(tmp, to, ec); if (ec) { fs::remove_all(tmp, ec); return fs::exists(to); }
+    return true;
+}
+static bool pullRemote(const string& key, bool needDep) {
+    if (gRemoteDir.empty()) return false;
+    string rdir = gRemoteDir + "/" + key;
+    if (!cacheEntryOkAt(rdir, key, needDep, false)) return false;
+    string local = cacheDirOf(key); std::error_code ec; fs::remove_all(local, ec); fs::create_directories(cacheRoot(), ec);
+    if (!copyEntryDir(rdir, local)) return false;
+    printf("        remote cache hit\n"); fflush(stdout);
+    return true;
+}
+static void pushRemote(const string& key) {
+    if (gRemoteDir.empty() || gRemoteReadOnly) return;
+    string rdir = gRemoteDir + "/" + key, local = cacheDirOf(key); std::error_code ec;
+    bool hasDep = fs::exists(local + "/dep", ec);
+    if (cacheEntryOkAt(rdir, key, hasDep, false)) return; // already there and good
+    fs::remove_all(rdir, ec); copyEntryDir(local, rdir);
+}
+static string slurpBin(const string& p) { std::ifstream f(p, std::ios::binary); return string((std::istreambuf_iterator<char>(f)), {}); }
+// Put the object into an entry folder, compressed when asked. Returns false on failure.
+static bool cachePutObj(const string& from, const string& dir, bool& packed) {
+    std::error_code ec; packed = false;
+    if (!gCacheCompress) { fs::copy_file(from, dir + "/obj", fs::copy_options::overwrite_existing, ec); return !ec; }
+    string z = lzPack(slurpBin(from)); packed = true;
+    std::ofstream f(dir + "/obj", std::ios::binary | std::ios::trunc); f.write(z.data(), (std::streamsize)z.size()); return (bool)f;
+}
+// Entry meta line 5 is "lz" when the object is compressed. Copy it out to dest; false when it cannot be restored.
+static bool cacheGetObj(const string& dir, const string& dest) {
+    std::ifstream in(dir + "/meta"); string l; bool packed = false;
+    for (int k = 0; k < 5 && std::getline(in, l); ++k) if (k == 4) packed = l == "lz";
+    std::error_code ec;
+    if (!packed) { fs::copy_file(dir + "/obj", dest, fs::copy_options::overwrite_existing, ec); return !ec; }
+    string raw; if (!lzUnpack(slurpBin(dir + "/obj"), raw)) return false;
+    std::ofstream f(dest, std::ios::binary | std::ios::trunc); f.write(raw.data(), (std::streamsize)raw.size()); return (bool)f;
+}
 static void rememberCache(const string&);
 // 1 hit, 0 miss, -1 could not preprocess.
 static int lookupCache(const Action& a, string& key, string& errOut) {
     vector<string> pp = preprocessArgv(a);
     string out, err; long long tPre = nowNs(); int rc = captureStdout(pp, out, err); gNsPre += nowNs() - tPre;
     if (rc != 0) { errOut += err.empty() ? out : err; if (errOut.empty() || errOut.back() != '\n') errOut += '\n'; errOut += "okay-build: preprocess failed\n"; return -1; }
-    string id = compilerIdentity(a.argv[0]); string cmd = hashArgv(a.argv);
+    string id = compilerIdentity(a.argv[0]); string cmd = hashArgvForCache(a.argv);
+    if (out.find(normRootValue()) != string::npos) out = normRoot(std::move(out)); // line markers hold absolute paths
     uint64_t h = fnv(out.data(), out.size()); h = fnv(cmd.data(), cmd.size(), h); h = fnv(id.data(), id.size(), h);
     key = hex64(h);
-    string dir = cacheDirOf(key), meta = dir + "/meta";
-    if (!fs::is_regular_file(dir + "/obj") || !fs::is_regular_file(meta)) return 0;
-    if (!a.depfile.empty() && !fs::is_regular_file(dir + "/dep")) return 0;
-    std::ifstream in(meta); string l1, l2; std::getline(in, l1); std::getline(in, l2);
-    if (l1 != "okaybuild-cache 1" || l2 != key) return 0;
+    string dir = cacheDirOf(key);
+    if (!cacheEntryOk(key, !a.depfile.empty()) && !pullRemote(key, !a.depfile.empty())) return 0;
     std::error_code ec;
-    fs::copy_file(dir + "/obj", a.output, fs::copy_options::overwrite_existing, ec);
-    if (ec) { errOut += "okay-build: cache copy failed: " + ec.message() + "\n"; return -1; }
+    if (!cacheGetObj(dir, a.output)) { std::error_code rm; fs::remove_all(dir, rm); return 0; } // a damaged entry is a miss and is removed
     if (!a.depfile.empty()) { fs::copy_file(dir + "/dep", a.depfile, fs::copy_options::overwrite_existing, ec); if (ec) { errOut += "okay-build: cache depfile copy failed\n"; return -1; } }
     rememberCache(key);
     return 1;
 }
 static void rememberCache(const string&);
+static int ownPid() {
+#ifdef _WIN32
+    return (int)GetCurrentProcessId();
+#else
+    return (int)getpid();
+#endif
+}
 static void storeCache(const Action& a, const string& key) {
     if (key.empty() || a.output.empty() || !fs::is_regular_file(a.output)) return;
-    string dir = cacheDirOf(key); fs::create_directories(dir); std::error_code ec;
-    fs::copy_file(a.output, dir + "/obj", fs::copy_options::overwrite_existing, ec);
-    if (!a.depfile.empty() && fs::is_regular_file(a.depfile)) fs::copy_file(a.depfile, dir + "/dep", fs::copy_options::overwrite_existing, ec);
-    std::ofstream m(dir + "/meta", std::ios::trunc); m << "okaybuild-cache 1\n" << key << "\n";
+    // Build the entry beside the final one and rename it in, so a killed or racing build never leaves a half entry that looks whole.
+    static std::atomic<int> seq{0};
+    string dir = cacheDirOf(key), tmp = dir + ".tmp" + std::to_string(ownPid()) + "_" + std::to_string(seq++);
+    std::error_code ec; fs::remove_all(tmp, ec); fs::create_directories(tmp, ec);
+    bool packed = false;
+    if (!cachePutObj(a.output, tmp, packed)) { fs::remove_all(tmp, ec); return; }
+    long long depSize = -1;
+    if (!a.depfile.empty() && fs::is_regular_file(a.depfile)) { fs::copy_file(a.depfile, tmp + "/dep", fs::copy_options::overwrite_existing, ec); if (!ec) depSize = fileSizeOf(tmp + "/dep"); }
+    { std::ofstream m(tmp + "/meta", std::ios::trunc); m << "okaybuild-cache 2\n" << key << "\n" << fileSizeOf(tmp + "/obj") << "\n" << depSize << "\n" << (packed ? "lz\n" : ""); }
+    fs::remove_all(dir, ec);
+    fs::rename(tmp, dir, ec);
+    if (ec) { std::error_code e2; fs::remove_all(tmp, e2); }
+    else pushRemote(key);
     rememberCache(key);
 }
 struct CacheRow { string key; uint64_t bytes = 0, used = 0; };
@@ -1252,7 +1666,7 @@ static uint64_t cacheDirBytes(const string& dir) {
     for (auto& e : fs::directory_iterator(dir, ec)) if (!ec && e.is_regular_file()) n += (uint64_t)e.file_size();
     return n;
 }
-static string cacheIndexPath() { return under(".okaybuild/cache/index"); }
+static string cacheIndexPath() { return cacheRoot() + "/index"; }
 static vector<CacheRow> loadCacheIndex() {
     vector<CacheRow> rows; std::ifstream in(cacheIndexPath()); string l;
     if (!std::getline(in, l) || l != "okaybuild-cache-index 1") return rows;
@@ -1266,8 +1680,8 @@ static vector<CacheRow> loadCacheIndex() {
     return rows;
 }
 static void saveCacheIndex(const vector<CacheRow>& rows) {
-    fs::create_directories(under(".okaybuild/cache"));
-    string tmp = cacheIndexPath() + ".tmp";
+    fs::create_directories(cacheRoot());
+    string tmp = cacheIndexPath() + ".tmp" + std::to_string(ownPid());
     { std::ofstream f(tmp, std::ios::trunc); f << "okaybuild-cache-index 1\n";
       f << "limit\t" << gCacheMax << "\n";
       for (auto& r : rows) f << r.key << '\t' << r.bytes << '\t' << r.used << '\n'; }
@@ -1296,13 +1710,13 @@ static void rememberCache(const string& key) {
 }
 static int cmdCache(const string& sub) {
     if (sub == "clean") {
-        std::error_code ec; fs::remove_all(under(".okaybuild/cache"), ec);
+        std::error_code ec; fs::remove_all(cacheRoot(), ec);
         printf("okay-build cache: removed\n"); return 0;
     }
     if (sub != "stats") throw Fail("usage: okay-build cache stats|clean");
     int entries = 0; uint64_t bytes = 0; std::error_code ec;
-    string root = under(".okaybuild/cache");
-    if (fs::exists(root, ec)) for (auto& e : fs::directory_iterator(root, ec)) if (!ec && e.is_directory()) { ++entries; bytes += cacheDirBytes(e.path().generic_string()); }
+    string root = cacheRoot();
+    if (fs::exists(root, ec)) for (auto& e : fs::directory_iterator(root, ec)) if (!ec && e.is_directory() && e.path().filename().string().find(".tmp") == string::npos) { ++entries; bytes += cacheDirBytes(e.path().generic_string()); }
     uint64_t limit = gCacheMax;
     if (limit == 0) {
         std::ifstream in(cacheIndexPath()); string l;
@@ -1341,8 +1755,16 @@ static void writeShowIncludesDepFile(const Action& a, const string& captured) {
     f << '\n';
 }
 static void commitStep(const Action& a, string& out, bool& ok, const vector<std::pair<string_view, FileSig>>& oldProduced) {
+    if (!a.partials.empty()) { // importer outputs: a finished file appears all at once, a failed one leaves nothing
+        std::error_code ec;
+        for (auto& [part, fin] : a.partials) {
+            if (ok) { fs::rename(part, fin, ec); if (ec) { ok = false; out += "okay-build: importer wrote no " + part + " (" + ec.message() + ")\n"; } }
+            if (!ok) { fs::remove(part, ec); fs::remove(fin, ec); }
+        }
+        if (!ok) for (auto& pth : a.outputs) { std::error_code e2; fs::remove(pth, e2); }
+    }
     if (ok) writeShowIncludesDepFile(a, out);
-    if (!ok || a.outputs.empty()) { if (!ok) out = "okay-build: FAILED: " + joined(a.argv) + "\n" + out; return; }
+    if (!ok || a.outputs.empty()) { if (!ok) out = "okay-build: FAILED: " + redact(joined(a.argv)) + "\n" + out; return; }
     long long ts = nowNs();
     Rec rec; rec.cmd = a.cmdHash; vector<string> ins = a.inputs;
     if (!a.depfile.empty()) for (auto& h : parseDepfile(a.depfile)) { string np = resolve(a.dir, h); if (std::find(ins.begin(), ins.end(), np) == ins.end()) ins.push_back(np); }
@@ -1350,7 +1772,7 @@ static void commitStep(const Action& a, string& out, bool& ok, const vector<std:
     for (auto& pth : ins) { FileSig sig; if (!hashFile(pth, sig)) { ok = false; out += "okay-build: cannot hash input " + pth + "\n"; break; } rec.inputs.push_back({poolStr(pth.data(), pth.size()), sig}); }
     if (ok) noteOutputs(a, rec, oldProduced, out, ok);
     if (ok) { OK_LOCK(l, gStateMu); gState[a.output] = rec; }
-    else out = "okay-build: FAILED: " + joined(a.argv) + "\n" + out;
+    else out = "okay-build: FAILED: " + redact(joined(a.argv)) + "\n" + out;
     gNsPost += nowNs() - ts;
     if (ok && !a.output.empty()) appendJournal(a.output);
 }
@@ -1358,12 +1780,21 @@ static void printCache() {
     int h = gCacheHit.load(), m = gCacheMiss.load();
     if (h + m > 0) printf("okay-build: cache %d hit, %d miss\n", h, m);
 }
-struct StepNote { long long ns = 0; string kind, cache, desc; };
+struct StepNote { long long ns = 0; string kind, cache, desc; long long start = 0; int tid = 0; };
+static string gTracePath; // --trace FILE: Chrome trace JSON of the steps of this run
 static vector<StepNote> gSteps;
 static void noteStep(const string& kind, const string& desc, long long ns, const string& cache) {
     string d = desc; for (char& c : d) if (c == '\t' || c == '\n') c = ' ';
-    OK_LOCK(l, gStateMu); gSteps.push_back(StepNote{ns, kind, cache, d});
+    OK_LOCK(l, gStateMu);
+    int tid = 0;
+#ifndef _WIN32
+    static std::map<std::thread::id, int> ids; // one small number per worker thread, in order of first use
+    auto it = ids.find(std::this_thread::get_id()); if (it == ids.end()) it = ids.emplace(std::this_thread::get_id(), (int)ids.size() + 1).first;
+    tid = it->second;
+#endif
+    gSteps.push_back(StepNote{ns, kind, cache, d, nowNs() - ns, tid});
 }
+static void writeTrace();
 static void archiveReport();
 static void writeReport() {
     fs::create_directories(under(".okaybuild"));
@@ -1374,6 +1805,27 @@ static void writeReport() {
       f << "hits\t" << gCacheHit.load() << "\nmisses\t" << gCacheMiss.load() << "\n"; }
     fs::rename(tmp, under(".okaybuild/report"));
     archiveReport();
+    writeTrace();
+}
+// Chrome trace event format (the JSON that chrome://tracing and similar viewers load): one "X" (complete) event per step,
+// times in microseconds from the first step, one row per worker thread. Written by us, temp file then rename.
+static string jsonEsc(const string& s);
+static void writeTrace() {
+    if (gTracePath.empty()) return;
+    long long t0 = 0; bool first = true; int maxTid = 0;
+    for (auto& s : gSteps) { if (first || s.start < t0) t0 = s.start; first = false; maxTid = std::max(maxTid, s.tid); }
+    string j = "{\"traceEvents\":[\n";
+    j += "{\"name\":\"process_name\",\"ph\":\"M\",\"pid\":1,\"tid\":0,\"args\":{\"name\":\"okay-build\"}}";
+    for (int t = 1; t <= maxTid; ++t) j += ",\n{\"name\":\"thread_name\",\"ph\":\"M\",\"pid\":1,\"tid\":" + std::to_string(t) + ",\"args\":{\"name\":\"worker " + std::to_string(t) + "\"}}";
+    for (auto& s : gSteps)
+        j += ",\n{\"name\":\"" + jsonEsc(s.desc) + "\",\"cat\":\"" + jsonEsc(s.kind) + "\",\"ph\":\"X\",\"ts\":" + std::to_string((s.start - t0) / 1000) +
+             ",\"dur\":" + std::to_string(s.ns / 1000) + ",\"pid\":1,\"tid\":" + std::to_string(s.tid) + ",\"args\":{\"cache\":\"" + jsonEsc(s.cache) + "\"}}";
+    j += "\n],\"displayTimeUnit\":\"ms\"}\n";
+    std::error_code ec; fs::path pth(gTracePath); if (!pth.parent_path().empty()) fs::create_directories(pth.parent_path(), ec);
+    string tmp = gTracePath + ".tmp";
+    { std::ofstream f(tmp, std::ios::binary | std::ios::trunc); f << j; }
+    fs::rename(tmp, gTracePath, ec);
+    if (ec) fprintf(stderr, "okay-build: cannot write trace %s: %s\n", gTracePath.c_str(), ec.message().c_str());
 }
 static int gReportKeep = 20;
 static void archiveReport() {
@@ -1403,16 +1855,18 @@ static int showHistory() {
     for (int id : ids) printf("%d\n", id);
     return 0;
 }
-static std::map<string, long long> loadReportSteps(const string& path) {
+static string jsonEsc(const string& s);
+struct DiffStep { long long ms = 0; string cache; };
+static std::map<string, DiffStep> loadReportSteps(const string& path) {
     std::ifstream in(path); string line;
     if (!std::getline(in, line) || line != "okaybuild-report 1") throw Fail("not a report: " + path);
-    std::map<string, long long> steps;
+    std::map<string, DiffStep> steps;
     while (std::getline(in, line)) {
         if (line.compare(0, 5, "hits\t") == 0 || line.compare(0, 7, "misses\t") == 0) continue;
         size_t a = line.find('\t'), b = a == string::npos ? string::npos : line.find('\t', a + 1), c = b == string::npos ? string::npos : line.find('\t', b + 1);
         if (a == string::npos || c == string::npos) continue;
         string desc = line.substr(c + 1);
-        steps[desc] = atoll(line.c_str()) / 1000000;
+        steps[desc] = DiffStep{atoll(line.c_str()) / 1000000, line.substr(b + 1, c - b - 1)};
     }
     return steps;
 }
@@ -1424,15 +1878,16 @@ static int diffReports(const string& a, const string& b) {
         throw Fail("no report '" + name + "'");
     };
     auto A = loadReportSteps(resolve(a)), B = loadReportSteps(resolve(b));
-    for (auto& [d, ms] : A) if (!B.count(d)) printf("only %s: %s (%lld ms)\n", a.c_str(), d.c_str(), ms);
-    for (auto& [d, ms] : B) if (!A.count(d)) printf("only %s: %s (%lld ms)\n", b.c_str(), d.c_str(), ms);
-    for (auto& [d, ms] : A) {
-        auto it = B.find(d); if (it == B.end() || it->second == ms) continue;
-        printf("changed: %s %lld ms -> %lld ms\n", d.c_str(), ms, it->second);
+    for (auto& [d, st] : A) if (!B.count(d)) printf("only %s: %s (%lld ms)\n", a.c_str(), d.c_str(), st.ms);
+    for (auto& [d, st] : B) if (!A.count(d)) printf("only %s: %s (%lld ms)\n", b.c_str(), d.c_str(), st.ms);
+    for (auto& [d, st] : A) {
+        auto it = B.find(d); if (it == B.end()) continue;
+        if (it->second.ms != st.ms) printf("changed: %s %lld ms -> %lld ms\n", d.c_str(), st.ms, it->second.ms);
+        if (it->second.cache != st.cache) printf("cache: %s %s -> %s\n", d.c_str(), st.cache.c_str(), it->second.cache.c_str());
     }
     return 0;
 }
-static int showReport() {
+static int showReport(bool json = false) {
     std::ifstream in(under(".okaybuild/report"));
     if (!in) throw Fail("no report yet; run a build first");
     string line; if (!std::getline(in, line) || line != "okaybuild-report 1") throw Fail("report is not from this okay-build");
@@ -1447,6 +1902,12 @@ static int showReport() {
     }
     std::sort(rows.begin(), rows.end(), [](const Row& x, const Row& y) { return x.ns > y.ns; });
     long long sum = 0; for (auto& r : rows) sum += r.ns;
+    if (json) {
+        printf("{\"steps\": %zu, \"hits\": %d, \"misses\": %d, \"total_ms\": %lld, \"items\": [", rows.size(), hits, misses, sum / 1000000);
+        for (size_t i = 0; i < rows.size(); ++i)
+            printf("%s{\"ms\": %lld, \"kind\": \"%s\", \"cache\": \"%s\", \"desc\": \"%s\"}", i ? ", " : "", rows[i].ns / 1000000, jsonEsc(rows[i].kind).c_str(), jsonEsc(rows[i].cache).c_str(), jsonEsc(rows[i].desc).c_str());
+        printf("]}\n"); return 0;
+    }
     printf("steps: %zu\n", rows.size());
     int denom = hits + misses;
     if (denom == 0) printf("cache: no compiles\n");
@@ -1454,6 +1915,10 @@ static int showReport() {
     printf("slowest:\n");
     size_t n = rows.size() < 10 ? rows.size() : 10;
     for (size_t i = 0; i < n; ++i) printf("  %lld ms\t%s\t%s\t%s\n", rows[i].ns / 1000000, rows[i].kind.c_str(), rows[i].cache.c_str(), rows[i].desc.c_str());
+    std::map<string, std::pair<int, long long>> byKind;
+    for (auto& r : rows) { auto& k = byKind[r.kind]; ++k.first; k.second += r.ns; }
+    printf("by kind:\n");
+    for (auto& [k, v] : byKind) printf("  %s\t%d step(s)\t%lld ms\n", k.c_str(), v.first, v.second / 1000000);
     printf("total: %lld ms\n", sum / 1000000);
     return 0;
 }
@@ -1510,15 +1975,13 @@ static int lookupImported(const Action& a, string& key, string& errOut) {
     string depfile = a.depfile.empty() ? dep : a.depfile;
     string out, err; long long tPre = nowNs(); int rc = captureStdout(pp, out, err); gNsPre += nowNs() - tPre;
     if (rc != 0) { errOut += err.empty() ? out : err; if (errOut.empty() || errOut.back() != '\n') errOut += '\n'; errOut += "okay-build: preprocess failed\n"; return -1; }
-    string id = compilerIdentity(w[0]); string cmd = hashArgv(w);
+    string id = compilerIdentity(w[0]); string cmd = hashArgvForCache(w);
     uint64_t h = fnv(out.data(), out.size()); h = fnv(cmd.data(), cmd.size(), h); h = fnv(id.data(), id.size(), h);
     key = hex64(h);
     string dir = cacheDirOf(key);
-    if (!fs::is_regular_file(dir + "/obj")) return 0;
-    if (!depfile.empty() && !fs::is_regular_file(dir + "/dep")) return 0;
+    if (!cacheEntryOk(key, !depfile.empty()) && !pullRemote(key, !depfile.empty())) return 0;
     std::error_code ec;
-    fs::copy_file(dir + "/obj", dest, fs::copy_options::overwrite_existing, ec);
-    if (ec) { errOut += "okay-build: cache copy failed: " + ec.message() + "\n"; return -1; }
+    if (!cacheGetObj(dir, dest)) { std::error_code rm; fs::remove_all(dir, rm); return 0; }
     if (!depfile.empty()) fs::copy_file(dir + "/dep", depfile, fs::copy_options::overwrite_existing, ec);
     rememberCache(key);
     return 1;
@@ -1722,7 +2185,7 @@ static string commandLineFor(const Action& a, string& err) {
 }
 static int buildOnWindows(const Manifest& m, const vector<string>& want, const Opts& o) {
     gRspUtf16 = m.tc.rspUtf16;
-    long long tStart = nowNs(); Graph g = plan(m, want); rejectOversized(g);
+    long long tStart = nowNs(); Graph g = plan(m, want); applyMeasuredMemory(g); rejectOversized(g);
     long long tPlanOnly = nowNs() - tStart; tStart = nowNs(); loadState();
     long long tState = nowNs() - tStart; long long tPlan = tPlanOnly + tState; tStart = nowNs() - tPlan;
     int total = (int)g.acts.size(), ran = 0, upToDate = 0, finished = 0;
@@ -1744,6 +2207,8 @@ static int buildOnWindows(const Manifest& m, const vector<string>& want, const O
         gNsDirty += nowNs() - t0;
         if (!anyDirty) {
             upToDate = total;
+            writeTrace();
+            if (gHashed.load() > 0 && refreshStamps() > 0) saveState();
             if (o.verbose) for (auto& a : g.acts) if (!a.output.empty()) printf("[up to date] %s\n", a.output.c_str());
             printf("okay-build: ran 0 of %d steps (%d up to date)\n", total, upToDate);
             if (o.profile) printf("okay-build: plan %lld ms, state %lld ms\n", tPlanOnly / 1000000, tState / 1000000);
@@ -1772,7 +2237,7 @@ static int buildOnWindows(const Manifest& m, const vector<string>& want, const O
     auto done = [&](int id, bool ok, const string& msg, bool held) {
         if (held) { if (poolIdx[id] >= 0) --pools[poolIdx[id]].used; memUsed -= g.acts[id].memory; }
         ++finished;
-        if (!ok) { anyFail = true; if (!o.keep) stop = true; if (!msg.empty()) { fflush(stdout); fputs(msg.c_str(), stderr); } }
+        if (!ok) { anyFail = true; if (!o.keep) stop = true; if (!msg.empty()) { fflush(stdout); fputs(redact(msg).c_str(), stderr); } }
         else if (!stop) for (int r : g.acts[id].rdeps) if (--pending[r] == 0) ready.push_back(r);
     };
     vector<Live> live;
@@ -1788,7 +2253,7 @@ static int buildOnWindows(const Manifest& m, const vector<string>& want, const O
                 if (!d) { ++upToDate; if (o.verbose) printf("[up to date] %s\n", a.output.c_str()); done(id, true, "", false); continue; }
                 ++ran; printf("[%d/%d] %s %s\n", ran, total, a.kind.c_str(), a.desc.c_str());
                 if (o.explain) printf("        because: %s\n", why.c_str());
-                if (o.verbose || o.dry) printf("        %s\n", joined(a.argv).c_str());
+                if (o.verbose || o.dry) printf("        %s\n", redact(joined(a.argv)).c_str());
                 fflush(stdout);
                 if (o.dry) { wouldRun[id] = 1; done(id, true, "", false); continue; }
                 for (auto& pth : a.outputs) { fs::path parent = fs::path(pth).parent_path(); if (!parent.empty()) fs::create_directories(parent); }
@@ -1855,7 +2320,7 @@ static int buildOnWindows(const Manifest& m, const vector<string>& want, const O
         noteStep(a.kind, a.desc, nowNs() - (L.began ? L.began : L.started), L.cacheTag.empty() ? "-" : L.cacheTag);
         done(L.id, ok, out, true);
     }
-    if (!o.dry) saveState();
+    if (!o.dry) { refreshStamps(); saveState(); saveMemory(); }
     if (!o.dry) writeReport();
     if (gCancel.load()) return 130;
     if (anyFail) { printCache(); fprintf(stderr, "okay-build: build FAILED (%d step(s) ran, %d of %d finished)\n", ran, finished, total); return 1; }
@@ -1872,7 +2337,7 @@ static int build(const Manifest& m, const vector<string>& want, const Opts& o) {
     return buildOnWindows(m, want, o);
 #else
     gRspUtf16 = m.tc.rspUtf16;
-    long long tStart = nowNs(); Graph g = plan(m, want); rejectOversized(g);
+    long long tStart = nowNs(); Graph g = plan(m, want); applyMeasuredMemory(g); rejectOversized(g);
     long long tPlanOnly = nowNs() - tStart; tStart = nowNs(); loadState();
     long long tState = nowNs() - tStart; long long tPlan = tPlanOnly + tState; tStart = nowNs() - tPlan;
     int total = (int)g.acts.size(), ran = 0, upToDate = 0, running = 0, finished = 0;
@@ -1896,6 +2361,8 @@ static int build(const Manifest& m, const vector<string>& want, const Opts& o) {
         gNsDirty += nowNs() - t0;
         if (!anyDirty) {
             upToDate = total;
+            writeTrace();
+            if (gHashed.load() > 0 && refreshStamps() > 0) saveState();
             if (o.verbose) for (auto& a : g.acts) if (!a.output.empty()) printf("[up to date] %s\n", a.output.c_str());
             printf("okay-build: ran 0 of %d steps (%d up to date)\n", total, upToDate);
             if (o.profile) printf("okay-build: plan %lld ms, state %lld ms\n", tPlanOnly / 1000000, tState / 1000000);
@@ -1946,7 +2413,7 @@ static int build(const Manifest& m, const vector<string>& want, const Opts& o) {
                 if (d) {
                     { std::lock_guard<std::mutex> pl(mu); ++ran; printf("[%d/%d] %s %s\n", ran, total, a.kind.c_str(), a.desc.c_str());
                       if (o.explain) printf("        because: %s\n", why.c_str());
-                      if (o.verbose || o.dry) printf("        %s\n", joined(a.argv).c_str());
+                      if (o.verbose || o.dry) printf("        %s\n", redact(joined(a.argv)).c_str());
                       fflush(stdout); }
                     if (!o.dry) {
                         for (auto& pth : a.outputs) { fs::path parent = fs::path(pth).parent_path(); if (!parent.empty()) fs::create_directories(parent); }
@@ -1977,7 +2444,7 @@ static int build(const Manifest& m, const vector<string>& want, const Opts& o) {
                                 std::this_thread::sleep_for(std::chrono::milliseconds(20));
                             }
                             if (tok.kind < 0) ok = false;
-                            else { int rc = runCmd(argv, out, stream); ok = rc == 0; giveJob(tok); }
+                            else { int rc = runCmd(argv, out, stream); ok = rc == 0; giveJob(tok); if (gLastPeakKb > 0) { std::lock_guard<std::mutex> pl(mu); gPeaks[a.output.empty() ? a.desc : a.output] = gLastPeakKb; } }
                         }
                         gNsSpawn += nowNs() - ts;
                         if (ok && !cached && !cacheKey.empty()) storeCache(a, cacheKey);
@@ -1987,14 +2454,14 @@ static int build(const Manifest& m, const vector<string>& want, const Opts& o) {
                 } else { std::lock_guard<std::mutex> pl(mu); ++upToDate; if (o.verbose) printf("[up to date] %s\n", a.output.c_str()); }
             } catch (const std::exception& e) { ok = false; out += string("okay-build: ") + e.what() + "\n"; }
             lk.lock(); --running; if (poolIdx[id] >= 0) --pools[poolIdx[id]].used; memUsed -= g.acts[id].memory; ++finished;
-            if (!ok) { anyFail = true; if (!o.keep) stop = true; if (firstErr.empty()) firstErr = out; if (!out.empty()) { fflush(stdout); fputs(out.c_str(), stderr); } }
+            if (!ok) { anyFail = true; if (!o.keep) stop = true; if (firstErr.empty()) firstErr = out; if (!out.empty()) { fflush(stdout); fputs(redact(out).c_str(), stderr); } }
             else if (!stop) for (int r : a.rdeps) if (--pending[r] == 0) ready.push_back(r);
             cv.notify_all();
         }
     };
     vector<std::thread> th; for (int i = 0; i < jobs; ++i) th.emplace_back(worker);
     for (auto& t : th) t.join();
-    if (!o.dry) saveState();
+    if (!o.dry) { refreshStamps(); saveState(); saveMemory(); }
     if (!o.dry) writeReport();
     if (gCancel.load()) return 130;
     if (anyFail) { printCache(); fprintf(stderr, "okay-build: build FAILED (%d step(s) ran, %d of %d finished)\n", ran, finished, total); return 1; }
@@ -2014,6 +2481,36 @@ static int numberBefore(const string& s, const string& word) {
     if (i == end) return -1;
     return atoi(s.c_str() + i);
 }
+static long long gTestTimeoutSec = 0;
+static vector<string> gCtestInc, gCtestExc, gCtestLabels; // ctest -R / -E / -L
+static string gJunitPath;            // --junit FILE: write the test run as JUnit-style XML
+static int gShardIdx = 0, gShardCnt = 1; // --shard I/N: run only every N-th test (1-based I)
+static string xmlEsc(const string& s) {
+    string r;
+    for (unsigned char c : s) {
+        if (c == '&') r += "&amp;"; else if (c == '<') r += "&lt;"; else if (c == '>') r += "&gt;";
+        else if (c == '"') r += "&quot;"; else if (c == '\'') r += "&apos;";
+        else if (c < 32 && c != '\n' && c != '\t' && c != '\r') r += '?'; // XML 1.0 cannot hold other control bytes
+        else r += (char)c;
+    }
+    return r;
+}
+static void writeJunit(const vector<std::pair<string, string>>& tests, const vector<int>& order, const vector<int>& code, const vector<string>& outs) {
+    int failed = 0; for (int i : order) if (code[i] != 0) ++failed;
+    std::ofstream x(gJunitPath, std::ios::trunc);
+    if (!x) { fprintf(stderr, "okay-build: cannot write %s\n", gJunitPath.c_str()); return; }
+    x << "<?xml version=\"1.0\" encoding=\"UTF-8\"?>\n";
+    x << "<testsuites tests=\"" << tests.size() << "\" failures=\"" << failed << "\">\n";
+    x << "<testsuite name=\"okay-build\" tests=\"" << tests.size() << "\" failures=\"" << failed << "\">\n";
+    for (int i : order) {
+        x << "<testcase name=\"" << xmlEsc(tests[i].first) << "\" classname=\"okay-build\"";
+        if (code[i] == 0) { x << "/>\n"; continue; }
+        string out = i < (int)outs.size() ? outs[i] : string();
+        if (out.size() > 4000) out = out.substr(out.size() - 4000); // keep the tail, that is where the failure is
+        x << ">\n<failure message=\"" << (code[i] == 124 ? "timed out" : "exit " + std::to_string(code[i])) << "\">" << xmlEsc(out) << "</failure>\n</testcase>\n";
+    }
+    x << "</testsuite>\n</testsuites>\n";
+}
 static int printTestReport(const vector<std::pair<string, string>>& tests, const vector<int>& code, const vector<string>& outs) {
     vector<int> order(tests.size());
     for (size_t i = 0; i < order.size(); ++i) order[i] = (int)i;
@@ -2029,9 +2526,17 @@ static int printTestReport(const vector<std::pair<string, string>>& tests, const
         if (checks >= 0) extra += " checks " + std::to_string(checks);
         if (bad >= 0) extra += " failed " + std::to_string(bad);
         if (code[i] == 0) { printf("PASS %s%s\n", tests[i].first.c_str(), extra.c_str()); rep << "PASS\t" << tests[i].first << "\t0\t" << checks << "\t" << bad << "\n"; }
-        else { printf("FAIL %s exit %d%s\n", tests[i].first.c_str(), code[i], extra.c_str()); rep << "FAIL\t" << tests[i].first << "\t" << code[i] << "\t" << checks << "\t" << bad << "\n"; ++failed; }
+        else { printf("FAIL %s exit %d%s\n", tests[i].first.c_str(), code[i], extra.c_str()); rep << "FAIL\t" << tests[i].first << "\t" << code[i] << "\t" << checks << "\t" << bad << "\n"; ++failed;
+            if (code[i] == 124) printf("  timed out after %lld s\n", gTestTimeoutSec);
+            if (i < (int)outs.size() && !outs[i].empty()) { // the last 40 lines of what the test printed
+                vector<string> ls; size_t pos = 0;
+                while (pos < outs[i].size()) { size_t e = outs[i].find('\n', pos); if (e == string::npos) e = outs[i].size(); ls.push_back(outs[i].substr(pos, e - pos)); pos = e + 1; }
+                for (size_t k = ls.size() > 40 ? ls.size() - 40 : 0; k < ls.size(); ++k) printf("  | %s\n", ls[k].c_str());
+            }
+        }
     }
     printf("%zu tests, %d failed\n", tests.size(), failed);
+    if (!gJunitPath.empty()) writeJunit(tests, order, code, outs);
     return failed ? 1 : 0;
 }
 static int executeTests(const vector<std::pair<string, string>>& tests, int jobs) {
@@ -2042,18 +2547,19 @@ static int executeTests(const vector<std::pair<string, string>>& tests, int jobs
 #ifdef _WIN32
     if (jobs > 64) jobs = 64;
     vector<int> left; for (int i = (int)tests.size() - 1; i >= 0; --i) left.push_back(i);
-    struct Slot { Live proc; int index; };
+    struct Slot { Live proc; int index; long long start; };
     vector<Slot> live;
     while (!left.empty() || !live.empty()) {
         while ((int)live.size() < jobs && !left.empty()) {
             int index = left.back(); left.pop_back();
             string err; Live L;
             if (!spawnLive(winJoin({tests[index].second}), "", false, L, err)) { code[index] = 127; continue; }
-            live.push_back(Slot{L, index});
+            live.push_back(Slot{L, index, nowNs()});
         }
         if (live.empty()) break;
         HANDLE hs[64]; int n = (int)live.size();
         for (int i = 0; i < n; ++i) { drainLive(live[i].proc); hs[i] = live[i].proc.proc; }
+        if (gTestTimeoutSec > 0) for (int i = 0; i < n; ++i) if (nowNs() - live[i].start > gTestTimeoutSec * 1000000000ll) { TerminateProcess(live[i].proc.proc, 124); }
         DWORD w = WaitForMultipleObjects((DWORD)n, hs, FALSE, 20);
         for (int i = 0; i < n; ++i) drainLive(live[i].proc);
         if (w < WAIT_OBJECT_0 || w >= WAIT_OBJECT_0 + (DWORD)n) continue;
@@ -2071,7 +2577,7 @@ static int executeTests(const vector<std::pair<string, string>>& tests, int jobs
     for (int t = 0; t < jobs; ++t) th.emplace_back([&] {
         for (;;) {
             int i = next++; if (i >= (int)tests.size()) return;
-            string out; code[i] = runCmd({tests[i].second}, out, false); outs[i] = out;
+            string out; code[i] = runCmd({tests[i].second}, out, false, gTestTimeoutSec * 1000000000ll); outs[i] = out;
         }
     });
     for (auto& t : th) t.join();
@@ -2136,7 +2642,7 @@ static int cmdPackage(Manifest& m, const vector<string>& want, const Opts& o) {
     if (rc != 0) return rc;
     for (auto& n : names) {
         const Target* t = nullptr; for (auto& x : m.targets) if (x.name == n) t = &x;
-        string exeName = n + m.tc.exe;
+        string exeName = (t && !t->outName.empty() ? t->outName : n) + m.tc.exe;
         string root = "dist/" + n;
         std::error_code ec; fs::remove_all(root, ec); fs::create_directories(root);
         fs::copy_file(under(m.outdir + "/" + exeName), root + "/" + exeName, fs::copy_options::overwrite_existing);
@@ -2157,15 +2663,31 @@ static int cmdPackage(Manifest& m, const vector<string>& want, const Opts& o) {
     }
     return 0;
 }
-static int cmdTest(Manifest& m, const Opts& o) {
+static int cmdTest(Manifest& m, const Opts& o, const vector<string>& only) {
     vector<string> names;
     for (auto& t : m.targets) if (t.isTest) names.push_back(t.name);
     if (names.empty()) for (auto& t : m.targets) if (!t.isLib && t.name.compare(0, 4, "test") == 0) names.push_back(t.name);
+    if (!only.empty()) { // okay-build test NAME...: run just those, any exe target will do
+        names.clear();
+        for (auto& n : only) {
+            bool ok = false; for (auto& t : m.targets) if (t.name == n && !t.isLib) ok = true;
+            if (!ok) throw Fail("no test program named '" + n + "'");
+            names.push_back(n);
+        }
+    }
     if (names.empty()) throw Fail("no tests; set 'test = on' on an exe, or start its name with 'test'");
+    if (gShardCnt > 1) { // shard by position in the sorted name list, so every shard sees the same split
+        std::sort(names.begin(), names.end());
+        vector<string> mine;
+        for (size_t i = 0; i < names.size(); ++i) if ((int)(i % (size_t)gShardCnt) == gShardIdx - 1) mine.push_back(names[i]);
+        printf("okay-build: shard %d/%d runs %zu of %zu tests\n", gShardIdx, gShardCnt, mine.size(), names.size());
+        names = mine;
+        if (names.empty()) { if (!gJunitPath.empty()) { vector<std::pair<string, string>> none; writeJunit(none, {}, {}, {}); } printf("0 tests, 0 failed\n"); return 0; }
+    }
     int rc = build(m, names, o);
     if (rc != 0) return rc;
     vector<std::pair<string, string>> runs;
-    for (auto& n : names) runs.push_back({n, under(m.outdir + "/" + n + m.tc.exe)});
+    for (auto& n : names) { string fileName = n; for (auto& t : m.targets) if (t.name == n && !t.outName.empty()) fileName = t.outName; runs.push_back({n, under(m.outdir + "/" + fileName + m.tc.exe)}); }
     int jobs = o.jobs;
     if (jobs <= 0) {
 #ifdef _WIN32
@@ -2175,6 +2697,144 @@ static int cmdTest(Manifest& m, const Opts& o) {
 #endif
     }
     return executeTests(runs, jobs);
+}
+
+
+// ---- ctest: run the manifest's `ctest` blocks (from CMake's add_test) the way CTest would: name, command, folder, time limit,
+// "will fail", "skip code". Words may hold {src} (the manifest folder), {bin} (<build dir>/ctest) and {target:NAME} (a built program).
+// Several run at once (-j); tests marked serial run alone afterwards. Filters are regular expressions on the test name.
+static int cmdCTest(const Manifest& m, const Opts& o, const vector<string>& filters) {
+#ifdef _WIN32
+    (void)m; (void)o; (void)filters; throw Fail("ctest: not done on Windows yet");
+#else
+    if (m.ctests.empty()) throw Fail("no ctest blocks in the manifest (okay-build cmake writes them from add_test lines)");
+    vector<const CTestDecl*> pick;
+    auto matches = [&](const string& text, const string& re) { try { return std::regex_search(text, std::regex(re)); } catch (const std::regex_error&) { throw Fail("bad test filter '" + re + "'"); } };
+    for (auto& c : m.ctests) {
+        bool ok = filters.empty() && gCtestInc.empty();
+        for (auto& f : filters) if (matches(c.name, f)) ok = true;
+        for (auto& f : gCtestInc) if (matches(c.name, f)) ok = true;     // -R: the name matches any of them
+        if (ok && !gCtestLabels.empty()) { // -L: some label matches any of the label expressions
+            bool lab = false; for (auto& l : c.labels) for (auto& f : gCtestLabels) if (matches(l, f)) lab = true;
+            ok = lab;
+        }
+        for (auto& f : gCtestExc) if (ok && matches(c.name, f)) ok = false; // -E: drop what matches
+        if (ok) pick.push_back(&c);
+    }
+    if (pick.empty()) throw Fail("no ctest matches the filter");
+    string srcDir = fs::current_path().generic_string();
+    string binDir = fs::absolute(under(m.outdir + "/ctest")).lexically_normal().generic_string();
+    auto scan = [&](const string& w, vector<string>& need) { for (size_t at = 0; (at = w.find("{target:", at)) != string::npos;) { size_t e = w.find('}', at); if (e == string::npos) break; need.push_back(w.substr(at + 8, e - at - 8)); at = e; } };
+    vector<string> need;
+    for (auto* c : pick) { for (auto& w : c->cmd) scan(w, need); for (auto& w : c->needs) need.push_back(w); }
+    std::sort(need.begin(), need.end()); need.erase(std::unique(need.begin(), need.end()), need.end());
+    if (!need.empty()) { int rc = build(m, need, o); if (rc != 0) return rc; }
+    auto subst = [&](string w) {
+        auto all = [&](const string& what, const string& with) { for (size_t at = 0; (at = w.find(what, at)) != string::npos; at += with.size()) w.replace(at, what.size(), with); };
+        all("{src}", srcDir); all("{bin}", binDir);
+        for (size_t at = 0; (at = w.find("{target:", at)) != string::npos;) {
+            size_t e = w.find('}', at); if (e == string::npos) break; string nm = w.substr(at + 8, e - at - 8);
+            string fileName = nm; for (auto& t : m.targets) if (t.name == nm && !t.outName.empty()) fileName = t.outName;
+            string path = fs::absolute(under(m.outdir + "/" + fileName + m.tc.exe)).generic_string(); w.replace(at, e - at + 1, path); at += path.size();
+        }
+        return w;
+    };
+    struct Run { const CTestDecl* c; int code = 0; string out; double secs = 0; int state = 0; }; // state: 0 waiting, 1 running, 2 done
+    vector<Run> runs; for (auto* c : pick) { Run r; r.c = c; runs.push_back(r); }
+    int jobs = o.jobs > 0 ? o.jobs : (int)std::max(1u, std::thread::hardware_concurrency());
+    auto runOne = [&](Run& r) {
+        vector<string> argv; for (auto& w : r.c->cmd) argv.push_back(subst(w));
+        string cwd = subst(r.c->cwd.empty() ? "{bin}" : r.c->cwd); std::error_code ec; fs::create_directories(cwd, ec);
+        gChildCwd = cwd; gChildEnv.clear(); for (auto& e : r.c->env) gChildEnv.push_back(subst(e));
+        long long to = r.c->timeout > 0 ? r.c->timeout : (gTestTimeoutSec > 0 ? gTestTimeoutSec : 1500);
+        long long t0 = nowNs(); r.code = runCmd(argv, r.out, false, to * 1000000000ll); r.secs = (double)(nowNs() - t0) / 1e9; gChildCwd.clear(); gChildEnv.clear();
+        if (r.code == 124) r.out += "\n(timed out after " + std::to_string(to) + " s)\n";
+    };
+    { // DEPENDS: a test starts only after the picked tests it names have finished (their result does not matter); serial tests run alone, last
+        std::mutex mu; std::condition_variable cv; size_t doneCount = 0, running = 0; bool serialRunning = false;
+        auto depsDone = [&](const Run& r) { for (auto& d : r.c->depends) for (auto& o2 : runs) if (o2.c->name == d && o2.state != 2) return false; return true; };
+        auto worker = [&] {
+            for (;;) {
+                Run* mine = nullptr;
+                { std::unique_lock<std::mutex> lk(mu);
+                  for (;;) {
+                      if (doneCount == runs.size()) return;
+                      bool otherParallel = false; for (auto& r : runs) if (r.state == 0 && !r.c->serial) otherParallel = true;
+                      for (auto& r : runs) if (r.state == 0 && depsDone(r) && !serialRunning && (!r.c->serial || (!otherParallel && running == 0))) { mine = &r; break; }
+                      if (mine) break;
+                      cv.wait_for(lk, std::chrono::milliseconds(50));
+                  }
+                  mine->state = 1; ++running; if (mine->c->serial) serialRunning = true; }
+                runOne(*mine);
+                { std::lock_guard<std::mutex> lk(mu); mine->state = 2; --running; ++doneCount; if (mine->c->serial) serialRunning = false; }
+                cv.notify_all();
+            }
+        };
+        // a dependency cycle would wait forever: report it
+        for (auto& r : runs) { std::set<string> seen; std::function<void(const string&)> go = [&](const string& n) { if (n == r.c->name) throw Fail("ctest: tests depend on each other in a loop at '" + n + "'"); if (!seen.insert(n).second) return; for (auto& o2 : runs) if (o2.c->name == n) for (auto& d : o2.c->depends) go(d); }; for (auto& d : r.c->depends) go(d); }
+        vector<std::thread> th; for (int t = 0; t < std::min<int>(jobs, (int)runs.size()); ++t) th.emplace_back(worker);
+        for (auto& t : th) t.join();
+    }
+    int failed = 0, skipped = 0;
+    std::sort(runs.begin(), runs.end(), [](const Run& a, const Run& b) { return a.c->name < b.c->name; });
+    for (auto& r : runs) {
+        bool skip = r.c->skipCode >= 0 && r.code == r.c->skipCode;
+        bool pass = !skip && (r.c->willFail ? r.code != 0 : r.code == 0);
+        if (skip) { printf("SKIP %s (exit %d)\n", r.c->name.c_str(), r.code); ++skipped; continue; }
+        if (pass) { printf("PASS %s %.1fs\n", r.c->name.c_str(), r.secs); continue; }
+        ++failed; printf("FAIL %s exit %d %.1fs\n", r.c->name.c_str(), r.code, r.secs);
+        vector<string> ls; size_t pos = 0;
+        while (pos < r.out.size()) { size_t e = r.out.find('\n', pos); if (e == string::npos) e = r.out.size(); ls.push_back(r.out.substr(pos, e - pos)); pos = e + 1; }
+        for (size_t k = ls.size() > 30 ? ls.size() - 30 : 0; k < ls.size(); ++k) printf("  | %s\n", ls[k].c_str());
+    }
+    printf("%zu tests, %d failed, %d skipped\n", runs.size(), failed, skipped);
+    if (!gJunitPath.empty()) {
+        { std::error_code mk; fs::create_directories(fs::path(gJunitPath).parent_path(), mk); }
+        std::ofstream x(gJunitPath, std::ios::trunc); if (!x) { fprintf(stderr, "okay-build: cannot write %s\n", gJunitPath.c_str()); }
+        else {
+            x << "<?xml version=\"1.0\" encoding=\"UTF-8\"?>\n<testsuites tests=\"" << runs.size() << "\" failures=\"" << failed << "\" skipped=\"" << skipped << "\">\n";
+            x << "<testsuite name=\"ctest\" tests=\"" << runs.size() << "\" failures=\"" << failed << "\" skipped=\"" << skipped << "\">\n";
+            for (auto& r : runs) {
+                bool skip = r.c->skipCode >= 0 && r.code == r.c->skipCode; bool pass = !skip && (r.c->willFail ? r.code != 0 : r.code == 0);
+                char tm[32]; snprintf(tm, sizeof tm, "%.3f", r.secs);
+                x << "<testcase name=\"" << xmlEsc(r.c->name) << "\" classname=\"ctest\" time=\"" << tm << "\"";
+                if (pass) { x << "/>\n"; continue; }
+                if (skip) { x << "><skipped message=\"exit " << r.code << "\"/></testcase>\n"; continue; }
+                string out = r.out; if (out.size() > 4000) out = out.substr(out.size() - 4000);
+                x << ">\n<failure message=\"" << (r.code == 124 ? "timed out" : "exit " + std::to_string(r.code)) << "\">" << xmlEsc(out) << "</failure>\n</testcase>\n";
+            }
+            x << "</testsuite>\n</testsuites>\n";
+        }
+    }
+    return failed ? 1 : 0;
+#endif
+}
+
+// ---- cmake: read the project's CMakeLists.txt files ourselves (no CMake) and write a build.okay. See cmake_reader.hpp.
+static int cmdCmake(const string& root, const string& outFile, const vector<std::pair<string, string>>& defs, const string& buildType,
+                    const std::map<string, string>& fetched, bool audit) {
+    cmr::Options co; co.root = fs::absolute(root).lexically_normal().generic_string(); while (co.root.size() > 1 && co.root.back() == '/') co.root.pop_back();
+    for (auto& d : defs) co.defs[d.first] = d.second;
+    co.fetched = fetched; if (!buildType.empty()) co.buildType = buildType;
+    cmr::Report rep; cmr::Tally tally; string text;
+    try { text = cmr::readProject(co, rep, tally); } catch (const cmr::ReadError& e) { throw Fail("cmake: " + e.msg); }
+    { std::ofstream f(outFile, std::ios::trunc); if (!f) throw Fail("cannot write " + outFile); f << text; }
+    printf("okay-build cmake: %d of %d targets written (%d skipped), %d of %d tests written -> %s\n", rep.emitted, rep.targetsDeclared, rep.skipped, rep.testsEmitted, rep.testsDeclared, outFile.c_str());
+    if (!audit) return 0;
+    printf("targets declared  %d (%d programs, %d libraries, %d interface libraries)\n", rep.targetsDeclared, rep.exes, rep.libs, rep.ifaces);
+    printf("targets written   %d, sources %d, definitions %d, flags %d, per-file settings %d\n", rep.emitted, rep.sources, rep.defines, rep.flags, rep.perFile);
+    printf("tests declared    %d (%d run a program of ours, %d run something else); written %d, skipped %d, run cmake itself %d; set aside: %d with a name already used, %d with no command\n", rep.testsDeclared, rep.testsExe, rep.testsScript, rep.testsEmitted, rep.testsSkipped, rep.testsNeedCmake, rep.testsDuplicate, rep.testsNoCommand);
+    if (rep.fetches) printf("downloads         %d fetch block(s) written (run okay-build fetch; nothing is downloaded by a build)\n", rep.fetches);
+    printf("options           %d declared, %d set from the command line\n", tally.options, tally.setOptions);
+    int cmds = 0; for (auto& c : tally.run) cmds += c.second;
+    printf("commands run      %d\n", cmds);
+    int unk = 0; for (auto& c : tally.unknown) unk += c.second;
+    printf("not understood    %d", unk); if (unk) { printf(" ("); bool first = true; for (auto& c : tally.unknown) { printf("%s%s x%d", first ? "" : ", ", c.first.c_str(), c.second); first = false; } printf(")"); } printf("\n");
+    if (!tally.genex.empty()) { printf("generator expressions"); for (auto& g : tally.genex) printf(" %s x%d", g.first.c_str(), g.second); printf("\n"); }
+    for (auto& s : rep.skippedTargets) printf("skipped target   %s: %s\n", s.first.c_str(), s.second.c_str());
+    int shown = 0; for (auto& s : rep.skippedTests) { if (++shown > 20) { printf("skipped test     ... and %zu more\n", rep.skippedTests.size() - 20); break; } printf("skipped test     %s: %s\n", s.first.c_str(), s.second.c_str()); }
+    for (auto& u : rep.unresolved) printf("unresolved link  %s\n", u.c_str());
+    return 0;
 }
 
 static void listTargets(const Graph& g) {
@@ -2206,12 +2866,12 @@ static void writeCompdb(const Manifest& m) {
     for (auto& a : g.acts) {
         if (a.kind == "CC") {
             f << (first ? "" : ",\n") << "  {\"directory\": \"" << jsonEsc(dir) << "\", \"file\": \"" << jsonEsc(a.inputs[0]) << "\", \"arguments\": [";
-            for (size_t i = 0; i < a.argv.size(); ++i) { f << (i ? ", " : "") << "\"" << jsonEsc(a.argv[i]) << "\""; }
+            for (size_t i = 0; i < a.argv.size(); ++i) { f << (i ? ", " : "") << "\"" << jsonEsc(redact(a.argv[i])) << "\""; }
             f << "]}"; first = false; ++n;
         } else {
             string file; if (!importedCompile(a, file)) continue;
             string where = a.dir.empty() ? dir : a.dir;
-            f << (first ? "" : ",\n") << "  {\"directory\": \"" << jsonEsc(where) << "\", \"file\": \"" << jsonEsc(file) << "\", \"command\": \"" << jsonEsc(a.rawCmd) << "\"}";
+            f << (first ? "" : ",\n") << "  {\"directory\": \"" << jsonEsc(where) << "\", \"file\": \"" << jsonEsc(file) << "\", \"command\": \"" << jsonEsc(redact(a.rawCmd)) << "\"}";
             first = false; ++n;
         }
     }
@@ -2363,6 +3023,29 @@ static FileSets readConfigOkay(const string& file) {
     return s;
 }
 
+// The two account defines, found the way CMakeLists.txt finds them: the environment (when either variable is set), otherwise
+// config/public-account.json ("url" and "key"). The values go into every compile as -DNAME="value" and are registered as secrets
+// so they are never printed, never written to compile_commands.json and never put in a manifest. Says only where they came from.
+static string jsonStringField(const string& j, const string& field) {
+    size_t at = j.find("\"" + field + "\""); if (at == string::npos) return "";
+    at = j.find(':', at); if (at == string::npos) return "";
+    at = j.find('"', at); if (at == string::npos) return "";
+    size_t e = j.find('"', at + 1); return e == string::npos ? "" : j.substr(at + 1, e - at - 1);
+}
+static void addAccountDefines(Manifest& m) {
+    string url, key, from = "none";
+    const char* eu = getenv("OKAY_DEFAULT_ACCOUNT_URL"); const char* ek = getenv("OKAY_DEFAULT_ACCOUNT_KEY");
+    if ((eu && *eu) || (ek && *ek)) { url = eu ? eu : ""; key = ek ? ek : ""; from = "environment"; }
+    else if (fs::is_regular_file("config/public-account.json")) {
+        std::ifstream f("config/public-account.json"); string j((std::istreambuf_iterator<char>(f)), {});
+        url = jsonStringField(j, "url"); key = jsonStringField(j, "key");
+        if (!url.empty() || !key.empty()) from = "config/public-account.json";
+    }
+    for (auto* v : {&url, &key}) if (v->find_first_of("\"\\ \t\r\n") != string::npos) throw Fail("account_defines: a value holds a quote, backslash or space");
+    if (!url.empty()) { m.tc.flags.push_back("-DOKAY_DEFAULT_ACCOUNT_URL=\"" + url + "\""); gSecrets.push_back(url); }
+    if (!key.empty()) { m.tc.flags.push_back("-DOKAY_DEFAULT_ACCOUNT_KEY=\"" + key + "\""); gSecrets.push_back(key); }
+    printf("okay-build: account defines: url %s, key %s (from %s)\n", url.empty() ? "no" : "yes", key.empty() ? "no" : "yes", from.c_str());
+}
 static void applyConfiguration(Manifest& m, const string& cliConfig, const string& configPath, bool configRequired, const vector<std::pair<string, string>>& cliOpts) {
     std::map<string, const OptionDecl*> decl;
     for (auto& o : m.options) decl[o.name] = &o;
@@ -2402,6 +3085,11 @@ static void applyConfiguration(Manifest& m, const string& cliConfig, const strin
         if (cfg->debug == 1) m.tc.flags.push_back("-g");
         addFlags(cfg->flags, cfg->linkFlags, cfg->defines);
     }
+    if (m.accountDefines) addAccountDefines(m);
+    // `outdir = build/{config}`: each configuration gets its own program folder and its own object folder, so switching
+    // configurations does not rebuild the other one (outputs are tracked by path).
+    { size_t at = m.outdir.find("{config}");
+      if (at != string::npos) { string n = cfg ? cfg->name : "default"; m.outdir.replace(at, 8, n); m.objSub = n + "/"; } }
     for (auto& c : m.conds) {
         auto it = decl.find(c.opt);
         if (it == decl.end()) throw Fail("if uses unknown option '" + c.opt + "'");
@@ -2440,19 +3128,48 @@ static string findNamed(const vector<string>& dirs, std::initializer_list<const 
     }
     return "";
 }
-static void considerMsvcBin(const string& bin, string& cl, string& link) {
-    if (cl.empty()) cl = findNamed({bin}, {"cl.exe", "cl"});
-    if (link.empty()) link = findNamed({bin}, {"link.exe", "link"});
+// MSVC installs are candidates (version text, cl, link). The version is the folder name under VC/Tools/MSVC (empty when unknown).
+struct MsvcCand { string ver, cl, link; };
+static string gMsvcPin; // --msvc-version PREFIX: only installs whose version starts with this
+static string msvcVersionOf(const string& cl) {
+    string p = cl; for (auto& c : p) if (c == '\\') c = '/';
+    const string key = "/MSVC/"; auto at = p.rfind(key); if (at == string::npos) return "";
+    at += key.size(); auto end = p.find('/', at); return end == string::npos ? "" : p.substr(at, end - at);
 }
-static void findMsvcUnder(const string& root, string& cl, string& link) {
-    considerMsvcBin(root, cl, link);
-    considerMsvcBin(root + "/bin/Hostx64/x64", cl, link);
+// Numeric, part by part: 14.10.2 is newer than 14.9.1 (a text sort gets that wrong). An unknown version is the oldest.
+static bool versionNewer(const string& a, const string& b) {
+    if (a.empty() || b.empty()) return !a.empty() && b.empty();
+    size_t i = 0, j = 0;
+    while (i < a.size() || j < b.size()) {
+        long long x = 0, y = 0;
+        while (i < a.size() && isdigit((unsigned char)a[i])) x = x * 10 + (a[i++] - '0');
+        while (j < b.size() && isdigit((unsigned char)b[j])) y = y * 10 + (b[j++] - '0');
+        if (x != y) return x > y;
+        while (i < a.size() && !isdigit((unsigned char)a[i])) ++i;
+        while (j < b.size() && !isdigit((unsigned char)b[j])) ++j;
+    }
+    return false;
+}
+static void addMsvcBin(const string& bin, vector<MsvcCand>& v) {
+    string cl = findNamed({bin}, {"cl.exe", "cl"}), link = findNamed({bin}, {"link.exe", "link"});
+    if (!cl.empty() && !link.empty()) v.push_back({msvcVersionOf(cl), cl, link});
+}
+static void findMsvcUnder(const string& root, vector<MsvcCand>& v) {
+    addMsvcBin(root, v);
+    addMsvcBin(root + "/bin/Hostx64/x64", v);
     string parent = root + "/VC/Tools/MSVC";
     std::error_code ec; if (!fs::is_directory(parent, ec)) return;
-    vector<string> vers;
-    for (auto& e : fs::directory_iterator(parent, ec)) if (!ec && e.is_directory()) vers.push_back(e.path().generic_string());
-    std::sort(vers.begin(), vers.end());
-    for (auto it = vers.rbegin(); it != vers.rend(); ++it) considerMsvcBin(*it + "/bin/Hostx64/x64", cl, link);
+    for (auto& e : fs::directory_iterator(parent, ec)) if (!ec && e.is_directory()) addMsvcBin(e.path().generic_string() + "/bin/Hostx64/x64", v);
+}
+// Picks one install: the one on PATH wins unless a version is pinned; otherwise the highest version among the roots.
+static MsvcCand chooseMsvc(const string& pathCl, const string& pathLink, vector<MsvcCand> v) {
+    if (!pathCl.empty() && !pathLink.empty()) v.insert(v.begin(), {msvcVersionOf(pathCl), pathCl, pathLink});
+    bool pinned = !gMsvcPin.empty();
+    if (pinned) { vector<MsvcCand> k; for (auto& c : v) if (c.ver.compare(0, gMsvcPin.size(), gMsvcPin) == 0) k.push_back(c); v = k; }
+    if (v.empty()) return {};
+    size_t best = 0;
+    if (pinned || pathCl.empty() || pathLink.empty()) for (size_t i = 1; i < v.size(); ++i) if (versionNewer(v[i].ver, v[best].ver)) best = i;
+    return v[best];
 }
 #ifdef _WIN32
 static string narrow(const wchar_t* w) {
@@ -2495,19 +3212,20 @@ static vector<string> vsRootsFromRegistry() {
 #else
 static vector<string> vsRootsFromRegistry() { return {}; }
 #endif
-static int cmdToolchains(const vector<string>& extra, const vector<string>& roots) {
+struct Detected { string name, cc, cxx, ld, ar, probe, host; bool found = false; };
+// Looks for every preset. Directories are searched in the order given, then PATH.
+static vector<Detected> detectToolchains(const vector<string>& extra, const vector<string>& roots) {
     vector<string> dirs = extra;
     const char* env = getenv("PATH");
     if (env) { auto p = splitEnv(env); dirs.insert(dirs.end(), p.begin(), p.end()); }
-    string gcc = findNamed(dirs, {"gcc", "gcc.exe"}), gxx = findNamed(dirs, {"g++", "g++.exe"});
-    if (!gcc.empty() && !gxx.empty()) printf("gcc\tfound\tcc=%s\tcxx=%s\n", gcc.c_str(), gxx.c_str());
-    else printf("gcc\tmissing\n");
-    string clang = findNamed(dirs, {"clang", "clang.exe"}), clangxx = findNamed(dirs, {"clang++", "clang++.exe"});
-    if (!clang.empty() && !clangxx.empty()) printf("clang\tfound\tcc=%s\tcxx=%s\n", clang.c_str(), clangxx.c_str());
-    else printf("clang\tmissing\n");
-    string mingw = findNamed(dirs, {"x86_64-w64-mingw32-g++-win32", "x86_64-w64-mingw32-g++-win32.exe", "x86_64-w64-mingw32-g++", "x86_64-w64-mingw32-g++.exe"});
-    if (!mingw.empty()) printf("mingw\tfound\tcxx=%s\n", mingw.c_str());
-    else printf("mingw\tmissing\n");
+    vector<Detected> out;
+    { Detected d; d.name = "gcc"; d.cc = findNamed(dirs, {"gcc", "gcc.exe"}); d.cxx = findNamed(dirs, {"g++", "g++.exe"});
+      d.ar = findNamed(dirs, {"ar", "ar.exe"}); d.found = !d.cc.empty() && !d.cxx.empty(); out.push_back(d); }
+    { Detected d; d.name = "clang"; d.cc = findNamed(dirs, {"clang", "clang.exe"}); d.cxx = findNamed(dirs, {"clang++", "clang++.exe"});
+      d.ar = findNamed(dirs, {"ar", "ar.exe"}); d.found = !d.cc.empty() && !d.cxx.empty(); out.push_back(d); }
+    { Detected d; d.name = "mingw"; d.cxx = findNamed(dirs, {"x86_64-w64-mingw32-g++-win32", "x86_64-w64-mingw32-g++-win32.exe", "x86_64-w64-mingw32-g++", "x86_64-w64-mingw32-g++.exe"});
+      d.cc = findNamed(dirs, {"x86_64-w64-mingw32-gcc-win32", "x86_64-w64-mingw32-gcc-win32.exe", "x86_64-w64-mingw32-gcc", "x86_64-w64-mingw32-gcc.exe"});
+      d.ar = findNamed(dirs, {"x86_64-w64-mingw32-ar", "x86_64-w64-mingw32-ar.exe"}); d.found = !d.cxx.empty(); out.push_back(d); }
 #ifdef _WIN32
     string cl = findNamed(dirs, {"cl.exe", "cl"}), link = findNamed(dirs, {"link.exe", "link"});
 #else
@@ -2518,17 +3236,69 @@ static int cmdToolchains(const vector<string>& extra, const vector<string>& root
 #ifdef _WIN32
     if (const char* e = getenv("VSINSTALLDIR")) all.push_back(e);
     if (const char* e = getenv("VCToolsInstallDir")) all.push_back(e);
-    const char* host = "windows";
-    string probe = roots.empty() ? "registry+path" : "root+registry+path";
+    string host = "windows", probe = roots.empty() ? "registry+path" : "root+registry+path";
 #else
-    const char* host = "posix";
-    string probe = roots.empty() ? "path" : "root+path";
+    string host = "posix", probe = roots.empty() ? "path" : "root+path";
 #endif
     for (auto& r : vsRootsFromRegistry()) all.push_back(r);
-    for (auto& r : all) findMsvcUnder(r, cl, link);
-    if (!cl.empty() && !link.empty()) printf("msvc\tfound\tcc=%s\tlink=%s\tprobe=%s\thost=%s\n", cl.c_str(), link.c_str(), probe.c_str(), host);
-    else printf("msvc\tmissing\tprobe=%s\thost=%s\n", probe.c_str(), host);
+    vector<MsvcCand> cands; for (auto& r : all) findMsvcUnder(r, cands);
+    { MsvcCand c = chooseMsvc(cl, link, cands); cl = c.cl; link = c.link; }
+    Detected d; d.name = "msvc"; d.cc = cl; d.cxx = cl; d.ld = link; d.probe = probe; d.host = host; d.found = !cl.empty() && !link.empty();
+    if (d.found) { string lib = findNamed({fs::path(link).parent_path().generic_string()}, {"lib.exe"}); d.ar = lib; }
+    out.push_back(d);
+    return out;
+}
+static bool gShowVersions = false; // toolchains --versions
+// The first line a compiler prints for --version (gcc, clang, mingw). Empty when it will not run.
+static string compilerVersionLine(const string& exe) {
+    string out; if (exe.empty() || runCmd({exe, "--version"}, out) != 0) return "";
+    string line = out.substr(0, out.find('\n'));
+    while (!line.empty() && (line.back() == '\r' || line.back() == ' ')) line.pop_back();
+    for (auto& c : line) if (c == '\t') c = ' ';
+    return line;
+}
+static int cmdToolchains(const vector<string>& extra, const vector<string>& roots) {
+    for (auto& d : detectToolchains(extra, roots)) {
+        string ver;
+        if (gShowVersions && d.found) ver = d.name == "msvc" ? msvcVersionOf(d.cc) : compilerVersionLine(d.cxx.empty() ? d.cc : d.cxx);
+        string tail = gShowVersions && d.found ? "\tversion=" + (ver.empty() ? string("unknown") : ver) : string();
+        if (d.name == "msvc") {
+            if (d.found) printf("msvc\tfound\tcc=%s\tlink=%s\tprobe=%s\thost=%s%s\n", d.cc.c_str(), d.ld.c_str(), d.probe.c_str(), d.host.c_str(), tail.c_str());
+            else printf("msvc\tmissing\tprobe=%s\thost=%s\n", d.probe.c_str(), d.host.c_str());
+        } else if (!d.found) printf("%s\tmissing\n", d.name.c_str());
+        else if (d.name == "mingw") printf("mingw\tfound\tcxx=%s%s\n", d.cxx.c_str(), tail.c_str());
+        else printf("%s\tfound\tcc=%s\tcxx=%s%s\n", d.name.c_str(), d.cc.c_str(), d.cxx.c_str(), tail.c_str());
+    }
     return 0;
+}
+// 'toolchain auto' in the manifest, or --toolchain NAME on the command line: detect the compilers and fill the toolchain from the
+// first one found (or the named one). Tool fields the manifest set by hand are kept.
+static void resolveToolchain(Manifest& m, const string& cliName, const vector<string>& extra, const vector<string>& roots) {
+    string want = !cliName.empty() ? cliName : (m.tc.autoPick ? "auto" : "");
+    if (want.empty()) return;
+    auto found = detectToolchains(extra, roots);
+    const Detected* pick = nullptr;
+    if (want == "auto") {
+#ifdef _WIN32
+        const char* order[] = {"msvc", "clang", "gcc", "mingw"};
+#else
+        const char* order[] = {"gcc", "clang", "mingw", "msvc"};
+#endif
+        for (const char* n : order) { for (auto& d : found) if (d.name == n && d.found) { pick = &d; break; } if (pick) break; }
+        if (!pick) throw Fail("toolchain auto: no compiler found (looked for gcc, clang, mingw and msvc; try --search DIR or --msvc-root DIR)");
+    } else {
+        for (auto& d : found) if (d.name == want) pick = &d;
+        if (!pick) throw Fail("unknown toolchain '" + want + "' (auto, gcc, clang, mingw, msvc)");
+        if (!pick->found) throw Fail("toolchain " + want + " was not found on this machine (see: okay-build toolchains)");
+    }
+    Toolchain& c = m.tc; bool autoFlag = c.autoPick;
+    Toolchain hand = c;
+    applyPreset(c, pick->name); c.autoPick = autoFlag;
+    auto kept = [&](const char* k) { return std::find(hand.setKeys.begin(), hand.setKeys.end(), k) != hand.setKeys.end(); };
+    if (kept("cc")) c.cc = hand.cc; else if (!pick->cc.empty()) c.cc = pick->cc;
+    if (kept("cxx")) c.cxx = hand.cxx; else if (!pick->cxx.empty()) c.cxx = pick->cxx;
+    if (kept("ld")) c.ld = hand.ld; else if (!pick->ld.empty()) c.ld = pick->ld;
+    if (kept("ar")) c.ar = hand.ar; else if (!pick->ar.empty()) c.ar = pick->ar;
 }
 
 static uint64_t hashPackageTree(const string& root) {
@@ -2626,13 +3396,26 @@ static int writeNative(const string& root, const string& outFile) {
     fs::path math = fs::path(root) / "tests/test_math.cpp";
     if (!fs::is_regular_file(math)) throw Fail("native: tests/test_math.cpp is missing");
     if (crypto.empty() || engine.empty()) throw Fail("native: source scan found nothing to build");
-    std::sort(crypto.begin(), crypto.end());
-    std::sort(plat.begin(), plat.end());
-    std::sort(engine.begin(), engine.end());
+    // Archive members come out in source order, and the CMake build lists sources by hand in engine/CMakeLists.txt. To get the same
+    // member order, files named in that text are ordered by where their path first appears; the rest follow, sorted by name.
+    // Only the order of names is read from that file; nothing else in it is used.
+    string cmakeText; { std::ifstream cf(fs::path(root) / "engine/CMakeLists.txt"); cmakeText.assign(std::istreambuf_iterator<char>(cf), {}); }
+    { std::ifstream pf(fs::path(root) / "cmake/OkayPlatform.cmake"); string t2((std::istreambuf_iterator<char>(pf)), {}); cmakeText += "\n" + t2; } // the platform files are listed there
+    auto byListing = [&](vector<string>& v) {
+        auto posOf = [&](const string& r) { size_t at = r.compare(0, 7, "engine/") == 0 ? cmakeText.find(r.substr(7)) : string::npos; return at; };
+        std::stable_sort(v.begin(), v.end(), [&](const string& a, const string& b) {
+            size_t pa = posOf(a), pb = posOf(b);
+            if (pa != pb) return pa < pb; // not listed = npos = last
+            return a < b;
+        });
+    };
+    byListing(crypto); byListing(plat); byListing(engine);
     std::ofstream out(outFile, std::ios::trunc);
     if (!out) throw Fail("cannot write " + outFile);
     out << "# generated by okay-build native from the source tree (not from a CMake build)\n";
+    out << "account_defines = on\n";
     out << "toolchain\n";
+    out << "  path_map = on\n";
     out << "  flags = -Wall -Wextra -Wpedantic\n";
     out << "end\n";
     auto block = [&](const string& name, const string& kind, const vector<string>& srcs, const string& extra) {
@@ -2640,17 +3423,27 @@ static int writeNative(const string& root, const string& outFile) {
         for (auto& s : srcs) out << " " << qtok(s);
         out << "\n" << extra << "end\n";
     };
+    // shared/ holds headers the network and font files include (AntiCheatChecks.hpp, RobotoFontOwn.h); the CMake build adds it per file
+    string sharedDir = fs::is_directory(fs::path(root) / "shared") ? " shared" : "";
+    // CMake gives BuildInfo.cpp -DOKAY_ENGINE_VERSION="<project version>" (read here from the top CMakeLists.txt) and
+    // ImageDecodeJpeg.cpp -Wno-narrowing. A manifest has no per-file flags, so both go to the whole engine: an unused macro changes no
+    // object, and -Wno-narrowing only stops a diagnostic.
+    string verDef;
+    { std::ifstream cf(fs::path(root) / "CMakeLists.txt"); string t((std::istreambuf_iterator<char>(cf)), {}); auto pr = t.find("project(");
+      if (pr != string::npos) { auto vv = t.find("VERSION", pr); auto close = t.find(')', pr);
+          if (vv != string::npos && vv < close) { size_t b = vv + 7; while (b < t.size() && isspace((unsigned char)t[b])) ++b; size_t e = b; while (e < t.size() && (isdigit((unsigned char)t[e]) || t[e] == '.')) ++e;
+              if (e > b) verDef = " \"OKAY_ENGINE_VERSION=\\\"" + t.substr(b, e - b) + "\\\"\""; } } }
     string inc =
-        "  flags = -std=c++17 -O0 -g0\n"
-        "  include = engine/include engine/third_party/stb engine/third_party/ufbx /usr/include/SDL2\n"
-        "  define = OKAY_HAVE_SODIUM OKAY_NET_CRYPTO OKAY_PLATFORM_HAVE_SDL2 OKAY_PLATFORM_HAVE_OWN OKAY_PLATFORM_X11_HEADERS\n";
+        "  flags = -std=c++17 -O0 -g0 -Wno-narrowing\n"
+        "  include = engine/include engine/third_party/stb engine/third_party/ufbx" + sharedDir + " /usr/include/SDL2\n"
+        "  define = OKAY_HAVE_SODIUM OKAY_NET_CRYPTO OKAY_PLATFORM_HAVE_SDL2 OKAY_PLATFORM_HAVE_OWN OKAY_PLATFORM_X11_HEADERS" + verDef + "\n";
     block("okay_crypto", "lib", crypto, "  flags = -std=c++17 -O0 -g0\n  export_include = engine/include\n");
     if (!plat.empty()) block("okay_platform", "lib", plat, inc + "  export_include = engine/include\n");
     string eng = inc + "  export_include = engine/include\n  deps = okay_crypto";
     if (!plat.empty()) eng += " okay_platform";
     if (haveUfbx) eng += " ufbx";
     eng += "\n";
-    if (haveUfbx) block("ufbx", "lib", {rel(ufbx)}, "  flags = -w -O2 -std=c11\n  include = engine/third_party/ufbx\n");
+    if (haveUfbx) block("ufbx", "lib", {rel(ufbx)}, "  flags = -w -O2\n  include = engine/third_party/ufbx\n");
     block("okay_engine", "lib", engine, eng);
     block("test_math", "exe", {rel(math)},
           "  flags = -std=c++17 -O0 -g0\n  deps = okay_engine\n  libs = sodium SDL2 dl pthread\n");
@@ -2659,14 +3452,213 @@ static int writeNative(const string& root, const string& outFile) {
     return 0;
 }
 
+
+// ---- okay-build tool: small helpers that manifests can call from importer/action commands (copy, hash, pack, unpack, list).
+// Written from the idea of an archive as "table of contents, then bytes" (like tar or zip in spirit); the layout below is our own.
+// Pack file "OKPK": magic, u32 version 1, u32 entry count, then per entry u32 path length, path bytes ('/' separated), u64 size,
+// u64 FNV-1a hash of the content; then the file bytes in the same order. All integers little-endian. Entries are sorted by
+// path and carry no times or owners, so the same folder always gives the same bytes. The hash is for damage detection only.
+static void putLe(string& b, uint64_t v, int bytes) { for (int i = 0; i < bytes; ++i) b += (char)((v >> (8 * i)) & 0xff); }
+static uint64_t getLe(const string& b, size_t& at, int bytes) {
+    if (at + (size_t)bytes > b.size()) throw Fail("pack file is cut short");
+    uint64_t v = 0; for (int i = 0; i < bytes; ++i) v |= (uint64_t)(unsigned char)b[at + i] << (8 * i);
+    at += (size_t)bytes; return v;
+}
+static string readAllBytes(const fs::path& p) {
+    std::ifstream f(p, std::ios::binary); if (!f) throw Fail("cannot read " + p.string());
+    return string((std::istreambuf_iterator<char>(f)), {});
+}
+static void writeAtomic(const fs::path& to, const string& bytes) {
+    if (!to.parent_path().empty()) fs::create_directories(to.parent_path());
+    fs::path tmp = to; tmp += ".partial";
+    { std::ofstream f(tmp, std::ios::binary | std::ios::trunc); f.write(bytes.data(), (std::streamsize)bytes.size()); if (!f) { f.close(); std::error_code ec; fs::remove(tmp, ec); throw Fail("cannot write " + to.string()); } }
+    fs::rename(tmp, to);
+}
+static bool safeRelPath(const string& r) {
+    if (r.empty() || r[0] == '/' || r[0] == '\\' || r.find(':') != string::npos || r.find('\\') != string::npos) return false;
+    size_t i = 0;
+    while (i <= r.size()) { size_t e = r.find('/', i); if (e == string::npos) e = r.size(); string part = r.substr(i, e - i); if (part.empty() || part == "..") return false; i = e + 1; }
+    return true;
+}
+
+// ---- SHA-256 (FIPS 180-4), written from the description of the algorithm. The round constants are the first 32 bits of the
+// fractional parts of the cube roots of the first 64 primes, and the start values those of the square roots of the first 8;
+// they are worked out here instead of typed in, and checked by the tests against the published test strings.
+struct Sha256 {
+    uint32_t h[8], k[64]; unsigned char buf[64]; uint64_t total = 0; size_t fill = 0;
+    static uint32_t frac32(long double v) { v -= floorl(v); return (uint32_t)floorl(v * 4294967296.0L); }
+    Sha256() {
+        int found = 0; for (int n = 2; found < 64; ++n) {
+            bool prime = true; for (int d = 2; d * d <= n; ++d) if (n % d == 0) { prime = false; break; }
+            if (!prime) continue;
+            if (found < 8) h[found] = frac32(sqrtl((long double)n));
+            k[found] = frac32(cbrtl((long double)n)); ++found;
+        }
+    }
+    static uint32_t rotr(uint32_t x, int n) { return (x >> n) | (x << (32 - n)); }
+    void block(const unsigned char* p) {
+        uint32_t w[64];
+        for (int i = 0; i < 16; ++i) w[i] = (uint32_t)p[4 * i] << 24 | (uint32_t)p[4 * i + 1] << 16 | (uint32_t)p[4 * i + 2] << 8 | p[4 * i + 3];
+        for (int i = 16; i < 64; ++i) {
+            uint32_t s0 = rotr(w[i - 15], 7) ^ rotr(w[i - 15], 18) ^ (w[i - 15] >> 3), s1 = rotr(w[i - 2], 17) ^ rotr(w[i - 2], 19) ^ (w[i - 2] >> 10);
+            w[i] = w[i - 16] + s0 + w[i - 7] + s1;
+        }
+        uint32_t a = h[0], b = h[1], c = h[2], d = h[3], e = h[4], f = h[5], g = h[6], hh = h[7];
+        for (int i = 0; i < 64; ++i) {
+            uint32_t t1 = hh + (rotr(e, 6) ^ rotr(e, 11) ^ rotr(e, 25)) + ((e & f) ^ (~e & g)) + k[i] + w[i];
+            uint32_t t2 = (rotr(a, 2) ^ rotr(a, 13) ^ rotr(a, 22)) + ((a & b) ^ (a & c) ^ (b & c));
+            hh = g; g = f; f = e; e = d + t1; d = c; c = b; b = a; a = t1 + t2;
+        }
+        h[0] += a; h[1] += b; h[2] += c; h[3] += d; h[4] += e; h[5] += f; h[6] += g; h[7] += hh;
+    }
+    void add(const void* data, size_t n) {
+        const unsigned char* p = (const unsigned char*)data; total += n;
+        while (n > 0) { size_t take = std::min(n, 64 - fill); memcpy(buf + fill, p, take); fill += take; p += take; n -= take; if (fill == 64) { block(buf); fill = 0; } }
+    }
+    string hex() {
+        uint64_t bits = total * 8; unsigned char pad[72] = {0x80}; size_t padLen = (fill < 56 ? 56 - fill : 120 - fill);
+        for (int i = 0; i < 8; ++i) pad[padLen + i] = (unsigned char)(bits >> (56 - 8 * i));
+        uint64_t keep = total; add(pad, padLen + 8); total = keep;
+        char out[65]; for (int i = 0; i < 8; ++i) snprintf(out + 8 * i, 9, "%08x", h[i]);
+        return string(out, 64);
+    }
+};
+static string sha256File(const string& path) {
+    std::ifstream in(path, std::ios::binary); if (!in) throw Fail("cannot read " + path);
+    Sha256 s; char b[65536]; while (in) { in.read(b, sizeof b); auto n = in.gcount(); if (n > 0) s.add(b, (size_t)n); }
+    return s.hex();
+}
+static bool isHex(const string& s, size_t n) { if (s.size() != n) return false; for (char c : s) if (!isxdigit((unsigned char)c)) return false; return true; }
+static string lowerStr(string s) { for (auto& c : s) c = (char)tolower((unsigned char)c); return s; }
+
+// okay-build fetch [NAME...]: download the `fetch` blocks into their folders. Off unless asked for: builds never download.
+// A git source is fetched by its commit (40 hex digits; a branch or tag name is refused because it can move) and the commit is
+// checked afterwards. A tarball must have a sha256 and is checked before it is unpacked. Downloads use the curl program (or wget);
+// our own HTTP client lives in the engine and is not linked into this tool. Unpacking uses tar, and git is the git program.
+static int cmdFetch(const Manifest& m, const vector<string>& names) {
+    if (m.fetches.empty()) throw Fail("no fetch blocks in the manifest");
+    int did = 0;
+    for (auto& f : m.fetches) {
+        if (!names.empty() && std::find(names.begin(), names.end(), f.name) == names.end()) continue;
+        string marker = f.dir + "/.okaybuild-fetched", pin = !f.git.empty() ? "git " + f.git + " " + lowerStr(f.commit) : "url " + f.url + " " + lowerStr(f.sha256);
+        if (!f.git.empty() && !isHex(f.commit, 40)) throw Fail("fetch " + f.name + ": the commit must be 40 hex digits (a branch or tag name can move, so it is not a pin)");
+        if (!f.url.empty() && !isHex(f.sha256, 64)) throw Fail("fetch " + f.name + ": sha256 must be 64 hex digits");
+        { std::ifstream mk(marker); string have((std::istreambuf_iterator<char>(mk)), {}); while (!have.empty() && (have.back() == '\n' || have.back() == ' ')) have.pop_back();
+          if (mk && have == pin) { printf("okay-build fetch: %s is already in %s\n", f.name.c_str(), f.dir.c_str()); continue; } }
+        std::error_code ec; fs::remove_all(f.dir + ".partial", ec); fs::create_directories(f.dir + ".partial", ec);
+        string part = f.dir + ".partial", out;
+        if (!f.git.empty()) {
+            vector<vector<string>> steps = {{"git", "init", "-q", part}, {"git", "-C", part, "fetch", "-q", "--depth", "1", f.git, lowerStr(f.commit)}, {"git", "-C", part, "checkout", "-q", "FETCH_HEAD"}};
+            for (auto& st : steps) { out.clear(); if (runCmd(st, out) != 0) { fs::remove_all(part, ec); throw Fail("fetch " + f.name + ": '" + st[st.size() > 3 ? 3 : 1] + "' failed: " + out); } }
+            out.clear(); runCmd({"git", "-C", part, "rev-parse", "HEAD"}, out); while (!out.empty() && isspace((unsigned char)out.back())) out.pop_back();
+            if (out != lowerStr(f.commit)) { fs::remove_all(part, ec); throw Fail("fetch " + f.name + ": git gave commit " + out + ", not the pinned " + f.commit); }
+            fs::remove_all(part + "/.git", ec); // the tree is the pinned content; no history is kept
+        } else {
+            string tmp = part + "/download.tmp"; out.clear();
+            int rc = runCmd({"curl", "-fsSL", "--retry", "2", "-o", tmp, f.url}, out);
+            if (rc == 127) { out.clear(); rc = runCmd({"wget", "-q", "-O", tmp, f.url}, out); }
+            if (rc != 0) { fs::remove_all(part, ec); throw Fail("fetch " + f.name + ": download failed (" + f.url + "): " + out); }
+            string got = sha256File(tmp);
+            if (got != lowerStr(f.sha256)) { fs::remove_all(part, ec); throw Fail("fetch " + f.name + ": the download has sha256 " + got + " but the pin is " + lowerStr(f.sha256) + "; nothing was unpacked"); }
+            out.clear(); string unpack = part + "/tree"; fs::create_directories(unpack, ec);
+            if (runCmd({"tar", "-xf", tmp, "-C", unpack, "--strip-components=" + std::to_string(f.strip)}, out) != 0) { fs::remove_all(part, ec); throw Fail("fetch " + f.name + ": cannot unpack: " + out); }
+            fs::remove(tmp, ec);
+            fs::path final = fs::path(part) / "tree"; // move the unpacked tree up so the folder holds the sources directly
+            for (auto& e : fs::directory_iterator(final, ec)) fs::rename(e.path(), fs::path(part) / e.path().filename(), ec);
+            fs::remove_all(final, ec);
+        }
+        { std::ofstream mk(part + "/.okaybuild-fetched"); mk << pin << "\n"; }
+        fs::remove_all(f.dir, ec); fs::create_directories(fs::path(f.dir).parent_path(), ec); fs::rename(part, f.dir, ec);
+        if (ec) throw Fail("fetch " + f.name + ": cannot move into " + f.dir + ": " + ec.message());
+        printf("okay-build fetch: %s -> %s (%s)\n", f.name.c_str(), f.dir.c_str(), !f.git.empty() ? "git commit checked" : "sha256 checked"); ++did;
+    }
+    if (!did && !names.empty()) throw Fail("no fetch block with that name");
+    return 0;
+}
+
+static int toolMain(const vector<string>& a) {
+    if (a.empty()) throw Fail("usage: okay-build tool copy SRC DST | hash FILE... | pack DIR OUT | unpack PACK DIR | list PACK");
+    const string& c = a[0];
+    if (c == "copy") {
+        if (a.size() != 3) throw Fail("usage: okay-build tool copy SRC DST");
+        writeAtomic(a[2], readAllBytes(a[1])); return 0;
+    }
+    if (c == "z" || c == "unz") { // compress or decompress one file with the cache's own OKLZ format
+        if (a.size() != 3) throw Fail("usage: okay-build tool " + c + " IN OUT");
+        string in = readAllBytes(a[1]), out;
+        if (c == "z") out = lzPack(in); else if (!lzUnpack(in, out)) throw Fail("not a valid OKLZ block: " + a[1]);
+        writeAtomic(a[2], out); return 0;
+    }
+    if (c == "hash") {
+        if (a.size() < 2) throw Fail("usage: okay-build tool hash FILE...");
+        for (size_t i = 1; i < a.size(); ++i) { string b = readAllBytes(a[i]); printf("%s  %s\n", hex64(fnv(b.data(), b.size())).c_str(), a[i].c_str()); }
+        return 0;
+    }
+    if (c == "pack") {
+        if (a.size() != 3) throw Fail("usage: okay-build tool pack DIR OUT");
+        fs::path root = a[1]; if (!fs::is_directory(root)) throw Fail("pack: not a folder: " + a[1]);
+        fs::path outAbs = fs::absolute(a[2]).lexically_normal();
+        vector<string> rels;
+        for (auto& e : fs::recursive_directory_iterator(root)) {
+            if (!e.is_regular_file()) continue;
+            if (fs::absolute(e.path()).lexically_normal() == outAbs) continue; // never pack the output itself
+            rels.push_back(fs::relative(e.path(), root).generic_string());
+        }
+        std::sort(rels.begin(), rels.end());
+        string head = "OKPK", body; putLe(head, 1, 4); putLe(head, rels.size(), 4);
+        for (auto& r : rels) {
+            string b = readAllBytes(root / r);
+            putLe(head, r.size(), 4); head += r; putLe(head, b.size(), 8); putLe(head, fnv(b.data(), b.size()), 8);
+            body += b;
+        }
+        writeAtomic(a[2], head + body);
+        printf("okay-build tool pack: %zu file(s), %zu bytes -> %s\n", rels.size(), head.size() + body.size(), a[2].c_str());
+        return 0;
+    }
+    if (c == "unpack" || c == "list") {
+        if (a.size() != (c == "list" ? 2u : 3u)) throw Fail("usage: okay-build tool " + c + (c == "list" ? " PACK" : " PACK DIR"));
+        string b = readAllBytes(a[1]); size_t at = 0;
+        if (b.compare(0, 4, "OKPK") != 0) throw Fail("not an OKPK pack file: " + a[1]);
+        at = 4; if (getLe(b, at, 4) != 1) throw Fail("unknown pack version");
+        uint64_t n = getLe(b, at, 4);
+        struct Ent { string path; uint64_t size, hash; }; vector<Ent> es;
+        for (uint64_t i = 0; i < n; ++i) {
+            uint64_t pl = getLe(b, at, 4); if (at + pl > b.size()) throw Fail("pack file is cut short");
+            Ent e; e.path = b.substr(at, (size_t)pl); at += (size_t)pl; e.size = getLe(b, at, 8); e.hash = getLe(b, at, 8);
+            if (!safeRelPath(e.path)) throw Fail("pack holds an unsafe path: " + e.path);
+            es.push_back(e);
+        }
+        for (auto& e : es) {
+            if (at + e.size > b.size()) throw Fail("pack file is cut short");
+            if (c == "list") printf("%s\t%llu\t%s\n", hex64(e.hash).c_str(), (unsigned long long)e.size, e.path.c_str());
+            else {
+                string d = b.substr(at, (size_t)e.size);
+                if (fnv(d.data(), d.size()) != e.hash) throw Fail("pack entry is damaged: " + e.path);
+                writeAtomic(fs::path(a[2]) / e.path, d);
+            }
+            at += (size_t)e.size;
+        }
+        return 0;
+    }
+    if (c == "sha256") { if (a.size() < 2) throw Fail("usage: okay-build tool sha256 FILE..."); for (size_t i = 1; i < a.size(); ++i) printf("%s  %s\n", sha256File(a[i]).c_str(), a[i].c_str()); return 0; }
+    throw Fail("unknown tool command '" + c + "'");
+}
+
 int main(int argc, char** argv) {
 #ifdef _WIN32
     SetConsoleCtrlHandler(onCtrl, TRUE);
 #else
     signal(SIGINT, onInt);
 #endif
+    if (argc >= 2 && string(argv[1]) == "tool") {
+        try { return toolMain(vector<string>(argv + 2, argv + argc)); }
+        catch (const std::exception& e) { fprintf(stderr, "okay-build: %s\n", e.what()); return 2; }
+    }
     adoptJobserver();
-    Opts o; string cmd = "build", runDir, importOut = "build.okay", configName, configFile; vector<string> want;
+    if (const char* e = getenv("OKAY_CACHE_DIR")) if (*e) gCacheDir = fs::absolute(e).string();
+    if (const char* e = getenv("OKAY_REMOTE_CACHE")) if (*e) gRemoteDir = fs::absolute(e).string();
+    Opts o; string toolchainName, cmd = "build", runDir, importOut = "build.okay", configName, configFile; vector<string> want;
+    bool cmakeAudit = false; string cmakeBuildType; std::map<string, string> cmakeFetched;
     vector<std::pair<string, string>> optSets; vector<string> searchDirs, msvcRoots; bool configFileSet = false;
     try {
         for (int i = 1; i < argc; ++i) {
@@ -2679,9 +3671,11 @@ int main(int argc, char** argv) {
             else if (a == "--explain") o.explain = true;
             else if (a == "-v") o.verbose = true;
             else if (a == "--profile") o.profile = true;
+            else if (a == "--trace" && i + 1 < argc) gTracePath = argv[++i];
             else if (a == "--build-dir" && i + 1 < argc) gBuildDir = argv[++i];
             else if (a == "--no-stat") gUseStat = false;
             else if (a == "--no-cache") gUseCache = false;
+            else if (a == "--cache-dir" && i + 1 < argc) gCacheDir = fs::absolute(argv[++i]).string();
             else if (a == "--cache-max" && i + 1 < argc) {
                 string s = argv[++i]; uint64_t n = 0; size_t k = 0;
                 if (s.empty()) throw Fail("--cache-max wants a number of bytes");
@@ -2694,7 +3688,21 @@ int main(int argc, char** argv) {
                 }
                 gCacheMax = n;
             }
+            else if (a == "--cache-compress") gCacheCompress = true;
+            else if (a == "--remote-cache" && i + 1 < argc) gRemoteDir = fs::absolute(argv[++i]).string();
+            else if (a == "--remote-cache-readonly") gRemoteReadOnly = true;
             else if (a == "--jobserver") gWantJobserver = true;
+            else if (a == "--timeout" && i + 1 < argc) { gTestTimeoutSec = atoll(argv[++i]); if (gTestTimeoutSec < 1) throw Fail("--timeout wants a number of seconds"); }
+            else if (a == "--versions") gShowVersions = true;
+            else if (a == "--msvc-version" && i + 1 < argc) gMsvcPin = argv[++i];
+            else if (a == "--junit" && i + 1 < argc) gJunitPath = argv[++i];
+            else if (a == "--shard" && i + 1 < argc) {
+                string v = argv[++i]; auto sl = v.find('/');
+                if (sl == string::npos || sl == 0 || sl + 1 >= v.size()) throw Fail("--shard wants I/N, for example 2/4");
+                gShardIdx = atoi(v.substr(0, sl).c_str()); gShardCnt = atoi(v.substr(sl + 1).c_str());
+                if (gShardCnt < 1 || gShardIdx < 1 || gShardIdx > gShardCnt) throw Fail("--shard wants I/N with 1 <= I <= N");
+            }
+            else if (a == "--memory-mb" && i + 1 < argc) { gMemMb = atoi(argv[++i]); if (gMemMb < 1) throw Fail("--memory-mb wants a number of megabytes"); }
             else if (a == "--memory" && i + 1 < argc) gMemLimit = atoi(argv[++i]);
             else if (a == "--run-dir" && i + 1 < argc) runDir = argv[++i];
             else if (a == "-o" && i + 1 < argc) importOut = argv[++i];
@@ -2705,22 +3713,41 @@ int main(int argc, char** argv) {
                 if (eq == string::npos || eq == 0) throw Fail("--opt wants name=value");
                 optSets.push_back({s.substr(0, eq), s.substr(eq + 1)});
             }
+            else if (a == "--audit") cmakeAudit = true;
+            else if (a == "-R" && i + 1 < argc) gCtestInc.push_back(argv[++i]);
+            else if (a == "-E" && i + 1 < argc) gCtestExc.push_back(argv[++i]);
+            else if (a == "-L" && i + 1 < argc) gCtestLabels.push_back(argv[++i]);
+            else if (a == "--build-type" && i + 1 < argc) cmakeBuildType = argv[++i];
+            else if (a == "--fetched" && i + 1 < argc) {
+                string s = argv[++i]; auto eq = s.find('=');
+                if (eq == string::npos || eq == 0) throw Fail("--fetched wants name=folder");
+                cmakeFetched[s.substr(0, eq)] = fs::absolute(s.substr(eq + 1)).generic_string();
+            }
+            else if (a == "--toolchain" && i + 1 < argc) toolchainName = argv[++i];
             else if (a == "--search" && i + 1 < argc) searchDirs.push_back(argv[++i]);
             else if (a == "--msvc-root" && i + 1 < argc) msvcRoots.push_back(argv[++i]);
             else if (cmd == "cache" && (a == "stats" || a == "clean")) want.push_back(a);
-            else if (a == "build" || a == "clean" || a == "compdb" || a == "import" || a == "graph" || a == "targets" || a == "modules" || a == "toolchains" || a == "report" || a == "test" || a == "cache" || a == "lock" || a == "package" || a == "native") cmd = a;
+            else if (a == "build" || a == "clean" || a == "compdb" || a == "import" || a == "graph" || a == "targets" || a == "modules" || a == "toolchains" || a == "report" || a == "test" || a == "cache" || a == "lock" || a == "package" || a == "native" || a == "cmake" || a == "ctest" || a == "fetch") cmd = a;
             else if (a == "-h" || a == "--help") {
-                puts("usage: okay-build [build|clean|compdb|import|graph|targets|modules|toolchains|report|test] [-f build.okay] [-j N] [-k] [--config NAME] [--opt name=value] [--build-dir DIR] [--no-stat] [--no-cache] [--dry-run] [--explain] [-v] [--profile] [target...]");
+                puts("usage: okay-build [build|clean|compdb|import|graph|targets|modules|toolchains|report|test|ctest|cmake|fetch|native] [-f build.okay] [-j N] [-k] [--config NAME] [--toolchain auto|gcc|clang|mingw|msvc] [--opt name=value] [--build-dir DIR] [--no-stat] [--no-cache] [--cache-dir DIR] [--cache-compress] [--remote-cache DIR] [--remote-cache-readonly] [--timeout SECONDS] [--msvc-version PREFIX] [--memory N] [--memory-mb MB] [--junit FILE] [--shard I/N] [--dry-run] [--explain] [-v] [--profile] [target...]");
                 puts("audit: docs/own_build_plan.md (12 subsystems; this tool is off by default)");
                 return 0;
             }
             else if (!a.empty() && a[0] == '-') throw Fail("unknown option " + a);
             else want.push_back(a);
         }
+        if (!gRemoteDir.empty()) { // the shared folder must be a folder we can use; otherwise carry on without it
+            std::error_code ec; if (!gRemoteReadOnly) fs::create_directories(gRemoteDir, ec);
+            if (!fs::is_directory(gRemoteDir, ec)) { fprintf(stderr, "okay-build: warning: remote cache folder '%s' is not usable, ignoring it\n", gRemoteDir.c_str()); gRemoteDir.clear(); }
+        }
         if (cmd == "toolchains") return cmdToolchains(searchDirs, msvcRoots);
         if (cmd == "native") {
             if (want.empty()) throw Fail("usage: okay-build native <repo root> [-o build.okay]");
             return writeNative(want[0], importOut);
+        }
+        if (cmd == "cmake") {
+            if (want.empty()) throw Fail("usage: okay-build cmake <repo root> [-o build.okay] [--opt NAME=VALUE ...] [--build-type Release|Debug|...] [--fetched NAME=DIR] [--audit]");
+            return cmdCmake(want[0], importOut, optSets, cmakeBuildType, cmakeFetched, cmakeAudit);
         }
         if (cmd == "modules") {
             if (want.empty()) throw Fail("usage: okay-build modules <directory> [-o build.okay]");
@@ -2734,17 +3761,20 @@ int main(int argc, char** argv) {
         fs::path mp = fs::absolute(o.file); fs::current_path(mp.parent_path());
         Manifest m = cmd == "build" ? loadWithRegen(mp.string()) : parseManifest(mp.string());
         if (!configFileSet) configFile = "config.okay";
+        if (cmd == "build" || cmd == "test" || cmd == "ctest" || cmd == "package" || cmd == "graph" || cmd == "compdb") resolveToolchain(m, toolchainName, searchDirs, msvcRoots);
         applyConfiguration(m, configName, configFile, configFileSet, optSets);
         if (cmd == "cache") return cmdCache(want.empty() ? "" : want[0]);
         if (cmd == "lock") return syncLock(m, true);
         if (cmd == "report") {
             if (!want.empty() && want[0] == "history") return showHistory();
             if (want.size() >= 3 && want[0] == "diff") return diffReports(want[1], want[2]);
-            return showReport();
+            return showReport(!want.empty() && want[0] == "json");
         }
         if (cmd == "build" || cmd == "test" || cmd == "package") syncLock(m, true);
         if (cmd == "package") return cmdPackage(m, want, o);
-        if (cmd == "test") return cmdTest(m, o);
+        if (cmd == "test") return cmdTest(m, o, want);
+        if (cmd == "ctest") return cmdCTest(m, o, want);
+        if (cmd == "fetch") return cmdFetch(m, want);
         if (cmd == "clean") {
             Graph g = plan(m, {}); for (auto& a : g.acts) if (a.kind != "CC") for (auto& pth : a.outputs) fs::remove(pth);
             fs::remove_all(under(".okaybuild")); fs::remove("compile_commands.json"); printf("okay-build: cleaned\n"); return 0;

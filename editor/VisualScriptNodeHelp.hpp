@@ -3,7 +3,10 @@
 // category and a short "what it does" for every node type in Registry().
 // Keyed by the node's serialization type; a node with no entry simply shows
 // its pins without a description.
+#include "VisualScriptPlain.hpp"
+#include "okay/VisualScript/QuickBlocks.hpp"
 #include <cstring>
+#include <set>
 #include <string>
 #include <unordered_map>
 
@@ -47,7 +50,8 @@ inline const char* VsStepCatBlurb(bool cond) {
                   "in the node, no wiring needed.";
 }
 
-inline const char* VsNodeHelp(const char* type) {
+inline const char* VsNodeHelpRaw(const char* type) {
+    if (const okay::vs::QuickBlock* qb = okay::vs::FindQuickBlock(type ? type : "")) return qb->description;
     if (type && std::strncmp(type, "Fn.", 3) == 0) {
         if (std::strcmp(type, "Fn.get_clipboard_text") == 0)
             return "The text on the clipboard. Empty when there is nothing to paste.";
@@ -91,8 +95,8 @@ inline const char* VsNodeHelp(const char* type) {
             return "Shoves this object's 2D body away from a point. Arguments: centre x y, force, radius, and an optional upward bias. Nothing past the radius moves.";
     }
     if (type && std::strncmp(type, "Fn.", 3) == 0)
-        return "Calls this text-script builtin on the current object. Requires: wire only the arguments it takes "
-               "(First, Second, Third, Fourth). A failure is an error on this node. Search for the builtin name.";
+        return "Does this job on this object. Fill in only the boxes it needs (First, Second, Third, Fourth). "
+               "If it cannot work, this block shows an error. Search for its name to find it.";
     static const std::unordered_map<std::string, const char*> help = {
         // ---- Events ----
         {"OnStart",        "Runs once when the object starts (the scene loads or the object is spawned)."},
@@ -716,6 +720,15 @@ inline const char* VsNodeHelp(const char* type) {
     if (!type) return nullptr;
     auto it = help.find(type);
     return it == help.end() ? nullptr : it->second;
+}
+
+// The sentence the palette and the tooltips show: the hand-written help, with programming words swapped for
+// everyday ones (VisualScriptPlain.hpp). The text lives for the whole run, so the pointer stays valid.
+inline const char* VsNodeHelp(const char* type) {
+    const char* raw = VsNodeHelpRaw(type);
+    if (!raw) return nullptr;
+    static std::set<std::string> kept;
+    return kept.insert(VsPlainText(raw)).first->c_str();
 }
 
 }  // namespace okay::editor::vsed

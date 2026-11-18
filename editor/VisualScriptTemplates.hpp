@@ -13,6 +13,7 @@
 #include "okay/Components/AudioSource.hpp"
 #include "okay/Components/MeshRenderer.hpp"
 #include "okay/Components/ParticleSystem.hpp"
+#include "okay/Components/SurvivalComponents.hpp"
 #include "okay/Components/TextRenderer.hpp"
 #include "okay/Components/UIBarBind.hpp"
 #include "okay/Components/UIProgressBar.hpp"
@@ -797,6 +798,11 @@ inline void VsAddTemplateComponents(GameObject* go, const char* add) {
             bar->min = 0.0f;
             bar->max = 100.0f;
         }
+    }
+    if (has("Health") && !go->GetComponent<HealthStat>()) {
+        auto* hp = go->AddComponent<HealthStat>();
+        hp->playDeathAnim = false;
+        hp->keepBodyOnDeath = true;   // stays in the scene when it dies, so the game-over graph can run
     }
     if (has("Audio") && !go->GetComponent<AudioSource>()) {
         auto* au = go->AddComponent<AudioSource>();

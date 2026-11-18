@@ -63,7 +63,7 @@ int main() {
         const auto text = VsOfferConvert((char)PinType::Number, (char)PinType::Text);
         CHECK(text.type == "ToString");
         const auto vec = VsOfferConvert((char)PinType::Vec3, (char)PinType::Number);
-        CHECK(vec.type.empty() && vec.why.find("Get X") != std::string::npos);
+        CHECK(vec.type.empty() && vec.why.find("Get Position") != std::string::npos);
         CHECK(VsOfferConvert((char)PinType::Number, (char)PinType::Number).type.empty());
     }
 

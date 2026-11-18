@@ -2979,12 +2979,17 @@ struct Parser {
                 while (is(TIdent) && (cur().text == "public" || cur().text == "private" ||
                                       cur().text == "protected" || cur().text == "virtual"))
                     next();
-                if (!is(TIdent) || find_struct(cur().text) < 0) {
-                    error = "expected a base class";
+                // The base is a class, an alias of a class (`using Behaviour = Component;`) or a class template instance.
+                Type base_type;
+                bool base_imp = false;
+                bool base_exp = false;
+                const size_t base_at = at;
+                if (!is(TIdent) || !parse_type_core(&base_type, &base_imp, &base_exp) || base_type.base != 3 ||
+                    base_type.pointers != 0 || base_type.struct_id < 0) {
+                    if (error.empty() || at == base_at) error = "expected a base class";
                     return false;
                 }
-                base_id = find_struct(cur().text);
-                next();
+                base_id = base_type.struct_id;
                 if (!is(TLBrace)) {
                     error = "only one base class is supported";
                     return false;
@@ -8052,6 +8057,17 @@ struct Parser {
                 owner.methods[mi].out_of_class = true;
                 owner.methods[mi].body_at = at;
                 owner.methods[mi].param_names = decl.param_names;
+                if (is(TAssign) && at + 2 < tokens.size() && (tokens[at + 1].kind == TDefault || (tokens[at + 1].kind == TIdent && tokens[at + 1].text == "default")) &&
+                    tokens[at + 2].kind == TSemi) {
+                    // C::~C() = default; (or C::C() = default;) defined outside the class: the compiler's own special
+                    // function, the same as when it is defaulted in the class.
+                    at += 3;
+                    owner.methods[mi].implicit = true;
+                    const size_t resume_default = at;
+                    if (!define_method(sid, mi)) return false;
+                    at = resume_default;
+                    continue;
+                }
                 skip_ctor_init_list();
                 if (!is(TLBrace)) {
                     error = "expected a constructor body";

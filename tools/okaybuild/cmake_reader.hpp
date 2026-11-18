@@ -718,7 +718,11 @@ inline void Interp::builtin(const Cmd& c) {
     }
     if (n == "project") {
         if (a.empty()) return; vars["PROJECT_NAME"] = a[0]; vars["CMAKE_PROJECT_NAME"] = a[0];
-        for (size_t k = 1; k + 1 < a.size(); ++k) if (a[k] == "VERSION") { vars["PROJECT_VERSION"] = a[k + 1]; vars[a[0] + "_VERSION"] = a[k + 1]; }
+        for (size_t k = 1; k + 1 < a.size(); ++k) if (a[k] == "VERSION") {
+            vars["PROJECT_VERSION"] = a[k + 1]; vars[a[0] + "_VERSION"] = a[k + 1];
+            auto parts = splitList(a[k + 1]); std::stringstream vs(a[k + 1]); string seg; int idx = 0; static const char* nm[] = {"MAJOR", "MINOR", "PATCH", "TWEAK"};
+            while (std::getline(vs, seg, '.') && idx < 4) { vars[string("PROJECT_VERSION_") + nm[idx]] = seg; vars[a[0] + "_VERSION_" + nm[idx]] = seg; ++idx; } (void)parts;
+        }
         vars["PROJECT_SOURCE_DIR"] = curSrc; vars["PROJECT_BINARY_DIR"] = curBin; return;
     }
     if (n == "configure_file" && a.size() >= 2) { // @VAR@ (and ${VAR} unless @ONLY) replaced; written below the generated folder when the output is under {bin}

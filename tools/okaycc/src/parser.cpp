@@ -3479,7 +3479,7 @@ private:
                     decl->file = at.file;
                     decl->type = cloneType(*td);
                     std::string tag = td->tag;
-                    preStmts_.push_back(declStmt(std::move(decl)));
+                    decl.reset();  // the checker declares the hidden local (it knows where it must live)
                     auto comma = ex(Expr::Kind::Comma, at);
                     comma->ival = 7;  // a temporary: the checker destroys it unless it initializes an object
                     comma->text = tmp;
@@ -4083,9 +4083,19 @@ private:
                 // A T(args) temporary: destroyed after the statement unless it initializes an object.
                 TempInfo ti;
                 ti.name = e.text;
-                if (needsDtor(*e.ty)) ti.tag = e.ty->tag;
+                ti.type = cloneType(*e.ty);
+                add(ti.name, cloneType(*e.ty), false, e.line, e.col);
+                if (needsDtor(*e.ty)) {
+                    ti.tag = e.ty->tag;
+                    ti.flag = "__cf" + std::to_string(tempN_++);
+                    add(ti.flag, std::make_unique<Type>(), false, e.line, e.col);
+                    scopes_.back()[ti.flag].type->kind = Type::Kind::Int;
+                    lastTempFlag_ = ti.flag;
+                    auto first = std::move(e.kids[0]);
+                    e.kids[0] = withFlag(std::move(first), e);
+                }
                 e.ival = 9;
-                if (!ti.tag.empty()) temps_.push_back(std::move(ti));
+                temps_.push_back(std::move(ti));
             }
             ET last = bad(e.line, e.col);
             for (auto& k : e.kids)
@@ -4105,11 +4115,28 @@ private:
     struct TempInfo {
         std::string name;
         std::string tag;                 // class to destroy ("" = nothing to destroy)
+        std::string flag;                // hidden int, set when the object was built (declared with it)
         std::unique_ptr<Type> type;      // set when the declaration still has to be inserted
         Pos2 pos;
     };
     std::vector<TempInfo> temps_;
     int tempN_ = 0;
+    std::string lastTempFlag_;  // the destruction flag of the temporary newTemp just made, or ""
+    // "flag = 1, first": the flag records that the object was built.
+    std::unique_ptr<Expr> withFlag(std::unique_ptr<Expr> first, const Expr& at) {
+        if (lastTempFlag_.empty()) return first;
+        auto one = mkE(Expr::Kind::Int, at);
+        one->ival = 1;
+        auto set = mkE(Expr::Kind::Assign, at);
+        set->text = "=";
+        set->ival = 3;
+        set->kids.push_back(mkName(lastTempFlag_, at));
+        set->kids.push_back(std::move(one));
+        auto c = mkE(Expr::Kind::Comma, at);
+        c->kids.push_back(std::move(set));
+        c->kids.push_back(std::move(first));
+        return c;
+    }
     std::map<const Expr*, ET> etCache_;
 
     static ET copyET(const ET& a) {
@@ -4149,7 +4176,14 @@ private:
         ti.pos.line = at.line;
         ti.pos.col = at.col;
         ti.pos.file = at.file;
-        if (destroy && needsDtor(t)) ti.tag = t.tag;
+        lastTempFlag_.clear();
+        if (destroy && needsDtor(t)) {
+            ti.tag = t.tag;
+            ti.flag = "__cf" + std::to_string(tempN_++);
+            lastTempFlag_ = ti.flag;
+            add(ti.flag, std::make_unique<Type>(), false, at.line, at.col);
+            scopes_.back()[ti.flag].type->kind = Type::Kind::Int;
+        }
         add(ti.name, cloneType(t), false, at.line, at.col);
         std::string name = ti.name;
         temps_.push_back(std::move(ti));
@@ -4159,7 +4193,7 @@ private:
     void eraseTemp(const std::string& name) {
         for (std::size_t i = 0; i < temps_.size(); ++i)
             if (temps_[i].name == name) {
-                temps_.erase(temps_.begin() + static_cast<std::ptrdiff_t>(i));
+                temps_[i].tag.clear();  // still declared (the flag is set), but not destroyed
                 return;
             }
     }
@@ -4263,7 +4297,7 @@ private:
             // An object that is not an lvalue (the result of a call): put it in a hidden local and
             // call the operator on that.
             std::string tmp = newTemp(*probe.type, e, true);
-            auto assign = eAssignNode(mkName(tmp, e), std::move(e.kids[lhsAt]), e);
+            auto assign = withFlag(eAssignNode(mkName(tmp, e), std::move(e.kids[lhsAt]), e), e);
             auto member = mkE(Expr::Kind::Member, e);
             member->text = ".";
             member->kids.push_back(mkName(tmp, e));
@@ -4793,7 +4827,7 @@ private:
                         addr = eUnary("&", mkName(existing, e), e);
                     } else {
                         std::string tmp = newTemp(*src.type, e, true);
-                        first = eAssignNode(mkName(tmp, e), std::move(e.kids[i + 1]), e);
+                        first = withFlag(eAssignNode(mkName(tmp, e), std::move(e.kids[i + 1]), e), e);
                         addr = eUnary("&", mkName(tmp, e), e);
                     }
                     auto both = eCommaNode(std::move(first), std::move(addr), e);
@@ -4845,6 +4879,7 @@ private:
                     } else {
                         made = eAssignNode(mkName(tmp, e), std::move(e.kids[i + 1]), e);
                     }
+                    made = withFlag(std::move(made), e);
                     e.kids[i + 1] = eCommaNode(std::move(made), mkName(tmp, e), e);
                     arg = decay(checkExpr(*e.kids[i + 1]));
                     if (arg.bad) return bad(e.line, e.col);
@@ -4985,24 +5020,45 @@ private:
         body = std::move(blk);
     }
 
-    // Puts the hidden locals' declarations before 'st' and the destructor calls after it (before
-    // a return, with the returned value kept in another hidden local).
-    void flushTemps(std::vector<std::unique_ptr<Stmt>>& out, std::unique_ptr<Stmt> st, std::vector<TempInfo>& temps) {
+    // Declarations of the hidden locals and their flags (the flag starts at 0).
+    void declareTemps(std::vector<std::unique_ptr<Stmt>>& out, std::vector<TempInfo>& temps) {
         for (TempInfo& t : temps) {
-            if (!t.type) continue;
-            auto d = std::make_unique<Decl>();
-            d->name = t.name;
-            d->line = t.pos.line;
-            d->col = t.pos.col;
-            d->file = t.pos.file;
-            d->type = std::move(t.type);
-            auto ds = std::make_unique<Stmt>();
-            ds->kind = Stmt::Kind::Decl;
-            ds->line = d->line;
-            ds->col = d->col;
-            ds->decl = std::move(d);
-            out.push_back(std::move(ds));
+            if (t.type) {
+                auto d = std::make_unique<Decl>();
+                d->name = t.name;
+                d->line = t.pos.line;
+                d->col = t.pos.col;
+                d->file = t.pos.file;
+                d->type = std::move(t.type);
+                auto ds = std::make_unique<Stmt>();
+                ds->kind = Stmt::Kind::Decl;
+                ds->line = d->line;
+                ds->col = d->col;
+                ds->decl = std::move(d);
+                out.push_back(std::move(ds));
+            }
+            if (!t.flag.empty()) {
+                auto d = std::make_unique<Decl>();
+                d->name = t.flag;
+                d->line = t.pos.line;
+                d->col = t.pos.col;
+                d->file = t.pos.file;
+                d->type = std::make_unique<Type>();
+                d->init = std::make_unique<Expr>();
+                d->init->kind = Expr::Kind::Int;
+                d->init->ival = 0;
+                auto ds = std::make_unique<Stmt>();
+                ds->kind = Stmt::Kind::Decl;
+                ds->line = d->line;
+                ds->col = d->col;
+                ds->decl = std::move(d);
+                out.push_back(std::move(ds));
+            }
         }
+    }
+    // "if (flag) dtor(&tmp);" for each temporary that has a destructor, latest first.
+    std::vector<std::unique_ptr<Stmt>> dtorStmts(std::vector<TempInfo>& temps, int line, int col,
+                                                 const std::string& file) {
         std::vector<std::unique_ptr<Stmt>> dtors;
         for (std::size_t i = temps.size(); i-- > 0;) {
             if (temps[i].tag.empty()) continue;
@@ -5010,21 +5066,40 @@ private:
             const Param* dp = it == canonStructs().end() ? nullptr : findSpecial(it->second.get(), "<dtor>");
             if (!dp) continue;
             Expr at;
-            at.line = st->line;
-            at.col = st->col;
-            at.file = st->file;
+            at.line = line;
+            at.col = col;
+            at.file = file;
             auto call = mkE(Expr::Kind::Call, at);
             call->kids.push_back(mkName(dp->mangled, at));
             call->kids.push_back(eUnary("&", mkName(temps[i].name, at), at));
             auto es = std::make_unique<Stmt>();
             es->kind = Stmt::Kind::Expr;
-            es->line = st->line;
-            es->col = st->col;
-            es->file = st->file;
+            es->line = line;
+            es->col = col;
+            es->file = file;
             es->expr = std::move(call);
-            checkStmt(*es);
-            dtors.push_back(std::move(es));
+            std::unique_ptr<Stmt> last = std::move(es);
+            if (!temps[i].flag.empty()) {
+                auto g = std::make_unique<Stmt>();
+                g->kind = Stmt::Kind::If;
+                g->line = line;
+                g->col = col;
+                g->file = file;
+                g->expr = mkName(temps[i].flag, at);
+                g->thenS = std::move(last);
+                last = std::move(g);
+            }
+            checkStmt(*last);
+            dtors.push_back(std::move(last));
         }
+        return dtors;
+    }
+
+    // Puts the hidden locals' declarations before 'st' and the destructor calls after it (before
+    // a return, with the returned value kept in another hidden local).
+    void flushTemps(std::vector<std::unique_ptr<Stmt>>& out, std::unique_ptr<Stmt> st, std::vector<TempInfo>& temps) {
+        declareTemps(out, temps);
+        std::vector<std::unique_ptr<Stmt>> dtors = dtorStmts(temps, st->line, st->col, st->file);
         if (dtors.empty()) {
             out.push_back(std::move(st));
             return;
@@ -5117,20 +5192,108 @@ private:
                 if (!v.bad && !canAssign(*ret_, v)) err(s.line, s.col, "return type does not match");
             }
             break;
-        case Stmt::Kind::If:
+        case Stmt::Kind::If: {
             blockify(s.thenS);
             blockify(s.elseS);
+            std::vector<TempInfo> outer = std::move(temps_);
+            temps_.clear();
             if (s.expr) checkCond(*s.expr);
+            std::vector<TempInfo> condTemps = std::move(temps_);
+            temps_ = std::move(outer);
             if (s.thenS) checkStmt(*s.thenS);
             if (s.elseS) checkStmt(*s.elseS);
+            if (!condTemps.empty() && s.expr) {
+                // The condition's temporaries die before either branch runs:
+                // { decls; int c = cond; dtors; if (c) then else }.
+                Expr at;
+                at.line = s.line;
+                at.col = s.col;
+                at.file = s.file;
+                auto inner = std::make_unique<Stmt>();
+                inner->kind = Stmt::Kind::If;
+                inner->line = s.line;
+                inner->col = s.col;
+                inner->file = s.file;
+                std::string cv = "__cc" + std::to_string(tempN_++);
+                inner->expr = mkName(cv, at);
+                inner->expr->checked = prim(Type::Kind::Long);
+                inner->thenS = std::move(s.thenS);
+                inner->elseS = std::move(s.elseS);
+                std::vector<std::unique_ptr<Stmt>> parts;
+                declareTemps(parts, condTemps);
+                auto d = std::make_unique<Decl>();
+                d->name = cv;
+                d->line = s.line;
+                d->col = s.col;
+                d->file = s.file;
+                d->type = prim(Type::Kind::Long);  // wide enough for a pointer condition
+                d->init = std::move(s.expr);
+                auto ds = std::make_unique<Stmt>();
+                ds->kind = Stmt::Kind::Decl;
+                ds->line = s.line;
+                ds->col = s.col;
+                ds->decl = std::move(d);
+                parts.push_back(std::move(ds));
+                for (auto& dt : dtorStmts(condTemps, s.line, s.col, s.file)) parts.push_back(std::move(dt));
+                parts.push_back(std::move(inner));
+                s.kind = Stmt::Kind::Block;
+                s.stmts = std::move(parts);
+                s.expr.reset();
+            }
             break;
-        case Stmt::Kind::While:
+        }
+        case Stmt::Kind::While: {
             blockify(s.body);
+            std::vector<TempInfo> outer = std::move(temps_);
+            temps_.clear();
             if (s.expr) checkCond(*s.expr);
+            std::vector<TempInfo> condTemps = std::move(temps_);
+            temps_ = std::move(outer);
             ++loops_;
             if (s.body) checkStmt(*s.body);
             --loops_;
+            if (!condTemps.empty() && s.expr && s.body) {
+                // Temporaries of the condition live for one test: while (1) { decls; if (!cond) {
+                // dtors; break; } dtors; body }.
+                auto blk = std::make_unique<Stmt>();
+                blk->kind = Stmt::Kind::Block;
+                blk->line = s.line;
+                blk->col = s.col;
+                blk->file = s.file;
+                declareTemps(blk->stmts, condTemps);
+                Expr at;
+                at.line = s.line;
+                at.col = s.col;
+                at.file = s.file;
+                auto notc = eUnary("!", std::move(s.expr), at);
+                notc->checked = prim(Type::Kind::Int);
+                auto stop = std::make_unique<Stmt>();
+                stop->kind = Stmt::Kind::If;
+                stop->line = s.line;
+                stop->col = s.col;
+                stop->file = s.file;
+                stop->expr = std::move(notc);
+                auto exitBlk = std::make_unique<Stmt>();
+                exitBlk->kind = Stmt::Kind::Block;
+                exitBlk->line = s.line;
+                exitBlk->file = s.file;
+                for (auto& d : dtorStmts(condTemps, s.line, s.col, s.file)) exitBlk->stmts.push_back(std::move(d));
+                auto brk = std::make_unique<Stmt>();
+                brk->kind = Stmt::Kind::Break;
+                brk->line = s.line;
+                brk->file = s.file;
+                exitBlk->stmts.push_back(std::move(brk));
+                stop->thenS = std::move(exitBlk);
+                blk->stmts.push_back(std::move(stop));
+                for (auto& d : dtorStmts(condTemps, s.line, s.col, s.file)) blk->stmts.push_back(std::move(d));
+                blk->stmts.push_back(std::move(s.body));
+                s.body = std::move(blk);
+                s.expr = mkE(Expr::Kind::Int, at);
+                s.expr->ival = 1;
+                s.expr->checked = prim(Type::Kind::Int);
+            }
             break;
+        }
         case Stmt::Kind::For:
             blockify(s.body);
             scopes_.emplace_back();

@@ -211,8 +211,9 @@ int main() {
         g.add("Print", 300, 40);
         const auto before = g.nodes.size();
         const auto made = VsInsertRecipe(g, VsRecipes()[1].graph);   // Jump with Space
-        CHECK(made.size() == 2 && g.nodes.size() == before + 2);
-        CHECK(g.execLinks.size() == 1);
+        const std::size_t want = (std::size_t)VsGraphNodeCount(VsRecipes()[1].graph);
+        CHECK(made.size() == want && g.nodes.size() == before + want);
+        CHECK(want < 2 || g.execLinks.size() == 1);
         for (int id : made) CHECK(g.find(id) && g.find(id)->y > 40);
         CHECK(!Overlaps(g));
         VsEditGraph e;                                              // an empty graph: the starting corner

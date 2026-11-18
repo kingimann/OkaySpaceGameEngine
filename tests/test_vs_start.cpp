@@ -35,7 +35,7 @@ int main() {
         VsEditGraph g;
         const auto made = VsInsertRecipe(g, VsRecipes()[(std::size_t)c.recipe].graph);
         CHECK((int)made.size() == VsGraphNodeCount(VsRecipes()[(std::size_t)c.recipe].graph));
-        CHECK(!g.execLinks.empty());
+        CHECK(made.size() < 2 || !g.execLinks.empty());   // a one-block Quick recipe has nothing to wire
     }
     {
         VsEditGraph g;

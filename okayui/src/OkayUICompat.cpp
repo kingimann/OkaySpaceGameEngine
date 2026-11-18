@@ -60,7 +60,7 @@ bool IsWindowDocked(const char* title) {
 }
 } // namespace OkayUI
 
-// ---- Step 6.9: Shortcut, key ownership, the state store ------------------------------------------------------------------------
+// ---- Step 6.9: Shortcut, key ownership, the state store ------
 namespace OkayUI {
 
 namespace {

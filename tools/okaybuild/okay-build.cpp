@@ -109,6 +109,7 @@ struct ImporterDecl {
     string name, pattern, output, cmd, depfile, pool; vector<string> inputs, settings; int line = 0;
 };
 struct Target {
+    string outName; // output_name: the program's file name when it differs from the target name (CMake's OUTPUT_NAME)
     string name; bool isLib = false; bool isTest = false; int line = 0; string pool;
     vector<string> sources, includes, exportIncludes, defines, flags, linkFlags, libs, deps, needs, runtime, assets;
     // per-file additions (CMake's set_source_files_properties): {source path, word}
@@ -377,6 +378,7 @@ static Manifest parseManifest(const string& file) {
             else if (k == "assets") add(x.assets);
             else if (k == "pool") { if (v.size() != 1) throw err("pool takes one value"); x.pool = v[0]; }
             else if (k == "test") x.isTest = oneFlag(v, "test");
+            else if (k == "output_name") { if (v.size() != 1) throw err("output_name takes one value"); x.outName = v[0]; }
             else if (k == "file_flag" || k == "file_define" || k == "file_include") {
                 if (v.size() < 2) throw err(k + " takes a source path and then one or more words");
                 auto& dst = k == "file_flag" ? x.fileFlags : k == "file_define" ? x.fileDefines : x.fileIncludes;
@@ -635,7 +637,7 @@ static Graph plan(const Manifest& m, const vector<string>& want) {
     for (auto& t : m.targets) if (col[t.name] == 0) visit(t.name);
 
     Graph g; std::map<string, int> finalAct;
-    auto outPath = [&](const Target& t) { return under(m.outdir + "/" + (t.isLib ? m.tc.libp + t.name + m.tc.libs : t.name + m.tc.exe)); };
+    auto outPath = [&](const Target& t) { return under(m.outdir + "/" + (t.isLib ? m.tc.libp + (t.outName.empty() ? t.name : t.outName) + m.tc.libs : (t.outName.empty() ? t.name : t.outName) + m.tc.exe)); };
     std::set<string> done; vector<string> order;
     std::function<void(const string&)> post = [&](const string& n) { if (!done.insert(n).second) return; for (auto& d : byName[n]->deps) post(d); order.push_back(n); };
     for (auto& t : m.targets) post(t.name);
@@ -2595,7 +2597,7 @@ static int cmdPackage(Manifest& m, const vector<string>& want, const Opts& o) {
     if (rc != 0) return rc;
     for (auto& n : names) {
         const Target* t = nullptr; for (auto& x : m.targets) if (x.name == n) t = &x;
-        string exeName = n + m.tc.exe;
+        string exeName = (t && !t->outName.empty() ? t->outName : n) + m.tc.exe;
         string root = "dist/" + n;
         std::error_code ec; fs::remove_all(root, ec); fs::create_directories(root);
         fs::copy_file(under(m.outdir + "/" + exeName), root + "/" + exeName, fs::copy_options::overwrite_existing);
@@ -2640,7 +2642,7 @@ static int cmdTest(Manifest& m, const Opts& o, const vector<string>& only) {
     int rc = build(m, names, o);
     if (rc != 0) return rc;
     vector<std::pair<string, string>> runs;
-    for (auto& n : names) runs.push_back({n, under(m.outdir + "/" + n + m.tc.exe)});
+    for (auto& n : names) { string fileName = n; for (auto& t : m.targets) if (t.name == n && !t.outName.empty()) fileName = t.outName; runs.push_back({n, under(m.outdir + "/" + fileName + m.tc.exe)}); }
     int jobs = o.jobs;
     if (jobs <= 0) {
 #ifdef _WIN32
@@ -2680,7 +2682,8 @@ static int cmdCTest(const Manifest& m, const Opts& o, const vector<string>& filt
         all("{src}", srcDir); all("{bin}", binDir);
         for (size_t at = 0; (at = w.find("{target:", at)) != string::npos;) {
             size_t e = w.find('}', at); if (e == string::npos) break; string nm = w.substr(at + 8, e - at - 8);
-            string path = fs::absolute(under(m.outdir + "/" + nm + m.tc.exe)).generic_string(); w.replace(at, e - at + 1, path); at += path.size();
+            string fileName = nm; for (auto& t : m.targets) if (t.name == nm && !t.outName.empty()) fileName = t.outName;
+            string path = fs::absolute(under(m.outdir + "/" + fileName + m.tc.exe)).generic_string(); w.replace(at, e - at + 1, path); at += path.size();
         }
         return w;
     };
@@ -2729,7 +2732,7 @@ static int cmdCmake(const string& root, const string& outFile, const vector<std:
     if (!audit) return 0;
     printf("targets declared  %d (%d programs, %d libraries, %d interface libraries)\n", rep.targetsDeclared, rep.exes, rep.libs, rep.ifaces);
     printf("targets written   %d, sources %d, definitions %d, flags %d, per-file settings %d\n", rep.emitted, rep.sources, rep.defines, rep.flags, rep.perFile);
-    printf("tests declared    %d (%d run a program of ours, %d run something else); written %d, skipped %d, run cmake itself %d\n", rep.testsDeclared, rep.testsExe, rep.testsScript, rep.testsEmitted, rep.testsSkipped, rep.testsNeedCmake);
+    printf("tests declared    %d (%d run a program of ours, %d run something else); written %d, skipped %d, run cmake itself %d; set aside: %d with a name already used, %d with no command\n", rep.testsDeclared, rep.testsExe, rep.testsScript, rep.testsEmitted, rep.testsSkipped, rep.testsNeedCmake, rep.testsDuplicate, rep.testsNoCommand);
     printf("options           %d declared, %d set from the command line\n", tally.options, tally.setOptions);
     int cmds = 0; for (auto& c : tally.run) cmds += c.second;
     printf("commands run      %d\n", cmds);

@@ -806,7 +806,7 @@ inline void Interp::runTop() {
 // ---- 3. Interpreter result to a build.okay manifest ----------------------------------------------------------------------
 struct Report {
     int targetsDeclared = 0, exes = 0, libs = 0, ifaces = 0, emitted = 0, skipped = 0, sources = 0, defines = 0, flags = 0, perFile = 0;
-    int testsDeclared = 0, testsExe = 0, testsScript = 0, testsEmitted = 0, testsSkipped = 0, testsNeedCmake = 0;
+    int testsDuplicate = 0, testsNoCommand = 0, testsDeclared = 0, testsExe = 0, testsScript = 0, testsEmitted = 0, testsSkipped = 0, testsNeedCmake = 0;
     vector<std::pair<string, string>> skippedTargets; // name, reason
     vector<std::pair<string, string>> skippedTests;
     vector<string> unresolved; // link items that were neither a target nor a plain library name
@@ -938,6 +938,7 @@ static string emitManifest(Interp& in, Report& rep) {
         for (auto& s : t.sources) { out << " " << qw(rootRel(s, root)); ++rep.sources; }
         out << "\n";
         auto line = [&](const char* k, const vector<string>& v) { if (v.empty()) return; out << "  " << k << " ="; for (auto& w : v) out << " " << qw(w); out << "\n"; };
+        { auto on = t.props.find("OUTPUT_NAME"); if (on != t.props.end() && !on->second.empty()) out << "  output_name = " << qw(on->second) << "\n"; }
         line("include", incs); line("define", defs); line("flags", opts); line("link_flags", linkFlags); line("libs", libs); line("deps", r.deps);
         rep.defines += (int)defs.size(); rep.flags += (int)opts.size();
         for (auto& s : t.sources) {
@@ -956,8 +957,8 @@ static string emitManifest(Interp& in, Report& rep) {
     // tests
     std::set<string> seenTests;
     for (auto& tdef : in.tests) {
-        ++rep.testsDeclared; if (!seenTests.insert(tdef.name).second) continue;
-        if (tdef.cmd.empty()) continue;
+        ++rep.testsDeclared; if (!seenTests.insert(tdef.name).second) { ++rep.testsDuplicate; continue; }
+        if (tdef.cmd.empty()) { ++rep.testsNoCommand; continue; }
         vector<string> words, needs; bool skip = false; string why;
         bool exe = false;
         for (size_t k = 0; k < tdef.cmd.size(); ++k) {

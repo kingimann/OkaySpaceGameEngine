@@ -1570,7 +1570,7 @@ static void cmakeProject() {
         "list(APPEND _l a b c)\nlist(LENGTH _l _n)\nstring(REGEX REPLACE \"^D(.*)$\" \"\\\\1\" _x \"Demo\")\n"
         "set(_good 0)\nif(\"${_x}\" STREQUAL \"emo\" AND _n EQUAL 3 AND NOT DEFINED NOPE AND (DEMO_FANCY OR NOT DEMO_FANCY) AND \"x${_n}\" MATCHES \"^x[0-9]$\")\n  set(_good 1)\nendif()\n"
         "add_executable(app src/main.cpp)\n"
-        "target_link_libraries(app PRIVATE demo::core viaiface)\n"
+        "target_link_libraries(app PRIVATE demo::core viaiface)\nset_target_properties(app PROPERTIES OUTPUT_NAME renamed_app)\n"
         "target_compile_definitions(app PRIVATE CHECK_GOOD=${_good})\n"
         "add_library(extra INTERFACE)\ntarget_include_directories(extra INTERFACE ${CMAKE_CURRENT_SOURCE_DIR}/incx)\n"
         "find_path(_sysinc stdio.h)\ntarget_include_directories(app PRIVATE ${_sysinc} \"$<TARGET_PROPERTY:extra,INTERFACE_INCLUDE_DIRECTORIES>\")\n"
@@ -1591,7 +1591,7 @@ static void cmakeProject() {
         "add_test(NAME shell COMMAND sh -c \"exit 0\")\n"
         "foreach(_n a b)\n  add_test(NAME loop_${_n} COMMAND sh -c \"test ${_n} = ${_n}\")\nendforeach()\n"
         "add_test(NAME really_fails COMMAND sh -c \"echo boom; exit 3\")\n"
-        "add_test(NAME by_path COMMAND $<TARGET_FILE:test_ok>)\n"
+        "add_test(NAME by_path COMMAND $<TARGET_FILE:test_ok>)\nadd_test(NAME app_runs COMMAND app)\n"
         "add_test(NAME slow COMMAND sh -c \"sleep 5\")\nset_tests_properties(slow PROPERTIES TIMEOUT 1)\n");
     write("tests/test_ok.cpp", "#include \"core.h\"\n#include <cstring>\nint main(){return std::strcmp(core_version(), \"1.2.3\") == 0 ? 0 : 1;}\n");
     write("tests/test_args.cpp", "#include <cstring>\nint main(int c, char** v){return c == 3 && !std::strcmp(v[1], \"one\") && !std::strcmp(v[2], \"two\") ? 0 : 1;}\n");
@@ -1628,10 +1628,11 @@ static void testCmakeReader() {
       check(at != string::npos && row.find("-std=") == string::npos && row.find("-Wall") != string::npos, "a C file does not get the C++ standard flag but keeps the other flags", row); }
     // build and run the tests
     o = sh("-f build.okay -j2 app", &rc); check(rc == 0, "the generated manifest builds the program (checks defines and if() at compile time)", o);
-    check(system(("'" + (gRoot / "build/app").string() + "'").c_str()) == 0, "the program runs");
-    o = sh("-f build.okay ctest -j2 '^(ok|args|cwd|fail|skip|shell|loop_.|by_path)$'", &rc);
+    check(system(("'" + (gRoot / "build/renamed_app").string() + "'").c_str()) == 0, "the program runs under its OUTPUT_NAME");
+    o = sh("-f build.okay ctest -j2 '^(ok|args|cwd|fail|skip|shell|loop_.|by_path|app_runs)$'", &rc);
     check(rc == 0, "ctest passes the passing tests", o);
     check(o.find("PASS ok") != string::npos && o.find("PASS args") != string::npos && o.find("PASS loop_a") != string::npos && o.find("PASS by_path") != string::npos, "PASS lines", o);
+    check(o.find("PASS app_runs") != string::npos, "a test that names a program by its target runs the renamed file", o);
     check(o.find("PASS fail") != string::npos, "WILL_FAIL: a failing command is a pass", o);
     check(o.find("SKIP skip") != string::npos && o.find("1 skipped") != string::npos, "SKIP_RETURN_CODE gives a skip", o);
     check(fs::exists(gRoot / "build/ctest/tests/cwd_marker"), "the default working folder is <build>/ctest/<folder>", o);

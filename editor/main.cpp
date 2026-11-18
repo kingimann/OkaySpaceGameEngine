@@ -1025,7 +1025,7 @@ SDL_Renderer* g_sdlRenderer = nullptr;
 bool          g_gpuRender = true;        // GPU 3D view, auto-on (D3D11/OpenGL by OS, software fallback)
 SDL_Window*   g_glWindow  = nullptr;     // hidden window owning the GL context
 bool          g_glCtx     = false;       // the hidden window's GL context exists (made and owned by g_glWin)
-std::unique_ptr<okay::platform::Window> g_glWin;   // non-owning seam wrapper over g_glWindow; owns the GL context
+std::unique_ptr<okay::platform::Window> g_glWin;   // owns the hidden window g_glWindow (an SDL_Window* view of it) and the GL context
 okay::GLRenderer* g_glRenderer = nullptr;
 bool          g_glReady   = false;       // GL context + entry points loaded OK
 bool          g_d3dReady  = false;       // D3D11 device created OK (Windows)
@@ -50343,12 +50343,17 @@ int main(int argc, char** argv) {
     // Windows renders the window at native resolution (crisp) instead of bitmap-
     // stretching a 96-DPI surface (the blurry look on 125%/150% scaled displays).
     // No-op on other platforms. Pair with the UI Scale menu to size the UI to taste.
-    SDL_SetHint(SDL_HINT_WINDOWS_DPI_AWARENESS, "permonitorv2");
-    if (SDL_Init(SDL_INIT_VIDEO | SDL_INIT_TIMER | SDL_INIT_AUDIO |
-                 SDL_INIT_GAMECONTROLLER) != 0) {
-        std::cerr << "SDL_Init failed: " << SDL_GetError() << "\n";
+    // The editor's windows are SDL windows (Dear ImGui's SDL backends and SDL_Renderer need an SDL_Window*), so the
+    // editor always asks the seam for the SDL2 backend, whatever OKAY_PLATFORM_BACKEND says. Init, windows and shutdown
+    // go through okay::platform; behaviour is the same as the direct SDL calls were.
+    okay::platform::Backend* sdlSeam = okay::platform::Get(okay::platform::BackendKind::Sdl2);
+    if (!sdlSeam) { std::cerr << "SDL2 platform backend is not available\n"; return 1; }
+    sdlSeam->SetPerMonitorDpiAware();
+    if (!sdlSeam->Init(okay::platform::InitFlags())) {   // video + audio + game controllers (+ timers, events)
+        std::cerr << "SDL_Init failed: " << sdlSeam->LastError() << "\n";
         return 1;
     }
+    sdlSeam->StartTextInput();   // SDL2 starts with text input on and Dear ImGui's SDL backend relies on it
     {
         // The previous build is kept as <exe>.old until this process is actually
         // up. A relaunch that loses the single-instance check, or fails to
@@ -50374,13 +50379,14 @@ int main(int argc, char** argv) {
     // Create the window HIDDEN so the OS never composites a black, uninitialized
     // rectangle during the window + renderer setup. We paint the first splash
     // frame while hidden and then reveal the window already showing the splash.
-    SDL_Window* window = SDL_CreateWindow(
-        "OkayEngine", SDL_WINDOWPOS_CENTERED, SDL_WINDOWPOS_CENTERED,
-        1280, 800, SDL_WINDOW_RESIZABLE | SDL_WINDOW_ALLOW_HIGHDPI | SDL_WINDOW_HIDDEN);
-    if (!window) { std::cerr << "CreateWindow failed: " << SDL_GetError() << "\n"; return 1; }
+    okay::platform::WindowDesc mainDesc;
+    mainDesc.title = "OkayEngine"; mainDesc.width = 1280; mainDesc.height = 800;
+    mainDesc.resizable = true; mainDesc.highDpi = true; mainDesc.hidden = true;
+    // The seam's window (it owns the window and destroys it); the SDL_Window* inside is what the ImGui backends and SDL_Renderer take.
+    std::unique_ptr<okay::platform::Window> winSeam = sdlSeam->MakeWindow(mainDesc);
+    if (!winSeam) { std::cerr << "CreateWindow failed: " << sdlSeam->LastError() << "\n"; return 1; }
+    SDL_Window* window = (SDL_Window*)winSeam->NativeHandle();
     okay::SetAppIcon(window);   // placeholder OkaySpace logo
-    // The seam's view of the editor window (non-owning): window state calls go through it, the window is still SDL's.
-    std::unique_ptr<okay::platform::Window> winSeam = okay::platform::WrapSdl2Window(window);
 
     // SDL's 2D renderer (Direct3D/Metal/OpenGL, chosen by SDL); fall back to software.
 #if defined(_WIN32)
@@ -50664,10 +50670,12 @@ int main(int argc, char** argv) {
         // SDL_GL_CreateContext fails and we fall back to software (no crash).
         okay::platform::Backend* glb = okay::platform::Get(okay::platform::BackendKind::Sdl2);
         const okay::platform::GLCurrent prevGL = glb->CurrentGL();
-        g_glWindow = SDL_CreateWindow("okay-gl", 0, 0, 16, 16,
-                                      SDL_WINDOW_OPENGL | SDL_WINDOW_HIDDEN);
+        okay::platform::WindowDesc glDesc;
+        glDesc.title = "okay-gl"; glDesc.x = 0; glDesc.y = 0; glDesc.width = 16; glDesc.height = 16;
+        glDesc.resizable = false; glDesc.opengl = true; glDesc.hidden = true;
+        g_glWin = glb->MakeWindow(glDesc);   // owns the window; destroyed with g_glWin
+        g_glWindow = g_glWin ? (SDL_Window*)g_glWin->NativeHandle() : nullptr;
         if (g_glWindow) {
-            g_glWin = okay::platform::WrapSdl2Window(g_glWindow);
             okay::platform::GLAttributes gla;   // 3.2 compatibility, 24-bit depth: the seam's defaults
             g_glCtx = g_glWin->CreateGLContext(gla);   // also makes it current
             if (g_glCtx) {
@@ -52438,8 +52446,8 @@ int main(int argc, char** argv) {
         if (g_glRenderer) { g_glRenderer->Destroy(); delete g_glRenderer; g_glRenderer = nullptr; }
         glb->RestoreGL(prevGL);
         if (g_glCtx) { g_glWin->DestroyGLContext(); g_glCtx = false; }
-        g_glWin.reset();
-        if (g_glWindow) { SDL_DestroyWindow(g_glWindow); g_glWindow = nullptr; }
+        g_glWin.reset();   // destroys the hidden window too
+        g_glWindow = nullptr;
         g_glReady = false;
     }
 #if defined(_WIN32)
@@ -52448,8 +52456,8 @@ int main(int argc, char** argv) {
     g_pads.CloseAll();
     audioDev.reset();
     SDL_DestroyRenderer(renderer);
-    SDL_DestroyWindow(window);
-    SDL_Quit();
+    winSeam.reset();   // destroys the main window (after its renderer)
+    sdlSeam->Shutdown();
     return 0;
 }
 #endif // OKAY_EDITOR_HEADLESS

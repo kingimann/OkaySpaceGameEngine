@@ -5230,7 +5230,11 @@ static std::string VoiceMessageBody(int secs, const std::string& url) { return "
 
 static bool EnsureAudio() {
     static int state = 0;   // 0 untried, 1 ok, -1 unavailable
-    if (state == 0) state = SDL_InitSubSystem(SDL_INIT_AUDIO) == 0 ? 1 : -1;
+    if (state == 0) {
+        okay::platform::InitFlags af; af.video = false; af.audio = true; af.gamepad = false;
+        okay::platform::Backend* ab = okay::platform::Get(okay::platform::BackendKind::Sdl2);
+        state = (ab && ab->Init(af)) ? 1 : -1;   // starts the audio subsystem on top of what main() already started (shut down with it)
+    }
     return state == 1;
 }
 
@@ -16692,6 +16696,7 @@ struct ChatWindowHost {
     ImFont* mono = nullptr; Uint32 id = 0; bool shown = false;
 };
 static ChatWindowHost g_chatHost;
+static okay::platform::Window* g_chatHostOwner = nullptr;   // owns g_chatHost.win
 // Keep a window reachable: when too little of it (or its title bar) is on any
 // display (a monitor was unplugged, a minimized position got saved...), put it
 // back in the middle of the first display, shrunk to fit.
@@ -16733,15 +16738,19 @@ static bool ChatHostCreate() {
     if (g_chatHost.win) return true;
     ImGuiContext* mainCtx = ImGui::GetCurrentContext();
     const int x = g_chatWinX >= 0 ? g_chatWinX : (int)SDL_WINDOWPOS_CENTERED, y = g_chatWinY >= 0 ? g_chatWinY : (int)SDL_WINDOWPOS_CENTERED;
-    g_chatHost.win = SDL_CreateWindow("OkaySpace Chat", x, y, g_chatWinW, g_chatWinH,
-                                      SDL_WINDOW_ALLOW_HIGHDPI | SDL_WINDOW_RESIZABLE | SDL_WINDOW_HIDDEN);
+    okay::platform::Backend* sb = okay::platform::Get(okay::platform::BackendKind::Sdl2);
+    okay::platform::WindowDesc cd;
+    cd.title = "OkaySpace Chat"; cd.x = x; cd.y = y; cd.width = g_chatWinW; cd.height = g_chatWinH;
+    cd.resizable = true; cd.highDpi = true; cd.hidden = true;
+    g_chatHostOwner = sb ? sb->MakeWindow(cd).release() : nullptr;   // owning; like before, the chat window lives until the process ends (never freed on purpose: it must not outlive SDL's shutdown in a static destructor)
+    g_chatHost.win = g_chatHostOwner ? (SDL_Window*)g_chatHostOwner->NativeHandle() : nullptr;
     if (!g_chatHost.win) return false;
     lw::SetMinSize(g_chatHost.win, 520, 380);
     okay::SetAppIcon(g_chatHost.win);
     // No VSync here: the launcher's present already paces the loop.
     g_chatHost.ren = SDL_CreateRenderer(g_chatHost.win, -1, SDL_RENDERER_ACCELERATED);
     if (!g_chatHost.ren) g_chatHost.ren = SDL_CreateRenderer(g_chatHost.win, -1, 0);
-    if (!g_chatHost.ren) { SDL_DestroyWindow(g_chatHost.win); g_chatHost.win = nullptr; return false; }
+    if (!g_chatHost.ren) { delete g_chatHostOwner; g_chatHostOwner = nullptr; g_chatHost.win = nullptr; return false; }
     g_chatHost.id = lw::Id(g_chatHost.win);
     g_chatHost.ctx = ImGui::CreateContext();
     ImGui::SetCurrentContext(g_chatHost.ctx);
@@ -18158,9 +18167,17 @@ int main(int argc, char** argv) {
 
     // Windows 11 / high-DPI: declare per-monitor-DPI-aware BEFORE SDL video init so
     // the launcher renders crisp at 125%/150% scaling instead of bitmap-stretched.
-    SDL_SetHint(SDL_HINT_WINDOWS_DPI_AWARENESS, "permonitorv2");
+    // The launcher's windows are SDL windows (Dear ImGui's SDL backends and SDL_Renderer need an SDL_Window*), so it always
+    // asks the seam for the SDL2 backend, whatever OKAY_PLATFORM_BACKEND says. Same behaviour as the direct SDL calls.
+    okay::platform::Backend* sdlSeam = okay::platform::Get(okay::platform::BackendKind::Sdl2);
+    if (!sdlSeam) return 1;
+    sdlSeam->SetPerMonitorDpiAware();
     okay::filedialog::SetContextGetter([]() -> void* { return ImGui::GetCurrentContext(); });   // the built-in file browser shows in the window (context) that asked
-    if (SDL_Init(SDL_INIT_VIDEO) != 0) return 1;
+    {
+        okay::platform::InitFlags vf; vf.audio = false; vf.gamepad = false;   // video (+ timers, events); audio is started later on demand
+        if (!sdlSeam->Init(vf)) return 1;
+        sdlSeam->StartTextInput();   // SDL2 starts with text input on and Dear ImGui's SDL backend relies on it
+    }
 
     // `--versions [<version>]` opens the Versions page (the editor's "Open launcher" button starts the launcher this way).
     okayversions::LauncherArgs launchArgs;
@@ -18174,7 +18191,7 @@ int main(int argc, char** argv) {
     // With --versions it also leaves a note for the running one to open that page.
     if (!AcquireSingleInstance()) {
         if (launchArgs.versions) okayversions::WriteHandoff(okayversions::HandoffFile(), launchArgs, (long long)std::time(nullptr));
-        SDL_Quit();
+        sdlSeam->Shutdown();
         return 0;
     }
     // Only the instance that stays up removes the previous exe. A second launch
@@ -18204,10 +18221,12 @@ int main(int argc, char** argv) {
     // rectangle during the window + renderer setup gap. We draw the first splash
     // frame while hidden, then reveal the window already showing the splash, so
     // the very first thing the user sees is the branded loading screen.
-    SDL_Window* window = SDL_CreateWindow("OkaySpace Launcher  v" OKAY_ENGINE_VERSION,
-        SDL_WINDOWPOS_CENTERED, SDL_WINDOWPOS_CENTERED, g_winW, g_winH,
-        SDL_WINDOW_ALLOW_HIGHDPI | SDL_WINDOW_RESIZABLE | SDL_WINDOW_HIDDEN);
-    if (!window) return 1;
+    okay::platform::WindowDesc mainDesc;
+    mainDesc.title = "OkaySpace Launcher  v" OKAY_ENGINE_VERSION; mainDesc.width = g_winW; mainDesc.height = g_winH;
+    mainDesc.resizable = true; mainDesc.highDpi = true; mainDesc.hidden = true;
+    std::unique_ptr<okay::platform::Window> mainWinOwner = sdlSeam->MakeWindow(mainDesc);   // owns the window
+    if (!mainWinOwner) return 1;
+    SDL_Window* window = (SDL_Window*)mainWinOwner->NativeHandle();
     g_launcherWindow = window;   // games ask us to come forward (Invite friends)
     lw::SetMinSize(window, 720, 480);   // the fixed layout needs this much
     okay::SetAppIcon(window);   // placeholder OkaySpace logo
@@ -27170,7 +27189,7 @@ int main(int argc, char** argv) {
     ImGui_ImplSDL2_Shutdown();
     ImGui::DestroyContext();
     SDL_DestroyRenderer(renderer);
-    SDL_DestroyWindow(window);
-    SDL_Quit();
+    mainWinOwner.reset();   // destroys the main window (after its renderer)
+    sdlSeam->Shutdown();
     return 0;
 }

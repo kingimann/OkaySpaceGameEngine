@@ -335,6 +335,23 @@ and `SetFocus`, and from the EWMH `_NET_WM_STATE_HIDDEN` state on X11 (specifica
   and editor `main.cpp` compile on Linux; `OwnWin32.cpp` passes a MinGW syntax check. Unverified: the Windows paths (no Windows machine here),
   and the own-Linux minimized/mouse-focus answers under a real window manager.
 
+## Round 7: window and platform start-up/shut-down creation moved onto the seam (editor, launcher; the player was done in stage 2)
+
+Written from our own needs; no new platform code (the SDL2 backend already had `Init`, `MakeWindow`, `CreateGLContext`, `Shutdown`).
+
+* Editor: `SDL_SetHint(DPI)`, `SDL_Init`, `SDL_CreateWindow` (main window and the hidden `okay-gl` GL window), `SDL_DestroyWindow` and `SDL_Quit`
+  became `Backend::SetPerMonitorDpiAware`, `Init`, `MakeWindow` (the seam window now owns the SDL window; the `SDL_Window*` for the ImGui backends and
+  `SDL_Renderer` comes from `NativeHandle()`), destroying the window object, and `Shutdown`. The GL context was already created through the seam.
+* Launcher: the same for the main window, the chat pop-out window, start-up / early exit / shutdown, and the on-demand audio start
+  (`SDL_InitSubSystem(AUDIO)` is `Init` with audio only). Display bounds queries were moved in round 5/6 (`DisplayCount/DisplayAt`).
+* Both apps ask for `BackendKind::Sdl2` explicitly, so `OKAY_PLATFORM_BACKEND=own` cannot hand an SDL-only code path a window with no `SDL_Window`.
+  SDL2 stays the default and the behaviour is meant to be identical. One deliberate detail: the SDL2 backend's `Init` switches text input off (the
+  seam's contract), SDL2 itself starts with it on, so both apps call `StartTextInput()` right after `Init`.
+* Not moved (stopped here): the `SDL_PollEvent` loops (editor 1, launcher 1) and `SDL_WINDOWPOS`/`SDL_Event` use feed Dear ImGui's `imgui_impl_sdl2`, which takes
+  an `SDL_Event`; they move with an own ImGui platform backend. `SDL_Renderer` creation needs the `SDL_Window*`. The launcher's `SDL_SetWindowsMessageHook`
+  (tray icon) is still SDL's. `editor/main.cpp` line 871 (`SDL_Init(SDL_INIT_EVENTS)` in the headless helper) is untouched.
+* Checked: launcher and editor `main.cpp` pass `g++ -fsyntax-only` with the real include paths. Not built to executables, not run.
+
 ## Not behind the seam yet (stage 1 list; see stage 2 above for what changed)
 
 The window, event loop and GL context of the editor, launcher and player still call SDL directly. Moving them needs more than

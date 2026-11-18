@@ -4,8 +4,9 @@
 // the tests share it; it does not include any engine header.
 //
 // How it works, in plain words:
-//  * Every item is OFF by default. The choices are saved in one small text file, own_switches.cfg, next to the program
-//    (the launcher and the editor read the same file). Format: one line `on=wav,http` (ids of the items that are on).
+//  * Every item is OFF by default. The choices are saved in one small text file, own_switches.cfg, in the person's own
+//    settings folder (Windows: %LOCALAPPDATA%\OkaySpace; elsewhere $XDG_CONFIG_HOME/okayspace or ~/.config/okayspace), so the
+//    launcher and the editor, which sit in different folders, read the same file. Format: one line `on=wav,http` (ids of the items that are on).
 //  * At the very top of main(), before anything reads its variable, Startup() sets the environment variable of each
 //    chosen item inside the running program. Programs the launcher starts inherit it.
 //  * A variable the person set themselves (set / $env: / export) always wins: the item then shows "set by an environment
@@ -16,6 +17,7 @@
 // TO ADD AN ITEM LATER (okay::platform events, own ImGui renderer, the okayui host ...): add ONE line to Items() below.
 #include <cstdio>
 #include <cstdlib>
+#include <filesystem>
 #include <fstream>
 #include <sstream>
 #include <string>
@@ -186,6 +188,19 @@ inline const char* StatusText(Status s) {
     }
 }
 
+/// Where the shared file lives (see the top). `home` overrides are for the tests; "" = ask the environment.
+inline std::string DefaultPath() {
+    namespace fs = std::filesystem;
+    fs::path dir;
+#if defined(_WIN32)
+    if (const char* a = std::getenv("LOCALAPPDATA"); a && *a) dir = fs::path(a) / "OkaySpace";
+#else
+    if (const char* x = std::getenv("XDG_CONFIG_HOME"); x && *x) dir = fs::path(x) / "okayspace";
+    else if (const char* h = std::getenv("HOME"); h && *h) dir = fs::path(h) / ".config" / "okayspace";
+#endif
+    return (dir / "own_switches.cfg").string();   // no folder known: a file in the working folder
+}
+
 // ---- the file ----------------------------------------------------------------------------------------------------------
 
 inline std::vector<std::string> LoadFile(const std::string& path, const std::vector<Item>& items = Items()) {
@@ -196,6 +211,9 @@ inline std::vector<std::string> LoadFile(const std::string& path, const std::vec
     return Parse(ss.str(), items);
 }
 inline bool SaveFile(const std::string& path, const std::vector<std::string>& on, const std::vector<Item>& items = Items()) {
+    std::error_code ec;
+    const std::filesystem::path parent = std::filesystem::path(path).parent_path();
+    if (!parent.empty()) std::filesystem::create_directories(parent, ec);
     std::ofstream f(path, std::ios::binary | std::ios::trunc);
     if (!f) return false;
     f << Serialize(on, items);
@@ -211,7 +229,7 @@ struct State {
 inline State& Global() { static State s; return s; }
 
 /// The one call at the top of main(), before OwnStack Startup(): load the file, set the variables.
-inline void Startup(const std::string& cfgPath) {
+inline void Startup(const std::string& cfgPath = DefaultPath()) {
     State& g = Global();
     g.path = cfgPath;
     g.chosen = LoadFile(cfgPath);

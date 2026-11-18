@@ -116,6 +116,11 @@ static void own_switches_file_round_trip() {
     std::remove(p.c_str());
 }
 
+static void DefaultPathNamesTheFile() {
+    const std::string p = DefaultPath();
+    CHECK(p.size() > 16 && p.compare(p.size() - 16, 16, "own_switches.cfg") == 0);
+}
+
 int main() {
     RUN_SUITE("own switches table");
     own_switches_real_table_is_sane();
@@ -126,5 +131,6 @@ int main() {
     own_switches_unavailable_items_stay_off();
     own_switches_status_text();
     own_switches_file_round_trip();
+    DefaultPathNamesTheFile();
     TEST_MAIN_RESULT();
 }

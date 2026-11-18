@@ -37,6 +37,10 @@
 #if defined(OKAY_XBOX_UWP)               // EXPERIMENTAL Xbox One Developer Mode (UWP) export: platform/xbox_uwp, docs/xbox_uwp.md
 #include "XboxExport.hpp"
 #include "XboxSdkProbe.hpp"
+#include "XboxBuildHost.hpp"   // one-click build: plan, runner, host (pure)
+#if defined(_WIN32)
+#include "XboxProcess.hpp"     // Windows process spawning for the runner (UNVERIFIED)
+#endif
 #endif
 #include "okay/Core/BuildInfo.hpp"
 #include "okay/Core/Clock.hpp"        // ClockSet: the channels the Tween Animation inspector offers
@@ -3008,6 +3012,16 @@ bool  g_showBuildGame = false;
 char  g_buildDirBuf[256] = "build/MyGame";
 char  g_buildNameBuf[128] = "MyGame";
 std::string g_buildStatus;
+#if defined(OKAY_XBOX_UWP)
+// One-click Xbox build (platform/xbox_uwp/XboxBuildPlan.hpp). UNVERIFIED on Windows: the steps have never run there.
+bool g_xboxExportOk = false;                       // set by the Xbox export block below
+std::vector<std::string> g_xboxExportWarnings;
+std::unique_ptr<okay::xbox::XboxBuildHost> g_xboxHost;
+std::unique_ptr<okay::xbox::BuildRunner> g_xboxRunner;
+bool g_xboxInstall = false;                        // "Install on this PC" (one administrator prompt)
+bool g_xboxShowRunner = false;
+std::string g_xboxSignerLabel, g_xboxSourceRoot, g_xboxAppx;
+#endif
 bool  g_openBuildResult = false;
 bool  g_vsBuildWantedRun = false;         // "Build & Run" was pressed when visual-script errors stopped the build
 std::vector<std::string> g_vsBuildErrors;  // errors that stopped the last Build (see Problems)
@@ -5037,6 +5051,7 @@ std::string ExportForPlatform(EditorState& ed, const std::string& outDir,
         okay::xbox::ExportInputs xi;
         xi.gameName = gameName; xi.company = opt.company; xi.version = opt.version; xi.bundleId = opt.bundleId; xi.iconPath = opt.iconPath;
         const okay::xbox::ExportResult xr = okay::xbox::WritePackage(dir.string(), xi);
+        g_xboxExportOk = xr.ok; g_xboxExportWarnings = xr.warnings;
         std::string msg = xr.message;
         for (const std::string& w : xr.warnings) msg += " Warning: " + w;
         return msg;
@@ -18564,6 +18579,9 @@ void DrawFileDialogs(EditorState& ed) {
         if (g_build.height < 240) g_build.height = 240;
         if (g_build.fpsCap < 0)   g_build.fpsCap = 0;
 
+#if defined(OKAY_XBOX_UWP)
+        if (g_xboxRunner) g_xboxRunner->Tick();   // keep the one-click Xbox build moving whichever page is shown
+#endif
         // ---- Target platform first ----
         // Target platform: Desktop ships a Windows .exe; Web/Android export a
         // ready-to-build project (the editor can't run Emscripten / the Android NDK
@@ -18739,6 +18757,36 @@ void DrawFileDialogs(EditorState& ed) {
             std::vector<std::string> xw;
             for (const std::string& pr : okay::xbox::ValidateManifest(xm, &xw)) ImGui::TextColored(ImVec4(1.0f, 0.45f, 0.4f, 1), "%s", pr.c_str());
             if (!g_build.icon[0]) ImGui::TextDisabled("No project icon: tile images will be generated PLACEHOLDERS (set one under Player).");
+            ImGui::Spacing();
+            ImGui::TextWrapped("The big button below does everything in one go: check the tools, export, compile the UWP app, compile the shaders, pack and sign. "
+                               "Signing uses: %s. The test certificate is made on this PC; its private key stays in your Windows certificate store.", okay::xbox::SignerLabel(okay::xbox::Signer::PowerShellSignTool));
+            ImGui::Checkbox("Also install on this PC afterwards", &g_xboxInstall);
+            if (g_xboxInstall) ImGui::TextDisabled("Windows will show ONE administrator (UAC) prompt near the end; accept it. Decline it and everything else is kept.");
+            if (g_xboxRunner) {   // the log panel: per-step status, streamed output, cancel
+                namespace xb = okay::xbox;
+                g_xboxRunner->Tick();
+                ImGui::Separator();
+                const auto& st = g_xboxRunner->Status(); const auto& sp = g_xboxRunner->Steps();
+                for (std::size_t i = 0; i < sp.size(); ++i) {
+                    const ImVec4 col = st[i] == xb::StepStatus::Done ? ImVec4(0.4f, 0.9f, 0.4f, 1) : st[i] == xb::StepStatus::Failed ? ImVec4(1, 0.45f, 0.4f, 1)
+                                     : st[i] == xb::StepStatus::Running ? ImVec4(1, 0.85f, 0.3f, 1) : ImVec4(0.65f, 0.65f, 0.65f, 1);
+                    ImGui::TextColored(col, "%-9s %s", xb::StatusName(st[i]), sp[i].title.c_str());
+                }
+                if (g_xboxRunner->Running() && ImGui::Button("Cancel build")) g_xboxRunner->Cancel();
+                if (g_xboxRunner->Succeeded()) {
+                    ImGui::TextColored(ImVec4(0.4f, 0.9f, 0.4f, 1), "Finished. Package: %s", g_xboxAppx.c_str());
+                    const std::string who = g_xboxRunner->Fact("SIGNER"); ImGui::TextDisabled("Signed with: %s", who.empty() ? g_xboxSignerLabel.c_str() : who.c_str());
+                    ImGui::TextDisabled("UNVERIFIED: nothing here has run on Windows or an Xbox yet. Tell us what you see.");
+                } else if (g_xboxRunner->Finished()) {
+                    ImGui::PushTextWrapPos(560.0f); ImGui::TextColored(ImVec4(1, 0.45f, 0.4f, 1), "%s", g_xboxRunner->FailureMessage().c_str()); ImGui::PopTextWrapPos();
+                }
+                if (ImGui::BeginChild("##xboxlog", ImVec2(560, 180), true)) {
+                    for (const xb::LogLine& l : g_xboxRunner->Log())
+                        ImGui::TextColored(l.cls == xb::LineClass::Error ? ImVec4(1, 0.5f, 0.45f, 1) : l.cls == xb::LineClass::Warning ? ImVec4(1, 0.8f, 0.4f, 1) : ImVec4(0.8f, 0.8f, 0.8f, 1), "%s", l.text.c_str());
+                    if (g_xboxRunner->Running()) ImGui::SetScrollHereY(1.0f);
+                }
+                ImGui::EndChild();
+            }
         }
 #endif
         if (s_buildSec == 6) {   // ---- Dedicated server ----
@@ -19064,7 +19112,7 @@ void DrawFileDialogs(EditorState& ed) {
         ImGui::SameLine();
         // Footer buttons, right-aligned (dialog convention): Cancel, then the
         // green primary Build/Export in the corner.
-        const char* buildLabel = (g_buildPlatform == 0 || g_buildPlatform == 3) ? "Build" : "Export";
+        const char* buildLabel = (g_buildPlatform == 0 || g_buildPlatform == 3) ? "Build" : (g_buildPlatform == 4 ? "Build Xbox package" : "Export");
         const float bw = 120.0f;
         const bool  desktop = (g_buildPlatform == 0);
         // Cancel, [Build & Run], Build/Export — right-aligned. Build & Run only
@@ -19087,7 +19135,7 @@ void DrawFileDialogs(EditorState& ed) {
         ImGui::PushStyleColor(ImGuiCol_ButtonHovered, ImVec4(0.24f, 0.70f, 0.32f, 1.0f));
         ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(1, 1, 1, 1));
 #if defined(OKAY_XBOX_UWP)
-        const bool xboxBlocked = g_buildPlatform == 4 && !okay::xbox::CachedSdkReport().available;
+        const bool xboxBlocked = g_buildPlatform == 4 && (!okay::xbox::CachedSdkReport().available || (g_xboxRunner && g_xboxRunner->Running()));
         ImGui::BeginDisabled(xboxBlocked);
 #endif
         if (ImGui::Button(buildLabel, ImVec2(bw, 0))) doBuild = true;
@@ -19153,9 +19201,38 @@ void DrawFileDialogs(EditorState& ed) {
             wo.width = g_build.width; wo.height = g_build.height; wo.bundleId = g_build.bundleId; wo.iconPath = g_build.icon;
             g_buildReport = builder::BuildReport{};
             g_buildStatus = builder::ExportForPlatform(ed, g_buildDirBuf, g_buildNameBuf, wo, g_buildPlatform);
-            g_openBuildResult = true;
             ConsoleLog("Export (" + std::string(plats[g_buildPlatform]) + "): " + g_buildStatus);
+#if defined(OKAY_XBOX_UWP)
+            if (g_buildPlatform == 4) {   // one click: SDK check, export, compile, shaders, pack, sign, (install). The popup stays open and shows the log.
+                namespace xb = okay::xbox;
+                xb::ExportInputs xi; xi.gameName = g_buildNameBuf; xi.company = g_build.company; xi.version = g_build.version; xi.bundleId = g_build.bundleId;
+                const xb::ManifestOptions xm = xb::ManifestFrom(xi);
+                xb::PlanInputs pi; pi.sdk = xb::CachedSdkReport(); pi.fs = xb::RealFs();
+                g_xboxSourceRoot = xb::FindSourceRoot(pi.fs, OkayExeDir(), std::getenv("OKAY_SOURCE_ROOT") ? std::getenv("OKAY_SOURCE_ROOT") : "");
+                pi.sourceRoot = g_xboxSourceRoot; pi.exportDir = g_buildDirBuf; pi.subject = xm.publisher; pi.installOnThisPc = g_xboxInstall;
+                pi.appxPath = (std::filesystem::path(g_buildDirBuf) / (xm.identityName + "_" + xb::NormalizeVersion(xm.version) + "_x64.appx")).string();
+                g_xboxAppx = pi.appxPath; g_xboxSignerLabel = xb::SignerLabel(pi.signer);
+                xb::BuildHostConfig hc; hc.sdkAvailable = pi.sdk.available; hc.exportOk = g_xboxExportOk; hc.exportMessage = g_buildStatus;
+                hc.exportWarnings = g_xboxExportWarnings; hc.exportDir = g_buildDirBuf; hc.appxPath = pi.appxPath; hc.configuration = pi.configuration;
+#if defined(_WIN32)
+                hc.spawn = xb::SpawnWindowsProcess;
+#endif
+                g_xboxHost.reset(new xb::XboxBuildHost(hc));
+                if (g_xboxSourceRoot.empty()) {
+                    g_buildStatus = "Xbox build: the Xbox build files were not found. They ship in the xbox-src folder next to the editor (or set OKAY_SOURCE_ROOT to a source checkout). The game data was exported.";
+                    g_openBuildResult = true; ImGui::CloseCurrentPopup();
+                } else {
+                    g_xboxRunner.reset(new xb::BuildRunner(xb::PlanBuild(pi), *g_xboxHost));
+                    g_xboxRunner->Start(); g_xboxShowRunner = true; s_buildSec = 7;
+                }
+            } else {
+                g_openBuildResult = true;
+                ImGui::CloseCurrentPopup();
+            }
+#else
+            g_openBuildResult = true;
             ImGui::CloseCurrentPopup();
+#endif
           } else {
             builder::Options o = builder::OptionsFromSettings(g_build, g_project);
             o.dryRun = g_buildDryRun;

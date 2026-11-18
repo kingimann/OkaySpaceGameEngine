@@ -4,6 +4,9 @@
 #include "okay/Render/ShaderBundle.hpp"
 #include "XboxDisplay.hpp"
 #include "XboxBuildPlan.hpp"
+#include "XboxBuildHost.hpp"
+#include <filesystem>
+#include <fstream>
 #include <deque>
 #include <set>
 #include <cstdio>
@@ -162,6 +165,19 @@ static void BuildPlanTests() {
     { PlanInputs b = in; b.installOnThisPc = true; b.appxPath = "C:/o/it's.appx"; CHECK(PlanBuild(b).back().cmd.Line().find("it''''s") != std::string::npos); }
 }
 
+static void SourceRootTests() {
+    using namespace okay::xbox;
+    std::set<std::string> files = {"C:/Apps/Okay/xbox-src/platform/xbox_uwp/app/CMakeLists.txt", "C:/Apps/Okay/xbox-src/scripts/xbox-sign.ps1",
+                                   "D:/src/OkaySpace/platform/xbox_uwp/app/CMakeLists.txt", "D:/src/OkaySpace/scripts/xbox-sign.ps1"};
+    FsView fs; fs.list = [files](const std::string& dir) { std::vector<std::string> o; const std::string pre = dir + "/";
+        for (const std::string& p : files) if (p.compare(0, pre.size(), pre) == 0) { std::string rest = p.substr(pre.size()); rest = rest.substr(0, rest.find('/')); if (std::find(o.begin(), o.end(), rest) == o.end()) o.push_back(rest); } return o; };
+    CHECK(FindSourceRoot(fs, "C:/Apps/Okay", "") == "C:/Apps/Okay/xbox-src");
+    CHECK(FindSourceRoot(fs, "D:/src/OkaySpace/build/bin", "") == "D:/src/OkaySpace");          // a source checkout: two folders up
+    CHECK(FindSourceRoot(fs, "C:/Apps/Okay", "D:/src/OkaySpace") == "D:/src/OkaySpace");         // the environment variable wins
+    CHECK(FindSourceRoot(fs, "C:/Apps/Okay", "E:/nothing") == "C:/Apps/Okay/xbox-src");          // a bad variable is ignored
+    CHECK(FindSourceRoot(fs, "E:/other", "").empty());
+}
+
 static void LogTests() {
     using namespace okay::xbox;
     CHECK(ClassifyLine("C:\\a.cpp(12): error C2065: 'x': undeclared identifier") == LineClass::Error);
@@ -230,8 +246,40 @@ static void RunnerTests() {
         PlanInputs in2 = in; in2.installOnThisPc = false; BuildRunner r(PlanBuild(in2), h); Drive(r); CHECK(r.Succeeded()); CHECK(r.Log().size() <= 3000); }
 }
 
+static void HostTests() {
+    using namespace okay::xbox;
+    namespace fs = std::filesystem;
+    const fs::path root = fs::temp_directory_path() / "okay_xbox_host_test";
+    fs::remove_all(root); fs::create_directories(root / "package" / "Shaders"); fs::create_directories(root / "build" / "app" / "out" / "Release");
+    auto put = [&](const fs::path& p, const std::string& b) { std::ofstream o(p, std::ios::binary); o << b; };
+    put(root / "package" / "AppxManifest.xml", "<Package/>"); put(root / "package" / "Shaders" / "okay3d.hlsl", "x"); put(root / "package" / "Shaders" / "entries.txt", "x");
+    put(root / "package" / "Shaders" / "shaders.manifest", "okay-shaders 1\n");
+    BuildHostConfig c; c.sdkAvailable = true; c.exportOk = true; c.exportMessage = "exported"; c.exportDir = root.string(); c.appxPath = (root / "g_1.0.0.0_x64.appx").string();
+    XboxBuildHost h(c);
+    std::vector<std::string> log; std::string err; Step s;
+    s.id = "sdk"; CHECK(h.RunInternal(s, log, err));
+    s.id = "export"; CHECK(h.RunInternal(s, log, err));
+    s.id = "pack"; CHECK(!h.RunInternal(s, log, err)); CHECK(err.find("OkaySpaceXbox.exe") != std::string::npos);   // not built yet
+    s.id = "collect"; CHECK(!h.RunInternal(s, log, err)); CHECK(err.find("not found") != std::string::npos);
+    put(root / "build" / "app" / "out" / "Release" / "OkaySpaceXbox.exe", "MZ-fake"); put(root / "build" / "app" / "tri_vs.cso", "DXBC");
+    err.clear(); s.id = "collect"; CHECK(h.RunInternal(s, log, err)); CHECK(fs::exists(root / "package" / "OkaySpaceXbox.exe")); CHECK(fs::exists(root / "package" / "tri_vs.cso"));
+    err.clear(); s.id = "pack"; CHECK(h.RunInternal(s, log, err)); CHECK(fs::exists(c.appxPath));
+    CHECK(!fs::exists(root / "package" / "Shaders" / "okay3d.hlsl")); CHECK(fs::exists(root / "package" / "Shaders" / "shaders.manifest"));
+    { std::ifstream f(c.appxPath, std::ios::binary); std::string z((std::istreambuf_iterator<char>(f)), std::istreambuf_iterator<char>()); CHECK(appx::Verify(z).ok); }
+    { BuildHostConfig d = c; d.sdkAvailable = false; XboxBuildHost h2(d); s.id = "sdk"; err.clear(); CHECK(!h2.RunInternal(s, log, err)); CHECK(!err.empty()); }
+    { BuildHostConfig d = c; d.exportOk = false; d.exportMessage = "Xbox export stopped: bad name"; XboxBuildHost h2(d); s.id = "export"; err.clear(); CHECK(!h2.RunInternal(s, log, err)); CHECK(err.find("bad name") != std::string::npos); }
+    { std::string e; CHECK(h.Spawn(Command{}, e) == nullptr); CHECK(!e.empty()); }   // no spawn function (not Windows)
+    // the whole runner with the real host and a fake process for each Process step
+    { struct P : ProcessHandle { bool Poll(std::string&, int& c) override { c = 0; return true; } void Kill() override {} };
+      BuildHostConfig d = c; d.spawn = [](const Command&, std::string&) { return std::unique_ptr<ProcessHandle>(new P()); };
+      XboxBuildHost h3(d); PlanInputs in = Inputs(); in.exportDir = root.string(); in.signPackage = false;
+      std::remove(c.appxPath.c_str()); BuildRunner r(PlanBuild(in), h3); r.Start(); for (int i = 0; i < 50 && r.Tick(); ++i) {}
+      CHECK(r.Succeeded()); CHECK(fs::exists(c.appxPath)); }
+    fs::remove_all(root);
+}
+
 int main() {
-    ShaderTests(); DisplayTests(); BuildPlanTests(); LogTests(); RunnerTests();
+    ShaderTests(); DisplayTests(); BuildPlanTests(); LogTests(); SourceRootTests(); RunnerTests(); HostTests();
     if (g_fail) { std::printf("%d FAILED\n", g_fail); return 1; }
     std::printf("xbox_uwp_runtime: all passed\n");
     return 0;

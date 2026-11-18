@@ -8,7 +8,6 @@
 #include "okay/Render/D3DPostHLSL.hpp"
 #include "okay/Render/DofMath.hpp"
 #include "okay/Render/SsaoMath.hpp"
-#include "okay/Render/Atmosphere.hpp"
 
 namespace okay {
 

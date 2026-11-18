@@ -82,10 +82,13 @@ inline std::string ReadmeText(const ExportInputs& in, const ManifestOptions& m, 
          "  package/Data/              your game's scene and assets\n\n";
     t += "IMPORTANT: the Xbox app shell in this version does not load Data/ yet. It opens a window, draws a test\n"
          "triangle with Direct3D 11 and reads a gamepad. It proves the packaging pipeline, not your game.\n\n";
-    t += "Next steps, on a Windows PC with Visual Studio 2022 (see docs/xbox_uwp.md in the OkaySpace source):\n"
-         "  1. powershell -File scripts\\xbox-check-sdk.ps1            (checks the tools)\n"
-         "  2. powershell -File scripts\\build-xbox-uwp.ps1 -SourceRoot <OkaySpace source> -ExportDir <this folder>\n"
-         "     (builds the UWP app, copies it into package/, packs with MakeAppx, makes a test certificate, signs)\n"
+    t += "Next steps, on a Windows PC (see docs/xbox_uwp.md in the OkaySpace source):\n"
+         "  1. Install Visual Studio 2022 once (the 'Universal Windows Platform development' workload, with its C++ UWP tools\n"
+         "     and a Windows 10/11 SDK). The editor checks this for you.\n"
+         "  2. In the editor press the big button on File > Build Settings > Xbox (exp.). It checks the tools, exports, compiles\n"
+         "     the UWP app and the shaders, packs with our own packer, signs with a test certificate (PowerShell + Microsoft's\n"
+         "     SignTool) and, if you ticked it, installs on this PC. Accept the one administrator prompt (UAC) when it appears.\n"
+         "     The log panel shows each step. (Advanced: scripts\\build-xbox-uwp.ps1 does the same from a command line.)\n"
          "  3. Put the console in Developer Mode and install the .appx from the Windows Device Portal\n"
          "     (steps in docs/xbox_uwp.md, written from Microsoft's documentation and unverified).\n";
     return t;

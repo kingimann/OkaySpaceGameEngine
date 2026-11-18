@@ -179,6 +179,16 @@ for d in $EXAMPLE_DIRS; do
 done
 # The texture the obj_texture_paths cubes name (the same starter file that ships in Assets/Textures).
 cp assets/textures/grid.png "$OUT_DIR/examples/obj_texture_paths/"
+
+# EXPERIMENTAL Xbox (UWP) one-click build: the editor's "Xbox (exp.)" button needs these sources next to it (xbox-src): the UWP app,
+# the helper tools, the PowerShell steps and the headers they include. docs/xbox_uwp.md. Never built or run on Windows (unverified).
+XBOX_SRC="$OUT_DIR/xbox-src"
+mkdir -p "$XBOX_SRC/platform" "$XBOX_SRC/scripts" "$XBOX_SRC/engine"
+cp -r platform/xbox_uwp "$XBOX_SRC/platform/"
+rm -rf "$XBOX_SRC/platform/xbox_uwp/tests"
+cp scripts/xbox-check-sdk.ps1 scripts/xbox-compile-shaders.ps1 scripts/xbox-sign.ps1 scripts/xbox-install-local.ps1 "$XBOX_SRC/scripts/"
+cp -r engine/include "$XBOX_SRC/engine/"
+[ -f "$XBOX_SRC/platform/xbox_uwp/app/CMakeLists.txt" ] || { echo "error: xbox-src did not get the UWP app" >&2; exit 1; }
 [ -s "$OUT_DIR/examples/vehicle/vehicle_test.okayscene" ] || { echo "error: examples/vehicle/vehicle_test.okayscene did not make it into the distribution" >&2; exit 1; }
 [ -s "$OUT_DIR/examples/ui_text/ui_text.okayscene" ] || { echo "error: examples/ui_text/ui_text.okayscene did not make it into the distribution" >&2; exit 1; }
 

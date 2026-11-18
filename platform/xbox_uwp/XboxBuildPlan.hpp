@@ -75,6 +75,23 @@ inline const char* SignerLabel(Signer s) {
     return s == Signer::OwnSigning ? "our own signer (OKAY_OWN_SIGNING, not independently reviewed)" : "PowerShell New-SelfSignedCertificate + Microsoft SignTool";
 }
 
+/// Where the Xbox build sources are (platform/xbox_uwp with app/, scripts/ and engine/include). The release ships them in `xbox-src` next to
+/// the editor; a source checkout has them two or three folders up. `envValue` (OKAY_SOURCE_ROOT) wins when it points at a good folder.
+inline std::string FindSourceRoot(const FsView& fs, const std::string& exeDir, const std::string& envValue) {
+    auto good = [&](const std::string& r) { return !r.empty() && fs.Exists(Join(r, "platform/xbox_uwp/app/CMakeLists.txt")) && fs.Exists(Join(r, "scripts/xbox-sign.ps1")); };
+    if (good(envValue)) return envValue;
+    std::vector<std::string> c = {Join(exeDir, "xbox-src")};
+    std::string d = exeDir;
+    for (int i = 0; i < 4 && !d.empty(); ++i) {
+        c.push_back(d);
+        const std::size_t cut = d.find_last_of("/\\");
+        if (cut == std::string::npos) break;
+        d = d.substr(0, cut);
+    }
+    for (const std::string& r : c) if (good(r)) return r;
+    return "";
+}
+
 inline std::vector<Step> PlanBuild(const PlanInputs& in) {
     std::vector<Step> v;
     auto internal = [&](const char* id, const char* title, const char* note) { Step s; s.id = id; s.title = title; s.note = note; v.push_back(s); };

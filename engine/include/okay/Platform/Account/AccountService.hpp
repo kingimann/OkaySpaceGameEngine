@@ -32,6 +32,9 @@
 #include <cstdlib>
 #include <ctime>
 #include <filesystem>
+#if defined(OKAY_XBOX_UWP)
+#include "okay/Core/Paths.hpp"
+#endif
 #include <fstream>
 #include <random>
 #include <sstream>
@@ -1257,7 +1260,9 @@ private:
 /// on Windows, $XDG_CONFIG_HOME or ~/.config/OkaySpace elsewhere, falling back
 /// to `fallbackBesideExe` if no home directory is known.
 inline fs::path DefaultConfigDir(const fs::path& fallbackBesideExe) {
-#if defined(_WIN32)
+#if defined(OKAY_XBOX_UWP)
+    { const std::string ad = okay::Paths::Env::Current().appData; if (!ad.empty()) return fs::path(ad) / "OkaySpace"; }   // ApplicationData, set by the UWP shell
+#elif defined(_WIN32)
     if (const char* appdata = std::getenv("APPDATA"))
         return fs::path(appdata) / "OkaySpace";
 #else

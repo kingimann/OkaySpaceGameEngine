@@ -5,6 +5,12 @@
 #include "XboxDisplay.hpp"
 #include "XboxBuildPlan.hpp"
 #include "XboxBuildHost.hpp"
+#include "XboxLifecycle.hpp"
+#include "XboxInput.hpp"
+#include "XboxPaths.hpp"
+#include "XboxAudio.hpp"
+#include "okay/Core/Paths.hpp"
+#include <cmath>
 #include <filesystem>
 #include <fstream>
 #include <deque>
@@ -278,8 +284,211 @@ static void HostTests() {
     fs::remove_all(root);
 }
 
+// ---- lifecycle ----
+static void LifecycleTests() {
+    using namespace okay::xbox;
+    Lifecycle l;
+    CHECK(l.Phase() == AppPhase::Created && !l.ShouldRender() && l.ShouldRunLogic());
+    l.Resized(960, 540, 192); CHECK((l.Size() == SizePx{1920, 1080}));
+    { LifecyclePending p = l.Take(); CHECK(p.resized && !p.saveState); CHECK(!l.Take().Any()); }
+    l.Launched(); CHECK(l.Phase() == AppPhase::Active && l.ShouldRender());
+    l.Resized(960, 540, 192); CHECK(!l.Peek());                       // same size: no event
+    l.Resized(1280, 720, 96); CHECK(l.Take().resized);
+    l.VisibilityChanged(false); CHECK(l.Phase() == AppPhase::Hidden && !l.ShouldRender() && l.ShouldRunLogic());
+    l.VisibilityChanged(true); CHECK(l.ShouldRender());
+    // suspend: save + trim exactly once, no drawing, resume brings the device check back
+    l.Suspending(1000, 5000);
+    { LifecyclePending p = l.Take(); CHECK(p.saveState && p.trimGpu && !p.resumed); }
+    CHECK(l.Phase() == AppPhase::Suspended && !l.ShouldRender() && !l.ShouldRunLogic());
+    CHECK(!l.SuspendReady()); CHECK(!l.SuspendOverdue(3000)); CHECK(l.SuspendOverdue(5600));   // 500 ms before the deadline the deferral must be completed
+    l.Suspending(1100); CHECK(!l.Take().Any());                       // a second Suspending changes nothing
+    l.VisibilityChanged(false); CHECK(l.Phase() == AppPhase::Suspended);   // applied at resume
+    l.Activated(true); CHECK(l.Phase() == AppPhase::Suspended);
+    l.SaveDone(); CHECK(l.SuspendReady() && !l.SuspendOverdue(99999));
+    l.Resuming(); CHECK(l.Phase() == AppPhase::Hidden); { LifecyclePending p = l.Take(); CHECK(p.resumed && !p.saveState); }
+    l.Resuming(); CHECK(!l.Take().Any());                             // Resuming without Suspending is ignored
+    l.VisibilityChanged(true);
+    // back button: exit request, not a state change by itself
+    l.BackRequested(); CHECK(l.Take().exitRequested); CHECK(l.Phase() == AppPhase::Active);
+    l.WindowClosed(); CHECK(l.Phase() == AppPhase::Closing && l.Take().exitRequested && !l.ShouldRunLogic());
+    l.BackRequested(); CHECK(!l.Take().Any()); l.Suspending(5, 5000); CHECK(!l.Take().Any());
+    // a suspend that arrives while hidden still saves
+    Lifecycle h; h.Launched(); h.VisibilityChanged(false); h.Suspending(0); CHECK(h.Take().saveState);
+}
+
+// ---- gamepad mapping ----
+static void InputTests() {
+    using namespace okay::xbox; using namespace okay::platform;
+    PadReading r; PadState s = MapReading(r);
+    for (int i = 0; i < 6; ++i) CHECK(s.axis[i] == 0);
+    for (int i = 0; i < 15; ++i) CHECK(!s.button[i]);
+    // documented button bit values (Windows.Gaming.Input.GamepadButtons)
+    CHECK(kPadMenu == 1 && kPadView == 2 && kPadA == 4 && kPadB == 8 && kPadX == 16 && kPadY == 32 && kPadDpadUp == 64 && kPadDpadDown == 128 && kPadDpadLeft == 256 && kPadDpadRight == 512 && kPadLeftShoulder == 1024 && kPadRightShoulder == 2048 && kPadLeftThumb == 4096 && kPadRightThumb == 8192);
+    r.buttons = kPadA | kPadMenu | kPadDpadLeft | kPadRightShoulder | kPadLeftThumb;
+    s = MapReading(r);
+    CHECK(s.button[(int)GamepadButton::A] && s.button[(int)GamepadButton::Start] && s.button[(int)GamepadButton::DpadLeft] && s.button[(int)GamepadButton::RightShoulder] && s.button[(int)GamepadButton::LeftStick]);
+    CHECK(!s.button[(int)GamepadButton::B] && !s.button[(int)GamepadButton::Back] && !s.button[(int)GamepadButton::DpadRight] && !s.button[(int)GamepadButton::Guide]);
+    r = PadReading(); r.buttons = kPadView | kPadB | kPadX | kPadY | kPadDpadUp | kPadDpadDown | kPadLeftShoulder | kPadRightThumb;
+    s = MapReading(r); CHECK(s.button[(int)GamepadButton::Back] && s.button[(int)GamepadButton::B] && s.button[(int)GamepadButton::X] && s.button[(int)GamepadButton::Y] && s.button[(int)GamepadButton::DpadUp] && s.button[(int)GamepadButton::DpadDown] && s.button[(int)GamepadButton::LeftShoulder] && s.button[(int)GamepadButton::RightStick]);
+    // sticks: +Y up becomes +Y down, full deflection reaches the ends, inside the dead zone is zero, no jump at the edge
+    r = PadReading(); r.leftX = 1.0; r.leftY = 1.0; s = MapReading(r);
+    CHECK(s.axis[(int)GamepadAxis::LeftX] > 0 && s.axis[(int)GamepadAxis::LeftY] < 0);      // diagonal: normalised to the unit circle
+    r = PadReading(); r.leftX = 1.0; s = MapReading(r); CHECK(s.axis[(int)GamepadAxis::LeftX] == 32767);
+    r = PadReading(); r.leftX = -1.0; s = MapReading(r); CHECK(s.axis[(int)GamepadAxis::LeftX] == -32768);
+    r = PadReading(); r.rightY = 1.0; s = MapReading(r); CHECK(s.axis[(int)GamepadAxis::RightY] == -32768);   // up = negative, like SDL
+    r = PadReading(); r.rightY = -1.0; s = MapReading(r); CHECK(s.axis[(int)GamepadAxis::RightY] == 32767);
+    r = PadReading(); r.leftX = 0.2; r.leftY = 0.1; s = MapReading(r); CHECK(s.axis[(int)GamepadAxis::LeftX] == 0 && s.axis[(int)GamepadAxis::LeftY] == 0);   // |v| 0.224 < 0.2395
+    r = PadReading(); r.rightX = 0.26; s = MapReading(r); CHECK(s.axis[(int)GamepadAxis::RightX] == 0);       // right dead zone is 0.265
+    r = PadReading(); r.rightX = 0.27; s = MapReading(r); CHECK(s.axis[(int)GamepadAxis::RightX] > 0 && s.axis[(int)GamepadAxis::RightX] < 1000);   // just outside: tiny, no jump
+    { double ox, oy; RadialDeadzone(0.5, 0.0, 0.25, ox, oy); CHECK(std::fabs(ox - 1.0 / 3.0) < 1e-9 && oy == 0); RadialDeadzone(3.0, 4.0, 0.25, ox, oy); CHECK(std::fabs(std::sqrt(ox * ox + oy * oy) - 1.0) < 1e-9); RadialDeadzone(0.1, 0.1, 5.0, ox, oy); CHECK(ox > 0); /* bad dz ignored */ }
+    // triggers: threshold then 0..32767
+    r = PadReading(); r.leftTrigger = 0.1; s = MapReading(r); CHECK(s.axis[(int)GamepadAxis::TriggerLeft] == 0);
+    r = PadReading(); r.leftTrigger = 1.0; r.rightTrigger = 0.5; s = MapReading(r); CHECK(s.axis[(int)GamepadAxis::TriggerLeft] == 32767 && s.axis[(int)GamepadAxis::TriggerRight] > 14000 && s.axis[(int)GamepadAxis::TriggerRight] < 17000);
+    r = PadReading(); r.leftTrigger = 7.0; s = MapReading(r); CHECK(s.axis[(int)GamepadAxis::TriggerLeft] == 32767);   // out-of-range reading is clamped
+    r = PadReading(); r.leftX = std::nan(""); s = MapReading(r); CHECK(s.axis[(int)GamepadAxis::LeftX] == 0);          // NaN never becomes garbage
+    // key table
+    CHECK(KeyFromVirtualKey(0x41) == Key::A && KeyFromVirtualKey(0x5A) == Key::Z && KeyFromVirtualKey(0x31) == Key::N1 && KeyFromVirtualKey(0x30) == Key::N0 && KeyFromVirtualKey(0x39) == Key::N9);
+    CHECK(KeyFromVirtualKey(0x70) == Key::F1 && KeyFromVirtualKey(0x7B) == Key::F12 && KeyFromVirtualKey(0x0D) == Key::Return && KeyFromVirtualKey(0x1B) == Key::Escape && KeyFromVirtualKey(0x20) == Key::Space);
+    CHECK(KeyFromVirtualKey(0x25) == Key::Left && KeyFromVirtualKey(0x26) == Key::Up && KeyFromVirtualKey(0x27) == Key::Right && KeyFromVirtualKey(0x28) == Key::Down);
+    CHECK(KeyFromVirtualKey(0x60) == Key::Kp0 && KeyFromVirtualKey(0x61) == Key::Kp1 && KeyFromVirtualKey(0x69) == Key::Kp9 && KeyFromVirtualKey(0xA1) == Key::RShift && KeyFromVirtualKey(0xFFFF) == Key::Unknown);
+}
+
+namespace {
+struct FakePad : okay::xbox::PadDevice {
+    okay::xbox::PadReading r; bool connected = true; std::vector<okay::xbox::Vibration> sent; bool trig = true;
+    bool Read(okay::xbox::PadReading& o) override { o = r; return connected; }
+    void SendVibration(const okay::xbox::Vibration& v) override { sent.push_back(v); }
+    bool HasTriggerMotors() const override { return trig; }
+};
+}
+static void PadClassTests() {
+    using namespace okay::xbox; using namespace okay::platform;
+    FakePad d; UwpGamepad g(7, &d);
+    CHECK(g.InstanceId() == 7 && std::string(g.Name()) == "Xbox controller");
+    d.r.buttons = kPadA; d.r.leftX = 1.0; g.Poll(1000);
+    CHECK(g.Connected() && g.Button(GamepadButton::A) && g.Axis(GamepadAxis::LeftX) == 32767);
+    d.connected = false; g.Poll(1010); CHECK(!g.Connected() && !g.Button(GamepadButton::A) && g.Axis(GamepadAxis::LeftX) == 0);   // unplugged: all released
+    d.connected = true; g.Poll(1020);
+    // rumble: motors scale 0..65535 -> 0..1, ends by itself after the duration, a new request replaces the old one
+    CHECK(g.Rumble(65535, 32768, 500)); g.Poll(1100);
+    CHECK(d.sent.size() == 1 && d.sent[0].leftMotor == 1.0 && std::fabs(d.sent[0].rightMotor - 0.5) < 0.001 && d.sent[0].leftTrigger == 0);
+    g.Poll(1300); CHECK(d.sent.size() == 1);                            // no change, nothing sent
+    g.Poll(1700); CHECK(d.sent.size() == 2 && d.sent[1].Zero());       // 1100+... the request started at now=1020 for 500 ms
+    CHECK(g.RumbleTriggers(65535, 0, 100) && g.HasTriggerRumble()); g.Poll(1750); CHECK(d.sent.back().leftTrigger == 1.0);
+    g.Poll(1900); CHECK(d.sent.back().Zero());
+    CHECK(g.Rumble(100, 100, 0)); g.Poll(2000); CHECK(d.sent.back().Zero());   // zero duration = stop
+    d.trig = false; CHECK(!g.RumbleTriggers(1, 1, 10) && !g.HasTriggerRumble());
+    { FakePad d2; { UwpGamepad g2(1, &d2); g2.Rumble(65535, 65535, 5000); g2.Poll(1); } CHECK(d2.sent.back().Zero()); }   // destroying the pad stops the motors
+    { UwpGamepad none(1, nullptr); CHECK(!none.Rumble(1, 1, 1)); none.Poll(0); CHECK(!none.Connected()); }
+}
+
+// ---- paths ----
+static void PathTests() {
+    using namespace okay::xbox;
+    PathRoots r; r.install = "C:/Program Files/WindowsApps/Okay_1.0_x64__abc/"; r.local = "C:/Users/u/AppData/Local/Packages/Okay/LocalState"; r.temp = "C:/Users/u/AppData/Local/Packages/Okay/TempState/";
+    { PathResult p = Resolve(r, PathArea::GameData, "scenes/main.okayscene"); CHECK(p.ok && p.path == "C:/Program Files/WindowsApps/Okay_1.0_x64__abc/Data/scenes/main.okayscene" && !p.writable); }
+    { PathResult p = Resolve(r, PathArea::Shaders, "shaders.manifest"); CHECK(p.ok && !p.writable && p.path.find("/Shaders/shaders.manifest") != std::string::npos); }
+    { PathResult p = Resolve(r, PathArea::Saves, "slot1.sav"); CHECK(p.ok && p.writable && p.path == "C:/Users/u/AppData/Local/Packages/Okay/LocalState/saves/slot1.sav"); }
+    { PathResult p = Resolve(r, PathArea::Temp, "a.tmp"); CHECK(p.ok && p.path == "C:/Users/u/AppData/Local/Packages/Okay/TempState/a.tmp"); }
+    { PathResult p = Resolve(r, PathArea::Config, ""); CHECK(p.ok && p.path.size() > 6 && p.path.substr(p.path.size() - 7) == "/config"); }
+    { PathResult p = Resolve(r, PathArea::Saves, "a\\b\\c.sav"); CHECK(p.ok && p.path.find("/saves/a/b/c.sav") != std::string::npos); }   // backslashes accepted
+    { PathResult p = Resolve(r, PathArea::Saves, "./a/./b"); CHECK(p.ok && p.path.find("/saves/a/b") != std::string::npos); }
+    for (const char* bad : {"../x", "a/../../x", "/etc/passwd", "C:/x", "a/b:stream", "a//b", "a/b.", "a/b ", "con", "dir/NUL.txt", "a/b?", "a\x01" "b", "..", "a/.."})
+        { PathResult p = Resolve(r, PathArea::Saves, bad); CHECK(!p.ok); CHECK(!p.error.empty()); }
+    { PathRoots e; CHECK(!Resolve(e, PathArea::Saves, "x").ok); }
+    CHECK(CanWrite(r, "C:/Users/u/AppData/Local/Packages/Okay/LocalState/saves/x"));
+    CHECK(CanWrite(r, "C:\\Users\\u\\AppData\\Local\\Packages\\Okay\\TempState\\x"));
+    CHECK(!CanWrite(r, "C:/Program Files/WindowsApps/Okay_1.0_x64__abc/Data/x"));
+    CHECK(!CanWrite(r, "C:/Users/u/AppData/Local/Packages/Okay/LocalState"));                        // the folder itself
+    CHECK(!CanWrite(r, "C:/Users/u/AppData/Local/Packages/Okay/LocalState/../../Other/x"));          // escapes
+    CHECK(!CanWrite(r, "C:/Users/u/AppData/Local/Packages/Okay/LocalStateEvil/x"));                  // prefix of a sibling folder
+    CHECK(!CanWrite(r, "C:/Windows/x"));
+    // the engine's Paths: with the override, Windows-style folders land inside LocalFolder
+    okay::Paths::Env e; e.appData = DesktopDirToLocal(r, DesktopDir::RoamingAppData); e.localAppData = DesktopDirToLocal(r, DesktopDir::LocalAppData); e.home = DesktopDirToLocal(r, DesktopDir::Documents);
+    okay::Paths::SetEnvOverride(&e);
+    CHECK(okay::Paths::Env::Current().appData == "C:/Users/u/AppData/Local/Packages/Okay/LocalState/roaming");
+    const std::string ud = okay::Paths::UserDataDirFor(okay::Paths::Platform::Windows, okay::Paths::Env::Current(), "Game");
+    CHECK(ud == "C:/Users/u/AppData/Local/Packages/Okay/LocalState/roaming/Game"); CHECK(CanWrite(r, ud + "/save.dat"));
+    okay::Paths::SetEnvOverride(nullptr); CHECK(okay::Paths::Env::Current().appData != e.appData);
+    CHECK(DesktopDirToLocal(r, DesktopDir::LocalAppData, "../x") == "C:/Users/u/AppData/Local/Packages/Okay/LocalState/localappdata");   // a bad relative part is dropped
+}
+
+// ---- audio ----
+namespace {
+struct FakeAudioHost : okay::xbox::AudioHost {
+    bool started = false, stopped = false; okay::xbox::AudioOutputFormat fmt;
+    bool Format(okay::xbox::AudioOutputFormat& o) override { o = fmt; return true; }
+    bool Start(okay::xbox::UwpAudioDevice*, std::string&) override { started = true; return true; }
+    void Stop(okay::xbox::UwpAudioDevice*) override { stopped = true; }
+};
+int g_cbCalls = 0;
+void Ramp(void*, std::uint8_t* s, int len) { std::int16_t* p = (std::int16_t*)s; for (int i = 0; i < len / 2; ++i) p[i] = (std::int16_t)(1000 + (g_cbCalls * 16 + i)); ++g_cbCalls; }
+}
+static void AudioTests() {
+    using namespace okay::xbox; using namespace okay::platform;
+    CHECK(S16ToF32(32767) == 1.0f && S16ToF32(-32768) == -1.0f && S16ToF32(0) == 0.0f);
+    CHECK(F32ToS16(1.0f) == 32767 && F32ToS16(-1.0f) == -32768 && F32ToS16(2.0f) == 32767 && F32ToS16(-9.0f) == -32768 && F32ToS16(std::nanf("")) == 0 && F32ToS16(0.5f) == 16384);
+    for (int v : {-32768, -1000, -1, 0, 1, 1000, 32767}) CHECK(F32ToS16(S16ToF32((std::int16_t)v)) == v);   // round trip is exact
+    { float a[2] = {0.5f, -0.5f}, o[6]; MapChannels(a, 2, o, 6); CHECK(o[0] == 0.5f && o[1] == -0.5f && o[2] == 0 && o[5] == 0); MapChannels(a, 2, o, 1); CHECK(o[0] == 0.0f);
+      float m[1] = {0.25f}; MapChannels(m, 1, o, 2); CHECK(o[0] == 0.25f && o[1] == 0.25f); MapChannels(m, 1, o, 4); CHECK(o[2] == 0 && o[3] == 0); }
+    // ring
+    { ByteRing b(10); CHECK(b.Capacity() == 16); unsigned char x[16], y[16]; for (int i = 0; i < 16; ++i) x[i] = (unsigned char)i;
+      CHECK(b.Write(x, 12)); CHECK(!b.Write(x, 5)); CHECK(b.Size() == 12 && b.Free() == 4); CHECK(b.Read(y, 8) == 8 && y[7] == 7);
+      CHECK(b.Write(x, 10)); CHECK(b.Read(y, 16) == 14); CHECK(y[0] == 8 && y[3] == 11 && y[4] == 0 && y[13] == 9);        // wraps around
+      CHECK(b.Read(y, 4) == 0); b.Write(x, 3); b.ConsumerClear(); CHECK(b.Size() == 0); }
+    FakeAudioHost host; host.fmt = {48000, 2};
+    AudioSpec want; want.freq = 48000; want.channels = 2; want.format = SampleFormat::S16; want.frames = 256;
+    { // queue mode, same rate, stereo S16 -> stereo float; starts paused; underrun is silence
+        UwpAudioDevice d(want, host.fmt, &host); std::string err; CHECK(d.Begin(err) && host.started);
+        std::int16_t in[8] = {16384, -16384, 8000, -8000, 100, 200, 300, 400};
+        CHECK(d.Queue(in, sizeof(in)) && d.QueuedBytes() == 16);
+        float out[16]; std::fill(out, out + 16, 9.0f);
+        d.Render(out, 4); for (int i = 0; i < 8; ++i) CHECK(out[i] == 0.0f);          // paused: silence, nothing consumed
+        CHECK(d.QueuedBytes() == 16);
+        d.Pause(false); d.Render(out, 4);
+        CHECK(std::fabs(out[0] - 16384 / 32767.0f) < 1e-6 && std::fabs(out[1] + 16384 / 32768.0f) < 1e-6 && std::fabs(out[6] - 300 / 32767.0f) < 1e-6);
+        d.Render(out, 4); for (int i = 0; i < 8; ++i) CHECK(out[i] == 0.0f);          // ran dry: silence, no crash
+        CHECK(d.UnderrunFrames() > 0);
+        CHECK(!d.Queue(in, 0) || true); std::int16_t odd[3] = {1, 2, 3}; CHECK(d.Queue(odd, 5) && d.QueuedBytes() == 4);   // 5 bytes: one whole stereo frame kept
+        d.ClearQueued(); CHECK(d.QueuedBytes() == 0); d.Render(out, 1); CHECK(out[0] == 0.0f);
+        CHECK(d.Dequeue(out, 4) == 0);
+    }
+    CHECK(host.stopped);   // the destructor stops the render thread first
+    { // mono S16 at 24 kHz to stereo float at 48 kHz: doubled length, interpolated, both channels equal
+        AudioSpec m = want; m.channels = 1; m.freq = 24000; UwpAudioDevice d(m, host.fmt, nullptr); d.Pause(false);
+        std::int16_t in[4] = {0, 32767, 0, -32768}; CHECK(d.Queue(in, sizeof(in)));
+        float out[16] = {}; d.Render(out, 6);
+        CHECK(out[0] == 0.0f && out[1] == 0.0f);                                       // frame 0 = sample 0
+        CHECK(std::fabs(out[2] - 0.5f) < 1e-5 && out[2] == out[3]);                    // frame 1 = halfway to sample 1
+        CHECK(std::fabs(out[4] - 1.0f) < 1e-5);                                        // frame 2 = sample 1
+        CHECK(std::fabs(out[6] - 0.5f) < 1e-5);                                        // frame 3 = halfway back to 0 (sample 2)
+    }
+    { // a stream split over many small Render calls equals one big call (no clicks at the seams), 44.1k -> 48k
+        AudioSpec m = want; m.freq = 44100; m.channels = 1; m.frames = 64; std::vector<std::int16_t> in(2000); for (std::size_t i = 0; i < in.size(); ++i) in[i] = (std::int16_t)(std::sin(i * 0.05) * 20000);
+        AudioOutputFormat of{48000, 1};
+        UwpAudioDevice a(m, of, nullptr), b(m, of, nullptr); a.Pause(false); b.Pause(false);
+        CHECK(a.Queue(in.data(), (std::uint32_t)(in.size() * 2))); CHECK(b.Queue(in.data(), (std::uint32_t)(in.size() * 2)));
+        std::vector<float> big(1500), small(1500); a.Render(big.data(), 1500);
+        for (int off = 0; off < 1500;) { int n = std::min(1500 - off, 1 + (off * 7) % 37); b.Render(small.data() + off, n); off += n; }
+        float maxDiff = 0; for (int i = 0; i < 1500; ++i) maxDiff = std::max(maxDiff, std::fabs(big[(std::size_t)i] - small[(std::size_t)i])); CHECK(maxDiff < 1e-4f);
+        float maxStep = 0; for (int i = 1; i < 1500; ++i) maxStep = std::max(maxStep, std::fabs(big[(std::size_t)i] - big[(std::size_t)i - 1])); CHECK(maxStep < 0.06f);   // smooth sine, no jumps
+    }
+    { // callback mode: the engine's callback fills S16, the device converts; 5.1 output keeps front L/R
+        AudioSpec c = want; c.callback = Ramp; c.frames = 64; AudioOutputFormat six{48000, 6}; g_cbCalls = 0;
+        UwpAudioDevice d(c, six, nullptr); d.Pause(false); CHECK(!d.Queue("xxxx", 4));   // callback devices ignore Queue
+        float out[6 * 100]; d.Render(out, 100);
+        CHECK(std::fabs(out[0] - S16ToF32(1000)) < 1e-6 && std::fabs(out[1] - S16ToF32(1001)) < 1e-6 && out[2] == 0 && out[3] == 0 && out[4] == 0 && out[5] == 0);
+        CHECK(std::fabs(out[6] - S16ToF32(1002)) < 1e-6); CHECK(g_cbCalls == 2);        // 100 frames need two 64-frame blocks
+    }
+    { // float input is passed through
+        AudioSpec f = want; f.format = SampleFormat::F32; UwpAudioDevice d(f, host.fmt, nullptr); d.Pause(false); float in[4] = {0.25f, -0.25f, 0.5f, 0.75f}; CHECK(d.Queue(in, sizeof(in)));
+        float out[4]; d.Render(out, 2); CHECK(out[0] == 0.25f && out[1] == -0.25f && out[2] == 0.5f && out[3] == 0.75f); }
+    { UwpAudioDevice d(AudioSpec{}, host.fmt, nullptr); CHECK(d.Spec().freq == 48000 && d.Spec().channels == 1); }   // defaults survive
+    { AudioSpec bad = want; bad.freq = 5; bad.channels = 0; bad.frames = 0; UwpAudioDevice d(bad, host.fmt, nullptr); CHECK(d.Spec().freq >= 8000 && d.Spec().channels >= 1 && d.Spec().frames >= 64); float o[4]; d.Render(o, 0); }
+}
+
 int main() {
-    ShaderTests(); DisplayTests(); BuildPlanTests(); LogTests(); SourceRootTests(); RunnerTests(); HostTests();
+    ShaderTests(); DisplayTests(); BuildPlanTests(); LogTests(); SourceRootTests(); RunnerTests(); HostTests(); LifecycleTests(); InputTests(); PadClassTests(); PathTests(); AudioTests();
     if (g_fail) { std::printf("%d FAILED\n", g_fail); return 1; }
     std::printf("xbox_uwp_runtime: all passed\n");
     return 0;

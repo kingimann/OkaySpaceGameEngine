@@ -482,3 +482,95 @@ Not done / unverified / found and not fixed (Round 21):
 - `new (p) T[n]` (placement array new), `delete` as an expression, `new int(5)` without a place, overloading `operator new`, and `using okay::Vec3;` inside a function are not supported.
 - A `for` over a class whose `begin()` returns a class iterator (not a pointer) is refused.
 - The new headers are minimal: what the engine files need is there, much of the standard is not (see the lists above).
+
+
+### Round 22: the eight failures, rvalue references, our own `<algorithm>` `<deque>` `<chrono>` `<set>` `<memory>` and more, and the first real engine files linked and run
+
+Tried with `sh tools/okayms/build.sh` on branch `claude/okayms-3` (head 98e8a937 plus this round) on Linux with Wine, 2026-11-18. The whole run finishes with exit 0: **182 test functions, 2113 checks, 0 failed**. Two new test files: `tests/test_round22.cpp` (10 test functions, 168 checks: 12 programs, each built by okay-cl at `/O0`, `/O1` and `/O2`, run under Wine, and built by MinGW g++ and run, all four exit codes 0) and `tests/test_engine_link.cpp` (2 programs, 52 checks, see "Link and run" below). Each language change was written as a failing program first. okay-ms is a separate tool and off by default; nothing in the engine build calls it.
+
+**Where each new file comes from (rule 19a).** The headers added to `tools/okayms/stdinc/` were written from ISO/IEC 14882 and ISO/IEC 9899 only: `<algorithm>` (find, find_if, count, any_of and friends, remove, remove_if, reverse, fill, copy, min/max_element, lower/upper_bound, binary_search, sort as a heap sort, stable_sort as an insertion sort) from [alg.*]; `<deque>` from [deque]; `<chrono>` from [time.duration], [time.point], [time.clock]; `<cwctype>` from [cwctype.syn] and 9899 7.30; `<climits>` from 9899 5.2.4.2.1; `<set>` and `<unordered_set>` from [set] and [unord.set]; `<memory>` (`unique_ptr`, `make_unique` only) from [unique.ptr]; `<numeric>` from [accumulate], [iota], [inner.product], [partial.sum]; `<utility>` (`move`, `forward`, `swap`, `pair`, `make_pair`) from [forward], [utility.swap], [pairs]; `<initializer_list>` from [support.initlist]; `<cmath>` is now **defined**, not only declared, from the mathematical definitions (Newton for the square root, Taylor series after range reduction for sine and cosine, halving of the angle for the arc tangent, `2^k * series` for the exponential, `atanh` series for the logarithm). The runtime additions (`memmove`, `memcmp`, `strncmp`, `strchr`, `calloc`, `strtoul`, `strtol`, `strtod`, `strtof`, `atof`, `printf` length modifiers `l ll z j t h` and `%X %i`) were written from ISO/IEC 9899 7.21, 7.22 and 7.21.6.1. Nothing was copied, ported or followed from libstdc++, libc++, the MSVC STL, glibc or any other implementation. They are minimal versions of the standard types; the differences from the standard are listed below.
+
+How to try it by hand (host tool, POSIX; Wine only to run the result):
+
+1. `sh tools/okayms/build.sh` builds `tools/okayms/build/okay-cl` and runs every test (about 3 minutes). `test_round22` must print `tests 10, checks passed 168, failed 0` and `test_engine_link` must print `tests 2, checks passed 52, failed 0`.
+2. Compile one of the files that failed before: `printf '#include "okay/Math/ColorSpace.hpp"\n' > /tmp/w.cpp; tools/okayms/build/okay-cl /c /tmp/w.cpp /Fo/tmp/w.obj /I engine/include /I engine/src /I shared /I tools/okayms/stdinc`. No output and an object file means it compiled. The same for `shared/OkfDecode.hpp`, and for the `.cpp` files `engine/src/Input/GestureRecognizer.cpp`, `engine/src/Optimize/PortalCells.cpp`, `engine/src/UI/FocusGraph.cpp` (copy the file next to a temporary name if it includes a header by a quoted name).
+3. Link and run a real engine file. After step 1 the test leaves `/tmp/okayms-el/okayrt.lib` and `/tmp/okayms-el/kernel32.lib`. Then: `for s in engine/src/Crypto/Sha512.cpp engine/src/Crypto/Blake2b.cpp engine/src/Crypto/ChaCha20.cpp engine/src/Crypto/Util.cpp tools/okayms/linktests/link_crypto.cpp; do tools/okayms/build/okay-cl /c /O2 /Fo/tmp/$(basename $s .cpp).obj $s /I tools/okayms/linktests /I engine/include /I engine/src /I shared /I tests /I tools/okayms/stdinc; done`, then `tools/okayms/build/okay-cl /ENTRY:mainCRTStartup /Fe/tmp/crypto.exe /tmp/Sha512.obj /tmp/Blake2b.obj /tmp/ChaCha20.obj /tmp/Util.obj /tmp/link_crypto.obj /tmp/okayms-el/okayrt.lib /tmp/okayms-el/kernel32.lib` and `wine /tmp/crypto.exe`. It prints the three digests and `23 checks, 0 failures`; the exit code is 0. The same program built by `x86_64-w64-mingw32-g++ -static` prints the same text.
+
+**The eight failures, one by one (cause found, then fixed, with a test):**
+
+1. `<chrono>`, 2. `<deque>`, 3. `<cwctype>`: own headers (above). Each file then stopped at the next missing header (`<climits>`, `<set>`, `<unordered_set>`, `<filesystem>`); `<climits>`, `<set>`, `<unordered_set>`, `<memory>`, `<numeric>` were added. `<filesystem>` is not done (see the table).
+4. **`= {}` default argument for a class reference** (`FocusGraph.hpp:109`, `const FocusOptions& o = {}`): a default argument that is a braced list, or a class name followed by `(`, is kept as a position in the token stream and read again at each call, where the temporary can be made. (Reading `Color(1, 1, 1, 1)` at the place of the declaration also gave the "unknown function Color" error in `ColorSpace`: same cause, same fix.)
+5. **Definition with return type `Outer::Nested*`** (`GestureRecognizer::Finger* GestureRecognizer::Find`): nested classes are kept under their plain name; `Outer::Nested` as a type now finds one.
+6. **Range `for` over a member vector, constructor error** (`PortalCells.cpp`): the real cause was `r.planes = {make(1, r0), ...}`: a braced list assigned to a `vector` has no `std::initializer_list` to go through. Now there is one: `std::initializer_list<T>` (a pointer and a count), built by the compiler from a hidden array in the caller's frame, for a parameter, an assignment, `T x = {..}`, `T x{..}` and `T{..}`; `vector` has the constructor and `operator=` for it. A nested list for an aggregate (`queue.push_back({cell, -1, 0, region, {cell}})`) and `Trap{group, restore}` for a struct that has default member initializers (it was read as a constructor call) were needed too. (`FocusGraph.cpp` also needed: a range `for` over a call result `for (n : f())`, and a `begin()` that returns a pointer to a pointer.)
+7. **`Color(...)` in `ColorSpace`**: see 4.
+8. **OkfDecode "assignment to const p"** (not the lambda): a local `const T* p` was treated as a const variable, so `p += 2` and `p++` were refused; the const belongs to what `p` points at. The same for a global.
+
+**Language changes (all with a test):** real **rvalue references**: `T&&` is its own kind of reference (`Type::rref`), a `T&&` parameter binds only to an rvalue (a call returning a class by value, `std::move(x)`, a hidden temporary), the choice between `C(const C&)` and `C(C&&)` and between `operator=(const C&)` and `operator=(C&&)` uses it, the decorated name is `$$QEA...`, `C x = std::move(y)` and a by-value argument `f(std::move(y))` call the move constructor. `std::move` is `T&& move(T& x)`. **`typedef T& reference;`**, **`new int(5)`**, **`using ns::name;`** in a function (read as a `using namespace ns;` directive for `ns`, which is a little wider than the standard), **NaN in a condition** (`if (x)` for a float or double NaN is true now), **`if (T* p = f())`** (a declaration in an `if` condition), **`operator->`**, **`extern "C"`** (block and single declaration, also inside `namespace std`), **`friend class X;`** (skipped), **`::name`**, **`__LINE__`**, **`int* p(&v);`**, **`T(x)` and `T()` for a pointer type `T`**, an expression statement that discards a class returned in memory (`s.insert(x);`), `Box<int>(args)` as an expression, class-name lookup of `Easing::Linear(x)` through `using namespace okay;`, deferring the bodies of a nested class until the enclosing class is complete.
+
+**Bugs found by linking and running real engine code (all older than this round, all with a test in `test_round22.cpp`):**
+
+- **A parameter written `T x[16]` was a copy of the array, not a pointer** (`ChaCha20.cpp`: `Rounds(std::uint32_t x[16])` changed a private copy, so every ChaCha20 keystream was wrong). Found by the first run of `link_crypto`. Only `T x[]` was a pointer before.
+- **The same variable name in two namespaces** was one variable (`Sha256.hpp` has `kK[64]` of 32-bit words, `Sha512.cpp` has `kK[80]` of 64-bit words: Sha512 read the SHA-256 table). The later one now gets its own internal name and what is read after it means that one. Not a real namespace scope: a name read after the second declaration always means the second one.
+- **The preprocessor replaced macro parameters one after the other**, so `CHECK_NEAR(Vec3::Dot(a, b), 32.0f, 1e-4)` (parameters named `a` and `b`) became `Vec3::Dot(a, 32.0f)`. Parameters are now replaced in one pass.
+- **`/O2`: a branch with a constant condition left the scope numbers out of step** ("unknown name i" in a function that had `if (e & 1)` before a `for`), and **inlining copied the callee's scope blocks** into the caller (the same error). Found by `sqrt` in the new `<cmath>`.
+- **Class-template members read in the caller's names** (`To::scale_den()` called inside a function template whose own parameter was also called `Period`: the constant-folding of `return expr;` read the class's body with the caller's template arguments). The instance's own arguments are bound now.
+- **A member initializer such as `p(new int(k))`** lost the statements `new` needs before it (the allocation and the store), so `p` was uninitialised. **`(To::name())`** after a cast was read as a type when `To` was a template parameter bound to a class. **`T x(c);` for a pointer type** was read as a function declaration. **`Foo(std::vector<int>& n)`** as the parameter list of a function returning a class was read as constructor arguments of a global object. **A function template called with the name of a local variable** (`count < 5` with `std::count` declared) was read as a template call.
+- **Linking several files:** `const` objects at namespace scope, anything in an unnamed namespace, `inline` functions, members written inside their class, template instances and virtual tables now have internal symbols, so two files that include the same header link (before, `duplicate symbol`). A member function that is declared in its class and defined in another file can be called (an undefined symbol with its decorated name is made).
+
+**Link and run: the first real engine code.** `tools/okayms/linktests/` holds `mini.hpp` (the `CHECK`, `CHECK_NEAR`, `RUN_SUITE` macros of `tests/test_framework.hpp` on `<cstdio>` only) and two programs. `link_crypto.cpp` is built with four real engine files, `engine/src/Crypto/Sha512.cpp`, `Blake2b.cpp`, `ChaCha20.cpp` and `Util.cpp`, and runs the engine's own known-answer vectors (`tests/crypto_rfc_vectors.hpp`: ChaCha20 blocks of RFC 8439, SHA-512 of FIPS 180-4 messages, BLAKE2b of RFC 7693) through one-shot and streaming calls, plus `ConstantTimeEqual` and `MemZero`; the checks follow `tests/test_crypto.cpp` for these four files. `link_math.cpp` runs the checks of `tests/test_math.cpp` and `tests/test_easing.cpp` (Vec3, Quat, Mat4, Mathf, all 18 first easings) and a few of `tests/test_core_math_extra.cpp` against the real headers. `tests/test_engine_link.cpp` builds the C runtime (`tools/okayms/runtime/*.c`) into `okayrt.lib`, writes a kernel32 import library, compiles every file at `/O0`, `/O1`, `/O2`, links, runs under Wine, builds the same sources with MinGW g++ and runs that too, and requires: exit code 0 for all four builds, and the printed text (the digests, and numbers in millionths) **byte for byte the same** for all four.
+
+Result: **both programs pass at `/O0`, `/O1` and `/O2` with the same output as g++.** These are the first engine `.cpp` files that okay-ms compiled, linked and ran (the Round 21 example was a program written for the purpose). Four engine `.cpp` files plus the math headers are not the engine: nothing else was linked, and the other test programs of `tests/` include `<Okay.hpp>`, `<iostream>` and more.
+
+Measurement, fifth run (the same 36 files, same command, 2026-11-18). After Round 21: 28. After Round 22: **33 of 36 compile to an object** (new: ColorSpace, GestureRecognizer, PortalCells, FocusGraph, OkfDecode; `engine/src/Crypto/Util.cpp` was compiled from its own folder, because it includes `"CtAnnotate.hpp"` from its neighbour; the other `.cpp` files were copied to a temporary name). Of the eight files that failed in the fourth run, five compile; the three that do not now stop at a different place than before:
+
+| File | Result | First error |
+|---|---|---|
+| `engine/include/okay/Components/Stance.hpp` | compiles |  |
+| `engine/include/okay/Core/ClockCursor.hpp` | compiles |  |
+| `engine/include/okay/Environment/Wind.hpp` | compiles |  |
+| `engine/include/okay/Input/InputBuffer.hpp` | compiles |  |
+| `engine/include/okay/Math/Bounds.hpp` | compiles |  |
+| `engine/include/okay/Math/ColorSpace.hpp` | compiles |  |
+| `engine/include/okay/Math/Curves.hpp` | compiles |  |
+| `engine/include/okay/Math/Easing.hpp` | compiles |  |
+| `engine/include/okay/Math/Mat3.hpp` | compiles |  |
+| `engine/include/okay/Math/Mat4.hpp` | compiles |  |
+| `engine/include/okay/Math/Mathf.hpp` | compiles |  |
+| `engine/include/okay/Math/Quat.hpp` | compiles |  |
+| `engine/include/okay/Math/Ray.hpp` | compiles |  |
+| `engine/include/okay/Math/Rect.hpp` | compiles |  |
+| `engine/include/okay/Math/Vec2.hpp` | compiles |  |
+| `engine/include/okay/Math/Vec3.hpp` | compiles |  |
+| `engine/include/okay/Math/VecInt.hpp` | compiles |  |
+| `engine/include/okay/Physics/ForceMode.hpp` | compiles |  |
+| `engine/include/okay/Physics/PhysicsMaterial.hpp` | compiles |  |
+| `engine/include/okay/Physics/PhysicsQuality.hpp` | compiles |  |
+| `engine/include/okay/Render/Color.hpp` | compiles |  |
+| `engine/include/okay/UI/TooltipPlace.hpp` | compiles |  |
+| `engine/include/okay/VisualScript/VsPinType.hpp` | compiles |  |
+| `engine/src/Audio/Mp3Tables.hpp` | compiles |  |
+| `engine/src/Core/RandomExtras.cpp` | fails | okay/Core/Random.hpp:214: no member function GateLock |
+| `engine/src/Crypto/Blake2b.cpp` | compiles |  |
+| `engine/src/Crypto/ChaCha20.cpp` | compiles |  |
+| `engine/src/Crypto/Sha512.cpp` | compiles |  |
+| `engine/src/Crypto/Util.cpp` | compiles |  |
+| `engine/src/Input/GestureRecognizer.cpp` | compiles |  |
+| `engine/src/Input/PlayerInput.cpp` | fails | okay/Input/Input.hpp:367: global initializer must be a constant |
+| `engine/src/Optimize/LodGroup.cpp` | fails | cannot open include filesystem |
+| `engine/src/Optimize/PortalCells.cpp` | compiles |  |
+| `engine/src/UI/FocusGraph.cpp` | compiles |  |
+| `shared/LauncherTips.hpp` | compiles |  |
+| `shared/OkfDecode.hpp` | compiles |  |
+
+What the three remaining ones stop at: `RandomExtras.cpp` (after `<chrono>`, `<climits>`, `<set>`, `<unordered_set>` were added: a nested class calls a function of its enclosing class declared later, which works now, and then `Random.hpp:264` "no member or base class named Random", not looked into); `PlayerInput.cpp` (after `<deque>`, `<set>`, `<unordered_set>`: `Input.hpp:367` "global initializer must be a constant", not looked into); `LodGroup.cpp` (after `<cwctype>`: `TexturePath.hpp` includes `<filesystem>`, which is not written).
+
+Not done / unverified / found and not fixed (Round 22):
+
+- Not run on Windows; Linux with Wine only. 33 of 36 files only compile; the four crypto files and the math headers are the only engine code linked and run. No test of `tests/` was built as it is.
+- Differences of our headers from the standard: `deque` keeps its elements in one block with room at both ends, so a push at either end can invalidate references (the standard keeps them valid); `set` and `unordered_set` are sorted arrays (linear insert and erase, no comparator, `unordered_set` iterates in ascending order and needs `operator<`, not `std::hash`); `stable_sort` is quadratic; `sort` is a heap sort; `unique_ptr` has no deleter and no array form; no `shared_ptr`, `weak_ptr`, `map`, `unordered_map`, `std::function`, `<filesystem>`, `<iostream>`, `<sstream>`, `<random>`. `vector` has no `emplace_back` and its elements are not constructed by a move when the object has no move constructor (they are copied).
+- `<cmath>` is our own and not correctly rounded (a few units of the last place of float in the ranges tried: the test compares with tolerances 1e-4 and prints millionths); `pow`, `exp`, `log` for huge or tiny arguments, the signed zero and some NaN cases were not checked. `strtod` builds the value from digits and powers of ten, so the last digit can differ from the nearest double. `printf` truncates `%f` instead of rounding and has no `%e`, `%g`, `%p` or `%o`.
+- Internal symbols for inline functions, in-class members and template instances mean one copy per file (more code, a function-local `static` in such a function is one per file, the address of such a function differs between files). No COMDAT folding is written by the compiler (the linker can read it).
+- `global_alias` is not a namespace scope: a variable name read after a second declaration of the same name always means the second one, also in code of the first namespace that is read later. `using ns::name;` is read as `using namespace ns;`. A declaration in a `while` condition (`while (T x = f())`) is refused with a message. `friend` declarations are skipped (access is not checked anywhere here); `friend` functions with a body are not read. `extern "C"` for a variable and a plain `extern int x;` are not read. A class name is not forward-declared (`struct X;`).
+- A braced argument is read by the parameter it goes to: a call whose callee is chosen by overload resolution on that argument, or a constructor argument, may not find the type; `{...}` as an argument to a function template parameter is not tried.
+- `initializer_list<T>` of a class with a destructor is refused. A move constructor is used for `T x = std::move(y)` and for a by-value argument; the return of a local by value still hands over the local itself (no move or copy call), and a class with a user-written move constructor but no copy constructor does not get its copy constructor deleted (a copy of such a class is not refused).
+- The decorated name of `const T&` is still `AEA...` for a return type (see Round 21).

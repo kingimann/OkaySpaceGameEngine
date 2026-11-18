@@ -4092,7 +4092,14 @@ struct Parser {
         return true;
     }
 
+    int struct_nest = 0;
+    std::vector<std::pair<int, size_t>> deferred_bodies{};
     bool parse_struct_body(bool as_union, std::string name, int* out_id, bool is_class = false, int base_id = -1) {
+        struct NestGuard {
+            int& n;
+            explicit NestGuard(int& x) : n(x) { ++n; }
+            ~NestGuard() { --n; }
+        } nest_guard(struct_nest);
         if (name.empty()) name = "__anon" + std::to_string(structs.size());
         StructDef def;
         struct BuildGuard {
@@ -4579,10 +4586,26 @@ struct Parser {
         structs[static_cast<size_t>(self)] = def;
         *out_id = self;
         // Member function bodies are compiled now that the class is complete,
-        // so a body may use members declared after it.
-        for (size_t mi = 0; mi < def.methods.size(); ++mi)
-            if (def.methods[mi].body_at != 0 && def.methods[mi].owner == self)
-                if (!define_method(self, mi)) return false;
+        // so a body may use members declared after it. A nested class is complete before its enclosing class is, and
+        // its bodies may use the enclosing class's members declared later ([class.mem] complete-class context), so
+        // they wait until the outermost class ends.
+        if (struct_nest > 1 && inst_base_name.empty()) {
+            for (size_t mi = 0; mi < def.methods.size(); ++mi)
+                if (def.methods[mi].body_at != 0 && def.methods[mi].owner == self)
+                    deferred_bodies.push_back({self, mi});
+        } else {
+            for (size_t mi = 0; mi < def.methods.size(); ++mi)
+                if (def.methods[mi].body_at != 0 && def.methods[mi].owner == self)
+                    if (!define_method(self, mi)) return false;
+            if (struct_nest == 1) {
+                while (!deferred_bodies.empty()) {
+                    const std::vector<std::pair<int, size_t>> batch = std::move(deferred_bodies);
+                    deferred_bodies.clear();
+                    for (const auto& item : batch)
+                        if (!define_method(item.first, item.second)) return false;
+                }
+            }
+        }
         for (size_t k = scoped_tds.size(); k-- > 0;) {
             typedefs.erase(scoped_tds[k].name);
             if (scoped_tds[k].had) typedefs[scoped_tds[k].name] = scoped_tds[k].old;
@@ -10578,7 +10601,8 @@ bool Parser::parse_unary(Node* out) {
         out->type.base = 2;
         next();
     } else if (is(TIdent) || (is(TColonColon) && at + 1 < tokens.size() && tokens[at + 1].kind == TIdent)) {
-        if (is(TColonColon)) next();  // ::name: the name looked up at global scope (names are not scoped further here)
+        const bool from_global = is(TColonColon);
+        if (from_global) next();  // ::name: looked up at global scope, not in the namespaces around the call
         std::string name = cur().text;
         next();
         if (!global_alias.empty() && !is(TLParen) && !local_visible(name)) {
@@ -10618,7 +10642,7 @@ bool Parser::parse_unary(Node* out) {
         if (name.find("::") != std::string::npos)
             for (const FuncDecl& fd : funcs)
                 if (fd.name == name) exact_function = true;
-        if (!exact_function && !current_ns.empty() && is(TLParen) && !local_visible(name)) {
+        if (!exact_function && !from_global && !current_ns.empty() && is(TLParen) && !local_visible(name)) {
             // A bare name inside a namespace finds the functions of that namespace and of the ones around
             // it ([basic.lookup.unqual]), innermost first.
             std::string ns = current_ns;

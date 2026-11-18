@@ -403,6 +403,35 @@ static void test_headers_and_statements(Tally& tally) {
              0);
 }
 
+static void test_found_while_linking(Tally& tally) {
+    std::printf("test_found_while_linking\n");
+    run_both(tally, "link_bugs",
+             "#include <cstdint>\n"
+             "static void Bump(std::uint32_t& a, std::uint32_t& b) { a += 1; b += 2; }\n"
+             "static void Rounds(std::uint32_t x[16]) { for (int i = 0; i < 3; ++i) Bump(x[0], x[4]); }\n"
+             "#define CHECK2(a, b, eps) ((a) - (b) < (eps) && (b) - (a) < (eps))\n"
+             "static int dot(int a, int b) { return a * 10 + b; }\n"
+             "namespace sha { constexpr std::uint32_t kK[2] = {7, 8}; inline std::uint32_t get(int i) { return kK[i]; } }\n"
+             "namespace wide { constexpr std::uint64_t kK[2] = {0x100000001ull, 0x200000002ull}; inline std::uint64_t get(int i) { return kK[i]; } }\n"
+             "static int g_one(int v) { return v + 1; }\n"
+             "namespace n { static int g_one(int v) { return v + 100; } static int call(int v) { return ::g_one(v) + g_one(v); } }\n"
+             "static int sqrt_like(int e) {\n"
+             "  int ee = 2; int g = e; if (ee & 1) { g = g * 2; } else { int k = 3; g = g + k; }\n"
+             "  for (int i = 0; i < 6; ++i) g = g + 1;\n"
+             "  return g; }\n"
+             "int entry(void) {\n"
+             "  std::uint32_t x[16]; for (int i = 0; i < 16; ++i) x[i] = 0;\n"
+             "  Rounds(x); CK(1, x[0] == 3 && x[4] == 6);\n"
+             "  int a = 7, b = 3; CK(2, CHECK2(dot(a, b), 73, 1) && CHECK2(dot(b, a), 37, 1));\n"
+             "  CK(3, sha::get(1) == 8 && wide::get(1) == 0x200000002ull && sha::get(0) == 7 && wide::get(0) == 0x100000001ull);\n"
+             "  CK(4, n::call(1) == 2 + 101);\n"
+             "  CK(5, sqrt_like(5) == 5 + 3 + 6);\n"
+             "  CK(6, __LINE__ > 20 && __LINE__ < 1000);\n"
+             "  return 0;\n"
+             "}\n",
+             0);
+}
+
 int main(int argc, char** argv) {
     const std::string root = argc > 1 ? argv[1] : ".";
     (void)root;
@@ -416,5 +445,6 @@ int main(int argc, char** argv) {
     test_rvalue_references(tally);
     test_move_containers_and_small_gaps(tally);
     test_headers_and_statements(tally);
-    return tally.finish(9);
+    test_found_while_linking(tally);
+    return tally.finish(10);
 }

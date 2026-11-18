@@ -42,6 +42,7 @@ public:
         float ratio = 0.5f;               // split only: the first child's share of the space (without the gap)
         std::vector<std::string> tabs;    // leaf only
         int active = 0;                   // leaf only: index of the chosen tab
+        bool noTabBar = false;            // leaf only: no tab strip (SetNoTabBar); never saved, the host sets it again each frame
         Rect rect;                        // from the last Compute
         bool IsSplit() const { return child[0] != 0; }
     };
@@ -79,6 +80,9 @@ public:
     bool MoveTab(const std::string& window, int index);   // reorder inside its leaf
     bool SetFloatingRect(const std::string& window, Rect rect, bool markDirty = false);
     bool TakeDirty(const std::string& window, Rect* rect);   // true once after the host should place a floating window
+    /// Hide (or show again) the tab strip of a leaf: the content fills the whole node and the chosen tab is the only one drawn. Not saved in
+    /// the layout text and dropped when the layout is rebuilt (Load, Repair), so a host that wants it sets it every frame. False for an unknown node.
+    bool SetNoTabBar(int leaf, bool on);
     void SetMinSize(const std::string& window, float w, float h);   // a docked window's smallest content size
     bool SetRatio(int splitNode, float ratio);       // clamped to the minimum sizes when the layout has been computed
 
@@ -145,6 +149,18 @@ void DockEnd();
 /// Layout text for saving and loading (see DockLayout::Save / Load).
 std::string DockSaveLayout();
 bool DockLoadLayout(const std::string& blob, int* repairs = nullptr);
+/// One tab of the last DockSpace, for hosts that draw over the strips or ask where a tab is (the node, its place in the node, its rectangle in
+/// screen pixels, the width it would like when the strip is not squeezed, and whether it is the chosen tab). Empty before the first DockSpace.
+struct DockTabInfo { std::string window; int node = 0; int index = 0; Rect rect; float idealWidth = 0.0f; bool selected = false; };
+std::vector<DockTabInfo> GetDockTabs();
+/// The area given to the last DockSpace (zero size before the first one) and the height of a tab strip.
+Rect GetDockArea();
+float GetDockTabHeight();
+/// Leave `width` pixels free at the right end of the leaf's strip from the next DockSpace on (for a button the host puts there with
+/// TabItemButton); 0 removes it. Kept until changed; ids of nodes that no longer exist are dropped.
+void SetDockTrailingReserve(int leaf, float width);
+/// The rectangle of a leaf's tab strip (the last DockSpace); empty for an unknown leaf or one without a strip.
+Rect GetDockStripRect(int leaf);
 /// What a drag in progress would do now (for hosts and tests): the node, the side and the preview rectangle.
 struct DockDropInfo { bool active = false; bool rootEdge = false; int node = 0; DockSide side = DockSide_Center; Rect preview; std::string window; };
 DockDropInfo GetDockDrop();

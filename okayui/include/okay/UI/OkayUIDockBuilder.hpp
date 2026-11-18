@@ -68,7 +68,7 @@ struct DockNodeInfo {
     Vec2 size{0, 0};
     std::vector<std::string> windows;              // leaf: its tabs, in order
 };
-DockNodeInfo DockBuilderGetNode(DockId id);
+DockNodeInfo DockBuilderGetNodeInfo(DockId id);   // (the pointer form, DockBuilderGetNode, is in OkayUIInternals.hpp)
 
 /// The next DockBegin puts its window in node `id` (a node of a finished plan), or floats it when `id` is 0. Cond_Always: every time;
 /// the other conditions (Once, FirstUseEver, Appearing): only while the window is not in the layout at all (a layout loaded from a save
@@ -76,6 +76,17 @@ DockNodeInfo DockBuilderGetNode(DockId id);
 void SetNextWindowDockID(DockId id, Cond cond = Cond_Always);
 /// The builder id of the node the window sits in (live layout), 0 when it floats or is unknown.
 DockId GetWindowDockID(const char* window);
+
+/// Node ids of the live layout. A node that came from a plan keeps the plan's id; the DockSpace root answers to the id given to DockSpace(id, ...);
+/// any other node (made by dragging a window to a side) has the derived id `kDerivedBase + layout node id`. The calls above that take a DockId
+/// (DockBuilderDockWindow, DockBuilderSetNodeSize, SetNextWindowDockID) accept all three kinds once the layout is live.
+constexpr DockId kDockDerivedBase = 0x0D0D0000u;
+DockId DockNodeIdOf(int layoutNode);       // 0 for an unknown layout node
+int DockLayoutNodeOf(DockId id);           // 0 when the id names no node of the live layout (a plan node that was never finished, an unknown id)
+void SetDockSpaceId(DockId id);            // DockSpace(id, ...) calls this; the live root answers to `id` from then on (0 forgets it)
+/// Resize a node of the live layout along its parent's split, as DockBuilderSetNodeSize does for a finished plan node. False when the node is
+/// unknown, is the root, or the layout has not been laid out yet.
+bool SetLiveNodeSize(int layoutNode, Vec2 size);
 
 // Called by DockBegin and DockReset (OkayUIDock.cpp); not for hosts.
 void DockBuilderApplyNext(const std::string& window);

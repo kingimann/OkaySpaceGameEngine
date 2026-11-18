@@ -535,6 +535,7 @@ inline float cursorX() {
 float g_nextItemW = -1.0f;
 float g_itemWStack[16];
 int   g_itemWTop = 0;
+int   g_winItemWDepth = 0;   // item-width stack height just above the default SetWindowItemWidthDefault pushed (0: none pushed)
 // Remaining width from the next item's left edge to the content's right edge.
 inline float availW() {
     float real = g_lay.ox + g_lay.contentW - cursorX();
@@ -1081,7 +1082,7 @@ void BeginFrame(const Input& in) {
     g_colTop = 0;
     while (g_textScaleTop > 0) PopTextScale();   // an unbalanced PushTextScale never leaks into the next frame
     g_ncards = 0;                        // reset card stack (BeginCard reserves per frame)
-    g_nextItemW = -1.0f; g_itemWTop = 0;   // reset item-width overrides
+    g_nextItemW = -1.0f; g_itemWTop = 0; g_winItemWDepth = 0;   // reset item-width overrides
     g_nspans = 0; g_clipTop = 0;           // reset draw spans/stack
     g_curClipOn = false; g_curTex = g_defTex;
     g_childTop = 0;                        // reset child-region stack
@@ -2228,6 +2229,7 @@ static void scrollbarThumb(float sbx, float top, float trackH, float thumbY, flo
 }
 
 void End() {
+    if (g_winItemWDepth > 0) { if (g_itemWTop >= g_winItemWDepth) g_itemWTop = g_winItemWDepth - 1; g_winItemWDepth = 0; }
     if (g_curWin.valid && g_winBaseScale > 0.0f) g_theme.textScale = g_winBaseScale;   // SetWindowFontScale ends with its window
     g_curWin.valid = false;
     g_posOverride = false;
@@ -2409,6 +2411,7 @@ CurrentWindow GetCurrentWindow() {
     if (!g_curWin.valid) return w;
     w.valid = true; w.id = (unsigned)g_curWin.id; w.pos = Vec2{g_curWin.x, g_curWin.y}; w.size = Vec2{g_curWin.w, g_curWin.h};
     w.focused = g_focusWin == g_curWin.id; w.hovered = IsWindowHovered(); w.appearing = g_curWin.appearing; w.z = g_curWin.z;
+    w.ID = w.id; w.Pos = w.pos; w.Size = w.size;
     std::snprintf(w.title, sizeof w.title, "%s", g_curWin.title);
     return w;
 }
@@ -2454,6 +2457,7 @@ WindowInfo FindWindowByID(unsigned id) {
     if (id == 0) return wi;
     for (const WinSlot& ws : g_wins) if (ws.used && (unsigned)ws.id == id) {
         wi.found = true; wi.pos = Vec2{ws.x, ws.y}; wi.size = Vec2{ws.w, ws.h}; wi.focused = g_focusWin == ws.id;
+        std::snprintf(wi.Name, sizeof wi.Name, "%s", ws.title); wi.Pos = wi.pos; wi.Size = wi.size; wi.ID = (unsigned)ws.id;
         break;
     }
     return wi;
@@ -2461,20 +2465,37 @@ WindowInfo FindWindowByID(unsigned id) {
 bool AnyWindowFocused() { return g_focusWin != 0; }
 bool AnyPopupOpen() { for (const PopupSlot& p : g_popups) if (p.used && p.open) return true; return false; }
 void ClosePopupToLevel(int level, bool) { if (level <= 0) for (PopupSlot& p : g_popups) p.open = false; else if (level == 1) for (PopupSlot& p : g_popups) if (p.open && !p.modal) p.open = false; }
+unsigned WindowIdOfTitle(const char* title) { return title ? (unsigned)windowId(title) : 0u; }
+int ListWindowSlots(WindowSlotInfo* out, int cap) {
+    int n = 0;
+    for (const WinSlot& ws : g_wins) {
+        if (!ws.used || n >= cap) continue;
+        WindowSlotInfo& o = out[n++];
+        std::snprintf(o.title, sizeof o.title, "%s", ws.title); o.id = (unsigned)ws.id; o.pos = Vec2{ws.x, ws.y}; o.size = Vec2{ws.w, ws.h};
+        o.lastFrame = ws.lastFrame; o.z = ws.z; o.focused = g_focusWin == ws.id;
+    }
+    return n;
+}
+void SetWindowItemWidthDefault(float width) {
+    if (!g_curWin.valid || !(width > 0.0f) || !std::isfinite(width)) return;
+    if (g_winItemWDepth > 0 && g_itemWTop >= g_winItemWDepth) { g_itemWStack[g_winItemWDepth - 1] = width; return; }
+    if (g_itemWTop >= 16) return;
+    g_itemWStack[g_itemWTop++] = width; g_winItemWDepth = g_itemWTop;
+}
 Context* RefreshContext() {
-    static Context c; static WindowRef refs[3];   // hovered, active, current
-    auto fill = [&](WindowRef& r, const WinSlot& ws) { std::snprintf(r.Name, sizeof r.Name, "%s", ws.title); r.ID = (unsigned)ws.id; r.Pos = Vec2{ws.x, ws.y}; r.Size = Vec2{ws.w, ws.h}; r.ParentWindow = nullptr; };
+    static Context c;
     c.ActiveId = (unsigned)g_active; c.HoveredId = (unsigned)g_hot; c.FrameCount = (int)g_frameCount; c.Time = GetTime();
     { static unsigned lastHot = 0; static double hotSince = 0.0; if (c.HoveredId != lastHot) { lastHot = c.HoveredId; hotSince = c.Time; } c.HoveredIdTimer = c.HoveredId ? (float)(c.Time - hotSince) : 0.0f; }
-    c.HoveredWindow = c.ActiveIdWindow = c.CurrentWindow = nullptr;
     const WinSlot* hov = nullptr;
     if (!g_in.blocked) for (const WinSlot& ws : g_wins) {
         if (!ws.used || ws.lastFrame + 1 < g_frameCount || !pointIn(g_in.mouseX, g_in.mouseY, ws.x, ws.y, ws.w, ws.h)) continue;
         if (!hov || ws.z >= hov->z) hov = &ws;
     }
-    if (hov) { fill(refs[0], *hov); c.HoveredWindow = &refs[0]; }
-    if (g_active != 0 && g_focusWin != 0) for (const WinSlot& ws : g_wins) if (ws.used && ws.id == g_focusWin) { fill(refs[1], ws); c.ActiveIdWindow = &refs[1]; break; }
-    if (g_curWin.valid) for (const WinSlot& ws : g_wins) if (ws.used && ws.id == g_curWin.id) { fill(refs[2], ws); c.CurrentWindow = &refs[2]; break; }
+    unsigned activeWin = 0;
+    if (g_active != 0 && g_focusWin != 0) for (const WinSlot& ws : g_wins) if (ws.used && ws.id == g_focusWin) { activeWin = (unsigned)ws.id; break; }
+    unsigned curWin = 0;
+    if (g_curWin.valid) for (const WinSlot& ws : g_wins) if (ws.used && ws.id == g_curWin.id) { curWin = (unsigned)ws.id; break; }
+    FillContextFromWindowTable(c, hov ? (unsigned)hov->id : 0u, activeWin, curWin, (unsigned)g_focusWin);
     return &c;
 }
 bool GetTopMostPopupModal() { for (const PopupSlot& p : g_popups) if (p.used && p.open && p.modal) return true; return false; }
@@ -2917,7 +2938,22 @@ bool BeginTabItem(const char* label, bool* open, int flags) {
 
 void EndTabItem() {}
 
+// A button on a dock node's strip (DockNodeBeginAmendTabBar in OkayUIDockNodes.cpp): placed right-to-left from the strip's right edge.
+namespace { struct TabAmendState { bool on = false; float x = 0, y = 0, w = 0, h = 0, used = 0; } g_amend; }
+void SetTabAmend(bool on, Rect strip) { g_amend.on = on; g_amend.x = strip.x; g_amend.y = strip.y; g_amend.w = strip.w; g_amend.h = strip.h; g_amend.used = 0.0f; }
+float TabAmendUsed() { return g_amend.used; }
 bool TabItemButton(const char* label, int flags) {
+    if (g_amend.on && g_lay.active && !g_tabBar.active && label) {
+        const int id = (hashLabel(label) ^ 0x7bc) | 1;
+        const float w = g_nextItemW > 0.0f ? g_nextItemW : visW(label) + 20.0f, gap = g_look ? 6.0f : 2.0f;
+        g_nextItemW = -1.0f;
+        const float x = g_amend.x + g_amend.w - g_amend.used - w;
+        g_amend.used += w + gap;
+        if (w < 1.0f || x < g_amend.x) return false;
+        const bool clicked = Button(id, x, g_amend.y, w, g_amend.h, label);
+        g_lay.prevX = x; g_lay.prevY = g_amend.y; g_lay.prevW = w; g_lay.prevH = g_amend.h;
+        return clicked;
+    }
     if (!g_lay.active || !g_tabBar.active || !label) return false;
     TabBarCtx& tb = g_tabBar;
     const int id = (hashLabel(label) ^ tb.id ^ 0x7bb) | 1;

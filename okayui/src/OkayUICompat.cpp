@@ -346,13 +346,7 @@ void InputTextCallbackData::InsertChars(int pos, const char* text, const char* e
 bool InputTextWithHint(const char* l, const char* h, char* b, int c, unsigned f, InputTextCallback, void*) { return InputTextWithHint(l, h, b, c, f); }
 bool InputText(const char* l, char* b, int c, unsigned f, InputTextCallback, void*) { return InputText(l, b, c, f); }
 bool IsWindowDocked() { const CurrentWindow w = GetCurrentWindow(); return w.valid && IsWindowDocked(w.title); }
-WindowInfo::operator WindowRef*() const {
-    if (!found) return nullptr;
-    static WindowRef ring[8]; static int next = 0;
-    WindowRef& r = ring[next]; next = (next + 1) & 7;
-    std::snprintf(r.Name, sizeof r.Name, "%s", Name); r.ID = ID; r.Pos = pos; r.Size = size; r.ParentWindow = nullptr;
-    return &r;
-}
+WindowInfo::operator WindowRef*() const { return found ? FindWindowRefByName(Name) : nullptr; }
 bool InvisibleButton(const char* id, Vec2 size, int) { return InvisibleButton(id, size.x, size.y); }
 bool BeginTabBar(const char* id, int) { return BeginTabBar(id); }
 bool BeginCombo(const char* label, const char* preview, int) { return BeginCombo(label, preview); }

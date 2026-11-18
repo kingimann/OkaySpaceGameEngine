@@ -5777,7 +5777,10 @@ struct Parser {
                     std::vector<Node> args;
                     args.push_back(std::move(theirs));
                     Node call;
-                    if (!method_call(&call, node_this_field(field.name), false, "operator=", {}, &args)) return false;
+                    if (!method_call(&call, node_this_field(field.name), false, "operator=", {}, &args)) {
+                        error += " [implicit copy assignment of member " + field.name + "]";
+                        return false;
+                    }
                     Node stmt;
                     stmt.kind = Node::ExprStmt;
                     stmt.kids.push_back(std::move(call));
@@ -11214,9 +11217,11 @@ bool Parser::static_type(const Node& node, Type* out) const {
             base = peel_array(base);
         }
         if (base.base != 3 || base.struct_id < 0 || base.struct_id >= static_cast<int>(structs.size())) return false;
-        for (const Field& field : structs[static_cast<size_t>(base.struct_id)].fields)
-            if (field.name == node.text) {
-                *out = field.type;
+        // A member of a derived class hides a base member of the same name: the last one in the layout wins.
+        const std::vector<Field>& all_fields = structs[static_cast<size_t>(base.struct_id)].fields;
+        for (size_t fi = all_fields.size(); fi-- > 0;)
+            if (all_fields[fi].name == node.text) {
+                *out = all_fields[fi].type;
                 return true;
             }
         return false;
@@ -11629,7 +11634,7 @@ bool Parser::method_call(Node* out, Node object, bool arrow, const std::string& 
     if (arrow && ot.pointers == 1) sid = ot.struct_id;
     if (!arrow && ot.pointers == 0 && !ot.is_array()) sid = ot.struct_id;
     if (sid < 0 || ot.base != 3) {
-        error = "member call on something that is not a class object: " + name + " (in " + current_fn + ", object node kind " + std::to_string(static_cast<int>(object.kind)) + ")";
+        error = "member call on something that is not a class object: " + name + " (in " + current_fn + ", object node kind " + std::to_string(static_cast<int>(object.kind)) + ", type base " + std::to_string(ot.base) + " pointers " + std::to_string(ot.pointers) + " sid " + std::to_string(ot.struct_id) + (ot.is_array() ? " array" : "") + ")";
         return false;
     }
     if (!arrow && object.kind == Node::Call && cur_locals != nullptr) {

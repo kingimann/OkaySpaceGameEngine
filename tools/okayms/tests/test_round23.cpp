@@ -374,5 +374,10 @@ int main(int, char**) {
           "int f(const char* k) { static const std::pair<const char*, int> kE[] = { {\"a\", 1}, {\"b\", 2}, }; static D ds[2]; static const std::string names[] = {\"x\", \"y\"};\n"
           "for (const auto& e : kE) if (k == e.first) return e.second + ds[1].n; return (int)names[1].size(); }\nint main() { return f(\"a\"); }\n", &o);
     CHECK(t, has_symbol(o, "main"));
+    ++tests;
+    build(t, "round 34: a derived member hides a base member of the same name (copy assignment of the derived class)",
+          "#include <vector>\nstruct B { bool m_live = false; virtual ~B() {} };\nstruct D : B { struct L { int a = 0; }; std::vector<L> m_live; };\n"
+          "int main() { D d; D e; e = d; d.m_live.push_back(D::L()); return (int)d.m_live.size(); }\n", &o);
+    CHECK(t, has_symbol(o, "main"));
     return t.finish(tests);
 }

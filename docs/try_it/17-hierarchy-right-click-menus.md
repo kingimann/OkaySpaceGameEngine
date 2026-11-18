@@ -21,7 +21,7 @@ Where: the **Hierarchy** panel (left side by default). Map and the Existing / Ga
 7. Right-click the empty space under the rows: Create Empty, the eight Create categories, Paste, Select All, Deselect, Expand All, Collapse All,
    Sort A-Z. The **[+]** button at the top has Create Empty, Create Empty Child, Group Selected and the same categories.
 
-Screenshots of the real editor (Linux, virtual display): [docs/images/editor_menus/](images/editor_menus/) (`hierarchy_row_menu.png`,
+Screenshots of the real editor (Linux, virtual display): a picture folder (pictures are no longer stored in the repository) (`hierarchy_row_menu.png`,
 `hierarchy_create_child.png`, `hierarchy_create_child_result.png`, `hierarchy_three_selected.png`, `hierarchy_same_type_reason.png`,
 `hierarchy_add_component.png`, `hierarchy_empty_space.png`).
 

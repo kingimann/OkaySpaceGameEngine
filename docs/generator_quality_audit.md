@@ -51,7 +51,7 @@ loose limit (5 s) so it is not flaky.
 
 - Motorcycles still use the old rough generator (next in the order).
 - Characters: organic body exists from Medium up; styles, proportion sliders and clothing parts are not finished.
-- The silhouette limit is a floor, not proof that every style looks good. Pictures: `docs/images/guided_modeling/cars_side_views.png`
+- The silhouette limit is a floor, not proof that every style looks good. Pictures: a picture folder (pictures are no longer stored in the repository)
   and `cars_three_quarter.png` (headless software renders).
 - Parts that touch are tested by bounding boxes, not by exact surfaces.
 - Mesh and draw-call counts, caching by parameter hash and instancing are not done yet.

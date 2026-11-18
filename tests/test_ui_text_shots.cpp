@@ -220,7 +220,7 @@ int main(int argc, char** argv) {
     }
 
     {   // the sign: a bigger run no longer overlaps the line above (a line is as tall as its largest size)
-        CHECK(SavePicture(Sign(false), dir, "world_text_sign.png"));       // the same text as the "before" picture (docs/images/ui_text)
+        CHECK(SavePicture(Sign(false), dir, "world_text_sign.png"));       // the same text as the "before" picture
         const Image sign = Sign(true);                                       // the big word in its own colour, to measure
         CHECK(SavePicture(sign, dir, "world_text_sign_measured.png"));
         // Three coloured parts, top to bottom: the red "Danger:" (line 2), the green "larger" at 150 percent (line 3) and the gold

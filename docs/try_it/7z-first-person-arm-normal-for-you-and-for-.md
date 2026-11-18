@@ -8,7 +8,7 @@ row: | 7z | First-person arm: looks normal to you and to others; presets to comp
 **What it is.** Your own arm in first person (the player in the First Person starter). Before: no arm unless you held
 something, then a floating skin block, and a left click did nothing. Now: a hand and forearm in your shirt colour, always in
 view at the lower right, a left click swings it, and other players see the whole body. Before and after pictures:
-`docs/images/fp_hand/before/` and `docs/images/fp_hand/after/` (headless renders: left your camera, middle a camera in
+a picture folder (pictures are no longer stored in the repository) and a picture folder (pictures are no longer stored in the repository) (headless renders: left your camera, middle a camera in
 front of the player, right a camera at the side). Details: [fp_hand.md](fp_hand.md).
 
 **How to try it (Windows release).**

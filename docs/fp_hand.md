@@ -5,7 +5,7 @@ What you see of your own body in first person, and what other players see. Code:
 `editor/FpHandsWindow.cpp` (Inspector section and the Fp Hands window with the live preview). Written from the existing
 engine code; no outside code or assets.
 
-## What was wrong (before, see `docs/images/fp_hand/before/`)
+## What was wrong (before, see a picture folder (pictures are no longer stored in the repository))
 
 Pictures are headless software renders (`tests/fp_hand_shot.cpp`), left to right: your own camera, a camera in front of the
 player, a camera at the side.

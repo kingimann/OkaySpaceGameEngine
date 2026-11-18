@@ -7,7 +7,7 @@ row: | 7zm | Guided props: furniture, containers, tools, decorations (27 designs
 
 **What it is.** Four prop templates on the **Guided** page (category Props), same rules and the same Detail, Randomise, model check and template controls.
 
-**Status.** Tested on Linux (`ctest -R "guided_quality|guided_detail|guided"`): every start design of the four templates is one connected, sound object at all four Detail levels, every start is different, every slot has designs that change the model, 1000 random seeds per template without a failure. Picture: `docs/images/guided_modeling/props_overview.png` (headless render).
+**Status.** Tested on Linux (`ctest -R "guided_quality|guided_detail|guided"`): every start design of the four templates is one connected, sound object at all four Detail levels, every start is different, every slot has designs that change the model, 1000 random seeds per template without a failure. Picture: a picture folder (pictures are no longer stored in the repository) (headless render).
 
 **Try it.**
 

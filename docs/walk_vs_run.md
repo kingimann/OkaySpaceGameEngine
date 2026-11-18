@@ -143,10 +143,8 @@ Gap at the defaults (Animator): +57 steps/min, step 1.9 times longer, flight +44
 
 Software renders from Linux (the engine's own rasteriser, headless), not screenshots of the Windows player. Eight poses evenly spaced over one stride, side view; the bands on the ground are 0.5 m apart.
 
-* ![new walk and run](images/walk_vs_run/sheet.png)
-* ![old walk and run](images/walk_vs_run/sheet_old.png)
 
-Singles: `new_walk.png`, `run.png`, `old_walk.png`, `old_run.png` in `docs/images/walk_vs_run/`. Remake: `walk_vs_run_strips <folder>` (and with `OKAY_OLD_GAIT=1`).
+Singles: `new_walk.png`, `run.png`, `old_walk.png`, `old_run.png` in a picture folder (pictures are no longer stored in the repository). Remake: `walk_vs_run_strips <folder>` (and with `OKAY_OLD_GAIT=1`).
 
 ## 5. Compare with the old gait in the same build
 

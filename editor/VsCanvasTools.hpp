@@ -58,10 +58,10 @@ struct VsVarRef {
 inline const char* VsVarScopeName(VsVarScope s) {
     switch (s) {
         case VsVarScope::Object:      return "On this object";
-        case VsVarScope::Scene:       return "Scene";
-        case VsVarScope::Global:      return "Global";
-        case VsVarScope::Local:       return "Local";
-        case VsVarScope::Story:       return "Story";
+        case VsVarScope::Scene:       return "In this scene";
+        case VsVarScope::Global:      return "In the whole game";
+        case VsVarScope::Local:       return "Inside one action";
+        case VsVarScope::Story:       return "In the story";
         case VsVarScope::OtherObject: return "On another object";
     }
     return "";

@@ -4091,6 +4091,7 @@ add_test(NAME vs_quick_blocks COMMAND test_vs_quick_blocks)
 # Beginner layer of the Modeling window as pure data (editor/ModelingEasy.hpp): plain names, banned-jargon check, hints, quick actions, recent tools, click counts.
 add_executable(test_modeling_easy test_modeling_easy.cpp)
 target_include_directories(test_modeling_easy PRIVATE ${CMAKE_SOURCE_DIR}/editor)
+target_compile_definitions(test_modeling_easy PRIVATE OKAY_SOURCE_DIR="${PROJECT_SOURCE_DIR}")
 add_test(NAME modeling_easy COMMAND test_modeling_easy)
 
 # One-click starter models (editor/ModelingStarters.hpp) built headlessly: closed, sane size, a colour per face.
@@ -4105,14 +4106,15 @@ target_include_directories(test_modeling_easy_ops PRIVATE ${CMAKE_SOURCE_DIR}/ed
 target_link_libraries(test_modeling_easy_ops PRIVATE okay::engine)
 add_test(NAME modeling_easy_ops COMMAND test_modeling_easy_ops)
 
-# The advanced Modeling window as data (editor/ModelingToolIndex.hpp): pages by job, every tool once, search by name and alias.
+# The Modeling window as data (editor/ModelingToolIndex.hpp): pages by job, every tool once, search by name and alias.
 # Also reads editor/main.cpp: a button added to the window without an index entry fails (OKAY_SOURCE_DIR).
 add_executable(test_modeling_tool_index test_modeling_tool_index.cpp)
 target_include_directories(test_modeling_tool_index PRIVATE ${CMAKE_SOURCE_DIR}/editor)
 target_compile_definitions(test_modeling_tool_index PRIVATE OKAY_SOURCE_DIR="${PROJECT_SOURCE_DIR}")
 add_test(NAME modeling_tool_index COMMAND test_modeling_tool_index)
 
-# Fold state and width maths of the advanced Modeling window's page list (editor/ModelingSidebar.hpp), its settings key and strip labels.
+# Fold state and width maths of the Modeling window's page list (editor/ModelingSidebar.hpp), its settings key and strip labels.
 add_executable(test_modeling_sidebar test_modeling_sidebar.cpp)
 target_include_directories(test_modeling_sidebar PRIVATE ${CMAKE_SOURCE_DIR}/editor)
+target_compile_definitions(test_modeling_sidebar PRIVATE OKAY_SOURCE_DIR="${PROJECT_SOURCE_DIR}")
 add_test(NAME modeling_sidebar COMMAND test_modeling_sidebar)

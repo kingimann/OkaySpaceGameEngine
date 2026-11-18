@@ -1,9 +1,9 @@
 #pragma once
-// ModelingToolIndex: the advanced Modeling window as data. Every tool the window offers is listed once (its page, the
+// ModelingToolIndex: the Modeling window as data. Every tool the window offers is listed once (its page, the
 // section it sits in, search words and a short plain hint), the pages are grouped by job (Create, Shape and size, Edit parts,
 // Effects, Files), and search finds tools by name, alias or section. The window draws from this: the sidebar headings, the
 // search box, the highlight on matching buttons and the hint line. The exact technical names stay (Bevel, Extrude ...): the
-// "no jargon" rule is for the beginner view only. No ImGui, no engine. Written from scratch for this engine.
+// "no jargon" rule is for the Easy page only (page 8, the first page, the default). No ImGui, no engine. Written from scratch for this engine.
 #include <algorithm>
 #include <cctype>
 #include <cstddef>
@@ -16,6 +16,7 @@ struct Page { int legacy; const char* name; const char* desc; const char* job; c
 /// The pages in the order of the sidebar, under their job headings.
 inline const std::vector<Page>& Pages() {
     static const std::vector<Page> p = {
+        {8, "Easy",      "Big buttons, start here",        "Start here", "Ea"},
         {0, "Add",       "Add a shape or a prop",              "Create", "Ad"},
         {7, "Guided",    "Fences, buildings, cars",        "Create", "Gd"},
         {4, "Generate",  "Spin, pipes and curves",      "Create", "Ge"},

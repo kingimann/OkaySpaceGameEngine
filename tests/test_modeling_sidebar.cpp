@@ -1,9 +1,11 @@
-// Fold state and width maths of the advanced Modeling window's page list (editor/ModelingSidebar.hpp).
+// Fold state and width maths of the Modeling window's page list (editor/ModelingSidebar.hpp).
 #include "ModelingSidebar.hpp"
 #include "ModelingToolIndex.hpp"
 #include "EditorLayoutMath.hpp"
 #include <cstdio>
+#include <fstream>
 #include <set>
+#include <sstream>
 using namespace oked::modeltools;
 static int fails = 0;
 #define CHECK(c) do { if (!(c)) { std::printf("FAIL line %d: %s\n", __LINE__, #c); ++fails; } } while (0)
@@ -51,6 +53,13 @@ int main() {
     }
     // The folded strip: every page has a short unique label (2 letters) so clicking one opens that page.
     std::set<std::string> ab; for (const Page& p : Pages()) { CHECK(std::string(p.abbr).size() >= 1 && std::string(p.abbr).size() <= 2); CHECK(ab.insert(p.abbr).second); }
+    // The folded strip has the Easy page first, and Ctrl+\ still folds the list (the key is wired in the window).
+    CHECK(std::string(Pages().front().abbr) == "Ea");
+    {
+        std::ifstream in(std::string(OKAY_SOURCE_DIR) + "/editor/main.cpp"); std::stringstream ss; ss << in.rdbuf();
+        CHECK(ss.str().find("ImGuiKey_Backslash") != std::string::npos);
+        CHECK(ss.str().find("Back to the simple view") == std::string::npos);
+    }
     if (fails) { std::printf("%d failure(s)\n", fails); return 1; }
     std::printf("modeling_sidebar: all passed\n");
     return 0;

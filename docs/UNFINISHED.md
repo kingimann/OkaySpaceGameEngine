@@ -167,7 +167,7 @@ These are "-style" subsets, not the real languages: code written for the real Lu
 | [3.5](feature_map/03-modeling-import.md#35-mesh-assets-and-primitives) | Mesh assets and primitives | Partial | M5b per-face materials: PolyFace has a material slot but Mesh has no per-triangle slot; old map says Sphere, Cylinder, Cone... |
 | [3.6](feature_map/03-modeling-import.md#36-model-import) | Model import | Partial | possible doc bug: docs/animation.md Tips says FBX animations import via Assimp, but FBX is read by the built-in ufbx path; packed... |
 | [3.11](feature_map/03-modeling-import.md#311-guided-creation-templates-parts-safe-regeneration) | Guided creation | Partial | fence and the architecture templates only; no landing railings; editor page not opened in a real window |
-| [3.12](feature_map/03-modeling-import.md#312-simple-view-of-the-modeling-window-beginner-mode) | Simple Modeling view | Partial | not built: drag-to-pull a face, double-click part pick in the 3D view, click-drag paint select, snap on by default, collapsible advanced sections; editor not run on a real desktop |
+| [3.12](feature_map/03-modeling-import.md#312-simple-view-of-the-modeling-window-beginner-mode) | Simple Modeling view | Partial | not built: drag-to-pull a face, double-click part pick in the 3D view, click-drag paint select, snap on by default, collapsible sections in the other pages; editor not run on a real desktop |
 
 ### 5. Animation & IK
 

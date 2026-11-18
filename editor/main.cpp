@@ -28399,7 +28399,7 @@ static void DrawModelingSimple(EditorState& ed) {
     h.loadRecent = [] { return em::RecentFromCodes(g_view.modelingRecent, 4); };
     h.saveRecent = [](const std::vector<std::string>& r) { const auto c = em::RecentToCodes(r); for (int i = 0; i < 4; ++i) g_view.modelingRecent[i] = c[(std::size_t)i]; };
     h.setPicks = [&](const std::vector<int>& faces, const std::vector<int>& corners) { if (!faces.empty()) g_meshSelFaces = faces; if (!corners.empty()) g_meshSelVerts = corners; };
-    oked::easymodel_ui::DrawEasyModeling(h, g_view.modelingAdvanced);
+    oked::easymodel_ui::DrawEasyModeling(h);
 }
 
 #define Button(...) MdlHlButton(__VA_ARGS__)          // inside DrawModeling every button is outlined when it matches the tool search
@@ -28413,8 +28413,6 @@ void DrawModeling(EditorState& ed) {
     // A floating window remembered tiny has no room for the sidebar + page.
     if (!ImGui::IsWindowDocked() && (ImGui::GetWindowSize().x < 640.0f || ImGui::GetWindowSize().y < 420.0f))
         ImGui::SetWindowSize(ImVec2(std::max(ImGui::GetWindowSize().x, 900.0f), std::max(ImGui::GetWindowSize().y, 640.0f)));
-    if (!g_view.modelingAdvanced) { DrawModelingSimple(ed); ImGui::End(); return; }   // the simple view is the default
-    if (ImGui::SmallButton("Back to the simple view##mdl")) g_view.modelingAdvanced = false;
 
     // One page at a time, picked from a sidebar (instead of a tab strip under an
     // always-open Add library): Add, then the mesh tools in the order you use them.
@@ -28428,10 +28426,10 @@ void DrawModeling(EditorState& ed) {
         {"Edit Mesh", "Select, move, sculpt, paint",      true},
         {"Import",    "Bring in a model file",            true},
         {"Guided",    "Fences and more, from designs",    false},   // appended (scenes and OKAY_UI_MODELPAGE use these numbers); drawn first
+        {"Easy",      "Big buttons, start here",          false},   // page 8: the simple view, the default page
     };
-    static const int kPageOrder[] = {7, 0, 1, 2, 3, 4, 5, 6};
-    static int s_mdlPage = 0;
-    if (const char* mp = std::getenv("OKAY_UI_MODELPAGE")) { static bool once = false; if (!once) { once = true; s_mdlPage = std::atoi(mp); } }
+    static int s_mdlPage = 8;
+    if (const char* mp = std::getenv("OKAY_UI_MODELPAGE")) { static bool once = false; if (!once) { once = true; s_mdlPage = std::max(0, std::min(8, std::atoi(mp))); } }
     GameObject* selGo = ed.selected();
     const bool haveMesh = selGo && (selGo->GetComponent<MeshRenderer>() || selGo->GetComponent<Terrain>());   // terrain: its sculpt tools
     static oked::modeltools::SidebarState s_sb = oked::modeltools::SidebarFromPref(g_view.modelingSidebar);
@@ -28469,7 +28467,7 @@ void DrawModeling(EditorState& ed) {
         ImGui::PopID();
     }
     ImGui::EndChild();
-    if (kPages[s_mdlPage].needsMesh && !haveMesh) s_mdlPage = 0;
+    if (kPages[s_mdlPage].needsMesh && !haveMesh) s_mdlPage = 8;
     ImGui::SameLine();
     ImGui::BeginChild("##mdlpage", ImVec2(0, 0), ImGuiChildFlags_Borders);
     ImGui::PushStyleVar(ImGuiStyleVar_ItemSpacing, ImVec2(10, 10));
@@ -28500,7 +28498,9 @@ void DrawModeling(EditorState& ed) {
     ImGui::SameLine(); ImGui::TextDisabled("  %s", g_mdlHint.empty() ? kPages[s_mdlPage].desc : g_mdlHint.c_str());   // the hint of the button the mouse was over
     g_mdlHint.clear();
     ImGui::Separator();
-    if (s_mdlPage == 7) {
+    if (s_mdlPage == 8) {
+        DrawModelingSimple(ed);   // the simple view: five tabs, big buttons, "What do I click next?"
+    } else if (s_mdlPage == 7) {
         // Guided Creation: designs, parts and regeneration live in GuidedPanel.cpp; this lends it the edit-mode selection
         // and the thumbnail renderer.
         namespace gu = oked::guided_ui;

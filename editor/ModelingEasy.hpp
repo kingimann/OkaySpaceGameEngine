@@ -14,12 +14,12 @@
 namespace oked::easymodel {
 
 // ---- Tabs -------------------------------------------------------------------------------------------------------------
-enum class Tab { Shape, Reshape, Details, Colour, Finish, Pick, Advanced };   // Pick = the buttons of the "Pick parts" row, not a tab
-constexpr int kBeginnerTabCount = 5;   // Advanced is a switch, not a tab, so a beginner never sees more than five
+enum class Tab { Shape, Reshape, Details, Colour, Finish, Pick };   // Pick = the buttons of the "Pick parts" row, not a tab
+constexpr int kBeginnerTabCount = 5;   // a beginner never sees more than five (every other tool is a page in the list on the left of the window)
 inline const char* TabName(Tab t) {
     switch (t) {
         case Tab::Shape: return "Shape";   case Tab::Reshape: return "Reshape"; case Tab::Details: return "Details";
-        case Tab::Colour: return "Colour"; case Tab::Finish: return "Finish";   default: return "Advanced";
+        case Tab::Colour: return "Colour"; case Tab::Finish: return "Finish";   default: return "Pick";
     }
 }
 inline const char* TabHelp(Tab t) {
@@ -30,7 +30,7 @@ inline const char* TabHelp(Tab t) {
         case Tab::Colour:  return "Paint the whole model or just the faces you picked.";
         case Tab::Finish:  return "Fix problems, put it on the ground, give it a solid body and save it.";
         case Tab::Pick:    return "Pick the whole part, or everything that looks the same.";
-        default:           return "The full toolset for people who know 3D modeling.";
+        default:           return "";
     }
 }
 
@@ -284,7 +284,4 @@ inline const std::vector<Job>& Jobs() {
 }
 
 // ---- Settings ---------------------------------------------------------------------------------------------------------
-/// Beginner mode is the default; "Show advanced tools" is remembered (ViewPrefs key "modelingadvanced").
-struct EasyPrefs { bool showAdvanced = false; };
-
 } // namespace oked::easymodel

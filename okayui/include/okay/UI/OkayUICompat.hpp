@@ -345,6 +345,11 @@ enum ConfigFlags : int { ConfigFlags_None = 0, ConfigFlags_NavEnableKeyboard = 1
                          ConfigFlags_NoMouseCursorChange = 32, ConfigFlags_DockingEnable = 64, ConfigFlags_ViewportsEnable = 1024 };
 /// Auto-layout image from Dear ImGui's argument list (size as a vector; texture coordinates, tint and border as given).
 void Image(ImTextureID tex, Vec2 size, Vec2 uv0 = Vec2{0.0f, 0.0f}, Vec2 uv1 = Vec2{1.0f, 1.0f}, Vec4 tint = Vec4{1.0f, 1.0f, 1.0f, 1.0f}, Vec4 border = Vec4{});
+/// BeginMenu with Dear ImGui's `enabled` argument: a disabled menu is drawn dimmed, does not open and returns false.
+bool BeginMenu(const char* label, bool enabled);
+/// BeginTable with the flags as a plain int (what `ImGuiTableFlags_A | ImGuiTableFlags_B` is), with and without an outer size.
+bool BeginTable(const char* id, int columns, int flags);
+bool BeginTable(const char* id, int columns, int flags, Vec2 outerSize, float innerWidth = 0.0f);
 /// TreeNodeEx with a printf-style label (the label is formatted, then used as the id as well).
 void TreeNodeExFormatted(bool* out, const char* label, unsigned flags, const char* fmt, ...);
 template <class... A> inline bool TreeNodeEx(const char* id, unsigned flags, const char* fmt, A... a) { bool r = false; TreeNodeExFormatted(&r, id, flags, fmt, a...); return r; }

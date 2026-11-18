@@ -286,6 +286,13 @@ bool Combo(const char* label, int* current, const char* zs, int) {
     for (const char* p = zs; p && *p && count < 64; p += std::strlen(p) + 1) items[count++] = p;
     return Combo(label, items, count, current);
 }
+bool BeginMenu(const char* label, bool enabled) {
+    if (enabled) return BeginMenu(label);
+    BeginDisabled(true); BeginMenu(label); EndDisabled();
+    return false;
+}
+bool BeginTable(const char* id, int columns, int flags) { return BeginTable(id, columns, static_cast<TableFlags>(flags)); }
+bool BeginTable(const char* id, int columns, int flags, Vec2 outerSize, float innerWidth) { return BeginTable(id, columns, static_cast<TableFlags>(flags), outerSize, innerWidth); }
 bool InvisibleButton(const char* id, Vec2 size, int) { return InvisibleButton(id, size.x, size.y); }
 bool BeginTabBar(const char* id, int) { return BeginTabBar(id); }
 bool BeginCombo(const char* label, const char* preview, int) { return BeginCombo(label, preview); }

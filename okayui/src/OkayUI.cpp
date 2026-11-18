@@ -153,6 +153,7 @@ float    g_dragAccum = 0.0f;     // sub-unit accumulator for DragInt while dragg
 
 // Menu bar / open-menu state.
 bool  g_inMenuBar = false;
+int   g_popupSubOpen = 0;   // open inline submenus inside a plain popup (EndMenu closes them)
 float g_barX = 0.0f, g_barY = 0.0f, g_barH = 0.0f;
 struct MenuKb { int id = 0; int count = 0; unsigned long long mask = 0; int idx = -1; bool childOpen = false, childOpenNext = false; };
 MenuKb g_menuKbs[16];
@@ -1069,7 +1070,7 @@ void BeginFrame(const Input& in) {
     ++g_frame;
     g_nv = 0; g_ni = 0; g_dropped = 0;
     g_onv = 0; g_oni = 0; g_toOverlay = false; g_novSpans = 0;
-    g_inMenuBar = false; g_curMenu.active = false; g_menuDepth = 0; g_tabBar.active = false;
+    g_inMenuBar = false; g_popupSubOpen = 0; g_curMenu.active = false; g_menuDepth = 0; g_tabBar.active = false;
     g_idSeed = 0; g_idTop = 0; g_idSkipped = 0;   // reset the ID stack each frame
     // Restore any colors left pushed by an imbalanced previous frame, then clear.
     PopStyleColor(g_colTop);
@@ -1469,7 +1470,7 @@ bool TextField(int id, float x, float y, float w, float h, char* buf, int cap, u
     }
     // SetKeyboardFocusHere / a typed number: applied after the click handling above, so the same-frame click on the box
     // cannot undo the caret or the select-all.
-    if (g_focusNextField) { g_focusNextField = false; g_focus = id; g_focusClaimed = true; ts->caret = len; ts->anchor = g_focusSelectAll ? 0 : len; g_focusSelectAll = false; }
+    if (g_focusNextField) { g_focusNextField = false; g_focus = id; g_focusClaimed = true; ts->caret = len; ts->anchor = (g_focusSelectAll || (flags & InputText_AutoSelectAll)) ? 0 : len; g_focusSelectAll = false; }   // AutoSelectAll also when the focus is given with SetKeyboardFocusHere
     if (g_disCount > 0 && g_focus == id) g_focus = 0;   // a disabled field gives up the keyboard
     bool focused = (g_focus == id);
     Composition comp = (focused && !(flags & InputText_ReadOnly)) ? GetComposition() : Composition();
@@ -3986,6 +3987,11 @@ void menuKeysBegin(int menuId, bool nestedMenu) {
 }
 
 bool BeginMenu(const char* label) {
+    if (g_lay.active && !g_curMenu.active && !g_inMenuBar && label && g_popupTop > 0) {   // a submenu of a plain popup: expands in place, indented
+        if (!TreeNode(label)) return false;
+        ++g_popupSubOpen;
+        return true;
+    }
     if (g_lay.active && g_curMenu.active && label) {   // a sub-menu: a row of the open menu that opens a list to its right
         if (g_menuDepth >= 4) return false;
         const int id = hashLabel(label) ^ g_curMenu.menuId ^ 0x5bu;
@@ -4044,6 +4050,16 @@ bool BeginMenu(const char* label) {
 
 namespace {
 bool menuItemImpl(const char* label, const char* shortcut, bool selected, bool enabled) {
+    if (g_lay.active && !g_curMenu.active && !g_inMenuBar && label && g_popupTop > 0) {   // inside a plain popup (a context menu): a selectable row
+        const float wantW = labelW(label) + (shortcut && *shortcut ? labelW(shortcut) + 40.0f : 0.0f) + 24.0f;   // room for the label, a gap and the shortcut
+        const bool clicked = Selectable(label, selected, (unsigned)(Selectable_ClosePopup | (enabled ? 0 : Selectable_Disabled)), Vec2{ wantW, 0.0f });
+        if (shortcut && *shortcut) {
+            const Rect r = GetItemRect();
+            const float tw = labelW(shortcut);
+            if (tw < r.w - 24.0f) GetWindowDrawList().AddText(Vec2{ r.x + r.w - tw - 8.0f, r.y + (r.h - textH()) * 0.5f }, 0xff000000u | ((unsigned)g_theme.textDim[2] << 16) | ((unsigned)g_theme.textDim[1] << 8) | g_theme.textDim[0], shortcut);
+        }
+        return clicked;
+    }
     if (!g_lay.active || !g_curMenu.active || !label) return false;
     const float h = rowH(), s = g_theme.textScale;
     const float x = g_curMenu.x, w = g_curMenu.w, y = g_curMenu.itemY;
@@ -4092,7 +4108,7 @@ void MenuSeparator() {
 }
 
 void EndMenu() {
-    if (!g_curMenu.active) return;
+    if (!g_curMenu.active) { if (g_popupSubOpen > 0) { --g_popupSubOpen; TreePop(); } return; }
     const bool nested = g_menuDepth > 0;
     // A press outside both the menu button (or the sub-menu's row) and its item list closes the menu.
     const bool inBtn  = pointIn(g_in.mouseX, g_in.mouseY, g_curMenu.bx, g_curMenu.by, g_curMenu.bw, g_curMenu.bh);
@@ -4224,7 +4240,8 @@ bool IsPopupOpen(const char* name) {
     return p && p->open;
 }
 
-bool BeginPopupModal(const char* name, bool* open, int) { return BeginPopupModal(name, open); }
+static bool g_modalNoTitle = false;   // BeginPopupModal(.., Window_NoTitleBar): no title line
+bool BeginPopupModal(const char* name, bool* open, int flags) { g_modalNoTitle = (flags & Window_NoTitleBar) != 0; const bool r = BeginPopupModal(name, open); g_modalNoTitle = false; return r; }
 bool BeginPopupModal(const char* name, bool* open) {
     if (!g_lay.active || !name) return false;
     const int id = hashLabel(name);
@@ -4251,12 +4268,14 @@ bool BeginPopupModal(const char* name, bool* open) {
     }
     if (!beginPopupBody(id)) return false;
     (void)titleH;
-    Text(name);
-    if (open) {   // a close button at the top-right of the title line
+    const VisLabel shown(name);
+    const bool showTitle = !g_modalNoTitle && shown.b[0] != 0;   // an empty title ("##id") or NoTitleBar: no title line and no rule under it
+    if (showTitle) Text(static_cast<const char*>(shown.b));
+    if (open && showTitle) {   // a close button at the top-right of the title line
         const float bx = p->x + p->w - pad - rowH(), by = p->y + pad;
         if (Button(id ^ 0x58, bx, by, rowH(), rowH(), "x")) { p->open = false; *open = false; }
     }
-    Separator();
+    if (showTitle) Separator();
     return true;
 }
 

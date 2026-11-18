@@ -2601,6 +2601,11 @@ struct VsEditState {
     bool   snapGrid = true;      // snap a moved node to the canvas grid on release
     bool   wasNodeDrag = false;
     bool   showHint = true;      // the one-line canvas hint
+    bool   panTool = false;      // the hand "Pan" button: plain left-drag pans
+    bool   scrollPans = false;   // trackpad mode: plain scroll pans (Ctrl+scroll zooms)
+    bool   panLeftNow = false;   // a left-drag pan is running this frame (nodes must not move)
+    bool   spaceDown = false; float spaceT = 0.0f, spaceMoved = 0.0f; bool spaceOpen = false;   // Space tap vs Space pan
+    float  rightT = 0.0f;        // how long the right button has been down (click vs pan)
     int    focusNode = -1;       // centre the view on this node next frame
     bool   addAtCenter = false;  // "+ Add" in the toolbar: palette, node placed mid-view
     bool   pasteTemplate = false; std::string templateText;   // a chosen template, placed mid-view
@@ -3539,6 +3544,7 @@ inline bool VsDrawChoice(EditorState& ed, const VsEditGraph& g, std::string& val
 }
 }  // namespace okay::editor::vsed
 #include "VisualScriptClarity.hpp"
+#include "VisualScriptPan.hpp"
 #include "VisualScriptPalette.hpp"
 namespace okay::editor::vsed {
 
@@ -3748,9 +3754,10 @@ inline void Draw(EditorState& ed, bool* open) {
         ImGui::MenuItem("Live values while playing", nullptr, &st.liveValues);
         ImGui::MenuItem("Show as OkayScript", nullptr, &st.showScript);
         ImGui::MenuItem("Canvas hint", nullptr, &st.showHint);
+        ImGui::MenuItem("Scroll moves the view (trackpad)", nullptr, &st.scrollPans);
         ImGui::Separator();
         ImGui::TextDisabled("Right-click or Space adds a node");
-        ImGui::TextDisabled("Scroll zooms. Home fits everything. F fits the selection.");
+        ImGui::TextDisabled("Scroll zooms (Ctrl+scroll always). Arrow keys, middle/right-drag or Space+drag move the view. Home fits everything. F fits the selection.");
         ImGui::EndPopup();
     }
     if (st.openTemplates) { ImGui::OpenPopup("##vsgraphtemplates"); st.openTemplates = false; }
@@ -3941,7 +3948,7 @@ inline void Draw(EditorState& ed, bool* open) {
         char probLbl[64];
         if (nErr + nWarn == 0) std::snprintf(probLbl, sizeof probLbl, "No problems");
         else std::snprintf(probLbl, sizeof probLbl, "%d problem%s", nErr + nWarn, nErr + nWarn == 1 ? "" : "s");
-        const float coreW = btnW(probLbl) + btnW("Fit") + btnW("-") + btnW("100%") + btnW("+");
+        const float coreW = btnW(probLbl) + btnW("Fit") + btnW("Pan") + btnW("-") + btnW("100%") + btnW("+");
         const float panelW = btnW("Outline") + btnW("Details");
         const float avail = ImGui::GetWindowContentRegionMax().x;
         const bool panelBtns = avail - ImGui::GetCursorPosX() >= coreW + panelW + 24.0f;
@@ -3963,6 +3970,14 @@ inline void Draw(EditorState& ed, bool* open) {
         if (ImGui::Button("Fit")) st.frameAll = true;
         if (ImGui::IsItemHovered()) ImGui::SetTooltip("Show every node (Home). F frames the selection.");
         ImGui::SameLine();
+        {   // the hand: while on, dragging with the left button moves the view instead of selecting
+            if (st.panTool) ImGui::PushStyleColor(ImGuiCol_Button, ImVec4(0.26f, 0.46f, 0.78f, 1.0f));
+            if (ImGui::Button("Pan##vspantool")) st.panTool = !st.panTool;
+            if (st.panTool) ImGui::PopStyleColor();
+            if (ImGui::IsItemHovered())
+                ImGui::SetTooltip("Hand tool. While on, drag with the left button to move the view.\nAlways works: middle-drag, right-drag on empty space, hold Space and drag, arrow keys.");
+            ImGui::SameLine();
+        }
         if (ImGui::Button("-##vszoomout")) st.zoom = std::clamp(st.zoom / 1.12f, 0.28f, 2.2f);
         if (ImGui::IsItemHovered()) ImGui::SetTooltip("Zoom out");
         ImGui::SameLine();
@@ -4259,11 +4274,15 @@ inline void Draw(EditorState& ed, bool* open) {
     // them by the same factor the nodes grew, so saved graphs keep their gaps.
     const float kLayout = 1.4f;
     const ImVec2 mouse = io.MousePos;
-    if (canvasWindowHovered && io.MouseWheel != 0.0f && !ImGui::IsAnyItemActive() &&
+    if (canvasWindowHovered && (io.MouseWheel != 0.0f || io.MouseWheelH != 0.0f) && !ImGui::IsAnyItemActive() &&
         !ImGui::IsPopupOpen("", ImGuiPopupFlags_AnyPopupId)) {
-        float wx = (mouse.x - canvasMin.x - st.pan.x) / z, wy = (mouse.y - canvasMin.y - st.pan.y) / z;
-        z = std::clamp(z * (io.MouseWheel > 0 ? 1.12f : 1.0f / 1.12f), 0.28f, 2.2f);
-        st.pan = ImVec2(mouse.x - canvasMin.x - wx * z, mouse.y - canvasMin.y - wy * z);
+        const VsWheelResult wr = VsWheel(io.MouseWheelH, io.MouseWheel, io.KeyCtrl, io.KeyShift, st.scrollPans);
+        st.pan.x += wr.panX; st.pan.y += wr.panY;
+        if (wr.zoomSteps != 0.0f) {
+            float wx = (mouse.x - canvasMin.x - st.pan.x) / z, wy = (mouse.y - canvasMin.y - st.pan.y) / z;
+            z = std::clamp(z * std::pow(1.12f, wr.zoomSteps > 0 ? 1.0f : -1.0f), 0.28f, 2.2f);
+            st.pan = ImVec2(mouse.x - canvasMin.x - wx * z, mouse.y - canvasMin.y - wy * z);
+        }
     }
     if (winFocused && !typing && ImGui::IsKeyPressed(ImGuiKey_Home, false)) st.frameAll = true;
     if (winFocused && !typing && !io.KeyCtrl && ImGui::IsKeyPressed(ImGuiKey_F, false) && !st.sel.empty()) st.frameSel = true;
@@ -4310,10 +4329,47 @@ inline void Draw(EditorState& ed, bool* open) {
             dl->AddLine(ImVec2(canvasMin.x, canvasMin.y + y), ImVec2(canvasMax.x, canvasMin.y + y), (j % 4 == 0) ? gridMajor : gridMinor);
     }
 
-    // Pan with middle or right drag (anywhere on the canvas); a right CLICK
-    // without dragging still opens the add menu.
-    if (canvasWindowHovered && (ImGui::IsMouseDragging(ImGuiMouseButton_Middle) || ImGui::IsMouseDragging(ImGuiMouseButton_Right, 6.0f))) {
-        st.pan.x += io.MouseDelta.x; st.pan.y += io.MouseDelta.y;
+    // Pan: middle drag, right drag on empty canvas, Space + left drag, the hand button + left drag, arrow keys.
+    // A right CLICK / Space TAP without dragging still opens the add menu (VisualScriptPan.hpp decides).
+    {
+        const bool spaceHeld = winFocused && !typing && ImGui::IsKeyDown(ImGuiKey_Space);
+        st.panLeftNow = false; st.spaceOpen = false;
+        if (canvasWindowHovered) {
+            if (ImGui::IsMouseDragging(ImGuiMouseButton_Middle, 1.0f) ||
+                (ImGui::IsMouseDragging(ImGuiMouseButton_Right, 1.0f) && VsRightDragPans(std::sqrt(io.MouseDragMaxDistanceSqr[ImGuiMouseButton_Right]), st.dragging)) ||
+                (VsLeftDragMode(spaceHeld, st.panTool) == VsLeftDrag::Pan && !st.boxing && ImGui::IsMouseDown(ImGuiMouseButton_Left) &&
+                 ImGui::IsMouseDragging(ImGuiMouseButton_Left, 1.0f))) {
+                st.pan.x += VsPanDeltaFromMouse(io.MouseDelta.x, z); st.pan.y += VsPanDeltaFromMouse(io.MouseDelta.y, z);
+                st.panLeftNow = ImGui::IsMouseDown(ImGuiMouseButton_Left);
+            }
+        }
+        // Space tap versus Space pan
+        if (spaceHeld) {
+            if (!st.spaceDown) { st.spaceDown = true; st.spaceT = 0.0f; st.spaceMoved = 0.0f; }
+            st.spaceT += io.DeltaTime;
+            st.spaceMoved += std::sqrt(io.MouseDelta.x * io.MouseDelta.x + io.MouseDelta.y * io.MouseDelta.y);
+        } else if (st.spaceDown) {
+            st.spaceDown = false;
+            st.spaceOpen = VsSpaceOpensPopup(st.spaceT, st.spaceMoved);
+        }
+        if (ImGui::IsMouseClicked(ImGuiMouseButton_Right)) st.rightT = 0.0f;
+        if (ImGui::IsMouseDown(ImGuiMouseButton_Right)) st.rightT += io.DeltaTime;
+        // Arrow keys (canvas focused, no text field)
+        if (winFocused && !typing && !io.KeyCtrl && !io.KeyAlt) {
+            float dx, dy;
+            VsKeyPan(ImGui::IsKeyDown(ImGuiKey_LeftArrow), ImGui::IsKeyDown(ImGuiKey_RightArrow), ImGui::IsKeyDown(ImGuiKey_UpArrow),
+                     ImGui::IsKeyDown(ImGuiKey_DownArrow), io.KeyShift, io.DeltaTime, dx, dy);
+            st.pan.x += dx; st.pan.y += dy;
+        }
+        // Keep some of the graph on screen (Fit works from anywhere)
+        if (!g.nodes.empty()) {
+            float x0 = 1e9f, y0 = 1e9f, x1 = -1e9f, y1 = -1e9f;
+            for (const auto& n : g.nodes) {
+                x0 = std::min(x0, n.x * kLayout); y0 = std::min(y0, n.y * kLayout);
+                x1 = std::max(x1, n.x * kLayout + 230.0f); y1 = std::max(y1, n.y * kLayout + 150.0f);
+            }
+            VsClampPan(st.pan.x, st.pan.y, canvasMax.x - canvasMin.x, canvasMax.y - canvasMin.y, x0, y0, x1, y1, z);
+        }
     }
 
     auto W2S = [&](float wx, float wy) { return ImVec2(canvasMin.x + st.pan.x + wx * kLayout * z, canvasMin.y + st.pan.y + wy * kLayout * z); };
@@ -4366,7 +4422,7 @@ inline void Draw(EditorState& ed, bool* open) {
             for (const auto& n : g.nodes)
                 if (n.x >= c.x && n.y >= c.y && n.x <= c.x + c.w && n.y <= c.y + c.h) st.commentNodes.push_back(n.id);
         }
-        if (st.dragComment == ci && ImGui::IsItemActive() && ImGui::IsMouseDragging(ImGuiMouseButton_Left)) {
+        if (st.dragComment == ci && !st.panLeftNow && ImGui::IsItemActive() && ImGui::IsMouseDragging(ImGuiMouseButton_Left)) {
             float dx = io.MouseDelta.x / (z * kLayout), dy = io.MouseDelta.y / (z * kLayout);
             c.x += dx; c.y += dy;
             for (int id : st.commentNodes) if (VsEditNode* n = g.find(id)) { n->x += dx; n->y += dy; }
@@ -4610,7 +4666,7 @@ inline void Draw(EditorState& ed, bool* open) {
             } else if (!st.sel.count(n.id)) { st.sel.clear(); st.sel.insert(n.id); }
             st.selected = n.id;
         }
-        if (ImGui::IsItemActive() && ImGui::IsMouseDragging(ImGuiMouseButton_Left)) {
+        if (!st.panLeftNow && ImGui::IsItemActive() && ImGui::IsMouseDragging(ImGuiMouseButton_Left)) {
             startNodeDrag = true;   // move every selected node together (after the loop)
         }
         if (ImGui::IsItemHovered(ImGuiHoveredFlags_DelayNormal) && !ImGui::IsItemActive())
@@ -5269,7 +5325,7 @@ inline void Draw(EditorState& ed, bool* open) {
     }
 
     // ---- Box selection --------------------------------------------------------------
-    if (bgClicked && !st.dragging && !io.KeyAlt) {
+    if (bgClicked && !st.dragging && !io.KeyAlt && VsLeftDragMode(ImGui::IsKeyDown(ImGuiKey_Space), st.panTool) == VsLeftDrag::Box) {
         st.boxing = true; st.boxStart = mouse;
         if (!io.KeyCtrl && !io.KeyShift) { st.sel.clear(); st.selected = -1; }
     }
@@ -5332,9 +5388,10 @@ inline void Draw(EditorState& ed, bool* open) {
         openPaletteNow = true; pconnPlace = true;
     }
     // Right-click empty canvas (or Space): node palette.
-    if ((canvasHovered && ImGui::IsMouseReleased(ImGuiMouseButton_Right) && io.MouseDragMaxDistanceSqr[ImGuiMouseButton_Right] < 36.0f && !st.dragging) ||
-        (winFocused && !typing && canvasWindowHovered && ImGui::IsKeyPressed(ImGuiKey_Space, false)) || openPaletteNow || st.addAtCenter) {
+    if ((canvasHovered && ImGui::IsMouseReleased(ImGuiMouseButton_Right) && VsRightClickOpensMenu(st.rightT, std::sqrt(io.MouseDragMaxDistanceSqr[ImGuiMouseButton_Right])) && !st.dragging) ||
+        (winFocused && !typing && canvasWindowHovered && st.spaceOpen) || openPaletteNow || st.addAtCenter) {
         st.openPalette = true;
+        st.spaceOpen = false;
         if (!openPaletteNow) st.linkPending = false;
         st.paletteWorld = st.addAtCenter ? S2W(ImVec2((canvasMin.x + canvasMax.x) * 0.5f - 100.0f, (canvasMin.y + canvasMax.y) * 0.5f - 40.0f))
                                          : S2W(io.MousePos);
@@ -5436,7 +5493,7 @@ inline void Draw(EditorState& ed, bool* open) {
         dl->AddRectFilled(bp, ImVec2(bp.x + ts.x + 24.0f, bp.y + ts.y + 16.0f), IM_COL32(64, 48, 24, 230), 8.0f);
         dl->AddText(ImVec2(bp.x + 12.0f, bp.y + 8.0f), IM_COL32(245, 214, 150, 255), msg);
     } else if (st.showHint) {
-        const char* msg = "Right-click or press Space to add a node    ·    Scroll to zoom    ·    Drag empty space to select";
+        const char* msg = "Right-click or tap Space to add a node    ·    Move the view: middle-drag, right-drag, or hold Space and drag    ·    Scroll to zoom    ·    Drag empty space to select";
         dl->AddText(ImVec2(canvasMin.x + 16.0f, canvasMax.y - 28.0f), IM_COL32(168, 178, 194, 180), msg);
     }
     // Why the last wire was refused. Wrapped, so the suggestion is not cut off.

@@ -4116,3 +4116,7 @@ add_test(NAME modeling_tool_index COMMAND test_modeling_tool_index)
 add_executable(test_modeling_sidebar test_modeling_sidebar.cpp)
 target_include_directories(test_modeling_sidebar PRIVATE ${CMAKE_SOURCE_DIR}/editor)
 add_test(NAME modeling_sidebar COMMAND test_modeling_sidebar)
+
+add_executable(test_vs_pan test_vs_pan.cpp)
+target_include_directories(test_vs_pan PRIVATE ${CMAKE_SOURCE_DIR}/editor)
+add_test(NAME vs_pan COMMAND test_vs_pan)

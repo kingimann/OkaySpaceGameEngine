@@ -27,6 +27,9 @@ public:
         std::string xdgData, xdgConfig, xdgCache, xdgState;
         static Env Current();
     };
+    /// Make Env::Current() return `*e` instead of the process environment (nullptr = back to the real one). Used by the Xbox UWP app, whose
+    /// folders come from ApplicationData, not from %APPDATA% (docs/xbox_uwp.md). Nothing calls it on the desktop, so the desktop is unchanged.
+    static void SetEnvOverride(const Env* e);
 
     static Platform CurrentPlatform();
 

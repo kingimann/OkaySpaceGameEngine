@@ -48,10 +48,12 @@ inline DebuggerProbes SystemDebuggerProbes() {
     DebuggerProbes p;
 #if defined(_WIN32)
     p.local = [] { return IsDebuggerPresent() != FALSE; };
+#if !defined(OKAY_XBOX_UWP)   // CheckRemoteDebuggerPresent is desktop-only: in a UWP app the remote probe stays empty (not run)
     p.remote = [] {
         BOOL b = FALSE;
         return CheckRemoteDebuggerPresent(GetCurrentProcess(), &b) && b;
     };
+#endif
 #endif
     return p;
 }
@@ -127,7 +129,7 @@ inline ModuleAllowlist DefaultModuleAllowlist(const std::string& gameRoot, const
 
 inline std::vector<std::string> LoadedModules() {
     std::vector<std::string> out;
-#if defined(_WIN32)
+#if defined(_WIN32) && !defined(OKAY_XBOX_UWP)   // module snapshots are desktop-only: empty list in a UWP app (the module check does not run there)
     HANDLE snap = CreateToolhelp32Snapshot(TH32CS_SNAPMODULE | TH32CS_SNAPMODULE32, GetCurrentProcessId());
     if (snap == INVALID_HANDLE_VALUE) return out;
     MODULEENTRY32W me;
@@ -289,7 +291,7 @@ struct GuardProbes {
 // The real probes: Windows only (elsewhere every probe is empty and the guard idles).
 inline GuardProbes SystemGuardProbes(const std::string& gameRoot, const Integrity* manifest) {
     GuardProbes p;
-#if defined(_WIN32)
+#if defined(_WIN32) && !defined(OKAY_XBOX_UWP)   // UWP (Xbox export): GetModuleHandleW / GetWindowsDirectoryW are desktop-only and the anti-cheat is not offered there: every probe stays empty, the guard idles
     p.debugger = SystemDebuggerProbes();
     p.modules = [] { return LoadedModules(); };
     // The reference: monotonic and never stepped by NTP or the user (unlike the

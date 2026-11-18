@@ -1,0 +1,5532 @@
+okayscene 3
+name "bodies"
+gravity 0 -9.81
+gravity3 0 -9.81 0
+rendersettings 1 0.27450982 0.47058824 0.78431374 0.5882353 0.7254902 0.88235295 0.47058824 0.47058824 0.50980395 0.15
+fog 0 0.5882353 0.7254902 0.88235295 20 90
+tonemap 1
+gameobject 0 "Ground"
+  guid "c8263b6ff11c7c765ff22ccbb280f5ff"
+  active 1
+  parent -1
+  transform 0 -0.5 0 0 0 0 1 120 1 120
+  mesh "Cube" 0.35 0.5 0.3 1 0 "" 0
+  material 0 0 0 0 16 0 "" 1 1
+  rigidbody3d 2 1 1 0 0 0 0 0 0 0.5 0.05 1 1 0
+  boxcollider3d 1 1 1 0 0 0 0 0 0
+  comporder "MeshRenderer" "BoxCollider3D" "Rigidbody3D"
+end
+gameobject 1 "Box"
+  guid "513e04db0d4e233892f0f31069fb8969"
+  active 1
+  parent -1
+  transform -6.567664 1 -6.5436544 0 0 0 1 1 1 1
+  mesh "Cube" 0.6183131 0.69441235 0.59917176 1 0 "" 0
+  material 0 0 0 0 16 0 "" 1 1
+  rigidbody3d 0 1 1 0 0 0 0 0 0 0.5 0.05 1 1 0
+  boxcollider3d 1 1 1 0 0 0 0 0 0
+  comporder "MeshRenderer" "BoxCollider3D" "Rigidbody3D"
+end
+gameobject 2 "Ball"
+  guid "87c185cdd063c0f67cd5cb7d520ba484"
+  active 1
+  parent -1
+  transform -5.2636576 1 -6.427469 0 0 0 1 1 1 1
+  mesh "Sphere" 0.68322927 0.4033854 0.40918717 1 0 "" 0
+  material 0 0 0 0 16 0 "" 1 1
+  rigidbody3d 0 1 1 0 0 0 0 0 0 0.5 0.05 1 1 0
+  spherecollider3d 0.5 0 0 0 0 0 0
+  comporder "MeshRenderer" "SphereCollider3D" "Rigidbody3D"
+end
+gameobject 3 "Box"
+  guid "775a316a599d7b65b7e421de012d86a4"
+  active 1
+  parent -1
+  transform -3.758675 1 -6.5363092 0 0 0 1 1 1 1
+  mesh "Cube" 0.5928246 0.7256654 0.53823805 1 0 "" 0
+  material 0 0 0 0 16 0 "" 1 1
+  rigidbody3d 0 1 1 0 0 0 0 0 0 0.5 0.05 1 1 0
+  boxcollider3d 1 1 1 0 0 0 0 0 0
+  comporder "MeshRenderer" "BoxCollider3D" "Rigidbody3D"
+end
+gameobject 4 "Ball"
+  guid "e89bf361df5aa7fb447e2bafbe772085"
+  active 1
+  parent -1
+  transform -2.530426 1 -6.3045597 0 0 0 1 1 1 1
+  mesh "Sphere" 0.5939509 0.3857671 0.72409225 1 0 "" 0
+  material 0 0 0 0 16 0 "" 1 1
+  rigidbody3d 0 1 1 0 0 0 0 0 0 0.5 0.05 1 1 0
+  spherecollider3d 0.5 0 0 0 0 0 0
+  comporder "MeshRenderer" "SphereCollider3D" "Rigidbody3D"
+end
+gameobject 5 "Box"
+  guid "c3f0bc0370fdd281a9566bdd469559cd"
+  active 1
+  parent -1
+  transform -1.429543 1 -6.34253 0 0 0 1 1 1 1
+  mesh "Cube" 0.34730464 0.8377199 0.51235586 1 0 "" 0
+  material 0 0 0 0 16 0 "" 1 1
+  rigidbody3d 0 1 1 0 0 0 0 0 0 0.5 0.05 1 1 0
+  boxcollider3d 1 1 1 0 0 0 0 0 0
+  comporder "MeshRenderer" "BoxCollider3D" "Rigidbody3D"
+end
+gameobject 6 "Ball"
+  guid "f42bdbf41ffd5d1da3fcd264850c97d2"
+  active 1
+  parent -1
+  transform 0.11392303 1 -6.5488777 0 0 0 1 1 1 1
+  mesh "Sphere" 0.46377194 0.47169855 0.55203706 1 0 "" 0
+  material 0 0 0 0 16 0 "" 1 1
+  rigidbody3d 0 1 1 0 0 0 0 0 0 0.5 0.05 1 1 0
+  spherecollider3d 0.5 0 0 0 0 0 0
+  comporder "MeshRenderer" "SphereCollider3D" "Rigidbody3D"
+end
+gameobject 7 "Box"
+  guid "d2f309dd3ceedaead89f8672e65e2ff3"
+  active 1
+  parent -1
+  transform 1.1637349 1 -6.6614146 0 0 0 1 1 1 1
+  mesh "Cube" 0.80008835 0.40495285 0.68310577 1 0 "" 0
+  material 0 0 0 0 16 0 "" 1 1
+  rigidbody3d 0 1 1 0 0 0 0 0 0 0.5 0.05 1 1 0
+  boxcollider3d 1 1 1 0 0 0 0 0 0
+  comporder "MeshRenderer" "BoxCollider3D" "Rigidbody3D"
+end
+gameobject 8 "Ball"
+  guid "3b438e0e342079efbcdd5d43e2e57b4b"
+  active 1
+  parent -1
+  transform 2.614526 1 -6.6604643 0 0 0 1 1 1 1
+  mesh "Sphere" 0.32994533 0.6155689 0.43427798 1 0 "" 0
+  material 0 0 0 0 16 0 "" 1 1
+  rigidbody3d 0 1 1 0 0 0 0 0 0 0.5 0.05 1 1 0
+  spherecollider3d 0.5 0 0 0 0 0 0
+  comporder "MeshRenderer" "SphereCollider3D" "Rigidbody3D"
+end
+gameobject 9 "Box"
+  guid "14421379f7ba715033866dd17c2f6d9c"
+  active 1
+  parent -1
+  transform 3.8115735 1 -6.4697104 0 0 0 1 1 1 1
+  mesh "Cube" 0.43547845 0.7936031 0.79725164 1 0 "" 0
+  material 0 0 0 0 16 0 "" 1 1
+  rigidbody3d 0 1 1 0 0 0 0 0 0 0.5 0.05 1 1 0
+  boxcollider3d 1 1 1 0 0 0 0 0 0
+  comporder "MeshRenderer" "BoxCollider3D" "Rigidbody3D"
+end
+gameobject 10 "Ball"
+  guid "8708def24fa5e06185ac9d382aaf9fab"
+  active 1
+  parent -1
+  transform 5.3170614 1 -6.533959 0 0 0 1 1 1 1
+  mesh "Sphere" 0.47570568 0.3531101 0.48965263 1 0 "" 0
+  material 0 0 0 0 16 0 "" 1 1
+  rigidbody3d 0 1 1 0 0 0 0 0 0 0.5 0.05 1 1 0
+  spherecollider3d 0.5 0 0 0 0 0 0
+  comporder "MeshRenderer" "SphereCollider3D" "Rigidbody3D"
+end
+gameobject 11 "Box"
+  guid "d6578a06b8a2b5663614cd1749fa16a7"
+  active 1
+  parent -1
+  transform -6.649281 1 -5.074726 0 0 0 1 1 1 1
+  mesh "Cube" 0.35322562 0.3963042 0.444152 1 0 "" 0
+  material 0 0 0 0 16 0 "" 1 1
+  rigidbody3d 0 1 1 0 0 0 0 0 0 0.5 0.05 1 1 0
+  boxcollider3d 1 1 1 0 0 0 0 0 0
+  comporder "MeshRenderer" "BoxCollider3D" "Rigidbody3D"
+end
+gameobject 12 "Ball"
+  guid "51baaa26a3470d568297bb83c61ce87c"
+  active 1
+  parent -1
+  transform -5.0256524 1 -5.32288 0 0 0 1 1 1 1
+  mesh "Sphere" 0.3090638 0.39323428 0.4832369 1 0 "" 0
+  material 0 0 0 0 16 0 "" 1 1
+  rigidbody3d 0 1 1 0 0 0 0 0 0 0.5 0.05 1 1 0
+  spherecollider3d 0.5 0 0 0 0 0 0
+  comporder "MeshRenderer" "SphereCollider3D" "Rigidbody3D"
+end
+gameobject 13 "Box"
+  guid "b6e4df48fd33fb698cfd0058c9c2e39b"
+  active 1
+  parent -1
+  transform -3.737512 1 -5.170721 0 0 0 1 1 1 1
+  mesh "Cube" 0.7871855 0.75135577 0.6545804 1 0 "" 0
+  material 0 0 0 0 16 0 "" 1 1
+  rigidbody3d 0 1 1 0 0 0 0 0 0 0.5 0.05 1 1 0
+  boxcollider3d 1 1 1 0 0 0 0 0 0
+  comporder "MeshRenderer" "BoxCollider3D" "Rigidbody3D"
+end
+gameobject 14 "Ball"
+  guid "22fd8e05ef81c4f13588fe6eb63c2e3b"
+  active 1
+  parent -1
+  transform -2.7788181 1 -5.144614 0 0 0 1 1 1 1
+  mesh "Sphere" 0.8729743 0.48076576 0.77695477 1 0 "" 0
+  material 0 0 0 0 16 0 "" 1 1
+  rigidbody3d 0 1 1 0 0 0 0 0 0 0.5 0.05 1 1 0
+  spherecollider3d 0.5 0 0 0 0 0 0
+  comporder "MeshRenderer" "SphereCollider3D" "Rigidbody3D"
+end
+gameobject 15 "Box"
+  guid "241a417244e18d9bdbfda0e82ca9fb89"
+  active 1
+  parent -1
+  transform -1.4363242 1 -5.0057406 0 0 0 1 1 1 1
+  mesh "Cube" 0.6580966 0.4337622 0.89180297 1 0 "" 0
+  material 0 0 0 0 16 0 "" 1 1
+  rigidbody3d 0 1 1 0 0 0 0 0 0 0.5 0.05 1 1 0
+  boxcollider3d 1 1 1 0 0 0 0 0 0
+  comporder "MeshRenderer" "BoxCollider3D" "Rigidbody3D"
+end
+gameobject 16 "Ball"
+  guid "e89115f9b7900cc08102cd747e744ca7"
+  active 1
+  parent -1
+  transform 0.097638324 1 -5.012617 0 0 0 1 1 1 1
+  mesh "Sphere" 0.66560644 0.6962719 0.86991173 1 0 "" 0
+  material 0 0 0 0 16 0 "" 1 1
+  rigidbody3d 0 1 1 0 0 0 0 0 0 0.5 0.05 1 1 0
+  spherecollider3d 0.5 0 0 0 0 0 0
+  comporder "MeshRenderer" "SphereCollider3D" "Rigidbody3D"
+end
+gameobject 17 "Box"
+  guid "93548810e41d00b36e52d38211da5962"
+  active 1
+  parent -1
+  transform 1.2777874 1 -5.2799873 0 0 0 1 1 1 1
+  mesh "Cube" 0.5710181 0.7050394 0.87913054 1 0 "" 0
+  material 0 0 0 0 16 0 "" 1 1
+  rigidbody3d 0 1 1 0 0 0 0 0 0 0.5 0.05 1 1 0
+  boxcollider3d 1 1 1 0 0 0 0 0 0
+  comporder "MeshRenderer" "BoxCollider3D" "Rigidbody3D"
+end
+gameobject 18 "Ball"
+  guid "64602ea06abff198f3f93aa0216a07b2"
+  active 1
+  parent -1
+  transform 2.6563826 1 -5.1943235 0 0 0 1 1 1 1
+  mesh "Sphere" 0.3529014 0.3540524 0.6539651 1 0 "" 0
+  material 0 0 0 0 16 0 "" 1 1
+  rigidbody3d 0 1 1 0 0 0 0 0 0 0.5 0.05 1 1 0
+  spherecollider3d 0.5 0 0 0 0 0 0
+  comporder "MeshRenderer" "SphereCollider3D" "Rigidbody3D"
+end
+gameobject 19 "Box"
+  guid "dda4fc5b965a64988aee139fddcb029a"
+  active 1
+  parent -1
+  transform 3.8214667 1 -5.0470953 0 0 0 1 1 1 1
+  mesh "Cube" 0.8387263 0.8919784 0.8118948 1 0 "" 0
+  material 0 0 0 0 16 0 "" 1 1
+  rigidbody3d 0 1 1 0 0 0 0 0 0 0.5 0.05 1 1 0
+  boxcollider3d 1 1 1 0 0 0 0 0 0
+  comporder "MeshRenderer" "BoxCollider3D" "Rigidbody3D"
+end
+gameobject 20 "Ball"
+  guid "84524b4338b468472abf2fc5f7358726"
+  active 1
+  parent -1
+  transform 5.05052 1 -5.2366333 0 0 0 1 1 1 1
+  mesh "Sphere" 0.44449311 0.50012916 0.32659644 1 0 "" 0
+  material 0 0 0 0 16 0 "" 1 1
+  rigidbody3d 0 1 1 0 0 0 0 0 0 0.5 0.05 1 1 0
+  spherecollider3d 0.5 0 0 0 0 0 0
+  comporder "MeshRenderer" "SphereCollider3D" "Rigidbody3D"
+end
+gameobject 21 "Box"
+  guid "6e7e412da44e527f2321b201b44da74e"
+  active 1
+  parent -1
+  transform -6.4768653 1 -3.817397 0 0 0 1 1 1 1
+  mesh "Cube" 0.55864036 0.54031956 0.7230221 1 0 "" 0
+  material 0 0 0 0 16 0 "" 1 1
+  rigidbody3d 0 1 1 0 0 0 0 0 0 0.5 0.05 1 1 0
+  boxcollider3d 1 1 1 0 0 0 0 0 0
+  comporder "MeshRenderer" "BoxCollider3D" "Rigidbody3D"
+end
+gameobject 22 "Ball"
+  guid "121fbb6287c7e4108da9e2a89969f4f5"
+  active 1
+  parent -1
+  transform -5.1609087 1 -3.9219446 0 0 0 1 1 1 1
+  mesh "Sphere" 0.8269332 0.7331068 0.31429607 1 0 "" 0
+  material 0 0 0 0 16 0 "" 1 1
+  rigidbody3d 0 1 1 0 0 0 0 0 0 0.5 0.05 1 1 0
+  spherecollider3d 0.5 0 0 0 0 0 0
+  comporder "MeshRenderer" "SphereCollider3D" "Rigidbody3D"
+end
+gameobject 23 "Box"
+  guid "8eec9a1f89c94e9fd65800e661dd93ea"
+  active 1
+  parent -1
+  transform -4.0377007 1 -3.8533382 0 0 0 1 1 1 1
+  mesh "Cube" 0.36553997 0.60326684 0.30110565 1 0 "" 0
+  material 0 0 0 0 16 0 "" 1 1
+  rigidbody3d 0 1 1 0 0 0 0 0 0 0.5 0.05 1 1 0
+  boxcollider3d 1 1 1 0 0 0 0 0 0
+  comporder "MeshRenderer" "BoxCollider3D" "Rigidbody3D"
+end
+gameobject 24 "Ball"
+  guid "f7d50691c83b68110a044fc57b5675a2"
+  active 1
+  parent -1
+  transform -2.5099173 1 -3.7804618 0 0 0 1 1 1 1
+  mesh "Sphere" 0.6793134 0.68153036 0.36829644 1 0 "" 0
+  material 0 0 0 0 16 0 "" 1 1
+  rigidbody3d 0 1 1 0 0 0 0 0 0 0.5 0.05 1 1 0
+  spherecollider3d 0.5 0 0 0 0 0 0
+  comporder "MeshRenderer" "SphereCollider3D" "Rigidbody3D"
+end
+gameobject 25 "Box"
+  guid "9c1a8d0db7a1a48bf7e834a267b371c9"
+  active 1
+  parent -1
+  transform -1.192466 1 -3.7533424 0 0 0 1 1 1 1
+  mesh "Cube" 0.37804824 0.4328727 0.62870705 1 0 "" 0
+  material 0 0 0 0 16 0 "" 1 1
+  rigidbody3d 0 1 1 0 0 0 0 0 0 0.5 0.05 1 1 0
+  boxcollider3d 1 1 1 0 0 0 0 0 0
+  comporder "MeshRenderer" "BoxCollider3D" "Rigidbody3D"
+end
+gameobject 26 "Ball"
+  guid "a7943dc8354159031d74c98777e76da4"
+  active 1
+  parent -1
+  transform -0.0285085 1 -3.7754083 0 0 0 1 1 1 1
+  mesh "Sphere" 0.38720334 0.88071054 0.5893924 1 0 "" 0
+  material 0 0 0 0 16 0 "" 1 1
+  rigidbody3d 0 1 1 0 0 0 0 0 0 0.5 0.05 1 1 0
+  spherecollider3d 0.5 0 0 0 0 0 0
+  comporder "MeshRenderer" "SphereCollider3D" "Rigidbody3D"
+end
+gameobject 27 "Box"
+  guid "95e55e3800fc2e42cfe07c0d595be6a8"
+  active 1
+  parent -1
+  transform 1.2633168 1 -3.842351 0 0 0 1 1 1 1
+  mesh "Cube" 0.8640147 0.699066 0.813185 1 0 "" 0
+  material 0 0 0 0 16 0 "" 1 1
+  rigidbody3d 0 1 1 0 0 0 0 0 0 0.5 0.05 1 1 0
+  boxcollider3d 1 1 1 0 0 0 0 0 0
+  comporder "MeshRenderer" "BoxCollider3D" "Rigidbody3D"
+end
+gameobject 28 "Ball"
+  guid "df5caa112a36528aaca6c601ffb168f2"
+  active 1
+  parent -1
+  transform 2.6259634 1 -3.8608603 0 0 0 1 1 1 1
+  mesh "Sphere" 0.6197925 0.86028755 0.4267619 1 0 "" 0
+  material 0 0 0 0 16 0 "" 1 1
+  rigidbody3d 0 1 1 0 0 0 0 0 0 0.5 0.05 1 1 0
+  spherecollider3d 0.5 0 0 0 0 0 0
+  comporder "MeshRenderer" "SphereCollider3D" "Rigidbody3D"
+end
+gameobject 29 "Box"
+  guid "1081a74a500fcff755386acf99c2fea9"
+  active 1
+  parent -1
+  transform 3.7342694 1 -3.7929046 0 0 0 1 1 1 1
+  mesh "Cube" 0.613662 0.31207374 0.45307624 1 0 "" 0
+  material 0 0 0 0 16 0 "" 1 1
+  rigidbody3d 0 1 1 0 0 0 0 0 0 0.5 0.05 1 1 0
+  boxcollider3d 1 1 1 0 0 0 0 0 0
+  comporder "MeshRenderer" "BoxCollider3D" "Rigidbody3D"
+end
+gameobject 30 "Ball"
+  guid "5affa6b7c99a362c3e76f3d0f63974bc"
+  active 1
+  parent -1
+  transform 5.035181 1 -3.8251703 0 0 0 1 1 1 1
+  mesh "Sphere" 0.7961705 0.86885285 0.40509796 1 0 "" 0
+  material 0 0 0 0 16 0 "" 1 1
+  rigidbody3d 0 1 1 0 0 0 0 0 0 0.5 0.05 1 1 0
+  spherecollider3d 0.5 0 0 0 0 0 0
+  comporder "MeshRenderer" "SphereCollider3D" "Rigidbody3D"
+end
+gameobject 31 "Box"
+  guid "1ff74cb8e69c11b6f141a4511f92941d"
+  active 1
+  parent -1
+  transform -6.671584 1 -2.5858767 0 0 0 1 1 1 1
+  mesh "Cube" 0.7670059 0.41803423 0.5581788 1 0 "" 0
+  material 0 0 0 0 16 0 "" 1 1
+  rigidbody3d 0 1 1 0 0 0 0 0 0 0.5 0.05 1 1 0
+  boxcollider3d 1 1 1 0 0 0 0 0 0
+  comporder "MeshRenderer" "BoxCollider3D" "Rigidbody3D"
+end
+gameobject 32 "Ball"
+  guid "430bd7586364744d1363e5db7d91d6fd"
+  active 1
+  parent -1
+  transform -5.280257 1 -2.4560359 0 0 0 1 1 1 1
+  mesh "Sphere" 0.8287861 0.68280894 0.5448904 1 0 "" 0
+  material 0 0 0 0 16 0 "" 1 1
+  rigidbody3d 0 1 1 0 0 0 0 0 0 0.5 0.05 1 1 0
+  spherecollider3d 0.5 0 0 0 0 0 0
+  comporder "MeshRenderer" "SphereCollider3D" "Rigidbody3D"
+end
+gameobject 33 "Box"
+  guid "7965ad2fa71bfd14e82d97c5243dd092"
+  active 1
+  parent -1
+  transform -4.0745444 1 -2.752641 0 0 0 1 1 1 1
+  mesh "Cube" 0.8284608 0.35426742 0.5145681 1 0 "" 0
+  material 0 0 0 0 16 0 "" 1 1
+  rigidbody3d 0 1 1 0 0 0 0 0 0 0.5 0.05 1 1 0
+  boxcollider3d 1 1 1 0 0 0 0 0 0
+  comporder "MeshRenderer" "BoxCollider3D" "Rigidbody3D"
+end
+gameobject 34 "Ball"
+  guid "f7631e51b743c281a4089fb15bc30ec2"
+  active 1
+  parent -1
+  transform -2.6406453 1 -2.5442142 0 0 0 1 1 1 1
+  mesh "Sphere" 0.4713372 0.8441156 0.42034525 1 0 "" 0
+  material 0 0 0 0 16 0 "" 1 1
+  rigidbody3d 0 1 1 0 0 0 0 0 0 0.5 0.05 1 1 0
+  spherecollider3d 0.5 0 0 0 0 0 0
+  comporder "MeshRenderer" "SphereCollider3D" "Rigidbody3D"
+end
+gameobject 35 "Box"
+  guid "90c685a0c364be82f7216e1d4f532a8e"
+  active 1
+  parent -1
+  transform -1.3030852 1 -2.7065694 0 0 0 1 1 1 1
+  mesh "Cube" 0.58889055 0.810164 0.56154805 1 0 "" 0
+  material 0 0 0 0 16 0 "" 1 1
+  rigidbody3d 0 1 1 0 0 0 0 0 0 0.5 0.05 1 1 0
+  boxcollider3d 1 1 1 0 0 0 0 0 0
+  comporder "MeshRenderer" "BoxCollider3D" "Rigidbody3D"
+end
+gameobject 36 "Ball"
+  guid "66336719ef1ac44ecf3bd98606ada3a0"
+  active 1
+  parent -1
+  transform -0.0031288564 1 -2.6801653 0 0 0 1 1 1 1
+  mesh "Sphere" 0.6705475 0.40447026 0.8437408 1 0 "" 0
+  material 0 0 0 0 16 0 "" 1 1
+  rigidbody3d 0 1 1 0 0 0 0 0 0 0.5 0.05 1 1 0
+  spherecollider3d 0.5 0 0 0 0 0 0
+  comporder "MeshRenderer" "SphereCollider3D" "Rigidbody3D"
+end
+gameobject 37 "Box"
+  guid "7b931badefc2a17ce27f07a0306aa231"
+  active 1
+  parent -1
+  transform 1.4583349 1 -2.465726 0 0 0 1 1 1 1
+  mesh "Cube" 0.35842723 0.75558245 0.40236795 1 0 "" 0
+  material 0 0 0 0 16 0 "" 1 1
+  rigidbody3d 0 1 1 0 0 0 0 0 0 0.5 0.05 1 1 0
+  boxcollider3d 1 1 1 0 0 0 0 0 0
+  comporder "MeshRenderer" "BoxCollider3D" "Rigidbody3D"
+end
+gameobject 38 "Ball"
+  guid "9329403e69cf6bc695c53339b1777dec"
+  active 1
+  parent -1
+  transform 2.58167 1 -2.46054 0 0 0 1 1 1 1
+  mesh "Sphere" 0.41581187 0.7653592 0.57942325 1 0 "" 0
+  material 0 0 0 0 16 0 "" 1 1
+  rigidbody3d 0 1 1 0 0 0 0 0 0 0.5 0.05 1 1 0
+  spherecollider3d 0.5 0 0 0 0 0 0
+  comporder "MeshRenderer" "SphereCollider3D" "Rigidbody3D"
+end
+gameobject 39 "Box"
+  guid "974cc714fdf084703730928cd94d67fe"
+  active 1
+  parent -1
+  transform 3.962272 1 -2.5608532 0 0 0 1 1 1 1
+  mesh "Cube" 0.5204383 0.42321804 0.51412827 1 0 "" 0
+  material 0 0 0 0 16 0 "" 1 1
+  rigidbody3d 0 1 1 0 0 0 0 0 0 0.5 0.05 1 1 0
+  boxcollider3d 1 1 1 0 0 0 0 0 0
+  comporder "MeshRenderer" "BoxCollider3D" "Rigidbody3D"
+end
+gameobject 40 "Ball"
+  guid "1a9757b9faa6beb1bcf9384a8a6020c4"
+  active 1
+  parent -1
+  transform 5.348389 1 -2.5629086 0 0 0 1 1 1 1
+  mesh "Sphere" 0.37237245 0.38131937 0.6789057 1 0 "" 0
+  material 0 0 0 0 16 0 "" 1 1
+  rigidbody3d 0 1 1 0 0 0 0 0 0 0.5 0.05 1 1 0
+  spherecollider3d 0.5 0 0 0 0 0 0
+  comporder "MeshRenderer" "SphereCollider3D" "Rigidbody3D"
+end
+gameobject 41 "Box"
+  guid "5d41e2b2326cd307d3c5c3963477a08b"
+  active 1
+  parent -1
+  transform -6.4802823 1 -1.1682264 0 0 0 1 1 1 1
+  mesh "Cube" 0.39918095 0.69590497 0.61203295 1 0 "" 0
+  material 0 0 0 0 16 0 "" 1 1
+  rigidbody3d 0 1 1 0 0 0 0 0 0 0.5 0.05 1 1 0
+  boxcollider3d 1 1 1 0 0 0 0 0 0
+  comporder "MeshRenderer" "BoxCollider3D" "Rigidbody3D"
+end
+gameobject 42 "Ball"
+  guid "d9796624711bbc3d7663fd70b17d1070"
+  active 1
+  parent -1
+  transform -5.149727 1 -1.4279392 0 0 0 1 1 1 1
+  mesh "Sphere" 0.62827545 0.59627515 0.511009 1 0 "" 0
+  material 0 0 0 0 16 0 "" 1 1
+  rigidbody3d 0 1 1 0 0 0 0 0 0 0.5 0.05 1 1 0
+  spherecollider3d 0.5 0 0 0 0 0 0
+  comporder "MeshRenderer" "SphereCollider3D" "Rigidbody3D"
+end
+gameobject 43 "Box"
+  guid "3073f4d8555a16d302caee778cd2c53e"
+  active 1
+  parent -1
+  transform -3.993492 1 -1.232006 0 0 0 1 1 1 1
+  mesh "Cube" 0.7886995 0.83208025 0.5250371 1 0 "" 0
+  material 0 0 0 0 16 0 "" 1 1
+  rigidbody3d 0 1 1 0 0 0 0 0 0 0.5 0.05 1 1 0
+  boxcollider3d 1 1 1 0 0 0 0 0 0
+  comporder "MeshRenderer" "BoxCollider3D" "Rigidbody3D"
+end
+gameobject 44 "Ball"
+  guid "dbae520e55f164f357260e77cd962363"
+  active 1
+  parent -1
+  transform -2.5094264 1 -1.4525377 0 0 0 1 1 1 1
+  mesh "Sphere" 0.41799143 0.58283883 0.7442372 1 0 "" 0
+  material 0 0 0 0 16 0 "" 1 1
+  rigidbody3d 0 1 1 0 0 0 0 0 0 0.5 0.05 1 1 0
+  spherecollider3d 0.5 0 0 0 0 0 0
+  comporder "MeshRenderer" "SphereCollider3D" "Rigidbody3D"
+end
+gameobject 45 "Box"
+  guid "25e228359d0521a489bac52e0509a801"
+  active 1
+  parent -1
+  transform -1.1959924 1 -1.4029746 0 0 0 1 1 1 1
+  mesh "Cube" 0.5574962 0.32326794 0.46272588 1 0 "" 0
+  material 0 0 0 0 16 0 "" 1 1
+  rigidbody3d 0 1 1 0 0 0 0 0 0 0.5 0.05 1 1 0
+  boxcollider3d 1 1 1 0 0 0 0 0 0
+  comporder "MeshRenderer" "BoxCollider3D" "Rigidbody3D"
+end
+gameobject 46 "Ball"
+  guid "c324c11c16f7763955aaddb569a237f7"
+  active 1
+  parent -1
+  transform -0.054520607 1 -1.3246402 0 0 0 1 1 1 1
+  mesh "Sphere" 0.36641565 0.8369653 0.68458486 1 0 "" 0
+  material 0 0 0 0 16 0 "" 1 1
+  rigidbody3d 0 1 1 0 0 0 0 0 0 0.5 0.05 1 1 0
+  spherecollider3d 0.5 0 0 0 0 0 0
+  comporder "MeshRenderer" "SphereCollider3D" "Rigidbody3D"
+end
+gameobject 47 "Box"
+  guid "59c4fb9b872e738efeed65492c22f3e8"
+  active 1
+  parent -1
+  transform 1.2165288 1 -1.1595058 0 0 0 1 1 1 1
+  mesh "Cube" 0.8766744 0.6470553 0.52613854 1 0 "" 0
+  material 0 0 0 0 16 0 "" 1 1
+  rigidbody3d 0 1 1 0 0 0 0 0 0 0.5 0.05 1 1 0
+  boxcollider3d 1 1 1 0 0 0 0 0 0
+  comporder "MeshRenderer" "BoxCollider3D" "Rigidbody3D"
+end
+gameobject 48 "Ball"
+  guid "fe6cea06dc43e26e37da701b02e8853e"
+  active 1
+  parent -1
+  transform 2.479458 1 -1.465072 0 0 0 1 1 1 1
+  mesh "Sphere" 0.6574915 0.3392151 0.50872254 1 0 "" 0
+  material 0 0 0 0 16 0 "" 1 1
+  rigidbody3d 0 1 1 0 0 0 0 0 0 0.5 0.05 1 1 0
+  spherecollider3d 0.5 0 0 0 0 0 0
+  comporder "MeshRenderer" "SphereCollider3D" "Rigidbody3D"
+end
+gameobject 49 "Box"
+  guid "81e8c9ff35e05be36a27973c161605d8"
+  active 1
+  parent -1
+  transform 4.074966 1 -1.2778105 0 0 0 1 1 1 1
+  mesh "Cube" 0.7463285 0.59229916 0.42466193 1 0 "" 0
+  material 0 0 0 0 16 0 "" 1 1
+  rigidbody3d 0 1 1 0 0 0 0 0 0 0.5 0.05 1 1 0
+  boxcollider3d 1 1 1 0 0 0 0 0 0
+  comporder "MeshRenderer" "BoxCollider3D" "Rigidbody3D"
+end
+gameobject 50 "Ball"
+  guid "a01a964e565c8a3c65e0dda08a1591a5"
+  active 1
+  parent -1
+  transform 5.134803 1 -1.2413317 0 0 0 1 1 1 1
+  mesh "Sphere" 0.6083199 0.55564934 0.73786616 1 0 "" 0
+  material 0 0 0 0 16 0 "" 1 1
+  rigidbody3d 0 1 1 0 0 0 0 0 0 0.5 0.05 1 1 0
+  spherecollider3d 0.5 0 0 0 0 0 0
+  comporder "MeshRenderer" "SphereCollider3D" "Rigidbody3D"
+end
+gameobject 51 "Box"
+  guid "ec320bc5202af91443f95c176bf191ee"
+  active 1
+  parent -1
+  transform -6.402047 1 0.14612691 0 0 0 1 1 1 1
+  mesh "Cube" 0.5902746 0.47977006 0.71660614 1 0 "" 0
+  material 0 0 0 0 16 0 "" 1 1
+  rigidbody3d 0 1 1 0 0 0 0 0 0 0.5 0.05 1 1 0
+  boxcollider3d 1 1 1 0 0 0 0 0 0
+  comporder "MeshRenderer" "BoxCollider3D" "Rigidbody3D"
+end
+gameobject 52 "Ball"
+  guid "d8557cda7b3282156c30a9da75a5832d"
+  active 1
+  parent -1
+  transform -5.17313 1 -0.08279276 0 0 0 1 1 1 1
+  mesh "Sphere" 0.42195106 0.75715935 0.44942996 1 0 "" 0
+  material 0 0 0 0 16 0 "" 1 1
+  rigidbody3d 0 1 1 0 0 0 0 0 0 0.5 0.05 1 1 0
+  spherecollider3d 0.5 0 0 0 0 0 0
+  comporder "MeshRenderer" "SphereCollider3D" "Rigidbody3D"
+end
+gameobject 53 "Box"
+  guid "88061f4a733b66bcfe037d97b46217b3"
+  active 1
+  parent -1
+  transform -4.0188317 1 0.14213069 0 0 0 1 1 1 1
+  mesh "Cube" 0.4656709 0.7770397 0.43197393 1 0 "" 0
+  material 0 0 0 0 16 0 "" 1 1
+  rigidbody3d 0 1 1 0 0 0 0 0 0 0.5 0.05 1 1 0
+  boxcollider3d 1 1 1 0 0 0 0 0 0
+  comporder "MeshRenderer" "BoxCollider3D" "Rigidbody3D"
+end
+gameobject 54 "Ball"
+  guid "35bfc882e6307356dd4917bdadae01f2"
+  active 1
+  parent -1
+  transform -2.6286333 1 -0.021241069 0 0 0 1 1 1 1
+  mesh "Sphere" 0.8873177 0.49494994 0.40890577 1 0 "" 0
+  material 0 0 0 0 16 0 "" 1 1
+  rigidbody3d 0 1 1 0 0 0 0 0 0 0.5 0.05 1 1 0
+  spherecollider3d 0.5 0 0 0 0 0 0
+  comporder "MeshRenderer" "SphereCollider3D" "Rigidbody3D"
+end
+gameobject 55 "Box"
+  guid "73adafd28793cfdbd2db167c8177805c"
+  active 1
+  parent -1
+  transform -1.192079 1 -0.19057035 0 0 0 1 1 1 1
+  mesh "Cube" 0.8696228 0.82896864 0.51522374 1 0 "" 0
+  material 0 0 0 0 16 0 "" 1 1
+  rigidbody3d 0 1 1 0 0 0 0 0 0 0.5 0.05 1 1 0
+  boxcollider3d 1 1 1 0 0 0 0 0 0
+  comporder "MeshRenderer" "BoxCollider3D" "Rigidbody3D"
+end
+gameobject 56 "Ball"
+  guid "d505810dd6d01bba838af0552ad1043c"
+  active 1
+  parent -1
+  transform 0.12441571 1 -0.11649525 0 0 0 1 1 1 1
+  mesh "Sphere" 0.68850815 0.68507874 0.43223464 1 0 "" 0
+  material 0 0 0 0 16 0 "" 1 1
+  rigidbody3d 0 1 1 0 0 0 0 0 0 0.5 0.05 1 1 0
+  spherecollider3d 0.5 0 0 0 0 0 0
+  comporder "MeshRenderer" "SphereCollider3D" "Rigidbody3D"
+end
+gameobject 57 "Box"
+  guid "1c092823e755afa1584f0c0841bb651d"
+  active 1
+  parent -1
+  transform 1.3158073 1 -0.044126913 0 0 0 1 1 1 1
+  mesh "Cube" 0.89921105 0.6388502 0.8803419 1 0 "" 0
+  material 0 0 0 0 16 0 "" 1 1
+  rigidbody3d 0 1 1 0 0 0 0 0 0 0.5 0.05 1 1 0
+  boxcollider3d 1 1 1 0 0 0 0 0 0
+  comporder "MeshRenderer" "BoxCollider3D" "Rigidbody3D"
+end
+gameobject 58 "Ball"
+  guid "895b5ee34b6ace6773993a4d5da74f2e"
+  active 1
+  parent -1
+  transform 2.465801 1 -0.068343595 0 0 0 1 1 1 1
+  mesh "Sphere" 0.7757437 0.6627517 0.4563143 1 0 "" 0
+  material 0 0 0 0 16 0 "" 1 1
+  rigidbody3d 0 1 1 0 0 0 0 0 0 0.5 0.05 1 1 0
+  spherecollider3d 0.5 0 0 0 0 0 0
+  comporder "MeshRenderer" "SphereCollider3D" "Rigidbody3D"
+end
+gameobject 59 "Box"
+  guid "6bd49ca9d61646079f2e37df2408df2a"
+  active 1
+  parent -1
+  transform 3.8143203 1 0.1591769 0 0 0 1 1 1 1
+  mesh "Cube" 0.42172137 0.7353133 0.7909169 1 0 "" 0
+  material 0 0 0 0 16 0 "" 1 1
+  rigidbody3d 0 1 1 0 0 0 0 0 0 0.5 0.05 1 1 0
+  boxcollider3d 1 1 1 0 0 0 0 0 0
+  comporder "MeshRenderer" "BoxCollider3D" "Rigidbody3D"
+end
+gameobject 60 "Ball"
+  guid "eb717a81e2bb5292380d37cf9d0cc4aa"
+  active 1
+  parent -1
+  transform 5.0482726 1 -0.16697583 0 0 0 1 1 1 1
+  mesh "Sphere" 0.5556245 0.43632644 0.6707338 1 0 "" 0
+  material 0 0 0 0 16 0 "" 1 1
+  rigidbody3d 0 1 1 0 0 0 0 0 0 0.5 0.05 1 1 0
+  spherecollider3d 0.5 0 0 0 0 0 0
+  comporder "MeshRenderer" "SphereCollider3D" "Rigidbody3D"
+end
+gameobject 61 "Box"
+  guid "0fee758649ba46d55af713d15a4f654f"
+  active 1
+  parent -1
+  transform -6.6478934 1 1.2775469 0 0 0 1 1 1 1
+  mesh "Cube" 0.37144065 0.77497053 0.67962086 1 0 "" 0
+  material 0 0 0 0 16 0 "" 1 1
+  rigidbody3d 0 1 1 0 0 0 0 0 0 0.5 0.05 1 1 0
+  boxcollider3d 1 1 1 0 0 0 0 0 0
+  comporder "MeshRenderer" "BoxCollider3D" "Rigidbody3D"
+end
+gameobject 62 "Ball"
+  guid "57ff17eec9fce94c948f0b6b02253c18"
+  active 1
+  parent -1
+  transform -5.316955 1 1.3551612 0 0 0 1 1 1 1
+  mesh "Sphere" 0.4224019 0.51591593 0.8112004 1 0 "" 0
+  material 0 0 0 0 16 0 "" 1 1
+  rigidbody3d 0 1 1 0 0 0 0 0 0 0.5 0.05 1 1 0
+  spherecollider3d 0.5 0 0 0 0 0 0
+  comporder "MeshRenderer" "SphereCollider3D" "Rigidbody3D"
+end
+gameobject 63 "Box"
+  guid "0ab3d5d69797648480a6ce7243d2f4c7"
+  active 1
+  parent -1
+  transform -4.0920153 1 1.4839891 0 0 0 1 1 1 1
+  mesh "Cube" 0.61230797 0.4047134 0.5617572 1 0 "" 0
+  material 0 0 0 0 16 0 "" 1 1
+  rigidbody3d 0 1 1 0 0 0 0 0 0 0.5 0.05 1 1 0
+  boxcollider3d 1 1 1 0 0 0 0 0 0
+  comporder "MeshRenderer" "BoxCollider3D" "Rigidbody3D"
+end
+gameobject 64 "Ball"
+  guid "57e46e4484c3eaac30281ff0777c1cbd"
+  active 1
+  parent -1
+  transform -2.426602 1 1.2495195 0 0 0 1 1 1 1
+  mesh "Sphere" 0.4535215 0.36096722 0.7774737 1 0 "" 0
+  material 0 0 0 0 16 0 "" 1 1
+  rigidbody3d 0 1 1 0 0 0 0 0 0 0.5 0.05 1 1 0
+  spherecollider3d 0.5 0 0 0 0 0 0
+  comporder "MeshRenderer" "SphereCollider3D" "Rigidbody3D"
+end
+gameobject 65 "Box"
+  guid "c6744cd1fb2ab8cbf206d4cfb34c1458"
+  active 1
+  parent -1
+  transform -1.2088833 1 1.4395819 0 0 0 1 1 1 1
+  mesh "Cube" 0.39022094 0.42307943 0.6203849 1 0 "" 0
+  material 0 0 0 0 16 0 "" 1 1
+  rigidbody3d 0 1 1 0 0 0 0 0 0 0.5 0.05 1 1 0
+  boxcollider3d 1 1 1 0 0 0 0 0 0
+  comporder "MeshRenderer" "BoxCollider3D" "Rigidbody3D"
+end
+gameobject 66 "Ball"
+  guid "27dd806b555c9fb671e3c8a6f9b1e88d"
+  active 1
+  parent -1
+  transform 0.14272721 1 1.2545396 0 0 0 1 1 1 1
+  mesh "Sphere" 0.6232269 0.42983156 0.41263252 1 0 "" 0
+  material 0 0 0 0 16 0 "" 1 1
+  rigidbody3d 0 1 1 0 0 0 0 0 0 0.5 0.05 1 1 0
+  spherecollider3d 0.5 0 0 0 0 0 0
+  comporder "MeshRenderer" "SphereCollider3D" "Rigidbody3D"
+end
+gameobject 67 "Box"
+  guid "e5df54e162b7c2aceaefd1dfa4fba91d"
+  active 1
+  parent -1
+  transform 1.1937003 1 1.2957723 0 0 0 1 1 1 1
+  mesh "Cube" 0.35199806 0.6872147 0.4241169 1 0 "" 0
+  material 0 0 0 0 16 0 "" 1 1
+  rigidbody3d 0 1 1 0 0 0 0 0 0 0.5 0.05 1 1 0
+  boxcollider3d 1 1 1 0 0 0 0 0 0
+  comporder "MeshRenderer" "BoxCollider3D" "Rigidbody3D"
+end
+gameobject 68 "Ball"
+  guid "a07176d7b8706d50ab112ab4a6a1e23f"
+  active 1
+  parent -1
+  transform 2.5473704 1 1.3692534 0 0 0 1 1 1 1
+  mesh "Sphere" 0.8523968 0.3379016 0.5630366 1 0 "" 0
+  material 0 0 0 0 16 0 "" 1 1
+  rigidbody3d 0 1 1 0 0 0 0 0 0 0.5 0.05 1 1 0
+  spherecollider3d 0.5 0 0 0 0 0 0
+  comporder "MeshRenderer" "SphereCollider3D" "Rigidbody3D"
+end
+gameobject 69 "Box"
+  guid "b71d8276b7cf38155f8e78f21ac2b728"
+  active 1
+  parent -1
+  transform 3.7484145 1 1.41835 0 0 0 1 1 1 1
+  mesh "Cube" 0.617244 0.4149145 0.6906365 1 0 "" 0
+  material 0 0 0 0 16 0 "" 1 1
+  rigidbody3d 0 1 1 0 0 0 0 0 0 0.5 0.05 1 1 0
+  boxcollider3d 1 1 1 0 0 0 0 0 0
+  comporder "MeshRenderer" "BoxCollider3D" "Rigidbody3D"
+end
+gameobject 70 "Ball"
+  guid "c01ef618d1102340512454dc75905931"
+  active 1
+  parent -1
+  transform 5.3317823 1 1.3927492 0 0 0 1 1 1 1
+  mesh "Sphere" 0.3050653 0.5265776 0.6353689 1 0 "" 0
+  material 0 0 0 0 16 0 "" 1 1
+  rigidbody3d 0 1 1 0 0 0 0 0 0 0.5 0.05 1 1 0
+  spherecollider3d 0.5 0 0 0 0 0 0
+  comporder "MeshRenderer" "SphereCollider3D" "Rigidbody3D"
+end
+gameobject 71 "Box"
+  guid "88a78a0672627a3927fd5cccbe070410"
+  active 1
+  parent -1
+  transform -6.589133 1 2.784218 0 0 0 1 1 1 1
+  mesh "Cube" 0.821076 0.30406535 0.8547273 1 0 "" 0
+  material 0 0 0 0 16 0 "" 1 1
+  rigidbody3d 0 1 1 0 0 0 0 0 0 0.5 0.05 1 1 0
+  boxcollider3d 1 1 1 0 0 0 0 0 0
+  comporder "MeshRenderer" "BoxCollider3D" "Rigidbody3D"
+end
+gameobject 72 "Ball"
+  guid "8d0b181279fc1c3b26027ae4d2fd5905"
+  active 1
+  parent -1
+  transform -5.083312 1 2.7807949 0 0 0 1 1 1 1
+  mesh "Sphere" 0.86537784 0.8762753 0.38328722 1 0 "" 0
+  material 0 0 0 0 16 0 "" 1 1
+  rigidbody3d 0 1 1 0 0 0 0 0 0 0.5 0.05 1 1 0
+  spherecollider3d 0.5 0 0 0 0 0 0
+  comporder "MeshRenderer" "SphereCollider3D" "Rigidbody3D"
+end
+gameobject 73 "Box"
+  guid "9b3eb0846712eeead25d047dd0773cb0"
+  active 1
+  parent -1
+  transform -3.9622655 1 2.6721253 0 0 0 1 1 1 1
+  mesh "Cube" 0.4381259 0.6130359 0.7494487 1 0 "" 0
+  material 0 0 0 0 16 0 "" 1 1
+  rigidbody3d 0 1 1 0 0 0 0 0 0 0.5 0.05 1 1 0
+  boxcollider3d 1 1 1 0 0 0 0 0 0
+  comporder "MeshRenderer" "BoxCollider3D" "Rigidbody3D"
+end
+gameobject 74 "Ball"
+  guid "da4b9cd22218ad9415aca3a1bd5a9049"
+  active 1
+  parent -1
+  transform -2.6723325 1 2.451493 0 0 0 1 1 1 1
+  mesh "Sphere" 0.4613467 0.3533511 0.5864733 1 0 "" 0
+  material 0 0 0 0 16 0 "" 1 1
+  rigidbody3d 0 1 1 0 0 0 0 0 0 0.5 0.05 1 1 0
+  spherecollider3d 0.5 0 0 0 0 0 0
+  comporder "MeshRenderer" "SphereCollider3D" "Rigidbody3D"
+end
+gameobject 75 "Box"
+  guid "5483ffcb1fc96dbb2c923cf7bb5b2a34"
+  active 1
+  parent -1
+  transform -1.1747324 1 2.5415783 0 0 0 1 1 1 1
+  mesh "Cube" 0.429305 0.77682304 0.5052597 1 0 "" 0
+  material 0 0 0 0 16 0 "" 1 1
+  rigidbody3d 0 1 1 0 0 0 0 0 0 0.5 0.05 1 1 0
+  boxcollider3d 1 1 1 0 0 0 0 0 0
+  comporder "MeshRenderer" "BoxCollider3D" "Rigidbody3D"
+end
+gameobject 76 "Ball"
+  guid "63a8b523135880eb73ce6a894b2b678d"
+  active 1
+  parent -1
+  transform 0.00975284 1 2.4474108 0 0 0 1 1 1 1
+  mesh "Sphere" 0.3952277 0.74647605 0.70678324 1 0 "" 0
+  material 0 0 0 0 16 0 "" 1 1
+  rigidbody3d 0 1 1 0 0 0 0 0 0 0.5 0.05 1 1 0
+  spherecollider3d 0.5 0 0 0 0 0 0
+  comporder "MeshRenderer" "SphereCollider3D" "Rigidbody3D"
+end
+gameobject 77 "Box"
+  guid "8985e19e7b8a659163ff608118cb6397"
+  active 1
+  parent -1
+  transform 1.338197 1 2.6659467 0 0 0 1 1 1 1
+  mesh "Cube" 0.34219667 0.31904972 0.4110518 1 0 "" 0
+  material 0 0 0 0 16 0 "" 1 1
+  rigidbody3d 0 1 1 0 0 0 0 0 0 0.5 0.05 1 1 0
+  boxcollider3d 1 1 1 0 0 0 0 0 0
+  comporder "MeshRenderer" "BoxCollider3D" "Rigidbody3D"
+end
+gameobject 78 "Ball"
+  guid "8dd3482c2e38f70a32a2f164d1298788"
+  active 1
+  parent -1
+  transform 2.5186007 1 2.6027448 0 0 0 1 1 1 1
+  mesh "Sphere" 0.6236825 0.81377 0.81538314 1 0 "" 0
+  material 0 0 0 0 16 0 "" 1 1
+  rigidbody3d 0 1 1 0 0 0 0 0 0 0.5 0.05 1 1 0
+  spherecollider3d 0.5 0 0 0 0 0 0
+  comporder "MeshRenderer" "SphereCollider3D" "Rigidbody3D"
+end
+gameobject 79 "Box"
+  guid "1f2fd0d6704c353575ac1cc4682e30f3"
+  active 1
+  parent -1
+  transform 3.9597664 1 2.536887 0 0 0 1 1 1 1
+  mesh "Cube" 0.4593013 0.8022935 0.5994224 1 0 "" 0
+  material 0 0 0 0 16 0 "" 1 1
+  rigidbody3d 0 1 1 0 0 0 0 0 0 0.5 0.05 1 1 0
+  boxcollider3d 1 1 1 0 0 0 0 0 0
+  comporder "MeshRenderer" "BoxCollider3D" "Rigidbody3D"
+end
+gameobject 80 "Ball"
+  guid "9e5158c70e7f03362b442973bf041ffa"
+  active 1
+  parent -1
+  transform 5.0926247 1 2.5553796 0 0 0 1 1 1 1
+  mesh "Sphere" 0.44710863 0.59157854 0.5643702 1 0 "" 0
+  material 0 0 0 0 16 0 "" 1 1
+  rigidbody3d 0 1 1 0 0 0 0 0 0 0.5 0.05 1 1 0
+  spherecollider3d 0.5 0 0 0 0 0 0
+  comporder "MeshRenderer" "SphereCollider3D" "Rigidbody3D"
+end
+gameobject 81 "Box"
+  guid "1a3758e3892b61ac50159d61f903b6d2"
+  active 1
+  parent -1
+  transform -6.6640215 1 3.8453827 0 0 0 1 1 1 1
+  mesh "Cube" 0.5314793 0.84268886 0.30816895 1 0 "" 0
+  material 0 0 0 0 16 0 "" 1 1
+  rigidbody3d 0 1 1 0 0 0 0 0 0 0.5 0.05 1 1 0
+  boxcollider3d 1 1 1 0 0 0 0 0 0
+  comporder "MeshRenderer" "BoxCollider3D" "Rigidbody3D"
+end
+gameobject 82 "Ball"
+  guid "db3d7fdd780b341f69e59eaa083db8dd"
+  active 1
+  parent -1
+  transform -5.161807 1 3.905132 0 0 0 1 1 1 1
+  mesh "Sphere" 0.7809591 0.7919126 0.87383646 1 0 "" 0
+  material 0 0 0 0 16 0 "" 1 1
+  rigidbody3d 0 1 1 0 0 0 0 0 0 0.5 0.05 1 1 0
+  spherecollider3d 0.5 0 0 0 0 0 0
+  comporder "MeshRenderer" "SphereCollider3D" "Rigidbody3D"
+end
+gameobject 83 "Box"
+  guid "3aa0da87a2ca43f36421f4b5ed129393"
+  active 1
+  parent -1
+  transform -3.8788617 1 3.846055 0 0 0 1 1 1 1
+  mesh "Cube" 0.660746 0.82761747 0.4726106 1 0 "" 0
+  material 0 0 0 0 16 0 "" 1 1
+  rigidbody3d 0 1 1 0 0 0 0 0 0 0.5 0.05 1 1 0
+  boxcollider3d 1 1 1 0 0 0 0 0 0
+  comporder "MeshRenderer" "BoxCollider3D" "Rigidbody3D"
+end
+gameobject 84 "Ball"
+  guid "8aca38d401bcbb283259f7b40f04aa48"
+  active 1
+  parent -1
+  transform -2.538693 1 3.8678346 0 0 0 1 1 1 1
+  mesh "Sphere" 0.46334088 0.7404644 0.3798508 1 0 "" 0
+  material 0 0 0 0 16 0 "" 1 1
+  rigidbody3d 0 1 1 0 0 0 0 0 0 0.5 0.05 1 1 0
+  spherecollider3d 0.5 0 0 0 0 0 0
+  comporder "MeshRenderer" "SphereCollider3D" "Rigidbody3D"
+end
+gameobject 85 "Box"
+  guid "8d79e6984c40407695a1675efa8f88b0"
+  active 1
+  parent -1
+  transform -1.2468758 1 3.9807515 0 0 0 1 1 1 1
+  mesh "Cube" 0.42675197 0.5979664 0.5805325 1 0 "" 0
+  material 0 0 0 0 16 0 "" 1 1
+  rigidbody3d 0 1 1 0 0 0 0 0 0 0.5 0.05 1 1 0
+  boxcollider3d 1 1 1 0 0 0 0 0 0
+  comporder "MeshRenderer" "BoxCollider3D" "Rigidbody3D"
+end
+gameobject 86 "Ball"
+  guid "e83ecb02c41ae05ea04949660e4da2e1"
+  active 1
+  parent -1
+  transform -0.066257834 1 3.8083887 0 0 0 1 1 1 1
+  mesh "Sphere" 0.608196 0.83348936 0.36123502 1 0 "" 0
+  material 0 0 0 0 16 0 "" 1 1
+  rigidbody3d 0 1 1 0 0 0 0 0 0 0.5 0.05 1 1 0
+  spherecollider3d 0.5 0 0 0 0 0 0
+  comporder "MeshRenderer" "SphereCollider3D" "Rigidbody3D"
+end
+gameobject 87 "Box"
+  guid "c2fc8e5395add7146d5b0c629a23a068"
+  active 1
+  parent -1
+  transform 1.1843492 1 3.8579342 0 0 0 1 1 1 1
+  mesh "Cube" 0.691636 0.4849707 0.42376208 1 0 "" 0
+  material 0 0 0 0 16 0 "" 1 1
+  rigidbody3d 0 1 1 0 0 0 0 0 0 0.5 0.05 1 1 0
+  boxcollider3d 1 1 1 0 0 0 0 0 0
+  comporder "MeshRenderer" "BoxCollider3D" "Rigidbody3D"
+end
+gameobject 88 "Ball"
+  guid "266f65c3aa430e11689c3810620b144f"
+  active 1
+  parent -1
+  transform 2.5548894 1 3.7748494 0 0 0 1 1 1 1
+  mesh "Sphere" 0.89992964 0.5608555 0.6541785 1 0 "" 0
+  material 0 0 0 0 16 0 "" 1 1
+  rigidbody3d 0 1 1 0 0 0 0 0 0 0.5 0.05 1 1 0
+  spherecollider3d 0.5 0 0 0 0 0 0
+  comporder "MeshRenderer" "SphereCollider3D" "Rigidbody3D"
+end
+gameobject 89 "Box"
+  guid "bc9499c17d86acbc5d7bca87f2081de7"
+  active 1
+  parent -1
+  transform 3.928308 1 3.7762039 0 0 0 1 1 1 1
+  mesh "Cube" 0.61398023 0.63794506 0.5953651 1 0 "" 0
+  material 0 0 0 0 16 0 "" 1 1
+  rigidbody3d 0 1 1 0 0 0 0 0 0 0.5 0.05 1 1 0
+  boxcollider3d 1 1 1 0 0 0 0 0 0
+  comporder "MeshRenderer" "BoxCollider3D" "Rigidbody3D"
+end
+gameobject 90 "Ball"
+  guid "6545bce31dd214531e4c74097893e4f8"
+  active 1
+  parent -1
+  transform 5.152593 1 3.9243274 0 0 0 1 1 1 1
+  mesh "Sphere" 0.5842725 0.34221876 0.45760354 1 0 "" 0
+  material 0 0 0 0 16 0 "" 1 1
+  rigidbody3d 0 1 1 0 0 0 0 0 0 0.5 0.05 1 1 0
+  spherecollider3d 0.5 0 0 0 0 0 0
+  comporder "MeshRenderer" "SphereCollider3D" "Rigidbody3D"
+end
+gameobject 91 "Box"
+  guid "77d1aecdd2055e1f8ff77b84c6edb941"
+  active 1
+  parent -1
+  transform -6.351281 1 5.2316875 0 0 0 1 1 1 1
+  mesh "Cube" 0.79196835 0.8191101 0.7206193 1 0 "" 0
+  material 0 0 0 0 16 0 "" 1 1
+  rigidbody3d 0 1 1 0 0 0 0 0 0 0.5 0.05 1 1 0
+  boxcollider3d 1 1 1 0 0 0 0 0 0
+  comporder "MeshRenderer" "BoxCollider3D" "Rigidbody3D"
+end
+gameobject 92 "Ball"
+  guid "57e176e320cc98151f07036c33cd0ac0"
+  active 1
+  parent -1
+  transform -5.0681996 1 5.1342993 0 0 0 1 1 1 1
+  mesh "Sphere" 0.6717391 0.77359 0.6908189 1 0 "" 0
+  material 0 0 0 0 16 0 "" 1 1
+  rigidbody3d 0 1 1 0 0 0 0 0 0 0.5 0.05 1 1 0
+  spherecollider3d 0.5 0 0 0 0 0 0
+  comporder "MeshRenderer" "SphereCollider3D" "Rigidbody3D"
+end
+gameobject 93 "Box"
+  guid "d71b7425256d39a9d4d59b221db36b28"
+  active 1
+  parent -1
+  transform -3.8985624 1 5.2804365 0 0 0 1 1 1 1
+  mesh "Cube" 0.74778473 0.87099594 0.64027065 1 0 "" 0
+  material 0 0 0 0 16 0 "" 1 1
+  rigidbody3d 0 1 1 0 0 0 0 0 0 0.5 0.05 1 1 0
+  boxcollider3d 1 1 1 0 0 0 0 0 0
+  comporder "MeshRenderer" "BoxCollider3D" "Rigidbody3D"
+end
+gameobject 94 "Ball"
+  guid "fce2f2e5ef84919eb5d45dc2765a0324"
+  active 1
+  parent -1
+  transform -2.7505436 1 5.246908 0 0 0 1 1 1 1
+  mesh "Sphere" 0.617168 0.5324605 0.3013651 1 0 "" 0
+  material 0 0 0 0 16 0 "" 1 1
+  rigidbody3d 0 1 1 0 0 0 0 0 0 0.5 0.05 1 1 0
+  spherecollider3d 0.5 0 0 0 0 0 0
+  comporder "MeshRenderer" "SphereCollider3D" "Rigidbody3D"
+end
+gameobject 95 "Box"
+  guid "81ca396290c987acb36502690aa60b20"
+  active 1
+  parent -1
+  transform -1.4022309 1 5.2174444 0 0 0 1 1 1 1
+  mesh "Cube" 0.6463623 0.804898 0.88507396 1 0 "" 0
+  material 0 0 0 0 16 0 "" 1 1
+  rigidbody3d 0 1 1 0 0 0 0 0 0 0.5 0.05 1 1 0
+  boxcollider3d 1 1 1 0 0 0 0 0 0
+  comporder "MeshRenderer" "BoxCollider3D" "Rigidbody3D"
+end
+gameobject 96 "Ball"
+  guid "f07b80946041cdb592d90e86460897f5"
+  active 1
+  parent -1
+  transform 0.14288472 1 5.3736243 0 0 0 1 1 1 1
+  mesh "Sphere" 0.6043979 0.78797454 0.7852955 1 0 "" 0
+  material 0 0 0 0 16 0 "" 1 1
+  rigidbody3d 0 1 1 0 0 0 0 0 0 0.5 0.05 1 1 0
+  spherecollider3d 0.5 0 0 0 0 0 0
+  comporder "MeshRenderer" "SphereCollider3D" "Rigidbody3D"
+end
+gameobject 97 "Box"
+  guid "735ee19595be6d0078a840e4d23df226"
+  active 1
+  parent -1
+  transform 1.4610242 1 5.3150206 0 0 0 1 1 1 1
+  mesh "Cube" 0.64013124 0.6889961 0.7162086 1 0 "" 0
+  material 0 0 0 0 16 0 "" 1 1
+  rigidbody3d 0 1 1 0 0 0 0 0 0 0.5 0.05 1 1 0
+  boxcollider3d 1 1 1 0 0 0 0 0 0
+  comporder "MeshRenderer" "BoxCollider3D" "Rigidbody3D"
+end
+gameobject 98 "Ball"
+  guid "6c2a3dbc65ebf07cf4a924fd1e0e1d06"
+  active 1
+  parent -1
+  transform 2.7145965 1 5.0607276 0 0 0 1 1 1 1
+  mesh "Sphere" 0.5691481 0.5258557 0.42115667 1 0 "" 0
+  material 0 0 0 0 16 0 "" 1 1
+  rigidbody3d 0 1 1 0 0 0 0 0 0 0.5 0.05 1 1 0
+  spherecollider3d 0.5 0 0 0 0 0 0
+  comporder "MeshRenderer" "SphereCollider3D" "Rigidbody3D"
+end
+gameobject 99 "Box"
+  guid "b547e35d0037ca41187f69ae3986fa50"
+  active 1
+  parent -1
+  transform 3.9619794 1 5.3611875 0 0 0 1 1 1 1
+  mesh "Cube" 0.41445678 0.52727485 0.5069076 1 0 "" 0
+  material 0 0 0 0 16 0 "" 1 1
+  rigidbody3d 0 1 1 0 0 0 0 0 0 0.5 0.05 1 1 0
+  boxcollider3d 1 1 1 0 0 0 0 0 0
+  comporder "MeshRenderer" "BoxCollider3D" "Rigidbody3D"
+end
+gameobject 100 "Ball"
+  guid "045221e5ca7512a9f33a2a638e97b117"
+  active 1
+  parent -1
+  transform 5.220191 1 5.170556 0 0 0 1 1 1 1
+  mesh "Sphere" 0.5266972 0.71449995 0.74781954 1 0 "" 0
+  material 0 0 0 0 16 0 "" 1 1
+  rigidbody3d 0 1 1 0 0 0 0 0 0 0.5 0.05 1 1 0
+  spherecollider3d 0.5 0 0 0 0 0 0
+  comporder "MeshRenderer" "SphereCollider3D" "Rigidbody3D"
+end
+gameobject 101 "Box"
+  guid "5931058be424769391ad9b3f9dae4ae0"
+  active 1
+  parent -1
+  transform -6.591613 2.4 -6.569508 0 0 0 1 1 1 1
+  mesh "Cube" 0.8061132 0.37496665 0.85694355 1 0 "" 0
+  material 0 0 0 0 16 0 "" 1 1
+  rigidbody3d 0 1 1 0 0 0 0 0 0 0.5 0.05 1 1 0
+  boxcollider3d 1 1 1 0 0 0 0 0 0
+  comporder "MeshRenderer" "BoxCollider3D" "Rigidbody3D"
+end
+gameobject 102 "Ball"
+  guid "8aa185972649f5354716ae0e026b25ba"
+  active 1
+  parent -1
+  transform -5.1517262 2.4 -6.6066055 0 0 0 1 1 1 1
+  mesh "Sphere" 0.494842 0.5081556 0.8194083 1 0 "" 0
+  material 0 0 0 0 16 0 "" 1 1
+  rigidbody3d 0 1 1 0 0 0 0 0 0 0.5 0.05 1 1 0
+  spherecollider3d 0.5 0 0 0 0 0 0
+  comporder "MeshRenderer" "SphereCollider3D" "Rigidbody3D"
+end
+gameobject 103 "Box"
+  guid "f1b8eab6aa7c700b5d4ce07315f5b959"
+  active 1
+  parent -1
+  transform -3.9129782 2.4 -6.366996 0 0 0 1 1 1 1
+  mesh "Cube" 0.36043137 0.33591473 0.8335519 1 0 "" 0
+  material 0 0 0 0 16 0 "" 1 1
+  rigidbody3d 0 1 1 0 0 0 0 0 0 0.5 0.05 1 1 0
+  boxcollider3d 1 1 1 0 0 0 0 0 0
+  comporder "MeshRenderer" "BoxCollider3D" "Rigidbody3D"
+end
+gameobject 104 "Ball"
+  guid "e3e92992b1cb7bfd69bf4e182a4a3818"
+  active 1
+  parent -1
+  transform -2.686618 2.4 -6.3110538 0 0 0 1 1 1 1
+  mesh "Sphere" 0.63130254 0.585494 0.8792888 1 0 "" 0
+  material 0 0 0 0 16 0 "" 1 1
+  rigidbody3d 0 1 1 0 0 0 0 0 0 0.5 0.05 1 1 0
+  spherecollider3d 0.5 0 0 0 0 0 0
+  comporder "MeshRenderer" "SphereCollider3D" "Rigidbody3D"
+end
+gameobject 105 "Box"
+  guid "0f45e97b1bd63f3326bed38bcb0ae2a4"
+  active 1
+  parent -1
+  transform -1.4034369 2.4 -6.4492946 0 0 0 1 1 1 1
+  mesh "Cube" 0.4205178 0.7477431 0.668001 1 0 "" 0
+  material 0 0 0 0 16 0 "" 1 1
+  rigidbody3d 0 1 1 0 0 0 0 0 0 0.5 0.05 1 1 0
+  boxcollider3d 1 1 1 0 0 0 0 0 0
+  comporder "MeshRenderer" "BoxCollider3D" "Rigidbody3D"
+end
+gameobject 106 "Ball"
+  guid "d3130c2e98a983668640457853e7ee08"
+  active 1
+  parent -1
+  transform -0.0711896 2.4 -6.445013 0 0 0 1 1 1 1
+  mesh "Sphere" 0.61150825 0.6719737 0.33686408 1 0 "" 0
+  material 0 0 0 0 16 0 "" 1 1
+  rigidbody3d 0 1 1 0 0 0 0 0 0 0.5 0.05 1 1 0
+  spherecollider3d 0.5 0 0 0 0 0 0
+  comporder "MeshRenderer" "SphereCollider3D" "Rigidbody3D"
+end
+gameobject 107 "Box"
+  guid "f99110f404cf2aa805c674af86e3853f"
+  active 1
+  parent -1
+  transform 1.4561148 2.4 -6.699124 0 0 0 1 1 1 1
+  mesh "Cube" 0.607267 0.5623354 0.5137575 1 0 "" 0
+  material 0 0 0 0 16 0 "" 1 1
+  rigidbody3d 0 1 1 0 0 0 0 0 0 0.5 0.05 1 1 0
+  boxcollider3d 1 1 1 0 0 0 0 0 0
+  comporder "MeshRenderer" "BoxCollider3D" "Rigidbody3D"
+end
+gameobject 108 "Ball"
+  guid "b4c4424ac41f48c33c4a38105d54478c"
+  active 1
+  parent -1
+  transform 2.5937092 2.4 -6.3294215 0 0 0 1 1 1 1
+  mesh "Sphere" 0.7025807 0.34382796 0.5000272 1 0 "" 0
+  material 0 0 0 0 16 0 "" 1 1
+  rigidbody3d 0 1 1 0 0 0 0 0 0 0.5 0.05 1 1 0
+  spherecollider3d 0.5 0 0 0 0 0 0
+  comporder "MeshRenderer" "SphereCollider3D" "Rigidbody3D"
+end
+gameobject 109 "Box"
+  guid "d5f3726bd13b90775f112f731d6327aa"
+  active 1
+  parent -1
+  transform 3.9717166 2.4 -6.4674144 0 0 0 1 1 1 1
+  mesh "Cube" 0.78329235 0.73797166 0.6000187 1 0 "" 0
+  material 0 0 0 0 16 0 "" 1 1
+  rigidbody3d 0 1 1 0 0 0 0 0 0 0.5 0.05 1 1 0
+  boxcollider3d 1 1 1 0 0 0 0 0 0
+  comporder "MeshRenderer" "BoxCollider3D" "Rigidbody3D"
+end
+gameobject 110 "Ball"
+  guid "b26dcf1fc716ed7ca402091c2eb6e95a"
+  active 1
+  parent -1
+  transform 5.272689 2.4 -6.302317 0 0 0 1 1 1 1
+  mesh "Sphere" 0.35908747 0.7039026 0.7780318 1 0 "" 0
+  material 0 0 0 0 16 0 "" 1 1
+  rigidbody3d 0 1 1 0 0 0 0 0 0 0.5 0.05 1 1 0
+  spherecollider3d 0.5 0 0 0 0 0 0
+  comporder "MeshRenderer" "SphereCollider3D" "Rigidbody3D"
+end
+gameobject 111 "Box"
+  guid "44f27dfa003d8666cd01d89ccf30237b"
+  active 1
+  parent -1
+  transform -6.6074805 2.4 -5.3045435 0 0 0 1 1 1 1
+  mesh "Cube" 0.5804535 0.7044994 0.59022725 1 0 "" 0
+  material 0 0 0 0 16 0 "" 1 1
+  rigidbody3d 0 1 1 0 0 0 0 0 0 0.5 0.05 1 1 0
+  boxcollider3d 1 1 1 0 0 0 0 0 0
+  comporder "MeshRenderer" "BoxCollider3D" "Rigidbody3D"
+end
+gameobject 112 "Ball"
+  guid "391c2aed5097aee93550f0e87494b1c3"
+  active 1
+  parent -1
+  transform -5.115236 2.4 -5.0524125 0 0 0 1 1 1 1
+  mesh "Sphere" 0.82483566 0.63058877 0.5140931 1 0 "" 0
+  material 0 0 0 0 16 0 "" 1 1
+  rigidbody3d 0 1 1 0 0 0 0 0 0 0.5 0.05 1 1 0
+  spherecollider3d 0.5 0 0 0 0 0 0
+  comporder "MeshRenderer" "SphereCollider3D" "Rigidbody3D"
+end
+gameobject 113 "Box"
+  guid "8462408fad79e17f90530dae70dbe925"
+  active 1
+  parent -1
+  transform -3.974685 2.4 -5.2608814 0 0 0 1 1 1 1
+  mesh "Cube" 0.67202103 0.5032931 0.6848695 1 0 "" 0
+  material 0 0 0 0 16 0 "" 1 1
+  rigidbody3d 0 1 1 0 0 0 0 0 0 0.5 0.05 1 1 0
+  boxcollider3d 1 1 1 0 0 0 0 0 0
+  comporder "MeshRenderer" "BoxCollider3D" "Rigidbody3D"
+end
+gameobject 114 "Ball"
+  guid "61e3e6177fd7cea65a7a0b367acccdc2"
+  active 1
+  parent -1
+  transform -2.5887537 2.4 -5.25659 0 0 0 1 1 1 1
+  mesh "Sphere" 0.34105957 0.8746002 0.83926535 1 0 "" 0
+  material 0 0 0 0 16 0 "" 1 1
+  rigidbody3d 0 1 1 0 0 0 0 0 0 0.5 0.05 1 1 0
+  spherecollider3d 0.5 0 0 0 0 0 0
+  comporder "MeshRenderer" "SphereCollider3D" "Rigidbody3D"
+end
+gameobject 115 "Box"
+  guid "3e4d791fc444597784fadd9859359cc0"
+  active 1
+  parent -1
+  transform -1.3008343 2.4 -5.051004 0 0 0 1 1 1 1
+  mesh "Cube" 0.8541653 0.704551 0.6633349 1 0 "" 0
+  material 0 0 0 0 16 0 "" 1 1
+  rigidbody3d 0 1 1 0 0 0 0 0 0 0.5 0.05 1 1 0
+  boxcollider3d 1 1 1 0 0 0 0 0 0
+  comporder "MeshRenderer" "BoxCollider3D" "Rigidbody3D"
+end
+gameobject 116 "Ball"
+  guid "4af5e6ec29eac38633262dd58e6dc262"
+  active 1
+  parent -1
+  transform -0.07993074 2.4 -5.2064214 0 0 0 1 1 1 1
+  mesh "Sphere" 0.38733467 0.54627126 0.7178763 1 0 "" 0
+  material 0 0 0 0 16 0 "" 1 1
+  rigidbody3d 0 1 1 0 0 0 0 0 0 0.5 0.05 1 1 0
+  spherecollider3d 0.5 0 0 0 0 0 0
+  comporder "MeshRenderer" "SphereCollider3D" "Rigidbody3D"
+end
+gameobject 117 "Box"
+  guid "53ee6adcb33de266c09b411451b10653"
+  active 1
+  parent -1
+  transform 1.4537789 2.4 -5.2744927 0 0 0 1 1 1 1
+  mesh "Cube" 0.42492348 0.83701545 0.3327667 1 0 "" 0
+  material 0 0 0 0 16 0 "" 1 1
+  rigidbody3d 0 1 1 0 0 0 0 0 0 0.5 0.05 1 1 0
+  boxcollider3d 1 1 1 0 0 0 0 0 0
+  comporder "MeshRenderer" "BoxCollider3D" "Rigidbody3D"
+end
+gameobject 118 "Ball"
+  guid "be181a87d847a62ed3fc2200a024a9f9"
+  active 1
+  parent -1
+  transform 2.4724877 2.4 -5.1540937 0 0 0 1 1 1 1
+  mesh "Sphere" 0.8606431 0.3377778 0.6229294 1 0 "" 0
+  material 0 0 0 0 16 0 "" 1 1
+  rigidbody3d 0 1 1 0 0 0 0 0 0 0.5 0.05 1 1 0
+  spherecollider3d 0.5 0 0 0 0 0 0
+  comporder "MeshRenderer" "SphereCollider3D" "Rigidbody3D"
+end
+gameobject 119 "Box"
+  guid "ea9451eb9482ce04d1839e7239b52ef8"
+  active 1
+  parent -1
+  transform 4.025297 2.4 -5.0759797 0 0 0 1 1 1 1
+  mesh "Cube" 0.55193305 0.7871915 0.8878304 1 0 "" 0
+  material 0 0 0 0 16 0 "" 1 1
+  rigidbody3d 0 1 1 0 0 0 0 0 0 0.5 0.05 1 1 0
+  boxcollider3d 1 1 1 0 0 0 0 0 0
+  comporder "MeshRenderer" "BoxCollider3D" "Rigidbody3D"
+end
+gameobject 120 "Ball"
+  guid "894d2535d22e8d139152c69401ff794f"
+  active 1
+  parent -1
+  transform 5.217341 2.4 -5.217581 0 0 0 1 1 1 1
+  mesh "Sphere" 0.5505481 0.6516908 0.7910961 1 0 "" 0
+  material 0 0 0 0 16 0 "" 1 1
+  rigidbody3d 0 1 1 0 0 0 0 0 0 0.5 0.05 1 1 0
+  spherecollider3d 0.5 0 0 0 0 0 0
+  comporder "MeshRenderer" "SphereCollider3D" "Rigidbody3D"
+end
+gameobject 121 "Box"
+  guid "c009197b27b5c35af2f86da2a3005bad"
+  active 1
+  parent -1
+  transform -6.5995455 2.4 -3.8962002 0 0 0 1 1 1 1
+  mesh "Cube" 0.67731106 0.49171382 0.32292017 1 0 "" 0
+  material 0 0 0 0 16 0 "" 1 1
+  rigidbody3d 0 1 1 0 0 0 0 0 0 0.5 0.05 1 1 0
+  boxcollider3d 1 1 1 0 0 0 0 0 0
+  comporder "MeshRenderer" "BoxCollider3D" "Rigidbody3D"
+end
+gameobject 122 "Ball"
+  guid "6a930a5c4198fad56824452e4a45bd3d"
+  active 1
+  parent -1
+  transform -5.257249 2.4 -3.8838916 0 0 0 1 1 1 1
+  mesh "Sphere" 0.6017025 0.8351508 0.5441192 1 0 "" 0
+  material 0 0 0 0 16 0 "" 1 1
+  rigidbody3d 0 1 1 0 0 0 0 0 0 0.5 0.05 1 1 0
+  spherecollider3d 0.5 0 0 0 0 0 0
+  comporder "MeshRenderer" "SphereCollider3D" "Rigidbody3D"
+end
+gameobject 123 "Box"
+  guid "433d1dd0662709a475d26cb028d6e970"
+  active 1
+  parent -1
+  transform -4.057817 2.4 -3.753747 0 0 0 1 1 1 1
+  mesh "Cube" 0.39880294 0.5189243 0.63580036 1 0 "" 0
+  material 0 0 0 0 16 0 "" 1 1
+  rigidbody3d 0 1 1 0 0 0 0 0 0 0.5 0.05 1 1 0
+  boxcollider3d 1 1 1 0 0 0 0 0 0
+  comporder "MeshRenderer" "BoxCollider3D" "Rigidbody3D"
+end
+gameobject 124 "Ball"
+  guid "e6826785a05c8d0944bfa5bcdc22b57e"
+  active 1
+  parent -1
+  transform -2.7071028 2.4 -3.719807 0 0 0 1 1 1 1
+  mesh "Sphere" 0.7485246 0.5670389 0.31662402 1 0 "" 0
+  material 0 0 0 0 16 0 "" 1 1
+  rigidbody3d 0 1 1 0 0 0 0 0 0 0.5 0.05 1 1 0
+  spherecollider3d 0.5 0 0 0 0 0 0
+  comporder "MeshRenderer" "SphereCollider3D" "Rigidbody3D"
+end
+gameobject 125 "Box"
+  guid "2e5a56b0aa0e393b9ff84139a959fa1e"
+  active 1
+  parent -1
+  transform -1.2643361 2.4 -3.8153095 0 0 0 1 1 1 1
+  mesh "Cube" 0.72552955 0.44506717 0.39689624 1 0 "" 0
+  material 0 0 0 0 16 0 "" 1 1
+  rigidbody3d 0 1 1 0 0 0 0 0 0 0.5 0.05 1 1 0
+  boxcollider3d 1 1 1 0 0 0 0 0 0
+  comporder "MeshRenderer" "BoxCollider3D" "Rigidbody3D"
+end
+gameobject 126 "Ball"
+  guid "a333b8c7a6d2e08f1d8ca3571b444b85"
+  active 1
+  parent -1
+  transform -0.14330514 2.4 -3.8568532 0 0 0 1 1 1 1
+  mesh "Sphere" 0.34644753 0.6579077 0.4959005 1 0 "" 0
+  material 0 0 0 0 16 0 "" 1 1
+  rigidbody3d 0 1 1 0 0 0 0 0 0 0.5 0.05 1 1 0
+  spherecollider3d 0.5 0 0 0 0 0 0
+  comporder "MeshRenderer" "SphereCollider3D" "Rigidbody3D"
+end
+gameobject 127 "Box"
+  guid "bfeac5bfd91e4a5887f3d23f099b467b"
+  active 1
+  parent -1
+  transform 1.4514228 2.4 -3.801836 0 0 0 1 1 1 1
+  mesh "Cube" 0.5745764 0.61834216 0.43171567 1 0 "" 0
+  material 0 0 0 0 16 0 "" 1 1
+  rigidbody3d 0 1 1 0 0 0 0 0 0 0.5 0.05 1 1 0
+  boxcollider3d 1 1 1 0 0 0 0 0 0
+  comporder "MeshRenderer" "BoxCollider3D" "Rigidbody3D"
+end
+gameobject 128 "Ball"
+  guid "5751c7f0aff32b492313fa5bd5a6576e"
+  active 1
+  parent -1
+  transform 2.689412 2.4 -3.9733193 0 0 0 1 1 1 1
+  mesh "Sphere" 0.4960155 0.49515688 0.54849607 1 0 "" 0
+  material 0 0 0 0 16 0 "" 1 1
+  rigidbody3d 0 1 1 0 0 0 0 0 0 0.5 0.05 1 1 0
+  spherecollider3d 0.5 0 0 0 0 0 0
+  comporder "MeshRenderer" "SphereCollider3D" "Rigidbody3D"
+end
+gameobject 129 "Box"
+  guid "32696a530f38e1ac310b50b9d105300f"
+  active 1
+  parent -1
+  transform 3.8715901 2.4 -3.8046932 0 0 0 1 1 1 1
+  mesh "Cube" 0.77561235 0.69360334 0.8418692 1 0 "" 0
+  material 0 0 0 0 16 0 "" 1 1
+  rigidbody3d 0 1 1 0 0 0 0 0 0 0.5 0.05 1 1 0
+  boxcollider3d 1 1 1 0 0 0 0 0 0
+  comporder "MeshRenderer" "BoxCollider3D" "Rigidbody3D"
+end
+gameobject 130 "Ball"
+  guid "4c8b6c62f177b9cb4399c8d6b0205cc6"
+  active 1
+  parent -1
+  transform 5.233443 2.4 -4.0229053 0 0 0 1 1 1 1
+  mesh "Sphere" 0.5233583 0.8750028 0.8080714 1 0 "" 0
+  material 0 0 0 0 16 0 "" 1 1
+  rigidbody3d 0 1 1 0 0 0 0 0 0 0.5 0.05 1 1 0
+  spherecollider3d 0.5 0 0 0 0 0 0
+  comporder "MeshRenderer" "SphereCollider3D" "Rigidbody3D"
+end
+gameobject 131 "Box"
+  guid "e3ab219028c0949abe654a756d150576"
+  active 1
+  parent -1
+  transform -6.6228533 2.4 -2.4124367 0 0 0 1 1 1 1
+  mesh "Cube" 0.82963085 0.80764097 0.66758597 1 0 "" 0
+  material 0 0 0 0 16 0 "" 1 1
+  rigidbody3d 0 1 1 0 0 0 0 0 0 0.5 0.05 1 1 0
+  boxcollider3d 1 1 1 0 0 0 0 0 0
+  comporder "MeshRenderer" "BoxCollider3D" "Rigidbody3D"
+end
+gameobject 132 "Ball"
+  guid "ca675b024ac09b5b3910734989107da4"
+  active 1
+  parent -1
+  transform -5.137808 2.4 -2.7778947 0 0 0 1 1 1 1
+  mesh "Sphere" 0.37911218 0.56603503 0.65678203 1 0 "" 0
+  material 0 0 0 0 16 0 "" 1 1
+  rigidbody3d 0 1 1 0 0 0 0 0 0 0.5 0.05 1 1 0
+  spherecollider3d 0.5 0 0 0 0 0 0
+  comporder "MeshRenderer" "SphereCollider3D" "Rigidbody3D"
+end
+gameobject 133 "Box"
+  guid "3c723cc569a0f1aa2dceed699136b1eb"
+  active 1
+  parent -1
+  transform -3.960575 2.4 -2.4440954 0 0 0 1 1 1 1
+  mesh "Cube" 0.48453346 0.38805926 0.34417495 1 0 "" 0
+  material 0 0 0 0 16 0 "" 1 1
+  rigidbody3d 0 1 1 0 0 0 0 0 0 0.5 0.05 1 1 0
+  boxcollider3d 1 1 1 0 0 0 0 0 0
+  comporder "MeshRenderer" "BoxCollider3D" "Rigidbody3D"
+end
+gameobject 134 "Ball"
+  guid "1be55e49f277d0d0cf8056c732651c29"
+  active 1
+  parent -1
+  transform -2.7927303 2.4 -2.486649 0 0 0 1 1 1 1
+  mesh "Sphere" 0.72716 0.6506696 0.88513744 1 0 "" 0
+  material 0 0 0 0 16 0 "" 1 1
+  rigidbody3d 0 1 1 0 0 0 0 0 0 0.5 0.05 1 1 0
+  spherecollider3d 0.5 0 0 0 0 0 0
+  comporder "MeshRenderer" "SphereCollider3D" "Rigidbody3D"
+end
+gameobject 135 "Box"
+  guid "0b679106a5ca996a9a89ed025855cc33"
+  active 1
+  parent -1
+  transform -1.2537419 2.4 -2.630879 0 0 0 1 1 1 1
+  mesh "Cube" 0.44721955 0.71439457 0.88186795 1 0 "" 0
+  material 0 0 0 0 16 0 "" 1 1
+  rigidbody3d 0 1 1 0 0 0 0 0 0 0.5 0.05 1 1 0
+  boxcollider3d 1 1 1 0 0 0 0 0 0
+  comporder "MeshRenderer" "BoxCollider3D" "Rigidbody3D"
+end
+gameobject 136 "Ball"
+  guid "40e74e75495f45d7712d58778e778100"
+  active 1
+  parent -1
+  transform -0.16079426 2.4 -2.4967914 0 0 0 1 1 1 1
+  mesh "Sphere" 0.7320128 0.5463576 0.3117543 1 0 "" 0
+  material 0 0 0 0 16 0 "" 1 1
+  rigidbody3d 0 1 1 0 0 0 0 0 0 0.5 0.05 1 1 0
+  spherecollider3d 0.5 0 0 0 0 0 0
+  comporder "MeshRenderer" "SphereCollider3D" "Rigidbody3D"
+end
+gameobject 137 "Box"
+  guid "23a304a671253da50aa70c72e989913a"
+  active 1
+  parent -1
+  transform 1.2726027 2.4 -2.7203536 0 0 0 1 1 1 1
+  mesh "Cube" 0.87601846 0.3673102 0.87907046 1 0 "" 0
+  material 0 0 0 0 16 0 "" 1 1
+  rigidbody3d 0 1 1 0 0 0 0 0 0 0.5 0.05 1 1 0
+  boxcollider3d 1 1 1 0 0 0 0 0 0
+  comporder "MeshRenderer" "BoxCollider3D" "Rigidbody3D"
+end
+gameobject 138 "Ball"
+  guid "65976611028a088dd56bde8d06243967"
+  active 1
+  parent -1
+  transform 2.5347035 2.4 -2.6716893 0 0 0 1 1 1 1
+  mesh "Sphere" 0.537361 0.41156074 0.5860391 1 0 "" 0
+  material 0 0 0 0 16 0 "" 1 1
+  rigidbody3d 0 1 1 0 0 0 0 0 0 0.5 0.05 1 1 0
+  spherecollider3d 0.5 0 0 0 0 0 0
+  comporder "MeshRenderer" "SphereCollider3D" "Rigidbody3D"
+end
+gameobject 139 "Box"
+  guid "adc7004c32889ef2cad2af629e5c5da8"
+  active 1
+  parent -1
+  transform 3.724942 2.4 -2.6310198 0 0 0 1 1 1 1
+  mesh "Cube" 0.3301677 0.55913746 0.67399883 1 0 "" 0
+  material 0 0 0 0 16 0 "" 1 1
+  rigidbody3d 0 1 1 0 0 0 0 0 0 0.5 0.05 1 1 0
+  boxcollider3d 1 1 1 0 0 0 0 0 0
+  comporder "MeshRenderer" "BoxCollider3D" "Rigidbody3D"
+end
+gameobject 140 "Ball"
+  guid "9c219ab4755c652fdfb1a55d4dbb7681"
+  active 1
+  parent -1
+  transform 5.1470933 2.4 -2.41668 0 0 0 1 1 1 1
+  mesh "Sphere" 0.6699654 0.6255317 0.59257066 1 0 "" 0
+  material 0 0 0 0 16 0 "" 1 1
+  rigidbody3d 0 1 1 0 0 0 0 0 0 0.5 0.05 1 1 0
+  spherecollider3d 0.5 0 0 0 0 0 0
+  comporder "MeshRenderer" "SphereCollider3D" "Rigidbody3D"
+end
+gameobject 141 "Box"
+  guid "c928be1e80751283937231319146a170"
+  active 1
+  parent -1
+  transform -6.685926 2.4 -1.4720056 0 0 0 1 1 1 1
+  mesh "Cube" 0.48085222 0.8972281 0.5406614 1 0 "" 0
+  material 0 0 0 0 16 0 "" 1 1
+  rigidbody3d 0 1 1 0 0 0 0 0 0 0.5 0.05 1 1 0
+  boxcollider3d 1 1 1 0 0 0 0 0 0
+  comporder "MeshRenderer" "BoxCollider3D" "Rigidbody3D"
+end
+gameobject 142 "Ball"
+  guid "0fcaf93c6f60995e7cb151249cc7a006"
+  active 1
+  parent -1
+  transform -5.314973 2.4 -1.2968774 0 0 0 1 1 1 1
+  mesh "Sphere" 0.7908317 0.7376211 0.6685779 1 0 "" 0
+  material 0 0 0 0 16 0 "" 1 1
+  rigidbody3d 0 1 1 0 0 0 0 0 0 0.5 0.05 1 1 0
+  spherecollider3d 0.5 0 0 0 0 0 0
+  comporder "MeshRenderer" "SphereCollider3D" "Rigidbody3D"
+end
+gameobject 143 "Box"
+  guid "fff01d4508a2e1d32d721ada240c82dd"
+  active 1
+  parent -1
+  transform -3.9255033 2.4 -1.2127937 0 0 0 1 1 1 1
+  mesh "Cube" 0.77300054 0.7811544 0.54019195 1 0 "" 0
+  material 0 0 0 0 16 0 "" 1 1
+  rigidbody3d 0 1 1 0 0 0 0 0 0 0.5 0.05 1 1 0
+  boxcollider3d 1 1 1 0 0 0 0 0 0
+  comporder "MeshRenderer" "BoxCollider3D" "Rigidbody3D"
+end
+gameobject 144 "Ball"
+  guid "79a0b2e06298ed40c5e8ff4415f3e898"
+  active 1
+  parent -1
+  transform -2.7373178 2.4 -1.2879878 0 0 0 1 1 1 1
+  mesh "Sphere" 0.6828033 0.33394927 0.5231868 1 0 "" 0
+  material 0 0 0 0 16 0 "" 1 1
+  rigidbody3d 0 1 1 0 0 0 0 0 0 0.5 0.05 1 1 0
+  spherecollider3d 0.5 0 0 0 0 0 0
+  comporder "MeshRenderer" "SphereCollider3D" "Rigidbody3D"
+end
+gameobject 145 "Box"
+  guid "ed53bbf2ec3201efe66749f181526d34"
+  active 1
+  parent -1
+  transform -1.4795579 2.4 -1.4899583 0 0 0 1 1 1 1
+  mesh "Cube" 0.5161163 0.5970677 0.7558405 1 0 "" 0
+  material 0 0 0 0 16 0 "" 1 1
+  rigidbody3d 0 1 1 0 0 0 0 0 0 0.5 0.05 1 1 0
+  boxcollider3d 1 1 1 0 0 0 0 0 0
+  comporder "MeshRenderer" "BoxCollider3D" "Rigidbody3D"
+end
+gameobject 146 "Ball"
+  guid "8a7489982dc725627aa7b61ac041aaae"
+  active 1
+  parent -1
+  transform 0.04831247 2.4 -1.2783484 0 0 0 1 1 1 1
+  mesh "Sphere" 0.7113953 0.5133693 0.41848326 1 0 "" 0
+  material 0 0 0 0 16 0 "" 1 1
+  rigidbody3d 0 1 1 0 0 0 0 0 0 0.5 0.05 1 1 0
+  spherecollider3d 0.5 0 0 0 0 0 0
+  comporder "MeshRenderer" "SphereCollider3D" "Rigidbody3D"
+end
+gameobject 147 "Box"
+  guid "45b2649c51e1a1fcbef39f503679f169"
+  active 1
+  parent -1
+  transform 1.3449907 2.4 -1.2827636 0 0 0 1 1 1 1
+  mesh "Cube" 0.38389295 0.737097 0.59400034 1 0 "" 0
+  material 0 0 0 0 16 0 "" 1 1
+  rigidbody3d 0 1 1 0 0 0 0 0 0 0.5 0.05 1 1 0
+  boxcollider3d 1 1 1 0 0 0 0 0 0
+  comporder "MeshRenderer" "BoxCollider3D" "Rigidbody3D"
+end
+gameobject 148 "Ball"
+  guid "41c22b4a7465c223554f899898179f66"
+  active 1
+  parent -1
+  transform 2.4350262 2.4 -1.2081151 0 0 0 1 1 1 1
+  mesh "Sphere" 0.5396472 0.7615368 0.7417673 1 0 "" 0
+  material 0 0 0 0 16 0 "" 1 1
+  rigidbody3d 0 1 1 0 0 0 0 0 0 0.5 0.05 1 1 0
+  spherecollider3d 0.5 0 0 0 0 0 0
+  comporder "MeshRenderer" "SphereCollider3D" "Rigidbody3D"
+end
+gameobject 149 "Box"
+  guid "dd9bf2854de49f94180a85ed25afdb63"
+  active 1
+  parent -1
+  transform 4.0365734 2.4 -1.2949442 0 0 0 1 1 1 1
+  mesh "Cube" 0.32937092 0.31587297 0.67267716 1 0 "" 0
+  material 0 0 0 0 16 0 "" 1 1
+  rigidbody3d 0 1 1 0 0 0 0 0 0 0.5 0.05 1 1 0
+  boxcollider3d 1 1 1 0 0 0 0 0 0
+  comporder "MeshRenderer" "BoxCollider3D" "Rigidbody3D"
+end
+gameobject 150 "Ball"
+  guid "c2ea455e738a6f392624fa70acac6fa2"
+  active 1
+  parent -1
+  transform 5.083849 2.4 -1.2419629 0 0 0 1 1 1 1
+  mesh "Sphere" 0.4582098 0.30485046 0.86521155 1 0 "" 0
+  material 0 0 0 0 16 0 "" 1 1
+  rigidbody3d 0 1 1 0 0 0 0 0 0 0.5 0.05 1 1 0
+  spherecollider3d 0.5 0 0 0 0 0 0
+  comporder "MeshRenderer" "SphereCollider3D" "Rigidbody3D"
+end
+gameobject 151 "Box"
+  guid "45a39e9236ab06fcb36b361f3bc0a084"
+  active 1
+  parent -1
+  transform -6.401332 2.4 0.18977596 0 0 0 1 1 1 1
+  mesh "Cube" 0.7324978 0.46020806 0.54161364 1 0 "" 0
+  material 0 0 0 0 16 0 "" 1 1
+  rigidbody3d 0 1 1 0 0 0 0 0 0 0.5 0.05 1 1 0
+  boxcollider3d 1 1 1 0 0 0 0 0 0
+  comporder "MeshRenderer" "BoxCollider3D" "Rigidbody3D"
+end
+gameobject 152 "Ball"
+  guid "922c144ebf11d494969bf15658619707"
+  active 1
+  parent -1
+  transform -5.0534115 2.4 -0.17052875 0 0 0 1 1 1 1
+  mesh "Sphere" 0.8498757 0.7371695 0.37554467 1 0 "" 0
+  material 0 0 0 0 16 0 "" 1 1
+  rigidbody3d 0 1 1 0 0 0 0 0 0 0.5 0.05 1 1 0
+  spherecollider3d 0.5 0 0 0 0 0 0
+  comporder "MeshRenderer" "SphereCollider3D" "Rigidbody3D"
+end
+gameobject 153 "Box"
+  guid "414549cb67e48405c443370587e0f5a6"
+  active 1
+  parent -1
+  transform -3.7756503 2.4 0.1987933 0 0 0 1 1 1 1
+  mesh "Cube" 0.88040686 0.68161225 0.43023348 1 0 "" 0
+  material 0 0 0 0 16 0 "" 1 1
+  rigidbody3d 0 1 1 0 0 0 0 0 0 0.5 0.05 1 1 0
+  boxcollider3d 1 1 1 0 0 0 0 0 0
+  comporder "MeshRenderer" "BoxCollider3D" "Rigidbody3D"
+end
+gameobject 154 "Ball"
+  guid "7f7a150bc0dac22f4c853652d484fd98"
+  active 1
+  parent -1
+  transform -2.4786224 2.4 0.058934465 0 0 0 1 1 1 1
+  mesh "Sphere" 0.6680652 0.7523143 0.69002783 1 0 "" 0
+  material 0 0 0 0 16 0 "" 1 1
+  rigidbody3d 0 1 1 0 0 0 0 0 0 0.5 0.05 1 1 0
+  spherecollider3d 0.5 0 0 0 0 0 0
+  comporder "MeshRenderer" "SphereCollider3D" "Rigidbody3D"
+end
+gameobject 155 "Box"
+  guid "469858cc2f44c629826f1995b4223c23"
+  active 1
+  parent -1
+  transform -1.1605784 2.4 0.07140271 0 0 0 1 1 1 1
+  mesh "Cube" 0.56887275 0.62099695 0.5310497 1 0 "" 0
+  material 0 0 0 0 16 0 "" 1 1
+  rigidbody3d 0 1 1 0 0 0 0 0 0 0.5 0.05 1 1 0
+  boxcollider3d 1 1 1 0 0 0 0 0 0
+  comporder "MeshRenderer" "BoxCollider3D" "Rigidbody3D"
+end
+gameobject 156 "Ball"
+  guid "ce35a69f8c0333a690368f26c2dde446"
+  active 1
+  parent -1
+  transform -0.16790552 2.4 -0.034432963 0 0 0 1 1 1 1
+  mesh "Sphere" 0.88405746 0.6567424 0.4104851 1 0 "" 0
+  material 0 0 0 0 16 0 "" 1 1
+  rigidbody3d 0 1 1 0 0 0 0 0 0 0.5 0.05 1 1 0
+  spherecollider3d 0.5 0 0 0 0 0 0
+  comporder "MeshRenderer" "SphereCollider3D" "Rigidbody3D"
+end
+gameobject 157 "Box"
+  guid "a2e29fbb570926d7308cb7cd85e16ced"
+  active 1
+  parent -1
+  transform 1.1825542 2.4 -0.1285393 0 0 0 1 1 1 1
+  mesh "Cube" 0.6778969 0.39860228 0.73830795 1 0 "" 0
+  material 0 0 0 0 16 0 "" 1 1
+  rigidbody3d 0 1 1 0 0 0 0 0 0 0.5 0.05 1 1 0
+  boxcollider3d 1 1 1 0 0 0 0 0 0
+  comporder "MeshRenderer" "BoxCollider3D" "Rigidbody3D"
+end
+gameobject 158 "Ball"
+  guid "fa770e1f893c51ef0de4cec022aa887d"
+  active 1
+  parent -1
+  transform 2.4208772 2.4 0.03940995 0 0 0 1 1 1 1
+  mesh "Sphere" 0.5149386 0.52537024 0.8397732 1 0 "" 0
+  material 0 0 0 0 16 0 "" 1 1
+  rigidbody3d 0 1 1 0 0 0 0 0 0 0.5 0.05 1 1 0
+  spherecollider3d 0.5 0 0 0 0 0 0
+  comporder "MeshRenderer" "SphereCollider3D" "Rigidbody3D"
+end
+gameobject 159 "Box"
+  guid "4b30116dc38cb3a97973c46a3919df4e"
+  active 1
+  parent -1
+  transform 3.7973146 2.4 0.0014271289 0 0 0 1 1 1 1
+  mesh "Cube" 0.73586035 0.35812792 0.77228546 1 0 "" 0
+  material 0 0 0 0 16 0 "" 1 1
+  rigidbody3d 0 1 1 0 0 0 0 0 0 0.5 0.05 1 1 0
+  boxcollider3d 1 1 1 0 0 0 0 0 0
+  comporder "MeshRenderer" "BoxCollider3D" "Rigidbody3D"
+end
+gameobject 160 "Ball"
+  guid "a3e1d112dceeeadb4010efbe03a3251b"
+  active 1
+  parent -1
+  transform 5.2602763 2.4 -0.0018904954 0 0 0 1 1 1 1
+  mesh "Sphere" 0.35559297 0.73869324 0.750924 1 0 "" 0
+  material 0 0 0 0 16 0 "" 1 1
+  rigidbody3d 0 1 1 0 0 0 0 0 0 0.5 0.05 1 1 0
+  spherecollider3d 0.5 0 0 0 0 0 0
+  comporder "MeshRenderer" "SphereCollider3D" "Rigidbody3D"
+end
+gameobject 161 "Box"
+  guid "bdf09024f36e84b205cf1b3dbbe25eb5"
+  active 1
+  parent -1
+  transform -6.3664446 2.4 1.3511637 0 0 0 1 1 1 1
+  mesh "Cube" 0.63052034 0.46527708 0.62859523 1 0 "" 0
+  material 0 0 0 0 16 0 "" 1 1
+  rigidbody3d 0 1 1 0 0 0 0 0 0 0.5 0.05 1 1 0
+  boxcollider3d 1 1 1 0 0 0 0 0 0
+  comporder "MeshRenderer" "BoxCollider3D" "Rigidbody3D"
+end
+gameobject 162 "Ball"
+  guid "a2898c1b58e6533525ac9f2683222688"
+  active 1
+  parent -1
+  transform -5.0528493 2.4 1.2576922 0 0 0 1 1 1 1
+  mesh "Sphere" 0.32692385 0.60809386 0.40337557 1 0 "" 0
+  material 0 0 0 0 16 0 "" 1 1
+  rigidbody3d 0 1 1 0 0 0 0 0 0 0.5 0.05 1 1 0
+  spherecollider3d 0.5 0 0 0 0 0 0
+  comporder "MeshRenderer" "SphereCollider3D" "Rigidbody3D"
+end
+gameobject 163 "Box"
+  guid "a401b8bed50f7dc349f0a1711acf5a66"
+  active 1
+  parent -1
+  transform -4.0212507 2.4 1.4520184 0 0 0 1 1 1 1
+  mesh "Cube" 0.6851597 0.5991919 0.58533543 1 0 "" 0
+  material 0 0 0 0 16 0 "" 1 1
+  rigidbody3d 0 1 1 0 0 0 0 0 0 0.5 0.05 1 1 0
+  boxcollider3d 1 1 1 0 0 0 0 0 0
+  comporder "MeshRenderer" "BoxCollider3D" "Rigidbody3D"
+end
+gameobject 164 "Ball"
+  guid "8732e9bb588ed37168f12ad37107d572"
+  active 1
+  parent -1
+  transform -2.5779233 2.4 1.2983767 0 0 0 1 1 1 1
+  mesh "Sphere" 0.8792305 0.56251997 0.75539064 1 0 "" 0
+  material 0 0 0 0 16 0 "" 1 1
+  rigidbody3d 0 1 1 0 0 0 0 0 0 0.5 0.05 1 1 0
+  spherecollider3d 0.5 0 0 0 0 0 0
+  comporder "MeshRenderer" "SphereCollider3D" "Rigidbody3D"
+end
+gameobject 165 "Box"
+  guid "29e7936a7c984c20234e01f3c24090dc"
+  active 1
+  parent -1
+  transform -1.3199753 2.4 1.1701596 0 0 0 1 1 1 1
+  mesh "Cube" 0.7073964 0.35942078 0.32146448 1 0 "" 0
+  material 0 0 0 0 16 0 "" 1 1
+  rigidbody3d 0 1 1 0 0 0 0 0 0 0.5 0.05 1 1 0
+  boxcollider3d 1 1 1 0 0 0 0 0 0
+  comporder "MeshRenderer" "BoxCollider3D" "Rigidbody3D"
+end
+gameobject 166 "Ball"
+  guid "b0cb27f638696d10cdf30576586a15d4"
+  active 1
+  parent -1
+  transform 0.16699551 2.4 1.116867 0 0 0 1 1 1 1
+  mesh "Sphere" 0.59408593 0.45923 0.48606062 1 0 "" 0
+  material 0 0 0 0 16 0 "" 1 1
+  rigidbody3d 0 1 1 0 0 0 0 0 0 0.5 0.05 1 1 0
+  spherecollider3d 0.5 0 0 0 0 0 0
+  comporder "MeshRenderer" "SphereCollider3D" "Rigidbody3D"
+end
+gameobject 167 "Box"
+  guid "333546dc339581b65770d6f51f06eb30"
+  active 1
+  parent -1
+  transform 1.2476178 2.4 1.4505148 0 0 0 1 1 1 1
+  mesh "Cube" 0.39812383 0.39323974 0.54018366 1 0 "" 0
+  material 0 0 0 0 16 0 "" 1 1
+  rigidbody3d 0 1 1 0 0 0 0 0 0 0.5 0.05 1 1 0
+  boxcollider3d 1 1 1 0 0 0 0 0 0
+  comporder "MeshRenderer" "BoxCollider3D" "Rigidbody3D"
+end
+gameobject 168 "Ball"
+  guid "c78ac97092d11e1ad07a23ac530fb81a"
+  active 1
+  parent -1
+  transform 2.4387894 2.4 1.3643847 0 0 0 1 1 1 1
+  mesh "Sphere" 0.6307367 0.8023472 0.5361345 1 0 "" 0
+  material 0 0 0 0 16 0 "" 1 1
+  rigidbody3d 0 1 1 0 0 0 0 0 0 0.5 0.05 1 1 0
+  spherecollider3d 0.5 0 0 0 0 0 0
+  comporder "MeshRenderer" "SphereCollider3D" "Rigidbody3D"
+end
+gameobject 169 "Box"
+  guid "ef5c67c295fc18ea2aee8ef907f2800b"
+  active 1
+  parent -1
+  transform 3.7354755 2.4 1.1799183 0 0 0 1 1 1 1
+  mesh "Cube" 0.7555747 0.7728247 0.6515142 1 0 "" 0
+  material 0 0 0 0 16 0 "" 1 1
+  rigidbody3d 0 1 1 0 0 0 0 0 0 0.5 0.05 1 1 0
+  boxcollider3d 1 1 1 0 0 0 0 0 0
+  comporder "MeshRenderer" "BoxCollider3D" "Rigidbody3D"
+end
+gameobject 170 "Ball"
+  guid "d800a28bb48471d7eeec4f2ba3c0aff0"
+  active 1
+  parent -1
+  transform 5.107101 2.4 1.2539843 0 0 0 1 1 1 1
+  mesh "Sphere" 0.45402476 0.89373523 0.80464506 1 0 "" 0
+  material 0 0 0 0 16 0 "" 1 1
+  rigidbody3d 0 1 1 0 0 0 0 0 0 0.5 0.05 1 1 0
+  spherecollider3d 0.5 0 0 0 0 0 0
+  comporder "MeshRenderer" "SphereCollider3D" "Rigidbody3D"
+end
+gameobject 171 "Box"
+  guid "090f21b33dc00dcd385df822ba7ed164"
+  active 1
+  parent -1
+  transform -6.4713535 2.4 2.4228268 0 0 0 1 1 1 1
+  mesh "Cube" 0.7854588 0.70051414 0.65010065 1 0 "" 0
+  material 0 0 0 0 16 0 "" 1 1
+  rigidbody3d 0 1 1 0 0 0 0 0 0 0.5 0.05 1 1 0
+  boxcollider3d 1 1 1 0 0 0 0 0 0
+  comporder "MeshRenderer" "BoxCollider3D" "Rigidbody3D"
+end
+gameobject 172 "Ball"
+  guid "bbcb0c7b44a57814a92fddea472625da"
+  active 1
+  parent -1
+  transform -5.061839 2.4 2.6364412 0 0 0 1 1 1 1
+  mesh "Sphere" 0.40777132 0.58508474 0.6720052 1 0 "" 0
+  material 0 0 0 0 16 0 "" 1 1
+  rigidbody3d 0 1 1 0 0 0 0 0 0 0.5 0.05 1 1 0
+  spherecollider3d 0.5 0 0 0 0 0 0
+  comporder "MeshRenderer" "SphereCollider3D" "Rigidbody3D"
+end
+gameobject 173 "Box"
+  guid "65baff9aa4b91168f7f10f75db4ede78"
+  active 1
+  parent -1
+  transform -3.795115 2.4 2.5770802 0 0 0 1 1 1 1
+  mesh "Cube" 0.52819705 0.5540766 0.51228356 1 0 "" 0
+  material 0 0 0 0 16 0 "" 1 1
+  rigidbody3d 0 1 1 0 0 0 0 0 0 0.5 0.05 1 1 0
+  boxcollider3d 1 1 1 0 0 0 0 0 0
+  comporder "MeshRenderer" "BoxCollider3D" "Rigidbody3D"
+end
+gameobject 174 "Ball"
+  guid "32033b2a95ca56e0152918006084c7c2"
+  active 1
+  parent -1
+  transform -2.7725513 2.4 2.5833302 0 0 0 1 1 1 1
+  mesh "Sphere" 0.3685699 0.33273122 0.75840837 1 0 "" 0
+  material 0 0 0 0 16 0 "" 1 1
+  rigidbody3d 0 1 1 0 0 0 0 0 0 0.5 0.05 1 1 0
+  spherecollider3d 0.5 0 0 0 0 0 0
+  comporder "MeshRenderer" "SphereCollider3D" "Rigidbody3D"
+end
+gameobject 175 "Box"
+  guid "6732ab9e7cd110d05f945b4f69c6db49"
+  active 1
+  parent -1
+  transform -1.2158588 2.4 2.5769312 0 0 0 1 1 1 1
+  mesh "Cube" 0.69611996 0.8328701 0.45691538 1 0 "" 0
+  material 0 0 0 0 16 0 "" 1 1
+  rigidbody3d 0 1 1 0 0 0 0 0 0 0.5 0.05 1 1 0
+  boxcollider3d 1 1 1 0 0 0 0 0 0
+  comporder "MeshRenderer" "BoxCollider3D" "Rigidbody3D"
+end
+gameobject 176 "Ball"
+  guid "3f99d9ab4af93593aff5ebf49cbf1380"
+  active 1
+  parent -1
+  transform -0.0012844503 2.4 2.7952814 0 0 0 1 1 1 1
+  mesh "Sphere" 0.4093213 0.8757 0.7858579 1 0 "" 0
+  material 0 0 0 0 16 0 "" 1 1
+  rigidbody3d 0 1 1 0 0 0 0 0 0 0.5 0.05 1 1 0
+  spherecollider3d 0.5 0 0 0 0 0 0
+  comporder "MeshRenderer" "SphereCollider3D" "Rigidbody3D"
+end
+gameobject 177 "Box"
+  guid "2820faeb669dc0ad32dfa16a442b9efe"
+  active 1
+  parent -1
+  transform 1.3503336 2.4 2.6413271 0 0 0 1 1 1 1
+  mesh "Cube" 0.8867556 0.541635 0.44684744 1 0 "" 0
+  material 0 0 0 0 16 0 "" 1 1
+  rigidbody3d 0 1 1 0 0 0 0 0 0 0.5 0.05 1 1 0
+  boxcollider3d 1 1 1 0 0 0 0 0 0
+  comporder "MeshRenderer" "BoxCollider3D" "Rigidbody3D"
+end
+gameobject 178 "Ball"
+  guid "f17d29ab2a6abedc7a8810b382d90542"
+  active 1
+  parent -1
+  transform 2.4051006 2.4 2.6203544 0 0 0 1 1 1 1
+  mesh "Sphere" 0.8341475 0.59027636 0.8120969 1 0 "" 0
+  material 0 0 0 0 16 0 "" 1 1
+  rigidbody3d 0 1 1 0 0 0 0 0 0 0.5 0.05 1 1 0
+  spherecollider3d 0.5 0 0 0 0 0 0
+  comporder "MeshRenderer" "SphereCollider3D" "Rigidbody3D"
+end
+gameobject 179 "Box"
+  guid "458cdc216c563a2a78ae18a680eec98b"
+  active 1
+  parent -1
+  transform 3.7593827 2.4 2.6091125 0 0 0 1 1 1 1
+  mesh "Cube" 0.57144344 0.54312646 0.67614317 1 0 "" 0
+  material 0 0 0 0 16 0 "" 1 1
+  rigidbody3d 0 1 1 0 0 0 0 0 0 0.5 0.05 1 1 0
+  boxcollider3d 1 1 1 0 0 0 0 0 0
+  comporder "MeshRenderer" "BoxCollider3D" "Rigidbody3D"
+end
+gameobject 180 "Ball"
+  guid "aab7a97accc36c79d1b43fa3292ec1bb"
+  active 1
+  parent -1
+  transform 5.100335 2.4 2.6560638 0 0 0 1 1 1 1
+  mesh "Sphere" 0.4482649 0.5403537 0.36689508 1 0 "" 0
+  material 0 0 0 0 16 0 "" 1 1
+  rigidbody3d 0 1 1 0 0 0 0 0 0 0.5 0.05 1 1 0
+  spherecollider3d 0.5 0 0 0 0 0 0
+  comporder "MeshRenderer" "SphereCollider3D" "Rigidbody3D"
+end
+gameobject 181 "Box"
+  guid "05069cb938972520acf98231f7b06d7d"
+  active 1
+  parent -1
+  transform -6.333316 2.4 3.7186089 0 0 0 1 1 1 1
+  mesh "Cube" 0.62468505 0.3309142 0.74031603 1 0 "" 0
+  material 0 0 0 0 16 0 "" 1 1
+  rigidbody3d 0 1 1 0 0 0 0 0 0 0.5 0.05 1 1 0
+  boxcollider3d 1 1 1 0 0 0 0 0 0
+  comporder "MeshRenderer" "BoxCollider3D" "Rigidbody3D"
+end
+gameobject 182 "Ball"
+  guid "19694ef002f341e40eef5ebc72dda14a"
+  active 1
+  parent -1
+  transform -5.294272 2.4 4.0949664 0 0 0 1 1 1 1
+  mesh "Sphere" 0.43430516 0.68055487 0.8823625 1 0 "" 0
+  material 0 0 0 0 16 0 "" 1 1
+  rigidbody3d 0 1 1 0 0 0 0 0 0 0.5 0.05 1 1 0
+  spherecollider3d 0.5 0 0 0 0 0 0
+  comporder "MeshRenderer" "SphereCollider3D" "Rigidbody3D"
+end
+gameobject 183 "Box"
+  guid "3a7be3856e079e8ec0f8a57b8faea134"
+  active 1
+  parent -1
+  transform -3.8011456 2.4 4.092995 0 0 0 1 1 1 1
+  mesh "Cube" 0.79931533 0.8600045 0.69640577 1 0 "" 0
+  material 0 0 0 0 16 0 "" 1 1
+  rigidbody3d 0 1 1 0 0 0 0 0 0 0.5 0.05 1 1 0
+  boxcollider3d 1 1 1 0 0 0 0 0 0
+  comporder "MeshRenderer" "BoxCollider3D" "Rigidbody3D"
+end
+gameobject 184 "Ball"
+  guid "efaa0c2a6100de06d6fd34cdb426883f"
+  active 1
+  parent -1
+  transform -2.7024684 2.4 3.7797108 0 0 0 1 1 1 1
+  mesh "Sphere" 0.69930315 0.57966936 0.310138 1 0 "" 0
+  material 0 0 0 0 16 0 "" 1 1
+  rigidbody3d 0 1 1 0 0 0 0 0 0 0.5 0.05 1 1 0
+  spherecollider3d 0.5 0 0 0 0 0 0
+  comporder "MeshRenderer" "SphereCollider3D" "Rigidbody3D"
+end
+gameobject 185 "Box"
+  guid "d272e6b011f413d3f48f0e964dd8058c"
+  active 1
+  parent -1
+  transform -1.4285209 2.4 3.8999546 0 0 0 1 1 1 1
+  mesh "Cube" 0.3833581 0.87803733 0.3495118 1 0 "" 0
+  material 0 0 0 0 16 0 "" 1 1
+  rigidbody3d 0 1 1 0 0 0 0 0 0 0.5 0.05 1 1 0
+  boxcollider3d 1 1 1 0 0 0 0 0 0
+  comporder "MeshRenderer" "BoxCollider3D" "Rigidbody3D"
+end
+gameobject 186 "Ball"
+  guid "d462848ddec876b4f66b2d62d5256e0b"
+  active 1
+  parent -1
+  transform 0.10168488 2.4 3.8009236 0 0 0 1 1 1 1
+  mesh "Sphere" 0.35464668 0.8206196 0.81121683 1 0 "" 0
+  material 0 0 0 0 16 0 "" 1 1
+  rigidbody3d 0 1 1 0 0 0 0 0 0 0.5 0.05 1 1 0
+  spherecollider3d 0.5 0 0 0 0 0 0
+  comporder "MeshRenderer" "SphereCollider3D" "Rigidbody3D"
+end
+gameobject 187 "Box"
+  guid "46d766a8245fa031c82271b492c58efa"
+  active 1
+  parent -1
+  transform 1.14658 2.4 4.0947537 0 0 0 1 1 1 1
+  mesh "Cube" 0.40686318 0.4294753 0.5794788 1 0 "" 0
+  material 0 0 0 0 16 0 "" 1 1
+  rigidbody3d 0 1 1 0 0 0 0 0 0 0.5 0.05 1 1 0
+  boxcollider3d 1 1 1 0 0 0 0 0 0
+  comporder "MeshRenderer" "BoxCollider3D" "Rigidbody3D"
+end
+gameobject 188 "Ball"
+  guid "3a0c0b5d0f946e17e60ae414a46251dc"
+  active 1
+  parent -1
+  transform 2.4947462 2.4 3.993413 0 0 0 1 1 1 1
+  mesh "Sphere" 0.47025704 0.38433918 0.64710414 1 0 "" 0
+  material 0 0 0 0 16 0 "" 1 1
+  rigidbody3d 0 1 1 0 0 0 0 0 0 0.5 0.05 1 1 0
+  spherecollider3d 0.5 0 0 0 0 0 0
+  comporder "MeshRenderer" "SphereCollider3D" "Rigidbody3D"
+end
+gameobject 189 "Box"
+  guid "93e9e3a77f85d4a77d6a20fe8c676b77"
+  active 1
+  parent -1
+  transform 3.8487895 2.4 3.7365007 0 0 0 1 1 1 1
+  mesh "Cube" 0.78263474 0.3995554 0.89547145 1 0 "" 0
+  material 0 0 0 0 16 0 "" 1 1
+  rigidbody3d 0 1 1 0 0 0 0 0 0 0.5 0.05 1 1 0
+  boxcollider3d 1 1 1 0 0 0 0 0 0
+  comporder "MeshRenderer" "BoxCollider3D" "Rigidbody3D"
+end
+gameobject 190 "Ball"
+  guid "615ef7191f2c0ed3675da27564cb3007"
+  active 1
+  parent -1
+  transform 5.2788925 2.4 3.9650023 0 0 0 1 1 1 1
+  mesh "Sphere" 0.64583254 0.74328935 0.6445811 1 0 "" 0
+  material 0 0 0 0 16 0 "" 1 1
+  rigidbody3d 0 1 1 0 0 0 0 0 0 0.5 0.05 1 1 0
+  spherecollider3d 0.5 0 0 0 0 0 0
+  comporder "MeshRenderer" "SphereCollider3D" "Rigidbody3D"
+end
+gameobject 191 "Box"
+  guid "6c4728b1f1cbb785bd673752ec05a606"
+  active 1
+  parent -1
+  transform -6.3640094 2.4 5.0849032 0 0 0 1 1 1 1
+  mesh "Cube" 0.44672844 0.72052664 0.8056184 1 0 "" 0
+  material 0 0 0 0 16 0 "" 1 1
+  rigidbody3d 0 1 1 0 0 0 0 0 0 0.5 0.05 1 1 0
+  boxcollider3d 1 1 1 0 0 0 0 0 0
+  comporder "MeshRenderer" "BoxCollider3D" "Rigidbody3D"
+end
+gameobject 192 "Ball"
+  guid "db0838f3633e2173619d1c81331f9b1e"
+  active 1
+  parent -1
+  transform -5.2383413 2.4 5.1298504 0 0 0 1 1 1 1
+  mesh "Sphere" 0.5903963 0.89572036 0.38508838 1 0 "" 0
+  material 0 0 0 0 16 0 "" 1 1
+  rigidbody3d 0 1 1 0 0 0 0 0 0 0.5 0.05 1 1 0
+  spherecollider3d 0.5 0 0 0 0 0 0
+  comporder "MeshRenderer" "SphereCollider3D" "Rigidbody3D"
+end
+gameobject 193 "Box"
+  guid "9b87f2cc632d664654dd948cf40fea7f"
+  active 1
+  parent -1
+  transform -3.881959 2.4 5.34436 0 0 0 1 1 1 1
+  mesh "Cube" 0.3236643 0.66380155 0.66836053 1 0 "" 0
+  material 0 0 0 0 16 0 "" 1 1
+  rigidbody3d 0 1 1 0 0 0 0 0 0 0.5 0.05 1 1 0
+  boxcollider3d 1 1 1 0 0 0 0 0 0
+  comporder "MeshRenderer" "BoxCollider3D" "Rigidbody3D"
+end
+gameobject 194 "Ball"
+  guid "40402bc7c394a03dfcf7c1cfabf3a924"
+  active 1
+  parent -1
+  transform -2.4784825 2.4 5.094669 0 0 0 1 1 1 1
+  mesh "Sphere" 0.7997493 0.56129944 0.39425823 1 0 "" 0
+  material 0 0 0 0 16 0 "" 1 1
+  rigidbody3d 0 1 1 0 0 0 0 0 0 0.5 0.05 1 1 0
+  spherecollider3d 0.5 0 0 0 0 0 0
+  comporder "MeshRenderer" "SphereCollider3D" "Rigidbody3D"
+end
+gameobject 195 "Box"
+  guid "d2a2d7c2739fdafa1ac95ebc741940e5"
+  active 1
+  parent -1
+  transform -1.3750508 2.4 5.3125987 0 0 0 1 1 1 1
+  mesh "Cube" 0.5041226 0.51077235 0.8506584 1 0 "" 0
+  material 0 0 0 0 16 0 "" 1 1
+  rigidbody3d 0 1 1 0 0 0 0 0 0 0.5 0.05 1 1 0
+  boxcollider3d 1 1 1 0 0 0 0 0 0
+  comporder "MeshRenderer" "BoxCollider3D" "Rigidbody3D"
+end
+gameobject 196 "Ball"
+  guid "28a9ca74f39ea3c9b2a88911c7748016"
+  active 1
+  parent -1
+  transform -0.032958463 2.4 5.058704 0 0 0 1 1 1 1
+  mesh "Sphere" 0.45531917 0.6398281 0.32296932 1 0 "" 0
+  material 0 0 0 0 16 0 "" 1 1
+  rigidbody3d 0 1 1 0 0 0 0 0 0 0.5 0.05 1 1 0
+  spherecollider3d 0.5 0 0 0 0 0 0
+  comporder "MeshRenderer" "SphereCollider3D" "Rigidbody3D"
+end
+gameobject 197 "Box"
+  guid "8e4e0766ba1a351a9e1a9341d5e69841"
+  active 1
+  parent -1
+  transform 1.2159817 2.4 5.371516 0 0 0 1 1 1 1
+  mesh "Cube" 0.71598554 0.83203673 0.5834749 1 0 "" 0
+  material 0 0 0 0 16 0 "" 1 1
+  rigidbody3d 0 1 1 0 0 0 0 0 0 0.5 0.05 1 1 0
+  boxcollider3d 1 1 1 0 0 0 0 0 0
+  comporder "MeshRenderer" "BoxCollider3D" "Rigidbody3D"
+end
+gameobject 198 "Ball"
+  guid "7848717f025f145b1ea6d0e03e059ac2"
+  active 1
+  parent -1
+  transform 2.6581182 2.4 5.3878927 0 0 0 1 1 1 1
+  mesh "Sphere" 0.56896114 0.79583406 0.46615005 1 0 "" 0
+  material 0 0 0 0 16 0 "" 1 1
+  rigidbody3d 0 1 1 0 0 0 0 0 0 0.5 0.05 1 1 0
+  spherecollider3d 0.5 0 0 0 0 0 0
+  comporder "MeshRenderer" "SphereCollider3D" "Rigidbody3D"
+end
+gameobject 199 "Box"
+  guid "35c395331e58974784e45bca8c33b65f"
+  active 1
+  parent -1
+  transform 4.0218425 2.4 5.254153 0 0 0 1 1 1 1
+  mesh "Cube" 0.8814465 0.7165369 0.7713611 1 0 "" 0
+  material 0 0 0 0 16 0 "" 1 1
+  rigidbody3d 0 1 1 0 0 0 0 0 0 0.5 0.05 1 1 0
+  boxcollider3d 1 1 1 0 0 0 0 0 0
+  comporder "MeshRenderer" "BoxCollider3D" "Rigidbody3D"
+end
+gameobject 200 "Ball"
+  guid "5e3757e3b2ab225d4af1aae21eaf99a2"
+  active 1
+  parent -1
+  transform 5.3784947 2.4 5.297641 0 0 0 1 1 1 1
+  mesh "Sphere" 0.7991259 0.42840385 0.37478143 1 0 "" 0
+  material 0 0 0 0 16 0 "" 1 1
+  rigidbody3d 0 1 1 0 0 0 0 0 0 0.5 0.05 1 1 0
+  spherecollider3d 0.5 0 0 0 0 0 0
+  comporder "MeshRenderer" "SphereCollider3D" "Rigidbody3D"
+end
+gameobject 201 "Box"
+  guid "b5e91a2a4ebb4eaf08e6ca9e70ee6d0c"
+  active 1
+  parent -1
+  transform -6.3325987 3.8 -6.332206 0 0 0 1 1 1 1
+  mesh "Cube" 0.44619414 0.80681175 0.40589243 1 0 "" 0
+  material 0 0 0 0 16 0 "" 1 1
+  rigidbody3d 0 1 1 0 0 0 0 0 0 0.5 0.05 1 1 0
+  boxcollider3d 1 1 1 0 0 0 0 0 0
+  comporder "MeshRenderer" "BoxCollider3D" "Rigidbody3D"
+end
+gameobject 202 "Ball"
+  guid "00fc29617adad3f12ae18b0a84bb6719"
+  active 1
+  parent -1
+  transform -5.0282516 3.8 -6.5345235 0 0 0 1 1 1 1
+  mesh "Sphere" 0.7309245 0.37827832 0.58810663 1 0 "" 0
+  material 0 0 0 0 16 0 "" 1 1
+  rigidbody3d 0 1 1 0 0 0 0 0 0 0.5 0.05 1 1 0
+  spherecollider3d 0.5 0 0 0 0 0 0
+  comporder "MeshRenderer" "SphereCollider3D" "Rigidbody3D"
+end
+gameobject 203 "Box"
+  guid "dc9c1d227e2005bae49e884f973878b5"
+  active 1
+  parent -1
+  transform -3.9386566 3.8 -6.470143 0 0 0 1 1 1 1
+  mesh "Cube" 0.57075876 0.40809897 0.58085525 1 0 "" 0
+  material 0 0 0 0 16 0 "" 1 1
+  rigidbody3d 0 1 1 0 0 0 0 0 0 0.5 0.05 1 1 0
+  boxcollider3d 1 1 1 0 0 0 0 0 0
+  comporder "MeshRenderer" "BoxCollider3D" "Rigidbody3D"
+end
+gameobject 204 "Ball"
+  guid "3a0eec1c05ae7e4c6d79540d5bb794b7"
+  active 1
+  parent -1
+  transform -2.4076543 3.8 -6.3825297 0 0 0 1 1 1 1
+  mesh "Sphere" 0.7949972 0.47176617 0.68885404 1 0 "" 0
+  material 0 0 0 0 16 0 "" 1 1
+  rigidbody3d 0 1 1 0 0 0 0 0 0 0.5 0.05 1 1 0
+  spherecollider3d 0.5 0 0 0 0 0 0
+  comporder "MeshRenderer" "SphereCollider3D" "Rigidbody3D"
+end
+gameobject 205 "Box"
+  guid "324fbf09370e8e07aab44cbf34789ead"
+  active 1
+  parent -1
+  transform -1.1834942 3.8 -6.54496 0 0 0 1 1 1 1
+  mesh "Cube" 0.8604103 0.64805657 0.84256923 1 0 "" 0
+  material 0 0 0 0 16 0 "" 1 1
+  rigidbody3d 0 1 1 0 0 0 0 0 0 0.5 0.05 1 1 0
+  boxcollider3d 1 1 1 0 0 0 0 0 0
+  comporder "MeshRenderer" "BoxCollider3D" "Rigidbody3D"
+end
+gameobject 206 "Ball"
+  guid "cd7197f7d26326afa7269c7e5decfc50"
+  active 1
+  parent -1
+  transform -0.09160173 3.8 -6.3851037 0 0 0 1 1 1 1
+  mesh "Sphere" 0.7391337 0.5749856 0.76810133 1 0 "" 0
+  material 0 0 0 0 16 0 "" 1 1
+  rigidbody3d 0 1 1 0 0 0 0 0 0 0.5 0.05 1 1 0
+  spherecollider3d 0.5 0 0 0 0 0 0
+  comporder "MeshRenderer" "SphereCollider3D" "Rigidbody3D"
+end
+gameobject 207 "Box"
+  guid "f9c69810e532909865f93a6e5583733c"
+  active 1
+  parent -1
+  transform 1.4426078 3.8 -6.630705 0 0 0 1 1 1 1
+  mesh "Cube" 0.35436353 0.8210228 0.49985105 1 0 "" 0
+  material 0 0 0 0 16 0 "" 1 1
+  rigidbody3d 0 1 1 0 0 0 0 0 0 0.5 0.05 1 1 0
+  boxcollider3d 1 1 1 0 0 0 0 0 0
+  comporder "MeshRenderer" "BoxCollider3D" "Rigidbody3D"
+end
+gameobject 208 "Ball"
+  guid "a55039f7fa5503be81e04a11f8f8f043"
+  active 1
+  parent -1
+  transform 2.508355 3.8 -6.5053144 0 0 0 1 1 1 1
+  mesh "Sphere" 0.43297303 0.62681687 0.4952026 1 0 "" 0
+  material 0 0 0 0 16 0 "" 1 1
+  rigidbody3d 0 1 1 0 0 0 0 0 0 0.5 0.05 1 1 0
+  spherecollider3d 0.5 0 0 0 0 0 0
+  comporder "MeshRenderer" "SphereCollider3D" "Rigidbody3D"
+end
+gameobject 209 "Box"
+  guid "20e541bdc9cd625666a4a71d547ef481"
+  active 1
+  parent -1
+  transform 3.913909 3.8 -6.448978 0 0 0 1 1 1 1
+  mesh "Cube" 0.79559135 0.80698 0.8654269 1 0 "" 0
+  material 0 0 0 0 16 0 "" 1 1
+  rigidbody3d 0 1 1 0 0 0 0 0 0 0.5 0.05 1 1 0
+  boxcollider3d 1 1 1 0 0 0 0 0 0
+  comporder "MeshRenderer" "BoxCollider3D" "Rigidbody3D"
+end
+gameobject 210 "Ball"
+  guid "f18484080521616760bb7418a55de286"
+  active 1
+  parent -1
+  transform 5.0894036 3.8 -6.638139 0 0 0 1 1 1 1
+  mesh "Sphere" 0.74104756 0.85819465 0.51469374 1 0 "" 0
+  material 0 0 0 0 16 0 "" 1 1
+  rigidbody3d 0 1 1 0 0 0 0 0 0 0.5 0.05 1 1 0
+  spherecollider3d 0.5 0 0 0 0 0 0
+  comporder "MeshRenderer" "SphereCollider3D" "Rigidbody3D"
+end
+gameobject 211 "Box"
+  guid "3a3d4af6f85f45685bb6a9d7b655d4bc"
+  active 1
+  parent -1
+  transform -6.379384 3.8 -5.103045 0 0 0 1 1 1 1
+  mesh "Cube" 0.55111885 0.7720753 0.3976493 1 0 "" 0
+  material 0 0 0 0 16 0 "" 1 1
+  rigidbody3d 0 1 1 0 0 0 0 0 0 0.5 0.05 1 1 0
+  boxcollider3d 1 1 1 0 0 0 0 0 0
+  comporder "MeshRenderer" "BoxCollider3D" "Rigidbody3D"
+end
+gameobject 212 "Ball"
+  guid "9c8be545ca18561ed3a224d80ff49878"
+  active 1
+  parent -1
+  transform -5.3822303 3.8 -5.0178604 0 0 0 1 1 1 1
+  mesh "Sphere" 0.41435426 0.82687056 0.37618828 1 0 "" 0
+  material 0 0 0 0 16 0 "" 1 1
+  rigidbody3d 0 1 1 0 0 0 0 0 0 0.5 0.05 1 1 0
+  spherecollider3d 0.5 0 0 0 0 0 0
+  comporder "MeshRenderer" "SphereCollider3D" "Rigidbody3D"
+end
+gameobject 213 "Box"
+  guid "58876fe77848bc2f0bea6aff56cb5e45"
+  active 1
+  parent -1
+  transform -4.058176 3.8 -5.1667047 0 0 0 1 1 1 1
+  mesh "Cube" 0.47370774 0.7037074 0.46878996 1 0 "" 0
+  material 0 0 0 0 16 0 "" 1 1
+  rigidbody3d 0 1 1 0 0 0 0 0 0 0.5 0.05 1 1 0
+  boxcollider3d 1 1 1 0 0 0 0 0 0
+  comporder "MeshRenderer" "BoxCollider3D" "Rigidbody3D"
+end
+gameobject 214 "Ball"
+  guid "64680a0777bc5fa8e9cfa97af6eb5903"
+  active 1
+  parent -1
+  transform -2.615091 3.8 -5.0555243 0 0 0 1 1 1 1
+  mesh "Sphere" 0.89694464 0.30025148 0.8456774 1 0 "" 0
+  material 0 0 0 0 16 0 "" 1 1
+  rigidbody3d 0 1 1 0 0 0 0 0 0 0.5 0.05 1 1 0
+  spherecollider3d 0.5 0 0 0 0 0 0
+  comporder "MeshRenderer" "SphereCollider3D" "Rigidbody3D"
+end
+gameobject 215 "Box"
+  guid "453db8dc51f9d731ed04857cf7e2766b"
+  active 1
+  parent -1
+  transform -1.1438719 3.8 -5.073968 0 0 0 1 1 1 1
+  mesh "Cube" 0.65826833 0.6252343 0.6338444 1 0 "" 0
+  material 0 0 0 0 16 0 "" 1 1
+  rigidbody3d 0 1 1 0 0 0 0 0 0 0.5 0.05 1 1 0
+  boxcollider3d 1 1 1 0 0 0 0 0 0
+  comporder "MeshRenderer" "BoxCollider3D" "Rigidbody3D"
+end
+gameobject 216 "Ball"
+  guid "11480500bc6ae0607d979b17dae95b60"
+  active 1
+  parent -1
+  transform -0.016271144 3.8 -5.3431196 0 0 0 1 1 1 1
+  mesh "Sphere" 0.8139866 0.6004807 0.7725333 1 0 "" 0
+  material 0 0 0 0 16 0 "" 1 1
+  rigidbody3d 0 1 1 0 0 0 0 0 0 0.5 0.05 1 1 0
+  spherecollider3d 0.5 0 0 0 0 0 0
+  comporder "MeshRenderer" "SphereCollider3D" "Rigidbody3D"
+end
+gameobject 217 "Box"
+  guid "88bfc2a6f0f869ac3d963bd5a44823d2"
+  active 1
+  parent -1
+  transform 1.3767483 3.8 -5.1825643 0 0 0 1 1 1 1
+  mesh "Cube" 0.8307564 0.3722451 0.8589025 1 0 "" 0
+  material 0 0 0 0 16 0 "" 1 1
+  rigidbody3d 0 1 1 0 0 0 0 0 0 0.5 0.05 1 1 0
+  boxcollider3d 1 1 1 0 0 0 0 0 0
+  comporder "MeshRenderer" "BoxCollider3D" "Rigidbody3D"
+end
+gameobject 218 "Ball"
+  guid "aa369eaff11d43fd42918fe494aa498a"
+  active 1
+  parent -1
+  transform 2.4736178 3.8 -5.1464014 0 0 0 1 1 1 1
+  mesh "Sphere" 0.32332104 0.7565299 0.68464637 1 0 "" 0
+  material 0 0 0 0 16 0 "" 1 1
+  rigidbody3d 0 1 1 0 0 0 0 0 0 0.5 0.05 1 1 0
+  spherecollider3d 0.5 0 0 0 0 0 0
+  comporder "MeshRenderer" "SphereCollider3D" "Rigidbody3D"
+end
+gameobject 219 "Box"
+  guid "9c28c1314151e27166dfaffa23ad45e3"
+  active 1
+  parent -1
+  transform 3.7831643 3.8 -5.315038 0 0 0 1 1 1 1
+  mesh "Cube" 0.3489664 0.7886878 0.4379707 1 0 "" 0
+  material 0 0 0 0 16 0 "" 1 1
+  rigidbody3d 0 1 1 0 0 0 0 0 0 0.5 0.05 1 1 0
+  boxcollider3d 1 1 1 0 0 0 0 0 0
+  comporder "MeshRenderer" "BoxCollider3D" "Rigidbody3D"
+end
+gameobject 220 "Ball"
+  guid "54c5bb80839b783a6c5982a4ec26ea3d"
+  active 1
+  parent -1
+  transform 5.2218485 3.8 -5.001872 0 0 0 1 1 1 1
+  mesh "Sphere" 0.7880691 0.5486977 0.35788137 1 0 "" 0
+  material 0 0 0 0 16 0 "" 1 1
+  rigidbody3d 0 1 1 0 0 0 0 0 0 0.5 0.05 1 1 0
+  spherecollider3d 0.5 0 0 0 0 0 0
+  comporder "MeshRenderer" "SphereCollider3D" "Rigidbody3D"
+end
+gameobject 221 "Box"
+  guid "0aefcf09a3c8bd8b9bb5ba400c0af851"
+  active 1
+  parent -1
+  transform -6.6522684 3.8 -3.7070584 0 0 0 1 1 1 1
+  mesh "Cube" 0.41969347 0.89798075 0.47826278 1 0 "" 0
+  material 0 0 0 0 16 0 "" 1 1
+  rigidbody3d 0 1 1 0 0 0 0 0 0 0.5 0.05 1 1 0
+  boxcollider3d 1 1 1 0 0 0 0 0 0
+  comporder "MeshRenderer" "BoxCollider3D" "Rigidbody3D"
+end
+gameobject 222 "Ball"
+  guid "accc856f78af851f519c68e7c7cf8aa8"
+  active 1
+  parent -1
+  transform -5.235572 3.8 -3.843158 0 0 0 1 1 1 1
+  mesh "Sphere" 0.8881011 0.35111097 0.419038 1 0 "" 0
+  material 0 0 0 0 16 0 "" 1 1
+  rigidbody3d 0 1 1 0 0 0 0 0 0 0.5 0.05 1 1 0
+  spherecollider3d 0.5 0 0 0 0 0 0
+  comporder "MeshRenderer" "SphereCollider3D" "Rigidbody3D"
+end
+gameobject 223 "Box"
+  guid "52e61687f55367e0057a3a4a4c734e3b"
+  active 1
+  parent -1
+  transform -3.865876 3.8 -3.8794127 0 0 0 1 1 1 1
+  mesh "Cube" 0.5284848 0.4608639 0.89508706 1 0 "" 0
+  material 0 0 0 0 16 0 "" 1 1
+  rigidbody3d 0 1 1 0 0 0 0 0 0 0.5 0.05 1 1 0
+  boxcollider3d 1 1 1 0 0 0 0 0 0
+  comporder "MeshRenderer" "BoxCollider3D" "Rigidbody3D"
+end
+gameobject 224 "Ball"
+  guid "ba6c7d95643ff4b34b28b3d209b0cf68"
+  active 1
+  parent -1
+  transform -2.6892936 3.8 -3.8398461 0 0 0 1 1 1 1
+  mesh "Sphere" 0.5090362 0.65805095 0.30996606 1 0 "" 0
+  material 0 0 0 0 16 0 "" 1 1
+  rigidbody3d 0 1 1 0 0 0 0 0 0 0.5 0.05 1 1 0
+  spherecollider3d 0.5 0 0 0 0 0 0
+  comporder "MeshRenderer" "SphereCollider3D" "Rigidbody3D"
+end
+gameobject 225 "Box"
+  guid "f71b171a2baab44719c747ae7a191f55"
+  active 1
+  parent -1
+  transform -1.2015097 3.8 -3.9224625 0 0 0 1 1 1 1
+  mesh "Cube" 0.3363456 0.8852762 0.4902928 1 0 "" 0
+  material 0 0 0 0 16 0 "" 1 1
+  rigidbody3d 0 1 1 0 0 0 0 0 0 0.5 0.05 1 1 0
+  boxcollider3d 1 1 1 0 0 0 0 0 0
+  comporder "MeshRenderer" "BoxCollider3D" "Rigidbody3D"
+end
+gameobject 226 "Ball"
+  guid "2358fa7931d63a3eddc61c2b36a8bb6f"
+  active 1
+  parent -1
+  transform -0.08014431 3.8 -3.974819 0 0 0 1 1 1 1
+  mesh "Sphere" 0.5336688 0.45323977 0.7963879 1 0 "" 0
+  material 0 0 0 0 16 0 "" 1 1
+  rigidbody3d 0 1 1 0 0 0 0 0 0 0.5 0.05 1 1 0
+  spherecollider3d 0.5 0 0 0 0 0 0
+  comporder "MeshRenderer" "SphereCollider3D" "Rigidbody3D"
+end
+gameobject 227 "Box"
+  guid "e683f477e1f4a3307d3f412237c75d9b"
+  active 1
+  parent -1
+  transform 1.4374665 3.8 -3.7816422 0 0 0 1 1 1 1
+  mesh "Cube" 0.5386396 0.83242655 0.49997082 1 0 "" 0
+  material 0 0 0 0 16 0 "" 1 1
+  rigidbody3d 0 1 1 0 0 0 0 0 0 0.5 0.05 1 1 0
+  boxcollider3d 1 1 1 0 0 0 0 0 0
+  comporder "MeshRenderer" "BoxCollider3D" "Rigidbody3D"
+end
+gameobject 228 "Ball"
+  guid "15d1d48907764c2717c1c90827e488cc"
+  active 1
+  parent -1
+  transform 2.7967265 3.8 -3.9754 0 0 0 1 1 1 1
+  mesh "Sphere" 0.54489356 0.6963819 0.35353142 1 0 "" 0
+  material 0 0 0 0 16 0 "" 1 1
+  rigidbody3d 0 1 1 0 0 0 0 0 0 0.5 0.05 1 1 0
+  spherecollider3d 0.5 0 0 0 0 0 0
+  comporder "MeshRenderer" "SphereCollider3D" "Rigidbody3D"
+end
+gameobject 229 "Box"
+  guid "ba2ea8f1c9adbc1ba8136ace1209043c"
+  active 1
+  parent -1
+  transform 3.8921957 3.8 -3.9737556 0 0 0 1 1 1 1
+  mesh "Cube" 0.542152 0.66740793 0.8840588 1 0 "" 0
+  material 0 0 0 0 16 0 "" 1 1
+  rigidbody3d 0 1 1 0 0 0 0 0 0 0.5 0.05 1 1 0
+  boxcollider3d 1 1 1 0 0 0 0 0 0
+  comporder "MeshRenderer" "BoxCollider3D" "Rigidbody3D"
+end
+gameobject 230 "Ball"
+  guid "e77c746acbb8aae9b761b7bfaac33d17"
+  active 1
+  parent -1
+  transform 5.3873377 3.8 -3.7377768 0 0 0 1 1 1 1
+  mesh "Sphere" 0.4762255 0.8746153 0.700391 1 0 "" 0
+  material 0 0 0 0 16 0 "" 1 1
+  rigidbody3d 0 1 1 0 0 0 0 0 0 0.5 0.05 1 1 0
+  spherecollider3d 0.5 0 0 0 0 0 0
+  comporder "MeshRenderer" "SphereCollider3D" "Rigidbody3D"
+end
+gameobject 231 "Box"
+  guid "238b56bc97a3aa7b02ed6472804216d3"
+  active 1
+  parent -1
+  transform -6.6564407 3.8 -2.4247606 0 0 0 1 1 1 1
+  mesh "Cube" 0.6105921 0.6704005 0.86439437 1 0 "" 0
+  material 0 0 0 0 16 0 "" 1 1
+  rigidbody3d 0 1 1 0 0 0 0 0 0 0.5 0.05 1 1 0
+  boxcollider3d 1 1 1 0 0 0 0 0 0
+  comporder "MeshRenderer" "BoxCollider3D" "Rigidbody3D"
+end
+gameobject 232 "Ball"
+  guid "5ccd4160dbf9e8cab8ecb00b24b4427e"
+  active 1
+  parent -1
+  transform -5.31902 3.8 -2.6721134 0 0 0 1 1 1 1
+  mesh "Sphere" 0.477942 0.41361827 0.7793696 1 0 "" 0
+  material 0 0 0 0 16 0 "" 1 1
+  rigidbody3d 0 1 1 0 0 0 0 0 0 0.5 0.05 1 1 0
+  spherecollider3d 0.5 0 0 0 0 0 0
+  comporder "MeshRenderer" "SphereCollider3D" "Rigidbody3D"
+end
+gameobject 233 "Box"
+  guid "2f1aee43b0e0b3ac97c6eb18f3916eda"
+  active 1
+  parent -1
+  transform -3.7938693 3.8 -2.5304022 0 0 0 1 1 1 1
+  mesh "Cube" 0.71547467 0.8420056 0.55594134 1 0 "" 0
+  material 0 0 0 0 16 0 "" 1 1
+  rigidbody3d 0 1 1 0 0 0 0 0 0 0.5 0.05 1 1 0
+  boxcollider3d 1 1 1 0 0 0 0 0 0
+  comporder "MeshRenderer" "BoxCollider3D" "Rigidbody3D"
+end
+gameobject 234 "Ball"
+  guid "262cdd75eebca692a3c74ca6eaf2599a"
+  active 1
+  parent -1
+  transform -2.4503202 3.8 -2.579712 0 0 0 1 1 1 1
+  mesh "Sphere" 0.3284424 0.7362913 0.4960034 1 0 "" 0
+  material 0 0 0 0 16 0 "" 1 1
+  rigidbody3d 0 1 1 0 0 0 0 0 0 0.5 0.05 1 1 0
+  spherecollider3d 0.5 0 0 0 0 0 0
+  comporder "MeshRenderer" "SphereCollider3D" "Rigidbody3D"
+end
+gameobject 235 "Box"
+  guid "3dd5cb316a55cd2a3ff880f63c1f2940"
+  active 1
+  parent -1
+  transform -1.4598539 3.8 -2.723237 0 0 0 1 1 1 1
+  mesh "Cube" 0.32317936 0.8039559 0.6202179 1 0 "" 0
+  material 0 0 0 0 16 0 "" 1 1
+  rigidbody3d 0 1 1 0 0 0 0 0 0 0.5 0.05 1 1 0
+  boxcollider3d 1 1 1 0 0 0 0 0 0
+  comporder "MeshRenderer" "BoxCollider3D" "Rigidbody3D"
+end
+gameobject 236 "Ball"
+  guid "42b4ca797a4d46544d59d717212337fa"
+  active 1
+  parent -1
+  transform -0.14410797 3.8 -2.4795732 0 0 0 1 1 1 1
+  mesh "Sphere" 0.7234267 0.60969007 0.40925336 1 0 "" 0
+  material 0 0 0 0 16 0 "" 1 1
+  rigidbody3d 0 1 1 0 0 0 0 0 0 0.5 0.05 1 1 0
+  spherecollider3d 0.5 0 0 0 0 0 0
+  comporder "MeshRenderer" "SphereCollider3D" "Rigidbody3D"
+end
+gameobject 237 "Box"
+  guid "089c589456f3a9761b55b43add02e0d7"
+  active 1
+  parent -1
+  transform 1.2402384 3.8 -2.6899824 0 0 0 1 1 1 1
+  mesh "Cube" 0.47535044 0.8279354 0.47710258 1 0 "" 0
+  material 0 0 0 0 16 0 "" 1 1
+  rigidbody3d 0 1 1 0 0 0 0 0 0 0.5 0.05 1 1 0
+  boxcollider3d 1 1 1 0 0 0 0 0 0
+  comporder "MeshRenderer" "BoxCollider3D" "Rigidbody3D"
+end
+gameobject 238 "Ball"
+  guid "68233fa83105f29046e5400dcce58292"
+  active 1
+  parent -1
+  transform 2.7830176 3.8 -2.6771894 0 0 0 1 1 1 1
+  mesh "Sphere" 0.3728728 0.43492663 0.62617487 1 0 "" 0
+  material 0 0 0 0 16 0 "" 1 1
+  rigidbody3d 0 1 1 0 0 0 0 0 0 0.5 0.05 1 1 0
+  spherecollider3d 0.5 0 0 0 0 0 0
+  comporder "MeshRenderer" "SphereCollider3D" "Rigidbody3D"
+end
+gameobject 239 "Box"
+  guid "341f09a166e8e438c2ec97e261d59918"
+  active 1
+  parent -1
+  transform 3.8773928 3.8 -2.7115583 0 0 0 1 1 1 1
+  mesh "Cube" 0.5004928 0.3741838 0.45213085 1 0 "" 0
+  material 0 0 0 0 16 0 "" 1 1
+  rigidbody3d 0 1 1 0 0 0 0 0 0 0.5 0.05 1 1 0
+  boxcollider3d 1 1 1 0 0 0 0 0 0
+  comporder "MeshRenderer" "BoxCollider3D" "Rigidbody3D"
+end
+gameobject 240 "Ball"
+  guid "7520fe7d78ea0ca2b6d4d6afed9e3e14"
+  active 1
+  parent -1
+  transform 5.377667 3.8 -2.6441863 0 0 0 1 1 1 1
+  mesh "Sphere" 0.51852745 0.51504546 0.33351982 1 0 "" 0
+  material 0 0 0 0 16 0 "" 1 1
+  rigidbody3d 0 1 1 0 0 0 0 0 0 0.5 0.05 1 1 0
+  spherecollider3d 0.5 0 0 0 0 0 0
+  comporder "MeshRenderer" "SphereCollider3D" "Rigidbody3D"
+end
+gameobject 241 "Box"
+  guid "15fd1939b03d6bdf97c54047dceae11f"
+  active 1
+  parent -1
+  transform -6.6571608 3.8 -1.4102917 0 0 0 1 1 1 1
+  mesh "Cube" 0.5919448 0.5485738 0.8625865 1 0 "" 0
+  material 0 0 0 0 16 0 "" 1 1
+  rigidbody3d 0 1 1 0 0 0 0 0 0 0.5 0.05 1 1 0
+  boxcollider3d 1 1 1 0 0 0 0 0 0
+  comporder "MeshRenderer" "BoxCollider3D" "Rigidbody3D"
+end
+gameobject 242 "Ball"
+  guid "d818cb377937e1b66082ca393de1763c"
+  active 1
+  parent -1
+  transform -5.162516 3.8 -1.154362 0 0 0 1 1 1 1
+  mesh "Sphere" 0.54612637 0.85358006 0.8818158 1 0 "" 0
+  material 0 0 0 0 16 0 "" 1 1
+  rigidbody3d 0 1 1 0 0 0 0 0 0 0.5 0.05 1 1 0
+  spherecollider3d 0.5 0 0 0 0 0 0
+  comporder "MeshRenderer" "SphereCollider3D" "Rigidbody3D"
+end
+gameobject 243 "Box"
+  guid "f7213fb12b6b217cbb0bcc75d7741771"
+  active 1
+  parent -1
+  transform -3.9390674 3.8 -1.1235671 0 0 0 1 1 1 1
+  mesh "Cube" 0.3224504 0.4802451 0.8156089 1 0 "" 0
+  material 0 0 0 0 16 0 "" 1 1
+  rigidbody3d 0 1 1 0 0 0 0 0 0 0.5 0.05 1 1 0
+  boxcollider3d 1 1 1 0 0 0 0 0 0
+  comporder "MeshRenderer" "BoxCollider3D" "Rigidbody3D"
+end
+gameobject 244 "Ball"
+  guid "6e5b67fe19d8ef441a028b605a1dec5f"
+  active 1
+  parent -1
+  transform -2.4495144 3.8 -1.2047411 0 0 0 1 1 1 1
+  mesh "Sphere" 0.8128736 0.6385917 0.51024634 1 0 "" 0
+  material 0 0 0 0 16 0 "" 1 1
+  rigidbody3d 0 1 1 0 0 0 0 0 0 0.5 0.05 1 1 0
+  spherecollider3d 0.5 0 0 0 0 0 0
+  comporder "MeshRenderer" "SphereCollider3D" "Rigidbody3D"
+end
+gameobject 245 "Box"
+  guid "efe7a291c2a32bcc27f6a85fa97ae84c"
+  active 1
+  parent -1
+  transform -1.418517 3.8 -1.358399 0 0 0 1 1 1 1
+  mesh "Cube" 0.39189368 0.8535007 0.5578896 1 0 "" 0
+  material 0 0 0 0 16 0 "" 1 1
+  rigidbody3d 0 1 1 0 0 0 0 0 0 0.5 0.05 1 1 0
+  boxcollider3d 1 1 1 0 0 0 0 0 0
+  comporder "MeshRenderer" "BoxCollider3D" "Rigidbody3D"
+end
+gameobject 246 "Ball"
+  guid "3cc49ebfe800cc3592d2afd58bdfcb7f"
+  active 1
+  parent -1
+  transform 0.1577376 3.8 -1.1503876 0 0 0 1 1 1 1
+  mesh "Sphere" 0.42707628 0.6541898 0.80066967 1 0 "" 0
+  material 0 0 0 0 16 0 "" 1 1
+  rigidbody3d 0 1 1 0 0 0 0 0 0 0.5 0.05 1 1 0
+  spherecollider3d 0.5 0 0 0 0 0 0
+  comporder "MeshRenderer" "SphereCollider3D" "Rigidbody3D"
+end
+gameobject 247 "Box"
+  guid "02ca7c7f0e4853940f2c6282b1f6335e"
+  active 1
+  parent -1
+  transform 1.3494551 3.8 -1.4871758 0 0 0 1 1 1 1
+  mesh "Cube" 0.6459259 0.782583 0.41002676 1 0 "" 0
+  material 0 0 0 0 16 0 "" 1 1
+  rigidbody3d 0 1 1 0 0 0 0 0 0 0.5 0.05 1 1 0
+  boxcollider3d 1 1 1 0 0 0 0 0 0
+  comporder "MeshRenderer" "BoxCollider3D" "Rigidbody3D"
+end
+gameobject 248 "Ball"
+  guid "eb016a96273fe634b9ec92850dc8adf9"
+  active 1
+  parent -1
+  transform 2.774454 3.8 -1.376395 0 0 0 1 1 1 1
+  mesh "Sphere" 0.34318244 0.50925106 0.46590143 1 0 "" 0
+  material 0 0 0 0 16 0 "" 1 1
+  rigidbody3d 0 1 1 0 0 0 0 0 0 0.5 0.05 1 1 0
+  spherecollider3d 0.5 0 0 0 0 0 0
+  comporder "MeshRenderer" "SphereCollider3D" "Rigidbody3D"
+end
+gameobject 249 "Box"
+  guid "120df95cfe905a9800e38ee9752aeb2a"
+  active 1
+  parent -1
+  transform 3.9408064 3.8 -1.2335033 0 0 0 1 1 1 1
+  mesh "Cube" 0.7625897 0.7014196 0.8926325 1 0 "" 0
+  material 0 0 0 0 16 0 "" 1 1
+  rigidbody3d 0 1 1 0 0 0 0 0 0 0.5 0.05 1 1 0
+  boxcollider3d 1 1 1 0 0 0 0 0 0
+  comporder "MeshRenderer" "BoxCollider3D" "Rigidbody3D"
+end
+gameobject 250 "Ball"
+  guid "cd1063410457f616622dfc8be4b3d780"
+  active 1
+  parent -1
+  transform 5.2163625 3.8 -1.2200855 0 0 0 1 1 1 1
+  mesh "Sphere" 0.42816746 0.8006458 0.783288 1 0 "" 0
+  material 0 0 0 0 16 0 "" 1 1
+  rigidbody3d 0 1 1 0 0 0 0 0 0 0.5 0.05 1 1 0
+  spherecollider3d 0.5 0 0 0 0 0 0
+  comporder "MeshRenderer" "SphereCollider3D" "Rigidbody3D"
+end
+gameobject 251 "Box"
+  guid "43ab3d6e77465b463ed1dbdec624a9a0"
+  active 1
+  parent -1
+  transform -6.6139307 3.8 -0.13999104 0 0 0 1 1 1 1
+  mesh "Cube" 0.40512443 0.8000223 0.8962954 1 0 "" 0
+  material 0 0 0 0 16 0 "" 1 1
+  rigidbody3d 0 1 1 0 0 0 0 0 0 0.5 0.05 1 1 0
+  boxcollider3d 1 1 1 0 0 0 0 0 0
+  comporder "MeshRenderer" "BoxCollider3D" "Rigidbody3D"
+end
+gameobject 252 "Ball"
+  guid "81015838ec50133fd3e90ca9ca2d2cae"
+  active 1
+  parent -1
+  transform -5.2866993 3.8 0.043524906 0 0 0 1 1 1 1
+  mesh "Sphere" 0.38945222 0.44339204 0.4717791 1 0 "" 0
+  material 0 0 0 0 16 0 "" 1 1
+  rigidbody3d 0 1 1 0 0 0 0 0 0 0.5 0.05 1 1 0
+  spherecollider3d 0.5 0 0 0 0 0 0
+  comporder "MeshRenderer" "SphereCollider3D" "Rigidbody3D"
+end
+gameobject 253 "Box"
+  guid "96e8f56c0bc488c4b2e0537155d3c9b5"
+  active 1
+  parent -1
+  transform -3.8163865 3.8 -0.03138423 0 0 0 1 1 1 1
+  mesh "Cube" 0.4491201 0.79927295 0.7382519 1 0 "" 0
+  material 0 0 0 0 16 0 "" 1 1
+  rigidbody3d 0 1 1 0 0 0 0 0 0 0.5 0.05 1 1 0
+  boxcollider3d 1 1 1 0 0 0 0 0 0
+  comporder "MeshRenderer" "BoxCollider3D" "Rigidbody3D"
+end
+gameobject 254 "Ball"
+  guid "97cb613e362d390fb37ed3cc757e60a9"
+  active 1
+  parent -1
+  transform -2.6665328 3.8 -0.10658729 0 0 0 1 1 1 1
+  mesh "Sphere" 0.6612576 0.3925578 0.37449294 1 0 "" 0
+  material 0 0 0 0 16 0 "" 1 1
+  rigidbody3d 0 1 1 0 0 0 0 0 0 0.5 0.05 1 1 0
+  spherecollider3d 0.5 0 0 0 0 0 0
+  comporder "MeshRenderer" "SphereCollider3D" "Rigidbody3D"
+end
+gameobject 255 "Box"
+  guid "ba662f8ef2fae6deff873837490241c3"
+  active 1
+  parent -1
+  transform -1.3862171 3.8 0.115152314 0 0 0 1 1 1 1
+  mesh "Cube" 0.68761325 0.8447255 0.6204269 1 0 "" 0
+  material 0 0 0 0 16 0 "" 1 1
+  rigidbody3d 0 1 1 0 0 0 0 0 0 0.5 0.05 1 1 0
+  boxcollider3d 1 1 1 0 0 0 0 0 0
+  comporder "MeshRenderer" "BoxCollider3D" "Rigidbody3D"
+end
+gameobject 256 "Ball"
+  guid "7c3aad967a44ddf24617db36a3f248f8"
+  active 1
+  parent -1
+  transform 0.070424035 3.8 0.19586177 0 0 0 1 1 1 1
+  mesh "Sphere" 0.586282 0.71549535 0.3403744 1 0 "" 0
+  material 0 0 0 0 16 0 "" 1 1
+  rigidbody3d 0 1 1 0 0 0 0 0 0 0.5 0.05 1 1 0
+  spherecollider3d 0.5 0 0 0 0 0 0
+  comporder "MeshRenderer" "SphereCollider3D" "Rigidbody3D"
+end
+gameobject 257 "Box"
+  guid "c5cb1e68d51619bd20b3c1c45c2d4641"
+  active 1
+  parent -1
+  transform 1.4379486 3.8 -0.022693202 0 0 0 1 1 1 1
+  mesh "Cube" 0.8499716 0.6513344 0.4080084 1 0 "" 0
+  material 0 0 0 0 16 0 "" 1 1
+  rigidbody3d 0 1 1 0 0 0 0 0 0 0.5 0.05 1 1 0
+  boxcollider3d 1 1 1 0 0 0 0 0 0
+  comporder "MeshRenderer" "BoxCollider3D" "Rigidbody3D"
+end
+gameobject 258 "Ball"
+  guid "788462a1c10c6c1f03d1991588f54e58"
+  active 1
+  parent -1
+  transform 2.4653194 3.8 0.082246974 0 0 0 1 1 1 1
+  mesh "Sphere" 0.6334368 0.7497734 0.7155446 1 0 "" 0
+  material 0 0 0 0 16 0 "" 1 1
+  rigidbody3d 0 1 1 0 0 0 0 0 0 0.5 0.05 1 1 0
+  spherecollider3d 0.5 0 0 0 0 0 0
+  comporder "MeshRenderer" "SphereCollider3D" "Rigidbody3D"
+end
+gameobject 259 "Box"
+  guid "b3623912474c90a6337a2f918e3ff1fb"
+  active 1
+  parent -1
+  transform 4.04208 3.8 0.15634026 0 0 0 1 1 1 1
+  mesh "Cube" 0.6354005 0.79369485 0.5697925 1 0 "" 0
+  material 0 0 0 0 16 0 "" 1 1
+  rigidbody3d 0 1 1 0 0 0 0 0 0 0.5 0.05 1 1 0
+  boxcollider3d 1 1 1 0 0 0 0 0 0
+  comporder "MeshRenderer" "BoxCollider3D" "Rigidbody3D"
+end
+gameobject 260 "Ball"
+  guid "cb3637d9245921a2f4a88dfcc9c415e3"
+  active 1
+  parent -1
+  transform 5.339237 3.8 0.1401171 0 0 0 1 1 1 1
+  mesh "Sphere" 0.4826265 0.41028175 0.42594668 1 0 "" 0
+  material 0 0 0 0 16 0 "" 1 1
+  rigidbody3d 0 1 1 0 0 0 0 0 0 0.5 0.05 1 1 0
+  spherecollider3d 0.5 0 0 0 0 0 0
+  comporder "MeshRenderer" "SphereCollider3D" "Rigidbody3D"
+end
+gameobject 261 "Box"
+  guid "a1101b604b4b2a4f0b71e08c70f1cd48"
+  active 1
+  parent -1
+  transform -6.5279827 3.8 1.2835915 0 0 0 1 1 1 1
+  mesh "Cube" 0.6410946 0.7681161 0.4775415 1 0 "" 0
+  material 0 0 0 0 16 0 "" 1 1
+  rigidbody3d 0 1 1 0 0 0 0 0 0 0.5 0.05 1 1 0
+  boxcollider3d 1 1 1 0 0 0 0 0 0
+  comporder "MeshRenderer" "BoxCollider3D" "Rigidbody3D"
+end
+gameobject 262 "Ball"
+  guid "28290324ac0422126ac4e82ba080fad1"
+  active 1
+  parent -1
+  transform -5.082883 3.8 1.3944609 0 0 0 1 1 1 1
+  mesh "Sphere" 0.45354813 0.5222963 0.56558776 1 0 "" 0
+  material 0 0 0 0 16 0 "" 1 1
+  rigidbody3d 0 1 1 0 0 0 0 0 0 0.5 0.05 1 1 0
+  spherecollider3d 0.5 0 0 0 0 0 0
+  comporder "MeshRenderer" "SphereCollider3D" "Rigidbody3D"
+end
+gameobject 263 "Box"
+  guid "7e788afd036160bd5bf8aa66d16aee09"
+  active 1
+  parent -1
+  transform -3.8811996 3.8 1.1907338 0 0 0 1 1 1 1
+  mesh "Cube" 0.62625307 0.36716783 0.488033 1 0 "" 0
+  material 0 0 0 0 16 0 "" 1 1
+  rigidbody3d 0 1 1 0 0 0 0 0 0 0.5 0.05 1 1 0
+  boxcollider3d 1 1 1 0 0 0 0 0 0
+  comporder "MeshRenderer" "BoxCollider3D" "Rigidbody3D"
+end
+gameobject 264 "Ball"
+  guid "a3170021e1bf169f4d73c0e6ef7ab303"
+  active 1
+  parent -1
+  transform -2.6174893 3.8 1.1960117 0 0 0 1 1 1 1
+  mesh "Sphere" 0.6747644 0.36199126 0.4219039 1 0 "" 0
+  material 0 0 0 0 16 0 "" 1 1
+  rigidbody3d 0 1 1 0 0 0 0 0 0 0.5 0.05 1 1 0
+  spherecollider3d 0.5 0 0 0 0 0 0
+  comporder "MeshRenderer" "SphereCollider3D" "Rigidbody3D"
+end
+gameobject 265 "Box"
+  guid "4a6299866ff23eab7a57d79ada2a5488"
+  active 1
+  parent -1
+  transform -1.3866005 3.8 1.3526316 0 0 0 1 1 1 1
+  mesh "Cube" 0.33569062 0.369034 0.6299077 1 0 "" 0
+  material 0 0 0 0 16 0 "" 1 1
+  rigidbody3d 0 1 1 0 0 0 0 0 0 0.5 0.05 1 1 0
+  boxcollider3d 1 1 1 0 0 0 0 0 0
+  comporder "MeshRenderer" "BoxCollider3D" "Rigidbody3D"
+end
+gameobject 266 "Ball"
+  guid "d567aeb848b75fcc274c599433f34ba3"
+  active 1
+  parent -1
+  transform -0.069276646 3.8 1.1682537 0 0 0 1 1 1 1
+  mesh "Sphere" 0.42402217 0.76724625 0.3549822 1 0 "" 0
+  material 0 0 0 0 16 0 "" 1 1
+  rigidbody3d 0 1 1 0 0 0 0 0 0 0.5 0.05 1 1 0
+  spherecollider3d 0.5 0 0 0 0 0 0
+  comporder "MeshRenderer" "SphereCollider3D" "Rigidbody3D"
+end
+gameobject 267 "Box"
+  guid "5da4b2956beced8f362e6064b36b9baf"
+  active 1
+  parent -1
+  transform 1.2480854 3.8 1.2813238 0 0 0 1 1 1 1
+  mesh "Cube" 0.6959213 0.6691187 0.5778121 1 0 "" 0
+  material 0 0 0 0 16 0 "" 1 1
+  rigidbody3d 0 1 1 0 0 0 0 0 0 0.5 0.05 1 1 0
+  boxcollider3d 1 1 1 0 0 0 0 0 0
+  comporder "MeshRenderer" "BoxCollider3D" "Rigidbody3D"
+end
+gameobject 268 "Ball"
+  guid "cb2ca5ad3b6a4257e204e995d0f9c853"
+  active 1
+  parent -1
+  transform 2.4768105 3.8 1.3600614 0 0 0 1 1 1 1
+  mesh "Sphere" 0.7531184 0.7431084 0.7957083 1 0 "" 0
+  material 0 0 0 0 16 0 "" 1 1
+  rigidbody3d 0 1 1 0 0 0 0 0 0 0.5 0.05 1 1 0
+  spherecollider3d 0.5 0 0 0 0 0 0
+  comporder "MeshRenderer" "SphereCollider3D" "Rigidbody3D"
+end
+gameobject 269 "Box"
+  guid "e8f15db53af0a5f8761c27a92a0cb3e8"
+  active 1
+  parent -1
+  transform 3.9143085 3.8 1.1711297 0 0 0 1 1 1 1
+  mesh "Cube" 0.46134603 0.3030304 0.48028958 1 0 "" 0
+  material 0 0 0 0 16 0 "" 1 1
+  rigidbody3d 0 1 1 0 0 0 0 0 0 0.5 0.05 1 1 0
+  boxcollider3d 1 1 1 0 0 0 0 0 0
+  comporder "MeshRenderer" "BoxCollider3D" "Rigidbody3D"
+end
+gameobject 270 "Ball"
+  guid "75795668baec6f86748a7e984438a40a"
+  active 1
+  parent -1
+  transform 5.1566586 3.8 1.104189 0 0 0 1 1 1 1
+  mesh "Sphere" 0.6480764 0.7022257 0.78675777 1 0 "" 0
+  material 0 0 0 0 16 0 "" 1 1
+  rigidbody3d 0 1 1 0 0 0 0 0 0 0.5 0.05 1 1 0
+  spherecollider3d 0.5 0 0 0 0 0 0
+  comporder "MeshRenderer" "SphereCollider3D" "Rigidbody3D"
+end
+gameobject 271 "Box"
+  guid "8612309887d0ab64970875a836c7b8ee"
+  active 1
+  parent -1
+  transform -6.3505564 3.8 2.663409 0 0 0 1 1 1 1
+  mesh "Cube" 0.8297015 0.670184 0.6562492 1 0 "" 0
+  material 0 0 0 0 16 0 "" 1 1
+  rigidbody3d 0 1 1 0 0 0 0 0 0 0.5 0.05 1 1 0
+  boxcollider3d 1 1 1 0 0 0 0 0 0
+  comporder "MeshRenderer" "BoxCollider3D" "Rigidbody3D"
+end
+gameobject 272 "Ball"
+  guid "30fbd786899b7ccb2f31c2d6078516cc"
+  active 1
+  parent -1
+  transform -5.130972 3.8 2.5465372 0 0 0 1 1 1 1
+  mesh "Sphere" 0.39181688 0.6734592 0.7491716 1 0 "" 0
+  material 0 0 0 0 16 0 "" 1 1
+  rigidbody3d 0 1 1 0 0 0 0 0 0 0.5 0.05 1 1 0
+  spherecollider3d 0.5 0 0 0 0 0 0
+  comporder "MeshRenderer" "SphereCollider3D" "Rigidbody3D"
+end
+gameobject 273 "Box"
+  guid "a72615abd86da0804ccf947a164df5a8"
+  active 1
+  parent -1
+  transform -3.8768358 3.8 2.5278802 0 0 0 1 1 1 1
+  mesh "Cube" 0.8155416 0.32744473 0.30049205 1 0 "" 0
+  material 0 0 0 0 16 0 "" 1 1
+  rigidbody3d 0 1 1 0 0 0 0 0 0 0.5 0.05 1 1 0
+  boxcollider3d 1 1 1 0 0 0 0 0 0
+  comporder "MeshRenderer" "BoxCollider3D" "Rigidbody3D"
+end
+gameobject 274 "Ball"
+  guid "452f494aaaf06b08c2f0fd65ed25c982"
+  active 1
+  parent -1
+  transform -2.6672444 3.8 2.4581695 0 0 0 1 1 1 1
+  mesh "Sphere" 0.65540516 0.689015 0.3820992 1 0 "" 0
+  material 0 0 0 0 16 0 "" 1 1
+  rigidbody3d 0 1 1 0 0 0 0 0 0 0.5 0.05 1 1 0
+  spherecollider3d 0.5 0 0 0 0 0 0
+  comporder "MeshRenderer" "SphereCollider3D" "Rigidbody3D"
+end
+gameobject 275 "Box"
+  guid "fd4abdd5ff6d95375632db27c372bc6f"
+  active 1
+  parent -1
+  transform -1.340146 3.8 2.5208125 0 0 0 1 1 1 1
+  mesh "Cube" 0.3674383 0.44489753 0.7842949 1 0 "" 0
+  material 0 0 0 0 16 0 "" 1 1
+  rigidbody3d 0 1 1 0 0 0 0 0 0 0.5 0.05 1 1 0
+  boxcollider3d 1 1 1 0 0 0 0 0 0
+  comporder "MeshRenderer" "BoxCollider3D" "Rigidbody3D"
+end
+gameobject 276 "Ball"
+  guid "f083db66d1362f344cd2578e29891532"
+  active 1
+  parent -1
+  transform -0.10500906 3.8 2.5351157 0 0 0 1 1 1 1
+  mesh "Sphere" 0.85191077 0.79892546 0.78020597 1 0 "" 0
+  material 0 0 0 0 16 0 "" 1 1
+  rigidbody3d 0 1 1 0 0 0 0 0 0 0.5 0.05 1 1 0
+  spherecollider3d 0.5 0 0 0 0 0 0
+  comporder "MeshRenderer" "SphereCollider3D" "Rigidbody3D"
+end
+gameobject 277 "Box"
+  guid "648aa8da1706139611b9c07a19610042"
+  active 1
+  parent -1
+  transform 1.1553038 3.8 2.760526 0 0 0 1 1 1 1
+  mesh "Cube" 0.68611765 0.5250914 0.4950858 1 0 "" 0
+  material 0 0 0 0 16 0 "" 1 1
+  rigidbody3d 0 1 1 0 0 0 0 0 0 0.5 0.05 1 1 0
+  boxcollider3d 1 1 1 0 0 0 0 0 0
+  comporder "MeshRenderer" "BoxCollider3D" "Rigidbody3D"
+end
+gameobject 278 "Ball"
+  guid "3feba17707780d48bb336d080de0e02e"
+  active 1
+  parent -1
+  transform 2.6321256 3.8 2.4449663 0 0 0 1 1 1 1
+  mesh "Sphere" 0.5616953 0.47736302 0.8752959 1 0 "" 0
+  material 0 0 0 0 16 0 "" 1 1
+  rigidbody3d 0 1 1 0 0 0 0 0 0 0.5 0.05 1 1 0
+  spherecollider3d 0.5 0 0 0 0 0 0
+  comporder "MeshRenderer" "SphereCollider3D" "Rigidbody3D"
+end
+gameobject 279 "Box"
+  guid "0eacff55ce1bc95cd2003a9cbe672695"
+  active 1
+  parent -1
+  transform 3.859055 3.8 2.6988454 0 0 0 1 1 1 1
+  mesh "Cube" 0.8315905 0.8068161 0.7671865 1 0 "" 0
+  material 0 0 0 0 16 0 "" 1 1
+  rigidbody3d 0 1 1 0 0 0 0 0 0 0.5 0.05 1 1 0
+  boxcollider3d 1 1 1 0 0 0 0 0 0
+  comporder "MeshRenderer" "BoxCollider3D" "Rigidbody3D"
+end
+gameobject 280 "Ball"
+  guid "35f55427466eabf6e1addaee71d5811b"
+  active 1
+  parent -1
+  transform 5.241262 3.8 2.7151968 0 0 0 1 1 1 1
+  mesh "Sphere" 0.45992875 0.38499764 0.8248387 1 0 "" 0
+  material 0 0 0 0 16 0 "" 1 1
+  rigidbody3d 0 1 1 0 0 0 0 0 0 0.5 0.05 1 1 0
+  spherecollider3d 0.5 0 0 0 0 0 0
+  comporder "MeshRenderer" "SphereCollider3D" "Rigidbody3D"
+end
+gameobject 281 "Box"
+  guid "1a345e5079137386d1b07905aac4e247"
+  active 1
+  parent -1
+  transform -6.5223875 3.8 3.8551075 0 0 0 1 1 1 1
+  mesh "Cube" 0.30772188 0.57216537 0.85044414 1 0 "" 0
+  material 0 0 0 0 16 0 "" 1 1
+  rigidbody3d 0 1 1 0 0 0 0 0 0 0.5 0.05 1 1 0
+  boxcollider3d 1 1 1 0 0 0 0 0 0
+  comporder "MeshRenderer" "BoxCollider3D" "Rigidbody3D"
+end
+gameobject 282 "Ball"
+  guid "f6a163be378d9390829a7d50bb4ed6a5"
+  active 1
+  parent -1
+  transform -5.00612 3.8 3.7644188 0 0 0 1 1 1 1
+  mesh "Sphere" 0.5974574 0.39764282 0.51629853 1 0 "" 0
+  material 0 0 0 0 16 0 "" 1 1
+  rigidbody3d 0 1 1 0 0 0 0 0 0 0.5 0.05 1 1 0
+  spherecollider3d 0.5 0 0 0 0 0 0
+  comporder "MeshRenderer" "SphereCollider3D" "Rigidbody3D"
+end
+gameobject 283 "Box"
+  guid "14cad274566402818e2f0fe9c059a6e5"
+  active 1
+  parent -1
+  transform -3.891716 3.8 3.8778517 0 0 0 1 1 1 1
+  mesh "Cube" 0.7757888 0.580868 0.40114343 1 0 "" 0
+  material 0 0 0 0 16 0 "" 1 1
+  rigidbody3d 0 1 1 0 0 0 0 0 0 0.5 0.05 1 1 0
+  boxcollider3d 1 1 1 0 0 0 0 0 0
+  comporder "MeshRenderer" "BoxCollider3D" "Rigidbody3D"
+end
+gameobject 284 "Ball"
+  guid "efe9e8ef86078265259853f268c5abdd"
+  active 1
+  parent -1
+  transform -2.7241275 3.8 3.747533 0 0 0 1 1 1 1
+  mesh "Sphere" 0.40893984 0.5336117 0.7595533 1 0 "" 0
+  material 0 0 0 0 16 0 "" 1 1
+  rigidbody3d 0 1 1 0 0 0 0 0 0 0.5 0.05 1 1 0
+  spherecollider3d 0.5 0 0 0 0 0 0
+  comporder "MeshRenderer" "SphereCollider3D" "Rigidbody3D"
+end
+gameobject 285 "Box"
+  guid "49259eee655e99959460c069dd580217"
+  active 1
+  parent -1
+  transform -1.2246418 3.8 3.742071 0 0 0 1 1 1 1
+  mesh "Cube" 0.7408483 0.52223307 0.33700943 1 0 "" 0
+  material 0 0 0 0 16 0 "" 1 1
+  rigidbody3d 0 1 1 0 0 0 0 0 0 0.5 0.05 1 1 0
+  boxcollider3d 1 1 1 0 0 0 0 0 0
+  comporder "MeshRenderer" "BoxCollider3D" "Rigidbody3D"
+end
+gameobject 286 "Ball"
+  guid "238006137350b82a9c9e4e83363f15b3"
+  active 1
+  parent -1
+  transform -0.110335164 3.8 3.85641 0 0 0 1 1 1 1
+  mesh "Sphere" 0.62255335 0.6250503 0.3670082 1 0 "" 0
+  material 0 0 0 0 16 0 "" 1 1
+  rigidbody3d 0 1 1 0 0 0 0 0 0 0.5 0.05 1 1 0
+  spherecollider3d 0.5 0 0 0 0 0 0
+  comporder "MeshRenderer" "SphereCollider3D" "Rigidbody3D"
+end
+gameobject 287 "Box"
+  guid "c8300c0c82eedab50167a3c8f649acbf"
+  active 1
+  parent -1
+  transform 1.285838 3.8 4.015992 0 0 0 1 1 1 1
+  mesh "Cube" 0.4944857 0.4188388 0.76051056 1 0 "" 0
+  material 0 0 0 0 16 0 "" 1 1
+  rigidbody3d 0 1 1 0 0 0 0 0 0 0.5 0.05 1 1 0
+  boxcollider3d 1 1 1 0 0 0 0 0 0
+  comporder "MeshRenderer" "BoxCollider3D" "Rigidbody3D"
+end
+gameobject 288 "Ball"
+  guid "6328b3a924993d027a6920e9af68f1ce"
+  active 1
+  parent -1
+  transform 2.4208784 3.8 3.7213953 0 0 0 1 1 1 1
+  mesh "Sphere" 0.6360404 0.8957792 0.62162113 1 0 "" 0
+  material 0 0 0 0 16 0 "" 1 1
+  rigidbody3d 0 1 1 0 0 0 0 0 0 0.5 0.05 1 1 0
+  spherecollider3d 0.5 0 0 0 0 0 0
+  comporder "MeshRenderer" "SphereCollider3D" "Rigidbody3D"
+end
+gameobject 289 "Box"
+  guid "8e2778fc73e2a0b9a299788fd38b4295"
+  active 1
+  parent -1
+  transform 3.961136 3.8 4.0860023 0 0 0 1 1 1 1
+  mesh "Cube" 0.44979978 0.7816996 0.7767422 1 0 "" 0
+  material 0 0 0 0 16 0 "" 1 1
+  rigidbody3d 0 1 1 0 0 0 0 0 0 0.5 0.05 1 1 0
+  boxcollider3d 1 1 1 0 0 0 0 0 0
+  comporder "MeshRenderer" "BoxCollider3D" "Rigidbody3D"
+end
+gameobject 290 "Ball"
+  guid "919f68c7a5dc0e2fb0f1fdbc6ca4a491"
+  active 1
+  parent -1
+  transform 5.3676057 3.8 3.963386 0 0 0 1 1 1 1
+  mesh "Sphere" 0.88745344 0.5194026 0.78299284 1 0 "" 0
+  material 0 0 0 0 16 0 "" 1 1
+  rigidbody3d 0 1 1 0 0 0 0 0 0 0.5 0.05 1 1 0
+  spherecollider3d 0.5 0 0 0 0 0 0
+  comporder "MeshRenderer" "SphereCollider3D" "Rigidbody3D"
+end
+gameobject 291 "Box"
+  guid "34d588ef2af08e6e94a8e0fa672a693b"
+  active 1
+  parent -1
+  transform -6.3402314 3.8 5.1139936 0 0 0 1 1 1 1
+  mesh "Cube" 0.82761484 0.42818248 0.5203401 1 0 "" 0
+  material 0 0 0 0 16 0 "" 1 1
+  rigidbody3d 0 1 1 0 0 0 0 0 0 0.5 0.05 1 1 0
+  boxcollider3d 1 1 1 0 0 0 0 0 0
+  comporder "MeshRenderer" "BoxCollider3D" "Rigidbody3D"
+end
+gameobject 292 "Ball"
+  guid "c0536e47765ee3fa2610122f69fe6a35"
+  active 1
+  parent -1
+  transform -5.035995 3.8 5.379695 0 0 0 1 1 1 1
+  mesh "Sphere" 0.3621207 0.30323973 0.79402757 1 0 "" 0
+  material 0 0 0 0 16 0 "" 1 1
+  rigidbody3d 0 1 1 0 0 0 0 0 0 0.5 0.05 1 1 0
+  spherecollider3d 0.5 0 0 0 0 0 0
+  comporder "MeshRenderer" "SphereCollider3D" "Rigidbody3D"
+end
+gameobject 293 "Box"
+  guid "2b0e4452b4c602ce4ab9fffcdda62a96"
+  active 1
+  parent -1
+  transform -3.760169 3.8 5.1670365 0 0 0 1 1 1 1
+  mesh "Cube" 0.5431763 0.86309546 0.51586765 1 0 "" 0
+  material 0 0 0 0 16 0 "" 1 1
+  rigidbody3d 0 1 1 0 0 0 0 0 0 0.5 0.05 1 1 0
+  boxcollider3d 1 1 1 0 0 0 0 0 0
+  comporder "MeshRenderer" "BoxCollider3D" "Rigidbody3D"
+end
+gameobject 294 "Ball"
+  guid "6d16845ff15cfda32bc2df9311accbd9"
+  active 1
+  parent -1
+  transform -2.5655615 3.8 5.139875 0 0 0 1 1 1 1
+  mesh "Sphere" 0.8349784 0.44114774 0.69670177 1 0 "" 0
+  material 0 0 0 0 16 0 "" 1 1
+  rigidbody3d 0 1 1 0 0 0 0 0 0 0.5 0.05 1 1 0
+  spherecollider3d 0.5 0 0 0 0 0 0
+  comporder "MeshRenderer" "SphereCollider3D" "Rigidbody3D"
+end
+gameobject 295 "Box"
+  guid "9e6868a9c4dac5087823751bcfbf3889"
+  active 1
+  parent -1
+  transform -1.2508099 3.8 5.3469305 0 0 0 1 1 1 1
+  mesh "Cube" 0.48116165 0.35019767 0.7284322 1 0 "" 0
+  material 0 0 0 0 16 0 "" 1 1
+  rigidbody3d 0 1 1 0 0 0 0 0 0 0.5 0.05 1 1 0
+  boxcollider3d 1 1 1 0 0 0 0 0 0
+  comporder "MeshRenderer" "BoxCollider3D" "Rigidbody3D"
+end
+gameobject 296 "Ball"
+  guid "20e159276b707c574c0eaa8583ead26d"
+  active 1
+  parent -1
+  transform 0.129028 3.8 5.2966847 0 0 0 1 1 1 1
+  mesh "Sphere" 0.65712 0.44700766 0.8117769 1 0 "" 0
+  material 0 0 0 0 16 0 "" 1 1
+  rigidbody3d 0 1 1 0 0 0 0 0 0 0.5 0.05 1 1 0
+  spherecollider3d 0.5 0 0 0 0 0 0
+  comporder "MeshRenderer" "SphereCollider3D" "Rigidbody3D"
+end
+gameobject 297 "Box"
+  guid "db2e7802666fa68c6d7c0430b52ed073"
+  active 1
+  parent -1
+  transform 1.4208481 3.8 5.2101717 0 0 0 1 1 1 1
+  mesh "Cube" 0.6122427 0.47578704 0.7793652 1 0 "" 0
+  material 0 0 0 0 16 0 "" 1 1
+  rigidbody3d 0 1 1 0 0 0 0 0 0 0.5 0.05 1 1 0
+  boxcollider3d 1 1 1 0 0 0 0 0 0
+  comporder "MeshRenderer" "BoxCollider3D" "Rigidbody3D"
+end
+gameobject 298 "Ball"
+  guid "e9dffa40abe49fe84b70c82ee8b33879"
+  active 1
+  parent -1
+  transform 2.7333457 3.8 5.101393 0 0 0 1 1 1 1
+  mesh "Sphere" 0.55330956 0.48160565 0.70235467 1 0 "" 0
+  material 0 0 0 0 16 0 "" 1 1
+  rigidbody3d 0 1 1 0 0 0 0 0 0 0.5 0.05 1 1 0
+  spherecollider3d 0.5 0 0 0 0 0 0
+  comporder "MeshRenderer" "SphereCollider3D" "Rigidbody3D"
+end
+gameobject 299 "Box"
+  guid "330e58b79b0acc3643f51adf7f69cbea"
+  active 1
+  parent -1
+  transform 3.961749 3.8 5.3283615 0 0 0 1 1 1 1
+  mesh "Cube" 0.5053828 0.78355074 0.6280056 1 0 "" 0
+  material 0 0 0 0 16 0 "" 1 1
+  rigidbody3d 0 1 1 0 0 0 0 0 0 0.5 0.05 1 1 0
+  boxcollider3d 1 1 1 0 0 0 0 0 0
+  comporder "MeshRenderer" "BoxCollider3D" "Rigidbody3D"
+end
+gameobject 300 "Ball"
+  guid "9202efbe75d071f6861cd50e04d25a05"
+  active 1
+  parent -1
+  transform 5.2004256 3.8 5.2075043 0 0 0 1 1 1 1
+  mesh "Sphere" 0.50948423 0.40308145 0.71025884 1 0 "" 0
+  material 0 0 0 0 16 0 "" 1 1
+  rigidbody3d 0 1 1 0 0 0 0 0 0 0.5 0.05 1 1 0
+  spherecollider3d 0.5 0 0 0 0 0 0
+  comporder "MeshRenderer" "SphereCollider3D" "Rigidbody3D"
+end
+gameobject 301 "Box"
+  guid "2c1cfe096b50e9257033463a55204bff"
+  active 1
+  parent -1
+  transform -6.4981756 5.2 -6.3890004 0 0 0 1 1 1 1
+  mesh "Cube" 0.44075155 0.5335555 0.7846724 1 0 "" 0
+  material 0 0 0 0 16 0 "" 1 1
+  rigidbody3d 0 1 1 0 0 0 0 0 0 0.5 0.05 1 1 0
+  boxcollider3d 1 1 1 0 0 0 0 0 0
+  comporder "MeshRenderer" "BoxCollider3D" "Rigidbody3D"
+end
+gameobject 302 "Ball"
+  guid "2835885dee4b959fa789562f04e8f2ae"
+  active 1
+  parent -1
+  transform -5.3427896 5.2 -6.367773 0 0 0 1 1 1 1
+  mesh "Sphere" 0.3659345 0.893575 0.55520576 1 0 "" 0
+  material 0 0 0 0 16 0 "" 1 1
+  rigidbody3d 0 1 1 0 0 0 0 0 0 0.5 0.05 1 1 0
+  spherecollider3d 0.5 0 0 0 0 0 0
+  comporder "MeshRenderer" "SphereCollider3D" "Rigidbody3D"
+end
+gameobject 303 "Box"
+  guid "6996f34e357bca4a836754f7d7f219b4"
+  active 1
+  parent -1
+  transform -3.782425 5.2 -6.358389 0 0 0 1 1 1 1
+  mesh "Cube" 0.84784067 0.725647 0.6665358 1 0 "" 0
+  material 0 0 0 0 16 0 "" 1 1
+  rigidbody3d 0 1 1 0 0 0 0 0 0 0.5 0.05 1 1 0
+  boxcollider3d 1 1 1 0 0 0 0 0 0
+  comporder "MeshRenderer" "BoxCollider3D" "Rigidbody3D"
+end
+gameobject 304 "Ball"
+  guid "44b07f9c8fde18799430e33c79a5d32e"
+  active 1
+  parent -1
+  transform -2.6163177 5.2 -6.459457 0 0 0 1 1 1 1
+  mesh "Sphere" 0.8457292 0.8822348 0.6612003 1 0 "" 0
+  material 0 0 0 0 16 0 "" 1 1
+  rigidbody3d 0 1 1 0 0 0 0 0 0 0.5 0.05 1 1 0
+  spherecollider3d 0.5 0 0 0 0 0 0
+  comporder "MeshRenderer" "SphereCollider3D" "Rigidbody3D"
+end
+gameobject 305 "Box"
+  guid "be6287c9064117da1221d5218b88d806"
+  active 1
+  parent -1
+  transform -1.2598152 5.2 -6.3665767 0 0 0 1 1 1 1
+  mesh "Cube" 0.49652797 0.6037235 0.30250704 1 0 "" 0
+  material 0 0 0 0 16 0 "" 1 1
+  rigidbody3d 0 1 1 0 0 0 0 0 0 0.5 0.05 1 1 0
+  boxcollider3d 1 1 1 0 0 0 0 0 0
+  comporder "MeshRenderer" "BoxCollider3D" "Rigidbody3D"
+end
+gameobject 306 "Ball"
+  guid "03d8bd4029b6b86f11da900769550275"
+  active 1
+  parent -1
+  transform 0.07341252 5.2 -6.44371 0 0 0 1 1 1 1
+  mesh "Sphere" 0.36286458 0.86595803 0.7054808 1 0 "" 0
+  material 0 0 0 0 16 0 "" 1 1
+  rigidbody3d 0 1 1 0 0 0 0 0 0 0.5 0.05 1 1 0
+  spherecollider3d 0.5 0 0 0 0 0 0
+  comporder "MeshRenderer" "SphereCollider3D" "Rigidbody3D"
+end
+gameobject 307 "Box"
+  guid "0720d7731adbd1f9abb69998a3ff75c1"
+  active 1
+  parent -1
+  transform 1.3344196 5.2 -6.416357 0 0 0 1 1 1 1
+  mesh "Cube" 0.32458445 0.5958508 0.80557024 1 0 "" 0
+  material 0 0 0 0 16 0 "" 1 1
+  rigidbody3d 0 1 1 0 0 0 0 0 0 0.5 0.05 1 1 0
+  boxcollider3d 1 1 1 0 0 0 0 0 0
+  comporder "MeshRenderer" "BoxCollider3D" "Rigidbody3D"
+end
+gameobject 308 "Ball"
+  guid "c163ca96f463486eb89d436bfdde82c1"
+  active 1
+  parent -1
+  transform 2.4310858 5.2 -6.6101637 0 0 0 1 1 1 1
+  mesh "Sphere" 0.7147713 0.78284657 0.34144473 1 0 "" 0
+  material 0 0 0 0 16 0 "" 1 1
+  rigidbody3d 0 1 1 0 0 0 0 0 0 0.5 0.05 1 1 0
+  spherecollider3d 0.5 0 0 0 0 0 0
+  comporder "MeshRenderer" "SphereCollider3D" "Rigidbody3D"
+end
+gameobject 309 "Box"
+  guid "03a2d029fb9806ab2a10b2c671b18458"
+  active 1
+  parent -1
+  transform 3.8713012 5.2 -6.6959066 0 0 0 1 1 1 1
+  mesh "Cube" 0.6858568 0.58047456 0.80963737 1 0 "" 0
+  material 0 0 0 0 16 0 "" 1 1
+  rigidbody3d 0 1 1 0 0 0 0 0 0 0.5 0.05 1 1 0
+  boxcollider3d 1 1 1 0 0 0 0 0 0
+  comporder "MeshRenderer" "BoxCollider3D" "Rigidbody3D"
+end
+gameobject 310 "Ball"
+  guid "720d81c1260ae289e76ca226ce9d1b8f"
+  active 1
+  parent -1
+  transform 5.2087827 5.2 -6.5833697 0 0 0 1 1 1 1
+  mesh "Sphere" 0.8779579 0.33864802 0.44197637 1 0 "" 0
+  material 0 0 0 0 16 0 "" 1 1
+  rigidbody3d 0 1 1 0 0 0 0 0 0 0.5 0.05 1 1 0
+  spherecollider3d 0.5 0 0 0 0 0 0
+  comporder "MeshRenderer" "SphereCollider3D" "Rigidbody3D"
+end
+gameobject 311 "Box"
+  guid "f3da4551441fafcbf487371a94d5815f"
+  active 1
+  parent -1
+  transform -6.554958 5.2 -5.1612453 0 0 0 1 1 1 1
+  mesh "Cube" 0.3819734 0.7111 0.6246109 1 0 "" 0
+  material 0 0 0 0 16 0 "" 1 1
+  rigidbody3d 0 1 1 0 0 0 0 0 0 0.5 0.05 1 1 0
+  boxcollider3d 1 1 1 0 0 0 0 0 0
+  comporder "MeshRenderer" "BoxCollider3D" "Rigidbody3D"
+end
+gameobject 312 "Ball"
+  guid "be7f1b9b40799322e235cbc907c3096d"
+  active 1
+  parent -1
+  transform -5.204932 5.2 -5.225877 0 0 0 1 1 1 1
+  mesh "Sphere" 0.36597195 0.3819281 0.5616832 1 0 "" 0
+  material 0 0 0 0 16 0 "" 1 1
+  rigidbody3d 0 1 1 0 0 0 0 0 0 0.5 0.05 1 1 0
+  spherecollider3d 0.5 0 0 0 0 0 0
+  comporder "MeshRenderer" "SphereCollider3D" "Rigidbody3D"
+end
+gameobject 313 "Box"
+  guid "403b30b0b771fb2585d13f785624d6c9"
+  active 1
+  parent -1
+  transform -3.9158 5.2 -5.3116894 0 0 0 1 1 1 1
+  mesh "Cube" 0.422263 0.5626969 0.45144504 1 0 "" 0
+  material 0 0 0 0 16 0 "" 1 1
+  rigidbody3d 0 1 1 0 0 0 0 0 0 0.5 0.05 1 1 0
+  boxcollider3d 1 1 1 0 0 0 0 0 0
+  comporder "MeshRenderer" "BoxCollider3D" "Rigidbody3D"
+end
+gameobject 314 "Ball"
+  guid "6d6eed8ef1099f88c3984dade8783991"
+  active 1
+  parent -1
+  transform -2.4974034 5.2 -5.0231276 0 0 0 1 1 1 1
+  mesh "Sphere" 0.7090963 0.38074222 0.3390777 1 0 "" 0
+  material 0 0 0 0 16 0 "" 1 1
+  rigidbody3d 0 1 1 0 0 0 0 0 0 0.5 0.05 1 1 0
+  spherecollider3d 0.5 0 0 0 0 0 0
+  comporder "MeshRenderer" "SphereCollider3D" "Rigidbody3D"
+end
+gameobject 315 "Box"
+  guid "57757819731ff720a7c4ca6cc83690c9"
+  active 1
+  parent -1
+  transform -1.495139 5.2 -5.2845674 0 0 0 1 1 1 1
+  mesh "Cube" 0.60393816 0.5880822 0.6611332 1 0 "" 0
+  material 0 0 0 0 16 0 "" 1 1
+  rigidbody3d 0 1 1 0 0 0 0 0 0 0.5 0.05 1 1 0
+  boxcollider3d 1 1 1 0 0 0 0 0 0
+  comporder "MeshRenderer" "BoxCollider3D" "Rigidbody3D"
+end
+gameobject 316 "Ball"
+  guid "c301488cf3294a1488a73328b4e9847e"
+  active 1
+  parent -1
+  transform -0.121851206 5.2 -5.164464 0 0 0 1 1 1 1
+  mesh "Sphere" 0.7225526 0.80512124 0.7631886 1 0 "" 0
+  material 0 0 0 0 16 0 "" 1 1
+  rigidbody3d 0 1 1 0 0 0 0 0 0 0.5 0.05 1 1 0
+  spherecollider3d 0.5 0 0 0 0 0 0
+  comporder "MeshRenderer" "SphereCollider3D" "Rigidbody3D"
+end
+gameobject 317 "Box"
+  guid "d7e6da5faaa34d5b41a6a4a1a034ad5f"
+  active 1
+  parent -1
+  transform 1.2532285 5.2 -5.1885915 0 0 0 1 1 1 1
+  mesh "Cube" 0.40306544 0.74410725 0.67442703 1 0 "" 0
+  material 0 0 0 0 16 0 "" 1 1
+  rigidbody3d 0 1 1 0 0 0 0 0 0 0.5 0.05 1 1 0
+  boxcollider3d 1 1 1 0 0 0 0 0 0
+  comporder "MeshRenderer" "BoxCollider3D" "Rigidbody3D"
+end
+gameobject 318 "Ball"
+  guid "c62b527e80758b1ee5159a5f462ed9e3"
+  active 1
+  parent -1
+  transform 2.4099743 5.2 -5.3623514 0 0 0 1 1 1 1
+  mesh "Sphere" 0.6165695 0.4588322 0.51251954 1 0 "" 0
+  material 0 0 0 0 16 0 "" 1 1
+  rigidbody3d 0 1 1 0 0 0 0 0 0 0.5 0.05 1 1 0
+  spherecollider3d 0.5 0 0 0 0 0 0
+  comporder "MeshRenderer" "SphereCollider3D" "Rigidbody3D"
+end
+gameobject 319 "Box"
+  guid "6beb19d1e02d1a05e44425f9284a5409"
+  active 1
+  parent -1
+  transform 4.0263453 5.2 -5.1497917 0 0 0 1 1 1 1
+  mesh "Cube" 0.7805095 0.8209671 0.39750168 1 0 "" 0
+  material 0 0 0 0 16 0 "" 1 1
+  rigidbody3d 0 1 1 0 0 0 0 0 0 0.5 0.05 1 1 0
+  boxcollider3d 1 1 1 0 0 0 0 0 0
+  comporder "MeshRenderer" "BoxCollider3D" "Rigidbody3D"
+end
+gameobject 320 "Ball"
+  guid "366a9a540aad23890dd4fcaa93c1a6fe"
+  active 1
+  parent -1
+  transform 5.1702404 5.2 -5.1973653 0 0 0 1 1 1 1
+  mesh "Sphere" 0.43214774 0.8030507 0.41814166 1 0 "" 0
+  material 0 0 0 0 16 0 "" 1 1
+  rigidbody3d 0 1 1 0 0 0 0 0 0 0.5 0.05 1 1 0
+  spherecollider3d 0.5 0 0 0 0 0 0
+  comporder "MeshRenderer" "SphereCollider3D" "Rigidbody3D"
+end
+gameobject 321 "Box"
+  guid "48d5f75b5cd1a9999134b891c81d5f38"
+  active 1
+  parent -1
+  transform -6.4992323 5.2 -3.9125142 0 0 0 1 1 1 1
+  mesh "Cube" 0.3758674 0.82409894 0.6741395 1 0 "" 0
+  material 0 0 0 0 16 0 "" 1 1
+  rigidbody3d 0 1 1 0 0 0 0 0 0 0.5 0.05 1 1 0
+  boxcollider3d 1 1 1 0 0 0 0 0 0
+  comporder "MeshRenderer" "BoxCollider3D" "Rigidbody3D"
+end
+gameobject 322 "Ball"
+  guid "d3172089a7a3be6db6bd24dace79b2e3"
+  active 1
+  parent -1
+  transform -5.1543345 5.2 -4.0591445 0 0 0 1 1 1 1
+  mesh "Sphere" 0.6250605 0.6572265 0.52299464 1 0 "" 0
+  material 0 0 0 0 16 0 "" 1 1
+  rigidbody3d 0 1 1 0 0 0 0 0 0 0.5 0.05 1 1 0
+  spherecollider3d 0.5 0 0 0 0 0 0
+  comporder "MeshRenderer" "SphereCollider3D" "Rigidbody3D"
+end
+gameobject 323 "Box"
+  guid "48bdcf1f024fab5bd1a8a9034c48cea1"
+  active 1
+  parent -1
+  transform -3.9464333 5.2 -3.8144917 0 0 0 1 1 1 1
+  mesh "Cube" 0.6828747 0.31061262 0.85332555 1 0 "" 0
+  material 0 0 0 0 16 0 "" 1 1
+  rigidbody3d 0 1 1 0 0 0 0 0 0 0.5 0.05 1 1 0
+  boxcollider3d 1 1 1 0 0 0 0 0 0
+  comporder "MeshRenderer" "BoxCollider3D" "Rigidbody3D"
+end
+gameobject 324 "Ball"
+  guid "54026434e40639621365b86ef25805d4"
+  active 1
+  parent -1
+  transform -2.7037554 5.2 -4.082051 0 0 0 1 1 1 1
+  mesh "Sphere" 0.38306814 0.8526881 0.32212284 1 0 "" 0
+  material 0 0 0 0 16 0 "" 1 1
+  rigidbody3d 0 1 1 0 0 0 0 0 0 0.5 0.05 1 1 0
+  spherecollider3d 0.5 0 0 0 0 0 0
+  comporder "MeshRenderer" "SphereCollider3D" "Rigidbody3D"
+end
+gameobject 325 "Box"
+  guid "24b76f21e09e3b35fa24cdc0484dd60f"
+  active 1
+  parent -1
+  transform -1.1074138 5.2 -3.901533 0 0 0 1 1 1 1
+  mesh "Cube" 0.3902051 0.7515091 0.82485354 1 0 "" 0
+  material 0 0 0 0 16 0 "" 1 1
+  rigidbody3d 0 1 1 0 0 0 0 0 0 0.5 0.05 1 1 0
+  boxcollider3d 1 1 1 0 0 0 0 0 0
+  comporder "MeshRenderer" "BoxCollider3D" "Rigidbody3D"
+end
+gameobject 326 "Ball"
+  guid "97b1b90eabb8e56fba37694451adf6b2"
+  active 1
+  parent -1
+  transform -0.12851694 5.2 -3.818767 0 0 0 1 1 1 1
+  mesh "Sphere" 0.758826 0.48675972 0.85899717 1 0 "" 0
+  material 0 0 0 0 16 0 "" 1 1
+  rigidbody3d 0 1 1 0 0 0 0 0 0 0.5 0.05 1 1 0
+  spherecollider3d 0.5 0 0 0 0 0 0
+  comporder "MeshRenderer" "SphereCollider3D" "Rigidbody3D"
+end
+gameobject 327 "Box"
+  guid "d9fca54b7a6dc480c59d412f64af82ad"
+  active 1
+  parent -1
+  transform 1.2841188 5.2 -4.019132 0 0 0 1 1 1 1
+  mesh "Cube" 0.7162788 0.8823587 0.42000657 1 0 "" 0
+  material 0 0 0 0 16 0 "" 1 1
+  rigidbody3d 0 1 1 0 0 0 0 0 0 0.5 0.05 1 1 0
+  boxcollider3d 1 1 1 0 0 0 0 0 0
+  comporder "MeshRenderer" "BoxCollider3D" "Rigidbody3D"
+end
+gameobject 328 "Ball"
+  guid "d8cbfdc34a1a12924032dee3a583dd4b"
+  active 1
+  parent -1
+  transform 2.6769965 5.2 -3.7915847 0 0 0 1 1 1 1
+  mesh "Sphere" 0.57443106 0.33076543 0.8113337 1 0 "" 0
+  material 0 0 0 0 16 0 "" 1 1
+  rigidbody3d 0 1 1 0 0 0 0 0 0 0.5 0.05 1 1 0
+  spherecollider3d 0.5 0 0 0 0 0 0
+  comporder "MeshRenderer" "SphereCollider3D" "Rigidbody3D"
+end
+gameobject 329 "Box"
+  guid "e815161ad94ec8b64ca7eb48a86074f1"
+  active 1
+  parent -1
+  transform 3.955364 5.2 -3.9115782 0 0 0 1 1 1 1
+  mesh "Cube" 0.5162741 0.6862458 0.6581266 1 0 "" 0
+  material 0 0 0 0 16 0 "" 1 1
+  rigidbody3d 0 1 1 0 0 0 0 0 0 0.5 0.05 1 1 0
+  boxcollider3d 1 1 1 0 0 0 0 0 0
+  comporder "MeshRenderer" "BoxCollider3D" "Rigidbody3D"
+end
+gameobject 330 "Ball"
+  guid "112b08f94f22832bd30dbf69a9617b17"
+  active 1
+  parent -1
+  transform 5.344982 5.2 -3.7783675 0 0 0 1 1 1 1
+  mesh "Sphere" 0.7669176 0.5456899 0.82252747 1 0 "" 0
+  material 0 0 0 0 16 0 "" 1 1
+  rigidbody3d 0 1 1 0 0 0 0 0 0 0.5 0.05 1 1 0
+  spherecollider3d 0.5 0 0 0 0 0 0
+  comporder "MeshRenderer" "SphereCollider3D" "Rigidbody3D"
+end
+gameobject 331 "Box"
+  guid "825ed8bc0fa8050ec4e48b0177313c9a"
+  active 1
+  parent -1
+  transform -6.3187795 5.2 -2.7791803 0 0 0 1 1 1 1
+  mesh "Cube" 0.7470225 0.45748428 0.5311133 1 0 "" 0
+  material 0 0 0 0 16 0 "" 1 1
+  rigidbody3d 0 1 1 0 0 0 0 0 0 0.5 0.05 1 1 0
+  boxcollider3d 1 1 1 0 0 0 0 0 0
+  comporder "MeshRenderer" "BoxCollider3D" "Rigidbody3D"
+end
+gameobject 332 "Ball"
+  guid "bfcb113b93482b489f94aac8f0e5b9ff"
+  active 1
+  parent -1
+  transform -5.0732207 5.2 -2.425717 0 0 0 1 1 1 1
+  mesh "Sphere" 0.3272282 0.8656316 0.8093932 1 0 "" 0
+  material 0 0 0 0 16 0 "" 1 1
+  rigidbody3d 0 1 1 0 0 0 0 0 0 0.5 0.05 1 1 0
+  spherecollider3d 0.5 0 0 0 0 0 0
+  comporder "MeshRenderer" "SphereCollider3D" "Rigidbody3D"
+end
+gameobject 333 "Box"
+  guid "0045597e8d8f66d4a1c8af1b1922bcc2"
+  active 1
+  parent -1
+  transform -3.723083 5.2 -2.418063 0 0 0 1 1 1 1
+  mesh "Cube" 0.7135446 0.84963983 0.78062886 1 0 "" 0
+  material 0 0 0 0 16 0 "" 1 1
+  rigidbody3d 0 1 1 0 0 0 0 0 0 0.5 0.05 1 1 0
+  boxcollider3d 1 1 1 0 0 0 0 0 0
+  comporder "MeshRenderer" "BoxCollider3D" "Rigidbody3D"
+end
+gameobject 334 "Ball"
+  guid "d55864f28b340765aac7fe5c7135b338"
+  active 1
+  parent -1
+  transform -2.5983706 5.2 -2.6170409 0 0 0 1 1 1 1
+  mesh "Sphere" 0.64350116 0.8651857 0.44568646 1 0 "" 0
+  material 0 0 0 0 16 0 "" 1 1
+  rigidbody3d 0 1 1 0 0 0 0 0 0 0.5 0.05 1 1 0
+  spherecollider3d 0.5 0 0 0 0 0 0
+  comporder "MeshRenderer" "SphereCollider3D" "Rigidbody3D"
+end
+gameobject 335 "Box"
+  guid "463d3566276fb80bdf73cfdd0dfab641"
+  active 1
+  parent -1
+  transform -1.2359781 5.2 -2.597351 0 0 0 1 1 1 1
+  mesh "Cube" 0.5712656 0.8998276 0.3463473 1 0 "" 0
+  material 0 0 0 0 16 0 "" 1 1
+  rigidbody3d 0 1 1 0 0 0 0 0 0 0.5 0.05 1 1 0
+  boxcollider3d 1 1 1 0 0 0 0 0 0
+  comporder "MeshRenderer" "BoxCollider3D" "Rigidbody3D"
+end
+gameobject 336 "Ball"
+  guid "63b60f6730426fa5610a32ee266e754e"
+  active 1
+  parent -1
+  transform -0.09035607 5.2 -2.606383 0 0 0 1 1 1 1
+  mesh "Sphere" 0.6544619 0.5831387 0.4079137 1 0 "" 0
+  material 0 0 0 0 16 0 "" 1 1
+  rigidbody3d 0 1 1 0 0 0 0 0 0 0.5 0.05 1 1 0
+  spherecollider3d 0.5 0 0 0 0 0 0
+  comporder "MeshRenderer" "SphereCollider3D" "Rigidbody3D"
+end
+gameobject 337 "Box"
+  guid "8e392f022cc48fd9a38b0020cb274167"
+  active 1
+  parent -1
+  transform 1.4610745 5.2 -2.610413 0 0 0 1 1 1 1
+  mesh "Cube" 0.521326 0.865183 0.43695322 1 0 "" 0
+  material 0 0 0 0 16 0 "" 1 1
+  rigidbody3d 0 1 1 0 0 0 0 0 0 0.5 0.05 1 1 0
+  boxcollider3d 1 1 1 0 0 0 0 0 0
+  comporder "MeshRenderer" "BoxCollider3D" "Rigidbody3D"
+end
+gameobject 338 "Ball"
+  guid "46308eb0cf53db3efcd0096826112459"
+  active 1
+  parent -1
+  transform 2.5456345 5.2 -2.6272125 0 0 0 1 1 1 1
+  mesh "Sphere" 0.77702665 0.32313198 0.87336683 1 0 "" 0
+  material 0 0 0 0 16 0 "" 1 1
+  rigidbody3d 0 1 1 0 0 0 0 0 0 0.5 0.05 1 1 0
+  spherecollider3d 0.5 0 0 0 0 0 0
+  comporder "MeshRenderer" "SphereCollider3D" "Rigidbody3D"
+end
+gameobject 339 "Box"
+  guid "946bc34e5ae6cebdd01ac760c3976551"
+  active 1
+  parent -1
+  transform 3.9564292 5.2 -2.696616 0 0 0 1 1 1 1
+  mesh "Cube" 0.48670828 0.51829153 0.8640294 1 0 "" 0
+  material 0 0 0 0 16 0 "" 1 1
+  rigidbody3d 0 1 1 0 0 0 0 0 0 0.5 0.05 1 1 0
+  boxcollider3d 1 1 1 0 0 0 0 0 0
+  comporder "MeshRenderer" "BoxCollider3D" "Rigidbody3D"
+end
+gameobject 340 "Ball"
+  guid "a5571fd882b583165b885c891e261206"
+  active 1
+  parent -1
+  transform 5.3595366 5.2 -2.4822178 0 0 0 1 1 1 1
+  mesh "Sphere" 0.58383954 0.8145417 0.6412103 1 0 "" 0
+  material 0 0 0 0 16 0 "" 1 1
+  rigidbody3d 0 1 1 0 0 0 0 0 0 0.5 0.05 1 1 0
+  spherecollider3d 0.5 0 0 0 0 0 0
+  comporder "MeshRenderer" "SphereCollider3D" "Rigidbody3D"
+end
+gameobject 341 "Box"
+  guid "a07d39c72c6757ddb8bf4f57f4bc0d8c"
+  active 1
+  parent -1
+  transform -6.3053737 5.2 -1.2891449 0 0 0 1 1 1 1
+  mesh "Cube" 0.8696779 0.43767112 0.8205493 1 0 "" 0
+  material 0 0 0 0 16 0 "" 1 1
+  rigidbody3d 0 1 1 0 0 0 0 0 0 0.5 0.05 1 1 0
+  boxcollider3d 1 1 1 0 0 0 0 0 0
+  comporder "MeshRenderer" "BoxCollider3D" "Rigidbody3D"
+end
+gameobject 342 "Ball"
+  guid "66de8a82d5d0d2dc3e676adfd384576d"
+  active 1
+  parent -1
+  transform -5.2704363 5.2 -1.159078 0 0 0 1 1 1 1
+  mesh "Sphere" 0.56950593 0.479034 0.85118335 1 0 "" 0
+  material 0 0 0 0 16 0 "" 1 1
+  rigidbody3d 0 1 1 0 0 0 0 0 0 0.5 0.05 1 1 0
+  spherecollider3d 0.5 0 0 0 0 0 0
+  comporder "MeshRenderer" "SphereCollider3D" "Rigidbody3D"
+end
+gameobject 343 "Box"
+  guid "51dbaa28eeb80f3d3fef27d6b7debfac"
+  active 1
+  parent -1
+  transform -3.8115332 5.2 -1.4834971 0 0 0 1 1 1 1
+  mesh "Cube" 0.31486288 0.6181798 0.49547762 1 0 "" 0
+  material 0 0 0 0 16 0 "" 1 1
+  rigidbody3d 0 1 1 0 0 0 0 0 0 0.5 0.05 1 1 0
+  boxcollider3d 1 1 1 0 0 0 0 0 0
+  comporder "MeshRenderer" "BoxCollider3D" "Rigidbody3D"
+end
+gameobject 344 "Ball"
+  guid "4dfdeca5eb51f43883daa2b3c66111e5"
+  active 1
+  parent -1
+  transform -2.6952372 5.2 -1.3191644 0 0 0 1 1 1 1
+  mesh "Sphere" 0.3328365 0.70831335 0.51319563 1 0 "" 0
+  material 0 0 0 0 16 0 "" 1 1
+  rigidbody3d 0 1 1 0 0 0 0 0 0 0.5 0.05 1 1 0
+  spherecollider3d 0.5 0 0 0 0 0 0
+  comporder "MeshRenderer" "SphereCollider3D" "Rigidbody3D"
+end
+gameobject 345 "Box"
+  guid "92d7ddeee612abdf522a4a6296e518b0"
+  active 1
+  parent -1
+  transform -1.3404164 5.2 -1.1977654 0 0 0 1 1 1 1
+  mesh "Cube" 0.8101335 0.6589992 0.8524884 1 0 "" 0
+  material 0 0 0 0 16 0 "" 1 1
+  rigidbody3d 0 1 1 0 0 0 0 0 0 0.5 0.05 1 1 0
+  boxcollider3d 1 1 1 0 0 0 0 0 0
+  comporder "MeshRenderer" "BoxCollider3D" "Rigidbody3D"
+end
+gameobject 346 "Ball"
+  guid "9086196e8837867e061826dbf0a9d22a"
+  active 1
+  parent -1
+  transform 0.090410665 5.2 -1.2093458 0 0 0 1 1 1 1
+  mesh "Sphere" 0.8476076 0.6948953 0.77285826 1 0 "" 0
+  material 0 0 0 0 16 0 "" 1 1
+  rigidbody3d 0 1 1 0 0 0 0 0 0 0.5 0.05 1 1 0
+  spherecollider3d 0.5 0 0 0 0 0 0
+  comporder "MeshRenderer" "SphereCollider3D" "Rigidbody3D"
+end
+gameobject 347 "Box"
+  guid "370411e7b575ee6cbcd0bc9d15c1e9e9"
+  active 1
+  parent -1
+  transform 1.448718 5.2 -1.2479224 0 0 0 1 1 1 1
+  mesh "Cube" 0.89809746 0.40344286 0.8138476 1 0 "" 0
+  material 0 0 0 0 16 0 "" 1 1
+  rigidbody3d 0 1 1 0 0 0 0 0 0 0.5 0.05 1 1 0
+  boxcollider3d 1 1 1 0 0 0 0 0 0
+  comporder "MeshRenderer" "BoxCollider3D" "Rigidbody3D"
+end
+gameobject 348 "Ball"
+  guid "8d030a03bd3a1499ac989eb9631e6549"
+  active 1
+  parent -1
+  transform 2.7847085 5.2 -1.2256968 0 0 0 1 1 1 1
+  mesh "Sphere" 0.64683294 0.49288782 0.5673732 1 0 "" 0
+  material 0 0 0 0 16 0 "" 1 1
+  rigidbody3d 0 1 1 0 0 0 0 0 0 0.5 0.05 1 1 0
+  spherecollider3d 0.5 0 0 0 0 0 0
+  comporder "MeshRenderer" "SphereCollider3D" "Rigidbody3D"
+end
+gameobject 349 "Box"
+  guid "d3e93d380b41c1b872cab2aa37ea56fd"
+  active 1
+  parent -1
+  transform 3.9115078 5.2 -1.1599103 0 0 0 1 1 1 1
+  mesh "Cube" 0.430835 0.70974845 0.506545 1 0 "" 0
+  material 0 0 0 0 16 0 "" 1 1
+  rigidbody3d 0 1 1 0 0 0 0 0 0 0.5 0.05 1 1 0
+  boxcollider3d 1 1 1 0 0 0 0 0 0
+  comporder "MeshRenderer" "BoxCollider3D" "Rigidbody3D"
+end
+gameobject 350 "Ball"
+  guid "cb89f5e6c63dd37bf9d94518ccc8bd06"
+  active 1
+  parent -1
+  transform 5.0209284 5.2 -1.2411847 0 0 0 1 1 1 1
+  mesh "Sphere" 0.4421662 0.89435536 0.8866014 1 0 "" 0
+  material 0 0 0 0 16 0 "" 1 1
+  rigidbody3d 0 1 1 0 0 0 0 0 0 0.5 0.05 1 1 0
+  spherecollider3d 0.5 0 0 0 0 0 0
+  comporder "MeshRenderer" "SphereCollider3D" "Rigidbody3D"
+end
+gameobject 351 "Box"
+  guid "03599a542b78cfced9c3850f910cd7b3"
+  active 1
+  parent -1
+  transform -6.4552727 5.2 -0.106186174 0 0 0 1 1 1 1
+  mesh "Cube" 0.5488275 0.32315123 0.50781775 1 0 "" 0
+  material 0 0 0 0 16 0 "" 1 1
+  rigidbody3d 0 1 1 0 0 0 0 0 0 0.5 0.05 1 1 0
+  boxcollider3d 1 1 1 0 0 0 0 0 0
+  comporder "MeshRenderer" "BoxCollider3D" "Rigidbody3D"
+end
+gameobject 352 "Ball"
+  guid "6997f3c262ed4af439981252f8848c19"
+  active 1
+  parent -1
+  transform -5.240824 5.2 -0.006093934 0 0 0 1 1 1 1
+  mesh "Sphere" 0.69162416 0.8719677 0.4198356 1 0 "" 0
+  material 0 0 0 0 16 0 "" 1 1
+  rigidbody3d 0 1 1 0 0 0 0 0 0 0.5 0.05 1 1 0
+  spherecollider3d 0.5 0 0 0 0 0 0
+  comporder "MeshRenderer" "SphereCollider3D" "Rigidbody3D"
+end
+gameobject 353 "Box"
+  guid "99bbb68d4af589619d4d1eba002d42c9"
+  active 1
+  parent -1
+  transform -3.842428 5.2 0.14238365 0 0 0 1 1 1 1
+  mesh "Cube" 0.7771591 0.59056103 0.49357647 1 0 "" 0
+  material 0 0 0 0 16 0 "" 1 1
+  rigidbody3d 0 1 1 0 0 0 0 0 0 0.5 0.05 1 1 0
+  boxcollider3d 1 1 1 0 0 0 0 0 0
+  comporder "MeshRenderer" "BoxCollider3D" "Rigidbody3D"
+end
+gameobject 354 "Ball"
+  guid "050ad61a48266399c517c59d9c173dfd"
+  active 1
+  parent -1
+  transform -2.5719335 5.2 0.08732189 0 0 0 1 1 1 1
+  mesh "Sphere" 0.49224442 0.3303702 0.58586 1 0 "" 0
+  material 0 0 0 0 16 0 "" 1 1
+  rigidbody3d 0 1 1 0 0 0 0 0 0 0.5 0.05 1 1 0
+  spherecollider3d 0.5 0 0 0 0 0 0
+  comporder "MeshRenderer" "SphereCollider3D" "Rigidbody3D"
+end
+gameobject 355 "Box"
+  guid "69056832474f6f3016c58ee2932cab82"
+  active 1
+  parent -1
+  transform -1.2137862 5.2 0.0006124228 0 0 0 1 1 1 1
+  mesh "Cube" 0.311422 0.80757374 0.72376573 1 0 "" 0
+  material 0 0 0 0 16 0 "" 1 1
+  rigidbody3d 0 1 1 0 0 0 0 0 0 0.5 0.05 1 1 0
+  boxcollider3d 1 1 1 0 0 0 0 0 0
+  comporder "MeshRenderer" "BoxCollider3D" "Rigidbody3D"
+end
+gameobject 356 "Ball"
+  guid "d9d7640459663a928ca59f221c8e0af3"
+  active 1
+  parent -1
+  transform 0.06778942 5.2 -0.17414586 0 0 0 1 1 1 1
+  mesh "Sphere" 0.5703194 0.72842765 0.4668028 1 0 "" 0
+  material 0 0 0 0 16 0 "" 1 1
+  rigidbody3d 0 1 1 0 0 0 0 0 0 0.5 0.05 1 1 0
+  spherecollider3d 0.5 0 0 0 0 0 0
+  comporder "MeshRenderer" "SphereCollider3D" "Rigidbody3D"
+end
+gameobject 357 "Box"
+  guid "097a99965374893f84ddd94b81fe2e12"
+  active 1
+  parent -1
+  transform 1.4159716 5.2 -0.038079098 0 0 0 1 1 1 1
+  mesh "Cube" 0.89660996 0.3761275 0.65778863 1 0 "" 0
+  material 0 0 0 0 16 0 "" 1 1
+  rigidbody3d 0 1 1 0 0 0 0 0 0 0.5 0.05 1 1 0
+  boxcollider3d 1 1 1 0 0 0 0 0 0
+  comporder "MeshRenderer" "BoxCollider3D" "Rigidbody3D"
+end
+gameobject 358 "Ball"
+  guid "884bcc8eb40b5febd5e2e2d0fc89e828"
+  active 1
+  parent -1
+  transform 2.491119 5.2 0.18068247 0 0 0 1 1 1 1
+  mesh "Sphere" 0.47898245 0.8479293 0.5412653 1 0 "" 0
+  material 0 0 0 0 16 0 "" 1 1
+  rigidbody3d 0 1 1 0 0 0 0 0 0 0.5 0.05 1 1 0
+  spherecollider3d 0.5 0 0 0 0 0 0
+  comporder "MeshRenderer" "SphereCollider3D" "Rigidbody3D"
+end
+gameobject 359 "Box"
+  guid "ff7c76a23fdcfa3e674422b00d087298"
+  active 1
+  parent -1
+  transform 3.922238 5.2 0.03532794 0 0 0 1 1 1 1
+  mesh "Cube" 0.892284 0.35629374 0.35367078 1 0 "" 0
+  material 0 0 0 0 16 0 "" 1 1
+  rigidbody3d 0 1 1 0 0 0 0 0 0 0.5 0.05 1 1 0
+  boxcollider3d 1 1 1 0 0 0 0 0 0
+  comporder "MeshRenderer" "BoxCollider3D" "Rigidbody3D"
+end
+gameobject 360 "Ball"
+  guid "90010c2877c0bd944a23f856df83497c"
+  active 1
+  parent -1
+  transform 5.1150413 5.2 0.1365792 0 0 0 1 1 1 1
+  mesh "Sphere" 0.4171822 0.63340247 0.3974089 1 0 "" 0
+  material 0 0 0 0 16 0 "" 1 1
+  rigidbody3d 0 1 1 0 0 0 0 0 0 0.5 0.05 1 1 0
+  spherecollider3d 0.5 0 0 0 0 0 0
+  comporder "MeshRenderer" "SphereCollider3D" "Rigidbody3D"
+end
+gameobject 361 "Box"
+  guid "f72ef079fa56dbb61a8e956fceca9c35"
+  active 1
+  parent -1
+  transform -6.6042004 5.2 1.3933151 0 0 0 1 1 1 1
+  mesh "Cube" 0.39625907 0.40154284 0.32887188 1 0 "" 0
+  material 0 0 0 0 16 0 "" 1 1
+  rigidbody3d 0 1 1 0 0 0 0 0 0 0.5 0.05 1 1 0
+  boxcollider3d 1 1 1 0 0 0 0 0 0
+  comporder "MeshRenderer" "BoxCollider3D" "Rigidbody3D"
+end
+gameobject 362 "Ball"
+  guid "eea17d8cc8a76623342078cfa9629ba3"
+  active 1
+  parent -1
+  transform -5.313009 5.2 1.4127281 0 0 0 1 1 1 1
+  mesh "Sphere" 0.87840027 0.3604725 0.40341353 1 0 "" 0
+  material 0 0 0 0 16 0 "" 1 1
+  rigidbody3d 0 1 1 0 0 0 0 0 0 0.5 0.05 1 1 0
+  spherecollider3d 0.5 0 0 0 0 0 0
+  comporder "MeshRenderer" "SphereCollider3D" "Rigidbody3D"
+end
+gameobject 363 "Box"
+  guid "7fa85fe8dff1970e1b73e66f1b813509"
+  active 1
+  parent -1
+  transform -3.9701083 5.2 1.486984 0 0 0 1 1 1 1
+  mesh "Cube" 0.45321953 0.4391013 0.88528067 1 0 "" 0
+  material 0 0 0 0 16 0 "" 1 1
+  rigidbody3d 0 1 1 0 0 0 0 0 0 0.5 0.05 1 1 0
+  boxcollider3d 1 1 1 0 0 0 0 0 0
+  comporder "MeshRenderer" "BoxCollider3D" "Rigidbody3D"
+end
+gameobject 364 "Ball"
+  guid "3fa2a711d08209209b18e8dc937b08cd"
+  active 1
+  parent -1
+  transform -2.4728456 5.2 1.1216567 0 0 0 1 1 1 1
+  mesh "Sphere" 0.62142074 0.34649873 0.47504264 1 0 "" 0
+  material 0 0 0 0 16 0 "" 1 1
+  rigidbody3d 0 1 1 0 0 0 0 0 0 0.5 0.05 1 1 0
+  spherecollider3d 0.5 0 0 0 0 0 0
+  comporder "MeshRenderer" "SphereCollider3D" "Rigidbody3D"
+end
+gameobject 365 "Box"
+  guid "68368ca3fdabe9052e980ed3c4a04b43"
+  active 1
+  parent -1
+  transform -1.272736 5.2 1.2949086 0 0 0 1 1 1 1
+  mesh "Cube" 0.8601445 0.66366875 0.61345077 1 0 "" 0
+  material 0 0 0 0 16 0 "" 1 1
+  rigidbody3d 0 1 1 0 0 0 0 0 0 0.5 0.05 1 1 0
+  boxcollider3d 1 1 1 0 0 0 0 0 0
+  comporder "MeshRenderer" "BoxCollider3D" "Rigidbody3D"
+end
+gameobject 366 "Ball"
+  guid "875def03ed60cb0e7b3799f351ffe985"
+  active 1
+  parent -1
+  transform 0.13206722 5.2 1.4774015 0 0 0 1 1 1 1
+  mesh "Sphere" 0.50711936 0.33594704 0.5697559 1 0 "" 0
+  material 0 0 0 0 16 0 "" 1 1
+  rigidbody3d 0 1 1 0 0 0 0 0 0 0.5 0.05 1 1 0
+  spherecollider3d 0.5 0 0 0 0 0 0
+  comporder "MeshRenderer" "SphereCollider3D" "Rigidbody3D"
+end
+gameobject 367 "Box"
+  guid "2b88cbcf9a6804c8b8eee400611510c3"
+  active 1
+  parent -1
+  transform 1.2549578 5.2 1.4947248 0 0 0 1 1 1 1
+  mesh "Cube" 0.69092 0.39459163 0.4129083 1 0 "" 0
+  material 0 0 0 0 16 0 "" 1 1
+  rigidbody3d 0 1 1 0 0 0 0 0 0 0.5 0.05 1 1 0
+  boxcollider3d 1 1 1 0 0 0 0 0 0
+  comporder "MeshRenderer" "BoxCollider3D" "Rigidbody3D"
+end
+gameobject 368 "Ball"
+  guid "a10f67bc4bac15c9a76a713a168f0be5"
+  active 1
+  parent -1
+  transform 2.533459 5.2 1.245883 0 0 0 1 1 1 1
+  mesh "Sphere" 0.5981886 0.32121372 0.5306502 1 0 "" 0
+  material 0 0 0 0 16 0 "" 1 1
+  rigidbody3d 0 1 1 0 0 0 0 0 0 0.5 0.05 1 1 0
+  spherecollider3d 0.5 0 0 0 0 0 0
+  comporder "MeshRenderer" "SphereCollider3D" "Rigidbody3D"
+end
+gameobject 369 "Box"
+  guid "e43271d8ec8af4429c26bd9450b23859"
+  active 1
+  parent -1
+  transform 4.0196676 5.2 1.2538422 0 0 0 1 1 1 1
+  mesh "Cube" 0.35787922 0.42729852 0.66095805 1 0 "" 0
+  material 0 0 0 0 16 0 "" 1 1
+  rigidbody3d 0 1 1 0 0 0 0 0 0 0.5 0.05 1 1 0
+  boxcollider3d 1 1 1 0 0 0 0 0 0
+  comporder "MeshRenderer" "BoxCollider3D" "Rigidbody3D"
+end
+gameobject 370 "Ball"
+  guid "86f63ead529a3f36ae0010e6273e6acb"
+  active 1
+  parent -1
+  transform 5.009017 5.2 1.3430997 0 0 0 1 1 1 1
+  mesh "Sphere" 0.3974872 0.4109777 0.87166476 1 0 "" 0
+  material 0 0 0 0 16 0 "" 1 1
+  rigidbody3d 0 1 1 0 0 0 0 0 0 0.5 0.05 1 1 0
+  spherecollider3d 0.5 0 0 0 0 0 0
+  comporder "MeshRenderer" "SphereCollider3D" "Rigidbody3D"
+end
+gameobject 371 "Box"
+  guid "989696602b86d6675cb36c0f9bd62644"
+  active 1
+  parent -1
+  transform -6.623229 5.2 2.5134966 0 0 0 1 1 1 1
+  mesh "Cube" 0.36453903 0.35551086 0.8841774 1 0 "" 0
+  material 0 0 0 0 16 0 "" 1 1
+  rigidbody3d 0 1 1 0 0 0 0 0 0 0.5 0.05 1 1 0
+  boxcollider3d 1 1 1 0 0 0 0 0 0
+  comporder "MeshRenderer" "BoxCollider3D" "Rigidbody3D"
+end
+gameobject 372 "Ball"
+  guid "887e4c2903584b1229eacc12c33020b8"
+  active 1
+  parent -1
+  transform -5.2127495 5.2 2.5467293 0 0 0 1 1 1 1
+  mesh "Sphere" 0.62023747 0.43090326 0.7282586 1 0 "" 0
+  material 0 0 0 0 16 0 "" 1 1
+  rigidbody3d 0 1 1 0 0 0 0 0 0 0.5 0.05 1 1 0
+  spherecollider3d 0.5 0 0 0 0 0 0
+  comporder "MeshRenderer" "SphereCollider3D" "Rigidbody3D"
+end
+gameobject 373 "Box"
+  guid "f6822af64218a56c05fb4bd82ff994ce"
+  active 1
+  parent -1
+  transform -3.8824217 5.2 2.5580335 0 0 0 1 1 1 1
+  mesh "Cube" 0.46495914 0.5151326 0.61412704 1 0 "" 0
+  material 0 0 0 0 16 0 "" 1 1
+  rigidbody3d 0 1 1 0 0 0 0 0 0 0.5 0.05 1 1 0
+  boxcollider3d 1 1 1 0 0 0 0 0 0
+  comporder "MeshRenderer" "BoxCollider3D" "Rigidbody3D"
+end
+gameobject 374 "Ball"
+  guid "c69f4f1732bb9cfb2c07623657ee6123"
+  active 1
+  parent -1
+  transform -2.6091805 5.2 2.4069479 0 0 0 1 1 1 1
+  mesh "Sphere" 0.5812124 0.42374486 0.52937114 1 0 "" 0
+  material 0 0 0 0 16 0 "" 1 1
+  rigidbody3d 0 1 1 0 0 0 0 0 0 0.5 0.05 1 1 0
+  spherecollider3d 0.5 0 0 0 0 0 0
+  comporder "MeshRenderer" "SphereCollider3D" "Rigidbody3D"
+end
+gameobject 375 "Box"
+  guid "2f5aff6d8952fe093df1ea005586a7a2"
+  active 1
+  parent -1
+  transform -1.3189034 5.2 2.7826748 0 0 0 1 1 1 1
+  mesh "Cube" 0.44315326 0.4380015 0.45129222 1 0 "" 0
+  material 0 0 0 0 16 0 "" 1 1
+  rigidbody3d 0 1 1 0 0 0 0 0 0 0.5 0.05 1 1 0
+  boxcollider3d 1 1 1 0 0 0 0 0 0
+  comporder "MeshRenderer" "BoxCollider3D" "Rigidbody3D"
+end
+gameobject 376 "Ball"
+  guid "bd38b4459bb1750cfb48f25b64d48dc8"
+  active 1
+  parent -1
+  transform 0.038378984 5.2 2.6266754 0 0 0 1 1 1 1
+  mesh "Sphere" 0.37493724 0.60165375 0.72256565 1 0 "" 0
+  material 0 0 0 0 16 0 "" 1 1
+  rigidbody3d 0 1 1 0 0 0 0 0 0 0.5 0.05 1 1 0
+  spherecollider3d 0.5 0 0 0 0 0 0
+  comporder "MeshRenderer" "SphereCollider3D" "Rigidbody3D"
+end
+gameobject 377 "Box"
+  guid "cdd1b08e822f346a61db731a80bb5663"
+  active 1
+  parent -1
+  transform 1.1497769 5.2 2.5906618 0 0 0 1 1 1 1
+  mesh "Cube" 0.7381276 0.4552322 0.42620158 1 0 "" 0
+  material 0 0 0 0 16 0 "" 1 1
+  rigidbody3d 0 1 1 0 0 0 0 0 0 0.5 0.05 1 1 0
+  boxcollider3d 1 1 1 0 0 0 0 0 0
+  comporder "MeshRenderer" "BoxCollider3D" "Rigidbody3D"
+end
+gameobject 378 "Ball"
+  guid "87c67e580dc4ca3f9f9651ad03d64147"
+  active 1
+  parent -1
+  transform 2.7161324 5.2 2.6672893 0 0 0 1 1 1 1
+  mesh "Sphere" 0.7057439 0.7678603 0.748476 1 0 "" 0
+  material 0 0 0 0 16 0 "" 1 1
+  rigidbody3d 0 1 1 0 0 0 0 0 0 0.5 0.05 1 1 0
+  spherecollider3d 0.5 0 0 0 0 0 0
+  comporder "MeshRenderer" "SphereCollider3D" "Rigidbody3D"
+end
+gameobject 379 "Box"
+  guid "4db5b6c5c9daf68805c82d05e8dee543"
+  active 1
+  parent -1
+  transform 4.0688577 5.2 2.7233005 0 0 0 1 1 1 1
+  mesh "Cube" 0.3370989 0.8535481 0.51095295 1 0 "" 0
+  material 0 0 0 0 16 0 "" 1 1
+  rigidbody3d 0 1 1 0 0 0 0 0 0 0.5 0.05 1 1 0
+  boxcollider3d 1 1 1 0 0 0 0 0 0
+  comporder "MeshRenderer" "BoxCollider3D" "Rigidbody3D"
+end
+gameobject 380 "Ball"
+  guid "5cbdb1433afe64c2069d72d760347611"
+  active 1
+  parent -1
+  transform 5.1918106 5.2 2.6884744 0 0 0 1 1 1 1
+  mesh "Sphere" 0.8457767 0.77199394 0.34484854 1 0 "" 0
+  material 0 0 0 0 16 0 "" 1 1
+  rigidbody3d 0 1 1 0 0 0 0 0 0 0.5 0.05 1 1 0
+  spherecollider3d 0.5 0 0 0 0 0 0
+  comporder "MeshRenderer" "SphereCollider3D" "Rigidbody3D"
+end
+gameobject 381 "Box"
+  guid "63a2d9e3d2dfff4d9044368ea1556f8a"
+  active 1
+  parent -1
+  transform -6.349581 5.2 3.773856 0 0 0 1 1 1 1
+  mesh "Cube" 0.7716557 0.3570478 0.4573777 1 0 "" 0
+  material 0 0 0 0 16 0 "" 1 1
+  rigidbody3d 0 1 1 0 0 0 0 0 0 0.5 0.05 1 1 0
+  boxcollider3d 1 1 1 0 0 0 0 0 0
+  comporder "MeshRenderer" "BoxCollider3D" "Rigidbody3D"
+end
+gameobject 382 "Ball"
+  guid "48b4900762e424ba2cf021f350e47449"
+  active 1
+  parent -1
+  transform -5.27404 5.2 4.0216484 0 0 0 1 1 1 1
+  mesh "Sphere" 0.44674963 0.7014773 0.8953611 1 0 "" 0
+  material 0 0 0 0 16 0 "" 1 1
+  rigidbody3d 0 1 1 0 0 0 0 0 0 0.5 0.05 1 1 0
+  spherecollider3d 0.5 0 0 0 0 0 0
+  comporder "MeshRenderer" "SphereCollider3D" "Rigidbody3D"
+end
+gameobject 383 "Box"
+  guid "afe71c7efa0853049e7c570b4321b9eb"
+  active 1
+  parent -1
+  transform -3.857419 5.2 3.8184206 0 0 0 1 1 1 1
+  mesh "Cube" 0.7686909 0.77763593 0.88033056 1 0 "" 0
+  material 0 0 0 0 16 0 "" 1 1
+  rigidbody3d 0 1 1 0 0 0 0 0 0 0.5 0.05 1 1 0
+  boxcollider3d 1 1 1 0 0 0 0 0 0
+  comporder "MeshRenderer" "BoxCollider3D" "Rigidbody3D"
+end
+gameobject 384 "Ball"
+  guid "57f0acc098f9b2086b5bb521b9c51d4d"
+  active 1
+  parent -1
+  transform -2.7378967 5.2 3.9062753 0 0 0 1 1 1 1
+  mesh "Sphere" 0.31003773 0.62935823 0.6448122 1 0 "" 0
+  material 0 0 0 0 16 0 "" 1 1
+  rigidbody3d 0 1 1 0 0 0 0 0 0 0.5 0.05 1 1 0
+  spherecollider3d 0.5 0 0 0 0 0 0
+  comporder "MeshRenderer" "SphereCollider3D" "Rigidbody3D"
+end
+gameobject 385 "Box"
+  guid "8940b5efbe035cbd744b38f7b3bfad91"
+  active 1
+  parent -1
+  transform -1.3365388 5.2 3.8581634 0 0 0 1 1 1 1
+  mesh "Cube" 0.7000699 0.42411923 0.41387692 1 0 "" 0
+  material 0 0 0 0 16 0 "" 1 1
+  rigidbody3d 0 1 1 0 0 0 0 0 0 0.5 0.05 1 1 0
+  boxcollider3d 1 1 1 0 0 0 0 0 0
+  comporder "MeshRenderer" "BoxCollider3D" "Rigidbody3D"
+end
+gameobject 386 "Ball"
+  guid "e4bca1540e829a6f3599bd2895973132"
+  active 1
+  parent -1
+  transform 0.062650934 5.2 3.8407953 0 0 0 1 1 1 1
+  mesh "Sphere" 0.55258167 0.37282103 0.3549344 1 0 "" 0
+  material 0 0 0 0 16 0 "" 1 1
+  rigidbody3d 0 1 1 0 0 0 0 0 0 0.5 0.05 1 1 0
+  spherecollider3d 0.5 0 0 0 0 0 0
+  comporder "MeshRenderer" "SphereCollider3D" "Rigidbody3D"
+end
+gameobject 387 "Box"
+  guid "8cd9b4f19d58c7c70de2ae01ef903053"
+  active 1
+  parent -1
+  transform 1.2936783 5.2 3.704336 0 0 0 1 1 1 1
+  mesh "Cube" 0.61431336 0.4581731 0.42060775 1 0 "" 0
+  material 0 0 0 0 16 0 "" 1 1
+  rigidbody3d 0 1 1 0 0 0 0 0 0 0.5 0.05 1 1 0
+  boxcollider3d 1 1 1 0 0 0 0 0 0
+  comporder "MeshRenderer" "BoxCollider3D" "Rigidbody3D"
+end
+gameobject 388 "Ball"
+  guid "7d62ffc72935a15597fee6222359213c"
+  active 1
+  parent -1
+  transform 2.589048 5.2 3.807776 0 0 0 1 1 1 1
+  mesh "Sphere" 0.32638663 0.70518494 0.68022275 1 0 "" 0
+  material 0 0 0 0 16 0 "" 1 1
+  rigidbody3d 0 1 1 0 0 0 0 0 0 0.5 0.05 1 1 0
+  spherecollider3d 0.5 0 0 0 0 0 0
+  comporder "MeshRenderer" "SphereCollider3D" "Rigidbody3D"
+end
+gameobject 389 "Box"
+  guid "f5c3bb1f6b5d296efac79330635a20f5"
+  active 1
+  parent -1
+  transform 3.8909392 5.2 3.8635402 0 0 0 1 1 1 1
+  mesh "Cube" 0.35094103 0.6721096 0.49962693 1 0 "" 0
+  material 0 0 0 0 16 0 "" 1 1
+  rigidbody3d 0 1 1 0 0 0 0 0 0 0.5 0.05 1 1 0
+  boxcollider3d 1 1 1 0 0 0 0 0 0
+  comporder "MeshRenderer" "BoxCollider3D" "Rigidbody3D"
+end
+gameobject 390 "Ball"
+  guid "8dec0a904cae4904ec41d303cf95bead"
+  active 1
+  parent -1
+  transform 5.100088 5.2 3.7867687 0 0 0 1 1 1 1
+  mesh "Sphere" 0.7333937 0.89096856 0.850404 1 0 "" 0
+  material 0 0 0 0 16 0 "" 1 1
+  rigidbody3d 0 1 1 0 0 0 0 0 0 0.5 0.05 1 1 0
+  spherecollider3d 0.5 0 0 0 0 0 0
+  comporder "MeshRenderer" "SphereCollider3D" "Rigidbody3D"
+end
+gameobject 391 "Box"
+  guid "afd46151bf8755e19c8975317bd51b13"
+  active 1
+  parent -1
+  transform -6.6263957 5.2 5.2772036 0 0 0 1 1 1 1
+  mesh "Cube" 0.5152357 0.7395463 0.4216428 1 0 "" 0
+  material 0 0 0 0 16 0 "" 1 1
+  rigidbody3d 0 1 1 0 0 0 0 0 0 0.5 0.05 1 1 0
+  boxcollider3d 1 1 1 0 0 0 0 0 0
+  comporder "MeshRenderer" "BoxCollider3D" "Rigidbody3D"
+end
+gameobject 392 "Ball"
+  guid "905108923a4d03bfb79e9cf845043a1b"
+  active 1
+  parent -1
+  transform -5.3276067 5.2 5.2401214 0 0 0 1 1 1 1
+  mesh "Sphere" 0.89670193 0.613563 0.891293 1 0 "" 0
+  material 0 0 0 0 16 0 "" 1 1
+  rigidbody3d 0 1 1 0 0 0 0 0 0 0.5 0.05 1 1 0
+  spherecollider3d 0.5 0 0 0 0 0 0
+  comporder "MeshRenderer" "SphereCollider3D" "Rigidbody3D"
+end
+gameobject 393 "Box"
+  guid "a5ab3b380849c3189e5948ae3cbd3fef"
+  active 1
+  parent -1
+  transform -3.836983 5.2 5.3650594 0 0 0 1 1 1 1
+  mesh "Cube" 0.5183678 0.56102896 0.7301072 1 0 "" 0
+  material 0 0 0 0 16 0 "" 1 1
+  rigidbody3d 0 1 1 0 0 0 0 0 0 0.5 0.05 1 1 0
+  boxcollider3d 1 1 1 0 0 0 0 0 0
+  comporder "MeshRenderer" "BoxCollider3D" "Rigidbody3D"
+end
+gameobject 394 "Ball"
+  guid "77e187e491ab577f6073009b0310e6a3"
+  active 1
+  parent -1
+  transform -2.5016258 5.2 5.052725 0 0 0 1 1 1 1
+  mesh "Sphere" 0.85402274 0.72098386 0.81497395 1 0 "" 0
+  material 0 0 0 0 16 0 "" 1 1
+  rigidbody3d 0 1 1 0 0 0 0 0 0 0.5 0.05 1 1 0
+  spherecollider3d 0.5 0 0 0 0 0 0
+  comporder "MeshRenderer" "SphereCollider3D" "Rigidbody3D"
+end
+gameobject 395 "Box"
+  guid "15aa77cbe23b168406bd3e0976544512"
+  active 1
+  parent -1
+  transform -1.2582679 5.2 5.334867 0 0 0 1 1 1 1
+  mesh "Cube" 0.44137192 0.3585167 0.40260217 1 0 "" 0
+  material 0 0 0 0 16 0 "" 1 1
+  rigidbody3d 0 1 1 0 0 0 0 0 0 0.5 0.05 1 1 0
+  boxcollider3d 1 1 1 0 0 0 0 0 0
+  comporder "MeshRenderer" "BoxCollider3D" "Rigidbody3D"
+end
+gameobject 396 "Ball"
+  guid "d0399eb3a2ba420114da157cc953178c"
+  active 1
+  parent -1
+  transform 0.06698893 5.2 5.1222324 0 0 0 1 1 1 1
+  mesh "Sphere" 0.6409806 0.5526142 0.40099537 1 0 "" 0
+  material 0 0 0 0 16 0 "" 1 1
+  rigidbody3d 0 1 1 0 0 0 0 0 0 0.5 0.05 1 1 0
+  spherecollider3d 0.5 0 0 0 0 0 0
+  comporder "MeshRenderer" "SphereCollider3D" "Rigidbody3D"
+end
+gameobject 397 "Box"
+  guid "2327b2780d0d4b0087e10f0031626071"
+  active 1
+  parent -1
+  transform 1.3312042 5.2 5.3604374 0 0 0 1 1 1 1
+  mesh "Cube" 0.63763046 0.71559334 0.7297908 1 0 "" 0
+  material 0 0 0 0 16 0 "" 1 1
+  rigidbody3d 0 1 1 0 0 0 0 0 0 0.5 0.05 1 1 0
+  boxcollider3d 1 1 1 0 0 0 0 0 0
+  comporder "MeshRenderer" "BoxCollider3D" "Rigidbody3D"
+end
+gameobject 398 "Ball"
+  guid "83cf91e1c261d574d3280582081c756e"
+  active 1
+  parent -1
+  transform 2.4469821 5.2 5.381659 0 0 0 1 1 1 1
+  mesh "Sphere" 0.48377013 0.4023025 0.6299516 1 0 "" 0
+  material 0 0 0 0 16 0 "" 1 1
+  rigidbody3d 0 1 1 0 0 0 0 0 0 0.5 0.05 1 1 0
+  spherecollider3d 0.5 0 0 0 0 0 0
+  comporder "MeshRenderer" "SphereCollider3D" "Rigidbody3D"
+end
+gameobject 399 "Box"
+  guid "7f56c21c8c85a9d08d36ebe167d33415"
+  active 1
+  parent -1
+  transform 3.759802 5.2 5.1659164 0 0 0 1 1 1 1
+  mesh "Cube" 0.7082758 0.507372 0.7077298 1 0 "" 0
+  material 0 0 0 0 16 0 "" 1 1
+  rigidbody3d 0 1 1 0 0 0 0 0 0 0.5 0.05 1 1 0
+  boxcollider3d 1 1 1 0 0 0 0 0 0
+  comporder "MeshRenderer" "BoxCollider3D" "Rigidbody3D"
+end
+gameobject 400 "Ball"
+  guid "5c3ec7c2572b1e60dcebdc2a74574cb3"
+  active 1
+  parent -1
+  transform 5.1443367 5.2 5.0332026 0 0 0 1 1 1 1
+  mesh "Sphere" 0.47528332 0.54316074 0.35893297 1 0 "" 0
+  material 0 0 0 0 16 0 "" 1 1
+  rigidbody3d 0 1 1 0 0 0 0 0 0 0.5 0.05 1 1 0
+  spherecollider3d 0.5 0 0 0 0 0 0
+  comporder "MeshRenderer" "SphereCollider3D" "Rigidbody3D"
+end
+gameobject 401 "Box"
+  guid "3d114783a1096d8f0c3192f049e34f37"
+  active 1
+  parent -1
+  transform -6.382122 6.6 -6.491985 0 0 0 1 1 1 1
+  mesh "Cube" 0.50884545 0.51635075 0.32575765 1 0 "" 0
+  material 0 0 0 0 16 0 "" 1 1
+  rigidbody3d 0 1 1 0 0 0 0 0 0 0.5 0.05 1 1 0
+  boxcollider3d 1 1 1 0 0 0 0 0 0
+  comporder "MeshRenderer" "BoxCollider3D" "Rigidbody3D"
+end
+gameobject 402 "Ball"
+  guid "2ce26554947d51e13223c6df2da885ab"
+  active 1
+  parent -1
+  transform -5.349137 6.6 -6.4980583 0 0 0 1 1 1 1
+  mesh "Sphere" 0.8357337 0.35760427 0.70257604 1 0 "" 0
+  material 0 0 0 0 16 0 "" 1 1
+  rigidbody3d 0 1 1 0 0 0 0 0 0 0.5 0.05 1 1 0
+  spherecollider3d 0.5 0 0 0 0 0 0
+  comporder "MeshRenderer" "SphereCollider3D" "Rigidbody3D"
+end
+gameobject 403 "Box"
+  guid "33cb0a20e8c4961045298e7056d5abee"
+  active 1
+  parent -1
+  transform -4.013093 6.6 -6.3884926 0 0 0 1 1 1 1
+  mesh "Cube" 0.6330759 0.41527772 0.52195203 1 0 "" 0
+  material 0 0 0 0 16 0 "" 1 1
+  rigidbody3d 0 1 1 0 0 0 0 0 0 0.5 0.05 1 1 0
+  boxcollider3d 1 1 1 0 0 0 0 0 0
+  comporder "MeshRenderer" "BoxCollider3D" "Rigidbody3D"
+end
+gameobject 404 "Ball"
+  guid "c7f91d929c7e11a4b32e0cce9621dcc2"
+  active 1
+  parent -1
+  transform -2.530284 6.6 -6.410133 0 0 0 1 1 1 1
+  mesh "Sphere" 0.3483022 0.39974067 0.58758914 1 0 "" 0
+  material 0 0 0 0 16 0 "" 1 1
+  rigidbody3d 0 1 1 0 0 0 0 0 0 0.5 0.05 1 1 0
+  spherecollider3d 0.5 0 0 0 0 0 0
+  comporder "MeshRenderer" "SphereCollider3D" "Rigidbody3D"
+end
+gameobject 405 "Box"
+  guid "071c0051f2ca3df3b54a8bcc392adb23"
+  active 1
+  parent -1
+  transform -1.4484327 6.6 -6.3560586 0 0 0 1 1 1 1
+  mesh "Cube" 0.57377625 0.41512144 0.46186596 1 0 "" 0
+  material 0 0 0 0 16 0 "" 1 1
+  rigidbody3d 0 1 1 0 0 0 0 0 0 0.5 0.05 1 1 0
+  boxcollider3d 1 1 1 0 0 0 0 0 0
+  comporder "MeshRenderer" "BoxCollider3D" "Rigidbody3D"
+end
+gameobject 406 "Ball"
+  guid "450839d438deaccd4f1af60cb14ae218"
+  active 1
+  parent -1
+  transform -0.19035323 6.6 -6.321912 0 0 0 1 1 1 1
+  mesh "Sphere" 0.7435597 0.56806016 0.40902176 1 0 "" 0
+  material 0 0 0 0 16 0 "" 1 1
+  rigidbody3d 0 1 1 0 0 0 0 0 0 0.5 0.05 1 1 0
+  spherecollider3d 0.5 0 0 0 0 0 0
+  comporder "MeshRenderer" "SphereCollider3D" "Rigidbody3D"
+end
+gameobject 407 "Box"
+  guid "92a3587a492de83e735eaa7408732958"
+  active 1
+  parent -1
+  transform 1.2002537 6.6 -6.656184 0 0 0 1 1 1 1
+  mesh "Cube" 0.58560294 0.85236347 0.53060424 1 0 "" 0
+  material 0 0 0 0 16 0 "" 1 1
+  rigidbody3d 0 1 1 0 0 0 0 0 0 0.5 0.05 1 1 0
+  boxcollider3d 1 1 1 0 0 0 0 0 0
+  comporder "MeshRenderer" "BoxCollider3D" "Rigidbody3D"
+end
+gameobject 408 "Ball"
+  guid "ed2dceb1904cdb29017fe6ec696a5bcd"
+  active 1
+  parent -1
+  transform 2.7178185 6.6 -6.675458 0 0 0 1 1 1 1
+  mesh "Sphere" 0.32563144 0.4983817 0.8667046 1 0 "" 0
+  material 0 0 0 0 16 0 "" 1 1
+  rigidbody3d 0 1 1 0 0 0 0 0 0 0.5 0.05 1 1 0
+  spherecollider3d 0.5 0 0 0 0 0 0
+  comporder "MeshRenderer" "SphereCollider3D" "Rigidbody3D"
+end
+gameobject 409 "Box"
+  guid "b5f868dedb17f06c5ad7105d4d485430"
+  active 1
+  parent -1
+  transform 3.9458563 6.6 -6.4629803 0 0 0 1 1 1 1
+  mesh "Cube" 0.43278095 0.82365245 0.6687804 1 0 "" 0
+  material 0 0 0 0 16 0 "" 1 1
+  rigidbody3d 0 1 1 0 0 0 0 0 0 0.5 0.05 1 1 0
+  boxcollider3d 1 1 1 0 0 0 0 0 0
+  comporder "MeshRenderer" "BoxCollider3D" "Rigidbody3D"
+end
+gameobject 410 "Ball"
+  guid "73594f73f36c8bcf15db2aa423d835cd"
+  active 1
+  parent -1
+  transform 5.168515 6.6 -6.5315847 0 0 0 1 1 1 1
+  mesh "Sphere" 0.8688112 0.71335137 0.46396977 1 0 "" 0
+  material 0 0 0 0 16 0 "" 1 1
+  rigidbody3d 0 1 1 0 0 0 0 0 0 0.5 0.05 1 1 0
+  spherecollider3d 0.5 0 0 0 0 0 0
+  comporder "MeshRenderer" "SphereCollider3D" "Rigidbody3D"
+end
+gameobject 411 "Box"
+  guid "b23e4c28c92354374b5cf076ae13cf07"
+  active 1
+  parent -1
+  transform -6.4464197 6.6 -5.338983 0 0 0 1 1 1 1
+  mesh "Cube" 0.3423289 0.5116229 0.55245656 1 0 "" 0
+  material 0 0 0 0 16 0 "" 1 1
+  rigidbody3d 0 1 1 0 0 0 0 0 0 0.5 0.05 1 1 0
+  boxcollider3d 1 1 1 0 0 0 0 0 0
+  comporder "MeshRenderer" "BoxCollider3D" "Rigidbody3D"
+end
+gameobject 412 "Ball"
+  guid "791fd106e565b9df77f17b12a6871e63"
+  active 1
+  parent -1
+  transform -5.26315 6.6 -5.388463 0 0 0 1 1 1 1
+  mesh "Sphere" 0.48843396 0.6684514 0.38247082 1 0 "" 0
+  material 0 0 0 0 16 0 "" 1 1
+  rigidbody3d 0 1 1 0 0 0 0 0 0 0.5 0.05 1 1 0
+  spherecollider3d 0.5 0 0 0 0 0 0
+  comporder "MeshRenderer" "SphereCollider3D" "Rigidbody3D"
+end
+gameobject 413 "Box"
+  guid "a07d4d8a910264e822b221d96109e120"
+  active 1
+  parent -1
+  transform -3.8095164 6.6 -5.3271065 0 0 0 1 1 1 1
+  mesh "Cube" 0.6796346 0.6857854 0.3042308 1 0 "" 0
+  material 0 0 0 0 16 0 "" 1 1
+  rigidbody3d 0 1 1 0 0 0 0 0 0 0.5 0.05 1 1 0
+  boxcollider3d 1 1 1 0 0 0 0 0 0
+  comporder "MeshRenderer" "BoxCollider3D" "Rigidbody3D"
+end
+gameobject 414 "Ball"
+  guid "d31526d4ec6b15c991eda0ac0a3ad717"
+  active 1
+  parent -1
+  transform -2.7658472 6.6 -5.3438845 0 0 0 1 1 1 1
+  mesh "Sphere" 0.5328171 0.55902845 0.47898608 1 0 "" 0
+  material 0 0 0 0 16 0 "" 1 1
+  rigidbody3d 0 1 1 0 0 0 0 0 0 0.5 0.05 1 1 0
+  spherecollider3d 0.5 0 0 0 0 0 0
+  comporder "MeshRenderer" "SphereCollider3D" "Rigidbody3D"
+end
+gameobject 415 "Box"
+  guid "8aae2866c7b6c92ddefad84011d090ca"
+  active 1
+  parent -1
+  transform -1.4880546 6.6 -5.3873296 0 0 0 1 1 1 1
+  mesh "Cube" 0.6986197 0.6098156 0.6772356 1 0 "" 0
+  material 0 0 0 0 16 0 "" 1 1
+  rigidbody3d 0 1 1 0 0 0 0 0 0 0.5 0.05 1 1 0
+  boxcollider3d 1 1 1 0 0 0 0 0 0
+  comporder "MeshRenderer" "BoxCollider3D" "Rigidbody3D"
+end
+gameobject 416 "Ball"
+  guid "7b7e0a9765977c8e275d1fe407fc2155"
+  active 1
+  parent -1
+  transform 0.03883314 6.6 -5.1546483 0 0 0 1 1 1 1
+  mesh "Sphere" 0.5136279 0.6304459 0.7922567 1 0 "" 0
+  material 0 0 0 0 16 0 "" 1 1
+  rigidbody3d 0 1 1 0 0 0 0 0 0 0.5 0.05 1 1 0
+  spherecollider3d 0.5 0 0 0 0 0 0
+  comporder "MeshRenderer" "SphereCollider3D" "Rigidbody3D"
+end
+gameobject 417 "Box"
+  guid "7fa477c2fbfec756411126c8808173af"
+  active 1
+  parent -1
+  transform 1.3873104 6.6 -5.3305774 0 0 0 1 1 1 1
+  mesh "Cube" 0.41721645 0.5949449 0.58429265 1 0 "" 0
+  material 0 0 0 0 16 0 "" 1 1
+  rigidbody3d 0 1 1 0 0 0 0 0 0 0.5 0.05 1 1 0
+  boxcollider3d 1 1 1 0 0 0 0 0 0
+  comporder "MeshRenderer" "BoxCollider3D" "Rigidbody3D"
+end
+gameobject 418 "Ball"
+  guid "5cd878b745f79e93b0b7c4ecaff03f27"
+  active 1
+  parent -1
+  transform 2.517123 6.6 -5.1173496 0 0 0 1 1 1 1
+  mesh "Sphere" 0.6952626 0.43260035 0.41092065 1 0 "" 0
+  material 0 0 0 0 16 0 "" 1 1
+  rigidbody3d 0 1 1 0 0 0 0 0 0 0.5 0.05 1 1 0
+  spherecollider3d 0.5 0 0 0 0 0 0
+  comporder "MeshRenderer" "SphereCollider3D" "Rigidbody3D"
+end
+gameobject 419 "Box"
+  guid "2970a95877efe1c4894c0ee35685481c"
+  active 1
+  parent -1
+  transform 3.729629 6.6 -5.133745 0 0 0 1 1 1 1
+  mesh "Cube" 0.42597407 0.6758069 0.6659745 1 0 "" 0
+  material 0 0 0 0 16 0 "" 1 1
+  rigidbody3d 0 1 1 0 0 0 0 0 0 0.5 0.05 1 1 0
+  boxcollider3d 1 1 1 0 0 0 0 0 0
+  comporder "MeshRenderer" "BoxCollider3D" "Rigidbody3D"
+end
+gameobject 420 "Ball"
+  guid "145d734a356db990edbb44d7e9f930c5"
+  active 1
+  parent -1
+  transform 5.3768682 6.6 -5.356195 0 0 0 1 1 1 1
+  mesh "Sphere" 0.653903 0.6774434 0.38575092 1 0 "" 0
+  material 0 0 0 0 16 0 "" 1 1
+  rigidbody3d 0 1 1 0 0 0 0 0 0 0.5 0.05 1 1 0
+  spherecollider3d 0.5 0 0 0 0 0 0
+  comporder "MeshRenderer" "SphereCollider3D" "Rigidbody3D"
+end
+gameobject 421 "Box"
+  guid "12a701f43fb899c99285e1cb39c3164b"
+  active 1
+  parent -1
+  transform -6.3737164 6.6 -4.0056324 0 0 0 1 1 1 1
+  mesh "Cube" 0.54812384 0.312082 0.8700112 1 0 "" 0
+  material 0 0 0 0 16 0 "" 1 1
+  rigidbody3d 0 1 1 0 0 0 0 0 0 0.5 0.05 1 1 0
+  boxcollider3d 1 1 1 0 0 0 0 0 0
+  comporder "MeshRenderer" "BoxCollider3D" "Rigidbody3D"
+end
+gameobject 422 "Ball"
+  guid "c6a2180cbc6c593d8df45584550942bd"
+  active 1
+  parent -1
+  transform -5.09721 6.6 -3.823346 0 0 0 1 1 1 1
+  mesh "Sphere" 0.69839597 0.7057397 0.6626227 1 0 "" 0
+  material 0 0 0 0 16 0 "" 1 1
+  rigidbody3d 0 1 1 0 0 0 0 0 0 0.5 0.05 1 1 0
+  spherecollider3d 0.5 0 0 0 0 0 0
+  comporder "MeshRenderer" "SphereCollider3D" "Rigidbody3D"
+end
+gameobject 423 "Box"
+  guid "3ccd938094b0ff44805d94ae15b79c8c"
+  active 1
+  parent -1
+  transform -3.7562041 6.6 -3.721015 0 0 0 1 1 1 1
+  mesh "Cube" 0.6702686 0.74263364 0.63299334 1 0 "" 0
+  material 0 0 0 0 16 0 "" 1 1
+  rigidbody3d 0 1 1 0 0 0 0 0 0 0.5 0.05 1 1 0
+  boxcollider3d 1 1 1 0 0 0 0 0 0
+  comporder "MeshRenderer" "BoxCollider3D" "Rigidbody3D"
+end
+gameobject 424 "Ball"
+  guid "9b3c9836942106014281f7856c0de694"
+  active 1
+  parent -1
+  transform -2.5698445 6.6 -3.9373739 0 0 0 1 1 1 1
+  mesh "Sphere" 0.80396 0.79564595 0.65459156 1 0 "" 0
+  material 0 0 0 0 16 0 "" 1 1
+  rigidbody3d 0 1 1 0 0 0 0 0 0 0.5 0.05 1 1 0
+  spherecollider3d 0.5 0 0 0 0 0 0
+  comporder "MeshRenderer" "SphereCollider3D" "Rigidbody3D"
+end
+gameobject 425 "Box"
+  guid "f33b55e8db9985218f49e5176e96de4e"
+  active 1
+  parent -1
+  transform -1.1047832 6.6 -3.8416922 0 0 0 1 1 1 1
+  mesh "Cube" 0.56041265 0.31611863 0.7110726 1 0 "" 0
+  material 0 0 0 0 16 0 "" 1 1
+  rigidbody3d 0 1 1 0 0 0 0 0 0 0.5 0.05 1 1 0
+  boxcollider3d 1 1 1 0 0 0 0 0 0
+  comporder "MeshRenderer" "BoxCollider3D" "Rigidbody3D"
+end
+gameobject 426 "Ball"
+  guid "aeb20156a8e7219dabae675dfcb84da0"
+  active 1
+  parent -1
+  transform -0.017598465 6.6 -3.8467314 0 0 0 1 1 1 1
+  mesh "Sphere" 0.7699113 0.87800103 0.5870373 1 0 "" 0
+  material 0 0 0 0 16 0 "" 1 1
+  rigidbody3d 0 1 1 0 0 0 0 0 0 0.5 0.05 1 1 0
+  spherecollider3d 0.5 0 0 0 0 0 0
+  comporder "MeshRenderer" "SphereCollider3D" "Rigidbody3D"
+end
+gameobject 427 "Box"
+  guid "fb507cbabfaf4ad53d431e7ad4b3b68d"
+  active 1
+  parent -1
+  transform 1.1035895 6.6 -4.0052376 0 0 0 1 1 1 1
+  mesh "Cube" 0.4754768 0.8430243 0.6780312 1 0 "" 0
+  material 0 0 0 0 16 0 "" 1 1
+  rigidbody3d 0 1 1 0 0 0 0 0 0 0.5 0.05 1 1 0
+  boxcollider3d 1 1 1 0 0 0 0 0 0
+  comporder "MeshRenderer" "BoxCollider3D" "Rigidbody3D"
+end
+gameobject 428 "Ball"
+  guid "9850082638eb329921c8e96b6dc29f84"
+  active 1
+  parent -1
+  transform 2.6324396 6.6 -3.7492003 0 0 0 1 1 1 1
+  mesh "Sphere" 0.43483847 0.78541005 0.4290647 1 0 "" 0
+  material 0 0 0 0 16 0 "" 1 1
+  rigidbody3d 0 1 1 0 0 0 0 0 0 0.5 0.05 1 1 0
+  spherecollider3d 0.5 0 0 0 0 0 0
+  comporder "MeshRenderer" "SphereCollider3D" "Rigidbody3D"
+end
+gameobject 429 "Box"
+  guid "1b544662a39c52cf8ac0955cff054a9a"
+  active 1
+  parent -1
+  transform 3.7176402 6.6 -4.039428 0 0 0 1 1 1 1
+  mesh "Cube" 0.67854136 0.36585903 0.89047164 1 0 "" 0
+  material 0 0 0 0 16 0 "" 1 1
+  rigidbody3d 0 1 1 0 0 0 0 0 0 0.5 0.05 1 1 0
+  boxcollider3d 1 1 1 0 0 0 0 0 0
+  comporder "MeshRenderer" "BoxCollider3D" "Rigidbody3D"
+end
+gameobject 430 "Ball"
+  guid "6336d389ddd62d265b0cb25027ab7870"
+  active 1
+  parent -1
+  transform 5.3026285 6.6 -3.84243 0 0 0 1 1 1 1
+  mesh "Sphere" 0.6628051 0.40089542 0.8674233 1 0 "" 0
+  material 0 0 0 0 16 0 "" 1 1
+  rigidbody3d 0 1 1 0 0 0 0 0 0 0.5 0.05 1 1 0
+  spherecollider3d 0.5 0 0 0 0 0 0
+  comporder "MeshRenderer" "SphereCollider3D" "Rigidbody3D"
+end
+gameobject 431 "Box"
+  guid "8e26d7b5fd0cdbef35e8a7a9955d2a6b"
+  active 1
+  parent -1
+  transform -6.49685 6.6 -2.5874162 0 0 0 1 1 1 1
+  mesh "Cube" 0.8257446 0.5689387 0.54553616 1 0 "" 0
+  material 0 0 0 0 16 0 "" 1 1
+  rigidbody3d 0 1 1 0 0 0 0 0 0 0.5 0.05 1 1 0
+  boxcollider3d 1 1 1 0 0 0 0 0 0
+  comporder "MeshRenderer" "BoxCollider3D" "Rigidbody3D"
+end
+gameobject 432 "Ball"
+  guid "143700d4e97b2051f941e07f9dff76fe"
+  active 1
+  parent -1
+  transform -5.2908263 6.6 -2.759066 0 0 0 1 1 1 1
+  mesh "Sphere" 0.5542544 0.35690624 0.7382259 1 0 "" 0
+  material 0 0 0 0 16 0 "" 1 1
+  rigidbody3d 0 1 1 0 0 0 0 0 0 0.5 0.05 1 1 0
+  spherecollider3d 0.5 0 0 0 0 0 0
+  comporder "MeshRenderer" "SphereCollider3D" "Rigidbody3D"
+end
+gameobject 433 "Box"
+  guid "0b8fcc2613f7148ed455f46ca49212e1"
+  active 1
+  parent -1
+  transform -3.891804 6.6 -2.699916 0 0 0 1 1 1 1
+  mesh "Cube" 0.33629042 0.42209455 0.41982114 1 0 "" 0
+  material 0 0 0 0 16 0 "" 1 1
+  rigidbody3d 0 1 1 0 0 0 0 0 0 0.5 0.05 1 1 0
+  boxcollider3d 1 1 1 0 0 0 0 0 0
+  comporder "MeshRenderer" "BoxCollider3D" "Rigidbody3D"
+end
+gameobject 434 "Ball"
+  guid "ffb5634ec0c759030fbdbd9d3cb6c18c"
+  active 1
+  parent -1
+  transform -2.684019 6.6 -2.7513208 0 0 0 1 1 1 1
+  mesh "Sphere" 0.3495842 0.46666533 0.32604694 1 0 "" 0
+  material 0 0 0 0 16 0 "" 1 1
+  rigidbody3d 0 1 1 0 0 0 0 0 0 0.5 0.05 1 1 0
+  spherecollider3d 0.5 0 0 0 0 0 0
+  comporder "MeshRenderer" "SphereCollider3D" "Rigidbody3D"
+end
+gameobject 435 "Box"
+  guid "280c0f3a094ece5209c9caa1310b70b9"
+  active 1
+  parent -1
+  transform -1.2023983 6.6 -2.5094368 0 0 0 1 1 1 1
+  mesh "Cube" 0.45270896 0.5585582 0.47789446 1 0 "" 0
+  material 0 0 0 0 16 0 "" 1 1
+  rigidbody3d 0 1 1 0 0 0 0 0 0 0.5 0.05 1 1 0
+  boxcollider3d 1 1 1 0 0 0 0 0 0
+  comporder "MeshRenderer" "BoxCollider3D" "Rigidbody3D"
+end
+gameobject 436 "Ball"
+  guid "b5cd8b2365d98440d8fc466fc561d8e7"
+  active 1
+  parent -1
+  transform 0.07047896 6.6 -2.5319257 0 0 0 1 1 1 1
+  mesh "Sphere" 0.4689087 0.55657434 0.5383614 1 0 "" 0
+  material 0 0 0 0 16 0 "" 1 1
+  rigidbody3d 0 1 1 0 0 0 0 0 0 0.5 0.05 1 1 0
+  spherecollider3d 0.5 0 0 0 0 0 0
+  comporder "MeshRenderer" "SphereCollider3D" "Rigidbody3D"
+end
+gameobject 437 "Box"
+  guid "8b2a27b51bd0f9baa5f894f72ad801d3"
+  active 1
+  parent -1
+  transform 1.1617346 6.6 -2.6296825 0 0 0 1 1 1 1
+  mesh "Cube" 0.7528826 0.7544652 0.56442106 1 0 "" 0
+  material 0 0 0 0 16 0 "" 1 1
+  rigidbody3d 0 1 1 0 0 0 0 0 0 0.5 0.05 1 1 0
+  boxcollider3d 1 1 1 0 0 0 0 0 0
+  comporder "MeshRenderer" "BoxCollider3D" "Rigidbody3D"
+end
+gameobject 438 "Ball"
+  guid "265fc3d76abf892c5bf23ed698ef9351"
+  active 1
+  parent -1
+  transform 2.7809215 6.6 -2.7025242 0 0 0 1 1 1 1
+  mesh "Sphere" 0.52286065 0.61163884 0.8335785 1 0 "" 0
+  material 0 0 0 0 16 0 "" 1 1
+  rigidbody3d 0 1 1 0 0 0 0 0 0 0.5 0.05 1 1 0
+  spherecollider3d 0.5 0 0 0 0 0 0
+  comporder "MeshRenderer" "SphereCollider3D" "Rigidbody3D"
+end
+gameobject 439 "Box"
+  guid "90ad7a176e1abf464a0d578ba4ee8e4d"
+  active 1
+  parent -1
+  transform 3.9550452 6.6 -2.5114791 0 0 0 1 1 1 1
+  mesh "Cube" 0.5956872 0.58218396 0.7636832 1 0 "" 0
+  material 0 0 0 0 16 0 "" 1 1
+  rigidbody3d 0 1 1 0 0 0 0 0 0 0.5 0.05 1 1 0
+  boxcollider3d 1 1 1 0 0 0 0 0 0
+  comporder "MeshRenderer" "BoxCollider3D" "Rigidbody3D"
+end
+gameobject 440 "Ball"
+  guid "7cee099de637766b5e32b006ad29d2b5"
+  active 1
+  parent -1
+  transform 5.328163 6.6 -2.796959 0 0 0 1 1 1 1
+  mesh "Sphere" 0.8621102 0.87134117 0.5137864 1 0 "" 0
+  material 0 0 0 0 16 0 "" 1 1
+  rigidbody3d 0 1 1 0 0 0 0 0 0 0.5 0.05 1 1 0
+  spherecollider3d 0.5 0 0 0 0 0 0
+  comporder "MeshRenderer" "SphereCollider3D" "Rigidbody3D"
+end
+gameobject 441 "Box"
+  guid "9cb7a9b9ad0d3e2ee4c75619e84fb726"
+  active 1
+  parent -1
+  transform -6.6879625 6.6 -1.1852934 0 0 0 1 1 1 1
+  mesh "Cube" 0.8213467 0.83432597 0.38266528 1 0 "" 0
+  material 0 0 0 0 16 0 "" 1 1
+  rigidbody3d 0 1 1 0 0 0 0 0 0 0.5 0.05 1 1 0
+  boxcollider3d 1 1 1 0 0 0 0 0 0
+  comporder "MeshRenderer" "BoxCollider3D" "Rigidbody3D"
+end
+gameobject 442 "Ball"
+  guid "ca8e96234e8264e256b15bf0e06ff39c"
+  active 1
+  parent -1
+  transform -5.2859874 6.6 -1.1934757 0 0 0 1 1 1 1
+  mesh "Sphere" 0.6947923 0.42544055 0.52065784 1 0 "" 0
+  material 0 0 0 0 16 0 "" 1 1
+  rigidbody3d 0 1 1 0 0 0 0 0 0 0.5 0.05 1 1 0
+  spherecollider3d 0.5 0 0 0 0 0 0
+  comporder "MeshRenderer" "SphereCollider3D" "Rigidbody3D"
+end
+gameobject 443 "Box"
+  guid "5fa89e158b517c45d858948d855df04f"
+  active 1
+  parent -1
+  transform -4.088735 6.6 -1.213807 0 0 0 1 1 1 1
+  mesh "Cube" 0.47820163 0.80369496 0.57615614 1 0 "" 0
+  material 0 0 0 0 16 0 "" 1 1
+  rigidbody3d 0 1 1 0 0 0 0 0 0 0.5 0.05 1 1 0
+  boxcollider3d 1 1 1 0 0 0 0 0 0
+  comporder "MeshRenderer" "BoxCollider3D" "Rigidbody3D"
+end
+gameobject 444 "Ball"
+  guid "f78c1d779eb76847287da50bd479c84f"
+  active 1
+  parent -1
+  transform -2.7961545 6.6 -1.4267422 0 0 0 1 1 1 1
+  mesh "Sphere" 0.87495404 0.5225356 0.66981965 1 0 "" 0
+  material 0 0 0 0 16 0 "" 1 1
+  rigidbody3d 0 1 1 0 0 0 0 0 0 0.5 0.05 1 1 0
+  spherecollider3d 0.5 0 0 0 0 0 0
+  comporder "MeshRenderer" "SphereCollider3D" "Rigidbody3D"
+end
+gameobject 445 "Box"
+  guid "f7e8cdc3b72cf7b5095eb8ab74d0d2ea"
+  active 1
+  parent -1
+  transform -1.3074812 6.6 -1.3466115 0 0 0 1 1 1 1
+  mesh "Cube" 0.5049568 0.77204776 0.7910012 1 0 "" 0
+  material 0 0 0 0 16 0 "" 1 1
+  rigidbody3d 0 1 1 0 0 0 0 0 0 0.5 0.05 1 1 0
+  boxcollider3d 1 1 1 0 0 0 0 0 0
+  comporder "MeshRenderer" "BoxCollider3D" "Rigidbody3D"
+end
+gameobject 446 "Ball"
+  guid "12740bbbdcca0f251f7c352d9c0b228e"
+  active 1
+  parent -1
+  transform -0.009181902 6.6 -1.4158314 0 0 0 1 1 1 1
+  mesh "Sphere" 0.736743 0.748301 0.88446516 1 0 "" 0
+  material 0 0 0 0 16 0 "" 1 1
+  rigidbody3d 0 1 1 0 0 0 0 0 0 0.5 0.05 1 1 0
+  spherecollider3d 0.5 0 0 0 0 0 0
+  comporder "MeshRenderer" "SphereCollider3D" "Rigidbody3D"
+end
+gameobject 447 "Box"
+  guid "41a708072f686102ff39ac24b06c1d6d"
+  active 1
+  parent -1
+  transform 1.2718501 6.6 -1.3743218 0 0 0 1 1 1 1
+  mesh "Cube" 0.65847075 0.8775364 0.428019 1 0 "" 0
+  material 0 0 0 0 16 0 "" 1 1
+  rigidbody3d 0 1 1 0 0 0 0 0 0 0.5 0.05 1 1 0
+  boxcollider3d 1 1 1 0 0 0 0 0 0
+  comporder "MeshRenderer" "BoxCollider3D" "Rigidbody3D"
+end
+gameobject 448 "Ball"
+  guid "8db3b9a38b3102b93d6fefe0d2c6d60e"
+  active 1
+  parent -1
+  transform 2.540103 6.6 -1.3231984 0 0 0 1 1 1 1
+  mesh "Sphere" 0.56783545 0.81163275 0.67412823 1 0 "" 0
+  material 0 0 0 0 16 0 "" 1 1
+  rigidbody3d 0 1 1 0 0 0 0 0 0 0.5 0.05 1 1 0
+  spherecollider3d 0.5 0 0 0 0 0 0
+  comporder "MeshRenderer" "SphereCollider3D" "Rigidbody3D"
+end
+gameobject 449 "Box"
+  guid "48a3b8c5d25dc4ee896b86fc32c23a8f"
+  active 1
+  parent -1
+  transform 3.9727914 6.6 -1.3462102 0 0 0 1 1 1 1
+  mesh "Cube" 0.57765186 0.59993315 0.5386142 1 0 "" 0
+  material 0 0 0 0 16 0 "" 1 1
+  rigidbody3d 0 1 1 0 0 0 0 0 0 0.5 0.05 1 1 0
+  boxcollider3d 1 1 1 0 0 0 0 0 0
+  comporder "MeshRenderer" "BoxCollider3D" "Rigidbody3D"
+end
+gameobject 450 "Ball"
+  guid "6d862c4ba3b93dd46aa8df60123c2ee3"
+  active 1
+  parent -1
+  transform 5.0022125 6.6 -1.3474356 0 0 0 1 1 1 1
+  mesh "Sphere" 0.70702994 0.74920166 0.51193464 1 0 "" 0
+  material 0 0 0 0 16 0 "" 1 1
+  rigidbody3d 0 1 1 0 0 0 0 0 0 0.5 0.05 1 1 0
+  spherecollider3d 0.5 0 0 0 0 0 0
+  comporder "MeshRenderer" "SphereCollider3D" "Rigidbody3D"
+end
+gameobject 451 "Box"
+  guid "37e0411bf7bd80c9227fed3fbc46f44d"
+  active 1
+  parent -1
+  transform -6.6140633 6.6 -0.052266 0 0 0 1 1 1 1
+  mesh "Cube" 0.880634 0.33725733 0.35783494 1 0 "" 0
+  material 0 0 0 0 16 0 "" 1 1
+  rigidbody3d 0 1 1 0 0 0 0 0 0 0.5 0.05 1 1 0
+  boxcollider3d 1 1 1 0 0 0 0 0 0
+  comporder "MeshRenderer" "BoxCollider3D" "Rigidbody3D"
+end
+gameobject 452 "Ball"
+  guid "f25e3394c21ae5350ba316299d2acfb7"
+  active 1
+  parent -1
+  transform -5.2769365 6.6 0.051839456 0 0 0 1 1 1 1
+  mesh "Sphere" 0.85956335 0.6779176 0.85144573 1 0 "" 0
+  material 0 0 0 0 16 0 "" 1 1
+  rigidbody3d 0 1 1 0 0 0 0 0 0 0.5 0.05 1 1 0
+  spherecollider3d 0.5 0 0 0 0 0 0
+  comporder "MeshRenderer" "SphereCollider3D" "Rigidbody3D"
+end
+gameobject 453 "Box"
+  guid "87334de79beb1d8bca2e7d29bb9613ca"
+  active 1
+  parent -1
+  transform -3.7370253 6.6 -0.1473699 0 0 0 1 1 1 1
+  mesh "Cube" 0.6178975 0.6434175 0.7483723 1 0 "" 0
+  material 0 0 0 0 16 0 "" 1 1
+  rigidbody3d 0 1 1 0 0 0 0 0 0 0.5 0.05 1 1 0
+  boxcollider3d 1 1 1 0 0 0 0 0 0
+  comporder "MeshRenderer" "BoxCollider3D" "Rigidbody3D"
+end
+gameobject 454 "Ball"
+  guid "4868d17d93806984e6d2baccba2df117"
+  active 1
+  parent -1
+  transform -2.5414617 6.6 0.16362564 0 0 0 1 1 1 1
+  mesh "Sphere" 0.63262534 0.865719 0.76154804 1 0 "" 0
+  material 0 0 0 0 16 0 "" 1 1
+  rigidbody3d 0 1 1 0 0 0 0 0 0 0.5 0.05 1 1 0
+  spherecollider3d 0.5 0 0 0 0 0 0
+  comporder "MeshRenderer" "SphereCollider3D" "Rigidbody3D"
+end
+gameobject 455 "Box"
+  guid "71ee86d56622ad6e7b629e37a5cf0cec"
+  active 1
+  parent -1
+  transform -1.3486643 6.6 0.073137894 0 0 0 1 1 1 1
+  mesh "Cube" 0.6521937 0.37315488 0.8091181 1 0 "" 0
+  material 0 0 0 0 16 0 "" 1 1
+  rigidbody3d 0 1 1 0 0 0 0 0 0 0.5 0.05 1 1 0
+  boxcollider3d 1 1 1 0 0 0 0 0 0
+  comporder "MeshRenderer" "BoxCollider3D" "Rigidbody3D"
+end
+gameobject 456 "Ball"
+  guid "70fba5e60860e4261923980eddad64de"
+  active 1
+  parent -1
+  transform 0.10141213 6.6 -0.061537147 0 0 0 1 1 1 1
+  mesh "Sphere" 0.7807772 0.7545775 0.62343764 1 0 "" 0
+  material 0 0 0 0 16 0 "" 1 1
+  rigidbody3d 0 1 1 0 0 0 0 0 0 0.5 0.05 1 1 0
+  spherecollider3d 0.5 0 0 0 0 0 0
+  comporder "MeshRenderer" "SphereCollider3D" "Rigidbody3D"
+end
+gameobject 457 "Box"
+  guid "0ede06d3e35fb068609bb810a144391f"
+  active 1
+  parent -1
+  transform 1.3104992 6.6 0.01585427 0 0 0 1 1 1 1
+  mesh "Cube" 0.85918 0.6846884 0.3172169 1 0 "" 0
+  material 0 0 0 0 16 0 "" 1 1
+  rigidbody3d 0 1 1 0 0 0 0 0 0 0.5 0.05 1 1 0
+  boxcollider3d 1 1 1 0 0 0 0 0 0
+  comporder "MeshRenderer" "BoxCollider3D" "Rigidbody3D"
+end
+gameobject 458 "Ball"
+  guid "cb7f196ff93cf27fd9a238580bf824e5"
+  active 1
+  parent -1
+  transform 2.7102852 6.6 -0.037894532 0 0 0 1 1 1 1
+  mesh "Sphere" 0.33717206 0.89870554 0.43854606 1 0 "" 0
+  material 0 0 0 0 16 0 "" 1 1
+  rigidbody3d 0 1 1 0 0 0 0 0 0 0.5 0.05 1 1 0
+  spherecollider3d 0.5 0 0 0 0 0 0
+  comporder "MeshRenderer" "SphereCollider3D" "Rigidbody3D"
+end
+gameobject 459 "Box"
+  guid "a257a44ec35c7f69b76021571f8e8241"
+  active 1
+  parent -1
+  transform 3.8701 6.6 0.14099012 0 0 0 1 1 1 1
+  mesh "Cube" 0.6394333 0.41356704 0.59463334 1 0 "" 0
+  material 0 0 0 0 16 0 "" 1 1
+  rigidbody3d 0 1 1 0 0 0 0 0 0 0.5 0.05 1 1 0
+  boxcollider3d 1 1 1 0 0 0 0 0 0
+  comporder "MeshRenderer" "BoxCollider3D" "Rigidbody3D"
+end
+gameobject 460 "Ball"
+  guid "b67d4915f73ddc4859ed19a0f45c0d2c"
+  active 1
+  parent -1
+  transform 5.007867 6.6 0.03134732 0 0 0 1 1 1 1
+  mesh "Sphere" 0.6360558 0.86608136 0.60434717 1 0 "" 0
+  material 0 0 0 0 16 0 "" 1 1
+  rigidbody3d 0 1 1 0 0 0 0 0 0 0.5 0.05 1 1 0
+  spherecollider3d 0.5 0 0 0 0 0 0
+  comporder "MeshRenderer" "SphereCollider3D" "Rigidbody3D"
+end
+gameobject 461 "Box"
+  guid "4f666b8a4d9785cb68b2c35219126114"
+  active 1
+  parent -1
+  transform -6.533062 6.6 1.2710634 0 0 0 1 1 1 1
+  mesh "Cube" 0.5764339 0.3255999 0.5416502 1 0 "" 0
+  material 0 0 0 0 16 0 "" 1 1
+  rigidbody3d 0 1 1 0 0 0 0 0 0 0.5 0.05 1 1 0
+  boxcollider3d 1 1 1 0 0 0 0 0 0
+  comporder "MeshRenderer" "BoxCollider3D" "Rigidbody3D"
+end
+gameobject 462 "Ball"
+  guid "4abfc3de217e6d083caac7eb1e35f187"
+  active 1
+  parent -1
+  transform -5.3896856 6.6 1.2064683 0 0 0 1 1 1 1
+  mesh "Sphere" 0.47552428 0.3500408 0.68762755 1 0 "" 0
+  material 0 0 0 0 16 0 "" 1 1
+  rigidbody3d 0 1 1 0 0 0 0 0 0 0.5 0.05 1 1 0
+  spherecollider3d 0.5 0 0 0 0 0 0
+  comporder "MeshRenderer" "SphereCollider3D" "Rigidbody3D"
+end
+gameobject 463 "Box"
+  guid "993840bf4cc8224ee9f6a4bd408e7733"
+  active 1
+  parent -1
+  transform -4.0268497 6.6 1.1171653 0 0 0 1 1 1 1
+  mesh "Cube" 0.8491798 0.87281644 0.7696296 1 0 "" 0
+  material 0 0 0 0 16 0 "" 1 1
+  rigidbody3d 0 1 1 0 0 0 0 0 0 0.5 0.05 1 1 0
+  boxcollider3d 1 1 1 0 0 0 0 0 0
+  comporder "MeshRenderer" "BoxCollider3D" "Rigidbody3D"
+end
+gameobject 464 "Ball"
+  guid "b4aee6442437678b7264ccc04797a082"
+  active 1
+  parent -1
+  transform -2.65302 6.6 1.1832522 0 0 0 1 1 1 1
+  mesh "Sphere" 0.6925334 0.7318485 0.6165009 1 0 "" 0
+  material 0 0 0 0 16 0 "" 1 1
+  rigidbody3d 0 1 1 0 0 0 0 0 0 0.5 0.05 1 1 0
+  spherecollider3d 0.5 0 0 0 0 0 0
+  comporder "MeshRenderer" "SphereCollider3D" "Rigidbody3D"
+end
+gameobject 465 "Box"
+  guid "dbcc682e77d857afdbee9d5ca423ef0d"
+  active 1
+  parent -1
+  transform -1.1282738 6.6 1.2280343 0 0 0 1 1 1 1
+  mesh "Cube" 0.7764375 0.6815184 0.30116457 1 0 "" 0
+  material 0 0 0 0 16 0 "" 1 1
+  rigidbody3d 0 1 1 0 0 0 0 0 0 0.5 0.05 1 1 0
+  boxcollider3d 1 1 1 0 0 0 0 0 0
+  comporder "MeshRenderer" "BoxCollider3D" "Rigidbody3D"
+end
+gameobject 466 "Ball"
+  guid "478e3613f1ecdce4fcebbae4e2842864"
+  active 1
+  parent -1
+  transform 0.06862213 6.6 1.2302876 0 0 0 1 1 1 1
+  mesh "Sphere" 0.63558406 0.5625911 0.3367784 1 0 "" 0
+  material 0 0 0 0 16 0 "" 1 1
+  rigidbody3d 0 1 1 0 0 0 0 0 0 0.5 0.05 1 1 0
+  spherecollider3d 0.5 0 0 0 0 0 0
+  comporder "MeshRenderer" "SphereCollider3D" "Rigidbody3D"
+end
+gameobject 467 "Box"
+  guid "0f18a9d6b165ad32b371c75c61f73571"
+  active 1
+  parent -1
+  transform 1.464967 6.6 1.286992 0 0 0 1 1 1 1
+  mesh "Cube" 0.832093 0.8242941 0.3942705 1 0 "" 0
+  material 0 0 0 0 16 0 "" 1 1
+  rigidbody3d 0 1 1 0 0 0 0 0 0 0.5 0.05 1 1 0
+  boxcollider3d 1 1 1 0 0 0 0 0 0
+  comporder "MeshRenderer" "BoxCollider3D" "Rigidbody3D"
+end
+gameobject 468 "Ball"
+  guid "abe3cce5c0d8ffb422df93379ab914b9"
+  active 1
+  parent -1
+  transform 2.4474096 6.6 1.1779307 0 0 0 1 1 1 1
+  mesh "Sphere" 0.3006588 0.59888136 0.7080802 1 0 "" 0
+  material 0 0 0 0 16 0 "" 1 1
+  rigidbody3d 0 1 1 0 0 0 0 0 0 0.5 0.05 1 1 0
+  spherecollider3d 0.5 0 0 0 0 0 0
+  comporder "MeshRenderer" "SphereCollider3D" "Rigidbody3D"
+end
+gameobject 469 "Box"
+  guid "bcc626842c3c6c54a4ab90a76b07a0a2"
+  active 1
+  parent -1
+  transform 4.014926 6.6 1.4062227 0 0 0 1 1 1 1
+  mesh "Cube" 0.45071223 0.7260838 0.4823963 1 0 "" 0
+  material 0 0 0 0 16 0 "" 1 1
+  rigidbody3d 0 1 1 0 0 0 0 0 0 0.5 0.05 1 1 0
+  boxcollider3d 1 1 1 0 0 0 0 0 0
+  comporder "MeshRenderer" "BoxCollider3D" "Rigidbody3D"
+end
+gameobject 470 "Ball"
+  guid "0132d4e927954f6a031c23f509123ae8"
+  active 1
+  parent -1
+  transform 5.1130123 6.6 1.1925516 0 0 0 1 1 1 1
+  mesh "Sphere" 0.37853372 0.5911513 0.8550422 1 0 "" 0
+  material 0 0 0 0 16 0 "" 1 1
+  rigidbody3d 0 1 1 0 0 0 0 0 0 0.5 0.05 1 1 0
+  spherecollider3d 0.5 0 0 0 0 0 0
+  comporder "MeshRenderer" "SphereCollider3D" "Rigidbody3D"
+end
+gameobject 471 "Box"
+  guid "af07ce045a92352fca4bae5656b14d57"
+  active 1
+  parent -1
+  transform -6.55969 6.6 2.7850466 0 0 0 1 1 1 1
+  mesh "Cube" 0.43491393 0.88797003 0.45983273 1 0 "" 0
+  material 0 0 0 0 16 0 "" 1 1
+  rigidbody3d 0 1 1 0 0 0 0 0 0 0.5 0.05 1 1 0
+  boxcollider3d 1 1 1 0 0 0 0 0 0
+  comporder "MeshRenderer" "BoxCollider3D" "Rigidbody3D"
+end
+gameobject 472 "Ball"
+  guid "fbd46ba73f608454865a99ed4b31cba9"
+  active 1
+  parent -1
+  transform -5.227417 6.6 2.47981 0 0 0 1 1 1 1
+  mesh "Sphere" 0.60002625 0.8832885 0.870996 1 0 "" 0
+  material 0 0 0 0 16 0 "" 1 1
+  rigidbody3d 0 1 1 0 0 0 0 0 0 0.5 0.05 1 1 0
+  spherecollider3d 0.5 0 0 0 0 0 0
+  comporder "MeshRenderer" "SphereCollider3D" "Rigidbody3D"
+end
+gameobject 473 "Box"
+  guid "e9cf3d7c1d6a152dc3d00417d272225a"
+  active 1
+  parent -1
+  transform -3.8292882 6.6 2.5686285 0 0 0 1 1 1 1
+  mesh "Cube" 0.6541846 0.87990576 0.75421774 1 0 "" 0
+  material 0 0 0 0 16 0 "" 1 1
+  rigidbody3d 0 1 1 0 0 0 0 0 0 0.5 0.05 1 1 0
+  boxcollider3d 1 1 1 0 0 0 0 0 0
+  comporder "MeshRenderer" "BoxCollider3D" "Rigidbody3D"
+end
+gameobject 474 "Ball"
+  guid "aa702b53dfac10d3eb18938e260536b2"
+  active 1
+  parent -1
+  transform -2.6075997 6.6 2.4958043 0 0 0 1 1 1 1
+  mesh "Sphere" 0.47835606 0.8983904 0.8773412 1 0 "" 0
+  material 0 0 0 0 16 0 "" 1 1
+  rigidbody3d 0 1 1 0 0 0 0 0 0 0.5 0.05 1 1 0
+  spherecollider3d 0.5 0 0 0 0 0 0
+  comporder "MeshRenderer" "SphereCollider3D" "Rigidbody3D"
+end
+gameobject 475 "Box"
+  guid "e7aca58ea47962c935146c769a1bf8fc"
+  active 1
+  parent -1
+  transform -1.1686956 6.6 2.7699454 0 0 0 1 1 1 1
+  mesh "Cube" 0.7166021 0.71659946 0.58333707 1 0 "" 0
+  material 0 0 0 0 16 0 "" 1 1
+  rigidbody3d 0 1 1 0 0 0 0 0 0 0.5 0.05 1 1 0
+  boxcollider3d 1 1 1 0 0 0 0 0 0
+  comporder "MeshRenderer" "BoxCollider3D" "Rigidbody3D"
+end
+gameobject 476 "Ball"
+  guid "af29177f0a7ff1d302cc866a79d9aa13"
+  active 1
+  parent -1
+  transform 0.1972393 6.6 2.675528 0 0 0 1 1 1 1
+  mesh "Sphere" 0.7238463 0.41225526 0.70719004 1 0 "" 0
+  material 0 0 0 0 16 0 "" 1 1
+  rigidbody3d 0 1 1 0 0 0 0 0 0 0.5 0.05 1 1 0
+  spherecollider3d 0.5 0 0 0 0 0 0
+  comporder "MeshRenderer" "SphereCollider3D" "Rigidbody3D"
+end
+gameobject 477 "Box"
+  guid "ac56d05a49277f1998fcd9e77828a1c0"
+  active 1
+  parent -1
+  transform 1.2664894 6.6 2.582618 0 0 0 1 1 1 1
+  mesh "Cube" 0.7403292 0.40536216 0.7989518 1 0 "" 0
+  material 0 0 0 0 16 0 "" 1 1
+  rigidbody3d 0 1 1 0 0 0 0 0 0 0.5 0.05 1 1 0
+  boxcollider3d 1 1 1 0 0 0 0 0 0
+  comporder "MeshRenderer" "BoxCollider3D" "Rigidbody3D"
+end
+gameobject 478 "Ball"
+  guid "ac723cf918c9c9cf521eca7a9c610397"
+  active 1
+  parent -1
+  transform 2.5602784 6.6 2.4666624 0 0 0 1 1 1 1
+  mesh "Sphere" 0.31476378 0.8690166 0.7190107 1 0 "" 0
+  material 0 0 0 0 16 0 "" 1 1
+  rigidbody3d 0 1 1 0 0 0 0 0 0 0.5 0.05 1 1 0
+  spherecollider3d 0.5 0 0 0 0 0 0
+  comporder "MeshRenderer" "SphereCollider3D" "Rigidbody3D"
+end
+gameobject 479 "Box"
+  guid "3f203dfd4091694ace4126c3e02aaf75"
+  active 1
+  parent -1
+  transform 3.7919788 6.6 2.4297569 0 0 0 1 1 1 1
+  mesh "Cube" 0.64552677 0.7910897 0.3219518 1 0 "" 0
+  material 0 0 0 0 16 0 "" 1 1
+  rigidbody3d 0 1 1 0 0 0 0 0 0 0.5 0.05 1 1 0
+  boxcollider3d 1 1 1 0 0 0 0 0 0
+  comporder "MeshRenderer" "BoxCollider3D" "Rigidbody3D"
+end
+gameobject 480 "Ball"
+  guid "673020275bbfccf790ca1b385eea113c"
+  active 1
+  parent -1
+  transform 5.0205264 6.6 2.627785 0 0 0 1 1 1 1
+  mesh "Sphere" 0.65688854 0.6768315 0.52939993 1 0 "" 0
+  material 0 0 0 0 16 0 "" 1 1
+  rigidbody3d 0 1 1 0 0 0 0 0 0 0.5 0.05 1 1 0
+  spherecollider3d 0.5 0 0 0 0 0 0
+  comporder "MeshRenderer" "SphereCollider3D" "Rigidbody3D"
+end
+gameobject 481 "Box"
+  guid "bb939a010b78a68e4a14f1546c0fbd48"
+  active 1
+  parent -1
+  transform -6.6522784 6.6 3.8588326 0 0 0 1 1 1 1
+  mesh "Cube" 0.5345385 0.714766 0.82727915 1 0 "" 0
+  material 0 0 0 0 16 0 "" 1 1
+  rigidbody3d 0 1 1 0 0 0 0 0 0 0.5 0.05 1 1 0
+  boxcollider3d 1 1 1 0 0 0 0 0 0
+  comporder "MeshRenderer" "BoxCollider3D" "Rigidbody3D"
+end
+gameobject 482 "Ball"
+  guid "6c9cb0e60e0561e2908b2ee7c2b1b557"
+  active 1
+  parent -1
+  transform -5.000947 6.6 3.8742032 0 0 0 1 1 1 1
+  mesh "Sphere" 0.7398678 0.31422374 0.32269236 1 0 "" 0
+  material 0 0 0 0 16 0 "" 1 1
+  rigidbody3d 0 1 1 0 0 0 0 0 0 0.5 0.05 1 1 0
+  spherecollider3d 0.5 0 0 0 0 0 0
+  comporder "MeshRenderer" "SphereCollider3D" "Rigidbody3D"
+end
+gameobject 483 "Box"
+  guid "65b46b698e4607fa8ac8ce58c481372f"
+  active 1
+  parent -1
+  transform -4.0557184 6.6 4.005688 0 0 0 1 1 1 1
+  mesh "Cube" 0.4071364 0.8003292 0.45590472 1 0 "" 0
+  material 0 0 0 0 16 0 "" 1 1
+  rigidbody3d 0 1 1 0 0 0 0 0 0 0.5 0.05 1 1 0
+  boxcollider3d 1 1 1 0 0 0 0 0 0
+  comporder "MeshRenderer" "BoxCollider3D" "Rigidbody3D"
+end
+gameobject 484 "Ball"
+  guid "a4373eee71457250b5323aaf69f6fdb0"
+  active 1
+  parent -1
+  transform -2.761633 6.6 3.733883 0 0 0 1 1 1 1
+  mesh "Sphere" 0.526068 0.6760367 0.66196984 1 0 "" 0
+  material 0 0 0 0 16 0 "" 1 1
+  rigidbody3d 0 1 1 0 0 0 0 0 0 0.5 0.05 1 1 0
+  spherecollider3d 0.5 0 0 0 0 0 0
+  comporder "MeshRenderer" "SphereCollider3D" "Rigidbody3D"
+end
+gameobject 485 "Box"
+  guid "1de795ece0ad06d1be1be32138a2f817"
+  active 1
+  parent -1
+  transform -1.4540492 6.6 3.7321565 0 0 0 1 1 1 1
+  mesh "Cube" 0.3898661 0.8886102 0.71934545 1 0 "" 0
+  material 0 0 0 0 16 0 "" 1 1
+  rigidbody3d 0 1 1 0 0 0 0 0 0 0.5 0.05 1 1 0
+  boxcollider3d 1 1 1 0 0 0 0 0 0
+  comporder "MeshRenderer" "BoxCollider3D" "Rigidbody3D"
+end
+gameobject 486 "Ball"
+  guid "1a1686c7235030fe2ff0d955264fdda5"
+  active 1
+  parent -1
+  transform 0.055201784 6.6 3.74997 0 0 0 1 1 1 1
+  mesh "Sphere" 0.6892116 0.7893975 0.66850394 1 0 "" 0
+  material 0 0 0 0 16 0 "" 1 1
+  rigidbody3d 0 1 1 0 0 0 0 0 0 0.5 0.05 1 1 0
+  spherecollider3d 0.5 0 0 0 0 0 0
+  comporder "MeshRenderer" "SphereCollider3D" "Rigidbody3D"
+end
+gameobject 487 "Box"
+  guid "0f9d1b432c0495e0b5f54a2ff478073a"
+  active 1
+  parent -1
+  transform 1.1397462 6.6 3.7391427 0 0 0 1 1 1 1
+  mesh "Cube" 0.75687134 0.7140176 0.44331372 1 0 "" 0
+  material 0 0 0 0 16 0 "" 1 1
+  rigidbody3d 0 1 1 0 0 0 0 0 0 0.5 0.05 1 1 0
+  boxcollider3d 1 1 1 0 0 0 0 0 0
+  comporder "MeshRenderer" "BoxCollider3D" "Rigidbody3D"
+end
+gameobject 488 "Ball"
+  guid "8473780de1383cc8e16ec9c4976cec28"
+  active 1
+  parent -1
+  transform 2.696187 6.6 3.7947173 0 0 0 1 1 1 1
+  mesh "Sphere" 0.41184694 0.34384972 0.8285172 1 0 "" 0
+  material 0 0 0 0 16 0 "" 1 1
+  rigidbody3d 0 1 1 0 0 0 0 0 0 0.5 0.05 1 1 0
+  spherecollider3d 0.5 0 0 0 0 0 0
+  comporder "MeshRenderer" "SphereCollider3D" "Rigidbody3D"
+end
+gameobject 489 "Box"
+  guid "4acfaf5fd95c030810b2b46bf705c795"
+  active 1
+  parent -1
+  transform 3.908613 6.6 3.9737408 0 0 0 1 1 1 1
+  mesh "Cube" 0.8859531 0.5288015 0.8838545 1 0 "" 0
+  material 0 0 0 0 16 0 "" 1 1
+  rigidbody3d 0 1 1 0 0 0 0 0 0 0.5 0.05 1 1 0
+  boxcollider3d 1 1 1 0 0 0 0 0 0
+  comporder "MeshRenderer" "BoxCollider3D" "Rigidbody3D"
+end
+gameobject 490 "Ball"
+  guid "4478495eae832dfbd92286388e1977cd"
+  active 1
+  parent -1
+  transform 5.1260366 6.6 3.7151003 0 0 0 1 1 1 1
+  mesh "Sphere" 0.7705617 0.49798727 0.5853783 1 0 "" 0
+  material 0 0 0 0 16 0 "" 1 1
+  rigidbody3d 0 1 1 0 0 0 0 0 0 0.5 0.05 1 1 0
+  spherecollider3d 0.5 0 0 0 0 0 0
+  comporder "MeshRenderer" "SphereCollider3D" "Rigidbody3D"
+end
+gameobject 491 "Box"
+  guid "5f99d0a501029df45b1860798c0c80d1"
+  active 1
+  parent -1
+  transform -6.581211 6.6 5.133851 0 0 0 1 1 1 1
+  mesh "Cube" 0.39531153 0.44739223 0.3837407 1 0 "" 0
+  material 0 0 0 0 16 0 "" 1 1
+  rigidbody3d 0 1 1 0 0 0 0 0 0 0.5 0.05 1 1 0
+  boxcollider3d 1 1 1 0 0 0 0 0 0
+  comporder "MeshRenderer" "BoxCollider3D" "Rigidbody3D"
+end
+gameobject 492 "Ball"
+  guid "de80041acc963ffb77e4ecd7e8cd3a3d"
+  active 1
+  parent -1
+  transform -5.0984974 6.6 5.317217 0 0 0 1 1 1 1
+  mesh "Sphere" 0.44417208 0.6279185 0.5939071 1 0 "" 0
+  material 0 0 0 0 16 0 "" 1 1
+  rigidbody3d 0 1 1 0 0 0 0 0 0 0.5 0.05 1 1 0
+  spherecollider3d 0.5 0 0 0 0 0 0
+  comporder "MeshRenderer" "SphereCollider3D" "Rigidbody3D"
+end
+gameobject 493 "Box"
+  guid "9e720b85a6c6510baace19fcedcc48a7"
+  active 1
+  parent -1
+  transform -3.9389794 6.6 5.002901 0 0 0 1 1 1 1
+  mesh "Cube" 0.4173819 0.78874874 0.711327 1 0 "" 0
+  material 0 0 0 0 16 0 "" 1 1
+  rigidbody3d 0 1 1 0 0 0 0 0 0 0.5 0.05 1 1 0
+  boxcollider3d 1 1 1 0 0 0 0 0 0
+  comporder "MeshRenderer" "BoxCollider3D" "Rigidbody3D"
+end
+gameobject 494 "Ball"
+  guid "62b1c29c56d52881ab90184078e1b16d"
+  active 1
+  parent -1
+  transform -2.5951884 6.6 5.2986474 0 0 0 1 1 1 1
+  mesh "Sphere" 0.61506045 0.6760769 0.46310735 1 0 "" 0
+  material 0 0 0 0 16 0 "" 1 1
+  rigidbody3d 0 1 1 0 0 0 0 0 0 0.5 0.05 1 1 0
+  spherecollider3d 0.5 0 0 0 0 0 0
+  comporder "MeshRenderer" "SphereCollider3D" "Rigidbody3D"
+end
+gameobject 495 "Box"
+  guid "5c447077be87bd562dc80c398c084416"
+  active 1
+  parent -1
+  transform -1.1398423 6.6 5.2976437 0 0 0 1 1 1 1
+  mesh "Cube" 0.83508444 0.8781885 0.616622 1 0 "" 0
+  material 0 0 0 0 16 0 "" 1 1
+  rigidbody3d 0 1 1 0 0 0 0 0 0 0.5 0.05 1 1 0
+  boxcollider3d 1 1 1 0 0 0 0 0 0
+  comporder "MeshRenderer" "BoxCollider3D" "Rigidbody3D"
+end
+gameobject 496 "Ball"
+  guid "e1dae6aa01e72fcc02e28574bee3e9c2"
+  active 1
+  parent -1
+  transform 0.08123101 6.6 5.3412466 0 0 0 1 1 1 1
+  mesh "Sphere" 0.32426995 0.49427408 0.38082895 1 0 "" 0
+  material 0 0 0 0 16 0 "" 1 1
+  rigidbody3d 0 1 1 0 0 0 0 0 0 0.5 0.05 1 1 0
+  spherecollider3d 0.5 0 0 0 0 0 0
+  comporder "MeshRenderer" "SphereCollider3D" "Rigidbody3D"
+end
+gameobject 497 "Box"
+  guid "ed4767b40e2247a1f913b2ddd618d538"
+  active 1
+  parent -1
+  transform 1.3562096 6.6 5.3661604 0 0 0 1 1 1 1
+  mesh "Cube" 0.53802794 0.830216 0.64522064 1 0 "" 0
+  material 0 0 0 0 16 0 "" 1 1
+  rigidbody3d 0 1 1 0 0 0 0 0 0 0.5 0.05 1 1 0
+  boxcollider3d 1 1 1 0 0 0 0 0 0
+  comporder "MeshRenderer" "BoxCollider3D" "Rigidbody3D"
+end
+gameobject 498 "Ball"
+  guid "5b82398e27fce73b663dae83ffd8b029"
+  active 1
+  parent -1
+  transform 2.6932085 6.6 5.2407203 0 0 0 1 1 1 1
+  mesh "Sphere" 0.49869615 0.47360528 0.59769034 1 0 "" 0
+  material 0 0 0 0 16 0 "" 1 1
+  rigidbody3d 0 1 1 0 0 0 0 0 0 0.5 0.05 1 1 0
+  spherecollider3d 0.5 0 0 0 0 0 0
+  comporder "MeshRenderer" "SphereCollider3D" "Rigidbody3D"
+end
+gameobject 499 "Box"
+  guid "0186f9c6f3df74806b91400f6d13101e"
+  active 1
+  parent -1
+  transform 3.9439015 6.6 5.3473887 0 0 0 1 1 1 1
+  mesh "Cube" 0.774765 0.31894916 0.47345075 1 0 "" 0
+  material 0 0 0 0 16 0 "" 1 1
+  rigidbody3d 0 1 1 0 0 0 0 0 0 0.5 0.05 1 1 0
+  boxcollider3d 1 1 1 0 0 0 0 0 0
+  comporder "MeshRenderer" "BoxCollider3D" "Rigidbody3D"
+end
+gameobject 500 "Ball"
+  guid "66009f3747ec0fe3707728437241ac65"
+  active 1
+  parent -1
+  transform 5.325538 6.6 5.3949065 0 0 0 1 1 1 1
+  mesh "Sphere" 0.62296104 0.7516585 0.77113444 1 0 "" 0
+  material 0 0 0 0 16 0 "" 1 1
+  rigidbody3d 0 1 1 0 0 0 0 0 0 0.5 0.05 1 1 0
+  spherecollider3d 0.5 0 0 0 0 0 0
+  comporder "MeshRenderer" "SphereCollider3D" "Rigidbody3D"
+end
+gameobject 501 "Sun"
+  guid "f37989bf6fc259a2272c71840dc4b05e"
+  active 1
+  parent -1
+  transform 0 0 0 0.6303714 0.09251889 0.11192458 0.762591 1 1 1
+  light 1 1 1 1 0.3 1 0 10 45 0.5 0 6500 1 1 1 0
+end
+gameobject 502 "Camera"
+  guid "fca9879a7c2232c55c03c00c4527f7fe"
+  active 1
+  parent -1
+  transform 0 14 26 -0.19878726 -0 -0 0.9800427 1 1 1
+  camera 1 5 60 0.19215687 0.3019608 0.4745098 1 1 0 0 0.3 4000 0 0 0 1 1 -1 0 50 24 1 0 0 0 0 32 0.3 2 18 1.5
+end

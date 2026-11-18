@@ -159,6 +159,7 @@ Find the window, page or symptom, then say the number. Back to the [overview](..
 | a message arrives twice or not at all | [16.11](16-networking.md#1611-rpc-syncvars-spawning-and-chat) RPC, SyncVars, spawning and chat |
 | a message with braces vanishes | [17.4](17-launcher-platform.md#174-chat-dms-groups-voice-notes-calls-polls-gifs-emoji) Chat: DMs, groups, voice notes, calls, polls, GIFs, emoji |
 | a minimap camera draws over the main view or replaces it | [2.10](02-rendering-world.md#210-cameras-and-the-camera-stack) Cameras and the camera stack |
+| a missing-tools message | [18.10](18-build-export-release.md#1810-xbox-one-export-experimental-developer-mode-uwp) Xbox One export (experimental, Developer Mode, UWP) |
 | a model faces backwards | [36.2](36-math-geometry.md#362-quaternions-and-matrices) Quaternions and matrices |
 | a model made here still edits like any mesh | [3.11](03-modeling-import.md#311-guided-creation-templates-parts-safe-regeneration) Guided creation (templates, parts, safe regeneration) |
 | a moderation action is refused | [17.9](17-launcher-platform.md#179-admin) Admin |
@@ -1068,6 +1069,7 @@ Find the window, page or symptom, then say the number. Back to the [overview](..
 | the okayui test targets are missing from a build | [40.6](40-okayui-library.md#406-headless-software-backend-and-test-harness) Headless software backend and test harness |
 | the Open button does nothing | [37.3](37-platform-windowing.md#373-file-dialogs) File dialogs |
 | the own backend cannot open a display | [17.17](17-launcher-platform.md#1717-platform-layer-okayplatform-and-the-own-backend) Platform layer (`okay::platform`) and the own backend |
+| the owner wants to try the game on an Xbox One | [18.10](18-build-export-release.md#1810-xbox-one-export-experimental-developer-mode-uwp) Xbox One export (experimental, Developer Mode, UWP) |
 | the owner wants to try unmerged work without waiting for a release | [18.9](18-build-export-release.md#189-test-builds-the-dev-channel) Test builds (the dev channel) |
 | the pad does nothing in the editor Play view | [8.2](08-input.md#82-gamepad-sdl) Gamepad (SDL) |
 | the panel does not show in the Scene view | [12.6](12-ingame-ui.md#126-world-space-ui) World-space UI |
@@ -1245,3 +1247,4 @@ Find the window, page or symptom, then say the number. Back to the [overview](..
 | wrong cell of the atlas | [5.10](05-animation-ik.md#510-sprite-animation) Sprite animation |
 | wrong move speed after attaching a model | [4.1](04-characters-cameras.md#41-player-controller) Player Controller |
 | wrong theme or text size | [17.1](17-launcher-platform.md#171-launcher-shell-and-updater) Launcher shell and updater |
+| Xbox (exp.)" in Build Settings | [18.10](18-build-export-release.md#1810-xbox-one-export-experimental-developer-mode-uwp) Xbox One export (experimental, Developer Mode, UWP) |

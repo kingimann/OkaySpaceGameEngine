@@ -28,7 +28,7 @@ string(REPLACE "/ZW" "" CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS}")   # C++/WinRT is p
 add_executable(OkaySpaceXbox WIN32 main.cpp shaders/tri_vs.hlsl shaders/tri_ps.hlsl)
 # Package.appxmanifest: the MSBuild WindowsStore project of an executable asks for one and fails without. This one is a MINIMAL stand-in so the
 # build can finish; the real package (manifest, tiles, Data) is written and packed by OUR packer (okay-appx), never by MSBuild, so MSBuild is told
-# not to sign or package anything. The three 1x1 images in Assets\ exist only because that manifest names them.
+# not to sign or package anything. The three solid-colour images of the sizes the manifest names (50, 44, 150 px) in Assets\ exist only because that manifest names them.
 target_sources(OkaySpaceXbox PRIVATE Package.appxmanifest Assets/StoreLogo.png Assets/Square44x44Logo.png Assets/Square150x150Logo.png)
 set_source_files_properties(Assets/StoreLogo.png Assets/Square44x44Logo.png Assets/Square150x150Logo.png PROPERTIES VS_DEPLOYMENT_CONTENT 1 VS_DEPLOYMENT_LOCATION "Assets")
 set_target_properties(OkaySpaceXbox PROPERTIES

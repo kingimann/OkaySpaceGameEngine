@@ -1,7 +1,7 @@
 <?xml version="1.0" encoding="utf-8"?>
 <!-- A MINIMAL manifest that exists only so the MSBuild WindowsStore project of the test app has one (the project asks for Package.appxmanifest).
      It is NOT what is shipped: our own packer (okay-appx) writes and packs the real package from the editor / okay-xbox-export manifest.
-     The three 1x1 images in Assets\ are placeholders for the same reason. EXPERIMENTAL, UNVERIFIED. -->
+     The three images (50x50, 44x44, 150x150, solid colour) in Assets\ are placeholders for the same reason. EXPERIMENTAL, UNVERIFIED. -->
 <Package xmlns="http://schemas.microsoft.com/appx/manifest/foundation/windows10"
          xmlns:mp="http://schemas.microsoft.com/appx/2014/phone/manifest"
          xmlns:uap="http://schemas.microsoft.com/appx/manifest/uap/windows10"

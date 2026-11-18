@@ -973,6 +973,7 @@ private:
     struct DVar {
         std::string name;
         std::string tag;
+        std::uint64_t count = 0;  // above 0: an array of that many objects
     };
     std::vector<std::vector<DVar>> dscopes_;
     std::size_t dbase_ = 0;
@@ -981,6 +982,9 @@ private:
     const Type* curRet_ = nullptr;
     std::vector<std::unique_ptr<Stmt>> preStmts_;
     int newN_ = 0;
+    std::vector<DVar> globalObjs_;                    // globals with destructors, in declaration order
+    std::vector<std::unique_ptr<Stmt>> globalInit_;   // their constructor calls, run first in main
+    int globalCount_ = 0;
 
     Type* classOf(const std::string& tag) {
         auto it = structs_.find(tag);
@@ -1697,7 +1701,7 @@ private:
     }
 
     // Parse a function body, noting the return type for destructor-before-return handling.
-    std::unique_ptr<Stmt> parseBody(const Type* ret) {
+    std::unique_ptr<Stmt> parseBody(const Type* ret, std::size_t outerScopes = 0) {
         const Type* savedRet = curRet_;
         std::size_t savedBase = dbase_;
         auto savedLoops = std::move(loopBases_);
@@ -1705,7 +1709,7 @@ private:
         loopBases_.clear();
         brkBases_.clear();
         curRet_ = ret;
-        dbase_ = dscopes_.size();
+        dbase_ = dscopes_.size() - outerScopes;
         auto b = parseCompound();
         curRet_ = savedRet;
         dbase_ = savedBase;
@@ -2421,6 +2425,39 @@ private:
                 tu.decls.push_back(std::move(decl));
             }
         };
+        // A global object of a class with a constructor or destructor: "G g(args);" or "G g;".
+        // Its constructor runs at the start of main and its destructor when main returns
+        // (only for a main defined later in this file, see the plan).
+        if (!td && !ext && base && base->kind == Type::Kind::Struct && !base->tag.empty() && classOf(base->tag) &&
+            (classOf(base->tag)->needCtor || classOf(base->tag)->needDtor) && !atEnd() &&
+            cur().kind == Tok::Ident && (nextIs("(") || nextIs(";"))) {
+            Parsed gd;
+            gd.name = cur().text;
+            gd.line = cur().line;
+            gd.col = cur().column;
+            gd.file = cur().file;
+            advance();
+            std::vector<std::unique_ptr<Expr>> args;
+            if (eatP("(")) {
+                if (!eatP(")")) {
+                    args.push_back(parseAssign());
+                    while (eatP(",")) args.push_back(parseAssign());
+                    expectP(")", ")");
+                }
+            }
+            expectP(";", ";");
+            Pos gp{gd.line, gd.col, gd.file};
+            std::string tag = base->tag;
+            auto decl = makeDecl(gd, cloneType(*base), nullptr);
+            decl->isStatic = st;
+            tu.decls.push_back(std::move(decl));
+            if (classOf(tag)->needCtor)
+                globalInit_.push_back(sExpr(ctorCall(tag, eAddr(eName(gd.name, gp), gp), std::move(args), gp), gp));
+            if (classOf(tag)->needDtor) globalObjs_.push_back(DVar{gd.name, tag});
+            ++globalCount_;
+            flushExtras(tu);
+            return;
+        }
         Parsed d = parseDeclarator(true);
         auto type = apply(cloneType(*base), d.mods);
         if (type && type->kind == Type::Kind::Function)
@@ -2456,7 +2493,24 @@ private:
             }
             auto decl = makeDecl(d, std::move(type), nullptr);
             decl->isStatic = st;
-            decl->body = parseBody(decl->type ? decl->type->inner.get() : nullptr);
+            if (decl->name == "main" && ns_.empty() && globalCount_ > 0) {
+                // The globals declared so far are constructed first thing in main and destroyed
+                // when it returns, latest first.
+                dscopes_.emplace_back(globalObjs_);
+                decl->body = parseBody(decl->type ? decl->type->inner.get() : nullptr, 1);
+                Pos mp{decl->line, decl->col, decl->file};
+                if (decl->body && decl->body->kind == Stmt::Kind::Block) {
+                    auto ds = pendingDtors(dscopes_.size() - 1, mp);
+                    for (auto& st2 : ds) decl->body->stmts.push_back(std::move(st2));
+                    decl->body->stmts.insert(decl->body->stmts.begin(), std::make_move_iterator(globalInit_.begin()),
+                                             std::make_move_iterator(globalInit_.end()));
+                }
+                globalInit_.clear();
+                dscopes_.pop_back();
+                globalCount_ = 0;
+            } else {
+                decl->body = parseBody(decl->type ? decl->type->inner.get() : nullptr);
+            }
             tu.decls.push_back(std::move(decl));
             flushExtras(tu);
             return;
@@ -2506,6 +2560,17 @@ private:
         p.col = decl->col;
         p.file = decl->file;
         const Type* ty0 = decl->type.get();
+        std::uint64_t arrayCount = 0;
+        if (ty0 && ty0->kind == Type::Kind::Array && ty0->inner && ty0->inner->kind == Type::Kind::Struct &&
+            !ty0->inner->tag.empty() && classOf(ty0->inner->tag) &&
+            (classOf(ty0->inner->tag)->needCtor || classOf(ty0->inner->tag)->needDtor)) {
+            if (ty0->bound && ty0->bound->kind == Expr::Kind::Int && !decl->init) {
+                arrayCount = ty0->bound->ival;
+                ty0 = ty0->inner.get();
+            } else {
+                err("an array of objects with constructors needs a constant size and no initializer");
+            }
+        }
         Type* cls = ty0 && ty0->kind == Type::Kind::Struct && !ty0->tag.empty() ? classOf(ty0->tag) : nullptr;
         std::string tag = ty0 ? ty0->tag : "";
         bool hasInit = decl->init != nullptr;
@@ -2517,6 +2582,14 @@ private:
         }
         out.push_back(declStmt(std::move(decl)));
         if (!cls || name.empty()) return;
+        if (arrayCount > 0) {
+            if (cls->needCtor)
+                out.push_back(elementLoop(name, arrayCount, false, p, [&](std::unique_ptr<Expr> at) {
+                    return ctorCall(tag, eAddr(std::move(at), p), {}, p);
+                }));
+            if (cls->needDtor && !dscopes_.empty()) dscopes_.back().push_back(DVar{name, tag, arrayCount});
+            return;
+        }
         if (copyFrom) {
             std::vector<std::unique_ptr<Expr>> a;
             a.push_back(eAddr(eName(name, p), p));
@@ -2671,12 +2744,63 @@ private:
         preStmts_.clear();
     }
 
+    std::unique_ptr<Expr> eBin(const char* op, std::unique_ptr<Expr> l, std::unique_ptr<Expr> r, const Pos& p) {
+        auto e = std::make_unique<Expr>();
+        e->kind = Expr::Kind::Bin;
+        e->text = op;
+        e->line = p.line;
+        e->col = p.col;
+        e->file = p.file;
+        e->kids.push_back(std::move(l));
+        e->kids.push_back(std::move(r));
+        return e;
+    }
+    // { int i; for (i = 0; i < n; i = i + 1) call(name[i]); } (or counting down). 'call' builds the
+    // call from the element expression. Used for constructors and destructors of an array.
+    template <class F>
+    std::unique_ptr<Stmt> elementLoop(const std::string& name, std::uint64_t n, bool reverse, const Pos& p, F call) {
+        auto blk = sBlock(p);
+        std::string iv = "__i" + std::to_string(newN_++);
+        auto decl = std::make_unique<Decl>();
+        decl->name = iv;
+        decl->line = p.line;
+        decl->col = p.col;
+        decl->file = p.file;
+        decl->type = ty(Type::Kind::Int);
+        blk->stmts.push_back(declStmt(std::move(decl)));
+        auto loop = std::make_unique<Stmt>();
+        loop->kind = Stmt::Kind::For;
+        loop->line = p.line;
+        loop->col = p.col;
+        loop->file = p.file;
+        loop->init = sExpr(eAssign(eName(iv, p), eInt(reverse ? n - 1 : 0, p), p), p);
+        loop->expr = reverse ? eBin(">=", eName(iv, p), eInt(0, p), p)
+                             : eBin("<", eName(iv, p), eInt(n, p), p);
+        loop->expr2 = eAssign(eName(iv, p), eBin(reverse ? "-" : "+", eName(iv, p), eInt(1, p), p), p);
+        auto idx = std::make_unique<Expr>();
+        idx->kind = Expr::Kind::Index;
+        idx->line = p.line;
+        idx->col = p.col;
+        idx->file = p.file;
+        idx->kids.push_back(eName(name, p));
+        idx->kids.push_back(eName(iv, p));
+        loop->body = sExpr(call(std::move(idx)), p);
+        blk->stmts.push_back(std::move(loop));
+        return blk;
+    }
+
     // Destructor calls for the objects declared in scopes from 'base' up, innermost first.
     std::vector<std::unique_ptr<Stmt>> pendingDtors(std::size_t base, const Pos& p) {
         std::vector<std::unique_ptr<Stmt>> out;
         for (std::size_t sc = dscopes_.size(); sc-- > base;) {
             auto& vars = dscopes_[sc];
             for (std::size_t i = vars.size(); i-- > 0;) {
+                if (vars[i].count > 0) {
+                    out.push_back(elementLoop(vars[i].name, vars[i].count, true, p, [&](std::unique_ptr<Expr> at) {
+                        return dtorCall(vars[i].tag, eAddr(std::move(at), p), p);
+                    }));
+                    continue;
+                }
                 auto call = dtorCall(vars[i].tag, eAddr(eName(vars[i].name, p), p), p);
                 if (call) out.push_back(sExpr(std::move(call), p));
             }

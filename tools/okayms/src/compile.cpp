@@ -1224,6 +1224,7 @@ struct Parser {
         std::string name;
         int sid = -1;
         int count = 0;  // above 0: an array of that many objects
+        int kind = 0;   // 0 object, 1 try frame (popped), 2 handler (ended)
     };
     // A global or static object whose destructor runs when the program ends.
     struct GlobalObj {
@@ -1463,13 +1464,19 @@ struct Parser {
             const std::vector<DObj>& list = dscopes[sc];
             for (size_t i = list.size(); i-- > 0;) {
                 Node call;
+                if (list[i].kind != 0) {
+                    out->push_back(eh_call(list[i].kind == 1 ? "__okay_eh_pop" : "__okay_eh_end", {}));
+                    continue;
+                }
                 if (list[i].count > 0) {
                     if (!element_loop(list[i].name, list[i].count, true, list[i].sid, "<dtor>", &call)) return false;
                     out->push_back(std::move(call));
+                    if (eh_) out->push_back(eh_call("__okay_eh_pop", {}));
                     continue;
                 }
                 if (!special_call(list[i].sid, "<dtor>", node_addr(node_name(list[i].name)), {}, &call)) return false;
                 out->push_back(std::move(call));
+                if (eh_) out->push_back(eh_call("__okay_eh_pop", {}));
             }
         }
         return true;
@@ -2489,6 +2496,7 @@ struct Parser {
         const StructDef def = structs[static_cast<size_t>(cls)];
         std::vector<Node> pre;
         std::vector<Node> post;
+        int eh_held = 0;  // sub-objects recorded for unwinding while the constructor runs
         struct Init {
             std::string name;
             std::vector<Node> args;
@@ -2570,6 +2578,10 @@ struct Parser {
                 Node call;
                 if (!special_call(def.base, "<ctor>", node_name("this"), std::move(args), &call)) return false;
                 pre.push_back(std::move(call));
+                if (eh_ && class_needs_dtor(structs[static_cast<size_t>(def.base)])) {
+                    eh_push_object(&pre, node_name("this"), def.base, 0, locals);
+                    ++eh_held;
+                }
             }
             if (def.poly) pre.push_back(vptr_store_this(def.vtable_sym));
             for (size_t fi = def.base_fields; fi < def.fields.size(); ++fi) {
@@ -2586,6 +2598,10 @@ struct Parser {
                                       std::move(args), &call))
                         return false;
                     pre.push_back(std::move(call));
+                    if (eh_ && obj_needs_dtor(field.type)) {
+                        eh_push_object(&pre, node_addr(node_this_field(field.name)), field.type.struct_id, 0, locals);
+                        ++eh_held;
+                    }
                 } else if (init != nullptr) {
                     if (init->args.size() != 1) {
                         error = "member " + field.name + " takes one initializer";
@@ -2634,8 +2650,13 @@ struct Parser {
         if (!implicit) {
             Node user;
             if (!parse_block(&user, locals)) return false;
+            if (eh_held > 0 && contains_return(user)) {
+                error = "a return in a constructor body is not supported with exceptions";
+                return false;
+            }
             block.kids.push_back(std::move(user));
         }
+        for (int k = 0; k < eh_held; ++k) block.kids.push_back(eh_call("__okay_eh_pop", {}));
         for (Node& n : post) block.kids.push_back(std::move(n));
         if (special == 1) {
             Node ret;
@@ -3144,6 +3165,363 @@ struct Parser {
     }
     std::set<std::string> in_instance{};
 
+
+    // ---- exceptions (ISO/IEC 14882 [except]; not the MSVC C++ exception model) ----
+    // A stack of records in the runtime (runtime/eh.c), the same scheme as tools/okaycc: an object
+    // with a destructor pushes a record when it is built and pops it when it is destroyed; a try
+    // block pushes a frame holding the registers saved by __okay_setjmp; throw copies the object into
+    // runtime memory and unwinds the records, destroying objects, until a try frame is entered; its
+    // handlers test the type name and continue the unwinding when none fits. It does not use .pdata
+    // and cannot interoperate with code that throws through SEH or __CxxFrameHandler.
+    bool eh_ = false;
+    int eh_count = 0;
+
+    Node eh_call(const std::string& fn, std::vector<Node> args) const {
+        Node call;
+        call.kind = Node::Call;
+        call.text = fn;
+        for (Node& a : args) call.kids.push_back(std::move(a));
+        Node stmt;
+        stmt.kind = Node::ExprStmt;
+        stmt.kids.push_back(std::move(call));
+        return stmt;
+    }
+    Node eh_call_value(const std::string& fn, std::vector<Node> args, const Type& ret) const {
+        Node call;
+        call.kind = Node::Call;
+        call.text = fn;
+        call.type = ret;
+        for (Node& a : args) call.kids.push_back(std::move(a));
+        return call;
+    }
+    static Node int_node(long long v) {
+        Node n;
+        n.kind = Node::IntLit;
+        n.number = static_cast<uint64_t>(v);
+        n.type.base = 1;
+        return n;
+    }
+    static Type void_ptr() {
+        Type t;
+        t.base = 0;
+        t.pointers = 1;
+        return t;
+    }
+    static Node cast_node(const Type& t, Node inner) {
+        Node c;
+        c.kind = Node::Unary;
+        c.type = t;
+        c.kids.push_back(std::move(inner));
+        return c;
+    }
+    // A hidden record (14 pointers) in the current function; returns its name.
+    std::string eh_record_local(std::vector<Local>* locals) {
+        Local rec;
+        rec.name = "__eh" + std::to_string(eh_count++);
+        rec.type = void_ptr();
+        rec.type.array_len = 16;
+        place_local(locals, rec);
+        return rec.name;
+    }
+    Node rec_slot(const std::string& rec, int i) const {
+        Node ix;
+        ix.kind = Node::Index;
+        ix.kids.push_back(node_name(rec));
+        ix.kids.push_back(int_node(i));
+        return ix;
+    }
+    Node rec_store(const std::string& rec, int i, Node value) const {
+        Node a;
+        a.kind = Node::Assign;
+        a.op = TAssign;
+        a.kids.push_back(rec_slot(rec, i));
+        a.kids.push_back(cast_node(void_ptr(), std::move(value)));
+        Node st;
+        st.kind = Node::ExprStmt;
+        st.kids.push_back(std::move(a));
+        return st;
+    }
+    // After an object of class sid is built (count elements when count > 0): record it so that
+    // unwinding destroys it. The nodes go to 'out'.
+    bool eh_push_object(std::vector<Node>* out, Node obj_addr, int sid, int count, std::vector<Local>* locals) {
+        if (!eh_ || locals == nullptr) return true;
+        const Method* dm = find_method(sid, "<dtor>", 0);
+        if (dm == nullptr) return true;
+        const std::string rec = eh_record_local(locals);
+        out->push_back(rec_store(rec, 1, int_node(count > 0 ? 1 : 0)));
+        out->push_back(rec_store(rec, 2, std::move(obj_addr)));
+        out->push_back(rec_store(rec, 3, node_name(dm->qname)));
+        if (count > 0) {
+            out->push_back(rec_store(rec, 4, int_node(count)));
+            Type elem;
+            elem.base = 3;
+            elem.struct_id = sid;
+            out->push_back(rec_store(rec, 5, int_node(size_of(elem))));
+        }
+        out->push_back(eh_call("__okay_eh_push", {node_name(rec)}));
+        return true;
+    }
+    // The names a thrown type can be caught as: a class and then its bases, or the decorated type.
+    std::string eh_type_names(const Type& t) const {
+        if (t.base == 3 && t.pointers == 0 && t.struct_id >= 0) {
+            std::string out;
+            for (int walk = t.struct_id; walk >= 0; walk = structs[static_cast<size_t>(walk)].base) {
+                Type one;
+                one.base = 3;
+                one.struct_id = walk;
+                out += cxx_type(one, &structs) + "\n";
+            }
+            return out;
+        }
+        Type plain = t;
+        plain.is_ref = false;
+        plain.is_const = false;
+        return cxx_type(plain, &structs);
+    }
+    void declare_eh_builtins() {
+        auto add = [&](const std::string& name, Type ret, std::vector<Type> params) {
+            for (const FuncDecl& fn : funcs)
+                if (fn.name == name) return;
+            FuncDecl fn;
+            fn.name = name;
+            fn.ret = ret;
+            fn.params = params;
+            fn.param_names.assign(params.size(), "");
+            finish_signature(&fn);
+            funcs.push_back(std::move(fn));
+        };
+        Type v;
+        v.base = 0;
+        Type i;
+        i.base = 1;
+        Type p = void_ptr();
+        Type cp;
+        cp.base = 2;
+        cp.pointers = 1;
+        add("__okay_eh_push", v, {p});
+        add("__okay_eh_pop", v, {});
+        add("__okay_eh_begin", v, {p});
+        add("__okay_eh_end", v, {});
+        add("__okay_eh_match", i, {cp});
+        add("__okay_eh_obj", p, {});
+        add("__okay_eh_resume", v, {});
+        add("__okay_eh_rethrow", v, {});
+        add("__okay_throw", v, {p, i, cp, p});
+    }
+
+    static bool contains_return(const Node& n) {
+        if (n.kind == Node::Return) return true;
+        for (const Node& k : n.kids)
+            if (contains_return(k)) return true;
+        return false;
+    }
+
+    // try { } catch (T e) { } catch (...) { }
+    bool parse_try(Node* out, std::vector<Local>* locals, int stmt_line) {
+        next();  // try
+        const std::string tr = eh_record_local(locals);
+        Node block;
+        block.kind = Node::Block;
+        block.line = stmt_line;
+        block.kids.push_back(rec_store(tr, 1, int_node(2)));
+        block.kids.push_back(eh_call("__okay_eh_push", {node_name(tr)}));
+        dscopes.emplace_back();
+        DObj frame;
+        frame.kind = 1;
+        dscopes.back().push_back(frame);
+        Node body;
+        const bool body_ok = parse_block(&body, locals);
+        dscopes.pop_back();
+        if (!body_ok) return false;
+        body.kids.push_back(eh_call("__okay_eh_pop", {}));
+        struct Handler {
+            bool all = false;
+            std::string name;
+            Node block;
+        };
+        std::vector<Handler> handlers;
+        if (!(is(TIdent) && cur().text == "catch")) {
+            error = "a try block needs a handler";
+            return false;
+        }
+        while (is(TIdent) && cur().text == "catch") {
+            next();
+            if (!expect(TLParen, "'('")) return false;
+            Handler h;
+            dscopes.emplace_back();
+            DObj hv;
+            hv.kind = 2;
+            dscopes.back().push_back(hv);
+            Node hb;
+            hb.kind = Node::Block;
+            const std::string cr = eh_record_local(locals);
+            hb.kids.push_back(rec_store(cr, 1, int_node(3)));
+            hb.kids.push_back(eh_call("__okay_eh_begin", {node_name(cr)}));
+            if (accept(TEllipsis)) {
+                h.all = true;
+            } else {
+                accept(TConst);
+                Type t;
+                bool imp = false;
+                bool exp = false;
+                if (!parse_type(&t, &imp, &exp)) return false;
+                accept(TConst);
+                while (accept(TStar)) ++t.pointers;
+                if (accept(TAmp)) t.is_ref = true;
+                h.name = eh_type_names(t);
+                if (!h.name.empty() && h.name.back() == '\n') h.name.pop_back();
+                // Only the first name (the class itself) is the handler's type.
+                const size_t nl = h.name.find('\n');
+                if (nl != std::string::npos) h.name = h.name.substr(0, nl);
+                if (is(TIdent)) {
+                    Local var;
+                    var.name = cur().text;
+                    var.type = t;
+                    next();
+                    place_local(locals, var);
+                    Type ptr = t;
+                    ptr.is_ref = false;
+                    ptr.pointers += 1;
+                    Node obj = cast_node(ptr, eh_call_value("__okay_eh_obj", {}, void_ptr()));
+                    Node deref;
+                    deref.kind = Node::Unary;
+                    deref.op = TStar;
+                    deref.kids.push_back(std::move(obj));
+                    Node assign;
+                    assign.kind = Node::Assign;
+                    assign.op = TAssign;
+                    assign.number = 1;
+                    assign.kids.push_back(node_name(var.name));
+                    assign.kids.push_back(std::move(deref));
+                    Node st;
+                    st.kind = Node::ExprStmt;
+                    st.kids.push_back(std::move(assign));
+                    hb.kids.push_back(std::move(st));
+                    if (obj_needs_dtor(t) && !t.is_ref) {
+                        std::vector<Node> rec_nodes;
+                        eh_push_object(&rec_nodes, node_addr(node_name(var.name)), t.struct_id, 0, locals);
+                        for (Node& n : rec_nodes) hb.kids.push_back(std::move(n));
+                        DObj obj_d;
+                        obj_d.name = var.name;
+                        obj_d.sid = t.struct_id;
+                        dscopes.back().push_back(std::move(obj_d));
+                    }
+                }
+            }
+            if (!expect(TRParen, "')'")) return false;
+            Node hbody;
+            if (!parse_block(&hbody, locals)) return false;
+            hb.kids.push_back(std::move(hbody));
+            std::vector<Node> dt;
+            if (!dtor_nodes(dscopes.size() - 1, &dt)) return false;
+            for (Node& n : dt) hb.kids.push_back(std::move(n));
+            dscopes.pop_back();
+            h.block = std::move(hb);
+            handlers.push_back(std::move(h));
+        }
+        // The chain: the first handler whose type fits, else keep unwinding.
+        Node chain = eh_call("__okay_eh_resume", {});
+        for (size_t i = handlers.size(); i-- > 0;) {
+            Node iff;
+            iff.kind = Node::If;
+            if (handlers[i].all) {
+                iff.kids.push_back(int_node(1));
+            } else {
+                Node str;
+                str.kind = Node::StringLit;
+                str.text = handlers[i].name;
+                str.type.pointers = 1;
+                str.type.base = 2;
+                Type ir;
+                ir.base = 1;
+                iff.kids.push_back(eh_call_value("__okay_eh_match", {std::move(str)}, ir));
+            }
+            iff.kids.push_back(std::move(handlers[i].block));
+            iff.kids.push_back(std::move(chain));
+            chain = std::move(iff);
+        }
+        Node top;
+        top.kind = Node::If;
+        {
+            Type ir;
+            ir.base = 1;
+            Node sj = eh_call_value("__okay_setjmp", {node_addr(rec_slot(tr, 6))}, ir);
+            Node not_c;
+            not_c.kind = Node::Unary;
+            not_c.op = TNot;
+            not_c.kids.push_back(std::move(sj));
+            top.kids.push_back(std::move(not_c));
+        }
+        top.kids.push_back(std::move(body));
+        top.kids.push_back(std::move(chain));
+        block.kids.push_back(std::move(top));
+        *out = std::move(block);
+        return true;
+    }
+
+    // throw e;  throw;
+    bool parse_throw(Node* out, std::vector<Local>* locals) {
+        next();  // throw
+        if (accept(TSemi)) {
+            *out = eh_call("__okay_eh_rethrow", {});
+            return true;
+        }
+        Node value;
+        if (!parse_expr(0, &value)) return false;
+        if (!expect(TSemi, "';'")) return false;
+        Type t;
+        if (!static_type(value, &t)) {
+            error = "cannot tell the type of the thrown value";
+            return false;
+        }
+        if (t.is_array()) {
+            t = peel_array(t);
+            t.pointers += 1;
+            t.array_len = -1;
+        }
+        t.is_ref = false;
+        Node block;
+        block.kind = Node::Block;
+        // The object to copy: an object that has a name is used where it is, anything else goes
+        // into a hidden local first.
+        Node addr;
+        if (value.kind == Node::Name || value.kind == Node::Field || value.kind == Node::Index ||
+            (value.kind == Node::Unary && value.op == TStar)) {
+            addr = node_addr(std::move(value));
+        } else {
+            Local tmp;
+            tmp.name = "__th" + std::to_string(eh_count++);
+            tmp.type = t;
+            place_local(locals, tmp);
+            Node assign;
+            assign.kind = Node::Assign;
+            assign.op = TAssign;
+            assign.number = 1;
+            assign.kids.push_back(node_name(tmp.name));
+            assign.kids.push_back(std::move(value));
+            Node st;
+            st.kind = Node::ExprStmt;
+            st.kids.push_back(std::move(assign));
+            block.kids.push_back(std::move(st));
+            addr = node_addr(node_name(tmp.name));
+        }
+        Node str;
+        str.kind = Node::StringLit;
+        str.text = eh_type_names(t);
+        str.type.pointers = 1;
+        str.type.base = 2;
+        Node dtor = int_node(0);
+        if (t.base == 3 && t.pointers == 0 && t.struct_id >= 0) {
+            const Method* dm = find_method(t.struct_id, "<dtor>", 0);
+            if (dm != nullptr) dtor = node_name(dm->qname);
+        }
+        block.kids.push_back(eh_call("__okay_throw", {cast_node(void_ptr(), std::move(addr)),
+                                                      int_node(std::max(1, size_of(t))), std::move(str),
+                                                      cast_node(void_ptr(), std::move(dtor))}));
+        *out = std::move(block);
+        return true;
+    }
+
     // The constructor calls of the global objects, in declaration order, go into __okay_init; the
     // destructors (globals, then static locals, latest first) into __okay_fini. main (or entry)
     // calls them. Written from ISO/IEC 14882 [basic.start.init] and [basic.start.term].
@@ -3319,6 +3697,8 @@ struct Parser {
     }
 
     bool parse() {
+        for (const Token& t : tokens)
+            if (t.kind == TIdent && (t.text == "try" || t.text == "throw")) eh_ = true;
         while (!is(TEnd)) {
             if (!current_ns.empty() && accept(TRBrace)) {
                 current_ns.clear();
@@ -3485,6 +3865,7 @@ struct Parser {
             funcs.push_back(std::move(fn));
         }
         if (!error.empty()) return false;
+        if (eh_) declare_eh_builtins();
         return finish_program();
     }
 };
@@ -3683,6 +4064,9 @@ bool Parser::parse_stmt_core(Node* out, std::vector<Local>* locals) {
 bool Parser::parse_stmt_inner(Node* out, std::vector<Local>* locals, int stmt_line) {
     cur_locals = locals;
     if (is(TLBrace)) return parse_block(out, locals);
+    if (is(TIdent) && cur().text == "try" && at + 1 < tokens.size() && tokens[at + 1].kind == TLBrace)
+        return parse_try(out, locals, stmt_line);
+    if (is(TIdent) && cur().text == "throw") return parse_throw(out, locals);
     if (is(TGoto)) {
         next();
         if (!is(TIdent)) {
@@ -4108,6 +4492,9 @@ bool Parser::parse_stmt_inner(Node* out, std::vector<Local>* locals, int stmt_li
                     out->kids.push_back(std::move(loop));
                 }
                 if (obj_needs_dtor(decl.type)) {
+                    std::vector<Node> rec_nodes;
+                    eh_push_object(&rec_nodes, node_name(decl.name), sid, decl.type.array_len, locals);
+                    for (Node& n : rec_nodes) out->kids.push_back(std::move(n));
                     DObj obj;
                     obj.name = decl.name;
                     obj.sid = sid;
@@ -4129,6 +4516,9 @@ bool Parser::parse_stmt_inner(Node* out, std::vector<Local>* locals, int stmt_li
                 return false;
             }
             if (obj_needs_dtor(decl.type)) {
+                std::vector<Node> rec_nodes;
+                eh_push_object(&rec_nodes, node_addr(node_name(decl.name)), decl.type.struct_id, 0, locals);
+                for (Node& n : rec_nodes) out->kids.push_back(std::move(n));
                 DObj obj;
                 obj.name = decl.name;
                 obj.sid = decl.type.struct_id;
@@ -6151,6 +6541,47 @@ bool Gen::gen_expr(const Node& node) {
         return true;
     }
     if (node.kind == Node::Call) {
+        if (node.text == "__okay_setjmp" && node.kids.size() == 1) {
+            // The registers a restore must bring back go to the buffer: rbx rbp rdi rsi r12 to r15
+            // rsp and the address after this sequence (the Windows x64 callee-saved set). The
+            // sequence is entered again by __okay_longjmp with eax = 1.
+            if (!gen_expr(node.kids[0])) return false;
+            static const uint8_t save[] = {0x48, 0x89, 0xC1,                          // mov rcx, rax
+                                           0x48, 0x89, 0x19,                          // mov [rcx], rbx
+                                           0x48, 0x89, 0x69, 0x08,                    // mov [rcx+8], rbp
+                                           0x48, 0x89, 0x79, 0x10,                    // mov [rcx+16], rdi
+                                           0x48, 0x89, 0x71, 0x18,                    // mov [rcx+24], rsi
+                                           0x4C, 0x89, 0x61, 0x20,                    // mov [rcx+32], r12
+                                           0x4C, 0x89, 0x69, 0x28,                    // mov [rcx+40], r13
+                                           0x4C, 0x89, 0x71, 0x30,                    // mov [rcx+48], r14
+                                           0x4C, 0x89, 0x79, 0x38,                    // mov [rcx+56], r15
+                                           0x48, 0x89, 0x61, 0x40,                    // mov [rcx+64], rsp
+                                           0x48, 0x8D, 0x05, 0x06, 0x00, 0x00, 0x00,  // lea rax, [rip+6]
+                                           0x48, 0x89, 0x41, 0x48,                    // mov [rcx+72], rax
+                                           0x31, 0xC0};                               // xor eax, eax
+            for (uint8_t c : save) b(c);
+            last_type = Type{};
+            last_type.base = 1;
+            return true;
+        }
+        if (node.text == "__okay_longjmp" && node.kids.size() == 1) {
+            if (!gen_expr(node.kids[0])) return false;
+            static const uint8_t restore[] = {0x48, 0x89, 0xC1,                    // mov rcx, rax
+                                              0xB8, 0x01, 0x00, 0x00, 0x00,        // mov eax, 1
+                                              0x48, 0x8B, 0x19,                    // mov rbx, [rcx]
+                                              0x48, 0x8B, 0x69, 0x08,              // mov rbp, [rcx+8]
+                                              0x48, 0x8B, 0x79, 0x10,              // mov rdi, [rcx+16]
+                                              0x48, 0x8B, 0x71, 0x18,              // mov rsi, [rcx+24]
+                                              0x4C, 0x8B, 0x61, 0x20,              // mov r12, [rcx+32]
+                                              0x4C, 0x8B, 0x69, 0x28,              // mov r13, [rcx+40]
+                                              0x4C, 0x8B, 0x71, 0x30,              // mov r14, [rcx+48]
+                                              0x4C, 0x8B, 0x79, 0x38,              // mov r15, [rcx+56]
+                                              0x48, 0x8B, 0x61, 0x40,              // mov rsp, [rcx+64]
+                                              0xFF, 0x61, 0x48};                   // jmp [rcx+72]
+            for (uint8_t c : restore) b(c);
+            last_type = Type{};
+            return true;
+        }
         if (node.text == "va_end") {
             mov_eax_imm(0);
             return true;
@@ -7349,6 +7780,17 @@ bool emit_functions(std::vector<FuncDecl>& funcs, const std::vector<StructDef>& 
         bool needs_nv = false;
         for (const Local& local : fn.locals) {
             if (local.type.base == 3 && local.type.pointers == 0 && !gen.fits_register(local.type)) needs_nv = true;
+        }
+        {
+            // A function with a try block keeps its locals in memory: a restore after a throw only
+            // brings back the registers saved when the try block was entered.
+            const std::function<bool(const Node&)> has_setjmp = [&](const Node& n) {
+                if (n.kind == Node::Call && n.text == "__okay_setjmp") return true;
+                for (const Node& k : n.kids)
+                    if (has_setjmp(k)) return true;
+                return false;
+            };
+            if (has_setjmp(fn.body)) needs_nv = true;
         }
         std::vector<int> extra_regs;
         if ((optimize || opt_level >= 1) && !needs_nv) {

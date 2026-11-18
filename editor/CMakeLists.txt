@@ -62,7 +62,8 @@ add_executable(okay-editor main.cpp EditorState.cpp FpHandsWindow.cpp
     EditorWidgets.cpp                                                  # shared widgets (accent, icons, search field)
     ConsolePanel.cpp                                                   # ConsoleLog + Console panel
     OkayPanels.cpp                                                     # Crash Log and Audio Mixer hosted by OkayUI (opt-in backend)
-    OkayUIHostMode.cpp                                                 # window mode: OkayUI owns the window (OKAY_UI_HOST=okayui, dev switch)
+    OkayUIHostMode.cpp                                                 # window mode: OkayUI owns the window (OKAY_UI_HOST=okayui, dev switch): screen + state
+    OkayUIHostRun.cpp                                                  # window mode: backend, window, painter, frame loop, the editor's game step
     ScriptEditorCodeEdit.cpp                                           # the script editor's adapter over OkayUI::CodeEdit (no ImGui)
     ProblemsPanel.cpp                                                  # Problems panel + project diagnostics
     SceneManagerPanel.cpp                                              # Scene Manager window

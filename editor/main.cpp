@@ -96,6 +96,7 @@
 #include "okay/Scene/UILayoutTools.hpp"  // wrap in panel, fit to children, match size, stack
 #include "okay/Platform/PlayFab/PlayFab.hpp" // PlayFab cloud services (Services panel)
 #include "okay/Platform/NativeFetch.hpp"      // own HTTP client in front of curl for the update download (only with OKAY_OWN_HTTP)
+#include "EditorFrameTick.hpp"                // the game-step part of the frame (oked::StepSimulation), shared with window mode
 #ifdef OKAY_HAVE_OKAYUI
 #include "okay/UI/OkayUI.hpp"           // demo overlay: OkayUI drawn on top of ImGui
 #include "OkayUIHostMode.hpp"           // window mode (OKAY_UI_HOST=okayui): OkayUI owns the window, no Dear ImGui
@@ -2210,6 +2211,8 @@ static void TickGame(EditorState& ed, float dt) {
     if (ed.isPlaying() && okay::vs::VsDebugger::Get().Active()) g_gameFiber.Run([&ed, dt] { ed.Tick(dt); });
     else ed.Tick(dt);
 }
+// What oked::StepSimulation (EditorFrameTick.hpp) needs from this file: the debugger-aware scene tick, the Pause button and the behaviour-tree breakpoint.
+static oked::SimHooks<EditorState> EditorSimHooks();
 /// Finish a frame frozen at a breakpoint, stopping at nothing (before Stop, undo,
 /// deleting objects or loading a scene: never rebuild a scene mid-frame).
 static void FinishFrozenTick() {
@@ -2220,6 +2223,13 @@ static void FinishFrozenTick() {
     d.RequestStep(okay::vs::VsDebugger::Step::None);
     g_gameFiber.Resume();
     d.enabled = was;
+}
+static oked::SimHooks<EditorState> EditorSimHooks() {
+    oked::SimHooks<EditorState> h;
+    h.tickGame = [](EditorState& e, float d) { TickGame(e, d); };
+    h.onRunFramesDone = [] { g_paused = true; };   // "Run N frames" ended: the Pause button follows the loop's pause
+    h.resumeBreakPause = [] { okay::Game::ClearPause(okay::BehaviorTreeRunner::kBreakPause); };   // resume also lets a node breakpoint go
+    return h;
 }
 bool g_clearConsoleOnPlay = true; // wipe the console each time Play starts
 bool g_consoleCollapse = false;   // the Console's Collapse toggle (okay_settings.txt "consolecollapse")
@@ -51398,15 +51408,10 @@ int main(int argc, char** argv) {
                     s_refreshHz = (window && SDL_GetWindowDisplayMode(window, &dm) == 0 && dm.refresh_rate > 0) ? (float)dm.refresh_rate : 0.0f;
                     s_refreshAge = 120;
                 }
-                if (ed.isPlaying()) {
-                    if (!ed.playTick) ed.playTick = [&ed](float gdt) { TickGame(ed, gdt); };   // the Play loop's update (debugger fiber aware)
-                    if (!ed.onRunFramesDone) ed.onRunFramesDone = [] { g_paused = true; };   // "Run N frames" ended: the Pause button follows the loop's pause
-                    if (!g_paused) okay::Game::ClearPause(okay::BehaviorTreeRunner::kBreakPause);   // resume also lets a node breakpoint go
-                    ed.SetPaused(g_paused);   // the Pause button = Game::PushPause("editor")
-                    // Steps Time (DeltaTime, ElapsedTime, time scale, hit stops, Clock channels), then ticks the
-                    // scene by the scaled delta: 0 while the game or the editor is paused, as before.
-                    ed.PlayFrame((double)dt, g_smoothFrameTime, g_vsync ? s_refreshHz : 0.0f);
-                } else TickGame(ed, dt > 0.1f ? 0.1f : dt);   // editing never steps Time
+                // The step itself (Play loop or one editing tick) lives in EditorFrameTick.hpp, shared with window mode (docs/own_ui_toolkit.md 6.24 step 4).
+                // Play: the loop's update is TickGame (debugger fiber aware); "Run N frames" ending sets the Pause button; resume lets a node breakpoint go.
+                // The loop steps Time (DeltaTime, ElapsedTime, time scale, hit stops, Clock channels), then ticks the scene by the scaled delta: 0 while paused.
+                oked::StepSimulation(ed, oked::SimStep{dt, g_paused, g_smoothFrameTime, g_vsync ? s_refreshHz : 0.0f}, EditorSimHooks());
             }
         }
         // A PauseMenu / script Quit during Play stops play (mirrors the built game).

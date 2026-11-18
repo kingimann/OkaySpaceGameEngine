@@ -227,6 +227,38 @@ public:
     virtual bool Button(GamepadButton b) const = 0;
     /// lo / hi motor strength 0..65535 for `ms`; false when the pad can't rumble.
     virtual bool Rumble(uint16_t lo, uint16_t hi, uint32_t ms) = 0;
+
+    // ---- Optional: who it is, its raw inputs and its extras. Every one has a default
+    // (unknown / none), so a backend only overrides what its host can really tell.
+    /// USB vendor / product id, 0 when the host does not say.
+    virtual uint16_t VendorId() const { return 0; }
+    virtual uint16_t ProductId() const { return 0; }
+    /// The host's own controller type (SDL_GameControllerType numbers), -1 when it has none.
+    virtual int ControllerType() const { return -1; }
+    /// False for a device the host has no layout for (opened as a plain joystick): Axis() and
+    /// Button() read 0 and the raw readers below are what to use.
+    virtual bool HasBuiltinMapping() const { return true; }
+    virtual int RawAxisCount() const { return 0; }
+    virtual int RawButtonCount() const { return 0; }
+    virtual int RawHatCount() const { return 0; }
+    virtual int16_t RawAxis(int) const { return 0; }
+    virtual bool RawButton(int) const { return false; }
+    virtual uint8_t RawHat(int) const { return 0; }      ///< bits 1 up, 2 right, 4 down, 8 left
+    /// -1 unknown, 0 empty, 1 low, 2 medium, 3 full, 4 wired (no battery).
+    virtual int PowerLevel() const { return -1; }
+    /// Lightbar colour (DualShock 4 / DualSense); false when the pad has none or the host cannot set it.
+    virtual bool SetLightbar(uint8_t, uint8_t, uint8_t) { return false; }
+    /// Player number shown on the pad (its LEDs), 0-based; -1 clears it.
+    virtual void SetPlayerIndex(int) {}
+    /// Separate trigger motors (Xbox One / Series); false when the pad has none.
+    virtual bool RumbleTriggers(uint16_t, uint16_t, uint32_t) { return false; }
+    virtual bool HasTriggerRumble() const { return false; }
+    /// Touchpads (PlayStation, Steam): how many, and one finger's state (x, y 0..1).
+    virtual int TouchpadCount() const { return 0; }
+    virtual bool TouchpadFinger(int /*pad*/, int /*finger*/, bool& down, float& x, float& y, float& pressure) const { down = false; x = y = pressure = 0; return false; }
+    /// Motion sensors: kind 0 = gyroscope (radians per second), 1 = accelerometer (m/s^2).
+    virtual bool HasSensor(int /*kind*/) const { return false; }
+    virtual bool SensorData(int /*kind*/, float out[3]) { out[0] = out[1] = out[2] = 0; return false; }
 };
 
 // ---- The backend ---------------------------------------------------------------

@@ -46,6 +46,9 @@
 // Input
 #include "okay/Input/Input.hpp"
 #include "okay/Input/InputActions.hpp"
+#include "okay/Input/InputRecorder.hpp"
+#include "okay/Input/InputDebug.hpp"
+#include "okay/Input/Haptics.hpp"
 #include "okay/Input/GestureRecognizer.hpp"
 #include "okay/Input/Gestures.hpp"
 #include "okay/Components/TouchControls.hpp"
@@ -160,6 +163,7 @@
 #include "okay/Components/FirstPersonHands.hpp"
 #include "okay/Components/ProceduralObjectHolding.hpp"
 #include "okay/Components/HoldPrompt.hpp"
+#include "okay/Components/LocalPlayerInput.hpp"
 #include "okay/Components/MoveSpeed.hpp"
 #include "okay/Render/Material.hpp"
 #include "okay/Components/Tilemap.hpp"

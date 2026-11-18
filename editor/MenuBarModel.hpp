@@ -266,6 +266,7 @@ inline std::vector<Entry> PanelsSubmenu() {
     p.push_back(Toggle("panel.assetmanager", "Asset Manager"));
     p.push_back(Toggle("panel.crashlog", "Crash Log", "View past crash reports (okay_crashlog.txt) and copy them to send to support."));
     p.push_back(Toggle("panel.audiomixer", "Audio Mixer", "Master and group volumes (Music, SFX, UI, Voice), output levels while playing, and music ducking."));
+    p.push_back(Toggle("panel.input", "Input", "Live keys, mouse, controllers and actions while the game plays, the last events, input recording and replay, and each action's response curve."));
     return p;
 }
 
@@ -290,6 +291,7 @@ inline std::vector<Entry> ToolsSubmenu() {
     t.push_back(Toggle("tool.uitheme", "UI Theme", "Define a reusable UI style (colors, corners, borders) and apply it to every widget at once: pick a preset or make your own, then restyle the whole UI in one click."));
     t.push_back(Toggle("tool.items", "Items, Loot & Recipes", "Define items, loot tables and crafting recipes. Saved as items.okayitems, .okayloot and .okayrecipes."));
     t.push_back(Toggle("tool.weapons", "Weapons", "Define swords and guns once (damage, swing or fire rate, range, rounds and reload, hit window, arc or hit box, combo and knockback). Melee and guns use these."));
+    t.push_back(Toggle("tool.inputactions", "Input Actions", "Author an input asset (.okayinput): control schemes, action maps, typed actions (button, axis, 2D and 3D vector), bindings with processors, and interactions (hold, tap, multi-tap, repeat), with a check list and a live view."));
     t.push_back(Toggle("tool.localization", "Localization", "The project's string table: every text key in every language, how complete each language is, CSV for translators and a pseudo-localized preview."));
     return t;
 }

@@ -1065,6 +1065,10 @@ add_executable(test_view_upgrade test_view_upgrade.cpp)
 target_link_libraries(test_view_upgrade PRIVATE okay::engine)
 add_test(NAME view_upgrade COMMAND test_view_upgrade)
 
+add_executable(test_one_controller test_one_controller.cpp)
+target_link_libraries(test_one_controller PRIVATE okay::engine)
+add_test(NAME one_controller COMMAND test_one_controller)
+
 add_executable(test_player_controller test_player_controller.cpp)
 target_link_libraries(test_player_controller PRIVATE okay::engine)
 add_test(NAME player_controller COMMAND test_player_controller)
@@ -1226,6 +1230,10 @@ add_test(NAME voxel_edit COMMAND test_voxel_edit)
 add_executable(test_voxel_materials test_voxel_materials.cpp)
 target_link_libraries(test_voxel_materials PRIVATE okay::engine)
 add_test(NAME voxel_materials COMMAND test_voxel_materials)
+
+add_executable(test_voxel_aim test_voxel_aim.cpp)
+target_link_libraries(test_voxel_aim PRIVATE okay::engine)
+add_test(NAME voxel_aim COMMAND test_voxel_aim)
 
 add_executable(test_voxel_digger_real test_voxel_digger_real.cpp)
 target_link_libraries(test_voxel_digger_real PRIVATE okay::engine)
@@ -2437,6 +2445,11 @@ if(SDL2_FOUND)
     target_compile_definitions(test_ui_library_shots PRIVATE OKAY_TEST_OUTPUT_DIR="${CMAKE_CURRENT_BINARY_DIR}")
     add_test(NAME ui_library_shots COMMAND test_ui_library_shots)
 
+    # Picture tool for the typed-input Controls screen (no add_test: it writes nothing without an output folder).
+    add_executable(shot_controls_screen shot_controls_screen.cpp)
+    target_link_libraries(shot_controls_screen PRIVATE okay::engine ${OKAY_TEST_SDL_LIB})
+    target_include_directories(shot_controls_screen PRIVATE ${SDL2_INCLUDE_DIRS})
+
     add_executable(test_ui_renderer_golden test_ui_renderer_golden.cpp)
     target_link_libraries(test_ui_renderer_golden PRIVATE okay::engine ${OKAY_TEST_SDL_LIB})
     target_include_directories(test_ui_renderer_golden PRIVATE ${SDL2_INCLUDE_DIRS})
@@ -2516,6 +2529,25 @@ add_test(NAME touch_controls COMMAND test_touch_controls)
 add_executable(test_input_keys_gamepad test_input_keys_gamepad.cpp)
 target_link_libraries(test_input_keys_gamepad PRIVATE okay::engine)
 add_test(NAME input_keys_gamepad COMMAND test_input_keys_gamepad)
+
+# Input audit, end to end and headless: the bugs found (fast taps, typing moving the player, layouts without Latin letters,
+# rebinding Move), chords, wheel bindings, response curves, buffering, per-player actions, glyph families, recording and replay,
+# the debugger model, and the fast evaluation path against the old one (docs/input_audit.md)
+add_executable(test_input_deep test_input_deep.cpp)
+target_link_libraries(test_input_deep PRIVATE okay::engine)
+add_test(NAME input_deep COMMAND test_input_deep)
+
+# Per-frame input cost: 100 actions, 4 controllers (prints microseconds and allocations per frame; checks 0 allocations)
+add_executable(test_input_bench test_input_bench.cpp)
+target_link_libraries(test_input_bench PRIVATE okay::engine)
+add_test(NAME input_bench COMMAND test_input_bench)
+
+# The shipped examples/input/input_playground.okayscene run headless: every station's script, with a software-rendered picture
+add_executable(test_input_playground test_input_playground.cpp)
+target_link_libraries(test_input_playground PRIVATE okay::engine)
+target_compile_definitions(test_input_playground PRIVATE OKAY_SOURCE_DIR="${PROJECT_SOURCE_DIR}")
+target_include_directories(test_input_playground PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})
+add_test(NAME input_playground COMMAND test_input_playground)
 
 # Save games: slots, whole-scene state, script variables, deferred load, autosave
 add_executable(test_save_game test_save_game.cpp)
@@ -3989,6 +4021,11 @@ add_executable(test_guided_perf test_guided_perf.cpp)
 target_link_libraries(test_guided_perf PRIVATE okay::engine)
 add_test(NAME guided_perf COMMAND test_guided_perf)
 
+# Controller identification, generic fallback, Controller Setup, saved mapping, glyph names and hot-plug slots, all with fake devices.
+add_executable(test_controller_mapping test_controller_mapping.cpp)
+target_link_libraries(test_controller_mapping PRIVATE okay::engine)
+add_test(NAME controller_mapping COMMAND test_controller_mapping)
+
 # Tests that time a real operation against a tight limit (a 6 ms physics step, a 500 ms loop, sleeps that must land in a window,
 # a 2 s network cancel). CI runs ctest with -j4, and a test sharing the machine with three others could miss such a limit for
 # reasons that have nothing to do with the code. RUN_SERIAL makes ctest run each of these with nothing else running, so they
@@ -3999,3 +4036,49 @@ foreach(_serial_test physics_deep_improved loop_audit2 bughunt_round3 frame_paci
         set_tests_properties(${_serial_test} PROPERTIES RUN_SERIAL TRUE)
     endif()
 endforeach()
+
+# Typed actions, composites, processors and control schemes (Input/ActionSet.hpp), with the real Input fed by hand; pictures with OKAY_SHOT_DIR.
+add_executable(test_action_set test_action_set.cpp)
+target_link_libraries(test_action_set PRIVATE okay::engine)
+target_include_directories(test_action_set PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})
+add_test(NAME action_set COMMAND test_action_set)
+
+# Interactions and phases (tap, hold, multi-tap, repeat, chorded), the input buffer and coyote time.
+add_executable(test_action_phases test_action_phases.cpp)
+target_link_libraries(test_action_phases PRIVATE okay::engine)
+target_include_directories(test_action_phases PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})
+add_test(NAME action_phases COMMAND test_action_phases)
+
+# The .okayinput asset, default asset, migration, action maps, rebinding overrides and local players.
+add_executable(test_input_asset test_input_asset.cpp)
+target_link_libraries(test_input_asset PRIVATE okay::engine)
+target_include_directories(test_input_asset PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})
+target_compile_definitions(test_input_asset PRIVATE OKAY_SOURCE_DIR="${PROJECT_SOURCE_DIR}")
+add_test(NAME input_asset COMMAND test_input_asset)
+
+# The ia_* script functions (typed actions, maps, phases, local players, rebinding).
+add_executable(test_input_script_api test_input_script_api.cpp)
+target_link_libraries(test_input_script_api PRIVATE okay::engine)
+add_test(NAME input_script_api COMMAND test_input_script_api)
+
+# The Input Actions window's logic (ActionEditor) and the live debugger lines.
+add_executable(test_action_editor test_action_editor.cpp)
+target_link_libraries(test_action_editor PRIVATE okay::engine)
+target_include_directories(test_action_editor PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})
+add_test(NAME action_editor COMMAND test_action_editor)
+
+# The Controls screen on the typed input system: fields on "ia:<action>@<player>" show and rebind a local player's inputs.
+add_executable(test_controls_screen test_controls_screen.cpp)
+target_link_libraries(test_controls_screen PRIVATE okay::engine)
+add_test(NAME controls_screen COMMAND test_controls_screen)
+
+# The Player Input component: joins a local player on scene start, with its device, scheme, maps and asset.
+add_executable(test_local_player_input test_local_player_input.cpp)
+target_link_libraries(test_local_player_input PRIVATE okay::engine)
+add_test(NAME local_player_input COMMAND test_local_player_input)
+
+# Editor Play uses the project's Assets/input.okayinput (or the default asset) with no setup.
+add_executable(test_input_autoload test_input_autoload.cpp ${PROJECT_SOURCE_DIR}/editor/EditorState.cpp ${PROJECT_SOURCE_DIR}/editor/ProjectUpgrade.cpp ${PROJECT_SOURCE_DIR}/shared/FileDialog.cpp)
+target_include_directories(test_input_autoload PRIVATE ${CMAKE_SOURCE_DIR}/editor)
+target_link_libraries(test_input_autoload PRIVATE okay::engine)
+add_test(NAME input_autoload COMMAND test_input_autoload)

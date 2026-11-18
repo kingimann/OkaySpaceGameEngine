@@ -142,6 +142,21 @@ example one added from code) is saved the same way, as a Player Controller
 with that one view, so saving a loaded scene again gives the same text. Older
 files with a bare `fpctrl` or `tpctrl` record still load as before.
 
+**One controller, no Humanoid (2026-11-17).** There is nothing else to add for
+a walking first- or third-person character: *GameObject > Player > Player
+Controller (first / third person)* and the New Project template **First / Third
+Person** both make the same Player Controller, and the View setting picks the
+views. The separate First Person, Third Person and Humanoid entries are gone from
+the menus and template lists (the old template titles still build when passed as
+`--template`). The Humanoid starter was only a Character with Foot IK and a
+third-person controller; a scene saved from it opens as a Player Controller (View:
+Third Person) with its Foot IK, Root Motion and speeds kept. Third Person
+Shooter stays: it is a different game mode (left mouse fires `on_fire`, the body
+always faces the camera) with its own settings. Top Down, Vehicle, 2.5D
+Platformer, Click To Move, Free Roam and the NPC controller are other kinds of
+game and stay. **Humanoid Retarget** (maps an imported rig's bones) is an
+animation tool, not a controller, and stays.
+
 ## Controller movement extras
 
 The Player Controller and Character Controller 3D

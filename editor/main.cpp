@@ -117,7 +117,7 @@
 #include "OkayUIBackend.hpp"            // UI backend setting: Dear ImGui (default) or OkayUI (preview)
 #include "AntiCheatIntegrity.hpp"       // Build Game's Data/manifest.json (opt-in anti-cheat)
 #include "FileDialog.hpp"                // open / save / folder dialogs: the system's own, or our built-in browser (asset import)
-#include "SdlClipboard.hpp"              // Play mode clipboard (SDL directly, not okay::platform)
+#include "PlatformClipboard.hpp"         // Play mode clipboard (through okay::platform)
 
 #include <numeric>
 #include <algorithm>
@@ -19441,7 +19441,7 @@ static std::string DefaultProjectsLocation() {
     const std::vector<std::string> recent = RecentLocations();
     if (!recent.empty()) return recent.front();
     std::string base;
-    if (char* b = SDL_GetBasePath()) { base = b; SDL_free(b); }
+    if (okay::platform::Backend* pb = okay::platform::Default()) base = pb->BasePath();
     return (std::filesystem::path(base.empty() ? "." : base) / "Projects").string();
 }
 // Pick a project folder and open it (its first scene). The chooser and File > Open Project Folder share this.
@@ -49413,7 +49413,7 @@ static void SavePrefabCmd(EditorState& ed) {
     std::string err, warn;
     if (!ed.SavePrefab(&err, &warn)) { g_lastSaveError = err; ConsoleLog(err, 2); ShowErrorPopup("Couldn't save the prefab", err + "\n\nNothing was lost: your edits are still open."); return; }
     g_lastSaveError.clear();
-    g_lastSavedAt = SDL_GetTicks64();
+    g_lastSavedAt = okay::platform::TicksMs();
     ConsoleLog("Saved prefab " + std::filesystem::path(ed.PrefabPath()).filename().string() + ". Instances in the scene update when you go Back.");
     if (!warn.empty()) ConsoleLog(warn, 1);
 }
@@ -50113,9 +50113,7 @@ static void OkayVpInstall() {
 static std::string LauncherIpcPath(const char* file) {
     static std::string base;
     if (base.empty()) {
-        char* b = SDL_GetBasePath();
-        base = b ? b : "";
-        if (b) SDL_free(b);
+        if (okay::platform::Backend* pb = okay::platform::Default()) base = pb->BasePath();
     }
     return base + file;
 }
@@ -51089,7 +51087,7 @@ int main(int argc, char** argv) {
         // Play reads and writes the operating-system clipboard. Stopping Play puts
         // the memory clipboard back, so a headless self-test never calls SDL for it.
         {
-            static okay::SdlClipboard s_playClipboard;
+            static okay::PlatformClipboard s_playClipboard;
             static bool s_playClipboardOn = false;
             if (ed.isPlaying()) {
                 if (!s_playClipboardOn) { okay::InstallGameClipboard(&s_playClipboard); s_playClipboardOn = true; }
@@ -51242,11 +51240,7 @@ int main(int argc, char** argv) {
                 UICanvas::Set(g_playCanvasSize.x, g_playCanvasSize.y);
             if (SDL_GetNumTouchDevices() > 0) Input::SetTouchScreen(true);
             TouchControls::Sample(ed.scene());
-#if SDL_VERSION_ATLEAST(2, 0, 18)
-            Gestures::Tick((double)SDL_GetTicks64() / 1000.0);
-#else
-            Gestures::Tick((double)SDL_GetTicks() / 1000.0);
-#endif
+            Gestures::Tick((double)okay::platform::TicksMs() / 1000.0);
             Input::SetTextFocused(GameInputBlocked(&ed.scene(), (unsigned)GameInputMask::Text));   // a game text field has focus: no walking
             InputActions::Tick();
         } else if (ed.isPlaying()) {

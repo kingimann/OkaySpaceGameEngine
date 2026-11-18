@@ -267,6 +267,21 @@ again with the OkayUI test panels and toasts (`OKAY_TESTUI=1 OKAY_DEV=1`) and wi
   typing in a non-ASCII layout, the editor and launcher splash screens (their call sites compile through the wrapper but the
   apps were not built or run), the web build, and long sessions (memory growth of the frame buffer was not measured).
 
+## Round 4: a small batch of leftover SDL calls moved (editor, player)
+
+Found with `grep` (per-file counts are in `docs/sdl_inventory.md`, section 5): calls that were still direct SDL although the seam had the
+feature. Moved, SDL2 still the default backend so nothing changes there:
+
+* `shared/SdlClipboard.hpp` became `shared/PlatformClipboard.hpp` (Play mode and player clipboard: `SDL_GetClipboardText`, `SDL_SetClipboardText`, `SDL_free`).
+* `Gestures::Tick` in the player and the editor: `SDL_GetTicks64()` / `SDL_GetTicks()` with a version `#if` became `okay::platform::TicksMs()`.
+* Editor `g_lastSavedAt = SDL_GetTicks64()` became `okay::platform::TicksMs()`. It was **compared with `okay::platform::TicksMs()`** two other
+  places, so on the own backend (a different zero point) the "Saved" toast would have shown or vanished at the wrong time.
+* Editor `SDL_GetBasePath()` (two places: default projects folder and the launcher message files) became `Backend::BasePath()`.
+
+Checked: `player/main.cpp` passes `g++ -fsyntax-only`. **`editor/main.cpp` was not compiled** (48,000 lines, not built here): the edits are
+the five lines above and follow the player's pattern. Not moved: `SDL_ShowSimpleMessageBox` in the editor start-up check (a warning icon,
+the seam's box is an error box), touch-device count, the renderer, ImGui backends, threads.
+
 ## Not behind the seam yet (stage 1 list; see stage 2 above for what changed)
 
 The window, event loop and GL context of the editor, launcher and player still call SDL directly. Moving them needs more than

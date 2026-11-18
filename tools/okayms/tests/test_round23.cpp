@@ -303,5 +303,24 @@ int main(int, char**) {
           "std::vector<int> vi; vi.push_back(1); std::unordered_set<int> us(vi.begin(), vi.end()); std::set<int> st(vi.begin(), vi.end()); std::uintmax_t x = 5; S s;\n"
           "return (int)(R.size() + i + us.size() + st.size() + x + s.v.size() + (w.ptr - buf)) + (r.ec == std::errc() ? 1 : 0); }\n", &o);
     CHECK(t, has_symbol(o, "main"));
+    ++tests;
+    build(t, "round 32: range-for iterator objects are destroyed on return",
+          "#include <cstdlib>\n#include <new>\nstruct It { int* p; It(int* q) : p(q) {} It(const It& o) : p(o.p) {} ~It() { ++g; } bool operator!=(const It& o) const { return p != o.p; } It& operator++() { ++p; return *this; } int& operator*() const { return *p; } static int g; };\n"
+          "int It::g = 0;\nstruct R { int a[3]; It begin() { return It(a); } It end() { return It(a + 3); } };\n"
+          "int f(R& r) { for (int& x : r) { if (x == 1) return x; } return 0; }\nint main() { R r; r.a[0] = 1; return f(r); }\n", &o);
+    {
+        // f makes two iterator objects: the loop end destroys both, and the return inside the body destroys both again.
+        size_t dtor_relocs = 0;
+        size_t f_index = 0;
+        for (size_t i = 0; i < o.symbols.size(); ++i)
+            if (o.symbols[i].name == "f") f_index = i;
+        for (const auto& sec : o.sections)
+            if (sec.name == ".text")
+                for (const auto& r : sec.relocations)
+                    if (r.symbol < o.symbols.size() && o.symbols[r.symbol].name.find("??1It@@") != std::string::npos &&
+                        r.offset >= o.symbols[f_index].value && r.offset < o.symbols[f_index].value + 0x400)
+                        ++dtor_relocs;
+        CHECK(t, f_index != 0 && dtor_relocs >= 4);
+    }
     return t.finish(tests);
 }

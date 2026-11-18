@@ -10281,6 +10281,11 @@ bool Parser::parse_range_for(Node* out, std::vector<Local>* locals, int stmt_lin
     }
     const int saved_depth = scope_depth;
     push_scope();
+    // The iterator objects of a range for over a class (with a destructor) are registered in a scope of their own around the
+    // loop's scope: a `return` in the body destroys them ([stmt.return]), a `break` or `continue` of this loop does not (the code
+    // after the loop does), a `break` of an enclosing loop does.
+    const bool iter_needs_dtor = iter_class && class_needs_dtor(structs[static_cast<size_t>(iter_type.struct_id)]);
+    if (iter_needs_dtor) dscopes.emplace_back();
     dscopes.emplace_back();
     Local index;
     index.name = "__ri" + std::to_string(range_count++);
@@ -10293,6 +10298,16 @@ bool Parser::parse_range_for(Node* out, std::vector<Local>* locals, int stmt_lin
     }
     place_local(locals, index);
     if (class_range) place_local(locals, range_end);
+    if (iter_needs_dtor) {
+        DObj dend;
+        dend.name = range_end.name;
+        dend.sid = iter_type.struct_id;
+        DObj dindex;
+        dindex.name = index.name;
+        dindex.sid = iter_type.struct_id;
+        dscopes[dscopes.size() - 2].push_back(dend);
+        dscopes[dscopes.size() - 2].push_back(dindex);
+    }
     Node element;
     if (iter_class) {
         bool done = false;
@@ -10387,6 +10402,7 @@ bool Parser::parse_range_for(Node* out, std::vector<Local>* locals, int stmt_lin
     if (!dtor_nodes(dscopes.size() - 1, &dt)) return false;
     for (Node& n : dt) iteration.kids.push_back(std::move(n));
     dscopes.pop_back();
+    if (iter_needs_dtor) dscopes.pop_back();
     pop_scope();
     scope_depth = saved_depth;
     Node loop;
@@ -10425,8 +10441,8 @@ bool Parser::parse_range_for(Node* out, std::vector<Local>* locals, int stmt_lin
     }
     out->kids.push_back(std::move(loop));
     if (iter_class && class_needs_dtor(structs[static_cast<size_t>(iter_type.struct_id)])) {
-        // The two iterator objects are destroyed when the loop ends (not on a `break` out of an enclosing scope or a
-        // `return` inside the body: those paths leave them undestroyed).
+        // The two iterator objects are destroyed when the loop ends; a `return` or a `break` of an enclosing loop inside the body
+        // destroys them too (they are registered in their own scope).
         for (const std::string& nm : {range_end.name, index.name}) {
             Node dcall;
             if (!special_call(iter_type.struct_id, "<dtor>", node_addr(node_name(nm)), {}, &dcall)) return false;

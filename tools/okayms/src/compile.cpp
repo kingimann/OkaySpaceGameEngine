@@ -56,6 +56,9 @@ struct Type {
     int bit_off = 0;
     bool is_unsigned = false;
     bool is_const = false;
+    // A parameter or return type written `const T&` or `const T*`: the target is const. Only decorated names and
+    // overload choice look at it.
+    bool pconst = false;
     bool is_ref = false;
     // bool: one byte holding 0 or 1 (base 2, unsigned). A conversion to it compares with zero.
     bool is_bool = false;
@@ -1372,12 +1375,12 @@ std::string cxx_type(const Type& type, const std::vector<StructDef>* structs = n
         // On x64 a reference is "AEA" (the E is the 64-bit pointer mark).
         Type inner = type;
         inner.is_ref = false;
-        return "AEA" + cxx_type(inner, structs);
+        return std::string(type.pconst && type.pointers == 0 ? "AEB" : "AEA") + cxx_type(inner, structs);
     }
     if (type.pointers > 0) {
         Type inner = type;
         --inner.pointers;
-        return "PEA" + cxx_type(inner, structs);
+        return std::string(type.pconst && type.pointers == 1 ? "PEB" : "PEA") + cxx_type(inner, structs);
     }
     if (type.base == 0) return "X";
     if (type.base == 2) return type.is_bool ? "_N" : type.is_unsigned ? "E" : "D";
@@ -1394,6 +1397,27 @@ std::string cxx_type(const Type& type, const std::vector<StructDef>* structs = n
     return type.is_unsigned ? "I" : "H";
 }
 
+// The name part of a decorated name: "f@" for a function f, and the operator code for an operator function
+// ("??H" for operator+, from the public MSVC decoration table: ?4 = ?5 >> ?6 << ?7 ! ?8 == ?9 != ?A [] ?B
+// conversion ?C -> ?D * ?E ++ ?F -- ?G - ?H + ?I & ?K / ?L % ?M < ?N <= ?O > ?P >= ?Q , ?R () ?S ~ ?T ^ ?U |
+// ?V && ?W || ?X *= ?Y += ?Z -= ?_0 /= ?_1 %= ?_2 >>= ?_3 <<= ?_4 &= ?_5 |= ?_6 ^=). The result of an operator
+// is "?" and the code, with no '@' after it.
+std::string name_part(const std::string& name) {
+    if (name.compare(0, 8, "operator") != 0 || name.size() == 8) return name + "@";
+    static const char* const table[][2] = {
+        {"=", "?4"}, {">>", "?5"}, {"<<", "?6"}, {"!", "?7"}, {"==", "?8"}, {"!=", "?9"}, {"[]", "?A"},
+        {"->", "?C"}, {"*", "?D"}, {"++", "?E"}, {"--", "?F"}, {"-", "?G"}, {"+", "?H"}, {"&", "?I"},
+        {"/", "?K"}, {"%", "?L"}, {"<", "?M"}, {"<=", "?N"}, {">", "?O"}, {">=", "?P"}, {",", "?Q"},
+        {"()", "?R"}, {"~", "?S"}, {"^", "?T"}, {"|", "?U"}, {"&&", "?V"}, {"||", "?W"}, {"*=", "?X"},
+        {"+=", "?Y"}, {"-=", "?Z"}, {"/=", "?_0"}, {"%=", "?_1"}, {">>=", "?_2"}, {"<<=", "?_3"},
+        {"&=", "?_4"}, {"|=", "?_5"}, {"^=", "?_6"}};
+    const std::string rest = name.substr(8);
+    if (rest.compare(0, 5, " conv") == 0) return "?B";
+    for (const auto& entry : table)
+        if (rest == entry[0]) return entry[1];
+    return name + "@";
+}
+
 // ?name@Class@@ access-letter this-qualifiers calling-convention return
 // parameters @Z. The access letter is Q/A/I for public/private/protected
 // and U/E/M for the same three when the function is virtual. "EAA" is a
@@ -1405,7 +1429,7 @@ std::string cxx_method_symbol(const std::vector<StructDef>& structs, const Struc
     if (m.is_static) {
         // ?g@P@@SAHH@Z: S, C or K for a public, private or protected static member, then the
         // calling convention, with no this qualifier.
-        std::string st = "?" + (m.tsym.empty() ? m.name : m.tsym) + "@" + owner.symname() + "@@";
+        std::string st = "?" + (m.tsym.empty() ? name_part(m.name) : m.tsym + "@") + owner.symname() + "@@";
         st += m.access == 'A' ? 'C' : m.access == 'I' ? 'K' : 'S';
         st += "A";
         if (m.ret.base == 3 && m.ret.pointers == 0 && !m.ret.is_ref) st += "?A";
@@ -1432,7 +1456,7 @@ std::string cxx_method_symbol(const std::vector<StructDef>& structs, const Struc
         }
         return special + "Z";
     }
-    std::string out = "?" + (m.tsym.empty() ? m.name : m.tsym) + "@" + owner.symname() + "@@";
+    std::string out = "?" + (m.tsym.empty() ? name_part(m.name) : m.tsym + "@") + owner.symname() + "@@";
     out += letter;
     out += m.is_const ? "EBA" : "EAA";
     if (m.ret.base == 3 && m.ret.pointers == 0 && !m.ret.is_ref) out += "?A";
@@ -1454,11 +1478,14 @@ std::string sdd_symbol(const StructDef& owner, const Method& m) {
     return "??_G" + owner.symname() + "@@" + letter + "EAAPEAXI@Z";
 }
 
-std::string cxx_symbol(const std::string& ns, const std::string& name, const Type& ret, const std::vector<Type>& params) {
-    std::string out = "?" + name + "@" + ns + "@@YA" + cxx_type(ret);
+std::string cxx_symbol(const std::string& ns, const std::string& name, const Type& ret, const std::vector<Type>& params,
+                       const std::vector<StructDef>* structs = nullptr) {
+    std::string out = "?" + name_part(name) + (ns.empty() ? "" : ns + "@") + "@YA";
+    if (ret.base == 3 && ret.pointers == 0 && !ret.is_ref) out += "?A";
+    out += cxx_type(ret, structs);
     if (params.empty()) out += "X";
     else {
-        for (const Type& param : params) out += cxx_type(param);
+        for (const Type& param : params) out += cxx_type(param, structs);
         out += "@";
     }
     out += "Z";
@@ -1725,6 +1752,111 @@ struct Parser {
     //   enum class E : T { } and enum E : T { } -> enum E { } (the underlying type is int)
     //   Scoped enumerators are renamed "E::X" (one token), so two enums may share an enumerator name
     //   static_cast<T>(x), reinterpret_cast and const_cast -> (T)(x)
+    // `operator` and the operator symbol become one identifier token ("operator+", "operator[]", "operator()"),
+    // so a declaration or a call of an operator function reads like any other function. A conversion function
+    // `operator T()` is written the way a function with a return type is read: T moves in front and the name is
+    // "operator conv" and T's spelling ([class.conv.fct], [over.oper]).
+    void collapse_operators() {
+        std::vector<Token> out;
+        out.reserve(tokens.size());
+        for (size_t i = 0; i < tokens.size(); ++i) {
+            const Token& t = tokens[i];
+            if (t.kind != TIdent || t.text != "operator" || i + 1 >= tokens.size()) {
+                out.push_back(t);
+                continue;
+            }
+            const Token& n = tokens[i + 1];
+            std::string name;
+            size_t used = 1;
+            switch (n.kind) {
+            case TPlus: name = "+"; break;
+            case TMinus: name = "-"; break;
+            case TStar: name = "*"; break;
+            case TSlash: name = "/"; break;
+            case TPercent: name = "%"; break;
+            case TAmp: name = "&"; break;
+            case TPipe: name = "|"; break;
+            case TCaret: name = "^"; break;
+            case TTilde: name = "~"; break;
+            case TNot: name = "!"; break;
+            case TAssign: name = "="; break;
+            case TLt: name = "<"; break;
+            case TLe: name = "<="; break;
+            case TGe: name = ">="; break;
+            case TEq: name = "=="; break;
+            case TNe: name = "!="; break;
+            case TPlusPlus: name = "++"; break;
+            case TMinusMinus: name = "--"; break;
+            case TPlusEq: name = "+="; break;
+            case TMinusEq: name = "-="; break;
+            case TStarEq: name = "*="; break;
+            case TSlashEq: name = "/="; break;
+            case TPercentEq: name = "%="; break;
+            case TAndEq: name = "&="; break;
+            case TOrEq: name = "|="; break;
+            case TXorEq: name = "^="; break;
+            case TShl: name = "<<"; break;
+            case TShlEq: name = "<<="; break;
+            case TAndAnd: name = "&&"; break;
+            case TOrOr: name = "||"; break;
+            case TArrow: name = "->"; break;
+            case TComma: name = ","; break;
+            case TGt:
+                name = ">";
+                if (i + 2 < tokens.size() && tokens[i + 2].adj && tokens[i + 2].kind == TGt) {
+                    name = ">>";
+                    used = 2;
+                } else if (i + 2 < tokens.size() && tokens[i + 2].adj && tokens[i + 2].kind == TGe) {
+                    name = ">>=";
+                    used = 2;
+                }
+                break;
+            case TLParen:
+                if (i + 2 < tokens.size() && tokens[i + 2].kind == TRParen) {
+                    name = "()";
+                    used = 2;
+                }
+                break;
+            case TLBrack:
+                if (i + 2 < tokens.size() && tokens[i + 2].kind == TRBrack) {
+                    name = "[]";
+                    used = 2;
+                }
+                break;
+            default: break;
+            }
+            if (!name.empty()) {
+                Token op = t;
+                op.text = "operator" + name;
+                out.push_back(op);
+                i += used;
+                continue;
+            }
+            if (n.kind == TIdent && (n.text == "new" || n.text == "delete")) {
+                out.push_back(t);
+                continue;
+            }
+            // A conversion function: the type runs up to the '('.
+            size_t j = i + 1;
+            std::string key;
+            while (j < tokens.size() && tokens[j].kind != TLParen && tokens[j].kind != TEnd) {
+                key += std::to_string(static_cast<int>(tokens[j].kind)) + tokens[j].text + ",";
+                ++j;
+            }
+            if (j >= tokens.size() || tokens[j].kind != TLParen || j == i + 1 ||
+                (!out.empty() && out.back().kind == TColonColon)) {
+                out.push_back(t);
+                continue;
+            }
+            for (size_t k = i + 1; k < j; ++k) out.push_back(tokens[k]);
+            Token op = t;
+            op.text = "operator conv:" + key;
+            out.push_back(op);
+            i = j - 1;
+        }
+        tokens = std::move(out);
+    }
+
     void lower_cxx_spellings() {
         const auto is_word = [this](size_t i, const char* w) {
             return i < tokens.size() && tokens[i].kind == TIdent && tokens[i].text == w;
@@ -1964,6 +2096,8 @@ struct Parser {
     std::vector<GlobalObj> static_objs{};
     std::vector<Node> global_init{};
     std::vector<std::vector<DObj>> dscopes{};
+    // The local that `return name;` hands to the caller as the result: its destructor does not run ([class.copy.elision]).
+    std::string dtor_skip{};
     size_t fn_dbase = 0;
     std::vector<size_t> brk_dbase{};
     std::vector<size_t> cont_dbase{};
@@ -2203,8 +2337,10 @@ struct Parser {
                     if (eh_) out->push_back(eh_call("__okay_eh_pop", {}));
                     continue;
                 }
-                if (!special_call(list[i].sid, "<dtor>", node_addr(node_name(list[i].name)), {}, &call)) return false;
-                out->push_back(std::move(call));
+                if (list[i].name != dtor_skip) {
+                    if (!special_call(list[i].sid, "<dtor>", node_addr(node_name(list[i].name)), {}, &call)) return false;
+                    out->push_back(std::move(call));
+                }
                 if (eh_) out->push_back(eh_call("__okay_eh_pop", {}));
             }
         }
@@ -2643,10 +2779,11 @@ struct Parser {
             Type pt;
             bool imp = false;
             bool exp = false;
-            accept(TConst);
+            bool lead_const = accept(TConst);
             const std::string type_name = is(TIdent) ? cur().text : std::string();
             if (!parse_type(&pt, &imp, &exp)) return false;
-            accept(TConst);
+            if (accept(TConst)) lead_const = true;
+            pt.pconst = lead_const;
             if (is(TLParen) && at + 1 < tokens.size() && tokens[at + 1].kind == TStar) {
                 next();
                 int stars = 0;
@@ -2849,7 +2986,23 @@ struct Parser {
     bool parse_new(Node* out);
     bool ensure_vector_helpers(int sid);
     bool parse_delete(Node* out);
-    bool method_call(Node* out, Node object, bool arrow, const std::string& name, std::vector<TArg> targs = {});
+    bool method_call(Node* out, Node object, bool arrow, const std::string& name, std::vector<TArg> targs = {},
+                     std::vector<Node>* preparsed = nullptr);
+    bool operator_binary(Tok op, Node* left, Node* right, bool* done);
+    bool operator_unary(Tok op, bool postfix, Node* operand, bool* done);
+    bool operator_call(Node* object, std::vector<Node> args, bool* done);
+    bool operator_index(Node* object, Node index, bool* done);
+    bool free_call(const std::string& name, std::vector<Node> args, Node* out, bool* found);
+    bool convert_class(Node* node, const Type& target);
+    bool class_object_type(const Node& node, Type* out) const;
+    bool operator_name(Tok op, std::string* name) const;
+    static Type bool_type() {
+        Type t;
+        t.base = 2;
+        t.is_bool = true;
+        t.is_unsigned = true;
+        return t;
+    }
     bool qualified_call(Node* out, int cls, const std::string& name, std::vector<TArg> targs = {});
     bool parse_expr(int min_prec, Node* out);
     bool parse_unary(Node* out);
@@ -3088,9 +3241,106 @@ struct Parser {
         return false;
     }
 
-    const Method* find_method(int sid, const std::string& name, size_t nargs) const {
+    // ---- overload choice (ISO/IEC 14882 [over.match]) ----
+    // The rank of converting the argument to a parameter of type p: 0 exact, 1 promotion, 2 conversion, 3 a
+    // user-defined conversion; -1 when it cannot be converted. An argument whose type is not known counts as 1.
+    bool derives_from(int sid, int base) const {
+        for (int walk = sid; walk >= 0; walk = structs[static_cast<size_t>(walk)].base)
+            if (walk == base) return true;
+        return false;
+    }
+    static bool arith_type(const Type& t) {
+        return t.pointers == 0 && !t.is_array() && t.base != 3 && t.base != 0 && t.func_id < 0;
+    }
+    // The conversion function of class sid that yields an arithmetic type like p (or a pointer, for bool), or null.
+    const Method* conv_for(int sid, const Type& p) const {
+        if (sid < 0 || sid >= static_cast<int>(structs.size())) return nullptr;
+        const Method* any = nullptr;
+        for (const Method& m : structs[static_cast<size_t>(sid)].methods) {
+            if (m.name.compare(0, 13, "operator conv") != 0) continue;
+            Type r = m.ret;
+            r.is_ref = false;
+            if (arith_type(p) ? arith_type(r) : (p.pointers == r.pointers && p.base == r.base)) {
+                if (r.base == p.base && r.wide == p.wide && r.is_unsigned == p.is_unsigned) return &m;
+                if (any == nullptr) any = &m;
+            } else if (p.is_bool && r.pointers > 0 && any == nullptr) {
+                any = &m;
+            }
+        }
+        return any;
+    }
+    int arg_score(const Node& arg, Type p) const {
+        Type a;
+        if (!static_type(arg, &a)) return 1;
+        a.is_ref = false;
+        p.is_ref = false;
+        if (a.is_array()) {
+            a = peel_array(a);
+            a.pointers += 1;
+        }
+        if (p.pointers > 0) {
+            if (a.pointers == p.pointers && a.base == p.base && (p.base != 3 || a.struct_id == p.struct_id) &&
+                (a.func_id >= 0) == (p.func_id >= 0))
+                return 0;
+            if (p.pointers == 1 && p.base == 0 && a.pointers >= 1) return 2;
+            if (a.pointers == 1 && p.pointers == 1 && a.base == 3 && p.base == 3 && derives_from(a.struct_id, p.struct_id))
+                return 2;
+            if (arg.kind == Node::IntLit && arg.number == 0 && a.pointers == 0 && a.base < 5) return 2;
+            return -1;
+        }
+        if (p.base == 3) {
+            if (a.pointers != 0 || a.base != 3) return -1;
+            if (a.struct_id == p.struct_id) return 0;
+            return derives_from(a.struct_id, p.struct_id) ? 2 : -1;
+        }
+        if (a.pointers > 0) return p.is_bool && p.base == 2 ? 3 : -1;
+        if (a.base == 3) return conv_for(a.struct_id, p) != nullptr ? 3 : -1;
+        if (a.base == 0 || p.base == 0) return -1;
+        if (a.base == p.base && a.wide == p.wide && a.is_bool == p.is_bool && (a.base >= 5 || a.is_unsigned == p.is_unsigned))
+            return 0;
+        if (p.base == 6 && a.base == 5) return 1;
+        if (p.base == 1 && !p.wide && !p.is_unsigned && (a.base == 2 || a.base == 4)) return 1;
+        return 2;
+    }
+    // The total rank of a call with these arguments, or -1 when one cannot convert.
+    int call_score(const std::vector<Type>& params, const std::vector<Node>& args) const {
+        int total = 0;
+        for (size_t i = 0; i < args.size() && i < params.size(); ++i) {
+            const int r = arg_score(args[i], params[i]);
+            if (r < 0) return -1;
+            total += r;
+        }
+        return total;
+    }
+
+    // The member function name taking these arguments. Among several of the same name the best match by the
+    // ranks above wins; obj_const is 1 for a const object, 0 for a non-const one, -1 when not known.
+    const Method* find_method(int sid, const std::string& name, size_t nargs, const std::vector<Node>* args = nullptr,
+                              int obj_const = -1) const {
         if (sid < 0 || sid >= static_cast<int>(structs.size())) return nullptr;
         const StructDef& def = structs[static_cast<size_t>(sid)];
+        if (args != nullptr) {
+            const Method* best = nullptr;
+            int best_score = 1 << 30;
+            const Method* fallback = nullptr;
+            for (size_t i = def.methods.size(); i-- > 0;) {
+                const Method& m = def.methods[i];
+                if (m.name != name) continue;
+                const bool exact = m.params.size() == nargs;
+                if (!exact && !(nargs < m.params.size() && nargs >= required_args(m.defaults, m.params.size()))) continue;
+                if (fallback == nullptr || (exact && fallback->params.size() != nargs)) fallback = &m;
+                int score = call_score(m.params, *args);
+                if (score < 0) continue;
+                if (!exact) score += 100;
+                if (obj_const == 1 && !m.is_const) score += 50;
+                if (obj_const == 0 && m.is_const) score += 1;
+                if (score < best_score) {
+                    best_score = score;
+                    best = &m;
+                }
+            }
+            return best != nullptr ? best : fallback;
+        }
         for (size_t i = def.methods.size(); i-- > 0;)
             if (def.methods[i].name == name && def.methods[i].params.size() == nargs) return &def.methods[i];
         // A function whose last parameters have defaults takes fewer arguments than it has parameters.
@@ -3099,6 +3349,64 @@ struct Parser {
             if (m.name == name && nargs < m.params.size() && nargs >= required_args(m.defaults, m.params.size())) return &m;
         }
         return nullptr;
+    }
+
+    // Free functions that share a name, by the full name ("ns::f"). Every free function is entered, so that an
+    // operator function or an overload can be found by its arguments; the first signature keeps the plain
+    // internal name, a later one is "name#decorated-parameters".
+    struct OvFn {
+        std::string sig;
+        std::string internal;
+        std::string symbol;
+        std::vector<Type> params;
+        size_t required = 0;
+        bool vararg = false;
+    };
+    std::map<std::string, std::vector<OvFn>> ovl{};
+
+    // The best of these overloads for the arguments: its internal name, or "" when there are none.
+    std::string pick_from(const std::vector<const OvFn*>& list, const std::vector<Node>& args, bool strict = false) const {
+        if (list.empty()) return std::string();
+        if (list.size() == 1 && !strict) return list[0]->internal;
+        const OvFn* best = nullptr;
+        const OvFn* fallback = nullptr;
+        int best_score = 1 << 30;
+        for (const OvFn* f : list) {
+            const bool exact = f->params.size() == args.size();
+            if (!exact && !(args.size() < f->params.size() && args.size() >= f->required) &&
+                !(f->vararg && args.size() > f->params.size()))
+                continue;
+            if (fallback == nullptr || (exact && fallback->params.size() != args.size())) fallback = f;
+            int score = call_score(f->params, args);
+            if (score < 0) continue;
+            if (!exact) score += 100;
+            if (score < best_score) {
+                best_score = score;
+                best = f;
+            }
+        }
+        if (strict) return best != nullptr ? best->internal : std::string();
+        return best != nullptr ? best->internal : fallback != nullptr ? fallback->internal : list[0]->internal;
+    }
+    // The best overload of `base` (the full name) for these arguments, or "" when base has no entry.
+    std::string pick_free(const std::string& base, const std::vector<Node>& args) const {
+        const auto it = ovl.find(base);
+        if (it == ovl.end()) return std::string();
+        std::vector<const OvFn*> list;
+        for (const OvFn& f : it->second) list.push_back(&f);
+        return pick_from(list, args);
+    }
+    // The same over every namespace: the functions called `name` (an operator is found in the namespaces of
+    // its operands in the standard; here every namespace is looked at).
+    std::string pick_any_ns(const std::string& name, const std::vector<Node>& args, bool strict = false) const {
+        std::vector<const OvFn*> list;
+        for (const auto& entry : ovl) {
+            const std::string& key = entry.first;
+            if (key == name || (key.size() > name.size() + 2 && key.compare(key.size() - name.size(), name.size(), name) == 0 &&
+                                key.compare(key.size() - name.size() - 2, 2, "::") == 0))
+                for (const OvFn& f : entry.second) list.push_back(&f);
+        }
+        return pick_from(list, args, strict);
     }
 
     static bool same_shape(const Type& a, const Type& b) {
@@ -3228,16 +3536,29 @@ struct Parser {
         return out;
     }
 
+    // The parameter types of a function as decorated-name text: two functions of one name are the same function
+    // when this and the const-ness agree ([over.load]).
+    std::string param_sig(const std::vector<Type>& params) const {
+        std::string out;
+        for (const Type& t : params) out += cxx_type(t, &structs);
+        return out;
+    }
     bool add_method(StructDef* def, int self, Method m) {
         m.owner = self;
         size_t found = def->methods.size();
+        const std::string new_sig = param_sig(m.params);
+        bool collide = false;
         for (size_t i = 0; i < def->methods.size(); ++i)
             if (def->methods[i].name == m.name && def->methods[i].params.size() == m.params.size()) {
                 bool same = true;
-                if (m.name == "<ctor>")
+                if (m.name == "<ctor>") {
                     for (size_t k = 0; k < m.params.size(); ++k)
                         if (!same_shape(def->methods[i].params[k], m.params[k])) same = false;
+                } else if (m.name != "<dtor>") {
+                    same = param_sig(def->methods[i].params) == new_sig && def->methods[i].is_const == m.is_const;
+                }
                 if (same) found = i;
+                else if (m.name != "<ctor>") collide = true;
             }
         if (found < def->methods.size() && def->methods[found].is_virtual) {
             m.is_virtual = true;
@@ -3262,6 +3583,7 @@ struct Parser {
             }
         }
         m.qname = def->name + "::" + m.name + "/" + std::to_string(m.params.size());
+        if (collide) m.qname += "~" + new_sig + (m.is_const ? "K" : "");
         if (m.name == "<ctor>")
             for (const Type& param : m.params) m.qname += param.is_ref ? "r" : "v";  // constructors overload by type
         if (!m.tsym.empty()) m.qname += "<" + m.tsym + ">";  // a constructor template instance
@@ -3505,7 +3827,7 @@ struct Parser {
                 int paren_depth = 0;
                 bool has_operator = false;
                 for (; semi < tokens.size() && tokens[semi].kind != TEnd; ++semi) {
-                    if (tokens[semi].kind == TIdent && tokens[semi].text == "operator") has_operator = true;
+                    if (tokens[semi].kind == TIdent && tokens[semi].text.compare(0, 8, "operator") == 0) has_operator = true;
                     if (tokens[semi].kind == TLParen) ++paren_depth;
                     else if (tokens[semi].kind == TRParen) --paren_depth;
                     else if (paren_depth == 0 && (tokens[semi].kind == TSemi || tokens[semi].kind == TLBrace ||
@@ -6133,6 +6455,7 @@ struct Parser {
     }
 
     bool parse() {
+        collapse_operators();
         lower_cxx_spellings();
         strip_namespace_qualifiers();
         for (const Token& t : tokens)
@@ -6274,8 +6597,21 @@ struct Parser {
                 next();
                 Declarator decl;
                 if (!parse_param_list(&decl)) return false;
-                accept(TConst);
-                const Method* found = find_method(sid, mname, decl.params.size());
+                const bool def_const = accept(TConst);
+                const Method* found = nullptr;
+                {
+                    const std::string def_sig = param_sig(decl.params);
+                    for (const Method& cand : structs[static_cast<size_t>(sid)].methods)
+                        if (cand.name == mname && cand.owner == sid && !cand.has_body && cand.is_const == def_const &&
+                            param_sig(cand.params) == def_sig)
+                            found = &cand;
+                    if (found == nullptr)
+                        for (const Method& cand : structs[static_cast<size_t>(sid)].methods)
+                            if (cand.name == mname && cand.owner == sid && !cand.has_body &&
+                                cand.params.size() == decl.params.size())
+                                found = &cand;
+                    if (found == nullptr) found = find_method(sid, mname, decl.params.size());
+                }
                 if (found == nullptr || found->owner != sid) {
                     error = "no member function " + mname + " in the class";
                     return false;
@@ -6385,7 +6721,39 @@ struct Parser {
             }
             FuncDecl fn;
             fn.name = current_ns.empty() ? decl.name : current_ns + "::" + decl.name;
-            if (!current_ns.empty()) fn.symbol = cxx_symbol(ns_mangled, decl.name, decl.type, decl.params);
+            if (!current_ns.empty()) fn.symbol = cxx_symbol(ns_mangled, decl.name, decl.type, decl.params, &structs);
+            {
+                // Overloads ([over.load]): a second signature under one name gets its own internal name, and
+                // every function of an overloaded name is decorated (?f@@YAHH@Z), as an operator always is.
+                const std::string base_name = fn.name;
+                OvFn entry;
+                entry.sig = param_sig(decl.params) + (decl.vararg ? "Z" : "");
+                entry.params = decl.params;
+                entry.required = required_args(decl.param_defaults, decl.params.size());
+                entry.vararg = decl.vararg;
+                entry.symbol = cxx_symbol(ns_mangled, decl.name, decl.type, decl.params, &structs);
+                std::vector<OvFn>& list = ovl[base_name];
+                OvFn* hit = nullptr;
+                for (OvFn& e : list)
+                    if (e.sig == entry.sig) hit = &e;
+                if (hit != nullptr) {
+                    hit->required = std::min(hit->required, entry.required);
+                    fn.name = hit->internal;
+                } else {
+                    entry.internal = list.empty() ? base_name : base_name + "#" + entry.sig;
+                    fn.name = entry.internal;
+                    list.push_back(entry);
+                    hit = &list.back();
+                }
+                const bool is_op = decl.name.compare(0, 8, "operator") == 0;
+                if ((list.size() > 1 || is_op) && !imported) {
+                    fn.symbol = hit->symbol;
+                    for (const OvFn& e : list)
+                        for (FuncDecl& earlier : funcs)
+                            if (earlier.name == e.internal && earlier.symbol.empty() && !earlier.imported)
+                                earlier.symbol = e.symbol;
+                }
+            }
             fn.ret = decl.type;
             fn.params = decl.params;
             fn.param_names = decl.param_names;
@@ -6663,6 +7031,7 @@ bool Parser::parse_stmt_inner(Node* out, std::vector<Local>* locals, int stmt_li
         if (!expect(TLParen, "'('")) return false;
         Node cond;
         if (!parse_expr(0, &cond)) return false;
+        if (!convert_class(&cond, bool_type())) return false;
         if (!expect(TRParen, "')'")) return false;
         Node then_s;
         if (!parse_stmt(&then_s, locals)) return false;
@@ -6681,6 +7050,7 @@ bool Parser::parse_stmt_inner(Node* out, std::vector<Local>* locals, int stmt_li
         if (!expect(TLParen, "'('")) return false;
         Node cond;
         if (!parse_expr(0, &cond)) return false;
+        if (!convert_class(&cond, bool_type())) return false;
         if (!expect(TRParen, "')'")) return false;
         Node body;
         brk_dbase.push_back(dscopes.size());
@@ -6719,6 +7089,7 @@ bool Parser::parse_stmt_inner(Node* out, std::vector<Local>* locals, int stmt_li
         cond.text = "skip";
         if (!is(TSemi)) {
             if (!parse_expr(0, &cond)) return false;
+            if (!convert_class(&cond, bool_type())) return false;
         }
         if (!expect(TSemi, "';'")) return false;
         Node step;
@@ -6772,6 +7143,7 @@ bool Parser::parse_stmt_inner(Node* out, std::vector<Local>* locals, int stmt_li
         if (!expect(TLParen, "'('")) return false;
         Node cond;
         if (!parse_expr(0, &cond)) return false;
+        if (!convert_class(&cond, bool_type())) return false;
         if (!expect(TRParen, "')'")) return false;
         if (!expect(TSemi, "';'")) return false;
         out->kids.push_back(std::move(body));
@@ -6837,12 +7209,12 @@ bool Parser::parse_stmt_inner(Node* out, std::vector<Local>* locals, int stmt_li
     if (is(TReturn)) {
         next();
         std::vector<Node> dt;
-        if (!dtor_nodes(fn_dbase, &dt)) return false;
         Node ret;
         ret.kind = Node::Return;
         Node value;
         bool has_value = false;
         bool braced_ret = false;
+        bool dt_ready = false;
         if (is(TLBrace) && !cur_ret_ref && cur_ret.base == 3 && cur_ret.pointers == 0 && !cur_ret.is_ref &&
             cur_ret.struct_id >= 0) {
             // return {a, b}; ([stmt.return], [dcl.init.list]): the object is made in a hidden local, by a
@@ -6852,10 +7224,6 @@ bool Parser::parse_stmt_inner(Node* out, std::vector<Local>* locals, int stmt_li
             hidden.type = cur_ret;
             place_local(locals, hidden);
             if (obj_needs_ctor(cur_ret)) {
-                if (obj_needs_dtor(cur_ret)) {
-                    error = "a braced return of a class with a destructor is not supported";
-                    return false;
-                }
                 next();
                 std::vector<Node> cargs;
                 if (!is(TRBrace)) {
@@ -6889,8 +7257,30 @@ bool Parser::parse_stmt_inner(Node* out, std::vector<Local>* locals, int stmt_li
         }
         if (braced_ret || !accept(TSemi)) {
             if (!braced_ret && !parse_expr(0, &value)) return false;
+            if (!braced_ret && cur_ret.base != 3 && cur_ret.base != 0 && !cur_ret_ref && !convert_class(&value, cur_ret))
+                return false;
             has_value = true;
             if (!expect(TSemi, "';'")) return false;
+            dtor_skip.clear();
+            if (value.kind == Node::Name && !cur_ret_ref && obj_needs_dtor(cur_ret)) {
+                // return x; where x is a local object of the result class, or a temporary made for this
+                // statement: the object itself becomes the result, so its destructor does not run here.
+                if (value.text.compare(0, 4, "__bt") == 0 || value.text.compare(0, 4, "__br") == 0) {
+                    for (size_t ti = 0; ti < stmt_temps.size(); ++ti)
+                        if (stmt_temps[ti].name == value.text) {
+                            stmt_temps.erase(stmt_temps.begin() + static_cast<std::ptrdiff_t>(ti));
+                            break;
+                        }
+                } else {
+                    for (const auto& scope : dscopes)
+                        for (const DObj& d : scope)
+                            if (d.kind == 0 && d.count == 0 && d.name == value.text && d.sid == cur_ret.struct_id)
+                                dtor_skip = value.text;
+                }
+            }
+            if (!dtor_nodes(fn_dbase, &dt)) return false;
+            dtor_skip.clear();
+            dt_ready = true;
             if (cur_ret_ref) value = node_addr(std::move(value));  // a reference result is the address
             // Hidden argument copies of the return expression go first.
             std::vector<Node> tdt;
@@ -6906,6 +7296,7 @@ bool Parser::parse_stmt_inner(Node* out, std::vector<Local>* locals, int stmt_li
             value = node_name("this");
             has_value = true;
         }
+        if (!dt_ready && !dtor_nodes(fn_dbase, &dt)) return false;
         if (dt.empty()) {
             if (has_value) ret.kids.push_back(std::move(value));
             *out = std::move(ret);
@@ -7577,11 +7968,11 @@ bool Parser::qualified_call(Node* out, int cls, const std::string& name, std::ve
     int method_owner = cls;
     {
         int tmpl_owner = -1;
-        if (find_member_tmpl(cls, name, &tmpl_owner) != nullptr && find_method(cls, name, args.size()) == nullptr) {
+        if (find_member_tmpl(cls, name, &tmpl_owner) != nullptr && find_method(cls, name, args.size(), &args) == nullptr) {
             if (!instantiate_member(cls, name, std::move(targs), args, &method_name, &method_owner)) return false;
         }
     }
-    const Method* m = find_method(method_owner, method_name, args.size());
+    const Method* m = find_method(method_owner, method_name, args.size(), &args);
     if (m == nullptr) {
         error = "no member function " + name;
         return false;
@@ -7612,7 +8003,8 @@ bool Parser::qualified_call(Node* out, int cls, const std::string& name, std::ve
 // object.name(args) or object->name(args), with '(' already read. A virtual
 // function reached through a pointer or reference is called through the
 // object's table: the table pointer is the first field, the slot is an index.
-bool Parser::method_call(Node* out, Node object, bool arrow, const std::string& name, std::vector<TArg> targs) {
+bool Parser::method_call(Node* out, Node object, bool arrow, const std::string& name, std::vector<TArg> targs,
+                         std::vector<Node>* preparsed) {
     Type ot;
     if (!static_type(object, &ot)) {
         error = "cannot tell the class of the object for " + name;
@@ -7645,16 +8037,17 @@ bool Parser::method_call(Node* out, Node object, bool arrow, const std::string& 
         object = node_name(hidden.name);
     }
     std::vector<Node> args;
-    if (!parse_call_args(&args)) return false;
+    if (preparsed != nullptr) args = std::move(*preparsed);
+    else if (!parse_call_args(&args)) return false;
     std::string method_name = name;
     int method_owner = sid;
     {
         int tmpl_owner = -1;
-        if (find_member_tmpl(sid, name, &tmpl_owner) != nullptr && find_method(sid, name, args.size()) == nullptr) {
+        if (find_member_tmpl(sid, name, &tmpl_owner) != nullptr && find_method(sid, name, args.size(), &args) == nullptr) {
             if (!instantiate_member(sid, name, std::move(targs), args, &method_name, &method_owner)) return false;
         }
     }
-    const Method* m = find_method(method_owner, method_name, args.size());
+    const Method* m = find_method(method_owner, method_name, args.size(), &args, ot.is_const || ot.pconst ? 1 : 0);
     if (m == nullptr) {
         error = "no member function " + name + " with " + std::to_string(args.size()) + " arguments";
         return false;
@@ -7721,6 +8114,253 @@ bool Parser::method_call(Node* out, Node object, bool arrow, const std::string& 
     if (!m->is_static) call.kids.push_back(std::move(self));
     for (Node& arg : args) call.kids.push_back(std::move(arg));
     *out = reference_result(std::move(call), m->ret.is_ref);
+    return true;
+}
+
+// ---- operator functions and conversion functions (ISO/IEC 14882 [over.oper], [over.match.oper], [class.conv.fct]) ----
+
+bool Parser::operator_name(Tok op, std::string* name) const {
+    const char* spelling = nullptr;
+    switch (op) {
+    case TPlus: spelling = "+"; break;
+    case TMinus: spelling = "-"; break;
+    case TStar: spelling = "*"; break;
+    case TSlash: spelling = "/"; break;
+    case TPercent: spelling = "%"; break;
+    case TAmp: spelling = "&"; break;
+    case TPipe: spelling = "|"; break;
+    case TCaret: spelling = "^"; break;
+    case TTilde: spelling = "~"; break;
+    case TNot: spelling = "!"; break;
+    case TAssign: spelling = "="; break;
+    case TLt: spelling = "<"; break;
+    case TGt: spelling = ">"; break;
+    case TLe: spelling = "<="; break;
+    case TGe: spelling = ">="; break;
+    case TEq: spelling = "=="; break;
+    case TNe: spelling = "!="; break;
+    case TPlusPlus: spelling = "++"; break;
+    case TMinusMinus: spelling = "--"; break;
+    case TPlusEq: spelling = "+="; break;
+    case TMinusEq: spelling = "-="; break;
+    case TStarEq: spelling = "*="; break;
+    case TSlashEq: spelling = "/="; break;
+    case TPercentEq: spelling = "%="; break;
+    case TAndEq: spelling = "&="; break;
+    case TOrEq: spelling = "|="; break;
+    case TXorEq: spelling = "^="; break;
+    case TShl: spelling = "<<"; break;
+    case TShr: spelling = ">>"; break;
+    case TShlEq: spelling = "<<="; break;
+    case TShrEq: spelling = ">>="; break;
+    case TAndAnd: spelling = "&&"; break;
+    case TOrOr: spelling = "||"; break;
+    default: return false;
+    }
+    *name = std::string("operator") + spelling;
+    return true;
+}
+
+// The node is an object of a class (not a pointer, reference-to-pointer or array).
+bool Parser::class_object_type(const Node& node, Type* out) const {
+    Type t;
+    if (!static_type(node, &t)) return false;
+    if (t.base != 3 || t.pointers != 0 || t.is_array() || t.struct_id < 0 || t.func_id >= 0) return false;
+    *out = t;
+    return true;
+}
+
+// A call of the free function `name` (found in any namespace) with these arguments, when one fits.
+bool Parser::free_call(const std::string& name, std::vector<Node> args, Node* out, bool* found) {
+    *found = false;
+    const std::string picked = pick_any_ns(name, args, true);
+    if (picked.empty()) return true;
+    for (const FuncDecl& known : funcs) {
+        if (known.name != picked) continue;
+        *found = true;
+        Node call;
+        call.kind = Node::Call;
+        call.text = picked;
+        call.kids = std::move(args);
+        if (!pad_func_defaults(picked, &call.kids)) return false;
+        std::vector<Type> source = known.params;
+        for (size_t i = 0; i < source.size() && i < known.param_ref.size(); ++i)
+            if (known.param_ref[i]) {
+                source[i].pointers -= 1;
+                source[i].is_ref = true;
+            }
+        if (!adjust_args(source, &call.kids)) return false;
+        *out = known.ret_ref ? reference_result(std::move(call), true) : std::move(call);
+        return true;
+    }
+    return true;
+}
+
+// An object of a class used where a number or a pointer is wanted: its conversion function is called.
+bool Parser::convert_class(Node* node, const Type& target) {
+    Type t;
+    if (!class_object_type(*node, &t)) return true;
+    const Method* m = conv_for(t.struct_id, target);
+    if (m == nullptr) return true;
+    std::vector<Node> none;
+    Node result;
+    if (!method_call(&result, std::move(*node), false, m->name, {}, &none)) return false;
+    *node = std::move(result);
+    return true;
+}
+
+// left op right where an operand is an object of a class: a member of the left class, else a free function.
+// `done` tells that *left now holds the call. Where no operator function fits, an operand that has a
+// conversion function is converted and the built-in operator is left to the caller.
+bool Parser::operator_binary(Tok op, Node* left, Node* right, bool* done) {
+    *done = false;
+    Type lt;
+    Type rt;
+    const bool lc = class_object_type(*left, &lt);
+    const bool rc = class_object_type(*right, &rt);
+    std::string name;
+    if (!operator_name(op, &name)) return true;
+    if (!lc && !rc) return true;
+    if (op == TAssign && lc) {
+        // Only a user-written operator= is called; without one the members are copied as before.
+        std::vector<Node> args;
+        args.push_back(*right);
+        const Method* m = find_method(lt.struct_id, name, 1, &args);
+        if (m == nullptr || m->implicit || m->is_static) return true;
+        Node result;
+        if (!method_call(&result, std::move(*left), false, name, {}, &args)) return false;
+        *left = std::move(result);
+        *done = true;
+        return true;
+    }
+    if (op == TAssign) {
+        Type target;
+        if (static_type(*left, &target) && arith_type(target)) return convert_class(right, target);
+        return true;
+    }
+    if (lc) {
+        std::vector<Node> args;
+        args.push_back(*right);
+        const Method* m = find_method(lt.struct_id, name, 1, &args, lt.is_const || lt.pconst ? 1 : 0);
+        if (m != nullptr && !m->is_static && call_score(m->params, args) >= 0) {
+            Node result;
+            if (!method_call(&result, std::move(*left), false, name, {}, &args)) return false;
+            *left = std::move(result);
+            *done = true;
+            return true;
+        }
+    }
+    {
+        std::vector<Node> args;
+        args.push_back(*left);
+        args.push_back(*right);
+        Node result;
+        bool found = false;
+        if (!free_call(name, std::move(args), &result, &found)) return false;
+        if (found) {
+            *left = std::move(result);
+            *done = true;
+            return true;
+        }
+    }
+    if (is_compound_op(op)) {
+        Type target;
+        if (rc && static_type(*left, &target) && arith_type(target)) return convert_class(right, target);
+        return true;
+    }
+    Type target;
+    target.base = 1;
+    if (op == TAndAnd || op == TOrOr) {
+        target.base = 2;
+        target.is_bool = true;
+        target.is_unsigned = true;
+    }
+    if (lc) {
+        Type other = target;
+        Type rtype;
+        if (static_type(*right, &rtype) && arith_type(rtype) && op != TAndAnd && op != TOrOr && (rtype.base >= 5 || rtype.wide)) other = rtype;
+        if (!convert_class(left, other)) return false;
+    }
+    if (rc) {
+        Type other = target;
+        Type ltype;
+        if (static_type(*left, &ltype) && arith_type(ltype) && op != TAndAnd && op != TOrOr && (ltype.base >= 5 || ltype.wide)) other = ltype;
+        if (!convert_class(right, other)) return false;
+    }
+    return true;
+}
+
+bool Parser::operator_unary(Tok op, bool postfix, Node* operand, bool* done) {
+    *done = false;
+    Type t;
+    if (!class_object_type(*operand, &t)) return true;
+    std::string name;
+    if (!operator_name(op, &name)) return true;
+    std::vector<Node> args;
+    if (postfix) {
+        Node zero;
+        zero.kind = Node::IntLit;
+        zero.number = 0;
+        zero.type.base = 1;
+        args.push_back(zero);
+    }
+    const Method* m = find_method(t.struct_id, name, args.size(), &args, t.is_const || t.pconst ? 1 : 0);
+    if (m != nullptr && !m->is_static) {
+        Node result;
+        if (!method_call(&result, std::move(*operand), false, name, {}, &args)) return false;
+        *operand = std::move(result);
+        *done = true;
+        return true;
+    }
+    std::vector<Node> fargs;
+    fargs.push_back(*operand);
+    if (postfix) fargs.push_back(args[0]);
+    Node result;
+    bool found = false;
+    if (!free_call(name, std::move(fargs), &result, &found)) return false;
+    if (found) {
+        *operand = std::move(result);
+        *done = true;
+        return true;
+    }
+    if (op == TMinus || op == TNot || op == TTilde) {
+        Type target;
+        target.base = op == TNot ? 2 : 1;
+        target.is_bool = op == TNot;
+        target.is_unsigned = op == TNot;
+        return convert_class(operand, target);
+    }
+    return true;
+}
+
+bool Parser::operator_call(Node* object, std::vector<Node> args, bool* done) {
+    *done = false;
+    Type t;
+    if (!class_object_type(*object, &t)) return true;
+    const Method* m = find_method(t.struct_id, "operator()", args.size(), &args, t.is_const || t.pconst ? 1 : 0);
+    if (m == nullptr) return true;
+    Node result;
+    if (!method_call(&result, std::move(*object), false, "operator()", {}, &args)) return false;
+    *object = std::move(result);
+    *done = true;
+    return true;
+}
+
+bool Parser::operator_index(Node* object, Node index, bool* done) {
+    *done = false;
+    Type t;
+    if (!class_object_type(*object, &t)) return true;
+    std::vector<Node> args;
+    args.push_back(std::move(index));
+    const Method* m = find_method(t.struct_id, "operator[]", 1, &args, t.is_const || t.pconst ? 1 : 0);
+    if (m == nullptr) {
+        error = "no operator[] in the class";
+        return false;
+    }
+    Node result;
+    if (!method_call(&result, std::move(*object), false, "operator[]", {}, &args)) return false;
+    *object = std::move(result);
+    *done = true;
     return true;
 }
 
@@ -8244,6 +8884,14 @@ bool Parser::parse_unary(Node* out) {
         next();
         Node inner;
         if (!parse_unary(&inner)) return false;
+        {
+            bool done = false;
+            if (!operator_unary(out->op, false, &inner, &done)) return false;
+            if (done) {
+                *out = std::move(inner);
+                return parse_postfix(out);
+            }
+        }
         out->kids.push_back(std::move(inner));
         return true;
     }
@@ -8453,6 +9101,20 @@ bool Parser::parse_unary(Node* out) {
             }
             return parse_postfix(out);
         }
+        bool var_object = false;
+        if (is(TLParen) && colons == std::string::npos) {
+            // obj(args) where obj is a variable of a class: its operator() (read in parse_postfix).
+            Type vt;
+            Node probe;
+            probe.kind = Node::Name;
+            probe.text = name;
+            var_object = static_type(probe, &vt) && vt.base == 3 && vt.pointers == 0 && !vt.is_array() && vt.struct_id >= 0 &&
+                         (local_visible(name) || [&]() {
+                             for (const FuncDecl& fd : funcs)
+                                 if (fd.name == name) return false;
+                             return true;
+                         }());
+        }
         if (name == "va_arg" && accept(TLParen)) {
             Node ap;
             if (!parse_expr(1, &ap)) return false;
@@ -8474,6 +9136,7 @@ bool Parser::parse_unary(Node* out) {
             Node inner;
             if (!parse_expr(0, &inner)) return false;
             if (!expect(TRParen, "')'")) return false;
+            if (!convert_class(&inner, ty)) return false;
             if (inner.kind == Node::IntLit && ty.pointers == 0 && ty.base == 1 && !ty.is_bool) {
                 inner.number = const_norm(inner.number, ty);
                 inner.type = Type{};
@@ -8486,7 +9149,7 @@ bool Parser::parse_unary(Node* out) {
             out->kind = Node::Unary;
             out->type = ty;
             out->kids.push_back(std::move(inner));
-        } else if (accept(TLParen)) {
+        } else if (!var_object && accept(TLParen)) {
             out->kind = Node::Call;
             out->text = name;
             if (!accept(TRParen)) {
@@ -8496,6 +9159,13 @@ bool Parser::parse_unary(Node* out) {
                     if (!expand_pack_arg(std::move(arg), &out->kids)) return false;
                 } while (accept(TComma));
                 if (!expect(TRParen, "')'")) return false;
+            }
+            if (!local_visible(name)) {
+                const std::string picked = pick_free(name, out->kids);
+                if (!picked.empty()) {
+                    name = picked;
+                    out->text = picked;
+                }
             }
             if (!pad_func_defaults(name, &out->kids)) return false;
             for (const FuncDecl& known : funcs) {
@@ -8538,6 +9208,7 @@ bool Parser::parse_unary(Node* out) {
             if (!expect(TRParen, "')'")) return false;
             Node inner;
             if (!parse_unary(&inner)) return false;
+            if (ty.base != 3 && ty.base != 0 && !ty.is_array() && !convert_class(&inner, ty)) return false;
             if (inner.kind == Node::IntLit && ty.pointers == 0 && !ty.is_array() && !ty.is_ref && ty.base >= 5 &&
                 ty.base <= 6) {
                 // (float)3 and (double)1.5f are constants: the literal is converted at compile time.
@@ -8613,6 +9284,14 @@ bool Parser::parse_unary(Node* out) {
         no_const_subst = saved_subst;
         if (!inner_ok) return false;
         const Tok uop = out->op;
+        if (uop == TMinus || uop == TNot || uop == TTilde || uop == TStar) {
+            bool done = false;
+            if (!operator_unary(uop, false, &inner, &done)) return false;
+            if (done) {
+                *out = std::move(inner);
+                return parse_postfix(out);
+            }
+        }
         if ((uop == TMinus || uop == TTilde || uop == TNot) && inner.kind == Node::IntLit && inner.type.base < 5) {
             // A constant operand is folded, so -16, ~0 and !1 can be used where a constant is needed.
             const uint64_t v = inner.number;
@@ -8665,6 +9344,7 @@ bool Parser::parse_unary(Node* out) {
         Node inner;
         if (!parse_expr(0, &inner)) return false;
         if (!expect(TRParen, "')'")) return false;
+        if (!convert_class(&inner, ty)) return false;
         if (inner.kind == Node::IntLit && inner.type.base < 5 && ty.base == 1) {
             inner.number = const_norm(inner.number, ty);
             inner.type = Type{};
@@ -8687,6 +9367,16 @@ bool Parser::parse_unary(Node* out) {
 bool Parser::parse_postfix(Node* out) {
     while (is(TLBrack) || is(TDot) || is(TArrow) || is(TLParen) || is(TPlusPlus) || is(TMinusMinus)) {
         if (is(TPlusPlus) || is(TMinusMinus)) {
+            {
+                bool done = false;
+                Node operand = std::move(*out);
+                if (!operator_unary(cur().kind, true, &operand, &done)) return false;
+                *out = std::move(operand);
+                if (done) {
+                    next();
+                    continue;
+                }
+            }
             Node wrapped;
             wrapped.kind = Node::Unary;
             wrapped.op = cur().kind;
@@ -8698,6 +9388,21 @@ bool Parser::parse_postfix(Node* out) {
         }
         if (is(TLParen)) {
             next();
+            {
+                Node probe;
+                Type ct;
+                if (class_object_type(*out, &ct)) {
+                    std::vector<Node> cargs;
+                    if (!parse_call_args(&cargs)) return false;
+                    bool done = false;
+                    if (!operator_call(out, std::move(cargs), &done)) return false;
+                    if (!done) {
+                        error = "no operator() in the class";
+                        return false;
+                    }
+                    continue;
+                }
+            }
             Node call;
             call.kind = Node::Call;
             call.kids.push_back(std::move(*out));
@@ -8717,6 +9422,15 @@ bool Parser::parse_postfix(Node* out) {
             Node index;
             if (!parse_expr(0, &index)) return false;
             if (!expect(TRBrack, "']'")) return false;
+            {
+                bool done = false;
+                Node probe;
+                Type ct;
+                if (class_object_type(*out, &ct)) {
+                    if (!operator_index(out, std::move(index), &done)) return false;
+                    continue;
+                }
+            }
             Node wrapped;
             wrapped.kind = Node::Index;
             wrapped.kids.push_back(std::move(*out));
@@ -8767,6 +9481,31 @@ bool Parser::parse_postfix(Node* out) {
                     }
                 }
             }
+            {
+                // f().x: the object a call returns is not in memory yet; it goes into a hidden local first
+                // ([expr.ref], [class.temporary]) and is destroyed after the statement.
+                Type call_type;
+                if (op == TDot && out->kind == Node::Call && cur_locals != nullptr && static_type(*out, &call_type) &&
+                    call_type.base == 3 && call_type.pointers == 0 && !call_type.is_array() && call_type.struct_id >= 0) {
+                    Local hidden;
+                    hidden.name = "__bt" + std::to_string(tmp_count++);
+                    hidden.type = call_type;
+                    place_local(cur_locals, hidden);
+                    Node assign;
+                    assign.kind = Node::Assign;
+                    assign.op = TAssign;
+                    assign.number = 1;
+                    assign.kids.push_back(node_name(hidden.name));
+                    assign.kids.push_back(std::move(*out));
+                    Node stmt;
+                    stmt.kind = Node::ExprStmt;
+                    stmt.kids.push_back(std::move(assign));
+                    stmt_pre.push_back(std::move(stmt));
+                    if (class_needs_dtor(structs[static_cast<size_t>(call_type.struct_id)]))
+                        stmt_temps.push_back(Temp{hidden.name, call_type.struct_id});
+                    *out = node_name(hidden.name);
+                }
+            }
             wrapped.kids.push_back(std::move(*out));
             *out = std::move(wrapped);
         }
@@ -8790,6 +9529,7 @@ bool Parser::parse_expr(int min_prec, Node* out) {
             if (!parse_expr(p, &els)) return false;
             Node tern;
             tern.kind = Node::Ternary;
+            if (!convert_class(out, bool_type())) return false;
             tern.kids.push_back(std::move(*out));
             tern.kids.push_back(std::move(mid));
             tern.kids.push_back(std::move(els));
@@ -8799,6 +9539,11 @@ bool Parser::parse_expr(int min_prec, Node* out) {
         Node right;
         const int next_min = is_assign_op(op) ? p : p + 1;
         if (!parse_expr(next_min, &right)) return false;
+        {
+            bool handled = false;
+            if (!operator_binary(op, out, &right, &handled)) return false;
+            if (handled) continue;
+        }
         Node bin;
         const bool compound = is_compound_op(op);
         bin.kind = op == TAssign || compound ? Node::Assign : Node::Binary;

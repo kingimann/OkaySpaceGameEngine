@@ -989,6 +989,17 @@ struct DrawList {
     void AddEllipse(Vec2 center, Vec2 radius, Color32 col, float rot = 0.0f, int segments = 0, float thickness = 1.0f) const;
     void AddEllipseFilled(Vec2 center, Vec2 radius, Color32 col, float rot = 0.0f, int segments = 0) const;
     void PushClipRect(Vec2 min, Vec2 max) const;
+    /// Channels: after ChannelsSplit(n) the geometry drawn goes into one of n lists (ChannelsSetCurrent(i); channel 0 is current at first), and
+    /// ChannelsMerge() puts the lists back in channel order, so what was drawn on channel 1 shows above everything on channel 0 whatever
+    /// order the calls came in. Only the window list has channels: on the foreground list the calls are accepted and do nothing (it is already
+    /// in call order). A split left open is merged when its window ends or the frame ends. n is 2 to 8 (a split of fewer or more than that does
+    /// nothing); a split while one is open, a bad index and a merge without a split do nothing. Written from the behaviour of the calls.
+    void ChannelsSplit(int count) const;
+    void ChannelsSetCurrent(int index) const;
+    void ChannelsMerge() const;
+    /// Dear ImGui's field names for the same facts (`_Splitter._Count` is 1 with no split open, `_Current` the channel being drawn on).
+    struct SplitterView { int _Current = 0; int _Count = 1; };
+    mutable SplitterView _Splitter;
     /// Dear ImGui's three-argument form: `intersectWithCurrent` false would replace the clip rectangle; here it always intersects.
     void PushClipRect(Vec2 min, Vec2 max, bool intersectWithCurrent) const;
     void PopClipRect() const;

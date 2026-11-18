@@ -22,6 +22,7 @@
 namespace OkayUI {
 void DockReset();   // okayui/src/OkayUIDock.cpp: ResetState forgets the dock layout too
 void ColorPickerReset();
+void ChannelsMergeAll();   // the window draw list's channels (below)
 void StateStorageReset();   // okayui/src/OkayUICompat.cpp: the state store and key owners (OkayUIInternals.hpp)   // okayui/src/OkayUIColor.cpp: and the colour pickers' remembered hue and original colour
 namespace {
 
@@ -1659,6 +1660,7 @@ void mergeOverlay() {
 }
 // End-of-frame interaction bookkeeping, shared by every backend.
 void finalizeFrame() {
+    ChannelsMergeAll();
     if (g_released) g_active = 0;                    // clear if the active item wasn't drawn
     if (g_pressed && !g_focusClaimed) { if (g_focus != 0) g_focusLostEnd = g_focus; g_focus = 0; }   // click on empty space drops keyboard focus
     // A floating chip follows the cursor while dragging (drawn in the overlay so it's
@@ -2229,6 +2231,7 @@ static void scrollbarThumb(float sbx, float top, float trackH, float thumbY, flo
 }
 
 void End() {
+    ChannelsMergeAll();   // a channel split left open ends with its window
     if (g_winItemWDepth > 0) { if (g_itemWTop >= g_winItemWDepth) g_itemWTop = g_winItemWDepth - 1; g_winItemWDepth = 0; }
     if (g_curWin.valid && g_winBaseScale > 0.0f) g_theme.textScale = g_winBaseScale;   // SetWindowFontScale ends with its window
     g_curWin.valid = false;
@@ -5817,6 +5820,75 @@ void DrawList::PathFillConvex(Color32 col) const {
 
 static const DrawListHandle g_windowList(false);
 static const DrawListHandle g_foregroundList(true);
+// ---- channels of the window list ----
+// A split keeps, per channel, the triangles (index runs) and span changes drawn on it, relative to where the split began; the vertices stay
+// where they are. Switching channel saves the current run, cuts the batch back to the split point and lays the other channel's run down
+// again; a merge lays all runs down in channel order. Clip and texture state at the split is the state every channel starts from.
+namespace {
+struct SpanSave { int rel; bool on; SDL_Rect rect; SDL_Texture* tex; };
+struct Chan { std::vector<int> idx; std::vector<SpanSave> spans; bool started = false; bool eOn = false; SDL_Rect eRect{0, 0, 0, 0}; SDL_Texture* eTex = nullptr; };
+struct SplitState { bool on = false; int count = 1, cur = 0, baseIdx = 0, baseSpans = 0; bool bOn = false; SDL_Rect bRect{0, 0, 0, 0}; SDL_Texture* bTex = nullptr; Chan ch[8]; };
+SplitState g_split;
+void saveChan(Chan& c) {
+    c.idx.assign(g_idx + g_split.baseIdx, g_idx + g_ni);
+    c.spans.clear();
+    for (int k = g_split.baseSpans; k < g_nspans; ++k) c.spans.push_back(SpanSave{g_spans[k].startIdx - g_split.baseIdx, g_spans[k].on, g_spans[k].rect, g_spans[k].tex});
+    c.started = true; c.eOn = g_curClipOn; c.eRect = g_curClipRect; c.eTex = g_curTex;
+}
+void layChan(const Chan& c) {   // append a saved run at the end of the batch
+    const int at = g_ni;
+    if (g_ni + (int)c.idx.size() > kMaxIdx) { noteDrop(); return; }
+    for (size_t k = 0; k < c.idx.size(); ++k) g_idx[g_ni++] = c.idx[k];
+    for (const SpanSave& sp : c.spans) {
+        if (g_nspans >= kMaxSpans) break;
+        if (g_nspans > 0 && g_spans[g_nspans - 1].startIdx == at + sp.rel) { g_spans[g_nspans - 1] = DrawSpan{at + sp.rel, sp.on, sp.rect, sp.tex}; continue; }
+        g_spans[g_nspans++] = DrawSpan{at + sp.rel, sp.on, sp.rect, sp.tex};
+    }
+}
+void cutBack() { g_ni = g_split.baseIdx; g_nspans = g_split.baseSpans; }
+}   // namespace
+void ChannelsMergeAll() {
+    if (!g_split.on) return;
+    SplitState& s = g_split;
+    saveChan(s.ch[s.cur]);
+    cutBack();
+    g_curClipOn = s.bOn; g_curClipRect = s.bRect; g_curTex = s.bTex;
+    for (int i = 0; i < s.count; ++i) {
+        if (!s.ch[i].started) continue;
+        // each run is laid with the state its channel began in
+        g_curClipOn = s.bOn; g_curClipRect = s.bRect; g_curTex = s.bTex; pushSpan();
+        layChan(s.ch[i]);
+    }
+    const Chan& last = s.ch[s.count - 1].started ? s.ch[s.count - 1] : s.ch[s.cur];
+    if (last.started) { g_curClipOn = last.eOn; g_curClipRect = last.eRect; g_curTex = last.eTex; }
+    pushSpan();
+    for (int i = 0; i < 8; ++i) s.ch[i] = Chan();
+    s.on = false; s.count = 1; s.cur = 0;
+    g_windowList._Splitter._Count = 1; g_windowList._Splitter._Current = 0;
+}
+void DrawList::ChannelsSplit(int count) const {
+    if (overlay || g_split.on || count < 2 || count > 8) return;
+    SplitState& s = g_split;
+    s = SplitState();
+    s.on = true; s.count = count; s.cur = 0; s.baseIdx = g_ni; s.baseSpans = g_nspans;
+    s.bOn = g_curClipOn; s.bRect = g_curClipRect; s.bTex = g_curTex;
+    _Splitter._Count = count; _Splitter._Current = 0;
+}
+void DrawList::ChannelsSetCurrent(int index) const {
+    if (overlay || !g_split.on || index < 0 || index >= g_split.count || index == g_split.cur) return;
+    SplitState& s = g_split;
+    saveChan(s.ch[s.cur]);
+    cutBack();
+    g_curClipOn = s.bOn; g_curClipRect = s.bRect; g_curTex = s.bTex;
+    Chan& n = s.ch[index];
+    pushSpan();
+    if (n.started) { layChan(n); g_curClipOn = n.eOn; g_curClipRect = n.eRect; g_curTex = n.eTex; pushSpan(); }
+    // (the saved run of a channel is laid down again as the batch tail so its geometry keeps being appended after it)
+    s.cur = index;
+    _Splitter._Current = index;
+}
+void DrawList::ChannelsMerge() const { if (!overlay) ChannelsMergeAll(); }
+
 const DrawListHandle& GetWindowDrawList() { return g_windowList; }
 const DrawListHandle& GetForegroundDrawList() { return g_foregroundList; }
 
@@ -5926,6 +5998,7 @@ void EndDisabled() {
 bool IsDisabled() { return g_disCount > 0; }
 
 void ResetState() {
+    g_split = SplitState(); g_windowList._Splitter._Count = 1; g_windowList._Splitter._Current = 0;
     UseLauncherLook(false);
     g_theme = Theme();
     g_font = &kFontDefault;

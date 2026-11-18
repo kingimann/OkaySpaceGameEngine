@@ -3558,6 +3558,9 @@ struct Parser {
         if (is(TIdent) && at + 1 < tokens.size() && (tokens[at + 1].kind == TDot || tokens[at + 1].kind == TArrow) &&
             local_visible(cur().text))
             return false;  // a variable named like a class (`path.clear()`) is the variable
+        if (is(TIdent) && variable_named(cur().text) && typedefs.find(cur().text) != typedefs.end() &&
+            !(at + 1 < tokens.size() && tokens[at + 1].kind == TColonColon))
+            return false;  // a variable named like a type (a parameter `seconds` next to std::chrono::seconds) is the variable
         return (is(TIdent) && typedefs.find(cur().text) != typedefs.end()) || is_class_name() ||
                is_template_name_at(at) || (is(TIdent) && cur().text == "typename") ||
                (is(TIdent) && cur().text == "auto" && at + 1 < tokens.size() &&
@@ -6058,8 +6061,20 @@ struct Parser {
     std::map<std::string, std::vector<std::string>> param_packs{};
 
     bool is_template_name_at(size_t i) const {
-        return i + 1 < tokens.size() && tokens[i].kind == TIdent && tokens[i + 1].kind == TLt &&
-               class_templates.count(tokens[i].text) > 0;
+        if (!(i + 1 < tokens.size() && tokens[i].kind == TIdent && tokens[i + 1].kind == TLt &&
+              class_templates.count(tokens[i].text) > 0))
+            return false;
+        // A variable or data member named like a class template (`duration < limit` with a member duration next to
+        // std::chrono::duration) is the variable: `<` is a comparison.
+        return !variable_named(tokens[i].text);
+    }
+    // A local variable, parameter or data member of the class being compiled has this name.
+    bool variable_named(const std::string& name) const {
+        if (local_visible(name)) return true;
+        if (cur_class >= 0 && cur_class < static_cast<int>(structs.size()))
+            for (const Field& f : structs[static_cast<size_t>(cur_class)].fields)
+                if (f.name == name) return true;
+        return false;
     }
 
     // At '<': the arguments up to '>', then the defaults. 'partial' lets a function template be
@@ -12278,7 +12293,7 @@ bool Parser::parse_unary(Node* out) {
             if (alias != global_alias.end()) name = alias->second;
         }
         int scope_sid = -1;
-        if (is(TLt) && class_templates.count(name) > 0 && !local_visible(name)) {
+        if (is(TLt) && class_templates.count(name) > 0 && !variable_named(name)) {
             // Box<int>::member in an expression.
             std::vector<TArg> targs;
             if (!parse_template_args(class_templates[name], &targs, false)) return false;
@@ -12796,7 +12811,8 @@ bool Parser::parse_unary(Node* out) {
         const bool type_ahead = ahead == TInt || ahead == TConst || ahead == TChar || ahead == TVoid || ahead == TShort || ahead == TUnsigned ||
                                 ahead == TSigned || ahead == TLong || ahead == TFloat || ahead == TDouble || ahead == TStruct ||
                                 ahead == TUnion || ahead == TEnum ||
-                                (ahead == TIdent && typedefs.find(tokens[at + 1].text) != typedefs.end() && !qualified_value_at(at + 1)) ||
+                                (ahead == TIdent && typedefs.find(tokens[at + 1].text) != typedefs.end() && !qualified_value_at(at + 1) &&
+                                 !variable_named(tokens[at + 1].text)) ||
                                 (ahead == TIdent && class_name_at(at + 1) && !qualified_value_at(at + 1));
         if (type_ahead) {
             next();

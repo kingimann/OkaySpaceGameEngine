@@ -129,5 +129,17 @@ int main(int, char**) {
           "int main() { M m; m.n = 1; V3 a, b; a = b = V3{1, 2, 3}; float mx = std::max({1.0f, 2.0f, 3.0f}); int k = +1; std::vector<int> src; src.push_back(1);\n"
           "struct { std::vector<int>& second; } cv{src}; std::vector<std::array<int, 3>> g; int s = 1; g.push_back({s, k, 0}); std::string_view sv(\"abc\"); std::queue<int> q; q.push(1);\n"
           "std::vector<int*> ptrs; int z = 0; for (int* p : {&z, &k}) ptrs.push_back(p); return m.run(2.0f) + (int)mx + (int)sv.size() + (int)q.size() + (int)cv.second.size() + g[0][0]; }\n", &o);
+    ++tests;
+    build(t, "typeid, type_index, wide strings, if constexpr", "#include <typeinfo>\n#include <typeindex>\n#include <unordered_map>\n#include <string>\nstruct B { virtual ~B() {} };\nstruct D : B {};\n"
+          "int main() { D d; B* b = &d; std::unordered_map<std::type_index, int> m; m[typeid(D)] = 1; std::u16string a; a.push_back(65); std::u32string c; c += 66; std::wstring w; w.push_back(67);\n"
+          "int k = 0; if constexpr (sizeof(wchar_t) == 2) { k = 1; } else { k = 2; }\n"
+          "return (typeid(*b) == typeid(D) ? 1 : 0) + m[typeid(*b)] + (int)typeid(B).name()[0] + (int)a.size() + (int)c.size() + (int)w.size() + k; }\n", &o);
+    CHECK(t, has_symbol(o, "__ti_UD@@") && has_symbol(o, "??_7D@@6B@"));
+    bool rtti_slot = false;
+    for (const auto& sec : o.sections)
+        if (sec.name == ".rdata")
+            for (const auto& r : sec.relocations)
+                if (r.symbol < o.symbols.size() && o.symbols[r.symbol].name.compare(0, 5, "__ti_") == 0) rtti_slot = true;
+    CHECK(t, rtti_slot);
     return t.finish(tests);
 }

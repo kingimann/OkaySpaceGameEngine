@@ -2114,8 +2114,6 @@ bool g_showScriptDocs = false;   // OkayScript reference window
 bool g_showShortcuts = false;    // keyboard shortcut cheatsheet window
 bool g_showModeling = false;     // dedicated 3D modeling panel (mesh build/edit)
 bool g_showUVEditor = false;     // UV layout of the mesh being edited, over its texture
-bool g_showCustomActions = false;// manager for reusable custom instructions/conditions
-bool g_showVarWatch = false;     // live watch of visual-script variables + arrays
 
 // A reusable, user-named group of Actions instructions or conditions. Saved to a
 // global library file (okay_custom_actions.txt) so it's available in every project;
@@ -2669,8 +2667,6 @@ static void CustomActionButton(const char* id, bool cond, std::vector<okay::Acti
                 dirty = true; ImGui::CloseCurrentPopup();
             }
         }
-        ImGui::Separator();
-        if (ImGui::MenuItem("Manage custom actions...")) g_showCustomActions = true;
         ImGui::EndPopup();
     }
     ImGui::PopID();
@@ -2706,181 +2702,6 @@ static void SaveAsCustomButton(const char* id, bool cond, const std::vector<okay
     ImGui::PopID();
 }
 
-// Manager window: rename/delete saved custom instructions and conditions.
-void DrawCustomActions() {
-    if (!g_showCustomActions) return;
-    ImGui::SetNextWindowSize(ImVec2(420, 460), ImGuiCond_FirstUseEver);
-    if (!ImGui::Begin("Custom Actions", &g_showCustomActions)) { ImGui::End(); return; }
-    ImGui::TextWrapped("Reusable groups of steps. Build them in an Actions component and "
-        "click 'Save as Custom'; then drop them into any Actions via the 'Use Custom' button.");
-    ImGui::Separator();
-    auto section = [&](const char* title, std::vector<CustomAction>& lib) {
-        ImGui::PushID(title);
-        ImGui::SeparatorText(title);
-        if (lib.empty()) ImGui::TextDisabled("(none yet)");
-        int del = -1;
-        for (int i = 0; i < (int)lib.size(); ++i) {
-            ImGui::PushID(i);
-            char nb[64]; std::strncpy(nb, lib[i].name.c_str(), sizeof(nb) - 1); nb[sizeof(nb) - 1] = '\0';
-            ImGui::SetNextItemWidth(220);
-            if (ImGui::InputText("##nm", nb, sizeof(nb))) { lib[i].name = nb; SaveCustomActions(); }
-            ImGui::SameLine(); ImGui::TextDisabled("%d step%s", (int)lib[i].items.size(), lib[i].items.size() == 1 ? "" : "s");
-            ImGui::SameLine();
-            if (ImGui::SmallButton("Delete")) del = i;
-            ImGui::PopID();
-        }
-        if (del >= 0) { lib.erase(lib.begin() + del); SaveCustomActions(); }
-        ImGui::PopID();
-    };
-    section("Custom Instructions", g_customInstr);
-    section("Custom Conditions",  g_customCond);
-    ImGui::End();
-}
-
-// Live watch of the shared visual-script variables and arrays — updates in real
-// time during Play, and values are editable so you can poke at your logic (drop
-// health, bump score) to test branches on the fly.
-void DrawVarWatch() {
-    if (!g_showVarWatch) return;
-    ImGui::SetNextWindowSize(ImVec2(360, 480), ImGuiCond_FirstUseEver);
-    if (!ImGui::Begin("Variables", &g_showVarWatch)) { ImGui::End(); return; }
-    auto& vars = okay::ActionList::Vars();
-    auto& arrs = okay::ActionList::Arrays();
-    static char filter[48] = "";
-    ImGui::SetNextItemWidth(-120);
-    ImGui::InputTextWithHint("##vwf", "filter by name...", filter, sizeof(filter));
-    ImGui::SameLine();
-    if (ImGui::SmallButton("Clear All")) ImGui::OpenPopup("Clear all variables?");
-    if (ImGui::IsItemHovered()) ImGui::SetTooltip("Wipe every variable and array");
-    ImGui::SetNextWindowPos(ImGui::GetMainViewport()->GetCenter(), ImGuiCond_Appearing, ImVec2(0.5f, 0.5f));
-    if (ImGui::BeginPopupModal("Clear all variables?", nullptr, ImGuiWindowFlags_AlwaysAutoResize)) {
-        ImGui::TextUnformatted("Wipe every variable, array and text value?");
-        ImGui::TextDisabled("Running game logic that reads them will see zeros/empties.");
-        ImGui::Dummy(ImVec2(0, 4));
-        ImGui::PushStyleColor(ImGuiCol_Button, ImVec4(0.65f, 0.22f, 0.22f, 1.0f));
-        ImGui::PushStyleColor(ImGuiCol_ButtonHovered, ImVec4(0.80f, 0.28f, 0.28f, 1.0f));
-        bool doWipe = ImGui::Button("Clear", ImVec2(110, 0));
-        ImGui::PopStyleColor(2);
-        if (doWipe) { okay::ActionList::ResetVars(); ImGui::CloseCurrentPopup(); }
-        ImGui::SameLine();
-        if (ImGui::Button("Cancel", ImVec2(110, 0))) ImGui::CloseCurrentPopup();
-        ImGui::EndPopup();
-    }
-    // Create a variable on the fly (handy for wiring UI/logic before any script runs).
-    static char newVar[48] = "";
-    ImGui::SetNextItemWidth(-120);
-    bool nvGo = ImGui::InputTextWithHint("##vwnew", "add a variable...", newVar, sizeof(newVar),
-                                         ImGuiInputTextFlags_EnterReturnsTrue);
-    ImGui::SameLine();
-    if ((ImGui::SmallButton("Add") || nvGo) && newVar[0]) { vars[newVar]; newVar[0] = '\0'; }
-    ImGui::TextDisabled("Shared by Actions, scripts, stats & UI. Drag a value to change it live.");
-    // Change-flash: remember each value and wash the row amber briefly when it
-    // changes, so activity is easy to spot while the game runs.
-    static std::unordered_map<std::string, float> s_prevVal, s_flash;
-    const float fdt = ImGui::GetIO().DeltaTime;
-    auto lc = [](std::string s){ for (auto& c : s) c = (char)std::tolower((unsigned char)c); return s; };
-    std::string q = lc(filter);
-    auto matches = [&](const std::string& k){ return q.empty() || lc(k).find(q) != std::string::npos; };
-
-    ImGui::SeparatorText("Variables");
-    if (vars.empty()) ImGui::TextDisabled("(none yet — variables appear once the game runs)");
-    else {
-        std::vector<std::string> keys; keys.reserve(vars.size());
-        for (auto& kv : vars) if (matches(kv.first)) keys.push_back(kv.first);
-        std::sort(keys.begin(), keys.end());
-        for (const auto& k : keys) {
-            ImGui::PushID(k.c_str());
-            auto pv = s_prevVal.find(k);
-            if (pv != s_prevVal.end() && pv->second != vars[k]) s_flash[k] = 0.8f;
-            s_prevVal[k] = vars[k];
-            float& ft = s_flash[k];
-            if (ft > 0.0f) {
-                ft -= fdt; if (ft < 0.0f) ft = 0.0f;
-                ImVec2 rm = ImGui::GetCursorScreenPos();
-                ImGui::GetWindowDrawList()->AddRectFilled(
-                    ImVec2(rm.x - 2, rm.y - 1),
-                    ImVec2(rm.x + ImGui::GetContentRegionAvail().x, rm.y + ImGui::GetFrameHeight() - 1),
-                    ImGui::GetColorU32(ImVec4(0.95f, 0.75f, 0.30f, 0.22f * (ft / 0.8f))), 3.0f);
-            }
-            ImGui::TextUnformatted(k.c_str());
-            ImGui::SameLine(170);
-            ImGui::SetNextItemWidth(-1);
-            float v = vars[k];
-            if (ImGui::DragFloat("##v", &v, 0.1f)) vars[k] = v;
-            // Right-click a value for quick actions.
-            if (ImGui::BeginPopupContextItem("##vctx")) {
-                if (ImGui::MenuItem("Copy name")) ImGui::SetClipboardText(k.c_str());
-                if (ImGui::MenuItem("Copy value")) {
-                    char vb[32]; std::snprintf(vb, sizeof(vb), "%g", vars[k]);
-                    ImGui::SetClipboardText(vb);
-                }
-                if (ImGui::MenuItem("Reset to 0")) vars[k] = 0.0f;
-                ImGui::Separator();
-                if (ImGui::MenuItem("Delete")) { vars.erase(k); s_prevVal.erase(k); s_flash.erase(k); }
-                ImGui::EndPopup();
-            }
-            ImGui::PopID();
-        }
-    }
-
-    ImGui::SeparatorText("Arrays");
-    if (arrs.empty()) ImGui::TextDisabled("(no arrays yet)");
-    else {
-        std::vector<std::string> keys; keys.reserve(arrs.size());
-        for (auto& kv : arrs) if (matches(kv.first)) keys.push_back(kv.first);
-        std::sort(keys.begin(), keys.end());
-        for (const auto& k : keys) {
-            const auto& a = arrs[k];
-            std::string vals;
-            for (std::size_t i = 0; i < a.size() && i < 40; ++i) {
-                if (!vals.empty()) vals += ", ";
-                char nb[24]; std::snprintf(nb, sizeof(nb), "%g", a[i]); vals += nb;
-            }
-            if (a.size() > 40) vals += ", ...";
-            ImGui::Text("%s", k.c_str());
-            ImGui::SameLine(170); ImGui::TextDisabled("[%d]", (int)a.size());
-            ImGui::Indent(); ImGui::TextWrapped("%s", vals.empty() ? "(empty)" : vals.c_str()); ImGui::Unindent();
-        }
-    }
-
-    auto& svars = okay::ActionList::StrVars();
-    ImGui::SeparatorText("Text");
-    if (svars.empty()) ImGui::TextDisabled("(no text variables yet)");
-    else {
-        std::vector<std::string> keys; keys.reserve(svars.size());
-        for (auto& kv : svars) if (matches(kv.first)) keys.push_back(kv.first);
-        std::sort(keys.begin(), keys.end());
-        for (const auto& k : keys) {
-            ImGui::PushID(k.c_str());
-            ImGui::TextUnformatted(k.c_str()); ImGui::SameLine(170);
-            char sb[256]; std::strncpy(sb, svars[k].c_str(), sizeof(sb) - 1); sb[sizeof(sb) - 1] = '\0';
-            ImGui::SetNextItemWidth(-1);
-            if (ImGui::InputText("##sv", sb, sizeof(sb))) svars[k] = sb;
-            ImGui::PopID();
-        }
-    }
-
-    auto& maps = okay::ActionList::Maps();
-    ImGui::SeparatorText("Maps");
-    if (maps.empty()) ImGui::TextDisabled("(no maps yet)");
-    else {
-        std::vector<std::string> keys; keys.reserve(maps.size());
-        for (auto& kv : maps) if (matches(kv.first)) keys.push_back(kv.first);
-        std::sort(keys.begin(), keys.end());
-        for (const auto& k : keys) {
-            const auto& m = maps[k];
-            ImGui::Text("%s", k.c_str());
-            ImGui::SameLine(170); ImGui::TextDisabled("{%d}", (int)m.size());
-            std::vector<std::string> mk; mk.reserve(m.size());
-            for (auto& e : m) mk.push_back(e.first);
-            std::sort(mk.begin(), mk.end());
-            ImGui::Indent();
-            for (const auto& kk : mk) ImGui::TextDisabled("%s = %g", kk.c_str(), m.at(kk));
-            ImGui::Unindent();
-        }
-    }
-    ImGui::End();
-}
 
 // Save the open scene so an auto-update relaunch never loses work. Uses the
 // current path when known, otherwise a recovery file (added to Recent).
@@ -5483,7 +5304,6 @@ static const DockPanelDef* DockPanels(int& n) {
         {"Scene Manager", "Scene Manager###Scenes",    &g_showScenes,        "Panels", PI_Scenes},
         {"Net",           "Net###Net",                 &g_showNet,           "Panels", PI_Stats},
         {"Save Manager",  "Save Manager",              &g_showSaveManager,   "Panels", PI_Save},
-        {"Variables",     "Variables",                 &g_showVarWatch,      "Panels", PI_Variables},
         {"History",       "History",                   &g_showHistory,       "Panels", PI_History},
         {"Stats",         "Stats",                     &g_showStats,         "Panels", PI_Stats},
         {"Lighting",      "Lighting",                  &g_showSceneSettings, "Panels", PI_Lighting},
@@ -5494,7 +5314,6 @@ static const DockPanelDef* DockPanels(int& n) {
         {"Input",         "Input",                     &g_showInputDebug,    "Panels", PI_Stats},
         {"Script Editor", "Script Editor",             &g_showScriptEditor,  "Editors & Tools", PI_Script},
         {"Visual Script", "Visual Script",             &g_showVisualScript,  "Editors & Tools", PI_Nodes},
-        {"Custom Actions","Custom Actions",            &g_showCustomActions, "Editors & Tools", PI_Bolt},
         {"Animation",     "Animation###AnimationDock", &g_showAnimation,     "Editors & Tools", PI_Animation},
         {"Animator",      "Animator",                  &g_showAnimatorGraph, "Editors & Tools", PI_Animator},
         {"Timeline",      "Timeline",                  &g_showTimeline,      "Editors & Tools", PI_Animation},
@@ -6904,10 +6723,10 @@ static bool* MenuFlag(const std::string& id) {
         {"panel.hierarchy", &g_showHierarchy}, {"panel.inspector", &g_showInspector}, {"panel.project", &g_showProject},
         {"panel.console", &g_showConsole}, {"panel.problems", &g_showProblems}, {"panel.game", &g_showGame},
         {"panel.services", &g_showServices}, {"panel.scenemanager", &g_showScenes}, {"panel.net", &g_showNet},
-        {"panel.savemanager", &g_showSaveManager}, {"panel.varwatch", &g_showVarWatch}, {"panel.history", &g_showHistory},
+        {"panel.savemanager", &g_showSaveManager}, {"panel.history", &g_showHistory},
         {"panel.stats", &g_showStats}, {"panel.lighting", &g_showSceneSettings}, {"panel.profiler", &g_showProfiler},
         {"panel.assetmanager", &g_showAssetManager}, {"panel.crashlog", &g_showCrashLog}, {"panel.audiomixer", &g_showAudioMixer}, {"panel.input", &g_showInputDebug},
-        {"tool.customactions", &g_showCustomActions}, {"tool.visualscript", &g_showVisualScript}, {"tool.scripteditor", &g_showScriptEditor},
+        {"tool.visualscript", &g_showVisualScript}, {"tool.scripteditor", &g_showScriptEditor},
         {"tool.animation", &g_showAnimation}, {"tool.animator", &g_showAnimatorGraph}, {"tool.timeline", &g_showTimeline},
         {"tool.navigation", &g_showNavigation}, {"tool.dialogue", &g_showDialogue}, {"tool.behaviortree", &g_showBehaviorTree},
         {"tool.modeling", &g_showModeling}, {"tool.uveditor", &g_showUVEditor}, {"tool.spriteeditor", &g_showSpriteEditor},
@@ -52017,8 +51836,6 @@ int main(int argc, char** argv) {
         { OKAY_PROFILE("UI.FindInFiles"); DrawFindInFiles(ed); }
         { OKAY_PROFILE("UI.ScriptDocs"); DrawScriptDocs(); }
         { OKAY_PROFILE("UI.ShortcutsWindow"); DrawShortcutsWindow(); }
-        { OKAY_PROFILE("UI.CustomActions"); DrawCustomActions(); }
-        { OKAY_PROFILE("UI.VarWatch"); DrawVarWatch(); }
         { OKAY_PROFILE("UI.AnimationEditor"); DrawAnimationEditor(ed); }
         { OKAY_PROFILE("UI.AnimatorGraph"); DrawAnimatorGraph(ed); }
         DrawBoneMap(ed);

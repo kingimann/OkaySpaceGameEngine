@@ -257,7 +257,6 @@ inline std::vector<Entry> PanelsSubmenu() {
     p.push_back(Toggle("panel.scenemanager", "Scene Manager"));
     p.push_back(Toggle("panel.net", "Net"));
     p.push_back(Toggle("panel.savemanager", "Save Manager"));
-    p.push_back(Toggle("panel.varwatch", "Variables (watch)"));
     p.push_back(Sep());
     p.push_back(Toggle("panel.history", "History"));
     p.push_back(Toggle("panel.stats", "Stats"));
@@ -272,7 +271,6 @@ inline std::vector<Entry> PanelsSubmenu() {
 
 inline std::vector<Entry> ToolsSubmenu() {
     std::vector<Entry> t;
-    t.push_back(Toggle("tool.customactions", "Custom Actions"));
     t.push_back(Toggle("tool.visualscript", "Visual Script"));
     t.push_back(Toggle("tool.scripteditor", "Script Editor"));
     t.push_back(Sep());

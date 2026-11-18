@@ -4319,7 +4319,7 @@ foreach(vs_usage_test vs_easy_ops vs_start vs_hints vs_plain_words vs_what_happe
 endforeach()
 
 # okay::tex, our own texture library (docs/own_texture_library.md). Pure CPU, deterministic.
-foreach(_t IN ITEMS mip)
+foreach(_t IN ITEMS mip atlas)
     add_executable(test_tex_${_t} test_tex_${_t}.cpp)
     target_link_libraries(test_tex_${_t} PRIVATE okay::engine)
     add_test(NAME tex_${_t} COMMAND test_tex_${_t} WORKING_DIRECTORY ${CMAKE_CURRENT_BINARY_DIR})

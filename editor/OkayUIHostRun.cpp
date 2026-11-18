@@ -7,6 +7,7 @@
 #ifdef OKAY_HAVE_OKAYUI
 #define OKAYUI_HOST_PLATFORM 1
 #include "OkayUIFrameLoop.hpp"
+#include "OkayUIHostPanels.hpp"
 #include "EditorFrameTick.hpp"
 #include "EditorState.hpp"
 #include "okay/Components/BehaviorTreeRunner.hpp"
@@ -42,6 +43,13 @@ int RunOkayUIHostMode(int, char**) {
     std::unique_ptr<okay::platform::Painter> painter = okay::platform::CreateSdl2Painter(*win, okay::platform::PainterDesc(), &err);
     if (!painter) { std::fprintf(stderr, "[okayui-host] no painter: %s\n", err.c_str()); be->Shutdown(); return 1; }
     okay::editor::EditorState editor;   // the real editor state: the same scene, Play loop and services the Dear ImGui editor drives
+    {   // the real panels: Console, Scene Manager and the Project window over the project folder (OKAY_UI_HOST_PROJECT, else ./Assets's folder, else none)
+        const char* pe = std::getenv("OKAY_UI_HOST_PROJECT");
+        std::error_code pec; std::string projectDir = pe && pe[0] ? pe : std::string();
+        if (projectDir.empty() && std::filesystem::is_directory("Assets", pec)) projectDir = std::filesystem::current_path(pec).generic_string();
+        if (!projectDir.empty()) editor.setProjectDir(projectDir);
+        state.panels = wm::MakeHooks(&editor, projectDir, &state);
+    }
     oked::SimHooks<okay::editor::EditorState> sim;
     sim.tickGame = [](okay::editor::EditorState& e, float d) { e.Tick(d); };
     sim.onRunFramesDone = [] {};

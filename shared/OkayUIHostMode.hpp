@@ -5,6 +5,7 @@
 #include "OkayUIHostState.hpp"
 
 #include <cstring>
+#include <functional>
 #include <map>
 #include <string>
 
@@ -18,7 +19,18 @@ inline bool HostModeRequested(const char* okayDev, const char* okayUiBackend, co
 }
 
 /// What the window-mode screen keeps between frames (and, through ToPersisted / ApplyPersisted, between runs: shared/OkayUIHostState.hpp).
+/// Window titles of the panels window mode can show (the dock layout, the saved state and the panels' own Begin calls use these exact strings).
+inline const char* kPanelConsole = "Console###Console";
+inline const char* kPanelSceneManager = "Scene Manager###Scenes";
+inline const char* kPanelProject = "Project";
+inline const char* kPanelMixer = "Audio Mixer";
+inline const char* kPanelStatus = "Window mode";
+
 struct HostModeState {
+    /// The real panels, wired in by the host (editor/OkayUIHostPanels.hpp): each draws its own window with Begin / End (dock-aware, see
+    /// OkayUI::SetDockAwareBegin). A null function means the panel is not offered (not in the default layout, not drawn). `before` / `after` run around the
+    /// panels each frame (they set the dock-aware switch and sync the panels' own open flags with `open`).
+    struct Panels { std::function<void()> console, sceneManager, project, before, after; } panels;
     int frame = 0;                           // frames drawn
     bool docked = false;                     // the layout was built or restored
     std::map<std::string, bool> open;        // panel name -> open; a panel not listed is open

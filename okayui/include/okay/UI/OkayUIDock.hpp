@@ -146,6 +146,14 @@ void DockSpace(Rect area);
 /// `*p_open` is set false when its close button or tab is clicked, and the window leaves the layout. Always call DockEnd.
 bool DockBegin(const char* title, bool* p_open = nullptr, int flags = 0);
 void DockEnd();
+/// Dock-aware Begin / End for code written for Dear ImGui (SetDockAwareBegin(true), off by default): a `Begin(title, &open, flags)` whose title is a window of the
+/// dock layout (docked or floating there) is run as DockBegin, and the End that closes it as DockEnd, so a panel that opens itself with Begin and
+/// closes with End sits in the dock like one written for DockBegin. `*p_open` is set false when its tab is closed, as for DockBegin. A title the
+/// layout does not hold is an ordinary window. DockBegin's own call to Begin is never routed back.
+void SetDockAwareBegin(bool on);
+bool DockAwareBegin();
+bool DockClosedPending(const char* title);   // not for hosts: a closed tab whose window has not been told (its next Begin gets *p_open = false)
+bool DockInsideBegin();   // not for hosts: Begin asks this to tell DockBegin's own call from a panel's
 /// Layout text for saving and loading (see DockLayout::Save / Load).
 std::string DockSaveLayout();
 bool DockLoadLayout(const std::string& blob, int* repairs = nullptr);

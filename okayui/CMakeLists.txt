@@ -80,7 +80,7 @@ target_link_libraries(okay_ui_render PUBLIC okay_ui_soft)
 if(OKAY_BUILD_OKAYUI_TESTS AND OKAY_BUILD_TESTS)
 
     # What the tests need: the shared test framework header and the committed golden images.
-    foreach(t okayui_soft okayui_behaviour okayui_golden okayui_drawlist okayui_fuzz okayui_painter okayui_values okayui_codeedit okayui_codeedit_fuzz okayui_dock okayui_dock_fuzz okayui_compose okayui_windows okayui_windows_fuzz okayui_color okayui_widgets okayui_tables okayui_render okayui_render_gl okayui_render_bench okayui_screens okayui_host okayui_compat okayui_scopes okayui_internals okayui_dockbuilder okayui_panels okayui_itemedit okayui_calls okayui_names okayui_host_platform okayui_docknodes okayui_channels okayui_host_shapes okayui_fonts okayui_frameloop)
+    foreach(t okayui_soft okayui_behaviour okayui_golden okayui_drawlist okayui_fuzz okayui_painter okayui_values okayui_codeedit okayui_codeedit_fuzz okayui_dock okayui_dock_fuzz okayui_compose okayui_windows okayui_windows_fuzz okayui_color okayui_widgets okayui_tables okayui_render okayui_render_gl okayui_render_bench okayui_screens okayui_host okayui_compat okayui_scopes okayui_internals okayui_dockbuilder okayui_panels okayui_itemedit okayui_calls okayui_names okayui_host_platform okayui_docknodes okayui_channels okayui_host_shapes okayui_fonts okayui_frameloop okayui_dockaware)
         add_executable(test_${t} tests/test_${t}.cpp)
         target_link_libraries(test_${t} PRIVATE okay_ui_render)
         target_include_directories(test_${t} PRIVATE ${CMAKE_SOURCE_DIR}/tests ${CMAKE_CURRENT_SOURCE_DIR}/tests ${CMAKE_SOURCE_DIR}/shared)
@@ -113,6 +113,9 @@ if(OKAY_BUILD_OKAYUI_TESTS AND OKAY_BUILD_TESTS)
     target_compile_definitions(test_okayui_hostmode PRIVATE OKAY_HAVE_OKAYUI=1)
     okayui_port_test(okayui_hoststate ../editor/OkayUIHostMode.cpp)   # window-mode persistence: state file, sanitiser, saver, two simulated runs
     target_compile_definitions(test_okayui_hoststate PRIVATE OKAY_HAVE_OKAYUI=1)
+    # Window mode with the editor's real panels (Console, Scene Manager, Project window) over the stand-in editor state.
+    okayui_port_test(okayui_hostpanels ../editor/OkayUIHostPanels.cpp ../editor/OkayUIHostMode.cpp ../editor/ProjectBrowser.cpp)
+    target_compile_definitions(test_okayui_hostpanels PRIVATE OKAYUI_PORT_STAND_IN_EDITORSTATE)
     okayui_port_test(okayui_frametick)   # the editor's game step (editor/EditorFrameTick.hpp) with a fake editor state
     okayui_port_test(okayui_port_scenemanager ../editor/SceneManagerPanel.cpp ../editor/ConsolePanel.cpp ../editor/EditorWidgets.cpp)
     target_compile_definitions(test_okayui_port_scenemanager PRIVATE OKAYUI_PORT_STAND_IN_EDITORSTATE)

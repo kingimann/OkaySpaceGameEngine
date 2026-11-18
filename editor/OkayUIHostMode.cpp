@@ -49,20 +49,37 @@ void DrawHostModeUi(HostModeState& st) {
     if (!st.docked && area.w > 8.0f && area.h > 8.0f) {
         bool restored = false;
         if (!st.restoredLayout.empty()) restored = DockLoadLayout(st.restoredLayout);   // damaged text is repaired by the loader; a text that is no layout is refused
-        if (!restored) {   // first run: the status panel on the right, the mixer on the left
+        if (!restored) {   // first run
             DockBuilderRemoveNode(kSpaceId);
             DockBuilderAddNode(kSpaceId, DockNode_DockSpace);
             DockBuilderSetNodeSize(kSpaceId, Vec2{area.w, area.h});
-            DockId left = kSpaceId, right = 0;
-            DockBuilderSplitNode(left, DockSide_Right, 0.38f, &right, &left);
-            DockBuilderDockWindow("Audio Mixer", left);
-            DockBuilderDockWindow("Window mode", right);
+            const bool havePanels = st.panels.console || st.panels.sceneManager || st.panels.project;
+            if (!havePanels) {   // the two screens only: the mixer on the left, the status panel on the right
+                DockId left = kSpaceId, right = 0;
+                DockBuilderSplitNode(left, DockSide_Right, 0.38f, &right, &left);
+                DockBuilderDockWindow(kPanelMixer, left);
+                DockBuilderDockWindow(kPanelStatus, right);
+            } else {   // Project on the left, the Console along the bottom, the rest as tabs in the middle
+                DockId centre = kSpaceId, left = 0, bottom = 0;
+                if (st.panels.project) DockBuilderSplitNode(centre, DockSide_Left, 0.24f, &left, &centre);
+                if (st.panels.console) DockBuilderSplitNode(centre, DockSide_Bottom, 0.30f, &bottom, &centre);
+                if (left) DockBuilderDockWindow(kPanelProject, left);
+                if (bottom) DockBuilderDockWindow(kPanelConsole, bottom);
+                DockBuilderDockWindow(kPanelStatus, centre);
+                if (st.panels.sceneManager) DockBuilderDockWindow(kPanelSceneManager, centre);
+                DockBuilderDockWindow(kPanelMixer, centre);
+            }
             DockBuilderFinish(kSpaceId);
         }
         st.restoredLayout.clear();
         st.docked = true;
     }
     DockSpace(area);
+    if (st.panels.before) st.panels.before();
+    if (st.panels.project && st.IsOpen(kPanelProject)) st.panels.project();             // the real panels: each runs its own Begin / End (dock-aware)
+    if (st.panels.sceneManager && st.IsOpen(kPanelSceneManager)) st.panels.sceneManager();
+    if (st.panels.console && st.IsOpen(kPanelConsole)) st.panels.console();
+    if (st.panels.after) st.panels.after();
     if (st.IsOpen("Audio Mixer")) {
         if (DockBegin("Audio Mixer", &st.OpenRef("Audio Mixer"))) {
             using okay::AudioMixer; using okay::AudioGroup;

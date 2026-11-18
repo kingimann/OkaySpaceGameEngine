@@ -187,12 +187,16 @@ void DrawConsole() {
     static int catSel = 0;
 
     char conTitle[64];
+#ifdef OKAYUI_STABLE_PANEL_TITLES   // window mode (editor/OkayUIHostPanels.cpp): the dock layout names a window by its title, so the title must not carry the counts
+    std::snprintf(conTitle, sizeof(conTitle), "Console###Console");
+#else
     if (g_consoleCounts[2] > 0)
         std::snprintf(conTitle, sizeof(conTitle), "Console  [x %d]###Console", g_consoleCounts[2]);
     else if (g_consoleCounts[1] > 0)
         std::snprintf(conTitle, sizeof(conTitle), "Console  [! %d]###Console", g_consoleCounts[1]);
     else
         std::snprintf(conTitle, sizeof(conTitle), "Console###Console");
+#endif
     g_model.SetPauseOnError(g_errorPause);
     if (g_model.ConsumePauseRequest()) g_paused = true;
 

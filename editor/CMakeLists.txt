@@ -116,6 +116,13 @@ if(WIN32)
 endif()
 # OkayUI overlay demo (renders on top of ImGui through the same SDL_Renderer).
 if(TARGET okay_ui)
+    # Window mode's copies of the Console, Scene Manager and Project-dialog panels: the same sources, compiled against OkayUI's Dear ImGui compatibility header
+    # (okayui/probe first on the include path, so no Dear ImGui is involved) in their own object library, then linked in. docs/own_ui_toolkit.md 6.24 step 5.
+    add_library(okay_editor_wm_panels OBJECT OkayUIHostPanels.cpp)
+    target_include_directories(okay_editor_wm_panels BEFORE PRIVATE ${CMAKE_SOURCE_DIR}/okayui/probe)
+    target_include_directories(okay_editor_wm_panels PRIVATE ${CMAKE_CURRENT_SOURCE_DIR} ${CMAKE_SOURCE_DIR}/shared ${CMAKE_SOURCE_DIR}/launcher ${CMAKE_SOURCE_DIR}/okayui/screens)
+    target_link_libraries(okay_editor_wm_panels PRIVATE okay_ui okay_ui_screens okay::engine)
+    target_sources(okay-editor PRIVATE $<TARGET_OBJECTS:okay_editor_wm_panels>)
     target_link_libraries(okay-editor PRIVATE okay_ui okay_ui_screens okay_ui_soft)
     target_compile_definitions(okay-editor PRIVATE OKAY_HAVE_OKAYUI=1)
 endif()

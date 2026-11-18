@@ -407,6 +407,9 @@ Rect GetDockStripRect(int leaf) {
     return Rect{n->rect.x, n->rect.y, n->rect.w, std::min(c.tabH, n->rect.h)};
 }
 
+bool DockClosedPending(const char* title) { if (!title) return false; for (const std::string& n : C().closed) if (n == title) return true; return false; }   // a tab was closed and its DockBegin has not been told yet
+bool DockInsideBegin() { const Ctx& c = C(); return c.inBegin && !c.began; }   // DockBegin is in its own call to Begin: that Begin must not be routed back (SetDockAwareBegin)
+
 void DockEnd() {
     Ctx& c = C();
     if (!c.inBegin) return;

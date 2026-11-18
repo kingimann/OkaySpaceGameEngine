@@ -2,6 +2,7 @@
 #include <cmath>
 #include <cstdlib>
 #include "okay/UI/OkayUI.hpp"
+#include "okay/UI/OkayUIDock.hpp"
 #include "okay/UI/OkayUIInternals.hpp"
 #include "okay/UI/OkayUICompat.hpp"   // BeginTooltip, GetStyle, ListClipper (defined here: they need the private layout state)
 #include "okay/Graphics/Font.hpp"   // okay::Font8x8 — a no-STL C API over a bitmap font
@@ -2280,7 +2281,9 @@ static void scrollbarThumb(float sbx, float top, float trackH, float thumbY, flo
     }
 }
 
+static bool g_dockAware = false, g_dockRouted = false;   // SetDockAwareBegin: Begin runs a window of the dock layout as DockBegin; the End that closes it as DockEnd
 void End() {
+    if (g_dockRouted) { g_dockRouted = false; DockEnd(); return; }   // closes a Begin that was run as DockBegin (SetDockAwareBegin); DockEnd calls End again, now plain
     ChannelsMergeAll();   // a channel split left open ends with its window
     if (g_winItemWDepth > 0) { if (g_itemWTop >= g_winItemWDepth) g_itemWTop = g_winItemWDepth - 1; g_winItemWDepth = 0; }
     if (g_curWin.valid && g_winBaseScale > 0.0f) g_theme.textScale = g_winBaseScale;   // SetWindowFontScale ends with its window
@@ -2432,7 +2435,10 @@ void SetNextWindowSize(Vec2 size, Cond cond) { g_nextWinSize = NextWin{true, siz
 // A window's id is hashed from a fixed seed (as Begin does), whatever widget ids were being built before.
 static int windowId(const char* title) { const auto saved = g_lay.seed; g_lay.seed = 0; const int id = hashLabel(title); g_lay.seed = saved; return id; }
 
+void SetDockAwareBegin(bool on) { g_dockAware = on; }
+bool DockAwareBegin() { return g_dockAware; }
 bool Begin(const char* title, bool* p_open, int flags) {
+    if (g_dockAware && title && *title && !g_dockRouted && !DockInsideBegin() && (GetDockLayout().Contains(title) || DockClosedPending(title))) { g_dockRouted = true; return DockBegin(title, p_open, flags); }
     if (!title) { g_nextWinPos.set = g_nextWinSize.set = false; g_nextWinFocus = false; g_nextCollapse = NextCollapse(); g_nextBgAlpha = -1.0f; return false; }
     const int id = windowId(title);
     WinSlot* slot = nullptr; bool created = false;
@@ -6203,6 +6209,7 @@ void EndDisabled() {
 bool IsDisabled() { return g_disCount > 0; }
 
 void ResetState() {
+    g_dockAware = false; g_dockRouted = false;
     g_split = SplitState(); g_windowList._Splitter._Count = 1; g_windowList._Splitter._Current = 0;
     UseLauncherLook(false);
     g_theme = Theme();

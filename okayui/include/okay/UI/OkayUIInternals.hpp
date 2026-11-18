@@ -44,6 +44,7 @@ struct WindowRef {
 typedef WindowRef ImGuiWindow;
 struct Context {
     unsigned ActiveId = 0, HoveredId = 0;
+    float HoveredIdTimer = 0.0f;           // seconds the pointer has been over the same item (worked out from the times RefreshContext is called; call it each frame for an accurate value)
     const WindowRef* ActiveIdWindow = nullptr;
     const WindowRef* HoveredWindow = nullptr;
     const WindowRef* CurrentWindow = nullptr;

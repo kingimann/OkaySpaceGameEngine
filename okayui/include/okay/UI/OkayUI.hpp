@@ -31,7 +31,18 @@ struct Vec2 {
     float& operator[](int i) { return i ? y : x; }
     float operator[](int i) const { return i ? y : x; }
 };
-struct Vec4;
+
+struct Vec4 { float x = 0.0f, y = 0.0f, z = 0.0f, w = 0.0f; };
+/// Dear ImGui's colour-vector type under its own name, for ported code that writes `ImVec4(r, g, b, a)` and reads `.x .y .z .w`. It
+/// converts both ways with Vec4 (so it can be passed to PushStyleColor and assigned from GetStyleColorVec4).
+struct ImVec4 {
+    float x = 0.0f, y = 0.0f, z = 0.0f, w = 0.0f;
+    ImVec4() {}
+    ImVec4(float x_, float y_, float z_, float w_) : x(x_), y(y_), z(z_), w(w_) {}
+    ImVec4(const Vec4& v) : x(v.x), y(v.y), z(v.z), w(v.w) {}
+    operator Vec4() const { return Vec4{x, y, z, w}; }
+};
+
 typedef unsigned Color32;   // a packed colour, 0xAABBGGRR
 
 /// This frame's input, supplied by the host (OkayUI polls nothing itself).
@@ -863,7 +874,7 @@ typedef Font ImFont;
 struct ImFontConfig { float SizePixels = 0.0f; int OversampleH = 1, OversampleV = 1; bool PixelSnapH = false, MergeMode = false; Vec2 GlyphOffset; const unsigned short* GlyphRanges = nullptr; char Name[40] = {0}; };
 /// Set the active font (null restores the built-in 8x8).
 void SetFont(const Font* font);
-const Font* GetFont();
+Font* GetFont();   // not const so `ImFont* f = GetFont();` compiles; the font is not changed through it
 /// Built-in fonts: the default 8x8, and a synthesized bold variant.
 const Font* FontDefault();
 const Font* FontBold();
@@ -952,7 +963,7 @@ struct DrawList {
     void AddText(Vec2 pos, Color32 col, const char* text, float scale = 0.0f) const;
     /// The Dear ImGui form with a font and a pixel size: draws with OkayUI's active font scaled so glyphs are `fontSize` pixels tall (the `font` argument is not
     /// used to pick a typeface). `textEnd` null means up to the zero. `wrapWidth` and `clipRect` are ignored.
-    void AddText(const Font* font, float fontSize, Vec2 pos, Color32 col, const char* text, const char* textEnd = nullptr, float wrapWidth = 0.0f, const Vec4* clipRect = nullptr) const;
+    void AddText(const Font* font, float fontSize, Vec2 pos, Color32 col, const char* text, const char* textEnd = nullptr, float wrapWidth = 0.0f, const ImVec4* clipRect = nullptr) const;
     /// With corner flags (DrawFlags, 0 = all corners, DrawFlags_None = square). Rounded outlines are centred on their path.
     void AddRect(Vec2 min, Vec2 max, Color32 col, float rounding, int flags, float thickness) const;
     void AddRectFilled(Vec2 min, Vec2 max, Color32 col, float rounding, int flags) const;
@@ -974,6 +985,8 @@ struct DrawList {
     void AddEllipse(Vec2 center, Vec2 radius, Color32 col, float rot = 0.0f, int segments = 0, float thickness = 1.0f) const;
     void AddEllipseFilled(Vec2 center, Vec2 radius, Color32 col, float rot = 0.0f, int segments = 0) const;
     void PushClipRect(Vec2 min, Vec2 max) const;
+    /// Dear ImGui's three-argument form: `intersectWithCurrent` false would replace the clip rectangle; here it always intersects.
+    void PushClipRect(Vec2 min, Vec2 max, bool intersectWithCurrent) const;
     void PopClipRect() const;
     /// A path of up to 256 points shared by both lists (cleared by PathStroke and PathFillConvex).
     void PathClear() const;
@@ -1182,17 +1195,6 @@ enum Col : int {
 void PushStyleColor(Col which, unsigned char r, unsigned char g, unsigned char b, unsigned char a = 255);
 /// The same with a packed colour (see RGBA) or four floats 0..1 (non-finite values count as 0; out of range ones are clamped).
 void PushStyleColor(Col which, Color32 color);
-struct Vec4 { float x = 0.0f, y = 0.0f, z = 0.0f, w = 0.0f; };
-/// Dear ImGui's colour-vector type under its own name, for ported code that writes `ImVec4(r, g, b, a)` and reads `.x .y .z .w`. It
-/// converts both ways with Vec4 (so it can be passed to PushStyleColor and assigned from GetStyleColorVec4).
-struct ImVec4 {
-    float x = 0.0f, y = 0.0f, z = 0.0f, w = 0.0f;
-    ImVec4() {}
-    ImVec4(float x_, float y_, float z_, float w_) : x(x_), y(y_), z(z_), w(w_) {}
-    ImVec4(const Vec4& v) : x(v.x), y(v.y), z(v.z), w(v.w) {}
-    operator Vec4() const { return Vec4{x, y, z, w}; }
-};
-
 void PushStyleColor(Col which, Vec4 rgba);
 void PopStyleColor(int count = 1);
 /// Set a colour until ResetStyleColor (or the next UseLauncherLook), outside the push / pop stack.

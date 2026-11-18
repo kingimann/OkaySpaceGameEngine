@@ -1958,7 +1958,7 @@ void ColorConvertHSVtoRGB(float h, float s, float v, float* r, float* g, float* 
 }
 
 void SetFont(const Font* f) { g_font = f ? f : &kFontDefault; }
-const Font* GetFont()       { return g_font; }
+Font* GetFont()             { return const_cast<Font*>(g_font); }
 const Font* FontDefault()   { return &kFontDefault; }
 const Font* FontBold()      { return &kFontBold; }
 
@@ -2450,6 +2450,7 @@ Context* RefreshContext() {
     static Context c; static WindowRef refs[3];   // hovered, active, current
     auto fill = [&](WindowRef& r, const WinSlot& ws) { std::snprintf(r.Name, sizeof r.Name, "%s", ws.title); r.ID = (unsigned)ws.id; r.Pos = Vec2{ws.x, ws.y}; r.Size = Vec2{ws.w, ws.h}; r.ParentWindow = nullptr; };
     c.ActiveId = (unsigned)g_active; c.HoveredId = (unsigned)g_hot; c.FrameCount = (int)g_frameCount; c.Time = GetTime();
+    { static unsigned lastHot = 0; static double hotSince = 0.0; if (c.HoveredId != lastHot) { lastHot = c.HoveredId; hotSince = c.Time; } c.HoveredIdTimer = c.HoveredId ? (float)(c.Time - hotSince) : 0.0f; }
     c.HoveredWindow = c.ActiveIdWindow = c.CurrentWindow = nullptr;
     const WinSlot* hov = nullptr;
     if (!g_in.blocked) for (const WinSlot& ws : g_wins) {
@@ -2648,16 +2649,22 @@ void textLine(const char* s, const unsigned char* col, float rowHeight = -1.0f) 
     if (s && *s) drawText(x, y + (h - textH()) * 0.5f, s, g_theme.textScale, col);
 }
 
-// The lines of one paragraph: every line but the last sits close to the next (a framed widget's row height would double-space them); the last
-// takes the normal row height, so a one-line text is exactly what it always was.
+// The lines of one paragraph. The first line is exactly what a one-line text is (a row of the normal height, so a bullet or an icon the caller
+// aligned to it stays aligned); each further line sits one text pitch (text height + 4) below the previous line's text, not a framed
+// widget's row below it, which would double-space the paragraph.
 struct ParaLines {
-    const unsigned char* col; char prev[512]; bool has = false;
+    const unsigned char* col; char prev[512]; bool has = false; int idx = 0; float t1 = 0.0f;
     explicit ParaLines(const unsigned char* c) : col(c) { prev[0] = 0; }
+    void Emit(const char* line) {
+        if (idx == 0) { textLine(line, col); t1 = g_lay.prevY + (rowH() - textH()) * 0.5f; }
+        else { const float pitch = textH() + 4.0f; g_lay.cy = t1 + (float)idx * pitch - 2.0f; textLine(line, col, pitch); }
+        ++idx;
+    }
     void Add(const char* line) {
-        if (has) textLine(prev, col, textH() + 6.0f);
+        if (has) Emit(prev);
         std::strncpy(prev, line, sizeof prev - 1); prev[sizeof prev - 1] = 0; has = true;
     }
-    void Done() { if (has) textLine(prev, col); has = false; }
+    void Done() { if (has) Emit(prev); has = false; }
 };
 
 // Word-wrapped text: lines are filled word by word up to maxW, '\n' always breaks.
@@ -5543,7 +5550,7 @@ Vec2 Font::CalcTextSizeA(float size, float, float, const char* text, const char*
     return Vec2{best * cw, (float)lines * size};
 }
 
-void DrawList::AddText(const Font* font, float fontSize, Vec2 pos, Color32 col, const char* text, const char* textEnd, float, const Vec4*) const {
+void DrawList::AddText(const Font* font, float fontSize, Vec2 pos, Color32 col, const char* text, const char* textEnd, float, const ImVec4*) const {
     if (!text || !finite1(fontSize) || fontSize <= 0.0f) return;
     char buf[1024]; std::size_t n = textEnd && textEnd >= text ? (std::size_t)(textEnd - text) : std::strlen(text);
     if (n > sizeof buf - 1) n = sizeof buf - 1;
@@ -5675,6 +5682,7 @@ void DrawList::AddNgonFilled(Vec2 center, float radius, Color32 col, int n) cons
 void DrawList::PushClipRect(Vec2 mn, Vec2 mx) const {
     OkayUI::PushClipRect(mn.x, mn.y, mx.x - mn.x, mx.y - mn.y);
 }
+void DrawList::PushClipRect(Vec2 mn, Vec2 mx, bool) const { PushClipRect(mn, mx); }
 void DrawList::PopClipRect() const { OkayUI::PopClipRect(); }
 
 void DrawList::PathClear() const { g_pathN = 0; }

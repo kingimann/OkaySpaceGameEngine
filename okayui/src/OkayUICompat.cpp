@@ -303,6 +303,8 @@ bool DockContextQueueUndockWindow(Context*, const WindowRef* window) {
     if (!l.Contains(window->Name) || l.IsFloating(window->Name)) return false;
     return l.Float(window->Name, Rect{ window->Pos.x, window->Pos.y, window->Size.x > 1.0f ? window->Size.x : 320.0f, window->Size.y > 1.0f ? window->Size.y : 240.0f });
 }
+bool BeginDragDropTargetCustom(const ImRect& bb, unsigned id) { return BeginDragDropTargetCustom(Rect{bb.Min.x, bb.Min.y, bb.Max.x - bb.Min.x, bb.Max.y - bb.Min.y}, id); }
+bool InputInt(const char* label, int* value, int step, int, int) { return InputInt(label, value, step > 0 ? step : 1); }
 bool InvisibleButton(const char* id, Vec2 size, int) { return InvisibleButton(id, size.x, size.y); }
 bool BeginTabBar(const char* id, int) { return BeginTabBar(id); }
 bool BeginCombo(const char* label, const char* preview, int) { return BeginCombo(label, preview); }

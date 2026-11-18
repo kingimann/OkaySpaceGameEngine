@@ -53,6 +53,7 @@ typedef int ImS32;
 typedef long long ImS64;
 typedef OkayUI::DrawList ImDrawList;
 #define IM_PI 3.14159265358979323846f
+#define IM_ARRAYSIZE(_ARR) ((int)(sizeof(_ARR) / sizeof(*(_ARR))))
 #define GImGui (::OkayUI::RefreshContext())
 #define IM_COL32(R, G, B, A) (OkayUI::RGBA((R), (G), (B), (A)))
 using OkayUI::ImVec4;
@@ -65,6 +66,21 @@ typedef int ImDrawFlags;
 
 // The generated names.
 '''
+
+
+HELPERS = r"""// Small math helpers Dear ImGui code calls.
+template <class T> inline T ImMin(T a, T b) { return a < b ? a : b; }
+template <class T> inline T ImMax(T a, T b) { return a < b ? b : a; }
+template <class T> inline T ImClamp(T v, T mn, T mx) { return v < mn ? mn : (v > mx ? mx : v); }
+inline ImVec2 ImMin(const ImVec2& a, const ImVec2& b) { return ImVec2(a.x < b.x ? a.x : b.x, a.y < b.y ? a.y : b.y); }
+inline ImVec2 ImMax(const ImVec2& a, const ImVec2& b) { return ImVec2(a.x < b.x ? b.x : a.x, a.y < b.y ? b.y : a.y); }
+inline ImVec2 ImClamp(const ImVec2& v, const ImVec2& mn, const ImVec2& mx) { return ImVec2(v.x < mn.x ? mn.x : (v.x > mx.x ? mx.x : v.x), v.y < mn.y ? mn.y : (v.y > mx.y ? mx.y : v.y)); }
+inline float ImLerp(float a, float b, float t) { return a + (b - a) * t; }
+inline ImVec2 ImLerp(const ImVec2& a, const ImVec2& b, float t) { return ImVec2(a.x + (b.x - a.x) * t, a.y + (b.y - a.y) * t); }
+inline float ImSaturate(float f) { return f < 0.0f ? 0.0f : (f > 1.0f ? 1.0f : f); }
+
+"""
+
 
 def declared_types():
     """(type names, enumerator names) declared in the OkayUI headers."""
@@ -106,7 +122,7 @@ def main():
             lines.append("typedef int %s;" % name)
         elif ident in tdecl:
             lines.append("typedef OkayUI::%s %s;" % (ident, name))
-    text = PREAMBLE + "\n".join(lines) + "\n\n// The namespace host code writes.\nnamespace ImGui = OkayUI;\n#endif // IMGUI_VERSION\n"
+    text = PREAMBLE + "\n".join(lines) + "\n\n" + HELPERS + "// The namespace host code writes.\nnamespace ImGui = OkayUI;\n#endif // IMGUI_VERSION\n"
     if "--check" in sys.argv:
         cur = open(OUT).read() if os.path.exists(OUT) else ""
         if cur != text:

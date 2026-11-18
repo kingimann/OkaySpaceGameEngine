@@ -383,6 +383,13 @@ bool DockContextQueueUndockWindow(Context* ctx, const WindowRef* window);
 enum Axis : int { Axis_None = -1, Axis_X = 0, Axis_Y = 1 };
 enum SortDirection : int { SortDirection_None = 0, SortDirection_Ascending = 1, SortDirection_Descending = 2 };
 enum PopupExtraFlags : int { Popup_NoOpenOverItems = 512 };   // accepted, no effect
+/// A drop target over an ImRect (the Dear ImGui form takes the rectangle type of its own).
+bool BeginDragDropTargetCustom(const ImRect& bb, unsigned id = 0);
+/// InputInt with the step arguments of Dear ImGui (`stepFast` and `flags` are accepted and not used; a `step` of 0 still shows the +/- buttons).
+bool InputInt(const char* label, int* value, int step, int stepFast, int flags = 0);
+void TreeNodeExFormatted(bool* out, const char* label, unsigned flags, const char* fmt, ...);
+/// TreeNode with an id and a printf-style label: `TreeNode("##id", "Incoming (%d)", n)`.
+template <class A0, class... A> inline bool TreeNode(const char* id, const char* fmt, A0 a0, A... a) { bool r = false; TreeNodeExFormatted(&r, id, 0u, fmt, a0, a...); return r; }
 /// TreeNodeEx with a printf-style label (the label is formatted, then used as the id as well).
 void TreeNodeExFormatted(bool* out, const char* label, unsigned flags, const char* fmt, ...);
 template <class... A> inline bool TreeNodeEx(const char* id, unsigned flags, const char* fmt, A... a) { bool r = false; TreeNodeExFormatted(&r, id, flags, fmt, a...); return r; }

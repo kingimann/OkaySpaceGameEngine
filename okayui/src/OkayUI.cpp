@@ -1113,7 +1113,17 @@ bool Button(int id, float x, float y, float w, float h, const char* label) {
         const float s  = g_theme.textScale;
         const float tw = visW(label);
         const float th = fH() * s;
-        drawText(x + (w - tw) * 0.5f, y + (h - th) * 0.5f, VisLabel(label).b, s, g_theme.text);
+        if (tw > w + 16.0f) {   // a label much wider than its button is shortened with "..." (a clip rectangle does not reach the overlay layer that popups draw in)
+            char cut[160]; const VisLabel vl(label); std::size_t n = 0;
+            while (vl.b[n] && n < sizeof cut - 4) {
+                std::size_t m = n + 1; while (vl.b[m] && ((unsigned char)vl.b[m] & 0xC0) == 0x80) ++m;   // whole UTF-8 characters
+                std::memcpy(cut, vl.b, m); cut[m] = '.'; cut[m + 1] = '.'; cut[m + 2] = '.'; cut[m + 3] = 0;
+                if (labelW(cut) > w - 8.0f) break;
+                n = m;
+            }
+            std::memcpy(cut, vl.b, n); cut[n] = '.'; cut[n + 1] = '.'; cut[n + 2] = '.'; cut[n + 3] = 0;
+            drawText(x + 4.0f, y + (h - th) * 0.5f, cut, s, g_theme.text);
+        } else drawText(x + (w - tw) * 0.5f, y + (h - th) * 0.5f, VisLabel(label).b, s, g_theme.text);
     }
     return clicked;
 }
@@ -4298,6 +4308,11 @@ bool BeginPopupModal(const char* name, bool* open) {
     PopupSlot* p = popupSlot(id, false);
     if (!p || !p->open) { if (open) *open = false; return false; }
     p->modal = true;
+    if (g_nextWinSize.set) {   // SetNextWindowSize before a modal sets its width (the height follows the content); the position is always the centre
+        if (g_nextWinSize.x > 0.0f && std::isfinite(g_nextWinSize.x)) p->w = g_nextWinSize.x < 120.0f ? 120.0f : (g_dispW > 0.0f && g_nextWinSize.x > g_dispW - 16.0f ? g_dispW - 16.0f : g_nextWinSize.x);
+        g_nextWinSize.set = false;
+    }
+    g_nextWinPos.set = false;   // consumed: it must not move the next window
     if (p->w <= 0.0f) p->w = 320.0f;
     if (g_in.escape) { p->open = false; if (open) *open = false; return false; }
     const float pad = 6.0f;

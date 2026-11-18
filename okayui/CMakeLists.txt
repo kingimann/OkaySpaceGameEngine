@@ -105,6 +105,10 @@ if(OKAY_BUILD_OKAYUI_TESTS AND OKAY_BUILD_TESTS)
     okayui_port_test(okayui_port_console ../editor/ConsolePanel.cpp ../editor/EditorWidgets.cpp)
     okayui_port_test(okayui_port_versions ../launcher/VersionsUI.cpp ../launcher/VersionsManager.cpp ../launcher/VersionsNet.cpp)
     okayui_port_test(okayui_port_project ../editor/ProjectPanelUI.cpp ../editor/ProjectMenuDraw.cpp ../editor/ProjectBrowser.cpp)
+    okayui_port_test(okayui_port_project2 ../editor/ProjectPanelUI.cpp ../editor/ProjectMenuDraw.cpp ../editor/ProjectBrowser.cpp)
+    # The Scene Manager panel over a small stand-in EditorState (tests/shadow/EditorState.hpp, switched on by the macro; the real class owns the engine's scene and play loop).
+    okayui_port_test(okayui_port_scenemanager ../editor/SceneManagerPanel.cpp ../editor/ConsolePanel.cpp ../editor/EditorWidgets.cpp)
+    target_compile_definitions(test_okayui_port_scenemanager PRIVATE OKAYUI_PORT_STAND_IN_EDITORSTATE)
 
     # The script editor's adapter over CodeEdit (editor/ScriptEditorCodeEdit.cpp: no ImGui, no SDL).
     add_executable(test_okayui_script_adapter tests/test_okayui_script_adapter.cpp ../editor/ScriptEditorCodeEdit.cpp)

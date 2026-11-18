@@ -125,5 +125,40 @@ int main() {
         s3.Frame([&] { OkayUI::BareNextWindow(); if (OkayUI::Begin("w", 0, 0, 100, 40)) { OkayUI::Button("b"); leftOpened = OkayUI::BeginPopupContextItem("p", OkayUI::Popup_MouseButtonLeft); rightOpened = OkayUI::BeginPopupContextItem("q", ImGuiPopupFlags_MouseButtonRight); if (rightOpened) OkayUI::EndPopup(); } OkayUI::End(); });
         CHECK(!leftOpened && !rightOpened);
     }
+    {   // the window / context accessor layer (what the Inspector reads): GImGui, ImGuiContext fields, ImGuiWindow fields
+        Reset(); Sim s(400, 260);
+        std::string hovered, current, activeWin; unsigned activeId = 0; const ImGuiWindow* parent = reinterpret_cast<const ImGuiWindow*>(1); OkayUI::Rect btn;
+        int a = 0, b = 0, clicksA = 0, clicksB = 0; OkayUI::Rect ra, rb;
+        auto ui = [&] {
+            ImGui::SetNextWindowPos(ImVec2(10, 10), ImGuiCond_Always); ImGui::SetNextWindowSize(ImVec2(180, 190), ImGuiCond_Always);
+            if (ImGui::Begin("Alpha##x")) {
+                ImGui::Button("go"); btn = ImGui::GetItemRect();
+                ImGuiContext& g = *GImGui;
+                if (g.CurrentWindow) current = g.CurrentWindow->Name;
+                ImGui::PushID(&a); if (ImGui::Button("same")) ++clicksA; ra = ImGui::GetItemRect(); ImGui::PopID();
+                ImGui::PushID(&b); if (ImGui::Button("same")) ++clicksB; rb = ImGui::GetItemRect(); ImGui::PopID();
+            }
+            ImGui::End();
+            ImGui::SetNextWindowPos(ImVec2(210, 10), ImGuiCond_Always); ImGui::SetNextWindowSize(ImVec2(180, 120), ImGuiCond_Always);
+            if (ImGui::Begin("Beta")) ImGui::Dummy(ImVec2(5, 5));
+            ImGui::End();
+            ImGuiContext& g = *GImGui;
+            hovered = g.HoveredWindow ? g.HoveredWindow->Name : "";
+            activeId = g.ActiveId; activeWin = g.ActiveIdWindow ? g.ActiveIdWindow->Name : "";
+            parent = g.HoveredWindow ? g.HoveredWindow->ParentWindow : nullptr;
+        };
+        s.Move(300, 100); s.Frames(2, ui);
+        CHECK(hovered == "Beta" && current == "Alpha##x" && activeId == 0 && activeWin.empty() && parent == nullptr);
+        s.Move(btn.x + 5, btn.y + 5); s.Frame(ui);
+        CHECK(hovered == "Alpha##x");
+        s.Down(); s.Frame(ui);
+        CHECK(activeId != 0 && activeWin == "Alpha##x");
+        s.Up(); s.Frame(ui);
+        s.Move(395, 255); s.Frame(ui); CHECK(hovered.empty());
+        s.blocked = true; s.Move(btn.x + 5, btn.y + 5); s.Frame(ui); CHECK(hovered.empty()); s.blocked = false;
+        s.Click(CenterX(ra), CenterY(ra), ui); CHECK(clicksA == 1 && clicksB == 0);
+        s.Click(CenterX(rb), CenterY(rb), ui); CHECK(clicksA == 1 && clicksB == 1);
+        ImGuiContext* c = ImGui::CreateContext(); CHECK(c == GImGui && ImGui::GetCurrentContext() == c);
+    }
     TEST_MAIN_RESULT();
 }

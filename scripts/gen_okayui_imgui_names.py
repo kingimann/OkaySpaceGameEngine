@@ -53,6 +53,7 @@ typedef int ImS32;
 typedef long long ImS64;
 typedef OkayUI::DrawList ImDrawList;
 #define IM_PI 3.14159265358979323846f
+#define GImGui (::OkayUI::RefreshContext())
 #define IM_COL32(R, G, B, A) (OkayUI::RGBA((R), (G), (B), (A)))
 using OkayUI::ImVec4;
 using OkayUI::ImTextureID;

@@ -33,6 +33,7 @@ typedef int ImS32;
 typedef long long ImS64;
 typedef OkayUI::DrawList ImDrawList;
 #define IM_PI 3.14159265358979323846f
+#define GImGui (::OkayUI::RefreshContext())
 #define IM_COL32(R, G, B, A) (OkayUI::RGBA((R), (G), (B), (A)))
 using OkayUI::ImVec4;
 using OkayUI::ImTextureID;
@@ -329,6 +330,7 @@ constexpr auto ImGuiTreeNodeFlags_OpenOnDoubleClick = OkayUI::TreeNode_OpenOnDou
 constexpr auto ImGuiTreeNodeFlags_Selected = OkayUI::TreeNode_Selected;
 constexpr auto ImGuiTreeNodeFlags_SpanAvailWidth = OkayUI::TreeNode_SpanAvailWidth;
 typedef OkayUI::Viewport ImGuiViewport;
+typedef OkayUI::WindowRef ImGuiWindow;
 typedef int ImGuiWindowFlags;
 constexpr auto ImGuiWindowFlags_AlwaysAutoResize = OkayUI::Window_AlwaysAutoResize;
 constexpr auto ImGuiWindowFlags_AlwaysVerticalScrollbar = OkayUI::Window_AlwaysVerticalScrollbar;

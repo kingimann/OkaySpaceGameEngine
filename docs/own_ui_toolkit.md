@@ -897,6 +897,24 @@ Pictures were looked at: the prompt is centred and readable, the error is shown 
 
 **SceneManager panel (`editor/SceneManagerPanel.cpp`): compiles clean (6.13) but not run.** `DrawSceneManager(EditorState&)` needs a real `okay::editor::EditorState`, which owns a `Scene`, a `GameLoop`, an undo stack and the scene serializer (`editor/EditorState.cpp` is 1,658 lines over most of the engine). Hand-linking that was not feasible here (the engine is about 385 source files and the shared machine builds a file every minute or two); the panel also calls `main.cpp` functions (`RunAfterSavePrompt`, `ShowErrorPopup`, `AddRecent`, `GetSceneThumb`). It needs a CMake-built test linking the whole engine, with those four functions stubbed in the test. Not done.
 
+### 6.15 The Inspector: the fields it reads, and the accessor layer
+
+`editor/InspectorPanel.cpp` reads these Dear ImGui internals (all in `InspectorPanel.cpp`, found by the probe; `imgui_internal.h` is included for them):
+
+| Read | Where | OkayUI equivalent (`OkayUIInternals.hpp`) |
+|---|---|---|
+| `GImGui` | line 83 | `GImGui` is a macro for `OkayUI::RefreshContext()`, which fills the one global `Context` from OkayUI's state and returns it |
+| `ImGuiContext::ActiveId` | 86, 95 | `Context::ActiveId`: the item being pressed or dragged (`GetActiveID()`) |
+| `ImGuiContext::ActiveIdWindow` | 86 | `Context::ActiveIdWindow`: the focused window while an item is active (a press gives its window the focus first, so it is the same window in practice; the window the press began in is not tracked) |
+| `ImGuiContext::HoveredWindow` | 91 | `Context::HoveredWindow`: the topmost window under the pointer, null when none or when the pointer is blocked |
+| `ImGuiWindow::Name` | 37, 38 | `WindowRef::Name`: the title the window was begun with (kept per window slot now; 63 characters) |
+| `ImGuiWindow::ParentWindow` | 36 | `WindowRef::ParentWindow`: always null (a `BeginChild` region is not a window here, so the walk up ends at the window) |
+| `ImGuiPayload::Data`, `IsDataType` | 101 to 203 | `DragPayload::Data`, `IsDataType` (6.13) |
+| `ImGuiItemFlags_MixedValue` | 323 | `Item_MixedValue`, accepted and ignored |
+Also added for it: `PushID(pointer)` (the pointer becomes the id seed; two buttons with the same label under different pointers are separate), `IsMouseHoveringRect(min, max, clip)`.
+
+The objects are snapshots, not live handles: `ImGuiWindow` is `WindowRef`, `ImGuiContext` is `Context`, and a pointer to a window is valid until the next `RefreshContext()` (so use it inside the frame, as the Inspector does). With this the probe reports **0 errors** for `InspectorPanel.cpp` (it was 30). Tested in `okayui_names` (hovered, current and active window names and ids with two windows, a blocked pointer, `GImGui`, `PushID(&a)`). The Inspector was **not run**: it needs the scene, the selected object, the undo stack and every component editor of the engine, which cannot be hand-linked here; a CMake test with a small scene is the next step.
+
 ## 7. The render interface: OkayUI on screen without a Dear ImGui backend
 
 Own code, off by default, wired into nothing: the editor and launcher still draw OkayUI (and everything else) through Dear ImGui's SDL backends. This section is the part that lets a later host put OkayUI's pixels on screen without any Dear ImGui backend code. (The numbered sections 5 and 6 of the draw-through-ImGui host live on another branch; this section is numbered 7 so the two cannot collide.)

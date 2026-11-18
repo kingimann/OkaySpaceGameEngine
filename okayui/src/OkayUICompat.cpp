@@ -196,18 +196,17 @@ const char* FindRenderedTextEnd(const char* text, const char* textEnd) {
 
 namespace {
 bool g_ctxCurrent = true;
-struct ContextTag { int unused; } g_ctxTag;
 }
-Context* CreateContext() { g_ctxCurrent = true; return reinterpret_cast<Context*>(&g_ctxTag); }
+Context* CreateContext() { g_ctxCurrent = true; return RefreshContext(); }
 void DestroyContext(Context* ctx) {
-    if (ctx && ctx != reinterpret_cast<Context*>(&g_ctxTag)) return;
+    if (ctx && ctx != RefreshContext()) return;
     ResetState();
     g_ctxCurrent = false;
 }
-Context* GetCurrentContext() { return g_ctxCurrent ? reinterpret_cast<Context*>(&g_ctxTag) : nullptr; }
+Context* GetCurrentContext() { return g_ctxCurrent ? RefreshContext() : nullptr; }
 void SetCurrentContext(Context* ctx) {
     if (!ctx) g_ctxCurrent = false;
-    else if (ctx == reinterpret_cast<Context*>(&g_ctxTag)) g_ctxCurrent = true;
+    else if (ctx == RefreshContext()) g_ctxCurrent = true;
 }
 
 namespace {
@@ -293,6 +292,7 @@ bool BeginMenu(const char* label, bool enabled) {
 }
 bool BeginTable(const char* id, int columns, int flags) { return BeginTable(id, columns, static_cast<TableFlags>(flags)); }
 bool BeginTable(const char* id, int columns, int flags, Vec2 outerSize, float innerWidth) { return BeginTable(id, columns, static_cast<TableFlags>(flags), outerSize, innerWidth); }
+bool IsMouseHoveringRect(Vec2 mn, Vec2 mx, bool) { return IsMouseHoveringRect(mn, mx); }
 bool InvisibleButton(const char* id, Vec2 size, int) { return InvisibleButton(id, size.x, size.y); }
 bool BeginTabBar(const char* id, int) { return BeginTabBar(id); }
 bool BeginCombo(const char* label, const char* preview, int) { return BeginCombo(label, preview); }

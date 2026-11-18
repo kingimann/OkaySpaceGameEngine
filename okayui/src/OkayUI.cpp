@@ -393,7 +393,7 @@ DragDrop g_dd;
 
 // Draggable-window position store (no STL): position persists across frames per id.
 struct WinSlot { int id = 0; float x = 0, y = 0; bool used = false; float w = 0, h = 0; bool sized = false;
-                 bool posInit = false, sizeInit = false, collInit = false; unsigned long long lastFrame = 0;
+                 bool posInit = false, sizeInit = false, collInit = false; unsigned long long lastFrame = 0; char title[64] = {0};   // title: for WindowRef::Name
                  unsigned long long z = 0;          // stacking order: higher is in front, 0 is the bottom (docked content, NoBringToFront)
                  float scroll = 0, maxScroll = 0;   // content scroll and the most it could scroll last frame
                  float autoW = 0, autoH = 0; bool measured = false;   // AlwaysAutoResize: the content's size from last frame
@@ -2110,7 +2110,7 @@ bool Begin(const char* title, float x, float y, float w, float h, bool* p_open) 
     g_curWin = CurWin{true, id, wx, wy, w, bodyH, slot != nullptr && slot->lastFrame + 1 < g_frameCount};   // appearing: not drawn on the frame before
     g_curWin.z = slot ? slot->z : 0;
     if (title) std::snprintf(g_curWin.title, sizeof g_curWin.title, "%s", title);
-    if (slot) slot->lastFrame = g_frameCount;
+    if (slot) { slot->lastFrame = g_frameCount; if (title) std::snprintf(slot->title, sizeof slot->title, "%s", title); }
     if (!hidden) registerWindowRect(id, g_curWin.z, wx, wy, w, bodyH);
     wrecBegin(id, g_curWin.z);
     g_we = WinEnd(); g_we.open = true; g_we.hidden = hidden; g_we.id = id; g_we.slot = slot ? (int)(slot - g_wins) : -1;
@@ -2445,6 +2445,21 @@ WindowInfo FindWindowByID(unsigned id) {
     return wi;
 }
 bool AnyWindowFocused() { return g_focusWin != 0; }
+Context* RefreshContext() {
+    static Context c; static WindowRef refs[3];   // hovered, active, current
+    auto fill = [&](WindowRef& r, const WinSlot& ws) { std::snprintf(r.Name, sizeof r.Name, "%s", ws.title); r.ID = (unsigned)ws.id; r.Pos = Vec2{ws.x, ws.y}; r.Size = Vec2{ws.w, ws.h}; r.ParentWindow = nullptr; };
+    c.ActiveId = (unsigned)g_active; c.HoveredId = (unsigned)g_hot; c.FrameCount = (int)g_frameCount; c.Time = GetTime();
+    c.HoveredWindow = c.ActiveIdWindow = c.CurrentWindow = nullptr;
+    const WinSlot* hov = nullptr;
+    if (!g_in.blocked) for (const WinSlot& ws : g_wins) {
+        if (!ws.used || ws.lastFrame + 1 < g_frameCount || !pointIn(g_in.mouseX, g_in.mouseY, ws.x, ws.y, ws.w, ws.h)) continue;
+        if (!hov || ws.z >= hov->z) hov = &ws;
+    }
+    if (hov) { fill(refs[0], *hov); c.HoveredWindow = &refs[0]; }
+    if (g_active != 0 && g_focusWin != 0) for (const WinSlot& ws : g_wins) if (ws.used && ws.id == g_focusWin) { fill(refs[1], ws); c.ActiveIdWindow = &refs[1]; break; }
+    if (g_curWin.valid) for (const WinSlot& ws : g_wins) if (ws.used && ws.id == g_curWin.id) { fill(refs[2], ws); c.CurrentWindow = &refs[2]; break; }
+    return &c;
+}
 bool GetTopMostPopupModal() { for (const PopupSlot& p : g_popups) if (p.used && p.open && p.modal) return true; return false; }
 void SetNextFrameWantCaptureKeyboard(bool want) { g_nextFrameKbd = want ? 1 : 0; }
 float GetTreeNodeToLabelSpacing() {

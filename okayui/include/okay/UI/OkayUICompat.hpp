@@ -6,6 +6,7 @@
 //
 // What each call does here, and where it differs from Dear ImGui, is written at the declaration.
 #include "okay/UI/OkayUI.hpp"
+#include <cstdint>
 
 namespace OkayUI {
 
@@ -210,7 +211,7 @@ const char* FindRenderedTextEnd(const char* text, const char* textEnd = nullptr)
 /// OkayUI's state (ResetState) and makes GetCurrentContext return null until CreateContext again, SetCurrentContext(null) does the same
 /// without resetting, SetCurrentContext(handle) makes it current. Any other handle is ignored. These exist so host code that guards on
 /// "is there a context" compiles; there is no NewFrame (call BeginFrame with the frame's Input).
-struct Context;
+struct Context;   // defined in OkayUIInternals.hpp
 Context* CreateContext();
 void DestroyContext(Context* ctx = nullptr);
 Context* GetCurrentContext();
@@ -350,6 +351,11 @@ bool BeginMenu(const char* label, bool enabled);
 /// BeginTable with the flags as a plain int (what `ImGuiTableFlags_A | ImGuiTableFlags_B` is), with and without an outer size.
 bool BeginTable(const char* id, int columns, int flags);
 bool BeginTable(const char* id, int columns, int flags, Vec2 outerSize, float innerWidth = 0.0f);
+/// PushID with a pointer (the object's address becomes the id seed). A template so every object pointer works; `const char*` still goes to the string form.
+template <class T> inline void PushID(const T* ptr) { PushID(static_cast<int>(reinterpret_cast<std::uintptr_t>(ptr) * 2654435761u >> 1)); }
+template <class T> inline void PushID(T* ptr) { PushID(static_cast<const T*>(ptr)); }
+/// IsMouseHoveringRect with Dear ImGui's `clip` argument (accepted; the rectangle is never clipped to the window here).
+bool IsMouseHoveringRect(Vec2 min, Vec2 max, bool clip);
 /// TreeNodeEx with a printf-style label (the label is formatted, then used as the id as well).
 void TreeNodeExFormatted(bool* out, const char* label, unsigned flags, const char* fmt, ...);
 template <class... A> inline bool TreeNodeEx(const char* id, unsigned flags, const char* fmt, A... a) { bool r = false; TreeNodeExFormatted(&r, id, flags, fmt, a...); return r; }

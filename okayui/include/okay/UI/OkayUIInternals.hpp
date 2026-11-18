@@ -21,6 +21,38 @@ CurrentWindow GetCurrentWindow();
 /// The same call (a snapshot is always read-only); kept so ported code that names the read-only form compiles.
 inline CurrentWindow GetCurrentWindowRead() { return GetCurrentWindow(); }
 
+/// What Dear ImGui code reads from `ImGuiWindow*` and `ImGuiContext` (the Inspector panel: `w->Name`, `w->ParentWindow`, `g.ActiveId`,
+/// `g.ActiveIdWindow`, `g.HoveredWindow`), as plain values refreshed by RefreshContext(). OkayUI has no window or context objects, so
+/// these are snapshots: a pointer is valid until the next RefreshContext() call (use it within the frame). Field by field:
+///   WindowRef::Name        the title the window was begun with (up to 63 characters).
+///   WindowRef::ID          GetID of the title (the same id CurrentWindow::id gives).
+///   WindowRef::Pos / Size  where the window was last drawn.
+///   WindowRef::ParentWindow always null: a child region (BeginChild) is not a window here, so a walk up the parents ends at the window itself.
+///   Context::ActiveId      the item being pressed or dragged (GetActiveID()).
+///   Context::ActiveIdWindow the focused window while an item is active (the window the press began in is not tracked; a press in a window
+///                          gives it the focus first, so this is the same window in practice), else null.
+///   Context::HoveredWindow the topmost window under the pointer, or null (no window, or the pointer is blocked).
+///   Context::HoveredId     the item under the pointer, 0 for none.
+///   Context::CurrentWindow the window between Begin and End, else null.
+///   Context::FrameCount / Time  GetFrameCount() / GetTime().
+struct WindowRef {
+    char Name[64] = {0};
+    unsigned ID = 0;
+    Vec2 Pos{0, 0}, Size{0, 0};
+    const WindowRef* ParentWindow = nullptr;
+};
+typedef WindowRef ImGuiWindow;
+struct Context {
+    unsigned ActiveId = 0, HoveredId = 0;
+    const WindowRef* ActiveIdWindow = nullptr;
+    const WindowRef* HoveredWindow = nullptr;
+    const WindowRef* CurrentWindow = nullptr;
+    int FrameCount = 0;
+    double Time = 0.0;
+};
+/// Fill the one global context and its window snapshots from OkayUI's state and return it. `GImGui` (OkayUIImGuiNames.hpp) calls this.
+Context* RefreshContext();
+
 /// The id of the item being pressed or dragged now (the same ids GetID / GetItemID give), 0 when none. Text fields count while they
 /// have the keyboard only through ClearActiveID / GetKeyboardFocusId, not here.
 unsigned GetActiveID();

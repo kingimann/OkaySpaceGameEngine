@@ -10,11 +10,11 @@ by name: a call counts as available when OkayUI declares a function of that name
 | What | Distinct | Call sites | Available in OkayUI | Coverage of call sites |
 |---|---:|---:|---:|---:|
 | `ImGui::` calls | 264 | 28025 | 28006 | 99.9% |
-| ImGui types, flags, enums | 330 | 12464 | 12390 | 99.4% |
+| ImGui types, flags, enums | 330 | 12464 | 12431 | 99.7% |
 | Draw-list methods | 26 | 2413 | 2413 | 100.0% |
 
 Distinct calls available: 251 of 264.
-Distinct types, flags and enums available: 319 of 330.
+Distinct types, flags and enums available: 320 of 330.
 
 ## Missing `ImGui::` calls, ranked by use
 
@@ -40,17 +40,16 @@ Missing draw-list methods: none.
 
 | # | Name | Uses | Files |
 |---:|---|---:|---:|
-| 1 | `ImGuiWindow` | 41 | 5 |
-| 2 | `ImGuiDockNode` | 16 | 1 |
-| 3 | `ImGuiKey_MouseWheelY` | 5 | 4 |
-| 4 | `ImGuiTabItem` | 3 | 1 |
-| 5 | `ImGuiInputTextCallbackData` | 2 | 2 |
-| 6 | `ImGuiPopupFlags_NoOpenOverItems` | 2 | 1 |
-| 7 | `ImGuiAxis_Y` | 1 | 1 |
-| 8 | `ImGuiPlatformIO` | 1 | 1 |
-| 9 | `ImGuiSortDirection_Ascending` | 1 | 1 |
-| 10 | `ImGuiStyleVar_GrabMinSize` | 1 | 1 |
-| 11 | `ImGuiTableBgTarget_CellBg` | 1 | 1 |
+| 1 | `ImGuiDockNode` | 16 | 1 |
+| 2 | `ImGuiKey_MouseWheelY` | 5 | 4 |
+| 3 | `ImGuiTabItem` | 3 | 1 |
+| 4 | `ImGuiInputTextCallbackData` | 2 | 2 |
+| 5 | `ImGuiPopupFlags_NoOpenOverItems` | 2 | 1 |
+| 6 | `ImGuiAxis_Y` | 1 | 1 |
+| 7 | `ImGuiPlatformIO` | 1 | 1 |
+| 8 | `ImGuiSortDirection_Ascending` | 1 | 1 |
+| 9 | `ImGuiStyleVar_GrabMinSize` | 1 | 1 |
+| 10 | `ImGuiTableBgTarget_CellBg` | 1 | 1 |
 
 ## Coverage per file
 

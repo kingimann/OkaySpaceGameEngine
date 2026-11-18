@@ -114,7 +114,7 @@ FUNC_START = re.compile(r"^(?:static\s+|inline\s+|constexpr\s+|template\s*<[^>]*
 KEYWORDS = {"if", "for", "while", "switch", "else", "return", "do", "catch", "sizeof", "namespace"}
 
 
-TYPE_ALIASES = {"ImGuiKey": "KeyId", "ImGuiStorage": "StateStorage"}   # types OkayUI has under another name
+TYPE_ALIASES = {"ImGuiKey": "KeyId", "ImGuiStorage": "StateStorage", "ImGuiWindow": "WindowRef"}   # types OkayUI has under another name
 
 
 def resolve_type(name, idents):

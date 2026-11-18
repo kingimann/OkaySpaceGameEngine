@@ -257,5 +257,11 @@ int main(int, char**) {
           "struct S { template <typename T> int h() const { return (int)sizeof(T); } int g() { return h<int>() + h<char>(); } };\n"
           "int main() { std::shared_ptr<void> p; S s; return f<int>(p) + s.g(); }\n", &o);
     CHECK(t, has_symbol(o, "main"));
+    ++tests;
+    build(t, "round 31: variadic macros (used to hang the preprocessor), # and ## in macros",
+          "#define LOG(fmt, ...) log_(fmt, __VA_ARGS__)\n#define ALL(...) sum_(__VA_ARGS__)\n#define CAT2(a, b) a##b\n#define CAT(a, b) CAT2(a, b)\n#define STR(x) #x\n"
+          "int log_(const char*, int a, int b) { return a + b; }\nint sum_(int a, int b, int c) { return a + b + c; }\n"
+          "int main() { const char* s = STR(hello world); int CAT(my, var) = 2; int CAT(v_, __LINE__) = 1; return LOG(\"x\", 1, 2) + ALL(1, 2, 3) + myvar + s[0]; }\n", &o);
+    CHECK(t, has_symbol(o, "main"));
     return t.finish(tests);
 }

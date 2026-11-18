@@ -359,6 +359,7 @@ bool read_file(const std::string& path, std::string* text) {
 
 struct Macro {
     bool function_like = false;
+    bool variadic = false;  // the last parameter is `...`, named __VA_ARGS__ in the body
     std::vector<std::string> params;
     std::string body;
 };
@@ -746,12 +747,55 @@ struct Preprocessor {
                     }
                     cur_arg.push_back(ch);
                 }
+                if (it->second.variadic && !it->second.params.empty()) {
+                    // The arguments from the `...` on are one argument, joined with their commas ([cpp.replace]/__VA_ARGS__).
+                    const size_t fixed = it->second.params.size() - 1;
+                    if (args.size() > fixed) {
+                        std::string joined = args[fixed];
+                        for (size_t a2 = fixed + 1; a2 < args.size(); ++a2) joined += "," + args[a2];
+                        args.resize(fixed);
+                        args.push_back(joined);
+                    } else if (args.size() == fixed) {
+                        args.push_back("");
+                    }
+                }
                 // Every parameter is replaced in one pass over the body, so an argument that happens to contain another
                 // parameter's name (CHECK_NEAR(f(a, b), 1, 2) with parameters a and b) is not substituted a second time.
                 std::string substituted;
                 {
                     const std::string& body = it->second.body;
                     for (size_t s = 0; s < body.size();) {
+                        if (body[s] == '#' && s + 1 < body.size() && body[s + 1] == '#') {
+                            substituted.push_back('\x01');  // token pasting: the spaces around it are removed below
+                            s += 2;
+                            continue;
+                        }
+                        if (body[s] == '#') {
+                            // #param: the argument as a string literal ([cpp.stringize])
+                            size_t e = s + 1;
+                            while (e < body.size() && (body[e] == ' ' || body[e] == '\t')) ++e;
+                            size_t f = e;
+                            while (f < body.size() && (std::isalnum(static_cast<unsigned char>(body[f])) || body[f] == '_')) ++f;
+                            const std::string pname = body.substr(e, f - e);
+                            bool done = false;
+                            for (size_t p = 0; p < it->second.params.size() && p < args.size() && !done; ++p)
+                                if (!pname.empty() && it->second.params[p] == pname) {
+                                    std::string text = args[p];
+                                    size_t b0 = 0;
+                                    while (b0 < text.size() && (text[b0] == ' ' || text[b0] == '\t')) ++b0;
+                                    size_t b1 = text.size();
+                                    while (b1 > b0 && (text[b1 - 1] == ' ' || text[b1 - 1] == '\t')) --b1;
+                                    substituted.push_back('"');
+                                    for (size_t q = b0; q < b1; ++q) {
+                                        if (text[q] == '"' || text[q] == '\\') substituted.push_back('\\');
+                                        substituted.push_back(text[q]);
+                                    }
+                                    substituted.push_back('"');
+                                    s = f;
+                                    done = true;
+                                }
+                            if (done) continue;
+                        }
                         if (std::isalpha(static_cast<unsigned char>(body[s])) || body[s] == '_') {
                             size_t e = s + 1;
                             while (e < body.size() && (std::isalnum(static_cast<unsigned char>(body[e])) || body[e] == '_')) ++e;
@@ -768,6 +812,13 @@ struct Preprocessor {
                             s = e;
                         } else substituted.push_back(body[s++]);
                     }
+                }
+                for (size_t pz = substituted.find('\x01'); pz != std::string::npos; pz = substituted.find('\x01')) {
+                    size_t from = pz;
+                    while (from > 0 && (substituted[from - 1] == ' ' || substituted[from - 1] == '\t')) --from;
+                    size_t to = pz + 1;
+                    while (to < substituted.size() && (substituted[to] == ' ' || substituted[to] == '\t')) ++to;
+                    substituted.erase(from, to - from);
                 }
                 out += expand(substituted, nest + 1);
                 i = k;
@@ -931,6 +982,13 @@ struct Preprocessor {
                             size_t e = p;
                             while (e < rest.size() && (std::isalnum(static_cast<unsigned char>(rest[e])) || rest[e] == '_')) ++e;
                             if (e > p) macro.params.push_back(rest.substr(p, e - p));
+                            else if (rest.compare(p, 3, "...") == 0) {
+                                macro.variadic = true;
+                                macro.params.push_back("__VA_ARGS__");
+                                e = p + 3;
+                            } else if (p < rest.size() && rest[p] != ')') {
+                                e = p + 1;  // a stray character: skipped (it used to stop the scan and loop forever)
+                            }
                             p = e;
                         }
                         if (p < rest.size() && rest[p] == ')') ++p;

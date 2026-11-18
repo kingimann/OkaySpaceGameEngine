@@ -787,6 +787,36 @@ static void testNativeManifest() {
     o = sh("-j2 test_math", &rc);
     check(rc == 0, "the generated manifest builds test_math", o);
     check(system(("'" + (gRoot / "build/test_math").string() + "' >/dev/null").c_str()) == 0, "test_math runs");
+    check(man.find("account_defines = on") != string::npos, "the native manifest asks for the account defines", man);
+}
+
+static void testAccountDefines() {
+    printf("test: account_defines reads the environment or config/public-account.json and never prints the values\n"); fresh("acct");
+    unsetenv("OKAY_DEFAULT_ACCOUNT_URL"); unsetenv("OKAY_DEFAULT_ACCOUNT_KEY");
+    write("a.cpp", "#include <cstdio>\n#ifndef OKAY_DEFAULT_ACCOUNT_KEY\n#define OKAY_DEFAULT_ACCOUNT_KEY \"none\"\n#endif\n#ifndef OKAY_DEFAULT_ACCOUNT_URL\n#define OKAY_DEFAULT_ACCOUNT_URL \"none\"\n#endif\nint main(){printf(\"%s %s\\n\", OKAY_DEFAULT_ACCOUNT_URL, OKAY_DEFAULT_ACCOUNT_KEY); return 0;}\n");
+    write("build.okay", "account_defines = on\ntarget app exe\n sources = a.cpp\nend\n");
+    int rc; string o = sh("-j1", &rc);
+    check(rc == 0 && o.find("account defines: url no, key no (from none)") != string::npos, "nothing set: says so and builds", o);
+    write("config/public-account.json", "{\n  \"url\": \"https://file.invalid/u\",\n  \"key\": \"filekey_AAAA\"\n}\n");
+    o = sh("-j1", &rc);
+    check(rc == 0 && o.find("(from config/public-account.json)") != string::npos && o.find("filekey_AAAA") == string::npos && o.find("file.invalid") == string::npos, "the json file is used and its values are not printed", o);
+    o = capture("'" + (gRoot / "build/app").string() + "'", &rc);
+    check(o == "https://file.invalid/u filekey_AAAA\n", "the program sees the json values", o);
+    setenv("OKAY_DEFAULT_ACCOUNT_URL", "https://env.invalid/u", 1); setenv("OKAY_DEFAULT_ACCOUNT_KEY", "envkey_BBBB", 1);
+    o = sh("-j1 -v", &rc);
+    check(rc == 0 && o.find("(from environment)") != string::npos && o.find("envkey_BBBB") == string::npos && o.find("env.invalid") == string::npos && o.find("<hidden>") != string::npos, "the environment wins; -v shows <hidden>, not the values", o);
+    o = capture("'" + (gRoot / "build/app").string() + "'", &rc);
+    check(o == "https://env.invalid/u envkey_BBBB\n", "the program sees the environment values", o);
+    write("a.cpp", readFile(gRoot / "a.cpp") + "// changed\n");
+    o = sh("-n -v --no-cache", &rc);
+    check(o.find("envkey_BBBB") == string::npos && o.find("<hidden>") != string::npos, "a dry run hides them too", o);
+    sh("compdb");
+    string cdb = readFile(gRoot / "compile_commands.json");
+    check(cdb.find("envkey_BBBB") == string::npos && cdb.find("env.invalid") == string::npos && cdb.find("<hidden>") != string::npos, "compile_commands.json does not hold the values", cdb);
+    write("a.cpp", "#error broken\n");
+    o = sh("-j1", &rc);
+    check(rc != 0 && o.find("broken") != string::npos && o.find("envkey_BBBB") == string::npos && o.find("env.invalid") == string::npos, "a failing compile does not echo the command with the values", o);
+    unsetenv("OKAY_DEFAULT_ACCOUNT_URL"); unsetenv("OKAY_DEFAULT_ACCOUNT_KEY");
 }
 
 static void testRestoredObjectsStayTrusted() {
@@ -1416,5 +1446,6 @@ int main(int argc, char** argv) {
     testCompressedCache();
     testLzFormat();
     testQuotedDefine();
+    testAccountDefines();
     printf("okaybuild tests: %d checks passed, %d failed\n", gPass, gFail); return gFail ? 1 : 0;
 }

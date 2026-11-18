@@ -123,6 +123,7 @@ struct DistDecl {
     vector<string> tools, examples;
 };
 struct Manifest {
+    bool accountDefines = false; // account_defines = on: add OKAY_DEFAULT_ACCOUNT_URL/KEY from the environment or config/public-account.json
     Toolchain tc; string outdir = "build", objSub; // objSub: "CONFIG/" when outdir has {config}
      vector<Target> targets; vector<RawAction> actions; vector<ImporterDecl> importers; vector<PoolDecl> pools;
     vector<ConfigBlock> configs; vector<OptionDecl> options; vector<CondBlock> conds; vector<PackageDecl> packages;
@@ -190,6 +191,7 @@ static Manifest parseManifest(const string& file) {
         if (t[0] == "end") { if (mode == TOP) throw err("'end' outside a block"); mode = TOP; continue; }
         if (mode == TOP) {
             if (t[0] == "outdir" && t.size() == 3 && t[1] == "=") { m.outdir = t[2]; continue; }
+            if (t[0] == "account_defines" && t.size() == 3 && t[1] == "=") { if (t[2] != "on" && t[2] != "off") throw err("account_defines wants on or off"); m.accountDefines = t[2] == "on"; continue; }
             if (t[0] == "toolchain") {
                 mode = TC; Toolchain& c = m.tc;
                 if (t.size() > 1) {
@@ -473,6 +475,12 @@ static string resolve(const string& dir, const string& p) {
 }
 
 static string quote(const string& s) { return s.find_first_of(" \"'$\\") == string::npos ? s : "'" + s + "'"; }
+// Values that must never be printed or written to a file we produce (the account key and URL). Filled by account_defines.
+static vector<string> gSecrets;
+static string redact(string s) {
+    for (auto& v : gSecrets) { if (v.empty()) continue; size_t at = 0; while ((at = s.find(v, at)) != string::npos) { s.replace(at, v.size(), "<hidden>"); at += 8; } }
+    return s;
+}
 static string joined(const vector<string>& a) { string r; for (auto& s : a) { if (!r.empty()) r += ' '; r += quote(s); } return r; }
 
 static string spellMsvc(const string& f, bool link) {
@@ -1588,7 +1596,7 @@ static void commitStep(const Action& a, string& out, bool& ok, const vector<std:
         if (!ok) for (auto& pth : a.outputs) { std::error_code e2; fs::remove(pth, e2); }
     }
     if (ok) writeShowIncludesDepFile(a, out);
-    if (!ok || a.outputs.empty()) { if (!ok) out = "okay-build: FAILED: " + joined(a.argv) + "\n" + out; return; }
+    if (!ok || a.outputs.empty()) { if (!ok) out = "okay-build: FAILED: " + redact(joined(a.argv)) + "\n" + out; return; }
     long long ts = nowNs();
     Rec rec; rec.cmd = a.cmdHash; vector<string> ins = a.inputs;
     if (!a.depfile.empty()) for (auto& h : parseDepfile(a.depfile)) { string np = resolve(a.dir, h); if (std::find(ins.begin(), ins.end(), np) == ins.end()) ins.push_back(np); }
@@ -1596,7 +1604,7 @@ static void commitStep(const Action& a, string& out, bool& ok, const vector<std:
     for (auto& pth : ins) { FileSig sig; if (!hashFile(pth, sig)) { ok = false; out += "okay-build: cannot hash input " + pth + "\n"; break; } rec.inputs.push_back({poolStr(pth.data(), pth.size()), sig}); }
     if (ok) noteOutputs(a, rec, oldProduced, out, ok);
     if (ok) { OK_LOCK(l, gStateMu); gState[a.output] = rec; }
-    else out = "okay-build: FAILED: " + joined(a.argv) + "\n" + out;
+    else out = "okay-build: FAILED: " + redact(joined(a.argv)) + "\n" + out;
     gNsPost += nowNs() - ts;
     if (ok && !a.output.empty()) appendJournal(a.output);
 }
@@ -2061,7 +2069,7 @@ static int buildOnWindows(const Manifest& m, const vector<string>& want, const O
     auto done = [&](int id, bool ok, const string& msg, bool held) {
         if (held) { if (poolIdx[id] >= 0) --pools[poolIdx[id]].used; memUsed -= g.acts[id].memory; }
         ++finished;
-        if (!ok) { anyFail = true; if (!o.keep) stop = true; if (!msg.empty()) { fflush(stdout); fputs(msg.c_str(), stderr); } }
+        if (!ok) { anyFail = true; if (!o.keep) stop = true; if (!msg.empty()) { fflush(stdout); fputs(redact(msg).c_str(), stderr); } }
         else if (!stop) for (int r : g.acts[id].rdeps) if (--pending[r] == 0) ready.push_back(r);
     };
     vector<Live> live;
@@ -2077,7 +2085,7 @@ static int buildOnWindows(const Manifest& m, const vector<string>& want, const O
                 if (!d) { ++upToDate; if (o.verbose) printf("[up to date] %s\n", a.output.c_str()); done(id, true, "", false); continue; }
                 ++ran; printf("[%d/%d] %s %s\n", ran, total, a.kind.c_str(), a.desc.c_str());
                 if (o.explain) printf("        because: %s\n", why.c_str());
-                if (o.verbose || o.dry) printf("        %s\n", joined(a.argv).c_str());
+                if (o.verbose || o.dry) printf("        %s\n", redact(joined(a.argv)).c_str());
                 fflush(stdout);
                 if (o.dry) { wouldRun[id] = 1; done(id, true, "", false); continue; }
                 for (auto& pth : a.outputs) { fs::path parent = fs::path(pth).parent_path(); if (!parent.empty()) fs::create_directories(parent); }
@@ -2237,7 +2245,7 @@ static int build(const Manifest& m, const vector<string>& want, const Opts& o) {
                 if (d) {
                     { std::lock_guard<std::mutex> pl(mu); ++ran; printf("[%d/%d] %s %s\n", ran, total, a.kind.c_str(), a.desc.c_str());
                       if (o.explain) printf("        because: %s\n", why.c_str());
-                      if (o.verbose || o.dry) printf("        %s\n", joined(a.argv).c_str());
+                      if (o.verbose || o.dry) printf("        %s\n", redact(joined(a.argv)).c_str());
                       fflush(stdout); }
                     if (!o.dry) {
                         for (auto& pth : a.outputs) { fs::path parent = fs::path(pth).parent_path(); if (!parent.empty()) fs::create_directories(parent); }
@@ -2278,7 +2286,7 @@ static int build(const Manifest& m, const vector<string>& want, const Opts& o) {
                 } else { std::lock_guard<std::mutex> pl(mu); ++upToDate; if (o.verbose) printf("[up to date] %s\n", a.output.c_str()); }
             } catch (const std::exception& e) { ok = false; out += string("okay-build: ") + e.what() + "\n"; }
             lk.lock(); --running; if (poolIdx[id] >= 0) --pools[poolIdx[id]].used; memUsed -= g.acts[id].memory; ++finished;
-            if (!ok) { anyFail = true; if (!o.keep) stop = true; if (firstErr.empty()) firstErr = out; if (!out.empty()) { fflush(stdout); fputs(out.c_str(), stderr); } }
+            if (!ok) { anyFail = true; if (!o.keep) stop = true; if (firstErr.empty()) firstErr = out; if (!out.empty()) { fflush(stdout); fputs(redact(out).c_str(), stderr); } }
             else if (!stop) for (int r : a.rdeps) if (--pending[r] == 0) ready.push_back(r);
             cv.notify_all();
         }
@@ -2551,12 +2559,12 @@ static void writeCompdb(const Manifest& m) {
     for (auto& a : g.acts) {
         if (a.kind == "CC") {
             f << (first ? "" : ",\n") << "  {\"directory\": \"" << jsonEsc(dir) << "\", \"file\": \"" << jsonEsc(a.inputs[0]) << "\", \"arguments\": [";
-            for (size_t i = 0; i < a.argv.size(); ++i) { f << (i ? ", " : "") << "\"" << jsonEsc(a.argv[i]) << "\""; }
+            for (size_t i = 0; i < a.argv.size(); ++i) { f << (i ? ", " : "") << "\"" << jsonEsc(redact(a.argv[i])) << "\""; }
             f << "]}"; first = false; ++n;
         } else {
             string file; if (!importedCompile(a, file)) continue;
             string where = a.dir.empty() ? dir : a.dir;
-            f << (first ? "" : ",\n") << "  {\"directory\": \"" << jsonEsc(where) << "\", \"file\": \"" << jsonEsc(file) << "\", \"command\": \"" << jsonEsc(a.rawCmd) << "\"}";
+            f << (first ? "" : ",\n") << "  {\"directory\": \"" << jsonEsc(where) << "\", \"file\": \"" << jsonEsc(file) << "\", \"command\": \"" << jsonEsc(redact(a.rawCmd)) << "\"}";
             first = false; ++n;
         }
     }
@@ -2708,6 +2716,29 @@ static FileSets readConfigOkay(const string& file) {
     return s;
 }
 
+// The two account defines, found the way CMakeLists.txt finds them: the environment (when either variable is set), otherwise
+// config/public-account.json ("url" and "key"). The values go into every compile as -DNAME="value" and are registered as secrets
+// so they are never printed, never written to compile_commands.json and never put in a manifest. Says only where they came from.
+static string jsonStringField(const string& j, const string& field) {
+    size_t at = j.find("\"" + field + "\""); if (at == string::npos) return "";
+    at = j.find(':', at); if (at == string::npos) return "";
+    at = j.find('"', at); if (at == string::npos) return "";
+    size_t e = j.find('"', at + 1); return e == string::npos ? "" : j.substr(at + 1, e - at - 1);
+}
+static void addAccountDefines(Manifest& m) {
+    string url, key, from = "none";
+    const char* eu = getenv("OKAY_DEFAULT_ACCOUNT_URL"); const char* ek = getenv("OKAY_DEFAULT_ACCOUNT_KEY");
+    if ((eu && *eu) || (ek && *ek)) { url = eu ? eu : ""; key = ek ? ek : ""; from = "environment"; }
+    else if (fs::is_regular_file("config/public-account.json")) {
+        std::ifstream f("config/public-account.json"); string j((std::istreambuf_iterator<char>(f)), {});
+        url = jsonStringField(j, "url"); key = jsonStringField(j, "key");
+        if (!url.empty() || !key.empty()) from = "config/public-account.json";
+    }
+    for (auto* v : {&url, &key}) if (v->find_first_of("\"\\ \t\r\n") != string::npos) throw Fail("account_defines: a value holds a quote, backslash or space");
+    if (!url.empty()) { m.tc.flags.push_back("-DOKAY_DEFAULT_ACCOUNT_URL=\"" + url + "\""); gSecrets.push_back(url); }
+    if (!key.empty()) { m.tc.flags.push_back("-DOKAY_DEFAULT_ACCOUNT_KEY=\"" + key + "\""); gSecrets.push_back(key); }
+    printf("okay-build: account defines: url %s, key %s (from %s)\n", url.empty() ? "no" : "yes", key.empty() ? "no" : "yes", from.c_str());
+}
 static void applyConfiguration(Manifest& m, const string& cliConfig, const string& configPath, bool configRequired, const vector<std::pair<string, string>>& cliOpts) {
     std::map<string, const OptionDecl*> decl;
     for (auto& o : m.options) decl[o.name] = &o;
@@ -2747,6 +2778,7 @@ static void applyConfiguration(Manifest& m, const string& cliConfig, const strin
         if (cfg->debug == 1) m.tc.flags.push_back("-g");
         addFlags(cfg->flags, cfg->linkFlags, cfg->defines);
     }
+    if (m.accountDefines) addAccountDefines(m);
     // `outdir = build/{config}`: each configuration gets its own program folder and its own object folder, so switching
     // configurations does not rebuild the other one (outputs are tracked by path).
     { size_t at = m.outdir.find("{config}");
@@ -3063,6 +3095,7 @@ static int writeNative(const string& root, const string& outFile) {
     std::ofstream out(outFile, std::ios::trunc);
     if (!out) throw Fail("cannot write " + outFile);
     out << "# generated by okay-build native from the source tree (not from a CMake build)\n";
+    out << "account_defines = on\n";
     out << "toolchain\n";
     out << "  flags = -Wall -Wextra -Wpedantic\n";
     out << "end\n";

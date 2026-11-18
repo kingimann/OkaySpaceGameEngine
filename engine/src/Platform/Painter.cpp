@@ -29,9 +29,21 @@ ui2d::Tex Painter::LoadTexture(const std::string& path) {
     }
     TextureDesc d;
     d.width = img.Width(); d.height = img.Height();
+    d.scale = m_imgLinear ? ScaleMode::Linear : ScaleMode::Nearest;
     ui2d::Tex tex = CreateTexture(d, (const std::uint8_t*)img.Data());
     m_cache[path] = tex;
     return tex;
+}
+
+void Painter::SetImageFilter(bool linear) {
+    if (linear == m_imgLinear) return;
+    m_imgLinear = linear;
+    for (auto& kv : m_cache)
+        if (kv.second) SetTextureScaleMode(kv.second, linear ? ScaleMode::Linear : ScaleMode::Nearest);
+}
+
+void Painter::SetTextureFilter(ui2d::Tex t, bool linear) {
+    if (t) SetTextureScaleMode(t, linear ? ScaleMode::Linear : ScaleMode::Nearest);
 }
 
 ui2d::Tex Painter::FontAtlas(okay::TtfFont* f) {

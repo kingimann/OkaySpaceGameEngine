@@ -46,6 +46,7 @@
 #include "okay/Math/Mat4.hpp"
 #include "ufbx.h"
 #include "okay/Render/FbxReader.hpp"
+#include "okay/Core/ThirdParty.hpp"
 #include <filesystem>
 #include <fstream>
 #include <algorithm>
@@ -58,9 +59,18 @@
 #include <vector>
 
 #include <atomic>
+#include <chrono>
 #include "ModelImportInternal.hpp"
+#include "FileOpen.hpp"
+#include <cstring>
+#include <cstdio>
 
 namespace okay {
+// Which reader read the last model (set by the import paths below, logged once per ImportModelScene): "the own LXO
+// reader", "Assimp", "ufbx", ... and the reading time in ms (-1 = not measured). Thread-local: imports on two threads
+// do not mix.
+static thread_local std::string g_readBy;
+static thread_local double g_readMs = -1.0;
 // Validate a freshly built skin's joint indices against its joint list (the one
 // place every importer funnels through) and say so when the file had bad ones.
 static void ValidateSkinJoints(SkinnedMesh& sm, const std::string& path) {
@@ -98,7 +108,7 @@ std::string ImportableExtensions() {
         return out;
     }();
     std::string res = list;
-    for (const char* opt : {".dae", ".3ds", ".bvh", ".off", ".smd", ".md5mesh", ".md5anim", ".ms3d", ".ase", ".3mf", ".amf", ".x3d", ".dxf", ".lwo", ".blend", ".md2", ".md3", ".irrmesh", ".b3d", ".x", ".ac", ".acc", ".ac3d", ".mesh.xml", ".xgl", ".zgl", ".irr", ".nff", ".enff", ".ter", ".mdc", ".hmp", ".csm", ".q3o", ".q3s", ".raw", ".iqm", ".cob", ".pmx", ".lws", ".mot"})   // not ".ndo": that reader is a seam and refuses every file, so it must not be advertised
+    for (const char* opt : {".dae", ".3ds", ".bvh", ".off", ".smd", ".md5mesh", ".md5anim", ".ms3d", ".ase", ".3mf", ".amf", ".x3d", ".dxf", ".lwo", ".blend", ".md2", ".md3", ".irrmesh", ".b3d", ".x", ".ac", ".acc", ".ac3d", ".mesh.xml", ".xgl", ".zgl", ".irr", ".nff", ".enff", ".ter", ".mdc", ".hmp", ".csm", ".q3o", ".q3s", ".raw", ".iqm", ".cob", ".pmx", ".lws", ".mot", ".mesh", ".zae", ".xml", ".lxo"})   // not ".ndo": that reader is a seam and refuses every file, so it must not be advertised
         if ((" " + res + " ").find(std::string(" ") + opt + " ") == std::string::npos && EffectiveImportBackend(opt) == ImportBackend::Own)
             res += std::string(" ") + opt;
     return res;
@@ -130,10 +140,13 @@ static void NormalizeImportedClips(GameObject* root) {
 
 Mesh ImportModel(const std::string& path, bool* ok, std::string* outTexture) {
     std::string p = Lower(path);
-    if (EndsWith(p, ".obj") && EffectiveImportBackend(".obj") != ImportBackend::Assimp)
+    if (EndsWith(p, ".obj") && EffectiveImportBackend(".obj") != ImportBackend::Assimp) {
+        g_readBy = "the own OBJ reader";
         return Mesh::LoadOBJ(path, ok, outTexture);
-    if (EndsWith(p, ".gltf") || EndsWith(p, ".glb"))  return LoadGLTF(path, ok, outTexture);
+    }
+    if (EndsWith(p, ".gltf") || EndsWith(p, ".glb")) { g_readBy = "the own glTF reader"; return LoadGLTF(path, ok, outTexture); }
     if (EndsWith(p, ".fbx")) {
+        g_readBy = fbx::OwnReaderEnabled() ? "the own FBX reader or ufbx (one mesh)" : "ufbx";   // (the own reader is the default; OKAY_OWN_FBX=0 or OKAY_THIRD_PARTY=1: ufbx)
         bool fok = false;
         Mesh m = ImportFbxMerged(path, &fok, outTexture);
         if (fok) { if (ok) *ok = true; return m; }
@@ -590,6 +603,30 @@ constexpr bool kOwnLwsDefault = true;
 constexpr bool kOwnLwsDefault = false;
 #endif
 
+#ifdef OKAY_OWN_OGREBIN_DEFAULT
+constexpr bool kOwnOgreBinDefault = true;
+#else
+constexpr bool kOwnOgreBinDefault = false;
+#endif
+
+#ifdef OKAY_OWN_ZAE_DEFAULT
+constexpr bool kOwnZaeDefault = true;
+#else
+constexpr bool kOwnZaeDefault = false;
+#endif
+
+#ifdef OKAY_OWN_XML_DEFAULT
+constexpr bool kOwnXmlDefault = true;
+#else
+constexpr bool kOwnXmlDefault = false;
+#endif
+
+#ifdef OKAY_OWN_LXO_DEFAULT
+constexpr bool kOwnLxoDefault = true;
+#else
+constexpr bool kOwnLxoDefault = false;
+#endif
+
 #ifdef OKAY_OWN_BLEND_DEFAULT
 constexpr bool kOwnBlendDefault = true;
 #else
@@ -639,8 +676,14 @@ constexpr OptInFormat kOptIn[] = {
     {"", "", false},                                       // 38 (reader e4: MDL, not on main yet; reserved, never reached)
     {"OKAY_OWN_PMX",     "PMX",     kOwnPmxDefault},       // 39
     {"OKAY_OWN_LWS",     "LWS",     kOwnLwsDefault},       // 40 (.lws and .mot)
+    {"", "", false},                                       // 41 (reserved: glTF 1.0, branch claude/own-readers-6; never reached)
+    {"", "", false},                                       // 42 (reserved: Q3BSP, branch claude/own-readers-6; never reached)
+    {"OKAY_OWN_OGREBIN", "OGRE binary", kOwnOgreBinDefault},   // 43 (.mesh)
+    {"OKAY_OWN_ZAE",     "ZAE",     kOwnZaeDefault},       // 44 (.zae)
+    {"OKAY_OWN_XML",     "XML",     kOwnXmlDefault},       // 45 (.xml: the reader is picked by the root element)
+    {"OKAY_OWN_LXO",     "LXO",     kOwnLxoDefault},       // 46 (.lxo: Modo, read by the LWO reader)
 };
-constexpr int kOwnSlots = 41;   // slots 22 to 26 are batch D, 27 is Terragen's, 28 to 30 are MDC, HMP, CSM, 31 and 33 are Q3D and RAW (32 is kept for SIB), 34 to 36 are IQM, COB, NDO (batch E3), 37 and 38 are reserved for reader e4 (OpenGEX, MDL), 39 and 40 are PMX and LWS/MOT (batch E5); raise this (and add rows above) when a reader needs a slot beyond 40
+constexpr int kOwnSlots = 47;   // slots 22 to 26 are batch D, 27 is Terragen's, 28 to 30 are MDC, HMP, CSM, 31 and 33 are Q3D and RAW (32 is kept for SIB), 34 to 36 are IQM, COB, NDO (batch E3), 37 and 38 are reserved for reader e4 (OpenGEX, MDL), 39 and 40 are PMX and LWS/MOT (batch E5), 41 and 42 are reserved for glTF 1.0 and Q3BSP, 43 to 45 are OGRE binary, ZAE and .xml (the gap batch), 46 is LXO; raise this (and add rows above) when a reader needs a slot beyond 46
 
 // 0 = .obj, 1 = .stl, 2 = .ply, 3 = .dae, 4 = .3ds, 5 = .bvh, 6 = .off; -1 = no own reader.
 int OwnSlot(const std::string& ext) {
@@ -683,14 +726,20 @@ int OwnSlot(const std::string& ext) {
     if (e == ".ndo") return 36;
     if (e == ".pmx") return 39;
     if (e == ".lws" || e == ".mot") return 40;
+    if (e == ".mesh") return 43;
+    if (e == ".zae") return 44;
+    if (e == ".xml") return 45;
+    if (e == ".lxo") return 46;
     return -1;
 }
 std::atomic<int> g_backendChoice[kOwnSlots] = {};   // ImportBackend per own-reader format (0 = Default)
 
-// Our Collada, 3DS and BVH readers are opt-in: run-time SetImportBackend, else the environment
-// variable OKAY_OWN_COLLADA / OKAY_OWN_3DS / OKAY_OWN_BVH = 0/1, else the CMake option.
+// Whether our reader is the one for a format (slot 3 and up). Order: SetImportBackend in code (checked by the caller), then
+// OKAY_THIRD_PARTY=1 (every format back to Assimp; okay/Core/ThirdParty.hpp), then OKAY_OWN_<FMT>=0/1, then the CMake option
+// (ON for every reader since the owner's approval of 2026-11-17, except the NDO seam, which refuses every file).
 bool OwnOptedIn(int slot) {
     if (slot < 3 || slot - 3 >= (int)(sizeof(kOptIn) / sizeof(kOptIn[0]))) return false;
+    if (ThirdPartyForced()) return false;
     bool v = kOptIn[slot - 3].cmakeDefault;
     if (const char* e = std::getenv(kOptIn[slot - 3].var)) { if (e[0] == '1') v = true; else if (e[0] == '0') v = false; }
     return v;
@@ -767,12 +816,21 @@ ImportBackend EffectiveImportBackend(const std::string& ext) {
     if (c == ImportBackend::Assimp) return AssimpAvailable() ? ImportBackend::Assimp : ImportBackend::Own;
     // Default: OBJ has always been our own reader. STL / PLY go to Assimp when the
     // build has it (as before our readers existed), unless CMake asked for ours first.
-    if (s >= 3) {   // Collada, 3DS, BVH: off by default; Assimp reads them when the build has it
+    if (s >= 3) {   // the readers from Collada on: ours unless switched off (OKAY_OWN_<FMT>=0 or OKAY_THIRD_PARTY=1); then Assimp
         if (OwnOptedIn(s)) return ImportBackend::Own;
-        return AssimpAvailable() ? ImportBackend::Assimp : ImportBackend::Default;
+        if (AssimpAvailable()) return ImportBackend::Assimp;
+        // OKAY_THIRD_PARTY=1 in a build without Assimp: nothing else can read the file, so ours still does. A single format
+        // switched off with OKAY_OWN_<FMT>=0 stays off (the import then says how to switch it on).
+        if (ThirdPartyForced() && kOptIn[s - 3].cmakeDefault) return ImportBackend::Own;
+        return ImportBackend::Default;
     }
-    if (s == 0 || kPreferOwnDefault || !AssimpAvailable()) return ImportBackend::Own;
-    return ImportBackend::Assimp;
+    if (s == 0 || !AssimpAvailable()) return ImportBackend::Own;
+    // STL / PLY: ours by default (OKAY_PREFER_OWN_READERS, ON since 2026-11-17); OKAY_OWN_STL / OKAY_OWN_PLY = 0/1 and
+    // OKAY_THIRD_PARTY=1 change it at run time.
+    if (ThirdPartyForced()) return ImportBackend::Assimp;
+    bool own = kPreferOwnDefault;
+    if (const char* e = std::getenv(s == 1 ? "OKAY_OWN_STL" : "OKAY_OWN_PLY")) { if (e[0] == '1') own = true; else if (e[0] == '0') own = false; }
+    return own ? ImportBackend::Own : ImportBackend::Assimp;
 }
 
 bool RunReaderGuarded(const std::function<bool()>& read, std::string& err) {
@@ -790,7 +848,81 @@ bool RunReaderGuarded(const std::function<bool()>& read, std::string& err) {
     return false;
 }
 
+// .xml (slot 45): several formats Assimp reads under this extension, told apart by the root element. Only the first 8 KiB are
+// looked at (UTF-16 text with its zero bytes dropped): the root element, and for <mesh> its first child element (<sharedgeometry>,
+// <submeshes> or <submesh> is OGRE XML, anything else an Irrlicht mesh). The file is then read by that format's own reader.
+static bool ReadXmlByRoot(const std::string& path, ImportedModel& out, std::string* err, bool flatten, const IrrMeshLoader* loader) {
+    char buf[8192];
+    std::size_t n = 0;
+    {
+        std::FILE* fp = detail::OpenRead(path);
+        if (!fp) { if (err) *err = "cannot open file"; return false; }
+        n = std::fread(buf, 1, sizeof(buf), fp);
+        std::fclose(fp);
+    }
+    if (std::memchr(buf, 0, n)) n = (std::size_t)(std::remove(buf, buf + n, '\0') - buf);   // UTF-16: the ASCII names survive
+    // the next element name at or after `i` (the XML declaration, comments, a DOCTYPE and closing tags skipped); `i` ends after the name
+    auto nextElement = [&](std::size_t& i) -> std::string {
+        while (i + 1 < n) {
+            if (buf[i] != '<') { ++i; continue; }
+            if (i + 3 < n && buf[i + 1] == '!' && buf[i + 2] == '-' && buf[i + 3] == '-') {
+                std::size_t k = i + 4;
+                while (k + 2 < n && !(buf[k] == '-' && buf[k + 1] == '-' && buf[k + 2] == '>')) ++k;
+                i = k + 3; continue;
+            }
+            if (buf[i + 1] == '?' || buf[i + 1] == '!' || buf[i + 1] == '/') { ++i; continue; }
+            std::size_t e = i + 1;
+            while (e < n && (std::isalnum((unsigned char)buf[e]) || buf[e] == '_' || buf[e] == '-' || buf[e] == ':' || buf[e] == '.')) ++e;
+            std::string nm(buf + i + 1, e - i - 1);
+            i = e;
+            const std::size_t colon = nm.find(':');
+            return Lower(colon == std::string::npos ? nm : nm.substr(colon + 1));
+        }
+        i = n;
+        return std::string();
+    };
+    std::size_t at = 0;
+    const std::string r = nextElement(at);
+    if (r == "irr_scene") return ReadIrrSceneFile(path, out, err, loader);
+    if (r == "collada") return ReadColladaFile(path, out, err, flatten);
+    if (r == "world") return ReadXglFile(path, out, err);
+    if (r == "mesh") {
+        const std::string kid = nextElement(at);
+        if (kid == "sharedgeometry" || kid == "submeshes" || kid == "submesh") return ReadOgreXmlFile(path, out, err);
+        return ReadIrrMeshFile(path, out, err);
+    }
+    if (err) *err = r.empty() ? "XML: no root element found" : "XML: the root element <" + r.substr(0, 60) + "> is not one this engine reads (irr_scene, mesh, COLLADA, WORLD)";
+    return false;
+}
+
+static std::string OwnReaderName(int slot) {
+    if (slot == 0) return "the own OBJ reader";
+    if (slot == 1) return "the own STL reader";
+    if (slot == 2) return "the own PLY reader";
+    const int n = (int)(sizeof(kOptIn) / sizeof(kOptIn[0]));
+    if (slot >= 3 && slot - 3 < n && kOptIn[slot - 3].name[0]) return std::string("the own ") + kOptIn[slot - 3].name + " reader";
+    return "an own reader";
+}
+
+static bool ImportModelDataImpl(const std::string& path, ImportedModel& out, ImportBackend which, bool flatten, std::string* err);
+
 bool ImportModelData(const std::string& path, ImportedModel& out, ImportBackend which, bool flatten, std::string* err) {
+    // The outermost call (an Irrlicht or LightWave scene reads its meshes through this function too) records which
+    // reader read the file and how long it took, for the one log line of ImportModelScene.
+    thread_local int depth = 0;
+    const auto t0 = std::chrono::steady_clock::now();
+    ++depth;
+    bool r = false;
+    try { r = ImportModelDataImpl(path, out, which, flatten, err); } catch (...) { --depth; throw; }
+    --depth;
+    if (depth == 0) {
+        g_readMs = std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - t0).count();
+        if (!r) g_readBy.clear();
+    }
+    return r;
+}
+
+static bool ImportModelDataImpl(const std::string& path, ImportedModel& out, ImportBackend which, bool flatten, std::string* err) {
     out = ImportedModel{};
     // `flatten` matters to Assimp and to our Collada reader (the others have no node transforms).
     const std::string ext = ExtensionOf(path);
@@ -803,8 +935,24 @@ bool ImportModelData(const std::string& path, ImportedModel& out, ImportBackend 
         return false;
     }
     ImportBackend use = which == ImportBackend::Default ? EffectiveImportBackend(ext) : which;
+    // Assimp 5.4.3's RAW importer leaves null child pointers in the scene when a file has two or more groups of triangles, and the
+    // import crashed on them (RawFileUnsafeForAssimp, RawReader.cpp). Such a file is never handed to Assimp: with the default
+    // choice (or the per-format switch set to Assimp) our RAW reader reads it, and an explicit request for Assimp is refused.
+    bool assimpUnsafe = false;
+#ifdef OKAY_HAVE_ASSIMP
+    if (use == ImportBackend::Assimp && ext == ".raw" && RawFileUnsafeForAssimp(path)) {
+        assimpUnsafe = true;
+        if (which == ImportBackend::Assimp) {
+            if (err) *err = "RAW: this file has more than one group of triangles, which crashes Assimp 5.4.3's RAW importer; read it with our own RAW reader (OKAY_OWN_RAW=1)";
+            return false;
+        }
+        Log::Warning("model import '", path, "': more than one group of triangles, which Assimp 5.4.3's RAW importer cannot read safely; reading it with our own RAW reader");
+        use = ImportBackend::Own;
+    }
+#endif
     if (use == ImportBackend::Assimp) {
 #ifdef OKAY_HAVE_ASSIMP
+        g_readBy = "Assimp";
         return assimp_backend::Read(path, flatten, out, err);
 #else
         if (err) *err = "this build was compiled without Assimp";
@@ -860,17 +1008,22 @@ bool ImportModelData(const std::string& path, ImportedModel& out, ImportBackend 
                   : s == 36 ? ReadNdoFile(path, out, &e1)
                   : s == 39 ? ReadPmxFile(path, out, &e1)
                   : s == 40 ? ReadLwsFile(path, out, &e1, &irrLoader)
+                  : s == 43 ? ReadOgreBinaryFile(path, out, &e1)
+                  : s == 44 ? ReadZaeFile(path, out, &e1, flatten)
+                  : s == 45 ? ReadXmlByRoot(path, out, &e1, flatten, &irrLoader)
+                  : s == 46 ? ReadLwoFile(path, out, &e1)   // LXOB is read by the LWO reader (LWO2 geometry chunks)
                   : (e1 = "no reader is wired to this slot", false); }, e1);   // slots 27 (Terragen) to 31 (Q3D), 33 (RAW) and 34 to 36 (IQM, COB, NDO), 39 (PMX) and 40 (LWS) are wired above; 37 and 38 are reserved for reader e4
         if (!good) out = ImportedModel{};   // a reader that threw may have left half a model
-        if (good && flatten && ((s >= 6 && s <= 10) || s >= 17)) FlattenImportedModel(out);   // batch A (OFF..ASE) and batch C (slot 17 and up) have no flatten switch of their own; batch B and the Blender reader flatten themselves
+        if (good && flatten && ((s >= 6 && s <= 10) || (s >= 17 && s != 44))) FlattenImportedModel(out);   // ZAE (44) is flattened by the COLLADA reader   // batch A (OFF..ASE) and batch C (slot 17 and up) have no flatten switch of their own; batch B and the Blender reader flatten themselves
         if (good) {
             for (const std::string& n : out.notes) Log::Warning("model import '", path, "': ", n);
+            g_readBy = OwnReaderName(s);
             return true;
         }
         // Our reader said no. With the default choice, give Assimp a go when the build has it.
-        if (which == ImportBackend::Default && AssimpAvailable()) {
+        if (which == ImportBackend::Default && AssimpAvailable() && !assimpUnsafe) {
 #ifdef OKAY_HAVE_ASSIMP
-            if (assimp_backend::Read(path, flatten, out, nullptr)) return true;
+            if (assimp_backend::Read(path, flatten, out, nullptr)) { g_readBy = "Assimp (" + OwnReaderName(s) + " refused it: " + e1.substr(0, 200) + ")"; return true; }
 #endif
         }
         out = ImportedModel{};
@@ -884,7 +1037,8 @@ bool ImportModelData(const std::string& path, ImportedModel& out, ImportBackend 
         const char* nm = optIn && kOptIn[xs - 3].name[0] ? kOptIn[xs - 3].name : nullptr;
         const char* var = optIn ? kOptIn[xs - 3].var : "";
         if (nm)
-            *err = std::string("no ") + nm + " reader enabled: our own reader is off by default (set " + var + "=1, build with -D" + var +
+            *err = std::string("no ") + nm + " reader enabled: our own reader is switched off (" + var + "=0, or OKAY_THIRD_PARTY=1, or a build with -D" + var +
+                   "=OFF; set " + var + "=1, build with -D" + var +
                    "=ON, or call SetImportBackend(\"" + x + "\", ImportBackend::Own)); the Assimp one needs -DOKAY_USE_ASSIMP=ON";
         else *err = "no reader for this format in this build";
     }
@@ -1360,7 +1514,7 @@ bool IsIdentity(const ufbx_matrix& m) {
 // Every mesh flattened into one (world space) — the single-mesh ImportModel path.
 static Mesh ImportFbxMerged(const std::string& path, bool* ok, std::string* outTexture) {
     Mesh merged;
-    if (fbx::OwnReaderEnabled()) {   // our reader first (opt-in); ufbx below if it could not read the file
+    if (fbx::OwnReaderEnabled()) {   // our reader first (the default since 2026-11-17); ufbx below if it could not read the file
         bool ownOk = false;
         Mesh m = ImportFbxMergedOwn(path, &ownOk, outTexture);
         if (ownOk) { if (ok) *ok = true; return m; }
@@ -1394,8 +1548,10 @@ static Mesh ImportFbxMerged(const std::string& path, bool* ok, std::string* outT
 // caller must then fail the import instead of falling back to another reader that would take the
 // same hostile file.
 static GameObject* ImportFbxSceneGraph(Scene& scene, const std::string& path, bool* ok, std::string* err, bool* rejected) {
-    if (fbx::OwnReaderEnabled())
-        if (GameObject* r = ImportFbxSceneGraphOwn(scene, path, ok, err)) return r;
+    const bool ownFbx = fbx::OwnReaderEnabled();
+    if (ownFbx)
+        if (GameObject* r = ImportFbxSceneGraphOwn(scene, path, ok, err)) { g_readBy = "the own FBX reader"; return r; }
+    g_readBy = ownFbx ? "ufbx (the own FBX reader could not read it)" : "ufbx";
     ufbx_scene* sc = LoadFbx(path, err, rejected);
     if (!sc) { if (ok) *ok = false; return nullptr; }
 
@@ -1953,6 +2109,7 @@ static GameObject* ImportModelSceneRaw(Scene& scene, const std::string& path, bo
         return go;
     }
 
+    g_readBy = "the own glTF reader";
     GltfDoc doc = LoadDoc(path);
     if (!doc.ok) { if (ok) *ok = false; return nullptr; }
     // glTF 1.0 (deprecated, a different layout: meshes, nodes and accessors are objects, not arrays) is not read.
@@ -2340,7 +2497,19 @@ static GameObject* ImportModelSceneRaw(Scene& scene, const std::string& path, bo
 // Rigged (skinned) parts and meshes with blend shapes keep the file's normals: their vertices are shared with the
 // skin weights and the shapes, so they are not rebuilt.
 GameObject* ImportModelScene(Scene& scene, const std::string& path, bool* ok) {
+    // One line per import, so the Console shows which reader read the file (an OKAY_OWN_<FMT> switch at work, or Assimp)
+    // and how long it took: "model import 'x.lxo': read by the own LXO reader in 1.20 ms (whole import 3.40 ms)".
+    g_readBy.clear(); g_readMs = -1.0;
+    const auto t0 = std::chrono::steady_clock::now();
     GameObject* root = ImportModelSceneRaw(scene, path, ok);
+    {
+        const double total = std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - t0).count();
+        char times[96];
+        if (g_readMs >= 0.0) std::snprintf(times, sizeof(times), "in %.2f ms (whole import %.2f ms)", g_readMs, total);
+        else std::snprintf(times, sizeof(times), "in %.2f ms", total);
+        if (root) Log::Info("model import '", path, "': read by ", g_readBy.empty() ? std::string("an unnamed reader") : g_readBy, " ", times);
+        else Log::Info("model import '", path, "': no reader could read it (", times + 3, ")");
+    }
     if (!root) return root;
     const ModelImportOptions opt = ReadModelImportOptions(path);
     if (opt.normals != ModelImportOptions::Import) {

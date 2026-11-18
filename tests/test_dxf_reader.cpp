@@ -154,7 +154,8 @@ int main() {
         CHECK(ImportModelData(path, m, ImportBackend::Own, false, &err) && m.backend == "own" && m.parts.size() == 1);
         SetImportBackend(".dxf", ImportBackend::Default);
         unsetenv("OKAY_OWN_DXF");
-        if (EffectiveImportBackend(".dxf") != ImportBackend::Own) CHECK(!ImportModelData(path, m, ImportBackend::Default, false, &err) && err.find("OKAY_OWN_DXF") != std::string::npos);
+        // no reader at all: no Assimp in this build and ours off
+        if (EffectiveImportBackend(".dxf") == ImportBackend::Default) CHECK(!ImportModelData(path, m, ImportBackend::Default, false, &err) && err.find("OKAY_OWN_DXF") != std::string::npos);
         setenv("OKAY_OWN_DXF", "1", 1);
         CHECK(EffectiveImportBackend(".dxf") == ImportBackend::Own && ImportableExtensions().find(".dxf") != std::string::npos);
         bool ok = false; std::string tex;

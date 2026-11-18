@@ -1,7 +1,7 @@
 #pragma once
 // The beginner view of the Modeling window (ModelingEasyUi.cpp): five tabs named by what you want to do, big plain-named
 // buttons, a "What do I click next?" line, quick actions for the selection, a recent-tools strip, Undo / Redo / Repeat
-// buttons and a switch to the full (advanced) window. The logic lives in ModelingEasy.hpp / ModelingEasyOps.hpp (tested);
+// buttons. It is the first page ("Easy") of the Modeling window; the other pages are listed on its left. The logic lives in ModelingEasy.hpp / ModelingEasyOps.hpp (tested);
 // main.cpp only lends this the editor's selection and undo through the Host callbacks below.
 #include "ModelingEasyOps.hpp"
 #include "okay/Render/Mesh.hpp"
@@ -32,7 +32,7 @@ struct Host {
     int openTab = -1;                        // when 0..4: switch to that tab this frame (screenshots, tests)
 };
 
-/// Draw the beginner view inside the Modeling window. `showAdvanced` is the remembered switch.
-void DrawEasyModeling(Host& h, bool& showAdvanced);
+/// Draw the beginner view inside the Modeling window (its first page).
+void DrawEasyModeling(Host& h);
 
 } // namespace oked::easymodel_ui

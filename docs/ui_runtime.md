@@ -105,6 +105,7 @@ included (so a long dialogue line over 2,000 bytes shows its `[color=...]` tags;
 it**: a sized run sits on the bottom of its line and pushes what follows to the right, the line below it starts under the
 big run (it used to start at the plain line height and the big letters climbed into the line above, and a big run on the
 first line reached above the text's top), and a line made only of small text is a small line.
+**Links and pictures (UI library slice 2).** `[url=manual]read it[/url]` draws the words underlined in a link colour (a `[color]` inside wins) and, with a **UI Rich Links** component on the same object, a click runs `on_link()` on the object's script and stores the target in the Prefs value `ui_link`; the target may be about 100 characters. `[icon=Iron Sword]` draws one glyph-sized picture inline: an item from the item database (its icon image, else a coloured tile with its first letter) or an image path such as `[icon=Assets/gem.png]`. Both draw on screen-space text only, and the pictures use the cell of the pixel font. See [ui_library.md](ui_library.md).
 `TextRenderer::PixelHeight()` counts it, so centring and Best Fit see the real height. The Line
 Spacing setting is added once per line, never multiplied. Text with no `[size]` lays out exactly as before. The
 **width** of a line is still measured at the text's own size, so wrapping is not changed by `[size]` and a centred

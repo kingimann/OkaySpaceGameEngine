@@ -1,6 +1,7 @@
-# Our own LWO reader (`.lwo`)
+# Our own LWO reader (`.lwo`, and Modo's `.lxo`)
 
 Status: **side by side, off by default** (`OKAY_OWN_LWO`, same rules as `docs/own_3mf_reader.md`). Assimp (when built) is still the only other reader of `.lwo`.
+Modo's `.lxo` is read by the same code with its own switch, `OKAY_OWN_LXO` (slot 46, off by default; section [LXO](#lxo-modo) below).
 
 ## What it is
 
@@ -10,7 +11,8 @@ Written from the public LightWave object format descriptions (LWO2, and the olde
 |---|---|
 | `engine/src/Render/LwoReader.cpp`, `engine/include/okay/Render/LwoReader.hpp` | `okay::ReadLwoBuffer` / `okay::ReadLwoFile` |
 | `engine/src/Render/ReaderCommon.hpp`, `PolygonTriangulate.hpp` | Shared number checks, smooth normals, ear clipping |
-| `engine/src/Render/ModelImport.cpp` | The seam: slot 15 of the batch-B table |
+| `engine/src/Render/ModelImport.cpp` | The seam: slot 15 of the batch-B table (`.lwo`), slot 46 (`.lxo`) |
+| `tests/lxo_fixture.hpp` | A synthetic `.lxo` (cube, two material tags, NORM maps, a shader tree), used by `lwo_reader`, `batchb_hostile` and `own_dispatch_gap` |
 | `tests/test_lwo_reader.cpp` | Hand-computed checks on synthetic LWO2 and LWOB files and the seam (`lwo_reader`) |
 | `tests/test_batchb_hostile.cpp` | Hostile input and mutation fuzz (`batchb_hostile`) |
 
@@ -54,5 +56,58 @@ Assimp's tree has 54 `.lwo` files under `models` and `models-nonbsd` (LWO2 apart
 - **8 differ in triangles (and sometimes area)**, none in the bounding box: `concave_polygon.lwo` and the LWOB `ConcavePolygon.lwo` (64 triangles, area 0.2455, the polygon's exact area; Assimp drops two zero-area slivers, 58 and 0.2339: the same story as OBJ and COLLADA), `concave_self_intersecting.lwo` and `nonplanar_polygon.lwo` (an 18-corner non-planar polygon: ours 15 triangles and Assimp 11, no reference triangulation exists for such polygons), `box_2vc_1unused.lwo` (ours 419, Assimp 432: Assimp keeps 13 zero-area triangles, ours drops them), and `QuickDraw--Arm-Shoulder`, `Arm-Tip`, `CabinPortals` (ours 640, 2388 and 632; for the first, 640 is `sum(n - 2)` over the file's polygons, and Assimp drops 24 triangles; 4 of its polygons have repeated indices, which may be why; the other two were not examined).
 - **Axes and handedness**: ours negates Z and reverses the polygons; the bounding boxes equal Assimp's on all 53 files, which is how this was settled (the first version kept the file's Z, mirrored every model, and showed on `rifle.lwo`, which is the same model as the `rifle.dxf` above).
 - Notes our reader printed: 17 non-UV image maps, 13 files with shader, procedural or gradient blocks, 7 with non-UV vertex maps (vertex colours, weights), 3 with envelopes, 2 with layer pivots, 1 with subdivision patches.
+
+## LXO (Modo)
+
+Added 2026-11-16 (branch `claude2/own-readers-gap-2`). Written from the public description of Modo's LXO file format: an IFF
+`FORM` of type `LXOB` whose geometry chunks are LWO2's, plus Modo's scene chunks. No code from any other importer was read.
+
+- **Shared with LWO2:** `TAGS`, `LAYR`, `PNTS`, `POLS`, `PTAG`, `VMAP` / `VMAD` `TXUV`, `BBOX`, the handedness change, the
+  triangulation and one part per (layer, material).
+- **Different in LXO:**
+  - `PTAG MATR` (not `SURF`) gives a polygon's material tag; `PTAG PART` and others are skipped.
+  - There are no `SURF` chunks. Each tag becomes a material of that name. Its values come from Modo's shader tree: the `ITEM`
+    of type `mask` whose `CHNS ptag` is the tag (and `ptyp` is `Material` or empty), then the `advancedMaterial` item whose
+    `LINK parent` is that mask; when no mask selects the tag, the first `advancedMaterial` that is not under a mask (Modo's
+    "Base Material"). Read from it: `CHNV diffCol` (R, G, B) times `diffAmt` as the diffuse colour, `1 - tranAmt` as alpha,
+    and `smAngle` (radians) as the crease angle when `smooth` is above 0. `CHAN` channels are numbered into the `CHNM` name
+    table (U4 count, then the names). Without a shader tree the LWO defaults apply (grey 0.78, flat).
+  - `VMAP` / `VMAD` of type `NORM` (dimension 3): Modo's own vertex normals, per point and per polygon corner (the corner
+    value wins). Z is negated like the points. When every corner of a part has one, the part uses them (no smoothing);
+    otherwise the smoothing angle decides.
+  - `LAYR`: bit 0 of the flags does **not** hide a layer (both corpus files set it on their only, visible, layer; Modo keeps
+    visibility on the mesh item). The parent is a signed 16-bit number (-1 = none). The fields after it (subdivision and
+    curve refinement, scale pivot, item reference) are not read.
+  - Skipped and counted in one note: every other `ITEM` (the mesh item's settings, cameras, lights, transforms, render
+    outputs, environment) and `ACTN` (actions). Skipped silently: `VRSN`, `UNIQ`, `UCPT`, `APPV`, `THUM`.
+- **Not read:** textures and image maps of the shader tree, specular, reflection, roughness, luminosity, bump, the item
+  transforms (a mesh moved in Modo comes in at its layer's coordinates), subdivision, morphs and weight maps.
+- **Notes** start with `LXO:`; the first one says which material values were read.
+
+**Real files** (Assimp's tree: `models/LWO/LXOB_Modo/CrazyEngine.lxo` and `sphereWithVertMap.lxo`, both "modo 301"):
+both read in ours and in Assimp, with the same triangles (2460, 528), parts (1) and bounding box. What differs, checked with
+`bench_model_readers --dump`:
+
+- **Vertices** (CrazyEngine 3427 ours / 3602 Assimp; sphere 1104 / 266). Ours follows the file: the sphere carries a `NORM`
+  vertex map with per-corner values (838 of them) and ours keeps them, so corners with different normals are different
+  vertices; Assimp ignores the map and smooths everything (266 = one vertex per point). CrazyEngine has no `NORM` map: ours
+  smooths at its base material's 40 degrees, Assimp smooths differently and splits more at UV seams. In the sphere file,
+  about one corner in six has a normal that points against its polygon's winding (checked in the raw file with a small
+  script, before any conversion), so the sphere is shaded oddly in places in ours; that is what the file says.
+- **Materials**: ours names the material after the tag (`Default`) and reads its colour from the shader tree (CrazyEngine
+  0.8 grey; the sphere's mask material 0.502 / 0 / 0.502, purple); Assimp gives `LWODefaultSurface` at 0.6 grey in both.
+- **Node names**: ours `RootNode` / `Layer1` (as for `.lwo`), Assimp `Pivot-Layer_0` / `Layer_0`.
+- **Speed and memory** (`docs/own_readers_speed.md`): 0.51x Assimp's time and 0.44x its largest peak over the two files;
+  the sphere alone peaks a little above Assimp (0.21 MB against 0.19 MB, its per-corner normals make 4 times the vertices).
+
+**Tests** (all synthetic, `tests/lxo_fixture.hpp`): `lwo_reader` suite "lxo (Modo)" (two tags, the mask material and the base
+material with hand-computed colours and alpha, a `NORM` corner override giving 10 + 8 vertices, the smoothing angles without
+`NORM` maps, the LWO defaults without a shader tree, the flag-bit-0 rule kept for LWO2) and "lxo: the import seam" (the
+`OKAY_OWN_LXO` switch, the extension list, and the import log line); `batchb_hostile` every truncation of the LXO fixture and
+a mutation fuzz (40,000 iterations per reader under ASan, UBSan and float-cast-overflow: 271,754 checks, no failure);
+`own_dispatch_gap` (slot 46, the switch, the sample `examples/own_readers/cube.lxo`); `model_corpus` (the two real files).
+
+Not verified: other Modo versions than 301, files with several layers or material masks nested in groups, `ptyp` values
+other than `Material`, image maps (not read), a run on Windows.
 
 Not verified on real files: LWOB surfaces other than the gloss ones (there are only five LWOB files: two spheres, a cylinder-mapped box, the concave polygon and one more), `VMAD` (the real files that have one were compared only by counts), multi-layer files with parents (the `hierarchy*.lwo` files agree on counts and box), LWO3 (no real file).

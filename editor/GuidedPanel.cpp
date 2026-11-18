@@ -199,7 +199,7 @@ bool CreateModel(Host& h, const gd::Recipe& recipe, const std::string& name) {
     ed.dirty = true;
     Invalidate();
     S().history[path.string()].Clear();
-    Log(h, "Created " + name + " from the guided designs (" + std::to_string(pm.faces.size()) + " faces). It is an ordinary mesh: Edit Mesh works on it.");
+    Log(h, "Created " + name + " from the guided designs (" + std::to_string(pm.faces.size()) + " faces). It is an ordinary mesh: Fix the surface works on it.");
     return true;
 }
 
@@ -413,7 +413,7 @@ void DrawPartRow(Host& h, GameObject* go, MeshRenderer* mr, const gd::Template& 
         if (faces.empty()) Log(h, p.id + " has no faces left to select.", 1);
         else h.selectFaces(go, faces);
     }
-    if (ImGui::IsItemHovered()) ImGui::SetTooltip("Select this part's faces in Edit Mesh so you can reshape it by hand.");
+    if (ImGui::IsItemHovered()) ImGui::SetTooltip("Select this part's faces in Fix the surface so you can reshape it by hand.");
     const gd::SlotDef* slot = nullptr;
     for (const auto& sd : t.slots) if (sd.id == p.slot) slot = &sd;
     if (slot) {
@@ -660,7 +660,7 @@ void DrawCustomise(Host& h, GameObject* go, MeshRenderer* mr) {
         int custom = 0;
         for (int f : sel) if (f >= 0 && f < (int)s.analysis.faceOwner.size()) { if (s.analysis.faceOwner[f].empty()) ++custom; else owners.insert(s.analysis.faceOwner[f]); }
         if (!sel.empty()) {
-            ImGui::SeparatorText("Selected in Edit Mesh");
+            ImGui::SeparatorText("Selected in Fix the surface");
             if (owners.empty()) ImGui::TextDisabled("%d face(s) of your own (not part of the design).", custom);
             for (const std::string& id : owners)
                 for (const auto& p : s.analysis.parts) if (p.id == id) DrawPartRow(h, go, mr, t, p, true);
@@ -867,7 +867,7 @@ void DrawCustomise(Host& h, GameObject* go, MeshRenderer* mr) {
 
     // Reusable parts and templates.
     if (ImGui::CollapsingHeader("My parts and templates##grp")) {
-        ImGui::TextWrapped("Make your own part from faces you selected in Edit Mesh (a post you reshaped, a new picket) and use it as a design for a kind of part. Or save this whole setup as a template.");
+        ImGui::TextWrapped("Make your own part from faces you selected in Fix the surface (a post you reshaped, a new picket) and use it as a design for a kind of part. Or save this whole setup as a template.");
         const std::vector<int> sel = h.selectedFaces ? h.selectedFaces(go) : std::vector<int>();
         ImGui::SetNextItemWidth(160);
         ImGui::InputText("Part name##pn", S().partName, sizeof(S().partName));
@@ -891,7 +891,7 @@ void DrawCustomise(Host& h, GameObject* go, MeshRenderer* mr) {
             }
         }
         ImGui::EndDisabled();
-        if (sel.empty() && ImGui::IsItemHovered(ImGuiHoveredFlags_AllowWhenDisabled)) ImGui::SetTooltip("Select faces first: Edit Mesh page, Edit mode (Tab), Face mode, click faces.");
+        if (sel.empty() && ImGui::IsItemHovered(ImGuiHoveredFlags_AllowWhenDisabled)) ImGui::SetTooltip("Select faces first: Fix the surface page, Edit mode (Tab), Face mode, click faces.");
         ImGui::SetNextItemWidth(160);
         ImGui::InputText("Template name##tn", S().saveName, sizeof(S().saveName));
         ImGui::SameLine();

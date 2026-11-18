@@ -4,7 +4,9 @@
 //   * a triangle "soup" (corner positions, optional UVs / normals) turned into an ImportedPart: smooth normals
 //     with a crease angle, vertices welded per (position, normal cluster, uv), degenerate triangles dropped
 //   * 3x4 / 4x4 transform helpers in double precision, and the Z-up -> Y-up root of the model
+#include "FileOpen.hpp"
 #include "NumParse.hpp"
+#include "WeldMap.hpp"
 #include "okay/Render/ModelData.hpp"
 #include <algorithm>
 #include <array>
@@ -22,13 +24,15 @@ namespace rc {
 
 constexpr double kMaxCoord = 1e15;   // larger coordinates would overflow the float arithmetic that follows
 
-inline bool Ws(char c) { return c == ' ' || c == '\t' || c == '\r' || c == '\n' || c == '\f' || c == '\v'; }
+inline bool Ws(char c) { return c == ' ' || (unsigned char)(c - 9) < 5u; }   // ' ' and '\t' '\n' '\v' '\f' '\r' (9 to 13)
 
 // One number from the whole of [b, e) (no trailing junk). Finite, |v| <= kMaxCoord.
 inline bool ParseNumber(const char* b, const char* e, double& v) {
     while (b < e && Ws(*b)) ++b;
     while (e > b && Ws(e[-1])) --e;
     if (b >= e || e - b > 63) return false;
+    // the fast way first: it reads only plain decimal numbers (the characters the check below allows), whole
+    if (DecimalWithoutStrtod(b, e, v)) return std::isfinite(v) && std::fabs(v) <= kMaxCoord;
     char buf[64];
     std::memcpy(buf, b, (std::size_t)(e - b));
     buf[e - b] = 0;
@@ -40,6 +44,14 @@ inline bool ParseNumber(const char* b, const char* e, double& v) {
     return std::isfinite(v) && std::fabs(v) <= kMaxCoord;
 }
 inline bool ParseNumber(const std::string& s, double& v) { return ParseNumber(s.data(), s.data() + s.size(), v); }
+// ParseNumber of the token that starts at `p` (not white space) and ends at the next white space or `e`, read in one pass
+// for the usual plain decimal (ScanDecimal); `p` is left at the token's end. The same result as ParseNumber(token).
+inline bool ScanNumber(const char*& p, const char* e, double& v) {
+    if (ScanDecimal(p, e, v, 63)) return std::isfinite(v) && std::fabs(v) <= kMaxCoord;
+    const char* const a = p;
+    while (p < e && !Ws(*p)) ++p;
+    return ParseNumber(a, p, v);
+}
 
 // A list of numbers separated by white space (and by commas when `commas`). False on any bad token or when
 // more than `maxCount` numbers are present.
@@ -146,7 +158,7 @@ inline bool BuildMesh(const Soup& s, double creaseDeg, Mesh& out, BuildStats* st
     // face normals and corner angle weights
     std::vector<std::uint8_t> keep(nt, 1);
     std::vector<Vec3> fn(nt);
-    std::vector<std::array<float, 3>> ang(nt);
+    std::vector<std::array<float, 3>> ang(haveN ? 0 : nt);   // corner angles weight the made normals: not needed with explicit ones
     for (std::size_t t = 0; t < nt; ++t) {
         const Vec3 a = s.pos[s.ci[t * 3]], b = s.pos[s.ci[t * 3 + 1]], c = s.pos[s.ci[t * 3 + 2]];
         const double ux = (double)b.x - a.x, uy = (double)b.y - a.y, uz = (double)b.z - a.z;
@@ -164,24 +176,26 @@ inline bool BuildMesh(const Soup& s, double creaseDeg, Mesh& out, BuildStats* st
             d = std::max(-1.0, std::min(1.0, d));
             return (float)std::acos(d);
         };
-        ang[t] = {angle(a, b, c), angle(b, c, a), angle(c, a, b)};
+        if (!haveN) ang[t] = {angle(a, b, c), angle(b, c, a), angle(c, a, b)};
     }
-    // per-position incident corners (CSR)
+    // per-position incident corners (CSR); only the made normals need them
     const std::size_t np = s.pos.size();
-    std::vector<std::uint32_t> start(np + 1, 0), corner;
-    for (std::size_t t = 0; t < nt; ++t) if (keep[t]) for (int k = 0; k < 3; ++k) ++start[s.ci[t * 3 + (std::size_t)k] + 1];
-    for (std::size_t i = 0; i < np; ++i) start[i + 1] += start[i];
-    corner.resize(start[np]);
-    {
+    std::vector<std::uint32_t> start(haveN ? 0 : np + 1, 0), corner;
+    if (!haveN) {
+        for (std::size_t t = 0; t < nt; ++t) if (keep[t]) for (int k = 0; k < 3; ++k) ++start[s.ci[t * 3 + (std::size_t)k] + 1];
+        for (std::size_t i = 0; i < np; ++i) start[i + 1] += start[i];
+        corner.resize(start[np]);
+    }
+    if (!haveN) {
         std::vector<std::uint32_t> fill(start.begin(), start.end() - 1);
         for (std::size_t t = 0; t < nt; ++t) if (keep[t]) for (int k = 0; k < 3; ++k) corner[fill[s.ci[t * 3 + (std::size_t)k]]++] = (std::uint32_t)(t * 3 + (std::size_t)k);
     }
     const double cosCrease = creaseDeg >= 179.9 ? -2.0 : std::cos(creaseDeg * 3.14159265358979323846 / 180.0);
     constexpr int kMaxClusters = 8;
-    std::vector<std::uint8_t> cluster(nt * 3, 0);
+    std::vector<std::uint8_t> cluster(haveN ? 0 : nt * 3, 0);
     // the clusters of one position are made one after the other, so they sit side by side in one array
     std::vector<Vec3> csum;                           // summed angle-weighted normals, one per cluster
-    std::vector<std::uint32_t> cbase(np, 0);          // first cluster of each position
+    std::vector<std::uint32_t> cbase(haveN ? 0 : np, 0);   // first cluster of each position
     if (!haveN) {
         csum.reserve(corner.size() / 2 + 8);
         Vec3 rep[kMaxClusters];
@@ -211,19 +225,9 @@ inline bool BuildMesh(const Soup& s, double creaseDeg, Mesh& out, BuildStats* st
             }
         }
     }
-    struct Key {
-        std::uint32_t w[7];
-        bool operator==(const Key& o) const { return std::memcmp(w, o.w, sizeof(w)) == 0; }
-    };
-    struct KeyHash {
-        std::size_t operator()(const Key& k) const {
-            std::uint64_t h = 0x9E3779B97F4A7C15ull;
-            for (std::uint32_t v : k.w) { h ^= v + 0x9E3779B97F4A7C15ull + (h << 6) + (h >> 2); h *= 0xC2B2AE3D27D4EB4Full; }
-            return (std::size_t)(h ^ (h >> 29));
-        }
-    };
-    std::unordered_map<Key, int, KeyHash> map;
-    map.reserve(np);
+    struct Key { std::uint32_t w[7]; };   // position index, normal cluster, uv, explicit normal: compared bit for bit
+    WeldMap<7> map;
+    map.Reserve(np);
     auto bits = [](float f) { std::uint32_t u; std::memcpy(&u, &f, 4); return u; };
     for (std::size_t t = 0; t < nt; ++t) {
         if (!keep[t]) continue;
@@ -234,11 +238,11 @@ inline bool BuildMesh(const Soup& s, double creaseDeg, Mesh& out, BuildStats* st
             key.w[1] = haveN ? 0u : (std::uint32_t)cluster[c];
             key.w[2] = haveUv ? bits(s.cuv[c].x) : 0u; key.w[3] = haveUv ? bits(s.cuv[c].y) : 0u;
             key.w[4] = haveN ? bits(s.cnrm[c].x) : 0u; key.w[5] = haveN ? bits(s.cnrm[c].y) : 0u; key.w[6] = haveN ? bits(s.cnrm[c].z) : 0u;
-            auto it = map.find(key);
-            if (it == map.end()) {
+            bool added = false;
+            const int got = map.Get(key.w, (int)out.vertices.size(), added);
+            if (added) {
                 if (out.vertices.size() >= maxOutVerts) return false;
-                const int idx = (int)out.vertices.size();
-                map.emplace(key, idx);
+                const int idx = got;
                 out.vertices.push_back(s.pos[s.ci[c]]);
                 Vec3 n = haveN ? s.cnrm[c] : csum[cbase[s.ci[c]] + cluster[c]];
                 const double l = std::sqrt((double)n.x * n.x + (double)n.y * n.y + (double)n.z * n.z);
@@ -246,7 +250,7 @@ inline bool BuildMesh(const Soup& s, double creaseDeg, Mesh& out, BuildStats* st
                 out.normals.push_back(n);
                 if (haveUv) out.uvs.push_back(s.cuv[c]);
                 out.triangles.push_back(idx);
-            } else out.triangles.push_back(it->second);
+            } else out.triangles.push_back(got);
         }
     }
     return true;
@@ -287,6 +291,7 @@ inline bool PartInRange(const ImportedPart& p) {
 
 inline std::string ReadAllBounded(std::FILE* fp, std::size_t cap, bool* tooLarge) {
     std::string bytes;
+    ReserveForFile(fp, bytes, cap);
     char buf[65536];
     if (tooLarge) *tooLarge = false;
     for (;;) {

@@ -9,14 +9,19 @@
 #include "PolygonTriangulate.hpp"
 #include <algorithm>
 #include <array>
+#include <charconv>
+#include <clocale>
 #include <cmath>
 #include <cstdint>
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
+#include <deque>
 #include <map>
 #include <memory>
 #include <string>
+#include <string_view>
+#include <system_error>
 #include <unordered_map>
 #include <utility>
 #include <vector>
@@ -44,11 +49,22 @@ struct XNode {
     std::string name;                                        // without a namespace prefix
     std::vector<std::pair<std::string, std::string>> attrs;
     std::vector<int> kids;
-    std::string text;
+    // The element's text, as pieces of the file (Xml::pieces, a linked list from `first`): most text (every big number
+    // array) is one piece without an entity and is read in place, never copied. Text in several pieces (the whitespace
+    // between child elements) or with an entity is joined only when asked for (`cache`, into Xml::joined).
+    int first = -1, last = -1;
+    mutable int cache = -1;
 };
+
+struct TextPiece { std::size_t a, b; int next; bool decode; };   // s[a, b); decode: has an entity to decode
+
+void AppendDecoded(std::string& dst, const std::string& s, std::size_t a, std::size_t b);
 
 struct Xml {
     std::vector<XNode> n;
+    std::vector<TextPiece> pieces;
+    const std::string* src = nullptr;                // the text parsed (pieces point into it)
+    mutable std::deque<std::string> joined;           // a deque: the views handed out stay valid
 
     std::string Attr(int i, const char* key) const {
         if (i < 0) return std::string();
@@ -81,14 +97,34 @@ struct Xml {
         }
         return -1;
     }
-    const std::string& Text(int i) const { return n[(std::size_t)i].text; }
+    std::string_view Text(int i) const {
+        const XNode& nd = n[(std::size_t)i];
+        if (nd.first < 0) return std::string_view();
+        const TextPiece& f = pieces[(std::size_t)nd.first];
+        if (f.next < 0 && !f.decode) return std::string_view(src->data() + f.a, f.b - f.a);
+        if (nd.cache < 0) {
+            std::string t;
+            for (int k = nd.first; k >= 0; k = pieces[(std::size_t)k].next) {
+                const TextPiece& pc = pieces[(std::size_t)k];
+                if (pc.decode) AppendDecoded(t, *src, pc.a, pc.b); else t.append(*src, pc.a, pc.b - pc.a);
+            }
+            joined.push_back(std::move(t));
+            nd.cache = (int)joined.size() - 1;
+        }
+        return joined[(std::size_t)nd.cache];
+    }
 };
 
+inline bool HasAmp(const std::string& s, std::size_t a, std::size_t b) {
+    return b > a && std::memchr(s.data() + a, '&', b - a) != nullptr;
+}
+
 void AppendDecoded(std::string& dst, const std::string& s, std::size_t a, std::size_t b) {
-    if (s.find('&', a) >= b) { dst.append(s, a, b - a); return; }
+    if (!HasAmp(s, a, b)) { dst.append(s, a, b - a); return; }
     for (std::size_t i = a; i < b; ++i) {
         if (s[i] != '&') { dst += s[i]; continue; }
-        std::size_t e = s.find(';', i);
+        const void* semi = std::memchr(s.data() + i, ';', std::min(b - i, (std::size_t)14));
+        const std::size_t e = semi ? (std::size_t)((const char*)semi - s.data()) : std::string::npos;
         if (e == std::string::npos || e >= b || e - i > 12) { dst += '&'; continue; }
         const std::string ent = s.substr(i + 1, e - i - 1);
         if (ent == "amp") dst += '&';
@@ -121,9 +157,21 @@ void AppendDecoded(std::string& dst, const std::string& s, std::size_t a, std::s
     }
 }
 
-std::string StripPrefix(const std::string& s) {
-    std::size_t c = s.find(':');
-    return c == std::string::npos ? s : s.substr(c + 1);
+// s[b, e) without a namespace prefix (what follows the first ':').
+inline std::string_view Unprefixed(const std::string& s, std::size_t b, std::size_t e) {
+    const void* c = e > b ? std::memchr(s.data() + b, ':', e - b) : nullptr;
+    if (c) b = (std::size_t)((const char*)c - s.data()) + 1;
+    return std::string_view(s.data() + b, e - b);
+}
+
+// Add the piece s[a, b) to a node's text. `decode`: entities are decoded (not in CDATA).
+void AddText(Xml& x, int node, const std::string& s, std::size_t a, std::size_t b, bool decode) {
+    if (a >= b) return;
+    const int k = (int)x.pieces.size();
+    x.pieces.push_back(TextPiece{a, b, -1, decode && HasAmp(s, a, b)});
+    XNode& nd = x.n[(std::size_t)node];
+    if (nd.first < 0) nd.first = k; else x.pieces[(std::size_t)nd.last].next = k;
+    nd.last = k;
 }
 
 bool ParseXml(const std::string& s, Xml& x, std::string& err) {
@@ -131,33 +179,36 @@ bool ParseXml(const std::string& s, Xml& x, std::string& err) {
     const std::size_t n = s.size();
     std::vector<int> stack;
     bool haveRoot = false;
+    x.src = &s;
+    {   // room for every element: count the '<' that open one (not '</', '<!' or '<?')
+        std::size_t starts = 0;
+        for (const char* c = s.data(), *e = c + n; (c = (const char*)std::memchr(c, '<', (std::size_t)(e - c))) != nullptr; ++c)
+            if (c + 1 < e && c[1] != '/' && c[1] != '!' && c[1] != '?') ++starts;
+        x.n.reserve(std::min(starts, kMaxXmlNodes));
+    }
     if (n >= 3 && (unsigned char)s[0] == 0xEF && (unsigned char)s[1] == 0xBB && (unsigned char)s[2] == 0xBF) p = 3;
     auto fail = [&](const char* m) { err = m; return false; };
     while (p < n) {
         if (s[p] != '<') {
-            std::size_t e = s.find('<', p);
-            if (e == std::string::npos) e = n;
-            if (!stack.empty()) AppendDecoded(x.n[(std::size_t)stack.back()].text, s, p, e);
+            const void* lt = std::memchr(s.data() + p, '<', n - p);
+            const std::size_t e = lt ? (std::size_t)((const char*)lt - s.data()) : n;
+            if (!stack.empty()) AddText(x, stack.back(), s, p, e, true);
             p = e;
             continue;
         }
-        if (s.compare(p, 4, "<!--") == 0) {
-            std::size_t e = s.find("-->", p + 4);
-            if (e == std::string::npos) return fail("XML: unterminated comment");
-            p = e + 3; continue;
-        }
-        if (s.compare(p, 9, "<![CDATA[") == 0) {
-            std::size_t e = s.find("]]>", p + 9);
-            if (e == std::string::npos) return fail("XML: unterminated CDATA");
-            if (!stack.empty()) x.n[(std::size_t)stack.back()].text.append(s, p + 9, e - p - 9);
-            p = e + 3; continue;
-        }
-        if (s.compare(p, 2, "<?") == 0) {
-            std::size_t e = s.find("?>", p + 2);
-            if (e == std::string::npos) return fail("XML: unterminated declaration");
-            p = e + 2; continue;
-        }
-        if (s.compare(p, 2, "<!") == 0) {
+        const char next = p + 1 < n ? s[p + 1] : '\0';
+        if (next == '!') {
+            if (s.compare(p, 4, "<!--") == 0) {
+                std::size_t e = s.find("-->", p + 4);
+                if (e == std::string::npos) return fail("XML: unterminated comment");
+                p = e + 3; continue;
+            }
+            if (s.compare(p, 9, "<![CDATA[") == 0) {
+                std::size_t e = s.find("]]>", p + 9);
+                if (e == std::string::npos) return fail("XML: unterminated CDATA");
+                if (!stack.empty()) AddText(x, stack.back(), s, p + 9, e, false);
+                p = e + 3; continue;
+            }
             int depth = 0;
             std::size_t q = p + 2;
             for (; q < n; ++q) {
@@ -168,10 +219,15 @@ bool ParseXml(const std::string& s, Xml& x, std::string& err) {
             if (q >= n) return fail("XML: unterminated DOCTYPE");
             p = q + 1; continue;
         }
-        if (s.compare(p, 2, "</") == 0) {
+        if (next == '?') {
+            std::size_t e = s.find("?>", p + 2);
+            if (e == std::string::npos) return fail("XML: unterminated declaration");
+            p = e + 2; continue;
+        }
+        if (next == '/') {
             std::size_t q = p + 2, b = q;
             while (q < n && !IsWs(s[q]) && s[q] != '>') ++q;
-            std::string nm = StripPrefix(s.substr(b, q - b));
+            const std::string_view nm = Unprefixed(s, b, q);
             while (q < n && IsWs(s[q])) ++q;
             if (q >= n || s[q] != '>') return fail("XML: malformed end tag");
             if (stack.empty() || x.n[(std::size_t)stack.back()].name != nm) return fail("XML: mismatched end tag");
@@ -185,8 +241,10 @@ bool ParseXml(const std::string& s, Xml& x, std::string& err) {
         if (x.n.size() >= kMaxXmlNodes) return fail("XML: too many elements");
         if ((int)stack.size() >= kMaxXmlDepth) return fail("XML: nesting too deep");
         if (stack.empty() && haveRoot) return fail("XML: more than one root element");
-        XNode node;
-        node.name = StripPrefix(s.substr(b, q - b));
+        const int idx = (int)x.n.size();
+        x.n.emplace_back();
+        XNode& node = x.n.back();
+        node.name.assign(Unprefixed(s, b, q));
         bool selfClose = false;
         for (;;) {
             while (q < n && IsWs(s[q])) ++q;
@@ -199,22 +257,21 @@ bool ParseXml(const std::string& s, Xml& x, std::string& err) {
             std::size_t ab = q;
             while (q < n && !IsWs(s[q]) && s[q] != '=' && s[q] != '>' && s[q] != '/') ++q;
             if (q == ab) return fail("XML: malformed attribute");
-            std::string an = s.substr(ab, q - ab);
+            const std::size_t ae = q;
             while (q < n && IsWs(s[q])) ++q;
             if (q >= n || s[q] != '=') return fail("XML: attribute without a value");
             ++q;
             while (q < n && IsWs(s[q])) ++q;
             if (q >= n || (s[q] != '"' && s[q] != '\'')) return fail("XML: attribute value not quoted");
             const char quote = s[q++];
-            std::size_t ve = s.find(quote, q);
-            if (ve == std::string::npos) return fail("XML: unterminated attribute value");
-            std::string av;
-            AppendDecoded(av, s, q, ve);
-            node.attrs.emplace_back(StripPrefix(an), std::move(av));
+            const void* qe = std::memchr(s.data() + q, quote, n - q);
+            if (!qe) return fail("XML: unterminated attribute value");
+            const std::size_t ve = (std::size_t)((const char*)qe - s.data());
+            node.attrs.emplace_back();
+            node.attrs.back().first.assign(Unprefixed(s, ab, ae));
+            AppendDecoded(node.attrs.back().second, s, q, ve);
             q = ve + 1;
         }
-        const int idx = (int)x.n.size();
-        x.n.push_back(std::move(node));
         if (!stack.empty()) x.n[(std::size_t)stack.back()].kids.push_back(idx);
         else haveRoot = true;
         if (!selfClose) stack.push_back(idx);
@@ -232,29 +289,81 @@ bool ParseXml(const std::string& s, Xml& x, std::string& err) {
 // Some exporters run in a locale with a decimal comma ("21,920870") and write it into the arrays
 // unchanged. A token with a comma and no point is read with the comma as the decimal point; `commas`
 // counts such tokens so the reader can say so.
-bool ParseFloats(const std::string& t, std::vector<float>& out, int* commas = nullptr) {
+// Whitespace-separated tokens in t, for reserving the exact size.
+std::size_t CountTokens(std::string_view t) {
+    std::size_t n = 0;
+    bool in = false;
+    for (char c : t) { const bool w = IsWs(c); if (!w && !in) ++n; in = !w; }
+    return n;
+}
+
+// True when the C library reads '.' as the decimal point (the usual case): then std::from_chars, which always does and
+// gives the same correctly rounded value as strtof, may stand in for it.
+inline bool PointLocale() {
+    const char* dp = std::localeconv()->decimal_point;
+    return !dp || (dp[0] == '.' && dp[1] == 0);
+}
+
+// Character classes for the number scanner: whitespace, the characters of a plain decimal number, '.' and ','.
+enum : unsigned char { kWs = 1, kNum = 2, kPoint = 4, kComma = 8, kOther = 16 };
+struct CharClass {
+    unsigned char c[256];
+    CharClass() {
+        for (int i = 0; i < 256; ++i) c[i] = kOther;
+        for (const char w : {' ', '\t', '\r', '\n', '\f', '\v'}) c[(unsigned char)w] = kWs;
+        for (int d = '0'; d <= '9'; ++d) c[d] = kNum;
+        c[(unsigned char)'-'] = c[(unsigned char)'+'] = c[(unsigned char)'e'] = c[(unsigned char)'E'] = kNum;
+        c[(unsigned char)'.'] = kPoint; c[(unsigned char)','] = kComma;
+    }
+};
+inline unsigned char ClassOf(char ch) { static const CharClass t; return t.c[(unsigned char)ch]; }
+
+// One float token [p, q) the way strtof reads it, whole token only. `plain`: the token holds only digits, signs, 'e' and
+// '.'. Then (in a '.' locale) std::from_chars reads it: it gives the same correctly rounded value as strtof. Anything
+// else (a leading '+', hex, inf / nan, out of range, not a whole number) goes the old way, so the result is the same.
+inline bool TokenToFloat(const char* p, const char* q, bool fast, bool plain, float& v) {
+#if defined(__cpp_lib_to_chars) && __cpp_lib_to_chars >= 201611L
+    if (fast && plain && *p != '+') {
+        const auto r = std::from_chars(p, q, v);
+        if (r.ec == std::errc() && r.ptr == q) return true;
+    }
+#else
+    (void)fast; (void)plain;
+#endif
+    // the token ends at whitespace, at '<' or ']' (the view into the file) or at the string's end: strtof stops there
+    char* e = nullptr;
+    v = detail::StrToF(p, &e);
+    return e == q;
+}
+
+// Some exporters run in a locale with a decimal comma ("21,920870") and write it into the arrays
+// unchanged. A token with a comma and no point is read with the comma as the decimal point; `commas`
+// counts such tokens so the reader can say so. `expect` (when not negative) is the count the file
+// announces: the room reserved, capped by what the text can hold, instead of counting the tokens first.
+bool ParseFloats(std::string_view t, std::vector<float>& out, int* commas = nullptr, long expect = -1) {
     out.clear();
-    out.reserve(t.size() / 4 + 1);
-    const char* p = t.c_str();
+    if (expect >= 0) out.reserve(std::min((std::size_t)expect, t.size() / 2 + 1));
+    else out.reserve(CountTokens(t));
+    const bool fast = PointLocale();
+    const char* p = t.data();
     const char* end = p + t.size();
     for (;;) {
-        while (p < end && IsWs(*p)) ++p;
+        while (p < end && ClassOf(*p) == kWs) ++p;
         if (p >= end) break;
         const char* q = p;
-        bool comma = false, point = false;
-        while (q < end && !IsWs(*q)) { if (*q == ',') comma = true; else if (*q == '.') point = true; ++q; }
-        char* e = nullptr;
+        unsigned char seen = 0, k;
+        while (q < end && (k = ClassOf(*q)) != kWs) { seen |= k; ++q; }
+        const bool comma = (seen & kComma) != 0, point = (seen & kPoint) != 0;
+        const bool plain = (seen & (kOther | kComma)) == 0;
         float v;
         if (comma && !point && q - p < 64) {
             char buf[72];
             for (const char* c = p; c < q; ++c) buf[c - p] = *c == ',' ? '.' : *c;
             buf[q - p] = 0;
-            v = detail::StrToF(buf, &e);
-            if (e != buf + (q - p)) return false;
+            if (!TokenToFloat(buf, buf + (q - p), fast, (seen & kOther) == 0, v)) return false;
             if (commas) ++*commas;
-        } else {
-            v = detail::StrToF(p, &e);
-            if (e != q) return false;   // not a whole token (or no number at all)
+        } else if (!TokenToFloat(p, q, fast, plain, v)) {
+            return false;   // not a whole token (or no number at all)
         }
         if (!std::isfinite(v)) return false;
         out.push_back(v);
@@ -262,32 +371,48 @@ bool ParseFloats(const std::string& t, std::vector<float>& out, int* commas = nu
     }
     return true;
 }
+bool ParseFloats(const std::string& t, std::vector<float>& out, int* commas = nullptr) { return ParseFloats(std::string_view(t), out, commas); }
 
-bool ParseInts(const std::string& t, std::vector<int>& out) {
-    out.clear();
-    out.reserve(t.size() / 2 + 1);
-    const char* p = t.c_str();
+// Integers as strtol(..., 10) reads them one after another (a number ends where strtol stops), appended to `out`.
+bool AppendInts(std::string_view t, std::vector<int>& out) {
+    // room for this list; grow geometrically, since a <polygons> set appends one short <p> per polygon
+    const std::size_t need = out.size() + CountTokens(t);
+    if (need > out.capacity()) out.reserve(std::max(need, out.capacity() * 2));
+    const char* p = t.data();
     const char* end = p + t.size();
     for (;;) {
         while (p < end && IsWs(*p)) ++p;
         if (p >= end) break;
-        char* e = nullptr;
-        long v = std::strtol(p, &e, 10);
-        if (e == p || v < -2147483647L || v > 2147483647L) return false;
+        long v = 0;
+        if (*p == '+') {   // from_chars takes no '+': the old way (the token ends at whitespace, '<', ']' or the end)
+            char* e = nullptr;
+            v = std::strtol(p, &e, 10);
+            if (e == p || v < -2147483647L || v > 2147483647L) return false;
+            p = e;
+        } else {
+            const auto r = std::from_chars(p, end, v, 10);
+            if (r.ptr == p || r.ec == std::errc::invalid_argument) return false;
+            if (r.ec == std::errc::result_out_of_range || v < -2147483647L || v > 2147483647L) return false;
+            p = r.ptr;
+        }
         out.push_back((int)v);
-        p = e;
     }
     return true;
 }
+bool ParseInts(std::string_view t, std::vector<int>& out) {
+    out.clear();
+    return AppendInts(t, out);
+}
 
-std::vector<std::string> Tokens(const std::string& t) {
+std::vector<std::string> Tokens(std::string_view t) {
     std::vector<std::string> r;
+    r.reserve(CountTokens(t));
     std::size_t i = 0;
     while (i < t.size()) {
         while (i < t.size() && IsWs(t[i])) ++i;
         std::size_t b = i;
         while (i < t.size() && !IsWs(t[i])) ++i;
-        if (i > b) r.push_back(t.substr(b, i - b));
+        if (i > b) r.emplace_back(t.substr(b, i - b));
     }
     return r;
 }
@@ -403,7 +528,9 @@ struct Reader {
         const int sn = Lookup(id);
         if (sn < 0 || x.n[(std::size_t)sn].name != "source") return false;
         const int fa = x.First(sn, "float_array");
-        if (fa < 0 || !ParseFloats(x.Text(fa), s.f, &decimalCommas)) return false;
+        long announced = -1;   // the array's count attribute: only how much room to reserve
+        if (fa >= 0 && x.HasAttr(fa, "count")) { announced = std::atol(x.Attr(fa, "count").c_str()); if (announced < 0) announced = -1; }
+        if (fa < 0 || !ParseFloats(x.Text(fa), s.f, &decimalCommas, announced)) return false;
         const int acc = x.Find(sn, "accessor");
         s.stride = 1; s.offset = 0;
         if (acc >= 0) {
@@ -414,8 +541,25 @@ struct Reader {
         return s.stride >= 1 && s.stride <= 64 && s.offset >= 0;
     }
 
+    // The sources of one <mesh>, each read once: its primitive sets (one per material) name the same position, normal
+    // and texture coordinate sources, which were parsed again for every set. Cleared when the mesh is done. A source's
+    // decimal-comma count is added again on every use, as when it was parsed every time.
+    struct CachedSrc { Src s; int commas = 0; };
+    std::unordered_map<std::string, std::shared_ptr<const CachedSrc>> srcCache;
+    std::shared_ptr<const CachedSrc> MeshSrc(const std::string& id) {
+        auto it = srcCache.find(id);
+        if (it != srcCache.end()) { decimalCommas += it->second->commas; return it->second; }
+        auto c = std::make_shared<CachedSrc>();
+        const int before = decimalCommas;
+        if (!ReadSrc(id, c->s)) return nullptr;
+        c->commas = decimalCommas - before;
+        srcCache.emplace(id, c);
+        return c;
+    }
+
     // ---- geometry ---------------------------------------------------------
-    struct Chan { Src src; int offset = 0; bool has = false; };
+    struct Chan { std::shared_ptr<const CachedSrc> keep; const Src* src = nullptr; int offset = 0; bool has = false;
+                  bool Read(Reader& r, const std::string& id) { keep = r.MeshSrc(id); src = keep ? &keep->s : nullptr; return src != nullptr; } };
     struct CornerKey {
         int p, n, t;
         bool operator==(const CornerKey& o) const { return p == o.p && n == o.n && t == o.t; }
@@ -443,12 +587,12 @@ struct Reader {
             const std::string src = UrlId(x.Attr(in, "source"));
             const int set = x.HasAttr(in, "set") ? std::atoi(x.Attr(in, "set").c_str()) : 0;
             auto take = [&](const std::string& semantic, const std::string& sid, int offset, int st) -> bool {
-                if (semantic == "POSITION" && !pos.has) { if (!ReadSrc(sid, pos.src)) return false; pos.offset = offset; pos.has = true; }
-                else if (semantic == "NORMAL" && !nrm.has) { if (!ReadSrc(sid, nrm.src)) return false; nrm.offset = offset; nrm.has = true; }
+                if (semantic == "POSITION" && !pos.has) { if (!pos.Read(*this, sid)) return false; pos.offset = offset; pos.has = true; }
+                else if (semantic == "NORMAL" && !nrm.has) { if (!nrm.Read(*this, sid)) return false; nrm.offset = offset; nrm.has = true; }
                 else if (semantic == "TEXCOORD") {
                     if (st < uvSet) {
                         if (uv.has) ++extraUv;
-                        if (!ReadSrc(sid, uv.src)) return false;
+                        if (!uv.Read(*this, sid)) return false;
                         uv.offset = offset; uv.has = true; uvSet = st;
                     } else ++extraUv;
                 } else if (semantic == "COLOR") sawColor = true;
@@ -467,19 +611,14 @@ struct Reader {
         (void)meshNode;
         if (sawColor) ++vcolors;
         if (!pos.has) return Fail("COLLADA: primitive has no POSITION input");
-        if (pos.src.stride < 3) return Fail("COLLADA: POSITION source has fewer than 3 components");
-        if (nrm.has && nrm.src.stride < 3) nrm.has = false;
-        if (uv.has && uv.src.stride < 2) uv.has = false;
+        if (pos.src->stride < 3) return Fail("COLLADA: POSITION source has fewer than 3 components");
+        if (nrm.has && nrm.src->stride < 3) nrm.has = false;
+        if (uv.has && uv.src->stride < 2) uv.has = false;
 
         // Corner stream -> polygons.
         std::vector<int> all;
         std::vector<std::pair<std::size_t, std::size_t>> polys;   // (first corner, corner count)
-        auto addP = [&](int pn) -> bool {
-            std::vector<int> v;
-            if (!ParseInts(x.Text(pn), v)) return false;
-            all.insert(all.end(), v.begin(), v.end());
-            return true;
-        };
+        auto addP = [&](int pn) -> bool { return AppendInts(x.Text(pn), all); };
         if (kind == "triangles") {
             const int pn = x.First(prim, "p");
             if (pn < 0) return true;   // empty set
@@ -532,23 +671,23 @@ struct Reader {
             const int pi = all[b + (std::size_t)pos.offset];
             const int ni = nrm.has ? all[b + (std::size_t)nrm.offset] : -1;
             const int ti = uv.has ? all[b + (std::size_t)uv.offset] : -1;
-            if (!pos.src.Has(pi, 3)) return false;
-            if (nrm.has && !nrm.src.Has(ni, 3)) return false;
-            if (uv.has && !uv.src.Has(ti, 2)) return false;
+            if (!pos.src->Has(pi, 3)) return false;
+            if (nrm.has && !nrm.src->Has(ni, 3)) return false;
+            if (uv.has && !uv.src->Has(ti, 2)) return false;
             const CornerKey key{pi, ni, ti};
             auto it = weld.find(key);
             if (it != weld.end()) { vi = it->second; return true; }
             vi = (int)m.vertices.size();
             weld.emplace(key, vi);
-            m.vertices.push_back(Vec3{pos.src.At(pi, 0), pos.src.At(pi, 1), pos.src.At(pi, 2)});
+            m.vertices.push_back(Vec3{pos.src->At(pi, 0), pos.src->At(pi, 1), pos.src->At(pi, 2)});
             ps.posIdx.push_back(pi);
             if (nrm.has) {
-                Vec3 nv{nrm.src.At(ni, 0), nrm.src.At(ni, 1), nrm.src.At(ni, 2)};
+                Vec3 nv{nrm.src->At(ni, 0), nrm.src->At(ni, 1), nrm.src->At(ni, 2)};
                 const float l = std::sqrt(nv.x * nv.x + nv.y * nv.y + nv.z * nv.z);
                 if (l > 0.0f) nv = Vec3{nv.x / l, nv.y / l, nv.z / l};
                 m.normals.push_back(nv);
             }
-            if (uv.has) m.uvs.push_back(Vec2{uv.src.At(ti, 0), 1.0f - uv.src.At(ti, 1)});
+            if (uv.has) m.uvs.push_back(Vec2{uv.src->At(ti, 0), 1.0f - uv.src->At(ti, 1)});
             return true;
         };
         std::vector<Vec3> ring;
@@ -568,7 +707,7 @@ struct Reader {
         if (totalVerts + m.vertices.size() > kMaxOutVerts) return Fail("COLLADA: model too large");
         totalVerts += m.vertices.size();
         if (!nrm.has && !m.vertices.empty()) {   // smooth normals, welded per source position
-            std::vector<Vec3> acc((std::size_t)pos.src.Count(), Vec3{0, 0, 0});
+            std::vector<Vec3> acc((std::size_t)pos.src->Count(), Vec3{0, 0, 0});
             for (std::size_t t = 0; t + 2 < m.triangles.size(); t += 3) {
                 const Vec3& p0 = m.vertices[(std::size_t)m.triangles[t]];
                 const Vec3& p1 = m.vertices[(std::size_t)m.triangles[t + 1]];
@@ -602,12 +741,13 @@ struct Reader {
             if (nm == "triangles" || nm == "polylist" || nm == "polygons" || nm == "tristrips" || nm == "trifans") {
                 PrimSet ps;
                 ps.mesh.name = x.Attr(gn, "name").empty() ? gid : x.Attr(gn, "name");
-                if (!BuildPrim(mn, k, ps)) { geoFailed[gid] = true; return nullptr; }
+                if (!BuildPrim(mn, k, ps)) { geoFailed[gid] = true; srcCache.clear(); return nullptr; }
                 if (!ps.mesh.triangles.empty()) sets.push_back(std::move(ps));
             } else if (nm == "lines" || nm == "linestrips") {
                 skippedPrims[nm]++;
             }
         }
+        srcCache.clear();
         auto ins = geoCache.emplace(gid, std::move(sets));
         return &ins.first->second;
     }
@@ -618,11 +758,11 @@ struct Reader {
         if (im < 0 || x.n[(std::size_t)im].name != "image") return std::string();
         int f = x.First(im, "init_from");
         if (f < 0) return std::string();
-        std::string t = x.Text(f);
+        std::string_view t = x.Text(f);
         const int r = x.First(f, "ref");
         if (r >= 0) t = x.Text(r);
         std::string trimmed;
-        { std::size_t a = 0, b = t.size(); while (a < b && IsWs(t[a])) ++a; while (b > a && IsWs(t[b - 1])) --b; trimmed = t.substr(a, b - a); }
+        { std::size_t a = 0, b = t.size(); while (a < b && IsWs(t[a])) ++a; while (b > a && IsWs(t[b - 1])) --b; trimmed.assign(t.substr(a, b - a)); }
         return trimmed.empty() ? std::string() : ResolveImagePath(trimmed, baseDir);
     }
 
@@ -869,6 +1009,10 @@ struct Reader {
             part.mesh = ps.mesh;
             part.node = nodeIdx;
             auto b = bind.find(ps.materialSymbol);
+            // A primitive without a `material` attribute (optional in COLLADA 1.4.1 and 1.5: "if not specified then the
+            // lighting and shading results are application defined") takes the instance's material when the
+            // <bind_material> binds exactly one; with several there is no way to tell which, so it has none.
+            if (b == bind.end() && ps.materialSymbol.empty() && bind.size() == 1) b = bind.begin();
             part.material = MaterialIndex(b != bind.end() ? b->second : ps.materialSymbol);
             if (flatten) Bake(part.mesh, world, false);
             else if (skin) {
@@ -1351,6 +1495,11 @@ bool ReadColladaFile(const std::string& path, ImportedModel& out, std::string* e
     std::FILE* fp = detail::OpenRead(path);
     if (!fp) { if (err) *err = "cannot open file"; return false; }
     std::string bytes;
+    if (std::fseek(fp, 0, SEEK_END) == 0) {   // reserve the file's size once (the buffer used to grow by doubling)
+        const long sz = std::ftell(fp);
+        if (sz > 0 && (unsigned long)sz <= dae::kMaxFileBytes) bytes.reserve((std::size_t)sz);
+    }
+    std::rewind(fp);
     char buf[65536];
     for (;;) {
         const std::size_t n = std::fread(buf, 1, sizeof(buf), fp);

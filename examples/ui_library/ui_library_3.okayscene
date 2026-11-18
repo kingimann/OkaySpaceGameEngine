@@ -1,0 +1,438 @@
+okayscene 3
+name "UI Library 3"
+gravity 0 -9.81
+gravity3 0 -9.81 0
+rendersettings 1 0.27450982 0.47058824 0.78431374 0.5882353 0.7254902 0.88235295 0.47058824 0.47058824 0.50980395 0.15
+fog 0 0.5882353 0.7254902 0.88235295 20 90
+tonemap 1
+gameobject 0 "Main Camera"
+  guid "ba2515434e8589f15825681f4a646147"
+  active 1
+  parent -1
+  transform 0 0 10 0 0 0 1 1 1 1
+  camera 0 5 60 0.19215687 0.3019608 0.4745098 1 1 0 0 0.3 4000 0 0 0 1 1 -1 0 50 24 1 0 0 0 0 32 0.3 2 18 1.5
+end
+gameobject 1 "Canvas"
+  guid "d0e80f94697aa73eec55294585a57b52"
+  active 1
+  parent -1
+  transform 0 0 0 0 0 0 1 1 1 1
+  canvas 1 1280 720 0.5 1 0 1 1 0 1280 720 100 1 1
+end
+gameobject 2 "EventSystem"
+  guid "6b1a6520e96abb74200208b937b127f9"
+  active 1
+  parent -1
+  transform 0 0 0 0 0 0 1 1 1 1
+  eventsystem
+end
+gameobject 3 "UI Library 3"
+  guid "e42423d662a83735801cd95d5827827b"
+  active 1
+  parent 1
+  transform 0 0 0 0 0 0 1 1 1 1
+end
+gameobject 4 "Backdrop"
+  guid "4e6b10e436180c4752067f4e24abc335"
+  active 1
+  parent 3
+  transform 0 0 0 0 0 0 1 1 1 1
+  uipanel 0 0 0 0 0.07058824 0.078431375 0.101960786 0.98039216 11 0 0 1 1 1 0.08627451 0 0.039215688 0.047058824 0.07058824 0.78431374 0 0 0 0 0.47058824 6 6 0 0 0 0 0 0.47058824 0.7058824 1 0.7058824 0 1 1 1 0.15686275 15
+end
+gameobject 5 "Title"
+  guid "38e937c423dcdcc7d1d4fb715c8102a4"
+  active 1
+  parent 3
+  transform 0 0 0 0 0 0 1 1 1 1
+  text "UI Library 3" 0.9098039 0.92156863 0.9411765 1 3.5 1 32 40 0 0 0 0 0 0.78431374 1 1 0 0 0 0 0 0.9019608 1 400 36 1 0 0 0 0 0.54901963 0 0 0 0 0 0 0.47058824 0.627451 1 1 -1 0 0 "" 0 0.02 4
+end
+gameobject 6 "Subtitle"
+  guid "12c3d43edd07860cdf52717fe40b85c8"
+  active 1
+  parent 3
+  transform 0 0 0 0 0 0 1 1 1 1
+  text "Press Play. Try the menu bar, toolbar, tree, table, wizard and colour picker." 0.5882353 0.6156863 0.6745098 1 1.625 1 34 76 0 0 0 0 0 0.78431374 1 1 0 0 0 0 0 0.9019608 0 1220 20 0 0 0 0 0 0.54901963 0 0 0 1 0 0 0.47058824 0.627451 1 1 -1 0 0 "" 0 0.02 4
+end
+gameobject 7 "Toolbar"
+  guid "1a0be1cef08fffddb3c112f781a5082d"
+  active 1
+  parent 3
+  transform 0 0 0 0 0 0 1 1 1 1
+  uitoolbar 32 100 420 40 0 0.09411765 0.10980392 0.14901961 0.8235294 0.25882354 0.5882353 0.98039216 1 1 1 1 1 1.75 1 0 "New@N|Open@O|Save@S|-|Bold@B*|Italic@I*|Underline@U*|-|Left@L=|Center@C=|Right@R=" "00000000010" "tool_pick" "tb_"
+end
+gameobject 8 "TreeCard"
+  guid "61cc9264a865f63292a493ade1df58ea"
+  active 1
+  parent 3
+  transform 0 0 0 0 0 0 1 1 1 1
+  uipanel 32 152 330 262 0.11764706 0.12941177 0.16078432 0.9882353 0 14 1 1 1 1 0.08627451 0 0.039215688 0.047058824 0.07058824 0.78431374 1 0 0 0 0.3529412 0 6 1 0 16 0 0 0.47058824 0.7058824 1 0.7058824 0 1 1 1 0.15686275 15
+  uix pblock=1
+end
+gameobject 9 "Caption"
+  guid "679ce289f807ddfb69a9623e668a899e"
+  active 1
+  parent 8
+  transform 0 0 0 0 0 0 1 1 1 1
+  text "Tree view" 0.25882354 0.5882353 0.98039216 1 1.5 1 20 14 0 0 0 0 0 0.78431374 1 1 0 0 0 0 0 0.9019608 0 290 18 1 0 0 0 0 0.54901963 1 0 1 0 0 0 0.47058824 0.627451 1 1 -1 0 0 "" 0 0.02 4
+end
+gameobject 10 "Tree"
+  guid "f4984a0e9f43fdd40c80b24d23c2552e"
+  active 1
+  parent 8
+  transform 0 0 0 0 0 0 1 1 1 1
+  uitree 20 44 290 170 0 1 1 1 0.05490196 0.25882354 0.5882353 0.98039216 1 1 1 1 1 1.75 1 26 18 -1 "World|>Forest|>>Wolf den|>>Old oak|>Castle|>>Gate|>>Throne room|Settings|>Audio|>Video" "0,1" "tree_pick"
+end
+gameobject 11 "TreeHint"
+  guid "64a303c8bd90faadca4bd36179d5be1c"
+  active 1
+  parent 8
+  transform 0 0 0 0 0 0 1 1 1 1
+  text "Arrows open rows. Then use the arrow keys." 0.5882353 0.6156863 0.6745098 1 1.625 1 20 222 0 0 0 0 0 0.78431374 1 1 0 0 0 0 0 0.9019608 0 290 34 0 0 0 0 0 0.54901963 0 0 0 1 0 0 0.47058824 0.627451 1 1 -1 0 0 "" 0 0.02 4
+end
+gameobject 12 "TableCard"
+  guid "97548a9aae69c108f17feaf7e9ec988b"
+  active 1
+  parent 3
+  transform 0 0 0 0 0 0 1 1 1 1
+  uipanel 382 152 520 262 0.11764706 0.12941177 0.16078432 0.9882353 0 14 1 1 1 1 0.08627451 0 0.039215688 0.047058824 0.07058824 0.78431374 1 0 0 0 0.3529412 0 6 1 0 16 0 0 0.47058824 0.7058824 1 0.7058824 0 1 1 1 0.15686275 15
+  uix pblock=1
+end
+gameobject 13 "Caption"
+  guid "aa790db665b0a7e60ceeeceab7327512"
+  active 1
+  parent 12
+  transform 0 0 0 0 0 0 1 1 1 1
+  text "Data table" 0.25882354 0.5882353 0.98039216 1 1.5 1 20 14 0 0 0 0 0 0.78431374 1 1 0 0 0 0 0 0.9019608 0 480 18 1 0 0 0 0 0.54901963 1 0 1 0 0 0 0.47058824 0.627451 1 1 -1 0 0 "" 0 0.02 4
+end
+gameobject 14 "Table"
+  guid "e2579b469f955e0fa80110b29dd88dde"
+  active 1
+  parent 12
+  transform 0 0 0 0 0 0 1 1 1 1
+  uitable 20 44 480 172 0 1 1 1 0.05490196 0.25882354 0.5882353 0.98039216 1 1 1 1 1 1.75 1 26 30 -1 1 1 1 -1 "Name:170|Class:170|Level" "Ava|Mage|42;Bo|Rogue|17;Cy|Knight|30;Di|Mage|8;Eli|Rogue|25;Fen|Knight|51;Gia|Mage|3;Hux|Rogue|12" "table_pick"
+end
+gameobject 15 "AddRow"
+  guid "5bc2a5de89c3f79b522ba863deca96c0"
+  active 1
+  parent 12
+  transform 0 0 0 0 0 0 1 1 1 1
+  uibutton "Add a row" 20 224 150 28 0.25882354 0.5882353 0.98039216 1 0.36078432 0.6509804 0.9882353 1 1 1 1 1 0 0.20392157 0.47843137 0.8392157 1 0.2 0.21960784 0.2784314 1 1 1 8 1.5 0 1 1 1 0.3137255 1 "" 0 1 1 1 1 0 0 0 1 0 0 0.4 0.12 1 0 0 0 0 0.43137255 0 3 0 "Table" "AddSampleRow" 0 "" 0 0 0 0.36078432 0.6509804 0.9882353 1
+  uivariant variant=0
+end
+gameobject 16 "SortLevel"
+  guid "ac72c555471d2929806312febb59b5aa"
+  active 1
+  parent 12
+  transform 0 0 0 0 0 0 1 1 1 1
+  uibutton "By level" 178 224 140 28 0.25882354 0.5882353 0.98039216 1 0.36078432 0.6509804 0.9882353 1 1 1 1 1 0 0.20392157 0.47843137 0.8392157 1 0.2 0.21960784 0.2784314 1 1 1 8 1.5 0 1 1 1 0.3137255 1 "" 0 1 1 1 1 0 0 0 1 0 0 0.4 0.12 1 0 0 0 0 0.43137255 0 3 0 "Table" "SortBy" 2 "" 0 0 0 0.36078432 0.6509804 0.9882353 1
+  uivariant variant=0
+end
+gameobject 17 "Unsorted"
+  guid "1bdeb6fa5d3f1222fdf749e714dcb4e3"
+  active 1
+  parent 12
+  transform 0 0 0 0 0 0 1 1 1 1
+  uibutton "Unsorted" 326 224 130 28 0.25882354 0.5882353 0.98039216 1 0.36078432 0.6509804 0.9882353 1 1 1 1 1 0 0.20392157 0.47843137 0.8392157 1 0.2 0.21960784 0.2784314 1 1 1 8 1.5 0 1 1 1 0.3137255 1 "" 0 1 1 1 1 0 0 0 1 0 0 0.4 0.12 1 0 0 0 0 0.43137255 0 3 0 "Table" "ClearSort" 0 "" 0 0 0 0.36078432 0.6509804 0.9882353 1
+  uivariant variant=1
+end
+gameobject 18 "StatusCard"
+  guid "5225add108cf5316237c873f992c273e"
+  active 1
+  parent 3
+  transform 0 0 0 0 0 0 1 1 1 1
+  uipanel 922 152 326 262 0.11764706 0.12941177 0.16078432 0.9882353 0 14 1 1 1 1 0.08627451 0 0.039215688 0.047058824 0.07058824 0.78431374 1 0 0 0 0.3529412 0 6 1 0 16 0 0 0.47058824 0.7058824 1 0.7058824 0 1 1 1 0.15686275 15
+  uix pblock=1
+end
+gameobject 19 "Caption"
+  guid "73a2a2149fcafaa4bbf35d391a47d545"
+  active 1
+  parent 18
+  transform 0 0 0 0 0 0 1 1 1 1
+  text "What you chose" 0.25882354 0.5882353 0.98039216 1 1.5 1 20 14 0 0 0 0 0 0.78431374 1 1 0 0 0 0 0 0.9019608 0 286 18 1 0 0 0 0 0.54901963 1 0 1 0 0 0 0.47058824 0.627451 1 1 -1 0 0 "" 0 0.02 4
+end
+gameobject 20 "SMenu"
+  guid "213c4e82b255e4b9b11c93fc32540bcb"
+  active 1
+  parent 18
+  transform 0 0 0 0 0 0 1 1 1 1
+  text "Menu: {menu_pick_text|none yet}" 0.9098039 0.92156863 0.9411765 1 1.375 1 20 48 0 0 0 0 0 0.78431374 1 1 0 0 0 0 0 0.9019608 0 290 28 0 0 0 0 0 0.54901963 0 0 0 1 0 0 0.47058824 0.627451 1 1 -1 0 0 "" 0 0.02 4
+  uibind "Menu: {menu_pick_text|none yet}"
+end
+gameobject 21 "STool"
+  guid "e92323d7415124cb610259362bddf2fa"
+  active 1
+  parent 18
+  transform 0 0 0 0 0 0 1 1 1 1
+  text "Tool: {tool_pick|none yet}" 0.9098039 0.92156863 0.9411765 1 1.375 1 20 78 0 0 0 0 0 0.78431374 1 1 0 0 0 0 0 0.9019608 0 290 28 0 0 0 0 0 0.54901963 0 0 0 1 0 0 0.47058824 0.627451 1 1 -1 0 0 "" 0 0.02 4
+  uibind "Tool: {tool_pick|none yet}"
+end
+gameobject 22 "SToggles"
+  guid "a87d3d2bba4392c6c542eadd78825d6d"
+  active 1
+  parent 18
+  transform 0 0 0 0 0 0 1 1 1 1
+  text "B {tb_bold|0}  I {tb_italic|0}  U {tb_underline|0}" 0.9098039 0.92156863 0.9411765 1 1.375 1 20 108 0 0 0 0 0 0.78431374 1 1 0 0 0 0 0 0.9019608 0 290 28 0 0 0 0 0 0.54901963 0 0 0 1 0 0 0.47058824 0.627451 1 1 -1 0 0 "" 0 0.02 4
+  uibind "B {tb_bold|0}  I {tb_italic|0}  U {tb_underline|0}"
+end
+gameobject 23 "STree"
+  guid "cdcb39955e341f4f315e734cca1af7b5"
+  active 1
+  parent 18
+  transform 0 0 0 0 0 0 1 1 1 1
+  text "Tree: {tree_pick_text|none yet}" 0.9098039 0.92156863 0.9411765 1 1.375 1 20 138 0 0 0 0 0 0.78431374 1 1 0 0 0 0 0 0.9019608 0 290 28 0 0 0 0 0 0.54901963 0 0 0 1 0 0 0.47058824 0.627451 1 1 -1 0 0 "" 0 0.02 4
+  uibind "Tree: {tree_pick_text|none yet}"
+end
+gameobject 24 "STable"
+  guid "5f1555d02af62ae00e8e61c4a5072d0c"
+  active 1
+  parent 18
+  transform 0 0 0 0 0 0 1 1 1 1
+  text "Row: {table_pick_text|none yet}" 0.9098039 0.92156863 0.9411765 1 1.375 1 20 168 0 0 0 0 0 0.78431374 1 1 0 0 0 0 0 0.9019608 0 290 28 0 0 0 0 0 0.54901963 0 0 0 1 0 0 0.47058824 0.627451 1 1 -1 0 0 "" 0 0.02 4
+  uibind "Row: {table_pick_text|none yet}"
+end
+gameobject 25 "SWizard"
+  guid "c6ff5bf700145a88dbfcad0b96f9dd38"
+  active 1
+  parent 18
+  transform 0 0 0 0 0 0 1 1 1 1
+  text "Wizard step {wiz_step|0}, {wiz_progress|0} percent" 0.9098039 0.92156863 0.9411765 1 1.375 1 20 198 0 0 0 0 0 0.78431374 1 1 0 0 0 0 0 0.9019608 0 290 28 0 0 0 0 0 0.54901963 0 0 0 1 0 0 0.47058824 0.627451 1 1 -1 0 0 "" 0 0.02 4
+  uibind "Wizard step {wiz_step|0}, {wiz_progress|0} percent"
+end
+gameobject 26 "SForm"
+  guid "2178a12db95c92852f93091c771e50ea"
+  active 1
+  parent 18
+  transform 0 0 0 0 0 0 1 1 1 1
+  text "Fields all valid: {wiz_valid|0}" 0.9098039 0.92156863 0.9411765 1 1.375 1 20 228 0 0 0 0 0 0.78431374 1 1 0 0 0 0 0 0.9019608 0 290 28 0 0 0 0 0 0.54901963 0 0 0 1 0 0 0.47058824 0.627451 1 1 -1 0 0 "" 0 0.02 4
+  uibind "Fields all valid: {wiz_valid|0}"
+end
+gameobject 27 "WizardCard"
+  guid "789efa1acc46c4b1b29bca62bcceae66"
+  active 1
+  parent 3
+  transform 0 0 0 0 0 0 1 1 1 1
+  uipanel 32 426 700 282 0.11764706 0.12941177 0.16078432 0.9882353 0 14 1 1 1 1 0.08627451 0 0.039215688 0.047058824 0.07058824 0.78431374 1 0 0 0 0.3529412 0 6 1 0 16 0 0 0.47058824 0.7058824 1 0.7058824 0 1 1 1 0.15686275 15
+  uix pblock=1
+end
+gameobject 28 "Caption"
+  guid "306255f640c0f75e6f69d0adf381a844"
+  active 1
+  parent 27
+  transform 0 0 0 0 0 0 1 1 1 1
+  text "Wizard and form group" 0.25882354 0.5882353 0.98039216 1 1.5 1 20 14 0 0 0 0 0 0.78431374 1 1 0 0 0 0 0 0.9019608 0 660 18 1 0 0 0 0 0.54901963 1 0 1 0 0 0 0.47058824 0.627451 1 1 -1 0 0 "" 0 0.02 4
+end
+gameobject 29 "Wizard"
+  guid "ad9bdca7f1e6ab639faa0f2dffa02b78"
+  active 1
+  parent 27
+  transform 0 0 0 0 0 0 1 1 1 1
+  uiwizard 20 44 660 228 0 1 1 1 0.039215688 0.25882354 0.5882353 0.98039216 1 1 1 1 1 1.75 1 0 1 0 "Account|Profile|Done" "AccountPage|ProfilePage|DonePage" "AccountForm;ProfileForm;" "wiz_progress" "wiz_step"
+end
+gameobject 30 "AccountPage"
+  guid "4e82c984079f05fea7acac836060a5ce"
+  active 1
+  parent 27
+  transform 0 0 0 0 0 0 1 1 1 1
+end
+gameobject 31 "AccountForm"
+  guid "2186aecfae062a1576931db6c82b63ae"
+  active 1
+  parent 30
+  transform 0 0 0 0 0 0 1 1 1 1
+  uiform 50 118 580 100 0 0.09411765 0.10980392 0.14901961 0.8235294 0.25882354 0.5882353 0.98039216 1 1 1 1 1 1.75 1 110 50 32 0 0.16078432 0.18039216 0.23137255 1 0.21960784 0.24313726 0.30588236 1 "Name:text|Email:email" "" "signup_" "wiz_valid"
+end
+gameobject 32 "AccountForm_name"
+  guid "0e05c970baef041b36a9e514f79e282d"
+  active 1
+  parent 31
+  transform 0 0 0 0 0 0 1 1 1 1
+  uiinput 110 0 470 32 0 64 "" "Name" 0.16078432 0.18039216 0.23137255 1 0 1 6 1 0.25882354 0.5882353 0.98039216 1 0
+  uivalidate 0 1 0 0 0 0 100 1 1 0 0.9098039 0.32941177 0.32941177 1 0.34509805 0.78431374 0.50980395 1 "" ""
+end
+gameobject 33 "AccountForm_email"
+  guid "dfef9a25d295f90ccca925af39ccd369"
+  active 1
+  parent 31
+  transform 0 0 0 0 0 0 1 1 1 1
+  uiinput 110 50 470 32 0 64 "" "Email" 0.16078432 0.18039216 0.23137255 1 0 1 6 1 0.25882354 0.5882353 0.98039216 1 0
+  uivalidate 1 1 0 0 0 0 100 1 1 0 0.9098039 0.32941177 0.32941177 1 0.34509805 0.78431374 0.50980395 1 "" ""
+end
+gameobject 34 "ProfilePage"
+  guid "f3ffb06c548d1db32d23d681ea4fd859"
+  active 0
+  parent 27
+  transform 0 0 0 0 0 0 1 1 1 1
+end
+gameobject 35 "ProfileForm"
+  guid "6ead98ae43a5a4b83c8bd58efefe08a4"
+  active 1
+  parent 34
+  transform 0 0 0 0 0 0 1 1 1 1
+  uiform 50 118 580 100 0 0.09411765 0.10980392 0.14901961 0.8235294 0.25882354 0.5882353 0.98039216 1 1 1 1 1 1.75 1 110 50 32 0 0.16078432 0.18039216 0.23137255 1 0.21960784 0.24313726 0.30588236 1 "Age:int:13..120|Nickname:text:?" "" "signup_" ""
+end
+gameobject 36 "ProfileForm_age"
+  guid "f504cf4e3621e19bd32bf97f9d756575"
+  active 1
+  parent 35
+  transform 0 0 0 0 0 0 1 1 1 1
+  uiinput 110 0 470 32 0 64 "" "Age" 0.16078432 0.18039216 0.23137255 1 0 1 6 1 0.25882354 0.5882353 0.98039216 1 0
+  uivalidate 2 1 0 0 1 13 120 1 1 0 0.9098039 0.32941177 0.32941177 1 0.34509805 0.78431374 0.50980395 1 "" ""
+end
+gameobject 37 "ProfileForm_nickname"
+  guid "42a8fce19ab19f1ca516ddbb804c4c7e"
+  active 1
+  parent 35
+  transform 0 0 0 0 0 0 1 1 1 1
+  uiinput 110 50 470 32 0 64 "" "Nickname" 0.16078432 0.18039216 0.23137255 1 0 1 6 1 0.25882354 0.5882353 0.98039216 1 0
+  uivalidate 0 0 0 0 0 0 100 1 1 0 0.9098039 0.32941177 0.32941177 1 0.34509805 0.78431374 0.50980395 1 "" ""
+end
+gameobject 38 "DonePage"
+  guid "6c3d3d756dc027c923a76a8823b37eca"
+  active 0
+  parent 27
+  transform 0 0 0 0 0 0 1 1 1 1
+end
+gameobject 39 "DoneText"
+  guid "3aa8910dc3134d9b7db463131e309dba"
+  active 1
+  parent 38
+  transform 0 0 0 0 0 0 1 1 1 1
+  text "Welcome, {signup_name|friend}! Press Finish." 0.9098039 0.92156863 0.9411765 1 2.5 1 50 128 0 0 0 0 0 0.78431374 1 1 0 0 0 0 0 0.9019608 1 580 30 1 0 0 0 0 0.54901963 0 0 0 0 0 0 0.47058824 0.627451 1 1 -1 0 0 "" 0 0.02 4
+  uibind "Welcome, {signup_name|friend}! Press Finish."
+end
+gameobject 40 "DoneNote"
+  guid "55a6a2e0bd619411ce8a5825fd20a99b"
+  active 1
+  parent 38
+  transform 0 0 0 0 0 0 1 1 1 1
+  text "We will write to {signup_email|your address}. Back goes to the steps before." 0.5882353 0.6156863 0.6745098 1 1.625 1 50 164 0 0 0 0 0 0.78431374 1 1 0 0 0 0 0 0.9019608 0 580 20 0 0 0 0 0 0.54901963 0 0 0 1 0 0 0.47058824 0.627451 1 1 -1 0 0 "" 0 0.02 4
+  uibind "We will write to {signup_email|your address}. Back goes to the steps before."
+end
+gameobject 41 "ColorCard"
+  guid "c29c9be5a4a749c0210b4cfd24819dcc"
+  active 1
+  parent 3
+  transform 0 0 0 0 0 0 1 1 1 1
+  uipanel 752 426 496 282 0.11764706 0.12941177 0.16078432 0.9882353 0 14 1 1 1 1 0.08627451 0 0.039215688 0.047058824 0.07058824 0.78431374 1 0 0 0 0.3529412 0 6 1 0 16 0 0 0.47058824 0.7058824 1 0.7058824 0 1 1 1 0.15686275 15
+  uix pblock=1
+end
+gameobject 42 "Caption"
+  guid "8035d18b3e24eb578125c3119cb46801"
+  active 1
+  parent 41
+  transform 0 0 0 0 0 0 1 1 1 1
+  text "Colour picker, advanced" 0.25882354 0.5882353 0.98039216 1 1.5 1 20 14 0 0 0 0 0 0.78431374 1 1 0 0 0 0 0 0.9019608 0 456 18 1 0 0 0 0 0.54901963 1 0 1 0 0 0 0.47058824 0.627451 1 1 -1 0 0 "" 0 0.02 4
+end
+gameobject 43 "Picker"
+  guid "19e7ebef1d7a86bcebd4226367a985f0"
+  active 1
+  parent 41
+  transform 0 0 0 0 0 0 1 1 1 1
+  uicolorpicker 20 44 0 40 8 0 8 0.9098039 0.92156863 0.9411765 1 0.18039216 0.2 0.2509804 1 0.8862745 0.32156864 0.32156864 1 0.9411765 0.7058824 0.27450982 1 0.28235295 0.76862746 0.5019608 1 0.28235295 0.76862746 0.76862746 1 0.25882354 0.5882353 0.98039216 1 0.7058824 0.47058824 0.9019608 1 1 210 0.8 0.95 1 0 140
+end
+gameobject 44 "Swatch0"
+  guid "49546f7a2694b5b382a168a2381801d7"
+  active 1
+  parent 43
+  transform 0 0 0 0 0 0 1 1 1 1
+  uibutton "" 20 56 40 40 0.9098039 0.92156863 0.9411765 1 0.9898039 1 1 1 1 1 1 1 0 0.9098039 0.92156863 0.9411765 1 0.2 0.21960784 0.2784314 1 1 0 8 1 3 1 1 1 1 1 "" 0 1 1 1 1 0 0 0 1 0 0 0.4 0.12 1 0 0 0 0 0.43137255 0 3 0 "" "" 0 "" 0 0 0 0.36078432 0.6509804 0.9882353 1
+end
+gameobject 45 "Swatch1"
+  guid "b1968f8fb5a3f0703b386241c0f79ab3"
+  active 1
+  parent 43
+  transform 0 0 0 0 0 0 1 1 1 1
+  uibutton "" 68 56 40 40 0.18039216 0.2 0.2509804 1 0.26039216 0.28 0.33098042 1 1 1 1 1 0 0.18039216 0.2 0.2509804 1 0.2 0.21960784 0.2784314 1 1 0 8 1 0 1 1 1 1 1 "" 0 1 1 1 1 0 0 0 1 0 0 0.4 0.12 1 0 0 0 0 0.43137255 0 3 0 "" "" 0 "" 0 0 0 0.36078432 0.6509804 0.9882353 1
+end
+gameobject 46 "Swatch2"
+  guid "18cdc7c969c1f260e14420c8f99488e9"
+  active 1
+  parent 43
+  transform 0 0 0 0 0 0 1 1 1 1
+  uibutton "" 116 56 40 40 0.8862745 0.32156864 0.32156864 1 0.9662745 0.40156865 0.40156865 1 1 1 1 1 0 0.8862745 0.32156864 0.32156864 1 0.2 0.21960784 0.2784314 1 1 0 8 1 0 1 1 1 1 1 "" 0 1 1 1 1 0 0 0 1 0 0 0.4 0.12 1 0 0 0 0 0.43137255 0 3 0 "" "" 0 "" 0 0 0 0.36078432 0.6509804 0.9882353 1
+end
+gameobject 47 "Swatch3"
+  guid "963974bcc11910ae520d63ffe40fae14"
+  active 1
+  parent 43
+  transform 0 0 0 0 0 0 1 1 1 1
+  uibutton "" 164 56 40 40 0.9411765 0.7058824 0.27450982 1 1 0.78588235 0.35450983 1 1 1 1 1 0 0.9411765 0.7058824 0.27450982 1 0.2 0.21960784 0.2784314 1 1 0 8 1 0 1 1 1 1 1 "" 0 1 1 1 1 0 0 0 1 0 0 0.4 0.12 1 0 0 0 0 0.43137255 0 3 0 "" "" 0 "" 0 0 0 0.36078432 0.6509804 0.9882353 1
+end
+gameobject 48 "Swatch4"
+  guid "ec35759a1366a208b6c0edb9212e735a"
+  active 1
+  parent 43
+  transform 0 0 0 0 0 0 1 1 1 1
+  uibutton "" 212 56 40 40 0.28235295 0.76862746 0.5019608 1 0.36235297 0.84862745 0.5819608 1 1 1 1 1 0 0.28235295 0.76862746 0.5019608 1 0.2 0.21960784 0.2784314 1 1 0 8 1 0 1 1 1 1 1 "" 0 1 1 1 1 0 0 0 1 0 0 0.4 0.12 1 0 0 0 0 0.43137255 0 3 0 "" "" 0 "" 0 0 0 0.36078432 0.6509804 0.9882353 1
+end
+gameobject 49 "Swatch5"
+  guid "deb0c1b1c92a8407d57bc8cb5415b4b2"
+  active 1
+  parent 43
+  transform 0 0 0 0 0 0 1 1 1 1
+  uibutton "" 260 56 40 40 0.28235295 0.76862746 0.76862746 1 0.36235297 0.84862745 0.84862745 1 1 1 1 1 0 0.28235295 0.76862746 0.76862746 1 0.2 0.21960784 0.2784314 1 1 0 8 1 0 1 1 1 1 1 "" 0 1 1 1 1 0 0 0 1 0 0 0.4 0.12 1 0 0 0 0 0.43137255 0 3 0 "" "" 0 "" 0 0 0 0.36078432 0.6509804 0.9882353 1
+end
+gameobject 50 "Swatch6"
+  guid "2ddd84e5256ebf0c0561ffab373a78c8"
+  active 1
+  parent 43
+  transform 0 0 0 0 0 0 1 1 1 1
+  uibutton "" 308 56 40 40 0.25882354 0.5882353 0.98039216 1 0.33882356 0.6682353 1 1 1 1 1 1 0 0.25882354 0.5882353 0.98039216 1 0.2 0.21960784 0.2784314 1 1 0 8 1 0 1 1 1 1 1 "" 0 1 1 1 1 0 0 0 1 0 0 0.4 0.12 1 0 0 0 0 0.43137255 0 3 0 "" "" 0 "" 0 0 0 0.36078432 0.6509804 0.9882353 1
+end
+gameobject 51 "Swatch7"
+  guid "b34de16157a882afbb02112ce787733d"
+  active 1
+  parent 43
+  transform 0 0 0 0 0 0 1 1 1 1
+  uibutton "" 356 56 40 40 0.7058824 0.47058824 0.9019608 1 0.78588235 0.55058825 0.9819608 1 1 1 1 1 0 0.7058824 0.47058824 0.9019608 1 0.2 0.21960784 0.2784314 1 1 0 8 1 0 1 1 1 1 1 "" 0 1 1 1 1 0 0 0 1 0 0 0.4 0.12 1 0 0 0 0 0.43137255 0 3 0 "" "" 0 "" 0 0 0 0.36078432 0.6509804 0.9882353 1
+end
+gameobject 52 "Preview"
+  guid "1651d5fb2ef6c787b588f8e8c0dde862"
+  active 1
+  parent 43
+  transform 0 0 0 0 0 0 1 1 1 1
+  uipanel 412 44 64 64 0.9098039 0.92156863 0.9411765 1 0 10 1 1 1 1 0.15686275 0 0.039215688 0.047058824 0.07058824 0.78431374 0 0 0 0 0.47058824 6 6 1 0 0 0 0 0.47058824 0.7058824 1 0.7058824 0 1 1 1 0.15686275 15
+end
+gameobject 53 "ColorSquare"
+  guid "76c14bd3a2ab425518b8ff55d3059c6e"
+  active 1
+  parent 43
+  transform 0 0 0 0 0 0 1 1 1 1
+  uicolorsquare 20 120 140 140 0 0.09411765 0.10980392 0.14901961 0.8235294 0.25882354 0.5882353 0.98039216 1 1 1 1 1 1.75 1 210 0.8 1
+end
+gameobject 54 "ValueSlider"
+  guid "20302e59eee2e1edc59e2e33a89550ed"
+  active 1
+  parent 43
+  transform 0 0 0 0 0 0 1 1 1 1
+  uislider 174 120 22 140 0.5 0 1 0.16078432 0.18039216 0.23137255 1 0.92156863 0.92156863 0.9411765 1 0.9607843 0.96862745 0.9882353 1 0 3 0.6 0 1 1 1 1 0 1 1 1 1 0 0 0.47058824 0.8235294 1 1 -1 ""
+end
+gameobject 55 "AlphaSlider"
+  guid "d2794df63c3db326f41a87e15a36c625"
+  active 1
+  parent 43
+  transform 0 0 0 0 0 0 1 1 1 1
+  uislider 208 120 22 140 0.5 0 1 0.16078432 0.18039216 0.23137255 1 0.47058824 0.74509805 1 1 0.9607843 0.96862745 0.9882353 1 0 3 0.6 0 1 1 1 1 0 1 1 1 1 0 0 0.47058824 0.8235294 1 1 -1 ""
+end
+gameobject 56 "ColorHint"
+  guid "c63090329967579381d724805cc71e56"
+  active 1
+  parent 41
+  transform 0 0 0 0 0 0 1 1 1 1
+  text "Drag in the square, then the two sliders." 0.5882353 0.6156863 0.6745098 1 1.625 1 246 150 0 0 0 0 0 0.78431374 1 1 0 0 0 0 0 0.9019608 0 230 60 0 0 0 0 0 0.54901963 0 0 0 1 0 0 0.47058824 0.627451 1 1 -1 0 0 "" 0 0.02 4
+end
+gameobject 57 "ToggleAdvanced"
+  guid "fd27ff7f86994a7eb6692d9e11d3fae8"
+  active 1
+  parent 41
+  transform 0 0 0 0 0 0 1 1 1 1
+  uibutton "Advanced on / off" 246 232 230 30 0.25882354 0.5882353 0.98039216 1 0.36078432 0.6509804 0.9882353 1 1 1 1 1 0 0.20392157 0.47843137 0.8392157 1 0.2 0.21960784 0.2784314 1 1 1 8 1.5 0 1 1 1 0.3137255 1 "" 0 1 1 1 1 0 0 0 1 0 0 0.4 0.12 1 0 0 0 0 0.43137255 0 3 0 "Picker" "ToggleAdvanced" 0 "" 0 0 0 0.36078432 0.6509804 0.9882353 1
+  uivariant variant=1
+end
+gameobject 58 "MenuBar"
+  guid "452241ee9c062b63aa65438b014da86e"
+  active 1
+  parent 3
+  transform 0 0 0 0 0 0 1 1 1 1
+  uimenubar 0 0 1280 32 0 0.078431375 0.09411765 0.13333334 1 0.25882354 0.5882353 0.98039216 1 1 1 1 1 1.75 1 28 170 "File:New scene|Open@Ctrl+O|Save@Ctrl+S|-|~Export (soon)|Quit;Edit:Undo@Ctrl+Z|Redo@Ctrl+Y|-|Cut|Copy|Paste;View:Zoom in|Zoom out|-|Full screen;Help:Manual|About" "menu_pick"
+end

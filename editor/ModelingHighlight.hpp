@@ -1,5 +1,5 @@
 #pragma once
-// Button wrappers for the advanced Modeling window: each draws the ordinary ImGui widget, then calls one hook, which outlines the
+// Button wrappers for the Modeling window: each draws the ordinary ImGui widget, then calls one hook, which outlines the
 // button when it matches the tool search and remembers its hint. main.cpp points the hook at its own function and, only around
 // DrawModeling, maps ImGui::Button / SmallButton / Checkbox onto these with a #define. Global scope on purpose (ImGui's namespace).
 #include "imgui.h"

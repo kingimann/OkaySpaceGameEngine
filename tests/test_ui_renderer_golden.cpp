@@ -77,6 +77,7 @@ int main(int argc, char** argv) {
         if (!updateDir.empty()) {
             CHECK(got.SavePNG(updateDir + "/" + name + ".png"));
             std::cout << "  wrote " << name << ".png\n";
+            Image scratch; RenderScene(ren, surf, i, tex, scratch, true);   // the check run draws the batched picture after each direct one; so does this, so both start every scene in the same state
             continue;
         }
         Image want;
@@ -108,11 +109,13 @@ int main(int argc, char** argv) {
         // The batched path draws the same scene as triangles from one atlas.
         Image bat;
         RenderScene(ren, surf, i, tex, bat, true);
+        if (const char* dump = std::getenv("OKAY_GOLDEN_DUMP")) { got.SavePNG(std::string(dump) + "/" + name + "_direct.png"); bat.SavePNG(std::string(dump) + "/" + name + "_batched.png"); }   // to look at a mismatch
         int bdiff = 0, bmax = 0, bbig = 0;
         const unsigned char* c = bat.Data();
+        const unsigned char* g0 = got.Data();
         for (int p = 0; p < bat.Width() * bat.Height(); ++p) {
             int d = 0;
-            for (int k = 0; k < 4; ++k) d = std::max(d, std::abs((int)a[p * 4 + k] - (int)c[p * 4 + k]));
+            for (int k = 0; k < 4; ++k) d = std::max(d, std::abs((int)g0[p * 4 + k] - (int)c[p * 4 + k]));   // against the direct render of this run
             if (d > 0) ++bdiff;
             if (d > 48) ++bbig;
             bmax = std::max(bmax, d);

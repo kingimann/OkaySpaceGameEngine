@@ -3,6 +3,7 @@
 // <vertex> elements, <faces>) and of the OGRE material script language (the .material files that name the colours and the
 // texture of a submesh's material); no code from any other importer. One part per submesh. Uses the strict XML reader of the
 // batch-B readers. Bounds-checked, capped, no recursion. See okay/Render/ModelData.hpp and docs/own_ogre_reader.md.
+#include "BinReader.hpp"
 #include "ReaderCommon.hpp"
 #include "TextReaderUtil.hpp"
 #include "XmlLite.hpp"
@@ -10,6 +11,7 @@
 #include <algorithm>
 #include <cmath>
 #include <cstdint>
+#include <cstring>
 #include <filesystem>
 #include <map>
 #include <string>
@@ -35,47 +37,51 @@ struct Geom {
     std::int64_t count = 0;
 };
 
-bool Dbl(const std::string* s, double& v) { return s && detail::rc::ParseNumber(*s, v); }
+// attribute `key` of element i as a number (false when it is missing or not a number)
+bool Num(const detail::xml::FlatDoc& d, int i, std::string_view key, double& v) {
+    std::string_view s;
+    return d.Attr(i, key, s) && detail::rc::ParseNumber(s.data(), s.data() + s.size(), v);
+}
 
 // One <geometry> / <sharedgeometry> element: the vertexcount attribute and the <vertexbuffer> children (position, normal and
 // the first texcoord set may be spread over several buffers; vertex k of every buffer is vertex k of the geometry).
-bool ReadGeometry(const detail::xml::Doc& d, int g, Geom& out, std::string* err, int& extraUv, int& colours, int& tangentsSeen) {
+bool ReadGeometry(const detail::xml::FlatDoc& d, int g, Geom& out, std::string* err, int& extraUv, int& colours, int& tangentsSeen) {
     double vc;
-    if (!Dbl(d.Attr(g, "vertexcount"), vc) || vc < 0 || vc > (double)kMaxVerts || vc != std::floor(vc))
+    if (!Num(d, g, "vertexcount", vc) || vc < 0 || vc > (double)kMaxVerts || vc != std::floor(vc))
         return Fail(err, "bad vertexcount '" + d.AttrOr(g, "vertexcount", "") + "'");
     out.count = (std::int64_t)vc;
     const std::size_t n = (std::size_t)vc;
     {   // the claimed count must be backed by <vertex> elements before anything is allocated from it
         std::size_t most = 0;
-        for (int b : d.Kids(g)) {
+        for (int b = d.Kid(g); b >= 0; b = d.Next(b)) {
             if (d.Name(b) != "vertexbuffer") continue;
             std::size_t k = 0;
-            for (int vi : d.Kids(b)) if (d.Name(vi) == "vertex") ++k;
+            for (int vi = d.Kid(b); vi >= 0; vi = d.Next(vi)) if (d.Name(vi) == "vertex") ++k;
             most = std::max(most, k);
         }
         if (most != n) return Fail(err, "the vertexcount " + std::to_string(n) + " does not match the " + std::to_string(most) + " <vertex> elements");
     }
     out.pos.assign(n, Vec3{0, 0, 0}); out.nrm.assign(n, Vec3{0, 0, 0}); out.uv.assign(n, Vec2{0, 0});
     out.hasPos.assign(n, 0); out.hasNrm.assign(n, 0); out.hasUv.assign(n, 0);
-    for (int b : d.Kids(g)) {
+    for (int b = d.Kid(g); b >= 0; b = d.Next(b)) {
         if (d.Name(b) != "vertexbuffer") continue;
         std::size_t k = 0;
-        for (int vi : d.Kids(b)) {
+        for (int vi = d.Kid(b); vi >= 0; vi = d.Next(vi)) {
             if (d.Name(vi) != "vertex") continue;
             if (k >= n) return Fail(err, "a vertexbuffer has more <vertex> elements than the vertexcount " + std::to_string(n));
             bool uvDone = false;
-            for (int e : d.Kids(vi)) {
-                const std::string& nm = d.Name(e);
+            for (int e = d.Kid(vi); e >= 0; e = d.Next(e)) {
+                const std::string_view nm = d.Name(e);
                 double a, bb, c;
                 if (nm == "position") {
-                    if (!Dbl(d.Attr(e, "x"), a) || !Dbl(d.Attr(e, "y"), bb) || !Dbl(d.Attr(e, "z"), c)) return Fail(err, "bad <position> in vertex " + std::to_string(k));
+                    if (!Num(d, e, "x", a) || !Num(d, e, "y", bb) || !Num(d, e, "z", c)) return Fail(err, "bad <position> in vertex " + std::to_string(k));
                     out.pos[k] = Vec3{(float)a, (float)bb, (float)c}; out.hasPos[k] = 1;
                 } else if (nm == "normal") {
-                    if (!Dbl(d.Attr(e, "x"), a) || !Dbl(d.Attr(e, "y"), bb) || !Dbl(d.Attr(e, "z"), c)) return Fail(err, "bad <normal> in vertex " + std::to_string(k));
+                    if (!Num(d, e, "x", a) || !Num(d, e, "y", bb) || !Num(d, e, "z", c)) return Fail(err, "bad <normal> in vertex " + std::to_string(k));
                     out.nrm[k] = Vec3{(float)a, (float)bb, (float)c}; out.hasNrm[k] = 1;
                 } else if (nm == "texcoord") {
                     if (uvDone) { ++extraUv; continue; }
-                    if (!Dbl(d.Attr(e, "u"), a) || !Dbl(d.Attr(e, "v"), bb)) return Fail(err, "bad <texcoord> in vertex " + std::to_string(k));
+                    if (!Num(d, e, "u", a) || !Num(d, e, "v", bb)) return Fail(err, "bad <texcoord> in vertex " + std::to_string(k));
                     out.uv[k] = Vec2{(float)a, (float)bb}; out.hasUv[k] = 1; uvDone = true;
                 } else if (nm == "colour_diffuse" || nm == "colour_specular") ++colours;
                 else if (nm == "tangent" || nm == "binormal") ++tangentsSeen;
@@ -149,29 +155,344 @@ void ParseScript(const std::string& script, std::map<std::string, Mat>& mats) {
     }
 }
 
+// ---- shared by the XML and the binary mesh: one submesh into one part ----
+struct Build {
+    explicit Build(ImportedModel& o) : out(o) {}
+    ImportedModel& out;
+    std::string baseDir;
+    std::map<std::string, Mat> mats;
+    std::map<std::string, int> matOut;
+    std::map<int, std::string> names;   // submesh index -> name (<submeshnames> / the binary name table)
+    std::size_t outVerts = 0;
+    int extraUv = 0, colours = 0, tangents = 0, boneAssign = 0, lines = 0, noGeom = 0, degenerate = 0, badIdx = 0;
+};
+
+// A strip alternates its winding: triangle i is (s[i], s[i+1], s[i+2]) for even i and (s[i+1], s[i], s[i+2]) for odd i;
+// a fan shares its first vertex: (s[0], s[i+1], s[i+2]). Repeated indices make degenerate triangles, which BuildMesh drops.
+void ExpandSequence(const std::vector<std::uint32_t>& seq, bool strip, std::vector<std::uint32_t>& faceIdx) {
+    for (std::size_t i = 0; i + 2 < seq.size(); ++i) {
+        if (strip) { faceIdx.push_back(seq[i + (i & 1)]); faceIdx.push_back(seq[i + 1 - (i & 1)]); faceIdx.push_back(seq[i + 2]); }
+        else { faceIdx.push_back(seq[0]); faceIdx.push_back(seq[i + 1]); faceIdx.push_back(seq[i + 2]); }
+    }
+}
+
+// The triangles of submesh `myIdx` (three indices into `g` each) as one part with its material. False only on a hard error
+// (too many output vertices, a vertex out of range); a submesh with nothing to draw is counted and skipped.
+bool AddSubmesh(Build& b, const Geom& g, const std::vector<std::uint32_t>& faceIdx, int myIdx, const std::string& matName, bool hasBoneAssign, std::string* err) {
+    detail::rc::Soup soup;
+    const std::size_t nv = (std::size_t)g.count;
+    // positions are the geometry's; only the vertices the faces use are copied (a submesh may use a few of a big shared buffer)
+    std::unordered_map<std::uint32_t, std::uint32_t> remap;
+    bool anyUv = false, anyNrm = false;
+    for (std::size_t t = 0; t + 2 < faceIdx.size(); t += 3) {
+        if (faceIdx[t] >= nv || faceIdx[t + 1] >= nv || faceIdx[t + 2] >= nv) { ++b.badIdx; continue; }
+        for (int c = 0; c < 3; ++c) {
+            const std::uint32_t v = faceIdx[t + (std::size_t)c];
+            auto r = remap.emplace(v, (std::uint32_t)soup.pos.size());
+            if (r.second) soup.pos.push_back(g.pos[v]);
+            soup.ci.push_back(r.first->second);
+            soup.cuv.push_back(g.uv[v]);
+            soup.cnrm.push_back(g.nrm[v]);
+            if (g.hasUv[v]) anyUv = true;
+            if (g.hasNrm[v]) anyNrm = true;
+        }
+    }
+    if (soup.ci.empty()) { ++b.noGeom; return true; }
+    if (!anyUv) soup.cuv.clear();
+    const bool allNrm = anyNrm && [&] { for (std::size_t c = 0; c < soup.ci.size(); ++c) { const Vec3& n = soup.cnrm[c]; if (n.x == 0 && n.y == 0 && n.z == 0) return false; } return true; }();
+    if (!allNrm) soup.cnrm.clear();
+    ImportedPart part;
+    detail::rc::BuildStats st;
+    if (!detail::rc::BuildMesh(soup, 180.0, part.mesh, &st, kMaxOutVerts - std::min(b.outVerts, kMaxOutVerts))) return Fail(err, "too many output vertices");
+    b.degenerate += st.degenerate;
+    b.outVerts += part.mesh.vertices.size();
+    if (part.mesh.triangles.empty()) return true;
+    if (!detail::rc::PartInRange(part)) return Fail(err, "a vertex is out of range");
+    std::string pname = matName.empty() ? "submesh" + std::to_string(myIdx) : matName;
+    { auto nm = b.names.find(myIdx); if (nm != b.names.end()) pname = nm->second; }
+    part.mesh.name = pname;
+    part.node = 0;
+    if (!matName.empty()) {
+        auto it = b.matOut.find(matName);
+        if (it == b.matOut.end()) {
+            ImportedMaterial im;
+            im.name = matName;
+            auto mi = b.mats.find(matName);
+            if (mi != b.mats.end()) {
+                const Mat& m = mi->second;
+                im.hasDiffuse = m.hasDiffuse; im.diffuse = m.diffuse; im.hasEmissive = m.hasEmissive; im.emissive = m.emissive; im.shininess = m.shininess;
+                if (!m.texture.empty()) {
+                    std::string t = m.texture;
+                    for (char& c : t) if (c == '\\') c = '/';
+                    if (!b.baseDir.empty() && t[0] != '/' && t.find(':') == std::string::npos) t = b.baseDir + t;
+                    im.texture = t;
+                }
+            }
+            b.out.materials.push_back(im);
+            it = b.matOut.emplace(matName, (int)b.out.materials.size() - 1).first;
+        }
+        part.material = it->second;
+    }
+    if (hasBoneAssign) ++b.boneAssign;
+    b.out.parts.push_back(std::move(part));
+    return true;
+}
+
+// What the file holds that was not read. `skeleton` is the linked skeleton's name (null: no link).
+void AddNotes(Build& b, const std::string* skeleton, bool meshBoneAssign, bool posesOrAnims, bool lod, bool noScripts) {
+    auto note = [&](const std::string& s) { b.out.notes.push_back("OGRE: " + s); };
+    if (skeleton) note("skeleton '" + *skeleton + "' (and the bone assignments of " + std::to_string(b.boneAssign + (meshBoneAssign ? 1 : 0)) + " mesh part(s)) not read: the mesh is imported at its bind pose, rigid");
+    else if (meshBoneAssign) note("bone assignments without a skeleton link not read");
+    if (posesOrAnims) note("morph / pose animations of the mesh are not read");
+    if (lod) note("levels of detail are not read");
+    if (b.lines) note(std::to_string(b.lines) + " submesh(es) that are not triangle lists, strips or fans (lines, points) skipped");
+    if (b.noGeom) note(std::to_string(b.noGeom) + " submesh(es) without geometry or faces skipped");
+    if (b.extraUv) note(std::to_string(b.extraUv) + " texture coordinate set(s) after the first are not imported");
+    if (b.colours) note(std::to_string(b.colours) + " vertex colour(s) not imported");
+    if (b.tangents) note("stored tangents / binormals are not imported");
+    if (b.badIdx) note(std::to_string(b.badIdx) + " triangle(s) with an index past the vertex list skipped");
+    if (b.degenerate) note(std::to_string(b.degenerate) + " degenerate triangle(s) skipped");
+    if (noScripts) note("no .material script was supplied: materials carry their names only");
+    note("coordinates, winding and texture coordinates as written; the material scripts' first pass colours and first texture unit texture are read, nothing else of them");
+}
+
+// The .material scripts next to a mesh file (a few, bounded): the material names of the submeshes are looked up in them.
+// The script named like the mesh comes first, then the others in name order; at most 32 are read. `suffixLen` is the length
+// of the mesh file's double extension (".mesh.xml" = 9, ".mesh" = 5).
+std::vector<std::string> ScriptsNextTo(const std::string& path, std::size_t suffixLen, std::string& dir) {
+    namespace fs = std::filesystem;
+    std::vector<std::string> scripts;
+    const std::size_t sl = path.find_last_of("/\\");
+    dir.clear();
+    if (sl != std::string::npos) dir = path.substr(0, sl + 1);
+    std::error_code ec;
+    std::vector<fs::path> found;
+    std::string stem = path.substr(sl == std::string::npos ? 0 : sl + 1);
+    if (stem.size() >= suffixLen) stem.resize(stem.size() - suffixLen);
+    stem = detail::txt::Lower(stem);
+    for (fs::directory_iterator it(fs::u8path(dir.empty() ? std::string(".") : dir), ec), end; !ec && it != end && found.size() < 4000; it.increment(ec)) {
+        std::error_code e2;
+        if (!it->is_regular_file(e2)) continue;
+        if (detail::txt::Lower(it->path().extension().string()) == ".material") found.push_back(it->path());
+    }
+    std::sort(found.begin(), found.end(), [&](const fs::path& a, const fs::path& b) {
+        const bool sa = detail::txt::Lower(a.stem().string()) == stem, sb = detail::txt::Lower(b.stem().string()) == stem;
+        if (sa != sb) return sa;
+        return a < b;
+    });
+    for (const fs::path& p : found) {
+        if (scripts.size() >= 32) break;
+        std::string s, e3;
+        if (detail::txt::ReadFileCapped(p.u8string(), 4u * 1024u * 1024u, s, &e3)) scripts.push_back(std::move(s));
+    }
+    return scripts;
+}
+
+// ---- the binary mesh (.mesh) ----
+// Written from the public description of the OGRE binary mesh file (the chunk list of the OGRE manual's "Mesh" chapter and
+// its serializer notes) and checked byte by byte against the three binary meshes of Assimp's test folder, whose XML twins
+// the XML reader above reads; no code from OGRE or any importer. The file is a 16-bit header id (0x1000) and a version
+// line, then chunks: a 16-bit id and a 32-bit length. The lengths cannot be trusted to skip a chunk that holds text (the
+// serializer leaves strings out of some of them), so the known chunks are read field by field in the order the format
+// writes them, and a chunk id that is not a child of the chunk being read ends that chunk.
+namespace bm {
+
+enum : std::uint16_t {
+    kHeader = 0x1000, kMesh = 0x3000, kSubmesh = 0x4000, kSubOp = 0x4010, kSubBone = 0x4100, kSubAlias = 0x4200,
+    kGeometry = 0x5000, kDecl = 0x5100, kElement = 0x5110, kVBuffer = 0x5200, kVBufferData = 0x5210,
+    kSkeletonLink = 0x6000, kMeshBone = 0x7000, kLod = 0x8000, kBounds = 0x9000, kNameTable = 0xA000, kNameEntry = 0xA100,
+    kEdgeLists = 0xB000, kPoses = 0xC000, kAnimations = 0xD000, kExtremes = 0xE000,
+};
+// vertex element semantics and types (the numbers of the format)
+enum { kSemPosition = 1, kSemBlendWeights = 2, kSemBlendIndices = 3, kSemNormal = 4, kSemDiffuse = 5, kSemSpecular = 6, kSemTexCoord = 7, kSemBinormal = 8, kSemTangent = 9 };
+enum { kFloat1 = 0, kFloat2 = 1, kFloat3 = 2, kFloat4 = 3 };
+constexpr std::size_t kMaxStr = 4096;
+constexpr std::uint32_t kMaxIndices = 3u * 20000000u;
+
+// counts per vertex (as the XML reader does), saturating
+void AddCount(int& c, std::size_t n) { c = (int)std::min<std::size_t>((std::size_t)c + n, 1000000000u); }
+
+int TypeSize(std::uint16_t t) {
+    switch (t) {
+        case 0: return 4; case 1: return 8; case 2: return 12; case 3: return 16;    // float1..4
+        case 4: return 4;                                                           // packed colour
+        case 5: return 2; case 6: return 4; case 7: return 6; case 8: return 8;     // short1..4
+        case 9: return 4; case 10: return 4; case 11: return 4;                     // ubyte4, ARGB, ABGR colour
+        default: return -1;
+    }
+}
+
+struct Elem { std::uint16_t source, type, semantic, offset, index; };
+
+struct Reader {
+    detail::bin::Br r;
+    std::string err;
+    explicit Reader(const std::string& s) : r(s) {}
+    bool Bad(const std::string& m) { if (err.empty()) err = m; return false; }
+    // a text field: bytes up to a line feed (consumed)
+    bool Line(std::string& s) {
+        std::size_t e = 0;
+        while (r.pos + e < r.n && e < kMaxStr && r.d[r.pos + e] != '\n') ++e;
+        if (r.pos + e >= r.n || e >= kMaxStr) return Bad("a text field has no end");
+        s.assign((const char*)r.d + r.pos, e);
+        if (!s.empty() && s.back() == '\r') s.pop_back();
+        r.pos += e + 1;
+        return true;
+    }
+    // the next chunk header without moving (false at the end of the file)
+    bool Peek(std::uint16_t& id, std::uint32_t& len) {
+        if (r.Left() < 6) return false;
+        const std::size_t at = r.pos;
+        id = r.U16(); len = r.U32();
+        r.pos = at;
+        return true;
+    }
+    void Header() { r.Skip(6); }
+    // skips a chunk this reader does not read, by its length (which counts the 6-byte header)
+    bool SkipChunk(std::uint32_t len) {
+        if (len < 6 || len > r.Left()) return Bad("a chunk's length runs past the end of the file");
+        r.Skip(len);
+        return !r.bad;
+    }
+};
+
+// <geometry>: the vertex count, the declaration and the buffers it names
+bool ReadGeometry(Reader& R, Geom& g, Build& b) {
+    const std::uint32_t vc = R.r.U32();
+    if (R.r.bad) return R.Bad("the geometry is cut off");
+    if (vc > (std::uint32_t)kMaxVerts) return R.Bad("too many vertices (" + std::to_string(vc) + ")");
+    std::vector<Elem> elems;
+    struct Buf { std::uint16_t bind, size; std::size_t at; };
+    std::vector<Buf> bufs;
+    std::uint16_t id; std::uint32_t len;
+    while (R.Peek(id, len)) {
+        if (id == kDecl) {
+            R.Header();
+            while (R.Peek(id, len) && id == kElement) {
+                R.Header();
+                Elem e{R.r.U16(), R.r.U16(), R.r.U16(), R.r.U16(), R.r.U16()};
+                if (R.r.bad) return R.Bad("a vertex element is cut off");
+                if (elems.size() >= 64) return R.Bad("too many vertex elements");
+                elems.push_back(e);
+            }
+        } else if (id == kVBuffer) {
+            R.Header();
+            Buf bf{R.r.U16(), R.r.U16(), 0};
+            std::uint16_t did; std::uint32_t dlen;
+            if (R.r.bad || !R.Peek(did, dlen) || did != kVBufferData) return R.Bad("a vertex buffer has no data");
+            R.Header();
+            if (!R.r.Fits(vc, bf.size)) return R.Bad("a vertex buffer runs past the end of the file");
+            bf.at = R.r.pos;
+            R.r.Skip((std::uint64_t)vc * bf.size);
+            if (bufs.size() >= 64) return R.Bad("too many vertex buffers");
+            bufs.push_back(bf);
+        } else break;
+    }
+    // the positions must be in a buffer before anything is allocated from the count (the buffers were checked to fit the file,
+    // and a position takes 12 bytes of its vertex, so the arrays below are bounded by the file's size)
+    if (vc > 0) {
+        bool backed = false;
+        for (const Elem& e : elems) {
+            if (e.semantic != kSemPosition || e.type < 2 || e.type > kFloat4) continue;
+            for (const Buf& x : bufs) if (x.bind == e.source && (std::size_t)e.offset + (std::size_t)TypeSize(e.type) <= x.size) backed = true;
+        }
+        if (!backed) return R.Bad("the geometry has no 32-bit float positions inside a vertex buffer");
+    }
+    g.count = vc;
+    const std::size_t n = vc;
+    g.pos.assign(n, Vec3{0, 0, 0}); g.nrm.assign(n, Vec3{0, 0, 0}); g.uv.assign(n, Vec2{0, 0});
+    g.hasPos.assign(n, 0); g.hasNrm.assign(n, 0); g.hasUv.assign(n, 0);
+    bool havePos = false;
+    for (const Elem& e : elems) {
+        const Buf* bf = nullptr;
+        for (const Buf& x : bufs) if (x.bind == e.source) bf = &x;
+        const int ts = TypeSize(e.type);
+        if (!bf) { if (e.semantic == kSemPosition) return R.Bad("the positions name a vertex buffer the geometry does not have"); continue; }
+        if (ts < 0 || (std::size_t)e.offset + (std::size_t)ts > bf->size) return R.Bad("a vertex element lies outside its vertex (type " + std::to_string(e.type) + ")");
+        if (e.semantic == kSemDiffuse || e.semantic == kSemSpecular) { AddCount(b.colours, n); continue; }
+        if (e.semantic == kSemTangent || e.semantic == kSemBinormal) { AddCount(b.tangents, n); continue; }
+        if (e.semantic == kSemTexCoord && e.index > 0) { AddCount(b.extraUv, n); continue; }
+        if (e.semantic != kSemPosition && e.semantic != kSemNormal && e.semantic != kSemTexCoord) continue;   // blend weights and indices: the skin is not read
+        const int comps = e.type <= kFloat4 ? e.type + 1 : 0;
+        if (comps == 0) {
+            if (e.semantic == kSemPosition) return R.Bad("positions of type " + std::to_string(e.type) + " are not read (only 32-bit floats)");
+            continue;
+        }
+        if (e.semantic != kSemTexCoord && comps < 3) return R.Bad("a position or normal with fewer than 3 components");
+        const unsigned char* base = R.r.d + bf->at + e.offset;
+        for (std::size_t k = 0; k < n; ++k) {
+            float f[3] = {0, 0, 0};
+            std::memcpy(f, base + k * bf->size, (std::size_t)std::min(comps, 3) * 4);
+            if (!std::isfinite(f[0]) || !std::isfinite(f[1]) || !std::isfinite(f[2])) return R.Bad("vertex " + std::to_string(k) + " holds a value that is not a finite number");
+            if (e.semantic == kSemPosition) { g.pos[k] = Vec3{f[0], f[1], f[2]}; g.hasPos[k] = 1; }
+            else if (e.semantic == kSemNormal) { g.nrm[k] = Vec3{f[0], f[1], f[2]}; g.hasNrm[k] = 1; }
+            else { g.uv[k] = Vec2{f[0], comps >= 2 ? f[1] : 0.0f}; g.hasUv[k] = 1; }
+        }
+        if (e.semantic == kSemPosition) havePos = true;
+    }
+    if (n > 0 && !havePos) return R.Bad("the geometry has no positions");
+    return true;
+}
+
+struct Sub {
+    std::string material;
+    bool shared = false, ownGeom = false, boneAssign = false;
+    std::uint16_t op = 4;   // triangle list unless an operation chunk says otherwise
+    std::vector<std::uint32_t> idx;
+    Geom geom;
+};
+
+bool ReadSubmesh(Reader& R, Sub& s, Build& b) {
+    if (!R.Line(s.material)) return false;
+    s.shared = R.r.U8() != 0;
+    const std::uint32_t ic = R.r.U32();
+    const bool i32 = R.r.U8() != 0;
+    if (R.r.bad) return R.Bad("a submesh is cut off");
+    if (ic > kMaxIndices) return R.Bad("too many indices (" + std::to_string(ic) + ")");
+    if (!R.r.Fits(ic, i32 ? 4 : 2)) return R.Bad("a submesh's index list runs past the end of the file");
+    s.idx.resize(ic);
+    for (std::uint32_t i = 0; i < ic; ++i) s.idx[i] = i32 ? R.r.U32() : R.r.U16();
+    std::uint16_t id; std::uint32_t len;
+    if (!s.shared) {
+        if (!R.Peek(id, len) || id != kGeometry) return R.Bad("a submesh without shared vertices has no geometry");
+        R.Header();
+        if (!ReadGeometry(R, s.geom, b)) return false;
+        s.ownGeom = true;
+    }
+    while (R.Peek(id, len)) {
+        if (id == kSubOp) { R.Header(); s.op = R.r.U16(); }
+        else if (id == kSubBone) { R.Header(); R.r.Skip(10); s.boneAssign = true; }   // vertex (32), bone (16), weight (float)
+        else if (id == kSubAlias) { R.Header(); std::string a, t; if (!R.Line(a) || !R.Line(t)) return false; }
+        else break;
+        if (R.r.bad) return R.Bad("a submesh chunk is cut off");
+    }
+    return true;
+}
+
+} // namespace bm
+
 } // namespace ogre
 } // namespace
 
-static bool ReadOgreImpl(const std::string& input, const std::string& baseDir, ImportedModel& out, std::string* err, const std::vector<std::string>* scripts) {
+static bool ReadOgreImpl(std::string text, const std::string& baseDir, ImportedModel& out, std::string* err, const std::vector<std::string>* scripts) {
     using namespace ogre;
-    std::string text = input;
     bool converted = false;
     std::string why;
     if (!detail::txt::NormalizeEncoding(text, converted, why, kMaxFileBytes)) return Fail(err, why);
-    detail::xml::Doc doc;
+    detail::xml::FlatDoc doc;   // offsets into `text`, which lives to the end of this function
     std::string xerr;
-    if (!detail::xml::Parse(text, doc, xerr)) return Fail(err, xerr);
-    if (doc.Name(0) != "mesh") return Fail(err, "not an OGRE mesh (the root element is <" + doc.Name(0) + ">, not <mesh>)");
+    if (!detail::xml::ParseFlat(text, doc, xerr)) return Fail(err, xerr);
+    if (doc.Name(0) != "mesh") return Fail(err, "not an OGRE mesh (the root element is <" + std::string(doc.Name(0)) + ">, not <mesh>)");
 
-    std::map<std::string, Mat> mats;
-    if (scripts) for (const std::string& s : *scripts) ParseScript(s, mats);
+    Build b(out);
+    b.baseDir = baseDir;
+    if (scripts) for (const std::string& s : *scripts) ParseScript(s, b.mats);
 
-    int extraUv = 0, colours = 0, tangents = 0, boneAssign = 0, lines = 0, badFaces = 0, partialStrips = 0, noGeom = 0;
     Geom shared;
     bool haveShared = false;
     const int sg = doc.First(0, "sharedgeometry");
     if (sg >= 0) {
-        if (!ReadGeometry(doc, sg, shared, err, extraUv, colours, tangents)) return false;
+        if (!ReadGeometry(doc, sg, shared, err, b.extraUv, b.colours, b.tangents)) return false;
         haveShared = true;
     }
     const int sm = doc.First(0, "submeshes");
@@ -181,23 +502,20 @@ static bool ReadOgreImpl(const std::string& input, const std::string& baseDir, I
     root.name = "OGRE";
     out.nodes.push_back(root);
 
-    std::map<int, std::string> names;   // <submeshnames>: index -> name
-    {
+    {   // <submeshnames>: index -> name
         const int sn = doc.First(0, "submeshnames");
-        if (sn >= 0) for (int e : doc.Kids(sn)) {
+        if (sn >= 0) for (int e = doc.Kid(sn); e >= 0; e = doc.Next(e)) {
             double ix;
-            if (doc.Name(e) == "submeshname" && Dbl(doc.Attr(e, "index"), ix) && ix >= 0 && ix < 1e9 && names.size() < kMaxSubmeshes) names[(int)ix] = doc.AttrOr(e, "name", "");
+            if (doc.Name(e) == "submeshname" && Num(doc, e, "index", ix) && ix >= 0 && ix < 1e9 && b.names.size() < kMaxSubmeshes) b.names[(int)ix] = doc.AttrOr(e, "name", "");
         }
     }
-    std::map<std::string, int> matOut;
-    std::size_t outVerts = 0;
-    int idx = 0, degenerate = 0, badIdx = 0;
-    for (int s : doc.Kids(sm)) {
+    int idx = 0;
+    for (int s = doc.Kid(sm); s >= 0; s = doc.Next(s)) {
         if (doc.Name(s) != "submesh") continue;
         if ((std::size_t)idx >= kMaxSubmeshes) return Fail(err, "too many submeshes");
         const int myIdx = idx++;
         const std::string op = detail::txt::Lower(doc.AttrOr(s, "operationtype", "triangle_list"));
-        if (op != "triangle_list" && op != "triangle_strip" && op != "triangle_fan") { ++lines; continue; }
+        if (op != "triangle_list" && op != "triangle_strip" && op != "triangle_fan") { ++b.lines; continue; }
         const std::string us = detail::txt::Lower(doc.AttrOr(s, "usesharedvertices", "false"));
         const bool useShared = us == "true" || us == "1";
         Geom own;
@@ -207,33 +525,28 @@ static bool ReadOgreImpl(const std::string& input, const std::string& baseDir, I
             g = &shared;
         } else {
             const int gi = doc.First(s, "geometry");
-            if (gi < 0) { ++noGeom; continue; }
-            if (!ReadGeometry(doc, gi, own, err, extraUv, colours, tangents)) return false;
+            if (gi < 0) { ++b.noGeom; continue; }
+            if (!ReadGeometry(doc, gi, own, err, b.extraUv, b.colours, b.tangents)) return false;
         }
         const int fi = doc.First(s, "faces");
-        if (fi < 0) { ++noGeom; continue; }
+        if (fi < 0) { ++b.noGeom; continue; }
         double fc;
-        if (!Dbl(doc.Attr(fi, "count"), fc) || fc < 0 || fc > (double)kMaxFaces || fc != std::floor(fc)) return Fail(err, "bad faces count '" + doc.AttrOr(fi, "count", "") + "'");
-        detail::rc::Soup soup;
-        const std::size_t nv = (std::size_t)g->count;
-        // positions are the geometry's; only the vertices the faces use are copied (a submesh may use a few of a big shared buffer)
-        std::unordered_map<std::uint32_t, std::uint32_t> remap;
-        bool anyUv = false, anyNrm = false;
+        if (!Num(doc, fi, "count", fc) || fc < 0 || fc > (double)kMaxFaces || fc != std::floor(fc)) return Fail(err, "bad faces count '" + doc.AttrOr(fi, "count", "") + "'");
         std::vector<std::uint32_t> faceIdx;   // 3 per triangle
         std::size_t seen = 0;
         const bool strip = op == "triangle_strip", fan = op == "triangle_fan";
         std::vector<std::uint32_t> seq;   // strip and fan: the index sequence, the first face's indices then each later face's newest one
         auto toIdx = [](double v) { return (std::uint32_t)std::min(v, 4294967295.0); };
-        for (int f : doc.Kids(fi)) {
+        for (int f = doc.Kid(fi); f >= 0; f = doc.Next(f)) {
             if (doc.Name(f) != "face") continue;
             if (++seen > (std::size_t)fc) return Fail(err, "more <face> elements than the faces count " + std::to_string((std::int64_t)fc));
             double v[3] = {0, 0, 0};
             bool has[3] = {false, false, false};
             static const char* const names[3] = {"v1", "v2", "v3"};
             for (int k = 0; k < 3; ++k) {
-                const std::string* at = doc.Attr(f, names[k]);
-                if (!at) continue;
-                if (!Dbl(at, v[k]) || v[k] < 0 || v[k] != std::floor(v[k])) return Fail(err, "bad <face> in submesh " + std::to_string(myIdx));
+                std::string_view at;
+                if (!doc.Attr(f, names[k], at)) continue;
+                if (!detail::rc::ParseNumber(at.data(), at.data() + at.size(), v[k]) || v[k] < 0 || v[k] != std::floor(v[k])) return Fail(err, "bad <face> in submesh " + std::to_string(myIdx));
                 has[k] = true;
             }
             if (!strip && !fan) {
@@ -247,87 +560,105 @@ static bool ReadOgreImpl(const std::string& input, const std::string& baseDir, I
             if (seq.empty()) { for (int k = 0; k < 3; ++k) if (has[k]) seq.push_back(toIdx(v[k])); }
             else { const int last = has[2] ? 2 : has[1] ? 1 : 0; seq.push_back(toIdx(v[last])); }
         }
-        if (strip || fan) {
-            // a strip alternates its winding: triangle i is (s[i], s[i+1], s[i+2]) for even i and (s[i+1], s[i], s[i+2]) for odd i;
-            // a fan shares its first vertex: (s[0], s[i+1], s[i+2]). Repeated indices make degenerate triangles, which are dropped below.
-            for (std::size_t i = 0; i + 2 < seq.size(); ++i) {
-                if (strip) { faceIdx.push_back(seq[i + (i & 1)]); faceIdx.push_back(seq[i + 1 - (i & 1)]); faceIdx.push_back(seq[i + 2]); }
-                else { faceIdx.push_back(seq[0]); faceIdx.push_back(seq[i + 1]); faceIdx.push_back(seq[i + 2]); }
-            }
-        }
-        (void)partialStrips; (void)badFaces;
-        for (std::size_t t = 0; t + 2 < faceIdx.size(); t += 3) {
-            if (faceIdx[t] >= nv || faceIdx[t + 1] >= nv || faceIdx[t + 2] >= nv) { ++badIdx; continue; }
-            for (int c = 0; c < 3; ++c) {
-                const std::uint32_t v = faceIdx[t + (std::size_t)c];
-                auto r = remap.emplace(v, (std::uint32_t)soup.pos.size());
-                if (r.second) soup.pos.push_back(g->pos[v]);
-                soup.ci.push_back(r.first->second);
-                soup.cuv.push_back(g->uv[v]);
-                soup.cnrm.push_back(g->nrm[v]);
-                if (g->hasUv[v]) anyUv = true;
-                if (g->hasNrm[v]) anyNrm = true;
-            }
-        }
-        if (soup.ci.empty()) { ++noGeom; continue; }
-        if (!anyUv) soup.cuv.clear();
-        const bool allNrm = anyNrm && [&] { for (std::size_t c = 0; c < soup.ci.size(); ++c) { const Vec3& n = soup.cnrm[c]; if (n.x == 0 && n.y == 0 && n.z == 0) return false; } return true; }();
-        if (!allNrm) soup.cnrm.clear();
-        ImportedPart part;
-        detail::rc::BuildStats st;
-        if (!detail::rc::BuildMesh(soup, 180.0, part.mesh, &st, kMaxOutVerts - std::min(outVerts, kMaxOutVerts))) return Fail(err, "too many output vertices");
-        degenerate += st.degenerate;
-        outVerts += part.mesh.vertices.size();
-        if (part.mesh.triangles.empty()) continue;
-        if (!detail::rc::PartInRange(part)) return Fail(err, "a vertex is out of range");
-        // material
-        const std::string matName = doc.AttrOr(s, "material", "");
-        std::string pname = matName.empty() ? "submesh" + std::to_string(myIdx) : matName;
-        { auto nm = names.find(myIdx); if (nm != names.end()) pname = nm->second; }
-        part.mesh.name = pname;
-        part.node = 0;
-        if (!matName.empty()) {
-            auto it = matOut.find(matName);
-            if (it == matOut.end()) {
-                ImportedMaterial im;
-                im.name = matName;
-                auto mi = mats.find(matName);
-                if (mi != mats.end()) {
-                    const Mat& m = mi->second;
-                    im.hasDiffuse = m.hasDiffuse; im.diffuse = m.diffuse; im.hasEmissive = m.hasEmissive; im.emissive = m.emissive; im.shininess = m.shininess;
-                    if (!m.texture.empty()) {
-                        std::string t = m.texture;
-                        for (char& c : t) if (c == '\\') c = '/';
-                        if (!baseDir.empty() && t[0] != '/' && t.find(':') == std::string::npos) t = baseDir + t;
-                        im.texture = t;
-                    }
-                }
-                out.materials.push_back(im);
-                it = matOut.emplace(matName, (int)out.materials.size() - 1).first;
-            }
-            part.material = it->second;
-        }
-        if (doc.First(s, "boneassignments") >= 0) ++boneAssign;
-        out.parts.push_back(std::move(part));
+        if (strip || fan) ExpandSequence(seq, strip, faceIdx);
+        if (!AddSubmesh(b, *g, faceIdx, myIdx, doc.AttrOr(s, "material", ""), doc.First(s, "boneassignments") >= 0, err)) return false;
     }
     if (out.parts.empty()) return Fail(err, "no submesh has both vertices and triangles");
     out.backend = "own";
 
-    auto note = [&](const std::string& s) { out.notes.push_back("OGRE: " + s); };
     const int skel = doc.First(0, "skeletonlink");
-    if (skel >= 0) note("skeleton '" + doc.AttrOr(skel, "name", "") + "' (and the bone assignments of " + std::to_string(boneAssign + (doc.First(0, "boneassignments") >= 0 ? 1 : 0)) + " mesh part(s)) not read: the mesh is imported at its bind pose, rigid");
-    else if (doc.First(0, "boneassignments") >= 0) note("bone assignments without a skeleton link not read");
-    if (doc.First(0, "poses") >= 0 || doc.First(0, "animations") >= 0) note("morph / pose animations of the mesh are not read");
-    if (doc.First(0, "levelofdetail") >= 0) note("levels of detail are not read");
-    if (lines) note(std::to_string(lines) + " submesh(es) that are not triangle lists, strips or fans (lines, points) skipped");
-    if (noGeom) note(std::to_string(noGeom) + " submesh(es) without geometry or faces skipped");
-    if (extraUv) note(std::to_string(extraUv) + " texture coordinate set(s) after the first are not imported");
-    if (colours) note(std::to_string(colours) + " vertex colour(s) not imported");
-    if (tangents) note("stored tangents / binormals are not imported");
-    if (badIdx) note(std::to_string(badIdx) + " triangle(s) with an index past the vertex list skipped");
-    if (degenerate) note(std::to_string(degenerate) + " degenerate triangle(s) skipped");
-    if (!scripts || scripts->empty()) note("no .material script was supplied: materials carry their names only");
-    note("coordinates, winding and texture coordinates as written; the material scripts' first pass colours and first texture unit texture are read, nothing else of them");
+    const std::string skelName = skel >= 0 ? doc.AttrOr(skel, "name", "") : std::string();
+    AddNotes(b, skel >= 0 ? &skelName : nullptr, doc.First(0, "boneassignments") >= 0, doc.First(0, "poses") >= 0 || doc.First(0, "animations") >= 0,
+             doc.First(0, "levelofdetail") >= 0, !scripts || scripts->empty());
+    return true;
+}
+
+static bool ReadOgreBinImpl(const std::string& bytes, const std::string& baseDir, ImportedModel& out, std::string* err, const std::vector<std::string>* scripts) {
+    using namespace ogre;
+    if (bytes.size() > kMaxFileBytes) return Fail(err, "the file is larger than " + std::to_string(kMaxFileBytes >> 20) + " MB");
+    if (bytes.size() >= 2 && (unsigned char)bytes[0] == 0x10 && (unsigned char)bytes[1] == 0x00) return Fail(err, "a big-endian binary mesh (not read)");
+    bm::Reader R(bytes);
+    std::string version;
+    if (R.r.U16() != bm::kHeader || !R.Line(version)) return Fail(err, "not an OGRE binary mesh (no header)");
+    if (version.rfind("[MeshSerializer_v", 0) != 0) return Fail(err, "not an OGRE binary mesh (version '" + version.substr(0, 40) + "')");
+    // v1.8 and later write the layout read here; the older ones (1.4 and before) differ in the parts that hold levels of
+    // detail and animation, which are not read anyway, and are accepted with a note.
+    std::uint16_t id; std::uint32_t len;
+    if (!R.Peek(id, len) || id != bm::kMesh) return Fail(err, "the file has no mesh chunk");
+    R.Header();
+    R.r.U8();   // "skeletally animated": the skeleton link says the same
+
+    Build b(out);
+    b.baseDir = baseDir;
+    if (scripts) for (const std::string& s : *scripts) ParseScript(s, b.mats);
+    Geom shared;
+    bool haveShared = false, meshBone = false, poses = false, lod = false, cutShort = false;
+    std::string skeleton;
+    bool haveSkeleton = false;
+    std::vector<bm::Sub> subs;
+    while (R.Peek(id, len)) {
+        if (id == bm::kSubmesh) {
+            R.Header();
+            if (subs.size() >= kMaxSubmeshes) return Fail(err, "too many submeshes");
+            subs.emplace_back();
+            if (!bm::ReadSubmesh(R, subs.back(), b)) return Fail(err, R.err);
+        } else if (id == bm::kGeometry) {
+            R.Header();
+            if (haveShared) return Fail(err, "two shared geometries");
+            if (!bm::ReadGeometry(R, shared, b)) return Fail(err, R.err);
+            haveShared = true;
+        } else if (id == bm::kSkeletonLink) {
+            R.Header();
+            if (!R.Line(skeleton)) return Fail(err, R.err);
+            haveSkeleton = true;
+        } else if (id == bm::kMeshBone) {
+            R.Header(); R.r.Skip(10); meshBone = true;
+        } else if (id == bm::kBounds) {
+            R.Header(); R.r.Skip(28);   // box and radius: worked out from the vertices instead
+        } else if (id == bm::kNameTable) {
+            R.Header();
+            while (R.Peek(id, len) && id == bm::kNameEntry) {
+                R.Header();
+                const std::uint16_t ix = R.r.U16();
+                std::string nm;
+                if (R.r.bad || !R.Line(nm)) return Fail(err, R.err.empty() ? "a submesh name is cut off" : R.err);
+                if (b.names.size() < kMaxSubmeshes) b.names[ix] = nm;
+            }
+        } else {
+            // levels of detail, edge lists, poses, animations, extremes and anything newer: skipped by their length; a length
+            // that does not fit ends the reading there (the submeshes before it are kept, with a note)
+            if (id == bm::kLod) lod = true;
+            if (id == bm::kPoses || id == bm::kAnimations) poses = true;
+            if (!R.SkipChunk(len)) { cutShort = true; break; }
+        }
+        if (R.r.bad) return Fail(err, "a chunk is cut off");
+    }
+    if (subs.empty()) return Fail(err, "the file has no submeshes");
+
+    ImportedNode root;
+    root.name = "OGRE";
+    out.nodes.push_back(root);
+    for (std::size_t i = 0; i < subs.size(); ++i) {
+        bm::Sub& s = subs[i];
+        const int myIdx = (int)i;
+        if (s.op != 4 && s.op != 5 && s.op != 6) { ++b.lines; continue; }   // 1 points, 2 line list, 3 line strip
+        const Geom* g = &s.geom;
+        if (s.shared) {
+            if (!haveShared) return Fail(err, "submesh " + std::to_string(myIdx) + " uses shared vertices but the file has no shared geometry");
+            g = &shared;
+        }
+        std::vector<std::uint32_t> faceIdx;
+        if (s.op == 4) { faceIdx = std::move(s.idx); faceIdx.resize(faceIdx.size() / 3 * 3); }
+        else ExpandSequence(s.idx, s.op == 5, faceIdx);
+        if (!AddSubmesh(b, *g, faceIdx, myIdx, s.material, s.boneAssign, err)) return false;
+        s.geom = Geom{};   // freed as soon as its part is built
+    }
+    if (out.parts.empty()) return Fail(err, "no submesh has both vertices and triangles");
+    out.backend = "own";
+    AddNotes(b, haveSkeleton ? &skeleton : nullptr, meshBone, poses, lod, !scripts || scripts->empty());
+    if (cutShort) out.notes.push_back("OGRE: a chunk after the submeshes has a length past the end of the file: the rest of the file was not read");
+    if (version != "[MeshSerializer_v1.8]" && version != "[MeshSerializer_v1.10]" && version != "[MeshSerializer_v1.100]")
+        out.notes.push_back("OGRE: binary mesh version '" + version.substr(0, 40) + "' was not checked against a real file (1.8 was)");
     return true;
 }
 
@@ -343,35 +674,30 @@ bool ReadOgreXmlFile(const std::string& path, ImportedModel& out, std::string* e
     std::string bytes;
     if (!detail::txt::ReadFileCapped(path, ogre::kMaxFileBytes, bytes, err)) return false;
     std::string dir;
-    const std::size_t sl = path.find_last_of("/\\");
-    if (sl != std::string::npos) dir = path.substr(0, sl + 1);
-    // the .material scripts next to the mesh (a few, bounded): the material names of the submeshes are looked up in them.
-    // The script named like the mesh comes first, then the others in name order; at most 32 are read.
-    std::vector<std::string> scripts;
-    {
-        namespace fs = std::filesystem;
-        std::error_code ec;
-        std::vector<fs::path> found;
-        std::string stem = path.substr(sl == std::string::npos ? 0 : sl + 1);
-        if (stem.size() >= 9) stem.resize(stem.size() - 9);   // ".mesh.xml"
-        stem = detail::txt::Lower(stem);
-        for (fs::directory_iterator it(fs::u8path(dir.empty() ? std::string(".") : dir), ec), end; !ec && it != end && found.size() < 4000; it.increment(ec)) {
-            std::error_code e2;
-            if (!it->is_regular_file(e2)) continue;
-            if (detail::txt::Lower(it->path().extension().string()) == ".material") found.push_back(it->path());
-        }
-        std::sort(found.begin(), found.end(), [&](const fs::path& a, const fs::path& b) {
-            const bool sa = detail::txt::Lower(a.stem().string()) == stem, sb = detail::txt::Lower(b.stem().string()) == stem;
-            if (sa != sb) return sa;
-            return a < b;
-        });
-        for (const fs::path& p : found) {
-            if (scripts.size() >= 32) break;
-            std::string s, e3;
-            if (detail::txt::ReadFileCapped(p.u8string(), 4u * 1024u * 1024u, s, &e3)) scripts.push_back(std::move(s));
-        }
-    }
-    return ReadOgreXmlBuffer(bytes, dir, out, err, &scripts);
+    std::vector<std::string> scripts = ogre::ScriptsNextTo(path, 9, dir);   // ".mesh.xml"
+    // the bytes are handed over, not copied (ReadOgreXmlBuffer copies the caller's text)
+    out = ImportedModel{};
+    const bool ok = ReadOgreImpl(std::move(bytes), dir, out, err, &scripts);
+    if (!ok) out = ImportedModel{};
+    return ok;
+}
+
+bool ReadOgreBinaryBuffer(const std::string& bytes, const std::string& baseDir, ImportedModel& out, std::string* err, const std::vector<std::string>* materialScripts) {
+    out = ImportedModel{};
+    const bool ok = ReadOgreBinImpl(bytes, baseDir, out, err, materialScripts);
+    if (!ok) out = ImportedModel{};
+    return ok;
+}
+
+bool ReadOgreBinaryFile(const std::string& path, ImportedModel& out, std::string* err) {
+    out = ImportedModel{};
+    std::string bytes;
+    if (!detail::txt::ReadFileCapped(path, ogre::kMaxFileBytes, bytes, err)) return false;
+    std::string dir;
+    std::vector<std::string> scripts = ogre::ScriptsNextTo(path, 5, dir);   // ".mesh"
+    const bool ok = ReadOgreBinImpl(bytes, dir, out, err, &scripts);
+    if (!ok) out = ImportedModel{};
+    return ok;
 }
 
 } // namespace okay

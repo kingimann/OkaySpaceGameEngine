@@ -41,12 +41,11 @@ int main(int argc, char** argv) {
         h.state.haveObject = sc.object; h.state.editMode = sc.edit; h.state.selMode = sc.mode; h.state.selCount = sc.count;
         h.canUndo = [] { return true; }; h.canRedo = [] { return false; };
         h.openTab = sc.tab;
-        bool adv = false;
         for (int f = 0; f < 4; ++f) {   // a few frames so tabs and layout settle
             ImGui_ImplSDLRenderer2_NewFrame(); ImGui_ImplSDL2_NewFrame(); ImGui::NewFrame();
             ImGui::SetNextWindowPos(ImVec2(0, 0)); ImGui::SetNextWindowSize(ImVec2(1280, 720));
             ImGui::Begin("Modeling", nullptr, ImGuiWindowFlags_NoMove | ImGuiWindowFlags_NoResize | ImGuiWindowFlags_NoCollapse);
-            oked::easymodel_ui::DrawEasyModeling(h, adv);
+            oked::easymodel_ui::DrawEasyModeling(h);
             ImGui::End();
             ImGui::Render();
             SDL_SetRenderDrawColor(rd, 30, 30, 34, 255); SDL_RenderClear(rd);

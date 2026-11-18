@@ -120,7 +120,8 @@ static std::string Sdna(const std::vector<std::pair<std::string, std::string>>& 
 
 int main() {
     RUN_SUITE("blend_hostile");
-    const char* names[] = {"blend_attr_41.blend", "blend_attr_36.blend", "blend_attr_be32.blend", "blend_attr_41_gz.blend", "blend_skin_anim.blend"};
+    const char* names[] = {"blend_attr_41.blend", "blend_attr_36.blend", "blend_attr_be32.blend", "blend_attr_41_gz.blend", "blend_skin_anim.blend", "blend_modifiers.blend",
+                           "blend_subsurf_41.blend", "blend_subsurf_36.blend", "blend_subsurf_293.blend"};
     std::vector<std::string> fixtures;
     for (const char* n : names) { fixtures.push_back(Slurp(kDir + n)); CHECK(!fixtures.back().empty()); }
 
@@ -249,7 +250,8 @@ int main() {
         if (const char* e = std::getenv("OKAY_BLEND_FUZZ_REAL_ITERS")) iters = std::atol(e);
         const char* real[] = {"models/BLEND/BlenderDefault_248.blend", "models/BLEND/BlenderDefault_269.blend", "models/BLEND/box.blend", "models/BLEND/yxa_1.blend",
                               "models/BLEND/TorusLightsCams_250_compressed.blend", "models/BLEND/test_279.blend", "models-nonbsd/BLEND/Bob.blend", "models/BLEND/CubeHierarchy_248.blend",
-                              "models-nonbsd/BLEND/fleurOptonl.blend", "models/BLEND/HUMAN.blend"};
+                              "models-nonbsd/BLEND/fleurOptonl.blend", "models/BLEND/HUMAN.blend",
+                              "models/BLEND/MirroredCube_252.blend", "models/BLEND/SuzanneSubdiv_252.blend"};
         long total = 0;
         for (const char* r : real) {
             const std::string f = Slurp(std::string(corpus) + "/" + r);

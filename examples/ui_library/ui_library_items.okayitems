@@ -1,0 +1,30 @@
+okayitems 1
+item "sword_iron"
+  name "Iron Sword"
+  description "A plain, honest blade."
+  stack 1
+  weight 2.4
+  rarity 2 0.352941 0.588235 1 1
+  category "Weapon"
+  equip mainhand
+  custom "damage" "12"
+  custom "speed" "1.1"
+end
+item "potion_heal"
+  name "Healing Potion"
+  description "Heals a little, tastes of mint."
+  stack 20
+  weight 0.3
+  rarity 1 0.431373 0.843137 0.588235 1
+  category "Potion"
+  use "Heal" 25
+end
+item "cap_leather"
+  name "Leather Cap"
+  description "Keeps the rain out of your eyes."
+  stack 1
+  weight 0.5
+  category "Armor"
+  equip head
+  custom "armor" "3"
+end

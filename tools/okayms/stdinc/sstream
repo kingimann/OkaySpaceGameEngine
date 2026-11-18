@@ -11,7 +11,14 @@
 #include <string>
 namespace std {
 struct ios_base {
-    enum openmode { in = 1, out = 2, app = 8, ate = 4, binary = 32, trunc = 16 };
+    // Constants, not an enum: an enumerator of a class is a global name here and would hide locals called `in` or `out`.
+    static const int in = 1;
+    static const int out = 2;
+    static const int ate = 4;
+    static const int app = 8;
+    static const int trunc = 16;
+    static const int binary = 32;
+    typedef int openmode;
 };
 typedef ios_base ios;
 

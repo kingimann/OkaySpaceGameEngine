@@ -331,4 +331,10 @@ inline double lgamma(double x) {
     return lgamma_pos(x);
 }
 inline float lgamma(float x) { return (float)lgamma((double)x); }
+
+// lround and llround (9899 7.12.9.7): the nearest integer, halves away from zero (the value is converted as the C types do).
+inline long lround(double x) { return (long)round(x); }
+inline long lround(float x) { return (long)round((double)x); }
+inline long long llround(double x) { return (long long)round(x); }
+inline long long llround(float x) { return (long long)round((double)x); }
 }

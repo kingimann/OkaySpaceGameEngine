@@ -106,5 +106,12 @@ int main(int, char**) {
           "std::ifstream mf(\"a.mtl\"); std::string ml; int n = 0; while (mf && std::getline(mf, ml)) { std::istringstream ms(ml); std::string mt; ms >> mt; float r; if (ms >> r) n += (int)r; }\n"
           "std::ofstream f(\"o.obj\"); f << \"v \" << 1.5f << \" \" << n << \"\\n\"; std::ostringstream o; o << \"x\" << 3;\n"
           "return std::get<1>(c) + grid[k] + cells[7] + (int)o.str().size(); }\n", &o);
+    ++tests;
+    build(t, "in-place construction, function assignment, loop condition temporaries, braced index", "#include <functional>\n#include <map>\n#include <utility>\nstatic int made = 0;\n"
+          "struct Tok { int v; Tok(int x) : v(x) { ++made; } ~Tok() {} };\nstruct It { int* p; bool operator!=(const It& o) const { return p != o.p; } };\n"
+          "struct C { int a[3]; It end() const { It i; i.p = (int*)a + 3; return i; } };\n"
+          "int main() { Tok t = Tok(5); std::function<void()> v; int c = 0; v = [&c]() { c = 1; }; v(); C k; It r; r.p = k.a; int n = 0; for (; r != k.end(); ++r.p) ++n;\n"
+          "std::map<std::pair<int, int>, int> m; ++m[{1, 2}]; return t.v + made + n + m.count({1, 2}); }\n", &o);
+    CHECK(t, has_symbol(o, "??0Tok@@QEAA@H@Z"));
     return t.finish(tests);
 }

@@ -2419,6 +2419,7 @@ struct Parser {
         if (m == nullptr) {
             error = std::string("no matching ") + (which[1] == 'c' ? "constructor" : "destructor") + " in " +
                     structs[static_cast<size_t>(sid)].name;
+            if (!current_fn.empty()) error += " (in " + current_fn + ", " + std::to_string(args.size()) + " arguments)";
             return false;
         }
         Node call;
@@ -6642,7 +6643,7 @@ struct Parser {
                     for (size_t j = i; j < call_args.size(); ++j) {
                         Type t;
                         if (!static_type(call_args[j], &t)) {
-                            error = "cannot deduce template arguments of " + name;
+                            error = "cannot deduce template arguments of " + name + " (in " + current_fn + ")";
                             return false;
                         }
                         if (t.is_array()) {
@@ -6663,7 +6664,7 @@ struct Parser {
             if (pt.tpat < 0 && explicit_given[static_cast<size_t>(pt.base - 100)]) continue;
             Type at_type;
             if (!static_type(call_args[i], &at_type)) {
-                error = "cannot deduce template arguments of " + name;
+                error = "cannot deduce template arguments of " + name + " (in " + current_fn + ")";
                 return false;
             }
             if (at_type.is_array()) {
@@ -8055,6 +8056,49 @@ bool Parser::parse_stmt(Node* out, std::vector<Local>* locals) {
     std::vector<Node> mine = std::move(stmt_pre);
     stmt_pre = std::move(outer);
     if (!ok || mine.empty()) return ok;
+    Node* loop_node = out;  // a `for` with its own variables is a scope block around the loop
+    if (loop && loop_node->kind == Node::Block)
+        for (Node& k : loop_node->kids)
+            if (k.kind == Node::While || k.kind == Node::For) loop_node = &k;
+    if (loop && (loop_node->kind == Node::While || loop_node->kind == Node::For) && loop_node->kids.size() >= 2) {
+        // The temporaries the condition needs are made again in every pass, before the condition is tested:
+        //   while (c) body   is   while (true) { make; if (!c) break; body }
+        //   for (i; c; s) body   is   for (i; ; s) { make; if (!c) break; body }
+        // (their destructors still run once, after the loop).
+        const size_t ci = loop_node->kind == Node::While ? 0 : 1;
+        const size_t bi = loop_node->kind == Node::While ? 1 : 3;
+        if (bi < loop_node->kids.size() && !(loop_node->kids[ci].kind == Node::Block && loop_node->kids[ci].text == "skip")) {
+            Node cond = std::move(loop_node->kids[ci]);
+            Node body = std::move(loop_node->kids[bi]);
+            Node negated;
+            negated.kind = Node::Unary;
+            negated.op = TNot;
+            negated.kids.push_back(std::move(cond));
+            Node jump;
+            jump.kind = Node::Break;
+            Node test;
+            test.kind = Node::If;
+            test.kids.push_back(std::move(negated));
+            test.kids.push_back(std::move(jump));
+            Node pass;
+            pass.kind = Node::Block;
+            for (Node& n : mine) pass.kids.push_back(std::move(n));
+            pass.kids.push_back(std::move(test));
+            pass.kids.push_back(std::move(body));
+            Node always;
+            if (loop_node->kind == Node::While) {
+                always.kind = Node::IntLit;
+                always.number = 1;
+                always.type.base = 1;
+            } else {
+                always.kind = Node::Block;
+                always.text = "skip";
+            }
+            loop_node->kids[ci] = std::move(always);
+            loop_node->kids[bi] = std::move(pass);
+            return true;
+        }
+    }
     if (loop) {
         error = "a reference bound to a temporary in a loop condition is not supported";
         return false;
@@ -8576,7 +8620,7 @@ bool Parser::parse_stmt_inner(Node* out, std::vector<Local>* locals, int stmt_li
             const size_t after_init = at;
             Type t;
             if (!static_type(init, &t)) {
-                error = "cannot work out the type of the auto variable";
+                error = "cannot work out the type of the auto variable (in " + current_fn + ")";
                 return false;
             }
             t.is_ref = false;
@@ -8741,6 +8785,28 @@ bool Parser::parse_local_decl_one(const Type& type, bool is_typedef, bool is_sta
             Node list;
             if (!init_list_temp(list_type_local, &list)) return false;
             ctor_args.push_back(std::move(list));
+            have_ctor_args = true;
+            has_init = false;
+            init = Node{};
+            init.kind = Node::Block;
+            init.text = "skipped";
+        } else if (!decl.type.is_array() && obj_needs_ctor(decl.type) && is(TIdent) && at + 1 < tokens.size() &&
+                   tokens[at + 1].kind == TLParen && !local_visible(cur().text) &&
+                   structs[static_cast<size_t>(decl.type.struct_id)].name == cur().text &&
+                   [&]() {
+                       size_t k = at + 1;
+                       int depth = 0;
+                       for (; k < tokens.size() && tokens[k].kind != TEnd; ++k) {
+                           if (tokens[k].kind == TLParen) ++depth;
+                           else if (tokens[k].kind == TRParen && --depth == 0) break;
+                       }
+                       return k + 1 < tokens.size() && (tokens[k + 1].kind == TSemi || tokens[k + 1].kind == TComma);
+                   }()) {
+            // T x = T(args); is made in place by the constructor, with no temporary and no copy ([dcl.init]/17.6.1, the
+            // C++17 rule: the initializer is a prvalue of the same class).
+            next();
+            next();
+            if (!parse_call_args(&ctor_args)) return false;
             have_ctor_args = true;
             has_init = false;
             init = Node{};
@@ -10526,6 +10592,35 @@ bool Parser::operator_binary(Tok op, Node* left, Node* right, bool* done) {
     std::string name;
     if (!operator_name(op, &name)) return true;
     if (!lc && !rc) return true;
+    if (op == TAssign && lc && rc && rt.struct_id != lt.struct_id && cur_locals != nullptr) {
+        // `f = lambda;` where the left class has a constructor that takes the right object: the right side is first made
+        // into a temporary of the left class ([over.match.copy], [class.conv.ctor]).
+        bool related = false;
+        for (int walk = rt.struct_id; walk >= 0; walk = structs[static_cast<size_t>(walk)].base)
+            if (walk == lt.struct_id) related = true;
+        for (int walk = lt.struct_id; walk >= 0 && !related; walk = structs[static_cast<size_t>(walk)].base)
+            if (walk == rt.struct_id) related = true;
+        for (const Method& m : structs[static_cast<size_t>(lt.struct_id)].methods)
+            if (m.name == name && !m.implicit && m.params.size() == 1 && m.params[0].base == 3 &&
+                m.params[0].struct_id == rt.struct_id)
+                related = true;  // an operator= for exactly this class: no conversion
+        if (!related) {
+            Local hidden;
+            hidden.name = "__cv" + std::to_string(tmp_count++);
+            hidden.type = lt;
+            hidden.type.is_const = false;
+            place_local(cur_locals, hidden);
+            std::vector<Node> cargs;
+            cargs.push_back(std::move(*right));
+            Node ctor_stmt;
+            if (!special_call(lt.struct_id, "<ctor>", node_addr(node_name(hidden.name)), std::move(cargs), &ctor_stmt))
+                return false;
+            stmt_pre.push_back(std::move(ctor_stmt));
+            if (class_needs_dtor(structs[static_cast<size_t>(lt.struct_id)])) stmt_temps.push_back(Temp{hidden.name, lt.struct_id});
+            *right = node_name(hidden.name);
+            rt = lt;
+        }
+    }
     if (op == TAssign && lc) {
         // Only a user-written operator= is called; without one the members are copied as before.
         std::vector<Node> args;
@@ -11831,7 +11926,7 @@ bool Parser::parse_unary(Node* out) {
     } else if (is(TLBrack)) {
         if (!parse_lambda(out)) return false;
     } else {
-        error = "expected an expression";
+        error = "expected an expression" + (current_fn.empty() ? std::string() : " (in " + current_fn + ", token " + (is(TEnd) ? std::string("end") : cur().text) + ")");
         return false;
     }
     return parse_postfix(out);
@@ -11890,7 +11985,25 @@ bool Parser::parse_postfix(Node* out) {
         if (is(TLBrack)) {
             next();
             Node index;
-            if (!parse_expr(0, &index)) return false;
+            if (is(TLBrace)) {
+                // m[{a, b}]: a braced list as the index; what it makes depends on the operator[] parameter, so its position
+                // is kept (like a braced call argument) and read when the parameter is known.
+                index.kind = Node::Block;
+                index.text = "tokbrace";
+                index.number = at;
+                int depth = 0;
+                do {
+                    if (is(TLBrace)) ++depth;
+                    else if (is(TRBrace)) --depth;
+                    else if (is(TEnd)) {
+                        error = "expected '}'";
+                        return false;
+                    }
+                    next();
+                } while (depth > 0);
+            } else if (!parse_expr(0, &index)) {
+                return false;
+            }
             if (!expect(TRBrack, "']'")) return false;
             {
                 bool done = false;

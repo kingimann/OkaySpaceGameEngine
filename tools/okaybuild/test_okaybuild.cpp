@@ -802,6 +802,7 @@ static void testNativeManifest() {
         check(m4.find("\"OKAY_ENGINE_VERSION=\\\"1.2.3\\\"\"") != string::npos && m4.find("-Wno-narrowing") != string::npos, "the engine version from project(... VERSION x) becomes a define", m4);
         fs::remove(gRoot / "CMakeLists.txt");
     }
+    check(man.find("path_map = on") != string::npos, "the native manifest turns path_map on", man);
     check(man.find("account_defines = on") != string::npos, "the native manifest asks for the account defines", man);
 }
 
@@ -1396,6 +1397,32 @@ static void testMeasuredMemory() {
     check(rc == 2 && o.find("--memory-mb wants") != string::npos, "a bad value is an error", o);
 }
 
+static void testPathMap() {
+    printf("test: toolchain path_map = on makes objects independent of where the tree sits\n");
+    auto mk = [&](const string& name, bool on) {
+        fresh(name);
+        write("inc/h.hpp", "#pragma once\ninline const char* hfile(){ return __FILE__; }\n");
+        write("a.cpp", "#include \"h.hpp\"\n#include <cstdio>\nint main(){ printf(\"%s %s\\n\", __FILE__, hfile()); return 0; }\n");
+        write("build.okay", string("toolchain\n") + (on ? " path_map = on\n" : "") + "end\ntarget app exe\n sources = a.cpp\n include = inc\nend\n");
+    };
+    mk("pmA", true); fs::path a = gRoot;
+    int rc; string o = sh("-j1", &rc); check(rc == 0, "tree A builds", o);
+    string objA = readFile(a / ".okaybuild/obj/app/a.cpp.o");
+    o = capture("'" + (a / "build/app").string() + "'", &rc);
+    check(o == "/okay-src/a.cpp /okay-src/inc/h.hpp\n", "__FILE__ is the mapped absolute spelling in the .cpp and the header", o);
+    mk("pmB", true); fs::path b = gRoot; string cd = (a.parent_path() / "okaybuild_test_pmcache").string(); fs::remove_all(cd);
+    sh("-j1 --cache-dir '" + cd + "' --no-stat", &rc);
+    check(readFile(b / ".okaybuild/obj/app/a.cpp.o") == objA, "the same sources in another folder give a byte-identical object", "");
+    gRoot = a; fs::remove_all(a / "build"); fs::remove_all(a / ".okaybuild");
+    sh("-j1 --cache-dir '" + cd + "'", &rc); gRoot = b; fs::remove_all(b / ".okaybuild"); fs::remove_all(b / "build");
+    o = sh("-j1 --cache-dir '" + cd + "'", &rc);
+    check(rc == 0 && o.find("cache hit") != string::npos, "the second folder hits the first folder's cache entry", o);
+    fs::remove_all(cd);
+    mk("pmOff", false);
+    sh("-j1", &rc); o = capture("'" + (gRoot / "build/app").string() + "'", &rc);
+    check(o == "a.cpp inc/h.hpp\n", "without path_map the relative spelling stays", o);
+}
+
 static void testImporters() {
     printf("test: importer blocks rebuild only changed assets, settings change rebuilds all, failures leave no output\n"); fresh("imp");
     write("tools/conv.sh", "echo \"$1\" >> imports.log\nif grep -q FAIL \"$1\"; then echo half > \"$2\"; exit 1; fi\n{ printf '%s|' \"$3\"; cat \"$1\"; } > \"$2\"\n");
@@ -1490,5 +1517,6 @@ int main(int argc, char** argv) {
     testQuotedDefine();
     testAccountDefines();
     testMeasuredMemory();
+    testPathMap();
     printf("okaybuild tests: %d checks passed, %d failed\n", gPass, gFail); return gFail ? 1 : 0;
 }

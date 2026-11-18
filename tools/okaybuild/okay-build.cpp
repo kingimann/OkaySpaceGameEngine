@@ -85,6 +85,7 @@ struct Fail : std::runtime_error { using std::runtime_error::runtime_error; };
 struct Toolchain {
     string name = "gcc", cc = "gcc", cxx = "g++", ld, ar = "ar", obj = ".o", exe, libp = "lib", libs = ".a";
     vector<string> flags, linkFlags; size_t rspThreshold = 30000; bool msvc = false; bool rspUtf16 = false;
+    bool pathMap = false; // path_map = on: absolute source/include paths plus -ffile-prefix-map, so __FILE__ does not depend on the checkout folder
     bool autoPick = false; vector<string> setKeys; // 'toolchain auto'; tool fields the manifest set by hand
 };
 static bool applyPreset(Toolchain& c, const string& name) {
@@ -275,6 +276,7 @@ static Manifest parseManifest(const string& file) {
             else if (k == "flags") add(c.flags); else if (k == "link_flags") add(c.linkFlags);
             else if (k == "rsp_threshold") { if (v.size() != 1) throw err("rsp_threshold takes one value"); c.rspThreshold = (size_t)atoll(v[0].c_str()); }
             else if (k == "rsp_utf16") c.rspUtf16 = oneFlag(v, "rsp_utf16");
+            else if (k == "path_map") c.pathMap = oneFlag(v, "path_map");
             else throw err("unknown toolchain key '" + k + "'");
         } else if (mode == POOL) {
             PoolDecl& p = m.pools.back();
@@ -463,7 +465,13 @@ static bool hashFile(string_view pv, FileSig& out) {
 }
 static void forgetHash(const string& p) { OK_LOCK(l, gHashMu); gCache.erase(p); }
 static string hashStr(const string& s) { return hex64(fnv(s.data(), s.size())); }
-static string hashArgv(const vector<string>& a) { uint64_t h = 1469598103934665603ull; for (auto& s : a) { h = fnv(s.data(), s.size(), h); h = fnv("\0", 1, h); } return hex64(h); }
+static const string& normRootValue() { static const string root = fs::current_path().generic_string(); return root; }
+static string normRoot(string s) { // the checkout folder as a fixed word, so moving the tree does not change a command's hash
+    static const string root = fs::current_path().generic_string();
+    size_t at = 0; while (!root.empty() && (at = s.find(root, at)) != string::npos) { s.replace(at, root.size(), "\x01R"); at += 2; }
+    return s;
+}
+static string hashArgv(const vector<string>& a) { uint64_t h = 1469598103934665603ull; for (auto& s0 : a) { string s = normRoot(s0); h = fnv(s.data(), s.size(), h); h = fnv("\0", 1, h); } return hex64(h); }
 
 // ---------------------------------------------------------------- graph
 struct Action {
@@ -650,6 +658,16 @@ static Graph plan(const Manifest& m, const vector<string>& want) {
                 for (auto& l : libs) for (auto& i : byName[l]->exportIncludes) a.argv.push_back("-I" + i);
                 for (auto& d : t.defines) a.argv.push_back("-D" + d);
                 for (auto& x : {string("-MMD"), string("-MF"), a.depfile, string("-MT"), a.output, string("-c"), s, string("-o"), a.output}) a.argv.push_back(x);
+                if (m.tc.pathMap) { // spell the sources and include folders absolutely and map the checkout folder to a fixed name
+                    string root = fs::current_path().generic_string();
+                    auto absOf = [&](const string& p) { return (p.empty() || p[0] == '/' || (p.size() > 1 && p[1] == ':')) ? p : root + "/" + p; };
+                    for (size_t i = 1; i < a.argv.size(); ++i) {
+                        string& w = a.argv[i];
+                        if (w.rfind("-I", 0) == 0 && w.size() > 2) w = "-I" + absOf(w.substr(2));
+                        else if (w == "-c" && i + 1 < a.argv.size()) a.argv[i + 1] = absOf(a.argv[i + 1]);
+                    }
+                    a.argv.insert(a.argv.begin() + 1, "-ffile-prefix-map=" + root + "=/okay-src");
+                }
             }
             objs.push_back(a.output); objActs.push_back(add(a));
         }
@@ -1449,7 +1467,7 @@ static long long fileSizeOf(const string& p) { std::error_code ec; auto n = fs::
 static string hashArgvForCache(const vector<string>& a) {
     uint64_t h = 1469598103934665603ull;
     for (size_t i = 0; i < a.size(); ++i) {
-        const string& s = a[i];
+        const string s = normRoot(a[i]);
         if ((s == "-o" || s == "-MF" || s == "-MT") && i + 1 < a.size()) { ++i; continue; }
         if (s.rfind("/Fo", 0) == 0 || s.rfind("/Fd", 0) == 0) continue;
         h = fnv(s.data(), s.size(), h); h = fnv("\0", 1, h);
@@ -1491,6 +1509,7 @@ static int lookupCache(const Action& a, string& key, string& errOut) {
     string out, err; long long tPre = nowNs(); int rc = captureStdout(pp, out, err); gNsPre += nowNs() - tPre;
     if (rc != 0) { errOut += err.empty() ? out : err; if (errOut.empty() || errOut.back() != '\n') errOut += '\n'; errOut += "okay-build: preprocess failed\n"; return -1; }
     string id = compilerIdentity(a.argv[0]); string cmd = hashArgvForCache(a.argv);
+    if (out.find(normRootValue()) != string::npos) out = normRoot(std::move(out)); // line markers hold absolute paths
     uint64_t h = fnv(out.data(), out.size()); h = fnv(cmd.data(), cmd.size(), h); h = fnv(id.data(), id.size(), h);
     key = hex64(h);
     string dir = cacheDirOf(key);
@@ -3142,6 +3161,7 @@ static int writeNative(const string& root, const string& outFile) {
     out << "# generated by okay-build native from the source tree (not from a CMake build)\n";
     out << "account_defines = on\n";
     out << "toolchain\n";
+    out << "  path_map = on\n";
     out << "  flags = -Wall -Wextra -Wpedantic\n";
     out << "end\n";
     auto block = [&](const string& name, const string& kind, const vector<string>& srcs, const string& extra) {

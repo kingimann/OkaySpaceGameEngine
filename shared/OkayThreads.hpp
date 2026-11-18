@@ -22,6 +22,7 @@
 #    define NOMINMAX
 #  endif
 #  include <windows.h>
+#  include <process.h>   // _beginthreadex: starts the thread with the C runtime set up for it (what SDL did), not a bare CreateThread
 #else
 #  include <pthread.h>
 #endif
@@ -112,7 +113,7 @@ inline void Run(Thread* t) {
     if (t->state.exchange(Thread::Finished) == Thread::Detached) delete t;
 }
 #if defined(_WIN32)
-inline DWORD WINAPI Entry(LPVOID p) { Run(static_cast<Thread*>(p)); return 0; }
+inline unsigned __stdcall Entry(void* p) { Run(static_cast<Thread*>(p)); return 0; }
 #else
 inline void* Entry(void* p) { Run(static_cast<Thread*>(p)); return nullptr; }
 #endif
@@ -124,7 +125,7 @@ inline Thread* CreateThread(ThreadFunction fn, const char* name, void* data) {
     Thread* t = new Thread();
     t->fn = fn; t->data = data;
 #if defined(_WIN32)
-    t->handle = ::CreateThread(nullptr, 0, &detail::Entry, t, 0, nullptr);
+    t->handle = reinterpret_cast<HANDLE>(_beginthreadex(nullptr, 0, &detail::Entry, t, 0, nullptr));   // 0 = failed
     if (!t->handle) { delete t; return nullptr; }
 #else
     if (pthread_create(&t->id, nullptr, &detail::Entry, t) != 0) { delete t; return nullptr; }

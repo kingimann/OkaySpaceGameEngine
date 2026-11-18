@@ -1617,6 +1617,10 @@ if(NOT EMSCRIPTEN AND NOT WIN32)   # (the test sleeps with nanosleep; the header
         target_link_libraries(test_okay_threads PRIVATE Threads::Threads)
     endif()
     add_test(NAME okay_threads COMMAND test_okay_threads)
+    find_package(Python3 COMPONENTS Interpreter QUIET)
+    if(Python3_Interpreter_FOUND)   # every launcher thread / mutex / atomic use is a 1:1 translation of the SDL call it replaced (counts against a recorded baseline)
+        add_test(NAME thread_conversion_review COMMAND ${Python3_EXECUTABLE} ${CMAKE_SOURCE_DIR}/scripts/review_thread_conversion.py)
+    endif()
 endif()
 
 add_executable(test_vs_names test_vs_names.cpp)

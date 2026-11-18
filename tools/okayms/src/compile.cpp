@@ -1918,6 +1918,19 @@ struct Parser {
                 out.push_back(c);
                 continue;
             }
+            if (t.kind == TIdent && t.text == "thread_local") {
+                // One copy for the whole program (no thread-local storage yet): read as `static`.
+                if (i > 0 && tokens[i - 1].kind == TStatic) continue;
+                Token c = t;
+                c.kind = TStatic;
+                c.text = "static";
+                out.push_back(c);
+                continue;
+            }
+            if (t.kind == TIdent && t.text == "mutable" && !out.empty() &&
+                (out.back().kind == TSemi || out.back().kind == TLBrace || out.back().kind == TRBrace ||
+                 out.back().kind == TColon))
+                continue;  // a mutable data member: constness is not checked
             if (t.kind == TIdent && (t.text == "inline" || t.text == "explicit" || t.text == "override" ||
                                       t.text == "final" || t.text == "consteval" || t.text == "constinit" ||
                                       t.text == "volatile")) {
@@ -4798,6 +4811,14 @@ struct Parser {
                 inits.push_back(std::move(init));
             } while (accept(TComma));
         }
+        int delegating = -1;
+        if (special == 1 && !implicit) {
+            std::string plain = def.name;
+            const size_t lt = plain.find('<');
+            if (lt != std::string::npos) plain.resize(lt);
+            for (size_t ii = 0; ii < inits.size(); ++ii)
+                if (inits[ii].name == def.name || inits[ii].name == plain) delegating = static_cast<int>(ii);
+        }
         if (special == 1 && implicit && cur_implicit_copy) {
             // Copy constructor made by the compiler: the base (its copy constructor if it has one,
             // else its fields one by one), the table pointer, then each member.
@@ -4852,6 +4873,13 @@ struct Parser {
                     pre.push_back(assign_field(field.name));
                 }
             }
+        } else if (special == 1 && delegating >= 0) {
+            // A delegating constructor `C() : C(args) {}` ([class.base.init]/6): the other constructor makes the whole
+            // object; nothing else is initialised here.
+            std::vector<Node> args = std::move(inits[static_cast<size_t>(delegating)].args);
+            Node call;
+            if (!special_call(cls, "<ctor>", node_name("this"), std::move(args), &call)) return false;
+            pre.push_back(std::move(call));
         } else if (special == 1) {
             if (def.base >= 0 && class_needs_ctor(structs[static_cast<size_t>(def.base)])) {
                 std::vector<Node> args;
@@ -5732,7 +5760,14 @@ struct Parser {
         size_t k = at;
         int depth = 0;
         bool body = false;
+        int head_parens = 0;  // a `{}` inside the parameter list (`T x = {}`) is not the body
         while (k < tokens.size() && tokens[k].kind != TEnd) {
+            if (depth == 0 && tokens[k].kind == TLParen) ++head_parens;
+            else if (depth == 0 && tokens[k].kind == TRParen && head_parens > 0) --head_parens;
+            if (head_parens > 0 && (tokens[k].kind == TLBrace || tokens[k].kind == TRBrace)) {
+                ++k;
+                continue;
+            }
             if (tokens[k].kind == TLBrace) {
                 ++depth;
                 body = true;
@@ -6021,7 +6056,14 @@ struct Parser {
         size_t k = at;
         int depth = 0;
         bool body = false;
+        int head_parens = 0;
         while (k < tokens.size() && tokens[k].kind != TEnd) {
+            if (depth == 0 && tokens[k].kind == TLParen) ++head_parens;
+            else if (depth == 0 && tokens[k].kind == TRParen && head_parens > 0) --head_parens;
+            if (head_parens > 0 && (tokens[k].kind == TLBrace || tokens[k].kind == TRBrace)) {
+                ++k;
+                continue;
+            }
             if (tokens[k].kind == TLBrace) {
                 ++depth;
                 body = true;
@@ -6400,6 +6442,7 @@ struct Parser {
             fn.ret = decl.type;
             fn.params = decl.params;
             fn.param_names = decl.param_names;
+            fn.defaults = decl.param_defaults;
             fn.vararg = decl.vararg;
             finish_signature(&fn);
             if (!parse_function_body(&fn, -1)) ok = false;
@@ -8262,12 +8305,12 @@ bool Parser::parse_local_decl_one(const Type& type, bool is_typedef, bool is_sta
         if (init.kind == Node::Block && init.text == "init" && decl.type.array_len != 0) init = elide_braces(decl.type, init);
         if (!fix_unsized(&decl.type, init)) return false;
         local.type = decl.type;
-        if (!is_static && wants_copy(decl.type, init)) {
+        if (wants_copy(decl.type, init)) {
             // C x = y; with y an object of the class: the copy constructor.
             ctor_args.push_back(std::move(init));
             have_ctor_args = true;
             has_init = false;
-        }        else if (!is_static && !decl.type.is_array() && obj_needs_ctor(decl.type) && init.kind != Node::Block) {
+        }        else if (!decl.type.is_array() && obj_needs_ctor(decl.type) && init.kind != Node::Block) {
             // C x = value; with a value that is not an object of a class (std::string s = "abc"; V v = 5;): a converting
             // constructor makes x from it ([dcl.init], copy-initialisation, with the copy elided).
             Type from;
@@ -8289,7 +8332,78 @@ bool Parser::parse_local_decl_one(const Type& type, bool is_typedef, bool is_sta
             init_relocs = &global.addr_relocs;  // a static array of string pointers: the addresses are relocations
             const bool flat_ok = flatten_init(decl.type, init, &global.init_bytes, 0);
             init_relocs = nullptr;
-            if (!flat_ok) return false;
+            if (!flat_ok) {
+                if (error != "global initializer must be a constant") return false;
+                const bool aggregate = decl.type.is_array() || init.kind == Node::Block;
+                if (aggregate && decl.type.base == 3 && decl.type.pointers == 0 && obj_needs_ctor(decl.type)) return false;
+                // `static int n = f();`, `static const E tab[] = {{"a", K(1)}}`: not constant, so it is computed the first
+                // time control reaches the declaration (a guard flag in a hidden global, [stmt.dcl]/4; no lock).
+                error.clear();
+                global.init_bytes.clear();
+                global.addr_relocs.clear();
+                global.bss = true;
+                Global guard;
+                guard.name = global.name + "_guard";
+                guard.type.base = 1;
+                guard.bss = true;
+                guard.is_static = true;
+                globals.push_back(guard);
+                local.symbol = global.name;
+                globals.push_back(global);
+                place_local(locals, local);
+                Node set;
+                set.kind = Node::Assign;
+                set.op = TAssign;
+                set.kids.push_back(node_name(guard.name));
+                Node one;
+                one.kind = Node::IntLit;
+                one.number = 1;
+                one.type.base = 1;
+                set.kids.push_back(std::move(one));
+                Node set_stmt;
+                set_stmt.kind = Node::ExprStmt;
+                set_stmt.kids.push_back(std::move(set));
+                Node then_block;
+                then_block.kind = Node::Block;
+                then_block.kids.push_back(std::move(set_stmt));
+                if (aggregate) {
+                    std::vector<Node> element_stmts;
+                    if (!lower_aggr(decl.type, node_name(decl.name), &init, &element_stmts)) return false;
+                    for (Node& e : element_stmts) {
+                        e.line = stmt_line;
+                        then_block.kids.push_back(std::move(e));
+                    }
+                } else {
+                    Node store;
+                    store.kind = Node::Assign;
+                    store.number = 1;
+                    store.kids.push_back(node_name(decl.name));
+                    store.kids.push_back(std::move(init));
+                    Node store_stmt;
+                    store_stmt.kind = Node::ExprStmt;
+                    store_stmt.line = stmt_line;
+                    store_stmt.kids.push_back(std::move(store));
+                    then_block.kids.push_back(std::move(store_stmt));
+                }
+                Node not_g;
+                not_g.kind = Node::Unary;
+                not_g.op = TNot;
+                not_g.kids.push_back(node_name(guard.name));
+                Node test;
+                test.kind = Node::If;
+                test.kids.push_back(std::move(not_g));
+                test.kids.push_back(std::move(then_block));
+                out->kind = Node::Block;
+                out->kids.push_back(std::move(test));
+                if (obj_needs_dtor(decl.type)) {
+                    GlobalObj g;
+                    g.name = local.symbol;
+                    g.sid = decl.type.struct_id;
+                    g.guard = guard.name;
+                    static_objs.push_back(std::move(g));
+                }
+                return end_decl(more);
+            }
             has_init = false;
         }
         local.symbol = global.name;
@@ -10868,6 +10982,7 @@ bool Parser::parse_unary(Node* out) {
             out->kind = Node::Call;
             out->text = inst;
             out->kids = std::move(cargs);
+            if (!pad_func_defaults(inst, &out->kids)) return false;
             for (const FuncDecl& known : funcs) {
                 if (known.name != inst) continue;
                 std::vector<Type> source = known.params;

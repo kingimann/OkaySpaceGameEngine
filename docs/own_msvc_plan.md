@@ -574,3 +574,9 @@ Not done / unverified / found and not fixed (Round 22):
 - A braced argument is read by the parameter it goes to: a call whose callee is chosen by overload resolution on that argument, or a constructor argument, may not find the type; `{...}` as an argument to a function template parameter is not tried.
 - `initializer_list<T>` of a class with a destructor is refused. A move constructor is used for `T x = std::move(y)` and for a by-value argument; the return of a local by value still hands over the local itself (no move or copy call), and a class with a user-written move constructor but no copy constructor does not get its copy constructor deleted (a copy of such a class is not refused).
 - The decorated name of `const T&` is still `AEA...` for a return type (see Round 21).
+
+### Round 23 (unverified: not run under Wine, Wine was broken in the container this was written in)
+
+Everything below was only compiled and the object inspected (symbols, `objdump -d`); nothing was run, and the full `sh tools/okayms/build.sh` was not green in that container because every Wine run aborted. Before this branch (`claude/okayms-3-r23b`) is merged into `claude/okayms-3` the full build and the link-and-run checks must be run where Wine works. New test: `tests/test_round23.cpp` (compile-only). Sources: ISO/IEC 14882 only, as before.
+
+Step 1 (front end): delegating constructors `C() : C(args) {}` ([class.base.init]/6); function-local statics with non-constant initializers (`static int n = f();`, `static const E tab[] = {{"a", K(1)}}`) built the first time control passes, with a guard flag, no lock; `thread_local` read as `static` (one copy, no thread-local storage); default arguments of function templates (they were dropped) and `= {}` in a template parameter list.

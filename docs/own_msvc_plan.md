@@ -730,3 +730,18 @@ First error of each failing file now (253 files):
 | other single errors | rest |
 
 Not done: `std::visit` and `get<N>` for `variant`; the parse-error groups above; `<stdexcept>`/`<exception>`; destruction of range-for iterators on `break`/`return`; COMDAT dedup and the `.CRT$XCU` startup table; everything must be re-run under Wine before merging into `claude/okayms-3`.
+
+## Round 29 (unverified: not run under Wine, Wine broken in this container)
+
+Compile-only work on branch `claude/okayms-3-r23b`. Checked by compiling to an object and by `test_round23` (20 tests, 32 checks, all pass). Nothing was linked or run.
+
+Fixed (written from the C++ standard text only):
+- `function<R(A, B)>` signatures with parameter names (names are dropped).
+- `member{}` / `member{a, b}` in constructor initializer lists, and skipping them when a body is only skipped.
+- `Vec3{}` as a default argument.
+- `shared_ptr<const Self>` (a `const` class as a template argument).
+- A class-scope typedef used as a type (`clk::time_point s;`), including as a field.
+
+Whole-library measurement (348 files of `engine/src`, compile to object, `/tmp/one.sh`): 95 compile, 253 fail. The count did not change from Round 28, because the fixed files now stop at the next error. First errors now: expected a type 43, expected an array length 23 (new, now visible), expected a class template body 20, expected a base class 18, expected ';' 19, assign with 3 arguments 10, thread/mutex/condition_variable 22 (intentionally excluded), large struct return 8, missing stdexcept/exception 11, charconv 3.
+
+Not done this round: `decltype(auto)`, `std::streamsize`/`ostream::write`, class template body and base class errors, `<stdexcept>`/`<exception>`, `std::visit`/`get<N>`, remaining `vector::assign`, large struct returns, iterator destruction on break/return.

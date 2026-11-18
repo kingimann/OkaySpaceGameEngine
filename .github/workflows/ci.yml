@@ -19,7 +19,9 @@ jobs:
     # editor builds are their own jobs below so they run in parallel with this one.
     # This job builds and runs the unit tests (about 800). The sandbox and example programs are built by the
     # "player" job and the launcher by the "editor" job, so nothing is left unbuilt (docs/automated_testing.md "CI speed").
-    timeout-minutes: 90
+    # 150, not 90: on a busy runner with a cold or partial compiler cache this job takes 90 minutes or more (PR #1000
+    # finished in 89m42s, and #960 and #969 were cancelled by the old 90 minute limit while still running tests).
+    timeout-minutes: 150
     env:
       CCACHE_DIR: ${{ github.workspace }}/.ccache
       # No CCACHE_BASEDIR: it makes ccache hand the compiler relative source paths, so __FILE__ is relative

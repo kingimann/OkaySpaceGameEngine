@@ -2149,9 +2149,73 @@ struct Parser {
                class_needs_dtor(structs[static_cast<size_t>(t.struct_id)]);
     }
 
+    // A class with no constructor written by the programmer, none of its own bases, and a braced list of members:
+    // an aggregate whose members have default initializers.
+    bool aggregate_with_defaults(int sid, const std::vector<Node>& args) const {
+        const StructDef& sd = structs[static_cast<size_t>(sid)];
+        if (sd.poly || sd.base >= 0 || sd.fields.empty()) return false;
+        for (const Method& m : sd.methods)
+            if (m.name == "<ctor>" && !m.implicit) return false;
+        if (args.size() == 1) {
+            Type at;
+            if (static_type(args[0], &at) && at.base == 3 && at.pointers == 0 && !at.is_array() && at.struct_id == sid)
+                return false;  // a copy
+        }
+        for (const Field& f : sd.fields) {
+            if (f.type.base == 3 && f.type.pointers == 0 && !f.type.is_ref && f.type.struct_id >= 0 &&
+                class_needs_ctor(structs[static_cast<size_t>(f.type.struct_id)]))
+                return false;  // keep it simple: members that are objects with constructors use the old path
+        }
+        return true;
+    }
     // A call of a constructor or destructor on the object whose address is 'self'.
     bool special_call(int sid, const char* which, Node self, std::vector<Node> args, Node* out) {
         std::string tctor;
+        if (which[1] == 'c' && !args.empty() && aggregate_with_defaults(sid, args)) {
+            // C{a, b} for a struct with default member initializers and no constructor written: the default
+            // constructor runs (it stores the defaults), then the members are set in order ([dcl.init.aggr]).
+            std::vector<Node> steps;
+            const Method* dflt = find_method(sid, "<ctor>", 0);
+            if (dflt != nullptr) {
+                Node call;
+                call.kind = Node::Call;
+                call.text = dflt->qname;
+                call.number = 1;
+                call.type = dflt->ret;
+                call.kids.push_back(self);
+                Node st;
+                st.kind = Node::ExprStmt;
+                st.kids.push_back(std::move(call));
+                steps.push_back(std::move(st));
+            }
+            const StructDef& sd = structs[static_cast<size_t>(sid)];
+            size_t k = 0;
+            for (const Field& f : sd.fields) {
+                if (f.name == "__vptr") continue;
+                if (k >= args.size()) break;
+                Node fn;
+                fn.kind = Node::Field;
+                fn.op = TArrow;
+                fn.text = f.name;
+                fn.kids.push_back(self);
+                Node assign;
+                assign.kind = Node::Assign;
+                assign.op = TAssign;
+                assign.number = 1;
+                assign.kids.push_back(std::move(fn));
+                assign.kids.push_back(std::move(args[k]));
+                ++k;
+                Node st;
+                st.kind = Node::ExprStmt;
+                st.kids.push_back(std::move(assign));
+                steps.push_back(std::move(st));
+            }
+            Node block;
+            block.kind = Node::Block;
+            block.kids = std::move(steps);
+            *out = std::move(block);
+            return true;
+        }
         if (which[1] == 'c' && !ensure_ctor_template(sid, args, &tctor)) return false;
         const Method* m = which[1] == 'c' ? find_ctor(sid, args) : find_method(sid, which, args.size());
         if (!tctor.empty()) m = find_ctor_instance(sid, tctor);
@@ -2548,6 +2612,19 @@ struct Parser {
                     continue;
                 }
             }
+            if (t->base == 3 && t->struct_id >= 0 && t->pointers == 0 && tokens[at + 1].kind == TIdent &&
+                typedefs.find(tokens[at + 1].text) == typedefs.end()) {
+                // Outer::Nested: nested classes are kept under their plain name.
+                const int nested = find_struct(tokens[at + 1].text);
+                if (nested >= 0 && nested != t->struct_id &&
+                    !(at + 2 < tokens.size() && tokens[at + 2].kind == TLParen)) {
+                    t->struct_id = nested;
+                    next();
+                    next();
+                    any = true;
+                    continue;
+                }
+            }
             break;
         }
         if (must && !any) {
@@ -2804,7 +2881,18 @@ struct Parser {
                 error = "too few arguments";
                 return false;
             }
-            args->push_back(defaults[args->size()]);
+            const Node& d = defaults[args->size()];
+            if (d.kind == Node::Block && d.text == "tokdef") {
+                const size_t saved = at;
+                at = static_cast<size_t>(d.number);
+                Node made;
+                const bool ok = tokens[at].kind == TLBrace ? braced_temp(d.type.struct_id, &made) : parse_expr(1, &made);
+                at = saved;
+                if (!ok) return false;
+                args->push_back(std::move(made));
+            } else {
+                args->push_back(d);
+            }
         }
         return true;
     }
@@ -2995,7 +3083,28 @@ struct Parser {
             if (accept(TAssign)) {
                 // A default argument: read where it is declared, so its names mean what they mean here.
                 Node def_expr;
-                if (!parse_expr(1, &def_expr)) return false;
+                if ((is(TLBrace) && pt.base == 3 && pt.pointers == 0 && pt.struct_id >= 0) ||
+                    (is(TIdent) && find_struct(cur().text) >= 0 && typedefs.find(cur().text) == typedefs.end() &&
+                     at + 1 < tokens.size() && tokens[at + 1].kind == TLParen)) {
+                    // `= {}`, `= {a, b}` or `= Color(1, 1, 1, 1)`: a class object made for each call. The text is
+                    // kept as a position in the token stream and read again at each call, where the temporary
+                    // can be made.
+                    def_expr.kind = Node::Block;
+                    def_expr.text = "tokdef";
+                    def_expr.number = at;
+                    def_expr.type = pt;
+                    int depth = 0;
+                    while (!is(TEnd)) {
+                        if (is(TLBrace) || is(TLParen) || is(TLBrack)) ++depth;
+                        else if (is(TRBrace) || is(TRParen) || is(TRBrack)) {
+                            if (depth == 0) break;
+                            --depth;
+                        } else if (is(TComma) && depth == 0) break;
+                        next();
+                    }
+                } else if (!parse_expr(1, &def_expr)) {
+                    return false;
+                }
                 out->param_defaults.resize(param_index + 1);
                 out->param_defaults[param_index] = std::move(def_expr);
             }
@@ -3340,6 +3449,18 @@ struct Parser {
     bool parse_range_for(Node* out, std::vector<Local>* locals, int stmt_line);
     bool parse_lambda(Node* out);
     bool braced_temp(int bsid, Node* out);
+    bool init_list_temp(const Type& list_type, Node* out);
+    bool is_init_list_class(const Type& t) const {
+        return t.base == 3 && t.pointers == 0 && t.struct_id >= 0 && structs[static_cast<size_t>(t.struct_id)].tmpl == "initializer_list";
+    }
+    bool has_init_list_ctor(int sid, Type* list_type) const {
+        for (const Method& m : structs[static_cast<size_t>(sid)].methods)
+            if (m.name == "<ctor>" && m.params.size() == 1 && is_init_list_class(m.params[0])) {
+                *list_type = m.params[0];
+                return true;
+            }
+        return false;
+    }
     int lambda_count = 0;
     // While a lambda body is read once only to learn the type of its first return.
     bool lam_probe = false;
@@ -3665,6 +3786,28 @@ struct Parser {
         for (size_t i = first; i < args->size() && i - first < params.size(); ++i) {
             const Type& pt = params[i - first];
             Node& arg = (*args)[i];
+            if (arg.kind == Node::Block && arg.text == "tokbrace") {
+                const size_t saved = at;
+                at = static_cast<size_t>(arg.number);
+                Node made;
+                bool ok;
+                if (is_init_list_class(pt)) {
+                    ok = init_list_temp(pt, &made);
+                } else if (pt.base == 3 && pt.pointers == 0 && pt.struct_id >= 0) {
+                    ok = braced_temp(pt.struct_id, &made);
+                } else if (tokens[at + 1].kind == TRBrace) {
+                    made.kind = Node::IntLit;
+                    made.number = 0;
+                    made.type.base = 1;
+                    ok = true;
+                } else {
+                    next();
+                    ok = parse_expr(1, &made);
+                }
+                at = saved;
+                if (!ok) return false;
+                arg = std::move(made);
+            }
             if (pt.is_ref) {
                 const bool object = arg.kind == Node::Name || arg.kind == Node::Field || arg.kind == Node::Index ||
                                     (arg.kind == Node::Unary && arg.op == TStar);
@@ -7742,6 +7885,13 @@ bool Parser::parse_local_decl_one(const Type& type, bool is_typedef, bool is_sta
         decl.type = type;
         next();
         const bool braced_args = is(TLBrace);
+        Type list_type;
+        if (braced_args && tokens[at + 1].kind != TRBrace && has_init_list_ctor(type.struct_id, &list_type)) {
+            Node list;
+            if (!init_list_temp(list_type, &list)) return false;
+            ctor_args.push_back(std::move(list));
+            have_ctor_args = true;
+        } else {
         next();
         if (braced_args) {
             if (!is(TRBrace)) {
@@ -7756,6 +7906,7 @@ bool Parser::parse_local_decl_one(const Type& type, bool is_typedef, bool is_sta
             return false;
         }
         have_ctor_args = true;
+        }
     } else if (!is_typedef && !obj_needs_ctor(type) && type.pointers == 0 && !type.is_array() && is(TIdent) &&
                at + 2 < tokens.size() && tokens[at + 1].kind == TLParen && tokens[at + 2].kind != TRParen &&
                [&]() {
@@ -7790,11 +7941,12 @@ bool Parser::parse_local_decl_one(const Type& type, bool is_typedef, bool is_sta
     Local local;
     local.name = decl.name;
     local.type = decl.type;
-    local.is_const = is_const;
+    local.is_const = is_const && decl.type.pointers == 0;  // `const T* p` is a pointer to const: p itself may change
     local.is_static = is_static;
     Node init;
     bool has_init = false;
     const bool preset = has_preset && (is(TAssign) || is(TColon));
+    Type list_type_local;
     if (preset || have_paren_init || accept(TAssign) || (is(TLBrace) && !have_ctor_args)) {
         if (preset) {
             init = std::move(preset_init);
@@ -7802,9 +7954,21 @@ bool Parser::parse_local_decl_one(const Type& type, bool is_typedef, bool is_sta
             has_preset = false;
         } else if (have_paren_init) {
             init = std::move(paren_init);
+        } else if (is(TLBrace) && !is_static && !decl.type.is_array() && obj_needs_ctor(decl.type) &&
+                   tokens[at + 1].kind != TRBrace && has_init_list_ctor(decl.type.struct_id, &list_type_local)) {
+            // C x = {a, b}; for a class with an initializer-list constructor.
+            Node list;
+            if (!init_list_temp(list_type_local, &list)) return false;
+            ctor_args.push_back(std::move(list));
+            have_ctor_args = true;
+            has_init = false;
+            init = Node{};
+            init.kind = Node::Block;
+            init.text = "skipped";
         } else if (!parse_init(&init)) {
             return false;
         }
+        if (init.kind == Node::Block && init.text == "skipped") has_init = false; else
         has_init = true;
         if (!decl.type.is_array() && decl.type.base != 3 && decl.type.base != 0 && !convert_class(&init, decl.type))
             return false;
@@ -8240,6 +8404,87 @@ bool Parser::parse_range_for(Node* out, std::vector<Local>* locals, int stmt_lin
     return true;
 }
 
+// `{a, b, c}` for a parameter of type std::initializer_list<T> ([dcl.init.list]): the elements go into a hidden array of
+// T in this function's frame and the list is a hidden object that points at the array. The current token is the '{'.
+bool Parser::init_list_temp(const Type& list_type, Node* out) {
+    const StructDef& lsd = structs[static_cast<size_t>(list_type.struct_id)];
+    if (lsd.targs.empty() || lsd.targs[0].is_value || cur_locals == nullptr) {
+        error = "cannot make an initializer_list here";
+        return false;
+    }
+    const Type elem = lsd.targs[0].type;
+    if (elem.base == 3 && elem.pointers == 0 && elem.struct_id >= 0 &&
+        class_needs_dtor(structs[static_cast<size_t>(elem.struct_id)])) {
+        error = "an initializer_list of a class with a destructor is not supported";
+        return false;
+    }
+    next();  // '{'
+    std::vector<Node> items;
+    while (!is(TRBrace) && !is(TEnd)) {
+        Node item;
+        if (is(TLBrace) && elem.base == 3 && elem.pointers == 0 && elem.struct_id >= 0) {
+            if (!braced_temp(elem.struct_id, &item)) return false;
+        } else {
+            if (!parse_expr(1, &item)) return false;
+            if (elem.base != 3 && elem.base != 0 && elem.pointers == 0 && !convert_class(&item, elem)) return false;
+        }
+        items.push_back(std::move(item));
+        if (!accept(TComma)) break;
+    }
+    if (!expect(TRBrace, "'}'")) return false;
+    Local array;
+    array.name = "__il" + std::to_string(tmp_count++);
+    array.type = elem;
+    array.type.array_len = items.empty() ? 1 : static_cast<int>(items.size());
+    place_local(cur_locals, array);
+    for (size_t i = 0; i < items.size(); ++i) {
+        Node idx;
+        idx.kind = Node::IntLit;
+        idx.type.base = 1;
+        idx.number = i;
+        Node slot;
+        slot.kind = Node::Index;
+        slot.kids.push_back(node_name(array.name));
+        slot.kids.push_back(std::move(idx));
+        Node assign;
+        assign.kind = Node::Assign;
+        assign.op = TAssign;
+        assign.number = 1;
+        assign.kids.push_back(std::move(slot));
+        assign.kids.push_back(std::move(items[i]));
+        Node stmt;
+        stmt.kind = Node::ExprStmt;
+        stmt.kids.push_back(std::move(assign));
+        stmt_pre.push_back(std::move(stmt));
+    }
+    Node zero;
+    zero.kind = Node::IntLit;
+    zero.type.base = 1;
+    Node first;
+    first.kind = Node::Index;
+    first.kids.push_back(node_name(array.name));
+    first.kids.push_back(std::move(zero));
+    Node count;
+    count.kind = Node::IntLit;
+    count.type.base = 1;
+    count.type.wide = true;
+    count.number = items.size();
+    Local hidden;
+    hidden.name = "__ilo" + std::to_string(tmp_count++);
+    hidden.type = list_type;
+    hidden.type.is_ref = false;
+    place_local(cur_locals, hidden);
+    std::vector<Node> cargs;
+    cargs.push_back(node_addr(std::move(first)));
+    cargs.push_back(std::move(count));
+    Node ctor_stmt;
+    if (!special_call(list_type.struct_id, "<ctor>", node_addr(node_name(hidden.name)), std::move(cargs), &ctor_stmt))
+        return false;
+    stmt_pre.push_back(std::move(ctor_stmt));
+    *out = node_name(hidden.name);
+    return true;
+}
+
 // C{args} ([expr.type.conv], [dcl.init.list]): a temporary object of class bsid made from the braced list at the
 // current token, by a constructor, or member by member for an aggregate. Its construction goes before the
 // statement and its destructor runs after it.
@@ -8251,7 +8496,18 @@ bool Parser::braced_temp(int bsid, Node* out) {
         hidden.name = "__bt" + std::to_string(tmp_count++);
         hidden.type = bt;
         place_local(cur_locals, hidden);
-        if (obj_needs_ctor(bt)) {
+        Type list_type;
+        if (obj_needs_ctor(bt) && tokens[at + 1].kind != TRBrace && has_init_list_ctor(bsid, &list_type)) {
+            // An initializer-list constructor is preferred when the list is not empty ([over.match.list]).
+            Node list;
+            if (!init_list_temp(list_type, &list)) return false;
+            std::vector<Node> bargs;
+            bargs.push_back(std::move(list));
+            Node ctor_stmt;
+            if (!special_call(bsid, "<ctor>", node_addr(node_name(hidden.name)), std::move(bargs), &ctor_stmt))
+                return false;
+            stmt_pre.push_back(std::move(ctor_stmt));
+        } else if (obj_needs_ctor(bt)) {
             next();
             std::vector<Node> bargs;
             if (!is(TRBrace)) {
@@ -8891,6 +9147,25 @@ bool Parser::parse_call_args(std::vector<Node>* args) {
             }
         }
         Node arg;
+        if (is(TLBrace)) {
+            // A braced list as an argument, f({1, 2}) or f({}): what it makes depends on the parameter, so its
+            // position is kept and adjust_args reads it once the parameter is known.
+            arg.kind = Node::Block;
+            arg.text = "tokbrace";
+            arg.number = at;
+            int depth = 0;
+            do {
+                if (is(TLBrace)) ++depth;
+                else if (is(TRBrace)) --depth;
+                else if (is(TEnd)) {
+                    error = "expected '}'";
+                    return false;
+                }
+                next();
+            } while (depth > 0);
+            args->push_back(std::move(arg));
+            continue;
+        }
         if (!parse_expr(1, &arg)) return false;
         if (!expand_pack_arg(std::move(arg), args)) return false;
     } while (accept(TComma));
@@ -10135,7 +10410,7 @@ bool Parser::parse_unary(Node* out) {
                 return parse_postfix(out);
             }
         }
-        if (func_templates.count(name) > 0 && (is(TLt) || is(TLParen))) {
+        if (func_templates.count(name) > 0 && (is(TLt) || is(TLParen)) && !local_visible(name)) {
             std::vector<TArg> targs;
             if (is(TLt) && !parse_template_args(func_templates[name], &targs, true)) return false;
             if (!expect(TLParen, "'('")) return false;
@@ -10218,14 +10493,7 @@ bool Parser::parse_unary(Node* out) {
         } else if (!var_object && accept(TLParen)) {
             out->kind = Node::Call;
             out->text = name;
-            if (!accept(TRParen)) {
-                do {
-                    Node arg;
-                    if (!parse_expr(1, &arg)) return false;
-                    if (!expand_pack_arg(std::move(arg), &out->kids)) return false;
-                } while (accept(TComma));
-                if (!expect(TRParen, "')'")) return false;
-            }
+            if (!parse_call_args(&out->kids)) return false;
             if (!local_visible(name)) {
                 const std::string picked = pick_free(name, out->kids);
                 if (!picked.empty()) {
@@ -12094,7 +12362,7 @@ bool Gen::gen_expr(const Node& node) {
                 }
             }
             if (Global* global = find_global(node.kids[0].text)) {
-                if (global->type.is_const) {
+                if (global->type.is_const && global->type.pointers == 0) {
                     error = "assignment to const " + global->name;
                     return false;
                 }

@@ -59,9 +59,13 @@ inline void VsDrawStartScreen(EditorState& ed, VsEditState& st, ImVec2 cmin, ImV
             dl->AddRectFilled(ImVec2(bx, by), ImVec2(bx + bw, by + bh), b == 0 ? IM_COL32(236, 120, 96, 255) : IM_COL32(96, 160, 236, 255), 3.0f);
             bx += bw + gap;
         }
-        dl->AddText(font, fs * 1.15f, ImVec2(p0.x + 14.0f, p0.y + 36.0f), IM_COL32(244, 247, 252, 255), cards[i].title.c_str());
-        dl->AddText(font, fs, ImVec2(p0.x + 14.0f, p0.y + 36.0f + fs * 1.6f), IM_COL32(176, 188, 206, 255),
+        const float titleSize = fs * 1.1f;
+        const ImVec2 tsz = font->CalcTextSizeA(titleSize, 1.0e9f, q.w - 28.0f, cards[i].title.c_str());   // wraps: a long title takes two lines
+        dl->PushClipRect(p0, p1, true);
+        dl->AddText(font, titleSize, ImVec2(p0.x + 14.0f, p0.y + 36.0f), IM_COL32(244, 247, 252, 255), cards[i].title.c_str(), nullptr, q.w - 28.0f);
+        dl->AddText(font, fs, ImVec2(p0.x + 14.0f, p0.y + 36.0f + tsz.y + 6.0f), IM_COL32(176, 188, 206, 255),
                     cards[i].line.c_str(), nullptr, q.w - 28.0f);
+        dl->PopClipRect();
         if (clicked) picked = cards[i].recipe;
     }
     // Below the cards: start empty, and never show this again.

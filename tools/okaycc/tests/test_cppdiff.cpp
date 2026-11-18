@@ -103,6 +103,54 @@ static void diffOne(const std::string& name, const std::string& srcPath) {
     ++gOk;
 }
 
+// Two files, each with a global object: the constructors run before main in link order (b, then
+// a) and the destructors after it in reverse. g++ leaves the order across files unspecified, so
+// the expected output is written out here.
+static void linkTwo() {
+    auto libc = loadLibc();
+    std::vector<std::vector<unsigned char>> objs;
+    for (const char* path : {"tests/progs_cpp_multi/b.cpp", "tests/progs_cpp_multi/a.cpp"}) {
+        okaycc::Diagnostics d;
+        auto obj = okaycc::compileToObject(readFile(path), d, path);
+        if (!d.ok() || obj.empty()) {
+            std::fprintf(stderr, "FAIL multi %s\n%s", path, d.format().c_str());
+            ++okaycc_test::gFail;
+            return;
+        }
+        objs.push_back(std::move(obj));
+    }
+    for (auto& o : libc) objs.push_back(std::move(o));
+    std::string error;
+    auto bin = okaycc::linkObjects(objs, error);
+    if (bin.empty()) {
+        std::fprintf(stderr, "FAIL multi link: %s\n", error.c_str());
+        ++okaycc_test::gFail;
+        return;
+    }
+    char tmpl[] = "/tmp/okaymultiXXXXXX";
+    char* dir = mkdtemp(tmpl);
+    if (!dir) {
+        ++okaycc_test::gFail;
+        return;
+    }
+    std::string folder(dir);
+    {
+        std::ofstream out(folder + "/prog", std::ios::binary);
+        out.write(reinterpret_cast<const char*>(bin.data()), static_cast<std::streamsize>(bin.size()));
+    }
+    chmod((folder + "/prog").c_str(), 0755);
+    int rc = runCapture(folder + "/prog", folder + "/out");
+    std::string got = readFile(folder + "/out");
+    std::string want = "H(7)\nG(5)\nmain 5 7\n~G(5)\n~H(7)\n";
+    std::system(("rm -rf " + folder).c_str());
+    if (rc != 0 || got != want) {
+        std::fprintf(stderr, "FAIL multi: rc=%d output:\n%s", rc, got.c_str());
+        ++okaycc_test::gFail;
+        return;
+    }
+    ++gOk;
+}
+
 int main() {
     DIR* dir = opendir("tests/progs_cpp");
     if (!dir) {
@@ -119,6 +167,7 @@ int main() {
         ++files;
     }
     closedir(dir);
+    if (!std::getenv("CPPDIFF_ONLY")) linkTwo();
     if (files == 0) {
         std::fprintf(stderr, "FAIL no programs\n");
         return 1;

@@ -1207,7 +1207,18 @@ std::vector<unsigned char> compileToElf(const std::string& source, Diagnostics& 
     }
     std::size_t entry = im.bytes.size();
     im.labels["_start"] = entry;
+    // Global objects: __okay_init_* before main, __okay_fini_* after it.
+    std::vector<std::string> finis;
+    for (const auto& kv : im.labels) {
+        if (kv.first.compare(0, 12, "__okay_init_") == 0) callRel(im, kv.first);
+        if (kv.first.compare(0, 12, "__okay_fini_") == 0) finis.insert(finis.begin(), kv.first);
+    }
     callRel(im, "main");
+    u8(im, 0x50);  // push rax twice: keeps the stack aligned
+    u8(im, 0x50);
+    for (const std::string& n : finis) callRel(im, n);
+    u8(im, 0x58);
+    u8(im, 0x58);
     movReg(im, Rdi, Rax);
     movImm(im, Rax, 60);
     u8(im, 0x0F);

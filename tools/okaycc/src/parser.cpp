@@ -15,6 +15,7 @@
 #include <set>
 #include <string>
 #include <utility>
+#include <cctype>
 #include <vector>
 
 namespace okaycc {
@@ -644,7 +645,59 @@ public:
         flushExtras(tu);
         processInstances(tu);
         flushExtras(tu);
+        emitGlobalObjects(tu);
         return tu;
+    }
+
+    // __okay_init_<file>: the constructors of the global and static objects, in order, and
+    // __okay_fini_<file>: their destructors in reverse order. The program start (our linker, or
+    // compileToElf) calls them around main. Written from ISO/IEC 14882 [basic.start.init] and
+    // [basic.start.term].
+    void emitGlobalObjects(Tu& tu) {
+        for (auto& st : staticObjs_) globalObjs_.push_back(std::move(st));
+        staticObjs_.clear();
+        if (globalInit_.empty() && globalObjs_.empty()) return;
+        std::string sfx;
+        for (char ch : (toks_.empty() ? std::string("t") : toks_[0].file)) sfx += std::isalnum(static_cast<unsigned char>(ch)) ? ch : '_';
+        Pos p{1, 1, toks_.empty() ? std::string() : toks_[0].file};
+        auto mk = [&](const std::string& name, std::unique_ptr<Stmt> body) {
+            auto d = std::make_unique<Decl>();
+            d->name = name;
+            d->line = 1;
+            d->col = 1;
+            d->file = p.file;
+            d->type = fnTypeOf({});
+            d->function = true;
+            d->body = std::move(body);
+            tu.decls.push_back(std::move(d));
+        };
+        if (!globalInit_.empty()) {
+            auto body = sBlock(p);
+            for (auto& st : globalInit_) body->stmts.push_back(std::move(st));
+            globalInit_.clear();
+            mk("__okay_init_" + sfx, std::move(body));
+        }
+        if (!globalObjs_.empty()) {
+            auto body = sBlock(p);
+            for (std::size_t i = globalObjs_.size(); i-- > 0;) {
+                auto call = dtorCall(globalObjs_[i].tag, eAddr(eName(globalObjs_[i].name, p), p), p);
+                if (!call) continue;
+                std::unique_ptr<Stmt> st = sExpr(std::move(call), p);
+                if (!globalObjs_[i].guard.empty()) {
+                    auto g = std::make_unique<Stmt>();
+                    g->kind = Stmt::Kind::If;
+                    g->line = p.line;
+                    g->col = p.col;
+                    g->file = p.file;
+                    g->expr = eName(globalObjs_[i].guard, p);
+                    g->thenS = std::move(st);
+                    st = std::move(g);
+                }
+                body->stmts.push_back(std::move(st));
+            }
+            globalObjs_.clear();
+            mk("__okay_fini_" + sfx, std::move(body));
+        }
     }
 
 private:
@@ -974,6 +1027,7 @@ private:
         std::string name;
         std::string tag;
         std::uint64_t count = 0;  // above 0: an array of that many objects
+        std::string guard;        // a static local: destroyed only if this flag is set
     };
     std::vector<std::vector<DVar>> dscopes_;
     std::size_t dbase_ = 0;
@@ -982,6 +1036,7 @@ private:
     const Type* curRet_ = nullptr;
     std::vector<std::unique_ptr<Stmt>> preStmts_;
     int newN_ = 0;
+    std::vector<DVar> staticObjs_;                    // static locals: built at run time, after every global
     std::vector<DVar> globalObjs_;                    // globals with destructors, in declaration order
     std::vector<std::unique_ptr<Stmt>> globalInit_;   // their constructor calls, run first in main
     int globalCount_ = 0;
@@ -1991,8 +2046,15 @@ private:
             err("'new' with a constructor or an initial value is only supported inside a function");
             preStmts_.clear();
         }
+        flushBefore(tu);
         for (auto& d : extras_) tu.decls.push_back(std::move(d));
         extras_.clear();
+    }
+    // Globals made for static locals go in before the function that uses them.
+    std::vector<std::unique_ptr<Decl>> beforeDecls_;
+    void flushBefore(Tu& tu) {
+        for (auto& d : beforeDecls_) tu.decls.push_back(std::move(d));
+        beforeDecls_.clear();
     }
 
     // ---- template parsing ----
@@ -2527,7 +2589,7 @@ private:
             tu.decls.push_back(std::move(decl));
             if (classOf(tag)->needCtor)
                 globalInit_.push_back(sExpr(ctorCall(tag, eAddr(eName(gd.name, gp), gp), std::move(args), gp), gp));
-            if (classOf(tag)->needDtor) globalObjs_.push_back(DVar{gd.name, tag});
+            if (classOf(tag)->needDtor) globalObjs_.push_back(DVar{gd.name, tag, 0, ""});
             ++globalCount_;
             flushExtras(tu);
             return;
@@ -2567,7 +2629,7 @@ private:
             }
             auto decl = makeDecl(d, std::move(type), nullptr);
             decl->isStatic = st;
-            if (decl->name == "main" && ns_.empty() && globalCount_ > 0) {
+            if (false) {
                 // The globals declared so far are constructed first thing in main and destroyed
                 // when it returns, latest first.
                 dscopes_.emplace_back(globalObjs_);
@@ -2585,6 +2647,7 @@ private:
             } else {
                 decl->body = parseBody(decl->type ? decl->type->inner.get() : nullptr);
             }
+            flushBefore(tu);
             tu.decls.push_back(std::move(decl));
             flushExtras(tu);
             return;
@@ -2633,6 +2696,63 @@ private:
         p.line = decl->line;
         p.col = decl->col;
         p.file = decl->file;
+        if (decl->isStatic && decl->type && decl->type->kind == Type::Kind::Struct && !decl->type->tag.empty() &&
+            classOf(decl->type->tag) && (classOf(decl->type->tag)->needCtor || classOf(decl->type->tag)->needDtor) &&
+            !name.empty()) {
+            // A static local object: a real global plus a guard flag. The local name is a reference
+            // to the global; the constructor runs the first time control passes the declaration and
+            // the destructor runs at program end (if it was built).
+            if (decl->init) err("a static local object cannot have an initializer");
+            std::string tag = decl->type->tag;
+            int n = newN_++;
+            std::string gname = "__sl" + std::to_string(n) + "_" + name;
+            std::string guard = "__sg" + std::to_string(n);
+            auto g = std::make_unique<Decl>();
+            g->name = gname;
+            g->line = p.line;
+            g->col = p.col;
+            g->file = p.file;
+            g->type = cloneType(*decl->type);
+            beforeDecls_.push_back(std::move(g));
+            auto gf = std::make_unique<Decl>();
+            gf->name = guard;
+            gf->line = p.line;
+            gf->col = p.col;
+            gf->file = p.file;
+            gf->type = ty(Type::Kind::Int);
+            beforeDecls_.push_back(std::move(gf));
+            auto refDecl = std::make_unique<Decl>();
+            refDecl->name = name;
+            refDecl->line = p.line;
+            refDecl->col = p.col;
+            refDecl->file = p.file;
+            auto rt = ty(Type::Kind::Reference);
+            rt->inner = cloneType(*decl->type);
+            refDecl->type = std::move(rt);
+            refDecl->init = eName(gname, p);
+            out.push_back(declStmt(std::move(refDecl)));
+            auto thenB = sBlock(p);
+            thenB->stmts.push_back(sExpr(eAssign(eName(guard, p), eInt(1, p), p), p));
+            if (classOf(tag)->needCtor)
+                thenB->stmts.push_back(sExpr(ctorCall(tag, eAddr(eName(gname, p), p), std::move(ctorArgs), p), p));
+            auto notG = std::make_unique<Expr>();
+            notG->kind = Expr::Kind::Unary;
+            notG->text = "!";
+            notG->line = p.line;
+            notG->col = p.col;
+            notG->file = p.file;
+            notG->kids.push_back(eName(guard, p));
+            auto iff = std::make_unique<Stmt>();
+            iff->kind = Stmt::Kind::If;
+            iff->line = p.line;
+            iff->col = p.col;
+            iff->file = p.file;
+            iff->expr = std::move(notG);
+            iff->thenS = std::move(thenB);
+            out.push_back(std::move(iff));
+            if (classOf(tag)->needDtor) staticObjs_.push_back(DVar{gname, tag, 0, guard});
+            return;
+        }
         const Type* ty0 = decl->type.get();
         std::uint64_t arrayCount = 0;
         if (ty0 && ty0->kind == Type::Kind::Array && ty0->inner && ty0->inner->kind == Type::Kind::Struct &&
@@ -2662,7 +2782,7 @@ private:
                 out.push_back(elementLoop(name, arrayCount, false, p, [&](std::unique_ptr<Expr> at) {
                     return ctorCall(tag, eAddr(std::move(at), p), {}, p);
                 }));
-            if (cls->needDtor && !dscopes_.empty()) dscopes_.back().push_back(DVar{name, tag, arrayCount});
+            if (cls->needDtor && !dscopes_.empty()) dscopes_.back().push_back(DVar{name, tag, arrayCount, ""});
             return;
         }
         if (copyFrom) {
@@ -2670,13 +2790,13 @@ private:
             a.push_back(eAddr(eName(name, p), p));
             a.push_back(std::move(copyFrom));
             out.push_back(sExpr(eCall(eName("\x01" "cinit:" + tag, p), std::move(a), p), p));
-            if (cls->needDtor && !dscopes_.empty()) dscopes_.back().push_back(DVar{name, tag});
+            if (cls->needDtor && !dscopes_.empty()) dscopes_.back().push_back(DVar{name, tag, 0, ""});
             return;
         }
         if (cls->needCtor && (haveCtorArgs || !hasInit)) {
             out.push_back(sExpr(ctorCall(tag, eAddr(eName(name, p), p), std::move(ctorArgs), p), p));
         }
-        if (cls->needDtor && !dscopes_.empty()) dscopes_.back().push_back(DVar{name, tag});
+        if (cls->needDtor && !dscopes_.empty()) dscopes_.back().push_back(DVar{name, tag, 0, ""});
     }
 
     void parseDeclInto(std::vector<std::unique_ptr<Stmt>>& out, bool forInit) {

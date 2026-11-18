@@ -1,0 +1,223 @@
+#pragma once
+// "Experimental: try our own code": one table of the own replacements that can be switched on at RUN time, and the pure logic
+// around it (docs/try_it/<id>-own-switch.md, docs/own_code_roadmap.md). Standard library only, so the launcher, the editor and
+// the tests share it; it does not include any engine header.
+//
+// How it works, in plain words:
+//  * Every item is OFF by default. The choices are saved in one small text file, own_switches.cfg, next to the program
+//    (the launcher and the editor read the same file). Format: one line `on=wav,http` (ids of the items that are on).
+//  * At the very top of main(), before anything reads its variable, Startup() sets the environment variable of each
+//    chosen item inside the running program. Programs the launcher starts inherit it.
+//  * A variable the person set themselves (set / $env: / export) always wins: the item then shows "set by an environment
+//    variable" and cannot be changed from the screen. To tell our own variables from the person's, the variables we set are
+//    listed in OKAY_OWN_SWITCHES_APPLIED (a child program sees which ones its parent set).
+//  * Changes take effect after a restart (each backend is chosen once, on first use), and the screen says so.
+//
+// TO ADD AN ITEM LATER (okay::platform events, own ImGui renderer, the okayui host ...): add ONE line to Items() below.
+#include <cstdio>
+#include <cstdlib>
+#include <fstream>
+#include <sstream>
+#include <string>
+#include <vector>
+
+namespace okay::ownswitches {
+
+/// What an item needs from the build or the system. A screen passes what is true here; an unavailable item is hidden.
+enum Needs : unsigned { kNone = 0, kNotWindows = 1, kNeedsOkayUi = 2 };
+
+struct Item {
+    const char* id;        // short stable name stored in the file ("wav")
+    const char* label;     // the words on the screen
+    const char* desc;      // one plain line
+    const char* env;       // the environment variable that switches it on
+    const char* value;     // what the variable is set to when on
+    unsigned needs;        // Needs bits
+};
+
+/// The table. Everything here exists on main today and is chosen at run time (compile-time-only options are not listed).
+inline const std::vector<Item>& Items() {
+    static const std::vector<Item> t = {
+        {"okayui",   "OkayUI screens",        "Draw the screens that have an OkayUI version (What's New, the editor Console) with our own toolkit instead of Dear ImGui.", "OKAY_UI_BACKEND",      "okayui", kNeedsOkayUi},
+        {"wav",      "Our own WAV reader",    "Read .wav sound files with our own decoder instead of the built-in one.",                                                      "OKAY_OWN_WAV",         "1",      kNone},
+        {"http",     "Our own web client",    "Download and check for updates with our own HTTP client instead of curl (Linux builds only; Windows already uses WinHTTP).",   "OKAY_OWN_HTTP",        "1",      kNotWindows},
+        {"platform", "Our own window layer",  "Open windows and read the keyboard and mouse with our own okay::platform backend instead of SDL (Linux only).",               "OKAY_PLATFORM_BACKEND", "own",   kNotWindows},
+    };
+    return t;
+}
+
+/// What is true on this machine: used to hide items that cannot work here.
+struct Context {
+    bool windows = false;
+    bool okayUi = false;
+    static Context Here() {
+        Context c;
+#if defined(_WIN32)
+        c.windows = true;
+#endif
+#if defined(OKAY_HAVE_OKAYUI)
+        c.okayUi = true;
+#endif
+        return c;
+    }
+};
+
+inline bool Available(const Item& it, const Context& c) {
+    if ((it.needs & kNotWindows) && c.windows) return false;
+    if ((it.needs & kNeedsOkayUi) && !c.okayUi) return false;
+    return true;
+}
+
+// ---- the list of ids (file line and OKAY_OWN_SWITCHES_APPLIED share the format) -----------------------------------------
+
+inline std::vector<std::string> SplitIds(const std::string& s) {
+    std::vector<std::string> out;
+    std::string cur;
+    for (char c : s + ",") {
+        if (c == ',' || c == ' ' || c == '\t' || c == '\r' || c == '\n') { if (!cur.empty()) out.push_back(cur); cur.clear(); }
+        else cur += c;
+    }
+    return out;
+}
+inline std::string JoinIds(const std::vector<std::string>& v) {
+    std::string s;
+    for (const std::string& i : v) { if (!s.empty()) s += ','; s += i; }
+    return s;
+}
+inline bool Has(const std::vector<std::string>& v, const std::string& id) {
+    for (const std::string& i : v) if (i == id) return true;
+    return false;
+}
+inline const Item* Find(const std::string& id, const std::vector<Item>& items) {
+    for (const Item& it : items) if (id == it.id) return &it;
+    return nullptr;
+}
+
+/// Read the file text: the `on=` line. Unknown ids, repeats and damaged lines are dropped, so a hand-edited file cannot turn
+/// on anything that is not in the table. Result is in table order.
+inline std::vector<std::string> Parse(const std::string& text, const std::vector<Item>& items = Items()) {
+    std::vector<std::string> raw;
+    std::istringstream in(text);
+    std::string line;
+    while (std::getline(in, line)) {
+        if (line.compare(0, 3, "on=") == 0) raw = SplitIds(line.substr(3));
+    }
+    std::vector<std::string> out;
+    for (const Item& it : items) if (Has(raw, it.id)) out.push_back(it.id);
+    return out;
+}
+inline std::string Serialize(const std::vector<std::string>& on, const std::vector<Item>& items = Items()) {
+    std::vector<std::string> ordered;
+    for (const Item& it : items) if (Has(on, it.id)) ordered.push_back(it.id);
+    return "# Experimental: our own code (set from Settings in the launcher or View > Rendering & Performance in the editor)\non=" + JoinIds(ordered) + "\n";
+}
+
+/// "Back to normal": everything off.
+inline void AllOff(std::vector<std::string>& on) { on.clear(); }
+inline void Set(std::vector<std::string>& on, const std::string& id, bool value) {
+    std::vector<std::string> n;
+    for (const std::string& i : on) if (i != id) n.push_back(i);
+    if (value) n.push_back(id);
+    on = n;
+}
+
+// ---- the environment -------------------------------------------------------------------------------------------------
+
+inline const char* AppliedVar() { return "OKAY_OWN_SWITCHES_APPLIED"; }
+
+inline void PutEnv(const char* name, const char* value) {
+#if defined(_WIN32)
+    _putenv_s(name, value);
+#else
+    setenv(name, value, 1);
+#endif
+}
+inline void DropEnv(const char* name) {
+#if defined(_WIN32)
+    _putenv_s(name, "");   // (Windows: an empty value removes the variable)
+#else
+    unsetenv(name);
+#endif
+}
+inline std::vector<std::string> AppliedNow() {
+    const char* e = std::getenv(AppliedVar());
+    return SplitIds(e ? e : "");
+}
+
+/// True when the person set the item's variable themselves (it is set and we did not set it).
+inline bool SetByUser(const Item& it, const std::vector<std::string>& appliedByUs) {
+    return std::getenv(it.env) != nullptr && !Has(appliedByUs, it.id);
+}
+
+/// Set the variables of the chosen, available items (not over a variable the person set), remove the ones a parent program set that
+/// are no longer chosen, and record what we set in OKAY_OWN_SWITCHES_APPLIED. Returns the ids now on. Call before anything reads them.
+inline std::vector<std::string> Apply(const std::vector<std::string>& on, const std::vector<Item>& items = Items(), const Context& ctx = Context::Here()) {
+    const std::vector<std::string> before = AppliedNow();
+    std::vector<std::string> applied;
+    for (const Item& it : items) {
+        const bool byUser = SetByUser(it, before);
+        const bool want = Has(on, it.id) && Available(it, ctx);
+        if (want && !byUser) { PutEnv(it.env, it.value); applied.push_back(it.id); }
+        else if (!want && !byUser && Has(before, it.id)) DropEnv(it.env);
+    }
+    if (applied.empty()) DropEnv(AppliedVar()); else PutEnv(AppliedVar(), JoinIds(applied).c_str());
+    return applied;
+}
+
+// ---- what the screen says ---------------------------------------------------------------------------------------------
+
+enum class Status { Off, OnNow, OnAfterRestart, OffAfterRestart, SetByEnvironment };
+
+/// `chosen`: the saved choice. `runningWith`: the ids that were on when this program started (the AppliedNow() taken in Startup).
+inline Status StatusOf(const Item& it, const std::vector<std::string>& chosen, const std::vector<std::string>& runningWith, bool setByUser) {
+    if (setByUser) return Status::SetByEnvironment;
+    const bool want = Has(chosen, it.id), now = Has(runningWith, it.id);
+    if (want && now) return Status::OnNow;
+    if (want) return Status::OnAfterRestart;
+    return now ? Status::OffAfterRestart : Status::Off;
+}
+inline const char* StatusText(Status s) {
+    switch (s) {
+        case Status::OnNow: return "on now";
+        case Status::OnAfterRestart: return "on after restart";
+        case Status::OffAfterRestart: return "off after restart";
+        case Status::SetByEnvironment: return "set by an environment variable";
+        default: return "off";
+    }
+}
+
+// ---- the file ----------------------------------------------------------------------------------------------------------
+
+inline std::vector<std::string> LoadFile(const std::string& path, const std::vector<Item>& items = Items()) {
+    std::ifstream f(path, std::ios::binary);
+    if (!f) return {};
+    std::stringstream ss;
+    ss << f.rdbuf();
+    return Parse(ss.str(), items);
+}
+inline bool SaveFile(const std::string& path, const std::vector<std::string>& on, const std::vector<Item>& items = Items()) {
+    std::ofstream f(path, std::ios::binary | std::ios::trunc);
+    if (!f) return false;
+    f << Serialize(on, items);
+    return (bool)f;
+}
+
+/// What a running program keeps: the saved choice (what the screen edits) and what was applied at start.
+struct State {
+    std::string path;
+    std::vector<std::string> chosen;
+    std::vector<std::string> runningWith;
+};
+inline State& Global() { static State s; return s; }
+
+/// The one call at the top of main(), before OwnStack Startup(): load the file, set the variables.
+inline void Startup(const std::string& cfgPath) {
+    State& g = Global();
+    g.path = cfgPath;
+    g.chosen = LoadFile(cfgPath);
+    g.runningWith = Apply(g.chosen);
+}
+/// Save the screen's choice to the file Startup() read.
+inline void SaveChosen() { State& g = Global(); if (!g.path.empty()) SaveFile(g.path, g.chosen); }
+
+} // namespace okay::ownswitches

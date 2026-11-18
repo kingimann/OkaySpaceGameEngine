@@ -143,6 +143,8 @@ cp "$BUILD_DIR/bin/OkayEngine.exe" \
    "$SDL2_MINGW_PREFIX/bin/SDL2.dll" \
    "$OUT_DIR/Tools/"
 [ -f "$BUILD_DIR/bin/okayspace-relay.exe" ] && cp "$BUILD_DIR/bin/okayspace-relay.exe" "$OUT_DIR/Tools/"
+# okay-content: builds, signs, checks and fetches downloadable game content (docs/content_delivery.md); a small command-line tool.
+[ -f "$BUILD_DIR/bin/okay-content.exe" ] && cp "$BUILD_DIR/bin/okay-content.exe" "$OUT_DIR/Tools/"
 # OkayUI's standalone Direct3D 11 demo (no SDL): a raw DX11 app rendering OkayUI.
 [ -f "$BUILD_DIR/bin/okayui_d3d11_demo.exe" ] && cp "$BUILD_DIR/bin/okayui_d3d11_demo.exe" "$OUT_DIR/Tools/"
 # VERSION.txt is the single source of truth for the self-updater: the launcher

@@ -130,6 +130,7 @@ Pictures and screenshots are not stored in the repository (owner rule, 2026-11-1
 - [anticheat_hardening_status.md](anticheat_hardening_status.md): every item of the 2026-10-26 hardening audit and the server-side topics, done or not, with proof; the cheat simulator.
 - [supabase-backend.md](supabase-backend.md): the Supabase backend.
 - [updater.md](updater.md): the updater: integrity, signed feeds, self-update and rollback.
+- [content_delivery.md](content_delivery.md): downloadable game content: signed manifest, resumable sync, rollback, overlay lookup, scripts and graphs (data and scripts only, never code), Xbox/UWP notes.
 - [account_data.md](account_data.md): download my data and delete my account.
 - [member_moderation.md](member_moderation.md): kick, ban and admins in community servers and group chats.
 - [password-reset.md](password-reset.md): the password reset page.

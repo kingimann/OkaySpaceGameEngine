@@ -91,6 +91,8 @@ release job or the installer build for this change.
 | 16 | Main menu bar clean-up: one Examples, Edit clipboard commands, GameObject categories, View, Help | The bar at the top of `Tools\OkayEngine.exe` | New in this change; see section 16 for what was and was not seen |
 | 17 | Hierarchy right-click menus: Create Child with every category, Add Component, Select Same Type, "Delete 3 Objects" | Right-click in the Hierarchy panel of `Tools\OkayEngine.exe` | New in this change; see section 17 |
 | ac-cheat-sim | Anti-cheat: watch the server catch a cheater (cheat simulator), ban list, audit log | `OkaySpacePlayer.exe --server --cheat-sim --log cheat_sim.txt` (Tools folder), then open the log | New in this change; tested headless on Linux over loopback; Windows and a real network unverified |
+| content-delivery | Downloadable game content: signed models, textures, scripts and data that an exported game fetches (off by default) | `okay-content.exe` in `Tools/`, or `content.okayconfig` / `OKAY_CONTENT_URL` for the player | Built; Linux-tested only |
+| editor-fps | Editor frame-time overlay and speed switches | Editor menu **View > Rendering**: Frame-time overlay, Frame rate limit, Slow down when idle, Viewport resolution, Performance mode. Heavy test scenes: `examples\perf\` | New in this change. Real Direct3D 11 numbers on a Windows machine are unverified; sent back by the owner |
 | fast1 | Fast release: one workflow dispatch, no version-bump PR | GitHub: Actions > "Fast release" > Run workflow (tick dry_run first); a change adds `dist/changelog.d/<id>.txt` | Built and tested offline with fake data; never run on GitHub; off until `FAST_RELEASE_ENABLED=1` |
 | hygiene1 | Account address and key in one config file; no built programs in git | Nothing to open: build or release as usual, optional key rotation in Supabase | Verified on Linux (tests, configure); no release or Windows run |
 | input | Input upgrade: input playground, rumble patterns, vibration setting, key positions (AZERTY) | Editor: File > Open, `examples\input\input_playground.okayscene`, then Play | Tested headless on Linux; nothing run on Windows or with a real controller or AZERTY keyboard |
@@ -1478,6 +1480,46 @@ next to each other. `hp 10` and `hp 9` stay two rows. The pill counts still coun
 **Status.** Logic tested headless (`test_debug_console`, 136 checks, run on Linux). `editor/ConsolePanel.cpp` and
 `editor/main.cpp` were NOT compiled (no SDL in this environment); the button and label are unverified until you look.
 
+## content-delivery. Downloadable game content (off by default, Windows first)
+
+An exported game can download updated **data and scripts** (models, textures, animations, scenes, audio, dialogue, Visual Script
+and OkayScript files) from a folder or a server. Never code or programs. Full description: `docs/content_delivery.md`.
+Nothing changes in a game unless a content URL is set. Not tested on Windows or an Xbox yet.
+
+You need a Windows PC with the release folder (the `Tools` folder holds `okay-content.exe`), Git Bash or WSL for the
+publish script (only for step 6), and Python 3 once to make a key.
+
+1. **Make a key.** In a terminal in the repo: `python3 scripts/sign_index.py genkey`. It prints a seed (private: keep it, never
+   share it) and a public key. Write them down for the steps below (`SEED` and `PUB`).
+2. **Make a content folder** (for example `C:\test\content-v1`) holding a few real files, in the same layout your game uses:
+   `models\ship.obj`, `scripts\boss.okayvs` (copy a graph saved by the Visual Script editor), `strings.okayloc`.
+3. **Sign it.** `set OKAY_CONTENT_SIGNING_SEED=SEED` then
+   `okay-content.exe make-manifest C:\test\content-v1 --game mygame --version 1`. You should see "wrote content.manifest ... and
+   content.manifest.sig". Then `okay-content.exe verify C:\test\content-v1 --keys PUB --game mygame` should say `OK`.
+   Try a file named `run.exe` in the folder: make-manifest must refuse it.
+4. **Download it like a player.** `okay-content.exe sync C:\test\content-v1 C:\test\player-content --game mygame --keys PUB`.
+   You should see each file, then `status=updated ... downloaded=3`. Run it again: `status=up-to-date`, nothing downloaded.
+   Change one file, make version 2 (`--version 2`), sync again: only the changed file downloads.
+5. **Try a bad key.** Repeat the sync with a different public key: it must refuse and `C:\test\player-content\current.txt` must not
+   appear (or stay at the old version).
+6. **Use it in a game.** Build a game with Build Game, put a text file `content.okayconfig` beside `OkaySpacePlayer.exe` (next to the
+   game's `_Data` folder) with
+   ```
+   url=file:///C:/test/content-v1
+   game=mygame
+   keys=PUB
+   ```
+   (or set the environment variables `OKAY_CONTENT_URL`, `OKAY_CONTENT_GAME`, `OKAY_CONTENT_KEYS`). Start the game. The game's log
+   (the player prints it at start-up; a development build also writes it to `game.log`) shows `content: updated, serving downloaded content version 1`. A downloaded
+   `strings.okayloc`, `items.okayitems`, `weapons.okayweapon`, a scene named in the scene list, a UI image or an `.obj` mesh now
+   wins over the installed one. With no `content.okayconfig` and no variable the game is unchanged.
+7. **Publish for real (optional).** With Git Bash and a Supabase service key in `SUPABASE_SERVICE_KEY`:
+   `OKAY_CONTENT_SIGNING_SEED=SEED scripts/publish-content.sh C:/test/content-v1 --game mygame --version 3`. It prints the
+   `url=` line to use. `DRY_RUN=1` checks everything and uploads nothing.
+
+Tests (Linux): `ctest -R "content_"` and `ctest -R publish_content`. Not verified: Windows, a real bucket, the Xbox app (its
+network transport is a stub that says so).
+
 ## Remove from list and Delete project (launcher Create page)
 
 **Where.** Launcher > **Create**. Your projects are the folders inside the **Projects** folder next to `OkaySpace.exe`
@@ -1532,6 +1574,40 @@ Three bug fixes from issue #888 (findings 74, 75 and 78). Nothing new to click; 
 
 **Checked:** `test_data_load_checks` (headless, Linux). **Not checked:** the editor windows above (the editor was
 not built for this change); anything on Windows.
+
+## editor-fps. Editor frame-time overlay and speed switches
+
+**What it is.** A small window inside the editor that shows your FPS, the frame time in milliseconds, a graph of the last
+120 frames, and where each frame goes (3D view, panels, ImGui, present, Play mode). Plus a few switches to make the editor
+cheaper. All switches are off until you turn them on. Guide: `docs/editor_performance.md`.
+
+**Steps (read the numbers).**
+1. Open the editor (`Tools\OkayEngine.exe`). Open a project, or use **File > Open Scene** and pick `<install folder>\examples\perf\many_lights.okayscene`.
+2. Open the menu **View**, then **Rendering**. Click **Frame-time overlay**. A window called "Frame time" appears at the top right.
+   Drag it where you like. It stays open the next time you start the editor.
+3. Leave the mouse over the Scene view for a few seconds, then orbit the camera (hold the right mouse button and move).
+4. Read the top line (FPS and ms) and the bars below it. The bar that is longest is where the time goes.
+5. Press **Copy report** in the overlay. Paste it into a message to us. That is the number to send back. Also say your
+   graphics card and the window size, and whether the line "Renderer:" in the overlay says "Direct3D 11 (GPU, direct to the view)".
+6. For more detail, press **Open Profiler** (or **View > Rendering > Profiler window**).
+
+**Steps (try the switches).** All in **View > Rendering**, each takes effect at once. Look at the overlay after each one.
+1. **Viewport resolution** > **75%** then **50%**: the 3D view gets a little softer and the "3D view render" bar shrinks.
+2. **Performance mode (Scene view)**: the Scene view loses ambient occlusion, bloom and edge smoothing; the Game view does not change.
+3. **Frame rate limit** > **120 FPS**: the FPS settles near 120 and a new bar "Frame limiter sleep" shows the time slept on purpose.
+   The overlay also says what the frame costs without the sleep ("possible FPS").
+4. **Slow down when idle**: take your hands off the mouse and keyboard for a second: FPS drops to the idle rate (30 by default)
+   and the GPU rests. Move the mouse: full speed again. It never slows down while the game is playing.
+5. Turn each switch off again to compare.
+
+**What you should see.** The overlay's numbers move when you change a switch. The sections add up to the frame time
+(the line "Not timed" is what no timer covers).
+
+**Status.** Logic tested headless on Linux (`test_editor_perf`: section maths, history numbers, idle and limiter decisions,
+scale, performance mode). The editor was built and started on Linux with a virtual screen and SDL's software 2D renderer: the
+frame limiter was seen working (a 10 FPS cap gave 99.7 ms frames with a "Frame limiter sleep" section) and the sections add up.
+The overlay window was drawn only with the profiler data path (not looked at on screen), no scene viewport was exercised, and
+nothing was run on Windows or a real GPU, so the Direct3D 11 numbers are unverified until you send the report.
 
 ## fast1. Fast release: one dispatch, no version-bump PR
 

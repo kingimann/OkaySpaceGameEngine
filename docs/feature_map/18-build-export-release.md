@@ -210,3 +210,24 @@ Release 2.851.0 is live (tag `v2.851.0`, 2026-11-09); the 2.852.0 release PR (#5
 - **Words:** Xbox, Xbox One, UWP, Developer Mode, appx, msix, package, AppxManifest, MakeAppx, SignTool, Device Portal, console
 - **Seen as:** the owner wants to try the game on an Xbox One; "Xbox (exp.)" in Build Settings; a missing-tools message
 - **Ask me like:** "make an Xbox One Developer Mode package", "why is Xbox export greyed out?"
+
+### 18.11 Downloadable game content (content delivery)
+- **What:** An exported game can download signed updates of its own data and scripts (models, textures, animations, scenes, audio, dialogue, Visual Script and OkayScript files) from a folder or a server, resume partial downloads, keep the previous version for rollback and look each file up in the downloaded content first, then in the installed files. Never code or programs. Off unless a content URL is configured.
+- **Parts:**
+  - 18.11.1 Manifest and signature - `shared/ContentManifest.hpp` - strict text list `{path, size, sha256, kind, group, min-app}` with path, case, size and count limits; ed25519 signature with its own domain, checked through `shared/UpdateSignature.hpp` key and signature parsing; no key means refused
+  - 18.11.2 Sync engine - `shared/ContentSync.hpp`, `shared/ContentTransport.hpp` - state machine over an abstract `Transport` (GET with Range): diff by SHA-256, resume, retry with backoff, size and hash check before the file is visible, budget, replay floor, commit record last, previous version kept, `Rollback`
+  - 18.11.3 Overlay lookup - `shared/ContentOverlay.hpp` - `Overlay::Resolve(name, installRoot)`: downloaded first, then installed; path-safe, case-insensitive, verified-manifest names only
+  - 18.11.4 Transports - `shared/ContentHttpTransport.hpp` - `file://` folder, HTTP(S) over `NativeHttp` (WinHTTP; own client on Linux), and a clearly named Xbox/UWP stub that only fails
+  - 18.11.5 Game wiring - `shared/GameContent.hpp`, `shared/GameContentValidators.hpp`, `player/main.cpp` - `content.okayconfig` or `OKAY_CONTENT_URL`; one sync at start-up; graph and script checks before a file is visible; overlay used for scenes, items, weapons, strings, UI images and `.obj` meshes
+  - 18.11.6 Tools - `tools/okay-content/main.cpp`, `scripts/publish-content.sh` - make-manifest, verify, sync, status, rollback, pubkey; signed upload to Supabase Storage, manifest last
+- **Code:** `shared/ContentManifest.hpp`, `shared/ContentSync.hpp`, `shared/ContentTransport.hpp`, `shared/ContentOverlay.hpp`, `shared/ContentHttpTransport.hpp`, `shared/GameContent.hpp`, `shared/GameContentValidators.hpp`, `tools/okay-content/main.cpp`, `scripts/publish-content.sh`, `player/main.cpp`
+- **API:** `okaycontent::Sync`, `okaycontent::Overlay::Resolve`, `okaycontent::StartGameContent`, `okaycontent::CheckSignature`, `content.okayconfig`, `OKAY_CONTENT_URL`, `OKAY_CONTENT_GAME`, `OKAY_CONTENT_KEYS`, `OKAY_CONTENT_GROUPS`, `OKAY_CONTENT_BUDGET_MB`, `OKAY_CONTENT_ALLOW_UNSIGNED`, `OKAY_CONTENT_SIGNING_SEED`, `okay-content make-manifest|verify|sync|status|rollback|pubkey`
+- **Editor:** none yet (Build Game does not write `content.okayconfig`)
+- **Docs:** `docs/content_delivery.md`, `docs/try_it/content-delivery.md`
+- **Tests:** `content_delivery`, `content_validators`, `content_cli`, `publish_content_script`
+- **Status:** Basic - tested on Linux against a fake server, a local folder and a loopback HTTP server; nothing run on Windows or a real bucket
+- **Open:** Windows, `https`, a real Supabase bucket and the player on screen are unverified; the Xbox transport is a stub; no Visual Script block, no progress screen (start-up waits); audio, `DataAsset`, character clips, glTF and FBX models, prefabs and fonts do not look in the downloaded content yet; no PowerShell publisher
+- **Related:** 18.5, 17.14, 39.4
+- **Words:** content delivery, downloadable content, DLC, content update, asset bundle, patch, manifest, content.manifest, okay-content, overlay, content.okayconfig, OKAY_CONTENT_URL, publish-content, game content, models textures scripts download
+- **Seen as:** the owner wants new models, maps or scripts in a shipped game without a new build; a game shows old content after a publish; "content refused: not signed"
+- **Ask me like:** "how do I ship a new map without rebuilding the game?", "can the Xbox app download scripts?", "why was my content update refused?"

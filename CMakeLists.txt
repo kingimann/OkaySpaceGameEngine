@@ -291,6 +291,25 @@ if(OKAY_BUILD_PLAYER OR OKAY_BUILD_EDITOR)
     endif()
 endif()
 
+# ---- Content delivery tool (docs/content_delivery.md) ----------------
+# okay-content: make-manifest / verify / sync / status / rollback for the signed game content that an exported game can download.
+# Tiny (crypto + our own HTTP layer only); it is what scripts/publish-content.sh calls and what the owner uses to test a content folder.
+option(OKAY_BUILD_CONTENT_TOOL "Build the okay-content command-line tool" ON)
+if(OKAY_BUILD_CONTENT_TOOL AND NOT EMSCRIPTEN)
+    add_executable(okay-content tools/okay-content/main.cpp)
+    target_compile_features(okay-content PRIVATE cxx_std_17)
+    target_include_directories(okay-content PRIVATE ${CMAKE_SOURCE_DIR}/shared ${CMAKE_SOURCE_DIR}/engine/include)
+    target_link_libraries(okay-content PRIVATE okay::crypto)
+    if(WIN32)
+        target_link_libraries(okay-content PRIVATE winhttp ws2_32)
+    elseif(OKAY_OWN_HTTP AND NOT APPLE)
+        target_compile_definitions(okay-content PRIVATE OKAY_OWN_HTTP=1)
+        find_package(Threads REQUIRED)
+        target_link_libraries(okay-content PRIVATE Threads::Threads ${CMAKE_DL_LIBS})
+    endif()
+    set_target_properties(okay-content PROPERTIES OUTPUT_NAME "okay-content")
+endif()
+
 # ---- Ship SDL2.dll beside the binaries ----
 # Unless fully static (OKAY_STATIC_SDL), the Windows exes link SDL2 dynamically and
 # need SDL2.dll next to them. Copy it into the output bin dir so a build is runnable

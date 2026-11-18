@@ -118,6 +118,7 @@ if(OKAY_BUILD_OKAYUI_TESTS AND OKAY_BUILD_TESTS)
     # Window mode with the editor's real panels (Console, Scene Manager, Project window) over the stand-in editor state.
     okayui_port_test(okayui_hostpanels ../editor/OkayUIHostPanels.cpp ../editor/OkayUIHostMode.cpp ../editor/ProjectBrowser.cpp)
     target_compile_definitions(test_okayui_hostpanels PRIVATE OKAYUI_PORT_STAND_IN_EDITORSTATE)
+    okayui_port_test(okayui_hostdialogs ../editor/OkayUIHostDialogs.cpp)   # the error modal and the save question as OkayUI popups (DialogService, 6.24 step 7)
     okayui_port_test(okayui_frametick)   # the editor's game step (editor/EditorFrameTick.hpp) with a fake editor state
     okayui_port_test(okayui_port_scenemanager ../editor/SceneManagerPanel.cpp ../editor/ConsolePanel.cpp ../editor/EditorWidgets.cpp)
     target_compile_definitions(test_okayui_port_scenemanager PRIVATE OKAYUI_PORT_STAND_IN_EDITORSTATE)

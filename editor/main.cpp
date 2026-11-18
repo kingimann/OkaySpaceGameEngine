@@ -96,6 +96,7 @@
 #include "okay/Scene/UILayoutTools.hpp"  // wrap in panel, fit to children, match size, stack
 #include "okay/Platform/PlayFab/PlayFab.hpp" // PlayFab cloud services (Services panel)
 #include "okay/Platform/NativeFetch.hpp"      // own HTTP client in front of curl for the update download (only with OKAY_OWN_HTTP)
+#include "DialogService.hpp"                  // the error / save-question / open-script calls behind one interface (window mode has its own)
 #include "EditorFrameTick.hpp"                // the game-step part of the frame (oked::StepSimulation), shared with window mode
 #ifdef OKAY_HAVE_OKAYUI
 #include "okay/UI/OkayUI.hpp"           // demo overlay: OkayUI drawn on top of ImGui
@@ -19387,7 +19388,17 @@ void RunAfterSavePrompt(EditorState& ed, const std::string& doing, std::function
     g_savePromptWhat = doing; g_savePromptAction = std::move(action); g_savePromptCancel = std::move(onCancel);
     g_savePromptError.clear(); g_savePromptOpen = true;
 }
+// The Dear ImGui implementation of oked::DialogService (editor/DialogService.hpp): the popups above. Window mode has its own (editor/OkayUIHostDialogs.cpp).
+namespace {
+struct ImGuiDialogs : DialogService {
+    EditorState* ed = nullptr;   // set by DrawSavePrompt each frame
+    void ShowError(const std::string& title, const std::string& text) override { ShowErrorPopup(title, text); }
+    void RunAfterSavePrompt(const std::string& doing, std::function<void()> action, std::function<void()> onCancel) override { if (ed) ::oked::RunAfterSavePrompt(*ed, doing, std::move(action), std::move(onCancel)); else if (action) action(); }
+    void OpenScriptAt(const std::string& path, int line) override { OpenScriptFileInEditorAt(path, line); }
+} g_imguiDialogs;
+}
 static void DrawSavePrompt(EditorState& ed) {
+    g_imguiDialogs.ed = &ed; if (!CurrentDialogs()) SetDialogs(&g_imguiDialogs);
     if (g_savePromptOpen && !ImGui::IsPopupOpen("Save changes?")) ImGui::OpenPopup("Save changes?");
     ImGui::SetNextWindowPos(ImGui::GetMainViewport()->GetCenter(), ImGuiCond_Appearing, ImVec2(0.5f, 0.5f));
     ImGui::SetNextWindowSize(ImVec2(480, 0), ImGuiCond_Always);

@@ -89,6 +89,7 @@ void DrawHostModeUi(HostModeState& st) {
     if (st.panels.sceneManager && st.IsOpen(kPanelSceneManager)) st.panels.sceneManager();
     if (st.panels.console && st.IsOpen(kPanelConsole)) st.panels.console();
     if (st.panels.after) st.panels.after();
+    if (st.panels.dialogs) st.panels.dialogs();   // the error modal and the save question, over everything
     if (st.IsOpen("Audio Mixer")) {
         if (DockBegin("Audio Mixer", &st.OpenRef("Audio Mixer"))) {
             using okay::AudioMixer; using okay::AudioGroup;

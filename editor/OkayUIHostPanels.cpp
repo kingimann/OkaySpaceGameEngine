@@ -3,6 +3,7 @@
 // header they need was included at global scope, with the names they DEFINE renamed (the *_WM macros) so they cannot collide with the Dear ImGui editor's
 // copy of the same files in the same program. Names they only USE (g_paused, SaveSettings, ...) stay as they are and resolve to the editor's own.
 #include "OkayUIHostPanels.hpp"
+#include "DialogService.hpp"
 
 #undef OKAY_HAVE_OKAYUI   // the panel sources must take their Dear ImGui API path (compiled against OkayUI): never the hosted-in-ImGui OkayUI path
 #define OKAYUI_STABLE_PANEL_TITLES 1   // ConsolePanel.cpp: no error counts in the window title (the dock layout keys windows by title)
@@ -11,6 +12,10 @@
 #define ConsoleLog ConsoleLog_WM
 #define DrawConsole DrawConsole_WM
 #define ConsoleClear ConsoleClear_WM
+// the three calls to the person: in this copy they go to the current DialogService (editor/DialogService.hpp), which window mode points at OkayUI popups
+#define ShowErrorPopup ShowErrorPopup_WM
+#define RunAfterSavePrompt RunAfterSavePrompt_WM
+#define OpenScriptFileInEditorAt OpenScriptFileInEditorAt_WM
 #define ConsoleSetMirror ConsoleSetMirror_WM
 #define g_consoleMirror g_consoleMirror_WM
 #define g_consoleCounts g_consoleCounts_WM
@@ -86,6 +91,9 @@
 #undef ConsoleLog
 #undef DrawConsole
 #undef ConsoleClear
+#undef ShowErrorPopup
+#undef RunAfterSavePrompt
+#undef OpenScriptFileInEditorAt
 #undef ConsoleSetMirror
 #undef g_consoleMirror
 #undef g_consoleCounts
@@ -118,6 +126,16 @@
 #undef DrawPropertyRows
 
 namespace oked {
+// the renamed calls of the panel sources (see the *_WM macros above): to the current DialogService; without one the error still reaches the Console
+void ShowErrorPopup_WM(const std::string& title, const std::string& text) {
+    if (DialogService* d = CurrentDialogs()) d->ShowError(title, text); else ConsoleLog_WM(title + ": " + text, 2);
+}
+void RunAfterSavePrompt_WM(okay::editor::EditorState&, const std::string& doing, std::function<void()> action, std::function<void()> onCancel) {
+    if (DialogService* d = CurrentDialogs()) d->RunAfterSavePrompt(doing, std::move(action), std::move(onCancel)); else if (action) action();
+}
+void OpenScriptFileInEditorAt_WM(const std::string& path, int line) {
+    if (DialogService* d = CurrentDialogs()) d->OpenScriptAt(path, line);
+}
 void ConsoleSetMirror(void (*fn)(const std::string&, int));   // ConsolePanel.cpp of the Dear ImGui editor's copy (the declaration in this TU's header was renamed)
 namespace wm {
 

@@ -9,6 +9,7 @@
 #include "OkayUIFrameLoop.hpp"
 #include "OkayUIHostPanels.hpp"
 #include "OkayUIHostViews.hpp"
+#include "OkayUIHostDialogs.hpp"
 #include "EditorFrameTick.hpp"
 #include "EditorState.hpp"
 #include "okay/Components/BehaviorTreeRunner.hpp"
@@ -56,6 +57,33 @@ int RunOkayUIHostMode(int, char**) {
         vs.yaw = &editor.camYaw; vs.pitch = &editor.camPitch; vs.dist = &editor.camDist; vs.target = &editor.camTarget;
         wm::AddSceneViews(state.panels, &state, painter.get(), vs);
     }
+    oked::wm::OkayUIDialogs dialogs;   // the error modal and the "Save changes?" question as OkayUI popups; the panels reach them through oked::CurrentDialogs()
+    {
+        namespace fs = std::filesystem;
+        okay::editor::EditorState* ed = &editor;
+        dialogs.ctx.inPrefabMode = [ed] { return ed->InPrefabMode(); };
+        dialogs.ctx.hasUnsavedChanges = [ed] { return ed->HasUnsavedChanges(); };
+        dialogs.ctx.sceneLabel = [ed] { return ed->path().empty() ? std::string("this new scene") : fs::path(ed->path()).filename().string(); };
+        dialogs.ctx.isPlaying = [ed] { return ed->isPlaying(); };
+        dialogs.ctx.stopPlay = [ed] { ed->Stop(); };
+        dialogs.ctx.save = [ed](std::string& err) {   // the open scene's path, else <project>/Assets/Scenes/<name>.okayscene (as the Dear ImGui editor does)
+            std::string p = ed->path();
+            if (p.empty()) {
+                std::string name = ed->scene().Name();
+                for (char& c : name) if (!(std::isalnum((unsigned char)c) || c == '_' || c == '-' || c == ' ')) c = '_';
+                if (name.empty() || name == "Scene") name = "Main";
+                p = ((ed->projectDir().empty() ? fs::path("Scenes") : fs::path(ed->projectDir()) / "Assets" / "Scenes") / (name + ".okayscene")).string();
+            }
+            std::error_code ec;
+            if (fs::path(p).has_parent_path()) fs::create_directories(fs::path(p).parent_path(), ec);
+            const bool ok = ed->Save(p, &err);
+            wm::ConsoleLog(ok ? "Saved scene: " + p : "Couldn't save the scene to " + p + ": " + err, ok ? 0 : 2);
+            return ok;
+        };
+        dialogs.log = [](const std::string& line, int level) { wm::ConsoleLog(line, level); };
+        state.panels.dialogs = [&dialogs] { dialogs.Draw(); };
+        oked::SetDialogs(&dialogs);
+    }
     oked::SimHooks<okay::editor::EditorState> sim;
     sim.tickGame = [](okay::editor::EditorState& e, float d) { e.Tick(d); };
     sim.onRunFramesDone = [] {};
@@ -81,6 +109,7 @@ int RunOkayUIHostMode(int, char**) {
         if (!statePath.empty() && state.frame > 2) saver.Offer(current(), be->TicksMs());   // saves at most every 2 seconds and only when something changed
     }
     if (!statePath.empty()) saver.Flush(current(), be->TicksMs());
+    oked::SetDialogs(nullptr);
     painter.reset(); win.reset();
     be->Shutdown();
     return 0;

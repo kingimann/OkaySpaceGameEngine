@@ -13,6 +13,7 @@
 #include "ProblemsPanel.hpp"
 #include "okay/UI/OkayUIDock.hpp"
 #include "okay/Debug/ConsoleModel.hpp"
+#include "DialogService.hpp"
 
 #include <cstdlib>
 #include <ctime>
@@ -43,6 +44,11 @@ void ConsoleSetMirror(void (*fn)(const std::string&, int)) { g_mirror = fn; }
 void ConsoleLog(const std::string& msg, int level) { if (g_mirror) g_mirror(msg, level); }
 }
 
+namespace oked {   // the renamed calls the panel sources make (OkayUIHostPanels.cpp): they go to the current DialogService
+void ShowErrorPopup_WM(const std::string& title, const std::string& text);
+void RunAfterSavePrompt_WM(okay::editor::EditorState&, const std::string& doing, std::function<void()> action, std::function<void()> onCancel);
+void OpenScriptFileInEditorAt_WM(const std::string& path, int line);
+}
 namespace UI = OkayUI;
 namespace plat = okay::platform;
 using fakeplat::FakeBackend; using fakeplat::Move; using fakeplat::Btn;
@@ -100,6 +106,25 @@ int main() {
         oked::ConsoleLog("mirrored again", 0);
         oked::wm::ConsoleCounts(c2);
         CHECK(c2[0] == c1[0] + 1);
+    }
+
+    // step 7: the panels' error / save-question / open-script calls reach the current DialogService; without one an error still lands in the Console
+    {
+        struct Fake : oked::DialogService {
+            std::string err, doing, script; int line = 0, asked = 0;
+            void ShowError(const std::string& t, const std::string&) override { err = t; }
+            void RunAfterSavePrompt(const std::string& d, std::function<void()> a, std::function<void()>) override { doing = d; ++asked; if (a) a(); }
+            void OpenScriptAt(const std::string& p, int l) override { script = p; line = l; }
+        } f;
+        oked::SetDialogs(&f);
+        int ran = 0;
+        oked::ShowErrorPopup_WM("Couldn't open", "why"); oked::RunAfterSavePrompt_WM(ed, "closing", [&] { ++ran; }, {}); oked::OpenScriptFileInEditorAt_WM("a.cs", 7);
+        CHECK(f.err == "Couldn't open" && f.doing == "closing" && f.asked == 1 && ran == 1 && f.script == "a.cs" && f.line == 7);
+        oked::SetDialogs(nullptr);
+        int c0[3], c1[3]; oked::wm::ConsoleCounts(c0);
+        oked::ShowErrorPopup_WM("No service", "still logged"); oked::RunAfterSavePrompt_WM(ed, "closing", [&] { ++ran; }, {});
+        oked::wm::ConsoleCounts(c1);
+        CHECK(c1[2] == c0[2] + 1 && ran == 2);
     }
 
     if (const char* shot = std::getenv("OKAYUI_SHOT")) {   // a picture of the window, for looking at (not a golden)

@@ -21,6 +21,14 @@ struct Viewport {
     Vec2 GetWorkPos() const { return pos; }
     Vec2 GetWorkSize() const { return size; }
     const Viewport* operator->() const { return this; }   // so `GetMainViewport()->GetCenter()` compiles as it does with Dear ImGui's pointer
+    // What a host reads and writes on a viewport (docs/own_ui_toolkit.md 6.22): the id, two handles the host keeps for itself (OkayUI never touches
+    // them) and the frame's draw data (what GetDrawData() converts to). These three persist in the one main-viewport object that the pointer
+    // conversion below hands out.
+    unsigned ID = 0x4F4B5650u;                 // fixed ("OKVP"): OkayUI has one viewport
+    void* PlatformHandle = nullptr; void* RendererUserData = nullptr; void* PlatformUserData = nullptr;
+    ImDrawData* DrawData = nullptr;
+    /// `ImGuiViewport* vp = GetMainViewport();`: a pointer to the one persistent main-viewport object, refreshed from the display size at each call.
+    operator Viewport*() const;
 };
 Viewport GetMainViewport();
 
@@ -106,6 +114,10 @@ struct StyleInfo {
     float SeparatorTextBorderSize = 1.0f, DockingSeparatorSize = 2.0f;
     Vec2 WindowTitleAlign{0.0f, 0.5f}, ButtonTextAlign{0.5f, 0.5f}, SelectableTextAlign{0.0f, 0.0f}, DisplayWindowPadding{19.0f, 19.0f}, DisplaySafeAreaPadding{3.0f, 3.0f};
     int WindowMenuButtonPosition = 0;
+    float ScrollbarRounding = 9.0f, IndentSpacing = 21.0f;
+    Vec2 SeparatorTextAlign{0.0f, 0.5f}, SeparatorTextPadding{20.0f, 3.0f};
+    bool DockingNodeHasCloseButton = true;
+    void ScaleAllSizes(float) {}           // accepted; OkayUI scales through the text scale and the display scale
     ImVec4 Colors[Col_COUNT];              // index with the Col ids
 };
 StyleInfo& GetStyle();   // not const only so `ImGuiStyle& st = GetStyle();` compiles; a write is still lost
@@ -152,6 +164,8 @@ bool Shortcut(KeyChord chord, int flags = Shortcut_None);
 /// kept between 1 and 1e6. Cond_Always applies now; Once and FirstUseEver apply only when the window has never been sized by the
 /// host; Appearing only on the frame the window reappears. Takes effect when the window is next begun.
 bool SetWindowSize(const char* title, Vec2 size, Cond cond = Cond_Always);
+/// The current window (nothing outside a window).
+void SetWindowSize(Vec2 size, Cond cond = Cond_Always);
 
 /// The top-left of the current window's content region in window coordinates (the padding, and the title bar's height). Zero outside a
 /// window. Note the pair is not symmetric here: GetWindowContentRegionMax stays "cursor plus the space left" measured from the content
@@ -195,7 +209,8 @@ bool BringWindowToDisplayFront(const CurrentWindow& w);
 WindowInfo FindWindowByID(unsigned id);
 /// True while an open popup is a modal (BeginPopupModal): Dear ImGui returns the window, OkayUI has no window objects, so this is the
 /// yes / no answer callers use (`if (GetTopMostPopupModal() && ...)`).
-bool GetTopMostPopupModal();
+/// The topmost open modal popup as a window entry (Name empty, ID the popup's id), or null: usable as a yes / no answer and as `ImGuiWindow*`.
+WindowRef* GetTopMostPopupModal();
 /// For the next frame only, report IO::wantCaptureKeyboard as `want` whatever the widgets say (a host that wants a shortcut to wait or
 /// to go through). Used up by the next BeginFrame.
 void SetNextFrameWantCaptureKeyboard(bool want);
@@ -291,6 +306,14 @@ bool AnyWindowFocused();
 enum ChildFlags : int { Child_None = 0, Child_Borders = 1, Child_AlwaysUseWindowPadding = 2, Child_ResizeX = 4, Child_ResizeY = 8,
                         Child_AutoResizeX = 16, Child_AutoResizeY = 32, Child_AlwaysAutoResize = 64, Child_FrameStyle = 128 };
 bool BeginChild(const char* id, Vec2 size, int childFlags = Child_None, int windowFlags = 0);
+/// By numeric id (a GetID value): the same child as the one named "##<id>".
+bool BeginChild(unsigned id, Vec2 size, int childFlags = Child_None, int windowFlags = 0);
+/// Dear ImGui's ImageButton: a size vector, uv corners, a background and a tint (uv, background and tint are ignored; the picture fills the button).
+bool ImageButton(const char* id, SDL_Texture* tex, Vec2 size, Vec2 uv0 = Vec2{0, 0}, Vec2 uv1 = Vec2{1, 1}, Vec4 bg = Vec4{}, Vec4 tint = Vec4{1, 1, 1, 1});
+/// PushClipRect with corners (min, max) and the intersect flag (always intersects).
+void PushClipRect(Vec2 min, Vec2 max, bool intersectWithCurrent);
+/// Finish the frame's drawing calls (Dear ImGui's Render): EndFrameData() without an output size. GetDrawData() then converts to an ImDrawData.
+void Render();
 
 
 // ---- Step 6.11 (continued): the type names host code spells ---------------------------------------------------------------------
@@ -298,7 +321,7 @@ bool BeginChild(const char* id, Vec2 size, int childFlags = Child_None, int wind
 /// A packed colour from a float colour (what GetColorU32(ImVec4) does in Dear ImGui); components are clamped to 0..1.
 Color32 GetColorU32(Vec4 color);
 /// A texture handle as ported code spells it: the SDL texture pointer AddImage takes.
-typedef SDL_Texture* ImTextureID;
+
 /// An id (what GetID returns).
 typedef unsigned ImGuiID;
 /// A rectangle by its two corners (Dear ImGui's internal type under its name; own code, the usual helpers).
@@ -313,6 +336,7 @@ struct ImRect {
     float GetHeight() const { return Max.y - Min.y; }
     bool Contains(Vec2 p) const { return p.x >= Min.x && p.y >= Min.y && p.x < Max.x && p.y < Max.y; }
     bool Overlaps(const ImRect& r) const { return r.Min.y < Max.y && r.Max.y > Min.y && r.Min.x < Max.x && r.Max.x > Min.x; }
+    void ClipWith(const ImRect& r) { Min.x = Min.x > r.Min.x ? Min.x : r.Min.x; Min.y = Min.y > r.Min.y ? Min.y : r.Min.y; Max.x = Max.x < r.Max.x ? Max.x : r.Max.x; Max.y = Max.y < r.Max.y ? Max.y : r.Max.y; }
     void Expand(float amount) { Min.x -= amount; Min.y -= amount; Max.x += amount; Max.y += amount; }
 };
 /// The last item's rectangle as an ImRect.
@@ -387,11 +411,30 @@ void RenderPlatformWindowsDefault();
 struct PlatformViewports { int Size = 1; int size() const { return Size; } };
 struct PlatformIO {
     PlatformViewports Viewports;
-    void* Renderer_CreateWindow = nullptr; void* Renderer_DestroyWindow = nullptr; void* Renderer_RenderWindow = nullptr; void* Renderer_SwapBuffers = nullptr;
-    void* Platform_CreateWindow = nullptr; void* Platform_DestroyWindow = nullptr;
+    void (*Renderer_CreateWindow)(Viewport*) = nullptr; void (*Renderer_DestroyWindow)(Viewport*) = nullptr;
+    void (*Renderer_RenderWindow)(Viewport*, void*) = nullptr; void (*Renderer_SwapBuffers)(Viewport*, void*) = nullptr;
+    void (*Platform_CreateWindow)(Viewport*) = nullptr; void (*Platform_DestroyWindow)(Viewport*) = nullptr;
 };
 struct WindowRef;   // OkayUIInternals.hpp
 PlatformIO& GetPlatformIO();
+/// io.Fonts: Dear ImGui hosts ask the atlas for fonts at start-up. OkayUI loads none here: each Add* call is RECORDED (what, how big, where from) in a
+/// list the host reads with FontRequests(), and returns a stable ImFont* that works with PushFont / PopFont (it is a copy of the default font; the
+/// size asked for is kept in `FontRequest::px`). A host that wants those faces builds them itself (the launcher look's atlas, UseLauncherLook) and
+/// maps the returned pointers. Compressed base-85 TTF data is not decoded.
+struct FontRequest { enum Kind { Default, FromMemoryTTF, FromCompressedBase85, FromFile } kind = Default; float px = 0.0f; const void* data = nullptr; int dataSize = 0; char file[260] = {0}; bool merge = false; ImFont* font = nullptr; };
+struct FontAtlasRef {
+    ImFont* AddFontDefault(const ImFontConfig* cfg = nullptr);
+    ImFont* AddFontFromMemoryTTF(void* data, int size, float px, const ImFontConfig* cfg = nullptr, const unsigned short* ranges = nullptr);
+    ImFont* AddFontFromMemoryCompressedBase85TTF(const char* data, float px, const ImFontConfig* cfg = nullptr, const unsigned short* ranges = nullptr);
+    ImFont* AddFontFromFileTTF(const char* file, float px, const ImFontConfig* cfg = nullptr, const unsigned short* ranges = nullptr);
+    bool Build() { return true; }
+    void Clear();
+    int FontCount() const;
+};
+FontAtlasRef* GetFontAtlasRef();
+typedef FontAtlasRef ImFontAtlas;
+/// The requests made so far, oldest first (up to 32; later ones are still answered with a font but not listed).
+const FontRequest* FontRequests(int* count);
 typedef PlatformIO ImGuiPlatformIO;
 /// Popups by id (the value GetID(name) returns; a popup opened or begun by name has the same id, so the forms can be mixed). BeginPopupEx takes
 /// window flags (accepted: a popup here is always auto-sized and has no title bar) and is true while the popup is open.

@@ -1201,6 +1201,7 @@ Word, then the number(s) to say. Back to the [overview](../FEATURE_MAP.md).
 - DLL injection (39.5)
 - DM (17.4)
 - dock space (15.15)
+- Dock-node view, window table, draw-list channels and host shapes (40.9.10)
 - Docker (18.7, 41.5)
 - Docker image (41.5.1)
 - docker-compose (41.5)

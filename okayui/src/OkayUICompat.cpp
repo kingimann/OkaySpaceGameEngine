@@ -23,6 +23,13 @@ Viewport GetMainViewport() {
     vp.Pos = vp.pos; vp.Size = vp.size; vp.WorkPos = vp.pos; vp.WorkSize = vp.size;
     return vp;
 }
+namespace { Viewport g_mainViewport; }
+Viewport::operator Viewport*() const {
+    const Viewport now = GetMainViewport();
+    g_mainViewport.pos = now.pos; g_mainViewport.size = now.size; g_mainViewport.Pos = now.Pos; g_mainViewport.Size = now.Size;
+    g_mainViewport.WorkPos = now.WorkPos; g_mainViewport.WorkSize = now.WorkSize;
+    return &g_mainViewport;
+}
 
 Vec2 GetContentRegionMax() {
     const Vec2 p = GetCursorPos(), a = GetContentRegionAvail();
@@ -109,6 +116,7 @@ Entry* Find(unsigned scope, unsigned id, bool create) {
     return freeSlot;
 }
 }
+StateStorage::operator StateStorage*() const { static StateStorage ring[4]; static int next = 0; StateStorage& r = ring[next]; next = (next + 1) & 3; r = *this; return &r; }
 StateStorage GetStateStorage() {
     StateStorage s;
     const CurrentWindow w = GetCurrentWindow();
@@ -293,7 +301,8 @@ bool BeginMenu(const char* label, bool enabled) {
 bool BeginTable(const char* id, int columns, int flags) { return BeginTable(id, columns, static_cast<TableFlags>(flags)); }
 bool BeginTable(const char* id, int columns, int flags, Vec2 outerSize, float innerWidth) { return BeginTable(id, columns, static_cast<TableFlags>(flags), outerSize, innerWidth); }
 bool IsMouseHoveringRect(Vec2 mn, Vec2 mx, bool) { return IsMouseHoveringRect(mn, mx); }
-void NewFrame() { Input in = GetFrameInput(); BeginFrame(in); }
+void MergePendingIo(Input& in);   // OkayUI.cpp: IO::AddKeyEvent / AddInputCharacter
+void NewFrame() { Input in = GetFrameInput(); MergePendingIo(in); BeginFrame(in); }
 void UpdatePlatformWindows() {}
 void RenderPlatformWindowsDefault() {}
 PlatformIO& GetPlatformIO() { static PlatformIO pio; return pio; }
@@ -368,3 +377,29 @@ void TreeNodeExFormatted(bool* out, const char* id, unsigned flags, const char* 
     *out = TreeNodeEx(label, flags);
 }
 } // namespace OkayUI
+
+// ---- io.Fonts: recorded requests -------------------------------------------------------------------------------------------------------------------
+namespace OkayUI {
+namespace {
+FontRequest g_fontReqs[32]; int g_nFontReqs = 0; ImFont g_fontPool[33]; int g_nFontPool = 0;
+ImFont* AddReq(FontRequest::Kind kind, float px, const void* data, int size, const char* file, const ImFontConfig* cfg) {
+    ImFont* f = g_nFontPool < 33 ? &g_fontPool[g_nFontPool++] : &g_fontPool[32];
+    *f = *FontDefault();   // a copy of the default font: PushFont with it keeps the look
+    if (g_nFontReqs < 32) {
+        FontRequest& r = g_fontReqs[g_nFontReqs++];
+        r = FontRequest(); r.kind = kind; r.px = px > 0.0f ? px : (cfg && cfg->SizePixels > 0.0f ? cfg->SizePixels : 13.0f); r.data = data; r.dataSize = size; r.merge = cfg && cfg->MergeMode; r.font = f;
+        if (file) std::snprintf(r.file, sizeof r.file, "%s", file);
+    }
+    return f;
+}
+FontAtlasRef g_atlasRef;
+}
+ImFont* FontAtlasRef::AddFontDefault(const ImFontConfig* cfg) { return AddReq(FontRequest::Default, 13.0f, nullptr, 0, nullptr, cfg); }
+ImFont* FontAtlasRef::AddFontFromMemoryTTF(void* data, int size, float px, const ImFontConfig* cfg, const unsigned short*) { return AddReq(FontRequest::FromMemoryTTF, px, data, size, nullptr, cfg); }
+ImFont* FontAtlasRef::AddFontFromMemoryCompressedBase85TTF(const char* data, float px, const ImFontConfig* cfg, const unsigned short*) { return AddReq(FontRequest::FromCompressedBase85, px, data, data ? (int)std::strlen(data) : 0, nullptr, cfg); }
+ImFont* FontAtlasRef::AddFontFromFileTTF(const char* file, float px, const ImFontConfig* cfg, const unsigned short*) { return AddReq(FontRequest::FromFile, px, nullptr, 0, file, cfg); }
+void FontAtlasRef::Clear() { g_nFontReqs = 0; g_nFontPool = 0; }
+int FontAtlasRef::FontCount() const { return g_nFontPool; }
+FontAtlasRef* GetFontAtlasRef() { return &g_atlasRef; }
+const FontRequest* FontRequests(int* count) { if (count) *count = g_nFontReqs; return g_fontReqs; }
+}   // namespace OkayUI

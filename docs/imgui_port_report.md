@@ -9,23 +9,18 @@ by name: a call counts as available when OkayUI declares a function of that name
 
 | What | Distinct | Call sites | Available in OkayUI | Coverage of call sites |
 |---|---:|---:|---:|---:|
-| `ImGui::` calls | 264 | 28025 | 28017 | 100.0% |
-| ImGui types, flags, enums | 330 | 12464 | 12439 | 99.8% |
+| `ImGui::` calls | 264 | 28025 | 28023 | 100.0% |
+| ImGui types, flags, enums | 330 | 12464 | 12458 | 100.0% |
 | Draw-list methods | 26 | 2413 | 2413 | 100.0% |
 
-Distinct calls available: 258 of 264.
-Distinct types, flags and enums available: 326 of 330.
+Distinct calls available: 263 of 264.
+Distinct types, flags and enums available: 328 of 330.
 
 ## Missing `ImGui::` calls, ranked by use
 
 | # | Call | Uses | Files | Where (most uses first) |
 |---:|---|---:|---:|---|
-| 1 | `DockNodeGetRootNode` | 2 | 1 | editor/main.cpp (2) |
-| 2 | `GetFontTexUvWhitePixel` | 2 | 2 | editor/SplineTools.cpp (1), editor/UIPreviewPainter.cpp (1) |
-| 3 | `DockNodeBeginAmendTabBar` | 1 | 1 | editor/main.cpp (1) |
-| 4 | `DockNodeEndAmendTabBar` | 1 | 1 | editor/main.cpp (1) |
-| 5 | `GetWindowDockNode` | 1 | 1 | editor/main.cpp (1) |
-| 6 | `TabBarFindTabByID` | 1 | 1 | editor/main.cpp (1) |
+| 1 | `GetFontTexUvWhitePixel` | 2 | 2 | editor/SplineTools.cpp (1), editor/UIPreviewPainter.cpp (1) |
 
 Missing draw-list methods: none.
 
@@ -33,10 +28,8 @@ Missing draw-list methods: none.
 
 | # | Name | Uses | Files |
 |---:|---|---:|---:|
-| 1 | `ImGuiDockNode` | 16 | 1 |
-| 2 | `ImGuiKey_MouseWheelY` | 5 | 4 |
-| 3 | `ImGuiTabItem` | 3 | 1 |
-| 4 | `ImGuiStyleVar_GrabMinSize` | 1 | 1 |
+| 1 | `ImGuiKey_MouseWheelY` | 5 | 4 |
+| 2 | `ImGuiStyleVar_GrabMinSize` | 1 | 1 |
 
 ## Coverage per file
 
@@ -89,7 +82,7 @@ Missing draw-list methods: none.
 | `editor/VisualScriptEditor.hpp` | 721 | 721 | 100.0% |  |
 | `editor/AnimatorWindow.cpp` | 739 | 739 | 100.0% |  |
 | `launcher/main.cpp` | 7215 | 7215 | 100.0% |  |
-| `editor/main.cpp` | 13786 | 13780 | 100.0% | DockNodeGetRootNode (2), DockNodeBeginAmendTabBar (1), DockNodeEndAmendTabBar (1), TabBarFindTabByID (1), GetWindowDockNode (1) |
+| `editor/main.cpp` | 13786 | 13786 | 100.0% |  |
 
 ## Smallest screens by call count that are fully or almost fully coverable
 
@@ -226,9 +219,9 @@ The ported functions above hold 182 of the 28025 `ImGui::` call sites counted (0
 | `DrawBoneMap` | `editor/main.cpp:9999` | 28 | 100.0% |  |
 | `ScriptRecipePicker` | `editor/main.cpp:22477` | 28 | 100.0% |  |
 | `RenderChatVoice` | `launcher/main.cpp:5539` | 28 | 100.0% |  |
-| `DrawAnimationEditor` | `editor/main.cpp:24921` | 29 | 96.6% | GetWindowDockNode (1) |
+| `DrawAnimationEditor` | `editor/main.cpp:24921` | 29 | 100.0% |  |
 | `DrawSideTabStrip` | `editor/main.cpp:6120` | 29 | 100.0% |  |
-| `DrawTabOverflow` | `editor/main.cpp:6019` | 29 | 93.1% | DockNodeBeginAmendTabBar (1), DockNodeEndAmendTabBar (1) |
+| `DrawTabOverflow` | `editor/main.cpp:6019` | 29 | 100.0% |  |
 | `DrawReportPopup` | `launcher/main.cpp:14289` | 29 | 100.0% |  |
 | `DrawTimeline` | `editor/TimelineWindow.cpp:1430` | 30 | 100.0% |  |
 | `ChatMsgToolbar` | `launcher/main.cpp:6662` | 30 | 100.0% |  |
@@ -276,7 +269,7 @@ The ported functions above hold 182 of the 28025 `ImGui::` call sites counted (0
 | `DrawToolbar` | `editor/AnimatorWindow.cpp:2609` | 42 | 100.0% |  |
 | `DrawBehaviorTreeWindow` | `editor/BehaviorTreeWindow.cpp:1710` | 42 | 100.0% |  |
 | `DrawLocalizationWindow` | `editor/LocalizationWindow.cpp:770` | 42 | 100.0% |  |
-| `DrawPanelTabMenu` | `editor/main.cpp:5863` | 42 | 97.6% | DockNodeGetRootNode (1) |
+| `DrawPanelTabMenu` | `editor/main.cpp:5863` | 42 | 100.0% |  |
 | `DrawAnimatorGraph` | `editor/AnimatorWindow.cpp:2714` | 44 | 100.0% |  |
 | `DrawBlackboardTab` | `editor/BehaviorTreeWindow.cpp:1409` | 44 | 100.0% |  |
 | `DrawAboutPopup` | `editor/main.cpp:19814` | 44 | 100.0% |  |
@@ -376,4 +369,4 @@ The ported functions above hold 182 of the 28025 `ImGui::` call sites counted (0
 | `main` | `launcher/main.cpp:18110` | 3567 | 100.0% |  |
 | `DrawInspector` | `editor/main.cpp:30178` | 5938 | 100.0% |  |
 
-Of 250 screens listed: 247 are fully covered by name, 250 are at least 90% covered.
+Of 250 screens listed: 250 are fully covered by name, 250 are at least 90% covered.

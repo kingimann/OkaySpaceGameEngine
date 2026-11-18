@@ -168,8 +168,8 @@ int main() {
         CHECK(ImGui::GetFrameCount() == fc + 1);
         ImGui::UpdatePlatformWindows(); ImGui::RenderPlatformWindowsDefault();
         ImGuiPlatformIO& pio = ImGui::GetPlatformIO();
-        pio.Renderer_CreateWindow = reinterpret_cast<void*>(1);
-        CHECK(pio.Viewports.Size == 1 && ImGui::GetPlatformIO().Renderer_CreateWindow == reinterpret_cast<void*>(1));
+        pio.Renderer_CreateWindow = reinterpret_cast<void (*)(OkayUI::Viewport*)>(1);
+        CHECK(pio.Viewports.Size == 1 && ImGui::GetPlatformIO().Renderer_CreateWindow == reinterpret_cast<void (*)(OkayUI::Viewport*)>(1));
         bool open = true;
         auto ui = [&] {
             OkayUI::BareNextWindow();

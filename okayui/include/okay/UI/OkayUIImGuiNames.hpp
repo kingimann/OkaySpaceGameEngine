@@ -9,6 +9,7 @@
 #include "okay/UI/OkayUIDock.hpp"
 #include "okay/UI/OkayUIDockBuilder.hpp"
 #include <cstdint>
+#include <cassert>
 
 // ImVec2 is OkayUI::Vec2 (two floats with a two-float constructor).
 typedef OkayUI::Vec2 ImVec2;
@@ -34,11 +35,38 @@ typedef long long ImS64;
 typedef OkayUI::DrawList ImDrawList;
 #define IM_PI 3.14159265358979323846f
 #define IM_ARRAYSIZE(_ARR) ((int)(sizeof(_ARR) / sizeof(*(_ARR))))
+#define IMGUI_VERSION "okayui"
+#define IMGUI_VERSION_NUM 0
+#define IMGUI_CHECKVERSION() ((void)0)
+#define IM_COL32_R_SHIFT 0
+#define IM_COL32_G_SHIFT 8
+#define IM_COL32_B_SHIFT 16
+#define IM_COL32_A_SHIFT 24
+#define IM_COL32_A_MASK 0xFF000000
+#define IM_COL32_WHITE (OkayUI::RGBA(255, 255, 255, 255))
+#define IM_COL32_BLACK (OkayUI::RGBA(0, 0, 0, 255))
+#define IM_COL32_BLACK_TRANS (OkayUI::RGBA(0, 0, 0, 0))
 #define GImGui (::OkayUI::RefreshContext())
 #define IM_COL32(R, G, B, A) (OkayUI::RGBA((R), (G), (B), (A)))
 using OkayUI::ImVec4;
 using OkayUI::ImTextureID;
 using OkayUI::ImRect;
+using OkayUI::ImVector;
+using OkayUI::ImHashStr;
+using OkayUI::ImDrawVert;
+using OkayUI::ImDrawIdx;
+using OkayUI::ImDrawCmd;
+using OkayUI::ImDrawData;
+using OkayUI::ImDrawCallback;
+using OkayUI::ImTextureData;
+using OkayUI::ImTextureRect;
+using OkayUI::ImTextureRef;
+using OkayUI::ImTextureStatus;
+using OkayUI::ImTextureStatus_OK;
+using OkayUI::ImTextureStatus_Destroyed;
+using OkayUI::ImTextureStatus_WantCreate;
+using OkayUI::ImTextureStatus_WantUpdates;
+using OkayUI::ImTextureStatus_WantDestroy;
 using OkayUI::ImGuiID;
 using OkayUI::ImGuiStyle;
 // Plain-int typedefs Dear ImGui code uses for flag arguments.

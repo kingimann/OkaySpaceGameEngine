@@ -428,6 +428,7 @@ TypedDrag g_tdd;
 float g_winBaseScale = 0.0f;          // the text scale the window started with (SetWindowFontScale multiplies it; End restores it)
 MouseCursor g_cursor = MouseCursor_Arrow;
 IO g_io;                              // GetIO(): filled in BeginFrame
+bool ioTypedTextConsumed();           // defined by GetIO(): the ported code took this frame's typed characters
 ImeRect g_ime;                        // GetImeRect(): the focused text input's caret, set while the frame is built
 bool g_ptrOverWindow = false, g_ptrOverWindowPrev = false;   // the pointer was over a window's rectangle this / last frame (WantCaptureMouse)
 double g_clock = 0.0;                             // seconds: Input::time when the host gives it, else frames / 60
@@ -1519,7 +1520,7 @@ bool TextField(int id, float x, float y, float w, float h, char* buf, int cap, u
                 p += n;
             }
         }
-        if (g_in.text && g_in.text[0] && !readOnly) {
+        if (g_in.text && g_in.text[0] && !readOnly && !ioTypedTextConsumed()) {
             for (const char* p = g_in.text; *p;) {
                 const int n = printableUtf8Len(p);
                 if (!n) { ++p; continue; }
@@ -1738,6 +1739,47 @@ DrawData GetDrawData() {
         d.atlasTexture = (const void*)kAtlasTex; d.atlasRgba = g_ttf->rgba; d.atlasW = g_ttf->w; d.atlasH = g_ttf->h;
     }
     return d;
+}
+
+// The Dear ImGui view of the frame's draw data (see ImDrawData in OkayUI.hpp): one list holding every vertex, index and command.
+DrawData::operator ImDrawData*() const {
+    static ImDrawData dd;
+    static DrawList list{false};
+    static ImTextureData atlasTex;
+    static ImVector<ImTextureData*> texList;
+    list.VtxBuffer.clear(); list.IdxBuffer.clear(); list.CmdBuffer.clear(); texList.clear();
+    const DrawVertex* v = static_cast<const DrawVertex*>(vertices);
+    if (v && vertexCount > 0) {
+        list.VtxBuffer.reserve(vertexCount);
+        for (int i = 0; i < vertexCount; ++i) {
+            ImDrawVert o; o.pos = Vec2{v[i].x, v[i].y}; o.uv = Vec2{v[i].u, v[i].v};
+            o.col = (unsigned)v[i].r | ((unsigned)v[i].g << 8) | ((unsigned)v[i].b << 16) | ((unsigned)v[i].a << 24);
+            list.VtxBuffer.push_back(o);
+        }
+    }
+    if (indices && indexCount > 0) {
+        list.IdxBuffer.reserve(indexCount);
+        for (int i = 0; i < indexCount; ++i) list.IdxBuffer.push_back((ImDrawIdx)(indices[i] < 0 ? 0 : indices[i]));
+    }
+    const bool haveAtlas = atlasTexture && atlasRgba && atlasW > 0 && atlasH > 0;
+    if (haveAtlas) { atlasTex.Status = ImTextureStatus_OK; atlasTex.Width = atlasW; atlasTex.Height = atlasH; atlasTex.BytesPerPixel = 4; atlasTex.Pixels = const_cast<unsigned char*>(atlasRgba); texList.push_back(&atlasTex); }
+    for (int i = 0; i < cmdCount; ++i) {
+        const DrawCmd& c = cmds[i];
+        if (c.idxCount <= 0) continue;
+        ImDrawCmd o;
+        o.ClipRect = c.clipOn ? ImVec4((float)c.clipX, (float)c.clipY, (float)(c.clipX + c.clipW), (float)(c.clipY + c.clipH)) : ImVec4(-8192.0f, -8192.0f, 8192.0f, 8192.0f);
+        o.TexRef._TexID = (ImTextureID)const_cast<void*>(c.texture);
+        if (haveAtlas && c.texture == atlasTexture) o.TexRef._TexData = &atlasTex;
+        o.IdxOffset = (unsigned)c.idxOffset; o.ElemCount = (unsigned)c.idxCount; o.VtxOffset = 0;
+        list.CmdBuffer.push_back(o);
+    }
+    dd.Valid = true;
+    dd.CmdLists.clear(); dd.CmdLists.push_back(&list);
+    dd.CmdListsCount = 1; dd.TotalVtxCount = list.VtxBuffer.Size; dd.TotalIdxCount = list.IdxBuffer.Size;
+    const IO& io = GetIO();
+    dd.DisplayPos = Vec2{0, 0}; dd.DisplaySize = io.displaySize; dd.FramebufferScale = io.DisplayFramebufferScale;
+    dd.Textures = &texList;
+    return &dd;
 }
 
 okay::TtfFont* FallbackFontOf(const void* texture) {
@@ -2290,7 +2332,69 @@ void SetWindowFontScale(float scale) {
 }
 void SetMouseCursor(MouseCursor cursor) { g_cursor = ((int)cursor >= 0 && (int)cursor < MouseCursor_COUNT) ? cursor : MouseCursor_Arrow; }
 MouseCursor GetMouseCursor() { return g_cursor; }
+namespace {
+long long g_ioQueueFrame = -1; int g_ioQueueFilled = 0;
+// Pending input fed through IO::AddKeyEvent / AddInputCharacter, applied by NewFrame (OkayUICompat.cpp).
+std::string g_pendText; bool g_pendKeyDown[KeyId_COUNT] = {}; bool g_pendKeyEdge[KeyId_COUNT] = {};
+unsigned decodeOne(const char*& p) {   // one UTF-8 code point (invalid bytes give U+FFFD)
+    const unsigned char c = (unsigned char)*p++;
+    if (c < 0x80) return c;
+    int n = c >= 0xF0 ? 3 : c >= 0xE0 ? 2 : c >= 0xC0 ? 1 : 0;
+    unsigned cp = n == 3 ? (c & 7u) : n == 2 ? (c & 15u) : n == 1 ? (c & 31u) : 0xFFFDu;
+    for (int i = 0; i < n; ++i) { if (((unsigned char)*p & 0xC0) != 0x80) return 0xFFFDu; cp = (cp << 6) | ((unsigned char)*p++ & 63u); }
+    return cp;
+}
+bool ioTypedTextConsumed() { return g_ioQueueFrame == (long long)g_frameCount && g_io.InputQueueCharacters.Size < g_ioQueueFilled; }
+}
+void IO::AddKeyEvent(int key, bool down) {
+    if (key <= 0 || key >= KeyId_COUNT) return;
+    g_pendKeyDown[key] = down;
+    if (down) g_pendKeyEdge[key] = true;
+}
+void IO::AddInputCharacter(unsigned cp) {
+    if (cp == 0 || cp > 0x10FFFFu || (cp >= 0xD800u && cp < 0xE000u) || g_pendText.size() > 4096) return;
+    char b[4]; int n;
+    if (cp < 0x80) { b[0] = (char)cp; n = 1; }
+    else if (cp < 0x800) { b[0] = (char)(0xC0 | (cp >> 6)); b[1] = (char)(0x80 | (cp & 63)); n = 2; }
+    else if (cp < 0x10000) { b[0] = (char)(0xE0 | (cp >> 12)); b[1] = (char)(0x80 | ((cp >> 6) & 63)); b[2] = (char)(0x80 | (cp & 63)); n = 3; }
+    else { b[0] = (char)(0xF0 | (cp >> 18)); b[1] = (char)(0x80 | ((cp >> 12) & 63)); b[2] = (char)(0x80 | ((cp >> 6) & 63)); b[3] = (char)(0x80 | (cp & 63)); n = 4; }
+    g_pendText.append(b, (size_t)n);
+}
+// Merge what AddKeyEvent / AddInputCharacter collected into a frame's input (NewFrame calls this), then forget the one-frame parts.
+void MergePendingIo(Input& in) {
+    static std::string text;
+    text.clear();   // typed text is one-shot: only what AddInputCharacter collected
+    text += g_pendText; g_pendText.clear();
+    in.text = text.empty() ? nullptr : text.c_str();
+    // NewFrame reuses the last frame's input, so its one-frame parts (the typed text, the key flags, the wheel) are cleared first.
+    in.backspace = in.del = in.left = in.right = in.up = in.down = in.home = in.end = in.enter = in.escape = false;
+    in.wheel = 0.0f; in.selectAll = in.copy = in.cut = in.paste = false; in.commit = nullptr;
+    static bool mine[KeyId_COUNT] = {};   // keys whose state came from events last time
+    for (int k = 1; k < KeyId_COUNT; ++k) {
+        const bool now = g_pendKeyDown[k] || g_pendKeyEdge[k];   // pressed and released inside one frame still counts as a press
+        if (now) in.keyDown[k] = true; else if (mine[k]) in.keyDown[k] = false;
+        mine[k] = now;
+    }
+    if (g_pendKeyEdge[KeyId_Enter]) in.enter = true;
+    if (g_pendKeyEdge[KeyId_Escape]) in.escape = true;
+    if (g_pendKeyEdge[KeyId_Backspace]) in.backspace = true;
+    if (g_pendKeyEdge[KeyId_Delete]) in.del = true;
+    if (g_pendKeyEdge[KeyId_Left]) in.left = true;
+    if (g_pendKeyEdge[KeyId_Right]) in.right = true;
+    if (g_pendKeyEdge[KeyId_Up]) in.up = true;
+    if (g_pendKeyEdge[KeyId_Down]) in.down = true;
+    if (g_pendKeyEdge[KeyId_Home]) in.home = true;
+    if (g_pendKeyEdge[KeyId_End]) in.end = true;
+    for (int k = 0; k < KeyId_COUNT; ++k) g_pendKeyEdge[k] = false;
+}
 IO& GetIO() {
+    if (g_ioQueueFrame != (long long)g_frameCount) {   // this frame's typed characters
+        g_io.InputQueueCharacters.clear();
+        if (g_in.text) for (const char* p = g_in.text; *p;) { const unsigned cp = decodeOne(p); if (cp > 0 && cp <= 0xFFFFu) g_io.InputQueueCharacters.push_back((unsigned short)cp); }
+        g_ioQueueFrame = (long long)g_frameCount; g_ioQueueFilled = g_io.InputQueueCharacters.Size;
+    }
+    g_io.Fonts = GetFontAtlasRef();
+    g_io.KeySuper = g_io.KeySuper;
     // These two depend on windows drawn since BeginFrame, so they are worked out when asked.
     g_io.mouseDelta = Vec2{g_mouseDX, g_mouseDY};
     g_io.wantCaptureMouse = !g_in.blocked && (g_ptrOverWindow || g_ptrOverWindowPrev || g_active != 0);
@@ -2379,6 +2483,7 @@ bool FindWindowSlot(const char* title, Vec2& pos, Vec2& size, bool& focused) {
 }
 void SetNextWindowFocus() { g_nextWinFocus = true; }
 // ---- small calls and internals added in step 6.9 (declared in OkayUICompat.hpp / OkayUIInternals.hpp) ----
+void SetWindowSize(Vec2 size, Cond cond) { if (g_curWin.valid) SetWindowSize(g_curWin.title, size, cond); }
 bool SetWindowSize(const char* title, Vec2 size, Cond cond) {
     if (!title || !*title || !std::isfinite(size.x) || !std::isfinite(size.y)) return false;
     const int id = windowId(title);
@@ -2501,7 +2606,11 @@ Context* RefreshContext() {
     FillContextFromWindowTable(c, hov ? (unsigned)hov->id : 0u, activeWin, curWin, (unsigned)g_focusWin);
     return &c;
 }
-bool GetTopMostPopupModal() { for (const PopupSlot& p : g_popups) if (p.used && p.open && p.modal) return true; return false; }
+WindowRef* GetTopMostPopupModal() {
+    static WindowRef ref;
+    for (const PopupSlot& p : g_popups) if (p.used && p.open && p.modal) { ref = WindowRef(); ref.ID = (unsigned)p.id; ref.Pos = Vec2{p.x, p.y}; ref.Size = Vec2{p.w, 0.0f}; ref.Active = ref.WasActive = true; ref.RootWindow = &ref; return &ref; }
+    return nullptr;
+}
 void SetNextFrameWantCaptureKeyboard(bool want) { g_nextFrameKbd = want ? 1 : 0; }
 float GetTreeNodeToLabelSpacing() {
     if (g_look) return 24.0f;
@@ -2648,6 +2757,10 @@ void SetNextItemWidth(float w) { g_nextItemW = w; }
 void PushItemWidth(float w)    { if (g_itemWTop < 16) g_itemWStack[g_itemWTop++] = w; }
 void PopItemWidth()            { if (g_itemWTop > 0) --g_itemWTop; }
 
+void PushClipRect(Vec2 mn, Vec2 mx, bool) { PushClipRect(mn.x, mn.y, mx.x - mn.x, mx.y - mn.y); }
+bool BeginChild(unsigned id, Vec2 size, int childFlags, int windowFlags) { char name[24]; std::snprintf(name, sizeof name, "##%u", id); return BeginChild(name, size, childFlags, windowFlags); }
+bool ImageButton(const char* id, SDL_Texture* tex, Vec2 size, Vec2, Vec2, Vec4, Vec4) { return ImageButton(id, tex, size.x, size.y); }
+void Render() { EndFrameData(); }
 void PushClipRect(float x, float y, float w, float h) {
     SDL_Rect r; r.x = clampPx(x, 0); r.y = clampPx(y, 0); r.w = clampPx(w < 0 ? 0 : w, 0); r.h = clampPx(h < 0 ? 0 : h, 0);
     // Intersect with the enclosing clip so nested regions never draw outside a parent.
@@ -4058,13 +4171,14 @@ void TreePop() {
     if (g_lay.indent < 0.0f) g_lay.indent = 0.0f;
 }
 
-void BeginMenuBar() {
-    if (!g_lay.active) return;
+bool BeginMenuBar() {
+    if (!g_lay.active) return false;
     const float h = rowH();
     float x, y; place(fullW(), h, x, y);
     if (!g_look || colorIsSet(Col_MenuBarBg)) quad(x, y, fullW(), h, pick(Col_MenuBarBg, g_theme.bgDown));
     if (g_look) quad(x, y + h - 1.0f, fullW(), 1.0f, g_theme.border);
     g_inMenuBar = true; g_barX = x; g_barY = y; g_barH = h;
+    return true;
 }
 
 void EndMenuBar() { g_inMenuBar = false; }

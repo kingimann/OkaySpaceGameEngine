@@ -5,5 +5,5 @@
 #ifndef IMGUI_IMPL_API
 #define IMGUI_IMPL_API
 #endif
-// Types of the Dear ImGui draw output, declared only (the backend calls that take them are host-specific: see backends/).
-struct ImDrawData; struct ImTextureData;
+// The Dear ImGui draw output types are OkayUI's own shapes now (OkayUI.hpp, "Dear ImGui's draw-data shapes"); the backend calls that take them
+// are host-specific: see backends/.

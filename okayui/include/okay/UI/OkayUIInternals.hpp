@@ -12,62 +12,6 @@
 
 namespace OkayUI {
 
-/// A growable array of plain values with the field names and calls ported code uses (`Size`, `Data`, `begin()`, `push_front`, `find_index`,
-/// `erase(pointer)`). Own design: a small malloc'd buffer; only for types that can be copied with memcpy (pointers, numbers, plain structs).
-template <typename T> struct ImVector {
-    static_assert(std::is_trivially_copyable<T>::value, "ImVector holds plain values only");
-    int Size = 0, Capacity = 0;
-    T* Data = nullptr;
-    typedef T* iterator; typedef const T* const_iterator;
-    ImVector() {}
-    ImVector(const ImVector& o) { *this = o; }
-    ImVector& operator=(const ImVector& o) {
-        if (this == &o) return *this;
-        Size = 0; reserve(o.Size);
-        if (o.Size) std::memcpy(static_cast<void*>(Data), static_cast<const void*>(o.Data), sizeof(T) * (size_t)o.Size);
-        Size = o.Size;
-        return *this;
-    }
-    ~ImVector() { std::free(Data); }
-    bool empty() const { return Size == 0; }
-    int size() const { return Size; }
-    T& operator[](int i) { return Data[i]; }
-    const T& operator[](int i) const { return Data[i]; }
-    T* begin() { return Data; }
-    const T* begin() const { return Data; }
-    T* end() { return Data + Size; }
-    const T* end() const { return Data + Size; }
-    T& front() { return Data[0]; }
-    T& back() { return Data[Size - 1]; }
-    void clear() { Size = 0; }
-    void reserve(int n) {
-        if (n <= Capacity) return;
-        T* d = static_cast<T*>(std::malloc(sizeof(T) * (size_t)n));
-        if (!d) return;
-        if (Size) std::memcpy(static_cast<void*>(d), static_cast<const void*>(Data), sizeof(T) * (size_t)Size);
-        std::free(Data); Data = d; Capacity = n;
-    }
-    void resize(int n) { reserve(n); if (n > Size) std::memset(static_cast<void*>(Data + Size), 0, sizeof(T) * (size_t)(n - Size)); Size = Capacity >= n ? n : Size; }
-    void push_back(const T& v) { if (Size == Capacity) reserve(Capacity ? Capacity * 2 : 8); if (Size < Capacity) Data[Size++] = v; }
-    void push_front(const T& v) {
-        if (Size == 0) { push_back(v); return; }
-        const T keep = v;
-        push_back(keep);
-        if (Size < 2) return;
-        std::memmove(static_cast<void*>(Data + 1), static_cast<const void*>(Data), sizeof(T) * (size_t)(Size - 1));
-        Data[0] = keep;
-    }
-    T* erase(const T* it) {
-        const int off = (int)(it - Data);
-        if (off < 0 || off >= Size) return Data + Size;
-        std::memmove(static_cast<void*>(Data + off), static_cast<const void*>(Data + off + 1), sizeof(T) * (size_t)(Size - off - 1));
-        --Size;
-        return Data + off;
-    }
-    int find_index(const T& v) const { for (int i = 0; i < Size; ++i) if (Data[i] == v) return i; return -1; }
-    bool contains(const T& v) const { return find_index(v) >= 0; }
-};
-
 struct WindowRef;
 struct DockNodeRef;
 
@@ -211,6 +155,7 @@ struct Context {
     WindowRef* NavWindow = nullptr;        // the focused window (what SetWindowFocus / a click chose), else null
     int FrameCount = 0;
     double Time = 0.0;
+    int ConfigNavWindowingKeyNext = 0, ConfigNavWindowingKeyPrev = 0;   // accepted (OkayUI has no window-switching keys of its own)
     ImVector<WindowRef*> Windows;          // every window of the table, back to front (floating windows by stacking order, docked and undrawn ones first)
     DockContextRef DockContext;
     StyleInfo Style;                       // a copy of GetStyle() at the refresh
@@ -287,6 +232,10 @@ public:
     void  SetVoidPtr(unsigned id, void* ptr);
     /// Forget every value of this store (the current window's only).
     void  Clear();
+    /// Pointer-like use (`GetStateStorage()->SetInt(...)`, `ImGuiStorage* st = GetStateStorage();`): the pointer is to a small ring of copies of the handle (valid for the next four calls).
+    StateStorage* operator->() { return this; }
+    const StateStorage* operator->() const { return this; }
+    operator StateStorage*() const;
 private:
     friend StateStorage GetStateStorage();
     unsigned scope_ = 0;

@@ -1,4 +1,7 @@
 #pragma once
+#include <cstdlib>
+#include <cstring>
+#include <type_traits>
 #include <cstring>
 // ---------------------------------------------------------------------------
 // OkayUI — a tiny immediate-mode UI toolkit that draws THROUGH SDL_Renderer, the
@@ -243,6 +246,7 @@ struct DrawCmd {
     /// SDL_Renderer backend can resolve.
     const void* texture   = nullptr;
 };
+struct ImDrawData;
 struct DrawData {
     const void*     vertices     = nullptr;   // DrawVertex[vertexCount]
     int             vertexCount  = 0;
@@ -260,6 +264,9 @@ struct DrawData {
     /// The batch holds 262,144 vertices and 393,216 indices, each for the main and the overlay layer. Zero in
     /// any normal UI. When it is not zero OkayUI also writes a message to stderr (the first few frames).
     int                  dropped = 0;
+    /// `ImDrawData* dd = GetDrawData();` (a Dear ImGui renderer's input): builds the ImDrawData view of this draw data (see the shapes above). The
+    /// pointer is to one static object that the next conversion rebuilds; it is valid until then.
+    operator ImDrawData*() const;
 };
 DrawData GetDrawData();
 /// The TrueType font whose glyph atlas a DrawCmd::texture stands for (a fallback font for characters the launcher
@@ -607,7 +614,8 @@ void TreePop();
 //     OkayUI::BeginMenuBar();
 //       if (OkayUI::BeginMenu("File")) { if (OkayUI::MenuItem("Open")) ...; OkayUI::EndMenu(); }
 //     OkayUI::EndMenuBar();
-void BeginMenuBar();
+/// Returns true when a menu bar began (inside a window), so `if (!BeginMenuBar()) return;` ports unchanged; EndMenuBar is still always safe to call.
+bool BeginMenuBar();
 void EndMenuBar();
 /// A menu on the bar; returns true while its dropdown is open (then add MenuItems).
 bool BeginMenu(const char* label);
@@ -936,6 +944,94 @@ enum DrawFlags : int {
     DrawFlags_Closed = 32      // AddPolyline: join the last point to the first
 };
 
+/// A growable array of plain values with the field names and calls ported code uses (`Size`, `Data`, `begin()`, `push_front`, `find_index`,
+/// `erase(pointer)`). Own design: a small malloc'd buffer; only for types that can be copied with memcpy (pointers, numbers, plain structs).
+template <typename T> struct ImVector {
+    static_assert(std::is_trivially_copyable<T>::value, "ImVector holds plain values only");
+    int Size = 0, Capacity = 0;
+    T* Data = nullptr;
+    typedef T* iterator; typedef const T* const_iterator;
+    ImVector() {}
+    ImVector(const ImVector& o) { *this = o; }
+    ImVector& operator=(const ImVector& o) {
+        if (this == &o) return *this;
+        Size = 0; reserve(o.Size);
+        if (o.Size) std::memcpy(static_cast<void*>(Data), static_cast<const void*>(o.Data), sizeof(T) * (size_t)o.Size);
+        Size = o.Size;
+        return *this;
+    }
+    ~ImVector() { std::free(Data); }
+    bool empty() const { return Size == 0; }
+    int size() const { return Size; }
+    T& operator[](int i) { return Data[i]; }
+    const T& operator[](int i) const { return Data[i]; }
+    T* begin() { return Data; }
+    const T* begin() const { return Data; }
+    T* end() { return Data + Size; }
+    const T* end() const { return Data + Size; }
+    T& front() { return Data[0]; }
+    T& back() { return Data[Size - 1]; }
+    void clear() { Size = 0; }
+    void reserve(int n) {
+        if (n <= Capacity) return;
+        T* d = static_cast<T*>(std::malloc(sizeof(T) * (size_t)n));
+        if (!d) return;
+        if (Size) std::memcpy(static_cast<void*>(d), static_cast<const void*>(Data), sizeof(T) * (size_t)Size);
+        std::free(Data); Data = d; Capacity = n;
+    }
+    void resize(int n) { reserve(n); if (n > Size) std::memset(static_cast<void*>(Data + Size), 0, sizeof(T) * (size_t)(n - Size)); Size = Capacity >= n ? n : Size; }
+    void push_back(const T& v) { if (Size == Capacity) reserve(Capacity ? Capacity * 2 : 8); if (Size < Capacity) Data[Size++] = v; }
+    void push_front(const T& v) {
+        if (Size == 0) { push_back(v); return; }
+        const T keep = v;
+        push_back(keep);
+        if (Size < 2) return;
+        std::memmove(static_cast<void*>(Data + 1), static_cast<const void*>(Data), sizeof(T) * (size_t)(Size - 1));
+        Data[0] = keep;
+    }
+    T* erase(const T* it) {
+        const int off = (int)(it - Data);
+        if (off < 0 || off >= Size) return Data + Size;
+        std::memmove(static_cast<void*>(Data + off), static_cast<const void*>(Data + off + 1), sizeof(T) * (size_t)(Size - off - 1));
+        --Size;
+        return Data + off;
+    }
+    int find_index(const T& v) const { for (int i = 0; i < Size; ++i) if (Data[i] == v) return i; return -1; }
+    bool contains(const T& v) const { return find_index(v) >= 0; }
+};
+
+
+// ---- Dear ImGui's draw-data shapes (what a custom renderer written for Dear ImGui reads) ---------------------------------------------------------
+// OkayUI's own draw data is DrawData / DrawCmd above. These are the same facts in the field names and layout a Dear ImGui renderer expects, built
+// from DrawData on request (`ImDrawData* dd = GetDrawData();` converts, see DrawData::operator ImDrawData*) so such a renderer can run unchanged
+// while the host is moved over to OkayUI's own FrameDrawer. Docs: docs/own_ui_toolkit.md 6.22.
+typedef SDL_Texture* ImTextureID;                    // what AddImage and Image take
+typedef unsigned int ImDrawIdx;                       // 32-bit: OkayUI batches hold more than 65,535 vertices
+struct ImDrawVert { Vec2 pos; Vec2 uv; unsigned col = 0; };   // col is 0xAABBGGRR
+struct ImTextureRect { unsigned short x = 0, y = 0, w = 0, h = 0; };
+enum ImTextureStatus : int { ImTextureStatus_OK = 0, ImTextureStatus_Destroyed = 1, ImTextureStatus_WantCreate = 2, ImTextureStatus_WantUpdates = 3, ImTextureStatus_WantDestroy = 4 };
+struct ImTextureData {
+    ImTextureStatus Status = ImTextureStatus_OK;
+    int Width = 0, Height = 0, BytesPerPixel = 4;
+    unsigned char* Pixels = nullptr;                   // RGBA8, top row first; owned by whoever made the data (OkayUI: the launcher look's atlas)
+    ImVector<ImTextureRect> Updates;                   // always empty here
+    unsigned char* GetPixels() const { return Pixels; }
+    int GetPitch() const { return Width * BytesPerPixel; }
+    unsigned char* GetPixelsAt(int x, int y) const { return Pixels + (size_t)y * (size_t)GetPitch() + (size_t)x * (size_t)BytesPerPixel; }
+};
+struct ImDrawCmd;
+struct DrawList;
+typedef void (*ImDrawCallback)(const DrawList* list, const ImDrawCmd* cmd);
+#define ImDrawCallback_ResetRenderState ((::OkayUI::ImDrawCallback)(intptr_t)-8)
+#define ImTextureID_Invalid ((::OkayUI::ImTextureID)nullptr)
+struct ImTextureRef { ImTextureData* _TexData = nullptr; ImTextureID _TexID = nullptr; };
+struct ImDrawCmd {
+    ImVec4 ClipRect;                                   // x y z w = left top right bottom, pixels
+    ImTextureRef TexRef;
+    unsigned VtxOffset = 0, IdxOffset = 0, ElemCount = 0;
+    ImDrawCallback UserCallback = nullptr; void* UserCallbackData = nullptr;
+    ImTextureID GetTexID() const { return TexRef._TexID; }
+};
 struct DrawList {
     bool overlay;
     void AddLine(Vec2 a, Vec2 b, Color32 col, float thickness = 1.0f) const;
@@ -1000,6 +1096,11 @@ struct DrawList {
     /// Dear ImGui's field names for the same facts (`_Splitter._Count` is 1 with no split open, `_Current` the channel being drawn on).
     struct SplitterView { int _Current = 0; int _Count = 1; };
     mutable SplitterView _Splitter;
+    /// The three buffers a Dear ImGui renderer reads. Empty on the handles GetWindowDrawList / GetForegroundDrawList return; filled on the one list of
+    /// an ImDrawData (see the shapes above).
+    ImVector<ImDrawVert> VtxBuffer;
+    ImVector<ImDrawIdx> IdxBuffer;
+    ImVector<ImDrawCmd> CmdBuffer;
     /// Dear ImGui's three-argument form: `intersectWithCurrent` false would replace the clip rectangle; here it always intersects.
     void PushClipRect(Vec2 min, Vec2 max, bool intersectWithCurrent) const;
     void PopClipRect() const;
@@ -1018,6 +1119,15 @@ struct DrawListHandle : DrawList {
     DrawListHandle(bool isOverlay) { overlay = isOverlay; }
     const DrawListHandle* operator->() const { return this; }
     operator DrawList*() const { return const_cast<DrawListHandle*>(this); }
+};
+/// What a Dear ImGui renderer reads per frame: one list (OkayUI has one batch), the display, and the textures. `Textures` points at a list holding
+/// the launcher look's atlas as an ImTextureData (Status OK, never Destroyed) when the frame uses it, else an empty list.
+struct ImDrawData {
+    bool Valid = false;
+    int CmdListsCount = 0, TotalIdxCount = 0, TotalVtxCount = 0;
+    ImVector<DrawList*> CmdLists;
+    Vec2 DisplayPos{0, 0}, DisplaySize{0, 0}, FramebufferScale{1, 1};
+    ImVector<ImTextureData*>* Textures = nullptr;
 };
 const DrawListHandle& GetWindowDrawList();
 const DrawListHandle& GetForegroundDrawList();
@@ -1149,6 +1259,18 @@ struct IO {
     Vec2 DisplayFramebufferScale{1.0f, 1.0f};
     int ConfigFlags = 0, BackendFlags = 0;
     const char* IniFilename = nullptr; const char* LogFilename = nullptr;
+    // Host-side fields of Dear ImGui's IO, see docs/own_ui_toolkit.md 6.22.
+    bool KeySuper = false;                       // the Windows / Command key: OkayUI has no such key; always false unless the host sets it
+    float FontGlobalScale = 1.0f;                // accepted; the text scale is Style().textScale
+    bool ConfigViewportsNoTaskBarIcon = false, ConfigDebugHighlightIdConflicts = true;   // accepted, unused
+    struct FontAtlasRef* Fonts = nullptr;        // GetIO() points it at the one atlas (below): font requests are recorded, nothing is loaded
+    /// The characters typed this frame (UTF-16 code units, characters above U+FFFF are left out), filled by GetIO() from Input::text. Removing any of
+    /// them (`resize(0)`) means "I took the typing": the OkayUI text fields skip this frame's typed text (the code editor's field does not).
+    ImVector<unsigned short> InputQueueCharacters;
+    /// Feed input the way a Dear ImGui host does: applied by the next NewFrame() (Input::text gets the characters; a key event sets Input::keyDown[key],
+    /// and a press of Enter / Escape / Backspace / Delete / Tab / the arrows / Home / End also sets that key's one-frame flag).
+    void AddKeyEvent(int key, bool down);
+    void AddInputCharacter(unsigned codePoint);
 };
 /// Not const so ported code can write the host fields (ConfigFlags, IniFilename); OkayUI never reads those.
 IO& GetIO();

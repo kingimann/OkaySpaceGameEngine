@@ -43,6 +43,10 @@ void Tick(const Host& host);
 void DrawPage(const Host& host);
 /// A download is running.
 bool InstallRunning();
+/// The version lookup (a worker thread, started by the first DrawPage): true while it runs, and true until Tick has taken its result. IndexLoaded: Tick has taken a
+/// result (good or not). For tests that must draw the page only after the lookup ended.
+bool IndexBusy();
+bool IndexLoaded();
 /// Settings > Behavior: the channel as a combo box. True when it changed.
 bool DrawChannelCombo(const Host& host, float width);
 /// The versions under Versions/ (newest first), cached for a couple of seconds so the project menu can ask every frame.

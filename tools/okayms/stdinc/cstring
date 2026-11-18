@@ -1,9 +1,18 @@
-// okay-ms own standard header: declarations only (ISO/IEC 14882 [cstring.syn]).
+// okay-ms own standard header: declarations only (ISO/IEC 14882 [cstring.syn]). The functions are the C runtime's
+// (tools/okayms/runtime/string.c, linked in as okayrt.lib); extern "C" gives them their plain C names although they
+// are written in namespace std.
 #pragma once
 namespace std {
+extern "C" {
 void *memcpy(void *dst, const void *src, unsigned long long n);
+void *memmove(void *dst, const void *src, unsigned long long n);
 void *memset(void *dst, int value, unsigned long long n);
 int memcmp(const void *a, const void *b, unsigned long long n);
 unsigned long long strlen(const char *s);
 int strcmp(const char *a, const char *b);
+int strncmp(const char *a, const char *b, unsigned long long n);
+char *strcpy(char *dst, const char *src);
+char *strcat(char *dst, const char *src);
+char *strchr(char *s, int c);
+}
 }

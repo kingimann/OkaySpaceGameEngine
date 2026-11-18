@@ -38,6 +38,9 @@ struct Token {
     int line = 0;
     // A '>' written directly after another '>' (no space), used to read '>>' and '>>='.
     bool adj = false;
+    // The word `inline` stood in front of this token (the word itself is dropped): the function that follows is an inline
+    // function, one copy per file.
+    bool inl = false;
 };
 
 struct Type {
@@ -125,6 +128,9 @@ struct Method {
     bool pure = false;
     bool is_const = false;
     bool has_body = false;
+    // Defined outside its class (`T C::f() {}`): one definition for the program. A member defined inside the class body is
+    // an inline function: every file that includes the class gets its own copy (internal symbol).
+    bool out_of_class = false;
     int slot = -1;
     // 'A' private, 'I' protected, 'Q' public: the MSVC access letters.
     char access = 'Q';
@@ -613,6 +619,8 @@ struct Preprocessor {
         return value;
     }
 
+    // The line of the file that is being expanded: what __LINE__ stands for.
+    int current_line = 0;
     std::string expand(const std::string& line, int nest) {
         if (nest > 20) {
             error = "macro expansion is too deep";
@@ -641,6 +649,11 @@ struct Preprocessor {
                 size_t j = i + 1;
                 while (j < line.size() && (std::isalnum(static_cast<unsigned char>(line[j])) || line[j] == '_')) ++j;
                 const std::string word = line.substr(i, j - i);
+                if (word == "__LINE__" && macros.find(word) == macros.end()) {
+                    out += std::to_string(current_line);
+                    i = j;
+                    continue;
+                }
                 const auto it = macros.find(word);
                 if (it == macros.end()) {
                     out += word;
@@ -701,22 +714,28 @@ struct Preprocessor {
                     }
                     cur_arg.push_back(ch);
                 }
-                std::string substituted = it->second.body;
-                for (size_t p = 0; p < it->second.params.size() && p < args.size(); ++p) {
-                    const std::string& param = it->second.params[p];
-                    std::string next;
-                    for (size_t s = 0; s < substituted.size();) {
-                        if (std::isalpha(static_cast<unsigned char>(substituted[s])) || substituted[s] == '_') {
+                // Every parameter is replaced in one pass over the body, so an argument that happens to contain another
+                // parameter's name (CHECK_NEAR(f(a, b), 1, 2) with parameters a and b) is not substituted a second time.
+                std::string substituted;
+                {
+                    const std::string& body = it->second.body;
+                    for (size_t s = 0; s < body.size();) {
+                        if (std::isalpha(static_cast<unsigned char>(body[s])) || body[s] == '_') {
                             size_t e = s + 1;
-                            while (e < substituted.size() &&
-                                   (std::isalnum(static_cast<unsigned char>(substituted[e])) || substituted[e] == '_'))
-                                ++e;
-                            if (substituted.substr(s, e - s) == param) next += args[p];
-                            else next += substituted.substr(s, e - s);
+                            while (e < body.size() && (std::isalnum(static_cast<unsigned char>(body[e])) || body[e] == '_')) ++e;
+                            const std::string word = body.substr(s, e - s);
+                            bool replaced = false;
+                            for (size_t p = 0; p < it->second.params.size() && p < args.size(); ++p) {
+                                if (it->second.params[p] == word) {
+                                    substituted += args[p];
+                                    replaced = true;
+                                    break;
+                                }
+                            }
+                            if (!replaced) substituted += word;
                             s = e;
-                        } else next.push_back(substituted[s++]);
+                        } else substituted.push_back(body[s++]);
                     }
-                    substituted = next;
                 }
                 out += expand(substituted, nest + 1);
                 i = k;
@@ -983,6 +1002,7 @@ struct Preprocessor {
                 }
                 continue;
             }
+            current_line = ln;
             out += active() ? expand(line, 0) + "\n" : std::string("\n");
             origin.push_back({file, ln});
         }
@@ -1749,6 +1769,13 @@ struct Parser {
     std::string ns_mangled{};
     std::vector<std::string> ns_parts{};
     std::vector<size_t> ns_open{};  // how many names each open brace pushed (0 for an unnamed namespace)
+    // extern "C" ([dcl.link]): a function declared under it keeps its plain name as the symbol, also inside a namespace.
+    std::map<std::string, std::string> global_alias{};  // variable name -> the internal name of its latest declaration
+    std::vector<bool> ns_is_c{};
+    std::vector<bool> ns_is_anon{};
+    int anon_depth = 0;
+    int c_linkage = 0;
+    bool c_single = false;
     std::set<std::string> namespaces{};
     void update_ns() {
         current_ns.clear();
@@ -1893,8 +1920,10 @@ struct Parser {
             }
             if (t.kind == TIdent && (t.text == "inline" || t.text == "explicit" || t.text == "override" ||
                                       t.text == "final" || t.text == "consteval" || t.text == "constinit" ||
-                                      t.text == "volatile"))
+                                      t.text == "volatile")) {
+                if (t.text == "inline" && i + 1 < tokens.size()) tokens[i + 1].inl = true;
                 continue;
+            }
             if (t.kind == TConst && !out.empty() && out.back().kind == TStar) continue;  // int *const p
             if (t.kind == TIdent && t.text == "nullptr") {
                 Token z = t;
@@ -2087,6 +2116,7 @@ struct Parser {
                     k += 2;
                 const bool call = k + 1 < tokens.size() && tokens[k].kind == TIdent && tokens[k + 1].kind == TLParen;
                 if (!call && k < tokens.size() && tokens[k].kind == TIdent) {
+                    if (tokens[i].inl) tokens[k].inl = true;  // `inline std::uint32_t f()`: the mark moves to the type name
                     i = k - 1;  // the leading namespace names and their '::' are dropped
                     continue;
                 }
@@ -3097,7 +3127,7 @@ struct Parser {
                 next();
             }
             if (!parse_brackets(&pt)) return false;
-            if (pt.array_len == 0) {  // T a[] as a parameter is T *a
+            if (pt.array_len >= 0 && pt.more.empty()) {  // T a[] and T a[16] as a parameter are T *a ([dcl.fct])
                 pt.array_len = -1;
                 ++pt.pointers;
             }
@@ -4170,6 +4200,16 @@ struct Parser {
             }
             bool static_member = false;
             bool static_const = false;
+            if (is(TIdent) && cur().text == "friend") {
+                // friend class X; and friend struct X; ([class.friend]): access is not checked here, so nothing to record.
+                // (A friend function with a body is not supported.)
+                size_t k = at;
+                while (k < tokens.size() && tokens[k].kind != TSemi && tokens[k].kind != TLBrace && tokens[k].kind != TEnd) ++k;
+                if (k < tokens.size() && tokens[k].kind == TSemi) {
+                    at = k + 1;
+                    continue;
+                }
+            }
             if (is(TStatic)) {
                 static_member = true;
                 next();
@@ -4602,6 +4642,7 @@ struct Parser {
         fn.name = m.qname;
         fn.symbol = m.symbol;
         fn.ret = m.ret;
+        fn.is_static = !m.out_of_class;  // a member written in its class is an inline function: an internal symbol
         Type self_ptr;
         self_ptr.base = 3;
         self_ptr.struct_id = sid;
@@ -6890,7 +6931,48 @@ struct Parser {
         for (Node& kid : n.kids) rewrite_returns(kid, fn);
     }
 
+    // A member function that is declared in its class and defined in another file (the engine's Sha512::Update): a call of
+    // it needs the function's signature and an undefined symbol with its decorated name for the linker to find.
+    void declare_external_methods() {
+        for (size_t sid = 0; sid < structs.size(); ++sid) {
+            for (size_t mi = 0; mi < structs[sid].methods.size(); ++mi) {
+                const Method& m = structs[sid].methods[mi];
+                if (m.has_body || m.pure || m.implicit || m.owner != static_cast<int>(sid) || m.qname.empty()) continue;
+                bool known = false;
+                for (const FuncDecl& f : funcs)
+                    if (f.name == m.qname) known = true;
+                if (known) continue;
+                FuncDecl fn;
+                fn.name = m.qname;
+                fn.symbol = m.symbol;
+                fn.ret = m.ret;
+                Type self_ptr;
+                self_ptr.base = 3;
+                self_ptr.struct_id = static_cast<int>(sid);
+                self_ptr.pointers = 1;
+                if (!m.is_static) {
+                    fn.params.push_back(self_ptr);
+                    fn.param_names.push_back("this");
+                }
+                for (size_t i = 0; i < m.params.size(); ++i) {
+                    fn.params.push_back(m.params[i]);
+                    fn.param_names.push_back(std::string());
+                }
+                finish_signature(&fn);
+                fn.defined = false;
+                funcs.push_back(std::move(fn));
+            }
+        }
+    }
+
     bool finish_program() {
+        declare_external_methods();
+        // What a header can make in every file that includes it has an internal symbol here (each file keeps its own copy,
+        // so two files can both use vector<int> or the same inline function): template instances and virtual tables.
+        for (FuncDecl& f : funcs)
+            if (f.defined && f.symbol.find("?$") != std::string::npos) f.is_static = true;
+        for (Global& g : globals)
+            if (g.vtable || g.name.find("?$") != std::string::npos) g.is_static = true;
         for (GlobalObj& g : static_objs) global_objs.push_back(std::move(g));
         static_objs.clear();
         const bool need_fini = !global_objs.empty();
@@ -6978,7 +7060,32 @@ struct Parser {
             if (!ns_open.empty() && accept(TRBrace)) {
                 for (size_t n = 0; n < ns_open.back(); ++n) ns_parts.pop_back();
                 ns_open.pop_back();
+                if (!ns_is_c.empty()) {
+                    if (ns_is_c.back()) --c_linkage;
+                    ns_is_c.pop_back();
+                }
+                if (!ns_is_anon.empty()) {
+                    if (ns_is_anon.back()) --anon_depth;
+                    ns_is_anon.pop_back();
+                }
                 update_ns();
+                continue;
+            }
+            if (is(TIdent) && cur().text == "extern" && at + 1 < tokens.size() && tokens[at + 1].kind == TString) {
+                // extern "C" { ... } and extern "C" declaration ([dcl.link]).
+                const bool c_lang = tokens[at + 1].text == "C";
+                next();
+                next();
+                if (is(TLBrace)) {
+                    next();
+                    ns_open.push_back(0);
+                    ns_is_c.push_back(c_lang);
+                    ns_is_anon.push_back(false);
+                    if (c_lang) ++c_linkage;
+                } else if (c_lang) {
+                    ++c_linkage;
+                    c_single = true;
+                }
                 continue;
             }
             if (is(TNamespace)) {
@@ -6997,6 +7104,9 @@ struct Parser {
                 }
                 if (!expect(TLBrace, "'{'")) return false;
                 ns_open.push_back(pushed);
+                ns_is_c.push_back(false);
+                ns_is_anon.push_back(pushed == 0);
+                if (pushed == 0) ++anon_depth;
                 update_ns();
                 continue;
             }
@@ -7011,6 +7121,7 @@ struct Parser {
             bool is_typedef = false;
             bool is_static = false;
             bool is_const = false;
+            const size_t decl_begin = at;
             while (is(TTypedef) || is(TStatic) || is(TConst)) {
                 if (accept(TTypedef)) is_typedef = true;
                 else if (accept(TStatic)) is_static = true;
@@ -7060,6 +7171,7 @@ struct Parser {
                     return false;
                 }
                 owner.methods[mi].has_body = true;
+                owner.methods[mi].out_of_class = true;
                 owner.methods[mi].body_at = at;
                 owner.methods[mi].param_names = decl.param_names;
                 while (!is(TLBrace) && !is(TEnd) && !is(TSemi)) next();
@@ -7154,6 +7266,7 @@ struct Parser {
                     return false;
                 }
                 owner.methods[mi].has_body = true;
+                owner.methods[mi].out_of_class = true;
                 owner.methods[mi].body_at = at;
                 owner.methods[mi].param_names = decl.param_names;
                 if (!skip_body()) return false;
@@ -7231,7 +7344,9 @@ struct Parser {
                     Global global;
                     global.name = decl.name;
                     global.type = decl.type;
-                    global.is_static = is_static;
+                    // A const object at namespace scope and anything in an unnamed namespace has internal linkage
+                    // ([basic.link]): every file keeps its own copy, so two files may use the same name.
+                    global.is_static = is_static || decl.type.is_const || anon_depth > 0;
                     if (accept(TAssign)) {
                         Node init;
                         if (!parse_init(&init)) return false;
@@ -7242,6 +7357,20 @@ struct Parser {
                         const bool flat_ok = flatten_init(decl.type, init, &global.init_bytes, 0);
                         init_relocs = nullptr;
                         if (!flat_ok) return false;
+                    }
+                    {
+                        // The same variable name in two namespaces (Sha256.hpp's kK and Sha512.cpp's kK): names of
+                        // variables are not kept apart by namespace here, so the later one gets its own internal name
+                        // and what is read after it means that one.
+                        bool taken = false;
+                        for (const Global& earlier : globals)
+                            if (earlier.name == global.name) taken = true;
+                        if (taken) {
+                            global.name = decl.name + "@" + std::to_string(globals.size());
+                            global_alias[decl.name] = global.name;
+                        } else {
+                            global_alias.erase(decl.name);
+                        }
                     }
                     globals.push_back(global);
                     if (!accept(TComma)) break;
@@ -7259,6 +7388,7 @@ struct Parser {
             FuncDecl fn;
             fn.name = current_ns.empty() ? decl.name : current_ns + "::" + decl.name;
             if (!current_ns.empty()) fn.symbol = cxx_symbol(ns_mangled, decl.name, decl.type, decl.params, &structs);
+            if (c_linkage > 0) fn.symbol = decl.name;  // extern "C": the plain name
             {
                 // Overloads ([over.load]): a second signature under one name gets its own internal name, and
                 // every function of an overloaded name is decorated (?f@@YAHH@Z), as an operator always is.
@@ -7268,7 +7398,7 @@ struct Parser {
                 entry.params = decl.params;
                 entry.required = required_args(decl.param_defaults, decl.params.size());
                 entry.vararg = decl.vararg;
-                entry.symbol = cxx_symbol(ns_mangled, decl.name, decl.type, decl.params, &structs);
+                entry.symbol = c_linkage > 0 ? decl.name : cxx_symbol(ns_mangled, decl.name, decl.type, decl.params, &structs);
                 std::vector<OvFn>& list = ovl[base_name];
                 OvFn* hit = nullptr;
                 for (OvFn& e : list)
@@ -7298,8 +7428,15 @@ struct Parser {
             fn.vararg = decl.vararg;
             fn.imported = imported;
             fn.exported = exported;
-            fn.is_static = is_static;
+            bool inline_fn = false;
+            for (size_t k = decl_begin; k < at && k < tokens.size(); ++k)
+                if (tokens[k].inl) inline_fn = true;
+            fn.is_static = is_static || anon_depth > 0 || inline_fn;
             finish_signature(&fn);
+            if (c_single) {
+                --c_linkage;
+                c_single = false;
+            }
             if (accept(TSemi)) {
                 fn.defined = false;
                 funcs.push_back(std::move(fn));
@@ -10440,9 +10577,14 @@ bool Parser::parse_unary(Node* out) {
         out->type.pointers = 1;
         out->type.base = 2;
         next();
-    } else if (is(TIdent)) {
+    } else if (is(TIdent) || (is(TColonColon) && at + 1 < tokens.size() && tokens[at + 1].kind == TIdent)) {
+        if (is(TColonColon)) next();  // ::name: the name looked up at global scope (names are not scoped further here)
         std::string name = cur().text;
         next();
+        if (!global_alias.empty() && !is(TLParen) && !local_visible(name)) {
+            const auto alias = global_alias.find(name);
+            if (alias != global_alias.end()) name = alias->second;
+        }
         int scope_sid = -1;
         if (is(TLt) && class_templates.count(name) > 0 && !local_visible(name)) {
             // Box<int>::member in an expression.
@@ -10501,6 +10643,32 @@ bool Parser::parse_unary(Node* out) {
                 if (fd.name == name) own = true;
             if (!own) {
                 for (const std::string& ns : using_namespaces) {
+                    const std::string candidate = ns + "::" + name;
+                    bool known = false;
+                    for (const FuncDecl& fd : funcs)
+                        if (fd.name == candidate) known = true;
+                    if (known) {
+                        name = candidate;
+                        break;
+                    }
+                }
+            }
+        }
+        if (name.find("::") != std::string::npos && is(TLParen) && !local_visible(name)) {
+            // Easing::Linear(x) where Easing is a namespace inside one that a `using namespace` names (or that is open
+            // here): the function is registered with the whole path.
+            bool own = false;
+            for (const FuncDecl& fd : funcs)
+                if (fd.name == name) own = true;
+            if (!own) {
+                std::vector<std::string> outer = using_namespaces;
+                std::string open = current_ns;
+                while (!open.empty()) {
+                    outer.push_back(open);
+                    const size_t cut = open.rfind("::");
+                    open = cut == std::string::npos ? std::string() : open.substr(0, cut);
+                }
+                for (const std::string& ns : outer) {
                     const std::string candidate = ns + "::" + name;
                     bool known = false;
                     for (const FuncDecl& fd : funcs)
@@ -11373,6 +11541,14 @@ struct Gen {
     bool gen_expr(const Node& node);
     bool store_init(const Type& type, int offset, const Node& node);
     bool gen_stmt(const Node& node);
+    // A statement that is not generated (a branch with a constant condition) still takes the scope numbers its blocks
+    // would have taken, so the scopes of what follows keep the numbers the parser gave them.
+    void skip_scopes(const Node& node) {
+        const bool scoped = node.kind == Node::Block && node.text == "scope";
+        if (scoped) push_scope();
+        for (const Node& kid : node.kids) skip_scopes(kid);
+        if (scoped) pop_scope();
+    }
     bool gen_addr(const Node& node);
     int size_of(const Type& type) const;
     bool fits_register(const Type& type) const;
@@ -13474,7 +13650,12 @@ bool Gen::gen_stmt(const Node& node) {
     if (node.kind == Node::ExprStmt) return gen_expr(node.kids[0]);
     if (node.kind == Node::If) {
         if (optimize && node.kids[0].kind == Node::IntLit) {
-            if (node.kids[0].number != 0) return gen_stmt(node.kids[1]);
+            if (node.kids[0].number != 0) {
+                const bool ok = gen_stmt(node.kids[1]);
+                if (node.kids.size() == 3) skip_scopes(node.kids[2]);
+                return ok;
+            }
+            skip_scopes(node.kids[1]);
             if (node.kids.size() == 3) return gen_stmt(node.kids[2]);
             return true;
         }
@@ -14101,6 +14282,14 @@ bool try_inline_stmt(Node* stmt, FuncDecl* caller, const std::vector<FuncDecl>& 
         }
         Node cloned = node;
         rename_names(&cloned, ren);
+        // The callee's blocks are not blocks of the caller: a "scope" block would take a scope number that the
+        // caller's own locals (numbered when the caller was parsed) do not expect. Its locals were renamed and
+        // placed in the caller already.
+        const std::function<void(Node*)> flatten_scopes = [&](Node* n) {
+            if (n->kind == Node::Block && n->text == "scope") n->text.clear();
+            for (Node& kid : n->kids) flatten_scopes(&kid);
+        };
+        flatten_scopes(&cloned);
         block.kids.push_back(std::move(cloned));
     };
     copy_stmts(fn->body);

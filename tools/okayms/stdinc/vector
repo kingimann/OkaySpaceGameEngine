@@ -85,6 +85,13 @@ public:
         return *this;
     }
 
+    bool operator==(const vector& o) const {
+        if (size_ != o.size_) return false;
+        for (size_t i = 0; i < size_; ++i)
+            if (!(data_[i] == o.data_[i])) return false;
+        return true;
+    }
+    bool operator!=(const vector& o) const { return !(*this == o); }
     size_t size() const { return size_; }
     size_t capacity() const { return cap_; }
     bool empty() const { return size_ == 0; }

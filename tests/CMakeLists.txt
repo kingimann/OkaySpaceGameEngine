@@ -4051,3 +4051,8 @@ add_executable(test_input_autoload test_input_autoload.cpp ${PROJECT_SOURCE_DIR}
 target_include_directories(test_input_autoload PRIVATE ${CMAKE_SOURCE_DIR}/editor)
 target_link_libraries(test_input_autoload PRIVATE okay::engine)
 add_test(NAME input_autoload COMMAND test_input_autoload)
+
+# The node search popup's pure logic (editor/VisualScriptSearchNav.hpp): panel size, selection movement, scroll-into-view, recent list, pin filter.
+add_executable(test_vs_search_nav test_vs_search_nav.cpp)
+target_include_directories(test_vs_search_nav PRIVATE ${CMAKE_SOURCE_DIR}/editor)
+add_test(NAME vs_search_nav COMMAND test_vs_search_nav)

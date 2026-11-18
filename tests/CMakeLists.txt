@@ -926,6 +926,37 @@ target_compile_definitions(test_play_start_bench PRIVATE OKAY_TEST_OUTPUT_DIR="$
 target_link_libraries(test_play_start_bench PRIVATE okay::engine)
 add_test(NAME play_start_bench COMMAND test_play_start_bench)
 
+# Frame-time benchmark: whole frames (scene update, physics, animation, software render, UI) split by phase, with output
+# hashes to prove a speed-up changed nothing. NOT a test: run `bench_frame` by hand (docs/perf_log.md, docs/try_it.md).
+# The ctest below only checks that it still builds and runs, on a tiny scale.
+add_executable(bench_frame bench_frame.cpp)
+target_link_libraries(bench_frame PRIVATE okay::engine)
+target_compile_definitions(bench_frame PRIVATE OKAY_SOURCE_DIR="${PROJECT_SOURCE_DIR}")
+if(NOT MSVC)
+    target_compile_options(bench_frame PRIVATE -g)   # line numbers for callgrind / perf; no effect on speed
+endif()
+add_test(NAME bench_frame_smoke COMMAND bench_frame --scale 0.05 --frames 3 --warmup 1)
+
+# Physics broad phase: the sort-and-sweep pair finder gives the brute force pair list in the same order, and whole 2D and 3D
+# physics scenes move bit-for-bit the same with either one (docs/perf_log.md)
+add_executable(test_broadphase test_broadphase.cpp)
+target_link_libraries(test_broadphase PRIVATE okay::engine)
+add_test(NAME broadphase COMMAND test_broadphase)
+
+# Software renderer speed-ups change no pixel: row spans and four texel loop for the sun's shadow maps (TriangleSpan.hpp),
+# band skipping and per-mesh light culling in RenderMeshes (docs/perf_log.md)
+add_executable(test_triangle_span test_triangle_span.cpp)
+target_link_libraries(test_triangle_span PRIVATE okay::engine)
+add_test(NAME triangle_span COMMAND test_triangle_span)
+add_executable(test_software_perf_paths test_software_perf_paths.cpp)
+target_link_libraries(test_software_perf_paths PRIVATE okay::engine)
+add_test(NAME software_perf_paths COMMAND test_software_perf_paths)
+
+# CachedComponents: the cached scene-wide component lists always equal a fresh walk (docs/perf_log.md)
+add_executable(test_component_cache test_component_cache.cpp)
+target_link_libraries(test_component_cache PRIVATE okay::engine)
+add_test(NAME component_cache COMMAND test_component_cache)
+
 # The Hierarchy and Inspector logic (editor/InspectorModel, EditUndo; ImGui-free): search filter, drag-and-drop reparenting, mixed values, copy / paste / reset, prefab changes, one undo step per edit.
 add_executable(test_inspector_model test_inspector_model.cpp ${PROJECT_SOURCE_DIR}/editor/InspectorModel.cpp ${PROJECT_SOURCE_DIR}/editor/EditorState.cpp ${PROJECT_SOURCE_DIR}/shared/FileDialog.cpp)
 target_include_directories(test_inspector_model PRIVATE ${PROJECT_SOURCE_DIR}/editor)
@@ -3474,6 +3505,12 @@ add_test(NAME fbx_hostile COMMAND test_fbx_hostile)
 add_executable(test_editor_layout test_editor_layout.cpp)
 target_include_directories(test_editor_layout PRIVATE ${CMAKE_SOURCE_DIR}/editor)
 add_test(NAME editor_layout COMMAND test_editor_layout)
+
+# The editor's frame-time maths (editor/EditorPerf.hpp, UI-library free): section breakdown, history numbers, idle throttle, viewport scale, performance mode.
+add_executable(test_editor_perf test_editor_perf.cpp)
+target_include_directories(test_editor_perf PRIVATE ${CMAKE_SOURCE_DIR}/editor)
+target_link_libraries(test_editor_perf PRIVATE okay::engine)
+add_test(NAME editor_perf COMMAND test_editor_perf)
 
 add_executable(test_net_reconnect test_net_reconnect.cpp)
 target_link_libraries(test_net_reconnect PRIVATE okay::engine)

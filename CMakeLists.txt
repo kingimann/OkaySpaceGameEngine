@@ -119,6 +119,10 @@ if(MSVC)
     add_compile_options(/W4 /permissive-)
 else()
     add_compile_options(-Wall -Wextra -Wpedantic)
+    # No fused multiply-add contraction: on a compiler or CPU target with FMA, GCC fuses a*b+c differently in the scalar and
+    # the SSE code of the software renderer (TriangleSpan.hpp), so the two paths stop being bit for bit equal. Plain IEEE
+    # float arithmetic keeps every path (and every machine) giving the same pixels.
+    add_compile_options(-ffp-contract=off)
 endif()
 
 # Sanitizer build (GCC/Clang), used by CI's sanitizer job. Off by default, e.g.

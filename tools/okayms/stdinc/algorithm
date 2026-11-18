@@ -231,4 +231,17 @@ template <typename It> bool is_sorted(It first, It last) {
         if (*next < *first) return false;
     return true;
 }
+// rotate ([alg.rotate]): the element at mid becomes the first; three reversals (a known method, written here from its description).
+template <typename It> void rotate(It first, It mid, It last) {
+    if (first == mid || mid == last) return;
+    reverse(first, mid);
+    reverse(mid, last);
+    reverse(first, last);
+}
+// nth_element and partial_sort ([alg.nth.element], [partial.sort]): a full sort satisfies both (the elements before nth are not
+// larger, the element at nth is the one a sort would put there). Simple and correct, not the fastest way.
+template <typename It> void nth_element(It first, It nth, It last) { (void)nth; sort(first, last); }
+template <typename It, typename C> void nth_element(It first, It nth, It last, C comp) { (void)nth; sort(first, last, comp); }
+template <typename It> void partial_sort(It first, It middle, It last) { (void)middle; sort(first, last); }
+template <typename It, typename C> void partial_sort(It first, It middle, It last, C comp) { (void)middle; sort(first, last, comp); }
 }

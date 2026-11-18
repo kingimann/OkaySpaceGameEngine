@@ -198,5 +198,19 @@ int main(int, char**) {
           "std::map<int, int> m; m[1] = 2; m[3] = 4; auto mi = std::next(m.begin()); D d; d.Load(); const char* dp = std::localeconv()->decimal_point;\n"
           "return a + b + *it + *pv + mi->second + (int)d.t + dp[0] + D::Get().a + (f ? 1 : 0); }\n", &o);
     CHECK(t, has_symbol(o, "main") && has_symbol(o, "??1D@@UEAA@XZ"));
+    ++tests;
+    build(t, "round 30: captureless lambda call with temporaries, nearest-scope names, using namespace in nested namespaces, ?: string and text, rotate, nth_element",
+          "#include <algorithm>\n#include <string>\n#include <vector>\nstruct V3 { float x, y, z; };\nV3 mk() { return V3{1, 2, 3}; }\n"
+          "namespace okay { namespace { namespace ac { bool Fail(int* e, int m) { if (e) *e = m; return false; } } }\n"
+          "static bool Impl(int* e) { using namespace ac; return Fail(e, 3); }\n"
+          "int Run(std::vector<int>& B, std::vector<std::string>& tok) {\n"
+          "  { unsigned long bi = 0; bi = 1; }\n  int nB = 2;\n  auto bi = [&](int i) { return B[i % nB]; };\n"
+          "  auto dot = [](const V3& u, const V3& w) { return u.x * w.x; };\n  auto fn = [&](int a) { return mk(); };\n"
+          "  auto add = [&](int a) { return dot(fn(a), mk()) < 0.0f ? 1 : 2; };\n"
+          "  std::string name = tok.size() >= 2 ? tok[1] : \"poly\";\n"
+          "  std::rotate(B.begin(), B.begin() + 1, B.end()); std::nth_element(B.begin(), B.begin() + 1, B.end());\n"
+          "  int e = 0; Impl(&e); return bi(1) + add(0) + (int)name.size() + e; } }\n"
+          "int main() { std::vector<int> b; b.push_back(1); b.push_back(2); std::vector<std::string> t; return okay::Run(b, t); }\n", &o);
+    CHECK(t, has_symbol(o, "main"));
     return t.finish(tests);
 }

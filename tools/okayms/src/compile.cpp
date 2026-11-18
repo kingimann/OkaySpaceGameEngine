@@ -95,6 +95,8 @@ struct TArg {
 struct FuncType {
     Type ret{};
     std::vector<Type> params;
+    // params[i] is the address of a reference parameter (the function was declared with T& there).
+    std::vector<bool> param_ref;
     bool vararg = false;
 };
 
@@ -2745,6 +2747,19 @@ struct Parser {
             walk = scope_parent[static_cast<size_t>(walk)];
         }
         return true;
+    }
+    // How many scopes up from the current one the scope `local_scope` is (0 is the current scope), or -1 when it is not an
+    // enclosing scope. A name means the declaration in the nearest scope, so a variable declared later in an outer scope does
+    // not hide an earlier one in an inner block.
+    int scope_distance(int local_scope) const {
+        int walk = scope_depth;
+        int dist = 0;
+        while (walk != local_scope) {
+            if (walk == 0) return -1;
+            walk = scope_parent[static_cast<size_t>(walk)];
+            ++dist;
+        }
+        return dist;
     }
 
     const Token& cur() const { return tokens[at]; }
@@ -5832,6 +5847,7 @@ struct Parser {
         FuncType ft;
         ft.ret = fn->ret;
         ft.params = fn->params;
+        ft.param_ref = fn->param_ref;
         ft.vararg = fn->vararg;
         fn->func_id = static_cast<int>(func_types.size());
         func_types.push_back(ft);
@@ -10564,12 +10580,20 @@ bool Parser::static_type(const Node& node, Type* out) const {
     switch (node.kind) {
     case Node::Name:
         if (cur_locals != nullptr) {
+            const Local* best = nullptr;
+            int best_dist = 1 << 30;
             for (int i = static_cast<int>(cur_locals->size()) - 1; i >= 0; --i) {
                 const Local& local = (*cur_locals)[static_cast<size_t>(i)];
-                if (local.name == node.text && scope_visible(local.scope)) {
-                    *out = local.type;
-                    return true;
+                if (local.name != node.text) continue;
+                const int dist = scope_distance(local.scope);
+                if (dist >= 0 && dist < best_dist) {
+                    best = &local;
+                    best_dist = dist;
                 }
+            }
+            if (best != nullptr) {
+                *out = best->type;
+                return true;
             }
         }
         for (const Global& global : globals)
@@ -12268,15 +12292,26 @@ bool Parser::parse_unary(Node* out) {
             for (const FuncDecl& fd : funcs)
                 if (fd.name == name) own = true;
             if (!own) {
+                bool found_using = false;
                 for (const std::string& ns : using_namespaces) {
-                    const std::string candidate = ns + "::" + name;
-                    bool known = false;
-                    for (const FuncDecl& fd : funcs)
-                        if (fd.name == candidate) known = true;
-                    if (known) {
-                        name = candidate;
-                        break;
+                    // `using namespace ac;` names ac as seen from where the directive is: also inside each enclosing
+                    // namespace of the code being compiled (okay::ac).
+                    std::string open = current_ns;
+                    for (;;) {
+                        const std::string candidate = (open.empty() ? std::string() : open + "::") + ns + "::" + name;
+                        bool known = false;
+                        for (const FuncDecl& fd : funcs)
+                            if (fd.name == candidate) known = true;
+                        if (known) {
+                            name = candidate;
+                            found_using = true;
+                            break;
+                        }
+                        if (open.empty()) break;
+                        const size_t cut = open.rfind("::");
+                        open = cut == std::string::npos ? std::string() : open.substr(0, cut);
                     }
+                    if (found_using) break;
                 }
             }
         }
@@ -12653,6 +12688,27 @@ bool Parser::parse_unary(Node* out) {
                 }
             }
             if (!pad_func_defaults(name, &out->kids)) return false;
+            if (local_visible(name)) {
+                // A call through a variable that holds a function pointer (a captureless lambda): a parameter the function
+                // takes by reference gets the address of its argument, a temporary going into a hidden local first.
+                Node callee;
+                callee.kind = Node::Name;
+                callee.text = name;
+                Type ct;
+                if (static_type(callee, &ct) && ct.func_id >= 0 && ct.func_id < static_cast<int>(func_types.size())) {
+                    const FuncType& ft = func_types[static_cast<size_t>(ct.func_id)];
+                    std::vector<Type> source = ft.params;
+                    bool any_ref = false;
+                    for (size_t i = 0; i < source.size(); ++i) {
+                        if (i < ft.param_ref.size() && ft.param_ref[i]) {
+                            source[i].pointers -= 1;
+                            source[i].is_ref = true;
+                        }
+                        if (source[i].is_ref) any_ref = true;
+                    }
+                    if (any_ref && !adjust_args(source, &out->kids)) return false;
+                }
+            }
             for (const FuncDecl& known : funcs) {
                 if (known.name != name) continue;
                 std::vector<Type> source = known.params;
@@ -12922,10 +12978,27 @@ bool Parser::parse_postfix(Node* out) {
             }
             Node call;
             call.kind = Node::Call;
+            Type callee_type;
+            const bool callee_known = static_type(*out, &callee_type);
             call.kids.push_back(std::move(*out));
             {
                 std::vector<Node> pargs;  // read like any call: a pack `a...` is expanded here too
                 if (!parse_call_args(&pargs)) return false;
+                if (callee_known && callee_type.func_id >= 0 && callee_type.func_id < static_cast<int>(func_types.size())) {
+                    // A call through a function pointer (a captureless lambda reached through a capture): a parameter the
+                    // function takes by reference gets the address of its argument, a temporary going into a hidden local.
+                    const FuncType& ft = func_types[static_cast<size_t>(callee_type.func_id)];
+                    std::vector<Type> source = ft.params;
+                    bool any_ref = false;
+                    for (size_t i = 0; i < source.size(); ++i) {
+                        if (i < ft.param_ref.size() && ft.param_ref[i]) {
+                            source[i].pointers -= 1;
+                            source[i].is_ref = true;
+                        }
+                        if (source[i].is_ref) any_ref = true;
+                    }
+                    if (any_ref && !adjust_args(source, &pargs)) return false;
+                }
                 for (Node& a : pargs) call.kids.push_back(std::move(a));
             }
             *out = std::move(call);
@@ -13112,6 +13185,31 @@ bool Parser::parse_expr(int min_prec, Node* out) {
             tern.kind = Node::Ternary;
             if (!convert_class(out, bool_type())) return false;
             tern.kids.push_back(std::move(*out));
+            if (cur_locals != nullptr) {
+                // c ? obj : "text": the branch that is not an object of the class is made into one by a converting
+                // constructor ([expr.cond]/4, a temporary made before the statement).
+                Type ma, ea;
+                if (static_type(mid, &ma) && static_type(els, &ea)) {
+                    const auto is_obj = [](const Type& t) {
+                        return t.base == 3 && t.pointers == 0 && !t.is_array() && t.struct_id >= 0;
+                    };
+                    if (is_obj(ma) && !is_obj(ea) && !ea.is_array() && class_needs_ctor(structs[static_cast<size_t>(ma.struct_id)])) {
+                        std::vector<Node> one;
+                        one.push_back(std::move(els));
+                        Type want = ma;
+                        want.is_ref = false;
+                        if (!adjust_args({want}, &one)) return false;
+                        els = std::move(one[0]);
+                    } else if (is_obj(ea) && !is_obj(ma) && !ma.is_array() && class_needs_ctor(structs[static_cast<size_t>(ea.struct_id)])) {
+                        std::vector<Node> one;
+                        one.push_back(std::move(mid));
+                        Type want = ea;
+                        want.is_ref = false;
+                        if (!adjust_args({want}, &one)) return false;
+                        mid = std::move(one[0]);
+                    }
+                }
+            }
             {
                 // c ? a : b with objects of one class where a branch is not an lvalue (a call result, a temporary):
                 // a hidden local gets the chosen value, in a statement before this one ([expr.cond]).
@@ -13245,6 +13343,7 @@ struct Gen {
     const std::vector<Global>* globals = nullptr;
     const std::vector<FuncType>* func_types = nullptr;
     const FuncDecl* current = nullptr;
+    int err_line = 0;  // the preprocessed-text line of the statement being generated, for error messages
     bool sret_dest_set = false;
     int sret_dest_off = 0;
     // The destination slot holds a pointer (the function's own hidden result pointer) instead of being the object.
@@ -13278,6 +13377,19 @@ struct Gen {
         }
         return true;
     }
+    // How many scopes up from the current one the scope `local_scope` is (0 is the current scope), or -1 when it is not an
+    // enclosing scope. A name means the declaration in the nearest scope, so a variable declared later in an outer scope does
+    // not hide an earlier one in an inner block.
+    int scope_distance(int local_scope) const {
+        int walk = scope_depth;
+        int dist = 0;
+        while (walk != local_scope) {
+            if (walk == 0) return -1;
+            walk = scope_parent[static_cast<size_t>(walk)];
+            ++dist;
+        }
+        return dist;
+    }
 
     explicit Gen(std::vector<FuncDecl>& functions) : funcs(functions) {}
 
@@ -13293,11 +13405,18 @@ struct Gen {
         return nullptr;
     }
     Local* find_local(const std::string& name) {
+        Local* best = nullptr;
+        int best_dist = 1 << 30;
         for (int i = static_cast<int>(locals.size()) - 1; i >= 0; --i) {
             Local& local = locals[static_cast<size_t>(i)];
-            if (local.name == name && scope_visible(local.scope)) return &local;
+            if (local.name != name) continue;
+            const int dist = scope_distance(local.scope);
+            if (dist >= 0 && dist < best_dist) {
+                best = &local;
+                best_dist = dist;
+            }
         }
-        return nullptr;
+        return best;
     }
 
     void load_slot(int32_t offset, bool pointer) {
@@ -14003,7 +14122,7 @@ bool Gen::gen_addr(const Node& node) {
         last_type = first;
         return true;
     }
-    error = "not an address";
+    error = "not an address (preprocessed line " + std::to_string(err_line) + ", node kind " + std::to_string(static_cast<int>(node.kind)) + ")";
     return false;
 }
 
@@ -15035,7 +15154,7 @@ bool Gen::gen_expr(const Node& node) {
                 hidden = current->sret_off;
                 hidden_ptr = true;
             } else {
-                error = "large struct return has no destination";
+                error = "large struct return has no destination (preprocessed line " + std::to_string(err_line) + ")";
                 return false;
             }
         }
@@ -15408,6 +15527,7 @@ bool Gen::gen_expr(const Node& node) {
 
 bool Gen::gen_stmt(const Node& node) {
     temp_depth = 0;
+    if (node.line > 0) err_line = node.line;
     if (debug_lines && node.line > 0 && node.kind != Node::Block)
         lines.push_back({static_cast<uint32_t>(text.size()), node.line});
     if (node.kind == Node::Block) {

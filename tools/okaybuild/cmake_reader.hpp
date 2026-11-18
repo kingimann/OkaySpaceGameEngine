@@ -1086,9 +1086,10 @@ static string emitManifest(Interp& in, Report& rep) {
         if (!pr("TIMEOUT").empty()) out << "  timeout = " << (long long)atof(pr("TIMEOUT").c_str()) << "\n";
         if (Interp::isTrue(pr("WILL_FAIL")) && !pr("WILL_FAIL").empty()) out << "  will_fail = on\n";
         if (!pr("SKIP_RETURN_CODE").empty()) out << "  skip_code = " << atoi(pr("SKIP_RETURN_CODE").c_str()) << "\n";
-        for (const char* key : {"ENVIRONMENT", "LABELS", "DEPENDS"}) {
+        for (const char* key : {"ENVIRONMENT", "LABELS", "DEPENDS", "FIXTURES_SETUP", "FIXTURES_CLEANUP", "FIXTURES_REQUIRED", "RESOURCE_LOCK", "PASS_REGULAR_EXPRESSION", "FAIL_REGULAR_EXPRESSION"}) {
             auto v = splitSemi(pr(key)); if (v.empty()) continue;
-            out << "  " << (string(key) == "ENVIRONMENT" ? "env" : string(key) == "LABELS" ? "labels" : "depends") << " =";
+            string k2 = key; string mk = k2 == "ENVIRONMENT" ? "env" : k2 == "LABELS" ? "labels" : k2 == "DEPENDS" ? "depends" : k2 == "FIXTURES_SETUP" ? "fixtures_setup" : k2 == "FIXTURES_CLEANUP" ? "fixtures_cleanup" : k2 == "FIXTURES_REQUIRED" ? "fixtures_required" : k2 == "RESOURCE_LOCK" ? "resource_lock" : k2 == "PASS_REGULAR_EXPRESSION" ? "pass_regex" : "fail_regex";
+            out << "  " << mk << " =";
             for (auto& w : v) out << " " << qw(string(key) == "ENVIRONMENT" ? srcWord(w, root) : w);
             out << "\n";
         }

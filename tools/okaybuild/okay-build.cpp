@@ -119,7 +119,7 @@ struct Target {
 };
 // A ctest-style test (from CMake's add_test): a command line whose first word may be a target name (then it is the built program),
 // an optional working folder, a time limit, "will_fail" (the test passes when the command fails) and a return code that means skipped.
-struct CTestDecl { string name; int line = 0; vector<string> cmd, needs; string cwd; long long timeout = 0; bool willFail = false; int skipCode = -1; bool serial = false; vector<string> env, labels, depends; };
+struct CTestDecl { string name; int line = 0; vector<string> cmd, needs; string cwd; long long timeout = 0; bool willFail = false; int skipCode = -1; bool serial = false; vector<string> env, labels, depends, fixSetup, fixCleanup, fixRequired, locks, passRegex, failRegex; };
 struct ConfigBlock {
     string name; int line = 0; int optimize = -1; int debug = -1;
     vector<string> flags, linkFlags, defines;
@@ -371,6 +371,12 @@ static Manifest parseManifest(const string& file) {
             else if (k == "env") { for (auto& w : v) { if (w.find('=') == string::npos || w[0] == '=') throw err("env wants NAME=VALUE words"); c.env.push_back(w); } }
             else if (k == "labels") { for (auto& w : v) c.labels.push_back(w); }
             else if (k == "depends") { for (auto& w : v) c.depends.push_back(w); }
+            else if (k == "fixtures_setup") { for (auto& w : v) c.fixSetup.push_back(w); }
+            else if (k == "fixtures_cleanup") { for (auto& w : v) c.fixCleanup.push_back(w); }
+            else if (k == "fixtures_required") { for (auto& w : v) c.fixRequired.push_back(w); }
+            else if (k == "resource_lock") { for (auto& w : v) c.locks.push_back(w); }
+            else if (k == "pass_regex") { for (auto& w : v) c.passRegex.push_back(w); }
+            else if (k == "fail_regex") { for (auto& w : v) c.failRegex.push_back(w); }
             else if (k == "skip_code") { if (v.size() != 1) throw err("skip_code takes one number"); c.skipCode = atoi(v[0].c_str()); }
             else throw err("unknown ctest key '" + k + "'");
         } else if (mode == DIST) {
@@ -2515,6 +2521,7 @@ static int numberBefore(const string& s, const string& word) {
 }
 static long long gTestTimeoutSec = 0;
 static string gCmakeToolchainFile; // cmake --toolchain-file
+static bool gCtestRerunFailed = false; // ctest --rerun-failed
 static vector<string> gCtestInc, gCtestExc, gCtestLabels; // ctest -R / -E / -L
 static string gJunitPath;            // --junit FILE: write the test run as JUnit-style XML
 static int gShardIdx = 0, gShardCnt = 1; // --shard I/N: run only every N-th test (1-based I)
@@ -2754,6 +2761,19 @@ static int cmdCTest(const Manifest& m, const Opts& o, const vector<string>& filt
         for (auto& f : gCtestExc) if (ok && matches(c.name, f)) ok = false; // -E: drop what matches
         if (ok) pick.push_back(&c);
     }
+    string binForList = fs::absolute(under(m.outdir + "/ctest")).lexically_normal().generic_string();
+    if (gCtestRerunFailed) { // only what failed the last time (the list is written after every run)
+        std::ifstream lf(binForList + "/last-failed.txt"); string nm; std::set<string> want; while (std::getline(lf, nm)) if (!nm.empty()) want.insert(nm);
+        if (want.empty()) { printf("0 tests (nothing failed last time)\n"); return 0; }
+        vector<const CTestDecl*> keep; for (auto* c : pick) if (want.count(c->name)) keep.push_back(c); pick = keep;
+    }
+    { // a test that needs a fixture brings the fixture's setup and cleanup tests along, even when the filter did not name them
+        bool grew = true; while (grew) { grew = false;
+            std::set<string> need; for (auto* c : pick) for (auto& f : c->fixRequired) need.insert(f);
+            for (auto& c : m.ctests) { if (std::find(pick.begin(), pick.end(), &c) != pick.end()) continue;
+                bool add = false; for (auto& f : c.fixSetup) if (need.count(f)) add = true; for (auto& f : c.fixCleanup) if (need.count(f)) add = true;
+                if (add) { pick.push_back(&c); grew = true; } } }
+    }
     if (pick.empty()) throw Fail("no ctest matches the filter");
     string srcDir = fs::current_path().generic_string();
     string binDir = fs::absolute(under(m.outdir + "/ctest")).lexically_normal().generic_string();
@@ -2772,7 +2792,8 @@ static int cmdCTest(const Manifest& m, const Opts& o, const vector<string>& filt
         }
         return w;
     };
-    struct Run { const CTestDecl* c; int code = 0; string out; double secs = 0; int state = 0; }; // state: 0 waiting, 1 running, 2 done
+    struct Run { const CTestDecl* c; int code = 0; string out; double secs = 0; int state = 0; bool notRun = false; string why; }; // state: 0 waiting, 1 running, 2 done
+    std::function<int(const Run&)> gVerdict;
     vector<Run> runs; for (auto* c : pick) { Run r; r.c = c; runs.push_back(r); }
     int jobs = o.jobs > 0 ? o.jobs : (int)std::max(1u, std::thread::hardware_concurrency());
     auto runOne = [&](Run& r) {
@@ -2785,7 +2806,27 @@ static int cmdCTest(const Manifest& m, const Opts& o, const vector<string>& filt
     };
     { // DEPENDS: a test starts only after the picked tests it names have finished (their result does not matter); serial tests run alone, last
         std::mutex mu; std::condition_variable cv; size_t doneCount = 0, running = 0; bool serialRunning = false;
-        auto depsDone = [&](const Run& r) { for (auto& d : r.c->depends) for (auto& o2 : runs) if (o2.c->name == d && o2.state != 2) return false; return true; };
+        auto verdictOf = [&](const Run& r) -> int { // 0 pass, 1 fail, 2 skip
+            if (r.notRun) return 1;
+            if (r.c->skipCode >= 0 && r.code == r.c->skipCode) return 2;
+            bool bad = false, good = false;
+            for (auto& rx : r.c->failRegex) { try { if (std::regex_search(r.out, std::regex(rx))) bad = true; } catch (const std::regex_error&) {} }
+            for (auto& rx : r.c->passRegex) { try { if (std::regex_search(r.out, std::regex(rx))) good = true; } catch (const std::regex_error&) {} }
+            if (bad) return 1;
+            if (!r.c->passRegex.empty()) return good ? 0 : 1; // PASS_REGULAR_EXPRESSION: the exit code no longer decides
+            return (r.c->willFail ? r.code != 0 : r.code == 0) ? 0 : 1;
+        };
+        gVerdict = verdictOf;
+        // fixtures: required tests wait for their setup tests, cleanup tests wait for the tests that require the fixture
+        auto fixtureWait = [&](const Run& r) { // true when something this test must wait for has not finished
+            for (auto& f : r.c->fixRequired) for (auto& o2 : runs) for (auto& sf : o2.c->fixSetup) if (sf == f && o2.state != 2) return true;
+            for (auto& f : r.c->fixCleanup) for (auto& o2 : runs) for (auto& rf : o2.c->fixRequired) if (rf == f && &o2 != &r && o2.state != 2) return true;
+            return false;
+        };
+        std::set<string> held; // RESOURCE_LOCK names in use
+        auto lockFree = [&](const Run& r) { for (auto& l : r.c->locks) if (held.count(l)) return false; return true; };
+        auto setupFailed = [&](Run& r) -> string { for (auto& f : r.c->fixRequired) for (auto& o2 : runs) for (auto& sf : o2.c->fixSetup) if (sf == f && o2.state == 2 && verdictOf(o2) == 1) return f; return ""; };
+        auto depsDone = [&](const Run& r) { if (fixtureWait(r)) return false; for (auto& d : r.c->depends) for (auto& o2 : runs) if (o2.c->name == d && o2.state != 2) return false; return true; };
         auto worker = [&] {
             for (;;) {
                 Run* mine = nullptr;
@@ -2793,13 +2834,16 @@ static int cmdCTest(const Manifest& m, const Opts& o, const vector<string>& filt
                   for (;;) {
                       if (doneCount == runs.size()) return;
                       bool otherParallel = false; for (auto& r : runs) if (r.state == 0 && !r.c->serial) otherParallel = true;
-                      for (auto& r : runs) if (r.state == 0 && depsDone(r) && !serialRunning && (!r.c->serial || (!otherParallel && running == 0))) { mine = &r; break; }
+                      for (auto& r : runs) if (r.state == 0 && depsDone(r) && !serialRunning && lockFree(r) && (!r.c->serial || (!otherParallel && running == 0))) { mine = &r; break; }
                       if (mine) break;
                       cv.wait_for(lk, std::chrono::milliseconds(50));
                   }
-                  mine->state = 1; ++running; if (mine->c->serial) serialRunning = true; }
+                  mine->state = 1; ++running; if (mine->c->serial) serialRunning = true;
+                  string badFix = setupFailed(*mine);
+                  if (!badFix.empty()) { mine->notRun = true; mine->why = "fixture " + badFix + ": its setup test failed"; mine->state = 2; --running; ++doneCount; if (mine->c->serial) serialRunning = false; cv.notify_all(); continue; }
+                  for (auto& l : mine->c->locks) held.insert(l); }
                 runOne(*mine);
-                { std::lock_guard<std::mutex> lk(mu); mine->state = 2; --running; ++doneCount; if (mine->c->serial) serialRunning = false; }
+                { std::lock_guard<std::mutex> lk(mu); for (auto& l : mine->c->locks) held.erase(l); mine->state = 2; --running; ++doneCount; if (mine->c->serial) serialRunning = false; }
                 cv.notify_all();
             }
         };
@@ -2808,19 +2852,20 @@ static int cmdCTest(const Manifest& m, const Opts& o, const vector<string>& filt
         vector<std::thread> th; for (int t = 0; t < std::min<int>(jobs, (int)runs.size()); ++t) th.emplace_back(worker);
         for (auto& t : th) t.join();
     }
-    int failed = 0, skipped = 0;
+    int failed = 0, skipped = 0; vector<string> failedNames;
     std::sort(runs.begin(), runs.end(), [](const Run& a, const Run& b) { return a.c->name < b.c->name; });
     for (auto& r : runs) {
-        bool skip = r.c->skipCode >= 0 && r.code == r.c->skipCode;
-        bool pass = !skip && (r.c->willFail ? r.code != 0 : r.code == 0);
+        int vd = gVerdict(r); bool skip = vd == 2, pass = vd == 0;
+        if (r.notRun) { ++failed; printf("FAIL %s not run (%s)\n", r.c->name.c_str(), r.why.c_str()); failedNames.push_back(r.c->name); continue; }
         if (skip) { printf("SKIP %s (exit %d)\n", r.c->name.c_str(), r.code); ++skipped; continue; }
         if (pass) { printf("PASS %s %.1fs\n", r.c->name.c_str(), r.secs); continue; }
-        ++failed; printf("FAIL %s exit %d %.1fs\n", r.c->name.c_str(), r.code, r.secs);
+        ++failed; failedNames.push_back(r.c->name); printf("FAIL %s exit %d %.1fs%s\n", r.c->name.c_str(), r.code, r.secs, (!r.c->passRegex.empty() || !r.c->failRegex.empty()) ? " (output regular expression decides)" : "");
         vector<string> ls; size_t pos = 0;
         while (pos < r.out.size()) { size_t e = r.out.find('\n', pos); if (e == string::npos) e = r.out.size(); ls.push_back(r.out.substr(pos, e - pos)); pos = e + 1; }
         for (size_t k = ls.size() > 30 ? ls.size() - 30 : 0; k < ls.size(); ++k) printf("  | %s\n", ls[k].c_str());
     }
     printf("%zu tests, %d failed, %d skipped\n", runs.size(), failed, skipped);
+    { std::error_code mk; fs::create_directories(binDir, mk); std::ofstream lf(binDir + "/last-failed.txt", std::ios::trunc); for (auto& n : failedNames) lf << n << "\n"; }
     if (!gJunitPath.empty()) {
         { std::error_code mk; fs::create_directories(fs::path(gJunitPath).parent_path(), mk); }
         std::ofstream x(gJunitPath, std::ios::trunc); if (!x) { fprintf(stderr, "okay-build: cannot write %s\n", gJunitPath.c_str()); }
@@ -2828,7 +2873,7 @@ static int cmdCTest(const Manifest& m, const Opts& o, const vector<string>& filt
             x << "<?xml version=\"1.0\" encoding=\"UTF-8\"?>\n<testsuites tests=\"" << runs.size() << "\" failures=\"" << failed << "\" skipped=\"" << skipped << "\">\n";
             x << "<testsuite name=\"ctest\" tests=\"" << runs.size() << "\" failures=\"" << failed << "\" skipped=\"" << skipped << "\">\n";
             for (auto& r : runs) {
-                bool skip = r.c->skipCode >= 0 && r.code == r.c->skipCode; bool pass = !skip && (r.c->willFail ? r.code != 0 : r.code == 0);
+                int vd = gVerdict(r); bool skip = vd == 2, pass = vd == 0;
                 char tm[32]; snprintf(tm, sizeof tm, "%.3f", r.secs);
                 x << "<testcase name=\"" << xmlEsc(r.c->name) << "\" classname=\"ctest\" time=\"" << tm << "\"";
                 if (pass) { x << "/>\n"; continue; }
@@ -3757,6 +3802,7 @@ int main(int argc, char** argv) {
             }
             else if (a == "--audit") cmakeAudit = true;
             else if (a == "--toolchain-file" && i + 1 < argc) gCmakeToolchainFile = argv[++i];
+            else if (a == "--rerun-failed") gCtestRerunFailed = true;
             else if (a == "-R" && i + 1 < argc) gCtestInc.push_back(argv[++i]);
             else if (a == "-E" && i + 1 < argc) gCtestExc.push_back(argv[++i]);
             else if (a == "-L" && i + 1 < argc) gCtestLabels.push_back(argv[++i]);

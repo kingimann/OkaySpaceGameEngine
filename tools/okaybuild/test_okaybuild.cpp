@@ -1816,11 +1816,43 @@ static void testCleanRebuildHitsCache() {
     check(o.find("cache 2 hit, 1 miss") != string::npos, "one edited source is the only miss", o);
     o = sh("-j2 --no-cache", &rc); check(o.find("cache ") == string::npos, "--no-cache turns the cache off", o);
 }
+
+static void testCtestFixturesLocksRegexRerun() {
+    printf("test: ctest fixtures, resource locks, output regular expressions, --rerun-failed\n");
+    fresh("ctestmore");
+    write("CMakeLists.txt",
+        "project(C)\nenable_testing()\n"
+        "add_test(NAME make_db COMMAND sh -c \"echo ready > db.txt\")\nset_tests_properties(make_db PROPERTIES FIXTURES_SETUP db)\n"
+        "add_test(NAME use_db COMMAND sh -c \"grep -q ready db.txt\")\nset_tests_properties(use_db PROPERTIES FIXTURES_REQUIRED db)\n"
+        "add_test(NAME use_db_too COMMAND sh -c \"grep -q ready db.txt\")\nset_tests_properties(use_db_too PROPERTIES FIXTURES_REQUIRED db)\n"
+        "add_test(NAME drop_db COMMAND sh -c \"test -f db.txt && rm db.txt && echo dropped > dropped.txt\")\nset_tests_properties(drop_db PROPERTIES FIXTURES_CLEANUP db)\n"
+        "add_test(NAME bad_setup COMMAND sh -c \"exit 1\")\nset_tests_properties(bad_setup PROPERTIES FIXTURES_SETUP broken)\n"
+        "add_test(NAME needs_broken COMMAND sh -c \"exit 0\")\nset_tests_properties(needs_broken PROPERTIES FIXTURES_REQUIRED broken)\n"
+        "foreach(n 1 2 3)\n  add_test(NAME lock_${n} COMMAND sh -c \"mkdir lockdir_x 2>/dev/null || exit 9; sleep 1; rmdir lockdir_x\")\n  set_tests_properties(lock_${n} PROPERTIES RESOURCE_LOCK port8080)\nendforeach()\n"
+        "add_test(NAME says_ok_but_fails COMMAND sh -c \"echo all good; exit 3\")\nset_tests_properties(says_ok_but_fails PROPERTIES PASS_REGULAR_EXPRESSION \"all good\")\n"
+        "add_test(NAME exit0_but_error_text COMMAND sh -c \"echo ERROR: broke\")\nset_tests_properties(exit0_but_error_text PROPERTIES FAIL_REGULAR_EXPRESSION \"ERROR:\")\n"
+        "add_test(NAME never_matches COMMAND sh -c \"echo hello\")\nset_tests_properties(never_matches PROPERTIES PASS_REGULAR_EXPRESSION \"nothing like this\")\n");
+    int rc; string o = sh("cmake . -o b.okay", &rc); string man = readFile(gRoot / "b.okay");
+    check(rc == 0 && man.find("fixtures_setup = db") != string::npos && man.find("resource_lock = port8080") != string::npos && man.find("pass_regex =") != string::npos, "the properties reach the manifest", man);
+    o = sh("-f b.okay ctest -j4 '^use_db$'", &rc);
+    check(rc == 0 && o.find("PASS make_db") != string::npos && o.find("PASS use_db") != string::npos && o.find("PASS drop_db") != string::npos && o.find("3 tests") != string::npos, "a test that needs a fixture brings its setup and cleanup along", o);
+    check(fs::exists(gRoot / "build/ctest/dropped.txt") && !fs::exists(gRoot / "build/ctest/db.txt"), "setup ran first and cleanup last");
+    o = sh("-f b.okay ctest -j4 -R 'make_db|use_db|drop_db'", &rc); check(rc == 0 && o.find("4 tests") != string::npos, "two tests sharing a fixture both run between setup and cleanup", o);
+    o = sh("-f b.okay ctest needs_broken", &rc);
+    check(rc == 1 && o.find("FAIL bad_setup") != string::npos && o.find("FAIL needs_broken not run") != string::npos, "a failed setup means the required test is not run (and counts as failed)", o);
+    o = sh("-f b.okay ctest -j4 lock_", &rc); check(rc == 0 && o.find("3 tests, 0 failed") != string::npos, "RESOURCE_LOCK: three tests that would collide on one folder never overlap, even at -j4", o);
+    o = sh("-f b.okay ctest says_ok_but_fails", &rc); check(rc == 0 && o.find("PASS says_ok_but_fails") != string::npos, "PASS_REGULAR_EXPRESSION: matching output passes even with a failing exit code", o);
+    o = sh("-f b.okay ctest exit0_but_error_text", &rc); check(rc == 1 && o.find("FAIL exit0_but_error_text") != string::npos, "FAIL_REGULAR_EXPRESSION: matching output fails an exit 0", o);
+    o = sh("-f b.okay ctest never_matches", &rc); check(rc == 1 && o.find("regular expression decides") != string::npos, "no match for PASS_REGULAR_EXPRESSION is a failure", o);
+    o = sh("-f b.okay ctest -R 'never_matches|exit0_but|lock_1'", &rc); check(rc == 1 && o.find("3 tests, 2 failed") != string::npos, "a run with two failures", o);
+    o = sh("-f b.okay ctest --rerun-failed", &rc);
+    check(rc == 1 && o.find("2 tests, 2 failed") != string::npos && o.find("lock_1") == string::npos, "--rerun-failed runs only the two that failed", o);
+}
 int main(int argc, char** argv) {
     if (argc < 2) { puts("usage: test_okaybuild PATH_TO_okay-build"); return 2; }
     gTool = "'" + fs::absolute(argv[1]).string() + "'";
     if (const char* only = getenv("OKB_ONLY")) { // OKB_ONLY=cmake runs just the CMake reader, ctest and library tests (quick while working on them)
-        if (string(only) == "cmake") { testCmakeReader(); testCmakeSyntax(); testSharedObjectLibs(); testFetchAndSha256(); testOnlyAffectedTestsRebuild(); testGeneratedSourcesAndRegen(); testCleanRebuildHitsCache(); printf("okaybuild tests (cmake only): %d checks passed, %d failed\n", gPass, gFail); return gFail ? 1 : 0; }
+        if (string(only) == "cmake") { testCmakeReader(); testCmakeSyntax(); testSharedObjectLibs(); testFetchAndSha256(); testOnlyAffectedTestsRebuild(); testGeneratedSourcesAndRegen(); testCleanRebuildHitsCache(); testCtestFixturesLocksRegexRerun(); printf("okaybuild tests (cmake only): %d checks passed, %d failed\n", gPass, gFail); return gFail ? 1 : 0; }
     }
     testBasicAndNoop(); testHeaderTouch(); testDefine(); testMissingHeader(); testCycle(); testLinkOrder();
     testParallelDeterministic(); testCompdbCleanDry(); testManifestErrors(); testMingwCompdb(); testMingwSlice(); testStatShortcut(); testFreshNoopTrust(); testSpacesBuildDirRsp(); testRawActions(); testHashInCommandAndPath(); testImportGenerated();
@@ -1845,5 +1877,6 @@ int main(int argc, char** argv) {
     testOnlyAffectedTestsRebuild();
     testGeneratedSourcesAndRegen();
     testCleanRebuildHitsCache();
+    testCtestFixturesLocksRegexRerun();
     printf("okaybuild tests: %d checks passed, %d failed\n", gPass, gFail); return gFail ? 1 : 0;
 }

@@ -3169,7 +3169,7 @@ static int writeNative(const string& root, const string& outFile) {
     if (!plat.empty()) eng += " okay_platform";
     if (haveUfbx) eng += " ufbx";
     eng += "\n";
-    if (haveUfbx) block("ufbx", "lib", {rel(ufbx)}, "  flags = -w -O2 -std=c11\n  include = engine/third_party/ufbx\n");
+    if (haveUfbx) block("ufbx", "lib", {rel(ufbx)}, "  flags = -w -O2\n  include = engine/third_party/ufbx\n");
     block("okay_engine", "lib", engine, eng);
     block("test_math", "exe", {rel(math)},
           "  flags = -std=c++17 -O0 -g0\n  deps = okay_engine\n  libs = sodium SDL2 dl pthread\n");

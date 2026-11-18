@@ -1848,11 +1848,31 @@ static void testCtestFixturesLocksRegexRerun() {
     o = sh("-f b.okay ctest --rerun-failed", &rc);
     check(rc == 1 && o.find("2 tests, 2 failed") != string::npos && o.find("lock_1") == string::npos, "--rerun-failed runs only the two that failed", o);
 }
+
+static void testMingwResourcesAndPe() {
+    printf("test: MinGW program with a windres resource, read back with `tool pe`\n");
+    if (system("command -v x86_64-w64-mingw32-g++ >/dev/null 2>&1 && command -v x86_64-w64-mingw32-windres >/dev/null 2>&1") != 0) { printf("  MinGW not installed, skipped\n"); return; }
+    fresh("mingwpe");
+    write("m.cpp", "#include <windows.h>\nint WINAPI WinMain(HINSTANCE, HINSTANCE, LPSTR, int){ MessageBoxA(0, \"x\", \"y\", 0); return 0; }\n");
+    write("res/app.manifest", "<?xml version=\"1.0\" encoding=\"UTF-8\" standalone=\"yes\"?>\n<assembly xmlns=\"urn:schemas-microsoft-com:asm.v1\" manifestVersion=\"1.0\"></assembly>\n");
+    write("app.rc", "#include <winver.h>\n1 VERSIONINFO\nFILEVERSION 1,2,3,0\nBEGIN\n BLOCK \"StringFileInfo\"\n BEGIN\n  BLOCK \"040904b0\"\n  BEGIN\n   VALUE \"FileDescription\", \"Okay Test App\\0\"\n  END\n END\nEND\n1 24 \"res/app.manifest\"\n");
+    write("build.okay", "toolchain mingw\n cc = x86_64-w64-mingw32-gcc\n cxx = x86_64-w64-mingw32-g++\n rc = x86_64-w64-mingw32-windres\n ar = x86_64-w64-mingw32-ar\nend\ntarget app exe\n sources = m.cpp app.rc\n link_flags = -mwindows -static-libgcc -static-libstdc++\n libs = user32\nend\n");
+    int rc; string o = sh("-j2", &rc);
+    check(rc == 0 && fs::exists(gRoot / "build/app.exe"), "the program and its resource build", o);
+    o = sh("tool pe build/app.exe", &rc);
+    check(rc == 0 && o.find("PE32+") != string::npos && o.find("x86-64") != string::npos && o.find("subsystem: 2 (Windows GUI)") != string::npos, "PE32+, x86-64, Windows GUI subsystem (from -mwindows)", o);
+    check(o.find("USER32.dll") != string::npos && o.find("KERNEL32.dll") != string::npos, "imports name USER32.dll and KERNEL32.dll", o);
+    check(o.find("resources: yes") != string::npos && o.find("file description: Okay Test App") != string::npos, "the version resource made it into the program", o);
+    o = sh("-j2 --explain", &rc); check(ran(o) == 0, "second build: nothing to do", o);
+    sleepMs(); write("res/app.manifest", "<?xml version=\"1.0\" encoding=\"UTF-8\" standalone=\"yes\"?>\n<assembly xmlns=\"urn:schemas-microsoft-com:asm.v1\" manifestVersion=\"1.0\"><!-- changed --></assembly>\n");
+    o = sh("-j2 --explain", &rc); check(ran(o) >= 1 && o.find("RC") != string::npos, "a changed file the .rc names (the manifest) rebuilds the resource", o);
+    write("notpe.txt", "hello"); o = sh("tool pe notpe.txt", &rc); check(rc == 2 && o.find("not a PE file") != string::npos, "a file that is not a PE is refused", o);
+}
 int main(int argc, char** argv) {
     if (argc < 2) { puts("usage: test_okaybuild PATH_TO_okay-build"); return 2; }
     gTool = "'" + fs::absolute(argv[1]).string() + "'";
     if (const char* only = getenv("OKB_ONLY")) { // OKB_ONLY=cmake runs just the CMake reader, ctest and library tests (quick while working on them)
-        if (string(only) == "cmake") { testCmakeReader(); testCmakeSyntax(); testSharedObjectLibs(); testFetchAndSha256(); testOnlyAffectedTestsRebuild(); testGeneratedSourcesAndRegen(); testCleanRebuildHitsCache(); testCtestFixturesLocksRegexRerun(); printf("okaybuild tests (cmake only): %d checks passed, %d failed\n", gPass, gFail); return gFail ? 1 : 0; }
+        if (string(only) == "cmake") { testCmakeReader(); testCmakeSyntax(); testSharedObjectLibs(); testFetchAndSha256(); testOnlyAffectedTestsRebuild(); testGeneratedSourcesAndRegen(); testCleanRebuildHitsCache(); testCtestFixturesLocksRegexRerun(); testMingwResourcesAndPe(); printf("okaybuild tests (cmake only): %d checks passed, %d failed\n", gPass, gFail); return gFail ? 1 : 0; }
     }
     testBasicAndNoop(); testHeaderTouch(); testDefine(); testMissingHeader(); testCycle(); testLinkOrder();
     testParallelDeterministic(); testCompdbCleanDry(); testManifestErrors(); testMingwCompdb(); testMingwSlice(); testStatShortcut(); testFreshNoopTrust(); testSpacesBuildDirRsp(); testRawActions(); testHashInCommandAndPath(); testImportGenerated();
@@ -1878,5 +1898,6 @@ int main(int argc, char** argv) {
     testGeneratedSourcesAndRegen();
     testCleanRebuildHitsCache();
     testCtestFixturesLocksRegexRerun();
+    testMingwResourcesAndPe();
     printf("okaybuild tests: %d checks passed, %d failed\n", gPass, gFail); return gFail ? 1 : 0;
 }

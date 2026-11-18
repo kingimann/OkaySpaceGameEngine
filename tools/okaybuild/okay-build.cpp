@@ -3727,6 +3727,32 @@ static int toolMain(const vector<string>& a) {
         }
         return 0;
     }
+    if (c == "pe") { // okay-build tool pe FILE...: what a Windows program says about itself (written from the PE/COFF file format description)
+        if (a.size() < 2) throw Fail("usage: okay-build tool pe FILE...");
+        for (size_t fi = 1; fi < a.size(); ++fi) {
+            string b = readAllBytes(a[fi]); auto u = [&](size_t at, int n) -> uint64_t { if (at + (size_t)n > b.size()) throw Fail(a[fi] + ": cut short at " + std::to_string(at)); uint64_t v = 0; for (int i = 0; i < n; ++i) v |= (uint64_t)(unsigned char)b[at + (size_t)i] << (8 * i); return v; };
+            if (b.size() < 64 || b[0] != 'M' || b[1] != 'Z') throw Fail(a[fi] + ": not a PE file (no MZ header)");
+            size_t pe = (size_t)u(0x3c, 4); if (u(pe, 4) != 0x00004550) throw Fail(a[fi] + ": no PE signature");
+            unsigned machine = (unsigned)u(pe + 4, 2), nsec = (unsigned)u(pe + 6, 2), optSize = (unsigned)u(pe + 20, 2), chars = (unsigned)u(pe + 22, 2);
+            size_t opt = pe + 24; unsigned magic = (unsigned)u(opt, 2); bool plus = magic == 0x20b; if (!plus && magic != 0x10b) throw Fail(a[fi] + ": unknown optional header magic");
+            unsigned sub = (unsigned)u(opt + 68, 2); size_t dd = opt + (plus ? 112 : 96); unsigned ndd = (unsigned)u(opt + (plus ? 108 : 92), 4);
+            struct Sec { uint64_t va, vsize, raw, rawSize; string name; }; vector<Sec> secs; size_t st = opt + optSize;
+            for (unsigned i = 0; i < nsec; ++i) { size_t o = st + 40 * i; Sec x; x.name = b.substr(o, 8); x.name = x.name.substr(0, x.name.find('\0')); x.vsize = u(o + 8, 4); x.va = u(o + 12, 4); x.rawSize = u(o + 16, 4); x.raw = u(o + 20, 4); secs.push_back(x); }
+            auto off = [&](uint64_t rva) -> size_t { for (auto& x : secs) if (rva >= x.va && rva < x.va + std::max(x.vsize, x.rawSize)) return (size_t)(x.raw + (rva - x.va)); throw Fail(a[fi] + ": address 0x" + std::to_string(rva) + " is in no section"); };
+            auto cstr = [&](size_t at) { string r; while (at < b.size() && b[at]) r += b[at++]; return r; };
+            printf("%s\n  format: %s, machine 0x%04x%s, %s\n", a[fi].c_str(), plus ? "PE32+" : "PE32", machine, machine == 0x8664 ? " (x86-64)" : "", (chars & 0x2000) ? "DLL" : "executable");
+            printf("  subsystem: %u (%s)\n", sub, sub == 2 ? "Windows GUI" : sub == 3 ? "Windows console" : "other");
+            printf("  sections:"); for (auto& x : secs) printf(" %s", x.name.c_str()); printf("\n");
+            if (ndd > 1 && u(dd + 8, 4)) { size_t imp = off(u(dd + 8, 4)); printf("  imports:");
+                for (;; imp += 20) { uint64_t nameRva = u(imp + 12, 4); if (!nameRva && !u(imp, 4)) break; printf(" %s", cstr(off(nameRva)).c_str()); } printf("\n"); }
+            else printf("  imports: none\n");
+            if (ndd > 2 && u(dd + 16, 4)) printf("  resources: yes (%llu bytes)\n", (unsigned long long)u(dd + 20, 4)); else printf("  resources: none\n");
+            // the version block text (UTF-16 "FileDescription") if there is a resource section: shown as found
+            size_t at = b.find(string("F\0i\0l\0e\0D\0e\0s\0c\0r\0i\0p\0t\0i\0o\0n\0", 30));
+            if (at != string::npos) { size_t q = at + 30; while (q + 1 < b.size() && (b[q] == 0 || (unsigned char)b[q] < 32)) ++q; string d; while (q + 1 < b.size() && !(b[q] == 0 && b[q + 1] == 0) && d.size() < 80) { if (b[q]) d += b[q]; q += 1; } printf("  file description: %s\n", d.c_str()); }
+        }
+        return 0;
+    }
     if (c == "sha256") { if (a.size() < 2) throw Fail("usage: okay-build tool sha256 FILE..."); for (size_t i = 1; i < a.size(); ++i) printf("%s  %s\n", sha256File(a[i]).c_str(), a[i].c_str()); return 0; }
     throw Fail("unknown tool command '" + c + "'");
 }

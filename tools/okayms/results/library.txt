@@ -14,7 +14,6 @@ engine/src/Animation/HumanoidLibrary.cpp|okay/Components/NaturalGait.hpp:60: exp
 engine/src/Animation/HumanoidMotion.cpp|OK
 engine/src/Animation/PlayerSetup.cpp|okay/Animation/HumanoidBones.hpp:93: a static local object takes no initializer and is not an array
 engine/src/Audio/AudioClip.cpp|engine/src/Audio/AudioClip.cpp:20: expected a type (in , token ostream, after )
-engine/src/Audio/AudioDecode.cpp|okay/Core/Log.hpp:326: no member function to_time_t
 engine/src/Audio/AudioMixer.cpp|OK
 engine/src/Audio/AudioStream.cpp|OK
 engine/src/Audio/FlacDecoder.cpp|OK
@@ -27,3 +26,323 @@ engine/src/Combat/WeaponBook.cpp|okay/Components/GridInventory.hpp:260: expected
 engine/src/Components/ActionList.cpp|okay/Core/Log.hpp:326: expected ';' (in Log::OpenFile/3), found 'sz' after 'uintmax_t' (token kinds 1/1)
 engine/src/Components/AnimClip.cpp|engine/src/Components/AnimClip.cpp:488: expected ';' (in AnimClip::ParseAll/4), found '' after 'npos' (token kinds 5/1)
 engine/src/Components/AnimControl.cpp|okay/Components/NaturalGait.hpp:60: expected ';' (in okay::NaturalGait::ButtonTooltip), found 'Crouch and Prone Speed change to 1.0 and 0.5 only if they are still the old 2.2 and 1
+engine/src/Components/AntiCheatConfig.cpp|okay/Components/NetValidator.hpp:133: expected ';' (in NetValidator::Park/2), found '' after '' (token kinds 5/5)
+engine/src/Components/BuildMode.cpp|okay/Components/Buildable.hpp:56: expected ')' (in Buildable::Of/1), found '' after 'nullptr' (token kinds 8/2)
+engine/src/Components/Cable.cpp|OK
+engine/src/Components/Camera.cpp|OK
+engine/src/Components/Character.cpp|cannot open include iomanip
+engine/src/Components/CharacterAnimBackend.cpp|okay/Components/NaturalGait.hpp:60: expected ';' (in okay::NaturalGait::ButtonTooltip), found 'Crouch and Prone Speed change to 1.0 and 0.5 only if they are still the old 2.2 and 1
+engine/src/Components/Decal.cpp|engine/src/Components/Decal.cpp:107: expected ';' (in Decal::Project/0), found '' after '' (token kinds 5/5)
+engine/src/Components/DialogueGraph.cpp|StoryKv.hpp:26: expected ';', found '' after '' (token kinds 6/5)
+engine/src/Components/DialogueRunner.cpp|okay/Render/Mesh.hpp:5036: expected a type (in Mesh::WeldVertices/1, token , after )
+engine/src/Components/Draggable.cpp|okay/Components/GridInventory.hpp:260: expected ')' (in GridInventory::CanMoveTo/5), found '' after 'GridInventory' (token kinds 11/1)
+engine/src/Components/Foliage.cpp|okay/Components/NaturalGait.hpp:60: expected ';' (in okay::NaturalGait::ButtonTooltip), found 'Crouch and Prone Speed change to 1.0 and 0.5 only if they are still the old 2.2 and 1
+engine/src/Components/LODGroup.cpp|OK
+engine/src/Components/LineRenderer.cpp|engine/src/Components/LineRenderer.cpp:456: member call on something that is not a class object: RibbonInput
+engine/src/Components/LookAtIK.cpp|okay/Math/IKMath.hpp:34: expected ')' (in okay::IsUnder), found '' after 'nullptr' (token kinds 8/2)
+engine/src/Components/MeleeAttacker.cpp|okay/Input/GameInput.hpp:22: expected an enumerator value
+engine/src/Components/ModelAnimatorPose.cpp|okay/Components/NaturalGait.hpp:60: expected ';' (in okay::NaturalGait::ButtonTooltip), found 'Crouch and Prone Speed change to 1.0 and 0.5 only if they are still the old 2.2 and 1
+engine/src/Components/NetworkObject.cpp|okay/Components/NaturalGait.hpp:60: expected ';' (in okay::NaturalGait::ButtonTooltip), found 'Crouch and Prone Speed change to 1.0 and 0.5 only if they are still the old 2.2 and 1
+engine/src/Components/PlayerView.cpp|okay/Components/NaturalGait.hpp:60: expected ';' (in okay::NaturalGait::ButtonTooltip), found 'Crouch and Prone Speed change to 1.0 and 0.5 only if they are still the old 2.2 and 1
+engine/src/Components/QuestLog.cpp|StoryKv.hpp:26: expected ';', found '' after '' (token kinds 6/5)
+engine/src/Components/Ragdoll.cpp|okay/Animation/HumanoidBones.hpp:93: a static local object takes no initializer and is not an array
+engine/src/Components/RangedWeapon.cpp|okay/Input/GameInput.hpp:22: expected an enumerator value
+engine/src/Components/Sequence.cpp|okay/Components/NaturalGait.hpp:60: expected ';' (in okay::NaturalGait::ButtonTooltip), found 'Crouch and Prone Speed change to 1.0 and 0.5 only if they are still the old 2.2 and 1
+engine/src/Components/SequencePlayer.cpp|okay/Core/Localization.hpp:179: no matching constructor in LocArg (in vector<ULocArg@@>::resize/1, 0 arguments)
+engine/src/Components/Spline.cpp|OK
+engine/src/Components/SplineMesh.cpp|okay/Components/NaturalGait.hpp:60: expected ';' (in okay::NaturalGait::ButtonTooltip), found 'Crouch and Prone Speed change to 1.0 and 0.5 only if they are still the old 2.2 and 1
+engine/src/Components/SpriteRenderer.cpp|OK
+engine/src/Components/Terrain.cpp|cannot open include thread
+engine/src/Components/UIAnimation.cpp|okay/Components/GridInventory.hpp:260: expected ')' (in GridInventory::CanMoveTo/5), found '' after 'GridInventory' (token kinds 11/1)
+engine/src/Components/UIBarBind.cpp|okay/Render/Mesh.hpp:5036: expected a type (in Mesh::WeldVertices/1, token , after )
+engine/src/Components/UIContextMenu.cpp|okay/Core/Localization.hpp:179: no matching constructor in LocArg (in vector<ULocArg@@>::resize/1, 0 arguments)
+engine/src/Components/UIDamageNumbers.cpp|okay/Core/Localization.hpp:179: no matching constructor in LocArg (in vector<ULocArg@@>::resize/1, 0 arguments)
+engine/src/Components/UIDialogueBox.cpp|okay/Components/GridInventory.hpp:260: expected ')' (in GridInventory::CanMoveTo/5), found '' after 'GridInventory' (token kinds 11/1)
+engine/src/Components/UIDocument.cpp|okay/Components/GridInventory.hpp:260: expected ')' (in GridInventory::CanMoveTo/5), found '' after 'GridInventory' (token kinds 11/1)
+engine/src/Components/UIDraggable.cpp|okay/Components/GridInventory.hpp:260: expected ')' (in GridInventory::CanMoveTo/5), found '' after 'GridInventory' (token kinds 11/1)
+engine/src/Components/UIKeybindField.cpp|engine/src/Components/UIKeybindField.cpp:132: expected ';' (in UIKeybindField::Update/1), found '' after '' (token kinds 5/2)
+engine/src/Components/UILayoutGroup.cpp|okay/Components/GridInventory.hpp:260: expected ')' (in GridInventory::CanMoveTo/5), found '' after 'GridInventory' (token kinds 11/1)
+engine/src/Components/UIListView.cpp|okay/Components/GridInventory.hpp:260: expected ')' (in GridInventory::CanMoveTo/5), found '' after 'GridInventory' (token kinds 11/1)
+engine/src/Components/UIModal.cpp|okay/Components/GridInventory.hpp:260: expected ')' (in GridInventory::CanMoveTo/5), found '' after 'GridInventory' (token kinds 11/1)
+engine/src/Components/UIOwnerData.cpp|okay/Components/NaturalGait.hpp:60: expected ';' (in okay::NaturalGait::ButtonTooltip), found 'Crouch and Prone Speed change to 1.0 and 0.5 only if they are still the old 2.2 and 1
+engine/src/Components/UITextBind.cpp|okay/Core/Localization.hpp:179: no matching constructor in LocArg (in vector<ULocArg@@>::resize/1, 0 arguments)
+engine/src/Components/UIThemeAsset.cpp|okay/Components/GridInventory.hpp:260: expected ')' (in GridInventory::CanMoveTo/5), found '' after 'GridInventory' (token kinds 11/1)
+engine/src/Components/UITooltip.cpp|okay/Core/Localization.hpp:179: no matching constructor in LocArg (in vector<ULocArg@@>::resize/1, 0 arguments)
+engine/src/Components/VisualScriptComponent.cpp|okay/Render/Mesh.hpp:5036: expected a type (in Mesh::WeldVertices/1, token , after )
+engine/src/Components/Volume.cpp|okay/Components/Buildable.hpp:56: expected ')' (in Buildable::Of/1), found '' after 'nullptr' (token kinds 8/2)
+engine/src/Components/VoxelEdit.cpp|engine/src/Components/VoxelEdit.cpp:90: cannot deduce template arguments of fill (in VoxelTerrain::BeginGenerate/6)
+engine/src/Components/VoxelFluid.cpp|OK
+engine/src/Components/VoxelTerrain.cpp|engine/src/Components/VoxelTerrain.cpp:388: expected a template parameter name
+engine/src/Core/AccessibilitySettings.cpp|OK
+engine/src/Core/Application.cpp|cannot open include thread
+engine/src/Core/AssetDatabase.cpp|cannot open include condition_variable
+engine/src/Core/AssetDatabaseDeps.cpp|cannot open include condition_variable
+engine/src/Core/AssetDatabaseSearch.cpp|AssetDatabaseInternal.hpp:35: cannot work out the type of the auto variable s (in okay::adb::U8, init node 17 '')
+engine/src/Core/AssetManager.cpp|cannot open include condition_variable
+engine/src/Core/Backup.cpp|okay/Core/PathSafety.hpp:70: global initializer must be a constant
+engine/src/Core/BuildInfo.cpp|OK
+engine/src/Core/BuildPipeline.cpp|engine/src/Core/BuildPipeline.cpp:171: expected ';' (in okay::buildpipe::FindDataDir), found 'it' after 'directory_iterator' (token kinds 1/1)
+engine/src/Core/Clipboard.cpp|OK
+engine/src/Core/CommandLine.cpp|engine/src/Core/CommandLine.cpp:111: expected ';' (in CommandLine::Get/2), found '' after '' (token kinds 5/5)
+engine/src/Core/Console.cpp|OK
+engine/src/Core/Cvar.cpp|okay/Core/PathSafety.hpp:70: global initializer must be a constant
+engine/src/Core/DataAsset.cpp|okay/Core/PathSafety.hpp:70: global initializer must be a constant
+engine/src/Core/DebugOverlay.cpp|OK
+engine/src/Core/DisplayModes.cpp|engine/src/Core/DisplayModes.cpp:82: cannot deduce template arguments of sort (in okay::FilterDisplayModes)
+engine/src/Core/DisplaySettings.cpp|cannot open include thread
+engine/src/Core/FrameOverlay.cpp|OK
+engine/src/Core/FramePacing.cpp|cannot open include condition_variable
+engine/src/Core/FrameRecord.cpp|okay/Core/PathSafety.hpp:70: global initializer must be a constant
+engine/src/Core/FrameStats.cpp|okay/Core/PathSafety.hpp:70: global initializer must be a constant
+engine/src/Core/Game.cpp|cannot open include mutex
+engine/src/Core/GameLoop.cpp|okay/Core/Clock.hpp:221: no matching constructor in Clock
+engine/src/Core/GameSaves.cpp|okay/Core/PathSafety.hpp:70: global initializer must be a constant
+engine/src/Core/ImageDecode.cpp|okay/Core/Inflate.hpp:95: expected ')' (in BitReader::Take/1), found '' after 'uint64_t' (token kinds 4/1)
+engine/src/Core/ImageDecodeJpeg.cpp|engine/src/Core/ImageDecodeJpeg.cpp:153: expected '(' (in okay::imgdec::IdctBlock), found '' after '' (token kinds 34/5)
+engine/src/Core/ImageWrite.cpp|OK
+engine/src/Core/ImportSettings.cpp|unknown field imbue (in okay::ParseFloat)
+engine/src/Core/Jobs.cpp|cannot open include condition_variable
+engine/src/Core/LocCheck.cpp|okay/Core/Localization.hpp:179: no matching constructor in LocArg (in vector<ULocArg@@>::resize/1, 0 arguments)
+engine/src/Core/LocPreview.cpp|okay/Core/Localization.hpp:179: no matching constructor in LocArg (in vector<ULocArg@@>::resize/1, 0 arguments)
+engine/src/Core/LocScan.cpp|okay/Core/Localization.hpp:179: no matching constructor in LocArg (in vector<ULocArg@@>::resize/1, 0 arguments)
+engine/src/Core/LocTable.cpp|okay/Core/Localization.hpp:179: no matching constructor in LocArg (in vector<ULocArg@@>::resize/1, 0 arguments)
+engine/src/Core/Localization.cpp|okay/Core/Localization.hpp:179: no matching constructor in LocArg (in vector<ULocArg@@>::resize/1, 0 arguments)
+engine/src/Core/LoopConsole.cpp|engine/src/Core/LoopConsole.cpp:130: expected ';' (in __lam2::operator()/1), found 'stats_csv <file>' after 'error: usage: ' (token kinds 3/3)
+engine/src/Core/Paths.cpp|engine/src/Core/Paths.cpp:30: no static member Env in the class
+engine/src/Core/Prefs.cpp|cannot open include condition_variable
+engine/src/Core/RandomExtras.cpp|OK
+engine/src/Core/Recovery.cpp|cannot open include signal.h
+engine/src/Core/SaveFile.cpp|cannot open include fcntl.h
+engine/src/Core/SaveFramework.cpp|okay/Core/PathSafety.hpp:70: global initializer must be a constant
+engine/src/Core/SaveFrameworkScene.cpp|okay/Core/PathSafety.hpp:70: global initializer must be a constant
+engine/src/Core/SaveFrameworkSync.cpp|okay/Core/PathSafety.hpp:70: global initializer must be a constant
+engine/src/Core/SaveGame.cpp|okay/Core/PathSafety.hpp:70: global initializer must be a constant
+engine/src/Core/Scheduler.cpp|okay/Core/Clock.hpp:221: no matching constructor in Clock
+engine/src/Core/StringId.cpp|cannot open include condition_variable
+engine/src/Core/Subtitles.cpp|okay/Core/Localization.hpp:179: no matching constructor in LocArg (in vector<ULocArg@@>::resize/1, 0 arguments)
+engine/src/Core/ThumbnailCache.cpp|AssetDatabaseInternal.hpp:35: cannot work out the type of the auto variable s (in okay::adb::U8, init node 17 '')
+engine/src/Core/Time.cpp|unknown function g_mono (in Time::RealtimeSinceStartup/0)
+engine/src/Core/TimeSnapshot.cpp|okay/Core/Clock.hpp:221: no matching constructor in Clock
+engine/src/Core/TimerDebug.cpp|engine/src/Core/TimerDebug.cpp:73: expected '(' (in okay::TaskText), found '' after 'Kind::Delay' (token kinds 39/1)
+engine/src/Core/TolerantNumbers.cpp|cannot open include ios
+engine/src/Core/Tween.cpp|okay/Core/Localization.hpp:179: no matching constructor in LocArg (in vector<ULocArg@@>::resize/1, 0 arguments)
+engine/src/Core/Undo.cpp|OK
+engine/src/Crypto/Aead.cpp|unknown function std::abort (in okay::crypto::ChaCha20Poly1305Seal)
+engine/src/Crypto/Blake2b.cpp|OK
+engine/src/Crypto/ChaCha20.cpp|OK
+engine/src/Crypto/Ed25519.cpp|Fe25519_16.hpp:84: cannot deduce template arguments of Barrier (in okay::crypto::fe16::ToBytes)
+engine/src/Crypto/Poly1305.cpp|OK
+engine/src/Crypto/Random.cpp|unknown function std::abort (in okay::crypto::Die)
+engine/src/Crypto/Sha512.cpp|OK
+engine/src/Crypto/Util.cpp|OK
+engine/src/Crypto/X25519.cpp|Fe25519_16.hpp:84: cannot deduce template arguments of Barrier (in okay::crypto::fe16::ToBytes)
+engine/src/Debug/DebugStatsOverlay.cpp|unknown function string (in DebugStatsOverlay::BuildLines/1)
+engine/src/Debug/Diagnostics.cpp|cannot open include mutex
+engine/src/Debug/DrawCallRecorder.cpp|engine/src/Debug/DrawCallRecorder.cpp:269: expected ')' (in DrawCallSummary::ToText/0), found 'unique: %zu materials, %zu meshes, %zu shaders' after '%zu call(s): %zu draw, %zu dis
+engine/src/Debug/FrameHistory.cpp|unknown function FlameText (in okay::FlameText)
+engine/src/Debug/GpuTimer.cpp|engine/src/Debug/GpuTimer.cpp:18: expected a type (in , token Fence, after )
+engine/src/Debug/MemoryTracker.cpp|OK
+engine/src/Debug/ProjectDiagnostics.cpp|cannot open include thread
+engine/src/Debug/RenderStats.cpp|engine/src/Debug/RenderStats.cpp:27: expected ')' (in GpuFrameStats::ToText/0), found 'textures ~%s, meshes ~%s, gpu %.3f ms' after 'Frame %llu: %u draw calls, %llu tris, %llu vert
+engine/src/Graphics/ColorVision.cpp|OK
+engine/src/Graphics/EmbeddedFont.cpp|OK
+engine/src/Graphics/Font.cpp|OK
+engine/src/Graphics/TtfFont.cpp|okay/Core/Localization.hpp:179: no matching constructor in LocArg (in vector<ULocArg@@>::resize/1, 0 arguments)
+engine/src/Graphics/TtfRaster.cpp|engine/src/Graphics/TtfRaster.cpp:680: no static member CffIndex in the class
+engine/src/Input/ActionEditor.cpp|unknown name BindingSpec::Kind::Single (in okay::PartCount)
+engine/src/Input/ActionSet.cpp|engine/src/Input/ActionSet.cpp:352: expected a case value
+engine/src/Input/ControllerMapping.cpp|OK
+engine/src/Input/GameInput.cpp|okay/Input/GameInput.hpp:22: expected an enumerator value
+engine/src/Input/GamepadInfo.cpp|OK
+engine/src/Input/GestureRecognizer.cpp|OK
+engine/src/Input/Gestures.cpp|engine/src/Input/Gestures.cpp:116: expected '(' (in Gestures::Tick/1), found '' after 'Phase::Began' (token kinds 5/1)
+engine/src/Input/Haptics.cpp|engine/src/Input/Haptics.cpp:36: expected an expression (in InputHaptics::Pattern/1, after kinds 5 /54 return/6 , line 2753, token )
+engine/src/Input/Input.cpp|engine/src/Input/Input.cpp:24: expected ';', found '' after 's_padFamily' (token kinds 34/1)
+engine/src/Input/InputActions.cpp|engine/src/Input/InputActions.cpp:72: global initializer must be a constant
+engine/src/Input/InputAsset.cpp|unknown preprocessor directive #The
+engine/src/Input/InputDebug.cpp|OK
+engine/src/Input/InputRecorder.cpp|unknown function std::strtoull (in InputRecorder::StartPlayback/1)
+engine/src/Input/InputRuntime.cpp|OK
+engine/src/Input/PadProfiles.cpp|OK
+engine/src/Input/PlayerInput.cpp|OK
+engine/src/Input/RemapModel.cpp|engine/src/Input/RemapModel.cpp:71: expected a case value
+engine/src/Input/TouchControls.cpp|okay/Components/GridInventory.hpp:260: expected ')' (in GridInventory::CanMoveTo/5), found '' after 'GridInventory' (token kinds 11/1)
+engine/src/Inventory/Equipment.cpp|okay/Components/GridInventory.hpp:260: expected ')' (in GridInventory::CanMoveTo/5), found '' after 'GridInventory' (token kinds 11/1)
+engine/src/Inventory/InventoryEvents.cpp|okay/Render/Mesh.hpp:5036: expected a type (in Mesh::WeldVertices/1, token , after )
+engine/src/Inventory/InventoryOps.cpp|okay/Components/GridInventory.hpp:260: expected ')' (in GridInventory::CanMoveTo/5), found '' after 'GridInventory' (token kinds 11/1)
+engine/src/Inventory/InventoryPersistence.cpp|okay/Components/GridInventory.hpp:260: expected ')' (in GridInventory::CanMoveTo/5), found '' after 'GridInventory' (token kinds 11/1)
+engine/src/Inventory/ItemDatabase.cpp|engine/src/Inventory/ItemDatabase.cpp:19: expected ';', found '' after '' (token kinds 6/5)
+engine/src/Inventory/LootTable.cpp|engine/src/Inventory/LootTable.cpp:17: expected ';', found '' after '' (token kinds 6/5)
+engine/src/Inventory/NetInventory.cpp|okay/Components/GridInventory.hpp:260: expected ')' (in GridInventory::CanMoveTo/5), found '' after 'GridInventory' (token kinds 11/1)
+engine/src/Inventory/Recipe.cpp|okay/Render/Mesh.hpp:5036: expected a type (in Mesh::WeldVertices/1, token , after )
+engine/src/Modeling/Curve.cpp|OK
+engine/src/Modeling/EditTransform.cpp|not an address (preprocessed line 9854, node kind 17) (in okay::modeling::MoveFromRays)
+engine/src/Modeling/Guided.cpp|engine/src/Modeling/Guided.cpp:923: expected ';' (in okay::modeling::guided::Regenerate), found 'Choose: keep your edits (the part stops following the design), discard your edits, 
+engine/src/Modeling/GuidedArchitecture.cpp|engine/src/Modeling/GuidedArchitecture.cpp:475: expected ';', found '' after '' (token kinds 9/7)
+engine/src/Modeling/GuidedCharacters.cpp|engine/src/Modeling/GuidedCharacters.cpp:535: expected ';', found '' after '' (token kinds 9/7)
+engine/src/Modeling/GuidedEnvironment.cpp|engine/src/Modeling/GuidedEnvironment.cpp:135: expected '(' (in okay::modeling::guided::MakeTree), found '' after 'Int' (token kinds 5/1)
+engine/src/Modeling/GuidedFence.cpp|engine/src/Modeling/GuidedFence.cpp:87: expected an expression (in okay::modeling::guided::PicketProfile, after kinds 8 /54 return/6 , line 9848, token )
+engine/src/Modeling/GuidedHuman.cpp|engine/src/Modeling/GuidedHuman.cpp:73: expected an expression
+engine/src/Net/CheatDetect.cpp|engine/src/Net/CheatDetect.cpp:55: expected ';', found '' after 'DetectSettings' (token kinds 40/1)
+engine/src/Net/CheatSim.cpp|cannot open include unistd.h
+engine/src/Net/DedicatedServer.cpp|cannot open include thread
+engine/src/Net/MatchResults.cpp|cannot open include mutex
+engine/src/Net/Matchmaker.cpp|cannot open include mutex
+engine/src/Net/NetBuildSync.cpp|okay/Components/Buildable.hpp:56: expected ')' (in Buildable::Of/1), found '' after 'nullptr' (token kinds 8/2)
+engine/src/Net/NetChannels.cpp|engine/src/Net/NetChannels.cpp:130: expected a name (in OrderedEnd::Unacked/3, token , after )
+engine/src/Net/NetDelta.cpp|engine/src/Net/NetDelta.cpp:112: expected a name (in okay::net::EncodeSnapshot, token , after )
+engine/src/Net/NetSim.cpp|engine/src/Net/NetSim.cpp:211: expected a name (in okay::net::ProfileAdvance, token , after )
+engine/src/Net/NetTransport.cpp|unknown function std::remainder (in PlayerInput::Clamp/0)
+engine/src/Net/NetworkManager.cpp|cannot open include mutex
+engine/src/Net/PhotonTransport.cpp|OK
+engine/src/Net/RelayServer.cpp|okay/Net/RelayServer.hpp:213: expected a name (in RelayServer::LegacyPeers/0, token , after )
+engine/src/Net/ServerBrowser.cpp|cannot open include mutex
+engine/src/Net/ServerQuery.cpp|cannot open include sys/socket.h
+engine/src/Net/SessionTicket.cpp|OK
+engine/src/Net/UdpSocket.cpp|cannot open include sys/socket.h
+engine/src/Optimize/BatchPlanner.cpp|OK
+engine/src/Optimize/LodGroup.cpp|OK
+engine/src/Optimize/MeshSimplify.cpp|not an address (preprocessed line 10026, node kind 17) (in Simplifier::Build/1)
+engine/src/Optimize/MipBudget.cpp|OK
+engine/src/Optimize/OcclusionBuffer.cpp|OK
+engine/src/Optimize/PortalCells.cpp|OK
+engine/src/Optimize/SceneOptimizationReport.cpp|engine/src/Optimize/SceneOptimizationReport.cpp:105: expected an expression (in okay::optimize::AnalyzeScene, after kinds 8 /1 set/19 , line 3040, token int)
+engine/src/Optimize/StreamingGrid.cpp|engine/src/Optimize/StreamingGrid.cpp:235: expected ')' (in StreamingGrid::Update/2), found '' after '' (token kinds 8/2)
+engine/src/Physics/MeshCollider3D.cpp|engine/src/Physics/MeshCollider3D.cpp:188: expected ';' (in MeshCollider3D::StatusMessage/0), found 'so this collider is ignored by physics contact. Use a Box, Sphere or Capsule co
+engine/src/Physics/Physics2D.cpp|OK
+engine/src/Physics/Physics3D.cpp|okay/Math/IKMath.hpp:34: expected ')' (in okay::IsUnder), found '' after 'nullptr' (token kinds 8/2)
+engine/src/Physics/TriMesh.cpp|wrong number of arguments to std::max (in __lam86::operator()/1)
+engine/src/Platform/Account/Account.cpp|okay/Platform/Account/AccountService.hpp:87: no member function Update with 1 arguments
+engine/src/Platform/OwnLinux.cpp|engine/src/Platform/OwnLinux.cpp:13: expected ';' (in okay::platform::MonoNs), found 'ts' after 'timespec' (token kinds 1/1)
+engine/src/Platform/OwnLinuxAudio.cpp|cannot open include dlfcn.h
+engine/src/Platform/OwnLinuxEvdev.cpp|cannot open include dirent.h
+engine/src/Platform/OwnLinuxX11.cpp|engine/src/Platform/OwnLinuxX11.cpp:13: this class cannot be copied
+engine/src/Platform/OwnWin32.cpp|engine/src/Platform/OwnWin32.cpp:600: this class cannot be copied
+engine/src/Platform/Painter.cpp|engine/src/Platform/Painter.cpp:9: no member function ReleaseCachedTextures in the class
+engine/src/Platform/Platform.cpp|cannot open include thread
+engine/src/Platform/SdlBackend.cpp|bad preprocessor expression
+engine/src/Platform/SdlPainter.cpp|engine/src/Platform/SdlPainter.cpp:142: expected an expression
+engine/src/Platform/Steam/NullSteamService.cpp|engine/src/Platform/Steam/NullSteamService.cpp:369: cannot tell the class of the object for Emit
+engine/src/Platform/Steam/Steam.cpp|OK
+engine/src/Platform/Steam/SteamworksService.cpp|cannot open include steam/steam_api.h
+engine/src/Render/Ac3dReader.cpp|OK
+engine/src/Render/AmfReader.cpp|unknown field maxArchiveBytes (in Archive::Open/1)
+engine/src/Render/AseReader.cpp|engine/src/Render/AseReader.cpp:635: expected '}' (in Reader::Parse/1), found 'Vec3' after '' (token kinds 1/9)
+engine/src/Render/B3dReader.cpp|OK
+engine/src/Render/BlendReader.cpp|engine/src/Render/BlendReader.cpp:1781: expected a name (in Reader::BuildAnimation/0, token , after path)
+engine/src/Render/BvhReader.cpp|OK
+engine/src/Render/CobReader.cpp|OK
+engine/src/Render/ColladaReader.cpp|engine/src/Render/ColladaReader.cpp:1329: expected ';' (in Reader::ReadAnimations/1), found '' after '' (token kinds 5/2)
+engine/src/Render/ConsoleRenderer.cpp|OK
+engine/src/Render/CsmReader.cpp|OK
+engine/src/Render/D3D11Renderer.cpp|OK
+engine/src/Render/D3D12Renderer.cpp|OK
+engine/src/Render/DxfReader.cpp|unknown field front (in Reader::Trim/1)
+engine/src/Render/FbxReader.cpp|okay/Core/Inflate.hpp:95: expected ')' (in BitReader::Take/1), found '' after 'uint64_t' (token kinds 4/1)
+engine/src/Render/FbxScene.cpp|engine/src/Render/FbxScene.cpp:218: global initializer must be a constant
+engine/src/Render/GLRenderer.cpp|cannot open include thread
+engine/src/Render/HmpReader.cpp|OK
+engine/src/Render/IqmReader.cpp|unknown name NAN (in okay::iqm::HalfToFloat)
+engine/src/Render/IrrMeshReader.cpp|OK
+engine/src/Render/IrrSceneReader.cpp|not an address (preprocessed line 11228, node kind 0) (in okay::irrs::MakeCube)
+engine/src/Render/LwoReader.cpp|OK
+engine/src/Render/LwsReader.cpp|engine/src/Render/LwsReader.cpp:317: a range for needs an array of known length
+engine/src/Render/Max3dsReader.cpp|engine/src/Render/Max3dsReader.cpp:783: expected ';' (in Reader::ResolveTexture/2), found 'it' after 'directory_iterator' (token kinds 1/1)
+engine/src/Render/Md2Reader.cpp|OK
+engine/src/Render/Md3Reader.cpp|OK
+engine/src/Render/Md5Reader.cpp|engine/src/Render/Md5Reader.cpp:558: a reference bound to a temporary in a loop condition is not supported
+engine/src/Render/MdcReader.cpp|OK
+engine/src/Render/ModelImport.cpp|cannot open include ufbx.h
+engine/src/Render/ModelImportAssimp.cpp|cannot open include assimp/Importer.hpp
+engine/src/Render/ModelReaders.cpp|unknown name INT32_MAX (in okay::ReadObjBuffer)
+engine/src/Render/Ms3dReader.cpp|OK
+engine/src/Render/NdoReader.cpp|OK
+engine/src/Render/NffReader.cpp|not an address (preprocessed line 11104, node kind 17) (in okay::nff::StripComment)
+engine/src/Render/OffReader.cpp|OK
+engine/src/Render/OgreXmlReader.cpp|engine/src/Render/OgreXmlReader.cpp:358: expected ';' (in okay::ReadOgreXmlFile), found 'it' after 'directory_iterator' (token kinds 1/1)
+engine/src/Render/PmxReader.cpp|OK
+engine/src/Render/Q3dReader.cpp|unknown name NAN (in okay::q3d::ReadMesh)
+engine/src/Render/RawReader.cpp|unknown field a (in Key::operator==/1)
+engine/src/Render/SmdReader.cpp|OK
+engine/src/Render/SurfaceRaycast.cpp|okay/Render/Lightmap.hpp:37: a static local object takes no initializer and is not an array
+engine/src/Render/TerragenReader.cpp|OK
+engine/src/Render/ThreeMfReader.cpp|unknown field maxArchiveBytes (in Archive::Open/1)
+engine/src/Render/Visibility.cpp|cannot open include thread
+engine/src/Render/X3dReader.cpp|not an address (preprocessed line 11389, node kind 16) (in Reader::IndexedFaceSet/6)
+engine/src/Render/XFileReader.cpp|engine/src/Render/XFileReader.cpp:734: a nested list for a member of this type is not supported
+engine/src/Render/XglReader.cpp|OK
+engine/src/Scene/BuiltinProperties.cpp|engine/src/Scene/BuiltinProperties.cpp:51: expected ')' (in okay::RegisterGameObject), found '' after 'Owner' (token kinds 40/1)
+engine/src/Scene/BuiltinPropertiesGameplay.cpp|cannot open include thread
+engine/src/Scene/BuiltinPropertiesUI.cpp|okay/Core/Localization.hpp:179: no matching constructor in LocArg (in vector<ULocArg@@>::resize/1, 0 arguments)
+engine/src/Scene/Component.cpp|OK
+engine/src/Scene/ComponentSerializer.cpp|cannot open include mutex
+engine/src/Scene/GameObject.cpp|cannot open include mutex
+engine/src/Scene/ObjectPool.cpp|engine/src/Scene/ObjectPool.cpp:19: expected a type (in okay::Reg, token Registry, after new)
+engine/src/Scene/PrefabTools.cpp|okay/Core/PathSafety.hpp:70: global initializer must be a constant
+engine/src/Scene/ProjectLists.cpp|not an address (preprocessed line 1025, node kind 17) (in Layers::Name/1)
+engine/src/Scene/Properties.cpp|engine/src/Scene/Properties.cpp:57: no member function quiet_NaN
+engine/src/Scene/PropertyRegistry.cpp|cannot open include mutex
+engine/src/Scene/Scene.cpp|okay/Render/Mesh.hpp:5036: expected a type (in Mesh::WeldVertices/1, token , after )
+engine/src/Scene/SceneDiff.cpp|engine/src/Scene/SceneDiff.cpp:27: expected '(' (in okay::DiffRecords), found '' after 'Kind::Removed' (token kinds 8/1)
+engine/src/Scene/SceneLocalization.cpp|okay/Core/Localization.hpp:179: no matching constructor in LocArg (in vector<ULocArg@@>::resize/1, 0 arguments)
+engine/src/Scene/SceneManager.cpp|engine/src/Scene/SceneManager.cpp:89: no matching destructor in __lam12 (in function_impl_<U__lam12@@,X,{_N;}>::<dtor>/0, 0 arguments)
+engine/src/Scene/SceneMerge.cpp|engine/src/Scene/SceneMerge.cpp:93: member call on something that is not a class object: end
+engine/src/Scene/SceneMigration.cpp|engine/src/Scene/SceneMigration.cpp:33: expected ';' (in okay::Builtins), found 'The loader adds it to every Character of an older file.' after 'A Character body gets the visible A
+engine/src/Scene/SceneSerializer.cpp|cannot open include mutex
+engine/src/Scene/SceneText.cpp|okay/Scene/ComponentSerializer.hpp:26: expected a type (in , token ostream, after )
+engine/src/Scene/SceneTextDetail.cpp|engine/src/Scene/SceneTextDetail.cpp:93: expected ')' (in okay::scenetext::StableElements), found '' after '' (token kinds 8/5)
+engine/src/Scene/Transform.cpp|cannot open include mutex
+engine/src/Script/Checker.cpp|cannot open include optional
+engine/src/Script/EngineApi.cpp|unterminated character
+engine/src/Script/Interpreter.cpp|unterminated character
+engine/src/Script/Lexer.cpp|unterminated character
+engine/src/Script/NextScriptVM.cpp|unterminated character
+engine/src/Script/Parser.cpp|unterminated character
+engine/src/Scripting/OkayScriptVM.cpp|cannot open include unistd.h
+engine/src/Scripting/ScriptVM.cpp|engine/src/Scripting/ScriptVM.cpp:15: this class cannot be copied
+engine/src/Testing/GoldenImage.cpp|cannot open include thread
+engine/src/Testing/ObjectPath.cpp|engine/src/Testing/ObjectPath.cpp:23: expected an expression (in okay::testing::ComponentTypeName, after kinds 9 /1 char_traits/19 , line 6246, token char)
+engine/src/Testing/PlayTest.cpp|okay/Core/EventBus.hpp:84: expected a member function template
+engine/src/Testing/Regression.cpp|engine/src/Testing/Regression.cpp:29: no operator() in the class
+engine/src/Testing/SceneValidator.cpp|cannot open include thread
+engine/src/Testing/TestRegistry.cpp|okay/Testing/TestRegistry.hpp:141: expected a type (in , token ostream, after )
+engine/src/UI/FocusGraph.cpp|OK
+engine/src/UI/InventoryInput.cpp|okay/Components/GridInventory.hpp:260: expected ')' (in GridInventory::CanMoveTo/5), found '' after 'GridInventory' (token kinds 11/1)
+engine/src/UI/UIBatcher.cpp|engine/src/UI/UIBatcher.cpp:22: expected a type (in , token ImageLoader, after )
+engine/src/UI/UIFocus.cpp|okay/Components/GridInventory.hpp:260: expected ')' (in GridInventory::CanMoveTo/5), found '' after 'GridInventory' (token kinds 11/1)
+engine/src/UI/UIFrameTransform.cpp|okay/Components/GridInventory.hpp:260: expected ')' (in GridInventory::CanMoveTo/5), found '' after 'GridInventory' (token kinds 11/1)
+engine/src/UI/UILayoutUpdate.cpp|okay/Components/GridInventory.hpp:260: expected ')' (in GridInventory::CanMoveTo/5), found '' after 'GridInventory' (token kinds 11/1)
+engine/src/UI/UIRenderer.cpp|cannot open include thread
+engine/src/UI/UIWidgetsMoreDraw.cpp|okay/Components/GridInventory.hpp:260: expected ')' (in GridInventory::CanMoveTo/5), found '' after 'GridInventory' (token kinds 11/1)
+engine/src/VisualScript/ActionGraph.cpp|engine/src/VisualScript/ActionGraph.cpp:127: expected an expression (in okay::vs::ActionListToGraph#AEBVActionList@@, after kinds 6 /3 declare_var/9 , line 1940, token )
+engine/src/VisualScript/NodeGraph.cpp|okay/VisualScript/NodesLoops.hpp:448: expected ';' (in ScopedVarNode::Exec/2), found '' after '' (token kinds 5/5)
+engine/src/VisualScript/VsApi.cpp|unterminated character
+engine/src/VisualScript/VsBuiltins.cpp|okay/Core/PathSafety.hpp:70: global initializer must be a constant
+engine/src/VisualScript/VsDebug.cpp|OK
+engine/src/VisualScript/VsDecl.cpp|unknown function Lit (in okay::vs::Lit)
+engine/src/VisualScript/VsTypes.cpp|okay/Render/Mesh.hpp:5036: expected a type (in Mesh::WeldVertices/1, token , after )
+engine/src/VisualScript/VsVariables.cpp|OK
+engine/src/Audio/AudioDecode.cpp|engine/src/Audio/AudioDecode.cpp:31: expected an expression (in okay::ReadFile, after kinds 4 /1 istreambuf_iterator/19 , line 5092, token char)
+engine/src/Components/PlayerController.cpp|okay/Render/Mesh.hpp:5036: expected a type (in Mesh::WeldVertices/1, token , after )
+engine/src/Components/ScriptComponent.cpp|okay/Testing/ObjectPath.hpp:14: expected a name (in okay::testing::ObjectPath, token , after path)
+engine/src/Components/SteamManager.cpp|engine/src/Components/SteamManager.cpp:16: cannot tell the class of the object for Emit
+engine/src/Debug/ConsoleModel.cpp|engine/src/Debug/ConsoleModel.cpp:60: expected a name (in okay::SplitPathLine, token , after path)
+engine/src/Graphics/Image.cpp|engine/src/Graphics/Image.cpp:27: cannot tell the class of the object for Emit
+engine/src/Modeling/GuidedProps.cpp|engine/src/Modeling/GuidedProps.cpp:215: expected '(' (in okay::modeling::guided::MakeFurniture), found '' after 'Int' (token kinds 5/1)
+engine/src/Modeling/GuidedRig.cpp|OK
+engine/src/Modeling/GuidedVehicles.cpp|engine/src/Modeling/GuidedVehicles.cpp:1200: expected ';', found '' after '' (token kinds 9/7)
+engine/src/Modeling/Measure.cpp|OK
+engine/src/Modeling/MeshAsset.cpp|not an address (preprocessed line 9558, node kind 17) (in okay::modeling::LoadMeshAsset)
+engine/src/Modeling/MeshLibrary.cpp|engine/src/Modeling/MeshLibrary.cpp:36: no member function ignore with 2 arguments
+engine/src/Modeling/Modifiers.cpp|engine/src/Modeling/Modifiers.cpp:265: expected an expression (in __lam95::operator()/2, after kinds 6 /1 key/9 , line 15649, token )
+engine/src/Modeling/PolyMesh.cpp|engine/src/Modeling/PolyMesh.cpp:154: no matching constructor in vector<H> (in PolyMesh::TriangulateFace/1, 3 arguments)
+engine/src/Modeling/PolyOps.cpp|engine/src/Modeling/PolyOps.cpp:1045: expected ')' (in okay::modeling::GridFill), found '' after 'Vec2' (token kinds 40/1)
+engine/src/Modeling/Remesh.cpp|OK
+engine/src/Modeling/ScreenSelect.cpp|OK
+engine/src/Modeling/SelectOps.cpp|OK
+engine/src/Modeling/UVUnwrap.cpp|engine/src/Modeling/UVUnwrap.cpp:73: expected a name (in okay::modeling::Group, token , after )
+engine/src/Net/AntiCheat.cpp|engine/src/Net/AntiCheat.cpp:228: expected a name (in AntiCheat::Tick/1, token , after )
+engine/src/Net/AntiCheatLog.cpp|engine/src/Net/AntiCheatLog.cpp:154: expected a name (in BanList::Save/1, token , after )
+engine/src/Net/ClockCheck.cpp|okay/Platform/Account/AccountService.hpp:87: no member function Update with 1 arguments
+engine/src/Net/NetBackend.cpp|okay/Platform/Account/AccountService.hpp:87: no member function Update with 1 arguments
+engine/src/Net/NetQuestSync.cpp|engine/src/Net/NetQuestSync.cpp:253: expected a name (in QuestSync::SharedNow/0, token , after )

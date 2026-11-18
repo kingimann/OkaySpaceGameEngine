@@ -114,9 +114,11 @@ int validate(const std::string& name, const okayms::ObjectFile& o) {
     return bad;
 }
 
-bool compile_text(const std::string& source, okayms::ObjectFile* out, std::string* err, bool comdat = false, bool xcu = false) {
+bool compile_text(const std::string& source, okayms::ObjectFile* out, std::string* err, bool comdat = false, bool xcu = false,
+                  const std::string& name = "source.c") {
     okayms::CompileInput in;
     in.source = source;
+    in.name = name;
     in.comdat_inline = comdat;
     in.crt_init_table = xcu;
     in.include_paths.push_back("tools/okayms/stdinc");
@@ -149,7 +151,7 @@ int main(int argc, char** argv) {
             ss << f.rdbuf();
             okayms::ObjectFile o;
             std::string err;
-            if (!compile_text(ss.str(), &o, &err)) {
+            if (!compile_text(ss.str(), &o, &err, false, false, argv[i])) {
                 ++failed_compile;
                 continue;
             }

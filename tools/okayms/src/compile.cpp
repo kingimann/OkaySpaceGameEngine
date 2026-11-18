@@ -157,6 +157,9 @@ struct Method {
     bool implicit_assign = false;
     // The result type is `auto` or `decltype(auto)`: found from the body's first return when the body is compiled.
     bool auto_ret = false;
+    // A member of a class template instance whose body did not compile (std::vector<T>::resize for a T without a default
+    // constructor): not an error until something calls it ([temp.inst]: members are instantiated when used).
+    std::string unusable;
     // A static member function: no this, decorated with S/C/K instead of the Q/A/I letters.
     bool is_static = false;
     // The decorated spelling of a member function template instance's name ("$add@H"), else empty.
@@ -5511,8 +5514,15 @@ struct Parser {
                     deferred_bodies.push_back({self, mi});
         } else {
             for (size_t mi = 0; mi < def.methods.size(); ++mi)
-                if (def.methods[mi].body_at != 0 && def.methods[mi].owner == self)
-                    if (!define_method(self, mi)) return false;
+                if (def.methods[mi].body_at != 0 && def.methods[mi].owner == self) {
+                    if (!define_method(self, mi)) {
+                        if (!is_instance_body || error.empty()) return false;
+                        // A member of a class template instance that cannot be compiled is dropped; a call of it is the error.
+                        structs[static_cast<size_t>(self)].methods[mi].unusable = error;
+                        structs[static_cast<size_t>(self)].methods[mi].body_at = 0;
+                        error.clear();
+                    }
+                }
             if (struct_nest == 1) {
                 while (!deferred_bodies.empty()) {
                     const std::vector<std::pair<int, size_t>> batch = std::move(deferred_bodies);
@@ -11626,6 +11636,10 @@ bool Parser::method_call(Node* out, Node object, bool arrow, const std::string& 
     const Method* m = find_method(method_owner, method_name, args.size(), &args, ot.is_const || ot.pconst ? 1 : 0);
     if (m == nullptr) {
         error = "no member function " + name + " with " + std::to_string(args.size()) + " arguments";
+        return false;
+    }
+    if (!m->unusable.empty()) {
+        error = "the member function " + name + " of " + structs[static_cast<size_t>(sid)].name + " cannot be used: " + m->unusable;
         return false;
     }
     if (!pad_defaults(m->defaults, m->params.size(), &args)) return false;
@@ -17983,10 +17997,29 @@ Result<CompileOutput> compile_c(const CompileInput& input) {
     line_source.files = &pp.files;
     CompileOutput output;
     std::string error;
-    if (!emit_functions(parser.funcs, parser.structs, parser.globals, parser.func_types, input.optimize, input.opt_level,
-                        line_source, &error, &output))
-        return Result<CompileOutput>::fail(error);
-    return Result<CompileOutput>::success(std::move(output));
+    // A member of a class template instance that calls a function which could not be made (a member that did not compile, see
+    // Method::unusable) is dropped too, and the file is generated again without it; only a call from a function that is not
+    // such a member is an error ([temp.inst]: members are instantiated when used).
+    const std::vector<FuncDecl> pristine_funcs = parser.funcs;
+    const std::vector<Global> pristine_globals = parser.globals;
+    std::set<std::string> dropped_funcs;
+    for (int attempt = 0;; ++attempt) {
+        error.clear();
+        if (emit_functions(parser.funcs, parser.structs, parser.globals, parser.func_types, input.optimize, input.opt_level,
+                           line_source, &error, &output))
+            return Result<CompileOutput>::success(std::move(output));
+        const size_t where = error.rfind(" (in ");
+        if (attempt >= 200 || error.compare(0, 17, "unknown function ") != 0 || where == std::string::npos || error.back() != ')')
+            return Result<CompileOutput>::fail(error);
+        const std::string failing = error.substr(where + 5, error.size() - where - 6);
+        if (failing.find('<') == std::string::npos || dropped_funcs.count(failing) > 0) return Result<CompileOutput>::fail(error);
+        dropped_funcs.insert(failing);
+        parser.funcs = pristine_funcs;
+        parser.globals = pristine_globals;
+        for (size_t fi = parser.funcs.size(); fi-- > 0;)
+            if (dropped_funcs.count(parser.funcs[fi].name) > 0) parser.funcs.erase(parser.funcs.begin() + static_cast<std::ptrdiff_t>(fi));
+        output = CompileOutput{};
+    }
 }
 
 }  // namespace okayms

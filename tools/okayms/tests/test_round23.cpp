@@ -350,5 +350,11 @@ int main(int, char**) {
           "std::error_code ec; std::filesystem::remove(\"x\", ec); std::filesystem::rename(\"a\", \"b\", ec); std::ofstream f(\"x\"); f.write(\"ab\", 2); long long tt = std::chrono::system_clock::to_time_t(std::chrono::system_clock::now());\n"
           "ST::Model m; m.a = 1; return place(\"x\") + g(m) + tip()[0] + (int)tt; }\n", &o);
     CHECK(t, has_symbol(o, "main"));
+    ++tests;
+    build(t, "round 33: members of class template instances are only an error when used (vector<T> of a class without a default constructor)",
+          "#include <string>\n#include <vector>\nstruct A { std::string s; A(const std::string& v) : s(v) {} A(int v) : s(\"x\") {} };\n"
+          "int main() { std::vector<A> v; v.push_back(A(1)); v.push_back(A(std::string(\"b\"))); return (int)v.size(); }\n", &o);
+    CHECK(t, has_symbol(o, "main"));
+    build(t, "round 33: ... and using such a member is an error", "#include <string>\n#include <vector>\nstruct A { A(int v) : n(v) {} int n; };\nint main() { std::vector<A> v; v.resize(3); return (int)v.size(); }\n", &o, false);
     return t.finish(tests);
 }

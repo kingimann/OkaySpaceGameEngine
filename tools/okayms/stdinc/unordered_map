@@ -59,6 +59,11 @@ public:
         next_.clear();
         heads_.clear();
     }
+    void swap(unordered_map& other) {
+        items_.swap(other.items_);
+        next_.swap(other.next_);
+        heads_.swap(other.heads_);
+    }
     void reserve(size_t) {}
     size_t count(const K& k) const { return index_of(k) >= 0 ? 1 : 0; }
     bool contains(const K& k) const { return index_of(k) >= 0; }

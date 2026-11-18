@@ -45,6 +45,7 @@ public:
     const T* begin() const { return items_.begin(); }
     const T* end() const { return items_.end(); }
     void clear() { items_.clear(); }
+    void swap(set& other) { items_.swap(other.items_); }
     size_t count(const T& value) const {
         const size_t at = lower(value);
         return at < items_.size() && !(value < items_[at]) ? 1 : 0;

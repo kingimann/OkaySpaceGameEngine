@@ -21,6 +21,7 @@ public:
     const T* begin() const { return items_.begin(); }
     const T* end() const { return items_.end(); }
     void clear() { items_.clear(); }
+    void swap(unordered_set& other) { items_.swap(other.items_); }
     void reserve(size_t) {}
     size_t count(const T& value) const { return items_.count(value); }
     const T* find(const T& value) const { return items_.find(value); }

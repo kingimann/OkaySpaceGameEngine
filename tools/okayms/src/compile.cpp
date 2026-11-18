@@ -3708,6 +3708,9 @@ struct Parser {
         if (id < 0) return false;
         const std::string& member = tokens[i + 2].text;
         if (structs[static_cast<size_t>(id)].tdefs.count(member) > 0) return false;
+        const auto etd = typedefs.find(member);
+        if (etd != typedefs.end() && etd->second.base == 1 && etd->second.pointers == 0 && enum_values.find(member) == enum_values.end())
+            return false;  // Class::Enum: an enumeration declared in the class (kept as a typedef of int under its plain name)
         return find_struct(member) < 0;
     }
 
@@ -3958,6 +3961,7 @@ struct Parser {
         {
             // Outer::Nested (sizeof(Outer::Nested), a cast) names a type when Nested is a class or typedef of Outer.
             int oid = typedefs.find(cur().text) == typedefs.end() ? find_struct(cur().text) : -1;
+            if (oid >= 0 && i == at + 1 && typedefs.count(tokens[i + 1].text) > 0 && tokens[i + 2].kind == TRParen) return false;  // (Class::Enum)x
             size_t q = i;
             while (oid >= 0 && i == at + 1 && q + 1 < tokens.size() && tokens[q].kind == TColonColon &&
                    tokens[q + 1].kind == TIdent) {
@@ -12895,7 +12899,26 @@ bool Parser::parse_unary(Node* out) {
             const std::string prefix = name.substr(0, colons);
             const std::string suffix = name.substr(name.rfind("::") + 2);
             auto ev = enum_values.find(suffix);
-            if (find_struct(prefix) >= 0 && ev != enum_values.end()) {
+            if (ev == enum_values.end()) {
+                // `using S = Shape; S::Capsule`: the alias keeps no enumeration name, so the scoped enumerator Shape::Capsule is
+                // found by its last part when exactly one enumeration has it.
+                const auto atd = typedefs.find(prefix);
+                if (atd != typedefs.end() && atd->second.base == 1 && atd->second.pointers == 0) {
+                    int hits = 0;
+                    auto found = enum_values.end();
+                    for (auto it = enum_values.begin(); it != enum_values.end(); ++it) {
+                        const std::string& key = it->first;
+                        if (key.size() > suffix.size() + 2 && key.compare(key.size() - suffix.size() - 2, std::string::npos, "::" + suffix) == 0) {
+                            ++hits;
+                            found = it;
+                        }
+                    }
+                    if (hits == 1) ev = found;
+                }
+            }
+            const auto ptd = typedefs.find(prefix);
+            const bool enum_alias = ptd != typedefs.end() && ptd->second.base == 1 && ptd->second.pointers == 0;
+            if ((find_struct(prefix) >= 0 || enum_alias) && ev != enum_values.end()) {
                 out->kind = Node::IntLit;
                 out->number = ev->second;
                 out->type = Type{};

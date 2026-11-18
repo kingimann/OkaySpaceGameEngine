@@ -45,6 +45,7 @@ public:
     pair<K, V>* end() { return items_.end(); }
     const pair<K, V>* end() const { return items_.end(); }
     void clear() { items_.clear(); }
+    void swap(map& other) { items_.swap(other.items_); }
     size_t count(const K& k) const {
         const size_t at = lower(k);
         return at < items_.size() && !(k < items_[at].first) ? 1 : 0;

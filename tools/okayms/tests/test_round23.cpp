@@ -287,5 +287,12 @@ int main(int, char**) {
           "struct D : C { int get(int a) override { return a * 2; } };\nvoid call(C* c, void (C::*fn)(int)) { (c->*fn)(2); }\nstruct H { void (C::*cb)(int); };\n"
           "int main() { C c; c.v = 1; call(&c, &C::inc); int (C::*g)(int) = &C::get; H h; h.cb = &C::inc; (c.*(h.cb))(5); D d; return (c.*g)(1) + (d.*g)(1); }\n", &o);
     CHECK(t, has_symbol(o, "main") && has_symbol(o, "?inc@C@@QEAAXH@Z"));
+    ++tests;
+    build(t, "round 32: (Class::Enum) casts, enum alias S::Enumerator, swap of set/map/unordered containers",
+          "#include <map>\n#include <set>\n#include <unordered_map>\n#include <unordered_set>\nstruct J { enum class Mode { Pin, Hinge }; int mode; };\n"
+          "int f(J* j) { using S = J::Mode; J::Mode m = (J::Mode)j->mode; if (m == S::Hinge) return 1; return 0; }\n"
+          "int main() { J j; j.mode = 1; std::set<int> a, b; a.insert(1); a.swap(b); std::map<int, int> m, n; m[1] = 2; m.swap(n); std::unordered_map<int, int> u, v; u[1] = 1; u.swap(v); std::unordered_set<int> x, y; x.insert(1); x.swap(y);\n"
+          "return f(&j) + (int)(a.size() + n.size() + v.size() + y.size()); }\n", &o);
+    CHECK(t, has_symbol(o, "main"));
     return t.finish(tests);
 }

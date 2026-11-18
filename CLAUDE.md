@@ -178,6 +178,12 @@ then this file gets updated. Keep this file short and true.
     Ninja, GCC, Clang/LLVM, MSVC, tcc or any other project (rule 19a). Both stay OFF: not in CMake, CI or releases, and
     nothing in the engine depends on them, until the owner says so. The coordinator's agents run the tests, read the
     result, and open and merge the PR.
+24b. **Exception: experimental Xbox One export through Microsoft's public Windows SDK and UWP tools (owner 2026-11-18:
+    "For Xbox I'll allow it").** The Windows SDK, Visual Studio UWP tools, MakeAppx and SignTool are build tools the owner
+    installs on their own PC; nothing from them is copied into the repository or shipped. Only the public SDK: no GDKX
+    or other restricted Xbox code. Code lives in its own isolated folder behind a CMake option that is OFF by default,
+    and existing Windows export must keep working. Say "unverified" for anything not built and packaged on Windows, and
+    never claim console hardware support without a test on a real console. Rule 19a still holds for everything else.
 25. **Claude 2 reports its usage.** With each result Claude 2 posts `Usage: about N% left` on issue #422, and
     `HANDOFF SOON` at about 20% and `HANDOFF NOW` at about 5%, naming its branches and what is unfinished, so the
     coordinator can take its branches over. Claude 2 pushes only `claude2/*` branches, opens no PRs, and starts a

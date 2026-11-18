@@ -2,6 +2,7 @@
 #include <cmath>
 #include <cstdlib>
 #include "okay/UI/OkayUI.hpp"
+#include "okay/UI/OkayUIInternals.hpp"
 #include "okay/UI/OkayUICompat.hpp"   // BeginTooltip, GetStyle, ListClipper (defined here: they need the private layout state)
 #include "okay/Graphics/Font.hpp"   // okay::Font8x8 — a no-STL C API over a bitmap font
 #include "OkayUI_FontAtlas.hpp"     // the launcher font (TrueType) for UseLauncherLook()
@@ -20,7 +21,8 @@
 
 namespace OkayUI {
 void DockReset();   // okayui/src/OkayUIDock.cpp: ResetState forgets the dock layout too
-void ColorPickerReset();   // okayui/src/OkayUIColor.cpp: and the colour pickers' remembered hue and original colour
+void ColorPickerReset();
+void StateStorageReset();   // okayui/src/OkayUICompat.cpp: the state store and key owners (OkayUIInternals.hpp)   // okayui/src/OkayUIColor.cpp: and the colour pickers' remembered hue and original colour
 namespace {
 
 // Fixed-capacity geometry batch. Text is drawn as one small quad per lit font
@@ -1941,7 +1943,7 @@ const Font* FontBold()      { return &kFontBold; }
 
 static bool g_pinNext = false;   // PinNextWindow: the next Begin sits where it is told
 // The window being built (for GetWindowPos / IsWindowHovered ...) and the one that was clicked last (IsWindowFocused).
-struct CurWin { bool valid = false; int id = 0; float x = 0, y = 0, w = 0, h = 0; bool appearing = false; unsigned long long z = 0; };
+struct CurWin { bool valid = false; int id = 0; float x = 0, y = 0, w = 0, h = 0; bool appearing = false; unsigned long long z = 0; char title[96] = {0}; };
 static CurWin g_curWin;
 // What End() needs to finish the window Begin() started: scrolling, the scroll bar, auto-resize, a hidden measuring frame.
 struct WinEnd { bool open = false, laid = false, scrolls = false, showBar = false, autoSize = false, hidden = false;
@@ -2076,6 +2078,7 @@ bool Begin(const char* title, float x, float y, float w, float h, bool* p_open) 
     if (!g_in.blocked && !hidden && pointIn(g_in.mouseX, g_in.mouseY, wx, wy, w, bodyH)) g_ptrOverWindow = true;
     g_curWin = CurWin{true, id, wx, wy, w, bodyH, slot != nullptr && slot->lastFrame + 1 < g_frameCount};   // appearing: not drawn on the frame before
     g_curWin.z = slot ? slot->z : 0;
+    if (title) std::snprintf(g_curWin.title, sizeof g_curWin.title, "%s", title);
     if (slot) slot->lastFrame = g_frameCount;
     if (!hidden) registerWindowRect(id, g_curWin.z, wx, wy, w, bodyH);
     wrecBegin(id, g_curWin.z);
@@ -2300,6 +2303,45 @@ bool FindWindowSlot(const char* title, Vec2& pos, Vec2& size, bool& focused) {
     return false;
 }
 void SetNextWindowFocus() { g_nextWinFocus = true; }
+// ---- small calls and internals added in step 6.9 (declared in OkayUICompat.hpp / OkayUIInternals.hpp) ----
+bool SetWindowSize(const char* title, Vec2 size, Cond cond) {
+    if (!title || !*title || !std::isfinite(size.x) || !std::isfinite(size.y)) return false;
+    const int id = windowId(title);
+    for (WinSlot& ws : g_wins) if (ws.used && ws.id == id) {
+        const bool appearing = ws.lastFrame + 1 < g_frameCount;
+        const bool take = cond == Cond_Always || (cond == Cond_Appearing && appearing) || ((cond == Cond_Once || cond == Cond_FirstUseEver) && !ws.sizeInit);
+        if (!take) return true;   // found, the condition said no
+        ws.w = size.x < 1.0f ? 1.0f : (size.x > 1.0e6f ? 1.0e6f : size.x);
+        ws.h = size.y < 1.0f ? 1.0f : (size.y > 1.0e6f ? 1.0e6f : size.y);
+        ws.sized = true; ws.sizeInit = true;
+        return true;
+    }
+    return false;
+}
+Vec2 GetWindowContentRegionMin() {
+    if (!g_curWin.valid || !g_lay.active) return Vec2{0, 0};
+    return Vec2{g_lay.ox - g_curWin.x, g_lay.oy - g_curWin.y};
+}
+Vec2 GetMousePosOnOpeningCurrentPopup() {
+    if (g_popupTop > 0) { const PopupSlot* p = popupSlot(g_popupStack[g_popupTop - 1].id, false); if (p) return Vec2{p->x, p->y}; }
+    return Vec2{g_in.mouseX, g_in.mouseY};
+}
+const DragPayload* GetDragDropPayload() {
+    if (!g_tdd.active || !g_tdd.hasPayload) return nullptr;
+    static DragPayload copy;
+    copy = g_tdd.pay; copy.delivery = false;
+    return &copy;
+}
+unsigned GetActiveID() { return (unsigned)g_active; }
+void ClearActiveID() { g_active = 0; if (g_focus != 0) { g_focusLostEnd = g_focus; g_focus = 0; } }
+CurrentWindow GetCurrentWindow() {
+    CurrentWindow w;
+    if (!g_curWin.valid) return w;
+    w.valid = true; w.id = (unsigned)g_curWin.id; w.pos = Vec2{g_curWin.x, g_curWin.y}; w.size = Vec2{g_curWin.w, g_curWin.h};
+    w.focused = g_focusWin == g_curWin.id; w.hovered = IsWindowHovered(); w.appearing = g_curWin.appearing; w.z = g_curWin.z;
+    std::snprintf(w.title, sizeof w.title, "%s", g_curWin.title);
+    return w;
+}
 Vec2 GetMouseDragDelta(int button, float threshold) {
     if (!IsMouseDragging(button, threshold)) return Vec2{0, 0};
     return Vec2{g_in.mouseX - g_pressX, g_in.mouseY - g_pressY};
@@ -4193,6 +4235,19 @@ const DragPayload* AcceptDragDropPayload(const char* type, int flags) {
     return nullptr;
 }
 void EndDragDropTarget() { g_tddOver = false; }
+// A drop target over a rectangle given by the caller (an item with no auto-layout slot: a node, a timeline lane). Same rules as
+// BeginDragDropTarget: true while a drag with a payload is over `bb`; the accent outline marks it; AcceptDragDropPayload works after it.
+bool BeginDragDropTargetCustom(Rect bb, unsigned id) {
+    (void)id;
+    g_tddOver = false;
+    if (!g_lay.active || !g_tdd.active || !g_tdd.hasPayload) return false;
+    if (!std::isfinite(bb.x) || !std::isfinite(bb.y) || !std::isfinite(bb.w) || !std::isfinite(bb.h) || bb.w <= 0.0f || bb.h <= 0.0f) return false;
+    if (!hit(bb.x, bb.y, bb.w, bb.h)) return false;
+    const unsigned char* dc = pick(Col_DragDropTarget, g_theme.accent);
+    quad(bb.x, bb.y, bb.w, 2.0f, dc); quad(bb.x, bb.y + bb.h - 2.0f, bb.w, 2.0f, dc);
+    g_tddOver = true;
+    return true;
+}
 
 bool DropTarget(int* outPayload) {
     if (!g_lay.active || !g_dd.active) return false;
@@ -5413,6 +5468,7 @@ void ResetState() {
     g_textScaleTop = 0; g_ncards = 0; g_ntoasts = 0;
     g_idSeed = 0; g_nextItemW = -1.0f; g_pinNext = false; g_bareNext = false; g_resizeNext = false; g_noTitleNext = false;
     DockReset();
+    StateStorageReset();
     ColorPickerReset();
     g_ovCurN = g_ovPrevN = 0;
     g_wCurN = g_wPrevN = 0; g_zCounter = 0; g_nwrec = 0; g_wrecOpen = -1; g_hitWinOn = false; g_we = WinEnd(); g_wheelUsed = false; g_wflagsNext = 0;

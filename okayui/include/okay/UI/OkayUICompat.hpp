@@ -109,4 +109,43 @@ private:
     ListClipper(const ListClipper&); ListClipper& operator=(const ListClipper&);   // not copyable (declared, never defined)
 };
 
+// ---- Step 6.9: small calls (written from what the names mean; tested in test_okayui_scopes.cpp) ----------------------------------
+
+/// A key chord for Shortcut: one named key plus the modifiers that must be held with it. `Chord(KeyId_S, Mod_Ctrl | Mod_Shift)`.
+/// (Own encoding: the key id in the low byte, the modifier bits above it; not Dear ImGui's chord values.)
+using KeyChord = int;
+enum KeyMods : int { Mod_None = 0, Mod_Ctrl = 1, Mod_Shift = 2, Mod_Alt = 4 };
+constexpr KeyChord Chord(KeyId key, int mods = Mod_None) { return (int)key | ((mods & 7) << 8); }
+enum ShortcutFlags : int { Shortcut_None = 0, Shortcut_AllowRepeat = 1, Shortcut_RouteAlways = 2 };
+/// True on the frame the chord's key goes down while exactly the chord's modifiers are held (a chord without Ctrl does not fire while
+/// Ctrl is held). It stays false while a text field has the keyboard (typing "s" must not save), unless Shortcut_RouteAlways is given,
+/// and while an item owns the chord's key (SetItemKeyOwner in OkayUIInternals.hpp). Shortcut_AllowRepeat also fires on key repeat.
+/// A chord with no key, or a bad key id, is never true. Ignores the pointer and the window: it is a global shortcut.
+bool Shortcut(KeyChord chord, int flags = Shortcut_None);
+
+/// Resize a window by title, as SetNextWindowSize would for its next Begin, but at any time (e.g. from a menu). Returns false for an
+/// unknown, null or empty title or a non-finite size; true when the window was found (even if `cond` said not to apply it). Sizes are
+/// kept between 1 and 1e6. Cond_Always applies now; Once and FirstUseEver apply only when the window has never been sized by the
+/// host; Appearing only on the frame the window reappears. Takes effect when the window is next begun.
+bool SetWindowSize(const char* title, Vec2 size, Cond cond = Cond_Always);
+
+/// The top-left of the current window's content region in window coordinates (the padding, and the title bar's height). Zero outside a
+/// window. Note the pair is not symmetric here: GetWindowContentRegionMax stays "cursor plus the space left" measured from the content
+/// origin (see its comment), so use GetWindowContentRegionMin only for where content starts, not as the other end of a span.
+Vec2 GetWindowContentRegionMin();
+
+/// Where the pointer was when the innermost open popup being built was opened (its top-left corner); the pointer's position now when
+/// called outside a popup. Lets a context menu place things at the click ("add node here").
+Vec2 GetMousePosOnOpeningCurrentPopup();
+
+/// The payload of the drag in progress (type, a copy of the bytes, size; `delivery` is false), or null when nothing is being dragged
+/// or the source has not set a payload yet. For hover feedback before the drop ("this does not fit here"). The pointer is valid until
+/// the next call.
+const DragPayload* GetDragDropPayload();
+
+/// A drop target over a rectangle you give (screen pixels) instead of the last item: for things the auto-layout does not know about
+/// (a node on a canvas, a timeline lane). Same rules as BeginDragDropTarget (outline, then AcceptDragDropPayload, then
+/// EndDragDropTarget); `id` is accepted for source compatibility and not used. False for an empty or non-finite rectangle.
+bool BeginDragDropTargetCustom(Rect bb, unsigned id = 0);
+
 } // namespace OkayUI

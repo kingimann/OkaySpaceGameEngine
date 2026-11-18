@@ -15,6 +15,7 @@
 #include "ActionExport.hpp"
 #include "MenuBarModel.hpp"          // the main menu bar and the Hierarchy menus as data (docs/editor_menus.md)
 #include "HierarchyContextModel.hpp"
+#include "SceneAddMenu.hpp"
 #include "MenuEntriesUI.hpp"          // draws those lists with Dear ImGui
 #include "ProjectState.hpp"           // project settings + build settings: the files inside the project folder
 #include "okay/Input/PlatformGamepad.hpp"   // controller -> Input (sticks, triggers, rumble), via okay::platform
@@ -7179,6 +7180,95 @@ static void DrawRenderingMenuItems(EditorState& ed) {
     if (ImGui::IsItemHovered()) ImGui::SetTooltip("Automatically drop anti-aliasing when the scene\nhas many models, to keep the editor smooth.");
 }
 
+// ---- Creators shared by GameObject > Create, the Hierarchy menus and the Scene view's right-click menu (and its search box). ----
+static GameObject* CreatePrimitiveByName(EditorState& ed, const std::string& mesh, const std::string& label) {
+    GameObject* go = mesh == "Cube" ? ed.CreateCube() : mesh == "Pyramid" ? ed.CreatePyramid() : ed.CreateMesh(mesh);
+    ConsoleLog("Created " + label);
+    return go;
+}
+static GameObject* AddLightObject(EditorState& ed, int kind) {   // 0 directional, 1 point, 2 spot
+    GameObject* go = nullptr;
+    if (kind == 0) {
+        go = ed.CreateEmpty("Directional Light");
+        go->AddComponent<Light>();
+        go->transform->localRotation = Quat::Euler({50, -30, 0}); // angled key light
+    } else if (kind == 1) {
+        go = ed.CreateEmpty("Point Light");
+        auto* l = go->AddComponent<Light>(); l->type = Light::Type::Point; l->range = 12.0f;
+        go->transform->localPosition = {0, 3, 0};
+    } else {
+        go = ed.CreateEmpty("Spot Light");
+        auto* l = go->AddComponent<Light>(); l->type = Light::Type::Spot; l->range = 16.0f; l->spotAngle = 50.0f;
+        go->transform->localPosition = {0, 5, 0};
+        go->transform->localRotation = Quat::Euler({90, 0, 0}); // aim down
+    }
+    ed.Select(go); ConsoleLog(std::string("Created ") + go->name);
+    return go;
+}
+static GameObject* AddAudioSourceObject(EditorState& ed) {
+    GameObject* g = ed.CreateEmpty("Audio Source");
+    g->AddComponent<AudioSource>()->clip = AudioClip::Sine(440.0f, 0.3f);
+    ed.Select(g); ed.dirty = true;
+    ConsoleLog("Created an Audio Source (a short test tone: pick your own sound in the Inspector)");
+    return g;
+}
+static GameObject* AddMusicPlayerObject(EditorState& ed) {
+    GameObject* g = ed.CreateEmpty("Music Player");
+    g->AddComponent<MusicPlayer>();
+    ed.Select(g); ed.dirty = true;
+    ConsoleLog("Created a Music Player");
+    return g;
+}
+static GameObject* AddParticleObject(EditorState& ed) {
+    GameObject* go = ed.CreateEmpty("Particles");
+    go->AddComponent<ParticleSystem>();
+    ConsoleLog("Created Particle System (press Play to see it)");
+    return go;
+}
+static GameObject* AddWaterObject(EditorState& ed) {
+    GameObject* go = ed.CreateEmpty("Water");
+    auto* w = go->AddComponent<Water>();
+    w->size = 80.0f; w->Apply();
+    ed.Select(go); ed.view3D = true; ed.dirty = true;
+    ConsoleLog("Created Water (animated reflective surface)");
+    return go;
+}
+static GameObject* AddTerrainObject(EditorState& ed) {
+    GameObject* go = ed.CreateEmpty("Terrain");
+    auto* tr = go->AddComponent<Terrain>();
+    tr->Resize(64); tr->size = 80.0f;
+    tr->Generate(1, 10.0f, 3.0f, 5, (unsigned)(ImGui::GetTime() * 1000.0)); // rolling hills
+    tr->Apply();
+    go->AddComponent<TerrainDigger>();   // dig/raise it at runtime out of the box
+    ed.Select(go); ed.view3D = true; ed.dirty = true;
+    ConsoleLog("Created Terrain (with a Terrain Digger: hold Left Mouse in Play to dig)");
+    return go;
+}
+static GameObject* AddCharacterObject(EditorState& ed) {
+    GameObject* g = ed.CreateEmpty("Character");
+    g->AddComponent<Character>()->Apply();
+    HumanoidLibrary::EnsureAnimator(g);
+    ed.SettleSpawn(g);
+    ed.Select(g); ed.view3D = true; ed.dirty = true;
+    ConsoleLog("Created Character");
+    return g;
+}
+static GameObject* AddTilemapObject(EditorState& ed) {
+    GameObject* go = ed.CreateEmpty("Tilemap");
+    auto* tm = go->AddComponent<Tilemap>();
+    tm->Resize(12, 8);
+    for (int x = 0; x < 12; ++x) tm->SetTile(x, 0, 1); // a ground row
+    ConsoleLog("Created Tilemap");
+    return go;
+}
+static GameObject* AddPlayerControllerObject(EditorState& ed) {
+    ed.PushUndo();
+    GameObject* g = ed.SettleSpawn(okay::Templates::AddThirdPersonPlayer(ed.scene()));
+    ed.Select(g);
+    ConsoleLog("Added Player Controller (View: Both, starts in third person; change View in the Inspector)"); ed.dirty = true;
+    return g;
+}
+
 // ---- GameObject > <category>, Hierarchy > Create: every creator the editor has, grouped (Create Child passes the parent). ----
 static void DrawCreateSlot(EditorState& ed, const std::string& id, GameObject* parent) {
     bool created = false;
@@ -7194,67 +7284,28 @@ static void DrawCreateSlot(EditorState& ed, const std::string& id, GameObject* p
                 }
             ImGui::EndMenu();
         }
-        if (ImGui::MenuItem("Tilemap")) {
-            GameObject* go = ed.CreateEmpty("Tilemap");
-            auto* tm = go->AddComponent<Tilemap>();
-            tm->Resize(12, 8);
-            for (int x = 0; x < 12; ++x) tm->SetTile(x, 0, 1); // a ground row
-            ConsoleLog("Created Tilemap");
-            created = true;
-        }
+        if (ImGui::MenuItem("Tilemap")) { AddTilemapObject(ed); created = true; }
     } else if (id == "create.3d") {
-        if (ImGui::MenuItem("Cube"))      { ed.CreateCube();    ConsoleLog("Created Cube"); created = true; }
-        if (ImGui::MenuItem("Sphere"))    { ed.CreateMesh("Sphere");    ConsoleLog("Created Sphere"); created = true; }
-        if (ImGui::MenuItem("Cylinder"))  { ed.CreateMesh("Cylinder");  ConsoleLog("Created Cylinder"); created = true; }
-        if (ImGui::MenuItem("Capsule"))   { ed.CreateMesh("Capsule");   ConsoleLog("Created Capsule"); created = true; }
-        if (ImGui::MenuItem("Cone"))      { ed.CreateMesh("Cone");      ConsoleLog("Created Cone"); created = true; }
-        if (ImGui::MenuItem("Plane"))     { ed.CreateMesh("Plane");     ConsoleLog("Created Plane"); created = true; }
-        if (ImGui::MenuItem("Pyramid"))   { ed.CreatePyramid(); ConsoleLog("Created Pyramid"); created = true; }
-        if (ImGui::MenuItem("Wedge"))     { ed.CreateMesh("Wedge");     ConsoleLog("Created Wedge"); created = true; }
-        if (ImGui::MenuItem("Torus"))     { ed.CreateMesh("Torus");     ConsoleLog("Created Torus"); created = true; }
-        if (ImGui::MenuItem("Torus Knot")){ ed.CreateMesh("TorusKnot"); ConsoleLog("Created Torus Knot"); created = true; }
-        if (ImGui::MenuItem("Icosphere")) { ed.CreateMesh("Icosphere"); ConsoleLog("Created Icosphere"); created = true; }
-        if (ImGui::MenuItem("Hemisphere")){ ed.CreateMesh("Hemisphere");ConsoleLog("Created Hemisphere"); created = true; }
-        if (ImGui::MenuItem("Stairs"))    { ed.CreateMesh("Stairs");    ConsoleLog("Created Stairs"); created = true; }
-        if (ImGui::MenuItem("Gear"))      { ed.CreateMesh("Gear");      ConsoleLog("Created Gear"); created = true; }
-        if (ImGui::MenuItem("Prism"))     { ed.CreateMesh("Prism");     ConsoleLog("Created Prism"); created = true; }
-        if (ImGui::MenuItem("Octahedron")){ ed.CreateMesh("Octahedron");ConsoleLog("Created Octahedron"); created = true; }
-        if (ImGui::MenuItem("Disc"))      { ed.CreateMesh("Disc");      ConsoleLog("Created Disc"); created = true; }
-        if (ImGui::MenuItem("Tetrahedron")){ ed.CreateMesh("Tetrahedron");ConsoleLog("Created Tetrahedron"); created = true; }
-        if (ImGui::MenuItem("Bipyramid")) { ed.CreateMesh("Bipyramid"); ConsoleLog("Created Bipyramid"); created = true; }
-        if (ImGui::MenuItem("Rounded Box")){ ed.CreateMesh("RoundedBox");ConsoleLog("Created Rounded Box"); created = true; }
-        if (ImGui::MenuItem("Quad"))      { ed.CreateMesh("Quad");      ConsoleLog("Created Quad"); created = true; }
+        for (const oked::sceneadd::MeshEntry& e : oked::sceneadd::kPrimitives)   // the same table the Scene view's right-click search reads
+            if (ImGui::MenuItem(e.label)) { CreatePrimitiveByName(ed, e.mesh, e.label); created = true; }
         ImGui::Separator();
         if (ImGui::BeginMenu("Nature")) {
-            const char* nat[] = {"Tree", "Pine", "PalmTree", "DeadTree", "Bush", "Rock", "Mushroom", "Cactus", "Crystal"};
-            for (const char* n : nat)
-                if (ImGui::MenuItem(n)) { ed.CreateMesh(n); ConsoleLog(std::string("Created ") + n); created = true; }
+            for (const oked::sceneadd::MeshEntry& e : oked::sceneadd::kNature)
+                if (ImGui::MenuItem(e.label)) { CreatePrimitiveByName(ed, e.mesh, e.label); created = true; }
             ImGui::EndMenu();
         }
         if (ImGui::BeginMenu("Props")) {
-            const char* pr[] = {"Barrel", "Crate", "Fence", "Well", "StreetLamp",
-                                "Campfire", "Lantern", "Chest", "Signpost", "Cart", "Tent", "Bench"};
-            for (const char* n : pr)
-                if (ImGui::MenuItem(n)) { ed.CreateMesh(n); ConsoleLog(std::string("Created ") + n); created = true; }
+            for (const oked::sceneadd::MeshEntry& e : oked::sceneadd::kProps)
+                if (ImGui::MenuItem(e.label)) { CreatePrimitiveByName(ed, e.mesh, e.label); created = true; }
             ImGui::EndMenu();
         }
         if (ImGui::BeginMenu("Structures")) {
-            const char* st[] = {"House", "Tower", "Windmill", "Bridge", "RockArch"};
-            for (const char* n : st)
-                if (ImGui::MenuItem(n)) { ed.CreateMesh(n); ConsoleLog(std::string("Created ") + n); created = true; }
+            for (const oked::sceneadd::MeshEntry& e : oked::sceneadd::kStructures)
+                if (ImGui::MenuItem(e.label)) { CreatePrimitiveByName(ed, e.mesh, e.label); created = true; }
             ImGui::EndMenu();
         }
         ImGui::Separator();
-        if (ImGui::MenuItem("Terrain")) {
-            GameObject* go = ed.CreateEmpty("Terrain");
-            auto* tr = go->AddComponent<Terrain>();
-            tr->Resize(64); tr->size = 80.0f;
-            tr->Generate(1, 10.0f, 3.0f, 5, (unsigned)(ImGui::GetTime() * 1000.0)); // rolling hills
-            tr->Apply();
-            go->AddComponent<TerrainDigger>();   // dig/raise it at runtime out of the box
-            ed.Select(go); ed.view3D = true; ed.dirty = true; created = true;
-            ConsoleLog("Created Terrain (with a Terrain Digger: hold Left Mouse in Play to dig)");
-        }
+        if (ImGui::MenuItem("Terrain")) { AddTerrainObject(ed); created = true; }
         if (ImGui::MenuItem("Voxel Terrain (caves)")) {
             GameObject* go = ed.CreateEmpty("Voxel Terrain");
             auto* v = go->AddComponent<VoxelTerrain>();
@@ -7265,29 +7316,12 @@ static void DrawCreateSlot(EditorState& ed, const std::string& id, GameObject* p
             ed.Select(go); ed.view3D = true; ed.dirty = true; created = true;
             ConsoleLog("Created Voxel Terrain (Voxel Digger: Left Mouse digs caves, Right Mouse adds)");
         }
-        if (ImGui::MenuItem("Water")) {
-            GameObject* go = ed.CreateEmpty("Water");
-            auto* w = go->AddComponent<Water>();
-            w->size = 80.0f; w->Apply();
-            ed.Select(go); ed.view3D = true; ed.dirty = true; created = true;
-            ConsoleLog("Created Water (animated reflective surface)");
-        }
-        if (ImGui::MenuItem("Character")) {
-            GameObject* g = ed.CreateEmpty("Character");
-            g->AddComponent<Character>()->Apply();
-            HumanoidLibrary::EnsureAnimator(g);
-            ed.SettleSpawn(g);
-            ed.Select(g); ed.view3D = true; ed.dirty = true; created = true;
-            ConsoleLog("Created Character");
-        }
+        if (ImGui::MenuItem("Water")) { AddWaterObject(ed); created = true; }
+        if (ImGui::MenuItem("Character")) { AddCharacterObject(ed); created = true; }
     } else if (id == "create.player") {
         // One Player Controller for first and third person: the View setting in its Inspector picks First, Third or Both
         // (V switches in Both). Third Person Shooter below is a different game mode (fires, own settings) and stays.
-        if (ImGui::MenuItem("Player Controller (first / third person)")) {
-            ed.PushUndo();
-            ed.Select(ed.SettleSpawn(okay::Templates::AddThirdPersonPlayer(ed.scene())));
-            ConsoleLog("Added Player Controller (View: Both, starts in third person; change View in the Inspector)"); ed.dirty = true; created = true;
-        }
+        if (ImGui::MenuItem("Player Controller (first / third person)")) { AddPlayerControllerObject(ed); created = true; }
         if (ImGui::MenuItem("Third Person Shooter")) {
             ed.PushUndo();
             ed.Select(ed.SettleSpawn(okay::Templates::AddThirdPersonShooterPlayer(ed.scene())));
@@ -7320,25 +7354,9 @@ static void DrawCreateSlot(EditorState& ed, const std::string& id, GameObject* p
         }
         if (ImGui::IsItemHovered()) ImGui::SetTooltip("Drops a fully set-up player (Character + controller + physics) into this scene.");
     } else if (id == "create.light") {
-        if (ImGui::MenuItem("Directional Light")) {
-            GameObject* go = ed.CreateEmpty("Directional Light");
-            go->AddComponent<Light>();
-            go->transform->localRotation = Quat::Euler({50, -30, 0}); // angled key light
-            ed.Select(go); ConsoleLog("Created Directional Light"); created = true;
-        }
-        if (ImGui::MenuItem("Point Light")) {
-            GameObject* go = ed.CreateEmpty("Point Light");
-            auto* l = go->AddComponent<Light>(); l->type = Light::Type::Point; l->range = 12.0f;
-            go->transform->localPosition = {0, 3, 0};
-            ed.Select(go); ConsoleLog("Created Point Light"); created = true;
-        }
-        if (ImGui::MenuItem("Spot Light")) {
-            GameObject* go = ed.CreateEmpty("Spot Light");
-            auto* l = go->AddComponent<Light>(); l->type = Light::Type::Spot; l->range = 16.0f; l->spotAngle = 50.0f;
-            go->transform->localPosition = {0, 5, 0};
-            go->transform->localRotation = Quat::Euler({90, 0, 0}); // aim down
-            ed.Select(go); ConsoleLog("Created Spot Light"); created = true;
-        }
+        if (ImGui::MenuItem("Directional Light")) { AddLightObject(ed, 0); created = true; }
+        if (ImGui::MenuItem("Point Light"))       { AddLightObject(ed, 1); created = true; }
+        if (ImGui::MenuItem("Spot Light"))        { AddLightObject(ed, 2); created = true; }
     } else if (id == "create.camera") {
         if (ImGui::MenuItem("Camera"))  { ed.CreateCamera();  ConsoleLog("Created Camera"); created = true; }
         ImGui::Separator();
@@ -7378,27 +7396,12 @@ static void DrawCreateSlot(EditorState& ed, const std::string& id, GameObject* p
         if (ImGui::IsItemHovered()) ImGui::SetTooltip("Glides along a Dolly Path; set its Path to the path's name.");
     } else if (id == "create.audio") {
         // The same two objects Add Component > Audio builds, here as ready-made objects.
-        if (ImGui::MenuItem("Audio Source")) {
-            GameObject* g = ed.CreateEmpty("Audio Source");
-            g->AddComponent<AudioSource>()->clip = AudioClip::Sine(440.0f, 0.3f);
-            ed.Select(g); ed.dirty = true; created = true;
-            ConsoleLog("Created an Audio Source (a short test tone: pick your own sound in the Inspector)");
-        }
+        if (ImGui::MenuItem("Audio Source")) { AddAudioSourceObject(ed); created = true; }
         if (ImGui::IsItemHovered()) ImGui::SetTooltip("Plays a sound. It starts with a short test tone; pick your own sound in the Inspector.");
-        if (ImGui::MenuItem("Music Player")) {
-            GameObject* g = ed.CreateEmpty("Music Player");
-            g->AddComponent<MusicPlayer>();
-            ed.Select(g); ed.dirty = true; created = true;
-            ConsoleLog("Created a Music Player");
-        }
+        if (ImGui::MenuItem("Music Player")) { AddMusicPlayerObject(ed); created = true; }
         if (ImGui::IsItemHovered()) ImGui::SetTooltip("Plays a playlist of music tracks.");
     } else if (id == "create.effects") {
-        if (ImGui::MenuItem("Particle System")) {
-            GameObject* go = ed.CreateEmpty("Particles");
-            go->AddComponent<ParticleSystem>();
-            ConsoleLog("Created Particle System (press Play to see it)");
-            created = true;
-        }
+        if (ImGui::MenuItem("Particle System")) { AddParticleObject(ed); created = true; }
         if (ImGui::MenuItem("Spline")) { CreateSplineFromMenu(ed); created = true; }
         if (ImGui::IsItemHovered()) ImGui::SetTooltip("A curve of three points in front of the camera: roads, rails, fences, paths.");
         LevelCreateMenuItems(ed, created);                // Foliage Layer, Decal Projector, Cable
@@ -43995,6 +43998,238 @@ static void SceneObjectDragChip(okay::GameObject* go, ImVec2 screen) {
     SceneObjectDragChipAt(go, ImVec2(screen.x - sz.x * 0.5f, screen.y - sz.y - 22.0f), 1.0f);
 }
 
+// ---- The Scene view's right-click "add here" menu ----------------------------------------------------------------------------
+// A right-click (a click, not a drag: dragging still orbits / looks / pans, and fly mode with the button held is untouched) on the Scene
+// view opens a menu at the cursor. Its create entries are the Hierarchy create slots (DrawCreateSlot) and the shared Add*Object
+// creators above, so there is one copy of the creation code. The clicked spot comes from oked::sceneadd (tested headless in
+// tests/test_scene_add_menu.cpp); this glue only gathers the ray / world position and runs the ids. docs/scene_right_click_add.md.
+struct SceneAddView {
+    bool is3D = true;
+    ImVec2 canvasPos{0, 0}, canvasSize{0, 0};
+    Mat4 vp; Vec3 eye{0, 0, 0};                         // 3D
+    ImVec2 center{0, 0}; Vec2 camPos{0, 0}; float scale = 1.0f;   // 2D
+};
+struct SceneAddState {
+    bool pressing = false; ImVec2 pressPos{0, 0}; double pressTime = 0.0;
+    oked::sceneadd::Placement place;
+    ObjectRef under;
+    char query[96] = "";
+    bool focusSearch = false;
+    int  sel = 0;
+    std::vector<std::string> prefabs;
+    ObjectRef renameTarget; bool renameOpen = false; char renameBuf[128] = "";
+};
+static SceneAddState g_sceneAdd;
+
+// Put a just-created object where the user clicked: the pivot on the clicked point, lifted so a mesh rests ON the surface or the
+// ground. UI pieces (they live under a Canvas and choose their own place) and anything already parented are left alone.
+static void SceneAddPlace(EditorState& ed, GameObject* go, const oked::sceneadd::Placement& pl) {
+    (void)ed;
+    if (!go || !go->transform || go->transform->Parent() || IsUIElement(go) || go->GetComponent<Canvas>() || go->GetComponent<EventSystem>()) return;
+    Transform* t = go->transform;
+    if (pl.source == oked::sceneadd::PlaceSource::World2D) {
+        t->SetPosition(Vec3{pl.pos.x, pl.pos.y, t->Position().z});
+        return;
+    }
+    float lift = 0.0f;
+    if (auto* mr = go->GetComponent<MeshRenderer>(); mr && !mr->DisplayMesh().vertices.empty()) {
+        Vec3 lo, hi; mr->DisplayMesh().Bounds(lo, hi);
+        lift = oked::sceneadd::RestOffsetY(pl.source, lo.y * std::fabs(t->LossyScale().y));
+    }
+    t->SetPosition(Vec3{pl.pos.x, pl.pos.y + lift, pl.pos.z});
+}
+
+static std::string SceneAddAssetsRoot() {
+    namespace fs = std::filesystem;
+    std::error_code ec;
+    return (g_pickerProjectDir.empty() ? fs::absolute(".", ec) : fs::path(g_pickerProjectDir) / "Assets").string();   // the folder CollectProjectPrefabs lists
+}
+
+// Run one id of the menu or of the search list. Creating goes through the same functions the Hierarchy menu uses; the new object is
+// then moved to the clicked spot. Every creator takes its own undo step first, and the move happens in the same frame, so one add = one step.
+static void SceneAddRun(EditorState& ed, const std::string& id, const std::string& label) {
+    namespace sa = oked::sceneadd;
+    SceneAddState& st = g_sceneAdd;
+    GameObject* under = st.under.Get(ed.scene());
+    GameObject* made = nullptr;
+    const std::size_t before = ed.scene().Objects().size();
+    if (id == sa::kIdEmpty || id == "empty") { HierEmptyAction(ed, "h.createempty"); made = ed.selected(); }
+    else if (id == sa::kIdFocus) { if (under) { ed.Select(under); FocusSelected(ed); } }
+    else if (id == sa::kIdRename) {
+        if (under) {
+            st.renameTarget.Set(under); st.renameOpen = true;
+            std::strncpy(st.renameBuf, under->name.c_str(), sizeof(st.renameBuf) - 1);
+            st.renameBuf[sizeof(st.renameBuf) - 1] = '\0';
+        }
+    }
+    else if (id == sa::kIdDuplicate) { if (under) { if (!ed.IsSelected(under)) ed.Select(under); ed.DuplicateSelected(); ConsoleLog("Duplicated"); } }
+    else if (id == sa::kIdCopy) { if (under) g_clipboard = SceneSerializer::SerializeObject(*under); }
+    else if (id == sa::kIdDelete) { if (under) { if (!ed.IsSelected(under)) ed.Select(under); ed.DeleteSelected(); ConsoleLog("Deleted"); } }
+    else if (id == sa::kIdPaste) {
+        if (!g_clipboard.empty()) {
+            ed.PushUndo();
+            made = SceneSerializer::InstantiateFromText(ed.scene(), g_clipboard);
+            if (made) { SceneAddPlace(ed, made, st.place); ed.Select(made); ed.dirty = true; }
+        }
+        return;
+    }
+    else if (!sa::PrefabPathFromId(id).empty()) {
+        namespace fs = std::filesystem;
+        const std::string path = (fs::path(SceneAddAssetsRoot()) / sa::PrefabPathFromId(id)).string();
+        ed.PushUndo();
+        std::string err;
+        made = SceneSerializer::InstantiateFromFile(ed.scene(), path, &err);
+        if (!made) ConsoleLog("Prefab load failed: " + err, 2);
+        else { SceneAddPlace(ed, made, st.place); ed.Select(made); ed.dirty = true; ConsoleLog("Placed " + made->name); }
+        return;
+    }
+    else if (id.rfind("mesh:", 0) == 0) made = CreatePrimitiveByName(ed, id.substr(5), label);
+    else if (id == "light:directional") made = AddLightObject(ed, 0);
+    else if (id == "light:point") made = AddLightObject(ed, 1);
+    else if (id == "light:spot") made = AddLightObject(ed, 2);
+    else if (id == "camera") { made = ed.CreateCamera(); ConsoleLog("Created Camera"); }
+    else if (id == "audio:source") made = AddAudioSourceObject(ed);
+    else if (id == "audio:music") made = AddMusicPlayerObject(ed);
+    else if (id == "particles") made = AddParticleObject(ed);
+    else if (id == "terrain") made = AddTerrainObject(ed);
+    else if (id == "water") made = AddWaterObject(ed);
+    else if (id == "character") made = AddCharacterObject(ed);
+    else if (id == "player:controller") made = AddPlayerControllerObject(ed);
+    else if (id == "2d:sprite") { made = ed.CreateSprite(); ConsoleLog("Created Sprite"); }
+    else if (id == "2d:tilemap") made = AddTilemapObject(ed);
+    if (made && ed.scene().Objects().size() > before) {
+        SceneAddPlace(ed, made, st.place);
+        ed.Select(made); ed.dirty = true;
+        ed.Achievement("FIRST_OBJECT");
+    }
+}
+
+static void SceneAddMenuTick(EditorState& ed, bool hovered, ImGuiIO& io, const SceneAddView& v) {
+    namespace sa = oked::sceneadd;
+    SceneAddState& st = g_sceneAdd;
+    const bool blocked = ed.isPlaying() || g_meshEdit || g_wpPlace != nullptr;   // mesh edit mode has its own right-click tool menu
+    const ImGuiPopupFlags anyPopup = ImGuiPopupFlags_AnyPopupId | ImGuiPopupFlags_AnyPopupLevel;
+    if (hovered && !blocked && ImGui::IsMouseClicked(ImGuiMouseButton_Right) && !ImGui::IsPopupOpen(nullptr, anyPopup)) {
+        st.pressing = true; st.pressPos = io.MousePos; st.pressTime = ImGui::GetTime();
+    }
+    if (st.pressing && ImGui::IsMouseReleased(ImGuiMouseButton_Right)) {
+        st.pressing = false;
+        const float secs = (float)(ImGui::GetTime() - st.pressTime);
+        if (!blocked && sa::IsClick(io.MousePos.x - st.pressPos.x, io.MousePos.y - st.pressPos.y, secs)) {
+            GameObject* under = nullptr;
+            sa::Placement pl;
+            if (v.is3D) {
+                const float nx = 2.0f * (st.pressPos.x - v.canvasPos.x) / v.canvasSize.x - 1.0f;
+                const float ny = 1.0f - 2.0f * (st.pressPos.y - v.canvasPos.y) / v.canvasSize.y;
+                const Mat4 inv = v.vp.Inverse();
+                const Vec3 p0 = inv.MultiplyPoint({nx, ny, -1.0f}), p1 = inv.MultiplyPoint({nx, ny, 1.0f});
+                const Vec3 rd = (p1 - p0).Normalized();
+                // The nearest thing under the cursor: a collider (physics ray) or a mesh's own box (so models without colliders are hit too).
+                float bestT = 1e30f;
+                RaycastHit3D rh = ed.scene().physics3D().Raycast(ed.scene(), p0, rd, 800.0f, nullptr);
+                if (rh.hit) { bestT = Vec3::Dot(rh.point - p0, rd); under = rh.gameObject; }
+                for (const auto& up : ed.scene().Objects()) {
+                    GameObject* go = up.get();
+                    auto* mr = go->GetComponent<MeshRenderer>();
+                    if (!mr || !go->active || go->transient || mr->DisplayMesh().vertices.empty()) continue;
+                    const Mat4 minv = go->transform->LocalToWorldMatrix().Inverse();
+                    const Vec3 lo0 = minv.MultiplyPoint(p0), ld = minv.MultiplyVector(rd);
+                    Vec3 blo, bhi; mr->DisplayMesh().Bounds(blo, bhi);
+                    float t = 0.0f;
+                    if (sa::RayBoxEntry({lo0.x, lo0.y, lo0.z}, {ld.x, ld.y, ld.z}, {blo.x, blo.y, blo.z}, {bhi.x, bhi.y, bhi.z}, t) && t < bestT) {
+                        bestT = t; under = go;
+                    }
+                }
+                const bool hit = under != nullptr && bestT < 1e29f;
+                const Vec3 hp = p0 + rd * bestT;
+                pl = sa::PlaceIn3D({{p0.x, p0.y, p0.z}, {rd.x, rd.y, rd.z}}, hit, {hp.x, hp.y, hp.z}, sa::kDefaultFallbackDistance);
+            } else {
+                const float wx = (st.pressPos.x - v.center.x) / v.scale + v.camPos.x;
+                const float wy = -(st.pressPos.y - v.center.y) / v.scale + v.camPos.y;
+                for (const auto& up : ed.scene().Objects()) {
+                    GameObject* go = up.get();
+                    auto* sr = go->GetComponent<SpriteRenderer>();
+                    if (!sr || !go->active || go->transient) continue;
+                    const Vec3 wp = go->transform->Position(), ls = go->transform->LossyScale();
+                    const float hx = std::fabs(sr->size.x * ls.x * 0.5f), hy = std::fabs(sr->size.y * ls.y * 0.5f);
+                    if (wx >= wp.x - hx && wx <= wp.x + hx && wy >= wp.y - hy && wy <= wp.y + hy) under = go;   // the last drawn wins
+                }
+                pl = sa::PlaceIn2D(wx, wy);
+            }
+            st.place = sa::SnapPlacement(pl, g_snapSize, g_snap);
+            st.under.Set(under);
+            if (under && !ed.IsSelected(under)) ed.Select(under);   // like the Hierarchy: right-click selects what it acts on
+            st.query[0] = '\0'; st.sel = 0; st.focusSearch = true;
+            st.prefabs = CollectProjectPrefabs();
+            ImGui::OpenPopup("##sceneadd");
+        }
+    }
+    if (!ImGui::IsMouseDown(ImGuiMouseButton_Right)) st.pressing = false;
+
+    if (ImGui::BeginPopup("##sceneadd")) {
+        GameObject* under = st.under.Get(ed.scene());
+        sa::MenuState ms;
+        ms.is2D = !v.is3D;
+        ms.hasObjectUnder = under != nullptr;
+        ms.underName = under ? under->name : std::string();
+        ms.clipboardHasObject = !g_clipboard.empty();
+        ms.prefabs = st.prefabs;
+        ImGui::TextDisabled("Add here");
+        ImGui::SetNextItemWidth(230.0f);
+        if (st.focusSearch) { ImGui::SetKeyboardFocusHere(); st.focusSearch = false; }
+        if (ImGui::InputTextWithHint("##sceneaddsearch", "Search: type a name (cube, light, tree...)", st.query, sizeof(st.query))) st.sel = 0;
+        const std::vector<sa::SearchItem> found = sa::Search(st.query, ms.is2D, st.prefabs);
+        if (st.query[0] != '\0') {
+            if (found.empty()) ImGui::TextDisabled("Nothing found. Try another word.");
+            if (ImGui::IsKeyPressed(ImGuiKey_DownArrow)) st.sel = sa::MoveSelection(st.sel, +1, (int)found.size());
+            if (ImGui::IsKeyPressed(ImGuiKey_UpArrow))   st.sel = sa::MoveSelection(st.sel, -1, (int)found.size());
+            st.sel = sa::MoveSelection(st.sel, 0, (int)found.size());
+            const sa::SearchItem* chosen = nullptr;
+            for (int i = 0; i < (int)found.size(); ++i) {
+                ImGui::PushID(i);
+                if (ImGui::Selectable(found[i].label.c_str(), i == st.sel)) chosen = &found[i];
+                ImGui::SameLine(0, 12.0f);
+                ImGui::TextDisabled("%s", found[i].group.c_str());
+                ImGui::PopID();
+            }
+            if (!chosen && !found.empty() && (ImGui::IsKeyPressed(ImGuiKey_Enter) || ImGui::IsKeyPressed(ImGuiKey_KeypadEnter))) chosen = &found[st.sel];
+            if (chosen) { SceneAddRun(ed, chosen->id, chosen->label); ImGui::CloseCurrentPopup(); }
+        } else {
+            ImGui::Separator();
+            oked::menubar::Host h;
+            h.run = [&ed](const oked::menubar::Entry& e) { SceneAddRun(ed, e.id, e.label); };
+            h.slot = [&ed](const oked::menubar::Entry& e) {
+                if (e.id.rfind("create.", 0) != 0) return;
+                const std::size_t before = ed.scene().Objects().size();
+                DrawCreateSlot(ed, e.id, nullptr);   // the Hierarchy's own create menu items
+                if (ed.scene().Objects().size() > before && ed.selected()) SceneAddPlace(ed, ed.selected(), g_sceneAdd.place);
+            };
+            oked::menubar::DrawEntries(sa::BuildMenu(ms), h);
+        }
+        ImGui::EndPopup();
+    }
+
+    // Rename (from the menu): a small box in the middle of the view; Enter or OK renames, Escape cancels.
+    if (st.renameOpen) { ImGui::OpenPopup("Rename Object##sceneadd"); st.renameOpen = false; }
+    ImGui::SetNextWindowPos(ImGui::GetMainViewport()->GetCenter(), ImGuiCond_Appearing, ImVec2(0.5f, 0.5f));
+    if (ImGui::BeginPopupModal("Rename Object##sceneadd", nullptr, ImGuiWindowFlags_AlwaysAutoResize)) {
+        GameObject* target = st.renameTarget.Get(ed.scene());
+        if (!target) { ImGui::TextUnformatted("That object is gone."); if (ImGui::Button("Close")) ImGui::CloseCurrentPopup(); }
+        else {
+            if (ImGui::IsWindowAppearing()) ImGui::SetKeyboardFocusHere();
+            const bool enter = ImGui::InputText("##sceneaddrename", st.renameBuf, sizeof(st.renameBuf), ImGuiInputTextFlags_EnterReturnsTrue);
+            ImGui::Spacing();
+            if ((ImGui::Button("OK") || enter) && st.renameBuf[0] != '\0') {
+                if (target->name != st.renameBuf) { ed.PushUndo("Rename"); target->name = st.renameBuf; ed.dirty = true; }
+                ImGui::CloseCurrentPopup();
+            }
+            ImGui::SameLine();
+            if (ImGui::Button("Cancel") || ImGui::IsKeyPressed(ImGuiKey_Escape)) ImGui::CloseCurrentPopup();
+        }
+        ImGui::EndPopup();
+    }
+}
+
 void DrawScene2D(EditorState& ed, ImDrawList* dl, ImVec2 canvasPos, ImVec2 canvasSize,
                  ImVec2 canvasEnd, bool hovered, ImGuiIO& io, bool gameView = false) {
     ImVec2 center(canvasPos.x + canvasSize.x * 0.5f, canvasPos.y + canvasSize.y * 0.5f);
@@ -44398,6 +44633,11 @@ void DrawScene2D(EditorState& ed, ImDrawList* dl, ImVec2 canvasPos, ImVec2 canva
     }
     // End of a 2D transform drag: drop the raw accumulator so the next drag reseeds.
     if (!ImGui::IsMouseDown(ImGuiMouseButton_Left)) g_dragRawValid = false;
+    {   // right-click (a click, not a drag, which pans) opens the "add here" menu
+        SceneAddView av; av.is3D = false; av.canvasPos = canvasPos; av.canvasSize = canvasSize;
+        av.center = center; av.camPos = camPos; av.scale = scale;
+        SceneAddMenuTick(ed, hovered, io, av);
+    }
 }
 
 // ---- Scene view overlays: stats line, camera readout, name labels -------------------------------
@@ -47402,6 +47642,10 @@ void DrawScene3D(EditorState& ed, ImDrawList* dl, ImVec2 canvasPos, ImVec2 canva
     }
     if (!gameView && chipPlan.valid && ed.selected() && ed.selected()->transform)
         SceneObjectDragChipAt(ed.selected(), chipPlan.pos, chipPlan.alpha);   // placed by the label pass above
+    if (!gameView) {   // right-click (a click, not a drag) opens the "add here" menu
+        SceneAddView av; av.is3D = true; av.canvasPos = canvasPos; av.canvasSize = canvasSize; av.vp = vp; av.eye = eye;
+        SceneAddMenuTick(ed, hovered, io, av);
+    }
 }
 
 // ---- Shared game / UI screen resolution ------------------------------------

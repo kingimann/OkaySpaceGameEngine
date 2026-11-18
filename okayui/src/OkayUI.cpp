@@ -2626,14 +2626,27 @@ void Separator() {
 
 namespace {
 // One line of text at the cursor in colour `col`.
-void textLine(const char* s, const unsigned char* col) {
-    const float h = rowH();
+void textLine(const char* s, const unsigned char* col, float rowHeight = -1.0f) {
+    const float h = rowHeight > 0.0f ? rowHeight : rowH();
     float x, y; place(s && *s ? labelW(s) : 1.0f, h, x, y);
     if (s && *s) drawText(x, y + (h - textH()) * 0.5f, s, g_theme.textScale, col);
 }
 
+// The lines of one paragraph: every line but the last sits close to the next (a framed widget's row height would double-space them); the last
+// takes the normal row height, so a one-line text is exactly what it always was.
+struct ParaLines {
+    const unsigned char* col; char prev[512]; bool has = false;
+    explicit ParaLines(const unsigned char* c) : col(c) { prev[0] = 0; }
+    void Add(const char* line) {
+        if (has) textLine(prev, col, textH() + 6.0f);
+        std::strncpy(prev, line, sizeof prev - 1); prev[sizeof prev - 1] = 0; has = true;
+    }
+    void Done() { if (has) textLine(prev, col); has = false; }
+};
+
 // Word-wrapped text: lines are filled word by word up to maxW, '\n' always breaks.
 void wrapLines(const char* text, float maxW, const unsigned char* col) {
+    ParaLines para(col);
     char line[512]; int n = 0;
     const char* p = text;
     while (*p) {
@@ -2645,14 +2658,15 @@ void wrapLines(const char* text, float maxW, const unsigned char* col) {
         if (n > 0 && tn < 500) trial[tn++] = ' ';
         for (int i = 0; i < wl && tn < 500; ++i) trial[tn++] = p[i];
         trial[tn] = 0;
-        if (n > 0 && labelW(trial) > maxW) { line[n] = 0; textLine(line, col); n = 0; continue; }
+        if (n > 0 && labelW(trial) > maxW) { line[n] = 0; para.Add(line); n = 0; continue; }
         for (int i = 0; i < tn && i < 500; ++i) line[i] = trial[i];
         n = tn < 500 ? tn : 500;
         p = wordEnd;
-        if (*p == '\n') { line[n] = 0; textLine(line, col); n = 0; ++p; }
+        if (*p == '\n') { line[n] = 0; para.Add(line); n = 0; ++p; }
         else if (*p == ' ') ++p;
     }
-    if (n > 0) { line[n] = 0; textLine(line, col); }
+    if (n > 0) { line[n] = 0; para.Add(line); }
+    para.Done();
 }
 
 // Text honouring PushTextWrapPos.
@@ -2661,6 +2675,19 @@ void textBlock(const char* s, const unsigned char* col) {
         float maxW = availW();
         if (g_wrapPos > 0.0f && g_wrapPos < maxW) maxW = g_wrapPos;
         wrapLines(s, maxW, col);
+    } else if (s && std::strchr(s, '\n')) {   // several lines: each on its own row, close together
+        ParaLines para(col);
+        char line[512];
+        for (const char* p = s;;) {
+            const char* e = std::strchr(p, '\n');
+            const std::size_t n = e ? (std::size_t)(e - p) : std::strlen(p);
+            const std::size_t m = n < sizeof line - 1 ? n : sizeof line - 1;
+            std::memcpy(line, p, m); line[m] = 0;
+            para.Add(line);
+            if (!e) break;
+            p = e + 1;
+        }
+        para.Done();
     } else textLine(s, col);
 }
 } // namespace

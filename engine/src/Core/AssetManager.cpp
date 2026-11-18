@@ -1,4 +1,5 @@
 #include "okay/Core/AssetManager.hpp"
+#include "okay/Core/AssetCacheBridge.hpp"
 #include "okay/Audio/AudioClip.hpp"
 #include "okay/Core/DataAsset.hpp"
 #include "okay/Graphics/Image.hpp"
@@ -32,6 +33,19 @@ bool StatFile(const std::string& path, std::int64_t& stamp, std::int64_t& size) 
     stamp = static_cast<std::int64_t>(t.time_since_epoch().count());
     size = ec ? -1 : static_cast<std::int64_t>(sz);
     return true;
+}
+
+// FNV-1a 64 of a file's bytes; 0 if it can't be read (0 is never a real result: it is mapped to 1).
+std::uint64_t HashFile(const std::string& path) {
+    std::FILE* f = std::fopen(std::filesystem::u8path(path).string().c_str(), "rb");
+    if (!f) return 0;
+    std::uint64_t h = 1469598103934665603ull;
+    unsigned char buf[16384];
+    std::size_t n;
+    while ((n = std::fread(buf, 1, sizeof buf, f)) > 0)
+        for (std::size_t i = 0; i < n; ++i) { h ^= buf[i]; h *= 1099511628211ull; }
+    std::fclose(f);
+    return h ? h : 1;
 }
 
 std::shared_ptr<void> RunLoader(const std::function<std::shared_ptr<void>(const std::string&, std::string&)>& fn,
@@ -153,7 +167,7 @@ void AssetManager::RegisterDefaultLoaders() {
     RegisterLoader<DataAsset>("DataAsset",
         [](const std::string& p, std::string& e) -> std::shared_ptr<DataAsset> {
             auto a = std::make_shared<DataAsset>();
-            if (a->Load(p)) return a;
+            if (a->Load(p)) { a->MarkLoaded(); return a; }
             e = "cannot read " + p;
             return nullptr;
         },
@@ -194,9 +208,12 @@ void AssetManager::WorkerMain() {
             if (it == m_loaders.end()) { d.error = "no loader registered"; }
             else {
                 auto fn = it->second.load;
+                const std::uint64_t oldHash = e.hash;
                 lk.unlock();
                 StatFile(e.path, d.stamp, d.size);   // before decoding: a later write is seen next scan
-                d.data = RunLoader(fn, e.path, d.error);
+                d.hash = HashFile(e.path);
+                if (d.hash != 0 && oldHash != 0 && d.hash == oldHash) d.unchanged = true;   // same bytes: nothing to decode
+                else d.data = RunLoader(fn, e.path, d.error);
                 lk.lock();
                 if (m_stop) return;
             }
@@ -208,9 +225,12 @@ void AssetManager::WorkerMain() {
             } else {
                 auto rec = it->second;
                 e.state = S(State::Loading);
+                ++m_counters.misses;
+                const bool hashIt = m_hot;
                 lk.unlock();
                 std::int64_t st = 0, sz = -1;
                 StatFile(e.path, st, sz);
+                const std::uint64_t hh = hashIt ? HashFile(e.path) : 0;
                 std::string err;
                 std::shared_ptr<void> data = RunLoader(rec.load, e.path, err);
                 lk.lock();
@@ -220,9 +240,14 @@ void AssetManager::WorkerMain() {
                     e.bytes = rec.size(data.get());
                     e.stamp = st;
                     e.fileSize = sz;
+                    e.hash = hh;
+                    e.lastUse = ++m_tick;
+                    ++m_counters.loads;
                     e.state.store(S(State::Ready), std::memory_order_release);
+                    if (m_budget) PinLocked(job.entry);
                 } else {
                     e.error = err;
+                    ++m_counters.failures;
                     FinishFailedLocked(job.entry);
                 }
             }
@@ -254,20 +279,23 @@ AssetManager::EntryPtr AssetManager::AcquireSync(std::type_index t, const std::s
             e = std::make_shared<Entry>(t, key, open);
             slot = e;
             e->state = S(State::Loading);
+            ++m_counters.misses;
             break;
         }
         int s = e->state.load();
-        if (s == S(State::Ready)) return e;
+        if (s == S(State::Ready)) { ++m_counters.hits; e->lastUse = ++m_tick; return e; }
         if (s == S(State::Failed)) { slot.reset(); continue; }
         if (s == S(State::Pending)) { e->state = S(State::Loading); break; }   // claim it from the queue
         m_entryCv.wait(lk, [&] { return e->state.load() != S(State::Loading); });
         if (e->state.load() == S(State::Ready)) return e;
         if (e->state.load() == S(State::Failed)) { if (error) *error = e->error; return nullptr; }
     }
+    const bool hashIt = m_hot;
     lk.unlock();
 
     std::int64_t stamp = 0, size = -1;
     StatFile(open, stamp, size);
+    const std::uint64_t hh = hashIt ? HashFile(open) : 0;
     std::string err;
     std::shared_ptr<void> data = RunLoader(rec.load, open, err);
 
@@ -277,9 +305,14 @@ AssetManager::EntryPtr AssetManager::AcquireSync(std::type_index t, const std::s
         e->bytes = rec.size(data.get());
         e->stamp = stamp;
         e->fileSize = size;
+        e->hash = hh;
+        e->lastUse = ++m_tick;
+        ++m_counters.loads;
         e->state.store(S(State::Ready), std::memory_order_release);
+        if (m_budget) PinLocked(e);
     } else {
         e->error = err;
+        ++m_counters.failures;
         FinishFailedLocked(e);
     }
     lk.unlock();
@@ -335,7 +368,7 @@ AssetManager::EntryPtr AssetManager::FindEntry(std::type_index t, const std::str
     auto it = m_cache.find(Key(t, Normalize(path)));
     if (it == m_cache.end()) return nullptr;
     EntryPtr e = it->second.lock();
-    if (e && e->state.load() == S(State::Ready)) return e;
+    if (e && e->state.load() == S(State::Ready)) { e->lastUse = ++m_tick; return e; }
     return nullptr;
 }
 
@@ -379,12 +412,18 @@ int AssetManager::Pump() {
                 e.reloading = false;
                 LoaderRec rec;
                 auto li = m_loaders.find(e.type);
-                if (d.data && li != m_loaders.end() && e.state.load() == S(State::Ready)) {
+                if (d.unchanged) {
+                    e.stamp = d.stamp;          // same bytes: remember the new time so the next scan is quiet
+                    e.fileSize = d.size;
+                    ++m_counters.reloadsSkippedSameHash;
+                } else if (d.data && li != m_loaders.end() && e.state.load() == S(State::Ready)) {
                     li->second.assign(e.data.get(), d.data.get());
                     e.bytes = li->second.size(e.data.get());
                     e.stamp = d.stamp;
                     e.fileSize = d.size;
+                    e.hash = d.hash;
                     e.version.fetch_add(1);
+                    ++m_counters.reloads;
                     reloaded.emplace_back(e.key, li->second.name);
                 } else if (!d.data) {
                     e.stamp = d.stamp;          // failed re-decode: keep the old data, retry on the next change
@@ -405,6 +444,10 @@ int AssetManager::Pump() {
             ++handled;
         }
         for (Done& d : deferred) m_done.push_back(std::move(d));
+        if (m_budget) {
+            EvictLocked(m_frameMark);
+            m_frameMark = m_tick;
+        }
         if (m_jobs.empty() && m_done.empty() && m_batchFinished >= m_batchSubmitted) m_batchSubmitted = m_batchFinished = 0;
     }
     m_entryCv.notify_all();
@@ -438,6 +481,161 @@ void AssetManager::SetReloadCallback(std::function<void(const std::string&, cons
     m_onReload = std::move(cb);
 }
 
+// --- Budget, pins, external caches, stats ---------------------------------------------
+
+void AssetManager::PinLocked(const EntryPtr& e) {
+    if (e->pinned) return;
+    e->pinned = true;
+    m_pins.push_back(e);
+}
+
+void AssetManager::UnpinAllLocked() {
+    for (auto& p : m_pins) p->pinned = false;
+    m_pins.clear();
+}
+
+std::size_t AssetManager::OwnBytesLocked() const {
+    std::size_t n = 0;
+    for (const auto& kv : m_cache) {
+        EntryPtr e = kv.second.lock();
+        if (e && e->state.load() == S(State::Ready)) n += e->bytes.load();
+    }
+    return n;
+}
+
+// Drops pins nobody else holds (use_count 1 = the pin only), least recently used first, while the total is over budget.
+// Assets used after `maxLastUse` are skipped. Externals are trimmed last, to what is left of the budget.
+std::size_t AssetManager::EvictLocked(std::uint64_t maxLastUse) {
+    if (!m_budget) return 0;
+    std::size_t extBytes = 0;
+    for (const auto& x : m_externals) extBytes += x.bytes ? x.bytes() : 0;
+    std::size_t own = OwnBytesLocked(), dropped = 0;
+    while (own + extBytes > m_budget) {
+        std::size_t best = m_pins.size();
+        for (std::size_t i = 0; i < m_pins.size(); ++i) {
+            if (m_pins[i].use_count() != 1 || m_pins[i]->lastUse > maxLastUse) continue;
+            if (best == m_pins.size() || m_pins[i]->lastUse < m_pins[best]->lastUse) best = i;
+        }
+        if (best == m_pins.size()) break;
+        own -= std::min(own, m_pins[best]->bytes.load());
+        m_pins.erase(m_pins.begin() + static_cast<std::ptrdiff_t>(best));   // last reference: the asset is freed
+        ++dropped;
+        ++m_counters.evictions;
+    }
+    if (own + extBytes > m_budget && extBytes > 0) {
+        const std::size_t room = m_budget > own ? m_budget - own : 0;
+        for (const auto& x : m_externals) {
+            const std::size_t b = x.bytes ? x.bytes() : 0;
+            if (b && x.trim) x.trim(static_cast<std::size_t>(static_cast<double>(room) * static_cast<double>(b) / static_cast<double>(extBytes)));
+        }
+    }
+    return dropped;
+}
+
+void AssetManager::SetBudget(std::size_t bytes) {
+    std::lock_guard<std::mutex> lk(m_mutex);
+    m_budget = bytes;
+    if (!bytes) { UnpinAllLocked(); return; }
+    for (auto& kv : m_cache) {
+        EntryPtr e = kv.second.lock();
+        if (e && e->state.load() == S(State::Ready)) PinLocked(e);
+    }
+    m_frameMark = m_tick;   // what was loaded before the budget is not evicted until a later Pump
+}
+
+std::size_t AssetManager::Budget() const {
+    std::lock_guard<std::mutex> lk(m_mutex);
+    return m_budget;
+}
+
+std::size_t AssetManager::Trim() {
+    std::lock_guard<std::mutex> lk(m_mutex);
+    return EvictLocked(m_tick);
+}
+
+std::size_t AssetManager::EvictUnused() {
+    std::lock_guard<std::mutex> lk(m_mutex);
+    std::size_t n = 0;
+    for (std::size_t i = 0; i < m_pins.size();) {
+        if (m_pins[i].use_count() == 1) { m_pins[i]->pinned = false; m_pins.erase(m_pins.begin() + static_cast<std::ptrdiff_t>(i)); ++n; ++m_counters.evictions; }
+        else ++i;
+    }
+    return n;
+}
+
+void AssetManager::RegisterExternalCache(AssetExternalCache cache) {
+    std::lock_guard<std::mutex> lk(m_mutex);
+    for (auto& x : m_externals) if (x.name == cache.name) { x = std::move(cache); return; }
+    m_externals.push_back(std::move(cache));
+}
+
+AssetManager::EntryPtr AssetManager::AdoptEntry(std::type_index t, const std::string& key, std::shared_ptr<void> obj,
+                                                const std::string& watchPath) {
+    if (!obj) return nullptr;
+    std::lock_guard<std::mutex> lk(m_mutex);
+    const std::string k = Normalize(key);
+    auto& slot = m_cache[Key(t, k)];
+    EntryPtr e = slot.lock();
+    std::size_t bytes = 0;
+    auto li = m_loaders.find(t);
+    if (li != m_loaders.end()) bytes = li->second.size(obj.get());
+    if (!e || e->data != obj || e->state.load() != S(State::Ready)) {
+        e = std::make_shared<Entry>(t, k, watchPath.empty() ? std::string() : Normalize(watchPath, false));
+        e->data = obj;
+        slot = e;
+        ++m_counters.loads;
+    }
+    e->bytes = bytes;
+    if (!e->path.empty()) {
+        StatFile(e->path, e->stamp, e->fileSize);
+        e->hash = m_hot ? HashFile(e->path) : 0;
+    }
+    e->lastUse = ++m_tick;
+    e->state.store(S(State::Ready), std::memory_order_release);
+    if (m_budget) PinLocked(e);
+    return e;
+}
+
+AssetStats AssetManager::Stats() const {
+    std::lock_guard<std::mutex> lk(m_mutex);
+    AssetStats s = m_counters;
+    s.budget = m_budget;
+    for (const auto& kv : m_cache) {
+        EntryPtr e = kv.second.lock();
+        if (e && e->state.load() == S(State::Ready)) { ++s.entries; s.residentBytes += e->bytes.load(); }
+    }
+    s.pinnedCount = m_pins.size();
+    for (const auto& p : m_pins) s.pinnedBytes += p->bytes.load();
+    for (const auto& x : m_externals) {
+        AssetStats::External ex;
+        ex.name = x.name;
+        ex.bytes = x.bytes ? x.bytes() : 0;
+        ex.count = x.count ? x.count() : 0;
+        s.externalBytes += ex.bytes;
+        s.externals.push_back(std::move(ex));
+    }
+    return s;
+}
+
+std::string AssetStats::ToString() const {
+    std::ostringstream o;
+    o << "Asset cache: " << entries << " assets, " << residentBytes << " bytes";
+    if (budget) o << ", budget " << budget << " bytes (total with other caches " << TotalBytes() << ")";
+    else o << ", budget unlimited";
+    o << "\n  hits " << hits << ", misses " << misses << ", loads " << loads << ", failures " << failures
+      << ", evictions " << evictions << ", reloads " << reloads << ", reloads skipped (same bytes) " << reloadsSkippedSameHash << "\n";
+    if (pinnedCount) o << "  kept alive for the cache: " << pinnedCount << " (" << pinnedBytes << " bytes)\n";
+    for (const auto& x : externals) o << "  " << x.name << ": " << x.count << " items, " << x.bytes << " bytes\n";
+    return o.str();
+}
+
+void RegisterAssetCache(const std::string& name, std::function<std::size_t()> bytes, std::function<std::size_t()> count,
+                        std::function<void(std::size_t)> trim, std::function<void()> clear) {
+    AssetExternalCache c;
+    c.name = name; c.bytes = std::move(bytes); c.count = std::move(count); c.trim = std::move(trim); c.clear = std::move(clear);
+    AssetManager::Instance().RegisterExternalCache(std::move(c));
+}
+
 // --- Housekeeping --------------------------------------------------------------------
 
 void AssetManager::Purge() {
@@ -465,8 +663,9 @@ AssetReport AssetManager::Report() const {
         it.key = e->key;
         it.type = li != m_loaders.end() ? li->second.name : e->type.name();
         it.bytes = e->bytes.load();
-        it.refs = std::max<long>(0, e.use_count() - 1);
+        it.refs = std::max<long>(0, e.use_count() - 1 - (e->pinned ? 1 : 0));
         it.version = e->version.load();
+        it.pinned = e->pinned;
         int s = e->state.load();
         it.loading = s == S(State::Pending) || s == S(State::Loading);
         if (it.loading) ++r.loadingCount; else ++r.loadedCount;
@@ -490,7 +689,7 @@ std::string AssetReport::ToString() const {
     for (const auto& t : types) o << "  " << t.type << ": " << t.count << " (" << t.bytes << " bytes)\n";
     for (const auto& i : items)
         o << "  " << i.key << " [" << i.type << "] " << i.bytes << " bytes, refs " << i.refs
-          << (i.loading ? ", loading" : "") << (i.version ? ", reloaded " + std::to_string(i.version) + "x" : "") << "\n";
+          << (i.loading ? ", loading" : "") << (i.pinned ? ", cached" : "") << (i.version ? ", reloaded " + std::to_string(i.version) + "x" : "") << "\n";
     return o.str();
 }
 

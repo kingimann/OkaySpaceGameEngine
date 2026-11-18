@@ -19,6 +19,7 @@
 #include "okay/Graphics/Image.hpp"
 #include "okay/Render/ProcTexture.hpp"
 #include "okay/Core/Profiler.hpp"
+#include "okay/Core/AssetCacheBridge.hpp"
 #include "okay/Core/Time.hpp"
 #include <algorithm>
 #include <cmath>
@@ -833,10 +834,31 @@ inline void RegisterTexture(const std::string& name, Image img) {
     TextureCacheMap()[name] = std::move(img);
 }
 
+inline void InvalidateAllTextureCaches();
+
+// Tells the AssetManager about the picture cache once, so its size shows in the asset stats and the memory budget can
+// drop pictures read from files (they are read again when next drawn; pictures registered by name stay).
+inline void RegisterTextureCacheWithAssetManager() {
+    static const bool done = [] {
+        RegisterAssetCache("textures",
+            [] { std::size_t n = 0; for (const auto& kv : TextureCacheMap()) n += kv.second.Pixels().size(); return n; },
+            [] { return TextureCacheMap().size(); },
+            [](std::size_t target) {
+                std::size_t file = 0, other = 0;
+                for (const auto& kv : TextureCacheMap()) (!kv.first.empty() && kv.first[0] == '@' ? other : file) += kv.second.Pixels().size();
+                if (file + other > target && file > 0) InvalidateAllTextureCaches();
+            },
+            [] { InvalidateAllTextureCaches(); });
+        return true;
+    }();
+    (void)done;
+}
+
 inline Image* GetCachedTexture(const std::string& path) {
     auto& cache = TextureCacheMap();
     auto it = cache.find(path);
     if (it == cache.end()) {
+        RegisterTextureCacheWithAssetManager();
         Image img;
         if (path.rfind("proc:", 0) == 0)
             img = GenerateProcTexture(path);   // built-in procedural (no file)

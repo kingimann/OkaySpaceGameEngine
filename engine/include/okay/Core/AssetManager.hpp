@@ -38,6 +38,9 @@ struct Entry {
     // Guarded by the manager's mutex:
     std::int64_t stamp = 0;                  // file mtime (ticks) at last (re)load attempt
     std::int64_t fileSize = -1;
+    std::uint64_t hash = 0;                  // FNV-1a of the file when it was read (0 = not hashed)
+    std::uint64_t lastUse = 0;               // manager tick of the last Get/Find (LRU order)
+    bool pinned = false;                     // the manager itself holds a reference (budget cache)
     bool reloading = false;
     std::vector<std::function<void(const std::shared_ptr<Entry>&, const std::string&)>> waiters;
 };
@@ -62,6 +65,8 @@ public:
     const std::string& Path() const { static const std::string e; return m_e ? m_e->key : e; }
     std::uint64_t Version() const { return m_e ? m_e->version.load() : 0; }
     long UseCount() const { return m_e ? m_e.use_count() : 0; }
+    /// A shared_ptr to the asset that keeps the cache entry alive (for APIs that hand out shared_ptr<const T>).
+    std::shared_ptr<T> Shared() const { return Ready() ? std::shared_ptr<T>(m_e, static_cast<T*>(m_e->data.get())) : nullptr; }
     void Reset() { m_e.reset(); }
     bool operator==(const AssetHandle& o) const { return m_e == o.m_e; }
     bool operator!=(const AssetHandle& o) const { return m_e != o.m_e; }
@@ -71,9 +76,33 @@ private:
     std::shared_ptr<assets_detail::Entry> m_e;
 };
 
+/// Counters and sizes of the whole manager (AssetManager::Stats()). The counters start at 0 and only grow.
+struct AssetStats {
+    std::uint64_t hits = 0, misses = 0, loads = 0, failures = 0, evictions = 0, reloads = 0, reloadsSkippedSameHash = 0;
+    std::size_t budget = 0;          ///< bytes; 0 = unlimited
+    std::size_t entries = 0;         ///< live cached assets of the manager itself
+    std::size_t residentBytes = 0;   ///< bytes of those assets
+    std::size_t pinnedCount = 0, pinnedBytes = 0;   ///< assets the manager keeps alive for the budget cache
+    struct External { std::string name; std::size_t count = 0, bytes = 0; };
+    std::vector<External> externals; ///< caches that report into the manager (audio clips, textures)
+    std::size_t externalBytes = 0;
+    std::size_t TotalBytes() const { return residentBytes + externalBytes; }
+    std::string ToString() const;
+};
+
+/// A cache that lives elsewhere (the audio decode cache, the picture cache) but reports its size to the manager and
+/// lets the manager's budget trim it. All callbacks run on the thread that calls Pump() / Trim().
+struct AssetExternalCache {
+    std::string name;
+    std::function<std::size_t()> bytes;                        ///< current size
+    std::function<std::size_t()> count;                        ///< number of items
+    std::function<void(std::size_t targetBytes)> trim;         ///< drop least useful items until at most targetBytes (best effort)
+    std::function<void()> clear;                               ///< drop everything
+};
+
 /// Usage report row/summary.
 struct AssetReport {
-    struct Item { std::string key, type; std::size_t bytes = 0; long refs = 0; bool loading = false; std::uint64_t version = 0; };
+    struct Item { std::string key, type; std::size_t bytes = 0; long refs = 0; bool loading = false; std::uint64_t version = 0; bool pinned = false; };
     struct TypeTotal { std::string type; std::size_t count = 0, bytes = 0; };
     std::vector<Item> items;
     std::vector<TypeTotal> types;
@@ -161,9 +190,35 @@ public:
     /// and size (at most every `intervalSeconds`) and re-decodes changed files on the
     /// worker thread. The new data is moved into the existing object, so handles stay
     /// valid; code reading the asset should run on the thread that calls Pump().
+    /// A changed modification time or size is only the first hint: the file is then hashed (FNV-1a 64) and a rewrite with
+    /// identical bytes (a "touch", a save with no change) is NOT decoded again. Assets loaded while hot reload was off have
+    /// no hash yet and are re-decoded on the first change.
     void SetHotReload(bool enabled, double intervalSeconds = 0.5);
     /// Called from Pump() after an asset was reloaded in place.
     void SetReloadCallback(std::function<void(const std::string& key, const std::string& typeName)> cb);
+
+    // --- Memory budget ------------------------------------------------------------
+    /// 0 (the default) = unlimited: nothing changes, an asset is freed with its last handle. With a budget in bytes the manager
+    /// keeps every loaded asset alive after its last handle goes (a real cache) and, when the total is over the budget, drops the
+    /// least recently used assets nobody else holds. Held handles are never evicted. Eviction happens in Pump() (never for an
+    /// asset used since the previous Pump, so raw pointers used this frame stay valid) and in Trim().
+    void SetBudget(std::size_t bytes);
+    std::size_t Budget() const;
+    /// Evicts now (even assets used this frame) until the total fits the budget; returns assets dropped. Call where nothing
+    /// holds a raw pointer into an asset.
+    std::size_t Trim();
+    /// Drops every asset the manager keeps alive only for the cache (handles in use stay). Returns assets dropped.
+    std::size_t EvictUnused();
+    /// Registers a cache that reports into the manager and is trimmed with it. Same name replaces.
+    void RegisterExternalCache(AssetExternalCache cache);
+    /// Registers an already-decoded object under `key` (a "cache hit" for later Get). The object stays valid and shared; `watchPath`
+    /// (optional) is the file the hot reload watches, and reload re-decodes it through the registered loader and moves the result
+    /// into `obj`.
+    template <class T>
+    AssetHandle<T> Adopt(const std::string& key, std::shared_ptr<T> obj, const std::string& watchPath = {}) {
+        return AssetHandle<T>(AdoptEntry(std::type_index(typeid(T)), key, std::static_pointer_cast<void>(obj), watchPath));
+    }
+    AssetStats Stats() const;
 
     // --- Housekeeping -------------------------------------------------------------
     /// Drops cache slots whose assets are gone (happens lazily anyway).
@@ -182,8 +237,8 @@ private:
     using Key = std::pair<std::type_index, std::string>;
     struct Job { EntryPtr entry; bool reload = false; };
     struct Done {
-        EntryPtr entry; bool reload = false, counted = false;
-        std::shared_ptr<void> data; std::string error; std::int64_t stamp = 0, size = -1;
+        EntryPtr entry; bool reload = false, counted = false, unchanged = false;
+        std::shared_ptr<void> data; std::string error; std::int64_t stamp = 0, size = -1; std::uint64_t hash = 0;
     };
 
     void AddLoader(std::type_index t, LoaderRec r);
@@ -196,6 +251,11 @@ private:
     void WorkerMain();
     bool LoaderFor(std::type_index t, LoaderRec& out) const;   // locks
     void CompleteLocked(const EntryPtr& e, const LoaderRec& rec, std::shared_ptr<void> data);
+    EntryPtr AdoptEntry(std::type_index t, const std::string& key, std::shared_ptr<void> obj, const std::string& watchPath);
+    void PinLocked(const EntryPtr& e);
+    void UnpinAllLocked();
+    std::size_t EvictLocked(std::uint64_t maxLastUse);   // pins nobody else holds, least recently used first, until under budget
+    std::size_t OwnBytesLocked() const;
 
     mutable std::mutex m_mutex;
     std::condition_variable m_entryCv;    // an entry left Loading
@@ -206,6 +266,11 @@ private:
     std::deque<Done> m_done;
     std::thread m_worker;
     bool m_stop = false;
+    std::size_t m_budget = 0;
+    std::uint64_t m_tick = 0, m_frameMark = 0;
+    std::vector<EntryPtr> m_pins;
+    std::vector<AssetExternalCache> m_externals;
+    AssetStats m_counters;
     int m_batchSubmitted = 0, m_batchFinished = 0;
     bool m_hot = false;
     double m_hotInterval = 0.5;

@@ -44,6 +44,8 @@ public:
     bool Save(const std::string& path) const;
     /// False (fields untouched) if the file can't be opened.
     bool Load(const std::string& path);
+    /// For the cache (DataAsset::Cached and the asset manager's loader): marks the fields as read from a file.
+    void MarkLoaded() { m_loaded = true; }
 
     /// Base directory prepended to relative paths when a bare path isn't found
     /// (the windowed runtime sets this to where the game's files live).

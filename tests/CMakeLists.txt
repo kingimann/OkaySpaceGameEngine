@@ -4340,3 +4340,8 @@ foreach(vs_usage_test vs_easy_ops vs_start vs_hints vs_plain_words vs_what_happe
         add_test(NAME ${vs_usage_test} COMMAND test_${vs_usage_test})
     endif()
 endforeach()
+
+# Asset manager memory budget (LRU), hash-checked hot reload, stats; DataAsset / audio / picture caches reporting into it.
+add_executable(test_asset_cache test_asset_cache.cpp)
+target_link_libraries(test_asset_cache PRIVATE okay::engine)
+add_test(NAME asset_cache COMMAND test_asset_cache)

@@ -1,5 +1,6 @@
 #include "okay/Core/DataAsset.hpp"
 #include "okay/Core/SaveData.hpp"
+#include "okay/Core/AssetManager.hpp"
 #include <fstream>
 #include <sstream>
 #include <unordered_map>
@@ -12,7 +13,18 @@
 namespace okay {
 namespace {
 std::string g_baseDir;
-std::unordered_map<std::string, DataAsset> g_cache;
+// One slot per path. The slot owns the asset (its address never changes, so a reference a script holds stays valid) and
+// the handle that registers it with the AssetManager (report, memory stats, hot reload by file hash). The handle also
+// keeps the manager's entry alive, so the asset is never evicted by the memory budget.
+struct Slot {
+    std::shared_ptr<DataAsset> obj = std::make_shared<DataAsset>();
+    AssetHandle<DataAsset> handle;
+};
+std::unordered_map<std::string, Slot> g_cache;
+
+void Register(const std::string& path, Slot& s) {
+    s.handle = AssetManager::Instance().Adopt<DataAsset>("data:" + path, s.obj, path);
+}
 
 std::string Trim(const std::string& s) {
     std::size_t a = s.find_first_not_of(" \t\r\n");
@@ -136,10 +148,12 @@ void DataAsset::SetBaseDir(const std::string& dir) { g_baseDir = dir; }
 const std::string& DataAsset::BaseDir() { return g_baseDir; }
 
 DataAsset& DataAsset::Cached(const std::string& path) {
-    DataAsset& a = g_cache[path];
+    Slot& s = g_cache[path];
+    DataAsset& a = *s.obj;
     // An entry whose file wasn't there is only a place for scripts to Set() into: while
     // it is still untouched, every call tries the file again, so creating it later works.
-    if (!a.m_loaded && a.m_fields.empty() && a.Load(path)) a.m_loaded = true;
+    if (!a.m_loaded && a.m_fields.empty() && a.Load(path)) { a.m_loaded = true; Register(path, s); }
+    else if (!s.handle && a.m_loaded) Register(path, s);
     return a;
 }
 
@@ -147,7 +161,9 @@ bool DataAsset::Reload(const std::string& path) {
     DataAsset a;
     if (!a.Load(path)) return false;     // keep what was cached
     a.m_loaded = true;
-    g_cache[path] = std::move(a);        // assigned in place: earlier references stay valid
+    Slot& s = g_cache[path];
+    *s.obj = std::move(a);               // assigned in place: earlier references stay valid
+    Register(path, s);
     return true;
 }
 
@@ -156,11 +172,11 @@ bool DataAsset::Reload(const std::string& path) {
 void DataAsset::Invalidate(const std::string& path) {
     auto it = g_cache.find(path);
     if (it == g_cache.end()) return;
-    it->second.m_fields.clear();
-    it->second.m_loaded = false;
+    it->second.obj->m_fields.clear();
+    it->second.obj->m_loaded = false;
 }
 void DataAsset::InvalidateAll() {
-    for (auto& kv : g_cache) { kv.second.m_fields.clear(); kv.second.m_loaded = false; }
+    for (auto& kv : g_cache) { kv.second.obj->m_fields.clear(); kv.second.obj->m_loaded = false; }
 }
 
 } // namespace okay

@@ -7,6 +7,7 @@
 #include "okay/Audio/FlacDecoder.hpp"
 #include "okay/Audio/Mp3Decoder.hpp"
 #include "okay/Audio/VorbisDecoder.hpp"
+#include "okay/Core/AssetCacheBridge.hpp"
 #include "okay/Core/ImportSidecar.hpp"
 #include "okay/Core/Log.hpp"
 #include "okay/Debug/DebugUtil.hpp"
@@ -149,6 +150,12 @@ std::size_t EntryBytes(const CacheEntry& e) { return e.clip ? e.clip->samples.si
 }  // namespace
 
 std::shared_ptr<const AudioClip> AudioClip::LoadCached(const std::string& path, int rate, std::string* error, bool downmix) {
+    static const bool registered = [] {   // the decode cache reports to the AssetManager (stats, memory budget)
+        RegisterAssetCache("audio clips", [] { return AudioClip::CacheBytes(); }, [] { return AudioClip::CacheCount(); },
+                           [](std::size_t target) { AudioClip::TrimCache(target); }, [] { AudioClip::ClearCache(); });
+        return true;
+    }();
+    (void)registered;
     const bool mono = downmix || ReadAudioImportOptions(path).forceMono;
     const auto key = std::make_pair(CacheName(path) + (mono ? "\n:mono" : ""), rate);
     std::uintmax_t size = 0; std::int64_t time = 0;

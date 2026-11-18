@@ -374,6 +374,10 @@ struct PlatformIO {
 struct WindowRef;   // OkayUIInternals.hpp
 PlatformIO& GetPlatformIO();
 typedef PlatformIO ImGuiPlatformIO;
+/// Popups by id (the value GetID(name) returns; a popup opened or begun by name has the same id, so the forms can be mixed). BeginPopupEx takes
+/// window flags (accepted: a popup here is always auto-sized and has no title bar) and is true while the popup is open.
+void OpenPopup(unsigned id, int flags = 0);
+bool BeginPopupEx(unsigned id, int flags);
 /// Close the open popups from stack depth `level` outward (0 closes all of them). `restoreFocus` is accepted and not used.
 void ClosePopupToLevel(int level, bool restoreFocus);
 /// DockContextQueueUndockWindow(ctx, window): make the window a floating one at its current place (OkayUIDock.hpp's layout). The context

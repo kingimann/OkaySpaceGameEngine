@@ -188,5 +188,21 @@ int main() {
         CHECK(!ImGui::DockContextQueueUndockWindow(ImGui::GetCurrentContext(), &ref) && !ImGui::DockContextQueueUndockWindow(nullptr, nullptr));
         static_assert(ImGuiAxis_Y == 1 && ImGuiSortDirection_Ascending == 1 && ImGuiTableBgTarget_CellBg == OkayUI::TableBg_CellBg, "names");
     }
+    {   // popups by id: OpenPopup(GetID(name)) opens the popup BeginPopup(name) / BeginPopupEx(id) draws
+        Reset(); Sim s(300, 200);
+        bool opened = false; int bodies = 0, bodiesEx = 0;
+        auto ui = [&] {
+            OkayUI::BareNextWindow();
+            if (OkayUI::Begin("w", 0, 0, 300, 200)) {
+                const ImGuiID id = OkayUI::GetID("##byid");
+                if (!opened) { ImGui::OpenPopup(id); opened = true; }
+                if (OkayUI::BeginPopup("##byid")) { ++bodies; OkayUI::Text("named"); OkayUI::EndPopup(); }
+                if (ImGui::BeginPopupEx(id, ImGuiWindowFlags_AlwaysAutoResize | ImGuiWindowFlags_NoTitleBar)) { ++bodiesEx; OkayUI::Text("by id"); OkayUI::EndPopup(); }
+            }
+            OkayUI::End();
+        };
+        s.Frames(4, ui);
+        CHECK(bodies > 0 && bodiesEx > 0 && OkayUI::IsPopupOpen("##byid"));
+    }
     TEST_MAIN_RESULT();
 }

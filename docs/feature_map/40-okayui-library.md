@@ -182,7 +182,7 @@ OkayUI is the one own UI toolkit that is meant to replace Dear ImGui over time (
 - **API:** `OkayUI::SetNextWindowBgAlpha`, `OkayUI::SetNextWindowCollapsed`, `OkayUI::PushMultiItemsWidths`, `OkayUI::StyleColorsLight`, `OkayUI::DrawList::AddImageRounded`, `OkayUI::BeginChild`
 - **Editor:** none (library only)
 - **Docs:** `docs/own_ui_toolkit.md` (section 6.10)
-- **Tests:** `okayui_calls`, `okayui_names`, `okayui_port_console`, `okayui_port_project`, `okayui_port_versions`
+- **Tests:** `okayui_calls`, `okayui_names`, `okayui_port_console`, `okayui_port_project`, `okayui_port_versions`, `okayui_port_project2`, `okayui_port_scenemanager`
 - **Status:** Works - implemented and tested headless (golden images for the three colour presets); not run in the real editor or launcher. Textured draw-list calls are checked on the draw data only (the software backend skips textures)
 - **Open:** `AddImageRounded` rounds corners only for images; `AddRect` has no per-corner flags and `AddPolyline` no `Closed` flag; hover delays are accepted and ignored; Middle mouse never fires; `Child_AutoResizeX` and resizable children are accepted and ignored; `NewFrame`, the platform and viewport calls and the dock node internals are not offered
 - **Related:** 40.8

@@ -9,11 +9,11 @@ by name: a call counts as available when OkayUI declares a function of that name
 
 | What | Distinct | Call sites | Available in OkayUI | Coverage of call sites |
 |---|---:|---:|---:|---:|
-| `ImGui::` calls | 264 | 28025 | 28016 | 100.0% |
+| `ImGui::` calls | 264 | 28025 | 28017 | 100.0% |
 | ImGui types, flags, enums | 330 | 12464 | 12437 | 99.8% |
 | Draw-list methods | 26 | 2413 | 2413 | 100.0% |
 
-Distinct calls available: 257 of 264.
+Distinct calls available: 258 of 264.
 Distinct types, flags and enums available: 325 of 330.
 
 ## Missing `ImGui::` calls, ranked by use
@@ -22,11 +22,10 @@ Distinct types, flags and enums available: 325 of 330.
 |---:|---|---:|---:|---|
 | 1 | `DockNodeGetRootNode` | 2 | 1 | editor/main.cpp (2) |
 | 2 | `GetFontTexUvWhitePixel` | 2 | 2 | editor/SplineTools.cpp (1), editor/UIPreviewPainter.cpp (1) |
-| 3 | `BeginPopupEx` | 1 | 1 | editor/main.cpp (1) |
-| 4 | `DockNodeBeginAmendTabBar` | 1 | 1 | editor/main.cpp (1) |
-| 5 | `DockNodeEndAmendTabBar` | 1 | 1 | editor/main.cpp (1) |
-| 6 | `GetWindowDockNode` | 1 | 1 | editor/main.cpp (1) |
-| 7 | `TabBarFindTabByID` | 1 | 1 | editor/main.cpp (1) |
+| 3 | `DockNodeBeginAmendTabBar` | 1 | 1 | editor/main.cpp (1) |
+| 4 | `DockNodeEndAmendTabBar` | 1 | 1 | editor/main.cpp (1) |
+| 5 | `GetWindowDockNode` | 1 | 1 | editor/main.cpp (1) |
+| 6 | `TabBarFindTabByID` | 1 | 1 | editor/main.cpp (1) |
 
 Missing draw-list methods: none.
 
@@ -91,7 +90,7 @@ Missing draw-list methods: none.
 | `editor/VisualScriptEditor.hpp` | 721 | 721 | 100.0% |  |
 | `editor/AnimatorWindow.cpp` | 739 | 739 | 100.0% |  |
 | `launcher/main.cpp` | 7215 | 7215 | 100.0% |  |
-| `editor/main.cpp` | 13786 | 13779 | 99.9% | DockNodeGetRootNode (2), DockNodeBeginAmendTabBar (1), DockNodeEndAmendTabBar (1), BeginPopupEx (1), TabBarFindTabByID (1), GetWindowDockNode (1) |
+| `editor/main.cpp` | 13786 | 13780 | 100.0% | DockNodeGetRootNode (2), DockNodeBeginAmendTabBar (1), DockNodeEndAmendTabBar (1), TabBarFindTabByID (1), GetWindowDockNode (1) |
 
 ## Smallest screens by call count that are fully or almost fully coverable
 
@@ -230,7 +229,7 @@ The ported functions above hold 182 of the 28025 `ImGui::` call sites counted (0
 | `RenderChatVoice` | `launcher/main.cpp:5539` | 28 | 100.0% |  |
 | `DrawAnimationEditor` | `editor/main.cpp:24921` | 29 | 96.6% | GetWindowDockNode (1) |
 | `DrawSideTabStrip` | `editor/main.cpp:6120` | 29 | 100.0% |  |
-| `DrawTabOverflow` | `editor/main.cpp:6019` | 29 | 89.7% | DockNodeBeginAmendTabBar (1), DockNodeEndAmendTabBar (1), BeginPopupEx (1) |
+| `DrawTabOverflow` | `editor/main.cpp:6019` | 29 | 93.1% | DockNodeBeginAmendTabBar (1), DockNodeEndAmendTabBar (1) |
 | `DrawReportPopup` | `launcher/main.cpp:14289` | 29 | 100.0% |  |
 | `DrawTimeline` | `editor/TimelineWindow.cpp:1430` | 30 | 100.0% |  |
 | `ChatMsgToolbar` | `launcher/main.cpp:6662` | 30 | 100.0% |  |
@@ -378,4 +377,4 @@ The ported functions above hold 182 of the 28025 `ImGui::` call sites counted (0
 | `main` | `launcher/main.cpp:18110` | 3567 | 100.0% |  |
 | `DrawInspector` | `editor/main.cpp:30178` | 5938 | 100.0% |  |
 
-Of 250 screens listed: 247 are fully covered by name, 249 are at least 90% covered.
+Of 250 screens listed: 247 are fully covered by name, 250 are at least 90% covered.

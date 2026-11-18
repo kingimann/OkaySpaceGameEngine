@@ -4293,6 +4293,12 @@ void EndPopup() {
 }
 
 bool BeginPopup(const char* id) { return beginPopupBody(hashLabel(id)); }
+// By id (what GetID(name) gives, which is also how a named popup is keyed): the popup opened with the same name or id.
+void OpenPopup(unsigned id, int) {
+    PopupSlot* p = popupSlot((int)id, true);
+    if (p) { p->open = true; p->x = g_in.mouseX; p->y = g_in.mouseY; p->w = 0.0f; p->modal = false; g_openPopupThisFrame = p->id; }
+}
+bool BeginPopupEx(unsigned id, int flags) { (void)flags; return beginPopupBody((int)id); }
 
 bool IsPopupOpen(const char* name) {
     if (!name) return false;

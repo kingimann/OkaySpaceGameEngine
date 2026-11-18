@@ -104,14 +104,14 @@ inline const VsName kVsNames[] = {
     {"OnSceneVarChanged",VsNameKind::Event, "On Scene Value Changed","On Scene Var Changed",  "var variable scene", nullptr, 0, kPinValuePrevious, 2},
     {"OnGlobalVarChanged", VsNameKind::Event, "On Game Value Changed", "On Global Var Changed", "var variable global", nullptr, 0, kPinValuePrevious, 2},
     // Flow. oldTitle is the previous palette title, including the unit in brackets.
-    {"Branch",        VsNameKind::Action, "Branch",                 "Branch",            "", kPinCondition, 1, nullptr, 0},
-    {"Sequence",      VsNameKind::Action, "Sequence",               "Sequence",          "", nullptr, 0, nullptr, 0},
+    {"Branch",        VsNameKind::Action, "If Then Else",           "Branch",            "if condition choose decide", kPinCondition, 1, nullptr, 0},
+    {"Sequence",      VsNameKind::Action, "Do in Order",            "Sequence",          "one after another then steps", nullptr, 0, nullptr, 0},
     {"Once",          VsNameKind::Action, "Run Once",               "Once",              "", nullptr, 0, nullptr, 0},
     {"Timer",         VsNameKind::Action, "Every Seconds",          "Every (s)",         "Timer seconds", nullptr, 0, nullptr, 0},
     {"Wait",          VsNameKind::Action, "Wait Once",              "Wait (s)",          "Wait seconds", nullptr, 0, nullptr, 0},
     {"Delay",         VsNameKind::Action, "Wait Seconds",           "Delay (s)",         "Delay pause seconds", nullptr, 0, nullptr, 0},
     {"Cooldown",      VsNameKind::Action, "Cooldown",               "Cooldown (s)",      "seconds", nullptr, 0, nullptr, 0},
-    {"ForLoop",       VsNameKind::Action, "For Loop",               "For Loop",          "", nullptr, 0, nullptr, 0},
+    {"ForLoop",       VsNameKind::Action, "Repeat Counting",               "For Loop",          "", nullptr, 0, nullptr, 0},
     {"Repeat",        VsNameKind::Action, "Repeat",                 "Repeat N",          "count", nullptr, 0, nullptr, 0},
     {"FlipFlop",      VsNameKind::Action, "Flip Flop",              "Flip-Flop",         "A B toggle", nullptr, 0, nullptr, 0},
     {"Gate",          VsNameKind::Action, "Gate",                   "Gate",              "", nullptr, 0, nullptr, 0},
@@ -120,13 +120,13 @@ inline const VsName kVsNames[] = {
     {"ChanceBranch",  VsNameKind::Action, "Random Branch",          "Random Branch",     "Chance", nullptr, 0, nullptr, 0},
     {"Counter",       VsNameKind::Action, "Counter",                "Counter",           "", nullptr, 0, nullptr, 0},
     {"EveryN",        VsNameKind::Action, "Every Number of Times",  "Every N Times",     "EveryN", kPinTimes, 1, nullptr, 0},
-    {"FunctionStart", VsNameKind::Action, "Define Function",        "Function",          "", nullptr, 0, nullptr, 0},
+    {"FunctionStart", VsNameKind::Action, "Define Named Action",        "Function",          "", nullptr, 0, nullptr, 0},
     {"Return",        VsNameKind::Action, "Return",                 "Return",            "", nullptr, 0, nullptr, 0},
-    {"CallFunction",  VsNameKind::Action, "Call Function",          "Call Function",     "", nullptr, 0, nullptr, 0},
+    {"CallFunction",  VsNameKind::Action, "Run Named Action",          "Call Function",     "", nullptr, 0, nullptr, 0},
     {"While",         VsNameKind::Action, "While",                  "While",             "", kPinCondition, 1, nullptr, 0},
     {"ForEach",       VsNameKind::Action, "For Each",               "For Each",          "", nullptr, 0, nullptr, 0},
-    {"Break",         VsNameKind::Action, "Break Loop",             "Break",             "", nullptr, 0, nullptr, 0},
-    {"Continue",      VsNameKind::Action, "Continue Loop",          "Continue",          "", nullptr, 0, nullptr, 0},
+    {"Break",         VsNameKind::Action, "Stop Repeating",             "Break",             "", nullptr, 0, nullptr, 0},
+    {"Continue",      VsNameKind::Action, "Next Repeat",          "Continue",          "", nullptr, 0, nullptr, 0},
     // Nodes added on the logic-runtime branch. File tokens stay; these are the titles.
     {"OnInteract",       VsNameKind::Event, "On Interact",            "On Interact",            "interact", nullptr, 0, nullptr, 0},
     {"OnTagEnter",       VsNameKind::Event, "On Tag Enter",           "On Tag Enter",           "tag enter", nullptr, 0, nullptr, 0},
@@ -318,7 +318,7 @@ inline bool VsBannedWord(const std::string& lower) {
 }
 
 inline bool VsSmallWord(const std::string& lower) {
-    static const char* k[] = {"a", "and", "at", "by", "for", "in", "is", "of", "on", "or", "the", "to", "up"};
+    static const char* k[] = {"a", "and", "do", "if", "at", "by", "for", "in", "is", "of", "on", "or", "the", "to", "up"};
     for (const char* w : k) if (lower == w) return true;
     return false;
 }

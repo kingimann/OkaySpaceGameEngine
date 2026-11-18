@@ -9,6 +9,14 @@
 // Limits, so hostile text stays cheap even when it is parsed every frame (world text): text longer than
 // kRichTextMaxBytes is not parsed at all (shown as written, tags included), and at most kRichTextMaxDepth tags may be
 // open at once (a deeper opening tag is shown as text).
+// Links and icons (UI library slice 2):
+//   [url=target]click me[/url]   a link: drawn underlined in a link colour (an explicit [color] inside wins); the target is
+//                                handed to UIRichLinks when it is clicked (RichText::links[RichStyle::link]). The target may be
+//                                up to about 100 characters and holds no ']'. An empty target is shown as text.
+//   [icon=name]                  one glyph-sized picture inline: an item id from the item database (a coloured tile with its
+//                                first letter, or the item's own icon) or the path of an image. RichText::icons[RichStyle::icon]
+//                                holds the name. The plain text carries one placeholder character (U+0001) in its place, so
+//                                wrapping and alignment see a one-character-wide thing. Only screen-space UI text draws it.
 // Colour names: white black red green blue yellow orange gold cyan magenta purple pink gray.
 // A tag that is not one of these (or has a bad colour) is shown as ordinary text. "[[" shows a "[".
 // Tags nest; a closing tag with nothing open is shown as text.
@@ -31,9 +39,12 @@ struct RichStyle {
     std::uint8_t r = 255, g = 255, b = 255, a = 255;
     bool bold = false, italic = false;
     float size = 1.0f;   ///< scale of the text's size ([size=150] gives 1.5)
+    bool underline = false;   ///< drawn under the run (links)
+    int link = -1;       ///< index into RichText::links ([url=...]), -1 for none
+    int icon = -1;       ///< index into RichText::icons ([icon=...]), -1 for none
     bool operator==(const RichStyle& o) const {
         return hasColor == o.hasColor && (!hasColor || (r == o.r && g == o.g && b == o.b && a == o.a)) &&
-               bold == o.bold && italic == o.italic && size == o.size;
+               bold == o.bold && italic == o.italic && size == o.size && underline == o.underline && link == o.link && icon == o.icon;
     }
 };
 
@@ -42,7 +53,13 @@ struct RichStyle {
 struct RichText {
     std::string plain;
     std::vector<RichStyle> styles;
+    std::vector<std::string> links;   ///< the targets of [url=...] tags, in order of appearance
+    std::vector<std::string> icons;   ///< the names of [icon=...] tags, in order of appearance
 };
+/// The placeholder character an [icon=...] leaves in the plain text.
+constexpr char kRichIconChar = '\x01';
+/// The link colour used when a [url] has no [color] of its own.
+constexpr std::uint8_t kRichLinkR = 110, kRichLinkG = 180, kRichLinkB = 255;
 
 constexpr std::size_t kRichTextMaxBytes = 2000;
 constexpr int kRichTextMaxDepth = 16;
@@ -98,17 +115,20 @@ inline RichText ParseRichText(const std::string& marked) {
         }
         return out;
     }
-    struct Scope { char kind; RichStyle colour; };   // kind: 'c' colour, 'b' bold, 'i' italic, 's' size (colour.size)
+    struct Scope { char kind; RichStyle colour; };   // kind: 'c' colour, 'b' bold, 'i' italic, 's' size (colour.size), 'u' link (colour.link)
     std::vector<Scope> open;
     RichStyle cur;
     auto refresh = [&]() {
         cur = RichStyle();
+        bool explicitColour = false;
         for (const Scope& sc : open) {
-            if (sc.kind == 'c') { cur.hasColor = true; cur.r = sc.colour.r; cur.g = sc.colour.g; cur.b = sc.colour.b; cur.a = sc.colour.a; }
+            if (sc.kind == 'c') { cur.hasColor = true; explicitColour = true; cur.r = sc.colour.r; cur.g = sc.colour.g; cur.b = sc.colour.b; cur.a = sc.colour.a; }
             else if (sc.kind == 'b') cur.bold = true;
             else if (sc.kind == 's') cur.size *= sc.colour.size;
+            else if (sc.kind == 'u') { cur.link = sc.colour.link; cur.underline = true; }
             else cur.italic = true;
         }
+        if (cur.link >= 0 && !explicitColour) { cur.hasColor = true; cur.r = kRichLinkR; cur.g = kRichLinkG; cur.b = kRichLinkB; cur.a = 255; }
         cur.size = cur.size < kRichTextMinSize ? kRichTextMinSize : (cur.size > kRichTextMaxSize ? kRichTextMaxSize : cur.size);
     };
     for (std::size_t i = 0; i < marked.size();) {
@@ -116,7 +136,8 @@ inline RichText ParseRichText(const std::string& marked) {
         if (c == '[') {
             if (i + 1 < marked.size() && marked[i + 1] == '[') { out.plain.push_back('['); out.styles.push_back(cur); i += 2; continue; }
             const std::size_t close = marked.find(']', i + 1);
-            if (close != std::string::npos && close - i <= 24) {
+            const std::size_t lim = (marked.compare(i + 1, 4, "url=") == 0 || marked.compare(i + 1, 5, "icon=") == 0) ? 128 : 24;
+            if (close != std::string::npos && close - i <= lim) {
                 const std::string tag = marked.substr(i + 1, close - i - 1);
                 bool ok = false;
                 const bool room = (int)open.size() < kRichTextMaxDepth;   // a deeper opening tag is shown as text
@@ -133,10 +154,22 @@ inline RichText ParseRichText(const std::string& marked) {
                         RichStyle s; s.size = (float)pct / 100.0f;
                         open.push_back({'s', s}); ok = true;
                     }
+                } else if (tag.rfind("url=", 0) == 0 && tag.size() > 4) {
+                    RichStyle l; l.link = (int)out.links.size();
+                    out.links.push_back(tag.substr(4));
+                    open.push_back({'u', l}); ok = true;
+                } else if (tag.rfind("icon=", 0) == 0 && tag.size() > 5) {
+                    RichStyle st = cur;
+                    st.icon = (int)out.icons.size();
+                    out.icons.push_back(tag.substr(5));
+                    out.plain.push_back(kRichIconChar);
+                    out.styles.push_back(st);
+                    i = close + 1;
+                    continue;
                 } else if (tag == "b") { open.push_back({'b', RichStyle()}); ok = true; }
                 else if (tag == "i") { open.push_back({'i', RichStyle()}); ok = true; }
-                else if (tag == "/color" || tag == "/b" || tag == "/i" || tag == "/size") {
-                    const char want = tag[1];
+                else if (tag == "/color" || tag == "/b" || tag == "/i" || tag == "/size" || tag == "/url") {
+                    const char want = tag == "/url" ? 'u' : tag[1];
                     for (std::size_t k = open.size(); k-- > 0;)
                         if (open[k].kind == want) { open.erase(open.begin() + (std::ptrdiff_t)k); ok = true; break; }
                 }

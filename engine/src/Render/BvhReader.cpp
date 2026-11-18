@@ -238,8 +238,17 @@ struct Reader {
             while (data.size() < samples) {
                 while (*s && IsWs(*s)) ++s;
                 if (!*s) return Fail("the motion data is shorter than the frame count says");
+                const char* q = s;
+                while (*q && !IsWs(*q)) ++q;
+                double v;
+                if (detail::DecimalWithoutStrtod(s, q, v)) {   // the whole token, read as strtod reads it
+                    if (!std::isfinite(v) || std::fabs(v) > 1e15) return Fail("bad motion value");
+                    data.push_back((float)v);
+                    s = q;
+                    continue;
+                }
                 char* e = nullptr;
-                const double v = detail::StrToD(s, &e);
+                v = detail::StrToD(s, &e);
                 if (e == s || !std::isfinite(v) || std::fabs(v) > 1e15) return Fail("bad motion value");
                 if (*e && !IsWs(*e)) return Fail("bad motion value");
                 data.push_back((float)v);
@@ -335,6 +344,7 @@ bool ReadBvhFile(const std::string& path, ImportedModel& out, std::string* err) 
     std::FILE* fp = detail::OpenRead(path);
     if (!fp) { if (err) *err = "cannot open file"; return false; }
     std::string bytes;
+    detail::ReserveForFile(fp, bytes, bvh::kMaxFileBytes);
     char buf[65536];
     for (;;) {
         const std::size_t k = std::fread(buf, 1, sizeof(buf), fp);

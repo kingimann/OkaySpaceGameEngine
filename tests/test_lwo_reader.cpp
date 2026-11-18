@@ -1,11 +1,15 @@
-// Our own LightWave object reader (engine/src/Render/LwoReader.cpp). SYNTHETIC fixtures (LWO2 and LWOB files built in
-// memory), checked against hand-computed numbers; plus the import seam. Real LWO files are checked by model_corpus.
+// Our own LightWave object reader (engine/src/Render/LwoReader.cpp). SYNTHETIC fixtures (LWO2, LWOB and Modo LXOB files built
+// in memory, the last in tests/lxo_fixture.hpp), checked against hand-computed numbers; plus the import seam (and its one log
+// line naming the reader). Real LWO files are checked by model_corpus.
 // Builds on its own with -DOKAY_STANDALONE_TEST (reader source only), no engine library.
 #include "test_framework.hpp"
 #include "model_fixture_util.hpp"
+#include "lxo_fixture.hpp"
 #include "okay/Render/LwoReader.hpp"
 #ifndef OKAY_STANDALONE_TEST
 #include "okay/Render/ModelImport.hpp"
+#include "okay/Scene/Scene.hpp"
+#include "okay/Core/Log.hpp"
 #endif
 #include <array>
 #include <cmath>
@@ -46,13 +50,13 @@ static std::string PtagSurf(const std::vector<unsigned>& tagOfPoly) {
     std::string b = "SURF"; for (std::size_t i = 0; i < tagOfPoly.size(); ++i) { BVX(b, (std::uint32_t)i); B16(b, tagOfPoly[i]); }
     return Chunk("PTAG", b);
 }
-static std::string Tags(const std::vector<std::string>& t) { std::string b; for (const std::string& s : t) BS0(b, s); return Chunk("TAGS", b); }
+static std::string TagsChunk(const std::vector<std::string>& t) { std::string b; for (const std::string& s : t) BS0(b, s); return Chunk("TAGS", b); }
 static std::string F3(float a, float b, float c) { std::string s; BF(s, a); BF(s, b); BF(s, c); B16(s, 0); return s; }   // colour + empty envelope
 static std::string F1(float a) { std::string s; BF(s, a); B16(s, 0); return s; }
 static std::string Surf2(const std::string& name, const std::string& subs) { std::string b; BS0(b, name); BS0(b, ""); b += subs; return Chunk("SURF", b); }
 
 static std::string Box2(bool textured, int proj = 5, int axis = 0, float wrapW = 1.0f, float wrapH = 1.0f) {
-    std::string c = Tags({"Red", "Blue"}) + Layr(0, "Box") + Pnts(kCube, 8) + Pols2() + PtagSurf({0, 0, 0, 1, 1, 1});
+    std::string c = TagsChunk({"Red", "Blue"}) + Layr(0, "Box") + Pnts(kCube, 8) + Pols2() + PtagSurf({0, 0, 0, 1, 1, 1});
     c += Surf2("Red", Sub("COLR", F3(1, 0, 0)) + Sub("DIFF", F1(0.5f)) + Sub("LUMI", F1(0.1f)) + Sub("SPEC", F1(0.5f)) + Sub("GLOS", F1(0.2f)) + Sub("TRAN", F1(0.25f)) + Sub("SMAN", [] { std::string s; BF(s, 0); return s; }()));
     std::string blue = Sub("COLR", F3(0, 0, 1));
     if (textured) {
@@ -83,7 +87,7 @@ static std::string ProjMesh(int proj, int axis, const std::vector<std::array<flo
                             float wrapW = 1.0f, float wrapH = 1.0f) {
     std::string pb; for (const auto& p : pts) for (int k = 0; k < 3; ++k) BF(pb, p[(std::size_t)k]);
     std::string pol = "FACE"; for (const auto& t : tris) { B16(pol, 3); for (int k = 0; k < 3; ++k) BVX(pol, (std::uint32_t)t[(std::size_t)k]); }
-    std::string c = Tags({"S"}) + Layr(0, "L") + Chunk("PNTS", pb) + Chunk("POLS", pol) + PtagSurf(std::vector<unsigned>(tris.size(), 0));
+    std::string c = TagsChunk({"S"}) + Layr(0, "L") + Chunk("PNTS", pb) + Chunk("POLS", pol) + PtagSurf(std::vector<unsigned>(tris.size(), 0));
     std::string head; BS0(head, "\x80"); head += Sub("CHAN", "COLR");
     std::string pj; B16(pj, (unsigned)proj);
     std::string ax; B16(ax, (unsigned)axis);
@@ -152,11 +156,11 @@ int main() {
     RUN_SUITE("lwo2: layers, polygon kinds, notes");
     {
         // two layers, the second a child of the first
-        std::string c = Tags({"S"}) + Layr(1, "Parent") + Pnts(kCube, 8) + Pols2() + PtagSurf({0, 0, 0, 0, 0, 0}) + Layr(2, "Child", 0, 1) + Pnts(kCube, 8) + Pols2() + PtagSurf({0, 0, 0, 0, 0, 0}) + Surf2("S", Sub("COLR", F3(1, 1, 1)));
+        std::string c = TagsChunk({"S"}) + Layr(1, "Parent") + Pnts(kCube, 8) + Pols2() + PtagSurf({0, 0, 0, 0, 0, 0}) + Layr(2, "Child", 0, 1) + Pnts(kCube, 8) + Pols2() + PtagSurf({0, 0, 0, 0, 0, 0}) + Surf2("S", Sub("COLR", F3(1, 1, 1)));
         CHECK(Read(Form("LWO2", c), m, err) && m.parts.size() == 2 && m.nodes.size() == 3 && m.nodes[2].parent == 1 && m.nodes[1].name == "Parent");
         // hidden layer and pivot
         const float pv[3] = {1, 2, 3};
-        c = Tags({"S"}) + Layr(0, "Hid", 1) + Pnts(kCube, 8) + Pols2() + Layr(1, "Vis", 0, -1, pv) + Pnts(kCube, 8) + Pols2() + PtagSurf({0, 0, 0, 0, 0, 0}) + Surf2("S", "");
+        c = TagsChunk({"S"}) + Layr(0, "Hid", 1) + Pnts(kCube, 8) + Pols2() + Layr(1, "Vis", 0, -1, pv) + Pnts(kCube, 8) + Pols2() + PtagSurf({0, 0, 0, 0, 0, 0}) + Surf2("S", "");
         CHECK(Read(Form("LWO2", c), m, err) && m.parts.size() == 1 && HasNote(m, "hidden") && HasNote(m, "pivot"));
         // patches are polygons with a note; curves are skipped
         c = Layr(0, "L") + Pnts(kCube, 8) + Pols2("PTCH");
@@ -176,7 +180,7 @@ int main() {
         float tri[3][3] = {{0, 0, 0}, {1, 0, 0}, {0, 1, 0}}; (void)tri;
         CHECK(Read(Form("LWO2", Layr(0, "L") + Chunk("PNTS", pts) + Chunk("POLS", big)), m, err) && Tris(m) == 1);
         const std::string shd = Sub("BLOK", [] { std::string h = "SHDR"; B16(h, 0); return h; }());
-        CHECK(Read(Form("LWO2", Tags({"S"}) + Layr(0, "L") + Pnts(kCube, 8) + Pols2() + PtagSurf({0, 0, 0, 0, 0, 0}) + Surf2("S", shd + Sub("COLR", F3(1, 1, 1)))), m, err) && HasNote(m, "shader"));
+        CHECK(Read(Form("LWO2", TagsChunk({"S"}) + Layr(0, "L") + Pnts(kCube, 8) + Pols2() + PtagSurf({0, 0, 0, 0, 0, 0}) + Surf2("S", shd + Sub("COLR", F3(1, 1, 1)))), m, err) && HasNote(m, "shader"));
     }
 
     RUN_SUITE("lwob (LWO1)");
@@ -377,6 +381,51 @@ int main() {
         CHECK(!anyUv && tex);
     }
 
+
+    RUN_SUITE("lxo (Modo): material tags, shader tree, NORM maps");
+    {
+        auto near3 = [](const Vec3& a, float x, float y, float z) { return std::fabs(a.x - x) < 1e-4f && std::fabs(a.y - y) < 1e-4f && std::fabs(a.z - z) < 1e-4f; };
+        ImportedModel x; std::string e;
+        CHECK(ReadLwoBuffer(fx::lxo::BuildLxo(), "", x, &e));
+        CHECK(x.backend == "own" && fx::Sane(x));
+        CHECK(x.nodes.size() == 2 && x.parts.size() == 2);   // LAYR flag bit 0 does not hide an LXO layer
+        CHECK(x.materials.size() == 2);
+        if (x.parts.size() == 2 && x.materials.size() == 2) {
+            const ImportedMaterial& shell = x.materials[(std::size_t)x.parts[0].material];
+            const ImportedMaterial& glass = x.materials[(std::size_t)x.parts[1].material];
+            CHECK(shell.name == "Shell" && glass.name == "Glass");
+            // the mask's material: red times 0.5, transparency 0.25; the base material: white times 0.8
+            CHECK(shell.hasDiffuse && std::fabs(shell.diffuse.r - 0.5f) < 1e-6f && shell.diffuse.g == 0.0f && std::fabs(shell.diffuse.a - 0.75f) < 1e-6f);
+            CHECK(glass.hasDiffuse && std::fabs(glass.diffuse.r - 0.8f) < 1e-6f && std::fabs(glass.diffuse.b - 0.8f) < 1e-6f && glass.diffuse.a == 1.0f);
+            const Mesh& sm = x.parts[0].mesh;
+            const Mesh& gm = x.parts[1].mesh;
+            CHECK(sm.TriangleCount() == 6 && gm.TriangleCount() == 6);
+            // Shell: polygon 0's corners use the VMAD normals, every other corner its point's: 4 + 4 + 2 vertices
+            CHECK(sm.vertices.size() == 10 && gm.vertices.size() == 8);
+            bool down = false, corner = false;
+            for (std::size_t i = 0; i < sm.vertices.size(); ++i) if (near3(sm.normals[i], 0, 0, 1)) down = true;   // (0, 0, -1) with z flipped
+            const float k = 0.57735027f;
+            for (std::size_t i = 0; i < gm.vertices.size(); ++i) if (near3(gm.vertices[i], 1, 1, -1) && near3(gm.normals[i], k, k, -k)) corner = true;
+            CHECK(down && corner);
+        }
+        bool modo = false, items = false;
+        for (const std::string& n : x.notes) { if (n.find("LXO: Modo LXO file") == 0) modo = true; if (n.find("4 scene item or action chunk(s)") != std::string::npos) items = true; }
+        CHECK(modo && items);
+        // without NORM maps the smoothing angles decide: Shell has smoothing off (flat, 12 vertices), Glass smooths at
+        // 100 degrees (the cube's 8 corners)
+        fx::lxo::Opts o; o.normals = false;
+        ImportedModel f; CHECK(ReadLwoBuffer(fx::lxo::BuildLxo(o), "", f, &e));
+        CHECK(f.parts.size() == 2 && f.parts[0].mesh.vertices.size() == 12 && f.parts[1].mesh.vertices.size() == 8);
+        // no shader tree: the LWO defaults (grey, flat)
+        o.shader = false;
+        ImportedModel g; CHECK(ReadLwoBuffer(fx::lxo::BuildLxo(o), "", g, &e));
+        CHECK(g.parts.size() == 2 && g.parts[0].mesh.vertices.size() == 12 && g.parts[1].mesh.vertices.size() == 12);
+        CHECK(g.materials.size() == 2 && std::fabs(g.materials[0].diffuse.r - 0.78f) < 1e-6f);
+        // an LWO2 file keeps its LAYR flag: bit 0 hides the layer there
+        std::string hidden = Form("LWO2", TagsChunk({"A"}) + Layr(0, "L", 1) + Pnts(kCube, 8) + Pols2() + PtagSurf({0, 0, 0, 0, 0, 0}));
+        ImportedModel h; CHECK(!ReadLwoBuffer(hidden, "", h, &e));
+    }
+
     RUN_SUITE("lwo: refused files");
     {
         CHECK(!Read("", m, err) && !err.empty());
@@ -410,7 +459,8 @@ int main() {
         CHECK(ImportModelData(path, m, ImportBackend::Own, false, &err) && m.backend == "own" && m.parts.size() == 2);
         SetImportBackend(".lwo", ImportBackend::Default);
         unsetenv("OKAY_OWN_LWO");
-        if (EffectiveImportBackend(".lwo") != ImportBackend::Own) CHECK(!ImportModelData(path, m, ImportBackend::Default, false, &err) && err.find("OKAY_OWN_LWO") != std::string::npos);
+        // no reader at all: no Assimp in this build and ours off
+        if (EffectiveImportBackend(".lwo") == ImportBackend::Default) CHECK(!ImportModelData(path, m, ImportBackend::Default, false, &err) && err.find("OKAY_OWN_LWO") != std::string::npos);
         setenv("OKAY_OWN_LWO", "1", 1);
         CHECK(EffectiveImportBackend(".lwo") == ImportBackend::Own && ImportableExtensions().find(".lwo") != std::string::npos);
         bool ok = false; std::string tex;
@@ -420,6 +470,35 @@ int main() {
         CHECK(EffectiveImportBackend(".lwo") != ImportBackend::Own);
         unsetenv("OKAY_OWN_LWO");
         std::error_code ec; fs::remove_all(dir, ec);
+    }
+
+    RUN_SUITE("lxo: the import seam and the log line naming the reader");
+    {
+        namespace fs = std::filesystem;
+        const fs::path dir = fs::temp_directory_path() / "okay_lxo_seam";
+        std::error_code ec; fs::remove_all(dir, ec); fs::create_directories(dir);
+        const fs::path file = dir / "cube.lxo";
+        { std::ofstream f(file, std::ios::binary); const std::string x = fx::lxo::BuildLxo(); f.write(x.data(), (std::streamsize)x.size()); }
+        const std::string path = file.u8string();
+        CHECK(HasOwnReader(".lxo"));
+        CHECK(ImportModelData(path, m, ImportBackend::Own, false, &err) && m.backend == "own" && m.parts.size() == 2);
+        unsetenv("OKAY_OWN_LXO");
+        SetImportBackend(".lxo", ImportBackend::Default);
+        if (EffectiveImportBackend(".lxo") == ImportBackend::Default) CHECK(!ImportModelData(path, m, ImportBackend::Default, false, &err) && err.find("OKAY_OWN_LXO") != std::string::npos);
+        setenv("OKAY_OWN_LXO", "1", 1);
+        CHECK(EffectiveImportBackend(".lxo") == ImportBackend::Own && ImportableExtensions().find(".lxo") != std::string::npos);
+        std::vector<std::string> lines;
+        Log::sink = [&](Log::Level, const std::string& msg) { if (msg.find("model import") != std::string::npos && msg.find("read by") != std::string::npos) lines.push_back(msg); };
+        {
+            Scene sc("lxo");
+            bool ok = false;
+            CHECK(ImportModelScene(sc, path, &ok) != nullptr && ok);
+        }
+        Log::sink = nullptr;
+        CHECK(lines.size() == 1);   // one line per import
+        if (lines.size() == 1) CHECK(lines[0].find("read by the own LXO reader in ") != std::string::npos && lines[0].find(" ms (whole import ") != std::string::npos);
+        unsetenv("OKAY_OWN_LXO");
+        fs::remove_all(dir, ec);
     }
 #endif
 

@@ -1,5 +1,6 @@
 #include "test_framework.hpp"
 #include "MenuBarModel.hpp"
+#include "UIMenuModel.hpp"
 #include "AutoPerf.hpp"
 #include <filesystem>
 #include <fstream>
@@ -339,13 +340,56 @@ int main() {
         for (const Moved& m : moved) CHECK(FindId(all, m.where) != nullptr);
         // Panels and tool windows keep their labels and are each reachable.
         for (const char* label : {"Hierarchy", "Inspector", "Project", "Console", "Problems", "Game", "Services", "Scene Manager", "Net",
-                                  "Save Manager", "Variables (watch)", "History", "Stats", "Lighting", "Profiler", "Asset Manager",
-                                  "Crash Log", "Audio Mixer", "Custom Actions", "Visual Script", "Script Editor", "Animation",
+                                  "Save Manager", "History", "Stats", "Lighting", "Profiler", "Asset Manager",
+                                  "Crash Log", "Audio Mixer", "Visual Script", "Script Editor", "Animation",
                                   "Animator (state graph)", "Timeline (cutscenes)", "Navigation", "Dialogue & Quests", "Behavior Tree",
                                   "Modeling", "UV Editor", "Sprite Editor", "UI Editor (separate tab)", "UI Theme", "Items, Loot & Recipes",
                                   "Weapons", "Localization", "UI Editing Mode"}) {
             const Entry* e = FindLabel(all, label);
             CHECK(e != nullptr && e->kind == Kind::Toggle);
+        }
+    }
+
+    {   // GameObject > UI (2026-11-17, "make it more simple so the user understands"): eight short groups with plain names, every item with a
+        // one-sentence tip, nothing listed twice, the Gallery last, and every item of the old menu still has a home. The screen sections
+        // come from the screen registry in the real editor; here the old screens stand in for them (tests/test_ui_library4.cpp checks the real list).
+        std::vector<oked::uimenu::ScreenGroup> screens(2);
+        screens[0].name = "Menus"; screens[0].tip = "Title, pause and settings screens.";
+        screens[1].name = "Loading"; screens[1].tip = "Loading screens.";
+        for (const auto& l : oked::uimenu::LegacyItems())
+            if (std::string(l.id).rfind("ui.scr.", 0) == 0) screens[std::string(l.id).find("loading") != std::string::npos ? 1 : 0].items.push_back({std::string(l.id).substr(7), l.label, "A ready-made screen."});
+        const auto menu = oked::uimenu::UIMenu(screens);
+        int groups = 0;
+        for (const Entry& e : menu) groups += e.kind == Kind::Submenu;
+        CHECK(groups == 8);                                   // Basics, Input, Layout, Game, Menus & Screens, Data & Lists, Windows & Pop-ups, Ready-made Pieces
+        CHECK(menu.back().id == "ui.browse" && menu.back().label == "Browse All UI...");
+        CHECK(menu.front().label == "Basics" && menu.front().children.front().label == "Text");   // the common things come first
+        CHECK(LabelsUniquePerLevel(menu));
+        std::set<std::string> ids; std::set<std::string> labels; int items = 0;
+        Walk(menu, [&](const Entry& e, int) {
+            if (e.kind == Kind::Separator || e.kind == Kind::Heading) return;
+            CHECK(!e.id.empty() && !e.label.empty());
+            CHECK(!e.tip.empty());                            // every entry says what it does in one sentence
+            CHECK(e.tip.size() < 230);
+            CHECK(ids.insert(e.id).second);                   // no id twice
+            if (e.kind == Kind::Item) { ++items; CHECK(labels.insert(e.label).second); }   // no label twice anywhere in the menu
+        });
+        CHECK(items >= 100);
+        // The old menu's items all have a home.
+        for (const auto& l : oked::uimenu::LegacyItems()) CHECK(ids.count(l.id) == 1);
+        // No jargon in the words a beginner reads first.
+        for (const Entry& g : menu) {
+            for (const char* bad : {"Canvas", "Raw Image", "Masked", "Flex", "Layout Group", "Safe Area"}) CHECK(g.label.find(bad) == std::string::npos);
+        }
+        // Every id is run by the editor (a dead click is a bug): ui.scr.* ids are run by one prefix rule, the rest by an exact id.
+        const std::string src = EditorSources();
+        if (src.empty()) std::cout << "  (editor sources not found: UI menu wiring check skipped)\n";
+        else for (const std::string& id : ids) {
+            if (id.rfind("ui.g.", 0) == 0 || id.rfind("ui.scr.", 0) == 0) continue;
+            const bool wired = src.find("id == \"" + id + "\"") != std::string::npos || (id.rfind("ui.o.", 0) == 0 && src.find("id.rfind(\"ui.o.\"") != std::string::npos)
+                            || (id.rfind("ui.w3d.", 0) == 0 && src.find("id.rfind(\"ui.w3d.\"") != std::string::npos);
+            if (!wired) std::cerr << "  not run in editor/*.cpp: " << id << "\n";
+            CHECK(wired);
         }
     }
 

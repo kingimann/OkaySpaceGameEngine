@@ -80,6 +80,10 @@ public:
     /// Decode an image file once and cache the texture, blended, nearest-sampled (a miss is cached too).
     /// Tries `path`, then the base directory + `path`.
     ui2d::Tex LoadTexture(const std::string& path) override;
+    /// How cached image textures are sampled when drawn at another size: linear (smooth UI) or nearest
+    /// (pixel-art). Textures start nearest, as before; the UI pass sets it each frame (UIPainter.hpp).
+    void SetImageFilter(bool linear) override;
+    void SetTextureFilter(ui2d::Tex t, bool linear) override;
     /// The glyph atlas of a TTF font, uploaded again when the font baked new characters.
     ui2d::Tex FontAtlas(okay::TtfFont* font) override;
     /// An atlas page of the UI batcher (ui2d::BatchPainter) as one painter texture, updated in place or replaced
@@ -95,6 +99,7 @@ protected:
 private:
     struct FontUp { ui2d::Tex tex = nullptr; std::uint32_t gen = 0; int w = 0, h = 0; };
     std::string m_baseDir;
+    bool m_imgLinear = false;
     std::unordered_map<std::string, ui2d::Tex> m_cache;
     std::unordered_map<okay::TtfFont*, FontUp> m_fonts;
 };

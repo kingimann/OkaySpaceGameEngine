@@ -34,7 +34,7 @@ Escape hatches: **Get Property**, **Set Property**, **Call Method** (`Type.Metho
 
 ## Builtin parity
 
-Every text-script builtin whose name is a single token (letters, digits, `_`, `.`) is the node `Fn.<name>`. It runs that builtin on this object. Wire only the arguments it takes. 1512 builtins are nodes.
+Every text-script builtin whose name is a single token (letters, digits, `_`, `.`) is the node `Fn.<name>`. It runs that builtin on this object. Wire only the arguments it takes. 1517 builtins are nodes.
 
 | Builtin | Node |
 | --- | --- |
@@ -1001,6 +1001,7 @@ Every text-script builtin whose name is a single token (letters, digits, `_`, `.
 | `repeat_every` | `Fn.repeat_every` |
 | `replace` | `Fn.replace` |
 | `reset_bindings` | `Fn.reset_bindings` |
+| `reset_controls` | `Fn.reset_controls` |
 | `response_curve` | `Fn.response_curve` |
 | `reverse` | `Fn.reverse` |
 | `revert_display_settings` | `Fn.revert_display_settings` |
@@ -1450,6 +1451,7 @@ Every text-script builtin whose name is a single token (letters, digits, `_`, `.
 | `ui_key_value` | `Fn.ui_key_value` |
 | `ui_list_item` | `Fn.ui_list_item` |
 | `ui_load_theme` | `Fn.ui_load_theme` |
+| `ui_look_sound` | `Fn.ui_look_sound` |
 | `ui_page` | `Fn.ui_page` |
 | `ui_page_count` | `Fn.ui_page_count` |
 | `ui_play` | `Fn.ui_play` |
@@ -1471,6 +1473,7 @@ Every text-script builtin whose name is a single token (letters, digits, `_`, `.
 | `ui_set_focus` | `Fn.ui_set_focus` |
 | `ui_set_interactable` | `Fn.ui_set_interactable` |
 | `ui_set_loading` | `Fn.ui_set_loading` |
+| `ui_set_look` | `Fn.ui_set_look` |
 | `ui_set_page` | `Fn.ui_set_page` |
 | `ui_set_progress` | `Fn.ui_set_progress` |
 | `ui_set_radio` | `Fn.ui_set_radio` |
@@ -1481,10 +1484,12 @@ Every text-script builtin whose name is a single token (letters, digits, `_`, `.
 | `ui_set_slider` | `Fn.ui_set_slider` |
 | `ui_set_slider_format` | `Fn.ui_set_slider_format` |
 | `ui_set_slider_step` | `Fn.ui_set_slider_step` |
+| `ui_set_style` | `Fn.ui_set_style` |
 | `ui_set_tab` | `Fn.ui_set_tab` |
 | `ui_set_tab_badge` | `Fn.ui_set_tab_badge` |
 | `ui_set_tab_enabled` | `Fn.ui_set_tab_enabled` |
 | `ui_set_text` | `Fn.ui_set_text` |
+| `ui_set_theme` | `Fn.ui_set_theme` |
 | `ui_set_time` | `Fn.ui_set_time` |
 | `ui_set_toggle` | `Fn.ui_set_toggle` |
 | `ui_set_variant` | `Fn.ui_set_variant` |

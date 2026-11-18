@@ -257,7 +257,6 @@ inline std::vector<Entry> PanelsSubmenu() {
     p.push_back(Toggle("panel.scenemanager", "Scene Manager"));
     p.push_back(Toggle("panel.net", "Net"));
     p.push_back(Toggle("panel.savemanager", "Save Manager"));
-    p.push_back(Toggle("panel.varwatch", "Variables (watch)"));
     p.push_back(Sep());
     p.push_back(Toggle("panel.history", "History"));
     p.push_back(Toggle("panel.stats", "Stats"));
@@ -272,7 +271,6 @@ inline std::vector<Entry> PanelsSubmenu() {
 
 inline std::vector<Entry> ToolsSubmenu() {
     std::vector<Entry> t;
-    t.push_back(Toggle("tool.customactions", "Custom Actions"));
     t.push_back(Toggle("tool.visualscript", "Visual Script"));
     t.push_back(Toggle("tool.scripteditor", "Script Editor"));
     t.push_back(Sep());
@@ -288,6 +286,7 @@ inline std::vector<Entry> ToolsSubmenu() {
     t.push_back(Toggle("tool.spriteeditor", "Sprite Editor", "Paint custom 2D sprites pixel-by-pixel, start from a shape, and save them into the project's Assets/Sprites."));
     t.push_back(Sep());
     t.push_back(Toggle("tool.uieditor", "UI Editor (separate tab)", "Open a dedicated, dockable UI editing tab (flat canvas) beside the Scene view,\nso you can keep the 3D Scene and the UI layout visible at the same time."));
+    t.push_back(Toggle("tool.uigallery", "UI Gallery", "Search every UI component, style, look, icon and ready-made screen, preview it and add it with one click."));
     t.push_back(Toggle("tool.uitheme", "UI Theme", "Define a reusable UI style (colors, corners, borders) and apply it to every widget at once: pick a preset or make your own, then restyle the whole UI in one click."));
     t.push_back(Toggle("tool.items", "Items, Loot & Recipes", "Define items, loot tables and crafting recipes. Saved as items.okayitems, .okayloot and .okayrecipes."));
     t.push_back(Toggle("tool.weapons", "Weapons", "Define swords and guns once (damage, swing or fire rate, range, rounds and reload, hit window, arc or hit box, combo and knockback). Melee and guns use these."));

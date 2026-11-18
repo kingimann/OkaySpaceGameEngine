@@ -14,6 +14,8 @@
 #include <cstring>
 #include <string>
 
+#include "okay/VisualScript/QuickBlocks.hpp"
+
 namespace okay::editor::vsed {
 
 struct VsPaletteCategory {
@@ -40,6 +42,8 @@ inline const VsPaletteCategory kPaletteCategories[] = {
     {"Waiting & Timers", "Wait, repeat on a timer, cooldowns, stopwatches, and delayed calls from a script.", "Flow"},
     {"Functions & Calls", "Define your own function, call another graph or script, or run a list of steps.", "Flow"},
     {"Time & Game Speed", "The clock, the frame time, slow motion and pausing the game.", "Flow"},
+    // ---- Quick blocks: one-block ready-made actions for beginners.
+    {"Quick blocks",    "One-block actions: move around, game rules, objects in the game, show and sound, do in order.", "Quick blocks"},
     // ---- Variables, lists and saving: remember things.
     {"Variables",       "Remember a number, a word or a yes/no on this object, the scene or the whole game.", "Variables, Lists & Saving"},
     {"Saving & Loading", "Keep things between runs: save slots, saved values and checkpoints.", "Variables, Lists & Saving"},
@@ -92,7 +96,7 @@ inline const VsPaletteCategory kPaletteCategories[] = {
     {"Camera",          "Where the player is looking: follow, switch, zoom, tilt and shake.", "Sound, Camera & Screen"},
     {"Screen Text",     "Words and numbers drawn on the screen.", "Sound, Camera & Screen"},
     {"Buttons & Inputs", "Buttons, sliders, toggles, dropdowns, text fields and pickers.", "Sound, Camera & Screen"},
-    {"Bars & Layout",   "Progress bars, tabs and pages, scroll areas and grids, layout helpers and themes.", "Sound, Camera & Screen"},
+    {"Bars & Layout",   "Progress bars, game HUD parts, app parts, tabs and pages, scroll areas and grids, layout helpers and themes.", "Sound, Camera & Screen"},
     {"Popups & Dialogs", "Toasts, tooltips, modals and bottom sheets.", "Sound, Camera & Screen"},
     // ---- Scenes and the environment
     {"Scenes & Levels", "Load, restart and quit scenes, and read which scene is open.", "Scenes & Environment"},
@@ -142,6 +146,12 @@ struct VsPaletteSub {
     const char* blurb;
 };
 inline const VsPaletteSub kPaletteSubs[] = {
+    // Quick blocks
+    {"Quick blocks", "Move Around", "Move with keys, jump, follow, walk back and forth."},
+    {"Quick blocks", "Game Rules", "Score, health, winning, losing and checkpoints."},
+    {"Quick blocks", "Objects In The Game", "Coins, doors, platforms, bullets and things that spin or appear."},
+    {"Quick blocks", "Show And Sound", "Messages, sounds, colours and the camera."},
+    {"Quick blocks", "Do In Order", "Wait, repeat, do forever, and do something only when a key is pressed or touched."},
     // Flow
     {"Branches & Gates", "State Machines", "Keep one state at a time and react when it changes."},
     {"Waiting & Timers", "Delayed Calls", "Call something later, or every few seconds, from a script."},
@@ -230,6 +240,8 @@ inline const VsPaletteSub kPaletteSubs[] = {
     {"Buttons & Inputs", "Dropdowns & Text Fields", "Dropdown lists and text boxes."},
     {"Buttons & Inputs", "Pickers & Search", "Color, date, time and file pickers, and search bars."},
     {"Bars & Layout", "Progress Bars", "Progress bars, radial bars, spinners and loading skeletons."},
+    {"Bars & Layout", "Game HUD", "Radial menus, kill feeds, ammo counters, key prompts, objective trackers, compasses, item cards and ability icons."},
+    {"Bars & Layout", "App Parts", "Menu bars, toolbars, tree views, data tables, wizards and form groups."},
     {"Bars & Layout", "Tabs & Pages", "Tabs, pages, accordions and breadcrumbs."},
     {"Bars & Layout", "Scroll Areas & Grids", "Scroll views and slot grids."},
     {"Bars & Layout", "Layout Helpers", "Begin and end a panel or card, put things on one line, separators and list rows."},
@@ -304,6 +316,11 @@ inline VsPlace VsPlaceForBuiltin(const char* name);   // a text-script function 
 // A type no rule covers comes back with a null category.
 inline VsPlace VsPlaceForNode(const char* type) {
     if (!type || !type[0]) return {};
+    if (const okay::vs::QuickBlock* qb = okay::vs::FindQuickBlock(type)) {
+        const std::string g = qb->group;
+        return VsAt("Quick blocks", g == "Movement" ? "Move Around" : g == "Game rules" ? "Game Rules"
+                                    : g == "World" ? "Objects In The Game" : g == "Feedback" ? "Show And Sound" : "Do In Order");
+    }
     if (VsPre(type, "Fn.")) return VsPlaceForBuiltin(type + 3);
     if (const VsRule* r = VsFindRule(kNodeRules, VsRuleCount(kNodeRules), type)) return VsAt(r->category, r->sub);
     return VsTranslateLegacy(VsLegacyPlaceForNode(type));

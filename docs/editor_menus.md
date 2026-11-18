@@ -77,8 +77,8 @@ GameObject
   Snap Position to Grid          (needs a selection)
 View
   Panels >                       Hierarchy, Inspector, Project, Console, Problems, Game | Services, Scene Manager, Net,
-                                 Save Manager, Variables (watch) | History, Stats, Lighting, Profiler, Asset Manager, Crash Log, Audio Mixer
-  Editors & Tools >              Custom Actions, Visual Script, Script Editor | Animation, Animator, Timeline, Navigation,
+                                 Save Manager, History, Stats, Lighting, Profiler, Asset Manager, Crash Log, Audio Mixer
+  Editors & Tools >              Visual Script, Script Editor | Animation, Animator, Timeline, Navigation,
                                  Dialogue & Quests, Behavior Tree | Modeling, UV Editor, Sprite Editor | UI Editor (separate tab),
                                  UI Theme, Items Loot & Recipes, Weapons, Localization
   Layout >                       Built-in, Saved, Save Layout..., Delete Layout, Maximize Viewport, Side Tabs, Reset Layout

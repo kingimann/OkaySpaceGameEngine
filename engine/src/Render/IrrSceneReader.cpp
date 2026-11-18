@@ -143,9 +143,8 @@ bool MakeSphere(double r, std::int64_t px, std::int64_t py, Mesh& m) {
 } // namespace irrs
 } // namespace
 
-static bool ReadIrrSceneImpl(const std::string& input, const std::string& baseDir, ImportedModel& out, std::string* err, const IrrMeshLoader* loader) {
+static bool ReadIrrSceneImpl(std::string text, const std::string& baseDir, ImportedModel& out, std::string* err, const IrrMeshLoader* loader) {
     using namespace irrs;
-    std::string text = input;
     bool converted = false;
     std::string why;
     if (!detail::txt::NormalizeEncoding(text, converted, why, kMaxFileBytes)) return Fail(err, why);
@@ -316,7 +315,11 @@ bool ReadIrrSceneFile(const std::string& path, ImportedModel& out, std::string* 
     std::string dir;
     const std::size_t sl = path.find_last_of("/\\");
     if (sl != std::string::npos) dir = path.substr(0, sl + 1);
-    return ReadIrrSceneBuffer(bytes, dir, out, err, loader);
+    // the bytes are handed over, not copied (ReadIrrSceneBuffer copies the caller's text)
+    out = ImportedModel{};
+    const bool ok = ReadIrrSceneImpl(std::move(bytes), dir, out, err, loader);
+    if (!ok) out = ImportedModel{};
+    return ok;
 }
 
 } // namespace okay

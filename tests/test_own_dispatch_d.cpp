@@ -99,13 +99,26 @@ int main() {
         TestSetEnv(c.env, "0");
         CHECK(EffectiveImportBackend(c.ext) != ImportBackend::Own);
         TestUnsetEnv(c.env);
-        // off by default (when the build has no Assimp the format cannot be read at all, and the message names the switch)
+        // The default: our reader since 2026-11-17 (OKAY_EXPECT_OWN_READERS = every reader option ON in this build). Then the two
+        // ways back: OKAY_THIRD_PARTY=1 for every format, OKAY_OWN_<FMT>=0 for this one (the checks below run in that state).
+#if defined(OKAY_EXPECT_OWN_READERS)
+        CHECK(EffectiveImportBackend(c.ext) == ImportBackend::Own);
+        { ImportedModel e0; CHECK(ImportModelData(path, e0, ImportBackend::Default, false, &err) && e0.backend == "own"); }
+        TestSetEnv("OKAY_THIRD_PARTY", "1");
+        CHECK(EffectiveImportBackend(c.ext) == (AssimpAvailable() ? ImportBackend::Assimp : ImportBackend::Own));
+        TestUnsetEnv("OKAY_THIRD_PARTY");
+        CHECK(EffectiveImportBackend(c.ext) == ImportBackend::Own);
+        TestSetEnv(c.env, "0");
+#endif
         if (!AssimpAvailable()) {
             CHECK(EffectiveImportBackend(c.ext) != ImportBackend::Own);
             CHECK((" " + ImportableExtensions() + " ").find(std::string(" ") + c.ext + " ") == std::string::npos);
             ImportedModel d; std::string e2;
             CHECK(!ImportModelData(path, d, ImportBackend::Default, false, &e2) && e2.find(c.env) != std::string::npos);
         }
+#if defined(OKAY_EXPECT_OWN_READERS)
+        TestUnsetEnv(c.env);
+#endif
     }
     // the other extensions of a format reach the same reader
     {
@@ -129,15 +142,19 @@ int main() {
             ImportedModel m; std::string err;
             CHECK(HasOwnReader(".enff") && ImportModelData(path, m, ImportBackend::Own, false, &err) && fx::TriCount(m) == 111);
         }
-        {   // ".mesh.xml" is the OGRE format; another .xml and a plain .mesh are not routed to it
-            CHECK(HasOwnReader(".mesh.xml") && !HasOwnReader(".xml") && !HasOwnReader(".mesh"));
+        {   // ".mesh.xml" is the OGRE XML format (slot 23); another .xml goes to slot 45 (the reader is picked by the root element,
+            // test_own_dispatch_gap.cpp) and a plain .mesh to the OGRE binary reader (slot 43), which refuses XML text
+            CHECK(HasOwnReader(".mesh.xml") && HasOwnReader(".xml") && HasOwnReader(".mesh"));
             const std::string upper = (dir / "UP.MESH.XML").string();
             WriteFile(upper, fx::BuildOgreXml());
             ImportedModel m; std::string err;
             CHECK(ImportModelData(upper, m, ImportBackend::Own, false, &err) && m.backend == "own" && fx::TriCount(m) == 3);
             const std::string other = (dir / "t.xml").string();
             WriteFile(other, fx::BuildOgreXml());
-            CHECK(!ImportModelData(other, m, ImportBackend::Own, false, &err));
+            CHECK(ImportModelData(other, m, ImportBackend::Own, false, &err) && fx::TriCount(m) == 3);   // <mesh> with <submeshes>: the OGRE XML reader
+            const std::string bin = (dir / "t.mesh").string();
+            WriteFile(bin, fx::BuildOgreXml());
+            CHECK(!ImportModelData(bin, m, ImportBackend::Own, false, &err) && err.find("not an OGRE binary mesh") != std::string::npos);
         }
     }
     // a format is not absorbed by a neighbour's reader: an NFF file named .ac is refused by the AC3D reader

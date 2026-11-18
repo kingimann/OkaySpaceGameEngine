@@ -2,7 +2,8 @@
 // the public format description (Paul Bourke's "Quick3D Object File" page: the 22 byte header, the 'm' meshes / 'c' materials /
 // 't' textures / 's' scene chunks and the field lists of each record). No importer source of any other project was read. The
 // description does not say which byte order the numbers use, so the reader tries little endian first and, if that does not
-// parse, big endian. It has NOT been checked against a real Quick3D file (none is in the repository): see docs/own_q3d_reader.md.
+// parse, big endian. Where the description leaves the layout open, the choices were checked against the bytes of the four Quick3D
+// files of the model corpus (docs/own_q3d_reader.md, "Checked against real files").
 // Bounds-checked, every count is checked against the bytes that are really there before anything is allocated, capped, no recursion.
 #include "PolygonTriangulate.hpp"
 #include "ReaderCommon.hpp"
@@ -71,7 +72,7 @@ struct Mesh1 {
     bool haveTex = false;
 };
 
-struct Stats { int fanned = 0; std::uint64_t earWork = 0; int badFace = 0, shortFace = 0, badUv = 0, badNormals = 0; std::uint64_t corners = 0; };
+struct Stats { int fanned = 0; std::uint64_t earWork = 0; int badFace = 0, shortFace = 0, badUv = 0, badNormals = 0, uvCountNoData = 0, clearMats = 0; std::uint64_t corners = 0; };
 
 bool ReadMesh(Cur& c, std::int32_t numTextures, Mesh1& m, Stats& st, std::string& why) {
     const std::int32_t nv = c.I32();
@@ -98,10 +99,14 @@ bool ReadMesh(Cur& c, std::int32_t numTextures, Mesh1& m, Stats& st, std::string
     if (!c.Fits((std::uint64_t)nn, 12)) { why = "the file ends inside the normals"; return false; }
     m.nrm.resize((std::size_t)nn);
     for (Vec3& p : m.nrm) { p.x = c.F32(); p.y = c.F32(); p.z = c.F32(); }
-    if (numTextures > 0) {   // the description leaves the texture coordinates and their indices out when the file has no textures
+    // The texture coordinate count is always there (the four corpus files, which have no textures, all carry it; one of them
+    // has 230 there and no coordinates). The coordinates and the per-corner texture indices follow only when the header names
+    // textures.
+    const std::int32_t nt = c.I32();
+    if (c.bad || nt < 0 || nt > kMaxMeshVerts) { why = "bad texture coordinate count"; return false; }
+    if (numTextures == 0 && nt > 0) ++st.uvCountNoData;
+    if (numTextures > 0) {
         m.haveTex = true;
-        const std::int32_t nt = c.I32();
-        if (c.bad || nt < 0 || nt > kMaxMeshVerts) { why = "bad texture coordinate count"; return false; }
         if (!c.Fits((std::uint64_t)nt, 8)) { why = "the file ends inside the texture coordinates"; return false; }
         m.tc.resize((std::size_t)nt);
         for (Vec2& t : m.tc) { t.x = c.F32(); t.y = c.F32(); if (!(std::isfinite(t.x) && std::isfinite(t.y) && std::fabs(t.x) <= 1e15f && std::fabs(t.y) <= 1e15f)) t = Vec2{NAN, NAN}; }   // marked bad, used as (0, 0) below
@@ -123,7 +128,7 @@ bool Q3dTry(const std::string& bytes, bool be, ImportedModel& out, std::string& 
     out = ImportedModel{};
     Cur c(bytes, be);
     if (bytes.size() < 22) { why = "file too short"; return false; }
-    const bool scene = std::memcmp(bytes.data(), "quick3Ds", 8) == 0;
+    bool scene = std::memcmp(bytes.data(), "quick3Ds", 8) == 0;   // a scene chunk also makes it a scene (WusonOrange.q3s says "quick3Do")
     c.pos = 8;
     const std::string version((const char*)c.d + 8, 2);
     c.pos = 10;
@@ -144,18 +149,23 @@ bool Q3dTry(const std::string& bytes, bool be, ImportedModel& out, std::string& 
             for (Mesh1& m : meshes) if (!ReadMesh(c, nTex, m, st, why)) return false;
         } else if (type == 'c' && !seenC) {
             seenC = true;
-            // name (NUL ended), ambient / diffuse / specular colour (3 floats each), transparency: at least 1 + 36 + 4 bytes
-            if (!c.Fits((std::uint64_t)nMat, 41)) { why = "the file ends inside the materials"; return false; }
+            // name (NUL ended), ambient / diffuse / specular colour (3 floats each), transparency, texture index (-1 = none):
+            // at least 1 + 36 + 4 + 4 bytes
+            if (!c.Fits((std::uint64_t)nMat, 45)) { why = "the file ends inside the materials"; return false; }
             for (std::int32_t i = 0; i < nMat; ++i) {
                 ImportedMaterial mt;
                 mt.name = c.CStr(4096);
                 float col[9];
                 for (float& f : col) f = c.F32();
                 const float tr = c.F32();
+                (void)c.I32();   // texture index; the embedded textures are not decoded (see the notes)
                 if (c.bad) { why = "the file ends inside a material"; return false; }
                 for (float f : col) if (!std::isfinite(f)) { why = "a material colour is not finite"; return false; }
                 auto cl = [](float f) { return std::min(1.0f, std::max(0.0f, f)); };
-                const float alpha = std::isfinite(tr) ? 1.0f - cl(tr) : 1.0f;
+                // Glass materials carry a small value here (0.12, 0.18); WusonOrange's only material carries exactly 1, which
+                // would make the whole model invisible: a fully clear material is read as opaque, with a note.
+                float alpha = std::isfinite(tr) ? 1.0f - cl(tr) : 1.0f;
+                if (alpha <= 0.0f) { alpha = 1.0f; ++st.clearMats; }
                 mt.hasDiffuse = true;
                 mt.diffuse = Color{cl(col[3]), cl(col[4]), cl(col[5]), alpha};
                 mats.push_back(std::move(mt));
@@ -170,8 +180,9 @@ bool Q3dTry(const std::string& bytes, bool be, ImportedModel& out, std::string& 
                 c.Skip((std::uint64_t)w * (std::uint64_t)h * 3u);
                 ++skippedTex;
             }
-        } else if (type == 's' && scene && !seenS) {
+        } else if (type == 's' && !seenS) {
             seenS = true;   // the scene chunk is last; camera, lights and background are not used
+            scene = true;
         } else { why = std::string("an unexpected or repeated chunk type ") + std::to_string((int)type); return false; }
     }
     if (nMesh > 0 && !seenM) { why = "the header names meshes but there is no meshes chunk"; return false; }
@@ -263,6 +274,8 @@ bool Q3dTry(const std::string& bytes, bool be, ImportedModel& out, std::string& 
     if (st.shortFace) note(std::to_string(st.shortFace) + " face(s) with fewer than 3 corners skipped");
     if (st.badUv) note(std::to_string(st.badUv) + " corner(s) with a bad texture coordinate index got (0, 0)");
     if (st.badNormals) note("a mesh has zero or invalid stored normals: normals were generated");
+    if (st.uvCountNoData) note(std::to_string(st.uvCountNoData) + " mesh(es) name texture coordinates but the file has no textures, so none are stored: no UVs");
+    if (st.clearMats) note(std::to_string(st.clearMats) + " material(s) with transparency 1 (fully clear) read as opaque");
     return true;
 }
 } // namespace

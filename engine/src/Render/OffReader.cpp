@@ -37,7 +37,7 @@ struct Reader {
             while (lines.Next(line)) {
                 const std::size_t h = line.find('#');
                 if (h != std::string::npos) line.resize(h);
-                tk = Split(line);
+                SplitInto(line, tk);   // reuses the vector and its strings
                 if (!tk.empty()) return true;
             }
             return false;

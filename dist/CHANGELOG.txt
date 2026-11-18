@@ -1,5 +1,36 @@
 OkaySpace Game Engine — Changelog
 
+v2.886.0
+  Simpler Modeling, Project panel, Visual Script and Scene menu
+  - Modeling no longer has an Advanced menu. Every tool is in the page list
+    and the pages have plain names.
+  - The Project panel can be one column (folders open in place) or two
+    columns (folder tree and contents). Pick it in the panel.
+  - Visual Script can be moved around easily: a Pan button, hold Space and
+    drag, arrow keys, and a trackpad option where plain scrolling pans.
+  - An empty Visual Script shows big recipe cards, with Start empty if you
+    want a blank page. New blocks join the selected block by themselves.
+  - Problems are explained in plain words, with a Fix it for me button for
+    unconnected blocks and wires of the wrong kind. A short note under a
+    running block says what just happened, and a one-line hint tells you
+    the next step.
+  - Right-click in the Scene view opens an Add menu (shapes, lights, camera,
+    character, UI, audio, effects, prefabs, search) and places the new
+    object where you clicked.
+
+v2.885.0
+  Easier scripts and modeling
+  - Visual Script is much simpler: Quick blocks do a whole job in one block
+    (for example "Open Door When Touched" instead of 10 nodes and 8 wires).
+    An empty script shows recipe cards you click to start.
+  - The Add node list shows 55 plain-named nodes in six groups. Tick
+    "Show all nodes" to see everything.
+  - The node search window is bigger, has a preview, and works with the
+    keyboard. The script window has Compact, Comfortable and Spacious sizes.
+  - Project panel has Assets, Favourites and Recent tabs.
+  - Modeling is easier: fewer clicks, starter shapes, and the side bar folds
+    with Ctrl+\.
+
 v2.884.0
   Fixes
   - Save before stopping really saves, Timeline keys survive dragging, and
@@ -7,6 +38,19 @@ v2.884.0
   - Prefab variants: a prefab file that is cut short is refused instead of
     half loading, and long Windows paths are no longer cut off.
   - Release checks wait longer for the update server before publishing.
+
+Unreleased
+  Fixes and new things
+  - Models now open with our own readers, written for this engine,
+    instead of the Assimp and ufbx libraries. They are faster and use
+    less memory on the test files. This covers FBX, COLLADA (.dae),
+    Blender, 3DS, OBJ, STL, PLY, DirectX .x and about 40 more formats.
+    If our reader cannot read a file, the old library still tries it,
+    and the Console says which one read it.
+  - To go back to the old libraries for every model, set
+    OKAY_THIRD_PARTY=1 before starting the program. To go back for one
+    format only, set OKAY_OWN_<FORMAT>=0 (for example OKAY_OWN_FBX=0).
+    Please tell us about any model that looks different.
 
 v2.883.0
   Fixes and new things

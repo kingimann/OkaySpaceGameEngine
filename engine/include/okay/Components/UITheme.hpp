@@ -1,4 +1,5 @@
 #pragma once
+#include <algorithm>
 // A saved skin for the runtime UI kit (grok/ui-theme).
 //
 // Twelve built-in looks (Dark, Light, Sci-fi, Fantasy, Modern Flat, Cartoon, Retro Pixel,
@@ -89,6 +90,8 @@ public:
     bool  gradient = true;
     int   gradientDir = (int)UIPanel::GradientDir::Vertical;
     bool  shadow = true;
+    float labelContrast = 4.5f; ///< button labels below this are moved to labelContrast + 1.5 (a look can ask for 7 : 1)
+    bool  textShadow = false;   ///< a soft 1 px low-alpha shadow under text; off by default so text stays crisp
     float shadowSoftness = 18.0f;
     Vec2  shadowOffset{0.0f, 10.0f};
     float glow = 0.0f;
@@ -179,6 +182,7 @@ public:
 
     /// Bake onto every object in the scene (UI widgets only change; nothing else is touched).
     void ApplyToScene(Scene& scene) const {
+        const_cast<UITheme*>(this)->MakeReadable();
         for (const auto& go : scene.Objects()) ApplyOne(go.get());
     }
 
@@ -190,10 +194,14 @@ public:
     /// fill they were given (the hover / pressed / disabled chips).
     void ApplyTo(GameObject* root) const {
         if (!root) return;
+        const_cast<UITheme*>(this)->MakeReadable();   // text and button labels reach 4.5 : 1 on every look
+        ApplyRec(root);
+    }
+    void ApplyRec(GameObject* root) const {
         ApplyOne(root);
         if (!root->transform) return;
         for (Transform* c : root->transform->Children())
-            if (c && c->gameObject) ApplyTo(c->gameObject);
+            if (c && c->gameObject) ApplyRec(c->gameObject);
     }
 
     static UITheme* Find(Scene* scene, const std::string& name) {
@@ -411,8 +419,8 @@ private:
     }
     void HorrorPalette() {
         SetLook(C::FromBytes(16, 8, 8, 245), C::FromBytes(6, 2, 2, 245), C::FromBytes(170, 20, 20),
-                C::FromBytes(210, 196, 184), C::FromBytes(120, 96, 88), C::FromBytes(60, 12, 12),
-                C::FromBytes(110, 20, 20), C::FromBytes(30, 6, 6), C::FromBytes(230, 210, 200),
+                C::FromBytes(240, 228, 216), C::FromBytes(178, 154, 142), C::FromBytes(60, 12, 12),
+                C::FromBytes(124, 22, 22), C::FromBytes(30, 6, 6), C::FromBytes(252, 242, 234),
                 C::FromBytes(34, 24, 24), C::FromBytes(200, 20, 20), C::FromBytes(90, 130, 70),
                 C::FromBytes(110, 20, 20, 220), C::FromBytes(140, 0, 0, 140), C::FromBytes(170, 20, 20, 120));
         SetShape(3.0f, UICornerAll, 1.0f, true, true, 20.0f, {0.0f, 0.0f}, 1.0f, false, 8.0f, 1.0f);
@@ -448,10 +456,66 @@ public:
     }
     /// The smallest contrast the themes promise between a label and what it sits on.
     static constexpr float kMinContrast = 3.0f;
+    /// The smallest contrast a look promises for body text: labels, button text and values (WCAG "AA", 4.5 : 1).
+    static constexpr float kTextContrast = 4.5f;
+
+    /// `fg` moved toward white or near-black (whichever reads better on `bg`) just far enough to reach `want` : 1 on `bg`. Same hue as far as possible.
+    static Color Fixed(Color fg, Color bg, float want, float trigger = -1.0f) {
+        const Color flatBg = Flat(bg);
+        if (Contrast(fg, flatBg) >= (trigger < 0.0f ? want : trigger)) return fg;
+        const Color target = Contrast(Color::White, flatBg) >= Contrast(Color(0.0f, 0.0f, 0.0f, 1.0f), flatBg) ? Color::White : Color(0.0f, 0.0f, 0.0f, 1.0f);
+        Color out = fg;
+        for (int i = 1; i <= 20; ++i) {
+            out = Mix(fg, target, i * 0.05f); out.a = fg.a;
+            if (Contrast(out, flatBg) >= want) break;
+        }
+        return out;
+    }
+    /// Make this look's own text readable: the text and muted colours on the panel (and the darker field behind inputs), the button label on the button in its
+    /// rest, hover and pressed colours. A pair that cannot reach 4.5 : 1 by moving the label (a mid-tone button) moves the button fills instead. Safe to call twice.
+    void MakeReadable() {
+        // A gradient panel (light at the top, dark at the bottom) cannot be read with one colour at both ends: pull the two ends together, on the side the
+        // text colour is on, until one label colour reaches 4.5 : 1 on both.
+        const Color darkInk = Color::FromBytes(20, 22, 28), lightInk = Color::White;
+        auto worst = [&](Color fg) { return std::min(Contrast(fg, panel), Contrast(fg, panelBottom)); };
+        const bool useDark = worst(darkInk) >= worst(lightInk);
+        const Color extreme = useDark ? darkInk : lightInk;
+        for (int i = 0; i < 40 && worst(extreme) < kTextContrast; ++i) {
+            const Color toward = useDark ? Color(1.0f, 1.0f, 1.0f, 1.0f) : Color(0.0f, 0.0f, 0.0f, 1.0f);
+            const bool pushTop = Contrast(extreme, panel) < Contrast(extreme, panelBottom);
+            Color& end = pushTop ? panel : panelBottom;
+            const float a = end.a; end = Mix(end, toward, 0.08f); end.a = a;
+        }
+        auto fixOne = [&](Color fg) {   // a colour below 4.5 : 1 is moved well past it (6.5 : 1), so it reads as clear text and not as a marginal pass
+            if (worst(fg) >= kTextContrast) return fg;
+            Color out = fg;
+            for (int i = 1; i <= 20; ++i) { out = Mix(fg, extreme, i * 0.05f); out.a = fg.a; if (worst(out) >= 6.5f) break; }
+            return out;
+        };
+        text = fixOne(text);
+        muted = fixOne(muted);
+        const Color fieldBg = Mul(panel, 0.6f);
+        text = Fixed(text, fieldBg, kTextContrast) ; muted = Fixed(muted, fieldBg, kTextContrast);
+        if (worst(text) < kTextContrast) text = fixOne(extreme);
+        if (worst(muted) < kTextContrast) muted = fixOne(extreme);
+        // A see-through button has no fixed colour under its label (the backdrop shows through), so no label colour can be promised readable: keep at least
+        // 85 percent of the fill.
+        for (Color* bgp : {&button, &buttonHover, &buttonPressed}) if (bgp->a < 0.85f) bgp->a = 0.85f;
+        for (int pass = 0; pass < 2; ++pass) {
+            const float need = labelContrast > kTextContrast ? labelContrast : kTextContrast;
+            for (const Color* bgp : {&button, &buttonHover, &buttonPressed}) buttonText = Fixed(buttonText, *bgp, need + 1.5f > 6.5f ? need + 1.5f : 6.5f, need);
+            bool ok = true;
+            for (const Color* bgp : {&button, &buttonHover, &buttonPressed}) ok = ok && Contrast(buttonText, *bgp) >= need;
+            if (ok) break;
+            const Color away = Luminance(buttonText) > 0.4f ? Color(0.0f, 0.0f, 0.0f, 1.0f) : Color(1.0f, 1.0f, 1.0f, 1.0f);
+            for (Color* bgp : {&button, &buttonHover, &buttonPressed})
+                for (int i = 1; i <= 40 && Contrast(buttonText, *bgp) < (need > 5.5f ? need : 5.5f); ++i) { const float a = bgp->a; *bgp = Mix(*bgp, away, 0.06f); bgp->a = a; }
+        }
+    }
 private:
     /// `fg` when it reads on `bg`, else the theme's text colour, else white or near-black: whichever reads best.
     Color Readable(Color fg, Color bg) const {
-        if (Contrast(fg, bg) >= kMinContrast) return fg;
+        if (Contrast(fg, bg) >= kTextContrast) return fg;
         Color best = text; float bestRatio = Contrast(text, bg);
         const Color ink = Ink(Flat(bg));
         if (Contrast(ink, bg) > bestRatio) { best = ink; bestRatio = Contrast(ink, bg); }
@@ -507,7 +571,7 @@ private:
             b->shadowColor = shadowCol;
             b->shadowOffset = Vec2{0.0f, shadowOffset.y * 0.45f};
             b->shadowSoftness = shadowSoftness * 0.5f;
-            b->fontScale = fontScale;
+            if (b->fontScale < fontScale) b->fontScale = fontScale;   // a look never makes a label smaller than the screen asked for (a phone menu's big buttons)
             b->transitionSpeed = transitionSpeed;
             b->hoverScale = hoverScale;
             // The buttons of a slot grid sit on the grid's own (themed) slot colours, not the button colour.
@@ -575,8 +639,11 @@ private:
         if (auto* tabs = go->GetComponent<UITabs>()) {
             tabs->background = Mul(panel, 0.78f);
             tabs->selected = accent;
-            tabs->textColor = muted;
-            tabs->selectedTextColor = Ink(accent);   // readable on the accent, whatever the look
+            tabs->textColor = Readable(muted, tabs->background);
+            // Readable on the accent when the selected tab is filled with it (Segmented, Pills); an Underline, Folder or Vertical tab is not filled, so its
+            // selected label is the theme's text colour (dark ink on a dark panel made it invisible).
+            const bool filled = tabs->style == UITabs::Style::Segmented || tabs->style == UITabs::Style::Pills;
+            tabs->selectedTextColor = filled ? Ink(accent) : text;
             tabs->hoverColor = Color(1.0f, 1.0f, 1.0f, 0.14f);
             tabs->cornerRadius = cornerRadius * 0.55f;
         }
@@ -626,10 +693,10 @@ private:
         const bool sw = SwatchChild(go);
         if (!sw) tr->color = text;
         const bool lightInk = (sw ? tr->color : text).r + (sw ? tr->color : text).g + (sw ? tr->color : text).b > 1.7f;
-        tr->shadow = true;
-        tr->outline = true;
-        tr->outlineColor = lightInk ? Color(0.0f, 0.0f, 0.0f, 0.90f) : Color(1.0f, 0.98f, 0.92f, 0.80f);
-        tr->shadowColor = tr->outlineColor;
+        // Crisp text: no outline and no shadow unless the look asks for one (textShadow), and then only a soft 1 px low-alpha shadow.
+        tr->outline = false;
+        tr->shadow = textShadow;
+        tr->shadowColor = lightInk ? Color(0.0f, 0.0f, 0.0f, 0.30f) : Color(1.0f, 1.0f, 1.0f, 0.30f);
         tr->shadowOffset = {1.0f, 1.0f};
         if (tr->pixelSize > 0.0f && tr->pixelSize < 0.5f) tr->pixelSize = textPixelSize;
     }

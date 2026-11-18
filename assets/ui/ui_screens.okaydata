@@ -1,0 +1,1001 @@
+# UI screens as data. One builder (engine/include/okay/Scene/UIScreens.hpp) turns each [screen] into objects under the Canvas.
+# Layout language: see the header of UIScreens.hpp. Every screen is checked by tests/test_ui_screens.cpp (builds, no widget off screen
+# or outside its card at the sizes it says it fits, saves and loads back, buttons that say act= really carry a script).
+# Written from scratch for this engine; no other project's layouts, art or text were used.
+
+[section menus]
+name = Menus
+tip = Title, pause, settings, credits, level choice and game over screens.
+[section hud]
+name = In-Game HUD
+tip = What the player sees while playing, laid out for a kind of game.
+[section items]
+name = Inventory & Items
+tip = Bags, crafting, shops, character sheets and skill trees.
+[section dialogue]
+name = Dialogue & Quests
+tip = Talking to characters, quest lists and journals.
+[section social]
+name = Multiplayer & Social
+tip = Lobbies, scoreboards, leaderboards, chat and friends.
+[section popups]
+name = Popups & Notifications
+tip = Questions, toasts, tooltips, achievements and errors.
+[section forms]
+name = Forms & Accounts
+tip = Login, sign-up and feedback forms.
+[section mobile]
+name = Mobile & Touch
+tip = Screens made for thumbs: big buttons and touch controls.
+[section loading]
+name = Loading
+tip = Screens that show while a level loads.
+
+# ------------------------------------------------------------------ Menus
+[screen main_menu]
+name = Main Menu
+section = menus
+desc = A title screen: Play, Settings, Credits and Quit in a centred card.
+tags = title, start, play, quit, home
+variants = Centered|Left side|Right side|Dimmed backdrop
+replaces = UITemplates::AddMainMenu (fixed card, buttons did nothing)
+group Main Menu
+  dim Dim v=3 a=0.45
+  panel Card card=1 anchor=center size=400,460 lift=1 cr=16
+    caption Caption "WELCOME TO" pos=36,34 size=328,18
+    text Title "MY GAME" pos=36,54 size=328,48 px=40 bold=1
+    divider Line pos=36,118 size=328,1
+    button PlayButton "Play" pos=36,146 size=328,52 act="hide:main_menu;show:hud_shooter" icon=play
+    button SettingsButton "Settings" pos=36,210 size=328,48 btn=secondary act="show:settings" icon=gear
+    button CreditsButton "Credits" pos=36,270 size=328,48 btn=secondary act="swap:main_menu>credits" icon=star
+    button QuitButton "Quit" pos=36,330 size=328,48 btn=ghost act=quit icon=door
+    text Version "v1.0" anchor=bottomleft pos=36,-14 size=120,18 px=12 color=dim
+
+[screen pause_menu]
+name = Pause Menu
+section = menus
+desc = Resume, Settings, Give up and Quit to menu over a dimmed game. Pauses the game while open.
+tags = pause, resume, quit, escape
+variants = Centered|Left side|Right side
+replaces = UITemplates::AddPauseMenu
+group Pause Menu
+  dim Dim a=0.55
+  panel Card card=1 anchor=center size=360,400 lift=1 cr=16
+    caption Caption "GAME" pos=32,28 size=296,18
+    text Title "Paused" pos=32,46 size=296,40 px=32 bold=1
+    button ResumeButton "Resume" pos=32,110 size=296,50 act="hide:pause_menu;pause:0" icon=play
+    button SettingsButton "Settings" pos=32,172 size=296,46 btn=secondary act="show:settings" icon=gear
+    button GiveUpButton "Give up" pos=32,230 size=296,46 btn=secondary act="hide:pause_menu;pause:0;hide:hud_shooter;show:game_over" icon=flag
+    button MenuButton "Quit to menu" pos=32,288 size=296,46 btn=ghost act="hide:pause_menu;pause:0;hide:hud_shooter;show:main_menu" icon=home
+
+[screen settings]
+name = Settings
+section = menus
+desc = Settings on four tabs: Video, Audio, Controls and Accessibility. The Volume slider works with no script.
+tags = options, audio, video, controls, accessibility, volume, graphics
+variants = Centered|Left side|Right side
+replaces = UITemplates::AddSettings (one crowded page, fixed 960x640)
+group Settings
+  dim Dim a=0.5
+  panel Card card=1 anchor=center size=640,520 lift=1 cr=16 block=1
+    text Title "Settings" pos=28,18 size=584,36 px=28 bold=1
+    tabs Tabs pos=28,64 size=584,36 tabs="Video|Audio|Controls|Accessibility" pages="Video|Audio|Controls|Access" style=underline
+    panel Video page=1 pos=28,112 size=584,330 fill=none cr=0
+      text L1 "Display mode" pos=0,8 size=200,24 px=16
+      dropdown Mode pos=260,4 size=320,32 options="Windowed|Borderless|Fullscreen" value=0
+      text L2 "Resolution" pos=0,56 size=200,24 px=16
+      dropdown Res pos=260,52 size=320,32 options="1280 x 720|1920 x 1080|2560 x 1440" value=1
+      text L3 "Quality" pos=0,104 size=200,24 px=16
+      dropdown Quality pos=260,100 size=320,32 options="Low|Medium|High|Ultra" value=2
+      text L4 "VSync" pos=0,152 size=200,24 px=16
+      toggle VSync pos=260,152 on=1
+      text L5 "Show FPS" pos=0,196 size=200,24 px=16
+      toggle Fps pos=260,196 on=0
+    panel Audio page=1 off=1 pos=28,112 size=584,330 fill=none cr=0
+      text L1 "Master volume" pos=0,8 size=200,24 px=16
+      slider Master pos=220,14 size=340,12 value=0.8 act=volume
+      text L2 "Music" pos=0,56 size=200,24 px=16
+      slider Music pos=220,62 size=340,12 value=0.7
+      text L3 "Effects" pos=0,104 size=200,24 px=16
+      slider Sfx pos=220,110 size=340,12 value=0.8
+      text L4 "Voices" pos=0,152 size=200,24 px=16
+      slider Voice pos=220,158 size=340,12 value=0.9
+      text L5 "Mute when in background" pos=0,200 size=260,24 px=16
+      toggle MuteBg pos=300,200 on=1
+    panel Controls page=1 off=1 pos=28,112 size=584,330 fill=none cr=0
+      text L1 "Mouse sensitivity" pos=0,8 size=200,24 px=16
+      slider Sens pos=220,14 size=340,12 value=0.5
+      text L2 "Invert Y axis" pos=0,56 size=200,24 px=16
+      toggle Invert pos=260,56 on=0
+      text L3 "Vibration" pos=0,100 size=200,24 px=16
+      toggle Rumble pos=260,100 on=1
+      button Rebind "Change keys..." pos=0,160 size=260,44 btn=secondary act="show:rebinding" icon=keyboard
+    panel Access page=1 off=1 pos=28,112 size=584,330 fill=none cr=0
+      text L1 "Text size" pos=0,8 size=200,24 px=16
+      dropdown TextSize pos=260,4 size=320,32 options="Small|Normal|Large|Extra large" value=1
+      text L2 "Colour filter" pos=0,56 size=200,24 px=16
+      dropdown Filter pos=260,52 size=320,32 options="Off|Protanopia|Deuteranopia|Tritanopia" value=0
+      text L3 "High contrast" pos=0,104 size=200,24 px=16
+      toggle Contrast pos=260,104 on=0
+      text L4 "Reduce motion" pos=0,148 size=200,24 px=16
+      toggle Motion pos=260,148 on=0
+      text L5 "Subtitles" pos=0,192 size=200,24 px=16
+      toggle Subs pos=260,192 on=1
+    button CloseButton "Done" pos=28,456 size=584,44 act="hide:settings" btn=primary
+
+[screen rebinding]
+name = Controls Rebinding
+section = menus
+desc = Eight actions with a keyboard box and a controller box each: click one, press a key or button, and the action really changes. Reset puts every default back.
+tags = keybinds, keys, controls, input, remap
+variants = Centered|Left side|Right side
+group Controls Rebinding
+  dim Dim a=0.5
+  panel Card card=1 anchor=center size=560,560 lift=1 cr=16 block=1
+    text Title "Controls" pos=28,18 size=504,36 px=28 bold=1
+    text Hdr1 "KEYBOARD AND MOUSE" pos=40,66 size=250,16 px=12 color=accent up=1
+    text Hdr2 "CONTROLLER" pos=326,66 size=180,16 px=12 color=accent up=1
+    keybind Jump "Jump" anchor=topleft pos=28,88 size=270,32 action=Jump def=key:space,pad:a
+    keybind JumpPad "Jump" anchor=topleft pos=310,88 size=222,32 action=Jump pad=1
+    keybind Fire "Fire" pos=28,130 size=270,32 action=Fire def=key:f,pad:rt
+    keybind FirePad "Fire" pos=310,130 size=222,32 action=Fire pad=1
+    keybind Interact "Use" pos=28,172 size=270,32 action=Interact def=key:e,pad:x
+    keybind InteractPad "Use" pos=310,172 size=222,32 action=Interact pad=1
+    keybind Reload "Reload" pos=28,214 size=270,32 action=Reload def=key:r,pad:y
+    keybind ReloadPad "Reload" pos=310,214 size=222,32 action=Reload pad=1
+    keybind Crouch "Crouch" pos=28,256 size=270,32 action=Crouch def=key:c,pad:b
+    keybind CrouchPad "Crouch" pos=310,256 size=222,32 action=Crouch pad=1
+    keybind Sprint "Sprint" pos=28,298 size=270,32 action=Sprint def=key:shift,pad:ls
+    keybind SprintPad "Sprint" pos=310,298 size=222,32 action=Sprint pad=1
+    keybind Map "Map" pos=28,340 size=270,32 action=OpenMap def=key:m,pad:back
+    keybind MapPad "Map" pos=310,340 size=222,32 action=OpenMap pad=1
+    keybind Pause "Pause" pos=28,382 size=270,32 action=PauseGame def=key:p,pad:start
+    keybind PausePad "Pause" pos=310,382 size=222,32 action=PauseGame pad=1
+    text Tip "Click a box, then press the key or button you want. Backspace puts the default back." pos=28,430 size=504,44 px=14 color=dim wrap=1
+    button Reset "Reset all" pos=28,500 size=250,40 btn=secondary act=resetkeys
+    button Done "Done" pos=290,500 size=242,40 act="hide:rebinding"
+
+[screen credits]
+name = Credits
+section = menus
+desc = Scrolling-style credit list with sections for the team, thanks and the tools used, and a Back button.
+tags = thanks, team, about, end
+variants = Centered|Left side|Right side
+group Credits
+  dim Dim a=0.6
+  panel Card card=1 anchor=center size=520,560 lift=1 cr=16 block=1
+    text Title "Credits" pos=28,20 size=464,40 px=30 bold=1 align=c
+    caption Role1 "GAME DESIGN" pos=28,84 size=464,18
+    text N1 "Your Name" pos=28,106 size=464,26 px=20 align=c
+    caption Role2 "PROGRAMMING" pos=28,150 size=464,18
+    text N2 "Your Name" pos=28,172 size=464,26 px=20 align=c
+    caption Role3 "ART AND MUSIC" pos=28,216 size=464,18
+    text N3 "Your Name" pos=28,238 size=464,26 px=20 align=c
+    caption Role4 "SPECIAL THANKS" pos=28,282 size=464,18
+    text N4 "Everyone who played the early versions" pos=28,304 size=464,26 px=16 align=c color=dim
+    divider Line pos=28,360 size=464,1
+    text Made "Made with OkaySpace Game Engine" pos=28,374 size=464,24 px=14 align=c color=dim
+    button Back "Back" pos=28,490 size=464,44 act="swap:credits>main_menu"
+
+[screen level_select]
+name = Level Select
+section = menus
+desc = A grid of level cards with stars and a lock on the ones not reached yet.
+tags = levels, stages, map, campaign
+variants = Centered|Dimmed backdrop
+group Level Select
+  dim Dim v=1 a=0.45
+  panel Card card=1 anchor=center size=660,480 lift=1 cr=16
+    text Title "Choose a level" pos=28,18 size=604,36 px=28 bold=1
+    rep n=8 cols=4 dx=152 dy=170
+      panel Level pos=28,70 size=140,150 fill=card cr=10 border=1
+        panel Thumb pos=10,10 size=120,80 fill=field cr=6
+          icon Mark "flag" pos=44,24 size=32,32 color=dim
+        text Name "Level {i}" pos=0,96 size=140,22 px=16 align=c bold=1
+        icon Star1 "star" pos=34,122 size=20,20 color=warning
+        icon Star2 "star" pos=60,122 size=20,20 color=warning
+        icon Star3 "star" pos=86,122 size=20,20 color=dim
+    button Back "Back" pos=28,420 size=180,40 btn=secondary act="swap:level_select>main_menu"
+
+[screen game_over]
+name = Game Over
+section = menus
+desc = The end screen: a big title, the final score and Retry, Menu and Quit buttons.
+tags = death, lose, retry, end, score
+variants = Centered|Dimmed backdrop
+replaces = UITemplates::AddGameOver
+group Game Over
+  dim Dim a=0.65
+  panel Card card=1 anchor=center size=420,420 lift=1 cr=16
+    text Title "GAME OVER" pos=24,28 size=372,56 px=44 bold=1 align=c color=danger
+    divider Line pos=40,100 size=340,1
+    caption Score "FINAL SCORE" pos=40,120 size=340,18
+    text Value "12,450" pos=40,142 size=340,44 px=36 bold=1 align=c
+    text Best "Best 18,200" pos=40,192 size=340,22 px=15 align=c color=dim
+    button RetryButton "Try again" pos=40,236 size=340,50 act="hide:game_over;show:hud_shooter" icon=redo
+    button MenuButton "Main menu" pos=40,298 size=340,46 btn=secondary act="hide:game_over;show:main_menu" icon=home
+    button QuitButton "Quit" pos=40,356 size=340,44 btn=ghost act=quit
+
+# ------------------------------------------------------------------ In-Game HUD
+[screen hud_shooter]
+name = HUD Shooter
+section = hud
+desc = Health and armour bars, ammo counter, crosshair, a round timer and a pause button.
+tags = fps, shooter, ammo, health, crosshair
+portrait = 0
+replaces = UITemplates::AddHUD (kept as "HUD (health + score)")
+group HUD Shooter
+  panel Health anchor=bottomleft pos=24,-24 size=280,64 fill=backdrop cr=10
+    icon Heart "heart" pos=12,10 size=22,22 color=danger
+    bar HealthBar pos=44,14 size=216,14 value=0.8 fill=danger
+    icon Shield "shield" pos=12,36 size=22,22 color=accent
+    bar ArmorBar pos=44,40 size=216,10 value=0.4 fill=accent
+  panel Ammo anchor=bottomright pos=-24,-24 size=216,64 fill=backdrop cr=10
+    icon AmmoIcon "bullet" pos=12,16 size=32,32 color=accent
+    text Mag "24" pos=52,6 size=62,52 px=40 bold=1
+    text Reserve "/ 120" pos=114,24 size=90,30 px=22 color=dim
+  icon Cross "crosshair" anchor=center pos=0,0 size=28,28 color=text
+  text Timer "02:45" anchor=topcenter pos=0,16 size=160,34 px=28 bold=1 align=c
+  button Pause "Pause" anchor=topright pos=-20,16 size=124,38 btn=secondary act="show:pause_menu;pause:1" icon=pause
+
+[screen hud_rpg]
+name = HUD RPG
+section = hud
+desc = Portrait with health, mana and experience bars, a skill hotbar and a quest hint.
+tags = rpg, mana, xp, hotbar, quest, skills
+portrait = 0
+group HUD RPG
+  panel Portrait anchor=topleft pos=20,20 size=300,92 fill=backdrop cr=12
+    avatar Face "Hero" pos=12,12 d=68
+    text Name "Hero  Lv 12" pos=92,8 size=190,22 px=16 bold=1
+    bar Hp pos=92,34 size=190,14 value=0.75 fill=danger
+    bar Mp pos=92,54 size=190,12 value=0.5 fill=accent
+    bar Xp pos=92,72 size=190,8 value=0.3 fill=warning
+  panel Quest anchor=topright pos=-20,20 size=280,84 fill=backdrop cr=12
+    caption Cap "QUEST" pos=14,10 size=250,16
+    text Goal "Find the old mill" pos=14,30 size=252,22 px=16
+    text Step "Talk to the miller 0/1" pos=14,54 size=252,20 px=13 color=dim
+  panel Hotbar anchor=bottomcenter pos=0,-20 size=456,68 fill=backdrop cr=12
+    rep n=6 cols=6 dx=72
+      panel Slot pos=10,8 size=60,52 fill=card cr=8 border=1
+        text Key "{i}" pos=4,2 size=20,16 px=12 color=dim
+  panel Mini anchor=bottomright pos=-20,-20 size=140,140 fill=backdrop cr=70 shape=circle
+    icon Pin "compass" pos=54,54 size=32,32 color=accent
+
+[screen hud_racing]
+name = HUD Racing
+section = hud
+desc = Speed, gear, lap and position, a boost bar and a minimap corner.
+tags = racing, car, speed, lap, position, boost
+portrait = 0
+group HUD Racing
+  panel Speed anchor=bottomright pos=-24,-24 size=260,150 fill=backdrop cr=14
+    text Kmh "186" pos=14,8 size=150,70 px=64 bold=1 align=r
+    text Unit "km/h" pos=170,40 size=80,24 px=18 color=dim
+    text Gear "Gear 5" pos=14,84 size=120,24 px=18
+    bar Boost pos=14,118 size=232,14 value=0.6 fill=warning
+  panel Lap anchor=topleft pos=24,24 size=220,88 fill=backdrop cr=12
+    caption Cap "LAP" pos=14,10 size=190,16
+    text LapNum "2 / 3" pos=14,28 size=190,34 px=28 bold=1
+    text Time "01:12.48" pos=14,60 size=190,22 px=16 color=dim
+  panel Place anchor=topright pos=-24,24 size=140,100 fill=backdrop cr=12
+    text Pos "3rd" pos=0,8 size=140,56 px=44 bold=1 align=c
+    text Of "of 8" pos=0,66 size=140,24 px=16 align=c color=dim
+  panel Mini anchor=bottomleft pos=24,-24 size=180,150 fill=backdrop cr=14
+    icon Pin "flag" pos=74,58 size=32,32 color=accent
+
+[screen hud_platformer]
+name = HUD Platformer
+section = hud
+desc = Lives, coins, score and a world name across the top; a power-up slot.
+tags = platformer, lives, coins, score, mario-like
+group HUD Platformer
+  panel Top anchor=topcenter pos=0,12 size=640,56 fill=backdrop cr=14
+    icon Heart "heart" pos=16,14 size=28,28 color=danger
+    text Lives "x 3" pos=50,10 size=70,36 px=24 bold=1
+    icon Coin "coin" pos=150,14 size=28,28 color=warning
+    text Coins "x 27" pos=184,10 size=90,36 px=24 bold=1
+    text World "WORLD 1-2" pos=300,10 size=160,36 px=20 align=c color=dim
+    text Score "004500" pos=470,10 size=154,36 px=24 bold=1 align=r
+  panel Power anchor=topleft pos=16,80 size=64,64 fill=backdrop cr=12
+    icon Item "star" pos=16,16 size=32,32 color=warning
+
+[screen hud_survival]
+name = HUD Survival
+section = hud
+desc = Health, hunger, thirst, stamina and temperature meters, a day counter and a quick hotbar.
+tags = survival, hunger, thirst, stamina, temperature, craft
+portrait = 0
+group HUD Survival
+  panel Meters anchor=bottomleft pos=20,-20 size=260,168 fill=backdrop cr=12
+    icon I1 "heart" pos=12,14 size=22,22 color=danger
+    bar B1 pos=44,18 size=200,14 value=0.9 fill=danger
+    icon I2 "apple" pos=12,46 size=22,22 color=warning
+    bar B2 pos=44,50 size=200,14 value=0.6 fill=warning
+    icon I3 "water-drop" pos=12,78 size=22,22 color=accent
+    bar B3 pos=44,82 size=200,14 value=0.7 fill=accent
+    icon I4 "lightning" pos=12,110 size=22,22 color=success
+    bar B4 pos=44,114 size=200,14 value=0.8 fill=success
+    icon I5 "thermometer" pos=12,138 size=22,22 color=text
+    bar B5 pos=44,142 size=200,10 value=0.5 fill=text
+  panel Day anchor=topright pos=-20,20 size=180,64 fill=backdrop cr=12
+    text DayNum "Day 4" pos=0,6 size=180,30 px=24 bold=1 align=c
+    text Clock "14:30" pos=0,36 size=180,22 px=16 align=c color=dim
+  panel Hotbar anchor=bottomcenter pos=0,-20 size=360,68 fill=backdrop cr=12
+    rep n=5 cols=5 dx=68
+      panel Slot pos=10,8 size=60,52 fill=card cr=8 border=1
+        text Key "{i}" pos=4,2 size=20,16 px=12 color=dim
+
+[screen hud_strategy]
+name = HUD Strategy
+section = hud
+desc = Resource bar on top, a selection info panel, a command card of buttons and a minimap.
+tags = rts, strategy, resources, units, commands
+portrait = 0
+group HUD Strategy
+  panel Res anchor=topcenter pos=0,10 size=620,48 fill=backdrop cr=12
+    icon R1 "coin" pos=16,10 size=26,26 color=warning
+    text V1 "1,200" pos=48,6 size=100,34 px=20 bold=1
+    icon R2 "tree" pos=170,10 size=26,26 color=success
+    text V2 "540" pos=202,6 size=100,34 px=20 bold=1
+    icon R3 "gem" pos=320,10 size=26,26 color=accent
+    text V3 "75" pos=352,6 size=100,34 px=20 bold=1
+    icon R4 "users" pos=470,10 size=26,26 color=text
+    text V4 "32/50" pos=502,6 size=110,34 px=20 bold=1
+  panel Sel anchor=bottomcenter pos=0,-12 size=420,150 fill=backdrop cr=12
+    avatar Unit "Knight" pos=14,14 d=70
+    text Name "Knight" pos=96,12 size=300,26 px=20 bold=1
+    bar Hp pos=96,46 size=300,14 value=0.9 fill=success
+    text Stat "Attack 12   Armor 5   Speed 3" pos=96,70 size=310,22 px=14 color=dim
+  panel Cmd anchor=bottomright pos=-12,-12 size=250,150 fill=backdrop cr=12
+    rep n=6 cols=3 dx=78 dy=70
+      button Cmd pos=10,10 size=70,60 btn=secondary text="{i}" 
+  panel Mini anchor=bottomleft pos=12,-12 size=190,190 fill=backdrop cr=12
+    icon Pin "compass" pos=79,79 size=32,32 color=accent
+
+[screen minimap_frame]
+name = Minimap Frame
+section = hud
+desc = A round map frame with a compass letter, a zoom pair and a place name under it.
+tags = map, minimap, compass, zoom, radar
+group Minimap Frame
+  panel Frame anchor=topright pos=-20,20 size=200,236 fill=backdrop cr=14
+    panel Map pos=10,10 size=180,180 fill=card cr=90 shape=circle
+      icon Pin "compass" pos=74,74 size=32,32 color=accent
+      text North "N" pos=80,4 size=20,20 px=16 bold=1 align=c color=danger
+    text Place "Old Mill Road" pos=10,196 size=140,22 px=14 color=dim
+    button Plus "+" pos=152,196 size=18,22 btn=secondary px=14
+    button Minus "-" pos=172,196 size=18,22 btn=secondary px=14
+
+# ------------------------------------------------------------------ Inventory & Items
+[screen inventory_grid]
+name = Inventory Grid
+section = items
+desc = A bag of 24 slots with a stats panel, weight bar and Use and Drop buttons.
+tags = bag, items, slots, backpack, weight
+variants = Centered|Dimmed backdrop
+replaces = UIGallery::AddInventoryScreen (kept as "Inventory (bag)")
+group Inventory Grid
+  dim Dim v=1 a=0.45
+  panel Card card=1 anchor=center size=700,500 lift=1 cr=16
+    text Title "Inventory" pos=24,16 size=300,36 px=28 bold=1
+    badge Weight "32 / 80 kg" anchor=topright pos=-24,22
+    rep n=24 cols=6 dx=68 dy=68
+      panel Slot pos=24,70 size=62,62 fill=card cr=8 border=1
+        icon Item "bag" pos=15,15 size=32,32 color=dim
+    panel Info pos=444,70 size=232,298 fill=card cr=12
+      caption Cap "SELECTED" pos=14,12 size=200,16
+      text Name "Iron sword" pos=14,34 size=204,26 px=20 bold=1
+      text Desc "A plain blade. Reliable, never fancy." pos=14,66 size=204,80 px=14 color=dim wrap=1
+      text Stats "Damage 12" pos=14,160 size=204,22 px=15
+    bar Load pos=24,386 size=396,10 value=0.4 fill=success
+    button Use "Use" pos=444,386 size=110,40 act=""
+    button Drop "Drop" pos=566,386 size=110,40 btn=secondary
+    button Close "Close" pos=24,440 size=652,40 btn=ghost act="hide:inventory_grid"
+
+[screen crafting]
+name = Crafting
+section = items
+desc = A recipe list on the left, the selected recipe's ingredients and a Craft button with a progress bar.
+tags = craft, recipes, build, ingredients
+variants = Centered|Dimmed backdrop
+group Crafting
+  dim Dim v=1 a=0.45
+  panel Card card=1 anchor=center size=720,460 lift=1 cr=16
+    text Title "Crafting" pos=24,16 size=300,36 px=28 bold=1
+    rep n=6 cols=1 dy=54
+      panel Recipe pos=24,70 size=250,46 fill=card cr=8
+        icon Icon "hammer" pos=10,10 size=26,26 color=accent
+        text Name "Recipe {i}" pos=46,0 size=190,46 px=16
+    panel Detail pos=292,70 size=404,310 fill=card cr=12
+      text Name "Iron sword" pos=18,14 size=370,30 px=24 bold=1
+      caption Cap "NEEDS" pos=18,60 size=370,16
+      rep n=3 cols=1 dy=40
+        panel Need pos=18,84 size=368,34 fill=field cr=6
+          icon I "bag" pos=8,5 size=24,24 color=dim
+          text Item "Ingredient {i}" pos=42,0 size=240,34 px=15
+          text Have "2 / 2" pos=282,0 size=76,34 px=15 align=r color=success
+      bar Progress pos=18,240 size=368,12 value=0 fill=accent
+      button Craft "Craft" pos=18,264 size=368,36
+    button Close "Close" pos=292,396 size=404,40 btn=ghost act="hide:crafting"
+
+[screen shop]
+name = Shop
+section = items
+desc = Items for sale as cards with prices, a coin counter and Buy buttons.
+tags = store, buy, sell, coins, merchant, vendor
+variants = Centered|Dimmed backdrop
+replaces = UITemplates::AddShop
+group Shop
+  dim Dim v=1 a=0.45
+  panel Card card=1 anchor=center size=700,480 lift=1 cr=16
+    text Title "Shop" pos=24,16 size=300,36 px=28 bold=1
+    panel Wallet anchor=topright pos=-24,18 size=140,34 fill=card cr=17
+      icon Coin "coin" pos=12,6 size=22,22 color=warning
+      text Gold "1,250" pos=40,0 size=92,34 px=18 bold=1
+    rep n=6 cols=3 dx=222 dy=182
+      panel Item pos=24,72 size=210,170 fill=card cr=12 border=1
+        panel Pic pos=12,12 size=186,70 fill=field cr=8
+          icon Icon "gem" pos=71,13 size=44,44 color=dim
+        text Name "Item {i}" pos=12,88 size=186,22 px=16 bold=1
+        text Price "120 gold" pos=12,110 size=186,20 px=14 color=warning
+        button Buy "Buy" pos=12,132 size=186,28 btn=primary px=14
+    button Close "Leave shop" pos=24,432 size=652,36 btn=ghost act="hide:shop"
+
+[screen character_sheet]
+name = Character Sheet
+section = items
+desc = Name and level, six stat rows with plus buttons, equipment slots and points to spend.
+tags = stats, attributes, level, equipment, rpg
+variants = Centered|Dimmed backdrop
+group Character Sheet
+  dim Dim v=1 a=0.45
+  panel Card card=1 anchor=center size=680,500 lift=1 cr=16
+    avatar Face "Hero" pos=24,24 d=72
+    text Name "Hero" pos=112,26 size=300,32 px=26 bold=1
+    text Level "Level 12   Warrior" pos=112,62 size=300,22 px=16 color=dim
+    badge Points "5 points to spend" anchor=topright pos=-24,36
+    rep n=6 cols=1 dy=48
+      panel Stat pos=24,120 size=300,40 fill=card cr=8
+        text Name "Stat {i}" pos=12,0 size=150,40 px=16
+        text Value "14" pos=170,0 size=60,40 px=18 bold=1 align=r
+        button Plus "+" pos=244,6 size=44,28 px=16
+    caption Cap "EQUIPMENT" pos=356,124 size=300,16
+    rep n=6 cols=3 dx=104 dy=104
+      panel Slot pos=356,150 size=92,92 fill=card cr=10 border=1
+        icon Icon "shield" pos=30,30 size=32,32 color=dim
+    button Close "Close" pos=24,444 size=632,40 btn=ghost act="hide:character_sheet"
+
+[screen skill_tree]
+name = Skill Tree
+section = items
+desc = Three branches of linked skill nodes with a points counter, a description box and a Reset button.
+tags = skills, perks, talents, upgrade, tree
+portrait = 0
+group Skill Tree
+  dim Dim a=0.5
+  panel Card card=1 anchor=center size=800,520 lift=1 cr=16
+    text Title "Skills" pos=24,16 size=300,36 px=28 bold=1
+    badge Points "3 points left" anchor=topright pos=-24,22
+    rep n=3 cols=3 dx=250
+      caption Branch "BRANCH {i}" pos=40,70 size=220,16
+      rep n=4 cols=1 dy=84
+        panel Node pos=95,96 size=64,64 fill=card cr=32 shape=circle border=1
+          icon Icon "star" pos=16,16 size=32,32 color=accent
+    panel Desc pos=24,440 size=550,64 fill=card cr=10
+      text Text "Pick a skill to read what it does." pos=14,0 size=520,64 px=15 color=dim
+    button Reset "Reset" pos=590,448 size=90,40 btn=secondary
+    button Close "Done" pos=686,448 size=90,40 act="hide:skill_tree"
+
+# ------------------------------------------------------------------ Dialogue & Quests
+[screen quest_log]
+name = Quest Log
+section = dialogue
+desc = Active and finished quests on tabs, the selected quest's steps and a track button.
+tags = quests, missions, journal, objectives, tasks
+variants = Centered|Left side|Right side|Dimmed backdrop
+group Quest Log
+  dim Dim v=3 a=0.45
+  panel Card card=1 anchor=center size=620,500 lift=1 cr=16
+    text Title "Quests" pos=24,16 size=300,36 px=28 bold=1
+    tabs Tabs pos=24,64 size=572,34 tabs="Active|Done" pages="Active|Done" style=pills
+    panel Active page=1 pos=24,110 size=572,320 fill=none cr=0
+      rep n=4 cols=1 dy=78
+        panel Quest pos=0,0 size=572,70 fill=card cr=10
+          text Name "Quest {i}" pos=14,8 size=400,26 px=18 bold=1
+          text Goal "Reach the next village" pos=14,36 size=400,22 px=14 color=dim
+          bar Progress pos=430,30 size=126,10 value=0.5 fill=accent
+    panel Done page=1 off=1 pos=24,110 size=572,320 fill=none cr=0
+      text Empty "Nothing finished yet." pos=0,0 size=572,40 px=16 color=dim
+    button Track "Track quest" pos=24,444 size=280,40
+    button Close "Close" pos=316,444 size=280,40 btn=secondary act="hide:quest_log"
+
+[screen dialogue_box]
+name = Dialogue Box
+section = dialogue
+desc = A speaker portrait and name, the line being said and three reply buttons at the bottom of the screen.
+tags = talk, npc, conversation, choices, story
+group Dialogue Box
+  panel Box anchor=bottomcenter pos=0,-24 size=880,220 fill=panel cr=16 lift=1
+    avatar Face "Elder" pos=20,20 d=88
+    text Name "Elder" pos=124,18 size=500,28 px=22 bold=1
+    text Line "The bridge is out. You will need another way across." pos=124,52 size=730,56 px=18 wrap=1
+    button C1 "I will find a way." pos=124,120 size=360,38 btn=secondary
+    button C2 "Is there a boat?" pos=496,120 size=360,38 btn=secondary
+    button C3 "Goodbye." pos=124,166 size=360,38 btn=ghost
+
+[screen journal_map]
+name = Journal & Map
+section = dialogue
+desc = A map area with markers, a legend and a notes list on tabs.
+tags = map, journal, notes, markers, lore
+portrait = 0
+group Journal & Map
+  dim Dim a=0.5
+  panel Card card=1 anchor=center size=820,520 lift=1 cr=16
+    text Title "Journal" pos=24,16 size=300,36 px=28 bold=1
+    panel Map pos=24,64 size=520,380 fill=card cr=12
+      icon Pin1 "pin" pos=120,100 size=32,32 color=danger
+      icon Pin2 "flag" pos=300,200 size=32,32 color=accent
+      icon Pin3 "home" pos=420,80 size=32,32 color=success
+    panel Notes pos=560,64 size=236,380 fill=card cr=12
+      caption Cap "NOTES" pos=14,12 size=200,16
+      text N1 "Talk to the miller." pos=14,40 size=208,40 px=14 wrap=1
+      text N2 "Cross the river before dusk." pos=14,90 size=208,40 px=14 wrap=1
+    button Close "Close" pos=24,462 size=772,40 btn=ghost act="hide:journal_map"
+
+# ------------------------------------------------------------------ Multiplayer & Social
+[screen chat_window]
+name = Chat Window
+section = social
+desc = A message list with channel tabs, a text box and a Send button.
+tags = chat, messages, text, team, channel
+variants = Centered|Left side|Right side
+group Chat Window
+  panel Card card=1 anchor=bottomleft pos=20,-20 size=420,360 fill=backdrop cr=14 lift=1
+    tabs Tabs pos=12,10 size=396,30 tabs="All|Team|Party" pages="" style=underline
+    panel Log pos=12,48 size=396,238 fill=card cr=8
+      text M1 "Ada: ready when you are" pos=10,8 size=376,22 px=14
+      text M2 "Bo: pushing the north gate" pos=10,34 size=376,22 px=14
+      text M3 "Cy: watch your left" pos=10,60 size=376,22 px=14 color=warning
+    input Msg pos=12,300 size=312,38 hint="Say something..."
+    button Send "Send" pos=332,300 size=76,38
+
+[screen friends_list]
+name = Friends List
+section = social
+desc = Friends with an online dot, a status line and Invite buttons, plus an Add friend box.
+tags = friends, social, invite, online, party
+variants = Centered|Left side|Right side
+group Friends List
+  panel Card card=1 anchor=center size=420,520 lift=1 cr=16
+    text Title "Friends" pos=24,16 size=300,36 px=28 bold=1
+    input Search pos=24,62 size=372,36 hint="Add or search a friend"
+    rep n=5 cols=1 dy=62
+      panel Row pos=24,112 size=372,54 fill=card cr=10
+        avatar Face "Friend" pos=10,8 d=38
+        text Name "Friend {i}" pos=58,6 size=180,22 px=16 bold=1
+        text State "Online" pos=58,28 size=180,18 px=12 color=success
+        button Invite "Invite" pos=276,10 size=84,34 btn=secondary px=14
+    button Close "Close" pos=24,466 size=372,40 btn=ghost act="hide:friends_list"
+
+# ------------------------------------------------------------------ Popups & Notifications
+[screen confirm_popup]
+name = Confirm Popup
+section = popups
+desc = A question with Yes and No buttons over a dimmed screen. Wire the buttons to what should happen.
+tags = confirm, yes, no, ask, dialog, modal
+replaces = UITemplates::AddConfirmDialog
+group Confirm Popup
+  dim Dim a=0.6
+  panel Card card=1 anchor=center size=420,230 lift=1 cr=16 block=1
+    icon Mark "question" pos=24,24 size=36,36 color=accent
+    text Title "Are you sure?" pos=72,22 size=320,40 px=26 bold=1
+    text Body "Unsaved progress will be lost." pos=24,84 size=372,50 px=16 color=dim wrap=1
+    button Yes "Yes" pos=24,160 size=176,46 btn=danger act="hide:confirm_popup"
+    button No "No" pos=220,160 size=176,46 btn=secondary act="hide:confirm_popup"
+
+[screen toast_set]
+name = Toast Set
+section = popups
+desc = Four toasts stacked at the top right: info, success, warning and error, each with an icon and a close mark.
+tags = toast, notification, message, snackbar, info, error
+group Toast Set
+  panel Info anchor=topright pos=-20,20 size=340,56 fill=card cr=12 lift=1
+    icon I "info" pos=14,14 size=28,28 color=accent
+    text T "Game saved automatically" pos=54,0 size=260,56 px=15
+  panel Ok anchor=topright pos=-20,86 size=340,56 fill=card cr=12 lift=1
+    icon I "check" pos=14,14 size=28,28 color=success
+    text T "Level complete" pos=54,0 size=260,56 px=15
+  panel Warn anchor=topright pos=-20,152 size=340,56 fill=card cr=12 lift=1
+    icon I "warning" pos=14,14 size=28,28 color=warning
+    text T "Low health" pos=54,0 size=260,56 px=15
+  panel Err anchor=topright pos=-20,218 size=340,56 fill=card cr=12 lift=1
+    icon I "cross" pos=14,14 size=28,28 color=danger
+    text T "Could not connect" pos=54,0 size=260,56 px=15
+
+[screen tooltip_set]
+name = Tooltip Set
+section = popups
+desc = Three tooltip looks: a plain hint, an item tooltip with stats and a keyboard key hint.
+tags = tooltip, hint, hover, item, key
+group Tooltip Set
+  panel Plain anchor=topleft pos=40,40 size=220,40 fill=backdrop cr=8 border=1
+    text T "Opens the door" pos=10,0 size=200,40 px=14
+  panel Item anchor=topleft pos=40,110 size=260,150 fill=backdrop cr=10 border=1
+    text Name "Iron sword" pos=14,10 size=232,24 px=18 bold=1
+    badge Rare "Rare" pos=14,40
+    text Stat "Damage 12" pos=14,72 size=232,20 px=14
+    text Stat2 "Speed 1.1" pos=14,94 size=232,20 px=14 color=dim
+    text Cost "Sells for 80 gold" pos=14,120 size=232,20 px=13 color=warning
+  panel Key anchor=topleft pos=40,290 size=200,44 fill=backdrop cr=22
+    panel Cap pos=10,8 size=28,28 fill=field cr=6
+      text K "E" pos=0,0 size=28,28 px=16 bold=1 align=c
+    text T "Pick up" pos=48,0 size=140,44 px=15
+
+[screen achievement_popup]
+name = Achievement Popup
+section = popups
+desc = A banner that says an achievement was unlocked, with an icon, a title and a description.
+tags = achievement, trophy, unlock, reward
+group Achievement Popup
+  panel Banner anchor=bottomcenter pos=0,-40 size=440,86 fill=panel cr=43 lift=1
+    panel Badge pos=12,12 size=62,62 fill=warning cr=31 shape=circle
+      icon Trophy "trophy" pos=15,15 size=32,32 color=backdrop
+    caption Cap "ACHIEVEMENT UNLOCKED" pos=90,14 size=330,16
+    text Name "First blood" pos=90,34 size=330,26 px=20 bold=1
+    text Desc "Win your first match." pos=90,58 size=330,20 px=13 color=dim
+
+[screen error_popup]
+name = Error Popup
+section = popups
+desc = An error box with a red icon, a message, a details line and Retry and Close buttons.
+tags = error, fail, warning, problem, retry
+group Error Popup
+  dim Dim a=0.6
+  panel Card card=1 anchor=center size=440,250 lift=1 cr=16 block=1
+    icon Mark "warning" pos=24,24 size=36,36 color=danger
+    text Title "Something went wrong" pos=72,22 size=340,40 px=24 bold=1
+    text Body "The game could not reach the server." pos=24,84 size=392,40 px=16 wrap=1
+    text Detail "Error 408: timeout" pos=24,130 size=392,22 px=13 color=dim
+    button Retry "Retry" pos=24,180 size=190,46
+    button Close "Close" pos=226,180 size=190,46 btn=secondary act="hide:error_popup"
+
+# ------------------------------------------------------------------ Forms & Accounts
+[screen login]
+name = Login
+section = forms
+desc = Email and password boxes with Remember me, a Log in button and links to sign up and reset.
+tags = login, sign in, account, password, email
+variants = Centered|Left side|Right side|Dimmed backdrop
+group Login
+  dim Dim v=3 a=0.45
+  panel Card card=1 anchor=center size=400,440 lift=1 cr=16
+    text Title "Welcome back" pos=32,28 size=336,40 px=30 bold=1
+    text Sub "Log in to continue" pos=32,70 size=336,22 px=15 color=dim
+    caption C1 "EMAIL" pos=32,112 size=336,16
+    input Email pos=32,132 size=336,40 hint="you@example.com"
+    caption C2 "PASSWORD" pos=32,184 size=336,16
+    input Password pos=32,204 size=336,40 hint="Password" password=1
+    toggle Remember "Remember me" pos=32,260 style=check
+    button LogIn "Log in" pos=32,300 size=336,48
+    button SignUp "Create an account" pos=32,358 size=160,36 btn=ghost px=13 act="swap:login>register"
+    button Forgot "Forgot password?" pos=208,358 size=160,36 btn=ghost px=13
+
+[screen register]
+name = Register
+section = forms
+desc = A sign-up form: name, email, password, repeat password and a terms tick box.
+tags = register, sign up, account, new, create
+variants = Centered|Left side|Right side|Dimmed backdrop
+group Register
+  dim Dim v=3 a=0.45
+  panel Card card=1 anchor=center size=400,540 lift=1 cr=16
+    text Title "Create account" pos=32,28 size=336,40 px=30 bold=1
+    caption C1 "NAME" pos=32,92 size=336,16
+    input Name pos=32,112 size=336,40 hint="Your name"
+    caption C2 "EMAIL" pos=32,164 size=336,16
+    input Email pos=32,184 size=336,40 hint="you@example.com"
+    caption C3 "PASSWORD" pos=32,236 size=336,16
+    input Password pos=32,256 size=336,40 hint="At least 8 characters" password=1
+    caption C4 "REPEAT PASSWORD" pos=32,308 size=336,16
+    input Repeat pos=32,328 size=336,40 hint="Same again" password=1
+    toggle Terms "I accept the terms" pos=32,384 style=check
+    button Create "Create account" pos=32,424 size=336,48
+    button Back "I have an account" pos=32,482 size=336,36 btn=ghost px=13 act="swap:register>login"
+
+[screen feedback_form]
+name = Feedback Form
+section = forms
+desc = A rating, a category dropdown, a message box and Send, for bug reports and ideas.
+tags = feedback, report, bug, contact, survey, rating
+variants = Centered|Left side|Right side
+group Feedback Form
+  dim Dim a=0.5
+  panel Card card=1 anchor=center size=480,500 lift=1 cr=16 block=1
+    text Title "Send feedback" pos=28,22 size=424,36 px=28 bold=1
+    caption C1 "CATEGORY" pos=28,76 size=424,16
+    dropdown Cat pos=28,96 size=424,36 options="Bug|Idea|Praise|Other" value=0
+    caption C2 "HOW WAS IT?" pos=28,148 size=424,16
+    rep n=5 cols=5 dx=48
+      icon Star "star" pos=28,168 size=36,36 color=warning
+    caption C3 "MESSAGE" pos=28,220 size=424,16
+    input Msg pos=28,240 size=424,150 hint="Tell us more..."
+    button Send "Send" pos=28,412 size=208,46 act="hide:feedback_form"
+    button Cancel "Cancel" pos=244,412 size=208,46 btn=secondary act="hide:feedback_form"
+
+# ------------------------------------------------------------------ Mobile & Touch
+[screen touch_hud]
+name = Touch HUD
+section = mobile
+desc = Thumb controls: a move pad on the left, action buttons on the right and a pause button.
+tags = touch, mobile, joystick, buttons, thumbs, phone
+group Touch HUD
+  panel Pad anchor=bottomleft pos=36,-36 size=160,160 fill=backdrop cr=80 shape=circle
+    panel Stick pos=50,50 size=60,60 fill=accent cr=30 shape=circle
+  button A "A" anchor=bottomright pos=-36,-60 size=84,84 shape=circle px=28
+  button B "B" anchor=bottomright pos=-136,-30 size=70,70 shape=circle btn=secondary px=24
+  button Pause "II" anchor=topright pos=-16,16 size=56,56 shape=circle btn=secondary px=20 act="show:pause_menu;pause:1"
+
+[screen mobile_menu]
+name = Mobile Menu
+section = mobile
+desc = A full-width menu with very large buttons that are easy to tap, for portrait phones.
+tags = mobile, phone, portrait, big buttons, thumbs
+landscape = 0
+group Mobile Menu
+  panel Card card=1 anchor=center size=600,880 lift=1 cr=24
+    text Title "MY GAME" pos=30,60 size=540,80 px=60 bold=1 align=c
+    button Play "Play" pos=40,220 size=520,120 px=40 act="hide:mobile_menu"
+    button Levels "Levels" pos=40,370 size=520,100 btn=secondary px=32
+    button Shop "Shop" pos=40,500 size=520,100 btn=secondary px=32
+    button Settings "Settings" pos=40,630 size=520,100 btn=secondary px=32 act="show:settings"
+    button Quit "Quit" pos=40,760 size=520,80 btn=ghost px=26 act=quit
+
+[screen results]
+name = Level Complete
+section = menus
+desc = The results after a level: three stars, time, score and coins, with Next level, Replay and Menu buttons.
+tags = results, win, stars, score, victory, complete
+variants = Centered|Dimmed backdrop
+group Level Complete
+  dim Dim v=1 a=0.45
+  panel Card card=1 anchor=center size=460,470 lift=1 cr=16
+    text Title "LEVEL COMPLETE" pos=24,24 size=412,44 px=34 bold=1 align=c color=success
+    icon S1 "star" pos=118,84 size=56,56 color=warning
+    icon S2 "star" pos=202,76 size=56,56 color=warning
+    icon S3 "star" pos=286,84 size=56,56 color=dim
+    rep n=3 cols=1 dy=40
+      panel Row pos=40,168 size=380,34 fill=card cr=8
+        text Key "Stat {i}" pos=12,0 size=180,34 px=15 color=dim
+        text Value "0:42" pos=200,0 size=168,34 px=16 bold=1 align=r
+    button Next "Next level" pos=40,308 size=380,46 act="hide:results" icon=arrow-right
+    button Replay "Replay" pos=40,364 size=184,40 btn=secondary icon=redo
+    button Menu "Menu" pos=236,364 size=184,40 btn=ghost act="hide:results;show:main_menu" icon=home
+
+[screen achievements]
+name = Achievements
+section = menus
+desc = A list of achievements with an icon, a description, a progress bar and a locked or unlocked mark.
+tags = trophies, progress, unlocks, rewards
+variants = Centered|Left side|Right side
+group Achievements
+  dim Dim a=0.5
+  panel Card card=1 anchor=center size=560,520 lift=1 cr=16 block=1
+    text Title "Achievements" pos=24,18 size=300,36 px=28 bold=1
+    badge Count "3 / 12" anchor=topright pos=-24,24
+    rep n=5 cols=1 dy=74
+      panel Item pos=24,68 size=512,66 fill=card cr=10
+        icon Icon "trophy" pos=14,16 size=32,32 color=warning
+        text Name "Achievement {i}" pos=64,8 size=300,24 px=17 bold=1
+        text Desc "Do the thing a few times." pos=64,32 size=300,20 px=13 color=dim
+        bar Progress pos=372,28 size=124,10 value=0.6 fill=accent
+    button Close "Close" pos=24,468 size=512,40 btn=ghost act="hide:achievements"
+
+[screen server_browser]
+name = Server Browser
+section = social
+desc = A table of game servers with name, players and ping, a filter box, Refresh and Join.
+tags = servers, multiplayer, join, list, ping
+variants = Centered|Dimmed backdrop
+group Server Browser
+  dim Dim v=1 a=0.45
+  panel Card card=1 anchor=center size=700,500 lift=1 cr=16
+    text Title "Servers" pos=24,18 size=300,36 px=28 bold=1
+    input Filter pos=330,22 size=240,34 hint="Filter..."
+    button Refresh "Refresh" pos=580,22 size=96,34 btn=secondary icon=refresh
+    caption H1 "NAME" pos=44,72 size=240,16
+    caption H2 "PLAYERS" pos=380,72 size=100,16
+    caption H3 "PING" pos=520,72 size=100,16
+    rep n=6 cols=1 dy=50
+      panel Row pos=24,94 size=652,42 fill=card cr=8
+        text Name "Server {i}" pos=20,0 size=300,42 px=16
+        text Players "12 / 32" pos=356,0 size=120,42 px=15 color=dim
+        text Ping "28 ms" pos=496,0 size=100,42 px=15 color=success
+    button Join "Join" pos=24,440 size=326,40
+    button Close "Back" pos=362,440 size=314,40 btn=secondary act="hide:server_browser"
+
+[screen profile_card]
+name = Profile Card
+section = social
+desc = A player profile: avatar, name, level, a few stats, badges and Add friend and Message buttons.
+tags = profile, player, account, stats, badges
+variants = Centered|Left side|Right side
+group Profile Card
+  panel Card card=1 anchor=center size=420,470 lift=1 cr=16
+    avatar Face "Hero" pos=32,28 d=84
+    text Name "Hero" pos=134,30 size=250,32 px=26 bold=1
+    text Level "Level 24   Gold league" pos=134,68 size=250,22 px=15 color=dim
+    badge B1 "Founder" pos=134,98
+    divider Line pos=32,140 size=356,1
+    rep n=3 cols=3 dx=120
+      panel Stat pos=32,158 size=116,70 fill=card cr=10
+        text Value "128" pos=0,8 size=116,32 px=26 bold=1 align=c
+        text Key "Stat {i}" pos=0,42 size=116,20 px=13 color=dim align=c
+    caption C1 "BADGES" pos=32,250 size=356,16
+    rep n=5 cols=5 dx=70
+      panel Badge pos=32,274 size=60,60 fill=card cr=30 shape=circle
+        icon Mark "medal" pos=14,14 size=32,32 color=warning
+    button Add "Add friend" pos=32,368 size=170,42 icon=user-plus
+    button Msg "Message" pos=218,368 size=170,42 btn=secondary icon=chat
+    button Close "Close" pos=32,420 size=356,34 btn=ghost act="hide:profile_card"
+
+[screen party_invite]
+name = Party Invite
+section = popups
+desc = A small invite popup with an avatar, who invited you, and Accept and Decline buttons.
+tags = invite, party, friends, request, join
+group Party Invite
+  panel Card card=1 anchor=bottomright pos=-24,-24 size=360,170 lift=1 cr=14
+    avatar Face "Ada" pos=18,18 d=52
+    text Title "Ada invited you" pos=82,18 size=260,26 px=18 bold=1
+    text Sub "Join her party for Level 4?" pos=82,46 size=260,22 px=14 color=dim
+    button Accept "Accept" pos=18,100 size=150,42 btn=primary act="hide:party_invite" icon=check
+    button Decline "Decline" pos=182,100 size=150,42 btn=secondary act="hide:party_invite" icon=cross
+
+[screen tutorial_tip]
+name = Tutorial Tip
+section = popups
+desc = A hint card pointing at something: a title, a short text, a key hint and a Got it button.
+tags = tutorial, help, hint, onboarding, tip
+group Tutorial Tip
+  panel Card card=1 anchor=topcenter pos=0,40 size=480,160 lift=1 cr=14
+    icon Mark "lightbulb" pos=20,20 size=34,34 color=warning
+    text Title "Jump over gaps" pos=70,18 size=390,30 px=22 bold=1
+    text Body "Hold the jump key longer to jump higher." pos=70,54 size=390,44 px=15 color=dim wrap=1
+    button Ok "Got it" pos=20,108 size=140,38 act="hide:tutorial_tip"
+    badge Key "Space" anchor=topright pos=-20,116
+
+# ------------------------------------------------------------------ Older screens, kept as they were (built by their C++ function)
+[screen save_slots]
+name = Save Slots
+section = menus
+desc = Three save slots with Save, Load and Delete, wired to the save framework.
+tags = save, load, slots, continue
+native = SaveSlots
+[screen loading_screen]
+name = Loading Screen
+section = loading
+desc = A loading screen whose bar follows the loading amount.
+tags = loading, progress, tips
+native = LoadingScreen
+[screen loading_minimal]
+name = Loading (Minimal)
+section = loading
+desc = Just a thin loading bar.
+tags = loading, minimal
+native = LoadingMinimal
+[screen loading_card]
+name = Loading (Card)
+section = loading
+desc = A card with a loading bar and a tip.
+tags = loading, card, tip
+native = LoadingCard
+[screen loading_splash]
+name = Loading (Logo)
+section = loading
+desc = A logo with a bar under it.
+tags = loading, logo, splash
+native = LoadingSplash
+[screen loading_cinematic]
+name = Loading (Cinematic)
+section = loading
+desc = Black bars and a slow fade.
+tags = loading, cinematic, film
+native = LoadingCinematic
+[screen lobby]
+name = Lobby
+section = social
+desc = A waiting room: players with ready marks and a Start button.
+tags = lobby, players, ready, multiplayer
+native = Lobby
+[screen scoreboard]
+name = Scoreboard
+section = social
+desc = A table of players with kills, deaths and score.
+tags = scores, players, table, match
+native = Scoreboard
+[screen leaderboard]
+name = Leaderboard
+section = social
+desc = The best scores of all players.
+tags = ranking, top, scores, online
+native = Leaderboard
+[screen matchmaking]
+name = Matchmaking
+section = social
+desc = A "finding a match" screen with a timer and Cancel.
+tags = queue, match, find, online
+native = Matchmaking
+[screen hud_basic]
+name = HUD (health + score)
+section = hud
+desc = A simple HUD with health, score and a hint.
+tags = hud, health, score, simple
+native = HUD
+[screen health_bar_screen]
+name = Health Bar Screen
+section = hud
+desc = A health bar with a label, ready to move.
+tags = health, bar
+native = HealthBar
+[screen hud_full]
+name = Full HUD
+section = hud
+desc = A bigger HUD with a minimap and slots.
+tags = hud, minimap, slots, big
+native = UIHUD
+[screen inventory_bag]
+name = Inventory (bag)
+section = items
+desc = The Inventory screen with a grid of slots, wired to the Inventory component.
+tags = inventory, bag, slots, items
+native = Inventory
+[screen dialogue_native]
+name = Dialogue
+section = dialogue
+desc = Speaker name, typing text and choice buttons, wired to the Dialogue Box component (scripts call ui_dialogue_show).
+tags = dialogue, talk, choices
+native = Dialogue
+[screen dialog_box_old]
+name = Dialog Box
+section = dialogue
+desc = A small speech box.
+tags = dialog, speech, box
+native = DialogBox
+[screen notification_list]
+name = Notification Screen
+section = popups
+desc = A sample notification list.
+tags = notifications, list, alerts
+native = Notification
+[screen ui_showcase]
+name = UI Showcase
+section = menus
+desc = Many widgets in one scene, to try a theme.
+tags = showcase, demo, widgets, theme
+native = Showcase
+[screen ui_color_screen]
+name = Colour Screen
+section = forms
+desc = A colour picker with a preview.
+tags = colour, picker, preview
+native = UIColor
+[screen ui_controls_screen]
+name = Controls Screen
+section = forms
+desc = Sliders, toggles and tabs together.
+tags = controls, sliders, toggles, tabs
+native = UIControls
+[screen ui_notify_screen]
+name = Toast Demo
+section = popups
+desc = Buttons that show toast messages.
+tags = toast, demo, notify
+native = UINotify
+[screen ui_options_screen]
+name = Options Screen
+section = forms
+desc = An options page with sliders and toggles.
+tags = options, sliders, toggles
+native = UIOptions

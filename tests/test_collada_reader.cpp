@@ -255,6 +255,33 @@ int main() {
         CHECK(HasNote(m, "<skew>/<lookat>"));
     }
 
+    // ---------------- a primitive with no material attribute (found by the corpus file human.zae) ----------------
+    // COLLADA leaves it to the application; when the instance binds exactly one material, that one is used.
+    {
+        auto doc = [](const std::string& bindings) {
+            return std::string("<?xml version=\"1.0\"?><COLLADA version=\"1.4.1\"><asset><up_axis>Y_UP</up_axis></asset>"
+                "<library_effects><effect id=\"e1\"><profile_COMMON><technique sid=\"c\"><phong><diffuse><color>1 0 0 1</color></diffuse></phong></technique></profile_COMMON></effect>"
+                "<effect id=\"e2\"><profile_COMMON><technique sid=\"c\"><phong><diffuse><color>0 1 0 1</color></diffuse></phong></technique></profile_COMMON></effect></library_effects>"
+                "<library_materials><material id=\"Skin\" name=\"Skin\"><instance_effect url=\"#e1\"/></material><material id=\"Eye\" name=\"Eye\"><instance_effect url=\"#e2\"/></material></library_materials>"
+                "<library_geometries><geometry id=\"g\"><mesh><source id=\"p\"><float_array id=\"pa\" count=\"9\">0 0 0 1 0 0 0 1 0</float_array>"
+                "<technique_common><accessor source=\"#pa\" count=\"3\" stride=\"3\"/></technique_common></source>"
+                "<vertices id=\"v\"><input semantic=\"POSITION\" source=\"#p\"/></vertices>"
+                "<triangles count=\"1\"><input semantic=\"VERTEX\" source=\"#v\" offset=\"0\"/><p>0 1 2</p></triangles></mesh></geometry></library_geometries>"
+                "<library_visual_scenes><visual_scene id=\"S\"><node id=\"N\"><instance_geometry url=\"#g\"><bind_material><technique_common>") + bindings +
+                "</technique_common></bind_material></instance_geometry></node></visual_scene></library_visual_scenes><scene><instance_visual_scene url=\"#S\"/></scene></COLLADA>";
+        };
+        ImportedModel m; std::string err;
+        CHECK(ReadColladaBuffer(doc("<instance_material symbol=\"Skin\" target=\"#Skin\"/>"), "", m, &err));
+        CHECK(m.parts.size() == 1 && m.materials.size() == 1);
+        if (m.parts.size() == 1 && m.materials.size() == 1) {
+            CHECK(m.parts[0].material == 0 && m.materials[0].name == "Skin");
+            CHECK(m.materials[0].hasDiffuse && m.materials[0].diffuse.r == 1.0f && m.materials[0].diffuse.g == 0.0f);
+        }
+        // two bindings: which one the primitive means cannot be told, so it gets none
+        CHECK(ReadColladaBuffer(doc("<instance_material symbol=\"Skin\" target=\"#Skin\"/><instance_material symbol=\"Eye\" target=\"#Eye\"/>"), "", m, &err));
+        CHECK(m.parts.size() == 1 && m.parts[0].material == -1 && m.materials.empty());
+    }
+
     // ---------------- found by real files: strips and fans, concave polygons, decimal commas, UTF-16 ----------------
     {
         auto doc = [](const std::string& pos, const std::string& prims, const std::string& vcount = std::string()) {

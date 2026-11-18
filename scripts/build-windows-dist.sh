@@ -99,6 +99,13 @@ cmake -S . -B "$BUILD_DIR" \
       -DCMAKE_PREFIX_PATH="$SDL2_MINGW_PREFIX" \
       -DCMAKE_FIND_ROOT_PATH="/usr/x86_64-w64-mingw32;$SDL2_MINGW_PREFIX" \
       "${EXTRA[@]}"
+# Our own model readers are the default since 2026-11-17; Assimp (and ufbx, always built) must stay in the release as their
+# fallback and as what OKAY_THIRD_PARTY=1 switches back to. Refuse a tree whose cache lost Assimp.
+if ! grep -q '^OKAY_USE_ASSIMP:BOOL=ON$' "$BUILD_DIR/CMakeCache.txt"; then
+    echo "refused: $BUILD_DIR is configured without Assimp (OKAY_USE_ASSIMP is not ON): the model-reader fallback and OKAY_THIRD_PARTY=1 need it" >&2
+    exit 1
+fi
+echo "Model readers: own by default, Assimp + ufbx compiled in as the fallback (OKAY_THIRD_PARTY=1 switches back)."
 # The configured tree too (a stale cache keeps old -D values). This also checks the BUILT result: the cache must say libsodium
 # is in the build (OKAY_SODIUM_IN_BUILD=ON) and the compiler flags must carry OKAY_HAVE_SODIUM and not OKAY_OWN_CRYPTO. The
 # programs are Windows .exe files and cannot run on this Linux host, so the program's own startup line (--binary) is not
@@ -168,7 +175,31 @@ fi
 # File > Examples > Visual Script Node Playground opens its scenes from (tests/test_examples_work.cpp checks that every
 # folder a File > Examples entry needs is listed here). Left out on purpose: account-server (a Python server), netdemo
 # and physicsdemo (C++ sources), editor-plugins, and the loose graphs in visual_script itself (not scenes).
-EXAMPLE_DIRS="security_paths vehicle own_wav own_readers obj_texture_paths spatial_audio cutscene behavior_trees node_playground physics physics2d weapons touch_controls visual_script/playground ui_text ui_library voxel modeling modeling_tools fp_hand player input"
+# One folder per line, sorted, so two branches that add a folder do not fight over one long line.
+EXAMPLE_DIRS="
+behavior_trees
+cutscene
+fp_hand
+input
+modeling
+modeling_tools
+node_playground
+obj_texture_paths
+own_readers
+own_wav
+physics
+physics2d
+player
+security_paths
+spatial_audio
+touch_controls
+ui_library
+ui_text
+vehicle
+visual_script/playground
+voxel
+weapons
+"
 for d in $EXAMPLE_DIRS; do
     [ -d "examples/$d" ] || { echo "error: examples/$d is missing (edit EXAMPLE_DIRS in $0)" >&2; exit 1; }
     mkdir -p "$OUT_DIR/examples/$d"

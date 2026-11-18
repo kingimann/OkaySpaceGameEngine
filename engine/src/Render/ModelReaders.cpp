@@ -29,6 +29,7 @@ bool ReadAllBytes(const std::string& path, std::size_t cap, std::string& out, st
     std::FILE* fp = detail::OpenRead(path);
     if (!fp) return Fail(err, "cannot open file");
     out.clear();
+    detail::ReserveForFile(fp, out, cap);
     char buf[65536];
     for (;;) {
         std::size_t n = std::fread(buf, 1, sizeof(buf), fp);

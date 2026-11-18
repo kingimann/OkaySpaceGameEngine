@@ -39,6 +39,7 @@ bool BatchPainter::CreatePage(int page) {
     pg.shelfX = kPad * 2 + 3; pg.shelfY = 0; pg.shelfH = kPad * 2 + 3;
     // Probe the backend: no atlas support means pass everything straight through.
     pg.tex = m_b.UploadAtlas(pg.img, page, nullptr);
+    if (pg.tex && page == 1) m_b.SetTextureFilter(pg.tex, m_imgLinear);
     pg.dirty = false;
     if (!pg.tex) { m_passthrough = true; pg.img = Image(); return false; }
     return true;
@@ -70,11 +71,35 @@ bool BatchPainter::Place(int page, int w, int h, int& x, int& y) {
     }
 }
 
+void BatchPainter::SetImageFilter(bool linear) {
+    if (linear == m_imgLinear) return;
+    Flush();   // the pending triangles were meant for the old filter
+    m_imgLinear = linear;
+    m_b.SetImageFilter(linear);
+    if (!m_passthrough && m_pages[1].tex) m_b.SetTextureFilter(m_pages[1].tex, linear);
+}
+
 void BatchPainter::Blit(Page& pg, const Image& src, int x, int y) {
     const int W = pg.img.Width();
     for (int row = 0; row < src.Height(); ++row)
         std::memcpy(pg.img.Data() + ((std::size_t)(y + row) * W + x) * 4, src.Data() + (std::size_t)row * src.Width() * 4,
                     (std::size_t)src.Width() * 4);
+    // Images: repeat the edge pixels into the gutter, so smooth (linear) sampling at the border
+    // fades into the image's own colour instead of into transparent black.
+    if (&pg == &m_pages[1] && src.Width() > 0 && src.Height() > 0) {
+        auto px = [&](int X, int Y) { return pg.img.Data() + ((std::size_t)Y * W + X) * 4; };
+        const int w = src.Width(), h = src.Height();
+        for (int row = 0; row < h; ++row) {
+            std::memcpy(px(x - 1, y + row), px(x, y + row), 4);
+            std::memcpy(px(x + w, y + row), px(x + w - 1, y + row), 4);
+        }
+        std::memcpy(px(x - 1, y - 1), px(x, y), 4);
+        std::memcpy(px(x + w, y - 1), px(x + w - 1, y), 4);
+        std::memcpy(px(x - 1, y + h), px(x, y + h - 1), 4);
+        std::memcpy(px(x + w, y + h), px(x + w - 1, y + h - 1), 4);
+        std::memcpy(px(x, y - 1), px(x, y), (std::size_t)w * 4);
+        std::memcpy(px(x, y + h), px(x, y + h - 1), (std::size_t)w * 4);
+    }
     pg.dirty = true;
 }
 
@@ -175,7 +200,12 @@ void BatchPainter::Flush() {
         return;
     }
     Page& pg = m_pages[m_batchPage];
-    if (pg.dirty) { pg.tex = m_b.UploadAtlas(pg.img, m_batchPage, pg.tex); pg.dirty = false; }
+    if (pg.dirty) {
+        Tex before = pg.tex;
+        pg.tex = m_b.UploadAtlas(pg.img, m_batchPage, pg.tex);
+        if (pg.tex && pg.tex != before && m_batchPage == 1) m_b.SetTextureFilter(pg.tex, m_imgLinear);   // a bigger page is a new texture
+        pg.dirty = false;
+    }
     ApplyBackendClip();
     m_b.Geometry(pg.tex, m_v.data(), (int)m_v.size(), m_i.data(), (int)m_i.size());
     m_v.clear(); m_i.clear();
@@ -341,6 +371,8 @@ void BatchPainter::Image4(Entry& e, const Rect* src, float x, float y, float w, 
     const int sw = src ? src->w : e.w, sh = src ? src->h : e.h;
     float u0 = U(e.page, (float)(e.x + sx)), v0 = V(e.page, (float)(e.y + sy));
     float u1 = U(e.page, (float)(e.x + sx + sw)), v1 = V(e.page, (float)(e.y + sy + sh));
+    // (No half-texel inset of a piece's UVs: it shrank every piece of a stretched 9-slice or partly filled image by up to a texel and made this path
+    // draw those pictures differently from the direct path, which cannot inset. The gutter pixels of the atlas already keep neighbours out.)
     if (flip & FlipH) std::swap(u0, u1);
     if (flip & FlipV) std::swap(v0, v1);
     if (angle == 0.0) { Quad(x, y, x + w, y + h, u0, v0, u1, v1, e.mod); return; }

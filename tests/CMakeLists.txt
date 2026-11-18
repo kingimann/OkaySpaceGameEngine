@@ -1,3 +1,13 @@
+# Our own model readers are the default since 2026-11-17 (owner approval). Tests that check "what a build does with nothing set"
+# get OKAY_EXPECT_OWN_READERS when every model reader option is ON (the default; NDO is a seam and stays OFF, so it is not listed).
+set(_okay_all_readers_on TRUE)
+foreach(_f FBX COLLADA 3DS BVH OFF SMD MD5 MS3D ASE BLEND 3MF AMF X3D DXF LWO MD2 MD3 IRRMESH B3D X AC3D OGRE XGL IRR NFF TER MDC HMP CSM
+        Q3D RAW IQM COB PMX LWS OGREBIN ZAE XML LXO)
+    if(NOT OKAY_OWN_${_f})
+        set(_okay_all_readers_on FALSE)
+    endif()
+endforeach()
+
 # The sandbox the file-writing tests run in (temp folder as working and save folder; guard against writes into the source tree)
 add_executable(test_sandbox test_sandbox.cpp)
 target_link_libraries(test_sandbox PRIVATE okay::engine)
@@ -803,6 +813,41 @@ target_link_libraries(test_ui_library_example PRIVATE okay::engine)
 target_compile_definitions(test_ui_library_example PRIVATE OKAY_SOURCE_DIR="${PROJECT_SOURCE_DIR}")
 add_test(NAME ui_library_example COMMAND test_ui_library_example)
 
+# UI library slice 2: game HUD parts and the data-driven glue (bind, visible-if, list bind, rich links, focus hints, hot reload)
+add_executable(test_ui_library2 test_ui_library2.cpp)
+target_link_libraries(test_ui_library2 PRIVATE okay::engine)
+add_test(NAME ui_library2 COMMAND test_ui_library2)
+
+# The shipped sample scene examples/ui_library/ui_library_2.okayscene, loaded and played
+add_executable(test_ui_library2_example test_ui_library2_example.cpp)
+target_link_libraries(test_ui_library2_example PRIVATE okay::engine)
+target_compile_definitions(test_ui_library2_example PRIVATE OKAY_SOURCE_DIR="${PROJECT_SOURCE_DIR}")
+add_test(NAME ui_library2_example COMMAND test_ui_library2_example)
+
+# UI library slice 3: app parts (menu bar, toolbar, tree view, data table, wizard, form group) and the colour picker's advanced mode
+add_executable(test_ui_library3 test_ui_library3.cpp)
+target_link_libraries(test_ui_library3 PRIVATE okay::engine)
+add_test(NAME ui_library3 COMMAND test_ui_library3)
+
+# The shipped sample scene examples/ui_library/ui_library_3.okayscene, loaded and played
+add_executable(test_ui_library3_example test_ui_library3_example.cpp)
+target_link_libraries(test_ui_library3_example PRIVATE okay::engine)
+target_compile_definitions(test_ui_library3_example PRIVATE OKAY_SOURCE_DIR="${PROJECT_SOURCE_DIR}")
+add_test(NAME ui_library3_example COMMAND test_ui_library3_example)
+
+# UI library slice 4: styles, themes, icons and screens as data (registries, theme switching, icon pixels, every screen builds and fits, gallery search, catalogue numbers)
+add_executable(test_ui_library4 test_ui_library4.cpp)
+target_link_libraries(test_ui_library4 PRIVATE okay::engine)
+target_include_directories(test_ui_library4 PRIVATE ${CMAKE_SOURCE_DIR}/editor)
+target_compile_definitions(test_ui_library4 PRIVATE OKAY_SOURCE_DIR="${PROJECT_SOURCE_DIR}")
+add_test(NAME ui_library4 COMMAND test_ui_library4)
+
+# The shipped sample scenes examples/ui_library/ui_library_4.okayscene and ui_starter_pack.okayscene, loaded and played (theme switch, the whole starter flow)
+add_executable(test_ui_library4_example test_ui_library4_example.cpp)
+target_link_libraries(test_ui_library4_example PRIVATE okay::engine)
+target_compile_definitions(test_ui_library4_example PRIVATE OKAY_SOURCE_DIR="${PROJECT_SOURCE_DIR}")
+add_test(NAME ui_library4_example COMMAND test_ui_library4_example)
+
 add_executable(test_uicapture_look test_uicapture_look.cpp)
 target_link_libraries(test_uicapture_look PRIVATE okay::engine)
 add_test(NAME uicapture_look COMMAND test_uicapture_look)
@@ -1133,6 +1178,11 @@ target_include_directories(test_own_stack PRIVATE ${CMAKE_SOURCE_DIR}/shared)
 target_link_libraries(test_own_stack PRIVATE okay::engine)
 add_test(NAME own_stack COMMAND test_own_stack)
 add_test(NAME own_stack_env COMMAND test_own_stack env)
+add_test(NAME own_stack_third_party COMMAND test_own_stack thirdparty)
+# Our own model readers are the default (2026-11-17): the default-build check expects them when every reader option is ON.
+if(_okay_all_readers_on)
+    target_compile_definitions(test_own_stack PRIVATE OKAY_EXPECT_OWN_READERS)
+endif()
 add_test(NAME release_refuses_own_crypto COMMAND bash ${CMAKE_SOURCE_DIR}/scripts/check_release_own_stack.sh --self-test)
 add_test(NAME fetch_tarball_pin COMMAND bash ${CMAKE_SOURCE_DIR}/scripts/test_fetch_tarball.sh)   # SHA-256 pinning of downloads (offline)
 
@@ -2414,6 +2464,24 @@ if(SDL2_FOUND)
     target_compile_definitions(test_ui_library_shots PRIVATE OKAY_TEST_OUTPUT_DIR="${CMAKE_CURRENT_BINARY_DIR}")
     add_test(NAME ui_library_shots COMMAND test_ui_library_shots)
 
+    add_executable(test_ui_library2_shots test_ui_library2_shots.cpp)
+    target_link_libraries(test_ui_library2_shots PRIVATE okay::engine ${OKAY_TEST_SDL_LIB})
+    target_include_directories(test_ui_library2_shots PRIVATE ${SDL2_INCLUDE_DIRS})
+    target_compile_definitions(test_ui_library2_shots PRIVATE OKAY_TEST_OUTPUT_DIR="${CMAKE_CURRENT_BINARY_DIR}" OKAY_SOURCE_DIR="${PROJECT_SOURCE_DIR}")
+    add_test(NAME ui_library2_shots COMMAND test_ui_library2_shots)
+
+    add_executable(test_ui_library3_shots test_ui_library3_shots.cpp)
+    target_link_libraries(test_ui_library3_shots PRIVATE okay::engine ${OKAY_TEST_SDL_LIB})
+    target_include_directories(test_ui_library3_shots PRIVATE ${SDL2_INCLUDE_DIRS})
+    target_compile_definitions(test_ui_library3_shots PRIVATE OKAY_TEST_OUTPUT_DIR="${CMAKE_CURRENT_BINARY_DIR}" OKAY_SOURCE_DIR="${PROJECT_SOURCE_DIR}")
+    add_test(NAME ui_library3_shots COMMAND test_ui_library3_shots)
+
+    add_executable(test_ui_library4_shots test_ui_library4_shots.cpp)
+    target_link_libraries(test_ui_library4_shots PRIVATE okay::engine ${OKAY_TEST_SDL_LIB})
+    target_include_directories(test_ui_library4_shots PRIVATE ${SDL2_INCLUDE_DIRS})
+    target_compile_definitions(test_ui_library4_shots PRIVATE OKAY_TEST_OUTPUT_DIR="${CMAKE_CURRENT_BINARY_DIR}" OKAY_SOURCE_DIR="${PROJECT_SOURCE_DIR}")
+    add_test(NAME ui_library4_shots COMMAND test_ui_library4_shots)
+
     # Picture tool for the typed-input Controls screen (no add_test: it writes nothing without an output folder).
     add_executable(shot_controls_screen shot_controls_screen.cpp)
     target_link_libraries(shot_controls_screen PRIVATE okay::engine ${OKAY_TEST_SDL_LIB})
@@ -2436,6 +2504,15 @@ if(SDL2_FOUND)
     add_executable(crisp_ui_shot crisp_ui_shot.cpp)
     target_link_libraries(crisp_ui_shot PRIVATE okay::engine ${OKAY_TEST_SDL_LIB})
     target_include_directories(crisp_ui_shot PRIVATE ${SDL2_INCLUDE_DIRS})
+    # Crisp-UI picture tool (headless renders at 1x..6x) and its numeric test.
+    add_executable(ui_crisp_shot ui_crisp_shot.cpp)
+    target_link_libraries(ui_crisp_shot PRIVATE okay::engine ${OKAY_TEST_SDL_LIB})
+    target_include_directories(ui_crisp_shot PRIVATE ${SDL2_INCLUDE_DIRS})
+    add_executable(test_ui_crisp test_ui_crisp.cpp)
+    target_link_libraries(test_ui_crisp PRIVATE okay::engine ${OKAY_TEST_SDL_LIB})
+    target_include_directories(test_ui_crisp PRIVATE ${SDL2_INCLUDE_DIRS})
+    target_compile_definitions(test_ui_crisp PRIVATE OKAY_TEST_OUTPUT_DIR="${CMAKE_CURRENT_BINARY_DIR}")
+    add_test(NAME ui_crisp COMMAND test_ui_crisp)
     add_executable(test_display_screen test_display_screen.cpp)
     target_link_libraries(test_display_screen PRIVATE okay::engine ${OKAY_TEST_SDL_LIB})
     target_include_directories(test_display_screen PRIVATE ${SDL2_INCLUDE_DIRS})
@@ -3341,6 +3418,9 @@ endif()
 add_executable(test_model_readers test_model_readers.cpp)
 target_link_libraries(test_model_readers PRIVATE okay::engine)
 target_compile_definitions(test_model_readers PRIVATE OKAY_SOURCE_DIR="${PROJECT_SOURCE_DIR}")
+if(_okay_all_readers_on AND OKAY_PREFER_OWN_READERS)
+    target_compile_definitions(test_model_readers PRIVATE OKAY_EXPECT_OWN_READERS)
+endif()
 add_test(NAME model_readers COMMAND test_model_readers WORKING_DIRECTORY ${CMAKE_CURRENT_BINARY_DIR})
 set_tests_properties(model_readers PROPERTIES TIMEOUT 300)
 add_executable(test_collada_reader test_collada_reader.cpp)
@@ -3540,12 +3620,29 @@ target_compile_definitions(test_blend_reader PRIVATE OKAY_SOURCE_DIR="${PROJECT_
 add_test(NAME blend_reader COMMAND test_blend_reader WORKING_DIRECTORY ${CMAKE_CURRENT_BINARY_DIR})
 add_executable(test_blend_hostile test_blend_hostile.cpp
     ${PROJECT_SOURCE_DIR}/engine/src/Render/BlendReader.cpp
+    ${PROJECT_SOURCE_DIR}/engine/src/Render/BlendModifiers.cpp
     ${PROJECT_SOURCE_DIR}/engine/src/Core/ImageDecode.cpp
     ${PROJECT_SOURCE_DIR}/engine/src/Core/ImageDecodeJpeg.cpp)
 target_include_directories(test_blend_hostile PRIVATE ${PROJECT_SOURCE_DIR}/engine/include ${PROJECT_SOURCE_DIR}/engine/src/Core)
 target_compile_definitions(test_blend_hostile PRIVATE OKAY_SOURCE_DIR="${PROJECT_SOURCE_DIR}")
 add_test(NAME blend_hostile COMMAND test_blend_hostile WORKING_DIRECTORY ${CMAKE_CURRENT_BINARY_DIR})
 set_tests_properties(blend_hostile PROPERTIES TIMEOUT 600)
+# Mirror and Subdivision Surface modifiers of the Blender reader (BlendModifiers.cpp): hand-computed Catmull-Clark and
+# mirror results, the synthetic fixture blend_modifiers.blend, the real corpus files with modifiers (OKAY_MODEL_CORPUS) and
+# a fuzz of the modifier code on random meshes (OKAY_BLEND_MOD_FUZZ_ITERS). Standalone like blend_hostile, for sanitizer builds.
+add_executable(test_blend_modifiers test_blend_modifiers.cpp
+    ${PROJECT_SOURCE_DIR}/engine/src/Render/BlendModifiers.cpp
+    ${PROJECT_SOURCE_DIR}/engine/src/Render/BlendReader.cpp
+    ${PROJECT_SOURCE_DIR}/engine/src/Core/ImageDecode.cpp
+    ${PROJECT_SOURCE_DIR}/engine/src/Core/ImageDecodeJpeg.cpp)
+target_include_directories(test_blend_modifiers PRIVATE ${PROJECT_SOURCE_DIR}/engine/include ${PROJECT_SOURCE_DIR}/engine/src/Core ${PROJECT_SOURCE_DIR}/engine/src/Render)
+target_compile_definitions(test_blend_modifiers PRIVATE OKAY_SOURCE_DIR="${PROJECT_SOURCE_DIR}")
+add_test(NAME blend_modifiers COMMAND test_blend_modifiers WORKING_DIRECTORY ${CMAKE_CURRENT_BINARY_DIR})
+set_tests_properties(blend_modifiers PROPERTIES TIMEOUT 600)
+# The committed synthetic .blend fixtures must be exactly what scripts/gen_blend_fixtures.py writes (fails on drift).
+if(OKAY_PYTHON)
+    add_test(NAME blend_fixtures_check COMMAND ${OKAY_PYTHON} -I ${PROJECT_SOURCE_DIR}/scripts/gen_blend_fixtures.py --check)
+endif()
 # Batch B own readers (3MF / AMF / X3D / DXF / LWO): one test per reader on SYNTHETIC fixtures built in memory, and one
 # standalone hostile-input + mutation-fuzz test for all of them (no engine library: reader sources and the engine's
 # inflate only, so it can also be built by hand under -fsanitize=address,undefined,float-cast-overflow;
@@ -3697,6 +3794,9 @@ add_test(NAME own_reader_wiring COMMAND ${CMAKE_COMMAND}
 # The import seam routes the batch-D formats (slots 22 to 26) to their own readers; needs the whole engine (ImportModelData).
 add_executable(test_own_dispatch_d test_own_dispatch_d.cpp)
 target_link_libraries(test_own_dispatch_d PRIVATE okay::engine)
+if(_okay_all_readers_on)
+    target_compile_definitions(test_own_dispatch_d PRIVATE OKAY_EXPECT_OWN_READERS)
+endif()
 add_test(NAME own_dispatch_d COMMAND test_own_dispatch_d WORKING_DIRECTORY ${CMAKE_CURRENT_BINARY_DIR})
 
 # Batch E3 own readers (IQM / COB / NDO seam): one test per reader on SYNTHETIC fixtures built in memory (tests/e3_fixtures.hpp), each with its own
@@ -3778,7 +3878,31 @@ add_test(NAME own_pmx_lws_default COMMAND test_own_pmx_lws_default WORKING_DIREC
 # The import seam routes the batch-C formats (slots 17 to 21) to their own readers; needs the whole engine (ImportModelData).
 add_executable(test_own_dispatch_c test_own_dispatch_c.cpp)
 target_link_libraries(test_own_dispatch_c PRIVATE okay::engine)
+if(_okay_all_readers_on)
+    target_compile_definitions(test_own_dispatch_c PRIVATE OKAY_EXPECT_OWN_READERS)
+endif()
 add_test(NAME own_dispatch_c COMMAND test_own_dispatch_c WORKING_DIRECTORY ${CMAKE_CURRENT_BINARY_DIR})
+
+# The "Assimp gap" readers: OGRE binary .mesh and ZAE (fixtures, truncation, mutation sweep, memory and time caps; reader sources and
+# the engine's inflate only, so it also builds by hand under -fsanitize=address,undefined; OKAY_GAP_FUZZ_ITERS raises the sweep),
+# and the import seam's slots 43 to 45 (.mesh, .zae, .xml by root element), which needs the whole engine.
+add_executable(test_gap_readers test_gap_readers.cpp
+    ${PROJECT_SOURCE_DIR}/engine/src/Render/OgreXmlReader.cpp
+    ${PROJECT_SOURCE_DIR}/engine/src/Render/ZaeReader.cpp
+    ${PROJECT_SOURCE_DIR}/engine/src/Render/ColladaReader.cpp
+    ${PROJECT_SOURCE_DIR}/engine/src/Core/ImageDecode.cpp
+    ${PROJECT_SOURCE_DIR}/engine/src/Core/ImageDecodeJpeg.cpp)
+target_include_directories(test_gap_readers PRIVATE ${PROJECT_SOURCE_DIR}/engine/include ${PROJECT_SOURCE_DIR}/engine/src/Core)
+target_compile_definitions(test_gap_readers PRIVATE OKAY_STANDALONE_TEST OKAY_SOURCE_DIR="${PROJECT_SOURCE_DIR}")
+add_test(NAME gap_readers COMMAND test_gap_readers WORKING_DIRECTORY ${CMAKE_CURRENT_BINARY_DIR})
+set_tests_properties(gap_readers PROPERTIES TIMEOUT 600)
+add_executable(test_own_dispatch_gap test_own_dispatch_gap.cpp)
+target_link_libraries(test_own_dispatch_gap PRIVATE okay::engine)
+target_compile_definitions(test_own_dispatch_gap PRIVATE OKAY_SOURCE_DIR="${PROJECT_SOURCE_DIR}")
+if(_okay_all_readers_on)
+    target_compile_definitions(test_own_dispatch_gap PRIVATE OKAY_EXPECT_OWN_READERS)
+endif()
+add_test(NAME own_dispatch_gap COMMAND test_own_dispatch_gap WORKING_DIRECTORY ${CMAKE_CURRENT_BINARY_DIR})
 
 # Real-file corpus check for the own FBX / COLLADA / 3DS / BVH readers. Needs OKAY_MODEL_CORPUS (a directory of
 # real exporter files, not in this repo; docs/model_corpus.md); without it the test prints "skipped" and passes.
@@ -3787,6 +3911,10 @@ target_link_libraries(test_model_corpus PRIVATE okay::engine)
 target_compile_definitions(test_model_corpus PRIVATE OKAY_SOURCE_DIR="${PROJECT_SOURCE_DIR}")
 add_test(NAME model_corpus COMMAND test_model_corpus WORKING_DIRECTORY ${CMAKE_CURRENT_BINARY_DIR})
 set_tests_properties(model_corpus PROPERTIES TIMEOUT 600)
+# Not a test: speed and peak heap of our own model readers against Assimp, per corpus file (docs/own_readers_speed.md).
+# Built, never run by ctest. Configure with -DOKAY_USE_ASSIMP=ON for the Assimp side; OKAY_MODEL_CORPUS names the files.
+add_executable(bench_model_readers bench_model_readers.cpp)
+target_link_libraries(bench_model_readers PRIVATE okay::engine)
 
 # Game clipboard: sanitize, input-field copy/paste, text-script and visual-script nodes.
 add_executable(test_clipboard test_clipboard.cpp)
@@ -3923,6 +4051,16 @@ foreach(_e_t IN ITEMS batche2_hostile batche2_budget)
     set_tests_properties(${_e_t} PROPERTIES TIMEOUT 600)
 endforeach()
 
+# The number scanner of the text model readers (engine/src/Render/NumParse.hpp), built twice: with the build's own path (four
+# digits at a time on little-endian machines) and with OKAY_NUMPARSE_NO_FOUR_DIGITS, the digit-by-digit path a big-endian machine
+# takes. Both check every token against FastDecimal, so they give identical values (with OKAY_MODEL_CORPUS set, on every number
+# of the corpus text files too). No engine library.
+foreach(_np IN ITEMS reader_numparse reader_numparse_portable)
+    add_executable(test_${_np} test_reader_numparse.cpp)
+    add_test(NAME ${_np} COMMAND test_${_np} WORKING_DIRECTORY ${CMAKE_CURRENT_BINARY_DIR})
+endforeach()
+target_compile_definitions(test_reader_numparse_portable PRIVATE OKAY_NUMPARSE_NO_FOUR_DIGITS)
+
 # The import seam routes the batch-E formats (slots 31 and 33) to their own readers; needs the whole engine (ImportModelData).
 add_executable(test_own_dispatch_e2 test_own_dispatch_e2.cpp)
 target_link_libraries(test_own_dispatch_e2 PRIVATE okay::engine)
@@ -3965,10 +4103,31 @@ add_executable(test_menu_bar_model test_menu_bar_model.cpp)
 target_include_directories(test_menu_bar_model PRIVATE ${CMAKE_SOURCE_DIR}/editor)
 target_compile_definitions(test_menu_bar_model PRIVATE OKAY_SOURCE_DIR="${PROJECT_SOURCE_DIR}")
 add_test(NAME menu_bar_model COMMAND test_menu_bar_model)
+
+# Density of the Visual Script and Script editor windows (editor/ScriptingDensity.hpp): numbers, node-width maths, eliding, settings.
+add_executable(test_scripting_density test_scripting_density.cpp)
+target_include_directories(test_scripting_density PRIVATE ${CMAKE_SOURCE_DIR}/editor)
+target_compile_definitions(test_scripting_density PRIVATE OKAY_SOURCE_DIR="${PROJECT_SOURCE_DIR}")
+add_test(NAME scripting_density COMMAND test_scripting_density)
+
+# The Project panel's tab strip as data (editor/ProjectTabs.hpp): which tab is active, tab clicks, the remembered tab and folder.
+add_executable(test_project_tabs test_project_tabs.cpp)
+target_include_directories(test_project_tabs PRIVATE ${CMAKE_SOURCE_DIR}/editor)
+add_test(NAME project_tabs COMMAND test_project_tabs)
+# The Project panel's One column / Two columns layouts as data (editor/ProjectLayout.hpp): divider clamp, widths, open-in-place rows, keys, saved choice.
+add_executable(test_project_layout test_project_layout.cpp)
+target_include_directories(test_project_layout PRIVATE ${CMAKE_SOURCE_DIR}/editor)
+add_test(NAME project_layout COMMAND test_project_layout)
 add_executable(test_hierarchy_context_model test_hierarchy_context_model.cpp)
 target_include_directories(test_hierarchy_context_model PRIVATE ${CMAKE_SOURCE_DIR}/editor)
 target_compile_definitions(test_hierarchy_context_model PRIVATE OKAY_SOURCE_DIR="${PROJECT_SOURCE_DIR}")
 add_test(NAME hierarchy_context_model COMMAND test_hierarchy_context_model)
+
+# The Scene view's right-click "add here" menu as data (editor/SceneAddMenu.hpp): click versus drag, where the new object goes
+# (surface, ground, in front of the camera, 2D, snapping), the menu groups and the search box.
+add_executable(test_scene_add_menu test_scene_add_menu.cpp)
+target_include_directories(test_scene_add_menu PRIVATE ${CMAKE_SOURCE_DIR}/editor)
+add_test(NAME scene_add_menu COMMAND test_scene_add_menu)
 
 # Walking must look like walking and running like running (docs/walk_vs_run.md). The second entry runs the same program with
 # OKAY_OLD_GAIT=1 and shows the old gait's walk was NOT clearly different from its run; the strips program draws the pictures.
@@ -4045,3 +4204,78 @@ add_executable(test_input_autoload test_input_autoload.cpp ${PROJECT_SOURCE_DIR}
 target_include_directories(test_input_autoload PRIVATE ${CMAKE_SOURCE_DIR}/editor)
 target_link_libraries(test_input_autoload PRIVATE okay::engine)
 add_test(NAME input_autoload COMMAND test_input_autoload)
+
+# The node search popup's pure logic (editor/VisualScriptSearchNav.hpp): panel size, selection movement, scroll-into-view, recent list, pin filter.
+add_executable(test_vs_search_nav test_vs_search_nav.cpp)
+target_include_directories(test_vs_search_nav PRIVATE ${CMAKE_SOURCE_DIR}/editor)
+add_test(NAME vs_search_nav COMMAND test_vs_search_nav)
+
+add_executable(test_vs_plain_names test_vs_plain_names.cpp)
+target_include_directories(test_vs_plain_names PRIVATE ${CMAKE_SOURCE_DIR}/editor ${OKAY_VS_IMGUI_INCLUDE})
+target_link_libraries(test_vs_plain_names PRIVATE okay::engine)
+add_test(NAME vs_plain_names COMMAND test_vs_plain_names)
+
+add_executable(test_vs_recipes test_vs_recipes.cpp)
+target_include_directories(test_vs_recipes PRIVATE ${CMAKE_SOURCE_DIR}/editor ${OKAY_VS_IMGUI_INCLUDE})
+target_link_libraries(test_vs_recipes PRIVATE okay::engine)
+target_compile_definitions(test_vs_recipes PRIVATE OKAY_SOURCE_DIR="${PROJECT_SOURCE_DIR}")
+add_test(NAME vs_recipes COMMAND test_vs_recipes)
+
+add_executable(test_vs_saved_graphs test_vs_saved_graphs.cpp)
+target_include_directories(test_vs_saved_graphs PRIVATE ${CMAKE_SOURCE_DIR}/editor ${OKAY_VS_IMGUI_INCLUDE})
+target_link_libraries(test_vs_saved_graphs PRIVATE okay::engine)
+target_compile_definitions(test_vs_saved_graphs PRIVATE OKAY_SOURCE_DIR="${PROJECT_SOURCE_DIR}")
+add_test(NAME vs_saved_graphs COMMAND test_vs_saved_graphs)
+
+add_executable(test_vs_search_connect test_vs_search_connect.cpp)
+target_include_directories(test_vs_search_connect PRIVATE ${CMAKE_SOURCE_DIR}/editor ${OKAY_VS_IMGUI_INCLUDE})
+target_link_libraries(test_vs_search_connect PRIVATE okay::engine)
+add_test(NAME vs_search_connect COMMAND test_vs_search_connect)
+
+add_executable(test_vs_quick_blocks test_vs_quick_blocks.cpp)
+target_link_libraries(test_vs_quick_blocks PRIVATE okay::engine)
+add_test(NAME vs_quick_blocks COMMAND test_vs_quick_blocks)
+
+# Beginner layer of the Modeling window as pure data (editor/ModelingEasy.hpp): plain names, banned-jargon check, hints, quick actions, recent tools, click counts.
+add_executable(test_modeling_easy test_modeling_easy.cpp)
+target_include_directories(test_modeling_easy PRIVATE ${CMAKE_SOURCE_DIR}/editor)
+target_compile_definitions(test_modeling_easy PRIVATE OKAY_SOURCE_DIR="${PROJECT_SOURCE_DIR}")
+add_test(NAME modeling_easy COMMAND test_modeling_easy)
+
+# One-click starter models (editor/ModelingStarters.hpp) built headlessly: closed, sane size, a colour per face.
+add_executable(test_modeling_starters test_modeling_starters.cpp)
+target_include_directories(test_modeling_starters PRIVATE ${CMAKE_SOURCE_DIR}/editor)
+target_link_libraries(test_modeling_starters PRIVATE okay::engine)
+add_test(NAME modeling_starters COMMAND test_modeling_starters)
+
+# The beginner tools mapped onto the engine's own mesh operations (editor/ModelingEasyOps.hpp), run headless on real meshes.
+add_executable(test_modeling_easy_ops test_modeling_easy_ops.cpp)
+target_include_directories(test_modeling_easy_ops PRIVATE ${CMAKE_SOURCE_DIR}/editor)
+target_link_libraries(test_modeling_easy_ops PRIVATE okay::engine)
+add_test(NAME modeling_easy_ops COMMAND test_modeling_easy_ops)
+
+# The Modeling window as data (editor/ModelingToolIndex.hpp): pages by job, every tool once, search by name and alias.
+# Also reads editor/main.cpp: a button added to the window without an index entry fails (OKAY_SOURCE_DIR).
+add_executable(test_modeling_tool_index test_modeling_tool_index.cpp)
+target_include_directories(test_modeling_tool_index PRIVATE ${CMAKE_SOURCE_DIR}/editor)
+target_compile_definitions(test_modeling_tool_index PRIVATE OKAY_SOURCE_DIR="${PROJECT_SOURCE_DIR}")
+add_test(NAME modeling_tool_index COMMAND test_modeling_tool_index)
+
+# Fold state and width maths of the Modeling window's page list (editor/ModelingSidebar.hpp), its settings key and strip labels.
+add_executable(test_modeling_sidebar test_modeling_sidebar.cpp)
+target_include_directories(test_modeling_sidebar PRIVATE ${CMAKE_SOURCE_DIR}/editor)
+target_compile_definitions(test_modeling_sidebar PRIVATE OKAY_SOURCE_DIR="${PROJECT_SOURCE_DIR}")
+add_test(NAME modeling_sidebar COMMAND test_modeling_sidebar)
+
+add_executable(test_vs_pan test_vs_pan.cpp)
+target_include_directories(test_vs_pan PRIVATE ${CMAKE_SOURCE_DIR}/editor)
+add_test(NAME vs_pan COMMAND test_vs_pan)
+# Easier canvas use: auto-connect, place beside, split a wire, delete and rejoin, start screen, hints, plain words.
+foreach(vs_usage_test vs_easy_ops vs_start vs_hints vs_plain_words vs_what_happened)
+    if(EXISTS ${CMAKE_CURRENT_SOURCE_DIR}/test_${vs_usage_test}.cpp)
+        add_executable(test_${vs_usage_test} test_${vs_usage_test}.cpp)
+        target_include_directories(test_${vs_usage_test} PRIVATE ${CMAKE_SOURCE_DIR}/editor ${OKAY_VS_IMGUI_INCLUDE})
+        target_link_libraries(test_${vs_usage_test} PRIVATE okay::engine)
+        add_test(NAME ${vs_usage_test} COMMAND test_${vs_usage_test})
+    endif()
+endforeach()

@@ -1,0 +1,2806 @@
+# The UI icon set: every icon is drawn by our own code from a few shapes in a 24 x 24 box (no outside artwork).
+# Shapes: c circle, o ring, e ellipse, r rect, q rounded rect, l line, p polygon, s polyline, a arc, t star, g regular polygon;
+# a leading - cuts the shape out of what is already drawn. `use <icon> rot=90 flip=h` reuses another icon turned or mirrored.
+# engine/include/okay/UI/UIIcons.hpp reads this file; tests/test_ui_icons.cpp checks every icon draws something and is deterministic.
+
+[icon arrow-right]
+category = Arrows
+tags = next,forward,go
+l 4 12 19 12 2
+s 13 6 19 12 13 18 2
+
+[icon arrow-down]
+category = Arrows
+tags = direction
+use arrow-right rot=90
+
+[icon arrow-left]
+category = Arrows
+tags = direction
+use arrow-right rot=180
+
+[icon arrow-up]
+category = Arrows
+tags = direction
+use arrow-right rot=270
+
+[icon arrow-up-right]
+category = Arrows
+tags = diagonal,external
+l 6 18 18 6 2
+s 9 6 18 6 18 15 2
+
+[icon arrow-down-right]
+category = Arrows
+tags = diagonal
+use arrow-up-right rot=90
+
+[icon arrow-down-left]
+category = Arrows
+tags = diagonal
+use arrow-up-right rot=180
+
+[icon arrow-up-left]
+category = Arrows
+tags = diagonal
+use arrow-up-right rot=270
+
+[icon chevron-right]
+category = Arrows
+tags = next,more
+s 9 5 16 12 9 19 2.4
+
+[icon chevron-down]
+category = Arrows
+tags = expand,collapse
+use chevron-right rot=90
+
+[icon chevron-left]
+category = Arrows
+tags = expand,collapse
+use chevron-right rot=180
+
+[icon chevron-up]
+category = Arrows
+tags = expand,collapse
+use chevron-right rot=270
+
+[icon chevrons-right]
+category = Arrows
+tags = fast,skip
+s 5 6 11 12 5 18 2.2
+s 12 6 18 12 12 18 2.2
+
+[icon chevrons-down]
+category = Arrows
+tags = fast
+use chevrons-right rot=90
+
+[icon chevrons-left]
+category = Arrows
+tags = fast
+use chevrons-right rot=180
+
+[icon chevrons-up]
+category = Arrows
+tags = fast
+use chevrons-right rot=270
+
+[icon caret-right]
+category = Arrows
+tags = triangle,play
+p 8 5 18 12 8 19
+
+[icon caret-down]
+category = Arrows
+tags = triangle,dropdown
+use caret-right rot=90
+
+[icon caret-left]
+category = Arrows
+tags = triangle,dropdown
+use caret-right rot=180
+
+[icon caret-up]
+category = Arrows
+tags = triangle,dropdown
+use caret-right rot=270
+
+[icon arrow-circle-right]
+category = Arrows
+tags = next,go
+o 12 12 9.5 2
+l 7 12 16 12 2
+s 12.5 8 16.5 12 12.5 16 2
+
+[icon arrow-circle-down]
+category = Arrows
+tags = circle
+use arrow-circle-right rot=90
+
+[icon arrow-circle-left]
+category = Arrows
+tags = circle
+use arrow-circle-right rot=180
+
+[icon arrow-circle-up]
+category = Arrows
+tags = circle
+use arrow-circle-right rot=270
+
+[icon refresh]
+category = Arrows
+tags = reload,sync,update
+a 12 12 8 -30 250 2.2
+p 15 2 21 7 14 9.5
+
+[icon redo]
+category = Arrows
+tags = forward,repeat
+a 12 13 7 200 360 2.2
+a 12 13 7 0 30 2.2
+p 15 3 21 8 15 12
+
+[icon undo]
+category = Arrows
+tags = back,revert
+use redo flip=h
+
+[icon swap-horizontal]
+category = Arrows
+tags = exchange,trade
+l 4 8 20 8 2
+s 16 4 20 8 16 12 2
+l 20 16 4 16 2
+s 8 12 4 16 8 20 2
+
+[icon swap-vertical]
+category = Arrows
+tags = exchange,sort
+use swap-horizontal rot=90
+
+[icon expand]
+category = Arrows
+tags = fullscreen,grow
+s 4 9 4 4 9 4 2
+s 15 4 20 4 20 9 2
+s 20 15 20 20 15 20 2
+s 9 20 4 20 4 15 2
+
+[icon collapse]
+category = Arrows
+tags = shrink,exit fullscreen
+s 9 4 9 9 4 9 2
+s 15 4 15 9 20 9 2
+s 20 15 15 15 15 20 2
+s 4 15 9 15 9 20 2
+
+[icon maximize]
+category = Arrows
+tags = window,big
+q 4 4 16 16 2 2
+l 4 8 20 8 2
+
+[icon minimize]
+category = Arrows
+tags = window,small
+l 5 18 19 18 2.4
+
+[icon download]
+category = Arrows
+tags = save,get
+l 12 4 12 15 2
+s 7 11 12 16 17 11 2
+l 5 20 19 20 2
+
+[icon upload]
+category = Arrows
+tags = send,put
+l 12 16 12 5 2
+s 7 9 12 4 17 9 2
+l 5 20 19 20 2
+
+[icon external-link]
+category = Arrows
+tags = open,new window
+s 14 4 20 4 20 10 2
+l 20 4 11 13 2
+s 17 14 17 19 5 19 5 7 10 7 2
+
+[icon corner-down-right]
+category = Arrows
+tags = enter,return
+s 5 5 5 15 17 15 2
+s 13 11 17 15 13 19 2
+
+[icon trending-up]
+category = Arrows
+tags = growth,chart
+s 3 17 9 11 13 15 21 7 2
+s 15 7 21 7 21 13 2
+
+[icon trending-down]
+category = Arrows
+tags = drop,loss
+s 3 7 9 13 13 9 21 17 2
+s 15 17 21 17 21 11 2
+
+[icon check]
+category = Marks
+tags = ok,done,yes,tick
+s 4 12.5 9.5 18 20 6.5 2.6
+
+[icon cross]
+category = Marks
+tags = close,no,x,cancel
+l 5 5 19 19 2.6
+l 19 5 5 19 2.6
+
+[icon plus]
+category = Marks
+tags = add,new,more
+l 12 4 12 20 2.6
+l 4 12 20 12 2.6
+
+[icon minus]
+category = Marks
+tags = remove,less,subtract
+l 4 12 20 12 2.6
+
+[icon divide]
+category = Marks
+tags = math,split
+l 4 12 20 12 2.4
+c 12 6 1.9
+c 12 18 1.9
+
+[icon equals]
+category = Marks
+tags = math,same
+l 5 9 19 9 2.4
+l 5 15 19 15 2.4
+
+[icon question]
+category = Marks
+tags = help,unknown
+a 12 9 4.5 150 390 2.4
+l 12 13.5 12 15 2.4
+c 12 19 1.5
+
+[icon exclamation]
+category = Marks
+tags = alert,important
+l 12 4 12 14 3
+c 12 19.5 1.8
+
+[icon info]
+category = Marks
+tags = about,details
+c 12 6 1.8
+l 12 10.5 12 19 2.8
+
+[icon warning]
+category = Marks
+tags = caution,alert,danger
+p 12 3 22 20.5 2 20.5
+-l 12 9 12 14.5 2
+-c 12 17.5 1.2
+
+[icon ban]
+category = Marks
+tags = forbidden,no,block
+o 12 12 9 2.2
+l 5.7 5.7 18.3 18.3 2.2
+
+[icon dot]
+category = Marks
+tags = point,bullet
+c 12 12 4
+
+[icon circle]
+category = Shapes
+tags = round
+o 12 12 8.5 2.4
+
+[icon circle-filled]
+category = Shapes
+tags = round,disc
+c 12 12 9
+
+[icon square]
+category = Shapes
+tags = box
+q 4 4 16 16 1.5 2.4
+
+[icon square-filled]
+category = Shapes
+tags = box
+q 3 3 18 18 2 -1
+
+[icon triangle]
+category = Shapes
+tags = 
+s 12 4 21 19 3 19 12 4 2.4
+
+[icon triangle-filled]
+category = Shapes
+tags = 
+p 12 3 22 20 2 20
+
+[icon diamond]
+category = Shapes
+tags = rhombus
+s 12 3 21 12 12 21 3 12 12 3 2.4
+
+[icon diamond-filled]
+category = Shapes
+tags = rhombus
+p 12 2 22 12 12 22 2 12
+
+[icon hexagon]
+category = Shapes
+tags = 
+g 12 12 9.5 6 0 2.4
+
+[icon pentagon]
+category = Shapes
+tags = 
+g 12 12 9.5 5 -90 2.4
+
+[icon octagon]
+category = Shapes
+tags = stop
+g 12 12 9.5 8 22.5 2.4
+
+[icon check-circle]
+category = Marks
+tags = ok,success
+o 12 12 9.5 2
+s 7.5 12.5 10.5 15.5 16.5 9 2.2
+
+[icon cross-circle]
+category = Marks
+tags = error,fail
+o 12 12 9.5 2
+l 8.5 8.5 15.5 15.5 2.2
+l 15.5 8.5 8.5 15.5 2.2
+
+[icon plus-circle]
+category = Marks
+tags = add
+o 12 12 9.5 2
+l 12 7.5 12 16.5 2.2
+l 7.5 12 16.5 12 2.2
+
+[icon minus-circle]
+category = Marks
+tags = remove
+o 12 12 9.5 2
+l 7.5 12 16.5 12 2.2
+
+[icon question-circle]
+category = Marks
+tags = help
+o 12 12 9.5 2
+a 12 10 3 160 380 2
+c 12 17 1.2
+
+[icon info-circle]
+category = Marks
+tags = about
+o 12 12 9.5 2
+c 12 7.8 1.3
+l 12 11 12 16.5 2.2
+
+[icon warning-circle]
+category = Marks
+tags = alert
+o 12 12 9.5 2
+l 12 7 12 13 2.2
+c 12 16.6 1.3
+
+[icon percent]
+category = Marks
+tags = discount,math
+l 18 5 6 19 2.2
+o 7 7 3 2
+o 17 17 3 2
+
+[icon hash]
+category = Marks
+tags = number,tag
+l 9 4 7 20 2
+l 17 4 15 20 2
+l 4 9 20 9 2
+l 4 15 20 15 2
+
+[icon at]
+category = Marks
+tags = email,mention
+o 12 12 4 2
+a 12 12 9 -40 250 2
+l 16 8 16 13.5 2
+
+[icon asterisk]
+category = Marks
+tags = star,required
+l 12 4 12 20 2.2
+l 5 8 19 16 2.2
+l 19 8 5 16 2.2
+
+[icon menu]
+category = Interface
+tags = hamburger,list
+l 4 6 20 6 2.4
+l 4 12 20 12 2.4
+l 4 18 20 18 2.4
+
+[icon dots-horizontal]
+category = Interface
+tags = more
+c 5 12 2
+c 12 12 2
+c 19 12 2
+
+[icon dots-vertical]
+category = Interface
+tags = more
+c 12 5 2
+c 12 12 2
+c 12 19 2
+
+[icon grid]
+category = Interface
+tags = tiles,apps
+q 4 4 7 7 1.5 -1
+q 13 4 7 7 1.5 -1
+q 4 13 7 7 1.5 -1
+q 13 13 7 7 1.5 -1
+
+[icon list]
+category = Interface
+tags = rows
+c 5 6 1.5
+l 9 6 20 6 2
+c 5 12 1.5
+l 9 12 20 12 2
+c 5 18 1.5
+l 9 18 20 18 2
+
+[icon search]
+category = Interface
+tags = find,magnify
+o 10.5 10.5 6.5 2.2
+l 15.5 15.5 20.5 20.5 2.6
+
+[icon zoom-in]
+category = Interface
+tags = magnify
+o 10.5 10.5 6.5 2.2
+l 15.5 15.5 20.5 20.5 2.6
+l 10.5 7.5 10.5 13.5 1.8
+l 7.5 10.5 13.5 10.5 1.8
+
+[icon zoom-out]
+category = Interface
+tags = magnify
+o 10.5 10.5 6.5 2.2
+l 15.5 15.5 20.5 20.5 2.6
+l 7.5 10.5 13.5 10.5 1.8
+
+[icon filter]
+category = Interface
+tags = funnel,sort
+p 3 5 21 5 14 13.5 14 20 10 18 10 13.5
+
+[icon sort]
+category = Interface
+tags = order
+l 4 7 20 7 2.2
+l 4 12 15 12 2.2
+l 4 17 10 17 2.2
+
+[icon gear]
+category = Interface
+tags = settings,options,cog
+t 12 12 10.6 8.4 16 0
+c 12 12 7.5
+-c 12 12 3.4
+
+[icon sliders]
+category = Interface
+tags = settings,equalizer
+l 4 7 20 7 2
+l 4 17 20 17 2
+c 9 7 2.8
+c 15 17 2.8
+
+[icon home]
+category = Interface
+tags = house,main
+p 12 3 22 12 19 12 19 20 14 20 14 14 10 14 10 20 5 20 5 12 2 12
+
+[icon user]
+category = People
+tags = person,profile,account
+c 12 8 4.2
+p 4 21 5 16 8 13.5 16 13.5 19 16 20 21
+
+[icon users]
+category = People
+tags = group,team,party
+c 9 8 3.6
+p 2.5 20 3.5 15.5 6 13.5 12 13.5 14.5 15.5 15.5 20
+c 17 9 3
+p 16.5 13.5 19.5 13.5 21.5 15.5 22 19
+
+[icon user-plus]
+category = People
+tags = add friend,invite
+c 10 8 3.8
+p 2.5 20 3.5 15 6.5 13 13.5 13 16.5 15 17.5 20
+l 19 6 19 12 2
+l 16 9 22 9 2
+
+[icon lock]
+category = Interface
+tags = secure,private,closed
+q 5 10.5 14 10.5 2 -1
+a 12 10.5 4.5 180 360 2.4
+-c 12 15 1.6
+
+[icon unlock]
+category = Interface
+tags = open,public
+q 5 10.5 14 10.5 2 -1
+a 12 10.5 4.5 180 330 2.4
+
+[icon key]
+category = Items
+tags = password,unlock
+o 8 12 4.5 2.4
+l 12.5 12 21 12 2.4
+l 18 12 18 16 2.2
+l 21 12 21 15 2.2
+
+[icon eye]
+category = Interface
+tags = view,visible,show
+a 12 22 14 -125 -55 2.2
+a 12 2 14 55 125 2.2
+c 12 12 3.2
+
+[icon eye-off]
+category = Interface
+tags = hide,invisible
+a 12 22 14 -125 -55 2.2
+a 12 2 14 55 125 2.2
+l 4 20 20 4 2.2
+
+[icon bell]
+category = Interface
+tags = notification,alert
+a 12 10 6 180 360 2.4
+l 6 10 6 15 2.4
+l 18 10 18 15 2.4
+l 4 16 20 16 2.4
+c 12 20 1.8
+
+[icon bell-off]
+category = Interface
+tags = mute,silent
+a 12 10 6 180 360 2.4
+l 6 10 6 15 2.4
+l 18 10 18 15 2.4
+l 4 16 20 16 2.4
+l 4 20 20 4 2.2
+
+[icon trash]
+category = Interface
+tags = delete,bin,remove
+l 4 6 20 6 2.2
+s 9 6 9 3.5 15 3.5 15 6 2
+s 6 6 7 20 17 20 18 6 2.2
+l 10 10 10 16 1.8
+l 14 10 14 16 1.8
+
+[icon edit]
+category = Interface
+tags = pencil,write,change
+p 5 19 6 14.5 15.5 5 19 8.5 9.5 18
+l 14 6.5 17.5 10 1.6
+
+[icon copy]
+category = Interface
+tags = duplicate
+q 8 8 12 12 2 2.2
+s 16 8 16 5 5 5 5 16 8 16 2.2
+
+[icon clipboard]
+category = Interface
+tags = paste,notes
+q 5 5 14 16 2 2.2
+q 9 3 6 4 1 -1
+
+[icon save]
+category = Interface
+tags = floppy,disk
+s 4 4 17 4 20 7 20 20 4 20 4 4 2.2
+q 8 4 7 5 1 2
+q 7 13 10 7 1 2
+
+[icon folder]
+category = Interface
+tags = directory,files
+p 3 6 9 6 11.5 8.5 21 8.5 21 19 3 19
+
+[icon folder-open]
+category = Interface
+tags = directory,open
+s 3 19 3 6 9 6 11 8 18 8 18 10 2.2
+p 5 19 7.5 11 22 11 19.5 19
+
+[icon file]
+category = Interface
+tags = document,page
+s 6 3 14 3 19 8 19 21 6 21 6 3 2.2
+s 14 3 14 8 19 8 2
+
+[icon file-text]
+category = Interface
+tags = document,notes
+s 6 3 14 3 19 8 19 21 6 21 6 3 2.2
+l 9 12 16 12 1.8
+l 9 16 16 16 1.8
+
+[icon image]
+category = Interface
+tags = picture,photo
+q 3 4 18 16 2 2.2
+c 9 10 1.8
+s 4 19 10 13 14 17 17 14 21 18 2
+
+[icon link]
+category = Interface
+tags = chain,url
+a 8.5 15.5 4.5 90 270 2.4
+a 15.5 8.5 4.5 -90 90 2.4
+l 9.5 14.5 14.5 9.5 2.2
+
+[icon share]
+category = Interface
+tags = send,social
+c 18 5.5 2.8
+c 6 12 2.8
+c 18 18.5 2.8
+l 8.5 10.6 15.5 6.9 1.8
+l 8.5 13.4 15.5 17.1 1.8
+
+[icon pin]
+category = Maps
+tags = location,place,marker
+p 12 22 5.5 11 5.5 8.5 8.5 4 15.5 4 18.5 8.5 18.5 11
+-c 12 9.5 2.6
+
+[icon bookmark]
+category = Interface
+tags = save,favourite
+p 6 3 18 3 18 21 12 16.5 6 21
+
+[icon tag]
+category = Interface
+tags = label,price
+p 3 4 12 4 21 13 13 21 4 12 3 12
+-c 7.5 8.5 1.6
+
+[icon flag]
+category = Maps
+tags = goal,finish,report
+l 6 3 6 21 2.4
+p 6 4 19 4 16 8.5 19 13 6 13
+
+[icon calendar]
+category = Time
+tags = date,schedule,event
+q 4 5 16 15 2 2.2
+l 4 10 20 10 2
+l 8 3 8 7 2.2
+l 16 3 16 7 2.2
+
+[icon clock]
+category = Time
+tags = time,watch,wait
+o 12 12 9.5 2.2
+s 12 6.5 12 12 16 14.5 2.2
+
+[icon hourglass]
+category = Time
+tags = wait,timer,loading
+s 6 3 18 3 6 21 18 21 6 3 2.2
+p 8.5 6 15.5 6 12 11
+p 9 19 15 19 12 15
+
+[icon timer]
+category = Time
+tags = stopwatch,countdown
+o 12 13 7.5 2.2
+l 12 13 15 9.5 2
+l 9.5 3 14.5 3 2.2
+
+[icon power]
+category = Interface
+tags = on,off,quit
+a 12 13 7.5 -50 230 2.4
+l 12 3.5 12 11 2.6
+
+[icon door]
+category = Interface
+tags = exit,leave,quit
+s 6 21 6 3 15 3 15 21 2.2
+l 3 21 21 21 2.2
+c 12.5 12 1.2
+
+[icon logout]
+category = Interface
+tags = exit,sign out
+s 10 4 5 4 5 20 10 20 2.2
+l 10 12 20 12 2.2
+s 16 8 20 12 16 16 2.2
+
+[icon login]
+category = Interface
+tags = enter,sign in
+s 14 4 19 4 19 20 14 20 2.2
+l 4 12 14 12 2.2
+s 10 8 14 12 10 16 2.2
+
+[icon help]
+category = Interface
+tags = support,question
+o 12 12 9.5 2
+a 12 10 3 160 380 2
+c 12 17 1.2
+
+[icon heart-outline]
+category = Game
+tags = love,like,favourite
+a 8 9 4 140 360 2.2
+a 16 9 4 180 400 2.2
+s 4.1 11.5 12 20 19.9 11.5 2.2
+
+[icon lightbulb]
+category = Interface
+tags = idea,hint,tip
+a 12 10 6 140 400 2.2
+l 9.5 17 14.5 17 2.2
+l 10 20 14 20 2.2
+
+[icon target]
+category = Game
+tags = aim,goal,bullseye
+o 12 12 9 2
+o 12 12 5 2
+c 12 12 1.8
+
+[icon crosshair]
+category = Game
+tags = aim,sight
+o 12 12 6.5 2
+l 12 2 12 7 2
+l 12 17 12 22 2
+l 2 12 7 12 2
+l 17 12 22 12 2
+
+[icon move]
+category = Interface
+tags = drag,pan
+l 12 3 12 21 2
+l 3 12 21 12 2
+s 9 6 12 3 15 6 2
+s 9 18 12 21 15 18 2
+s 6 9 3 12 6 15 2
+s 18 9 21 12 18 15 2
+
+[icon rotate]
+category = Interface
+tags = turn,spin
+a 12 12 8 -60 240 2.2
+p 18 2 21 9 14 9
+
+[icon layers]
+category = Interface
+tags = stack,levels
+p 12 3 22 9 12 15 2 9
+s 3 13 12 18 21 13 2
+s 3 17 12 22 21 17 2
+
+[icon palette]
+category = Interface
+tags = colour,paint,theme
+a 12 12 9 -20 290 2.4
+l 12 21 17 21 2.4
+c 8 10 1.4
+c 12 7 1.4
+c 16 10 1.4
+
+[icon brush]
+category = Interface
+tags = paint,draw
+p 15 3 21 9 12 18 6 12
+p 6 14 10 18 8 21 3 21 4 17
+
+[icon scissors]
+category = Interface
+tags = cut
+o 6 6 2.8 2
+o 6 18 2.8 2
+l 8.3 7.6 20 17 2
+l 8.3 16.4 20 7 2
+
+[icon filter-list]
+category = Interface
+tags = options
+l 4 7 20 7 2
+l 7 12 17 12 2
+l 10 17 14 17 2
+
+[icon expand-box]
+category = Interface
+tags = resize
+q 4 4 16 16 2 2.2
+s 14 10 14 14 10 14 2
+l 14 14 20 20 2
+
+[icon lines-box]
+category = Interface
+tags = text
+q 4 4 16 16 2 2.2
+l 8 9 16 9 1.8
+l 8 13 16 13 1.8
+l 8 17 13 17 1.8
+
+[icon play]
+category = Media
+tags = start,run
+p 7 4 20 12 7 20
+
+[icon pause]
+category = Media
+tags = wait
+q 6 4 4 16 1 -1
+q 14 4 4 16 1 -1
+
+[icon stop]
+category = Media
+tags = end
+q 5 5 14 14 2 -1
+
+[icon record]
+category = Media
+tags = rec,dot
+c 12 12 8
+
+[icon skip-next]
+category = Media
+tags = next track
+p 5 4 15 12 5 20
+q 16 4 3 16 1 -1
+
+[icon skip-previous]
+category = Media
+tags = previous track
+use skip-next flip=h
+
+[icon fast-forward]
+category = Media
+tags = speed
+p 3 5 12 12 3 19
+p 12 5 21 12 12 19
+
+[icon rewind]
+category = Media
+tags = back
+use fast-forward flip=h
+
+[icon shuffle]
+category = Media
+tags = random
+s 3 7 8 7 16 17 21 17 2
+s 3 17 8 17 16 7 21 7 2
+s 18 4 21 7 18 10 1.8
+s 18 14 21 17 18 20 1.8
+
+[icon repeat]
+category = Media
+tags = loop
+s 4 11 4 8 7 6 19 6 2.2
+s 16 3 19 6 16 9 2.2
+s 20 13 20 16 17 18 5 18 2.2
+s 8 15 5 18 8 21 2.2
+
+[icon volume-high]
+category = Media
+tags = sound,speaker,loud
+p 3 9 7 9 12 4.5 12 19.5 7 15 3 15
+a 12 12 5 -50 50 2
+a 12 12 9 -50 50 2
+
+[icon volume-low]
+category = Media
+tags = sound,quiet
+p 3 9 7 9 12 4.5 12 19.5 7 15 3 15
+a 12 12 5.5 -50 50 2
+
+[icon volume-mute]
+category = Media
+tags = silent
+p 3 9 7 9 12 4.5 12 19.5 7 15 3 15
+l 16 9 22 15 2
+l 22 9 16 15 2
+
+[icon mic]
+category = Media
+tags = microphone,voice
+q 9 3 6 11 3 -1
+a 12 11 7 0 180 2.2
+l 12 18 12 21 2.2
+
+[icon mic-off]
+category = Media
+tags = mute
+q 9 3 6 11 3 -1
+a 12 11 7 0 180 2.2
+l 12 18 12 21 2.2
+l 4 20 20 4 2.2
+
+[icon music]
+category = Media
+tags = note,song,audio
+l 9 18 9 5 2.2
+l 9 5 19 3 2.2
+l 19 3 19 15 2.2
+c 7 18 3
+c 17 15 3
+
+[icon headphones]
+category = Media
+tags = audio,listen
+a 12 13 8 180 360 2.4
+q 3 13 4 7 1.5 -1
+q 17 13 4 7 1.5 -1
+
+[icon camera]
+category = Media
+tags = photo,screenshot
+q 3 7 18 13 2.5 2.2
+l 8 7 9.5 4.5 2.2
+c 12 13.5 3.4
+
+[icon video]
+category = Media
+tags = film,movie
+q 3 7 13 10 2 2.2
+p 16 10.5 21 7.5 21 16.5 16 13.5
+
+[icon speaker]
+category = Media
+tags = sound,loud
+q 6 3 12 18 2 2.2
+c 12 14.5 3.2
+c 12 7.5 1.2
+
+[icon equalizer]
+category = Media
+tags = audio,levels
+q 4 12 3 8 1 -1
+q 9 5 3 15 1 -1
+q 14 9 3 11 1 -1
+q 19 14 2 6 1 -1
+
+[icon film]
+category = Media
+tags = cinema,cutscene
+q 4 3 16 18 2 2.2
+l 4 8 8 8 2
+l 4 12 8 12 2
+l 4 16 8 16 2
+l 16 8 20 8 2
+l 16 12 20 12 2
+l 16 16 20 16 2
+
+[icon cast]
+category = Media
+tags = stream,screen
+s 4 8 4 5 20 5 20 18 14 18 2.2
+a 4 20 6 -90 0 2
+a 4 20 11 -90 0 2
+c 5 19.5 1.4
+
+[icon mail]
+category = Communication
+tags = email,message,inbox
+q 3 5 18 14 2 2.2
+s 3.8 6.5 12 13 20.2 6.5 2
+
+[icon chat]
+category = Communication
+tags = message,talk,comment
+p 4 4 20 4 20 16 12 16 7 21 7 16 4 16
+
+[icon chat-dots]
+category = Communication
+tags = typing,message
+p 4 4 20 4 20 16 12 16 7 21 7 16 4 16
+-c 8.5 10 1.3
+-c 12 10 1.3
+-c 15.5 10 1.3
+
+[icon chat-outline]
+category = Communication
+tags = speech
+s 4 4 20 4 20 16 12 16 7 21 7 16 4 16 4 4 2.2
+
+[icon phone]
+category = Communication
+tags = call,telephone
+p 6 3 10 3 11.5 8 9 10 14 15 16 12.5 21 14 21 18 17 21 7 17 3 7
+
+[icon send]
+category = Communication
+tags = paper plane,submit
+p 3 11 21 3 15 21 11.5 13 3 11
+
+[icon inbox]
+category = Communication
+tags = mail,tray
+s 3 13 6 5 18 5 21 13 21 19 3 19 3 13 2.2
+s 3 13 8 13 9.5 16 14.5 16 16 13 21 13 2
+
+[icon megaphone]
+category = Communication
+tags = announce,shout
+p 4 9 9 9 17 4 17 20 9 15 4 15
+l 7 15 8.5 20 2.2
+l 20 10 21.5 10 2
+l 20 14 21.5 14 2
+
+[icon globe]
+category = Communication
+tags = world,internet,web
+o 12 12 9.5 2
+a 12 12 4.5 90 270 1.8
+a 12 12 4.5 -90 90 1.8
+l 2.5 12 21.5 12 1.8
+
+[icon wifi]
+category = Communication
+tags = wireless,signal
+a 12 19 14 -135 -45 2.2
+a 12 19 9 -135 -45 2.2
+a 12 19 4.5 -135 -45 2.2
+c 12 19 1.6
+
+[icon signal]
+category = Communication
+tags = bars,network
+q 4 16 3 4 1 -1
+q 9 12 3 8 1 -1
+q 14 8 3 12 1 -1
+q 19 4 3 16 1 -1
+
+[icon rss]
+category = Communication
+tags = feed
+a 5 19 6 -90 0 2.4
+a 5 19 12 -90 0 2.4
+c 6 18 1.8
+
+[icon bluetooth]
+category = Communication
+tags = wireless
+s 6 7.5 18 16.5 12 21 12 3 18 7.5 6 16.5 2
+
+[icon at-sign]
+category = Communication
+tags = email
+o 12 12 4 2
+a 12 12 9 -40 250 2
+l 16 8 16 13.5 2
+
+[icon sword]
+category = Game
+tags = blade,weapon,attack
+p 18 3 21 3 21 6 10 17 7 14
+l 5 15.5 8.5 19 2.4
+l 3.5 20.5 6.5 17.5 2.4
+l 8.5 13 11 15.5 1.8
+
+[icon swords]
+category = Game
+tags = crossed,battle,pvp
+l 5 5 18 18 2.4
+l 19 5 6 18 2.4
+l 3.5 16 8 20.5 2.2
+l 20.5 16 16 20.5 2.2
+
+[icon shield]
+category = Game
+tags = defense,armor,protect
+p 12 3 20 6 20 12 17.5 17.5 12 21 6.5 17.5 4 12 4 6
+
+[icon shield-half]
+category = Game
+tags = defense
+s 12 3 20 6 20 12 17.5 17.5 12 21 6.5 17.5 4 12 4 6 12 3 2.2
+p 12 3 12 21 6.5 17.5 4 12 4 6
+
+[icon shield-check]
+category = Game
+tags = safe,verified
+p 12 3 20 6 20 12 17.5 17.5 12 21 6.5 17.5 4 12 4 6
+-s 8.5 12 11 14.5 15.5 9.5 2
+
+[icon bow]
+category = Game
+tags = archery,ranged
+a 5 12 12 -60 60 2.4
+l 9.5 3.5 9.5 20.5 1.4
+l 4 12 20 12 1.8
+p 20 12 16.5 9.5 16.5 14.5
+
+[icon arrow-ammo]
+category = Game
+tags = arrow,projectile
+l 4 20 19 5 2
+p 21 3 21 9 15 3
+p 4 20 4 15 9 20
+
+[icon axe]
+category = Game
+tags = chop,tool,weapon
+l 6 20 16 6 2.4
+p 13 4 20 6 21 11 17 12 14 8
+
+[icon hammer]
+category = Game
+tags = build,tool,smith
+l 4 20 14 10 3
+p 12 3 20 3 21 8 16 11 11 8
+
+[icon pickaxe]
+category = Game
+tags = mine,dig,tool
+l 5 20 16 9 2.4
+a 12 12 9 -150 -30 2.6
+l 3.5 8 5 6 2
+
+[icon dagger]
+category = Game
+tags = knife,stab
+p 12 2 15 12 12 15 9 12
+q 8 14 8 2 1 -1
+l 12 16 12 21 3
+
+[icon staff]
+category = Game
+tags = magic,wand,mage
+l 6 20 15 11 2.6
+c 17.5 8.5 3.2
+l 17.5 3 17.5 4.5 1.6
+l 22 8.5 20.5 8.5 1.6
+
+[icon wand]
+category = Game
+tags = magic,spell
+l 4 20 14 10 2.6
+p 17 3 18 6 21 7 18 8 17 11 16 8 13 7 16 6
+
+[icon potion]
+category = Game
+tags = health,flask,drink
+s 10 3 14 3 14 9 19 18 18 21 6 21 5 18 10 9 10 3 2.2
+p 7.5 15 16.5 15 18 18.5 17.5 20 6.5 20 6 18.5
+
+[icon potion-round]
+category = Game
+tags = mana,flask,elixir
+l 10.5 3 13.5 3 2.2
+l 12 3 12 8 2
+c 12 15 6.5
+-a 12 15 4.5 200 340 1.4
+
+[icon bottle]
+category = Game
+tags = drink,water
+q 10 3 4 4 1 -1
+p 10 7 14 7 16 11 16 20 8 20 8 11
+
+[icon flask]
+category = Game
+tags = lab,chemistry
+s 9 3 9 9 4 19 5 21 19 21 20 19 15 9 15 3 2.2
+l 8 3 16 3 2.2
+
+[icon chest]
+category = Game
+tags = loot,treasure,box
+q 3 9 18 11 1.5 -1
+a 12 9 9 180 360 2.6
+-q 10.5 11.5 3 4 1 -1
+
+[icon coin]
+category = Game
+tags = money,gold,currency
+o 12 12 9 2.4
+l 12 7 12 17 2
+s 14.5 9.5 10 9.5 10 12 14 12 14 14.5 9.5 14.5 1.6
+
+[icon coins]
+category = Game
+tags = money,gold,stack
+o 9 9 6 2.2
+a 15 15 6 -60 120 2.2
+l 9 6.5 9 11.5 1.8
+
+[icon gem]
+category = Game
+tags = diamond,crystal,jewel
+p 6 4 18 4 22 10 12 21 2 10
+-l 2 10 22 10 1
+-l 9 10 12 4 1
+-l 15 10 12 4 1
+
+[icon crown]
+category = Game
+tags = king,royal,leader
+p 3 8 8 12 12 5 16 12 21 8 19 19 5 19
+
+[icon scroll]
+category = Game
+tags = quest,paper,spell
+q 5 4 14 15 2 2.2
+a 5 19 2.5 90 270 2
+a 19 5 2.5 -90 90 2
+l 9 9 15 9 1.8
+l 9 13 15 13 1.8
+
+[icon book]
+category = Game
+tags = journal,lore,read
+s 4 5 4 20 11 20 12 20 12 6 4 5 2.2
+s 20 5 20 20 13 20 12 20 12 6 20 5 2.2
+
+[icon book-open]
+category = Game
+tags = read,journal
+p 3 5 11 6.5 11 20 3 18.5
+p 21 5 13 6.5 13 20 21 18.5
+
+[icon map]
+category = Game
+tags = world,navigate,chart
+p 3 6 9 4 15 6 21 4 21 18 15 20 9 18 3 20
+-l 9 4.5 9 18 1.1
+-l 15 6 15 20 1.1
+
+[icon bag]
+category = Game
+tags = inventory,loot,sack
+p 8 7 16 7 19 21 5 21
+a 12 7 3.5 180 360 2.2
+
+[icon backpack]
+category = Game
+tags = inventory,travel
+q 6 6 12 15 4 2.2
+a 12 6 3.4 180 360 2.2
+q 9 13 6 5 1 2
+l 6 12 18 12 1.6
+
+[icon torch]
+category = Game
+tags = light,fire,flame
+l 9 21 14 12 2.8
+p 14 3 18 8 17 12 11 12 10 8
+
+[icon lantern]
+category = Game
+tags = light,lamp
+l 9 3 15 3 2.2
+q 7 5 10 14 2 2.2
+l 8 19 16 19 2.2
+c 12 12 2
+
+[icon heart]
+category = Game
+tags = health,life,love
+c 8 9 4.4
+c 16 9 4.4
+p 3.9 11 12 21 20.1 11
+
+[icon heart-half]
+category = Game
+tags = health,damage
+s 12 6.5 10 4 6 4 3 7.5 3 11 12 20 21 11 21 7.5 18 4 14 4 12 6.5 2.2
+p 12 6.5 10 4 6 4 3 7.5 3 11 12 20
+
+[icon heart-broken]
+category = Game
+tags = dead,damage,sad
+p 12 6.5 10 4 6 4 3 7.5 3 11 12 20 21 11 21 7.5 18 4 14 4
+-s 12 6 9.5 11 14 13 11 20 1.8
+
+[icon heart-plus]
+category = Game
+tags = heal,health
+p 12 6.5 10 4 6 4 3 7.5 3 11 12 20 21 11 21 7.5 18 4 14 4
+-l 12 8 12 14 2
+-l 9 11 15 11 2
+
+[icon star]
+category = Game
+tags = favourite,rating,reward
+t 12 12.5 10 4.2 5 -90
+
+[icon star-outline]
+category = Game
+tags = favourite,rating
+t 12 12.5 9.6 4.2 5 -90 2
+
+[icon star-half]
+category = Game
+tags = rating
+t 12 12.5 9.6 4.2 5 -90 2
+p 12 3 13.4 8.7 12 12.5
+
+[icon skull]
+category = Game
+tags = death,danger,enemy
+a 12 10.5 8 180 360 2
+q 7 12 10 8 2 -1
+-c 9 11 2
+-c 15 11 2
+-l 12 14 12 15.5 1.4
+-l 10 17 10 20 1
+-l 14 17 14 20 1
+
+[icon bone]
+category = Game
+tags = skeleton,dog
+l 7 17 17 7 3
+c 5 15 2.4
+c 7 19 2.4
+c 17 5 2.4
+c 19 9 2.4
+
+[icon bomb]
+category = Game
+tags = explosive,boom
+c 10 14 7
+l 15 8 18 5 2
+l 18 5 20 4 1.6
+l 19 7 21 7 1.4
+l 17 3 17 1.5 1.4
+
+[icon gun]
+category = Game
+tags = pistol,shoot,weapon
+p 3 7 19 7 19 11 11 11 11 13 9 17 5 17 6 11 3 11
+l 14 11 14 14 2
+
+[icon rifle]
+category = Game
+tags = shoot,weapon,gun
+p 2 10 14 10 15 8 20 8 21 11 14 12 9 12 8 17 5 17 5 12 2 12
+
+[icon bullet]
+category = Game
+tags = ammo,shot
+a 12 8 4 180 360 4
+q 8 8 8 12 1 -1
+l 8 17 16 17 1.6
+
+[icon ammo-box]
+category = Game
+tags = ammunition
+q 4 8 16 12 2 -1
+-l 9 11 9 17 1.6
+-l 12 11 12 17 1.6
+-l 15 11 15 17 1.6
+
+[icon grenade]
+category = Game
+tags = bomb,throw
+c 12 14 6.5
+q 10 4 4 4 1 -1
+l 14 6 18 4 2
+
+[icon helmet]
+category = Game
+tags = armor,head,knight
+a 12 14 8 180 360 2.4
+q 4 14 16 5 1 -1
+-l 7 15 17 15 1.6
+l 12 3 12 6 2
+
+[icon armor]
+category = Game
+tags = chest,body,protect
+p 4 5 9 3 10.5 6 13.5 6 15 3 20 5 19 11 17 11 17 21 7 21 7 11 5 11
+
+[icon boot]
+category = Game
+tags = shoe,speed
+p 8 3 14 3 14 13 20 16 20 21 7 21 7 14 8 14
+
+[icon glove]
+category = Game
+tags = hand,armor
+q 7 10 10 11 3 -1
+q 7 4 2.4 8 1 -1
+q 10.3 3 2.4 8 1 -1
+q 13.6 4 2.4 8 1 -1
+q 16.7 6 2.4 7 1 -1
+
+[icon ring]
+category = Game
+tags = jewel,magic
+o 12 14 6 2.6
+p 9 5 12 8 15 5 14 3 10 3
+
+[icon amulet]
+category = Game
+tags = necklace,charm
+s 5 3 12 14 19 3 2
+p 12 13 16 17 12 22 8 17
+
+[icon feather]
+category = Game
+tags = light,quill
+p 19 3 12 5 6 12 5 19 7 18 13 17 18 10
+l 5 19 3.5 21 1.6
+
+[icon anvil]
+category = Game
+tags = forge,craft,smith
+p 3 7 19 7 21 9 15 11 15 14 18 17 18 20 6 20 6 17 9 14 9 11 3 11
+
+[icon crafting]
+category = Game
+tags = build,make
+l 5 19 13 11 2.6
+p 12 3 18 4 21 8 17 9 14 7
+l 14 14 20 20 2.6
+
+[icon campfire]
+category = Game
+tags = fire,rest,camp
+l 5 20 19 16 2.4
+l 5 16 19 20 2.4
+p 12 3 16 8 15 13 9 13 8 8
+
+[icon tent]
+category = Game
+tags = camp,rest
+p 12 4 22 20 2 20
+-p 12 11 16 20 8 20
+
+[icon castle]
+category = Game
+tags = fort,base,keep
+p 3 20 3 7 6 7 6 10 9 10 9 7 12 7 12 10 15 10 15 7 18 7 18 10 21 10 21 20
+-q 10.5 14 3 6 1.5 -1
+
+[icon house]
+category = Game
+tags = home,building
+p 12 3 22 12 19 12 19 20 5 20 5 12 2 12
+-q 10 14 4 6 1 -1
+
+[icon tower]
+category = Game
+tags = defense,watch
+p 8 3 10 3 10 5 14 5 14 3 16 3 16 9 15 21 9 21 8 9
+-q 10.6 13 2.8 5 1 -1
+
+[icon trophy]
+category = Game
+tags = win,reward,cup
+p 7 4 17 4 17 11 14 15 10 15 7 11
+a 6 8 3 90 270 2
+a 18 8 3 -90 90 2
+l 12 15 12 18 2.4
+l 8 20 16 20 2.6
+
+[icon medal]
+category = Game
+tags = award,rank
+p 8 2 12 8 16 2 17 2 13 10 11 10 7 2
+c 12 15.5 5.5
+-c 12 15.5 3.2
+
+[icon ribbon]
+category = Game
+tags = award,badge
+c 12 9 6.5
+p 8.5 14 7 22 12 19 17 22 15.5 14
+
+[icon dice]
+category = Game
+tags = random,luck,chance
+q 4 4 16 16 3 -1
+-c 8.5 8.5 1.5
+-c 15.5 15.5 1.5
+-c 12 12 1.5
+-c 15.5 8.5 1.5
+-c 8.5 15.5 1.5
+
+[icon puzzle]
+category = Game
+tags = piece,plugin
+p 4 8 9 8 9 6 11 4 13 6 13 8 18 8 18 12 20 12 22 14 20 16 18 16 18 20 4 20
+
+[icon cards]
+category = Game
+tags = poker,deck
+q 4 6 11 15 2 2.2
+p 14 5 19 5 20 18 16 20 13 7
+
+[icon ghost]
+category = Game
+tags = spirit,boo,haunt
+c 12 9.5 7
+p 5 9.5 19 9.5 19 21 16 18 13.5 21 11 18 8.5 21 5 18
+-c 9.5 9.5 1.5
+-c 14.5 9.5 1.5
+
+[icon dragon]
+category = Game
+tags = beast,fire
+p 3 17 8 12 7 6 11 8 14 6 14 11 19 12 21 16 16 17 12 21 7 19
+
+[icon sparkles]
+category = Game
+tags = magic,new,effect
+t 10 13 8 2.4 4 -90
+t 18.5 5.5 3.6 1.2 4 -90
+t 19 18 3 1 4 -90
+
+[icon lightning]
+category = Game
+tags = power,energy,fast,bolt
+p 14 2 5 13.5 11 13.5 9 22 19 9.5 12.5 9.5
+
+[icon fire]
+category = Game
+tags = flame,hot,burn
+p 12 2 17 9 19 14 16 20 12 22 8 20 5 14 8 9 9 12 11 9
+
+[icon water-drop]
+category = Game
+tags = drip,rain,thirst
+p 12 2 18.5 12 19 16 16 20.5 12 22 8 20.5 5 16 5.5 12
+
+[icon snowflake]
+category = Game
+tags = ice,cold,winter
+l 12 2 12 22 2
+l 3.3 7 20.7 17 2
+l 3.3 17 20.7 7 2
+s 9.5 4 12 6.5 14.5 4 1.6
+s 9.5 20 12 17.5 14.5 20 1.6
+
+[icon poison]
+category = Game
+tags = toxic,venom
+c 12 10 7
+-c 9.5 9 1.8
+-c 14.5 9 1.8
+q 9 15 6 6 1 -1
+-l 11 16 11 20.5 1
+-l 13 16 13 20.5 1
+
+[icon sprint]
+category = Game
+tags = run,speed,fast
+c 14 4.5 2.4
+s 14 8 11 13 15 16 14 21 2.4
+s 11 13 7 12 5 15 2.2
+s 14 9.5 19 10 21 13 2.2
+
+[icon strength]
+category = Game
+tags = muscle,power
+q 4 14 7 6 3 -1
+a 14 11 6 -80 60 3.4
+q 15 6 5 3 1.5 -1
+
+[icon speed]
+category = Game
+tags = dash,fast
+l 3 8 11 8 2
+l 2 12 9 12 2
+l 4 16 11 16 2
+p 13 5 22 12 13 19 15 12
+
+[icon xp]
+category = Game
+tags = experience,level
+t 12 12.5 9.5 4.5 5 -90 2.2
+l 12 9.5 12 15.5 2
+l 9 12.5 15 12.5 2
+
+[icon sun]
+category = Weather
+tags = day,sunny,bright
+c 12 12 4.6
+l 12 2 12 5 2
+l 12 19 12 22 2
+l 2 12 5 12 2
+l 19 12 22 12 2
+l 5 5 7 7 2
+l 17 17 19 19 2
+l 19 5 17 7 2
+l 5 19 7 17 2
+
+[icon moon]
+category = Weather
+tags = night,dark,sleep
+a 12 12 9 -230 40 2.4
+a 15 9 7 -230 40 2.4
+
+[icon cloud]
+category = Weather
+tags = sky,overcast
+c 8 14 4.5
+c 14 11 5.5
+c 18 15 3.5
+q 6 14 14 5 2.5 -1
+
+[icon rain]
+category = Weather
+tags = cloud,shower
+c 8 10 4.5
+c 14 8 5
+q 6 10 13 5 2.5 -1
+l 8 18 7 21 1.8
+l 13 18 12 21 1.8
+l 18 18 17 21 1.8
+
+[icon storm]
+category = Weather
+tags = thunder,lightning
+c 8 9 4.5
+c 14 7 5
+q 6 9 13 5 2.5 -1
+p 13 13 8.5 19 12 19 10.5 23 16 16 12.5 16
+
+[icon snow]
+category = Weather
+tags = cloud,winter
+c 8 10 4.5
+c 14 8 5
+q 6 10 13 5 2.5 -1
+c 8 19 1.4
+c 13 20 1.4
+c 18 19 1.4
+
+[icon wind]
+category = Weather
+tags = breeze,air
+l 3 9 14 9 2
+a 15 7 2.5 -90 180 2
+l 3 15 17 15 2
+a 18 17.5 2.5 -90 180 2
+l 3 12 10 12 2
+
+[icon fog]
+category = Weather
+tags = mist,haze
+l 4 8 20 8 2
+l 6 12 22 12 2
+l 3 16 17 16 2
+l 7 20 19 20 2
+
+[icon rainbow]
+category = Weather
+tags = arc,colour
+a 12 19 9 180 360 2.2
+a 12 19 5.5 180 360 2.2
+
+[icon thermometer]
+category = Weather
+tags = temperature,heat
+q 10.5 3 3 12 1.5 2.2
+c 12 17.5 3.6
+l 12 8 12 16 2
+
+[icon umbrella]
+category = Weather
+tags = rain,cover
+a 12 12 9 180 360 2.4
+l 12 12 12 19 2.2
+a 10 19 2 0 180 2
+
+[icon tree]
+category = Nature
+tags = forest,plant,wood
+c 12 9 6.5
+c 8 12 4
+c 16 12 4
+q 11 15 2 6 0.5 -1
+
+[icon pine]
+category = Nature
+tags = fir,forest,christmas
+p 12 2 18 9 15 9 20 16 4 16 9 9 6 9
+q 11 16 2 5 0.5 -1
+
+[icon leaf]
+category = Nature
+tags = plant,eco,herb
+p 5 19 5 9 12 4 20 4 20 12 15 19
+-l 5 19 17 7 1.6
+
+[icon flower]
+category = Nature
+tags = plant,bloom
+c 12 12 2.6
+c 12 6 3
+c 12 18 3
+c 6 12 3
+c 18 12 3
+
+[icon mushroom]
+category = Nature
+tags = fungus,toadstool
+a 12 12 9 180 360 2
+q 3 11.5 18 3 1.5 -1
+q 10 14 4 7 1.5 -1
+-c 8 9 1.4
+-c 15 8 1.2
+
+[icon mountain]
+category = Nature
+tags = hill,peak,terrain
+p 2 20 9 7 13 14 16 10 22 20
+
+[icon wave]
+category = Nature
+tags = water,sea,ocean
+s 2 9 5 7 8 9 11 11 14 9 17 7 20 9 2.2
+s 2 15 5 13 8 15 11 17 14 15 17 13 20 15 2.2
+
+[icon paw]
+category = Nature
+tags = animal,pet,track
+c 12 16 4.5
+c 5.5 11 2.2
+c 9.5 6.5 2.2
+c 14.5 6.5 2.2
+c 18.5 11 2.2
+
+[icon bug]
+category = Nature
+tags = insect,debug,beetle
+c 12 14 5.5
+c 12 7 2.8
+l 6 11 3 8 1.8
+l 18 11 21 8 1.8
+l 6 16 3 19 1.8
+l 18 16 21 19 1.8
+-l 12 9 12 20 1.2
+
+[icon fish]
+category = Nature
+tags = sea,food,catch
+e 11 12 7.5 4.2
+p 17 12 22 7 22 17
+-c 7 11 1
+
+[icon bird]
+category = Nature
+tags = fly,animal,tweet
+c 11 12 5.5
+c 17 8 3
+p 19.5 8 23 9 19.5 10.5
+p 5.5 12 2 9 3 15
+l 11 17 11 21 1.6
+
+[icon cat]
+category = Nature
+tags = pet,animal,meow
+c 12 13 7.5
+p 5 11 5 3 10 6.5
+p 19 11 19 3 14 6.5
+-c 9.5 12 1.3
+-c 14.5 12 1.3
+
+[icon rock]
+category = Nature
+tags = stone,boulder
+p 3 19 5 11 10 6 16 7 21 13 20 19
+
+[icon cactus]
+category = Nature
+tags = desert,plant
+q 10 4 4 17 2 -1
+q 4 9 3 6 1.5 -1
+q 17 7 3 6 1.5 -1
+q 4 13 8 3 1 -1
+q 12 11 8 3 1 -1
+
+[icon island]
+category = Nature
+tags = beach,palm
+a 12 21 11 200 340 2.4
+l 12 18 12 8 2.2
+p 12 8 6 6 3 9 9 8 12 5 15 8 21 9 18 6
+
+[icon apple]
+category = Food
+tags = fruit,heal,eat
+c 8.5 14 5.5
+c 15.5 14 5.5
+l 12 8 12 4 2
+p 12 5 15 3 16 5 13 6.5
+
+[icon meat]
+category = Food
+tags = drumstick,eat,hunger
+c 8 9 5
+l 11 12 17 18 3
+c 18.5 19 2
+c 20 17 1.6
+
+[icon bread]
+category = Food
+tags = loaf,eat
+q 3 9 18 11 5 -1
+a 12 9 9 180 360 2.4
+-l 8 12 7 16 1.2
+-l 12 12 11 16 1.2
+-l 16 12 15 16 1.2
+
+[icon cheese]
+category = Food
+tags = dairy,eat
+p 3 18 21 18 21 9 3 4
+-c 15 14 1.5
+-c 9 15 1.2
+
+[icon carrot]
+category = Food
+tags = vegetable,eat
+p 4 20 6 12 12 8 16 12 8 18
+l 14 6 19 3 2
+l 16 9 21 8 2
+
+[icon cup]
+category = Food
+tags = drink,coffee,tea
+p 5 8 17 8 16 18 14 20 8 20 6 18
+s 17 10 20 10 20 14 16.5 14 2
+
+[icon burger]
+category = Food
+tags = fast food,eat
+a 12 11 8 180 360 2.4
+q 3 12 18 2.5 1 -1
+q 4 16 16 4 2 -1
+
+[icon cake]
+category = Food
+tags = birthday,sweet,dessert
+q 4 12 16 8 2 -1
+-l 4 15 20 15 1.4
+l 12 4 12 9 2
+c 12 3.6 1.2
+
+[icon egg]
+category = Food
+tags = eat,hatch
+e 12 13 6 8
+
+[icon pizza]
+category = Food
+tags = slice,fast food
+p 3 6 21 6 12 21
+-c 9 9 1.3
+-c 14 9 1.3
+-c 12 14 1.3
+
+[icon wheat]
+category = Food
+tags = grain,farm,crop
+l 12 21 12 4 2
+p 12 4 14 7 12 9 10 7
+p 12 9 15 12 12 14 9 12
+p 12 14 15 17 12 19 9 17
+
+[icon car]
+category = Vehicles
+tags = drive,auto
+p 3 15 5 9 8 6 16 6 19 9 21 15 21 18 3 18
+c 7.5 18.5 2.6
+c 16.5 18.5 2.6
+
+[icon truck]
+category = Vehicles
+tags = cargo,deliver
+q 2 6 12 10 1 -1
+p 14 9 19 9 22 13 22 16 14 16
+c 7 17.5 2.4
+c 17 17.5 2.4
+
+[icon plane]
+category = Vehicles
+tags = air,flight,travel
+p 12 2 14 9 22 14 22 16 14 14 14 19 17 21 17 22 12 21 7 22 7 21 10 19 10 14 2 16 2 14 10 9
+
+[icon ship]
+category = Vehicles
+tags = boat,sea
+p 3 14 21 14 18 20 6 20
+l 12 4 12 14 2
+p 12 4 18 12 12 12
+
+[icon rocket]
+category = Vehicles
+tags = space,launch,boost
+p 12 2 17 8 17 15 7 15 7 8
+c 12 10 2
+p 7 12 4 17 7 17
+p 17 12 20 17 17 17
+p 9.5 17 12 22 14.5 17
+
+[icon bicycle]
+category = Vehicles
+tags = bike,ride
+o 6 16 4 2
+o 18 16 4 2
+s 6 16 10 8 15 8 18 16 2
+l 10 8 12 16 2
+l 15 8 14 5 2
+
+[icon train]
+category = Vehicles
+tags = rail,metro
+q 6 3 12 15 3 2.2
+l 6 11 18 11 2
+c 9.5 14.5 1.2
+c 14.5 14.5 1.2
+l 8 21 10 18 2
+l 16 21 14 18 2
+
+[icon helicopter]
+category = Vehicles
+tags = air,fly
+e 11 13 6 4
+l 3 7 19 7 2
+l 11 7 11 9 2
+l 17 13 22 11 2.2
+l 7 19 15 19 2
+
+[icon ufo]
+category = Vehicles
+tags = alien,space
+e 12 14 9.5 3.5
+a 12 12 5 180 360 2.2
+c 7 16 1
+c 12 17 1
+c 17 16 1
+
+[icon anchor]
+category = Vehicles
+tags = ship,port
+o 12 5.5 2.4 2
+l 12 8 12 20 2.2
+l 7 11 17 11 2
+a 12 13 8 20 160 2.2
+l 4.5 15 4 12 1.8
+l 19.5 15 20 12 1.8
+
+[icon wheel]
+category = Vehicles
+tags = tire,steering
+o 12 12 9.5 2.2
+c 12 12 2.2
+l 12 9.8 12 2.5 2
+l 9.9 13.2 4 17.5 2
+l 14.1 13.2 20 17.5 2
+
+[icon gas-pump]
+category = Vehicles
+tags = fuel,petrol
+q 5 4 9 17 1.5 2.2
+q 7.5 7 4 4 0.5 -1
+s 14 9 18 9 18 17 20 17 20 11 2
+
+[icon monitor]
+category = Devices
+tags = screen,computer,display
+q 3 4 18 12 2 2.2
+l 12 16 12 20 2.2
+l 8 20 16 20 2.2
+
+[icon laptop]
+category = Devices
+tags = computer
+q 5 5 14 10 1.5 2.2
+l 2.5 18 21.5 18 2.6
+
+[icon phone-mobile]
+category = Devices
+tags = smartphone,mobile
+q 7 2.5 10 19 2.5 2.2
+c 12 18.5 1.1
+
+[icon tablet]
+category = Devices
+tags = ipad
+q 4 3 16 18 2.5 2.2
+c 12 18 1
+
+[icon gamepad]
+category = Devices
+tags = controller,play,console
+q 2.5 7 19 11 5 -1
+-l 7 10 7 14 1.6
+-l 5 12 9 12 1.6
+-c 16 10.5 1.2
+-c 18.5 13 1.2
+
+[icon keyboard]
+category = Devices
+tags = type,keys,input
+q 2.5 6 19 12 2 2.2
+l 6 10 7 10 1.8
+l 10 10 11 10 1.8
+l 14 10 15 10 1.8
+l 18 10 18.5 10 1.8
+l 7 14.5 17 14.5 1.8
+
+[icon mouse]
+category = Devices
+tags = pointer,click
+q 6.5 3 11 18 5.5 2.2
+l 12 3.5 12 10 2
+
+[icon battery]
+category = Devices
+tags = power,charge
+q 2.5 7 17 10 2 2.2
+q 4.5 9 9 6 0.5 -1
+q 19.5 10 2 4 0.5 -1
+
+[icon plug]
+category = Devices
+tags = power,connect
+l 9 3 9 8 2.2
+l 15 3 15 8 2.2
+p 6 8 18 8 18 12 12 17 6 12
+l 12 17 12 21 2.2
+
+[icon usb]
+category = Devices
+tags = port,connect
+l 12 3 12 20 2
+c 12 21 1.4
+l 12 14 7 10 2
+l 12 11 17 8 2
+c 6.5 9.5 1.6
+q 15.8 6.2 3.4 3.4 0.5 -1
+
+[icon tv]
+category = Devices
+tags = television,screen
+q 3 6 18 13 2 2.2
+s 9 2.5 12 6 15 2.5 2
+
+[icon watch]
+category = Devices
+tags = time,smartwatch
+q 7 6 10 12 3 2.2
+l 9 3 15 3 2
+l 9 21 15 21 2
+s 12 9 12 12 14 13.5 1.8
+
+[icon printer]
+category = Devices
+tags = print,paper
+q 3 9 18 8 2 2.2
+s 7 9 7 3 17 3 17 9 2
+q 7 14 10 7 1 2
+
+[icon hard-drive]
+category = Devices
+tags = disk,storage
+q 3 6 18 12 2.5 2.2
+c 17 12 1.2
+l 6 12 12 12 2
+
+[icon bluetooth-controller]
+category = Devices
+tags = wireless gamepad
+q 3 8 18 9 4 2.2
+l 7 10 7 15 2
+l 4.5 12.5 9.5 12.5 2
+c 16 11 1.2
+c 18.5 13.5 1.2
+
+[icon vr]
+category = Devices
+tags = headset,virtual reality
+q 2.5 8 19 9 3 2.2
+a 12 17 3 200 340 2
+
+[icon wrench]
+category = Tools
+tags = fix,settings,tool
+a 16 8 5 140 400 4.4
+l 12 12 5 19 3.4
+
+[icon screwdriver]
+category = Tools
+tags = fix,tool
+l 5 19 14 10 3
+p 14 7 17 4 21 8 18 11
+
+[icon saw]
+category = Tools
+tags = cut,wood,tool
+p 3 9 19 9 19 15 3 15
+-l 6 13 7 15 1
+-l 9 13 10 15 1
+-l 12 13 13 15 1
+l 19 12 21 12 3
+
+[icon ruler]
+category = Tools
+tags = measure
+q 2.5 8 19 8 1.5 2.2
+l 6 8 6 11 1.6
+l 10 8 10 12 1.6
+l 14 8 14 11 1.6
+l 18 8 18 12 1.6
+
+[icon magnet]
+category = Tools
+tags = attract
+a 12 11 7 180 360 4.2
+l 5 11 5 18 4.2
+l 19 11 19 18 4.2
+
+[icon compass]
+category = Maps
+tags = navigate,direction
+o 12 12 9.5 2
+p 15.5 8.5 13.5 13.5 8.5 15.5 10.5 10.5
+
+[icon binoculars]
+category = Tools
+tags = look,zoom,scout
+q 3 9 7 11 3 -1
+q 14 9 7 11 3 -1
+q 9 5 6 6 1 -1
+-c 6.5 15 2
+-c 17.5 15 2
+
+[icon flashlight]
+category = Tools
+tags = light,torch
+p 8 3 16 3 15 9 9 9
+q 9 9 6 12 1.5 -1
+
+[icon bucket]
+category = Tools
+tags = pail,water
+p 5 8 19 8 17 21 7 21
+a 12 8 7 180 360 2
+
+[icon shovel]
+category = Tools
+tags = dig,garden
+l 12 3 12 14 2.6
+l 9 3 15 3 2.4
+p 8 13 16 13 15 21 12 22 9 21
+
+[icon fishing-rod]
+category = Tools
+tags = fish,catch
+l 4 20 18 4 2
+s 18 4 20 10 18 14 1.6
+c 18 15.5 1.4
+
+[icon rope]
+category = Tools
+tags = tie,climb
+a 8 8 4 90 360 2.2
+a 16 16 4 -90 180 2.2
+l 10 10 14 14 2.2
+
+[icon ladder]
+category = Tools
+tags = climb
+l 7 3 7 21 2.2
+l 17 3 17 21 2.2
+l 7 8 17 8 2
+l 7 13 17 13 2
+l 7 18 17 18 2
+
+[icon thumbs-up]
+category = Social
+tags = like,good,approve
+q 3 11 4 9 1 -1
+p 8 11 11 3 14 4 13 9 20 9 21 12 19 19 8 19
+
+[icon thumbs-down]
+category = Social
+tags = dislike,bad
+use thumbs-up flip=v
+
+[icon smile]
+category = Social
+tags = happy,face,emoji
+o 12 12 9.5 2
+c 8.8 9.8 1.3
+c 15.2 9.8 1.3
+a 12 12 5.5 25 155 2
+
+[icon sad]
+category = Social
+tags = unhappy,face
+o 12 12 9.5 2
+c 8.8 9.8 1.3
+c 15.2 9.8 1.3
+a 12 18.5 5.5 205 335 2
+
+[icon neutral]
+category = Social
+tags = face,meh
+o 12 12 9.5 2
+c 8.8 9.8 1.3
+c 15.2 9.8 1.3
+l 8.5 16 15.5 16 2
+
+[icon hand]
+category = Social
+tags = stop,wave,palm
+q 7 10 11 11 3 -1
+q 7 4 2.4 8 1.2 -1
+q 10.2 2.5 2.4 9 1.2 -1
+q 13.4 3.5 2.4 8 1.2 -1
+q 16.4 6 2.4 6 1.2 -1
+
+[icon gift]
+category = Shop
+tags = present,reward,loot
+q 4 10 16 11 1.5 -1
+q 3 7 18 4 1 -1
+-l 12 7 12 21 1.6
+s 12 7 8 3 6 6 12 7 2
+s 12 7 16 3 18 6 12 7 2
+
+[icon cart]
+category = Shop
+tags = shopping,buy,basket
+s 2 4 5 4 7.5 15 18 15 20 8 6 8 2
+c 9 19.5 1.8
+c 17 19.5 1.8
+
+[icon store]
+category = Shop
+tags = shop,market
+p 3 8 5 3 19 3 21 8
+q 4 8 16 13 1 2.2
+q 10 14 4 7 0.5 -1
+
+[icon wallet]
+category = Shop
+tags = money,purse
+q 3 6 18 14 2.5 2.2
+q 14 11 7 4 1.5 -1
+-c 16.5 13 1
+
+[icon credit-card]
+category = Shop
+tags = pay,bank
+q 2.5 5.5 19 13 2.5 2.2
+l 2.5 10 21.5 10 2.4
+l 6 15 10 15 1.8
+
+[icon receipt]
+category = Shop
+tags = bill,invoice
+s 5 3 5 21 8 19 11 21 14 19 17 21 19 19 19 3 5 3 2
+l 8 8 16 8 1.6
+l 8 12 16 12 1.6
+
+[icon package]
+category = Shop
+tags = box,delivery,parcel
+p 12 2 21 7 21 17 12 22 3 17 3 7
+-s 3 7 12 12 21 7 1.2
+-l 12 12 12 22 1.2
+
+[icon location-arrow]
+category = Maps
+tags = gps,navigate
+p 3 11 21 3 13 21 11 13
+
+[icon route]
+category = Maps
+tags = path,road,way
+c 6 19 2.6
+c 18 5 2.6
+s 6 16 6 10 18 14 18 8 2.2
+
+[icon globe-pin]
+category = Maps
+tags = world,location
+o 11 11 8 2
+p 17 22 13.5 17 13.5 15.5 14.5 13.5 19.5 13.5 20.5 15.5 20.5 17
+-c 17 16 1.1
+
+[icon signpost]
+category = Maps
+tags = direction,sign
+l 12 3 12 21 2.4
+p 5 5 18 5 21 8 18 11 5 11
+p 19 13 6 13 3 16 6 19 19 19
+
+[icon treasure-map]
+category = Maps
+tags = x marks the spot
+p 3 5 9 4 15 6 21 4 21 19 15 21 9 19 3 20
+-l 11 9 15 13 1.6
+-l 15 9 11 13 1.6
+
+[icon level-up]
+category = Status
+tags = rank,upgrade,promote
+p 12 3 20 11 15 11 15 20 9 20 9 11 4 11
+
+[icon heal]
+category = Status
+tags = cross,medic,health
+q 9 3 6 18 1.5 -1
+q 3 9 18 6 1.5 -1
+
+[icon mana]
+category = Status
+tags = magic,blue,drop
+p 12 2 18.5 12 19 16 16 20.5 12 22 8 20.5 5 16 5.5 12
+-t 12 14 4 1.6 4 -90
+
+[icon stamina]
+category = Status
+tags = energy,run
+p 14 2 5 13.5 11 13.5 9 22 19 9.5 12.5 9.5
+
+[icon clover]
+category = Status
+tags = luck,lucky,four leaf
+c 8.5 8.5 3.8
+c 15.5 8.5 3.8
+c 8.5 15.5 3.8
+c 15.5 15.5 3.8
+l 12 12 12 21 2
+
+[icon shield-plus]
+category = Status
+tags = buff,protect
+p 12 3 20 6 20 12 17.5 17.5 12 21 6.5 17.5 4 12 4 6
+-l 12 8 12 15 2
+-l 8.5 11.5 15.5 11.5 2
+
+[icon buff-up]
+category = Status
+tags = boost,increase
+c 12 12 9
+-p 12 6 17 12 14 12 14 18 10 18 10 12 7 12
+
+[icon debuff-down]
+category = Status
+tags = curse,decrease
+c 12 12 9
+-p 12 18 17 12 14 12 14 6 10 6 10 12 7 12
+
+[icon timer-sand]
+category = Status
+tags = cooldown,wait
+p 7 3 17 3 12 12
+p 7 21 17 21 12 12
+
+[icon lock-key]
+category = Status
+tags = locked,keyhole
+q 5 10.5 14 10.5 2 -1
+a 12 10.5 4.5 180 360 2.4
+-c 12 14.5 1.5
+-q 11.3 14.5 1.4 3 0.5 -1
+
+[icon radar]
+category = Status
+tags = scan,detect
+o 12 12 9.5 2
+o 12 12 5 1.6
+l 12 12 18 6 2
+c 12 12 1.2
+
+[icon pulse]
+category = Status
+tags = heartbeat,health
+s 2 12 7 12 9 6 13 18 15 12 22 12 2.2
+
+[icon chart-bar]
+category = Data
+tags = stats,graph,analytics
+q 4 12 4 8 1 -1
+q 10 6 4 14 1 -1
+q 16 3 4 17 1 -1
+
+[icon chart-line]
+category = Data
+tags = stats,graph
+s 3 3 3 21 21 21 2
+s 6 16 11 10 14 13 20 6 2.2
+
+[icon chart-pie]
+category = Data
+tags = stats,share
+a 12 12 9 0 270 2.2
+l 12 12 12 3 2.2
+p 12 12 21 12 20 15 18 18 15 20 12 21
+
+[icon table]
+category = Data
+tags = grid,spreadsheet
+q 3 4 18 16 2 2.2
+l 3 9.5 21 9.5 2
+l 3 14.5 21 14.5 2
+l 9 4 9 20 2
+
+[icon database]
+category = Data
+tags = storage,server
+e 12 6 8 3 2.2
+s 4 6 4 18
+s 20 6 20 18
+a 12 18 8 0 180 2.2
+a 12 12 8 0 180 2.2
+
+[icon code]
+category = Data
+tags = script,dev
+s 8 7 3 12 8 17 2.4
+s 16 7 21 12 16 17 2.4
+l 13.5 5 10.5 19 2
+
+[icon terminal]
+category = Data
+tags = console,command
+q 3 4 18 16 2.5 2.2
+s 7 9 11 12 7 15 2
+l 13 16 17 16 2
+
+[icon cube]
+category = Data
+tags = 3d,box,block
+p 12 2 21 7 21 17 12 22 3 17 3 7
+-s 3 7 12 12 21 7 1.2
+-l 12 12 12 22 1.2
+
+[icon sphere]
+category = Data
+tags = ball,3d
+o 12 12 9.5 2
+a 12 12 9.5 20 160 1.6
+a 12 12 4 90 270 1.6
+
+[icon cursor]
+category = Interface
+tags = pointer,arrow
+p 5 3 5 19 9.5 15 12.5 21 15 20 12 14 18 14
+
+[icon hand-pointer]
+category = Interface
+tags = click,select
+q 9 10 9 10 2 -1
+q 9 3 2.6 10 1.3 -1
+l 9 12 7 11 2
+l 18 13 19 18 2
+
+[icon fingerprint]
+category = Interface
+tags = biometric,identity
+a 12 12 9 200 340 2
+a 12 13 6 200 340 2
+a 12 14 3 200 340 2
+l 12 14 12 20 2
+
+[icon shield-lock]
+category = Interface
+tags = security,safe
+p 12 3 20 6 20 12 17.5 17.5 12 21 6.5 17.5 4 12 4 6
+-q 9 11 6 5 1 -1
+
+[icon bolt-circle]
+category = Status
+tags = power,charge
+o 12 12 9.5 2
+p 13 5 8 13 11.5 13 10.5 19 16 11 12.5 11
+
+[icon crosshair-dot]
+category = Game
+tags = aim,sniper
+o 12 12 8 2
+c 12 12 1.6
+l 12 2 12 5 2
+l 12 19 12 22 2
+l 2 12 5 12 2
+l 19 12 22 12 2
+
+[icon check-double]
+category = Marks
+tags = ok,all,read
+s 3 13 8 18 14 10 2.4
+s 10 15 12 17 21 7 2.4
+
+[icon plus-square]
+category = Marks
+tags = add,box
+q 4 4 16 16 2 2.2
+l 12 8 12 16 2.2
+l 8 12 16 12 2.2
+
+[icon minus-square]
+category = Marks
+tags = remove,box
+q 4 4 16 16 2 2.2
+l 8 12 16 12 2.2
+
+[icon cross-square]
+category = Marks
+tags = close,box,no
+q 4 4 16 16 2 2.2
+l 8.5 8.5 15.5 15.5 2.2
+l 15.5 8.5 8.5 15.5 2.2
+
+[icon eject]
+category = Media
+tags = remove,disc
+p 12 4 20 13 4 13
+q 4 16 16 3.5 1 -1
+
+[icon bookmark-plus]
+category = Interface
+tags = save,add
+p 6 3 18 3 18 21 12 16.5 6 21
+-l 12 7 12 13 1.8
+-l 9 10 15 10 1.8
+
+[icon star-circle]
+category = Game
+tags = rank,badge
+c 12 12 10
+-t 12 12.5 6.5 2.8 5 -90
+
+[icon heart-circle]
+category = Game
+tags = love,badge
+c 12 12 10
+-c 9.5 10.5 2.6
+-c 14.5 10.5 2.6
+-p 7.5 12 12 17.5 16.5 12
+
+[icon hexagon-filled]
+category = Shapes
+tags = solid
+g 12 12 10 6 0
+
+[icon pentagon-filled]
+category = Shapes
+tags = solid
+g 12 12 10 5 -90
+
+[icon octagon-filled]
+category = Shapes
+tags = solid,stop
+g 12 12 10 8 22.5
+
+[icon ring-thick]
+category = Shapes
+tags = donut
+o 12 12 8 5
+
+[icon text-cursor]
+category = Interface
+tags = type,caret,ibeam
+l 12 4 12 20 2
+l 8 4 16 4 2
+l 8 20 16 20 2
+
+[icon grip-dots]
+category = Interface
+tags = drag,handle
+c 9 6 1.6
+c 15 6 1.6
+c 9 12 1.6
+c 15 12 1.6
+c 9 18 1.6
+c 15 18 1.6
+
+[icon drag-handle]
+category = Interface
+tags = drag,reorder
+l 5 9 19 9 2.2
+l 5 15 19 15 2.2
+
+[icon sidebar]
+category = Interface
+tags = layout,panel
+q 3 4 18 16 2 2.2
+l 9 4 9 20 2
+
+[icon columns]
+category = Interface
+tags = layout,split
+q 3 4 18 16 2 2.2
+l 9 4 9 20 2
+l 15 4 15 20 2
+
+[icon table-rows]
+category = Interface
+tags = layout,list
+q 3 4 18 16 2 2.2
+l 3 9.3 21 9.3 2
+l 3 14.7 21 14.7 2
+
+[icon window]
+category = Interface
+tags = app,frame
+q 3 4 18 16 2 2.2
+l 3 9 21 9 2
+c 6 6.5 0.8
+
+[icon picture-in-picture]
+category = Interface
+tags = float,video
+q 3 5 18 14 2 2.2
+q 11 11 8 6 1 -1
+
+[icon zoom-fit]
+category = Interface
+tags = fit,frame
+s 4 9 4 4 9 4 2.2
+s 15 4 20 4 20 9 2.2
+s 20 15 20 20 15 20 2.2
+s 9 20 4 20 4 15 2.2
+q 9 9 6 6 1 2
+
+[icon battery-full]
+category = Devices
+tags = power,charged
+q 2.5 7 17 10 2 2.2
+q 4.5 9 3.5 6 0.5 -1
+q 8.5 9 3.5 6 0.5 -1
+q 12.5 9 3.5 6 0.5 -1
+q 19.5 10 2 4 0.5 -1
+
+[icon battery-empty]
+category = Devices
+tags = power,low
+q 2.5 7 17 10 2 2.2
+q 19.5 10 2 4 0.5 -1
+
+[icon wifi-off]
+category = Communication
+tags = offline,no signal
+a 12 19 14 -135 -45 2.2
+a 12 19 9 -135 -45 2.2
+c 12 19 1.6
+l 4 20 20 4 2.2
+
+[icon signal-off]
+category = Communication
+tags = offline
+q 4 16 3 4 1 -1
+q 9 12 3 8 1 -1
+q 14 8 3 12 1 -1
+q 19 4 3 16 1 -1
+-l 3 21 21 3 2.4
+
+[icon flag-checkered]
+category = Maps
+tags = finish,race
+l 6 3 6 21 2.4
+q 6 4 13 9 0.5 2.2
+q 6 4 4.3 3 0 -1
+q 14.6 4 4.4 3 0 -1
+q 10.3 7 4.3 3 0 -1
+q 6 10 4.3 3 0 -1
+q 14.6 10 4.4 3 0 -1
+
+[icon shield-off]
+category = Game
+tags = unprotected
+p 12 3 20 6 20 12 17.5 17.5 12 21 6.5 17.5 4 12 4 6
+-l 4 20 20 4 2.4
+
+[icon heart-pulse]
+category = Game
+tags = health,rate
+p 12 6.5 10 4 6 4 3 7.5 3 11 12 20 21 11 21 7.5 18 4 14 4
+-s 4 12 8 12 10 9 13 15 15 12 20 12 1.6
+
+[icon coin-stack]
+category = Game
+tags = money,pile
+e 12 7 7 3 -1
+e 12 12 7 3 -1
+e 12 17 7 3 -1
+
+[icon key-card]
+category = Items
+tags = access,badge
+q 3 6 18 12 2 2.2
+q 5 9 5 4 1 -1
+l 12 10 18 10 1.8
+l 12 14 16 14 1.8
+
+[icon sparkle]
+category = Game
+tags = new,shine
+t 12 12 10 2 4 -90
+
+[icon target-lock]
+category = Game
+tags = aim,lock
+o 12 12 7 2
+l 12 2 12 6 2
+l 12 18 12 22 2
+l 2 12 6 12 2
+l 18 12 22 12 2
+c 12 12 2
+
+[icon tag-price]
+category = Shop
+tags = sale,cost
+p 3 4 12 4 21 13 13 21 4 12 3 12
+-c 7.5 8.5 1.6
+-l 11 12 15 16 1.4
+
+[icon bell-ring]
+category = Interface
+tags = alarm,notify
+a 12 10 6 180 360 2.4
+l 6 10 6 15 2.4
+l 18 10 18 15 2.4
+l 4 16 20 16 2.4
+c 12 20 1.8
+l 3 6 5 8 1.6
+l 21 6 19 8 1.6
+
+[icon backpack-open]
+category = Game
+tags = bag,gear
+q 6 8 12 13 4 2.2
+a 12 8 3.4 180 360 2.2
+l 6 14 18 14 1.8
+
+[icon map-pin-off]
+category = Maps
+tags = no location
+p 12 22 5.5 11 5.5 8.5 8.5 4 15.5 4 18.5 8.5 18.5 11
+-c 12 9.5 2.6
+-l 4 20 20 4 2.4
+
+[icon quote]
+category = Communication
+tags = speech,quote
+c 8 11 3
+c 16 11 3
+p 5 11 11 11 9 17 6 17
+p 13 11 19 11 17 17 14 17

@@ -247,11 +247,11 @@ inline const std::vector<QuickBlock>& QuickBlocks() {
         {"QbChangeNumber", "Change Number", "Game rules",
          "Changes a saved number: add, subtract, multiply or divide.", "Take 1 off the number named lives.", true, true,
          {{"Name", "points", QbKind::Name}, {"Change", "Add", QbKind::Choice, "add~Add|subtract~Sub|multiply~Mul|divide~Div"}, {"Amount", "1", QbKind::Number}},
-         "N g GetVar {0}\nN o {1}\nW o 0 g 0\nD o 1 {v2}\nN s SetVar {0}\nW s 0 o 0\nIN s\nOUT s 0\n", {{"Add to score", {"score", "Add", "1"}}, {"Take away 1 life", {"lives", "Sub", "1"}}, {"Add 1 coin", {"coins", "Add", "1"}}, {"Count down 1", {"time", "Sub", "1"}}}},
+         "N g {G0} {n0}\nN o {1}\nW o 0 g 0\nD o 1 {v2}\nN s {S0} {n0}\nW s 0 o 0\nIN s\nOUT s 0\n", {{"Add to score", {"score", "Add", "1"}}, {"Take away 1 life", {"lives", "Sub", "1"}}, {"Add 1 coin", {"coins", "Add", "1"}}, {"Count down 1", {"time", "Sub", "1"}}}},
         {"QbIfNumberIs", "If Number Is", "Flow",
          "Does the next thing only when a saved number matches.", "If lives is 0, then end the game.", true, true,
          {{"Name", "points", QbKind::Name}, {"Is", ">=", QbKind::Choice, "equal to~==|not equal to~!=|less than~<|more than~>|at least~>=|at most~<="}, {"Number", "5", QbKind::Number}},
-         "N g GetVar {0}\nN c Compare {1}\nW c 0 g 0\nD c 1 {v2}\nN b Branch\nW b 0 c 0\nIN b\nOUT b 0\n"},
+         "N g {G0} {n0}\nN c Compare {1}\nW c 0 g 0\nD c 1 {v2}\nN b Branch\nW b 0 c 0\nIN b\nOUT b 0\n"},
         {"QbPlayOrStopSound", "Play Or Stop Sound", "Feedback",
          "Starts or stops this object's sound.", "Stop the music when the game is over.", true, true,
          {{"Do", "PlaySound", QbKind::Choice, "play~PlaySound|stop~StopSound"}},
@@ -332,19 +332,19 @@ inline const std::vector<QuickBlock>& QuickBlocks() {
         {"QbToggleSwitch", "Switch On Or Off", "Flow",
          "Flips a switch: on becomes off and off becomes on.", "Press a button to switch the light.", true, true,
          {{"Name", "switch", QbKind::Name}},
-         "N a Toggle {0}\nIN a\nOUT a 0\n"},
+         "N a Toggle {n0}\nIN a\nOUT a 0\n"},
         {"QbIfSwitchOn", "If Switch Is On", "Flow",
          "Does the next thing only when the switch is on.", "If the lever is on, open the gate.", true, true,
          {{"Name", "switch", QbKind::Name}},
-         "N g GetVar {0}\nN b Branch\nW b 0 g 0\nIN b\nOUT b 0\n"},
+         "N g {G0} {n0}\nN b Branch\nW b 0 g 0\nIN b\nOUT b 0\n"},
         {"QbSaveNumber", "Save A Number", "Game rules",
          "Keeps a saved number so it is still there next time you play.", "Save the best score.", true, true,
          {{"Name", "score", QbKind::Name}, {"Save as", "best"}},
-         "N g GetVar {0}\nN a SaveValue {1}\nW a 0 g 0\nIN a\nOUT a 0\n"},
+         "N g {G0} {n0}\nN a SaveValue {1}\nW a 0 g 0\nIN a\nOUT a 0\n"},
         {"QbLoadNumber", "Load A Saved Number", "Game rules",
          "Reads a number you saved before back into a saved value.", "Load the best score when the game starts.", true, true,
          {{"Name", "score", QbKind::Name}, {"Saved as", "best"}},
-         "N l LoadValue {1}\nD l 0 0\nN a SetVar {0}\nW a 0 l 0\nIN a\nOUT a 0\n"},
+         "N l LoadValue {1}\nD l 0 0\nN a {S0} {n0}\nW a 0 l 0\nIN a\nOUT a 0\n"},
         {"QbGiveItem", "Give Item", "Game rules",
          "Puts items in the bag.", "Give the player 2 keys.", true, true,
          {{"Item", "key"}, {"How many", "1", QbKind::Number}},
@@ -396,11 +396,24 @@ inline const std::vector<QuickBlock>& QuickBlocks() {
         {"QbShowValue", "Show Value On Screen", "Game rules",
          "Writes a saved value on this object's text, all the time.", "Show Score: 3 on the screen.", false, false,
          {{"Name", "score", QbKind::Name}, {"Label", "Score: "}},
-         "N a OnUpdate\nE OnUpdate a\nN s GetVar {0}\nN x GlShowNumberInText\nD x 0 {q1}\nW x 1 s 0\nD x 2 0\nX a 0 x\nIN a\n"},
+         "N a OnUpdate\nE OnUpdate a\nN s {G0} {n0}\nN x GlShowNumberInText\nD x 0 {q1}\nW x 1 s 0\nD x 2 0\nX a 0 x\nIN a\n"},
         {"QbCountEverySecond", "Count Every Second", "Game rules",
          "Counts a saved value up or down once every second.", "A clock that counts up.", false, false,
          {{"Name", "time", QbKind::Name}, {"Count", "Add", QbKind::Choice, "up~Add|down~Sub"}},
-         "N a OnTimer 1\nE OnTimer:1 a\nN g GetVar {0}\nN o {1}\nW o 0 g 0\nD o 1 1\nN s SetVar {0}\nW s 0 o 0\nX a 0 s\nIN a\n"},
+         "N a OnTimer 1\nE OnTimer:1 a\nN g {G0} {n0}\nN o {1}\nW o 0 g 0\nD o 1 1\nN s {S0} {n0}\nW s 0 o 0\nX a 0 s\nIN a\n"},
+        {"QbSetValue", "Set Value To", "Game rules",
+         "Sets a saved value to a number, a word or yes or no.", "Set health to 100.", true, true,
+         {{"Name", "health", QbKind::Name}, {"Value", "100"}},
+         "N a {S0} {n0}\nD a 0 {v1}\nIN a\nOUT a 0\n",
+         {{"Set health to 100", {"health", "100"}}, {"Set lives to 3", {"lives", "3"}}, {"Set score to 0", {"score", "0"}}, {"Set time to 60", {"time", "60"}}}},
+        {"QbMoveTurnResize", "Move Turn Or Resize", "Movement",
+         "Moves, turns or resizes this object by an amount (right, up, forward). For Turn, the first number is the degrees.", "Move up 2, or turn 90 degrees.", true, true,
+         {{"Do", "Translate", QbKind::Choice, "move~Translate|turn~Rotate|resize~SetScale"}, {"Amount", "0,1,0"}},
+         "N a {0}\nD a 0 {vp1.0}\n!Rotate D a 1 {vp1.1}\n!Rotate D a 2 {vp1.2}\nIN a\nOUT a 0\n"},
+        {"QbShowHide", "Show Or Hide This", "World",
+         "Shows or hides this object.", "Hide the coin after it is picked up.", true, true,
+         {{"Do", "1", QbKind::Choice, "show~1|hide~0"}},
+         "N a SetActive self\nD a 0 {0}\nIN a\nOUT a 0\n"},
     };
     return all;
 }
@@ -510,6 +523,17 @@ inline std::string Fill(const std::string& tmpl, const std::vector<std::string>&
             i = e;
             continue;
         }
+        if (key.size() >= 2 && (key[0] == 'G' || key[0] == 'S' || key[0] == 'n') && std::isdigit((unsigned char)key[1])) {
+            // A saved-value name: {n0} the name, {G0} the node that reads it, {S0} the node that sets it.
+            const std::size_t fk = (std::size_t)std::atoi(key.c_str() + 1);
+            const std::string nm = fk < f.size() ? f[fk] : std::string();
+            const bool shared = !nm.empty() && nm[0] == '*';
+            if (key[0] == 'G') out += shared ? "GetSceneVar" : "GetVar";
+            else if (key[0] == 'S') out += shared ? "SetSceneVar" : "SetVar";
+            else out += Word(shared ? nm.substr(1) : nm);
+            i = e;
+            continue;
+        }
         char mode = 'w';
         if (!key.empty() && (key[0] == 'v' || key[0] == 'q' || key[0] == 'r' || key[0] == 'g' || key[0] == 'b')) { mode = key[0]; key = key.substr(1); }
         int part = -1;
@@ -546,6 +570,12 @@ inline Ends Emit(const std::string& body, const std::vector<std::string>& fields
     std::string l;
     while (std::getline(in, l)) {
         l = Fill(l, fields);
+        if (!l.empty() && l[0] == '!') {   // "!Value line": left out when the first field is Value (a dropdown choice)
+            std::string tail;
+            const auto head = Words(l.substr(1), 1, &tail);
+            if (head.empty() || (!fields.empty() && fields[0] == head[0])) continue;
+            l = tail;
+        }
         std::string rest;
         const auto w = Words(l, 1, &rest);
         if (w.empty()) continue;
@@ -644,7 +674,10 @@ inline bool QbValidate(QbKind kind, const std::string& value, const char* choice
             for (std::size_t i = 1; i < 7; ++i) if (!std::isxdigit((unsigned char)value[i])) return false;
             return true;
         }
-        case QbKind::Name: return !qb_detail::Trim(value).empty() && value.find_first_of("\"# \t") == std::string::npos;
+        case QbKind::Name: {
+            const std::string bare = (!value.empty() && value[0] == '*') ? value.substr(1) : value;   // a leading * means "everyone can see this"
+            return !qb_detail::Trim(bare).empty() && bare.find_first_of("\"# \t*") == std::string::npos;
+        }
         case QbKind::Preset: case QbKind::Object: case QbKind::Text: return true;
     }
     return true;
@@ -659,10 +692,17 @@ inline std::string QbNormalize(QbKind kind, const std::string& value) {
 
 /// A saved value's name as typed: spaces and odd marks become "_", so it is one word the graph can keep.
 inline std::string QbNormalizeName(const std::string& typed) {
-    std::string out;
-    for (char c : qb_detail::Trim(typed)) out += (std::isalnum((unsigned char)c) || c == '_') ? c : '_';
-    return out;
+    std::string t = qb_detail::Trim(typed), out;
+    const bool shared = !t.empty() && t[0] == '*';
+    if (shared) t = t.substr(1);
+    for (char c : t) out += (std::isalnum((unsigned char)c) || c == '_') ? c : '_';
+    return shared ? "*" + out : out;
 }
+/// A saved value is "only this object" by default; a leading * in its name means "everyone can see this" (every graph
+/// in the scene). These three keep that in one place.
+inline bool QbNameShared(const std::string& name) { return !name.empty() && name[0] == '*'; }
+inline std::string QbNameBare(const std::string& name) { return QbNameShared(name) ? name.substr(1) : name; }
+inline std::string QbNameWithScope(const std::string& bare, bool shared) { return (shared ? "*" : "") + QbNameBare(bare); }
 
 /// What the editor knows when it fills a new block in.
 struct QbContext {
@@ -725,6 +765,35 @@ inline bool QbUpgradeFields(const std::string& type, std::map<int, std::string>&
         };
         const std::string colour = "#" + hex(0, "1") + hex(1, "0") + hex(2, "0"), seconds = get(3, "0.2");
         v.clear(); v[0] = colour; v[1] = seconds;
+        return true;
+    }
+    return false;
+}
+
+/// An old plain node that one Quick block now covers, when it is safe to swap (nothing wired into it): returns the block
+/// and its typed values. `pins` is the node's typed values (pin -> text). The editor does this when it loads a graph;
+/// the running graph does not need it, because the old nodes keep working as they are.
+inline bool QbConvertOldNode(const std::string& type, const std::string& arg, const std::map<int, std::string>& pins,
+                             std::string& newType, std::map<int, std::string>& newPins) {
+    auto numeric = [](const std::string& v) { return qb_detail::IsNumberOrBool(v) && v != "true" && v != "false"; };
+    newPins.clear();
+    if (type == "SetActive" && (arg.empty() || arg == "self") && pins.size() == 1 && pins.count(0)) {
+        const std::string& v = pins.at(0);
+        if (v == "0" || v == "false") { newType = "QbShowHide"; newPins[0] = "0"; return true; }
+        if (v == "1" || v == "true")  { newType = "QbShowHide"; newPins[0] = "1"; return true; }
+        return false;
+    }
+    if (type == "Translate" && arg.empty() && !pins.empty()) {
+        std::string parts[3] = {"0", "0", "0"};
+        for (const auto& kv : pins) {
+            if (kv.first < 0 || kv.first > 2 || !numeric(kv.second)) return false;
+            parts[kv.first] = kv.second;
+        }
+        newType = "QbMoveTurnResize"; newPins[0] = "Translate"; newPins[1] = parts[0] + "," + parts[1] + "," + parts[2];
+        return true;
+    }
+    if (type == "Rotate" && arg.empty() && pins.size() == 1 && pins.count(0) && numeric(pins.at(0))) {
+        newType = "QbMoveTurnResize"; newPins[0] = "Rotate"; newPins[1] = pins.at(0) + ",0,0";
         return true;
     }
     return false;

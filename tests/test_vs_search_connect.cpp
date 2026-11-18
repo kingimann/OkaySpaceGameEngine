@@ -226,6 +226,23 @@ int main() {
         old.fromText("node 1 QbMoveWithKeys\ndefault 1 0 a\ndefault 1 1 d\ndefault 1 2 w\ndefault 1 3 s\ndefault 1 4 9\n");
         CHECK(old.nodes.size() == 1 && old.nodes[0].pinDefault.size() == 2 && old.nodes[0].pinDefault[0] == "wasd" && old.nodes[0].pinDefault[1] == "9");
     }
+
+    // ---- Old Show / Hide, Move and Turn nodes become the merged blocks when the editor loads a graph (nothing wired in).
+    {
+        VsEditGraph g;
+        g.fromText("node 1 SetActive self\ndefault 1 0 0\nnode 2 Translate\ndefault 2 0 1\ndefault 2 1 2\ndefault 2 2 3\n"
+                   "node 3 Rotate\ndefault 3 0 90\nnode 4 Translate\nnode 5 Const 3\ndata 4 0 5 0\nexec 2 0 3\n");
+        CHECK(g.find(1)->type == "QbShowHide" && g.find(1)->pinDefault[0] == "0");
+        CHECK(g.find(2)->type == "QbMoveTurnResize" && g.find(2)->pinDefault[1] == "1,2,3");
+        CHECK(g.find(3)->type == "QbMoveTurnResize" && g.find(3)->pinDefault[0] == "Rotate");
+        CHECK(g.find(4)->type == "Translate");           // a value is wired in: left as it was
+        CHECK(g.execLinks.size() == 1);                  // the flow wire survives
+        // Names: a shared name is listed once, bare.
+        VsEditGraph n;
+        const int a = n.add("QbChangeNumber", 0, 0); n.find(a)->pinDefault[0] = "*gold";
+        const int b = n.add("QbShowValue", 0, 100);  n.find(b)->pinDefault[0] = "gold";
+        CHECK(VsUsedValueNames(n).size() == 1 && VsUsedValueNames(n)[0] == "gold");
+    }
     // ---- Wire refusals in plain words (no banned words, and the example sentence from the owner).
     {
         using okay::vs::PinType;

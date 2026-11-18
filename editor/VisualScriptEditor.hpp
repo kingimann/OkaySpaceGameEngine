@@ -1421,6 +1421,15 @@ public:
         }
         // Quick blocks saved by an earlier release: bring their typed values up to the current fields.
         for (auto& n : nodes) if (okay::vs::FindQuickBlock(n.type)) okay::vs::QbUpgradeFields(n.type, n.pinDefault);
+        // Old Show / Hide, Move and Turn nodes with only typed values become the one merged block (nothing wired into them).
+        for (auto& n : nodes) {
+            bool wired = false;
+            for (const auto& l : dataLinks) if (l.consumer == n.id) wired = true;
+            std::string newType; std::map<int, std::string> newPins;
+            if (!wired && okay::vs::QbConvertOldNode(n.type, n.arg, n.pinDefault, newType, newPins)) {
+                n.type = newType; n.arg.clear(); n.pinDefault = newPins;
+            }
+        }
         nextId = maxId + 1;
     }
 };
@@ -1441,7 +1450,7 @@ inline std::vector<std::string> VsUsedValueNames(const VsEditGraph& g) {
             for (std::size_t i = 0; i < fields.size(); ++i) {
                 if (fields[i].kind != okay::vs::QbKind::Name) continue;
                 auto it = n.pinDefault.find((int)i);
-                add(it != n.pinDefault.end() && !it->second.empty() ? it->second : std::string(fields[i].def));
+                add(okay::vs::QbNameBare(it != n.pinDefault.end() && !it->second.empty() ? it->second : std::string(fields[i].def)));
             }
         }
     }
@@ -3437,19 +3446,27 @@ inline bool VsDrawQuickField(EditorState& ed, VsEditGraph& g, VsEditNode& n, con
         }
         case QbKind::Name: {
             // Type a name (it is made on the spot) or pick one the script already uses, so a typo cannot make a new one.
-            char buf[64]; std::snprintf(buf, sizeof buf, "%s", (dv.empty() ? std::string(f.def) : dv).c_str());
-            const float btn = 22.0f;
-            ImGui::SetNextItemWidth(std::max(30.0f, width - btn - 4.0f));
+            // The small button says who can see it: only this object (the default) or everyone (every graph in the scene).
+            const std::string whole = dv.empty() ? std::string(f.def) : dv;
+            const bool shared = okay::vs::QbNameShared(whole);
+            char buf[64]; std::snprintf(buf, sizeof buf, "%s", okay::vs::QbNameBare(whole).c_str());
+            const float btn = 22.0f, scopeW = 34.0f;
+            ImGui::SetNextItemWidth(std::max(30.0f, width - btn - scopeW - 8.0f));
             if (ImGui::InputTextWithHint(id, "name, like score", buf, sizeof buf)) {
-                dv = okay::vs::QbNormalizeName(buf); changed = true;
+                dv = okay::vs::QbNameWithScope(okay::vs::QbNormalizeName(buf), shared); changed = true;
             }
             ImGui::SameLine(0, 4);
             if (ImGui::Button("v##names", ImVec2(btn, 0))) ImGui::OpenPopup("##namelist");
             if (ImGui::IsItemHovered()) ImGui::SetTooltip("Pick a saved value this script already uses");
+            ImGui::SameLine(0, 4);
+            if (ImGui::Button(shared ? "All##scope" : "Me##scope", ImVec2(scopeW, 0))) {
+                dv = okay::vs::QbNameWithScope(buf, !shared); changed = true;
+            }
+            if (ImGui::IsItemHovered()) ImGui::SetTooltip(shared ? "Everyone can see this. Click for only this object." : "Only this object. Click for everyone can see this.");
             if (ImGui::BeginPopup("##namelist")) {
                 const std::vector<std::string> used = VsUsedValueNames(g);
                 if (used.empty()) ImGui::TextDisabled("No saved values yet. Type a name.");
-                for (const std::string& u : used) if (ImGui::Selectable(u.c_str())) { dv = u; changed = true; }
+                for (const std::string& u : used) if (ImGui::Selectable(u.c_str())) { dv = okay::vs::QbNameWithScope(u, shared); changed = true; }
                 ImGui::EndPopup();
             }
             return changed;
@@ -4292,7 +4309,7 @@ inline void Draw(EditorState& ed, bool* open) {
                     for (std::size_t fi = 0; fi < fields.size(); ++fi) {
                         if (fields[fi].kind != okay::vs::QbKind::Name) continue;
                         auto it = n.pinDefault.find((int)fi);
-                        refs.push_back({"GetVar", it != n.pinDefault.end() && !it->second.empty() ? it->second : std::string(fields[fi].def), n.id});
+                        refs.push_back({"GetVar", okay::vs::QbNameBare(it != n.pinDefault.end() && !it->second.empty() ? it->second : std::string(fields[fi].def)), n.id});
                     }
                 }
             }

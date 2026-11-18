@@ -79,7 +79,7 @@ int main() {
 
     // ---- The table itself: plain, small, complete.
     const auto& all = vs::QuickBlocks();
-    CHECK(all.size() >= 66);   // more one-block actions are the plain nodes that already do their job in one block: Heal, Save Checkpoint, Shake Camera, Say Text
+    CHECK(all.size() >= 69);   // more one-block actions are the plain nodes that already do their job in one block: Heal, Save Checkpoint, Shake Camera, Say Text
     std::set<std::string> types, titles;
     for (const vs::QuickBlock& b : all) {
         CHECK(types.insert(b.type).second);
@@ -658,6 +658,69 @@ int main() {
         Rig sv(Alone("QbShowValue", Defaults(1, {"gold", "\"Gold: \""})), false);
         sv.go->AddComponent<TextRenderer>(); sv.vs->SetVariable("gold", vs::VsValue(7.0f)); sv.Start(); sv.Tick(2, 0.016f);
         CHECK(sv.go->GetComponent<TextRenderer>()->text.find("Gold: 7") != std::string::npos);
+    }
+
+    // ---- Saved values: "only this object" (the default) or "everyone can see this" (a leading * on the name).
+    {
+        CHECK(vs::QbNameShared("*gold") && !vs::QbNameShared("gold") && vs::QbNameBare("*gold") == "gold" && vs::QbNameBare("gold") == "gold");
+        CHECK(vs::QbNameWithScope("gold", true) == "*gold" && vs::QbNameWithScope("*gold", false) == "gold");
+        CHECK(vs::QbValidate(vs::QbKind::Name, "*gold") && !vs::QbValidate(vs::QbKind::Name, "*") && !vs::QbValidate(vs::QbKind::Name, "**x"));
+        CHECK(vs::QbNormalizeName("*my gold") == "*my_gold");
+        // Change Number on a shared name changes the scene's value; on a plain name, only this object's.
+        { Rig r("node 1 OnStart\nentry OnStart 1\nnode 2 QbChangeNumber\n" + Defaults(2, {"*gold", "Add", "4"}) + "exec 1 0 2\n"); r.Start();
+          CHECK(std::fabs(vs::SceneVariables(&r.scene)["gold"].AsFloat() - 4.0f) < 1e-3f); CHECK(r.vs->GetVariable("gold").AsFloat() == 0.0f); }
+        { Rig r("node 1 OnStart\nentry OnStart 1\nnode 2 QbChangeNumber\n" + Defaults(2, {"gold", "Add", "4"}) + "exec 1 0 2\n"); r.Start();
+          CHECK(std::fabs(r.vs->GetVariable("gold").AsFloat() - 4.0f) < 1e-3f); CHECK(vs::SceneVariables(&r.scene)["gold"].AsFloat() == 0.0f); }
+        // Two objects share one value: one adds, the other shows it.
+        { Scene scene("Shared"); scene.physicsEnabled = false;
+          auto* a = scene.CreateGameObject("A"); auto* va = a->AddComponent<VisualScriptComponent>();
+          CHECK(va->LoadFromText("node 1 OnStart\nentry OnStart 1\nnode 2 QbSetValue\n" + Defaults(2, {"*level", "5"}) + "exec 1 0 2\n"));
+          auto* b = scene.CreateGameObject("B"); b->AddComponent<TextRenderer>(); auto* vb = b->AddComponent<VisualScriptComponent>();
+          CHECK(vb->LoadFromText("node 1 QbShowValue\n" + Defaults(1, {"*level", "\"Level \""})));
+          scene.Start(); scene.Update(0.016f); scene.Update(0.016f);
+          CHECK(b->GetComponent<TextRenderer>()->text.find("Level 5") != std::string::npos); }
+        // An old graph (no star) behaves as before: this object only.
+        { Rig r("node 1 OnStart\nentry OnStart 1\nnode 2 QbSetValue\n" + Defaults(2, {"health", "100"}) + "exec 1 0 2\n"); r.Start();
+          CHECK(r.vs->GetVariable("health").AsFloat() == 100.0f); }
+        // Set Value To presets.
+        const vs::QuickBlock* sv = vs::FindQuickBlock("QbSetValue");
+        std::vector<std::string> v;
+        for (const vs::QbField& f : sv->fields) v.push_back(f.def);
+        CHECK(vs::QbApplyPreset(*sv, "Set lives to 3", v) && v[0] == "lives" && v[1] == "3");
+        { Rig r("node 1 OnStart\nentry OnStart 1\nnode 2 QbSetValue\n" + Defaults(2, {v[0].c_str(), v[1].c_str()}) + "exec 1 0 2\n"); r.Start();
+          CHECK(r.vs->GetVariable("lives").AsFloat() == 3.0f); }
+        // A word and yes or no are worked out from what is typed.
+        { Rig r("node 1 OnStart\nentry OnStart 1\nnode 2 QbSetValue\n" + Defaults(2, {"title", "Hello"}) + "node 3 QbSetValue\n" + Defaults(3, {"on", "true"}) + "exec 1 0 2\nexec 2 0 3\n"); r.Start();
+          CHECK(r.vs->GetVariable("title").AsString() == "Hello" && r.vs->GetVariable("on").AsBool()); }
+    }
+    // ---- Merged blocks: Move Turn Or Resize, Show Or Hide This.
+    {
+        { Rig r(AfterStart("QbMoveTurnResize", Defaults(2, {"Translate", "0,2,0"}))); r.Start(); r.Tick(1, 0.016f); CHECK(r.Pos().y > 1.5f); }
+        { Rig r(AfterStart("QbMoveTurnResize", Defaults(2, {"Rotate", "90,0,0"}))); r.Start(); r.Tick(1, 0.016f);
+          const Vec3 e = r.go->transform->LocalEulerAngles(); CHECK(std::fabs(e.x) + std::fabs(e.y) + std::fabs(e.z) > 10.0f); }
+        { Rig r(AfterStart("QbMoveTurnResize", Defaults(2, {"SetScale", "2,2,2"}))); r.Start(); r.Tick(1, 0.016f); CHECK(std::fabs(r.go->transform->localScale.x - 2.0f) < 0.01f); }
+        { Rig r(AfterStart("QbShowHide", Defaults(2, {"0"}))); r.Start(); r.Tick(1, 0.016f); CHECK(!r.go->active); }
+        { Rig r(AfterStart("QbShowHide", Defaults(2, {"1"}), kThen)); r.Start(); r.Tick(1, 0.016f); CHECK(r.go->active && Score(r.scene) == 1.0f); }
+        // Old plain nodes convert to the merged block only when nothing is wired into them.
+        std::string t; std::map<int, std::string> out;
+        CHECK(vs::QbConvertOldNode("SetActive", "self", {{0, "0"}}, t, out) && t == "QbShowHide" && out[0] == "0");
+        CHECK(vs::QbConvertOldNode("SetActive", "", {{0, "true"}}, t, out) && out[0] == "1");
+        CHECK(!vs::QbConvertOldNode("SetActive", "Door", {{0, "0"}}, t, out));          // another object: left alone
+        CHECK(!vs::QbConvertOldNode("SetActive", "self", {}, t, out));                  // no typed value: left alone
+        CHECK(vs::QbConvertOldNode("Translate", "", {{0, "1"}, {2, "3"}}, t, out) && t == "QbMoveTurnResize" && out[0] == "Translate" && out[1] == "1,0,3");
+        CHECK(!vs::QbConvertOldNode("Translate", "", {{0, "1"}, {3, "x"}}, t, out));    // a Target value: left alone
+        CHECK(vs::QbConvertOldNode("Rotate", "", {{0, "45"}}, t, out) && out[0] == "Rotate" && out[1] == "45,0,0");
+        CHECK(!vs::QbConvertOldNode("Print", "", {{0, "1"}}, t, out));
+    }
+    {   // Respawn This Object brings a dead object back.
+        Rig r("node 1 OnKey r\nentry OnKey:r 1\nnode 2 QbRespawnThis\nexec 1 0 2\n");
+        auto* hp = r.go->AddComponent<HealthStat>(); hp->playDeathAnim = false; hp->keepBodyOnDeath = true; hp->maxHealth = 100;
+        r.Start(); Keys({}); r.Tick(1, 0.016f);
+        hp->Damage(hp->maxHealth * 2); r.Tick(1, 0.016f);
+        CHECK(hp->IsDead());
+        Keys({'r'}); r.Tick(2, 0.016f);
+        CHECK(!hp->IsDead() && hp->health > 0.0f);
+        Keys({});
     }
     // A saved block keeps its typed values: the file says "QbAddToScore" and the value, nothing else.
     CHECK(vs::ExpandQuickBlocks(AfterStart("QbAddToScore", Defaults(2, {"7"}))).find("default 1000100 0 7") != std::string::npos ||

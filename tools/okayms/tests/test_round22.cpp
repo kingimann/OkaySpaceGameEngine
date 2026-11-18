@@ -66,7 +66,14 @@ void run_both(Tally& tally, const std::string& name, const std::string& source, 
             continue;
         }
         if (object_out != nullptr && level == 0) *object_out = compiled.value.object;
-        const auto linked = okayms::link_executable({compiled.value.object}, {});
+        okayms::LinkOptions link_options;
+        for (const char* fn : {"QueryPerformanceCounter", "QueryPerformanceFrequency", "GetSystemTimeAsFileTime"}) {
+            okayms::ImportedSymbol imp;
+            imp.dll = "kernel32.dll";
+            imp.name = fn;
+            link_options.imports.push_back(imp);
+        }
+        const auto linked = okayms::link_executable({compiled.value.object}, link_options);
         CHECK(tally, linked.ok());
         if (!linked.ok()) {
             std::fprintf(stderr, "  %s\n", linked.error.c_str());
@@ -315,6 +322,87 @@ static void test_move_containers_and_small_gaps(Tally& tally) {
              0);
 }
 
+static void test_headers_and_statements(Tally& tally) {
+    std::printf("test_headers_and_statements\n");
+    run_both(tally, "chrono_cwctype",
+             std::string(kAlloc) +
+             "#include <chrono>\n"
+             "#include <cwctype>\n"
+             "#include <climits>\n"
+             "int entry(void) {\n"
+             "  auto a = std::chrono::steady_clock::now();\n"
+             "  auto b = std::chrono::steady_clock::now();\n"
+             "  CK(1, (b - a).count() >= 0 && b >= a && a.time_since_epoch().count() > 0);\n"
+             "  auto w = std::chrono::system_clock::now().time_since_epoch().count();\n"
+             "  CK(2, w > 1600000000000000000LL);\n"
+             "  std::chrono::seconds two(2); std::chrono::milliseconds ms = std::chrono::duration_cast<std::chrono::milliseconds>(two);\n"
+             "  CK(3, ms.count() == 2000 && std::chrono::duration_cast<std::chrono::seconds>(ms).count() == 2);\n"
+             "  CK(4, std::iswdigit(55) && !std::iswdigit(65) && std::iswalpha(65) && !std::iswalpha(48) && std::iswspace(32));\n"
+             "  CK(5, towlower(65) == 97 && std::towupper(122) == 90 && towlower(49) == 49 && iswupper(90) && iswlower(122));\n"
+             "  CK(6, INT_MAX == 2147483647 && INT_MIN < 0 && UCHAR_MAX == 255 && SHRT_MIN == -32768);\n"
+             "  return 0;\n"
+             "}\n",
+             0);
+    run_both(tally, "deque_set_memory",
+             std::string(kAlloc) +
+             "#include <deque>\n"
+             "#include <set>\n"
+             "#include <memory>\n"
+             "#include <numeric>\n"
+             "#include <vector>\n"
+             "#include <string>\n"
+             "struct P { int a; P(int x) : a(x) {} int get() const { return a; } };\n"
+             "int entry(void) {\n"
+             "  std::deque<int> d;\n"
+             "  for (int i = 0; i < 20; ++i) { d.push_back(i); d.push_front(-i - 1); }\n"
+             "  CK(1, d.size() == 40 && d.front() == -20 && d.back() == 19 && d[20] == 0 && d[19] == -1);\n"
+             "  d.pop_front(); d.pop_back(); CK(2, d.size() == 38 && d.front() == -19 && d.back() == 18);\n"
+             "  int s = 0; for (int v : d) s += v; CK(3, s == -19);\n"
+             "  d.erase(d.begin()); CK(4, d.size() == 37 && d[0] == -18);\n"
+             "  std::deque<std::string> ds; ds.push_back(std::string(\"b\")); ds.push_front(std::string(\"a\")); ds.push_back(std::string(\"c\"));\n"
+             "  CK(5, ds.size() == 3 && ds[0] == \"a\" && ds[2] == \"c\");\n"
+             "  std::deque<int> d2(d); d.clear(); CK(6, d.empty() && d2.size() == 37 && d2[1] == -17);\n"
+             "  std::set<int> st; st.insert(5); st.insert(1); st.insert(9); st.insert(5);\n"
+             "  CK(7, st.size() == 3 && st.count(5) == 1 && st.count(4) == 0 && *st.begin() == 1 && st.find(9) != st.end() && st.find(2) == st.end());\n"
+             "  bool fresh = st.insert(7).second; CK(8, fresh && !st.insert(7).second && st.count(7) == 1);\n"
+             "  st.erase(5); CK(9, st.size() == 3 && st.count(5) == 0);\n"
+             "  std::unique_ptr<P> p = std::make_unique<P>(5); std::unique_ptr<P> q = std::move(p);\n"
+             "  CK(10, !p && q && q->a == 5 && q->get() == 5 && (*q).a == 5);\n"
+             "  q.reset(new P(8)); CK(11, q->a == 8);\n"
+             "  std::vector<int> v; for (int i = 1; i <= 4; ++i) v.push_back(i);\n"
+             "  CK(12, std::accumulate(v.begin(), v.end(), 0) == 10 && std::accumulate(v.begin(), v.end(), 1, [](int a, int b) { return a * b; }) == 24);\n"
+             "  std::vector<int> io(5); std::iota(io.begin(), io.end(), 10); CK(13, io[0] == 10 && io[4] == 14);\n"
+             "  return 0;\n"
+             "}\n",
+             0);
+    run_both(tally, "cond_decl_range_call",
+             std::string(kAlloc) +
+             "#include <vector>\n"
+             "struct F { int id; bool hit; };\n"
+             "struct G { std::vector<F> fs;\n"
+             "  F* Find(int id) { for (F& f : fs) if (f.id == id) return &f; return 0; }\n"
+             "  int Hit(int id) { if (F* f = Find(id)) { f->hit = true; return f->id; } return -1; }\n"
+             "  std::vector<int> Ids() const { std::vector<int> r; for (const F& f : fs) r.push_back(f.id); return r; } };\n"
+             "struct Reg { std::vector<int> planes; };\n"
+             "struct Nd { int cell; int from; int depth; Reg region; std::vector<int> path; };\n"
+             "template <typename T> struct Hold { T value; Hold(T v) : value(v) {} T make() const { T z = T(); T c(value); return c; } };\n"
+             "static std::vector<int> mk() { std::vector<int> r; r.push_back(3); r.push_back(4); return r; }\n"
+             "static int sumv(std::vector<int>& v) { int s = 0; for (int x : v) s += x; return s; }\n"
+             "static void fill(std::vector<Nd>& q, int c) { q.push_back({c, -1, 0, Reg(), {c}}); }\n"
+             "int entry(void) {\n"
+             "  G g; F a; a.id = 4; a.hit = false; g.fs.push_back(a); a.id = 9; g.fs.push_back(a);\n"
+             "  CK(1, g.Hit(9) == 9 && g.fs[1].hit && !g.fs[0].hit && g.Hit(2) == -1);\n"
+             "  int t = 0; for (int x : mk()) t += x; CK(2, t == 7);\n"
+             "  int u = 0; for (int x : g.Ids()) u += x; CK(3, u == 13);\n"
+             "  std::vector<Nd> q; fill(q, 5); CK(4, q.size() == 1 && q[0].cell == 5 && q[0].from == -1 && q[0].path.size() == 1 && q[0].path[0] == 5);\n"
+             "  int one = 6; int* p(&one); CK(5, *p == 6);\n"
+             "  Hold<int*> h(&one); CK(6, *h.make() == 6);\n"
+             "  std::vector<int> mv = mk(); CK(7, sumv(mv) == 7);\n"
+             "  return 0;\n"
+             "}\n",
+             0);
+}
+
 int main(int argc, char** argv) {
     const std::string root = argc > 1 ? argv[1] : ".";
     (void)root;
@@ -327,5 +415,6 @@ int main(int argc, char** argv) {
     test_algorithms(tally);
     test_rvalue_references(tally);
     test_move_containers_and_small_gaps(tally);
-    return tally.finish(8);
+    test_headers_and_statements(tally);
+    return tally.finish(9);
 }

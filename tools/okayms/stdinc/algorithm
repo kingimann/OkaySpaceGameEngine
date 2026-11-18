@@ -1,6 +1,6 @@
 // okay-ms own standard header: min, max, clamp, swap, and the sequence algorithms the engine uses (find, find_if,
 // count, count_if, any_of, all_of, none_of, remove, remove_if, reverse, fill, copy, min_element, max_element,
-// lower_bound, upper_bound, sort). Written from the wording of ISO/IEC 14882 [alg.min.max], [alg.clamp],
+// lower_bound, upper_bound, binary_search, sort, stable_sort). Written from the wording of ISO/IEC 14882 [alg.min.max], [alg.clamp],
 // [utility.swap], [alg.find], [alg.count], [alg.all.of], [alg.remove], [alg.reverse], [alg.fill], [alg.copy],
 // [alg.binary.search], [alg.sort]. Iterators are plain pointers here (our vector, string and array use pointers).
 // sort is a heap sort (any order of equal elements is allowed by [alg.sort]; it is not stable).
@@ -167,6 +167,22 @@ template <typename It> void sort(It first, It last) {
             swap(first[root], first[child]);
             root = child;
         }
+    }
+}
+template <typename It, typename V> bool binary_search(It first, It last, const V &value) {
+    It at = lower_bound(first, last, value);
+    return at != last && !(value < *at);
+}
+// A stable sort by insertion: elements that compare equal keep their order ([alg.sort] stable_sort). Quadratic in the
+// worst case, which is fine for the short sequences the engine sorts.
+template <typename It, typename Less> void stable_sort(It first, It last, Less less) {
+    for (It i = first + 1; i < last; ++i) {
+        for (It j = i; j > first && less(*j, *(j - 1)); --j) swap(*j, *(j - 1));
+    }
+}
+template <typename It> void stable_sort(It first, It last) {
+    for (It i = first + 1; i < last; ++i) {
+        for (It j = i; j > first && *j < *(j - 1); --j) swap(*j, *(j - 1));
     }
 }
 }

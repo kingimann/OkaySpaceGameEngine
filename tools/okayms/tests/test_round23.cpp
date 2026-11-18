@@ -281,5 +281,11 @@ int main(int, char**) {
           "int main() { L l; l.Set(1, 2, 3.0f); TS t; t.filter = TS::Point; auto low = [](std::string s) { for (auto& c : s) c += 1; return s; }; std::string f = low(rd()); int a = 0, b = 0; float c = 0; std::sscanf(\"1,2,3.5\", \"%d,%d,%f\", &a, &b, &c);\n"
           "return (int)l.m_cells[0].cost + t.filter + (int)f.size() + a + b + (int)c; }\n", &o);
     CHECK(t, has_symbol(o, "UCell@L@@") && has_symbol(o, "UCell@P@@") && has_symbol(o, "sscanf"));
+    ++tests;
+    build(t, "round 32: pointers to member functions (declarator, &C::f, obj->*pm, obj.*pm, virtual and not)",
+          "#include <cstdlib>\n#include <new>\nstruct C { int v; void inc(int d) { v += d; } virtual int get(int a) { return v + a; } virtual ~C() {} };\n"
+          "struct D : C { int get(int a) override { return a * 2; } };\nvoid call(C* c, void (C::*fn)(int)) { (c->*fn)(2); }\nstruct H { void (C::*cb)(int); };\n"
+          "int main() { C c; c.v = 1; call(&c, &C::inc); int (C::*g)(int) = &C::get; H h; h.cb = &C::inc; (c.*(h.cb))(5); D d; return (c.*g)(1) + (d.*g)(1); }\n", &o);
+    CHECK(t, has_symbol(o, "main") && has_symbol(o, "?inc@C@@QEAAXH@Z"));
     return t.finish(tests);
 }

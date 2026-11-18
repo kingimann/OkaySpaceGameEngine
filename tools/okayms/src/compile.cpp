@@ -3429,6 +3429,55 @@ struct Parser {
     bool parse_init(Node* out);
     bool flatten_init(const Type& type, const Node& node, std::vector<uint8_t>* bytes, int at);
 
+    // At `(`: is it `( Class :: * ...`, the start of a pointer to a member function declarator?
+    bool member_for_pointer(const std::string& cls_name, const std::string& m) const {
+        const int cls = scope_class(cls_name);
+        if (cls < 0) return false;
+        for (const Method& cand : structs[static_cast<size_t>(cls)].methods)
+            if (cand.name == m && !cand.is_static) return true;
+        return false;
+    }
+    bool member_ptr_ahead() const {
+        return is(TLParen) && at + 3 < tokens.size() && tokens[at + 1].kind == TIdent && tokens[at + 2].kind == TColonColon &&
+               tokens[at + 3].kind == TStar && scope_class(tokens[at + 1].text) >= 0;
+    }
+    // `R (C::*name)(P...)` after the result type R: the type is a pointer to the function that takes `C*` (the object) and the
+    // parameters P, and it is called as (obj->*name)(args) ([dcl.mptr]). A non-virtual member is held as the address of the
+    // function; a virtual one as slot * 8 + 1 (odd), which the call turns into a table lookup. The name may be left out.
+    bool parse_member_ptr(const Type& ret, Type* out, std::string* name) {
+        next();  // (
+        const int cls = scope_class(cur().text);
+        next();
+        next();  // ::
+        next();  // *
+        if (is(TIdent)) {
+            *name = cur().text;
+            next();
+        }
+        if (!expect(TRParen, "')'")) return false;
+        if (!expect(TLParen, "'('")) return false;
+        Declarator fp;
+        if (!parse_param_list(&fp)) return false;
+        const bool is_const_member = accept(TConst);
+        (void)is_const_member;
+        FuncDecl fd;
+        fd.ret = ret;
+        Type self;
+        self.base = 3;
+        self.struct_id = cls;
+        self.pointers = 1;
+        fd.params.push_back(self);
+        for (const Type& pt : fp.params) fd.params.push_back(pt);
+        fd.vararg = fp.vararg;
+        finish_signature(&fd);
+        *out = ret;
+        out->pointers = 1;
+        out->array_len = -1;
+        out->is_ref = false;
+        out->func_id = fd.func_id;
+        return true;
+    }
+
     bool parse_param_list(Declarator* out) {
         if (is(TVoid) && at + 1 < tokens.size() && tokens[at + 1].kind == TRParen) {
             next();
@@ -3452,6 +3501,14 @@ struct Parser {
             if (!parse_type(&pt, &imp, &exp)) return false;
             if (accept(TConst)) lead_const = true;
             pt.pconst = lead_const;
+            if (member_ptr_ahead()) {
+                Type mp;
+                std::string mname;
+                if (!parse_member_ptr(pt, &mp, &mname)) return false;
+                out->params.push_back(mp);
+                out->param_names.push_back(mname);
+                continue;
+            }
             if (is(TLParen) && at + 1 < tokens.size() && tokens[at + 1].kind == TStar) {
                 next();
                 int stars = 0;
@@ -3559,6 +3616,12 @@ struct Parser {
 
     bool parse_declarator(Type base, Declarator* out) {
         out->type = base;
+        if (member_ptr_ahead()) {
+            Type mp;
+            if (!parse_member_ptr(base, &mp, &out->name)) return false;
+            out->type = mp;
+            return true;
+        }
         if (is(TLParen) && at + 1 < tokens.size() && tokens[at + 1].kind == TStar) {
             next();
             int stars = 0;
@@ -5072,8 +5135,9 @@ struct Parser {
                 ++field.type.pointers;
                 field.ref = true;
             }
-            if (!static_member && is(TLParen) && at + 2 < tokens.size() && tokens[at + 1].kind == TStar &&
-                tokens[at + 2].kind == TIdent) {
+            if (!static_member && ((is(TLParen) && at + 2 < tokens.size() && tokens[at + 1].kind == TStar &&
+                                    tokens[at + 2].kind == TIdent) ||
+                                   member_ptr_ahead())) {
                 // R (*name)(A, B); a pointer-to-function member, read like any declarator.
                 Declarator fdecl;
                 if (!parse_declarator(base_type, &fdecl)) return false;
@@ -13339,6 +13403,47 @@ bool Parser::parse_unary(Node* out) {
         // Unary plus ([expr.unary.op]/7): the value of the operand (after the usual conversions, which the use does).
         next();
         return parse_unary(out);
+    } else if (is(TAmp) && at + 3 < tokens.size() && tokens[at + 1].kind == TIdent && tokens[at + 2].kind == TColonColon &&
+               tokens[at + 3].kind == TIdent && scope_class(tokens[at + 1].text) >= 0 &&
+               !(at + 4 < tokens.size() && tokens[at + 4].kind == TLParen) && member_for_pointer(tokens[at + 1].text, tokens[at + 3].text)) {
+        // &C::f ([expr.unary.op]/4): a pointer to the member function f of C.
+        const int cls = scope_class(tokens[at + 1].text);
+        const std::string mname = tokens[at + 3].text;
+        next();
+        next();
+        next();
+        next();
+        const Method* mm = nullptr;
+        for (const Method& cand : structs[static_cast<size_t>(cls)].methods)
+            if (cand.name == mname && !cand.is_static) {
+                mm = &cand;
+                break;
+            }
+        FuncDecl fd;
+        fd.ret = mm->ret;
+        Type self;
+        self.base = 3;
+        self.struct_id = cls;
+        self.pointers = 1;
+        fd.params.push_back(self);
+        for (const Type& pt : mm->params) fd.params.push_back(pt);
+        finish_signature(&fd);
+        Type pmt = mm->ret;
+        pmt.pointers = 1;
+        pmt.array_len = -1;
+        pmt.is_ref = false;
+        pmt.func_id = fd.func_id;
+        if (mm->is_virtual && mm->slot >= 0) {
+            Node lit;
+            lit.kind = Node::IntLit;
+            lit.number = static_cast<uint64_t>(mm->slot) * 8 + 1;
+            lit.type.base = 1;
+            lit.type.wide = true;
+            *out = cast_node(pmt, std::move(lit));
+        } else {
+            *out = cast_node(pmt, node_name(mm->qname));
+        }
+        return parse_postfix(out);
     } else if (is(TStar) || is(TAmp) || is(TMinus) || is(TNot) || is(TTilde)) {
         out->kind = Node::Unary;
         out->op = cur().kind;
@@ -13459,7 +13564,7 @@ bool Parser::parse_postfix(Node* out) {
             {
                 Node probe;
                 Type ct;
-                if (class_object_type(*out, &ct)) {
+                if (!(out->kind == Node::Binary && out->text == "->*") && class_object_type(*out, &ct)) {
                     std::vector<Node> cargs;
                     if (!parse_call_args(&cargs)) return false;
                     bool done = false;
@@ -13470,6 +13575,104 @@ bool Parser::parse_postfix(Node* out) {
                     }
                     continue;
                 }
+            }
+            if (out->kind == Node::Binary && out->text == "->*" && cur_locals != nullptr) {
+                // (obj->*pm)(args): the object and the pointer go into hidden locals, then a call through the function the
+                // pointer stands for: its own address, or for an odd value (virtual) the table entry numbered value / 8.
+                Node obj = std::move(out->kids[0]);
+                Node pm = std::move(out->kids[1]);
+                const bool arrow = out->op == TArrow;
+                Type pmt;
+                Type objt;
+                if (!static_type(pm, &pmt) || pmt.func_id < 0 || !static_type(obj, &objt) || objt.base != 3) {
+                    error = "cannot tell the type of the member pointer or the object";
+                    return false;
+                }
+                Type self_ptr = objt;
+                if (arrow) self_ptr.pointers -= 1;
+                self_ptr.pointers = 1;
+                self_ptr.is_ref = false;
+                Local lo;
+                lo.name = "__po" + std::to_string(tmp_count++);
+                lo.type = self_ptr;
+                place_local(cur_locals, lo);
+                Local lf;
+                lf.name = "__pf" + std::to_string(tmp_count++);
+                lf.type = pmt;
+                place_local(cur_locals, lf);
+                auto assign_pre = [&](const std::string& name, Node value) {
+                    Node as;
+                    as.kind = Node::Assign;
+                    as.op = TAssign;
+                    as.number = 1;
+                    as.kids.push_back(node_name(name));
+                    as.kids.push_back(std::move(value));
+                    Node st;
+                    st.kind = Node::ExprStmt;
+                    st.kids.push_back(std::move(as));
+                    stmt_pre.push_back(std::move(st));
+                };
+                assign_pre(lo.name, arrow ? std::move(obj) : node_addr(std::move(obj)));
+                assign_pre(lf.name, std::move(pm));
+                // odd: ((fn)table[value >> 3]); even: ((fn)value)
+                Node odd_test;
+                odd_test.kind = Node::Binary;
+                odd_test.op = TAmp;
+                odd_test.kids.push_back(node_name(lf.name));
+                Node one;
+                one.kind = Node::IntLit;
+                one.number = 1;
+                one.type.base = 1;
+                one.type.wide = true;
+                odd_test.kids.push_back(std::move(one));
+                Type ulong_t;
+                ulong_t.base = 1;
+                ulong_t.wide = true;
+                Node as_long = cast_node(ulong_t, node_name(lf.name));
+                odd_test.kids[0] = std::move(as_long);
+                Node shift;
+                shift.kind = Node::Binary;
+                shift.op = TShr;
+                shift.kids.push_back(cast_node(ulong_t, node_name(lf.name)));
+                Node three;
+                three.kind = Node::IntLit;
+                three.number = 3;
+                three.type.base = 1;
+                shift.kids.push_back(std::move(three));
+                Node vptr;
+                vptr.kind = Node::Field;
+                vptr.op = TArrow;
+                vptr.text = "__vptr";
+                vptr.kids.push_back(node_name(lo.name));
+                Node entry;
+                entry.kind = Node::Index;
+                entry.kids.push_back(std::move(vptr));
+                entry.kids.push_back(std::move(shift));
+                Node tern;
+                tern.kind = Node::Ternary;
+                tern.kids.push_back(std::move(odd_test));
+                tern.kids.push_back(cast_node(pmt, std::move(entry)));
+                tern.kids.push_back(cast_node(pmt, node_name(lf.name)));
+                Node call;
+                call.kind = Node::Call;
+                call.kids.push_back(cast_node(pmt, std::move(tern)));
+                call.kids.push_back(node_name(lo.name));
+                std::vector<Node> pargs;
+                if (!parse_call_args(&pargs)) return false;
+                const FuncType& ft = func_types[static_cast<size_t>(pmt.func_id)];
+                std::vector<Type> source;
+                for (size_t i = 1; i < ft.params.size(); ++i) {
+                    Type pt = ft.params[i];
+                    if (i < ft.param_ref.size() && ft.param_ref[i]) {
+                        pt.pointers -= 1;
+                        pt.is_ref = true;
+                    }
+                    source.push_back(pt);
+                }
+                if (!adjust_args(source, &pargs)) return false;
+                for (Node& a2 : pargs) call.kids.push_back(std::move(a2));
+                *out = std::move(call);
+                continue;
             }
             Node call;
             call.kind = Node::Call;
@@ -13539,6 +13742,20 @@ bool Parser::parse_postfix(Node* out) {
         } else {
             const Tok op = cur().kind;
             next();
+            if ((op == TDot || op == TArrow) && is(TStar)) {
+                // obj.*pm and obj->*pm ([expr.mptr.oper]): the call parenthesis after it is read next.
+                next();
+                Node pm;
+                if (!parse_unary(&pm)) return false;
+                Node bound;
+                bound.kind = Node::Binary;
+                bound.op = op;
+                bound.text = "->*";
+                bound.kids.push_back(std::move(*out));
+                bound.kids.push_back(std::move(pm));
+                *out = std::move(bound);
+                continue;
+            }
             if (op == TArrow) {
                 // obj->member for a class object with operator->: its result (a pointer) is what -> then applies to.
                 Type object_type;

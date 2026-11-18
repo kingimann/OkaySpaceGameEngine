@@ -31,16 +31,10 @@ then this file gets updated. Keep this file short and true.
    without a word of explanation.
 4. **Be honest.** Say exactly what was run and what was not. Say "unverified" when it is. Never call something
    done, ready or green when it is not. A failing test is reported with its output.
-4a. **The owner must be able to try everything.** (Owner rule, 2026-11-15: "everything that's being made I should be able
-    to test; if I can't test it out it's useless".) Every PR and every release note says how to try the change, in
-    plain steps: what to open or run, what to click or press, and what you should see. It must be reachable in the
-    Windows release the owner runs (launcher, editor, player, installer, zip): a menu, a template, a shipped example
-    scene (`examples/`, copied by `scripts/build-windows-dist.sh`), a setting or an environment variable. The steps go
-    in `docs/try_it.md` and in the PR's "How to try it" section. Visual work comes with screenshots (headless renders
-    are fine, say they are). Something switched off by default (our own readers, own WAV decoder and so on) comes
-    with the exact switch, a sample file to use, and how to tell it is on (the startup stack line or a log line). If
-    a feature cannot be tried yet, the PR says so at the top and says what is missing, and builds that way in; a
-    feature nobody can reach is not done.
+4a. **No "how to try it" write-ups.** (Owner rule, 2026-11-17: "stop doing how try it. remove that too".) PRs, release
+    notes and agents no longer write "How to try it" sections or `docs/try_it/` entries, and CI no longer checks them.
+    Still say honestly what was run and what was not (rule 4). The old `docs/try_it/` files and `scripts/gen_try_it.py`
+    stay for now; they are not required.
 4b. **No screenshots in the repository.** (Owner rule, 2026-11-17: "Remove any screenshots on GitHub, clean up the GitHub,
     organize files better".) Pictures are never committed: `docs/images/` was deleted and is git-ignored, and `branch_lint.py`
     refuses a picture under `docs/` or at the repo root. Make pictures outside the repo (`OKAY_SHOT_DIR` or a temp folder), show

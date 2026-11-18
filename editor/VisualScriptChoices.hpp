@@ -170,13 +170,13 @@ struct VsConvertOffer {
 inline VsConvertOffer VsOfferConvert(char from, char to) {
     VsConvertOffer o;
     if (from == to || from == 'A' || to == 'A') return o;
-    if (from == 'T' && to == 'N') { o.type = "ToNumber"; o.label = "Insert To Number"; o.why = "Text can't go straight into a number. To Number reads it as a number."; return o; }
-    if ((from == 'N' || from == 'B') && to == 'T') { o.type = "ToString"; o.label = "Insert To Text"; o.why = "That input wants text. To Text writes the number out as text."; return o; }
-    if (from == 'V' && to == 'N') { o.why = "A vector isn't one number. Use Get X, Get Y or Get Z."; return o; }
-    if (from == 'N' && to == 'V') { o.why = "A number isn't a vector. Use Make Vec3."; return o; }
-    if (from == 'O' && to == 'V') { o.why = "An object isn't a position. Use Object Position, or Get Position with this object as Target."; return o; }
-    if (from == 'O' && to == 'N') { o.why = "An object isn't a number. Use Distance To, or Get X / Get Y / Get Z."; return o; }
-    if (to == 'O') { o.why = "This input wants an object. Use Self, Find Object, or drop one from the Hierarchy."; return o; }
+    if (from == 'T' && to == 'N') { o.type = "ToNumber"; o.label = "Insert To Number"; o.why = "This plug needs a number, but you gave it text. Text To Number reads the text as a number."; return o; }
+    if ((from == 'N' || from == 'B') && to == 'T') { o.type = "ToString"; o.label = "Insert To Text"; o.why = "This plug needs text, but you gave it a number. Number To Text writes the number out as text."; return o; }
+    if (from == 'V' && to == 'N') { o.why = "This plug needs a number, but you gave it a position. Use Get Position Left-Right, Up-Down or Forward-Back."; return o; }
+    if (from == 'N' && to == 'V') { o.why = "This plug needs a position, but you gave it a number. Use Make Position."; return o; }
+    if (from == 'O' && to == 'V') { o.why = "This plug needs a position, but you gave it an object. Use Get Position and put this object in its Target."; return o; }
+    if (from == 'O' && to == 'N') { o.why = "This plug needs a number, but you gave it an object. Use Get Distance To, or Get Position."; return o; }
+    if (to == 'O') { o.why = "This plug needs an object. Use Find Object, or drag one in from the Hierarchy."; return o; }
     return o;
 }
 

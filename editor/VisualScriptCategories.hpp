@@ -14,6 +14,8 @@
 #include <cstring>
 #include <string>
 
+#include "okay/VisualScript/QuickBlocks.hpp"
+
 namespace okay::editor::vsed {
 
 struct VsPaletteCategory {
@@ -40,6 +42,8 @@ inline const VsPaletteCategory kPaletteCategories[] = {
     {"Waiting & Timers", "Wait, repeat on a timer, cooldowns, stopwatches, and delayed calls from a script.", "Flow"},
     {"Functions & Calls", "Define your own function, call another graph or script, or run a list of steps.", "Flow"},
     {"Time & Game Speed", "The clock, the frame time, slow motion and pausing the game.", "Flow"},
+    // ---- Quick blocks: one-block ready-made actions for beginners.
+    {"Quick blocks",    "One-block actions: move around, game rules, objects in the game, show and sound, do in order.", "Quick blocks"},
     // ---- Variables, lists and saving: remember things.
     {"Variables",       "Remember a number, a word or a yes/no on this object, the scene or the whole game.", "Variables, Lists & Saving"},
     {"Saving & Loading", "Keep things between runs: save slots, saved values and checkpoints.", "Variables, Lists & Saving"},
@@ -104,7 +108,7 @@ inline const VsPaletteCategory kPaletteCategories[] = {
     // ---- Input
     {"Keyboard",        "Is a key held, pressed or released.", "Input"},
     {"Mouse & Touch",   "The mouse position and buttons, the cursor, taps and swipes.", "Input"},
-    {"Gamepad & Controls", "Movement axes, the gamepad, named actions and rebinding keys.", "Input"},
+    {"Gamepad & Controls", "Movement axes, the gamepad, named actions and rebinding keys, local players and the controllers they use.", "Input"},
     // ---- Online
     {"Multiplayer",     "Host or join, browse servers, matchmaking, messages, synced objects, players and matches.", "Online"},
     {"Steam",           "Steam achievements, stats, lobbies, friends, cloud files and the workshop.", "Online"},
@@ -142,6 +146,12 @@ struct VsPaletteSub {
     const char* blurb;
 };
 inline const VsPaletteSub kPaletteSubs[] = {
+    // Quick blocks
+    {"Quick blocks", "Move Around", "Move with keys, jump, follow, walk back and forth."},
+    {"Quick blocks", "Game Rules", "Score, health, winning, losing and checkpoints."},
+    {"Quick blocks", "Objects In The Game", "Coins, doors, platforms, bullets and things that spin or appear."},
+    {"Quick blocks", "Show And Sound", "Messages, sounds, colours and the camera."},
+    {"Quick blocks", "Do In Order", "Wait, repeat, do forever, and do something only when a key is pressed or touched."},
     // Flow
     {"Branches & Gates", "State Machines", "Keep one state at a time and react when it changes."},
     {"Waiting & Timers", "Delayed Calls", "Call something later, or every few seconds, from a script."},
@@ -239,6 +249,8 @@ inline const VsPaletteSub kPaletteSubs[] = {
     // Input
     {"Mouse & Touch", "Touch & Gestures", "Touch screens, swipes, pinches and twists."},
     {"Gamepad & Controls", "Named Actions", "Define an action, read its value, rebind its key and rumble the pad."},
+    {"Gamepad & Controls", "Local Players", "A local player's typed actions: values, phases, action maps, control scheme and rebinding."},
+    {"Gamepad & Controls", "Controllers", "Which controller is plugged in, its family and battery, lightbar, trigger rumble, Controller Setup and rumble patterns."},
     // Online
     {"Multiplayer", "Hosting & Joining", "Host, join, leave and ask who is the server."},
     {"Multiplayer", "Server Browser", "List servers and join one."},
@@ -302,6 +314,11 @@ inline VsPlace VsPlaceForBuiltin(const char* name);   // a text-script function 
 // A type no rule covers comes back with a null category.
 inline VsPlace VsPlaceForNode(const char* type) {
     if (!type || !type[0]) return {};
+    if (const okay::vs::QuickBlock* qb = okay::vs::FindQuickBlock(type)) {
+        const std::string g = qb->group;
+        return VsAt("Quick blocks", g == "Movement" ? "Move Around" : g == "Game rules" ? "Game Rules"
+                                    : g == "World" ? "Objects In The Game" : g == "Feedback" ? "Show And Sound" : "Do In Order");
+    }
     if (VsPre(type, "Fn.")) return VsPlaceForBuiltin(type + 3);
     if (const VsRule* r = VsFindRule(kNodeRules, VsRuleCount(kNodeRules), type)) return VsAt(r->category, r->sub);
     return VsTranslateLegacy(VsLegacyPlaceForNode(type));

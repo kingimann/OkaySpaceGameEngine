@@ -1,4 +1,5 @@
 #include "okay/Net/Matchmaker.hpp"
+#include "okay/Input/InputRuntime.hpp"
 #include "okay/Net/NetworkManager.hpp"
 #include "EditorState.hpp"
 #include "okay/Modeling/MeshAsset.hpp"
@@ -15,6 +16,7 @@
 #include "okay/Components/PlayerDebug.hpp"
 #include "okay/Core/TimerDebug.hpp"
 #include "okay/Scene/PrefabTools.hpp"
+#include "okay/Scene/EnsureCamera.hpp"
 #include <map>
 #include <set>
 #include <filesystem>
@@ -377,23 +379,24 @@ GameObject* EditorState::CreateCamera(const std::string& name) {
 void EditorState::AdoptCamera(Camera* cam) {
     if (!cam) return;
     // Drop the placeholder "Main Camera" if it's still exactly as the editor made it.
-    if (autoCamera && autoCamera != cam->gameObject) {
-        bool alive = false;
-        for (const auto& up : m_scene.Objects()) if (up.get() == autoCamera) { alive = true; break; }
+    // autoCamera is held by GUID: after an undo / reload rebuilt the scene, another object may sit at the placeholder's
+    // old address, and it must never be taken for the placeholder (and deleted).
+    if (autoCamera.IsSet() && !autoCamera.Is(cam->gameObject)) {
+        GameObject* ac = autoCamera.Get(m_scene);
         // Untouched = only Transform + Camera, no children or parent, and still at
         // the spot EnsureSceneCamera put it ((0,2,10) in 3D, (0,0,10) in 2D).
         auto untouched = [&]() {
-            Transform* t = autoCamera->transform;
-            if (!t || autoCamera->Components().size() > 2 || !t->Children().empty() || t->Parent()) return false;
+            Transform* t = ac->transform;
+            if (!t || ac->Components().size() > 2 || !t->Children().empty() || t->Parent()) return false;
             const Vec3 p = t->localPosition;
             return (p - Vec3{0, 2, 10}).Magnitude() < 1e-3f || (p - Vec3{0, 0, 10}).Magnitude() < 1e-3f;
         };
-        if (alive && untouched()) {
-            if (m_selected == autoCamera) m_selected = nullptr;
-            m_scene.Destroy(autoCamera);
+        if (ac && untouched()) {
+            if (m_selected == ac) m_selected = nullptr;
+            m_scene.Destroy(ac);
             m_scene.FlushDestroyed();
         }
-        autoCamera = nullptr;
+        autoCamera.Clear();
     }
     for (const auto& up : m_scene.Objects())
         if (up)
@@ -685,18 +688,6 @@ void EditorState::NewPlatformer3D() {
     StartDocument();
 }
 
-void EditorState::NewFPS() {
-    NewScene();
-    m_suppressUndo = true;
-    Templates::FPS(m_scene);
-    m_suppressUndo = false;
-    view3D = true;
-    camTarget = {0, 1, 0};
-    camDist = 10.0f;
-    m_selected = m_scene.Find("Player");
-    StartDocument();
-}
-
 void EditorState::NewTerrainSandbox() {
     NewScene();
     m_suppressUndo = true;
@@ -725,18 +716,6 @@ void EditorState::NewThirdPerson() {
     NewScene();
     m_suppressUndo = true;
     Templates::ThirdPerson(m_scene);
-    m_suppressUndo = false;
-    view3D = true;
-    camTarget = {0, 1, 0};
-    camDist = 8.0f;
-    m_selected = m_scene.Find("Player");
-    StartDocument();
-}
-
-void EditorState::NewHumanoid() {
-    NewScene();
-    m_suppressUndo = true;
-    Templates::Humanoid(m_scene);
     m_suppressUndo = false;
     view3D = true;
     camTarget = {0, 1, 0};
@@ -1016,6 +995,19 @@ bool EditorState::LoadRecoveredText(const std::string& text, const std::string& 
     return true;
 }
 
+// The view a scene is made for: 3D when the camera it renders through is a perspective camera, 2D when it is
+// orthographic. -1 when the scene has no camera (the editor then keeps the view it is in). The editor used to keep
+// whatever view it was in, so a 3D scene opened in the 2D view: every object flattened onto X/Y and the world text
+// labels of examples/physics/physics_playground.okayscene, which differ only in depth, were drawn on top of each other.
+int EditorState::SceneViewFor(const Scene& scene) {
+    std::vector<Camera*> cams;
+    for (const auto& go : scene.Objects())
+        if (auto* c = go->GetComponent<Camera>()) cams.push_back(c);
+    const Camera* cam = okay::PickRenderCamera(scene.mainCamera, cams);
+    if (!cam) return -1;
+    return cam->projection == Camera::Projection::Perspective ? 1 : 0;
+}
+
 bool EditorState::Load(const std::string& path, std::string* error) {
     if (beforeLoad) {   // the project version gate: nothing is read, let alone changed, for a project nobody has answered for
         std::string why;
@@ -1031,6 +1023,7 @@ bool EditorState::Load(const std::string& path, std::string* error) {
     okay::filedialog::CancelBuiltin();   // a queued dialog may hold a pointer into the replaced scene (#732)
     if (!SceneSerializer::LoadFromFile(m_scene, path, error)) return false;   // all or nothing: the scene is as it was
     m_path = path;
+    if (const int v = SceneViewFor(m_scene); v >= 0) view3D = (v == 1);   // open the scene in the view it is made for
     // A different scene is a different document: its undo history is its own. (Keeping the old one
     // would let Undo put the previous scene's objects into this file.)
     // Re-home the project to the scene's own project folder (the parent of its
@@ -1123,6 +1116,7 @@ void EditorState::Play() {
     m_playPrint = Fingerprint(m_snapshot);            // what "unsaved changes" means while the game runs
     m_dirtyAtPlay = dirty;
     m_scene.UseFixedStepPhysics(true);   // physics as the game runs it: fixed steps, drawn smoothly
+    InputRuntime::UseProjectAsset(m_projectDir);   // a fresh set of local players on the project's input asset (or the default)
     Character::SetAssetBaseDir(m_projectDir);   // a Character's project-relative clips file
     PoseCapture::SetAssetBaseDir(m_projectDir.empty() ? std::string() : m_projectDir + "/Assets");
     for (const auto& up : m_scene.Objects())
@@ -1186,6 +1180,7 @@ void EditorState::Stop() {
     dirty = m_dirtyAtPlay;   // edits made to the running game are thrown away, so they leave no mark
     if (okay::FirstPersonHands::RestoreApplied(m_scene)) dirty = true;   // Apply during Play
     Select(nullptr);   // Deserialize freed every object; clear m_multi too (no dangling ptrs)
+    InputRuntime::Reset();   // the local players belonged to the session that ended
 }
 
 void EditorState::Tick(float dt) {
@@ -1480,7 +1475,7 @@ bool EditorState::OpenPrefab(const std::string& pathIn, std::string* error) {
     m_levels.push_back(std::move(lv));
     m_ses = PrefabSession{path, guid, {}, PrefabDiskPrint(path), false};
     m_scene.SetName(StemOf(path));
-    autoCamera = nullptr;
+    autoCamera.Clear();
     m_pending = Pending{};
     m_known = SceneSerializer::Serialize(m_scene);
     m_savedPrint = Fingerprint(m_known);
@@ -1579,7 +1574,7 @@ bool EditorState::ClosePrefab(bool save, std::string* error) {
     for (const std::string& p : saved) if (std::find(m_ses.saved.begin(), m_ses.saved.end(), p) == m_ses.saved.end()) m_ses.saved.push_back(p);   // the levels further out still owe an update
     cameraPos = lv.cameraPos; cameraZoom = lv.cameraZoom; view3D = lv.view3D;
     camYaw = lv.camYaw; camPitch = lv.camPitch; camDist = lv.camDist; camTarget = lv.camTarget;
-    autoCamera = nullptr;
+    autoCamera.Clear();
     SelectByRef(lv.sel);
     m_prefabNote.clear();
     if (!saved.empty()) RefreshInstancesOf(saved, &m_prefabNote);

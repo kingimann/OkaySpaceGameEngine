@@ -291,7 +291,7 @@ Corrections are **smoothed**: each frame moves the foot a fraction of the
 way to its planted target (the **Smoothing** field, per second — 0 =
 instant), so stepping over a ledge or stair edge eases the foot down
 instead of popping it. The pelvis shift is smoothed the same way. The
-one-click **Humanoid (foot IK)** player ships with the full plant setup on:
+**Foot IK** on a Player Controller player (add it from Add Component) ships with the full plant setup on:
 pelvis adjust, plant-down, slope align and smoothing.
 
 On the built-in blocky Character, Foot IK **wires itself**: drop the

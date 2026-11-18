@@ -1660,7 +1660,7 @@ int main(int argc, char** argv) {
         okay::SplashStyle st;
         if (cfg.bootAccentOn) { st.ar = cfg.bootAccent[0]; st.ag = cfg.bootAccent[1]; st.ab = cfg.bootAccent[2]; }
         auto C = [](const float* c) -> SDL_Color {
-            auto u = [](float v){ return (Uint8)((v < 0 ? 0 : v > 1 ? 1 : v) * 255.0f + 0.5f); };
+            auto u = [](float v){ return (Uint8)((!(v > 0) ? 0 : v > 1 ? 1 : v) * 255.0f + 0.5f); };   // nan counts as 0 (a nan cast is undefined)
             return SDL_Color{u(c[0]), u(c[1]), u(c[2]), 255}; };
         st.bgTop = C(cfg.bootBgTop); st.bgBottom = C(cfg.bootBgBot); st.showProgress = cfg.bootBar;
         if (!cfg.bootLogo.empty()) {
@@ -1946,6 +1946,16 @@ int main(int argc, char** argv) {
             if (e.type == ET::MouseButtonDown && cursorReleased) cursorReleased = false;
             if (e.type == ET::GamepadAdded) pads.Add(e.deviceId);
             if (e.type == ET::GamepadRemoved) pads.Remove(e.deviceId);
+            if (keyDown && !e.repeat) {   // a tap shorter than one frame is still a press (the held-key poll below would miss it)
+                std::vector<char> tapped;
+                okay::TapCharsForKey(e.key, [&](char c) { return okay::KeyForLetter(*pb, c); }, tapped);
+                for (char c : tapped) Input::FeedKeyTap(c);
+            }
+            if (e.type == ET::MouseButtonDown) {
+                if (e.button == okay::platform::MouseLeft) Input::FeedMouseTap(0);
+                else if (e.button == okay::platform::MouseRight) Input::FeedMouseTap(1);
+                else if (e.button == okay::platform::MouseMiddle) Input::FeedMouseTap(2);
+            }
             if (e.type == ET::TextInput) Input::FeedText(e.text.c_str());   // real characters
             if (e.type == ET::MouseWheel) Input::FeedMouseWheel(osWheelY);
             if (e.type == ET::FingerDown || e.type == ET::FingerMotion || e.type == ET::FingerUp) {
@@ -1992,9 +2002,9 @@ int main(int argc, char** argv) {
         auto keyHeld = [pb](PK k) { return pb->IsKeyDown(k); };
         std::vector<char> down;
         for (char c = 'a'; c <= 'z'; ++c)
-            if (keyHeld(pb->KeyForChar(c))) down.push_back(c);   // by the layout's letter: AZERTY WASD works
+            if (keyHeld(okay::KeyForLetter(*pb, c))) down.push_back(c);   // by the layout's letter: AZERTY WASD works; layouts without Latin letters fall back to the US place
         for (char c = '0'; c <= '9'; ++c)
-            if (keyHeld(pb->KeyForChar(c))) down.push_back(c);
+            if (keyHeld(okay::KeyForLetter(*pb, c))) down.push_back(c);
         if (keyHeld(PK::Space)) down.push_back(' ');
         if (keyHeld(PK::LShift) || keyHeld(PK::RShift)) down.push_back(Input::KeyShift); // sprint
         if (keyHeld(PK::LCtrl)  || keyHeld(PK::RCtrl))  down.push_back(Input::KeyCtrl);  // crouch
@@ -2038,6 +2048,7 @@ int main(int argc, char** argv) {
         okay::CaptionOverlay::Ensure(scene);
         const bool gameModal = invModal || okay::Game::Paused() || okay::SettingsScreen::AnyOpen(&scene);
         Input::SetUICaptured(gameModal || okay::GameInputBlocked(&scene, (unsigned)okay::GameInputMask::World));
+        Input::SetTextFocused(okay::GameInputBlocked(&scene, (unsigned)okay::GameInputMask::Text));   // typing in a field does not also move the player
 
         // Apply the game's requested cursor state.
         static Vec2 s_virtualMouse{0, 0};

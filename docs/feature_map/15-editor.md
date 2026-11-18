@@ -86,6 +86,7 @@ Line ranges for `editor/main.cpp` are approximate (as of 2026-11-08) and move wh
 - **What:** The file browser of the project's Assets folder (folders, thumbnails, smart filters, search, color labels, drag and drop into the scene) and a window that imports marketplace downloads into the project.
 - **Parts:**
   - 15.4.1 Project panel - `editor/main.cpp` (`DrawProject`), `editor/ProjectBrowser.*` - folder tree, list and grid, search (`t:model`, `ext:png`, `l:tag`, `is:unused`, `is:broken`, `uses:`, `deps:`), smart filters (All Models, Recently Changed, Unused Assets), multi-select; the listing, counts, folders and dependency lookups come from `AssetDatabase`
+  - 15.4.8 Project panel tab strip - `editor/ProjectTabs.hpp`, `editor/main.cpp` (`DrawProject`) - Assets / Favourites / Recent tabs (Search shows while the box has text) above the panes; Favourites is a flat list view of the starred items (smart view 102), Recent is the existing Recently Changed view; the last tab and folder are remembered per project in `.okay/projectview.txt`
   - 15.4.2 Asset icons and thumbnails - `editor/main.cpp`, `editor/ProjectBrowser.*` - drawn icons per asset kind while a picture is not made yet; pictures from `ThumbnailCache` (textures, audio waveforms, models, meshes, materials, prefabs, scenes), tile size Small / Medium / Large and a slider, grid or list
   - 15.4.3 Asset color labels - `editor/main.cpp` (~8542-8589) - per-project labels stored in `.okaylabels`
   - 15.4.4 Import Model - `editor/main.cpp` (~2407-2512) - OS file picker first, then a settings dialog
@@ -96,7 +97,7 @@ Line ranges for `editor/main.cpp` are approximate (as of 2026-11-08) and move wh
 - **API:** View > Panels > Project, View > Panels > Asset Manager, File > Import Model
 - **Editor:** Project panel, Asset Manager window
 - **Docs:** `docs/editor.md` (Drag & drop from Project), `docs/project_panel.md` (Right-click menus), `docs/try_it.md`
-- **Tests:** `assetmanager`, `asset_database`, `project_panel`, `project_panel_db`, `project_context_model`, `project_menu_ops`, `launch_file`
+- **Tests:** `assetmanager`, `asset_database`, `project_panel`, `project_panel_db`, `project_context_model`, `project_menu_ops`, `launch_file`, `project_tabs`
 - **Status:** Works - the panel reads from the asset database and thumbnail cache; the window itself is only checked by running the editor (screenshots), the model has tests
 - **Open:** colour labels are still the editor's own list (`.okaylabels`), separate from the tags in `.okaymeta`; changes made outside the editor show up on the next poll (2 s or more), not at once; thumbnails are made on the main thread within a frame budget; the right-click menus have no Export Package (no package exporter exists), no Select Dependencies (a selection cannot reach into other folders), no Localization table or Animation in Create, and their drawing, the Move to... and Properties windows and the Explorer and default-app launches were never seen in a running editor
 - **Related:** 20, 3.6, 1.6, 17.6, 15.2

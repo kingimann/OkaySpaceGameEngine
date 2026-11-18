@@ -30,7 +30,11 @@ patches are not done here (`docs/release_channels.md`, "Cutting an LTS").
    * **CI gate (rule 6, no second CI run).** It asks GitHub for main's own `CI` run (the push run) for that exact commit. It refuses with a
      clear message if there is none, if it is still running or queued, if it finished red, cancelled or skipped, or if any job in it is not
      `success`/`skipped` (a job that was allowed to fail would still make the run "success"). So the commit is only released after the
-     full CI, including the slow "Build & test (Ubuntu)" job, passed on main. Dispatch again when CI finishes.
+     full CI, including the slow "Build & test (Ubuntu)" job, passed on main. **If CI is still running it waits** (every 30 s, at most
+     90 min; a run that has not started yet gets 10 min) and stops at once, with the job names, when a job has already ended red or
+     cancelled. Input `gate=release` (default `full`) waits only for the jobs that build and test what ships (`RELEASE_GATE_JOBS` in
+     `scripts/fast_release.py`) and does not wait for the informational ones (Assimp, own HTTP, own stack, no-libsodium crypto, WebGL, SQL);
+     a red or cancelled job anywhere still refuses. `full` is what rule 6 asks; use `release` only with the owner's say-so.
    * **Version (rule 12).** Releases are `2.<build>.<patch>`. The next version is counted from the newest published one, read from git tags,
      every GitHub release (drafts too) and `versions.json` on the update server. It refuses a version that already exists, one that is not
      newer than everything published, and one in the LTS line. A `CMakeLists.txt` version that somebody already raised above the newest
@@ -43,7 +47,7 @@ patches are not done here (`docs/release_channels.md`, "Cutting an LTS").
    build, the version is written into the runner's copy of `CMakeLists.txt` (never committed); the build script then derives the binaries'
    version, `VERSION.txt` (twice), the zip name and the tag from it, so they cannot disagree. A check before publishing confirms that
    `VERSION.txt` and the programs really contain the version. The tag is made on the tested commit. Signing, checksums, the Supabase publish,
-   the Linux server and the "Make the release visible (latest)" job are release.yml's own and unchanged: the release stays hidden (not
+   the Linux server (built beside Windows, attached by the Windows job's last steps) and the "mark latest" step (the end of the same job, no separate runner) are release.yml's own: the release stays hidden (not
    "latest") unless `versions.json` has a SHA-256 for `OkaySpace.exe`, `OkayEngine.exe` and `OkaySpacePlayer.exe` (rule 13).
 3. **Check the release** (job `after`): what used to be checked by hand. Fails loudly, with a table in the summary, unless: the GitHub
    release is published (not a draft) and its tag is on the tested commit; every asset is attached (three programs, `VERSION.txt`,

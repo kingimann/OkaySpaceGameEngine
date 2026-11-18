@@ -121,6 +121,8 @@ public:
     static Color TextColor(const Color& foreground, const Color& background);
     /// Whether this action toggles instead of holding.
     static bool ToggleFor(const std::string& action);
+    /// True when any action toggles (so the per-frame action loop can skip the lookup when none does).
+    static bool AnyToggle();
     /// 0 .. 1 for the player's aim assist level.
     static float AimAssistStrength();
 

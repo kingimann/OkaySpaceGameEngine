@@ -83,7 +83,10 @@ def check_includes(root, base, head, rev=None):
             continue
         if "lint-allow: win32-thread" in text:
             continue
-        m = THREAD_RE.search(text)
+        code = text.split("//", 1)[0]  # a mention inside a // comment is not a use
+        if code.lstrip().startswith(("*", "/*")):
+            continue  # inside a block comment: a mention is not a use
+        m = THREAD_RE.search(code)
         if not m:
             continue
         is_header = path.endswith((".hpp", ".h", ".inc"))

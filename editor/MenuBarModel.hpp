@@ -116,6 +116,7 @@ struct State {
     int  recentCount = 0;           // scenes in Open Recent
     bool assimp = false;            // Import Model reads more formats (tooltip only)
     bool isolating = false;         // Isolate mode is on
+    bool darkMode = true;           // the editor is in dark mode (false = light mode)
 };
 
 // ---- GameObject > Create: the categories every "create an object" menu shares ----
@@ -212,10 +213,15 @@ inline std::vector<Entry> EditMenu(const State& s) {
                        s.objectCount > 0, "The scene has no objects."));
     m.push_back(OnlyIf(Item("edit.deselect", "Deselect"), sel, "Nothing is selected."));
     m.push_back(Sep());
-    m.push_back(SlotMenu("edit.preferences", "Preferences", "How the editor looks: UI scale, row density, theme and accent colour."));
+    m.push_back(OnlyIf(Item("edit.darkmode", "Dark Mode", "", "Dark editor colours."), !s.darkMode, "The editor is already in dark mode."));
+    m.push_back(OnlyIf(Item("edit.lightmode", "Light Mode", "", "Light editor colours."), s.darkMode, "The editor is already in light mode."));
     m.push_back(Item("edit.projectsettings", "Project Settings..."));
     return m;
 }
+
+/// Old okay_settings.txt files saved one of three themes (0 Slate, 1 Light, 2 Classic). Only light is a light look; Slate and
+/// Classic are dark, and anything unknown falls back to dark.
+inline bool LegacyThemeIsDark(int oldTheme) { return oldTheme != 1; }
 
 inline std::vector<Entry> GameObjectMenu(const State& s) {
     std::vector<Entry> m;
@@ -251,7 +257,6 @@ inline std::vector<Entry> PanelsSubmenu() {
     p.push_back(Toggle("panel.scenemanager", "Scene Manager"));
     p.push_back(Toggle("panel.net", "Net"));
     p.push_back(Toggle("panel.savemanager", "Save Manager"));
-    p.push_back(Toggle("panel.varwatch", "Variables (watch)"));
     p.push_back(Sep());
     p.push_back(Toggle("panel.history", "History"));
     p.push_back(Toggle("panel.stats", "Stats"));
@@ -260,12 +265,12 @@ inline std::vector<Entry> PanelsSubmenu() {
     p.push_back(Toggle("panel.assetmanager", "Asset Manager"));
     p.push_back(Toggle("panel.crashlog", "Crash Log", "View past crash reports (okay_crashlog.txt) and copy them to send to support."));
     p.push_back(Toggle("panel.audiomixer", "Audio Mixer", "Master and group volumes (Music, SFX, UI, Voice), output levels while playing, and music ducking."));
+    p.push_back(Toggle("panel.input", "Input", "Live keys, mouse, controllers and actions while the game plays, the last events, input recording and replay, and each action's response curve."));
     return p;
 }
 
 inline std::vector<Entry> ToolsSubmenu() {
     std::vector<Entry> t;
-    t.push_back(Toggle("tool.customactions", "Custom Actions"));
     t.push_back(Toggle("tool.visualscript", "Visual Script"));
     t.push_back(Toggle("tool.scripteditor", "Script Editor"));
     t.push_back(Sep());
@@ -284,6 +289,7 @@ inline std::vector<Entry> ToolsSubmenu() {
     t.push_back(Toggle("tool.uitheme", "UI Theme", "Define a reusable UI style (colors, corners, borders) and apply it to every widget at once: pick a preset or make your own, then restyle the whole UI in one click."));
     t.push_back(Toggle("tool.items", "Items, Loot & Recipes", "Define items, loot tables and crafting recipes. Saved as items.okayitems, .okayloot and .okayrecipes."));
     t.push_back(Toggle("tool.weapons", "Weapons", "Define swords and guns once (damage, swing or fire rate, range, rounds and reload, hit window, arc or hit box, combo and knockback). Melee and guns use these."));
+    t.push_back(Toggle("tool.inputactions", "Input Actions", "Author an input asset (.okayinput): control schemes, action maps, typed actions (button, axis, 2D and 3D vector), bindings with processors, and interactions (hold, tap, multi-tap, repeat), with a check list and a live view."));
     t.push_back(Toggle("tool.localization", "Localization", "The project's string table: every text key in every language, how complete each language is, CSV for translators and a pseudo-localized preview."));
     return t;
 }

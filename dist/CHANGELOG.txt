@@ -1,5 +1,54 @@
 OkaySpace Game Engine — Changelog
 
+v2.885.0
+  Easier scripts and modeling
+  - Visual Script is much simpler: Quick blocks do a whole job in one block
+    (for example "Open Door When Touched" instead of 10 nodes and 8 wires).
+    An empty script shows recipe cards you click to start.
+  - The Add node list shows 55 plain-named nodes in six groups. Tick
+    "Show all nodes" to see everything.
+  - The node search window is bigger, has a preview, and works with the
+    keyboard. The script window has Compact, Comfortable and Spacious sizes.
+  - Project panel has Assets, Favourites and Recent tabs.
+  - Modeling is easier: fewer clicks, starter shapes, and the side bar folds
+    with Ctrl+\.
+
+v2.884.0
+  Fixes
+  - Save before stopping really saves, Timeline keys survive dragging, and
+    LOD distances work on big objects.
+  - Prefab variants: a prefab file that is cut short is refused instead of
+    half loading, and long Windows paths are no longer cut off.
+  - Release checks wait longer for the update server before publishing.
+
+v2.883.0
+  Fixes and new things
+  - Editor: Dark and Light mode replace the Preferences window, and
+    anti-aliasing and VSync have an Auto choice that picks the best setting
+    for your PC.
+  - Fixes: project numbers are safe, tagging no longer shrinks textures,
+    material paths with spaces work, OkayScript object references and the 3D
+    Rigidbody API are fixed, and the Inspector no longer shows the wrong
+    object after Undo while locked.
+  - Scripts can no longer spawn prefabs from outside the game folder.
+  - Launcher and editor screens: the Install now button, the Community
+    games list, overlapping viewport text and cut-off fields are fixed.
+  - Editor no longer flips a window setting every frame on systems with
+    one window.
+  - Under the hood: an own download client (off by default) and faster
+    release builds.
+
+v2.882.0
+  Fixes and new things
+  - Security: scripts can no longer read or write files outside the project,
+    the relay and updater checks were tightened, and a reactions database
+    hole was closed.
+  - Modeling: Recenter, Ground and Fit 1u now survive saving; typed NaN or
+    infinity values no longer break a mesh; Solidify closes open edges; Export
+    OBJ keeps colours, polygons and normals; every whole-mesh button is one
+    undo step in Edit Mesh.
+  - Many smaller bug fixes in scenes, scripts and saving.
+
 v2.881.0
   New things
   - Anti-cheat hardening for multiplayer games: the server can keep a ban

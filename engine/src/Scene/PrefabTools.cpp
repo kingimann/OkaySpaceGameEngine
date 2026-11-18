@@ -202,6 +202,20 @@ struct RawDoc {
     std::vector<RawObj> objs;
 };
 
+// A top-level line that is a complete record this loader knows: a `variant` with its
+// quoted base path, or a well-formed override / unset / remove record.
+bool IsWholeTopRecord(const std::string& t) {
+    const std::string tok = FirstToken(t);
+    if (tok == "variant") {
+        std::size_t p = t.find(tok) + tok.size();
+        SkipSpaces(t, p);
+        std::string b;
+        return p < t.size() && t[p] == '"' && ReadQuoted(t, p, b) && !b.empty();
+    }
+    Delta d;
+    return ParseDeltaLine(t, d) == 1;
+}
+
 // Strict about structure, so a truncated or damaged file is refused here and never
 // reaches the object loader half-built.
 bool ParseRaw(const std::string& text, RawDoc& doc, std::string& err) {
@@ -246,6 +260,13 @@ bool ParseRaw(const std::string& text, RawDoc& doc, std::string& err) {
             doc.objs.push_back({idx, name, {}});
             cur = &doc.objs.back();
             continue;
+        }
+        // The writer ends every line with a newline. A last top-level line without one
+        // that is not a whole record means the file was cut in the middle of that line:
+        // refuse it instead of dropping the half record and loading a different prefab.
+        if (in.eof() && !IsWholeTopRecord(t)) {
+            err = "the file is cut short (its last line '" + t + "' is incomplete)";
+            return false;
         }
         (doc.objs.empty() ? doc.head : doc.tail).push_back(t);
     }

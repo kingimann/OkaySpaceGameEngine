@@ -53,7 +53,8 @@ Edit
   Select All
   Deselect
   ---
-  Preferences >                  UI Scale, Density, Theme, Accent color   (was View > Appearance)
+  Dark Mode                      the only look choice (greyed while the editor is dark)
+  Light Mode                     (greyed while the editor is light)
   Project Settings...
 GameObject
   Create Empty
@@ -76,8 +77,8 @@ GameObject
   Snap Position to Grid          (needs a selection)
 View
   Panels >                       Hierarchy, Inspector, Project, Console, Problems, Game | Services, Scene Manager, Net,
-                                 Save Manager, Variables (watch) | History, Stats, Lighting, Profiler, Asset Manager, Crash Log, Audio Mixer
-  Editors & Tools >              Custom Actions, Visual Script, Script Editor | Animation, Animator, Timeline, Navigation,
+                                 Save Manager, History, Stats, Lighting, Profiler, Asset Manager, Crash Log, Audio Mixer
+  Editors & Tools >              Visual Script, Script Editor | Animation, Animator, Timeline, Navigation,
                                  Dialogue & Quests, Behavior Tree | Modeling, UV Editor, Sprite Editor | UI Editor (separate tab),
                                  UI Theme, Items Loot & Recipes, Weapons, Localization
   Layout >                       Built-in, Saved, Save Layout..., Delete Layout, Maximize Viewport, Side Tabs, Reset Layout
@@ -188,7 +189,7 @@ eight Create categories.
 |---|---|---|
 | "Examples" twice in File | **Three** submenus called Examples: one inline with a Node Playground list, one from `oked::DrawExamplesMenu` (UI Gallery), one inline with the Visual Script playground and the *same* Node Playground list | One `Examples` submenu: UI Gallery, UI Gallery (phone), Visual Script Node Playground, Node Playground (flow and variables). The repeated list is gone. `DrawExampleItems` (UIRuntimeTools.cpp) draws the UI Gallery items, so examples added there appear in the one menu. |
 | "Layout" in more than one place | (1) the tab right-click menu, (2) the Layout dropdown at the top right, (3) View > Layout all call **one** function (`DrawLayoutMenuItems`); (4) GameObject > UI > "Layout" was a different thing (UI containers) | (1) to (3): kept, one implementation, three entry points. (4) renamed "Layout & Overlays". View also had a loose "Reset Layout" beside the Layout menu, which is also inside it: the loose one is removed. |
-| Very long View menu | Panels, Editors & Tools, Rendering & Performance, UI backend, Scene Overlays, Appearance (4 more submenus), Camera Bookmarks, Layout, Reset Layout | Appearance moved to Edit > Preferences; the loose Reset Layout removed; Frame / Isolate / UI Editing Mode added in one tidy group; View now has 9 entries. |
+| Very long View menu | Panels, Editors & Tools, Rendering & Performance, UI backend, Scene Overlays, Appearance (4 more submenus), Camera Bookmarks, Layout, Reset Layout | Appearance was replaced by Edit > Dark Mode / Light Mode; the loose Reset Layout removed; Frame / Isolate / UI Editing Mode added in one tidy group; View now has 9 entries. |
 | Items without shortcuts | Copy, Paste, Duplicate, Delete, Undo, Save etc. were mixed between GameObject and Edit; Edit had no clipboard | Edit holds the clipboard commands; every key that works is shown (a test checks that a shown key is a real key and appears once per menu). |
 | Inconsistent names | "Open..." beside "Save Scene", "Create Sprite" vs "2D Shape", "Delete Selected" vs "Delete" | "Open Scene...", names inside the category menus drop "Create", Edit uses Cut / Copy / Paste / Duplicate / Delete. |
 | Greyed items without a reason | Open Recent, Delete Layout, Go to slot N, Node Playground, Save Selected as UI, Save in Play | Each says why on hover (the model has a `reason` for every disabled item; a test fails if one is missing). |
@@ -229,9 +230,9 @@ eight Create categories.
 |---|---|---|---|---|
 | Panels > (19 toggles) | show or hide a panel | 6584 | keep | `view.panels` |
 | Editors & Tools > (17 toggles; UI Editing Mode among them) | show or hide a tool window | 6610 | keep; UI Editing Mode moved to View | `view.tools`, `view.uionly` |
-| Rendering & Performance > | anti-aliasing, renderer status, UI backend (developer only), VSync, Smooth frame time, Auto performance | 6645 | keep | `view.rendering` (slot) |
+| Rendering & Performance > | anti-aliasing and VSync (each Auto / Off / On, Auto is the default and the title shows what it chose, e.g. "VSync: Auto (On)"; rules in `editor/AutoPerf.hpp`), renderer status, UI backend (developer only), Smooth frame time, Auto performance | 6645 | keep | `view.rendering` (slot) |
 | Scene Overlays > | colliders, volumes, physics debug, skeletons, gizmos, skybox, clear console on Play | 6706 | keep | `view.overlays` (slot) |
-| Appearance > UI Scale, Density, Theme, Accent color | editor look | 6730 | move | Edit > `edit.preferences` |
+| Appearance > UI Scale, Density, Theme, Accent color | editor look | 6730 | replaced | Edit > `edit.darkmode` / `edit.lightmode`; scale, density, accent and the theme list are gone (old saved values are ignored; old Light stays light, old Slate and Classic become dark) |
 | Camera Bookmarks > | save and go to 3 camera slots | 6768 | keep; reason on empty slots | `view.bookmarks` (slot) |
 | Layout > | presets, saved layouts, side tabs, maximize | 6791 | keep | `view.layout` (slot) |
 | Reset Layout (loose) | back to the default layout | 6792 | remove-duplicate (inside Layout) | `view.layout` |
@@ -286,7 +287,7 @@ eight Create categories.
 |---|---|---|
 | Edit > Cut, Copy, Paste, Duplicate, Delete | the keys (`HandleShortcuts`), and copies of Copy / Paste / Duplicate / Delete in GameObject | the Edit menu had none; Cut was only a key and a Hierarchy item |
 | Edit > Select All, Deselect | Hierarchy empty-space menu | no menu-bar entry |
-| Edit > Preferences | View > Appearance | moved here as the owner's list asks |
+| Edit > Dark Mode, Light Mode | View > Appearance > Theme | replaced the Preferences submenu (owner: "just have dark theme and light theme mode") |
 | View > Frame Selected, Isolate Selection | the F and Shift+I keys, and the Hierarchy item | not in any menu bar |
 | GameObject > Create Empty Child / Parent | Hierarchy items "Create Empty Child", "Create Parent" | not in the menu bar |
 | GameObject > Audio > Audio Source, Music Player | Inspector > Add Component > Audio has both (the same line builds the object) | no way to create a sound object from the menu |
@@ -309,7 +310,7 @@ Rig & IK > Add IK Target; GameObject > Create Empty Parent, then Create Empty Ch
 Exit Isolation; View > Panels (a check mark per open panel; clicking Problems closed that tab); View > Layout > Delete Layout hover reason;
 Camera Bookmarks "Go to slot 1" hover reason; the Play button, then File and Edit while the game ran; the [+] button; the empty-space menu; Help
 > Report a Bug... (no crash; there is no browser here, so the page and the clipboard line were not seen).
-**Not clicked:** the items under Open Recent, Autosave, Import Model, Merge Scene, Build Settings, New Project; Edit > Preferences items; the
+**Not clicked:** the items under Open Recent, Autosave, Import Model, Merge Scene, Build Settings, New Project; Edit > Dark Mode / Light Mode; the
 other Create items (2D, Player, Light, Camera, Effects, UI); Instantiate Prefab, Array Duplicate, Snap; Help > Documentation, Check for
 Updates, Keyboard Shortcuts, About, Scripting Reference; the prefab menu (no prefab in the test project); Parent To, Order, Transform
 and the Expand/Collapse items; Paste as Child; Open Recent greyed with no history (the test project always had its scene in the list).

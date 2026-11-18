@@ -215,6 +215,11 @@ class Lint(unittest.TestCase):
                        "tests/test_x.cpp": "#include <thread>\nstd::thread t;\n"}, BL.check_includes)
         self.assertEqual(f, [])
 
+    def test_comment_mentions_are_not_uses(self):
+        f = self.lint({"launcher/main.cpp": "// MinGW has no std::thread here\nint x; // std::mutex is not used\n/* std::thread */\n * std::condition_variable\n",
+                       "launcher/other.cpp": "std::thread t;  // a real use\n"}, BL.check_includes)
+        self.assertEqual([(x["file"], x["line"]) for x in f], [("launcher/other.cpp", 1)])
+
     def test_guarded_is_warning_and_allow_marker(self):
         f = self.lint({"engine/src/Core/X.cpp": "#if !defined(_WIN32)\n#include <thread>\n#endif\n#include <mutex>  // lint-allow: win32-thread\n"}, BL.check_includes)
         self.assertEqual([x["sev"] for x in f], ["warning"])

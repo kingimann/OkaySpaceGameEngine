@@ -225,13 +225,26 @@ jobs:
     env:
       ASAN_OPTIONS: detect_leaks=1:abort_on_error=1
       UBSAN_OPTIONS: print_stacktrace=1:halt_on_error=1
+      CCACHE_DIR: ${{ github.workspace }}/.ccache
+      CCACHE_COMPRESS: "1"
+      CCACHE_MAXSIZE: 2G
     steps:
       - uses: actions/checkout@v6
 
       - name: Install toolchain
         run: |
           bash scripts/ci-apt-mirror.sh
-          sudo apt-get update && sudo apt-get install -y cmake g++ ninja-build libsdl2-dev
+          sudo apt-get update && sudo apt-get install -y cmake g++ ninja-build libsdl2-dev ccache
+
+      # Same rule as the other jobs (#953): every run restores, only a push to main saves. This job was the critical path
+      # (about 21.6 min, of which a 16.3 min build with no cache). Linking is not cached, so the link share stays.
+      - name: Restore compiler cache
+        uses: actions/cache/restore@v5
+        with:
+          path: .ccache
+          key: ccache-ubuntu-asan-${{ github.sha }}
+          restore-keys: |
+            ccache-ubuntu-asan-
 
       # The runner kernel's high mmap randomness can break ASan's shadow memory
       # setup (random "DEADLYSIGNAL" crashes before main); 28 bits is safe.
@@ -244,7 +257,8 @@ jobs:
         run: |
           cmake -S . -B build-asan -G Ninja -DCMAKE_BUILD_TYPE=Debug -DCMAKE_CXX_FLAGS_DEBUG=-g1 \
             -DOKAY_SANITIZE=address,undefined,float-cast-overflow -DOKAY_BUILD_TESTS=ON \
-            -DOKAY_BUILD_SANDBOX=OFF -DOKAY_BUILD_LAUNCHER=OFF -DOKAY_USE_SODIUM=OFF
+            -DOKAY_BUILD_SANDBOX=OFF -DOKAY_BUILD_LAUNCHER=OFF -DOKAY_USE_SODIUM=OFF \
+            -DCMAKE_C_COMPILER_LAUNCHER=ccache -DCMAKE_CXX_COMPILER_LAUNCHER=ccache
 
       # Every test_script_* target is picked up from tests/CMakeLists.txt, so new
       # script tests join this job without editing it.
@@ -276,7 +290,21 @@ jobs:
       # (out of memory) on most runs, because every sanitized test executable links the
       # whole sanitized engine.
       - name: Build
-        run: cmake --build build-asan -j 3 --target $SAN_TESTS
+        run: |
+          ccache -z || true
+          cmake --build build-asan -j 3 --target $SAN_TESTS
+
+      # Look for the hit rate here: it is the before/after measure for the cache.
+      - name: Compiler cache statistics
+        if: always()
+        run: ccache -s || true
+
+      - name: Save compiler cache (main only)
+        if: ${{ always() && github.event_name == 'push' && github.ref == 'refs/heads/main' }}
+        uses: actions/cache/save@v5
+        with:
+          path: .ccache
+          key: ccache-ubuntu-asan-${{ github.sha }}
 
       - name: Test
         working-directory: build-asan/tests
@@ -386,13 +414,13 @@ jobs:
           grep -q 'OKAY_OWN_HTTP=1' build-http/build.ninja
 
       - name: Build
-        run: cmake --build build-http -j2 --target test_own_http test_own_http_inflate test_own_http_net test_launcher_download_own test_native_fetch test_playfab_own
+        run: cmake --build build-http -j2 --target test_own_http test_own_http_inflate test_own_http_net test_own_http_download test_launcher_download_own test_native_fetch test_playfab_own
 
       - name: Test (a skipped TLS case fails)
         env:
           OKAY_REQUIRE_TLS_TESTS: "1"
           OKAY_REQUIRE_DIFFERENTIAL: "1"
-        run: ctest --test-dir build-http --output-on-failure -R '^(own_http|own_http_inflate|own_http_net|launcher_download_own|native_fetch|playfab_own)$'
+        run: ctest --test-dir build-http --output-on-failure -R '^(own_http|own_http_inflate|own_http_net|own_http_download|launcher_download_own|native_fetch|playfab_own)$'
 
       - name: Sanitizers (ASan + UBSan)
         env:

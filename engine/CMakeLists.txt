@@ -35,6 +35,7 @@ add_library(okay_engine
     src/Core/DebugOverlay.cpp
     src/Core/SaveGame.cpp
     src/Core/SaveFile.cpp
+    src/Core/TolerantNumbers.cpp
     src/Core/SaveFramework.cpp
     src/Core/SaveFrameworkScene.cpp
     src/Core/SaveFrameworkSync.cpp
@@ -56,6 +57,17 @@ add_library(okay_engine
     src/Core/ThumbnailCache.cpp
     src/Core/Localization.cpp
     src/Input/Input.cpp
+    src/Input/InputRecorder.cpp
+    src/Input/InputDebug.cpp
+    src/Input/Haptics.cpp
+    src/Input/GamepadInfo.cpp
+    src/Input/ControllerMapping.cpp
+    src/Input/PadProfiles.cpp
+    src/Input/ActionSet.cpp
+    src/Input/InputAsset.cpp
+    src/Input/PlayerInput.cpp
+    src/Input/InputRuntime.cpp
+    src/Input/ActionEditor.cpp
     src/Input/InputActions.cpp
     src/Input/GameInput.cpp
     src/Input/GestureRecognizer.cpp

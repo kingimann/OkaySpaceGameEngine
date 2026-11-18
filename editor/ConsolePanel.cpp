@@ -135,7 +135,7 @@ void ConsoleClear() {
 }
 
 #ifdef OKAY_HAVE_OKAYUI
-// The Console panel drawn by OkayUI (Edit > Preferences > UI backend, or OKAY_UI_BACKEND=okayui). The ImGui window stays: it
+// The Console panel drawn by OkayUI (View > Rendering & Performance > UI backend, or OKAY_UI_BACKEND=okayui). The ImGui window stays: it
 // is the dock tab, the title with the counts and the close box, and it hands its free area to OkayUI as one rectangle.
 namespace {
 okayuiscreens::ConsoleViewState g_okayView;
@@ -146,7 +146,11 @@ void DrawConsoleOkayUI(const char* title) {
     if (g_model.ConsumePauseRequest()) g_paused = true;
     if (g_preferPending) { g_okayView.preferCategory = g_preferCategory; g_preferPending = false; }
     if (ImGui::Begin(title, &g_showConsole, ImGuiWindowFlags_NoScrollbar | ImGuiWindowFlags_NoScrollWithMouse)) {
-        const ImVec2 p = ImGui::GetCursorScreenPos();
+        // OkayUI draws and reads the mouse in the editor window's own pixels; with the multi-window viewports on, ImGui's
+        // screen positions are desktop positions, so take the window's position off (the panel was drawn that far down
+        // and to the right of where it belongs, by the editor window's place on the screen).
+        const ImVec2 vpPos = ImGui::GetWindowViewport()->Pos;
+        const ImVec2 p(ImGui::GetCursorScreenPos().x - vpPos.x, ImGui::GetCursorScreenPos().y - vpPos.y);
         ImVec2 a = ImGui::GetContentRegionAvail();
         a.x = std::max(a.x, 8.0f); a.y = std::max(a.y, 8.0f);
         ImGui::InvisibleButton("##okayui_console", a);   // the rectangle: an ImGui item, so ImGui does not move or scroll the window under it

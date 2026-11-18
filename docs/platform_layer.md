@@ -553,8 +553,12 @@ registered for the main and chat window); `okay::pb::CreateRenderer` on an own-b
 painter's address as the "renderer" handle (never an SDL renderer: use it only with `okay::pb` and the Painter); Splash, the script UI bridge and OkayUI's end-of-frame
 (`shared/OkayUIFrame.hpp`: `EndFrame` on SDL, `EndFrameData` + `FrameDrawer` on a painter) take the handle through `okay::pb::For`; `okay::SetAppIcon` is `Window::SetIcon`; the mouse
 state and text-input calls are seam calls. The launcher has no direct `SDL_*` call left except `SDL_SetMainReady` and audio-format macros. The editor got the same changes (window title, show,
-raise, restore, held keys, cursor visibility through the seam; feed and renderer forced; painter factory) and compiles on Linux (`-fsyntax-only` and a full build, see the run notes), but a
-run of it on the own backend is reported separately below.
+raise, restore, held keys, cursor visibility through the seam; feed and renderer forced; painter factory) and compiles on Linux (`-fsyntax-only` and a full build, see the run notes), and it was **built and run headless** on both backends (`bin/OkayEngine --dev` on Xvfb, `APP_ARGS=--dev scripts/headless_app_shot.sh ...`): default backend and own
+backend both start, draw the full editor UI (menus, Hierarchy, Scene grid, Inspector, Console, status bar) and keep running 60 s; the own backend run logs
+`platform backend: own`, own feed, own renderer and, as designed, "Multi-window panels are off" (no multi-viewport on the own feed). Pictures:
+`docs/img/editor_sdl2_headless.png` and `docs/img/editor_own_backend_headless.png` (the default run happened to show the "Engine Update" dialog because its update check
+had finished by the time of the picture; the own run's check had not, so the two pictures differ by that dialog, not by drawing). The own run showed 8 frames per second
+(software painter on a shared machine). Not tried: any click, the GL 3D view (needs a scene with a 3D camera), play mode, the file dialog, Windows.
 
 ## Not behind the seam yet (stage 1 list; see stage 2 above for what changed)
 

@@ -83,6 +83,8 @@ release job or the installer build for this change.
 | 7zn | Guided: Randomise within a style (seed), validation check, save-edit-reopen round trip | Modeling > **Guided** > Variation and check; File > Examples > Guided modeling > `guided_car_styles` | New in this change; tested on Linux, buttons never clicked in a window (unverified) |
 | 7zo | Guided: no more lag when you change a slider, style or Detail; a live drag preview; a "Last change" time line | Modeling > **Guided**, select a guided model (File > Examples > Guided modeling > `guided_vehicles`), drag any slider, press Ultra | New in this change; timings measured headless on Linux (`test_guided_perf`), the editor panel compiles but was **never opened in a real window** (unverified) |
 | 7zq | Modeling: curves, bevel weights, Quad Remesh, reference images, mirror/undo/snapping fixes, faces keeping slots and UVs, slot remove and reorder | `examples\modeling_tools\curves_bevel.okayscene` (File > Open...), then the Modeling window > Edit Mesh | Linux headless tests only; editor window, Direct3D and OpenGL per-slot pictures unverified |
+| 7zr | A prefab variant cut in the middle of a line is refused ("cut short"), not loaded with a record missing; deep project folders work | Drag a damaged `.okayprefab` variant into the scene in `Tools\OkayEngine.exe` | New in this change; see section 7zr |
+| 7zsd | Sandbox digging works in first and third person; crosshair, dig feedback, rebindable dig/place/pick actions, hotbar | New Project > Sandbox, or File > Examples > voxel > `voxel_sandbox` (also `voxel_big_world`); press V to switch view | New in this change; tested headless on Linux, not run in a window or on Windows |
 | 14 | One SHA-256 (file checksums, account passwords, anti-cheat tag, voice key) | Nothing new to click: sign in with an existing local account (Account tab), use the launcher's update check, join an anti-cheat checked server, join a voice room; all must work exactly as before. For the checks themselves see `docs/sha256_comparison.md` section "How to try it" | Tests only (Linux); launcher, Windows and real accounts unverified |
 | 16 | Main menu bar clean-up: one Examples, Edit clipboard commands, GameObject categories, View, Help | The bar at the top of `Tools\OkayEngine.exe` | New in this change; see section 16 for what was and was not seen |
 | 17 | Hierarchy right-click menus: Create Child with every category, Add Component, Select Same Type, "Delete 3 Objects" | Right-click in the Hierarchy panel of `Tools\OkayEngine.exe` | New in this change; see section 17 |
@@ -90,7 +92,9 @@ release job or the installer build for this change.
 | fast1 | Fast release: one workflow dispatch, no version-bump PR | GitHub: Actions > "Fast release" > Run workflow (tick dry_run first); a change adds `dist/changelog.d/<id>.txt` | Built and tested offline with fake data; never run on GitHub; off until `FAST_RELEASE_ENABLED=1` |
 | hygiene1 | Account address and key in one config file; no built programs in git | Nothing to open: build or release as usual, optional key rotation in Supabase | Verified on Linux (tests, configure); no release or Windows run |
 | input | Input upgrade: input playground, rumble patterns, vibration setting, key positions (AZERTY) | Editor: File > Open, `examples\input\input_playground.okayscene`, then Play | Tested headless on Linux; nothing run on Windows or with a real controller or AZERTY keyboard |
+| one-controller | One Player Controller for first and third person; no Humanoid or separate First and Third Person entries | Editor: GameObject > Player, Add Component > Gameplay, File > New Project (First and Third Person) | Tests run on Linux only; not run in a real editor or on Windows |
 | security-sec1 | Security plan SEC1: script file paths, update signature status, relay caps, reactions SQL | examples\security_paths\script_paths.okayscene (Play, read Console); Settings > About and Help > About line; SQL and relay are owner steps | Tests on Linux only; editor/launcher lines not run; nothing on Windows or real Supabase |
+| vpa | Multi-window panels start cleanly on every video driver | `Tools\OkayEngine.exe`: drag a panel tab outside the editor | Linux only (Xvfb, a build with assertions on); Windows unverified |
 | 7n | Every own replacement in one table: the switch, the sample, how to tell it is on, and what is missing | section 7n below and `docs/own_flip_proposal.md` | Table is new. Read from the code and from CI logs, not run on Windows |
 | 8 | Own model readers (off by default) | `OKAY_OWN_STACK=1` or `OKAY_OWN_<FMT>=1`, `examples\own_readers` | Switch works on a release; see the table |
 | 9 | Own WAV decoder (off by default) | `OKAY_OWN_WAV=1`, `examples\own_wav` | Switch works; no log line |
@@ -1250,6 +1254,61 @@ More new steps (same branch):
 
 **Status.** The engine side is covered by the Linux tests `modeling_more`, `modeling_more_scene` and `modeling_fuzz` (headless). The editor buttons and menus here were not compiled with the editor on Linux and not clicked in the Windows editor; the Direct3D 11/12 and OpenGL per-slot drawing never ran on a GPU. The picture `docs/images/modeling_more/curves_bevel.png` is a headless software render.
 
+## 7zr. Damaged prefab variants and deep project folders
+
+What changed: a variant prefab file that was cut off in the middle of its last line (a crash or a full disk while
+saving, a bad copy) used to load anyway, quietly missing the half-written record (for example a colour or tag
+override). It is now refused with an error that says the file is cut short, and the scene is left as it was.
+
+1. In the editor, make a prefab, then **Create Variant** of it, and change something on the variant (a tag) so the
+   variant file has an `override` line.
+2. Close the editor. Open the variant `.okayprefab` in Notepad. Delete the end of the file from the middle of an
+   `override ...` line onwards (keep `override 2 ` and delete the rest), and save.
+3. Start the editor and drag the variant into the scene. You should see an error that names the variant and says
+   "cut short", and nothing is added. Before this change the variant appeared without that override.
+4. Deep folders: put the project in a folder whose full path is longer than 260 characters and repeat steps 1 and 3
+   with an undamaged variant. It should load normally.
+
+Also fixed for deep folders on Windows (code only): a file dragged onto the editor window from a deep folder kept
+only the first 520 characters of its path; the editor's own path (used to find the player, plugins, downloads and
+crash reports) was cut at 260 characters; the crash report folder was cut at 260 characters.
+
+**Checks run for this change** (Linux): `prefab_variants` passed with 201 different temp folder path lengths
+(about 100 to 300 characters); its new suite cuts a variant in a folder over 300 characters deep at every byte, and
+failed before the fix (82 cuts in the middle of a line loaded). `ctest -R "prefab|scene|asset|path"`: see the PR.
+
+**Not seen:** the editor steps above were not run; the Windows changes (drag and drop, editor path, crash folder,
+`Backend::BasePath`) were only syntax-checked with MinGW, not built or run on Windows.
+
+## 7zsd. Sandbox digging: first and third person
+
+**What it is.** The Sandbox's digger now aims the same way in both views. The aim line always goes through the
+crosshair (the centre of the screen). In third person it starts where that line passes the character (not at the lens
+behind you), the reach is measured from the character, and it will not dig inside your own body, with your head in the
+ground, or the ground behind a wall you are looking over. The same Player Controller View setting (First Person,
+Third Person, Both) is used; the Sandbox template now uses Both and starts in first person.
+
+**Steps.**
+1. Open the editor, choose New Project > Sandbox (or File > Examples > voxel > `voxel_sandbox`), press Play.
+2. Look at the ground. A hollow orange marker shows where you will dig. Hold left mouse (or RT on a pad): the ground
+   goes, the marker shrinks and turns white as the ground under it is taken away. Right mouse (or LT) builds.
+3. Press V (or Back on a pad) to switch to third person. Dig again: the marker is still under the crosshair, and
+   ground more than 14 m from the character is out of reach (the marker disappears).
+4. Stand with a wall of ground between you and a spot you look at over your shoulder: it will not dig that spot.
+5. Press 1 to 9 to pick the material to build with, or use the mouse wheel or the bumpers (LB / RB) to step through
+   them. With a terrain that has no materials, the wheel changes the brush size instead. T (or a click on the right
+   stick) picks the material under the crosshair.
+6. Rebind: the actions are named Dig, Place, PickBlock, HotbarNext and HotbarPrev (the Input settings / remap
+   screen list them; until you rebind Dig and Place they follow Fire and Aim, i.e. left and right mouse, RT and LT). Once an action is rebound its old default button stops working.
+
+**What you should see.** The same dig in both views, a crosshair dot in the middle of the screen, the help line at
+the top listing the controls. A material the tool is too weak for (Realistic preset, hardness above the tool
+power) shows a red marker.
+
+**Status.** Verified here: the `voxel_aim` test (ray start, reach, wall, body, both views with a real Player
+Controller, actions, hotbar, progress, scene save) on Linux. Unverified: nothing was run in a window, on Windows
+or with a real pad or touch screen.
+
 ## 16. Main menu bar (cleaned up)
 
 What changed and why: [editor_menus.md](editor_menus.md) (the map, and a table of every old item and where it went).
@@ -1395,6 +1454,42 @@ Status: the list logic (hide, restart, a project that is both in the folder and 
 forms, more than 100 hidden projects, delete clean-up) is tested by `tests/test_project_list.cpp` (g++ on Linux). The
 Recycle Bin call and the clicks were not run on Windows.
 
+## Damaged project, texture and material files load safely (branch `claude2/data-load-checks`, not merged or released yet)
+
+Three bug fixes from issue #888 (findings 74, 75 and 78). Nothing new to click; what changes is what you see after loading.
+
+**Project settings with bad numbers (finding 74).**
+1. Close the editor. Open your project folder and edit `project.okayproj` in Notepad. Change three lines to
+   `gravity3d=0 nan 0`, `ambient=5` and `splash_bg_top=nan 1e39 -3`, and save.
+2. Open the project in the editor and open **Edit > Project Settings**.
+3. You should see Gravity 3D back at `0, -9.81, 0` (a line with `nan` is ignored, so the default stays), Ambient at
+   `1` (5 is pulled down to the top of 0..1) and the splash background top colour at its default. Before this fix the
+   window showed `nan`, and Apply to current scene copied `nan` into the scene.
+   The rules: sizes 16..16384, gravity -10000..10000 per part, steps per second 1..500, ambient and colours 0..1. Each
+   corrected line writes one `WARN` line to the engine log.
+
+**Tagging a texture no longer shrinks it (finding 75).**
+1. Put a large picture (for example 4096 x 4096 px) in `Assets` and use it on a material, so you can see it is sharp.
+2. In the Project panel, right-click the picture and add a tag.
+3. Close and reopen the project (or reimport the picture). It should still be sharp: open its Import Settings and
+   **Largest side** says **No limit**. Before this fix the tag wrote `set maxSize 2048` into `big.png.okaymeta` and the
+   picture came back at 2048 px. To shrink a picture on purpose, choose a size in **Largest side**; that still works.
+   Pictures that already have a meta keep whatever it says (an old meta with `maxSize 2048` still shrinks; pick
+   **No limit** to undo it).
+
+**Materials with spaces in the texture path, or a bad number (finding 78).**
+1. Double-click a `.okaymat` (or make one in the Material editor). Set its texture to a file whose name has a space,
+   for example `Assets/Art/stone wall.png`. Save, close it, and open it again.
+2. You should see the full path and the texture on the object. Before this fix it came back as `Assets/Art/stone`
+   and the object was untextured. In the file the line is now `texture "Assets/Art/stone wall.png"` (a path without
+   spaces is still written bare, so older versions read it as before).
+3. Edit the `.okaymat` in Notepad and change the `emissive` line to `emissive inf 0 0`. Open it again: only emissive
+   red falls back to its default; tiling, rim, outline and the texture are all still there. Before, every line after
+   the `inf` was lost.
+
+**Checked:** `test_data_load_checks` (headless, Linux). **Not checked:** the editor windows above (the editor was
+not built for this change); anything on Windows.
+
 ## fast1. Fast release: one dispatch, no version-bump PR
 
 **What it is.** A release without the version-bump PR and its extra hour of CI. One click on "Fast release" works out the next version,
@@ -1410,7 +1505,7 @@ then "Release Windows build") still works. Everything: `docs/fast_release.md`.
 **What you should see.** A table with the new version (for example "v2.881.0, next build after 2.880.0"), the commit, the CI gate
 ("passed: run ..., N jobs") and how many new changelog entries there are, then the ROADMAP row, the update card lines and the top of the
 new changelog. If main's newest commit has no finished green CI run, the run goes red with "Refused: ..." and says what is wrong
-(missing, red). If CI is still running the run now waits for it (log lines every 30 s) instead of failing. Optional input `gate`: `release` waits only for the jobs that build what ships. That is the safety check working, not a failure of the tool.
+(missing, still running, red). That is the safety check working, not a failure of the tool.
 
 **Steps (the first real release through it).**
 1. Set the repository variable `FAST_RELEASE_ENABLED` to `1` (Settings > Secrets and variables > Actions > Variables).
@@ -1503,6 +1598,104 @@ What changes for you:
 
 **Status.** Tested headless on Linux (`input_deep`, `input_playground`; the playground test presses H, 0 and K and renders a software picture). Unverified: Windows, a real controller (rumble was only checked as the request the host takes), a real AZERTY keyboard. No Settings-screen toggle yet.
 
+## okay-build: our own replacement for CMake (not part of the Windows release; Linux checkout only, off by default)
+
+CMake stays the default build. okay-build is a second way to build the engine that does not need CMake or Ninja. Nothing in the release
+uses it. Plan and numbers: [own_build_plan.md](own_build_plan.md), section "Round 11".
+
+Needs g++, the SDL2 development headers and about 2 GB of disk. Run from a checkout of the repository.
+
+1. Build the tool and its tests: `sh tools/okaybuild/build.sh /tmp/okb`. You should see `okaybuild tests: N checks passed` (a few checks need
+   wine or libsodium and may fail on a machine without them; the failing names are printed).
+2. Read the project's CMake files with okay-build itself and see what it can express:
+   `/tmp/okb/okay-build cmake . -o build.cmake.okay --audit`.
+   You should see `okay-build cmake: 815 of 820 targets written ...` and a table (targets, sources, definitions, tests, what was not understood).
+   Options work like `-D`: `--opt OKAY_BUILD_EDITOR=ON --opt OKAY_BUILD_PLAYER=ON`. `--build-type None` gives plain `-O0` flags (Release is the default,
+   as in CMake). `--fetched imgui=/folder/with/imgui` says where the Dear ImGui sources already are (okay-build does not download).
+3. Build one program and its tests with no CMake: `/tmp/okb/okay-build -f build.cmake.okay -j2 --build-dir /tmp/okb-tree test_math`
+   (about 350 steps; delete `/tmp/okb-tree` and `build.cmake.okay` afterwards).
+4. Run the project's `add_test` lines like ctest: `/tmp/okb/okay-build -f build.cmake.okay -j2 --build-dir /tmp/okb-tree ctest '^(math|scene|serialize)$'`.
+   You should see `PASS math 0.0s` lines and `3 tests, 0 failed, 0 skipped`. The argument is a regular expression on the test name; with none, every test runs.
+5. Compare with CMake (needs cmake and ninja): configure with `cmake -G Ninja -B /tmp/cm -DCMAKE_EXPORT_COMPILE_COMMANDS=ON`, then
+   `okay-build -f build.cmake.okay compdb --build-dir /tmp/okb-tree` and
+   `python3 tools/okaybuild/examples/compare_cmake_commands.py /tmp/cm/compile_commands.json compile_commands.json $PWD`.
+   You should see `identical settings: N, different: 0`.
+
+Unverified: Windows (the reader and `ctest` were only run on Linux; `ctest` is not done on Windows), MSVC.
+
+## OkayScript: object references, Rigidbody calls and Find (bug fixes, branch `claude2/okayscript-object-refs`, not merged or released yet)
+
+Issue #888, Findings 108 to 111. Before: a bullet that hit the third "Enemy" destroyed the first one,
+`other.GetComponent<Rigidbody>()` pushed the attacker instead of the target, most `Rigidbody` calls did nothing, and
+`GameObject.Find` returned switched-off objects.
+
+1. Open the editor (`Tools\OkayEngine.exe` or Open from the launcher), then **File > Open** and pick
+   `examples\physics\script_object_refs.okayscene`.
+2. You see three red boxes, all named **Enemy**, a blue ball above the **right** one, and a yellow **Spinner** box.
+3. Press **Play** and open **View > Console**.
+4. Expect: the ball falls on the right enemy and **that** enemy disappears (the left and middle ones stay). The
+   Console shows `Ball hit Enemy at x = 3`. Before this fix the left enemy (x = -3) vanished instead.
+5. Expect: the yellow Spinner floats (its script turns gravity off with `rb.useGravity = false`) and spins about its
+   vertical axis (`rb.AddTorque(..., ForceMode.VelocityChange)`). The Console shows
+   `Spinner: spin = 3 rad/s, Find(Hidden Enemy) found = false, FindIncludingInactive found = true`
+   ("Hidden Enemy" is switched off in the Hierarchy).
+6. Try your own: select the Ball, open its script and change `Destroy(other);` to
+   `other.GetComponent<Renderer>().color = Color.green;`. Press Play: the hit enemy turns green, not the ball.
+
+What changed for scripts: `other`, `gameObject`, `GameObject.Find(..)`, `FindWithTag(..)`,
+`FindGameObjectsWithTag(..)` and what `Instantiate` / `spawn` return now carry the object's unique id. They still
+print and compare as the name, and a quoted name (`Destroy("Enemy")`) still means the first object with that name.
+Details: [scripting.md](scripting.md#object-references).
+
+**Status.** Engine tests run on Linux (see the PR). The editor and the Windows build were not run here, so steps 4
+to 6 are unverified on Windows; the same scene file is loaded and played headless by `test_okayscript_object_refs`.
+
+## one-controller. One Player Controller for first and third person (no Humanoid)
+
+**What it is.** A walking first- or third-person character is made with one thing, the **Player Controller**. Its **View**
+setting is First Person, Third Person or Both. The separate First Person, Third Person and Humanoid entries are gone from the
+menus and template lists. Third Person Shooter, Top Down, Vehicle, 2.5D, Click To Move and Free Roam stay (they are other
+kinds of game). Older scenes still open.
+
+**Steps.**
+1. Open the editor. Open **GameObject > Player**. You see **Player Controller (first / third person)** as the first entry, then
+   Third Person Shooter, Top Down and the others. There is no First Person, Third Person or Humanoid entry.
+2. Click **Player Controller (first / third person)**. A player and a camera appear. In the Inspector the **Player Controller**
+   panel has **View** (First Person only / Third Person only / Both). Press Play: you start behind the player; press **V** to
+   go to the eyes. Stop, set **View** to First Person only, press Play: eyes only, V does nothing.
+3. Select any object, **Add Component > Gameplay**. There is one **Player Controller (first / third person)** entry, and no
+   separate First Person or Third Person controller. (Foot IK: Add Component > Foot IK on the player; it wires itself.)
+4. **File > New Project...**: the template list has **First and Third Person** and no separate First Person, Third Person or
+   Humanoid template. The launcher's quick list shows the same one card.
+5. Old scenes: open a scene saved before this change that has a Humanoid player or a First Person or Third Person player
+   (for example any older project of yours). It opens, the player has a **Player Controller** with the same speeds and
+   settings, and Foot IK and Root Motion are still on it.
+6. Old launchers or scripts that pass `--template "First Person"` or `"Third Person"` to the editor still get this scene (it starts behind the player; press V for the eyes).
+
+**What you should see.** One controller entry in both menus, one New Project template, and old scenes loading with their
+settings. The Console says "Added Player Controller (View: Both ...)" when you use the menu entry.
+
+**Status.** Unverified in a real editor and on Windows. Tests run on Linux: `one_controller` (an old-format Humanoid scene and
+an old First plus Third scene load as one Player Controller and keep their settings), `templates_work` (one template, old titles
+still build, Humanoid gone), `scene_cameras`, `player_controller`, `view_upgrade`.
+
+## Scene view: the selected object's name sits on its object (bug fix)
+
+The small name box of the selected object in the 3D Scene view used to be drawn a gizmo's length to the right of the
+object, often on top of the next object (select cube A and its "A" sat on cube B). It now sits just above the object,
+beside the gizmo's up arrow, and never on a gizmo handle.
+
+1. Make a new 3D scene. Add two cubes (**GameObject > Cube** twice). Set the first one's Position to
+   -1.5, 0.5, 0 and the second one's to 1.5, 0.5, 0. Rename them A and B.
+2. Select A. Its name box sits just above the orange cube A, to the side of the green arrow, not on B. Select B: its box
+   sits just above B.
+3. Press the Rotate tool (the circle arrow button). The name stays by the object, inside the rings, or straight above the
+   rings when the object is small; it is never on a ring. Try the Scale tool and a few window sizes: the same.
+4. Switch the view to **2D**: the name sits at the object's corner, as before.
+
+Tests: `ctest -R editor_layout` (the placement maths, with the numbers from the screenshot that showed the bug).
+Checked by screenshots on Linux (Xvfb) at 1280x800, 1600x900 and 1920x1200; not checked on Windows.
+
 ## Security plan SEC1: script file paths, update signature status, relay caps, reactions SQL
 
 Details and the reasons: [security.md](security.md). Four protections; two you can see in the Windows release, two are owner steps.
@@ -1531,6 +1724,40 @@ paste it > Run. Check it with `select * from public.reaction_counts('dm', array[
 `sign_release_script`, and `reactions_sql` against a throwaway local Postgres. The editor and launcher lines are code that compiles
 in the build but was not seen on screen; nothing ran on Windows or against your real Supabase project.
 
+## Stop prompt saves, Timeline keys pass each other, LOD distances on big objects (bug fixes, issue #888 findings 85, 76, 77)
+
+Branch `claude2/editor-stop-save-timeline-lod`, not merged or released yet.
+
+**Save in the Stop prompt (finding 85).**
+1. Open any scene in the editor and change something (select a cube, press **Ctrl+D**). The title says "unsaved".
+2. Press **Play**. In "Save your work before playing?" click **Don't Save**.
+3. Press **Stop**. "Save your work before stopping?" lists "Scene". Click **Save**.
+4. Expected: Play stops, the title no longer says "unsaved", the Console says `Project saved: scene, settings`, and the
+   `.okayscene` file has the copied cube (open it again from the Project panel to check). The next Play does not ask.
+   Anything you changed *while playing* is still thrown away, as before.
+   Before the fix the Console said "The scene wasn't saved while playing" and the scene stayed unsaved.
+   The same now happens for "Save your work before opening another scene?" while playing.
+
+**Timeline keys (finding 76).**
+1. **Window > Timeline**, open or make a sequence, add a Transform track and keys at 0 s, 1 s and 2 s (double-click the row).
+2. Drag the 0 s key to 1.5 s, past the 1 s key.
+3. Expected: three keys (1 s, 1.5 s, 2 s); the 1 s key keeps its pose. Before the fix the 1 s key disappeared.
+   A key cannot land exactly on another key: it stops one frame before and moves on once you drag past. Typing another
+   key's time in the **Time** field is refused the same way (the field keeps the old time). Letterbox, Shake and Fade
+   keys behave the same.
+
+**LOD distances (finding 77).**
+1. Add a big object (a cube scaled to 20) and give it a **LOD Group** (distance mode, the default) with distances 5, 15, 40.
+   Turn on its debug tint so each level has a colour.
+2. Move the Scene camera away from it. Expected: level 1 from about 5.5 m and level 2 from about 16.7 m from the object's
+   centre (the extra 11 % is the 0.1 hysteresis), whatever the object's size. Before the fix a 20-unit object switched at
+   about 19 m and 39 m, and a 100-unit one at about 96 m and 193 m.
+
+**Checked (Linux, headless):** `test_stop_save_timeline_lod` 45 checks, 0 failures (21 of 41 failed before the fix);
+`test_editor_hooks`, `test_editor_undo`, `test_play*`, `test_player*`, `test_sequence`, `test_visibility_lod`,
+`test_optimize_simplify` and `test_optimize_occlusion` all pass. `editor/main.cpp` and `editor/TimelineWindow.cpp` were
+syntax-checked only (not built or run): the three walkthroughs above have not been tried in the GUI or on Windows.
+
 ## Team tooling (not part of the Windows release)
 
 How to try the collaboration tools ([collaboration.md](collaboration.md)); these run on a Linux checkout and on GitHub, not in
@@ -1543,34 +1770,32 @@ How to try the collaboration tools ([collaboration.md](collaboration.md)); these
    fails with the file and line and says to use `debugutil::SpinLock`.
 4. Open a PR without a "How to try it" section: the **PR hygiene** check fails and says what to add.
 
-## Modeling fixes: pivot buttons saved, one undo per button, NaN guard, closed Solidify, full OBJ export, no duplicate tools (issue #888, findings 134-139)
+## Lock Inspector keeps the right object after Undo (bug fix)
 
-All steps are in the Windows editor (OkaySpace.exe), with any scene open. Test: `ctest -R modeling_fixes_134_139`.
+**What was wrong:** with **Lock Inspector** on, pressing **Ctrl+Z** could make the Inspector show a *different* object. Undo
+rebuilds every object in the scene, and the Inspector remembered the locked object by its place in memory, which a new object
+could take over. It now remembers the object by its id (the GUID saved with the scene) and finds it again every frame.
 
-1. **Recenter / Ground / Fit 1u are saved (134).** GameObject > 3D > Cube. Window > Modeling > **Edit** page > **Ground**. The
-   cube jumps up so its base is at y = 0. Ctrl+S, close the scene and open it again: the cube is still resting on y = 0 (before,
-   it was centred again). Same with **Fit 1u** after a **Stretch X**, and on a ready-made prop (Add > Nature > Tree).
-2. **One undo per button (135).** Select the cube, turn **Edit Mesh** on, then on the Modeling window's **Edit** page press
-   UV **Box**, then **Twist Y**. Edit > Undo once: only the twist goes; the UV section still shows UVs. Redo brings the twist
-   back alone. In object mode (Edit Mesh off), **Ground** then Ctrl+Z puts the cube back (before, nothing happened).
-3. **A typed `nan` is ignored (136).** Double-click the **shear** field, type `nan`, Enter, press **Shear X**: the cube stays as
-   it was (before, it vanished and the scene saved `nan` vertices). Same for Jitter, Cast Cyl, Shrink/Fatten, Wireframe and the
-   UV **tile** field.
-4. **Solidify closes the sides (137).** Modeling > Add > **Plane**, then Edit > **Solidify** (0.10). The Edit Mesh page stats
-   show no open edges (before: "8 open edges"), and the slab looks solid from the side.
-5. **Export OBJ keeps the model (138).** Add > Props > **Barrel** (a coloured prop), Edit > **Export OBJ**. The console names
-   `Assets/<name>.obj`; next to it is `<name>.mtl` with one `Kd` colour per face colour. Press Export OBJ again: it writes
-   `<name>_2.obj` instead of replacing the first file. Open the .obj in a text editor: `v` lines carry vertex colours when the
-   mesh has them, faces are grouped under `usemtl colorN`, and a quad cube has 6 four-corner `f` lines. (The test reads the
-   file back with our OBJ reader and gets the same colours, polygons and positions; dragging it into the editor goes through
-   the same reader but was not tried by hand.)
-6. **One implementation per tool (139).** The Edit page's axis tool is now called **Slice X/Y/Z** (it cuts with planes); the
-   real **Loop Cut** is Ctrl+R / the Loop Cut button in Edit Mesh. Inspector > Mesh Renderer: **Subdivide**, **Weld**,
-   **Recenter**, **Ground**, **Fit 1u** behave exactly like the Modeling window's buttons, including undo and saving.
+**Try it** (editor, `Tools\OkayEngine.exe`):
 
-What is not covered: the Problems panel still does not flag a mesh that already holds NaN vertices (from an older scene);
-`.okaymesh` (Save as Mesh Asset) still drops the Auto Smooth angle; "Split in two objects" stays a scene undo step even in Edit
-Mesh (it creates a second object).
+1. **File > New Scene**. Add two cubes with the editor's create menu (**Cube**, twice). Name them `A` and `B`.
+2. Select `A`. In the Inspector tick **Lock Inspector** (top of the panel).
+3. Change something on `A` (for example its X position), then press **Ctrl+Z**.
+   You should see: the Inspector still shows `A`, with the old X value.
+4. Click `B` in the Hierarchy. The Inspector should still show `A` (it is locked).
+5. Add another new object (for example a third **Cube**). The Inspector should still show `A`, not the new object.
+6. Delete `A` (select it in the Hierarchy, press **Delete**).
+   You should see: the Inspector stays locked and says **"Locked object is gone"**, with an **Unlock Inspector** button.
+   It does not jump to another object.
+7. Press **Ctrl+Z**. `A` comes back and the locked Inspector shows it again.
+8. Click **Unlock Inspector** (or untick **Lock Inspector**): the Inspector follows the selection again.
+
+**Also fixed the same way** (they remember the object by its id now): the Hierarchy **Rename** box, **Save as Prefab** box,
+the editor's automatic placeholder camera, the Animator live preview, mesh edit mode (Tab) and the UI drag in the Scene view.
+None of these can now act on a different object after an Undo.
+
+**Checked here (Linux, headless):** `tests/test_inspector_lock.cpp` (lock, undo, new object, delete, undo again, new scene).
+**Not seen:** the editor on Windows, the "Locked object is gone" message on screen.
 
 ## UI Notify template: no freeze when toasts pile up (bug fix)
 
@@ -1583,6 +1808,58 @@ pushed out now stops counting at once.
 3. You should see at most four toast cards stacked in the top-right corner. The oldest card disappears when a new one arrives,
    and each card goes away by itself after about six seconds. The editor keeps responding.
 4. Test: `ctest -R ui_toast` (it also pushes 10 toasts in one frame and runs the template's click sequence).
+
+## Visible UI fixes: launcher library, update card, Scene view, Project Settings, Console (bug fixes)
+
+Fixes for things seen in screenshots of the default (Dear ImGui) launcher and editor, plus the Console of the OkayUI preview.
+
+1. **Launcher, Community page.** Put two game folders (each with an `.okayscene`) in the `community` folder next to
+   `OkaySpace.exe` and open **Community**. You should see each game **once** ("YOUR LIBRARY — 2"; it used to say 4 and show
+   each card twice). The **Play** badge counts each built game once.
+2. **Launcher, update card.** When a newer version is found, the sidebar card "Update available" shows a full **Install now**
+   button (the label's bottom used to be cut off). To see it without a real update: start the launcher with
+   `OKAY_UI_DEMO_UPDATE=9.0.0`.
+3. **Editor, opening a scene.** Open `examples\physics\physics_playground.okayscene`. It opens in the **3D** view (it used to
+   open in 2D, flattened). Open **Game**: the nine station labels ("1 TOWER ..." to "9 DEBRIS ...") are readable, each on its
+   own dark box, none on top of another at the default layout. Open `examples\ui_text\ui_text.okayscene`: it opens in 2D.
+4. **Editor, Scene view stats line.** Open `examples\own_wav\own_wav_test.okayscene`. The "3D | 3 objects | .. FPS" line sits
+   at the **bottom left**, because the scene's instruction text is at the top left (it used to be drawn over that text).
+   In a scene with nothing at the top left it stays at the top left.
+5. **Editor, Edit > Project Settings.** Under Player, Width and Height show **1280** and **720** in full. The first line wraps;
+   the physics Quality box says **Improved** with what it does on the line below.
+6. **Editor, Project panel > select a sound.** In the Inspector, Import Settings: "Load the whole file" shows in full and the
+   notes wrap instead of running off the right edge.
+7. **OkayUI preview Console** (start the editor with `OKAY_UI_BACKEND=okayui`): the Console sits inside its dock (it was drawn
+   off by the window's place on the screen), "Search" is the hint inside the box, and in a narrow dock "Auto-scroll" moves
+   to the next line instead of being cut to "Auto-scro".
+
+Tests: `ctest -R "library_scan|editor_layout|examples_work|okayui_screens"`. Checked by screenshots on Linux (Xvfb); not
+checked on Windows.
+
+## vpa. Multi-window panels: set once, before the first frame
+
+What changed: the editor turns on Dear ImGui's multi-window panels ("viewports") once, before its first frame, and only when the
+video driver can make extra OS windows and read the mouse anywhere on the desktop. It no longer switches them back on at the end of a
+frame after Dear ImGui has turned them off. Up to v2.880 it did, and a build with assertions on stopped at its second frame with
+"Please set ViewportsEnable before the first call to NewFrame()". Release builds ignored that check but flipped the option on and
+off every frame.
+
+Try it on Windows (the Windows driver always supports it, so nothing should change for you):
+1. Start `Tools\OkayEngine.exe` and open any project.
+2. Drag the **Console** tab out of the editor window and let go over the desktop. It becomes its own window. Drag it back over the
+   editor to dock it again.
+3. Open the **Console**: there is no "Multi-window panels are off" line.
+
+What you should see on a system without that support (Linux with `SDL_VIDEODRIVER=wayland`, or `SDL_VIDEODRIVER=offscreen`): the
+editor starts, a dragged tab stays inside the editor window, and the Console says once "Multi-window panels are off: the video driver
+... cannot open extra windows here."
+
+Verified on Linux with an editor built with assertions on (`-O1`, no `NDEBUG`, Dear ImGui included): with `SDL_VIDEODRIVER=offscreen`
+the editor before this change stopped at its second frame every time, in both backends (Dear ImGui and `OKAY_UI_BACKEND=okayui`); with
+it, it ran for the whole 25-second check in both and printed the "Multi-window panels are off" line. Under Xvfb (X11) both versions
+ran in both backends without stopping, and with the change a Project tab dragged outside the editor still became its own window. The
+intermittent stop seen before under Xvfb was SDL falling back to the `offscreen` driver when the X server was not ready yet.
+Unverified: Windows (not built or run here), a real Wayland session.
 
 ## Switches that are off by default (own code)
 
@@ -1709,9 +1986,8 @@ and curl exactly as before.
 On a Linux build (`cmake -DOKAY_OWN_HTTP=ON`, launcher and editor built), to try it:
 
 1. Start the launcher with `OKAY_OWN_HTTP=1 ./OkaySpace` (the launcher). Open **Versions** and download a version. Expect:
-   the download runs, a `<file>.<key>.<pid>-<random>.part` file grows next to the target (a name of its own for each
-   download, so two downloads of the same file never write into one file) and is renamed to the real name only when the
-   whole file has arrived; the version then installs as with curl. Pull the network cable (or stop Wi-Fi) for a few seconds
+   the download runs, a `<file>.part` file grows next to the target and is renamed to the real name only when the whole
+   file has arrived; the version then installs as with curl. Pull the network cable (or stop Wi-Fi) for a few seconds
    in the middle: the download continues where it stopped (up to two more tries) instead of starting over.
 2. Start the editor with `OKAY_OWN_HTTP=1 ./OkayEngine` and use **Engine > Check for Updates**. Expect: the version check and
    (if there is an update) the download work as before. With `OKAY_HTTP_CURL=1` as well, curl is used instead.

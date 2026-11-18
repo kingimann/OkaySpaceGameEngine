@@ -185,7 +185,8 @@ int main() {
         w.srv->story->SetFlag("blink", true);
         CHECK(w.srv->log->CompleteObjective("q", 0));
         const bool converged = w.Until([&] { return c.nm->Joined() && c.log->Status("q") == QuestStatus::Completed && c.story->HasFlag("blink") &&
-                                   a.log->Status("q") == QuestStatus::Completed && b.story->HasFlag("blink"); }, 4000);
+                                   a.log->Status("q") == QuestStatus::Completed && b.story->HasFlag("blink") &&
+                                   c.story->Get("counter").AsFloat() == 40.0f; }, 4000);   // include the counter: over a lossy link it can arrive after the quest status
         CHECK(converged);
         if (!converged)
             std::fprintf(stderr, "  (c joined %d, c quest %d, c blink %d, a quest %d, b blink %d, c snapshots %d, c malformed %d, srv blink %d)\n", c.nm->Joined(),

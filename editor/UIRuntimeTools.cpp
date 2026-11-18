@@ -495,6 +495,7 @@ void DrawUIAddMenuExtras(EditorState& ed, GameObject* parent, bool& created) {
     });
     add("Inventory", "A bag screen with a grid of slots.", [&] { return UIGallery::AddInventoryScreen(sc); });
     add("Dialogue", "Speaker, typing text and choice buttons. Scripts call ui_dialogue_show().", [&] { return UIGallery::AddDialogueScreen(sc); });
+    add("Controls", "Rebind keys and controller buttons of the input asset (Assets/input.okayinput, or the default one), saved per player.", [&] { return UIGallery::AddControlsScreen(sc); });
 }
 
 void OpenUIGalleryExample(EditorState& ed, bool portrait) {

@@ -1,5 +1,13 @@
 OkaySpace Game Engine — Changelog
 
+v2.884.0
+  Fixes
+  - Save before stopping really saves, Timeline keys survive dragging, and
+    LOD distances work on big objects.
+  - Prefab variants: a prefab file that is cut short is refused instead of
+    half loading, and long Windows paths are no longer cut off.
+  - Release checks wait longer for the update server before publishing.
+
 v2.883.0
   Fixes and new things
   - Editor: Dark and Light mode replace the Preferences window, and

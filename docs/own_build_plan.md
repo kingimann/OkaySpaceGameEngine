@@ -1,0 +1,323 @@
+# Own build tool (okay-build): internal plan
+
+Internal note, not a guide. Owner, 2026-11-17: start, do not replace CMake tomorrow. OFF: not in CMake, CI or releases.
+Written from general knowledge of build systems (action graph, compiler depfiles, content hashes, worker pool).
+No code from CMake, Ninja, Make, Meson, Bazel, MSBuild, ccache or sccache was read or used (rule 19a).
+
+## Audit at 29e1b2b8 (owner brief: 12 subsystems, one build system)
+Read of `tools/okaybuild/okay-build.cpp` and `test_okaybuild.cpp` on `grok/okaybuild-1` at `29e1b2b8`. One executable, one manifest format (`build.okay`), one state file (`.okaybuild/state`). Nothing here is wired into CMake, CI or releases.
+
+Dependency map, in the order a build walks them:
+
+1. **CLI** (`main`) picks a command and the options (`-f`, `-j`, `-k`, `--config` is not implemented yet, `--build-dir`, `--dry-run`, `--explain`, `-v`, `--profile`, `--no-stat`).
+2. **Manifest parser** reads `build.okay`: `toolchain`, `target`, `action`, `pool`, `buildfile`, `outdir`. `okay-build modules` writes that same manifest from `*.okaymodule` files. `okay-build import` writes it from an existing Ninja build.
+3. **Buildfile regen** (optional) reruns a command when declared inputs change, then the parser runs again.
+4. **Planner** turns targets and actions into a graph: compile, archive, link, or a raw command. It orders links, reports target cycles and action cycles, and wires generator outputs.
+5. **Incremental check** loads `.okaybuild/state` and decides each step from the output, the command-line hash, depfile headers, and a size+mtime shortcut. The hash is FNV-1a 64-bit. It is for change detection only. It is not collision-safe for security.
+6. **Scheduler** runs the dirty steps. POSIX uses a worker pool (`<thread>`, `<mutex>`, `<condition_variable>`), which the Windows build does not include. Windows waits on `CreateProcessW` handles with `WaitForMultipleObjects`. Both honour pools and `-k`.
+7. **Compdb** reads the same graph and writes `compile_commands.json`, including imported compiles.
+
+There is no second copy of any of those. Configurations, a compiler cache, a test runner, packages, assets and packaging are not in that chain yet.
+
+Claude's 12-row table, confirmed or corrected:
+
+| # | System | Audit |
+|---|---|---|
+| 1 | Configuration manager | Partial, as Claude said. `build.okay` has toolchain and target blocks, and `modules` can generate that file. No named Debug/Release/custom configuration, no typed options, no `config.okay`. |
+| 2 | Build graph | Exists, as Claude said. Compile, archive, link, raw actions, computed link order, target cycles and action cycles, generator outputs, `needs`. |
+| 3 | Scheduler | Exists, as Claude said: worker pool on POSIX, handle wait on Windows, pools, `-k`. Missing: a memory limit, Ctrl+C cancellation, recovery after a killed build. |
+| 4 | Incremental | Exists. Content hashes, depfiles, the stat shortcut, restat. A changed command line rebuilds that step. There is no separate "build settings" record beyond the command line. |
+| 5 | Compiler cache | Missing, as Claude said. Incremental rebuild is not a cache: deleting the object compiles it again. |
+| 6 | Toolchain manager | Partial, as Claude said. Hand-written `gcc`, `clang` and `mingw` presets. No detection. No MSVC. |
+| 7 | Packages | Missing, as Claude said. |
+| 8 | Testing | Missing, as Claude said. Discovering and running test executables is not a command. |
+| 9 | Asset pipeline | Missing, as Claude said. An engine change would be asked on the issue before any of it is built. |
+| 10 | Packaging | Missing in okay-build, as Claude said. `scripts/build-windows-dist.sh` is the engine's packager and is not called from here. |
+| 11 | Diagnostics | Partial. Claude said there is no timing report. `--profile` does print plan, dirty-check, command, hash and wall time, and `-v` / `--explain` name the reason for a step. There is still no per-step report, no cache hit rate, and no `okay-build report`. |
+| 12 | CLI | Partial. Claude's list missed `modules`, which is on this head. Commands today: `build`, `clean`, `compdb`, `import`, `graph`, `targets`, `modules`. No `test`, `report`, `package`, or `toolchains`. |
+
+Order after this audit, set by the owner and the coordinator together: configurations and toolchain detection, then the compiler cache, then diagnostics, then the test runner. Packages, assets and packaging stay later. The scheduler gaps (memory, Ctrl+C, a killed build) stay later too.
+
+## Configurations and toolchain detection
+Named configs live in the manifest: `config NAME` then `optimize` (0–3, emitted as `-O`), `debug` (on adds `-g`), `flags`, `link_flags`, `define`. `--config NAME` selects one. With no selection, the first config is used. A custom name is just another block.
+
+Typed options are one line, the same shape in the manifest and in `config.okay`: `option NAME bool|int|string = VALUE`. `config.okay` sits next to the manifest and may also say `config = NAME`. `--opt name=value` overrides the file. `if OPTION` and `if OPTION == VALUE` add flags and defines when the value matches. Bool words are on/off, yes/no, true/false, 1/0. A bad value is an error at load time. The chosen flags become part of the command line, so the existing incremental check rebuilds when the config changes.
+
+`okay-build toolchains` looks for gcc, clang and the MinGW cross compiler on PATH, plus any `--search DIR`. MSVC is `cl.exe` and `link.exe`. `--msvc-root DIR` walks `VC/Tools/MSVC/<version>/bin/Hostx64/x64`. On a Windows build the same walk also reads `VSINSTALLDIR`, `VCToolsInstallDir`, and `HKLM\SOFTWARE\Microsoft\VisualStudio\SxS\VS7` (and the WOW6432Node copy) through advapi32. It does not run vswhere. The registry read is compiled into the Windows program only. It was cross-compiled and started under Wine here. It was not run on Windows, and no Visual Studio install was present, so a real `cl.exe` discovery is unverified.
+
+## Distribution layout
+A `dist` block tells `okay-build package` to assemble the same shape as `scripts/build-windows-dist.sh`: the launcher and its DLL at the top, `Tools/` with the other programs and a second copy of the DLL, `VERSION.txt` in both places, `Assets/Textures`, `Assets/Fonts`, `examples/<folder>/`, and `README.txt`. The script itself is not run.
+
+## Response files for MSVC
+The `msvc` preset writes response files as UTF-16LE with a BOM (`FF FE`) and a CRLF after each argument. `rsp_utf16 = off` in the toolchain block turns that off. Other toolchains stay one byte per character.
+
+## FIFO jobserver
+If `MAKEFLAGS` or `OKAY_JOBSERVER` contains `--jobserver-auth=fifo:PATH`, okay-build opens that fifo and takes a byte before each command, the same way it takes a byte from the pipe form. It is a client only.
+
+## Package checksums
+`okay.lock` now ends each line with an FNV-1a 64-bit hash of the files under that package path (relative names, then bytes). A later build refuses to run when the tree hash differs. This is change detection, not a security hash.
+
+## Report diff
+`okay-build report diff A B` reads two saved reports (history numbers or file paths) and prints steps that are only in one of them, and steps whose time changed.
+
+## Imported compiles in the cache
+An imported command whose first word is gcc, g++, clang, clang++ or cl, and which passes `-c` or `/c`, is preprocessed and keyed like a structured compile. A later build that is missing the object copies it back and does not compile. Archives and links are left as ordinary commands.
+
+## Native manifest (no CMake)
+`okay-build native <repo>` reads the source tree, not a CMake build directory. It writes a `build.okay` with `okay_crypto`, `okay_platform`, `ufbx`, `okay_engine` and `test_math`. Files that are only compiled for optional backends (Assimp, Steamworks, the Win32 platform file) are left out. Includes and the Linux defines (`OKAY_HAVE_SODIUM`, the platform SDL/own/X11 switches) are written into that manifest. The real `test_math` run is recorded below when it has been measured.
+
+## Compact state (OKB1)
+The state file is now binary, version 1, magic `OKB1`. Paths are stored once. Hashes are 8-byte integers. The whole file is read in one shot (mapped, then copied into a pool the records point at). A file that still starts with `okaybuild-state 3` or `okaybuild-state 4` is read as the old text. A journal after a killed build is still text and is applied on top. The mtime+size shortcut is unchanged: a matching stamp is not hashed again. `--profile` prints plan time and state time apart.
+
+## Benchmarks on the 339-step test_math tree (2026-11-17, this machine, OKB1)
+Same configure as before: shallow clone, Ninja Debug `-O0 -g0`, tests on, player/editor/launcher/sandbox/assimp off, sodium on, `-j2`. Import is 335 compiles, 3 archives, 1 link. Not Windows. These numbers replace the earlier 63.5 ms no-op.
+
+No-op, median of 20, process start included, after the binary state existed:
+- okay-build: 29.6 ms (runs from 27.8 to 35.0). Profile of one of them: plan 2 ms, state 12 ms, dirty-check 8 ms, wall 23 ms inside the process.
+- Ninja `test_math`: 28.7 ms (27.8 to 33.3).
+
+The state file is 3.9 MB (`OKB1`) instead of 11 MB of text. The old gap of about 38 ms is about 1 ms on this run.
+
+Cold build, clean tree, same `-j2`:
+- Ninja: 439.7 s
+- okay-build: 413.5 s. Profile: plan 3 ms, state 0 ms (nothing saved yet), dirty-check 5 ms, preprocess 0 ms, run command 819723 ms summed on two workers, depfile+hash 1495 ms, wall 413489 ms. Ran 339 of 339.
+
+Preprocess is 0 because an imported step is the compiler command itself, not a structured compile that runs `-E` first. The cache therefore does not restore those outputs: deleting them and building again would compile them again. A cache-hit rebuild was not measured on this tree for that reason. The separate preprocess timer is in `--profile` for structured compiles.
+
+## Asset pipeline (design only, not built)
+A pipeline would be a rule in the manifest: a source suffix, a tool, an output suffix, and a folder to scan. okay-build would turn each match into an action edge. The engine's importers are inside the engine and the editor, not a program this tool can run. Until there is a command-line importer, assets stay as hand-written `action` blocks. No engine file was changed. The question for the owner is in the round report: is a small importer program allowed, or do assets stay as actions?
+
+## MSVC flag spelling
+The `msvc` toolchain preset drives `cl.exe`, `link.exe` and `lib.exe` (object `.obj`, library `.lib`, program `.exe`). Configs, defines and includes are spelled for that driver: `/Od` `/O1` `/O2` `/Ox`, `/Zi`, `/D`, `/I`, `/Fo` on a compile, `/OUT:` on `link.exe` and `lib.exe`, `/Fe` when the linker itself is `cl.exe`, `/LIBPATH:` and `name.lib` for libraries. A compile passes `/showIncludes`. Lines that say `including file:` are written into the same depfile the gcc path already reads, so a named header is a real dependency. Long commands use the existing response-file path (`tool @file`, one argument per line). This was checked with a fake `cl.exe` that records its arguments. It was not run against a real Microsoft compiler.
+
+## Compiler cache
+Before a compile that is going to run, okay-build preprocesses that file and builds a cache key from three pieces: the preprocessed text, the compile command, and the compiler file's own bytes. The hash is FNV-1a 64-bit. It is not collision-safe. Two different inputs can land on the same key. The cache is a speed-up, not a security boundary, and it is not a cryptographic check. `--no-cache` turns it off.
+
+A hit copies the stored object and its depfile back and does not compile. A miss compiles and stores both under `.okaybuild/cache/<key>/`. Changing the source, a header that the preprocessor sees, the command line, or the compiler file produces a different key, so the old entry is simply not used. `--cache-max N` (bytes, or a `k`/`m`/`g` suffix) evicts the least recently used entries until the total fits. One entry that is itself bigger than the limit is kept. `okay-build cache stats` prints the entry count, the bytes, and the limit. `okay-build cache clean` deletes the cache.
+
+## Report history and test check counts
+Each build keeps a copy under `.okaybuild/reports/N.txt`. The last 20 are kept. `okay-build report history` lists how many. `okay-build test` reads a line such as `4 checks, 1 failed` from the program's output and repeats those counts next to PASS or FAIL.
+
+## Diagnostics
+Each step that runs records its kind, its description, how long it took, and whether the compiler cache hit, missed, or was not involved. The build writes that to `.okaybuild/report`. `okay-build report` prints the step count, the cache hit rate, the slowest steps (up to ten), and the summed time. `--profile` still prints the older plan/dirty/command/wall line. The report is the per-step view.
+
+## Testing
+`okay-build test` builds every exe marked `test = on` (a library cannot be a test) and then runs those programs. If none are marked, it runs exe targets whose names start with `test`. Anything else is left alone. The runs use `-j`, the same limit as the build. On Windows the wait is `WaitForMultipleObjects`, so the tool still does not use `<thread>`. The command prints `PASS` or `FAIL name exit N`, then `N tests, M failed`, and writes the same facts to `.okaybuild/test-report`. Exit status is 1 when a test fails.
+
+## Scheduler memory limit
+An action may say `memory = N` (a plain integer, the unit is whatever the manifest author means). `--memory N` is the budget. The scheduler will not start a step whose memory would push the running total over that budget, on top of the existing pools. A step that by itself needs more than the budget is refused before anything runs. With no `--memory`, nothing is counted and the old behaviour stays.
+
+## Cancellation and a killed build
+Each finished step is appended to `.okaybuild/state.journal` before the build ends. The final save folds that into `.okaybuild/state` and deletes the journal. If the process is killed first, the next run reads the journal and does not repeat a step that finished. Ctrl+C sets a flag, stops starting new steps, and ends the running command (its process group). The process then exits 130. ## Packaging
+`okay-build package` builds an exe and copies it into `dist/<name>/` with each `runtime` file beside it and each `assets` folder kept as a folder. `PACKAGE.txt` lists every copied path. Windows loads a DLL from the exe's own directory, so runtime files sit next to the exe on purpose.
+
+`scripts/build-windows-dist.sh` (read, not called) does more, and only for the whole engine: `OkaySpace.exe` and `SDL2.dll` at the top, a second `SDL2.dll` under `Tools/` next to the editor and the player, `VERSION.txt` in both places, `Assets/Textures`, `Assets/Fonts`, a curated `examples/` list, and `README.txt`. okay-build package is the general layout for one target. It does not assemble that full engine distribution.
+
+## Packages and lockfiles
+A manifest may declare local packages: `package NAME`, then `path`, `version`, and `depend = OTHER VERSION`. There is no download and no registry. Resolving checks that every dependency names a package in the same manifest and the same version. A mismatch is an error that names both versions. The first build writes `okay.lock` (name, version, path, sorted). Later builds refuse to run when the lock and the manifest disagree, so the set of packages stays reproducible. `okay-build lock` writes or checks the same file.
+
+## Jobserver
+`--jobserver` opens a pipe and puts `-j` minus one `+` tokens in it (this process keeps one slot without a token, which is the usual arrangement). It publishes the read and write ends in `OKAY_JOBSERVER` and in `MAKEFLAGS` as `--jobserver-auth=R,W`. A later okay-build sees that and takes a token before each real command, then puts it back. One slot stays implicit so a nested run can make progress without waiting for a token that its parent is holding for it. On Windows the same idea is a named semaphore (`OKAY_JOBSERVER=sem:NAME`) instead of a pipe. The test runs two child okay-builds, each with `-j8`, under a parent `-j2 --jobserver`, and the number of leaf commands in flight stays at 2.
+
+## Stage A (done, prototype): `tools/okaybuild/`
+- `okay-build.cpp` (one file, ~350 lines, C++17, POSIX fork/exec). `build.sh` builds it and runs `test_okaybuild.cpp`.
+- Manifest `build.okay`: `toolchain [gcc|clang|mingw]` block (cc, cxx, ar, flags, link_flags, suffixes), `target NAME exe|lib`
+  block (sources, include, export_include, define, flags, link_flags, libs, deps), `outdir = DIR`.
+- Commands: `build` (default), `clean`, `compdb`; options `-f FILE`, `-j N`, `--dry-run`, `--explain`, `-v`.
+- Graph: compile -> archive/link actions; link order is computed (dependents before dependencies); target cycles reported.
+- Up to date = output exists AND stored hash of (command line) AND hashes of source + every header the compiler listed
+  (`-MMD -MF`, parsed by our own make-syntax reader) all match `.okaybuild/state`. Touching without editing rebuilds nothing;
+  a recompiled object with identical bytes does not relink.
+- Stage B additions (2026-11-17): stat shortcut (size+mtime trusted only if the file was already 2 s older than the moment
+  it was recorded; `--no-stat` turns it off; `-v` prints hashed/trusted counts), response files for long link/archive lines
+  (`rsp_threshold` in the toolchain block, default 30000 chars), quoted words so paths may contain spaces, `--build-dir DIR`
+  (state, objects and outputs go there; manifest stays in the source dir), raw `action` blocks and `okay-build import`.
+- The Windows host is now in this file (see the later note). The hash is still FNV-1a 64-bit: fine for change
+  detection, not collision-safe for security. Structured targets use -MMD (system headers not tracked),
+  imported ones keep CMake's -MD.
+
+## No-op speed (2026-11-17, measured on this machine)
+The old "27 ms vs Ninja 8 ms on 51 files" was before the -O2 and stat work. Re-measured here, median of several runs,
+process start included, nothing else busy on the machine:
+- 52 translation units, just built (105 inputs). Before: okay-build 2.54 ms and it read every input (hashed 105, trusted 0);
+  Ninja 1.94 ms. After: okay-build 2.00 ms, hashed 0, trusted 105; Ninja 1.82 ms.
+- 200 copies of a 64 KiB file, just built. Before: okay-build 12.7 ms (hashed all 200). Ninja 2.2 ms.
+  After: okay-build 2.61 ms (hashed 0, trusted 200). Ninja 2.08 ms.
+What changed: a modification time with sub-millisecond digits is trusted immediately (an ordinary write cannot keep it).
+Whole-second and whole-millisecond stamps still wait until they were 2 s old when recorded, because two writes can share
+them. A clean tree is checked on the calling thread and returns without starting workers. Reading a file, when it is
+still required, uses one `read` loop. Forged timestamps that keep the same size are still not detected.
+
+## Regenerating the manifest (2026-11-17)
+A single `buildfile` block names a command, `inputs`, and an optional `depfile` (same make-style reader as compile
+depfiles). `okay-build build` hashes those files. If the hashes differ from `.okaybuild/buildfile`, or there is no
+record yet, it runs the command and reads the manifest again (at most twice). A hand edit of `build.okay` is left
+alone until an input changes. `clean` deletes the record, so the next build regenerates. `graph`, `targets`,
+`compdb` and `clean` do not regenerate. `--dry-run` does regenerate, because the planned steps come from the new file.
+
+## Stage A follow-up (2026-11-17, grok/okaybuild-1): pools, generators, restat, -k, listings
+Written from the same general ideas (a named slot counter beside the worker count, declared outputs as edges,
+content hash of an output after the command, keep scheduling work that does not depend on a failure). No other
+build tool's code was read.
+- `pool NAME` / `depth = N` (at least 1). A step runs only when a worker is free and its pool has a free slot.
+  Link steps (`LD`) use the built-in pool `link` with depth 1 unless the manifest sets `pool link` or `pool = none`
+  on the target. `pool = console` is depth 1 and the command writes straight to the terminal.
+- An action may list `outputs` (more than one), `restat = 1` and `pool`. A target may list `needs` (order-only:
+  wait for the action that produces that file) and `pool` (the link or archive step only). A source that is some
+  action's output does not have to exist when the graph is planned.
+- `restat`: after the command, if every declared output has the same bytes as last time, the previous modification
+  time is put back and dependents are not rebuilt. Dependents already skip identical bytes; restoring the time is
+  what a later mtime check can see.
+- `-k` / `--keep-going`: a failed step does not run its dependents, and other ready steps still run. Without `-k`
+  the build stops taking new steps (steps already running finish).
+- `okay-build targets` prints `name<TAB>lib|exe` and one line per raw output. `okay-build graph [name...]` prints
+  each step as `id<TAB>kind<TAB>desc<TAB>output<TAB>pool=NAME` plus `deps` lines.
+- Bug fixed (2026-11-17): a `#` used to end the line even inside quotes and inside `cmd`, so `sources = "a#b.cpp"` and
+  `cmd = printf '#define V 3'` were cut in half. Comments are now stripped only outside quotes, and a `cmd` line is kept whole.
+  The same test aborted the process: an output in the current directory has an empty parent path, and
+  `create_directories` on that path throws out of the worker thread (`std::terminate`). Empty parents are skipped, and a
+  worker exception fails that step instead of killing the process.
+
+## What Ninja/Make do that okay-build does not yet
+This list is the gap as of the first prototype. Later sections on this page land pools, restat, generator outputs,
+`-k`, `graph`/`targets`, the console pool, manifest regeneration and a faster no-op. Still open after that: compdb of
+imported commands, a jobserver, and a Windows host (see the design note). The old timing (27 ms vs Ninja 8 ms on 51
+files) is replaced by the measurements in "No-op speed".
+
+## Stage B: CMake importer (done as prototype)
+`okay-build compdb` writes structured compiles and also imported commands that contain `-c` (the source is the argument after `-c`; links are left out). The entry uses `command` with the raw text and `directory` from the action.
+`okay-build import <cmake build dir> [--run-dir DIR] [-o build.okay] [ninja targets/objects...]` runs `ninja -t commands` in an
+already configured build dir (simplest robust source: every compile, archive, link and custom command, exact text, in dependency
+order, with CMake's -MD -MF depfile flags). compile_commands.json is not enough alone (no link steps, no depfile flag), so it is
+only a cross-check: the compile count matched (1284 = 1284). Each command becomes an `action` block (`cmd` is run verbatim by
+`sh -c "cd DIR && CMD"`); edges are inferred from inputs/outputs (objects -> archive -> link); compiles wait for any custom step
+that precedes them (`after`). `--run-dir` builds into another directory so Ninja's own tree is untouched (output paths in CMake
+commands are relative). Result on the engine configure (Debug -O0, tests ON, editor/launcher OFF): all 2078 commands imported
+(1284 compile, 7 archive, 787 link, 0 custom); dry run of the whole graph 0.14 s.
+Real slice: the 53 `src/Core` objects of okay_engine + libokay_crypto.a (62 compiles + 1 archive), -j4, 4 cores:
+Ninja 80.3 s, okay-build 87.8 s; no-op Ninja 35 ms, okay-build 82 ms (660 inputs trusted by stat, 9 hashed); all 53 Core objects
+and the archive byte-identical to Ninja's; header edit (AssetManager.hpp): both rebuild 3 steps, 8.5 s vs 8.6 s; touch only: Ninja
+rebuilds 3, okay-build 0. Where it fails / is weak on real commands: nothing broke on this slice, but untested: a real link of an
+engine exe (needs the full 330-file engine lib), PCH (none in this configure), generated files (no custom steps in this
+configure; order-only edges are not in `ninja -t commands`, so only the conservative `after` rule protects us), MinGW/Windows
+configures, multi-config generators, `cmake -E` helper steps (need cmake installed), depfiles with unusual escapes. Imported
+commands are CMake's, so include order and flags are exact by construction; the weak point is edge inference by file name.
+
+## Stage C (design only): manifests from modules
+Per-module manifests (the idea on branch `claude/modular-1`, `engine/modules/*/module.okaymodule`) would list sources,
+public include dirs, defines and deps. A generator step turns them into `build.okay`. Not depending on that branch yet.
+
+First slice (2026-11-17): `okay-build modules DIR [-o build.okay]` reads every `*.okaymodule` in that directory
+(flat `key = values` lines: name, kind lib|exe, sources, include, export_include, define, deps) and writes one
+`build.okay`. Unknown deps and a dep on an exe are errors. It does not build; the usual `okay-build` does that next.
+It does not read the engine's real modules.
+
+## Stage D (design only): CMake option logic
+Today CMake decides: which backends (SDL/own), platform, MinGW cross, crypto (libsodium default), tests, packaging. Replace by a
+`config.okay` of named options with typed values, `if` conditions on options/platform in the manifest, and a printed config
+summary. Last step, only after B and C work and the owner agrees (rule 19).
+
+## Honest effort estimate to replace CMake and Ninja for this repo
+Ninja role: Stage A is about 70% of it; pools, restat, Windows host and speed work are about 1-2 weeks.
+CMake role: import (B) about 1 week for compile/link of the engine; the hard part is what CMake also does here: ctest tests,
+install/package steps, shader and asset generation, third-party fetch/config, MinGW cross toolchain quirks, WebGL/Emscripten
+job. Realistic total 6-10 weeks of agent time to match the current CI matrix, and CMake must stay until every CI job passes
+with okay-build. Worth continuing only as the staged, optional path: B first (cheap, shows whether the engine builds).
+
+## Real engine executable through the importer (2026-11-17)
+Configure: Ninja, Debug, `-O0 -g0`, tests ON, sandbox/launcher/editor/player/assimp/tools/OkayUI tests OFF,
+libsodium found (packet encryption on). C files used clang (`/usr/bin/cc`), C++ used g++ (`/usr/bin/c++`).
+`GL/gl.h` was missing at first (`libgl1-mesa-dev` installed, then the build continued). No code change in okay-build.
+
+`ninja -j2 test_math`: 339 steps, exit 0. The program printed `15 checks, 0 failures`.
+`okay-build import` of that target: 335 compile, 3 archive, 1 link, 2 order-only edges, 0 custom commands.
+Built with `okay-build -j2` into a separate directory so Ninja's tree stayed put. 339 of 339 steps, exit 0.
+Byte comparison of every `.o`, the three archives (`libokay_engine.a`, `libokay_crypto.a`, `libokay_platform.a`)
+and `tests/test_math`: 339 files, 339 identical. The okay-build program also printed `15 checks, 0 failures`.
+`libokay_engine.a` is 463,143,278 bytes on both sides.
+
+No-op of that same 339-step import, measured after a clean okay-build so every stamp matched (median of 5, process start included):
+okay-build 66 ms, Ninja 24 ms. Inside okay-build: plan+state load 42 ms, dirty check 9 ms, wall 52 ms, hashed 0, trusted 1835.
+The state file is 11 MB and 105,057 rows because every compile records every header. A rewrite that interned paths and stored hashes as integers was not faster (state load about 54 ms, wall about 67 ms), so it was not kept. The gap with Ninja is that table, not re-reading file bytes.
+
+## Player through the importer (2026-11-17)
+Same configure as test_math, plus `-DOKAY_BUILD_PLAYER=ON` (SDL2 2.30 dev headers were installed). Ninja `okay-player`:
+347 steps, `bin/okay-player` is 87 MB. okay-build import: 350 compile, 6 archive, 1 link, 14 order-only edges.
+`okay-build -j2` in a separate directory: `ran 357 of 357 steps`, exit 0. Byte comparison of every `.o`, every
+archive and `bin/okay-player`: 357 files, 357 identical. Both binaries exit 0 on `--help`. The help text differs
+only because it prints its own path. The player was not given a scene and was not opened on a display.
+
+## Windows host (2026-11-17, implemented, POSIX path unchanged)
+`okay-build.cpp` compiles with `x86_64-w64-mingw32-g++-win32` (`-std=c++17 -O2 -static-libgcc -static-libstdc++`).
+The Windows build does not include `<thread>`, `<mutex>`, `<condition_variable>` or `std::call_once`. Jobs are
+started with CreateProcessW and the one thread waits on their handles with WaitForMultipleObjects (at most 64),
+draining the stdout/stderr pipe every 20 ms so a full pipe cannot stall the child. Raw commands are written to a
+`.cmd` file and run with `cmd.exe /C`, with the manifest `dir` as the process working directory. A tool invocation
+longer than about 7000 characters, or any direct argv longer than 30000 (and never past 32767), is put in a
+response file. File stamps use `GetFileAttributesExW` (100 ns ticks). A leading `/` path is tried as `Z:\...`
+because Wine maps `/` to `Z:`. Under Wine (`WINEPREFIX=$HOME/.wine-okay`) a two-step `echo` graph and `-k` both
+passed. The program was not tried on a real Windows machine.
+
+## Windows host design note (2026-11-17, the plan this was written from)
+The `toolchain mingw` block already names `x86_64-w64-mingw32-gcc-win32`, `g++-win32` and `x86_64-w64-mingw32-ar`,
+object suffix `.o`, executable suffix `.exe`. On this machine that compiler linked a two-file static library and a
+program. `file` reported `PE32+ executable (console) x86-64, for MS Windows`. The program was not run (no Wine).
+The same shape is locked in by `testMingwSlice` in `tools/okaybuild/test_okaybuild.cpp`.
+
+`okay-build.cpp` does not compile as a Windows program. Both the win32 and the posix MinGW g++ stop at
+`#include <sys/wait.h>`. The tool runs commands with `fork`, `execvp`, `pipe` and `sh -c`. A Windows host has to
+replace that, not just switch compilers.
+
+What was checked about threads, because rule 21a says the win32 thread model cannot compile `<thread>`, `<mutex>`
+or `<condition_variable>`: a small program that creates a thread, a mutex and a condition variable compiled and
+linked with BOTH `x86_64-w64-mingw32-g++-win32` and `g++-posix` (MinGW-w64 gcc 13.2 on this machine). The win32
+exe imported KERNEL32, msvcrt, libgcc and libstdc++. The posix exe also imported libwinpthread-1.dll. Neither exe
+was run. This does not change rule 21a for the launcher, editor and player. It only says this particular compiler
+accepted those headers. The build tool stays a POSIX program until the process code is replaced.
+
+Replacement, when it is written (still not in this branch):
+- `runCmd` becomes CreateProcessW. The working directory is the process argument (`dir` in the manifest), not a
+  `cd` glued onto the command. Stdout and stderr come back through an inheritable pipe. Wait with
+  WaitForSingleObject. One job at a time needs no thread header. A worker pool on the win32 compiler can use the
+  threads that compiler accepted here, or a loop that waits on several process handles.
+- Raw actions on Windows go through `cmd.exe /C`, because imported CMake lines use shell syntax (`: && ... && :`).
+  A command with no shell metacharacters can be an argv array instead.
+- Paths in the manifest already use `/`. Keep that until a tool rejects it.
+- The command-line limit is 32767 characters. Response files already exist and the default threshold (30000) is
+  under that limit. A Windows host should keep the threshold below 32767.
+- Modification times: NTFS ticks are 100 ns, FAT is 2 seconds. The sub-millisecond shortcut is for stamps that
+  actually change on every write. On a coarse Windows filesystem the 2 second rule is the one that is correct.
+  That choice is part of writing the host, not something this note turns on.
+- No cryptography. The change-detection hash stays a non-cryptographic 64-bit mix.
+
+## Windows host plan (not implemented)
+Replace `runCmd` (fork/exec/pipe) with CreateProcessW and an inheritable pipe; run raw actions with `cmd /C` instead of `sh -c`
+(or run argv directly); lexically-normal paths use `/` already; mtime via `std::filesystem` is fine; 32767-char command limit
+makes response files mandatory (done, threshold must be below it); no `cd` chaining, so set the working directory in
+CreateProcess. Threads: use `std::thread`/`mutex` only in this dev tool, never in headers the launcher/editor/player reach
+(rule 21a), and MinGW "win32" thread model cannot compile them, so build the tool with the posix MinGW or MSVC.
+
+## Stage B follow-up (2026-11-17, second round)
+Machine was loaded by other agents (load 5-8 on 4 cores) and disk fell under 4.5 GB, so some measurements are partial.
+- Whole engine library (334 compiles + 3 archives, -O0 -g0, -j3): okay-build 7 min wall (423 s) when the machine was quieter; the
+  Ninja run on the same configure took 725 s wall, 939 s user, 61 s sys (heavily loaded; wall times are NOT comparable, CPU times are).
+  Objects: 333 of 334 byte-identical to Ninja's. `third_party/ufbx/ufbx.c.o` differs (47 bytes, same size; cause not found, no
+  __DATE__ string seen) so libokay_engine.a differs too. No-op: okay-build 381 ms before the speed work, Ninja 52 ms.
+- Test exes through okay-build (tests/test_serialize + tests/test_math, 341 steps incl. 2 links, 792 s wall under load, 977 s user):
+  both run and pass (67 checks / 15 checks, 0 failures). The Ninja-built twin was NOT compared: disk ran low, so unverified.
+  No-op of those 341 steps: 180 ms (before the speed work: not measured on this tree).
+- Order-only edges: `ninja -t commands` drops them, so the importer reads `build.ninja` (build statements, phony nodes) and keeps
+  every edge that leads to another imported output as `after`. On the engine configure only 2 exist (archive after crypto/platform
+  archives); no real generated file exists in the Linux configure (only `configure_file` at configure time and a Windows version
+  resource in cmake/OkayWinVersion.cmake). The mechanism is tested with a real CMake+Ninja tiny project (custom command makes gen.h).
+  Custom steps: their output is found by matching a build.ninja CUSTOM_COMMAND output against the command words (if none matches
+  the step always runs); absolute existing file inputs of the edge are tracked. With `--run-dir`, absolute paths of the build tree in
+  commands (`cd BUILD`, `-IBUILD`) are rewritten to the run tree.
+- Speed: the "9% slower" earlier was load noise. `--profile` on the 62-file slice: user CPU 70-72 s for both tools; okay-build's own
+  work is plan 80 ms, dirty checks 9 ms, depfile+hash 40 ms in total (below 0.3% of the run). The real problem was the no-op:
+  copying each state record, stringstream parsing, two filesystem calls per file, and building the tool with -O0. Fixes: no copy,
+  hand-parsed state, one stat(2), hash maps, `build.sh` now -O2. Slice no-op 250 ms -> 23 ms at -O2 (30 ms at -O0); Ninja 25-29 ms.
+- MinGW: importing a MinGW configure of the engine works after two importer fixes (archive tool is `x86_64-w64-mingw32-ar`,
+  objects end in `.obj`); the Core slice imports as 62 compiles + 1 archive. It was NOT built (disk stop), so bytes vs Ninja are
+  unverified for MinGW. The CMake configure used: toolchain cmake/mingw-w64-x86_64.toolchain.cmake, tests/sandbox/launcher/
+  player/editor/assimp OFF (the launcher/player/editor targets need SDL2 for MinGW).

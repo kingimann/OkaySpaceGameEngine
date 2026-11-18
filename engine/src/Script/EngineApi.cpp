@@ -8,6 +8,8 @@
 #include "okay/Input/Input.hpp"
 #include "okay/Input/InputActions.hpp"
 #include "okay/Input/Gestures.hpp"
+#include "okay/Input/InputRuntime.hpp"
+#include "okay/Components/LocalPlayerInput.hpp"
 #include "okay/Core/Time.hpp"
 #include "okay/Core/Game.hpp"
 #include "okay/Core/GameLoop.hpp"
@@ -1388,6 +1390,44 @@ EngineApi Build() {
                 InputActions::Define(S(a[0]), b, true);
                 return Value{};
             }, "Add a direction action, e.g. (\"Steer\", \"keys:i,k,j,l\", \"stick:right\")."));
+        // ---- Local players and typed actions (the .okayinput system): the player is the index a Player Input component reports (0 = first).
+        auto setOf = [](const std::vector<Value>& a, std::size_t i) { return InputRuntime::Set(a.size() > i ? I(a[i]) : 0); };
+        in.staticMethods.push_back(method("PlayerActionValue", {tString, tInt}, {"action", "player"}, tVec,
+            [setOf](const Value&, std::vector<Value>& a, CallContext&) {
+                ActionSet* s = setOf(a, 1);
+                const InputValue v = s ? s->Value(S(a[0])) : InputValue{};
+                return Value{Vec3{v.x, v.y, v.z}};
+            }, "A local player's action as x, y, z: a button is x 0 to 1, an axis is x, a 2D vector is x and y (y up), a 3D vector uses z too."));
+        auto flag = [&](const char* n, bool (ActionSet::*fn)(const std::string&) const, const char* doc) {
+            in.staticMethods.push_back(method(n, {tString, tInt}, {"action", "player"}, tBool,
+                [setOf, fn](const Value&, std::vector<Value>& a, CallContext&) { ActionSet* s = setOf(a, 1); return Value{s && (s->*fn)(S(a[0]))}; }, doc));
+        };
+        flag("PlayerActionHeld", &ActionSet::Held, "True while a local player's action is held (past its press point).");
+        flag("PlayerActionPressed", &ActionSet::Pressed, "True on the frame a local player's action is pressed.");
+        flag("PlayerActionReleased", &ActionSet::Released, "True on the frame a local player's action is released.");
+        flag("PlayerActionStarted", &ActionSet::Started, "True on the frame a local player's action starts (the first press of a hold, tap or multi-tap).");
+        flag("PlayerActionPerformed", &ActionSet::Performed, "True on the frame a local player's action is performed (its hold, tap, multi-tap or repeat completes).");
+        flag("PlayerActionCanceled", &ActionSet::Canceled, "True on the frame a local player's action is canceled (let go too early, too slow).");
+        in.staticMethods.push_back(method("PlayerActionProgress", {tString, tInt}, {"action", "player"}, tFloat,
+            [setOf](const Value&, std::vector<Value>& a, CallContext&) { ActionSet* s = setOf(a, 1); return Value{s ? s->Progress(S(a[0])) : 0.0f}; },
+            "How far through a hold the action is, 0 to 1 (a hold-to-confirm bar)."));
+        in.staticMethods.push_back(method("PlayerActionPhase", {tString, tInt}, {"action", "player"}, tString,
+            [setOf](const Value&, std::vector<Value>& a, CallContext&) { ActionSet* s = setOf(a, 1); return Value{std::string(PhaseName(s ? s->PhaseOf(S(a[0])) : Phase::Waiting))}; },
+            "\"started\", \"performed\", \"canceled\" or \"waiting\": where a local player's action is."));
+        in.staticMethods.push_back(method("SetActionMapEnabled", {tString, tBool, tInt}, {"map", "enabled", "player"}, tBool,
+            [setOf](const Value&, std::vector<Value>& a, CallContext&) { ActionSet* s = setOf(a, 2); return Value{s && s->SetMapEnabled(S(a[0]), std::get_if<bool>(&a[1]) ? *std::get_if<bool>(&a[1]) : F(a[1]) != 0.0f)}; },
+            "Switch a local player's action map on or off (Gameplay, UI ...). False for an unknown map."));
+        in.staticMethods.push_back(method("PlayerRebind", {tString, tInt, tInt, tString, tInt}, {"action", "binding", "part", "input", "player"}, tBool,
+            [setOf](const Value&, std::vector<Value>& a, CallContext&) { ActionSet* s = setOf(a, 4); return Value{s && s->Rebind(S(a[0]), I(a[1]), I(a[2]), S(a[3]))}; },
+            "Change one input of a local player's action (binding and part count from 0), e.g. (\"Jump\", 0, 0, \"key:j\", 0). False if it is not understood."));
+        in.staticMethods.push_back(method("MyPlayer", {}, {}, tInt,
+            [](const Value&, std::vector<Value>&, CallContext& c) {
+                auto* lp = c.self ? c.self->GetComponent<LocalPlayerInput>() : nullptr;
+                return Value{(std::int32_t)(lp ? lp->GetPlayerIndex() : -1)};
+            }, "The local player index of the Player Input component on this object (use it as the player of the Player calls), or -1 when there is none or the game is not playing."));
+        in.staticMethods.push_back(method("PlayerScheme", {tInt}, {"player"}, tString,
+            [setOf](const Value&, std::vector<Value>& a, CallContext&) { ActionSet* s = setOf(a, 0); return Value{s ? s->Scheme() : std::string()}; },
+            "The control scheme a local player is in now (Keyboard+Mouse, Gamepad ...); it follows the device used last when the player uses any device."));
         in.staticProps.push_back(ro("gamepadConnected", tBool,
             [](const Value&, CallContext&) { return Value{Input::GamepadConnected()}; }, "True while a controller is plugged in."));
         in.staticMethods.push_back(method("Gesture", {tString}, {"name"}, tBool,

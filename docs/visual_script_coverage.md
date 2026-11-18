@@ -34,7 +34,7 @@ Escape hatches: **Get Property**, **Set Property**, **Call Method** (`Type.Metho
 
 ## Builtin parity
 
-Every text-script builtin whose name is a single token (letters, digits, `_`, `.`) is the node `Fn.<name>`. It runs that builtin on this object. Wire only the arguments it takes. 1444 builtins are nodes.
+Every text-script builtin whose name is a single token (letters, digits, `_`, `.`) is the node `Fn.<name>`. It runs that builtin on this object. Wire only the arguments it takes. 1517 builtins are nodes.
 
 | Builtin | Node |
 | --- | --- |
@@ -179,7 +179,15 @@ Every text-script builtin whose name is a single token (letters, digits, `_`, `.
 | `account_verify` | `Fn.account_verify` |
 | `acos` | `Fn.acos` |
 | `action` | `Fn.action` |
+| `action_buffered` | `Fn.action_buffered` |
+| `action_conflicts` | `Fn.action_conflicts` |
+| `action_consume` | `Fn.action_consume` |
+| `action_double_tap` | `Fn.action_double_tap` |
 | `action_down` | `Fn.action_down` |
+| `action_held` | `Fn.action_held` |
+| `action_hold` | `Fn.action_hold` |
+| `action_hold_done` | `Fn.action_hold_done` |
+| `action_label` | `Fn.action_label` |
 | `action_time` | `Fn.action_time` |
 | `action_up` | `Fn.action_up` |
 | `action_value` | `Fn.action_value` |
@@ -426,6 +434,8 @@ Every text-script builtin whose name is a single token (letters, digits, `_`, `.
 | `game_slot_text` | `Fn.game_slot_text` |
 | `game_time` | `Fn.game_time` |
 | `gamepad` | `Fn.gamepad` |
+| `gamepad_connected` | `Fn.gamepad_connected` |
+| `gamepad_count` | `Fn.gamepad_count` |
 | `gamepad_down` | `Fn.gamepad_down` |
 | `gamepad_x` | `Fn.gamepad_x` |
 | `gamepad_y` | `Fn.gamepad_y` |
@@ -473,6 +483,8 @@ Every text-script builtin whose name is a single token (letters, digits, `_`, `.
 | `grid_stop` | `Fn.grid_stop` |
 | `grid_weight` | `Fn.grid_weight` |
 | `group_volume` | `Fn.group_volume` |
+| `haptic` | `Fn.haptic` |
+| `haptic_strength` | `Fn.haptic_strength` |
 | `has_clip` | `Fn.has_clip` |
 | `has_parent` | `Fn.has_parent` |
 | `has_save` | `Fn.has_save` |
@@ -494,6 +506,35 @@ Every text-script builtin whose name is a single token (letters, digits, `_`, `.
 | `hold_throw` | `Fn.hold_throw` |
 | `hurt` | `Fn.hurt` |
 | `hypot` | `Fn.hypot` |
+| `ia_canceled` | `Fn.ia_canceled` |
+| `ia_conflicts` | `Fn.ia_conflicts` |
+| `ia_down` | `Fn.ia_down` |
+| `ia_event` | `Fn.ia_event` |
+| `ia_join` | `Fn.ia_join` |
+| `ia_label` | `Fn.ia_label` |
+| `ia_leave` | `Fn.ia_leave` |
+| `ia_load` | `Fn.ia_load` |
+| `ia_map` | `Fn.ia_map` |
+| `ia_map_enabled` | `Fn.ia_map_enabled` |
+| `ia_my_player` | `Fn.ia_my_player` |
+| `ia_performed` | `Fn.ia_performed` |
+| `ia_phase` | `Fn.ia_phase` |
+| `ia_players` | `Fn.ia_players` |
+| `ia_poll_join` | `Fn.ia_poll_join` |
+| `ia_pressed` | `Fn.ia_pressed` |
+| `ia_progress` | `Fn.ia_progress` |
+| `ia_rebind` | `Fn.ia_rebind` |
+| `ia_released` | `Fn.ia_released` |
+| `ia_reset_bindings` | `Fn.ia_reset_bindings` |
+| `ia_save` | `Fn.ia_save` |
+| `ia_scheme` | `Fn.ia_scheme` |
+| `ia_set_scheme` | `Fn.ia_set_scheme` |
+| `ia_started` | `Fn.ia_started` |
+| `ia_use_default` | `Fn.ia_use_default` |
+| `ia_value` | `Fn.ia_value` |
+| `ia_x` | `Fn.ia_x` |
+| `ia_y` | `Fn.ia_y` |
+| `ia_z` | `Fn.ia_z` |
 | `ik_clear_target` | `Fn.ik_clear_target` |
 | `ik_enable` | `Fn.ik_enable` |
 | `ik_foot` | `Fn.ik_foot` |
@@ -506,7 +547,11 @@ Every text-script builtin whose name is a single token (letters, digits, `_`, `.
 | `ik_set_target` | `Fn.ik_set_target` |
 | `ik_set_weight` | `Fn.ik_set_weight` |
 | `index_of` | `Fn.index_of` |
+| `input_button_name` | `Fn.input_button_name` |
+| `input_device` | `Fn.input_device` |
 | `input_horizontal` | `Fn.input_horizontal` |
+| `input_preset` | `Fn.input_preset` |
+| `input_record` | `Fn.input_record` |
 | `input_vertical` | `Fn.input_vertical` |
 | `insert_at` | `Fn.insert_at` |
 | `instantiate` | `Fn.instantiate` |
@@ -561,6 +606,7 @@ Every text-script builtin whose name is a single token (letters, digits, `_`, `.
 | `keep_in_box` | `Fn.keep_in_box` |
 | `key` | `Fn.key` |
 | `key_down` | `Fn.key_down` |
+| `key_positions` | `Fn.key_positions` |
 | `key_pressed` | `Fn.key_pressed` |
 | `key_released` | `Fn.key_released` |
 | `key_up` | `Fn.key_up` |
@@ -807,8 +853,30 @@ Every text-script builtin whose name is a single token (letters, digits, `_`, `.
 | `overlap_capsule` | `Fn.overlap_capsule` |
 | `overlap_capsule3` | `Fn.overlap_capsule3` |
 | `overlap_sphere3` | `Fn.overlap_sphere3` |
+| `pad_battery` | `Fn.pad_battery` |
+| `pad_button_name` | `Fn.pad_button_name` |
+| `pad_event` | `Fn.pad_event` |
+| `pad_family` | `Fn.pad_family` |
+| `pad_gyro` | `Fn.pad_gyro` |
+| `pad_ids` | `Fn.pad_ids` |
+| `pad_info` | `Fn.pad_info` |
 | `pad_left` | `Fn.pad_left` |
+| `pad_lightbar` | `Fn.pad_lightbar` |
+| `pad_mapping` | `Fn.pad_mapping` |
+| `pad_name` | `Fn.pad_name` |
+| `pad_raw` | `Fn.pad_raw` |
 | `pad_right` | `Fn.pad_right` |
+| `pad_setup_active` | `Fn.pad_setup_active` |
+| `pad_setup_back` | `Fn.pad_setup_back` |
+| `pad_setup_cancel` | `Fn.pad_setup_cancel` |
+| `pad_setup_clear` | `Fn.pad_setup_clear` |
+| `pad_setup_prompt` | `Fn.pad_setup_prompt` |
+| `pad_setup_save` | `Fn.pad_setup_save` |
+| `pad_setup_skip` | `Fn.pad_setup_skip` |
+| `pad_setup_start` | `Fn.pad_setup_start` |
+| `pad_swap` | `Fn.pad_swap` |
+| `pad_touch` | `Fn.pad_touch` |
+| `pad_trigger_rumble` | `Fn.pad_trigger_rumble` |
 | `parent_of` | `Fn.parent_of` |
 | `parse_int` | `Fn.parse_int` |
 | `particles_alive` | `Fn.particles_alive` |
@@ -922,6 +990,7 @@ Every text-script builtin whose name is a single token (letters, digits, `_`, `.
 | `raycast_hit3` | `Fn.raycast_hit3` |
 | `read_save` | `Fn.read_save` |
 | `rebind` | `Fn.rebind` |
+| `rebind_swap` | `Fn.rebind_swap` |
 | `recoil` | `Fn.recoil` |
 | `reduce_fn` | `Fn.reduce_fn` |
 | `reload_scene` | `Fn.reload_scene` |
@@ -931,7 +1000,9 @@ Every text-script builtin whose name is a single token (letters, digits, `_`, `.
 | `repeat` | `Fn.repeat` |
 | `repeat_every` | `Fn.repeat_every` |
 | `replace` | `Fn.replace` |
+| `reset_bindings` | `Fn.reset_bindings` |
 | `reset_controls` | `Fn.reset_controls` |
+| `response_curve` | `Fn.response_curve` |
 | `reverse` | `Fn.reverse` |
 | `revert_display_settings` | `Fn.revert_display_settings` |
 | `revive` | `Fn.revive` |
@@ -1053,6 +1124,7 @@ Every text-script builtin whose name is a single token (letters, digits, `_`, `.
 | `set_object_position` | `Fn.set_object_position` |
 | `set_object_var` | `Fn.set_object_var` |
 | `set_parent` | `Fn.set_parent` |
+| `set_per_player` | `Fn.set_per_player` |
 | `set_physics_smooth` | `Fn.set_physics_smooth` |
 | `set_physics_steps` | `Fn.set_physics_steps` |
 | `set_pos` | `Fn.set_pos` |
@@ -1069,6 +1141,7 @@ Every text-script builtin whose name is a single token (letters, digits, `_`, `.
 | `set_radial_start` | `Fn.set_radial_start` |
 | `set_radial_thickness` | `Fn.set_radial_thickness` |
 | `set_refresh_rate` | `Fn.set_refresh_rate` |
+| `set_response` | `Fn.set_response` |
 | `set_root_motion` | `Fn.set_root_motion` |
 | `set_rot3` | `Fn.set_rot3` |
 | `set_rotation` | `Fn.set_rotation` |

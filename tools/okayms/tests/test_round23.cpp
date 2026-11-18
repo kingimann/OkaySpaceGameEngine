@@ -92,5 +92,10 @@ int main(int, char**) {
           "std::error_code ec; fs::path q = fs::weakly_canonical(fs::absolute(p, ec), ec); fs::path base = n.parent_path() / \"x\";\n"
           "return (n.is_absolute() ? 1 : 0) + (int)n.extension().string().size() + (base == q ? 1 : 0) + (fs::is_directory(p, ec) ? 1 : 0); }\n", &o);
     CHECK(t, has_symbol(o, "lexically_normal"));
+    ++tests;
+    build(t, "range for over a class with an iterator class", "struct It { int* p; bool operator!=(const It& o) const { return p != o.p; } It& operator++() { ++p; return *this; } int& operator*() const { return *p; } };\n"
+          "struct C { int a[3]; It begin() { It i; i.p = a; return i; } It end() { It i; i.p = a + 3; return i; } };\n"
+          "int main() { C c; c.a[0] = 1; c.a[1] = 2; c.a[2] = 3; int s = 0; for (int x : c) s += x; for (auto& y : c) y = y * 2; return s + c.a[2]; }\n", &o);
+    CHECK(t, has_symbol(o, "??9It@@") && has_symbol(o, "??EIt@@") && has_symbol(o, "??DIt@@"));
     return t.finish(tests);
 }

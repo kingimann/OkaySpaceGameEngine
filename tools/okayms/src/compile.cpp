@@ -9178,6 +9178,8 @@ bool Parser::parse_range_for(Node* out, std::vector<Local>* locals, int stmt_lin
     }
     // A class with begin() and end() that return pointers: the pointer runs from one to the other ([stmt.ranged]).
     bool class_range = false;
+    bool iter_class = false;
+    Type iter_deref;
     Type iter_type;
     Node begin_call, end_call;
     if (range_type.base == 3 && range_type.pointers == 0 && !range_type.is_array() && range_type.struct_id >= 0 &&
@@ -9185,10 +9187,39 @@ bool Parser::parse_range_for(Node* out, std::vector<Local>* locals, int stmt_lin
          (range.kind == Node::Unary && range.op == TStar))) {
         const Method* mb = find_method(range_type.struct_id, "begin", 0);
         const Method* me = find_method(range_type.struct_id, "end", 0);
-        if (mb == nullptr || me == nullptr || mb->ret.pointers < 1 || me->ret.pointers != mb->ret.pointers) {
+        if (mb != nullptr && me != nullptr && mb->ret.base == 3 && mb->ret.pointers == 0 && !mb->ret.is_ref &&
+            me->ret.base == 3 && me->ret.pointers == 0 && me->ret.struct_id == mb->ret.struct_id) {
+            // begin() and end() return an iterator class: the loop uses its operator!=, prefix operator++ and operator*
+            // ([stmt.ranged]). The iterator objects are copied from the calls; their destructors are not run.
+            const int isid = mb->ret.struct_id;
+            const Method* m_ne = find_method(isid, "operator!=", 1);
+            const Method* m_inc = find_method(isid, "operator++", 0);
+            const Method* m_deref = find_method(isid, "operator*", 0);
+            if (m_ne == nullptr || m_inc == nullptr || m_deref == nullptr) {
+                error = "a range for over a class needs an iterator with !=, ++ and *";
+                return false;
+            }
+            iter_class = true;
+            iter_deref = m_deref->ret;
+            iter_deref.is_ref = false;
+            iter_deref.rref = false;
+            class_range = true;
+            iter_type = mb->ret;
+            for (int w = 0; w < 2; ++w) {
+                const Method* m = w == 0 ? mb : me;
+                Node call;
+                call.kind = Node::Call;
+                call.text = m->qname;
+                call.number = 1;
+                call.type = m->ret;
+                call.kids.push_back(node_addr(range));
+                (w == 0 ? begin_call : end_call) = std::move(call);
+            }
+        } else if (mb == nullptr || me == nullptr || mb->ret.pointers < 1 || me->ret.pointers != mb->ret.pointers) {
             error = "a range for over a class needs begin() and end() that return pointers";
             return false;
         }
+        if (!iter_class) {
         class_range = true;
         iter_type = mb->ret;
         for (int w = 0; w < 2; ++w) {
@@ -9201,13 +9232,15 @@ bool Parser::parse_range_for(Node* out, std::vector<Local>* locals, int stmt_lin
             call.kids.push_back(node_addr(range));
             (w == 0 ? begin_call : end_call) = std::move(call);
         }
+        }
     } else if (!range_type.is_array() || range_type.array_len < 0) {
         error = "a range for needs an array of known length";
         return false;
     }
     const int count = class_range ? 0 : range_type.array_len;
     Type elem = class_range ? iter_type : peel_array(range_type);
-    if (class_range) elem.pointers -= 1;
+    if (iter_class) elem = iter_deref;
+    else if (class_range) elem.pointers -= 1;
     elem.is_const = false;
     at = decl_start;
     bool is_const = false;
@@ -9237,7 +9270,14 @@ bool Parser::parse_range_for(Node* out, std::vector<Local>* locals, int stmt_lin
     place_local(locals, index);
     if (class_range) place_local(locals, range_end);
     Node element;
-    if (class_range) {
+    if (iter_class) {
+        bool done = false;
+        element = node_name(index.name);
+        if (!operator_unary(TStar, false, &element, &done) || !done) {
+            if (error.empty()) error = "the iterator of a range for has no operator*";
+            return false;
+        }
+    } else if (class_range) {
         element.kind = Node::Unary;
         element.op = TStar;
         element.kids.push_back(node_name(index.name));
@@ -9278,6 +9318,16 @@ bool Parser::parse_range_for(Node* out, std::vector<Local>* locals, int stmt_lin
         init.kids.push_back(std::move(zero));
     }
     Node cond;
+    if (iter_class) {
+        Node left = node_name(index.name);
+        Node right = node_name(range_end.name);
+        bool done = false;
+        if (!operator_binary(TNe, &left, &right, &done) || !done) {
+            if (error.empty()) error = "the iterator of a range for has no operator!=";
+            return false;
+        }
+        cond = std::move(left);
+    } else {
     cond.kind = Node::Binary;
     cond.op = class_range ? TNe : TLt;
     cond.kids.push_back(node_name(index.name));
@@ -9290,11 +9340,21 @@ bool Parser::parse_range_for(Node* out, std::vector<Local>* locals, int stmt_lin
         limit.type.base = 1;
         cond.kids.push_back(std::move(limit));
     }
+    }
     Node step;
+    if (iter_class) {
+        bool done = false;
+        step = node_name(index.name);
+        if (!operator_unary(TPlusPlus, false, &step, &done) || !done) {
+            if (error.empty()) error = "the iterator of a range for has no prefix operator++";
+            return false;
+        }
+    } else {
     step.kind = Node::Unary;
     step.op = TPlusPlus;
     step.number = 0;
     step.kids.push_back(node_name(index.name));
+    }
     Node iteration;
     iteration.kind = Node::Block;
     iteration.kids.push_back(std::move(decl_node));

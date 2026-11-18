@@ -279,4 +279,53 @@ inline float VsCurveDistance(float px, float py, float ax, float ay, float bx, f
     return std::sqrt(best);
 }
 
+/// One wire as the canvas draws it: which kind, its place in the graph's list, and where its two plugs are on screen.
+struct VsWireEnds { bool exec = true; int index = 0; float ax = 0, ay = 0, bx = 0, by = 0; };
+
+/// The wire nearest to a point (within maxDist pixels), as an index into `wires`; -1 when none is close enough.
+inline int VsNearestWire(const std::vector<VsWireEnds>& wires, float px, float py, float zoom, float maxDist) {
+    int best = -1;
+    float bestD = maxDist;
+    for (int i = 0; i < (int)wires.size(); ++i) {
+        const VsWireEnds& w = wires[(std::size_t)i];
+        const float d = VsCurveDistance(px, py, w.ax, w.ay, w.bx, w.by, zoom);
+        if (d <= bestD) { bestD = d; best = i; }
+    }
+    return best;
+}
+
+/// A wire named by what it joins (stays valid while other wires come and go; an index would not).
+struct VsWireRef {
+    bool on = false, exec = true;
+    int a = 0, b = 0, c = 0;   // exec: from, pin, to.  value: consumer, inPin, (unused)
+};
+inline VsWireRef VsRefOfWire(const VsEditGraph& g, bool exec, int index) {
+    VsWireRef r;
+    if (exec && index >= 0 && index < (int)g.execLinks.size()) {
+        const VsExecLink& l = g.execLinks[(std::size_t)index];
+        r = {true, true, l.from, l.pin, l.to};
+    } else if (!exec && index >= 0 && index < (int)g.dataLinks.size()) {
+        const VsDataLink& l = g.dataLinks[(std::size_t)index];
+        r = {true, false, l.consumer, l.inPin, 0};
+    }
+    return r;
+}
+
+/// Put block `blockId` on the wire `ref` names. False (graph unchanged) when the wire is gone or the block does not fit.
+inline bool VsSplitWire(VsEditGraph& g, const VsWireRef& ref, int blockId) {
+    if (!ref.on) return false;
+    if (ref.exec) {
+        for (int i = 0; i < (int)g.execLinks.size(); ++i) {
+            const VsExecLink& l = g.execLinks[(std::size_t)i];
+            if (l.from == ref.a && l.pin == ref.b && l.to == ref.c) return VsInsertOnExecWire(g, i, blockId);
+        }
+        return false;
+    }
+    for (int i = 0; i < (int)g.dataLinks.size(); ++i) {
+        const VsDataLink& l = g.dataLinks[(std::size_t)i];
+        if (l.consumer == ref.a && l.inPin == ref.b) return VsInsertOnDataWire(g, i, blockId);
+    }
+    return false;
+}
+
 } // namespace okay::editor::vsed

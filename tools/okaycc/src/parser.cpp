@@ -583,6 +583,16 @@ std::vector<InstReq>& instRequests() {
     return v;
 }
 
+bool& ehActive() {
+    static bool on = false;
+    return on;
+}
+
+bool& forceExceptions() {
+    static bool force = false;
+    return force;
+}
+
 bool& instDirty() {
     static bool d = false;
     return d;
@@ -691,6 +701,9 @@ public:
     Tu parseTu() {
         Tu tu;
         if (tscopes_.empty()) tscopes_.emplace_back();
+        eh_ = forceExceptions();
+        for (const Token& t : toks_)
+            if (t.kind == Tok::Keyword && (t.text == "try" || t.text == "throw")) eh_ = true;
         while (!atEnd()) {
             std::size_t before = i_;
             if (isKw("namespace")) parseNamespace(tu);
@@ -712,7 +725,57 @@ public:
         processInstances(tu);
         flushExtras(tu);
         emitGlobalObjects(tu);
+        if (eh_) emitEhBuiltins(tu);
+        ehActive() = eh_;
         return tu;
+    }
+
+    // Prototypes of the runtime functions the generated code calls (lib/eh.c).
+    void emitEhBuiltins(Tu& tu) {
+        struct B {
+            const char* name;
+            int ret;  // 0 void, 1 int, 2 long, 3 void *
+            std::vector<int> params;  // 2 long, 4 long *, 5 char *
+        };
+        const B list[] = {
+            {"__okay_eh_push", 0, {4}}, {"__okay_eh_pop", 0, {}},      {"__okay_eh_begin", 0, {4}},
+            {"__okay_eh_end", 0, {}},   {"__okay_eh_match", 1, {5}},   {"__okay_eh_obj", 3, {}},
+            {"__okay_eh_resume", 0, {}}, {"__okay_eh_rethrow", 0, {}}, {"__okay_throw", 0, {2, 5, 2}},
+            {"__okay_setjmp", 2, {4}},  {"__okay_alloc", 3, {2}},
+        };
+        Pos p{1, 1, toks_.empty() ? std::string() : toks_[0].file};
+        auto make = [&](int code) -> std::unique_ptr<Type> {
+            switch (code) {
+            case 0: return ty(Type::Kind::Void);
+            case 1: return ty(Type::Kind::Int);
+            case 2: return ty(Type::Kind::Long);
+            case 3: return voidPtr();
+            case 4: return longPtr();
+            default: {
+                auto cp = ty(Type::Kind::Pointer);
+                cp->inner = ty(Type::Kind::Char);
+                return cp;
+            }
+            }
+        };
+        for (const B& b : list) {
+            std::vector<Param> params;
+            for (int code : b.params) {
+                Param prm;
+                prm.type = make(code);
+                params.push_back(std::move(prm));
+            }
+            auto fn = fnTypeOf(params);
+            fn->inner = make(b.ret);
+            auto d = std::make_unique<Decl>();
+            d->name = b.name;
+            d->line = 1;
+            d->col = 1;
+            d->file = p.file;
+            d->type = std::move(fn);
+            d->function = true;
+            tu.decls.push_back(std::move(d));
+        }
     }
 
     // __okay_init_<file>: the constructors of the global and static objects, in order, and
@@ -843,7 +906,7 @@ private:
     }
     bool isUnsupported() const {
         if (atEnd() || cur().kind != Tok::Keyword) return false;
-        return !isTypeKw(cur()) && !isKw("if") && !isKw("else") && !isKw("while") && !isKw("for") && !isKw("do") &&
+        return !isTypeKw(cur()) && !isKw("if") && !isKw("else") && !isKw("while") && !isKw("for") && !isKw("do") && !isKw("try") && !isKw("throw") &&
                !isKw("return") && !isKw("break") && !isKw("continue") && !isKw("switch") && !isKw("goto") &&
                !isKw("new") && !isKw("delete");
     }
@@ -1095,6 +1158,7 @@ private:
         std::string tag;
         std::uint64_t count = 0;  // above 0: an array of that many objects
         std::string guard;        // a static local: destroyed only if this flag is set
+        int kind = 0;             // 0 object, 1 try frame (popped), 2 handler (ended)
     };
     std::vector<std::vector<DVar>> dscopes_;
     std::size_t dbase_ = 0;
@@ -1390,11 +1454,16 @@ private:
             return nullptr;
         };
         Type* B = T->base.empty() ? nullptr : classOf(T->base);
+        int ehHeld = 0;  // sub-objects recorded for unwinding while the constructor runs
         if (B && B->needCtor) {
             MemInit* mi = take(shortName(T->base), T->base);
             std::vector<std::unique_ptr<Expr>> args;
             if (mi) args = std::move(mi->args);
             body->stmts.push_back(sExpr(ctorCall(T->base, eName("this", p), std::move(args), p), p));
+            if (eh_ && B->needDtor) {
+                ehPushObject(body->stmts, eName("this", p), T->base, 0, p);
+                ++ehHeld;
+            }
         }
         if (T->hasVptr) body->stmts.push_back(vptrStore(tag, p));
         for (auto& f : ownFields(*T)) {
@@ -1411,10 +1480,18 @@ private:
                     a.push_back(eAddr(eArrow(eName("this", p), f.first, p), p));
                     a.push_back(std::move(args[0]));
                     body->stmts.push_back(sExpr(eCall(eName("\x01" "cinit:" + f.second->tag, p), std::move(a), p), p));
+                    if (eh_ && ft->needDtor) {
+                        ehPushObject(body->stmts, eAddr(eArrow(eName("this", p), f.first, p), p), f.second->tag, 0, p);
+                        ++ehHeld;
+                    }
                     continue;
                 }
                 body->stmts.push_back(sExpr(
                     ctorCall(f.second->tag, eAddr(eArrow(eName("this", p), f.first, p), p), std::move(args), p), p));
+                if (eh_ && ft->needDtor) {
+                    ehPushObject(body->stmts, eAddr(eArrow(eName("this", p), f.first, p), p), f.second->tag, 0, p);
+                    ++ehHeld;
+                }
             } else if (mi && mi->args.size() == 1) {
                 body->stmts.push_back(
                     sExpr(eAssign(eArrow(eName("this", p), f.first, p), std::move(mi->args[0]), p), p));
@@ -1426,9 +1503,24 @@ private:
                 if (f.first == m.name) ok = true;
             if (!ok) diags_.error(p.file.empty() ? "t.c" : p.file, p.line, p.col, "'" + m.name + "' is not a member or base");
         }
-        if (d.body) body->stmts.push_back(std::move(d.body));
+        if (d.body) {
+            if (ehHeld > 0 && hasReturn(*d.body))
+                diags_.error(p.file.empty() ? "t.c" : p.file, p.line, p.col,
+                             "a return in a constructor body is not supported with exceptions");
+            body->stmts.push_back(std::move(d.body));
+        }
+        for (int k = 0; k < ehHeld; ++k) body->stmts.push_back(sExpr(ehCall("__okay_eh_pop", {}, p), p));
         decl->body = std::move(body);
         return decl;
+    }
+
+    static bool hasReturn(const Stmt& st) {
+        if (st.kind == Stmt::Kind::Return) return true;
+        for (const auto& k : st.stmts)
+            if (k && hasReturn(*k)) return true;
+        for (const Stmt* k : {st.thenS.get(), st.elseS.get(), st.body.get(), st.init.get()})
+            if (k && hasReturn(*k)) return true;
+        return false;
     }
 
     std::unique_ptr<Decl> buildDtor(const std::string& tag, std::unique_ptr<Stmt> user, const Pos& p, bool deleting) {
@@ -3039,7 +3131,10 @@ private:
                 out.push_back(elementLoop(name, arrayCount, false, p, [&](std::unique_ptr<Expr> at) {
                     return ctorCall(tag, eAddr(std::move(at), p), {}, p);
                 }));
-            if (cls->needDtor && !dscopes_.empty()) dscopes_.back().push_back(DVar{name, tag, arrayCount, ""});
+            if (cls->needDtor && !dscopes_.empty()) {
+                if (eh_) ehPushObject(out, eName(name, p), tag, arrayCount, p);
+                dscopes_.back().push_back(DVar{name, tag, arrayCount, "", 0});
+            }
             return;
         }
         if (copyFrom) {
@@ -3047,13 +3142,19 @@ private:
             a.push_back(eAddr(eName(name, p), p));
             a.push_back(std::move(copyFrom));
             out.push_back(sExpr(eCall(eName("\x01" "cinit:" + tag, p), std::move(a), p), p));
-            if (cls->needDtor && !dscopes_.empty()) dscopes_.back().push_back(DVar{name, tag, 0, ""});
+            if (cls->needDtor && !dscopes_.empty()) {
+                if (eh_) ehPushObject(out, eAddr(eName(name, p), p), tag, 0, p);
+                dscopes_.back().push_back(DVar{name, tag, 0, "", 0});
+            }
             return;
         }
         if (cls->needCtor && (haveCtorArgs || !hasInit)) {
             out.push_back(sExpr(ctorCall(tag, eAddr(eName(name, p), p), std::move(ctorArgs), p), p));
         }
-        if (cls->needDtor && !dscopes_.empty()) dscopes_.back().push_back(DVar{name, tag, 0, ""});
+        if (cls->needDtor && !dscopes_.empty()) {
+            if (eh_) ehPushObject(out, eAddr(eName(name, p), p), tag, 0, p);
+            dscopes_.back().push_back(DVar{name, tag, 0, "", 0});
+        }
     }
 
     void parseDeclInto(std::vector<std::unique_ptr<Stmt>>& out, bool forInit) {
@@ -3247,14 +3348,25 @@ private:
         for (std::size_t sc = dscopes_.size(); sc-- > base;) {
             auto& vars = dscopes_[sc];
             for (std::size_t i = vars.size(); i-- > 0;) {
+                if (vars[i].kind == 1) {
+                    out.push_back(sExpr(ehCall("__okay_eh_pop", {}, p), p));
+                    continue;
+                }
+                if (vars[i].kind == 2) {
+                    out.push_back(sExpr(ehCall("__okay_eh_end", {}, p), p));
+                    continue;
+                }
                 if (vars[i].count > 0) {
                     out.push_back(elementLoop(vars[i].name, vars[i].count, true, p, [&](std::unique_ptr<Expr> at) {
                         return dtorCall(vars[i].tag, eAddr(std::move(at), p), p);
                     }));
+                    if (eh_) out.push_back(sExpr(ehCall("__okay_eh_pop", {}, p), p));
                     continue;
                 }
                 auto call = dtorCall(vars[i].tag, eAddr(eName(vars[i].name, p), p), p);
-                if (call) out.push_back(sExpr(std::move(call), p));
+                const bool had = call != nullptr;
+                if (had) out.push_back(sExpr(std::move(call), p));
+                if (had && eh_ && vars[i].guard.empty()) out.push_back(sExpr(ehCall("__okay_eh_pop", {}, p), p));
             }
         }
         return out;
@@ -3308,6 +3420,7 @@ private:
         if (isKw("if")) return parseIf();
         if (isKw("while")) return parseWhile();
         if (isKw("do")) return parseDo();
+        if (isKw("try")) return parseTry();
         if (isKw("for")) return parseFor();
         if (isKw("return")) return parseReturn();
         if (isKw("switch")) return parseSwitch();
@@ -3371,6 +3484,227 @@ private:
         loopBases_.pop_back();
         brkBases_.pop_back();
         return s;
+    }
+
+    // ---- exceptions (written from ISO/IEC 14882 [except]; not the Itanium ABI) ----
+    // A stack of records in the runtime (lib/eh.c): an object with a destructor pushes a record when
+    // it is built and pops it when it is destroyed; a try block pushes a frame holding the saved
+    // registers (__okay_setjmp); throw walks the records, destroying objects, until it reaches a try
+    // frame, which jumps to the handlers. The handlers test the thrown type and continue unwinding
+    // when none fits.
+    bool eh_ = false;
+    std::unique_ptr<Expr> ehCall(const std::string& fn, std::vector<std::unique_ptr<Expr>> args, const Pos& p) {
+        return eCall(eName(fn, p), std::move(args), p);
+    }
+    std::unique_ptr<Expr> eStr(const std::string& text, const Pos& p) {
+        auto e = std::make_unique<Expr>();
+        e->kind = Expr::Kind::String;
+        e->text = text;
+        e->line = p.line;
+        e->col = p.col;
+        e->file = p.file;
+        return e;
+    }
+    std::unique_ptr<Expr> eCastTo(std::unique_ptr<Type> t, std::unique_ptr<Expr> x, const Pos& p) {
+        auto e = std::make_unique<Expr>();
+        e->kind = Expr::Kind::Cast;
+        e->line = p.line;
+        e->col = p.col;
+        e->file = p.file;
+        e->ty = std::move(t);
+        e->kids.push_back(std::move(x));
+        return e;
+    }
+    std::unique_ptr<Expr> eIndex(const std::string& arr, std::uint64_t i, const Pos& p) {
+        auto e = std::make_unique<Expr>();
+        e->kind = Expr::Kind::Index;
+        e->line = p.line;
+        e->col = p.col;
+        e->file = p.file;
+        e->kids.push_back(eName(arr, p));
+        e->kids.push_back(eInt(i, p));
+        return e;
+    }
+    std::unique_ptr<Stmt> ehRecordDecl(const std::string& name, const Pos& p) {
+        auto d = std::make_unique<Decl>();
+        d->name = name;
+        d->line = p.line;
+        d->col = p.col;
+        d->file = p.file;
+        auto arr = ty(Type::Kind::Array);
+        arr->inner = ty(Type::Kind::Long);
+        arr->bound = eInt(14, p);
+        d->type = std::move(arr);
+        return declStmt(std::move(d));
+    }
+    // After an object of class 'tag' is built: record it so that unwinding destroys it.
+    void ehPushObject(std::vector<std::unique_ptr<Stmt>>& out, std::unique_ptr<Expr> objAddr, const std::string& tag,
+                      std::uint64_t count, const Pos& p) {
+        Type* c = classOf(tag);
+        const Param* d = c ? special(c, "<dtor>") : nullptr;
+        if (!d) return;
+        std::string rec = "__eh" + std::to_string(newN_++);
+        out.push_back(ehRecordDecl(rec, p));
+        out.push_back(sExpr(eAssign(eIndex(rec, 1, p), eInt(count ? 1 : 0, p), p), p));
+        out.push_back(sExpr(eAssign(eIndex(rec, 2, p), eCastTo(ty(Type::Kind::Long), std::move(objAddr), p), p), p));
+        out.push_back(sExpr(eAssign(eIndex(rec, 3, p), eCastTo(ty(Type::Kind::Long), eName(d->mangled, p), p), p), p));
+        if (count) {
+            out.push_back(sExpr(eAssign(eIndex(rec, 4, p), eInt(count, p), p), p));
+            auto sz = std::make_unique<Expr>();
+            sz->kind = Expr::Kind::Unary;
+            sz->text = "sizeof";
+            sz->line = p.line;
+            sz->col = p.col;
+            sz->file = p.file;
+            sz->ty = ty(Type::Kind::Struct);
+            sz->ty->tag = tag;
+            out.push_back(sExpr(eAssign(eIndex(rec, 5, p), std::move(sz), p), p));
+        }
+        std::vector<std::unique_ptr<Expr>> a;
+        a.push_back(eName(rec, p));
+        out.push_back(sExpr(ehCall("__okay_eh_push", std::move(a), p), p));
+    }
+
+    std::unique_ptr<Type> longPtr() {
+        auto pt = ty(Type::Kind::Pointer);
+        pt->inner = ty(Type::Kind::Long);
+        return pt;
+    }
+
+    // try { body } catch (T e) { ... } catch (...) { ... }
+    std::unique_ptr<Stmt> parseTry() {
+        Pos p = here();
+        advance();
+        const int n = newN_++;
+        const std::string tr = "__tr" + std::to_string(n);
+        auto blk = sBlock(p);
+        blk->stmts.push_back(ehRecordDecl(tr, p));
+        blk->stmts.push_back(sExpr(eAssign(eIndex(tr, 1, p), eInt(2, p), p), p));
+        {
+            std::vector<std::unique_ptr<Expr>> a;
+            a.push_back(eName(tr, p));
+            blk->stmts.push_back(sExpr(ehCall("__okay_eh_push", std::move(a), p), p));
+        }
+        // The try body, with the frame popped by every way out of it.
+        dscopes_.emplace_back();
+        DVar frame;
+        frame.kind = 1;
+        dscopes_.back().push_back(frame);
+        auto body = parseCompound();
+        dscopes_.pop_back();
+        body->stmts.push_back(sExpr(ehCall("__okay_eh_pop", {}, p), p));
+        struct Handler {
+            bool all = false;
+            std::string name;
+            std::unique_ptr<Type> type;
+            std::string var;
+            std::unique_ptr<Stmt> block;
+        };
+        std::vector<Handler> handlers;
+        if (!isKw("catch")) err("a try block needs a handler");
+        while (isKw("catch")) {
+            Handler h;
+            advance();
+            expectP("(", "(");
+            Pos hp = here();
+            dscopes_.emplace_back();
+            DVar hv;
+            hv.kind = 2;
+            dscopes_.back().push_back(hv);
+            auto hb = sBlock(hp);
+            const std::string cr = "__ch" + std::to_string(newN_++);
+            hb->stmts.push_back(ehRecordDecl(cr, hp));
+            {
+                std::vector<std::unique_ptr<Expr>> a;
+                a.push_back(eName(cr, hp));
+                hb->stmts.push_back(sExpr(ehCall("__okay_eh_begin", std::move(a), hp), hp));
+            }
+            if (isP("...")) {
+                advance();
+                h.all = true;
+            } else {
+                auto base = parseBase();
+                Parsed d = parseDeclarator(false);
+                auto type = apply(std::move(base), d.mods);
+                h.name = mangleType(type->kind == Type::Kind::Reference && type->inner ? *type->inner : *type);
+                if (!d.name.empty()) {
+                    // The caught object: a copy for a type, the object itself for a reference.
+                    auto decl = std::make_unique<Decl>();
+                    decl->name = d.name;
+                    decl->line = d.line;
+                    decl->col = d.col;
+                    decl->file = d.file;
+                    const Type* want = type->kind == Type::Kind::Reference && type->inner ? type->inner.get() : type.get();
+                    auto ptr = ty(Type::Kind::Pointer);
+                    ptr->inner = cloneType(*want);
+                    auto objp = eCastTo(std::move(ptr), ehCall("__okay_eh_obj", {}, hp), hp);
+                    auto deref = std::make_unique<Expr>();
+                    deref->kind = Expr::Kind::Unary;
+                    deref->text = "*";
+                    deref->line = hp.line;
+                    deref->col = hp.col;
+                    deref->file = hp.file;
+                    deref->kids.push_back(std::move(objp));
+                    decl->type = std::move(type);
+                    decl->init = std::move(deref);
+                    addLocal(hb->stmts, std::move(decl), {}, false);
+                }
+            }
+            expectP(")", ")");
+            auto hbody = parseCompound();
+            hb->stmts.push_back(std::move(hbody));
+            auto ds = pendingDtors(dscopes_.size() - 1, hp);
+            for (auto& dd : ds) hb->stmts.push_back(std::move(dd));
+            dscopes_.pop_back();
+            h.block = std::move(hb);
+            handlers.push_back(std::move(h));
+        }
+        // The chain: the first handler whose type fits, else keep unwinding.
+        std::unique_ptr<Stmt> chain;
+        {
+            auto resume = sExpr(ehCall("__okay_eh_resume", {}, p), p);
+            chain = std::move(resume);
+        }
+        for (std::size_t i = handlers.size(); i-- > 0;) {
+            auto iff = std::make_unique<Stmt>();
+            iff->kind = Stmt::Kind::If;
+            iff->line = p.line;
+            iff->col = p.col;
+            iff->file = p.file;
+            if (handlers[i].all) {
+                iff->expr = eInt(1, p);
+            } else {
+                std::vector<std::unique_ptr<Expr>> a;
+                a.push_back(eStr(handlers[i].name, p));
+                iff->expr = ehCall("__okay_eh_match", std::move(a), p);
+            }
+            iff->thenS = std::move(handlers[i].block);
+            iff->elseS = std::move(chain);
+            chain = std::move(iff);
+        }
+        // if (!setjmp(frame)) body else handlers
+        auto top = std::make_unique<Stmt>();
+        top->kind = Stmt::Kind::If;
+        top->line = p.line;
+        top->col = p.col;
+        top->file = p.file;
+        {
+            std::vector<std::unique_ptr<Expr>> a;
+            a.push_back(eAddr(eIndex(tr, 6, p), p));
+            auto call = ehCall("__okay_setjmp", std::move(a), p);
+            auto notc = std::make_unique<Expr>();
+            notc->kind = Expr::Kind::Unary;
+            notc->text = "!";
+            notc->line = p.line;
+            notc->col = p.col;
+            notc->file = p.file;
+            notc->kids.push_back(std::move(call));
+            top->expr = std::move(notc);
+        }
+        top->thenS = std::move(body);
+        top->elseS = std::move(chain);
+        blk->stmts.push_back(std::move(top));
+        return blk;
     }
 
     // do body while (cond); as { first = 1; while (first || cond) { first = 0; body } }. A
@@ -3558,6 +3892,15 @@ private:
     }
 
     std::unique_ptr<Expr> parseAssign() {
+        if (isKw("throw")) {
+            // throw e  /  throw  (rethrow): the checker knows the type of e and builds the throw.
+            Token at = cur();
+            advance();
+            auto call = ex(Expr::Kind::Call, at);
+            call->kids.push_back(eName("\x01" "throw", Pos{at.line, at.column, at.file}));
+            if (!isP(";") && !isP(")") && !isP(",")) call->kids.push_back(parseAssign());
+            return call;
+        }
         auto e = parseCond();
         if (!isAssignOp()) return e;
         Token op = cur();
@@ -4600,6 +4943,20 @@ private:
                     add(ti.flag, std::make_unique<Type>(), false, e.line, e.col);
                     scopes_.back()[ti.flag].type->kind = Type::Kind::Int;
                     lastTempFlag_ = ti.flag;
+                    lastTempName_ = ti.name;
+                    lastTempTag_ = ti.tag;
+                    lastTempRec_.clear();
+                    if (ehActive()) {
+                        ti.rec = "__cr" + std::to_string(tempN_++);
+                        lastTempRec_ = ti.rec;
+                        auto arr = std::make_unique<Type>();
+                        arr->kind = Type::Kind::Array;
+                        arr->inner = prim(Type::Kind::Long);
+                        arr->bound = std::make_unique<Expr>();
+                        arr->bound->kind = Expr::Kind::Int;
+                        arr->bound->ival = 14;
+                        add(ti.rec, std::move(arr), false, e.line, e.col);
+                    }
                     auto first = std::move(e.kids[0]);
                     e.kids[0] = withFlag(std::move(first), e);
                 }
@@ -4625,13 +4982,17 @@ private:
         std::string name;
         std::string tag;                 // class to destroy ("" = nothing to destroy)
         std::string flag;                // hidden int, set when the object was built (declared with it)
+        std::string rec;                 // with exceptions: the unwinding record (14 longs) of the object
         std::unique_ptr<Type> type;      // set when the declaration still has to be inserted
         Pos2 pos;
     };
     std::vector<TempInfo> temps_;
     int tempN_ = 0;
     std::string lastTempFlag_;  // the destruction flag of the temporary newTemp just made, or ""
-    // "flag = 1, first": the flag records that the object was built.
+    std::string lastTempRec_;   // its unwinding record, or ""
+    std::string lastTempName_;
+    std::string lastTempTag_;
+    // "first, flag = 1 (, record the object)": the flag records that the object was built.
     std::unique_ptr<Expr> withFlag(std::unique_ptr<Expr> first, const Expr& at) {
         if (lastTempFlag_.empty()) return first;
         auto one = mkE(Expr::Kind::Int, at);
@@ -4642,9 +5003,50 @@ private:
         set->kids.push_back(mkName(lastTempFlag_, at));
         set->kids.push_back(std::move(one));
         auto c = mkE(Expr::Kind::Comma, at);
-        c->kids.push_back(std::move(set));
         c->kids.push_back(std::move(first));
+        c->kids.push_back(std::move(set));
+        if (!lastTempRec_.empty()) {
+            // Record it for unwinding: rec[1] = 0, rec[2] = &object, rec[3] = destructor, push(rec).
+            auto idx = [&](std::uint64_t k) {
+                auto ix = mkE(Expr::Kind::Index, at);
+                ix->kids.push_back(mkName(lastTempRec_, at));
+                auto n = mkE(Expr::Kind::Int, at);
+                n->ival = k;
+                ix->kids.push_back(std::move(n));
+                return ix;
+            };
+            auto toLong = [&](std::unique_ptr<Expr> x) {
+                auto cst = mkE(Expr::Kind::Cast, at);
+                cst->ty = prim(Type::Kind::Long);
+                cst->kids.push_back(std::move(x));
+                return cst;
+            };
+            auto zero = mkE(Expr::Kind::Int, at);
+            c->kids.push_back(eAssignNode(idx(1), std::move(zero), at));
+            c->kids.push_back(eAssignNode(idx(2), toLong(eUnary("&", mkName(lastTempName_, at), at)), at));
+            auto it = canonStructs().find(lastTempTag_);
+            const Param* dp = it == canonStructs().end() ? nullptr : findSpecial(it->second.get(), "<dtor>");
+            if (dp) c->kids.push_back(eAssignNode(idx(3), toLong(mkName(dp->mangled, at)), at));
+            auto push = mkE(Expr::Kind::Call, at);
+            push->kids.push_back(mkName("__okay_eh_push", at));
+            push->kids.push_back(mkName(lastTempRec_, at));
+            c->kids.push_back(std::move(push));
+        }
         return c;
+    }
+    // The temporary (a Comma made by the parser for T(args)) initializes an object or is returned:
+    // nothing destroys it separately, and its unwinding record is dropped.
+    void consumed(Expr& comma) {
+        comma.ival = 8;
+        bool hadRecord = false;
+        for (TempInfo& t : temps_)
+            if (t.name == comma.text) hadRecord = !t.rec.empty() && !t.tag.empty();
+        eraseTemp(comma.text);
+        if (hadRecord && comma.kids.size() >= 2) {
+            auto pop = mkE(Expr::Kind::Call, comma);
+            pop->kids.push_back(mkName("__okay_eh_pop", comma));
+            comma.kids.insert(comma.kids.end() - 1, std::move(pop));
+        }
     }
     std::map<const Expr*, ET> etCache_;
 
@@ -4686,12 +5088,28 @@ private:
         ti.pos.col = at.col;
         ti.pos.file = at.file;
         lastTempFlag_.clear();
+        lastTempRec_.clear();
         if (destroy && needsDtor(t)) {
             ti.tag = t.tag;
             ti.flag = "__cf" + std::to_string(tempN_++);
             lastTempFlag_ = ti.flag;
+            lastTempName_ = ti.name;
+            lastTempTag_ = t.tag;
+            if (ehActive()) {
+                ti.rec = "__cr" + std::to_string(tempN_++);
+                lastTempRec_ = ti.rec;
+            }
             add(ti.flag, std::make_unique<Type>(), false, at.line, at.col);
             scopes_.back()[ti.flag].type->kind = Type::Kind::Int;
+        }
+        if (!ti.rec.empty()) {
+            auto arr = std::make_unique<Type>();
+            arr->kind = Type::Kind::Array;
+            arr->inner = prim(Type::Kind::Long);
+            arr->bound = std::make_unique<Expr>();
+            arr->bound->kind = Expr::Kind::Int;
+            arr->bound->ival = 14;
+            add(ti.rec, std::move(arr), false, at.line, at.col);
         }
         add(ti.name, cloneType(t), false, at.line, at.col);
         std::string name = ti.name;
@@ -5225,6 +5643,91 @@ private:
             }
             const Param* pick = pickOverload(cands, e, 2);
             c0.text = pick->mangled;
+        } else if (c0.kind == Expr::Kind::Name && c0.text == "\x01" "throw") {
+            if (e.kids.size() == 1) {
+                c0.text = "__okay_eh_rethrow";  // throw;
+                return checkCall(e);
+            }
+            // throw e: the object is copied into memory the runtime owns, then thrown with the names
+            // of its type (a class: the class, then its bases) and its destructor.
+            ET src = decay(checkExpr(*e.kids[1]));
+            if (src.bad || !src.type) return bad(e.line, e.col);
+            std::unique_ptr<Type> T = cloneType(*src.type);
+            std::string types;
+            std::string dtorName;
+            if (T->kind == Type::Kind::Struct && !T->tag.empty()) {
+                std::string walk = T->tag;
+                while (!walk.empty()) {
+                    auto cit = canonStructs().find(walk);
+                    if (cit == canonStructs().end() || !cit->second) break;
+                    Type tmp;
+                    tmp.kind = Type::Kind::Struct;
+                    tmp.tag = walk;
+                    types += mangleType(tmp) + "\n";
+                    walk = cit->second->base;
+                }
+                auto cit = canonStructs().find(T->tag);
+                const Param* d1 = cit != canonStructs().end() ? findSpecial(cit->second.get(), "<dtor>") : nullptr;
+                if (d1) dtorName = d1->mangled;
+            } else {
+                types = mangleType(*T);
+            }
+            std::string th = newTemp(*ptrTo(cloneType(*T)), e, false);
+            auto sizeOf = mkE(Expr::Kind::Unary, e);
+            sizeOf->text = "sizeof";
+            sizeOf->ty = cloneType(*T);
+            std::vector<std::unique_ptr<Expr>> aa;
+            aa.push_back(std::move(sizeOf));
+            auto allocCall = mkE(Expr::Kind::Call, e);
+            allocCall->kids.push_back(mkName("__okay_alloc", e));
+            for (auto& k : aa) allocCall->kids.push_back(std::move(k));
+            auto cast = mkE(Expr::Kind::Cast, e);
+            cast->ty = ptrTo(cloneType(*T));
+            cast->kids.push_back(std::move(allocCall));
+            auto allocAssign = eAssignNode(mkName(th, e), std::move(cast), e);
+            std::unique_ptr<Expr> copy;
+            if (T->kind == Type::Kind::Struct) {
+                auto idx0 = mkE(Expr::Kind::Index, e);
+                idx0->kids.push_back(mkName(th, e));
+                idx0->kids.push_back(mkE(Expr::Kind::Int, e));
+                auto self = eUnary("&", std::move(idx0), e);
+                auto cc = mkE(Expr::Kind::Call, e);
+                cc->kids.push_back(mkName("\x01" "cinit:" + T->tag, e));
+                cc->kids.push_back(std::move(self));
+                cc->kids.push_back(std::move(e.kids[1]));
+                copy = std::move(cc);
+            } else {
+                auto idx0 = mkE(Expr::Kind::Index, e);
+                idx0->kids.push_back(mkName(th, e));
+                idx0->kids.push_back(mkE(Expr::Kind::Int, e));
+                copy = eAssignNode(std::move(idx0), std::move(e.kids[1]), e);
+            }
+            auto throwCall = mkE(Expr::Kind::Call, e);
+            throwCall->kids.push_back(mkName("__okay_throw", e));
+            auto objLong = mkE(Expr::Kind::Cast, e);
+            objLong->ty = prim(Type::Kind::Long);
+            objLong->kids.push_back(mkName(th, e));
+            throwCall->kids.push_back(std::move(objLong));
+            auto typesStr = mkE(Expr::Kind::String, e);
+            typesStr->text = types;
+            throwCall->kids.push_back(std::move(typesStr));
+            if (dtorName.empty()) {
+                auto zero = mkE(Expr::Kind::Int, e);
+                throwCall->kids.push_back(std::move(zero));
+            } else {
+                auto dl = mkE(Expr::Kind::Cast, e);
+                dl->ty = prim(Type::Kind::Long);
+                dl->kids.push_back(mkName(dtorName, e));
+                throwCall->kids.push_back(std::move(dl));
+            }
+            e.kind = Expr::Kind::Comma;
+            e.text.clear();
+            e.ival = 0;
+            e.kids.clear();
+            e.kids.push_back(std::move(allocAssign));
+            e.kids.push_back(std::move(copy));
+            e.kids.push_back(std::move(throwCall));
+            return checkExprBody(e);
         } else if (c0.kind == Expr::Kind::Name && c0.text.compare(0, 7, "\x01" "cinit:") == 0 && e.kids.size() == 3) {
             // T x = y: the copy constructor when y is an lvalue of class T, else a plain copy of
             // the bytes (y is a temporary: the object is built in place).
@@ -5232,8 +5735,7 @@ private:
             ET src = checkExpr(*e.kids[2]);
             if (src.bad) return bad(e.line, e.col);
             if (e.kids[2]->kind == Expr::Kind::Comma && e.kids[2]->ival == 9) {
-                e.kids[2]->ival = 8;  // built in place
-                eraseTemp(e.kids[2]->text);
+                consumed(*e.kids[2]);  // built in place
             }
             const bool sameClass = src.type && src.type->kind == Type::Kind::Struct && src.type->tag == tag;
             // Another type (an int for a constructor taking an int) is an ordinary constructor call;
@@ -5479,8 +5981,7 @@ private:
                 Expr& argExpr = *e.kids[i + 1];
                 if (argExpr.kind == Expr::Kind::Comma && argExpr.ival == 9) {
                     // A T(args) temporary passed by value initializes the parameter directly.
-                    argExpr.ival = 8;
-                    eraseTemp(argExpr.text);
+                    consumed(argExpr);
                 } else if (arg.lvalue && (hasUserCopy(*arg.type) || needsDtor(*arg.type))) {
                     // The caller copies the object into a hidden local (by the copy constructor, or
                     // bytewise) and destroys that copy after the statement.
@@ -5578,8 +6079,7 @@ private:
             if (d.type->kind != Type::Kind::Struct) convertIfNeeded(*d.init);
             ET src = decay(checkExpr(*d.init));
             if (d.init->kind == Expr::Kind::Comma && d.init->ival == 9) {
-                d.init->ival = 8;  // T x = T(args): built in place, the temporary is not destroyed
-                eraseTemp(d.init->text);
+                consumed(*d.init);  // T x = T(args): built in place, the temporary is not destroyed
             }
             if (!src.bad && !canAssign(*d.type, src)) err(d.line, d.col, "cannot assign this value");
             else if (!src.bad && scopes_.size() == 1 && !isConst(*d.init))
@@ -5658,6 +6158,26 @@ private:
                 ds->decl = std::move(d);
                 out.push_back(std::move(ds));
             }
+            if (!t.rec.empty()) {
+                auto d = std::make_unique<Decl>();
+                d->name = t.rec;
+                d->line = t.pos.line;
+                d->col = t.pos.col;
+                d->file = t.pos.file;
+                auto arr = std::make_unique<Type>();
+                arr->kind = Type::Kind::Array;
+                arr->inner = prim(Type::Kind::Long);
+                arr->bound = std::make_unique<Expr>();
+                arr->bound->kind = Expr::Kind::Int;
+                arr->bound->ival = 14;
+                d->type = std::move(arr);
+                auto ds = std::make_unique<Stmt>();
+                ds->kind = Stmt::Kind::Decl;
+                ds->line = d->line;
+                ds->col = d->col;
+                ds->decl = std::move(d);
+                out.push_back(std::move(ds));
+            }
             if (!t.flag.empty()) {
                 auto d = std::make_unique<Decl>();
                 d->name = t.flag;
@@ -5700,6 +6220,24 @@ private:
             es->file = file;
             es->expr = std::move(call);
             std::unique_ptr<Stmt> last = std::move(es);
+            if (!temps[i].rec.empty()) {
+                auto blk2 = std::make_unique<Stmt>();
+                blk2->kind = Stmt::Kind::Block;
+                blk2->line = line;
+                blk2->col = col;
+                blk2->file = file;
+                blk2->stmts.push_back(std::move(last));
+                auto popCall = mkE(Expr::Kind::Call, at);
+                popCall->kids.push_back(mkName("__okay_eh_pop", at));
+                auto ps = std::make_unique<Stmt>();
+                ps->kind = Stmt::Kind::Expr;
+                ps->line = line;
+                ps->col = col;
+                ps->file = file;
+                ps->expr = std::move(popCall);
+                blk2->stmts.push_back(std::move(ps));
+                last = std::move(blk2);
+            }
             if (!temps[i].flag.empty()) {
                 auto g = std::make_unique<Stmt>();
                 g->kind = Stmt::Kind::If;
@@ -5808,8 +6346,7 @@ private:
                 if (ret_->kind != Type::Kind::Struct) convertIfNeeded(*s.expr);
                 ET v = decay(checkExpr(*s.expr));
                 if (s.expr->kind == Expr::Kind::Comma && s.expr->ival == 9) {
-                    s.expr->ival = 8;  // returned: it is the result object
-                    eraseTemp(s.expr->text);
+                    consumed(*s.expr);  // returned: it is the result object
                 }
                 if (!v.bad && !canAssign(*ret_, v)) err(s.line, s.col, "return type does not match");
             }
@@ -6705,6 +7242,9 @@ private:
         if (s->mem) {
             Val v = loadMem(s->reg, s->width, s->zext);
             v.fpw = s->fpw;
+            v.step = s->step;  // a pointer kept in memory still points to something of a size
+            v.inner = s->inner;
+            v.fields = s->fields;
             return v;
         }
         if (s->array || s->agg) {
@@ -6765,6 +7305,12 @@ private:
 
     Addr lowerAddr(Expr& e) {
         Addr a;
+        if (e.kind == Expr::Kind::Comma && !e.kids.empty() && e.kids.back()) {
+            // (x, y): x is evaluated for its effects, the address is y's.
+            for (std::size_t i = 0; i + 1 < e.kids.size(); ++i)
+                if (e.kids[i]) lowerExpr(*e.kids[i]);
+            return lowerAddr(*e.kids.back());
+        }
         if (e.kind == Expr::Kind::Name) {
             Sym* s = find(e.text);
             if (!s) {
@@ -7595,6 +8141,21 @@ private:
             Sym* s = find(lhs.text);
             if (s && s->agg) return storeCall(*s, *e.kids[1]);
         }
+        if (lhs.kind == Expr::Kind::Name && e.kids[1]->kind != Expr::Kind::Call) {
+            // A local object assigned from *p, a[i] or s.f: copy the bytes from that object's address.
+            Sym* s = find(lhs.text);
+            const Expr& r = *e.kids[1];
+            const bool viaAddress = (r.kind == Expr::Kind::Unary && r.text == "*") || r.kind == Expr::Kind::Index ||
+                                    r.kind == Expr::Kind::Member;
+            if (s && s->agg && !s->ref && viaAddress) {
+                Addr src = lowerAddr(*e.kids[1]);
+                if (!src.ok) return {};
+                int sz = s->objSize > 0 ? s->objSize : s->width;
+                Operand dst = addrOf(*s);
+                copyMem(dst, src.op, sz);
+                return Val{dst, 0, 0};
+            }
+        }
         if (lhs.kind != Expr::Kind::Name && lhs.checked && lhs.checked->kind == Type::Kind::Struct &&
             e.kids[1]->kind != Expr::Kind::Call) {
             // struct = struct through a pointer, a field or an index: copy the bytes.
@@ -8255,12 +8816,18 @@ private:
 
     void scanExpr(const Expr* e) {
         if (!e) return;
+        if (e->kind == Expr::Kind::Call && !e->kids.empty() && e->kids[0] && e->kids[0]->kind == Expr::Kind::Name &&
+            e->kids[0]->text == "__okay_setjmp")
+            hasTry_ = true;
         if (e->kind == Expr::Kind::Unary && e->text == "&" && !e->kids.empty() && e->kids[0] &&
             e->kids[0]->kind == Expr::Kind::Name)
             addr_.insert(e->kids[0]->text);
         for (const auto& k : e->kids) scanExpr(k.get());
     }
+    bool hasTry_ = false;
+    std::set<std::string> declNames_;
     void scanStmt(const Stmt& s) {
+        if (s.decl) declNames_.insert(s.decl->name);
         scanExpr(s.expr.get());
         scanExpr(s.expr2.get());
         scanExpr(s.expr3.get());
@@ -8349,7 +8916,16 @@ private:
         retStruct_ = false;
         retRef_ = d.type && d.type->inner && d.type->inner->kind == Type::Kind::Reference;
         hiddenReg_ = -1;
+        hasTry_ = false;
+        declNames_.clear();
         if (d.body) scanStmt(*d.body);
+        if (hasTry_) {
+            // A longjmp restores only the registers saved when the try block was entered, so every
+            // named local of this function lives in memory.
+            for (const std::string& n : declNames_) addr_.insert(n);
+            if (d.type)
+                for (const Param& prm : d.type->params) addr_.insert(prm.name);
+        }
         if (d.type && d.type->inner) {
             const Type* r = d.type->inner.get();
             if (r->kind == Type::Kind::Char || r->kind == Type::Kind::Short || r->kind == Type::Kind::Int ||
@@ -8629,5 +9205,7 @@ Module lowerSource(const std::string& source, Diagnostics& diags, const std::str
     if (diags.ok()) optimizeModule(m);
     return m;
 }
+
+void setForceExceptions(bool on) { forceExceptions() = on; }
 
 }  // namespace okaycc

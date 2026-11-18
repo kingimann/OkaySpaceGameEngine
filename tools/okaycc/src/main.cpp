@@ -57,6 +57,8 @@ int main(int argc, char** argv) {
             lex = true;
         } else if (a == "--pp") {
             pp = true;
+        } else if (a == "--eh") {
+            okaycc::setForceExceptions(true);
         } else if (a == "--ast") {
             ast = true;
         } else if (a == "--check") {

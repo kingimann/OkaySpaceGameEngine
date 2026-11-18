@@ -29,7 +29,7 @@ static int runCapture(const std::string& bin, const std::string& outPath) {
 
 static std::vector<std::vector<unsigned char>> loadLibc() {
     const char* files[] = {"lib/write.c", "lib/exit.c", "lib/mem.c", "lib/str.c", "lib/printf.c", "lib/extra.c",
-                           "lib/alloc.c"};
+                           "lib/alloc.c", "lib/eh.c"};
     std::vector<std::string> inc = {"include"};
     std::vector<std::vector<unsigned char>> objs;
     for (const char* path : files) {

@@ -16,6 +16,7 @@
 #include "XboxOverlayMath.hpp"
 #include "XboxRecovery.hpp"
 #include "XboxHttp.hpp"
+#include "XboxOwnHttp.hpp"
 #include "okay/Core/Paths.hpp"
 #include <cmath>
 #include <filesystem>
@@ -592,6 +593,9 @@ static void AuditTests() {
     CHECK(ScanSource("int a;\nvoid f(){ D3DCompile(x); }\n")[0].line == 2);
     CHECK(n("// D3DCompile in a comment\n/* LoadLibraryA\n in a block */ int x;\n") == 0);
     CHECK(n("#include <d3dcompiler.h>\n") == 1 && n("#include <d3d11.h>\n") == 0);
+    // third-party libraries the build must not reach (docs/xbox_uwp_thirdparty.md): reported when active, not when fenced out
+    CHECK(n("#include <sodium.h>\n") == 1 && n("#include \"ufbx.h\"\n") == 1 && n("#include <imgui.h>\n") == 1 && n("#include <assimp/scene.h>\n") == 1 && n("#include <curl/curl.h>\n") == 1);
+    CHECK(n("#if !defined(OKAY_XBOX_UWP)\n#include \"ufbx.h\"\n#endif\n") == 0 && n("#ifdef OKAY_HAVE_SODIUM\n#include <sodium.h>\n#endif\n") == 0 && n("#ifdef OKAY_NET_CRYPTO\n#ifdef OKAY_OWN_CRYPTO\n#include <okay/Crypto/Crypto.hpp>\n#else\n#include <sodium.h>\n#endif\n#endif\n") == 0);
     CHECK(n("MyD3DCompileHelper(1);\n") == 0 && n("D3DCompileFromFile(1);\n") == 0);                  // whole words only
     CHECK(n("auto p = std::getenv(\"APPDATA\");\n") == 1 && n("auto p = std::getenv(\"HOME\");\n") == 0);
     CHECK(n("SDL_Init(0); SDL_CreateWindow(0);\n") == 1);                                              // one finding per token per line
@@ -777,8 +781,49 @@ static void HttpTests() {
       CHECK(!h::Get(c, "http://cdn.example.com", "a.bin", 0, 0, hh).reached && c.seen.empty()); h::Options o; o.allowHttp = true; c.script = {{200, {}, "x"}}; CHECK(h::Get(c, "http://cdn.example.com", "a.bin", 0, 0, hh, o).reached); CHECK(!h::Get(c, "notaurl", "a.bin", 0, 0, hh).reached); }
 }
 
+// ---- the optional own HTTP client (XboxOwnHttp.hpp): policy, plain-http connector over an in-memory TCP, https refused ----
+namespace {
+struct MemStream : okay::ownhttp::Stream {
+    std::string in; std::size_t pos = 0; std::string* sent;
+    MemStream(std::string r, std::string* s) : in(std::move(r)), sent(s) {}
+    long Read(void* b, std::size_t n, okay::ownhttp::Err&) override { if (pos >= in.size()) return 0; const std::size_t k = std::min(n, std::min<std::size_t>(in.size() - pos, 7)); std::memcpy(b, in.data() + pos, k); pos += k; return (long)k; }
+    bool Write(const void* b, std::size_t n, okay::ownhttp::Err&) override { sent->append((const char*)b, n); return true; }
+};
+struct MemDialer : okay::xbox::ownnet::Dialer {
+    std::string reply, sent, host; int port = 0, dials = 0; bool fail = false;
+    std::unique_ptr<okay::ownhttp::Stream> Dial(const std::string& h, int p, okay::ownhttp::Clock::time_point, okay::ownhttp::Err& e, std::string& m) override {
+        ++dials; host = h; port = p; if (fail) { e = okay::ownhttp::Err::Connect; m = "no route"; return nullptr; }
+        return std::make_unique<MemStream>(reply, &sent);
+    }
+};
+}
+static void OwnHttpTests() {
+    namespace on = okay::xbox::ownnet; namespace h = okay::xbox::http;
+    // the compile-time choice: default Windows.Web.Http; own only for plain http; never https without TLS
+    CHECK(on::Decide(false, true, "https").use == on::Backend::WindowsWebHttp && on::Decide(false, true, "http").use == on::Backend::WindowsWebHttp);
+    CHECK(on::Decide(true, true, "http").use == on::Backend::OwnPlain && on::Decide(true, true, "https").use == on::Backend::WindowsWebHttp);
+    { on::Decision d = on::Decide(true, false, "https"); CHECK(d.refuse && d.why.find("no TLS") != std::string::npos); }
+    CHECK(on::Decide(true, false, "http").use == on::Backend::OwnPlain && !on::Decide(true, false, "http").refuse && on::Decide(false, false, "http").refuse);
+    // a plain GET with a Range header and a body split into small reads
+    { MemDialer d; d.reply = "HTTP/1.1 206 Partial Content\r\nContent-Length: 5\r\nContent-Range: bytes 2-6/10\r\nConnection: close\r\n\r\nhello";
+      on::OwnHttpClient c(d); h::Request r; r.url = "http://lan.example:8080/a/b.bin"; r.headers.push_back({"Range", "bytes=2-"});
+      std::string got; int status = 0; h::Sink s; s.onHead = [&](const h::Head& x) { status = x.status; return true; }; s.onData = [&](const std::uint8_t* p, std::size_t n) { got.append((const char*)p, n); return true; };
+      h::ClientResult cr = c.Send(r, s); CHECK(cr.reached && !cr.aborted && status == 206 && got == "hello" && d.host == "lan.example" && d.port == 8080);
+      CHECK(d.sent.find("GET /a/b.bin HTTP/1.1") == 0 && d.sent.find("Range: bytes=2-") != std::string::npos && d.sent.find("Host: lan.example:8080") != std::string::npos); }
+    // through the pure driver (the same Get the Windows.Web.Http client uses), allowHttp for the test
+    { MemDialer d; d.reply = "HTTP/1.1 200 OK\r\nContent-Length: 3\r\nConnection: close\r\n\r\nabc"; on::OwnHttpClient c(d); std::string got; h::GetHandlers hh; hh.onData = [&](const std::uint8_t* p, std::size_t n) { got.append((const char*)p, n); return true; };
+      h::Options o; o.allowHttp = true; h::GetResult r = h::Get(c, "http://lan.example/base", "x.bin", 0, 0, hh, o); CHECK(r.reached && got == "abc" && d.sent.find("GET /base/x.bin") == 0); }
+    // https is refused and nothing is dialled (never sent in the clear)
+    { MemDialer d; on::OwnHttpClient c(d); h::Request r; r.url = "https://cdn.example.com/a.bin"; h::Sink s; h::ClientResult cr = c.Send(r, s); CHECK(!cr.reached && cr.error.find("no TLS") != std::string::npos && d.dials == 0 && d.sent.empty()); }
+    // a refused connection and an abort from the sink
+    { MemDialer d; d.fail = true; on::OwnHttpClient c(d); h::Request r; r.url = "http://lan.example/a"; h::Sink s; h::ClientResult cr = c.Send(r, s); CHECK(!cr.reached && cr.error == "no route"); }
+    { MemDialer d; d.reply = "HTTP/1.1 200 OK\r\nContent-Length: 4\r\nConnection: close\r\n\r\nabcd"; on::OwnHttpClient c(d); h::Request r; r.url = "http://lan.example/a"; h::Sink s; s.onData = [](const std::uint8_t*, std::size_t) { return false; }; CHECK(c.Send(r, s).aborted); }
+    // an https -> http redirect is refused by okay::ownhttp
+    { MemDialer d; d.reply = "HTTP/1.1 302 Found\r\nLocation: https://cdn.example.com/z\r\nContent-Length: 0\r\nConnection: close\r\n\r\n"; on::OwnHttpClient c(d); h::Request r; r.url = "http://lan.example/a"; h::Sink s; h::ClientResult cr = c.Send(r, s); CHECK(!cr.reached && d.dials == 1); }
+}
+
 int main() {
-    ShaderTests(); DisplayTests(); BuildPlanTests(); LogTests(); SourceRootTests(); RunnerTests(); HostTests(); LifecycleTests(); InputTests(); PadClassTests(); PathTests(); AudioTests(); BackendTests(); AuditTests(); ConfigTests(); RasterTests(); OverlayMathTests(); RecoveryTests(); HttpTests();
+    ShaderTests(); DisplayTests(); BuildPlanTests(); LogTests(); SourceRootTests(); RunnerTests(); HostTests(); LifecycleTests(); InputTests(); PadClassTests(); PathTests(); AudioTests(); BackendTests(); AuditTests(); ConfigTests(); RasterTests(); OverlayMathTests(); RecoveryTests(); HttpTests(); OwnHttpTests();
     if (g_fail) { std::printf("%d FAILED\n", g_fail); return 1; }
     std::printf("xbox_uwp_runtime: all passed\n");
     return 0;

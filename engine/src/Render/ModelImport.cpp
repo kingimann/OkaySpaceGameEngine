@@ -44,7 +44,9 @@
 #include "okay/Physics/Rigidbody3D.hpp"
 #include "okay/Math/Quat.hpp"
 #include "okay/Math/Mat4.hpp"
-#include "ufbx.h"
+#if !defined(OKAY_XBOX_UWP)
+#include "ufbx.h"   // not in the Xbox UWP build (own FBX reader only)
+#endif
 #include "okay/Render/FbxReader.hpp"
 #include "okay/Core/ThirdParty.hpp"
 #include <filesystem>
@@ -146,7 +148,7 @@ Mesh ImportModel(const std::string& path, bool* ok, std::string* outTexture) {
     }
     if (EndsWith(p, ".gltf") || EndsWith(p, ".glb")) { g_readBy = "the own glTF reader"; return LoadGLTF(path, ok, outTexture); }
     if (EndsWith(p, ".fbx")) {
-        g_readBy = fbx::OwnReaderEnabled() ? "the own FBX reader or ufbx (one mesh)" : "ufbx";   // (the own reader is the default; OKAY_OWN_FBX=0 or OKAY_THIRD_PARTY=1: ufbx)
+        g_readBy = fbx::OwnReaderEnabled() ? "the own FBX reader or ufbx (one mesh)" : "ufbx";   // (Xbox UWP: always the own reader)   // (the own reader is the default; OKAY_OWN_FBX=0 or OKAY_THIRD_PARTY=1: ufbx)
         bool fok = false;
         Mesh m = ImportFbxMerged(path, &fok, outTexture);
         if (fok) { if (ok) *ok = true; return m; }
@@ -1245,6 +1247,7 @@ GameObject* BuildSceneFromModel(Scene& scene, const ImportedModel& model, const 
     return root;
 }
 
+#if !defined(OKAY_XBOX_UWP)
 // ============================================================================
 // FBX (built in, via the vendored ufbx — no Assimp needed). Mixamo characters,
 // Blender/Maya/3ds Max exports: node hierarchy, meshes split per material,
@@ -1742,6 +1745,37 @@ static GameObject* ImportFbxSceneGraph(Scene& scene, const std::string& path, bo
     if (ok) *ok = true;
     return root;
 }
+
+#else   // OKAY_XBOX_UWP: no ufbx in the UWP build (it is a third-party library that is being replaced). FBX is read ONLY by our own reader (okay::fbx); a file it
+        // refuses fails with a plain message instead of falling back to a library that is not there. docs/xbox_uwp_thirdparty.md
+namespace {   // the two helpers our own reader's code below shares with the ufbx block (which is compiled out here)
+struct FbxVert {
+    float px, py, pz, nx, ny, nz, u, v;
+    int   j[4];
+    float w[4];
+    uint32_t vi;   ///< control point (for blend shape offsets)
+};
+Mesh TransformedMesh(Mesh m, const Mat4& t) {
+    for (auto& v : m.vertices) v = t.MultiplyPoint(v);
+    for (auto& n : m.normals) { n = t.MultiplyVector(n); const float l = n.Magnitude(); if (l > 1e-8f) n = n * (1.0f / l); }
+    return m;
+}
+} // namespace
+static Mesh ImportFbxMerged(const std::string& path, bool* ok, std::string* outTexture) {
+    bool ownOk = false;
+    Mesh m = ImportFbxMergedOwn(path, &ownOk, outTexture);
+    if (ok) *ok = ownOk;
+    if (!ownOk) Log::Error("model import '", path, "': the own FBX reader could not read this file (the Xbox build has no other FBX reader)");
+    return m;
+}
+static GameObject* ImportFbxSceneGraph(Scene& scene, const std::string& path, bool* ok, std::string* err, bool* rejected) {
+    if (GameObject* r = ImportFbxSceneGraphOwn(scene, path, ok, err)) { g_readBy = "the own FBX reader"; return r; }
+    if (err && err->empty()) *err = "the own FBX reader could not read this file (the Xbox build has no other FBX reader)";
+    if (rejected) *rejected = true;   // fail the import: nothing else can read an FBX here
+    if (ok) *ok = false;
+    return nullptr;
+}
+#endif   // !OKAY_XBOX_UWP
 
 // ============================================================================
 // FBX via OUR reader (okay::fbx, Render/FbxReader). Side by side with the ufbx

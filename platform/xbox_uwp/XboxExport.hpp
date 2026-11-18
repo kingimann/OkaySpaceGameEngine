@@ -33,6 +33,15 @@ inline constexpr const char* kLimitationsText =
     "3D scene, scripts, physics and gamepad; the 2D / UI layer is software-painted over the 3D view (EXPERIMENTAL, never run), and the engine has never been compiled with Microsoft's UWP compiler. The triangle test package was built and run on a Windows 11 PC (2026-11-18) but nothing has run on a console, so compatibility with "
     "any console is unknown. The package is made unsigned by our own packer and signed on your PC with a test certificate.";
 
+// Which of OUR OWN code stands in for third-party libraries in the Xbox UWP build, and the crypto statement (docs/xbox_uwp_thirdparty.md). Written into README_XBOX.txt.
+inline constexpr const char* kThirdPartyText =
+    "Third-party code in this build: none is linked. SDL, Dear ImGui, Assimp, ufbx and libsodium are NOT part of the Xbox build; the engine's own code does "
+    "their job (our own window/input/audio backend, software 2D painter, model readers, WAV/OGG/MP3/FLAC decoders, image and font code). "
+    "CRYPTO: this build has no libsodium. Packet encryption is OFF by default. SHA-256, random bytes and Ed25519 checks use our own okay::crypto code, which is "
+    "own crypto, not independently reviewed; for experiments only; do not ship. The build switch OKAY_XBOX_OWN_CRYPTO=ON (off by default) turns packet "
+    "encryption on through the same unreviewed code; a release build refuses that switch (scripts/check_release_own_stack.sh). "
+    "HTTP for downloads: Windows.Web.Http by default; OKAY_XBOX_HTTP=own uses our own HTTP client over Winsock for plain http:// only (no TLS of our own yet). Both UNVERIFIED.";
+
 struct ExportInputs {
     std::string gameName = "My Game";
     std::string company;
@@ -77,6 +86,7 @@ inline std::string ReadmeText(const ExportInputs& in, const ManifestOptions& m, 
          "MakeAppx, installed and started on a Windows 11 PC (Visual Studio 2026, MSVC 14.52, Windows SDK 10.0.26100.0): it showed the triangle test.\n"
          "NOT verified: the gamepad, suspend/resume, an Xbox console, engine mode (running your game) and the editor's one-click button.\n"
          "Everything not listed as verified is UNVERIFIED. Nothing here claims it works on an Xbox.\n\n";
+    t += std::string(kThirdPartyText) + "\n\n";
     t += "What this is NOT: it is not a native Xbox console game, it does not use the Xbox GDK, and it cannot be\n"
          "published. It is a Universal Windows Platform (UWP) app for a console in Developer Mode.\n\n";
     t += "What is in this folder\n"

@@ -48,4 +48,15 @@ if(OKAY_BUILD_TESTS)
     # The engine source list is clean of forbidden APIs (text scan), and CMake and the C++ parser agree on the list.
     add_test(NAME xbox_uwp_audit COMMAND okay-uwp-audit ${CMAKE_SOURCE_DIR})
     add_test(NAME xbox_uwp_sources_cmake COMMAND ${CMAKE_COMMAND} -DOKAY_ROOT=${CMAKE_SOURCE_DIR} -P ${CMAKE_CURRENT_SOURCE_DIR}/engine/uwp_sources.cmake)
+
+    # Models through OUR OWN readers only, compiled the way okay_engine_uwp does (OKAY_XBOX_UWP, every OKAY_OWN_<FMT>_DEFAULT that is ON, no ufbx.h, no Assimp):
+    # ModelImport.cpp and FbxScene.cpp are compiled again into this test (its objects win over the same ones in the engine library). Linux, no Windows needed.
+    include(${CMAKE_CURRENT_SOURCE_DIR}/engine/uwp_own_readers.cmake)
+    okay_uwp_own_readers("${CMAKE_SOURCE_DIR}/CMakeLists.txt" _xbox_mi_defs _xbox_own_on)
+    add_executable(test_xbox_uwp_models tests/test_xbox_uwp_models.cpp ${CMAKE_SOURCE_DIR}/engine/src/Render/ModelImport.cpp ${CMAKE_SOURCE_DIR}/engine/src/Render/FbxScene.cpp)
+    target_link_libraries(test_xbox_uwp_models PRIVATE okay::engine)
+    target_include_directories(test_xbox_uwp_models PRIVATE ${CMAKE_SOURCE_DIR}/tests ${CMAKE_SOURCE_DIR}/engine/src)
+    target_compile_definitions(test_xbox_uwp_models PRIVATE OKAY_XBOX_UWP=1 OKAY_SOURCE_DIR="${CMAKE_SOURCE_DIR}" OKAY_TEST_TMP_DIR="${CMAKE_CURRENT_BINARY_DIR}")
+    set_source_files_properties(${CMAKE_SOURCE_DIR}/engine/src/Render/ModelImport.cpp PROPERTIES COMPILE_DEFINITIONS "${_xbox_mi_defs}")
+    add_test(NAME xbox_uwp_models COMMAND test_xbox_uwp_models WORKING_DIRECTORY ${CMAKE_CURRENT_BINARY_DIR})
 endif()

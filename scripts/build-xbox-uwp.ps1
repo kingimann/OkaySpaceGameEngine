@@ -20,6 +20,12 @@
   EXPERIMENTAL, UNVERIFIED. Builds the app in ENGINE MODE: the real engine (okay_engine_uwp, ~300 engine sources: a LONG compile) is linked and the app runs
   the game in package\Data. With -MinimalTest the test export then also contains a tiny scene (a cube and a camera). Without it the app only draws the triangle.
   The owner's command for this: powershell -ExecutionPolicy Bypass -File scripts\build-xbox-uwp.ps1 -SourceRoot . -ExportDir .\xbox-engine -MinimalTest -EngineMode -SkipInstall
+.PARAMETER Http
+  Engine mode only. How downloads are made: 'windows-web-http' (default, Windows.Web.Http, does https) or 'own' (our own HTTP client over Winsock; PLAIN http:// only,
+  no TLS of our own yet). Both UNVERIFIED.
+.PARAMETER OwnCrypto
+  Engine mode only, EXPERIMENT. Turns packet encryption on through our own okay::crypto (OKAY_XBOX_OWN_CRYPTO=ON). It is NOT independently reviewed: for experiments only,
+  never ship it. A release build refuses this switch (scripts/check_release_own_stack.sh). Off by default (the build has no libsodium and then no packet encryption).
 .PARAMETER SkipInstall
   Accepted for convenience. This script has no install step (the editor's one-click build has the optional install); it does nothing here.
 .PARAMETER SourceRoot
@@ -39,6 +45,8 @@ param(
     [ValidateSet('Release', 'Debug')][string]$Configuration = 'Release',
     [switch]$MinimalTest,
     [switch]$EngineMode,
+    [ValidateSet('windows-web-http', 'own')][string]$Http = 'windows-web-http',
+    [switch]$OwnCrypto,
     [switch]$SkipInstall,
     [switch]$SkipSign,
     [string]$Subject = ''
@@ -185,7 +193,12 @@ try {
     $cmakeArgs += @('-DCMAKE_SYSTEM_NAME=WindowsStore', '-DCMAKE_SYSTEM_VERSION=10.0')
     if ($EngineMode) {
         # the shell stays C++20 (C++/WinRT), the engine is its own C++17 target (okay_engine_uwp); only plain C++ crosses (app/engine_bridge.hpp)
-        $cmakeArgs += @('-DOKAY_XBOX_APP_ENGINE=ON', ('-DOKAY_SOURCE_ROOT=' + ($SourceRoot -replace '\\', '/')))
+        $cmakeArgs += @('-DOKAY_XBOX_APP_ENGINE=ON', ('-DOKAY_SOURCE_ROOT=' + ($SourceRoot -replace '\\', '/')), ('-DOKAY_XBOX_HTTP=' + $Http))
+        if ($OwnCrypto) {
+            $cmakeArgs += '-DOKAY_XBOX_OWN_CRYPTO=ON'
+            $w = 'OWN CRYPTO is ON: packet encryption uses our own okay::crypto, which is NOT independently reviewed. For experiments only; do not ship.'
+            Write-Host $w -ForegroundColor Yellow; Log $w
+        }
         $m = 'ENGINE MODE is ON: the engine (okay_engine_uwp, about 300 sources) is compiled and linked. This is EXPERIMENTAL; the first compile takes a long time and may fail (the engine has never been through Microsoft''s UWP compiler).'
         Write-Host $m -ForegroundColor Yellow; Log $m
     } else { Write-Host 'Engine mode is OFF: the app is the triangle test (add -EngineMode to build the engine in).' }

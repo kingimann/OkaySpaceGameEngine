@@ -222,10 +222,13 @@ cp -r engine/include "$XBOX_SRC/engine/"
 mkdir -p "$XBOX_SRC/engine/src/Graphics" "$XBOX_SRC/engine/src/Core"   # okay-xbox-export (-MinimalTest) compiles the engine's image code for the placeholder PNGs
 # Engine mode (-EngineMode) compiles the whole engine for UWP: it needs the engine sources, its CMake list (read at configure time) and shared/.
 cp -r engine/src "$XBOX_SRC/engine/" && cp engine/CMakeLists.txt "$XBOX_SRC/engine/" && cp -r shared "$XBOX_SRC/"
-[ ! -d engine/third_party ] || cp -r engine/third_party "$XBOX_SRC/engine/"
+# The UWP engine reads the root CMakeLists.txt at configure time for the ON defaults of the own model readers (engine/uwp_own_readers.cmake). No engine/third_party:
+# ufbx is not compiled for UWP (our own FBX reader is the only one), so it is not shipped here.
+cp CMakeLists.txt "$XBOX_SRC/"
 cp engine/src/Graphics/Image.cpp "$XBOX_SRC/engine/src/Graphics/"
 cp engine/src/Core/ImageDecode.cpp engine/src/Core/ImageDecodeJpeg.cpp engine/src/Core/ImageWrite.cpp engine/src/Core/ImageDecodeInternal.hpp "$XBOX_SRC/engine/src/Core/"
-[ ! -d engine/third_party/stb ] || { mkdir -p "$XBOX_SRC/engine/third_party" && cp -r engine/third_party/stb "$XBOX_SRC/engine/third_party/"; }
+[ -f "$XBOX_SRC/CMakeLists.txt" ] && [ -f "$XBOX_SRC/platform/xbox_uwp/engine/uwp_own_readers.cmake" ] || { echo "error: xbox-src is missing the root CMakeLists.txt or uwp_own_readers.cmake (the UWP engine reads them)" >&2; exit 1; }
+[ ! -e "$XBOX_SRC/engine/third_party" ] || { echo "error: xbox-src must not carry engine/third_party (no third-party code in the Xbox build)" >&2; exit 1; }
 [ -f "$XBOX_SRC/platform/xbox_uwp/app/CMakeLists.txt" ] || { echo "error: xbox-src did not get the UWP app" >&2; exit 1; }
 [ -s "$OUT_DIR/examples/vehicle/vehicle_test.okayscene" ] || { echo "error: examples/vehicle/vehicle_test.okayscene did not make it into the distribution" >&2; exit 1; }
 [ -s "$OUT_DIR/examples/ui_text/ui_text.okayscene" ] || { echo "error: examples/ui_text/ui_text.okayscene did not make it into the distribution" >&2; exit 1; }

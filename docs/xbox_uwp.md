@@ -339,3 +339,14 @@ desktop build is unchanged (checked below).
 
 UWP sandbox (no desktop-only APIs, read-only install folder, smaller budgets than a PC), Developer Mode only, no GDK, no publishing, Direct3D 11 only, the engine runs inside
 the app only in the EXPERIMENTAL engine mode that has never been compiled, no hardware ever tested, no signing code of ours.
+
+## Our own code instead of third-party libraries (2026-11-18)
+
+Details and the table: [xbox_uwp_thirdparty.md](xbox_uwp_thirdparty.md). Short version, all UNVERIFIED on Windows and a console:
+
+* No SDL2, Dear ImGui, Assimp, ufbx or libsodium in the UWP target (`okay-uwp-audit`: 0 findings; `ufbx.c` is in `engine/uwp_exclude.txt`).
+* Models: every `OKAY_OWN_<FMT>` option that is ON in the root `CMakeLists.txt` is turned on for the UWP engine (`engine/uwp_own_readers.cmake`); FBX is always our own reader; a refused file fails with a plain message. Linux test `xbox_uwp_models` loads 17 sample files that way.
+* Sound: our own WAV decoder is the WAV reader (`OKAY_OWN_WAV_DEFAULT`); OGG, MP3 and FLAC are always ours.
+* Crypto: no libsodium. Packet encryption is OFF by default. `OKAY_XBOX_OWN_CRYPTO=ON` (PowerShell `-OwnCrypto`) is an experiment switch for our own unreviewed `okay::crypto`: for experiments only, do not ship. The README of every export says so and `scripts/check_release_own_stack.sh` refuses the switch in a release (with self-test cases).
+* HTTP: `-Http windows-web-http` (default, https) or `-Http own` (our own client over Winsock, plain `http://` only: we have no TLS of our own yet).
+

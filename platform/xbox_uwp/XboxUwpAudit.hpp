@@ -43,6 +43,18 @@ inline const std::vector<ForbiddenApi>& ForbiddenApis() {
         {"getenv(\"USERPROFILE\")", "environment folders", "ApplicationData"},
         {"xinput1_4.dll", "XInput by LoadLibrary", "Windows.Gaming.Input (XboxInput.hpp)"},
         {"X11/Xlib.h", "X11", "not Windows code"},
+        // Third-party libraries the owner wants replaced by our own code (docs/xbox_uwp_thirdparty.md): none may be reachable in the UWP build.
+        {"sodium.h", "libsodium", "okay::crypto (own, unreviewed: docs/xbox_uwp_thirdparty.md)"},
+        {"imgui.h", "Dear ImGui", "the software painter (XboxSoftPainter)"},
+        {"assimp/", "Assimp", "our own model readers (OKAY_OWN_*)"},
+        {"ufbx.h", "ufbx", "our own FBX reader (okay::fbx)"},
+        {"curl/curl.h", "libcurl", "our own HTTP client or Windows.Web.Http"},
+        {"openssl/", "OpenSSL", "our own TLS (okay::http) or Windows.Web.Http"},
+        {"stb_image.h", "stb", "our own image decoders"},
+        {"stb_truetype.h", "stb", "our own TTF rasteriser"},
+        {"stb_vorbis.c", "stb", "our own OGG decoder"},
+        {"dr_wav.h", "dr_libs", "our own WAV decoder"},
+        {"dr_mp3.h", "dr_libs", "our own MP3 decoder"},
         // Found by compiling the engine sources with MinGW and WINAPI_FAMILY=WINAPI_FAMILY_APP (its headers hide desktop-only APIs): the names
         // below were reported "not declared". As remembered from Microsoft's pages; UNVERIFIED.
         {"CheckRemoteDebuggerPresent", "debugger probe", "no remote-debugger check in UWP"},
@@ -66,8 +78,8 @@ inline Tri Or(Tri a, Tri b) { if (a == Tri::T || b == Tri::T) return Tri::T; if 
 /// What the UWP build (MSVC, x64) defines. Unknown macros are U (the block is scanned, the safe direction).
 inline Tri MacroDefined(const std::string& m) {
     static const char* yes[] = {"OKAY_XBOX_UWP", "_WIN32", "_WIN64", "WIN32", "_MSC_VER", "_M_X64", "__cplusplus"};
-    // OKAY_HTTP_WINHTTP is defined by NativeHttp.hpp itself only when OKAY_XBOX_UWP is not (so it is off here)
-    static const char* no[] = {"__linux__", "__APPLE__", "__EMSCRIPTEN__", "__ANDROID__", "__MINGW32__", "__MINGW64__", "__GNUC__", "__clang__", "__unix__", "_POSIX_VERSION", "OKAY_HTTP_WINHTTP"};
+    // OKAY_HTTP_WINHTTP is defined by NativeHttp.hpp itself only when OKAY_XBOX_UWP is not (so it is off here). OKAY_NET_CRYPTO and OKAY_OWN_CRYPTO are off in the DEFAULT UWP configuration (NetCrypto.hpp then never includes sodium.h; the own-crypto experiment includes okay/Crypto/Crypto.hpp, never sodium.h).
+    static const char* no[] = {"__linux__", "__APPLE__", "__EMSCRIPTEN__", "__ANDROID__", "__MINGW32__", "__MINGW64__", "__GNUC__", "__clang__", "__unix__", "_POSIX_VERSION", "OKAY_HTTP_WINHTTP", "OKAY_HAVE_SODIUM", "OKAY_HAVE_ASSIMP", "OKAY_NET_CRYPTO_LIBSODIUM", "OKAY_NET_CRYPTO", "OKAY_OWN_CRYPTO"};
     for (const char* y : yes) if (m == y) return Tri::T;
     for (const char* n : no) if (m == n) return Tri::F;
     return Tri::U;
@@ -150,7 +162,7 @@ inline std::vector<AuditFinding> ScanSource(const std::string& source, std::vect
             const std::string tok = f.token; std::size_t at = l.find(tok);
             while (at != std::string::npos) {
                 const bool wordStart = at == 0 || !(std::isalnum((unsigned char)l[at - 1]) || l[at - 1] == '_');
-                const bool endsInUnderscore = tok.back() == '_' || tok.back() == '.' || tok.back() == ')';
+                const bool endsInUnderscore = tok.back() == '_' || tok.back() == '.' || tok.back() == ')' || tok.back() == '/';
                 const std::size_t after = at + tok.size();
                 const bool wordEnd = endsInUnderscore || after >= l.size() || !(std::isalnum((unsigned char)l[after]) || l[after] == '_');
                 if (wordStart && wordEnd) { out.push_back({line, f.token, f.category, f.alternative}); break; }

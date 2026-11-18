@@ -59,3 +59,11 @@ Problems 2 to 8 in the ranked list above now have code. None of it is verified o
 
 The triangle test package was built, packed with our packer, accepted by MakeAppx `unpack`, signed, installed and started on a Windows 11 PC (Visual Studio 2026, MSVC 14.52.37025, toolset v145, Windows SDK 10.0.26100.0) and showed the triangle through a Direct3D 11 flip-model swap chain on a CoreWindow.
 That confirms, for the triangle shell only: the compile with C++/WinRT (C++20, no `/ZW`, no `/await`), the manifest and package layout, the packer, signing and install. It confirms nothing about problems 1, 2, 4 to 8 above for the engine (they are untouched by that run), and nothing about a console. See `docs/xbox_uwp.md`, "What is verified on Windows".
+
+## Third-party code in the UWP target (2026-11-18, own-code round)
+
+The reduced engine target now carries no third-party library: SDL2, Dear ImGui, Assimp, ufbx, libsodium, libcurl and OpenSSL are not compiled or included, and the audit
+scanner lists their headers (`sodium.h`, `imgui.h`, `assimp/`, `ufbx.h`, `curl/curl.h`, `openssl/`, `stb_*`, `dr_*`) as forbidden. Current result: 313 sources, 4 excluded
+(`ufbx.c` is the new one), 309 scanned, 949 files in the include closure, 0 findings. The table of what replaces what, and what is still blocked, is
+[xbox_uwp_thirdparty.md](xbox_uwp_thirdparty.md). Crypto is the one honest exception: SHA-256, random bytes and Ed25519 checks are our own unreviewed `okay::crypto` code (never a release).
+

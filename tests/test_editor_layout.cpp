@@ -307,6 +307,14 @@ int main() {
         CHECK(c.camHudCorner == kCornerCount - 1 && c.camHudOpacityPct == 20 && c.density == 1);
         c = ViewPrefs::Parse("camhudcorner -3\ncamhudopacity 900\ndensity -1\n");
         CHECK(c.camHudCorner == 0 && c.camHudOpacityPct == 100 && c.density == 0);
+        // Modeling window: the simple view is the default, the advanced switch is remembered.
+        CHECK(!d.modelingAdvanced && ViewPrefs::Parse("modelingadvanced 1\n").modelingAdvanced && ViewPrefs::Parse(ViewPrefs::Parse("modelingadvanced 1\n").Write()).modelingAdvanced);
+        // Simple Modeling view: mirroring is on by default, the last four tools are remembered, junk is ignored.
+        CHECK(d.modelingMirror && d.modelingRecent[0] == 0);
+        { ViewPrefs m; m.modelingMirror = false; m.modelingRecent[0] = 123; m.modelingRecent[3] = 456;
+          ViewPrefs r = ViewPrefs::Parse(m.Write());
+          CHECK(!r.modelingMirror && r.modelingRecent[0] == 123 && r.modelingRecent[1] == 0 && r.modelingRecent[3] == 456);
+          CHECK(ViewPrefs::Parse("modelingrecent9 5\nmodelingrecent2 -7\n").modelingRecent[2] == 0); }
         // The built-in layout that was on screen comes back; -1 (a custom arrangement) is kept; junk is clamped.
         CHECK(d.layoutPreset == 0);
         CHECK(ViewPrefs::Parse("layoutpreset 3\n").layoutPreset == 3 && ViewPrefs::Parse("layoutpreset -1\n").layoutPreset == -1);

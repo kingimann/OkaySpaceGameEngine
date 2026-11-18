@@ -4027,6 +4027,17 @@ add_executable(test_menu_bar_model test_menu_bar_model.cpp)
 target_include_directories(test_menu_bar_model PRIVATE ${CMAKE_SOURCE_DIR}/editor)
 target_compile_definitions(test_menu_bar_model PRIVATE OKAY_SOURCE_DIR="${PROJECT_SOURCE_DIR}")
 add_test(NAME menu_bar_model COMMAND test_menu_bar_model)
+
+# Density of the Visual Script and Script editor windows (editor/ScriptingDensity.hpp): numbers, node-width maths, eliding, settings.
+add_executable(test_scripting_density test_scripting_density.cpp)
+target_include_directories(test_scripting_density PRIVATE ${CMAKE_SOURCE_DIR}/editor)
+target_compile_definitions(test_scripting_density PRIVATE OKAY_SOURCE_DIR="${PROJECT_SOURCE_DIR}")
+add_test(NAME scripting_density COMMAND test_scripting_density)
+
+# The Project panel's tab strip as data (editor/ProjectTabs.hpp): which tab is active, tab clicks, the remembered tab and folder.
+add_executable(test_project_tabs test_project_tabs.cpp)
+target_include_directories(test_project_tabs PRIVATE ${CMAKE_SOURCE_DIR}/editor)
+add_test(NAME project_tabs COMMAND test_project_tabs)
 add_executable(test_hierarchy_context_model test_hierarchy_context_model.cpp)
 target_include_directories(test_hierarchy_context_model PRIVATE ${CMAKE_SOURCE_DIR}/editor)
 target_compile_definitions(test_hierarchy_context_model PRIVATE OKAY_SOURCE_DIR="${PROJECT_SOURCE_DIR}")
@@ -4107,3 +4118,63 @@ add_executable(test_input_autoload test_input_autoload.cpp ${PROJECT_SOURCE_DIR}
 target_include_directories(test_input_autoload PRIVATE ${CMAKE_SOURCE_DIR}/editor)
 target_link_libraries(test_input_autoload PRIVATE okay::engine)
 add_test(NAME input_autoload COMMAND test_input_autoload)
+
+# The node search popup's pure logic (editor/VisualScriptSearchNav.hpp): panel size, selection movement, scroll-into-view, recent list, pin filter.
+add_executable(test_vs_search_nav test_vs_search_nav.cpp)
+target_include_directories(test_vs_search_nav PRIVATE ${CMAKE_SOURCE_DIR}/editor)
+add_test(NAME vs_search_nav COMMAND test_vs_search_nav)
+
+add_executable(test_vs_plain_names test_vs_plain_names.cpp)
+target_include_directories(test_vs_plain_names PRIVATE ${CMAKE_SOURCE_DIR}/editor ${OKAY_VS_IMGUI_INCLUDE})
+target_link_libraries(test_vs_plain_names PRIVATE okay::engine)
+add_test(NAME vs_plain_names COMMAND test_vs_plain_names)
+
+add_executable(test_vs_recipes test_vs_recipes.cpp)
+target_include_directories(test_vs_recipes PRIVATE ${CMAKE_SOURCE_DIR}/editor ${OKAY_VS_IMGUI_INCLUDE})
+target_link_libraries(test_vs_recipes PRIVATE okay::engine)
+target_compile_definitions(test_vs_recipes PRIVATE OKAY_SOURCE_DIR="${PROJECT_SOURCE_DIR}")
+add_test(NAME vs_recipes COMMAND test_vs_recipes)
+
+add_executable(test_vs_saved_graphs test_vs_saved_graphs.cpp)
+target_include_directories(test_vs_saved_graphs PRIVATE ${CMAKE_SOURCE_DIR}/editor ${OKAY_VS_IMGUI_INCLUDE})
+target_link_libraries(test_vs_saved_graphs PRIVATE okay::engine)
+target_compile_definitions(test_vs_saved_graphs PRIVATE OKAY_SOURCE_DIR="${PROJECT_SOURCE_DIR}")
+add_test(NAME vs_saved_graphs COMMAND test_vs_saved_graphs)
+
+add_executable(test_vs_search_connect test_vs_search_connect.cpp)
+target_include_directories(test_vs_search_connect PRIVATE ${CMAKE_SOURCE_DIR}/editor ${OKAY_VS_IMGUI_INCLUDE})
+target_link_libraries(test_vs_search_connect PRIVATE okay::engine)
+add_test(NAME vs_search_connect COMMAND test_vs_search_connect)
+
+add_executable(test_vs_quick_blocks test_vs_quick_blocks.cpp)
+target_link_libraries(test_vs_quick_blocks PRIVATE okay::engine)
+add_test(NAME vs_quick_blocks COMMAND test_vs_quick_blocks)
+
+# Beginner layer of the Modeling window as pure data (editor/ModelingEasy.hpp): plain names, banned-jargon check, hints, quick actions, recent tools, click counts.
+add_executable(test_modeling_easy test_modeling_easy.cpp)
+target_include_directories(test_modeling_easy PRIVATE ${CMAKE_SOURCE_DIR}/editor)
+add_test(NAME modeling_easy COMMAND test_modeling_easy)
+
+# One-click starter models (editor/ModelingStarters.hpp) built headlessly: closed, sane size, a colour per face.
+add_executable(test_modeling_starters test_modeling_starters.cpp)
+target_include_directories(test_modeling_starters PRIVATE ${CMAKE_SOURCE_DIR}/editor)
+target_link_libraries(test_modeling_starters PRIVATE okay::engine)
+add_test(NAME modeling_starters COMMAND test_modeling_starters)
+
+# The beginner tools mapped onto the engine's own mesh operations (editor/ModelingEasyOps.hpp), run headless on real meshes.
+add_executable(test_modeling_easy_ops test_modeling_easy_ops.cpp)
+target_include_directories(test_modeling_easy_ops PRIVATE ${CMAKE_SOURCE_DIR}/editor)
+target_link_libraries(test_modeling_easy_ops PRIVATE okay::engine)
+add_test(NAME modeling_easy_ops COMMAND test_modeling_easy_ops)
+
+# The advanced Modeling window as data (editor/ModelingToolIndex.hpp): pages by job, every tool once, search by name and alias.
+# Also reads editor/main.cpp: a button added to the window without an index entry fails (OKAY_SOURCE_DIR).
+add_executable(test_modeling_tool_index test_modeling_tool_index.cpp)
+target_include_directories(test_modeling_tool_index PRIVATE ${CMAKE_SOURCE_DIR}/editor)
+target_compile_definitions(test_modeling_tool_index PRIVATE OKAY_SOURCE_DIR="${PROJECT_SOURCE_DIR}")
+add_test(NAME modeling_tool_index COMMAND test_modeling_tool_index)
+
+# Fold state and width maths of the advanced Modeling window's page list (editor/ModelingSidebar.hpp), its settings key and strip labels.
+add_executable(test_modeling_sidebar test_modeling_sidebar.cpp)
+target_include_directories(test_modeling_sidebar PRIVATE ${CMAKE_SOURCE_DIR}/editor)
+add_test(NAME modeling_sidebar COMMAND test_modeling_sidebar)

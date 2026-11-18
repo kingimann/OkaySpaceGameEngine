@@ -1419,6 +1419,44 @@ struct Parser {
         return true;
     }
 
+    // C a[N] = { x, { y, z } }: element i is built by a constructor given its item (a brace is a
+    // list of arguments); elements without an item use the default constructor.
+    bool array_init_calls(const std::string& name, const Type& type, Node& init, std::vector<Node>* calls) {
+        const int count = type.array_len;
+        const int sid = type.struct_id;
+        if (init.kind != Node::Block || init.text != "init") {
+            error = "an array of objects is initialized with a brace list";
+            return false;
+        }
+        if (static_cast<int>(init.kids.size()) > count) {
+            error = "too many initializers for the array";
+            return false;
+        }
+        for (int i = 0; i < count; ++i) {
+            std::vector<Node> args;
+            if (i < static_cast<int>(init.kids.size())) {
+                Node& item = init.kids[static_cast<size_t>(i)];
+                if (item.kind == Node::Block && item.text == "init") {
+                    for (Node& a : item.kids) args.push_back(std::move(a));
+                } else {
+                    args.push_back(std::move(item));
+                }
+            }
+            Node element;
+            element.kind = Node::Index;
+            element.kids.push_back(node_name(name));
+            Node index;
+            index.kind = Node::IntLit;
+            index.number = static_cast<uint64_t>(i);
+            index.type.base = 1;
+            element.kids.push_back(std::move(index));
+            Node call;
+            if (!special_call(sid, "<ctor>", node_addr(std::move(element)), std::move(args), &call)) return false;
+            calls->push_back(std::move(call));
+        }
+        return true;
+    }
+
     // Destructor calls for the open blocks from 'base' up, latest object first.
     bool dtor_nodes(size_t base, std::vector<Node>* out) {
         for (size_t sc = dscopes.size(); sc-- > base;) {
@@ -3109,14 +3147,23 @@ struct Parser {
     // The constructor calls of the global objects, in declaration order, go into __okay_init; the
     // destructors (globals, then static locals, latest first) into __okay_fini. main (or entry)
     // calls them. Written from ISO/IEC 14882 [basic.start.init] and [basic.start.term].
-    bool register_global_object(const std::string& name, const Type& type, std::vector<Node> args) {
+    bool register_global_object(const std::string& name, const Type& type, std::vector<Node> args,
+                                Node* array_init = nullptr) {
         std::vector<Local>* saved_locals = cur_locals;
         const int saved_depth = scope_depth;
         cur_locals = &init_locals;
         scope_depth = 0;
         const int sid = type.struct_id;
         bool ok = true;
-        if (obj_needs_ctor(type)) {
+        if (array_init != nullptr && ok) {
+            std::vector<Node> calls;
+            ok = array_init_calls(name, type, *array_init, &calls);
+            if (ok) {
+                for (Node& c : calls) init_body.kids.push_back(std::move(c));
+                init_body.kind = Node::Block;
+                init_used = true;
+            }
+        } else if (obj_needs_ctor(type)) {
             Node call;
             if (type.is_array()) {
                 if (!type.more.empty() || !args.empty()) {
@@ -3380,9 +3427,18 @@ struct Parser {
             }
             decl.type.is_const = is_const;
             if (!decl.is_function && (obj_needs_ctor(decl.type) || obj_needs_dtor(decl.type))) {
-                if (is_static || accept(TAssign)) {
-                    error = "a global object with a constructor takes arguments in parentheses and is not static";
+                Node ginit;
+                bool has_ginit = false;
+                if (is_static) {
+                    error = "a global object with a constructor is not static";
                     return false;
+                }
+                if (accept(TAssign)) {
+                    if (!decl.type.is_array() || !decl.type.more.empty() || !parse_init(&ginit)) {
+                        error = error.empty() ? "a global object with a constructor takes arguments in parentheses" : error;
+                        return false;
+                    }
+                    has_ginit = true;
                 }
                 if (!expect(TSemi, "';'")) return false;
                 Global global;
@@ -3390,7 +3446,8 @@ struct Parser {
                 global.type = decl.type;
                 global.bss = true;
                 globals.push_back(global);
-                if (!register_global_object(decl.name, decl.type, std::move(gargs))) return false;
+                if (!register_global_object(decl.name, decl.type, std::move(gargs), has_ginit ? &ginit : nullptr))
+                    return false;
                 continue;
             }
             if (!decl.is_function) {
@@ -3984,8 +4041,8 @@ bool Parser::parse_stmt_inner(Node* out, std::vector<Local>* locals, int stmt_li
         }
         if (obj_needs_ctor(decl.type) || obj_needs_dtor(decl.type)) {
             const int sid = decl.type.struct_id;
-            if (decl.type.is_array() && (!decl.type.more.empty() || has_init)) {
-                error = "an array of objects needs one dimension and no initializer";
+            if (decl.type.is_array() && !decl.type.more.empty()) {
+                error = "an array of objects needs one dimension";
                 return false;
             }
             if (is_static) {
@@ -4040,7 +4097,12 @@ bool Parser::parse_stmt_inner(Node* out, std::vector<Local>* locals, int stmt_li
                 return expect(TSemi, "';'");
             }
             if (decl.type.is_array()) {
-                if (obj_needs_ctor(decl.type)) {
+                if (has_init) {
+                    std::vector<Node> calls;
+                    if (!array_init_calls(decl.name, decl.type, init, &calls)) return false;
+                    for (Node& c : calls) out->kids.push_back(std::move(c));
+                    has_init = false;
+                } else if (obj_needs_ctor(decl.type)) {
                     Node loop;
                     if (!element_loop(decl.name, decl.type.array_len, false, sid, "<ctor>", &loop)) return false;
                     out->kids.push_back(std::move(loop));

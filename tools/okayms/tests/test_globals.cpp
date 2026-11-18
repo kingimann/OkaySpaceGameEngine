@@ -166,9 +166,34 @@ static void test_vector(Tally& tally) {
              44);
 }
 
+// Arrays of objects (global and local) with brace initializers: each item goes to a constructor.
+static void test_arrinit(Tally& tally) {
+    std::printf("test_arrinit\n");
+    run_both(tally, "arrinit",
+             "int sum;\n"
+             "struct P {\n"
+             "  int a;\n"
+             "  int b;\n"
+             "  P(int x) : a(x), b(0) { sum = sum + x; }\n"
+             "  P(int x, int y) : a(x), b(y) { sum = sum + x * y; }\n"
+             "  P() : a(100), b(100) { sum = sum + 1000; }\n"
+             "};\n"
+             "P gl[3] = { 1, {2, 3} };\n"
+             "int tbl[4] = {1, 2, 3, 4};\n"
+             "int entry(void) {\n"
+             "  P loc[2] = { {5, 6}, 7 };\n"
+             "  int i;\n"
+             "  int t = 0;\n"
+             "  for (i = 0; i < 4; i = i + 1) t = t + tbl[i];\n"
+             "  return (sum + gl[2].a + loc[0].b + loc[1].a + t) % 256;\n"
+             "}\n",
+             143);
+}
+
 int main() {
     Tally tally;
     test_order(tally);
     test_vector(tally);
-    return tally.finish(2);
+    test_arrinit(tally);
+    return tally.finish(3);
 }

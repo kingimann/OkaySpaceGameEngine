@@ -111,8 +111,14 @@ Not done: a PDB (the MSF container, the type and symbol streams), symbol and typ
 ## Estimate
 
 Stages 1 to 3 are file formats. Stages 4 to 9 are the rest of a small linker and a small C subset. A full C++ front end, the Microsoft C++ ABI, a standard library and a real optimiser are not started. `/O2` is not an optimiser. Wine is not Windows.
+### Round 14: templates and array initializers
+
+- Templates. `template <typename T, int N = 3>` before a function or a `struct`/`class`. The declaration is kept as a token range and parsed again with its parameters bound (a type parameter is a typedef, a value parameter an enumerator, so `T items[N]` works). A class template is instantiated when it is named (`Box<int>`, `Box<Box<int> >`, defaults filled in, the class may name itself inside its body); its members are compiled for each instance. A function template is instantiated at the first call: all arguments given (`maxOf<int>(8, 2)`), the first ones given (`convert<int>(7)`, the rest deduced) or all deduced from the argument types (a parameter `T`, `T *` or `T &` binds to the argument's type; literals, names, fields, elements, calls and arithmetic have a type). Instance symbols follow the public MSVC decoration: `??$twice@H@@YAHH@Z`, a member `?get@?$Box@H@@QEBAHXZ`, a constructor `??0?$Box@H@@QEAA@H@Z`, a nested instance `?$Box@U?$Box@H@@@`, a value parameter `$02` for 3 (`$0` then the value minus one for 1 to 10, `A@` for 0, hex digits A to P ending in `@` above that). Test: `tests/test_templates.cpp` (the program, plus 8 symbol names). Not done: partial or explicit specialization, member templates, variadic templates, a class template member defined outside the class, template template parameters, deducing from a class template argument (`length(Node<T> *)`), a template used before its definition, `typename T::type`.
+- A member call on a returned object (`f().g()`) puts the object in a hidden local. A function body can now be parsed in the middle of another one (a template instance) without losing the outer function's locals (the outer `cur_locals` was reset; fixed).
+- Brace initializers for arrays of objects (`P gl[3] = { 1, {2, 3} };`, global or local): each item is the argument (or, in braces, the arguments) of a constructor of that element; elements without an item use the default constructor. Test: `arrinit` in `tests/test_globals.cpp`. Not done: a static local array, a multi-dimensional array of objects.
 
 ## Exceptions: design only (not started in code)
+
 
 Nothing here is implemented. `throw`, `try` and `catch` are refused. Written from the Microsoft x64 exception handling documentation, the PE Format document and the public description of the MSVC C++ exception structures (`ThrowInfo`, `CatchableType`, `FuncInfo`).
 

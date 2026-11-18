@@ -49105,6 +49105,10 @@ void DrawProfiler(EditorState& ed) {
             ImGui::TextWrapped("Last trace: %s  (open it in chrome://tracing or ui.perfetto.dev)", last.c_str());
             if (ImGui::SmallButton("Copy path##trace")) ImGui::SetClipboardText(last.c_str());
         }
+        if (okay::MemTrack::Enabled() && ImGui::TreeNode("Allocator report (OKAY_MEMTRACK)##trace")) {
+            ImGui::TextUnformatted(okay::MemTrack::Report().c_str());
+            ImGui::TreePop();
+        }
         ImGui::Separator();
     }
 

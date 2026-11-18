@@ -130,6 +130,7 @@ These are "-style" subsets, not the real languages: code written for the real Lu
 
 ## Planned work from the to-do list
 
+- Core runtime upgrade ([core_runtime_upgrade.md](core_runtime_upgrade.md), branch `claude/core-perf-1`): work-stealing fork-join jobs, `StackAllocator` and allocator tracking, frame capture to a Chrome trace are built and tested on Linux (ThreadSanitizer clean); left: run on Windows, a lock-free deque if the spin-locked one shows contention, use `Fork` in the physics, animation and render-prep loops (only `ParallelFor` uses it now), a Console command and editor panel for the allocator report beyond the Profiler window list, feed `MemTrack` into `Debug/MemoryTracker`
 - Admin: create test servers without a game (not started: "test server" needs a definition from the owner; see unfinished_launcher.md)
 - Improve the editor Plugins menu
 - Editor menus, follow-ups from the 2026-11-15 clean-up ([editor_menus.md](editor_menus.md), section 5): Ctrl+X with several objects selected deletes them all but keeps only one on the clipboard (the menus refuse Cut for several, the key does not); Copy and the clipboard hold one object, not a selection; what a menu click does (`RunMenuAction`, `HierRowAction`) has no test, only the lists do; the Inspector and Project menus are separate branches

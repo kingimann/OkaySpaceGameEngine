@@ -402,6 +402,10 @@ add_test(NAME profiler COMMAND test_profiler)
 add_executable(test_profiler_export test_profiler_export.cpp)
 target_link_libraries(test_profiler_export PRIVATE okay::engine)
 add_test(NAME profiler_export COMMAND test_profiler_export)
+# Frame capture to a Chrome trace file: nested scopes on all threads, ring buffers, counters, frame count, JSON.
+add_executable(test_trace_capture test_trace_capture.cpp)
+target_link_libraries(test_trace_capture PRIVATE okay::engine)
+add_test(NAME trace_capture COMMAND test_trace_capture)
 
 add_executable(test_log test_log.cpp)
 target_link_libraries(test_log PRIVATE okay::engine)
@@ -3107,6 +3111,10 @@ add_test(NAME arena_handles COMMAND test_arena_handles)
 add_executable(test_memory_track test_memory_track.cpp)
 target_link_libraries(test_memory_track PRIVATE okay::engine)
 add_test(NAME memory_track COMMAND test_memory_track)
+# Frame arena in the Scene's per-frame lists: prints the per-frame cost (heap vector vs arena).
+add_executable(test_frame_arena_bench test_frame_arena_bench.cpp)
+target_link_libraries(test_frame_arena_bench PRIVATE okay::engine)
+add_test(NAME frame_arena_bench COMMAND test_frame_arena_bench)
 
 
 # Frame delta clamp, frame timer and frame limiter.

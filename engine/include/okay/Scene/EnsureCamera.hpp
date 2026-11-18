@@ -39,7 +39,8 @@ inline bool CameraUsable(const Camera* c) {
 /// Depth). When `current` can't render (its object or component was turned off),
 /// the best usable camera takes over: Main first, then highest Depth. So enabling
 /// one camera and disabling another switches the view (cutscenes, death cams).
-inline Camera* PickRenderCamera(Camera* current, const std::vector<Camera*>& cams) {
+template <class CameraList>
+inline Camera* PickRenderCamera(Camera* current, const CameraList& cams) {
     bool currentLive = false;
     for (Camera* c : cams) if (c == current) { currentLive = true; break; }
     if (!currentLive) current = nullptr;

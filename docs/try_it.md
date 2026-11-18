@@ -2394,8 +2394,7 @@ Steps (Linux or Windows; Linux was run headless, Windows was not run):
 3. What you should see: the same launcher window as without the variable (the Create page, sidebar, update banner). Software drawing, so it can feel slower on a big screen.
 4. Try: click the sidebar pages, type in a field, scroll, open the chat window, minimise and restore, drop a file on it. Report anything that looks or acts different.
 5. Without a screen to look at (a headless check): `scripts/headless_app_shot.sh build/bin/OkaySpace 25 own.png OKAY_PLATFORM_BACKEND=own` writes a screenshot
-   (needs Xvfb and ImageMagick). Two ready-made pictures from this branch: `docs/img/launcher_sdl2_headless.png` (default) and
-   `docs/img/launcher_own_backend_headless.png` (own); the two are the same picture to within 0 pixels at 4 percent.
+   (needs Xvfb and ImageMagick). Run it once without the variable and once with it and compare the two pictures (they were the same to within 0 pixels at 4 percent when checked).
 6. Checks: `ctest -R "thread_conversion_review|okay_threads|painter_bridge_vs_sdl|platform_events|platform_xdnd"`.
 7. Not run: clicking and typing in the own-backend launcher, the chat window, Windows, and the editor on the own backend (see `docs/platform_layer.md`, Round 12).
 

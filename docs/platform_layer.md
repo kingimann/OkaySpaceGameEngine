@@ -542,7 +542,7 @@ a launcher. So before anything new:
   (`scripts/headless_app_shot.sh`): on the DEFAULT backend (sdl2, imgui_impl_sdl2, imgui_impl_sdlrenderer2) it starts, draws the whole Create page, its update-check worker thread reaches
   the update server and the page shows "Update available v2.887.0" (so `CreateThread`, the mutexes and atomics, and the textures, clear, present of the bridge all ran in a real
   process). Left alone with the default settings (without `OKAY_UPDATE_ON_LAUNCH=0`) it downloaded the newest release into the build folder and tried to swap it in, which is also a real run of the
-  download threads. Pictures: `docs/img/launcher_sdl2_headless.png` (default) and `docs/img/launcher_own_backend_headless.png` (own backend, below); they differ by 0 pixels at a
+  download threads. The two pictures (made with `scripts/headless_app_shot.sh`, not kept in the repository) differ by 0 pixels at a
   4 percent threshold (RMSE 0.06 percent). Not tried: clicking, typing, the chat window, voice, a download in the UI, quitting (SDL turns SIGTERM into a close
   request, which makes the launcher ask Exit or Minimise).
 
@@ -555,8 +555,7 @@ painter's address as the "renderer" handle (never an SDL renderer: use it only w
 state and text-input calls are seam calls. The launcher has no direct `SDL_*` call left except `SDL_SetMainReady` and audio-format macros. The editor got the same changes (window title, show,
 raise, restore, held keys, cursor visibility through the seam; feed and renderer forced; painter factory) and compiles on Linux (`-fsyntax-only` and a full build, see the run notes), and it was **built and run headless** on both backends (`bin/OkayEngine --dev` on Xvfb, `APP_ARGS=--dev scripts/headless_app_shot.sh ...`): default backend and own
 backend both start, draw the full editor UI (menus, Hierarchy, Scene grid, Inspector, Console, status bar) and keep running 60 s; the own backend run logs
-`platform backend: own`, own feed, own renderer and, as designed, "Multi-window panels are off" (no multi-viewport on the own feed). Pictures:
-`docs/img/editor_sdl2_headless.png` and `docs/img/editor_own_backend_headless.png` (the default run happened to show the "Engine Update" dialog because its update check
+`platform backend: own`, own feed, own renderer and, as designed, "Multi-window panels are off" (no multi-viewport on the own feed). The two pictures (not kept in the repository; the default run happened to show the "Engine Update" dialog because its update check
 had finished by the time of the picture; the own run's check had not, so the two pictures differ by that dialog, not by drawing). The own run showed 8 frames per second
 (software painter on a shared machine). Not tried: any click, the GL 3D view (needs a scene with a 3D camera), play mode, the file dialog, Windows.
 

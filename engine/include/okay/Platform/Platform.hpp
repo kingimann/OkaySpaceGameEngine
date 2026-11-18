@@ -90,6 +90,9 @@ enum class EventType {
     FingerDown, FingerMotion, FingerUp,   // touch: fingerId, fx, fy (0..1 of the window). sdl2 only; own never fires them
     WindowDpiChanged,  // x = the window's new DPI (96 = 100 percent); the window has already been resized to the OS's suggestion. own Windows only
     TextEditing,       // input method composition: text = UTF-8 being composed ("" = cleared), x = caret in code points. own Windows only
+    RenderTargetsReset,   // the graphics device lost its render-target contents: draw them again. sdl2 only (own never fires it)
+    RenderDeviceReset,    // the graphics device was lost and made again: every texture must be re-created. sdl2 only
+    Other,             // an event the seam has no type for. Only the sdl2 backend, and only after ReportUnmappedEvents(true); `native` has it
 };
 
 struct Event {
@@ -108,6 +111,11 @@ struct Event {
     int width = 0, height = 0;
     int deviceId = 0;
     std::string text;
+    /// The backend's own record of this event (sdl2: a `const SDL_Event*`), for the one consumer that still needs it (Dear
+    /// ImGui's imgui_impl_sdl2 while it is the default). Null on the own backends. Valid only until the next PollEvent
+    /// or PumpEvents call on the same backend; copy nothing out of it later. A DropFile's string has already been taken
+    /// (and freed) in `text`, so do not read it from `native`. Temporary: it goes away with SDL2.
+    const void* native = nullptr;
 };
 
 // ---- Windows and the OpenGL context -----------------------------------------
@@ -330,6 +338,17 @@ public:
     // Windows and events.
     virtual std::unique_ptr<Window> MakeWindow(const WindowDesc& desc) = 0;
     virtual bool PollEvent(Event& out) = 0;  // false when the queue is empty
+    /// Let the system deliver pending input without taking any event out (keeps a window alive and mapped during a
+    /// wait loop). sdl2: SDL_PumpEvents. own: reads what is waiting into the backend's queue, so the next PollEvent
+    /// still returns it, in order. Never loses an event.
+    virtual void PumpEvents() {}
+    /// Put an event into the queue; PollEvent returns it after the events already waiting. Used to inject input (tests,
+    /// the editor's OKAY_UI_DROP hook). False when this backend cannot make that kind of event (sdl2 makes Quit,
+    /// WindowClose, WindowFocusGained/Lost, KeyDown/Up, TextInput, MouseMove, MouseButtonDown/Up, MouseWheel and DropFile).
+    virtual bool PushEvent(const Event& e) { (void)e; return false; }
+    /// With true, PollEvent also returns the events the seam has no type for, as EventType::Other with `native` set
+    /// (sdl2 only; default off). Lets an app that still feeds Dear ImGui's SDL backend see every event it needs.
+    virtual void ReportUnmappedEvents(bool on) { (void)on; }
     virtual void* GLProcAddress(const char* name) = 0;   // needs a current context
     virtual void ReleaseCurrent() = 0;       // no GL context current on this thread
     /// The GL window and context current on this thread, to put back after other GL work. Both null = none current.
@@ -378,6 +397,9 @@ public:
     /// layout, so a game's WASD follows an AZERTY layout. Key::Unknown when none.
     /// The base version assumes a US layout.
     virtual Key KeyForChar(char c);
+    /// The character `k` types on the CURRENT layout, as KeyForChar's inverse: 'a'..'z', '0'..'9' or ' '; 0 when `k` types
+    /// none of those. (Found by asking KeyForChar for each of them, so it follows whatever layout that follows.)
+    virtual char CharForKey(Key k);
 
     /// Displays, primary first and then left to right. DisplayAt fills `out` and returns false for an index out of range.
     /// The base versions know none (0 displays); the own Windows backend and the sdl2 backend list them.

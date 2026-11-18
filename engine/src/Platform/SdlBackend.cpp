@@ -28,6 +28,17 @@ uint32_t ModsFromSdl(Uint16 m) {
     return r;
 }
 
+Uint16 ModsToSdl(uint32_t m) {
+    Uint16 r = 0;
+    if (m & ModShift) r |= KMOD_LSHIFT;
+    if (m & ModCtrl)  r |= KMOD_LCTRL;
+    if (m & ModAlt)   r |= KMOD_LALT;
+    if (m & ModGui)   r |= KMOD_LGUI;
+    if (m & ModCaps)  r |= KMOD_CAPS;
+    if (m & ModNum)   r |= KMOD_NUM;
+    return r;
+}
+
 SDL_AudioFormat ToSdlFormat(SampleFormat f) { return f == SampleFormat::F32 ? AUDIO_F32SYS : AUDIO_S16SYS; }
 SampleFormat FromSdlFormat(SDL_AudioFormat f) { return SDL_AUDIO_ISFLOAT(f) ? SampleFormat::F32 : SampleFormat::S16; }
 
@@ -264,11 +275,58 @@ public:
     }
 
     bool PollEvent(Event& out) override {
-        SDL_Event e;
-        while (SDL_PollEvent(&e)) {
+        // m_last outlives this call (Event::native points at it until the next poll). A drop's string is taken and freed by Translate.
+        while (SDL_PollEvent(&m_last)) {
             Event r;
-            if (Translate(e, r)) { out = std::move(r); return true; }
+            if (Translate(m_last, r)) { r.native = &m_last; out = std::move(r); return true; }
+            if (m_reportUnmapped) { r.type = EventType::Other; r.timestampMs = m_last.common.timestamp; r.native = &m_last; out = std::move(r); return true; }
         }
+        return false;
+    }
+    void PumpEvents() override { SDL_PumpEvents(); }
+    void ReportUnmappedEvents(bool on) override { m_reportUnmapped = on; }
+    bool PushEvent(const Event& r) override {
+        SDL_Event e;
+        SDL_zero(e);
+        switch (r.type) {
+        case EventType::Quit: e.type = SDL_QUIT; break;
+        case EventType::WindowClose: case EventType::WindowFocusGained: case EventType::WindowFocusLost:
+            e.type = SDL_WINDOWEVENT; e.window.windowID = r.windowId;
+            e.window.event = r.type == EventType::WindowClose ? SDL_WINDOWEVENT_CLOSE
+                           : r.type == EventType::WindowFocusGained ? SDL_WINDOWEVENT_FOCUS_GAINED : SDL_WINDOWEVENT_FOCUS_LOST;
+            break;
+        case EventType::KeyDown: case EventType::KeyUp:
+            e.type = r.type == EventType::KeyDown ? SDL_KEYDOWN : SDL_KEYUP;
+            e.key.windowID = r.windowId; e.key.state = r.type == EventType::KeyDown ? SDL_PRESSED : SDL_RELEASED;
+            e.key.repeat = r.repeat ? 1 : 0; e.key.keysym.scancode = (SDL_Scancode)r.key;
+            e.key.keysym.sym = SDL_GetKeyFromScancode((SDL_Scancode)r.key); e.key.keysym.mod = ModsToSdl(r.mods);
+            break;
+        case EventType::TextInput:
+            e.type = SDL_TEXTINPUT; e.text.windowID = r.windowId;
+            std::strncpy(e.text.text, r.text.c_str(), sizeof(e.text.text) - 1);   // SDL's text event holds 32 bytes; the zeroed tail ends it
+            break;
+        case EventType::MouseMove:
+            e.type = SDL_MOUSEMOTION; e.motion.windowID = r.windowId;
+            e.motion.x = r.x; e.motion.y = r.y; e.motion.xrel = r.dx; e.motion.yrel = r.dy;
+            break;
+        case EventType::MouseButtonDown: case EventType::MouseButtonUp:
+            e.type = r.type == EventType::MouseButtonDown ? SDL_MOUSEBUTTONDOWN : SDL_MOUSEBUTTONUP;
+            e.button.windowID = r.windowId; e.button.button = (Uint8)r.button; e.button.clicks = (Uint8)r.clicks;
+            e.button.state = r.type == EventType::MouseButtonDown ? SDL_PRESSED : SDL_RELEASED; e.button.x = r.x; e.button.y = r.y;
+            break;
+        case EventType::MouseWheel:
+            e.type = SDL_MOUSEWHEEL; e.wheel.windowID = r.windowId;
+            e.wheel.x = (Sint32)(r.wheelFlipped ? -r.wheelX : r.wheelX); e.wheel.y = (Sint32)(r.wheelFlipped ? -r.wheelY : r.wheelY);
+            e.wheel.direction = r.wheelFlipped ? SDL_MOUSEWHEEL_FLIPPED : SDL_MOUSEWHEEL_NORMAL;
+            break;
+        case EventType::DropFile:
+            e.type = SDL_DROPFILE; e.drop.file = SDL_strdup(r.text.c_str());   // Translate frees it
+            if (!e.drop.file) return false;
+            break;
+        default: return false;
+        }
+        if (SDL_PushEvent(&e) == 1) return true;
+        if (e.type == SDL_DROPFILE) SDL_free(e.drop.file);
         return false;
     }
     void* GLProcAddress(const char* n) override { return SDL_GL_GetProcAddress(n); }
@@ -462,6 +520,8 @@ private:
             r.type = EventType::DropFile; r.text = e.drop.file ? e.drop.file : "";
             if (e.drop.file) SDL_free(e.drop.file);
             return true;
+        case SDL_RENDER_TARGETS_RESET: r.type = EventType::RenderTargetsReset; return true;
+        case SDL_RENDER_DEVICE_RESET:  r.type = EventType::RenderDeviceReset; return true;
         case SDL_CONTROLLERDEVICEADDED:   r.type = EventType::GamepadAdded;   r.deviceId = e.cdevice.which; return true;
         case SDL_CONTROLLERDEVICEREMOVED: r.type = EventType::GamepadRemoved; r.deviceId = e.cdevice.which; return true;
         case SDL_JOYDEVICEADDED:   // a device SDL has no controller layout for: offered as a generic pad
@@ -479,6 +539,8 @@ private:
         }
     }
     Uint32 m_started = 0;
+    SDL_Event m_last;
+    bool m_reportUnmapped = false;
     SDL_Cursor* m_cursors[11] = {};
 };
 

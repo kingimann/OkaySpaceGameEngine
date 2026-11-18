@@ -47,13 +47,21 @@ public:
         if (!w) m_err = err;
         return w;
     }
+    // m_pending holds, in order: events PumpEvents already read, pushed events, and pad hot-plug events.
     bool PollEvent(Event& out) override {
-        if (m_x11 && m_x11->PollEvent(out)) return true;
-        if (m_flags.gamepad) {
-            if (m_pending.empty()) own::EvdevPollHotplug(m_pendingVec), Drain();
-            if (!m_pending.empty()) { out = std::move(m_pending.front()); m_pending.pop_front(); return true; }
-        }
+        if (m_pending.empty() && m_x11 && m_x11->PollEvent(out)) return true;
+        if (m_pending.empty() && m_flags.gamepad) own::EvdevPollHotplug(m_pendingVec), Drain();
+        if (!m_pending.empty()) { out = std::move(m_pending.front()); m_pending.pop_front(); return true; }
         return false;
+    }
+    void PumpEvents() override {
+        Event e;
+        while (m_x11 && m_x11->PollEvent(e)) m_pending.push_back(std::move(e));
+    }
+    bool PushEvent(const Event& e) override {
+        if (e.type == EventType::NoEvent || e.type == EventType::Other) return false;
+        m_pending.push_back(e);
+        return true;
     }
     void* GLProcAddress(const char* n) override { return m_x11 ? m_x11->GLProcAddress(n) : nullptr; }
     void ReleaseCurrent() override { if (m_x11) m_x11->ReleaseCurrent(); }

@@ -3203,6 +3203,15 @@ if(NOT WIN32 AND NOT EMSCRIPTEN)
             ENVIRONMENT "OKAY_PLATFORM_BACKEND=${_okay_pb}" PASS_REGULAR_EXPRESSION "default=${_okay_pb}")
     endforeach()
 
+    # The event queue (push, poll, pump, native pointer, unmapped events, render resets, CharForKey): no display needed.
+    add_executable(test_platform_events test_platform_events.cpp)
+    target_link_libraries(test_platform_events PRIVATE okay::platform)
+    if(TARGET SDL2::SDL2)
+        target_link_libraries(test_platform_events PRIVATE SDL2::SDL2)
+    endif()
+    add_test(NAME platform_events COMMAND test_platform_events)
+    set_tests_properties(platform_events PROPERTIES TIMEOUT 60)
+
     add_executable(test_platform_window test_platform_window.cpp)
     target_link_libraries(test_platform_window PRIVATE okay::platform)
     if(TARGET SDL2::SDL2)

@@ -370,13 +370,22 @@ public:
     }
     void Unregister(HWND h) { m_wins.erase(h); }
 
-    bool PollEvent(Event& out) override {
+    void PumpEvents() override { PumpMessages(); }
+    bool PushEvent(const Event& e) override {
+        if (e.type == EventType::NoEvent || e.type == EventType::Other) return false;
+        m_pending.push_back(e);
+        return true;
+    }
+    void PumpMessages() {   // the window procedures put what they translate into m_pending
         MSG msg;
         while (PeekMessageW(&msg, nullptr, 0, 0, PM_REMOVE)) {
             if (msg.message == WM_QUIT) { Event e; e.type = EventType::Quit; m_pending.push_back(e); continue; }
             TranslateMessage(&msg);
             DispatchMessageW(&msg);
         }
+    }
+    bool PollEvent(Event& out) override {
+        PumpMessages();
         own::RawPads::Change ch;
         while (m_raw.PopChange(ch)) {
             Event e; e.timestampMs = (uint32_t)TicksMs();

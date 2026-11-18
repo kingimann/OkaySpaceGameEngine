@@ -91,6 +91,14 @@ Key Backend::KeyForChar(char c) {
     return Key::Unknown;
 }
 
+char Backend::CharForKey(Key k) {
+    if (k == Key::Unknown) return 0;
+    static const char kChars[] = "abcdefghijklmnopqrstuvwxyz0123456789 ";
+    for (const char* c = kChars; *c; ++c)
+        if (KeyForChar(*c) == k) return *c;
+    return 0;
+}
+
 bool Backend::ShowErrorBox(const std::string& title, const std::string& text, Window*) {
     std::fprintf(stderr, "ERROR: %s: %s\n", title.c_str(), text.c_str());
     return false;

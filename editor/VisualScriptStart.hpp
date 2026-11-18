@@ -49,7 +49,7 @@ inline std::vector<VsStartRect> VsStartLayout(int count, float w, float h, float
     const int cols = std::max(1, std::min(perRow, count));
     const int rows = (count + cols - 1) / cols;
     float cw = std::min(250.0f, (w - 48.0f - gap * (cols - 1)) / (float)cols);
-    float ch = std::min(130.0f, (h - headerH - footerH - gap * (rows - 1)) / (float)rows);
+    float ch = std::min(150.0f, (h - headerH - footerH - gap * (rows - 1)) / (float)rows);
     cw = std::max(cw, 60.0f); ch = std::max(ch, 50.0f);
     const float totalW = cw * cols + gap * (cols - 1), totalH = ch * rows + gap * (rows - 1);
     const float x0 = (w - totalW) * 0.5f;

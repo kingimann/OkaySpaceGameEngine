@@ -1034,6 +1034,10 @@ add_executable(test_view_upgrade test_view_upgrade.cpp)
 target_link_libraries(test_view_upgrade PRIVATE okay::engine)
 add_test(NAME view_upgrade COMMAND test_view_upgrade)
 
+add_executable(test_one_controller test_one_controller.cpp)
+target_link_libraries(test_one_controller PRIVATE okay::engine)
+add_test(NAME one_controller COMMAND test_one_controller)
+
 add_executable(test_player_controller test_player_controller.cpp)
 target_link_libraries(test_player_controller PRIVATE okay::engine)
 add_test(NAME player_controller COMMAND test_player_controller)

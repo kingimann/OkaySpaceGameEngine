@@ -688,18 +688,6 @@ void EditorState::NewPlatformer3D() {
     StartDocument();
 }
 
-void EditorState::NewFPS() {
-    NewScene();
-    m_suppressUndo = true;
-    Templates::FPS(m_scene);
-    m_suppressUndo = false;
-    view3D = true;
-    camTarget = {0, 1, 0};
-    camDist = 10.0f;
-    m_selected = m_scene.Find("Player");
-    StartDocument();
-}
-
 void EditorState::NewTerrainSandbox() {
     NewScene();
     m_suppressUndo = true;
@@ -728,18 +716,6 @@ void EditorState::NewThirdPerson() {
     NewScene();
     m_suppressUndo = true;
     Templates::ThirdPerson(m_scene);
-    m_suppressUndo = false;
-    view3D = true;
-    camTarget = {0, 1, 0};
-    camDist = 8.0f;
-    m_selected = m_scene.Find("Player");
-    StartDocument();
-}
-
-void EditorState::NewHumanoid() {
-    NewScene();
-    m_suppressUndo = true;
-    Templates::Humanoid(m_scene);
     m_suppressUndo = false;
     view3D = true;
     camTarget = {0, 1, 0};

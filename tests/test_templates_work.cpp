@@ -342,19 +342,6 @@ void DriveStatic(Ctx& c) {   // nothing to steer: it must simply sit there and r
     c.Expect(c.s.threw.empty(), "an exception while the scene ran: " + c.s.threw);
 }
 
-void DriveHumanoidWiring(Ctx& c) {   // the one-call humanoid setup: foot IK and root motion wired to the rig
-    Session& s = c.s;
-    s.Frames(3);
-    GameObject* p = s.Obj("Player");
-    auto* fik = p ? p->GetComponent<FootIK>() : nullptr;
-    auto* rm = p ? p->GetComponent<RootMotion>() : nullptr;
-    c.Expect(fik && rm, "the Player has no FootIK or no RootMotion");
-    if (!fik || !rm) return;
-    c.Expect(fik->leftHip && fik->leftKnee && fik->leftFoot && fik->rightHip && fik->rightKnee && fik->rightFoot && fik->pelvis,
-             "foot IK is not wired to the rig's hips, knees, feet and pelvis");
-    c.Expect(rm->rootNode != nullptr, "root motion is not wired to the rig's hips (root node is empty)");
-}
-
 void DriveInventory(Ctx& c) {
     Session& s = c.s;
     DriveMover(c, {"Player", {'d'}, false, false, 1.0f});   // it is a top-down 2D player too
@@ -703,8 +690,7 @@ std::vector<Spec> MakeSpecs() {
         {"3D Scene",                   true,  false, "", "", fixed(&DriveStatic)},
         {"2D Scene",                   false, true,  "", "", fixed(&DriveStatic)},
         {"Empty",                      false, false, "", "", fixed(&DriveStatic)},
-        {"First Person",               true,  false, "Player", "PlayerController", mover({"Player", {'w'}, true, true, 1.0f}, {look("Player")})},
-        {"Third Person",               true,  false, "Player", "PlayerController", mover({"Player", {'w'}, true, true, 1.0f}, {look("Player")})},
+        {"First and Third Person",       true,  false, "Player", "PlayerController", mover({"Player", {'w'}, true, true, 1.0f}, {look("Player")})},
         {"Third Person Shooter",       true,  false, "Player", "ThirdPersonShooterController", mover({"Player", {'w'}, true, true, 1.0f}, {look("Player"), shoot})},
         {"Platformer",                 false, true,  "Player", "CharacterController2D", mover({"Player", {'d'}, false, true, 1.0f})},
         {"Top-Down",                   false, true,  "Player", "TopDownController2D", mover({"Player", {'d'}, false, false, 1.0f}, {fixed(&CheckWalls)})},
@@ -760,9 +746,6 @@ std::vector<NotOffered> MakeNotOffered() {
         {"NewInventory", &EditorState::NewInventory,
          "removed from the New Project lists on the owner's request (2026-11-16); the scene and its builder stay, and projects made from it still open. The engine builder Templates::Inventory keeps its own tests.",
          {"NewInventory", false, true,  "Player", "Inventory", fixed(&DriveInventory)}},
-        {"NewHumanoid", &EditorState::NewHumanoid,
-         "removed from the New Project lists on the owner's request (2026-11-16); the scene and its builder stay, and projects made from it still open. The engine builder Templates::Humanoid keeps its own tests.",
-         {"NewHumanoid", true,  false, "Player", "PlayerController", mover({"Player", {'w'}, true, true, 1.0f}, {fixed(&DriveHumanoidWiring), look("Player")})}},
     };
 }
 
@@ -1029,6 +1012,22 @@ void CheckTable() {
         }
     // Unknown and empty titles
     bool known = true;
+    // One Player Controller (owner, 2026-11-17): the New Project list has ONE first/third person template, no Humanoid.
+    // The old titles are not listed any more but still build (old launchers, scripts and --template arguments).
+    {
+        bool hasOne = false, hasOld = false;
+        for (const okayproj::TemplateInfo& t : okayproj::Templates()) {
+            const std::string n = t.title;
+            hasOne = hasOne || n == "First and Third Person";
+            hasOld = hasOld || n == "First Person" || n == "Third Person" || n == "Humanoid";
+        }
+        CHECK(hasOne);
+        CHECK(!hasOld);
+        CHECK(oked::FindBuilder("First and Third Person") == &EditorState::NewThirdPerson);
+        CHECK(oked::FindBuilder("First Person") == &EditorState::NewThirdPerson);   // starts behind the player; V goes to the eyes
+        CHECK(oked::FindBuilder("Third Person") == &EditorState::NewThirdPerson);
+        CHECK(oked::FindBuilder("Humanoid") == nullptr);   // gone: it falls back to the 3D Scene with the "unknown" notice
+    }
     CHECK(oked::FindBuilder("No Such Template") == nullptr);
     CHECK(oked::FindBuilder("") == nullptr);
     CHECK(oked::FindBuilder("3d scene") == nullptr);   // titles are matched exactly

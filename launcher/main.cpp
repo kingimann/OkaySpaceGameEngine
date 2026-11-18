@@ -3451,9 +3451,9 @@ void TemplateGlyph(ImDrawList* d, const std::string& t, ImVec2 p, float size, Im
         d->AddLine(P(20, 6), P(20, 13), col, th); d->AddLine(P(20, 27), P(20, 34), col, th);
         d->AddLine(P(6, 20), P(13, 20), col, th); d->AddLine(P(27, 20), P(34, 20), col, th);
         d->AddCircleFilled(P(20, 20), 1.6f * k, col, 8);
-    } else if (t == "Third Person") {
+    } else if (t == "Third Person" || t == "First and Third Person") {
         person(20, 21, 1.15f);
-        if (t == "Third Person") { d->PathArcTo(P(20, 33), 13 * k, 3.6f, 5.8f, 16); d->PathStroke(col, 0, th * 0.8f); }
+        if (true) { d->PathArcTo(P(20, 33), 13 * k, 3.6f, 5.8f, 16); d->PathStroke(col, 0, th * 0.8f); }
     } else if (t == "Third Person Shooter") {
         person(15, 21, 1.0f);
         d->AddCircle(P(29, 15), 5 * k, col, 16, th); d->AddLine(P(29, 8), P(29, 22), col, th * 0.8f); d->AddLine(P(22, 15), P(36, 15), col, th * 0.8f);
@@ -18258,8 +18258,7 @@ int main(int argc, char** argv) {
         {"Platformer",     "Side-scrolling jump-and-run starter.",  "Platformer"},
         {"Top-Down",       "Top-down movement and rooms.",          "Top-Down"},
         {"Main Menu (UI)", "A title screen with buttons.",          "Main Menu"},
-        {"First Person",   "FPS character: mouse-look, WASD, jump.", "First Person"},
-        {"Third Person",   "Orbit-camera character controller.",    "Third Person"},
+        {"First and Third Person", "One Player Controller: first person, third person or both.", "First and Third Person"},
         {"Multiplayer",    "Host / join networked starter.",        "Multiplayer"},
     };
 

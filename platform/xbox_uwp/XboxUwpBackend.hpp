@@ -134,7 +134,9 @@ public:
         return r.path + "/";
     }
     std::vector<std::string> PreferredLocales() override { return host_->Locales(); }
-    void Log(const std::string& line) override { log_.push_back(line); if (log_.size() > 200) log_.pop_front(); }
+    void Log(const std::string& line) override { log_.push_back(line); if (log_.size() > 200) log_.pop_front(); if (logSink) logSink(line); }
+    /// Also receives every line (the app sets it to a FileLog, XboxLog.hpp, so the owner can read the log from the Device Portal).
+    std::function<void(const std::string&)> logSink;
     const std::deque<std::string>& LogLines() const { return log_; }
     bool SetClipboardText(const std::string& t) override { clip_ = t; return true; }   // in-app only (no Windows clipboard yet)
     std::string GetClipboardText() override { return clip_; }

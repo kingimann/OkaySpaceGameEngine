@@ -24,8 +24,11 @@ target_include_directories(okay-appx PRIVATE ${CMAKE_CURRENT_SOURCE_DIR} ${CMAKE
 set_target_properties(okay-appx PROPERTIES RUNTIME_OUTPUT_DIRECTORY ${CMAKE_BINARY_DIR}/bin)
 
 # okay-xbox-export: writes a minimal TEST export folder from the command line (scripts/build-xbox-uwp.ps1 -MinimalTest compiles it with cl.exe).
-add_executable(okay-xbox-export tool/okay_xbox_export.cpp)
-target_link_libraries(okay-xbox-export PRIVATE okay::engine)   # the engine's image code writes the placeholder PNGs
+# It compiles the same four engine image files the script gives cl.exe (no engine library), so this build and the script's build are the same thing.
+add_executable(okay-xbox-export tool/okay_xbox_export.cpp
+    ${CMAKE_SOURCE_DIR}/engine/src/Graphics/Image.cpp ${CMAKE_SOURCE_DIR}/engine/src/Core/ImageDecode.cpp
+    ${CMAKE_SOURCE_DIR}/engine/src/Core/ImageDecodeJpeg.cpp ${CMAKE_SOURCE_DIR}/engine/src/Core/ImageWrite.cpp)
+target_include_directories(okay-xbox-export PRIVATE ${CMAKE_SOURCE_DIR}/engine/src)
 target_include_directories(okay-xbox-export PRIVATE ${CMAKE_CURRENT_SOURCE_DIR} ${CMAKE_SOURCE_DIR}/engine/include)
 set_target_properties(okay-xbox-export PROPERTIES RUNTIME_OUTPUT_DIRECTORY ${CMAKE_BINARY_DIR}/bin)
 
@@ -45,6 +48,17 @@ if(OKAY_BUILD_TESTS)
     add_executable(test_xbox_uwp_runtime tests/test_xbox_uwp_runtime.cpp UwpPlatform.cpp ${CMAKE_SOURCE_DIR}/engine/src/Core/Paths.cpp)
     target_include_directories(test_xbox_uwp_runtime PRIVATE ${CMAKE_CURRENT_SOURCE_DIR} ${CMAKE_SOURCE_DIR}/engine/include)
     add_test(NAME xbox_uwp_runtime COMMAND test_xbox_uwp_runtime)
+    # The log file the owner reads from the Device Portal (XboxLog.hpp). Header-only, no engine.
+    add_executable(test_xbox_uwp_next tests/test_xbox_uwp_next.cpp)
+    target_include_directories(test_xbox_uwp_next PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})
+    add_test(NAME xbox_uwp_next COMMAND test_xbox_uwp_next ${CMAKE_CURRENT_BINARY_DIR})
+    # The real pipeline on Linux: export folder -> our packer -> our reader, plus static checks of the PowerShell scripts and the manifest.
+    find_package(Python3 COMPONENTS Interpreter)
+    if(Python3_FOUND)
+        add_test(NAME xbox_uwp_pipeline COMMAND ${Python3_EXECUTABLE} -I ${CMAKE_SOURCE_DIR}/scripts/check_xbox_uwp.py pipeline
+                 --export $<TARGET_FILE:okay-xbox-export> --appx $<TARGET_FILE:okay-appx> --work ${CMAKE_CURRENT_BINARY_DIR}/pipeline)
+        add_test(NAME xbox_uwp_scripts COMMAND ${Python3_EXECUTABLE} -I ${CMAKE_SOURCE_DIR}/scripts/check_xbox_uwp.py scripts ${CMAKE_SOURCE_DIR})
+    endif()
     # The engine source list is clean of forbidden APIs (text scan), and CMake and the C++ parser agree on the list.
     add_test(NAME xbox_uwp_audit COMMAND okay-uwp-audit ${CMAKE_SOURCE_DIR})
     add_test(NAME xbox_uwp_sources_cmake COMMAND ${CMAKE_COMMAND} -DOKAY_ROOT=${CMAKE_SOURCE_DIR} -P ${CMAKE_CURRENT_SOURCE_DIR}/engine/uwp_sources.cmake)

@@ -409,6 +409,7 @@ struct ViewPrefs {
     bool modelingMirror = true;     // simple Modeling view: edits are mirrored left to right while editing (one switch)
     int modelingRecent[4] = {0, 0, 0, 0};   // simple Modeling view: the last four tools used (stable codes, see ModelingEasy.hpp)
     int modelingSidebar = 0;        // Modeling window page list: 0 = open (auto-fold when narrow), 1 = folded by choice, 2 = open by choice
+    int projectColumns = 2;         // Project panel layout: 1 = one column (folders open in place), 2 = two columns (tree + contents); see ProjectLayout.hpp
     int layoutPreset = 0;           // the built-in layout on screen when the editor closed (-1 = a saved or custom arrangement)
 
     /// One "key value" line of the settings file. False when the key is not one of these.
@@ -426,6 +427,7 @@ struct ViewPrefs {
         if (k.size() == 15 && k.compare(0, 14, "modelingrecent") == 0 && k[14] >= '0' && k[14] <= '3') { modelingRecent[k[14] - '0'] = v < 0 ? 0 : v; return true; }
         if (k == "modelingsidebarfolded") { modelingSidebar = (v >= 0 && v <= 2) ? v : 0; return true; }
         if (k == "modelingadvanced")   return true;   // old settings files: the Advanced switch is gone; the value is read and ignored
+        if (k == "projectcolumns")     { projectColumns = v == 1 ? 1 : 2; return true; }
         if (k == "layoutpreset")       { layoutPreset = v < -1 ? -1 : (v > 99 ? 99 : v); return true; }
         return false;
     }
@@ -444,6 +446,7 @@ struct ViewPrefs {
           << "modelingmirror " << (modelingMirror ? 1 : 0) << "\n"
           << "modelingrecent0 " << modelingRecent[0] << "\nmodelingrecent1 " << modelingRecent[1] << "\nmodelingrecent2 " << modelingRecent[2] << "\nmodelingrecent3 " << modelingRecent[3] << "\n"
           << "modelingsidebarfolded " << modelingSidebar << "\n"
+          << "projectcolumns " << projectColumns << "\n"
           << "layoutpreset " << layoutPreset << "\n";
         return o.str();
     }

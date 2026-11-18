@@ -212,5 +212,12 @@ int main(int, char**) {
           "  int e = 0; Impl(&e); return bi(1) + add(0) + (int)name.size() + e; } }\n"
           "int main() { std::vector<int> b; b.push_back(1); b.push_back(2); std::vector<std::string> t; return okay::Run(b, t); }\n", &o);
     CHECK(t, has_symbol(o, "main"));
+    ++tests;
+    build(t, "round 30: scopes in constructor bodies, 2.f literals, sizeof of nested classes, frexp/ldexp, memchr",
+          "#include <cmath>\n#include <cstring>\n#include <vector>\nstruct VS { struct Impl; Impl* m; };\nstruct VS::Impl { struct Entry { int a; }; int setupBytes; };\n"
+          "struct D { std::vector<int> v; int id_; D(int id) : id_(id) { for (int b = 0; b < 2; ++b) id_ += b; for (int& x : v) id_ += x; } };\n"
+          "int main() { D d(1); float a = 2.f; double b = 3.; double c = 1.e2; int e; double m = std::frexp(40.0, &e); const char* s = \"a\\nb\";\n"
+          "return d.id_ + (int)(a + b + c + std::ldexp(m, e)) + (int)sizeof(VS::Impl::Entry) + (int)sizeof(VS::Impl) + (std::memchr(s, 10, 3) != 0); }\n", &o);
+    CHECK(t, has_symbol(o, "main"));
     return t.finish(tests);
 }

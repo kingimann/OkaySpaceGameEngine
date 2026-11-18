@@ -1231,8 +1231,15 @@ std::vector<Token> lex(const std::string& text, std::string* error) {
             int frac_digits = 0;
             int exp10 = 0;
             bool exp_neg = false;
+            // A '.' after the digits starts the fraction when a digit follows, or when nothing that would make `.` a member
+            // access or an ellipsis does: 2.f, 3., 1.e2 ([lex.fcon]: the digit sequence before or after the point may be empty).
+            const bool point_follows = base == 10 && any && j < text.size() && text[j] == '.' && j + 1 < text.size();
+            const char after_point = point_follows ? text[j + 1] : '\0';
+            const bool bare_point = point_follows && !std::isdigit(static_cast<unsigned char>(after_point)) && after_point != '.' &&
+                                    (after_point == 'f' || after_point == 'F' || after_point == 'e' || after_point == 'E' ||
+                                     !(std::isalpha(static_cast<unsigned char>(after_point)) || after_point == '_'));
             if (base == 10 && j < text.size() && text[j] == '.' && j + 1 < text.size() &&
-                std::isdigit(static_cast<unsigned char>(text[j + 1]))) {
+                (std::isdigit(static_cast<unsigned char>(text[j + 1])) || bare_point)) {
                 real = true;
                 ++j;
                 while (j < text.size() && std::isdigit(static_cast<unsigned char>(text[j]))) {
@@ -3558,7 +3565,8 @@ struct Parser {
         if (i + 2 < tokens.size() && tokens[i + 1].kind == TColonColon && tokens[i + 2].kind == TIdent &&
             (typedefs.find(tokens[i + 2].text) != typedefs.end() ||
              structs[static_cast<size_t>(id)].tdefs.count(tokens[i + 2].text) > 0 ||
-             find_nested(id, tokens[i + 2].text) >= 0))
+             find_nested(id, tokens[i + 2].text) >= 0 ||
+             (find_struct(tokens[i + 2].text) >= 0 && structs[static_cast<size_t>(id)].statics.count(tokens[i + 2].text) == 0)))
             return true;  // Struct::Enum, Struct::member_typedef, Struct::Nested
         return i + 1 < tokens.size() &&
                (tokens[i + 1].kind == TIdent || tokens[i + 1].kind == TStar || tokens[i + 1].kind == TAmp ||
@@ -3761,6 +3769,21 @@ struct Parser {
             ++i;
         }
         if (i + 2 >= tokens.size() || tokens[i].kind != TColonColon || tokens[i + 1].kind != TIdent) return false;
+        {
+            // Outer::Nested (sizeof(Outer::Nested), a cast) names a type when Nested is a class or typedef of Outer.
+            int oid = typedefs.find(cur().text) == typedefs.end() ? find_struct(cur().text) : -1;
+            size_t q = i;
+            while (oid >= 0 && i == at + 1 && q + 1 < tokens.size() && tokens[q].kind == TColonColon &&
+                   tokens[q + 1].kind == TIdent) {
+                if (structs[static_cast<size_t>(oid)].tdefs.count(tokens[q + 1].text) > 0) return false;
+                int nested = find_nested(oid, tokens[q + 1].text);
+                if (nested < 0) nested = find_struct(tokens[q + 1].text);
+                if (nested < 0) break;
+                if (!(q + 2 < tokens.size() && tokens[q + 2].kind == TColonColon)) return false;  // the last name is a class
+                oid = nested;
+                q += 2;
+            }
+        }
         const Tok after = tokens[i + 2].kind;
         return after != TIdent && after != TStar && after != TAmp && after != TAndAnd && after != TColonColon;
     }
@@ -5742,7 +5765,12 @@ struct Parser {
         for (Node& n : pre) block.kids.push_back(std::move(n));
         if (!implicit) {
             Node user;
-            if (!parse_block(&user, locals)) return false;
+            // The wrapper block above is a scope of its own when the code is generated: the numbering of the scopes the
+            // body opens must count it too, or a name placed in a loop of the body is looked up in the wrong scope.
+            push_scope();
+            const bool user_ok = parse_block(&user, locals);
+            pop_scope();
+            if (!user_ok) return false;
             if (eh_held > 0 && contains_return(user)) {
                 error = "a return in a constructor body is not supported with exceptions";
                 return false;
@@ -16425,6 +16453,7 @@ bool emit_functions(std::vector<FuncDecl>& funcs, const std::vector<StructDef>& 
         gen.save_nv = !extra_regs.empty();
         gen.extra_pops.clear();
         gen.locals = fn.locals;
+        for (int p = 0; p < fn.nparams; ++p) gen.locals[static_cast<size_t>(fn.param_base + p)].scope = 0;  // a parameter is in the outermost scope
         gen.temp_base = -(((local_end + 7) & ~7) + 8);
         gen.struct_copy = -((((local_end + 7) & ~7) + 128 + copy_bytes));
         gen.frame = frame;

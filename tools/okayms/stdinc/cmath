@@ -220,6 +220,21 @@ inline bool isinf(float x) { return x > 3.40282347e+38f || x < -3.40282347e+38f;
 
 // The double overloads (the float ones above round the result of these).
 inline double sqrt(double x) { return okay_math::sqrt_d(x); }
+// ldexp and frexp ([c.math]): x * 2^e, and the split x = m * 2^e with m in [0.5, 1). Own code over the binary64 layout.
+inline double ldexp(double x, int e) {
+    if (x == 0.0 || x != x || okay_math::abs_d(x) == okay_math::inf_d()) return x;
+    return okay_math::scale2(x, e);
+}
+inline double frexp(double x, int* e) {
+    *e = 0;
+    if (x == 0.0 || x != x || okay_math::abs_d(x) == okay_math::inf_d()) return x;
+    const bool neg = x < 0.0;
+    int ex = 0;
+    double m = okay_math::split2(neg ? -x : x, &ex);  // m in [1, 2)
+    *e = ex + 1;
+    m *= 0.5;
+    return neg ? -m : m;
+}
 inline double sin(double x) { return okay_math::sin_cos_d(x, true); }
 inline double cos(double x) { return okay_math::sin_cos_d(x, false); }
 inline double tan(double x) { return okay_math::sin_cos_d(x, true) / okay_math::sin_cos_d(x, false); }

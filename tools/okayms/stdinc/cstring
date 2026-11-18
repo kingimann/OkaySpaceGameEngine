@@ -15,4 +15,41 @@ char *strcpy(char *dst, const char *src);
 char *strcat(char *dst, const char *src);
 char *strchr(char *s, int c);
 }
+// memchr, strrchr, strstr and strncpy ([cstring.syn]) are small inline functions here (own code, written from the C library's
+// description), so that the runtime library does not need them.
+inline void *memchr(void *s, int c, unsigned long long n) {
+    unsigned char *p = (unsigned char *)s;
+    for (unsigned long long i = 0; i < n; ++i)
+        if (p[i] == (unsigned char)c) return p + i;
+    return 0;
+}
+inline const void *memchr(const void *s, int c, unsigned long long n) {
+    const unsigned char *p = (const unsigned char *)s;
+    for (unsigned long long i = 0; i < n; ++i)
+        if (p[i] == (unsigned char)c) return p + i;
+    return 0;
+}
+inline const char *strrchr(const char *s, int c) {
+    const char *last = 0;
+    for (;; ++s) {
+        if (*s == (char)c) last = s;
+        if (*s == 0) return last;
+    }
+}
+inline const char *strstr(const char *hay, const char *needle) {
+    if (*needle == 0) return hay;
+    for (; *hay; ++hay) {
+        const char *a = hay;
+        const char *b = needle;
+        while (*a && *b && *a == *b) { ++a; ++b; }
+        if (*b == 0) return hay;
+    }
+    return 0;
+}
+inline char *strncpy(char *dst, const char *src, unsigned long long n) {
+    unsigned long long i = 0;
+    for (; i < n && src[i]; ++i) dst[i] = src[i];
+    for (; i < n; ++i) dst[i] = 0;
+    return dst;
+}
 }

@@ -282,6 +282,7 @@ std::string operatorCode(const std::string& op) {
 }
 
 std::string manglePart(const std::string& part) {
+    if (part.compare(0, 9, "operator ") == 0) return "cv" + part.substr(9);  // conversion function
     if (part.compare(0, 8, "operator") == 0 && part.size() > 8) return operatorCode(part.substr(8));
     std::size_t lt = part.find('<');
     if (lt == std::string::npos || part.back() != '>') return std::to_string(part.size()) + part;
@@ -1745,13 +1746,30 @@ private:
                 cx.ctors.push_back(std::move(cd));
                 continue;
             }
-            if (!isTypeKw(cur())) {
-                err("expected a field");
-                break;
+            Parsed d;
+            std::unique_ptr<Type> fieldType;
+            if (!atEnd() && cur().kind == Tok::Ident && cur().text == "operator" && i_ + 1 < toks_.size() &&
+                isTypeKw(toks_[i_ + 1])) {
+                // A conversion function: operator int() const { ... } (ISO/IEC 14882 [class.conv.fct]).
+                d.line = cur().line;
+                d.col = cur().column;
+                d.file = cur().file;
+                advance();
+                auto target = parseBase();
+                expectP("(", "(");
+                expectP(")", ")");
+                d.name = "operator " + mangleType(*target);
+                fieldType = fnTypeOf({});
+                fieldType->inner = std::move(target);
+            } else {
+                if (!isTypeKw(cur())) {
+                    err("expected a field");
+                    break;
+                }
+                auto base = parseBase();
+                d = parseDeclarator(true);
+                fieldType = apply(std::move(base), d.mods);
             }
-            auto base = parseBase();
-            Parsed d = parseDeclarator(true);
-            auto fieldType = apply(std::move(base), d.mods);
             if (fieldType && fieldType->kind == Type::Kind::Function && !tag.empty() && !isUnion) {
                 cx.cxx = true;
                 if (cx.cxx && !classy) classy = true;
@@ -4029,6 +4047,7 @@ private:
         }
         case Expr::Kind::Unary: {
             if (!need(0)) return bad(e.line, e.col);
+            if (e.text == "!" || e.text == "-" || e.text == "+" || e.text == "~") convertIfNeeded(*e.kids[0]);
             if (e.text == "sizeof") {
                 if (e.ty) {
                     if (e.ty->kind == Type::Kind::Void || e.ty->kind == Type::Kind::Function) {
@@ -4115,6 +4134,20 @@ private:
             if (!c.type || !scalar(*c.type)) {
                 err(e.line, e.col, "condition is not a scalar");
                 return bad(e.line, e.col);
+            }
+            if (a.lvalue && b.lvalue && a.type && b.type && a.type->kind == Type::Kind::Struct &&
+                sameType(*a.type, *b.type)) {
+                // c ? x : y with two objects of one class is an lvalue (ISO/IEC 14882 [expr.cond]):
+                // *(c ? &x : &y).
+                auto cond = mkE(Expr::Kind::Cond, e);
+                cond->kids.push_back(std::move(e.kids[0]));
+                cond->kids.push_back(eUnary("&", std::move(e.kids[1]), e));
+                cond->kids.push_back(eUnary("&", std::move(e.kids[2]), e));
+                e.kind = Expr::Kind::Unary;
+                e.text = "*";
+                e.kids.clear();
+                e.kids.push_back(std::move(cond));
+                return checkExprBody(e);
             }
             if (a.type && b.type && isIntish(*a.type) && isIntish(*b.type)) {
                 r.type = prim(Type::Kind::Int);
@@ -4464,6 +4497,47 @@ private:
         return true;
     }
 
+    // An object of a class with a conversion function used where a number or pointer is needed:
+    // e becomes e.operator T() (the first conversion function the class has). Only an lvalue
+    // object is converted (a call result is not), and the result is not converted again.
+    void convertIfNeeded(Expr& e) {
+        if (!simpleOperand(e)) return;
+        ++quiet_;
+        ET probe = checkExpr(e);
+        --quiet_;
+        if (probe.bad || !probe.type || probe.type->kind != Type::Kind::Struct || !probe.lvalue) return;
+        const Type* st = canonOf(probe.type.get());
+        if (!st) return;
+        const Param* conv = nullptr;
+        for (const Param& f : st->params)
+            if (f.name.compare(0, 9, "operator ") == 0 && !f.mangled.empty()) {
+                conv = &f;
+                break;
+            }
+        if (!conv) return;
+        auto self = std::make_unique<Expr>();
+        self->kind = e.kind;
+        self->text = e.text;
+        self->ival = e.ival;
+        self->litUnsigned = e.litUnsigned;
+        self->litRank = e.litRank;
+        self->line = e.line;
+        self->col = e.col;
+        self->file = e.file;
+        self->kids = std::move(e.kids);
+        self->ty = std::move(e.ty);
+        auto member = mkE(Expr::Kind::Member, e);
+        member->text = ".";
+        member->kids.push_back(std::move(self));
+        member->kids.push_back(mkName(conv->name, e));
+        e.kind = Expr::Kind::Call;
+        e.text.clear();
+        e.ival = 0;
+        e.kids.clear();
+        e.kids.push_back(std::move(member));
+        e.checked.reset();
+    }
+
     ET checkExpr(Expr& e) {
         if (!e.file.empty()) file_ = e.file;
         {
@@ -4482,6 +4556,8 @@ private:
 
     ET checkBin(Expr& e) {
         if (e.kids.size() < 2 || !e.kids[0] || !e.kids[1]) return bad(e.line, e.col);
+        convertIfNeeded(*e.kids[0]);
+        convertIfNeeded(*e.kids[1]);
         ET a = decay(checkExpr(*e.kids[0]));
         ET b = decay(checkExpr(*e.kids[1]));
         if (a.bad || b.bad || !a.type || !b.type) return bad(e.line, e.col);
@@ -4536,6 +4612,7 @@ private:
     ET checkAssign(Expr& e) {
         if (e.kids.size() < 2 || !e.kids[0] || !e.kids[1]) return bad(e.line, e.col);
         ET lhs = checkExpr(*e.kids[0]);
+        if (!lhs.bad && lhs.type && lhs.type->kind != Type::Kind::Struct) convertIfNeeded(*e.kids[1]);
         ET rhs = decay(checkExpr(*e.kids[1]));
         if (lhs.bad || rhs.bad || !lhs.type) return bad(e.line, e.col);
         if (!lhs.mod) {
@@ -4973,6 +5050,7 @@ private:
                 if (ptr.bad) return bad(e.line, e.col);
                 continue;
             }
+            if (fn.params[i].type && fn.params[i].type->kind != Type::Kind::Struct) convertIfNeeded(*e.kids[i + 1]);
             ET arg = decay(checkExpr(*e.kids[i + 1]));
             if (arg.bad) return bad(e.line, e.col);
             if (fn.params[i].type && fn.params[i].type->kind == Type::Kind::Struct && arg.type &&
@@ -5076,6 +5154,7 @@ private:
         } else if (d.init && d.init->kind == Expr::Kind::String && d.type->kind == Type::Kind::Array) {
             checkExpr(*d.init);
         } else if (d.init) {
+            if (d.type->kind != Type::Kind::Struct) convertIfNeeded(*d.init);
             ET src = decay(checkExpr(*d.init));
             if (d.init->kind == Expr::Kind::Comma && d.init->ival == 9) {
                 d.init->ival = 8;  // T x = T(args): built in place, the temporary is not destroyed
@@ -5123,6 +5202,7 @@ private:
     }
 
     void checkCond(Expr& e) {
+        convertIfNeeded(e);
         ET c = decay(checkExpr(e));
         if (!c.bad && c.type && !scalar(*c.type)) err(e.line, e.col, "condition is not a scalar");
     }
@@ -5304,6 +5384,7 @@ private:
                                (!sameType(*ret_->inner, *v.type) && !derivedFrom(*v.type, *ret_->inner))))
                     err(s.line, s.col, "return type does not match");
             } else {
+                if (ret_->kind != Type::Kind::Struct) convertIfNeeded(*s.expr);
                 ET v = decay(checkExpr(*s.expr));
                 if (s.expr->kind == Expr::Kind::Comma && s.expr->ival == 9) {
                     s.expr->ival = 8;  // returned: it is the result object
@@ -7141,13 +7222,19 @@ private:
         std::string eL = lab("cond_end");
         emitBr(material(lowerExpr(*e.kids[0])), tL, fL);
         startBlock(tL);
-        emitMov(dst, lowerExpr(*e.kids[1]).op);
+        Val first = lowerExpr(*e.kids[1]);
+        emitMov(dst, first.op);
         emitJmp(eL);
         startBlock(fL);
         emitMov(dst, lowerExpr(*e.kids[2]).op);
         emitJmp(eL);
         startBlock(eL);
-        return Val{Operand::vreg(dst), 0, 0};
+        Val result{Operand::vreg(dst), 0, 0};
+        // Two pointers to objects of one class: the result points to that class too.
+        result.step = first.step;
+        result.inner = first.inner;
+        result.fields = first.fields;
+        return result;
     }
 
     Val lowerVa(Expr& e, const std::string& fname) {

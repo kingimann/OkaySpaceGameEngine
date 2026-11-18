@@ -600,6 +600,9 @@ void OpenPopup(const char* id);
 /// Open a popup when the LAST widget is right-clicked; returns true while it's open
 /// (then add items; clicking one should call CloseCurrentPopup()).
 bool BeginPopupContextItem(const char* id);
+/// Open a popup when the empty background of the current window is right-clicked (not an item, not a window above it); returns
+/// true while it is open, like BeginPopupContextItem. Call it after the window's widgets, so the hovered item is known.
+bool BeginPopupContextWindow(const char* id);
 /// Returns true while the named popup (opened via OpenPopup) is showing.
 bool BeginPopup(const char* id);
 /// A modal dialog: while the popup named `name` is open (OpenPopup(name) first) the area behind it is dimmed and
@@ -938,6 +941,16 @@ bool IsItemVisible();
 bool IsItemActive();         // pressed and held (or, for a text field, being dragged)
 bool IsItemActivated();      // became active this frame
 bool IsItemDeactivated();    // stopped being active this frame
+/// True when the last value widget (checkbox, radio, switch, slider, drag, input, combo, list box, colour edit) changed its value
+/// this frame (the frame it returned true). For a widget made of several cells (DragFloat3, InputInt) "the last item" is its last cell.
+bool IsItemEdited();
+/// True on the frame the last item stops being held (or, for a text field, loses the keyboard) if its value changed at any point
+/// while it was held or focused: the "now commit it" moment for a drag or a typed value. A click-to-change widget (checkbox)
+/// answers true on its click frame.
+bool IsItemDeactivatedAfterEdit();
+/// The width the next full-width item would get (the room left on the line, or the SetNextItemWidth / PushItemWidth width when
+/// that is smaller). 0 outside a frame.
+float CalcItemWidth();
 bool IsItemClicked(int button = 0);   // hovered and `button` (0 left, 1 right) went down this frame
 bool IsMouseDown(int button = 0);
 bool IsMouseClicked(int button = 0);

@@ -179,6 +179,37 @@ Each stage is its own branch and its own review of the docs; all of it stays OFF
    MinGW or MSVC.
 3. Self-signed X.509 v3 certificate (subject from the manifest Publisher, code signing EKU, key usage, validity);
    `.cer` output that `openssl x509` can read.
+   **Status 2026-11-18: written and tested, NOT independently reviewed, test key only, not wired to anything.**
+   Where: `signing/include/okay/Sign/{Cert,Pem}.hpp`, `signing/src/{Cert,Pem}.cpp`, SPKI functions added to `Rsa.hpp`;
+   tests `signing/tests/test_sign_cert.cpp`, `test_sign_cert_openssl.cpp`. Same switch (`OKAY_OWN_SIGNING`, default OFF,
+   refused by releases). Written from RFC 5280 (4.1, 4.2.1.2, 4.2.1.3, 4.2.1.9, 4.2.1.12), RFC 7093 section 2 (key identifier:
+   leftmost 160 bits of SHA-256, so no SHA-1 code is needed), RFC 4648 and RFC 7468 (base64, PEM). What exists:
+   `MakeSelfSignedCodeSigningCert` (v3, random 16-byte serial from `RandomCertSerial`, sha256WithRSAEncryption, issuer = subject,
+   validity passed in as `UtcDateTime`, UTCTime before 2050 and GeneralizedTime from 2050, SPKI, extensions basicConstraints
+   critical CA:FALSE, keyUsage critical digitalSignature, extendedKeyUsage codeSigning, subjectKeyIdentifier; no hidden clock),
+   `ParseDistinguishedName` / `FormatDistinguishedName` for the manifest Publisher string (CN, C, L, S/ST, O, OU, STREET, DC, E,
+   SERIALNUMBER or dotted OIDs; quotes, backslash escapes; multi-valued RDNs refused), `ParseCertificate` (strict DER, v3 only,
+   unknown critical extensions refused, duplicates refused, trailing bytes refused), `CheckSelfSignedCodeSigningCert` (returns a
+   reason string: algorithms, issuer == subject bytes, self-signature over the exact TBS bytes, subject equals the expected
+   Publisher, extensions, key identifier, validity at a given time), PEM and base64, `WriteRsaPrivateKeyPemFile` (POSIX mode
+   0600 from the first byte, refuses to overwrite; on Windows a plain new file, no ACL set, UNVERIFIED there) and
+   `WritePublicFile` for the DER `.cer`. Key bytes are never printed or logged.
+   Tests (all pass, also under AddressSanitizer + UndefinedBehaviorSanitizer): RFC 4648 base64 vectors, DN parse/format cases,
+   a known-answer certificate whose bytes were produced by a separate small Python encoder (not our code; our writer must give
+   the identical bytes, the signature being deterministic; the file was also read by `openssl x509 -text` and accepted by
+   `openssl verify`), generated-key round trips, tampered DER (every third byte flipped: none accepted), truncations, swapped
+   signature, wrong key, issuer/subject mismatch, wrong Publisher, wrong order, validity edges, bad parameters, random-junk parser
+   fuzz, key file mode 0600 and no-overwrite. Optional openssl cross-check (skipped without openssl): `openssl x509 -inform DER
+   -text` shows version 3, sha256WithRSAEncryption, 2048-bit key, CA:FALSE critical, Digital Signature critical, Code Signing,
+   key identifier and the DN; `openssl verify -CAfile self.pem self.pem` says OK; the key file and the certificate have the same
+   modulus. Nothing from OpenSSL is in the repo.
+   UNVERIFIED and open: (a) the order of the name's attributes inside the certificate. We write them in the order of the Publisher
+   string (how Windows prints a name, as I understand it) and offer `reverseNameOrder` for the RFC 4514 reading; only a real
+   Windows check on the owner's PC can settle which one it accepts. (b) String types: UTF8String, except C and serialNumber
+   (PrintableString) and DC and E (IA5String); Windows may compare strings, not bytes; unknown. (c) Microsoft's own
+   `New-SelfSignedCertificate` example adds basicConstraints without marking it critical; we mark it critical (RFC 5280 allows
+   both for an end-entity certificate); not known whether Windows cares. (d) No PFX / PKCS #12 export, no thumbprint helper.
+   (e) Only RSA; only the four extensions; not a general X.509 library.
 4. CMS SignedData builder (generic), then the Microsoft SPC indirect data content on top.
 5. The APPX signature: compute AXPC, AXCD, AXCT, AXBM from the packer's output, build `AppxSignature.p7x`, add it to the
    ZIP. This stage has to be done jointly with the owner of the packer branch, because the central directory hash
@@ -227,9 +258,22 @@ reasons we cannot see.
 
 Unknown today:
 
-- Whether the manifest is signed through the block map only (our reading) or also directly.
+- Whether the manifest is signed through the block map only (our reading) or also directly. What public documentation says
+  (read 2026-11-18, Microsoft Learn, "MakeAppx.exe" and "Create a certificate for package signing"): the block map is created
+  by MakeAppx with a hash algorithm (SHA256 by default, SHA384 and SHA512 possible) and SignTool's file digest algorithm "must
+  match the hash algorithm used to create the blockmap", which shows that the signature is tied to the block map. Those pages do
+  NOT describe the layout of `AppxSignature.p7x`, the tagged hashes (`AXPC`, `AXCD`, `AXCT`, `AXBM`, `AXCI`) or whether the
+  manifest is hashed separately. So the statement "the manifest is covered only through the block map hash" stays an unconfirmed
+  reading (verify): it rests on the block map listing every file of the package, which I have not re-read in the OPC/APPX
+  specification this session. Stage 5 must start by reading that specification, and by hashing a real SignTool-signed package.
 - Exact `SpcSipInfo` contents and the SIP GUID; exact required signed attributes.
 - Whether Windows accepts `rsaEncryption` or only `sha256WithRSAEncryption` as the signer algorithm OID.
+- What the Windows trust check needs, per the same Microsoft page: the certificate Subject must match the manifest Publisher
+  (their example: `Publisher="CN=Contoso Software, O=Contoso Corporation, C=US"`); a self-signed test certificate has
+  KeyUsage DigitalSignature, EKU 1.3.6.1.5.5.7.3.3 (code signing) and an empty basicConstraints (end entity, not a CA); and to
+  install a package signed with it the certificate must be imported into the Local Machine "Trusted People" store (their
+  example does this with a PFX and `Import-PfxCertificate`; a DER `.cer` imported into the same store is expected to work too,
+  unverified). Only users who trust the certificate can run the app. The page says nothing about the Xbox.
 - Xbox Developer Mode: how a self-signed certificate is trusted there, and whether it is checked at all for
   sideloaded dev packages (it may use a different path than the PC).
 - Whether the owner wants a PFX export at all.

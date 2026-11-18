@@ -1,0 +1,11 @@
+// Known-answer certificate for the stage 3 tests. NOT INDEPENDENTLY REVIEWED. TEST KEY ONLY.
+// Assembled by a separate small Python encoder (testing tool only; none of our code, nothing copied from any project) from the
+// FIRST throw-away 1024-bit key in rsa_vectors.hpp: subject = issuer = "CN=Okay Test Publisher, O=Okay Space, C=US", serial
+// 4a1b2c3d4e5f60718293a4b5c6d7e8f9, valid 2026-11-18 00:00:00 to 2036-11-18 00:00:00 UTC, the four extensions our writer emits
+// (basicConstraints critical CA:FALSE, keyUsage critical digitalSignature, extKeyUsage codeSigning, subjectKeyIdentifier = leftmost
+// 160 bits of SHA-256 of the key bit string). PKCS#1 v1.5 is deterministic, so our writer must produce the same bytes. The file
+// was also parsed by `openssl x509 -text` and accepted by `openssl verify` once, when it was made.
+#pragma once
+static const char* const kCertKatPublisher = "CN=Okay Test Publisher, O=Okay Space, C=US";
+static const char* const kCertKatSerialHex = "4a1b2c3d4e5f60718293a4b5c6d7e8f9";
+static const char* const kCertKatDerHex = "30820259308201c2a00302010202104a1b2c3d4e5f60718293a4b5c6d7e8f9300d06092a864886f70d01010b05003040311c301a06035504030c134f6b61792054657374205075626c697368657231133011060355040a0c0a4f6b6179205370616365310b3009060355040613025553301e170d3236313131383030303030305a170d3336313131383030303030305a3040311c301a06035504030c134f6b61792054657374205075626c697368657231133011060355040a0c0a4f6b6179205370616365310b300906035504061302555330819f300d06092a864886f70d010101050003818d0030818902818100d12d6d3a19d673308e61cf52b40c5432e332afa0192f626889ee2e37adda17b892f316c6bac8472cfb9b77defd53dd901a3420a1fb097d2303e370cc285f24822a6cc53bcfe052ddb6a8db180124a130abfbb4c3e87d4ed890b4a0bff8180a430b14f23f4fee7cc3acb56c32dada08f5f750dbbb31caa56bb12725d03099459f0203010001a3543052300c0603551d130101ff04023000300e0603551d0f0101ff04040302078030130603551d25040c300a06082b06010505070303301d0603551d0e04160414aafe2782e85474ce9f0ed75b594e370f22a00b87300d06092a864886f70d01010b0500038181009b310ce5579aecd0ba77d81de53b29850e6b5a8ee83b0cfc59ec0b532bb9b67fa3ba49805b0099108b3878c75e0f75ef4c19e451215b718e6db80a84545abdff034603f2c7789bea223025aee0134f55b32adab3a6b071761feecc85765b1dfbf67727e4135e005567d131712815bc21b1cc46b2768349008083058e02aefe4b";

@@ -57,6 +57,9 @@ bool RsaVerifySha256(const RsaPublicKey& key, const std::uint8_t* msg, std::size
 /// like a password (owner-only file, never logged, never committed).
 std::vector<std::uint8_t> RsaPrivateKeyToDer(const RsaPrivateKey& k);
 std::vector<std::uint8_t> RsaPublicKeyToDer(const RsaPublicKey& k);
+/// SubjectPublicKeyInfo (RFC 5280 4.1.2.7, RFC 8017 A.1): SEQUENCE { SEQUENCE { rsaEncryption, NULL }, BIT STRING { RSAPublicKey } }.
+std::vector<std::uint8_t> RsaPublicKeyToSpkiDer(const RsaPublicKey& k);
+bool RsaPublicKeyFromSpkiDer(const std::vector<std::uint8_t>& der, RsaPublicKey& out);   // strict; only rsaEncryption with NULL
 bool RsaPrivateKeyFromDer(const std::vector<std::uint8_t>& der, RsaPrivateKey& out);   // strict DER; does not check consistency
 bool RsaPublicKeyFromDer(const std::vector<std::uint8_t>& der, RsaPublicKey& out);
 

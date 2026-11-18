@@ -139,6 +139,27 @@ std::vector<std::uint8_t> RsaPrivateKeyToDer(const RsaPrivateKey& k) {
                           der::Integer(k.q), der::Integer(k.dP), der::Integer(k.dQ), der::Integer(k.qInv)});
 }
 
+std::vector<std::uint8_t> RsaPublicKeyToSpkiDer(const RsaPublicKey& k) {
+    return der::Sequence({der::Sequence({der::Oid("1.2.840.113549.1.1.1"), der::Null()}), der::BitString(RsaPublicKeyToDer(k), 0)});
+}
+
+bool RsaPublicKeyFromSpkiDer(const std::vector<std::uint8_t>& d, RsaPublicKey& out) {
+    out = RsaPublicKey();
+    der::Reader top(d);
+    der::Tlv_ seq, alg, bits, oid, nul;
+    if (!top.Expect(der::kTagSequence, seq) || !top.AtEnd()) return false;
+    der::Reader in(seq.content, seq.length);
+    if (!in.Expect(der::kTagSequence, alg) || !in.Expect(der::kTagBitString, bits) || !in.AtEnd()) return false;
+    der::Reader ar(alg.content, alg.length);
+    std::string o;
+    if (!ar.Expect(der::kTagOid, oid) || !der::ReadOid(oid, o) || o != "1.2.840.113549.1.1.1") return false;
+    if (!ar.Expect(der::kTagNull, nul) || nul.length != 0 || !ar.AtEnd()) return false;
+    std::vector<std::uint8_t> inner;
+    unsigned unused = 0;
+    if (!der::ReadBitString(bits, inner, unused) || unused != 0) return false;
+    return RsaPublicKeyFromDer(inner, out);
+}
+
 bool RsaPublicKeyFromDer(const std::vector<std::uint8_t>& d, RsaPublicKey& out) {
     out = RsaPublicKey();
     der::Reader top(d);

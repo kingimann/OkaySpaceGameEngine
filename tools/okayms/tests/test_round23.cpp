@@ -169,5 +169,14 @@ int main(int, char**) {
           "const std::vector<std::string>& B() { static const std::vector<std::string> b = {\"a\", \"b\"}; return b; }\n"
           "int main() { T t(\"xy\"); T u(t); return (int)(B().size() + u.size() + t.at2(0)); }\n", &o);
     CHECK(t, has_symbol(o, "??0?$vector@Vstring@@@@QEAA@V?$initializer_list@Vstring@@@@@Z") && has_symbol(o, "main"));
+    ++tests;
+    build(t, "round 30: function pointer members, global braces, const local array length, .5 literals, variable named like a class, assign(str,pos,n)",
+          "#include <atomic>\n#include <filesystem>\n#include <string>\n#include <vector>\nstruct G;\nstruct E { bool (*has)(const G&); int (*f)(int, int); };\nint add(int a, int b) { return a + b; }\n"
+          "std::atomic<int> h{3};\nstruct P { int a; int b; };\nP gp{1, 2};\nstruct PS { int a; };\nstruct VV { float x; VV() : x(0) {} };\n"
+          "inline VV Fn(PS& sample, G* parent, const VV& b, float dt, VV& out) { return b; }\nstruct C { struct Code { int a; }; std::vector<Code> slow; };\n"
+          "int main() { constexpr int n = 8; int arr[n]; arr[1] = 2; E e; e.f = add; std::vector<int> path; path.clear(); path.push_back(1);\n"
+          "std::string a(\"hello\"), b2, c2; b2.assign(a, 1, 3); c2.append(a, 2, 100); C cc; cc.slow.push_back({1});\n"
+          "return e.f(1, 2) + arr[1] + h.load() + gp.b + (int)(.5f * 4) + (int)path.size() + (int)(b2.size() + c2.size()); }\n", &o);
+    CHECK(t, has_symbol(o, "main"));
     return t.finish(tests);
 }

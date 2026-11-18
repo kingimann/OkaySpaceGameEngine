@@ -1180,7 +1180,7 @@ std::vector<Token> lex(const std::string& text, std::string* error) {
             tokens.push_back(tok);
             continue;
         }
-        if (std::isdigit(c)) {
+        if (std::isdigit(c) || (c == '.' && i + 1 < text.size() && std::isdigit(static_cast<unsigned char>(text[i + 1])))) {
             int base = 10;
             size_t j = i;
             if (text[i] == '0' && i + 1 < text.size() && (text[i + 1] == 'x' || text[i + 1] == 'X')) {
@@ -3503,6 +3503,9 @@ struct Parser {
             is(TStruct) || is(TUnion) || is(TEnum) || is(TTypedef) || is(TDeclspec) || is(TStatic) || is(TConst) ||
             is(TFloat) || is(TDouble))
             return true;
+        if (is(TIdent) && at + 1 < tokens.size() && (tokens[at + 1].kind == TDot || tokens[at + 1].kind == TArrow) &&
+            local_visible(cur().text))
+            return false;  // a variable named like a class (`path.clear()`) is the variable
         return (is(TIdent) && typedefs.find(cur().text) != typedefs.end()) || is_class_name() ||
                is_template_name_at(at) || (is(TIdent) && cur().text == "typename") ||
                (is(TIdent) && cur().text == "auto" && at + 1 < tokens.size() &&
@@ -3524,8 +3527,9 @@ struct Parser {
             return true;  // sizeof(S)
         if (i + 2 < tokens.size() && tokens[i + 1].kind == TColonColon && tokens[i + 2].kind == TIdent &&
             (typedefs.find(tokens[i + 2].text) != typedefs.end() ||
-             structs[static_cast<size_t>(id)].tdefs.count(tokens[i + 2].text) > 0))
-            return true;  // Struct::Enum, Struct::member_typedef
+             structs[static_cast<size_t>(id)].tdefs.count(tokens[i + 2].text) > 0 ||
+             find_nested(id, tokens[i + 2].text) >= 0))
+            return true;  // Struct::Enum, Struct::member_typedef, Struct::Nested
         return i + 1 < tokens.size() &&
                (tokens[i + 1].kind == TIdent || tokens[i + 1].kind == TStar || tokens[i + 1].kind == TAmp ||
                 tokens[i + 1].kind == TAndAnd ||

@@ -107,6 +107,12 @@ public:
         return *this;
     }
     string& assign(const char* s) { return assign(s, length_of(s)); }
+    // assign(str, pos, count) ([string.assign]): a part of another string; count is cut at the end.
+    string& assign(const string& other, size_t pos, size_t count) {
+        if (pos > other.size_) pos = other.size_;
+        if (count > other.size_ - pos) count = other.size_ - pos;
+        return assign(other.data_ + pos, count);
+    }
     string& assign(const string& other) { return assign(other.data_, other.size_); }
 
     size_t size() const { return size_; }
@@ -172,6 +178,11 @@ public:
         return *this;
     }
     string& append(const char* s) { return append(s, length_of(s)); }
+    string& append(const string& other, size_t pos, size_t count) {
+        if (pos > other.size_) pos = other.size_;
+        if (count > other.size_ - pos) count = other.size_ - pos;
+        return append(other.data_ + pos, count);
+    }
     string& append(const string& other) { return append(other.data_, other.size_); }
     string& append(size_t n, char c) {
         reserve_exact(size_ + n);

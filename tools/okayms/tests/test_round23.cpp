@@ -141,5 +141,10 @@ int main(int, char**) {
             for (const auto& r : sec.relocations)
                 if (r.symbol < o.symbols.size() && o.symbols[r.symbol].name.compare(0, 5, "__ti_") == 0) rtti_slot = true;
     CHECK(t, rtti_slot);
+    ++tests;
+    build(t, "variant, trailing pack deduction", "#include <variant>\n#include <string>\ntemplate <typename... Ts> struct L { int n; };\ntemplate <typename T, typename... Ts> int pick(L<Ts...>& v) { return v.n; }\n"
+          "struct V3 { float x, y, z; };\nint main() { L<int, float> l; l.n = 3; std::variant<std::monostate, int, std::string, V3> v; v = 5; int a = std::holds_alternative<int>(v) ? std::get<int>(v) : 0;\n"
+          "v = std::string(\"hi\"); const std::string* s = std::get_if<std::string>(&v); std::variant<std::monostate, int, std::string, V3> w = v; return pick<int>(l) + a + (s ? (int)s->size() : 0) + (int)w.index(); }\n", &o);
+    CHECK(t, has_symbol(o, "holds_alternative") && has_symbol(o, "get_if"));
     return t.finish(tests);
 }

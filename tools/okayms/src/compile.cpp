@@ -3038,7 +3038,7 @@ struct Parser {
         type->is_unsigned = unsign && !sign;
         if ((longs >= 2 || int64_word) && type->base == 1) type->wide = true;
         if (!saw) {
-            error = "expected a type";
+            error = "expected a type (in " + current_fn + ", token " + (is(TEnd) ? std::string("end") : cur().text) + ", after " + (at > 0 ? tokens[at - 1].text : std::string()) + ")";
             return false;
         }
         return true;
@@ -5057,6 +5057,23 @@ struct Parser {
     // Compiles the body of a member function from its saved token position.
     bool define_method(int sid, size_t mi) {
         const Method m = structs[static_cast<size_t>(sid)].methods[mi];
+        // The typedefs and aliases of the class mean what they mean in the class while its member bodies are read (a body
+        // compiled after the class, or a member template instance, no longer has them in scope otherwise).
+        struct ScopeTd {
+            std::map<std::string, Type>& table;
+            std::vector<std::pair<std::string, std::pair<bool, Type>>> saved;
+            ~ScopeTd() {
+                for (size_t k = saved.size(); k-- > 0;) {
+                    if (saved[k].second.first) table[saved[k].first] = saved[k].second.second;
+                    else table.erase(saved[k].first);
+                }
+            }
+        } scope_td{typedefs, {}};
+        for (const auto& td : structs[static_cast<size_t>(sid)].tdefs) {
+            auto had = typedefs.find(td.first);
+            scope_td.saved.push_back({td.first, {had != typedefs.end(), had != typedefs.end() ? had->second : Type{}}});
+            typedefs[td.first] = td.second;
+        }
         FuncDecl fn;
         fn.name = m.qname;
         fn.symbol = m.symbol;
@@ -6772,7 +6789,8 @@ struct Parser {
                      const std::vector<Node>& call_args) {
         std::vector<TArg>& args = *args_io;
         std::vector<bool> given(td.params.size(), false);
-        for (size_t i = 0; i < args.size(); ++i) given[i] = true;
+        // An empty pack that parse_template_args filled in after the written arguments was not written: it is deduced.
+        for (size_t i = 0; i < args.size() && i < given.size(); ++i) given[i] = !(args[i].is_pack && args[i].pack.empty());
         const std::vector<bool> explicit_given = given;
         args.resize(td.params.size());
         for (size_t i = 0; i < td.proto.size() && i < call_args.size() + 1; ++i) {
@@ -10869,22 +10887,25 @@ bool Parser::operator_binary(Tok op, Node* left, Node* right, bool* done) {
     Type lt;
     Type rt;
     const bool lc = class_object_type(*left, &lt);
-    const bool rc = class_object_type(*right, &rt);
+    bool rc = class_object_type(*right, &rt);
     std::string name;
     if (!operator_name(op, &name)) return true;
     if (!lc && !rc) return true;
-    if (op == TAssign && lc && rc && rt.struct_id != lt.struct_id && cur_locals != nullptr) {
+    if (op == TAssign && lc && (!rc ? structs[static_cast<size_t>(lt.struct_id)].ctor_tmpl : rt.struct_id != lt.struct_id) &&
+        cur_locals != nullptr) {
         // `f = lambda;` where the left class has a constructor that takes the right object: the right side is first made
         // into a temporary of the left class ([over.match.copy], [class.conv.ctor]).
         bool related = false;
-        for (int walk = rt.struct_id; walk >= 0; walk = structs[static_cast<size_t>(walk)].base)
-            if (walk == lt.struct_id) related = true;
-        for (int walk = lt.struct_id; walk >= 0 && !related; walk = structs[static_cast<size_t>(walk)].base)
-            if (walk == rt.struct_id) related = true;
-        for (const Method& m : structs[static_cast<size_t>(lt.struct_id)].methods)
-            if (m.name == name && !m.implicit && m.params.size() == 1 && m.params[0].base == 3 &&
-                m.params[0].struct_id == rt.struct_id)
-                related = true;  // an operator= for exactly this class: no conversion
+        if (rc) {
+            for (int walk = rt.struct_id; walk >= 0; walk = structs[static_cast<size_t>(walk)].base)
+                if (walk == lt.struct_id) related = true;
+            for (int walk = lt.struct_id; walk >= 0 && !related; walk = structs[static_cast<size_t>(walk)].base)
+                if (walk == rt.struct_id) related = true;
+            for (const Method& m : structs[static_cast<size_t>(lt.struct_id)].methods)
+                if (m.name == name && !m.implicit && m.params.size() == 1 && m.params[0].base == 3 &&
+                    m.params[0].struct_id == rt.struct_id)
+                    related = true;  // an operator= for exactly this class: no conversion
+        }
         if (!related) {
             Local hidden;
             hidden.name = "__cv" + std::to_string(tmp_count++);
@@ -10900,6 +10921,7 @@ bool Parser::operator_binary(Tok op, Node* left, Node* right, bool* done) {
             if (class_needs_dtor(structs[static_cast<size_t>(lt.struct_id)])) stmt_temps.push_back(Temp{hidden.name, lt.struct_id});
             *right = node_name(hidden.name);
             rt = lt;
+            rc = true;
         }
     }
     if (op == TAssign && lc) {

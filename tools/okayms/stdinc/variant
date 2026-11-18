@@ -1,0 +1,110 @@
+// okay-ms own standard header: std::variant, monostate, get<T>, get<N>, get_if, holds_alternative, visit (one variant), written
+// from ISO/IEC 14882 [variant]. The value lives in an aligned buffer as large as the largest alternative; the index of the
+// active alternative is a run-time int (-1 when empty, which this version never leaves it in except after a failed copy).
+// Operations over the alternative list are recursive class templates on the pack. Differences from the standard: no
+// valueless_by_exception, no emplace, no converting assignment between alternatives beyond exact-type assignment `v = T(...)`,
+// visit takes exactly one variant, no comparison operators, get<> of the wrong alternative returns the buffer as that type (the
+// standard throws bad_variant_access; there are no exceptions in the path used here), alignment is 8.
+#pragma once
+#include <cstddef>
+#include <cstdlib>
+#include <new>
+namespace std {
+struct monostate {};
+
+template <typename... Ts> struct variant_size_max;
+template <typename T> struct variant_size_max<T> { static const size_t value = sizeof(T); };
+template <typename T, typename... R> struct variant_size_max<T, R...> {
+    // max(a, b) without a conditional (not a constant expression here): a + (a < b) * (b - a)
+    static const size_t rest = variant_size_max<R...>::value;
+    static const size_t value = sizeof(T) + (sizeof(T) < rest) * (rest - sizeof(T));
+};
+
+// The index of T among the alternatives (the list is wrapped in one class so that no pack is spread in an expression).
+template <typename... Ts> struct variant_list {};
+template <typename T, typename L> struct variant_index;
+template <typename T, typename... R> struct variant_index<T, variant_list<T, R...>> { static const int value = 0; };
+template <typename T, typename U, typename... R> struct variant_index<T, variant_list<U, R...>> {
+    static const int value = 1 + variant_index<T, variant_list<R...>>::value;
+};
+
+// Destroy and copy the alternative with a given index.
+template <typename... Ts> struct variant_ops;
+template <> struct variant_ops<> {
+    static void destroy(int, void*) {}
+    static void copy(int, void*, const void*) {}
+    static void first(void*) {}
+};
+template <typename T, typename... R> struct variant_ops<T, R...> {
+    static void destroy(int i, void* p) {
+        if (i == 0) ((T*)p)->~T();
+        else variant_ops<R...>::destroy(i - 1, p);
+    }
+    static void first(void* p) { new (p) T(); }
+    static void copy(int i, void* to, const void* from) {
+        if (i == 0) new (to) T(*(const T*)from);
+        else variant_ops<R...>::copy(i - 1, to, from);
+    }
+};
+
+template <typename... Ts>
+class variant {
+public:
+    typedef variant_list<Ts...> list_;
+    long long buf_[(variant_size_max<Ts...>::value + 7) / 8];
+    int idx_;
+    variant() : idx_(-1) { construct_first(); }
+    variant(const variant& o) : idx_(-1) {
+        if (o.idx_ >= 0) {
+            variant_ops<Ts...>::copy(o.idx_, (void*)buf_, (const void*)o.buf_);
+            idx_ = o.idx_;
+        }
+    }
+    template <typename U> variant(const U& v) : idx_(-1) {
+        new (slot()) U(v);
+        idx_ = variant_index<U, list_>::value;
+    }
+    ~variant() { reset(); }
+    variant& operator=(const variant& o) {
+        if (this != &o) {
+            reset();
+            if (o.idx_ >= 0) {
+                variant_ops<Ts...>::copy(o.idx_, (void*)buf_, (const void*)o.buf_);
+                idx_ = o.idx_;
+            }
+        }
+        return *this;
+    }
+    template <typename U> variant& operator=(const U& v) {
+        reset();
+        new (slot()) U(v);
+        idx_ = variant_index<U, list_>::value;
+        return *this;
+    }
+    void* slot() { return (void*)buf_; }
+    size_t index() const { return (size_t)idx_; }
+    template <typename U> int index_of() const { return variant_index<U, list_>::value; }
+    void reset() {
+        if (idx_ >= 0) {
+            variant_ops<Ts...>::destroy(idx_, (void*)buf_);
+            idx_ = -1;
+        }
+    }
+    void construct_first() {
+        variant_ops<Ts...>::first((void*)buf_);
+        idx_ = 0;
+    }
+};
+
+template <typename T, typename... Ts> bool holds_alternative(const variant<Ts...>& v) { return v.idx_ == v.template index_of<T>(); }
+template <typename T, typename... Ts> T& get(variant<Ts...>& v) { return *(T*)(void*)v.buf_; }
+template <typename T, typename... Ts> const T& get(const variant<Ts...>& v) { return *(const T*)(const void*)v.buf_; }
+template <typename T, typename... Ts> T* get_if(variant<Ts...>* v) {
+    if (v == 0 || v->idx_ != v->template index_of<T>()) return 0;
+    return (T*)(void*)v->buf_;
+}
+template <typename T, typename... Ts> const T* get_if(const variant<Ts...>* v) {
+    if (v == 0 || v->idx_ != v->template index_of<T>()) return 0;
+    return (const T*)(const void*)v->buf_;
+}
+}

@@ -5426,6 +5426,7 @@ Word, then the number(s) to say. Back to the [overview](../FEATURE_MAP.md).
 - Window creation (37.1.1)
 - window icon (37.1)
 - Window mode panels and persistence (40.9.12)
+- Window mode views, dialogs, Hierarchy and Inspector (40.9.13)
 - window shadow (40.2)
 - Window, fullscreen and display settings (37.1)
 - Window, sidebar and pages (17.1.1)

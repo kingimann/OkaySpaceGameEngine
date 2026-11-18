@@ -9,6 +9,7 @@
 #include "OkayUIFrameLoop.hpp"
 #include "OkayUIHostPanels.hpp"
 #include "OkayUIHostViews.hpp"
+#include "OkayUIHostObjects.hpp"
 #include "OkayUIHostDialogs.hpp"
 #include "EditorFrameTick.hpp"
 #include "EditorState.hpp"
@@ -56,6 +57,7 @@ int RunOkayUIHostMode(int, char**) {
         wm::ViewSource vs; vs.scene = [&editor] { return &editor.scene(); };
         vs.yaw = &editor.camYaw; vs.pitch = &editor.camPitch; vs.dist = &editor.camDist; vs.target = &editor.camTarget;
         wm::AddSceneViews(state.panels, &state, painter.get(), vs);
+        wm::AddObjectPanels(state.panels, &state, &editor);   // the Hierarchy and the Inspector
     }
     oked::wm::OkayUIDialogs dialogs;   // the error modal and the "Save changes?" question as OkayUI popups; the panels reach them through oked::CurrentDialogs()
     {

@@ -39,6 +39,19 @@ v2.884.0
     half loading, and long Windows paths are no longer cut off.
   - Release checks wait longer for the update server before publishing.
 
+Unreleased
+  Fixes and new things
+  - Models now open with our own readers, written for this engine,
+    instead of the Assimp and ufbx libraries. They are faster and use
+    less memory on the test files. This covers FBX, COLLADA (.dae),
+    Blender, 3DS, OBJ, STL, PLY, DirectX .x and about 40 more formats.
+    If our reader cannot read a file, the old library still tries it,
+    and the Console says which one read it.
+  - To go back to the old libraries for every model, set
+    OKAY_THIRD_PARTY=1 before starting the program. To go back for one
+    format only, set OKAY_OWN_<FORMAT>=0 (for example OKAY_OWN_FBX=0).
+    Please tell us about any model that looks different.
+
 v2.883.0
   Fixes and new things
   - Editor: Dark and Light mode replace the Preferences window, and

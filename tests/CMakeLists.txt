@@ -1,3 +1,13 @@
+# Our own model readers are the default since 2026-11-17 (owner approval). Tests that check "what a build does with nothing set"
+# get OKAY_EXPECT_OWN_READERS when every model reader option is ON (the default; NDO is a seam and stays OFF, so it is not listed).
+set(_okay_all_readers_on TRUE)
+foreach(_f FBX COLLADA 3DS BVH OFF SMD MD5 MS3D ASE BLEND 3MF AMF X3D DXF LWO MD2 MD3 IRRMESH B3D X AC3D OGRE XGL IRR NFF TER MDC HMP CSM
+        Q3D RAW IQM COB PMX LWS OGREBIN ZAE XML LXO)
+    if(NOT OKAY_OWN_${_f})
+        set(_okay_all_readers_on FALSE)
+    endif()
+endforeach()
+
 # The sandbox the file-writing tests run in (temp folder as working and save folder; guard against writes into the source tree)
 add_executable(test_sandbox test_sandbox.cpp)
 target_link_libraries(test_sandbox PRIVATE okay::engine)
@@ -1133,6 +1143,11 @@ target_include_directories(test_own_stack PRIVATE ${CMAKE_SOURCE_DIR}/shared)
 target_link_libraries(test_own_stack PRIVATE okay::engine)
 add_test(NAME own_stack COMMAND test_own_stack)
 add_test(NAME own_stack_env COMMAND test_own_stack env)
+add_test(NAME own_stack_third_party COMMAND test_own_stack thirdparty)
+# Our own model readers are the default (2026-11-17): the default-build check expects them when every reader option is ON.
+if(_okay_all_readers_on)
+    target_compile_definitions(test_own_stack PRIVATE OKAY_EXPECT_OWN_READERS)
+endif()
 add_test(NAME release_refuses_own_crypto COMMAND bash ${CMAKE_SOURCE_DIR}/scripts/check_release_own_stack.sh --self-test)
 add_test(NAME fetch_tarball_pin COMMAND bash ${CMAKE_SOURCE_DIR}/scripts/test_fetch_tarball.sh)   # SHA-256 pinning of downloads (offline)
 
@@ -3341,6 +3356,9 @@ endif()
 add_executable(test_model_readers test_model_readers.cpp)
 target_link_libraries(test_model_readers PRIVATE okay::engine)
 target_compile_definitions(test_model_readers PRIVATE OKAY_SOURCE_DIR="${PROJECT_SOURCE_DIR}")
+if(_okay_all_readers_on AND OKAY_PREFER_OWN_READERS)
+    target_compile_definitions(test_model_readers PRIVATE OKAY_EXPECT_OWN_READERS)
+endif()
 add_test(NAME model_readers COMMAND test_model_readers WORKING_DIRECTORY ${CMAKE_CURRENT_BINARY_DIR})
 set_tests_properties(model_readers PROPERTIES TIMEOUT 300)
 add_executable(test_collada_reader test_collada_reader.cpp)
@@ -3540,12 +3558,29 @@ target_compile_definitions(test_blend_reader PRIVATE OKAY_SOURCE_DIR="${PROJECT_
 add_test(NAME blend_reader COMMAND test_blend_reader WORKING_DIRECTORY ${CMAKE_CURRENT_BINARY_DIR})
 add_executable(test_blend_hostile test_blend_hostile.cpp
     ${PROJECT_SOURCE_DIR}/engine/src/Render/BlendReader.cpp
+    ${PROJECT_SOURCE_DIR}/engine/src/Render/BlendModifiers.cpp
     ${PROJECT_SOURCE_DIR}/engine/src/Core/ImageDecode.cpp
     ${PROJECT_SOURCE_DIR}/engine/src/Core/ImageDecodeJpeg.cpp)
 target_include_directories(test_blend_hostile PRIVATE ${PROJECT_SOURCE_DIR}/engine/include ${PROJECT_SOURCE_DIR}/engine/src/Core)
 target_compile_definitions(test_blend_hostile PRIVATE OKAY_SOURCE_DIR="${PROJECT_SOURCE_DIR}")
 add_test(NAME blend_hostile COMMAND test_blend_hostile WORKING_DIRECTORY ${CMAKE_CURRENT_BINARY_DIR})
 set_tests_properties(blend_hostile PROPERTIES TIMEOUT 600)
+# Mirror and Subdivision Surface modifiers of the Blender reader (BlendModifiers.cpp): hand-computed Catmull-Clark and
+# mirror results, the synthetic fixture blend_modifiers.blend, the real corpus files with modifiers (OKAY_MODEL_CORPUS) and
+# a fuzz of the modifier code on random meshes (OKAY_BLEND_MOD_FUZZ_ITERS). Standalone like blend_hostile, for sanitizer builds.
+add_executable(test_blend_modifiers test_blend_modifiers.cpp
+    ${PROJECT_SOURCE_DIR}/engine/src/Render/BlendModifiers.cpp
+    ${PROJECT_SOURCE_DIR}/engine/src/Render/BlendReader.cpp
+    ${PROJECT_SOURCE_DIR}/engine/src/Core/ImageDecode.cpp
+    ${PROJECT_SOURCE_DIR}/engine/src/Core/ImageDecodeJpeg.cpp)
+target_include_directories(test_blend_modifiers PRIVATE ${PROJECT_SOURCE_DIR}/engine/include ${PROJECT_SOURCE_DIR}/engine/src/Core ${PROJECT_SOURCE_DIR}/engine/src/Render)
+target_compile_definitions(test_blend_modifiers PRIVATE OKAY_SOURCE_DIR="${PROJECT_SOURCE_DIR}")
+add_test(NAME blend_modifiers COMMAND test_blend_modifiers WORKING_DIRECTORY ${CMAKE_CURRENT_BINARY_DIR})
+set_tests_properties(blend_modifiers PROPERTIES TIMEOUT 600)
+# The committed synthetic .blend fixtures must be exactly what scripts/gen_blend_fixtures.py writes (fails on drift).
+if(OKAY_PYTHON)
+    add_test(NAME blend_fixtures_check COMMAND ${OKAY_PYTHON} -I ${PROJECT_SOURCE_DIR}/scripts/gen_blend_fixtures.py --check)
+endif()
 # Batch B own readers (3MF / AMF / X3D / DXF / LWO): one test per reader on SYNTHETIC fixtures built in memory, and one
 # standalone hostile-input + mutation-fuzz test for all of them (no engine library: reader sources and the engine's
 # inflate only, so it can also be built by hand under -fsanitize=address,undefined,float-cast-overflow;
@@ -3697,6 +3732,9 @@ add_test(NAME own_reader_wiring COMMAND ${CMAKE_COMMAND}
 # The import seam routes the batch-D formats (slots 22 to 26) to their own readers; needs the whole engine (ImportModelData).
 add_executable(test_own_dispatch_d test_own_dispatch_d.cpp)
 target_link_libraries(test_own_dispatch_d PRIVATE okay::engine)
+if(_okay_all_readers_on)
+    target_compile_definitions(test_own_dispatch_d PRIVATE OKAY_EXPECT_OWN_READERS)
+endif()
 add_test(NAME own_dispatch_d COMMAND test_own_dispatch_d WORKING_DIRECTORY ${CMAKE_CURRENT_BINARY_DIR})
 
 # Batch E3 own readers (IQM / COB / NDO seam): one test per reader on SYNTHETIC fixtures built in memory (tests/e3_fixtures.hpp), each with its own
@@ -3778,7 +3816,31 @@ add_test(NAME own_pmx_lws_default COMMAND test_own_pmx_lws_default WORKING_DIREC
 # The import seam routes the batch-C formats (slots 17 to 21) to their own readers; needs the whole engine (ImportModelData).
 add_executable(test_own_dispatch_c test_own_dispatch_c.cpp)
 target_link_libraries(test_own_dispatch_c PRIVATE okay::engine)
+if(_okay_all_readers_on)
+    target_compile_definitions(test_own_dispatch_c PRIVATE OKAY_EXPECT_OWN_READERS)
+endif()
 add_test(NAME own_dispatch_c COMMAND test_own_dispatch_c WORKING_DIRECTORY ${CMAKE_CURRENT_BINARY_DIR})
+
+# The "Assimp gap" readers: OGRE binary .mesh and ZAE (fixtures, truncation, mutation sweep, memory and time caps; reader sources and
+# the engine's inflate only, so it also builds by hand under -fsanitize=address,undefined; OKAY_GAP_FUZZ_ITERS raises the sweep),
+# and the import seam's slots 43 to 45 (.mesh, .zae, .xml by root element), which needs the whole engine.
+add_executable(test_gap_readers test_gap_readers.cpp
+    ${PROJECT_SOURCE_DIR}/engine/src/Render/OgreXmlReader.cpp
+    ${PROJECT_SOURCE_DIR}/engine/src/Render/ZaeReader.cpp
+    ${PROJECT_SOURCE_DIR}/engine/src/Render/ColladaReader.cpp
+    ${PROJECT_SOURCE_DIR}/engine/src/Core/ImageDecode.cpp
+    ${PROJECT_SOURCE_DIR}/engine/src/Core/ImageDecodeJpeg.cpp)
+target_include_directories(test_gap_readers PRIVATE ${PROJECT_SOURCE_DIR}/engine/include ${PROJECT_SOURCE_DIR}/engine/src/Core)
+target_compile_definitions(test_gap_readers PRIVATE OKAY_STANDALONE_TEST OKAY_SOURCE_DIR="${PROJECT_SOURCE_DIR}")
+add_test(NAME gap_readers COMMAND test_gap_readers WORKING_DIRECTORY ${CMAKE_CURRENT_BINARY_DIR})
+set_tests_properties(gap_readers PROPERTIES TIMEOUT 600)
+add_executable(test_own_dispatch_gap test_own_dispatch_gap.cpp)
+target_link_libraries(test_own_dispatch_gap PRIVATE okay::engine)
+target_compile_definitions(test_own_dispatch_gap PRIVATE OKAY_SOURCE_DIR="${PROJECT_SOURCE_DIR}")
+if(_okay_all_readers_on)
+    target_compile_definitions(test_own_dispatch_gap PRIVATE OKAY_EXPECT_OWN_READERS)
+endif()
+add_test(NAME own_dispatch_gap COMMAND test_own_dispatch_gap WORKING_DIRECTORY ${CMAKE_CURRENT_BINARY_DIR})
 
 # Real-file corpus check for the own FBX / COLLADA / 3DS / BVH readers. Needs OKAY_MODEL_CORPUS (a directory of
 # real exporter files, not in this repo; docs/model_corpus.md); without it the test prints "skipped" and passes.
@@ -3787,6 +3849,10 @@ target_link_libraries(test_model_corpus PRIVATE okay::engine)
 target_compile_definitions(test_model_corpus PRIVATE OKAY_SOURCE_DIR="${PROJECT_SOURCE_DIR}")
 add_test(NAME model_corpus COMMAND test_model_corpus WORKING_DIRECTORY ${CMAKE_CURRENT_BINARY_DIR})
 set_tests_properties(model_corpus PROPERTIES TIMEOUT 600)
+# Not a test: speed and peak heap of our own model readers against Assimp, per corpus file (docs/own_readers_speed.md).
+# Built, never run by ctest. Configure with -DOKAY_USE_ASSIMP=ON for the Assimp side; OKAY_MODEL_CORPUS names the files.
+add_executable(bench_model_readers bench_model_readers.cpp)
+target_link_libraries(bench_model_readers PRIVATE okay::engine)
 
 # Game clipboard: sanitize, input-field copy/paste, text-script and visual-script nodes.
 add_executable(test_clipboard test_clipboard.cpp)
@@ -3922,6 +3988,16 @@ foreach(_e_t IN ITEMS batche2_hostile batche2_budget)
     add_test(NAME ${_e_t} COMMAND test_${_e_t} WORKING_DIRECTORY ${CMAKE_CURRENT_BINARY_DIR})
     set_tests_properties(${_e_t} PROPERTIES TIMEOUT 600)
 endforeach()
+
+# The number scanner of the text model readers (engine/src/Render/NumParse.hpp), built twice: with the build's own path (four
+# digits at a time on little-endian machines) and with OKAY_NUMPARSE_NO_FOUR_DIGITS, the digit-by-digit path a big-endian machine
+# takes. Both check every token against FastDecimal, so they give identical values (with OKAY_MODEL_CORPUS set, on every number
+# of the corpus text files too). No engine library.
+foreach(_np IN ITEMS reader_numparse reader_numparse_portable)
+    add_executable(test_${_np} test_reader_numparse.cpp)
+    add_test(NAME ${_np} COMMAND test_${_np} WORKING_DIRECTORY ${CMAKE_CURRENT_BINARY_DIR})
+endforeach()
+target_compile_definitions(test_reader_numparse_portable PRIVATE OKAY_NUMPARSE_NO_FOUR_DIGITS)
 
 # The import seam routes the batch-E formats (slots 31 and 33) to their own readers; needs the whole engine (ImportModelData).
 add_executable(test_own_dispatch_e2 test_own_dispatch_e2.cpp)

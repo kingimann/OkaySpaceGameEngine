@@ -51,6 +51,7 @@ git clone --depth 1 --branch v5.4.3 https://github.com/assimp/assimp <scratch di
 OKAY_MODEL_CORPUS=<checkout>/test ctest -R "model_corpus|fbx_reader"
 ```
 
+- Speed and peak heap of the readers against Assimp on the same files, and a per-file count / box comparison: `tests/bench_model_readers.cpp`, results in `docs/own_readers_speed.md`.
 - `model_corpus` reads every manifest row with the reader named in it. A file recorded as read must still read with the same mesh, triangle, bone, skinned-mesh, clip and material counts; a file recorded as failing must still fail (a fix therefore shows up as a manifest change).
 - `fbx_reader` (`tests/test_fbx_reader.cpp`) additionally imports every real `.fbx` through ufbx and through our reader and compares them the way it does for our own fixtures: object, mesh, joint, vertex, triangle and clip counts, names, bounding box, surface area, skin weights, inverse binds, clip samples.
 - Without `OKAY_MODEL_CORPUS` both tests run only on our fixtures and `model_corpus` prints "skipped".
@@ -204,9 +205,20 @@ Not verified: a run on real Windows; files from other tools than the ones in the
 
 Real files in the same test directory: `models/MDC/spider.mdc` (1), `models/HMP/terrain.hmp` and `models-nonbsd/HMP/terrain_withtexture.hmp` (2), `models/CSM/ThomasFechten.csm` (1). **These readers were not compared with Assimp**: they were written without reading or running another importer (`docs/provenance_audit.md`, F12), so what the real files show is a check of the reader against numbers taken from the raw bytes by a separate script. `test_batche_hostile` (with `OKAY_MODEL_CORPUS` set) reads all four and checks: MDC 19 parts, 1,312 triangles (1,368 in the file, 56 of them with zero area), first vertex and first texture name, and that the stored normals agree with the winding (99.4 percent of corners); HMP 1,089 vertices, 2,048 triangles, x and y from -80 to 80, z from -34 to 18, the skin note on the textured file only; CSM 43 markers, 2,439 frames, 104,877 keys, the first key, the last key time. **Licence note:** these four files were analysed as data only and are not committed; their licence is unchecked (`terrain_withtexture.hmp` is in the `models-nonbsd` part of the tree); see `docs/THIRD_PARTY.md`. They are not in `tests/data/model_corpus_manifest.tsv`: `test_model_corpus` has no reader names for them yet (open).
 
+### Q3D and LWS (own readers vs Assimp, 2026-11-16)
+
+Both are in the manifest now (`q3d`: `.q3o` and `.q3s`; `lws`: `.lws`, its objects read with our LWO reader), so `model_corpus` covers them: **433 rows, 399 read, 34 recorded as failing, 4,080 checks** (before: 414 rows, 380 read, 3,871 checks).
+
+- **Q3D (4 files).** Our reader refused all four ("bad vertex count", "an unexpected or repeated chunk type 158"): the format description leaves the layout open in places, and the files showed two guesses were wrong (a mesh always has a texture coordinate count, a material ends with a texture index; and a `quick3Do` file may carry a scene chunk). Fixed from the bytes of the files (`docs/own_q3d_reader.md`, "Checked against real files"); all four read, and triangles, materials and boxes equal Assimp's (`bench_model_readers --compare`), except the `.q3s` box (Assimp applies the scene chunk's placement, ours does not read it). Parts and vertices differ by design (one part per mesh and material).
+- **LWS (15 files).** `QuickDraw v.2.2.lws` was refused: it names its objects as `../LWO/LWO2/LWSReferences/x.lwo`, and our scene-folder rule refused every `..`. LightWave objects with exactly one leading `../` are now looked up in the folder above the scene (LightWave's content directory; `docs/own_lws_reader.md`), and `PivotPosition` is applied (without it every part sat twice as far out). It reads with Assimp's box; 22,144 / 22,073 triangles (LWO concave polygons, known). The other 14 read as before. **Later the same day:** `move_x_oldformat_56.lws` (scene version 2) had no clip and the wrong box because ours read none of the older motion layout; it does now, and its row equals `move_x.lws`'s (clip 1.333 s, the moved box), as Assimp's does. Still 433 rows, 4,080 checks.
+
 ### Sanitizers and valgrind (engine-linked tests)
 
 The engine-linked reader tests were never run under sanitizers before this step. Built from the whole engine with `-DOKAY_SANITIZE=address,undefined,float-cast-overflow` (GCC 13, `-O1 -g1`, `-fno-sanitize-recover=all`, so any finding aborts; the full `okay_engine` library and each test were compiled instrumented, no hand-built subset): `fbx_reader` (fixtures, and with the corpus: 42 real files through ufbx and ours, 2514 checks), `fbx_import_limits`, `collada_reader`, `3ds_reader`, `bvh_reader`, `model_readers` (including the glTF mode fuzz, the locale and the UTF-8 path tests), `model_readers_fuzz` (33,151 mutated inputs), `gltf_import`, `loaders_robust` and `model_corpus` (all 190 manifest rows). No finding. The same binaries built without sanitizers (`-O1 -g`) ran under `valgrind --leak-check=full` (3.22.0, definite and indirect leaks count as errors): `3ds_reader`, `bvh_reader`, `collada_reader`, `model_readers`, `gltf_import`, `loaders_robust`, `fbx_reader` with and without the corpus, and `model_corpus` on all 190 files: no error, no leak.
+
+**Again on 2026-11-16 (branch `claude2/own-readers-speed-3`)**, after the reader speed rounds: the whole engine with
+`-fsanitize=address,undefined,float-cast-overflow -fno-sanitize-recover=all` at `-O1 -g0`, Assimp off. `model_readers_fuzz`
+(1,437 checks) and `model_corpus` with the corpus set (433 rows, 4,080 checks) passed with no sanitizer report.
 
 ### Windows (MinGW-w64 under wine)
 

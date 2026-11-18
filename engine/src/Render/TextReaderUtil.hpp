@@ -5,19 +5,24 @@
 // installed. Nothing here reads past the buffer it is given.
 #include "FileOpen.hpp"
 #include "NumParse.hpp"
+#include "WeldMap.hpp"
+#include <charconv>
+#include <clocale>
 #include <cmath>
 #include <cstddef>
 #include <cstdint>
 #include <cstdio>
 #include <cstdlib>
+#include <cstring>
 #include <string>
+#include <string_view>
 #include <vector>
 
 namespace okay {
 namespace detail {
 namespace txt {
 
-inline bool IsWs(char c) { return c == ' ' || c == '\t' || c == '\r' || c == '\n' || c == '\f' || c == '\v'; }
+inline bool IsWs(char c) { return c == ' ' || (unsigned char)(c - 9) < 5u; }   // ' ' and '\t' '\n' '\v' '\f' '\r' (9 to 13)
 
 inline std::string Lower(std::string s) {
     for (char& c : s) if (c >= 'A' && c <= 'Z') c = (char)(c - 'A' + 'a');
@@ -29,6 +34,7 @@ inline bool ReadFileCapped(const std::string& path, std::size_t cap, std::string
     bytes.clear();
     std::FILE* fp = OpenRead(path);
     if (!fp) { if (err) *err = "cannot open file"; return false; }
+    ReserveForFile(fp, bytes, cap);
     char buf[65536];
     for (;;) {
         const std::size_t k = std::fread(buf, 1, sizeof(buf), fp);
@@ -83,6 +89,22 @@ struct Lines {
     std::size_t pos = 0;
     std::size_t number = 0;   // 1 based number of the line last returned
     explicit Lines(const std::string& text) : t(&text) {}
+    // The next line as a view into the text (no copy); valid while the text is.
+    bool Next(std::string_view& line) {
+        const char* const b = t->data();
+        const std::size_t n = t->size();
+        if (pos >= n) return false;
+        // the line ends at the first '\n' or '\r': find the '\n', then look for a '\r' before it
+        const void* nl = std::memchr(b + pos, '\n', n - pos);
+        std::size_t e = nl ? (std::size_t)((const char*)nl - b) : n;
+        if (const void* cr = std::memchr(b + pos, '\r', e - pos)) e = (std::size_t)((const char*)cr - b);
+        line = std::string_view(b + pos, e - pos);
+        pos = e;
+        if (pos < n && b[pos] == '\r') { ++pos; if (pos < n && b[pos] == '\n') ++pos; }
+        else if (pos < n) ++pos;
+        ++number;
+        return true;
+    }
     bool Next(std::string& line) {
         const std::string& s = *t;
         if (pos >= s.size()) return false;
@@ -99,8 +121,14 @@ struct Lines {
 
 // Tokens of one line. Double quotes group a token ("my file.tga" is one token, quotes dropped); '#' and "//" start a
 // comment only when the caller asks for it (strip it first with StripComment).
-inline std::vector<std::string> Split(const std::string& s) {
-    std::vector<std::string> r;
+// SplitInto fills `r` and reuses its strings and room, so a reader that splits line after line into the same vector
+// does not allocate for every line.
+inline void SplitInto(std::string_view s, std::vector<std::string>& r) {
+    std::size_t n = 0;
+    auto put = [&](std::size_t a, std::size_t len) {
+        if (n < r.size()) r[n].assign(s, a, len); else r.emplace_back(s, a, len);
+        ++n;
+    };
     std::size_t i = 0;
     while (i < s.size()) {
         while (i < s.size() && IsWs(s[i])) ++i;
@@ -108,31 +136,87 @@ inline std::vector<std::string> Split(const std::string& s) {
         if (s[i] == '"') {
             std::size_t a = ++i;
             while (i < s.size() && s[i] != '"') ++i;
-            r.push_back(s.substr(a, i - a));
+            put(a, i - a);
             if (i < s.size()) ++i;
         } else {
             std::size_t a = i;
             while (i < s.size() && !IsWs(s[i])) ++i;
-            r.push_back(s.substr(a, i - a));
+            put(a, i - a);
         }
     }
+    r.resize(n);
+}
+// The same tokens as views into `s` (valid while `s` is).
+inline void SplitInto(std::string_view s, std::vector<std::string_view>& r) {
+    r.clear();
+    // ' ' and '\t' '\n' '\v' '\f' '\r' (9 to 13): the same set as IsWs
+    auto ws = [](char c) { return c == ' ' || (unsigned char)(c - 9) < 5u; };
+    const char* p = s.data();
+    const char* const end = p + s.size();
+    while (p < end) {
+        while (p < end && ws(*p)) ++p;
+        if (p >= end) break;
+        if (*p == '"') {
+            const char* a = ++p;
+            while (p < end && *p != '"') ++p;
+            r.emplace_back(a, (std::size_t)(p - a));
+            if (p < end) ++p;
+        } else {
+            const char* a = p;
+            while (p < end && !ws(*p)) ++p;
+            r.emplace_back(a, (std::size_t)(p - a));
+        }
+    }
+}
+inline std::vector<std::string> Split(const std::string& s) {
+    std::vector<std::string> r;
+    SplitInto(s, r);
     return r;
 }
 
 // A finite number, the whole token, within +-1e15. No hex, no "nan", no "inf", no trailing text, '.' always the point.
-inline bool ToDouble(const std::string& s, double& v) {
+inline bool ToDouble(std::string_view s, double& v) {
     if (s.empty() || s.size() > 64) return false;
+    // the common case first: a plain decimal the exact fast path reads (it accepts only characters the check below allows)
+    if (FastDecimal(s.data(), s.data() + s.size(), v)) return std::isfinite(v) && std::fabs(v) <= 1e15;
     const char c = s[0];
     if (!((c >= '0' && c <= '9') || c == '-' || c == '+' || c == '.')) return false;
     for (char ch : s) if (!((ch >= '0' && ch <= '9') || ch == '-' || ch == '+' || ch == '.' || ch == 'e' || ch == 'E')) return false;
+#if defined(__cpp_lib_to_chars) && __cpp_lib_to_chars >= 201611L
+    // std::from_chars reads '.' as the point and rounds correctly, as strtod does in a '.' locale: the same value. Only
+    // used in such a locale and for a token it reads whole; anything else (a leading '+', out of range) goes the old way.
+    if (c != '+') {
+        const char* dp = std::localeconv()->decimal_point;
+        if (!dp || (dp[0] == '.' && dp[1] == 0)) {
+            double d = 0;
+            const auto r = std::from_chars(s.data(), s.data() + s.size(), d);
+            if (r.ec == std::errc() && r.ptr == s.data() + s.size()) { v = d; return std::isfinite(v) && std::fabs(v) <= 1e15; }
+        }
+    }
+#endif
+    char buf[72];   // the token is at most 64 characters and holds no NUL (checked above)
+    std::memcpy(buf, s.data(), s.size());
+    buf[s.size()] = '\0';
     char* e = nullptr;
-    v = StrToD(s.c_str(), &e);
+    v = StrToD(buf, &e);
     return e && *e == '\0' && std::isfinite(v) && std::fabs(v) <= 1e15;
 }
-inline bool ToFloat(const std::string& s, float& f) { double d; if (!ToDouble(s, d)) return false; f = (float)d; return true; }
+inline bool ToFloat(std::string_view s, float& f) { double d; if (!ToDouble(s, d)) return false; f = (float)d; return true; }
+
+// Reads the token that starts at `p` (not white space, not a quote: the caller checks) up to the next white space or `e`,
+// leaves `p` just after it, and returns exactly what ToDouble(token) returns: in one pass for the usual plain decimal
+// (ScanDecimal, the FastDecimal case), else ToDouble on the whole token.
+inline bool ScanToDouble(const char*& p, const char* e, double& v) {
+    if (ScanDecimal(p, e, v, 64)) return std::isfinite(v) && std::fabs(v) <= 1e15;   // as ToDouble after FastDecimal
+    const char* const a = p;
+    const char* q = a;
+    while (q < e && !IsWs(*q)) ++q;
+    p = q;
+    return ToDouble(std::string_view(a, (std::size_t)(q - a)), v);
+}
 
 // A plain decimal integer (optional sign), the whole token, within +-2^31.
-inline bool ToInt(const std::string& s, long long& v) {
+inline bool ToInt(std::string_view s, long long& v) {
     if (s.empty() || s.size() > 12) return false;
     std::size_t i = 0;
     bool neg = false;
@@ -148,6 +232,31 @@ inline bool ToInt(const std::string& s, long long& v) {
     v = r;
     return true;
 }
+
+// Reads the tokens of one line straight from the text, for a reader's fast path: the tokens are the ones SplitInto gives
+// (white space as SplitInto takes it), except that a quote ends the scan (a quoted token is the general path's job), and
+// numbers are ToDouble's (ScanToDouble) and ToInt's. A reader commits nothing until the whole line has read.
+struct LineScan {
+    const char* p; const char* e;
+    static bool Ws(char c) { return IsWs(c); }
+    // the next token, or false at the end of the line or at a quote
+    bool Tok(std::string_view& t) {
+        while (p < e && IsWs(*p)) ++p;
+        if (p >= e || *p == '"') return false;
+        const char* a = p;
+        while (p < e && !IsWs(*p)) ++p;
+        t = std::string_view(a, (std::size_t)(p - a));
+        return true;
+    }
+    bool End() { while (p < e && IsWs(*p)) ++p; return p >= e; }
+    bool Num(double& v) { while (p < e && IsWs(*p)) ++p; return p < e && *p != '"' && ScanToDouble(p, e, v); }
+    bool Flt(float& f) { double d; if (!Num(d)) return false; f = (float)d; return true; }   // as ToFloat
+    bool Int(long long& v) { std::string_view t; return Tok(t) && ToInt(t, v); }
+    // an integer that may end in ':' (ASE's "12:"), as ASE's IntAt reads it
+    bool Index(long long& v) { std::string_view t; if (!Tok(t)) return false; if (!t.empty() && t.back() == ':') t.remove_suffix(1); return ToInt(t, v); }
+};
+
+using detail::WeldMap;   // WeldMap.hpp
 
 // Lists bones so that every parent comes before its children. `par[i]` is the parent index or -1; a parent loop is cut at
 // the bone that closes it (that bone becomes a root). `order` gets every index once. Returns the number of loops cut.

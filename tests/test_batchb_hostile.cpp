@@ -1,4 +1,4 @@
-// Hostile input and mutation fuzz for the batch-B own readers: 3MF, AMF, X3D, DXF, LWO. Needs only the reader sources,
+// Hostile input and mutation fuzz for the batch-B own readers: 3MF, AMF, X3D, DXF, LWO (and Modo LXO). Needs only the reader sources,
 // okay/Render/ModelData.hpp and the engine's Core/ImageDecode*.cpp (the inflate used by the zip reader), so it builds
 // on its own, e.g.
 //   g++ -std=c++17 -O1 -g -fsanitize=address,undefined,float-cast-overflow -fno-sanitize-recover=all -DOKAY_STANDALONE_TEST
@@ -12,6 +12,7 @@
 #include "okay/Render/X3dReader.hpp"
 #include "okay/Render/DxfReader.hpp"
 #include "okay/Render/LwoReader.hpp"
+#include "lxo_fixture.hpp"
 #include <chrono>
 #include <cstdlib>
 #include <cstring>
@@ -354,7 +355,8 @@ static const std::string kLwob = [] {
 
 static void HostileLwo() {
     RUN_SUITE("lwo hostile");
-    for (const std::string* f : {&kLwo2, &kLwob}) {
+    static const std::string kLxo = fx::lxo::BuildLxo();   // Modo LXOB: LWO2 geometry, MATR tags, NORM maps, the shader tree items
+    for (const std::string* f : {&kLwo2, &kLwob, &kLxo}) {
         { ImportedModel m; std::string e; CHECK(ReadLwo(*f, m, e) && m.parts.size() >= 1); }
         for (std::size_t n = 0; n < f->size(); ++n) Try(ReadLwo, f->substr(0, n));
     }
@@ -389,7 +391,7 @@ static void HostileLwo() {
     }
     RUN_SUITE("lwo fuzz");
     const long n = Iters();
-    for (long i = 0; i < n; ++i) { Try(ReadLwo, Mutate(kLwo2)); if (i % 2) Try(ReadLwo, Mutate(kLwob)); }
+    for (long i = 0; i < n; ++i) { Try(ReadLwo, Mutate(kLwo2)); if (i % 2) Try(ReadLwo, Mutate(kLwob)); else Try(ReadLwo, Mutate(kLxo)); }
 }
 
 int main() {

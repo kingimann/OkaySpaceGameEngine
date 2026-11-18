@@ -266,6 +266,7 @@ add_library(okay_engine
     src/Render/Ms3dReader.cpp
     src/Render/AseReader.cpp
     src/Render/BlendReader.cpp
+    src/Render/BlendModifiers.cpp
     src/Render/ThreeMfReader.cpp
     src/Render/AmfReader.cpp
     src/Render/X3dReader.cpp
@@ -278,6 +279,7 @@ add_library(okay_engine
     src/Render/XFileReader.cpp
     src/Render/Ac3dReader.cpp
     src/Render/OgreXmlReader.cpp
+    src/Render/ZaeReader.cpp
     src/Render/XglReader.cpp
     src/Render/IrrSceneReader.cpp
     src/Render/NffReader.cpp
@@ -618,10 +620,12 @@ if(OKAY_PLATFORM_SDL_OPTIONS)
     set_source_files_properties(src/Platform/SdlPainter.cpp PROPERTIES COMPILE_OPTIONS "${OKAY_PLATFORM_SDL_OPTIONS}")
 endif()
 
+# The model reader defaults below (OKAY_PREFER_OWN_READERS_DEFAULT, OKAY_OWN_<FMT>_DEFAULT) are read by ModelImport.cpp only, so they
+# are put on that one file: switching a reader's default rebuilds one file, not the whole engine.
 # Our own STL / PLY readers are always built. With Assimp also on, this picks which one
 # a format uses by default (docs/model_import.md); SetImportBackend() changes it at run time.
 if(OKAY_PREFER_OWN_READERS)
-    target_compile_definitions(okay_engine PRIVATE OKAY_PREFER_OWN_READERS_DEFAULT)
+    set_property(SOURCE src/Render/ModelImport.cpp APPEND PROPERTY COMPILE_DEFINITIONS OKAY_PREFER_OWN_READERS_DEFAULT)
     message(STATUS "OkaySpace: model import prefers the built-in STL/PLY readers over Assimp")
 endif()
 
@@ -629,17 +633,17 @@ endif()
 # has it, and a build without Assimp reads no .dae at all until the reader is switched on, with
 # -DOKAY_OWN_COLLADA=ON, the OKAY_OWN_COLLADA=1 environment variable, or SetImportBackend(".dae", Own).
 if(OKAY_OWN_COLLADA)
-    target_compile_definitions(okay_engine PRIVATE OKAY_OWN_COLLADA_DEFAULT)
+    set_property(SOURCE src/Render/ModelImport.cpp APPEND PROPERTY COMPILE_DEFINITIONS OKAY_OWN_COLLADA_DEFAULT)
     message(STATUS "OkaySpace: model import reads .dae with the built-in Collada reader first")
 endif()
 # Our own 3DS (.3ds) and BVH (.bvh) readers: same opt-in rules as Collada (default OFF; run-time env
 # OKAY_OWN_3DS=0/1 / OKAY_OWN_BVH=0/1 and SetImportBackend override the build default).
 if(OKAY_OWN_3DS)
-    target_compile_definitions(okay_engine PRIVATE OKAY_OWN_3DS_DEFAULT)
+    set_property(SOURCE src/Render/ModelImport.cpp APPEND PROPERTY COMPILE_DEFINITIONS OKAY_OWN_3DS_DEFAULT)
     message(STATUS "OkaySpace: model import reads .3ds with the built-in 3DS reader first")
 endif()
 if(OKAY_OWN_BVH)
-    target_compile_definitions(okay_engine PRIVATE OKAY_OWN_BVH_DEFAULT)
+    set_property(SOURCE src/Render/ModelImport.cpp APPEND PROPERTY COMPILE_DEFINITIONS OKAY_OWN_BVH_DEFAULT)
     message(STATUS "OkaySpace: model import reads .bvh with the built-in BVH reader")
 endif()
 # Our own WAV decoder (PCM, float, A-law, mu-law, MS and IMA ADPCM): AudioClip::LoadWAV uses it when this is ON
@@ -650,38 +654,38 @@ if(OKAY_OWN_WAV)
 endif()
 # Our own OFF (.off) reader (same opt-in rules; env OKAY_OWN_OFF=0/1 and SetImportBackend override the build default).
 if(OKAY_OWN_OFF)
-    target_compile_definitions(okay_engine PRIVATE OKAY_OWN_OFF_DEFAULT)
+    set_property(SOURCE src/Render/ModelImport.cpp APPEND PROPERTY COMPILE_DEFINITIONS OKAY_OWN_OFF_DEFAULT)
     message(STATUS "OkaySpace: model import reads .off with the built-in OFF reader")
 endif()
 # Our own SMD reader (same opt-in rules; env OKAY_OWN_SMD=0/1 and SetImportBackend override the build default).
 if(OKAY_OWN_SMD)
-    target_compile_definitions(okay_engine PRIVATE OKAY_OWN_SMD_DEFAULT)
+    set_property(SOURCE src/Render/ModelImport.cpp APPEND PROPERTY COMPILE_DEFINITIONS OKAY_OWN_SMD_DEFAULT)
     message(STATUS "OkaySpace: model import reads .smd with the built-in SMD reader")
 endif()
 # Our own MD5 reader (same opt-in rules; env OKAY_OWN_MD5=0/1 and SetImportBackend override the build default).
 if(OKAY_OWN_MD5)
-    target_compile_definitions(okay_engine PRIVATE OKAY_OWN_MD5_DEFAULT)
+    set_property(SOURCE src/Render/ModelImport.cpp APPEND PROPERTY COMPILE_DEFINITIONS OKAY_OWN_MD5_DEFAULT)
     message(STATUS "OkaySpace: model import reads .md5mesh / .md5anim with the built-in MD5 reader")
 endif()
 # Our own MS3D reader (same opt-in rules; env OKAY_OWN_MS3D=0/1 and SetImportBackend override the build default).
 if(OKAY_OWN_MS3D)
-    target_compile_definitions(okay_engine PRIVATE OKAY_OWN_MS3D_DEFAULT)
+    set_property(SOURCE src/Render/ModelImport.cpp APPEND PROPERTY COMPILE_DEFINITIONS OKAY_OWN_MS3D_DEFAULT)
     message(STATUS "OkaySpace: model import reads .ms3d with the built-in MS3D reader")
 endif()
 # Our own ASE reader (same opt-in rules; env OKAY_OWN_ASE=0/1 and SetImportBackend override the build default).
 if(OKAY_OWN_ASE)
-    target_compile_definitions(okay_engine PRIVATE OKAY_OWN_ASE_DEFAULT)
+    set_property(SOURCE src/Render/ModelImport.cpp APPEND PROPERTY COMPILE_DEFINITIONS OKAY_OWN_ASE_DEFAULT)
     message(STATUS "OkaySpace: model import reads .ase with the built-in ASE reader")
 endif()
 # Our own Blender (.blend) reader (docs/own_blend_reader.md): same opt-in rules, default OFF.
 if(OKAY_OWN_BLEND)
-    target_compile_definitions(okay_engine PRIVATE OKAY_OWN_BLEND_DEFAULT)
+    set_property(SOURCE src/Render/ModelImport.cpp APPEND PROPERTY COMPILE_DEFINITIONS OKAY_OWN_BLEND_DEFAULT)
     message(STATUS "OkaySpace: model import reads .blend with the built-in Blender reader first")
 endif()
 # Our own 3MF / AMF / X3D / DXF / LWO readers (batch B), same opt-in rules as 3DS: default OFF.
 foreach(_fmt 3MF AMF X3D DXF LWO)
     if(OKAY_OWN_${_fmt})
-        target_compile_definitions(okay_engine PRIVATE OKAY_OWN_${_fmt}_DEFAULT)
+        set_property(SOURCE src/Render/ModelImport.cpp APPEND PROPERTY COMPILE_DEFINITIONS OKAY_OWN_${_fmt}_DEFAULT)
         message(STATUS "OkaySpace: model import reads .${_fmt} with the built-in ${_fmt} reader first")
     endif()
 endforeach()
@@ -701,14 +705,14 @@ foreach(_h IN LISTS _okay_heads)
 endforeach()
 foreach(_line IN LISTS _okay_own_opts)
     string(REGEX REPLACE "^option\\(OKAY_OWN_([A-Z0-9]+) .*$" "\\1" _name "${_line}")
-    string(FIND "${_okay_this_file}" "target_compile_definitions(okay_engine PRIVATE OKAY_OWN_${_name}_DEFAULT)" _okay_lit)
+    string(FIND "${_okay_this_file}" "COMPILE_DEFINITIONS OKAY_OWN_${_name}_DEFAULT)" _okay_lit)
     if(NOT _name IN_LIST _okay_looped AND _okay_lit EQUAL -1)
         message(FATAL_ERROR "OKAY_OWN_${_name} is an option in CMakeLists.txt but is in no foreach(_fmt ...) list of engine/CMakeLists.txt and has no OKAY_OWN_${_name}_DEFAULT definition: its default would never be applied")
     endif()
 endforeach()
-foreach(_fmt MD2 MD3 IRRMESH B3D X AC3D OGRE XGL IRR NFF TER MDC HMP CSM Q3D RAW IQM COB NDO PMX LWS)
+foreach(_fmt MD2 MD3 IRRMESH B3D X AC3D OGRE XGL IRR NFF TER MDC HMP CSM Q3D RAW IQM COB NDO PMX LWS OGREBIN ZAE XML LXO)
     if(OKAY_OWN_${_fmt})
-        target_compile_definitions(okay_engine PRIVATE OKAY_OWN_${_fmt}_DEFAULT)
+        set_property(SOURCE src/Render/ModelImport.cpp APPEND PROPERTY COMPILE_DEFINITIONS OKAY_OWN_${_fmt}_DEFAULT)
         message(STATUS "OkaySpace: model import reads .${_fmt} with the built-in ${_fmt} reader first")
     endif()
 endforeach()

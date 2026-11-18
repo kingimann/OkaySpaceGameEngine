@@ -1,5 +1,11 @@
 # Own replacements: what can become the default, in what order, and what blocks deleting each library
 
+> **2026-11-17: the model readers are flipped.** The owner approved ("start switching them so i can test them out"). Every
+> `OKAY_OWN_<FMT>` model reader option, `OKAY_OWN_FBX` and `OKAY_PREFER_OWN_READERS` (STL, PLY) are ON by default (NDO stays
+> OFF: a seam). Assimp and ufbx stay compiled in as the fallback. Ways back at run time: `OKAY_OWN_<FMT>=0` for one format,
+> `OKAY_THIRD_PARTY=1` for all of them (`okay::ThirdPartyForced()`, `engine/include/okay/Core/ThirdParty.hpp`). Details:
+> `docs/own_code_roadmap.md`, "Model readers: our own are the default". Tested on Linux only; Windows unverified.
+
 Date: 2026-11-15. Branch `claude/own-flip-proposal`. **This is a proposal.** Nothing is flipped and nothing is deleted
 by this page. A flip needs the owner's written approval (`CLAUDE.md` rule 17). Our own cryptography is never flipped on our
 word (rule 18).

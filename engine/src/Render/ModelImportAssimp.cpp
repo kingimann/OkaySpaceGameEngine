@@ -192,7 +192,8 @@ bool Read(const std::string& path, bool flatten, ImportedModel& out, std::string
                 const int me = (int)out.nodes.size();
                 out.nodes.push_back(std::move(node));
                 list.push_back(n);
-                for (unsigned c = 0; c < n->mNumChildren; ++c) Go(n->mChildren[c], me, list, out);
+                // a null child is skipped: Assimp 5.4.3's RAW importer leaves some (the seam keeps such files away; this is a second guard)
+                if (n->mChildren) for (unsigned c = 0; c < n->mNumChildren; ++c) if (n->mChildren[c]) Go(n->mChildren[c], me, list, out);
             }
         };
         Walker::Go(sc->mRootNode, -1, aiNodes, out);
@@ -207,6 +208,7 @@ bool Read(const std::string& path, bool flatten, ImportedModel& out, std::string
     for (std::size_t ni = 0; ni < aiNodes.size(); ++ni) {
         const aiNode* n = aiNodes[ni];
         for (unsigned i = 0; i < n->mNumMeshes; ++i) {
+            if (n->mMeshes[i] >= sc->mNumMeshes || !sc->mMeshes[n->mMeshes[i]]) continue;   // a bad mesh index from an importer
             const aiMesh* am = sc->mMeshes[n->mMeshes[i]];
             ImportedPart part;
             part.node = (int)ni;

@@ -17,5 +17,14 @@ inline std::FILE* OpenRead(const std::string& utf8Path) {
 #endif
 }
 
+// Reserve `bytes` for the whole of an open file (when it is not larger than `cap`) and go back to its start, so that
+// reading it in chunks does not grow the string by doubling: that held up to twice the file's size at once.
+inline void ReserveForFile(std::FILE* fp, std::string& bytes, std::size_t cap) {
+    if (!fp || std::fseek(fp, 0, SEEK_END) != 0) return;
+    const long sz = std::ftell(fp);
+    if (sz > 0 && (unsigned long)sz <= cap) bytes.reserve((std::size_t)sz);
+    std::rewind(fp);
+}
+
 } // namespace detail
 } // namespace okay

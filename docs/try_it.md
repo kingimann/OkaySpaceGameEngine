@@ -2346,3 +2346,19 @@ changes unless you set the switch.
 5. Not tested on a real Windows machine when this was written. The own feed's logic is covered by `ctest -R imgui_platform_feed`
    (key table, event translation, a real Dear ImGui context fed through a fake window: modifiers, repeats, focus loss, pointer
    leaving, clipboard, cursor shape, display size, delta time).
+
+## Editor and launcher event loops now go through `okay::platform` (nothing to switch; try that nothing changed)
+
+Both programs used to read input straight from SDL. They now read it from the platform layer (SDL2 is still the backend underneath,
+the default). You cannot see a difference if it worked. To check:
+
+1. Editor (`OkayEngine.exe`): click around, type in a field, scroll a list, drag a panel tab out into its own window (multi-window
+   still works in the default mode), press Play and use WASD, the mouse and (if you have one) a game pad, press Esc to leave Play,
+   drag a picture from Explorer onto the window (it lands in the Project panel's Assets folder), alt-tab away while playing
+   (the pointer is released).
+2. Launcher (`OkaySpace.exe`): click, type, scroll, open the chat pop-out window and type there, drop an `.okayscene` or a folder on
+   the main window (it plays / installs), drop a file on the open chat window (it is sent), press the window's [X] (the Exit / Minimize
+   question appears), minimise and bring it back (it checks for updates).
+3. With `OKAY_PLATFORM_EVENTS=own` set (see the section above) the same things go through our own ImGui feed.
+4. Automatic checks on Linux: `ctest -R "platform_events|okayui_host|imgui_platform_feed"`.
+5. Not run on Windows when this was written.

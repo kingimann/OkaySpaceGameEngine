@@ -50094,12 +50094,11 @@ static void OkayVp_RenderWindow(ImGuiViewport* vp, void*) {
 // Dear ImGui input: imgui_impl_sdl2 by default, or our own okay::platform feed with OKAY_PLATFORM_EVENTS=own (shared/ImGuiPlatformFeed.hpp).
 static bool g_imguiOwnFeed = false;
 static okay::imguifeed::Feed g_imguiFeed;
-// One SDL event for Dear ImGui through whichever path is on. (The loop still polls SDL for everything else; the own
-// feed gets the event translated to a platform event, which touches nothing in the SDL one.)
-static void FeedImGuiEvent(const SDL_Event& e) {
-    if (!g_imguiOwnFeed) { ImGui_ImplSDL2_ProcessEvent(&e); return; }
-    okay::platform::Event pe;
-    if (okay::platform::TranslateSdl2Event(&e, pe)) g_imguiFeed.ProcessEvent(pe, ImGui::GetIO());
+// One platform event for Dear ImGui through whichever path is on: our own feed takes it directly; imgui_impl_sdl2 (the
+// default) takes the SDL record the sdl2 backend keeps in Event::native (it is only valid inside the current poll loop pass).
+static void FeedImGuiEvent(const okay::platform::Event& e) {
+    if (g_imguiOwnFeed) { g_imguiFeed.ProcessEvent(e, ImGui::GetIO()); return; }
+    if (e.native) ImGui_ImplSDL2_ProcessEvent((const SDL_Event*)e.native);
 }
 // True when both halves of multi-window panels are there: the platform backend can create OS windows (the
 // SDL2 backend says so only on video drivers that report the mouse anywhere on the desktop: Windows, macOS,
@@ -50516,7 +50515,7 @@ int main(int argc, char** argv) {
     auto splashTick = [&]() {
         int sw = 1280, sh = 800; SDL_GetRendererOutputSize(renderer, &sw, &sh);
         okay::DrawSplashStyled(renderer, sw, sh, splashStyle());
-        SDL_PumpEvents();
+        sdlSeam->PumpEvents();
     };
     splashTick();
     // (Project settings were already loaded above, before the first splash, so
@@ -50648,6 +50647,7 @@ int main(int argc, char** argv) {
     // Own feed: no pop-out panels (no multi-viewport), no gamepad navigation; keys, text, mouse, wheel, focus, clipboard, cursor shape work.
     g_imguiOwnFeed = okay::imguifeed::OwnRequested(std::getenv("OKAY_PLATFORM_EVENTS"));
     std::fprintf(stderr, "%s\n", okay::imguifeed::ActiveLine(g_imguiOwnFeed));
+    sdlSeam->ReportUnmappedEvents(!g_imguiOwnFeed);   // imgui_impl_sdl2 wants every SDL event (pointer enter / leave, display changes ...)
     if (g_imguiOwnFeed) g_imguiFeed.Init(ImGui::GetIO(), winSeam->Id(), okay::imguifeed::FeedHost::FromPlatform(sdlSeam, winSeam.get()));
     else ImGui_ImplSDL2_InitForSDLRenderer(window, renderer);
     ImGui_ImplSDLRenderer2_Init(renderer);
@@ -50896,80 +50896,83 @@ int main(int argc, char** argv) {
                 winSeam->SetInputFocus();
             s_prevViewports = vps;
         }
-        SDL_Event e;
-        while (SDL_PollEvent(&e)) {
+        okay::platform::Event e;
+        while (sdlSeam->PollEvent(e)) {
+            using EvT = okay::platform::EventType;
+            using PKey = okay::platform::Key;
 #ifdef OKAY_HAVE_OKAYUI
-            g_okayInput.Feed(e);   // typed text, key edges, wheel for a hosted OkayUI panel (only delivered when its field has focus)
+            g_okayInput.Feed(e, sdlSeam->CharForKey(e.key));   // typed text, key edges, wheel for a hosted OkayUI panel (only delivered when its field has focus)
 #endif
-            if (e.type == SDL_KEYDOWN && !e.key.repeat &&
-                e.key.keysym.scancode == SDL_SCANCODE_ESCAPE)
+            if (e.type == EvT::KeyDown && !e.repeat && e.key == PKey::Escape)
                 g_escapeEdge = true;
             // A key or click shorter than one frame still counts for the playing game (the held-key poll would miss it).
             if (ed.isPlaying() && !ImGui::GetIO().WantTextInput) {
-                if (e.type == SDL_KEYDOWN && !e.key.repeat) {
-                    const SDL_Scancode sc = e.key.keysym.scancode;
-                    const SDL_Keycode kc = SDL_GetKeyFromScancode(sc);
-                    if (kc >= 'a' && kc <= 'z') Input::FeedKeyTap((char)kc);
-                    else if (kc >= '0' && kc <= '9') Input::FeedKeyTap((char)kc);
-                    else if (sc >= SDL_SCANCODE_A && sc <= SDL_SCANCODE_Z) Input::FeedKeyTap((char)('a' + (sc - SDL_SCANCODE_A)));
-                    else if (sc == SDL_SCANCODE_SPACE) Input::FeedKeyTap(' ');
-                    else if (sc == SDL_SCANCODE_UP) { Input::FeedKeyTap('w'); Input::FeedKeyTap(Input::KeyUp); }
-                    else if (sc == SDL_SCANCODE_DOWN) { Input::FeedKeyTap('s'); Input::FeedKeyTap(Input::KeyDown); }
-                    else if (sc == SDL_SCANCODE_LEFT) { Input::FeedKeyTap('a'); Input::FeedKeyTap(Input::KeyLeft); }
-                    else if (sc == SDL_SCANCODE_RIGHT) { Input::FeedKeyTap('d'); Input::FeedKeyTap(Input::KeyRight); }
+                if (e.type == EvT::KeyDown && !e.repeat) {
+                    const PKey sc = e.key;
+                    const char kc = sdlSeam->CharForKey(sc);   // what the key types on this layout
+                    if (kc >= 'a' && kc <= 'z') Input::FeedKeyTap(kc);
+                    else if (kc >= '0' && kc <= '9') Input::FeedKeyTap(kc);
+                    else if (sc >= PKey::A && sc <= PKey::Z) Input::FeedKeyTap((char)('a' + ((int)sc - (int)PKey::A)));
+                    else if (sc == PKey::Space) Input::FeedKeyTap(' ');
+                    else if (sc == PKey::Up) { Input::FeedKeyTap('w'); Input::FeedKeyTap(Input::KeyUp); }
+                    else if (sc == PKey::Down) { Input::FeedKeyTap('s'); Input::FeedKeyTap(Input::KeyDown); }
+                    else if (sc == PKey::Left) { Input::FeedKeyTap('a'); Input::FeedKeyTap(Input::KeyLeft); }
+                    else if (sc == PKey::Right) { Input::FeedKeyTap('d'); Input::FeedKeyTap(Input::KeyRight); }
                 }
             }
             // A pop-out menu or dialog can be its own OS window. When it closes and the window system does not hand the
             // keyboard back (no window manager, or one that does not), Esc, F2 and the other keys would go nowhere and a
             // dialog could only be closed with the mouse. A click in the editor window takes the keyboard focus back.
-            if (e.type == SDL_MOUSEBUTTONDOWN && e.button.windowID == winSeam->Id() &&
+            if (e.type == EvT::MouseButtonDown && e.windowId == winSeam->Id() &&
                 !winSeam->HasInputFocus())
                 winSeam->SetInputFocus();
             // While the play cursor is grabbed, absolute motion is frozen where
             // the grab began. Feeding those events to ImGui clicks the Play
             // button and stops the game. The game still reads relative motion.
-            const bool mouseEv = e.type == SDL_MOUSEMOTION || e.type == SDL_MOUSEBUTTONDOWN
-                || e.type == SDL_MOUSEBUTTONUP || e.type == SDL_MOUSEWHEEL;
+            const bool mouseEv = e.type == EvT::MouseMove || e.type == EvT::MouseButtonDown
+                || e.type == EvT::MouseButtonUp || e.type == EvT::MouseWheel;
             if (!(g_playPointerGrabbed && mouseEv && !g_escapeEdge))
                 FeedImGuiEvent(e);
-            if (e.type == SDL_QUIT) g_quitRequested = true;
-            if (e.type == SDL_CONTROLLERDEVICEADDED) g_pads.Add(e.cdevice.which);
-            if (e.type == SDL_CONTROLLERDEVICEREMOVED) g_pads.Remove(e.cdevice.which);
-            if (e.type == SDL_RENDER_TARGETS_RESET || e.type == SDL_RENDER_DEVICE_RESET)
-                ResetViewTextures(e.type == SDL_RENDER_DEVICE_RESET);
-            if (e.type == SDL_WINDOWEVENT && e.window.event == SDL_WINDOWEVENT_CLOSE &&
-                e.window.windowID == winSeam->Id())
+            if (e.type == EvT::Quit) g_quitRequested = true;
+            if (e.type == EvT::GamepadAdded) g_pads.Add(e.deviceId);
+            if (e.type == EvT::GamepadRemoved) g_pads.Remove(e.deviceId);
+            if (e.type == EvT::RenderTargetsReset || e.type == EvT::RenderDeviceReset)
+                ResetViewTextures(e.type == EvT::RenderDeviceReset);
+            if (e.type == EvT::WindowClose && e.windowId == winSeam->Id())
                 g_quitRequested = true;
-            if (e.type == SDL_WINDOWEVENT && e.window.event == SDL_WINDOWEVENT_FOCUS_LOST) {
+            if (e.type == EvT::WindowFocusLost) {
                 if (ed.isPlaying()) g_gameCursorReleased = true;   // alt-tab: never leave the pointer trapped
                 if (g_autosave) DocRecovery().Autosave();
             }
             // Route typed characters to the playing game's UI input fields (but not
             // while an ImGui field — inspector/markup box — is capturing text).
-            if (e.type == SDL_TEXTINPUT && ed.isPlaying() && !ImGui::GetIO().WantTextInput)
-                Input::FeedText(e.text.text);
-            if (e.type == SDL_MOUSEWHEEL && ed.isPlaying())
-                Input::FeedMouseWheel((float)e.wheel.y);
-            if (((e.type == SDL_FINGERDOWN || e.type == SDL_FINGERMOTION) && ed.isPlaying()) || e.type == SDL_FINGERUP) {
+            if (e.type == EvT::TextInput && ed.isPlaying() && !ImGui::GetIO().WantTextInput)
+                Input::FeedText(e.text.c_str());
+            if (e.type == EvT::MouseWheel && ed.isPlaying())
+                Input::FeedMouseWheel(e.wheelFlipped ? -e.wheelY : e.wheelY);   // the OS's own scrolling direction, as SDL reported it
+            if (((e.type == EvT::FingerDown || e.type == EvT::FingerMotion) && ed.isPlaying()) || e.type == EvT::FingerUp) {
                 // Touches relative to the Game view, like the mouse; a finger must land on it
                 // (a lift always goes through so a touch never sticks after Stop).
                 const ImVec2 ds = ImGui::GetIO().DisplaySize;
-                const Vec2 p{e.tfinger.x * ds.x - g_playCanvasPos.x, e.tfinger.y * ds.y - g_playCanvasPos.y};
+                const Vec2 p{e.fx * ds.x - g_playCanvasPos.x, e.fy * ds.y - g_playCanvasPos.y};
                 const bool onGame = p.x >= 0.0f && p.y >= 0.0f && p.x < g_playCanvasSize.x && p.y < g_playCanvasSize.y;
-                const int state = e.type == SDL_FINGERDOWN ? 0 : e.type == SDL_FINGERMOTION ? 1 : 2;
-                if (state != 0 || onGame) Input::FeedTouch((long long)e.tfinger.fingerId, state, p);
+                const int state = e.type == EvT::FingerDown ? 0 : e.type == EvT::FingerMotion ? 1 : 2;
+                if (state != 0 || onGame) Input::FeedTouch(e.fingerId, state, p);
             }
             // Feed OkayUI text fields (Test UI demo or a playing game's ui_inputtext)
             // when ImGui isn't capturing the keyboard.
             if ((g_showTestUI || ed.isPlaying()) && !ImGui::GetIO().WantTextInput) {
-                if (e.type == SDL_TEXTINPUT)
-                    SDL_strlcat(g_okayUITyped, e.text.text, sizeof(g_okayUITyped));
-                if (e.type == SDL_KEYDOWN && e.key.keysym.scancode == SDL_SCANCODE_BACKSPACE)
+                if (e.type == EvT::TextInput) {
+                    const size_t have = std::strlen(g_okayUITyped);
+                    const size_t room = sizeof(g_okayUITyped) - 1 - have;   // a full buffer drops the rest
+                    std::strncat(g_okayUITyped, e.text.c_str(), room);
+                }
+                if (e.type == EvT::KeyDown && e.key == PKey::Backspace)
                     g_okayUIBack = true;
             }
             // Import by dragging files from the OS file explorer onto the window: copy
             // each dropped file into the Assets folder the Project panel is browsing.
-            if (e.type == SDL_DROPFILE && e.drop.file) {
+            if (e.type == EvT::DropFile && !e.text.empty()) {
                 {   // dropped before the Project panel was ever drawn: still land in the project's Assets
                     std::filesystem::path into(g_assetImportDir);
                     if (into.empty() && !ed.projectDir().empty()) into = std::filesystem::path(ed.projectDir()) / "Assets";
@@ -50978,9 +50981,8 @@ int main(int argc, char** argv) {
                         g_pb = std::make_unique<okaypb::Browser>(assets.generic_string());
                         g_pbRoot = assets.generic_string();
                     }
-                    ImportAssetFile(e.drop.file, into);
+                    ImportAssetFile(e.text.c_str(), into);
                 }
-                SDL_free(e.drop.file);
             }
         }
 
@@ -51640,9 +51642,8 @@ int main(int argc, char** argv) {
             // OKAY_UI_DROP=<file>: send the editor a file-drop event for that file (what the OS sends when you drop one
             // on the window), so the import can be checked without a file manager.
             if (const char* dp = std::getenv("OKAY_UI_DROP"); dp && s_focusFrames == 60) {
-                SDL_Event de; SDL_zero(de);
-                de.type = SDL_DROPFILE; de.drop.file = SDL_strdup(dp);
-                SDL_PushEvent(&de);
+                okay::platform::Event de; de.type = okay::platform::EventType::DropFile; de.text = dp;
+                sdlSeam->PushEvent(de);
             }
             if (const char* sn = std::getenv("OKAY_UI_SELECT"); sn && (s_focusFrames == 31 || s_focusFrames == 40))
                 for (const auto& up : ed.scene().Objects()) if (up->name == sn) { ed.Select(up.get()); break; }

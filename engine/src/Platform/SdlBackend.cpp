@@ -320,7 +320,7 @@ public:
             e.wheel.direction = r.wheelFlipped ? SDL_MOUSEWHEEL_FLIPPED : SDL_MOUSEWHEEL_NORMAL;
             break;
         case EventType::DropFile:
-            e.type = SDL_DROPFILE; e.drop.file = SDL_strdup(r.text.c_str());   // Translate frees it
+            e.type = SDL_DROPFILE; e.drop.windowID = r.windowId; e.drop.file = SDL_strdup(r.text.c_str());   // Translate frees it
             if (!e.drop.file) return false;
             break;
         default: return false;
@@ -517,7 +517,7 @@ private:
                    : e.type == SDL_FINGERMOTION ? EventType::FingerMotion : EventType::FingerUp;
             r.fingerId = (long long)e.tfinger.fingerId; r.fx = e.tfinger.x; r.fy = e.tfinger.y; return true;
         case SDL_DROPFILE:
-            r.type = EventType::DropFile; r.text = e.drop.file ? e.drop.file : "";
+            r.type = EventType::DropFile; r.windowId = e.drop.windowID; r.text = e.drop.file ? e.drop.file : "";
             if (e.drop.file) SDL_free(e.drop.file);
             return true;
         case SDL_RENDER_TARGETS_RESET: r.type = EventType::RenderTargetsReset; return true;

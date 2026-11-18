@@ -377,6 +377,46 @@ code were not read or followed.
 * Checked: `ctest -R imgui_platform_feed` logic (built here with g++ against the pinned Dear ImGui commit; 82 checks), and `g++ -fsyntax-only`
   of `launcher/main.cpp`, `editor/main.cpp` and `SdlBackend.cpp`. Not built to executables, not run on Windows, not tried with a real window.
 
+## Round 9: the editor and launcher event loops poll `okay::platform` (SDL2 still the default backend)
+
+Written from the seam's own header and the OS-neutral event meaning; no SDL source was read or followed. This moves the two
+big `SDL_PollEvent` loops (editor 1, launcher 1) and their small neighbours behind the seam. The own backend stays off by default and
+the apps still ask for the SDL2 backend (they still draw through `SDL_Renderer` and Dear ImGui's SDL backends).
+
+What the seam gained (each with a default, so a backend that cannot do it says so):
+
+| API | sdl2 | own Linux / own Windows |
+|---|---|---|
+| `Backend::PumpEvents()` | `SDL_PumpEvents` | reads waiting input into the backend's queue; the next `PollEvent` returns it, in order, nothing lost |
+| `Backend::PushEvent(Event)` | `SDL_PushEvent` for Quit, WindowClose, focus gained / lost, KeyDown / Up, TextInput, MouseMove, button down / up, wheel, DropFile | queues any event type except `NoEvent` and `Other` |
+| `Event::native` | `const SDL_Event*` of the event just returned (valid until the next poll) | null |
+| `Backend::ReportUnmappedEvents(bool)` and `EventType::Other` | with `true`, events the seam has no type for (pointer enter / leave, display changes, IME composition ...) come back as `Other` with `native` set, so imgui_impl_sdl2 still sees every event | nothing to report |
+| `EventType::RenderTargetsReset`, `RenderDeviceReset` | `SDL_RENDER_TARGETS_RESET`, `SDL_RENDER_DEVICE_RESET` | never fired |
+| `Backend::CharForKey(Key)` | inverse of `KeyForChar`: the letter, digit or space a key types on the current layout | the same (follows that backend's `KeyForChar`) |
+| `Event::windowId` on `DropFile` | set | the own Windows backend does not fill it (its drop has no per-window id) |
+
+Call sites moved:
+
+* **Editor** (`editor/main.cpp`): the main loop is `sdlSeam->PollEvent`. Escape edge, key taps for the playing game (layout-aware through
+  `CharForKey`), focus click, grabbed-pointer filter, quit / close / focus lost, controller add / remove, render resets, game text and wheel
+  (the wheel keeps SDL's raw OS direction: `wheelFlipped ? -wheelY : wheelY`), touch, OkayUI demo text and Backspace, file drops. The splash's
+  `SDL_PumpEvents` is `PumpEvents`; the `OKAY_UI_DROP` test hook pushes a platform `DropFile` through `PushEvent`.
+* **Launcher** (`launcher/main.cpp`): the main loop, `ChatHostEvent` (routes events to the chat window by window id; the kinds the seam has
+  no type for are routed by the id inside `native`), quit / close / focus gained, file drops (main window and chat window), and the verify-wait
+  `SDL_PumpEvents`.
+* **Dear ImGui**: `FeedImGuiEvent` in both apps takes a platform event. Default: `ImGui_ImplSDL2_ProcessEvent(event.native)`. With
+  `OKAY_PLATFORM_EVENTS=own`: `Feed::ProcessEvent(event)` directly (no more `TranslateSdl2Event` in the apps; the function stays for tests).
+* `shared/OkayUIHost.hpp`: `InputCollector::Feed(const okay::platform::Event&, char layoutChar)` next to the SDL overload. A test feeds both
+  with the same events and compares every field of `OkayUI::Input`.
+
+Tests: `ctest -R platform_events` (headless: round trip of every pushable event kind on each compiled-in backend, `PumpEvents` order,
+`native`, unmapped events, render resets, flipped wheel, drop strings, CharForKey; SDL 2.30 sometimes hands a just-pushed event over on the
+second poll, so the SDL part of the test polls up to five times), `ctest -R okayui_host` (SDL / platform parity), `ctest -R imgui_platform_feed`.
+
+Not moved (SDL calls that remain next to the loops): `SDL_EventState(SDL_DROPFILE)` (editor), `SDL_GetGlobalMouseState` (launcher drop
+position), the `SDL_PollEvent` in `editor/VsGraphShot.cpp` (a screenshot tool), the SDL window and renderer objects, Dear ImGui's SDL backends.
+Windows (own or sdl2) was not run; `OwnWin32.cpp` passes `-fsyntax-only` with MinGW.
+
 ## Not behind the seam yet (stage 1 list; see stage 2 above for what changed)
 
 The window, event loop and GL context of the editor, launcher and player still call SDL directly. Moving them needs more than

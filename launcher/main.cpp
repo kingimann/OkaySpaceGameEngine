@@ -16703,10 +16703,11 @@ static bool g_imguiOwnFeed = false;
 static okay::imguifeed::Feed g_imguiFeed, g_imguiChatFeed;
 static std::unique_ptr<okay::platform::Window> g_imguiMainWrap;   // non-owning wrapper over the launcher's SDL window for the feed
 static std::unique_ptr<okay::platform::Window> g_imguiChatWrap;
-static void FeedImGuiEvent(okay::imguifeed::Feed& feed, const SDL_Event& e) {
-    if (!g_imguiOwnFeed) { ImGui_ImplSDL2_ProcessEvent(&e); return; }
-    okay::platform::Event pe;
-    if (okay::platform::TranslateSdl2Event(&e, pe)) feed.ProcessEvent(pe, ImGui::GetIO());
+// One platform event for Dear ImGui: our own feed takes it directly; imgui_impl_sdl2 (the default) takes the SDL record the sdl2
+// backend keeps in Event::native (valid only inside the poll loop pass that returned the event).
+static void FeedImGuiEvent(okay::imguifeed::Feed& feed, const okay::platform::Event& e) {
+    if (g_imguiOwnFeed) { feed.ProcessEvent(e, ImGui::GetIO()); return; }
+    if (e.native) ImGui_ImplSDL2_ProcessEvent((const SDL_Event*)e.native);
 }
 static okay::platform::Window* g_chatHostOwner = nullptr;   // owns g_chatHost.win
 // Keep a window reachable: when too little of it (or its title bar) is on any
@@ -16803,26 +16804,34 @@ static bool ChatHostFocused() {
     return g_chatHost.shown && lw::IsFocused(g_chatHost.win);
 }
 static void ChatHostRaise() { if (g_chatHost.shown) { lw::Restore(g_chatHost.win); KeepWindowOnScreen(g_chatHost.win); lw::Raise(g_chatHost.win); } }
-// Route an SDL event to the chat window; true when it belonged to it.
-static bool ChatHostEvent(const SDL_Event& e) {
+// Route a platform event to the chat window; true when it belonged to it.
+static bool ChatHostEvent(const okay::platform::Event& e) {
     if (!g_chatHost.win) return false;
+    using EvT = okay::platform::EventType;
     Uint32 wid = 0;
     switch (e.type) {
-        case SDL_WINDOWEVENT: wid = e.window.windowID; break;
-        case SDL_KEYDOWN: case SDL_KEYUP: wid = e.key.windowID; break;
-        case SDL_TEXTINPUT: wid = e.text.windowID; break;
-        case SDL_TEXTEDITING: wid = e.edit.windowID; break;
-        case SDL_MOUSEMOTION: wid = e.motion.windowID; break;
-        case SDL_MOUSEBUTTONDOWN: case SDL_MOUSEBUTTONUP: wid = e.button.windowID; break;
-        case SDL_MOUSEWHEEL: wid = e.wheel.windowID; break;
-        case SDL_DROPFILE: case SDL_DROPBEGIN: case SDL_DROPCOMPLETE: wid = e.drop.windowID; break;
+        case EvT::WindowClose: case EvT::WindowResized: case EvT::WindowFocusGained: case EvT::WindowFocusLost: case EvT::WindowExposed:
+        case EvT::KeyDown: case EvT::KeyUp: case EvT::TextInput: case EvT::TextEditing:
+        case EvT::MouseMove: case EvT::MouseButtonDown: case EvT::MouseButtonUp: case EvT::MouseWheel: case EvT::DropFile:
+            wid = e.windowId; break;
+        case EvT::Other: {   // what the seam has no type for: other window events (pointer enter / leave, moved ...), IME composition, drop begin / complete
+            const SDL_Event* n = (const SDL_Event*)e.native;
+            if (!n) return false;
+            switch (n->type) {
+                case SDL_WINDOWEVENT: wid = n->window.windowID; break;
+                case SDL_TEXTEDITING: wid = n->edit.windowID; break;
+                case SDL_DROPBEGIN: case SDL_DROPCOMPLETE: wid = n->drop.windowID; break;
+                default: return false;
+            }
+            break;
+        }
         default: return false;
     }
     if (wid != g_chatHost.id) return false;
-    if (e.type == SDL_WINDOWEVENT && e.window.event == SDL_WINDOWEVENT_CLOSE) { g_chatWinOpen = false; return true; }
-    if (e.type == SDL_DROPFILE) {   // dropped onto the chat: send it to the open conversation
-        if (!e.drop.file) return true;
-        std::string dropped = e.drop.file; SDL_free(e.drop.file);
+    if (e.type == EvT::WindowClose) { g_chatWinOpen = false; return true; }
+    if (e.type == EvT::DropFile) {   // dropped onto the chat: send it to the open conversation
+        if (e.text.empty()) return true;
+        std::string dropped = e.text;
         if (!g_chatDropOk || (g_chatDropUid.empty() && g_chatDropGroup <= 0)) { Toast("Open a conversation to send a file", 2); return true; }
         std::error_code fec; auto fsz = fs::file_size(fs::path(dropped), fec);
         if (fec || fs::is_directory(dropped, fec)) Toast("Only files can be sent", 2);
@@ -18313,6 +18322,7 @@ int main(int argc, char** argv) {
     // The own feed has no gamepad navigation; keys, text, mouse, wheel, focus, clipboard and the cursor shape work.
     g_imguiOwnFeed = okay::imguifeed::OwnRequested(std::getenv("OKAY_PLATFORM_EVENTS"));
     std::fprintf(stderr, "%s\n", okay::imguifeed::ActiveLine(g_imguiOwnFeed));
+    sdlSeam->ReportUnmappedEvents(!g_imguiOwnFeed);   // imgui_impl_sdl2 wants every SDL event (pointer enter / leave, display changes ...)
     if (g_imguiOwnFeed) {
         g_imguiMainWrap = okay::platform::WrapSdl2Window(window);
         g_imguiFeed.Init(ImGui::GetIO(), g_imguiMainWrap->Id(), okay::imguifeed::FeedHost::FromPlatform(okay::platform::Get(okay::platform::BackendKind::Sdl2), g_imguiMainWrap.get()));
@@ -18391,7 +18401,7 @@ int main(int argc, char** argv) {
         VerifyJob vj{ accountPtr.get(), false };
         SDL_Thread* vt = SDL_CreateThread(VerifySessionWorker, "okay-verify", &vj);
         while (!vj.done) {
-            SDL_PumpEvents();   // keep the window responsive (and mapped) while we wait
+            sdlSeam->PumpEvents();   // keep the window responsive (and mapped) while we wait
             int sw = g_winW, sh = g_winH; SDL_GetRendererOutputSize(renderer, &sw, &sh);
             okay::DrawSplashStyled(renderer, sw, sh, splashStyle());
             okay::platform::DelayMs(16);
@@ -18472,21 +18482,22 @@ int main(int argc, char** argv) {
         // code reads naturally; the Settings tab may rebuild accountPtr (which
         // is why the Settings tab uses accountPtr-> directly, not this alias).
         acct::AccountService& account = *accountPtr;
-        SDL_Event e;
-        while (SDL_PollEvent(&e)) {
+        okay::platform::Event e;
+        while (sdlSeam->PollEvent(e)) {
+            using EvT = okay::platform::EventType;
             if (ChatHostEvent(e)) continue;   // belonged to the chat's own window
             FeedImGuiEvent(g_imguiFeed, e);
 #ifdef OKAY_HAVE_OKAYUI
-            g_okayInput.Feed(e);   // typed text, key edges and the wheel for hosted OkayUI screens (a no-op for the Dear ImGui backend)
+            g_okayInput.Feed(e, sdlSeam->CharForKey(e.key));   // typed text, key edges and the wheel for hosted OkayUI screens (a no-op for the Dear ImGui backend)
 #endif
             // Clicking the window's [X] (or Alt+F4) asks whether to exit or just
             // minimize, rather than quitting outright. (With the chat window
             // around, SDL reports the launcher's [X] as a window close, not a quit.)
-            if (e.type == SDL_QUIT) closeConfirm = true;
-            else if (e.type == SDL_WINDOWEVENT && e.window.event == SDL_WINDOWEVENT_FOCUS_GAINED &&
-                     e.window.windowID == lw::Id(window)) g_launcherRefocused = true;   // check for updates
-            else if (e.type == SDL_WINDOWEVENT && e.window.event == SDL_WINDOWEVENT_CLOSE &&
-                     e.window.windowID == lw::Id(window)) closeConfirm = true;
+            if (e.type == EvT::Quit) closeConfirm = true;
+            else if (e.type == EvT::WindowFocusGained &&
+                     e.windowId == lw::Id(window)) g_launcherRefocused = true;   // check for updates
+            else if (e.type == EvT::WindowClose &&
+                     e.windowId == lw::Id(window)) closeConfirm = true;
             // NOTE: minimizing does a plain Windows minimize (to the taskbar) and
             // is always restored by clicking the taskbar button. The launcher does
             // NOT hide itself to the system tray — that could trap the window with
@@ -18494,9 +18505,8 @@ int main(int argc, char** argv) {
             // Drag & drop onto the launcher: a .okayscene plays instantly (no
             // download); a shared game FOLDER (or loose script/model) installs into
             // your community library.
-            else if (e.type == SDL_DROPFILE && e.drop.file) {
-                std::string dropped = e.drop.file;
-                SDL_free(e.drop.file);
+            else if (e.type == EvT::DropFile && !e.text.empty()) {
+                std::string dropped = e.text;
                 // Dropped onto the open chat window: send it to that conversation.
                 bool toChat = false;
                 if (g_chatWinOpen && g_chatDropOk && (!g_chatDropUid.empty() || g_chatDropGroup > 0)) {

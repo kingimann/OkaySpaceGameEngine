@@ -1577,6 +1577,21 @@ target_link_libraries(test_vs_editor_model PRIVATE okay::engine)
 target_compile_definitions(test_vs_editor_model PRIVATE OKAY_SOURCE_DIR="${PROJECT_SOURCE_DIR}")
 add_test(NAME vs_editor_model COMMAND test_vs_editor_model)
 
+# Our own Dear ImGui platform feed (shared/ImGuiPlatformFeed.hpp): key table, event translation, and a real ImGui context
+# fed through a fake host (no window, no SDL). Links the editor's okay_imgui when it is in the build, else compiles the
+# ImGui core files from the same source tree.
+add_executable(test_imgui_platform_feed test_imgui_platform_feed.cpp)
+target_include_directories(test_imgui_platform_feed PRIVATE ${CMAKE_SOURCE_DIR}/shared ${CMAKE_SOURCE_DIR}/engine/include ${OKAY_VS_IMGUI_INCLUDE})
+if(TARGET okay_imgui)
+    target_link_libraries(test_imgui_platform_feed PRIVATE okay_imgui okay::engine)
+else()
+    target_sources(test_imgui_platform_feed PRIVATE ${imgui_SOURCE_DIR}/imgui.cpp ${imgui_SOURCE_DIR}/imgui_draw.cpp
+        ${imgui_SOURCE_DIR}/imgui_tables.cpp ${imgui_SOURCE_DIR}/imgui_widgets.cpp)
+    target_link_libraries(test_imgui_platform_feed PRIVATE okay::engine)
+endif()
+target_compile_features(test_imgui_platform_feed PRIVATE cxx_std_17)
+add_test(NAME imgui_platform_feed COMMAND test_imgui_platform_feed)
+
 add_executable(test_vs_names test_vs_names.cpp)
 target_include_directories(test_vs_names PRIVATE ${CMAKE_SOURCE_DIR}/editor ${OKAY_VS_IMGUI_INCLUDE})
 target_link_libraries(test_vs_names PRIVATE okay::engine)

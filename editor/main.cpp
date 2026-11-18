@@ -118,6 +118,7 @@
 #include "AntiCheatIntegrity.hpp"       // Build Game's Data/manifest.json (opt-in anti-cheat)
 #include "FileDialog.hpp"                // open / save / folder dialogs: the system's own, or our built-in browser (asset import)
 #include "PlatformClipboard.hpp"         // Play mode clipboard (through okay::platform)
+#include "ImGuiPlatformFeed.hpp"          // our own Dear ImGui input feed over okay::platform (OKAY_PLATFORM_EVENTS=own; default stays imgui_impl_sdl2)
 
 #include <numeric>
 #include <algorithm>
@@ -50090,6 +50091,16 @@ static void OkayVp_RenderWindow(ImGuiViewport* vp, void*) {
     SDL_RenderPresent(d->ren);
 }
 
+// Dear ImGui input: imgui_impl_sdl2 by default, or our own okay::platform feed with OKAY_PLATFORM_EVENTS=own (shared/ImGuiPlatformFeed.hpp).
+static bool g_imguiOwnFeed = false;
+static okay::imguifeed::Feed g_imguiFeed;
+// One SDL event for Dear ImGui through whichever path is on. (The loop still polls SDL for everything else; the own
+// feed gets the event translated to a platform event, which touches nothing in the SDL one.)
+static void FeedImGuiEvent(const SDL_Event& e) {
+    if (!g_imguiOwnFeed) { ImGui_ImplSDL2_ProcessEvent(&e); return; }
+    okay::platform::Event pe;
+    if (okay::platform::TranslateSdl2Event(&e, pe)) g_imguiFeed.ProcessEvent(pe, ImGui::GetIO());
+}
 // True when both halves of multi-window panels are there: the platform backend can create OS windows (the
 // SDL2 backend says so only on video drivers that report the mouse anywhere on the desktop: Windows, macOS,
 // X11; not Wayland or the headless offscreen driver) and the renderer side (OkayVpInstall) is installed.
@@ -50633,7 +50644,12 @@ int main(int argc, char** argv) {
     okay::editor::vsed::StepSummary = [](const ActionList::Item& it) { return ActionOpSummary(it); };
     okay::editor::vsed::TemplatePicker = [](const char* id, ActionList& out) { bool d = false; return ScriptRecipePicker(id, &out, d); };
     ApplyTheme();
-    ImGui_ImplSDL2_InitForSDLRenderer(window, renderer);
+    // Which Dear ImGui input path runs: imgui_impl_sdl2 (default) or our own okay::platform feed (OKAY_PLATFORM_EVENTS=own).
+    // Own feed: no pop-out panels (no multi-viewport), no gamepad navigation; keys, text, mouse, wheel, focus, clipboard, cursor shape work.
+    g_imguiOwnFeed = okay::imguifeed::OwnRequested(std::getenv("OKAY_PLATFORM_EVENTS"));
+    std::fprintf(stderr, "%s\n", okay::imguifeed::ActiveLine(g_imguiOwnFeed));
+    if (g_imguiOwnFeed) g_imguiFeed.Init(ImGui::GetIO(), winSeam->Id(), okay::imguifeed::FeedHost::FromPlatform(sdlSeam, winSeam.get()));
+    else ImGui_ImplSDL2_InitForSDLRenderer(window, renderer);
     ImGui_ImplSDLRenderer2_Init(renderer);
     OkayVpInstall();   // renderer-side multi-viewport hooks (dual-monitor panels)
     // Multi-window panels: drag a tab outside the editor and it becomes its own OS window (the Inspector or the
@@ -50915,7 +50931,7 @@ int main(int argc, char** argv) {
             const bool mouseEv = e.type == SDL_MOUSEMOTION || e.type == SDL_MOUSEBUTTONDOWN
                 || e.type == SDL_MOUSEBUTTONUP || e.type == SDL_MOUSEWHEEL;
             if (!(g_playPointerGrabbed && mouseEv && !g_escapeEdge))
-                ImGui_ImplSDL2_ProcessEvent(&e);
+                FeedImGuiEvent(e);
             if (e.type == SDL_QUIT) g_quitRequested = true;
             if (e.type == SDL_CONTROLLERDEVICEADDED) g_pads.Add(e.cdevice.which);
             if (e.type == SDL_CONTROLLERDEVICEREMOVED) g_pads.Remove(e.cdevice.which);
@@ -51519,7 +51535,7 @@ int main(int argc, char** argv) {
             ImGui::GetIO().ConfigFlags |= ImGuiConfigFlags_NavEnableKeyboard;
 
         ImGui_ImplSDLRenderer2_NewFrame();
-        ImGui_ImplSDL2_NewFrame();
+        if (g_imguiOwnFeed) g_imguiFeed.NewFrame(ImGui::GetIO()); else ImGui_ImplSDL2_NewFrame();
         // Skinned meshes deform on the GPU when the Direct3D 11 renderer draws the
         // views (one upload of the bind pose, bone matrices per frame) instead of
         // every vertex on the CPU + a full mesh re-upload each frame.
@@ -52435,7 +52451,7 @@ int main(int argc, char** argv) {
     ProjectUpgradeAtExit();       // the editor of the project's own version ("Keep"), or this one again after a restore, starts once this process is gone
 
     ImGui_ImplSDLRenderer2_Shutdown();
-    ImGui_ImplSDL2_Shutdown();
+    if (g_imguiOwnFeed) g_imguiFeed.Shutdown(ImGui::GetIO()); else ImGui_ImplSDL2_Shutdown();
     ImGui::DestroyContext();
     // Tear down the optional GPU renderer: free its GL objects with its own context
     // current, then drop the context + hidden window.

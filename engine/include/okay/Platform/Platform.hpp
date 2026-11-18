@@ -123,6 +123,9 @@ inline int ValidWindowExtent(int v, int fallback) { return v >= 1 && v <= kMaxWi
 /// How a window asks for attention (task bar button flash). Stop ends a flash that is running.
 enum class FlashMode { Stop, Briefly, UntilFocused };
 
+/// The pointer shapes a UI toolkit asks for (the names follow the common set of system cursors).
+enum class CursorShape { Arrow, TextInput, ResizeAll, ResizeNS, ResizeEW, ResizeNESW, ResizeNWSE, Hand, Wait, Progress, NotAllowed };
+
 struct WindowDesc {
     std::string title = "OkaySpace";
     int x = kCentered, y = kCentered;
@@ -356,6 +359,8 @@ public:
     virtual void WarpMouse(Window* w, int x, int y) = 0;
     /// Whether the cursor is visible (what ShowCursor last asked for; starts true).
     virtual bool IsCursorShown() { return true; }
+    /// Change the pointer's shape (the system cursor of that kind). False = this backend cannot (the shape stays as it was).
+    virtual bool SetCursorShape(CursorShape shape) { (void)shape; return false; }
     /// Mouse motion since the last call, and the button mask (MouseMask bits). Not
     /// supported by a backend that returns false from SupportsRelativeMouseState().
     virtual uint32_t RelativeMouseState(int* dx, int* dy) { if (dx) *dx = 0; if (dy) *dy = 0; return 0; }
@@ -420,6 +425,12 @@ public:
 /// context made through the wrapper (CreateGLContext) belongs to the wrapper and goes with it. Temporary: it goes
 /// away with SDL2.
 std::unique_ptr<Window> WrapSdl2Window(void* sdlWindow);
+
+/// Turn one SDL_Event (passed as `const SDL_Event*`) into a platform Event, for code that still polls SDL itself but
+/// feeds a seam consumer (the ImGui platform feed). Handles quit, window, key, text, mouse and wheel events only and
+/// touches nothing in the SDL event (a drop's string is not read). False for any other kind, or when sdl2 is not
+/// compiled in. Temporary: it goes away with SDL2.
+bool TranslateSdl2Event(const void* sdlEvent, Event& out);
 
 // ---- Free functions on the default backend ------------------------------------
 // Timers work with no backend at all (they fall back to std::chrono), so call

@@ -36,6 +36,7 @@ inline void Flash(SDL_Window* w, okay::platform::FlashMode m) { if (auto s = oka
 #include "WavPlayback.hpp"   // the one WAV loading seam (SDL_LoadWAV, or our own decoder with OKAY_OWN_WAV)
 #include "VoiceChat.hpp"   // voice calls (first: winsock2.h must precede windows.h)
 #include "AppIcon.hpp"
+#include "ImGuiPlatformFeed.hpp"   // our own Dear ImGui input feed over okay::platform (OKAY_PLATFORM_EVENTS=own; default stays imgui_impl_sdl2)
 #include "OwnStack.hpp"   // OKAY_OWN_STACK=1 dogfood switch + the one-line startup stack report
 #include "OkayTheme.hpp"  // shared Slate palette (launcher + editor)
 #include "LauncherDemo.hpp"   // okay::IsLauncherDemoMode(): the one list of demo / screenshot env variables
@@ -16696,6 +16697,17 @@ struct ChatWindowHost {
     ImFont* mono = nullptr; Uint32 id = 0; bool shown = false;
 };
 static ChatWindowHost g_chatHost;
+// Dear ImGui input: imgui_impl_sdl2 by default, or our own okay::platform feed with OKAY_PLATFORM_EVENTS=own
+// (shared/ImGuiPlatformFeed.hpp). One feed per ImGui context: the launcher window and the chat pop-out window.
+static bool g_imguiOwnFeed = false;
+static okay::imguifeed::Feed g_imguiFeed, g_imguiChatFeed;
+static std::unique_ptr<okay::platform::Window> g_imguiMainWrap;   // non-owning wrapper over the launcher's SDL window for the feed
+static std::unique_ptr<okay::platform::Window> g_imguiChatWrap;
+static void FeedImGuiEvent(okay::imguifeed::Feed& feed, const SDL_Event& e) {
+    if (!g_imguiOwnFeed) { ImGui_ImplSDL2_ProcessEvent(&e); return; }
+    okay::platform::Event pe;
+    if (okay::platform::TranslateSdl2Event(&e, pe)) feed.ProcessEvent(pe, ImGui::GetIO());
+}
 static okay::platform::Window* g_chatHostOwner = nullptr;   // owns g_chatHost.win
 // Keep a window reachable: when too little of it (or its title bar) is on any
 // display (a monitor was unplugged, a minimized position got saved...), put it
@@ -16764,7 +16776,10 @@ static bool ChatHostCreate() {
         MergeEmojiFallback(17.0f);
         g_chatHost.mono = ImGui::GetIO().Fonts->AddFontFromMemoryCompressedBase85TTF(JetBrainsMono_compressed_data_base85, 16.0f, &fc);
     }
-    ImGui_ImplSDL2_InitForSDLRenderer(g_chatHost.win, g_chatHost.ren);
+    if (g_imguiOwnFeed) {
+        g_imguiChatWrap = okay::platform::WrapSdl2Window(g_chatHost.win);
+        g_imguiChatFeed.Init(ImGui::GetIO(), g_imguiChatWrap->Id(), okay::imguifeed::FeedHost::FromPlatform(okay::platform::Get(okay::platform::BackendKind::Sdl2), g_imguiChatWrap.get()));
+    } else ImGui_ImplSDL2_InitForSDLRenderer(g_chatHost.win, g_chatHost.ren);
     ImGui_ImplSDLRenderer2_Init(g_chatHost.ren);
     ImGui::SetCurrentContext(mainCtx);
     return true;
@@ -16818,7 +16833,7 @@ static bool ChatHostEvent(const SDL_Event& e) {
     }
     ImGuiContext* mainCtx = ImGui::GetCurrentContext();
     ImGui::SetCurrentContext(g_chatHost.ctx);
-    ImGui_ImplSDL2_ProcessEvent(&e);
+    FeedImGuiEvent(g_imguiChatFeed, e);
     ImGui::SetCurrentContext(mainCtx);
     return true;
 }
@@ -16857,7 +16872,7 @@ static void ChatHostFrame(okay::account::AccountService& account) {
     ImGui::GetStyle() = style; ImGui::GetIO().FontGlobalScale = fontScale;
     g_renderer = g_chatHost.ren; g_rslot = 1; g_fontMono = g_chatHost.mono; g_chatInOwnWindow = true;
     ImGui_ImplSDLRenderer2_NewFrame();
-    ImGui_ImplSDL2_NewFrame();
+    if (g_imguiOwnFeed) g_imguiChatFeed.NewFrame(ImGui::GetIO()); else ImGui_ImplSDL2_NewFrame();
     ImGui::NewFrame();
     DrawChatWindow(account);
     DrawIncomingCall();
@@ -18294,7 +18309,14 @@ int main(int argc, char** argv) {
             JetBrainsMono_compressed_data_base85, 16.0f, &fc);
     }
     ApplyAccent(g_accentIndex);  // applies the saved accent/theme (calls DarkTheme)
-    ImGui_ImplSDL2_InitForSDLRenderer(window, renderer);
+    // Which Dear ImGui input path runs: imgui_impl_sdl2 (default) or our own okay::platform feed (OKAY_PLATFORM_EVENTS=own).
+    // The own feed has no gamepad navigation; keys, text, mouse, wheel, focus, clipboard and the cursor shape work.
+    g_imguiOwnFeed = okay::imguifeed::OwnRequested(std::getenv("OKAY_PLATFORM_EVENTS"));
+    std::fprintf(stderr, "%s\n", okay::imguifeed::ActiveLine(g_imguiOwnFeed));
+    if (g_imguiOwnFeed) {
+        g_imguiMainWrap = okay::platform::WrapSdl2Window(window);
+        g_imguiFeed.Init(ImGui::GetIO(), g_imguiMainWrap->Id(), okay::imguifeed::FeedHost::FromPlatform(okay::platform::Get(okay::platform::BackendKind::Sdl2), g_imguiMainWrap.get()));
+    } else ImGui_ImplSDL2_InitForSDLRenderer(window, renderer);
     ImGui_ImplSDLRenderer2_Init(renderer);
 
     std::string editor = FindExe({"OkayEngine.exe", "OkaySpaceEngine.exe", "okay-editor.exe", "okay-editor", "OkayEngine"});
@@ -18453,7 +18475,7 @@ int main(int argc, char** argv) {
         SDL_Event e;
         while (SDL_PollEvent(&e)) {
             if (ChatHostEvent(e)) continue;   // belonged to the chat's own window
-            ImGui_ImplSDL2_ProcessEvent(&e);
+            FeedImGuiEvent(g_imguiFeed, e);
 #ifdef OKAY_HAVE_OKAYUI
             g_okayInput.Feed(e);   // typed text, key edges and the wheel for hosted OkayUI screens (a no-op for the Dear ImGui backend)
 #endif
@@ -18715,7 +18737,7 @@ int main(int argc, char** argv) {
         }
 
         ImGui_ImplSDLRenderer2_NewFrame();
-        ImGui_ImplSDL2_NewFrame();
+        if (g_imguiOwnFeed) g_imguiFeed.NewFrame(ImGui::GetIO()); else ImGui_ImplSDL2_NewFrame();
         ImGui::NewFrame();
         okayFrame = false;
 #ifdef OKAY_HAVE_OKAYUI
@@ -27186,7 +27208,7 @@ int main(int argc, char** argv) {
     OkayTrayRemove();   // make sure no stray tray icon lingers after exit
 #endif
     ImGui_ImplSDLRenderer2_Shutdown();
-    ImGui_ImplSDL2_Shutdown();
+    if (g_imguiOwnFeed) { g_imguiFeed.Shutdown(ImGui::GetIO()); g_imguiMainWrap.reset(); } else ImGui_ImplSDL2_Shutdown();
     ImGui::DestroyContext();
     SDL_DestroyRenderer(renderer);
     mainWinOwner.reset();   // destroys the main window (after its renderer)

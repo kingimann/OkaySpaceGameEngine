@@ -352,6 +352,31 @@ Written from our own needs; no new platform code (the SDL2 backend already had `
   (tray icon) is still SDL's. `editor/main.cpp` line 871 (`SDL_Init(SDL_INIT_EVENTS)` in the headless helper) is untouched.
 * Checked: launcher and editor `main.cpp` pass `g++ -fsyntax-only` with the real include paths. Not built to executables, not run.
 
+## Round 8: our own Dear ImGui platform feed (`shared/ImGuiPlatformFeed.hpp`), OFF by default
+
+Written from Dear ImGui's public header (`io.Add*Event`, `ImGuiKey`, `ImGuiPlatformIO`) and the `okay::platform` seam; imgui_impl_sdl2 and SDL
+code were not read or followed.
+
+* `Translate()` (pure): platform `Event` -> list of `Action`s (key, mouse position, button, wheel, text, focus), filtered by window id.
+  Key repeats are dropped (Dear ImGui repeats keys itself). `KeyToImGui()` is the key table (HID numbers, including F13-F24 and keypad `=`
+  by value). Dear ImGui also wants `ImGuiMod_Ctrl/Shift/Alt/Super` as their own key events; the feed keeps a held-modifier mask so
+  left + right keys of one kind work.
+* `Feed` (per ImGui context; the launcher has two): `ProcessEvent`, `NewFrame` (display size and framebuffer scale, delta time never zero,
+  "no mouse" when the pointer leaves and no button is held, cursor shape and hide, `WantSetMousePos` warp), clipboard and IME
+  position through `ImGuiPlatformIO` callbacks that go to the seam, window DPI remembered (`Dpi()`, not applied to ImGui's scale).
+  `FeedHost` hides the window and backend, so the tests use a fake one.
+* Seam additions: `CursorShape` and `Backend::SetCursorShape` (SDL2 backend: system cursors; own Linux / Windows backends: not written,
+  they return false), `TranslateSdl2Event()` (SDL event -> platform event with no side effects, temporary).
+* Wired into `editor/main.cpp` and `launcher/main.cpp` (main window and chat window) behind `OKAY_PLATFORM_EVENTS=own`. Default
+  stays `imgui_impl_sdl2`. Both apps log which one is active. In own mode the editor's multi-viewport pop-out panels are off (the feed
+  does not set `PlatformHasViewports`) and there is no gamepad navigation.
+* **Not moved yet:** the two `SDL_PollEvent` loops themselves. They still poll SDL because dozens of other consumers in them (`g_okayInput.Feed`,
+  controller add/remove, drop files, render reset, chat window routing) read `SDL_Event`; the own feed gets each event translated.
+  Moving the loops to `Backend::PollEvent` is the next step. Also not done: `SDL_CaptureMouse` (drag that leaves the window), IME
+  composition display, own-backend cursor shapes (X11, Win32), touch.
+* Checked: `ctest -R imgui_platform_feed` logic (built here with g++ against the pinned Dear ImGui commit; 82 checks), and `g++ -fsyntax-only`
+  of `launcher/main.cpp`, `editor/main.cpp` and `SdlBackend.cpp`. Not built to executables, not run on Windows, not tried with a real window.
+
 ## Not behind the seam yet (stage 1 list; see stage 2 above for what changed)
 
 The window, event loop and GL context of the editor, launcher and player still call SDL directly. Moving them needs more than

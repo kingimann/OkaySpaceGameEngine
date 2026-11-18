@@ -232,6 +232,7 @@ public:
     void Shutdown() override {
         if (m_started) SDL_QuitSubSystem(m_started);
         m_started = 0;
+        for (SDL_Cursor*& c : m_cursors) { if (c) SDL_FreeCursor(c); c = nullptr; }
     }
     std::string LastError() const override { return SDL_GetError(); }
 
@@ -297,6 +298,18 @@ public:
     bool SetRelativeMouse(bool on) override { return SDL_SetRelativeMouseMode(on ? SDL_TRUE : SDL_FALSE) == 0; }
     void ShowCursor(bool s) override { SDL_ShowCursor(s ? SDL_ENABLE : SDL_DISABLE); }
     bool IsCursorShown() override { return SDL_ShowCursor(SDL_QUERY) != SDL_DISABLE; }
+    bool SetCursorShape(CursorShape shape) override {
+        static const SDL_SystemCursor kMap[] = {
+            SDL_SYSTEM_CURSOR_ARROW, SDL_SYSTEM_CURSOR_IBEAM, SDL_SYSTEM_CURSOR_SIZEALL, SDL_SYSTEM_CURSOR_SIZENS,
+            SDL_SYSTEM_CURSOR_SIZEWE, SDL_SYSTEM_CURSOR_SIZENESW, SDL_SYSTEM_CURSOR_SIZENWSE, SDL_SYSTEM_CURSOR_HAND,
+            SDL_SYSTEM_CURSOR_WAIT, SDL_SYSTEM_CURSOR_WAITARROW, SDL_SYSTEM_CURSOR_NO };
+        const int i = (int)shape;
+        if (i < 0 || i >= (int)(sizeof(kMap) / sizeof(kMap[0]))) return false;
+        if (!m_cursors[i]) m_cursors[i] = SDL_CreateSystemCursor(kMap[i]);
+        if (!m_cursors[i]) return false;
+        SDL_SetCursor(m_cursors[i]);
+        return true;
+    }
     uint32_t RelativeMouseState(int* dx, int* dy) override { return SDL_GetRelativeMouseState(dx, dy); }
     bool SupportsRelativeMouseState() override { return true; }
     uint32_t ModState() override { return ModsFromSdl((Uint16)SDL_GetModState()); }
@@ -405,6 +418,8 @@ public:
         return j ? std::unique_ptr<Gamepad>(new SdlGamepad(j)) : nullptr;
     }
 
+public:
+    static bool TranslateEvent(const SDL_Event& e, Event& r) { return Translate(e, r); }
 private:
     static bool Translate(const SDL_Event& e, Event& r) {
         r.timestampMs = e.common.timestamp;
@@ -464,11 +479,26 @@ private:
         }
     }
     Uint32 m_started = 0;
+    SDL_Cursor* m_cursors[11] = {};
 };
 
 } // namespace
 
 std::unique_ptr<Backend> CreateSdl2Backend() { return std::unique_ptr<Backend>(new SdlBackend()); }
+
+bool TranslateSdl2Event(const void* sdlEvent, Event& out) {
+    if (!sdlEvent) return false;
+    const SDL_Event& e = *(const SDL_Event*)sdlEvent;
+    switch (e.type) {   // only the kinds a UI feed needs; no side effects (a drop's string is left alone)
+    case SDL_QUIT: case SDL_WINDOWEVENT: case SDL_KEYDOWN: case SDL_KEYUP: case SDL_TEXTINPUT:
+    case SDL_MOUSEMOTION: case SDL_MOUSEBUTTONDOWN: case SDL_MOUSEBUTTONUP: case SDL_MOUSEWHEEL: {
+        Event r;
+        if (!SdlBackend::TranslateEvent(e, r)) return false;
+        out = std::move(r); return true;
+    }
+    default: return false;
+    }
+}
 
 std::unique_ptr<Window> WrapSdl2Window(void* sdlWindow) {
     if (!sdlWindow) return nullptr;

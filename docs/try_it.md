@@ -2326,3 +2326,23 @@ already made from them still open and play, and the scene builders stay in the e
 * Run here: `bash -n` on the script, and the new copy block on its own against the real source tree, then a listing of
   the result. **Not run:** the full Windows cross build, the zip, `makensis`, the installer, anything on Windows.
 * `release.yml` was not changed and no workflow was run.
+
+## Own Dear ImGui input feed in the editor and launcher (OKAY_PLATFORM_EVENTS=own, off by default)
+
+Dear ImGui got its keyboard, mouse, text, wheel and clipboard from `imgui_impl_sdl2` (SDL's code). There is now our own
+replacement, `shared/ImGuiPlatformFeed.hpp`, that takes `okay::platform` events instead. It is **off by default**: nothing
+changes unless you set the switch.
+
+1. Windows: open a Command Prompt in the folder with `OkayEngine.exe` and `OkaySpace.exe` and run
+   `set OKAY_PLATFORM_EVENTS=own` then `OkayEngine.exe` (or `OkaySpace.exe` for the launcher). Linux: `OKAY_PLATFORM_EVENTS=own ./okay-editor`.
+2. How to tell it is on: the program prints one line to its console / log at start-up. With the switch:
+   `ImGui input: own okay::platform feed (OKAY_PLATFORM_EVENTS=own)`. Without it:
+   `ImGui input: imgui_impl_sdl2 (default; set OKAY_PLATFORM_EVENTS=own for the own feed)`.
+3. Try it: click buttons, type in a text field (including a letter with an accent, and paste with Ctrl+V; copy with Ctrl+C and paste
+   into Notepad), scroll a list with the wheel, drag a window, press Tab and the arrow keys, hover a text field (the pointer
+   becomes an I-beam) and a window edge (resize arrows). In the launcher, also open the chat pop-out window and type in it.
+4. What is different in this mode on purpose: the editor's pop-out panels (drag a tab out into its own OS window) are off
+   (the own feed has no multi-window support yet), and gamepad navigation of the UI is off. Everything else should behave as before.
+5. Not tested on a real Windows machine when this was written. The own feed's logic is covered by `ctest -R imgui_platform_feed`
+   (key table, event translation, a real Dear ImGui context fed through a fake window: modifiers, repeats, focus loss, pointer
+   leaving, clipboard, cursor shape, display size, delta time).

@@ -228,6 +228,7 @@ void DelayMs(uint32_t ms) {
 }
 
 #ifndef OKAY_PLATFORM_HAVE_SDL2
+bool TranslateSdl2Event(const void*, Event&) { return false; }
 std::unique_ptr<Window> WrapSdl2Window(void*) { return nullptr; }   // the real one is in SdlBackend.cpp
 #endif
 

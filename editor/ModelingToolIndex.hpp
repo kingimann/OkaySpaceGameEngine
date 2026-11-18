@@ -12,19 +12,19 @@
 
 namespace oked::modeltools {
 
-struct Page { int legacy; const char* name; const char* desc; const char* job; const char* abbr; };   // abbr: the two letters on the folded strip   // legacy = the page number the window and OKAY_UI_MODELPAGE use
-/// The pages in the order of the sidebar, under their job headings.
+struct Page { int legacy; const char* name; const char* desc; const char* job; const char* abbr; const char* was; };   // abbr: the two letters on the folded strip; was: the old technical title (still found by search); legacy = the page number the window and OKAY_UI_MODELPAGE use
+/// The pages in the order of the sidebar, under their job headings. Titles are plain words for a beginner.
 inline const std::vector<Page>& Pages() {
     static const std::vector<Page> p = {
-        {8, "Easy",      "Big buttons, start here",        "Start here", "Ea"},
-        {0, "Add",       "Add a shape or a prop",              "Create", "Ad"},
-        {7, "Guided",    "Fences, buildings, cars",        "Create", "Gd"},
-        {4, "Generate",  "Spin, pipes and curves",      "Create", "Ge"},
-        {1, "Shape",     "Shape, colour, collision",        "Shape and size", "Sh"},
-        {2, "Edit",      "Detail, deform, pivot",    "Shape and size", "Ed"},
-        {5, "Edit Mesh", "Pick, sculpt, paint, UVs",     "Edit parts", "EM"},
-        {3, "Modifiers", "Array, joins, remesh",       "Effects", "Mo"},
-        {6, "Import",    "Bring in and save files",      "Files", "Im"},
+        {8, "Easy",             "Big buttons, start here",   "Start here",     "Ea", "Simple view"},
+        {0, "Add shapes",       "Shapes, trees, props",  "Make something", "As", "Add"},
+        {7, "Step by step",     "Fences, buildings, cars",    "Make something", "St", "Guided"},
+        {4, "Make shapes",      "Spin, pipes and curves",     "Make something", "Ma", "Generate"},
+        {1, "Change the shape", "Size, colour, solid body",   "Change it",      "Ch", "Shape"},
+        {2, "Bend and cut",     "Bend, cut, mirror",  "Change it",      "Be", "Edit"},
+        {5, "Fix the surface",  "Pick, sculpt, paint parts",  "Fix parts",      "Fi", "Edit Mesh"},
+        {3, "Effects",          "Copies, joins, simpler",     "Extras",         "Ef", "Modifiers"},
+        {6, "Bring in a model", "Bring in and save files",    "Files",          "Br", "Import"},
     };
     return p;
 }
@@ -240,7 +240,7 @@ inline std::vector<std::string> Words(const std::string& s) {
 inline int Score(const Tool& t, const std::string& query) {
     const std::vector<std::string> q = Words(query);
     if (q.empty()) return 0;
-    const std::vector<std::string> nm = Words(t.name), al = Words(t.aliases), sec = Words(std::string(t.section) + " " + (FindPage(t.page) ? FindPage(t.page)->name : ""));
+    const std::vector<std::string> nm = Words(t.name), al = Words(t.aliases), sec = Words(std::string(t.section) + " " + (FindPage(t.page) ? std::string(FindPage(t.page)->name) + " " + FindPage(t.page)->was : std::string()));
     auto starts = [](const std::vector<std::string>& hay, const std::string& w) { for (const std::string& h : hay) if (h.rfind(w, 0) == 0) return true; return false; };
     int total = 0;
     for (const std::string& w : q) {

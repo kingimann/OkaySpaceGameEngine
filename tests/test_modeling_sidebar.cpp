@@ -2,6 +2,7 @@
 #include "ModelingSidebar.hpp"
 #include "ModelingToolIndex.hpp"
 #include "EditorLayoutMath.hpp"
+#include <cctype>
 #include <cstdio>
 #include <fstream>
 #include <set>
@@ -55,6 +56,8 @@ int main() {
     std::set<std::string> ab; for (const Page& p : Pages()) { CHECK(std::string(p.abbr).size() >= 1 && std::string(p.abbr).size() <= 2); CHECK(ab.insert(p.abbr).second); }
     // The folded strip has the Easy page first, and Ctrl+\ still folds the list (the key is wired in the window).
     CHECK(std::string(Pages().front().abbr) == "Ea");
+    for (const Page& p : Pages()) CHECK(std::string(p.abbr).size() == 2 && std::isupper((unsigned char)p.abbr[0]) && std::islower((unsigned char)p.abbr[1]));   // "Ad", not the old "EM"
+    for (const Page& p : Pages()) CHECK(std::string(p.abbr)[0] == p.name[0]);   // the letters come from the new name (Fix the surface: Fs)
     {
         std::ifstream in(std::string(OKAY_SOURCE_DIR) + "/editor/main.cpp"); std::stringstream ss; ss << in.rdbuf();
         CHECK(ss.str().find("ImGuiKey_Backslash") != std::string::npos);

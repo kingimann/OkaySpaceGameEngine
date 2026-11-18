@@ -3715,7 +3715,7 @@ static std::vector<ModelCmd> BuildModelCmds(EditorState& ed, MeshRenderer* mr) {
         g_meshSelMode = 1; g_meshSelFaces = pmo::SelectByArea(mr->mesh, 0.0f, avg * 0.1f);
     });
     // Editing
-    add("Set Crease on Selected Edges", "", "Edit", "Keep the selected edges sharp when the Subdivision modifier rounds the mesh (sharpness set in Edit Mesh; shown pink).", anyEdges, needEdges, [&ed, mr] {
+    add("Set Crease on Selected Edges", "", "Edit", "Keep the selected edges sharp when the Subdivision modifier rounds the mesh (sharpness set in Fix the surface; shown pink).", anyEdges, needEdges, [&ed, mr] {
         const pmo::EdgeList edges = SelectedPolyEdges(mr->mesh);
         EditUndoPoint(ed, mr);
         for (const auto& e : edges) mr->mesh.SetCrease(e.first, e.second, g_creaseW);
@@ -3727,7 +3727,7 @@ static std::vector<ModelCmd> BuildModelCmds(EditorState& ed, MeshRenderer* mr) {
         for (const auto& e : edges) mr->mesh.SetCrease(e.first, e.second, 0.0f);
         ed.dirty = true;
     });
-    add("Quad Remesh", "", "Edit", "Rebuild the whole mesh as quads: fewer faces (the Quads target in Edit Mesh), the same shape. Slots, vertex colours and UVs are dropped; Undo brings them back.", mr->mesh.TriangleCount() > 0, "The mesh has no triangles.", [&ed, mr] {
+    add("Quad Remesh", "", "Edit", "Rebuild the whole mesh as quads: fewer faces (the Quads target in Fix the surface), the same shape. Slots, vertex colours and UVs are dropped; Undo brings them back.", mr->mesh.TriangleCount() > 0, "The mesh has no triangles.", [&ed, mr] {
         okay::modeling::QuadRemeshOptions qo; qo.targetQuads = g_quadTarget; qo.allQuads = g_quadAllQuads;
         okay::modeling::QuadRemeshReport rep; const int before = mr->mesh.TriangleCount();
         const Mesh src = mr->mesh;
@@ -3738,7 +3738,7 @@ static std::vector<ModelCmd> BuildModelCmds(EditorState& ed, MeshRenderer* mr) {
         });
         ConsoleLog(ok ? "Quad Remesh: " + std::to_string(before) + " triangles -> " + std::to_string(rep.outputQuads) + " quads, " + std::to_string(rep.outputTriangles) + " triangles left" : "Quad Remesh: " + rep.error);
     });
-    add("Set Bevel Weight on Selected Edges", "", "Edit", "Mark the selected edges for the Bevel modifier's 'Use edge weights' option (weight set in Edit Mesh: 1 = full width).", anyEdges, needEdges, [&ed, mr] {
+    add("Set Bevel Weight on Selected Edges", "", "Edit", "Mark the selected edges for the Bevel modifier's 'Use edge weights' option (weight set in Fix the surface: 1 = full width).", anyEdges, needEdges, [&ed, mr] {
         const pmo::EdgeList edges = SelectedPolyEdges(mr->mesh);
         EditUndoPoint(ed, mr);
         for (const auto& e : edges) mr->mesh.SetBevelWeight(e.first, e.second, g_bevelWeight);
@@ -3750,7 +3750,7 @@ static std::vector<ModelCmd> BuildModelCmds(EditorState& ed, MeshRenderer* mr) {
         for (const auto& e : edges) mr->mesh.SetBevelWeight(e.first, e.second, 0.0f);
         ed.dirty = true;
     });
-    add("Reduce Polygons (Quality)", "", "Edit", "Cut the triangle count to the Reduce % in Edit Mesh by collapsing the least visible edges (keeps borders, UV seams and the shape; colours kept per face). Slots and vertex colours are dropped.", mr->mesh.TriangleCount() > 8, "The mesh is too small to reduce.", [&ed, mr] {
+    add("Reduce Polygons (Quality)", "", "Edit", "Cut the triangle count to the Reduce % in Fix the surface by collapsing the least visible edges (keeps borders, UV seams and the shape; colours kept per face). Slots and vertex colours are dropped.", mr->mesh.TriangleCount() > 8, "The mesh is too small to reduce.", [&ed, mr] {
         EditUndoPoint(ed, mr);
         okay::optimize::SimplifyOptions o; o.targetRatio = std::clamp(g_reduceRatio * 0.01f, 0.02f, 1.0f); o.lockBoundary = false;
         const int before = mr->mesh.TriangleCount();
@@ -3808,7 +3808,7 @@ static std::vector<ModelCmd> BuildModelCmds(EditorState& ed, MeshRenderer* mr) {
         auto* tmr = t->AddComponent<MeshRenderer>();
         tmr->mesh = pmo::MakeTable();
         ed.Select(t);
-        ConsoleLog("Added a table: Modeling > Edit Mesh to change it, Material Slots to recolour it");
+        ConsoleLog("Added a table: Modeling > Fix the surface to change it, Material Slots to recolour it");
         ed.dirty = true;
     });
     add("Apply Scale and Rotation", "", "Object", "Bake the object's scale and rotation into its mesh and reset them (so sizes read true).", mr->gameObject->transform->ChildCount() == 0, "Not available while the object has children (their placement would change).", [&ed, mr] {
@@ -3990,7 +3990,7 @@ static std::vector<ModelCmd> BuildModelCmds(EditorState& ed, MeshRenderer* mr) {
                 ed.dirty = true;
             };
         };
-        add("Snap Selection to Surface", "", "Object", "Move the selected vertices onto the nearest point of the other selected object's surface (offset in Edit Mesh).", target != nullptr && (anyVerts || anyFaces || !g_meshSelEdges.empty()), target ? "Select vertices, edges or faces first." : needTarget, wrap(pmo::WrapMode::Nearest, true));
+        add("Snap Selection to Surface", "", "Object", "Move the selected vertices onto the nearest point of the other selected object's surface (offset in Fix the surface).", target != nullptr && (anyVerts || anyFaces || !g_meshSelEdges.empty()), target ? "Select vertices, edges or faces first." : needTarget, wrap(pmo::WrapMode::Nearest, true));
         add("Shrinkwrap Whole Mesh to Other Object", "", "Object", "Wrap every vertex of this mesh onto the other selected object's surface (nearest point).", target != nullptr, needTarget, wrap(pmo::WrapMode::Nearest, false));
         add("Project Selection Down onto Other Object", "", "Object", "Drop the selected vertices straight down (along world Y) onto the other selected object.", target != nullptr && (anyVerts || anyFaces || !g_meshSelEdges.empty()), target ? "Select vertices, edges or faces first." : needTarget, wrap(pmo::WrapMode::Project, true));
     }
@@ -28418,14 +28418,14 @@ void DrawModeling(EditorState& ed) {
     // always-open Add library): Add, then the mesh tools in the order you use them.
     struct MdlPage { const char* name; const char* desc; bool needsMesh; };
     static const MdlPage kPages[] = {
-        {"Add",       "Create a shape or prop",           false},
-        {"Shape",     "Primitive, color, collision",      true},
-        {"Edit",      "Subdivide, loop cut, UVs",         true},
-        {"Modifiers", "Array, remesh, smooth...",         true},
-        {"Generate",  "Procedural shapes, pipes",         true},
-        {"Edit Mesh", "Select, move, sculpt, paint",      true},
-        {"Import",    "Bring in a model file",            true},
-        {"Guided",    "Fences and more, from designs",    false},   // appended (scenes and OKAY_UI_MODELPAGE use these numbers); drawn first
+        {"Add shapes", "Shapes, trees, props",       false},
+        {"Change the shape", "Size, colour, solid body", true},
+        {"Bend and cut", "Bend, cut, mirror",   true},
+        {"Effects",   "Copies, joins, simpler",         true},
+        {"Make shapes", "Spin, pipes and curves",       true},
+        {"Fix the surface", "Pick, sculpt, paint parts", true},
+        {"Bring in a model", "Bring in and save files",  true},
+        {"Step by step", "Fences, buildings, cars",    false},   // appended (scenes and OKAY_UI_MODELPAGE use these numbers); drawn first
         {"Easy",      "Big buttons, start here",          false},   // page 8: the simple view, the default page
     };
     static int s_mdlPage = 8;
@@ -28620,7 +28620,7 @@ void DrawModeling(EditorState& ed) {
     auto* mr = go ? go->GetComponent<MeshRenderer>() : nullptr;
     if (!go) {
         EmptyState("\xE2\x9C\xB1", "No mesh selected",
-                   "Create a shape on the Add page, or select a mesh object to model it.");
+                   "Create a shape on the Add shapes page, or select a mesh object to model it.");
     } else if (mr) {
         // Auto-refit this object's colliders when its mesh changed since last frame
         // (subdivide / extrude / any deform), so physics tracks the new shape instead
@@ -28709,7 +28709,7 @@ void DrawModeling(EditorState& ed) {
         ShapeOpButton(ed, mr, okay::modeling::ShapeOp::Subdivide, false, "##model");
         if (ImGui::IsItemHovered())
             ImGui::SetTooltip(g_meshSelFaces.empty()
-                ? "Split every face into 4. Select faces first (Edit Mesh) to subdivide just those."
+                ? "Split every face into 4. Select faces first (Fix the surface) to subdivide just those."
                 : "Subdivides only the %d selected face(s). Deselect to subdivide the whole mesh.",
                 (int)g_meshSelFaces.size());
         ImGui::SameLine();
@@ -28726,7 +28726,7 @@ void DrawModeling(EditorState& ed) {
         if (ImGui::Button("Y##loop")) ModelOp(ed, mr, "Slice Y", [&](Mesh& m) { m.SliceAxis(1, s_loopCount); });
         ImGui::SameLine();
         if (ImGui::Button("Z##loop")) ModelOp(ed, mr, "Slice Z", [&](Mesh& m) { m.SliceAxis(2, s_loopCount); });
-        if (ImGui::IsItemHovered()) ImGui::SetTooltip("Cut the whole mesh with evenly spaced planes across an axis: adds editable divisions to a wall/box/cylinder.\nFor a real edge loop through a ring of quads, use Loop Cut (Ctrl+R) in Edit Mesh.");
+        if (ImGui::IsItemHovered()) ImGui::SetTooltip("Cut the whole mesh with evenly spaced planes across an axis: adds editable divisions to a wall/box/cylinder.\nFor a real edge loop through a ring of quads, use Loop Cut (Ctrl+R) in Fix the surface.");
         ImGui::SameLine();
         ShapeOpButton(ed, mr, okay::modeling::ShapeOp::SmoothRound, false, "##model");
         static float s_relax = 0.5f;
@@ -29105,7 +29105,7 @@ void DrawModeling(EditorState& ed) {
             ImGui::SameLine(); if (ImGui::SmallButton("Loop##curveloop")) { g_curvePts = {{2, 0, 0}, {0, 0, 2}, {-2, 0, 0}, {0, 0, -2}}; g_curveClosed = true; }
             if (g_meshEdit && g_meshEditObj == go) {
                 ImGui::SameLine();
-                if (ToolButton("From Selected Edges##curveedges", !g_meshSelEdges.empty(), "Select a chain of edges in Edit Mesh (key 2, Alt+click for a loop) first.", true)) {
+                if (ToolButton("From Selected Edges##curveedges", !g_meshSelEdges.empty(), "Select a chain of edges in Fix the surface (key 2, Alt+click for a loop) first.", true)) {
                     const auto chains = pmo::OrderChains(SelectedPolyEdges(mr->mesh));
                     const pmo::EdgeChain* best = nullptr;
                     for (const auto& ch : chains) if (!best || ch.verts.size() > best->verts.size()) best = &ch;
@@ -31334,7 +31334,7 @@ void DrawInspector(EditorState& ed) {
             ShapeOpButton(ed, mr, okay::modeling::ShapeOp::Subdivide, true, "##mesh");
             if (ImGui::IsItemHovered())
                 ImGui::SetTooltip(g_meshSelFaces.empty()
-                    ? "Split every face into 4. Select faces first (Edit Mesh) to subdivide just those."
+                    ? "Split every face into 4. Select faces first (Fix the surface) to subdivide just those."
                     : "Subdivides only the %d selected face(s). Deselect to subdivide the whole mesh.",
                     (int)g_meshSelFaces.size());
             ImGui::SameLine();
@@ -46421,7 +46421,7 @@ void DrawScene3D(EditorState& ed, ImDrawList* dl, ImVec2 canvasPos, ImVec2 canva
                     qs.push_back({"Sym X", "Mirror every G / R / S move across the local X = 0 plane.", true, g_meshSymX, "Toggle Symmetry X", 0});
                     qs.push_back({"Y", "Symmetry across the local Y = 0 plane.", true, g_meshSymY, "Toggle Symmetry Y", 0});
                     qs.push_back({"Z", "Symmetry across the local Z = 0 plane.", true, g_meshSymZ, "Toggle Symmetry Z", 0});
-                    qs.push_back({"Snap", "Snap moves, turns and scales (Ctrl also snaps while held). Set what it snaps to in Edit Mesh > Snapping and measuring.", true, g_snap, "Toggle Snap", 0});
+                    qs.push_back({"Snap", "Snap moves, turns and scales (Ctrl also snaps while held). Set what it snaps to in Fix the surface > Snapping and measuring.", true, g_snap, "Toggle Snap", 0});
                     qs.push_back({"Repeat", "Run the last tool again (Shift+R): " + (g_lastCmdName.empty() ? std::string("none yet") : g_lastCmdName), !g_lastCmdName.empty(), false, "", 1});
                     qs.push_back({"Find... (Ctrl+K)", "Search every modeling tool by name and run it.", true, false, "", 2});
                     const float pad = 7.0f, gap = 4.0f, lh2 = ImGui::GetTextLineHeight(), hgt2 = lh2 + 6.0f;

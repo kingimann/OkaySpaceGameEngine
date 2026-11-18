@@ -1870,3 +1870,14 @@ already made from them still open and play, and the scene builders stay in the e
 * Run here: `bash -n` on the script, and the new copy block on its own against the real source tree, then a listing of
   the result. **Not run:** the full Windows cross build, the zip, `makensis`, the installer, anything on Windows.
 * `release.yml` was not changed and no workflow was run.
+
+## Visual Script: move the view (pan)
+
+* Open the editor, open Visual Script (a graph with a few nodes). Try each, and the graph should slide with the mouse:
+  middle-mouse drag; right-mouse drag on empty canvas (a right click without moving still opens the add-node menu);
+  hold Space and left-drag (tapping Space without moving still opens the add-node menu); the arrow keys (Shift is faster).
+* Click the **Pan** button in the toolbar (it turns blue): plain left-drag now moves the view. Click it again to turn off.
+* Two-finger sideways scroll pans. Plain scroll zooms; Ctrl + scroll always zooms. On a laptop, turn on
+  **Graph menu > Scroll moves the view (trackpad)** to make two-finger scroll pan in every direction.
+* Drag the view far away: it stops so part of the graph stays on screen. **Fit** or **Home** brings everything back.
+* Not run in a real window yet; the decisions are covered by `ctest -R vs_pan`.

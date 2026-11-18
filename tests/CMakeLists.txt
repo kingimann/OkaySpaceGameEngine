@@ -4122,3 +4122,7 @@ add_executable(test_modeling_sidebar test_modeling_sidebar.cpp)
 target_include_directories(test_modeling_sidebar PRIVATE ${CMAKE_SOURCE_DIR}/editor)
 target_compile_definitions(test_modeling_sidebar PRIVATE OKAY_SOURCE_DIR="${PROJECT_SOURCE_DIR}")
 add_test(NAME modeling_sidebar COMMAND test_modeling_sidebar)
+
+add_executable(test_vs_pan test_vs_pan.cpp)
+target_include_directories(test_vs_pan PRIVATE ${CMAKE_SOURCE_DIR}/editor)
+add_test(NAME vs_pan COMMAND test_vs_pan)

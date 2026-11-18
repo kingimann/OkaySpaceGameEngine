@@ -629,7 +629,7 @@ const std::unordered_map<std::string, NodeSignature>& Table() {
         }
         // Quick blocks: typed fields only (any value), flow in when they have it. No data output.
         for (const QuickBlock& b : QuickBlocks())
-            m.emplace(b.type, NodeSignature{b.flowIn, std::string(b.fields.size(), 'A'), ""});
+            m.emplace(b.type, NodeSignature{b.flowIn, std::string(QbAllFields(b).size(), 'A'), ""});
         return m;
     }();
     return t;

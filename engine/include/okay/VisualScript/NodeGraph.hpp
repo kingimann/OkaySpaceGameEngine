@@ -384,6 +384,16 @@ public:
     void CaptureFlow(std::vector<VsFlowRecord>& flows, std::vector<int>& suspendedFileIds) const;
     void RestoreFlow(const std::vector<VsFlowRecord>& flows, const std::vector<int>& suspendedFileIds);
 
+    /// For a Quick block (one node in the editor): how many times the nodes it stands for have run, so the editor can
+    /// light the block up in Play. 0 for a node that is not a block.
+    unsigned BlockExecCount(int blockFileId) const {
+        unsigned total = 0;
+        for (const auto& r : m_blockRanges) {
+            if (r.second != blockFileId) continue;
+            for (const auto& n : m_nodes) if (n && n->fileId >= r.first && n->fileId < r.first + 200) total += n->execCount;
+        }
+        return total;
+    }
     /// Look a node up by its file / editor id (-1 when absent).
     int NodeByFileId(int fileId) const {
         for (const auto& n : m_nodes) if (n && n->fileId == fileId) return n->id;
@@ -392,6 +402,9 @@ public:
 
     /// Parse a graph from the simple OkayVS text format (see docs/visual_scripting.md).
     static std::unique_ptr<NodeGraph> Parse(const std::string& text, std::string* error = nullptr);
+private:
+    std::vector<std::pair<int, int>> m_blockRanges;   // {first expanded id, block id} per Quick block
+public:
 
 private:
     std::vector<std::unique_ptr<VsNode>> m_nodes;

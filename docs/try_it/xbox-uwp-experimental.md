@@ -15,7 +15,10 @@ What to do (needs a Windows PC and a release built with `-DOKAY_BUILD_XBOX_UWP=O
 5. If you ticked install, Windows shows **one** administrator (UAC) prompt: accept it. Then start the app from the Start menu: you should see a dark window with a coloured triangle (the background turns green once a pad is connected; left stick moves it, A centres it, B exits).
 6. The result is `<output>\<name>_<version>_x64.appx` (signed with a test certificate from PowerShell + SignTool: the page says so) and `OkaySpaceXbox-test.cer` (public part only).
 7. **Engine mode** (EXPERIMENTAL): tick it and build again to try running your exported game (`package\Data`): 3D scene, scripts, physics, gamepad and keyboard. The 2D / UI layer is not drawn. It has never been compiled with Microsoft's compiler, so a compile error is likely: the page then tells you to untick it. Please send the first error lines.
-8. For the console: `docs/xbox_uwp.md`, "Deploy to an Xbox in Developer Mode" (Device Portal upload).
+8. **No editor with the Xbox tab yet?** One command from a source checkout or `xbox-src`:
+   `powershell -ExecutionPolicy Bypass -File scripts\build-xbox-uwp.ps1 -SourceRoot . -ExportDir .\xbox-test -MinimalTest -SkipInstall`
+   It writes a test export, builds, packs and signs it (progress lines `[1/9]` ... `[9/9]`). On a failure it prints the step and the last 15 lines of output; send us `xbox-test\build.log`.
+9. For the console: `docs/xbox_uwp.md`, "Deploy to an Xbox in Developer Mode" (Device Portal upload).
 
 Checks you can run without Windows: `ctest -R xbox_uwp` (needs `-DOKAY_BUILD_XBOX_UWP=ON -DOKAY_BUILD_TESTS=ON`) runs the Linux tests: the old package/packer tests, `xbox_uwp_runtime` (shader bundle, display, lifecycle, pad mapping, paths, audio conversion, the backend over a fake host, the build plan and runner, the API audit, game config), `xbox_uwp_audit` (no forbidden UWP API in the engine sources the UWP target compiles) and `xbox_uwp_sources_cmake`.
 

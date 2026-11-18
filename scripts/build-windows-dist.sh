@@ -188,6 +188,10 @@ cp -r platform/xbox_uwp "$XBOX_SRC/platform/"
 rm -rf "$XBOX_SRC/platform/xbox_uwp/tests"
 cp scripts/xbox-check-sdk.ps1 scripts/xbox-compile-shaders.ps1 scripts/xbox-sign.ps1 scripts/xbox-install-local.ps1 "$XBOX_SRC/scripts/"
 cp -r engine/include "$XBOX_SRC/engine/"
+mkdir -p "$XBOX_SRC/engine/src/Graphics" "$XBOX_SRC/engine/src/Core"   # okay-xbox-export (-MinimalTest) compiles the engine's image code for the placeholder PNGs
+cp engine/src/Graphics/Image.cpp "$XBOX_SRC/engine/src/Graphics/"
+cp engine/src/Core/ImageDecode.cpp engine/src/Core/ImageDecodeJpeg.cpp engine/src/Core/ImageWrite.cpp engine/src/Core/ImageDecodeInternal.hpp "$XBOX_SRC/engine/src/Core/"
+[ ! -d engine/third_party/stb ] || { mkdir -p "$XBOX_SRC/engine/third_party" && cp -r engine/third_party/stb "$XBOX_SRC/engine/third_party/"; }
 [ -f "$XBOX_SRC/platform/xbox_uwp/app/CMakeLists.txt" ] || { echo "error: xbox-src did not get the UWP app" >&2; exit 1; }
 [ -s "$OUT_DIR/examples/vehicle/vehicle_test.okayscene" ] || { echo "error: examples/vehicle/vehicle_test.okayscene did not make it into the distribution" >&2; exit 1; }
 [ -s "$OUT_DIR/examples/ui_text/ui_text.okayscene" ] || { echo "error: examples/ui_text/ui_text.okayscene did not make it into the distribution" >&2; exit 1; }

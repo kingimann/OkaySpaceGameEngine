@@ -2,6 +2,7 @@
 // Runs on Linux with fake folder listings. It proves our logic, NOT that a Windows PC or an Xbox accepts the result.
 #include "XboxAppx.hpp"
 #include "XboxExport.hpp"
+#include "XboxExportTool.hpp"
 #include "XboxSdkCheck.hpp"
 #include <cstdio>
 #include <cstdlib>
@@ -96,6 +97,29 @@ static void NewerVsTests() {
     // an unknown major gets no generator (CMake picks), a missing version is tolerated
     CHECK(GeneratorForMajor(99).empty() && GeneratorForMajor(16) == "Visual Studio 16 2019" && MajorOf("") == 0 && MajorOf("17.9") == 17 && MajorOf("x") == 0);
     CHECK(!UwpComponentIds().empty() && std::string(kVcToolsComponentId()) == "Microsoft.VisualStudio.Component.VC.Tools.x86.x64");
+}
+
+static void ExportToolTests() {
+    namespace fs = std::filesystem;
+    ExportToolOptions o; std::string err;
+    CHECK(ParseExportArgs({"--out", "x"}, o, err) && o.outDir == "x" && o.in.company == "OkaySpaceTest" && o.in.version == "1.0.0.0" && o.in.gameName == "OkaySpace Test");
+    CHECK(ParseExportArgs({"--out", "x", "--name", "My Game", "--version", "2.1.0.0", "--company", "Me", "--bundle-id", "a.b", "--icon", "i.png"}, o, err) && o.in.gameName == "My Game" && o.in.version == "2.1.0.0" && o.in.company == "Me" && o.in.bundleId == "a.b" && o.in.iconPath == "i.png");
+    CHECK(!ParseExportArgs({}, o, err) && err.find("--out") != std::string::npos);
+    CHECK(!ParseExportArgs({"--out"}, o, err) && err.find("missing value") != std::string::npos);
+    CHECK(!ParseExportArgs({"--out", "--name"}, o, err));
+    CHECK(!ParseExportArgs({"--out", "x", "--bogus"}, o, err) && err.find("unknown") != std::string::npos);
+    CHECK(ParseExportArgs({"--help"}, o, err) && o.help);
+    // the folder it writes, into a folder that does not exist yet
+    const fs::path tmp = fs::temp_directory_path() / "okay_xbox_tool_test" / "does" / "not" / "exist";
+    fs::remove_all(fs::temp_directory_path() / "okay_xbox_tool_test");
+    ExportToolOptions e; CHECK(ParseExportArgs({"--out", tmp.string()}, e, err));
+    std::string msg; CHECK(WriteTestExport(e, msg));
+    CHECK(fs::exists(tmp / "package" / "AppxManifest.xml") && fs::exists(tmp / "README_XBOX.txt") && fs::exists(tmp / "PLACEHOLDER_ASSETS.txt") && fs::exists(tmp / "package" / "Data" / "README.txt") && fs::exists(tmp / "xbox-export.json"));
+    int pngs = 0; for (auto& f : fs::directory_iterator(tmp / "package" / "Assets")) if (f.path().extension() == ".png") ++pngs; CHECK(pngs == 14);
+    { std::ifstream f(tmp / "package" / "AppxManifest.xml"); std::stringstream ss; ss << f.rdbuf(); const std::string m = ss.str();
+      CHECK(m.find("CN=OkaySpaceTest") != std::string::npos && m.find("Version=\"1.0.0.0\"") != std::string::npos && m.find("Executable=\"OkaySpaceXbox.exe\"") != std::string::npos); }
+    { ExportToolOptions bad = e; bad.in.version = "not a version"; std::string m2; CHECK(!WriteTestExport(bad, m2)); CHECK(!m2.empty()); }
+    fs::remove_all(fs::temp_directory_path() / "okay_xbox_tool_test");
 }
 
 static void SdkTests() {
@@ -333,7 +357,7 @@ static void AppxTests() {
 
 int main() {
     SdkTests();
-    NewerVsTests(); ManifestTests(); AppxTests(); AssetTests(); ExportTests();
+    NewerVsTests(); ExportToolTests(); ManifestTests(); AppxTests(); AssetTests(); ExportTests();
     if (g_fail) { std::printf("%d check(s) FAILED\n", g_fail); return 1; }
     std::printf("xbox_uwp: all checks passed\n");
     return 0;

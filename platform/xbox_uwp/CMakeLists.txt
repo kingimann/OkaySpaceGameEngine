@@ -23,6 +23,12 @@ add_executable(okay-appx tool/okay_appx.cpp)
 target_include_directories(okay-appx PRIVATE ${CMAKE_CURRENT_SOURCE_DIR} ${CMAKE_SOURCE_DIR}/engine/include)
 set_target_properties(okay-appx PROPERTIES RUNTIME_OUTPUT_DIRECTORY ${CMAKE_BINARY_DIR}/bin)
 
+# okay-xbox-export: writes a minimal TEST export folder from the command line (scripts/build-xbox-uwp.ps1 -MinimalTest compiles it with cl.exe).
+add_executable(okay-xbox-export tool/okay_xbox_export.cpp)
+target_link_libraries(okay-xbox-export PRIVATE okay::engine)   # the engine's image code writes the placeholder PNGs
+target_include_directories(okay-xbox-export PRIVATE ${CMAKE_CURRENT_SOURCE_DIR} ${CMAKE_SOURCE_DIR}/engine/include)
+set_target_properties(okay-xbox-export PROPERTIES RUNTIME_OUTPUT_DIRECTORY ${CMAKE_BINARY_DIR}/bin)
+
 # Offline shaders: okay-shaders writes the HLSL text and the manifest around fxc's .cso files (scripts/xbox-compile-shaders.ps1).
 add_executable(okay-shaders tool/okay_shaders.cpp)
 target_include_directories(okay-shaders PRIVATE ${CMAKE_SOURCE_DIR}/engine/include)

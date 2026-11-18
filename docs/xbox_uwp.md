@@ -102,6 +102,19 @@ UNVERIFIED**; they are only shown, never used to decide: the folders decide. The
 CMake picks), with `-DCMAKE_GENERATOR_INSTANCE=<install>` and `-T version=<discovered MSVC folder>` instead of a fixed `v143`. Tested on Linux with fake vswhere output and folders for 2022, a newer install, a newer install without the UWP
 component and with ARM64-only extras, both installed, and several toolset folders (`14.9` < `14.44` < `14.100`). Never run on Windows; the PowerShell version of the check was not run at all.
 
+## One command, no editor needed (`-MinimalTest`)
+
+From a source checkout (or the `xbox-src` folder of a release), in PowerShell, with Visual Studio's UWP tools installed:
+
+    powershell -ExecutionPolicy Bypass -File scripts\build-xbox-uwp.ps1 -SourceRoot . -ExportDir .\xbox-test -MinimalTest -SkipInstall
+
+`-ExportDir` may be a folder that does not exist yet. `-MinimalTest` compiles `okay-xbox-export` (cl.exe, using the `vcvars64.bat` of whichever Visual Studio the SDK check found) and writes a minimal TEST export:
+`package\AppxManifest.xml` (publisher `CN=OkaySpaceTest`, version 1.0.0.0), 14 placeholder tile PNGs (labelled placeholders in `PLACEHOLDER_ASSETS.txt`), `README_XBOX.txt`, a `package\Data` with only a note (so the app shows its triangle).
+Then the normal steps run, printed as `[n/9]` lines: tool check, export, our packer, CMake setup, UWP compile, copy, offline shaders, pack and check, test certificate and SignTool. `-SkipInstall` is accepted and does nothing (this script has no install step;
+the editor's one-click build has the optional install). `-SkipSign` stops before signing. On any failure the script prints the step name, the **last 15 lines** of the failing tool's output and the path of **`<ExportDir>\build.log`** (the full log, paste it to us).
+The tool's arguments (also testable alone): `okay-xbox-export --out <folder> [--name] [--company] [--version] [--bundle-id] [--icon]`. Tested on Linux: argument parsing and the folder layout (14 PNGs, manifest with the right publisher and version, folder created from nothing,
+a bad version refused). **Never run:** the PowerShell script (re-read by hand for quoting, `$LASTEXITCODE`, `Resolve-Path` on a missing folder and stderr under `$ErrorActionPreference = 'Stop'`), cl.exe on the tool (it compiles four engine image files; MSVC has not seen them).
+
 ## The pipeline
 
 1. **Editor:** File > Build Settings, platform **Xbox (exp.)**, set name, version and icon (Player page), Export. It writes

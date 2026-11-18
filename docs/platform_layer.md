@@ -306,8 +306,21 @@ never fires), touch, DPI / multi-monitor queries, window icons, IME composition 
 ### Windows (compiles, untested)
 
 `OwnWin32.cpp`: Win32 window and input, `WM_CHAR` text, WGL context, Win32 clipboard, `QueryPerformanceCounter`, XInput pads,
-`WM_DROPFILES`. **Only syntax-checked with MinGW (`-fsyntax-only`) on Linux. Never run on Windows.** No audio device
-(`OpenAudio` returns null).
+`WM_DROPFILES`. **Only syntax-checked with MinGW (`-fsyntax-only`) on Linux. Never run on Windows.**
+
+Round 4 (this slice): **audio device** and the **scan code table**.
+
+| New file | What | Written from | Tested where |
+|---|---|---|---|
+| `engine/src/Platform/OwnWin32Audio.cpp` | WASAPI shared mode, event driven, playback and capture, queue and callback mode, device list (index 0 is `default`, then the active endpoints by friendly name). One `CreateThread` per device owns its COM objects (no `std::thread`, rule 21a). Asks for the exact format with `AUTOCONVERTPCM` + `SRC_DEFAULT_QUALITY`; if the engine refuses and `allowChange` is set it runs at the mix format (16-bit PCM or 32-bit float only) and says so in the `got` spec. Links `ole32`. | The public Microsoft documentation of `IMMDeviceEnumerator`, `IAudioClient`, `IAudioRenderClient`, `IAudioCaptureClient` | **MinGW `-fsyntax-only` only. Never run.** |
+| `engine/src/Platform/AudioPump.hpp` | The parts with no Windows in them: 100 ns time maths, period and buffer sizes, `WAVEFORMATEX(EXTENSIBLE)` field values and default speaker masks, the mix-format fallback rule, a growable byte queue with a spin flag (no mutex), what the pump does with one playback or capture buffer (underrun silence, silent capture packets, queue cap) | The WAVEFORMATEX, speaker position and `REFERENCE_TIME` documentation | `platform_audio_pump` (343 checks, also run under ASan and UBSan), on Linux |
+| `engine/src/Platform/Win32Keys.hpp` | The scan code to HID key table, moved out of `OwnWin32.cpp`. Two keys were missing and are now there: the ISO key (scan 0x56) and the menu key (extended 0x5D). `Key::NonUsBackslash = 100` and `Key::Application = 101` are new (HID numbers, SDL's too). | The Microsoft scan code table (set 1) and the USB HID keyboard page | `platform_audio_pump` |
+
+Honest limits: nothing here has opened a real audio endpoint. Open questions only a Windows run answers: whether `AUTOCONVERTPCM`
+is accepted for 6 and 8 channels on common drivers (the mix-format fallback covers a refusal), device-removal handling (the pump
+stops and the device goes silent, it does not reopen), and latency (three periods, at least 20 ms, is a guess). `QueuedBytes`
+counts only our queue, not what is already inside the engine's buffer (the Linux device does the same).
+Still missing on Windows: IME composition, raw input for non-XInput pads, per-monitor DPI queries, window icon, display queries.
 
 ### macOS (not written)
 
@@ -319,6 +332,7 @@ MinGW cross-compiler, so nothing was written rather than writing code that was n
 | ctest name | What | Needs |
 |---|---|---|
 | `platform` | registry, key numbering vs SDL scancodes, timers (both backends), `BasePath` (equals the executable's directory), `PrefPath` (created, writable, under `$XDG_DATA_HOME`), `PreferredLocales` (own parsing of `$LANGUAGE` / `$LC_ALL` is exact), error box / DPI on own report "not supported", the US `KeyForChar` table, audio devices on both backends (queue, clear, pause, callback, capture; SDL dummy driver / ALSA `null` device), controllers enumeration, own evdev mapping fed through a pipe | nothing; audio parts print `SKIP` when no device can be opened |
+| `platform_audio_pump` | Pure Windows helpers (see "Windows" above): time maths, wave formats, speaker masks, mix-format fallback, byte queue against a plain model, playback and capture buffer rules, the scan code table | nothing |
 | `platform_window_sdl2`, `platform_window_own` | create / resize / title, GL clear colour read back with `glReadPixels` (and for `own`, the window's pixels read back from the X server with `XGetImage`), keyboard, modifiers, text input (incl. a non-ASCII character), mouse buttons / wheel / motion, relative mouse, clipboard (incl. a second X client reading ours and vice versa). Stage 2 added: `KeyForChar` on the US and the German layout (z and y swap places), `ModState`, `AppendExtendedKeys` (F-keys, Tab, navigation, left/right modifiers) with keys held through xdotool, `RelativeMouseState` sums (12,7 then 0,0 then -5,3), `IsCursorShown`, fullscreen at creation and toggled, maximised, `SetIcon` (valid and invalid), refresh rate, base path; on sdl2 also touch events and flipped / normal wheel events pushed as SDL would | Xvfb, `xdotool` (XTEST input). Skipped (exit 77) when either is missing |
 | `platform_default_env_sdl2`, `platform_default_env_own` | `OKAY_PLATFORM_BACKEND` in the environment overrides the build's default backend (`test_platform --print-default`) | nothing |
 

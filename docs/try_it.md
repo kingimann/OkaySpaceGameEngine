@@ -98,13 +98,15 @@ release job or the installer build for this change.
 | security-sec1 | Security plan SEC1: script file paths, update signature status, relay caps, reactions SQL | examples\security_paths\script_paths.okayscene (Play, read Console); Settings > About and Help > About line; SQL and relay are owner steps | Tests on Linux only; editor/launcher lines not run; nothing on Windows or real Supabase |
 | vpa | Multi-window panels start cleanly on every video driver | `Tools\OkayEngine.exe`: drag a panel tab outside the editor | Linux only (Xvfb, a build with assertions on); Windows unverified |
 | 7n | Every own replacement in one table: the switch, the sample, how to tell it is on, and what is missing | section 7n below and `docs/own_flip_proposal.md` | Table is new. Read from the code and from CI logs, not run on Windows |
-| 8 | Own model readers (off by default) | `OKAY_OWN_STACK=1` or `OKAY_OWN_<FMT>=1`, `examples\own_readers` | Switch works on a release; see the table |
+| 8 | Own model readers: **the default** since 2026-11-17 (`OKAY_THIRD_PARTY=1` = back to Assimp / ufbx) | import anything; `examples\own_readers`; `OKAY_THIRD_PARTY=1` or `OKAY_OWN_<FMT>=0` to go back | Not in a release yet (branch `claude2/own-readers-integration`); Linux tests only, Windows unverified |
 | 9 | Own WAV decoder (off by default) | `OKAY_OWN_WAV=1`, `examples\own_wav` | Switch works; no log line |
 | 10 | Own HTTP client (off by default) | none | **Cannot be tried on Windows** |
 | 11 | Own platform layer (off by default) | `OKAY_PLATFORM_BACKEND=own` | Unverified on Windows, never run there |
 | 12 | OkayUI instead of Dear ImGui (off by default) | `OKAY_UI_BACKEND=okayui` | Unverified, only a few screens |
 | 13 | Own crypto | none, on purpose | **Cannot and must not be tried** |
 | 15 | One shared inflate (zlib/gzip) decoder: PNG, `.blend`, FBX, `.x`, `.zgl`, 3MF/AMF, HTTP gzip | open a PNG texture; `examples\own_readers\cube_gzip.blend`, `cube_compressed_arrays.fbx` | PNG always on; the readers need their switch; HTTP gzip is Linux only |
+| 15b | Blender reader applies Mirror and Subdivision Surface modifiers (off by default, like the reader) | `OKAY_OWN_BLEND=1`, `examples\own_readers\mirror_subdiv_box.blend` | Tests only (Linux); not run in a Windows editor |
+| 15c | Blender reader: Subdivision Surface options of Blender 2.9+ (UV Smooth, Boundary Smooth keep corners, limit surface, creases by DeRose's rules) | `OKAY_OWN_BLEND=1`, `examples\own_readers\subsurf_options_42.blend` | Tests only (Linux); synthetic file, not written by Blender |
 | ci1 | CI and release speed-up: how to tell it worked | GitHub Actions (not in the Windows release) | Unverified until a real CI run |
 
 ---
@@ -1698,6 +1700,35 @@ settings. The Console says "Added Player Controller (View: Both ...)" when you u
 an old First plus Third scene load as one Player Controller and keep their settings), `templates_work` (one template, old titles
 still build, Humanoid gone), `scene_cameras`, `player_controller`, `view_upgrade`.
 
+## Importing a `.raw` file with several groups no longer crashes (bug fix, branch `claude2/own-readers-speed-3`, not released yet)
+
+The Windows release reads `.raw` (raw triangle text) through Assimp, and Assimp 5.4.3 breaks on a file with two or more groups
+of triangles: the import crashed. Such a file now goes to our own RAW reader. To try it once released: save this as `two.raw`
+
+```
+first
+0 0 0  1 0 0  0 1 0
+second
+0 0 1  1 0 1  0 1 1
+```
+
+and import it in the editor. Expect two parts (`first`, `second`) and a log line "... more than one group of triangles, which
+Assimp 5.4.3's RAW importer cannot read safely; reading it with our own RAW reader". A `.raw` file with one group still goes to
+Assimp. Not tried on Windows (checked on Linux in a build with Assimp). Details: `docs/own_raw_reader.md`.
+
+## Model reader bench: our readers against Assimp (developer tool, Linux)
+
+Not in the Windows release: it needs a build with `-DOKAY_USE_ASSIMP=ON` and Assimp's test files. On a Linux checkout:
+
+1. Configure with `-DOKAY_USE_ASSIMP=ON -DOKAY_BUILD_TESTS=ON` and build `bench_model_readers`.
+2. `OKAY_MODEL_CORPUS=<assimp v5.4.3 checkout>/test build/tests/bench_model_readers --format dae` prints one row per Collada
+   file (our read time and peak heap against Assimp's, the full import with each) and a summary line saying "met" or "NOT
+   met". Leave out `--format` for every reader (about half an hour).
+3. `--digest` prints a hash of our output per file (it must not change when only speed work was done); `--compare` lists
+   where our reader and Assimp disagree on counts and bounds.
+
+What to expect and the latest numbers: `docs/own_readers_speed.md`.
+
 ## Scene view: the selected object's name sits on its object (bug fix)
 
 The small name box of the selected object in the 3D Scene view used to be drawn a gizmo's length to the right of the
@@ -1933,6 +1964,7 @@ Checked by reading the code and the CI logs on 2026-11-15. Nothing here was run 
 | BVH, SMD, MD5, MS3D, ASE, Blender | `OKAY_OWN_<FMT>=1` | **none** | `readers=own(<fmt>)` | no sample |
 | 3MF, AMF, X3D, DXF, LWO, MD2, MD3, IRRMESH, B3D, X | `OKAY_OWN_<FMT>=1` | **none** | `readers=own(<fmt>)` | no sample |
 | AC3D, OGRE, XGL, IRR, NFF, TER, MDC, HMP, CSM, Q3D, RAW, IQM, COB, NDO, PMX, LWS | `OKAY_OWN_<FMT>=1` | **none** | **nothing**: they are not in the stack line and no log line says which reader ran | no sample and no way to tell |
+| OGRE binary, ZAE, `.xml` (gap batch) | `OKAY_OWN_OGREBIN=1`, `OKAY_OWN_ZAE=1`, `OKAY_OWN_XML=1` | `examples\own_readers\cube.mesh`, `cube.zae`, `cube_irrmesh.xml` | **nothing** (same as the row above) | no way to tell |
 | STL and PLY first | build option `OKAY_PREFER_OWN_READERS` only | none | nothing | no run-time switch, no sample, no sign |
 | WAV | `OKAY_OWN_WAV=1` (`0` = old) | `examples\own_wav\own_wav_test.okayscene` with `mulaw_tone.wav` | you hear it: old = buzzy, own = a clean 440 Hz tone | no startup word, no log line |
 | Own HTTP | Linux builds only: `OKAY_OWN_HTTP=1` | none | `http=own` (Linux) | cannot be tried on the Windows download |
@@ -1946,6 +1978,23 @@ and PLY, no import log line) are "Step 0" of the proposal. Until they are closed
 at the top (rule 4a).
 
 ### 8. Own model readers
+
+* **Now the default (owner approval 2026-11-17; branch `claude2/own-readers-integration`, not in a release yet).** Every model
+  format that has a reader of ours is read by it with nothing set: FBX, COLLADA, Blender, 3DS, STL, PLY, `.x` and about 40 more
+  (not NDO: that reader refuses every file). Assimp and ufbx are still in the program: a file ours refuses goes to them.
+  **Steps, once a release has it:**
+  1. Start `Tools\OkayEngine.exe` with nothing set. **File > Import Model...**, choose `examples\own_readers\cube.off`. A white
+     cube appears and the **Console** says `model import '...cube.off': read by the own OFF reader in ... ms`.
+     **Help > About OkaySpace** says `readers=own(fbx,dae,3ds,...)+assimp`.
+  2. Close it. In a Command Prompt: `set OKAY_THIRD_PARTY=1`, then start `Tools\OkayEngine.exe` from that window. Import the same
+     file: the same cube, and the Console says `read by Assimp in ... ms`. About says `readers=ufbx+assimp`. This is the way back
+     for **every** model format (only the exact value `1` counts).
+  3. Close it, `set OKAY_THIRD_PARTY=`, `set OKAY_OWN_OFF=0`, start again and import: `read by Assimp` for `.off` only; any other
+     format is still ours. `OKAY_OWN_FBX=0` sends FBX back to ufbx; `OKAY_OWN_STL=0` / `OKAY_OWN_PLY=0` work for STL and PLY.
+  4. If a model looks wrong with ours and right with `OKAY_THIRD_PARTY=1`, that is a bug in our reader: please report the file.
+  Checked on Linux by `own_dispatch_c`, `own_dispatch_d`, `own_dispatch_gap`, `own_stack`, `own_stack_third_party` and
+  `model_readers`; **nothing here was run on Windows** and no editor window was opened (unverified).
+* The text below is from before the switch, when every reader had to be switched on; the variables still work the same way.
 
 * **Variables.** `OKAY_OWN_STACK=1` turns on all of them (plus the settings below). Or one at a time: `OKAY_OWN_FBX`,
   `OKAY_OWN_COLLADA` (.dae), `OKAY_OWN_3DS`, `OKAY_OWN_BVH`, `OKAY_OWN_OFF`, `OKAY_OWN_SMD`, `OKAY_OWN_MD5`,
@@ -1963,13 +2012,33 @@ at the top (rule 4a).
      `readers=own(off)+assimp` (with `OKAY_OWN_STACK=1`: a long `own(fbx,dae,3ds,...)` list).
   2. **File > Import Model...** and choose `examples\own_readers\cube.off`. A white unit cube appears in the scene.
   3. Close the editor, start it again with no variable, import the same file: you get the same cube, read by Assimp.
-* **How you can tell it is really ours.** Only the About popup or startup line (`own(off)`). There is no per-import
-  log line saying which reader ran, and the two readers give the same cube here (the corpus comparisons in
-  `docs/own_stack_rollout.md` say how closely they agree). Honest gap: a "read with the built-in OFF reader" Console
-  line on import would close this; it does not exist. Without Assimp in a build, a format whose own reader is off fails
+* **How you can tell it is really ours.** Since 2026-11-16 (branch `claude2/own-readers-gap-2`, not in a release yet) every
+  import writes one line in the **Console**: `model import '...cube.off': read by the own OFF reader in 0.05 ms (whole
+  import 0.40 ms)`. Without the variable the same import says `read by Assimp in ...`. If ours refuses a file and Assimp
+  reads it, the line says `read by Assimp (the own OFF reader refused it: <why>)`. FBX says `ufbx` or `the own FBX reader`,
+  glTF `the own glTF reader`. Before that change only the About popup or startup line (`own(off)`) told you. Tested on
+  Linux by `lwo_reader` (the line for a `.lxo` import); the Console showing it is **unverified** (no editor window was
+  opened). Without Assimp in a build, a format whose own reader is off fails
   with `no OFF reader enabled: our own reader is off by default (set OKAY_OWN_OFF=1 ...)`; the Windows release has
   Assimp, so you will not see that message.
 * **More sample files** for other formats are under `tests\data\models` in a source checkout (not in the release).
+* **The "Assimp gap" readers (2026-11-16, off by default)**: OGRE binary meshes, ZAE archives and `.xml` model files. Each has
+  a cube in `examples\own_readers`, written by our own `scripts/gen_gap_fixtures.py` (no outside source):
+  * **OGRE binary `.mesh`**: `set OKAY_OWN_OGREBIN=1`, start the editor, **File > Import Model...**, choose
+    `examples\own_readers\cube.mesh`. A unit cube appears (12 triangles, material `Cube/White`; no `.material` file ships, so
+    it is the default white). `docs/own_ogre_reader.md`.
+  * **ZAE (COLLADA in a ZIP)**: `set OKAY_OWN_ZAE=1`, import `examples\own_readers\cube.zae`. A red unit cube appears.
+    For a ZAE with textures inside, ours writes each image next to the `.zae` as `<name>_zae_<file>`. `docs/own_zae_reader.md`.
+  * **`.xml` (Irrlicht scene or mesh, COLLADA, XGL, OGRE XML by the root element)**: `set OKAY_OWN_XML=1`, import
+    `examples\own_readers\cube_irrmesh.xml`. A green unit cube appears. `docs/own_xml_reader.md`.
+  * **Modo `.lxo`** (added on branch `claude2/own-readers-gap-2`, not in a release yet): `set OKAY_OWN_LXO=1`, import
+    `examples\own_readers\cube.lxo`. A **blue** unit cube appears (material `Blue`, colour 0.2 / 0.4 / 0.9, from the file's
+    material item). The Console line says `read by the own LXO reader`. Without the variable Assimp reads it: the same cube,
+    but **grey** (Assimp does not read Modo's material items) and the line says `read by Assimp`. `docs/own_lwo_reader.md`,
+    section LXO.
+  * Without the variable the same files are read by Assimp (the Windows release has it), so you see the same cube (grey for
+    `.lxo`); the Console line on each import names the reader (see above). Checked on Linux by the `own_dispatch_gap` test (all
+    four samples read as 12 triangles, area 6); **not run on Windows**.
 
 ### 9. Own WAV decoder
 
@@ -2025,6 +2094,10 @@ through SDL2 anyway, so only the seam parts (timers, audio, gamepads, voice) wou
 `platform=own` when it took effect; if this release was not built with the own backend it stays `platform=sdl2`.
 **Unverified, not ready**, expect problems. Never ship with it.
 
+Audio on the own Windows backend (WASAPI) is new and has never run on Windows: with `OKAY_PLATFORM_BACKEND=own` the player's
+sound goes through it. If you hear nothing, or the startup log shows an audio error, that is the thing to report. A Linux check of
+its pure parts: `ctest -R platform_audio_pump`.
+
 ### 12. OkayUI
 
 `OKAY_UI_BACKEND=okayui` (or `OKAY_OWN_STACK=1`) starts the launcher and editor on OkayUI where it is compiled in. Only
@@ -2072,6 +2145,61 @@ streams it compared with an independent slow decoder and ends with `ok:`.
 `own_http_inflate`, `png_hint`, and the existing `image_decoder`, `blend_reader`, `3mf_reader`, `amf_reader`, `fbx_reader`,
 `fbx_hostile`, `x_reader`, `xgl_reader`, `own_http` tests. **Unverified:** every editor step above (nothing here opens a
 real editor window), anything on Windows, real-world files other than our own samples.
+
+### 15b. Blender files: Mirror and Subdivision Surface modifiers are applied
+
+**What it is.** Our own `.blend` reader (off by default, `OKAY_OWN_BLEND=1`) used to show a Blender model as it is stored,
+without its modifiers, so a model with a Subdivision Surface looked blocky and a mirrored model showed only one half.
+Now it applies the two modifiers Assimp applies, Mirror and Subdivision Surface, in the order of the modifier stack. Any
+other modifier (Array, Boolean, Solidify, ...) is skipped and named in one log line, for example
+`modifier 'Array' (Array) not applied (not supported) on 1 object(s)`.
+
+**Steps.**
+1. `set OKAY_OWN_BLEND=1`, start the editor (`Tools\OkayEngine.exe`).
+2. **File > Import Model...**, choose `examples\own_readers\mirror_subdiv_box.blend` (our own test file, written by
+   `scripts/gen_blend_fixtures.py`, not by Blender). It stores half a box (one side open) with Mirror, Array and
+   Subdivision Surface level 1.
+3. You should see one closed, rounded box, symmetric left to right (the mirror filled in the missing half and the
+   subdivision rounded it), 80 triangles. One bottom edge on each side stays straight (it has a crease). The console
+   or log shows the warning about the Array modifier.
+4. If you have Blender files with Subdivision Surface or Mirror of your own, import them the same way: the result should
+   look like Blender's viewport (the subdivision level used is the higher of the viewport and render levels).
+
+**What to expect if it is off** (`OKAY_OWN_BLEND` not set): Assimp reads the file, as before.
+
+**Status.** Verified here (Linux, headless): `blend_modifiers` (hand-computed results, the sample file, the four Assimp
+test files with modifiers: triangle counts equal Assimp's on `SuzanneSubdiv_252`, `yxa_1` and `HUMAN`), `blend_reader`,
+`blend_hostile`, `model_corpus`, ASan and UBSan runs. **Unverified:** the editor steps (no window opened), anything on
+Windows, real Blender 2.8+ files (the corpus files are Blender 2.49 to 2.60), and Blender's own output (no Blender run).
+
+### 15c. Blender files: the Subdivision Surface options of Blender 2.9+
+
+**What it is.** Blender 2.9 and later give the Subdivision Surface modifier more options. Our `.blend` reader (off by
+default, `OKAY_OWN_BLEND=1`) now reads and applies them: **UV Smooth** (which UV points stay put: none, corners, junctions,
+concave corners, boundaries, or all smoothed), **Boundary Smooth: Keep Corners** (an open mesh keeps its corners),
+**Use Limit Surface** (on by default in Blender: the points are moved onto the final smooth surface, so the shape is a
+little rounder than plain subdivision) and **Use Creases** (creased edges stay sharp for some levels, by the rules of the
+DeRose 1998 paper). Files older than 2.9 behave as before.
+
+**Steps.**
+1. `set OKAY_OWN_BLEND=1`, start the editor (`Tools\OkayEngine.exe`).
+2. **File > Import Model...**, choose `examples\own_readers\subsurf_options_42.blend` (our own test file in the Blender
+   4.2 layout, written by `scripts/gen_blend_fixtures.py`, **not** by Blender). It stores a flat 3 x 3 grid of points with
+   the middle point raised, one creased edge, and a Subdivision Surface with 2 levels, limit surface on, UV Smooth
+   "Keep Corners" and Boundary Smooth "Keep Corners".
+3. You should see a square sheet with a smooth bump in the middle, 128 triangles. Its four corners are exactly at the
+   corners of the original square (keep corners); without that option they would be pulled in. The edge from the bump to
+   the middle of one side is sharper than the rest (the crease). A texture applied to it covers the whole square to its corners.
+4. Your own Blender 2.9+ files with these options can be imported the same way.
+
+**What to expect if it is off** (`OKAY_OWN_BLEND` not set): Assimp reads the file (Assimp does not read these options).
+
+**Status.** Verified here (Linux, headless): `blend_modifiers` (limit positions checked against hand-computed values and
+against each other across levels, every UV mode, keep corners, the paper's crease rules, the three new fixture files
+against the same steps done by hand), `blend_reader`, `blend_hostile`, `blend_fixtures_check`, `model_corpus`.
+**Unverified:** the editor steps (no window opened), anything on Windows, and above all real Blender 2.9+ files: the field
+names and option values are from memory of Blender's file format (a `.blend` file names its fields but does not say
+what the option numbers mean) and no real file with these options was available.
 
 ## 7s. Sandbox fps: read where the time goes (F3) and the dig-time fix
 

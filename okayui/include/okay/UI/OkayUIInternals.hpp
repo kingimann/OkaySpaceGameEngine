@@ -76,6 +76,8 @@ struct WindowRef {
     Vec2 Pos{0, 0}, Size{0, 0};
     WindowRef* ParentWindow = nullptr;     // always null here (no child windows)
     WindowRef* RootWindow = nullptr;       // the entry itself
+    int Flags = 0;                         // Window_Modal for a modal popup's entry; 0 for the others (the flags Begin was given are not kept)
+    ImRect Rect() const { return ImRect(Pos.x, Pos.y, Pos.x + Size.x, Pos.y + Size.y); }
     bool Active = false;                   // drawn this frame
     bool WasActive = false;                // drawn this frame or the one before
     float WindowBorderSize = 1.0f;
@@ -146,6 +148,8 @@ struct DockContextRef {
     struct NodeMap { ImVector<StoragePairRef> Data; } Nodes;   // every node of the live layout, keyed by node id (val_p is a DockNodeRef*)
 };
 
+/// An open popup as a window entry (Pos, Size, Flags; Name empty). OpenPopupStack lists them oldest first; the entries are valid until the next refresh.
+struct PopupDataRef { WindowRef* Window = nullptr; unsigned PopupId = 0; };
 struct Context {
     unsigned ActiveId = 0, HoveredId = 0;
     float HoveredIdTimer = 0.0f;           // seconds the pointer has been over the same item (worked out from the times RefreshContext is called; call it each frame for an accurate value)
@@ -155,7 +159,9 @@ struct Context {
     WindowRef* NavWindow = nullptr;        // the focused window (what SetWindowFocus / a click chose), else null
     int FrameCount = 0;
     double Time = 0.0;
+    struct { bool WantVisible = false, WantTextInput = false; Vec2 InputPos{0, 0}; float InputLineHeight = 0.0f; } PlatformImeData;   // written by hosts; OkayUI reads GetImeRect() / WantsTextInput() instead
     int ConfigNavWindowingKeyNext = 0, ConfigNavWindowingKeyPrev = 0;   // accepted (OkayUI has no window-switching keys of its own)
+    ImVector<PopupDataRef> OpenPopupStack;
     ImVector<WindowRef*> Windows;          // every window of the table, back to front (floating windows by stacking order, docked and undrawn ones first)
     DockContextRef DockContext;
     StyleInfo Style;                       // a copy of GetStyle() at the refresh
@@ -163,6 +169,8 @@ struct Context {
 /// The windows OkayUI has a slot for (everything Begin was called for and not yet forgotten), for OkayUIDockNodes.cpp: not for hosts.
 struct WindowSlotInfo { char title[64] = {0}; unsigned id = 0; Vec2 pos{0, 0}, size{0, 0}; unsigned long long lastFrame = 0, z = 0; bool focused = false; };
 int ListWindowSlots(WindowSlotInfo* out, int cap);
+struct PopupSlotInfo { unsigned id = 0; Vec2 pos{0, 0}, size{0, 0}; bool modal = false; };
+int ListOpenPopups(PopupSlotInfo* out, int cap);
 unsigned WindowIdOfTitle(const char* title);          // the id a window of this title has (GetID with no PushID in force)
 /// Set the default width of the value column for the rest of the current window (PushItemWidth, undone when the window ends). Nothing outside a window.
 void SetWindowItemWidthDefault(float width);
@@ -227,6 +235,8 @@ public:
     bool  GetBool(unsigned id, bool def = false) const { return GetInt(id, def ? 1 : 0) != 0; }
     void  SetBool(unsigned id, bool value) { SetInt(id, value ? 1 : 0); }
     float GetFloat(unsigned id, float def = 0.0f) const;
+    /// A pointer to the stored float (made with `def` when missing); null when the store is full. Stays valid until ResetState / Clear (the slot does not move).
+    float* GetFloatRef(unsigned id, float def = 0.0f);
     void  SetFloat(unsigned id, float value);
     void* GetVoidPtr(unsigned id) const;           // null when never set
     void  SetVoidPtr(unsigned id, void* ptr);

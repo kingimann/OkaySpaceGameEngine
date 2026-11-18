@@ -98,6 +98,7 @@
 #include "okay/Platform/NativeFetch.hpp"      // own HTTP client in front of curl for the update download (only with OKAY_OWN_HTTP)
 #ifdef OKAY_HAVE_OKAYUI
 #include "okay/UI/OkayUI.hpp"           // demo overlay: OkayUI drawn on top of ImGui
+#include "OkayUIHostMode.hpp"           // window mode (OKAY_UI_HOST=okayui): OkayUI owns the window, no Dear ImGui
 #include "OkayUIHost.hpp"               // the opt-in OkayUI backend: SDL input for OkayUI, the hosted region (docs/own_ui_toolkit.md, section 5)
 #endif
 #include "Splash.hpp"                   // branded loading frame (no black screen at startup)
@@ -50291,6 +50292,11 @@ int main(int argc, char** argv) {
         if (std::string(argv[i]) == "--build-game") return RunBuildGameCli(argc, argv);
         if (std::string(argv[i]) == "--vs-shot") return RunVsGraphShot(argc, argv);
     }
+#ifdef OKAY_HAVE_OKAYUI
+    // Window mode (dev switch, off by default): OKAY_DEV=1 OKAY_UI_BACKEND=okayui OKAY_UI_HOST=okayui. OkayUI owns the window and the frame and Dear ImGui is never
+    // started; only the Audio Mixer is ported to it so far (docs/own_ui_toolkit.md 6.23). Without all three switches this line does nothing.
+    if (oked::HostModeRequested(std::getenv("OKAY_DEV"), std::getenv("OKAY_UI_BACKEND"), std::getenv("OKAY_UI_HOST"))) return oked::RunOkayUIHostMode(argc, argv);
+#endif
     // Dev/test: crash on purpose after a breadcrumb, to check the crash reports end to end (docs/try_it.md, docs/crash_reports.md).
     //   OKAY_TEST_CRASH=<step>       crash right now, before the window opens (the report has the OS, CPU and RAM but no scene or GPU yet)
     //   OKAY_TEST_CRASH_LATE=<step>  crash on the 120th frame of the running editor (the report has the GPU, the scene, the Console and the steps)

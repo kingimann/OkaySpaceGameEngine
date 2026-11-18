@@ -10,6 +10,8 @@
 #include "okay/UI/OkayUIDockBuilder.hpp"
 #include <cstdint>
 #include <cassert>
+#include <cfloat>
+#include <cmath>
 
 // ImVec2 is OkayUI::Vec2 (two floats with a two-float constructor).
 typedef OkayUI::Vec2 ImVec2;
@@ -259,6 +261,7 @@ constexpr auto ImGuiKey_LeftCtrl = OkayUI::KeyId_LeftCtrl;
 constexpr auto ImGuiKey_LeftShift = OkayUI::KeyId_LeftShift;
 constexpr auto ImGuiKey_M = OkayUI::KeyId_M;
 constexpr auto ImGuiKey_Minus = OkayUI::KeyId_Minus;
+constexpr auto ImGuiKey_MouseWheelY = OkayUI::KeyId_MouseWheelY;
 constexpr auto ImGuiKey_O = OkayUI::KeyId_O;
 constexpr auto ImGuiKey_P = OkayUI::KeyId_P;
 constexpr auto ImGuiKey_PageDown = OkayUI::KeyId_PageDown;
@@ -315,6 +318,7 @@ constexpr auto ImGuiStyleVar_ChildRounding = OkayUI::StyleVar_ChildRounding;
 constexpr auto ImGuiStyleVar_FrameBorderSize = OkayUI::StyleVar_FrameBorderSize;
 constexpr auto ImGuiStyleVar_FramePadding = OkayUI::StyleVar_FramePadding;
 constexpr auto ImGuiStyleVar_FrameRounding = OkayUI::StyleVar_FrameRounding;
+constexpr auto ImGuiStyleVar_GrabMinSize = OkayUI::StyleVar_GrabMinSize;
 constexpr auto ImGuiStyleVar_ItemInnerSpacing = OkayUI::StyleVar_ItemInnerSpacing;
 constexpr auto ImGuiStyleVar_ItemSpacing = OkayUI::StyleVar_ItemSpacing;
 constexpr auto ImGuiStyleVar_ScrollbarSize = OkayUI::StyleVar_ScrollbarSize;
@@ -404,6 +408,13 @@ inline ImVec2 ImMax(const ImVec2& a, const ImVec2& b) { return ImVec2(a.x < b.x 
 inline ImVec2 ImClamp(const ImVec2& v, const ImVec2& mn, const ImVec2& mx) { return ImVec2(v.x < mn.x ? mn.x : (v.x > mx.x ? mx.x : v.x), v.y < mn.y ? mn.y : (v.y > mx.y ? mx.y : v.y)); }
 inline float ImLerp(float a, float b, float t) { return a + (b - a) * t; }
 inline ImVec2 ImLerp(const ImVec2& a, const ImVec2& b, float t) { return ImVec2(a.x + (b.x - a.x) * t, a.y + (b.y - a.y) * t); }
+inline float ImLengthSqr(const ImVec2& v) { return v.x * v.x + v.y * v.y; }
+inline float ImLengthSqr(const ImVec4& v) { return v.x * v.x + v.y * v.y + v.z * v.z + v.w * v.w; }
+inline ImVec2 ImBezierCubicCalc(const ImVec2& p1, const ImVec2& p2, const ImVec2& p3, const ImVec2& p4, float t) {
+    const float u = 1.0f - t, w1 = u * u * u, w2 = 3 * u * u * t, w3 = 3 * u * t * t, w4 = t * t * t;
+    return ImVec2(w1 * p1.x + w2 * p2.x + w3 * p3.x + w4 * p4.x, w1 * p1.y + w2 * p2.y + w3 * p3.y + w4 * p4.y);
+}
+inline ImVec4 operator*(const OkayUI::Vec4& a, const ImVec4& b) { return ImVec4(a.x * b.x, a.y * b.y, a.z * b.z, a.w * b.w); }
 inline float ImSaturate(float f) { return f < 0.0f ? 0.0f : (f > 1.0f ? 1.0f : f); }
 
 // The namespace host code writes.

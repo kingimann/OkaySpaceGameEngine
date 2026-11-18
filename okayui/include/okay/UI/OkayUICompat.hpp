@@ -114,6 +114,7 @@ struct StyleInfo {
     float SeparatorTextBorderSize = 1.0f, DockingSeparatorSize = 2.0f;
     Vec2 WindowTitleAlign{0.0f, 0.5f}, ButtonTextAlign{0.5f, 0.5f}, SelectableTextAlign{0.0f, 0.0f}, DisplayWindowPadding{19.0f, 19.0f}, DisplaySafeAreaPadding{3.0f, 3.0f};
     int WindowMenuButtonPosition = 0;
+    float DisabledAlpha = 0.6f;            // accepted; disabled widgets blend halfway to the panel colour
     float ScrollbarRounding = 9.0f, IndentSpacing = 21.0f;
     Vec2 SeparatorTextAlign{0.0f, 0.5f}, SeparatorTextPadding{20.0f, 3.0f};
     bool DockingNodeHasCloseButton = true;
@@ -422,6 +423,17 @@ PlatformIO& GetPlatformIO();
 /// size asked for is kept in `FontRequest::px`). A host that wants those faces builds them itself (the launcher look's atlas, UseLauncherLook) and
 /// maps the returned pointers. Compressed base-85 TTF data is not decoded.
 struct FontRequest { enum Kind { Default, FromMemoryTTF, FromCompressedBase85, FromFile } kind = Default; float px = 0.0f; const void* data = nullptr; int dataSize = 0; char file[260] = {0}; bool merge = false; ImFont* font = nullptr; };
+/// ---- Real fonts (a multi-font store) ----
+/// Register a TrueType font from bytes (copied) at a pixel size: the returned Font works with SetFont, PushFont / PopFont and DrawList::AddText(font, size, ...),
+/// and text drawn or measured while it is active uses it (own rasteriser, okay::TtfFont; a glyph the font lacks is skipped). The same bytes registered
+/// again at another size share one font (one glyph atlas). Up to 5 different font files and 32 sizes in all; null past that or for bytes that are no font.
+/// Draw data: the glyph atlas is a fallback-font texture (FallbackFontOf(texture)), uploaded by the backend like the launcher look's fallback fonts.
+Font* AddFontTtf(const unsigned char* data, std::size_t size, float px, const char* name = nullptr);
+Font* AddFontTtfFile(const char* path, float px);
+/// Dear ImGui hosts load the editor's two faces from base-85 compressed arrays. OkayUI has no decoder for that format (the engine dropped it on purpose;
+/// the same fonts ship as our own OKF1 data, decoded by okay::EmbeddedUIFontData). A host maps each array to the decoded TTF bytes once, and
+/// AddFontFromMemoryCompressedBase85TTF(array, px) then registers that font. An array that was not mapped gives the default font (and is recorded).
+void RegisterBase85FontSource(const char* array, const unsigned char* ttf, std::size_t size);
 struct FontAtlasRef {
     ImFont* AddFontDefault(const ImFontConfig* cfg = nullptr);
     ImFont* AddFontFromMemoryTTF(void* data, int size, float px, const ImFontConfig* cfg = nullptr, const unsigned short* ranges = nullptr);

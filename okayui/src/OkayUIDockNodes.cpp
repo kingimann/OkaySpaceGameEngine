@@ -359,6 +359,19 @@ void FillContextFromWindowTable(Context& c, unsigned hoveredId, unsigned activeI
     c.Windows = t.order;
     c.Style = GetStyle();
     c.DockContext.Nodes.Data = t.pairs;
+    {   // open popups as window entries
+        static WindowRef popRefs[8];
+        PopupSlotInfo pops[8];
+        const int np = ListOpenPopups(pops, 8);
+        c.OpenPopupStack.clear();
+        for (int i = 0; i < np; ++i) {
+            WindowRef& w = popRefs[i];
+            w = WindowRef(); w.ID = pops[i].id; w.Pos = pops[i].pos; w.Size = pops[i].size; w.Active = w.WasActive = true; w.RootWindow = &w;
+            w.Flags = pops[i].modal ? Window_Modal : 0;
+            PopupDataRef pr; pr.Window = &w; pr.PopupId = pops[i].id;
+            c.OpenPopupStack.push_back(pr);
+        }
+    }
     // the strip of the chosen window being the focused one
     for (int i = 0; i < t.nodeCount; ++i) {
         DockNodeRef& d = t.nodes[(size_t)i];

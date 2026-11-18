@@ -162,6 +162,8 @@ int main() {
             if (UI::BeginPopupModal("modal", nullptr, 0)) { modalRef = UI::GetTopMostPopupModal(); modalOpen = modalRef != nullptr; UI::EndPopup(); }
             UI::End();
         });
+        UI::Context* gc = UI::RefreshContext();
+        CHECK(gc->OpenPopupStack.Size >= 1 && gc->OpenPopupStack[0].Window && gc->OpenPopupStack[0].Window->Flags == UI::Window_Modal && gc->OpenPopupStack[0].Window->Rect().GetWidth() > 10.0f);
         CHECK(!modalAtStart && menuBegan && modalOpen && modalRef && modalRef->ID != 0 && modalRef->Name[0] == 0);
         // the window item width default: written through DC, applied to the next items of the window
         float wBefore = 0, wAfter = 0;

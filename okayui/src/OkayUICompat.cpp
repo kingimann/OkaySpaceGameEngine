@@ -1,3 +1,6 @@
+#include <memory>
+#include <vector>
+#include "okay/Graphics/TtfFont.hpp"
 #include "okay/UI/OkayUICompat.hpp"
 #include "okay/UI/OkayUIDock.hpp"
 #include "okay/UI/OkayUIInternals.hpp"
@@ -137,6 +140,11 @@ float StateStorage::GetFloat(unsigned id, float def) const {
     const Entry* e = Find(scope_, id, false);
     if (!e) return def;
     const std::uint32_t lo = (std::uint32_t)e->bits; float v; std::memcpy(&v, &lo, sizeof v); return v;
+}
+float* StateStorage::GetFloatRef(unsigned id, float def) {
+    Entry* e = Find(scope_, id, false);
+    if (!e) { e = Find(scope_, id, true); if (!e) return nullptr; SetFloat(id, def); }
+    return reinterpret_cast<float*>(&e->bits);   // the low 32 bits (little-endian targets; the store reads and writes the same bytes with memcpy)
 }
 void StateStorage::SetFloat(unsigned id, float value) {
     Entry* e = Find(scope_, id, true);
@@ -381,10 +389,15 @@ void TreeNodeExFormatted(bool* out, const char* id, unsigned flags, const char* 
 // ---- io.Fonts: recorded requests -------------------------------------------------------------------------------------------------------------------
 namespace OkayUI {
 namespace {
+struct TtfEntry { const unsigned char* key = nullptr; std::unique_ptr<okay::TtfFont> font; };
+TtfEntry g_ttfs[5]; int g_nTtfs = 0;
+Font g_userFonts[32]; int g_nUserFonts = 0;
+struct B85 { const char* array; const unsigned char* ttf; std::size_t size; };
+B85 g_b85[8]; int g_nB85 = 0;
 FontRequest g_fontReqs[32]; int g_nFontReqs = 0; ImFont g_fontPool[33]; int g_nFontPool = 0;
-ImFont* AddReq(FontRequest::Kind kind, float px, const void* data, int size, const char* file, const ImFontConfig* cfg) {
-    ImFont* f = g_nFontPool < 33 ? &g_fontPool[g_nFontPool++] : &g_fontPool[32];
-    *f = *FontDefault();   // a copy of the default font: PushFont with it keeps the look
+ImFont* Record(FontRequest::Kind kind, float px, const void* data, int size, const char* file, const ImFontConfig* cfg, ImFont* made) {
+    ImFont* f = made;
+    if (!f) { f = g_nFontPool < 33 ? &g_fontPool[g_nFontPool++] : &g_fontPool[32]; *f = *FontDefault(); }   // no real font: a copy of the default (PushFont keeps the look)
     if (g_nFontReqs < 32) {
         FontRequest& r = g_fontReqs[g_nFontReqs++];
         r = FontRequest(); r.kind = kind; r.px = px > 0.0f ? px : (cfg && cfg->SizePixels > 0.0f ? cfg->SizePixels : 13.0f); r.data = data; r.dataSize = size; r.merge = cfg && cfg->MergeMode; r.font = f;
@@ -394,12 +407,52 @@ ImFont* AddReq(FontRequest::Kind kind, float px, const void* data, int size, con
 }
 FontAtlasRef g_atlasRef;
 }
-ImFont* FontAtlasRef::AddFontDefault(const ImFontConfig* cfg) { return AddReq(FontRequest::Default, 13.0f, nullptr, 0, nullptr, cfg); }
-ImFont* FontAtlasRef::AddFontFromMemoryTTF(void* data, int size, float px, const ImFontConfig* cfg, const unsigned short*) { return AddReq(FontRequest::FromMemoryTTF, px, data, size, nullptr, cfg); }
-ImFont* FontAtlasRef::AddFontFromMemoryCompressedBase85TTF(const char* data, float px, const ImFontConfig* cfg, const unsigned short*) { return AddReq(FontRequest::FromCompressedBase85, px, data, data ? (int)std::strlen(data) : 0, nullptr, cfg); }
-ImFont* FontAtlasRef::AddFontFromFileTTF(const char* file, float px, const ImFontConfig* cfg, const unsigned short*) { return AddReq(FontRequest::FromFile, px, nullptr, 0, file, cfg); }
+Font* AddFontTtf(const unsigned char* data, std::size_t size, float px, const char* name) {
+    if (!data || size < 12 || !(px >= 4.0f && px <= 512.0f) || g_nUserFonts >= 32) return nullptr;
+    TtfEntry* e = nullptr;
+    for (int i = 0; i < g_nTtfs; ++i) if (g_ttfs[i].key == data) e = &g_ttfs[i];
+    if (!e) {
+        if (g_nTtfs >= 5) return nullptr;
+        auto f = std::make_unique<okay::TtfFont>();
+        if (!f->LoadFromMemory(data, size, 48.0f, name ? name : "(user font)")) return nullptr;
+        g_ttfs[g_nTtfs].key = data; g_ttfs[g_nTtfs].font = std::move(f); e = &g_ttfs[g_nTtfs++];
+    }
+    Font& u = g_userFonts[g_nUserFonts++];
+    u = *FontDefault(); u.ttf = e->font.get(); u.px = px;
+    return &u;
+}
+Font* AddFontTtfFile(const char* path, float px) {
+    if (!path || !*path) return nullptr;
+    FILE* fp = std::fopen(path, "rb");
+    if (!fp) return nullptr;
+    static std::vector<std::vector<unsigned char>> keep;   // the bytes of files read here (the font copies them; the key must stay unique per file)
+    std::vector<unsigned char> b; unsigned char tmp[4096]; std::size_t n;
+    while ((n = std::fread(tmp, 1, sizeof tmp, fp)) > 0 && b.size() < (64u << 20)) b.insert(b.end(), tmp, tmp + n);
+    std::fclose(fp);
+    if (keep.size() >= 8) return nullptr;
+    keep.push_back(std::move(b));
+    return AddFontTtf(keep.back().data(), keep.back().size(), px, path);
+}
+void RegisterBase85FontSource(const char* array, const unsigned char* ttf, std::size_t size) {
+    if (!array || !ttf || size == 0) return;
+    for (int i = 0; i < g_nB85; ++i) if (g_b85[i].array == array) { g_b85[i] = B85{array, ttf, size}; return; }
+    if (g_nB85 < 8) g_b85[g_nB85++] = B85{array, ttf, size};
+}
+ImFont* FontAtlasRef::AddFontDefault(const ImFontConfig* cfg) { return Record(FontRequest::Default, 13.0f, nullptr, 0, nullptr, cfg, nullptr); }
+ImFont* FontAtlasRef::AddFontFromMemoryTTF(void* data, int size, float px, const ImFontConfig* cfg, const unsigned short*) {
+    return Record(FontRequest::FromMemoryTTF, px, data, size, nullptr, cfg, size > 0 ? AddFontTtf(static_cast<const unsigned char*>(data), (std::size_t)size, px) : nullptr);
+}
+ImFont* FontAtlasRef::AddFontFromMemoryCompressedBase85TTF(const char* data, float px, const ImFontConfig* cfg, const unsigned short*) {
+    ImFont* made = nullptr;
+    for (int i = 0; i < g_nB85; ++i) if (g_b85[i].array == data) made = AddFontTtf(g_b85[i].ttf, g_b85[i].size, px > 0.0f ? px : (cfg ? cfg->SizePixels : 0.0f));
+    return Record(FontRequest::FromCompressedBase85, px, data, data ? (int)std::strlen(data) : 0, nullptr, cfg, made);
+}
+ImFont* FontAtlasRef::AddFontFromFileTTF(const char* file, float px, const ImFontConfig* cfg, const unsigned short*) { return Record(FontRequest::FromFile, px, nullptr, 0, file, cfg, AddFontTtfFile(file, px)); }
 void FontAtlasRef::Clear() { g_nFontReqs = 0; g_nFontPool = 0; }
-int FontAtlasRef::FontCount() const { return g_nFontPool; }
+int FontAtlasRef::FontCount() const { return g_nFontPool + g_nUserFonts; }
 FontAtlasRef* GetFontAtlasRef() { return &g_atlasRef; }
 const FontRequest* FontRequests(int* count) { if (count) *count = g_nFontReqs; return g_fontReqs; }
 }   // namespace OkayUI
+
+namespace OkayUI { void ColorConvertHSVtoRGB(float h, float s, float v, float& r, float& g, float& b) { ColorConvertHSVtoRGB(h, s, v, &r, &g, &b); } }
+namespace OkayUI { void Columns(int count, const char*, bool) { Columns(count); } }

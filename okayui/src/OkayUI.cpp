@@ -346,6 +346,7 @@ struct TableState {
     int   id = 0, count = 0, index = -1;
     float x0 = 0, fullW = 0;
     float rowTop = 0, rowBottom = 0, rowStart = 0;
+    float minRowH = 0;          // TableNextRow(flags, minRowHeight): the row being built is at least this tall
     float* w[16] = {nullptr};   // persisted per-column widths (pixels)
     float headerBottom = 0;     // y below the header row (for the resize handles)
     float topY = 0;             // y of the table's top edge (borders and resize handles start here)
@@ -487,6 +488,7 @@ inline bool fPix(char c, int x, int y) { return g_font->pixel && g_font->pixel(c
 // Width of `s` in font-cell units (multiply by textScale for pixels). With the
 // launcher look it's the TrueType width at the 8-unit cell height (proportional).
 inline float fMeasure(const char* s) {
+    if (g_font->ttf && s) return static_cast<const okay::TtfFont*>(g_font->ttf)->Measure(s, 8.0f);   // a user font (AddFontTtf): its width at the 8-unit cell
     if (g_ttf && s) {
         if (okay::TtfFont* f = fontatlas::FallbackFont(s)) return f->Measure(s, 8.0f);
         const fontatlas::Size& z = g_ttf->Pick(16.0f);
@@ -501,7 +503,7 @@ inline float fMeasure(const char* s) {
     return (float)(fW() * cstrlen(s));
 }
 // Average character width in cell units (spacing glyph-like icons).
-inline float fCharW() { return g_ttf ? fMeasure("n") : (float)fW(); }
+inline float fCharW() { return (g_ttf || g_font->ttf) ? fMeasure("n") : (float)fW(); }
 
 inline float rowH() { return fH() * g_theme.textScale + (g_look ? 15.0f : 12.0f); }
 inline float textH() { return fH() * g_theme.textScale; }
@@ -795,6 +797,7 @@ void drawTextWith(okay::TtfFont* f, float x, float y, const char* str, float s, 
 // Draw a C string from the 8x8 bitmap font, each lit pixel a `s`x`s` quad.
 void drawText(float x, float y, const char* str, float s, const unsigned char c[4]) {
     if (!str || (g_cullRow && !g_toOverlay)) return;
+    if (g_font->ttf) { drawTextWith(const_cast<okay::TtfFont*>(static_cast<const okay::TtfFont*>(g_font->ttf)), x, y, str, s, c); return; }
     if (g_ttf && (!g_toOverlay || g_novSpans < 30))
         if (okay::TtfFont* f = fontatlas::FallbackFont(str)) { drawTextWith(f, x, y, str, s, c); return; }
     if (g_ttf) {   // TrueType: one textured quad per glyph from the atlas (same texture as shapes)
@@ -2016,7 +2019,12 @@ void ColorConvertHSVtoRGB(float h, float s, float v, float* r, float* g, float* 
     if (b) *b = B;
 }
 
-void SetFont(const Font* f) { g_font = f ? f : &kFontDefault; }
+namespace { float g_userSavedScale = 0.0f; }   // textScale before a user font set its own (0: none active)
+void SetFont(const Font* f) {
+    if (g_font->ttf && g_userSavedScale > 0.0f) { g_theme.textScale = g_userSavedScale; g_userSavedScale = 0.0f; }   // leaving a user font gives the scale back
+    g_font = f ? f : &kFontDefault;
+    if (g_font->ttf && g_font->px > 0.0f) { g_userSavedScale = g_theme.textScale; g_theme.textScale = g_font->px / 8.0f; }   // the line is px tall: 8 cell units times px / 8
+}
 Font* GetFont()             { return const_cast<Font*>(g_font); }
 const Font* FontDefault()   { return &kFontDefault; }
 const Font* FontBold()      { return &kFontBold; }
@@ -2335,6 +2343,7 @@ MouseCursor GetMouseCursor() { return g_cursor; }
 namespace {
 long long g_ioQueueFrame = -1; int g_ioQueueFilled = 0;
 // Pending input fed through IO::AddKeyEvent / AddInputCharacter, applied by NewFrame (OkayUICompat.cpp).
+bool g_pendMouseSet = false; float g_pendMX = 0, g_pendMY = 0; int g_pendBtn[3] = {-1, -1, -1}; bool g_pendClick[3] = {false, false, false};
 std::string g_pendText; bool g_pendKeyDown[KeyId_COUNT] = {}; bool g_pendKeyEdge[KeyId_COUNT] = {};
 unsigned decodeOne(const char*& p) {   // one UTF-8 code point (invalid bytes give U+FFFD)
     const unsigned char c = (unsigned char)*p++;
@@ -2351,6 +2360,8 @@ void IO::AddKeyEvent(int key, bool down) {
     g_pendKeyDown[key] = down;
     if (down) g_pendKeyEdge[key] = true;
 }
+void IO::AddMousePosEvent(float x, float y) { if (std::isfinite(x) && std::isfinite(y)) { g_pendMouseSet = true; g_pendMX = x; g_pendMY = y; } }
+void IO::AddMouseButtonEvent(int b, bool down) { if (b < 0 || b > 1) return; g_pendBtn[b] = down ? 1 : 0; if (down) g_pendClick[b] = true; }
 void IO::AddInputCharacter(unsigned cp) {
     if (cp == 0 || cp > 0x10FFFFu || (cp >= 0xD800u && cp < 0xE000u) || g_pendText.size() > 4096) return;
     char b[4]; int n;
@@ -2375,6 +2386,10 @@ void MergePendingIo(Input& in) {
         if (now) in.keyDown[k] = true; else if (mine[k]) in.keyDown[k] = false;
         mine[k] = now;
     }
+    if (g_pendMouseSet) { in.mouseX = g_pendMX; in.mouseY = g_pendMY; g_pendMouseSet = false; }
+    if (g_pendBtn[0] >= 0 || g_pendClick[0]) { in.mouseDown = g_pendBtn[0] == 1 || (g_pendClick[0] && g_pendBtn[0] != 1); }
+    if (g_pendBtn[1] >= 0 || g_pendClick[1]) { in.rightDown = g_pendBtn[1] == 1 || (g_pendClick[1] && g_pendBtn[1] != 1); }
+    for (int b = 0; b < 3; ++b) { g_pendBtn[b] = -1; g_pendClick[b] = false; }
     if (g_pendKeyEdge[KeyId_Enter]) in.enter = true;
     if (g_pendKeyEdge[KeyId_Escape]) in.escape = true;
     if (g_pendKeyEdge[KeyId_Backspace]) in.backspace = true;
@@ -2394,6 +2409,7 @@ IO& GetIO() {
         g_ioQueueFrame = (long long)g_frameCount; g_ioQueueFilled = g_io.InputQueueCharacters.Size;
     }
     g_io.Fonts = GetFontAtlasRef();
+    g_io.MouseClickedCount[0] = IsMouseDoubleClicked(0) ? 2 : (g_pressed ? 1 : 0);
     g_io.KeySuper = g_io.KeySuper;
     // These two depend on windows drawn since BeginFrame, so they are worked out when asked.
     g_io.mouseDelta = Vec2{g_mouseDX, g_mouseDY};
@@ -2573,6 +2589,16 @@ WindowInfo FindWindowByID(unsigned id) {
 bool AnyWindowFocused() { return g_focusWin != 0; }
 bool AnyPopupOpen() { for (const PopupSlot& p : g_popups) if (p.used && p.open) return true; return false; }
 void ClosePopupToLevel(int level, bool) { if (level <= 0) for (PopupSlot& p : g_popups) p.open = false; else if (level == 1) for (PopupSlot& p : g_popups) if (p.open && !p.modal) p.open = false; }
+int ListOpenPopups(PopupSlotInfo* out, int cap) {
+    int n = 0;
+    for (const PopupSlot& p : g_popups) {
+        if (!p.used || !p.open || n >= cap) continue;
+        PopupSlotInfo& o = out[n++];
+        o.id = (unsigned)p.id; o.pos = Vec2{p.x, p.y}; o.modal = p.modal;
+        o.size = Vec2{p.w > 0.0f ? p.w : 200.0f, *floatState(p.id ^ 0x9090, rowH() * 3.0f) + 12.0f};
+    }
+    return n;
+}
 unsigned WindowIdOfTitle(const char* title) { return title ? (unsigned)windowId(title) : 0u; }
 int ListWindowSlots(WindowSlotInfo* out, int cap) {
     int n = 0;
@@ -4901,6 +4927,7 @@ void tblDrawHeader(const char* const* labels, bool interactive) {
 void tblFinishRow() {
     const float cyLogical = g_lay.cy - g_tbl.shiftY;
     if (cyLogical > g_tbl.rowBottom) g_tbl.rowBottom = cyLogical;
+    if (g_tbl.rowTop + g_tbl.minRowH > g_tbl.rowBottom) g_tbl.rowBottom = g_tbl.rowTop + g_tbl.minRowH;
 }
 void tblRememberRow() {
     if (g_tbl.store && g_tbl.rowIndex >= 0 && g_tbl.rowIndex < kTblRows) g_tbl.store->rowH[g_tbl.rowIndex] = std::max(0.0f, g_tbl.rowBottom - g_tbl.rowTop);
@@ -5027,14 +5054,16 @@ void TableHeadersRow() {
     tblDrawHeader(none, true);
 }
 
+void TableNextRow(int, float minRowHeight) { TableNextRow(); if (g_tbl.active && std::isfinite(minRowHeight) && minRowHeight > 0.0f) g_tbl.minRowH = minRowHeight; }
 TableSortSpecs* TableGetSortSpecs() {
     static TableColumnSortSpecs arr[kTblSortKeys];
     static TableSortSpecs out;
     if (!g_tbl.active || !(g_tbl.flags & Table_Sortable) || !g_tbl.store) return nullptr;
     tblFinishSetup();
     const TblStore& t = *g_tbl.store;
-    for (int k = 0; k < t.sortN; ++k) { arr[k].columnIndex = t.sortCol[k]; arr[k].sortOrder = k; arr[k].descending = t.sortDesc[k]; arr[k].columnUserId = t.sortCol[k] < g_tbl.nSetup ? g_tbl.sUser[t.sortCol[k]] : 0; }
-    out.specs = arr; out.specsCount = t.sortN; out.specsDirty = t.dirty;
+    for (int k = 0; k < t.sortN; ++k) { arr[k].columnIndex = t.sortCol[k]; arr[k].sortOrder = k; arr[k].descending = t.sortDesc[k]; arr[k].columnUserId = t.sortCol[k] < g_tbl.nSetup ? g_tbl.sUser[t.sortCol[k]] : 0; arr[k].ColumnUserID = arr[k].columnUserId; arr[k].ColumnIndex = arr[k].columnIndex; arr[k].SortOrder = k; arr[k].SortDirection = arr[k].descending ? 2 : 1; }
+    out.specs = arr; out.specsCount = t.sortN; out.specsDirty = t.dirty; out.SpecsDirty = t.dirty;
+    out.Specs = arr; out.SpecsCount = t.sortN;
     g_sortSpecsFor = g_tbl.id; g_sortSpecsOut = &out;
     return &out;
 }
@@ -5062,6 +5091,7 @@ void TableNextRow() {
     tblFinishSetup();
     tblFinishRow();
     tblRememberRow();
+    g_tbl.minRowH = 0.0f;
     g_tbl.rowTop = g_tbl.rowBottom;   // next row starts below the tallest cell so far
     g_tbl.index = -1;
     ++g_tbl.rowIndex;
@@ -5186,7 +5216,7 @@ void EndTable() {
             quad(tx + 1.0f, sby + 1.0f, thumbW - 2.0f, kBarThick - 2.0f, act ? pick(Col_ScrollbarGrabActive, g_theme.text) : (over ? pick(Col_ScrollbarGrabHovered, g_theme.text) : pick(Col_ScrollbarGrab, g_theme.accent)));
         }
         *g_tbl.pSX = sx; *g_tbl.pSY = sy;
-        if (g_sortSpecsFor == g_tbl.id && g_sortSpecsOut && g_tbl.store) g_tbl.store->dirty = g_sortSpecsOut->specsDirty;
+        if (g_sortSpecsFor == g_tbl.id && g_sortSpecsOut && g_tbl.store) g_tbl.store->dirty = g_sortSpecsOut->specsDirty && g_sortSpecsOut->SpecsDirty;
         g_sortSpecsFor = 0; g_sortSpecsOut = nullptr;
         g_lay = g_tbl.saved;                 // the box was placed as one item: the cursor is already below it
         g_lay.pendingSameLine = false;
@@ -5213,7 +5243,7 @@ void EndTable() {
         } else if (over && g_pressed) { g_active = hid; g_focusClaimed = true; }
     }
 
-    if (g_sortSpecsFor == g_tbl.id && g_sortSpecsOut && g_tbl.store) g_tbl.store->dirty = g_sortSpecsOut->specsDirty;
+    if (g_sortSpecsFor == g_tbl.id && g_sortSpecsOut && g_tbl.store) g_tbl.store->dirty = g_sortSpecsOut->specsDirty && g_sortSpecsOut->SpecsDirty;
     g_sortSpecsFor = 0; g_sortSpecsOut = nullptr;
     g_lay.ox = g_tbl.x0;
     g_lay.contentW = g_tbl.fullW;
@@ -5775,6 +5805,12 @@ void DrawList::AddText(const Font* font, float fontSize, Vec2 pos, Color32 col, 
     if (n > sizeof buf - 1) n = sizeof buf - 1;
     std::memcpy(buf, text, n); buf[n] = 0;
     const Font* f = font ? font : GetFont();
+    if (f && f->ttf) {   // a user font: draw with it for this call at `fontSize` pixels
+        const Font* prev = GetFont(); SetFont(f); const float saved = g_theme.textScale; g_theme.textScale = fontSize / 8.0f;
+        AddText(pos, col, buf, fontSize / 8.0f);
+        g_theme.textScale = saved; SetFont(prev);
+        return;
+    }
     const float h = f && f->height > 0 ? (float)f->height : 8.0f;
     AddText(pos, col, buf, fontSize / h);
 }
@@ -5912,8 +5948,9 @@ void DrawList::PushClipRect(Vec2 mn, Vec2 mx) const {
 void DrawList::PushClipRect(Vec2 mn, Vec2 mx, bool) const { PushClipRect(mn, mx); }
 void DrawList::PopClipRect() const { OkayUI::PopClipRect(); }
 
-void DrawList::PathClear() const { g_pathN = 0; }
-void DrawList::PathLineTo(Vec2 p) const { if (g_pathN < kMaxPath && finite2(p)) g_path[g_pathN++] = p; }
+static void syncPath(const DrawList& d) { d._Path.clear(); for (int i = 0; i < g_pathN; ++i) d._Path.push_back(g_path[i]); }
+void DrawList::PathClear() const { g_pathN = 0; _Path.clear(); }
+void DrawList::PathLineTo(Vec2 p) const { if (g_pathN < kMaxPath && finite2(p)) g_path[g_pathN++] = p; syncPath(*this); }
 void DrawList::PathArcTo(Vec2 center, float radius, float a0, float a1, int segments) const {
     if (!finite2(center) || !finite1(radius) || !finite1(a0) || !finite1(a1) || radius < 0.0f) return;
     int n = segments > 0 ? segments : circleSegments(radius, 0) / 4 + 1;
@@ -5923,17 +5960,71 @@ void DrawList::PathArcTo(Vec2 center, float radius, float a0, float a1, int segm
         PathLineTo(Vec2{ center.x + radius * SDL_cosf(a), center.y + radius * SDL_sinf(a) });
     }
 }
+void DrawList::PathRect(Vec2 mn, Vec2 mx, float rounding, int) const {
+    if (!finite2(mn) || !finite2(mx)) return;
+    if (mx.x < mn.x) std::swap(mn.x, mx.x);
+    if (mx.y < mn.y) std::swap(mn.y, mx.y);
+    Vec2 pts[kMaxPath];
+    const int n = roundedRectPath(pts, mn.x, mn.y, mx.x, mx.y, rounding > 0.0f && std::isfinite(rounding) ? rounding : 0.0f);
+    for (int i = 0; i < n && g_pathN < kMaxPath; ++i) g_path[g_pathN++] = pts[i];
+    syncPath(*this);
+}
 void DrawList::PathStroke(Color32 col, bool closed, float th) const {
     if (g_pathN >= 2) AddPolyline(g_path, g_pathN, col, closed, th);
-    g_pathN = 0;
+    g_pathN = 0; _Path.clear();
 }
 void DrawList::PathFillConvex(Color32 col) const {
     if (g_pathN >= 3) AddConvexPolyFilled(g_path, g_pathN, col);
-    g_pathN = 0;
+    g_pathN = 0; _Path.clear();
 }
 
 static const DrawListHandle g_windowList(false);
 static const DrawListHandle g_foregroundList(true);
+DrawListHandle::operator DrawList*() const { if (isNull) return nullptr; return const_cast<DrawListHandle*>(overlay ? &g_foregroundList : &g_windowList); }
+// ---- raw geometry ----
+Vec2 GetFontTexUvWhitePixel() { return Vec2{g_whiteU, g_whiteV}; }
+namespace { SDL_Texture* g_texStack[8]; int g_texTop = 0; }
+void DrawList::PrimReserve(int idxCount, int vtxCount) const {
+    (void)idxCount; (void)vtxCount;
+    _VtxCurrentIdx = (unsigned)(overlay ? g_onv : g_nv);
+}
+void DrawList::PrimWriteVtx(Vec2 pos, Vec2 uv, Color32 col) const {
+    ListScope s(overlay);
+    SDL_Vertex* V = g_toOverlay ? g_ovVerts : g_verts;
+    int& nv = g_toOverlay ? g_onv : g_nv;
+    if ((g_cullRow && !g_toOverlay)) return;
+    if (nv + 1 > kMaxVerts) { noteDrop(); return; }
+    unsigned char c[4]; unpack(col, c);
+    SDL_Vertex v; v.color = toColor(c);
+    v.position.x = std::isfinite(pos.x) ? pos.x : 0.0f; v.position.y = std::isfinite(pos.y) ? pos.y : 0.0f;
+    v.tex_coord.x = std::isfinite(uv.x) ? uv.x : 0.0f; v.tex_coord.y = std::isfinite(uv.y) ? uv.y : 0.0f;
+    V[nv++] = v;
+}
+void DrawList::PrimWriteIdx(ImDrawIdx idx) const {
+    ListScope s(overlay);
+    int* I = g_toOverlay ? g_ovIdx : g_idx;
+    int& ni = g_toOverlay ? g_oni : g_ni;
+    const int nv = g_toOverlay ? g_onv : g_nv;
+    if ((g_cullRow && !g_toOverlay)) return;
+    if (ni + 1 > kMaxIdx) { noteDrop(); return; }
+    I[ni++] = idx < (unsigned)nv ? (int)idx : 0;   // an index past the vertices written is clamped (it would read garbage)
+}
+void DrawList::PrimVtx(Vec2 pos, Vec2 uv, Color32 col) const {
+    PrimWriteIdx((ImDrawIdx)(overlay ? g_onv : g_nv));
+    PrimWriteVtx(pos, uv, col);
+}
+void DrawList::PushTexture(const ImTextureRef& tex) const {
+    ListScope s(overlay);
+    if (g_texTop < 8) g_texStack[g_texTop++] = tex._TexID;
+    bindTexture(tex._TexID);
+}
+void DrawList::PopTexture() const {
+    ListScope s(overlay);
+    if (g_texTop <= 0) return;
+    --g_texTop;
+    bindTexture(g_texTop > 0 ? g_texStack[g_texTop - 1] : g_defTex);
+}
+
 // ---- channels of the window list ----
 // A split keeps, per channel, the triangles (index runs) and span changes drawn on it, relative to where the split began; the vertices stay
 // where they are. Switching channel saves the current run, cuts the batch back to the split point and lays the other channel's run down

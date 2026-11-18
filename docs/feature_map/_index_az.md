@@ -3688,6 +3688,7 @@ Word, then the number(s) to say. Back to the [overview](../FEATURE_MAP.md).
 - README and docs (19.1)
 - ready (16.12)
 - Real backend (37.7.4)
+- Real fonts and window mode (40.9.11)
 - Real Steamworks backend (17.10.2)
 - ReapplyPrefab (21.4)
 - rebind button (12.3)

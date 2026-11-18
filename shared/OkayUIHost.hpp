@@ -301,11 +301,16 @@ public:
     void Feed(const okay::platform::Event& e) { m_events.Feed(e); }
     bool QuitRequested() const { return m_events.QuitRequested(); }
     /// Starts the frame: the display size is the painter's output size. `blocked` (pointer owned by something else) and `deliverKeys` as in Build.
-    void BeginFrame(bool blocked = false, bool deliverKeys = true) {
+    /// `time` is seconds since the start (Input::time; 0 = OkayUI derives it from the frame count).
+    void BeginFrame(bool blocked = false, bool deliverKeys = true, double time = 0.0) {
         int w = 0, h = 0; m_painter.OutputSize(&w, &h);
         m_w = w; m_h = h;
-        OkayUI::BeginFrame(m_events.Build((float)w, (float)h, blocked, deliverKeys));
+        OkayUI::Input in = m_events.Build((float)w, (float)h, blocked, deliverKeys);
+        in.time = time;
+        OkayUI::BeginFrame(in);
     }
+    /// A resize event came since the last frame (see EventCollector::TakeResized).
+    bool TakeResized() { return m_events.TakeResized(); }
     /// Ends the frame: finishes the draw data, clears to `clear`, draws the frame through the painter and presents it.
     void EndFrame(unsigned char r = 24, unsigned char g = 26, unsigned char b = 32) {
         OkayUI::EndFrameData();

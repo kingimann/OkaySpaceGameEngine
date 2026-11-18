@@ -62,6 +62,7 @@ add_executable(okay-editor main.cpp EditorState.cpp FpHandsWindow.cpp
     EditorWidgets.cpp                                                  # shared widgets (accent, icons, search field)
     ConsolePanel.cpp                                                   # ConsoleLog + Console panel
     OkayPanels.cpp                                                     # Crash Log and Audio Mixer hosted by OkayUI (opt-in backend)
+    OkayUIHostMode.cpp                                                 # window mode: OkayUI owns the window (OKAY_UI_HOST=okayui, dev switch)
     ScriptEditorCodeEdit.cpp                                           # the script editor's adapter over OkayUI::CodeEdit (no ImGui)
     ProblemsPanel.cpp                                                  # Problems panel + project diagnostics
     SceneManagerPanel.cpp                                              # Scene Manager window
@@ -114,7 +115,7 @@ if(WIN32)
 endif()
 # OkayUI overlay demo (renders on top of ImGui through the same SDL_Renderer).
 if(TARGET okay_ui)
-    target_link_libraries(okay-editor PRIVATE okay_ui okay_ui_screens)
+    target_link_libraries(okay-editor PRIVATE okay_ui okay_ui_screens okay_ui_soft)
     target_compile_definitions(okay-editor PRIVATE OKAY_HAVE_OKAYUI=1)
 endif()
 if(OKAY_UI_DEFAULT_BACKEND STREQUAL "okayui" OR OKAY_OWN_STACK)   # OKAY_OWN_STACK: the dogfood build starts on OkayUI

@@ -69,6 +69,11 @@ foreach ($cso in 'tri_vs.cso', 'tri_ps.cso') {
     Copy-Item $f.FullName $pkg -Force
 }
 
+# 4b. the engine's own shaders: compiled to .cso at build time (D3DCompile does not exist in UWP) into package\Shaders
+& (Join-Path $SourceRoot 'scripts\xbox-compile-shaders.ps1') -SourceRoot $SourceRoot -OutDir (Join-Path $pkg 'Shaders') -VsPath $sdk.visualStudioPath -WorkDir (Join-Path $work 'shaders')
+if ($LASTEXITCODE -ne 0) { throw 'The engine shaders did not compile.' }
+Remove-Item (Join-Path $pkg 'Shaders\okay3d.hlsl'), (Join-Path $pkg 'Shaders\entries.txt') -Force -ErrorAction SilentlyContinue
+
 # 5. pack with OUR packer (unsigned)
 $appxName = ([xml](Get-Content $manifestPath)).Package.Identity
 $version = $appxName.Version; $id = $appxName.Name

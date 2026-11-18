@@ -3,6 +3,7 @@
 // GL header files only supply types and constants; with them absent (no
 // OKAY_PLATFORM_X11_HEADERS) this file is just "no display".
 #include "OwnLinux.hpp"
+#include "UriList.hpp"
 
 #ifndef OKAY_PLATFORM_X11_HEADERS
 namespace okay::platform::own {
@@ -288,6 +289,18 @@ public:
         m_aTargets = m_x.XInternAtom(m_dpy, "TARGETS", False);
         m_aProp = m_x.XInternAtom(m_dpy, "OKAY_SELECTION", False);
         m_aTextPlain = m_x.XInternAtom(m_dpy, "text/plain;charset=utf-8", False);
+        m_aDndAware = m_x.XInternAtom(m_dpy, "XdndAware", False);
+        m_aDndEnter = m_x.XInternAtom(m_dpy, "XdndEnter", False);
+        m_aDndPosition = m_x.XInternAtom(m_dpy, "XdndPosition", False);
+        m_aDndStatus = m_x.XInternAtom(m_dpy, "XdndStatus", False);
+        m_aDndLeave = m_x.XInternAtom(m_dpy, "XdndLeave", False);
+        m_aDndDrop = m_x.XInternAtom(m_dpy, "XdndDrop", False);
+        m_aDndFinished = m_x.XInternAtom(m_dpy, "XdndFinished", False);
+        m_aDndSelection = m_x.XInternAtom(m_dpy, "XdndSelection", False);
+        m_aDndCopy = m_x.XInternAtom(m_dpy, "XdndActionCopy", False);
+        m_aDndTypeList = m_x.XInternAtom(m_dpy, "XdndTypeList", False);
+        m_aUriList = m_x.XInternAtom(m_dpy, "text/uri-list", False);
+        m_aDndProp = m_x.XInternAtom(m_dpy, "OKAY_XDND", False);
         if (m_x.XSupportsLocale()) {
             m_x.XSetLocaleModifiers("");
             m_im = m_x.XOpenIM(m_dpy, nullptr, nullptr, nullptr);
@@ -338,6 +351,10 @@ public:
         m_wins[w] = win;
         Atom protos[1] = {m_aDelete};
         m_x.XSetWMProtocols(m_dpy, w, protos, 1);
+        {   // accept file drops (XDND protocol version 5)
+            const Atom ver = 5;
+            m_x.XChangeProperty(m_dpy, w, m_aDndAware, XA_ATOM, 32, PropModeReplace, (const unsigned char*)&ver, 1);
+        }
         win->SetTitle(d.title);
         XSizeHints* sh2 = m_x.XAllocSizeHints();
         if (sh2) {
@@ -389,6 +406,7 @@ public:
         if (win) e.windowId = (uint32_t)win->m_win;
         switch (ev.type) {
         case ClientMessage:
+            if (win && HandleDndMessage(ev.xclient, *win)) break;
             if (win && ev.xclient.message_type == m_aProtocols && (Atom)ev.xclient.data.l[0] == m_aDelete) {
                 e.type = EventType::WindowClose; m_pending.push_back(e);
                 if (m_wins.size() == 1) { Event q; q.type = EventType::Quit; q.timestampMs = e.timestampMs; m_pending.push_back(q); }
@@ -452,7 +470,10 @@ public:
             break;
         case SelectionRequest: HandleSelectionRequest(ev.xselectionrequest); break;
         case SelectionClear: m_ownsClip = false; break;
-        case SelectionNotify: m_selNotify = true; m_selProp = ev.xselection.property; break;
+        case SelectionNotify:
+            if (ev.xselection.selection == m_aDndSelection) HandleDndData(ev.xselection);
+            else { m_selNotify = true; m_selProp = ev.xselection.property; }
+            break;
         default: break;
         }
     }
@@ -675,6 +696,75 @@ public:
         }
         return out;
     }
+    // ---- file drops (XDND, version 5; written from the freedesktop XDND protocol text) ------------------------------------------
+    // Source -> us: XdndEnter (the types on offer), XdndPosition (answered with XdndStatus: accept as a copy), XdndLeave or
+    // XdndDrop. On the drop we ask for the XdndSelection as text/uri-list, turn the URIs into paths (one DropFile event per
+    // file, window id = the window it was dropped on) and answer XdndFinished.
+    void DndSend(::Window to, Atom type, long l0, long l1, long l2, long l3 = 0, long l4 = 0) {
+        XEvent r; std::memset(&r, 0, sizeof(r));
+        r.xclient.type = ClientMessage; r.xclient.display = m_dpy; r.xclient.window = to;
+        r.xclient.message_type = type; r.xclient.format = 32;
+        r.xclient.data.l[0] = l0; r.xclient.data.l[1] = l1; r.xclient.data.l[2] = l2; r.xclient.data.l[3] = l3; r.xclient.data.l[4] = l4;
+        m_x.XSendEvent(m_dpy, to, False, NoEventMask, &r);
+        m_x.XFlush(m_dpy);
+    }
+    bool HandleDndMessage(XClientMessageEvent& m, X11Win& win) {
+        const Atom t = m.message_type;
+        if (t == m_aDndEnter) {
+            m_dndSource = (::Window)m.data.l[0];
+            m_dndVersion = (int)((unsigned long)m.data.l[1] >> 24);
+            m_dndAccept = false;
+            if (m_dndVersion < 1 || m_dndVersion > 5) { m_dndSource = 0; return true; }   // a version we do not know
+            if (m.data.l[1] & 1) {   // more than three types: the source's XdndTypeList holds them
+                Atom type; int fmt; unsigned long n, rest; unsigned char* data = nullptr;
+                if (m_x.XGetWindowProperty(m_dpy, m_dndSource, m_aDndTypeList, 0, 1 << 16, False, XA_ATOM, &type, &fmt, &n, &rest, &data) == Success && data) {
+                    if (fmt == 32) for (unsigned long i = 0; i < n; ++i) if (((long*)data)[i] == (long)m_aUriList) m_dndAccept = true;
+                    m_x.XFree(data);
+                }
+            } else {
+                for (int i = 2; i < 5; ++i) if ((Atom)m.data.l[i] == m_aUriList) m_dndAccept = true;
+            }
+            return true;
+        }
+        if (t == m_aDndPosition) {
+            if (!m_dndSource || (::Window)m.data.l[0] != m_dndSource) return true;
+            DndSend(m_dndSource, m_aDndStatus, (long)win.m_win, m_dndAccept ? 1 : 0, 0, 0, m_dndAccept ? (long)m_aDndCopy : (long)None);
+            return true;
+        }
+        if (t == m_aDndLeave) { if ((::Window)m.data.l[0] == m_dndSource) { m_dndSource = 0; m_dndAccept = false; } return true; }
+        if (t == m_aDndDrop) {
+            if (!m_dndSource || (::Window)m.data.l[0] != m_dndSource) return true;
+            if (!m_dndAccept) { DndSend(m_dndSource, m_aDndFinished, (long)win.m_win, 0, (long)None); m_dndSource = 0; return true; }
+            m_dndTarget = win.m_win;
+            const Time tm = m_dndVersion >= 1 ? (Time)m.data.l[2] : CurrentTime;
+            m_x.XDeleteProperty(m_dpy, win.m_win, m_aDndProp);
+            m_x.XConvertSelection(m_dpy, m_aDndSelection, m_aUriList, m_aDndProp, win.m_win, tm);
+            m_x.XFlush(m_dpy);
+            return true;
+        }
+        return false;
+    }
+    void HandleDndData(XSelectionEvent& se) {
+        const ::Window source = m_dndSource, target = m_dndTarget;
+        m_dndSource = 0; m_dndAccept = false;
+        std::string text;
+        bool got = false;
+        if (se.property != None && m_wins.count(se.requestor)) {
+            Atom type; int fmt; unsigned long n, rest; unsigned char* data = nullptr;
+            if (m_x.XGetWindowProperty(m_dpy, se.requestor, se.property, 0, 1 << 20, True, AnyPropertyType, &type, &fmt, &n, &rest, &data) == Success && data) {
+                if (fmt == 8 && type == m_aUriList) { text.assign((char*)data, n); got = true; }   // (an INCR transfer is not supported: it is refused)
+                m_x.XFree(data);
+            }
+        }
+        size_t count = 0;
+        if (got) {
+            for (const std::string& p : UriListToPaths(text)) {
+                Event d; d.type = EventType::DropFile; d.windowId = (uint32_t)target; d.timestampMs = (uint32_t)NowMs(); d.text = p;
+                m_pending.push_back(d); ++count;
+            }
+        }
+        if (source) DndSend(source, m_aDndFinished, (long)target, count ? 1 : 0, count ? (long)m_aDndCopy : (long)None);
+    }
     void HandleSelectionRequest(XSelectionRequestEvent& rq) {
         XEvent r; std::memset(&r, 0, sizeof(r));
         r.xselection.type = SelectionNotify;
@@ -747,6 +837,11 @@ public:
     std::string m_clip;
     bool m_ownsClip = false, m_selNotify = false;
     Atom m_selProp = 0;
+    Atom m_aDndAware = 0, m_aDndEnter = 0, m_aDndPosition = 0, m_aDndStatus = 0, m_aDndLeave = 0, m_aDndDrop = 0, m_aDndFinished = 0,
+         m_aDndSelection = 0, m_aDndCopy = 0, m_aDndTypeList = 0, m_aUriList = 0, m_aDndProp = 0;
+    ::Window m_dndSource = 0, m_dndTarget = 0;   // the drag in progress: who offers it, which of our windows it entered
+    int m_dndVersion = 0;
+    bool m_dndAccept = false;                    // the source offers text/uri-list
 };
 
 // ---- X11Win methods ------------------------------------------------------------------

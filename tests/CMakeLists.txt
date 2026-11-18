@@ -3203,6 +3203,18 @@ if(NOT WIN32 AND NOT EMSCRIPTEN)
             ENVIRONMENT "OKAY_PLATFORM_BACKEND=${_okay_pb}" PASS_REGULAR_EXPRESSION "default=${_okay_pb}")
     endforeach()
 
+    # File drops on the own X11 backend (XDND) with a fake drag source on a second X connection, and the URI list parser.
+    add_executable(test_platform_xdnd test_platform_xdnd.cpp)
+    target_link_libraries(test_platform_xdnd PRIVATE okay::platform)
+    target_include_directories(test_platform_xdnd PRIVATE ${CMAKE_SOURCE_DIR}/engine/src)
+    find_library(OKAY_TEST_X11_LIB X11)
+    if(OKAY_TEST_X11_LIB AND EXISTS /usr/include/X11/Xlib.h)
+        target_compile_definitions(test_platform_xdnd PRIVATE OKAY_TEST_HAVE_X11)
+        target_link_libraries(test_platform_xdnd PRIVATE ${OKAY_TEST_X11_LIB})
+    endif()
+    add_test(NAME platform_xdnd COMMAND sh ${CMAKE_CURRENT_SOURCE_DIR}/run_under_xvfb.sh $<TARGET_FILE:test_platform_xdnd>)
+    set_tests_properties(platform_xdnd PROPERTIES SKIP_RETURN_CODE 77 TIMEOUT 120)
+
     # The event queue (push, poll, pump, native pointer, unmapped events, render resets, CharForKey): no display needed.
     add_executable(test_platform_events test_platform_events.cpp)
     target_link_libraries(test_platform_events PRIVATE okay::platform)

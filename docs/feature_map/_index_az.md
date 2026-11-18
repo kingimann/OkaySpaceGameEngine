@@ -3484,6 +3484,7 @@ Word, then the number(s) to say. Back to the [overview](../FEATURE_MAP.md).
 - Project management (25)
 - Project panel (15.4, 15.4.1, 20.1)
 - Project panel and asset manager (15.4)
+- Project panel One column / Two columns (15.4.9)
 - Project panel right-click menus (15.4.7)
 - Project panel tab strip (15.4.8)
 - Project Settings (15.14, 15.14.2, 25.2)

@@ -410,6 +410,7 @@ struct ViewPrefs {
     int modelingRecent[4] = {0, 0, 0, 0};   // simple Modeling view: the last four tools used (stable codes, see ModelingEasy.hpp)
     int modelingSidebar = 0;        // advanced Modeling window page list: 0 = open (auto-fold when narrow), 1 = folded by choice, 2 = open by choice
     bool modelingAdvanced = false;  // Modeling window: false = the simple beginner view (default), true = every tool
+    int projectColumns = 2;         // Project panel layout: 1 = one column (folders open in place), 2 = two columns (tree + contents); see ProjectLayout.hpp
     int layoutPreset = 0;           // the built-in layout on screen when the editor closed (-1 = a saved or custom arrangement)
 
     /// One "key value" line of the settings file. False when the key is not one of these.
@@ -427,6 +428,7 @@ struct ViewPrefs {
         if (k.size() == 15 && k.compare(0, 14, "modelingrecent") == 0 && k[14] >= '0' && k[14] <= '3') { modelingRecent[k[14] - '0'] = v < 0 ? 0 : v; return true; }
         if (k == "modelingsidebarfolded") { modelingSidebar = (v >= 0 && v <= 2) ? v : 0; return true; }
         if (k == "modelingadvanced")   { modelingAdvanced = v != 0; return true; }
+        if (k == "projectcolumns")     { projectColumns = v == 1 ? 1 : 2; return true; }
         if (k == "layoutpreset")       { layoutPreset = v < -1 ? -1 : (v > 99 ? 99 : v); return true; }
         return false;
     }
@@ -446,6 +448,7 @@ struct ViewPrefs {
           << "modelingrecent0 " << modelingRecent[0] << "\nmodelingrecent1 " << modelingRecent[1] << "\nmodelingrecent2 " << modelingRecent[2] << "\nmodelingrecent3 " << modelingRecent[3] << "\n"
           << "modelingsidebarfolded " << modelingSidebar << "\n"
           << "modelingadvanced " << (modelingAdvanced ? 1 : 0) << "\n"
+          << "projectcolumns " << projectColumns << "\n"
           << "layoutpreset " << layoutPreset << "\n";
         return o.str();
     }

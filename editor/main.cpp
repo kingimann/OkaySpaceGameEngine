@@ -949,6 +949,7 @@ static void RunEditorPlayKeyTest(int& failures) {
 #include "ProjectBrowser.hpp"     // the Project panel's logic: folder model, safe file operations, references
 #include "ProjectPanelUI.hpp"     // the Project panel's name prompt, delete confirmation, import settings
 #include "ProjectTabs.hpp"        // the Project panel's tab strip (Assets / Favourites / Recent / Search) and the remembered tab
+#include "ProjectLayout.hpp"      // the Project panel's One column / Two columns layouts: divider clamp, open-in-place rows, keys
 #include "ProjectNewAssets.hpp"   // the text of a new dialogue, quest file, behavior tree and cutscene (Project > Create)
 #include "ProjectDelete.hpp"      // okayproj::Normalized / IsSameOrInside: the launcher's "is this path inside that folder" test
 #include "LaunchFile.hpp"         // open a file with the system's program, in a text editor, or show it in the file manager (no shell)
@@ -10496,6 +10497,10 @@ void DrawProject(EditorState& ed) {
     // Persisted view prefs + favorites — load once, before anything reads them.
     static bool s_prefsLoaded = false;
     if (!s_prefsLoaded) { LoadProjectViewPrefs(); s_prefsLoaded = true; }
+    // One column (a single list, folders open in place) or two columns (folder tree + contents); saved with the editor layout.
+    bool oneCol = oked::projectlayout::ColumnsFromInt(g_view.projectColumns) == oked::projectlayout::Columns::One;
+    static std::set<std::string> s_openFolders;   // folders opened in place in the one-column list (generic paths)
+    static std::uint64_t s_openVer = 0;           // bumped whenever s_openFolders changes, so the list is made again
     // A pending "ping": jump to the asset's folder, filter to its name, select it.
     static bool s_keepSearchOnce = false;   // the ping just SET the search — don't auto-clear it
     if (!g_pingAsset.empty()) {
@@ -10637,7 +10642,7 @@ void DrawProject(EditorState& ed) {
     const bool tbNarrow = ImGui::GetContentRegionAvail().x < 860.0f;   // a small dock: shorter search box, no slider (it is in "...")
     const float tbSearchW = tbNarrow ? 130.0f : 170.0f, tbFilterW = tbNarrow ? 92.0f : 104.0f;
     const float tbImportW = ImGui::CalcTextSize("Import").x + ImGui::GetStyle().FramePadding.x * 2.0f;
-    const float tbScopeW = 74.0f, tbSliderW = (g_projView == 0 && !tbNarrow) ? 78.0f : 0.0f;
+    const float tbScopeW = 74.0f, tbSliderW = (g_projView == 0 && !oneCol && !tbNarrow) ? 78.0f : 0.0f;
     const float tbRightW = tbFh * 3.0f + tbImportW + tbFilterW + tbSearchW + tbScopeW + tbSliderW +
                            ImGui::GetStyle().ItemSpacing.x * (tbSliderW > 0.0f ? 7.0f : 6.0f);
     {
@@ -10663,6 +10668,22 @@ void DrawProject(EditorState& ed) {
             }
         }
         if (active == pt::Tab::Favourites) { ImGui::SameLine(0, 10); ImGui::TextDisabled("starred files and folders; right-click an item > Add to Favourites"); }
+        {   // Layout switch at the right end of this row: One column | Two columns
+            namespace pl = oked::projectlayout;
+            const float fh = ImGui::GetFrameHeight() - 6.0f;
+            const float w1 = ImGui::CalcTextSize(pl::ColumnsLabel(pl::Columns::One)).x + ImGui::GetStyle().FramePadding.x * 2.0f + 4.0f;
+            const float w2 = ImGui::CalcTextSize(pl::ColumnsLabel(pl::Columns::Two)).x + ImGui::GetStyle().FramePadding.x * 2.0f + 4.0f;
+            const float wantX = ImGui::GetWindowContentRegionMax().x - w1 - w2 - 4.0f;
+            ImGui::SameLine(wantX > ImGui::GetCursorPosX() ? wantX : 0.0f, wantX > ImGui::GetCursorPosX() ? -1.0f : 8.0f);
+            const pl::Columns now = pl::ColumnsFromInt(g_view.projectColumns);
+            pl::Columns pick = now;
+            if (AccentToggleButton("One column##projcols1", now == pl::Columns::One, ImVec2(w1, fh))) pick = pl::Columns::One;
+            if (ImGui::IsItemHovered()) ImGui::SetTooltip("One list: folders open in place and show what is inside them.");
+            ImGui::SameLine(0, 2);
+            if (AccentToggleButton("Two columns##projcols2", now == pl::Columns::Two, ImVec2(w2, fh))) pick = pl::Columns::Two;
+            if (ImGui::IsItemHovered()) ImGui::SetTooltip("Folders on the left, what is inside the chosen folder on the right.");
+            if (pick != now) { g_view.projectColumns = pl::ColumnsToInt(pick); oneCol = pick == pl::Columns::One; g_treeFocused = false; SaveSettings(); }
+        }
         pt::Remembered rem;
         rem.smart = s_smart;
         {   // the folder, relative to Assets
@@ -10680,6 +10701,10 @@ void DrawProject(EditorState& ed) {
 
     // ---- Two panes: folder tree (left) + asset grid (right), with a
     //      draggable splitter between them (width persists) --------------
+    // Two columns: the tree keeps kMinTreeW.. and leaves the contents side its minimum (ProjectLayout.hpp). One column: no tree pane.
+    if (oneCol) g_treeFocused = false;
+    if (!oneCol) {
+    g_projTreeW = oked::projectlayout::ClampTreeWidth(ImGui::GetContentRegionAvail().x, g_projTreeW);
     ImGui::BeginChild("tree", ImVec2(g_projTreeW, 0), true, ImGuiWindowFlags_NoNavInputs);   // (the arrow keys are ours here: no second focus box)
     // Smart filters: every model / texture / sound / script / ... in the project at
     // once, with counts (a cached whole-project scan, refreshed every few seconds).
@@ -10826,11 +10851,10 @@ void DrawProject(EditorState& ed) {
     ImGui::InvisibleButton("##projsplit", ImVec2(7.0f, -1.0f));
     if (ImGui::IsItemHovered() || ImGui::IsItemActive()) ImGui::SetMouseCursor(ImGuiMouseCursor_ResizeEW);
     if (ImGui::IsItemActive()) {
-        g_projTreeW += ImGui::GetIO().MouseDelta.x;
-        g_projTreeW = g_projTreeW < 120.0f ? 120.0f : (g_projTreeW > 480.0f ? 480.0f : g_projTreeW);
+        g_projTreeW = oked::projectlayout::DragTreeWidth(ImGui::GetWindowContentRegionMax().x - ImGui::GetWindowContentRegionMin().x, g_projTreeW, ImGui::GetIO().MouseDelta.x);
     }
     if (ImGui::IsItemDeactivated()) SaveProjectViewPrefs();
-    if (ImGui::IsItemHovered() && ImGui::IsMouseDoubleClicked(ImGuiMouseButton_Left)) { g_projTreeW = 200.0f; SaveProjectViewPrefs(); }
+    if (ImGui::IsItemHovered() && ImGui::IsMouseDoubleClicked(ImGuiMouseButton_Left)) { g_projTreeW = oked::projectlayout::kDefaultTreeW; SaveProjectViewPrefs(); }
     {   // a subtle handle line so the splitter is discoverable
         ImVec2 mn = ImGui::GetItemRectMin(), mx = ImGui::GetItemRectMax();
         float cx = (mn.x + mx.x) * 0.5f;
@@ -10838,6 +10862,7 @@ void DrawProject(EditorState& ed) {
             ImGui::GetColorU32(ImGuiCol_Border, ImGui::IsItemHovered() || ImGui::IsItemActive() ? 1.0f : 0.5f));
     }
     ImGui::SameLine(0, 0);
+    }   // !oneCol
     ImGui::BeginChild("grid", ImVec2(0, 0), true);
 
     // Asset operations toolbar + the deferred rename target.
@@ -11013,6 +11038,7 @@ void DrawProject(EditorState& ed) {
     int&   s_filter = g_projFilter;
     int&   s_sort   = g_projSort;
     int&   s_view   = g_projView;
+    const int vw    = oneCol ? 1 : s_view;   // what is drawn: the one-column layout is always a list
     float& s_cell   = g_projCell;
 
     // Reserve room at the bottom for the selected-asset details strip and scroll
@@ -11026,7 +11052,9 @@ void DrawProject(EditorState& ed) {
     // The listing comes from the asset database (okaypb::Browser::List): no disk walk of the panel's own. It is made again only
     // when the folder, the search, the sort or a filter changes, or when the database's revision moves (a scan found a change,
     // or an operation here made one), so an idle panel does no work at all.
-    static std::string s_scanDir, s_scanSearch; static int s_scanSort = -2, s_scanFilter = -2, s_scanSmart = -2;
+    static std::string s_scanDir, s_scanSearch; static int s_scanSort = -2, s_scanFilter = -2, s_scanSmart = -2, s_scanCols = -1;
+    static std::uint64_t s_scanOpenVer = ~0ull;
+    static std::vector<int> s_scanDepth;   // one column: how deep each listed row sits (0 = in the shown folder)
     static bool s_scanAll = false;
     static std::uint64_t s_scanRev = ~0ull;
     static std::vector<okaypb::Entry> s_scanEntries;
@@ -11050,11 +11078,12 @@ void DrawProject(EditorState& ed) {
     const bool haveProject = !ed.projectDir().empty() && fs::is_directory(root, ec);
     {
         const bool changed = s_scanDir != dir.string() || s_scanSearch != std::string(search) || s_scanSort != s_sort ||
-                             s_scanFilter != s_filter || s_scanSmart != s_smart || s_scanAll != s_searchAll || s_scanRev != pb.Revision();
+                             s_scanFilter != s_filter || s_scanSmart != s_smart || s_scanAll != s_searchAll || s_scanRev != pb.Revision() ||
+                             s_scanCols != (oneCol ? 1 : 2) || s_scanOpenVer != s_openVer;
         if (changed) {
             s_scanDir = dir.string(); s_scanSearch = search; s_scanSort = s_sort; s_scanFilter = s_filter; s_scanSmart = s_smart;
-            s_scanAll = s_searchAll; s_scanRev = pb.Revision();
-            s_scanEntries.clear();
+            s_scanAll = s_searchAll; s_scanRev = pb.Revision(); s_scanCols = oneCol ? 1 : 2; s_scanOpenVer = s_openVer;
+            s_scanEntries.clear(); s_scanDepth.clear();
             if (haveProject) {
                 okaypb::ListOptions lo;
                 lo.text = dbText;
@@ -11091,6 +11120,24 @@ void DrawProject(EditorState& ed) {
                     if (qColor > 0 && colour != qColor) continue;
                     s_scanEntries.push_back(std::move(e));
                 }
+                s_scanDepth.assign(s_scanEntries.size(), 0);
+                if (oneCol && s_smart < 0 && dbText.empty() && qColor <= 0 && !s_openFolders.empty()) {
+                    // One column: folders the user opened show their contents right beneath them (rows come from oked::projectlayout).
+                    namespace pl = oked::projectlayout;
+                    std::map<std::string, okaypb::Entry> byId;
+                    const std::string rootId = dir.generic_string();
+                    auto kids = [&](const std::string& id) {
+                        std::vector<pl::Item> items;
+                        std::vector<okaypb::Entry> got;
+                        if (id == rootId) got = s_scanEntries;
+                        else { okaypb::ListOptions lo2 = lo; lo2.recursive = false; got = pb.List(id, lo2); }
+                        for (okaypb::Entry& ge : got) { items.push_back({ge.path, ge.isDir}); byId[ge.path] = std::move(ge); }
+                        return items;
+                    };
+                    const std::vector<pl::Row> rows = pl::FlattenOpen(rootId, s_openFolders, kids);
+                    s_scanEntries.clear(); s_scanDepth.clear();
+                    for (const pl::Row& r : rows) { s_scanEntries.push_back(byId[r.id]); s_scanDepth.push_back(r.depth); }
+                }
             }
         }
     }
@@ -11113,7 +11160,7 @@ void DrawProject(EditorState& ed) {
 
     // Clickable column headers for the list view — click Name / Type / Size / Date
     // to sort by that column (a small "v" marks the active sort).
-    if (s_view == 1) {
+    if (vw == 1) {
         float hx0 = ImGui::GetCursorPosX();
         ImGui::PushStyleColor(ImGuiCol_Button, ImVec4(0, 0, 0, 0));
         ImGui::PushStyleColor(ImGuiCol_ButtonHovered, ImVec4(1, 1, 1, 0.06f));
@@ -11204,7 +11251,7 @@ void DrawProject(EditorState& ed) {
         if (starts("sort:"))  { s_sort = std::clamp(act[5] - '0', 0, 3); SaveProjectViewPrefs(); return; }
         if (starts("tiles:")) {
             const int n = std::clamp(act[6] - '0', 1, 3);
-            s_cell = n == 1 ? 64.0f : n == 2 ? 96.0f : 128.0f; s_view = 0; SaveProjectViewPrefs();
+            s_cell = n == 1 ? 64.0f : n == 2 ? 96.0f : 128.0f; s_view = 0; if (oneCol) { g_view.projectColumns = 2; oneCol = false; SaveSettings(); } SaveProjectViewPrefs();
             return;
         }
         if (starts("label:")) {
@@ -11345,7 +11392,7 @@ void DrawProject(EditorState& ed) {
             if (selected.empty() && !shownPaths.empty()) selected = shownPaths.front();
             return;
         }
-        if (act == "view:grid") { s_view = 0; SaveProjectViewPrefs(); return; }
+        if (act == "view:grid") { s_view = 0; if (oneCol) { g_view.projectColumns = 2; oneCol = false; SaveSettings(); } SaveProjectViewPrefs(); return; }
         if (act == "view:list") { s_view = 1; SaveProjectViewPrefs(); return; }
         if (act == "up" && dir != root) {
             std::strncpy(dirBuf, dir.parent_path().string().c_str(), sizeof(dirBuf) - 1);
@@ -11448,7 +11495,7 @@ void DrawProject(EditorState& ed) {
         ImGui::PushID(shown);
         bool hov = false, dbl = false;
 
-        if (s_view == 0) {
+        if (vw == 0) {
             // ---- Grid tile (thumbnail / icon + wrapped name) ----
             ImGui::BeginGroup();
             ImVec4 cv = ImGui::ColorConvertU32ToFloat4(k.col);
@@ -11532,8 +11579,14 @@ void DrawProject(EditorState& ed) {
         } else {
             // ---- List row: icon chip + name, with right-aligned type & size ----
             float rowH = ImGui::GetTextLineHeight() + 6.0f;
+            const int rowDepth = (oneCol && shown < (int)s_scanDepth.size()) ? s_scanDepth[shown] : 0;
             if (ImGui::Selectable("##row", isSel, ImGuiSelectableFlags_AllowDoubleClick, ImVec2(0, rowH)))
                 pickItem(full);
+            if (oneCol && isDir && ImGui::IsItemClicked(ImGuiMouseButton_Left) &&
+                oked::projectlayout::OnDisclosureArrow(rowDepth, ImGui::GetItemRectMin().x + 5.0f, ImGui::GetIO().MousePos.x)) {
+                if (!s_openFolders.erase(e.path)) s_openFolders.insert(e.path);   // the arrow opens / closes the folder in place
+                ++s_openVer;
+            }
             hov = ImGui::IsItemHovered();
             if (hov && ImGui::IsMouseDoubleClicked(ImGuiMouseButton_Left)) dbl = true;
             if (ImGui::BeginDragDropSource()) {
@@ -11548,7 +11601,15 @@ void DrawProject(EditorState& ed) {
             ImVec2 mn = ImGui::GetItemRectMin(), mx = ImGui::GetItemRectMax();
             ImDrawList* dl = ImGui::GetWindowDrawList();
             float sq = rowH - 6.0f;
-            ImVec2 c0(mn.x + 5.0f, mn.y + 3.0f), c1(c0.x + sq, c0.y + sq);
+            const float oneColShift = oneCol ? oked::projectlayout::RowIndent(rowDepth) + oked::projectlayout::kArrowW : 0.0f;
+            if (oneCol && isDir) {   // open / close arrow: points right when closed, down when open
+                const bool isOpen = s_openFolders.count(e.path) != 0;
+                const float ax = mn.x + 5.0f + oked::projectlayout::RowIndent(rowDepth) + oked::projectlayout::kArrowW * 0.5f, ay = (mn.y + mx.y) * 0.5f, ar = rowH * 0.22f;
+                const ImU32 acol = ImGui::GetColorU32(ImGuiCol_Text);
+                if (isOpen) dl->AddTriangleFilled(ImVec2(ax - ar, ay - ar * 0.6f), ImVec2(ax + ar, ay - ar * 0.6f), ImVec2(ax, ay + ar * 0.8f), acol);
+                else dl->AddTriangleFilled(ImVec2(ax - ar * 0.6f, ay - ar), ImVec2(ax - ar * 0.6f, ay + ar), ImVec2(ax + ar * 0.8f, ay), acol);
+            }
+            ImVec2 c0(mn.x + 5.0f + oneColShift, mn.y + 3.0f), c1(c0.x + sq, c0.y + sq);
             // Real previews where they're cheap: image files show their pixels,
             // materials their albedo ball; everything else keeps its icon chip.
             SDL_Texture* rowThumb = isDir ? nullptr : ProjectThumb(full);
@@ -11587,7 +11648,7 @@ void DrawProject(EditorState& ed) {
         if (dbl) openAsset(full, ext, isDir);
 
         ImGui::PopID();
-        if (s_view == 0) { if (++col < cols) ImGui::SameLine(); else col = 0; }
+        if (vw == 0) { if (++col < cols) ImGui::SameLine(); else col = 0; }
         ++shown;
     }
     if (shown == 0) {
@@ -11958,11 +12019,30 @@ void DrawProject(EditorState& ed) {
             int cur = -1;
             for (int i = 0; i < (int)shownPaths.size(); ++i) if (shownPaths[i] == selected) cur = i;
             int step = 0;
-            if (ImGui::IsKeyPressed(ImGuiKey_RightArrow)) step = s_view == 0 ? 1 : 0;
-            if (ImGui::IsKeyPressed(ImGuiKey_LeftArrow))  step = s_view == 0 ? -1 : 0;
-            if (ImGui::IsKeyPressed(ImGuiKey_DownArrow))  step = s_view == 0 ? cols : 1;
-            if (ImGui::IsKeyPressed(ImGuiKey_UpArrow))    step = s_view == 0 ? -cols : -1;
+            if (ImGui::IsKeyPressed(ImGuiKey_RightArrow)) step = vw == 0 ? 1 : 0;
+            if (ImGui::IsKeyPressed(ImGuiKey_LeftArrow))  step = vw == 0 ? -1 : 0;
+            if (ImGui::IsKeyPressed(ImGuiKey_DownArrow))  step = vw == 0 ? cols : 1;
+            if (ImGui::IsKeyPressed(ImGuiKey_UpArrow))    step = vw == 0 ? -cols : -1;
             int target = -1;
+            if (oneCol && cur >= 0 && s_smart < 0 && search[0] == '\0' && entries.size() == shownPaths.size() &&
+                (ImGui::IsKeyPressed(ImGuiKey_RightArrow) || ImGui::IsKeyPressed(ImGuiKey_LeftArrow))) {
+                // One column: Right opens a folder in place (then steps into it), Left closes it (then steps out to the folder above).
+                namespace pl = oked::projectlayout;
+                std::vector<pl::Row> krows;
+                for (int i = 0; i < (int)entries.size(); ++i) {
+                    pl::Row r; r.id = entries[i].path; r.depth = i < (int)s_scanDepth.size() ? s_scanDepth[i] : 0;
+                    r.isFolder = entries[i].isDir; r.open = r.isFolder && s_openFolders.count(r.id) != 0;
+                    krows.push_back(r);
+                }
+                const pl::Move mv = pl::MoveSelection(krows, cur, ImGui::IsKeyPressed(ImGuiKey_RightArrow) ? pl::Key::Right : pl::Key::Left);
+                if (mv.expand >= 0) { s_openFolders.insert(krows[mv.expand].id); ++s_openVer; }
+                if (mv.collapse >= 0) { s_openFolders.erase(krows[mv.collapse].id); ++s_openVer; }
+                if (mv.select >= 0 && mv.select != cur) target = mv.select;
+                else if (mv.expand < 0 && mv.collapse < 0 && ImGui::IsKeyPressed(ImGuiKey_LeftArrow) && dir != root) {
+                    std::strncpy(dirBuf, dir.parent_path().string().c_str(), sizeof(dirBuf) - 1);   // top of the list: leave this folder
+                    dirBuf[sizeof(dirBuf) - 1] = '\0';
+                }
+            }
             if (step != 0) target = cur < 0 ? 0 : std::clamp(cur + step, 0, (int)shownPaths.size() - 1);
             if (ImGui::IsKeyPressed(ImGuiKey_Home)) target = 0;
             if (ImGui::IsKeyPressed(ImGuiKey_End))  target = (int)shownPaths.size() - 1;
@@ -12039,7 +12119,7 @@ void DrawProject(EditorState& ed) {
         if (ImGui::Button(s_searchAll ? "Project##scope" : "Folder##scope", ImVec2(tbScopeW, 0))) s_searchAll = !s_searchAll;
         if (ImGui::IsItemHovered()) ImGui::SetTooltip(s_searchAll ? "Search looks in the whole project.\nClick to search only this folder." : "Search looks in this folder and the folders in it.\nClick to search the whole project.");
         ImGui::SameLine();
-        if (s_view == 0 && tbSliderW > 0.0f) {   // how big the tiles are
+        if (s_view == 0 && !oneCol && tbSliderW > 0.0f) {   // how big the tiles are
             ImGui::SetNextItemWidth(tbSliderW);
             ImGui::PushStyleColor(ImGuiCol_FrameBg, ImVec4(0.26f, 0.28f, 0.33f, 1.0f));   // a visible track
             ImGui::SliderFloat("##tilesize", &s_cell, 48.0f, 128.0f, "");
@@ -12048,7 +12128,11 @@ void DrawProject(EditorState& ed) {
             if (ImGui::IsItemHovered()) ImGui::SetTooltip("Thumbnail size");
             ImGui::SameLine();
         }
-        if (IconButton("##pview", s_view == 0 ? TbIcon::List : TbIcon::Grid, s_view == 0 ? "List view" : "Grid view")) { s_view ^= 1; prefsChanged = true; }
+        if (IconButton("##pview", (s_view == 0 && !oneCol) ? TbIcon::List : TbIcon::Grid, oneCol ? "Grid view (two columns)" : (s_view == 0 ? "List view" : "Grid view"))) {
+            if (oneCol) { g_view.projectColumns = 2; oneCol = false; s_view = 0; SaveSettings(); }   // tiles need the two-column layout
+            else s_view ^= 1;
+            prefsChanged = true;
+        }
         ImGui::SameLine();
         if (IconButton("##pmore", TbIcon::More, "View options")) ImGui::OpenPopup("##projopts");
         if (ImGui::BeginPopup("##projopts")) {
@@ -12061,7 +12145,7 @@ void DrawProject(EditorState& ed) {
             ImGui::SliderFloat("##size", &s_cell, 48.0f, 128.0f, "%.0f px");
             prefsChanged |= ImGui::IsItemDeactivatedAfterEdit();
             for (const auto& sz : {std::pair<const char*, float>{"Small", 64.0f}, {"Medium", 96.0f}, {"Large", 128.0f}}) {
-                if (ImGui::SmallButton(sz.first)) { s_cell = sz.second; s_view = 0; prefsChanged = true; }
+                if (ImGui::SmallButton(sz.first)) { s_cell = sz.second; s_view = 0; if (oneCol) { g_view.projectColumns = 2; oneCol = false; SaveSettings(); } prefsChanged = true; }
                 ImGui::SameLine();
             }
             ImGui::NewLine();

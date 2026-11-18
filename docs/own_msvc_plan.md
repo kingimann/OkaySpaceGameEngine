@@ -745,3 +745,13 @@ Fixed (written from the C++ standard text only):
 Whole-library measurement (348 files of `engine/src`, compile to object, `/tmp/one.sh`): 95 compile, 253 fail. The count did not change from Round 28, because the fixed files now stop at the next error. First errors now: expected a type 43, expected an array length 23 (new, now visible), expected a class template body 20, expected a base class 18, expected ';' 19, assign with 3 arguments 10, thread/mutex/condition_variable 22 (intentionally excluded), large struct return 8, missing stdexcept/exception 11, charconv 3.
 
 Not done this round: `decltype(auto)`, `std::streamsize`/`ostream::write`, class template body and base class errors, `<stdexcept>`/`<exception>`, `std::visit`/`get<N>`, remaining `vector::assign`, large struct returns, iterator destruction on break/return.
+
+## Round 30 (unverified: not run under Wine, Wine broken in this container)
+
+Compile-only, branch `claude/okayms-3-r23b`. Each fix has a check in `tools/okayms/tests/test_round23.cpp` (28 tests, 48 checks, all pass). `sh tools/okayms/build.sh` compiles with no errors or warnings; its Wine-run lines are red as before (479 FAIL lines against 482 before this round).
+
+Added: `auto`/`decltype(auto)` result types; inherited typedefs; `std::Base(...)` in mem-initializers; initializer_list of classes with destructors; function pointer members; `C g{args}` globals; const local array lengths; `.5` and `2.f` literals; hash for string and pointers; class array member init lists; `struct Outer::Inner {}`; alias and template base classes (CRTP); `= default` outside the class; comma operator; `(void)` of large results; `f = nullptr`; `std::next/prev/advance/rotate/nth_element`; `enable_shared_from_this` (base must be at offset 0); `<exception>`/`<stdexcept>` (exception_ptr is an empty handle); virtual functions after a plain base; scope numbering in constructor bodies; nearest-scope local lookup; function-pointer calls with reference parameters; `using namespace` inside nested namespaces; variables named like types (`seconds`, `duration`).
+
+New Wine-free check: `tools/okayms/tests/test_objcheck.cpp` reads each object back and checks relocations, symbols, `.pdata` and the byte before every REL32. Run it on files: `tools/okayms/build/test_objcheck engine/src/Core/*.cpp`.
+
+Whole library: not re-measured with the final binary (the run was cut short). Last full run (earlier binary): 97 of 348 compile.

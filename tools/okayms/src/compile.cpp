@@ -1217,7 +1217,21 @@ struct Parser {
     struct DObj {
         std::string name;
         int sid = -1;
+        int count = 0;  // above 0: an array of that many objects
     };
+    // A global or static object whose destructor runs when the program ends.
+    struct GlobalObj {
+        std::string name;
+        int sid = -1;
+        int count = 0;
+        std::string guard;  // a static local: destroyed only if this flag is set
+    };
+    std::vector<Local> init_locals{};
+    Node init_body{};
+    bool init_used = false;
+    std::vector<GlobalObj> global_objs{};
+    std::vector<GlobalObj> static_objs{};
+    std::vector<Node> global_init{};
     std::vector<std::vector<DObj>> dscopes{};
     size_t fn_dbase = 0;
     std::vector<size_t> brk_dbase{};
@@ -1322,12 +1336,71 @@ struct Parser {
         stmt.kids.push_back(std::move(store));
         return stmt;
     }
+    // for (i = 0; i < n; i = i + 1) ctor(&name[i]) (or, going down, for the destructors). The
+    // counter is a hidden local of the function being compiled.
+    bool element_loop(const std::string& name, int count, bool reverse, int sid, const char* which, Node* out) {
+        if (cur_locals == nullptr) {
+            error = "an array of objects needs a function";
+            return false;
+        }
+        Local hidden;
+        hidden.name = "__ai" + std::to_string(rv_count++);
+        hidden.type.base = 1;
+        place_local(cur_locals, hidden);
+        auto int_lit = [](int v) {
+            Node n;
+            n.kind = Node::IntLit;
+            n.number = static_cast<uint64_t>(v);
+            n.type.base = 1;
+            return n;
+        };
+        auto assign = [&](Node value) {
+            Node a;
+            a.kind = Node::Assign;
+            a.op = TAssign;
+            a.kids.push_back(node_name(hidden.name));
+            a.kids.push_back(std::move(value));
+            return a;
+        };
+        Node init = assign(int_lit(reverse ? count - 1 : 0));
+        Node cond;
+        cond.kind = Node::Binary;
+        cond.op = reverse ? TGe : TLt;
+        cond.kids.push_back(node_name(hidden.name));
+        cond.kids.push_back(int_lit(reverse ? 0 : count));
+        Node step_value;
+        step_value.kind = Node::Binary;
+        step_value.op = reverse ? TMinus : TPlus;
+        step_value.kids.push_back(node_name(hidden.name));
+        step_value.kids.push_back(int_lit(1));
+        Node step = assign(std::move(step_value));
+        Node element;
+        element.kind = Node::Index;
+        element.kids.push_back(node_name(name));
+        element.kids.push_back(node_name(hidden.name));
+        Node call;
+        if (!special_call(sid, which, node_addr(std::move(element)), {}, &call)) return false;
+        Node loop;
+        loop.kind = Node::For;
+        loop.kids.push_back(std::move(init));
+        loop.kids.push_back(std::move(cond));
+        loop.kids.push_back(std::move(step));
+        loop.kids.push_back(std::move(call));
+        *out = std::move(loop);
+        return true;
+    }
+
     // Destructor calls for the open blocks from 'base' up, latest object first.
     bool dtor_nodes(size_t base, std::vector<Node>* out) {
         for (size_t sc = dscopes.size(); sc-- > base;) {
             const std::vector<DObj>& list = dscopes[sc];
             for (size_t i = list.size(); i-- > 0;) {
                 Node call;
+                if (list[i].count > 0) {
+                    if (!element_loop(list[i].name, list[i].count, true, list[i].sid, "<dtor>", &call)) return false;
+                    out->push_back(std::move(call));
+                    continue;
+                }
                 if (!special_call(list[i].sid, "<dtor>", node_addr(node_name(list[i].name)), {}, &call)) return false;
                 out->push_back(std::move(call));
             }
@@ -2550,6 +2623,171 @@ struct Parser {
         fn->sret = fn->ret.base == 3 && fn->ret.pointers == 0 && !fits_register(fn->ret);
     }
 
+    // The constructor calls of the global objects, in declaration order, go into __okay_init; the
+    // destructors (globals, then static locals, latest first) into __okay_fini. main (or entry)
+    // calls them. Written from ISO/IEC 14882 [basic.start.init] and [basic.start.term].
+    bool register_global_object(const std::string& name, const Type& type, std::vector<Node> args) {
+        std::vector<Local>* saved_locals = cur_locals;
+        const int saved_depth = scope_depth;
+        cur_locals = &init_locals;
+        scope_depth = 0;
+        const int sid = type.struct_id;
+        bool ok = true;
+        if (obj_needs_ctor(type)) {
+            Node call;
+            if (type.is_array()) {
+                if (!type.more.empty() || !args.empty()) {
+                    error = "a global array of objects needs one dimension and no arguments";
+                    ok = false;
+                } else {
+                    ok = element_loop(name, type.array_len, false, sid, "<ctor>", &call);
+                }
+            } else {
+                ok = special_call(sid, "<ctor>", node_addr(node_name(name)), std::move(args), &call);
+            }
+            if (ok) {
+                if (init_body.kind != Node::Block) init_body.kind = Node::Block;
+                init_body.kids.push_back(std::move(call));
+                init_used = true;
+            }
+        }
+        cur_locals = saved_locals;
+        scope_depth = saved_depth;
+        if (ok && obj_needs_dtor(type)) {
+            GlobalObj g;
+            g.name = name;
+            g.sid = sid;
+            g.count = type.is_array() ? type.array_len : 0;
+            global_objs.push_back(std::move(g));
+        }
+        return ok;
+    }
+
+    // Wraps every return of fn so that __okay_fini runs after the value is computed.
+    void rewrite_returns(Node& n, FuncDecl& fn) {
+        if (n.kind == Node::Return) {
+            Node call;
+            call.kind = Node::Call;
+            call.text = "__okay_fini";
+            Node call_stmt;
+            call_stmt.kind = Node::ExprStmt;
+            call_stmt.kids.push_back(std::move(call));
+            Node block;
+            block.kind = Node::Block;
+            block.line = n.line;
+            if (!n.kids.empty()) {
+                Local hidden;
+                hidden.name = "__rv" + std::to_string(rv_count++);
+                hidden.type = fn.ret;
+                const int saved_depth = scope_depth;
+                scope_depth = 0;
+                place_local(&fn.locals, hidden);
+                scope_depth = saved_depth;
+                Node assign;
+                assign.kind = Node::Assign;
+                assign.op = TAssign;
+                assign.number = 1;
+                assign.kids.push_back(node_name(hidden.name));
+                assign.kids.push_back(std::move(n.kids[0]));
+                Node assign_stmt;
+                assign_stmt.kind = Node::ExprStmt;
+                assign_stmt.kids.push_back(std::move(assign));
+                block.kids.push_back(std::move(assign_stmt));
+                block.kids.push_back(std::move(call_stmt));
+                Node ret;
+                ret.kind = Node::Return;
+                ret.kids.push_back(node_name(hidden.name));
+                block.kids.push_back(std::move(ret));
+            } else {
+                block.kids.push_back(std::move(call_stmt));
+                Node ret;
+                ret.kind = Node::Return;
+                block.kids.push_back(std::move(ret));
+            }
+            n = std::move(block);
+            return;
+        }
+        for (Node& kid : n.kids) rewrite_returns(kid, fn);
+    }
+
+    bool finish_program() {
+        for (GlobalObj& g : static_objs) global_objs.push_back(std::move(g));
+        static_objs.clear();
+        const bool need_fini = !global_objs.empty();
+        if (!init_used && !need_fini) return true;
+        auto make_fn = [&](const std::string& name, Node body, std::vector<Local> locals) {
+            FuncDecl fn;
+            fn.name = name;
+            fn.ret.base = 0;
+            finish_signature(&fn);
+            fn.body = std::move(body);
+            fn.locals = std::move(locals);
+            fn.defined = true;
+            funcs.push_back(std::move(fn));
+        };
+        if (init_used) {
+            init_body.kind = Node::Block;
+            make_fn("__okay_init", std::move(init_body), init_locals);
+        }
+        if (need_fini) {
+            std::vector<Local> fini_locals;
+            std::vector<Local>* saved_locals = cur_locals;
+            const int saved_depth = scope_depth;
+            cur_locals = &fini_locals;
+            scope_depth = 0;
+            Node body;
+            body.kind = Node::Block;
+            for (size_t i = global_objs.size(); i-- > 0;) {
+                const GlobalObj& g = global_objs[i];
+                Node call;
+                if (g.count > 0) {
+                    if (!element_loop(g.name, g.count, true, g.sid, "<dtor>", &call)) return false;
+                } else if (!special_call(g.sid, "<dtor>", node_addr(node_name(g.name)), {}, &call)) {
+                    return false;
+                }
+                if (!g.guard.empty()) {
+                    Node test;
+                    test.kind = Node::If;
+                    test.kids.push_back(node_name(g.guard));
+                    test.kids.push_back(std::move(call));
+                    call = std::move(test);
+                }
+                body.kids.push_back(std::move(call));
+            }
+            cur_locals = saved_locals;
+            scope_depth = saved_depth;
+            make_fn("__okay_fini", std::move(body), std::move(fini_locals));
+        }
+        // main (or entry when there is no main) runs them.
+        FuncDecl* start = nullptr;
+        for (FuncDecl& fn : funcs)
+            if (fn.name == "main" && fn.defined) start = &fn;
+        if (start == nullptr)
+            for (FuncDecl& fn : funcs)
+                if (fn.name == "entry" && fn.defined) start = &fn;
+        if (start == nullptr) return true;
+        if (need_fini) {
+            rewrite_returns(start->body, *start);
+            Node call;
+            call.kind = Node::Call;
+            call.text = "__okay_fini";
+            Node call_stmt;
+            call_stmt.kind = Node::ExprStmt;
+            call_stmt.kids.push_back(std::move(call));
+            start->body.kids.push_back(std::move(call_stmt));
+        }
+        if (init_used) {
+            Node call;
+            call.kind = Node::Call;
+            call.text = "__okay_init";
+            Node call_stmt;
+            call_stmt.kind = Node::ExprStmt;
+            call_stmt.kids.push_back(std::move(call));
+            start->body.kids.insert(start->body.kids.begin(), std::move(call_stmt));
+        }
+        return true;
+    }
+
     bool parse() {
         while (!is(TEnd)) {
             if (!current_ns.empty() && accept(TRBrace)) {
@@ -2627,7 +2865,26 @@ struct Parser {
                 continue;
             }
             Declarator decl;
-            if (!parse_declarator(type, &decl)) return false;
+            std::vector<Node> gargs;
+            bool gctor_args = false;
+            if (!is_typedef && (obj_needs_ctor(type) || obj_needs_dtor(type)) && is(TIdent) && at + 2 < tokens.size() &&
+                tokens[at + 1].kind == TLParen) {
+                const Tok after = tokens[at + 2].kind;
+                const bool type_start = after == TRParen || after == TInt || after == TVoid || after == TChar ||
+                                        after == TUnsigned || after == TSigned || after == TLong || after == TShort ||
+                                        after == TStruct || after == TUnion || after == TEnum || after == TFloat ||
+                                        after == TDouble || after == TConst;
+                if (!type_start) {
+                    // C g(args); a global object, the arguments go to a constructor.
+                    decl.name = cur().text;
+                    decl.type = type;
+                    next();
+                    next();
+                    if (!parse_call_args(&gargs)) return false;
+                    gctor_args = true;
+                }
+            }
+            if (!gctor_args && !parse_declarator(type, &decl)) return false;
             if (is_typedef) {
                 decl.type.is_const = is_const;
                 typedefs[decl.name] = decl.type;
@@ -2635,6 +2892,20 @@ struct Parser {
                 continue;
             }
             decl.type.is_const = is_const;
+            if (!decl.is_function && (obj_needs_ctor(decl.type) || obj_needs_dtor(decl.type))) {
+                if (is_static || accept(TAssign)) {
+                    error = "a global object with a constructor takes arguments in parentheses and is not static";
+                    return false;
+                }
+                if (!expect(TSemi, "';'")) return false;
+                Global global;
+                global.name = decl.name;
+                global.type = decl.type;
+                global.bss = true;
+                globals.push_back(global);
+                if (!register_global_object(decl.name, decl.type, std::move(gargs))) return false;
+                continue;
+            }
             if (!decl.is_function) {
                 Global global;
                 global.name = decl.name;
@@ -2669,7 +2940,8 @@ struct Parser {
             if (!parse_function_body(&fn, -1)) return false;
             funcs.push_back(std::move(fn));
         }
-        return error.empty();
+        if (!error.empty()) return false;
+        return finish_program();
     }
 };
 
@@ -3163,11 +3435,9 @@ bool Parser::parse_stmt_inner(Node* out, std::vector<Local>* locals, int stmt_li
         out->kind = Node::Block;
         if (decl.type.base == 3 && decl.type.pointers == 0 && !decl.type.is_ref && decl.type.struct_id >= 0 &&
             structs[static_cast<size_t>(decl.type.struct_id)].poly) {
-            if (decl.type.is_array() || is_static) {
-                error = "an array or static object of a class with virtual functions is not supported";
-                return false;
-            }
-            // The table pointer is set where the object is declared.
+            // The table pointer is set where the object is declared (an array or static object gets
+            // it from its constructors).
+            if (!decl.type.is_array() && !is_static) {
             const StructDef& cls = structs[static_cast<size_t>(decl.type.struct_id)];
             Node table_name;
             table_name.kind = Node::Name;
@@ -3199,11 +3469,80 @@ bool Parser::parse_stmt_inner(Node* out, std::vector<Local>* locals, int stmt_li
             stmt.line = stmt_line;
             stmt.kids.push_back(std::move(store));
             out->kids.push_back(std::move(stmt));
+            }
         }
         if (obj_needs_ctor(decl.type) || obj_needs_dtor(decl.type)) {
-            if (decl.type.is_array() || is_static) {
-                error = "an array or static object of a class with a constructor or destructor is not supported";
+            const int sid = decl.type.struct_id;
+            if (decl.type.is_array() && (!decl.type.more.empty() || has_init)) {
+                error = "an array of objects needs one dimension and no initializer";
                 return false;
+            }
+            if (is_static) {
+                // A static local object: built the first time control reaches the declaration (a
+                // guard flag in a hidden global), destroyed by the program end function.
+                if (has_init || have_ctor_args || decl.type.is_array()) {
+                    error = "a static local object takes no initializer and is not an array";
+                    return false;
+                }
+                Global guard;
+                guard.name = local.symbol + "_guard";
+                guard.type.base = 1;
+                guard.bss = true;
+                guard.is_static = true;
+                globals.push_back(guard);
+                Node set;
+                set.kind = Node::Assign;
+                set.op = TAssign;
+                set.kids.push_back(node_name(guard.name));
+                Node one;
+                one.kind = Node::IntLit;
+                one.number = 1;
+                one.type.base = 1;
+                set.kids.push_back(std::move(one));
+                Node set_stmt;
+                set_stmt.kind = Node::ExprStmt;
+                set_stmt.kids.push_back(std::move(set));
+                Node then_block;
+                then_block.kind = Node::Block;
+                then_block.kids.push_back(std::move(set_stmt));
+                if (obj_needs_ctor(decl.type)) {
+                    Node call;
+                    if (!special_call(sid, "<ctor>", node_addr(node_name(local.symbol)), {}, &call)) return false;
+                    then_block.kids.push_back(std::move(call));
+                }
+                Node not_g;
+                not_g.kind = Node::Unary;
+                not_g.op = TNot;
+                not_g.kids.push_back(node_name(guard.name));
+                Node test;
+                test.kind = Node::If;
+                test.kids.push_back(std::move(not_g));
+                test.kids.push_back(std::move(then_block));
+                out->kids.push_back(std::move(test));
+                if (obj_needs_dtor(decl.type)) {
+                    GlobalObj g;
+                    g.name = local.symbol;
+                    g.sid = sid;
+                    g.guard = guard.name;
+                    static_objs.push_back(std::move(g));
+                }
+                return expect(TSemi, "';'");
+            }
+            if (decl.type.is_array()) {
+                if (obj_needs_ctor(decl.type)) {
+                    Node loop;
+                    if (!element_loop(decl.name, decl.type.array_len, false, sid, "<ctor>", &loop)) return false;
+                    out->kids.push_back(std::move(loop));
+                }
+                if (obj_needs_dtor(decl.type)) {
+                    DObj obj;
+                    obj.name = decl.name;
+                    obj.sid = sid;
+                    obj.count = decl.type.array_len;
+                    if (dscopes.empty()) dscopes.emplace_back();
+                    dscopes.back().push_back(std::move(obj));
+                }
+                return expect(TSemi, "';'");
             }
             if (obj_needs_ctor(decl.type) && !has_init) {
                 Node call;

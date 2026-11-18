@@ -4066,6 +4066,7 @@ Word, then the number(s) to say. Back to the [overview](../FEATURE_MAP.md).
 - Scene view capture (50.1.2)
 - Scene view overlays, toolbar, density and maximize (15.9.8)
 - Scene view render (38.10)
+- Scene view right-click "add here" menu (15.3.13)
 - Scene view shell and toolbar (15.3.1)
 - Scene view tooling (11.12.5)
 - scene_capture.png (50.1)

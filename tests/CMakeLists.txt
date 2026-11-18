@@ -3981,6 +3981,12 @@ target_include_directories(test_hierarchy_context_model PRIVATE ${CMAKE_SOURCE_D
 target_compile_definitions(test_hierarchy_context_model PRIVATE OKAY_SOURCE_DIR="${PROJECT_SOURCE_DIR}")
 add_test(NAME hierarchy_context_model COMMAND test_hierarchy_context_model)
 
+# The Scene view's right-click "add here" menu as data (editor/SceneAddMenu.hpp): click versus drag, where the new object goes
+# (surface, ground, in front of the camera, 2D, snapping), the menu groups and the search box.
+add_executable(test_scene_add_menu test_scene_add_menu.cpp)
+target_include_directories(test_scene_add_menu PRIVATE ${CMAKE_SOURCE_DIR}/editor)
+add_test(NAME scene_add_menu COMMAND test_scene_add_menu)
+
 # Walking must look like walking and running like running (docs/walk_vs_run.md). The second entry runs the same program with
 # OKAY_OLD_GAIT=1 and shows the old gait's walk was NOT clearly different from its run; the strips program draws the pictures.
 add_executable(test_walk_vs_run test_walk_vs_run.cpp)

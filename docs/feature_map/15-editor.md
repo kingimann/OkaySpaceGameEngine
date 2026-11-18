@@ -70,11 +70,12 @@ Line ranges for `editor/main.cpp` are approximate (as of 2026-11-08) and move wh
   - 15.3.10 Mobile emulator and shared game resolution - `editor/main.cpp` (~41398-41507, ~42845-42925) - phone and tablet frames shared by Game view and UI editing
   - 15.3.11 Play mode - `editor/EditorState.*`, `editor/main.cpp` - Play snapshots the scene and Stop restores it; mouse capture rules; Error Pause
   - 15.3.12 Orthographic views - `editor/LevelTools.*` - View options > Perspective / Orthographic and Top, Bottom, Front, Back, Right, Left (numpad 7, 1, 3 with Ctrl for the opposite, numpad 5 switches projection); a true orthographic projection of the Scene view, zoomed with the wheel; a label names the view
+  - 15.3.13 Scene view right-click "add here" menu - `editor/SceneAddMenu.hpp` (click versus drag, where the object goes, menu groups, search; tested), `editor/main.cpp` (`SceneAddMenuTick`, `SceneAddRun`, `SceneAddPlace`, and the shared `Add*Object` creators that `DrawCreateSlot` also uses) - a right-click (not a drag) opens a menu at the cursor with the Hierarchy create groups, Prefabs, a search box, and Focus, Rename, Duplicate, Copy, Paste Here, Delete for the object under the cursor; the new object lands on the surface under the cursor, else the ground, else 10 m in front of the camera (the clicked point in 2D), snapped when Snap is on, and is selected; one undo step (`docs/scene_right_click_add.md`)
 - **Code:** `editor/main.cpp`, `editor/SplineTools.*`, `editor/NavigationWindow.*`, `editor/EditorState.*`, `editor/UIPreviewPainter.*`
 - **API:** View > Panels > Game; Scene toolbar; GameObject > Effects > Spline
 - **Editor:** Scene panel, Game panel, UI panel (12.10)
-- **Docs:** `docs/editor.md` (Scene & Game view extras), `docs/splines.md`, `docs/web_mobile.md`
-- **Tests:** `editor` (selftest, play and stop in `EditorState`), `splines` (engine side)
+- **Docs:** `docs/editor.md` (Scene & Game view extras), `docs/splines.md`, `docs/web_mobile.md`, `docs/scene_right_click_add.md`
+- **Tests:** `editor` (selftest, play and stop in `EditorState`), `splines` (engine side), `scene_add_menu` (15.3.13: no ImGui)
 - **Status:** Works - used daily; only the non-GUI play and snapshot logic is tested
 - **Open:** world-space canvases show only in the Game view (12.6); Scene view 3D render does a GPU-to-CPU readback each frame (the code comments call it the biggest per-frame cost); live editing during Play is planned (area 34)
 - **Related:** 15.9, 12.10, 2.1, 2.7, 6.5

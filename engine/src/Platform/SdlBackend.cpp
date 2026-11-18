@@ -276,7 +276,12 @@ public:
 
     bool PollEvent(Event& out) override {
         // m_last outlives this call (Event::native points at it until the next poll). A drop's string is taken and freed by Translate.
-        while (SDL_PollEvent(&m_last)) {
+        // Not SDL_PollEvent: SDL 2.30.0's version returns 0 once on a queue that holds an event pushed after the previous
+        // poll emptied it (found by tests/test_platform_events.cpp: the event arrives on the next call). Pump then take one is
+        // what it is meant to do and has no such gap.
+        for (;;) {
+            SDL_PumpEvents();
+            if (SDL_PeepEvents(&m_last, 1, SDL_GETEVENT, SDL_FIRSTEVENT, SDL_LASTEVENT) != 1) break;
             Event r;
             if (Translate(m_last, r)) { r.native = &m_last; out = std::move(r); return true; }
             if (m_reportUnmapped) { r.type = EventType::Other; r.timestampMs = m_last.common.timestamp; r.native = &m_last; out = std::move(r); return true; }

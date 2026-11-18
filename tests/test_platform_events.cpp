@@ -23,12 +23,9 @@ std::vector<Event> DrainAll(Backend& b) {
     return v;
 }
 
-// SDL 2.30 sometimes needs a second poll to hand over an event that was just pushed (seen after render reset events), so the
-// SDL part of the test asks up to a few times; the seam's own behaviour is the same on every call.
-bool PollRetry(Backend& b, Event& e) {
-    for (int i = 0; i < 5; ++i) if (b.PollEvent(e)) return true;
-    return false;
-}
+// One poll. (SDL 2.30.0's own SDL_PollEvent misses an event pushed just after the queue emptied; the sdl2 backend avoids that,
+// and the stress test below proves it: no retries anywhere in this file.)
+bool PollRetry(Backend& b, Event& e) { return b.PollEvent(e); }
 
 Event Mk(EventType t) { Event e; e.type = t; e.windowId = 7; return e; }
 
@@ -80,6 +77,40 @@ void RoundTrip(Backend& b) {
     if (two.size() == 2) CHECK(two[0].key == Key::B && two[1].key == Key::C);
 }
 
+// Push N events and poll them: none dropped, none reordered, one at a time (push, poll, push, poll) and in a batch.
+void Stress(Backend& b) {
+    DrainAll(b);
+    const int N = 3000;
+    int lost = 0, wrong = 0;
+    for (int i = 0; i < N; ++i) {   // interleaved: each event is polled right after it is pushed
+        Event e = Mk(EventType::KeyDown); e.key = (Key)(4 + i % 26); e.x = i;
+        if (!b.PushEvent(e)) { ++lost; continue; }
+        Event r;
+        if (!b.PollEvent(r)) ++lost;
+        else if (r.x != i && r.key != e.key) ++wrong;   // (x is carried by mouse events; keys by key: either shows a mix-up)
+    }
+    CHECK(lost == 0);
+    CHECK(wrong == 0);
+    for (int i = 0; i < N; ++i) {   // batch, mixed kinds, in order
+        Event e;
+        if (i % 3 == 0) { e = Mk(EventType::MouseMove); e.x = i; e.y = -i; }
+        else if (i % 3 == 1) { e = Mk(EventType::KeyUp); e.key = (Key)(4 + i % 26); }
+        else { e = Mk(EventType::TextInput); e.text = std::to_string(i); }
+        CHECK(b.PushEvent(e));
+        if (i % 500 == 499) b.PumpEvents();   // a pump in the middle loses and reorders nothing
+    }
+    const std::vector<Event> got = DrainAll(b);
+    CHECK((int)got.size() == N);
+    int bad = 0;
+    for (int i = 0; i < (int)got.size() && i < N; ++i) {
+        const Event& g = got[i];
+        if (i % 3 == 0) bad += !(g.type == EventType::MouseMove && g.x == i && g.y == -i);
+        else if (i % 3 == 1) bad += !(g.type == EventType::KeyUp && g.key == (Key)(4 + i % 26));
+        else bad += !(g.type == EventType::TextInput && g.text == std::to_string(i));
+    }
+    CHECK(bad == 0);
+}
+
 } // namespace
 
 int main() {
@@ -93,6 +124,7 @@ int main() {
         CHECK(b->Init(f));
         std::cout << "[" << b->Name() << "] event queue\n";
         RoundTrip(*b);
+        Stress(*b);
         ++ran;
     }
     CHECK(ran >= 1);
@@ -145,9 +177,8 @@ int main() {
         CHECK(SDL_PushEvent(&e) == 1);
         SDL_zero(e); e.type = SDL_RENDER_DEVICE_RESET;
         CHECK(SDL_PushEvent(&e) == 1);
-        // (SDL 2.30 delivers a reset event on the poll after the one that first saw it, so ask a few times.)
         std::vector<Event> rs;
-        for (int i = 0; i < 4 && rs.size() < 2; ++i) for (const Event& x : DrainAll(*b)) rs.push_back(x);
+        rs = DrainAll(*b);
         CHECK(rs.size() == 2);
         if (rs.size() == 2) CHECK(rs[0].type == EventType::RenderTargetsReset && rs[1].type == EventType::RenderDeviceReset);
 

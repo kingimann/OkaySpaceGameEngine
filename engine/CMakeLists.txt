@@ -334,6 +334,7 @@ add_library(okay_engine
     src/Texture/Texture.cpp
     src/Texture/Mip.cpp
     src/Texture/Atlas.cpp
+    src/Texture/Convert.cpp
     src/Optimize/SceneOptimizationReport.cpp
     src/Testing/TestRegistry.cpp
     src/Testing/PlayTest.cpp

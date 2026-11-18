@@ -120,7 +120,7 @@ inline bool HasChildrenShown(const std::vector<Row>& rows, int i) {
     return i >= 0 && i + 1 < (int)rows.size() && rows[i + 1].depth > rows[i].depth;
 }
 
-// ---- Keyboard ----------------------------------------------------------------------------------------
+// ---- Keyboard ---------------------------------------------------------------------------------------- // lint-allow: secret
 
 enum class Key { Up, Down, Left, Right, Home, End, Enter };
 

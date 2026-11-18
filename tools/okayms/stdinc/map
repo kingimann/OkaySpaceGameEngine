@@ -92,9 +92,4 @@ public:
     }
 };
 
-template <typename K, typename V, typename H = int, typename E = int, typename A = int>
-class unordered_map : public map<K, V> {
-public:
-    unordered_map() {}
-};
 }

@@ -1,0 +1,213 @@
+// okay-ms own standard header: istringstream, ostringstream, stringstream and the stream operators the engine uses, written
+// from ISO/IEC 14882 [string.streams] and [istream.formatted]. Own small version, NOT the iostream class hierarchy: an input
+// stream is a string and a read position, an output stream is a string that grows. Supported: `>>` into string (a word),
+// int, unsigned, long, long long, unsigned long long, float, double, char; std::getline(stream, string [, delim]); `<<` of
+// strings, C strings, char, the integer types, float and double (a float is written as fixed digits with the trailing zeros
+// removed, up to six decimals, not as printf's %g); str(); eof() and the stream's truth value (false after a failed read).
+// No manipulators (setw, hex, ...), no precision or flags, no locales, no seekg/tellg, no exceptions.
+#pragma once
+#include <cstddef>
+#include <cstdlib>
+#include <string>
+namespace std {
+struct ios_base {
+    enum openmode { in = 1, out = 2, app = 8, ate = 4, binary = 32, trunc = 16 };
+};
+typedef ios_base ios;
+
+class okay_istream {
+public:
+    string buf_;
+    size_t pos_;
+    bool fail_;
+    okay_istream() : buf_(), pos_(0), fail_(false) {}
+    operator bool() const { return !fail_; }
+    bool operator!() const { return fail_; }
+    bool fail() const { return fail_; }
+    bool good() const { return !fail_ && pos_ <= buf_.size(); }
+    bool eof() const { return pos_ >= buf_.size(); }
+    void skip_space() {
+        while (pos_ < buf_.size() && (buf_[pos_] == ' ' || buf_[pos_] == '\t' || buf_[pos_] == '\n' || buf_[pos_] == '\r')) ++pos_;
+    }
+    // The next word, or fail when there is none.
+    string word() {
+        skip_space();
+        size_t start = pos_;
+        while (pos_ < buf_.size() && !(buf_[pos_] == ' ' || buf_[pos_] == '\t' || buf_[pos_] == '\n' || buf_[pos_] == '\r')) ++pos_;
+        if (start == pos_) fail_ = true;
+        return buf_.substr(start, pos_ - start);
+    }
+    okay_istream* rdbuf() { return this; }
+    string rest() const {
+        if (pos_ >= buf_.size()) return string();
+        return buf_.substr(pos_);
+    }
+};
+
+class okay_ostream {
+public:
+    string out_;
+    okay_ostream() : out_() {}
+    operator bool() const { return true; }
+    bool fail() const { return false; }
+};
+
+inline okay_istream& operator>>(okay_istream& src, string& s) {
+    s = src.word();
+    return src;
+}
+inline okay_istream& operator>>(okay_istream& src, char& c) {
+    src.skip_space();
+    if (src.pos_ >= src.buf_.size()) src.fail_ = true;
+    else c = src.buf_[src.pos_++];
+    return src;
+}
+inline okay_istream& operator>>(okay_istream& src, double& v) {
+    const string w = src.word();
+    if (src.fail_) return src;
+    char* end = 0;
+    const double d = strtod(w.c_str(), &end);
+    if (end == w.c_str()) src.fail_ = true;
+    else v = d;
+    return src;
+}
+inline okay_istream& operator>>(okay_istream& src, float& v) {
+    double d = 0.0;
+    src >> d;
+    if (!src.fail_) v = (float)d;
+    return src;
+}
+inline okay_istream& operator>>(okay_istream& src, long long& v) {
+    const string w = src.word();
+    if (src.fail_) return src;
+    char* end = 0;
+    const long r = strtol(w.c_str(), &end, 10);
+    if (end == w.c_str()) src.fail_ = true;
+    else v = r;
+    return src;
+}
+inline okay_istream& operator>>(okay_istream& src, int& v) {
+    long long x = 0;
+    src >> x;
+    if (!src.fail_) v = (int)x;
+    return src;
+}
+inline okay_istream& operator>>(okay_istream& src, long& v) {
+    long long x = 0;
+    src >> x;
+    if (!src.fail_) v = (long)x;
+    return src;
+}
+inline okay_istream& operator>>(okay_istream& src, unsigned& v) {
+    long long x = 0;
+    src >> x;
+    if (!src.fail_) v = (unsigned)x;
+    return src;
+}
+inline okay_istream& operator>>(okay_istream& src, unsigned long long& v) {
+    long long x = 0;
+    src >> x;
+    if (!src.fail_) v = (unsigned long long)x;
+    return src;
+}
+// getline ([string.io]): up to the delimiter, which is read and dropped; false when nothing was left to read.
+inline okay_istream& getline(okay_istream& src, string& line, char delim) {
+    if (src.pos_ >= src.buf_.size()) {
+        src.fail_ = true;
+        line.clear();
+        return src;
+    }
+    size_t start = src.pos_;
+    while (src.pos_ < src.buf_.size() && src.buf_[src.pos_] != delim) ++src.pos_;
+    line = src.buf_.substr(start, src.pos_ - start);
+    if (src.pos_ < src.buf_.size()) ++src.pos_;
+    if (delim == '\n' && !line.empty() && line[line.size() - 1] == '\r') line.resize(line.size() - 1);
+    return src;
+}
+inline okay_istream& getline(okay_istream& src, string& line) { return getline(src, line, '\n'); }
+
+inline okay_ostream& operator<<(okay_ostream& o, const string& s) {
+    o.out_ += s;
+    return o;
+}
+inline okay_ostream& operator<<(okay_ostream& o, const char* s) {
+    o.out_ += s;
+    return o;
+}
+inline okay_ostream& operator<<(okay_ostream& o, char c) {
+    o.out_.push_back(c);
+    return o;
+}
+inline okay_ostream& operator<<(okay_ostream& o, long long v) {
+    o.out_ += to_string(v);
+    return o;
+}
+inline okay_ostream& operator<<(okay_ostream& o, int v) { return o << (long long)v; }
+inline okay_ostream& operator<<(okay_ostream& o, long v) { return o << (long long)v; }
+inline okay_ostream& operator<<(okay_ostream& o, unsigned v) { return o << (long long)v; }
+inline okay_ostream& operator<<(okay_ostream& o, unsigned long long v) {
+    o.out_ += to_string(v);
+    return o;
+}
+inline okay_ostream& operator<<(okay_ostream& o, double v) {
+    if (v != v) {
+        o.out_ += "nan";
+        return o;
+    }
+    if (v < 0.0) {
+        o.out_.push_back('-');
+        v = -v;
+    }
+    if (v > 1.0e18) {
+        o.out_ += "inf";
+        return o;
+    }
+    long long whole = (long long)v;
+    double frac = v - (double)whole;
+    long long micro = (long long)(frac * 1000000.0 + 0.5);
+    if (micro >= 1000000) {
+        ++whole;
+        micro -= 1000000;
+    }
+    o.out_ += to_string(whole);
+    if (micro > 0) {
+        string digits = to_string(micro);
+        while (digits.size() < 6) digits = "0" + digits;
+        size_t end = digits.size();
+        while (end > 0 && digits[end - 1] == '0') --end;
+        o.out_.push_back('.');
+        o.out_ += digits.substr(0, end);
+    }
+    return o;
+}
+inline okay_ostream& operator<<(okay_ostream& o, float v) { return o << (double)v; }
+// `out << in.rdbuf()`: the rest of the input is appended.
+inline okay_ostream& operator<<(okay_ostream& o, okay_istream* src) {
+    o.out_ += src->rest();
+    src->pos_ = src->buf_.size();
+    return o;
+}
+
+class istringstream : public okay_istream {
+public:
+    istringstream() {}
+    istringstream(const string& s) { buf_ = s; }
+    string str() const { return buf_; }
+    void str(const string& s) {
+        buf_ = s;
+        pos_ = 0;
+        fail_ = false;
+    }
+};
+class ostringstream : public okay_ostream {
+public:
+    ostringstream() {}
+    string str() const { return out_; }
+    void str(const string& s) { out_ = s; }
+};
+class stringstream : public okay_ostream {
+public:
+    stringstream() {}
+    string str() const { return out_; }
+};
+}

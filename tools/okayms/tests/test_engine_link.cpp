@@ -42,7 +42,7 @@ const char* kDir = "/tmp/okayms-el";
 bool build_runtime(Tally& tally, const std::string& cl, const std::string& root) {
     const std::string rt = root + "/tools/okayms/runtime";
     okayms::Archive archive;
-    for (const char* name : {"string", "printf", "startup", "mem", "env"}) {
+    for (const char* name : {"string", "printf", "startup", "mem", "env", "file"}) {
         const std::string obj = std::string(kDir) + "/rt_" + name + ".obj";
         const int rc = run(cl + " /I" + rt + " /c /Fo" + obj + " " + rt + "/" + name + ".c", std::string(kDir) + "/rt.log");
         CHECK(tally, rc == 0);
@@ -64,7 +64,8 @@ bool build_runtime(Tally& tally, const std::string& cl, const std::string& root)
     okayms::Archive kernel;
     for (const char* name : {"ExitProcess", "GetStdHandle", "WriteFile", "GetProcessHeap", "HeapAlloc", "HeapFree",
                              "QueryPerformanceCounter", "QueryPerformanceFrequency", "GetSystemTimeAsFileTime",
-                             "GetEnvironmentVariableA", "GetFileAttributesA", "GetCurrentDirectoryA"}) {
+                             "GetEnvironmentVariableA", "GetFileAttributesA", "GetCurrentDirectoryA", "CreateFileA",
+                             "GetFileSize", "ReadFile", "CloseHandle"}) {
         okayms::ArchiveMember member;
         member.name = name;
         member.is_import = true;

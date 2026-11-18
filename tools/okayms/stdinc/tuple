@@ -1,0 +1,48 @@
+// okay-ms own standard header: std::tuple of up to three elements, make_tuple and get<N>, written from ISO/IEC 14882
+// [tuple]. Own minimal version: `tuple<A, B, C>` has three members (the unused ones of a shorter tuple are ints that stay 0),
+// comparison is lexicographic over the three. No tie, no tuple_cat, no tuple_size, no allocator constructors.
+#pragma once
+namespace std {
+template <typename A, typename B = int, typename C = int>
+struct tuple {
+    A a_;
+    B b_;
+    C c_;
+    tuple() : a_(), b_(), c_() {}
+    tuple(const A& a) : a_(a), b_(), c_() {}
+    tuple(const A& a, const B& b) : a_(a), b_(b), c_() {}
+    tuple(const A& a, const B& b, const C& c) : a_(a), b_(b), c_(c) {}
+};
+template <typename A, typename B, typename C>
+bool operator<(const tuple<A, B, C>& x, const tuple<A, B, C>& y) {
+    if (x.a_ < y.a_) return true;
+    if (y.a_ < x.a_) return false;
+    if (x.b_ < y.b_) return true;
+    if (y.b_ < x.b_) return false;
+    return x.c_ < y.c_;
+}
+template <typename A, typename B, typename C>
+bool operator==(const tuple<A, B, C>& x, const tuple<A, B, C>& y) { return x.a_ == y.a_ && x.b_ == y.b_ && x.c_ == y.c_; }
+template <typename A, typename B, typename C>
+bool operator!=(const tuple<A, B, C>& x, const tuple<A, B, C>& y) { return !(x == y); }
+template <typename A> tuple<A> make_tuple(const A& a) { return tuple<A>(a); }
+template <typename A, typename B> tuple<A, B> make_tuple(const A& a, const B& b) { return tuple<A, B>(a, b); }
+template <typename A, typename B, typename C> tuple<A, B, C> make_tuple(const A& a, const B& b, const C& c) { return tuple<A, B, C>(a, b, c); }
+
+// get<N>: the element type is found through a helper class selected by N.
+template <int N, typename A, typename B, typename C> struct tuple_at;
+template <typename A, typename B, typename C> struct tuple_at<0, A, B, C> {
+    typedef A type;
+    static A& get(tuple<A, B, C>& t) { return t.a_; }
+};
+template <typename A, typename B, typename C> struct tuple_at<1, A, B, C> {
+    typedef B type;
+    static B& get(tuple<A, B, C>& t) { return t.b_; }
+};
+template <typename A, typename B, typename C> struct tuple_at<2, A, B, C> {
+    typedef C type;
+    static C& get(tuple<A, B, C>& t) { return t.c_; }
+};
+template <int N, typename A, typename B, typename C>
+typename tuple_at<N, A, B, C>::type& get(tuple<A, B, C>& t) { return tuple_at<N, A, B, C>::get(t); }
+}

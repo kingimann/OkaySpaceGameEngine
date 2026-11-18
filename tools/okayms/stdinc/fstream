@@ -1,0 +1,64 @@
+// okay-ms own standard header: ifstream and ofstream, written from ISO/IEC 14882 [file.streams] on the small stream classes
+// of <sstream>. An ifstream reads the whole file when it is opened and then behaves like an istringstream; an ofstream
+// collects what is written and writes it to the file when it is closed or destroyed (so a program that crashes loses it).
+// The open mode is accepted and ignored except for ios::app (append). No seekg/tellg, no read() of binary blocks, no
+// std::filesystem::path constructor. Needs runtime/file.c (okay_read_file, okay_write_file) from the runtime library.
+#pragma once
+#include <cstdlib>
+#include <sstream>
+#include <string>
+extern "C" long long okay_read_file(const char* path, char** data);
+extern "C" int okay_write_file(const char* path, const char* data, long long size, int append);
+namespace std {
+class ifstream : public okay_istream {
+public:
+    bool open_;
+    ifstream() : open_(false) {}
+    ifstream(const char* path, int mode = 1) : open_(false) { open(path, mode); }
+    ifstream(const string& path, int mode = 1) : open_(false) { open(path.c_str(), mode); }
+    void open(const char* path, int mode = 1) {
+        (void)mode;
+        char* data = 0;
+        const long long n = okay_read_file(path, &data);
+        buf_.clear();
+        pos_ = 0;
+        if (n < 0) {
+            fail_ = true;
+            open_ = false;
+            return;
+        }
+        fail_ = false;
+        open_ = true;
+        buf_ = string(data, (size_t)n);
+        free(data);
+    }
+    bool is_open() const { return open_; }
+    void close() { open_ = false; }
+};
+class ofstream : public okay_ostream {
+public:
+    string path_;
+    bool open_;
+    bool append_;
+    bool failed_;
+    ofstream() : path_(), open_(false), append_(false), failed_(false) {}
+    ofstream(const char* path, int mode = 2) : path_(), open_(false), append_(false), failed_(false) { open(path, mode); }
+    ofstream(const string& path, int mode = 2) : path_(), open_(false), append_(false), failed_(false) { open(path.c_str(), mode); }
+    ~ofstream() { close(); }
+    void open(const char* path, int mode = 2) {
+        path_ = path;
+        append_ = (mode & 8) != 0;
+        open_ = true;
+        failed_ = false;
+        out_.clear();
+    }
+    bool is_open() const { return open_; }
+    operator bool() const { return open_ && !failed_; }
+    bool fail() const { return failed_; }
+    void close() {
+        if (!open_) return;
+        open_ = false;
+        if (!okay_write_file(path_.c_str(), out_.c_str(), (long long)out_.size(), append_ ? 1 : 0)) failed_ = true;
+    }
+};
+}

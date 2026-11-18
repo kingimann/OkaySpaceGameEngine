@@ -97,5 +97,14 @@ int main(int, char**) {
           "struct C { int a[3]; It begin() { It i; i.p = a; return i; } It end() { It i; i.p = a + 3; return i; } };\n"
           "int main() { C c; c.a[0] = 1; c.a[1] = 2; c.a[2] = 3; int s = 0; for (int x : c) s += x; for (auto& y : c) y = y * 2; return s + c.a[2]; }\n", &o);
     CHECK(t, has_symbol(o, "??9It@@") && has_symbol(o, "??EIt@@") && has_symbol(o, "??DIt@@"));
+    ++tests;
+    build(t, "tuple, unordered_map with a hash, sstream, fstream", "#include <tuple>\n#include <map>\n#include <unordered_map>\n#include <sstream>\n#include <fstream>\n#include <string>\n"
+          "struct Cell { int x, y; bool operator==(const Cell& o) const { return x == o.x && y == o.y; } };\n"
+          "struct CellHash { size_t operator()(const Cell& c) const { return (size_t)(c.x * 73856093) ^ (size_t)(c.y * 19349663); } };\n"
+          "int main() { std::map<std::tuple<long, long, long>, int> m; std::tuple<long, long, long> c = std::make_tuple(1L, 2L, 3L); m[c] = 5;\n"
+          "std::unordered_map<Cell, int, CellHash> grid; Cell k; k.x = 1; k.y = 2; grid[k] = 5; std::unordered_map<long long, int> cells; cells[7] = 1;\n"
+          "std::ifstream mf(\"a.mtl\"); std::string ml; int n = 0; while (mf && std::getline(mf, ml)) { std::istringstream ms(ml); std::string mt; ms >> mt; float r; if (ms >> r) n += (int)r; }\n"
+          "std::ofstream f(\"o.obj\"); f << \"v \" << 1.5f << \" \" << n << \"\\n\"; std::ostringstream o; o << \"x\" << 3;\n"
+          "return std::get<1>(c) + grid[k] + cells[7] + (int)o.str().size(); }\n", &o);
     return t.finish(tests);
 }

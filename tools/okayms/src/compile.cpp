@@ -5652,7 +5652,10 @@ struct Parser {
             const size_t saved = at;
             at = td.params[idx].def_at;
             TArg a;
+            // A default may name the parameters before it (`typename H = hash<K>`): they are bound while it is read.
+            const std::vector<Binding> earlier = bind_params(td, *out);
             const bool ok = parse_one_arg(td.params[idx], &a);
+            unbind_params(earlier);
             at = saved;
             if (!ok) return false;
             out->push_back(std::move(a));

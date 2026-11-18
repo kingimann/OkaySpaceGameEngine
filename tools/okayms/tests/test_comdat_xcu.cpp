@@ -69,7 +69,7 @@ int main() {
             size_t comdat_sections = 0;
             for (const auto& s : a.sections)
                 if (s.name == ".text$mn" && (s.characteristics & okayms::kScnLnkComdat) != 0) ++comdat_sections;
-            CHECK(t, comdat_sections >= 1);  // W::f (a free inline function keeps its internal copy: it has no decorated name)
+            CHECK(t, comdat_sections >= 2);  // sq (decorated as ?sq@@YAHH@Z) and W::f
             okayms::LinkOptions opt;
             opt.entry = "main";
             const auto with = okayms::link_executable({a, b}, opt);

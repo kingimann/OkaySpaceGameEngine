@@ -2813,6 +2813,39 @@ struct Parser {
     }
 
     // Destructor calls for the open blocks from 'base' up, latest object first.
+    // goto and destructors: a goto that leaves blocks destroys the objects of the blocks it leaves ([stmt.jump]/2). The label's
+    // depth is not known at a forward goto, so the goto keeps a copy of the open scopes and is completed when the function has
+    // been read (resolve_gotos).
+    struct GotoSnap {
+        int id = 0;
+        std::vector<std::vector<DObj>> scopes;
+    };
+    std::vector<GotoSnap> goto_snaps{};
+    std::map<std::string, size_t> label_depth{};
+    int goto_count = 0;
+    bool resolve_gotos(Node* node) {
+        for (Node& kid : node->kids)
+            if (!resolve_gotos(&kid)) return false;
+        if (node->kind != Node::Goto || node->number == 0) return true;
+        const auto snap = std::find_if(goto_snaps.begin(), goto_snaps.end(), [&](const GotoSnap& g) { return g.id == static_cast<int>(node->number); });
+        const auto depth = label_depth.find(node->text);
+        node->number = 0;
+        if (snap == goto_snaps.end() || depth == label_depth.end()) return true;
+        std::vector<std::vector<DObj>> saved = dscopes;
+        dscopes = snap->scopes;
+        std::vector<Node> dt;
+        const bool ok = dtor_nodes(depth->second, &dt);
+        dscopes = std::move(saved);
+        if (!ok) return false;
+        if (dt.empty()) return true;
+        Node jump = std::move(*node);
+        node->kind = Node::Block;
+        node->text.clear();
+        node->kids.clear();
+        for (Node& n : dt) node->kids.push_back(std::move(n));
+        node->kids.push_back(std::move(jump));
+        return true;
+    }
     bool dtor_nodes(size_t base, std::vector<Node>* out) {
         for (size_t sc = dscopes.size(); sc-- > base;) {
             const std::vector<DObj>& list = dscopes[sc];
@@ -6140,11 +6173,18 @@ struct Parser {
         cur_locals = &locals;
         fn->line = cur().line;
         bool ok = true;
+        const std::vector<GotoSnap> saved_goto_snaps = std::move(goto_snaps);
+        const std::map<std::string, size_t> saved_label_depth = std::move(label_depth);
+        goto_snaps.clear();
+        label_depth.clear();
         if (special == 0) {
             ok = parse_block(&fn->body, &locals);
         } else {
             ok = parse_special_body(fn, cls, special, implicit, &locals);
         }
+        if (ok && !goto_snaps.empty()) ok = resolve_gotos(&fn->body);
+        goto_snaps = saved_goto_snaps;
+        label_depth = saved_label_depth;
         fn->end_line = at > 0 ? tokens[at - 1].line : 0;
         dscopes = saved_dscopes;
         fn_dbase = saved_dbase;
@@ -8820,6 +8860,12 @@ struct Parser {
             for (size_t k = decl_begin; k < at && k < tokens.size(); ++k)
                 if (tokens[k].inl) inline_fn = true;
             fn.is_static = is_static || anon_depth > 0 || inline_fn;
+            if (g_comdat_inline && inline_fn && !is_static && anon_depth == 0 && c_linkage == 0 && fn.symbol.empty() && !imported &&
+                !decl.name.empty() && decl.name != "main" && decl.name.compare(0, 8, "operator") != 0) {
+                // An inline function gets its decorated name (?sq@@YAHH@Z) so that every file that defines it names the same
+                // COMDAT function (a plain name could collide with a static function of another file).
+                fn.symbol = cxx_symbol(ns_mangled, decl.name, decl.type, decl.params, &structs);
+            }
             fn.comdat = inline_fn && !is_static && anon_depth == 0 && c_linkage == 0 && !fn.symbol.empty() && !decl.name.empty();
             finish_signature(&fn);
             if (c_single) {
@@ -9129,12 +9175,25 @@ bool Parser::parse_stmt_inner(Node* out, std::vector<Local>* locals, int stmt_li
         out->kind = Node::Goto;
         out->text = cur().text;
         next();
+        {
+            bool any = false;
+            for (const auto& sc : dscopes)
+                if (!sc.empty()) any = true;
+            if (any) {
+                out->number = static_cast<uint64_t>(++goto_count);
+                GotoSnap snap;
+                snap.id = goto_count;
+                snap.scopes = dscopes;
+                goto_snaps.push_back(std::move(snap));
+            }
+        }
         return expect(TSemi, "';'");
     }
     if (is(TIdent) && at + 1 < tokens.size() && tokens[at + 1].kind == TColon &&
         typedefs.find(cur().text) == typedefs.end()) {
         out->kind = Node::Label;
         out->text = cur().text;
+        label_depth[out->text] = dscopes.size();
         next();
         next();
         Node stmt;

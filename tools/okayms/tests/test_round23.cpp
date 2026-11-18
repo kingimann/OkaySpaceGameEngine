@@ -322,5 +322,23 @@ int main(int, char**) {
                         ++dtor_relocs;
         CHECK(t, f_index != 0 && dtor_relocs >= 4);
     }
+    ++tests;
+    build(t, "round 33: range-for iterator objects are destroyed on goto out of the loop",
+          "#include <cstdlib>\n#include <new>\nstruct It { int* p; It(int* q) : p(q) {} It(const It& o) : p(o.p) {} ~It() { ++g; } bool operator!=(const It& o) const { return p != o.p; } It& operator++() { ++p; return *this; } int& operator*() const { return *p; } static int g; };\n"
+          "int It::g = 0;\nstruct R { int a[3]; It begin() { return It(a); } It end() { return It(a + 3); } };\n"
+          "int jump(R& r) { int n = 0; for (int i = 0; i < 3; ++i) { for (int& x : r) { if (x == 2) goto done; n += x; } } done: return n; }\nint main() { R r; r.a[0] = 1; return jump(r); }\n", &o);
+    {
+        size_t dtor_relocs = 0;
+        size_t f_index = 0;
+        for (size_t i = 0; i < o.symbols.size(); ++i)
+            if (o.symbols[i].name == "jump") f_index = i;
+        for (const auto& sec : o.sections)
+            if (sec.name == ".text")
+                for (const auto& r : sec.relocations)
+                    if (r.symbol < o.symbols.size() && o.symbols[r.symbol].name.find("??1It@@") != std::string::npos &&
+                        r.offset >= o.symbols[f_index].value && r.offset < o.symbols[f_index].value + 0x400)
+                        ++dtor_relocs;
+        CHECK(t, f_index != 0 && dtor_relocs >= 4);  // the loop's end and the goto each destroy both iterators
+    }
     return t.finish(tests);
 }

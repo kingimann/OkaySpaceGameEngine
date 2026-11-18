@@ -17,6 +17,14 @@ template <> struct hash<int> { size_t operator()(int v) const { return (size_t)v
 template <> struct hash<unsigned> { size_t operator()(unsigned v) const { return (size_t)v; } };
 template <> struct hash<long long> { size_t operator()(long long v) const { return (size_t)v; } };
 template <> struct hash<unsigned long long> { size_t operator()(unsigned long long v) const { return (size_t)v; } };
+template <> struct hash<unsigned char> { size_t operator()(unsigned char v) const { return (size_t)v; } };
+template <> struct hash<unsigned short> { size_t operator()(unsigned short v) const { return (size_t)v; } };
+template <> struct hash<long> { size_t operator()(long v) const { return (size_t)v; } };
+template <> struct hash<unsigned long> { size_t operator()(unsigned long v) const { return (size_t)v; } };
+// A pointer hashes as its address ([unord.hash]).
+template <typename T> struct hash<T*> { size_t operator()(T* v) const { return (size_t)(unsigned long long)v; } };
+template <> struct hash<float> { size_t operator()(float v) const { union { float f; unsigned u; } c; c.f = v == 0.0f ? 0.0f : v; return (size_t)c.u; } };
+template <> struct hash<double> { size_t operator()(double v) const { union { double f; unsigned long long u; } c; c.f = v == 0.0 ? 0.0 : v; return (size_t)c.u; } };
 
 template <typename T> struct less { bool operator()(const T& a, const T& b) const { return a < b; } };
 template <typename T> struct greater { bool operator()(const T& a, const T& b) const { return a > b; } };

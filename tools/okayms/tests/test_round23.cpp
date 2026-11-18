@@ -178,5 +178,13 @@ int main(int, char**) {
           "std::string a(\"hello\"), b2, c2; b2.assign(a, 1, 3); c2.append(a, 2, 100); C cc; cc.slow.push_back({1});\n"
           "return e.f(1, 2) + arr[1] + h.load() + gp.b + (int)(.5f * 4) + (int)path.size() + (int)(b2.size() + c2.size()); }\n", &o);
     CHECK(t, has_symbol(o, "main"));
+    ++tests;
+    build(t, "round 30: hash of string and pointer, class array member init list, nested class defined outside",
+          "#include <cstdlib>\n#include <new>\n#include <string>\n#include <unordered_map>\nstruct V2 { float x, y; V2() : x(0), y(0) {} V2(float a, float b) : x(a), y(b) {} };\n"
+          "struct O { int p[3] = {0, 0, 0}; V2 uv[3] = {{0, 0}, {1, 1}, {2, 2}}; int mat = 0; };\n"
+          "struct VS { struct Impl; Impl* p; VS(); int f(); };\nstruct VS::Impl { int a; int g() { return a; } };\nVS::VS() : p(new Impl) { p->a = 4; }\nint VS::f() { return p->g(); }\n"
+          "std::unordered_map<std::string, int> ms;\nstd::unordered_map<const void*, int> mp;\n"
+          "int main() { O o; VS v; ms[\"a\"] = 1; mp[&o] = 2; return (int)o.uv[1].x + v.f() + ms[\"a\"] + mp[&o]; }\n", &o);
+    CHECK(t, has_symbol(o, "main") && has_symbol(o, "?f@VS@@QEAAHXZ"));
     return t.finish(tests);
 }

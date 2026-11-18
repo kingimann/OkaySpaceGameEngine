@@ -474,4 +474,14 @@ template <typename C> bool operator!=(const okay_wide_string<C>& a, const okay_w
 typedef okay_wide_string<char16_t> u16string;
 typedef okay_wide_string<char32_t> u32string;
 typedef okay_wide_string<wchar_t> wstring;
+// hash<string> ([basic.string.hash]): FNV-1a over the bytes (own choice; the standard leaves the function open).
+template <typename T> struct hash;
+template <> struct hash<string> {
+    size_t operator()(const string& s) const {
+        unsigned long long h = 1469598103934665603ull;
+        const char* p = s.data();
+        for (size_t i = 0; i < s.size(); ++i) h = (h ^ (unsigned char)p[i]) * 1099511628211ull;
+        return (size_t)h;
+    }
+};
 }

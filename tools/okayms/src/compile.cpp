@@ -2967,6 +2967,12 @@ struct Parser {
             if (is(TIdent)) {
                 name = cur().text;
                 next();
+                // struct Outer::Inner { ... }; a nested class defined outside its class is kept under its plain name.
+                while (is(TColonColon) && at + 1 < tokens.size() && tokens[at + 1].kind == TIdent) {
+                    next();
+                    name = cur().text;
+                    next();
+                }
             }
             int base_id = -1;
             if (accept(TColon)) {
@@ -5559,6 +5565,40 @@ struct Parser {
                         item = &list;
                     }
                     if (!lower_aggr(field.type, node_this_field(field.name), item, &pre)) return false;
+                    continue;
+                }
+                if (init == nullptr && field.init_aggr && field.init_at >= 0 && field.type.is_array() &&
+                    field.type.more.empty() && peel_array(field.type).base == 3 && peel_array(field.type).pointers == 0 &&
+                    obj_needs_ctor(peel_array(field.type))) {
+                    // `V uv[3] = {{0, 0}, {1, 1}};` for elements that have constructors: each element is made by the
+                    // constructor that takes its braced items; an element without an item uses the default constructor.
+                    Node list;
+                    const size_t saved_at = at;
+                    at = static_cast<size_t>(field.init_at);
+                    const bool ok = parse_init(&list);
+                    at = saved_at;
+                    if (!ok) return false;
+                    const Type elem = peel_array(field.type);
+                    for (int i = 0; i < field.type.array_len; ++i) {
+                        std::vector<Node> eargs;
+                        if (list.kind == Node::Block && static_cast<size_t>(i) < list.kids.size()) {
+                            Node& kid = list.kids[static_cast<size_t>(i)];
+                            if (kid.kind == Node::Block && kid.text == "init") eargs = std::move(kid.kids);
+                            else eargs.push_back(std::move(kid));
+                        }
+                        Node idx;
+                        idx.kind = Node::IntLit;
+                        idx.type.base = 1;
+                        idx.number = static_cast<uint64_t>(i);
+                        Node slot;
+                        slot.kind = Node::Index;
+                        slot.kids.push_back(node_this_field(field.name));
+                        slot.kids.push_back(std::move(idx));
+                        Node call;
+                        if (!special_call(elem.struct_id, "<ctor>", node_addr(std::move(slot)), std::move(eargs), &call))
+                            return false;
+                        pre.push_back(std::move(call));
+                    }
                     continue;
                 }
                 if (obj_needs_ctor(field.type)) {

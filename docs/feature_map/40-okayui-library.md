@@ -166,3 +166,22 @@ OkayUI is the one own UI toolkit that is meant to replace Dear ImGui over time (
 - **Seen as:** a ported tooltip with several lines draws nothing; a ported panel does not compile because of GetStyle; a 10,000-row list is slow
 - **Ask me like:** "work on 40.8.4, make the clipper handle rows of different height"
 
+
+### 40.9 Ported-code calls: window, frame, context, style presets and child flags
+- **What:** the calls and names that editor and launcher code written for Dear ImGui still needed after 40.8: collapse, background alpha and position of windows, raising a window, a modal check, a keyboard-capture override, item flags, multi-item widths, context shims, the Dark / Light / Classic colour presets, the dock layout as text, regular polygons and textured quads and rounded images on the draw list, mouse button, direction, hover, focus and child flag names, and `BeginChild` with flags (a bordered or content-sized child). Library only; nothing in the editor or launcher calls them yet.
+- **Parts:**
+  - 40.9.1 Window calls - `okayui/src/OkayUI.cpp` - `SetNextWindowCollapsed`, `SetNextWindowBgAlpha`, `SetWindowPos` (by title or current), `BringWindowToDisplayFront`, `FindWindowByID`, `GetTopMostPopupModal`, `SetNextFrameWantCaptureKeyboard`, `GetTreeNodeToLabelSpacing`
+  - 40.9.2 Small helpers - `okayui/src/OkayUICompat.cpp` - `GetCursorStartPos`, `GetWindowViewport`, `PushItemFlag`, `PushMultiItemsWidths`, `FindRenderedTextEnd`, context shims, `StyleColorsDark/Light/Classic`, `SaveIniSettingsToMemory`, `LoadIniSettingsFromMemory`
+  - 40.9.3 Draw list - `okayui/src/OkayUI.cpp` - `AddNgon`, `AddNgonFilled`, `AddImageQuad`, `AddImageRounded`, `DrawFlags`
+  - 40.9.4 Names and child flags - `okayui/include/okay/UI/OkayUICompat.hpp` - `MouseButton_*`, `Dir_*`, `Hovered_*`, `Focused_*`, `Child_*`, `KeyId_UpArrow` and friends, `IsItemHovered(flags)`, `IsWindowHovered(flags)`, `IsWindowFocused(flags)`, `BeginChild(id, size, childFlags)`
+- **Code:** `okayui/include/okay/UI/OkayUICompat.hpp`, `okayui/include/okay/UI/OkayUI.hpp`, `okayui/src/OkayUI.cpp`, `okayui/src/OkayUICompat.cpp`, `okayui/tests/test_okayui_calls.cpp`
+- **API:** `OkayUI::SetNextWindowBgAlpha`, `OkayUI::SetNextWindowCollapsed`, `OkayUI::PushMultiItemsWidths`, `OkayUI::StyleColorsLight`, `OkayUI::DrawList::AddImageRounded`, `OkayUI::BeginChild`
+- **Editor:** none (library only)
+- **Docs:** `docs/own_ui_toolkit.md` (section 6.10)
+- **Tests:** `okayui_calls`
+- **Status:** Works - implemented and tested headless (golden images for the three colour presets); not run in the real editor or launcher. Textured draw-list calls are checked on the draw data only (the software backend skips textures)
+- **Open:** `AddImageRounded` rounds corners only for images; `AddRect` has no per-corner flags and `AddPolyline` no `Closed` flag; hover delays are accepted and ignored; Middle mouse never fires; `Child_AutoResizeX` and resizable children are accepted and ignored; `NewFrame`, the platform and viewport calls and the dock node internals are not offered
+- **Related:** 40.8
+- **Words:** SetNextWindowBgAlpha, SetNextWindowCollapsed, PushMultiItemsWidths, StyleColorsLight, AddNgon, AddImageRounded, ChildFlags, HoveredFlags, MouseButton, context, replace Dear ImGui
+- **Seen as:** a ported panel does not compile because of a missing call name; a child window with a content-sized height is the wrong size; a light theme call has no effect
+- **Ask me like:** "work on 40.9.4, add Child_AutoResizeX"

@@ -5,6 +5,7 @@
 #include <cmath>
 #include <cstdint>
 #include <cstring>
+#include <string>
 
 namespace OkayUI {
 
@@ -145,4 +146,111 @@ void StateStorageReset() {
     for (int i = 0; i < KeyId_COUNT; ++i) { g_keyOwner[i] = 0; g_keyOwnerFrame[i] = 0; }
 }
 
+
+// ---- Step 6.10 ----
+Vec2 GetCursorStartPos() { return GetWindowContentRegionMin(); }
+Viewport GetWindowViewport() { return GetMainViewport(); }
+void SetNextWindowViewport(unsigned) {}
+
+namespace {
+struct ItemFlagRec { bool disabled; };
+ItemFlagRec g_flagStack[16];
+int g_flagTop = 0;
+}
+void PushItemFlag(int flag, bool enabled) {
+    if (g_flagTop >= 16) return;
+    const bool dis = (flag & ItemFlag_Disabled) != 0 && enabled;
+    g_flagStack[g_flagTop++] = ItemFlagRec{ dis };
+    if (dis) BeginDisabled(true);
+}
+void PopItemFlag() {
+    if (g_flagTop <= 0) return;
+    if (g_flagStack[--g_flagTop].disabled) EndDisabled();
+}
+
+void PushMultiItemsWidths(int count, float totalWidth) {
+    if (count < 1) count = 1;
+    if (count > 8) count = 8;
+    if (!std::isfinite(totalWidth) || totalWidth < 1.0f) totalWidth = 1.0f;
+    const float gap = GetStyle().ItemInnerSpacing.x;
+    float one = std::floor((totalWidth - gap * (float)(count - 1)) / (float)count);
+    if (one < 1.0f) one = 1.0f;
+    float last = totalWidth - (one + gap) * (float)(count - 1);
+    if (last < 1.0f) last = 1.0f;
+    PushItemWidth(last);                                   // the last item's width goes in first, so the first item's is on top
+    for (int i = 1; i < count; ++i) PushItemWidth(one);
+}
+
+const char* FindRenderedTextEnd(const char* text, const char* textEnd) {
+    if (!text) return nullptr;
+    const char* p = text;
+    while ((!textEnd || p < textEnd) && *p) {
+        if (p[0] == '#' && p[1] == '#' && (!textEnd || p + 1 < textEnd)) return p;
+        ++p;
+    }
+    return p;
+}
+
+namespace {
+bool g_ctxCurrent = true;
+struct ContextTag { int unused; } g_ctxTag;
+}
+Context* CreateContext() { g_ctxCurrent = true; return reinterpret_cast<Context*>(&g_ctxTag); }
+void DestroyContext(Context* ctx) {
+    if (ctx && ctx != reinterpret_cast<Context*>(&g_ctxTag)) return;
+    ResetState();
+    g_ctxCurrent = false;
+}
+Context* GetCurrentContext() { return g_ctxCurrent ? reinterpret_cast<Context*>(&g_ctxTag) : nullptr; }
+void SetCurrentContext(Context* ctx) {
+    if (!ctx) g_ctxCurrent = false;
+    else if (ctx == reinterpret_cast<Context*>(&g_ctxTag)) g_ctxCurrent = true;
+}
+
+namespace {
+void SetBase(Theme& t, const unsigned char bg[4], const unsigned char hov[4], const unsigned char down[4], const unsigned char border[4],
+             const unsigned char text[4], const unsigned char panel[4], const unsigned char track[4], const unsigned char accent[4],
+             const unsigned char dim[4], const unsigned char title[4], const unsigned char field[4], bool shadow) {
+    std::memcpy(t.bg, bg, 4); std::memcpy(t.bgHover, hov, 4); std::memcpy(t.bgDown, down, 4); std::memcpy(t.border, border, 4);
+    std::memcpy(t.text, text, 4); std::memcpy(t.panel, panel, 4); std::memcpy(t.track, track, 4); std::memcpy(t.accent, accent, 4);
+    std::memcpy(t.textDim, dim, 4); std::memcpy(t.titleBg, title, 4); std::memcpy(t.field, field, 4);
+    t.windowShadow = shadow;
+    std::memset(t.colors, 0, sizeof t.colors); t.colorSet = 0;
+}
+}
+void StyleColorsDark() {
+    const Theme d;   // the library's default palette
+    SetBase(Style(), d.bg, d.bgHover, d.bgDown, d.border, d.text, d.panel, d.track, d.accent, d.textDim, d.titleBg, d.field, d.windowShadow);
+}
+void StyleColorsLight() {
+    static const unsigned char bg[4] = {222, 226, 234, 255}, hov[4] = {204, 212, 226, 255}, down[4] = {184, 194, 212, 255}, bd[4] = {150, 156, 170, 255},
+        tx[4] = {26, 29, 36, 255}, pn[4] = {240, 242, 246, 240}, tr[4] = {208, 213, 222, 255}, ac[4] = {44, 108, 214, 255},
+        dm[4] = {108, 114, 128, 255}, ti[4] = {204, 210, 224, 255}, fl[4] = {250, 251, 253, 255};
+    SetBase(Style(), bg, hov, down, bd, tx, pn, tr, ac, dm, ti, fl, false);
+}
+void StyleColorsClassic() {
+    static const unsigned char bg[4] = {46, 52, 74, 255}, hov[4] = {64, 72, 104, 255}, down[4] = {32, 36, 56, 255}, bd[4] = {20, 22, 34, 255},
+        tx[4] = {230, 232, 240, 255}, pn[4] = {30, 33, 48, 240}, tr[4] = {22, 24, 38, 255}, ac[4] = {96, 120, 214, 255},
+        dm[4] = {144, 150, 172, 255}, ti[4] = {40, 46, 78, 255}, fl[4] = {22, 24, 38, 255};
+    SetBase(Style(), bg, hov, down, bd, tx, pn, tr, ac, dm, ti, fl, false);
+}
+
+const char* SaveIniSettingsToMemory(unsigned long long* size) {
+    static std::string s;
+    s = DockSaveLayout();
+    if (size) *size = (unsigned long long)s.size();
+    return s.c_str();
+}
+void LoadIniSettingsFromMemory(const char* data, unsigned long long size) {
+    if (!data) return;
+    const std::string blob = size ? std::string(data, (size_t)size) : std::string(data);
+    DockLoadLayout(blob);
+}
+
+bool IsItemHovered(int) { return IsItemHovered(); }
+bool IsWindowHovered(int flags) { return (flags & Hovered_AnyWindow) ? (IsWindowHovered() || GetIO().wantCaptureMouse) : IsWindowHovered(); }
+bool IsWindowFocused(int flags) {
+    if (flags & Focused_AnyWindow) return IsWindowFocused() || AnyWindowFocused();
+    return IsWindowFocused();
+}
 } // namespace OkayUI

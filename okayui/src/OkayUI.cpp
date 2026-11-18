@@ -295,6 +295,7 @@ float g_posX = 0.0f, g_posY = 0.0f;
 
 // Saved parent layout + child metadata while inside a BeginChild/EndChild pair.
 struct ChildSave {
+    float* autoSlot = nullptr;   // BeginChild with Child_AutoResizeY: where EndChild stores the measured height
     LayoutState lay;      // parent layout to restore
     float rx, ry, rw, rh; // child region rect
     float top;            // unscrolled content top (ry + pad)
@@ -391,7 +392,7 @@ DragDrop g_dd;
 
 // Draggable-window position store (no STL): position persists across frames per id.
 struct WinSlot { int id = 0; float x = 0, y = 0; bool used = false; float w = 0, h = 0; bool sized = false;
-                 bool posInit = false, sizeInit = false; unsigned long long lastFrame = 0;
+                 bool posInit = false, sizeInit = false, collInit = false; unsigned long long lastFrame = 0;
                  unsigned long long z = 0;          // stacking order: higher is in front, 0 is the bottom (docked content, NoBringToFront)
                  float scroll = 0, maxScroll = 0;   // content scroll and the most it could scroll last frame
                  float autoW = 0, autoH = 0; bool measured = false;   // AlwaysAutoResize: the content's size from last frame
@@ -431,6 +432,11 @@ double g_clock = 0.0;                             // seconds: Input::time when t
 double g_lastPressTime = -1.0; float g_lastPressX = 0, g_lastPressY = 0;   // for double clicks
 bool   g_dblClick = false;                        // this frame's press was the second of a double click
 bool   g_nextWinFocus = false;                    // SetNextWindowFocus: the next ImGui-style Begin takes the focus
+int    g_nextFrameKbd = -1;                       // SetNextFrameWantCaptureKeyboard: -1 none, else 0 / 1 for the next BeginFrame
+struct NextCollapse { bool set = false; bool value = false; int cond = 0; };
+NextCollapse g_nextCollapse;                      // SetNextWindowCollapsed, used up by the next ImGui-style Begin
+float  g_nextBgAlpha = -1.0f;                     // SetNextWindowBgAlpha: -1 none, else 0..1 for the next ImGui-style Begin
+float  g_bgAlphaCore = -1.0f;                     // the same, handed to the core Begin that draws the body
 bool   g_anyHoverNow = false, g_anyHoverPrev = false;   // some item was under the pointer this frame so far / last frame
 float  g_pressX = 0, g_pressY = 0;                // where the left button went down (for dragging)
 bool   g_keyNow[KeyId_COUNT] = {}, g_keyPrev[KeyId_COUNT] = {};   // named keys: this frame and last
@@ -1029,6 +1035,7 @@ void BeginFrame(const Input& in) {
     g_io.keyCtrl = in.ctrl || in.keyDown[KeyId_Ctrl]; g_io.keyShift = in.shift || in.keyDown[KeyId_Shift]; g_io.keyAlt = in.keyDown[KeyId_Alt];
     g_io.mouseDown[0] = in.mouseDown; g_io.mouseDown[1] = in.rightDown;
     g_io.wantCaptureKeyboard = g_focus != 0; g_io.wantTextInput = g_focus != 0;
+    if (g_nextFrameKbd >= 0) { g_io.wantCaptureKeyboard = g_nextFrameKbd != 0; g_nextFrameKbd = -1; }   // SetNextFrameWantCaptureKeyboard
     for (int k = 0; k < KeyId_COUNT; ++k) {   // named keys: keep last frame's state, take this frame's
         g_keyPrev[k] = g_keyNow[k];
         g_keyNow[k] = in.keyDown[k] || (k == KeyId_Ctrl && in.ctrl) || (k == KeyId_Shift && in.shift);
@@ -1965,6 +1972,12 @@ static bool  g_resizeNext = false;   // ResizableNextWindow: the next Begin gets
 static float g_resizeMinW = 100.0f, g_resizeMinH = 60.0f;
 void ResizableNextWindow(float minW, float minH) { g_resizeNext = true; g_resizeMinW = minW; g_resizeMinH = minH; }
 
+// SetNextWindowBgAlpha: scale the alpha of the body geometry a window just drew (vertices from `from` on); the title bar and the content are drawn after and are not touched.
+static void scaleBodyAlpha(int from, float a) {
+    if (!(a >= 0.0f) || a >= 1.0f || g_toOverlay) return;
+    for (int i = from; i < g_nv; ++i) g_verts[i].color.a = (Uint8)(g_verts[i].color.a * a + 0.5f);
+}
+
 bool Begin(const char* title, float x, float y, float w, float h, bool* p_open) {
     g_posOverride = false;             // a SetCursorScreenPos left over from the previous window
     g_lay.seed = 0;                    // hash the window id from a FIXED seed so it (and
@@ -1979,6 +1992,8 @@ bool Begin(const char* title, float x, float y, float w, float h, bool* p_open) 
     g_bareNext = false;
     const bool pinned = g_pinNext || bare;
     g_pinNext = false;
+    const float bgAlpha = g_bgAlphaCore; g_bgAlphaCore = -1.0f;   // SetNextWindowBgAlpha for this window's body
+    const int bodyV0 = g_nv;
     // Opt-in resize grip (ResizableNextWindow): the remembered size replaces the w and h passed in.
     const bool autoSize = (wf & Window_AlwaysAutoResize) != 0 && slot != nullptr;
     const bool resizable = g_resizeNext && slot != nullptr && !autoSize;
@@ -2093,6 +2108,7 @@ bool Begin(const char* title, float x, float y, float w, float h, bool* p_open) 
             rrect(wx, wy, w, bodyH, wr, g_theme.border);
             rrect(wx + 1.0f, wy + 1.0f, w - 2.0f, bodyH - 2.0f, wr > 1.0f ? wr - 1.0f : 0.0f, pick(Col_WindowBg, g_theme.panel));
         }
+        scaleBodyAlpha(bodyV0, bgAlpha);
         if (!noTitle) rrect(wx + 1.0f, wy + 1.0f, w - 2.0f, titleH - 1.0f, wr > 1.0f ? wr - 1.0f : 0.0f, titleCol);
         if (!noTitle && !*collapsed && titleH > wr) quad(wx + 1.0f, wy + wr, w - 2.0f, titleH - wr, titleCol);
         if (!noTitle && !*collapsed) quad(wx + 1.0f, wy + titleH - 1.0f, w - 2.0f, 1.0f, g_theme.border);
@@ -2107,8 +2123,10 @@ bool Begin(const char* title, float x, float y, float w, float h, bool* p_open) 
             if (overClose) rrect(closeX + 5.0f, wy + 5.0f, btn - 10.0f, titleH - 10.0f, 6.0f, withAlpha(white, 0.10f, tmp));
             xMark(closeX + btn * 0.5f, wy + titleH * 0.5f, 9.0f, overClose ? g_theme.text : pick(Col_TextDisabled, g_theme.textDim));
         }
-    } else if (!noBg)
+    } else if (!noBg) {
     Panel(wx, wy, w, bodyH);
+    scaleBodyAlpha(bodyV0, bgAlpha);
+    }
     if (!g_look && !bare && !noTitle) {
     // Title bar: round the TOP corners to match the panel, square at the bottom edge
     // (drawn as a rounded rect, then a square strip fills its lower half flush to body).
@@ -2251,7 +2269,7 @@ void SetNextWindowSize(Vec2 size, Cond cond) { g_nextWinSize = NextWin{true, siz
 static int windowId(const char* title) { const auto saved = g_lay.seed; g_lay.seed = 0; const int id = hashLabel(title); g_lay.seed = saved; return id; }
 
 bool Begin(const char* title, bool* p_open, int flags) {
-    if (!title) { g_nextWinPos.set = g_nextWinSize.set = false; g_nextWinFocus = false; return false; }
+    if (!title) { g_nextWinPos.set = g_nextWinSize.set = false; g_nextWinFocus = false; g_nextCollapse = NextCollapse(); g_nextBgAlpha = -1.0f; return false; }
     const int id = windowId(title);
     WinSlot* slot = nullptr; bool created = false;
     for (WinSlot& ws : g_wins) if (ws.used && ws.id == id) { slot = &ws; break; }
@@ -2275,6 +2293,15 @@ bool Begin(const char* title, bool* p_open, int flags) {
     }
     const float x = slot ? slot->x : (np.set ? np.x : 60.0f), y = slot ? slot->y : (np.set ? np.y : 60.0f);
     const float w = slot ? slot->w : (ns.set ? ns.x : 320.0f), h = slot ? slot->h : (ns.set ? ns.y : 240.0f);
+    if (g_nextCollapse.set) {   // SetNextWindowCollapsed, with the same conditions as position and size
+        const NextCollapse nc = g_nextCollapse; g_nextCollapse = NextCollapse();
+        if (slot) {
+            const bool appearing = slot->lastFrame + 1 < g_frameCount;
+            const bool take = nc.cond == Cond_Always || ((nc.cond == Cond_Once || nc.cond == Cond_FirstUseEver) && !slot->collInit) || (nc.cond == Cond_Appearing && appearing);
+            if (take) { *openState(id ^ 0x5c01, false) = nc.value; slot->collInit = true; }
+        }
+    }
+    g_bgAlphaCore = g_nextBgAlpha; g_nextBgAlpha = -1.0f;
     if (pin) PinNextWindow();
     if (g_nextWinFocus) { g_nextWinFocus = false; SetWindowFocus(title); }
     if (!(flags & (Window_NoResize | Window_AlwaysAutoResize))) ResizableNextWindow(96.0f, 64.0f);
@@ -2354,7 +2381,51 @@ void SetWindowFocus(const char* title) {
     for (WinSlot& ws : g_wins) if (ws.used && ws.id == g_focusWin && ws.z != 0) ws.z = ++g_zCounter;   // and raise it
 }
 
+// ---- step 6.10: window and frame calls (declared in OkayUICompat.hpp / OkayUIInternals.hpp) ----
+void SetNextWindowCollapsed(bool collapsed, Cond cond) { g_nextCollapse = NextCollapse{true, collapsed, (int)cond}; }
+void SetNextWindowBgAlpha(float alpha) { g_nextBgAlpha = std::isfinite(alpha) ? (alpha < 0.0f ? 0.0f : (alpha > 1.0f ? 1.0f : alpha)) : -1.0f; }
+bool SetWindowPos(const char* title, Vec2 pos, Cond cond) {
+    if (!title || !*title || !std::isfinite(pos.x) || !std::isfinite(pos.y)) return false;
+    const int id = windowId(title);
+    for (WinSlot& ws : g_wins) if (ws.used && ws.id == id) {
+        const bool appearing = ws.lastFrame + 1 < g_frameCount;
+        const bool take = cond == Cond_Always || (cond == Cond_Appearing && appearing) || ((cond == Cond_Once || cond == Cond_FirstUseEver) && !ws.posInit);
+        if (!take) return true;
+        ws.x = pos.x < -1.0e6f ? -1.0e6f : (pos.x > 1.0e6f ? 1.0e6f : pos.x);
+        ws.y = pos.y < -1.0e6f ? -1.0e6f : (pos.y > 1.0e6f ? 1.0e6f : pos.y);
+        ws.posInit = true;
+        return true;
+    }
+    return false;
+}
+void SetWindowPos(Vec2 pos, Cond cond) { if (g_curWin.valid) SetWindowPos(g_curWin.title, pos, cond); }
+bool BringWindowToDisplayFront(const char* title) {
+    if (!title || !*title) return false;
+    const int id = windowId(title);
+    for (WinSlot& ws : g_wins) if (ws.used && ws.id == id) { if (ws.z != 0) ws.z = ++g_zCounter; return true; }
+    return false;
+}
+bool BringWindowToDisplayFront(const CurrentWindow& w) { return w.valid && BringWindowToDisplayFront(w.title); }
+WindowInfo FindWindowByID(unsigned id) {
+    WindowInfo wi;
+    if (id == 0) return wi;
+    for (const WinSlot& ws : g_wins) if (ws.used && (unsigned)ws.id == id) {
+        wi.found = true; wi.pos = Vec2{ws.x, ws.y}; wi.size = Vec2{ws.w, ws.h}; wi.focused = g_focusWin == ws.id;
+        break;
+    }
+    return wi;
+}
+bool AnyWindowFocused() { return g_focusWin != 0; }
+bool GetTopMostPopupModal() { for (const PopupSlot& p : g_popups) if (p.used && p.open && p.modal) return true; return false; }
+void SetNextFrameWantCaptureKeyboard(bool want) { g_nextFrameKbd = want ? 1 : 0; }
+float GetTreeNodeToLabelSpacing() {
+    if (g_look) return 24.0f;
+    return 4.0f + fCharW() * g_theme.textScale * 1.5f;
+}
+
+static float* g_childAutoSlot = nullptr;   // set by the flags form of BeginChild for the plain one to pick up
 bool BeginChild(const char* id, float w, float h, bool border) {
+    float* const autoSlot = g_childAutoSlot; g_childAutoSlot = nullptr;
     // Depth guard first: past the child-stack capacity the parent layout cannot
     // be saved, so the child cannot begin at all -- otherwise EndChild would pop
     // a slot that was never pushed and corrupt the parent's scroll/clip state.
@@ -2383,7 +2454,7 @@ bool BeginChild(const char* id, float w, float h, bool border) {
     if (g_childTop < 8) {
         ChildSave& c = g_childStack[g_childTop++];
         c.lay = g_lay; c.rx = rx; c.ry = ry; c.rw = rw; c.rh = rh;
-        c.top = ry + pad; c.scroll = scroll; c.maxSlot = maxSlot; c.pad = pad; c.hovered = hovered; c.setScroll = -1.0f;
+        c.top = ry + pad; c.scroll = scroll; c.maxSlot = maxSlot; c.pad = pad; c.hovered = hovered; c.setScroll = -1.0f; c.autoSlot = autoSlot;
     }
     g_lay.ox = rx + pad;
     g_lay.contentW = rw - 2.0f * pad - kScrollbarW;
@@ -2408,6 +2479,22 @@ void SetScrollY(float y) {
 
 float GetChildViewHeight() { return g_childTop > 0 ? g_childStack[g_childTop - 1].rh - 2.0f * g_childStack[g_childTop - 1].pad : 0.0f; }   // hook for OkayUICompat's SetScrollHereY
 
+bool BeginChild(const char* id, Vec2 size, int childFlags, int /*windowFlags*/) {
+    if (!id || !g_lay.active) return false;
+    float h = std::isfinite(size.y) ? size.y : 0.0f;
+    float w = std::isfinite(size.x) ? size.x : 0.0f;
+    float* slot = nullptr;
+    if (childFlags & Child_AutoResizeY) {
+        slot = floatState(hashLabel(id) ^ 0x7a31, 0.0f);
+        const float measured = *slot > 0.0f ? *slot : rowH();   // one frame behind: the first frame shows a single row
+        h = h > measured ? h : measured;                          // a positive size is the smallest height
+    }
+    g_childAutoSlot = slot;
+    const bool ok = BeginChild(id, w, h, (childFlags & Child_Borders) != 0);
+    g_childAutoSlot = nullptr;
+    return ok;
+}
+
 void EndChild() {
     if (g_childTop <= 0) return;
     ChildSave& c = g_childStack[--g_childTop];
@@ -2416,6 +2503,7 @@ void EndChild() {
     const float contentH = g_lay.cy - (c.top - *c.scroll);
     const float viewH = c.rh - 2.0f * c.pad;
     float maxScroll = contentH - viewH; if (maxScroll < 0.0f) maxScroll = 0.0f;
+    if (c.autoSlot) *c.autoSlot = contentH + 2.0f * c.pad;   // Child_AutoResizeY: next frame's height
     if (c.setScroll >= 0.0f) *c.scroll = c.setScroll;   // SetScrollY, now that the content is measured
     *c.maxSlot = maxScroll;                     // remember for next frame's clamp
     if (*c.scroll < 0.0f) *c.scroll = 0.0f;
@@ -5307,6 +5395,85 @@ void DrawList::AddImage(SDL_Texture* tex, Vec2 mn, Vec2 mx, Vec2 uv0, Vec2 uv1, 
     texQuad(mn.x, mn.y, mx.x - mn.x, mx.y - mn.y, tex, uv0.x, uv0.y, uv1.x, uv1.y, c);
 }
 
+// A textured convex polygon: a fan from point 0, each point with its own texture coordinate.
+static void texPoly(SDL_Texture* tex, const Vec2* p, const Vec2* uv, int n, const unsigned char tint[4]) {
+    if (g_cullRow || n < 3) return;
+    setTexture(tex);
+    if (g_nv + n > kMaxVerts || g_ni + (n - 2) * 3 > kMaxIdx) { noteDrop(); setTexture(g_defTex); return; }
+    const SDL_Color sc = toColor(tint);
+    const int base = g_nv;
+    for (int i = 0; i < n; ++i) {
+        SDL_Vertex v; v.color = sc; v.position.x = p[i].x; v.position.y = p[i].y; v.tex_coord.x = uv[i].x; v.tex_coord.y = uv[i].y;
+        g_verts[g_nv++] = v;
+    }
+    for (int i = 1; i + 1 < n; ++i) { g_idx[g_ni++] = base; g_idx[g_ni++] = base + i; g_idx[g_ni++] = base + i + 1; }
+    setTexture(g_defTex);
+}
+
+void DrawList::AddImageQuad(SDL_Texture* tex, Vec2 p1, Vec2 p2, Vec2 p3, Vec2 p4, Vec2 uv1, Vec2 uv2, Vec2 uv3, Vec2 uv4, Color32 tint) const {
+    if (!tex || !finite2(p1) || !finite2(p2) || !finite2(p3) || !finite2(p4) || !finite2(uv1) || !finite2(uv2) || !finite2(uv3) || !finite2(uv4)) return;
+    ListScope s(false); unsigned char c[4]; unpack(tint, c);
+    const Vec2 p[4] = {p1, p2, p3, p4}, uv[4] = {uv1, uv2, uv3, uv4};
+    texPoly(tex, p, uv, 4, c);
+}
+
+void DrawList::AddImageRounded(SDL_Texture* tex, Vec2 mn, Vec2 mx, Vec2 uv0, Vec2 uv1, Color32 tint, float rounding, int flags) const {
+    if (!tex || !finite2(mn) || !finite2(mx) || !finite2(uv0) || !finite2(uv1) || mx.x <= mn.x || mx.y <= mn.y) return;
+    if (!std::isfinite(rounding) || rounding < 0.0f) rounding = 0.0f;
+    const float w = mx.x - mn.x, h = mx.y - mn.y;
+    const float maxR = 0.5f * (w < h ? w : h);
+    if (rounding > maxR) rounding = maxR;
+    if (flags == 0) flags = DrawFlags_RoundCornersAll;
+    if (flags & DrawFlags_None) flags = 0;
+    if (rounding < 0.5f || (flags & DrawFlags_RoundCornersAll) == 0) { AddImage(tex, mn, mx, uv0, uv1, tint); return; }
+    // Corners clockwise from the top-left; each rounded corner is an arc of `arc` steps, a square one is a single point.
+    const int arc = circleSegments(rounding, 0) / 4 + 1 > 16 ? 16 : circleSegments(rounding, 0) / 4 + 1;
+    Vec2 pts[4 * 17]; int n = 0;
+    struct Corner { float cx, cy, a0; int bit; float px, py; };
+    const Corner cs[4] = {
+        { mn.x + rounding, mn.y + rounding, 3.14159265f,        DrawFlags_RoundCornersTopLeft,     mn.x, mn.y },
+        { mx.x - rounding, mn.y + rounding, 4.71238898f,        DrawFlags_RoundCornersTopRight,    mx.x, mn.y },
+        { mx.x - rounding, mx.y - rounding, 0.0f,               DrawFlags_RoundCornersBottomRight, mx.x, mx.y },
+        { mn.x + rounding, mx.y - rounding, 1.57079633f,        DrawFlags_RoundCornersBottomLeft,  mn.x, mx.y },
+    };
+    for (const Corner& c : cs) {
+        if (flags & c.bit) {
+            for (int i = 0; i <= arc; ++i) {
+                const float a = c.a0 + 1.57079633f * (float)i / (float)arc;
+                pts[n++] = Vec2{ c.cx + rounding * SDL_cosf(a), c.cy + rounding * SDL_sinf(a) };
+            }
+        } else pts[n++] = Vec2{c.px, c.py};
+    }
+    Vec2 uv[4 * 17];
+    for (int i = 0; i < n; ++i) {
+        uv[i].x = uv0.x + (uv1.x - uv0.x) * (pts[i].x - mn.x) / w;
+        uv[i].y = uv0.y + (uv1.y - uv0.y) * (pts[i].y - mn.y) / h;
+    }
+    ListScope s(false); unsigned char c[4]; unpack(tint, c);
+    // A fan from the first point is convex-safe for a rounded rectangle, but the first point is on a corner arc: use the centre instead.
+    Vec2 fan[4 * 17 + 2]; Vec2 fuv[4 * 17 + 2]; int m = 0;
+    fan[m] = Vec2{ (mn.x + mx.x) * 0.5f, (mn.y + mx.y) * 0.5f };
+    fuv[m] = Vec2{ (uv0.x + uv1.x) * 0.5f, (uv0.y + uv1.y) * 0.5f }; ++m;
+    for (int i = 0; i < n; ++i) { fan[m] = pts[i]; fuv[m] = uv[i]; ++m; }
+    fan[m] = pts[0]; fuv[m] = uv[0]; ++m;
+    texPoly(tex, fan, fuv, m, c);
+}
+
+void DrawList::AddNgon(Vec2 center, float radius, Color32 col, int n, float th) const {
+    if (!finite2(center) || !finite1(radius) || radius < 0.0f || n < 3) return;
+    if (n > 128) n = 128;
+    Vec2 p[128];
+    for (int i = 0; i < n; ++i) { const float a = 6.28318531f * (float)i / (float)n; p[i] = Vec2{ center.x + radius * SDL_cosf(a), center.y + radius * SDL_sinf(a) }; }
+    AddPolyline(p, n, col, true, th);
+}
+void DrawList::AddNgonFilled(Vec2 center, float radius, Color32 col, int n) const {
+    if (!finite2(center) || !finite1(radius) || radius < 0.0f || n < 3) return;
+    if (n > 128) n = 128;
+    Vec2 p[128];
+    for (int i = 0; i < n; ++i) { const float a = 6.28318531f * (float)i / (float)n; p[i] = Vec2{ center.x + radius * SDL_cosf(a), center.y + radius * SDL_sinf(a) }; }
+    AddConvexPolyFilled(p, n, col);
+}
+
 void DrawList::PushClipRect(Vec2 mn, Vec2 mx) const {
     OkayUI::PushClipRect(mn.x, mn.y, mx.x - mn.x, mx.y - mn.y);
 }
@@ -5418,12 +5585,12 @@ bool BeginPopupContextWindow(const char* id) {
     return beginPopupBody(pid);
 }
 bool IsItemClicked(int button) {
-    if (!IsItemHovered()) return false;
+    if (!IsItemHovered() || (button != 0 && button != 1)) return false;   // only the left and right buttons exist
     return button == 1 ? g_rPressed : g_pressed;
 }
-bool IsMouseDown(int button)     { return !g_in.blocked && (button == 1 ? g_in.rightDown : g_in.mouseDown); }
-bool IsMouseClicked(int button)  { return !g_in.blocked && (button == 1 ? g_rPressed : g_pressed); }
-bool IsMouseReleased(int button) { return button == 1 ? g_rReleased : g_released; }
+bool IsMouseDown(int button)     { return !g_in.blocked && (button == 1 ? g_in.rightDown : (button == 0 && g_in.mouseDown)); }
+bool IsMouseClicked(int button)  { return !g_in.blocked && (button == 1 ? g_rPressed : (button == 0 && g_pressed)); }
+bool IsMouseReleased(int button) { return button == 1 ? g_rReleased : (button == 0 && g_released); }
 Vec2 GetMousePos()   { return Vec2{ g_in.mouseX, g_in.mouseY }; }
 Vec2 GetMouseDelta() { return Vec2{ g_mouseDX, g_mouseDY }; }
 bool IsMouseHoveringRect(Vec2 mn, Vec2 mx) {

@@ -37,7 +37,10 @@ enum KeyId : int {
     KeyId_0, KeyId_1, KeyId_2, KeyId_3, KeyId_4, KeyId_5, KeyId_6, KeyId_7, KeyId_8, KeyId_9,
     KeyId_F1, KeyId_F2, KeyId_F3, KeyId_F4, KeyId_F5, KeyId_F6, KeyId_F7, KeyId_F8, KeyId_F9, KeyId_F10, KeyId_F11, KeyId_F12,
     KeyId_Ctrl, KeyId_Shift, KeyId_Alt,
-    KeyId_COUNT
+    KeyId_COUNT,
+    // Dear ImGui's spellings of the same keys (aliases, not new keys; the numeric-keypad Enter arrives as Enter).
+    KeyId_UpArrow = KeyId_Up, KeyId_DownArrow = KeyId_Down, KeyId_LeftArrow = KeyId_Left, KeyId_RightArrow = KeyId_Right,
+    KeyId_KeypadEnter = KeyId_Enter
 };
 
 struct Input;
@@ -861,6 +864,14 @@ Color32 ColorMulAlpha(Color32 c, float alphaMul);
 /// BeginDisabled. Rectangle and circle outlines are drawn INSIDE the given bounds (a rectangle of thickness 2 covers
 /// exactly its border pixels); polylines, and so triangle and quad outlines, are centred on their path. Joins are
 /// mitred, so a translucent stroke does not double up at a corner.
+/// Which corners a rounded shape rounds (AddImageRounded). 0 means all four; DrawFlags_None (no corner) draws a plain rectangle.
+/// Our own values, not Dear ImGui's numbers.
+enum DrawFlags : int {
+    DrawFlags_RoundCornersTopLeft = 1, DrawFlags_RoundCornersTopRight = 2, DrawFlags_RoundCornersBottomRight = 4, DrawFlags_RoundCornersBottomLeft = 8,
+    DrawFlags_RoundCornersTop = 3, DrawFlags_RoundCornersRight = 6, DrawFlags_RoundCornersBottom = 12, DrawFlags_RoundCornersLeft = 9,
+    DrawFlags_RoundCornersAll = 15, DrawFlags_None = 16
+};
+
 struct DrawList {
     bool overlay;
     void AddLine(Vec2 a, Vec2 b, Color32 col, float thickness = 1.0f) const;
@@ -888,6 +899,16 @@ struct DrawList {
     /// skips textured commands.
     void AddImage(SDL_Texture* tex, Vec2 min, Vec2 max, Vec2 uv0 = Vec2{0.0f, 0.0f}, Vec2 uv1 = Vec2{1.0f, 1.0f},
                   Color32 tint = 0xffffffffu) const;
+    /// A textured four-corner shape (corners in order around the shape, each with its own texture coordinate); convex shapes only (drawn as a
+    /// fan from corner 0). Same rules as AddImage (main batch, skipped by the software test backend).
+    void AddImageQuad(SDL_Texture* tex, Vec2 p1, Vec2 p2, Vec2 p3, Vec2 p4, Vec2 uv1 = Vec2{0.0f, 0.0f}, Vec2 uv2 = Vec2{1.0f, 0.0f},
+                      Vec2 uv3 = Vec2{1.0f, 1.0f}, Vec2 uv4 = Vec2{0.0f, 1.0f}, Color32 tint = 0xffffffffu) const;
+    /// AddImage with rounded corners (`rounding` in pixels, clamped to half the shorter side; which corners: DrawFlags, 0 = all). The
+    /// texture coordinates follow the position inside the rectangle, so the rounded shape cuts the picture.
+    void AddImageRounded(SDL_Texture* tex, Vec2 min, Vec2 max, Vec2 uv0, Vec2 uv1, Color32 tint, float rounding, int flags = 0) const;
+    /// A regular polygon with `n` corners (3 to 128), the first corner pointing right of the centre, corners going clockwise on screen.
+    void AddNgon(Vec2 center, float radius, Color32 col, int n, float thickness = 1.0f) const;
+    void AddNgonFilled(Vec2 center, float radius, Color32 col, int n) const;
     void PushClipRect(Vec2 min, Vec2 max) const;
     void PopClipRect() const;
     /// A path of up to 256 points shared by both lists (cleared by PathStroke and PathFillConvex).

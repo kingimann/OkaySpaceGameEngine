@@ -122,6 +122,8 @@ def type_covered(name, idents):
         return "Color32" in idents
     if name in ("ImDrawList",):
         return "DrawList" in idents
+    if name.startswith("ImDrawFlags_"):
+        return "DrawFlags_" + name[len("ImDrawFlags_"):] in idents
     if name.startswith("ImGui"):
         base = name[5:]
         cands = [base, base.replace("Flags_", "_"), base.replace("Flags", ""), re.sub(r"Flags_", "_", base)]
@@ -211,6 +213,7 @@ def render():
     w("| Draw-list methods | %d | %d | %d | %s |" % (len(dls), dl_total, dl_cov, pct(dl_cov, dl_total)))
     w("")
     w("Distinct calls available: %d of %d." % (sum(1 for k in calls if call_ok(k, funcs)), len(calls)))
+    w("Distinct types, flags and enums available: %d of %d." % (sum(1 for k in types if type_covered(k, idents)), len(types)))
     w("")
 
     w("## Missing `ImGui::` calls, ranked by use")

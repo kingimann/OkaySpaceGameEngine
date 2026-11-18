@@ -148,4 +148,122 @@ const DragPayload* GetDragDropPayload();
 /// EndDragDropTarget); `id` is accepted for source compatibility and not used. False for an empty or non-finite rectangle.
 bool BeginDragDropTargetCustom(Rect bb, unsigned id = 0);
 
+// ---- Step 6.10: window, frame, context and style calls (written from what the names mean; tested in test_okayui_calls.cpp) ----------
+
+/// The next ImGui-style Begin folds (true) or opens (false) the window. `cond` as for SetNextWindowPos: Always every time, Once and
+/// FirstUseEver only the first time the window is ever seen, Appearing each time it comes back after a frame without it.
+/// A window with Window_NoCollapse or Window_NoTitleBar is never collapsed.
+void SetNextWindowCollapsed(bool collapsed, Cond cond = Cond_Always);
+/// The next ImGui-style Begin draws its body (background and border) with this opacity (0 to 1; a non-finite value does nothing). The
+/// title bar and the content are not changed. One request, used up by the next Begin.
+void SetNextWindowBgAlpha(float alpha);
+/// Move a window by title (any time) or the current one. It takes effect when the window is next begun, so a call from inside the window
+/// moves it one frame later. False for an unknown, null or empty title or a non-finite position. Cond as for SetNextWindowPos
+/// (Always, Once / FirstUseEver, Appearing); a condition that says no still returns true (the window was found).
+bool SetWindowPos(const char* title, Vec2 pos, Cond cond = Cond_Always);
+void SetWindowPos(Vec2 pos, Cond cond = Cond_Always);
+/// Raise a window above the other windows without giving it the focus. False for an unknown title. Windows that sit at the bottom by
+/// design (docked content, NoBringToFront) stay there. The CurrentWindow form takes what GetCurrentWindow() returned.
+bool BringWindowToDisplayFront(const char* title);
+struct CurrentWindow;
+bool BringWindowToDisplayFront(const CurrentWindow& w);
+/// FindWindowByName for a window id (CurrentWindow::id, GetID of the title). `docked` is not filled (false).
+WindowInfo FindWindowByID(unsigned id);
+/// True while an open popup is a modal (BeginPopupModal): Dear ImGui returns the window, OkayUI has no window objects, so this is the
+/// yes / no answer callers use (`if (GetTopMostPopupModal() && ...)`).
+bool GetTopMostPopupModal();
+/// For the next frame only, report IO::wantCaptureKeyboard as `want` whatever the widgets say (a host that wants a shortcut to wait or
+/// to go through). Used up by the next BeginFrame.
+void SetNextFrameWantCaptureKeyboard(bool want);
+/// The space from a tree node's left edge to where its label starts (the arrow's width): the arrow column of TreeNode.
+float GetTreeNodeToLabelSpacing();
+/// Where the current window's content starts, in window coordinates (the same value as GetWindowContentRegionMin; zero outside a window).
+Vec2 GetCursorStartPos();
+
+/// OkayUI has one viewport (the display). GetWindowViewport is GetMainViewport; SetNextWindowViewport is accepted and does nothing.
+Viewport GetWindowViewport();
+void SetNextWindowViewport(unsigned viewportId);
+
+/// Item flags for PushItemFlag / PopItemFlag (our own values). Only ItemFlag_Disabled does something (it is BeginDisabled / EndDisabled
+/// for the items in between); the others are accepted and ignored: OkayUI has no keyboard navigation to opt out of, no repeat-on-hold
+/// buttons and no mixed-value display. Up to 16 pushes at once; pops are matched to pushes.
+enum ItemFlags : int { ItemFlag_None = 0, ItemFlag_NoTabStop = 1, ItemFlag_ButtonRepeat = 2, ItemFlag_Disabled = 4, ItemFlag_NoNav = 8,
+                       ItemFlag_NoNavDefaultFocus = 16, ItemFlag_MixedValue = 32 };
+void PushItemFlag(int flag, bool enabled);
+void PopItemFlag();
+/// Width for `count` side-by-side items (a Vec3 field): `totalWidth` is shared out with the inner spacing between items, and one
+/// PushItemWidth per item is made, the first item's on top, so the caller pops after each item (PopItemWidth) exactly as with Dear
+/// ImGui. count is kept between 1 and 8 (the width stack holds 16). Pass CalcItemWidth() as the total.
+void PushMultiItemsWidths(int count, float totalWidth);
+
+/// Where a label's visible text ends: the first "##" (the hidden id part) or the end of the text. With `textEnd` the search stops there
+/// (it returns textEnd when no "##" is found before it). Null in gives null out.
+const char* FindRenderedTextEnd(const char* text, const char* textEnd = nullptr);
+
+/// One global context. CreateContext returns a handle for it (the same one every time: OkayUI cannot hold two), DestroyContext resets
+/// OkayUI's state (ResetState) and makes GetCurrentContext return null until CreateContext again, SetCurrentContext(null) does the same
+/// without resetting, SetCurrentContext(handle) makes it current. Any other handle is ignored. These exist so host code that guards on
+/// "is there a context" compiles; there is no NewFrame (call BeginFrame with the frame's Input).
+struct Context;
+Context* CreateContext();
+void DestroyContext(Context* ctx = nullptr);
+Context* GetCurrentContext();
+void SetCurrentContext(Context* ctx);
+
+/// The look presets: StyleColorsDark is the default OkayUI palette, StyleColorsLight a light one, StyleColorsClassic the dark blue-grey
+/// one. Only the colours change (the eight base colours, text-dim, title, field and the shadow flag); sizes, rounding and the text scale
+/// stay, and colours set with SetStyleColor / PushStyleColor are cleared. Calling one between a PushStyleColor and its pop is the caller's problem.
+void StyleColorsDark();
+void StyleColorsLight();
+void StyleColorsClassic();
+
+/// The dock layout as text (DockSaveLayout) and back. Only the dock layout is stored (not window positions or sizes). The returned
+/// pointer is valid until the next call. `size` (optional) receives the length. LoadIniSettingsFromMemory takes `size` 0 as "up to the
+/// terminating zero"; text that does not load leaves the layout as it was.
+const char* SaveIniSettingsToMemory(unsigned long long* size = nullptr);
+void LoadIniSettingsFromMemory(const char* data, unsigned long long size = 0);
+
+
+// ---- Step 6.11: the names ported code uses for buttons, directions, hover / focus flags and child windows --------------------------
+
+/// Mouse buttons by name. OkayUI tracks the left and right buttons; Middle is accepted everywhere a button is taken and is never down
+/// or clicked (a middle-click feature needs the host to give OkayUI that button first). Before this step any button number but 1
+/// behaved like the left button; now only 0 and 1 do anything.
+enum MouseButton : int { MouseButton_Left = 0, MouseButton_Right = 1, MouseButton_Middle = 2 };
+/// Directions for ArrowButton (the values it takes).
+enum Dir : int { Dir_Left = 0, Dir_Right = 1, Dir_Up = 2, Dir_Down = 3 };
+
+/// Flags for IsItemHovered(flags) and IsWindowHovered(flags). All are accepted. What they change here (OkayUI's item hover is a plain
+/// "is the pointer over the item's rectangle", which already ignores disabled state, an active item elsewhere and overlapping items):
+///   Hovered_AnyWindow (window form): true when the pointer is over any OkayUI window (IO::wantCaptureMouse).
+///   Hovered_ChildWindows / Hovered_RootWindow / Hovered_RootAndChildWindows: no change (a child is part of its window's rectangle).
+///   Hovered_AllowWhenDisabled, Hovered_AllowWhenBlockedByActiveItem, Hovered_AllowWhenOverlapped, Hovered_RectOnly: no change (already so).
+///   Hovered_AllowWhenBlockedByPopup: no change (the item form does not look at popups).
+///   Hovered_Stationary, Hovered_DelayShort, Hovered_DelayNormal, Hovered_ForTooltip, Hovered_NoSharedDelay: no delay is applied.
+/// (Our own values.)
+enum HoveredFlags : int {
+    Hovered_None = 0, Hovered_ChildWindows = 1, Hovered_RootWindow = 2, Hovered_RootAndChildWindows = 3, Hovered_AnyWindow = 4,
+    Hovered_AllowWhenBlockedByPopup = 8, Hovered_AllowWhenBlockedByActiveItem = 16, Hovered_AllowWhenOverlapped = 32,
+    Hovered_AllowWhenDisabled = 64, Hovered_RectOnly = 128, Hovered_Stationary = 256, Hovered_DelayShort = 512, Hovered_DelayNormal = 1024,
+    Hovered_ForTooltip = 2048, Hovered_NoSharedDelay = 4096
+};
+bool IsItemHovered(int flags);
+bool IsWindowHovered(int flags);
+/// Flags for IsWindowFocused(flags): all accepted; Focused_AnyWindow is true when any OkayUI window has the focus; the root / child
+/// flags change nothing (a child is part of its window).
+enum FocusedFlags : int { Focused_None = 0, Focused_ChildWindows = 1, Focused_RootWindow = 2, Focused_RootAndChildWindows = 3, Focused_AnyWindow = 4,
+                          Focused_NoPopupHierarchy = 8 };
+bool IsWindowFocused(int flags);
+/// Some OkayUI window has the focus (implemented next to the window slots in OkayUI.cpp; IsWindowFocused(Focused_AnyWindow) uses it).
+bool AnyWindowFocused();
+
+/// Flags for the ImGui-style BeginChild(id, size, childFlags, windowFlags). Supported: Child_Borders (the child's background panel) and
+/// Child_AutoResizeY (the height follows the content, one frame behind: the first frame shows one row; a positive size.y is the smallest
+/// height). Accepted and ignored: Child_AlwaysUseWindowPadding (a child always has its padding), Child_ResizeX / Child_ResizeY,
+/// Child_AutoResizeX (width does not follow content: use the size), Child_AlwaysAutoResize, Child_FrameStyle. `windowFlags` is ignored.
+/// A size of 0 on an axis (not auto-resized) means the space left, as in the (w, h, border) form.
+enum ChildFlags : int { Child_None = 0, Child_Borders = 1, Child_AlwaysUseWindowPadding = 2, Child_ResizeX = 4, Child_ResizeY = 8,
+                        Child_AutoResizeX = 16, Child_AutoResizeY = 32, Child_AlwaysAutoResize = 64, Child_FrameStyle = 128 };
+bool BeginChild(const char* id, Vec2 size, int childFlags = Child_None, int windowFlags = 0);
+
 } // namespace OkayUI

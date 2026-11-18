@@ -57,6 +57,7 @@ Find the window, page or symptom, then say the number. Back to the [overview](..
 | a chest opens for the wrong player | [11.1](11-gameplay-systems.md#111-inventory-bag-grid-chests-equipment) Inventory: bag, grid, chests, equipment |
 | a child jumps when re-parented | [1.3](01-core-scene.md#13-scene-graph) Scene graph |
 | a child still collides under a switched-off parent | [1.17](01-core-scene.md#117-scene-hierarchy-search-and-validation) Scene hierarchy, search and validation |
+| a child window with a content-sized height is the wrong size | [40.9](40-okayui-library.md#409-ported-code-calls-window-frame-context-style-presets-and-child-flags) Ported-code calls: window, frame, context, style presets and child flags |
 | a choice never shows | [10.2](10-story-cinematics.md#102-dialogue-graphs-and-dialogue-runner) Dialogue graphs and Dialogue Runner |
 | a click selects the wrong object | [36.6](36-math-geometry.md#366-geometry-helpers-elsewhere) Geometry helpers elsewhere |
 | a client can't connect or says "encryption required | [16.1](16-networking.md#161-transport-sealed-channels-packets) Transport, sealed channels, packets |
@@ -138,6 +139,7 @@ Find the window, page or symptom, then say the number. Back to the [overview](..
 | a launcher feature is hidden until a SQL file is run | [41.6](41-build-tools-infra.md#416-supabase-functions-and-sql-schema) Supabase functions and SQL schema |
 | a launcher warning in report mode | [39.4](39-security-anticheat.md#394-client-integrity-signed-manifest-and-launch-check) Client integrity: signed manifest and launch check |
 | a level gets slower with each change and nobody notices | [58.1](43-proposals.md#581-performance-budgets) Performance budgets |
+| a light theme call has no effect | [40.9](40-okayui-library.md#409-ported-code-calls-window-frame-context-style-presets-and-child-flags) Ported-code calls: window, frame, context, style presets and child flags |
 | a lighting setting does not save | [15.14](15-editor.md#1514-scene-settings-project-settings-and-help-windows) Scene settings, project settings and help windows |
 | a limb flips | [5.6](05-animation-ik.md#56-foot-limb-and-chain-ik) Foot, limb and chain IK |
 | a limb pops at full extension | [36.5](36-math-geometry.md#365-ik-math) IK math |
@@ -199,6 +201,7 @@ Find the window, page or symptom, then say the number. Back to the [overview](..
 | a plugin panel does not appear | [24.2](20-35-planned.md#242-editor-extensions) Editor extensions |
 | a plugin panel does not draw | [15.8](15-editor.md#158-plugin-system-and-plugins-menu) Plugin system and Plugins menu |
 | a point light casts no shadow | [2.3](02-rendering-world.md#23-lighting-and-shadows) Lighting and shadows |
+| a ported panel does not compile because of a missing call name | [40.9](40-okayui-library.md#409-ported-code-calls-window-frame-context-style-presets-and-child-flags) Ported-code calls: window, frame, context, style presets and child flags |
 | a ported panel does not compile because of GetStyle | [40.8](40-okayui-library.md#408-porting-helpers-tooltip-scope-style-fields-mapping-layer-list-clipper) Porting helpers: tooltip scope, style fields, mapping layer, list clipper |
 | a ported tooltip with several lines draws nothing | [40.8](40-okayui-library.md#408-porting-helpers-tooltip-scope-style-fields-mapping-layer-list-clipper) Porting helpers: tooltip scope, style fields, mapping layer, list clipper |
 | a pose pops at a key | [5.2](05-animation-ik.md#52-clips-and-curves) Clips and curves |

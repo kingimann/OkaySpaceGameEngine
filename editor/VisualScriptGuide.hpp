@@ -24,6 +24,7 @@
 #include <cctype>
 #include <cstring>
 #include <string>
+#include <unordered_map>
 #include <vector>
 
 namespace okay::editor::vsed {
@@ -46,6 +47,14 @@ inline std::string VsPlainLine(const VsDef& d) {
     s = VsPlainText(s);
     if (!s.empty() && s.back() != '.' && s.back() != '!' && s.back() != '?') s += '.';
     return s;
+}
+
+/// VsPlainLine, kept per node type: it is drawn on every node every frame.
+inline const std::string& VsPlainLineCached(const VsDef& d) {
+    static std::unordered_map<std::string, std::string> cache;
+    auto it = cache.find(d.type);
+    if (it == cache.end()) it = cache.emplace(d.type, VsPlainLine(d)).first;
+    return it->second;
 }
 
 // ---- 2. Example values and pin tips -------------------------------------------------------------------------
@@ -410,29 +419,30 @@ inline const char* const kVsIntentBlurbs[] = {
     "Everything else.",
 };
 
-/// The heading this node is listed under, an index into kVsIntents. Decided from the node's type name and its
-/// category, so a new node lands somewhere sensible without a table row.
-inline int VsIntentFor(const VsDef& d) {
-    const std::string t = d.type;
-    auto has = [&](const char* w) { return t.find(w) != std::string::npos; };
-    const bool event = !d.execIn && !d.execOut.empty();
-    if (has("Score") || has("Health") || has("Damage") || has("GameOver") || has("Lives") || has("Win") || has("Lose")) return 10;
-    if (event && (has("Key") || has("Click") || has("Mouse") || has("Tap") || has("Swipe") || has("Pinch") || has("Action") || has("Press") || has("Touch"))) return 1;
-    if (d.cat == CAT_INPUT) return 1;
-    if (event && (t == "OnStart" || t == "OnUpdate" || t == "OnLateUpdate" || t == "OnFixedUpdate" || t == "OnTimer" || t == "OnEnable" || t == "OnDisable" || t == "OnDestroy")) return 0;
-    if (d.cat == CAT_EVENT) return event ? 0 : 11;
-    if (has("Sound") || has("Audio") || has("Music") || has("Clip") || has("Volume")) return 4;
-    if (has("Print") || has("Text") || has("ShowUI") || has("HideUI") || has("Label") || has("Message") || has("Format")) return 3;
-    if (has("Translate") || has("Move") || has("Rotate") || has("Position") || has("Teleport") || has("Follow") || has("Patrol") || has("Chase") ||
-        has("Flee") || has("Jump") || has("Velocity") || has("Force") || has("Look") || has("Scale") || has("Spin") || has("Bob") || d.cat == CAT_XFORM) return 2;
-    if (has("Spawn") || has("Destroy") || has("SetActive") || has("Clone") || has("Instantiate")) return 9;
-    if (d.cat == CAT_VAR || has("Var") || has("SaveValue") || has("LoadValue")) return 7;
-    if (d.cat == CAT_LOGIC || t == "Branch" || has("Switch") || has("Compare") || has("Chance")) return 5;
-    if (t == "Delay" || t == "Wait" || t == "Timer" || t == "Repeat" || t == "ForLoop" || t == "Once" || t == "Cooldown" || t == "DoN" ||
-        t == "Sequence" || t == "FlipFlop" || t == "Gate" || has("Loop") || d.cat == CAT_FLOW) return 6;
-    if (d.cat == CAT_MATH) return 8;
+/// The heading for a node (or an action step) from its type name, its category and whether it is an event.
+/// Decided from the words in the name, so a new node lands somewhere sensible without a table row.
+inline int VsIntentForName(const std::string& t, int cat, bool event) {
+    auto has = [&](const char* w) { return VsNameHas(t, w); };
+    auto is = [&](const char* w) { return t == w; };
+    if (has("score") || has("health") || has("damage") || has("gameover") || has("lives") || has("win") || has("lose")) return 10;
+    if (event && (has("key") || has("click") || has("mouse") || has("tap") || has("swipe") || has("pinch") || has("action") || has("press") || has("touch"))) return 1;
+    if (cat == CAT_INPUT) return 1;
+    if (event && (is("OnStart") || is("OnUpdate") || is("OnLateUpdate") || is("OnFixedUpdate") || is("OnTimer") || is("OnEnable") || is("OnDisable") || is("OnDestroy"))) return 0;
+    if (cat == CAT_EVENT) return event ? 0 : 11;
+    if (has("sound") || has("audio") || has("music") || has("clip") || has("volume")) return 4;
+    if (has("print") || has("text") || has("showui") || has("hideui") || has("label") || has("message") || has("format") || has("say")) return 3;
+    if (has("translate") || has("move") || has("rotate") || has("position") || has("teleport") || has("follow") || has("patrol") || has("chase") ||
+        has("flee") || has("jump") || has("velocity") || has("force") || has("look") || has("scale") || has("spin") || has("bob") || cat == CAT_XFORM) return 2;
+    if (has("spawn") || has("destroy") || has("setactive") || has("clone") || has("instantiate")) return 9;
+    if (cat == CAT_VAR || has("var") || has("savevalue") || has("loadvalue")) return 7;
+    if (cat == CAT_LOGIC || is("Branch") || has("switch") || has("compare") || has("chance")) return 5;
+    if (is("Delay") || is("Wait") || is("Timer") || is("Repeat") || is("ForLoop") || is("Once") || is("Cooldown") || is("DoN") ||
+        is("Sequence") || is("FlipFlop") || is("Gate") || has("loop") || cat == CAT_FLOW) return 6;
+    if (cat == CAT_MATH) return 8;
     return 11;
 }
+
+inline int VsIntentFor(const VsDef& d) { return VsIntentForName(d.type, d.cat, !d.execIn && !d.execOut.empty()); }
 
 // ---- 8. Plain titles: kVsPlainRenames and VsPlainRenameFor live in VisualScriptPlain.hpp (the registry needs them first).
 

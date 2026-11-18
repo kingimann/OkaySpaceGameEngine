@@ -3769,16 +3769,50 @@ A single "Move With Keys" block would make it 2 blocks; that macro block is NOT 
 
 Budgets live in the data (`VsRecipe::maxNodes/maxWires`) and the test fails when a recipe grows past them.
 
-### Not done in this pass
+### Quick blocks, default palette and counts (second pass, 2026-11-18)
 
-- Combined (macro) blocks such as Move With Keys, Jump On Key, Follow Object, When Touched Do, Wait Then Do.
-- Hiding the low-level blocks behind a "Show advanced nodes" switch (the Starter group is the default first view; levels
-  already filter).
-- Auto-connect on drop and insert-on-wire are written as pure, tested functions (`VisualScriptAutoConnect.hpp`) but
-  are not yet called by the canvas code.
-- The plain pin-refusal sentences were not rewritten.
-- No token was retired or merged, so the alias table is still empty; the saved-graph test proves every saved
-  identifier in examples/ and assets/ still loads and runs.
+Quick blocks (`engine/include/okay/VisualScript/QuickBlocks.hpp`): 30 one-block actions, written as DATA (a table row
+per block: plain name, one sentence, example, typed fields with defaults, and a small text body naming the ordinary
+low-level nodes and wires it stands for). One generic expander (`ExpandQuickBlocks`, called at the start of
+`NodeGraph::Parse`) turns each block into those nodes when a graph loads. A saved graph stores only the block token
+and the values typed on it (`node 3 QbAddToScore` + `default 3 0 5`), so it is one node in the editor and in the file.
+Continuous blocks (Move With Keys, Follow Object, Move To Spot, Walk Back And Forth, Spin, Show Score, Do Forever) start
+on their own, so they need no event and no wire. The blocks that already exist as ONE ordinary node were not
+duplicated: Heal, Save Checkpoint, Shake Camera, Say Text (Print), Add Score, Wait Then Do (Delay), Repeat Times.
+
+Default palette: 2447 palette nodes in the whole library; **55 by default** (30 Quick blocks and 25 basics) in six
+groups (Events 9, Move 9, Look 10, Game rules 9, Sound and screen 6, Flow 12); **2447 with "Show all nodes"**. The
+budget (60 in total, 12 per group) is a constant in `VisualScriptAdvanced.hpp` and a test fails above it. Search finds
+hidden nodes and marks them Advanced; "Search all nodes" (or the switch) lists them. Beginner mode shows the six
+groups plus Everything, Recent and Favourites and no topic tree.
+
+Blocks and wires for the small complete game (collect 5 coins, patrolling enemy, game over on touch, show score,
+win at 5), as scripts on 4 objects:
+
+| | Before (templates) | Now |
+| --- | --- | --- |
+| Player moves with arrow keys | 12 blocks, 12 wires | 1 block, 0 wires |
+| Coin (all five share it) | 6 blocks, 5 wires | 1 block, 0 wires |
+| Enemy patrols, touch ends the game | 18 + 2 blocks, 20 + 1 wires | 2 blocks, 0 wires |
+| Score on screen, win at 5 | 6 + 7 blocks, 5 + 6 wires | 2 blocks, 0 wires |
+| Total | about 51 blocks, 49 wires | **6 blocks, 0 wires** |
+
+(Before = the old Move with WASD, Pickup, Patrol, Score readout and Win at score templates plus an On Trigger -> Lose pair;
+the game-over-on-touch part of the before count is my estimate, the rest is measured by tests/test_vs_recipes.cpp.)
+The 10 recipes are 1 or 2 blocks and at most 1 wire each (budget: 3 blocks, 2 wires).
+
+Also done: auto-connect when a block is added from the popup, insert-on-wire when a node is dropped on a flow wire (both
+tested on the real graph model), plain wire-refusal sentences with a banned-word test, recipe cards on the empty canvas.
+
+### Not done
+
+- The Rule super-block (WHEN / IF / DO list inside one node), block options and presets, the "Do this to all objects
+  named X" target, smart defaults from the selected object, and highlighting the running block in Play.
+- Merged blocks with dropdowns (Change Number, Compare, Play Sound Start/Stop ...) and the old-id alias for them. The old
+  nodes were NOT merged; they are only hidden from the default list. The alias table is still empty.
+- Fields are plain text boxes; there is no key picker, object picker or dropdown widget on a block yet.
+- Quick blocks are not translated to OkayScript text (the export lists them as not translated).
+- The editor window was never run on a real desktop.
 
 ## Found on the way (listed, not fixed)
 

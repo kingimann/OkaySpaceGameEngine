@@ -2,6 +2,7 @@
 // run in a headless scene (the object moves, jumps, scores, opens, follows, speaks, sounds, loses).
 #include "test_framework.hpp"
 #include "VisualScriptRecipes.hpp"
+#include "okay/Scene/SceneSerializer.hpp"
 #include "VisualScriptTemplates.hpp"
 #include "okay/Components/AudioSource.hpp"
 #include "okay/Components/MeshRenderer.hpp"
@@ -16,6 +17,7 @@
 #include "okay/VisualScript/VsVariables.hpp"
 #include <Okay.hpp>
 #include <cmath>
+#include <filesystem>
 #include <string>
 
 using namespace okay;
@@ -41,6 +43,9 @@ void Keys(std::initializer_list<char> down) { Input::FeedKeys(std::vector<char>(
 } // namespace
 
 int main() {
+#ifdef OKAY_SOURCE_DIR
+    std::filesystem::current_path(OKAY_SOURCE_DIR);
+#endif
     RUN_SUITE("vs_recipes");
     auto sink = okay::Log::sink;
     okay::Log::sink = [](okay::Log::Level, const std::string&) {};
@@ -52,7 +57,7 @@ int main() {
         CHECK(n <= r.maxNodes);
         CHECK(w <= r.maxWires);
         if (n > r.maxNodes || w > r.maxWires) std::printf("  over budget: %s has %d nodes, %d wires\n", r.name, n, w);
-        CHECK(r.maxNodes <= 7 && r.maxWires <= 6);
+        CHECK(r.maxNodes <= 3 && r.maxWires <= 2);   // a recipe never needs more than 3 blocks and 2 wires
         CHECK(VsGlossaryViolation(r.name).empty());
         CHECK(VsGlossaryViolation(r.blurb).empty());
         CHECK(VsGlossaryViolation(r.needs).empty());
@@ -86,7 +91,7 @@ int main() {
     std::printf("  compared recipes: %d nodes and %d wires now, %d nodes and %d wires before\n", totalNodes, totalWires, oldNodes, oldWires);
 
     // The longer templates that have no one-click recipe, for the counts note (docs/visual_script_category_audit.md).
-    for (const char* name : {"Win or lose", "Health", "Spawner", "Shooter", "Score readout", "Message", "Camera follow"})
+    for (const char* name : {"Win or lose", "Health", "Spawner", "Shooter", "Score readout", "Message", "Camera follow", "Patrol", "Win at score", "Move with WASD", "Pickup"})
         if (const VsTemplate* t = VsTemplateNamed(name))
             std::printf("  template %-16s %2d nodes, %2d wires\n", name, VsGraphNodeCount(t->graph), VsGraphWireCount(t->graph));
 
@@ -95,8 +100,9 @@ int main() {
         auto* vs = Attach(scene, R("Move with arrow keys"));
         scene.Start();
         Keys({}); scene.Update(0.1f);
-        Keys({'d'}); scene.Update(0.5f);
+        Keys({Input::KeyFromName("right")}); scene.Update(0.5f);
         CHECK(vs->gameObject->transform->localPosition.x > 0.5f);
+        Keys({});
     }
     {   // Jump with Space: the body gets an upward speed.
         Scene scene("Jump");
@@ -164,6 +170,72 @@ int main() {
         scene.Update(0.016f);
         CHECK(Time::TimeScale() == 0.0f);
         CHECK(okay::vs::SceneVariables(&scene)["outcome"].AsString() == "lose");
+        Time::SetTimeScale(1.0f);
+    }
+    {   // Spawn a copy when I click: one more object in the scene.
+        {
+            Scene proto("Proto");
+            auto* shot = proto.CreateGameObject("Marker");
+            shot->AddComponent<MeshRenderer>()->mesh = Mesh::Cube();
+            std::filesystem::create_directories("examples/node_playground");
+            if (!std::filesystem::exists("examples/node_playground/marker.okayprefab"))
+                CHECK(SceneSerializer::SaveObjectToFile(*shot, "examples/node_playground/marker.okayprefab"));
+        }
+        Scene scene("Click");
+        auto* vs = Attach(scene, R("Spawn a copy when I click"));
+        scene.Start();
+        const std::size_t before = scene.Objects().size();
+        vs->OnMouseDown();
+        scene.Update(0.016f);
+        CHECK(scene.Objects().size() == before + 1);
+    }
+    {   // Change scene when touched: a scene load is asked for.
+        Scene scene("Door");
+        auto* vs = Attach(scene, R("Change scene when touched"));
+        scene.Start();
+        CHECK(!scene.HasPendingLoad());
+        vs->OnTriggerEnter3D(nullptr);
+        CHECK(scene.HasPendingLoad());
+    }
+    {   // The small complete game: counts, then play it.
+        int nodes = 0, wires = 0;
+        for (const VsSampleScript& sc : VsSampleGame()) {
+            nodes += VsGraphNodeCount(sc.graph); wires += VsGraphWireCount(sc.graph);
+        }
+        std::printf("  small game (4 scripts): %d blocks, %d wires\n", nodes, wires);
+        CHECK(nodes <= 6 && wires <= 5);   // the owner's target: 6 blocks and 5 wires
+        Time::SetTimeScale(1.0f);
+        Scene scene("Game");
+        scene.physicsEnabled = false;
+        auto make = [&](const char* name, const std::string& graph, Vec3 at) {
+            auto* go = scene.CreateGameObject(name);
+            go->transform->localPosition = at;
+            go->AddComponent<MeshRenderer>()->mesh = Mesh::Cube();
+            return go;
+        };
+        const auto& game = VsSampleGame();
+        auto* player = make("Player", game[0].graph, {0, 0, 0});
+        auto* coin = make("Coin", game[1].graph, {3, 0, 0});
+        auto* enemy = make("Enemy", game[2].graph, {0, 5, 0});
+        auto* board = make("Scoreboard", game[3].graph, {0, 8, 0});
+        board->AddComponent<TextRenderer>();
+        coin->AddComponent<AudioSource>();
+        player->AddComponent<VisualScriptComponent>()->LoadFromText(game[0].graph);
+        auto* cvs = coin->AddComponent<VisualScriptComponent>(); cvs->LoadFromText(game[1].graph);
+        auto* evs = enemy->AddComponent<VisualScriptComponent>(); evs->LoadFromText(game[2].graph);
+        board->AddComponent<VisualScriptComponent>()->LoadFromText(game[3].graph);
+        scene.Start();
+        Keys({Input::KeyFromName("right")}); scene.Update(0.5f); Keys({});
+        CHECK(player->transform->localPosition.x > 1.0f);           // the player moved
+        for (int i = 0; i < 4; ++i) scene.Update(0.3f);
+        cvs->OnTriggerEnter3D(nullptr); scene.Update(0.016f);       // the coin is touched
+        CHECK(vs::SceneVariables(&scene)["score"].AsFloat() == 1.0f && !coin->active);
+        CHECK(board->GetComponent<TextRenderer>()->text.find("Score: 1") != std::string::npos);
+        CHECK(std::fabs(enemy->transform->localPosition.x) > 0.05f); // the enemy walked
+        CHECK(Time::TimeScale() == 1.0f);
+        evs->OnTriggerEnter3D(nullptr);                              // the enemy touches the player
+        CHECK(Time::TimeScale() == 0.0f);
+        CHECK(vs::SceneVariables(&scene)["outcome"].AsString() == "lose");
         Time::SetTimeScale(1.0f);
     }
     okay::Log::sink = sink;

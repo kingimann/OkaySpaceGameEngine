@@ -10,6 +10,8 @@
 // kSharedLevels below; that is the list both branches share.
 #include <cstring>
 
+#include "okay/VisualScript/QuickBlocks.hpp"
+
 namespace okay::editor::vsed {
 
 enum class VsLevel : int { Basic = 0, Intermediate = 1, Advanced = 2 };
@@ -185,6 +187,7 @@ inline bool VsIsStarter(const char* type) { return VsStarterIndex(type) >= 0; }
 
 inline VsLevel VsLevelForNode(const char* type) {
     if (!type || !type[0]) return VsLevel::Intermediate;
+    if (okay::vs::FindQuickBlock(type)) return VsLevel::Basic;   // quick blocks are for beginners
     for (const VsSharedLevel& s : kSharedLevels)
         if (std::strcmp(s.type, type) == 0) return s.level;
     for (const char* b : kBasicTypes)
@@ -270,6 +273,7 @@ inline VsLevel VsLevelForStep(const char* op, const char* group) {
 // A tiny example, only where a beginner benefits from seeing one. Empty when there is nothing to add.
 inline const char* VsNodeExample(const char* type) {
     if (!type) return nullptr;
+    if (const okay::vs::QuickBlock* qb = okay::vs::FindQuickBlock(type)) return qb->example;
     struct Ex { const char* type; const char* text; };
     static const Ex k[] = {
         {"OnStart", "Turn a light on when the level loads."},

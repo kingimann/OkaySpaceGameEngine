@@ -4,6 +4,7 @@
 // Keyed by the node's serialization type; a node with no entry simply shows
 // its pins without a description.
 #include "VisualScriptPlain.hpp"
+#include "okay/VisualScript/QuickBlocks.hpp"
 #include <cstring>
 #include <set>
 #include <string>
@@ -50,6 +51,7 @@ inline const char* VsStepCatBlurb(bool cond) {
 }
 
 inline const char* VsNodeHelpRaw(const char* type) {
+    if (const okay::vs::QuickBlock* qb = okay::vs::FindQuickBlock(type ? type : "")) return qb->description;
     if (type && std::strncmp(type, "Fn.", 3) == 0) {
         if (std::strcmp(type, "Fn.get_clipboard_text") == 0)
             return "The text on the clipboard. Empty when there is nothing to paste.";

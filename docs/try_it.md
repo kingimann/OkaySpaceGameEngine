@@ -99,7 +99,6 @@ release job or the installer build for this change.
 | one-controller | One Player Controller for first and third person; no Humanoid or separate First and Third Person entries | Editor: GameObject > Player, Add Component > Gameplay, File > New Project (First and Third Person) | Tests run on Linux only; not run in a real editor or on Windows |
 | security-sec1 | Security plan SEC1: script file paths, update signature status, relay caps, reactions SQL | examples\security_paths\script_paths.okayscene (Play, read Console); Settings > About and Help > About line; SQL and relay are owner steps | Tests on Linux only; editor/launcher lines not run; nothing on Windows or real Supabase |
 | vpa | Multi-window panels start cleanly on every video driver | `Tools\OkayEngine.exe`: drag a panel tab outside the editor | Linux only (Xvfb, a build with assertions on); Windows unverified |
-| vsclarity | Visual Script nodes explain themselves (plain line, What is this? card, Needs input, Next steps, Try this node, What do you want to do? list) | `Tools\OkayEngine.exe`: View > Editors & Tools > Visual Script, drop any node | Compiled and unit-tested (`vs_guide`); never drawn in a real window, Windows unverified |
 | xbox-uwp | Xbox One export (EXPERIMENTAL, UNVERIFIED): one-click build (check, export, compile, shaders, pack, sign, install), own .appx packer, engine mode | File > Build Settings > platform "Xbox (exp.)" > Build Xbox package | Linux-tested only |
 | 7n | Every own replacement in one table: the switch, the sample, how to tell it is on, and what is missing | section 7n below and `docs/own_flip_proposal.md` | Table is new. Read from the code and from CI logs, not run on Windows |
 | 8 | Own model readers: **the default** since 2026-11-17 (`OKAY_THIRD_PARTY=1` = back to Assimp / ufbx) | import anything; `examples\own_readers`; `OKAY_THIRD_PARTY=1` or `OKAY_OWN_<FMT>=0` to go back | Not in a release yet (branch `claude2/own-readers-integration`); Linux tests only, Windows unverified |
@@ -1984,35 +1983,6 @@ it, it ran for the whole 25-second check in both and printed the "Multi-window p
 ran in both backends without stopping, and with the change a Project tab dragged outside the editor still became its own window. The
 intermittent stop seen before under Xvfb was SDL falling back to the `offscreen` driver when the X server was not ready yet.
 Unverified: Windows (not built or run here), a real Wayland session.
-
-## vsclarity. Visual Script nodes explain themselves
-
-What changed: when you drop a node you now see what it does, what to plug in, and what to do next. Nothing about saved
-graphs or how scripts run changed. Notes and the full gap table: `docs/visual_script_clarity.md`.
-
-Try it on Windows (this is all in the normal editor, nothing to switch on):
-1. Start `Tools\OkayEngine.exe`, open a project, select an object and open View > Editors & Tools > Visual Script.
-2. Press "Or add a block" (or right-click the canvas, or tap Space) and drop **If Then Else**.
-   * Under its title you should see one plain sentence, not a blank line.
-   * The node shows an amber **Needs input** badge and the line "Plug the condition in here." The Condition box says "needed".
-   * Hover the Condition circle: the tip says what goes in and gives "Example: true".
-3. Look at the bottom-right corner of the canvas: the **What is this?** card for the selected node. It lists what it does,
-   what to plug in, a tiny example chain, common mistakes and what to do next. Press **Hide** to fold it; close and reopen
-   the editor and it stays folded (`helpcard 0` in `okay_vs_usage.txt`). Press **Show** to open it again.
-4. In the card, under "Next steps", click a chip (for example **Say Text**). The node is added next to the selected one and
-   wired in. Chips only suggest nodes that fit.
-5. Drop **Add Numbers** (a value node). Its chips add a node that takes a number, with the wire already drawn from the result.
-6. Press **Try this node** at the bottom of the card. A small ready-made graph (On Start, the node with sensible values, a
-   Say Text step) appears. Press Play: the Console shows the message, and for a value node it shows the result (Add Numbers: 10).
-7. Open the Add Node list (right-click the canvas). In the left list find **What do you want to do?** and click **Move things**,
-   **Show messages** and so on. Each row has its plain sentence under the name. Type `move things` in the search: the movement
-   nodes come up.
-8. Renamed nodes: search `Wait Seconds`, `Flip Flop` or `Every Seconds`. The nodes now called **Wait, Then Go On**, **Switch
-   Between Two Paths** and **Repeat Every Few Seconds** are found. An old saved graph that used them loads unchanged.
-
-What was and was not verified: the rules behind every item were unit-tested over all nodes in the list on Linux (`vs_guide`,
-and the existing `vs_clarity`, `vs_node_docs`, `vs_names`, `vs_start` suites). The drawing was compile-checked only: it was never
-shown in a real window, on Linux or on Windows, so card size on a small window and the second line on a narrow node are unchecked.
 
 ## xbox-uwp. Xbox One (experimental, Developer Mode) export
 

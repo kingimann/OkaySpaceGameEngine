@@ -27,6 +27,7 @@ void UpdateUILayouts(Scene& scene) {
         if (auto* lv = go->GetComponent<UIListView>()) lists.push_back(lv);
     }
     for (UIListView* lv : lists) lv->Layout();
+    UIVisibleIf::TickHidden(scene);   // an object a condition switched off cannot update itself; bring it back when the condition holds
 }
 
 int ConvertSceneToUIFrames(Scene& scene) {

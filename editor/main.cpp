@@ -107,6 +107,9 @@
 #include "InspectorPanel.hpp"           // reference fields, generic component card, undo for every field, prefab changes
 #include "PrefabEdit.hpp"               // prefab actions: revert / apply / variants / unpack, with undo
 #include "InspectorModel.hpp"           // Hierarchy filter, drag-drop reparenting, mixed values (ImGui-free)
+#include "UIMenuModel.hpp"               // GameObject > UI as data (groups, tips)
+#include "UIGalleryWindow.hpp"           // the UI Gallery window (Browse All UI...)
+#include "okay/Scene/UIScreens.hpp"      // ready-made screens as data, and the Starter Pack
 #include "UIRuntimeTools.hpp"            // UI themes + runtime UI widgets, File > Examples > UI Gallery
 #include "UIInspectorOverlay.hpp"       // modal / context menu / keybind inspectors
 #include "UIInspectorWidgetsMore.hpp"   // search, date, files, accordion, crumbs, pages, skeleton, sheet
@@ -6394,182 +6397,342 @@ void UIStyleBar(EditorState& ed, Component* c) {
     ImGui::Spacing();
 }
 
-// The widget list shared by Create > UI and the UI view's "+ Add" button: plain
-// widgets, launcher-look kit pieces and whole prebuilt screens.
-void DrawUIWidgetItems(EditorState& ed, bool& created) {
-    auto addUI = [&](const char* nm, auto build) {
-        GameObject* parent = UIAddParent(ed);
-        GameObject* g = ed.CreateEmpty(nm);
-        build(g);
-        if (parent) g->transform->SetParent(parent->transform, /*worldPositionStays=*/false);
-        // Spawn centered (on screen, or in the panel it went into) so it's visible.
-        UIRect r = GetUIRect(g);
-        if (r.valid && r.anchorPtr && r.position) { *r.anchorPtr = UIAnchor::Center; *r.position = {0, 0}; }
-        ConvertToUIFrame(g);   // new widgets are placed by a UI Frame
-        ed.Select(g); ed.dirty = true; created = true;
+// GameObject > UI (and the UI view's "+ Add" button). The menu itself is DATA: editor/UIMenuModel.hpp lists the eight groups, every item with
+// a one-sentence tip, and a last entry "Browse All UI..." that opens the UI Gallery. The ready-made screens come from the screen registry
+// (okay/Scene/UIScreens.hpp), one submenu per section. This function draws that list and RunUIMenuItem runs the ids.
+// A widget goes inside the selected panel, else under the scene's Canvas, which is made (with an Event System) the first time it is needed,
+// so nobody has to know about Canvas before adding a button.
+GameObject* MakeUIWidget(EditorState& ed, const char* nm, const std::function<void(GameObject*)>& build) {
+    GameObject* parent = UIAddParent(ed);
+    GameObject* g = ed.CreateEmpty(nm);
+    build(g);
+    if (parent) g->transform->SetParent(parent->transform, /*worldPositionStays=*/false);
+    // Spawn centered (on screen, or in the panel it went into) so it's visible.
+    UIRect r = GetUIRect(g);
+    if (r.valid && r.anchorPtr && r.position) { *r.anchorPtr = UIAnchor::Center; *r.position = {0, 0}; }
+    ConvertToUIFrame(g);   // new widgets are placed by a UI Frame
+    ed.Select(g); ed.dirty = true;
+    return g;
+}
+
+// Runs one id of oked::uimenu::UIMenu. Returns true when it did something (an object was added or a window opened).
+bool RunUIMenuItem(EditorState& ed, const std::string& id, const std::string& label, bool& created) {
+    using namespace okay::UITemplates;
+    using BuildFn = void (*)(GameObject*);
+    auto widget = [&](const char* nm, const std::function<void(GameObject*)>& build) { ed.PushUndo(); MakeUIWidget(ed, nm, build); created = true; ConsoleLog("Added UI: " + label); return true; };
+    auto kit = [&](GameObject* (*fn)(okay::Scene&, GameObject*)) {
+        ed.PushUndo(); GameObject* g = fn(ed.scene(), UIAddParent(ed)); ed.Select(g); ed.dirty = true; created = true; ConsoleLog("Added UI: " + label); return true;
     };
-    if (ImGui::BeginMenu("Basic")) {
-        if (ImGui::MenuItem("Button"))       { addUI("Button",    [](GameObject* g){ g->AddComponent<UIButton>(); }); MakeButtonTextChild(ed, ed.selected()); }
-        if (ImGui::MenuItem("Panel"))        addUI("Panel",       [](GameObject* g){ g->AddComponent<UIPanel>(); });
-        if (ImGui::MenuItem("Image"))        addUI("Image",       [](GameObject* g){ g->AddComponent<UIImage>(); });
-        if (ImGui::MenuItem("Raw Image"))    addUI("RawImage",    [](GameObject* g){ g->AddComponent<UIRawImage>(); });
-        if (ImGui::MenuItem("Safe Area"))    addUI("Safe Area",   [](GameObject* g){ g->AddComponent<UISafeArea>(); });
-        if (ImGui::IsItemHovered()) ImGui::SetTooltip("A full-screen container that keeps its widgets clear of phone notches and home bars.");
-        if (ImGui::IsItemHovered()) ImGui::SetTooltip("A texture through a UV rect: show part of it, tile it or scroll it.");
-        if (ImGui::MenuItem("Text"))         addUI("Text",        [](GameObject* g){ auto* t = g->AddComponent<TextRenderer>(); t->screenSpace = true; t->pixelSize = 2.0f; t->align = 1; });
-        ImGui::EndMenu();
+    auto screen = [&](GameObject* (*fn)(okay::Scene&)) {
+        ed.PushUndo(); GameObject* g = fn(ed.scene()); HideOtherMenus(ed, g); ed.Select(g); ConsoleLog("Added UI: " + label); ed.dirty = true; created = true; return true;
+    };
+    auto sceneUI = [&](const std::function<GameObject*()>& make) { ed.PushUndo(); GameObject* g = make(); ed.Select(g); ed.dirty = true; created = true; ConsoleLog("Added UI: " + label); return true; };
+    okay::Scene& sc = ed.scene();
+    if (id.rfind("ui.scr.", 0) == 0) {   // a ready-made screen from the registry
+        const std::string sid = id.substr(7);
+        ed.PushUndo();
+        std::string look, style;
+        okay::editor::CurrentScreenLook(look, style);   // the look and style picked in the UI Gallery (none by default)
+        GameObject* g = okay::UIScreens::Build(sc, sid, 0, look, style);
+        if (!g) return false;
+        HideOtherMenus(ed, g); ed.Select(g); ed.dirty = true; created = true;
+        ConsoleLog("Added UI: " + label + " (more layouts: UI Gallery)");
+        return true;
     }
-    if (ImGui::BeginMenu("Controls")) {
-        if (ImGui::MenuItem("Slider"))       addUI("Slider",      [](GameObject* g){ g->AddComponent<UISlider>(); });
-        if (ImGui::MenuItem("Range Slider")) addUI("Range Slider", oked::BuildUIRangeSlider);
-        if (ImGui::MenuItem("Virtual Joystick")) addUI("Virtual Joystick", [](GameObject* g){ g->AddComponent<VirtualJoystick>(); });
-        if (ImGui::MenuItem("D-Pad"))        addUI("D-Pad",       [](GameObject* g){ g->AddComponent<TouchDPad>(); });
-        if (ImGui::MenuItem("Touch Button")) addUI("Touch Button", [](GameObject* g){ g->AddComponent<TouchButton>(); });
-        if (ImGui::MenuItem("Toggle"))       addUI("Toggle",      [](GameObject* g){ g->AddComponent<UIToggle>(); });
-        if (ImGui::MenuItem("Stepper"))      addUI("Stepper",     [](GameObject* g){ g->AddComponent<UIStepper>(); });
-        if (ImGui::MenuItem("Rating"))       addUI("Rating",      [](GameObject* g){ g->AddComponent<UIRating>(); });
-        if (ImGui::MenuItem("Tabs"))         addUI("Tabs",        [](GameObject* g){ g->AddComponent<UITabs>(); });
-        if (ImGui::MenuItem("Input Field"))  addUI("InputField",  [](GameObject* g){ g->AddComponent<UIInputField>(); });
-        if (ImGui::MenuItem("Input Field with Validation")) addUI("ValidatedInput", oked::BuildUIInputValidation);
-        if (ImGui::MenuItem("Dropdown"))     addUI("Dropdown",    [](GameObject* g){ g->AddComponent<UIDropdown>(); });
-        if (ImGui::MenuItem("Draggable"))    addUI("Draggable",   [](GameObject* g){ g->AddComponent<UIImage>(); g->AddComponent<UIDraggable>(); });
-        if (ImGui::MenuItem("Drop Target"))  addUI("DropTarget",  [](GameObject* g){ g->AddComponent<UIPanel>(); g->AddComponent<UIDropTarget>(); });
-        ImGui::EndMenu();
+    if (id == "ui.looks") { okay::editor::OpenUIGalleryWindow(); ConsoleLog("UI Gallery: pick a Screen, then its Look and Style; screens added from GameObject > UI use them."); return true; }
+    if (id == "ui.browse") {
+        okay::editor::SetUIGalleryAdder([](EditorState& e, const std::string& wid) { bool c = false; return RunUIMenuItem(e, wid, wid, c); });
+        okay::editor::OpenUIGalleryWindow();
+        return true;
     }
-    if (ImGui::BeginMenu("HUD")) {
-        if (ImGui::MenuItem("Progress Bar")) addUI("ProgressBar", [](GameObject* g){ g->AddComponent<UIProgressBar>(); });
-        if (ImGui::MenuItem("Radial Progress")) addUI("Radial",   [](GameObject* g){ g->AddComponent<UIRadialProgress>(); });
-        if (ImGui::MenuItem("Minimap"))      addUI("Minimap",     [](GameObject* g){ g->AddComponent<Minimap>(); });
-        if (ImGui::MenuItem("Crosshair"))    addUI("Crosshair",   [](GameObject* g){ g->AddComponent<Crosshair>(); });
-        if (ImGui::MenuItem("Color Picker")) addUI("ColorPicker", [](GameObject* g){ g->AddComponent<UIColorPicker>()->Rebuild(); }); // grok/ui-color
-        if (ImGui::MenuItem("Slot Grid"))    addUI("SlotGrid",   [](GameObject* g){ g->AddComponent<UISlotGrid>()->Rebuild(); }); // grok/ui-hud
-        if (ImGui::MenuItem("Tooltip"))      addUI("Tooltip",     [](GameObject* g){ g->AddComponent<UIPanel>(); g->AddComponent<UITooltip>(); });
-        ImGui::EndMenu();
-    }
-    if (ImGui::BeginMenu("Layout & Overlays")) {   // (was "Layout": the editor's panel layouts have a Layout menu of their own, in View)
-        if (ImGui::MenuItem("Scroll View"))  addUI("ScrollView",  [](GameObject* g){ g->AddComponent<UIScrollView>(); });
-        if (ImGui::MenuItem("Layout Group")) addUI("Layout",      [](GameObject* g){ g->AddComponent<UILayoutGroup>(); });
-        if (ImGui::MenuItem("Flex Box"))     addUI("FlexBox",     oked::BuildUIFlexBox);
-        if (ImGui::MenuItem("Aspect Ratio Box")) addUI("AspectBox", oked::BuildUIAspectRatio);
-        if (ImGui::MenuItem("Masked Panel")) addUI("Mask",        oked::BuildUIMaskedPanel);
-        if (ImGui::MenuItem("List View"))    addUI("ListView",    oked::BuildUIListView);
-        ImGui::Separator();
-        if (ImGui::MenuItem("Modal Dialog")) addUI("Dialog",      oked::BuildUIModalDialog);
-        if (ImGui::MenuItem("Toast Stack"))  addUI("Toasts",      oked::BuildUIToast);   // grok/ui-toast
-        if (ImGui::MenuItem("Context Menu Panel")) addUI("ContextPanel", oked::BuildUIContextMenu);
-        if (ImGui::MenuItem("Keybind Field")) addUI("Keybind",    oked::BuildUIKeybindField);
-        ImGui::EndMenu();
-    }
-    if (ImGui::BeginMenu("App")) {
-        if (ImGui::MenuItem("Search Bar"))         addUI("Search Bar",  oked::BuildUISearchBar);
-        if (ImGui::MenuItem("Date and Time"))      addUI("Date and Time", oked::BuildUIDateTimePicker);
-        if (ImGui::MenuItem("File Picker"))        addUI("File Picker", oked::BuildUIFilePicker);
-        if (ImGui::MenuItem("Accordion"))          addUI("Accordion",   oked::BuildUIAccordion);
-        if (ImGui::MenuItem("Breadcrumbs"))        addUI("Breadcrumbs", oked::BuildUIBreadcrumbs);
-        if (ImGui::MenuItem("Pagination"))         addUI("Pagination",  oked::BuildUIPagination);
-        if (ImGui::MenuItem("Skeleton"))           addUI("Skeleton",    oked::BuildUISkeleton);
-        if (ImGui::MenuItem("Bottom Sheet"))       addUI("Bottom Sheet", oked::BuildUIBottomSheet);
-        ImGui::EndMenu();
-    }
-    // Launcher-look building blocks: each is a small ready-styled group you can
-    // restyle. They go inside the selected panel/card when there is one.
-    if (ImGui::BeginMenu("Kit (launcher look)")) {
-        auto kit = [&](const char* label, const char* tip, auto fn) {
-            if (ImGui::MenuItem(label)) {
-                ed.PushUndo();
-                GameObject* g = fn(ed.scene(), UIAddParent(ed));
-                ed.Select(g); ed.dirty = true; created = true;
-                ConsoleLog(std::string("Added UI: ") + label);
-            }
-            if (tip && ImGui::IsItemHovered()) ImGui::SetTooltip("%s", tip);
-        };
-        using namespace okay::UITemplates;
-        kit("Card",             "A raised rounded card: caption, title, text and an action button.", &AddCard);
-        kit("Heading",          "A caption over a big title with the accent underline.", &AddHeading);
-        kit("List Row",         "Avatar + name + status, with a badge on the right (player lists, friends).", &AddListRow);
-        kit("Badge",            "A pill tag (\"Ready\", \"3 / 4\", \"New\").", &AddBadge);
-        kit("Avatar",           "A coloured circle with an initial.", &AddAvatar);
-        kit("Divider",          "A 1 px hairline.", &AddDivider);
-        ImGui::Separator();
-        kit("Primary Button",   "The accent call-to-action button.", [](okay::Scene& s, GameObject* p) { return AddButtonOfKind(s, p, ButtonKind::Primary); });
-        kit("Secondary Button", "A quieter button for other actions.", [](okay::Scene& s, GameObject* p) { return AddButtonOfKind(s, p, ButtonKind::Secondary); });
-        kit("Danger Button",    "A red button for destructive actions.", [](okay::Scene& s, GameObject* p) { return AddButtonOfKind(s, p, ButtonKind::Danger); });
-        kit("Ghost Button",     "A text-only button (Cancel, Back).", [](okay::Scene& s, GameObject* p) { return AddButtonOfKind(s, p, ButtonKind::Ghost); });
-        ImGui::Separator();
-        kit("Switch",           "An on/off switch.", &AddSwitch);
-        kit("Spinner",          "A busy spinner (loading, searching).", &AddSpinner);
-        kit("Notification",     "A toast that slides in at the top-right.", &AddNotification);
-        ImGui::EndMenu();
-    }
-    // Prebuilt, fully-editable UI screens. Drop one in, then customize it or save
-    // it as a reusable prefab ("Save Selected as UI").
-    if (ImGui::BeginMenu("Prebuilt Screens")) {
-        auto add = [&](const char* label, GameObject* (*fn)(okay::Scene&)) {
-            if (ImGui::MenuItem(label)) {
-                ed.PushUndo();
-                GameObject* g = fn(ed.scene());
-                HideOtherMenus(ed, g);
-                ed.Select(g);
-                ConsoleLog(std::string("Added UI: ") + label); ed.dirty = true; created = true;
-            }
-        };
-        ImGui::TextDisabled("Menus");
-        add("Main Menu",            &okay::UITemplates::AddMainMenu);
-        add("Pause Menu",           &okay::UITemplates::AddPauseMenu);
-        add("Settings",             &okay::UITemplates::AddSettings);
-        add("Save Slots",           &okay::UITemplates::AddSaveSlots);
-        add("Confirm Dialog",       &okay::UITemplates::AddConfirmDialog);
-        add("UI Notify",            &okay::UITemplates::AddUINotify);   // grok/ui-toast
-        if (ImGui::BeginMenu("Loading Screens")) {
-            ImGui::TextDisabled("UI you can edit (bar follows `loading`)");
-            add("Loading Screen",      &okay::UITemplates::AddLoadingScreen);
-            add("Minimal",             &okay::UITemplates::AddLoadingMinimal);
-            add("Card",                &okay::UITemplates::AddLoadingCard);
-            add("Splash (logo)",       &okay::UITemplates::AddLoadingSplash);
-            add("Cinematic",           &okay::UITemplates::AddLoadingCinematic);
-            ImGui::Separator();
-            ImGui::TextDisabled("Automatic overlay (shows on Play, times itself)");
-            static const char* kOverlay[] = {"Classic", "Minimal", "Cinematic", "Splash", "Card", "Corner", "Ring"};
-            for (int li = 0; li < (int)okay::LoadingScreen::Layout::Count; ++li) {
-                if (ImGui::MenuItem((std::string(kOverlay[li]) + " overlay").c_str())) {
-                    ed.PushUndo();
-                    GameObject* g = ed.scene().CreateGameObject("Loading Screen");
-                    auto* ls = g->AddComponent<okay::LoadingScreen>();
-                    okay::ApplyLoadingPreset(*ls, (okay::LoadingScreen::Layout)li);
-                    ls->tips = {"Tip: hold Shift to sprint.", "Tip: press Esc to pause."};
-                    ls->tipInterval = 2.5f;
-                    ed.Select(g);
-                    ConsoleLog(std::string("Added a ") + kOverlay[li] + " loading screen (pick another look in the Inspector)");
-                    ed.dirty = true; created = true;
-                }
-                if (ImGui::IsItemHovered()) ImGui::SetTooltip("A LoadingScreen component: covers the game when the scene starts\n(or call Begin(\"NextLevel\")), fills its bar, then reveals or loads a scene.");
-            }
-            ImGui::EndMenu();
+    if (id == "ui.starter") { return sceneUI([&] { std::string look, style; okay::editor::CurrentScreenLook(look, style); GameObject* g = okay::UIScreens::BuildStarterPack(sc, look, style); ConsoleLog("Starter Pack: only the Main Menu shows; press Play, then click Play, Settings, Pause..."); return g; }); }
+    // --- Basics
+    if (id == "ui.text")    return widget("Text", [](GameObject* g) { auto* t = g->AddComponent<TextRenderer>(); t->screenSpace = true; t->pixelSize = 2.0f; t->align = 1; });
+    if (id == "ui.button")  { widget("Button", [](GameObject* g) { g->AddComponent<UIButton>(); }); MakeButtonTextChild(ed, ed.selected()); return true; }
+    if (id == "ui.image")   return widget("Image", [](GameObject* g) { g->AddComponent<UIImage>(); });
+    if (id == "ui.panel")   return widget("Panel", [](GameObject* g) { g->AddComponent<UIPanel>(); });
+    if (id == "ui.rawimage") return widget("RawImage", [](GameObject* g) { g->AddComponent<UIRawImage>(); });
+    if (id == "ui.divider") return kit(&AddDivider);
+    // --- Input
+    if (id == "ui.inputfield")     return widget("InputField", [](GameObject* g) { g->AddComponent<UIInputField>(); });
+    if (id == "ui.validatedinput") return widget("ValidatedInput", oked::BuildUIInputValidation);
+    if (id == "ui.slider")         return widget("Slider", [](GameObject* g) { g->AddComponent<UISlider>(); });
+    if (id == "ui.rangeslider")    return widget("Range Slider", oked::BuildUIRangeSlider);
+    if (id == "ui.toggle")         return widget("Toggle", [](GameObject* g) { g->AddComponent<UIToggle>(); });
+    if (id == "ui.switch")         return kit(&AddSwitch);
+    if (id == "ui.radio") return sceneUI([&] {
+        GameObject* row = okay::UITemplates::detail::Group(sc, UIAddParent(ed), "Radio Buttons");
+        const char* n[] = {"Easy", "Normal", "Hard"};
+        for (int i = 0; i < 3; ++i) {
+            GameObject* r = okay::UITemplates::detail::Child(sc, row, n[i]);
+            auto* t = r->AddComponent<UIToggle>();
+            t->anchor = UIAnchor::TopLeft; t->position = {24.0f, 24.0f + i * 36.0f}; t->size = {24, 24};
+            t->style = UIToggle::Style::Radio; t->radioGroup = "Choice"; t->label = n[i]; t->on = (i == 1);
         }
-        ImGui::Separator();
-        ImGui::TextDisabled("In game");
-        add("HUD (health + score)", &okay::UITemplates::AddHUD);
-        add("Health Bar",           &okay::UITemplates::AddHealthBar);
-        add("Dialog Box",           &okay::UITemplates::AddDialogBox);
-        add("Notification",         &okay::UITemplates::AddNotificationScreen);
-        add("UI Showcase",          &okay::UITemplates::AddUIShowcase);   // grok/ui-theme
-        add("Shop",                 &okay::UITemplates::AddShop);
-        add("Game Over",            &okay::UITemplates::AddGameOver);
-        ImGui::Separator();
-        ImGui::TextDisabled("Multiplayer");
-        add("Lobby",                &okay::UITemplates::AddLobby);
-        add("Scoreboard",           &okay::UITemplates::AddScoreboard);
-        add("Leaderboard",          &okay::UITemplates::AddLeaderboard);
-        add("Matchmaking",          &okay::UITemplates::AddMatchmaking);
-        add("UI Color",             &okay::UITemplates::AddUIColor); // grok/ui-color
-        add("UI HUD",               &okay::UITemplates::AddUIHUD); // grok/ui-hud
-        add("UI Controls",          &okay::UITemplates::AddUIControls);   // grok/ui-controls
-        add("UI Notify",            &okay::UITemplates::AddUINotify);   // grok/ui-toast
-        add("UI Options",           &okay::UITemplates::AddUIOptions);   // grok/ui-options
-        ImGui::Separator();
-        oked::DrawUIAddMenuExtras(ed, UIAddParent(ed), created);   // window, radio buttons, damage numbers, nameplate, inventory, dialogue
-        ImGui::EndMenu();
+        return row; });
+    if (id == "ui.dropdown")    return widget("Dropdown", [](GameObject* g) { g->AddComponent<UIDropdown>(); });
+    if (id == "ui.stepper")     return widget("Stepper", [](GameObject* g) { g->AddComponent<UIStepper>(); });
+    if (id == "ui.rating")      return widget("Rating", [](GameObject* g) { g->AddComponent<UIRating>(); });
+    if (id == "ui.colorpicker") return widget("ColorPicker", [](GameObject* g) { g->AddComponent<UIColorPicker>()->Rebuild(); });
+    if (id == "ui.keybind")     return widget("Keybind", oked::BuildUIKeybindField);
+    if (id == "ui.searchbar")   return widget("Search Bar", oked::BuildUISearchBar);
+    if (id == "ui.datetime")    return widget("Date and Time", oked::BuildUIDateTimePicker);
+    if (id == "ui.filepicker")  return widget("File Picker", oked::BuildUIFilePicker);
+    if (id == "ui.formgroup")   return widget("Form Group", oked::BuildUIFormGroup);
+    // --- Layout
+    if (id == "ui.layoutgroup") return widget("Layout", [](GameObject* g) { g->AddComponent<UILayoutGroup>(); });
+    if (id == "ui.scrollview")  return widget("ScrollView", [](GameObject* g) { g->AddComponent<UIScrollView>(); });
+    if (id == "ui.tabs")        return widget("Tabs", [](GameObject* g) { g->AddComponent<UITabs>(); });
+    if (id == "ui.accordion")   return widget("Accordion", oked::BuildUIAccordion);
+    if (id == "ui.flexbox")     return widget("FlexBox", oked::BuildUIFlexBox);
+    if (id == "ui.aspectbox")   return widget("AspectBox", oked::BuildUIAspectRatio);
+    if (id == "ui.mask")        return widget("Mask", oked::BuildUIMaskedPanel);
+    if (id == "ui.safearea")    return widget("Safe Area", [](GameObject* g) { g->AddComponent<UISafeArea>(); });
+    if (id == "ui.draggable")   return widget("Draggable", [](GameObject* g) { g->AddComponent<UIImage>(); g->AddComponent<UIDraggable>(); });
+    if (id == "ui.droptarget")  return widget("DropTarget", [](GameObject* g) { g->AddComponent<UIPanel>(); g->AddComponent<UIDropTarget>(); });
+    if (id == "ui.canvas")      { ed.PushUndo(); ed.Select(ed.CreateEmpty("Canvas")); ed.selected()->AddComponent<Canvas>()->screenMatch = Canvas::ScreenMatch::Expand; ed.dirty = true; created = true; return true; }
+    if (id == "ui.eventsystem") { ed.PushUndo(); ed.Select(ed.CreateEmpty("EventSystem")); ed.selected()->AddComponent<EventSystem>(); ed.dirty = true; created = true; return true; }
+    // --- Game
+    if (id == "ui.progressbar") return widget("ProgressBar", [](GameObject* g) { g->AddComponent<UIProgressBar>(); });
+    if (id == "ui.hotbar")      return widget("SlotGrid", [](GameObject* g) { g->AddComponent<UISlotGrid>()->Rebuild(); });
+    if (id == "ui.minimap")     return widget("Minimap", [](GameObject* g) { g->AddComponent<Minimap>(); });
+    if (id == "ui.crosshair")   return widget("Crosshair", [](GameObject* g) { g->AddComponent<Crosshair>(); });
+    if (id == "ui.ammo")        return widget("Ammo Counter", oked::BuildUIAmmoCounter);
+    if (id == "ui.compass")     return widget("Compass", oked::BuildUICompass);
+    if (id == "ui.objective")   return widget("Objective Tracker", oked::BuildUIObjectiveTracker);
+    if (id == "ui.prompt")      return widget("Interaction Prompt", oked::BuildUIInteractionPrompt);
+    if (id == "ui.killfeed")    return widget("Kill Feed", oked::BuildUIKillFeed);
+    if (id == "ui.damage")      return sceneUI([&] { GameObject* g = okay::UITemplates::detail::Child(sc, UIAddParent(ed), "Damage Numbers"); g->AddComponent<UIDamageNumbers>(); return g; });
+    if (id == "ui.nameplate")   return sceneUI([&] { return UIGallery::AddNameplate(sc, false); });
+    if (id == "ui.nameplateworld") return sceneUI([&] {
+        GameObject* plate = UIGallery::AddNameplate(sc, true);
+        if (GameObject* sel = ed.selected(); sel && sel != plate && sel->transform) {
+            plate->transform->SetParent(sel->transform, false);
+            if (okay::uiowner::Find(plate) == sel) {            // a character: the plate hangs above it
+                float up = 1.3f;
+                if (auto* sr = sel->GetComponent<SpriteRenderer>()) up = sr->size.y * 0.5f + 0.25f;
+                plate->transform->localPosition = {0.0f, up, 0.0f};
+            } else plate->transform->SetParent(nullptr, false);   // not a character: leave the plate where it was made
+        }
+        return plate; });
+    if (id == "ui.worldlabel")  { ed.PushUndo(); ed.Select(ed.CreateEmpty("WorldLabel")); ed.selected()->AddComponent<WorldUI>(); ed.dirty = true; created = true; return true; }
+    if (id == "ui.abilityicon") return widget("Ability", oked::BuildUIAbilityIcon);
+    if (id == "ui.itemcard")    return widget("Item Card", oked::BuildUIItemTooltipCard);
+    if (id == "ui.radialmenu")  return widget("Radial Menu", oked::BuildUIRadialMenu);
+    if (id == "ui.radialprogress") return widget("Radial", [](GameObject* g) { g->AddComponent<UIRadialProgress>(); });
+    if (id == "ui.joystick")    return widget("Virtual Joystick", [](GameObject* g) { g->AddComponent<VirtualJoystick>(); });
+    if (id == "ui.dpad")        return widget("D-Pad", [](GameObject* g) { g->AddComponent<TouchDPad>(); });
+    if (id == "ui.touchbutton") return widget("Touch Button", [](GameObject* g) { g->AddComponent<TouchButton>(); });
+    // --- Data & Lists
+    if (id == "ui.listview")    return widget("ListView", oked::BuildUIListView);
+    if (id == "ui.datatable")   return widget("Data Table", oked::BuildUIDataTable);
+    if (id == "ui.treeview")    return widget("Tree View", oked::BuildUITreeView);
+    if (id == "ui.boundlist")   return widget("Bound List", oked::BuildUIBoundList);
+    if (id == "ui.boundslider") return widget("Bound Slider", oked::BuildUIBoundSlider);
+    if (id == "ui.visibleif")   return widget("Visible If", oked::BuildUIVisibleIf);
+    if (id == "ui.hotreload")   return widget("Hot Reload", oked::BuildUIHotReload);
+    if (id == "ui.pagination")  return widget("Pagination", oked::BuildUIPagination);
+    if (id == "ui.breadcrumbs") return widget("Breadcrumbs", oked::BuildUIBreadcrumbs);
+    if (id == "ui.skeleton")    return widget("Skeleton", oked::BuildUISkeleton);
+    if (id == "ui.menubar")     return widget("Menu Bar", oked::BuildUIMenuBar);
+    if (id == "ui.toolbar")     return widget("Toolbar", oked::BuildUIToolbar);
+    // --- Windows & Pop-ups
+    if (id == "ui.dialog")      return widget("Dialog", oked::BuildUIModalDialog);
+    if (id == "ui.toast")       return widget("Toasts", oked::BuildUIToast);
+    if (id == "ui.notice")      return kit(&AddNotification);
+    if (id == "ui.tooltip")     return widget("Tooltip", [](GameObject* g) { g->AddComponent<UIPanel>(); g->AddComponent<UITooltip>(); });
+    if (id == "ui.contextmenu") return widget("ContextPanel", oked::BuildUIContextMenu);
+    if (id == "ui.window")      return sceneUI([&] {
+        GameObject* w = UIGallery::AddWindow(sc, UIAddParent(ed), "Window", "Window", {200, 140}, {320, 220});
+        okay::UITemplates::detail::Text(sc, w, "Body", "Put your content here.", UIAnchor::TopLeft, {16, 52}, {288, 40}, 14.0f, slate::Dim());
+        return w; });
+    if (id == "ui.wizard")      return widget("Wizard", oked::BuildUIWizard);
+    if (id == "ui.bottomsheet") return widget("Bottom Sheet", oked::BuildUIBottomSheet);
+    if (id == "ui.spinner")     return kit(&AddSpinner);
+    // --- Ready-made pieces
+    if (id == "ui.card")        return kit(&AddCard);
+    if (id == "ui.heading")     return kit(&AddHeading);
+    if (id == "ui.listrow")     return kit(&AddListRow);
+    if (id == "ui.badge")       return kit(&AddBadge);
+    if (id == "ui.avatar")      return kit(&AddAvatar);
+    if (id == "ui.btn.primary")   return kit([](okay::Scene& s, GameObject* p) { return AddButtonOfKind(s, p, ButtonKind::Primary); });
+    if (id == "ui.btn.secondary") return kit([](okay::Scene& s, GameObject* p) { return AddButtonOfKind(s, p, ButtonKind::Secondary); });
+    if (id == "ui.btn.danger")    return kit([](okay::Scene& s, GameObject* p) { return AddButtonOfKind(s, p, ButtonKind::Danger); });
+    if (id == "ui.btn.ghost")     return kit([](okay::Scene& s, GameObject* p) { return AddButtonOfKind(s, p, ButtonKind::Ghost); });
+    if (id == "ui.inventory.mc") {
+
+            // The items live on the player (selected or tagged "Player") so its Crafting,
+            // Consumables and StructureBuilder find them; only the UI goes under the Canvas.
+            GameObject* player = (ed.selected() && ed.selected()->tag == "Player") ? ed.selected()
+                                                                                     : ed.scene().FindWithTag("Player");
+            GameObject* root = EnsureUIRoot(ed);   // inventories are UI → live under the Canvas
+            GameObject* g = ed.CreateEmpty("Inventory");
+            GameObject* holder = player ? player : g;
+            auto* inv = holder->GetComponent<Inventory>();
+            if (!inv) {
+                inv = holder->AddComponent<Inventory>();
+                inv->capacity = 36;   // 9 hotbar + 27 backpack, like Minecraft (= the UI's slots)
+                inv->Add("Dirt", 64); inv->Add("Stone", 64); inv->Add("Wood", 32);
+                inv->Add("Torch", 16); inv->Add("Sword", 1);
+            }
+            auto* iu = g->AddComponent<InventoryUI>();
+            if (player) iu->inventoryTarget = player->name;
+            if (root) g->transform->SetParent(root->transform, false);
+            ed.Select(g); ed.dirty = true; created = true;
+        
+        return true;
     }
+    if (id == "ui.inventory.grid") {
+
+            GameObject* root = EnsureUIRoot(ed);   // UI → under the Canvas
+            GameObject* g = ed.CreateEmpty("GridInventory");
+            auto* gi = g->AddComponent<GridInventory>();
+            gi->cols = 8; gi->rows = 6; gi->title = "Backpack";
+            gi->AddItem("Rifle", 2, 6, 1, 4.0f);
+            gi->AddItem("Backpack", 3, 3, 1, 1.0f);
+            gi->AddItem("Beans", 1, 1, 2, 0.4f);
+            gi->AddItem("Bandage", 1, 1, 3, 0.1f);
+            gi->AddItem("Water", 1, 2, 1, 0.6f);
+            g->AddComponent<GridInventoryUI>();
+            if (root) g->transform->SetParent(root->transform, false);
+            ed.Select(g); ed.dirty = true; created = true;
+        
+        return true;
+    }
+    if (id == "ui.inventory.unturned") {
+
+            // Everything lives under ONE tidy "Unturned Inventory" group so the
+            // hierarchy stays clean: a Player (body grid + screen UI) with a worn
+            // Vest and Backpack as children, and a single Loot Crate beside it.
+            GameObject* group = ed.CreateEmpty("Unturned Inventory");
+            GameObject* player = ed.CreateEmpty("Player");
+            player->transform->SetParent(group->transform, false);
+            auto* body = player->AddComponent<GridInventory>();
+            body->cols = 5; body->rows = 2; body->title = "Pockets"; body->category = "Pockets";
+            body->toggleKey = 'i';
+            body->AddItem("Knife", 1, 2, 1, 0.3f);
+            body->AddItem("Map", 2, 2, 1, 0.1f);
+            auto* screen = player->AddComponent<GridInventoryUI>();
+            screen->multiContainer = true; screen->nearbyRange = 4.0f;
+
+            auto worn = [&](const char* name, const char* cat, int c, int rr) {
+                GameObject* w = ed.CreateEmpty(name);
+                w->transform->SetParent(player->transform, false);
+                auto* gi = w->AddComponent<GridInventory>();
+                gi->cols = c; gi->rows = rr; gi->title = name; gi->category = cat; gi->toggleKey = 0;
+                return gi;
+            };
+            worn("Vest", "Vest", 5, 2)->AddItem("Mag", 1, 2, 3, 0.2f);
+            auto* pack = worn("Backpack", "Backpack", 6, 5);
+            pack->weightLimit = 30.0f;
+            pack->AddItem("Rifle", 2, 5, 1, 4.0f);
+            pack->AddItem("Water", 1, 2, 1, 0.6f);
+            pack->AddItem("Beans", 1, 1, 2, 0.4f);
+
+            GameObject* crate = ed.CreateEmpty("Loot Crate");
+            crate->transform->SetParent(group->transform, false);
+            crate->transform->localPosition = {2.0f, 0.0f, 0.0f};   // 2m away → in the Nearby column
+            auto* ci = crate->AddComponent<GridInventory>();
+            ci->cols = 5; ci->rows = 4; ci->title = "Loot Crate"; ci->worldItem = true; ci->toggleKey = 0;
+            ci->AddItem("Ammo", 1, 1, 30, 0.5f); ci->AddItem("Scope", 1, 2, 1, 0.3f); ci->AddItem("Medkit", 2, 2, 1, 1.2f);
+
+            ed.Select(player); ed.dirty = true; created = true;
+        
+        return true;
+    }
+    if (id == "ui.document") {
+
+            GameObject* root = EnsureUIRoot(ed);
+            GameObject* g = ed.CreateEmpty("UIDocument");
+            auto* doc = g->AddComponent<UIDocument>();
+            doc->markup =
+                "panel pos=40,40 size=360,240 color=30,36,52,220\n"
+                "  text \"MY GAME\" pos=70,70 size=5\n"
+                "  button \"Play\" pos=70,170 size=300,60 anchor=topleft\n";
+            if (root) g->transform->SetParent(root->transform, false);
+            doc->Rebuild(); ed.scene().Update(0.0f);
+            ed.Select(g); ed.dirty = true; created = true;
+        
+        return true;
+    }
+    if (id == "ui.saveprefab") {
+        if (!ed.selected()) { ConsoleLog("Select the UI first (a Canvas, or a menu Panel with its children), then save it.", 1); return false; }
+        namespace fs = std::filesystem;
+            fs::path assets = ed.projectDir().empty() ? fs::path("Assets") : fs::path(ed.projectDir()) / "Assets";
+            fs::path dir = assets / "UI"; std::error_code ec; fs::create_directories(dir, ec);
+            SavePrefabInto(ed.selected(), dir);
+            created = true;
+        return true;
+    }
+    if (id.rfind("ui.w3d.", 0) == 0) {   // 3D UI: each widget is its own standalone object in the world (a WorldSpaceUI marker), not under the Canvas
+        auto add3d = [&](const char* nm, auto build) {
+                GameObject* g = ed.CreateEmpty(nm);
+                build(g);
+                g->AddComponent<WorldSpaceUI>();
+                if (g->transform) g->transform->localPosition = ed.camTarget;
+                ed.Select(g); ed.dirty = true; created = true;
+            };
+        const std::string w = id.substr(7);
+        ed.PushUndo();
+        if (w == "button") add3d("Button3D", [](GameObject* g){ auto* b = g->AddComponent<UIButton>(); b->anchor = UIAnchor::Center; b->position = {0,0}; b->size = {220, 80}; b->label = "Button"; b->fontScale = 3.0f; });
+        else if (w == "text") add3d("Text3D", [](GameObject* g){ auto* t = g->AddComponent<TextRenderer>(); t->screenSpace = true; t->pixelSize = 3.0f; t->align = 1; t->anchor = UIAnchor::Center; });
+        else if (w == "panel") add3d("Panel3D", [](GameObject* g){ auto* p = g->AddComponent<UIPanel>(); p->anchor = UIAnchor::Center; p->position = {0,0}; });
+        else if (w == "image") add3d("Image3D", [](GameObject* g){ auto* im = g->AddComponent<UIImage>(); im->anchor = UIAnchor::Center; im->position = {0,0}; });
+        else return false;
+        return true;
+    }
+    // --- Automatic loading overlays
+    if (id.rfind("ui.o.", 0) == 0) {
+        const int li = std::atoi(id.c_str() + 5);
+        static const char* kOverlay[] = {"Classic", "Minimal", "Cinematic", "Splash", "Card", "Corner", "Ring"};
+        if (li < 0 || li >= (int)okay::LoadingScreen::Layout::Count) return false;
+        ed.PushUndo();
+        GameObject* g = ed.scene().CreateGameObject("Loading Screen");
+        auto* ls = g->AddComponent<okay::LoadingScreen>();
+        okay::ApplyLoadingPreset(*ls, (okay::LoadingScreen::Layout)li);
+        ls->tips = {"Tip: hold Shift to sprint.", "Tip: press Esc to pause."};
+        ls->tipInterval = 2.5f;
+        ed.Select(g);
+        ConsoleLog(std::string("Added a ") + kOverlay[li] + " loading screen (pick another look in the Inspector)");
+        ed.dirty = true; created = true;
+        return true;
+    }
+    (void)screen;
+    return false;
+}
+
+// The ready-made screens, grouped by the registry's sections, for the menu model.
+const std::vector<oked::uimenu::ScreenGroup>& UIScreenGroups() {
+    static const std::vector<oked::uimenu::ScreenGroup> groups = [] {
+        std::vector<oked::uimenu::ScreenGroup> v;
+        for (const okay::UIScreens::Section& sec : okay::UIScreens::Sections()) {
+            oked::uimenu::ScreenGroup g; g.name = sec.name; g.tip = sec.tip;
+            for (const okay::UIScreens::Def& d : okay::UIScreens::Screens())
+                if (d.section == sec.id) g.items.push_back({d.id, d.name, d.desc});
+            if (!g.items.empty()) v.push_back(std::move(g));
+        }
+        return v;
+    }();
+    return groups;
+}
+
+void DrawUIWidgetItems(EditorState& ed, bool& created) {
+    static const std::vector<oked::menubar::Entry> menu = oked::uimenu::UIMenu(UIScreenGroups());
+    std::function<void(const std::vector<oked::menubar::Entry>&)> draw = [&](const std::vector<oked::menubar::Entry>& es) {
+        for (const auto& e : es) {
+            using oked::menubar::Kind;
+            if (e.kind == Kind::Separator) { ImGui::Separator(); continue; }
+            if (e.kind == Kind::Submenu) {
+                const bool open = ImGui::BeginMenu(e.label.c_str());
+                if (!e.tip.empty() && ImGui::IsItemHovered()) ImGui::SetTooltip("%s", e.tip.c_str());
+                if (open) { draw(e.children); ImGui::EndMenu(); }
+                continue;
+            }
+            if (ImGui::MenuItem(e.label.c_str())) RunUIMenuItem(ed, e.id, e.label, created);
+            if (!e.tip.empty() && ImGui::IsItemHovered()) ImGui::SetTooltip("%s", e.tip.c_str());
+        }
+    };
+    draw(menu);
 }
 
 // Defined with the Animation window further down; entering Play must clear the
@@ -6732,7 +6895,7 @@ static bool* MenuFlag(const std::string& id) {
         {"tool.animation", &g_showAnimation}, {"tool.animator", &g_showAnimatorGraph}, {"tool.timeline", &g_showTimeline},
         {"tool.navigation", &g_showNavigation}, {"tool.dialogue", &g_showDialogue}, {"tool.behaviortree", &g_showBehaviorTree},
         {"tool.modeling", &g_showModeling}, {"tool.uveditor", &g_showUVEditor}, {"tool.spriteeditor", &g_showSpriteEditor},
-        {"tool.uieditor", &g_showUIEditor}, {"tool.uitheme", &g_showUIThemer}, {"tool.items", &g_showItemDatabase},
+        {"tool.uieditor", &g_showUIEditor}, {"tool.uigallery", &okay::editor::UIGalleryOpenFlag()}, {"tool.uitheme", &g_showUIThemer}, {"tool.items", &g_showItemDatabase},
         {"tool.weapons", &g_showWeapons}, {"tool.localization", &g_showLocalization}, {"tool.inputactions", &g_showInputActions}, {"view.uionly", &g_uiOnlyMode},
     };
     for (const auto& f : kFlags) if (id == f.first) return f.second;
@@ -7228,129 +7391,9 @@ static void DrawCreateSlot(EditorState& ed, const std::string& id, GameObject* p
     } else if (id == "create.ui") {
         // Widgets go under the scene's Canvas (made, plus an Event System, if
         // missing), or inside the selected panel; see DrawUIWidgetItems.
-        DrawUIWidgetItems(ed, created);
-        ImGui::Separator();
-        if (ImGui::MenuItem("Canvas"))       { ed.Select(ed.CreateEmpty("Canvas"));   ed.selected()->AddComponent<Canvas>()->screenMatch = Canvas::ScreenMatch::Expand; ed.dirty = true; created = true; }
-        if (ImGui::MenuItem("Event System")) { ed.Select(ed.CreateEmpty("EventSystem")); ed.selected()->AddComponent<EventSystem>();  ed.dirty = true; created = true; }
-        if (ImGui::MenuItem("World Label (3D)")) { ed.Select(ed.CreateEmpty("WorldLabel")); ed.selected()->AddComponent<WorldUI>(); ed.dirty = true; created = true; }
-        if (ImGui::IsItemHovered()) ImGui::SetTooltip("In-world UI: a label/marker that floats over a 3D point (nameplates, health bars). Shows in the Game view + built game.");
-        if (ImGui::MenuItem("Inventory (Minecraft-style)")) {
-            // The items live on the player (selected or tagged "Player") so its Crafting,
-            // Consumables and StructureBuilder find them; only the UI goes under the Canvas.
-            GameObject* player = (ed.selected() && ed.selected()->tag == "Player") ? ed.selected()
-                                                                                     : ed.scene().FindWithTag("Player");
-            GameObject* root = EnsureUIRoot(ed);   // inventories are UI → live under the Canvas
-            GameObject* g = ed.CreateEmpty("Inventory");
-            GameObject* holder = player ? player : g;
-            auto* inv = holder->GetComponent<Inventory>();
-            if (!inv) {
-                inv = holder->AddComponent<Inventory>();
-                inv->capacity = 36;   // 9 hotbar + 27 backpack, like Minecraft (= the UI's slots)
-                inv->Add("Dirt", 64); inv->Add("Stone", 64); inv->Add("Wood", 32);
-                inv->Add("Torch", 16); inv->Add("Sword", 1);
-            }
-            auto* iu = g->AddComponent<InventoryUI>();
-            if (player) iu->inventoryTarget = player->name;
-            if (root) g->transform->SetParent(root->transform, false);
-            ed.Select(g); ed.dirty = true; created = true;
-        }
-        if (ImGui::IsItemHovered()) ImGui::SetTooltip("Ready hotbar + backpack (1-9 / wheel to select, E to open), with sample items. The Inventory goes on the selected or \"Player\"-tagged object, so crafting and consumables there use it.");
-        if (ImGui::MenuItem("Grid Inventory (DayZ/Unturned-style)")) {
-            GameObject* root = EnsureUIRoot(ed);   // UI → under the Canvas
-            GameObject* g = ed.CreateEmpty("GridInventory");
-            auto* gi = g->AddComponent<GridInventory>();
-            gi->cols = 8; gi->rows = 6; gi->title = "Backpack";
-            gi->AddItem("Rifle", 2, 6, 1, 4.0f);
-            gi->AddItem("Backpack", 3, 3, 1, 1.0f);
-            gi->AddItem("Beans", 1, 1, 2, 0.4f);
-            gi->AddItem("Bandage", 1, 1, 3, 0.1f);
-            gi->AddItem("Water", 1, 2, 1, 0.6f);
-            g->AddComponent<GridInventoryUI>();
-            if (root) g->transform->SetParent(root->transform, false);
-            ed.Select(g); ed.dirty = true; created = true;
-        }
-        if (ImGui::IsItemHovered()) ImGui::SetTooltip("A grid bag where items take up w×h cells; press I in Play to open and drag items around. Comes with sample loot.");
-        if (ImGui::MenuItem("Unturned Inventory (worn bags + nearby loot)")) {
-            // Everything lives under ONE tidy "Unturned Inventory" group so the
-            // hierarchy stays clean: a Player (body grid + screen UI) with a worn
-            // Vest and Backpack as children, and a single Loot Crate beside it.
-            GameObject* group = ed.CreateEmpty("Unturned Inventory");
-            GameObject* player = ed.CreateEmpty("Player");
-            player->transform->SetParent(group->transform, false);
-            auto* body = player->AddComponent<GridInventory>();
-            body->cols = 5; body->rows = 2; body->title = "Pockets"; body->category = "Pockets";
-            body->toggleKey = 'i';
-            body->AddItem("Knife", 1, 2, 1, 0.3f);
-            body->AddItem("Map", 2, 2, 1, 0.1f);
-            auto* screen = player->AddComponent<GridInventoryUI>();
-            screen->multiContainer = true; screen->nearbyRange = 4.0f;
-
-            auto worn = [&](const char* name, const char* cat, int c, int rr) {
-                GameObject* w = ed.CreateEmpty(name);
-                w->transform->SetParent(player->transform, false);
-                auto* gi = w->AddComponent<GridInventory>();
-                gi->cols = c; gi->rows = rr; gi->title = name; gi->category = cat; gi->toggleKey = 0;
-                return gi;
-            };
-            worn("Vest", "Vest", 5, 2)->AddItem("Mag", 1, 2, 3, 0.2f);
-            auto* pack = worn("Backpack", "Backpack", 6, 5);
-            pack->weightLimit = 30.0f;
-            pack->AddItem("Rifle", 2, 5, 1, 4.0f);
-            pack->AddItem("Water", 1, 2, 1, 0.6f);
-            pack->AddItem("Beans", 1, 1, 2, 0.4f);
-
-            GameObject* crate = ed.CreateEmpty("Loot Crate");
-            crate->transform->SetParent(group->transform, false);
-            crate->transform->localPosition = {2.0f, 0.0f, 0.0f};   // 2m away → in the Nearby column
-            auto* ci = crate->AddComponent<GridInventory>();
-            ci->cols = 5; ci->rows = 4; ci->title = "Loot Crate"; ci->worldItem = true; ci->toggleKey = 0;
-            ci->AddItem("Ammo", 1, 1, 30, 0.5f); ci->AddItem("Scope", 1, 2, 1, 0.3f); ci->AddItem("Medkit", 2, 2, 1, 1.2f);
-
-            ed.Select(player); ed.dirty = true; created = true;
-        }
-        if (ImGui::IsItemHovered()) ImGui::SetTooltip("One tidy 'Unturned Inventory' group: a Player with a worn Vest + Backpack and a single nearby Loot Crate. Press I in Play; drag loot across bags.");
-        if (ImGui::MenuItem("UI Document"))  {
-            GameObject* root = EnsureUIRoot(ed);
-            GameObject* g = ed.CreateEmpty("UIDocument");
-            auto* doc = g->AddComponent<UIDocument>();
-            doc->markup =
-                "panel pos=40,40 size=360,240 color=30,36,52,220\n"
-                "  text \"MY GAME\" pos=70,70 size=5\n"
-                "  button \"Play\" pos=70,170 size=300,60 anchor=topleft\n";
-            if (root) g->transform->SetParent(root->transform, false);
-            doc->Rebuild(); ed.scene().Update(0.0f);
-            ed.Select(g); ed.dirty = true; created = true;
-        }
-        // Save the selected UI subtree as a reusable prefab under Assets/UI, so you
-        // can drop your own custom UI back into any scene from the Project panel.
-        if (ImGui::MenuItem("Save Selected as UI", nullptr, false, ed.selected() != nullptr)) {
-            namespace fs = std::filesystem;
-            fs::path assets = ed.projectDir().empty() ? fs::path("Assets") : fs::path(ed.projectDir()) / "Assets";
-            fs::path dir = assets / "UI"; std::error_code ec; fs::create_directories(dir, ec);
-            SavePrefabInto(ed.selected(), dir);
-            created = true;
-        }
-        if (ImGui::IsItemHovered(ImGuiHoveredFlags_AllowWhenDisabled))
-            ImGui::SetTooltip("%s", ed.selected() ? "Save the selected UI (e.g. a Canvas or a menu Panel + its children) as a reusable .okayprefab in Assets/UI.\nDrop it from the Project panel into any scene to reuse it."
-                                                  : "Select the UI first (a Canvas, or a menu Panel with its children), then save it as a reusable .okayprefab in Assets/UI.");
-        ImGui::Separator();
-        // 3D UI: each widget is its own standalone object in the world (a
-        // WorldSpaceUI marker), NOT under the 2D Canvas. Placed at the camera focus.
-        if (ImGui::BeginMenu("3D UI (in-world)")) {
-            auto add3d = [&](const char* nm, auto build) {
-                GameObject* g = ed.CreateEmpty(nm);
-                build(g);
-                g->AddComponent<WorldSpaceUI>();
-                if (g->transform) g->transform->localPosition = ed.camTarget;
-                ed.Select(g); ed.dirty = true; created = true;
-            };
-            if (ImGui::MenuItem("Button")) add3d("Button3D", [](GameObject* g){ auto* b = g->AddComponent<UIButton>(); b->anchor = UIAnchor::Center; b->position = {0,0}; b->size = {220, 80}; b->label = "Button"; b->fontScale = 3.0f; });
-            if (ImGui::MenuItem("Text"))   add3d("Text3D",   [](GameObject* g){ auto* t = g->AddComponent<TextRenderer>(); t->screenSpace = true; t->pixelSize = 3.0f; t->align = 1; t->anchor = UIAnchor::Center; });
-            if (ImGui::MenuItem("Panel"))  add3d("Panel3D",  [](GameObject* g){ auto* p = g->AddComponent<UIPanel>(); p->anchor = UIAnchor::Center; p->position = {0,0}; });
-            if (ImGui::MenuItem("Image"))  add3d("Image3D",  [](GameObject* g){ auto* im = g->AddComponent<UIImage>(); im->anchor = UIAnchor::Center; im->position = {0,0}; });
-            ImGui::EndMenu();
-        }
+        DrawUIWidgetItems(ed, created);   // everything GameObject > UI offers, as data: editor/UIMenuModel.hpp
     }
+
     const bool grew = ed.scene().Objects().size() > before;
     if (created || grew) ed.Achievement("FIRST_OBJECT");
     if (grew && ed.selected()) ed.Select(ed.selected());   // the creators set the active object; make it the whole selection so its row lights up
@@ -40940,6 +40983,18 @@ void DrawInspector(EditorState& ed) {
             if (ImGui::DragInt("Selected##ucp", &sel, 0.1f, 0, std::max(0, cp->Count() - 1))) { cp->SetValue(sel); ed.dirty = true; }
             oked::FieldTip("Selected##ucp");
             AnchorCombo("Anchor##ucp", cp->anchor, ed);
+            if (ImGui::Checkbox("Advanced (hue square, value and alpha sliders)##ucp", &cp->advanced)) { cp->SetAdvanced(cp->advanced); ed.dirty = true; }   // UI library slice 3
+            oked::FieldTip("Advanced (hue square, value and alpha sliders)##ucp");
+            if (cp->advanced) {
+                float h = cp->hue, sa = cp->sat, va = cp->val, al = cp->alpha;
+                bool edit = ImGui::DragFloat("Hue##ucp", &h, 1.0f, 0.0f, 360.0f);
+                edit = ImGui::DragFloat("Saturation##ucp", &sa, 0.005f, 0.0f, 1.0f) || edit;
+                edit = ImGui::DragFloat("Value##ucp", &va, 0.005f, 0.0f, 1.0f) || edit;
+                edit = ImGui::DragFloat("Alpha##ucp", &al, 0.005f, 0.0f, 1.0f) || edit;
+                if (edit) { cp->SetHSVA(h, sa, va, al); ed.dirty = true; }
+                if (ImGui::DragFloat("Square size##ucp", &cp->squareSize, 1.0f, 48.0f, 400.0f)) ed.dirty = true;
+                ImGui::TextDisabled("Colour now: %s   (script: Hex(), SetHSVA(h, s, v, a))", cp->Hex().c_str());
+            }
             cp->Rebuild();
             for (int i = 0; i < cp->Count(); ++i) {
                 Color c = cp->swatches[(std::size_t)i];
@@ -42261,6 +42316,26 @@ void DrawInspector(EditorState& ed) {
             if (item(!go->GetComponent<UIPagination>(), "UI Pagination")) { go->AddComponent<UIPagination>(); ed.dirty = true; }
             if (item(!go->GetComponent<UISkeleton>(), "UI Skeleton")) { go->AddComponent<UISkeleton>(); ed.dirty = true; }
             if (item(!go->GetComponent<UIBottomSheet>(), "UI Bottom Sheet")) { go->AddComponent<UIBottomSheet>(); ed.dirty = true; }
+            if (item(!go->GetComponent<UIMenuBar>(), "UI Menu Bar")) { go->AddComponent<UIMenuBar>(); ed.dirty = true; }
+            if (item(!go->GetComponent<UIToolbar>(), "UI Toolbar")) { go->AddComponent<UIToolbar>(); ed.dirty = true; }
+            if (item(!go->GetComponent<UITreeView>(), "UI Tree View")) { go->AddComponent<UITreeView>(); ed.dirty = true; }
+            if (item(!go->GetComponent<UIDataTable>(), "UI Data Table")) { go->AddComponent<UIDataTable>(); ed.dirty = true; }
+            if (item(!go->GetComponent<UIWizard>(), "UI Wizard")) { go->AddComponent<UIWizard>(); ed.dirty = true; }
+            if (item(!go->GetComponent<UIFormGroup>(), "UI Form Group")) { go->AddComponent<UIFormGroup>()->Rebuild(); ed.dirty = true; }
+            if (item(!go->GetComponent<UIBind>(), "UI Bind (widget <-> variable)")) { go->AddComponent<UIBind>(); ed.dirty = true; }
+            if (item(!go->GetComponent<UIVisibleIf>(), "UI Visible If (show from a condition)")) { go->AddComponent<UIVisibleIf>(); ed.dirty = true; }
+            if (item(!go->GetComponent<UIListBind>() && go->GetComponent<UIListView>(), "UI List Bind (array -> list)")) { go->AddComponent<UIListBind>(); ed.dirty = true; }
+            if (item(!go->GetComponent<UIHotReload>(), "UI Hot Reload (watch a UI file)")) { go->AddComponent<UIHotReload>(); ed.dirty = true; }
+            if (item(!go->GetComponent<UIFocusHint>(), "UI Focus Hint (tab order, links)")) { go->AddComponent<UIFocusHint>(); ed.dirty = true; }
+            if (item(!go->GetComponent<UIRichLinks>() && go->GetComponent<TextRenderer>(), "UI Rich Links (clickable [url] text)")) { go->AddComponent<UIRichLinks>(); ed.dirty = true; }
+            if (item(!go->GetComponent<UIRadialMenu>(), "UI Radial Menu")) { go->AddComponent<UIRadialMenu>(); ed.dirty = true; }
+            if (item(!go->GetComponent<UIKillFeed>(), "UI Kill Feed")) { go->AddComponent<UIKillFeed>(); ed.dirty = true; }
+            if (item(!go->GetComponent<UIAmmoCounter>(), "UI Ammo Counter")) { go->AddComponent<UIAmmoCounter>(); ed.dirty = true; }
+            if (item(!go->GetComponent<UIInteractionPrompt>(), "UI Interaction Prompt")) { go->AddComponent<UIInteractionPrompt>(); ed.dirty = true; }
+            if (item(!go->GetComponent<UIObjectiveTracker>(), "UI Objective Tracker")) { go->AddComponent<UIObjectiveTracker>(); ed.dirty = true; }
+            if (item(!go->GetComponent<UICompass>(), "UI Compass")) { go->AddComponent<UICompass>(); ed.dirty = true; }
+            if (item(!go->GetComponent<UIItemTooltipCard>(), "UI Item Tooltip Card")) { go->AddComponent<UIItemTooltipCard>(); ed.dirty = true; }
+            if (item(!go->GetComponent<UIAbilityIcon>() && go->GetComponent<UIRadialProgress>(), "UI Ability Icon (on a Radial Progress)")) { go->AddComponent<UIAbilityIcon>(); ed.dirty = true; }
             if (item(!go->GetComponent<UIRangeSlider>(), "UI Range Slider (two handles)")) { go->AddComponent<UIRangeSlider>(); ed.dirty = true; }
             if (item(!go->GetComponent<UIAspectRatio>(), "UI Aspect Ratio (keeps a shape)")) { go->AddComponent<UIAspectRatio>(); ed.dirty = true; }
             if (item(!go->GetComponent<UIInputValidator>() && go->GetComponent<UIInputField>(), "UI Input Validator (rules for an input field)")) { go->AddComponent<UIInputValidator>(); ed.dirty = true; }
@@ -52109,6 +52184,7 @@ int main(int argc, char** argv) {
         { OKAY_PROFILE("UI.Profiler"); if (g_showProfiler)  DrawProfiler(ed); }
         { OKAY_PROFILE("UI.Inspector"); if (g_showInspector) DrawInspector(ed); }
         DrawFpHandsPreviewWindow(ed);
+        okay::editor::DrawUIGalleryWindow(ed);   // UI Gallery: GameObject > UI > Browse All UI...
         { OKAY_PROFILE("UI.Console"); if (g_showConsole)   DrawConsole(); }
         { OKAY_PROFILE("UI.CrashLog"); if (g_showCrashLog)  DrawCrashLog(); }
         { OKAY_PROFILE("UI.AudioMixer"); if (g_showAudioMixer) DrawAudioMixer(); }

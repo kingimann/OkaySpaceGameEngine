@@ -440,7 +440,18 @@ void Scene::Update(float deltaTime) {
 
     {
         OKAY_PROFILE("Scripts.Update");
+        // A click that shows a screen must not also click the button that appears under the pointer (a "Give up" button over a Game Over
+        // screen's "Try again"): on a frame where the mouse goes down, a component that was switched off when the frame began is left
+        // for the next frame. Only those frames pay for the snapshot.
+        std::vector<char> wasOn;
+        if (Input::GetMouseButtonDown(0)) {
+            wasOn.reserve(m_active.size());
+            for (Component* c : m_active) wasOn.push_back(c && c->gameObject && c->gameObject->ActiveInHierarchy() ? 1 : 0);
+        }
+        std::size_t activeIndex = 0;
         for (Component* c : m_active) {
+            const std::size_t at = activeIndex++;
+            if (!wasOn.empty() && at < wasOn.size() && !wasOn[at]) continue;
             if (c && c->enabled && c->gameObject && c->gameObject->ActiveInHierarchy()) {
                 if (!c->m_started) {   // switched on since it joined: its Start comes first
                     if (!StartComponent(c)) continue;   // its OnEnable removed/destroyed it: it is gone

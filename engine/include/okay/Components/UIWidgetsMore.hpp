@@ -13,6 +13,9 @@
 #include "okay/Components/UIRangeSlider.hpp"
 #include "okay/Components/UIAspectRatio.hpp"
 #include "okay/Components/UIInputValidator.hpp"
+#include "okay/Components/UIGameHud.hpp"
+#include "okay/Components/UIAppParts.hpp"
+#include "okay/Components/UIDataGlue.hpp"
 #include <iostream>
 #include <string>
 
@@ -277,11 +280,305 @@ inline void WriteMoreUI(std::ostream& out, GameObject* go) {
         UIWriteColor(out, w->okColor);
         out << ' ' << UIQuote(w->mustMatch) << ' ' << UIQuote(w->message) << '\n';
     }
+    // ---- slice 2: game HUD parts, data glue ----
+    auto hudBase = [&](const UIHudBase* w) {
+        out << w->position.x << ' ' << w->position.y << ' ' << w->size.x << ' ' << w->size.y << ' ' << (int)w->anchor << ' ';
+        UIWriteColor(out, w->background); out << ' ';
+        UIWriteColor(out, w->accent); out << ' ';
+        UIWriteColor(out, w->textColor);
+    };
+    if (auto* w = go->GetComponent<UIRadialMenu>()) {
+        out << "  uiradialmenu "; hudBase(w);
+        out << ' ' << w->innerRadius << ' ' << (int)w->openKey << ' ' << UIBit(w->holdToOpen) << ' ' << UIBit(w->closeOnSelect)
+            << ' ' << UIBit(w->alwaysShown) << ' ' << UIQuote(w->items) << ' ' << UIQuote(w->centerText) << ' ' << UIQuote(w->chosenVar) << '\n';
+    }
+    if (auto* w = go->GetComponent<UIKillFeed>()) {
+        out << "  uikillfeed "; hudBase(w);
+        out << ' ' << w->maxEntries << ' ' << w->lifetime << ' ' << w->fadeTime << ' ' << w->rowHeight << ' ' << UIBit(w->alignRight)
+            << ' ' << UIQuote(w->playerName) << ' ' << UIQuote(w->format) << ' ' << UIQuote(w->weaponFormat) << '\n';
+    }
+    if (auto* w = go->GetComponent<UIAmmoCounter>()) {
+        out << "  uiammo "; hudBase(w);
+        out << ' ' << w->current << ' ' << w->reserve << ' ' << w->magazine << ' ' << UIBit(w->reloading) << ' ' << w->lowFraction
+            << ' ' << UIBit(w->showPips) << ' ' << UIBit(w->showReserve) << ' ';
+        UIWriteColor(out, w->warnColor); out << ' ';
+        UIWriteColor(out, w->emptyColor);
+        out << ' ' << UIQuote(w->weapon) << ' ' << UIQuote(w->currentVar) << ' ' << UIQuote(w->reserveVar) << ' ' << UIQuote(w->label) << '\n';
+    }
+    if (auto* w = go->GetComponent<UIInteractionPrompt>()) {
+        out << "  uiprompt "; hudBase(w);
+        out << ' ' << w->range << ' ' << UIBit(w->alwaysShow) << ' ' << w->fadeSpeed << ' ' << UIQuote(w->key) << ' ' << UIQuote(w->action)
+            << ' ' << UIQuote(w->target) << ' ' << UIQuote(w->showVar) << ' ' << UIQuote(w->playerTag) << '\n';
+    }
+    if (auto* w = go->GetComponent<UIObjectiveTracker>()) {
+        out << "  uitracker "; hudBase(w);
+        out << ' ' << w->maxQuests << ' ' << UIBit(w->showDescription) << ' ';
+        UIWriteColor(out, w->doneColor);
+        out << ' ' << UIQuote(w->title) << ' ' << UIQuote(w->questId) << '\n';
+    }
+    if (auto* w = go->GetComponent<UICompass>()) {
+        out << "  uicompass "; hudBase(w);
+        out << ' ' << w->heading << ' ' << w->fieldOfView << ' ' << UIBit(w->showDegrees) << ' ' << UIBit(w->showMarkerDistance) << ' ';
+        UIWriteColor(out, w->markerColor);
+        out << ' ' << UIQuote(w->source) << ' ' << UIQuote(w->markers) << ' ' << UIQuote(w->headingVar) << '\n';
+    }
+    if (auto* w = go->GetComponent<UIItemTooltipCard>()) {
+        out << "  uicard "; hudBase(w);
+        out << ' ' << w->count << ' ' << UIBit(w->showIcon) << ' ';
+        UIWriteColor(out, w->nameColor);
+        out << ' ' << UIQuote(w->item) << ' ' << UIQuote(w->itemVar) << ' ' << UIQuote(w->equipment) << ' ' << UIQuote(w->itemsFile) << '\n';
+    }
+    if (auto* w = go->GetComponent<UIAbilityIcon>()) {
+        out << "  uiability " << (int)w->useKey << ' ' << w->cooldown << ' ' << w->maxCharges << ' ';
+        UIWriteColor(out, w->iconColor); out << ' ';
+        UIWriteColor(out, w->readyColor);
+        out << ' ' << UIQuote(w->label) << ' ' << UIQuote(w->iconPath) << ' ' << UIQuote(w->keyText) << '\n';
+    }
+    // ---- slice 3: app parts ----
+    auto appBase = [&](const UIAppBase* w) {
+        hudBase(w);
+        out << ' ' << w->fontScale << ' ' << UIBit(w->interactable);
+    };
+    if (auto* w = go->GetComponent<UIMenuBar>()) {
+        out << "  uimenubar "; appBase(w);
+        out << ' ' << w->itemHeight << ' ' << w->menuWidth << ' ' << UIQuote(w->menus) << ' ' << UIQuote(w->chosenVar) << '\n';
+    }
+    if (auto* w = go->GetComponent<UIToolbar>()) {
+        out << "  uitoolbar "; appBase(w);
+        out << ' ' << UIBit(w->showLabels) << ' ' << UIQuote(w->items) << ' ' << UIQuote(w->states) << ' ' << UIQuote(w->chosenVar) << ' ' << UIQuote(w->varPrefix) << '\n';
+    }
+    if (auto* w = go->GetComponent<UITreeView>()) {
+        out << "  uitree "; appBase(w);
+        out << ' ' << w->rowHeight << ' ' << w->indent << ' ' << w->selected << ' ' << UIQuote(w->nodes) << ' ' << UIQuote(w->expanded) << ' ' << UIQuote(w->selectedVar) << '\n';
+    }
+    if (auto* w = go->GetComponent<UIDataTable>()) {
+        out << "  uitable "; appBase(w);
+        out << ' ' << w->rowHeight << ' ' << w->headerHeight << ' ' << w->sortColumn << ' ' << UIBit(w->ascending) << ' ' << UIBit(w->sortable)
+            << ' ' << UIBit(w->zebra) << ' ' << w->selected << ' ' << UIQuote(w->columns) << ' ' << UIQuote(w->rows) << ' ' << UIQuote(w->selectedVar) << '\n';
+    }
+    if (auto* w = go->GetComponent<UIWizard>()) {
+        out << "  uiwizard "; appBase(w);
+        out << ' ' << w->step << ' ' << UIBit(w->showButtons) << ' ' << UIBit(w->freeNavigation) << ' ' << UIQuote(w->steps) << ' ' << UIQuote(w->pages)
+            << ' ' << UIQuote(w->validate) << ' ' << UIQuote(w->progressVar) << ' ' << UIQuote(w->stepVar) << '\n';
+    }
+    if (auto* w = go->GetComponent<UIFormGroup>()) {
+        out << "  uiform "; appBase(w);
+        out << ' ' << w->labelWidth << ' ' << w->rowHeight << ' ' << w->fieldHeight << ' ' << UIBit(w->showSummary) << ' ';
+        UIWriteColor(out, w->fieldColor); out << ' ';
+        UIWriteColor(out, w->fieldFocusColor);
+        out << ' ' << UIQuote(w->fields) << ' ' << UIQuote(w->submitLabel) << ' ' << UIQuote(w->valuesVar) << ' ' << UIQuote(w->validVar) << '\n';
+    }
+    if (auto* w = go->GetComponent<UIColorSquare>()) {
+        out << "  uicolorsquare "; appBase(w);
+        out << ' ' << w->hue << ' ' << w->sat << ' ' << w->brightness << '\n';
+    }
+    if (auto* w = go->GetComponent<UIBind>())
+        out << "  uidatabind " << (int)w->mode << ' ' << UIQuote(w->var) << ' ' << UIQuote(w->varHigh) << '\n';
+    if (auto* w = go->GetComponent<UIVisibleIf>())
+        out << "  uivisible " << UIBit(w->invert) << ' ' << UIQuote(w->condition) << ' ' << UIQuote(w->target) << '\n';
+    if (auto* w = go->GetComponent<UIListBind>())
+        out << "  uilistbind " << UIQuote(w->var) << ' ' << UIQuote(w->format) << ' ' << UIQuote(w->emptyText) << '\n';
+    if (auto* w = go->GetComponent<UIHotReload>())
+        out << "  uihotreload " << w->interval << ' ' << UIBit(w->loadAtStart) << ' ' << UIQuote(w->file) << ' ' << UIQuote(w->target) << '\n';
+    if (auto* w = go->GetComponent<UIRichLinks>())
+        out << "  uirichlinks " << UIBit(w->fireEvent) << ' ' << UIBit(w->storeInPrefs) << '\n';
+    if (auto* w = go->GetComponent<UIFocusHint>())
+        out << "  uifocushint " << w->tabIndex << ' ' << UIQuote(w->up) << ' ' << UIQuote(w->down) << ' ' << UIQuote(w->left) << ' ' << UIQuote(w->right) << '\n';
 }
 
 inline bool TryReadMoreUI(const std::string& field, std::istream& in, GameObject* go) {
     if (!go) return false;
     auto bit = [](int v) { return v != 0; };
+    auto readHud = [&](UIHudBase* w) {
+        int anchor = 0;
+        in >> w->position.x >> w->position.y >> w->size.x >> w->size.y >> anchor;
+        w->anchor = (UIAnchor)anchor;
+        UIReadColor(in, w->background); UIReadColor(in, w->accent); UIReadColor(in, w->textColor);
+    };
+    auto readApp = [&](UIAppBase* w) {
+        readHud(w);
+        int inter = 1;
+        in >> w->fontScale >> inter;
+        w->interactable = bit(inter);
+    };
+    if (field == "uimenubar") {
+        auto* w = go->AddComponent<UIMenuBar>();
+        readApp(w);
+        in >> w->itemHeight >> w->menuWidth;
+        w->menus = UIReadQuoted(in); w->chosenVar = UIReadQuoted(in);
+        return true;
+    }
+    if (field == "uitoolbar") {
+        auto* w = go->AddComponent<UIToolbar>();
+        int labels = 1;
+        readApp(w);
+        in >> labels;
+        w->showLabels = bit(labels);
+        w->items = UIReadQuoted(in); w->states = UIReadQuoted(in); w->chosenVar = UIReadQuoted(in); w->varPrefix = UIReadQuoted(in);
+        return true;
+    }
+    if (field == "uitree") {
+        auto* w = go->AddComponent<UITreeView>();
+        readApp(w);
+        in >> w->rowHeight >> w->indent >> w->selected;
+        w->nodes = UIReadQuoted(in); w->expanded = UIReadQuoted(in); w->selectedVar = UIReadQuoted(in);
+        return true;
+    }
+    if (field == "uitable") {
+        auto* w = go->AddComponent<UIDataTable>();
+        int asc = 1, sortable = 1, zebra = 1;
+        readApp(w);
+        in >> w->rowHeight >> w->headerHeight >> w->sortColumn >> asc >> sortable >> zebra >> w->selected;
+        w->ascending = bit(asc); w->sortable = bit(sortable); w->zebra = bit(zebra);
+        w->columns = UIReadQuoted(in); w->rows = UIReadQuoted(in); w->selectedVar = UIReadQuoted(in);
+        return true;
+    }
+    if (field == "uiwizard") {
+        auto* w = go->AddComponent<UIWizard>();
+        int buttons = 1, freeNav = 0;
+        readApp(w);
+        in >> w->step >> buttons >> freeNav;
+        w->showButtons = bit(buttons); w->freeNavigation = bit(freeNav);
+        w->steps = UIReadQuoted(in); w->pages = UIReadQuoted(in); w->validate = UIReadQuoted(in);
+        w->progressVar = UIReadQuoted(in); w->stepVar = UIReadQuoted(in);
+        return true;
+    }
+    if (field == "uiform") {
+        auto* w = go->AddComponent<UIFormGroup>();
+        int summary = 1;
+        readApp(w);
+        in >> w->labelWidth >> w->rowHeight >> w->fieldHeight >> summary;
+        w->showSummary = bit(summary);
+        UIReadColor(in, w->fieldColor); UIReadColor(in, w->fieldFocusColor);
+        w->fields = UIReadQuoted(in); w->submitLabel = UIReadQuoted(in); w->valuesVar = UIReadQuoted(in); w->validVar = UIReadQuoted(in);
+        return true;
+    }
+    if (field == "uicolorsquare") {
+        auto* w = go->AddComponent<UIColorSquare>();
+        readApp(w);
+        in >> w->hue >> w->sat >> w->brightness;
+        return true;
+    }
+    if (field == "uiradialmenu") {
+        auto* w = go->AddComponent<UIRadialMenu>();
+        int key = 0, hold = 1, close = 1, always = 0;
+        readHud(w);
+        in >> w->innerRadius >> key >> hold >> close >> always;
+        w->openKey = (char)key; w->holdToOpen = bit(hold); w->closeOnSelect = bit(close); w->alwaysShown = bit(always);
+        w->items = UIReadQuoted(in); w->centerText = UIReadQuoted(in); w->chosenVar = UIReadQuoted(in);
+        return true;
+    }
+    if (field == "uikillfeed") {
+        auto* w = go->AddComponent<UIKillFeed>();
+        int right = 1;
+        readHud(w);
+        in >> w->maxEntries >> w->lifetime >> w->fadeTime >> w->rowHeight >> right;
+        w->alignRight = bit(right);
+        w->playerName = UIReadQuoted(in); w->format = UIReadQuoted(in); w->weaponFormat = UIReadQuoted(in);
+        return true;
+    }
+    if (field == "uiammo") {
+        auto* w = go->AddComponent<UIAmmoCounter>();
+        int rel = 0, pips = 1, res = 1;
+        readHud(w);
+        in >> w->current >> w->reserve >> w->magazine >> rel >> w->lowFraction >> pips >> res;
+        w->reloading = bit(rel); w->showPips = bit(pips); w->showReserve = bit(res);
+        UIReadColor(in, w->warnColor); UIReadColor(in, w->emptyColor);
+        w->weapon = UIReadQuoted(in); w->currentVar = UIReadQuoted(in); w->reserveVar = UIReadQuoted(in); w->label = UIReadQuoted(in);
+        return true;
+    }
+    if (field == "uiprompt") {
+        auto* w = go->AddComponent<UIInteractionPrompt>();
+        int always = 0;
+        readHud(w);
+        in >> w->range >> always >> w->fadeSpeed;
+        w->alwaysShow = bit(always);
+        w->key = UIReadQuoted(in); w->action = UIReadQuoted(in); w->target = UIReadQuoted(in);
+        w->showVar = UIReadQuoted(in); w->playerTag = UIReadQuoted(in);
+        return true;
+    }
+    if (field == "uitracker") {
+        auto* w = go->AddComponent<UIObjectiveTracker>();
+        int desc = 0;
+        readHud(w);
+        in >> w->maxQuests >> desc;
+        w->showDescription = bit(desc);
+        UIReadColor(in, w->doneColor);
+        w->title = UIReadQuoted(in); w->questId = UIReadQuoted(in);
+        return true;
+    }
+    if (field == "uicompass") {
+        auto* w = go->AddComponent<UICompass>();
+        int deg = 1, dist = 1;
+        readHud(w);
+        in >> w->heading >> w->fieldOfView >> deg >> dist;
+        w->showDegrees = bit(deg); w->showMarkerDistance = bit(dist);
+        UIReadColor(in, w->markerColor);
+        w->source = UIReadQuoted(in); w->markers = UIReadQuoted(in); w->headingVar = UIReadQuoted(in);
+        return true;
+    }
+    if (field == "uicard") {
+        auto* w = go->AddComponent<UIItemTooltipCard>();
+        int icon = 1;
+        readHud(w);
+        in >> w->count >> icon;
+        w->showIcon = bit(icon);
+        UIReadColor(in, w->nameColor);
+        w->item = UIReadQuoted(in); w->itemVar = UIReadQuoted(in); w->equipment = UIReadQuoted(in); w->itemsFile = UIReadQuoted(in);
+        return true;
+    }
+    if (field == "uiability") {
+        auto* w = go->AddComponent<UIAbilityIcon>();
+        int key = 0;
+        in >> key >> w->cooldown >> w->maxCharges;
+        w->useKey = (char)key;
+        UIReadColor(in, w->iconColor); UIReadColor(in, w->readyColor);
+        w->label = UIReadQuoted(in); w->iconPath = UIReadQuoted(in); w->keyText = UIReadQuoted(in);
+        return true;
+    }
+    if (field == "uidatabind") {
+        auto* w = go->AddComponent<UIBind>();
+        int mode = 0;
+        in >> mode;
+        if (mode < 0 || mode > 2) mode = 0;
+        w->mode = (UIBind::Mode)mode;
+        w->var = UIReadQuoted(in); w->varHigh = UIReadQuoted(in);
+        return true;
+    }
+    if (field == "uivisible") {
+        auto* w = go->AddComponent<UIVisibleIf>();
+        int inv = 0;
+        in >> inv;
+        w->invert = bit(inv);
+        w->condition = UIReadQuoted(in); w->target = UIReadQuoted(in);
+        return true;
+    }
+    if (field == "uilistbind") {
+        auto* w = go->AddComponent<UIListBind>();
+        w->var = UIReadQuoted(in); w->format = UIReadQuoted(in); w->emptyText = UIReadQuoted(in);
+        return true;
+    }
+    if (field == "uihotreload") {
+        auto* w = go->AddComponent<UIHotReload>();
+        int load = 1;
+        in >> w->interval >> load;
+        w->loadAtStart = bit(load);
+        w->file = UIReadQuoted(in); w->target = UIReadQuoted(in);
+        return true;
+    }
+    if (field == "uirichlinks") {
+        auto* w = go->AddComponent<UIRichLinks>();
+        int ev = 1, pr = 1;
+        in >> ev >> pr;
+        w->fireEvent = bit(ev); w->storeInPrefs = bit(pr);
+        return true;
+    }
+    if (field == "uifocushint") {
+        auto* w = go->AddComponent<UIFocusHint>();
+        in >> w->tabIndex;
+        w->up = UIReadQuoted(in); w->down = UIReadQuoted(in); w->left = UIReadQuoted(in); w->right = UIReadQuoted(in);
+        return true;
+    }
     if (field == "uirange") {
         auto* w = go->AddComponent<UIRangeSlider>();
         int anchor = 0, shape = 0, whole = 0, show = 1, inter = 1, foc = 1;

@@ -72,12 +72,12 @@ bool TtfFont::Bake(const unsigned char* bytes, std::size_t size, float bakeHeigh
     m_lineHeight = (float)(asc - desc + gap) * scale;
 
     // Bake the printable ASCII range into a single-channel coverage atlas. Grow the
-    // atlas once if the glyphs don't fit at this bake height.
+    // atlas (up to 4096) if the glyphs don't fit at this bake height.
     ttf::BakedGlyph cdata[kCount];
     int aw = 512, ah = 512;
     std::vector<unsigned char> gray;
     int rows = -1;
-    for (int attempt = 0; attempt < 2 && rows < 0; ++attempt) {
+    for (int attempt = 0; attempt < 4 && rows < 0; ++attempt) {   // 512, 1024, 2048, 4096: a 256 px bake of 95 glyphs needs about 2600 x 2600
         gray.assign((std::size_t)aw * ah, 0);
         ttf::ShelfPacker packer(aw, ah, kPad);
         bool fit = true;
@@ -85,7 +85,7 @@ bool TtfFont::Bake(const unsigned char* bytes, std::size_t size, float bakeHeigh
             fit = ttf::BakeGlyph(info->face, info->face.FindGlyph((std::uint32_t)(kFirst + i)), scale, packer,
                                  gray.data(), cdata[i]);
         if (fit) rows = packer.Bottom();
-        else { aw = 1024; ah = 1024; }   // didn't fit: try a bigger atlas
+        else { aw *= 2; ah *= 2; }   // didn't fit: try a bigger atlas
     }
     if (rows <= 0) { Log::Error("[ttf] atlas bake failed: ", path); return false; }
 

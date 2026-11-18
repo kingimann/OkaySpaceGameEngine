@@ -813,6 +813,41 @@ target_link_libraries(test_ui_library_example PRIVATE okay::engine)
 target_compile_definitions(test_ui_library_example PRIVATE OKAY_SOURCE_DIR="${PROJECT_SOURCE_DIR}")
 add_test(NAME ui_library_example COMMAND test_ui_library_example)
 
+# UI library slice 2: game HUD parts and the data-driven glue (bind, visible-if, list bind, rich links, focus hints, hot reload)
+add_executable(test_ui_library2 test_ui_library2.cpp)
+target_link_libraries(test_ui_library2 PRIVATE okay::engine)
+add_test(NAME ui_library2 COMMAND test_ui_library2)
+
+# The shipped sample scene examples/ui_library/ui_library_2.okayscene, loaded and played
+add_executable(test_ui_library2_example test_ui_library2_example.cpp)
+target_link_libraries(test_ui_library2_example PRIVATE okay::engine)
+target_compile_definitions(test_ui_library2_example PRIVATE OKAY_SOURCE_DIR="${PROJECT_SOURCE_DIR}")
+add_test(NAME ui_library2_example COMMAND test_ui_library2_example)
+
+# UI library slice 3: app parts (menu bar, toolbar, tree view, data table, wizard, form group) and the colour picker's advanced mode
+add_executable(test_ui_library3 test_ui_library3.cpp)
+target_link_libraries(test_ui_library3 PRIVATE okay::engine)
+add_test(NAME ui_library3 COMMAND test_ui_library3)
+
+# The shipped sample scene examples/ui_library/ui_library_3.okayscene, loaded and played
+add_executable(test_ui_library3_example test_ui_library3_example.cpp)
+target_link_libraries(test_ui_library3_example PRIVATE okay::engine)
+target_compile_definitions(test_ui_library3_example PRIVATE OKAY_SOURCE_DIR="${PROJECT_SOURCE_DIR}")
+add_test(NAME ui_library3_example COMMAND test_ui_library3_example)
+
+# UI library slice 4: styles, themes, icons and screens as data (registries, theme switching, icon pixels, every screen builds and fits, gallery search, catalogue numbers)
+add_executable(test_ui_library4 test_ui_library4.cpp)
+target_link_libraries(test_ui_library4 PRIVATE okay::engine)
+target_include_directories(test_ui_library4 PRIVATE ${CMAKE_SOURCE_DIR}/editor)
+target_compile_definitions(test_ui_library4 PRIVATE OKAY_SOURCE_DIR="${PROJECT_SOURCE_DIR}")
+add_test(NAME ui_library4 COMMAND test_ui_library4)
+
+# The shipped sample scenes examples/ui_library/ui_library_4.okayscene and ui_starter_pack.okayscene, loaded and played (theme switch, the whole starter flow)
+add_executable(test_ui_library4_example test_ui_library4_example.cpp)
+target_link_libraries(test_ui_library4_example PRIVATE okay::engine)
+target_compile_definitions(test_ui_library4_example PRIVATE OKAY_SOURCE_DIR="${PROJECT_SOURCE_DIR}")
+add_test(NAME ui_library4_example COMMAND test_ui_library4_example)
+
 add_executable(test_uicapture_look test_uicapture_look.cpp)
 target_link_libraries(test_uicapture_look PRIVATE okay::engine)
 add_test(NAME uicapture_look COMMAND test_uicapture_look)
@@ -2429,6 +2464,24 @@ if(SDL2_FOUND)
     target_compile_definitions(test_ui_library_shots PRIVATE OKAY_TEST_OUTPUT_DIR="${CMAKE_CURRENT_BINARY_DIR}")
     add_test(NAME ui_library_shots COMMAND test_ui_library_shots)
 
+    add_executable(test_ui_library2_shots test_ui_library2_shots.cpp)
+    target_link_libraries(test_ui_library2_shots PRIVATE okay::engine ${OKAY_TEST_SDL_LIB})
+    target_include_directories(test_ui_library2_shots PRIVATE ${SDL2_INCLUDE_DIRS})
+    target_compile_definitions(test_ui_library2_shots PRIVATE OKAY_TEST_OUTPUT_DIR="${CMAKE_CURRENT_BINARY_DIR}" OKAY_SOURCE_DIR="${PROJECT_SOURCE_DIR}")
+    add_test(NAME ui_library2_shots COMMAND test_ui_library2_shots)
+
+    add_executable(test_ui_library3_shots test_ui_library3_shots.cpp)
+    target_link_libraries(test_ui_library3_shots PRIVATE okay::engine ${OKAY_TEST_SDL_LIB})
+    target_include_directories(test_ui_library3_shots PRIVATE ${SDL2_INCLUDE_DIRS})
+    target_compile_definitions(test_ui_library3_shots PRIVATE OKAY_TEST_OUTPUT_DIR="${CMAKE_CURRENT_BINARY_DIR}" OKAY_SOURCE_DIR="${PROJECT_SOURCE_DIR}")
+    add_test(NAME ui_library3_shots COMMAND test_ui_library3_shots)
+
+    add_executable(test_ui_library4_shots test_ui_library4_shots.cpp)
+    target_link_libraries(test_ui_library4_shots PRIVATE okay::engine ${OKAY_TEST_SDL_LIB})
+    target_include_directories(test_ui_library4_shots PRIVATE ${SDL2_INCLUDE_DIRS})
+    target_compile_definitions(test_ui_library4_shots PRIVATE OKAY_TEST_OUTPUT_DIR="${CMAKE_CURRENT_BINARY_DIR}" OKAY_SOURCE_DIR="${PROJECT_SOURCE_DIR}")
+    add_test(NAME ui_library4_shots COMMAND test_ui_library4_shots)
+
     # Picture tool for the typed-input Controls screen (no add_test: it writes nothing without an output folder).
     add_executable(shot_controls_screen shot_controls_screen.cpp)
     target_link_libraries(shot_controls_screen PRIVATE okay::engine ${OKAY_TEST_SDL_LIB})
@@ -2451,6 +2504,15 @@ if(SDL2_FOUND)
     add_executable(crisp_ui_shot crisp_ui_shot.cpp)
     target_link_libraries(crisp_ui_shot PRIVATE okay::engine ${OKAY_TEST_SDL_LIB})
     target_include_directories(crisp_ui_shot PRIVATE ${SDL2_INCLUDE_DIRS})
+    # Crisp-UI picture tool (headless renders at 1x..6x) and its numeric test.
+    add_executable(ui_crisp_shot ui_crisp_shot.cpp)
+    target_link_libraries(ui_crisp_shot PRIVATE okay::engine ${OKAY_TEST_SDL_LIB})
+    target_include_directories(ui_crisp_shot PRIVATE ${SDL2_INCLUDE_DIRS})
+    add_executable(test_ui_crisp test_ui_crisp.cpp)
+    target_link_libraries(test_ui_crisp PRIVATE okay::engine ${OKAY_TEST_SDL_LIB})
+    target_include_directories(test_ui_crisp PRIVATE ${SDL2_INCLUDE_DIRS})
+    target_compile_definitions(test_ui_crisp PRIVATE OKAY_TEST_OUTPUT_DIR="${CMAKE_CURRENT_BINARY_DIR}")
+    add_test(NAME ui_crisp COMMAND test_ui_crisp)
     add_executable(test_display_screen test_display_screen.cpp)
     target_link_libraries(test_display_screen PRIVATE okay::engine ${OKAY_TEST_SDL_LIB})
     target_include_directories(test_display_screen PRIVATE ${SDL2_INCLUDE_DIRS})

@@ -140,6 +140,18 @@ namespace okayuihost { inline bool PopupCoversRect(float, float, float, float) {
 #include "VersionsNet.hpp"
 #include "VersionsUI.hpp"
 #include "MemberModeration.hpp"   // kick / ban / unban / admin role for servers and group chats
+#include "okay/Platform/Painter.hpp"   // okay::platform::Painter: textures from RGBA pixels (the first SDL_Renderer calls moved behind the seam)
+
+// An RGBA8 picture (w * h * 4 bytes, top row first) as a texture of `renderer`; null when it cannot be made. The same texture
+// SDL_CreateTextureFromSurface gave (static, alpha blended, nearest sampling); the caller still draws it with SDL_RenderCopy and
+// frees it with SDL_DestroyTexture. Goes through okay::platform::Painter, which wraps the renderer and does not own it.
+static SDL_Texture* TextureFromRgba(SDL_Renderer* renderer, const unsigned char* rgba, int w, int h) {
+    if (!renderer || !rgba || w <= 0 || h <= 0) return nullptr;
+    std::unique_ptr<okay::platform::Painter> painter = okay::platform::WrapSdl2Renderer(renderer);
+    if (!painter) return nullptr;
+    okay::platform::TextureDesc d; d.width = w; d.height = h;
+    return (SDL_Texture*)painter->CreateTexture(d, rgba);
+}
 
 #if defined(_WIN32)
 // Prefer the dedicated GPU on hybrid-graphics laptops (NVIDIA Optimus / AMD
@@ -3578,9 +3590,7 @@ SDL_Texture* GameCover(const std::string& gamePath) {
             int w = 0, h = 0;
             unsigned char* px = LoadRgbaFile(c.string(), &w, &h);
             if (!px) continue;
-            SDL_Surface* surf = SDL_CreateRGBSurfaceWithFormatFrom(
-                px, w, h, 32, w * 4, SDL_PIXELFORMAT_ABGR8888);
-            if (surf) { tex = SDL_CreateTextureFromSurface(g_renderer, surf); SDL_FreeSurface(surf); }
+            tex = TextureFromRgba(g_renderer, px, w, h);
             std::free(px);
             break;
         }
@@ -3644,8 +3654,7 @@ SDL_Texture* AvatarTexture(const std::string& url) {
         int w = 0, h = 0;
         unsigned char* px = LoadRgbaFile(cache.string(), &w, &h);
         if (px) {
-            SDL_Surface* s = SDL_CreateRGBSurfaceWithFormatFrom(px, w, h, 32, w * 4, SDL_PIXELFORMAT_ABGR8888);
-            if (s) { tex = SDL_CreateTextureFromSurface(g_renderer, s); SDL_FreeSurface(s); }
+            tex = TextureFromRgba(g_renderer, px, w, h);
             std::free(px);
         }
         if (tex) { g_avatarCache[url] = tex; return tex; }
@@ -3865,8 +3874,7 @@ static void EmojiCatalogPump() {
     SDL_UnlockMutex(g_emojiMutex);
     if (!done) return;
     if (g_emojiPixels && g_renderer && !g_emojiParsedCells.empty()) {
-        SDL_Surface* sf = SDL_CreateRGBSurfaceWithFormatFrom(g_emojiPixels, g_emojiPxW, g_emojiPxH, 32, g_emojiPxW * 4, SDL_PIXELFORMAT_ABGR8888);
-        if (sf) { g_emojiSheet = SDL_CreateTextureFromSurface(g_renderer, sf); SDL_FreeSurface(sf); }
+        g_emojiSheet = TextureFromRgba(g_renderer, (const unsigned char*)g_emojiPixels, g_emojiPxW, g_emojiPxH);
         g_emojiSheetW = g_emojiPxW; g_emojiSheetH = g_emojiPxH;
     }
     // (g_emojiPixels stay loaded: the chat window's renderer makes its own copy.)
@@ -3881,8 +3889,7 @@ static void EmojiCatalogPump() {
 // Draw sheet cell (sx,sy) into the square [c-s/2, c+s/2].
 static void DrawEmojiCell(ImDrawList* dl, ImVec2 c, float s, int sx, int sy) {
     if (!g_emojiSheet && g_emojiPixels && g_renderer) {   // first use on this renderer
-        SDL_Surface* sf = SDL_CreateRGBSurfaceWithFormatFrom(g_emojiPixels, g_emojiPxW, g_emojiPxH, 32, g_emojiPxW * 4, SDL_PIXELFORMAT_ABGR8888);
-        if (sf) { g_emojiSheet = SDL_CreateTextureFromSurface(g_renderer, sf); SDL_FreeSurface(sf); }
+        g_emojiSheet = TextureFromRgba(g_renderer, (const unsigned char*)g_emojiPixels, g_emojiPxW, g_emojiPxH);
     }
     if (!g_emojiSheet) return;
     const float u0 = (float)(sx * kEmojiStride + 1) / g_emojiSheetW, v0 = (float)(sy * kEmojiStride + 1) / g_emojiSheetH;
@@ -3956,10 +3963,7 @@ static SDL_Texture* ChatImageTexture(const std::string& url, int* w = nullptr, i
                     if (d < 20) d = 100;   // browsers treat 0-10ms frames as 100ms
                     acc += d;
                     if (i % step != 0 && i != frames - 1) continue;
-                    SDL_Surface* sf = SDL_CreateRGBSurfaceWithFormatFrom(const_cast<unsigned char*>(px) + (std::size_t)i * fw * fh * 4, fw, fh, 32, fw * 4, SDL_PIXELFORMAT_ABGR8888);
-                    if (!sf) continue;
-                    SDL_Texture* tx = SDL_CreateTextureFromSurface(g_renderer, sf);
-                    SDL_FreeSurface(sf);
+                    SDL_Texture* tx = TextureFromRgba(g_renderer, px + (std::size_t)i * fw * fh * 4, fw, fh);
                     if (!tx) continue;
                     a.frames.push_back(tx);
                     a.total += acc; a.ends.push_back(a.total); acc = 0;
@@ -18269,10 +18273,7 @@ int main(int argc, char** argv) {
     if (!g_splashLogo.empty()) {
         int lw = 0, lh = 0;
         if (unsigned char* px = LoadRgbaFile(g_splashLogo, &lw, &lh)) {
-            if (SDL_Surface* s = SDL_CreateRGBSurfaceWithFormatFrom(px, lw, lh, 32, lw * 4, SDL_PIXELFORMAT_ABGR8888)) {
-                g_splashLogoTex = SDL_CreateTextureFromSurface(renderer, s);
-                SDL_FreeSurface(s);
-            }
+            g_splashLogoTex = TextureFromRgba(renderer, px, lw, lh);
             std::free(px);
         }
     }

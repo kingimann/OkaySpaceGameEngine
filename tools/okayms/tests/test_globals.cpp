@@ -1,3 +1,4 @@
+// new[] and delete[] (test_vector) are also checked here.
 // Global objects, arrays of objects and static local objects with constructors and destructors.
 // The constructors of the globals run first thing in main (or entry), in declaration order; a
 // static local is built the first time its declaration is reached; the destructors run when main
@@ -127,8 +128,47 @@ static void test_order(Tally& tally) {
              141);
 }
 
+static void test_vector(Tally& tally) {
+    std::printf("test_vector\n");
+    run_both(tally, "vector",
+             "#ifdef __GNUC__\n"
+             "#include <stdlib.h>\n"
+             "#else\n"
+             "char pool[2048];\n"
+             "int used;\n"
+             "void *malloc(unsigned int n) { char *p; p = pool + used; used = used + ((n + 15) / 16) * 16; return (void *)p; }\n"
+             "void free(void *p) { }\n"
+             "#endif\n"
+             "int g;\n"
+             "struct A {\n"
+             "  int v;\n"
+             "  A() : v(3) { g = g + 1; }\n"
+             "  ~A() { g = g * 2; }\n"
+             "};\n"
+             "struct B {\n"
+             "  int v;\n"
+             "  B() : v(5) { }\n"
+             "};\n"
+             "int entry(void) {\n"
+             "  A *a = new A[3];\n"
+             "  a[1].v = 7;\n"
+             "  int r = a[0].v + a[1].v + a[2].v;\n"
+             "  delete[] a;\n"
+             "  B *b = new B[2];\n"
+             "  r = r + b[1].v;\n"
+             "  delete[] b;\n"
+             "  int *z = new int[4];\n"
+             "  z[3] = 2;\n"
+             "  r = r + z[3];\n"
+             "  delete[] z;\n"
+             "  return r + g;\n"
+             "}\n",
+             44);
+}
+
 int main() {
     Tally tally;
     test_order(tally);
-    return tally.finish(1);
+    test_vector(tally);
+    return tally.finish(2);
 }

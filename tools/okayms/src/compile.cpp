@@ -1338,7 +1338,8 @@ struct Parser {
     }
     // for (i = 0; i < n; i = i + 1) ctor(&name[i]) (or, going down, for the destructors). The
     // counter is a hidden local of the function being compiled.
-    bool element_loop(const std::string& name, int count, bool reverse, int sid, const char* which, Node* out) {
+    bool element_loop(const std::string& name, int count, bool reverse, int sid, const char* which, Node* out,
+                      const Node* count_expr = nullptr) {
         if (cur_locals == nullptr) {
             error = "an array of objects needs a function";
             return false;
@@ -1362,12 +1363,22 @@ struct Parser {
             a.kids.push_back(std::move(value));
             return a;
         };
-        Node init = assign(int_lit(reverse ? count - 1 : 0));
+        Node start;
+        if (count_expr != nullptr && reverse) {
+            start.kind = Node::Binary;
+            start.op = TMinus;
+            start.kids.push_back(*count_expr);
+            start.kids.push_back(int_lit(1));
+        } else {
+            start = int_lit(reverse ? count - 1 : 0);
+        }
+        Node init = assign(std::move(start));
         Node cond;
         cond.kind = Node::Binary;
         cond.op = reverse ? TGe : TLt;
         cond.kids.push_back(node_name(hidden.name));
-        cond.kids.push_back(int_lit(reverse ? 0 : count));
+        if (count_expr != nullptr && !reverse) cond.kids.push_back(*count_expr);
+        else cond.kids.push_back(int_lit(reverse ? 0 : count));
         Node step_value;
         step_value.kind = Node::Binary;
         step_value.op = reverse ? TMinus : TPlus;
@@ -1796,6 +1807,7 @@ struct Parser {
     bool static_type(const Node& node, Type* out) const;
     bool parse_call_args(std::vector<Node>* args);
     bool parse_new(Node* out);
+    bool ensure_vector_helpers(int sid);
     bool parse_delete(Node* out);
     bool method_call(Node* out, Node object, bool arrow, const std::string& name);
     bool qualified_call(Node* out, int cls, const std::string& name);
@@ -3813,6 +3825,182 @@ bool Parser::method_call(Node* out, Node object, bool arrow, const std::string& 
     return true;
 }
 
+// __vnew_C(n) and __vdel_C(p): new C[n] and delete[] p for a class with a constructor or
+// destructor. The block has an 8-byte header holding the count when the destructor must run per
+// element. Built as syntax trees, once per class.
+bool Parser::ensure_vector_helpers(int sid) {
+    const StructDef& def = structs[static_cast<size_t>(sid)];
+    const std::string new_name = "__vnew_" + def.name;
+    for (const FuncDecl& fn : funcs)
+        if (fn.name == new_name) return true;
+    const bool cookie = class_needs_dtor(def);
+    Type elem;
+    elem.base = 3;
+    elem.struct_id = sid;
+    Type elem_ptr = elem;
+    elem_ptr.pointers = 1;
+    Type char_ptr;
+    char_ptr.base = 2;
+    char_ptr.pointers = 1;
+    Type int_t;
+    int_t.base = 1;
+    auto lit = [](int v) {
+        Node n;
+        n.kind = Node::IntLit;
+        n.number = static_cast<uint64_t>(v);
+        n.type.base = 1;
+        return n;
+    };
+    auto cast_to = [](const Type& t, Node inner) {
+        Node c;
+        c.kind = Node::Unary;
+        c.type = t;
+        c.kids.push_back(std::move(inner));
+        return c;
+    };
+    auto assign_stmt = [](Node l, Node r) {
+        Node a;
+        a.kind = Node::Assign;
+        a.op = TAssign;
+        a.kids.push_back(std::move(l));
+        a.kids.push_back(std::move(r));
+        Node st;
+        st.kind = Node::ExprStmt;
+        st.kids.push_back(std::move(a));
+        return st;
+    };
+    auto bin = [](Tok op, Node l, Node r) {
+        Node b;
+        b.kind = Node::Binary;
+        b.op = op;
+        b.kids.push_back(std::move(l));
+        b.kids.push_back(std::move(r));
+        return b;
+    };
+    auto push_fn = [&](FuncDecl fn, Node body, std::vector<Local> locals) {
+        finish_signature(&fn);
+        fn.body = std::move(body);
+        fn.locals = std::move(locals);
+        fn.nparams = static_cast<int>(fn.params.size());
+        fn.defined = true;
+        funcs.push_back(std::move(fn));
+    };
+    std::vector<Local>* saved_locals = cur_locals;
+    const int saved_depth = scope_depth;
+    scope_depth = 0;
+    {
+        FuncDecl fn;
+        fn.name = new_name;
+        fn.ret = elem_ptr;
+        fn.params.push_back(int_t);
+        fn.param_names.push_back("n");
+        std::vector<Local> locals;
+        Local ln;
+        ln.name = "n";
+        ln.type = int_t;
+        place_local(&locals, ln);
+        Local lr;
+        lr.name = "raw";
+        lr.type = char_ptr;
+        place_local(&locals, lr);
+        Local lq;
+        lq.name = "q";
+        lq.type = elem_ptr;
+        place_local(&locals, lq);
+        cur_locals = &locals;
+        Node body;
+        body.kind = Node::Block;
+        Node alloc;
+        alloc.kind = Node::Call;
+        alloc.text = "malloc";
+        Node bytes = bin(TStar, node_name("n"), lit(size_of(elem)));
+        if (cookie) bytes = bin(TPlus, std::move(bytes), lit(8));
+        alloc.kids.push_back(std::move(bytes));
+        body.kids.push_back(assign_stmt(node_name("raw"), cast_to(char_ptr, std::move(alloc))));
+        if (cookie) {
+            Type int_ptr = int_t;
+            int_ptr.pointers = 1;
+            Node count_at;
+            count_at.kind = Node::Unary;
+            count_at.op = TStar;
+            count_at.kids.push_back(cast_to(int_ptr, node_name("raw")));
+            body.kids.push_back(assign_stmt(std::move(count_at), node_name("n")));
+        }
+        Node base = node_name("raw");
+        if (cookie) base = bin(TPlus, std::move(base), lit(8));
+        body.kids.push_back(assign_stmt(node_name("q"), cast_to(elem_ptr, std::move(base))));
+        if (class_needs_ctor(def)) {
+            Node loop;
+            const Node count_node = node_name("n");
+            if (!element_loop("q", 0, false, sid, "<ctor>", &loop, &count_node)) {
+                cur_locals = saved_locals;
+                scope_depth = saved_depth;
+                return false;
+            }
+            body.kids.push_back(std::move(loop));
+        }
+        Node ret;
+        ret.kind = Node::Return;
+        ret.kids.push_back(node_name("q"));
+        body.kids.push_back(std::move(ret));
+        push_fn(std::move(fn), std::move(body), std::move(locals));
+    }
+    if (class_needs_dtor(def)) {
+        FuncDecl fn;
+        fn.name = "__vdel_" + def.name;
+        fn.ret.base = 0;
+        fn.params.push_back(elem_ptr);
+        fn.param_names.push_back("p");
+        std::vector<Local> locals;
+        Local lp;
+        lp.name = "p";
+        lp.type = elem_ptr;
+        place_local(&locals, lp);
+        Local ln;
+        ln.name = "n";
+        ln.type = int_t;
+        place_local(&locals, ln);
+        cur_locals = &locals;
+        Type int_ptr = int_t;
+        int_ptr.pointers = 1;
+        Node header = bin(TMinus, cast_to(char_ptr, node_name("p")), lit(8));
+        Node count_at;
+        count_at.kind = Node::Unary;
+        count_at.op = TStar;
+        count_at.kids.push_back(cast_to(int_ptr, std::move(header)));
+        Node work;
+        work.kind = Node::Block;
+        work.kids.push_back(assign_stmt(node_name("n"), std::move(count_at)));
+        Node loop;
+        const Node count_node = node_name("n");
+        if (!element_loop("p", 0, true, sid, "<dtor>", &loop, &count_node)) {
+            cur_locals = saved_locals;
+            scope_depth = saved_depth;
+            return false;
+        }
+        work.kids.push_back(std::move(loop));
+        Node release;
+        release.kind = Node::Call;
+        release.text = "free";
+        release.kids.push_back(bin(TMinus, cast_to(char_ptr, node_name("p")), lit(8)));
+        Node release_stmt;
+        release_stmt.kind = Node::ExprStmt;
+        release_stmt.kids.push_back(std::move(release));
+        work.kids.push_back(std::move(release_stmt));
+        Node guard;
+        guard.kind = Node::If;
+        guard.kids.push_back(node_name("p"));
+        guard.kids.push_back(std::move(work));
+        Node body;
+        body.kind = Node::Block;
+        body.kids.push_back(std::move(guard));
+        push_fn(std::move(fn), std::move(body), std::move(locals));
+    }
+    cur_locals = saved_locals;
+    scope_depth = saved_depth;
+    return true;
+}
+
 // new T, new T(args): malloc, then the constructor (which returns its object). The program
 // declares malloc and free itself (the runtime provides them). Written from ISO/IEC 14882
 // [expr.new].
@@ -3823,9 +4011,45 @@ bool Parser::parse_new(Node* out) {
     bool exp = false;
     if (!parse_type(&ty, &imp, &exp)) return false;
     while (accept(TStar)) ++ty.pointers;
-    if (is(TLBrack)) {
-        error = "new of an array is not supported";
-        return false;
+    if (accept(TLBrack)) {
+        // new T[n]: n objects. A class with a constructor or destructor goes through __vnew_C
+        // (a count in front of the block when destructors must run per element).
+        Node count;
+        if (!parse_expr(0, &count)) return false;
+        if (!expect(TRBrack, "']'")) return false;
+        const bool vobj = ty.base == 3 && ty.pointers == 0 && ty.struct_id >= 0;
+        if (vobj && (class_needs_ctor(structs[static_cast<size_t>(ty.struct_id)]) ||
+                     class_needs_dtor(structs[static_cast<size_t>(ty.struct_id)]))) {
+            if (!ensure_vector_helpers(ty.struct_id)) return false;
+            Node call;
+            call.kind = Node::Call;
+            call.text = "__vnew_" + structs[static_cast<size_t>(ty.struct_id)].name;
+            call.type = ty;
+            call.type.pointers = 1;
+            call.kids.push_back(std::move(count));
+            *out = std::move(call);
+            return true;
+        }
+        Node size;
+        size.kind = Node::IntLit;
+        size.number = static_cast<uint64_t>(size_of(ty));
+        size.type.base = 1;
+        Node bytes;
+        bytes.kind = Node::Binary;
+        bytes.op = TStar;
+        bytes.kids.push_back(std::move(count));
+        bytes.kids.push_back(std::move(size));
+        Node alloc;
+        alloc.kind = Node::Call;
+        alloc.text = "malloc";
+        alloc.kids.push_back(std::move(bytes));
+        Node cast;
+        cast.kind = Node::Unary;
+        cast.type = ty;
+        cast.type.pointers += 1;
+        cast.kids.push_back(std::move(alloc));
+        *out = std::move(cast);
+        return true;
     }
     std::vector<Node> args;
     if (accept(TLParen)) {
@@ -3875,6 +4099,12 @@ bool Parser::parse_new(Node* out) {
 // the scalar deleting destructor, which frees the memory itself. A null pointer does nothing.
 bool Parser::parse_delete(Node* out) {
     next();
+    bool vec = false;
+    if (is(TLBrack) && at + 1 < tokens.size() && tokens[at + 1].kind == TRBrack) {
+        next();
+        next();
+        vec = true;
+    }
     Node target;
     if (!parse_unary(&target)) return false;
     if (!expect(TSemi, "';'")) return false;
@@ -3887,9 +4117,19 @@ bool Parser::parse_delete(Node* out) {
         error = "delete needs a pointer expression without side effects";
         return false;
     }
+    if (vec && ot.base == 3 && ot.struct_id >= 0 && class_needs_dtor(structs[static_cast<size_t>(ot.struct_id)])) {
+        // delete[] p for objects with destructors: __vdel_C runs them (last to first) and frees.
+        Node call;
+        call.kind = Node::Call;
+        call.text = "__vdel_" + structs[static_cast<size_t>(ot.struct_id)].name;
+        call.kids.push_back(std::move(target));
+        out->kind = Node::ExprStmt;
+        out->kids.push_back(std::move(call));
+        return true;
+    }
     Node then_block;
     then_block.kind = Node::Block;
-    const bool cls = ot.base == 3 && ot.struct_id >= 0 && class_needs_dtor(structs[static_cast<size_t>(ot.struct_id)]);
+    const bool cls = ot.base == 3 && !vec && ot.struct_id >= 0 && class_needs_dtor(structs[static_cast<size_t>(ot.struct_id)]);
     const Method* dm = cls ? find_method(ot.struct_id, "<dtor>", 0) : nullptr;
     if (dm != nullptr && dm->is_virtual) {
         FuncType ft;
@@ -5636,6 +5876,34 @@ bool Gen::gen_expr(const Node& node) {
             b(0x03);
             b(0x85);
             disp(off);
+            --temp_depth;
+            last_type = left_type;
+            if (last_type.is_array()) {
+                last_type = element_type(last_type);
+                last_type.pointers += 1;
+                last_type.array_len = -1;
+            }
+            return true;
+        }
+        if ((left_type.pointers > 0 || left_type.is_array()) && node.op == TMinus && last_type.pointers == 0 &&
+            !last_type.is_array()) {
+            // pointer - integer: the count is scaled by the element size and the result is a
+            // 64-bit pointer (ISO/IEC 14882 [expr.add]).
+            const int scale = std::max(1, size_of(element_type(left_type)));
+            b(0x48);
+            b(0x69);
+            b(0xC0);
+            u32(static_cast<uint32_t>(scale));
+            b(0x49);  // mov r10, rax
+            b(0x89);
+            b(0xC2);
+            b(0x48);  // mov rax, [rbp+off]
+            b(0x8B);
+            b(0x85);
+            disp(off);
+            b(0x4C);  // sub rax, r10
+            b(0x29);
+            b(0xD0);
             --temp_depth;
             last_type = left_type;
             if (last_type.is_array()) {

@@ -3103,6 +3103,11 @@ add_executable(test_arena_handles test_arena_handles.cpp)
 target_link_libraries(test_arena_handles PRIVATE okay::engine)
 add_test(NAME arena_handles COMMAND test_arena_handles)
 
+# StackAllocator and the opt-in memory tracking layer (tags, peak, fragmentation, leak report).
+add_executable(test_memory_track test_memory_track.cpp)
+target_link_libraries(test_memory_track PRIVATE okay::engine)
+add_test(NAME memory_track COMMAND test_memory_track)
+
 
 # Frame delta clamp, frame timer and frame limiter.
 add_executable(test_frame_pacing test_frame_pacing.cpp)

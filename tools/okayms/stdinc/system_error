@@ -3,6 +3,7 @@
 // values (2 not found, 22 invalid argument).
 #pragma once
 namespace std {
+enum class errc { none = 0, invalid_argument = 22, result_out_of_range = 34, no_such_file_or_directory = 2, value_too_large = 75 };
 struct error_code {
     int v_;
     error_code() : v_(0) {}

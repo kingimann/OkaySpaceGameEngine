@@ -1,0 +1,160 @@
+// okay-ms own standard header: <charconv> ([charconv.syn]), written from ISO/IEC 14882. from_chars reads an integer of any size or a
+// float or double from a character range (no leading white space, an optional '-', for floats the digits, a point, digits and an
+// exponent; the value is built by repeated multiplication, so it is not always the correctly rounded one). to_chars writes
+// integers in base 2 to 36. to_chars for float and double is NOT provided (no shortest round-trip printing here).
+#pragma once
+#include <system_error>
+namespace std {
+struct from_chars_result {
+    const char* ptr;
+    errc ec;
+};
+struct to_chars_result {
+    char* ptr;
+    errc ec;
+};
+template <typename T> from_chars_result from_chars_int_(const char* first, const char* last, T& value, int base) {
+    from_chars_result r;
+    r.ptr = first;
+    r.ec = errc::none;
+    const char* p = first;
+    bool neg = false;
+    if (p < last && *p == '-') {
+        neg = true;
+        ++p;
+    }
+    unsigned long long acc = 0;
+    int digits = 0;
+    bool overflow = false;
+    for (; p < last; ++p) {
+        int d;
+        if (*p >= '0' && *p <= '9') d = *p - '0';
+        else if (*p >= 'a' && *p <= 'z') d = *p - 'a' + 10;
+        else if (*p >= 'A' && *p <= 'Z') d = *p - 'A' + 10;
+        else break;
+        if (d >= base) break;
+        if (acc > (0xFFFFFFFFFFFFFFFFull - (unsigned long long)d) / (unsigned long long)base) overflow = true;
+        else acc = acc * (unsigned long long)base + (unsigned long long)d;
+        ++digits;
+    }
+    if (digits == 0) {
+        r.ec = errc::invalid_argument;
+        return r;
+    }
+    r.ptr = p;
+    if (overflow) {
+        r.ec = errc::result_out_of_range;
+        return r;
+    }
+    T v = (T)acc;
+    if (neg) v = (T)(0 - (T)acc);
+    // range check by round trip: the value read back must equal the digits' value
+    if ((unsigned long long)(neg ? (T)(0 - v) : v) != acc && !neg) r.ec = errc::result_out_of_range;
+    value = v;
+    return r;
+}
+inline from_chars_result from_chars(const char* first, const char* last, int& v, int base = 10) { return from_chars_int_(first, last, v, base); }
+inline from_chars_result from_chars(const char* first, const char* last, unsigned& v, int base = 10) { return from_chars_int_(first, last, v, base); }
+inline from_chars_result from_chars(const char* first, const char* last, long long& v, int base = 10) { return from_chars_int_(first, last, v, base); }
+inline from_chars_result from_chars(const char* first, const char* last, unsigned long long& v, int base = 10) { return from_chars_int_(first, last, v, base); }
+inline from_chars_result from_chars(const char* first, const char* last, short& v, int base = 10) { return from_chars_int_(first, last, v, base); }
+inline from_chars_result from_chars(const char* first, const char* last, unsigned short& v, int base = 10) { return from_chars_int_(first, last, v, base); }
+inline from_chars_result from_chars(const char* first, const char* last, long& v, int base = 10) { return from_chars_int_(first, last, v, base); }
+inline from_chars_result from_chars(const char* first, const char* last, unsigned long& v, int base = 10) { return from_chars_int_(first, last, v, base); }
+inline from_chars_result from_chars(const char* first, const char* last, char& v, int base = 10) { return from_chars_int_(first, last, v, base); }
+inline from_chars_result from_chars(const char* first, const char* last, unsigned char& v, int base = 10) { return from_chars_int_(first, last, v, base); }
+inline from_chars_result from_chars_double_(const char* first, const char* last, double& value) {
+    from_chars_result r;
+    r.ptr = first;
+    r.ec = errc::none;
+    const char* p = first;
+    bool neg = false;
+    if (p < last && *p == '-') {
+        neg = true;
+        ++p;
+    }
+    double v = 0.0;
+    int digits = 0;
+    int exp10 = 0;
+    for (; p < last && *p >= '0' && *p <= '9'; ++p) {
+        v = v * 10.0 + (*p - '0');
+        ++digits;
+    }
+    if (p < last && *p == '.') {
+        ++p;
+        for (; p < last && *p >= '0' && *p <= '9'; ++p) {
+            v = v * 10.0 + (*p - '0');
+            --exp10;
+            ++digits;
+        }
+    }
+    if (digits == 0) {
+        r.ec = errc::invalid_argument;
+        return r;
+    }
+    if (p < last && (*p == 'e' || *p == 'E')) {
+        const char* q = p + 1;
+        bool eneg = false;
+        if (q < last && (*q == '-' || *q == '+')) {
+            eneg = *q == '-';
+            ++q;
+        }
+        int e = 0;
+        int ed = 0;
+        for (; q < last && *q >= '0' && *q <= '9'; ++q) {
+            e = e * 10 + (*q - '0');
+            ++ed;
+        }
+        if (ed > 0) {
+            exp10 += eneg ? -e : e;
+            p = q;
+        }
+    }
+    double scale = 1.0;
+    int n = exp10 < 0 ? -exp10 : exp10;
+    double b = 10.0;
+    while (n > 0) {
+        if (n & 1) scale *= b;
+        b *= b;
+        n >>= 1;
+    }
+    v = exp10 < 0 ? v / scale : v * scale;
+    value = neg ? -v : v;
+    r.ptr = p;
+    return r;
+}
+inline from_chars_result from_chars(const char* first, const char* last, double& v) { return from_chars_double_(first, last, v); }
+inline from_chars_result from_chars(const char* first, const char* last, float& v) {
+    double d = 0.0;
+    from_chars_result r = from_chars_double_(first, last, d);
+    if (r.ec == errc::none) v = (float)d;
+    return r;
+}
+template <typename T> to_chars_result to_chars_int_(char* first, char* last, T value, int base) {
+    to_chars_result r;
+    r.ptr = last;
+    r.ec = errc::none;
+    char tmp[72];
+    int n = 0;
+    bool neg = value < 0;
+    unsigned long long u = neg ? (unsigned long long)(0 - (long long)value) : (unsigned long long)value;
+    if (u == 0) tmp[n++] = '0';
+    while (u > 0) {
+        int d = (int)(u % (unsigned long long)base);
+        tmp[n++] = (char)(d < 10 ? '0' + d : 'a' + d - 10);
+        u /= (unsigned long long)base;
+    }
+    if (neg) tmp[n++] = '-';
+    if (n > last - first) {
+        r.ec = errc::value_too_large;
+        return r;
+    }
+    for (int i = 0; i < n; ++i) first[i] = tmp[n - 1 - i];
+    r.ptr = first + n;
+    return r;
+}
+inline to_chars_result to_chars(char* first, char* last, int v, int base = 10) { return to_chars_int_(first, last, v, base); }
+inline to_chars_result to_chars(char* first, char* last, unsigned v, int base = 10) { return to_chars_int_(first, last, v, base); }
+inline to_chars_result to_chars(char* first, char* last, long long v, int base = 10) { return to_chars_int_(first, last, v, base); }
+inline to_chars_result to_chars(char* first, char* last, unsigned long long v, int base = 10) { return to_chars_int_(first, last, v, base); }
+}

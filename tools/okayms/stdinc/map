@@ -35,6 +35,9 @@ public:
     typedef const pair<K, V>* const_iterator;
 
     map() {}
+    template <typename It> map(It first, It last) {
+        for (; first != last; ++first) insert(*first);
+    }
     map(initializer_list<pair<K, V>> list) {
         for (size_t i = 0; i < list.size(); ++i) insert(list.begin()[i]);
     }

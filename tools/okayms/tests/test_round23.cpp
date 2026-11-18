@@ -294,5 +294,14 @@ int main(int, char**) {
           "int main() { J j; j.mode = 1; std::set<int> a, b; a.insert(1); a.swap(b); std::map<int, int> m, n; m[1] = 2; m.swap(n); std::unordered_map<int, int> u, v; u[1] = 1; u.swap(v); std::unordered_set<int> x, y; x.insert(1); x.swap(y);\n"
           "return f(&j) + (int)(a.size() + n.size() + v.size() + y.size()); }\n", &o);
     CHECK(t, has_symbol(o, "main"));
+    ++tests;
+    build(t, "round 32: std::list, <charconv>, range constructors of set/map, vector member with a braced list, uintmax_t",
+          "#include <charconv>\n#include <cstdint>\n#include <list>\n#include <map>\n#include <set>\n#include <string>\n#include <unordered_set>\n#include <vector>\n"
+          "struct S { std::vector<std::string> v = {\"a\", \"b\", \"c\"}; std::vector<int> w{1, 2}; };\n"
+          "int main() { std::vector<std::string> b; b.push_back(\"a\"); std::list<std::string> R(b.begin(), b.end()); auto it = R.begin(); auto ni = R.insert(it, std::string(\"x\")); R.push_back(\"z\"); R.erase(ni); std::list<std::string> o; o.push_back(\"q\"); R.splice(R.begin(), o);\n"
+          "std::string v = \"123\"; int i = 0; auto r = std::from_chars(v.data(), v.data() + v.size(), i); char buf[32]; auto w = std::to_chars(buf, buf + 32, -42);\n"
+          "std::vector<int> vi; vi.push_back(1); std::unordered_set<int> us(vi.begin(), vi.end()); std::set<int> st(vi.begin(), vi.end()); std::uintmax_t x = 5; S s;\n"
+          "return (int)(R.size() + i + us.size() + st.size() + x + s.v.size() + (w.ptr - buf)) + (r.ec == std::errc() ? 1 : 0); }\n", &o);
+    CHECK(t, has_symbol(o, "main"));
     return t.finish(tests);
 }

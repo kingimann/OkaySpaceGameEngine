@@ -15,6 +15,9 @@ public:
     typedef const T* iterator;
     typedef const T* const_iterator;
     unordered_set() {}
+    template <typename It> unordered_set(It first, It last) {
+        for (; first != last; ++first) insert(*first);
+    }
     unordered_set(initializer_list<T> list) : items_(list) {}
     size_t size() const { return items_.size(); }
     bool empty() const { return items_.empty(); }

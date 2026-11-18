@@ -5932,6 +5932,22 @@ struct Parser {
                     else if (field.init_at >= 0) {
                         // A default member initializer of a class member: `T x{a, b};` or `T x = e;`.
                         const size_t saved_at = at;
+                        Type list_type_field;
+                        if ((field.init_braced || field.init_aggr) && !field.type.is_array() &&
+                            has_init_list_ctor(field.type.struct_id, &list_type_field)) {
+                            // `std::vector<std::string> v = {"a", "b"};` / `T v{...}` with an initializer-list constructor: the
+                            // braced list is one argument, made by init_list_temp ([over.match.list]).
+                            at = static_cast<size_t>(field.init_at) - (field.init_aggr ? 0 : 1);
+                            Node list_arg;
+                            const size_t hoist_from_f = stmt_pre.size();
+                            const bool list_ok = tokens[at].kind == TLBrace && tokens[at + 1].kind != TRBrace && init_list_temp(list_type_field, &list_arg);
+                            if (list_ok) args.push_back(std::move(list_arg));
+                            for (size_t h = hoist_from_f; h < stmt_pre.size(); ++h) pre.push_back(std::move(stmt_pre[h]));
+                            if (stmt_pre.size() > hoist_from_f) stmt_pre.resize(hoist_from_f);
+                            at = saved_at;
+                            if (!list_ok && !error.empty()) return false;
+                        }
+                        if (args.empty()) {
                         at = static_cast<size_t>(field.init_at);
                         if (field.init_aggr) ++at;  // `T x = {a, b};`: past the '{'
                         bool ok = true;
@@ -5942,6 +5958,7 @@ struct Parser {
                         } while (ok && (field.init_braced || field.init_aggr) && accept(TComma));
                         at = saved_at;
                         if (!ok) return false;
+                        }
                     }
                     Node call;
                     {

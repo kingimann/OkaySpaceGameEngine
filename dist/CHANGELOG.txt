@@ -1,5 +1,26 @@
 OkaySpace Game Engine — Changelog
 
+v2.885.0
+  Easier scripts and modeling
+  - Visual Script is much simpler: Quick blocks do a whole job in one block
+    (for example "Open Door When Touched" instead of 10 nodes and 8 wires).
+    An empty script shows recipe cards you click to start.
+  - The Add node list shows 55 plain-named nodes in six groups. Tick
+    "Show all nodes" to see everything.
+  - The node search window is bigger, has a preview, and works with the
+    keyboard. The script window has Compact, Comfortable and Spacious sizes.
+  - Project panel has Assets, Favourites and Recent tabs.
+  - Modeling is easier: fewer clicks, starter shapes, and the side bar folds
+    with Ctrl+\.
+
+v2.884.0
+  Fixes
+  - Save before stopping really saves, Timeline keys survive dragging, and
+    LOD distances work on big objects.
+  - Prefab variants: a prefab file that is cut short is refused instead of
+    half loading, and long Windows paths are no longer cut off.
+  - Release checks wait longer for the update server before publishing.
+
 Unreleased
   Fixes and new things
   - Models now open with our own readers, written for this engine,

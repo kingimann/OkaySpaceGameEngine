@@ -81,6 +81,7 @@ here now, so "where does my script start?" has one answer. The test checks it.
 |  | Waiting & Timers | Wait, repeat on a timer, cooldowns, stopwatches, and delayed calls from a script. | Delayed Calls |
 |  | Functions & Calls | Define your own function, call another graph or script, or run a list of steps. |  |
 |  | Time & Game Speed | The clock, the frame time, slow motion and pausing the game. | Clock, Game Speed, Pausing, Time Math |
+| **Quick blocks** | Quick blocks | One-block actions: move around, game rules, objects in the game, show and sound, do in order. | Move Around, Game Rules, Objects In The Game, Show And Sound, Do In Order |
 | **Variables, Lists & Saving** | Variables | Remember a number, a word or a yes/no on this object, the scene or the whole game. | Change a Variable, Check a Variable, Shared Variables |
 |  | Saving & Loading | Keep things between runs: save slots, saved values and checkpoints. | Saved Values, Save Slots, Save Files |
 |  | Lists | Several values in order under one name: add, remove, sort, search, and array functions. | Sorting & Searching, Array Functions |
@@ -135,7 +136,7 @@ here now, so "where does my script start?" has one answer. The test checks it.
 |  | Cutscenes | Play a cutscene (a sequence) and build one from tweens. |  |
 | **Input** | Keyboard | Is a key held, pressed or released. |  |
 |  | Mouse & Touch | The mouse position and buttons, the cursor, taps and swipes. | Touch & Gestures |
-|  | Gamepad & Controls | Movement axes, the gamepad, named actions and rebinding keys. | Named Actions |
+|  | Gamepad & Controls | Movement axes, the gamepad, named actions and rebinding keys, local players and the controllers they use. | Named Actions, Local Players, Controllers |
 | **Online** | Multiplayer | Host or join, browse servers, matchmaking, messages, synced objects, players and matches. | Hosting & Joining, Server Browser, Matchmaking & Relay, Messages & RPC, Synced Objects & Variables, Players & Matches |
 |  | Steam | Steam achievements, stats, lobbies, friends, cloud files and the workshop. | Achievements & Stats, Lobbies & Friends, Cloud & Workshop |
 |  | Server Security | Anti-cheat: validate what clients send, rate limits, kicks and budgets. |  |

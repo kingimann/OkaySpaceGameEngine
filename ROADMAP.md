@@ -10,6 +10,8 @@ _Last updated: 2026-11-13 17:55 UTC_
 
 | Version | What's in it |
 |---|---|
+| 2.885.0 | Visual Script made simple: Quick blocks (one block does a whole job), recipe cards on an empty script, a 55-node Add node list, a roomier window and a bigger node search popup; Project panel tabs; easier Modeling with a foldable sidebar |
+| 2.884.0 | Save before stopping, Timeline key drags and LOD distances fixed (#977); prefab variants refuse a cut-short file and long Windows paths (#995); release gate waits longer for the checksum list (#994) |
 | 2.883.0 | Editor Dark/Light mode replaces Preferences, Auto anti-aliasing and VSync (#964); #888 fixes: project numbers, texture tagging, material paths (#979), OkayScript references and Rigidbody API (#981); script prefab path guard (#970); launcher and editor visual fixes (#983); locked Inspector after undo (#990); viewport window setting (#973); own HTTP client, off by default (#971); release speed (#976); guided roundtrip test race (#972); branch lint comment fix (#989) |
 | 2.882.0 | SEC1 security: relay, script paths, updater signing, reactions SQL (#949); Claude 2 bug fixes 131, 140-142 (#958); modeling fixes 134-139: saved recenter/ground/fit, NaN safety, Solidify rim, OBJ export, one undo step per button (#959) |
 | 2.881.0 | Anti-cheat hardening: a ban list, an audit log, a packet ceiling, a bot and macro detector and a cheat simulator (`--cheat-sim`) (#951); in-game UI library slice 1: range slider, input validation, aspect-ratio box and more (#950); the player controller presets, camera and gamepad options, per-system frame cost and scene query speed-ups that were in 2.880.0 but missing from its notes (#942) |

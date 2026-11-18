@@ -236,7 +236,7 @@ void VisualScriptComponent::Update(float dt) {
             if (b->WasClicked()) Fire("OnClick", gameObject);
     // On Key Pressed / Released.
     for (const KeyEntry& k : m_keyEntries)
-        if (k.up ? Input::GetKeyUp(k.key) : Input::GetKeyDown(k.key)) Fire(k.entry.c_str(), nullptr);
+        if (k.up ? Input::GetKeyUp(k.key) : Input::GetKeyDownGame(k.key)) Fire(k.entry.c_str(), nullptr);
     for (const std::string& e : m_gestureEntries) {
         bool go = false;
         if (e == "OnTap") go = Gestures::Happened("tap");
@@ -266,11 +266,11 @@ void VisualScriptComponent::Update(float dt) {
 
 namespace {
 bool ActionDown(const std::string& name) {
-    if (name == "interact" || name == "use") return Input::GetKeyDown('e');
-    if (name == "jump") return Input::GetKeyDown(' ');
+    if (name == "interact" || name == "use") return Input::GetKeyDownGame('e');
+    if (name == "jump") return Input::GetKeyDownGame(' ');
     if (name == "fire" || name == "attack") return Input::GetMouseButtonDown(0);
-    if (name == "crouch") return Input::GetKeyDown('c');
-    return Input::GetKeyDown(Input::KeyFromName(name));
+    if (name == "crouch") return Input::GetKeyDownGame('c');
+    return Input::GetKeyDownGame(Input::KeyFromName(name));
 }
 bool ActionUp(const std::string& name) {
     if (name == "interact" || name == "use") return Input::GetKeyUp('e');
@@ -280,11 +280,11 @@ bool ActionUp(const std::string& name) {
     return Input::GetKeyUp(Input::KeyFromName(name));
 }
 bool ActionHeld(const std::string& name) {
-    if (name == "interact" || name == "use") return Input::GetKey('e');
-    if (name == "jump") return Input::GetKey(' ');
+    if (name == "interact" || name == "use") return Input::GetKeyGame('e');
+    if (name == "jump") return Input::GetKeyGame(' ');
     if (name == "fire" || name == "attack") return Input::GetMouseButton(0);
-    if (name == "crouch") return Input::GetKey('c');
-    return Input::GetKey(Input::KeyFromName(name));
+    if (name == "crouch") return Input::GetKeyGame('c');
+    return Input::GetKeyGame(Input::KeyFromName(name));
 }
 }
 
@@ -297,7 +297,7 @@ void VisualScriptComponent::FireTagged(const char* prefix, GameObject* other) {
 
 void VisualScriptComponent::PollGameplay(float) {
     if (!m_graph || !gameObject) return;
-    if (!m_graph->Entries("OnInteract").empty() && Input::GetKeyDown('e') && transform && gameObject->scene()) {
+    if (!m_graph->Entries("OnInteract").empty() && Input::GetKeyDownGame('e') && transform && gameObject->scene()) {
         GameObject* best = nullptr;
         float bestD = 2.0f;
         for (const auto& up : gameObject->scene()->Objects()) {

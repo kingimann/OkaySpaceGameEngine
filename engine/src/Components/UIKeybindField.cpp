@@ -1,14 +1,37 @@
+#include "okay/Input/PadProfiles.hpp"
 #include "okay/Components/UIKeybindField.hpp"
 #include "okay/Components/ScriptComponent.hpp"
 #include "okay/Components/UIModal.hpp"
 #include "okay/Core/Prefs.hpp"
 #include "okay/Input/Input.hpp"
 #include "okay/Input/InputActions.hpp"
+#include "okay/Input/InputRuntime.hpp"
 #include "okay/Scene/GameObject.hpp"
 
 namespace okay {
 
+namespace {
+// "ia:Jump" / "ia:Jump@1": an action of a local player's input asset.
+bool ParseTyped(const std::string& s, std::string& name, int& player) {
+    if (s.rfind("ia:", 0) != 0) return false;
+    name = s.substr(3); player = 0;
+    const std::size_t at = name.find('@');
+    if (at != std::string::npos) { player = std::atoi(name.substr(at + 1).c_str()); name.resize(at); }
+    return !name.empty();
+}
+// The first binding of the keyboard / mouse group, or of the controller group.
+int TypedBinding(const ActionSet& set, const ActionDef& a, bool gamepad) {
+    for (std::size_t i = 0; i < a.bindings.size(); ++i) {
+        const std::string& g = a.bindings[i].group;
+        if (g.empty()) return (int)i;
+        for (const ControlScheme& c : set.Schemes()) if (c.name == g && (gamepad ? c.gamepad : (c.keyboard || c.mouse))) return (int)i;
+    }
+    return -1;
+}
+}
+
 void UIKeybindField::Start() {
+    { std::string tn; int tp = 0; if (ParseTyped(inputAction, tn, tp)) InputRuntime::Set(tp); }   // a typed field needs its player (the first read joins one)
     if (!prefKey.empty() && Prefs::Has(prefKey)) {
         const int k = Prefs::GetInt(prefKey, (int)(unsigned char)key);
         if (k > 0 && k < 256) key = (char)k;
@@ -17,16 +40,32 @@ void UIKeybindField::Start() {
 
 std::string UIKeybindField::KeyLabel() const {
     if (inputAction.empty()) return Input::KeyName(key);
+    std::string tn; int tp = 0;
+    if (ParseTyped(inputAction, tn, tp)) {
+        const ActionSet* set = InputRuntime::Players().Player(tp);
+        const ActionDef* a = set ? set->Find(tn) : nullptr;
+        const int bi = a ? TypedBinding(*set, *a, gamepad) : -1;
+        const int pi = part < 0 ? 0 : part;
+        if (bi < 0 || pi >= (int)a->bindings[(std::size_t)bi].parts.size()) return "None";
+        return PadProfiles::BindingLabel(InputBinding::Parse(a->bindings[(std::size_t)bi].parts[(std::size_t)pi]));
+    }
     const InputBinding* b = InputActions::Current(inputAction, gamepad);
     if (!b) return "None";
     if (part >= 0 && part < 4 && b->kind == InputBinding::Kind::Keys4) return Input::KeyName(b->keys[part]);
-    return b->Label();
+    return b->kind == InputBinding::Kind::PadButton ? PadProfiles::BindingLabel(*b) : b->Label();
 }
 
 void UIKeybindField::BindAction(const std::string& binding) {
     m_listening = false;
     const std::string before = KeyLabel();
-    if (!InputActions::Rebind(inputAction, binding, part)) return;
+    std::string tn; int tp = 0;
+    if (ParseTyped(inputAction, tn, tp)) {
+        ActionSet* set = InputRuntime::Set(tp);
+        const ActionDef* a = set ? set->Find(tn) : nullptr;
+        const int bi = a ? TypedBinding(*set, *a, gamepad) : -1;
+        if (bi < 0 || !set->Rebind(tn, bi, part < 0 ? 0 : part, InputBinding::Parse(binding).ToString())) return;   // the canonical text ("key:j")
+        InputRuntime::Players().SaveOverrides(tp);
+    } else if (!InputActions::Rebind(inputAction, binding, part)) return;
     if (KeyLabel() == before) return;
     if (gameObject)
         if (auto* sc = gameObject->GetComponent<ScriptComponent>())
@@ -58,9 +97,19 @@ void UIKeybindField::Update(float) {
         if (m_skipFrame) { m_skipFrame = false; return; }
         if (Input::GetKeyDown((char)27)) { m_listening = false; return; }       // Escape: keep the old key
         if (!inputAction.empty()) {
-            if (Input::GetKeyDown('\b')) { InputActions::Reset(inputAction); m_listening = false; return; }
+            std::string tn; int tp = 0;
+            const bool typed = ParseTyped(inputAction, tn, tp);
+            if (Input::GetKeyDown('\b')) {
+                if (!typed) InputActions::Reset(inputAction);
+                else if (ActionSet* set = InputRuntime::Set(tp)) {
+                    if (const ActionDef* a = set->Find(tn)) set->ResetOverride(tn, TypedBinding(*set, *a, gamepad));
+                    InputRuntime::Players().SaveOverrides(tp);
+                }
+                m_listening = false; return;
+            }
             if (gamepad) {
-                if (const int b = Input::FirstGamepadButtonDown(); b >= 0) BindAction("pad:" + Input::GamepadButtonKey(b));
+                const int pad = typed ? InputRuntime::Players().PadOf(tp) : -1;
+                if (const int b = Input::FirstGamepadButtonDown(pad >= 0 ? pad : 0); b >= 0) BindAction("pad:" + Input::GamepadButtonKey(b));
             } else if (const char k = Input::FirstKeyDown()) {
                 BindAction("key:" + Input::KeyName(k));
             } else if (part < 0 && Input::GetMouseButtonDown(1)) {

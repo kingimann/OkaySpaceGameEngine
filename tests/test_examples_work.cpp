@@ -143,18 +143,18 @@ void RunScene(const fs::path& copyRoot, const fs::path& scene, Result& r) {
 // ---- the packaging: which example folders the Windows release carries ---------------------------------------------------
 
 std::vector<std::string> DistExampleDirs() {
+    // EXAMPLE_DIRS="..." lists one folder per line (sorted); the list ends at the closing quote, which may be on a later line.
     std::vector<std::string> dirs;
-    std::istringstream in(ReadAll(fs::path(OKAY_SOURCE_DIR) / "scripts" / "build-windows-dist.sh"));
-    std::string line;
-    while (std::getline(in, line)) {
-        const std::string key = "EXAMPLE_DIRS=\"";
-        if (line.rfind(key, 0) != 0) continue;
-        std::string list = line.substr(key.size());
-        list = list.substr(0, list.find('"'));
-        std::istringstream words(list);
-        std::string w;
-        while (words >> w) dirs.push_back(w);
-    }
+    const std::string text = ReadAll(fs::path(OKAY_SOURCE_DIR) / "scripts" / "build-windows-dist.sh");
+    const std::string key = "\nEXAMPLE_DIRS=\"";
+    std::size_t at = text.find(key);
+    if (at == std::string::npos) return dirs;
+    at += key.size();
+    const std::size_t end = text.find('"', at);
+    if (end == std::string::npos) return dirs;
+    std::istringstream words(text.substr(at, end - at));
+    std::string w;
+    while (words >> w) dirs.push_back(w);
     return dirs;
 }
 

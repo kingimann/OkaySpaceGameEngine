@@ -9,9 +9,9 @@
 //   <out>/PLACEHOLDER_ASSETS.txt       only when the images are generated stand-ins
 //   <out>/xbox-export.json             the settings used (small, plain)
 //
-// It does NOT build the UWP app, pack or sign: that is scripts/build-xbox-uwp.ps1 on Windows.
-// The UWP app shell (platform/xbox_uwp/app) does not load the game's data yet: it draws a test
-// triangle and reads a gamepad. Say so wherever this is shown.
+// It does NOT build the UWP app, pack or sign: the editor's one-click build (XboxBuildPlan.hpp) or scripts/build-xbox-uwp.ps1 does, on Windows.
+// The UWP app shell (platform/xbox_uwp/app) draws a test triangle by default. Only when built in "engine mode" (EXPERIMENTAL, never compiled)
+// does it run the game in package/Data: 3D view, scripts, physics and pads, no UI layer yet. Say so wherever this is shown.
 //
 // UNVERIFIED on Windows and on an Xbox. Written from Microsoft's public documentation.
 // ---------------------------------------------------------------------------
@@ -28,8 +28,9 @@ inline constexpr const char* kLimitationsText =
     "This makes a Universal Windows Platform (UWP) package for an Xbox One in Developer Mode, using only Microsoft's public "
     "Windows SDK and tools. It is NOT a native console game: it does not use the Xbox GDK, it cannot be published, and it is "
     "limited by the UWP sandbox (no desktop-only Windows APIs, memory and CPU budgets for a Developer Mode app, Direct3D 11 "
-    "only). The Xbox app shell in this version does not run your game yet: it opens a window, draws a test triangle and reads a "
-    "gamepad, to prove the packaging steps. Nothing here has been built on Windows or run on a console, so compatibility with "
+    "only). By default the Xbox app shell does not run your game: it opens a window, draws a test triangle and reads a "
+    "gamepad, to prove the packaging steps. \"Engine mode\" (a tick box next to the build button, EXPERIMENTAL) also links the engine and runs your game's "
+    "3D scene, scripts, physics and gamepad; the 2D / UI layer is not drawn yet, and the engine has never been compiled with Microsoft's UWP compiler. Nothing here has been built on Windows or run on a console, so compatibility with "
     "any console is unknown. The package is made unsigned by our own packer and signed on your PC with a test certificate.";
 
 struct ExportInputs {
@@ -80,8 +81,11 @@ inline std::string ReadmeText(const ExportInputs& in, const ManifestOptions& m, 
          "  package/AppxManifest.xml   package identity: " + m.identityName + "  version " + NormalizeVersion(m.version) + "  publisher " + m.publisher + "\n"
          "  package/Assets/            tile and logo images" + std::string(placeholder ? " (GENERATED PLACEHOLDERS, see PLACEHOLDER_ASSETS.txt)" : " (made from the project icon)") + "\n"
          "  package/Data/              your game's scene and assets\n\n";
-    t += "IMPORTANT: the Xbox app shell in this version does not load Data/ yet. It opens a window, draws a test\n"
-         "triangle with Direct3D 11 and reads a gamepad. It proves the packaging pipeline, not your game.\n\n";
+    t += "IMPORTANT: by default the Xbox app shell does not load Data/. It opens a window, draws a test triangle with\n"
+         "Direct3D 11 and reads a gamepad (left stick moves it, A centres it, B exits). That proves the packaging pipeline, not your game.\n"
+         "Tick 'Engine mode' before building to try the EXPERIMENTAL game run: it links the engine and plays package/Data (3D scene,\n"
+         "scripts, physics, gamepad and keyboard). The 2D / UI layer is NOT drawn yet. Nobody has compiled it with Microsoft's compiler,\n"
+         "so it may fail to build; untick it to get the triangle back.\n\n";
     t += "Next steps, on a Windows PC (see docs/xbox_uwp.md in the OkaySpace source):\n"
          "  1. Install Visual Studio 2022 once (the 'Universal Windows Platform development' workload, with its C++ UWP tools\n"
          "     and a Windows 10/11 SDK). The editor checks this for you.\n"
@@ -122,10 +126,10 @@ inline ExportResult WritePackage(const std::string& outDir, const ExportInputs& 
         "  \"identity\": \"" + XmlEscape(m.identityName) + "\",\n  \"version\": \"" + NormalizeVersion(m.version) + "\",\n"
         "  \"publisher\": \"" + XmlEscape(m.publisher) + "\",\n  \"executable\": \"" + m.executable + "\",\n"
         "  \"placeholder_assets\": " + (a.placeholder ? "true" : "false") + ",\n"
-        "  \"app_shell_loads_game_data\": false\n}\n");
+        "  \"app_shell_loads_game_data\": false,\n  \"engine_mode_available_experimental\": true\n}\n");
     r.ok = true;
     r.message = "Exported an UNVERIFIED Xbox UWP package folder to " + pkg.u8string() +
-                ". It still has to be built and packed on Windows (see README_XBOX.txt); the app shell does not run your game yet.";
+                ". It still has to be built and packed on Windows (see README_XBOX.txt); the app shell runs your game only in the EXPERIMENTAL engine mode (see README_XBOX.txt).";
     return r;
 }
 

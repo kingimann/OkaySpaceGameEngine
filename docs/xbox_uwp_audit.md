@@ -37,13 +37,20 @@ it does not use the restricted GDK, and the public SDK does not build one.
 9. **Sandbox and budgets.** UWP apps on a console run in a sandbox with a smaller memory and CPU budget than a PC and Direct3D 11 (feature level 11_x) as the graphics API; the exact Developer Mode numbers are on Microsoft's "UWP on Xbox One" pages and were not checked.
 10. **MinGW cannot build UWP.** Our release is cross-compiled with MinGW (win32 threads). UWP needs the MSVC toolset with the Windows SDK's WinRT headers and import libraries. So this target cannot come out of `build-windows-dist.sh`.
 
-## Parts that need a UWP adapter (and their state in this branch)
+## Parts that need a UWP adapter (and their state on `claude/xbox-uwp-2`)
 
 | Adapter | State |
 |---|---|
-| App shell: `CoreApplication`, `IFrameworkView`, suspend and resume, `CoreWindow`, swap chain, clean exit | written, **uncompiled** (`platform/xbox_uwp/app/main.cpp`) |
-| Gamepad through `Windows.Gaming.Input` | reader written in the shell, **uncompiled**; not behind `platform::Gamepad` |
-| Package manifest, tile images, packer, signing steps | written, tested on Linux (manifest, images, packer); signing is Microsoft's SignTool on Windows |
-| Offline shader compile, present path from `D3D11Renderer`, save folder, audio, 2D painting | **not started** |
+| App shell: `CoreApplication`, `IFrameworkView`, suspend and resume, `CoreWindow`, swap chain, clean exit | triangle shell written, **uncompiled**; engine mode (`app/engine_app.hpp`) written, **uncompiled** |
+| Window, lifecycle, events | **done as pure code** (`XboxUwpBackend.hpp`, `XboxLifecycle.hpp`), tested on Linux with a fake host; the CoreWindow glue is uncompiled |
+| Gamepad through `Windows.Gaming.Input` | **behind `platform::Gamepad`** (`XboxInput.hpp`), mapping tested on Linux; the WinRT reader is uncompiled |
+| Offline shader compile | **done** (`ShaderBundle.hpp`, `okay-shaders`, `xbox-compile-shaders.ps1`); the renderer loads `.cso` under `OKAY_XBOX_UWP`; fxc never run |
+| Present path from `D3D11Renderer` | **written** (`XboxPresent.hpp`, over the existing `RenderToTexture`); syntax-checked only |
+| Save folder | **done as pure code** (`XboxPaths.hpp`, `Paths::SetEnvOverride`); engine users fenced; `SaveFile`/`Prefs` unchecked |
+| Audio | **written** (`XboxAudio.hpp`, `XboxWasapi.hpp`); conversion tested on Linux; WASAPI syntax-checked only |
+| 2D painting | **not started** (the software painter has no present path) |
+| Reduced engine target | **written** (`okay_engine_uwp`), audited for forbidden API names on Linux, never compiled |
+| Package manifest, tile images, packer, signing steps | written, tested on Linux (manifest, images, packer); signing is Microsoft's SignTool on Windows, started from the editor |
+| One-click build | written (`XboxBuildPlan.hpp`...), plan and runner tested on Linux; the spawned programs never ran |
 
-So the shell proves the package pipeline. Running a real OkaySpace game on the console needs the "not started" row, most of it unfinished engine work.
+Problems 2 to 8 in the ranked list above now have code. None of it is verified on Windows. What stays open: compiling the engine with Microsoft's compiler, the UI layer, device-loss recovery, WinHTTP-or-`Windows.Web.Http`, libsodium for UWP, every real run.

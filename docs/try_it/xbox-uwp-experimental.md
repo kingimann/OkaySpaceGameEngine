@@ -1,16 +1,22 @@
 ---
 id: xbox-uwp
-row: | xbox-uwp | Xbox One export (EXPERIMENTAL, UNVERIFIED): package folder, own .appx packer, SDK check | File > Build Settings > platform "Xbox (exp.)"; scripts in the source checkout | Linux-tested only |
+row: | xbox-uwp | Xbox One export (EXPERIMENTAL, UNVERIFIED): one-click build (check, export, compile, shaders, pack, sign, install), own .appx packer, engine mode | File > Build Settings > platform "Xbox (exp.)" > Build Xbox package | Linux-tested only |
 ---
 ## xbox-uwp. Xbox One (experimental, Developer Mode) export
 
-**Read this first: nothing here has been built on Windows or run on an Xbox.** It makes a UWP package for an Xbox One in Developer Mode, not a native console game, and the app shell only draws a test triangle (it does not run your game). Full text: `docs/xbox_uwp.md`; audit: `docs/xbox_uwp_audit.md`.
+**Read this first: nothing here has been built on Windows or run on an Xbox.** It makes a UWP package for an Xbox One in Developer Mode, not a native console game. Full text: `docs/xbox_uwp.md`; audit: `docs/xbox_uwp_audit.md`.
 
-In the release (needs a build made with `-DOKAY_BUILD_XBOX_UWP=ON`, which `build-windows-dist.sh` now sets):
+What to do (needs a Windows PC and a release built with `-DOKAY_BUILD_XBOX_UWP=ON`, which `build-windows-dist.sh` sets; it also ships `xbox-src` next to the editor):
 
-1. Open the editor, File > Build Settings, click **Xbox (exp.)** at the top.
-2. You should see an orange "EXPERIMENTAL and UNVERIFIED" line, the limits text, a list of Visual Studio 2022 / UWP tools / Windows SDK / SignTool as found or MISSING with the install step, and the package name, version and publisher it will use. If anything required is MISSING the **Export** button is greyed with a tooltip. **Check again** re-runs the check.
-3. With everything found, press Export. Open the output folder: `package\AppxManifest.xml`, `package\Assets\` (14 PNG files; generated placeholders unless the project has an icon, then `PLACEHOLDER_ASSETS.txt` is written), `package\Data\`, `README_XBOX.txt`, `xbox-export.json`.
-4. Building the app, packing with our own packer and signing: `scripts\build-xbox-uwp.ps1` (see `docs/xbox_uwp.md`, "Verify it yourself"). The checks only: `scripts\xbox-check-sdk.ps1`.
+1. **Once:** install Visual Studio 2022 (free Community edition) with the workload "Universal Windows Platform development", its C++ UWP tools and a Windows 10/11 SDK.
+2. Open the editor, **File > Build Settings**, click **Xbox (exp.)** at the top. You should see an orange "EXPERIMENTAL and UNVERIFIED" line, the limits text, the tools list (found / MISSING with the install step), and the package name, version and publisher. A missing required tool greys the button with a tooltip; **Check again** re-checks.
+3. Leave **Engine mode** unticked the first time (a triangle test, the safest). Tick **Also install on this PC afterwards** if you want it on this PC. Press **Build Xbox package**.
+4. Watch the page: a step list (Check the Windows tools, Export, Set up the UWP app build, Compile the UWP app, Put the program into the package, Compile the shaders, Pack and check the .appx, Sign, Install) with a status per step and a live log. **Cancel build** stops it. If a step fails you get a plain message and the first error lines: send us those.
+5. If you ticked install, Windows shows **one** administrator (UAC) prompt: accept it. Then start the app from the Start menu: you should see a dark window with a coloured triangle (the background turns green once a pad is connected; left stick moves it, A centres it, B exits).
+6. The result is `<output>\<name>_<version>_x64.appx` (signed with a test certificate from PowerShell + SignTool: the page says so) and `OkaySpaceXbox-test.cer` (public part only).
+7. **Engine mode** (EXPERIMENTAL): tick it and build again to try running your exported game (`package\Data`): 3D scene, scripts, physics, gamepad and keyboard. The 2D / UI layer is not drawn. It has never been compiled with Microsoft's compiler, so a compile error is likely: the page then tells you to untick it. Please send the first error lines.
+8. For the console: `docs/xbox_uwp.md`, "Deploy to an Xbox in Developer Mode" (Device Portal upload).
 
-Verified on Linux: manifest, assets, package folder, our own `.appx` writer and reader (every block hash, content types), SDK decision logic (fake folders), `unzip -t` and Python `zipfile`/`hashlib` agree with the packer; `ctest -R xbox_uwp`. Not verified: everything that needs Windows, Visual Studio, SignTool, the editor window, or a console.
+Checks you can run without Windows: `ctest -R xbox_uwp` (needs `-DOKAY_BUILD_XBOX_UWP=ON -DOKAY_BUILD_TESTS=ON`) runs the Linux tests: the old package/packer tests, `xbox_uwp_runtime` (shader bundle, display, lifecycle, pad mapping, paths, audio conversion, the backend over a fake host, the build plan and runner, the API audit, game config), `xbox_uwp_audit` (no forbidden UWP API in the engine sources the UWP target compiles) and `xbox_uwp_sources_cmake`.
+
+Verified on Linux: everything in those tests. Not verified: every program the build starts (cmake, MSBuild, fxc, SignTool, PowerShell scripts), the editor page drawing, the UWP app and engine mode, installing, the console.

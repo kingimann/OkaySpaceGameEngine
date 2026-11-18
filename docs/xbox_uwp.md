@@ -1,6 +1,6 @@
 # Xbox One (experimental, Developer Mode) export
 
-Internal. **EXPERIMENTAL and UNVERIFIED.** Owner request 2026-11-18: a hobby target, not for publishing. Branch `claude/xbox-uwp-1`.
+Internal. **EXPERIMENTAL and UNVERIFIED.** Owner request 2026-11-18: a hobby target, not for publishing. Branches `claude/xbox-uwp-1` (packaging) and `claude/xbox-uwp-2` (engine inside UWP, one-click build; this page was updated there).
 The audit that led here is [xbox_uwp_audit.md](xbox_uwp_audit.md).
 
 ## What this is, and what it is not
@@ -10,9 +10,39 @@ The audit that led here is [xbox_uwp_audit.md](xbox_uwp_audit.md).
 * It is **not** a native console game. The public SDK does not build native console games, and this does not claim to.
 * It was **written on Linux**, which has no Visual Studio, Windows SDK, SignTool or UWP compiler and no Xbox. Nothing that needs those
   has ever run. "Compatibility with any console" is **unknown**.
-* The Xbox app shell in this version **does not run your game**. It opens a window, draws a test triangle with Direct3D 11 and reads a
-  gamepad (left stick moves the triangle, A centres it, B exits). It exists to prove the packaging pipeline. Making the engine itself
-  run inside UWP is the unfinished part (audit, "Concrete compatibility problems").
+* The Xbox app shell has **two modes**. Default: it opens a window, draws a test triangle with Direct3D 11 and reads a gamepad (left stick moves
+  the triangle, A centres it, B exits); that proves the package pipeline. **Engine mode** (a tick box next to the build button, `-DOKAY_XBOX_APP_ENGINE=ON`)
+  links the engine (`okay_engine_uwp`) and runs the exported game in `package\Data`: scene loading, scripts, fixed-step physics, animation, the 3D view
+  through a Direct3D 11 swap chain, gamepad and keyboard input, WASAPI audio output. **Not drawn yet: the 2D / UI layer** (UICanvas elements),
+  because the software painter has no present path wired. Engine mode has **never been compiled with Microsoft's UWP compiler** (the engine is only ever
+  built with MinGW today), so expect compile errors on the first try. Nothing in engine mode ever ran.
+
+## One click (owner request 2026-11-18): the build button runs everything
+
+Install Visual Studio 2022 once (workload "Universal Windows Platform development" with its C++ UWP tools and a Windows 10/11 SDK), open the editor,
+File > Build Settings > **Xbox (exp.)**, press **Build Xbox package**, accept the one administrator prompt if you ticked "Also install on this PC".
+The page shows a step list with a status per step, a live log, and **Cancel build**. Steps, in order (`platform/xbox_uwp/XboxBuildPlan.hpp`):
+
+| # | Step | What runs | Where it is decided |
+|---|---|---|---|
+| 1 | Check the Windows tools | the SDK check (in the editor process) | `XboxSdkCheck.hpp` |
+| 2 | Export game data, manifest, tile images | the editor's export (`package\Data`, `AppxManifest.xml`, 14 PNG) | `XboxExport.hpp` |
+| 3 | Set up the UWP app build | Visual Studio's `cmake` (or the one on PATH) with `-G "Visual Studio 17 2022" -A x64 -DCMAKE_SYSTEM_NAME=WindowsStore` | `PlanBuild` |
+| 4 | Compile the UWP app | `cmake --build` | `PlanBuild` |
+| 5 | Put the program into the package | copy `OkaySpaceXbox.exe` (and the two triangle `.cso`) | `XboxBuildHost.hpp` |
+| 6 | Compile the shaders (offline) | `scripts\xbox-compile-shaders.ps1` (fxc.exe from the SDK) into `package\Shaders` | `PlanBuild` |
+| 7 | Pack and check the `.appx` | our own packer and checker, in the editor process (no MakeAppx) | `XboxAppx.hpp` |
+| 8 | Sign | `scripts\xbox-sign.ps1`: `New-SelfSignedCertificate` + Microsoft SignTool. The log says which signer was used. The own-signing stages (`claude/own-signing-plan`, `OKAY_OWN_SIGNING`, not independently reviewed) are not on this branch; when they land the plan's `Signer::OwnSigning` switches step 8 to them | `Signer` |
+| 9 | optional: Install on this PC | one UAC prompt, then `xbox-install-local.ps1` imports the public `.cer` into `Cert:\LocalMachine\TrustedPeople` and runs `Add-AppxPackage` | `PlanBuild`, `scripts\xbox-install-local.ps1` |
+
+A failure stops the build with a plain message (what usually causes it) and the first error lines. Cancel kills the running program. Anything that looks
+like a password, token or key is replaced in the log; the scripts never print one (the test certificate's private key stays in your Windows certificate store).
+The runner (`BuildRunner`) is polled once per editor frame: no `<thread>`, `<mutex>` or `std::condition_variable`. Process spawning is `XboxProcess.hpp`
+(`CreateProcessW` with a pipe, `PeekNamedPipe`). **Where the sources come from:** the Windows release carries them in `xbox-src` next to the editor
+(`scripts\build-windows-dist.sh`); a source checkout works too, or set `OKAY_SOURCE_ROOT`.
+**Verified on Linux:** the plan and its command lines (fake Visual Studio layouts, quoting, paths with spaces), the runner (order, stop on failure, cancel, UAC declined, secrets
+never in the log, bounded log), log classification and redaction, the Internal steps (collect and pack on a real folder, our checker accepts the package). **Never run:**
+all spawned programs, the PowerShell scripts, the Windows process glue (`XboxProcess.hpp`, syntax-checked with MinGW only), the editor page drawing.
 
 ## Where everything is
 
@@ -27,7 +57,16 @@ The audit that led here is [xbox_uwp_audit.md](xbox_uwp_audit.md).
 | Build, pack, test certificate, sign | `scripts/build-xbox-uwp.ps1` | **never run** |
 | UWP app shell | `platform/xbox_uwp/app/` (`main.cpp`, two HLSL files, CMake) | **uncompiled**. Only brace balance was checked |
 | Editor entry | File > Build Settings > platform **Xbox (exp.)** (`editor/main.cpp`, under `#if OKAY_XBOX_UWP`) | the editor code was compiled (syntax only) with g++ on Linux, with and without the option; **never seen on a screen** |
-| Tests | `platform/xbox_uwp/tests/test_xbox_uwp.cpp`, ctest name `xbox_uwp` | run on Linux, see below |
+| Offline shaders | `engine/include/okay/Render/D3D11Hlsl.hpp` (the HLSL text, moved out of `D3D11Renderer.cpp` byte for byte), `ShaderBundle.hpp` (manifest, hashes, loader), `tool/okay_shaders.cpp`, `scripts/xbox-compile-shaders.ps1` | manifest and loader tested on Linux; **fxc never run**; the renderer compiles (syntax) for desktop and UWP with MinGW |
+| Swap-chain present | `XboxPresent.hpp`, `XboxDisplay.hpp` | sizing, Present result handling tested; the DXGI calls only syntax-checked |
+| UWP platform backend | `XboxUwpBackend.hpp` (a `platform::Backend`, kind Own), `XboxLifecycle.hpp`, `UwpPlatform.cpp` (replaces `Platform.cpp` in the UWP target) | tested on Linux with a fake host; the CoreWindow glue in `app/engine_app.hpp` is **uncompiled** |
+| Input | `XboxInput.hpp` (Windows.Gaming.Input mapping, dead zones, triggers, vibration timer, key table) | tested on Linux with fake readings |
+| Files | `XboxPaths.hpp`, `Paths::SetEnvOverride`, `#if OKAY_XBOX_UWP` in `Platform.cpp`, `Achievements.hpp`, `AccountService.hpp` | path mapping tested; the real folders come from `ApplicationData` (glue, uncompiled) |
+| Audio | `XboxAudio.hpp` (ring, conversion, resampler, `platform::AudioDevice`), `XboxWasapi.hpp` | conversion tested on Linux; WASAPI glue syntax-checked only |
+| Reduced engine | `engine/CMakeLists.txt` + `uwp_sources.cmake` + `uwp_exclude.txt` (target `okay_engine_uwp`), `XboxUwpAudit.hpp`, `tool/okay_uwp_audit.cpp` | source list and API audit tested on Linux; **never compiled** |
+| Game run | `XboxGameConfig.hpp` (tested), `XboxGameRuntime.hpp` (syntax-checked, not linked), `app/engine_app.hpp` (uncompiled) | see "Engine mode" |
+| One-click build | `XboxBuildPlan.hpp`, `XboxBuildHost.hpp`, `XboxProcess.hpp`, `scripts/xbox-sign.ps1`, `scripts/xbox-install-local.ps1` | see above |
+| Tests | `platform/xbox_uwp/tests/test_xbox_uwp.cpp` (ctest `xbox_uwp`) and `test_xbox_uwp_runtime.cpp` (ctest `xbox_uwp_runtime`, plus `xbox_uwp_audit` and `xbox_uwp_sources_cmake`) | run on Linux, see below |
 
 Isolation: everything Xbox is in `platform/xbox_uwp/`. The CMake option `OKAY_BUILD_XBOX_UWP` is OFF by default. It adds the test, the
 `okay-appx` tool and, in the editor, one define (`OKAY_XBOX_UWP`) and one include path. `scripts/build-windows-dist.sh` turns it on so the
@@ -162,7 +201,47 @@ A UWP package also installs on Windows 10/11, so steps 1 to 6 test the whole pip
 
 Run `ctest -R xbox_uwp` (needs `-DOKAY_BUILD_XBOX_UWP=ON -DOKAY_BUILD_TESTS=ON`) to run the Linux tests anywhere.
 
+## The engine inside UWP (branch `claude/xbox-uwp-2`): what was done, from what, and what is not
+
+All of it is **unverified on Windows**: written and tested on Linux, never compiled with Microsoft's UWP compiler, never run on a PC or a console. "Tested" below means
+the pure logic ran on Linux. Each file says in its header what it was written from; everything is our own code from Microsoft's public documentation and the C++ standard,
+no code copied, no new dependency (rule 19a). Everything Xbox-only is behind `OKAY_XBOX_UWP` (a compile define set only by the UWP target) or in `platform/xbox_uwp/`; the
+desktop build is unchanged (checked below).
+
+1. **Offline shaders.** `D3DCompile` was called at 8 places in `D3D11Renderer.cpp` for 15 entry points (VSMain, PSMain, VSDepth, VSSkin, VSDepthSkin, VSQuad, PSSky, PSDown, PSBlur, PSUber,
+   PSFxaa, PSAoDepth, PSAo, PSAoMul, PSDof). The HLSL text moved byte for byte into `D3D11Hlsl.hpp` (compared with the old string: identical, 23,291 bytes). One helper
+   (`CompileShader`) now either calls `D3DCompile` (desktop, unchanged) or, with `OKAY_XBOX_UWP`, reads `shaders.manifest` + `okay3d_<entry>.cso` from `package\Shaders` through
+   `ShaderBundle.hpp` (sizes and FNV-1a hashes checked, `DXBC` magic checked, refuses a bundle made from a different HLSL text, required entries VSMain/PSMain, optional ones switch a feature off exactly as
+   a desktop compile failure did). `okay-shaders dump|manifest|verify` and `scripts/xbox-compile-shaders.ps1` (fxc `/T <profile> /E <entry> /Fo`) make the bundle at build time. `D3D12Renderer.cpp` also calls D3DCompile; it is excluded from the UWP target.
+   Not done: shader debug info / `/O` flags are fxc defaults; the other HLSL users (the UI D3D11 painter `OkayUI_D3D11.cpp`) are not part of the UWP target.
+2. **Swap-chain presentation.** `XboxPresent.hpp`: a flip-model (`DXGI_SWAP_EFFECT_FLIP_DISCARD`, 2 buffers, `R8G8B8A8_UNORM`, `DXGI_SCALING_STRETCH`) swap chain on the CoreWindow, fed by the
+   existing `D3D11Renderer::RenderToTexture` (it already resolves MSAA straight into a texture, no read-back). The back buffer is capped at 1920x1080 by default (`ChooseBackBuffer`, our default, not a
+   measured limit). `Present` results map to Ok / Occluded / DeviceLost (`ClassifyPresent`). Not done: device-loss recovery (the shell exits with a message), HDR, 4K.
+3. **Window and lifecycle.** `XboxUwpBackend.hpp` implements `okay::platform::Backend` (kind `Own`) over a small `UwpHost` interface: window size/visibility/activation, suspend with a save hook and the 5 s deadline rule
+   (`XboxLifecycle.hpp`), resume, B / back request to a single `Quit` event, DPI changes (`DipsToPixels`), keyboard, mouse, pads, audio, clipboard (in-app only). `UwpPlatform.cpp` replaces `Platform.cpp` in the UWP target
+   (registry, defaults, timers). Not done: touch, text composition (IME), the system clipboard, Windows-key layouts (a US layout is assumed for `KeyForChar`), multi-window, a splash.
+4. **Input.** `XboxInput.hpp`: `GamepadReading` to `platform::GamepadAxis/Button` with XInput's documented dead zones (radial, rescaled), trigger threshold, +Y flipped to SDL's +Y down, Menu to Start, View to Back, d-pad and
+   shoulders and thumb clicks; rumble with a duration (the API holds a vibration until changed, so a timer ends it) and trigger motors; `KeyFromVirtualKey`. Button bit values are from the documented enum and checked at compile time by a
+   `static_assert` in the shell (unverified). Not done: Guide button (the system keeps it), battery, hot-plug identity beyond an instance id.
+5. **Files.** `XboxPaths.hpp`: `GameData` and `Shaders` map to the read-only install folder, saves/config/cache/logs to `LocalFolder`, temp to `TemporaryFolder`; `..`, absolute paths, drive letters, device names and
+   trailing dots are refused; `CanWrite` is false for the install folder. `Paths::SetEnvOverride` (new, nothing calls it on the desktop) lets the shell point `%APPDATA%`-style lookups into `LocalFolder`; `Platform.cpp` `PrefPath`,
+   `Achievements.hpp` and `AccountService.hpp` use it under `OKAY_XBOX_UWP`. Not done: `SaveFile.cpp` and `Prefs.cpp` still use `windows.h` calls that were not checked against the UWP allow-list (`MoveFileEx` and friends), game code that writes next to its data fails by design.
+6. **Audio.** What the desktop mixer outputs to: `platform::AudioDevice` (SDL's audio on the desktop). `XboxAudio.hpp` is a `platform::AudioDevice` for UWP: a lock-free ring (queue mode) or the engine's callback (callback mode), S16/F32 in, any channel count and sample
+   rate out (linear resampler), silence on underrun, paused at start, `ClearQueued`. The mixer is unchanged. `XboxWasapi.hpp`: shared-mode `IAudioClient` through `ActivateAudioInterfaceAsync`, event-driven, one native `CreateThread`, float mix format only. Not done: microphone capture, exclusive mode,
+   low-latency `IAudioClient3`, spatial audio, a non-float mix format.
+7. **Reduced engine.** `okay_engine_uwp` (`platform/xbox_uwp/engine/`): the source list is **read from `engine/CMakeLists.txt` at configure time** (305 engine sources, 9 crypto), minus `uwp_exclude.txt` (3: the OpenGL renderer, the Direct3D 12 renderer, the Photon adapter). It does **not** link `d3dcompiler`, `d3d12`, `dxguid`, `winhttp`, `user32`,
+   `gdi32`, `opengl32`, SDL2 or libsodium; it links `WindowsApp`, `d3d11`, `dxgi`, `ws2_32`, `bcrypt`. `okay-uwp-audit` scans the 302 compiled files and their 927-file include closure for 27 forbidden-API tokens with a small three-valued preprocessor (so `#if !defined(OKAY_XBOX_UWP)` code is
+   not reported); it found and I fenced: `winhttp` in `NativeHttp.hpp` (no native HTTP client under UWP: calls report "not reached"), `LoadLibraryA` and `CreateProcessA` in `AccountService.hpp` (random bytes now `BCryptGenRandom`, no curl fallback), `getenv("USERPROFILE")` in `TexturePath.hpp`. It now finds none (ctest `xbox_uwp_audit`).
+   The forbidden list is from memory of Microsoft's pages: check it. Libsodium is not available: packet encryption is off and Ed25519 would use our unreviewed `okay::crypto`: this target is never a release (rule 18). 2D drawing: `SDL_Renderer` does not exist; the software painter is the plan and is **not wired** (no UI drawn).
+   Not done: it has never been compiled; MSVC may reject GNU-style code in many of the 300 files; the `third_party/stb` and `ufbx` include paths and `_CRT_SECURE_NO_WARNINGS` are guesses; Winsock, `SaveFile.cpp`, `Recovery.cpp`, `Prefs.cpp`, `CoreThreads.hpp` (`CreateThread` is allowed) were not checked against the UWP allow-list.
+8. **App shell.** `app/engine_app.hpp` (+ `main.cpp`, `app/CMakeLists.txt` option `OKAY_XBOX_APP_ENGINE`, off by default): wires CoreWindow events to the backend, Windows.Gaming.Input to pads, starts WASAPI, creates the renderer and presenter, loads `package\Data` through `XboxGameRuntime.hpp` (config parser tested;
+   it loads the scene, adds a camera when the scene has none, steps the engine's `GameLoop` with the scene's fixed-step physics, scripts and animation, feeds pads and keys), and draws the 3D view. When there is no `package\Data\game.okayconfig` it runs the triangle test as before. Not done: the 2D/UI layer, a loading screen, error display (failures go to the log and the app exits), device-loss recovery, scene switching UI, networking checks, anything that needs a save
+   framework to write outside LocalFolder.
+
+**Desktop unchanged, what was run:** the HLSL string is byte-identical; `D3D11Renderer.cpp`, `NativeHttp.hpp`, `AccountService.hpp`, `Achievements.hpp`, `Platform.cpp` and `Paths.cpp` compile (syntax) with MinGW with and without `OKAY_XBOX_UWP`; `editor/main.cpp` compiles (syntax) with g++ with and without the define;
+`ctest`-style runs of `test_xbox_uwp` (existing) and `test_xbox_uwp_runtime` (new), `okay-uwp-audit`, and the CMake source-list script. **Not run:** the full engine test suite, the editor, any Windows or console program.
+
 ## Limits to remember
 
-UWP sandbox (no desktop-only APIs, read-only install folder, smaller budgets than a PC), Developer Mode only, no GDK, no publishing, Direct3D 11 only, the engine is not
-inside the app yet, no hardware ever tested, no signing code of ours.
+UWP sandbox (no desktop-only APIs, read-only install folder, smaller budgets than a PC), Developer Mode only, no GDK, no publishing, Direct3D 11 only, the engine runs inside
+the app only in the EXPERIMENTAL engine mode that has never been compiled, no hardware ever tested, no signing code of ours.

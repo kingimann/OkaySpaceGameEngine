@@ -152,6 +152,31 @@ Each stage is its own branch and its own review of the docs; all of it stays OFF
    signed INTEGERs, no multi-byte tag numbers, no DER parser for whole certificates. Checked here with g++ 13 on Linux only
    (also under AddressSanitizer and UndefinedBehaviorSanitizer); never compiled with MinGW or MSVC.
 2. RSA key generation, sign, verify (PKCS#1 v1.5 SHA-256); known-answer and OpenSSL cross-check tests.
+   **Status 2026-11-18: written and tested, NOT independently reviewed, test key only, not wired to anything.**
+   Where: `signing/include/okay/Sign/Rsa.hpp`, `signing/src/Rsa.cpp`, tests `signing/tests/test_sign_rsa.cpp` and
+   `test_sign_rsa_openssl.cpp`; same switch (`OKAY_OWN_SIGNING`, default OFF, refused by releases). Written from RFC 8017
+   (3, 5.1, 5.2, 8.2, 9.2, A.1) and FIPS 186-5 appendix A. Reuses `okay::crypto::Sha256Hash` (no new hash code) and
+   `RandomBytes`. What exists: `RsaGenerateKey` (even size from 512 bits, e = 65537, two fresh random primes with the top two
+   bits set, trial division then Miller-Rabin, |p-q| > 2^(half-100), d from lcm(p-1, q-1) and d > 2^half, CRT values),
+   `RsaCheckPrivateKey`, `RsaEncodeEmsaSha256` (DigestInfo written with our DER writer), `RsaSignSha256` / `RsaSignDigestSha256`
+   (CRT; the result is checked with e before it is returned), `RsaVerifySha256` / `RsaVerifyDigestSha256` (exact length, s < n,
+   re-encode and compare bytes, so no padding parser to get wrong), and PKCS#1 private and public key DER export and strict import.
+   Tests: exact signatures for fixed 1024 and 2048-bit test keys (6 vectors; numbers computed with Python integers and each
+   one equal to what `openssl dgst -sha256 -sign` produced; these are NOT official NIST CAVP or RFC vectors, which could not
+   be fetched here), the RFC 8017 DigestInfo prefix constant, round trips at several sizes and message lengths, tampered
+   message / signature bit / signature length / s = n / zero / all-ones / s + n, wrong key, wrong exponent, a broken private key
+   refusing to sign, and hand-made malformed blocks that carry a valid RSA operation (wrong block type, non-FF padding, short
+   padding with trailing garbage, missing NULL parameters, other digest) which verify must reject. Optional cross-check (skipped
+   without openssl): `openssl rsa -check` accepts our exported key, `openssl dgst -sha256 -verify` accepts our signatures and
+   rejects a changed message, and our verify accepts openssl's signature made with our key (identical bytes, as expected for
+   a deterministic scheme). Timings, g++ 13 `-O2`, one Linux machine, no other load: 2048-bit key generation 0.5 to 1.6 s
+   (12 runs, no run over 1.6 s), signing about 8.5 ms, verifying about 0.1 ms. So the plain square-and-multiply modexp
+   from stage 1 is fast enough and Montgomery / sliding window was NOT needed; it stays a possible later improvement.
+   Not done / limits: not constant time and no blinding (a local timing attacker could recover the key; irrelevant for a
+   throw-away test key, fatal for a real one), no private-key file writer (owner-only permissions, rule 15) yet, no SPKI
+   public key encoding yet (stage 3), no sizes below 512 bits, 3072/4096-bit timings not measured, no RSA-PSS, only SHA-256.
+   Verified only with g++ 13 on Linux (also AddressSanitizer + UndefinedBehaviorSanitizer on the RSA test); never built with
+   MinGW or MSVC.
 3. Self-signed X.509 v3 certificate (subject from the manifest Publisher, code signing EKU, key usage, validity);
    `.cer` output that `openssl x509` can read.
 4. CMS SignedData builder (generic), then the Microsoft SPC indirect data content on top.

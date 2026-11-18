@@ -244,5 +244,12 @@ int main(int, char**) {
           "std::fprintf(stderr, \"x=%d\\n\", 3); std::fputs(\"a\", stdout); std::ifstream f(\"x\", std::ios::binary | std::ios::ate); const std::streamoff n = f.tellg(); std::vector<unsigned char> buf((size_t)(n < 0 ? 0 : n)); f.seekg(0);\n"
           "if (!f.read(reinterpret_cast<char*>(buf.data()), n)) return 2; return (int)f.gcount() + v[0]; }\n", &o);
     CHECK(t, has_symbol(o, "fprintf") && has_symbol(o, "main"));
+    ++tests;
+    build(t, "round 31: aggregate of classes from a braced list, type trait built-ins",
+          "#include <array>\n#include <cstdlib>\n#include <new>\n#include <type_traits>\nstruct V { float x, y, z; V() : x(0), y(0), z(0) {} V(float a, float b, float c) : x(a), y(b), z(c) {} };\n"
+          "std::array<V, 4> f(const V& c) { std::array<V, 4> a = {c, c, c, c}; a[1] = V{1, 2, 3}; return a; }\n"
+          "struct A { virtual ~A() {} }; struct B : A {}; struct C { int x; C(int a) : x(a) {} };\nstatic_assert(std::is_base_of<A, B>::value, \"x\");\n"
+          "int main() { V c; auto a = f(c); int r = 0; if (std::is_base_of<B, A>::value) r += 10; if (std::is_default_constructible<C>::value) r += 100; if (std::is_polymorphic<B>::value) r += 1000; return (int)a[1].y + r; }\n", &o);
+    CHECK(t, has_symbol(o, "main"));
     return t.finish(tests);
 }

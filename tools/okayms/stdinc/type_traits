@@ -41,4 +41,16 @@ template <> struct is_floating_point<float> { static const bool value = true; };
 template <> struct is_floating_point<double> { static const bool value = true; };
 template <typename T> struct is_pointer { static const bool value = false; };
 template <typename T> struct is_pointer<T*> { static const bool value = true; };
+// is_base_of, is_class, is_polymorphic and is_default_constructible ([meta.rel], [meta.unary.prop]) are answered by compiler
+// built-ins (__is_base_of and so on), so they are exact (the placeholders above are for traits that have no built-in here).
+template <typename B, typename D> struct is_base_of { static const bool value = __is_base_of(B, D); };
+template <typename T> struct is_class { static const bool value = __is_class(T); };
+template <typename T> struct is_polymorphic { static const bool value = __is_polymorphic(T); };
+template <typename T> struct is_default_constructible { static const bool value = __is_default_constructible(T); };
+// Placeholders (documented, not exact): `final` is dropped by the compiler so no class is final here; an enum is an int here
+// so is_enum is false; the triviality traits say true (they are only used in static_assert, which is not checked).
+template <typename T> struct is_final { static const bool value = false; };
+template <typename T> struct is_enum { static const bool value = false; };
+template <typename T> struct is_trivially_copyable { static const bool value = true; };
+template <typename T> struct is_trivially_destructible { static const bool value = true; };
 }

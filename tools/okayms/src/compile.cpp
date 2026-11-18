@@ -3890,6 +3890,7 @@ struct Parser {
     }
     bool parse_typeid(Node* out);
     bool parse_dynamic_cast(Node* out);
+    bool parse_type_trait(Node* out);
     bool instantiate_generic_lambda(int sid, const std::vector<Node>& args);
     std::vector<Type> auto_types{};
     size_t auto_idx = 0;
@@ -9422,6 +9423,12 @@ bool Parser::parse_local_decl_one(const Type& type, bool is_typedef, bool is_sta
             init = Node{};
             init.kind = Node::Block;
             init.text = "skipped";
+        } else if (is(TLBrace) && !decl.type.is_array() && decl.type.base == 3 && decl.type.pointers == 0 && !decl.type.is_ref &&
+                   decl.type.struct_id >= 0 && obj_needs_ctor(decl.type) && tokens[at + 1].kind != TRBrace &&
+                   aggregate_with_defaults(decl.type.struct_id, std::vector<Node>(2))) {
+            // `std::array<V, 4> a = {c, c, c, c};` for an aggregate with members that need construction: made as the
+            // temporary `T{...}` (default construction, then each member set from its item) and then copied in.
+            if (!braced_temp(decl.type.struct_id, &init)) return false;
         } else if (!parse_init(&init)) {
             return false;
         }
@@ -12223,9 +12230,62 @@ bool Parser::parse_dynamic_cast(Node* out) {
     return parse_postfix(out);
 }
 
+// __is_base_of(B, D), __is_class(T), __is_polymorphic(T), __is_default_constructible(T): the compiler's answers for the
+// <type_traits> templates of the same names ([meta.rel], [meta.unary.prop]); an integer constant 0 or 1.
+bool Parser::parse_type_trait(Node* out) {
+    const std::string which = cur().text;
+    next();
+    next();  // name (
+    Type a;
+    bool imp = false;
+    bool exp = false;
+    if (!parse_type(&a, &imp, &exp)) return false;
+    while (accept(TStar)) ++a.pointers;
+    Type b2;
+    if (which == "__is_base_of") {
+        if (!expect(TComma, "','")) return false;
+        if (!parse_type(&b2, &imp, &exp)) return false;
+        while (accept(TStar)) ++b2.pointers;
+    }
+    if (!expect(TRParen, "')'")) return false;
+    const auto is_class = [](const Type& t) { return t.base == 3 && t.pointers == 0 && !t.is_array() && t.struct_id >= 0; };
+    bool answer = false;
+    if (which == "__is_base_of") {
+        if (is_class(a) && is_class(b2))
+            for (int walk = b2.struct_id; walk >= 0; walk = structs[static_cast<size_t>(walk)].base)
+                if (walk == a.struct_id) answer = true;
+    } else if (which == "__is_class") {
+        answer = is_class(a);
+    } else if (which == "__is_polymorphic") {
+        answer = is_class(a) && structs[static_cast<size_t>(a.struct_id)].poly;
+    } else {
+        // Default-constructible: a scalar, or a class with no constructors or one that can be called with no arguments.
+        answer = true;
+        if (is_class(a)) {
+            bool any_ctor = false;
+            bool callable = false;
+            for (const Method& m : structs[static_cast<size_t>(a.struct_id)].methods) {
+                if (m.name != "<ctor>" || m.owner != a.struct_id) continue;
+                any_ctor = true;
+                if (required_args(m.defaults, m.params.size()) == 0) callable = true;
+            }
+            answer = !any_ctor || callable;
+        }
+    }
+    out->kind = Node::IntLit;
+    out->number = answer ? 1 : 0;
+    out->type = Type{};
+    out->type.base = 1;
+    return parse_postfix(out);
+}
+
 bool Parser::parse_unary(Node* out) {
     if (is(TIdent) && cur().text == "typeid" && at + 1 < tokens.size() && tokens[at + 1].kind == TLParen) return parse_typeid(out);
     if (is(TIdent) && cur().text == "dynamic_cast" && at + 1 < tokens.size() && tokens[at + 1].kind == TLt) return parse_dynamic_cast(out);
+    if (is(TIdent) && at + 1 < tokens.size() && tokens[at + 1].kind == TLParen &&
+        (cur().text == "__is_base_of" || cur().text == "__is_class" || cur().text == "__is_polymorphic" ||
+         cur().text == "__is_default_constructible"))
+        return parse_type_trait(out);
     if (is(TIdent) && cur().text == "new") {
         if (!parse_new(out)) return false;
         return parse_postfix(out);

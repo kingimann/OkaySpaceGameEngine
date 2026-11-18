@@ -39,9 +39,9 @@ $vswhere = Join-Path $pf86 'Microsoft Visual Studio\Installer\vswhere.exe'
 $vsPath = $null; $vsVersion = $null; $vsName = $null; $vsMajor = 0; $toolset = $null
 $cands = @()
 if (Test-Path $vswhere) {
-    $paths = @(& $vswhere -products * -sort -property installationPath)
-    $vers = @(& $vswhere -products * -sort -property installationVersion)
-    $names = @(& $vswhere -products * -sort -property displayName)
+    $paths = @(& $vswhere -products * -prerelease -sort -property installationPath)
+    $vers = @(& $vswhere -products * -prerelease -sort -property installationVersion)
+    $names = @(& $vswhere -products * -prerelease -sort -property displayName)
     for ($i = 0; $i -lt $paths.Count; $i++) {
         $p = $paths[$i]; $msvc = Join-Path $p 'VC\Tools\MSVC'
         if (-not $p -or -not (Test-Path $msvc)) { continue }
@@ -58,6 +58,9 @@ $best = $cands | Sort-Object @{ e = { [bool]$_.toolset }; Descending = $true }, 
 if ($best) { $vsPath = $best.path; $vsVersion = $best.version; $vsName = $best.name; $toolset = $best.toolset; if ($vsVersion -match '^(\d+)') { $vsMajor = [int]$Matches[1] } }
 $generators = @{ 15 = 'Visual Studio 15 2017'; 16 = 'Visual Studio 16 2019'; 17 = 'Visual Studio 17 2022'; 18 = 'Visual Studio 18 2026' }
 $generator = if ($generators.ContainsKey($vsMajor)) { $generators[$vsMajor] } else { '' }
+# MSBuild platform toolset NAME for the MSVC folder (14.30-14.49 = v143, 14.50-14.59 = v145; UNVERIFIED): a newer Visual Studio's default may differ from the toolset that has the UWP libraries
+$platformToolset = ''
+if ($toolset -match '^14\.(\d+)') { $mn = [int]$Matches[1]; if ($mn -ge 30 -and $mn -le 49) { $platformToolset = 'v143' } elseif ($mn -ge 50 -and $mn -le 59) { $platformToolset = 'v145' } }
 $vsInstall = 'Install Visual Studio 2022 or newer (the free Community edition is enough) from the Visual Studio downloads page on visualstudio.microsoft.com.'
 if (-not (Test-Path $vswhere)) { $vsInstall = 'vswhere.exe was not found (it installs with Visual Studio 2017 or newer). ' + $vsInstall }
 Add-Item 'vs' 'Visual Studio 2022 or newer' ($null -ne $vsPath) $(if ($vsPath) { "$vsName $vsVersion ($vsPath)" } else { $null }) $vsInstall
@@ -96,7 +99,7 @@ Add-Item 'signtool' 'SignTool.exe' ($null -ne $st) $st 'Part of the Windows SDK 
 $missing = @($items | Where-Object { $_.required -and -not $_.found })
 $available = ($missing.Count -eq 0)
 if ($Json) {
-    [pscustomobject]@{ available = $available; visualStudioPath = $vsPath; visualStudioVersion = $vsVersion; visualStudioMajor = $vsMajor; generator = $generator; toolsetVersion = $toolset; sdkVersion = $goodSdk; sdkRoot = $kits; signTool = $st; makeAppx = $mk; items = $items } | ConvertTo-Json -Depth 4
+    [pscustomobject]@{ available = $available; visualStudioPath = $vsPath; visualStudioVersion = $vsVersion; visualStudioMajor = $vsMajor; generator = $generator; toolsetVersion = $toolset; platformToolset = $platformToolset; sdkVersion = $goodSdk; sdkRoot = $kits; signTool = $st; makeAppx = $mk; items = $items } | ConvertTo-Json -Depth 4
 } else {
     foreach ($i in $items) {
         $tag = if ($i.found) { 'FOUND  ' } elseif ($i.required) { 'MISSING' } else { 'missing (optional)' }

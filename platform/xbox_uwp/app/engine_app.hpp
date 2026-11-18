@@ -22,6 +22,7 @@
 #include <winrt/Windows.Storage.h>
 #include <winrt/Windows.System.h>
 #include <winrt/Windows.UI.Core.h>
+#include <winrt/Windows.UI.Input.h>
 #include <winrt/Windows.UI.ViewManagement.h>
 
 #include <chrono>
@@ -29,6 +30,7 @@
 namespace okay_xbox_app {
 
 using namespace winrt;
+using namespace winrt::Windows::Foundation;   // IInspectable
 using namespace winrt::Windows::ApplicationModel::Core;
 using namespace winrt::Windows::UI::Core;
 namespace gi = winrt::Windows::Gaming::Input;
@@ -68,7 +70,7 @@ struct Host : xb::UwpHost {
     CoreWindow window{nullptr};
     std::vector<std::unique_ptr<WinRtPad>> pads;
     std::unique_ptr<xb::WasapiHost> audio;
-    void* CoreWindowHandle() override { return window ? reinterpret_cast<IUnknown*>(get_abi(window)) : nullptr; }
+    void* CoreWindowHandle() override { return window ? reinterpret_cast<::IUnknown*>(get_abi(window)) : nullptr; }
     void PumpEvents() override { window.Dispatcher().ProcessEvents(CoreProcessEventsOption::ProcessAllIfPresent); }
     void Refresh() {   // rebuild the pad list from the system (called each frame; cheap for a handful of pads)
         auto list = gi::Gamepad::Gamepads();
@@ -79,7 +81,7 @@ struct Host : xb::UwpHost {
     xb::PadDevice* Pad(int i) override { return i >= 0 && i < (int)pads.size() ? pads[(size_t)i].get() : nullptr; }
     xb::AudioHost* Audio() override {
         if (!audio) {
-            const hstring id = Windows::Media::Devices::MediaDevice::GetDefaultAudioRenderId(Windows::Media::Devices::AudioDeviceRole::Default);
+            const hstring id = winrt::Windows::Media::Devices::MediaDevice::GetDefaultAudioRenderId(winrt::Windows::Media::Devices::AudioDeviceRole::Default);
             audio.reset(new xb::WasapiHost(std::wstring(id.c_str())));
         }
         return audio.get();
@@ -87,7 +89,7 @@ struct Host : xb::UwpHost {
     bool PresentPixels(const std::uint8_t*, int, int) override { return false; }   // software frames are not presented yet (docs/xbox_uwp.md)
 };
 
-inline std::wstring PackageDir() { return std::wstring(Windows::ApplicationModel::Package::Current().InstalledLocation().Path().c_str()); }
+inline std::wstring PackageDir() { return std::wstring(winrt::Windows::ApplicationModel::Package::Current().InstalledLocation().Path().c_str()); }
 inline std::string Narrow(const std::wstring& w) { return winrt::to_string(winrt::hstring(w)); }
 
 struct GameApp : implements<GameApp, IFrameworkViewSource, IFrameworkView> {
@@ -104,8 +106,8 @@ struct GameApp : implements<GameApp, IFrameworkViewSource, IFrameworkView> {
         // Roots first: the Paths override must be in place before anything asks for a per-user folder.
         xb::PathRoots roots;
         roots.install = Narrow(PackageDir()) + "/";
-        roots.local = Narrow(std::wstring(Windows::Storage::ApplicationData::Current().LocalFolder().Path().c_str()));
-        roots.temp = Narrow(std::wstring(Windows::Storage::ApplicationData::Current().TemporaryFolder().Path().c_str()));
+        roots.local = Narrow(std::wstring(winrt::Windows::Storage::ApplicationData::Current().LocalFolder().Path().c_str()));
+        roots.temp = Narrow(std::wstring(winrt::Windows::Storage::ApplicationData::Current().TemporaryFolder().Path().c_str()));
         m_roots = roots;
         okay::Paths::Env env;
         env.appData = xb::DesktopDirToLocal(roots, xb::DesktopDir::RoamingAppData);
@@ -120,7 +122,7 @@ struct GameApp : implements<GameApp, IFrameworkViewSource, IFrameworkView> {
         (void)pixels;
         auto resize = [this]() {
             auto b = m_host.window.Bounds();
-            const float dpi = Windows::Graphics::Display::DisplayInformation::GetForCurrentView().LogicalDpi();
+            const float dpi = winrt::Windows::Graphics::Display::DisplayInformation::GetForCurrentView().LogicalDpi();
             m_backend->Life().Resized(b.Width, b.Height, dpi);
         };
         resize();
@@ -134,13 +136,13 @@ struct GameApp : implements<GameApp, IFrameworkViewSource, IFrameworkView> {
             const uint32_t c = a.KeyCode(); wchar_t wc[2] = {(wchar_t)c, 0};
             if (c >= 32 && c < 0xD800) m_backend->PushText(winrt::to_string(winrt::hstring(wc)));
         });
-        auto scale = [](float v) { return (int)(v * Windows::Graphics::Display::DisplayInformation::GetForCurrentView().LogicalDpi() / 96.0f + 0.5f); };
+        auto scale = [](float v) { return (int)(v * winrt::Windows::Graphics::Display::DisplayInformation::GetForCurrentView().LogicalDpi() / 96.0f + 0.5f); };
         w.PointerMoved([this, scale](auto&&, PointerEventArgs const& a) { auto p = a.CurrentPoint().Position(); m_backend->PushPointerMove(scale(p.X), scale(p.Y)); });
         w.PointerPressed([this, scale](auto&&, PointerEventArgs const& a) { auto p = a.CurrentPoint().Position(); m_backend->PushPointerButton(okay::platform::MouseLeft, true, scale(p.X), scale(p.Y)); });
         w.PointerReleased([this, scale](auto&&, PointerEventArgs const& a) { auto p = a.CurrentPoint().Position(); m_backend->PushPointerButton(okay::platform::MouseLeft, false, scale(p.X), scale(p.Y)); });
         w.PointerWheelChanged([this](auto&&, PointerEventArgs const& a) { m_backend->PushWheel(a.CurrentPoint().Properties().MouseWheelDelta() / 120.0f); });
         // B on the pad: the system's back request. We handle it (so the system does not close us abruptly) and leave through the loop.
-        Windows::UI::Core::SystemNavigationManager::GetForCurrentView().BackRequested([this](auto&&, BackRequestedEventArgs const& a) { a.Handled(true); m_backend->Life().BackRequested(); });
+        winrt::Windows::UI::Core::SystemNavigationManager::GetForCurrentView().BackRequested([this](auto&&, BackRequestedEventArgs const& a) { a.Handled(true); m_backend->Life().BackRequested(); });
         (void)life;
     }
 
@@ -150,7 +152,7 @@ struct GameApp : implements<GameApp, IFrameworkViewSource, IFrameworkView> {
         okay::D3D11Renderer::SetShaderBundleDir((Narrow(PackageDir()) + "/Shaders").c_str());
         if (!m_renderer.Init()) { Fail("The Direct3D 11 renderer could not start (see the log). Shaders: package\\Shaders must hold shaders.manifest and the .cso files."); return; }
         const xb::SizePx first = xb::ChooseBackBuffer(m_backend->Life().Size());
-        if (!m_presenter.Create(m_renderer.DeviceForPresent(), reinterpret_cast<IUnknown*>(get_abi(m_host.window)), first)) { Fail("The swap chain could not be created."); return; }
+        if (!m_presenter.Create(m_renderer.DeviceForPresent(), reinterpret_cast<::IUnknown*>(get_abi(m_host.window)), first)) { Fail("The swap chain could not be created."); return; }
         if (!m_runtime.Start(Narrow(PackageDir()) + "/Data", err)) { Fail(err); return; }
         m_backend->onSuspend = [this] { m_runtime.OnSuspend(); };
         m_backend->onResume = [this] { m_runtime.OnResume(); };
@@ -184,12 +186,12 @@ struct GameApp : implements<GameApp, IFrameworkViewSource, IFrameworkView> {
 
 private:
     void Fail(const std::string& why) { m_backend->Log("Xbox app: " + why); CoreApplication::Exit(); }   // no UI to show it on yet: the log is the only report
-    void OnSuspending(IInspectable const&, Windows::ApplicationModel::SuspendingEventArgs const& a) {
+    void OnSuspending(IInspectable const&, winrt::Windows::ApplicationModel::SuspendingEventArgs const& a) {
         auto deferral = a.SuspendingOperation().GetDeferral();
         auto& life = m_backend->Life();
         life.Suspending(m_backend->TicksMs(), 4500);
         m_backend->ServiceLifecycle();   // runs onSuspend (the save) and marks the save done
-        if (void* dev = m_renderer.DeviceForPresent()) { winrt::com_ptr<IDXGIDevice3> d; if (SUCCEEDED(static_cast<IUnknown*>(dev)->QueryInterface(IID_PPV_ARGS(d.put())))) d->Trim(); }
+        if (void* dev = m_renderer.DeviceForPresent()) { winrt::com_ptr<IDXGIDevice3> d; if (SUCCEEDED(static_cast<::IUnknown*>(dev)->QueryInterface(IID_PPV_ARGS(d.put())))) d->Trim(); }
         deferral.Complete();   // Microsoft: complete within the deadline or the app is terminated (SuspendReady / SuspendOverdue in XboxLifecycle.hpp)
     }
     void OnResuming(IInspectable const&, IInspectable const&) { m_backend->Life().Resuming(); }

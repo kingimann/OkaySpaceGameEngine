@@ -47,10 +47,10 @@ inline SdkInputs ProbeThisPc() {
             }
             return lines;
         };
-        const std::vector<std::string> paths = run("-products * -sort -property installationPath");
-        const std::vector<std::string> vers = run("-products * -sort -property installationVersion");
-        const std::vector<std::string> names = run("-products * -sort -property displayName");
-        const std::vector<std::string> withVc = run(std::string("-products * -sort -requires ") + kVcToolsComponentId() + " -property installationPath");
+        const std::vector<std::string> paths = run("-products * -prerelease -sort -property installationPath");
+        const std::vector<std::string> vers = run("-products * -prerelease -sort -property installationVersion");
+        const std::vector<std::string> names = run("-products * -prerelease -sort -property displayName");
+        const std::vector<std::string> withVc = run(std::string("-products * -prerelease -sort -requires ") + kVcToolsComponentId() + " -property installationPath");
         for (std::size_t i = 0; i < paths.size(); ++i) {
             VsInstall v; v.path = paths[i];
             if (vers.size() == paths.size()) v.version = vers[i];   // only trusted when the lists line up

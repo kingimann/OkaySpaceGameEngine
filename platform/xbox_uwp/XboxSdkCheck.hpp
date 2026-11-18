@@ -93,6 +93,7 @@ struct SdkReport {
     std::string visualStudioName;      // its display name ("" if unknown)
     int visualStudioMajor = 0;         // 17 for 2022, 18 for the next one; 0 = unknown
     std::string generator;             // CMake generator for that major ("" = let CMake choose)
+    std::string platformToolset;       // "v143" / "v145" derived from toolsetVersion ("" = unknown: the plan then passes only version=)
     std::string toolsetVersion;    // e.g. 14.38.33130 (newest MSVC folder with the UWP "store" libraries)
     std::string sdkVersion;        // e.g. 10.0.19041.0
     std::string sdkRoot;           // e.g. C:/Program Files (x86)/Windows Kits/10
@@ -148,6 +149,17 @@ inline std::string GeneratorForMajor(int major) {
         case 18: return "Visual Studio 18 2026";
         default: return "";
     }
+}
+
+/// The MSBuild platform toolset name for an MSVC folder version, because a newer Visual Studio's DEFAULT toolset may differ from the one that has the
+/// UWP libraries (Visual Studio 2026 defaults to v145 while a v143 UWP component is MSVC 14.4x). From Microsoft's published mapping as remembered
+/// (UNVERIFIED): 14.30-14.49 = v143, 14.50-14.59 = v145. Anything else: "" (omit the name; pass only version=).
+inline std::string PlatformToolsetFor(const std::string& msvcFolderVersion) {
+    const std::vector<long> v = ParseDottedVersionLoose(msvcFolderVersion);
+    if (v.size() < 2 || v[0] != 14) return "";
+    if (v[1] >= 30 && v[1] <= 49) return "v143";
+    if (v[1] >= 50 && v[1] <= 59) return "v145";
+    return "";
 }
 
 // The oldest SDK this export asks for. 10.0.17763 is Windows 10 version 1809, the first with a UWP
@@ -225,7 +237,7 @@ inline SdkReport EvaluateSdk(const SdkInputs& in) {
         r.visualStudioPath = pick->vs.path; r.visualStudioVersion = pick->vs.version; r.visualStudioName = pick->vs.displayName;
         r.visualStudioMajor = MajorOf(pick->vs.version); r.generator = GeneratorForMajor(r.visualStudioMajor);
         vs->found = true; vs->detail = pick->vs.displayName.empty() ? pick->vs.path : pick->vs.displayName + " " + pick->vs.version + " (" + pick->vs.path + ")";
-        if (pick->hasUwp) { r.toolsetVersion = pick->toolset; ts->found = true; ts->detail = "MSVC " + r.toolsetVersion; }
+        if (pick->hasUwp) { r.toolsetVersion = pick->toolset; r.platformToolset = PlatformToolsetFor(pick->toolset); ts->found = true; ts->detail = "MSVC " + r.toolsetVersion; }
         else ts->detail = "no MSVC toolset with x64 UWP libraries (lib/x64/store) in " + pick->vs.path;
         ts->install = UwpInstallText(r.visualStudioMajor);
     }

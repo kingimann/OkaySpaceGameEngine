@@ -43,8 +43,16 @@ if (-not $VsPath) {
 $tool = Join-Path $WorkDir 'okay-shaders.exe'
 $vcvars = Join-Path $VsPath 'VC\Auxiliary\Build\vcvars64.bat'
 $src = Join-Path $SourceRoot 'platform\xbox_uwp\tool\okay_shaders.cpp'
-cmd /c "`"$vcvars`" && cl /nologo /std:c++17 /EHsc /O2 /I `"$SourceRoot\engine\include`" `"$src`" /Fe:`"$tool`" /Fo:`"$WorkDir\\`""
-if (-not (Test-Path $tool)) { throw 'Could not build okay-shaders.' }
+if (-not (Test-Path -LiteralPath $vcvars)) { throw "vcvars64.bat not found: $vcvars" }
+if (Test-Path -LiteralPath $tool) { Remove-Item -LiteralPath $tool -Force }   # a stale exe must not hide a failed build
+# cl.exe through a small .bat (quoting paths with spaces inside `cmd /c "..."` is fragile). UTF-8 without BOM + chcp 65001 keeps non-ASCII paths.
+$objDir = Join-Path $WorkDir 'obj-shaders'; New-Item -ItemType Directory -Force -Path $objDir | Out-Null
+$bat = Join-Path $WorkDir 'cl-shaders.bat'
+$text = "@echo off`r`nchcp 65001 >nul`r`ncall `"$vcvars`"`r`nif errorlevel 1 exit /b 1`r`ncl /nologo /std:c++17 /EHsc /O2 /W0 /I`"$SourceRoot\engine\include`" `"$src`" /Fe:`"$tool`" /Fo:`"$objDir\\`"`r`nexit /b %errorlevel%`r`n"
+[System.IO.File]::WriteAllText($bat, $text, (New-Object System.Text.UTF8Encoding($false)))
+& $bat
+if ($LASTEXITCODE -ne 0) { throw "Could not build okay-shaders (cl.exe exit code $LASTEXITCODE)." }
+if (-not (Test-Path -LiteralPath $tool)) { throw 'Could not build okay-shaders (no exe was produced).' }
 
 & $tool dump $OutDir
 if ($LASTEXITCODE -ne 0) { throw 'okay-shaders dump failed.' }
@@ -52,10 +60,10 @@ $hlsl = Join-Path $OutDir 'okay3d.hlsl'
 $failed = @()
 foreach ($line in Get-Content (Join-Path $OutDir 'entries.txt')) {
     $p = $line -split ' '
-    $entry = $p[0]; $profile = $p[1]; $required = ($p[2] -eq 'required')
+    $entry = $p[0]; $prof = $p[1]; $required = ($p[2] -eq 'required')
     $cso = Join-Path $OutDir ("okay3d_{0}.cso" -f $entry)
     if (Test-Path $cso) { Remove-Item $cso -Force }
-    & $Fxc /nologo /T $profile /E $entry /Fo $cso $hlsl
+    & $Fxc /nologo /T $prof /E $entry /Fo $cso $hlsl
     if ($LASTEXITCODE -ne 0 -or -not (Test-Path $cso)) {
         if ($required) { throw "fxc failed for the required shader $entry." }
         Write-Host "warning: fxc failed for the optional shader $entry (that engine feature will be off)" -ForegroundColor Yellow

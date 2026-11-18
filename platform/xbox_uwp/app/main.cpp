@@ -14,6 +14,8 @@
 // headers (C++/WinRT is header-only in the SDK) and system libraries. No third-party code.
 // ---------------------------------------------------------------------------
 #include <winrt/Windows.ApplicationModel.Core.h>
+#include <winrt/Windows.ApplicationModel.Activation.h>
+#include <winrt/Windows.Storage.h>   // Package::Current().InstalledLocation().Path()
 #include <winrt/Windows.ApplicationModel.h>
 #include <winrt/Windows.Foundation.Collections.h>
 #include <winrt/Windows.Foundation.h>
@@ -30,11 +32,13 @@
 #include <cmath>
 #include <cstdint>
 #include <fstream>
+#include <iterator>
 #include <string>
 #include <vector>
 
 using Microsoft::WRL::ComPtr;
 using namespace winrt;
+using namespace winrt::Windows::Foundation;   // IInspectable
 using namespace winrt::Windows::ApplicationModel::Core;
 using namespace winrt::Windows::UI::Core;
 using namespace winrt::Windows::Gaming::Input;
@@ -84,9 +88,9 @@ struct App : implements<App, IFrameworkViewSource, IFrameworkView> {
     }
 
 private:
-    void OnActivated(CoreApplicationView const&, Windows::ApplicationModel::Activation::IActivatedEventArgs const&) { m_window.Activate(); }
+    void OnActivated(CoreApplicationView const&, winrt::Windows::ApplicationModel::Activation::IActivatedEventArgs const&) { m_window.Activate(); }
 
-    void OnSuspending(IInspectable const&, Windows::ApplicationModel::SuspendingEventArgs const&) {
+    void OnSuspending(IInspectable const&, winrt::Windows::ApplicationModel::SuspendingEventArgs const&) {
         // Required by the UWP rules: release driver memory the app does not need while suspended.
         if (m_device) { ComPtr<IDXGIDevice3> dxgi; if (SUCCEEDED(m_device.As(&dxgi))) dxgi->Trim(); }
         m_visible = false;
@@ -96,17 +100,17 @@ private:
     bool CreateDevice() {
         const D3D_FEATURE_LEVEL levels[] = {D3D_FEATURE_LEVEL_11_1, D3D_FEATURE_LEVEL_11_0, D3D_FEATURE_LEVEL_10_1, D3D_FEATURE_LEVEL_10_0};
         ComPtr<ID3D11Device> dev; ComPtr<ID3D11DeviceContext> ctx;
-        HRESULT hr = D3D11CreateDevice(nullptr, D3D_DRIVER_TYPE_HARDWARE, nullptr, D3D11_CREATE_DEVICE_BGRA_SUPPORT, levels, ARRAYSIZE(levels), D3D11_SDK_VERSION, &dev, nullptr, &ctx);
+        HRESULT hr = D3D11CreateDevice(nullptr, D3D_DRIVER_TYPE_HARDWARE, nullptr, D3D11_CREATE_DEVICE_BGRA_SUPPORT, levels, static_cast<UINT>(std::size(levels)), D3D11_SDK_VERSION, &dev, nullptr, &ctx);
         if (FAILED(hr)) return false;
         m_device = dev; m_context = ctx;
         ComPtr<IDXGIDevice3> dxgiDevice; ComPtr<IDXGIAdapter> adapter; ComPtr<IDXGIFactory2> factory;
         if (FAILED(m_device.As(&dxgiDevice)) || FAILED(dxgiDevice->GetAdapter(&adapter)) || FAILED(adapter->GetParent(IID_PPV_ARGS(&factory)))) return false;
-        const Rect b = m_window.Bounds();
+        auto const b = m_window.Bounds();
         DXGI_SWAP_CHAIN_DESC1 sd = {};
         sd.Width = std::max(1u, static_cast<UINT>(b.Width)); sd.Height = std::max(1u, static_cast<UINT>(b.Height));
         sd.Format = DXGI_FORMAT_B8G8R8A8_UNORM; sd.SampleDesc.Count = 1;
         sd.BufferUsage = DXGI_USAGE_RENDER_TARGET_OUTPUT; sd.BufferCount = 2; sd.SwapEffect = DXGI_SWAP_EFFECT_FLIP_SEQUENTIAL;
-        if (FAILED(factory->CreateSwapChainForCoreWindow(m_device.Get(), reinterpret_cast<IUnknown*>(get_abi(m_window)), &sd, nullptr, &m_swap))) return false;
+        if (FAILED(factory->CreateSwapChainForCoreWindow(m_device.Get(), reinterpret_cast<::IUnknown*>(get_abi(m_window)), &sd, nullptr, &m_swap))) return false;
         if (!MakeTarget()) return false;
         const std::vector<char> vs = ReadPackageFile(L"tri_vs.cso"), ps = ReadPackageFile(L"tri_ps.cso");
         if (vs.empty() || ps.empty()) return false;   // the build script copies the two .cso files next to the exe
@@ -125,7 +129,7 @@ private:
         if (!m_swap) return;
         m_context->OMSetRenderTargets(0, nullptr, nullptr);
         m_rtv.Reset();
-        const Rect b = m_window.Bounds();
+        auto const b = m_window.Bounds();
         if (FAILED(m_swap->ResizeBuffers(0, std::max(1u, static_cast<UINT>(b.Width)), std::max(1u, static_cast<UINT>(b.Height)), DXGI_FORMAT_UNKNOWN, 0)) || !MakeTarget()) m_exit = true;
     }
 

@@ -1,0 +1,24 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- A MINIMAL manifest that exists only so the MSBuild WindowsStore project of the test app has one (the project asks for Package.appxmanifest).
+     It is NOT what is shipped: our own packer (okay-appx) writes and packs the real package from the editor / okay-xbox-export manifest.
+     The three 1x1 images in Assets\ are placeholders for the same reason. EXPERIMENTAL, UNVERIFIED. -->
+<Package xmlns="http://schemas.microsoft.com/appx/manifest/foundation/windows10"
+         xmlns:uap="http://schemas.microsoft.com/appx/manifest/uap/windows10"
+         IgnorableNamespaces="uap">
+  <Identity Name="OkaySpace.XboxBuildOnly" Publisher="CN=OkaySpaceTest" Version="1.0.0.0" ProcessorArchitecture="x64" />
+  <Properties>
+    <DisplayName>OkaySpace Xbox build-only</DisplayName>
+    <PublisherDisplayName>OkaySpaceTest</PublisherDisplayName>
+    <Logo>Assets\StoreLogo.png</Logo>
+  </Properties>
+  <Dependencies>
+    <TargetDeviceFamily Name="Windows.Universal" MinVersion="10.0.17763.0" MaxVersionTested="10.0.17763.0" />
+  </Dependencies>
+  <Resources><Resource Language="en-us" /></Resources>
+  <Applications>
+    <Application Id="App" Executable="$targetnametoken$.exe" EntryPoint="OkaySpaceXbox.App">
+      <uap:VisualElements DisplayName="OkaySpace Xbox build-only" Description="Build-only manifest" BackgroundColor="transparent"
+                          Square150x150Logo="Assets\Square150x150Logo.png" Square44x44Logo="Assets\Square44x44Logo.png" />
+    </Application>
+  </Applications>
+</Package>

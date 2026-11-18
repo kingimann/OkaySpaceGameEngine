@@ -114,7 +114,11 @@ inline std::vector<Step> PlanBuild(const PlanInputs& in) {
       if (!in.sdk.generator.empty()) { c.args.push_back("-G"); c.args.push_back(in.sdk.generator); }   // empty: CMake picks its default VS generator
       c.args.push_back("-A"); c.args.push_back("x64");
       if (!in.sdk.visualStudioPath.empty()) c.args.push_back("-DCMAKE_GENERATOR_INSTANCE=" + in.sdk.visualStudioPath);   // the install the probe chose
-      if (!in.sdk.toolsetVersion.empty()) { c.args.push_back("-T"); c.args.push_back("version=" + in.sdk.toolsetVersion); }   // the MSVC folder with the UWP libraries
+      // The MSVC folder with the UWP libraries, with its platform toolset NAME (v143 / v145): a newer Visual Studio's default toolset may be another one.
+      if (!in.sdk.toolsetVersion.empty()) {
+          std::string pt = in.sdk.platformToolset.empty() ? PlatformToolsetFor(in.sdk.toolsetVersion) : in.sdk.platformToolset;
+          c.args.push_back("-T"); c.args.push_back((pt.empty() ? std::string() : pt + ",") + "version=" + in.sdk.toolsetVersion);
+      }
       c.args.push_back("-DCMAKE_SYSTEM_NAME=WindowsStore"); c.args.push_back("-DCMAKE_SYSTEM_VERSION=10.0");
       if (in.engineMode) { c.args.push_back("-DOKAY_XBOX_APP_ENGINE=ON"); c.args.push_back("-DOKAY_SOURCE_ROOT=" + in.sourceRoot); }
       process("configure", "Set up the UWP app build", "cmake, with Visual Studio's UWP toolset.", c); }
@@ -135,10 +139,14 @@ inline std::vector<Step> PlanBuild(const PlanInputs& in) {
         const std::string cer = Join(in.exportDir, "OkaySpaceXbox-test.cer");
         // One UAC prompt: the elevated child imports the certificate and runs Add-AppxPackage; it writes install-result.txt.
         const std::string res = Join(in.exportDir, "install-result.txt");
-        auto q = [](const std::string& s) { std::string o = "'"; for (char ch : s) { if (ch == '\'') o += "''"; else o += ch; } return o + "'"; };
+        auto sq = [](const std::string& s) { std::string o; for (char ch : s) { if (ch == '\'') o += "''"; else o += ch; } return o; };
+        auto q = [&](const std::string& s) { return "'" + sq(s) + "'"; };                  // a PowerShell single-quoted string
+        // An element for Start-Process -ArgumentList that powershell -File reads as ONE argument: the value inside real double quotes
+        // ('"C:\a b\x.ps1"'). Single quotes inside -ArgumentList are NOT stripped by powershell -File, so they must not be used there.
+        auto qd = [&](const std::string& s) { return "'\"" + sq(s) + "\"'"; };
         c.args = {"-NoProfile", "-ExecutionPolicy", "Bypass", "-Command",
-                  "Start-Process powershell -Verb RunAs -Wait -ArgumentList '-NoProfile','-ExecutionPolicy','Bypass','-File'," + q(q(script)) +
-                  ",'-Cer'," + q(q(cer)) + ",'-Appx'," + q(q(in.appxPath)) + ",'-ResultFile'," + q(q(res)) +
+                  "Start-Process powershell -Verb RunAs -Wait -ArgumentList '-NoProfile','-ExecutionPolicy','Bypass','-File'," + qd(script) +
+                  ",'-Cer'," + qd(cer) + ",'-Appx'," + qd(in.appxPath) + ",'-ResultFile'," + qd(res) +
                   "; if (Test-Path " + q(res) + ") { Get-Content " + q(res) + " } else { 'INSTALL: FAILED (no result: the administrator prompt was probably declined)' }"};
         process("install", "Install on this PC (asks for administrator permission once)", "Windows shows one prompt; accept it.", c);
     }

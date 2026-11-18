@@ -160,9 +160,11 @@ static void BuildPlanTests() {
     CHECK(p[2].kind == StepKind::Process && p[0].kind == StepKind::Internal && p[4].kind == StepKind::Internal);
     CHECK(p[2].cmd.Line().find("-DCMAKE_SYSTEM_NAME=WindowsStore") != std::string::npos);
     CHECK(p[2].cmd.Line().find("-G \"Visual Studio 17 2022\"") != std::string::npos && p[2].cmd.Line().find("-DCMAKE_GENERATOR_INSTANCE=C:/VS/2022/Community") != std::string::npos);   // from the probe
-    { PlanInputs b = in; b.sdk.generator = "Visual Studio 18 2026"; b.sdk.toolsetVersion = "14.50.35717"; b.sdk.visualStudioPath = "C:/VS/18/Community";
+    { PlanInputs b = in; b.sdk.generator = "Visual Studio 18 2026"; b.sdk.toolsetVersion = "14.44.35207"; b.sdk.platformToolset = "v143"; b.sdk.visualStudioPath = "C:/VS/18/Community";
       const std::string l = PlanBuild(b)[2].cmd.Line(); CHECK(l.find("-G \"Visual Studio 18 2026\"") != std::string::npos && l.find("Visual Studio 17") == std::string::npos);
-      CHECK(l.find("-T version=14.50.35717") != std::string::npos && l.find("v143") == std::string::npos && l.find("-DCMAKE_GENERATOR_INSTANCE=C:/VS/18/Community") != std::string::npos); }
+      CHECK(l.find("-T v143,version=14.44.35207") != std::string::npos && l.find("-DCMAKE_GENERATOR_INSTANCE=C:/VS/18/Community") != std::string::npos); }
+    { PlanInputs b = in; b.sdk.toolsetVersion = "14.50.35717"; b.sdk.platformToolset = ""; CHECK(PlanBuild(b)[2].cmd.Line().find("-T v145,version=14.50.35717") != std::string::npos);   // derived when the probe did not say
+      b.sdk.toolsetVersion = "14.29.30133"; CHECK(PlanBuild(b)[2].cmd.Line().find("-T version=14.29.30133") != std::string::npos); }   // unknown mapping: version= only
     { PlanInputs b = in; b.sdk.generator = ""; const std::string l = PlanBuild(b)[2].cmd.Line(); CHECK(l.find(" -G ") == std::string::npos && l.find("-A x64") != std::string::npos); }
     CHECK(p[2].cmd.Line().find("\"C:/out/My Game/build/app\"") != std::string::npos);   // spaces quoted
     CHECK(p[3].cmd.Line().find("--config Release") != std::string::npos);
@@ -180,7 +182,15 @@ static void BuildPlanTests() {
       CHECK(l.find("xbox-install-local.ps1") != std::string::npos); CHECK(l.find("install-result.txt") != std::string::npos);
       int uac = 0; for (auto& s : q) if (s.cmd.elevated) ++uac; CHECK(uac == 1); }
     { PlanInputs b = in; b.signer = Signer::OwnSigning; auto q = PlanBuild(b); CHECK(q.back().id == "sign" && q.back().kind == StepKind::Internal); CHECK(std::string(SignerLabel(Signer::OwnSigning)).find("not independently reviewed") != std::string::npos); }
-    { PlanInputs b = in; b.installOnThisPc = true; b.appxPath = "C:/o/it's.appx"; CHECK(PlanBuild(b).back().cmd.Line().find("it''''s") != std::string::npos); }
+    { PlanInputs b = in; b.installOnThisPc = true; b.appxPath = "C:/o/it's.appx"; CHECK(PlanBuild(b).back().cmd.Line().find("it''s") != std::string::npos); }
+    // paths with spaces: every -File / -Cer / -Appx value is inside real double quotes in the -ArgumentList (powershell -File does not strip single quotes)
+    { PlanInputs b = in; b.installOnThisPc = true; b.sourceRoot = "C:/my src/Okay Space"; b.exportDir = "C:/out/My Game"; b.appxPath = "C:/out/My Game/My_1.0.0.0_x64.appx";
+      const auto q = PlanBuild(b).back(); const std::string cmdArg = q.cmd.args[4];   // the -Command text, before the Windows quoting
+      CHECK(cmdArg.find("'-File','\"C:/my src/Okay Space/scripts/xbox-install-local.ps1\"'") != std::string::npos);
+      CHECK(cmdArg.find("'-Cer','\"C:/out/My Game/OkaySpaceXbox-test.cer\"'") != std::string::npos);
+      CHECK(cmdArg.find("'-Appx','\"C:/out/My Game/My_1.0.0.0_x64.appx\"'") != std::string::npos);
+      CHECK(cmdArg.find("-File','C:") == std::string::npos);   // no bare or single-quoted value
+      CHECK(q.cmd.Line().find("-Command \"Start-Process powershell -Verb RunAs -Wait -ArgumentList") != std::string::npos); }   // the whole -Command is one quoted Windows argument
 }
 
 static void SourceRootTests() {

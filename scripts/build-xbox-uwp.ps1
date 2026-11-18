@@ -90,8 +90,9 @@ function Compile-Cpp([string]$name, [string[]]$sources, [string[]]$includes, [st
     $bat = Join-Path $work ("cl-" + $name + ".bat")
     $inc = ($includes | ForEach-Object { '/I"' + $_ + '"' }) -join ' '
     $src = ($sources | ForEach-Object { '"' + $_ + '"' }) -join ' '
-    $text = "@echo off`r`ncall `"$script:Vcvars`"`r`nif errorlevel 1 exit /b 1`r`ncl /nologo /std:c++17 /EHsc /O2 /W0 $inc $src /Fe:`"$outExe`" /Fo:`"$obj\\`"`r`nexit /b %errorlevel%`r`n"
-    Set-Content -LiteralPath $bat -Value $text -Encoding ASCII
+    # UTF-8 without BOM plus chcp 65001 so a non-ASCII user folder survives; paths with spaces are quoted inside the .bat
+    $text = "@echo off`r`nchcp 65001 >nul`r`ncall `"$script:Vcvars`"`r`nif errorlevel 1 exit /b 1`r`ncl /nologo /std:c++17 /EHsc /O2 /W0 $inc $src /Fe:`"$outExe`" /Fo:`"$obj\\`"`r`nexit /b %errorlevel%`r`n"
+    [System.IO.File]::WriteAllText($bat, $text, (New-Object System.Text.UTF8Encoding($false)))
     return (Invoke-Tool $bat @())
 }
 
@@ -103,6 +104,11 @@ function Fail-With([string]$message) {
         Write-Host "Last lines of the failing tool's output:" -ForegroundColor Yellow
         foreach ($l in $script:Tail) { Write-Host ("  " + $l) }
     }
+    $all = $message + ' ' + (($script:Tail | ForEach-Object { "$_" }) -join ' ')
+    if ($all -match 'v145') { Write-Host 'Hint: "v145" in the error: the generated project picked a newer platform toolset than the one with the UWP libraries. The script passes -T v143,version=<MSVC folder>; send us build\app\*.vcxproj lines with PlatformToolset.' -ForegroundColor Yellow }
+    if ($all -match 'ZW') { Write-Host 'Hint: "ZW" in the error: the project compiled as C++/CX (/ZW). It must be plain C++ with C++/WinRT (uwp_cpp.props sets CompileAsWinRT false).' -ForegroundColor Yellow }
+    if ($all -match '(?i)appxmanifest') { Write-Host 'Hint: "appxmanifest" in the error: the MSBuild project wants a Package.appxmanifest (platform/xbox_uwp/app has a minimal one; check it was picked up).' -ForegroundColor Yellow }
+    if ($all -match '(?i)VCLibs') { Write-Host 'Hint: "VCLibs": the package depends on Microsoft.VCLibs.140.00; install it first (see the next-steps lines of a successful run or docs/xbox_uwp.md).' -ForegroundColor Yellow }
     Write-Host ("Full log (paste it to us): " + $script:LogFile) -ForegroundColor Yellow
     Log ("FAILED in step " + $script:StepName + ": " + $message)
     exit 1
@@ -161,19 +167,42 @@ try {
     if ($sdk.generator) { $cmakeArgs += @('-G', $sdk.generator) }
     $cmakeArgs += @('-A', 'x64')
     if ($sdk.visualStudioPath) { $cmakeArgs += "-DCMAKE_GENERATOR_INSTANCE=$($sdk.visualStudioPath)" }
-    if ($sdk.toolsetVersion) { $cmakeArgs += @('-T', "version=$($sdk.toolsetVersion)") }
+    # the toolset NAME too (v143 / v145): a newer Visual Studio's default toolset can differ from the MSVC folder that has the UWP libraries
+    if ($sdk.toolsetVersion) {
+        $tsArg = "version=$($sdk.toolsetVersion)"
+        if ($sdk.platformToolset) { $tsArg = "$($sdk.platformToolset),$tsArg" }
+        $cmakeArgs += @('-T', $tsArg)
+    }
     $cmakeArgs += @('-DCMAKE_SYSTEM_NAME=WindowsStore', '-DCMAKE_SYSTEM_VERSION=10.0')
     Require-Ok (Invoke-Tool $cmakeExe $cmakeArgs) 'CMake (setting up the UWP app)'
+    # What the generated project really passes to the compiler: /ZW (C++/CX) and /await must NOT be there, /std:c++20 should be (STL1011 / C++/WinRT).
+    $vcx = Get-ChildItem -LiteralPath $appBuild -Filter 'OkaySpaceXbox.vcxproj' -Recurse -ErrorAction SilentlyContinue | Select-Object -First 1
+    if ($vcx) {
+        $vtext = Get-Content -LiteralPath $vcx.FullName -Raw
+        $zw = [regex]::IsMatch($vtext, '/ZW\b') -or [regex]::IsMatch($vtext, '<CompileAsWinRT>\s*true')
+        $aw = $vtext.Contains('/await')
+        $std = [regex]::Match($vtext, '<LanguageStandard>([^<]*)</LanguageStandard>').Groups[1].Value
+        $m = "vcxproj check: /ZW or CompileAsWinRT=true present: $zw; /await present: $aw; LanguageStandard: '$std'"
+        Write-Host $m; Log $m
+        if ($zw -or $aw) { Write-Host 'WARNING: the project passes /ZW or /await; the C++/WinRT build is likely to fail (see docs/xbox_uwp.md).' -ForegroundColor Yellow }
+    } else { Write-Host 'vcxproj check: OkaySpaceXbox.vcxproj not found (is the generator a Visual Studio one?).' }
     Step 5 'Compiling the UWP app (can take a few minutes)'
     Require-Ok (Invoke-Tool $cmakeExe @('--build', $appBuild, '--config', $Configuration)) 'The UWP app build'
 
     # 6. copy the program into the package folder. The manifest's Executable is OkaySpaceXbox.exe.
     Step 6 'Putting the program into the package'
-    $exe = Get-ChildItem -LiteralPath $appBuild -Recurse -Filter 'OkaySpaceXbox.exe' -ErrorAction SilentlyContinue | Select-Object -First 1
+    # Prefer the files of the configuration just built (...\Release\...), newest first; any other match only as a fallback.
+    function Pick-Built([string]$name) {
+        $all = @(Get-ChildItem -LiteralPath $appBuild -Recurse -Filter $name -ErrorAction SilentlyContinue)
+        $cfg = @($all | Where-Object { $_.FullName -match ('[\\/]' + [regex]::Escape($Configuration) + '[\\/]') })
+        if ($cfg.Count -gt 0) { $all = $cfg }
+        return ($all | Sort-Object LastWriteTime -Descending | Select-Object -First 1)
+    }
+    $exe = Pick-Built 'OkaySpaceXbox.exe'
     if (-not $exe) { throw 'OkaySpaceXbox.exe was not found after the build.' }
     Copy-Item -LiteralPath $exe.FullName -Destination $pkg -Force
     foreach ($cso in 'tri_vs.cso', 'tri_ps.cso') {
-        $f = Get-ChildItem -LiteralPath $appBuild -Recurse -Filter $cso -ErrorAction SilentlyContinue | Select-Object -First 1
+        $f = Pick-Built $cso
         if (-not $f) { throw "Shader $cso was not produced by the build." }
         Copy-Item -LiteralPath $f.FullName -Destination $pkg -Force
     }
@@ -213,9 +242,16 @@ try {
     Write-Host "Done. Signed test package: $appx" -ForegroundColor Green
     Write-Host "Test certificate (public): $cer"
     Write-Host "Full log: $script:LogFile"
-    Write-Host 'Next (docs/xbox_uwp.md, "Deploy to an Xbox in Developer Mode", unverified): trust the .cer on your PC to install there first'
-    Write-Host '(Import-Certificate into Cert:\LocalMachine\TrustedPeople, as administrator, then Add-AppxPackage), or open the Windows Device Portal of your console'
-    Write-Host '(the address is shown in Dev Home on the Xbox) and use "Add" under Apps to upload the .appx and the VC runtime framework package.'
+    Write-Host ''
+    Write-Host 'TO INSTALL ON THIS PC (UNVERIFIED), in an ADMINISTRATOR PowerShell:' -ForegroundColor Cyan
+    $vclibs = $null
+    $ext = Join-Path ${env:ProgramFiles(x86)} 'Microsoft SDKs\Windows Kits\10\ExtensionSDKs\Microsoft.VCLibs'
+    if (Test-Path -LiteralPath $ext) { $vclibs = Get-ChildItem -LiteralPath $ext -Recurse -Filter 'Microsoft.VCLibs.x64.14.00.appx' -ErrorAction SilentlyContinue | Where-Object { $_.FullName -match 'Retail' } | Select-Object -First 1 }
+    if ($vclibs) { Write-Host ("  Add-AppxPackage -Path '{0}'     # the VC runtime framework the app depends on (once)" -f $vclibs.FullName) }
+    else { Write-Host '  (install the Microsoft.VCLibs.140.00 x64 framework package first; its .appx is under Microsoft SDKs\Windows Kits\10\ExtensionSDKs\Microsoft.VCLibs in Program Files (x86) if Visual Studio installed it)' }
+    Write-Host ("  Import-Certificate -FilePath '{0}' -CertStoreLocation Cert:\LocalMachine\TrustedPeople" -f $cer)
+    Write-Host ("  Add-AppxPackage -Path '{0}'" -f $appx)
+    Write-Host 'For the console: open the Windows Device Portal (address shown in Dev Home on the Xbox), Apps > Add, upload the .appx and the VCLibs package (docs/xbox_uwp.md, "Deploy to an Xbox in Developer Mode").'
     exit 0
 } catch {
     Fail-With $_.Exception.Message

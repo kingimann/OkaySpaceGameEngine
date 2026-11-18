@@ -94,6 +94,12 @@ static void NewerVsTests() {
     // toolset folders are never hard-coded: several, numeric order (14.9 < 14.44 < 14.100)
     { auto p = SdkOnly(); for (const char* t : {"14.9.1", "14.44.35207", "14.100.1"}) p.insert(std::string("C:/VS/18/Community/VC/Tools/MSVC/") + t + "/lib/x64/store/a.lib");
       SdkInputs i; i.fs = Fake(p); i.vswhereFound = true; i.installs = {Vs("C:\\VS\\18\\Community", "18.0.0.1", "")}; CHECK(EvaluateSdk(i).toolsetVersion == "14.100.1"); }
+    // platform toolset NAME from the MSVC folder, and the toolset WITH the UWP libraries is the one picked when several are installed
+    CHECK(PlatformToolsetFor("14.44.35207") == "v143" && PlatformToolsetFor("14.40.1") == "v143" && PlatformToolsetFor("14.38.33130") == "v143" && PlatformToolsetFor("14.50.35717") == "v145" && PlatformToolsetFor("14.29.1").empty() && PlatformToolsetFor("15.1").empty() && PlatformToolsetFor("x").empty());
+    { auto p = SdkOnly(); const std::string vs = "C:/VS/18/Community";   // owner's layout: newest toolset 14.50 WITHOUT the UWP libs, 14.44 WITH them
+      p.insert(vs + "/VC/Tools/MSVC/14.50.35717/lib/x64/x.lib"); p.insert(vs + "/VC/Tools/MSVC/14.44.35207/lib/x64/store/vcruntime.lib");
+      SdkInputs i; i.fs = Fake(p); i.vswhereFound = true; i.installs = {Vs("C:\\VS\\18\\Community", "18.0.1.1", "Visual Studio Community 2026")};
+      SdkReport r = EvaluateSdk(i); CHECK(r.available && r.toolsetVersion == "14.44.35207" && r.platformToolset == "v143"); }
     // an unknown major gets no generator (CMake picks), a missing version is tolerated
     CHECK(GeneratorForMajor(99).empty() && GeneratorForMajor(16) == "Visual Studio 16 2019" && MajorOf("") == 0 && MajorOf("17.9") == 17 && MajorOf("x") == 0);
     CHECK(!UwpComponentIds().empty() && std::string(kVcToolsComponentId()) == "Microsoft.VisualStudio.Component.VC.Tools.x86.x64");

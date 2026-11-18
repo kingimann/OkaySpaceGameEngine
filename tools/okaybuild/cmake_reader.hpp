@@ -35,7 +35,7 @@ namespace cmr {
 using std::string; using std::vector;
 namespace fs = std::filesystem;
 
-struct Arg { string text; bool quoted = false; };
+struct Arg { string text; bool quoted = false, bracket = false; };
 struct Cmd { string name; vector<Arg> args; int line = 0; string file; };
 
 struct ReadError { string msg; };
@@ -82,7 +82,7 @@ static vector<Cmd> parseFile(const string& text, const string& file) {
             if (ch == ')') { if (--depth == 0) { ++i; break; } c.args.push_back({")", false}); ++i; continue; }
             if (ch == '(') { ++depth; c.args.push_back({"(", false}); ++i; continue; }
             size_t eqs;
-            if (ch == '[' && bracketOpen(i, eqs)) { size_t at = i; string body = readBracket(at, eqs); i = at; c.args.push_back({body, true}); continue; }
+            if (ch == '[' && bracketOpen(i, eqs)) { size_t at = i; string body = readBracket(at, eqs); i = at; c.args.push_back({body, true, true}); continue; }
             if (ch == '"') {
                 string v; ++i;
                 for (;;) {
@@ -235,6 +235,7 @@ struct Interp {
     vector<string> args(const vector<Arg>& in, size_t from = 0) {
         vector<string> r;
         for (size_t i = from; i < in.size(); ++i) {
+            if (in[i].bracket) { r.push_back(in[i].text); continue; } // [[ ]] text is taken exactly as written
             string e = expand(in[i].text);
             if (in[i].quoted) { string t; for (size_t k = 0; k < e.size(); ++k) { if (e[k] == '\\' && k + 1 < e.size() && e[k + 1] == ';') { t += ';'; ++k; } else t += e[k]; } r.push_back(t); }
             else for (auto& p : splitList(e)) r.push_back(p);
@@ -316,6 +317,7 @@ struct Interp {
     bool condArgs(const Cmd& c) {
         vector<CTok> t;
         for (auto& a : c.args) {
+            if (a.bracket) { t.push_back({a.text, true}); continue; }
             string e = expand(a.text);
             if (a.quoted) t.push_back({e, true});
             else for (auto& p : splitList(e)) t.push_back({p, false});

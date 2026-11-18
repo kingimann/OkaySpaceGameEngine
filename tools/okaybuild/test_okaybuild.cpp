@@ -1655,6 +1655,34 @@ static void testCmakeReader() {
     write("pf.okay", "target m exe\n sources = one.cpp two.cpp m.cpp\n file_define = one.cpp ONLY_ONE=1\n file_include = one.cpp h\n file_flag = two.cpp -Wall -Wextra\nend\n");
     o = sh("-f pf.okay -j2", &rc); check(rc == 0, "per-file define and include apply to that file only", o);
 }
+
+static void testCmakeSyntax() {
+    printf("test: okay-build cmake: comments, bracket arguments, macros, functions, lists, conditions\n");
+    fresh("cmakesyntax");
+    write("CMakeLists.txt",
+        "# a line comment\n#[[ a block\ncomment (with parens) ]]\nproject(S VERSION 4.5)\n"
+        "set(RAW [=[raw \"text\" ${NOT_EXPANDED} ; stays]=])\n"
+        "macro(m1 x)\n  set(OUT_${x} yes)\nendmacro()\nm1(foo)\n"
+        "function(f1 v)\n  set(INNER local)\n  set(${v} made PARENT_SCOPE)\nendfunction()\nf1(RES)\n"
+        "foreach(i RANGE 3)\n  list(APPEND R ${i})\nendforeach()\nlist(LENGTH R n)\nlist(GET R -1 last)\n"
+        "string(TOUPPER \"abc\" up)\nstring(REPLACE \"-\" \"_\" under \"a-b-c\")\nstring(SUBSTRING \"abcdef\" 1 3 sub)\n"
+        "set(parts \"x;y;z\")\nforeach(p IN LISTS parts)\n  if(p STREQUAL \"y\")\n    break()\n  endif()\n  set(before_y ${p})\nendforeach()\n"
+        "if(NOT DEFINED INNER AND NOT DEFINED NOPE AND \"${R}\" STREQUAL \"0;1;2;3\" AND (1 LESS 2) AND 3 VERSION_GREATER 2.9 AND \"x\" IN_LIST parts)\n  set(ALLGOOD ok)\nelse()\n  set(ALLGOOD bad)\nendif()\n"
+        "if(0)\n  set(WRONG_BRANCH 1)\nelseif(ON)\n  set(ELSEIF_OK 1)\nelse()\n  set(WRONG_BRANCH 1)\nendif()\n"
+        "add_executable(t m.cpp)\n"
+        "target_compile_definitions(t PRIVATE N=${n} LAST=${last} MACRO=${OUT_foo} FUNC=${RES} UP=${up} UNDER=${under} SUB=${sub} BEFORE=${before_y} ALL=${ALLGOOD} ELIF=${ELSEIF_OK} \"RAWTXT=${RAW}\" VER=${PROJECT_VERSION})\n");
+    write("m.cpp", "int main(){}\n");
+    int rc; string o = sh("cmake . -o b.okay --audit", &rc); string man = readFile(gRoot / "b.okay");
+    check(rc == 0, "reads", o);
+    for (const char* want : {"N=4", "LAST=3", "MACRO=yes", "FUNC=made", "UP=ABC", "UNDER=a_b_c", "SUB=bcd", "BEFORE=x", "ALL=ok", "ELIF=1", "VER=4.5"})
+        check(man.find(string(" ") + want) != string::npos, string("define ") + want, man);
+    check(man.find("WRONG_BRANCH") == string::npos, "no wrong branch ran");
+    check(man.find("raw \\\"text\\\" ${NOT_EXPANDED} ; stays") != string::npos || man.find("raw \\\"text\\\" ${NOT_EXPANDED}") != string::npos, "a [[bracket]] argument is not expanded", man);
+    write("CMakeLists.txt", "add_executable(t m.cpp\n"); o = sh("cmake . -o c.okay", &rc);
+    check(rc == 2 && o.find("missing ')'") != string::npos, "a missing parenthesis is an error with the line", o);
+    write("CMakeLists.txt", "if(ON)\nadd_executable(t m.cpp)\n"); o = sh("cmake . -o c.okay", &rc);
+    check(rc == 2 && o.find("no endif") != string::npos, "an if without endif is an error", o);
+}
 int main(int argc, char** argv) {
     if (argc < 2) { puts("usage: test_okaybuild PATH_TO_okay-build"); return 2; }
     gTool = "'" + fs::absolute(argv[1]).string() + "'";
@@ -1675,5 +1703,6 @@ int main(int argc, char** argv) {
     testPathMap();
     testRemoteCacheFolder();
     testCmakeReader();
+    testCmakeSyntax();
     printf("okaybuild tests: %d checks passed, %d failed\n", gPass, gFail); return gFail ? 1 : 0;
 }

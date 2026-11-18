@@ -1958,7 +1958,30 @@ struct Parser {
                         comma.kind = TComma;
                         comma.text = ",";
                         out.push_back(comma);
-                        for (size_t k2 = open + 1; k2 < close; ++k2) out.push_back(tokens[k2]);
+                        // The parameter names are dropped: `function<bool(const std::string& path, int id)>` is
+                        // `function<bool, const std::string&, int>`. A trailing identifier after '&', '*', a type word or
+                        // another identifier is a name (an identifier after '::' or '<' is part of the type).
+                        size_t pstart = open + 1;
+                        int pdepth = 0;
+                        for (size_t k2 = open + 1; k2 <= close; ++k2) {
+                            const Tok kk = tokens[k2].kind;
+                            if (kk == TLt || kk == TLParen) ++pdepth;
+                            else if ((kk == TGt || kk == TRParen) && k2 != close) --pdepth;
+                            if ((kk == TComma && pdepth == 0) || k2 == close) {
+                                size_t pend = k2;
+                                if (pend - pstart >= 2 && tokens[pend - 1].kind == TIdent) {
+                                    const Tok before = tokens[pend - 2].kind;
+                                    if (before == TAmp || before == TStar || before == TAndAnd || before == TIdent ||
+                                        before == TInt || before == TChar || before == TFloat || before == TDouble ||
+                                        before == TLong || before == TShort || before == TUnsigned || before == TSigned ||
+                                        before == TGt)
+                                        --pend;
+                                }
+                                for (size_t k3 = pstart; k3 < pend; ++k3) out.push_back(tokens[k3]);
+                                if (k2 != close) out.push_back(tokens[k2]);
+                                pstart = k2 + 1;
+                            }
+                        }
                     }
                     out.push_back(tokens[j]);
                     i = j;
@@ -3324,7 +3347,7 @@ struct Parser {
                 Node def_expr;
                 if ((is(TLBrace) && pt.base == 3 && pt.pointers == 0 && pt.struct_id >= 0) ||
                     (is(TIdent) && find_struct(cur().text) >= 0 && typedefs.find(cur().text) == typedefs.end() &&
-                     at + 1 < tokens.size() && tokens[at + 1].kind == TLParen)) {
+                     at + 1 < tokens.size() && (tokens[at + 1].kind == TLParen || tokens[at + 1].kind == TLBrace))) {
                     // `= {}`, `= {a, b}` or `= Color(1, 1, 1, 1)`: a class object made for each call. The text is
                     // kept as a position in the token stream and read again at each call, where the temporary
                     // can be made.
@@ -3470,13 +3493,15 @@ struct Parser {
             tokens[i + 1].kind == TRParen)
             return true;  // sizeof(S)
         if (i + 2 < tokens.size() && tokens[i + 1].kind == TColonColon && tokens[i + 2].kind == TIdent &&
-            typedefs.find(tokens[i + 2].text) != typedefs.end())
-            return true;  // Struct::Enum
+            (typedefs.find(tokens[i + 2].text) != typedefs.end() ||
+             structs[static_cast<size_t>(id)].tdefs.count(tokens[i + 2].text) > 0))
+            return true;  // Struct::Enum, Struct::member_typedef
         return i + 1 < tokens.size() &&
                (tokens[i + 1].kind == TIdent || tokens[i + 1].kind == TStar || tokens[i + 1].kind == TAmp ||
                 tokens[i + 1].kind == TAndAnd ||
                 ((tokens[i + 1].kind == TComma || tokens[i + 1].kind == TGt) && i >= 1 &&
-                 (tokens[i - 1].kind == TLt || tokens[i - 1].kind == TComma)));  // a template argument: Box<P, 3>
+                 (tokens[i - 1].kind == TLt || tokens[i - 1].kind == TComma ||
+                  (tokens[i - 1].kind == TConst && i >= 2 && (tokens[i - 2].kind == TLt || tokens[i - 2].kind == TComma)))));  // a template argument: Box<P, 3>, Box<const P>
     }
     bool is_class_name() const {
         if (!is(TIdent) || typedefs.find(cur().text) != typedefs.end()) return false;
@@ -4398,6 +4423,24 @@ struct Parser {
     }
 
     int struct_nest = 0;
+    // From the ':' of a constructor's member-initializer list (or after it) to the '{' of its body: a '{' that follows a name or a
+    // '>' opens the braces of one initializer (`a{}`, `b{1, 2}`) and is skipped with its contents.
+    void skip_ctor_init_list() {
+        while (!is(TEnd) && !is(TSemi)) {
+            if (is(TLBrace)) {
+                const bool member_brace = at > 0 && (tokens[at - 1].kind == TIdent || tokens[at - 1].kind == TGt);
+                if (!member_brace) return;
+                int depth = 0;
+                do {
+                    if (is(TLBrace)) ++depth;
+                    else if (is(TRBrace)) --depth;
+                    next();
+                } while (depth > 0 && !is(TEnd));
+                continue;
+            }
+            next();
+        }
+    }
     bool pending_extern = false;
     std::vector<int> class_ids{};  // the classes whose bodies are being read, innermost last
     std::vector<std::pair<int, size_t>> deferred_bodies{};
@@ -4626,7 +4669,7 @@ struct Parser {
                 if (is(TColon) && is_ctor) {
                     m.body_at = at;
                     m.has_body = true;
-                    while (!is(TLBrace) && !is(TEnd) && !is(TSemi)) next();
+                    skip_ctor_init_list();
                     if (!is(TLBrace)) {
                         error = "expected a constructor body";
                         return false;
@@ -5265,9 +5308,22 @@ struct Parser {
                 Init init;
                 init.name = cur().text;
                 next();
-                if (!expect(TLParen, "'('")) return false;
+                const bool braced_init = is(TLBrace);  // `member{a, b}` and `member{}` mean what `member(a, b)` and `member()` mean
+                if (braced_init) next();
+                else if (!expect(TLParen, "'('")) return false;
                 const size_t hoist_from = stmt_pre.size();
-                if (!parse_call_args(&init.args)) return false;
+                if (braced_init) {
+                    if (!accept(TRBrace)) {
+                        do {
+                            Node a;
+                            if (!parse_expr(1, &a)) return false;
+                            init.args.push_back(std::move(a));
+                        } while (accept(TComma));
+                        if (!expect(TRBrace, "'}'")) return false;
+                    }
+                } else if (!parse_call_args(&init.args)) {
+                    return false;
+                }
                 // Statements an argument needs before it (`p(new int(k))`: the allocation and the store) run before
                 // the members are made.
                 for (size_t h = hoist_from; h < stmt_pre.size(); ++h) pre.push_back(std::move(stmt_pre[h]));
@@ -6664,7 +6720,7 @@ struct Parser {
             if (is(TColon)) {
                 m.body_at = at;
                 m.has_body = true;
-                while (!is(TLBrace) && !is(TEnd) && !is(TSemi)) next();
+                skip_ctor_init_list();
                 if (!is(TLBrace)) {
                     error = "expected a constructor body";
                     ok = false;
@@ -7789,7 +7845,7 @@ struct Parser {
                 owner.methods[mi].out_of_class = true;
                 owner.methods[mi].body_at = at;
                 owner.methods[mi].param_names = decl.param_names;
-                while (!is(TLBrace) && !is(TEnd) && !is(TSemi)) next();
+                skip_ctor_init_list();
                 if (!is(TLBrace)) {
                     error = "expected a constructor body";
                     return false;

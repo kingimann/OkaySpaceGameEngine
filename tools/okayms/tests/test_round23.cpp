@@ -151,5 +151,11 @@ int main(int, char**) {
           "int main() { int a = 0; std::string s; std::cin >> a >> s; std::getline(std::cin, s); std::cout << \"hello \" << 42 << ' ' << 1.5 << std::setw(5) << a << std::endl;\n"
           "std::cerr << std::setprecision(2) << 2.5 << std::endl; return a; }\n", &o);
     CHECK(t, has_symbol(o, "okay_write_handle") && has_symbol(o, "okay_read_stdin"));
+    ++tests;
+    build(t, "round 29 front end: signature parameter names, braced member init, C{} default, const Self arg, class typedef field",
+          "#include <functional>\n#include <memory>\ntemplate <typename C> struct tp { int v; };\nstruct clk { typedef tp<clk> time_point; };\n"
+          "struct Vec3 { float x, y, z; };\nstruct Self { int k; };\nstruct Holder { clk::time_point s; std::shared_ptr<const Self> p; std::function<int(int count, const Vec3& v)> cb; Vec3 b; int n; Holder() : b{}, n{3} {} };\n"
+          "int area(Vec3 v = Vec3{}) { return (int)v.x; }\nint main() { Holder h; h.s.v = 2; return h.s.v + area() + h.n; }\n", &o);
+    CHECK(t, has_symbol(o, "main"));
     return t.finish(tests);
 }

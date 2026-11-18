@@ -187,7 +187,18 @@ std::vector<unsigned char> linkObjects(const std::vector<std::vector<unsigned ch
         for (const Sym& s : o.syms)
             if (s.name == "_start" && s.shndx != 0) needStart = false;
     std::uint64_t startVa = 0;
-    const int kStart = 17;
+    // Global objects with constructors or destructors: each object file may define
+    // __okay_init_<file> (run before main, in link order) and __okay_fini_<file> (after main, in
+    // reverse order).
+    std::vector<std::string> inits;
+    std::vector<std::string> finis;
+    for (const Obj& o : objs)
+        for (const Sym& s : o.syms) {
+            if (s.bind != 1 || s.shndx == 0) continue;
+            if (s.name.compare(0, 12, "__okay_init_") == 0) inits.push_back(s.name);
+            if (s.name.compare(0, 12, "__okay_fini_") == 0) finis.insert(finis.begin(), s.name);
+        }
+    const int kStart = 21 + 5 * static_cast<int>(inits.size() + finis.size());
     if (needStart) {
         startVa = va;
         va = align16(va + kStart);
@@ -276,18 +287,34 @@ std::vector<unsigned char> linkObjects(const std::vector<std::vector<unsigned ch
     }
     if (needStart) {
         std::size_t at = static_cast<std::size_t>(startVa - (kBase + kLoad));
-        image[at] = 0xE8;
-        auto rel = static_cast<std::int64_t>(global["main"]) - static_cast<std::int64_t>(startVa + 5);
-        wr(image, at + 1, static_cast<std::uint64_t>(static_cast<std::int32_t>(rel)), 4);
-        image[at + 5] = 0x48;
-        image[at + 6] = 0x89;
-        image[at + 7] = 0xC7;
-        image[at + 8] = 0x48;
-        image[at + 9] = 0xC7;
-        image[at + 10] = 0xC0;
-        image[at + 11] = 0x3C;
-        image[at + 15] = 0x0F;
-        image[at + 16] = 0x05;
+        std::uint64_t pc = startVa;
+        auto emit = [&](unsigned char byte) { image[at++] = byte; ++pc; };
+        auto callTo = [&](const std::string& name) {
+            emit(0xE8);
+            auto rel = static_cast<std::int64_t>(global[name]) - static_cast<std::int64_t>(pc + 4);
+            wr(image, at, static_cast<std::uint64_t>(static_cast<std::int32_t>(rel)), 4);
+            at += 4;
+            pc += 4;
+        };
+        for (const std::string& n : inits) callTo(n);
+        callTo("main");
+        emit(0x50);  // push rax twice: keeps the stack aligned for the calls below
+        emit(0x50);
+        for (const std::string& n : finis) callTo(n);
+        emit(0x58);  // pop rax
+        emit(0x58);
+        emit(0x48);  // mov rdi, rax
+        emit(0x89);
+        emit(0xC7);
+        emit(0x48);  // mov rax, 60
+        emit(0xC7);
+        emit(0xC0);
+        emit(0x3C);
+        emit(0x00);
+        emit(0x00);
+        emit(0x00);
+        emit(0x0F);  // syscall
+        emit(0x05);
     }
     std::uint64_t filesz = kLoad + image.size();
     std::uint64_t entry = needStart ? startVa : global["_start"];

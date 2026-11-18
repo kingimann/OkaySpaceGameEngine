@@ -2,6 +2,7 @@
 // The add-node panel: search, a topic list on the left (grouped under section headings), favourites, and a
 // details pane. Shared by the right-click menu, a wire dropped in empty space, and Add node.
 #include "VisualScriptNodeDocs.hpp"
+#include "ScriptingDensity.hpp"   // Density: every size below comes from this table
 #include "imgui.h"
 
 #include <algorithm>
@@ -322,9 +323,10 @@ inline bool VsPaletteStepIsDuplicate(const std::string& label) {
 /// highlighted node does on the right. Levels filter the list.
 inline void DrawNodePalette(VsEditState& st, const VsEditGraph& g,
                             const std::function<void(const VsDef&, const std::string&)>& addNode) {
-    ImGui::PushStyleVar(ImGuiStyleVar_FramePadding, ImVec2(10.0f, 8.0f));
-    ImGui::PushStyleVar(ImGuiStyleVar_ItemSpacing, ImVec2(8.0f, 6.0f));
-    ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding, ImVec2(12.0f, 12.0f));
+    const oked::scriptui::Metrics dm = oked::scriptui::Current();
+    ImGui::PushStyleVar(ImGuiStyleVar_FramePadding, ImVec2(dm.framePad.x, dm.framePad.y));
+    ImGui::PushStyleVar(ImGuiStyleVar_ItemSpacing, ImVec2(dm.itemSpacing.x, dm.itemSpacing.y * 0.75f));
+    ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding, ImVec2(dm.windowPad.x, dm.windowPad.y));
     okay::vs::PinType dragged = okay::vs::PinType::Any;
     if (st.linkPending && !st.linkExec)
         dragged = st.linkFromOutput ? VsOutPinType(g, st.linkNode, st.linkPin)
@@ -505,7 +507,7 @@ inline void DrawNodePalette(VsEditState& st, const VsEditGraph& g,
     ImGui::SetNextItemWidth(-FLT_MIN);
     if (ImGui::InputTextWithHint("##vssearch", "Search nodes and actions...  (Up / Down, Enter to add)", search, sizeof search))
         s_kb = 0;
-    ImGui::PushStyleVar(ImGuiStyleVar_FramePadding, ImVec2(6.0f, 2.0f));
+    ImGui::PushStyleVar(ImGuiStyleVar_FramePadding, ImVec2(dm.paletteFilterPad.x, dm.paletteFilterPad.y));
     const float filterW = (ImGui::GetContentRegionAvail().x - 18.0f) / 4.0f;
     for (int fi = 0; fi < 4; ++fi) {
         if (fi) ImGui::SameLine();
@@ -561,24 +563,25 @@ inline void DrawNodePalette(VsEditState& st, const VsEditGraph& g,
     };
 
     // ---- Sidebar ----
-    ImGui::PushStyleVar(ImGuiStyleVar_FramePadding, ImVec2(6.0f, 2.0f));
-    ImGui::PushStyleVar(ImGuiStyleVar_ItemSpacing, ImVec2(4.0f, 1.0f));
-    ImGui::BeginChild("##vspside", ImVec2(262, -4), ImGuiChildFlags_Borders);   // wide enough for "Collision & Trigger Events"
+    ImGui::PushStyleVar(ImGuiStyleVar_FramePadding, ImVec2(dm.paletteSideFramePad.x, dm.paletteSideFramePad.y));
+    ImGui::PushStyleVar(ImGuiStyleVar_ItemSpacing, ImVec2(dm.paletteSideItemSpacing.x, dm.paletteSideItemSpacing.y));
+    ImGui::BeginChild("##vspside", ImVec2(dm.paletteSideW, -4), ImGuiChildFlags_Borders);   // wide enough for "Collision & Trigger Events"
     auto sideItem = [&](int id, const char* label, ImU32 dot, int count, bool selected, int indent) {
         ImGui::PushID(id + 10);
         const ImVec2 p = ImGui::GetCursorScreenPos();
         if (indent) ImGui::Indent(12.0f);
-        if (ImGui::Selectable("##side", selected)) { s_kb = 0; }
-        ImDrawList* sdl = ImGui::GetWindowDrawList();
         const float h = ImGui::GetTextLineHeight();
-        if (dot) sdl->AddCircleFilled(ImVec2(p.x + 6, p.y + h * 0.5f + 1), 3.5f, dot);
+        const float padY = dm.paletteSideRowPad;   // extra air above and below the name (Density)
+        if (ImGui::Selectable("##side", selected, 0, ImVec2(0, h + 2.0f * padY))) { s_kb = 0; }
+        ImDrawList* sdl = ImGui::GetWindowDrawList();
+        if (dot) sdl->AddCircleFilled(ImVec2(p.x + 6, p.y + padY + h * 0.5f + 1), 3.5f, dot);
         const float right = p.x + ImGui::GetContentRegionAvail().x;
         char n[16] = ""; if (count >= 0) std::snprintf(n, sizeof n, "%d", count);
         const float nw = ImGui::CalcTextSize(n).x;
-        sdl->PushClipRect(ImVec2(p.x, p.y), ImVec2(right - nw - 6, p.y + h + 4), true);   // long names stop before the count
-        sdl->AddText(ImVec2(p.x + 16 + (indent ? 14.0f : 0.0f), p.y), ImGui::GetColorU32(ImGuiCol_Text), label);
+        sdl->PushClipRect(ImVec2(p.x, p.y), ImVec2(right - nw - 6, p.y + h + 2.0f * padY), true);   // long names stop before the count
+        sdl->AddText(ImVec2(p.x + 16 + (indent ? 14.0f : 0.0f), p.y + padY), ImGui::GetColorU32(ImGuiCol_Text), label);
         sdl->PopClipRect();
-        if (count >= 0) sdl->AddText(ImVec2(right - nw, p.y), ImGui::GetColorU32(ImGuiCol_TextDisabled), n);
+        if (count >= 0) sdl->AddText(ImVec2(right - nw, p.y + padY), ImGui::GetColorU32(ImGuiCol_TextDisabled), n);
         if (ImGui::IsItemHovered()) {
             const char* blurb = (id >= 0 && id < VsPaletteCategoryCount()) ? kPaletteCategories[id].blurb
                               : id == -4 ? "The 26 nodes a first script is built from."
@@ -784,7 +787,8 @@ inline void DrawNodePalette(VsEditState& st, const VsEditGraph& g,
         ImGui::TextDisabled("Start here");
     }
     const float lh = ImGui::GetTextLineHeight();
-    const float lineH = lh + 14;                                   // every line (row or header) is this tall, which the clipper needs
+    const float rowPad = dm.paletteRowPad;
+    const float lineH = lh + 2.0f * rowPad;                                   // every line (row or header) is this tall, which the clipper needs
     ImGuiListClipper clip;
     clip.Begin((int)s_disp.size(), lineH + ImGui::GetStyle().ItemSpacing.y);
     if (kbMoved && s_kb >= 0 && s_kb < (int)s_rowDisp.size()) clip.IncludeItemByIndex(s_rowDisp[(std::size_t)s_kb]);
@@ -803,7 +807,7 @@ inline void DrawNodePalette(VsEditState& st, const VsEditGraph& g,
         ImGui::PushID(i);
         const ImVec2 p = ImGui::GetCursorScreenPos();
         const bool kbSel = i == s_kb;
-        if (ImGui::Selectable("##row", kbSel, ImGuiSelectableFlags_AllowOverlap, ImVec2(0, lh + 14))) toAdd = &e;
+        if (ImGui::Selectable("##row", kbSel, ImGuiSelectableFlags_AllowOverlap, ImVec2(0, lineH))) toAdd = &e;
         if (ImGui::IsItemHovered()) {
             hovered = &e;
             ImGui::BeginTooltip();
@@ -820,14 +824,14 @@ inline void DrawNodePalette(VsEditState& st, const VsEditGraph& g,
         if (kbSel && (ImGui::IsKeyPressed(ImGuiKey_DownArrow) || ImGui::IsKeyPressed(ImGuiKey_UpArrow))) ImGui::SetScrollHereY(0.5f);
         ImDrawList* rdl = ImGui::GetWindowDrawList();
         const float w = ImGui::GetContentRegionAvail().x;
-        rdl->AddCircleFilled(ImVec2(p.x + 8, p.y + (lh + 14) * 0.5f), 5.0f, e.col);
+        rdl->AddCircleFilled(ImVec2(p.x + 8, p.y + lineH * 0.5f), 5.0f, e.col);
         // Title, matched letters in the accent colour.
         float x = p.x + 18;
         const ImU32 normal = ImGui::GetColorU32(ImGuiCol_Text), hit = IM_COL32(110, 180, 255, 255);
         for (int c = 0; c < (int)e.title.size(); ++c) {
             const char buf[2] = {e.title[c], 0};
             const bool h = std::find(hitsNow.begin(), hitsNow.end(), c) != hitsNow.end();
-            rdl->AddText(ImVec2(x, p.y + 2), h ? hit : normal, buf);
+            rdl->AddText(ImVec2(x, p.y + rowPad), h ? hit : normal, buf);
             x += ImGui::CalcTextSize(buf).x;
         }
         // Level badge: Basic, then Inter, then Adv. Colour says which, the word says it too.
@@ -836,7 +840,7 @@ inline void DrawNodePalette(VsEditState& st, const VsEditGraph& g,
             const ImVec2 bs = ImGui::CalcTextSize(badge);
             const float bw = bs.x + 8.0f, bh = lh + 2.0f;
             if (x + 8.0f + bw < p.x + w - ImGui::CalcTextSize(e.cat.c_str()).x - 36.0f) {
-                const ImVec2 b0(x + 8.0f, p.y + 4.0f), b1(b0.x + bw, b0.y + bh);
+                const ImVec2 b0(x + 8.0f, p.y + rowPad + 2.0f), b1(b0.x + bw, b0.y + bh);
                 const ImU32 bg = e.level == VsLevel::Basic ? IM_COL32(46, 110, 78, 255)
                                : e.level == VsLevel::Advanced ? IM_COL32(96, 72, 120, 255)
                                : IM_COL32(52, 78, 120, 255);
@@ -847,11 +851,11 @@ inline void DrawNodePalette(VsEditState& st, const VsEditGraph& g,
         // Category on the right, then the favourite star.
         const float catW = ImGui::CalcTextSize(e.cat.c_str()).x;
         if (x + 20 < p.x + w - catW - 32)
-            rdl->AddText(ImVec2(p.x + w - catW - 32, p.y + 2), ImGui::GetColorU32(ImGuiCol_TextDisabled), e.cat.c_str());
-        ImGui::SameLine(w - 18);
+            rdl->AddText(ImVec2(p.x + w - catW - 32, p.y + rowPad), ImGui::GetColorU32(ImGuiCol_TextDisabled), e.cat.c_str());
+        ImGui::SameLine(w - dm.smallHit + 4.0f);
         const bool fav = isFav(e.key);
         const ImVec2 sp = ImGui::GetCursorScreenPos();
-        if (ImGui::InvisibleButton("##fav", ImVec2(22, lh + 14))) {
+        if (ImGui::InvisibleButton("##fav", ImVec2(dm.smallHit, lineH))) {
             if (fav) s_fav.erase(std::remove(s_fav.begin(), s_fav.end(), e.key), s_fav.end());
             else s_fav.push_back(e.key);
             ++s_listVer;
@@ -860,7 +864,7 @@ inline void DrawNodePalette(VsEditState& st, const VsEditGraph& g,
         const bool sh = ImGui::IsItemHovered();
         if (sh) ImGui::SetTooltip(fav ? "Remove from favourites" : "Add to favourites");
         {   // a drawn star (the UI font has no star glyph)
-            const ImVec2 c(sp.x + 10, sp.y + (lh + 14) * 0.5f);
+            const ImVec2 c(sp.x + dm.smallHit * 0.5f - 1.0f, sp.y + lineH * 0.5f);
             ImVec2 pts[10];
             for (int k = 0; k < 10; ++k) {
                 const float a = -1.5707963f + k * 0.6283185f, r = (k % 2) ? 2.6f : 6.0f;

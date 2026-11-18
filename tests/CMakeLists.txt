@@ -3965,6 +3965,12 @@ add_executable(test_menu_bar_model test_menu_bar_model.cpp)
 target_include_directories(test_menu_bar_model PRIVATE ${CMAKE_SOURCE_DIR}/editor)
 target_compile_definitions(test_menu_bar_model PRIVATE OKAY_SOURCE_DIR="${PROJECT_SOURCE_DIR}")
 add_test(NAME menu_bar_model COMMAND test_menu_bar_model)
+
+# Density of the Visual Script and Script editor windows (editor/ScriptingDensity.hpp): numbers, node-width maths, eliding, settings.
+add_executable(test_scripting_density test_scripting_density.cpp)
+target_include_directories(test_scripting_density PRIVATE ${CMAKE_SOURCE_DIR}/editor)
+target_compile_definitions(test_scripting_density PRIVATE OKAY_SOURCE_DIR="${PROJECT_SOURCE_DIR}")
+add_test(NAME scripting_density COMMAND test_scripting_density)
 add_executable(test_hierarchy_context_model test_hierarchy_context_model.cpp)
 target_include_directories(test_hierarchy_context_model PRIVATE ${CMAKE_SOURCE_DIR}/editor)
 target_compile_definitions(test_hierarchy_context_model PRIVATE OKAY_SOURCE_DIR="${PROJECT_SOURCE_DIR}")

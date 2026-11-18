@@ -258,7 +258,7 @@ Mostly on main and tested. Nothing is open: #574 added the optimization tools (L
   - 2.13.4 Block compression - `Texture/Bc`, `Texture/Dds` - our own BC1/BC3/BC4/BC5 encoder (axis fit, least squares, endpoint search) and decoder; DDS writer and reader with mips
   - 2.13.5 Streaming planner - `Texture/Stream` - camera distance and screen size to the mip each texture needs, memory budget through `Optimize/MipBudget`, load and evict amounts, per-frame upload cap
   - 2.13.6 Tool and editor hook - `tools/okaytexture`, `Texture/Export`, `editor/ProjectPanelUI` - `okay-texture mips|compress|atlas|info|stream`; Project panel Import Settings "Generate mipmaps / compress" writes a .dds beside the picture
-- **Code:** `Texture/Texture`, `Texture/Mip`, `Texture/Atlas`, `Texture/Convert`, `Texture/Bc`, `Texture/Dds`, `Texture/Stream`, `Texture/Export`, `tools/okaytexture/main.cpp`, `editor/ProjectPanelUI.cpp`
+- **Code:** `Texture/Texture`, `Texture/Mip`, `Texture/Atlas`, `Texture/Convert`, `Texture/Bc`, `Texture/Dds`, `Texture/Stream`, `Texture/Export`, `tools/okaytexture/main.cpp`, `examples/texture`, `editor/ProjectPanelUI.cpp`
 - **API:** `okay::tex::GenerateMips`, `GenerateMipsRGBA8`, `MipOptions`, `PackAtlas`, `ComposeAtlasRGBA8`, `AtlasToJson`, `ConvertPixels`, `FloatToHalf`, `EncodeBc`, `DecodeBc`, `WriteDds`, `ReadDds`, `StreamPlanner`, `BuildDdsFile`, `BuildAtlasFiles`; command `okay-texture`
 - **Editor:** Project panel > picture > Import Settings > "Generate mipmaps / compress"
 - **Docs:** `docs/own_texture_library.md`

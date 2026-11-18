@@ -14,16 +14,18 @@
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
+#include <map>
 #include <sstream>
 #include <string>
 #include <unordered_map>
+#include <utility>
 #include <vector>
 
 namespace okay::vs {
 
 /// What a field is, so the editor can draw the right widget: a number you can drag or type, text, a key to press, an
 /// object to pick, a fixed list of choices, a colour swatch, or the presets list (a field that fills the others in).
-enum class QbKind { Text, Number, Key, Object, Choice, Colour, Preset };
+enum class QbKind { Text, Number, Key, Object, Choice, Colour, Preset, Name };   // Name: a saved value's name (typed, or picked from the names already used)
 struct QbField {
     const char* name;
     const char* def;
@@ -77,8 +79,8 @@ inline const std::vector<QbRuleEntry>& QbRuleActions() {
         {"score", "add to the score (type the points)", "N a ScoreAdd\nD a 0 {v0}\nIN a\nOUT a 0\n"},
         {"hurt", "take health away (type the amount)", "N a Damage\nD a 0 {v0}\nIN a\nOUT a 0\n"},
         {"heal", "give health back (type the amount)", "N a Heal\nD a 0 {v0}\nIN a\nOUT a 0\n"},
-        {"text", "show text (type the words)", "N a SetText self\nD a 0 {v0}\nIN a\nOUT a 0\n"},
-        {"say", "say text in the Console (type the words)", "N a Print\nD a 0 {v0}\nIN a\nOUT a 0\n"},
+        {"text", "show text (type the words)", "N a SetText self\nD a 0 {q0}\nIN a\nOUT a 0\n"},
+        {"say", "say text in the Console (type the words)", "N a Print\nD a 0 {q0}\nIN a\nOUT a 0\n"},
         {"sound", "play this object's sound", "N a PlaySound\nIN a\nOUT a 0\n"},
         {"spawn", "make a copy of a saved object (type its file)", "N a Spawn {0}\nIN a\nOUT a 0\n"},
         {"remove", "remove this object", "N a Destroy\nIN a\nOUT a 0\n"},
@@ -110,15 +112,20 @@ inline const std::vector<QuickBlock>& QuickBlocks() {
     static const std::vector<QuickBlock> all = {
         // ---- Movement
         {"QbMoveWithKeys", "Move With Keys", "Movement",
-         "Slides this object while you hold the four keys, all the time.", "Hold the right arrow to go right.", false, false,
-         {{"Left key", "left", QbKind::Key}, {"Right key", "right", QbKind::Key}, {"Up key", "up", QbKind::Key}, {"Down key", "down", QbKind::Key}, {"Speed", "5", QbKind::Number}},
-         "N u OnUpdate\nE OnUpdate u\nN a Key {1}\nN b Key {0}\nN c Sub\nW c 0 a 0\nW c 1 b 0\nN d Mul\nD d 1 {v4}\nW d 0 c 0\nN e DeltaTime\n"
-         "N f Mul\nW f 0 d 0\nW f 1 e 0\nN g Key {2}\nN h Key {3}\nN i Sub\nW i 0 g 0\nW i 1 h 0\nN j Mul\nD j 1 {v4}\n"
-         "W j 0 i 0\nN k Mul\nW k 0 j 0\nW k 1 e 0\nN t Translate\nW t 0 f 0\nW t 1 k 0\nD t 2 0\nX u 0 t\nIN u\n"},
+         "Slides this object while you hold the keys, all the time.", "Hold the right arrow to go right.", false, false,
+         {{"Keys", "arrows", QbKind::Choice, "arrow keys~arrows|W A S D~wasd|both~both"}, {"Speed", "5", QbKind::Number}},
+         "N u OnUpdate\nE OnUpdate u\n"
+         "N ra Key {kr1:0}\nN rb Key {kr2:0}\nN ro Or\nW ro 0 ra 0\nW ro 1 rb 0\n"
+         "N la Key {kl1:0}\nN lb Key {kl2:0}\nN lo Or\nW lo 0 la 0\nW lo 1 lb 0\n"
+         "N c Sub\nW c 0 ro 0\nW c 1 lo 0\nN d Mul\nD d 1 {v1}\nW d 0 c 0\nN e DeltaTime\nN f Mul\nW f 0 d 0\nW f 1 e 0\n"
+         "N ua Key {ku1:0}\nN ub Key {ku2:0}\nN uo Or\nW uo 0 ua 0\nW uo 1 ub 0\n"
+         "N da Key {kd1:0}\nN db Key {kd2:0}\nN do Or\nW do 0 da 0\nW do 1 db 0\n"
+         "N i Sub\nW i 0 uo 0\nW i 1 do 0\nN j Mul\nD j 1 {v1}\nW j 0 i 0\nN k Mul\nW k 0 j 0\nW k 1 e 0\n"
+         "N t Translate\nW t 0 f 0\nW t 1 k 0\nD t 2 0\nX u 0 t\nIN u\n"},
         {"QbMoveToward", "Move To Spot", "Movement",
-         "Walks this object toward a spot, all the time.", "Walk to the spot 5 steps right.", false, false,
-         {{"Right", "5", QbKind::Number}, {"Up", "0", QbKind::Number}, {"Forward", "0", QbKind::Number}, {"Speed", "2", QbKind::Number}},
-         "N u OnUpdate\nE OnUpdate u\nN a GlMoveToPosition\nD a 0 {v0}\nD a 1 {v1}\nD a 2 {v2}\nD a 3 {v3}\nX u 0 a\nIN u\n"},
+         "Walks this object toward a spot (right, up, forward), all the time.", "Walk to the spot 5 steps right.", false, false,
+         {{"Spot", "5,0,0"}, {"Speed", "2", QbKind::Number}},
+         "N u OnUpdate\nE OnUpdate u\nN a GlMoveToPosition\nD a 0 {vp0.0}\nD a 1 {vp0.1}\nD a 2 {vp0.2}\nD a 3 {v1}\nX u 0 a\nIN u\n"},
         {"QbFollowObject", "Follow Object", "Movement",
          "Walks toward the object with this name, all the time.", "A ghost follows the object named Player.", false, false,
          {{"Who", "Player", QbKind::Object}, {"Speed", "3", QbKind::Number}},
@@ -143,7 +150,7 @@ inline const std::vector<QuickBlock>& QuickBlocks() {
         {"QbShowScore", "Show Score", "Game rules",
          "Writes the score on this object's text, all the time.", "Show Score: 3 on the screen.", false, false,
          {{"Label", "Score: "}},
-         "N a OnUpdate\nE OnUpdate a\nN s ScoreGet\nN x GlShowNumberInText\nD x 0 {v0}\nW x 1 s 0\nD x 2 0\nX a 0 x\nIN a\n"},
+         "N a OnUpdate\nE OnUpdate a\nN s ScoreGet\nN x GlShowNumberInText\nD x 0 {q0}\nW x 1 s 0\nD x 2 0\nX a 0 x\nIN a\n"},
         {"QbLoseHealth", "Lose Health", "Game rules",
          "Takes health away from this object.", "A spike takes 10 health.", true, true,
          {{"Amount", "10", QbKind::Number}},
@@ -191,9 +198,9 @@ inline const std::vector<QuickBlock>& QuickBlocks() {
          {{"What", "Assets/ball.okayprefab"}, {"Seconds", "2", QbKind::Number}},
          "N a OnUpdate\nE OnUpdate a\nN b SpawnEvery {0}\nD b 0 {v1}\nX a 0 b\nIN a\n"},
         {"QbSpawnCopyAt", "Spawn Copy At", "World",
-         "Makes a copy of a saved object at a spot.", "Drop a coin at 2 steps up.", true, true,
-         {{"What", "Assets/coin.okayprefab"}, {"Right", "0", QbKind::Number}, {"Up", "0", QbKind::Number}, {"Forward", "0", QbKind::Number}},
-         "N a Spawn {0}\nD a 0 {v1}\nD a 1 {v2}\nD a 2 {v3}\nIN a\nOUT a 0\n"},
+         "Makes a copy of a saved object at a spot (right, up, forward).", "Drop a coin 2 steps up.", true, true,
+         {{"What", "Assets/coin.okayprefab"}, {"Spot", "0,0,0"}},
+         "N a Spawn {0}\nD a 0 {vp1.0}\nD a 1 {vp1.1}\nD a 2 {vp1.2}\nIN a\nOUT a 0\n"},
         {"QbRemoveAfter", "Remove After A While", "World",
          "Takes this object away after some seconds.", "A bullet disappears after 3 seconds.", false, false,
          {{"Seconds", "3", QbKind::Number}},
@@ -202,7 +209,7 @@ inline const std::vector<QuickBlock>& QuickBlocks() {
         {"QbShowText", "Show Text On Screen", "Feedback",
          "Shows a message on this object's text for a few seconds.", "Show Hello! for 2 seconds.", true, true,
          {{"Text", "Hello!"}, {"Seconds", "2", QbKind::Number}},
-         "N a SetText self\nD a 0 {v0}\nN w Delay {1}\nX a 0 w\nN c SetText self\nD c 0 \"\"\nX w 0 c\nIN a\nOUT a 0\n"},
+         "N a SetText self\nD a 0 {q0}\nN w Delay {1}\nX a 0 w\nN c SetText self\nD c 0 \"\"\nX w 0 c\nIN a\nOUT a 0\n"},
         {"QbPlaySoundOnKey", "Play Sound On Key", "Feedback",
          "Plays this object's sound when you press the key.", "Press Space to hear a beep.", false, true,
          {{"Key", "space", QbKind::Key}},
@@ -239,11 +246,11 @@ inline const std::vector<QuickBlock>& QuickBlocks() {
         // ---- Merged blocks: one block with a dropdown instead of several nodes
         {"QbChangeNumber", "Change Number", "Game rules",
          "Changes a saved number: add, subtract, multiply or divide.", "Take 1 off the number named lives.", true, true,
-         {{"Name", "points"}, {"Change", "Add", QbKind::Choice, "add~Add|subtract~Sub|multiply~Mul|divide~Div"}, {"Amount", "1", QbKind::Number}},
-         "N g GetVar {0}\nN o {1}\nW o 0 g 0\nD o 1 {v2}\nN s SetVar {0}\nW s 0 o 0\nIN s\nOUT s 0\n"},
+         {{"Name", "points", QbKind::Name}, {"Change", "Add", QbKind::Choice, "add~Add|subtract~Sub|multiply~Mul|divide~Div"}, {"Amount", "1", QbKind::Number}},
+         "N g GetVar {0}\nN o {1}\nW o 0 g 0\nD o 1 {v2}\nN s SetVar {0}\nW s 0 o 0\nIN s\nOUT s 0\n", {{"Add to score", {"score", "Add", "1"}}, {"Take away 1 life", {"lives", "Sub", "1"}}, {"Add 1 coin", {"coins", "Add", "1"}}, {"Count down 1", {"time", "Sub", "1"}}}},
         {"QbIfNumberIs", "If Number Is", "Flow",
          "Does the next thing only when a saved number matches.", "If lives is 0, then end the game.", true, true,
-         {{"Name", "points"}, {"Is", ">=", QbKind::Choice, "equal to~==|not equal to~!=|less than~<|more than~>|at least~>=|at most~<="}, {"Number", "5", QbKind::Number}},
+         {{"Name", "points", QbKind::Name}, {"Is", ">=", QbKind::Choice, "equal to~==|not equal to~!=|less than~<|more than~>|at least~>=|at most~<="}, {"Number", "5", QbKind::Number}},
          "N g GetVar {0}\nN c Compare {1}\nW c 0 g 0\nD c 1 {v2}\nN b Branch\nW b 0 c 0\nIN b\nOUT b 0\n"},
         {"QbPlayOrStopSound", "Play Or Stop Sound", "Feedback",
          "Starts or stops this object's sound.", "Stop the music when the game is over.", true, true,
@@ -265,6 +272,135 @@ inline const std::vector<QuickBlock>& QuickBlocks() {
           {"Checkpoint", {"touched", "", "none", "", "checkpoint", "", "none", "", "none", "", "none", ""}},
           {"Jump pad", {"touched", "", "none", "", "move", "0,3,0", "sound", "", "none", "", "none", ""}},
           {"Game over", {"dead", "", "none", "", "lose", "", "none", "", "none", "", "none", ""}}}},
+        // ---- A bigger wave: more everyday blocks, each one job, typed fields only
+        {"QbWhenKeyDo", "When Key Pressed Do", "Flow",
+         "Does the next thing when you press the key.", "When you press E, open the chest.", false, true,
+         {{"Key", "space", QbKind::Key}},
+         "N a OnKey {0}\nE OnKey:{0} a\nIN a\nOUT a 0\n"},
+        {"QbWhenKeyReleasedDo", "When Key Let Go Do", "Flow",
+         "Does the next thing when you let go of the key.", "When you let go of Space, stop the engine.", false, true,
+         {{"Key", "space", QbKind::Key}},
+         "N a OnKeyUp {0}\nE OnKeyUp:{0} a\nIN a\nOUT a 0\n"},
+        {"QbWhenClickedDo", "When Clicked Do", "Flow",
+         "Does the next thing when you click this object.", "When you click the button, play a sound.", false, true,
+         {},
+         "N a OnClick\nE OnClick a\nIN a\nOUT a 0\n"},
+        {"QbWhenBumpedDo", "When Bumped Do", "Flow",
+         "Does the next thing when this object bumps into something.", "When the ball bumps the wall, play a sound.", false, true,
+         {},
+         "N a OnCollision\nE OnCollision a\nIN a\nOUT a 0\n"},
+        {"QbWhenStartDo", "When The Game Starts Do", "Flow",
+         "Does the next thing once, when the game starts.", "When the game starts, say hello.", false, true,
+         {},
+         "N a OnStart\nE OnStart a\nIN a\nOUT a 0\n"},
+        {"QbRunAwayFrom", "Run Away From", "Movement",
+         "Walks away from the object with this name, all the time.", "A rabbit runs away from the Player.", false, false,
+         {{"Who", "Player", QbKind::Object}, {"Speed", "3", QbKind::Number}},
+         "N u OnUpdate\nE OnUpdate u\nN f FindObject {0}\nN a Flee\nW a 0 f 0\nD a 1 {v1}\nX u 0 a\nIN u\n"},
+        {"QbGoRound", "Go Round In A Circle", "Movement",
+         "Moves this object round in a circle, all the time.", "A planet circles the sun.", false, false,
+         {{"Radius", "2", QbKind::Number}, {"Speed", "1.5", QbKind::Number}},
+         "N u OnUpdate\nE OnUpdate u\nN a GlMoveInCircle\nD a 0 {v0}\nD a 1 {v1}\nX u 0 a\nIN u\n"},
+        {"QbFloatUpDown", "Bob Up And Down", "Movement",
+         "Bobs this object up and down, all the time.", "A coin bobs above the ground.", false, false,
+         {{"Height", "0.5", QbKind::Number}, {"Speed", "2", QbKind::Number}},
+         "N u OnUpdate\nE OnUpdate u\nN a Bob\nD a 0 {v0}\nD a 1 {v1}\nX u 0 a\nIN u\n"},
+        {"QbTeleportTo", "Teleport To Spot", "Movement",
+         "Puts this object at a spot (right, up, forward) straight away.", "Teleport the player back to the start.", true, true,
+         {{"Spot", "0,0,0"}},
+         "N a Teleport self\nD a 0 {vp0.0}\nD a 1 {vp0.1}\nD a 2 {vp0.2}\nIN a\nOUT a 0\n"},
+        {"QbLaunch", "Launch This Object", "Movement",
+         "Gives this object a sudden push (right, up, forward).", "A spring flings the player up.", true, true,
+         {{"Push", "0,8,0"}},
+         "N a AddImpulse\nD a 0 {vp0.0}\nD a 1 {vp0.1}\nD a 2 {vp0.2}\nIN a\nOUT a 0\n"},
+        {"QbCountdownThenDo", "Count Down Then Do", "Flow",
+         "Counts down, then does the next thing.", "Count down 3 seconds, then start the race.", true, true,
+         {{"Seconds", "3", QbKind::Number}},
+         "N a Countdown {0}\nIN a\nOUT a 0\n"},
+        {"QbOnlyEvery", "Only Every Few Seconds", "Flow",
+         "Lets the next thing happen at most once every few seconds.", "The gun can fire once every second.", true, true,
+         {{"Seconds", "1", QbKind::Number}},
+         "N a Cooldown {0}\nIN a\nOUT a 0\n"},
+        {"QbDoOnce", "Do Only Once", "Flow",
+         "Lets the next thing happen only the first time.", "Show the tip only once.", true, true,
+         {},
+         "N a Once\nIN a\nOUT a 0\n"},
+        {"QbDoByChance", "Do By Chance", "Flow",
+         "Does the next thing only some of the time.", "A chest drops a gem half the time.", true, true,
+         {{"Chance (0 to 1)", "0.5", QbKind::Number}},
+         "N k Chance {0}\nN b Branch\nW b 0 k 0\nIN b\nOUT b 0\n"},
+        {"QbToggleSwitch", "Switch On Or Off", "Flow",
+         "Flips a switch: on becomes off and off becomes on.", "Press a button to switch the light.", true, true,
+         {{"Name", "switch", QbKind::Name}},
+         "N a Toggle {0}\nIN a\nOUT a 0\n"},
+        {"QbIfSwitchOn", "If Switch Is On", "Flow",
+         "Does the next thing only when the switch is on.", "If the lever is on, open the gate.", true, true,
+         {{"Name", "switch", QbKind::Name}},
+         "N g GetVar {0}\nN b Branch\nW b 0 g 0\nIN b\nOUT b 0\n"},
+        {"QbSaveNumber", "Save A Number", "Game rules",
+         "Keeps a saved number so it is still there next time you play.", "Save the best score.", true, true,
+         {{"Name", "score", QbKind::Name}, {"Save as", "best"}},
+         "N g GetVar {0}\nN a SaveValue {1}\nW a 0 g 0\nIN a\nOUT a 0\n"},
+        {"QbLoadNumber", "Load A Saved Number", "Game rules",
+         "Reads a number you saved before back into a saved value.", "Load the best score when the game starts.", true, true,
+         {{"Name", "score", QbKind::Name}, {"Saved as", "best"}},
+         "N l LoadValue {1}\nD l 0 0\nN a SetVar {0}\nW a 0 l 0\nIN a\nOUT a 0\n"},
+        {"QbGiveItem", "Give Item", "Game rules",
+         "Puts items in the bag.", "Give the player 2 keys.", true, true,
+         {{"Item", "key"}, {"How many", "1", QbKind::Number}},
+         "N a AddItem {0}\nD a 0 {v1}\nIN a\nOUT a 0\n"},
+        {"QbIfHasItem", "If Has Item", "Game rules",
+         "Does the next thing only if the bag has enough of the item.", "If the player has a key, open the door.", true, true,
+         {{"Item", "key"}, {"At least", "1", QbKind::Number}},
+         "N h HasItem {0}\nD h 0 {v1}\nN b Branch\nW b 0 h 0\nIN b\nOUT b 0\n"},
+        {"QbRestartGame", "Restart The Game", "Game rules",
+         "Starts the scene again from the beginning.", "Press R to try again.", true, false,
+         {},
+         "N a RestartScene\nIN a\n"},
+        {"QbHealFully", "Heal Fully", "Game rules",
+         "Gives all the health back.", "A potion fills the health.", true, true,
+         {},
+         "N a GlHealToFull\nIN a\nOUT a 0\n"},
+        {"QbIfHealthLow", "If Health Is Low", "Game rules",
+         "Does the next thing only when health is low.", "When health is low, play a warning.", true, true,
+         {{"Share (0 to 1)", "0.25", QbKind::Number}},
+         "N h GlIsHealthLow\nD h 0 {v0}\nN b Branch\nW b 0 h 0\nIN b\nOUT b 0\n"},
+        {"QbDefeatThis", "Defeat This Object", "Game rules",
+         "Takes all the health away.", "A trap defeats whatever falls in.", true, true,
+         {},
+         "N a GlKill\nIN a\nOUT a 0\n"},
+        {"QbRespawnThis", "Respawn This Object", "Game rules",
+         "Brings this object back to life.", "The hero comes back after falling.", true, true,
+         {},
+         "N a Respawn\nIN a\nOUT a 0\n"},
+        {"QbHurtOnTouch", "Hurt Whatever Touches", "Game rules",
+         "When something touches this, it loses health.", "Lava that hurts the player.", false, false,
+         {{"Amount", "10", QbKind::Number}},
+         "N a OnTrigger\nE OnTrigger a\nN o Other\nN d Damage\nD d 0 {v0}\nW d 1 o 0\nX a 0 d\nIN a\n", {{"Lava hurts", {"10"}}, {"Sharp spikes", {"25"}}}},
+        {"QbHealOnTouch", "Heal Whatever Touches", "Game rules",
+         "When something touches this, it gets health back.", "A heart that heals the player.", false, false,
+         {{"Amount", "25", QbKind::Number}},
+         "N a OnTrigger\nE OnTrigger a\nN o Other\nN d Heal\nD d 0 {v0}\nW d 1 o 0\nX a 0 d\nIN a\n"},
+        {"QbRemoveOnTouch", "Remove When Touched", "World",
+         "Takes this object out of the game when something touches it.", "A balloon that pops.", false, false,
+         {},
+         "N a OnTrigger\nE OnTrigger a\nN b Destroy\nX a 0 b\nIN a\n"},
+        {"QbRandomSpot", "Jump To A Random Spot", "World",
+         "Puts this object at a random spot left or right and forward or back.", "A coin hops to a new place.", true, true,
+         {{"Smallest", "-5", QbKind::Number}, {"Largest", "5", QbKind::Number}},
+         "N r1 RandomRange\nD r1 0 {v0}\nD r1 1 {v1}\nN r2 RandomRange\nD r2 0 {v0}\nD r2 1 {v1}\nN p SetPosition\nW p 0 r1 0\nD p 1 0\nW p 2 r2 0\nIN p\nOUT p 0\n"},
+        {"QbSayWhenTouched", "Show Text When Touched", "Feedback",
+         "Shows a message on this object's text when something touches it.", "A sign that says Welcome.", false, false,
+         {{"Text", "Welcome!"}},
+         "N a OnTrigger\nE OnTrigger a\nN b SetText self\nD b 0 {q0}\nX a 0 b\nIN a\n"},
+        {"QbShowValue", "Show Value On Screen", "Game rules",
+         "Writes a saved value on this object's text, all the time.", "Show Score: 3 on the screen.", false, false,
+         {{"Name", "score", QbKind::Name}, {"Label", "Score: "}},
+         "N a OnUpdate\nE OnUpdate a\nN s GetVar {0}\nN x GlShowNumberInText\nD x 0 {q1}\nW x 1 s 0\nD x 2 0\nX a 0 x\nIN a\n"},
+        {"QbCountEverySecond", "Count Every Second", "Game rules",
+         "Counts a saved value up or down once every second.", "A clock that counts up.", false, false,
+         {{"Name", "time", QbKind::Name}, {"Count", "Add", QbKind::Choice, "up~Add|down~Sub"}},
+         "N a OnTimer 1\nE OnTimer:1 a\nN g GetVar {0}\nN o {1}\nW o 0 g 0\nD o 1 1\nN s SetVar {0}\nW s 0 o 0\nX a 0 s\nIN a\n"},
     };
     return all;
 }
@@ -349,6 +485,18 @@ inline std::string ColourPart(const std::string& v, int which) {
 }
 // Placeholders: {0} word, {v0} number-or-quoted, {q0} quoted, {r0}/{g0}/{b0} colour parts, {p0.1} part of a comma list,
 // {vp0.1} the same as a number or quoted text.
+/// The key for a direction (l r u d) from the Keys dropdown: arrows, W A S D, or both (the second key is the other set).
+inline std::string MoveKey(const std::string& choice, char dir, bool second) {
+    const bool arrows = choice != "wasd";
+    const bool both = choice == "both";
+    const bool useArrows = both ? !second : arrows;
+    switch (dir) {
+        case 'l': return useArrows ? "left" : "a";
+        case 'r': return useArrows ? "right" : "d";
+        case 'u': return useArrows ? "up" : "w";
+        default:  return useArrows ? "down" : "s";
+    }
+}
 inline std::string Fill(const std::string& tmpl, const std::vector<std::string>& f) {
     std::string out;
     for (std::size_t i = 0; i < tmpl.size(); ++i) {
@@ -356,6 +504,12 @@ inline std::string Fill(const std::string& tmpl, const std::vector<std::string>&
         const std::size_t e = tmpl.find('}', i);
         if (e == std::string::npos) { out += tmpl[i]; continue; }
         std::string key = tmpl.substr(i + 1, e - i - 1);
+        if (key.size() > 4 && key[0] == 'k' && key[3] == ':') {   // {kl1:0}: a movement key, from the Keys dropdown in field 0
+            const std::size_t fk = (std::size_t)std::atoi(key.c_str() + 4);
+            out += MoveKey(fk < f.size() ? f[fk] : std::string("arrows"), key[1], key[2] == '2');
+            i = e;
+            continue;
+        }
         char mode = 'w';
         if (!key.empty() && (key[0] == 'v' || key[0] == 'q' || key[0] == 'r' || key[0] == 'g' || key[0] == 'b')) { mode = key[0]; key = key.substr(1); }
         int part = -1;
@@ -490,6 +644,7 @@ inline bool QbValidate(QbKind kind, const std::string& value, const char* choice
             for (std::size_t i = 1; i < 7; ++i) if (!std::isxdigit((unsigned char)value[i])) return false;
             return true;
         }
+        case QbKind::Name: return !qb_detail::Trim(value).empty() && value.find_first_of("\"# \t") == std::string::npos;
         case QbKind::Preset: case QbKind::Object: case QbKind::Text: return true;
     }
     return true;
@@ -500,6 +655,13 @@ inline std::string QbNormalize(QbKind kind, const std::string& value) {
     std::string v = qb_detail::Trim(value);
     if (kind == QbKind::Key || kind == QbKind::Colour) for (char& c : v) c = (char)std::tolower((unsigned char)c);
     return v;
+}
+
+/// A saved value's name as typed: spaces and odd marks become "_", so it is one word the graph can keep.
+inline std::string QbNormalizeName(const std::string& typed) {
+    std::string out;
+    for (char c : qb_detail::Trim(typed)) out += (std::isalnum((unsigned char)c) || c == '_') ? c : '_';
+    return out;
 }
 
 /// What the editor knows when it fills a new block in.
@@ -531,9 +693,48 @@ inline const QbAlias* QuickBlockForOldNode(const std::string& type) {
     return nullptr;
 }
 
+/// Graphs saved by release 2.885.0 hold the first fields these blocks had. This turns such a set of typed values (pin ->
+/// text) into the current fields, so an old graph loads and behaves the same. A set that is already current is untouched.
+inline bool QbUpgradeFields(const std::string& type, std::map<int, std::string>& v) {
+    auto get = [&](int pin, const char* def) { auto it = v.find(pin); return it != v.end() && !it->second.empty() ? it->second : std::string(def); };
+    auto hasHigh = [&](int pin) { return v.lower_bound(pin) != v.end(); };
+    if (type == "QbMoveWithKeys" && hasHigh(2)) {   // was: Left key, Right key, Up key, Down key, Speed
+        const std::string l = get(0, "left"), r = get(1, "right");
+        const std::string speed = get(4, "5");
+        v.clear();
+        v[0] = (l == "a" && r == "d") ? "wasd" : "arrows";
+        v[1] = speed;
+        return true;
+    }
+    if (type == "QbMoveToward" && hasHigh(2)) {    // was: Right, Up, Forward, Speed
+        const std::string spot = get(0, "5") + "," + get(1, "0") + "," + get(2, "0"), speed = get(3, "2");
+        v.clear(); v[0] = spot; v[1] = speed;
+        return true;
+    }
+    if (type == "QbSpawnCopyAt" && hasHigh(2)) {   // was: What, Right, Up, Forward
+        const std::string what = get(0, "Assets/coin.okayprefab"), spot = get(1, "0") + "," + get(2, "0") + "," + get(3, "0");
+        v.clear(); v[0] = what; v[1] = spot;
+        return true;
+    }
+    if (type == "QbFlashColour" && hasHigh(2)) {   // was: Red, Green, Blue, Seconds (0 to 1 each)
+        auto hex = [&](int pin, const char* def) {
+            const double d = std::atof(get(pin, def).c_str());
+            const int n = d <= 0 ? 0 : d >= 1 ? 255 : (int)(d * 255.0 + 0.5);
+            char b[4]; std::snprintf(b, sizeof b, "%02x", n);
+            return std::string(b);
+        };
+        const std::string colour = "#" + hex(0, "1") + hex(1, "0") + hex(2, "0"), seconds = get(3, "0.2");
+        v.clear(); v[0] = colour; v[1] = seconds;
+        return true;
+    }
+    return false;
+}
+
 /// Turns every quick block in a saved graph into the low-level nodes and wires it stands for. Graphs without a
 /// quick block come back unchanged.
-inline std::string ExpandQuickBlocks(const std::string& text) {
+/// `ranges` (optional) gets one {first expanded id, the block's own id} per block: every expanded node of a block has an id in
+/// [first, first + 199]. The editor uses it to light up the block while its nodes run in Play.
+inline std::string ExpandQuickBlocks(const std::string& text, std::vector<std::pair<int, int>>* ranges = nullptr) {
     using namespace qb_detail;
     if (text.find("node ") == std::string::npos || text.find(" Qb") == std::string::npos) return text;
     struct Inst { const QuickBlock* b; std::vector<std::string> fields; int base; };
@@ -551,6 +752,7 @@ inline std::string ExpandQuickBlocks(const std::string& text) {
         Inst inst{b, {}, 1000000 + 200 * counter++};
         for (const QbField& f : b->fields) inst.fields.push_back(f.def);
         blocks[std::atoi(w[1].c_str())] = inst;
+        if (ranges) ranges->push_back({inst.base, std::atoi(w[1].c_str())});
     }
     if (blocks.empty()) return text;
     // Typed field values: "default <id> <pin> <value>".
@@ -564,6 +766,31 @@ inline std::string ExpandQuickBlocks(const std::string& text) {
         const std::size_t pin = (std::size_t)std::atoi(w[2].c_str());
         if (pin < it->second.fields.size()) it->second.fields[pin] = Unquote(Trim(rest));
     }
+    // Graphs saved by an earlier release: bring the typed values up to the current fields.
+    {
+        std::unordered_map<int, std::map<int, std::string>> typed;
+        for (const std::string& l : lines) {
+            if (l.compare(0, 8, "default ") != 0) continue;
+            std::string rest;
+            const auto w = Words(l, 3, &rest);
+            if (w.size() < 3) continue;
+            const int id = std::atoi(w[1].c_str());
+            if (blocks.count(id)) typed[id][std::atoi(w[2].c_str())] = Unquote(Trim(rest));
+        }
+        for (auto& kv : typed) {
+            Inst& inst = blocks[kv.first];
+            if (!QbUpgradeFields(inst.b->type, kv.second)) continue;
+            inst.fields.clear();
+            for (const QbField& f : inst.b->fields) inst.fields.push_back(f.def);
+            for (const auto& pv : kv.second) if ((std::size_t)pv.first < inst.fields.size()) inst.fields[(std::size_t)pv.first] = pv.second;
+        }
+    }
+    // A dropdown that holds something that is not one of its choices (a hand-edited file) falls back to its default.
+    for (auto& kv : blocks)
+        for (std::size_t i = 0; i < kv.second.fields.size() && i < kv.second.b->fields.size(); ++i) {
+            const QbField& f = kv.second.b->fields[i];
+            if (f.kind == QbKind::Choice && !QbValidate(QbKind::Choice, kv.second.fields[i], f.choices)) kv.second.fields[i] = f.def;
+        }
     std::unordered_map<int, Ends> ends;
     std::string extra;
     for (auto& kv : blocks) {

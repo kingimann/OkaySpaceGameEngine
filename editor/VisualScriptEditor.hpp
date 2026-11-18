@@ -1419,9 +1419,34 @@ public:
             if (dest) continue;
             for (auto& l : execLinks) if (l.from == n.id && l.pin == 4) l.pin = ncases;
         }
+        // Quick blocks saved by an earlier release: bring their typed values up to the current fields.
+        for (auto& n : nodes) if (okay::vs::FindQuickBlock(n.type)) okay::vs::QbUpgradeFields(n.type, n.pinDefault);
         nextId = maxId + 1;
     }
 };
+
+/// The names of the saved values a graph already uses (typed on Get / Set / Add Saved Value blocks, or in the Name field
+/// of a Quick block), each once, in the order first used. The Name field offers these, so a typo cannot make a new one.
+inline std::vector<std::string> VsUsedValueNames(const VsEditGraph& g) {
+    std::vector<std::string> out;
+    auto add = [&](const std::string& name) {
+        if (name.empty()) return;
+        for (const std::string& o : out) if (o == name) return;
+        out.push_back(name);
+    };
+    for (const VsEditNode& n : g.nodes) {
+        if (n.type == "GetVar" || n.type == "SetVar" || n.type == "AddVar" || n.type == "Toggle" || n.type == "HasVar") add(n.arg);
+        if (const okay::vs::QuickBlock* qb = okay::vs::FindQuickBlock(n.type)) {
+            const auto fields = okay::vs::QbAllFields(*qb);
+            for (std::size_t i = 0; i < fields.size(); ++i) {
+                if (fields[i].kind != okay::vs::QbKind::Name) continue;
+                auto it = n.pinDefault.find((int)i);
+                add(it != n.pinDefault.end() && !it->second.empty() ? it->second : std::string(fields[i].def));
+            }
+        }
+    }
+    return out;
+}
 
 // The graph a new visual script starts with: the same thing the starter text
 // script does, so every node is doing a job. On Start prints that the object is
@@ -3358,7 +3383,7 @@ inline bool VsApplyDrop(EditorState& ed, VsEditState& st, okay::vs::VsRefKind ki
 /// One field of a Quick block, drawn with the widget for its kind: a number you drag or type, a key to press, an object
 /// to pick, a dropdown, a colour swatch, or the presets list. Returns true when the value changed. Plain text fields
 /// return false (the caller draws the text box).
-inline bool VsDrawQuickField(EditorState& ed, VsEditNode& n, const okay::vs::QuickBlock& qb, int i, std::string& dv, float width) {
+inline bool VsDrawQuickField(EditorState& ed, VsEditGraph& g, VsEditNode& n, const okay::vs::QuickBlock& qb, int i, std::string& dv, float width) {
     using okay::vs::QbKind;
     const std::vector<okay::vs::QbField> fields = okay::vs::QbAllFields(qb);
     if (i < 0 || i >= (int)fields.size()) return false;
@@ -3407,6 +3432,25 @@ inline bool VsDrawQuickField(EditorState& ed, VsEditNode& n, const okay::vs::Qui
             if (ImGui::ColorEdit3(id, col, ImGuiColorEditFlags_NoInputs | ImGuiColorEditFlags_NoLabel)) {
                 char b[16]; std::snprintf(b, sizeof b, "#%02x%02x%02x", (int)(col[0] * 255.0f + 0.5f), (int)(col[1] * 255.0f + 0.5f), (int)(col[2] * 255.0f + 0.5f));
                 dv = b; changed = true;
+            }
+            return changed;
+        }
+        case QbKind::Name: {
+            // Type a name (it is made on the spot) or pick one the script already uses, so a typo cannot make a new one.
+            char buf[64]; std::snprintf(buf, sizeof buf, "%s", (dv.empty() ? std::string(f.def) : dv).c_str());
+            const float btn = 22.0f;
+            ImGui::SetNextItemWidth(std::max(30.0f, width - btn - 4.0f));
+            if (ImGui::InputTextWithHint(id, "name, like score", buf, sizeof buf)) {
+                dv = okay::vs::QbNormalizeName(buf); changed = true;
+            }
+            ImGui::SameLine(0, 4);
+            if (ImGui::Button("v##names", ImVec2(btn, 0))) ImGui::OpenPopup("##namelist");
+            if (ImGui::IsItemHovered()) ImGui::SetTooltip("Pick a saved value this script already uses");
+            if (ImGui::BeginPopup("##namelist")) {
+                const std::vector<std::string> used = VsUsedValueNames(g);
+                if (used.empty()) ImGui::TextDisabled("No saved values yet. Type a name.");
+                for (const std::string& u : used) if (ImGui::Selectable(u.c_str())) { dv = u; changed = true; }
+                ImGui::EndPopup();
             }
             return changed;
         }
@@ -4241,10 +4285,31 @@ inline void Draw(EditorState& ed, bool* open) {
         {
             std::vector<VsVarNode> refs;
             refs.reserve(g.nodes.size());
-            for (const auto& n : g.nodes) refs.push_back({n.type, n.arg, n.id});
+            for (const auto& n : g.nodes) {
+                refs.push_back({n.type, n.arg, n.id});
+                if (const okay::vs::QuickBlock* qb = okay::vs::FindQuickBlock(n.type)) {   // a Quick block's Name field is a saved value too
+                    const auto fields = okay::vs::QbAllFields(*qb);
+                    for (std::size_t fi = 0; fi < fields.size(); ++fi) {
+                        if (fields[fi].kind != okay::vs::QbKind::Name) continue;
+                        auto it = n.pinDefault.find((int)fi);
+                        refs.push_back({"GetVar", it != n.pinDefault.end() && !it->second.empty() ? it->second : std::string(fields[fi].def), n.id});
+                    }
+                }
+            }
+            // In Play: the running copy of this graph, so each saved value can show what it holds now.
+            VisualScriptComponent* liveComp = nullptr;
+            if (ed.isPlaying() && !g.path.empty())
+                for (const auto& up : ed.scene().Objects()) {
+                    if (!up || liveComp) continue;
+                    for (auto* vc : up->GetComponents<VisualScriptComponent>()) if (vc->Path() == g.path) { liveComp = vc; break; }
+                }
             const std::vector<VsVarRef> vars = VsCollectVariables(refs);
             const std::vector<VsParamRef> params = VsCollectParameters(refs);
-            VsDrawVariableDecls(g);
+            // Nobody has to declare anything: a name typed on a block is made on the spot. The start-value form only
+            // shows when the script already has declarations, or when asked for.
+            static bool s_showDecls = false;
+            if (!g.vars.empty() || !g.structs.empty() || s_showDecls) VsDrawVariableDecls(g);
+            else if (ImGui::SmallButton(kPanelStartValues)) s_showDecls = true;
             ImGui::Spacing();
             ImGui::TextUnformatted(kPanelUsed);
             ImGui::Separator();
@@ -4257,7 +4322,9 @@ inline void Draw(EditorState& ed, bool* open) {
                     last = v.scope; anyScope = true;
                 }
                 ImGui::PushID(v.nodeId + 500000 + (int)v.scope);
-                if (ImGui::Selectable(v.name.c_str(), st.sel.count(v.nodeId) > 0, 0, ImVec2(0, 28))) {
+                std::string rowText = v.name;
+                if (liveComp) rowText += "   =   " + okay::vs::VsToLiteral(liveComp->GetVariable(v.name));
+                if (ImGui::Selectable(rowText.c_str(), st.sel.count(v.nodeId) > 0, 0, ImVec2(0, 28))) {
                     st.sel = {v.nodeId}; st.selected = v.nodeId; st.focusNode = v.nodeId;
                 }
                 if (ImGui::IsItemHovered()) ImGui::SetTooltip("%s", kPanelUsedTip);
@@ -4598,6 +4665,11 @@ inline void Draw(EditorState& ed, bool* open) {
         if (ln) {
             unsigned& seen = st.seenExec[n.id];
             if (ln->execCount != seen) { st.flash[n.id] = 1.0f; seen = ln->execCount; }
+        } else if (live && okay::vs::FindQuickBlock(n.type)) {
+            // A Quick block is one node here but several in the running graph: light it when any of them ran.
+            const unsigned ran = live->BlockExecCount(n.id);
+            unsigned& seen = st.seenExec[n.id];
+            if (ran != seen) { st.flash[n.id] = 1.0f; seen = ran; }
         }
         const float fl = (live && st.flash.count(n.id)) ? st.flash[n.id] : 0.0f;
 
@@ -4803,7 +4875,7 @@ inline void Draw(EditorState& ed, bool* open) {
                 const okay::vs::QuickBlock* qbk = okay::vs::FindQuickBlock(n.type);
                 const auto qfields = qbk ? okay::vs::QbAllFields(*qbk) : std::vector<okay::vs::QbField>();
                 if (qbk && i < (int)qfields.size() && qfields[(std::size_t)i].kind != okay::vs::QbKind::Text) {
-                    if (VsDrawQuickField(ed, n, *qbk, i, dv, BOX_W)) g.dirty = true;
+                    if (VsDrawQuickField(ed, g, n, *qbk, i, dv, BOX_W)) g.dirty = true;
                     if (dv.empty()) n.pinDefault.erase(i);
                 } else if (rk != okay::vs::VsRefKind::None) {
                     const bool selfDefault = okay::vs::TargetPinFor(n.type) == i;

@@ -187,7 +187,10 @@ int main() {
             CHECK(VsGlossaryViolation(kVsBeginnerGroupNames[g]).empty() && VsGlossaryViolation(kVsBeginnerGroupBlurbs[g]).empty());
         }
         for (const VsBeginnerEntry& e : kVsBeginner) CHECK(inRegistry.count(e.type) > 0);
-        for (const okay::vs::QuickBlock& b : okay::vs::QuickBlocks()) CHECK(VsVisibleByDefault(b.type));
+        int quickDefault = 0;
+        for (const okay::vs::QuickBlock& b : okay::vs::QuickBlocks()) if (VsVisibleByDefault(b.type)) ++quickDefault;
+        std::printf("  quick blocks: %d in all, %d in the default list\n", (int)okay::vs::QuickBlocks().size(), quickDefault);
+        CHECK(quickDefault >= 25);
         CHECK(hidden > 2000);
         // A hidden node is still found by typing its name, and marked Advanced.
         bool foundHidden = false;
@@ -204,6 +207,25 @@ int main() {
         CHECK(InTop(health, "QbGameOverAtZeroHealth", 5) || InTop(health, "QbLoseHealth", 5));
     }
 
+
+    // ---- Saved values: the names a script uses are listed once, from plain blocks and from Quick block Name fields.
+    {
+        VsEditGraph g;
+        const int a = g.add("SetVar", 0, 0); g.find(a)->arg = "score";
+        const int b = g.add("GetVar", 0, 100); g.find(b)->arg = "score";
+        const int c = g.add("QbChangeNumber", 0, 200);          // Name field starts as "points"
+        g.find(c)->pinDefault[0] = "lives";
+        const int d = g.add("QbShowValue", 0, 300);             // Name field starts as "score"
+        const std::vector<std::string> names = VsUsedValueNames(g);
+        CHECK(names.size() == 2 && names[0] == "score" && names[1] == "lives");
+        (void)d;
+        VsEditGraph empty;
+        CHECK(VsUsedValueNames(empty).empty());
+        // An old saved graph with the first, longer fields is brought up to date when the editor loads it.
+        VsEditGraph old;
+        old.fromText("node 1 QbMoveWithKeys\ndefault 1 0 a\ndefault 1 1 d\ndefault 1 2 w\ndefault 1 3 s\ndefault 1 4 9\n");
+        CHECK(old.nodes.size() == 1 && old.nodes[0].pinDefault.size() == 2 && old.nodes[0].pinDefault[0] == "wasd" && old.nodes[0].pinDefault[1] == "9");
+    }
     // ---- Wire refusals in plain words (no banned words, and the example sentence from the owner).
     {
         using okay::vs::PinType;

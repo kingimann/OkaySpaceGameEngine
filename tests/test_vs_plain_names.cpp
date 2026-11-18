@@ -60,8 +60,8 @@ int main() {
             if (!v.empty() || old || stops > 0 || tooLong) { ++bad; std::printf("  panel word '%s' (banned '%s', old %d, stops %d, long %d)\n", w, v.c_str(), (int)old, stops, (int)tooLong); }
         }
         CHECK(n >= 30 && bad == 0);
-        for (okay::vs::VsVarScope sc : {okay::vs::VsVarScope::Object, okay::vs::VsVarScope::Scene, okay::vs::VsVarScope::Global,
-                                        okay::vs::VsVarScope::Local, okay::vs::VsVarScope::Story, okay::vs::VsVarScope::OtherObject})
+        for (VsVarScope sc : {VsVarScope::Object, VsVarScope::Scene, VsVarScope::Global,
+                                        VsVarScope::Local, VsVarScope::Story, VsVarScope::OtherObject})
             CHECK(VsGlossaryViolation(VsVarScopeName(sc)).empty());
         std::printf("  left panel: %d labels and sentences checked\n", n);
     }

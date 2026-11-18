@@ -44,7 +44,7 @@ inline const std::vector<VsRecipe>& VsRecipes() {
         {"Move with arrow keys", "The object slides when you press the arrow keys. Example: press the right arrow to go right.",
          "", "Solid", 1, 0, "Move with WASD",
          Note("Hold the arrow keys to move. Change the keys or the speed on the block.") +
-         "node 1 QbMoveWithKeys\npos 1 40 40\ndefault 1 0 left\ndefault 1 1 right\ndefault 1 2 up\ndefault 1 3 down\ndefault 1 4 5\n"},
+         "node 1 QbMoveWithKeys\npos 1 40 40\ndefault 1 0 arrows\ndefault 1 1 5\n"},
         {"Jump with Space", "The object jumps up when you press Space. Example: press Space to hop over a box.",
          "The object needs a physics body (it is added for you).", "Rigidbody", 1, 0, "Jump",
          Note("Press Space to jump. Change the key or the strength on the block.") +
@@ -81,6 +81,26 @@ inline const std::vector<VsRecipe>& VsRecipes() {
          "The object needs a touch zone (it is added for you). Type the scene name in the Rule.", "Trigger", 1, 0, "",
          Note("When something touches this, go to the scene named in the Rule.") +
          recipe::Rule("touched", "", "none", "", {"scene", "Level2"})},
+        {"Lava that hurts", "Anything that touches this loses health. Example: lava that hurts the player.",
+         "The object needs a touch zone (it is added for you).", "Trigger", 1, 0, "",
+         Note("When something touches this, it loses 10 health. Change the amount on the block.") +
+         "node 1 QbHurtOnTouch\npos 1 40 40\ndefault 1 0 10\n"},
+        {"Heart that heals", "Anything that touches this gets health back. Example: a heart that heals the player.",
+         "The object needs a touch zone (it is added for you).", "Trigger", 1, 0, "",
+         Note("When something touches this, it gets 25 health back.") +
+         "node 1 QbHealOnTouch\npos 1 40 40\ndefault 1 0 25\n"},
+        {"Guard walks back and forth", "The object walks to one side and back, over and over. Example: a guard on patrol.",
+         "", "", 1, 0, "Patrol",
+         Note("Walks 3 steps each way. Change the distance or the speed on the block.") +
+         "node 1 QbPatrol\npos 1 40 40\ndefault 1 0 3\ndefault 1 1 1.5\n"},
+        {"Enemy runs away", "The object runs away from the object named Player. Example: a rabbit that is hard to catch.",
+         "Name the thing to run from Player.", "", 1, 0, "",
+         Note("Runs away from the object named Player.") +
+         "node 1 QbRunAwayFrom\npos 1 40 40\ndefault 1 0 Player\ndefault 1 1 3\n"},
+        {"Bobbing coin", "The object bobs up and down. Example: a coin that bobs above the ground.",
+         "", "", 1, 0, "",
+         Note("Bobs up and down. Change the height or the speed on the block.") +
+         "node 1 QbFloatUpDown\npos 1 40 40\ndefault 1 0 0.5\ndefault 1 1 2\n"},
     };
     return all;
 }
@@ -91,7 +111,7 @@ struct VsSampleScript { const char* object; const char* what; std::string graph;
 inline const std::vector<VsSampleScript>& VsSampleGame() {
     static const std::vector<VsSampleScript> all = {
         {"Player", "moves with the arrow keys",
-         "node 1 QbMoveWithKeys\ndefault 1 0 left\ndefault 1 1 right\ndefault 1 2 up\ndefault 1 3 down\ndefault 1 4 5\n"},
+         "node 1 QbMoveWithKeys\ndefault 1 0 arrows\ndefault 1 1 5\n"},
         {"Coin (five copies)", "gives a point when touched",
          "node 1 QbCollectOnTouch\ndefault 1 0 1\n"},
         {"Enemy", "walks back and forth; touching the player ends the game",

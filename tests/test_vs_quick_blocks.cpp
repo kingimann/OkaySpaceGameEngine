@@ -3,6 +3,7 @@
 #include "okay/Components/AudioSource.hpp"
 #include "okay/Components/Camera.hpp"
 #include "okay/Components/CameraFollow.hpp"
+#include "okay/Components/ItemPickup.hpp"
 #include "okay/Components/MeshRenderer.hpp"
 #include "okay/Components/SurvivalComponents.hpp"
 #include "okay/Components/TextRenderer.hpp"
@@ -20,6 +21,7 @@
 #include <Okay.hpp>
 #include <cmath>
 #include <cstdio>
+#include <map>
 #include <set>
 #include <string>
 #include <vector>
@@ -77,7 +79,7 @@ int main() {
 
     // ---- The table itself: plain, small, complete.
     const auto& all = vs::QuickBlocks();
-    CHECK(all.size() >= 34);   // more one-block actions are the plain nodes that already do their job in one block: Heal, Save Checkpoint, Shake Camera, Say Text
+    CHECK(all.size() >= 66);   // more one-block actions are the plain nodes that already do their job in one block: Heal, Save Checkpoint, Shake Camera, Say Text
     std::set<std::string> types, titles;
     for (const vs::QuickBlock& b : all) {
         CHECK(types.insert(b.type).second);
@@ -98,7 +100,7 @@ int main() {
 
     // ---- Movement
     {   // Move With Keys: hold D, the object slides right (no wire for the key or the speed).
-        Rig r(Alone("QbMoveWithKeys", Defaults(1, {"a", "d", "w", "s", "5"})));
+        Rig r(Alone("QbMoveWithKeys", Defaults(1, {"wasd", "5"})));
         r.Start(); Keys({}); r.Tick(1, 0.1f); Keys({'d'}); r.Tick(1, 0.5f);
         CHECK(r.Pos().x > 1.0f && std::fabs(r.Pos().y) < 0.01f);
         Keys({'w'}); r.Tick(1, 0.5f);
@@ -106,7 +108,7 @@ int main() {
         Keys({}); 
     }
     {   // Move To Spot
-        Rig r(Alone("QbMoveToward", Defaults(1, {"5", "0", "0", "2"})));
+        Rig r(Alone("QbMoveToward", Defaults(1, {"5,0,0", "2"})));
         r.Start(); r.Tick(1, 0.5f);
         CHECK(r.Pos().x > 0.5f);
     }
@@ -233,7 +235,7 @@ int main() {
             CHECK(SceneSerializer::SaveObjectToFile(*shot, "quickblock_shot.okayprefab"));
         }
         {
-            Rig r(AfterStart("QbSpawnCopyAt", Defaults(2, {"quickblock_shot.okayprefab", "2", "1", "0"})));
+            Rig r(AfterStart("QbSpawnCopyAt", Defaults(2, {"quickblock_shot.okayprefab", "2,1,0"})));
             const std::size_t n = r.scene.Objects().size();
             r.Start(); r.Tick(1, 0.016f);
             CHECK(r.scene.Objects().size() == n + 1);
@@ -328,7 +330,7 @@ int main() {
     // ---- Field kinds: every field has a kind, a valid default and plain words; choices and presets are well formed.
     {
         using vs::QbKind;
-        int kinds[7] = {};
+        int kinds[8] = {};
         for (const vs::QuickBlock& b : all) {
             const auto fields = vs::QbAllFields(b);
             for (const vs::QbField& f : fields) {
@@ -358,10 +360,10 @@ int main() {
             }
             if (!b.presets.empty()) CHECK(fields.back().kind == QbKind::Preset);
         }
-        std::printf("  field kinds in use: %d number, %d text, %d key, %d object, %d choice, %d colour, %d preset\n",
+        std::printf("  field kinds in use: %d number, %d text, %d key, %d object, %d choice, %d colour, %d preset, %d name\n",
                     kinds[(int)QbKind::Number], kinds[(int)QbKind::Text], kinds[(int)QbKind::Key], kinds[(int)QbKind::Object],
-                    kinds[(int)QbKind::Choice], kinds[(int)QbKind::Colour], kinds[(int)QbKind::Preset]);
-        for (int k = 0; k < 7; ++k) CHECK(kinds[k] > 0);
+                    kinds[(int)QbKind::Choice], kinds[(int)QbKind::Colour], kinds[(int)QbKind::Preset], kinds[(int)QbKind::Name]);
+        for (int k = 0; k < 8; ++k) CHECK(kinds[k] > 0);
         // Value rules.
         CHECK(vs::QbValidate(QbKind::Number, "3.5") && vs::QbValidate(QbKind::Number, "-2") && !vs::QbValidate(QbKind::Number, "abc") && !vs::QbValidate(QbKind::Number, "") && !vs::QbValidate(QbKind::Number, "1e99"));
         CHECK(vs::QbValidate(QbKind::Key, "a") && vs::QbValidate(QbKind::Key, "space") && !vs::QbValidate(QbKind::Key, "") && !vs::QbValidate(QbKind::Key, "12345"));
@@ -514,6 +516,148 @@ int main() {
         for (std::size_t k = 0; k < values.size(); ++k) if (!values[k].empty()) g += "default 1 " + std::to_string(k) + " " + values[k] + "\n";
         Rig r(g); r.Start(); r.vs->OnTriggerEnter3D(nullptr);
         CHECK(r.Pos().y > 1.5f);
+    }
+    {   // Play highlight: a block lights up (its run counter moves) when the nodes it stands for run.
+        vs::NodeGraph::Tracing() = true;
+        Rig r(Alone("QbWhenTouchedDo", "", "node 2 ScoreAdd\nexec 1 0 2\n"));
+        r.Start();
+        CHECK(r.vs->Graph()->BlockExecCount(1) == 0);
+        r.vs->OnTriggerEnter3D(nullptr);
+        CHECK(r.vs->Graph()->BlockExecCount(1) > 0);
+        CHECK(r.vs->Graph()->BlockExecCount(2) == 0);   // node 2 is an ordinary node, not a block
+        vs::NodeGraph::Tracing() = false;
+    }
+
+    // ---- The second wave: one run per block.
+    {
+        ItemDatabase::Get().Clear();
+        ItemDatabase::Get().LoadText("okayitems 1\nitem \"key\"\n  name \"Key\"\nend\n");
+        const char* thenScore = "node 2 ScoreAdd\nexec 1 0 2\n";
+        {   Rig r(Alone("QbWhenKeyDo", Defaults(1, {"space"}), thenScore)); r.Start(); Keys({}); r.Tick(1, 0.016f); CHECK(Score(r.scene) == 0.0f);
+            Keys({' '}); r.Tick(1, 0.016f); CHECK(Score(r.scene) >= 1.0f); Keys({}); }
+        {   Rig r(Alone("QbWhenKeyReleasedDo", Defaults(1, {"space"}), thenScore)); r.Start(); Keys({' '}); r.Tick(1, 0.016f); CHECK(Score(r.scene) == 0.0f);
+            Keys({}); r.Tick(1, 0.016f); CHECK(Score(r.scene) >= 1.0f); }
+        {   Rig r(Alone("QbWhenClickedDo", "", thenScore)); r.Start(); r.vs->OnMouseDown(); CHECK(Score(r.scene) == 1.0f); }
+        {   Rig r(Alone("QbWhenBumpedDo", "", thenScore)); r.Start(); Collision3D c{}; r.vs->OnCollisionEnter3D(c); CHECK(Score(r.scene) == 1.0f); }
+        {   Rig r(Alone("QbWhenStartDo", "", thenScore)); r.Start(); CHECK(Score(r.scene) == 1.0f); }
+        {   Rig r(Alone("QbRunAwayFrom", Defaults(1, {"Player", "3"}))); auto* p = r.scene.CreateGameObject("Player"); p->transform->localPosition = {2, 0, 0};
+            r.Start(); r.Tick(2, 0.3f); CHECK(r.Pos().x < -0.3f); }
+        {   Rig r(Alone("QbGoRound", Defaults(1, {"2", "1.5"}))); r.Start(); r.Tick(1, 0.4f); CHECK(std::fabs(r.Pos().x) + std::fabs(r.Pos().z) > 0.05f); }
+        {   Rig r(Alone("QbFloatUpDown", Defaults(1, {"0.5", "2"}))); r.Start(); r.Tick(1, 0.4f); CHECK(std::fabs(r.Pos().y) > 0.02f); }
+        {   Rig r(AfterStart("QbTeleportTo", Defaults(2, {"2,3,4"}))); r.Start(); r.Tick(1, 0.016f);
+            CHECK(std::fabs(r.Pos().x - 2) < 0.01f && std::fabs(r.Pos().y - 3) < 0.01f && std::fabs(r.Pos().z - 4) < 0.01f); }
+        {   Rig r(AfterStart("QbLaunch", Defaults(2, {"0,8,0"}))); r.scene.physicsEnabled = true; r.go->AddComponent<Rigidbody3D>();
+            r.Start(); r.Tick(2, 0.016f); CHECK(r.Pos().y > 0.0f || r.go->GetComponent<Rigidbody3D>()->velocity.y > 0.0f); }
+        {   Rig r(AfterStart("QbCountdownThenDo", Defaults(2, {"0.3"}), kThen)); r.Start(); r.Tick(1, 0.1f); CHECK(Score(r.scene) == 0.0f);
+            r.Tick(2, 0.3f); CHECK(Score(r.scene) >= 1.0f); }
+        {   Rig r(AfterUpdate("QbOnlyEvery", Defaults(2, {"0.5"}), kThen)); r.Start(); r.Tick(5, 0.2f);
+            CHECK(Score(r.scene) >= 1.0f && Score(r.scene) <= 3.0f); }
+        {   Rig r(AfterUpdate("QbDoOnce", "", kThen)); r.Start(); r.Tick(5, 0.016f); CHECK(Score(r.scene) == 1.0f); }
+        {   Rig r(AfterUpdate("QbDoByChance", Defaults(2, {"0"}), kThen)); r.Start(); r.Tick(20, 0.016f); CHECK(Score(r.scene) == 0.0f); }
+        {   Rig r(AfterUpdate("QbDoByChance", Defaults(2, {"1"}), kThen)); r.Start(); r.Tick(5, 0.016f); CHECK(Score(r.scene) >= 5.0f); }
+        {   Rig r("node 1 OnStart\nentry OnStart 1\nnode 2 QbToggleSwitch\n" + Defaults(2, {"sw"}) + "node 3 QbIfSwitchOn\n" + Defaults(3, {"sw"}) +
+                  "node 4 ScoreAdd\nexec 1 0 2\nexec 2 0 3\nexec 3 0 4\n"); g_errors.clear(); auto* inv = r.go->AddComponent<Inventory>(); inv->capacity = 8; r.Start(); CHECK(Score(r.scene) == 1.0f);
+            if (Score(r.scene) != 1.0f) { std::printf("  key count %d\n", inv->Count(ItemDatabase::Get().Resolve("key"))); for (const auto& m : g_errors) std::printf("  err: %s\n", m.c_str()); } }
+        {   Rig r("node 1 OnStart\nentry OnStart 1\nnode 2 QbToggleSwitch\n" + Defaults(2, {"sw"}) + "node 5 QbToggleSwitch\n" + Defaults(5, {"sw"}) +
+                  "node 3 QbIfSwitchOn\n" + Defaults(3, {"sw"}) + "node 4 ScoreAdd\nexec 1 0 2\nexec 2 0 5\nexec 5 0 3\nexec 3 0 4\n"); r.Start(); CHECK(Score(r.scene) == 0.0f); }
+        {   // Save A Number then Load A Saved Number: 7 goes in, the value is wiped, 7 comes back.
+            Rig r("node 1 OnStart\nentry OnStart 1\nnode 2 SetVar n\ndefault 2 0 7\nnode 3 QbSaveNumber\n" + Defaults(3, {"n", "quickblock_slot"}) +
+                  "node 4 SetVar n\ndefault 4 0 0\nnode 5 QbLoadNumber\n" + Defaults(5, {"n", "quickblock_slot"}) +
+                  "exec 1 0 2\nexec 2 0 3\nexec 3 0 4\nexec 4 0 5\n");
+            r.Start(); CHECK(std::fabs(r.vs->GetVariable("n").AsFloat() - 7.0f) < 1e-3f); }
+        {   Rig r("node 1 OnStart\nentry OnStart 1\nnode 2 QbGiveItem\n" + Defaults(2, {"key", "2"}) + "node 3 QbIfHasItem\n" + Defaults(3, {"key", "2"}) +
+                  "node 4 ScoreAdd\nexec 1 0 2\nexec 2 0 3\nexec 3 0 4\n"); r.Start(); CHECK(Score(r.scene) == 1.0f); }
+        {   Rig r("node 1 OnStart\nentry OnStart 1\nnode 2 QbGiveItem\n" + Defaults(2, {"key", "1"}) + "node 3 QbIfHasItem\n" + Defaults(3, {"key", "2"}) +
+                  "node 4 ScoreAdd\nexec 1 0 2\nexec 2 0 3\nexec 3 0 4\n"); r.go->AddComponent<Inventory>()->capacity = 8; r.Start(); CHECK(Score(r.scene) == 0.0f); }
+        {   // Restart The Game: with no scene loaded the engine says so (a real game has one).
+            g_errors.clear(); Rig r(AfterUpdate("QbRestartGame", "")); r.Start(); r.Tick(1, 0.016f);
+            bool said = false; for (const auto& m : g_errors) if (m.find("nothing to restart") != std::string::npos) said = true; CHECK(said); }
+        {   Rig r(AfterUpdate("QbHealFully", "")); auto* hp = r.go->AddComponent<HealthStat>(); hp->playDeathAnim = false; hp->maxHealth = 100;
+            r.Start(); r.Tick(1, 0.016f); hp->health = 10; r.Tick(1, 0.016f); CHECK(hp->health > 99.0f); }
+        {   Rig r(AfterUpdate("QbIfHealthLow", Defaults(2, {"0.25"}), kThen)); auto* hp = r.go->AddComponent<HealthStat>(); hp->playDeathAnim = false; hp->maxHealth = 100;
+            r.Start(); r.Tick(1, 0.016f); CHECK(Score(r.scene) == 0.0f); hp->health = 10; r.Tick(1, 0.016f); CHECK(Score(r.scene) >= 1.0f); }
+        {   Rig r(AfterUpdate("QbDefeatThis", "")); auto* hp = r.go->AddComponent<HealthStat>(); hp->playDeathAnim = false; hp->keepBodyOnDeath = true;
+            r.Start(); r.Tick(2, 0.016f); CHECK(hp->IsDead()); }
+        {   // Hurt / Heal Whatever Touches: the OTHER object changes health.
+            Rig r(Alone("QbHurtOnTouch", Defaults(1, {"10"}))); r.scene.physicsEnabled = false;
+            auto* other = r.scene.CreateGameObject("Victim"); auto* box = other->AddComponent<BoxCollider3D>();
+            auto* hp = other->AddComponent<HealthStat>(); hp->playDeathAnim = false; hp->maxHealth = 100;
+            r.Start(); r.Tick(1, 0.016f); r.vs->OnTriggerEnter3D(box); CHECK(std::fabs(hp->health - 90.0f) < 0.5f); }
+        {   Rig r(Alone("QbHealOnTouch", Defaults(1, {"25"}))); r.scene.physicsEnabled = false;
+            auto* other = r.scene.CreateGameObject("Hero"); auto* box = other->AddComponent<BoxCollider3D>();
+            auto* hp = other->AddComponent<HealthStat>(); hp->playDeathAnim = false; hp->maxHealth = 100;
+            r.Start(); r.Tick(1, 0.016f); hp->health = 50; r.vs->OnTriggerEnter3D(box); CHECK(std::fabs(hp->health - 75.0f) < 0.5f); }
+        {   Rig r(Alone("QbRemoveOnTouch", "")); r.Start(); r.vs->OnTriggerEnter3D(nullptr); r.Tick(3, 0.016f); CHECK(r.scene.Find("Thing") == nullptr); }
+        {   Rig r(AfterStart("QbRandomSpot", Defaults(2, {"-5", "5"}))); r.Start(); r.Tick(1, 0.016f);
+            CHECK(std::fabs(r.Pos().x) + std::fabs(r.Pos().z) > 0.0001f && std::fabs(r.Pos().x) <= 5.01f); }
+        {   Rig r(Alone("QbSayWhenTouched", Defaults(1, {"\"Welcome!\""})), false); r.go->AddComponent<TextRenderer>(); r.Start();
+            r.vs->OnTriggerEnter3D(nullptr); CHECK(r.go->GetComponent<TextRenderer>()->text == "Welcome!"); }
+
+    }
+
+    // ---- Simple blocks: at most 3 typed fields (the Rule is the one sentence-shaped exception).
+    {
+        int most = 0;
+        for (const vs::QuickBlock& b : all) {
+            if (std::strcmp(b.type, "QbRule") == 0) continue;
+            most = std::max(most, (int)b.fields.size());
+            CHECK(b.fields.size() <= 3);
+            if (b.fields.size() > 3) std::printf("  %s has %d fields\n", b.title, (int)b.fields.size());
+        }
+        std::printf("  most fields on any block except the Rule: %d\n", most);
+        CHECK(vs::QbValidate(vs::QbKind::Name, "score") && !vs::QbValidate(vs::QbKind::Name, "my score") && !vs::QbValidate(vs::QbKind::Name, ""));
+        CHECK(vs::QbNormalizeName(" my score! ") == "my_score_");
+    }
+    // ---- Move With Keys: one Keys dropdown covers arrows, W A S D and both; the speed is typed.
+    {
+        for (const char* keys : {"arrows", "wasd", "both"}) {
+            for (const char* press : {"right", "d"}) {
+                const bool should = std::string(keys) == "both" || (std::string(keys) == "arrows") == (std::string(press) == "right");
+                Rig r(Alone("QbMoveWithKeys", Defaults(1, {keys, "5"}))); r.Start(); Keys({}); r.Tick(1, 0.1f);
+                Keys({Input::KeyFromName(press)}); r.Tick(1, 0.5f);
+                CHECK((r.Pos().x > 1.0f) == should);
+                Keys({});
+            }
+        }
+    }
+    // ---- Graphs saved by release 2.885.0 (the first, longer fields) load and behave the same.
+    {
+        {   // Move With Keys: Left, Right, Up, Down, Speed
+            Rig r("node 1 QbMoveWithKeys\ndefault 1 0 a\ndefault 1 1 d\ndefault 1 2 w\ndefault 1 3 s\ndefault 1 4 5\n"); r.Start(); Keys({}); r.Tick(1, 0.1f);
+            Keys({'d'}); r.Tick(1, 0.5f); CHECK(r.Pos().x > 1.0f); Keys({}); }
+        {   // Move To Spot: Right, Up, Forward, Speed
+            Rig r("node 1 QbMoveToward\ndefault 1 0 5\ndefault 1 1 0\ndefault 1 2 0\ndefault 1 3 2\n"); r.Start(); r.Tick(1, 0.5f); CHECK(r.Pos().x > 0.5f); }
+        {   // Flash Colour: Red, Green, Blue, Seconds
+            Rig r("node 1 OnStart\nentry OnStart 1\nnode 2 QbFlashColour\ndefault 2 0 0\ndefault 2 1 1\ndefault 2 2 0\ndefault 2 3 0.2\nexec 1 0 2\n");
+            r.Start(); r.Tick(1, 0.016f); auto* mr = r.go->GetComponent<MeshRenderer>(); CHECK(mr->color.g > 0.9f && mr->color.r < 0.1f); }
+        {   // Spawn Copy At: What, Right, Up, Forward
+            Scene proto("Proto"); auto* shot = proto.CreateGameObject("Shot"); shot->AddComponent<MeshRenderer>()->mesh = Mesh::Cube();
+            CHECK(SceneSerializer::SaveObjectToFile(*shot, "quickblock_old.okayprefab"));
+            Rig r("node 1 OnStart\nentry OnStart 1\nnode 2 QbSpawnCopyAt\ndefault 2 0 quickblock_old.okayprefab\ndefault 2 1 2\ndefault 2 2 1\ndefault 2 3 0\nexec 1 0 2\n");
+            const std::size_t n = r.scene.Objects().size(); r.Start(); r.Tick(1, 0.016f); CHECK(r.scene.Objects().size() == n + 1); std::remove("quickblock_old.okayprefab"); }
+        std::map<int, std::string> now = {{0, "arrows"}, {1, "7"}};
+        CHECK(!vs::QbUpgradeFields("QbMoveWithKeys", now) && now[1] == "7");   // already current: untouched
+        std::map<int, std::string> old = {{0, "a"}, {1, "d"}, {2, "w"}, {3, "s"}, {4, "9"}};
+        CHECK(vs::QbUpgradeFields("QbMoveWithKeys", old) && old[0] == "wasd" && old[1] == "9" && old.size() == 2);
+    }
+    // ---- Saved values: made on the spot from a typed name; the common jobs are presets.
+    {
+        const vs::QuickBlock* cn = vs::FindQuickBlock("QbChangeNumber");
+        std::vector<std::string> values;
+        for (const vs::QbField& f : cn->fields) values.push_back(f.def);
+        CHECK(vs::QbApplyPreset(*cn, "Take away 1 life", values) && values[0] == "lives" && values[1] == "Sub" && values[2] == "1");
+        std::string g = "node 1 OnStart\nentry OnStart 1\nnode 2 QbChangeNumber\n";
+        for (std::size_t k = 0; k < values.size(); ++k) g += "default 2 " + std::to_string(k) + " " + values[k] + "\n";
+        g += "exec 1 0 2\n";
+        Rig r(g); r.Start();   // no declaration anywhere: "lives" is made now, starting at 0
+        CHECK(std::fabs(r.vs->GetVariable("lives").AsFloat() + 1.0f) < 1e-3f);
+        // Show Value On Screen and Count Every Second.
+        Rig t(Alone("QbCountEverySecond", Defaults(1, {"time", "Add"})), false);
+        t.Start(); t.Tick(1, 1.1f); t.Tick(1, 1.1f);
+        CHECK(t.vs->GetVariable("time").AsFloat() >= 1.0f);
+        Rig sv(Alone("QbShowValue", Defaults(1, {"gold", "\"Gold: \""})), false);
+        sv.go->AddComponent<TextRenderer>(); sv.vs->SetVariable("gold", vs::VsValue(7.0f)); sv.Start(); sv.Tick(2, 0.016f);
+        CHECK(sv.go->GetComponent<TextRenderer>()->text.find("Gold: 7") != std::string::npos);
     }
     // A saved block keeps its typed values: the file says "QbAddToScore" and the value, nothing else.
     CHECK(vs::ExpandQuickBlocks(AfterStart("QbAddToScore", Defaults(2, {"7"}))).find("default 1000100 0 7") != std::string::npos ||

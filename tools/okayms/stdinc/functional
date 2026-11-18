@@ -54,6 +54,14 @@ template <typename R, typename... Args> struct function {
     function_base_<R, Args...>* b;
     function() : b(0) {}
     function(const function& o) : b(o.b ? o.b->clone() : 0) {}
+    // function(nullptr) and f = nullptr ([func.wrap.func.con]): nullptr is an int-typed null constant here, so an int
+    // argument means "no target".
+    function(int) : b(0) {}
+    function& operator=(int) {
+        delete b;
+        b = 0;
+        return *this;
+    }
     template <typename F> function(F f) : b(new function_impl_<F, R, Args...>(f)) {}
     function& operator=(const function& o) {
         if (this != &o) {

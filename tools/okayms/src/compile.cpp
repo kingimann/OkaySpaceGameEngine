@@ -3173,7 +3173,11 @@ struct Parser {
     bool pad_defaults(const std::vector<Node>& defaults, size_t nparams, std::vector<Node>* args) {
         while (args->size() < nparams) {
             if (!has_default(defaults, args->size())) {
-                error = "too few arguments";
+                {
+                    std::string around;
+                    for (size_t b = at >= 8 ? at - 8 : 0; b < at && b < tokens.size(); ++b) around += tokens[b].text + " ";
+                    error = "too few arguments (in " + current_fn + ", after " + around + ")";
+                }
                 return false;
             }
             const Node& d = defaults[args->size()];
@@ -8019,6 +8023,13 @@ struct Parser {
                 ++type.pointers;
                 next();
             }
+            if (!is_typedef && (is(TAmp) || is(TAndAnd)) && at + 3 < tokens.size() && tokens[at + 1].kind == TIdent &&
+                tokens[at + 2].kind == TColonColon && class_name_at(at + 1)) {
+                // `const T& C::f() { ... }`: a function returning a reference, defined outside its class.
+                if (is(TAndAnd) && type.pointers == 0) type.rref = true;
+                type.is_ref = true;
+                next();
+            }
             if (!is_typedef && type.base == 3 && type.pointers == 0 && !type.is_ref && type.struct_id >= 0 && is(TColonColon) &&
                 at + 3 < tokens.size() &&
                 ((tokens[at + 1].kind == TIdent && tokens[at + 2].kind == TLParen) ||
@@ -12229,7 +12240,11 @@ bool Parser::parse_unary(Node* out) {
         if (name.find("::") != std::string::npos)
             for (const FuncDecl& fd : funcs)
                 if (fd.name == name) exact_function = true;
-        if (!exact_function && !from_global && !current_ns.empty() && is(TLParen) && !local_visible(name)) {
+        bool member_hides = false;  // a member function of the class being compiled hides a namespace function of its name
+        if (cur_class >= 0 && name.find("::") == std::string::npos)
+            for (const Method& hm : structs[static_cast<size_t>(cur_class)].methods)
+                if (hm.name == name) member_hides = true;
+        if (!exact_function && !from_global && !current_ns.empty() && is(TLParen) && !local_visible(name) && !member_hides) {
             // A bare name inside a namespace finds the functions of that namespace and of the ones around
             // it ([basic.lookup.unqual]), innermost first.
             std::string ns = current_ns;
@@ -12291,12 +12306,16 @@ bool Parser::parse_unary(Node* out) {
                 }
             }
         }
+        bool from_ns_call = false;  // okay::Clamp(...): the namespace's function, not a member of the same name
         if (name.find("::") != std::string::npos && (is(TLParen) || is(TLt))) {
             // std::min(a, b): a function template of a namespace is registered by its bare name.
             const size_t first = name.find("::");
             const size_t last = name.rfind("::");
             const std::string suffix = name.substr(last + 2);
-            if (namespaces.count(name.substr(0, first)) > 0 && func_templates.count(suffix) > 0) name = suffix;
+            if (namespaces.count(name.substr(0, first)) > 0 && func_templates.count(suffix) > 0) {
+                name = suffix;
+                from_ns_call = true;
+            }
         }
         if (name.find("::") != std::string::npos && (is(TLParen) || is(TLBrace))) {
             // std::string("abc"): a class of a namespace is registered by its bare name, as in a declaration.
@@ -12370,7 +12389,7 @@ bool Parser::parse_unary(Node* out) {
             }
             if (!is(TLParen) && static_member_expr(ec, name, out)) return parse_postfix(out);
         }
-        if (cur_class >= 0 && !local_visible(name) && colons == std::string::npos) {
+        if (cur_class >= 0 && !local_visible(name) && colons == std::string::npos && !from_ns_call) {
             const StructDef& def = structs[static_cast<size_t>(cur_class)];
             if (!is(TLParen) && static_member_expr(cur_class, name, out)) return parse_postfix(out);
             bool is_field = false;
@@ -12679,6 +12698,27 @@ bool Parser::parse_unary(Node* out) {
             if (!expect(TRParen, "')'")) return false;
             Node inner;
             if (!parse_unary(&inner)) return false;
+            if (ty.base == 0 && ty.pointers == 0 && inner.kind == Node::Call && cur_locals != nullptr) {
+                // (void)f(): a call whose class result does not fit a register still needs somewhere to put it.
+                Type st;
+                if (static_type(inner, &st) && st.base == 3 && st.pointers == 0 && !st.is_ref && !st.is_array() &&
+                    st.struct_id >= 0 && !class_needs_dtor(structs[static_cast<size_t>(st.struct_id)])) {
+                    const int sz = size_of(st);
+                    if (sz != 1 && sz != 2 && sz != 4 && sz != 8) {
+                        Local hidden;
+                        hidden.name = "__dv" + std::to_string(tmp_count++);
+                        hidden.type = st;
+                        place_local(cur_locals, hidden);
+                        Node assign;
+                        assign.kind = Node::Assign;
+                        assign.op = TAssign;
+                        assign.number = 1;
+                        assign.kids.push_back(node_name(hidden.name));
+                        assign.kids.push_back(std::move(inner));
+                        inner = std::move(assign);
+                    }
+                }
+            }
             if (ty.base != 3 && ty.base != 0 && !ty.is_array() && !convert_class(&inner, ty)) return false;
             if (inner.kind == Node::IntLit && ty.pointers == 0 && !ty.is_array() && !ty.is_ref && ty.base >= 5 &&
                 ty.base <= 6) {
@@ -15195,6 +15235,11 @@ bool Gen::gen_expr(const Node& node) {
         return true;
     }
     if (node.kind == Node::Binary) {
+        if (node.op == TComma) {
+            // a, b ([expr.comma]): a is evaluated and dropped, the value and type are those of b.
+            if (!gen_expr(node.kids[0])) return false;
+            return gen_expr(node.kids[1]);
+        }
         if (node.op == TAndAnd || node.op == TOrOr) {
             if (!gen_expr(node.kids[0])) return false;
             test_cond();

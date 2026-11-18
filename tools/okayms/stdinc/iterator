@@ -24,4 +24,22 @@ template <typename T> struct reverse_iterator<T*> {
     bool operator!=(const reverse_iterator& o) const { return cur_ != o.cur_; }
 };
 template <typename T> ptrdiff_t distance(T* a, T* b) { return b - a; }
+// next, prev and advance ([iterator.operations]): step with ++ and -- so that any iterator works, and by arithmetic for a pointer.
+template <typename It> It next(It it, ptrdiff_t n = 1) {
+    while (n > 0) { ++it; --n; }
+    while (n < 0) { --it; ++n; }
+    return it;
+}
+template <typename T> T* next(T* p, ptrdiff_t n = 1) { return p + n; }
+template <typename It> It prev(It it, ptrdiff_t n = 1) {
+    while (n > 0) { --it; --n; }
+    while (n < 0) { ++it; ++n; }
+    return it;
+}
+template <typename T> T* prev(T* p, ptrdiff_t n = 1) { return p - n; }
+template <typename It> void advance(It& it, ptrdiff_t n) {
+    while (n > 0) { ++it; --n; }
+    while (n < 0) { --it; ++n; }
+}
+template <typename T> void advance(T*& p, ptrdiff_t n) { p += n; }
 }

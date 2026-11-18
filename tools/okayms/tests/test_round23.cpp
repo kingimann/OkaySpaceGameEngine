@@ -186,5 +186,17 @@ int main(int, char**) {
           "std::unordered_map<std::string, int> ms;\nstd::unordered_map<const void*, int> mp;\n"
           "int main() { O o; VS v; ms[\"a\"] = 1; mp[&o] = 2; return (int)o.uv[1].x + v.f() + ms[\"a\"] + mp[&o]; }\n", &o);
     CHECK(t, has_symbol(o, "main") && has_symbol(o, "?f@VS@@QEAAHXZ"));
+    ++tests;
+    build(t, "round 30: alias base, defaulted dtor outside, reference result outside, comma, (void) of a large result, function = nullptr, next/prev, member hides namespace function",
+          "#include <clocale>\n#include <functional>\n#include <iterator>\n#include <map>\n#include <string>\n#include <vector>\n"
+          "namespace okay {\ntemplate <typename T> T Clamp(T v, T lo, T hi) { return v < lo ? lo : v > hi ? hi : v; }\n"
+          "struct Base { virtual ~Base() {} int a = 1; };\nusing Behaviour = Base;\nstruct D : public Behaviour { std::string s; D(); ~D(); float t = 3; void Clamp(); void Load(); static const D& Get(); };\n"
+          "D::D() {}\nD::~D() = default;\nvoid D::Clamp() { t = okay::Clamp(t, 0.5f, 2.0f); }\nvoid D::Load() { Clamp(); }\nstatic D g_d;\nconst D& D::Get() { return g_d; }\n"
+          "struct Big { int a, b, c, d; };\nBig mk(int x) { Big r; r.a = x; r.b = 0; r.c = 0; r.d = 0; return r; }\n}\n"
+          "int main() { using namespace okay; int a = 0, b = 0; (a = 1, b = 2); (void)mk(2); std::function<void(int)> f = [](int) {}; f = nullptr;\n"
+          "std::vector<int> v; v.push_back(1); v.push_back(2); auto it = std::next(v.begin()); auto pv = std::prev(v.end());\n"
+          "std::map<int, int> m; m[1] = 2; m[3] = 4; auto mi = std::next(m.begin()); D d; d.Load(); const char* dp = std::localeconv()->decimal_point;\n"
+          "return a + b + *it + *pv + mi->second + (int)d.t + dp[0] + D::Get().a + (f ? 1 : 0); }\n", &o);
+    CHECK(t, has_symbol(o, "main") && has_symbol(o, "??1D@@QEAA@XZ"));
     return t.finish(tests);
 }

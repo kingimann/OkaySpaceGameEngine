@@ -5,6 +5,7 @@
 #include "test_framework.hpp"
 #include "okay/Platform/Platform.hpp"
 #include "Platform/UriList.hpp"
+#include "Platform/CursorMap.hpp"
 #include <chrono>
 #include <cstring>
 #include <string>
@@ -13,9 +14,23 @@
 #if defined(OKAY_TEST_HAVE_X11)
 #include <X11/Xatom.h>
 #include <X11/Xlib.h>
+#undef CursorShape   // Xlib defines it as a number
 #endif
 
 using namespace okay::platform;
+
+static void TestCursorMaps() {
+    // The two tables (X11 cursor font glyph, Win32 stock cursor id) as the system headers define them, one entry per shape.
+    const struct { CursorShape s; int x11; int win; } t[] = {
+        {CursorShape::Arrow, 68, 32512}, {CursorShape::TextInput, 152, 32513}, {CursorShape::ResizeAll, 52, 32646},
+        {CursorShape::ResizeNS, 116, 32645}, {CursorShape::ResizeEW, 108, 32644}, {CursorShape::ResizeNESW, 136, 32643},
+        {CursorShape::ResizeNWSE, 134, 32642}, {CursorShape::Hand, 60, 32649}, {CursorShape::Wait, 150, 32514},
+        {CursorShape::Progress, 150, 32650}, {CursorShape::NotAllowed, 0, 32648}};
+    for (const auto& e : t) { CHECK(X11FontCursorFor(e.s) == e.x11); CHECK(Win32CursorIdFor(e.s) == e.win); }
+    CHECK(X11FontCursorFor((CursorShape)11) == -1 && Win32CursorIdFor((CursorShape)99) == -1);
+    for (size_t i = 0; i < sizeof(t) / sizeof(t[0]); ++i)      // no two shapes share a Windows cursor
+        for (size_t j = i + 1; j < sizeof(t) / sizeof(t[0]); ++j) CHECK(t[i].win != t[j].win);
+}
 
 static void TestParser() {
     std::string o;
@@ -180,10 +195,24 @@ static int TestDrop(Backend& b) {
 
 int main() {
     TestParser();
+    TestCursorMaps();
 #if defined(OKAY_TEST_HAVE_X11)
     if (IsCompiledIn(BackendKind::Own) && std::getenv("DISPLAY")) {
         Backend* b = Get(BackendKind::Own);
-        if (b && b->Init(InitFlags())) TestDrop(*b);
+        if (b && b->Init(InitFlags())) {
+            TestDrop(*b);
+            // Cursor shapes on a real X server: every shape is accepted (font cursors exist), also after hiding and showing.
+            WindowDesc wd; wd.title = "cursor";
+            auto cw = b->MakeWindow(wd);
+            CHECK(cw != nullptr);
+            for (int i = 0; i < 11; ++i) CHECK(b->SetCursorShape((CursorShape)i));
+            CHECK(!b->SetCursorShape((CursorShape)11));
+            b->ShowCursor(false); b->SetCursorShape(CursorShape::Hand); b->ShowCursor(true);
+            CHECK(b->IsCursorShown());
+            auto cw2 = b->MakeWindow(wd);   // a window made after a shape was chosen gets it
+            CHECK(cw2 != nullptr);
+            Event e; while (b->PollEvent(e)) {}
+        }
         else std::cout << "[skip] no X display for the drop test\n";
     } else std::cout << "[skip] drop test needs the own backend and a display\n";
 #endif

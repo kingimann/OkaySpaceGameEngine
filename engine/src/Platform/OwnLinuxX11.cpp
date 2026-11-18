@@ -4,6 +4,7 @@
 // OKAY_PLATFORM_X11_HEADERS) this file is just "no display".
 #include "OwnLinux.hpp"
 #include "UriList.hpp"
+#include "CursorMap.hpp"
 
 #ifndef OKAY_PLATFORM_X11_HEADERS
 namespace okay::platform::own {
@@ -19,6 +20,7 @@ std::unique_ptr<X11System> X11System::Open(std::string& err) {
 #include <X11/Xatom.h>
 #include <X11/keysym.h>
 #include <GL/glx.h>
+#undef CursorShape   // Xlib defines it as a number (XQueryBestSize class); ours is okay::platform::CursorShape
 #include <dlfcn.h>
 #include <cstdio>
 #include <cstdlib>
@@ -79,6 +81,7 @@ namespace {
     F(int, XFreePixmap, (Display*, Pixmap)) \
     F(int, XFreeCursor, (Display*, Cursor)) \
     F(int, XDefineCursor, (Display*, ::Window, Cursor)) \
+    F(Cursor, XCreateFontCursor, (Display*, unsigned)) \
     F(int, XUndefineCursor, (Display*, ::Window)) \
     F(int, XGrabPointer, (Display*, ::Window, int, unsigned, int, int, ::Window, Cursor, Time)) \
     F(int, XUngrabPointer, (Display*, Time)) \
@@ -262,6 +265,7 @@ class X11Impl final : public X11System {
 public:
     ~X11Impl() override {
         if (m_blankCursor) m_x.XFreeCursor(m_dpy, m_blankCursor);
+        for (Cursor c : m_shapeCursor) if (c) m_x.XFreeCursor(m_dpy, c);
         if (m_im) m_x.XCloseIM(m_im);
         if (m_dpy) m_x.XCloseDisplay(m_dpy);
         // libX11 / libGL stay loaded; they may be shared with other code.
@@ -379,6 +383,7 @@ public:
             else if (d.maximized && d.resizable) { st[n++] = m_aMaxH; st[n++] = m_aMaxV; }
             if (n) m_x.XChangeProperty(m_dpy, w, m_aNetState, XA_ATOM, 32, PropModeReplace, (const unsigned char*)st, n);
         }
+        if (m_shape != CursorShape::Arrow || m_cursorHidden) HideCursorOn(w, m_cursorHidden || m_relative);
         if (!d.hidden) win->Show();
         m_x.XSync(m_dpy, False);
         return std::unique_ptr<Window>(win);
@@ -638,8 +643,25 @@ public:
         for (auto& kv : m_wins) HideCursorOn(kv.first, m_cursorHidden || m_relative);
         m_x.XFlush(m_dpy);
     }
+    // The pointer's shape (font cursors, X11/cursorfont.h glyphs chosen in CursorMap.hpp) for every window of ours. Arrow = the
+    // server's default (no cursor set on the window). Applies to windows made later too; a hidden pointer stays hidden.
+    bool SetCursorShape(CursorShape shape) override {
+        const int glyph = X11FontCursorFor(shape);
+        const int i = (int)shape;
+        if (glyph < 0 || i < 0 || i >= 11) return false;
+        if (!m_shapeCursor[i]) m_shapeCursor[i] = m_x.XCreateFontCursor(m_dpy, (unsigned)glyph);
+        if (!m_shapeCursor[i]) return false;
+        m_shape = shape;
+        for (auto& kv : m_wins) HideCursorOn(kv.first, m_cursorHidden || m_relative);
+        m_x.XFlush(m_dpy);
+        return true;
+    }
     void HideCursorOn(::Window w, bool hide) {
-        if (!hide) { m_x.XUndefineCursor(m_dpy, w); return; }
+        if (!hide) {
+            if (m_shape == CursorShape::Arrow) m_x.XUndefineCursor(m_dpy, w);
+            else m_x.XDefineCursor(m_dpy, w, m_shapeCursor[(int)m_shape]);
+            return;
+        }
         if (!m_blankCursor) {
             static const char data[1] = {0};
             XColor black; std::memset(&black, 0, sizeof(black));
@@ -831,6 +853,8 @@ public:
     ::Window m_focus = 0;
     bool m_textInput = false, m_relative = false, m_warped = false, m_cursorHidden = false;
     Cursor m_blankCursor = 0;
+    Cursor m_shapeCursor[11] = {};
+    CursorShape m_shape = CursorShape::Arrow;
     int m_lastX = 0, m_lastY = 0;
     int m_relAccX = 0, m_relAccY = 0;   // motion since RelativeMouseState was last read
     int m_lastBtn = 0, m_clicks = 0; unsigned long m_lastBtnTime = 0;

@@ -7,6 +7,7 @@
 #ifdef _WIN32
 #include "Internal.hpp"
 #include "Win32Keys.hpp"
+#include "CursorMap.hpp"
 #include "AudioPump.hpp"
 #include "Win32Display.hpp"
 #include "Win32Hid.hpp"
@@ -487,6 +488,16 @@ public:
         return MessageBoxW(parent ? (HWND)parent->NativeHandle() : nullptr, Wide(text).c_str(), Wide(title).c_str(),
                            MB_OK | MB_ICONERROR) != 0;
     }
+    // The pointer's shape: a stock Windows cursor (ids in CursorMap.hpp), applied at once and again on every WM_SETCURSOR.
+    bool SetCursorShape(CursorShape shape) override {
+        const int id = Win32CursorIdFor(shape);
+        if (id < 0) return false;
+        HCURSOR c = LoadCursorW(nullptr, MAKEINTRESOURCEW(id));
+        if (!c) return false;
+        m_shapeCursor = c;
+        if (m_cursorShown && !m_relative) SetCursor(c);
+        return true;
+    }
     void ShowCursor(bool show) override { if (show != m_cursorShown) { m_cursorShown = show; ::ShowCursor(show ? TRUE : FALSE); } }
     void WarpMouse(Window* w, int x, int y) override {
         HWND h = w ? (HWND)w->NativeHandle() : GetForegroundWindow();
@@ -699,6 +710,7 @@ public:
         }
         case WM_SETCURSOR:
             if (LOWORD(lp) == HTCLIENT && (!b->m_cursorShown || b->m_relative)) { SetCursor(nullptr); return TRUE; }
+            if (LOWORD(lp) == HTCLIENT && b->m_shapeCursor) { SetCursor(b->m_shapeCursor); return TRUE; }   // the shape the app asked for
             break;
         default: break;
         }
@@ -756,6 +768,7 @@ public:
     std::map<HWND, WinWindow*> m_wins;
     std::deque<Event> m_pending;
     bool m_text = false, m_relative = false, m_cursorShown = true, m_inited = false;
+    HCURSOR m_shapeCursor = nullptr;   // set by SetCursorShape; null = the window class's arrow
     int m_lastX = 0, m_lastY = 0;
     int m_relAccX = 0, m_relAccY = 0;
     RECT m_imeRect = {0, 0, 0, 0};

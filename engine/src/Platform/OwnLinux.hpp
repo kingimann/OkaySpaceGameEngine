@@ -36,6 +36,7 @@ public:
     virtual uint32_t RelativeMouseState(int* dx, int* dy) = 0;
     virtual Key KeyForChar(char c) = 0;
     virtual bool IsCursorShown() = 0;
+    virtual bool SetCursorShape(CursorShape shape) = 0;
     virtual bool SetClipboardText(const std::string& t) = 0;
     virtual std::string GetClipboardText() = 0;
     /// Test hook: the window's current pixels as RGBA8 (XGetImage), top row first.

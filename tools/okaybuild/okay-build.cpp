@@ -664,7 +664,15 @@ static Graph plan(const Manifest& m, const vector<string>& want) {
     auto outPath = [&](const Target& t) { return under(m.outdir + "/" + (t.isLib ? m.tc.libp + (t.outName.empty() ? t.name : t.outName) + (t.libKind == "shared" && !m.tc.msvc ? string(".so") : m.tc.libs) : (t.outName.empty() ? t.name : t.outName) + m.tc.exe)); };
     std::set<string> done; vector<string> order;
     std::function<void(const string&)> post = [&](const string& n) { if (!done.insert(n).second) return; for (auto& d : byName[n]->deps) post(d); order.push_back(n); };
-    for (auto& t : m.targets) post(t.name);
+    {   // asked for some targets by name: plan only those and what they depend on (a big manifest costs time to plan otherwise)
+        std::set<string> closure; bool allNames = !want.empty();
+        for (auto& w : want) if (!byName.count(w)) allNames = false;
+        if (allNames) {
+            std::function<void(const string&)> take = [&](const string& n) { if (!closure.insert(n).second) return; for (auto& d : byName[n]->deps) take(d); };
+            for (auto& w : want) take(w);
+            for (auto& t : m.targets) if (closure.count(t.name)) post(t.name);
+        } else for (auto& t : m.targets) post(t.name);
+    }
 
     auto transitive = [&](const Target& t) { // dependents first (link order)
         vector<string> po; std::set<string> seen;

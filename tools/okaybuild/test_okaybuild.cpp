@@ -723,7 +723,8 @@ static void testDistLayout() {
     string examples = script.substr(script.find("EXAMPLE_DIRS="));
     auto q1 = examples.find('"'); auto q2 = examples.find('"', q1 + 1);
     examples = examples.substr(q1 + 1, q2 - q1 - 1);
-    string firstEx = examples.substr(0, examples.find(' '));
+    examples.erase(0, examples.find_first_not_of(" \t\r\n")); // the script lists one folder per line now
+    string firstEx = examples.substr(0, examples.find_first_of(" \t\r\n"));
     write("fake/OkaySpace.exe", "launcher\n");
     write("fake/SDL2.dll", "dll\n");
     write("fake/OkayEngine.exe", "editor\n");

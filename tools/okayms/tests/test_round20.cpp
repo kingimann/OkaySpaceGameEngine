@@ -378,6 +378,49 @@ static void test_struct_results(Tally& tally) {
              0);
 }
 
+static void test_auto_range(Tally& tally) {
+    std::printf("test_auto_range\n");
+    run_both(tally, "auto_basic",
+             "struct P { int x; int y; };\n"
+             "P mk(int a, int b) { P p; p.x = a; p.y = b; return p; }\n"
+             "double half(int v) { return v / 2.0; }\n"
+             "int entry(void) {\n"
+             "  auto a = 5; auto d = 2.5; auto s = \"hi\"; auto p = &a; auto q = a + 1; auto f = 1.5f;\n"
+             "  CK(1, a == 5 && d == 2.5 && s[0] == 104 && *p == 5 && q == 6 && f == 1.5f);\n"
+             "  auto m = mk(3, 4); CK(2, m.x == 3 && m.y == 4);\n"
+             "  auto h = half(7); CK(3, h == 3.5);\n"
+             "  auto ll = 3000000000LL; CK(4, ll == 3000000000LL && ll > 2147483647LL);\n"
+             "  auto& r = a; r = 9; CK(5, a == 9);\n"
+             "  const auto k = a * 2; CK(6, k == 18);\n"
+             "  auto* pp = &m; CK(7, pp->x == 3);\n"
+             "  auto c = 'x'; CK(8, c == 120);\n"
+             "  auto u = 7u; CK(9, u == 7u);\n"
+             "  int arr[3]; arr[0] = 4; auto e = arr; CK(10, e[0] == 4);\n"
+             "  auto t1 = 1, t2 = 2; CK(11, t1 + t2 == 3);\n"
+             "  return 0;\n"
+             "}\n",
+             0);
+    run_both(tally, "range_for",
+             "struct P { int x; int y; };\n"
+             "int g[4] = { 1, 2, 3, 4 };\n"
+             "struct H { int a[3]; int total() { int t = 0; for (int v : a) t += v; return t; } };\n"
+             "int entry(void) {\n"
+             "  int arr[3]; arr[0] = 1; arr[1] = 2; arr[2] = 3;\n"
+             "  int sum = 0; for (int v : arr) sum += v; CK(1, sum == 6);\n"
+             "  for (auto& r : arr) r = r * 2; CK(2, arr[2] == 6 && arr[0] == 2);\n"
+             "  int t = 0; for (auto v : g) t += v; CK(3, t == 10);\n"
+             "  P ps[2]; ps[0].x = 1; ps[0].y = 2; ps[1].x = 3; ps[1].y = 4;\n"
+             "  int u = 0; for (const P& e : ps) u += e.x * e.y; CK(4, u == 14);\n"
+             "  for (P e : ps) u += e.x; CK(5, u == 18);\n"
+             "  int n = 0; for (int v : arr) { if (v == 4) continue; if (v == 6) break; n += v; } CK(6, n == 2);\n"
+             "  double ds[2]; ds[0] = 0.5; ds[1] = 1.5; double dt = 0; for (double v : ds) dt += v; CK(7, dt == 2.0);\n"
+             "  H h; h.a[0] = 5; h.a[1] = 6; h.a[2] = 7; CK(8, h.total() == 18);\n"
+             "  int cnt = 0; for (int a : arr) for (int b : arr) cnt += a < b; CK(9, cnt == 3);\n"
+             "  return 0;\n"
+             "}\n",
+             0);
+}
+
 int main() {
     Tally tally;
     test_member_operators(tally);
@@ -386,5 +429,6 @@ int main() {
     test_overload_types(tally);
     test_operator_more(tally);
     test_struct_results(tally);
-    return tally.finish(6);
+    test_auto_range(tally);
+    return tally.finish(7);
 }

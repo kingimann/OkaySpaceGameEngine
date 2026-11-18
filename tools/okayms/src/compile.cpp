@@ -2953,7 +2953,10 @@ struct Parser {
             is(TFloat) || is(TDouble))
             return true;
         return (is(TIdent) && typedefs.find(cur().text) != typedefs.end()) || is_class_name() ||
-               is_template_name_at(at) || (is(TIdent) && cur().text == "typename");
+               is_template_name_at(at) || (is(TIdent) && cur().text == "typename") ||
+               (is(TIdent) && cur().text == "auto" && at + 1 < tokens.size() &&
+                (tokens[at + 1].kind == TIdent || tokens[at + 1].kind == TAmp || tokens[at + 1].kind == TStar ||
+                 tokens[at + 1].kind == TConst));
     }
 
     // A class or struct used by its bare name, as in C++ ("C c;").
@@ -3157,7 +3160,18 @@ struct Parser {
     bool parse_local_decl_one(const Type& type, bool is_typedef, bool is_static, bool is_const, Node* out,
                               std::vector<Local>* locals, int stmt_line, bool* more);
     // The end of a declarator: ',' means another follows, otherwise ';'.
+    // `auto x = e;` and `for (T x : array)`: the initializer was read before the declaration, to learn its type;
+    // the declaration then takes it from here, where it would have read `= e` (or `: e`).
+    bool has_preset = false;
+    Node preset_init{};
+    size_t preset_end = 0;
+    bool range_decl = false;
+    int range_count = 0;
     bool end_decl(bool* more) {
+        if (range_decl) {
+            *more = false;
+            return true;
+        }
         if (accept(TComma)) {
             *more = true;
             return true;
@@ -3166,6 +3180,21 @@ struct Parser {
         return expect(TSemi, "';'");
     }
     bool parse_block(Node* out, std::vector<Local>* locals);
+    // for (declaration : range): a ':' before any ';' at the top level of the parentheses ([stmt.ranged]).
+    bool range_for_ahead() const {
+        int depth = 0;
+        for (size_t i = at; i < tokens.size() && tokens[i].kind != TEnd; ++i) {
+            const Tok k = tokens[i].kind;
+            if (k == TLParen || k == TLBrack || k == TLBrace) ++depth;
+            else if (k == TRParen || k == TRBrack || k == TRBrace) {
+                if (depth == 0) return false;
+                --depth;
+            } else if (depth == 0 && k == TSemi) return false;
+            else if (depth == 0 && k == TColon) return true;
+        }
+        return false;
+    }
+    bool parse_range_for(Node* out, std::vector<Local>* locals, int stmt_line);
 
     // ISO/IEC 14882 [expr]: the binary operators from the loosest to the tightest.
     int prec(Tok op) const {
@@ -7067,6 +7096,7 @@ bool Parser::parse_stmt_inner(Node* out, std::vector<Local>* locals, int stmt_li
         next();
         out->kind = Node::For;
         if (!expect(TLParen, "'('")) return false;
+        if (range_for_ahead()) return parse_range_for(out, locals, stmt_line);
         Node init;
         init.kind = Node::Block;
         init.text = "skip";
@@ -7339,7 +7369,40 @@ bool Parser::parse_stmt_inner(Node* out, std::vector<Local>* locals, int stmt_li
         Type type;
         bool imp = false;
         bool exp = false;
-        if (!parse_type(&type, &imp, &exp)) return false;
+        if (!is_typedef && is(TIdent) && cur().text == "auto") {
+            // auto x = e; ([dcl.spec.auto]): the type of e, without a reference, a top-level const or an array.
+            next();
+            const size_t at_declarator = at;
+            size_t k = at;
+            while (k < tokens.size() && (tokens[k].kind == TAmp || tokens[k].kind == TStar || tokens[k].kind == TConst)) ++k;
+            if (!(k + 1 < tokens.size() && tokens[k].kind == TIdent && tokens[k + 1].kind == TAssign)) {
+                error = "auto needs a name and an initializer";
+                return false;
+            }
+            at = k + 2;
+            Node init;
+            if (!parse_init(&init)) return false;
+            const size_t after_init = at;
+            Type t;
+            if (!static_type(init, &t)) {
+                error = "cannot work out the type of the auto variable";
+                return false;
+            }
+            t.is_ref = false;
+            t.pconst = false;
+            if (t.is_array()) {
+                t = peel_array(t);
+                t.pointers += 1;
+            }
+            if (tokens[at_declarator].kind == TStar && t.pointers > 0) t.pointers -= 1;
+            at = at_declarator;
+            type = t;
+            has_preset = true;
+            preset_init = std::move(init);
+            preset_end = after_init;
+        } else if (!parse_type(&type, &imp, &exp)) {
+            return false;
+        }
         if (!is_typedef && is(TSemi)) {
             next();
             out->kind = Node::Block;
@@ -7407,8 +7470,15 @@ bool Parser::parse_local_decl_one(const Type& type, bool is_typedef, bool is_sta
     local.is_static = is_static;
     Node init;
     bool has_init = false;
-    if (accept(TAssign)) {
-        if (!parse_init(&init)) return false;
+    const bool preset = has_preset && (is(TAssign) || is(TColon));
+    if (preset || accept(TAssign)) {
+        if (preset) {
+            init = std::move(preset_init);
+            at = preset_end;
+            has_preset = false;
+        } else if (!parse_init(&init)) {
+            return false;
+        }
         has_init = true;
         if (!fix_unsized(&decl.type, init)) return false;
         local.type = decl.type;
@@ -7596,6 +7666,124 @@ bool Parser::parse_local_decl_one(const Type& type, bool is_typedef, bool is_sta
 
 
 
+// for (T x : array) body ([stmt.ranged]) over an array whose length is known: an index runs over it and the
+// variable is declared, in each pass, from the element (a reference for T&).
+bool Parser::parse_range_for(Node* out, std::vector<Local>* locals, int stmt_line) {
+    const size_t decl_start = at;
+    size_t colon = at;
+    int depth = 0;
+    for (; colon < tokens.size() && tokens[colon].kind != TEnd; ++colon) {
+        const Tok k = tokens[colon].kind;
+        if (k == TLParen || k == TLBrack || k == TLBrace) ++depth;
+        else if (k == TRParen || k == TRBrack || k == TRBrace) --depth;
+        else if (depth == 0 && k == TColon) break;
+    }
+    at = colon + 1;
+    Node range;
+    if (!parse_expr(0, &range)) return false;
+    if (!expect(TRParen, "')'")) return false;
+    const size_t after_range = at;
+    Type range_type;
+    if (!static_type(range, &range_type) || !range_type.is_array() || range_type.array_len < 0) {
+        error = "a range for needs an array of known length";
+        return false;
+    }
+    const int count = range_type.array_len;
+    Type elem = peel_array(range_type);
+    elem.is_const = false;
+    at = decl_start;
+    bool is_const = false;
+    while (accept(TConst)) is_const = true;
+    Type declared;
+    if (is(TIdent) && cur().text == "auto") {
+        next();
+        declared = elem;
+        if (is(TStar) && declared.pointers > 0) declared.pointers -= 1;
+    } else {
+        bool imp = false;
+        bool exp = false;
+        if (!parse_type(&declared, &imp, &exp)) return false;
+    }
+    const int saved_depth = scope_depth;
+    push_scope();
+    dscopes.emplace_back();
+    Local index;
+    index.name = "__ri" + std::to_string(range_count++);
+    index.type.base = 1;
+    place_local(locals, index);
+    Node element;
+    element.kind = Node::Index;
+    element.kids.push_back(range);
+    element.kids.push_back(node_name(index.name));
+    has_preset = true;
+    preset_init = std::move(element);
+    preset_end = after_range;
+    range_decl = true;
+    Node decl_node;
+    bool more = false;
+    const bool decl_ok = parse_local_decl_one(declared, false, false, is_const, &decl_node, locals, stmt_line, &more);
+    range_decl = false;
+    has_preset = false;
+    if (!decl_ok) return false;
+    at = after_range;
+    Node body;
+    brk_dbase.push_back(dscopes.size());
+    cont_dbase.push_back(dscopes.size());
+    const bool body_ok = parse_stmt(&body, locals);
+    brk_dbase.pop_back();
+    cont_dbase.pop_back();
+    if (!body_ok) return false;
+    Node init;
+    init.kind = Node::Assign;
+    init.op = TAssign;
+    init.number = 1;
+    init.kids.push_back(node_name(index.name));
+    {
+        Node zero;
+        zero.kind = Node::IntLit;
+        zero.type.base = 1;
+        init.kids.push_back(std::move(zero));
+    }
+    Node cond;
+    cond.kind = Node::Binary;
+    cond.op = TLt;
+    cond.kids.push_back(node_name(index.name));
+    {
+        Node limit;
+        limit.kind = Node::IntLit;
+        limit.number = static_cast<uint64_t>(count);
+        limit.type.base = 1;
+        cond.kids.push_back(std::move(limit));
+    }
+    Node step;
+    step.kind = Node::Unary;
+    step.op = TPlusPlus;
+    step.number = 0;
+    step.kids.push_back(node_name(index.name));
+    Node iteration;
+    iteration.kind = Node::Block;
+    iteration.kids.push_back(std::move(decl_node));
+    iteration.kids.push_back(std::move(body));
+    std::vector<Node> dt;
+    if (!dtor_nodes(dscopes.size() - 1, &dt)) return false;
+    for (Node& n : dt) iteration.kids.push_back(std::move(n));
+    dscopes.pop_back();
+    pop_scope();
+    scope_depth = saved_depth;
+    Node loop;
+    loop.kind = Node::For;
+    loop.kids.push_back(std::move(init));
+    loop.kids.push_back(std::move(cond));
+    loop.kids.push_back(std::move(step));
+    loop.kids.push_back(std::move(iteration));
+    // The loop's variables live in a scope around it, as for `for (int i = ...)`.
+    *out = Node{};
+    out->kind = Node::Block;
+    out->text = "scope";
+    out->kids.push_back(std::move(loop));
+    return true;
+}
+
 bool Parser::local_visible(const std::string& name) const {
     if (cur_locals == nullptr) return false;
     for (int i = static_cast<int>(cur_locals->size()) - 1; i >= 0; --i) {
@@ -7624,7 +7812,18 @@ bool Parser::static_type(const Node& node, Type* out) const {
                 *out = global.type;
                 return true;
             }
+        for (const FuncDecl& fn : funcs)
+            if (fn.name == node.text) {
+                // The name of a function is a pointer to it.
+                *out = Type{};
+                out->base = 1;
+                out->pointers = 1;
+                out->func_id = fn.func_id;
+                return true;
+            }
         return false;
+    case Node::Assign:
+        return !node.kids.empty() && static_type(node.kids[0], out);
     case Node::Field: {
         Type base;
         if (node.kids.empty() || !static_type(node.kids[0], &base)) return false;

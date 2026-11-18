@@ -244,4 +244,50 @@ template <typename It> void nth_element(It first, It nth, It last) { (void)nth; 
 template <typename It, typename C> void nth_element(It first, It nth, It last, C comp) { (void)nth; sort(first, last, comp); }
 template <typename It> void partial_sort(It first, It middle, It last) { (void)middle; sort(first, last); }
 template <typename It, typename C> void partial_sort(It first, It middle, It last, C comp) { (void)middle; sort(first, last, comp); }
+// Heaps ([alg.heap.operations]): a binary max-heap in the range (the largest by `less` at the front), written from the
+// definition of a heap: the children of index i are 2i+1 and 2i+2.
+template <typename It, typename Less> void sift_down_heap_(It first, long long n, long long i, Less less) {
+    for (;;) {
+        long long big = i;
+        const long long l = 2 * i + 1;
+        const long long r = l + 1;
+        if (l < n && less(*(first + big), *(first + l))) big = l;
+        if (r < n && less(*(first + big), *(first + r))) big = r;
+        if (big == i) return;
+        swap(*(first + i), *(first + big));
+        i = big;
+    }
+}
+template <typename It, typename Less> void make_heap(It first, It last, Less less) {
+    const long long n = last - first;
+    for (long long i = n / 2 - 1; i >= 0; --i) sift_down_heap_(first, n, i, less);
+}
+struct heap_less_ {
+    template <typename T> bool operator()(const T& a, const T& b) const { return a < b; }
+};
+template <typename It> void make_heap(It first, It last) { make_heap(first, last, heap_less_()); }
+template <typename It, typename Less> void push_heap(It first, It last, Less less) {
+    long long i = (last - first) - 1;
+    while (i > 0) {
+        const long long parent = (i - 1) / 2;
+        if (!less(*(first + parent), *(first + i))) break;
+        swap(*(first + parent), *(first + i));
+        i = parent;
+    }
+}
+template <typename It, typename Less> void pop_heap(It first, It last, Less less) {
+    const long long n = (last - first) - 1;
+    if (n <= 0) return;
+    swap(*first, *(first + n));
+    sift_down_heap_(first, n, 0, less);
+}
+template <typename It, typename Less> void sort_heap(It first, It last, Less less) {
+    while (last - first > 1) {
+        pop_heap(first, last, less);
+        --last;
+    }
+}
+template <typename It> void push_heap(It first, It last) { push_heap(first, last, heap_less_()); }
+template <typename It> void pop_heap(It first, It last) { pop_heap(first, last, heap_less_()); }
+template <typename It> void sort_heap(It first, It last) { sort_heap(first, last, heap_less_()); }
 }

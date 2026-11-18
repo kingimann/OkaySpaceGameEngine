@@ -1,7 +1,7 @@
 // okay-ms own standard header: ifstream and ofstream, written from ISO/IEC 14882 [file.streams] on the small stream classes
 // of <sstream>. An ifstream reads the whole file when it is opened and then behaves like an istringstream; an ofstream
 // collects what is written and writes it to the file when it is closed or destroyed (so a program that crashes loses it).
-// The open mode is accepted and ignored except for ios::app (append). No seekg/tellg, no read() of binary blocks, no
+// The open mode is accepted and ignored except for ios::app (append). seekg/tellg/read work on the text held in memory; no
 // std::filesystem::path constructor. Needs runtime/file.c (okay_read_file, okay_write_file) from the runtime library.
 #pragma once
 #include <cstdlib>
@@ -17,7 +17,6 @@ public:
     ifstream(const char* path, int mode = 1) : open_(false) { open(path, mode); }
     ifstream(const string& path, int mode = 1) : open_(false) { open(path.c_str(), mode); }
     void open(const char* path, int mode = 1) {
-        (void)mode;
         char* data = 0;
         const long long n = okay_read_file(path, &data);
         buf_.clear();
@@ -31,6 +30,7 @@ public:
         open_ = true;
         buf_ = string(data, (size_t)n);
         free(data);
+        if ((mode & ios_base::ate) != 0) pos_ = buf_.size();
     }
     bool is_open() const { return open_; }
     void close() { open_ = false; }

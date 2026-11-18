@@ -10,6 +10,8 @@
 #include <cstdlib>
 #include <string>
 namespace std {
+typedef long long streamoff;
+typedef long long streamsize;
 struct ios_base {
     // Constants, not an enum: an enumerator of a class is a global name here and would hide locals called `in` or `out`.
     static const int in = 1;
@@ -27,7 +29,7 @@ public:
     string buf_;
     size_t pos_;
     bool fail_;
-    okay_istream() : buf_(), pos_(0), fail_(false) {}
+    okay_istream() : buf_(), pos_(0), fail_(false), gcount_(0) {}
     operator bool() const { return !fail_; }
     bool operator!() const { return fail_; }
     bool fail() const { return fail_; }
@@ -44,6 +46,43 @@ public:
         if (start == pos_) fail_ = true;
         return buf_.substr(start, pos_ - start);
     }
+    // Binary-style access on the text held in buf_ ([istream.unformatted], [istream.members.seekg]): tellg, seekg, read, gcount,
+    // get, peek, ignore, clear. The position is a byte offset into the text.
+    long long gcount_;
+    long long tellg() const { return fail_ ? -1 : (long long)pos_; }
+    okay_istream& seekg(long long p) {
+        if (p < 0 || p > (long long)buf_.size()) fail_ = true;
+        else pos_ = (size_t)p;
+        return *this;
+    }
+    okay_istream& seekg(long long off, int dir) {  // dir: 0 from the start, 1 from here, 2 from the end
+        long long base = dir == 0 ? 0 : dir == 1 ? (long long)pos_ : (long long)buf_.size();
+        return seekg(base + off);
+    }
+    okay_istream& read(char* dst, long long n) {
+        long long avail = (long long)buf_.size() - (long long)pos_;
+        long long take = n < avail ? n : avail;
+        for (long long i = 0; i < take; ++i) dst[i] = buf_[pos_ + (size_t)i];
+        pos_ += (size_t)take;
+        gcount_ = take;
+        if (take < n) fail_ = true;
+        return *this;
+    }
+    long long gcount() const { return gcount_; }
+    int get() {
+        if (pos_ >= buf_.size()) {
+            fail_ = true;
+            return -1;
+        }
+        return (unsigned char)buf_[pos_++];
+    }
+    int peek() const { return pos_ >= buf_.size() ? -1 : (unsigned char)buf_[pos_]; }
+    okay_istream& ignore(long long n = 1) {
+        pos_ += (size_t)n;
+        if (pos_ > buf_.size()) pos_ = buf_.size();
+        return *this;
+    }
+    void clear() { fail_ = false; }
     okay_istream* rdbuf() { return this; }
     string rest() const {
         if (pos_ >= buf_.size()) return string();

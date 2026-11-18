@@ -237,5 +237,12 @@ int main(int, char**) {
           "template <typename X> X* C::Get() const { return dynamic_cast<X*>(const_cast<C*>(this)); }\n"
           "int main() { T t; t.x = 3; C* c = &t; U* u = dynamic_cast<U*>(c); T* tp = c->Get<T>(); C& r = t; T& tr = dynamic_cast<T&>(r); return (u == 0) + tp->x + tr.x; }\n", &o);
     CHECK(t, has_symbol(o, "__okay_dyncast") && has_symbol(o, "__ti_UT@@"));
+    ++tests;
+    build(t, "round 31: heaps, fprintf/stderr, ifstream seekg/tellg/read, streamoff",
+          "#include <algorithm>\n#include <cstdio>\n#include <fstream>\n#include <vector>\n"
+          "int main() { std::vector<int> v; v.push_back(3); v.push_back(9); auto cmp = [](int a, int b) { return a < b; }; std::make_heap(v.begin(), v.end(), cmp); v.push_back(5); std::push_heap(v.begin(), v.end(), cmp); std::pop_heap(v.begin(), v.end()); std::sort_heap(v.begin(), v.end() - 1);\n"
+          "std::fprintf(stderr, \"x=%d\\n\", 3); std::fputs(\"a\", stdout); std::ifstream f(\"x\", std::ios::binary | std::ios::ate); const std::streamoff n = f.tellg(); std::vector<unsigned char> buf((size_t)(n < 0 ? 0 : n)); f.seekg(0);\n"
+          "if (!f.read(reinterpret_cast<char*>(buf.data()), n)) return 2; return (int)f.gcount() + v[0]; }\n", &o);
+    CHECK(t, has_symbol(o, "fprintf") && has_symbol(o, "main"));
     return t.finish(tests);
 }

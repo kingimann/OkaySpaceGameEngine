@@ -6,6 +6,8 @@
 #define SEEK_CUR 1
 #define SEEK_END 2
 struct FILE;
+#define stdout (std::__okay_get_stdout())
+#define stderr (std::__okay_get_stderr())
 namespace std {
 extern "C" {
 FILE *fopen(const char *path, const char *mode);
@@ -17,5 +19,10 @@ long ftell(FILE *f);
 int printf(const char *fmt, ...);
 int snprintf(char *buf, unsigned long long cap, const char *fmt, ...);
 int puts(const char *s);
+int fprintf(FILE *f, const char *fmt, ...);
+int fputs(const char *s, FILE *f);
+int fflush(FILE *f);
+FILE *__okay_get_stdout();
+FILE *__okay_get_stderr();
 }
 }

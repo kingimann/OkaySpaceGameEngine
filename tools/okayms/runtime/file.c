@@ -55,6 +55,7 @@ typedef struct FILE {
     long long pos;
     int writing;
     int append;
+    int std_handle; /* 0 an ordinary file, 1 standard output, 2 standard error */
     char path[260];
 } FILE;
 
@@ -95,8 +96,13 @@ unsigned long long fread(void *buf, unsigned long long size, unsigned long long 
     return total / size;
 }
 
+void okay_write_handle(int which, const char *data, long long n);
 unsigned long long fwrite(const void *buf, unsigned long long size, unsigned long long count, FILE *f) {
     unsigned long long total = size * count;
+    if (f != 0 && f->std_handle != 0) {
+        okay_write_handle(f->std_handle, (const char *)buf, (long long)total);
+        return count;
+    }
     if (f == 0 || !f->writing || size == 0) return 0;
     if ((long long)total + f->size > f->cap) {
         long long ncap = (f->cap + (long long)total) * 2 + 64;
@@ -170,4 +176,54 @@ long long okay_read_stdin(char **data) {
     block[size] = 0;
     *data = block;
     return size;
+}
+
+/* stdout and stderr as FILE objects, and fprintf, fputs and fflush on them (and on any FILE). cstdio.h names them through the
+   macros stdout and stderr. fprintf formats into a 1024-byte buffer: longer output is cut. */
+typedef char *va_list;
+int format_out(char *buf, unsigned int cap, char *fmt, va_list ap);
+static FILE std_files[2];
+FILE *__okay_stdout;
+FILE *__okay_stderr;
+
+static void init_std_files(void) {
+    if (__okay_stdout != 0) return;
+    std_files[0].std_handle = 1;
+    std_files[1].std_handle = 2;
+    __okay_stdout = &std_files[0];
+    __okay_stderr = &std_files[1];
+}
+
+FILE *__okay_get_stdout(void) {
+    init_std_files();
+    return __okay_stdout;
+}
+
+FILE *__okay_get_stderr(void) {
+    init_std_files();
+    return __okay_stderr;
+}
+
+int fprintf(FILE *f, char *fmt, ...) {
+    char out[1024];
+    int count;
+    va_list ap;
+    va_start(ap, fmt);
+    count = format_out(out, 1024, fmt, ap);
+    va_end(ap);
+    if (count > 1023) count = 1023;
+    if (count > 0) fwrite(out, 1, (unsigned long long)count, f);
+    return count;
+}
+
+int fputs(const char *s, FILE *f) {
+    unsigned long long n = 0;
+    while (s[n] != 0) ++n;
+    fwrite(s, 1, n, f);
+    return 0;
+}
+
+int fflush(FILE *f) {
+    (void)f;
+    return 0;
 }

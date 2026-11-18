@@ -2350,14 +2350,21 @@ struct Parser {
         if (namespaces.empty()) return;
         std::vector<Token> out;
         out.reserve(tokens.size());
+        size_t dropped_colons = static_cast<size_t>(-1);
         for (size_t i = 0; i < tokens.size(); ++i) {
+            if (tokens[i].kind == TColonColon && i + 2 < tokens.size() && tokens[i + 1].kind == TIdent &&
+                namespaces.count(tokens[i + 1].text) > 0 && tokens[i + 2].kind == TColonColon &&
+                !(i > 0 && (tokens[i - 1].kind == TIdent || tokens[i - 1].kind == TGt))) {
+                dropped_colons = i;
+                continue;  // ::okay::Name: the leading '::' (global scope) is dropped; namespaces are stripped next
+            }
             if (tokens[i].kind == TNamespace) {
                 while (i < tokens.size() && tokens[i].kind != TLBrace && tokens[i].kind != TEnd) out.push_back(tokens[i++]);
                 if (i < tokens.size()) out.push_back(tokens[i]);
                 continue;
             }
             if (tokens[i].kind == TIdent && namespaces.count(tokens[i].text) > 0 && i + 1 < tokens.size() &&
-                tokens[i + 1].kind == TColonColon && !(i > 0 && tokens[i - 1].kind == TColonColon)) {
+                tokens[i + 1].kind == TColonColon && !(i > 0 && tokens[i - 1].kind == TColonColon && i - 1 != dropped_colons)) {
                 size_t k = i;
                 while (k + 1 < tokens.size() && tokens[k].kind == TIdent && namespaces.count(tokens[k].text) > 0 &&
                        tokens[k + 1].kind == TColonColon)
@@ -4496,6 +4503,30 @@ struct Parser {
                     stmt_pre.push_back(std::move(stmt));
                     arg = node_name(hidden.name);
                 }
+            } else if (cur_locals != nullptr && !pt.is_ref && pt.base == 3 && pt.pointers == 0 && pt.struct_id >= 0 &&
+                       !pt.is_array() && arg.kind == Node::Call && !wants_copy(pt, arg)) {
+                // A by-value class parameter given the result of a call (take(mk())): the result goes into a hidden local,
+                // which is passed as the argument and destroyed after the statement (the copy is elided, [class.copy.elision]).
+                Type rt;
+                if (static_type(arg, &rt) && rt.base == 3 && rt.pointers == 0 && !rt.is_ref && rt.struct_id == pt.struct_id) {
+                    Local held;
+                    held.name = "__bt" + std::to_string(tmp_count++);
+                    held.type = rt;
+                    place_local(cur_locals, held);
+                    Node hold_assign;
+                    hold_assign.kind = Node::Assign;
+                    hold_assign.op = TAssign;
+                    hold_assign.number = 1;
+                    hold_assign.kids.push_back(node_name(held.name));
+                    hold_assign.kids.push_back(std::move(arg));
+                    Node hold_stmt;
+                    hold_stmt.kind = Node::ExprStmt;
+                    hold_stmt.kids.push_back(std::move(hold_assign));
+                    stmt_pre.push_back(std::move(hold_stmt));
+                    if (class_needs_dtor(structs[static_cast<size_t>(rt.struct_id)]))
+                        stmt_temps.push_back(Temp{held.name, rt.struct_id});
+                    arg = node_name(held.name);
+                }
             } else if (cur_locals != nullptr && wants_copy(pt, arg)) {
                 Local hidden;
                 hidden.name = "__tmp" + std::to_string(tmp_count++);
@@ -4505,6 +4536,30 @@ struct Parser {
                 if (cm == nullptr) {
                     error = "this class cannot be copied";
                     return false;
+                }
+                if (arg.kind == Node::Call) {
+                    // The argument is the result of a call: it is not in memory until it goes into a hidden local, and
+                    // the copy or move is then made from that.
+                    Type rt;
+                    if (static_type(arg, &rt) && rt.base == 3 && rt.pointers == 0 && !rt.is_ref && rt.struct_id >= 0) {
+                        Local held;
+                        held.name = "__bt" + std::to_string(tmp_count++);
+                        held.type = rt;
+                        place_local(cur_locals, held);
+                        Node hold_assign;
+                        hold_assign.kind = Node::Assign;
+                        hold_assign.op = TAssign;
+                        hold_assign.number = 1;
+                        hold_assign.kids.push_back(node_name(held.name));
+                        hold_assign.kids.push_back(std::move(arg));
+                        Node hold_stmt;
+                        hold_stmt.kind = Node::ExprStmt;
+                        hold_stmt.kids.push_back(std::move(hold_assign));
+                        stmt_pre.push_back(std::move(hold_stmt));
+                        if (class_needs_dtor(structs[static_cast<size_t>(rt.struct_id)]))
+                            stmt_temps.push_back(Temp{held.name, rt.struct_id});
+                        arg = node_name(held.name);
+                    }
                 }
                 Node call;
                 call.kind = Node::Call;
@@ -5043,6 +5098,26 @@ struct Parser {
                         // variable of the program with its initial value (one copy per file here).
                         if (!fix_unsized(&sm.type, init)) return false;
                         sm.symbol = static_symbol(def, field.name, sm.type);
+                        if (!sm.type.is_array() && sm.type.base == 3 && sm.type.pointers == 0 && sm.type.struct_id >= 0 &&
+                            (obj_needs_ctor(sm.type) || obj_needs_dtor(sm.type)) && init.kind != Node::Block) {
+                            // `static inline Vec3 listener = Vec3::Zero;`: an object with a constructor, made at startup
+                            // from the initializer (copy or converting constructor), like a global object.
+                            Global g;
+                            g.name = sm.symbol;
+                            g.type = sm.type;
+                            g.bss = true;
+                            g.is_static = true;
+                            globals.push_back(g);
+                            std::vector<Node> gargs;
+                            gargs.push_back(std::move(init));
+                            if (!register_global_object(sm.symbol, sm.type, std::move(gargs), nullptr)) return false;
+                            def.statics[field.name] = sm;
+                            const int more_o = more_statics();
+                            if (more_o < 0) return false;
+                            if (more_o > 0) continue;
+                            if (!expect(TSemi, "';'")) return false;
+                            break;
+                        }
                         Global g;
                         g.name = sm.symbol;
                         g.type = sm.type;

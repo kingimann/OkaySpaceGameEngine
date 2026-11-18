@@ -263,5 +263,14 @@ int main(int, char**) {
           "int log_(const char*, int a, int b) { return a + b; }\nint sum_(int a, int b, int c) { return a + b + c; }\n"
           "int main() { const char* s = STR(hello world); int CAT(my, var) = 2; int CAT(v_, __LINE__) = 1; return LOG(\"x\", 1, 2) + ALL(1, 2, 3) + myvar + s[0]; }\n", &o);
     CHECK(t, has_symbol(o, "main"));
+    ++tests;
+    build(t, "round 31: class results as by-value arguments, ::ns::Type declarations, static inline class members, steady_clock::time_point",
+          "#include <chrono>\n#include <memory>\nnamespace okay { struct ProfScope { int v; ProfScope(const char* n) : v(n[0]) {} }; }\n"
+          "struct A { int v; };\nstd::shared_ptr<A> mk() { return std::make_shared<A>(); }\nint take(std::shared_ptr<A> p) { return p ? 1 : 0; }\n"
+          "struct W { std::shared_ptr<A> p; explicit W(std::shared_ptr<A> a) : p(std::move(a)) {} };\nW make() { return W(std::make_shared<A>()); }\n"
+          "struct V { float x, y, z; V() : x(0), y(0), z(0) {} V(float a, float b, float c) : x(a), y(b), z(c) {} static const V Zero; };\ninline const V V::Zero {0, 0, 0};\n"
+          "struct Mixer { static inline V listener = V::Zero; };\nstruct Open { std::chrono::steady_clock::time_point start; };\n"
+          "int main() { ::okay::ProfScope p1(\"a\"); int a = take(mk()); W w(mk()); W w2 = make(); Open o; o.start = std::chrono::steady_clock::now(); return a + p1.v + (int)Mixer::listener.x; }\n", &o);
+    CHECK(t, has_symbol(o, "main"));
     return t.finish(tests);
 }

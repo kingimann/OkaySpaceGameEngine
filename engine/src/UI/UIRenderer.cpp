@@ -1536,11 +1536,17 @@ static void RenderSceneUIImpl(Scene& scene, Painter& target, int w, int h, const
                     }
                     const RGBA vc{255, 255, 255, 255};
                     std::vector<Vertex> vx;
+                    // The software renderer reads the texel at floor(u * width), so a coordinate of exactly 1.0 reads one texel past the last row or
+                    // column (heap garbage: a few grey pixels at the bottom/right tip of a round picture that changed from render to render). Keep
+                    // coordinates a quarter texel inside the picture.
+                    int texW = 0, texH = 0;
+                    p.QueryTexture(tex, &texW, &texH);
+                    const float uMax = texW > 0 ? 1.0f - 0.25f / (float)texW : 1.0f, vMax = texH > 0 ? 1.0f - 0.25f / (float)texH : 1.0f;
                     auto uvOf = [&](float qx, float qy) {
                         float u = std::clamp((qx - x0) / ww, 0.0f, 1.0f), v = std::clamp((qy - y0) / hh, 0.0f, 1.0f);   // the soft edge sits just outside the picture: clamp, never wrap
                         if (im->flipX) u = 1.0f - u;
                         if (im->flipY) v = 1.0f - v;
-                        return FPoint{u, v};
+                        return FPoint{std::min(u, uMax), std::min(v, vMax)};
                     };
                     vx.push_back({{x0 + ww * 0.5f, y0 + hh * 0.5f}, vc, {0.5f, 0.5f}});
                     for (const auto& q : pts) vx.push_back({q, vc, uvOf(q.x, q.y)});

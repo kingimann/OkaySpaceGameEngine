@@ -328,6 +328,56 @@ static void test_operator_more(Tally& tally) {
              0);
 }
 
+static void test_struct_results(Tally& tally) {
+    std::printf("test_struct_results\n");
+    run_both(tally, "sr_field",
+             "struct P { int x; int y; double d; };\n"
+             "P mk(int a, int b) { P p; p.x = a; p.y = b; p.d = 2.5; return p; }\n"
+             "struct Q { P in; int z; };\n"
+             "Q mq(int a) { Q q; q.in = mk(a, a + 1); q.z = a * 2; return q; }\n"
+             "struct W { int k; P get() const { return mk(k, k * 3); } int twice() const { return k * 2; } };\n"
+             "int entry(void) {\n"
+             "  CK(1, mk(3, 4).x == 3);\n"
+             "  CK(2, mk(3, 4).y == 4);\n"
+             "  CK(3, mk(3, 4).d == 2.5);\n"
+             "  int s = mk(1, 2).x + mk(10, 20).y; CK(4, s == 21);\n"
+             "  CK(5, mq(5).in.y == 6 && mq(5).z == 10);\n"
+             "  W w; w.k = 7; CK(6, w.get().y == 21 && w.get().x == 7);\n"
+             "  P* pp = 0; P p = mk(8, 9); pp = &p; CK(7, pp->x == 8);\n"
+             "  int loop = 0; for (int i = 0; i < 4; i++) loop += mk(i, 1).x; CK(8, loop == 6);\n"
+             "  return 0;\n"
+             "}\n",
+             0);
+    run_both(tally, "sr_dtor_return",
+             "int live = 0;\n"
+             "struct N {\n"
+             "  int v;\n"
+             "  N(int a) { v = a; live += 1; }\n"
+             "  N(int a, int b) { v = a + b; live += 1; }\n"
+             "  N(const N& o) { v = o.v; live += 1; }\n"
+             "  ~N() { live -= 1; }\n"
+             "};\n"
+             "N named(int k) { N r(k); return r; }\n"
+             "N temp(int k) { return N(k); }\n"
+             "N braced(int a, int b) { return {a, b}; }\n"
+             "N pick(int c) { N a(1); N b(2); if (c) return a; return b; }\n"
+             "int seen(int k) { return named(k).v + temp(k).v + braced(k, 1).v; }\n"
+             "int entry(void) {\n"
+             "  {\n"
+             "    N a = named(3); CK(1, a.v == 3 && live == 1);\n"
+             "    N b = temp(4); CK(2, b.v == 4 && live == 2);\n"
+             "    N c = braced(5, 6); CK(3, c.v == 11 && live == 3);\n"
+             "    N d = pick(1); N e = pick(0); CK(4, d.v == 1 && e.v == 2 && live == 5);\n"
+             "  }\n"
+             "  CK(5, live == 0);\n"
+             "  CK(6, seen(2) == 2 + 2 + 3);\n"
+             "  CK(7, live == 0);\n"
+             "  CK(8, named(9).v == 9 && live == 1);\n"
+             "  return 0;\n"
+             "}\n",
+             0);
+}
+
 int main() {
     Tally tally;
     test_member_operators(tally);
@@ -335,5 +385,6 @@ int main() {
     test_incdec_conv(tally);
     test_overload_types(tally);
     test_operator_more(tally);
-    return tally.finish(5);
+    test_struct_results(tally);
+    return tally.finish(6);
 }

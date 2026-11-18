@@ -9596,6 +9596,8 @@ struct Gen {
     const FuncDecl* current = nullptr;
     bool sret_dest_set = false;
     int sret_dest_off = 0;
+    // The destination slot holds a pointer (the function's own hidden result pointer) instead of being the object.
+    bool sret_dest_indirect = false;
     bool save_nv = false;
     bool optimize = false;
     // Offset and line (of the preprocessed text) for each statement of the
@@ -11049,6 +11051,50 @@ bool Gen::gen_expr(const Node& node) {
                 }
             }
         }
+        if (node.kids[0].kind == Node::Field || node.kids[0].kind == Node::Index ||
+            (node.kids[0].kind == Node::Unary && node.kids[0].op == TStar)) {
+            // A big struct stored into a member, an element or through a pointer: the bytes are copied, or the
+            // callee writes the result straight there. The address is worked out first; when the target turns
+            // out to be something else, the code is dropped and the general path below runs.
+            const size_t mark_text = text.size();
+            const size_t mark_relocs = relocs.size();
+            const int mark_depth = temp_depth;
+            if (!gen_addr(node.kids[0])) return false;
+            const Type target = last_type;
+            if (target.base == 3 && target.pointers == 0 && !target.is_array() && !fits_register(target)) {
+                const int dest = spill_addr();
+                if (!error.empty()) return false;
+                if (node.kids[1].kind == Node::Call) {
+                    sret_dest_set = true;
+                    sret_dest_off = dest;
+                    sret_dest_indirect = true;
+                    if (!gen_expr(node.kids[1])) return false;
+                } else {
+                    if (!gen_addr(node.kids[1])) return false;
+                    spill_reg(6);
+                    spill_reg(7);
+                    b(0x48);  // mov rsi, rax
+                    b(0x89);
+                    b(0xC6);
+                    b(0x48);  // mov rdi, [rbp+dest]
+                    b(0x8B);
+                    b(0xBD);
+                    disp(dest);
+                    b(0xB9);
+                    u32(static_cast<uint32_t>(size_of(target)));
+                    b(0xF3);
+                    b(0xA4);
+                    reload_reg(6);
+                    reload_reg(7);
+                }
+                --temp_depth;
+                last_type = target;
+                return true;
+            }
+            text.resize(mark_text);
+            relocs.resize(mark_relocs);
+            temp_depth = mark_depth;
+        }
         if (!gen_expr(node.kids[1])) return false;
         const Type rhs_type = last_type;
         const bool rhs_fp = is_fp_t(rhs_type);
@@ -11276,12 +11322,16 @@ bool Gen::gen_expr(const Node& node) {
         }
         const bool sret = sig.ret.base == 3 && sig.ret.pointers == 0 && !fits_register(sig.ret);
         int hidden = 0;
+        bool hidden_ptr = false;
         if (sret) {
             if (sret_dest_set) {
                 hidden = sret_dest_off;
+                hidden_ptr = sret_dest_indirect;
                 sret_dest_set = false;
+                sret_dest_indirect = false;
             } else if (current != nullptr && current->sret) {
                 hidden = current->sret_off;
+                hidden_ptr = true;
             } else {
                 error = "large struct return has no destination";
                 return false;
@@ -11390,7 +11440,7 @@ bool Gen::gen_expr(const Node& node) {
         reload_reg(7);
         if (sret) {
             b(0x48);
-            b(0x8D);
+            b(hidden_ptr ? 0x8B : 0x8D);
             b(0x8D);
             disp(hidden);
         }
@@ -11468,7 +11518,7 @@ bool Gen::gen_expr(const Node& node) {
         last_type = sig.ret;
         if (sret) {
             b(0x48);
-            b(0x8D);
+            b(hidden_ptr ? 0x8B : 0x8D);
             b(0x85);
             disp(hidden);
         } else {
@@ -11664,6 +11714,7 @@ bool Gen::gen_stmt(const Node& node) {
             if (node.kids[0].kind == Node::Call) {
                 sret_dest_set = true;
                 sret_dest_off = current->sret_off;
+                sret_dest_indirect = true;
                 if (!gen_expr(node.kids[0])) return false;
             } else {
                 if (!gen_addr(node.kids[0])) return false;

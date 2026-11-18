@@ -120,6 +120,9 @@ constexpr int kMaxWindowExtent = 16384;
 /// leaves the caller with no window at all.
 inline int ValidWindowExtent(int v, int fallback) { return v >= 1 && v <= kMaxWindowExtent ? v : fallback; }
 
+/// How a window asks for attention (task bar button flash). Stop ends a flash that is running.
+enum class FlashMode { Stop, Briefly, UntilFocused };
+
 struct WindowDesc {
     std::string title = "OkaySpace";
     int x = kCentered, y = kCentered;
@@ -137,6 +140,12 @@ struct GLAttributes {
     int major = 3, minor = 2;
     bool compatibility = true;   // compatibility profile (the engine's GL 1.x paths need it)
     int depthBits = 24;
+};
+
+/// What is current for GL on this thread (see Backend::CurrentGL). Opaque to callers.
+struct GLCurrent {
+    void* window = nullptr;
+    void* context = nullptr;
 };
 
 class Window {
@@ -168,6 +177,9 @@ public:
     virtual int Dpi() const { return 96; }
     /// Refresh rate (Hz) of the display the window is on; 0 = unknown.
     virtual int RefreshRateHz() const { return 0; }
+    /// Ask the user's attention: flash the task bar button (FlashMode::Briefly a few times, UntilFocused until the
+    /// window gets focus, Stop to end it). False = not supported here (nothing happens).
+    virtual bool Flash(FlashMode mode) { (void)mode; return false; }
     /// Show a finished software frame: tightly packed RGBA8 (alpha ignored), `w` x `h`, top row first, drawn at the
     /// window's top-left corner (X11 XPutImage, Win32 StretchDIBits). A frame that is not the window's size is cut
     /// or leaves the rest as it was. False when the window cannot take pixels (sdl2 windows draw through SDL_Renderer
@@ -304,6 +316,13 @@ public:
     virtual bool PollEvent(Event& out) = 0;  // false when the queue is empty
     virtual void* GLProcAddress(const char* name) = 0;   // needs a current context
     virtual void ReleaseCurrent() = 0;       // no GL context current on this thread
+    /// The GL window and context current on this thread, to put back after other GL work. Both null = none current.
+    /// The two pointers are the backend's own handles (SDL_Window* / SDL_GLContext on sdl2); give them back only to RestoreGL.
+    virtual GLCurrent CurrentGL() { return GLCurrent(); }
+    /// Make `state` current again (a null state releases the current context). False when the backend cannot.
+    virtual bool RestoreGL(const GLCurrent& state) { (void)state; return false; }
+    /// How many touch screens or touch pads the system has (0 = none, or this backend cannot tell).
+    virtual int TouchDeviceCount() { return 0; }
 
     // Keyboard, mouse.
     virtual void StartTextInput() = 0;
@@ -374,6 +393,13 @@ public:
     virtual bool IsGamepad(int deviceIndex) = 0;
     virtual std::unique_ptr<Gamepad> OpenGamepad(int deviceIndex) = 0;
 };
+
+/// A non-owning Window over an SDL_Window* the app made itself (the bridge that lets window calls move behind the
+/// seam before windows are created by Backend::MakeWindow). Null when sdl2 is not compiled in or `sdlWindow` is
+/// null. The caller still owns and destroys the SDL window, and must destroy it only after this object. A GL
+/// context made through the wrapper (CreateGLContext) belongs to the wrapper and goes with it. Temporary: it goes
+/// away with SDL2.
+std::unique_ptr<Window> WrapSdl2Window(void* sdlWindow);
 
 // ---- Free functions on the default backend ------------------------------------
 // Timers work with no backend at all (they fall back to std::chrono), so call

@@ -84,10 +84,10 @@ CAPS = [
     # ---- window ----
     ("win.create", "window", "HAVE", "create and destroy a window, creation flags, centred position",
      f"{P}: Backend::MakeWindow(WindowDesc), kCentered (owning unique_ptr<Window>). The apps hold raw SDL_Window*, so the Window methods "
-     "below cannot be called on their windows until a window is made by MakeWindow or adopted (see GAP win.adopt)",
+     "below are called on their windows through WrapSdl2Window (see win.adopt) until a window is made by MakeWindow",
      r"SDL_CreateWindow|SDL_DestroyWindow|SDL_Window|SDL_WINDOW_(RESIZABLE|ALLOW_HIGHDPI|SHOWN|BORDERLESS|MAXIMIZED|FULLSCREEN|FULLSCREEN_DESKTOP|OPENGL|HIDDEN)|SDL_WINDOWPOS_[A-Z]+"),
-    ("win.adopt", "window", "GAP", "(no SDL word) use the Window methods on a window the app made with SDL_CreateWindow",
-     "GAP: the apps hold raw SDL_Window*; only Backend::MakeWindow makes a Window. Needs a non-owning wrapper (WrapSdl2Window) until the apps create their windows through the seam",
+    ("win.adopt", "window", "HAVE", "(no SDL word) use the Window methods on a window the app made with SDL_CreateWindow",
+     f"{P}: okay::platform::WrapSdl2Window(void*): a non-owning Window over the SDL_Window* an app made itself (null without sdl2). Used by the launcher (helpers in namespace lw) and the editor; goes away in step 6 with SDL2",
      r"(?!x)x"),
     ("win.geometry", "window", "HAVE", "window size, position, minimum size, title, id",
      f"{P}: Window::GetSize / GetPosition / SetSize / SetPosition / SetMinimumSize / SetTitle / Id",
@@ -111,8 +111,8 @@ CAPS = [
     ("win.focus", "window", "GAP", "which window has keyboard or mouse focus; give a window input focus; window from an id",
      "GAP: no Backend::KeyboardFocusWindowId / MouseFocusWindowId / WindowFromId, no Window::SetInputFocus (Window::Raise gives X11 focus only)",
      r"SDL_SetWindowInputFocus|SDL_GetKeyboardFocus|SDL_GetMouseFocus|SDL_GetWindowFromID"),
-    ("win.flash", "window", "GAP", "flash the taskbar button (attention request)",
-     "GAP: no Window::RequestAttention (a version exists on branch claude/platform-gaps2, not merged)", r"SDL_FlashWindow|SDL_FLASH_[A-Z_]+"),
+    ("win.flash", "window", "HAVE", "flash the taskbar button (attention request)",
+     f"{P}: Window::Flash(FlashMode::Stop / Briefly / UntilFocused). sdl2: SDL_FlashWindow; own Windows: FlashWindowEx (plan tested in test_platform_win32_pure); own Linux: nothing yet (urgency hint is on claude/platform-gaps2)", r"SDL_FlashWindow|SDL_FLASH_[A-Z_]+"),
     ("win.border", "window", "GAP", "switch the window border on or off after creation",
      "GAP: only WindowDesc::borderless at creation", r"SDL_SetWindowBordered"),
     ("win.displays", "window", "GAP", "monitor list, bounds, usable area, DPI, display modes",
@@ -164,7 +164,7 @@ CAPS = [
     ("m.global", "mouse", "GAP", "mouse position on the whole desktop",
      "GAP: no Backend::GlobalMouseState", r"SDL_GetGlobalMouseState"),
     ("m.touch", "mouse", "PARTIAL", "touch events",
-     f"{P}: EventType::FingerDown / FingerMotion / FingerUp (sdl2 only; own never fires). GAP: touch-device count",
+     f"{P}: EventType::FingerDown / FingerMotion / FingerUp (sdl2 only; own never fires), Backend::TouchDeviceCount() (sdl2 only; own says 0)",
      r"SDL_FINGER[A-Z]+|SDL_GetNumTouchDevices"),
     # ---- gamepad ----
     ("pad", "gamepad", "HAVE", "game controllers",
@@ -185,8 +185,8 @@ CAPS = [
     ("gl.ctx", "gl", "HAVE", "create a GL context, make current, swap, vsync, proc address",
      f"{P}: Window::CreateGLContext / DestroyGLContext / MakeCurrent / SwapBuffers / SetSwapInterval / GetDrawableSize, Backend::GLProcAddress / ReleaseCurrent, GLAttributes",
      r"SDL_GL_(MakeCurrent|SetAttribute|CreateContext|DeleteContext|GetProcAddress|SwapWindow|SetSwapInterval|GetDrawableSize|CONTEXT_[A-Z_]+|DEPTH_SIZE)|SDL_GLContext"),
-    ("gl.cur", "gl", "GAP", "which window and context are current (save and restore around other GL work)",
-     "GAP: no Backend::CurrentGLWindow / CurrentGLContext, and MakeCurrent only takes the window's own context", r"SDL_GL_GetCurrentContext|SDL_GL_GetCurrentWindow"),
+    ("gl.cur", "gl", "HAVE", "which window and context are current (save and restore around other GL work)",
+     f"{P}: Backend::CurrentGL() returns an opaque GLCurrent, Backend::RestoreGL(GLCurrent) puts it back (sdl2 only; own backends return an empty state)", r"SDL_GL_GetCurrentContext|SDL_GL_GetCurrentWindow"),
     # ---- renderer ----
     ("r.create", "renderer", "HAVE", "make or wrap an SDL_Renderer",
      f"{PP}: CreateSdl2Painter(Window&), WrapSdl2Renderer(void*), CreateSdl2SurfacePainter(w, h); own: OkayUI::soft::CreateWindowPainter",
@@ -739,9 +739,9 @@ def render(ref, sha, infos, build_files, comment_only, commit_date):
         w("Every SDL word found is classified (the script lists any it cannot place here).")
     w("")
     w("**The window caveat.** The launcher and the editor create their windows with `SDL_CreateWindow` and keep a raw `SDL_Window*`. Every `Window::`")
-    w("method in `okay::platform` needs an `okay::platform::Window` object, which only `Backend::MakeWindow` makes (and the player is the only app")
-    w("that uses it). So the HAVE rows for window geometry, visibility and the like are *reachable* only after the apps create or adopt their windows")
-    w("through the seam. That is GAP `win.adopt` below.")
+    w("method in `okay::platform` needs an `okay::platform::Window` object. `okay::platform::WrapSdl2Window(void*)` gives a non-owning one over the app's")
+    w("own SDL window, so call sites move one by one (the launcher through its `lw::` helpers, the editor through `winSeam`) while SDL still creates the window.")
+    w("Window calls that still show SDL words in the table are the ones with no `Window` method yet (see the GAP rows).")
     w("")
 
     # ---------------- ranking

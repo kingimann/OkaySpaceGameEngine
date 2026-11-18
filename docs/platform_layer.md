@@ -282,6 +282,37 @@ Checked: `player/main.cpp` passes `g++ -fsyntax-only`. **`editor/main.cpp` was n
 the five lines above and follow the player's pattern. Not moved: `SDL_ShowSimpleMessageBox` in the editor start-up check (a warning icon,
 the seam's box is an error box), touch-device count, the renderer, ImGui backends, threads.
 
+## Round 5: window-bound calls, taskbar flash, touch count, GL current state (editor, launcher)
+
+New seam pieces (own code, written from the Microsoft `FLASHWINFO` documentation and from our own needs; nothing taken from SDL):
+
+* `okay::platform::WrapSdl2Window(void*)`: a non-owning `Window` over an `SDL_Window*` the app made itself. It is the bridge that lets window
+  calls move before windows are created by `Backend::MakeWindow`. It destroys nothing but a GL context made through it. Temporary, goes with SDL2.
+* `Window::Flash(FlashMode::Stop / Briefly / UntilFocused)`. sdl2: `SDL_FlashWindow` (guarded by the SDL 2.0.16 version check). Own Windows:
+  `FlashWindowEx` with the plan from `win32disp::PlanFlash` (briefly = caption and taskbar, 3 flashes; until focused = those plus
+  `FLASHW_TIMERNOFG`; stop = 0). Own Linux: not done (default returns false; the urgency hint is on `claude/platform-gaps2`).
+* `Backend::TouchDeviceCount()` (sdl2 only; own backends say 0 because they never produce finger events).
+* `Backend::CurrentGL()` / `RestoreGL()` with an opaque `GLCurrent` (the window and context pointers of the backend): the save and
+  restore the editor does around its hidden GPU-renderer context.
+
+Moved, SDL2 still the default (behaviour identical):
+
+* Launcher: `SDL_RestoreWindow / RaiseWindow / ShowWindow / HideWindow / MinimizeWindow`, `SDL_Get/SetWindowPosition`, `SDL_Get/SetWindowSize`,
+  `SDL_SetWindowMinimumSize`, `SDL_GetWindowID`, the chat window's focus test, and both `SDL_FlashWindow` calls now go through small `lw::` helpers
+  that wrap the window per call.
+* Editor: window size, id and focus queries on the main window (`winSeam`), the display refresh rate (`SDL_GetWindowDisplayMode`), relative mouse
+  motion (`SDL_GetRelativeMouseState` through `Backend::RelativeMouseState`), `SDL_GetNumTouchDevices`, and the hidden GL context of the GPU renderer
+  (context creation, make current, save and restore, `SDL_GL_GetProcAddress`) through the wrapper and the sdl2 backend.
+
+Left on SDL on purpose: `SDL_GetWindowFlags` minimised / hidden queries (no `Window` method yet), `SDL_GetKeyboardFocus` and friends,
+`SDL_GetWindowWMInfo` and the Windows message hook (tray icon), `SDL_GetWindowDisplayIndex` + `SDL_GetDisplayDPI` for the editor's first-run UI scale
+(`Window::Dpi()` rounds to a whole DPI and treats an absurd value as 96, which could differ by a quarter step in rare cases), `SDL_GetWindowFromID`
+(ImGui viewports), the windows' creation, and the `SDL_Renderer`.
+
+Tests: `test_platform_win32_pure` (flash plan), `platform_window_sdl2` (wrapper identity with SDL, non-owning, refresh rate, touch count, flash calls,
+GL current save / restore through the wrapper). Try it (rule 4a): nothing visible changes; in the launcher, minimise it and let a chat message or
+an update notice arrive, and the taskbar button flashes as before; in the editor, Play with mouse look and the GPU view work as before.
+
 ## Not behind the seam yet (stage 1 list; see stage 2 above for what changed)
 
 The window, event loop and GL context of the editor, launcher and player still call SDL directly. Moving them needs more than

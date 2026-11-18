@@ -161,6 +161,16 @@ public:
         DEVMODEW dm; std::memset(&dm, 0, sizeof(dm)); dm.dmSize = sizeof(dm);
         return EnumDisplaySettingsW(mi.szDevice, ENUM_CURRENT_SETTINGS, &dm) ? win32disp::RefreshFromDevMode((int)dm.dmDisplayFrequency) : 0;
     }
+    bool Flash(FlashMode mode) override {
+        const win32disp::FlashPlan p = win32disp::PlanFlash(mode);
+        FLASHWINFO fi; std::memset(&fi, 0, sizeof(fi));
+        fi.cbSize = sizeof(fi);
+        fi.hwnd = m_hwnd;
+        fi.dwFlags = p.flags;
+        fi.uCount = p.count;
+        FlashWindowEx(&fi);   // its result is the window's previous flash state, not success
+        return true;
+    }
     bool SetIcon(const uint8_t* rgba, int w, int h) override {
         if (!win32icon::ValidIcon(rgba, w, h)) return false;
         // A big icon (Alt+Tab, task bar) and a small one (title bar), each at the size this system asks for.

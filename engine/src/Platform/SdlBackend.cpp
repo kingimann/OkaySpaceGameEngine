@@ -30,10 +30,10 @@ SampleFormat FromSdlFormat(SDL_AudioFormat f) { return SDL_AUDIO_ISFLOAT(f) ? Sa
 
 class SdlWindow final : public Window {
 public:
-    SdlWindow(SDL_Window* w) : m_win(w) {}
+    explicit SdlWindow(SDL_Window* w, bool owns = true) : m_win(w), m_owns(owns) {}
     ~SdlWindow() override {
         DestroyGLContext();
-        if (m_win) SDL_DestroyWindow(m_win);
+        if (m_win && m_owns) SDL_DestroyWindow(m_win);
     }
     uint32_t Id() const override { return SDL_GetWindowID(m_win); }
     BackendKind Kind() const override { return BackendKind::Sdl2; }
@@ -55,6 +55,15 @@ public:
     void SetFullscreen(bool on) override { SDL_SetWindowFullscreen(m_win, on ? SDL_WINDOW_FULLSCREEN_DESKTOP : 0); }
     bool IsFocused() const override { return (SDL_GetWindowFlags(m_win) & SDL_WINDOW_INPUT_FOCUS) != 0; }
     bool IsFullscreen() const override { return (SDL_GetWindowFlags(m_win) & SDL_WINDOW_FULLSCREEN) != 0; }
+    bool Flash(FlashMode mode) override {
+#if SDL_VERSION_ATLEAST(2, 0, 16)
+        SDL_FlashOperation op = mode == FlashMode::Stop ? SDL_FLASH_CANCEL
+                              : mode == FlashMode::Briefly ? SDL_FLASH_BRIEFLY : SDL_FLASH_UNTIL_FOCUSED;
+        return SDL_FlashWindow(m_win, op) == 0;
+#else
+        (void)mode; return false;
+#endif
+    }
     bool SetIcon(const uint8_t* rgba, int w, int h) override {
         if (!rgba || w <= 0 || h <= 0) return false;
         SDL_Surface* surf = SDL_CreateRGBSurfaceWithFormatFrom((void*)rgba, w, h, 32, w * 4, SDL_PIXELFORMAT_ABGR8888);
@@ -98,6 +107,7 @@ public:
 
 private:
     SDL_Window* m_win = nullptr;
+    bool m_owns = true;
     SDL_GLContext m_ctx = nullptr;
 };
 
@@ -248,6 +258,16 @@ public:
     }
     void* GLProcAddress(const char* n) override { return SDL_GL_GetProcAddress(n); }
     void ReleaseCurrent() override { SDL_GL_MakeCurrent(nullptr, nullptr); }
+    GLCurrent CurrentGL() override {
+        GLCurrent c;
+        c.window = SDL_GL_GetCurrentWindow();
+        c.context = SDL_GL_GetCurrentContext();
+        return c;
+    }
+    bool RestoreGL(const GLCurrent& s) override {
+        return SDL_GL_MakeCurrent((SDL_Window*)s.window, (SDL_GLContext)s.context) == 0;
+    }
+    int TouchDeviceCount() override { return SDL_GetNumTouchDevices(); }
 
     void StartTextInput() override { SDL_StartTextInput(); }
     void StopTextInput() override { SDL_StopTextInput(); }
@@ -432,6 +452,11 @@ private:
 } // namespace
 
 std::unique_ptr<Backend> CreateSdl2Backend() { return std::unique_ptr<Backend>(new SdlBackend()); }
+
+std::unique_ptr<Window> WrapSdl2Window(void* sdlWindow) {
+    if (!sdlWindow) return nullptr;
+    return std::unique_ptr<Window>(new SdlWindow((SDL_Window*)sdlWindow, false));
+}
 
 } // namespace okay::platform
 #endif // OKAY_PLATFORM_HAVE_SDL2

@@ -8,6 +8,24 @@
 #define SDL_MAIN_HANDLED
 #include <SDL.h>
 #include "okay/Platform/Platform.hpp"   // okay::platform: timers (and the SDL seam)
+
+// Window calls on the launcher's raw SDL windows, through the okay::platform seam (a non-owning wrapper per call; the
+// windows are still made and destroyed by SDL). A null window does nothing, like SDL's own calls with an error.
+namespace lw {
+inline void Restore(SDL_Window* w)  { if (auto s = okay::platform::WrapSdl2Window(w)) s->Restore(); }
+inline void Raise(SDL_Window* w)    { if (auto s = okay::platform::WrapSdl2Window(w)) s->Raise(); }
+inline void Show(SDL_Window* w)     { if (auto s = okay::platform::WrapSdl2Window(w)) s->Show(); }
+inline void Hide(SDL_Window* w)     { if (auto s = okay::platform::WrapSdl2Window(w)) s->Hide(); }
+inline void Minimize(SDL_Window* w) { if (auto s = okay::platform::WrapSdl2Window(w)) s->Minimize(); }
+inline void GetPos(SDL_Window* w, int* x, int* y) { int a = 0, b = 0; if (auto s = okay::platform::WrapSdl2Window(w)) s->GetPosition(a, b); if (x) *x = a; if (y) *y = b; }
+inline void GetSize(SDL_Window* w, int* x, int* y) { int a = 0, b = 0; if (auto s = okay::platform::WrapSdl2Window(w)) s->GetSize(a, b); if (x) *x = a; if (y) *y = b; }
+inline void SetSize(SDL_Window* w, int x, int y) { if (auto s = okay::platform::WrapSdl2Window(w)) s->SetSize(x, y); }
+inline void SetPos(SDL_Window* w, int x, int y)  { if (auto s = okay::platform::WrapSdl2Window(w)) s->SetPosition(x, y); }
+inline void SetMinSize(SDL_Window* w, int x, int y) { if (auto s = okay::platform::WrapSdl2Window(w)) s->SetMinimumSize(x, y); }
+inline uint32_t Id(SDL_Window* w)   { auto s = okay::platform::WrapSdl2Window(w); return s ? s->Id() : 0; }
+inline bool IsFocused(SDL_Window* w) { auto s = okay::platform::WrapSdl2Window(w); return s && s->IsFocused(); }
+inline void Flash(SDL_Window* w, okay::platform::FlashMode m) { if (auto s = okay::platform::WrapSdl2Window(w)) s->Flash(m); }
+} // namespace lw
 #include "WavPlayback.hpp"   // the one WAV loading seam (SDL_LoadWAV, or our own decoder with OKAY_OWN_WAV)
 #include "VoiceChat.hpp"   // voice calls (first: winsock2.h must precede windows.h)
 #include "AppIcon.hpp"
@@ -11441,7 +11459,7 @@ static void PumpMultiplayer() {
     // Shift+Tab in a game (or net_invite_friends()): bring up Invite friends.
     if (!okay::GameIpc::TakeInviteRequests().empty()) {
         g_inviteOpenReq = true; g_inviteMode = 0;
-        if (g_launcherWindow) { SDL_RestoreWindow(g_launcherWindow); SDL_RaiseWindow(g_launcherWindow); }
+        if (g_launcherWindow) { lw::Restore(g_launcherWindow); lw::Raise(g_launcherWindow); }
     }
 }
 
@@ -16676,9 +16694,9 @@ static ChatWindowHost g_chatHost;
 // back in the middle of the first display, shrunk to fit.
 static void KeepWindowOnScreen(SDL_Window* w) {
     if (!w) return;
-    if (SDL_GetWindowFlags(w) & SDL_WINDOW_MINIMIZED) SDL_RestoreWindow(w);
+    if (SDL_GetWindowFlags(w) & SDL_WINDOW_MINIMIZED) lw::Restore(w);
     int x = 0, y = 0, ww = 0, wh = 0;
-    SDL_GetWindowPosition(w, &x, &y); SDL_GetWindowSize(w, &ww, &wh);
+    lw::GetPos(w, &x, &y); lw::GetSize(w, &ww, &wh);
     okay::platform::Backend* pb = okay::platform::Default();
     const int nDisp = pb ? pb->DisplayCount() : 0;
     // Usable area (without the task bar) of display d, from okay::platform.
@@ -16699,14 +16717,14 @@ static void KeepWindowOnScreen(SDL_Window* w) {
     SDL_Rect b;
     if (!usable(0, b)) return;
     ww = std::min(ww, b.w - 40); wh = std::min(wh, b.h - 40);
-    SDL_SetWindowSize(w, ww, wh);
-    SDL_SetWindowPosition(w, b.x + (b.w - ww) / 2, b.y + (b.h - wh) / 2);
+    lw::SetSize(w, ww, wh);
+    lw::SetPos(w, b.x + (b.w - ww) / 2, b.y + (b.h - wh) / 2);
 }
 static void ChatHostSaveGeometry() {
     if (!g_chatHost.win || !g_chatHost.shown) return;
     if (SDL_GetWindowFlags(g_chatHost.win) & SDL_WINDOW_MINIMIZED) return;   // (its position is meaningless then)
-    SDL_GetWindowPosition(g_chatHost.win, &g_chatWinX, &g_chatWinY);
-    SDL_GetWindowSize(g_chatHost.win, &g_chatWinW, &g_chatWinH);
+    lw::GetPos(g_chatHost.win, &g_chatWinX, &g_chatWinY);
+    lw::GetSize(g_chatHost.win, &g_chatWinW, &g_chatWinH);
 }
 static bool ChatHostCreate() {
     if (g_chatHost.win) return true;
@@ -16715,13 +16733,13 @@ static bool ChatHostCreate() {
     g_chatHost.win = SDL_CreateWindow("OkaySpace Chat", x, y, g_chatWinW, g_chatWinH,
                                       SDL_WINDOW_ALLOW_HIGHDPI | SDL_WINDOW_RESIZABLE | SDL_WINDOW_HIDDEN);
     if (!g_chatHost.win) return false;
-    SDL_SetWindowMinimumSize(g_chatHost.win, 520, 380);
+    lw::SetMinSize(g_chatHost.win, 520, 380);
     okay::SetAppIcon(g_chatHost.win);
     // No VSync here: the launcher's present already paces the loop.
     g_chatHost.ren = SDL_CreateRenderer(g_chatHost.win, -1, SDL_RENDERER_ACCELERATED);
     if (!g_chatHost.ren) g_chatHost.ren = SDL_CreateRenderer(g_chatHost.win, -1, 0);
     if (!g_chatHost.ren) { SDL_DestroyWindow(g_chatHost.win); g_chatHost.win = nullptr; return false; }
-    g_chatHost.id = SDL_GetWindowID(g_chatHost.win);
+    g_chatHost.id = lw::Id(g_chatHost.win);
     g_chatHost.ctx = ImGui::CreateContext();
     ImGui::SetCurrentContext(g_chatHost.ctx);
     ImGui::GetIO().IniFilename = nullptr;
@@ -16744,20 +16762,20 @@ static void ChatHostSync() {
     const bool want = g_chatSeparate && g_chatWinOpen;
     if (want && !g_chatHost.shown) {
         if (!ChatHostCreate()) { g_chatSeparate = false; return; }   // fall back to the in-launcher window
-        SDL_ShowWindow(g_chatHost.win);
+        lw::Show(g_chatHost.win);
         KeepWindowOnScreen(g_chatHost.win);
-        SDL_RaiseWindow(g_chatHost.win);
+        lw::Raise(g_chatHost.win);
         g_chatHost.shown = true;
     } else if (!want && g_chatHost.shown) {
         ChatHostSaveGeometry(); SavePrefs();
-        SDL_HideWindow(g_chatHost.win);
+        lw::Hide(g_chatHost.win);
         g_chatHost.shown = false;
     }
 }
 static bool ChatHostFocused() {
-    return g_chatHost.shown && (SDL_GetWindowFlags(g_chatHost.win) & SDL_WINDOW_INPUT_FOCUS) != 0;
+    return g_chatHost.shown && lw::IsFocused(g_chatHost.win);
 }
-static void ChatHostRaise() { if (g_chatHost.shown) { SDL_RestoreWindow(g_chatHost.win); KeepWindowOnScreen(g_chatHost.win); SDL_RaiseWindow(g_chatHost.win); } }
+static void ChatHostRaise() { if (g_chatHost.shown) { lw::Restore(g_chatHost.win); KeepWindowOnScreen(g_chatHost.win); lw::Raise(g_chatHost.win); } }
 // Route an SDL event to the chat window; true when it belonged to it.
 static bool ChatHostEvent(const SDL_Event& e) {
     if (!g_chatHost.win) return false;
@@ -18188,7 +18206,7 @@ int main(int argc, char** argv) {
         SDL_WINDOW_ALLOW_HIGHDPI | SDL_WINDOW_RESIZABLE | SDL_WINDOW_HIDDEN);
     if (!window) return 1;
     g_launcherWindow = window;   // games ask us to come forward (Invite friends)
-    SDL_SetWindowMinimumSize(window, 720, 480);   // the fixed layout needs this much
+    lw::SetMinSize(window, 720, 480);   // the fixed layout needs this much
     okay::SetAppIcon(window);   // placeholder OkaySpace logo
 #if defined(_WIN32)
     SDL_SetWindowsMessageHook(OkayMsgHook, nullptr);   // receive tray-icon clicks
@@ -18232,8 +18250,8 @@ int main(int argc, char** argv) {
         okay::DrawSplashStyled(renderer, sw, sh, splashStyle());
     };
     firstSplash();                 // draw + present while still hidden
-    SDL_ShowWindow(window);        // reveal with the splash already composited
-    SDL_RaiseWindow(window);
+    lw::Show(window);        // reveal with the splash already composited
+    lw::Raise(window);
     firstSplash();                 // present once more so the shown frame is the splash
 
     IMGUI_CHECKVERSION();
@@ -18422,9 +18440,9 @@ int main(int argc, char** argv) {
             // around, SDL reports the launcher's [X] as a window close, not a quit.)
             if (e.type == SDL_QUIT) closeConfirm = true;
             else if (e.type == SDL_WINDOWEVENT && e.window.event == SDL_WINDOWEVENT_FOCUS_GAINED &&
-                     e.window.windowID == SDL_GetWindowID(window)) g_launcherRefocused = true;   // check for updates
+                     e.window.windowID == lw::Id(window)) g_launcherRefocused = true;   // check for updates
             else if (e.type == SDL_WINDOWEVENT && e.window.event == SDL_WINDOWEVENT_CLOSE &&
-                     e.window.windowID == SDL_GetWindowID(window)) closeConfirm = true;
+                     e.window.windowID == lw::Id(window)) closeConfirm = true;
             // NOTE: minimizing does a plain Windows minimize (to the taskbar) and
             // is always restored by clicking the taskbar button. The launcher does
             // NOT hide itself to the system tray — that could trap the window with
@@ -18440,7 +18458,7 @@ int main(int argc, char** argv) {
                 if (g_chatWinOpen && g_chatDropOk && (!g_chatDropUid.empty() || g_chatDropGroup > 0)) {
                     int gx = 0, gy = 0, wx = 0, wy = 0;
                     SDL_GetGlobalMouseState(&gx, &gy);
-                    SDL_GetWindowPosition(window, &wx, &wy);
+                    lw::GetPos(window, &wx, &wy);
                     float mx = (float)(gx - wx), my = (float)(gy - wy);
                     toChat = mx >= g_chatDropMin.x && mx <= g_chatDropMax.x && my >= g_chatDropMin.y && my <= g_chatDropMax.y;
                 }
@@ -18496,9 +18514,9 @@ int main(int argc, char** argv) {
         if (g_trayRestoreReq) {
             g_trayRestoreReq = false;
             OkayTrayRemove();
-            SDL_ShowWindow(window);
-            SDL_RestoreWindow(window);
-            SDL_RaiseWindow(window);
+            lw::Show(window);
+            lw::Restore(window);
+            lw::Raise(window);
         }
 #endif
         // A finished git job (clone/pull/push) reports its result as a toast.
@@ -18584,8 +18602,8 @@ int main(int argc, char** argv) {
                 okayversions::LauncherArgs ha;
                 if (okayversions::TakeHandoff(okayversions::HandoffFile(), (long long)std::time(nullptr), &ha)) {
                     okayversionsui::RequestPage(ha.version);
-                    SDL_RestoreWindow(window);
-                    SDL_RaiseWindow(window);
+                    lw::Restore(window);
+                    lw::Raise(window);
                 }
             }
             if (okayversionsui::TakePageRequest()) { tab = 15; ClosePublicProfile(); }
@@ -18636,10 +18654,8 @@ int main(int argc, char** argv) {
                     UpsertNotif("update:" + latest, "Test build available",
                                 g_upAvailableTitle + " (v" + latest + ") is ready. It can be broken. Install it from the sidebar.", 3, -1);
                 }
-#if SDL_VERSION_ATLEAST(2, 0, 16)
                 if ((SDL_GetWindowFlags(window) & (SDL_WINDOW_MINIMIZED | SDL_WINDOW_INPUT_FOCUS)) != SDL_WINDOW_INPUT_FOCUS)
-                    SDL_FlashWindow(window, SDL_FLASH_UNTIL_FOCUSED);   // taskbar attention while minimized/unfocused
-#endif
+                    lw::Flash(window, okay::platform::FlashMode::UntilFocused);   // taskbar attention while minimized/unfocused
             }
             if (us == Up_Updated || us == Up_UpToDate) {   // a real check/install supersedes the hint
                 if (!g_upAvailable.empty() && (us == Up_Updated || CompareVersions(LocalVersion(), g_upAvailable) >= 0)) { g_upAvailable.clear(); g_upAvailableTitle.clear(); }
@@ -18663,13 +18679,11 @@ int main(int argc, char** argv) {
             static Uint32 nextRing = 0;
             if (okay::platform::TicksMs32() >= nextRing) {
                 PlayChatChime(); nextRing = okay::platform::TicksMs32() + 2200;
-#if SDL_VERSION_ATLEAST(2, 0, 16)
-                SDL_FlashWindow(g_chatHost.shown ? g_chatHost.win : window, SDL_FLASH_BRIEFLY);
-#endif
+                lw::Flash(g_chatHost.shown ? g_chatHost.win : window, okay::platform::FlashMode::Briefly);
             }
         }
         ChatHostSync();
-        if (g_raiseMainReq) { g_raiseMainReq = false; SDL_RestoreWindow(window); SDL_RaiseWindow(window); }
+        if (g_raiseMainReq) { g_raiseMainReq = false; lw::Restore(window); lw::Raise(window); }
         if ((SDL_GetWindowFlags(window) & (SDL_WINDOW_HIDDEN | SDL_WINDOW_MINIMIZED)) != 0) {
             if (g_chatHost.shown && !(SDL_GetWindowFlags(g_chatHost.win) & SDL_WINDOW_MINIMIZED)) {
                 ChatHostFrame(account);   // the chat window keeps going on its own
@@ -18705,7 +18719,7 @@ int main(int argc, char** argv) {
                 }
                 ImGui::SameLine();
                 if (ImGui::Button("Minimize", ImVec2(120, 0))) {
-                    SDL_MinimizeWindow(window); closeConfirm = false; ImGui::CloseCurrentPopup();
+                    lw::Minimize(window); closeConfirm = false; ImGui::CloseCurrentPopup();
                 }
                 ImGui::SameLine();
                 if (ImGui::Button("Cancel", ImVec2(120, 0)) ||
@@ -27121,7 +27135,7 @@ int main(int argc, char** argv) {
 
     // Remember the window size for next launch.
     ChatHostSaveGeometry();
-    { int w = 0, h = 0; SDL_GetWindowSize(window, &w, &h);
+    { int w = 0, h = 0; lw::GetSize(window, &w, &h);
       if (w > 0 && h > 0) { g_winW = w; g_winH = h; SavePrefs(); } }
 
     // Stop the background friends/DM poll + chat poll threads.

@@ -49,6 +49,10 @@ static void Display() {
     Rect f = FullscreenRect(v[2]);
     CHECK(f.x == 1920 && f.y == 0 && f.w == 1920 && f.h == 1080);
     CHECK(DisplayForNewWindow(v, true, -100, 50) == 1 && DisplayForNewWindow(v, false, -100, 50) == 0 && DisplayForNewWindow({}, true, 0, 0) == -1);
+    // Taskbar flash: stop clears, briefly flashes window and taskbar a few times, until-focused keeps going until foreground.
+    CHECK(PlanFlash(FlashMode::Stop).flags == 0 && PlanFlash(FlashMode::Stop).count == 0);
+    CHECK(PlanFlash(FlashMode::Briefly).flags == 3 && PlanFlash(FlashMode::Briefly).count == 3);
+    CHECK(PlanFlash(FlashMode::UntilFocused).flags == (3u | 0xCu) && PlanFlash(FlashMode::UntilFocused).count == 0);
 }
 
 static void PadMapT() {

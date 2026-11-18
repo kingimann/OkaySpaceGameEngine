@@ -25,6 +25,20 @@ inline int ValidDpi(int dpi) { return dpi >= 48 && dpi <= 1000 ? dpi : kBaseDpi;
 /// WM_DPICHANGED: the new horizontal DPI is the low word of wParam (the high word is the vertical one, equal on Windows).
 inline int DpiFromWParam(uint64_t wp) { return (int)(wp & 0xFFFF); }
 
+/// FlashWindowEx arguments for a FlashMode, from the Microsoft documentation of FLASHWINFO: dwFlags FLASHW_STOP = 0,
+/// FLASHW_CAPTION = 1, FLASHW_TRAY = 2, FLASHW_ALL = 3, FLASHW_TIMERNOFG = 0xC (keep flashing until the window comes to
+/// the foreground). uCount is the number of flashes; timeout 0 means the user's cursor blink rate.
+struct FlashPlan { uint32_t flags; uint32_t count; };
+constexpr uint32_t kFlashStop = 0, kFlashAll = 3, kFlashTimerNoFg = 0xC;
+inline FlashPlan PlanFlash(FlashMode m) {
+    switch (m) {
+    case FlashMode::Briefly:      return FlashPlan{kFlashAll, 3};
+    case FlashMode::UntilFocused: return FlashPlan{kFlashAll | kFlashTimerNoFg, 0};
+    case FlashMode::Stop:         break;
+    }
+    return FlashPlan{kFlashStop, 0};
+}
+
 struct Rect { int x = 0, y = 0, w = 0, h = 0; };
 inline bool Contains(const Rect& r, int px, int py) { return px >= r.x && py >= r.y && px < r.x + r.w && py < r.y + r.h; }
 

@@ -1023,7 +1023,8 @@ SDL_Renderer* g_sdlRenderer = nullptr;
 // SDL_Renderer UI is never disturbed. Experimental + off by default.
 bool          g_gpuRender = true;        // GPU 3D view, auto-on (D3D11/OpenGL by OS, software fallback)
 SDL_Window*   g_glWindow  = nullptr;     // hidden window owning the GL context
-SDL_GLContext g_glCtx     = nullptr;
+bool          g_glCtx     = false;       // the hidden window's GL context exists (made and owned by g_glWin)
+std::unique_ptr<okay::platform::Window> g_glWin;   // non-owning seam wrapper over g_glWindow; owns the GL context
 okay::GLRenderer* g_glRenderer = nullptr;
 bool          g_glReady   = false;       // GL context + entry points loaded OK
 bool          g_d3dReady  = false;       // D3D11 device created OK (Windows)
@@ -1225,12 +1226,12 @@ SDL_Texture* Render3DTexture(const Scene& scene, const Mat4& vp, const Vec3& eye
 #endif
         if (!px && g_glReady && g_glRenderer && g_glWindow && g_glCtx) {
             OKAY_BREADCRUMB("Render3D:gl");
-            SDL_GLContext prevCtx = SDL_GL_GetCurrentContext();
-            SDL_Window*   prevWin = SDL_GL_GetCurrentWindow();
-            if (SDL_GL_MakeCurrent(g_glWindow, g_glCtx) == 0)
+            okay::platform::Backend* glb = okay::platform::Get(okay::platform::BackendKind::Sdl2);
+            const okay::platform::GLCurrent prevGL = glb->CurrentGL();
+            if (g_glWin->MakeCurrent())
                 px = g_glRenderer->RenderToPixels(scene, vp, eye, rw, rh, 4,
                                                   0.0f, 0.0f, 0.0f, 0.0f, ignore);
-            SDL_GL_MakeCurrent(prevWin, prevCtx);
+            glb->RestoreGL(prevGL);
             if (px) okay::FrameOverlay::RendererName() = "OpenGL (GPU)";
         }
         static int s_gpuFails = 0;
@@ -1299,12 +1300,12 @@ const std::uint32_t* Render3DPassPixels(const Scene& scene, const okay::CameraPa
     }
 #endif
     if (tryGpu && !px && g_glReady && g_glRenderer && g_glWindow && g_glCtx) {
-        SDL_GLContext prevCtx = SDL_GL_GetCurrentContext();
-        SDL_Window* prevWin = SDL_GL_GetCurrentWindow();
-        if (SDL_GL_MakeCurrent(g_glWindow, g_glCtx) == 0)
+        okay::platform::Backend* glb = okay::platform::Get(okay::platform::BackendKind::Sdl2);
+        const okay::platform::GLCurrent prevGL = glb->CurrentGL();
+        if (g_glWin->MakeCurrent())
             px = g_glRenderer->RenderToPixels(scene, pass.vp, pass.eye, rw, rh, 4,
                                               pass.clearR, pass.clearG, pass.clearB, pass.clearA, pass.ignore);
-        SDL_GL_MakeCurrent(prevWin, prevCtx);
+        glb->RestoreGL(prevGL);
     }
     okay::SceneOcclusionDepth().valid = false;
     if (!px) {
@@ -50376,6 +50377,8 @@ int main(int argc, char** argv) {
         1280, 800, SDL_WINDOW_RESIZABLE | SDL_WINDOW_ALLOW_HIGHDPI | SDL_WINDOW_HIDDEN);
     if (!window) { std::cerr << "CreateWindow failed: " << SDL_GetError() << "\n"; return 1; }
     okay::SetAppIcon(window);   // placeholder OkaySpace logo
+    // The seam's view of the editor window (non-owning): window state calls go through it, the window is still SDL's.
+    std::unique_ptr<okay::platform::Window> winSeam = okay::platform::WrapSdl2Window(window);
 
     // SDL's 2D renderer (Direct3D/Metal/OpenGL, chosen by SDL); fall back to software.
 #if defined(_WIN32)
@@ -50657,26 +50660,23 @@ int main(int argc, char** argv) {
         // objects, multisample renderbuffers + blit, and VAOs, while still accepting
         // our legacy #version 120 shaders. If the driver can't provide it,
         // SDL_GL_CreateContext fails and we fall back to software (no crash).
-        SDL_GL_SetAttribute(SDL_GL_CONTEXT_MAJOR_VERSION, 3);
-        SDL_GL_SetAttribute(SDL_GL_CONTEXT_MINOR_VERSION, 2);
-        SDL_GL_SetAttribute(SDL_GL_CONTEXT_PROFILE_MASK, SDL_GL_CONTEXT_PROFILE_COMPATIBILITY);
-        SDL_GL_SetAttribute(SDL_GL_DEPTH_SIZE, 24);
-        SDL_Window* prevWin = SDL_GL_GetCurrentWindow();
-        SDL_GLContext prevCtx = SDL_GL_GetCurrentContext();
+        okay::platform::Backend* glb = okay::platform::Get(okay::platform::BackendKind::Sdl2);
+        const okay::platform::GLCurrent prevGL = glb->CurrentGL();
         g_glWindow = SDL_CreateWindow("okay-gl", 0, 0, 16, 16,
                                       SDL_WINDOW_OPENGL | SDL_WINDOW_HIDDEN);
         if (g_glWindow) {
-            g_glCtx = SDL_GL_CreateContext(g_glWindow);
+            g_glWin = okay::platform::WrapSdl2Window(g_glWindow);
+            okay::platform::GLAttributes gla;   // 3.2 compatibility, 24-bit depth: the seam's defaults
+            g_glCtx = g_glWin->CreateGLContext(gla);   // also makes it current
             if (g_glCtx) {
-                SDL_GL_MakeCurrent(g_glWindow, g_glCtx);
-                if (okay::GLRenderer::LoadGL((okay::GLRenderer::GLGetProc)SDL_GL_GetProcAddress)) {
+                if (okay::GLRenderer::LoadGL([](const char* n) -> void* { return okay::platform::Get(okay::platform::BackendKind::Sdl2)->GLProcAddress(n); })) {
                     g_glRenderer = new okay::GLRenderer();
                     g_glReady = true;
                     ConsoleLog("GPU renderer available (View > GPU Renderer).");
                     {   // the GPU, the vendor and the OpenGL version go into every crash report (the UI crash shows on some drivers only)
                         using GetStringFn = const unsigned char* (SDLCALL*)(unsigned int);   // GL_VENDOR 0x1F00, GL_RENDERER 0x1F01, GL_VERSION 0x1F02
                         std::string gpu;
-                        if (auto gs = (GetStringFn)SDL_GL_GetProcAddress("glGetString")) {
+                        if (auto gs = (GetStringFn)glb->GLProcAddress("glGetString")) {
                             auto str = [&](unsigned int what) { const unsigned char* t = gs(what); return t ? std::string((const char*)t) : std::string("?"); };
                             gpu = str(0x1F01) + " | " + str(0x1F00) + " | OpenGL " + str(0x1F02);
                         }
@@ -50689,7 +50689,7 @@ int main(int argc, char** argv) {
         }
         // Restore whatever context SDL_Renderer had current (its own on the GL backend,
         // or none on the D3D backend) so the editor UI keeps drawing normally.
-        SDL_GL_MakeCurrent(prevWin, prevCtx);
+        glb->RestoreGL(prevGL);
         if (!g_glReady) {
             ConsoleLog("GPU renderer unavailable; using the software renderer.", 1);
             SDL_RendererInfo ri; std::memset(&ri, 0, sizeof(ri));
@@ -50870,7 +50870,7 @@ int main(int argc, char** argv) {
             // another program's focus is never taken.
             static int s_prevViewports = 1;
             const int vps = ImGui::GetPlatformIO().Viewports.Size;
-            if (s_prevViewports > 1 && vps <= 1 && (SDL_GetWindowFlags(window) & SDL_WINDOW_INPUT_FOCUS) == 0 &&
+            if (s_prevViewports > 1 && vps <= 1 && !winSeam->IsFocused() &&
                 SDL_GetKeyboardFocus() == nullptr && SDL_GetMouseFocus() == window)
                 SDL_SetWindowInputFocus(window);
             s_prevViewports = vps;
@@ -50901,8 +50901,8 @@ int main(int argc, char** argv) {
             // A pop-out menu or dialog can be its own OS window. When it closes and the window system does not hand the
             // keyboard back (no window manager, or one that does not), Esc, F2 and the other keys would go nowhere and a
             // dialog could only be closed with the mouse. A click in the editor window takes the keyboard focus back.
-            if (e.type == SDL_MOUSEBUTTONDOWN && e.button.windowID == SDL_GetWindowID(window) &&
-                (SDL_GetWindowFlags(window) & SDL_WINDOW_INPUT_FOCUS) == 0)
+            if (e.type == SDL_MOUSEBUTTONDOWN && e.button.windowID == winSeam->Id() &&
+                !winSeam->IsFocused())
                 SDL_SetWindowInputFocus(window);
             // While the play cursor is grabbed, absolute motion is frozen where
             // the grab began. Feeding those events to ImGui clicks the Play
@@ -50917,7 +50917,7 @@ int main(int argc, char** argv) {
             if (e.type == SDL_RENDER_TARGETS_RESET || e.type == SDL_RENDER_DEVICE_RESET)
                 ResetViewTextures(e.type == SDL_RENDER_DEVICE_RESET);
             if (e.type == SDL_WINDOWEVENT && e.window.event == SDL_WINDOWEVENT_CLOSE &&
-                e.window.windowID == SDL_GetWindowID(window))
+                e.window.windowID == winSeam->Id())
                 g_quitRequested = true;
             if (e.type == SDL_WINDOWEVENT && e.window.event == SDL_WINDOWEVENT_FOCUS_LOST) {
                 if (ed.isPlaying()) g_gameCursorReleased = true;   // alt-tab: never leave the pointer trapped
@@ -51147,7 +51147,7 @@ int main(int argc, char** argv) {
             static bool s_prevGameModal = false;
             if (gameModal != s_prevGameModal && (g_gameMouseCapture || Cursor::IsLocked())) {
                 int ww = 0, wh = 0, ow = 0, oh = 0;
-                SDL_GetWindowSize(window, &ww, &wh);
+                winSeam->GetSize(ww, wh);
                 SDL_GetRendererOutputSize(renderer, &ow, &oh);
                 float sx = ow > 0 ? (float)ww / ow : 1.0f, sy = oh > 0 ? (float)wh / oh : 1.0f;
                 int cx = (int)((g_playCanvasPos.x + g_playCanvasSize.x * 0.5f) * sx);
@@ -51167,7 +51167,8 @@ int main(int argc, char** argv) {
                 if (!s_playLookLocked)
                     { if (okay::platform::Backend* pb = okay::platform::Default()) pb->SetRelativeMouse(true); }
                 int dxp = 0, dyp = 0;
-                Uint32 rmb = SDL_GetRelativeMouseState(&dxp, &dyp);
+                Uint32 rmb = 0;
+                if (okay::platform::Backend* pb = okay::platform::Default()) rmb = pb->RelativeMouseState(&dxp, &dyp);
                 if (!s_playLookLocked) {
                     // First locked frame: throw away the warp and stay on the
                     // canvas sample the controller already took as its baseline.
@@ -51193,7 +51194,7 @@ int main(int argc, char** argv) {
                     // button. Park it in the game view so that restore is not a
                     // click on Stop. A click there grabs the mouse again.
                     int ww = 0, wh = 0, ow = 0, oh = 0;
-                    SDL_GetWindowSize(window, &ww, &wh);
+                    winSeam->GetSize(ww, wh);
                     SDL_GetRendererOutputSize(renderer, &ow, &oh);
                     float sx = ow > 0 ? (float)ww / (float)ow : 1.0f;
                     float sy = oh > 0 ? (float)wh / (float)oh : 1.0f;
@@ -51238,7 +51239,7 @@ int main(int argc, char** argv) {
             // events already fed above. The own platform backend stays off.
             if (g_playCanvasSize.x > 1.0f && g_playCanvasSize.y > 1.0f)
                 UICanvas::Set(g_playCanvasSize.x, g_playCanvasSize.y);
-            if (SDL_GetNumTouchDevices() > 0) Input::SetTouchScreen(true);
+            if (okay::platform::Backend* sb = okay::platform::Get(okay::platform::BackendKind::Sdl2)) { if (sb->TouchDeviceCount() > 0) Input::SetTouchScreen(true); }   // the finger events are SDL's
             TouchControls::Sample(ed.scene());
             Gestures::Tick((double)okay::platform::TicksMs() / 1000.0);
             Input::SetTextFocused(GameInputBlocked(&ed.scene(), (unsigned)GameInputMask::Text));   // a game text field has focus: no walking
@@ -51388,8 +51389,7 @@ int main(int argc, char** argv) {
                 static float s_refreshHz = 0.0f;
                 static int s_refreshAge = 0;
                 if (s_refreshAge-- <= 0) {
-                    SDL_DisplayMode dm;
-                    s_refreshHz = (window && SDL_GetWindowDisplayMode(window, &dm) == 0 && dm.refresh_rate > 0) ? (float)dm.refresh_rate : 0.0f;
+                    s_refreshHz = (float)winSeam->RefreshRateHz();   // 0 when unknown
                     s_refreshAge = 120;
                 }
                 if (ed.isPlaying()) {
@@ -52435,12 +52435,13 @@ int main(int argc, char** argv) {
     // Tear down the optional GPU renderer: free its GL objects with its own context
     // current, then drop the context + hidden window.
     if (g_glRenderer || g_glCtx) {
-        SDL_Window* prevWin = SDL_GL_GetCurrentWindow();
-        SDL_GLContext prevCtx = SDL_GL_GetCurrentContext();
-        if (g_glWindow && g_glCtx) SDL_GL_MakeCurrent(g_glWindow, g_glCtx);
+        okay::platform::Backend* glb = okay::platform::Get(okay::platform::BackendKind::Sdl2);
+        const okay::platform::GLCurrent prevGL = glb->CurrentGL();
+        if (g_glWin && g_glCtx) g_glWin->MakeCurrent();
         if (g_glRenderer) { g_glRenderer->Destroy(); delete g_glRenderer; g_glRenderer = nullptr; }
-        SDL_GL_MakeCurrent(prevWin, prevCtx);
-        if (g_glCtx) { SDL_GL_DeleteContext(g_glCtx); g_glCtx = nullptr; }
+        glb->RestoreGL(prevGL);
+        if (g_glCtx) { g_glWin->DestroyGLContext(); g_glCtx = false; }
+        g_glWin.reset();
         if (g_glWindow) { SDL_DestroyWindow(g_glWindow); g_glWindow = nullptr; }
         g_glReady = false;
     }

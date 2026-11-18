@@ -1758,11 +1758,26 @@ static void testFetchAndSha256() {
     o = sh("-f c.okay fetch", &rc); check(rc == 0 && fs::exists(gRoot / "_deps/pkg-src/lib.cpp"), "and fetch then works from it", o);
     o = sh("-f c.okay -j2", &rc); check(rc == 0, "and it builds", o);
 }
+
+static void testOnlyAffectedTestsRebuild() {
+    printf("test: touching one header rebuilds only the programs that include it, then ctest runs without building\n");
+    fresh("affected");
+    write("a.h", "#pragma once\ninline int av(){return 1;}\n"); write("b.h", "#pragma once\ninline int bv(){return 2;}\n");
+    write("ta.cpp", "#include \"a.h\"\nint main(){return av()==1?0:1;}\n"); write("tb.cpp", "#include \"b.h\"\nint main(){return bv()==2?0:1;}\n");
+    write("build.okay", "target ta exe\n sources = ta.cpp\nend\ntarget tb exe\n sources = tb.cpp\nend\nctest ta\n cmd = {target:ta}\nend\nctest tb\n cmd = {target:tb}\nend\n");
+    int rc; string o = sh("-j2 ctest", &rc); check(rc == 0 && ran(o) == 4, "first ctest builds both programs (2 compiles, 2 links) and runs them", o);
+    o = sh("-j2 ctest", &rc); check(rc == 0 && ran(o) == 0, "second ctest builds nothing", o);
+    sleepMs(); write("a.h", "#pragma once\ninline int av(){return 1;} // edited\n");
+    o = sh("-j2 --explain ctest", &rc); check(rc == 0 && ran(o) == 1 && o.find("CC ta.cpp") != string::npos && o.find("CC tb.cpp") == string::npos && o.find("LD") == string::npos, "only the compile of the program that includes the edited header runs (a comment-only edit is a cache hit with the same object, so no relink)", o);
+    write("a.h", "#pragma once\ninline int av(){return 99;}\n");
+    o = sh("-j2 --explain ctest", &rc); check(ran(o) == 2 && o.find("CC tb.cpp") == string::npos && o.find("LD tb") == string::npos, "a real edit recompiles and relinks only ta", o);
+    o = sh("-j2 ctest", &rc); check(rc == 1 && o.find("FAIL ta") != string::npos && o.find("PASS tb") != string::npos, "the rebuilt program's result is what ctest reports", o);
+}
 int main(int argc, char** argv) {
     if (argc < 2) { puts("usage: test_okaybuild PATH_TO_okay-build"); return 2; }
     gTool = "'" + fs::absolute(argv[1]).string() + "'";
     if (const char* only = getenv("OKB_ONLY")) { // OKB_ONLY=cmake runs just the CMake reader, ctest and library tests (quick while working on them)
-        if (string(only) == "cmake") { testCmakeReader(); testCmakeSyntax(); testSharedObjectLibs(); testFetchAndSha256(); printf("okaybuild tests (cmake only): %d checks passed, %d failed\n", gPass, gFail); return gFail ? 1 : 0; }
+        if (string(only) == "cmake") { testCmakeReader(); testCmakeSyntax(); testSharedObjectLibs(); testFetchAndSha256(); testOnlyAffectedTestsRebuild(); printf("okaybuild tests (cmake only): %d checks passed, %d failed\n", gPass, gFail); return gFail ? 1 : 0; }
     }
     testBasicAndNoop(); testHeaderTouch(); testDefine(); testMissingHeader(); testCycle(); testLinkOrder();
     testParallelDeterministic(); testCompdbCleanDry(); testManifestErrors(); testMingwCompdb(); testMingwSlice(); testStatShortcut(); testFreshNoopTrust(); testSpacesBuildDirRsp(); testRawActions(); testHashInCommandAndPath(); testImportGenerated();
@@ -1784,5 +1799,6 @@ int main(int argc, char** argv) {
     testCmakeSyntax();
     testSharedObjectLibs();
     testFetchAndSha256();
+    testOnlyAffectedTestsRebuild();
     printf("okaybuild tests: %d checks passed, %d failed\n", gPass, gFail); return gFail ? 1 : 0;
 }

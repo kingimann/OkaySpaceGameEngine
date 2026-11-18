@@ -763,3 +763,11 @@ Compile-only. 34 tests in `test_round23.cpp` pass. Whole-library table on the he
 Added: `dynamic_cast` (single inheritance; `runtime/rtti.c`, type records now hold a base link), `__is_base_of` family behind `<type_traits>`, heap algorithms, `fprintf/stdout/stderr`, `ifstream` `seekg/tellg/read`, out-of-class member templates returning `T*`, `f<T>()` inside members, casts to class template pointers (and `static_cast<T>(x)->f()` precedence), aggregates of classes from braced lists, by-value class arguments from calls, `return nullptr` for class results, leading `::ns::Type`, `static inline` class members, `steady_clock::time_point`.
 
 Not done: member-function pointers, COMDAT dedup, `.CRT$XCU` table, range-for iterator destruction, `test_objcheck` over all engine files.
+
+## Round 32 (unverified: not run under Wine)
+
+Compile-only. `tools/okayms/scripts/measure_library.sh` (resumable, 60 s per file, private copy of the compiler) is committed. The run on the head is PARTIAL: `tools/okayms/results/library.txt` holds the first 25 of 348 files (11 compile, 14 fail); continue it with the same command. 39 tests in `test_round23.cpp` pass; `test_comdat_xcu` and `test_objcheck` (also over objects built with the new flags) pass.
+
+Added: pointers to member functions (virtual ones as slot*8+1), nested classes decorated with their outer class, `Outer::Nested{}`, enum aliases and `(Class::Enum)` casts, `std::list`, `<charconv>` (no float to_chars), `sscanf` (`runtime/scan.c`), swap and range constructors for set/map, range-for iterators destroyed on `return`, opt-in `/okay:comdat` (COMDAT inline members; one copy kept, .pdata sorted) and `/okay:xcu` (.CRT$XCU table, `runtime/startup_xcu.c`, linker symbols `__okay_xcu_begin/_end`). Both flags are off by default.
+
+Not done: the full-library table, objcheck over every engine file, LocArg constructors, and full `build.sh` (not re-run).

@@ -1,0 +1,29 @@
+engine/src/AI/BehaviorTree.cpp|cannot open include mutex
+engine/src/AI/BehaviorTreeRunner.cpp|okay/Render/Mesh.hpp:5036: expected a type (in Mesh::WeldVertices/1, token , after )
+engine/src/AI/GridPath2D.cpp|OK
+engine/src/AI/NavMesh.cpp|OK
+engine/src/AI/NavMeshAgent.cpp|okay/Components/NaturalGait.hpp:60: expected ';' (in okay::NaturalGait::ButtonTooltip), found 'Crouch and Prone Speed change to 1.0 and 0.5 only if they are still the old 2.2 and 1
+engine/src/AI/NavMeshBake.cpp|okay/Components/NaturalGait.hpp:60: expected ';' (in okay::NaturalGait::ButtonTooltip), found 'Crouch and Prone Speed change to 1.0 and 0.5 only if they are still the old 2.2 and 1
+engine/src/AI/NavMeshCarve.cpp|OK
+engine/src/AI/NavMeshSurface.cpp|cannot open include thread
+engine/src/AI/Navigation.cpp|cannot open include thread
+engine/src/AI/Pathfinding.cpp|OK
+engine/src/AI/Perception.cpp|OK
+engine/src/Animation/HumanoidActions.cpp|okay/Components/NaturalGait.hpp:60: expected ';' (in okay::NaturalGait::ButtonTooltip), found 'Crouch and Prone Speed change to 1.0 and 0.5 only if they are still the old 2.2 and 1
+engine/src/Animation/HumanoidLibrary.cpp|okay/Components/NaturalGait.hpp:60: expected ';' (in okay::NaturalGait::ButtonTooltip), found 'Crouch and Prone Speed change to 1.0 and 0.5 only if they are still the old 2.2 and 1
+engine/src/Animation/HumanoidMotion.cpp|OK
+engine/src/Animation/PlayerSetup.cpp|okay/Animation/HumanoidBones.hpp:93: a static local object takes no initializer and is not an array
+engine/src/Audio/AudioClip.cpp|engine/src/Audio/AudioClip.cpp:20: expected a type (in , token ostream, after )
+engine/src/Audio/AudioDecode.cpp|okay/Core/Log.hpp:326: no member function to_time_t
+engine/src/Audio/AudioMixer.cpp|OK
+engine/src/Audio/AudioStream.cpp|OK
+engine/src/Audio/FlacDecoder.cpp|OK
+engine/src/Audio/Mp3Decoder.cpp|unknown function std::exp2 (in Layer3Decoder::Requantize/5)
+engine/src/Audio/SpatialFx.cpp|engine/src/Audio/SpatialFx.cpp:78: no static member Ring in the class
+engine/src/Audio/VorbisDecoder.cpp|OK
+engine/src/Audio/WavDecoder.cpp|engine/src/Audio/WavDecoder.cpp:48: expected ')' (in okay::wav::MuLawToLinear), found '' after 'int' (token kinds 4/41)
+engine/src/Audio/WavPlayback.cpp|OK
+engine/src/Combat/WeaponBook.cpp|okay/Components/GridInventory.hpp:260: expected ')' (in GridInventory::CanMoveTo/5), found '' after 'GridInventory' (token kinds 11/1)
+engine/src/Components/ActionList.cpp|okay/Core/Log.hpp:326: expected ';' (in Log::OpenFile/3), found 'sz' after 'uintmax_t' (token kinds 1/1)
+engine/src/Components/AnimClip.cpp|engine/src/Components/AnimClip.cpp:488: expected ';' (in AnimClip::ParseAll/4), found '' after 'npos' (token kinds 5/1)
+engine/src/Components/AnimControl.cpp|okay/Components/NaturalGait.hpp:60: expected ';' (in okay::NaturalGait::ButtonTooltip), found 'Crouch and Prone Speed change to 1.0 and 0.5 only if they are still the old 2.2 and 1

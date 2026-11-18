@@ -219,5 +219,17 @@ int main(int, char**) {
           "int main() { D d(1); float a = 2.f; double b = 3.; double c = 1.e2; int e; double m = std::frexp(40.0, &e); const char* s = \"a\\nb\";\n"
           "return d.id_ + (int)(a + b + c + std::ldexp(m, e)) + (int)sizeof(VS::Impl::Entry) + (int)sizeof(VS::Impl) + (std::memchr(s, 10, 3) != 0); }\n", &o);
     CHECK(t, has_symbol(o, "main"));
+    ++tests;
+    build(t, "round 30: CRTP base, enable_shared_from_this, virtual after a plain base, <stdexcept>, template overload fallback",
+          "#include <cstdlib>\n#include <memory>\n#include <new>\n#include <stdexcept>\n#include <string>\n"
+          "class Tw : public std::enable_shared_from_this<Tw> { public: int v = 3; std::shared_ptr<Tw> self() { return shared_from_this(); } virtual ~Tw() {} virtual int f() { return v; } };\n"
+          "struct B { int a; int b; };\nstruct D : B { int c; virtual int f() { return a + b + c; } virtual ~D() {} };\n"
+          "template <typename U> struct Base { int hooked; };\nstruct CD : Base<CD> { int z; };\nstruct P { int q; };\ninline void hook(void*, int) {}\n"
+          "template <typename U> inline void hook(Base<U>* e, int c) { e->hooked = c; }\ntemplate <typename T> void make(T* p) { hook(p, 5); }\n"
+          "int g(int x) { if (x < 0) throw std::out_of_range(\"neg\"); return x; }\n"
+          "int main() { std::shared_ptr<Tw> a = std::make_shared<Tw>(); std::shared_ptr<Tw> b = a->self(); D d; d.a = 1; d.b = 2; d.c = 3; B* bp = &d; CD cd; P p; make(&cd); make(&p);\n"
+          "try { g(-1); } catch (const std::exception& e) { return e.what()[0]; }\n"
+          "return b->v + a.use_count() + bp->a + d.f() + cd.hooked; }\n", &o);
+    CHECK(t, has_symbol(o, "main") && has_symbol(o, "??$hook@UCD@@@@YAXPEAU?$Base@UCD@@@@H@Z"));
     return t.finish(tests);
 }

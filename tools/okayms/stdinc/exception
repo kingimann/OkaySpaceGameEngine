@@ -1,0 +1,40 @@
+// okay-ms own standard header: <exception> ([support.exception]), written from ISO/IEC 14882. The class std::exception with
+// a virtual what(), bad_exception and bad_alloc, terminate. LIMITS: exception_ptr is an empty handle (current_exception()
+// returns an empty one and rethrow_exception() of it ends the program), because okay-ms's own exception runtime has no way to
+// hold an exception that is in flight outside its handler. terminate() ends the program by an invalid write (there is no abort).
+#pragma once
+#include <cstdlib>
+namespace std {
+class exception {
+public:
+    exception() {}
+    virtual ~exception() {}
+    virtual const char* what() const { return "std::exception"; }
+};
+class bad_exception : public exception {
+public:
+    const char* what() const override { return "std::bad_exception"; }
+};
+class bad_alloc : public exception {
+public:
+    const char* what() const override { return "std::bad_alloc"; }
+};
+inline void terminate() {
+    int* p = 0;
+    *p = 1;
+}
+typedef void (*terminate_handler)();
+inline terminate_handler set_terminate(terminate_handler h) { return h; }
+class exception_ptr {
+public:
+    void* p_;
+    exception_ptr() : p_(0) {}
+    exception_ptr(int) : p_(0) {}  // exception_ptr(nullptr): nullptr is an int-typed null constant here
+    explicit operator bool() const { return p_ != 0; }
+    bool operator!() const { return p_ == 0; }
+};
+inline bool operator==(const exception_ptr& a, const exception_ptr& b) { return a.p_ == b.p_; }
+inline bool operator!=(const exception_ptr& a, const exception_ptr& b) { return a.p_ != b.p_; }
+inline exception_ptr current_exception() { return exception_ptr(); }
+inline void rethrow_exception(exception_ptr) { terminate(); }
+}

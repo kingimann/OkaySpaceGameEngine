@@ -1,0 +1,59 @@
+// okay-ms own standard header: <stdexcept> ([stdexcept.syn]), written from ISO/IEC 14882. The exception classes that carry a
+// message: logic_error (domain_error, invalid_argument, length_error, out_of_range) and runtime_error (range_error,
+// overflow_error, underflow_error). The message is kept in a std::string.
+#pragma once
+#include <exception>
+#include <string>
+namespace std {
+class logic_error : public exception {
+    string msg_;
+
+public:
+    explicit logic_error(const string& m) : msg_(m) {}
+    explicit logic_error(const char* m) : msg_(m) {}
+    const char* what() const override { return msg_.c_str(); }
+};
+class domain_error : public logic_error {
+public:
+    explicit domain_error(const string& m) : logic_error(m) {}
+    explicit domain_error(const char* m) : logic_error(m) {}
+};
+class invalid_argument : public logic_error {
+public:
+    explicit invalid_argument(const string& m) : logic_error(m) {}
+    explicit invalid_argument(const char* m) : logic_error(m) {}
+};
+class length_error : public logic_error {
+public:
+    explicit length_error(const string& m) : logic_error(m) {}
+    explicit length_error(const char* m) : logic_error(m) {}
+};
+class out_of_range : public logic_error {
+public:
+    explicit out_of_range(const string& m) : logic_error(m) {}
+    explicit out_of_range(const char* m) : logic_error(m) {}
+};
+class runtime_error : public exception {
+    string msg_;
+
+public:
+    explicit runtime_error(const string& m) : msg_(m) {}
+    explicit runtime_error(const char* m) : msg_(m) {}
+    const char* what() const override { return msg_.c_str(); }
+};
+class range_error : public runtime_error {
+public:
+    explicit range_error(const string& m) : runtime_error(m) {}
+    explicit range_error(const char* m) : runtime_error(m) {}
+};
+class overflow_error : public runtime_error {
+public:
+    explicit overflow_error(const string& m) : runtime_error(m) {}
+    explicit overflow_error(const char* m) : runtime_error(m) {}
+};
+class underflow_error : public runtime_error {
+public:
+    explicit underflow_error(const string& m) : runtime_error(m) {}
+    explicit underflow_error(const char* m) : runtime_error(m) {}
+};
+}

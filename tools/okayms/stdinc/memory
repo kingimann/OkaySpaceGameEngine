@@ -3,7 +3,7 @@
 // copyable. std::shared_ptr and std::weak_ptr ([util.smartptr.shared], [util.smartptr.weak]) are here too with the SINGLE-THREAD
 // subset of the standard's guarantee: the counts are plain integers (okay-ms has no locked instructions yet), so one
 // shared_ptr family must not be touched by two threads. The control block is a separate allocation (make_shared makes two);
-// no custom deleter, no aliasing constructor, no enable_shared_from_this, no pointer casts.
+// no custom deleter, no aliasing constructor, no pointer casts. enable_shared_from_this is here (see sp_esft_base).
 #pragma once
 #include <cstddef>
 #include <cstdlib>
@@ -84,6 +84,25 @@ template <typename T> struct sp_ctrl : sp_ctrl_base {
     }
 };
 template <typename T> class weak_ptr;
+// enable_shared_from_this support. The base class registers its own address while the object is being made (`new T(...)`); the
+// shared_ptr constructor that adopts the raw pointer then hands the base its control block. This works when the base is at
+// the start of the object (it is the first or only base), which is the usual layout; a base at another offset is not adopted.
+struct sp_esft_base {
+    sp_ctrl_base* esft_c_;
+    void* esft_p_;
+    static sp_esft_base*& pending() {
+        static sp_esft_base* p = 0;
+        return p;
+    }
+    static void adopt(void* p, sp_ctrl_base* c) {
+        sp_esft_base* e = pending();
+        if (e != 0 && (void*)e == p) {
+            e->esft_c_ = c;
+            e->esft_p_ = p;
+            pending() = 0;
+        }
+    }
+};
 template <typename T>
 class shared_ptr {
 public:
@@ -92,7 +111,10 @@ public:
     typedef T element_type;
     shared_ptr() : p_(0), c_(0) {}
     shared_ptr(T* p) : p_(p), c_(0) {
-        if (p) c_ = new sp_ctrl<T>(p);
+        if (p) {
+            c_ = new sp_ctrl<T>(p);
+            sp_esft_base::adopt((void*)p, c_);
+        }
     }
     shared_ptr(const shared_ptr& o) : p_(o.p_), c_(o.c_) {
         if (c_) ++c_->strong;
@@ -187,6 +209,42 @@ public:
         p_ = 0;
         c_ = 0;
         sp_ctrl_base::release_weak(old);
+    }
+};
+// enable_shared_from_this ([util.smartptr.enab]): shared_from_this() returns a shared_ptr that shares the object's control block.
+template <typename T> class enable_shared_from_this : public sp_esft_base {
+public:
+    enable_shared_from_this() {
+        esft_c_ = 0;
+        esft_p_ = 0;
+        sp_esft_base::pending() = this;
+    }
+    enable_shared_from_this(const enable_shared_from_this&) {
+        esft_c_ = 0;
+        esft_p_ = 0;
+        sp_esft_base::pending() = this;
+    }
+    enable_shared_from_this& operator=(const enable_shared_from_this&) { return *this; }
+    ~enable_shared_from_this() {
+        if (sp_esft_base::pending() == this) sp_esft_base::pending() = 0;
+    }
+    shared_ptr<T> shared_from_this() {
+        shared_ptr<T> r;
+        if (esft_c_ && esft_c_->strong > 0) {
+            r.p_ = (T*)esft_p_;
+            r.c_ = esft_c_;
+            ++esft_c_->strong;
+        }
+        return r;
+    }
+    weak_ptr<T> weak_from_this() {
+        weak_ptr<T> w;
+        if (esft_c_) {
+            w.p_ = (T*)esft_p_;
+            w.c_ = esft_c_;
+            ++esft_c_->weak;
+        }
+        return w;
     }
 };
 template <typename T> bool operator==(const shared_ptr<T>& a, const shared_ptr<T>& b) { return a.p_ == b.p_; }

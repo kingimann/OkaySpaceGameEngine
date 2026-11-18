@@ -2997,6 +2997,15 @@ struct Parser {
                 }
             }
             int base_id = -1;
+            if (!name.empty() && is(TColon) && find_struct(name) < 0) {
+                // class D : public Base<D> { ... } (the curiously recurring template pattern): D is named in its own base list,
+                // so it is an incomplete class from here; its definition fills this entry in.
+                StructDef placeholder;
+                placeholder.name = name;
+                placeholder.incomplete = true;
+                placeholder.is_union = as_union;
+                structs.push_back(std::move(placeholder));
+            }
             if (accept(TColon)) {
                 while (is(TIdent) && (cur().text == "public" || cur().text == "private" ||
                                       cur().text == "protected" || cur().text == "virtual"))
@@ -3006,7 +3015,13 @@ struct Parser {
                 bool base_imp = false;
                 bool base_exp = false;
                 const size_t base_at = at;
-                if (!is(TIdent) || !parse_type_core(&base_type, &base_imp, &base_exp) || base_type.base != 3 ||
+                if (is(TIdent) && typedefs.find(cur().text) == typedefs.end() && find_struct(cur().text) >= 0 &&
+                    at + 1 < tokens.size() && (tokens[at + 1].kind == TLBrace || tokens[at + 1].kind == TComma)) {
+                    // A plain struct named as a base (no member functions yet, so it is not a "class name" by its look).
+                    base_type.base = 3;
+                    base_type.struct_id = find_struct(cur().text);
+                    next();
+                } else if (!is(TIdent) || !parse_type_core(&base_type, &base_imp, &base_exp) || base_type.base != 3 ||
                     base_type.pointers != 0 || base_type.struct_id < 0) {
                     if (error.empty() || at == base_at) error = "expected a base class";
                     return false;
@@ -4453,15 +4468,14 @@ struct Parser {
         }
         if (m.is_virtual) {
             if (!def->poly) {
-                if (def->base >= 0) {
-                    error = "a virtual function in a class derived from a class without virtual functions is not supported";
-                    return false;
-                }
+                // The table pointer goes first in a class without a base. In a class derived from a class without virtual
+                // functions it goes after the base's members (the base keeps its place at the start of the object, so a
+                // pointer to the derived class is also a pointer to the base); typeid of such an object is not supported.
                 Field vptr;
                 vptr.name = "__vptr";
                 vptr.type.base = 0;
                 vptr.type.pointers = 2;
-                def->fields.insert(def->fields.begin(), vptr);
+                def->fields.insert(def->fields.begin() + static_cast<std::ptrdiff_t>(def->base >= 0 ? def->base_fields : 0), vptr);
                 def->poly = true;
             }
             if (m.slot < 0) {
@@ -6246,9 +6260,13 @@ struct Parser {
         if (pat.tpat == -2) return true;
         if (pat.tpat >= 0) {
             if (act.base != 3 || act.struct_id < 0 || act.pointers != pat.pointers) return false;
-            const StructDef& sd = structs[static_cast<size_t>(act.struct_id)];
             const TPat& tp = tpats[static_cast<size_t>(pat.tpat)];
-            if (sd.tmpl != tp.name || sd.targs.size() != tp.args.size()) return false;
+            // Base<U>* from a D*: the argument may be a class derived from an instance of the template ([temp.deduct.call]/4.3).
+            int walk = act.struct_id;
+            while (walk >= 0 && structs[static_cast<size_t>(walk)].tmpl != tp.name) walk = structs[static_cast<size_t>(walk)].base;
+            if (walk < 0) return false;
+            const StructDef& sd = structs[static_cast<size_t>(walk)];
+            if (sd.targs.size() != tp.args.size()) return false;
             for (size_t i = 0; i < tp.args.size(); ++i)
                 if (!match_arg(tp.args[i], sd.targs[i], args, got)) return false;
             return true;
@@ -12630,7 +12648,15 @@ bool Parser::parse_unary(Node* out) {
                         }
                     }
                 }
-            if (!braced_overload && !instantiate_function(name, std::move(targs), cargs, &inst)) return false;
+            if (!braced_overload && !instantiate_function(name, std::move(targs), cargs, &inst)) {
+                // A template that cannot be deduced from these arguments is not a candidate: an ordinary function of the
+                // same name ([over.match.funcs]) takes the call when one fits.
+                std::string ordinary = error.compare(0, 6, "cannot") == 0 ? pick_free(name, cargs) : std::string();
+                if (ordinary.empty() && error.compare(0, 6, "cannot") == 0) ordinary = pick_any_ns(name, cargs);
+                if (ordinary.empty()) return false;
+                error.clear();
+                inst = ordinary;
+            }
             out->kind = Node::Call;
             out->text = inst;
             out->kids = std::move(cargs);

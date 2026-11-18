@@ -11,6 +11,8 @@
 #define ConsoleLog ConsoleLog_WM
 #define DrawConsole DrawConsole_WM
 #define ConsoleClear ConsoleClear_WM
+#define ConsoleSetMirror ConsoleSetMirror_WM
+#define g_consoleMirror g_consoleMirror_WM
 #define g_consoleCounts g_consoleCounts_WM
 #define ConsolePreferCategory ConsolePreferCategory_WM
 #define DrawTbIcon DrawTbIcon_WM
@@ -84,6 +86,8 @@
 #undef ConsoleLog
 #undef DrawConsole
 #undef ConsoleClear
+#undef ConsoleSetMirror
+#undef g_consoleMirror
 #undef g_consoleCounts
 #undef ConsolePreferCategory
 #undef DrawTbIcon
@@ -114,6 +118,7 @@
 #undef DrawPropertyRows
 
 namespace oked {
+void ConsoleSetMirror(void (*fn)(const std::string&, int));   // ConsolePanel.cpp of the Dear ImGui editor's copy (the declaration in this TU's header was renamed)
 namespace wm {
 
 namespace {
@@ -191,12 +196,14 @@ void DrawProjectWindow(ProjectWindow& pw) {
 }   // namespace
 
 void ConsoleLog(const std::string& msg, int level) { ConsoleLog_WM(msg, level); }
+void ConsoleCounts(int out[3]) { for (int i = 0; i < 3; ++i) out[i] = g_consoleCounts_WM[i]; }
 const ProjectProbe& GetProjectProbe() { return g_probe; }
 
 PanelHooks MakeHooks(okay::editor::EditorState* ed, const std::string& projectDir, HostModeState* st) {
     PanelHooks h;
     if (st) { h.before = [st] { BeginPanels(*st); }; h.after = [st] { EndPanels(*st); }; }
     h.console = [] { DrawConsole_WM(); };
+    oked::ConsoleSetMirror(&ConsoleLog);   // every line the editor's code logs (ShowErrorPopup, tools, scripts) also lands in this Console
     if (ed) h.sceneManager = [ed] { DrawSceneManager_WM(*ed); };
     if (!projectDir.empty()) {
         auto pw = std::make_shared<ProjectWindow>();

@@ -30,6 +30,10 @@ void EndPanels(HostModeState& st);
 /// A line for the window-mode Console (this copy of the Console panel has its own log; the editor's other code logs into the Dear ImGui copy).
 void ConsoleLog(const std::string& msg, int level = 0);
 
+/// Lines the window-mode Console holds now: info, warning, error. Every line logged through the editor's own oked::ConsoleLog (ShowErrorPopup, tools, scripts) is mirrored here
+/// once MakeHooks has run (ConsoleSetMirror in ConsolePanel.hpp), so the two Consoles show the same lines.
+void ConsoleCounts(int out[3]);
+
 /// Where the Project window put its controls last frame and what it shows, for tests and tools.
 struct ProjectProbe { OkayUI::Rect up, newFolder, firstRow; std::string current; bool namePromptOpen = false; };
 const ProjectProbe& GetProjectProbe();

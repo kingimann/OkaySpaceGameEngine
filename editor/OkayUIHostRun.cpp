@@ -8,6 +8,7 @@
 #define OKAYUI_HOST_PLATFORM 1
 #include "OkayUIFrameLoop.hpp"
 #include "OkayUIHostPanels.hpp"
+#include "OkayUIHostViews.hpp"
 #include "EditorFrameTick.hpp"
 #include "EditorState.hpp"
 #include "okay/Components/BehaviorTreeRunner.hpp"
@@ -49,6 +50,11 @@ int RunOkayUIHostMode(int, char**) {
         if (projectDir.empty() && std::filesystem::is_directory("Assets", pec)) projectDir = std::filesystem::current_path(pec).generic_string();
         if (!projectDir.empty()) editor.setProjectDir(projectDir);
         state.panels = wm::MakeHooks(&editor, projectDir, &state);
+    }
+    {   // the Scene and Game views: the engine's software renderer into a painter texture (OkayUIHostViews.cpp); the orbit camera is the editor's own
+        wm::ViewSource vs; vs.scene = [&editor] { return &editor.scene(); };
+        vs.yaw = &editor.camYaw; vs.pitch = &editor.camPitch; vs.dist = &editor.camDist; vs.target = &editor.camTarget;
+        wm::AddSceneViews(state.panels, &state, painter.get(), vs);
     }
     oked::SimHooks<okay::editor::EditorState> sim;
     sim.tickGame = [](okay::editor::EditorState& e, float d) { e.Tick(d); };

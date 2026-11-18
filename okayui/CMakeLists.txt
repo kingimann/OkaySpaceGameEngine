@@ -108,6 +108,8 @@ if(OKAY_BUILD_OKAYUI_TESTS AND OKAY_BUILD_TESTS)
     okayui_port_test(okayui_port_project ../editor/ProjectPanelUI.cpp ../editor/ProjectMenuDraw.cpp ../editor/ProjectBrowser.cpp)
     okayui_port_test(okayui_port_project2 ../editor/ProjectPanelUI.cpp ../editor/ProjectMenuDraw.cpp ../editor/ProjectBrowser.cpp)
     # The Scene Manager panel over a small stand-in EditorState (tests/shadow/EditorState.hpp, switched on by the macro; the real class owns the engine's scene and play loop).
+    # OkayUIHostMode.cpp is the window-mode screen: it needs OKAY_HAVE_OKAYUI in every test that links it (else it compiles to the not-built stub).
+    set_source_files_properties(../editor/OkayUIHostMode.cpp PROPERTIES COMPILE_DEFINITIONS OKAY_HAVE_OKAYUI=1)
     # Window mode (OKAY_UI_HOST=okayui): the three-switch gate and the window-mode screen through the frame loop, fake backend, software painter.
     okayui_port_test(okayui_hostmode ../editor/OkayUIHostMode.cpp)
     target_compile_definitions(test_okayui_hostmode PRIVATE OKAY_HAVE_OKAYUI=1)
@@ -119,6 +121,16 @@ if(OKAY_BUILD_OKAYUI_TESTS AND OKAY_BUILD_TESTS)
     okayui_port_test(okayui_frametick)   # the editor's game step (editor/EditorFrameTick.hpp) with a fake editor state
     okayui_port_test(okayui_port_scenemanager ../editor/SceneManagerPanel.cpp ../editor/ConsolePanel.cpp ../editor/EditorWidgets.cpp)
     target_compile_definitions(test_okayui_port_scenemanager PRIVATE OKAYUI_PORT_STAND_IN_EDITORSTATE)
+
+    # Scene and Game views (window mode, 6.24 step 6): a real okay::Scene rendered by the engine's software renderer through editor/SceneViewCore.hpp.
+    add_executable(test_okayui_sceneview tests/test_okayui_sceneview.cpp)
+    target_include_directories(test_okayui_sceneview PRIVATE ${CMAKE_SOURCE_DIR}/tests ${CMAKE_SOURCE_DIR}/editor)
+    target_link_libraries(test_okayui_sceneview PRIVATE okay_engine)
+    add_test(NAME okayui_sceneview COMMAND test_okayui_sceneview)
+    okayui_port_test(okayui_hostviews ../editor/OkayUIHostViews.cpp ../editor/OkayUIHostMode.cpp)
+    target_compile_definitions(test_okayui_hostviews PRIVATE OKAY_HAVE_OKAYUI=1)
+    target_include_directories(test_okayui_hostviews PRIVATE ${CMAKE_SOURCE_DIR}/engine/include)
+    target_link_libraries(test_okayui_hostviews PRIVATE okay_engine)
 
     # The script editor's adapter over CodeEdit (editor/ScriptEditorCodeEdit.cpp: no ImGui, no SDL).
     add_executable(test_okayui_script_adapter tests/test_okayui_script_adapter.cpp ../editor/ScriptEditorCodeEdit.cpp)

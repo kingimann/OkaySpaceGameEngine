@@ -37,6 +37,10 @@ SDL_Texture* GetSceneThumb(const std::string&) { return nullptr; }
 void AddRecent(const std::string&) {}
 void RunAfterSavePrompt(okay::editor::EditorState&, const std::string&, std::function<void()> action, std::function<void()>) { if (action) action(); }
 void ShowErrorPopup(const std::string&, const std::string&) {}
+// The editor's own Console copy (ConsolePanel.cpp) is not linked here: a stand-in with the same mirror contract (its test is in okayui_port_console).
+static void (*g_mirror)(const std::string&, int) = nullptr;
+void ConsoleSetMirror(void (*fn)(const std::string&, int)) { g_mirror = fn; }
+void ConsoleLog(const std::string& msg, int level) { if (g_mirror) g_mirror(msg, level); }
 }
 
 namespace UI = OkayUI;
@@ -81,6 +85,22 @@ int main() {
     for (int i = 0; i < 12; ++i) oked::wm::ConsoleLog("Loaded level " + std::to_string(i), i % 3);
     frame(); frame();
     CHECK(UI::GetDrawData().vertexCount > before + 200);
+
+    // step 8: a line logged through the editor's own Console (the copy every tool writes to) reaches the window-mode Console too, with its level
+    {
+        int c0[3], c1[3]; oked::wm::ConsoleCounts(c0);
+        oked::ConsoleLog("from the editor: info", 0); oked::ConsoleLog("from the editor: warning", 1); oked::ConsoleLog("from the editor: error", 2);
+        oked::wm::ConsoleCounts(c1);
+        CHECK(c1[0] == c0[0] + 1 && c1[1] == c0[1] + 1 && c1[2] == c0[2] + 1);
+        oked::ConsoleSetMirror(nullptr);   // unplugged: nothing more arrives
+        oked::ConsoleLog("not mirrored", 0);
+        int c2[3]; oked::wm::ConsoleCounts(c2);
+        CHECK(c2[0] == c1[0]);
+        oked::wm::MakeHooks(nullptr, std::string(), nullptr);   // plugs it back in
+        oked::ConsoleLog("mirrored again", 0);
+        oked::wm::ConsoleCounts(c2);
+        CHECK(c2[0] == c1[0] + 1);
+    }
 
     if (const char* shot = std::getenv("OKAYUI_SHOT")) {   // a picture of the window, for looking at (not a golden)
         std::vector<std::uint8_t> px; int w = 0, h = 0;

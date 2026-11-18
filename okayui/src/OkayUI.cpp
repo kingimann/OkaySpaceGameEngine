@@ -2445,6 +2445,7 @@ WindowInfo FindWindowByID(unsigned id) {
     return wi;
 }
 bool AnyWindowFocused() { return g_focusWin != 0; }
+void ClosePopupToLevel(int level, bool) { if (level <= 0) for (PopupSlot& p : g_popups) p.open = false; else if (level == 1) for (PopupSlot& p : g_popups) if (p.open && !p.modal) p.open = false; }
 Context* RefreshContext() {
     static Context c; static WindowRef refs[3];   // hovered, active, current
     auto fill = [&](WindowRef& r, const WinSlot& ws) { std::snprintf(r.Name, sizeof r.Name, "%s", ws.title); r.ID = (unsigned)ws.id; r.Pos = Vec2{ws.x, ws.y}; r.Size = Vec2{ws.w, ws.h}; r.ParentWindow = nullptr; };

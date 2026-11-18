@@ -293,6 +293,16 @@ bool BeginMenu(const char* label, bool enabled) {
 bool BeginTable(const char* id, int columns, int flags) { return BeginTable(id, columns, static_cast<TableFlags>(flags)); }
 bool BeginTable(const char* id, int columns, int flags, Vec2 outerSize, float innerWidth) { return BeginTable(id, columns, static_cast<TableFlags>(flags), outerSize, innerWidth); }
 bool IsMouseHoveringRect(Vec2 mn, Vec2 mx, bool) { return IsMouseHoveringRect(mn, mx); }
+void NewFrame() { Input in = GetFrameInput(); BeginFrame(in); }
+void UpdatePlatformWindows() {}
+void RenderPlatformWindowsDefault() {}
+PlatformIO& GetPlatformIO() { static PlatformIO pio; return pio; }
+bool DockContextQueueUndockWindow(Context*, const WindowRef* window) {
+    if (!window || !window->Name[0]) return false;
+    DockLayout& l = GetDockLayout();
+    if (!l.Contains(window->Name) || l.IsFloating(window->Name)) return false;
+    return l.Float(window->Name, Rect{ window->Pos.x, window->Pos.y, window->Size.x > 1.0f ? window->Size.x : 320.0f, window->Size.y > 1.0f ? window->Size.y : 240.0f });
+}
 bool InvisibleButton(const char* id, Vec2 size, int) { return InvisibleButton(id, size.x, size.y); }
 bool BeginTabBar(const char* id, int) { return BeginTabBar(id); }
 bool BeginCombo(const char* label, const char* preview, int) { return BeginCombo(label, preview); }

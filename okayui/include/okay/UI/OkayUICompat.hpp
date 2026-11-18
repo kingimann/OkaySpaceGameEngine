@@ -356,6 +356,33 @@ template <class T> inline void PushID(const T* ptr) { PushID(static_cast<int>(re
 template <class T> inline void PushID(T* ptr) { PushID(static_cast<const T*>(ptr)); }
 /// IsMouseHoveringRect with Dear ImGui's `clip` argument (accepted; the rectangle is never clipped to the window here).
 bool IsMouseHoveringRect(Vec2 min, Vec2 max, bool clip);
+/// Step 6.14: the host-level calls that make sense without a platform layer. OkayUI has one viewport and no platform windows.
+/// NewFrame: BeginFrame with the input of the last frame (what GetFrameInput returns; zeros before the first), for code that starts frames the
+/// Dear ImGui way. A host that has this frame's input calls BeginFrame(input) itself instead.
+void NewFrame();
+/// UpdatePlatformWindows / RenderPlatformWindowsDefault: nothing to do (no extra windows); accepted so a host loop compiles.
+void UpdatePlatformWindows();
+void RenderPlatformWindowsDefault();
+/// What `GetPlatformIO()` shows: one viewport (`Viewports.Size` is 1) and the renderer callbacks of a multi-viewport host as plain fields that
+/// are stored and never called (OkayUI has no secondary windows to call them for).
+struct PlatformViewports { int Size = 1; int size() const { return Size; } };
+struct PlatformIO {
+    PlatformViewports Viewports;
+    void* Renderer_CreateWindow = nullptr; void* Renderer_DestroyWindow = nullptr; void* Renderer_RenderWindow = nullptr; void* Renderer_SwapBuffers = nullptr;
+    void* Platform_CreateWindow = nullptr; void* Platform_DestroyWindow = nullptr;
+};
+struct WindowRef;   // OkayUIInternals.hpp
+PlatformIO& GetPlatformIO();
+typedef PlatformIO ImGuiPlatformIO;
+/// Close the open popups from stack depth `level` outward (0 closes all of them). `restoreFocus` is accepted and not used.
+void ClosePopupToLevel(int level, bool restoreFocus);
+/// DockContextQueueUndockWindow(ctx, window): make the window a floating one at its current place (OkayUIDock.hpp's layout). The context
+/// argument is accepted and unused. False when the window is not docked or is unknown.
+bool DockContextQueueUndockWindow(Context* ctx, const WindowRef* window);
+/// Axis (ImGuiAxis_X / Y), sort direction and the popup / style names the probe found missing: names only.
+enum Axis : int { Axis_None = -1, Axis_X = 0, Axis_Y = 1 };
+enum SortDirection : int { SortDirection_None = 0, SortDirection_Ascending = 1, SortDirection_Descending = 2 };
+enum PopupExtraFlags : int { Popup_NoOpenOverItems = 512 };   // accepted, no effect
 /// TreeNodeEx with a printf-style label (the label is formatted, then used as the id as well).
 void TreeNodeExFormatted(bool* out, const char* label, unsigned flags, const char* fmt, ...);
 template <class... A> inline bool TreeNodeEx(const char* id, unsigned flags, const char* fmt, A... a) { bool r = false; TreeNodeExFormatted(&r, id, flags, fmt, a...); return r; }

@@ -3162,6 +3162,7 @@ Word, then the number(s) to say. Back to the [overview](../FEATURE_MAP.md).
 - panel files (15.10)
 - panel switcher (15.9)
 - Panel tabs and layouts (15.9.4)
+- Panels run headless and accessor layer (40.9.8)
 - ParallelFor (1.18)
 - parameter (5.1)
 - Parameter and state calls (5.11.2)

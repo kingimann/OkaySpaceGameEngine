@@ -160,5 +160,33 @@ int main() {
         s.Click(CenterX(rb), CenterY(rb), ui); CHECK(clicksA == 1 && clicksB == 1);
         ImGuiContext* c = ImGui::CreateContext(); CHECK(c == GImGui && ImGui::GetCurrentContext() == c);
     }
+    {   // host-level calls: NewFrame, platform no-ops and PlatformIO, ClosePopupToLevel, undock by window ref, names
+        Reset(); Sim s(300, 200);
+        s.Frame([] {});
+        const int fc = ImGui::GetFrameCount();
+        ImGui::NewFrame(); ImGui::EndFrameData();                     // starts a frame with the last input
+        CHECK(ImGui::GetFrameCount() == fc + 1);
+        ImGui::UpdatePlatformWindows(); ImGui::RenderPlatformWindowsDefault();
+        ImGuiPlatformIO& pio = ImGui::GetPlatformIO();
+        pio.Renderer_CreateWindow = reinterpret_cast<void*>(1);
+        CHECK(pio.Viewports.Size == 1 && ImGui::GetPlatformIO().Renderer_CreateWindow == reinterpret_cast<void*>(1));
+        bool open = true;
+        auto ui = [&] {
+            OkayUI::BareNextWindow();
+            if (OkayUI::Begin("w", 0, 0, 300, 200)) { if (open) { OkayUI::OpenPopup("p"); open = false; } if (OkayUI::BeginPopup("p")) { OkayUI::Text("x"); OkayUI::EndPopup(); } }
+            OkayUI::End();
+        };
+        s.Frames(3, ui); CHECK(OkayUI::IsPopupOpen("p"));
+        ImGui::ClosePopupToLevel(0, true); s.Frames(2, ui); CHECK(!OkayUI::IsPopupOpen("p"));
+        // undock: a docked window becomes a floating one; an unknown or null ref does nothing
+        OkayUI::DockLayout& lay = OkayUI::GetDockLayout();
+        lay.DockRoot("docked one", OkayUI::DockSide_Left); lay.DockRoot("docked two", OkayUI::DockSide_Right);
+        OkayUI::WindowRef dref; std::strcpy(dref.Name, "docked one"); dref.Pos = {20, 30}; dref.Size = {200, 100};
+        CHECK(lay.Contains("docked one") && !lay.IsFloating("docked one"));
+        CHECK(ImGui::DockContextQueueUndockWindow(nullptr, &dref) && lay.IsFloating("docked one") && !ImGui::DockContextQueueUndockWindow(nullptr, &dref));
+        OkayUI::WindowRef ref; std::strcpy(ref.Name, "nowhere"); ref.Size = {100, 80};
+        CHECK(!ImGui::DockContextQueueUndockWindow(ImGui::GetCurrentContext(), &ref) && !ImGui::DockContextQueueUndockWindow(nullptr, nullptr));
+        static_assert(ImGuiAxis_Y == 1 && ImGuiSortDirection_Ascending == 1 && ImGuiTableBgTarget_CellBg == OkayUI::TableBg_CellBg, "names");
+    }
     TEST_MAIN_RESULT();
 }

@@ -9,30 +9,24 @@ by name: a call counts as available when OkayUI declares a function of that name
 
 | What | Distinct | Call sites | Available in OkayUI | Coverage of call sites |
 |---|---:|---:|---:|---:|
-| `ImGui::` calls | 264 | 28025 | 28006 | 99.9% |
-| ImGui types, flags, enums | 330 | 12464 | 12431 | 99.7% |
+| `ImGui::` calls | 264 | 28025 | 28016 | 100.0% |
+| ImGui types, flags, enums | 330 | 12464 | 12437 | 99.8% |
 | Draw-list methods | 26 | 2413 | 2413 | 100.0% |
 
-Distinct calls available: 251 of 264.
-Distinct types, flags and enums available: 320 of 330.
+Distinct calls available: 257 of 264.
+Distinct types, flags and enums available: 325 of 330.
 
 ## Missing `ImGui::` calls, ranked by use
 
 | # | Call | Uses | Files | Where (most uses first) |
 |---:|---|---:|---:|---|
-| 1 | `NewFrame` | 4 | 3 | launcher/main.cpp (2), editor/VsGraphShot.cpp (1), editor/main.cpp (1) |
-| 2 | `DockNodeGetRootNode` | 2 | 1 | editor/main.cpp (2) |
-| 3 | `GetFontTexUvWhitePixel` | 2 | 2 | editor/SplineTools.cpp (1), editor/UIPreviewPainter.cpp (1) |
-| 4 | `GetPlatformIO` | 2 | 1 | editor/main.cpp (2) |
-| 5 | `BeginPopupEx` | 1 | 1 | editor/main.cpp (1) |
-| 6 | `ClosePopupToLevel` | 1 | 1 | shared/FileDialogUI.cpp (1) |
-| 7 | `DockContextQueueUndockWindow` | 1 | 1 | editor/main.cpp (1) |
-| 8 | `DockNodeBeginAmendTabBar` | 1 | 1 | editor/main.cpp (1) |
-| 9 | `DockNodeEndAmendTabBar` | 1 | 1 | editor/main.cpp (1) |
-| 10 | `GetWindowDockNode` | 1 | 1 | editor/main.cpp (1) |
-| 11 | `RenderPlatformWindowsDefault` | 1 | 1 | editor/main.cpp (1) |
-| 12 | `TabBarFindTabByID` | 1 | 1 | editor/main.cpp (1) |
-| 13 | `UpdatePlatformWindows` | 1 | 1 | editor/main.cpp (1) |
+| 1 | `DockNodeGetRootNode` | 2 | 1 | editor/main.cpp (2) |
+| 2 | `GetFontTexUvWhitePixel` | 2 | 2 | editor/SplineTools.cpp (1), editor/UIPreviewPainter.cpp (1) |
+| 3 | `BeginPopupEx` | 1 | 1 | editor/main.cpp (1) |
+| 4 | `DockNodeBeginAmendTabBar` | 1 | 1 | editor/main.cpp (1) |
+| 5 | `DockNodeEndAmendTabBar` | 1 | 1 | editor/main.cpp (1) |
+| 6 | `GetWindowDockNode` | 1 | 1 | editor/main.cpp (1) |
+| 7 | `TabBarFindTabByID` | 1 | 1 | editor/main.cpp (1) |
 
 Missing draw-list methods: none.
 
@@ -44,12 +38,7 @@ Missing draw-list methods: none.
 | 2 | `ImGuiKey_MouseWheelY` | 5 | 4 |
 | 3 | `ImGuiTabItem` | 3 | 1 |
 | 4 | `ImGuiInputTextCallbackData` | 2 | 2 |
-| 5 | `ImGuiPopupFlags_NoOpenOverItems` | 2 | 1 |
-| 6 | `ImGuiAxis_Y` | 1 | 1 |
-| 7 | `ImGuiPlatformIO` | 1 | 1 |
-| 8 | `ImGuiSortDirection_Ascending` | 1 | 1 |
-| 9 | `ImGuiStyleVar_GrabMinSize` | 1 | 1 |
-| 10 | `ImGuiTableBgTarget_CellBg` | 1 | 1 |
+| 5 | `ImGuiStyleVar_GrabMinSize` | 1 | 1 |
 
 ## Coverage per file
 
@@ -60,7 +49,7 @@ Missing draw-list methods: none.
 | `editor/UIPreviewPainter.cpp` | 2 | 1 | 50.0% | GetFontTexUvWhitePixel (1) |
 | `editor/ScriptEditorWidget.hpp` | 5 | 5 | 100.0% |  |
 | `editor/ScriptingDensityUi.hpp` | 5 | 5 | 100.0% |  |
-| `editor/VsGraphShot.cpp` | 7 | 6 | 85.7% | NewFrame (1) |
+| `editor/VsGraphShot.cpp` | 7 | 7 | 100.0% |  |
 | `editor/MenuEntriesUI.hpp` | 11 | 11 | 100.0% |  |
 | `editor/OkayPanels.cpp` | 11 | 11 | 100.0% |  |
 | `editor/VisualScriptStartDraw.hpp` | 16 | 16 | 100.0% |  |
@@ -76,7 +65,7 @@ Missing draw-list methods: none.
 | `editor/UIInspectorLayout.cpp` | 77 | 77 | 100.0% |  |
 | `editor/WeaponEditor.cpp` | 83 | 83 | 100.0% |  |
 | `editor/InputActionsWindow.hpp` | 86 | 86 | 100.0% |  |
-| `shared/FileDialogUI.cpp` | 90 | 89 | 98.9% | ClosePopupToLevel (1) |
+| `shared/FileDialogUI.cpp` | 90 | 90 | 100.0% |  |
 | `editor/ModelingEasyUi.cpp` | 106 | 106 | 100.0% |  |
 | `editor/ConsolePanel.cpp` | 107 | 107 | 100.0% |  |
 | `editor/UIInspectorWidgetsMore.cpp` | 114 | 114 | 100.0% |  |
@@ -101,8 +90,8 @@ Missing draw-list methods: none.
 | `editor/DialogueWindow.cpp` | 663 | 663 | 100.0% |  |
 | `editor/VisualScriptEditor.hpp` | 721 | 721 | 100.0% |  |
 | `editor/AnimatorWindow.cpp` | 739 | 739 | 100.0% |  |
-| `launcher/main.cpp` | 7215 | 7213 | 100.0% | NewFrame (2) |
-| `editor/main.cpp` | 13786 | 13773 | 99.9% | DockNodeGetRootNode (2), GetPlatformIO (2), DockContextQueueUndockWindow (1), DockNodeBeginAmendTabBar (1), DockNodeEndAmendTabBar (1), BeginPopupEx (1), ... |
+| `launcher/main.cpp` | 7215 | 7215 | 100.0% |  |
+| `editor/main.cpp` | 13786 | 13779 | 99.9% | DockNodeGetRootNode (2), DockNodeBeginAmendTabBar (1), DockNodeEndAmendTabBar (1), BeginPopupEx (1), TabBarFindTabByID (1), GetWindowDockNode (1) |
 
 ## Smallest screens by call count that are fully or almost fully coverable
 
@@ -289,7 +278,7 @@ The ported functions above hold 182 of the 28025 `ImGui::` call sites counted (0
 | `DrawToolbar` | `editor/AnimatorWindow.cpp:2609` | 42 | 100.0% |  |
 | `DrawBehaviorTreeWindow` | `editor/BehaviorTreeWindow.cpp:1710` | 42 | 100.0% |  |
 | `DrawLocalizationWindow` | `editor/LocalizationWindow.cpp:770` | 42 | 100.0% |  |
-| `DrawPanelTabMenu` | `editor/main.cpp:5863` | 42 | 95.2% | DockContextQueueUndockWindow (1), DockNodeGetRootNode (1) |
+| `DrawPanelTabMenu` | `editor/main.cpp:5863` | 42 | 97.6% | DockNodeGetRootNode (1) |
 | `DrawAnimatorGraph` | `editor/AnimatorWindow.cpp:2714` | 44 | 100.0% |  |
 | `DrawBlackboardTab` | `editor/BehaviorTreeWindow.cpp:1409` | 44 | 100.0% |  |
 | `DrawAboutPopup` | `editor/main.cpp:19814` | 44 | 100.0% |  |
@@ -298,7 +287,7 @@ The ported functions above hold 182 of the 28025 `ImGui::` call sites counted (0
 | `DrawNodeInspector` | `editor/BehaviorTreeWindow.cpp:1288` | 45 | 100.0% |  |
 | `DrawRuntimeUIComponentInspector` | `editor/UIRuntimeTools.cpp:303` | 45 | 100.0% |  |
 | `DrawAudioMixer` | `editor/main.cpp:7996` | 45 | 100.0% |  |
-| `main` | `editor/main.cpp:719` | 46 | 91.3% | GetPlatformIO (1), NewFrame (1), UpdatePlatformWindows (1), RenderPlatformWindowsDefault (1) |
+| `main` | `editor/main.cpp:719` | 46 | 100.0% |  |
 | `DrawReportsAdmin` | `launcher/main.cpp:14407` | 46 | 100.0% |  |
 | `DrawNavigationWindow` | `editor/NavigationWindow.cpp:338` | 47 | 100.0% |  |
 | `QuestLogInspector` | `editor/DialogueWindow.cpp:1850` | 48 | 100.0% |  |
@@ -345,7 +334,7 @@ The ported functions above hold 182 of the 28025 `ImGui::` call sites counted (0
 | `DrawScriptDocs` | `editor/main.cpp:13238` | 85 | 100.0% |  |
 | `DrawInputActionsWindow` | `editor/InputActionsWindow.hpp:21` | 86 | 100.0% |  |
 | `DrawLootTab` | `editor/ContentEditors.cpp:612` | 87 | 100.0% |  |
-| `DrawBuiltin` | `shared/FileDialogUI.cpp:25` | 90 | 98.9% | ClosePopupToLevel (1) |
+| `DrawBuiltin` | `shared/FileDialogUI.cpp:25` | 90 | 100.0% |  |
 | `DrawAssetManager` | `editor/main.cpp:9332` | 91 | 100.0% |  |
 | `BuildUIVisibleIf` | `editor/UIInspectorWidgetsMore.cpp:327` | 92 | 100.0% |  |
 | `DrawSimpleRules` | `editor/main.cpp:26102` | 95 | 100.0% |  |
@@ -386,7 +375,7 @@ The ported functions above hold 182 of the 28025 `ImGui::` call sites counted (0
 | `Draw` | `editor/VisualScriptEditor.hpp:3565` | 656 | 100.0% |  |
 | `DrawChatWindow` | `launcher/main.cpp:8612` | 715 | 100.0% |  |
 | `DrawModeling` | `editor/main.cpp:28357` | 896 | 100.0% |  |
-| `main` | `launcher/main.cpp:18110` | 3567 | 100.0% | NewFrame (1) |
+| `main` | `launcher/main.cpp:18110` | 3567 | 100.0% |  |
 | `DrawInspector` | `editor/main.cpp:30178` | 5938 | 100.0% |  |
 
-Of 250 screens listed: 244 are fully covered by name, 249 are at least 90% covered.
+Of 250 screens listed: 247 are fully covered by name, 249 are at least 90% covered.

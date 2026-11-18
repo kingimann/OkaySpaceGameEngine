@@ -743,7 +743,8 @@ struct TableColumnSortSpecs { unsigned columnUserId = 0; int columnIndex = 0; in
 struct TableSortSpecs { const TableColumnSortSpecs* specs = nullptr; int specsCount = 0; bool specsDirty = false; };
 /// The sort keys of the current Sortable table (null when it is not sortable). Valid until EndTable; clear `specsDirty` once you have sorted.
 TableSortSpecs* TableGetSortSpecs();
-enum TableBgTarget : int { TableBg_RowBg0 = 1, TableBg_RowBg1 = 2, TableBg_CellBg = 3 };
+enum TableBgTarget : int { TableBg_RowBg0 = 1, TableBg_RowBg1 = 2, TableBg_CellBg = 3,
+                           TableBgTarget_RowBg0 = TableBg_RowBg0, TableBgTarget_RowBg1 = TableBg_RowBg1, TableBgTarget_CellBg = TableBg_CellBg };   // the second set: Dear ImGui's spelling
 /// Paint the current row (RowBg0 replaces the even-row colour, RowBg1 the odd-row one, whichever the row is) or a cell (`column` < 0: the
 /// current one) with a packed colour (RGBA()).
 void TableSetBgColor(TableBgTarget target, Color32 color, int column = -1);

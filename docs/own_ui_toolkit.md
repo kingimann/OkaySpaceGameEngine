@@ -915,6 +915,21 @@ Also added for it: `PushID(pointer)` (the pointer becomes the id seed; two butto
 
 The objects are snapshots, not live handles: `ImGuiWindow` is `WindowRef`, `ImGuiContext` is `Context`, and a pointer to a window is valid until the next `RefreshContext()` (so use it inside the frame, as the Inspector does). With this the probe reports **0 errors** for `InspectorPanel.cpp` (it was 30). Tested in `okayui_names` (hovered, current and active window names and ids with two windows, a blocked pointer, `GImGui`, `PushID(&a)`). The Inspector was **not run**: it needs the scene, the selected object, the undo stack and every component editor of the engine, which cannot be hand-linked here; a CMake test with a small scene is the next step.
 
+### 6.16 The last calls and names: implemented, and host-specific
+
+After 6.15 the report had 13 calls and 10 types, flags and enums without a same-named OkayUI identifier (24 unresolved by the 6.13 count, which became 23 once `ImGuiWindow` was named). Now **7 calls and 5 types are left: 12 unresolved** (call-site coverage by name: calls 100.0%, types and flags 99.8%; 257 of 264 distinct calls, 325 of 330 distinct types, flags and enums).
+
+Implemented (tested in `okayui_names`, 33 checks): `NewFrame()` (BeginFrame with the last frame's input, not a platform read), `UpdatePlatformWindows()` and `RenderPlatformWindowsDefault()` (no-ops: no extra windows), `GetPlatformIO()` (a `PlatformIO` with `Viewports.Size` = 1 and the renderer / platform callback fields stored and never called), `ClosePopupToLevel(level, restoreFocus)` (0 closes every open popup), `DockContextQueueUndockWindow(ctx, window)` (floats a docked window at its place; tested with a docked and an unknown window), `Axis_*`, `SortDirection_*`, `TableBgTarget_*` and `Popup_NoOpenOverItems` names.
+
+**Host-specific, rewrite (not offered), with what each is for:**
+- `GetFontTexUvWhitePixel` (2 uses, `SplineTools.cpp`, `UIPreviewPainter.cpp`): the white texel of Dear ImGui's font atlas, used with `PrimReserve` / `PrimVtx` to write triangles into the draw list. OkayUI has no font atlas to point into and no vertex-level draw list; those two places should use `AddConvexPolyFilled`, `AddImageQuad` or `AddImageRounded`.
+- `BeginPopupEx(id, flags)` (1, `main.cpp`: the panel-tab list popup): a popup by numeric id with window flags; use `OpenPopup(name)` / `BeginPopup(name)`.
+- `DockNodeGetRootNode` (2), `GetWindowDockNode` (1), `DockNodeBeginAmendTabBar` / `DockNodeEndAmendTabBar` (1 each), `TabBarFindTabByID` (1), and the type `ImGuiDockNode` (16 uses): `main.cpp`'s panel tab strip draws extra buttons inside Dear ImGui's dock-node tab bars. OkayUI's dock tabs are its own (`OkayUIDock.hpp`); this code would be rewritten against `DockLayout`, not ported.
+- `ImGuiInputTextCallbackData` (2) and `InputTextFlags_Callback*`: OkayUI text fields have no callbacks.
+- `ImGuiTabItem` (3, an internal type), `ImGuiKey_MouseWheelY` (5, a mouse wheel read as a key: use `GetIO().mouseWheel`), `ImGuiStyleVar_GrabMinSize` (1: no slider grab size setting).
+
+**Counts over this round (probe and names; same script):** unresolved names 24 -> 12; probes of real panels with 0 errors: Console, EditorWidgets, Project (3 files), SceneManager, Inspector, Versions page (9 files in all, was 4 of 5 panels); run headless: Console, Project pieces, Versions page (3 tests, 28 checks, 8 golden images). Built and run by hand with g++ (not CMake or ctest); the CMake lines for the three port tests are untested.
+
 ## 7. The render interface: OkayUI on screen without a Dear ImGui backend
 
 Own code, off by default, wired into nothing: the editor and launcher still draw OkayUI (and everything else) through Dear ImGui's SDL backends. This section is the part that lets a later host put OkayUI's pixels on screen without any Dear ImGui backend code. (The numbered sections 5 and 6 of the draw-through-ImGui host live on another branch; this section is numbered 7 so the two cannot collide.)

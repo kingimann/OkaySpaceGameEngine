@@ -22,6 +22,9 @@ struct CompileInput {
     // propagates constants and removes dead stores.
     int opt_level = 0;
     bool optimize = false;
+    // /Z7: write CodeView line records into a .debug$S section. There is no
+    // PDB, no symbol records and no type records.
+    bool debug_lines = false;
 };
 
 struct CompileOutput {

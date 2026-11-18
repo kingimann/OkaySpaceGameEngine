@@ -29,6 +29,8 @@ struct Token {
     uint64_t number = 0;
     // 0 for an integer, 5 for a float literal, 6 for a double literal.
     int real = 0;
+    // Line of the preprocessed text, counted from 1.
+    int line = 0;
 };
 
 struct Type {
@@ -62,12 +64,45 @@ struct Field {
     int offset = 0;
 };
 
+// A member function. The first parameter of the compiled function is an
+// implicit pointer to the object, named "this".
+struct Method {
+    std::string name;
+    // Internal function name ("C::f/1") and the MSVC decorated symbol.
+    std::string qname;
+    std::string symbol;
+    Type ret{};
+    std::vector<Type> params;
+    std::vector<std::string> param_names;
+    bool is_virtual = false;
+    bool pure = false;
+    bool is_const = false;
+    bool has_body = false;
+    int slot = -1;
+    // 'A' private, 'I' protected, 'Q' public: the MSVC access letters.
+    char access = 'Q';
+    // The class that declared the function.
+    int owner = -1;
+    // Token index of the body's '{' until the body has been compiled.
+    size_t body_at = 0;
+};
+
 struct StructDef {
     std::string name;
     std::vector<Field> fields;
     int size = 0;
     int align = 1;
     bool is_union = false;
+    bool is_class = false;
+    // True for a class, or any struct with a base class or member functions.
+    bool cxx = false;
+    int base = -1;
+    size_t base_fields = 0;
+    bool poly = false;
+    std::vector<Method> methods;
+    // Symbol of the function in each virtual slot. Empty for a pure virtual.
+    std::vector<std::string> vtable;
+    std::string vtable_sym;
 };
 
 struct Global {
@@ -77,6 +112,9 @@ struct Global {
     bool is_static = false;
     uint32_t init = 0;
     std::vector<uint8_t> init_bytes;
+    // A virtual function table: read-only data, one ADDR64 slot per entry.
+    bool vtable = false;
+    std::vector<std::string> slots;
 };
 
 Type peel_array(const Type& type) {
@@ -105,6 +143,8 @@ struct Node {
     Type type{};
     int32_t offset = 0;
     bool imported = false;
+    // Line of the preprocessed text where a statement starts. 0 is unknown.
+    int line = 0;
     std::vector<Node> kids;
 };
 
@@ -139,6 +179,9 @@ struct FuncDecl {
     std::vector<Local> locals;
     int nparams = 0;
     int max_args = 0;
+    // First and last line of the body (the braces), for the line table.
+    int line = 0;
+    int end_line = 0;
 };
 
 std::string strip_comments(const std::string& in) {
@@ -161,7 +204,11 @@ std::string strip_comments(const std::string& in) {
         }
         if (in[i] == '/' && i + 1 < in.size() && in[i + 1] == '*') {
             i += 2;
-            while (i + 1 < in.size() && !(in[i] == '*' && in[i + 1] == '/')) ++i;
+            // Keep the newlines so a line number still names its source line.
+            while (i + 1 < in.size() && !(in[i] == '*' && in[i + 1] == '/')) {
+                if (in[i] == '\n') out.push_back('\n');
+                ++i;
+            }
             if (i + 1 < in.size()) i += 2;
             continue;
         }
@@ -188,6 +235,10 @@ struct Preprocessor {
     std::vector<std::string> includes;
     std::string error;
     int depth = 0;
+    // File names (index 0 is the main source) and, for each line of the
+    // output, the file and line it came from.
+    std::vector<std::string> files;
+    std::vector<std::pair<int, int>> origin;
 
     bool defined(const std::string& name) const { return macros.find(name) != macros.end(); }
 
@@ -541,7 +592,7 @@ struct Preprocessor {
         return "";
     }
 
-    std::string run(const std::string& text, const std::string& dir) {
+    std::string run(const std::string& text, const std::string& dir, int file = 0) {
         if (depth > 16) {
             error = "include nesting is too deep";
             return "";
@@ -562,7 +613,9 @@ struct Preprocessor {
         };
         std::string out;
         size_t i = 0;
+        int ln = 0;
         while (i < text.size()) {
+            ++ln;
             size_t end = text.find('\n', i);
             if (end == std::string::npos) end = text.size();
             std::string line = text.substr(i, end - i);
@@ -576,6 +629,12 @@ struct Preprocessor {
                 while (a < rest.size() && (rest[a] == ' ' || rest[a] == '\t')) ++a;
                 rest = rest.substr(a);
                 auto word = [&](const char* w) { return rest.compare(0, std::strlen(w), w) == 0; };
+                // Every output line has an origin. A directive leaves a blank
+                // line, except an include, which is replaced by the file's lines.
+                if (!(word("include") && active())) {
+                    out += "\n";
+                    origin.push_back({file, ln});
+                }
                 if (word("include")) {
                     if (!active()) continue;
                     const size_t q1 = rest.find_first_of("\"<");
@@ -593,7 +652,8 @@ struct Preprocessor {
                         --depth;
                         return "";
                     }
-                    out += run(strip_comments(body), dir);
+                    files.push_back(name);
+                    out += run(strip_comments(body), dir, static_cast<int>(files.size()) - 1);
                     if (!error.empty()) {
                         --depth;
                         return "";
@@ -696,7 +756,8 @@ struct Preprocessor {
                 }
                 continue;
             }
-            if (active()) out += expand(line, 0) + "\n";
+            out += active() ? expand(line, 0) + "\n" : std::string("\n");
+            origin.push_back({file, ln});
         }
         --depth;
         return out;
@@ -717,7 +778,7 @@ Tok keyword(const std::string& text) {
     if (text == "default") return TDefault;
     if (text == "break") return TBreak;
     if (text == "continue") return TContinue;
-    if (text == "struct") return TStruct;
+    if (text == "struct" || text == "class") return TStruct;
     if (text == "union") return TUnion;
     if (text == "enum") return TEnum;
     if (text == "typedef") return TTypedef;
@@ -818,13 +879,16 @@ bool decode_escape(const std::string& text, size_t* i, unsigned char* out) {
 
 std::vector<Token> lex(const std::string& text, std::string* error) {
     std::vector<Token> tokens;
+    int line = 1;
     for (size_t i = 0; i < text.size();) {
         const unsigned char c = static_cast<unsigned char>(text[i]);
         if (std::isspace(c)) {
+            if (c == '\n') ++line;
             ++i;
             continue;
         }
         Token tok;
+        tok.line = line;
         if (std::isalpha(c) || c == '_') {
             size_t j = i + 1;
             while (j < text.size() && (std::isalnum(static_cast<unsigned char>(text[j])) || text[j] == '_')) ++j;
@@ -1031,30 +1095,61 @@ std::vector<Token> lex(const std::string& text, std::string* error) {
         ++i;
         tokens.push_back(tok);
     }
-    tokens.push_back(Token{});
+    Token end_token;
+    end_token.line = line;
+    tokens.push_back(end_token);
     return tokens;
 }
 
 // MSVC decorated names, from the public decoration rules: '?' name '@'
 // namespace '@@YA' return-type argument-types '@Z'. H is int, X is void,
 // A in front of a type is a reference. Written here, not copied.
-std::string cxx_type(const Type& type) {
+std::string cxx_type(const Type& type, const std::vector<StructDef>* structs = nullptr) {
     if (type.is_ref) {
+        // On x64 a reference is "AEA" (the E is the 64-bit pointer mark).
         Type inner = type;
         inner.is_ref = false;
-        return "A" + cxx_type(inner);
+        return "AEA" + cxx_type(inner, structs);
     }
     if (type.pointers > 0) {
         Type inner = type;
         --inner.pointers;
-        return "PEA" + cxx_type(inner);
+        return "PEA" + cxx_type(inner, structs);
     }
     if (type.base == 0) return "X";
-    if (type.base == 2) return "D";
-    if (type.base == 4) return "F";
+    if (type.base == 2) return type.is_unsigned ? "E" : "D";
+    if (type.base == 4) return type.is_unsigned ? "G" : "F";
     if (type.base == 5) return "M";
     if (type.base == 6) return "N";
-    return "H";
+    if (type.base == 3 && structs != nullptr && type.struct_id >= 0 &&
+        type.struct_id < static_cast<int>(structs->size())) {
+        const StructDef& def = (*structs)[static_cast<size_t>(type.struct_id)];
+        // U is struct, T is union, V is class; then the name and "@@".
+        return std::string(def.is_union ? "T" : def.is_class ? "V" : "U") + def.name + "@@";
+    }
+    return type.is_unsigned ? "I" : "H";
+}
+
+// ?name@Class@@ access-letter this-qualifiers calling-convention return
+// parameters @Z. The access letter is Q/A/I for public/private/protected
+// and U/E/M for the same three when the function is virtual. "EAA" is a
+// 64-bit non-const this pointer and the one calling convention; "EBA" is a
+// const this pointer.
+std::string cxx_method_symbol(const std::vector<StructDef>& structs, const StructDef& owner, const Method& m) {
+    char letter = m.access;
+    if (m.is_virtual) letter = m.access == 'A' ? 'E' : m.access == 'I' ? 'M' : 'U';
+    std::string out = "?" + m.name + "@" + owner.name + "@@";
+    out += letter;
+    out += m.is_const ? "EBA" : "EAA";
+    if (m.ret.base == 3 && m.ret.pointers == 0 && !m.ret.is_ref) out += "?A";
+    out += cxx_type(m.ret, &structs);
+    if (m.params.empty()) out += "X";
+    else {
+        for (const Type& param : m.params) out += cxx_type(param, &structs);
+        out += "@";
+    }
+    out += "Z";
+    return out;
 }
 
 std::string cxx_symbol(const std::string& ns, const std::string& name, const Type& ret, const std::vector<Type>& params) {
@@ -1082,6 +1177,8 @@ struct Parser {
     std::vector<Local>* cur_locals = nullptr;
     std::string current_fn;
     std::string current_ns;
+    // The class whose member function body is being compiled, or -1.
+    int cur_class = -1;
     int scope_depth = 0;
     std::vector<int> scope_parent{0};
 
@@ -1192,15 +1289,32 @@ struct Parser {
         type->is_const = false;
         if (is(TStruct) || is(TUnion)) {
             const bool as_union = is(TUnion);
+            const bool as_class = is(TStruct) && cur().text == "class";
             next();
             std::string name;
             if (is(TIdent)) {
                 name = cur().text;
                 next();
             }
+            int base_id = -1;
+            if (accept(TColon)) {
+                while (is(TIdent) && (cur().text == "public" || cur().text == "private" ||
+                                      cur().text == "protected" || cur().text == "virtual"))
+                    next();
+                if (!is(TIdent) || find_struct(cur().text) < 0) {
+                    error = "expected a base class";
+                    return false;
+                }
+                base_id = find_struct(cur().text);
+                next();
+                if (!is(TLBrace)) {
+                    error = "only one base class is supported";
+                    return false;
+                }
+            }
             if (is(TLBrace)) {
                 int id = -1;
-                if (!parse_struct_body(as_union, name, &id)) return false;
+                if (!parse_struct_body(as_union, name, &id, as_class, base_id)) return false;
                 type->base = 3;
                 type->struct_id = id;
                 return true;
@@ -1232,6 +1346,12 @@ struct Parser {
         }
         if (is(TIdent) && typedefs.find(cur().text) != typedefs.end()) {
             *type = typedefs[cur().text];
+            next();
+            return true;
+        }
+        if (is_class_name()) {
+            type->base = 3;
+            type->struct_id = find_struct(cur().text);
             next();
             return true;
         }
@@ -1423,12 +1543,37 @@ struct Parser {
             is(TStruct) || is(TUnion) || is(TEnum) || is(TTypedef) || is(TDeclspec) || is(TStatic) || is(TConst) ||
             is(TFloat) || is(TDouble))
             return true;
-        return is(TIdent) && typedefs.find(cur().text) != typedefs.end();
+        return (is(TIdent) && typedefs.find(cur().text) != typedefs.end()) || is_class_name();
     }
 
+    // A class or struct used by its bare name, as in C++ ("C c;").
+    bool class_name_at(size_t i) const {
+        if (i >= tokens.size() || tokens[i].kind != TIdent || typedefs.find(tokens[i].text) != typedefs.end())
+            return false;
+        const int id = find_struct(tokens[i].text);
+        return id >= 0 && structs[static_cast<size_t>(id)].cxx;
+    }
+    bool is_class_name() const {
+        if (!is(TIdent) || typedefs.find(cur().text) != typedefs.end()) return false;
+        const int id = find_struct(cur().text);
+        return id >= 0 && structs[static_cast<size_t>(id)].cxx;
+    }
+
+    bool local_visible(const std::string& name) const;
+    bool static_type(const Node& node, Type* out) const;
+    bool parse_call_args(std::vector<Node>* args);
+    bool method_call(Node* out, Node object, bool arrow, const std::string& name);
+    bool qualified_call(Node* out, int cls, const std::string& name);
     bool parse_expr(int min_prec, Node* out);
     bool parse_unary(Node* out);
+    bool parse_postfix(Node* out);
+    bool class_name_text(const std::string& text) const {
+        if (typedefs.find(text) != typedefs.end()) return false;
+        const int id = find_struct(text);
+        return id >= 0 && structs[static_cast<size_t>(id)].cxx;
+    }
     bool parse_stmt(Node* out, std::vector<Local>* locals);
+    bool parse_stmt_inner(Node* out, std::vector<Local>* locals, int stmt_line);
     bool parse_block(Node* out, std::vector<Local>* locals);
 
     int prec(Tok op) const {
@@ -1445,19 +1590,158 @@ struct Parser {
         return -1;
     }
 
-    bool parse_struct_body(bool as_union, std::string name, int* out_id) {
+    // Looks ahead from the current token: stars or '&', a name, then '('.
+    bool method_ahead() const {
+        size_t i = at;
+        while (i < tokens.size() && (tokens[i].kind == TStar || tokens[i].kind == TAmp)) ++i;
+        return i + 1 < tokens.size() && tokens[i].kind == TIdent && tokens[i + 1].kind == TLParen;
+    }
+
+    bool skip_body() {
+        if (!is(TLBrace)) {
+            error = "expected a function body";
+            return false;
+        }
+        int depth = 0;
+        while (!is(TEnd)) {
+            if (is(TLBrace)) ++depth;
+            if (is(TRBrace)) {
+                --depth;
+                if (depth == 0) {
+                    next();
+                    return true;
+                }
+            }
+            next();
+        }
+        error = "unterminated function body";
+        return false;
+    }
+
+    const Method* find_method(int sid, const std::string& name, size_t nargs) const {
+        if (sid < 0 || sid >= static_cast<int>(structs.size())) return nullptr;
+        const StructDef& def = structs[static_cast<size_t>(sid)];
+        for (size_t i = def.methods.size(); i-- > 0;)
+            if (def.methods[i].name == name && def.methods[i].params.size() == nargs) return &def.methods[i];
+        return nullptr;
+    }
+
+    // Adds or replaces a member function. A function with the same name and
+    // parameter count that a base class declared is replaced; if that one was
+    // virtual, this one is virtual in the same slot.
+    bool add_method(StructDef* def, int self, Method m) {
+        m.owner = self;
+        size_t found = def->methods.size();
+        for (size_t i = 0; i < def->methods.size(); ++i)
+            if (def->methods[i].name == m.name && def->methods[i].params.size() == m.params.size()) found = i;
+        if (found < def->methods.size() && def->methods[found].is_virtual) {
+            m.is_virtual = true;
+            m.slot = def->methods[found].slot;
+        }
+        if (m.is_virtual) {
+            if (!def->poly) {
+                if (def->base >= 0) {
+                    error = "a virtual function in a class derived from a class without virtual functions is not supported";
+                    return false;
+                }
+                Field vptr;
+                vptr.name = "__vptr";
+                vptr.type.base = 0;
+                vptr.type.pointers = 2;
+                def->fields.insert(def->fields.begin(), vptr);
+                def->poly = true;
+            }
+            if (m.slot < 0) {
+                m.slot = static_cast<int>(def->vtable.size());
+                def->vtable.push_back("");
+            }
+        }
+        m.qname = def->name + "::" + m.name + "/" + std::to_string(m.params.size());
+        m.symbol = cxx_method_symbol(structs, *def, m);
+        if (m.is_virtual) def->vtable[static_cast<size_t>(m.slot)] = m.pure ? "" : m.symbol;
+        if (found < def->methods.size()) def->methods[found] = std::move(m);
+        else def->methods.push_back(std::move(m));
+        return true;
+    }
+
+    bool parse_struct_body(bool as_union, std::string name, int* out_id, bool is_class = false, int base_id = -1) {
         if (name.empty()) name = "__anon" + std::to_string(structs.size());
         StructDef def;
         def.name = name;
         def.is_union = as_union;
+        def.is_class = is_class;
+        def.cxx = is_class;
+        if (base_id >= 0) {
+            const StructDef& base = structs[static_cast<size_t>(base_id)];
+            def.base = base_id;
+            def.cxx = true;
+            def.fields = base.fields;
+            def.base_fields = base.fields.size();
+            def.poly = base.poly;
+            def.methods = base.methods;
+            for (Method& inherited : def.methods) inherited.body_at = 0;
+            def.vtable = base.vtable;
+        }
         structs.push_back(def);
         const int self = static_cast<int>(structs.size()) - 1;
         if (!expect(TLBrace, "'{'")) return false;
+        char access = is_class ? 'A' : 'Q';
         while (!is(TRBrace) && !is(TEnd)) {
+            if (is(TIdent) && at + 1 < tokens.size() && tokens[at + 1].kind == TColon &&
+                (cur().text == "public" || cur().text == "private" || cur().text == "protected")) {
+                access = cur().text == "public" ? 'Q' : cur().text == "private" ? 'A' : 'I';
+                next();
+                next();
+                continue;
+            }
+            bool is_virtual = false;
+            if (is(TIdent) && cur().text == "virtual") {
+                is_virtual = true;
+                next();
+            }
+            if (is(TNot) || (is(TIdent) && cur().text == name && at + 1 < tokens.size() &&
+                             tokens[at + 1].kind == TLParen)) {
+                error = "constructors and destructors are not supported";
+                return false;
+            }
             Field field;
             bool imp = false;
             bool exp = false;
             if (!parse_type(&field.type, &imp, &exp)) return false;
+            if (method_ahead()) {
+                Declarator decl;
+                if (!parse_declarator(field.type, &decl)) return false;
+                Method m;
+                m.name = decl.name;
+                m.ret = decl.type;
+                m.params = decl.params;
+                m.param_names = decl.param_names;
+                m.is_virtual = is_virtual;
+                m.access = access;
+                if (accept(TConst)) m.is_const = true;
+                if (accept(TAssign)) {
+                    if (!is(TNumber) || cur().number != 0) {
+                        error = "expected = 0 for a pure virtual function";
+                        return false;
+                    }
+                    next();
+                    m.pure = true;
+                    if (!m.is_virtual) {
+                        error = "only a virtual function can be pure";
+                        return false;
+                    }
+                }
+                if (is(TLBrace)) {
+                    m.body_at = at;
+                    m.has_body = true;
+                    if (!skip_body()) return false;
+                } else if (!expect(TSemi, "';'")) {
+                    return false;
+                }
+                def.cxx = true;
+                if (!add_method(&def, self, std::move(m))) return false;
+                continue;
+            }
             while (accept(TStar)) ++field.type.pointers;
             if (!is(TIdent)) {
                 error = "expected a field name";
@@ -1485,7 +1769,18 @@ struct Parser {
         int offset = 0;
         int align = 1;
         int cursor_bits = 0;
-        for (Field& field : def.fields) {
+        size_t first_field = 0;
+        if (def.base >= 0) {
+            // A derived class starts after the whole base object, as the
+            // MSVC layout does. The base fields keep their offsets.
+            const StructDef& base = structs[static_cast<size_t>(def.base)];
+            offset = base.size;
+            align = base.align;
+            cursor_bits = offset * 8;
+            first_field = def.base_fields;
+        }
+        for (size_t fi = first_field; fi < def.fields.size(); ++fi) {
+            Field& field = def.fields[fi];
             int field_align = align_of(field.type);
             int field_size = size_of(field.type);
             if (field_align < 1) field_align = 1;
@@ -1522,8 +1817,100 @@ struct Parser {
         if (cursor_bits > offset * 8) offset = (cursor_bits + 7) / 8;
         def.align = align;
         def.size = (offset + align - 1) & ~(align - 1);
+        if (def.poly) {
+            def.vtable_sym = "??_7" + def.name + "@@6B@";
+            Global table;
+            table.name = def.vtable_sym;
+            table.type.base = 0;
+            table.type.pointers = 1;
+            table.type.array_len = static_cast<int>(def.vtable.size());
+            table.bss = false;
+            table.vtable = true;
+            table.slots = def.vtable;
+            globals.push_back(std::move(table));
+        }
         structs[static_cast<size_t>(self)] = def;
         *out_id = self;
+        // Member function bodies are compiled now that the class is complete,
+        // so a body may use members declared after it.
+        for (size_t mi = 0; mi < def.methods.size(); ++mi)
+            if (def.methods[mi].body_at != 0 && def.methods[mi].owner == self)
+                if (!define_method(self, mi)) return false;
+        return true;
+    }
+
+    // Compiles the body of a member function from its saved token position.
+    bool define_method(int sid, size_t mi) {
+        const Method m = structs[static_cast<size_t>(sid)].methods[mi];
+        FuncDecl fn;
+        fn.name = m.qname;
+        fn.symbol = m.symbol;
+        fn.ret = m.ret;
+        Type self_ptr;
+        self_ptr.base = 3;
+        self_ptr.struct_id = sid;
+        self_ptr.pointers = 1;
+        fn.params.push_back(self_ptr);
+        fn.param_names.push_back("this");
+        for (size_t i = 0; i < m.params.size(); ++i) {
+            fn.params.push_back(m.params[i]);
+            fn.param_names.push_back(i < m.param_names.size() ? m.param_names[i] : std::string());
+        }
+        finish_signature(&fn);
+        const size_t resume = at;
+        at = m.body_at;
+        const bool ok = parse_function_body(&fn, sid);
+        at = resume;
+        if (!ok) return false;
+        structs[static_cast<size_t>(sid)].methods[mi].body_at = 0;
+        funcs.push_back(std::move(fn));
+        return true;
+    }
+
+    // Parses a function body at the current token with the parameters
+    // already in fn. cls is the class whose members are visible, or -1.
+    bool parse_function_body(FuncDecl* fn, int cls) {
+        std::vector<Local>* saved_locals = cur_locals;
+        const std::string saved_fn = current_fn;
+        const int saved_depth = scope_depth;
+        const std::vector<int> saved_parent = scope_parent;
+        const int saved_class = cur_class;
+        scope_depth = 0;
+        scope_parent.clear();
+        scope_parent.push_back(0);
+        cur_class = cls;
+        std::vector<Local> locals;
+        if (fn->sret) {
+            Local hidden;
+            hidden.name = "__sret";
+            hidden.type.pointers = 1;
+            hidden.type.base = 3;
+            hidden.type.struct_id = fn->ret.struct_id;
+            place_local(&locals, hidden);
+            fn->sret_off = locals.back().offset;
+        }
+        fn->param_base = static_cast<int>(locals.size());
+        for (size_t p = 0; p < fn->param_names.size(); ++p) {
+            Local local;
+            local.name = fn->param_names[p];
+            local.type = fn->params[p];
+            place_local(&locals, local);
+        }
+        fn->nparams = static_cast<int>(fn->params.size());
+        current_fn = fn->name;
+        cur_locals = &locals;
+        fn->line = cur().line;
+        const bool ok = parse_block(&fn->body, &locals);
+        fn->end_line = at > 0 ? tokens[at - 1].line : 0;
+        (void)saved_locals;
+        cur_locals = nullptr;
+        current_fn = saved_fn;
+        scope_depth = saved_depth;
+        scope_parent = saved_parent;
+        cur_class = saved_class;
+        if (!ok) return false;
+        fn->defined = true;
+        fn->locals = std::move(locals);
         return true;
     }
 
@@ -1566,6 +1953,49 @@ struct Parser {
             bool exported = false;
             Type type;
             if (!parse_type(&type, &imported, &exported)) return false;
+            while (!is_typedef && is(TStar) && at + 2 < tokens.size() && tokens[at + 1].kind == TIdent &&
+                   tokens[at + 2].kind == TColonColon) {
+                ++type.pointers;
+                next();
+            }
+            if (!is_typedef && is(TIdent) && at + 3 < tokens.size() && tokens[at + 1].kind == TColonColon &&
+                class_name_at(at)) {
+                // int C::f(int x) { ... } for a function declared in class C.
+                const int sid = find_struct(cur().text);
+                next();
+                next();
+                if (!is(TIdent)) {
+                    error = "expected a member function name";
+                    return false;
+                }
+                const std::string mname = cur().text;
+                next();
+                if (!expect(TLParen, "'('")) return false;
+                Declarator decl;
+                if (!parse_param_list(&decl)) return false;
+                accept(TConst);
+                const Method* found = find_method(sid, mname, decl.params.size());
+                if (found == nullptr || found->owner != sid) {
+                    error = "no member function " + mname + " in the class";
+                    return false;
+                }
+                size_t mi = 0;
+                StructDef& owner = structs[static_cast<size_t>(sid)];
+                for (size_t i = 0; i < owner.methods.size(); ++i)
+                    if (&owner.methods[i] == found) mi = i;
+                if (owner.methods[mi].has_body) {
+                    error = "member function " + mname + " is defined twice";
+                    return false;
+                }
+                owner.methods[mi].has_body = true;
+                owner.methods[mi].body_at = at;
+                owner.methods[mi].param_names = decl.param_names;
+                if (!skip_body()) return false;
+                const size_t resume = at;
+                if (!define_method(sid, mi)) return false;
+                at = resume;
+                continue;
+            }
             if (!is_typedef && is(TSemi)) {
                 next();
                 continue;
@@ -1610,33 +2040,7 @@ struct Parser {
                 funcs.push_back(std::move(fn));
                 continue;
             }
-            scope_depth = 0;
-            scope_parent.clear();
-            scope_parent.push_back(0);
-            std::vector<Local> locals;
-            if (fn.sret) {
-                Local hidden;
-                hidden.name = "__sret";
-                hidden.type.pointers = 1;
-                hidden.type.base = 3;
-                hidden.type.struct_id = fn.ret.struct_id;
-                place_local(&locals, hidden);
-                fn.sret_off = locals.back().offset;
-            }
-            fn.param_base = static_cast<int>(locals.size());
-            for (size_t p = 0; p < fn.param_names.size(); ++p) {
-                Local local;
-                local.name = fn.param_names[p];
-                local.type = fn.params[p];
-                place_local(&locals, local);
-            }
-            fn.nparams = static_cast<int>(fn.params.size());
-            current_fn = fn.name;
-            cur_locals = &locals;
-            if (!parse_block(&fn.body, &locals)) return false;
-            cur_locals = nullptr;
-            fn.defined = true;
-            fn.locals = std::move(locals);
+            if (!parse_function_body(&fn, -1)) return false;
             funcs.push_back(std::move(fn));
         }
         return error.empty();
@@ -1713,6 +2117,13 @@ bool Parser::parse_block(Node* out, std::vector<Local>* locals) {
 }
 
 bool Parser::parse_stmt(Node* out, std::vector<Local>* locals) {
+    const int stmt_line = cur().line;
+    const bool ok = parse_stmt_inner(out, locals, stmt_line);
+    out->line = stmt_line;
+    return ok;
+}
+
+bool Parser::parse_stmt_inner(Node* out, std::vector<Local>* locals, int stmt_line) {
     cur_locals = locals;
     if (is(TLBrace)) return parse_block(out, locals);
     if (is(TGoto)) {
@@ -1940,6 +2351,45 @@ bool Parser::parse_stmt(Node* out, std::vector<Local>* locals) {
         }
         place_local(locals, local);
         out->kind = Node::Block;
+        if (decl.type.base == 3 && decl.type.pointers == 0 && !decl.type.is_ref && decl.type.struct_id >= 0 &&
+            structs[static_cast<size_t>(decl.type.struct_id)].poly) {
+            if (decl.type.is_array() || is_static) {
+                error = "an array or static object of a class with virtual functions is not supported";
+                return false;
+            }
+            // The table pointer is set where the object is declared.
+            const StructDef& cls = structs[static_cast<size_t>(decl.type.struct_id)];
+            Node table_name;
+            table_name.kind = Node::Name;
+            table_name.text = cls.vtable_sym;
+            Node table_addr;
+            table_addr.kind = Node::Unary;
+            table_addr.op = TAmp;
+            table_addr.kids.push_back(std::move(table_name));
+            Node as_ptr;
+            as_ptr.kind = Node::Unary;
+            as_ptr.type.base = 0;
+            as_ptr.type.pointers = 2;
+            as_ptr.kids.push_back(std::move(table_addr));
+            Node object;
+            object.kind = Node::Name;
+            object.text = decl.name;
+            Node field;
+            field.kind = Node::Field;
+            field.op = TDot;
+            field.text = "__vptr";
+            field.kids.push_back(std::move(object));
+            Node store;
+            store.kind = Node::Assign;
+            store.op = TAssign;
+            store.kids.push_back(std::move(field));
+            store.kids.push_back(std::move(as_ptr));
+            Node stmt;
+            stmt.kind = Node::ExprStmt;
+            stmt.line = stmt_line;
+            stmt.kids.push_back(std::move(store));
+            out->kids.push_back(std::move(stmt));
+        }
         if (has_init) {
             Node assign;
             assign.kind = Node::Assign;
@@ -1951,6 +2401,7 @@ bool Parser::parse_stmt(Node* out, std::vector<Local>* locals) {
             assign.kids.push_back(std::move(init));
             Node stmt;
             stmt.kind = Node::ExprStmt;
+            stmt.line = stmt_line;
             stmt.kids.push_back(std::move(assign));
             out->kids.push_back(std::move(stmt));
         }
@@ -1961,6 +2412,230 @@ bool Parser::parse_stmt(Node* out, std::vector<Local>* locals) {
     if (!parse_expr(0, &expr)) return false;
     out->kids.push_back(std::move(expr));
     return expect(TSemi, "';'");
+}
+
+
+bool Parser::local_visible(const std::string& name) const {
+    if (cur_locals == nullptr) return false;
+    for (int i = static_cast<int>(cur_locals->size()) - 1; i >= 0; --i) {
+        const Local& local = (*cur_locals)[static_cast<size_t>(i)];
+        if (local.name == name && scope_visible(local.scope)) return true;
+    }
+    return false;
+}
+
+// The static type of an expression, for the forms that name an object:
+// names, fields, elements, dereferences, address-of, casts and calls.
+bool Parser::static_type(const Node& node, Type* out) const {
+    switch (node.kind) {
+    case Node::Name:
+        if (cur_locals != nullptr) {
+            for (int i = static_cast<int>(cur_locals->size()) - 1; i >= 0; --i) {
+                const Local& local = (*cur_locals)[static_cast<size_t>(i)];
+                if (local.name == node.text && scope_visible(local.scope)) {
+                    *out = local.type;
+                    return true;
+                }
+            }
+        }
+        for (const Global& global : globals)
+            if (global.name == node.text) {
+                *out = global.type;
+                return true;
+            }
+        return false;
+    case Node::Field: {
+        Type base;
+        if (node.kids.empty() || !static_type(node.kids[0], &base)) return false;
+        if (node.op == TArrow) {
+            if (base.pointers < 1) return false;
+            base = peel_array(base);
+        }
+        if (base.base != 3 || base.struct_id < 0 || base.struct_id >= static_cast<int>(structs.size())) return false;
+        for (const Field& field : structs[static_cast<size_t>(base.struct_id)].fields)
+            if (field.name == node.text) {
+                *out = field.type;
+                return true;
+            }
+        return false;
+    }
+    case Node::Index: {
+        Type base;
+        if (node.kids.empty() || !static_type(node.kids[0], &base)) return false;
+        *out = peel_array(base);
+        return true;
+    }
+    case Node::Unary: {
+        if (node.op == TEnd) {
+            *out = node.type;
+            return true;
+        }
+        Type inner;
+        if (node.kids.empty() || !static_type(node.kids[0], &inner)) return false;
+        if (node.op == TStar) {
+            inner.is_ref = false;
+            *out = peel_array(inner);
+            return true;
+        }
+        if (node.op == TAmp) {
+            inner.is_ref = false;
+            if (inner.is_array()) {
+                inner = peel_array(inner);
+            }
+            ++inner.pointers;
+            *out = inner;
+            return true;
+        }
+        return false;
+    }
+    case Node::Call:
+        if (node.number == 1) {
+            *out = node.type;
+            return true;
+        }
+        if (!node.text.empty()) {
+            for (const FuncDecl& fn : funcs)
+                if (fn.name == node.text) {
+                    *out = fn.ret;
+                    return true;
+                }
+        }
+        return false;
+    default:
+        return false;
+    }
+}
+
+bool Parser::parse_call_args(std::vector<Node>* args) {
+    if (accept(TRParen)) return true;
+    do {
+        Node arg;
+        if (!parse_expr(1, &arg)) return false;
+        args->push_back(std::move(arg));
+    } while (accept(TComma));
+    return expect(TRParen, "')'");
+}
+
+static bool has_effects(const Node& node) {
+    if (node.kind == Node::Call || node.kind == Node::Assign) return true;
+    if (node.kind == Node::Unary && (node.op == TPlusPlus || node.op == TMinusMinus)) return true;
+    for (const Node& kid : node.kids)
+        if (has_effects(kid)) return true;
+    return false;
+}
+
+// "Base::f(args)": a direct call of that class's function on this.
+bool Parser::qualified_call(Node* out, int cls, const std::string& name) {
+    if (!expect(TLParen, "'('")) return false;
+    std::vector<Node> args;
+    if (!parse_call_args(&args)) return false;
+    const Method* m = find_method(cls, name, args.size());
+    if (m == nullptr) {
+        error = "no member function " + name;
+        return false;
+    }
+    if (cur_class < 0) {
+        error = "a qualified member call needs this";
+        return false;
+    }
+    Node call;
+    call.kind = Node::Call;
+    call.text = m->qname;
+    call.number = 1;
+    call.type = m->ret;
+    Node self;
+    self.kind = Node::Name;
+    self.text = "this";
+    call.kids.push_back(std::move(self));
+    for (Node& arg : args) call.kids.push_back(std::move(arg));
+    *out = std::move(call);
+    return true;
+}
+
+// object.name(args) or object->name(args), with '(' already read. A virtual
+// function reached through a pointer or reference is called through the
+// object's table: the table pointer is the first field, the slot is an index.
+bool Parser::method_call(Node* out, Node object, bool arrow, const std::string& name) {
+    Type ot;
+    if (!static_type(object, &ot)) {
+        error = "cannot tell the class of the object for " + name;
+        return false;
+    }
+    int sid = -1;
+    if (arrow && ot.pointers == 1) sid = ot.struct_id;
+    if (!arrow && ot.pointers == 0 && !ot.is_array()) sid = ot.struct_id;
+    if (sid < 0 || ot.base != 3) {
+        error = "member call on something that is not a class object: " + name;
+        return false;
+    }
+    std::vector<Node> args;
+    if (!parse_call_args(&args)) return false;
+    const Method* m = find_method(sid, name, args.size());
+    if (m == nullptr) {
+        error = "no member function " + name + " with " + std::to_string(args.size()) + " arguments";
+        return false;
+    }
+    const bool dynamic = m->is_virtual && (arrow || ot.is_ref || (object.kind == Node::Unary && object.op == TStar));
+    Node self;
+    if (arrow) {
+        self = std::move(object);
+    } else {
+        self.kind = Node::Unary;
+        self.op = TAmp;
+        self.kids.push_back(std::move(object));
+    }
+    Node call;
+    call.kind = Node::Call;
+    call.number = 1;
+    call.type = m->ret;
+    if (!dynamic) {
+        call.text = m->qname;
+    } else {
+        if (has_effects(self)) {
+            error = "a virtual call needs an object expression without side effects";
+            return false;
+        }
+        FuncType ft;
+        ft.ret = m->ret;
+        Type self_ptr;
+        self_ptr.base = 3;
+        self_ptr.struct_id = m->owner;
+        self_ptr.pointers = 1;
+        ft.params.push_back(self_ptr);
+        for (const Type& param : m->params) ft.params.push_back(param);
+        Type fp;
+        fp.base = 1;
+        fp.pointers = 1;
+        fp.func_id = static_cast<int>(func_types.size());
+        func_types.push_back(ft);
+        Node table;
+        table.kind = Node::Field;
+        table.op = TArrow;
+        table.text = "__vptr";
+        table.kids.push_back(self);
+        Node slot;
+        slot.kind = Node::IntLit;
+        slot.number = static_cast<uint64_t>(m->slot);
+        slot.type.base = 1;
+        Node entry_addr;
+        entry_addr.kind = Node::Binary;
+        entry_addr.op = TPlus;
+        entry_addr.kids.push_back(std::move(table));
+        entry_addr.kids.push_back(std::move(slot));
+        Node entry;
+        entry.kind = Node::Unary;
+        entry.op = TStar;
+        entry.kids.push_back(std::move(entry_addr));
+        Node target;
+        target.kind = Node::Unary;
+        target.type = fp;
+        target.kids.push_back(std::move(entry));
+        call.kids.push_back(std::move(target));
+    }
+    call.kids.push_back(std::move(self));
+    for (Node& arg : args) call.kids.push_back(std::move(arg));
+    *out = std::move(call);
+    return true;
 }
 
 bool Parser::parse_unary(Node* out) {
@@ -2042,6 +2717,36 @@ bool Parser::parse_unary(Node* out) {
             name += "::" + cur().text;
             next();
         }
+        const size_t colons = name.find("::");
+        if (colons != std::string::npos && class_name_text(name.substr(0, colons))) {
+            return qualified_call(out, find_struct(name.substr(0, colons)), name.substr(colons + 2)) &&
+                   parse_postfix(out);
+        }
+        if (cur_class >= 0 && !local_visible(name) && colons == std::string::npos) {
+            const StructDef& def = structs[static_cast<size_t>(cur_class)];
+            bool is_field = false;
+            for (const Field& field : def.fields)
+                if (field.name == name) is_field = true;
+            Node self;
+            self.kind = Node::Name;
+            self.text = "this";
+            if (is_field) {
+                out->kind = Node::Field;
+                out->op = TArrow;
+                out->text = name;
+                out->kids.push_back(std::move(self));
+                return parse_postfix(out);
+            }
+            if (is(TLParen) && !def.methods.empty()) {
+                bool is_method = false;
+                for (const Method& m : def.methods)
+                    if (m.name == name) is_method = true;
+                if (is_method) {
+                    next();
+                    return method_call(out, std::move(self), true, name) && parse_postfix(out);
+                }
+            }
+        }
         if (name == "va_arg" && accept(TLParen)) {
             Node ap;
             if (!parse_expr(1, &ap)) return false;
@@ -2080,7 +2785,8 @@ bool Parser::parse_unary(Node* out) {
         const bool type_ahead = ahead == TInt || ahead == TChar || ahead == TVoid || ahead == TShort || ahead == TUnsigned ||
                                 ahead == TSigned || ahead == TLong || ahead == TFloat || ahead == TDouble || ahead == TStruct ||
                                 ahead == TUnion || ahead == TEnum ||
-                                (ahead == TIdent && typedefs.find(tokens[at + 1].text) != typedefs.end());
+                                (ahead == TIdent && typedefs.find(tokens[at + 1].text) != typedefs.end()) ||
+                                (ahead == TIdent && class_name_at(at + 1));
         if (type_ahead) {
             next();
             Type ty;
@@ -2110,6 +2816,10 @@ bool Parser::parse_unary(Node* out) {
         error = "expected an expression";
         return false;
     }
+    return parse_postfix(out);
+}
+
+bool Parser::parse_postfix(Node* out) {
     while (is(TLBrack) || is(TDot) || is(TArrow) || is(TLParen) || is(TPlusPlus) || is(TMinusMinus)) {
         if (is(TPlusPlus) || is(TMinusMinus)) {
             Node wrapped;
@@ -2159,6 +2869,21 @@ bool Parser::parse_unary(Node* out) {
             wrapped.op = op;
             wrapped.text = cur().text;
             next();
+            if (is(TLParen)) {
+                Type object_type;
+                if (static_type(*out, &object_type) && object_type.base == 3 && object_type.struct_id >= 0) {
+                    const int sid = object_type.struct_id;
+                    bool is_method = false;
+                    for (const Method& m : structs[static_cast<size_t>(sid)].methods)
+                        if (m.name == wrapped.text) is_method = true;
+                    if (is_method) {
+                        next();
+                        Node object = std::move(*out);
+                        if (!method_call(out, std::move(object), op == TArrow, wrapped.text)) return false;
+                        continue;
+                    }
+                }
+            }
             wrapped.kids.push_back(std::move(*out));
             *out = std::move(wrapped);
         }
@@ -2258,6 +2983,10 @@ struct Gen {
     int sret_dest_off = 0;
     bool save_nv = false;
     bool optimize = false;
+    // Offset and line (of the preprocessed text) for each statement of the
+    // function being generated, when line records are wanted.
+    bool debug_lines = false;
+    std::vector<std::pair<uint32_t, int>> lines;
     std::vector<uint8_t> extra_pops;
     std::map<std::string, size_t> labels;
     std::vector<std::pair<std::string, size_t>> gotos;
@@ -3717,6 +4446,8 @@ bool Gen::gen_expr(const Node& node) {
 
 bool Gen::gen_stmt(const Node& node) {
     temp_depth = 0;
+    if (debug_lines && node.line > 0 && node.kind != Node::Block)
+        lines.push_back({static_cast<uint32_t>(text.size()), node.line});
     if (node.kind == Node::Block) {
         const bool scoped = node.text == "scope";
         if (scoped) push_scope();
@@ -4142,6 +4873,7 @@ void inline_node(Node* node, const std::vector<FuncDecl>& funcs) {
         for (const FuncDecl& item : funcs)
             if (item.name == node->text && item.defined) fn = &item;
         const bool simple = fn != nullptr && !fn->vararg && !fn->sret &&
+                            (fn->param_names.empty() || fn->param_names[0] != "this") &&
                             static_cast<int>(node->kids.size()) == fn->nparams &&
                             static_cast<int>(fn->locals.size()) == fn->nparams;
         bool args_ok = simple;
@@ -4229,6 +4961,8 @@ bool try_inline_stmt(Node* stmt, FuncDecl* caller, const std::vector<FuncDecl>& 
     for (const FuncDecl& item : funcs)
         if (item.name == call->text && item.defined) fn = &item;
     if (fn == nullptr || fn->vararg || fn->sret || static_cast<int>(call->kids.size()) != fn->nparams) return false;
+    // Member functions are not inlined: their body names this->field.
+    if (!fn->param_names.empty() && fn->param_names[0] == "this") return false;
     if (!no_loop(fn->body) || contains_call(fn->body)) return false;
     std::map<std::string, std::string> ren;
     Node block;
@@ -4314,10 +5048,22 @@ int struct_arg_space(const Node& node, const std::vector<FuncDecl>& funcs, const
     return best;
 }
 
+// Where the lines of the preprocessed text came from, for the line table.
+struct LineSource {
+    bool enabled = false;
+    const std::vector<std::pair<int, int>>* origin = nullptr;
+    const std::vector<std::string>* files = nullptr;
+};
+
+void put32(std::vector<uint8_t>* out, uint32_t value) {
+    for (int i = 0; i < 4; ++i) out->push_back(static_cast<uint8_t>(value >> (8 * i)));
+}
+
 bool emit_functions(std::vector<FuncDecl>& funcs, const std::vector<StructDef>& structs,
                     const std::vector<Global>& globals, const std::vector<FuncType>& func_types, bool optimize,
-                    int opt_level, std::string* error, CompileOutput* out) {
+                    int opt_level, const LineSource& line_source, std::string* error, CompileOutput* out) {
     Gen gen(funcs);
+    gen.debug_lines = line_source.enabled;
     gen.structs = &structs;
     gen.globals = &globals;
     gen.func_types = &func_types;
@@ -4328,6 +5074,7 @@ bool emit_functions(std::vector<FuncDecl>& funcs, const std::vector<StructDef>& 
         uint32_t size = 0;
         bool exported = false;
         bool is_static = false;
+        std::vector<std::pair<uint32_t, int>> lines;
     };
     std::vector<PlacedFn> placed;
     std::vector<uint32_t> unwind_offs;
@@ -4433,6 +5180,8 @@ bool emit_functions(std::vector<FuncDecl>& funcs, const std::vector<StructDef>& 
         gen.struct_copy = -((((local_end + 7) & ~7) + 64 + copy_bytes));
         gen.frame = frame;
         const uint32_t start = static_cast<uint32_t>(gen.text.size());
+        gen.lines.clear();
+        if (gen.debug_lines) gen.lines.push_back({start, fn.line});
         uint8_t cursor = 0;
         auto mark = [&](uint8_t bytes) { cursor = static_cast<uint8_t>(cursor + bytes); return cursor; };
         std::vector<UnwindPush> pushes;
@@ -4562,8 +5311,10 @@ bool emit_functions(std::vector<FuncDecl>& funcs, const std::vector<StructDef>& 
             *error = gen.error.empty() ? "codegen failed" : gen.error;
             return false;
         }
+        if (gen.debug_lines) gen.lines.push_back({static_cast<uint32_t>(gen.text.size()), fn.end_line});
         gen.epilogue();
-        placed.push_back({fn.symbol.empty() ? fn.name : fn.symbol, start, static_cast<uint32_t>(gen.text.size()) - start, fn.exported, fn.is_static});
+        placed.push_back({fn.symbol.empty() ? fn.name : fn.symbol, start, static_cast<uint32_t>(gen.text.size()) - start, fn.exported, fn.is_static, {}});
+        placed.back().lines = gen.lines;
         for (const auto& site : gen.gotos) {
             const auto found = gen.labels.find(site.first);
             if (found == gen.labels.end()) {
@@ -4628,6 +5379,19 @@ bool emit_functions(std::vector<FuncDecl>& funcs, const std::vector<StructDef>& 
     };
     int next_section = 2;
     for (const Global& global : globals) {
+        if (global.vtable) {
+            // Read-only: one 8-byte slot per virtual function, filled by an
+            // ADDR64 relocation. A pure virtual slot stays zero.
+            while (gen.rdata.size() % 8 != 0) gen.rdata.push_back(0);
+            const uint32_t at = static_cast<uint32_t>(gen.rdata.size());
+            for (size_t i = 0; i < global.slots.size(); ++i) {
+                if (!global.slots[i].empty())
+                    gen.relocs.push_back({1, at + static_cast<uint32_t>(i * 8), global.slots[i], kRelAmd64Addr64});
+                for (int k = 0; k < 8; ++k) gen.rdata.push_back(0);
+            }
+            add_sym(global.name, at, 0, kClassExternal, 0);
+            continue;
+        }
         const int size = std::max(1, gen.size_of(global.type));
         const int align = global.type.pointer() ? 8 : 4;
         if (global.bss) {
@@ -4665,7 +5429,7 @@ bool emit_functions(std::vector<FuncDecl>& funcs, const std::vector<StructDef>& 
     for (Sym& sym : symbols) {
         for (const Global& global : globals) {
             if (sym.name != global.name) continue;
-            sym.section = static_cast<int16_t>(global.bss ? bss_section : data_section);
+            sym.section = static_cast<int16_t>(global.vtable ? rdata_section : global.bss ? bss_section : data_section);
         }
     }
     for (const auto& str : gen.string_at) add_sym(str.first, str.second, static_cast<int16_t>(rdata_section), kClassStatic, 0);
@@ -4710,11 +5474,117 @@ bool emit_functions(std::vector<FuncDecl>& funcs, const std::vector<StructDef>& 
     add_data(".rdata", gen.rdata);
     add_data(".xdata", gen.xdata);
     add_data(".pdata", gen.pdata);
+    int debug_index = -1;
+    if (line_source.enabled && line_source.origin != nullptr && line_source.files != nullptr) {
+        // CodeView C13 subsections in .debug$S: signature 4, then one
+        // DEBUG_S_LINES (0xF2) per function, DEBUG_S_STRINGTABLE (0xF3) and
+        // DEBUG_S_FILECHKSMS (0xF4). A LINES header names its code range by a
+        // SECREL and a SECTION relocation against the function symbol.
+        std::vector<uint8_t> cv;
+        std::vector<Relocation> cv_relocs;
+        std::vector<std::string> used_files;
+        auto table_index = [&](int file) {
+            for (size_t k = 0; k < used_files.size(); ++k)
+                if (used_files[k] == (*line_source.files)[static_cast<size_t>(file)]) return static_cast<uint32_t>(k);
+            used_files.push_back((*line_source.files)[static_cast<size_t>(file)]);
+            return static_cast<uint32_t>(used_files.size() - 1);
+        };
+        put32(&cv, 4);
+        for (const PlacedFn& fn : placed) {
+            // (file table index, offset in function, line) with same-line and same-offset entries merged.
+            struct Entry {
+                uint32_t file;
+                uint32_t offset;
+                uint32_t line;
+            };
+            std::vector<Entry> entries;
+            for (const auto& item : fn.lines) {
+                const int out_line = item.second;
+                if (out_line <= 0 || static_cast<size_t>(out_line) > line_source.origin->size()) continue;
+                const auto& where = (*line_source.origin)[static_cast<size_t>(out_line) - 1];
+                if (where.second <= 0) continue;
+                Entry entry{table_index(where.first), item.first - fn.start, static_cast<uint32_t>(where.second)};
+                if (!entries.empty() && entries.back().offset == entry.offset) entries.pop_back();
+                if (!entries.empty() && entries.back().file == entry.file && entries.back().line == entry.line) continue;
+                entries.push_back(entry);
+            }
+            if (entries.empty()) continue;
+            std::vector<uint8_t> payload;
+            put32(&payload, 0);
+            payload.push_back(0);
+            payload.push_back(0);
+            payload.push_back(0);
+            payload.push_back(0);
+            put32(&payload, fn.size);
+            for (size_t k = 0; k < entries.size();) {
+                size_t end = k;
+                while (end < entries.size() && entries[end].file == entries[k].file) ++end;
+                put32(&payload, entries[k].file * 8u);
+                put32(&payload, static_cast<uint32_t>(end - k));
+                put32(&payload, 12u + static_cast<uint32_t>(end - k) * 8u);
+                for (size_t e = k; e < end; ++e) {
+                    put32(&payload, entries[e].offset);
+                    // 24 bits of line, 7 bits of extra lines, then the statement bit.
+                    put32(&payload, (entries[e].line & 0x00FFFFFFu) | 0x80000000u);
+                }
+                k = end;
+            }
+            put32(&cv, 0xF2);
+            put32(&cv, static_cast<uint32_t>(payload.size()));
+            const auto sym = index.find(fn.name);
+            if (sym == index.end()) {
+                *error = "missing symbol " + fn.name;
+                return false;
+            }
+            Relocation secrel;
+            secrel.offset = static_cast<uint32_t>(cv.size());
+            secrel.symbol = sym->second;
+            secrel.type = kRelAmd64Secrel;
+            Relocation section_rel = secrel;
+            section_rel.offset += 4;
+            section_rel.type = kRelAmd64Section;
+            cv_relocs.push_back(secrel);
+            cv_relocs.push_back(section_rel);
+            cv.insert(cv.end(), payload.begin(), payload.end());
+        }
+        if (!used_files.empty()) {
+            std::vector<uint8_t> names(1, 0);
+            std::vector<uint8_t> sums;
+            for (const std::string& file : used_files) {
+                put32(&sums, static_cast<uint32_t>(names.size()));
+                sums.push_back(0);
+                sums.push_back(0);
+                sums.push_back(0);
+                sums.push_back(0);
+                names.insert(names.end(), file.begin(), file.end());
+                names.push_back(0);
+            }
+            while (names.size() % 4 != 0) names.push_back(0);
+            put32(&cv, 0xF4);
+            put32(&cv, static_cast<uint32_t>(sums.size()));
+            cv.insert(cv.end(), sums.begin(), sums.end());
+            put32(&cv, 0xF3);
+            put32(&cv, static_cast<uint32_t>(names.size()));
+            cv.insert(cv.end(), names.begin(), names.end());
+            Section debug;
+            debug.name = ".debug$S";
+            debug.virtual_size = static_cast<uint32_t>(cv.size());
+            debug.data = std::move(cv);
+            debug.relocations = std::move(cv_relocs);
+            // Initialized data, readable, discardable, 1-byte alignment.
+            debug.characteristics = kScnCntInitData | kScnMemRead | 0x02000000u | kScnAlign1;
+            object.sections.push_back(std::move(debug));
+            debug_index = static_cast<int>(object.sections.size()) - 1;
+        }
+    }
+    (void)debug_index;
     for (const Gen::NamedReloc& named : gen.relocs) {
         // section 0 text, 1 rdata (unused), 2 pdata in the Gen numbering.
         int sec = 0;
         if (named.section == 2) {
             sec = pdata_section - 1;
+        } else if (named.section == 1) {
+            sec = rdata_section - 1;
         }
         const auto found = index.find(named.symbol);
         if (found == index.end()) {
@@ -4755,6 +5625,7 @@ Result<CompileOutput> compile_c(const CompileInput& input) {
         else pp.macros[def.substr(0, eq)] = macro;
     }
     const std::string stripped = strip_comments(input.source);
+    pp.files.push_back(input.name);
     const std::string expanded = pp.run(stripped, "");
     if (!pp.error.empty()) return Result<CompileOutput>::fail(pp.error);
     std::string lex_error;
@@ -4762,10 +5633,14 @@ Result<CompileOutput> compile_c(const CompileInput& input) {
     if (!lex_error.empty()) return Result<CompileOutput>::fail(lex_error);
     Parser parser{tokens, 0, {}, {}, {}, {}, {}, {}, {}, {}, nullptr, {}, {}};
     if (!parser.parse()) return Result<CompileOutput>::fail(parser.error.empty() ? "parse failed" : parser.error);
+    LineSource line_source;
+    line_source.enabled = input.debug_lines;
+    line_source.origin = &pp.origin;
+    line_source.files = &pp.files;
     CompileOutput output;
     std::string error;
     if (!emit_functions(parser.funcs, parser.structs, parser.globals, parser.func_types, input.optimize, input.opt_level,
-                        &error, &output))
+                        line_source, &error, &output))
         return Result<CompileOutput>::fail(error);
     return Result<CompileOutput>::success(std::move(output));
 }

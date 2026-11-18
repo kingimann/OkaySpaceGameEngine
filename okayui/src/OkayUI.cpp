@@ -514,6 +514,9 @@ struct VisLabel {
     }
 };
 
+// Width of a label's visible part (what follows "##" is not shown, so it takes no room).
+inline float visW(const char* s) { return s && *s ? labelW(VisLabel(s).b) : 0.0f; }
+
 // The indented content left edge and full indented content width.
 inline float leftEdge() { return g_lay.ox + g_lay.indent; }
 inline float fullW()    { return g_lay.contentW - g_lay.indent; }
@@ -1107,9 +1110,9 @@ bool Button(int id, float x, float y, float w, float h, const char* label) {
     // Centered label.
     if (label && *label) {
         const float s  = g_theme.textScale;
-        const float tw = fMeasure(label) * s;
+        const float tw = visW(label);
         const float th = fH() * s;
-        drawText(x + (w - tw) * 0.5f, y + (h - th) * 0.5f, label, s, g_theme.text);
+        drawText(x + (w - tw) * 0.5f, y + (h - th) * 0.5f, VisLabel(label).b, s, g_theme.text);
     }
     return clicked;
 }
@@ -1129,7 +1132,7 @@ void Panel(float x, float y, float w, float h) { panelColored(x, y, w, h, pick(C
 bool Checkbox(int id, float x, float y, float size, const char* label, bool* value) {
     if (!value) return false;
     // The label is part of the target (clicking the text toggles, like every desktop toolkit).
-    const bool inside = hit(x, y, size + (label && *label ? 8.0f + labelW(label) : 0.0f), size);
+    const bool inside = hit(x, y, size + (label && *label ? 8.0f + visW(label) : 0.0f), size);
     g_lastId = id; if (inside) g_hot = id;
 
     bool changed = false;
@@ -1161,14 +1164,14 @@ bool Checkbox(int id, float x, float y, float size, const char* label, bool* val
     if (label && *label) {
         const float s  = g_theme.textScale;
         const float th = fH() * s;
-        drawText(x + size + 8.0f, y + (size - th) * 0.5f, label, s, g_theme.text);
+        drawText(x + size + 8.0f, y + (size - th) * 0.5f, VisLabel(label).b, s, g_theme.text);
     }
     return changed;
 }
 
 bool ToggleSwitch(int id, float x, float y, float w, float h, const char* label, bool* value) {
     if (!value || w <= 0.0f || h <= 0.0f) return false;
-    const bool inside = hit(x, y, w + (label && *label ? 8.0f + labelW(label) : 0.0f), h);
+    const bool inside = hit(x, y, w + (label && *label ? 8.0f + visW(label) : 0.0f), h);
     g_lastId = id; if (inside) g_hot = id;
 
     bool changed = false;
@@ -1192,7 +1195,7 @@ bool ToggleSwitch(int id, float x, float y, float w, float h, const char* label,
     // Label to the right of the switch, vertically centered.
     if (label && *label) {
         const float s = g_theme.textScale, th = fH() * s;
-        drawText(x + w + 8.0f, y + (h - th) * 0.5f, label, s, g_theme.text);
+        drawText(x + w + 8.0f, y + (h - th) * 0.5f, VisLabel(label).b, s, g_theme.text);
     }
     return changed;
 }
@@ -1266,7 +1269,7 @@ void ProgressBar(float x, float y, float w, float h, float t) {
 
 bool RadioButton(int id, float x, float y, float size, const char* label, int* value, int option) {
     if (!value) return false;
-    const bool inside = hit(x, y, size + (label && *label ? 8.0f + labelW(label) : 0.0f), size);
+    const bool inside = hit(x, y, size + (label && *label ? 8.0f + visW(label) : 0.0f), size);
     g_lastId = id; if (inside) g_hot = id;
 
     bool changed = false;
@@ -1289,7 +1292,7 @@ bool RadioButton(int id, float x, float y, float size, const char* label, int* v
     if (label && *label) {
         const float s  = g_theme.textScale;
         const float th = fH() * s;
-        drawText(x + size + 8.0f, y + (size - th) * 0.5f, label, s, g_theme.text);
+        drawText(x + size + 8.0f, y + (size - th) * 0.5f, VisLabel(label).b, s, g_theme.text);
     }
     return changed;
 }
@@ -1312,8 +1315,8 @@ bool Tab(int id, float x, float y, float w, float h, const char* label, int* cur
         const unsigned char* fill = selected ? g_theme.accent : withAlpha(white, inside ? 0.10f : 0.05f, tmp);
         rrect(x, y, w, h, h * 0.5f, fill);
         if (label && *label) {
-            const float s = g_theme.textScale, tw = fMeasure(label) * s, th = fH() * s;
-            drawText(x + (w - tw) * 0.5f, y + (h - th) * 0.5f, label, s, g_theme.text);
+            const float s = g_theme.textScale, tw = visW(label), th = fH() * s;
+            drawText(x + (w - tw) * 0.5f, y + (h - th) * 0.5f, VisLabel(label).b, s, g_theme.text);
         }
         return *current == index;
     }
@@ -1326,9 +1329,9 @@ bool Tab(int id, float x, float y, float w, float h, const char* label, int* cur
     if (selected) quad(x, y, w, 3.0f, g_theme.accent);   // accent strip on the active tab
     if (label && *label) {
         const float s  = g_theme.textScale;
-        const float tw = fMeasure(label) * s;
+        const float tw = visW(label);
         const float th = fH() * s;
-        drawText(x + (w - tw) * 0.5f, y + (h - th) * 0.5f, label, s, g_theme.text);
+        drawText(x + (w - tw) * 0.5f, y + (h - th) * 0.5f, VisLabel(label).b, s, g_theme.text);
     }
     return *current == index;
 }
@@ -2664,8 +2667,8 @@ void SeparatorText(const char* label) {
     const float h = rowH();
     float x, y; place(fullW(), h, x, y);
     const float ty = y + (h - textH()) * 0.5f;
-    const float lw = label && *label ? labelW(label) : 0.0f;
-    if (lw > 0.0f) drawText(x, ty, label, g_theme.textScale, g_theme.text);
+    const float lw = label && *label ? visW(label) : 0.0f;
+    if (lw > 0.0f) drawText(x, ty, VisLabel(label).b, g_theme.textScale, g_theme.text);
     // A line filling the space to the right of the label.
     const float lineX = x + (lw > 0.0f ? lw + 8.0f : 0.0f);
     const float lineW = (x + fullW()) - lineX;
@@ -2714,14 +2717,14 @@ void PopID() { popIdSeed(); }
 
 bool Button(const char* label) {
     if (!g_lay.active) return false;
-    const float w = labelW(label) + 24.0f, h = rowH();
+    const float w = visW(label) + 24.0f, h = rowH();
     float x, y; place(w, h, x, y);
     return Button(hashLabel(label), x, y, w, h, label);
 }
 
 bool SmallButton(const char* label) {
     if (!g_lay.active) return false;
-    const float w = labelW(label) + 12.0f, h = textH() + 6.0f;   // tight padding
+    const float w = visW(label) + 12.0f, h = textH() + 6.0f;   // tight padding
     float x, y; place(w, h, x, y);
     return Button(hashLabel(label), x, y, w, h, label);
 }
@@ -2771,7 +2774,7 @@ bool BeginTabItem(const char* label, bool* open, int flags) {
     TabBarCtx& tb = g_tabBar;
     const int id = (hashLabel(label) ^ tb.id) | 1;
     const float closeW = open ? 16.0f : 0.0f;
-    const float w = labelW(label) + (g_look ? 28.0f : 20.0f) + closeW, gap = g_look ? 6.0f : 2.0f;
+    const float w = visW(label) + (g_look ? 28.0f : 20.0f) + closeW, gap = g_look ? 6.0f : 2.0f;
     float x;
     if (flags & Tab_Trailing) { tb.tr -= w; x = tb.tr; tb.tr -= gap; }
     else { x = tb.cx; tb.cx += w + gap; }
@@ -2801,7 +2804,7 @@ bool TabItemButton(const char* label, int flags) {
     if (!g_lay.active || !g_tabBar.active || !label) return false;
     TabBarCtx& tb = g_tabBar;
     const int id = (hashLabel(label) ^ tb.id ^ 0x7bb) | 1;
-    const float w = labelW(label) + 20.0f, gap = g_look ? 6.0f : 2.0f;
+    const float w = visW(label) + 20.0f, gap = g_look ? 6.0f : 2.0f;
     float x;
     if (flags & Tab_Trailing) { tb.tr -= w; x = tb.tr; tb.tr -= gap; } else { x = tb.cx; tb.cx += w + gap; }
     const bool clicked = Button(id, x, tb.y, w, tb.h, label);
@@ -2855,7 +2858,7 @@ void PopStyleVar(int count) {
 static bool Checkbox_raw(const char* label, bool* value) {
     if (!g_lay.active || !value) return false;
     const float h = rowH(), sz = textH() + 6.0f;
-    const float w = sz + 8.0f + labelW(label);
+    const float w = sz + 8.0f + visW(label);
     float x, y; place(w, h, x, y);
     return Checkbox(hashLabel(label), x, y + (h - sz) * 0.5f, sz, label, value);
 }
@@ -2863,7 +2866,7 @@ static bool Checkbox_raw(const char* label, bool* value) {
 static bool RadioButton_raw(const char* label, int* value, int option) {
     if (!g_lay.active || !value) return false;
     const float h = rowH(), sz = textH() + 6.0f;
-    const float w = sz + 8.0f + labelW(label);
+    const float w = sz + 8.0f + visW(label);
     float x, y; place(w, h, x, y);
     return RadioButton(hashLabel(label), x, y + (h - sz) * 0.5f, sz, label, value, option);
 }
@@ -2872,7 +2875,7 @@ static bool ToggleSwitch_raw(const char* label, bool* value) {
     if (!g_lay.active || !value) return false;
     const float h = rowH();
     const float sh = textH() + 4.0f, sw = sh * 1.9f;   // switch pill size (track ~1.9:1)
-    const float w = sw + 8.0f + labelW(label);
+    const float w = sw + 8.0f + visW(label);
     float x, y; place(w, h, x, y);
     return ToggleSwitch(hashLabel(label), x, y + (h - sh) * 0.5f, sw, sh, label, value);
 }
@@ -2908,7 +2911,7 @@ int numberEdit(int id, float x, float y, float w, float h, bool inside, double c
 static bool SliderFloat_raw(const char* label, float* value, float minV, float maxV) {
     if (!g_lay.active || !value) return false;
     const float h = rowH();
-    const float lw = labelW(label) > 0.0f ? labelW(label) + 8.0f : 0.0f;
+    const float lw = visW(label) > 0.0f ? visW(label) + 8.0f : 0.0f;
     const float w = availW();
     float x, y; place(w, h, x, y);
     float ctrlW = w - lw; if (ctrlW < 24.0f) ctrlW = 24.0f;
@@ -2916,13 +2919,13 @@ static bool SliderFloat_raw(const char* label, float* value, float minV, float m
         double typed = 0.0;
         const int e = numberEdit(hashLabel(label), x, y, ctrlW, h, hit(x, y, ctrlW, h), (double)*value, false, (double)minV, (double)maxV, &typed);
         if (e != 0) {
-            if (lw > 0.0f) drawText(x + ctrlW + 8.0f, y + (h - textH()) * 0.5f, label, g_theme.textScale, g_theme.text);
+            if (lw > 0.0f) drawText(x + ctrlW + 8.0f, y + (h - textH()) * 0.5f, VisLabel(label).b, g_theme.textScale, g_theme.text);
             if (e == 2 && (float)typed != *value) { *value = (float)typed; return true; }
             return false;
         }
     }
     const bool ch = Slider(hashLabel(label), x, y, ctrlW, h, value, minV, maxV);
-    if (lw > 0.0f) drawText(x + ctrlW + 8.0f, y + (h - textH()) * 0.5f, label, g_theme.textScale, g_theme.text);
+    if (lw > 0.0f) drawText(x + ctrlW + 8.0f, y + (h - textH()) * 0.5f, VisLabel(label).b, g_theme.textScale, g_theme.text);
     return ch;
 }
 
@@ -2971,7 +2974,7 @@ static bool Knob_raw(const char* label, float* value, float minV, float maxV, fl
     if (!g_lay.active || !value) return false;
     const int id = hashLabel(label);
     const float d = size > 0.0f ? size : rowH() * 2.0f;
-    const float lw = labelW(label) > 0.0f ? labelW(label) + 8.0f : 0.0f;
+    const float lw = visW(label) > 0.0f ? visW(label) + 8.0f : 0.0f;
     float x, y; place(d + lw, d, x, y);
     const float cx = x + d * 0.5f, cy = y + d * 0.5f, rad = d * 0.5f - 2.0f;
     const bool inside = hit(x, y, d, d);
@@ -2993,7 +2996,7 @@ static bool Knob_raw(const char* label, float* value, float minV, float maxV, fl
     float span = maxV - minV; float t = span != 0.0f ? clamp01((*value - minV) / span) : 0.0f;
     const float a = 2.35619f + t * 4.71239f;   // 135deg + t*270deg (radians)
     line(cx, cy, cx + SDL_cosf(a) * rad, cy + SDL_sinf(a) * rad, 2.5f, g_theme.accent);
-    if (lw > 0.0f) drawText(x + d + 8.0f, y + (d - textH()) * 0.5f, label, g_theme.textScale, g_theme.text);
+    if (lw > 0.0f) drawText(x + d + 8.0f, y + (d - textH()) * 0.5f, VisLabel(label).b, g_theme.textScale, g_theme.text);
     return changed;
 }
 
@@ -3024,13 +3027,13 @@ static bool plotFrame(const char* label, const float* values, int count,
                       float& scaleMin, float& scaleMax, float height,
                       float& px, float& py, float& pw, float& ph) {
     if (!g_lay.active || !values || count <= 0) return false;
-    const float lw = labelW(label) > 0.0f ? labelW(label) + 8.0f : 0.0f;
+    const float lw = visW(label) > 0.0f ? visW(label) + 8.0f : 0.0f;
     const float h = height > 0.0f ? height : rowH() * 2.4f;
     const float w = availW();
     float x, y; place(w, h, x, y);
     pw = w - lw; if (pw < 24.0f) pw = 24.0f;
     px = x; py = y; ph = h;
-    if (lw > 0.0f) drawText(x + pw + 8.0f, y + (h - textH()) * 0.5f, label, g_theme.textScale, g_theme.text);
+    if (lw > 0.0f) drawText(x + pw + 8.0f, y + (h - textH()) * 0.5f, VisLabel(label).b, g_theme.textScale, g_theme.text);
     if (scaleMin >= scaleMax) {              // auto-range from the data
         scaleMin = values[0]; scaleMax = values[0];
         for (int i = 1; i < count; ++i) { if (values[i] < scaleMin) scaleMin = values[i];
@@ -3074,8 +3077,8 @@ void LabelText(const char* label, const char* value) {
     float x, y; place(w, h, x, y);
     if (value && *value) drawText(x, y + (h - textH()) * 0.5f, value, g_theme.textScale, g_theme.text);
     if (label && *label) {
-        const float lw = labelW(label);
-        drawText(x + w - lw, y + (h - textH()) * 0.5f, label, g_theme.textScale, g_theme.text);
+        const float lw = visW(label);
+        drawText(x + w - lw, y + (h - textH()) * 0.5f, VisLabel(label).b, g_theme.textScale, g_theme.text);
     }
 }
 
@@ -3130,7 +3133,7 @@ static bool InputInt_raw(const char* label, int* value, int step) {
     if (!g_lay.active || !value) return false;
     const int id = hashLabel(label);
     const float h = rowH();
-    const float lw = labelW(label) > 0.0f ? labelW(label) + 8.0f : 0.0f;
+    const float lw = visW(label) > 0.0f ? visW(label) + 8.0f : 0.0f;
     const float w = availW();
     float x, y; place(w, h, x, y);
     const float btnW = h;                 // square [-]/[+] steppers
@@ -3170,12 +3173,12 @@ bool CollapsingHeader(const char* label, bool defaultOpen) {
     if (g_look) {
         rrect(x, y, w, h, rnd(), inside ? pick(Col_HeaderHovered, g_theme.bgHover) : pick(Col_Header, g_theme.bg));
         chevron(x + 14.0f, y + h * 0.5f, 9.0f, *open, pick(Col_TextDisabled, g_theme.textDim));
-        drawText(x + 28.0f, y + (h - textH()) * 0.5f, label, s, g_theme.text);
+        drawText(x + 28.0f, y + (h - textH()) * 0.5f, VisLabel(label).b, s, g_theme.text);
         return *open;
     }
     quad(x, y, w, h, bg);
     drawText(x + 8.0f, y + (h - textH()) * 0.5f, *open ? "-" : "+", s, g_theme.text);   // expander glyph
-    drawText(x + 8.0f + fCharW() * s * 2.0f, y + (h - textH()) * 0.5f, label, s, g_theme.text);
+    drawText(x + 8.0f + fCharW() * s * 2.0f, y + (h - textH()) * 0.5f, VisLabel(label).b, s, g_theme.text);
     return *open;
 }
 
@@ -3514,7 +3517,7 @@ static bool DragFloat_raw(const char* label, float* v, float speed, float minV, 
     if (!g_lay.active || !v) return false;
     const int id = hashLabel(label);
     const float h = rowH(), s = g_theme.textScale;
-    const float lw = labelW(label) > 0.0f ? labelW(label) + 8.0f : 0.0f;
+    const float lw = visW(label) > 0.0f ? visW(label) + 8.0f : 0.0f;
     const float w = availW();
     float x, y; place(w, h, x, y);
     float ctrlW = w - lw; if (ctrlW < 32.0f) ctrlW = 32.0f;
@@ -3523,7 +3526,7 @@ static bool DragFloat_raw(const char* label, float* v, float speed, float minV, 
         double typed = 0.0;
         const int e = numberEdit(id, x, y, ctrlW, h, inside, (double)*v, false, minV < maxV ? (double)minV : 0.0, minV < maxV ? (double)maxV : 0.0, &typed);
         if (e != 0) {
-            if (lw > 0.0f) drawText(x + ctrlW + 8.0f, y + (h - textH()) * 0.5f, label, s, g_theme.text);
+            if (lw > 0.0f) drawText(x + ctrlW + 8.0f, y + (h - textH()) * 0.5f, VisLabel(label).b, s, g_theme.text);
             if (e == 2 && (float)typed != *v) { *v = (float)typed; return true; }
             return false;
         }
@@ -3537,7 +3540,7 @@ static bool DragFloat_raw(const char* label, float* v, float speed, float minV, 
     }
     char buf[32]; std::snprintf(buf, sizeof(buf), "%.3f", *v);
     drawText(x + 6.0f, y + (h - textH()) * 0.5f, buf, s, g_theme.text);
-    if (lw > 0.0f) drawText(x + ctrlW + 8.0f, y + (h - textH()) * 0.5f, label, s, g_theme.text);
+    if (lw > 0.0f) drawText(x + ctrlW + 8.0f, y + (h - textH()) * 0.5f, VisLabel(label).b, s, g_theme.text);
     return changed;
 }
 
@@ -3545,7 +3548,7 @@ static bool DragInt_raw(const char* label, int* v, float speed, int minV, int ma
     if (!g_lay.active || !v) return false;
     const int id = hashLabel(label);
     const float h = rowH(), s = g_theme.textScale;
-    const float lw = labelW(label) > 0.0f ? labelW(label) + 8.0f : 0.0f;
+    const float lw = visW(label) > 0.0f ? visW(label) + 8.0f : 0.0f;
     const float w = availW();
     float x, y; place(w, h, x, y);
     float ctrlW = w - lw; if (ctrlW < 32.0f) ctrlW = 32.0f;
@@ -3554,7 +3557,7 @@ static bool DragInt_raw(const char* label, int* v, float speed, int minV, int ma
         double typed = 0.0;
         const int e = numberEdit(id, x, y, ctrlW, h, inside, (double)*v, true, minV < maxV ? (double)minV : 0.0, minV < maxV ? (double)maxV : 0.0, &typed);
         if (e != 0) {
-            if (lw > 0.0f) drawText(x + ctrlW + 8.0f, y + (h - textH()) * 0.5f, label, s, g_theme.text);
+            if (lw > 0.0f) drawText(x + ctrlW + 8.0f, y + (h - textH()) * 0.5f, VisLabel(label).b, s, g_theme.text);
             if (e == 2 && (int)typed != *v) { *v = (int)typed; return true; }
             return false;
         }
@@ -3573,7 +3576,7 @@ static bool DragInt_raw(const char* label, int* v, float speed, int minV, int ma
     }
     char buf[32]; std::snprintf(buf, sizeof(buf), "%d", *v);
     drawText(x + 6.0f, y + (h - textH()) * 0.5f, buf, s, g_theme.text);
-    if (lw > 0.0f) drawText(x + ctrlW + 8.0f, y + (h - textH()) * 0.5f, label, s, g_theme.text);
+    if (lw > 0.0f) drawText(x + ctrlW + 8.0f, y + (h - textH()) * 0.5f, VisLabel(label).b, s, g_theme.text);
     return changed;
 }
 
@@ -3585,7 +3588,7 @@ bool dragCells(const char* label, float* fv, int* iv, int n, float speed, float 
     if (!g_lay.active || (!fv && !iv) || n < 1 || n > 4) return false;
     const int base = hashLabel(label);
     const float h = rowH(), s = g_theme.textScale;
-    const float lw = labelW(label) > 0.0f ? labelW(label) + 8.0f : 0.0f;
+    const float lw = visW(label) > 0.0f ? visW(label) + 8.0f : 0.0f;
     const float w = availW();
     float x, y; place(w, h, x, y);
     const float gap = 4.0f;
@@ -3637,7 +3640,7 @@ bool dragCells(const char* label, float* fv, int* iv, int n, float speed, float 
         else std::snprintf(buf, sizeof(buf), "%d", iv[i]);
         drawText(cx + 6.0f, y + (h - textH()) * 0.5f, buf, s, g_theme.text);
     }
-    if (lw > 0.0f) drawText(x + ctrlW + 8.0f, y + (h - textH()) * 0.5f, label, s, g_theme.text);
+    if (lw > 0.0f) drawText(x + ctrlW + 8.0f, y + (h - textH()) * 0.5f, VisLabel(label).b, s, g_theme.text);
     return changed;
 }
 } // namespace
@@ -3671,7 +3674,7 @@ bool sliderCells(const char* label, float* v, int n, float minV, float maxV) {
     if (!g_lay.active || !v || n < 2 || n > 4) return false;
     const int base = hashLabel(label);
     const float h = rowH();
-    const float lw = labelW(label) > 0.0f ? labelW(label) + 8.0f : 0.0f;
+    const float lw = visW(label) > 0.0f ? visW(label) + 8.0f : 0.0f;
     const float w = availW();
     float x, y; place(w, h, x, y);
     const float gap = 4.0f;
@@ -3687,7 +3690,7 @@ bool sliderCells(const char* label, float* v, int n, float minV, float maxV) {
         if (e == 1) continue;
         if (Slider(cid, cx, y, cw, h, &v[i], minV, maxV)) changed = true;
     }
-    if (lw > 0.0f) drawText(x + ctrlW + 8.0f, y + (h - textH()) * 0.5f, label, g_theme.textScale, g_theme.text);
+    if (lw > 0.0f) drawText(x + ctrlW + 8.0f, y + (h - textH()) * 0.5f, VisLabel(label).b, g_theme.textScale, g_theme.text);
     return changed;
 }
 } // namespace
@@ -3700,7 +3703,7 @@ static bool InputFloat_raw(const char* label, float* value, float step) {
     if (!g_lay.active || !value) return false;
     const int id = hashLabel(label);
     const float h = rowH();
-    const float lw = labelW(label) > 0.0f ? labelW(label) + 8.0f : 0.0f;
+    const float lw = visW(label) > 0.0f ? visW(label) + 8.0f : 0.0f;
     const float w = availW();
     float x, y; place(w, h, x, y);
     const float btnW = h;
@@ -3716,7 +3719,7 @@ static bool InputFloat_raw(const char* label, float* value, float step) {
     const bool okStep = std::isfinite(step);
     if (Button(id ^ 0x2d, bx, y, btnW, h, "-") && okStep && std::isfinite(*value - step))              { *value -= step; ch = true; }
     if (Button(id ^ 0x2b, bx + btnW + 4.0f, y, btnW, h, "+") && okStep && std::isfinite(*value + step)) { *value += step; ch = true; }
-    if (lw > 0.0f) drawText(x + fieldW + btnW * 2.0f + 12.0f, y + (h - textH()) * 0.5f, label, g_theme.textScale, g_theme.text);
+    if (lw > 0.0f) drawText(x + fieldW + btnW * 2.0f + 12.0f, y + (h - textH()) * 0.5f, VisLabel(label).b, g_theme.textScale, g_theme.text);
     return ch;
 }
 
@@ -3784,8 +3787,8 @@ static bool colorEditRow(const char* label, float* c, int n, int flags) {
     if (n == 3 || (flags & ColorEdit_NoAlpha)) { n = 3; flags |= ColorEdit_NoAlpha; }
     const int id = hashLabel(label);
     const float h = rowH(), s = g_theme.textScale;
-    const bool showLabel = !(flags & ColorEdit_NoLabel) && labelW(label) > 0.0f;
-    const float lw = showLabel ? labelW(label) + 8.0f : 0.0f;
+    const bool showLabel = !(flags & ColorEdit_NoLabel) && visW(label) > 0.0f;
+    const float lw = showLabel ? visW(label) + 8.0f : 0.0f;
     const float w = availW();
     float x, y; place(w, h, x, y);
     const float row = w - lw, swatch = h;
@@ -3814,7 +3817,7 @@ static bool colorEditRow(const char* label, float* c, int n, int flags) {
             }
         }
     }
-    if (showLabel) drawText(x + row + 8.0f, y + (h - textH()) * 0.5f, label, s, g_theme.text);
+    if (showLabel) drawText(x + row + 8.0f, y + (h - textH()) * 0.5f, VisLabel(label).b, s, g_theme.text);
     // the picker popup, anchored under the swatch
     if (!(flags & ColorEdit_NoPicker)) {
         const int pkey = id ^ 0x7c1c;
@@ -3877,12 +3880,12 @@ bool TreeNodeEx(const char* label, unsigned flags) {
         if (inside && !(flags & TreeNode_Framed)) rrect(x, y, w, h, 6.0f, pick(Col_HeaderHovered, withAlpha(white, 0.06f, tmp)));
         if (bullet) fillCircle(ax + 11.0f, y + h * 0.5f, 3.0f, g_theme.text);
         else if (!leaf) chevron(ax + 11.0f, y + h * 0.5f, 8.0f, *open, pick(Col_TextDisabled, g_theme.textDim));
-        drawText(ax + 24.0f, y + (h - textH()) * 0.5f, label, s, g_theme.text);
+        drawText(ax + 24.0f, y + (h - textH()) * 0.5f, VisLabel(label).b, s, g_theme.text);
     } else {
         if (inside && !(flags & TreeNode_Framed)) quad(x, y, w, h, pick(Col_HeaderHovered, g_theme.bgHover));
         if (bullet) fillCircle(ax + 4.0f + fCharW() * s * 0.5f, y + h * 0.5f, 3.0f, g_theme.text);
         else if (!leaf) drawText(ax + 4.0f, y + (h - textH()) * 0.5f, *open ? "v" : ">", s, g_theme.text);
-        drawText(ax + 4.0f + fCharW() * s * 1.5f, y + (h - textH()) * 0.5f, label, s, g_theme.text);
+        drawText(ax + 4.0f + fCharW() * s * 1.5f, y + (h - textH()) * 0.5f, VisLabel(label).b, s, g_theme.text);
     }
     if (shown && !(flags & TreeNode_NoTreePushOnOpen)) g_lay.indent += 16.0f;   // children indent until TreePop()
     return shown;
@@ -3948,7 +3951,7 @@ bool BeginMenu(const char* label) {
         if (ksel && (g_in.right || g_curMenu.activate)) *open = true;          // Right or Enter on the highlighted row opens it
         g_toOverlay = true;
         quad(x, y, w, h, (ih || *open || ksel) ? pick(Col_HeaderHovered, g_theme.bgHover) : pick(Col_PopupBg, g_theme.panel));
-        drawText(x + 10.0f, y + (h - textH()) * 0.5f, label, s, g_theme.text);
+        drawText(x + 10.0f, y + (h - textH()) * 0.5f, VisLabel(label).b, s, g_theme.text);
         drawText(x + w - labelW(">") - 8.0f, y + (h - textH()) * 0.5f, ">", s, pick(Col_TextDisabled, g_theme.textDim));
         g_toOverlay = false;
         if (!*open) { kbSlot(id)->idx = -1; return false; }
@@ -3966,7 +3969,7 @@ bool BeginMenu(const char* label) {
     const int id = hashLabel(label);
     bool* open = openState(id, false);
     const float h = g_barH, s = g_theme.textScale;
-    const float bw = labelW(label) + 16.0f;
+    const float bw = visW(label) + 16.0f;
     const float x = g_barX, y = g_barY;
     g_barX += bw;   // advance the bar cursor for the next menu
 
@@ -3975,7 +3978,7 @@ bool BeginMenu(const char* label) {
     if (g_active == id) { if (g_released) { if (inside) *open = !*open; g_active = 0; } }
     else if (inside && g_pressed) g_active = id;
     if (*open || inside) quad(x, y, bw, h, g_theme.bgHover);
-    drawText(x + 8.0f, y + (h - textH()) * 0.5f, label, s, g_theme.text);
+    drawText(x + 8.0f, y + (h - textH()) * 0.5f, VisLabel(label).b, s, g_theme.text);
 
     if (*open) {
         g_curMenu.active = true; g_curMenu.menuId = id;
@@ -4014,10 +4017,10 @@ bool menuItemImpl(const char* label, const char* shortcut, bool selected, bool e
     g_toOverlay = true;
     quad(x, y, w, h, (ih || ksel) ? pick(Col_HeaderHovered, g_theme.bgHover) : pick(Col_PopupBg, g_theme.panel));
     if (selected) quad(x + 3.0f, y + (h - 6.0f) * 0.5f, 6.0f, 6.0f, col);   // a small filled square marks a checked item
-    drawText(x + 10.0f, y + (h - textH()) * 0.5f, label, s, col);
+    drawText(x + 10.0f, y + (h - textH()) * 0.5f, VisLabel(label).b, s, col);
     if (shortcut && shortcut[0]) {   // right-aligned, dim; skipped when it would run into the label
         const float sw = labelW(shortcut), sx = x + w - sw - 10.0f;
-        if (sx > x + 10.0f + labelW(label) + 12.0f) drawText(sx, y + (h - textH()) * 0.5f, shortcut, s, pick(Col_TextDisabled, g_theme.textDim));
+        if (sx > x + 10.0f + visW(label) + 12.0f) drawText(sx, y + (h - textH()) * 0.5f, shortcut, s, pick(Col_TextDisabled, g_theme.textDim));
     }
     g_toOverlay = false;
     return clicked;
@@ -4093,11 +4096,11 @@ static bool selectableImpl(const char* label, bool selected, unsigned flags, Vec
         const unsigned char white[4] = {255, 255, 255, 255};
         if (selected) { rrect(x, y, w, h, 6.0f, withAlpha(g_theme.accent, 0.28f, tmp)); rrect(x, y + 5.0f, 3.0f, h - 10.0f, 1.5f, g_theme.accent); }
         else if (inside) rrect(x, y, w, h, 6.0f, pick(Col_HeaderHovered, withAlpha(white, 0.06f, tmp)));
-        drawText(textX + 10.0f, ty, label, s, tcol);
+        drawText(textX + 10.0f, ty, VisLabel(label).b, s, tcol);
     } else {
         if (selected)      quad(x, y, w, h, pick(Col_HeaderActive, g_theme.accent));
         else if (inside)   quad(x, y, w, h, pick(Col_HeaderHovered, g_theme.bgHover));
-        drawText(textX + 6.0f, ty, label, s, tcol);
+        drawText(textX + 6.0f, ty, VisLabel(label).b, s, tcol);
     }
     if (clicked) {
         if (p_sel) *p_sel = !*p_sel;
@@ -4213,7 +4216,7 @@ bool BeginCombo(const char* label, const char* preview) {
     if (!g_lay.active) return false;
     const int id = hashLabel(label);
     const float h = rowH(), s = g_theme.textScale, b = g_theme.borderPx;
-    const float lw = labelW(label) > 0.0f ? labelW(label) + 8.0f : 0.0f;
+    const float lw = visW(label) > 0.0f ? visW(label) + 8.0f : 0.0f;
     const float w = availW();
     float x, y; place(w, h, x, y);
     float boxW = w - lw; if (boxW < 48.0f) boxW = 48.0f;
@@ -4235,7 +4238,7 @@ bool BeginCombo(const char* label, const char* preview) {
     const bool open = ps && ps->open;
     if (g_look) chevron(x + boxW - 14.0f, y + h * 0.5f, 8.0f, true, pick(Col_TextDisabled, g_theme.textDim));
     else drawText(x + boxW - fCharW() * s - 6.0f, y + (h - textH()) * 0.5f, open ? "-" : "+", s, g_theme.text);
-    if (lw > 0.0f) drawText(x + boxW + 8.0f, y + (h - textH()) * 0.5f, label, s, g_theme.text);
+    if (lw > 0.0f) drawText(x + boxW + 8.0f, y + (h - textH()) * 0.5f, VisLabel(label).b, s, g_theme.text);
     if (!ps) return false;
     const bool shown = beginPopupBody(ps->id);
     if (shown) { g_lay.prevX = x; g_lay.prevY = y; g_lay.prevW = boxW; g_lay.prevH = h; }   // GetItemRect right after BeginCombo is the box
@@ -4984,7 +4987,7 @@ void TextWrapped(const char* text) {
 bool PrimaryButton(const char* label) {
     if (!g_lay.active || !label) return false;
     const int id = hashLabel(label);
-    const float w = labelW(label) + 40.0f, h = rowH();
+    const float w = visW(label) + 40.0f, h = rowH();
     float x, y; place(w, h, x, y);
     const bool inside = hit(x, y, w, h);
     g_lastId = id; if (inside) g_hot = id;
@@ -4996,7 +4999,7 @@ bool PrimaryButton(const char* label) {
     else if (inside) { c[0] = (unsigned char)(c[0] + (255 - c[0]) * 0.12f); c[1] = (unsigned char)(c[1] + (255 - c[1]) * 0.12f); c[2] = (unsigned char)(c[2] + (255 - c[2]) * 0.12f); }
     rrect(x, y, w, h, rnd(), c);
     const unsigned char white[4] = {255, 255, 255, 255};
-    drawText(x + (w - labelW(label)) * 0.5f, y + (h - textH()) * 0.5f, label, g_theme.textScale, white);
+    drawText(x + (w - visW(label)) * 0.5f, y + (h - textH()) * 0.5f, VisLabel(label).b, g_theme.textScale, white);
     return clicked;
 }
 
@@ -5091,7 +5094,7 @@ void KeyValue(const char* label, const char* value) {
     const float h = rowH(), w = fullW();
     float x, y; place(w, h, x, y);
     const float ty = y + (h - textH()) * 0.5f;
-    if (label) drawText(x, ty, label, g_theme.textScale, pick(Col_TextDisabled, g_theme.textDim));
+    if (label) drawText(x, ty, VisLabel(label).b, g_theme.textScale, pick(Col_TextDisabled, g_theme.textDim));
     if (value) drawText(x + w - labelW(value), ty, value, g_theme.textScale, g_theme.text);
 }
 

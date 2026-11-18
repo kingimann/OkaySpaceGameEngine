@@ -429,5 +429,40 @@ int main() {
         const Bitmap legacy = (s2.Frame([&] { UI::BareNextWindow(); if (UI::Begin("w", 0, 0, 300, 200)) { if (UI::BeginChild("b", 200, 100, true)) UI::Text("x"); UI::EndChild(); } UI::End(); }), s2.Draw(1, 2, 3));
         CHECK(PixelAt(legacy, 150, 90) == PixelAt(bordered, 150, 90));        // same as the (w, h, border) form
     }
+    {   // "##id" suffixes are not drawn and take no room: the picture of "Name##id" equals the picture of "Name", for the labelled widgets
+        for (int kind = 0; kind < 9; ++kind) {
+            Bitmap pic[2];
+            for (int v = 0; v < 2; ++v) {
+                Reset(); Sim s(320, 60);
+                bool b = true; float f = 0.3f; int n = 2; char t[8] = "ab"; float f3[3] = {1, 2, 3}; int sel = 0; const char* items[2] = {"x", "y"};
+                const char* lab = v ? "Name##secret" : "Name";
+                s.Frames(2, [&] {
+                    UI::BareNextWindow();
+                    if (UI::Begin("w", 0, 0, 320, 60)) {
+                        switch (kind) {
+                            case 0: UI::Button(lab); break;
+                            case 1: UI::Checkbox(lab, &b); break;
+                            case 2: UI::SliderFloat(lab, &f, 0, 1); break;
+                            case 3: UI::InputText(lab, t, sizeof t); break;
+                            case 4: UI::DragFloat(lab, &f); break;
+                            case 5: UI::SliderInt(lab, &n, 0, 5); break;
+                            case 6: UI::Combo(lab, items, 2, &sel); break;
+                            case 7: UI::DragFloat3(lab, f3); break;
+                            case 8: UI::Selectable(lab, false); break;
+                        }
+                    }
+                    UI::End();
+                });
+                pic[v] = s.Draw(5, 5, 5);
+            }
+            bool same = pic[0].rgba == pic[1].rgba;
+            if (!same) std::cerr << "  label kind " << kind << " differs\n";
+            CHECK(same);
+        }
+        Reset(); Sim s3(200, 40);
+        float w0 = 0, w1 = 0;
+        s3.Frame([&] { UI::BareNextWindow(); if (UI::Begin("w", 0, 0, 200, 40)) { UI::Button("##only"); w0 = UI::GetItemRect().w; UI::Button(""); w1 = UI::GetItemRect().w; } UI::End(); });
+        CHECK(std::fabs(w0 - w1) < 0.01f);
+    }
     TEST_MAIN_RESULT();
 }

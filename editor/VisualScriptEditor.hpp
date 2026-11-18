@@ -3554,6 +3554,7 @@ inline bool VsDrawChoice(EditorState& ed, const VsEditGraph& g, std::string& val
 #include "VisualScriptPan.hpp"
 #include "VisualScriptPalette.hpp"
 #include "VisualScriptEasyOps.hpp"   // graph-in, graph-out rules for the canvas (needs the graph model above)
+#include "VisualScriptPlainWords.hpp" // every "something is wrong" sentence, in plain words
 #include "VisualScriptHints.hpp"      // the one-line next-step bar
 #include "VisualScriptStartDraw.hpp"  // the big recipe cards shown for an empty graph
 namespace okay::editor::vsed {
@@ -4541,8 +4542,8 @@ inline void Draw(EditorState& ed, bool* open) {
         std::string inlineMsg;
         bool inlineErr = false;
         for (const auto& is : st.issues) if (is.node == n.id) {
-            if (is.severity == 0) { inlineMsg = is.message; inlineErr = true; break; }
-            if (inlineMsg.empty()) inlineMsg = is.message;
+            if (is.severity == 0) { inlineMsg = VsPlainIssue(is.message); inlineErr = true; break; }
+            if (inlineMsg.empty()) inlineMsg = VsPlainIssue(is.message);
         }
         const bool isSwitch = IsSwitchNode(n.type);
         bool targetWired = false;
@@ -4597,7 +4598,7 @@ inline void Draw(EditorState& ed, bool* open) {
         {
             int worst = 2; std::string tips;
             for (const auto& is : st.issues)
-                if (is.node == n.id) { worst = std::min(worst, is.severity); tips += (tips.empty() ? "" : "\n") + std::string(is.severity == 0 ? "Error: " : "Warning: ") + is.message; }
+                if (is.node == n.id) { worst = std::min(worst, is.severity); tips += (tips.empty() ? "" : "\n") + std::string(is.severity == 0 ? "Error: " : "Warning: ") + VsPlainIssue(is.message); }
             if (worst < 2) {
                 const ImVec2 bc(p1.x - 12.0f * z, p0.y + HEADER_H * 0.5f);
                 const ImU32 col = worst == 0 ? IM_COL32(255, 85, 75, 255) : IM_COL32(240, 185, 70, 255);
@@ -5270,6 +5271,17 @@ inline void Draw(EditorState& ed, bool* open) {
     bool openPaletteNow = false;
     const std::size_t wiresBeforeDrag = g.execLinks.size() + g.dataLinks.size();
     if (st.dragging) {
+        // While a wire is dragged: a green ring on every plug it can go into, a red ring on the ones that would refuse it.
+        {
+            const int wantSide = st.dragFromOutput ? 0 : 1, wantKind = st.dragExec ? 0 : 1;
+            const float rr = 11.0f * std::max(0.8f, z);
+            for (const auto& kvp : pinPos) {
+                const int node = (int)(kvp.first >> 20), kind = (int)((kvp.first >> 18) & 3), side = (int)((kvp.first >> 16) & 3), idx = (int)(kvp.first & 0xFFFF);
+                if (kind != wantKind || side != wantSide || node == st.dragNode) continue;
+                const bool fits = VsPlugAccepts(g, st.dragExec, st.dragFromOutput, st.dragNode, st.dragPin, node, idx);
+                dl->AddCircle(kvp.second, rr, fits ? IM_COL32(90, 230, 130, 255) : IM_COL32(245, 90, 80, 235), 20, 3.0f);
+            }
+        }
         auto from = pinPos.find(pk(st.dragNode, st.dragExec ? 0 : 1, st.dragFromOutput ? 1 : 0, st.dragPin));
         if (from != pinPos.end()) {
             ImVec2 m = io.MousePos;
@@ -5299,7 +5311,7 @@ inline void Draw(EditorState& ed, bool* open) {
                     const VsDef* dd = nullptr;
                     if (const VsEditNode* dn = g.find(dest)) dd = FindDef(dn->type);
                     if (dd && !dd->execIn) {
-                        st.refuseMsg = VsPlainRefuseEventIntoEvent();
+                        st.refuseMsg = VsPlainStartIntoStart();
                         st.refuseTime = 5.0f; st.offerOn = false;
                     } else if (st.dragFromOutput) g.linkExec(st.dragNode, st.dragPin, bestNode);
                     else g.linkExec(bestNode, bestIdx, st.dragNode);
@@ -5311,15 +5323,18 @@ inline void Draw(EditorState& ed, bool* open) {
                     std::vector<std::pair<int, int>> edges;
                     for (const auto& l : g.dataLinks) edges.push_back({l.producer, l.consumer});
                     if (VsDataWouldCycle(edges, prod, cons)) {
-                        st.refuseMsg = VsPlainRefuseLoop();
+                        st.refuseMsg = VsPlainWouldLoop();
                         st.refuseTime = 5.0f; st.offerOn = false;
                     } else if (VsWireOk(g, cons, inP, prod, outP, &why)) {
                         g.linkData(cons, inP, prod, outP); st.offerOn = false;
                     } else {
                         const auto offer = VsOfferConvert((char)VsOutPinType(g, prod, outP), (char)VsInPinType(g, cons, inP));
-                        st.refuseMsg = why.empty() ? offer.why : why;
-                        if (!offer.why.empty() && st.refuseMsg.find(offer.why) == std::string::npos && offer.type.empty())
-                            st.refuseMsg += " " + offer.why;
+                        (void)why;
+                        st.refuseMsg = VsPlainMismatch(VsOutPinType(g, prod, outP), VsInPinType(g, cons, inP));
+                        if (offer.type.empty()) {   // no one-click fix: a plain tip when there is one
+                            const std::string tip = VsPlainMismatchTip(VsOutPinType(g, prod, outP), VsInPinType(g, cons, inP));
+                            if (!tip.empty()) st.refuseMsg += " " + tip;
+                        }
                         st.refuseTime = 6.0f;
                         st.offerOn = !offer.type.empty();
                         st.offerCons = cons; st.offerIn = inP; st.offerProd = prod; st.offerOut = outP;
@@ -5339,9 +5354,7 @@ inline void Draw(EditorState& ed, bool* open) {
                     if (dx * dx + dy * dy < hitDist2) { nk = kind; ns = side; break; }
                 }
                 if (nk >= 0 && nk != (st.dragExec ? 0 : 1)) {
-                    st.refuseMsg = st.dragExec
-                        ? VsPlainRefuseFlowOnValue()
-                        : VsPlainRefuseValueOnFlow();
+                    st.refuseMsg = st.dragExec ? VsPlainFlowToValue() : VsPlainValueToFlow();
                     st.refuseTime = 5.0f; st.offerOn = false; (void)ns;
                 } else {
                 // Dropped in empty space: offer the palette and wire up what's picked.
@@ -5470,7 +5483,7 @@ inline void Draw(EditorState& ed, bool* open) {
             st.wireInsOn = false;
             if (!VsSplitWire(g, ref, nid)) {
                 g.removeNode(nid); st.sel.clear(); st.selected = -1;
-                st.refuseMsg = "That block does not fit on this wire.";
+                st.refuseMsg = VsPlainDoesNotFitWire();
                 st.refuseTime = 4.0f; st.offerOn = false;
                 return;
             }
@@ -5606,7 +5619,7 @@ inline void Draw(EditorState& ed, bool* open) {
         ImGui::PushTextWrapPos(boxW - 16.0f);
         ImGui::TextUnformatted(st.refuseMsg.c_str());
         ImGui::PopTextWrapPos();
-        if (st.offerOn && !st.offerType.empty() && ImGui::Button(st.offerWhy.empty() ? "Insert conversion" : st.offerWhy.c_str())) {
+        if (st.offerOn && !st.offerType.empty() && ImGui::Button(VsPlainFixIt())) {
             const VsEditNode* prod = g.find(st.offerProd);
             const VsEditNode* cons = g.find(st.offerCons);
             const float x = prod && cons ? (prod->x + cons->x) * 0.5f : 80.0f;
@@ -5631,13 +5644,22 @@ inline void Draw(EditorState& ed, bool* open) {
             const auto& is = st.issues[i];
             ImGui::PushID((int)i);
             ImGui::PushStyleColor(ImGuiCol_Text, is.severity == 0 ? ImVec4(1.0f, 0.5f, 0.45f, 1) : ImVec4(0.95f, 0.78f, 0.4f, 1));
-            std::string row = std::string(is.severity == 0 ? "Error: " : "Warning: ") + is.message;
-            if (ImGui::Selectable(row.c_str()) && is.node >= 0) { st.sel = {is.node}; st.selected = is.node; st.focusNode = is.node; }
+            std::string row = std::string(is.severity == 0 ? "Error: " : "Warning: ") + VsPlainIssue(is.message);
+            const bool canFix = VsFixAvailable(g, is.message, is.node, is.pin, is.pinDir);
+            if (ImGui::Selectable(row.c_str(), false, 0, ImVec2(canFix ? w - 190.0f : 0.0f, 0.0f)) && is.node >= 0) { st.sel = {is.node}; st.selected = is.node; st.focusNode = is.node; }
             if (ImGui::IsItemHovered()) {   // long messages: the whole text
                 ImGui::BeginTooltip(); ImGui::PushTextWrapPos(ImGui::GetFontSize() * 36.0f);
                 ImGui::TextUnformatted(row.c_str()); ImGui::PopTextWrapPos(); ImGui::EndTooltip();
             }
             ImGui::PopStyleColor();
+            if (canFix) {   // an obvious fix exists: one button
+                ImGui::SameLine();
+                if (ImGui::SmallButton(VsPlainFixIt())) {
+                    VsFixIssue(g, is.message, is.node, is.pin, is.pinDir);
+                    ImGui::PopID();
+                    break;   // the list is rebuilt next frame
+                }
+            }
             ImGui::PopID();
         }
         ImGui::EndChild();

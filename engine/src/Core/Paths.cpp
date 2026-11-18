@@ -27,7 +27,11 @@ std::string Pick(const std::string& base, const std::string& home, const char* f
 }
 }
 
+namespace { Paths::Env g_envOverride; bool g_envOverrideSet = false; }
+void Paths::SetEnvOverride(const Env* e) { if (e) { g_envOverride = *e; g_envOverrideSet = true; } else g_envOverrideSet = false; }
+
 Paths::Env Paths::Env::Current() {
+    if (g_envOverrideSet) return g_envOverride;
     Env e;
     e.home = Env_("HOME");
     if (e.home.empty()) e.home = Env_("USERPROFILE");

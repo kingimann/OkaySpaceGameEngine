@@ -69,7 +69,9 @@ inline fs::path Dir() {
     return okay::account::DefaultConfigDir(fs::path(".")) / "ipc";
 }
 inline long CurrentPid() {
-#if defined(_WIN32)
+#if defined(OKAY_XBOX_UWP)
+    return (long)GetCurrentProcessId();   // _getpid is not available to UWP apps
+#elif defined(_WIN32)
     return (long)_getpid();
 #else
     return (long)getpid();

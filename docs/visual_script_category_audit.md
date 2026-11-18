@@ -3888,15 +3888,33 @@ The 10 recipes are 1 or 2 blocks and at most 1 wire each (budget: 3 blocks, 2 wi
 Also done: auto-connect when a block is added from the popup, insert-on-wire when a node is dropped on a flow wire (both
 tested on the real graph model), plain wire-refusal sentences with a banned-word test, recipe cards on the empty canvas.
 
-### Not done
+### Third pass (2026-11-18): field widgets, Rule block, merged blocks, presets, left panel words
 
-- The Rule super-block (WHEN / IF / DO list inside one node), block options and presets, the "Do this to all objects
-  named X" target, smart defaults from the selected object, and highlighting the running block in Play.
-- Merged blocks with dropdowns (Change Number, Compare, Play Sound Start/Stop ...) and the old-id alias for them. The old
-  nodes were NOT merged; they are only hidden from the default list. The alias table is still empty.
-- Fields are plain text boxes; there is no key picker, object picker or dropdown widget on a block yet.
-- Quick blocks are not translated to OkayScript text (the export lists them as not translated).
-- The editor window was never run on a real desktop.
+- **Field kinds** (`QbKind` in QuickBlocks.hpp): number (drag, or Ctrl+click to type), text, key (the existing key picker:
+  click, press a key), object (dropdown of scene objects plus "This object"), choice (dropdown), colour (swatch, saved
+  as `#rrggbb`) and presets. Pure value rules (`QbValidate`, `QbNormalize`, `QbChoices`) are tested for every kind and
+  every default; every dropdown label goes through the banned-word scan.
+- **Rule block** (`QbRule`): WHEN (8 events) ONLY IF (3 conditions) DO (up to 4 actions out of 20). It is one node with 12
+  fields (the sentence), saved as plain `default` lines, expanded at load by the same expander from three data tables
+  (`QbRuleEvents/Conditions/Actions`). Deviation from the design: four action slots instead of an open-ended
+  "+ Add action" list (the node's rows are fixed). Each event, condition and action kind is run headless in
+  `test_vs_quick_blocks`.
+- **Merged blocks:** Change Number (add / subtract / multiply / divide), If Number Is (six comparisons), Play Or Stop
+  Sound. The old nodes are unchanged and still load (they are only hidden from the default list);
+  `QuickBlockForOldNode` records which block and dropdown value covers AddVar, PlaySound and StopSound, but graphs are
+  not rewritten. Move / Turn / Scale and Show / Hide were not merged (Show Or Hide Object is already one node).
+- **Presets** (Coin pickup, Big gem, Door opens, Enemy chases, Jump pad, Lava hurts, Guard walks, Moving platform and six
+  for the Rule incl. Checkpoint and Game over) and **smart defaults** (the last key picked; an object field picks an
+  object that exists in the scene) are pure functions (`QbApplyPreset`, `QbSmartDefault`) with tests; the Presets field
+  is the last row of the block.
+- **Recipes** now use Rule blocks where the job is "when X do Y" (Say hello, Play a sound on click, Spawn a copy when I
+  click, Change scene when touched): all 10 recipes are 1 block, 0 wires. The small complete game stays at 6 blocks, 0 wires.
+- **Left panel words** (`VisualScriptPanelWords.hpp`): "Declared variables" is now "Saved values", "Variables used" is
+  "Where each value is used", "Structs" is "Bundles" and "Parameters" is "Action inputs"; the long help texts are one
+  short sentence; Bundles and Action inputs are folded away unless the script uses them. A test checks every label.
+- **Not done:** an open-ended "+ Add action" list inside the Rule (four fixed slots), "all objects named X" targets,
+  Play-mode highlight of the running block (expanded nodes get ids from 1,000,000 up that the editor does not map back
+  to the block; the runner would need a block-id map), OkayScript export of blocks, and nothing was rendered.
 
 ## Found on the way (listed, not fixed)
 

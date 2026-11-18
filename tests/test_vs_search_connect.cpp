@@ -137,7 +137,7 @@ int main() {
             ++found;
             CHECK(std::string(d->title) == b.title);
             CHECK(d->level == VsLevel::Basic);
-            CHECK(d->dataIn.size() == b.fields.size());
+            CHECK(d->dataIn.size() == okay::vs::QbAllFields(b).size());
             CHECK(!VsPaletteHidden(*d));
             CHECK(std::strcmp(VsPlaceForNode(b.type).category, "Quick blocks") == 0);
             CHECK(VsGlossaryViolation(b.title).empty() && VsGlossaryViolation(b.description).empty() && VsGlossaryViolation(b.example).empty());
@@ -150,7 +150,9 @@ int main() {
             VsEditGraph h;
             h.fromText(g.toText());
             CHECK(h.nodes.size() == 1 && h.nodes[0].type == b.type);
-            CHECK(h.nodes[0].pinDefault.size() == b.fields.size());
+            std::size_t typed = 0;
+            for (const okay::vs::QbField& f : b.fields) if (f.def[0]) ++typed;
+            CHECK(h.nodes[0].pinDefault.size() == typed);
         }
         CHECK(found == (int)okay::vs::QuickBlocks().size());
         // The Quick blocks topic has room: subcategories exist and none is over the limits.

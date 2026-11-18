@@ -15,6 +15,7 @@
 #include "XboxGameConfig.hpp"
 #include "XboxOverlayMath.hpp"
 #include "XboxRecovery.hpp"
+#include "XboxHttp.hpp"
 #include "okay/Core/Paths.hpp"
 #include <cmath>
 #include <filesystem>
@@ -707,8 +708,77 @@ static void RecoveryTests() {
     CHECK(DecideStart(false, false) == StartAction::Fresh && DecideStart(false, true) == StartAction::Fresh && DecideStart(true, true) == StartAction::RestoreSuspended && DecideStart(true, false) == StartAction::DropStaleMarker);
 }
 
+// ---- HTTP GET with Range (pure, fake client) ----
+namespace {
+struct Rsp { int status = 200; std::vector<okay::xbox::http::Header> headers; std::string body; bool cutAfterHead = false; size_t cutBodyAt = std::string::npos; };
+struct FakeClient : okay::xbox::http::Client {
+    std::vector<Rsp> script; size_t next = 0; std::vector<okay::xbox::http::Request> seen; size_t chunk = 4;
+    okay::xbox::http::ClientResult Send(const okay::xbox::http::Request& r, const okay::xbox::http::Sink& s) override {
+        seen.push_back(r); okay::xbox::http::ClientResult cr;
+        if (next >= script.size()) { cr.error = "no network"; return cr; }
+        const Rsp& p = script[next++]; okay::xbox::http::Head h; h.status = p.status; h.headers = p.headers;
+        if (!s.onHead(h)) { cr.aborted = true; return cr; }
+        std::string body = p.body.substr(0, p.cutBodyAt == std::string::npos ? p.body.size() : p.cutBodyAt);
+        for (size_t i = 0; i < body.size(); i += chunk) { const size_t n = std::min(chunk, body.size() - i); if (!s.onData((const std::uint8_t*)body.data() + i, n)) { cr.aborted = true; return cr; } }
+        cr.reached = true; return cr;
+    }
+};
+using okay::xbox::http::Header;
+}
+static void HttpTests() {
+    namespace h = okay::xbox::http;
+    // URL
+    h::Url u; std::string why;
+    CHECK(h::ParseUrl("https://Example.com/a/b?x=1#frag", u, &why) && u.scheme == "https" && u.host == "example.com" && u.port == 443 && u.pathAndQuery == "/a/b?x=1" && h::UrlToString(u) == "https://example.com/a/b?x=1");
+    CHECK(h::ParseUrl("http://h:8080", u) && u.port == 8080 && u.pathAndQuery == "/" && h::UrlToString(u) == "http://h:8080/"); CHECK(h::ParseUrl("https://h?q=1", u) && u.pathAndQuery == "/?q=1");
+    CHECK(h::ParseUrl("https://[::1]:444/x", u) && u.host == "[::1]" && u.port == 444);
+    for (const char* bad : {"ftp://x/y", "https://", "https://u:p@host/", "https://ho st/", "https://host:0/", "https://host:99999/", "https://host:abc/", "nohost", "https://ho_st/", "https://h/\x01", "https://[::1/x", ""}) CHECK(!h::ParseUrl(bad, u));
+    CHECK(h::JoinUrl("https://h/base/", "models/my ship.glb") == "https://h/base/models/my%20ship.glb" && h::JoinUrl("https://h", "a/é") == "https://h/a/%C3%A9");
+    { h::Url f; h::ParseUrl("https://h/a/b/c.bin?x=1", f); h::Url t; CHECK(h::ResolveLocation(f, "/z", t) && t.pathAndQuery == "/z" && t.host == "h"); CHECK(h::ResolveLocation(f, "d.bin", t) && t.pathAndQuery == "/a/b/d.bin");
+      CHECK(h::ResolveLocation(f, "//other/q", t) && t.host == "other" && t.scheme == "https"); CHECK(h::ResolveLocation(f, "http://x/y", t) && t.scheme == "http"); CHECK(!h::ResolveLocation(f, "", t)); }
+    CHECK(h::RangeHeaderValue(100) == "bytes=100-" && h::RangeHeaderValue(0, 9) == "bytes=0-9");
+    { h::ContentRange c; CHECK(h::ParseContentRange("bytes 100-199/1234", c) && c.first == 100 && c.last == 199 && c.total == 1234 && c.hasRange && c.hasTotal); CHECK(h::ParseContentRange("bytes */1234", c) && !c.hasRange && c.total == 1234); CHECK(h::ParseContentRange("bytes 0-9/*", c) && !c.hasTotal);
+      for (const char* bad : {"", "bytes", "bytes 5-3/10", "bytes 0-10/10", "items 0-1/2", "bytes a-b/c", "bytes */*", "bytes 0-9", "bytes 99999999999999999999-1/2"}) CHECK(!h::ParseContentRange(bad, c)); }
+    { std::string v = "7"; CHECK(h::RetryAfterMs(&v, 1000, 15000) == 7000); v = "9999"; CHECK(h::RetryAfterMs(&v, 1000, 15000) == 15000); v = "Wed, 21 Oct 2026 07:28:00 GMT"; CHECK(h::RetryAfterMs(&v, 1000, 15000) == 1000); CHECK(h::RetryAfterMs(nullptr, 99999, 15000) == 15000); }
+    // the driver
+    std::string got; auto collect = [&](h::GetHandlers& hh, h::GetHead* head = nullptr) { hh.onHead = [head](const h::GetHead& x) { if (head) *head = x; return true; }; hh.onData = [&got](const std::uint8_t* d, std::size_t n) { got.append((const char*)d, n); return true; }; };
+    const std::string base = "https://cdn.example.com/game";
+    { FakeClient c; c.script = {{200, {{"Content-Length", "10"}}, "0123456789"}}; h::GetHandlers hh; h::GetHead hd; got.clear(); collect(hh, &hd);
+      h::GetResult r = h::Get(c, base, "data/a b.bin", 0, 0, hh); CHECK(r.reached && !r.aborted && got == "0123456789" && hd.status == 200 && hd.bodyStart == 0 && hd.totalSize == 10);
+      CHECK(c.seen.size() == 1 && c.seen[0].url == "https://cdn.example.com/game/data/a%20b.bin"); CHECK(h::FindHeader(c.seen[0].headers, "Range") == nullptr); CHECK(*h::FindHeader(c.seen[0].headers, "Accept-Encoding") == "identity"); }
+    { FakeClient c; c.script = {{206, {{"Content-Range", "bytes 4-9/10"}, {"Content-Length", "6"}}, "456789"}}; h::GetHandlers hh; h::GetHead hd; got.clear(); collect(hh, &hd);   // resume
+      h::GetResult r = h::Get(c, base, "a.bin", 4, 0, hh); CHECK(r.reached && got == "456789" && hd.status == 206 && hd.bodyStart == 4 && hd.totalSize == 10); CHECK(*h::FindHeader(c.seen[0].headers, "Range") == "bytes=4-"); }
+    { FakeClient c; c.script = {{200, {{"Content-Length", "10"}}, "0123456789"}}; h::GetHandlers hh; h::GetHead hd; got.clear(); collect(hh, &hd);   // server ignored the Range: head says 200, bodyStart 0
+      h::GetResult r = h::Get(c, base, "a.bin", 4, 0, hh); CHECK(r.reached && hd.status == 200 && hd.bodyStart == 0 && got.size() == 10); }
+    { FakeClient c; c.script = {{206, {{"Content-Range", "bytes 0-9/10"}}, "0123456789"}}; h::GetHandlers hh; got.clear(); collect(hh); h::GetResult r = h::Get(c, base, "a.bin", 4, 0, hh); CHECK(!r.reached && r.error.find("different byte range") != std::string::npos && got.empty()); }
+    { FakeClient c; c.script = {{206, {}, "x"}}; h::GetHandlers hh; collect(hh); h::GetResult r = h::Get(c, base, "a.bin", 4, 0, hh); CHECK(!r.reached && r.error.find("Content-Range") != std::string::npos); }
+    { FakeClient c; c.script = {{206, {{"Content-Range", "bytes 4-9/10"}, {"Content-Length", "99"}}, "456789"}}; h::GetHandlers hh; collect(hh); CHECK(!h::Get(c, base, "a.bin", 4, 0, hh).reached); }
+    { FakeClient c; c.script = {{416, {{"Content-Range", "bytes */10"}}, ""}}; h::GetHandlers hh; h::GetHead hd; collect(hh, &hd); h::GetResult r = h::Get(c, base, "a.bin", 10, 0, hh); CHECK(r.reached && hd.status == 416 && hd.totalSize == 10); }
+    { FakeClient c; c.script = {{404, {}, "not found page"}}; h::GetHandlers hh; h::GetHead hd; got.clear(); collect(hh, &hd); h::GetResult r = h::Get(c, base, "a.bin", 0, 0, hh); CHECK(r.reached && hd.status == 404 && got.empty()); }   // the error page is not handed on
+    { FakeClient c; c.script = {{200, {{"Content-Length", "10"}}, "0123456789", false, 5}}; h::GetHandlers hh; got.clear(); collect(hh); h::GetResult r = h::Get(c, base, "a.bin", 0, 0, hh); CHECK(!r.reached && r.error.find("cut short") != std::string::npos && got == "01234"); }
+    { FakeClient c; c.script = {{200, {}, std::string(100, 'x')}}; h::GetHandlers hh; got.clear(); collect(hh); h::GetResult r = h::Get(c, base, "a.bin", 0, 50, hh); CHECK(!r.reached && !r.aborted && r.error.find("larger than allowed") != std::string::npos && got.size() <= 50); }
+    { FakeClient c; c.script = {{200, {{"Content-Length", "5"}}, "0123456789"}}; h::GetHandlers hh; collect(hh); h::GetResult r = h::Get(c, base, "a.bin", 0, 0, hh); CHECK(!r.reached && r.error.find("longer than") != std::string::npos); }
+    { FakeClient c; c.script = {{200, {}, "abc"}}; h::GetHandlers hh; hh.onHead = [](const h::GetHead&) { return false; }; h::GetResult r = h::Get(c, base, "a.bin", 0, 0, hh); CHECK(r.aborted && !r.reached); }
+    { FakeClient c; c.script = {{200, {}, "abcdefgh"}}; h::GetHandlers hh; hh.onData = [](const std::uint8_t*, std::size_t) { return false; }; h::GetResult r = h::Get(c, base, "a.bin", 0, 0, hh); CHECK(r.aborted); }
+    { FakeClient c; h::GetHandlers hh; collect(hh); CHECK(!h::Get(c, base, "a.bin", 0, 0, hh).reached && h::Get(c, base, "a.bin", 0, 0, hh).error == "no network"); }
+    // redirects
+    { FakeClient c; c.script = {{302, {{"Location", "/moved/a.bin"}}, ""}, {301, {{"Location", "https://other.example.com/b.bin"}}, ""}, {200, {{"Content-Length", "3"}}, "abc"}}; h::GetHandlers hh; got.clear(); collect(hh);
+      h::GetResult r = h::Get(c, base, "a.bin", 0, 0, hh); CHECK(r.reached && got == "abc" && c.seen.size() == 3 && c.seen[1].url == "https://cdn.example.com/moved/a.bin" && c.seen[2].url == "https://other.example.com/b.bin"); }
+    { FakeClient c; c.script = {{302, {{"Location", "http://cdn.example.com/a.bin"}}, ""}}; h::GetHandlers hh; collect(hh); h::GetResult r = h::Get(c, base, "a.bin", 0, 0, hh); CHECK(!r.reached && r.error.find("https to plain http") != std::string::npos); }
+    { FakeClient c; for (int i = 0; i < 8; ++i) c.script.push_back({302, {{"Location", "/loop"}}, ""}); h::GetHandlers hh; collect(hh); h::GetResult r = h::Get(c, base, "a.bin", 0, 0, hh); CHECK(!r.reached && r.error.find("too many redirects") != std::string::npos && c.seen.size() == 6); }
+    { FakeClient c; c.script = {{302, {{"Location", "ftp://x/y"}}, ""}}; h::GetHandlers hh; collect(hh); CHECK(!h::Get(c, base, "a.bin", 0, 0, hh).reached); }
+    { FakeClient c; c.script = {{302, {{"Location", "/b"}}, ""}, {206, {{"Content-Range", "bytes 4-5/6"}}, "45"}}; h::GetHandlers hh; got.clear(); collect(hh); h::GetResult r = h::Get(c, base, "a.bin", 4, 0, hh); CHECK(r.reached && got == "45" && h::FindHeader(c.seen[1].headers, "Range") != nullptr); }   // the Range survives a redirect
+    // retries: 503 with Retry-After, then success; the driver never sleeps itself
+    { FakeClient c; c.script = {{503, {{"Retry-After", "3"}}, ""}, {429, {}, ""}, {200, {{"Content-Length", "2"}}, "ok"}}; h::GetHandlers hh; got.clear(); collect(hh); std::vector<std::uint64_t> sleeps; h::Options o; o.sleepMs = [&](std::uint64_t ms) { sleeps.push_back(ms); };
+      h::GetResult r = h::Get(c, base, "a.bin", 0, 0, hh, o); CHECK(r.reached && got == "ok" && c.seen.size() == 3 && (sleeps == std::vector<std::uint64_t>{3000, 1000})); }
+    { FakeClient c; for (int i = 0; i < 5; ++i) c.script.push_back({503, {}, ""}); h::GetHandlers hh; h::GetHead hd; collect(hh, &hd); h::GetResult r = h::Get(c, base, "a.bin", 0, 0, hh); CHECK(r.reached && hd.status == 503 && c.seen.size() == 3); }   // after 2 retries the 503 is handed on
+    // refused up front
+    { FakeClient c; h::GetHandlers hh; collect(hh); for (const char* bad : {"../x", "/abs", "a\\b", "c:x", ""}) CHECK(!h::Get(c, base, bad, 0, 0, hh).reached); CHECK(c.seen.empty());
+      CHECK(!h::Get(c, "http://cdn.example.com", "a.bin", 0, 0, hh).reached && c.seen.empty()); h::Options o; o.allowHttp = true; c.script = {{200, {}, "x"}}; CHECK(h::Get(c, "http://cdn.example.com", "a.bin", 0, 0, hh, o).reached); CHECK(!h::Get(c, "notaurl", "a.bin", 0, 0, hh).reached); }
+}
+
 int main() {
-    ShaderTests(); DisplayTests(); BuildPlanTests(); LogTests(); SourceRootTests(); RunnerTests(); HostTests(); LifecycleTests(); InputTests(); PadClassTests(); PathTests(); AudioTests(); BackendTests(); AuditTests(); ConfigTests(); RasterTests(); OverlayMathTests(); RecoveryTests();
+    ShaderTests(); DisplayTests(); BuildPlanTests(); LogTests(); SourceRootTests(); RunnerTests(); HostTests(); LifecycleTests(); InputTests(); PadClassTests(); PathTests(); AudioTests(); BackendTests(); AuditTests(); ConfigTests(); RasterTests(); OverlayMathTests(); RecoveryTests(); HttpTests();
     if (g_fail) { std::printf("%d FAILED\n", g_fail); return 1; }
     std::printf("xbox_uwp_runtime: all passed\n");
     return 0;

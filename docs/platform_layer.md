@@ -519,6 +519,43 @@ SDL, imgui_impl_sdlrenderer2 or other project code was read or followed.
   **Not run:** the launcher itself (downloads, chat, voice, update), anything on Windows (the Win32 half compiles only under MinGW `-fsyntax-only` for
   the test, the launcher was only checked on Linux), so a hang from a changed lock would show only in a real session.
 
+## Round 12 (branch `claude/own-platform-5`): checking the round-11 moves 1:1, and the launcher and editor on the own backend
+
+**Why a review first.** The thread move (718 uses) and the renderer bridge change what the *default* launcher and editor run, and until now nobody had run
+a launcher. So before anything new:
+
+* **Threads, mechanical review** (`scripts/review_thread_conversion.py`, ctest `thread_conversion_review`). Counts of every `okay::thr::` name per file equal
+  the number of SDL uses in the last SDL commit (`tests/data/thread_conversion_baseline.json`: 58 `CreateMutex`, 65 `CreateThread`, 56 `DetachThread`,
+  170 + 10 + 2 `LockMutex`, the same `UnlockMutex`, 24 `AtomicSet`, 16 `AtomicGet`, 6 `AtomicAdd`, 2 `AtomicCAS` ...), no SDL thread name is left, and with
+  `--base 2eda734e` every line that holds a thread name equals the old line after the name mapping (the only edits by hand are `SDL_AtomicIncRef` / `DecRef`, whose
+  result no site used, now `AtomicAdd(+1 / -1)`). Result: CLEAN, no mismatch. Read by hand: no call site uses the return value of `AtomicSet`, `AtomicAdd` or
+  `AtomicCAS`; the thread name argument was only a label in SDL; `WaitThread(t, nullptr)` and `DetachThread` have SDL's meaning (checked by `okay_threads`: 24 checks, also under
+  ASan, UBSan and TSan). One difference found and fixed: on Windows SDL starts threads with `_beginthreadex`, ours used a bare `CreateThread`; now `_beginthreadex`
+  (MinGW `-fsyntax-only` only).
+* **Renderer bridge, behaviour test** (`tests/test_painter_bridge_vs_sdl.cpp`, ctest `painter_bridge_vs_sdl`, 48 checks, 0 failures). Two identical SDL software
+  renderers on surfaces; one driven with the exact old call sequences, one through the bridge. Equal afterwards: texture format, access, size, blend mode and scale mode for
+  the five creation sequences the apps use (streaming 3D view, static thumbnail, nearest sprite texture, opaque FpHands texture, render target); pixels after a rectangle update with
+  its own pitch and a scaled `SDL_RenderCopy`; clear colour, draw colour, output size, driver name, `ReadPixels` bytes; scale 2 + clip + `SDL_RenderGeometryRaw` with
+  16-bit and 32-bit indices (the ImGui path); render target draw and copy back. Also `CreateRenderer` on a window of the sdl2 backend (dummy video driver). Not covered by a test: the
+  Direct3D 11 interop, and OKAY_RENDER_DRIVER hints.
+* **A real launcher run, headless.** `okayspace-launcher` (`bin/OkaySpace`) built from this branch and run on Xvfb with SDL's dummy audio
+  (`scripts/headless_app_shot.sh`): on the DEFAULT backend (sdl2, imgui_impl_sdl2, imgui_impl_sdlrenderer2) it starts, draws the whole Create page, its update-check worker thread reaches
+  the update server and the page shows "Update available v2.887.0" (so `CreateThread`, the mutexes and atomics, and the textures, clear, present of the bridge all ran in a real
+  process). Left alone with the default settings (without `OKAY_UPDATE_ON_LAUNCH=0`) it downloaded the newest release into the build folder and tried to swap it in, which is also a real run of the
+  download threads. Pictures: `docs/img/launcher_sdl2_headless.png` (default) and `docs/img/launcher_own_backend_headless.png` (own backend, below); they differ by 0 pixels at a
+  4 percent threshold (RMSE 0.06 percent). Not tried: clicking, typing, the chat window, voice, a download in the UI, quitting (SDL turns SIGTERM into a close
+  request, which makes the launcher ask Exit or Minimise).
+
+**Own window surface (step 5), launcher done, editor written but not run.** With `OKAY_PLATFORM_BACKEND=own` the launcher now makes its windows on the own backend
+(X11 here), uses our own Dear ImGui input feed and our own Dear ImGui renderer (both forced on for the own backend, since the SDL ones cannot see such a window) and draws
+with the software painter. How, in order: `okay::platform::Default()` instead of a fixed sdl2 backend; `shared/WindowHandles.hpp` (native handle to `Window`, used by the `lw::` helpers,
+registered for the main and chat window); `okay::pb::CreateRenderer` on an own-backend window asks a registered factory (`OkayUI::soft::CreateWindowPainter`) and returns the
+painter's address as the "renderer" handle (never an SDL renderer: use it only with `okay::pb` and the Painter); Splash, the script UI bridge and OkayUI's end-of-frame
+(`shared/OkayUIFrame.hpp`: `EndFrame` on SDL, `EndFrameData` + `FrameDrawer` on a painter) take the handle through `okay::pb::For`; `okay::SetAppIcon` is `Window::SetIcon`; the mouse
+state and text-input calls are seam calls. The launcher has no direct `SDL_*` call left except `SDL_SetMainReady` and audio-format macros. The editor got the same changes (window title, show,
+raise, restore, held keys, cursor visibility through the seam; feed and renderer forced; painter factory) and compiles on Linux (`-fsyntax-only` and a full build, see the run notes), but a
+run of it on the own backend is reported separately below.
+
 ## Not behind the seam yet (stage 1 list; see stage 2 above for what changed)
 
 The window, event loop and GL context of the editor, launcher and player still call SDL directly. Moving them needs more than

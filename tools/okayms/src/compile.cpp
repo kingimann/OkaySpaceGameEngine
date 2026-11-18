@@ -110,6 +110,9 @@ struct Field {
     bool init_zero = false;
     // `T x = {a, b};`: init_at is the '{' itself; an array or aggregate member is filled element by element.
     bool init_aggr = false;
+    // `T& x;` (a reference member): the field holds the address (type.pointers is one more than the declared type) and
+    // every read of the name goes through it.
+    bool ref = false;
 };
 
 struct Node;
@@ -194,11 +197,17 @@ struct StructDef {
     // The class template and the arguments of an instance, for deduction through Node<T>.
     std::string tmpl;
     std::vector<TArg> targs;
+    // The class this one is declared inside (-1 for none): its statics can be named from the nested class.
+    int outer = -1;
+    // Named by `struct X;` or used by pointer before its definition; the definition fills this entry in.
+    bool incomplete = false;
 };
 
 struct Global {
     std::string name;
     Type type{};
+    // `extern T x;`: declared here, made in another file (an undefined symbol).
+    bool is_extern = false;
     bool bss = true;
     bool is_static = false;
     uint32_t init = 0;
@@ -2016,8 +2025,21 @@ struct Parser {
                     td.kind = TTypedef;
                     td.text = "typedef";
                     out.push_back(td);
-                    for (size_t k = i + 3; k < j; ++k) out.push_back(tokens[k]);
-                    out.push_back(tokens[i + 1]);
+                    // using F = R (*)(A);  is  typedef R (*F)(A);  : the name goes inside the parentheses.
+                    size_t fp = 0;
+                    for (size_t k = i + 3; k + 2 < j; ++k)
+                        if (tokens[k].kind == TLParen && tokens[k + 1].kind == TStar && tokens[k + 2].kind == TRParen) {
+                            fp = k;
+                            break;
+                        }
+                    if (fp != 0) {
+                        for (size_t k = i + 3; k < fp + 2; ++k) out.push_back(tokens[k]);
+                        out.push_back(tokens[i + 1]);
+                        for (size_t k = fp + 2; k < j; ++k) out.push_back(tokens[k]);
+                    } else {
+                        for (size_t k = i + 3; k < j; ++k) out.push_back(tokens[k]);
+                        out.push_back(tokens[i + 1]);
+                    }
                     i = j - 1;
                     continue;
                 }
@@ -2284,6 +2306,20 @@ struct Parser {
             // C x(other) with no copy constructor written or implied: the members are copied as they are ([class.copy]).
             Type from;
             if (static_type(args[0], &from) && from.base == 3 && from.pointers == 0 && !from.is_array() && from.struct_id == sid) {
+                if (has_move_ctor(sid)) {
+                    // A class that declares a move constructor and no copy constructor has its copy constructor deleted
+                    // ([class.copy.ctor]/8). Only a use in a function that is reached is an error: it is recorded here
+                    // and reported when the program is finished (vector<unique_ptr<T>>'s copy constructor, never called,
+                    // must not stop a file).
+                    deleted_uses[current_fn] = "use of deleted function: the copy constructor of " +
+                                               structs[static_cast<size_t>(sid)].name +
+                                               " is deleted because the class declares a move constructor";
+                    Node nothing;
+                    nothing.kind = Node::Block;
+                    nothing.text = "skip";
+                    *out = std::move(nothing);
+                    return true;
+                }
                 Node target;
                 target.kind = Node::Unary;
                 target.op = TStar;
@@ -2600,9 +2636,24 @@ struct Parser {
         return false;
     }
 
+    // The class a name means: first one nested in the class being read (or whose member function is being read) or in a class
+    // around it ([basic.lookup.unqual]), so two classes can each have a nested `State`; then one at namespace scope; then any.
     int find_struct(const std::string& name) const {
+        const int ctx = !class_ids.empty() ? class_ids.back() : cur_class;
+        if (ctx >= 0 && ctx < static_cast<int>(structs.size())) {
+            for (int c = ctx; c >= 0; c = structs[static_cast<size_t>(c)].outer)
+                for (size_t i = 0; i < structs.size(); ++i)
+                    if (structs[i].outer == c && structs[i].name == name) return static_cast<int>(i);
+        }
+        for (size_t i = 0; i < structs.size(); ++i)
+            if (structs[i].outer < 0 && structs[i].name == name) return static_cast<int>(i);
         for (size_t i = 0; i < structs.size(); ++i)
             if (structs[i].name == name) return static_cast<int>(i);
+        return -1;
+    }
+    int find_nested(int outer, const std::string& name) const {
+        for (size_t i = 0; i < structs.size(); ++i)
+            if (structs[i].outer == outer && structs[i].name == name) return static_cast<int>(i);
         return -1;
     }
     int size_of(const Type& type) const {
@@ -2676,10 +2727,23 @@ struct Parser {
             if (t->base == 3 && t->struct_id >= 0 && t->pointers == 0 && tokens[at + 1].kind == TIdent &&
                 typedefs.find(tokens[at + 1].text) == typedefs.end()) {
                 // Outer::Nested: nested classes are kept under their plain name.
-                const int nested = find_struct(tokens[at + 1].text);
+                int nested = find_nested(t->struct_id, tokens[at + 1].text);
+                if (nested < 0) nested = find_struct(tokens[at + 1].text);
                 if (nested >= 0 && nested != t->struct_id &&
                     !(at + 2 < tokens.size() && tokens[at + 2].kind == TLParen)) {
                     t->struct_id = nested;
+                    next();
+                    next();
+                    any = true;
+                    continue;
+                }
+            }
+            if (t->base == 3 && t->struct_id >= 0 && t->pointers == 0 && tokens[at + 1].kind == TIdent &&
+                !(at + 2 < tokens.size() && tokens[at + 2].kind == TLParen)) {
+                // Class::Enum: an enumeration declared in a class is kept under its plain name (a typedef of int).
+                auto en = typedefs.find(tokens[at + 1].text);
+                if (en != typedefs.end() && en->second.base == 1 && en->second.pointers == 0) {
+                    *t = en->second;
                     next();
                     next();
                     any = true;
@@ -2778,10 +2842,16 @@ struct Parser {
                 error = "expected a struct name";
                 return false;
             }
-            const int id = find_struct(name);
+            int id = find_struct(name);
             if (id < 0) {
-                error = "unknown struct " + name;
-                return false;
+                // `struct X;` and `X* p` before X is defined ([class.name]): an incomplete class; a later definition of X
+                // fills in this entry, so pointers made before it already mean the final type.
+                StructDef placeholder;
+                placeholder.name = name;
+                placeholder.incomplete = true;
+                placeholder.is_union = as_union;
+                structs.push_back(std::move(placeholder));
+                id = static_cast<int>(structs.size()) - 1;
             }
             type->base = 3;
             type->struct_id = id;
@@ -3295,6 +3365,9 @@ struct Parser {
         if (i >= 2 && tokens[i - 1].kind == TLParen && tokens[i - 2].kind == TSizeof && i + 1 < tokens.size() &&
             tokens[i + 1].kind == TRParen)
             return true;  // sizeof(S)
+        if (i + 2 < tokens.size() && tokens[i + 1].kind == TColonColon && tokens[i + 2].kind == TIdent &&
+            typedefs.find(tokens[i + 2].text) != typedefs.end())
+            return true;  // Struct::Enum
         return i + 1 < tokens.size() &&
                (tokens[i + 1].kind == TIdent || tokens[i + 1].kind == TStar || tokens[i + 1].kind == TAmp ||
                 tokens[i + 1].kind == TAndAnd ||
@@ -3863,6 +3936,7 @@ struct Parser {
             // Of several constructors of one arity the best match by the ranks of [over.match] wins; a tie, or no
             // viable one, goes to the one declared last (the order used before).
             const int score = args.empty() ? 0 : call_score(m.params, args);
+            if (score < 0 && args.size() == 1 && is_move_param(m, sid)) continue;  // an lvalue does not bind to T&&
             if (best == nullptr || best_score < 0 || (score >= 0 && score <= best_score)) {
                 best = &m;
                 best_score = score;
@@ -4106,6 +4180,8 @@ struct Parser {
     }
 
     int struct_nest = 0;
+    bool pending_extern = false;
+    std::vector<int> class_ids{};  // the classes whose bodies are being read, innermost last
     std::vector<std::pair<int, size_t>> deferred_bodies{};
     bool parse_struct_body(bool as_union, std::string name, int* out_id, bool is_class = false, int base_id = -1) {
         struct NestGuard {
@@ -4126,9 +4202,11 @@ struct Parser {
             def.tmpl = inst_base_name;
             def.targs = inst_args;
         }
+        const bool is_instance_body = !pending_sym.empty();
         def.sym_name = pending_sym;
         pending_sym.clear();
-        const std::string ctor_name = inst_base_name.empty() ? name : inst_base_name;
+        // A class nested in a template instance has its own name for its constructors and destructor.
+        const std::string ctor_name = inst_base_name.empty() || !is_instance_body ? name : inst_base_name;
         def.is_union = as_union;
         def.is_class = is_class;
         def.cxx = is_class;
@@ -4148,8 +4226,25 @@ struct Parser {
             def.statics = base.statics;
         }
         const std::map<std::string, uint64_t> enums_before = enum_values;
-        structs.push_back(def);
-        const int self = static_cast<int>(structs.size()) - 1;
+        if (inst_base_name.empty() && !class_ids.empty()) def.outer = class_ids.back();
+        int self = -1;
+        if (inst_base_name.empty() && !is_instance_body) {
+            const int earlier = find_struct(name);
+            if (earlier >= 0 && structs[static_cast<size_t>(earlier)].incomplete &&
+                structs[static_cast<size_t>(earlier)].outer == def.outer)
+                self = earlier;
+        }
+        if (self >= 0) {
+            structs[static_cast<size_t>(self)] = def;  // the incomplete entry becomes this class
+        } else {
+            structs.push_back(def);
+            self = static_cast<int>(structs.size()) - 1;
+        }
+        class_ids.push_back(self);
+        struct ClassIdGuard {
+            std::vector<int>& v;
+            ~ClassIdGuard() { v.pop_back(); }
+        } class_id_guard{class_ids};
         if (!expect(TLBrace, "'{'")) return false;
         char access = is_class ? 'A' : 'Q';
         // typedef and using names of this class are visible to the members after them.
@@ -4174,13 +4269,23 @@ struct Parser {
                     next();  // =
                 }
                 if (!parse_type(&aliased, &imp, &exp)) return false;
-                while (accept(TStar)) ++aliased.pointers;
-                if (accept(TAmp)) aliased.is_ref = true;  // typedef T& reference;
+                bool declared = false;
+                if (!is_using && is(TLParen) && at + 1 < tokens.size() && tokens[at + 1].kind == TStar) {
+                    // typedef R (*F)(A);  inside a class: a pointer to function, read like any declarator.
+                    Declarator fdecl;
+                    if (!parse_declarator(aliased, &fdecl)) return false;
+                    alias = fdecl.name;
+                    aliased = fdecl.type;
+                    declared = true;
+                }
+                while (!declared && accept(TStar)) ++aliased.pointers;
+                if (declared) {
+                } else if (accept(TAmp)) aliased.is_ref = true;  // typedef T& reference;
                 else if (accept(TAndAnd)) {
                     aliased.is_ref = true;
                     if (aliased.pointers == 0) aliased.rref = true;
                 }
-                if (!is_using) {
+                if (!is_using && !declared) {
                     if (!is(TIdent)) {
                         error = "expected a typedef name";
                         return false;
@@ -4390,6 +4495,10 @@ struct Parser {
             }
             const Type base_type = field.type;
             while (accept(TStar)) ++field.type.pointers;
+            if (!static_member && (accept(TAmp) || accept(TAndAnd))) {
+                ++field.type.pointers;
+                field.ref = true;
+            }
             if (!is(TIdent)) {
                 error = "expected a field name";
                 return false;
@@ -4402,20 +4511,53 @@ struct Parser {
                 return false;
             }
             if (static_member) {
-                // static T name; or static const T name = constant; ([class.static.data])
+                // static T name; or static const T name = constant; ([class.static.data]); `static int a = 0, b = 1;`
+                auto more_statics = [&]() -> int {
+                    if (!accept(TComma)) return 0;
+                    field.type = base_type;
+                    while (accept(TStar)) ++field.type.pointers;
+                    if (!is(TIdent)) {
+                        error = "expected a field name";
+                        return -1;
+                    }
+                    field.name = cur().text;
+                    next();
+                    return parse_brackets(&field.type) ? 1 : -1;
+                };
+                for (;;) {
                 StaticMem sm;
                 sm.type = field.type;
                 sm.type.is_const = static_const;
                 def.cxx = true;
-                if (accept(TAssign)) {
+                if (accept(TAssign) || is(TLBrace)) {
                     Node init;
                     if (!parse_init(&init)) return false;
+                    const bool constant_value = static_const && sm.type.pointers == 0 && !sm.type.is_array() &&
+                                                sm.type.base != 3;
+                    if (!constant_value) {
+                        // `static inline float x = 0.0f;`, a mutable `static inline int n = 0;`, an array or a pointer: a
+                        // variable of the program with its initial value (one copy per file here).
+                        if (!fix_unsized(&sm.type, init)) return false;
+                        sm.symbol = static_symbol(def, field.name, sm.type);
+                        Global g;
+                        g.name = sm.symbol;
+                        g.type = sm.type;
+                        g.bss = false;
+                        g.is_static = true;
+                        init_relocs = &g.addr_relocs;
+                        const bool flat_ok = flatten_init(sm.type, init, &g.init_bytes, 0);
+                        init_relocs = nullptr;
+                        if (!flat_ok) return false;
+                        globals.push_back(std::move(g));
+                        def.statics[field.name] = sm;
+                        const int more_g = more_statics();
+                        if (more_g < 0) return false;
+                        if (more_g > 0) continue;
+                        if (!expect(TSemi, "';'")) return false;
+                        break;
+                    }
                     std::vector<uint8_t> bytes;
                     if (!flatten_init(sm.type, init, &bytes, 0)) return false;
-                    if (sm.type.pointers != 0 || sm.type.is_array() || sm.type.base == 3) {
-                        error = "a static member with an initializer must be an integer constant";
-                        return false;
-                    }
                     long long v = 0;
                     for (size_t bi = bytes.size(); bi-- > 0;) v = (v << 8) | bytes[bi];
                     const size_t nb = bytes.size();
@@ -4430,8 +4572,13 @@ struct Parser {
                     g.bss = true;
                     globals.push_back(g);
                 }
-                if (!expect(TSemi, "';'")) return false;
                 def.statics[field.name] = sm;
+                const int more_s = more_statics();
+                if (more_s < 0) return false;
+                if (more_s > 0) continue;
+                if (!expect(TSemi, "';'")) return false;
+                break;
+                }
                 continue;
             }
             for (;;) {  // float x, y, z; every name gets the type read before the first one
@@ -4453,6 +4600,10 @@ struct Parser {
                 field = Field{};
                 field.type = base_type;
                 while (accept(TStar)) ++field.type.pointers;
+                if (accept(TAmp)) {
+                    ++field.type.pointers;
+                    field.ref = true;
+                }
                 if (!is(TIdent)) {
                     error = "expected a field name";
                     return false;
@@ -4995,7 +5146,7 @@ struct Parser {
                     assign.kind = Node::Assign;
                     assign.op = TAssign;
                     assign.kids.push_back(node_this_field(field.name));
-                    assign.kids.push_back(std::move(init->args[0]));
+                    assign.kids.push_back(field.ref ? node_addr(std::move(init->args[0])) : std::move(init->args[0]));
                     Node stmt;
                     stmt.kind = Node::ExprStmt;
                     stmt.kids.push_back(std::move(assign));
@@ -7031,7 +7182,65 @@ struct Parser {
         }
     }
 
+    std::map<std::string, std::string> deleted_uses{};  // function name -> a use of a deleted function in it
+    // Reports a use of a deleted function in a function that is reached: from every function with an external symbol, the
+    // virtual tables and the addresses in global data, through every name found in a reached function.
+    bool check_deleted_uses() {
+        if (deleted_uses.empty()) return true;
+        std::map<std::string, std::vector<size_t>> by_name;
+        for (size_t i = 0; i < funcs.size(); ++i) {
+            if (!funcs[i].name.empty()) by_name[funcs[i].name].push_back(i);
+            if (!funcs[i].symbol.empty()) by_name[funcs[i].symbol].push_back(i);
+        }
+        std::vector<bool> reach(funcs.size(), false);
+        std::vector<size_t> work;
+        auto mark = [&](const std::string& name) {
+            auto it = by_name.find(name);
+            if (it == by_name.end()) return;
+            for (size_t i : it->second)
+                if (!reach[i]) {
+                    reach[i] = true;
+                    work.push_back(i);
+                }
+        };
+        for (size_t i = 0; i < funcs.size(); ++i)
+            if (funcs[i].defined && (!funcs[i].is_static || funcs[i].exported)) {
+                reach[i] = true;
+                work.push_back(i);
+            }
+        for (const Global& g : globals) {
+            for (const std::string& slot : g.slots) mark(slot);
+            for (const auto& reloc : g.addr_relocs) mark(reloc.second);
+        }
+        while (!work.empty()) {
+            const size_t i = work.back();
+            work.pop_back();
+            std::vector<const Node*> stack;
+            stack.push_back(&funcs[i].body);
+            while (!stack.empty()) {
+                const Node* n = stack.back();
+                stack.pop_back();
+                if (!n->text.empty()) mark(n->text);
+                for (const Node& k : n->kids) stack.push_back(&k);
+            }
+        }
+        for (size_t i = 0; i < funcs.size(); ++i) {
+            if (!reach[i] || !funcs[i].defined) continue;
+            auto bad = deleted_uses.find(funcs[i].name);
+            if (bad != deleted_uses.end()) {
+                error = bad->second + " (in " + funcs[i].name + ")";
+                return false;
+            }
+        }
+        return true;
+    }
+
     bool finish_program() {
+        if (!finish_program_core()) return false;
+        return check_deleted_uses();
+    }
+
+    bool finish_program_core() {
         declare_external_methods();
         // What a header can make in every file that includes it has an internal symbol here (each file keeps its own copy,
         // so two files can both use vector<int> or the same inline function): template instances and virtual tables.
@@ -7151,6 +7360,7 @@ struct Parser {
                 } else if (c_lang) {
                     ++c_linkage;
                     c_single = true;
+                    pending_extern = true;  // `extern "C" int x;` is a declaration when it is a variable
                 }
                 continue;
             }
@@ -7187,11 +7397,17 @@ struct Parser {
             bool is_typedef = false;
             bool is_static = false;
             bool is_const = false;
+            bool is_extern_decl = pending_extern;
+            pending_extern = false;  // `extern int x;` and `extern "C" int x;`: the object is elsewhere
             const size_t decl_begin = at;
-            while (is(TTypedef) || is(TStatic) || is(TConst)) {
+            while (is(TTypedef) || is(TStatic) || is(TConst) || (is(TIdent) && cur().text == "extern")) {
                 if (accept(TTypedef)) is_typedef = true;
                 else if (accept(TStatic)) is_static = true;
                 else if (accept(TConst)) is_const = true;
+                else {
+                    next();
+                    is_extern_decl = true;
+                }
             }
             bool imported = false;
             bool exported = false;
@@ -7257,6 +7473,22 @@ struct Parser {
                 const int sid = find_struct(cur().text);
                 next();
                 next();
+                // After `C::` the names of C's scope are visible: its typedefs and aliases mean what they mean in the class.
+                struct ClassScopeTypedefs {
+                    std::map<std::string, Type>& table;
+                    std::vector<std::pair<std::string, std::pair<bool, Type>>> saved;
+                    ~ClassScopeTypedefs() {
+                        for (size_t k = saved.size(); k-- > 0;) {
+                            if (saved[k].second.first) table[saved[k].first] = saved[k].second.second;
+                            else table.erase(saved[k].first);
+                        }
+                    }
+                } class_scope{typedefs, {}};
+                for (const auto& td : structs[static_cast<size_t>(sid)].tdefs) {
+                    auto had = typedefs.find(td.first);
+                    class_scope.saved.push_back({td.first, {had != typedefs.end(), had != typedefs.end() ? had->second : Type{}}});
+                    typedefs[td.first] = td.second;
+                }
                 if (!is(TIdent)) {
                     error = "expected a member function name";
                     return false;
@@ -7272,6 +7504,12 @@ struct Parser {
                     }
                     Node sinit;
                     bool has_init = false;
+                    bool inline_def = false;  // `inline T C::x{...};` in a header: every file has its own copy
+                    for (size_t k = decl_begin; k < at && k < tokens.size(); ++k)
+                        if (tokens[k].inl) inline_def = true;
+                    if (inline_def)
+                        for (Global& g : globals)
+                            if (g.name == sm->second.symbol) g.is_static = true;
                     if (is(TLBrace) && !sm->second.has_const && obj_needs_ctor(sm->second.type)) {
                         // inline const V V::Zero {0, 0}; the braces are the constructor's arguments.
                         next();
@@ -7389,11 +7627,19 @@ struct Parser {
                     return false;
                 }
                 if (accept(TAssign)) {
-                    if (!decl.type.is_array() || !decl.type.more.empty() || !parse_init(&ginit)) {
+                    if (!decl.type.is_array()) {
+                        // T g = expr;  at namespace scope: the constructor (copy or converting) runs at startup with the
+                        // value as its argument ([dcl.init], copy-initialisation).
+                        Node value;
+                        if (!parse_expr(1, &value)) return false;
+                        gargs.clear();
+                        gargs.push_back(std::move(value));
+                    } else if (!decl.type.more.empty() || !parse_init(&ginit)) {
                         error = error.empty() ? "a global object with a constructor takes arguments in parentheses" : error;
                         return false;
+                    } else {
+                        has_ginit = true;
                     }
-                    has_ginit = true;
                 }
                 if (!expect(TSemi, "';'")) return false;
                 Global global;
@@ -7406,10 +7652,29 @@ struct Parser {
                 continue;
             }
             if (!decl.is_function) {
+                if (c_single) {  // extern "C" int x;
+                    --c_linkage;
+                    c_single = false;
+                }
                 for (;;) {  // int a = 1, *b, c[2]; : every name gets the type read before the first one
                     Global global;
                     global.name = decl.name;
                     global.type = decl.type;
+                    if (is_extern_decl && !is(TAssign)) {
+                        bool known = false;
+                        for (const Global& earlier : globals)
+                            if (earlier.name == global.name) known = true;
+                        if (!known) {
+                            global.is_extern = true;
+                            global.bss = false;
+                            globals.push_back(global);
+                        }
+                        if (!accept(TComma)) break;
+                        decl = Declarator{};
+                        if (!parse_declarator(type, &decl)) return false;
+                        decl.type.is_const = is_const;
+                        continue;
+                    }
                     // A const object at namespace scope and anything in an unnamed namespace has internal linkage
                     // ([basic.link]): every file keeps its own copy, so two files may use the same name.
                     global.is_static = is_static || decl.type.is_const || anon_depth > 0;
@@ -7429,6 +7694,11 @@ struct Parser {
                         // variables are not kept apart by namespace here, so the later one gets its own internal name
                         // and what is read after it means that one.
                         bool taken = false;
+                        for (size_t gi = globals.size(); gi-- > 0;)
+                            if (globals[gi].name == global.name && globals[gi].is_extern) {
+                                globals.erase(globals.begin() + static_cast<std::ptrdiff_t>(gi));  // now defined here
+                                break;
+                            }
                         for (const Global& earlier : globals)
                             if (earlier.name == global.name) taken = true;
                         if (taken) {
@@ -7805,18 +8075,52 @@ bool Parser::parse_stmt_inner(Node* out, std::vector<Local>* locals, int stmt_li
         bool cond_scoped = false;
         if (!parse_condition(&cond, &cond_decl, &cond_scoped, locals)) return false;
         Node body;
-        brk_dbase.push_back(dscopes.size());
-        cont_dbase.push_back(dscopes.size());
+        // With a declaration in the condition the variable belongs to each pass: break and continue destroy it too.
+        const size_t loop_base = cond_scoped ? dscopes.size() - 1 : dscopes.size();
+        brk_dbase.push_back(loop_base);
+        cont_dbase.push_back(loop_base);
         const bool body_ok = parse_stmt(&body, locals);
         brk_dbase.pop_back();
         cont_dbase.pop_back();
         if (!body_ok) return false;
+        if (cond_scoped) {
+            // while (T x = f()) body  is read as  while (true) { T x = f(); if (!x) break; body }  ([stmt.while]): the
+            // variable is made again, tested and destroyed in every pass.
+            std::vector<Node> dt;
+            if (!dtor_nodes(dscopes.size() - 1, &dt)) return false;
+            Node jump;
+            jump.kind = Node::Break;
+            Node leave;
+            if (dt.empty()) {
+                leave = std::move(jump);
+            } else {
+                leave.kind = Node::Block;
+                for (Node& n : dt) leave.kids.push_back(std::move(n));
+                leave.kids.push_back(std::move(jump));
+            }
+            Node negated;
+            negated.kind = Node::Unary;
+            negated.op = TNot;
+            negated.kids.push_back(std::move(cond));
+            Node test;
+            test.kind = Node::If;
+            test.kids.push_back(std::move(negated));
+            test.kids.push_back(std::move(leave));
+            Node pass;
+            pass.kind = Node::Block;
+            pass.kids.push_back(std::move(test));
+            pass.kids.push_back(std::move(body));
+            close_condition_scope(&pass, std::move(cond_decl), true);
+            Node always;
+            always.kind = Node::IntLit;
+            always.number = 1;
+            always.type.base = 1;
+            out->kids.push_back(std::move(always));
+            out->kids.push_back(std::move(pass));
+            return true;
+        }
         out->kids.push_back(std::move(cond));
         out->kids.push_back(std::move(body));
-        if (cond_scoped) {
-            error = "a declaration in a while condition is not supported";  // the variable would need to be made again each pass
-            return false;
-        }
         return true;
     }
     if (is(TFor)) {
@@ -8297,6 +8601,20 @@ bool Parser::parse_local_decl_one(const Type& type, bool is_typedef, bool is_sta
             init.text = "skipped";
         } else if (!parse_init(&init)) {
             return false;
+        }
+        if (init.kind == Node::Block && init.text == "init" && !decl.type.is_array() && decl.type.base != 3 &&
+            init.kids.size() <= 1) {
+            // `int x{};` and `float f{1.5f};` ([dcl.init.list]/3): a scalar from a list of at most one element.
+            if (init.kids.empty()) {
+                Node zero;
+                zero.kind = Node::IntLit;
+                zero.number = 0;
+                zero.type.base = 1;
+                init = std::move(zero);
+            } else {
+                Node only = std::move(init.kids[0]);
+                init = std::move(only);
+            }
         }
         if (init.kind == Node::Block && init.text == "skipped") has_init = false; else
         has_init = true;
@@ -10870,7 +11188,10 @@ bool Parser::parse_unary(Node* out) {
                 out->op = TArrow;
                 out->text = name;
                 out->kids.push_back(std::move(self));
-                if (def.ref_caps.count(name) > 0) {
+                bool ref_field = false;
+                for (const Field& field : def.fields)
+                    if (field.name == name && field.ref) ref_field = true;
+                if (def.ref_caps.count(name) > 0 || ref_field) {
                     // A variable a lambda captured by reference: the field holds its address.
                     Node field = std::move(*out);
                     *out = Node{};
@@ -10896,6 +11217,19 @@ bool Parser::parse_unary(Node* out) {
                 if (is_method) {
                     next();
                     return method_call(out, std::move(self), true, name) && parse_postfix(out);
+                }
+            }
+            // A static member or static function of an enclosing class, named from a nested class.
+            for (int outer = def.outer; outer >= 0; outer = structs[static_cast<size_t>(outer)].outer) {
+                const StructDef& od = structs[static_cast<size_t>(outer)];
+                if (!is(TLParen) && static_member_expr(outer, name, out)) return parse_postfix(out);
+                if (is(TLParen)) {
+                    bool only_static = false;
+                    for (const Method& m : od.methods)
+                        if (m.name == name) only_static = true;
+                    for (const Method& m : od.methods)
+                        if (m.name == name && !m.is_static) only_static = false;
+                    if (only_static) return qualified_call(out, outer, name, {}) && parse_postfix(out);
                 }
             }
         }
@@ -11436,6 +11770,25 @@ bool Parser::parse_postfix(Node* out) {
             }
             wrapped.kids.push_back(std::move(*out));
             *out = std::move(wrapped);
+            {
+                // A reference member: the field holds an address, the name means the object it refers to.
+                Type object_type;
+                if (static_type(out->kids[0], &object_type)) {
+                    if (out->op == TArrow && object_type.pointers > 0) object_type = peel_array(object_type);
+                    if (object_type.base == 3 && object_type.struct_id >= 0 &&
+                        object_type.struct_id < static_cast<int>(structs.size())) {
+                        for (const Field& field : structs[static_cast<size_t>(object_type.struct_id)].fields)
+                            if (field.name == out->text && field.ref) {
+                                Node field_node = std::move(*out);
+                                *out = Node{};
+                                out->kind = Node::Unary;
+                                out->op = TStar;
+                                out->kids.push_back(std::move(field_node));
+                                break;
+                            }
+                    }
+                }
+            }
         }
     }
     return true;
@@ -14872,6 +15225,13 @@ bool emit_functions(std::vector<FuncDecl>& funcs, const std::vector<StructDef>& 
             add_sym(global.name, at, 0, kClassExternal, 0);
             continue;
         }
+        if (global.is_extern) {
+            bool used = false;
+            for (const auto& reloc : gen.relocs)
+                if (reloc.symbol == global.name) used = true;
+            if (used) add_sym(global.name, 0, 0, kClassExternal, 0);
+            continue;
+        }
         const int size = std::max(1, gen.size_of(global.type));
         const int align = global.type.pointer() ? 8 : 4;
         if (global.bss) {
@@ -14909,7 +15269,7 @@ bool emit_functions(std::vector<FuncDecl>& funcs, const std::vector<StructDef>& 
     if (!gen.pdata.empty()) pdata_section = next_section++;
     for (Sym& sym : symbols) {
         for (const Global& global : globals) {
-            if (sym.name != global.name) continue;
+            if (sym.name != global.name || global.is_extern) continue;
             sym.section = static_cast<int16_t>(global.vtable ? rdata_section : global.bss ? bss_section : data_section);
         }
     }

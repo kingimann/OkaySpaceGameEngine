@@ -4311,6 +4311,7 @@ Word, then the number(s) to say. Back to the [overview](../FEATURE_MAP.md).
 - Settings page (17.1.5)
 - settings screen (7.4, 12.8, 12.8.4)
 - Settings screen sliders (7.4.2)
+- Settings switches (41.11.7)
 - Settings values (1.15.1)
 - setup status (5.13)
 - SetVar (16.11)

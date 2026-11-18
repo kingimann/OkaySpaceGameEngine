@@ -189,6 +189,7 @@ inline VsPlace VsLegacyPlaceForNewNode(const char* type) {
 // Hand-written nodes (no '.' in the type). Unknown types come back with a null category.
 inline VsPlace VsLegacyPlaceForNode(const char* type) {
     if (!type || !type[0]) return {};
+    if (VsPre(type, "Qb")) return VsAt("Objects");   // quick blocks are new: there was no old place
     if (VsPre(type, "Lb")) {
 #include "generated/library_place.inc"
     }

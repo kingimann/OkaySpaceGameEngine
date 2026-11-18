@@ -405,6 +405,11 @@ struct ViewPrefs {
     bool showNames = true;          // names beside the selected object, cameras and lights
     bool toolbarLabels = false;     // Scene view toolbar: icon + text
     int density = (int)Density::Comfortable;
+    int scriptDensity = 1;          // Visual Script + Script editor spacing: 0 Compact, 1 Comfortable, 2 Spacious (ScriptingDensity.hpp)
+    bool modelingMirror = true;     // simple Modeling view: edits are mirrored left to right while editing (one switch)
+    int modelingRecent[4] = {0, 0, 0, 0};   // simple Modeling view: the last four tools used (stable codes, see ModelingEasy.hpp)
+    int modelingSidebar = 0;        // advanced Modeling window page list: 0 = open (auto-fold when narrow), 1 = folded by choice, 2 = open by choice
+    bool modelingAdvanced = false;  // Modeling window: false = the simple beginner view (default), true = every tool
     int layoutPreset = 0;           // the built-in layout on screen when the editor closed (-1 = a saved or custom arrangement)
 
     /// One "key value" line of the settings file. False when the key is not one of these.
@@ -417,6 +422,11 @@ struct ViewPrefs {
         if (k == "shownames")          { showNames = v != 0; return true; }
         if (k == "toolbarlabels")      { toolbarLabels = v != 0; return true; }
         if (k == "density")            { density = ClampDensity(v); return true; }
+        if (k == "scriptdensity")      { scriptDensity = v <= 0 ? 0 : (v >= 2 ? 2 : v); return true; }
+        if (k == "modelingmirror")     { modelingMirror = v != 0; return true; }
+        if (k.size() == 15 && k.compare(0, 14, "modelingrecent") == 0 && k[14] >= '0' && k[14] <= '3') { modelingRecent[k[14] - '0'] = v < 0 ? 0 : v; return true; }
+        if (k == "modelingsidebarfolded") { modelingSidebar = (v >= 0 && v <= 2) ? v : 0; return true; }
+        if (k == "modelingadvanced")   { modelingAdvanced = v != 0; return true; }
         if (k == "layoutpreset")       { layoutPreset = v < -1 ? -1 : (v > 99 ? 99 : v); return true; }
         return false;
     }
@@ -431,6 +441,11 @@ struct ViewPrefs {
           << "shownames " << (showNames ? 1 : 0) << "\n"
           << "toolbarlabels " << (toolbarLabels ? 1 : 0) << "\n"
           << "density " << density << "\n"
+          << "scriptdensity " << scriptDensity << "\n"
+          << "modelingmirror " << (modelingMirror ? 1 : 0) << "\n"
+          << "modelingrecent0 " << modelingRecent[0] << "\nmodelingrecent1 " << modelingRecent[1] << "\nmodelingrecent2 " << modelingRecent[2] << "\nmodelingrecent3 " << modelingRecent[3] << "\n"
+          << "modelingsidebarfolded " << modelingSidebar << "\n"
+          << "modelingadvanced " << (modelingAdvanced ? 1 : 0) << "\n"
           << "layoutpreset " << layoutPreset << "\n";
         return o.str();
     }

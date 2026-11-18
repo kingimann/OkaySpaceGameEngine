@@ -1,4 +1,5 @@
 #include "okay/VisualScript/NodeGraph.hpp"
+#include "okay/VisualScript/QuickBlocks.hpp"
 #include "okay/VisualScript/NodeAliases.hpp"
 #include "okay/VisualScript/VsTypes.hpp"
 #include "okay/VisualScript/VsApi.hpp"
@@ -434,6 +435,7 @@ std::unique_ptr<VsNode> MakeNode(const std::string& type,
         type == "OnDialogueEvent" || type == "OnDialogueEnd" || type == "OnQuestStarted" ||
         type == "OnQuestCompleted" || type == "OnQuestFailed" || type == "OnObjectiveCompleted" || type == "OnQuestEvent")
         return std::make_unique<EventNode>();
+    if (FindQuickBlock(type)) return std::make_unique<EventNode>();   // normally expanded before this (Parse); a bare one just passes flow on
     if (type == "OnEvent" || type == "OnNetRpc") return std::make_unique<CustomEventNode>();
     // ---- Actions steps (the no-code library) ----
     // The editor writes the encoded steps as one quoted arg; hand-written files may
@@ -1028,7 +1030,9 @@ bool ParseQuoted(const std::string& field, std::string& out) {
     return true;
 }
 
-std::unique_ptr<NodeGraph> NodeGraph::Parse(const std::string& text, std::string* error) {
+std::unique_ptr<NodeGraph> NodeGraph::Parse(const std::string& savedText, std::string* error) {
+    // A quick block is one node in the file; it runs as the ordinary nodes it stands for (QuickBlocks.hpp).
+    const std::string text = ExpandQuickBlocks(savedText);
     auto graph = std::make_unique<NodeGraph>();
     std::unordered_map<int, int> fileToGraph; // file id -> graph id
 

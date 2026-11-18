@@ -62,6 +62,11 @@
 #include "okay/Modeling/MeshAsset.hpp"       // .okaymesh / .obj mesh files
 #include "okay/Modeling/PolyMesh.hpp"        // polygon mesh (quads, n-gons)
 #include "GuidedPanel.hpp"                    // Guided page of the Modeling window
+#include "ModelingEasyUi.hpp"                // the simple (beginner) view of the Modeling window
+#include "ModelingHighlight.hpp"            // button wrappers: outline matches of the tool search
+#include "ModelingSidebar.hpp"              // fold state and widths of the advanced Modeling window's page list
+#include "ModelingToolIndex.hpp"            // the advanced Modeling window as data: pages by job, search, hints
+#include "ModelingStarters.hpp"               // one-click ready-made models
 #include "okay/Modeling/PolyOps.hpp"         // edge-loop tools: loop cut, slide, bevel, knife...
 #include "okay/Modeling/UVUnwrap.hpp"        // seams, LSCM unwrap, island packing
 #include "okay/Render/SkyStars.hpp"    // deterministic skybox star field
@@ -136,6 +141,7 @@
 #include "ScriptText.hpp"   // the Script Editor's token view of a script: outline / go-to-definition
 #include "VsCanvasTools.hpp"   // visual-script snap, align, variable list (no GUI)
 #include "VisualScriptEditor.hpp"   // graph text the editor saves (round-trip in --selftest)
+#include "ScriptingDensityUi.hpp"    // Density (Compact / Comfortable / Spacious) for the Script and Visual Script windows
 
 // ----------------------------------------------------------------------------
 // OkayScript semantic lint — Rider-style "yellow" inspections, no execution.
@@ -942,6 +948,7 @@ static void RunEditorPlayKeyTest(int& failures) {
 #include "okay/Core/ThumbnailCache.hpp"   // Project panel thumbnails
 #include "ProjectBrowser.hpp"     // the Project panel's logic: folder model, safe file operations, references
 #include "ProjectPanelUI.hpp"     // the Project panel's name prompt, delete confirmation, import settings
+#include "ProjectTabs.hpp"        // the Project panel's tab strip (Assets / Favourites / Recent / Search) and the remembered tab
 #include "ProjectNewAssets.hpp"   // the text of a new dialogue, quest file, behavior tree and cutscene (Project > Create)
 #include "ProjectDelete.hpp"      // okayproj::Normalized / IsSameOrInside: the launcher's "is this path inside that folder" test
 #include "LaunchFile.hpp"         // open a file with the system's program, in a text editor, or show it in the file manager (no shell)
@@ -3344,10 +3351,24 @@ static void NoteRecentTool(const char* label) {
     g_recentTools.insert(g_recentTools.begin(), n);
     if (g_recentTools.size() > 6) g_recentTools.resize(6);
 }
+// Modeling window tool search (ModelingToolIndex.hpp): the words typed, the page on screen, and the hint of the button under the mouse.
+static std::string g_mdlFind, g_mdlHint;
+static int g_mdlCurPage = 0;
+static const ImGuiWindow* g_mdlRoot = nullptr;   // the Modeling window itself: ShapeOpButton / ToolButton also draw in the Inspector
+static void MdlMark(const char* label) {   // call right after a button: outline it when it matches the search, remember its hint
+    if (!g_mdlRoot || ImGui::GetCurrentWindowRead()->RootWindow != g_mdlRoot) return;
+    const std::string l = label;
+    if (!g_mdlFind.empty() && oked::modeltools::HighlightLabel(g_mdlCurPage, l, g_mdlFind)) {
+        const ImVec2 a = ImGui::GetItemRectMin(), b = ImGui::GetItemRectMax();
+        ImGui::GetWindowDrawList()->AddRect(ImVec2(a.x - 2, a.y - 2), ImVec2(b.x + 2, b.y + 2), IM_COL32(255, 205, 60, 255), 4.0f, 0, 2.5f);
+    }
+    if (ImGui::IsItemHovered()) if (const auto* t = oked::modeltools::FindByLabel(g_mdlCurPage, l)) g_mdlHint = std::string(t->name) + ": " + t->hint;
+}
 static bool ToolButton(const char* label, bool ok, const char* why, bool small = false) {
     ImGui::BeginDisabled(!ok);
     const bool hit = small ? ImGui::SmallButton(label) : ImGui::Button(label);
     ImGui::EndDisabled();
+    MdlMark(label);
     if (!ok && ImGui::IsItemHovered(ImGuiHoveredFlags_AllowWhenDisabled)) ImGui::SetTooltip("%s", why);
     if (hit && ok) NoteRecentTool(label);
     return hit && ok;
@@ -3374,9 +3395,9 @@ static void LoadMeshFileInto(EditorState& ed, MeshRenderer* mr) {
 // "Save as Mesh Asset": write the object's mesh to <project>/Assets/<name>.okaymesh
 // (quads kept as quads) and point the object at it, so other objects and scenes
 // can use the same model. Saving the scene later writes edits back to the file.
-static void SaveMeshAssetButton(EditorState& ed, GameObject* go, MeshRenderer* mr) {
+static void SaveMeshAssetNow(EditorState& ed, GameObject* go, MeshRenderer* mr) {
     const bool isAsset = okay::modeling::IsOkayMeshPath(mr->meshPath);
-    if (ImGui::Button(isAsset ? "Save Mesh Asset##meshasset" : "Save as Mesh Asset##meshasset")) {
+    {
         std::filesystem::path path;
         if (isAsset) path = mr->meshPath;
         else {
@@ -3407,6 +3428,10 @@ static void SaveMeshAssetButton(EditorState& ed, GameObject* go, MeshRenderer* m
             ConsoleLog("Couldn't save the mesh asset: " + err, 2);
         }
     }
+}
+static void SaveMeshAssetButton(EditorState& ed, GameObject* go, MeshRenderer* mr) {
+    const bool isAsset = okay::modeling::IsOkayMeshPath(mr->meshPath);
+    if (ImGui::Button(isAsset ? "Save Mesh Asset##meshasset" : "Save as Mesh Asset##meshasset")) SaveMeshAssetNow(ed, go, mr);
     if (ImGui::IsItemHovered())
         ImGui::SetTooltip(isAsset ? "Write this mesh back to %s now (saving the scene does it too)."
                                   : "Save this mesh as a .okaymesh file in the project's Assets folder and use it from there,\nso other objects and scenes can share the model. Quads are kept as quads.",
@@ -10460,7 +10485,7 @@ void DrawProject(EditorState& ed) {
     auto smartName = [](int id) -> const char* {
         switch (id) { case 8: return "All Models"; case 2: return "All Textures"; case 7: return "All Audio";
                       case 1: return "All Scripts"; case 3: return "All Scenes"; case 5: return "All Prefabs";
-                      case 4: return "All Materials"; case 6: return "All Data"; case 100: return "Recently Changed";
+                      case 4: return "All Materials"; case 6: return "All Data"; case 100: return "Recently Changed"; case 102: return "Favourites";
                       case 101: return "Unused Assets"; }
         if (id >= 200 && id < 200 + kAssetLabelCount) {
             static std::string lb; lb = std::string("Label: ") + kAssetLabelNames[id - 200]; return lb.c_str();
@@ -10554,6 +10579,17 @@ void DrawProject(EditorState& ed) {
         s_navSuppress = false;
         s_keepSearchOnce = false;
     }
+    // The tab and folder this project was left on (once per project; the folder change above would clear the smart view).
+    static std::string s_tabsLoadedFor, s_tabsSaved;
+    if (!ed.projectDir().empty() && s_tabsLoadedFor != ed.projectDir()) {
+        s_tabsLoadedFor = ed.projectDir();
+        const oked::projecttabs::Remembered rem = oked::projecttabs::Load((fs::path(ed.projectDir()) / ".okay" / "projectview.txt").string());
+        std::error_code te;
+        const fs::path want = rem.folder.empty() ? root : root / fs::u8path(rem.folder);
+        if (fs::is_directory(want, te)) { std::strncpy(dirBuf, want.string().c_str(), sizeof(dirBuf) - 1); dirBuf[sizeof(dirBuf) - 1] = '\0'; s_navLast = dirBuf; dir = want; }
+        s_smart = rem.smart;
+        s_tabsSaved = oked::projecttabs::Serialize(rem);
+    }
     ImGui::BeginDisabled(s_navBack.empty());
     if (ImGui::SmallButton("<##navb")) {
         s_navFwd.push_back(dirBuf);
@@ -10611,6 +10647,35 @@ void DrawProject(EditorState& ed) {
     }
     const ImVec2 tbPos = ImGui::GetCursorScreenPos();
     ImGui::Dummy(ImVec2(tbRightW, tbFh));
+    {   // Tab strip: Assets / Favourites / Recent / Search. The active tab follows the smart view and the search box.
+        namespace pt = oked::projecttabs;
+        const pt::Tab active = pt::ActiveTab(s_smart, search);
+        const int favCount = (int)g_fav.List().size();
+        for (int ti = 0; ti < 4; ++ti) {
+            const pt::Tab t = (pt::Tab)ti;
+            if (t == pt::Tab::Search && active != pt::Tab::Search) continue;   // only while a search is on screen
+            std::string lbl = pt::TabName(t);
+            if (t == pt::Tab::Favourites && favCount > 0) lbl += " " + pt::CountBadge(favCount);
+            lbl += "##projtab" + std::to_string(ti);
+            if (ti) ImGui::SameLine(0, 4);
+            if (AccentToggleButton(lbl.c_str(), active == t, ImVec2(0, ImGui::GetFrameHeight() - 6.0f)) && t != pt::Tab::Search) {
+                s_smart = pt::SmartForTab(t, s_smart); search[0] = '\0';
+            }
+        }
+        if (active == pt::Tab::Favourites) { ImGui::SameLine(0, 10); ImGui::TextDisabled("starred files and folders; right-click an item > Add to Favourites"); }
+        pt::Remembered rem;
+        rem.smart = s_smart;
+        {   // the folder, relative to Assets
+            std::error_code re2; const fs::path rl = fs::relative(dir, root, re2);
+            rem.folder = (re2 || rl.empty() || rl == ".") ? std::string() : rl.generic_string();
+        }
+        const std::string now = pt::Serialize(rem);
+        if (!ed.projectDir().empty() && now != s_tabsSaved && s_tabsLoadedFor == ed.projectDir()) {
+            s_tabsSaved = now;
+            std::error_code me; fs::create_directories(fs::path(ed.projectDir()) / ".okay", me);
+            pt::Save((fs::path(ed.projectDir()) / ".okay" / "projectview.txt").string(), rem);
+        }
+    }
     ImGui::Separator();
 
     // ---- Two panes: folder tree (left) + asset grid (right), with a
@@ -11003,13 +11068,18 @@ void DrawProject(EditorState& ed) {
                     if (s_smart >= 1 && s_smart <= 8) lo.filter = static_cast<okaypb::Filter>(s_smart);
                     else if (s_smart == kSmartRecent) { lo.modifiedWithinSeconds = 7 * 24 * 3600; lo.sort = okaypb::SortKey::Modified; lo.descending = true; lo.limit = 200; }
                     else if (s_smart == 101) lo.unusedOnly = true;
+                    else if (s_smart == oked::projecttabs::kSmartFavourites) lo.text.clear();
                 } else if (!dbText.empty() || qColor > 0) {
                     if (s_searchAll) scope = root.generic_string();   // a search looks in this folder and below, or the whole project
                     lo.recursive = true;
                 }
                 std::vector<okaypb::Entry> list = pb.List(scope, lo);
+                std::set<std::string> favSet;
+                if (s_smart == oked::projecttabs::kSmartFavourites)
+                    for (const std::string& f : g_fav.List()) favSet.insert(fs::path(f).generic_string());
                 for (okaypb::Entry& e : list) {
-                    if (s_smart >= 0 && e.isDir) continue;
+                    if (s_smart == oked::projecttabs::kSmartFavourites) { if (!favSet.count(fs::path(e.path).generic_string())) continue; }
+                    else if (s_smart >= 0 && e.isDir) continue;
                     if (s_smart == 101) {   // Unused Assets: the kinds a scene or script points at, that nothing points at
                         const okay::AssetType k = e.kind;
                         const bool referenceable = k == okay::AssetType::Texture || k == okay::AssetType::Audio || k == okay::AssetType::Model ||
@@ -15427,6 +15497,7 @@ void DrawScriptEditor(EditorState& ed) {
     const ImGuiWindowFlags sewFlags = g_scriptTabs.empty() ? 0 : ImGuiWindowFlags_MenuBar;
     if (!ImGui::Begin("Script Editor", &g_showScriptEditor, sewFlags)) { ImGui::End(); return; }
     bool s_isDocked = ImGui::IsWindowDocked();
+    const oked::scriptui::Metrics sdm = oked::scriptui::Current();   // Density: sizes and paddings of this window (editor/ScriptingDensity.hpp)
 
     // Gather every live ScriptComponent (an object can have several), and prune
     // tabs whose component was deleted. `owner` maps a component to its object.
@@ -15508,7 +15579,7 @@ void DrawScriptEditor(EditorState& ed) {
     ScriptEditorNewScriptPopup(ed);
 
     // One tab per open script; the selected tab drives the editor below.
-    ImGui::PushStyleVar(ImGuiStyleVar_FramePadding, ImVec2(14.0f, 8.0f));
+    ImGui::PushStyleVar(ImGuiStyleVar_FramePadding, ImVec2(sdm.tabPad.x, sdm.tabPad.y));
     if (ImGui::BeginTabBar("##scripttabs",
             ImGuiTabBarFlags_Reorderable | ImGuiTabBarFlags_FittingPolicyScroll)) {
         ScriptComponent* closeTab = nullptr;
@@ -15713,6 +15784,10 @@ void DrawScriptEditor(EditorState& ed) {
         // Statics that outlive the toolbar (used by the editor body further below).
         static bool  s_minimap = true;
         static float s_zoom = 1.25f;
+        {   // Density sets the starting code size; picking another step resets the zoom to that step's size
+            static int s_zoomDensity = -1;
+            if (s_zoomDensity != oked::scriptui::g_scriptDensity) { s_zoomDensity = oked::scriptui::g_scriptDensity; s_zoom = sdm.codeZoom; }
+        }
 
         // ---- Menu bar: every tool, grouped the way IDEs do -------------------------
         bool rqReload = false, rqIde = false, rqOutline = false, rqMarks = false, rqTemplates = false,
@@ -15746,6 +15821,7 @@ void DrawScriptEditor(EditorState& ed) {
                 ImGui::MenuItem("Minimap", nullptr, &s_minimap);
                 ImGui::MenuItem("Auto-close Brackets", nullptr, &g_scriptAutoPair);
                 ImGui::MenuItem("Problems Panel", nullptr, &s_showProblems);
+                oked::scriptui::DrawDensityMenu();   // Compact / Comfortable / Spacious, shared with the Visual Script window
                 ImGui::Separator();
                 if (ImGui::MenuItem("Zoom In", "Ctrl+Wheel")) s_zoom = Mathf::Clamp(s_zoom + 0.1f, 0.7f, 3.0f);
                 if (ImGui::MenuItem("Zoom Out")) s_zoom = Mathf::Clamp(s_zoom - 0.1f, 0.7f, 3.0f);
@@ -16375,7 +16451,7 @@ void DrawScriptEditor(EditorState& ed) {
         }
         if (s_showFind) {
             static char s_replace[128] = "";
-            ImGui::PushStyleVar(ImGuiStyleVar_FramePadding, ImVec2(10.0f, 7.0f));
+            ImGui::PushStyleVar(ImGuiStyleVar_FramePadding, ImVec2(10.0f, sdm.findPadY));
             ImGui::PushStyleColor(ImGuiCol_ChildBg, ImVec4(0.13f, 0.145f, 0.175f, 1.0f));
             ImGui::BeginChild("##findbar", ImVec2(0, 0), ImGuiChildFlags_AutoResizeY | ImGuiChildFlags_Borders);
             if (sfFocusField) { ImGui::SetKeyboardFocusHere(); s_findCursor = caret.pos; }
@@ -16521,11 +16597,13 @@ void DrawScriptEditor(EditorState& ed) {
         float lineH = ImGui::GetTextLineHeight();
         const int nprobLive = (int)s_diags.size() + (int)s_warns.size();
         const float probH = (s_showProblems && nprobLive > 0)
-            ? (std::min(nprobLive, 6) * (ImGui::GetTextLineHeight() + 14.0f) + 28.0f) : 0.0f;
+            ? (std::min(nprobLive, 6) * (ImGui::GetTextLineHeight() + 2.0f * sdm.problemsRowPad + ImGui::GetStyle().ItemSpacing.y) + 28.0f) : 0.0f;
         ImVec2 av = ImGui::GetContentRegionAvail(); av.y -= lineH + 16.0f + probH; if (av.y < 80) av.y = 80;
 
         ScriptEditorWidget& te = CodeEditorFor(sc);
         te.SetColorizerEnable(s_highlight);   // toolbar "Syntax" checkbox
+        te.SetLineSpacing(sdm.codeLineSpacing);   // Density (the setters just store a number, so every frame is fine)
+        te.SetLeftMargin(sdm.codeLeftMargin);
 
         // Sync widget <-> CodeBuffer. g_teHash is the text both sides last agreed on:
         // if buf changed underneath us (format, live-sync, first open, language switch)
@@ -16713,7 +16791,7 @@ void DrawScriptEditor(EditorState& ed) {
         // Render. ImGui 1.92 dynamic fonts rasterise on demand, so the code font is
         // crisp at any zoom straight from PushFont(size) — no atlas-bake trick needed.
         // A negative width reserves the minimap column on the right.
-        const float mmW = 92.0f;
+        const float mmW = sdm.minimapW;
         bool showMap = s_minimap && av.x > 300.0f;
         // Bracket / quote pairing (decided before the widget eats this frame's
         // typing): ( [ { " ' get their closer, typing a closer that's already
@@ -16760,8 +16838,8 @@ void DrawScriptEditor(EditorState& ed) {
                 d->AddLine(ImVec2(c.x + 2.5f * k, c.y), ImVec2(c.x - 2.5f * k, c.y + 5), col, 1.6f);
             };
             if (!s_sideOpen) {   // folded: a slim strip with an expand chevron
-                ImGui::BeginChild("##sesidefold", ImVec2(84, av.y), ImGuiChildFlags_None, ImGuiWindowFlags_NoScrollbar);
-                if (ImGui::Button("Scripts", ImVec2(76, 32))) s_sideOpen = true;
+                ImGui::BeginChild("##sesidefold", ImVec2(sdm.sideFoldW, av.y), ImGuiChildFlags_None, ImGuiWindowFlags_NoScrollbar);
+                if (ImGui::Button("Scripts", ImVec2(sdm.sideFoldW - 8.0f, sdm.smallHit + 10.0f))) s_sideOpen = true;
                 if (ImGui::IsItemHovered()) ImGui::SetTooltip("Show the script list (Alt+1)");
                 ImGui::EndChild();
                 ImGui::SameLine(0, 2);
@@ -16785,7 +16863,7 @@ void DrawScriptEditor(EditorState& ed) {
                         return a < b;
                     });
                 }
-                ImGui::BeginChild("##setool", ImVec2(280, av.y), ImGuiChildFlags_Borders);
+                ImGui::BeginChild("##setool", ImVec2(sdm.sideListW, av.y), ImGuiChildFlags_Borders);
                 {   // header: "Scripts" + count, fold chevron on the right
                     const ImVec2 hp = ImGui::GetCursorScreenPos();
                     const float hw = ImGui::GetContentRegionAvail().x;
@@ -16793,8 +16871,8 @@ void DrawScriptEditor(EditorState& ed) {
                     ImGui::TextUnformatted("Scripts");
                     ImGui::SameLine(0, 6);
                     ImGui::TextDisabled("%d", (int)s_sideFiles.size());
-                    ImGui::SetCursorScreenPos(ImVec2(hp.x + hw - 22, hp.y));
-                    if (ImGui::InvisibleButton("##sefold", ImVec2(22, ImGui::GetFrameHeight()))) s_sideOpen = false;
+                    ImGui::SetCursorScreenPos(ImVec2(hp.x + hw - sdm.smallHit, hp.y));
+                    if (ImGui::InvisibleButton("##sefold", ImVec2(sdm.smallHit, std::max(sdm.smallHit, ImGui::GetFrameHeight())))) s_sideOpen = false;
                     const bool h = ImGui::IsItemHovered();
                     ImDrawList* d = ImGui::GetWindowDrawList();
                     const ImVec2 bmin = ImGui::GetItemRectMin(), bmax = ImGui::GetItemRectMax();
@@ -16818,14 +16896,19 @@ void DrawScriptEditor(EditorState& ed) {
                     if (rel == "." || rel == "Scripts") rel.clear();
                     ImGui::PushID(f.c_str());
                     const ImVec2 rp = ImGui::GetCursorScreenPos();
-                    if (ImGui::Selectable("##sefile", cur, 0, ImVec2(0, ImGui::GetTextLineHeight() + 14)) && !cur) OpenScriptFileInEditor(f);
+                    const float rowAvailW = ImGui::GetContentRegionAvail().x;
+                    if (ImGui::Selectable("##sefile", cur, 0, ImVec2(0, sdm.sideRowH(ImGui::GetTextLineHeight()))) && !cur) OpenScriptFileInEditor(f);
                     if (ImGui::IsItemHovered()) ImGui::SetTooltip("%s", fp.lexically_relative(assets.parent_path()).generic_string().c_str());
                     ImDrawList* d = ImGui::GetWindowDrawList();
-                    const float ty = rp.y + 2;
-                    d->AddText(ImVec2(rp.x + 4, ty), ImGui::GetColorU32(ImGuiCol_Text), nm.c_str());
-                    if (!rel.empty()) {
+                    const float ty = rp.y + sdm.sideRowPad;   // centred in the row
+                    auto measure = [](const std::string& t) { return ImGui::CalcTextSize(t.c_str()).x; };
+                    // A long name is cut with "..." instead of running past the list; the folder shows only if there is room.
+                    const std::string shownNm = oked::scriptui::ElideToWidth(nm, rowAvailW - 12.0f, measure);
+                    d->AddText(ImVec2(rp.x + 6, ty), ImGui::GetColorU32(ImGuiCol_Text), shownNm.c_str());
+                    if (!rel.empty() && shownNm == nm) {
                         const float nw = ImGui::CalcTextSize(nm.c_str()).x;
-                        d->AddText(ImVec2(rp.x + 4 + nw + 8, ty), ImGui::GetColorU32(ImGuiCol_TextDisabled), rel.c_str());
+                        const std::string shownRel = oked::scriptui::ElideToWidth(rel, rowAvailW - 12.0f - nw - 10.0f, measure);
+                        if (!shownRel.empty()) d->AddText(ImVec2(rp.x + 6 + nw + 10, ty), ImGui::GetColorU32(ImGuiCol_TextDisabled), shownRel.c_str());
                     }
                     ImGui::PopID();
                     ++shown;
@@ -17962,7 +18045,7 @@ void DrawScriptEditor(EditorState& ed) {
             ImGui::Spacing();
             SectionHeader("Problems");
             float ph = std::min((int)s_diags.size() + (int)s_warns.size(), 6)
-                       * (ImGui::GetTextLineHeight() + 14.0f) + 12.0f;
+                       * (ImGui::GetTextLineHeight() + 2.0f * sdm.problemsRowPad + ImGui::GetStyle().ItemSpacing.y) + 12.0f;
             if (ImGui::BeginChild("##problems", ImVec2(0, ph), true)) {
                 for (std::size_t i = 0; i < s_diags.size(); ++i) {
                     const auto& d = s_diags[i];
@@ -17976,7 +18059,7 @@ void DrawScriptEditor(EditorState& ed) {
                     else
                         std::snprintf(row, sizeof(row), "x  %s##p%zu", d.message.c_str(), i);
                     ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(0.95f, 0.55f, 0.55f, 1.0f));
-                    bool clicked = ImGui::Selectable(row, false, 0, ImVec2(0, ImGui::GetTextLineHeight() + 10));
+                    bool clicked = ImGui::Selectable(row, false, 0, ImVec2(0, ImGui::GetTextLineHeight() + 2.0f * sdm.problemsRowPad));
                     ImGui::PopStyleColor();
                     if (clicked && d.line > 0) { jumpTo(d.line, d.column > 0 ? d.column : 1); }
                 }
@@ -17990,7 +18073,7 @@ void DrawScriptEditor(EditorState& ed) {
                         std::snprintf(row, sizeof(row), "!  line %d:  %s##w%zu",
                                       w.line, w.msg.c_str(), i);
                     ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(0.92f, 0.78f, 0.35f, 1.0f));
-                    bool clicked = ImGui::Selectable(row, false, 0, ImVec2(0, ImGui::GetTextLineHeight() + 10));
+                    bool clicked = ImGui::Selectable(row, false, 0, ImVec2(0, ImGui::GetTextLineHeight() + 2.0f * sdm.problemsRowPad));
                     ImGui::PopStyleColor();
                     if (clicked && w.line > 0) { jumpTo(w.line, w.column > 0 ? w.column : 1); }
                 }
@@ -28249,12 +28332,89 @@ static void DrawUVEditor(EditorState& ed) {
     ImGui::End();
 }
 
+// The simple (beginner) view of the Modeling window: logic in ModelingEasy*.hpp, drawing in ModelingEasyUi.cpp; this only lends it
+// the selection, undo and the editor's own operations. Pick-mode numbers differ: ours are 0 corners, 1 edges, 2 faces.
+static void DrawModelingSimple(EditorState& ed) {
+    namespace em = oked::easymodel;
+    GameObject* go = ed.selected();
+    MeshRenderer* mr = go ? go->GetComponent<MeshRenderer>() : nullptr;
+    const bool editing = mr && g_meshEdit && g_meshEditObj == go;
+    oked::easymodel_ui::Host h;
+    h.mesh = mr ? &mr->mesh : nullptr;
+    h.state.haveObject = mr != nullptr;
+    h.state.editMode = editing;
+    h.state.selMode = g_meshSelMode == 1 ? 2 : g_meshSelMode == 2 ? 1 : 0;
+    h.state.selCount = !editing ? 0 : (int)(g_meshSelMode == 1 ? g_meshSelFaces.size() : g_meshSelMode == 2 ? g_meshSelEdges.size() : g_meshSelVerts.size());
+    h.state.modalActive = editing && g_meModal.Active();
+    h.addShape = [&](const std::string& n) { ed.CreateMesh(n); ed.view3D = true; ed.dirty = true; ConsoleLog("Created " + n); };
+    h.addModel = [&](const Mesh& m, const std::string& n) {
+        GameObject* g = ed.CreateMesh("Cube");
+        if (MeshRenderer* r = g ? g->GetComponent<MeshRenderer>() : nullptr) { r->mesh = m; r->meshPath.clear(); r->color = okay::Color{1, 1, 1, 1}; g->name = n; FitColliders(g); }
+        ed.view3D = true; ed.dirty = true;
+    };
+    h.meshOp = [&](const std::string& label, const std::function<void(Mesh&)>& fn) { if (mr) ModelOp(ed, mr, label.c_str(), fn); };
+    h.args = [&] {
+        em::ToolArgs a;
+        if (editing && g_meshSelMode == 1) a.faces = g_meshSelFaces;
+        if (editing && g_meshSelMode == 0) a.corners = g_meshSelVerts;
+        return a;
+    };
+    h.setGizmo = [](int t) { g_tool = t == 0 ? Tool::Move : t == 1 ? Tool::Rotate : Tool::Scale; };
+    h.pickMode = [&](bool on, int mode) {
+        if (!go || !mr) return;
+        if (on) { if (!editing) SetMeshEditMode(ed, go, true); g_meshSelMode = mode == 2 ? 1 : mode == 1 ? 2 : 0; }
+        else if (editing) SetMeshEditMode(ed, go, false);
+    };
+    h.canUndo = [&] { return editing ? (!g_meshUndo.empty() || ed.CanUndo()) : ed.CanUndo(); };
+    h.canRedo = [&] { return editing ? (!g_meshRedo.empty() || ed.CanRedo()) : ed.CanRedo(); };
+    h.undo = [&] { if (!(editing && MeshUndo(false))) ed.Undo(); };
+    h.redo = [&] { if (!(editing && MeshUndo(true))) ed.Redo(); };
+    h.addSolid = [&] {
+        if (!go) return;
+        for (auto* c : go->GetComponents<Collider3D>()) go->RemoveComponent(c);
+        go->AddComponent<MeshCollider3D>(); ed.dirty = true;
+    };
+    h.saveAsset = [&] { if (go && mr) SaveMeshAssetNow(ed, go, mr); };
+    h.thumb = [](const std::string& key, const std::function<Mesh()>& build) -> void* {
+        static std::unordered_map<std::string, SDL_Texture*> cache;
+        auto it = cache.find(key);
+        if (it != cache.end()) return it->second;
+        static int s_frame = -1, s_made = 0;
+        if (s_frame != ImGui::GetFrameCount()) { s_frame = ImGui::GetFrameCount(); s_made = 0; }
+        if (s_made >= 2 || !g_sdlRenderer) return nullptr;
+        ++s_made;
+        okay::Scene sc;
+        GameObject* g = sc.CreateGameObject("easy thumb");
+        MeshRenderer* m = g->AddComponent<MeshRenderer>();
+        m->mesh = build(); m->color = okay::Color{1, 1, 1, 1};
+        sc.Update(0.0f);
+        SDL_Texture* tex = RenderObjectThumb(sc, g);
+        cache[key] = tex;
+        return tex;
+    };
+    h.log = [](const std::string& m, int lv) { ConsoleLog(m, lv); };
+    g_meshSymX = g_view.modelingMirror;   // the simple view's one mirror switch (on by default) drives X symmetry in edit mode
+    h.mirror = g_view.modelingMirror;
+    h.setMirror = [](bool on) { g_view.modelingMirror = on; g_meshSymX = on; };
+    h.loadRecent = [] { return em::RecentFromCodes(g_view.modelingRecent, 4); };
+    h.saveRecent = [](const std::vector<std::string>& r) { const auto c = em::RecentToCodes(r); for (int i = 0; i < 4; ++i) g_view.modelingRecent[i] = c[(std::size_t)i]; };
+    h.setPicks = [&](const std::vector<int>& faces, const std::vector<int>& corners) { if (!faces.empty()) g_meshSelFaces = faces; if (!corners.empty()) g_meshSelVerts = corners; };
+    oked::easymodel_ui::DrawEasyModeling(h, g_view.modelingAdvanced);
+}
+
+#define Button(...) MdlHlButton(__VA_ARGS__)          // inside DrawModeling every button is outlined when it matches the tool search
+#define SmallButton(...) MdlHlSmallButton(__VA_ARGS__)
+#define Checkbox(...) MdlHlCheckbox(__VA_ARGS__)
 void DrawModeling(EditorState& ed) {
     ImGui::SetNextWindowSize(ImVec2(900, 640), ImGuiCond_FirstUseEver);
     if (!ImGui::Begin("Modeling", &g_showModeling)) { ImGui::End(); return; }
+    g_mdlRoot = ImGui::GetCurrentWindowRead();
+    g_mdlMarkHook = MdlMark;
     // A floating window remembered tiny has no room for the sidebar + page.
     if (!ImGui::IsWindowDocked() && (ImGui::GetWindowSize().x < 640.0f || ImGui::GetWindowSize().y < 420.0f))
         ImGui::SetWindowSize(ImVec2(std::max(ImGui::GetWindowSize().x, 900.0f), std::max(ImGui::GetWindowSize().y, 640.0f)));
+    if (!g_view.modelingAdvanced) { DrawModelingSimple(ed); ImGui::End(); return; }   // the simple view is the default
+    if (ImGui::SmallButton("Back to the simple view##mdl")) g_view.modelingAdvanced = false;
 
     // One page at a time, picked from a sidebar (instead of a tab strip under an
     // always-open Add library): Add, then the mesh tools in the order you use them.
@@ -28274,12 +28434,28 @@ void DrawModeling(EditorState& ed) {
     if (const char* mp = std::getenv("OKAY_UI_MODELPAGE")) { static bool once = false; if (!once) { once = true; s_mdlPage = std::atoi(mp); } }
     GameObject* selGo = ed.selected();
     const bool haveMesh = selGo && (selGo->GetComponent<MeshRenderer>() || selGo->GetComponent<Terrain>());   // terrain: its sculpt tools
-    ImGui::BeginChild("##mdlnav", ImVec2(196, 0), ImGuiChildFlags_Borders);
-    ImGui::Dummy(ImVec2(0, 4));
-    for (int oi = 0; oi < (int)(sizeof(kPageOrder) / sizeof(kPageOrder[0])); ++oi) {
-        const int i = kPageOrder[oi];
+    static oked::modeltools::SidebarState s_sb = oked::modeltools::SidebarFromPref(g_view.modelingSidebar);
+    const auto sbToggle = [&] { oked::modeltools::SidebarToggle(s_sb); g_view.modelingSidebar = oked::modeltools::SidebarToPref(s_sb); SaveSettings(); };
+    // Ctrl+\ folds / opens the page list while this window is focused (Ctrl+B is taken: Build Game, and Bevel in edit mode).
+    if (ImGui::IsWindowFocused(ImGuiFocusedFlags_RootAndChildWindows) && ImGui::GetIO().KeyCtrl && ImGui::IsKeyPressed(ImGuiKey_Backslash, false)) sbToggle();
+    oked::modeltools::SidebarAuto(s_sb, ImGui::GetWindowSize().x);
+    ImGui::BeginChild("##mdlnav", ImVec2(oked::modeltools::SidebarWidth(s_sb, ImGui::GetWindowSize().x), 0), ImGuiChildFlags_Borders);
+    if (ImGui::Button(s_sb.folded ? ">##mdlfold" : "<##mdlfold", ImVec2(32, 32))) sbToggle();
+    if (ImGui::IsItemHovered()) ImGui::SetTooltip("%s  (Ctrl+\\)", s_sb.folded ? "Show the page list" : "Hide the page list");
+    const char* lastJob = "";
+    for (const oked::modeltools::Page& pi : oked::modeltools::Pages()) {   // pages grouped by job (ModelingToolIndex.hpp)
+        const int i = pi.legacy;
         const MdlPage& pg = kPages[i];
         const bool usable = !pg.needsMesh || haveMesh;
+        if (s_sb.folded) {   // the thin strip: two letters per page, the name in the tooltip
+            ImGui::PushID(i); ImGui::BeginDisabled(!usable);
+            if (ImGui::Selectable(pi.abbr, s_mdlPage == i, 0, ImVec2(0, 34))) s_mdlPage = i;
+            ImGui::EndDisabled();
+            if (ImGui::IsItemHovered(ImGuiHoveredFlags_AllowWhenDisabled)) ImGui::SetTooltip("%s\n%s", pi.name, usable ? pi.desc : "Select a mesh object first.");
+            ImGui::PopID();
+            continue;
+        }
+        if (std::string(pi.job) != lastJob) { lastJob = pi.job; ImGui::Dummy(ImVec2(0, 2)); ImGui::TextDisabled("%s", pi.job); }
         ImGui::PushID(i);
         ImGui::BeginDisabled(!usable);
         const ImVec2 r0 = ImGui::GetCursorScreenPos();
@@ -28288,8 +28464,8 @@ void DrawModeling(EditorState& ed) {
         if (!usable && ImGui::IsItemHovered(ImGuiHoveredFlags_AllowWhenDisabled)) ImGui::SetTooltip("Select a mesh object first.");
         ImDrawList* ndl = ImGui::GetWindowDrawList();
         const ImU32 tc = usable ? ImGui::GetColorU32(ImGuiCol_Text) : ImGui::GetColorU32(ImGuiCol_TextDisabled);
-        ndl->AddText(ImVec2(r0.x + 8, r0.y + 5), tc, pg.name);
-        ndl->AddText(ImVec2(r0.x + 8, r0.y + 5 + ImGui::GetTextLineHeight()), ImGui::GetColorU32(ImGuiCol_TextDisabled), pg.desc);
+        ndl->AddText(ImVec2(r0.x + 8, r0.y + 5), tc, pi.name);
+        ndl->AddText(ImVec2(r0.x + 8, r0.y + 5 + ImGui::GetTextLineHeight()), ImGui::GetColorU32(ImGuiCol_TextDisabled), pi.desc);
         ImGui::PopID();
     }
     ImGui::EndChild();
@@ -28298,8 +28474,31 @@ void DrawModeling(EditorState& ed) {
     ImGui::BeginChild("##mdlpage", ImVec2(0, 0), ImGuiChildFlags_Borders);
     ImGui::PushStyleVar(ImGuiStyleVar_ItemSpacing, ImVec2(10, 10));
     ImGui::PushStyleVar(ImGuiStyleVar_FramePadding, ImVec2(10, 6));
+    g_mdlCurPage = s_mdlPage;
+    {   // Find a tool: type "bevel" or "round"; matches are listed with their page and outlined on that page.
+        static char s_find[40] = "";
+        ImGui::SetNextItemWidth(-90);
+        if (ImGui::InputTextWithHint("##mdlfind", "Find a tool (try: bevel, round, mirror, uv)...", s_find, sizeof(s_find))) g_mdlFind = s_find;
+        ImGui::SameLine();
+        if (ImGui::Button("Clear##mdlfind")) { s_find[0] = 0; g_mdlFind.clear(); }
+        if (!g_mdlFind.empty()) {
+            const auto hits = oked::modeltools::Search(g_mdlFind, 8);
+            if (hits.empty()) ImGui::TextDisabled("No tool matches \"%s\".", g_mdlFind.c_str());
+            for (const auto& h : hits) {
+                const auto* pgi = oked::modeltools::FindPage(h.tool->page);
+                const bool usable = !kPages[h.tool->page].needsMesh || haveMesh;
+                std::string row = std::string(h.tool->name) + "   -   " + (pgi ? pgi->name : "") + " > " + h.tool->section;
+                ImGui::BeginDisabled(!usable);
+                if (ImGui::Selectable((row + "##hit" + h.tool->id).c_str(), s_mdlPage == h.tool->page)) s_mdlPage = h.tool->page;
+                ImGui::EndDisabled();
+                if (ImGui::IsItemHovered(ImGuiHoveredFlags_AllowWhenDisabled)) ImGui::SetTooltip("%s\n%s", h.tool->hint, usable ? "Click to open that page. The button is outlined." : "Select a mesh object first.");
+            }
+        }
+    }
+    ImGui::Separator();
     ImGui::TextUnformatted(kPages[s_mdlPage].name);
-    ImGui::TextDisabled("%s", kPages[s_mdlPage].desc);
+    ImGui::SameLine(); ImGui::TextDisabled("  %s", g_mdlHint.empty() ? kPages[s_mdlPage].desc : g_mdlHint.c_str());   // the hint of the button the mouse was over
+    g_mdlHint.clear();
     ImGui::Separator();
     if (s_mdlPage == 7) {
         // Guided Creation: designs, parts and regeneration live in GuidedPanel.cpp; this lends it the edit-mode selection
@@ -28647,6 +28846,7 @@ void DrawModeling(EditorState& ed) {
         if (mr->mesh.uvs.empty())
             ImGui::TextDisabled("No UVs yet — textures use a default mapping.");
 
+        SectionHeader("Symmetry, deform and shell");
         // Whole-mesh modeling ops (symmetry / deform / shell).
         if (ImGui::Button("Mirror X##model")) ModelOp(ed, mr, "Mirror X", [&](Mesh& m) { m.Mirror(0); });
         ImGui::SameLine(); if (ImGui::Button("Mirror Y##model")) ModelOp(ed, mr, "Mirror Y", [&](Mesh& m) { m.Mirror(1); });
@@ -29017,6 +29217,7 @@ void DrawModeling(EditorState& ed) {
             ImGui::TextDisabled("Click in the 3D view to select. G move, R rotate, S scale\n"
                                 "(then X/Y/Z to lock an axis, type a value, Ctrl to snap,\n"
                                 "Enter or click to confirm, Esc or right-click to cancel).");
+            SectionHeader("Pick parts");
             ImGui::RadioButton("Vertices##me", &g_meshSelMode, 0); ImGui::SameLine();
             ImGui::RadioButton("Edges##me", &g_meshSelMode, 2); ImGui::SameLine();
             ImGui::RadioButton("Faces##me", &g_meshSelMode, 1);
@@ -29098,6 +29299,7 @@ void DrawModeling(EditorState& ed) {
                 ImGui::DragFloat("##softr", &g_meshSoftRadius, 0.01f, 0.02f, 20.0f, "r %.2f");
             }
 
+            SectionHeader("Faces");
             ImGui::Spacing();
             ImGui::SetNextItemWidth(110);
             ImGui::DragFloat("##extdist", &g_extrudeDist, 0.01f, -10.0f, 10.0f, "%.2f");
@@ -29167,6 +29369,7 @@ void DrawModeling(EditorState& ed) {
                 ed.dirty = true;
             }
             if (ImGui::IsItemHovered()) ImGui::SetTooltip("One click clean-up: merge doubled vertices, drop collapsed triangles, cap holes and\nmake every face point outward. Painted colours and material slots stay. The result is in the Console.");
+            SectionHeader("Corners and edges");
             static float s_bevelAmt = 0.15f;
             ImGui::SetNextItemWidth(110);
             ImGui::DragFloat("##bevamt", &s_bevelAmt, 0.005f, 0.01f, 2.0f, "%.2f");
@@ -29347,6 +29550,7 @@ void DrawModeling(EditorState& ed) {
             // Edge-loop tools on the polygons (quads and n-gons). The interactive
             // versions run in the 3D view: Ctrl+R loop cut, G G slide, Ctrl+B bevel, K knife.
             ImGui::SeparatorText("Edge loops");
+            SectionHeader("Edge loops and joins");
             {
                 namespace pmo = okay::modeling;
                 const bool haveEdges = !SelectedPolyEdges(mr->mesh).empty();
@@ -30018,6 +30222,9 @@ void DrawModeling(EditorState& ed) {
     ImGui::EndChild();
     ImGui::End();
 }
+#undef Button
+#undef SmallButton
+#undef Checkbox
 
 void DrawInspector(EditorState& ed) {
     ImGui::Begin("Inspector", &g_showInspector);
@@ -50327,6 +50534,7 @@ int main(int argc, char** argv) {
     }
     LoadRecent();
     LoadSettings();
+    oked::scriptui::g_scriptDensity = oked::scriptui::ClampDensity(g_view.scriptDensity);   // the saved Density of the script windows
     ResolveAutoRendering();   // the saved Auto / Off / On modes are known now
     g_view.density = 0;   // the Density choice is gone: always Comfortable, even if an old settings file saved Compact
     LoadUserLayouts();     // named panel layouts (okay_layouts.txt)
@@ -51790,6 +51998,7 @@ int main(int argc, char** argv) {
         // the Inspector is open. This catches whichever queue is still pending.
         ApplyPendingInspectorAdds(ed);
         { OKAY_PROFILE("UI.Services"); if (g_showServices)  DrawServices(ed); }
+        if (oked::scriptui::TakeDensityChanged()) { g_view.scriptDensity = oked::scriptui::g_scriptDensity; SaveSettings(); }   // a Density menu was used
         { OKAY_PROFILE("UI.ScriptEditor"); if (g_showScriptEditor) DrawScriptEditor(ed); }
         if (const char* vsOpen = std::getenv("OKAY_VS_OPEN")) {
             static bool opened = false;

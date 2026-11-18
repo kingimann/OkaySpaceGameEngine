@@ -192,12 +192,12 @@ runs, the camera looks the other way.
 
 | Scene | Before | After |
 |---|---|---|
-| `examples/weapons/arena.okayscene` | ![blank sky](images/templates_check/weapons_arena_before.png) | ![arena](images/templates_check/weapons_arena_after.png) |
-| `examples/behavior_trees/breakpoint_demo.okayscene` | ![blank sky](images/templates_check/behavior_trees_breakpoint_demo_before.png) | ![demo](images/templates_check/behavior_trees_breakpoint_demo_after.png) |
-| `examples/own_wav/own_wav_test.okayscene` | ![blank sky](images/templates_check/own_wav_test_before.png) | ![test](images/templates_check/own_wav_test_after.png) |
-| `examples/visual_script/playground/movement.okayscene` | ![blank sky](images/templates_check/vs_playground_movement_before.png) | ![playground](images/templates_check/vs_playground_movement_after.png) |
-| `examples/spatial_audio/spatial_audio.okayscene` | ![floor only](images/templates_check/spatial_audio_before.png) | ![wall and crate](images/templates_check/spatial_audio_after.png) |
-| `examples/physics/step_and_parent.okayscene` | no picture: the scene had no camera, the renderer refused | ![crate, ball and slab on a floor](images/templates_check/physics_step_and_parent_after.png) |
+| `examples/weapons/arena.okayscene` |  |  |
+| `examples/behavior_trees/breakpoint_demo.okayscene` |  |  |
+| `examples/own_wav/own_wav_test.okayscene` |  |  |
+| `examples/visual_script/playground/movement.okayscene` |  |  |
+| `examples/spatial_audio/spatial_audio.okayscene` |  |  |
+| `examples/physics/step_and_parent.okayscene` | no picture: the scene had no camera, the renderer refused |  |
 
 The other 37 of the 42 scenes whose camera was turned to face the content are not pictured; `examples_work` checks every one of
 them (`DrawnInView`: at least one drawn object is inside the picture).

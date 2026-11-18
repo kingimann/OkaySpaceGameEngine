@@ -6,6 +6,10 @@
 #include <cstdio>
 #include <cstdlib>
 #include <thread>
+#if defined(OKAY_XBOX_UWP)
+#include "okay/Core/Paths.hpp"   // UWP: per-user folders come from ApplicationData (Paths::SetEnvOverride)
+#include <filesystem>
+#endif
 #if defined(_WIN32)
 #  ifndef WIN32_LEAN_AND_MEAN
 #    define WIN32_LEAN_AND_MEAN
@@ -137,7 +141,16 @@ std::string Backend::BasePath() {
 
 std::string Backend::PrefPath(const std::string& org, const std::string& app) {
     if (org.empty() || app.empty()) return std::string();
-#if defined(_WIN32)
+#if defined(OKAY_XBOX_UWP)
+    const std::string uwpBase = okay::Paths::Env::Current().appData;   // UWP: ApplicationData folder set by the app shell
+    if (uwpBase.empty()) return std::string();
+    std::string root = uwpBase;
+    for (const std::string& part : {org, app}) {
+        root += "/" + part;
+        std::error_code ec; std::filesystem::create_directories(root, ec);
+    }
+    return root + "/";
+#elif defined(_WIN32)
     const char* base = std::getenv("APPDATA");
     if (!base || !*base) return std::string();
     std::string root = base;

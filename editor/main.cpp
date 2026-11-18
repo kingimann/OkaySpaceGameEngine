@@ -8,6 +8,7 @@
 // window — used in CI where there's no display.
 #define IMGUI_DEFINE_MATH_OPERATORS
 #include "EditorState.hpp"
+#include "EditorPerf.hpp"            // frame-time maths, idle throttle, viewport scale, performance mode (tests/test_editor_perf.cpp)
 #include "SaveBeforePrompt.hpp"         // the Save-before-Play/Stop/Open prompt's order: stop first, then save (#888)
 #include "ObjectRef.hpp"         // GUID-held object references that survive undo / scene rebuilds
 #include "OwnStack.hpp"   // OKAY_OWN_STACK=1 dogfood switch + the one-line startup stack report
@@ -35,6 +36,14 @@
 #include "WeaponEditor.hpp"            // the Weapons window (weapon definitions)
 #include "okay/Core/Utf8.hpp"
 #include "okay/Core/BuildPipeline.hpp"   // the build pipeline: layout, dependency walk, manifest, report, zip
+#if defined(OKAY_XBOX_UWP)               // EXPERIMENTAL Xbox One Developer Mode (UWP) export: platform/xbox_uwp, docs/xbox_uwp.md
+#include "XboxExport.hpp"
+#include "XboxSdkProbe.hpp"
+#include "XboxBuildHost.hpp"   // one-click build: plan, runner, host (pure)
+#if defined(_WIN32)
+#include "XboxProcess.hpp"     // Windows process spawning for the runner (UNVERIFIED)
+#endif
+#endif
 #include "okay/Core/BuildInfo.hpp"
 #include "okay/Core/Clock.hpp"        // ClockSet: the channels the Tween Animation inspector offers
 #include <cstdio>
@@ -1058,7 +1067,15 @@ int g_ssaa = 1;   // 3D anti-aliasing: 1 = off (FXAA still on), 2 = 2x supersamp
                   // OFF by default for speed: 2x supersample renders 4x the pixels,
                   // which tanked FPS (badly on HiDPI displays). Cheap FXAA still
                   // smooths edges; turn 2x on in View > 3D Anti-aliasing if wanted.
+extern bool g_showGame;   // (defined with the panel flags below)
 float g_renderScale = 1.0f;  // 3D view render resolution (1.0 = native; lower = faster, softer)
+// View > Rendering: editor frame rate and cost switches (okay::editor::perf in EditorPerf.hpp). All off by default; remembered in okay_settings.txt.
+int   g_fpsCapEditor = 0;       // 0 = no cap; else the editor sleeps out the rest of each frame
+bool  g_idleThrottle = false;   // slow to g_idleFps while nothing is clicked, typed or playing
+int   g_idleFps = 30;
+bool  g_perfMode = false;       // cheaper Scene-view rendering (no AO / bloom / FXAA / supersampling, one small shadow cascade)
+bool  g_showPerfOverlay = false; // the frame-time overlay (FPS, ms graph, where the frame went)
+double g_secSinceInput = 0.0;   // seconds since the last click / key / wheel / touch (for the idle throttle)
 bool g_autoPerf = true;  // auto-drop supersampling when the scene gets heavy
 bool g_vsync = false;    // the VSync in effect (resolved from g_vsyncMode at start-up and when the setting changes)
 int  g_aaMode = 0, g_vsyncMode = 0;   // 0 Auto (default), 1 Off, 2 On (see AutoPerf.hpp); saved as "aamode" / "vsyncmode"
@@ -1153,8 +1170,27 @@ SDL_Texture* Render3DTexture(const Scene& scene, const Mat4& vp, const Vec3& eye
     // Render at a fraction of the panel resolution when render scale < 1: the
     // texture is drawn STRETCHED to the panel, so a smaller buffer upscales for
     // free (linear filtered) — a near-linear FPS win for the software renderer.
-    float scale = g_renderScale < 0.25f ? 0.25f : (g_renderScale > 1.0f ? 1.0f : g_renderScale);
+    const bool perfView = g_perfMode && slot == 0;   // performance mode is for the Scene view only
+    float scale = okay::editor::perf::EffectiveScale(g_renderScale, perfView);
     int ss = g_ssaa;
+    // Performance mode: cheaper switches for this render only; put back on every way out of the function.
+    struct PerfModeGuard {
+        okay::editor::perf::ViewKnobs saved; bool on = false; int* ssaa = nullptr; int savedSsaa = 1;
+        PerfModeGuard(bool active, int& ssaaRef, bool changeShadowSize) {
+            if (!active) return;
+            on = true; ssaa = &ssaaRef; savedSsaa = ssaaRef;
+            saved = {ShadowsEnabled(), ShadowMapResolution(), ShadowCascades(), SSAOEnabled(), BloomEnabled(), FXAAEnabled(), ssaaRef};
+            const auto c = okay::editor::perf::Cheaper(saved, changeShadowSize);
+            ShadowMapResolution() = c.shadowResolution; ShadowCascades() = c.shadowCascades;
+            SSAOEnabled() = c.ssao; BloomEnabled() = c.bloom; FXAAEnabled() = c.fxaa;
+        }
+        ~PerfModeGuard() {
+            if (!on) return;
+            ShadowMapResolution() = saved.shadowResolution; ShadowCascades() = saved.shadowCascades;
+            SSAOEnabled() = saved.ssao; BloomEnabled() = saved.bloom; FXAAEnabled() = saved.fxaa;
+        }
+    } perfGuard(perfView, g_ssaa, !g_showGame);   // (g_ssaa itself is never changed: ss below is the local copy)
+    if (perfView) ss = 1;
     int rw = (int)(w * scale); if (rw < 1) rw = 1;
     int rh = (int)(h * scale); if (rh < 1) rh = 1;
     // Cap the offscreen 3D buffer's long edge. The viewport is rendered to a texture
@@ -1276,7 +1312,7 @@ SDL_Texture* Render3DTexture(const Scene& scene, const Mat4& vp, const Vec3& eye
         g_view3DTex[slot] = okay::pb::CreateTexture(g_sdlRenderer, rw, rh, okay::pb::Access::Streaming, true, true);   // linear: smooth upscale
         g_view3DW[slot] = rw; g_view3DH[slot] = rh; g_view3DIsTarget[slot] = false;
     }
-    okay::pb::UpdateTexture(g_sdlRenderer, g_view3DTex[slot], nullptr, px, rw * 4);
+    { OKAY_PROFILE("Render3D.Upload"); okay::pb::UpdateTexture(g_sdlRenderer, g_view3DTex[slot], nullptr, px, rw * 4); }
     return g_view3DTex[slot];
 }
 
@@ -2489,6 +2525,11 @@ void LoadSettings() {
         // Old "vsync" / "ssaa" lines were written for everyone (default or not), so they are ignored: everyone starts on Auto.
         else if (k == "smoothframetime") g_smoothFrameTime = (v != 0);
         else if (k == "renderscalepct") g_renderScale = (v < 25 ? 25 : (v > 100 ? 100 : v)) / 100.0f;
+        else if (k == "editorfpscap") g_fpsCapEditor = v < 0 ? 0 : (v > 1000 ? 1000 : v);
+        else if (k == "idlethrottle") g_idleThrottle = (v != 0);
+        else if (k == "idlefps") g_idleFps = v < 5 ? 5 : (v > 240 ? 240 : v);
+        else if (k == "perfmode") g_perfMode = (v != 0);
+        else if (k == "perfoverlay") g_showPerfOverlay = (v != 0);
         else if (k == "showgizmos") g_showGizmos = (v != 0);
         else if (k == "showvolumes") oked::g_showVolumes = (v != 0);
         else if (k == "volumelabels") oked::g_showVolumeLabels = (v != 0);
@@ -2558,6 +2599,11 @@ void SaveSettings() {
       << "smoothframetime " << (g_smoothFrameTime ? 1 : 0) << "\n"
       << "aamode "     << g_aaMode << "\n"
       << "renderscalepct " << (int)(g_renderScale * 100 + 0.5f) << "\n"
+      << "editorfpscap " << g_fpsCapEditor << "\n"
+      << "idlethrottle " << (g_idleThrottle ? 1 : 0) << "\n"
+      << "idlefps " << g_idleFps << "\n"
+      << "perfmode " << (g_perfMode ? 1 : 0) << "\n"
+      << "perfoverlay " << (g_showPerfOverlay ? 1 : 0) << "\n"
       << "showgizmos " << (g_showGizmos ? 1 : 0) << "\n"
       << "showvolumes " << (oked::g_showVolumes ? 1 : 0) << "\n"
       << "volumelabels " << (oked::g_showVolumeLabels ? 1 : 0) << "\n"
@@ -2826,6 +2872,17 @@ bool  g_showBuildGame = false;
 char  g_buildDirBuf[256] = "build/MyGame";
 char  g_buildNameBuf[128] = "MyGame";
 std::string g_buildStatus;
+#if defined(OKAY_XBOX_UWP)
+// One-click Xbox build (platform/xbox_uwp/XboxBuildPlan.hpp). UNVERIFIED on Windows: the steps have never run there.
+bool g_xboxExportOk = false;                       // set by the Xbox export block below
+std::vector<std::string> g_xboxExportWarnings;
+std::unique_ptr<okay::xbox::XboxBuildHost> g_xboxHost;
+std::unique_ptr<okay::xbox::BuildRunner> g_xboxRunner;
+bool g_xboxInstall = false;
+bool g_xboxEngineMode = false;                     // link the engine and run the exported game (EXPERIMENTAL)                        // "Install on this PC" (one administrator prompt)
+bool g_xboxShowRunner = false;
+std::string g_xboxSignerLabel, g_xboxSourceRoot, g_xboxAppx;
+#endif
 bool  g_openBuildResult = false;
 bool  g_vsBuildWantedRun = false;         // "Build & Run" was pressed when visual-script errors stopped the build
 std::vector<std::string> g_vsBuildErrors;  // errors that stopped the last Build (see Problems)
@@ -2890,6 +2947,9 @@ static void LoadBuildProfilesFrom(const std::string& dir) {
         std::snprintf(g_buildNameBuf, sizeof(g_buildNameBuf), "%s", live.productName.c_str());
         std::snprintf(g_buildDirBuf, sizeof(g_buildDirBuf), "%s", live.outputDir.c_str());
         g_buildPlatform = live.platform;
+#if !defined(OKAY_XBOX_UWP)
+        if (g_buildPlatform > 3) g_buildPlatform = 0;   // a profile saved by a build with the Xbox target
+#endif
         for (std::size_t i = 0; i < g_buildProfiles.size(); ++i) if (g_buildProfiles[i].name == sel) g_buildProfileSel = (int)i;
     }
 }
@@ -4840,7 +4900,7 @@ std::string ExportForPlatform(EditorState& ed, const std::string& outDir,
 
     // Web preloads a 'game/' folder; Android expects app/src/main/assets — either
     // way it's just our scene + config + assets.
-    fs::path data = dir / (target == 2 ? "assets" : "game");
+    fs::path data = dir / (target == 2 ? "assets" : target == 4 ? fs::path("package") / "Data" : fs::path("game"));
     fs::create_directories(data, ec);
     if (!SceneSerializer::SaveToFile(ed.scene(), (data / "game.okayscene").string()))
         return "Failed to write game.okayscene.";
@@ -4865,6 +4925,17 @@ std::string ExportForPlatform(EditorState& ed, const std::string& outDir,
     }
     CopyLocalizationFiles(ed, data.u8string());   // strings.okayloc and its languages' fonts
 
+#if defined(OKAY_XBOX_UWP)
+    if (target == 4) {   // ---- Xbox One Developer Mode (UWP), EXPERIMENTAL and UNVERIFIED: manifest, assets, notes beside package/Data ----
+        okay::xbox::ExportInputs xi;
+        xi.gameName = gameName; xi.company = opt.company; xi.version = opt.version; xi.bundleId = opt.bundleId; xi.iconPath = opt.iconPath;
+        const okay::xbox::ExportResult xr = okay::xbox::WritePackage(dir.string(), xi);
+        g_xboxExportOk = xr.ok; g_xboxExportWarnings = xr.warnings;
+        std::string msg = xr.message;
+        for (const std::string& w : xr.warnings) msg += " Warning: " + w;
+        return msg;
+    }
+#endif
     if (target == 1) {   // ---- Web (Emscripten / WebGL) ----
         std::ofstream sh((dir / "build-web.sh").string());
         sh << "#!/usr/bin/env bash\n"
@@ -7149,6 +7220,38 @@ static void DrawRenderingMenuItems(EditorState& ed) {
     // Multi-window panels are always on now (drag a tab to a second monitor) — no toggle.
     if (ImGui::MenuItem("Auto performance", nullptr, &g_autoPerf)) SaveSettings();
     if (ImGui::IsItemHovered()) ImGui::SetTooltip("Automatically drop anti-aliasing when the scene\nhas many models, to keep the editor smooth.");
+    // Editor frame rate: see the numbers, then pick what helps (docs/editor_performance.md; okay::editor::perf).
+    ImGui::Separator();
+    if (ImGui::MenuItem("Frame-time overlay", nullptr, &g_showPerfOverlay)) SaveSettings();
+    if (ImGui::IsItemHovered()) ImGui::SetTooltip("A small window with FPS, frame time, a graph of the last frames and where the frame goes\n(3D view, panels, ImGui, present). Its Copy report button puts the numbers on the clipboard.");
+    if (ImGui::MenuItem("Profiler window", nullptr, &g_showProfiler)) SaveSettings();
+    if (ImGui::BeginMenu("Viewport resolution")) {
+        const int pcts[] = {100, 75, 50, 35};
+        for (int p : pcts) {
+            char lb[40]; std::snprintf(lb, sizeof(lb), p == 100 ? "100%% (native)" : "%d%%", p);
+            if (ImGui::MenuItem(lb, nullptr, (int)(g_renderScale * 100 + 0.5f) == p)) { g_renderScale = p / 100.0f; SaveSettings(); }
+        }
+        ImGui::TextDisabled("The 3D view is drawn smaller and stretched.");
+        ImGui::EndMenu();
+    }
+    if (ImGui::BeginMenu("Frame rate limit")) {
+        const int caps[] = {0, 60, 90, 120, 144, 240};
+        for (int c : caps) {
+            char lb[32]; if (c == 0) std::snprintf(lb, sizeof(lb), "Off (as fast as it goes)"); else std::snprintf(lb, sizeof(lb), "%d FPS", c);
+            if (ImGui::MenuItem(lb, nullptr, g_fpsCapEditor == c)) { g_fpsCapEditor = c; SaveSettings(); }
+        }
+        ImGui::TextDisabled("A limit makes the editor sleep, which frees the GPU and CPU.");
+        ImGui::EndMenu();
+    }
+    if (ImGui::MenuItem("Slow down when idle", nullptr, &g_idleThrottle)) SaveSettings();
+    if (ImGui::IsItemHovered()) ImGui::SetTooltip("When nothing is clicked or typed for a moment (and the game is not playing),\nthe editor drops to %d FPS so it stops burning the GPU. It speeds up again at once on any input.", g_idleFps);
+    if (ImGui::BeginMenu("Idle frame rate")) {
+        const int rates[] = {15, 20, 30, 60};
+        for (int r : rates) { char lb[24]; std::snprintf(lb, sizeof(lb), "%d FPS", r); if (ImGui::MenuItem(lb, nullptr, g_idleFps == r)) { g_idleFps = r; SaveSettings(); } }
+        ImGui::EndMenu();
+    }
+    if (ImGui::MenuItem("Performance mode (Scene view)", nullptr, &g_perfMode)) SaveSettings();
+    if (ImGui::IsItemHovered()) ImGui::SetTooltip("Cheaper Scene view only (the Game view and your builds keep the scene's own look):\nno ambient occlusion, bloom, FXAA or supersampling, render scale at most 75%%,\nand one small shadow cascade while the Game panel is closed.");
 }
 
 // ---- Creators shared by GameObject > Create, the Hierarchy menus and the Scene view's right-click menu (and its search box). ----
@@ -18564,23 +18667,34 @@ void DrawFileDialogs(EditorState& ed) {
         if (g_build.height < 240) g_build.height = 240;
         if (g_build.fpsCap < 0)   g_build.fpsCap = 0;
 
+#if defined(OKAY_XBOX_UWP)
+        if (g_xboxRunner) g_xboxRunner->Tick();   // keep the one-click Xbox build moving whichever page is shown
+#endif
         // ---- Target platform first ----
         // Target platform: Desktop ships a Windows .exe; Web/Android export a
         // ready-to-build project (the editor can't run Emscripten / the Android NDK
         // itself, so it lays down the data + build script + instructions).
+        #if defined(OKAY_XBOX_UWP)
+        const int kPlatCount = 5;
+        const char* plats[] = {"Desktop (Windows .exe)", "Web (WebGL / WASM)", "Android (project)", "Dedicated Server", "Xbox One (experimental, Developer Mode)"};
+#else
+        const int kPlatCount = 4;
         const char* plats[] = {"Desktop (Windows .exe)", "Web (WebGL / WASM)", "Android (project)", "Dedicated Server"};
+#endif
         {   // Segmented platform picker (clearer than a dropdown for a few options).
-            const char* platShort[] = {"Desktop", "Web", "Android", "Server"};
+            const char* platShort[] = {"Desktop", "Web", "Android", "Server", "Xbox (exp.)"};
             const char* platTip[] = {
                 "Build a runnable Windows .exe right here.",
                 "Export game data + an Emscripten build script/README;\nfinish the build with Emscripten (WebGL / WASM).",
                 "Export an Android Studio project;\nfinish the build with Android Studio + NDK.",
                 "A headless multiplayer server for Linux or Windows: the game runs with no window\n"
                 "and players connect to it. Comes with server.cfg, start scripts, a one-command\n"
-                "deploy to a Linux VPS, a Dockerfile and a README."};
+                "deploy to a Linux VPS, a Dockerfile and a README.",
+                "EXPERIMENTAL, UNVERIFIED. A UWP package folder for an Xbox One in Developer Mode.\n"
+                "Not a native console game, not for publishing, never tested on hardware."};
             ImGui::TextDisabled("Platform");
             ImGui::SameLine();
-            for (int pi = 0; pi < 4; ++pi) {
+            for (int pi = 0; pi < kPlatCount; ++pi) {
                 if (pi) ImGui::SameLine(0, 2);
                 bool on = g_buildPlatform == pi;
                 if (on) {
@@ -18588,7 +18702,7 @@ void DrawFileDialogs(EditorState& ed) {
                     ImGui::PushStyleColor(ImGuiCol_ButtonHovered, AccentCol(1.0f));
                     ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(1, 1, 1, 1));
                 }
-                if (ImGui::Button(platShort[pi], ImVec2(86, 0))) g_buildPlatform = pi;
+                if (ImGui::Button(platShort[pi], ImVec2(pi == 4 ? 100 : 86, 0))) g_buildPlatform = pi;
                 if (on) ImGui::PopStyleColor(3);
                 if (ImGui::IsItemHovered()) ImGui::SetTooltip("%s", platTip[pi]);
             }
@@ -18618,8 +18732,15 @@ void DrawFileDialogs(EditorState& ed) {
                 if (ImGui::Selectable(labels[k], s_buildSec == ids[k], 0, ImVec2(0, ImGui::GetTextLineHeight() + 12))) s_buildSec = ids[k];
                 if (ImGui::IsItemHovered()) ImGui::SetTooltip("%s", tips[k]);
             }
+        } else if (g_buildPlatform == 4) {   // Xbox (experimental): Scenes, Player (name, version, icon), Xbox
+            if (s_buildSec != 0 && s_buildSec != 1 && s_buildSec != 7) s_buildSec = 7;
+            const int ids[] = {0, 1, 7};
+            const char* labels[] = {"Scenes", "Player", "Xbox"};
+            for (int k = 0; k < 3; ++k) {
+                if (ImGui::Selectable(labels[k], s_buildSec == ids[k], 0, ImVec2(0, ImGui::GetTextLineHeight() + 12))) s_buildSec = ids[k];
+            }
         } else {
-            if (s_buildSec == 6) s_buildSec = 0;
+            if (s_buildSec == 6 || s_buildSec == 7) s_buildSec = 0;
             for (int si = 0; si < IM_ARRAYSIZE(kBuildSecs); ++si) {
                 if (ImGui::Selectable(kBuildSecs[si], s_buildSec == si, 0, ImVec2(0, ImGui::GetTextLineHeight() + 12))) s_buildSec = si;
                 if (ImGui::IsItemHovered()) ImGui::SetTooltip("%s", kBuildSecTips[si]);
@@ -18702,6 +18823,63 @@ void DrawFileDialogs(EditorState& ed) {
                 if (ImGui::IsItemHovered()) ImGui::SetTooltip("Without a list: also bundle every .okayscene in Assets (the open scene starts the game).");
             }
         }
+#if defined(OKAY_XBOX_UWP)
+        if (s_buildSec == 7) {   // ---- Xbox One Developer Mode (UWP), EXPERIMENTAL ----
+            SectionHeader("Xbox One (experimental, Developer Mode)");
+            ImGui::TextColored(ImVec4(1.0f, 0.75f, 0.3f, 1.0f), "EXPERIMENTAL and UNVERIFIED. Never built on Windows, never run on an Xbox.");
+            ImGui::TextWrapped("%s", okay::xbox::kLimitationsText);
+            ImGui::Spacing();
+            const okay::xbox::SdkReport& s_xboxSdk = okay::xbox::CachedSdkReport(ImGui::Button("Check again"));
+            ImGui::TextWrapped("%s", s_xboxSdk.message.c_str());
+            for (const okay::xbox::SdkItem& it : s_xboxSdk.items) {
+                ImGui::TextColored(it.found ? ImVec4(0.4f, 0.9f, 0.4f, 1) : (it.required ? ImVec4(1.0f, 0.45f, 0.4f, 1) : ImVec4(0.7f, 0.7f, 0.7f, 1)),
+                                   "%s  %s", it.found ? "found  " : (it.required ? "MISSING" : "missing (optional)"), it.name.c_str());
+                if (!it.detail.empty()) { ImGui::SameLine(); ImGui::TextDisabled("%s", it.detail.c_str()); }
+                if (!it.found && it.required) ImGui::TextDisabled("    %s", it.install.c_str());
+            }
+            ImGui::Spacing();
+            okay::xbox::ExportInputs xi;
+            xi.gameName = g_buildNameBuf; xi.company = g_build.company; xi.version = g_build.version; xi.bundleId = g_build.bundleId;
+            const okay::xbox::ManifestOptions xm = okay::xbox::ManifestFrom(xi);
+            ImGui::TextDisabled("Package name %s  |  version %s  |  publisher %s", xm.identityName.c_str(), okay::xbox::NormalizeVersion(xm.version).c_str(), xm.publisher.c_str());
+            std::vector<std::string> xw;
+            for (const std::string& pr : okay::xbox::ValidateManifest(xm, &xw)) ImGui::TextColored(ImVec4(1.0f, 0.45f, 0.4f, 1), "%s", pr.c_str());
+            if (!g_build.icon[0]) ImGui::TextDisabled("No project icon: tile images will be generated PLACEHOLDERS (set one under Player).");
+            ImGui::Spacing();
+            ImGui::TextWrapped("The big button below does everything in one go: check the tools, export, compile the UWP app, compile the shaders, pack and sign. "
+                               "Signing uses: %s. The test certificate is made on this PC; its private key stays in your Windows certificate store.", okay::xbox::SignerLabel(okay::xbox::Signer::PowerShellSignTool));
+            ImGui::Checkbox("Engine mode: run my game inside the app (EXPERIMENTAL)", &g_xboxEngineMode);
+            ImGui::TextDisabled(g_xboxEngineMode ? "Links the engine and runs package\\Data. The engine has never been compiled with Microsoft's UWP compiler, so this may fail to build."
+                                                 : "Off: the app only draws a test triangle and reads the pad (proves the package works).");
+            ImGui::Checkbox("Also install on this PC afterwards", &g_xboxInstall);
+            if (g_xboxInstall) ImGui::TextDisabled("Windows will show ONE administrator (UAC) prompt near the end; accept it. Decline it and everything else is kept.");
+            if (g_xboxRunner) {   // the log panel: per-step status, streamed output, cancel
+                namespace xb = okay::xbox;
+                g_xboxRunner->Tick();
+                ImGui::Separator();
+                const auto& st = g_xboxRunner->Status(); const auto& sp = g_xboxRunner->Steps();
+                for (std::size_t i = 0; i < sp.size(); ++i) {
+                    const ImVec4 col = st[i] == xb::StepStatus::Done ? ImVec4(0.4f, 0.9f, 0.4f, 1) : st[i] == xb::StepStatus::Failed ? ImVec4(1, 0.45f, 0.4f, 1)
+                                     : st[i] == xb::StepStatus::Running ? ImVec4(1, 0.85f, 0.3f, 1) : ImVec4(0.65f, 0.65f, 0.65f, 1);
+                    ImGui::TextColored(col, "%-9s %s", xb::StatusName(st[i]), sp[i].title.c_str());
+                }
+                if (g_xboxRunner->Running() && ImGui::Button("Cancel build")) g_xboxRunner->Cancel();
+                if (g_xboxRunner->Succeeded()) {
+                    ImGui::TextColored(ImVec4(0.4f, 0.9f, 0.4f, 1), "Finished. Package: %s", g_xboxAppx.c_str());
+                    const std::string who = g_xboxRunner->Fact("SIGNER"); ImGui::TextDisabled("Signed with: %s", who.empty() ? g_xboxSignerLabel.c_str() : who.c_str());
+                    ImGui::TextDisabled("UNVERIFIED: nothing here has run on Windows or an Xbox yet. Tell us what you see.");
+                } else if (g_xboxRunner->Finished()) {
+                    ImGui::PushTextWrapPos(560.0f); ImGui::TextColored(ImVec4(1, 0.45f, 0.4f, 1), "%s", g_xboxRunner->FailureMessage().c_str()); ImGui::PopTextWrapPos();
+                }
+                if (ImGui::BeginChild("##xboxlog", ImVec2(560, 180), true)) {
+                    for (const xb::LogLine& l : g_xboxRunner->Log())
+                        ImGui::TextColored(l.cls == xb::LineClass::Error ? ImVec4(1, 0.5f, 0.45f, 1) : l.cls == xb::LineClass::Warning ? ImVec4(1, 0.8f, 0.4f, 1) : ImVec4(0.8f, 0.8f, 0.8f, 1), "%s", l.text.c_str());
+                    if (g_xboxRunner->Running()) ImGui::SetScrollHereY(1.0f);
+                }
+                ImGui::EndChild();
+            }
+        }
+#endif
         if (s_buildSec == 6) {   // ---- Dedicated server ----
             SectionHeader("Dedicated Server");
             ImGui::TextDisabled("The game runs headless (no window or GPU) and players connect to it over UDP.\n"
@@ -19025,7 +19203,7 @@ void DrawFileDialogs(EditorState& ed) {
         ImGui::SameLine();
         // Footer buttons, right-aligned (dialog convention): Cancel, then the
         // green primary Build/Export in the corner.
-        const char* buildLabel = (g_buildPlatform == 0 || g_buildPlatform == 3) ? "Build" : "Export";
+        const char* buildLabel = (g_buildPlatform == 0 || g_buildPlatform == 3) ? "Build" : (g_buildPlatform == 4 ? "Build Xbox package" : "Export");
         const float bw = 120.0f;
         const bool  desktop = (g_buildPlatform == 0);
         // Cancel, [Build & Run], Build/Export — right-aligned. Build & Run only
@@ -19047,7 +19225,15 @@ void DrawFileDialogs(EditorState& ed) {
         ImGui::PushStyleColor(ImGuiCol_Button, ImVec4(0.18f, 0.55f, 0.25f, 1.0f));
         ImGui::PushStyleColor(ImGuiCol_ButtonHovered, ImVec4(0.24f, 0.70f, 0.32f, 1.0f));
         ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(1, 1, 1, 1));
+#if defined(OKAY_XBOX_UWP)
+        const bool xboxBlocked = g_buildPlatform == 4 && (!okay::xbox::CachedSdkReport().available || (g_xboxRunner && g_xboxRunner->Running()));
+        ImGui::BeginDisabled(xboxBlocked);
+#endif
         if (ImGui::Button(buildLabel, ImVec2(bw, 0))) doBuild = true;
+#if defined(OKAY_XBOX_UWP)
+        ImGui::EndDisabled();
+        if (xboxBlocked && ImGui::IsItemHovered(ImGuiHoveredFlags_AllowWhenDisabled)) ImGui::SetTooltip("Xbox export is unavailable: a required Windows tool is missing (see the Xbox page).");
+#endif
         ImGui::PopStyleColor(3);
         if (g_vsBuildRetry) { doBuild = true; doRun = g_vsBuildRetry == 2; g_vsBuildRetry = 0; }
         else if (doBuild) {
@@ -19103,12 +19289,41 @@ void DrawFileDialogs(EditorState& ed) {
           } else if (g_buildPlatform != 0) {
             builder::Options wo;
             wo.company = g_build.company; wo.version = g_build.version;
-            wo.width = g_build.width; wo.height = g_build.height; wo.bundleId = g_build.bundleId;
+            wo.width = g_build.width; wo.height = g_build.height; wo.bundleId = g_build.bundleId; wo.iconPath = g_build.icon;
             g_buildReport = builder::BuildReport{};
             g_buildStatus = builder::ExportForPlatform(ed, g_buildDirBuf, g_buildNameBuf, wo, g_buildPlatform);
-            g_openBuildResult = true;
             ConsoleLog("Export (" + std::string(plats[g_buildPlatform]) + "): " + g_buildStatus);
+#if defined(OKAY_XBOX_UWP)
+            if (g_buildPlatform == 4) {   // one click: SDK check, export, compile, shaders, pack, sign, (install). The popup stays open and shows the log.
+                namespace xb = okay::xbox;
+                xb::ExportInputs xi; xi.gameName = g_buildNameBuf; xi.company = g_build.company; xi.version = g_build.version; xi.bundleId = g_build.bundleId;
+                const xb::ManifestOptions xm = xb::ManifestFrom(xi);
+                xb::PlanInputs pi; pi.sdk = xb::CachedSdkReport(); pi.fs = xb::RealFs();
+                g_xboxSourceRoot = xb::FindSourceRoot(pi.fs, OkayExeDir(), std::getenv("OKAY_SOURCE_ROOT") ? std::getenv("OKAY_SOURCE_ROOT") : "");
+                pi.sourceRoot = g_xboxSourceRoot; pi.exportDir = g_buildDirBuf; pi.subject = xm.publisher; pi.installOnThisPc = g_xboxInstall; pi.engineMode = g_xboxEngineMode;
+                pi.appxPath = (std::filesystem::path(g_buildDirBuf) / (xm.identityName + "_" + xb::NormalizeVersion(xm.version) + "_x64.appx")).string();
+                g_xboxAppx = pi.appxPath; g_xboxSignerLabel = xb::SignerLabel(pi.signer);
+                xb::BuildHostConfig hc; hc.sdkAvailable = pi.sdk.available; hc.exportOk = g_xboxExportOk; hc.exportMessage = g_buildStatus;
+                hc.exportWarnings = g_xboxExportWarnings; hc.exportDir = g_buildDirBuf; hc.appxPath = pi.appxPath; hc.configuration = pi.configuration;
+#if defined(_WIN32)
+                hc.spawn = xb::SpawnWindowsProcess;
+#endif
+                g_xboxHost.reset(new xb::XboxBuildHost(hc));
+                if (g_xboxSourceRoot.empty()) {
+                    g_buildStatus = "Xbox build: the Xbox build files were not found. They ship in the xbox-src folder next to the editor (or set OKAY_SOURCE_ROOT to a source checkout). The game data was exported.";
+                    g_openBuildResult = true; ImGui::CloseCurrentPopup();
+                } else {
+                    g_xboxRunner.reset(new xb::BuildRunner(xb::PlanBuild(pi), *g_xboxHost));
+                    g_xboxRunner->Start(); g_xboxShowRunner = true; s_buildSec = 7;
+                }
+            } else {
+                g_openBuildResult = true;
+                ImGui::CloseCurrentPopup();
+            }
+#else
+            g_openBuildResult = true;
             ImGui::CloseCurrentPopup();
+#endif
           } else {
             builder::Options o = builder::OptionsFromSettings(g_build, g_project);
             o.dryRun = g_buildDryRun;
@@ -20932,20 +21147,24 @@ void DrawHierarchy(EditorState& ed) {
             // The name stops before the eye, the lock and the error badge.
             char cnt[16] = ""; if (childCount > 0) std::snprintf(cnt, sizeof(cnt), "  (%d)", childCount);
             const std::string tail = std::string(cnt) + (node->active ? "" : "  (off)");
-            const bool diag = ObjectHasDiag(node);
-            const float nameRoom = ImGui::GetContentRegionAvail().x
+            // A row scrolled out of the panel is not drawn, so its decorations (icon, badges, eye, lock, the width fitting of its
+            // name) are skipped: in a big scene most rows are out of view and this was most of the Hierarchy's per-frame cost.
+            // (The row still goes through TreeNodeEx below, so open / closed state and the keyboard order stay right.)
+            const bool rowShown = ImGui::IsRectVisible(ImVec2(ImGui::GetContentRegionAvail().x, ImGui::GetFrameHeight()));
+            const bool diag = rowShown && ObjectHasDiag(node);
+            const float nameRoom = rowShown ? ImGui::GetContentRegionAvail().x
                 - (ImGui::GetFontSize() + ImGui::GetStyle().FramePadding.x * 2.0f)
                 - ImGui::CalcTextSize("     ").x
                 - ImGui::CalcTextSize(tail.c_str()).x
                 - kHierEyeW * 2.0f - 8.0f
-                - (diag ? 22.0f : 0.0f);
-            const std::string shown = EllipsizeToWidth(node->name, nameRoom);
+                - (diag ? 22.0f : 0.0f) : 0.0f;
+            const std::string shown = rowShown ? EllipsizeToWidth(node->name, nameRoom) : node->name;
             bool open = ImGui::TreeNodeEx(node, flags, "     %s%s", shown.c_str(), tail.c_str());
             if (shown != node->name && ImGui::IsItemHovered()) ImGui::SetTooltip("%s", node->name.c_str());
             if (dim || prefabRoot) ImGui::PopStyleColor();
             ImVec2 rowMin = ImGui::GetItemRectMin(), rowMax = ImGui::GetItemRectMax();
             if (revealSel == node && !ImGui::IsItemVisible()) ImGui::SetScrollHereY(0.4f);   // selected in the Scene view: scroll to it
-            {   // drawn type icon in the leading space (after the tree arrow zone)
+            if (rowShown) {   // drawn type icon in the leading space (after the tree arrow zone)
                 float isz = ImGui::GetFontSize();
                 float ax = isz + ImGui::GetStyle().FramePadding.x * 2.0f;   // arrow width
                 const ImVec2 ip(rowMin.x + ax, rowMin.y + (rowMax.y - rowMin.y - isz) * 0.5f);
@@ -20957,14 +21176,14 @@ void DrawHierarchy(EditorState& ed) {
             if (ed.IsSelected(node))
                 ImGui::GetWindowDrawList()->AddRectFilled(
                     rowMin, ImVec2(rowMin.x + 3.0f, rowMax.y), ImGui::GetColorU32(AccentCol(1.0f)));
-            {   // badges only where the name leaves room
+            if (rowShown) {   // badges only where the name leaves room
                 const float labelEnd = rowMin.x + ImGui::GetFontSize() + ImGui::GetStyle().FramePadding.x * 2.0f +
                                        ImGui::CalcTextSize(("     " + shown + tail).c_str()).x + 8.0f;
                 HierComponentBadges(node, rowMin, ImVec2(rowMax.x - kHierEyeW * 2.0f, rowMax.y), labelEnd);
+                DrawObjectDiagMarker(node, rowMin, rowMax);
+                HierEye(node, rowMin, rowMax);
+                HierLock(node, ImGui::IsItemHovered(), rowMin, rowMax);
             }
-            DrawObjectDiagMarker(node, rowMin, rowMax);
-            HierEye(node, rowMin, rowMax);
-            HierLock(node, ImGui::IsItemHovered(), rowMin, rowMax);
             float mx = ImGui::GetIO().MousePos.x;
             bool inEye  = mx >= rowMax.x - kHierEyeW && mx <= rowMax.x;
             bool inLock = mx >= rowMax.x - kHierEyeW * 2.0f && mx < rowMax.x - kHierEyeW;
@@ -48650,6 +48869,73 @@ void DrawUIThemer(EditorState& ed) {
     ImGui::End();
 }
 
+// The frame-time overlay (View > Rendering > Frame-time overlay): FPS and frame time over the last frames, a graph, and where
+// the newest frames went (okay::editor::perf::Break over the profiler's own scopes; same data as the Profiler window, in a
+// small panel you can leave open). "Copy report" puts a plain-text version on the clipboard to send back.
+void DrawPerfOverlay(EditorState& ed) {
+    namespace perf = okay::editor::perf;
+    okay::Profiler& P = okay::Prof();
+    ImGui::SetNextWindowPos(ImVec2(ImGui::GetMainViewport()->WorkPos.x + ImGui::GetMainViewport()->WorkSize.x - 12.0f,
+                                   ImGui::GetMainViewport()->WorkPos.y + 36.0f), ImGuiCond_FirstUseEver, ImVec2(1.0f, 0.0f));
+    ImGui::SetNextWindowBgAlpha(0.88f);
+    const bool open = ImGui::Begin("Frame time###PerfOverlay", &g_showPerfOverlay,
+                                   ImGuiWindowFlags_AlwaysAutoResize | ImGuiWindowFlags_NoFocusOnAppearing | ImGuiWindowFlags_NoNav);
+    if (!g_showPerfOverlay) SaveSettings();   // closed with its X
+    if (!open) { ImGui::End(); return; }
+    const int n = P.Count();
+    const int kStatFrames = 120, kBreakFrames = 30;
+    static std::vector<double> ms; static std::vector<float> plot;
+    ms.clear(); plot.clear();
+    for (int i = std::max(0, n - kStatFrames); i < n; ++i) { ms.push_back(P.FrameAt(i).total); plot.push_back((float)P.FrameAt(i).total); }
+    const perf::HistoryStats st = perf::Stats(ms);
+    // Average of the newest frames, section by section (one frame jumps around too much to read).
+    perf::Breakdown avg;
+    int bn = 0;
+    for (int i = std::max(0, n - kBreakFrames); i < n; ++i) {
+        const perf::Breakdown b = perf::Break(P.FrameAt(i));
+        for (int k = 0; k < (int)perf::Section::Count; ++k) avg.ms[k] += b.ms[k];
+        avg.total += b.total; ++bn;
+    }
+    if (bn > 0) { for (int k = 0; k < (int)perf::Section::Count; ++k) avg.ms[k] /= bn; avg.total /= bn; }
+    const double sleepMs = avg.ms[(int)perf::Section::Sleep];
+    const double workMs = avg.total - sleepMs;   // what the frame costs without the on-purpose sleep
+    ImVec4 col = st.fps >= 100.0 ? ImVec4(0.45f, 0.85f, 0.55f, 1) : st.fps >= 60.0 ? ImVec4(0.95f, 0.80f, 0.35f, 1) : ImVec4(0.95f, 0.45f, 0.40f, 1);
+    ImGui::TextColored(col, "%.0f FPS", st.fps);
+    ImGui::SameLine(); ImGui::TextDisabled("%.2f ms avg   95%%: %.2f   worst: %.2f   1%% low: %.0f FPS", st.avgMs, st.p95Ms, st.worstMs, st.lowFps);
+    if (sleepMs > 0.05 && workMs > 0.0) ImGui::TextDisabled("Without the limiter's sleep: %.2f ms = %.0f FPS possible", workMs, 1000.0 / workMs);
+    if (!P.enabled || n < 2) ImGui::TextDisabled("Collecting frames ...");
+    if (!plot.empty()) {
+        const float top = (float)std::max(16.7, st.worstMs * 1.1);
+        char ov[48]; std::snprintf(ov, sizeof(ov), "last %d frames, top %.0f ms", (int)plot.size(), (double)top);
+        ImGui::PlotLines("##perfms", plot.data(), (int)plot.size(), 0, ov, 0.0f, top, ImVec2(360, 56));
+    }
+    ImGui::Separator();
+    ImGui::TextDisabled("Where the frame goes (average of the last %d frames)", bn);
+    int order[(int)perf::Section::Count];
+    for (int k = 0; k < (int)perf::Section::Count; ++k) order[k] = k;
+    std::sort(order, order + (int)perf::Section::Count, [&](int a, int b) { return avg.ms[a] > avg.ms[b]; });
+    for (int oi = 0; oi < (int)perf::Section::Count; ++oi) {
+        const int k = order[oi];
+        if (avg.ms[k] < 0.005 && k != (int)perf::Section::Viewport3D) continue;
+        const float share = avg.total > 0.0 ? (float)(avg.ms[k] / avg.total) : 0.0f;
+        char lb[40]; std::snprintf(lb, sizeof(lb), "%.2f ms  %.0f%%", avg.ms[k], (double)share * 100.0);
+        ImGui::ProgressBar(share, ImVec2(150, 0), lb);
+        ImGui::SameLine(); ImGui::TextUnformatted(perf::SectionName((perf::Section)k));
+    }
+    ImGui::Separator();
+    ImGui::TextDisabled("Renderer: %s", okay::FrameOverlay::RendererName().c_str());
+    ImGui::TextDisabled("Scene view %dx%d, scale %.2f%s", g_lastSceneW, g_lastSceneH, (double)perf::EffectiveScale(g_renderScale, g_perfMode), g_perfMode ? ", performance mode" : "");
+    if (ImGui::Button("Copy report")) {
+        const std::string rep = perf::Report(st, bn > 0 ? avg : perf::Break(P.Displayed()), okay::FrameOverlay::RendererName().c_str(), ed.isPlaying(),
+                                              g_lastSceneW, g_lastSceneH, perf::EffectiveScale(g_renderScale, g_perfMode), g_perfMode, g_fpsCapEditor, g_idleThrottle);
+        ImGui::SetClipboardText(rep.c_str());
+        ConsoleLog("Frame-time report copied to the clipboard.");
+    }
+    ImGui::SameLine();
+    if (ImGui::Button("Open Profiler")) g_showProfiler = true;
+    ImGui::End();
+}
+
 // Advanced CPU/GPU profiler. A frame/CPU/GPU timeline you can pause and
 // scrub, a stacked CPU-category area (Scripts / Physics / Render / Other), per-section
 // self/total/calls/%-of-frame with min/avg/max over the window, live draw stats, and
@@ -50842,7 +51128,7 @@ int main(int argc, char** argv) {
             }
         }
         static const bool kPerfDump = std::getenv("OKAY_PERF_DUMP") != nullptr;   // dev: print frame breakdown to stdout
-        okay::Prof().enabled = g_showProfiler || kPerfDump || (g_gameStatsOverlay && ed.isPlaying());   // the Game view Stats overlay lists ms per system   // gate timers; set before BeginFrame/Tick this frame
+        okay::Prof().enabled = g_showProfiler || g_showPerfOverlay || kPerfDump || (g_gameStatsOverlay && ed.isPlaying());   // the Game view Stats overlay lists ms per system   // gate timers; set before BeginFrame/Tick this frame
         okay::Prof().BeginFrame();
         // Pick up the background update check when it finishes (once).
         if (!g_autoCheckDone && g_updateCheck.valid() &&
@@ -50876,6 +51162,12 @@ int main(int argc, char** argv) {
                     pbf->KeyboardFocusWindowId(), pbf->MouseFocusWindowId(), winSeam->Id()))
                 winSeam->SetInputFocus();
             s_prevViewports = vps;
+        }
+        {   // seconds since the last event of any kind (the idle throttle reads this; the first frame counts as just now)
+            static Uint64 s_lastInput = okay::platform::PerfCounter();
+            g_secSinceInput = (double)(okay::platform::PerfCounter() - s_lastInput) / (double)okay::platform::PerfFrequency();
+            SDL_PumpEvents();
+            if (SDL_HasEvents(SDL_FIRSTEVENT, SDL_LASTEVENT)) { s_lastInput = okay::platform::PerfCounter(); g_secSinceInput = 0.0; }
         }
         okay::platform::Event e;
         while (sdlSeam->PollEvent(e)) {
@@ -50967,6 +51259,7 @@ int main(int argc, char** argv) {
             }
         }
 
+        okay::Prof().Begin("Editor.Update");   // closed before the window title below (nothing in between leaves the loop body early)
         Uint64 now = okay::platform::PerfCounter();
         float dt = (float)((now - last) / (double)okay::platform::PerfFrequency());
         last = now;
@@ -51500,6 +51793,7 @@ int main(int argc, char** argv) {
             }
         }
 
+        okay::Prof().End();
         // Keep the window title in sync with the scene + dirty state.
         std::string title = "OkaySpace Editor  -  ";
         if (!ed.projectDir().empty()) title += std::filesystem::path(ed.projectDir()).filename().string() + "  /  ";
@@ -51519,8 +51813,8 @@ int main(int argc, char** argv) {
         else
             ImGui::GetIO().ConfigFlags |= ImGuiConfigFlags_NavEnableKeyboard;
 
-        if (!g_imguiOwnRender) ImGui_ImplSDLRenderer2_NewFrame();
-        if (g_imguiOwnFeed) g_imguiFeed.NewFrame(ImGui::GetIO()); else ImGui_ImplSDL2_NewFrame();
+        { OKAY_PROFILE("ImGui.NewFrame"); if (!g_imguiOwnRender) ImGui_ImplSDLRenderer2_NewFrame();
+          if (g_imguiOwnFeed) g_imguiFeed.NewFrame(ImGui::GetIO()); else ImGui_ImplSDL2_NewFrame(); }
         // Skinned meshes deform on the GPU when the Direct3D 11 renderer draws the
         // views (one upload of the bind pose, bone matrices per frame) instead of
         // every vertex on the CPU + a full mesh re-upload each frame.
@@ -52181,6 +52475,7 @@ int main(int argc, char** argv) {
         { OKAY_PROFILE("UI.MaterialEditor"); DrawMaterialEditor(ed); }
         { OKAY_PROFILE("UI.GameView"); if (g_showGame)      DrawGameView(ed); }
         { OKAY_PROFILE("UI.Profiler"); if (g_showProfiler)  DrawProfiler(ed); }
+        { OKAY_PROFILE("UI.PerfOverlay"); if (g_showPerfOverlay) DrawPerfOverlay(ed); }
         { OKAY_PROFILE("UI.Inspector"); if (g_showInspector) DrawInspector(ed); }
         DrawFpHandsPreviewWindow(ed);
         okay::editor::DrawUIGalleryWindow(ed);   // UI Gallery: GameObject > UI > Browse All UI...
@@ -52298,7 +52593,7 @@ int main(int argc, char** argv) {
                         if (g_imguiOwnRender) okay::imguirender::UpdateTexture(*okay::pb::For(renderer), tx);
                         else ImGui_ImplSDLRenderer2_UpdateTexture(tx);
                     }
-            OkayRenderDrawData(mdd, renderer, nullptr);
+            { OKAY_PROFILE("ImGui.Draw"); OkayRenderDrawData(mdd, renderer, nullptr); }   // (this multi-window branch is the default one: it was not timed, so its cost showed as "not timed")
         } else {
             { OKAY_PROFILE("ImGui.Draw");
               if (g_imguiOwnRender) okay::imguirender::Render(*okay::pb::For(renderer), ImGui::GetDrawData());
@@ -52404,6 +52699,15 @@ int main(int argc, char** argv) {
             else if (ViewportsSupported() && ImGui::GetFrameCount() > 1) io.ConfigFlags |= ImGuiConfigFlags_ViewportsEnable;
         }
 
+        {   // Frame limiter and idle throttle (View > Rendering; both off by default): sleep out the rest of the frame budget.
+            const okay::editor::perf::PacingSettings ps{g_fpsCapEditor, g_idleThrottle, g_idleFps, 0.75};
+            const double target = okay::editor::perf::TargetFps(ps, ed.isPlaying(), ImGui::IsAnyMouseDown(), g_secSinceInput);
+            if (target > 0.0) {
+                const double elapsed = (double)(okay::platform::PerfCounter() - g_frameT0) / (double)okay::platform::PerfFrequency();
+                const double wait = okay::editor::perf::SleepSeconds(target, elapsed);
+                if (wait >= 0.001) { OKAY_PROFILE("Pacing.Sleep"); SDL_Delay((Uint32)(wait * 1000.0)); }
+            }
+        }
         {   // Close out the profiler frame (total wall time incl. present).
             Uint64 f1 = okay::platform::PerfCounter();
             double frameMs = (double)(f1 - g_frameT0) / (double)okay::platform::PerfFrequency() * 1000.0;

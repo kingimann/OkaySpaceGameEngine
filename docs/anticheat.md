@@ -828,21 +828,14 @@ A library game that the launcher runs through its own player (a scene, not the
 game's exe) is checked by the launcher only. That player reads its settings from
 its own folder, not the game's.
 
-![Build Settings > Output > Anti-cheat](images/anticheat/editor-build-settings.png)
-
-![Settings > Behavior > Anti-cheat in the launcher](images/anticheat/launcher-settings.png)
 
 What a player sees when a game is set to **Enforce** and one of its files was
 changed:
 
-![The game refuses to start](images/anticheat/player-tampered-build.png)
 
 The launcher in **Enforce** mode refuses to start the game. In **Report** mode it
 starts the game and shows the problem:
 
-![Launcher, enforce: refused](images/anticheat/launcher-enforce-refused.png)
-
-![Launcher, report: warning, game starts](images/anticheat/launcher-report-warning.png)
 
 ### The manifest
 
@@ -1048,33 +1041,13 @@ signing up again doesn't clear a machine ban: the new account still sees it
   anti-cheat ban, its reason and its end. **Appeal...** opens a box to explain;
   the banner then shows that the appeal is waiting, or the decision and its note.
 - **Report cheating...** in a chat's menu files a player report.
-![Admin > Anti-cheat > Reports](images/anticheat/admin-reports.png)
 
-![Ban dialog, prefilled from a client-check report](images/anticheat/admin-ban-dialog.png)
-
-![Optional expiry](images/anticheat/admin-ban-expiry.png)
-
-![Bans: active and ended](images/anticheat/admin-bans.png)
-
-![Unban with a reason](images/anticheat/admin-unban-dialog.png)
-
-![Appeals](images/anticheat/admin-appeals.png)
-
-![Deciding an appeal](images/anticheat/admin-appeal-decision.png)
 
 What a banned player sees, and the appeal flow:
 
-![Ban banner](images/anticheat/player-ban-banner.png)
-
-![Appeal your ban](images/anticheat/player-appeal.png)
-
-![After a rejected appeal](images/anticheat/player-appeal-rejected.png)
 
 Reporting a cheater from a chat:
 
-![Chat menu](images/anticheat/player-report-menu.png)
-
-![Report cheating](images/anticheat/player-report-cheating.png)
 
 These screenshots use the launcher's built-in sample data (`OKAY_UI_DEMO_USER`,
 plus `OKAY_UI_DEMO_ACVIEW` / `OKAY_UI_DEMO_ACPOPUP` / `OKAY_UI_DEMO_ACBAN` /

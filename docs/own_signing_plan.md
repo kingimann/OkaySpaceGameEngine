@@ -211,6 +211,61 @@ Each stage is its own branch and its own review of the docs; all of it stays OFF
    both for an end-entity certificate); not known whether Windows cares. (d) No PFX / PKCS #12 export, no thumbprint helper.
    (e) Only RSA; only the four extensions; not a general X.509 library.
 4. CMS SignedData builder (generic), then the Microsoft SPC indirect data content on top.
+   **Status 2026-11-18: the generic CMS part is written and tested, NOT independently reviewed, test key only, not wired to
+   anything. The Microsoft SPC part is NOT written (it belongs to stage 5, whose exact layout is unverified).**
+   Where: `signing/include/okay/Sign/Cms.hpp`, `signing/src/Cms.cpp`, tests `signing/tests/test_sign_cms.cpp` and
+   `test_sign_cms_openssl.cpp`. Same switch (`OKAY_OWN_SIGNING`, default OFF, refused by releases). Written from RFC 5652
+   (3, 4, 5.1 to 5.4, 11.1 to 11.3) and RFC 5754 (SHA-2 in CMS); SHA-256 is `okay::crypto::Sha256Hash`. What exists:
+   `CmsSignSha256` (ContentInfo { signedData }: version by the RFC 5652 5.1 rule or forced to 1 or 3; one SHA-256 digest
+   algorithm with NULL parameters or without; encapsulated or detached content under any content-type OID; our stage-3
+   certificate in the certificates field; one SignerInfo with issuerAndSerialNumber, signed attributes contentType,
+   messageDigest and an optional signingTime passed in, kept in DER SET OF order, signed after re-tagging [0] to SET (RFC 5652
+   5.4) with sha256WithRSAEncryption or rsaEncryption), `CmsParse` (strict DER, one signer, signed attributes required and in
+   DER order, no CRLs, no unsigned attributes, unknown attributes ignored), `CmsVerifySelfSigned` (content from the message or
+   a detached copy, never both; digest; contentType attribute; signer certificate found by issuer and serial and checked with the
+   stage-3 checker including its self-signature; RSA signature over the signed attributes; signing time inside the
+   certificate validity). The eContent is always an OCTET STRING here; Authenticode's content is a different ASN.1 type (stage 5).
+   Tests (all pass, also under AddressSanitizer + UndefinedBehaviorSanitizer): exact bytes against two messages (encapsulated and
+   detached) assembled by a separate small Python encoder (not our code; both also accepted by `openssl cms -verify -noverify`
+   when made); 8 option combinations times 5 content sizes; other content type and version forcing; refusals when signing (wrong
+   certificate for the key, bad OID, bad time, bad version, bad certificate bytes); tampered content, detached content wrong,
+   both or none given; expired, not yet valid, signing time before the certificate; a different key's certificate with the same name
+   and serial spliced in (valid self-signature, wrong key: refused); every third byte flipped (none accepted), truncations,
+   trailing byte; 4,000 random multi-byte mutations of a valid message (none accepted) and 3,000 random junk inputs. Optional
+   openssl cross-check (skipped without openssl): `openssl asn1parse` and `openssl cms -cmsout -print` read our output,
+   `openssl cms -verify -noverify` accepts the encapsulated and detached forms and returns the content, refuses a changed
+   detached content; and OUR verifier accepts a message that `openssl cms -sign` made with our key and certificate (so it
+   copes with another writer's attribute set and algorithm identifiers). Nothing from OpenSSL is in the repo.
+   UNVERIFIED and open: whether Windows wants NULL or absent digest-algorithm parameters, rsaEncryption or
+   sha256WithRSAEncryption as the signature algorithm, which signed attributes, and which SignedData version for the APPX
+   signature (the options exist so stage 5 can match a real reference package). Not done: no countersignature / timestamp,
+   no unsigned attributes, no certificate chains (one self-signed certificate only), no multiple signers, no
+   subjectKeyIdentifier signer id, no RSA-PSS, no enveloped or other CMS types. Checked with g++ 13 on Linux only.
+
+   **What stage 5 needs from the owner's PC (a SignTool-signed reference package).** Stage 5 must start from facts, not from
+   memory of the format. Please make one signed package on the Windows PC and send back only PUBLIC files. Never send a `.pfx`
+   or any private key (the recipe below never exports one). Recipe (PowerShell, in a folder with a package folder `ref\`
+   that holds a small `AppxManifest.xml` and one or two small files, or better, an unsigned `.msix` or `.appx` produced by our
+   own packer; the manifest Publisher must be the subject used below):
+   ```
+   $c = New-SelfSignedCertificate -Type Custom -KeyUsage DigitalSignature -CertStoreLocation Cert:\CurrentUser\My -TextExtension @("2.5.29.37={text}1.3.6.1.5.5.7.3.3","2.5.29.19={text}") -Subject "CN=Okay Reference, O=Okay Space, C=US"
+   makeappx pack /d ref /p ref_unsigned.msix
+   Copy-Item ref_unsigned.msix ref_signed.msix
+   signtool sign /fd SHA256 /sha1 $c.Thumbprint ref_signed.msix
+   Export-Certificate -Cert $c -FilePath ref.cer
+   Copy-Item ref_signed.msix ref_signed.zip; Expand-Archive ref_signed.zip -DestinationPath ref_signed_files
+   Get-AuthenticodeSignature ref_signed.msix | Format-List * | Out-File ref_signature.txt
+   certutil -dump ref.cer | Out-File ref_cer_dump.txt
+   ```
+   Send back: `ref_unsigned.msix`, `ref_signed.msix` (they hold only the test manifest and files), `ref.cer` (public
+   certificate only), `ref_signature.txt`, `ref_cer_dump.txt`, and the Windows version and `signtool /?` header line
+   (SDK version). From these I can: diff the signed against the unsigned package (what SignTool changes, where the
+   `AppxSignature.p7x` entry sits in the ZIP, the central directory and ZIP flags), parse the `.p7x` (the `PKCX` header and the
+   SignedData: version, digest algorithm parameters, signed attributes, the SPC content and its digest bytes), recompute the
+   tagged hashes from the unsigned package and see which bytes each one covers (settling whether the manifest is hashed
+   directly or only through `AppxBlockMap.xml`), and compare the certificate encoding (name order and string types) with ours.
+   Optional but useful: the same steps with a SECOND, different package, to see which values change; and a package after
+   `Add-AppxPackage` fails with our own signed one (the exact error text), once stage 5 exists.
 5. The APPX signature: compute AXPC, AXCD, AXCT, AXBM from the packer's output, build `AppxSignature.p7x`, add it to the
    ZIP. This stage has to be done jointly with the owner of the packer branch, because the central directory hash
    depends on how the ZIP is written (see risks).

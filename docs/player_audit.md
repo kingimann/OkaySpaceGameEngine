@@ -158,7 +158,7 @@ a hard-landing event (`onHardLand`, Action List message `player_hard_land`, `har
 hurt), buried-in-solid recovery (a body whose centre is inside a solid at start, after a teleport or while falling
 fast is stood on open ground instead of falling out of the world), and the Scene-view gizmo (`PlayerGizmo`).
 Coyote time and jump buffering already existed (on by default, saved, in the Inspector); `player_deep_coyote_jump`
-now pins them. Pictures of the course: `docs/images/player_course/`.
+now pins them. Pictures of the course: a picture folder (pictures are no longer stored in the repository).
 
 ## Not done, and bugs for other lanes
 

@@ -23,7 +23,7 @@ with two handles, input boxes with rules (email, number range, password and repe
    Range Slider** or **Input Field with Validation**, **Layout & Overlays > Aspect Ratio Box**.
 
 **What you should see.** A red ring and a sentence appear only after typing a wrong value; the range handles stop at each
-other; the blue frame is 16:9 at every window shape. Pictures: `docs/images/ui_library/`.
+other; the blue frame is 16:9 at every window shape. Pictures: a picture folder (pictures are no longer stored in the repository).
 
 **Status.** Logic and the shipped scene are tested headless (`ui_library`, `ui_library_example`: 179 checks, run on Linux).
 The pictures are software renders (`ui_library_shots`), not a real window. The editor menu entries and Inspector panels

@@ -37,7 +37,7 @@ stairs down hop, a jump from the platform loses its speed, and every frame costs
 Settings you can now change and that are saved: select the player, the **Player Controller** panel, **Step Offset** and **Slope
 Limit** (first and third person).
 
-**Pictures** (headless software render, flat shading, no signs or water shine, made by `tests/render_course.cpp`): `docs/images/player_course/` (`02_ramps.png`, `07_f3_player_lines_on_30_degree_ramp.png` shows the F3 lines as the 8x8 font draws them; the real F3 panel was not seen).
+**Pictures** (headless software render, flat shading, no signs or water shine, made by `tests/render_course.cpp`): a picture folder (pictures are no longer stored in the repository) (`02_ramps.png`, `07_f3_player_lines_on_30_degree_ramp.png` shows the F3 lines as the 8x8 font draws them; the real F3 panel was not seen).
 
 **Checks run here (Linux, headless)**: `tests/test_player_deep.cpp` (860 checks, each fails with `OKAY_OLD_PLAYER=1`),
 `tests/test_player_course.cpp` (the shipped file is what the code writes, and a player walks stations 1, 3, 7), and the older player,

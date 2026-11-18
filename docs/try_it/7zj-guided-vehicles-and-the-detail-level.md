@@ -10,8 +10,8 @@ every guided model: **Detail** (Low, Medium, High, Ultra) with the triangle coun
 **Status.** Tested on Linux (`ctest -R "guided_vehicles|guided_detail"`: about 2300 and 980 checks: every design sound, parts never
 overlap, every setting at its limits, fuzz, swapping wheels, headlights and bumpers, your edits surviving, the triangle counts and
 level changes). The page was never opened in a real window; nothing ran on Windows. Pictures
-(`docs/images/guided_modeling/vehicle_*.png`, `vehicles_*.png`, `detail_*.png`) are headless renders of the generated meshes by our own
-small rasteriser (the detail pictures show triangle edges), not editor screenshots. Motorcycle pictures: `docs/images/guided_modeling/motorcycles_side_views.png` and `motorcycles_three_quarter.png` (Medium detail). The motorcycles are still blocky at Medium: tubes, boxes and simple profiles, not shaped like real tanks and engines.
+(a picture folder (pictures are no longer stored in the repository), `vehicles_*.png`, `detail_*.png`) are headless renders of the generated meshes by our own
+small rasteriser (the detail pictures show triangle edges), not editor screenshots. Motorcycle pictures: a picture folder (pictures are no longer stored in the repository) and `motorcycles_three_quarter.png` (Medium detail). The motorcycles are still blocky at Medium: tubes, boxes and simple profiles, not shaped like real tanks and engines.
 
 **Try it.**
 

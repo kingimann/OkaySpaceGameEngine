@@ -118,6 +118,8 @@
 #include "AntiCheatIntegrity.hpp"       // Build Game's Data/manifest.json (opt-in anti-cheat)
 #include "FileDialog.hpp"                // open / save / folder dialogs: the system's own, or our built-in browser (asset import)
 #include "PlatformClipboard.hpp"         // Play mode clipboard (through okay::platform)
+#include "ImGuiPainterRenderer.hpp"   // our own Dear ImGui renderer over okay::platform::Painter (OKAY_IMGUI_RENDER=own; default stays imgui_impl_sdlrenderer2)
+#include "PainterBridge.hpp"   // the 2D renderer calls, through okay::platform::Painter
 #include "ImGuiPlatformFeed.hpp"          // our own Dear ImGui input feed over okay::platform (OKAY_PLATFORM_EVENTS=own; default stays imgui_impl_sdl2)
 
 #include <numeric>
@@ -1099,32 +1101,30 @@ static void DestroyViewTexture(int slot) {
     auto it = g_viewD3DTex.find(t);
     if (it != g_viewD3DTex.end()) { okay::D3D11Renderer::ReleaseCom(it->second); g_viewD3DTex.erase(it); }
 #endif
-    SDL_DestroyTexture(t);
+    okay::pb::DestroyTexture(g_sdlRenderer, t);
     g_view3DTex[slot] = nullptr; g_view3DW[slot] = g_view3DH[slot] = 0; g_view3DIsTarget[slot] = false;
 }
 #if defined(_WIN32)
 static SDL_Texture* EnsureViewTarget(int slot, int w, int h) {
     if (g_view3DTex[slot] && g_view3DIsTarget[slot] && g_view3DW[slot] == w && g_view3DH[slot] == h) return g_view3DTex[slot];
     DestroyViewTexture(slot);
-    SDL_Texture* t = SDL_CreateTexture(g_sdlRenderer, SDL_PIXELFORMAT_ABGR8888, SDL_TEXTUREACCESS_TARGET, w, h);
+    SDL_Texture* t = okay::pb::CreateTexture(g_sdlRenderer, w, h, okay::pb::Access::Target, true, true);
     if (!t) return nullptr;
-    SDL_SetTextureBlendMode(t, SDL_BLENDMODE_BLEND);
-    SDL_SetTextureScaleMode(t, SDL_ScaleModeLinear);
     g_view3DTex[slot] = t; g_view3DW[slot] = w; g_view3DH[slot] = h; g_view3DIsTarget[slot] = true;
     return t;
 }
 static void* ViewTargetD3D(SDL_Texture* t) {
     auto it = g_viewD3DTex.find(t);
     if (it != g_viewD3DTex.end()) return it->second;
-    SDL_Texture* prev = SDL_GetRenderTarget(g_sdlRenderer);
-    if (SDL_SetRenderTarget(g_sdlRenderer, t) != 0) return nullptr;
-    Uint8 r, g, b, a; SDL_GetRenderDrawColor(g_sdlRenderer, &r, &g, &b, &a);
-    SDL_SetRenderDrawColor(g_sdlRenderer, 0, 0, 0, 0);
-    SDL_RenderDrawPoint(g_sdlRenderer, -64, -64);   // off-target: binds the RTV, draws nothing
-    SDL_RenderFlush(g_sdlRenderer);
+    SDL_Texture* prev = okay::pb::GetRenderTarget(g_sdlRenderer);
+    if (!okay::pb::SetRenderTarget(g_sdlRenderer, t)) return nullptr;
+    Uint8 r, g, b, a; okay::pb::GetDrawColor(g_sdlRenderer, &r, &g, &b, &a);
+    okay::pb::SetDrawColor(g_sdlRenderer, 0, 0, 0, 0);
+    okay::pb::DrawPoint(g_sdlRenderer, -64, -64);   // off-target: binds the RTV, draws nothing
+    okay::pb::Flush(g_sdlRenderer);
     void* tex = g_d3dRenderer ? g_d3dRenderer->BoundRenderTargetTexture() : nullptr;
-    SDL_SetRenderDrawColor(g_sdlRenderer, r, g, b, a);
-    SDL_SetRenderTarget(g_sdlRenderer, prev);
+    okay::pb::SetDrawColor(g_sdlRenderer, r, g, b, a);
+    okay::pb::SetRenderTarget(g_sdlRenderer, prev);
     if (tex) g_viewD3DTex[t] = tex;
     return tex;
 }
@@ -1198,7 +1198,7 @@ SDL_Texture* Render3DTexture(const Scene& scene, const Mat4& vp, const Vec3& eye
             OKAY_BREADCRUMB("Render3D:d3d11-direct");
             if (SDL_Texture* t = EnsureViewTarget(slot, rw, rh)) {
                 if (void* dst = ViewTargetD3D(t)) {
-                    SDL_RenderFlush(g_sdlRenderer);   // SDL's queued draws go first
+                    okay::pb::Flush(g_sdlRenderer);   // SDL's queued draws go first
                     if (g_d3dRenderer->RenderToTexture(scene, vp, eye, rw, rh, 4, 0.0f, 0.0f, 0.0f, 0.0f, dst, ignore)) {
                         okay::SceneOcclusionDepth().valid = false;
                         okay::FrameOverlay::RendererName() = "Direct3D 11 (GPU, direct to the view)";
@@ -1272,13 +1272,10 @@ SDL_Texture* Render3DTexture(const Scene& scene, const Mat4& vp, const Vec3& eye
     }
     if (!g_view3DTex[slot] || g_view3DW[slot] != rw || g_view3DH[slot] != rh || g_view3DIsTarget[slot]) {
         if (g_view3DTex[slot]) DestroyViewTexture(slot);
-        g_view3DTex[slot] = SDL_CreateTexture(g_sdlRenderer, SDL_PIXELFORMAT_ABGR8888,
-                                              SDL_TEXTUREACCESS_STREAMING, rw, rh);
-        SDL_SetTextureBlendMode(g_view3DTex[slot], SDL_BLENDMODE_BLEND);
-        SDL_SetTextureScaleMode(g_view3DTex[slot], SDL_ScaleModeLinear);  // smooth upscale
+        g_view3DTex[slot] = okay::pb::CreateTexture(g_sdlRenderer, rw, rh, okay::pb::Access::Streaming, true, true);   // linear: smooth upscale
         g_view3DW[slot] = rw; g_view3DH[slot] = rh; g_view3DIsTarget[slot] = false;
     }
-    SDL_UpdateTexture(g_view3DTex[slot], nullptr, px, rw * 4);
+    okay::pb::UpdateTexture(g_sdlRenderer, g_view3DTex[slot], nullptr, px, rw * 4);
     return g_view3DTex[slot];
 }
 
@@ -1337,13 +1334,10 @@ SDL_Texture* RenderCameraStackView(const Scene& scene, int w, int h, int slot, c
         return nullptr;
     if (!g_view3DTex[slot] || g_view3DW[slot] != w || g_view3DH[slot] != h || g_view3DIsTarget[slot]) {
         if (g_view3DTex[slot]) DestroyViewTexture(slot);
-        g_view3DTex[slot] = SDL_CreateTexture(g_sdlRenderer, SDL_PIXELFORMAT_ABGR8888,
-                                              SDL_TEXTUREACCESS_STREAMING, w, h);
-        SDL_SetTextureBlendMode(g_view3DTex[slot], SDL_BLENDMODE_BLEND);
-        SDL_SetTextureScaleMode(g_view3DTex[slot], SDL_ScaleModeLinear);
+        g_view3DTex[slot] = okay::pb::CreateTexture(g_sdlRenderer, w, h, okay::pb::Access::Streaming, true, true);
         g_view3DW[slot] = w; g_view3DH[slot] = h; g_view3DIsTarget[slot] = false;
     }
-    SDL_UpdateTexture(g_view3DTex[slot], nullptr, composited.data(), w * 4);
+    okay::pb::UpdateTexture(g_sdlRenderer, g_view3DTex[slot], nullptr, composited.data(), w * 4);
     return g_view3DTex[slot];
 }
 
@@ -1361,12 +1355,8 @@ SDL_Texture* GetThumb(const std::string& path) {
     if (path.rfind("proc:", 0) == 0) img = okay::GenerateProcTexture(path);   // built-in procedural
     else img.Load(path);
     if (g_sdlRenderer && img.Width() > 0) {
-        tex = SDL_CreateTexture(g_sdlRenderer, SDL_PIXELFORMAT_ABGR8888,
-                                SDL_TEXTUREACCESS_STATIC, img.Width(), img.Height());
-        if (tex) {
-            SDL_SetTextureBlendMode(tex, SDL_BLENDMODE_BLEND);
-            SDL_UpdateTexture(tex, nullptr, img.Pixels().data(), img.Width() * 4);
-        }
+        tex = okay::pb::CreateTexture(g_sdlRenderer, img.Width(), img.Height(), okay::pb::Access::Static, true, false,
+                                      (const std::uint8_t*)img.Pixels().data());
     }
     cache[path] = tex;   // cache failures (nullptr) too, so we don't retry
     return tex;
@@ -1536,12 +1526,7 @@ static SDL_Texture* RenderFramedThumb(okay::Scene& sc, const Vec3& center, float
     if (!g_sdlRenderer) return nullptr;
     const okay::Image img = RenderFramedImage(sc, center, radius);
     if (!img.Valid()) return nullptr;
-    SDL_Texture* tex = SDL_CreateTexture(g_sdlRenderer, SDL_PIXELFORMAT_ABGR8888, SDL_TEXTUREACCESS_STATIC, img.Width(), img.Height());
-    if (tex) {
-        SDL_SetTextureBlendMode(tex, SDL_BLENDMODE_BLEND);
-        SDL_SetTextureScaleMode(tex, SDL_ScaleModeLinear);
-        SDL_UpdateTexture(tex, nullptr, img.Data(), img.Width() * 4);
-    }
+    SDL_Texture* tex = okay::pb::CreateTexture(g_sdlRenderer, img.Width(), img.Height(), okay::pb::Access::Static, true, true, (const std::uint8_t*)img.Data());
     return tex;
 }
 
@@ -7079,7 +7064,7 @@ static void DrawCameraBookmarkMenuItems(EditorState& ed) {
 // What this PC offers, for the Auto choices (AutoPerf.hpp). Read from SDL and the renderer that was created.
 static oked::autoperf::Hardware ReadHardware() {
     oked::autoperf::Hardware h;
-    if (g_sdlRenderer) { SDL_RendererInfo ri; if (SDL_GetRendererInfo(g_sdlRenderer, &ri) == 0) h.gpuRenderer = (ri.flags & SDL_RENDERER_ACCELERATED) != 0; }
+    if (g_sdlRenderer) h.gpuRenderer = okay::pb::IsAccelerated(g_sdlRenderer);
     h.cpuCores = SDL_GetCPUCount();
     h.ramMB = SDL_GetSystemRAM();
     SDL_DisplayMode dm;
@@ -7091,7 +7076,7 @@ static void ResolveAutoRendering() {
     const oked::autoperf::Hardware h = ReadHardware();
     g_ssaa = oked::autoperf::Resolve(g_aaMode, oked::autoperf::AutoAntiAliasing(h)) ? 2 : 1;
     g_vsync = oked::autoperf::Resolve(g_vsyncMode, oked::autoperf::AutoVSync(h));
-    if (g_sdlRenderer) SDL_RenderSetVSync(g_sdlRenderer, g_vsync ? 1 : 0);
+    if (g_sdlRenderer) okay::pb::SetVSync(g_sdlRenderer, g_vsync);
 }
 // One Auto / Off / On submenu; the title shows what is in effect ("3D Anti-aliasing: Auto (On)").
 static void DrawAutoModeMenu(const char* name, int& mode, bool effective, const char* tip) {
@@ -10187,12 +10172,8 @@ static SDL_Texture* ProjectThumb(const std::string& abs) {
     auto it = g_thumbTex.find(r.key);
     if (it != g_thumbTex.end()) { it->second.lastUse = g_thumbFrame; return it->second.tex; }
     if (!r.ready) return nullptr;   // not made yet (or no picture for it): the icon shows
-    SDL_Texture* tex = SDL_CreateTexture(g_sdlRenderer, SDL_PIXELFORMAT_ABGR8888, SDL_TEXTUREACCESS_STATIC, r.image->Width(), r.image->Height());
-    if (tex) {
-        SDL_SetTextureBlendMode(tex, SDL_BLENDMODE_BLEND);
-        SDL_SetTextureScaleMode(tex, SDL_ScaleModeLinear);
-        SDL_UpdateTexture(tex, nullptr, r.image->Pixels().data(), r.image->Width() * 4);
-    }
+    SDL_Texture* tex = okay::pb::CreateTexture(g_sdlRenderer, r.image->Width(), r.image->Height(), okay::pb::Access::Static, true, true,
+                                               (const std::uint8_t*)r.image->Pixels().data());
     g_thumbTex[r.key] = {tex, g_thumbFrame};
     return tex;
 }
@@ -10203,7 +10184,7 @@ static void ProjectThumbFrame() {
     if (g_pb) g_pb->ThumbFrame(10.0);
     if (g_thumbTex.size() < 64 || (g_thumbFrame & 31) != 0) return;
     for (auto it = g_thumbTex.begin(); it != g_thumbTex.end();) {
-        if (g_thumbFrame - it->second.lastUse > 120) { if (it->second.tex) SDL_DestroyTexture(it->second.tex); it = g_thumbTex.erase(it); }
+        if (g_thumbFrame - it->second.lastUse > 120) { if (it->second.tex) okay::pb::DestroyTexture(g_sdlRenderer, it->second.tex); it = g_thumbTex.erase(it); }
         else ++it;
     }
 }
@@ -10215,7 +10196,7 @@ static void ProjectForgetThumb(const std::string& abs) {
     g_pb->ForgetThumb(NativePath(abs));
     const std::string pre = g.ToString() + ":";
     for (auto it = g_thumbTex.begin(); it != g_thumbTex.end();) {
-        if (it->first.rfind(pre, 0) == 0) { if (it->second.tex) SDL_DestroyTexture(it->second.tex); it = g_thumbTex.erase(it); } else ++it;
+        if (it->first.rfind(pre, 0) == 0) { if (it->second.tex) okay::pb::DestroyTexture(g_sdlRenderer, it->second.tex); it = g_thumbTex.erase(it); } else ++it;
     }
 }
 
@@ -41080,7 +41061,7 @@ void DrawInspector(EditorState& ed) {
             if (AssetSlot("uritex", ri->texture, "Image", {".png", ".jpg", ".jpeg", ".bmp", ".tga"})) ed.dirty = true;
             TexFieldThumb(ri->texture);
             int tw = 0, th = 0;
-            if (SDL_Texture* t = ri->texture.empty() ? nullptr : GetThumb(ri->texture)) SDL_QueryTexture(t, nullptr, nullptr, &tw, &th);
+            if (SDL_Texture* t = ri->texture.empty() ? nullptr : GetThumb(ri->texture)) okay::pb::QueryTexture(g_sdlRenderer, t, &tw, &th);
             if (tw > 0) {
                 if (ImGui::SmallButton("Set Native Size##uri")) {
                     ed.PushUndo();
@@ -41123,7 +41104,7 @@ void DrawInspector(EditorState& ed) {
             TexFieldThumb(im->texture);
             if (!im->texture.empty()) {
                 if (SDL_Texture* t = GetThumb(im->texture)) {
-                    int tw = 0, th = 0; SDL_QueryTexture(t, nullptr, nullptr, &tw, &th);
+                    int tw = 0, th = 0; okay::pb::QueryTexture(g_sdlRenderer, t, &tw, &th);
                     if (ImGui::SmallButton("Set Native Size##uim")) { ed.PushUndo(); im->size = {(float)tw, (float)th}; ed.dirty = true; }
                     if (ImGui::IsItemHovered()) ImGui::SetTooltip("Make the widget the picture's own size (%d x %d)", tw, th);
                     ImGui::SameLine(); ImGui::TextDisabled("%d x %d px", tw, th);
@@ -44216,8 +44197,7 @@ void DrawScene2D(EditorState& ed, ImDrawList* dl, ImVec2 canvasPos, ImVec2 canva
             if (sr->flipX) std::swap(u0, u1);
             if (sr->flipY) std::swap(v0, v1);
             SDL_Texture* stex = sr->texture.empty() ? nullptr : GetThumb(sr->texture);
-            if (stex) SDL_SetTextureScaleMode(stex,
-                sr->texFilter == SpriteRenderer::TexFilter::Pixel ? SDL_ScaleModeNearest : SDL_ScaleModeLinear);
+            if (stex) okay::pb::SetTextureLinear(g_sdlRenderer, stex, sr->texFilter != SpriteRenderer::TexFilter::Pixel);
             ImU32 col = ToColor(sr->color);
             if (stex) dl->AddImageQuad((ImTextureID)stex, pTL, pTR, pBR, pBL,
                                        ImVec2(u0, v0), ImVec2(u1, v0), ImVec2(u1, v1), ImVec2(u0, v1), col);
@@ -45386,7 +45366,7 @@ void DrawScene3D(EditorState& ed, ImDrawList* dl, ImVec2 canvasPos, ImVec2 canva
             if (!ri.visible || ri.path.empty() || !(ri.width > 0.0f)) continue;
             SDL_Texture* rt = GetThumb(ri.path);
             if (!rt) continue;
-            int iw = 0, ih = 0; SDL_QueryTexture(rt, nullptr, nullptr, &iw, &ih);
+            int iw = 0, ih = 0; okay::pb::QueryTexture(g_sdlRenderer, rt, &iw, &ih);
             if (iw <= 0 || ih <= 0) continue;
             const std::array<Vec3, 4> c4 = okay::modeling::RefPlaneCorners((okay::modeling::RefPlane)std::clamp(ri.plane, 0, 2), ri.centre, ri.width, (float)ih / (float)iw, ri.flipX);
             ImVec2 sp[4]; bool ok = true;
@@ -48440,13 +48420,12 @@ static void SpriteFloodFill(okay::Image& img, int sx, int sy, const okay::Color&
 // crisp 1:1 pixel preview in the Sprite Editor.
 static SDL_Texture* SpriteEdTexture(okay::Image& img, SDL_Texture*& tex, int& tw, int& th, bool& dirty) {
     if (!g_sdlRenderer || img.Width() <= 0) return nullptr;
-    if (tex && (tw != img.Width() || th != img.Height())) { SDL_DestroyTexture(tex); tex = nullptr; }
+    if (tex && (tw != img.Width() || th != img.Height())) { okay::pb::DestroyTexture(g_sdlRenderer, tex); tex = nullptr; }
     if (!tex) {
-        tex = SDL_CreateTexture(g_sdlRenderer, SDL_PIXELFORMAT_ABGR8888, SDL_TEXTUREACCESS_STATIC, img.Width(), img.Height());
-        if (tex) { SDL_SetTextureBlendMode(tex, SDL_BLENDMODE_BLEND); SDL_SetTextureScaleMode(tex, SDL_ScaleModeNearest); }
+        tex = okay::pb::CreateTexture(g_sdlRenderer, img.Width(), img.Height(), okay::pb::Access::Static, true, false);
         tw = img.Width(); th = img.Height(); dirty = true;
     }
-    if (tex && dirty) { SDL_UpdateTexture(tex, nullptr, img.Pixels().data(), img.Width() * 4); dirty = false; }
+    if (tex && dirty) { okay::pb::UpdateTexture(g_sdlRenderer, tex, nullptr, img.Pixels().data(), img.Width() * 4); dirty = false; }
     return tex;
 }
 
@@ -49970,22 +49949,19 @@ static SDL_Texture* OkayVpTexture(OkayVpData* d, ImTextureData* td) {
     SDL_Texture* t = (it != d->texes.end()) ? it->second : nullptr;
     bool fresh = false;
     if (!t) {
-        t = SDL_CreateTexture(d->ren, SDL_PIXELFORMAT_RGBA32, SDL_TEXTUREACCESS_STATIC,
-                              td->Width, td->Height);
+        t = okay::pb::CreateTexture(d->ren, td->Width, td->Height, okay::pb::Access::Static, true, true);
         if (!t) return nullptr;
-        SDL_SetTextureBlendMode(t, SDL_BLENDMODE_BLEND);
-        SDL_SetTextureScaleMode(t, SDL_ScaleModeLinear);
         d->texes[td] = t;
         fresh = true;
     }
     // The main backend consumes Status, but this frame's dirty rects stay in
     // Updates[] until the next NewFrame — apply them to our copy too.
     if (fresh)
-        SDL_UpdateTexture(t, nullptr, td->GetPixels(), td->GetPitch());
+        okay::pb::UpdateTexture(d->ren, t, nullptr, td->GetPixels(), td->GetPitch());
     else
         for (ImTextureRect& r : td->Updates) {
-            SDL_Rect sr = {r.x, r.y, r.w, r.h};
-            SDL_UpdateTexture(t, &sr, td->GetPixelsAt(r.x, r.y), td->GetPitch());
+            const int sr[4] = {r.x, r.y, r.w, r.h};
+            okay::pb::UpdateTexture(d->ren, t, sr, td->GetPixelsAt(r.x, r.y), td->GetPitch());
         }
     return t;
 }
@@ -49995,15 +49971,14 @@ static void OkayVp_CreateWindow(ImGuiViewport* vp) {
     SDL_Window* w = pb ? (SDL_Window*)pb->NativeHandleFromId((uint32_t)(intptr_t)vp->PlatformHandle) : nullptr;
     if (!w) return;
     OkayVpData* d = new OkayVpData();
-    d->ren = SDL_CreateRenderer(w, -1, SDL_RENDERER_ACCELERATED);
-    if (!d->ren) d->ren = SDL_CreateRenderer(w, -1, 0);
+    if (std::unique_ptr<okay::platform::Window> vw = okay::platform::WrapSdl2Window(w)) d->ren = okay::pb::CreateRenderer(*vw);   // (the wrapper is only borrowed for the call)
     vp->RendererUserData = d;
 }
 
 static void OkayVp_DestroyWindow(ImGuiViewport* vp) {
     if (OkayVpData* d = (OkayVpData*)vp->RendererUserData) {
-        for (auto& kv : d->texes) SDL_DestroyTexture(kv.second);
-        if (d->ren) SDL_DestroyRenderer(d->ren);
+        for (auto& kv : d->texes) okay::pb::DestroyTexture(d->ren, kv.second);
+        if (d->ren) okay::pb::DestroyRenderer(d->ren);
         delete d;
     }
     vp->RendererUserData = nullptr;
@@ -50023,7 +49998,8 @@ static void OkayRenderDrawData(ImDrawData* dd, SDL_Renderer* ren, OkayVpData* d)
     ImVec2 scale = dd->FramebufferScale;
     int fbW = (int)(dd->DisplaySize.x * scale.x), fbH = (int)(dd->DisplaySize.y * scale.y);
     if (fbW <= 0 || fbH <= 0) return;
-    SDL_RenderSetScale(ren, scale.x, scale.y);
+    okay::platform::Painter* P = okay::pb::For(ren);
+    P->SetScale(scale.x, scale.y);
 
     static std::vector<ImDrawVert> s_rebase;   // reused scratch for offset vertices
     for (const ImDrawList* dl : dd->CmdLists) {
@@ -50048,8 +50024,8 @@ static void OkayRenderDrawData(ImDrawData* dd, SDL_Renderer* ren, OkayVpData* d)
             if (cmax.x > (float)fbW) cmax.x = (float)fbW;
             if (cmax.y > (float)fbH) cmax.y = (float)fbH;
             if (cmax.x <= cmin.x || cmax.y <= cmin.y) continue;
-            SDL_Rect clip = {(int)cmin.x, (int)cmin.y, (int)(cmax.x - cmin.x), (int)(cmax.y - cmin.y)};
-            SDL_RenderSetClipRect(ren, &clip);
+            okay::ui2d::Rect clip = {(int)cmin.x, (int)cmin.y, (int)(cmax.x - cmin.x), (int)(cmax.y - cmin.y)};
+            P->SetClipRect(&clip);
 
             SDL_Texture* tex = nullptr;
             if (d) {   // secondary renderer: per-window copies; foreign textures skipped
@@ -50062,15 +50038,15 @@ static void OkayRenderDrawData(ImDrawData* dd, SDL_Renderer* ren, OkayVpData* d)
             }
 
             const char* vbase = (const char*)(vtx + cmd->VtxOffset);
-            SDL_RenderGeometryRaw(ren, tex,
+            P->GeometryRaw((okay::ui2d::Tex)tex,
                 (const float*)(const void*)(vbase + offsetof(ImDrawVert, pos)), (int)sizeof(ImDrawVert),
-                (const SDL_Color*)(const void*)(vbase + offsetof(ImDrawVert, col)), (int)sizeof(ImDrawVert),
+                (const std::uint8_t*)(const void*)(vbase + offsetof(ImDrawVert, col)), (int)sizeof(ImDrawVert),
                 (const float*)(const void*)(vbase + offsetof(ImDrawVert, uv)), (int)sizeof(ImDrawVert),
                 dl->VtxBuffer.Size - (int)cmd->VtxOffset,
                 idx + cmd->IdxOffset, (int)cmd->ElemCount, (int)sizeof(ImDrawIdx));
         }
     }
-    SDL_RenderSetClipRect(ren, nullptr);
+    P->SetClipRect(nullptr);
 }
 
 static void OkayVp_RenderWindow(ImGuiViewport* vp, void*) {
@@ -50080,19 +50056,20 @@ static void OkayVp_RenderWindow(ImGuiViewport* vp, void*) {
     // Drop cached copies of textures ImGui destroyed this frame.
     for (auto it = d->texes.begin(); it != d->texes.end();) {
         if (it->first->Status == ImTextureStatus_Destroyed) {
-            SDL_DestroyTexture(it->second);
+            okay::pb::DestroyTexture(d->ren, it->second);
             it = d->texes.erase(it);
         } else ++it;
     }
 
-    SDL_SetRenderDrawColor(d->ren, 15, 16, 20, 255);
-    SDL_RenderClear(d->ren);
+    okay::pb::SetDrawColor(d->ren, 15, 16, 20, 255);
+    okay::pb::Clear(d->ren);
     OkayRenderDrawData(vp->DrawData, d->ren, d);
-    SDL_RenderPresent(d->ren);
+    okay::pb::Present(d->ren);
 }
 
 // Dear ImGui input: imgui_impl_sdl2 by default, or our own okay::platform feed with OKAY_PLATFORM_EVENTS=own (shared/ImGuiPlatformFeed.hpp).
 static bool g_imguiOwnFeed = false;
+static bool g_imguiOwnRender = false;   // OKAY_IMGUI_RENDER=own: our Painter-based renderer instead of imgui_impl_sdlrenderer2
 static okay::imguifeed::Feed g_imguiFeed;
 // One platform event for Dear ImGui through whichever path is on: our own feed takes it directly; imgui_impl_sdl2 (the
 // default) takes the SDL record the sdl2 backend keeps in Event::native (it is only valid inside the current poll loop pass).
@@ -50407,9 +50384,10 @@ int main(int argc, char** argv) {
     if (const char* rd = std::getenv("OKAY_RENDER_DRIVER")) SDL_SetHint(SDL_HINT_RENDER_DRIVER, rd);
     else SDL_SetHint(SDL_HINT_RENDER_DRIVER, "direct3d11");
 #endif
-    SDL_Renderer* renderer = SDL_CreateRenderer(window, -1, SDL_RENDERER_ACCELERATED);
-    if (!renderer) { SDL_SetHint(SDL_HINT_RENDER_DRIVER, ""); renderer = SDL_CreateRenderer(window, -1, SDL_RENDERER_ACCELERATED); }
-    if (!renderer) renderer = SDL_CreateRenderer(window, -1, 0);
+    // An accelerated renderer (the driver the hint chose), else one with the default driver, else any (software). The painter owns it.
+    SDL_Renderer* renderer = okay::pb::CreateRenderer(*winSeam, false, nullptr, true);
+    if (!renderer) { SDL_SetHint(SDL_HINT_RENDER_DRIVER, ""); renderer = okay::pb::CreateRenderer(*winSeam, false, nullptr, true); }
+    if (!renderer) renderer = okay::pb::CreateRenderer(*winSeam);
     if (!renderer) { std::cerr << "CreateRenderer failed: " << SDL_GetError() << "\n"; return 1; }
     g_sdlRenderer = renderer; // used by the z-buffered 3D view to make textures
     ResolveAutoRendering();   // VSync and 3D anti-aliasing: Auto picks for this PC (re-run after the saved settings load)
@@ -50433,11 +50411,7 @@ int main(int argc, char** argv) {
     if (g_project.splashLogo[0]) {
         okay::Image img;
         if (img.Load(g_project.splashLogo) && img.Valid()) {
-            if (SDL_Surface* s = SDL_CreateRGBSurfaceWithFormatFrom(
-                    (void*)img.Data(), img.Width(), img.Height(), 32, img.Width() * 4, SDL_PIXELFORMAT_ABGR8888)) {
-                g_editorSplashLogo = SDL_CreateTextureFromSurface(renderer, s);
-                SDL_FreeSurface(s);
-            }
+            g_editorSplashLogo = okay::pb::CreateTexture(renderer, img.Width(), img.Height(), okay::pb::Access::Static, true, false, (const std::uint8_t*)img.Data());
         }
     }
     // Build the splash style from the project's loading-screen settings.
@@ -50458,7 +50432,7 @@ int main(int argc, char** argv) {
     // hidden, reveal the window, then draw once more so the shown frame is the
     // splash (not a black frame), whatever the platform's show/present ordering.
     {
-        int sw = 1280, sh = 800; SDL_GetRendererOutputSize(renderer, &sw, &sh);
+        int sw = 1280, sh = 800; okay::pb::OutputSize(renderer, &sw, &sh);
         okay::DrawSplashStyled(renderer, sw, sh, splashStyle());
         SDL_ShowWindow(window);
         SDL_RaiseWindow(window);
@@ -50513,7 +50487,7 @@ int main(int argc, char** argv) {
     // Re-present the (animated) splash between heavy init steps so the loading
     // frame keeps moving instead of sitting frozen until the first real frame.
     auto splashTick = [&]() {
-        int sw = 1280, sh = 800; SDL_GetRendererOutputSize(renderer, &sw, &sh);
+        int sw = 1280, sh = 800; okay::pb::OutputSize(renderer, &sw, &sh);
         okay::DrawSplashStyled(renderer, sw, sh, splashStyle());
         sdlSeam->PumpEvents();
     };
@@ -50650,7 +50624,9 @@ int main(int argc, char** argv) {
     sdlSeam->ReportUnmappedEvents(!g_imguiOwnFeed);   // imgui_impl_sdl2 wants every SDL event (pointer enter / leave, display changes ...)
     if (g_imguiOwnFeed) g_imguiFeed.Init(ImGui::GetIO(), winSeam->Id(), okay::imguifeed::FeedHost::FromPlatform(sdlSeam, winSeam.get()));
     else ImGui_ImplSDL2_InitForSDLRenderer(window, renderer);
-    ImGui_ImplSDLRenderer2_Init(renderer);
+    g_imguiOwnRender = okay::imguirender::OwnRequested(std::getenv("OKAY_IMGUI_RENDER"));
+    std::fprintf(stderr, "%s\n", okay::imguirender::ActiveLine(g_imguiOwnRender));
+    if (g_imguiOwnRender) okay::imguirender::Init(ImGui::GetIO()); else ImGui_ImplSDLRenderer2_Init(renderer);
     OkayVpInstall();   // renderer-side multi-viewport hooks (dual-monitor panels)
     // Multi-window panels: drag a tab outside the editor and it becomes its own OS window (the Inspector or the
     // Console on a second monitor). Set before the first NewFrame(), and only when both backends can do it: Dear
@@ -50706,8 +50682,8 @@ int main(int argc, char** argv) {
                             auto str = [&](unsigned int what) { const unsigned char* t = gs(what); return t ? std::string((const char*)t) : std::string("?"); };
                             gpu = str(0x1F01) + " | " + str(0x1F00) + " | OpenGL " + str(0x1F02);
                         }
-                        SDL_RendererInfo ri; std::memset(&ri, 0, sizeof(ri));
-                        if (SDL_GetRendererInfo(renderer, &ri) == 0 && ri.name) gpu += std::string(gpu.empty() ? "" : " | ") + "SDL renderer " + ri.name;
+                        const std::string drv = okay::pb::DriverName(renderer);
+                        if (!drv.empty()) gpu += std::string(gpu.empty() ? "" : " | ") + "SDL renderer " + drv;
                         okaycrash::ctx::SetGpu(gpu.c_str());
                     }
                 }
@@ -50718,9 +50694,8 @@ int main(int argc, char** argv) {
         glb->RestoreGL(prevGL);
         if (!g_glReady) {
             ConsoleLog("GPU renderer unavailable; using the software renderer.", 1);
-            SDL_RendererInfo ri; std::memset(&ri, 0, sizeof(ri));
             std::string gpu = "OpenGL renderer unavailable";
-            if (SDL_GetRendererInfo(renderer, &ri) == 0 && ri.name) gpu += std::string(" | SDL renderer ") + ri.name;
+            if (const std::string drv = okay::pb::DriverName(renderer); !drv.empty()) gpu += std::string(" | SDL renderer ") + drv;
             okaycrash::ctx::SetGpu(gpu.c_str());
         }
     }
@@ -51171,7 +51146,7 @@ int main(int argc, char** argv) {
             if (gameModal != s_prevGameModal && (g_gameMouseCapture || Cursor::IsLocked())) {
                 int ww = 0, wh = 0, ow = 0, oh = 0;
                 winSeam->GetSize(ww, wh);
-                SDL_GetRendererOutputSize(renderer, &ow, &oh);
+                okay::pb::OutputSize(renderer, &ow, &oh);
                 float sx = ow > 0 ? (float)ww / ow : 1.0f, sy = oh > 0 ? (float)wh / oh : 1.0f;
                 int cx = (int)((g_playCanvasPos.x + g_playCanvasSize.x * 0.5f) * sx);
                 int cy = (int)((g_playCanvasPos.y + g_playCanvasSize.y * 0.5f) * sy);
@@ -51218,7 +51193,7 @@ int main(int argc, char** argv) {
                     // click on Stop. A click there grabs the mouse again.
                     int ww = 0, wh = 0, ow = 0, oh = 0;
                     winSeam->GetSize(ww, wh);
-                    SDL_GetRendererOutputSize(renderer, &ow, &oh);
+                    okay::pb::OutputSize(renderer, &ow, &oh);
                     float sx = ow > 0 ? (float)ww / (float)ow : 1.0f;
                     float sy = oh > 0 ? (float)wh / (float)oh : 1.0f;
                     int cx = (int)((g_playCanvasPos.x + g_playCanvasSize.x * 0.5f) * sx);
@@ -51373,7 +51348,7 @@ int main(int argc, char** argv) {
                     s_dispGen = gen;
                     if (window) okay::sdldisplay::Apply(window, okay::DisplaySettings::CurrentApply());
                     g_vsync = okay::DisplaySettings::VSync();
-                    if (renderer) SDL_RenderSetVSync(renderer, g_vsync ? 1 : 0);
+                    if (renderer) okay::pb::SetVSync(renderer, g_vsync);
                     okay::DisplaySettings::ApplyQuality();
                 }
             }
@@ -51536,7 +51511,7 @@ int main(int argc, char** argv) {
         else
             ImGui::GetIO().ConfigFlags |= ImGuiConfigFlags_NavEnableKeyboard;
 
-        ImGui_ImplSDLRenderer2_NewFrame();
+        if (!g_imguiOwnRender) ImGui_ImplSDLRenderer2_NewFrame();
         if (g_imguiOwnFeed) g_imguiFeed.NewFrame(ImGui::GetIO()); else ImGui_ImplSDL2_NewFrame();
         // Skinned meshes deform on the GPU when the Direct3D 11 renderer draws the
         // views (one upload of the bind pose, bone matrices per frame) instead of
@@ -52300,9 +52275,9 @@ int main(int argc, char** argv) {
         }
 #endif
         { OKAY_PROFILE("ImGui.Render"); ImGui::Render(); }
-        SDL_RenderSetScale(renderer, io.DisplayFramebufferScale.x, io.DisplayFramebufferScale.y);
-        SDL_SetRenderDrawColor(renderer, 30, 30, 34, 255);
-        SDL_RenderClear(renderer);
+        okay::pb::SetScale(renderer, io.DisplayFramebufferScale.x, io.DisplayFramebufferScale.y);
+        okay::pb::SetDrawColor(renderer, 30, 30, 34, 255);
+        okay::pb::Clear(renderer);
         if (io.ConfigFlags & ImGuiConfigFlags_ViewportsEnable) {
             // Multi-window mode: draw data is in absolute desktop coordinates,
             // which the stock SDL_Renderer backend can't offset — process the
@@ -52311,10 +52286,15 @@ int main(int argc, char** argv) {
             if (mdd && mdd->Textures)
                 for (ImTextureData* tx : *mdd->Textures)
                     if (tx->Status != ImTextureStatus_OK)
-                        ImGui_ImplSDLRenderer2_UpdateTexture(tx);
+                    {
+                        if (g_imguiOwnRender) okay::imguirender::UpdateTexture(*okay::pb::For(renderer), tx);
+                        else ImGui_ImplSDLRenderer2_UpdateTexture(tx);
+                    }
             OkayRenderDrawData(mdd, renderer, nullptr);
         } else {
-            { OKAY_PROFILE("ImGui.Draw"); ImGui_ImplSDLRenderer2_RenderDrawData(ImGui::GetDrawData(), renderer); }
+            { OKAY_PROFILE("ImGui.Draw");
+              if (g_imguiOwnRender) okay::imguirender::Render(*okay::pb::For(renderer), ImGui::GetDrawData());
+              else ImGui_ImplSDLRenderer2_RenderDrawData(ImGui::GetDrawData(), renderer); }
         }
 #ifdef OKAY_HAVE_OKAYUI
         // Flush OkayUI here, AFTER ImGui, through the SAME SDL_Renderer — so it
@@ -52376,10 +52356,9 @@ int main(int argc, char** argv) {
             static int shotFrames = 0;
             if (++shotFrames == 160 && shot[0]) {
                 int sw = 0, sh = 0;
-                SDL_GetRendererOutputSize(renderer, &sw, &sh);
-                if (sw > 0 && sh > 0) {
-                    std::vector<std::uint8_t> px((std::size_t)sw * sh * 4);
-                    if (SDL_RenderReadPixels(renderer, nullptr, SDL_PIXELFORMAT_ABGR8888, px.data(), sw * 4) == 0) {
+                {
+                    std::vector<std::uint8_t> px;
+                    if (okay::pb::ReadPixels(renderer, px, sw, sh) && sw > 0 && sh > 0) {
                         okay::Image img;
                         img.Set(sw, sh, std::move(px));
                         img.SavePNG(shot);
@@ -52392,22 +52371,16 @@ int main(int argc, char** argv) {
         }
         if (const std::string shot = TakePendingEditorShot(); !shot.empty()) {
             int sw = 0, sh = 0;
-            SDL_GetRendererOutputSize(renderer, &sw, &sh);
-            SDL_Surface* surface = (sw > 0 && sh > 0)
-                ? SDL_CreateRGBSurfaceWithFormat(0, sw, sh, 32, SDL_PIXELFORMAT_RGBA32) : nullptr;
-            if (surface && SDL_RenderReadPixels(renderer, nullptr, SDL_PIXELFORMAT_RGBA32, surface->pixels, surface->pitch) == 0) {
+            std::vector<std::uint8_t> px;
+            if (okay::pb::ReadPixels(renderer, px, sw, sh) && sw > 0 && sh > 0) {
                 okay::Image img(sw, sh);
-                for (int y = 0; y < sh; ++y)
-                    std::memcpy(img.Data() + (std::size_t)y * sw * 4,
-                                static_cast<unsigned char*>(surface->pixels) + y * surface->pitch,
-                                (std::size_t)sw * 4);
+                std::memcpy(img.Data(), px.data(), (std::size_t)sw * sh * 4);
                 img.SavePNG(shot);
                 std::printf("[diag-shot] %s (%dx%d)\n", shot.c_str(), sw, sh);
                 std::fflush(stdout);
             }
-            if (surface) SDL_FreeSurface(surface);
         }
-        { OKAY_PROFILE("Present"); SDL_RenderPresent(renderer); }
+        { OKAY_PROFILE("Present"); okay::pb::Present(renderer); }
 
         // Multi-window panels: create/size/paint the extra OS windows (tabs
         // dragged out of the editor).
@@ -52451,7 +52424,7 @@ int main(int argc, char** argv) {
     SyncProjectFiles(ed, true);   // the project's settings and build settings are never lost with the window
     ProjectUpgradeAtExit();       // the editor of the project's own version ("Keep"), or this one again after a restore, starts once this process is gone
 
-    ImGui_ImplSDLRenderer2_Shutdown();
+    if (g_imguiOwnRender) okay::imguirender::Shutdown(*okay::pb::For(renderer), ImGui::GetIO()); else ImGui_ImplSDLRenderer2_Shutdown();
     if (g_imguiOwnFeed) g_imguiFeed.Shutdown(ImGui::GetIO()); else ImGui_ImplSDL2_Shutdown();
     ImGui::DestroyContext();
     // Tear down the optional GPU renderer: free its GL objects with its own context
@@ -52472,7 +52445,7 @@ int main(int argc, char** argv) {
 #endif
     g_pads.CloseAll();
     audioDev.reset();
-    SDL_DestroyRenderer(renderer);
+    okay::pb::DestroyRenderer(renderer);   // its painter owns it
     winSeam.reset();   // destroys the main window (after its renderer)
     sdlSeam->Shutdown();
     return 0;

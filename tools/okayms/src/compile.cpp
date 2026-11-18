@@ -20,7 +20,7 @@ enum Tok {
     TAndAnd, TOrOr, TNot, TLBrack, TRBrack, TDot, TArrow, TEllipsis, TColon, TColonColon,
     TInt, TVoid, TChar, TIf, TElse, TWhile, TFor, TDo, TSwitch, TCase, TDefault, TBreak, TContinue, TReturn,
     TStruct, TUnion, TEnum, TTypedef, TUnsigned, TSigned, TLong, TShort, TDeclspec,
-    TSizeof, TConst, TStatic, TGoto, TFloat, TDouble, TNamespace
+    TSizeof, TConst, TStatic, TGoto, TFloat, TDouble, TNamespace, TTilde
 };
 
 struct Token {
@@ -83,8 +83,12 @@ struct Method {
     char access = 'Q';
     // The class that declared the function.
     int owner = -1;
-    // Token index of the body's '{' until the body has been compiled.
+    // Token index of the body's '{' (or of the ':' that starts a constructor's
+    // initializer list) until the body has been compiled.
     size_t body_at = 0;
+    // A constructor or destructor the compiler made because a member or base
+    // needs one. It has no tokens.
+    bool implicit = false;
 };
 
 struct StructDef {
@@ -1079,6 +1083,7 @@ std::vector<Token> lex(const std::string& text, std::string* error) {
         else if (c == '<') tok.kind = TLt;
         else if (c == '>') tok.kind = TGt;
         else if (c == '!') tok.kind = TNot;
+        else if (c == '~') tok.kind = TTilde;
         else if (c == '[') tok.kind = TLBrack;
         else if (c == ']') tok.kind = TRBrack;
         else if (c == '.') tok.kind = TDot;
@@ -1138,6 +1143,19 @@ std::string cxx_type(const Type& type, const std::vector<StructDef>* structs = n
 std::string cxx_method_symbol(const std::vector<StructDef>& structs, const StructDef& owner, const Method& m) {
     char letter = m.access;
     if (m.is_virtual) letter = m.access == 'A' ? 'E' : m.access == 'I' ? 'M' : 'U';
+    if (m.name == "<ctor>" || m.name == "<dtor>") {
+        // ??0 is a constructor and ??1 a destructor. There is no return type: '@' stands where it
+        // would be.
+        std::string special = std::string(m.name == "<ctor>" ? "??0" : "??1") + owner.name + "@@";
+        special += letter;
+        special += "EAA@";
+        if (m.params.empty()) special += "X";
+        else {
+            for (const Type& param : m.params) special += cxx_type(param, &structs);
+            special += "@";
+        }
+        return special + "Z";
+    }
     std::string out = "?" + m.name + "@" + owner.name + "@@";
     out += letter;
     out += m.is_const ? "EBA" : "EAA";
@@ -1181,6 +1199,124 @@ struct Parser {
     int cur_class = -1;
     int scope_depth = 0;
     std::vector<int> scope_parent{0};
+    // Objects with destructors, one list per open block. A block end, return, break and
+    // continue run the destructors of the blocks they leave, innermost and latest first.
+    struct DObj {
+        std::string name;
+        int sid = -1;
+    };
+    std::vector<std::vector<DObj>> dscopes{};
+    size_t fn_dbase = 0;
+    std::vector<size_t> brk_dbase{};
+    std::vector<size_t> cont_dbase{};
+    Type cur_ret{};
+    int rv_count = 0;
+
+    bool class_needs_ctor(const StructDef& d) const {
+        for (const Method& m : d.methods)
+            if (m.name == "<ctor>") return true;
+        if (d.base >= 0 && class_needs_ctor(structs[static_cast<size_t>(d.base)])) return true;
+        for (size_t i = d.base_fields; i < d.fields.size(); ++i) {
+            const Type& t = d.fields[i].type;
+            if (t.base == 3 && t.pointers == 0 && !t.is_ref && t.struct_id >= 0 &&
+                class_needs_ctor(structs[static_cast<size_t>(t.struct_id)]))
+                return true;
+        }
+        return false;
+    }
+    bool class_needs_dtor(const StructDef& d) const {
+        for (const Method& m : d.methods)
+            if (m.name == "<dtor>") return true;
+        if (d.base >= 0 && class_needs_dtor(structs[static_cast<size_t>(d.base)])) return true;
+        for (size_t i = d.base_fields; i < d.fields.size(); ++i) {
+            const Type& t = d.fields[i].type;
+            if (t.base == 3 && t.pointers == 0 && !t.is_ref && t.struct_id >= 0 &&
+                class_needs_dtor(structs[static_cast<size_t>(t.struct_id)]))
+                return true;
+        }
+        return false;
+    }
+    bool obj_needs_ctor(const Type& t) const {
+        return t.base == 3 && t.pointers == 0 && !t.is_ref && t.struct_id >= 0 &&
+               class_needs_ctor(structs[static_cast<size_t>(t.struct_id)]);
+    }
+    bool obj_needs_dtor(const Type& t) const {
+        return t.base == 3 && t.pointers == 0 && !t.is_ref && t.struct_id >= 0 &&
+               class_needs_dtor(structs[static_cast<size_t>(t.struct_id)]);
+    }
+
+    // A call of a constructor or destructor on the object whose address is 'self'.
+    bool special_call(int sid, const char* which, Node self, std::vector<Node> args, Node* out) {
+        const Method* m = find_method(sid, which, args.size());
+        if (m == nullptr) {
+            error = std::string("no matching ") + (which[1] == 'c' ? "constructor" : "destructor") + " in " +
+                    structs[static_cast<size_t>(sid)].name;
+            return false;
+        }
+        Node call;
+        call.kind = Node::Call;
+        call.text = m->qname;
+        call.number = 1;
+        call.type = m->ret;
+        call.kids.push_back(std::move(self));
+        for (Node& arg : args) call.kids.push_back(std::move(arg));
+        Node stmt;
+        stmt.kind = Node::ExprStmt;
+        stmt.kids.push_back(std::move(call));
+        *out = std::move(stmt);
+        return true;
+    }
+    Node node_name(const std::string& n) const {
+        Node name;
+        name.kind = Node::Name;
+        name.text = n;
+        return name;
+    }
+    Node node_addr(Node inner) const {
+        Node a;
+        a.kind = Node::Unary;
+        a.op = TAmp;
+        a.kids.push_back(std::move(inner));
+        return a;
+    }
+    Node node_this_field(const std::string& field) const {
+        Node f;
+        f.kind = Node::Field;
+        f.op = TArrow;
+        f.text = field;
+        f.kids.push_back(node_name("this"));
+        return f;
+    }
+    // this->__vptr = (void **)&table;
+    Node vptr_store_this(const std::string& table_sym) const {
+        Node table_addr = node_addr(node_name(table_sym));
+        Node as_ptr;
+        as_ptr.kind = Node::Unary;
+        as_ptr.type.base = 0;
+        as_ptr.type.pointers = 2;
+        as_ptr.kids.push_back(std::move(table_addr));
+        Node store;
+        store.kind = Node::Assign;
+        store.op = TAssign;
+        store.kids.push_back(node_this_field("__vptr"));
+        store.kids.push_back(std::move(as_ptr));
+        Node stmt;
+        stmt.kind = Node::ExprStmt;
+        stmt.kids.push_back(std::move(store));
+        return stmt;
+    }
+    // Destructor calls for the open blocks from 'base' up, latest object first.
+    bool dtor_nodes(size_t base, std::vector<Node>* out) {
+        for (size_t sc = dscopes.size(); sc-- > base;) {
+            const std::vector<DObj>& list = dscopes[sc];
+            for (size_t i = list.size(); i-- > 0;) {
+                Node call;
+                if (!special_call(list[i].sid, "<dtor>", node_addr(node_name(list[i].name)), {}, &call)) return false;
+                out->push_back(std::move(call));
+            }
+        }
+        return true;
+    }
 
     void push_scope() {
         const int id = static_cast<int>(scope_parent.size());
@@ -1679,6 +1815,9 @@ struct Parser {
             def.base_fields = base.fields.size();
             def.poly = base.poly;
             def.methods = base.methods;
+            // Constructors are not inherited.
+            for (size_t i = def.methods.size(); i-- > 0;)
+                if (def.methods[i].name == "<ctor>") def.methods.erase(def.methods.begin() + static_cast<std::ptrdiff_t>(i));
             for (Method& inherited : def.methods) inherited.body_at = 0;
             def.vtable = base.vtable;
         }
@@ -1699,10 +1838,50 @@ struct Parser {
                 is_virtual = true;
                 next();
             }
-            if (is(TNot) || (is(TIdent) && cur().text == name && at + 1 < tokens.size() &&
-                             tokens[at + 1].kind == TLParen)) {
-                error = "constructors and destructors are not supported";
-                return false;
+            const bool is_dtor = is(TTilde) && at + 2 < tokens.size() && tokens[at + 1].kind == TIdent &&
+                                 tokens[at + 1].text == name && tokens[at + 2].kind == TLParen;
+            const bool is_ctor = is(TIdent) && cur().text == name && at + 1 < tokens.size() &&
+                                 tokens[at + 1].kind == TLParen;
+            if (is_dtor || is_ctor) {
+                if (is_dtor) next();
+                next();
+                next();
+                Declarator decl;
+                if (!parse_param_list(&decl)) return false;
+                if (is_dtor && !decl.params.empty()) {
+                    error = "a destructor takes no arguments";
+                    return false;
+                }
+                Method m;
+                m.name = is_dtor ? "<dtor>" : "<ctor>";
+                m.ret.base = 0;
+                m.params = decl.params;
+                m.param_names = decl.param_names;
+                m.is_virtual = is_virtual && is_dtor;
+                if (is_virtual && !is_dtor) {
+                    error = "a constructor cannot be virtual";
+                    return false;
+                }
+                m.access = access;
+                if (is(TColon) && is_ctor) {
+                    m.body_at = at;
+                    m.has_body = true;
+                    while (!is(TLBrace) && !is(TEnd) && !is(TSemi)) next();
+                    if (!is(TLBrace)) {
+                        error = "expected a constructor body";
+                        return false;
+                    }
+                    if (!skip_body()) return false;
+                } else if (is(TLBrace)) {
+                    m.body_at = at;
+                    m.has_body = true;
+                    if (!skip_body()) return false;
+                } else if (!expect(TSemi, "';'")) {
+                    return false;
+                }
+                def.cxx = true;
+                if (!add_method(&def, self, std::move(m))) return false;
+                continue;
             }
             Field field;
             bool imp = false;
@@ -1817,6 +1996,35 @@ struct Parser {
         if (cursor_bits > offset * 8) offset = (cursor_bits + 7) / 8;
         def.align = align;
         def.size = (offset + align - 1) & ~(align - 1);
+        // A class that has a base or a member needing construction or destruction, and declares no
+        // such function itself, gets one that only runs those of its parts.
+        {
+            bool has_ctor = false;
+            bool has_dtor = false;
+            for (const Method& m : def.methods) {
+                if (m.name == "<ctor>") has_ctor = true;
+                if (m.name == "<dtor>" && m.owner == self) has_dtor = true;
+            }
+            structs[static_cast<size_t>(self)] = def;
+            if (!has_ctor && class_needs_ctor(structs[static_cast<size_t>(self)])) {
+                Method m;
+                m.name = "<ctor>";
+                m.ret.base = 0;
+                m.implicit = true;
+                m.has_body = true;
+                m.body_at = 1;
+                if (!add_method(&def, self, std::move(m))) return false;
+            }
+            if (!has_dtor && class_needs_dtor(structs[static_cast<size_t>(self)])) {
+                Method m;
+                m.name = "<dtor>";
+                m.ret.base = 0;
+                m.implicit = true;
+                m.has_body = true;
+                m.body_at = 1;
+                if (!add_method(&def, self, std::move(m))) return false;
+            }
+        }
         if (def.poly) {
             def.vtable_sym = "??_7" + def.name + "@@6B@";
             Global table;
@@ -1859,7 +2067,7 @@ struct Parser {
         finish_signature(&fn);
         const size_t resume = at;
         at = m.body_at;
-        const bool ok = parse_function_body(&fn, sid);
+        const bool ok = parse_function_body(&fn, sid, m.name == "<ctor>" ? 1 : m.name == "<dtor>" ? 2 : 0, m.implicit);
         at = resume;
         if (!ok) return false;
         structs[static_cast<size_t>(sid)].methods[mi].body_at = 0;
@@ -1869,8 +2077,123 @@ struct Parser {
 
     // Parses a function body at the current token with the parameters
     // already in fn. cls is the class whose members are visible, or -1.
-    bool parse_function_body(FuncDecl* fn, int cls) {
+    // The body of a constructor (initializer list, then the block) or a destructor. A
+    // constructor runs the base constructor, stores the table pointer, then each member in
+    // declaration order; a destructor stores the table pointer, runs its block, then destroys the
+    // members in reverse order and the base. Written from ISO/IEC 14882 [class.base.init] and
+    // [class.dtor].
+    bool parse_special_body(FuncDecl* fn, int cls, int special, bool implicit, std::vector<Local>* locals) {
+        const StructDef def = structs[static_cast<size_t>(cls)];
+        std::vector<Node> pre;
+        std::vector<Node> post;
+        struct Init {
+            std::string name;
+            std::vector<Node> args;
+        };
+        std::vector<Init> inits;
+        if (special == 1 && !implicit && accept(TColon)) {
+            do {
+                if (!is(TIdent)) {
+                    error = "expected a member or base class name";
+                    return false;
+                }
+                Init init;
+                init.name = cur().text;
+                next();
+                if (!expect(TLParen, "'('")) return false;
+                if (!parse_call_args(&init.args)) return false;
+                inits.push_back(std::move(init));
+            } while (accept(TComma));
+        }
+        if (special == 1) {
+            if (def.base >= 0 && class_needs_ctor(structs[static_cast<size_t>(def.base)])) {
+                std::vector<Node> args;
+                for (Init& init : inits)
+                    if (init.name == structs[static_cast<size_t>(def.base)].name) args = std::move(init.args);
+                Node call;
+                if (!special_call(def.base, "<ctor>", node_name("this"), std::move(args), &call)) return false;
+                pre.push_back(std::move(call));
+            }
+            if (def.poly) pre.push_back(vptr_store_this(def.vtable_sym));
+            for (size_t fi = def.base_fields; fi < def.fields.size(); ++fi) {
+                const Field& field = def.fields[fi];
+                if (field.name == "__vptr") continue;
+                Init* init = nullptr;
+                for (Init& candidate : inits)
+                    if (candidate.name == field.name) init = &candidate;
+                if (obj_needs_ctor(field.type)) {
+                    std::vector<Node> args;
+                    if (init != nullptr) args = std::move(init->args);
+                    Node call;
+                    if (!special_call(field.type.struct_id, "<ctor>", node_addr(node_this_field(field.name)),
+                                      std::move(args), &call))
+                        return false;
+                    pre.push_back(std::move(call));
+                } else if (init != nullptr) {
+                    if (init->args.size() != 1) {
+                        error = "member " + field.name + " takes one initializer";
+                        return false;
+                    }
+                    Node assign;
+                    assign.kind = Node::Assign;
+                    assign.op = TAssign;
+                    assign.kids.push_back(node_this_field(field.name));
+                    assign.kids.push_back(std::move(init->args[0]));
+                    Node stmt;
+                    stmt.kind = Node::ExprStmt;
+                    stmt.kids.push_back(std::move(assign));
+                    pre.push_back(std::move(stmt));
+                }
+            }
+            for (const Init& init : inits) {
+                bool known = init.name == (def.base >= 0 ? structs[static_cast<size_t>(def.base)].name : std::string());
+                for (size_t fi = def.base_fields; fi < def.fields.size(); ++fi)
+                    if (def.fields[fi].name == init.name) known = true;
+                if (!known) {
+                    error = "no member or base class named " + init.name;
+                    return false;
+                }
+            }
+        } else {
+            if (def.poly) pre.push_back(vptr_store_this(def.vtable_sym));
+            for (size_t fi = def.fields.size(); fi-- > def.base_fields;) {
+                const Field& field = def.fields[fi];
+                if (!obj_needs_dtor(field.type)) continue;
+                Node call;
+                if (!special_call(field.type.struct_id, "<dtor>", node_addr(node_this_field(field.name)), {}, &call))
+                    return false;
+                post.push_back(std::move(call));
+            }
+            if (def.base >= 0 && class_needs_dtor(structs[static_cast<size_t>(def.base)])) {
+                Node call;
+                if (!special_call(def.base, "<dtor>", node_name("this"), {}, &call)) return false;
+                post.push_back(std::move(call));
+            }
+        }
+        Node block;
+        block.kind = Node::Block;
+        block.text = "scope";
+        for (Node& n : pre) block.kids.push_back(std::move(n));
+        if (!implicit) {
+            Node user;
+            if (!parse_block(&user, locals)) return false;
+            block.kids.push_back(std::move(user));
+        }
+        for (Node& n : post) block.kids.push_back(std::move(n));
+        fn->body = std::move(block);
+        return true;
+    }
+
+    // special is 1 for a constructor and 2 for a destructor: the parts of the object are
+    // constructed before the body and destroyed after it. An implicit one has no body.
+    bool parse_function_body(FuncDecl* fn, int cls, int special = 0, bool implicit = false) {
         std::vector<Local>* saved_locals = cur_locals;
+        const std::vector<std::vector<DObj>> saved_dscopes = dscopes;
+        const size_t saved_dbase = fn_dbase;
+        const Type saved_ret = cur_ret;
+        dscopes.clear();
+        fn_dbase = 0;
+        cur_ret = fn->ret;
         const std::string saved_fn = current_fn;
         const int saved_depth = scope_depth;
         const std::vector<int> saved_parent = scope_parent;
@@ -1900,9 +2223,17 @@ struct Parser {
         current_fn = fn->name;
         cur_locals = &locals;
         fn->line = cur().line;
-        const bool ok = parse_block(&fn->body, &locals);
+        bool ok = true;
+        if (special == 0) {
+            ok = parse_block(&fn->body, &locals);
+        } else {
+            ok = parse_special_body(fn, cls, special, implicit, &locals);
+        }
         fn->end_line = at > 0 ? tokens[at - 1].line : 0;
         (void)saved_locals;
+        dscopes = saved_dscopes;
+        fn_dbase = saved_dbase;
+        cur_ret = saved_ret;
         cur_locals = nullptr;
         current_fn = saved_fn;
         scope_depth = saved_depth;
@@ -2107,10 +2438,18 @@ bool Parser::parse_block(Node* out, std::vector<Local>* locals) {
     out->kind = Node::Block;
     out->text = "scope";
     push_scope();
+    dscopes.emplace_back();
     while (!is(TRBrace) && !is(TEnd)) {
         Node stmt;
         if (!parse_stmt(&stmt, locals)) return false;
         out->kids.push_back(std::move(stmt));
+    }
+    {
+        // Destroy this block's objects, latest first.
+        std::vector<Node> dt;
+        if (!dtor_nodes(dscopes.size() - 1, &dt)) return false;
+        for (Node& n : dt) out->kids.push_back(std::move(n));
+        dscopes.pop_back();
     }
     pop_scope();
     return expect(TRBrace, "'}'");
@@ -2174,7 +2513,12 @@ bool Parser::parse_stmt_inner(Node* out, std::vector<Local>* locals, int stmt_li
         if (!parse_expr(0, &cond)) return false;
         if (!expect(TRParen, "')'")) return false;
         Node body;
-        if (!parse_stmt(&body, locals)) return false;
+        brk_dbase.push_back(dscopes.size());
+        cont_dbase.push_back(dscopes.size());
+        const bool body_ok = parse_stmt(&body, locals);
+        brk_dbase.pop_back();
+        cont_dbase.pop_back();
+        if (!body_ok) return false;
         out->kids.push_back(std::move(cond));
         out->kids.push_back(std::move(body));
         return true;
@@ -2205,7 +2549,12 @@ bool Parser::parse_stmt_inner(Node* out, std::vector<Local>* locals, int stmt_li
         }
         if (!expect(TRParen, "')'")) return false;
         Node body;
-        if (!parse_stmt(&body, locals)) return false;
+        brk_dbase.push_back(dscopes.size());
+        cont_dbase.push_back(dscopes.size());
+        const bool body_ok = parse_stmt(&body, locals);
+        brk_dbase.pop_back();
+        cont_dbase.pop_back();
+        if (!body_ok) return false;
         out->kids.push_back(std::move(init));
         out->kids.push_back(std::move(cond));
         out->kids.push_back(std::move(step));
@@ -2216,7 +2565,12 @@ bool Parser::parse_stmt_inner(Node* out, std::vector<Local>* locals, int stmt_li
         next();
         out->kind = Node::Do;
         Node body;
-        if (!parse_stmt(&body, locals)) return false;
+        brk_dbase.push_back(dscopes.size());
+        cont_dbase.push_back(dscopes.size());
+        const bool body_ok = parse_stmt(&body, locals);
+        brk_dbase.pop_back();
+        cont_dbase.pop_back();
+        if (!body_ok) return false;
         if (!is(TWhile)) {
             error = "expected while";
             return false;
@@ -2240,6 +2594,11 @@ bool Parser::parse_stmt_inner(Node* out, std::vector<Local>* locals, int stmt_li
         if (!expect(TRParen, "')'")) return false;
         if (!expect(TLBrace, "'{'")) return false;
         out->kids.push_back(std::move(cond));
+        brk_dbase.push_back(dscopes.size());
+        struct PopBrk {
+            std::vector<size_t>& v;
+            ~PopBrk() { v.pop_back(); }
+        } pop_brk{brk_dbase};
         while (!is(TRBrace) && !is(TEnd)) {
             Node arm;
             arm.kind = Node::Case;
@@ -2273,25 +2632,64 @@ bool Parser::parse_stmt_inner(Node* out, std::vector<Local>* locals, int stmt_li
         }
         return expect(TRBrace, "'}'");
     }
-    if (is(TBreak)) {
+    if (is(TBreak) || is(TContinue)) {
+        const bool is_break = is(TBreak);
         next();
-        out->kind = Node::Break;
-        return expect(TSemi, "';'");
-    }
-    if (is(TContinue)) {
-        next();
-        out->kind = Node::Continue;
+        std::vector<Node> dt;
+        const std::vector<size_t>& bases = is_break ? brk_dbase : cont_dbase;
+        if (!bases.empty() && !dtor_nodes(bases.back(), &dt)) return false;
+        Node jump;
+        jump.kind = is_break ? Node::Break : Node::Continue;
+        if (dt.empty()) {
+            *out = std::move(jump);
+        } else {
+            out->kind = Node::Block;
+            for (Node& n : dt) out->kids.push_back(std::move(n));
+            out->kids.push_back(std::move(jump));
+        }
         return expect(TSemi, "';'");
     }
     if (is(TReturn)) {
         next();
-        out->kind = Node::Return;
+        std::vector<Node> dt;
+        if (!dtor_nodes(fn_dbase, &dt)) return false;
+        Node ret;
+        ret.kind = Node::Return;
+        Node value;
+        bool has_value = false;
         if (!accept(TSemi)) {
-            Node value;
             if (!parse_expr(0, &value)) return false;
-            out->kids.push_back(std::move(value));
-            return expect(TSemi, "';'");
+            has_value = true;
+            if (!expect(TSemi, "';'")) return false;
         }
+        if (dt.empty()) {
+            if (has_value) ret.kids.push_back(std::move(value));
+            *out = std::move(ret);
+            return true;
+        }
+        // The value is computed first, then the objects are destroyed, then the function returns.
+        out->kind = Node::Block;
+        if (has_value) {
+            Local hidden;
+            hidden.name = "__rv" + std::to_string(rv_count++);
+            hidden.type = cur_ret;
+            place_local(locals, hidden);
+            Node assign;
+            assign.kind = Node::Assign;
+            assign.op = TAssign;
+            assign.number = 1;
+            assign.kids.push_back(node_name(hidden.name));
+            assign.kids.push_back(std::move(value));
+            Node stmt;
+            stmt.kind = Node::ExprStmt;
+            stmt.kids.push_back(std::move(assign));
+            out->kids.push_back(std::move(stmt));
+            for (Node& n : dt) out->kids.push_back(std::move(n));
+            ret.kids.push_back(node_name(hidden.name));
+        } else {
+            for (Node& n : dt) out->kids.push_back(std::move(n));
+        }
+        out->kids.push_back(std::move(ret));
         return true;
     }
     if (is_decl_start()) {
@@ -2313,7 +2711,20 @@ bool Parser::parse_stmt_inner(Node* out, std::vector<Local>* locals, int stmt_li
             return true;
         }
         Declarator decl;
-        if (!parse_declarator(type, &decl)) return false;
+        std::vector<Node> ctor_args;
+        bool have_ctor_args = false;
+        if (!is_typedef && obj_needs_ctor(type) && is(TIdent) && at + 1 < tokens.size() &&
+            tokens[at + 1].kind == TLParen) {
+            // C x(args); the arguments go to a constructor.
+            decl.name = cur().text;
+            decl.type = type;
+            next();
+            next();
+            if (!parse_call_args(&ctor_args)) return false;
+            have_ctor_args = true;
+        } else if (!parse_declarator(type, &decl)) {
+            return false;
+        }
         if (is_typedef) {
             decl.type.is_const = is_const;
             typedefs[decl.name] = decl.type;
@@ -2389,6 +2800,30 @@ bool Parser::parse_stmt_inner(Node* out, std::vector<Local>* locals, int stmt_li
             stmt.line = stmt_line;
             stmt.kids.push_back(std::move(store));
             out->kids.push_back(std::move(stmt));
+        }
+        if (obj_needs_ctor(decl.type) || obj_needs_dtor(decl.type)) {
+            if (decl.type.is_array() || is_static) {
+                error = "an array or static object of a class with a constructor or destructor is not supported";
+                return false;
+            }
+            if (obj_needs_ctor(decl.type) && !has_init) {
+                Node call;
+                if (!special_call(decl.type.struct_id, "<ctor>", node_addr(node_name(decl.name)),
+                                  std::move(ctor_args), &call))
+                    return false;
+                call.line = stmt_line;
+                out->kids.push_back(std::move(call));
+            } else if (have_ctor_args) {
+                error = "constructor arguments together with an initializer";
+                return false;
+            }
+            if (obj_needs_dtor(decl.type)) {
+                DObj obj;
+                obj.name = decl.name;
+                obj.sid = decl.type.struct_id;
+                if (dscopes.empty()) dscopes.emplace_back();
+                dscopes.back().push_back(std::move(obj));
+            }
         }
         if (has_init) {
             Node assign;

@@ -2010,6 +2010,8 @@ struct Parser {
         bool want_name = false;
         for (size_t i = 0; i < tokens.size(); ++i) {
             const Token& t = tokens[i];
+            if (t.kind == TIdent && t.text == "constexpr" && !out.empty() && out.back().kind == TIf)
+                continue;  // `if constexpr (c)` is read as `if (c)`: both branches are compiled
             if (t.kind == TIdent && t.text == "constexpr") {
                 Token c = t;
                 c.kind = TConst;
@@ -2726,7 +2728,7 @@ struct Parser {
     }
     bool expect(Tok k, const char* what) {
         if (accept(k)) return true;
-        if (error.empty()) error = std::string("expected ") + what;
+        if (error.empty()) error = std::string("expected ") + what + (current_fn.empty() ? std::string() : " (in " + current_fn + ")");
         return false;
     }
 
@@ -6461,7 +6463,10 @@ struct Parser {
         at = paren + 1;
         Declarator pd;
         pat_values = &values;
+        const bool saved_rest = pat_rest_ok;
+        pat_rest_ok = true;  // a parameter like `variant<Ts...>&` names the template's own pack
         const bool ok = parse_param_list(&pd);
+        pat_rest_ok = saved_rest;
         pat_values = nullptr;
         td.proto = pd.params;
         at = was_at;

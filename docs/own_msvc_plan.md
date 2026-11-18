@@ -677,3 +677,28 @@ Compile-only; checked by the object and `objdump -d`. Written from ISO/IEC 14882
 
    Added this round for it: `<clocale>`, `<cerrno>`, `<iosfwd>`, `<ctime>` (declarations only), `<string_view>`, `<queue>` (queue and a heap priority_queue). Before them the same run gave 21 compiling files and 236 files stopped on a missing header (`clocale` 35, `ctime` 25, `string_view` 15, `queue` 4, ...). The next steps by size: `<typeinfo>` and `typeid` (80 files, needs compiler support), `<typeindex>`, `<variant>`, `<iostream>`, `<locale>`, `<random>`, then the parse errors in `Utf*.hpp`.
 3. **Not done this round:** destruction of range-for iterators on `break`/`return` (still only at normal loop end), COMDAT-style dedup and the `.CRT$XCU` startup table (design above in Round 22/23 notes: an own PE-reader check would be the way to verify them; not started), the Random link-and-run comparison. All of it must be re-run under Wine before merging into `claude/okayms-3`.
+
+### Round 27 (unverified: not run under Wine, Wine broken in this container)
+
+Compile-only; checked by objects. Whole-library measurement of `engine/src` (348 `.cpp`, compile to an object, nothing run): **23 compile** (22 before this round). The first error moved for hundreds of files, which unmasks the next one; the numbers below are the first error of each failing file after the round.
+
+1. **`typeid`, `<typeinfo>`, `<typeindex>`** ([expr.typeid], [type.info], [type.index]): the compiler makes one `type_info` object per type per file (the address of the type's decorated name; equality compares the name text, because there is one object per file); a class with virtual functions gets the address of its object in the slot before its virtual table (vtable[-1], checked in the object: a `ADDR64 __ti_UD@@` relocation at offset 0 before `??_7D@@6B@`, and every vtable symbol now sits 8 bytes later), and `typeid(*p)` reads it. `std::type_index` (with a default constructor, a non-standard extra, so `pair<type_index, V>` works) and `std::hash<type_index>` make it usable as a key of `std::map` and `std::unordered_map`. A minimal `<type_traits>` (`is_same`, `is_integral`, `is_floating_point`, `is_pointer`, `remove_reference`, `remove_const`, `remove_pointer`, `conditional`, `enable_if`; the traits are plain classes with `::value`, no `_v`/`_t` forms, no `is_base_of`) took away 106 missing-header stops.
+2. **`Utf*.hpp`:** `char16_t`, `char32_t`, `wchar_t` (integers: 16, 32, 16 bits) and `std::u16string`, `std::u32string`, `std::wstring` (one small growable array class; no conversions between strings, no find), and `if constexpr (c)` read as `if (c)` (both branches are compiled). `Utf8.hpp` compiles.
+3. **`<variant>`: not working.** A first version (aligned buffer, index, `get`, `get_if`, `holds_alternative`) was written but not kept: calling `get<T>(v)` needs deducing a pack from a parameter `variant<Ts...>&` while `T` is given, and that gives "cannot deduce template arguments" (reduced to `template <typename T, typename... Ts> int pick(L<Ts...>& v)` called as `pick<int>(v)`). The work file is not in the tree. A compiler change that lets a function template take its own pack from a class-template parameter (`match_type` with a trailing pack) is needed first; I only made the pattern parse (`variant<Ts...>&` in a function template parameter list).
+4. **Not done:** `<iostream>`/`<locale>`/`<random>` (39 + 19 + 11 files first stop there), the six `large struct return has no destination` cases, the remaining parse errors (47 `expected ...` + 26 `expected a type`), `<mutex>`/`<thread>`/`<condition_variable>` (rule 21a: intentionally excluded, 17 files).
+
+First error of each failing file now (tool: okay-cl /c on every `engine/src/**/*.cpp`):
+
+| first error | files |
+|---|---|
+| `cannot open include variant` | 65 |
+| `expected ...` (various) | about 52 |
+| `cannot open include iostream` | 39 |
+| `expected a type` | 26 |
+| `cannot open include locale` | 19 |
+| `cannot open include random` | 11 |
+| `no member function assign with N arguments` (`vector::assign(first, last)`) | 8 |
+| `cannot open include thread` / `condition_variable` / `mutex` (excluded, rule 21a) | 17 |
+| `large struct return has no destination` | 6 |
+| `expected a class template body` / `expected a base class` | 10 |
+| other single errors | rest |

@@ -4,6 +4,9 @@
 // malloc and free (see <cstdlib>). The functions found by the engine headers are here: construct, copy, assign,
 // append, +, ==, <, [], size, c_str, substr, find, rfind, erase, insert, compare, push_back, clear, resize, to_string.
 #pragma once
+typedef unsigned short char16_t;
+typedef unsigned int char32_t;
+typedef unsigned short wchar_t;
 #include <cstddef>
 #include <cstdlib>
 #include <utility>
@@ -374,4 +377,90 @@ inline string to_string(long long v) {
 }
 inline string to_string(int v) { return to_string((long long)v); }
 inline string to_string(unsigned v) { return to_string((unsigned long long)v); }
+
+// Wide strings: char16_t, char32_t and wchar_t are integers here (16, 32 and 16 bits: wchar_t is 16 bits on Windows), and
+// u16string, u32string and wstring are one small growable array class over them: push_back, append, +=, size, empty, clear,
+// operator[], c_str, data, substr, ==, !=, <. No conversion between strings, no iterators beyond pointers, no find.
+template <typename C>
+class okay_wide_string {
+    C* d_;
+    size_t n_;
+    size_t cap_;
+    void grow(size_t want) {
+        if (want + 1 <= cap_) return;
+        size_t nc = cap_ == 0 ? 16 : cap_;
+        while (nc < want + 1) nc *= 2;
+        C* nd = (C*)malloc(nc * sizeof(C));
+        for (size_t i = 0; i < n_; ++i) nd[i] = d_[i];
+        if (d_) free(d_);
+        d_ = nd;
+        cap_ = nc;
+    }
+
+public:
+    static const size_t npos = (size_t)-1;
+    okay_wide_string() : d_(0), n_(0), cap_(0) {}
+    okay_wide_string(const okay_wide_string& o) : d_(0), n_(0), cap_(0) { append(o.data(), o.n_); }
+    okay_wide_string(const C* s, size_t n) : d_(0), n_(0), cap_(0) { append(s, n); }
+    ~okay_wide_string() {
+        if (d_) free(d_);
+    }
+    okay_wide_string& operator=(const okay_wide_string& o) {
+        if (this != &o) {
+            n_ = 0;
+            append(o.data(), o.n_);
+        }
+        return *this;
+    }
+    size_t size() const { return n_; }
+    size_t length() const { return n_; }
+    bool empty() const { return n_ == 0; }
+    void clear() { n_ = 0; }
+    const C* data() const { return d_ ? d_ : (const C*)"\0\0\0\0"; }
+    const C* c_str() const {
+        if (d_ == 0) return (const C*)"\0\0\0\0";
+        d_[n_] = 0;
+        return d_;
+    }
+    C operator[](size_t i) const { return d_[i]; }
+    C& operator[](size_t i) { return d_[i]; }
+    void push_back(C c) {
+        grow(n_ + 1);
+        d_[n_++] = c;
+    }
+    void reserve(size_t n) { grow(n); }
+    void append(const C* s, size_t n) {
+        grow(n_ + n);
+        for (size_t i = 0; i < n; ++i) d_[n_ + i] = s[i];
+        n_ += n;
+    }
+    okay_wide_string& operator+=(C c) {
+        push_back(c);
+        return *this;
+    }
+    okay_wide_string& operator+=(const okay_wide_string& o) {
+        append(o.data(), o.n_);
+        return *this;
+    }
+    okay_wide_string substr(size_t pos, size_t n) const {
+        if (pos > n_) pos = n_;
+        if (n > n_ - pos) n = n_ - pos;
+        return okay_wide_string(data() + pos, n);
+    }
+    okay_wide_string substr(size_t pos) const { return substr(pos, npos); }
+    C* begin() { return d_; }
+    C* end() { return d_ + n_; }
+    const C* begin() const { return d_; }
+    const C* end() const { return d_ + n_; }
+};
+template <typename C> bool operator==(const okay_wide_string<C>& a, const okay_wide_string<C>& b) {
+    if (a.size() != b.size()) return false;
+    for (size_t i = 0; i < a.size(); ++i)
+        if (a[i] != b[i]) return false;
+    return true;
+}
+template <typename C> bool operator!=(const okay_wide_string<C>& a, const okay_wide_string<C>& b) { return !(a == b); }
+typedef okay_wide_string<char16_t> u16string;
+typedef okay_wide_string<char32_t> u32string;
+typedef okay_wide_string<wchar_t> wstring;
 }

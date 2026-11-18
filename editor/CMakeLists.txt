@@ -115,6 +115,9 @@ endif()
 # OkayUI overlay demo (renders on top of ImGui through the same SDL_Renderer).
 if(TARGET okay_ui)
     target_link_libraries(okay-editor PRIVATE okay_ui okay_ui_screens)
+    if(TARGET okay_ui_soft)   # the software painter: the editor's window on the own platform backend (OKAY_PLATFORM_BACKEND=own)
+        target_link_libraries(okay-editor PRIVATE okay_ui_soft)
+    endif()
     target_compile_definitions(okay-editor PRIVATE OKAY_HAVE_OKAYUI=1)
 endif()
 if(OKAY_UI_DEFAULT_BACKEND STREQUAL "okayui" OR OKAY_OWN_STACK)   # OKAY_OWN_STACK: the dogfood build starts on OkayUI

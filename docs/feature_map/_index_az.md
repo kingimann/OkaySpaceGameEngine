@@ -3312,6 +3312,7 @@ Word, then the number(s) to say. Back to the [overview](../FEATURE_MAP.md).
 - Platform layer (`okay::platform`) and the own backend (17.17)
 - platform SDK (56.4)
 - Platform targets and store packaging (56)
+- Platform-event host and editor probe (40.9.9)
 - Platform: Server (18.7)
 - platformer (4.3)
 - platformer template (1.6)

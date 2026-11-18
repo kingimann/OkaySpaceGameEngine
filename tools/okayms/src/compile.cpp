@@ -95,6 +95,10 @@ struct Method {
 
 struct StructDef {
     std::string name;
+    // The name in decorated symbols when it differs from name (a class template instance Box<H>
+    // is ?$Box@H there).
+    std::string sym_name;
+    const std::string& symname() const { return sym_name.empty() ? name : sym_name; }
     std::vector<Field> fields;
     int size = 0;
     int align = 1;
@@ -1137,7 +1141,7 @@ std::string cxx_type(const Type& type, const std::vector<StructDef>* structs = n
         type.struct_id < static_cast<int>(structs->size())) {
         const StructDef& def = (*structs)[static_cast<size_t>(type.struct_id)];
         // U is struct, T is union, V is class; then the name and "@@".
-        return std::string(def.is_union ? "T" : def.is_class ? "V" : "U") + def.name + "@@";
+        return std::string(def.is_union ? "T" : def.is_class ? "V" : "U") + def.symname() + "@@";
     }
     return type.is_unsigned ? "I" : "H";
 }
@@ -1153,7 +1157,7 @@ std::string cxx_method_symbol(const std::vector<StructDef>& structs, const Struc
     if (m.name == "<ctor>" || m.name == "<dtor>") {
         // ??0 is a constructor and ??1 a destructor. There is no return type: '@' stands where it
         // would be.
-        std::string special = std::string(m.name == "<ctor>" ? "??0" : "??1") + owner.name + "@@";
+        std::string special = std::string(m.name == "<ctor>" ? "??0" : "??1") + owner.symname() + "@@";
         special += letter;
         special += "EAA@";
         if (m.params.empty()) special += "X";
@@ -1163,7 +1167,7 @@ std::string cxx_method_symbol(const std::vector<StructDef>& structs, const Struc
         }
         return special + "Z";
     }
-    std::string out = "?" + m.name + "@" + owner.name + "@@";
+    std::string out = "?" + m.name + "@" + owner.symname() + "@@";
     out += letter;
     out += m.is_const ? "EBA" : "EAA";
     if (m.ret.base == 3 && m.ret.pointers == 0 && !m.ret.is_ref) out += "?A";
@@ -1182,7 +1186,7 @@ std::string cxx_method_symbol(const std::vector<StructDef>& structs, const Struc
 // returns this. Written from the public MSVC decoration description.
 std::string sdd_symbol(const StructDef& owner, const Method& m) {
     const char letter = m.access == 'A' ? 'E' : m.access == 'I' ? 'M' : 'U';
-    return "??_G" + owner.name + "@@" + letter + "EAAPEAXI@Z";
+    return "??_G" + owner.symname() + "@@" + letter + "EAAPEAXI@Z";
 }
 
 std::string cxx_symbol(const std::string& ns, const std::string& name, const Type& ret, const std::vector<Type>& params) {
@@ -1595,6 +1599,13 @@ struct Parser {
             type->base = 1;
             return true;
         }
+        if (is_template_name_at(at)) {
+            const std::string tname = cur().text;
+            next();
+            std::vector<TArg> targs;
+            if (!parse_template_args(class_templates[tname], &targs, false)) return false;
+            return instantiate_class(tname, targs, type);
+        }
         if (is(TIdent) && typedefs.find(cur().text) != typedefs.end()) {
             *type = typedefs[cur().text];
             next();
@@ -1674,11 +1685,15 @@ struct Parser {
     }
     bool parse_brackets(Type* type) {
         while (accept(TLBrack)) {
-            if (!is(TNumber)) {
+            int length = 0;
+            if (is(TNumber)) {
+                length = static_cast<int>(cur().number);
+            } else if (is(TIdent) && enum_values.count(cur().text) > 0) {
+                length = static_cast<int>(enum_values[cur().text]);  // an enumerator or a template value
+            } else {
                 error = "expected an array length";
                 return false;
             }
-            const int length = static_cast<int>(cur().number);
             next();
             if (!expect(TRBrack, "']'")) return false;
             if (!add_dim(type, length)) return false;
@@ -1797,7 +1812,8 @@ struct Parser {
             is(TStruct) || is(TUnion) || is(TEnum) || is(TTypedef) || is(TDeclspec) || is(TStatic) || is(TConst) ||
             is(TFloat) || is(TDouble))
             return true;
-        return (is(TIdent) && typedefs.find(cur().text) != typedefs.end()) || is_class_name();
+        return (is(TIdent) && typedefs.find(cur().text) != typedefs.end()) || is_class_name() ||
+               is_template_name_at(at);
     }
 
     // A class or struct used by its bare name, as in C++ ("C c;").
@@ -2055,6 +2071,9 @@ struct Parser {
         if (name.empty()) name = "__anon" + std::to_string(structs.size());
         StructDef def;
         def.name = name;
+        def.sym_name = pending_sym;
+        pending_sym.clear();
+        const std::string ctor_name = inst_base_name.empty() ? name : inst_base_name;
         def.is_union = as_union;
         def.is_class = is_class;
         def.cxx = is_class;
@@ -2090,8 +2109,8 @@ struct Parser {
                 next();
             }
             const bool is_dtor = is(TTilde) && at + 2 < tokens.size() && tokens[at + 1].kind == TIdent &&
-                                 tokens[at + 1].text == name && tokens[at + 2].kind == TLParen;
-            const bool is_ctor = is(TIdent) && cur().text == name && at + 1 < tokens.size() &&
+                                 tokens[at + 1].text == ctor_name && tokens[at + 2].kind == TLParen;
+            const bool is_ctor = is(TIdent) && cur().text == ctor_name && at + 1 < tokens.size() &&
                                  tokens[at + 1].kind == TLParen;
             if (is_dtor || is_ctor) {
                 if (is_dtor) next();
@@ -2314,7 +2333,7 @@ struct Parser {
             }
         }
         if (def.poly) {
-            def.vtable_sym = "??_7" + def.name + "@@6B@";
+            def.vtable_sym = "??_7" + def.symname() + "@@6B@";
             Global table;
             table.name = def.vtable_sym;
             table.type.base = 0;
@@ -2644,13 +2663,12 @@ struct Parser {
             ok = parse_special_body(fn, cls, special, implicit, &locals);
         }
         fn->end_line = at > 0 ? tokens[at - 1].line : 0;
-        (void)saved_locals;
         dscopes = saved_dscopes;
         fn_dbase = saved_dbase;
         cur_ret = saved_ret;
         cur_special = saved_special;
         cur_ret_ref = saved_ret_ref;
-        cur_locals = nullptr;
+        cur_locals = saved_locals;  // a template instance is parsed in the middle of another function
         current_fn = saved_fn;
         scope_depth = saved_depth;
         scope_parent = saved_parent;
@@ -2682,6 +2700,411 @@ struct Parser {
         func_types.push_back(ft);
         fn->sret = fn->ret.base == 3 && fn->ret.pointers == 0 && !fits_register(fn->ret);
     }
+
+
+    // ---- templates (ISO/IEC 14882 [temp]) ----
+    // A template is kept as a range of tokens and parsed again with its parameters bound: a type
+    // parameter is a typedef, a value parameter an enumerator. An instance is named
+    // Box<H> (H is the decorated spelling of int) and its symbols use ?$Box@H, the public MSVC
+    // decoration of a template instance; a function instance is ??$name@args@@YA<ret><params>@Z.
+    struct TParam {
+        std::string name;
+        bool is_type = true;
+        bool has_def = false;
+        size_t def_at = 0;
+    };
+    struct TDecl {
+        std::vector<TParam> params;
+        size_t start = 0;
+        size_t end = 0;
+        std::vector<Type> proto;  // function templates: parameter types, a parameter T is base 100 + index
+    };
+    struct TArg {
+        bool is_value = false;
+        long long value = 0;
+        Type type{};
+    };
+    std::map<std::string, TDecl> class_templates{};
+    std::map<std::string, TDecl> func_templates{};
+    std::string pending_sym{};
+    std::string inst_base_name{};
+
+    static std::string value_code(long long v) {
+        // $0 and the value: 1..10 is one digit, 0 is A@, larger values are hex digits A-P ending in @.
+        std::string out = "$0";
+        if (v >= 1 && v <= 10) return out + static_cast<char>('0' + (v - 1));
+        if (v == 0) return out + "A@";
+        std::string hex;
+        unsigned long long u = static_cast<unsigned long long>(v);
+        while (u > 0) {
+            hex.insert(hex.begin(), static_cast<char>('A' + (u & 15)));
+            u >>= 4;
+        }
+        return out + hex + "@";
+    }
+    std::string arg_code(const TArg& a) const { return a.is_value ? value_code(a.value) : cxx_type(a.type, &structs); }
+    std::string arg_key(const TArg& a) const { return a.is_value ? "$" + std::to_string(a.value) : cxx_type(a.type, &structs); }
+
+    bool is_template_name_at(size_t i) const {
+        return i + 1 < tokens.size() && tokens[i].kind == TIdent && tokens[i + 1].kind == TLt &&
+               class_templates.count(tokens[i].text) > 0;
+    }
+
+    // At '<': the arguments up to '>', then the defaults. 'partial' lets a function template be
+    // given only its first arguments.
+    bool parse_template_args(const TDecl& td, std::vector<TArg>* out, bool partial) {
+        if (!expect(TLt, "'<'")) return false;
+        size_t idx = 0;
+        while (!is(TGt) && !is(TEnd)) {
+            if (idx >= td.params.size()) {
+                error = "too many template arguments";
+                return false;
+            }
+            TArg a;
+            if (!parse_one_arg(td.params[idx], &a)) return false;
+            out->push_back(std::move(a));
+            ++idx;
+            if (!accept(TComma)) break;
+        }
+        if (!expect(TGt, "'>'")) return false;
+        for (; idx < td.params.size(); ++idx) {
+            if (!td.params[idx].has_def) {
+                if (partial) break;
+                error = "too few template arguments";
+                return false;
+            }
+            const size_t saved = at;
+            at = td.params[idx].def_at;
+            TArg a;
+            const bool ok = parse_one_arg(td.params[idx], &a);
+            at = saved;
+            if (!ok) return false;
+            out->push_back(std::move(a));
+        }
+        return true;
+    }
+    bool parse_one_arg(const TParam& tp, TArg* a) {
+        if (tp.is_type) {
+            bool imp = false;
+            bool exp = false;
+            if (!parse_type(&a->type, &imp, &exp)) return false;
+            while (accept(TStar)) ++a->type.pointers;
+            return true;
+        }
+        Node value;
+        if (!parse_expr(7, &value)) return false;
+        if (value.kind != Node::IntLit) {
+            error = "a template argument must be a constant";
+            return false;
+        }
+        a->is_value = true;
+        a->value = static_cast<long long>(value.number);
+        return true;
+    }
+
+    struct Binding {
+        std::string name;
+        bool had_typedef = false;
+        Type old_typedef{};
+        bool had_enum = false;
+        uint64_t old_enum = 0;
+    };
+    std::vector<Binding> bind_params(const TDecl& td, const std::vector<TArg>& args) {
+        std::vector<Binding> saved;
+        for (size_t i = 0; i < td.params.size() && i < args.size(); ++i) {
+            Binding b;
+            b.name = td.params[i].name;
+            auto t = typedefs.find(b.name);
+            if (t != typedefs.end()) {
+                b.had_typedef = true;
+                b.old_typedef = t->second;
+            }
+            auto e = enum_values.find(b.name);
+            if (e != enum_values.end()) {
+                b.had_enum = true;
+                b.old_enum = e->second;
+            }
+            if (args[i].is_value) {
+                enum_values[b.name] = static_cast<uint64_t>(args[i].value);
+                typedefs.erase(b.name);
+            } else {
+                typedefs[b.name] = args[i].type;
+                enum_values.erase(b.name);
+            }
+            saved.push_back(std::move(b));
+        }
+        return saved;
+    }
+    void unbind_params(const std::vector<Binding>& saved) {
+        for (size_t i = saved.size(); i-- > 0;) {
+            const Binding& b = saved[i];
+            typedefs.erase(b.name);
+            enum_values.erase(b.name);
+            if (b.had_typedef) typedefs[b.name] = b.old_typedef;
+            if (b.had_enum) enum_values[b.name] = b.old_enum;
+        }
+    }
+
+    // Box<int>: the class instance, made the first time it is named.
+    bool instantiate_class(const std::string& name, const std::vector<TArg>& args, Type* out) {
+        const TDecl& td = class_templates[name];
+        std::string key = name + "<";
+        std::string sym = "?$" + name + "@";
+        for (size_t i = 0; i < args.size(); ++i) {
+            if (i) key += ",";
+            key += arg_key(args[i]);
+            sym += arg_code(args[i]);
+        }
+        key += ">";
+        int id = find_struct(key);
+        if (id < 0) {
+            const size_t saved_at = at;
+            const std::string saved_base = inst_base_name;
+            const auto saved = bind_params(td, args);
+            inst_base_name = name;
+            pending_sym = sym;
+            Type self;
+            self.base = 3;
+            self.struct_id = static_cast<int>(structs.size());
+            auto old = typedefs.find(name);
+            const bool had = old != typedefs.end();
+            const Type old_type = had ? old->second : Type{};
+            typedefs[name] = self;  // the class names itself inside its body
+            at = td.start;
+            bool ok = true;
+            const bool as_class = is(TStruct) && cur().text == "class";
+            next();
+            if (is(TIdent)) next();
+            int base_id = -1;
+            if (accept(TColon)) {
+                while (is(TIdent) && (cur().text == "public" || cur().text == "private" ||
+                                      cur().text == "protected" || cur().text == "virtual"))
+                    next();
+                Type bt;
+                bool imp = false;
+                bool exp = false;
+                if (!parse_type(&bt, &imp, &exp) || bt.base != 3) {
+                    if (error.empty()) error = "expected a base class";
+                    ok = false;
+                } else {
+                    base_id = bt.struct_id;
+                }
+            }
+            if (ok && !is(TLBrace)) {
+                error = "expected a class template body";
+                ok = false;
+            }
+            if (ok) ok = parse_struct_body(false, key, &id, as_class, base_id);
+            if (had) typedefs[name] = old_type;
+            else typedefs.erase(name);
+            inst_base_name = saved_base;
+            unbind_params(saved);
+            at = saved_at;
+            pending_sym.clear();
+            if (!ok) return false;
+        }
+        out->base = 3;
+        out->struct_id = id;
+        return true;
+    }
+
+    // template <typename T, int N = 3> ... : remember the declaration as a token range.
+    bool parse_template_decl() {
+        next();  // template
+        if (!expect(TLt, "'<'")) return false;
+        TDecl td;
+        while (!is(TGt) && !is(TEnd)) {
+            TParam tp;
+            if (is(TStruct) && cur().text == "class") {
+                next();
+            } else if (is(TIdent) && cur().text == "typename") {
+                next();
+            } else {
+                tp.is_type = false;
+                while (!is(TIdent) && !is(TComma) && !is(TGt) && !is(TEnd)) next();
+            }
+            if (!is(TIdent)) {
+                error = "expected a template parameter name";
+                return false;
+            }
+            tp.name = cur().text;
+            next();
+            if (accept(TAssign)) {
+                tp.has_def = true;
+                tp.def_at = at;
+                int depth = 0;
+                while (!is(TEnd)) {
+                    if (is(TLt)) ++depth;
+                    else if (is(TGt)) {
+                        if (depth == 0) break;
+                        --depth;
+                    } else if (is(TComma) && depth == 0) break;
+                    next();
+                }
+            }
+            td.params.push_back(tp);
+            if (!accept(TComma)) break;
+        }
+        if (!expect(TGt, "'>'")) return false;
+        td.start = at;
+        // The declaration ends after its first top-level body or semicolon.
+        size_t k = at;
+        int depth = 0;
+        bool body = false;
+        while (k < tokens.size() && tokens[k].kind != TEnd) {
+            if (tokens[k].kind == TLBrace) {
+                ++depth;
+                body = true;
+            } else if (tokens[k].kind == TRBrace) {
+                --depth;
+                if (depth == 0) {
+                    ++k;
+                    if (k < tokens.size() && tokens[k].kind == TSemi && (tokens[td.start].kind == TStruct)) ++k;
+                    break;
+                }
+            } else if (tokens[k].kind == TSemi && depth == 0 && !body) {
+                ++k;
+                break;
+            }
+            ++k;
+        }
+        td.end = k;
+        if (tokens[td.start].kind == TStruct) {
+            if (td.start + 1 >= tokens.size() || tokens[td.start + 1].kind != TIdent) {
+                error = "expected a class template name";
+                return false;
+            }
+            class_templates[tokens[td.start + 1].text] = td;
+            at = td.end;
+            return true;
+        }
+        // A function template: its name is the identifier before the first '('. The parameter
+        // types are read once with each type parameter standing for itself (base 100 + index), so
+        // a call can deduce them.
+        size_t paren = td.start;
+        while (paren < td.end && tokens[paren].kind != TLParen) ++paren;
+        if (paren == td.start || paren >= td.end || tokens[paren - 1].kind != TIdent) {
+            error = "expected a function template";
+            return false;
+        }
+        const std::string fname = tokens[paren - 1].text;
+        std::vector<Binding> saved;
+        {
+            std::vector<TArg> markers;
+            for (size_t i = 0; i < td.params.size(); ++i) {
+                TArg m;
+                if (td.params[i].is_type) {
+                    m.type.base = static_cast<int>(100 + i);
+                } else {
+                    m.is_value = true;
+                    m.value = 0;
+                }
+                markers.push_back(m);
+            }
+            saved = bind_params(td, markers);
+        }
+        const size_t resume = td.end;
+        const size_t was_at = at;
+        at = paren + 1;
+        Declarator pd;
+        const bool ok = parse_param_list(&pd);
+        td.proto = pd.params;
+        at = was_at;
+        unbind_params(saved);
+        if (!ok) return false;
+        func_templates[fname] = td;
+        at = resume;
+        return true;
+    }
+
+    // name<args>(...) or name(...): the instance of a function template, made the first time it is
+    // called. Returns its name through *out.
+    bool instantiate_function(const std::string& name, std::vector<TArg> args, const std::vector<Node>& call_args,
+                              std::string* out) {
+        const TDecl& td = func_templates[name];
+        // Deduce what was not given from the argument types.
+        std::vector<bool> given(td.params.size(), false);
+        for (size_t i = 0; i < args.size(); ++i) given[i] = true;
+        args.resize(td.params.size());
+        for (size_t i = 0; i < td.proto.size() && i < call_args.size(); ++i) {
+            const Type& pt = td.proto[i];
+            if (pt.base < 100) continue;
+            const size_t idx = static_cast<size_t>(pt.base - 100);
+            if (idx >= args.size() || given[idx]) continue;
+            Type at_type;
+            if (!static_type(call_args[i], &at_type)) {
+                error = "cannot deduce template argument " + td.params[idx].name;
+                return false;
+            }
+            if (at_type.is_array()) {
+                at_type = peel_array(at_type);
+                at_type.pointers += 1;
+                at_type.array_len = -1;
+            }
+            at_type.is_ref = false;
+            at_type.pointers -= pt.pointers;
+            if (at_type.pointers < 0) {
+                error = "cannot deduce template argument " + td.params[idx].name;
+                return false;
+            }
+            args[idx].type = at_type;
+            given[idx] = true;
+        }
+        for (size_t i = 0; i < td.params.size(); ++i)
+            if (!given[i]) {
+                error = "cannot deduce template argument " + td.params[i].name;
+                return false;
+            }
+        std::string key = name + "<";
+        std::string codes;
+        for (size_t i = 0; i < args.size(); ++i) {
+            if (i) key += ",";
+            key += arg_key(args[i]);
+            codes += arg_code(args[i]);
+        }
+        key += ">";
+        *out = key;
+        for (const FuncDecl& fn : funcs)
+            if (fn.name == key) return true;
+        if (in_instance.count(key)) return true;  // a call inside its own body
+        in_instance.insert(key);
+        const size_t saved_at = at;
+        const auto saved = bind_params(td, args);
+        at = td.start;
+        bool imported = false;
+        bool exported = false;
+        Type type;
+        bool ok = parse_type(&type, &imported, &exported);
+        Declarator decl;
+        if (ok) ok = parse_declarator(type, &decl);
+        if (ok && !decl.is_function) {
+            error = "expected a function template";
+            ok = false;
+        }
+        if (ok) {
+            FuncDecl fn;
+            fn.name = key;
+            fn.symbol = "??$" + name + "@" + codes + "@@YA" + cxx_type(decl.type, &structs);
+            if (decl.params.empty()) fn.symbol += "X";
+            else {
+                for (const Type& param : decl.params) fn.symbol += cxx_type(param, &structs);
+                fn.symbol += "@";
+            }
+            fn.symbol += "Z";
+            fn.ret = decl.type;
+            fn.params = decl.params;
+            fn.param_names = decl.param_names;
+            fn.vararg = decl.vararg;
+            finish_signature(&fn);
+            if (!parse_function_body(&fn, -1)) ok = false;
+            else funcs.push_back(std::move(fn));
+        }
+        unbind_params(saved);
+        at = saved_at;
+        in_instance.erase(key);
+        return ok;
+    }
+    std::set<std::string> in_instance{};
 
     // The constructor calls of the global objects, in declaration order, go into __okay_init; the
     // destructors (globals, then static locals, latest first) into __okay_fini. main (or entry)
@@ -2863,6 +3286,10 @@ struct Parser {
                 current_ns = cur().text;
                 next();
                 if (!expect(TLBrace, "'{'")) return false;
+                continue;
+            }
+            if (is(TIdent) && cur().text == "template" && at + 1 < tokens.size() && tokens[at + 1].kind == TLt) {
+                if (!parse_template_decl()) return false;
                 continue;
             }
             bool is_typedef = false;
@@ -3745,6 +4172,25 @@ bool Parser::static_type(const Node& node, Type* out) const {
         }
         return false;
     }
+    case Node::IntLit:
+    case Node::StringLit:
+        *out = node.type;
+        return true;
+    case Node::Binary: {
+        if (node.kids.size() != 2) return false;
+        if (node.op == TEq || node.op == TNe || node.op == TLt || node.op == TGt || node.op == TLe ||
+            node.op == TGe || node.op == TAndAnd || node.op == TOrOr) {
+            *out = Type{};
+            out->base = 1;
+            return true;
+        }
+        Type left;
+        if (!static_type(node.kids[0], &left)) return false;
+        *out = left;
+        return true;
+    }
+    case Node::Ternary:
+        return node.kids.size() == 3 && static_type(node.kids[1], out);
     case Node::Call:
         if (node.number == 1) {
             *out = node.type;
@@ -3825,6 +4271,25 @@ bool Parser::method_call(Node* out, Node object, bool arrow, const std::string& 
     if (sid < 0 || ot.base != 3) {
         error = "member call on something that is not a class object: " + name;
         return false;
+    }
+    if (!arrow && object.kind == Node::Call && cur_locals != nullptr) {
+        // A member call on a returned object (f().g()): the object goes into a hidden local first.
+        Local hidden;
+        hidden.name = "__bt" + std::to_string(tmp_count++);
+        hidden.type = ot;
+        place_local(cur_locals, hidden);
+        Node assign;
+        assign.kind = Node::Assign;
+        assign.op = TAssign;
+        assign.number = 1;
+        assign.kids.push_back(node_name(hidden.name));
+        assign.kids.push_back(std::move(object));
+        Node stmt;
+        stmt.kind = Node::ExprStmt;
+        stmt.kids.push_back(std::move(assign));
+        stmt_pre.push_back(std::move(stmt));
+        if (class_needs_dtor(structs[static_cast<size_t>(sid)])) stmt_temps.push_back(Temp{hidden.name, sid});
+        object = node_name(hidden.name);
     }
     std::vector<Node> args;
     if (!parse_call_args(&args)) return false;
@@ -4391,6 +4856,31 @@ bool Parser::parse_unary(Node* out) {
                     return method_call(out, std::move(self), true, name) && parse_postfix(out);
                 }
             }
+        }
+        if (func_templates.count(name) > 0 && (is(TLt) || is(TLParen))) {
+            std::vector<TArg> targs;
+            if (is(TLt) && !parse_template_args(func_templates[name], &targs, true)) return false;
+            if (!expect(TLParen, "'('")) return false;
+            std::vector<Node> cargs;
+            if (!parse_call_args(&cargs)) return false;
+            std::string inst;
+            if (!instantiate_function(name, std::move(targs), cargs, &inst)) return false;
+            out->kind = Node::Call;
+            out->text = inst;
+            out->kids = std::move(cargs);
+            for (const FuncDecl& known : funcs) {
+                if (known.name != inst) continue;
+                std::vector<Type> source = known.params;
+                for (size_t i = 0; i < source.size() && i < known.param_ref.size(); ++i)
+                    if (known.param_ref[i]) {
+                        source[i].pointers -= 1;
+                        source[i].is_ref = true;
+                    }
+                if (!adjust_args(source, &out->kids)) return false;
+                if (known.ret_ref) *out = reference_result(std::move(*out), true);
+                break;
+            }
+            return parse_postfix(out);
         }
         if (name == "va_arg" && accept(TLParen)) {
             Node ap;

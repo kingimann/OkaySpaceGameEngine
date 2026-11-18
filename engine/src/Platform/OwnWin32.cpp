@@ -2,10 +2,12 @@
 // the Win32 clipboard, QueryPerformanceCounter timers and XInput controllers.
 //
 // STATUS: COMPILES, UNTESTED. This file is only syntax-checked with MinGW on a Linux
-// machine; it has never been run on Windows. Audio devices are not written yet
-// (OpenAudio returns null). Treat every behaviour here as a first draft.
+// machine; it has never been run on Windows. Audio is in OwnWin32Audio.cpp (WASAPI, same status),
+// the scan code table in Win32Keys.hpp (tested on Linux). Treat every behaviour here as a first draft.
 #ifdef _WIN32
 #include "Internal.hpp"
+#include "Win32Keys.hpp"
+#include "AudioPump.hpp"
 #ifndef NOMINMAX
 #define NOMINMAX
 #endif
@@ -25,29 +27,6 @@ namespace {
 // ---- GL pieces we need without GL headers' extension loader ----
 constexpr int kWglContextMajor = 0x2091, kWglContextMinor = 0x2092, kWglProfileMask = 0x9126;
 constexpr int kWglProfileCore = 0x1, kWglProfileCompat = 0x2;
-
-Key KeyFromScan(int scan, bool ext) {
-    static const uint16_t kTab[89] = {
-        0, 41, 30, 31, 32, 33, 34, 35, 36, 37, 38, 39, 45, 46, 42, 43,
-        20, 26, 8, 21, 23, 28, 24, 12, 18, 19, 47, 48, 40, 224, 4, 22,
-        7, 9, 10, 11, 13, 14, 15, 51, 52, 53, 225, 49, 29, 27, 6, 25,
-        5, 17, 16, 54, 55, 56, 229, 85, 226, 44, 57, 58, 59, 60, 61, 62,
-        63, 64, 65, 66, 67, 83, 71, 95, 96, 97, 86, 92, 93, 94, 87, 89,
-        90, 91, 98, 99, 0, 0, 0, 68, 69};
-    if (ext) {
-        switch (scan) {
-        case 0x1C: return Key::KpEnter;   case 0x1D: return Key::RCtrl;   case 0x35: return Key::KpDivide;
-        case 0x37: return Key::PrintScreen; case 0x38: return Key::RAlt;  case 0x47: return Key::Home;
-        case 0x48: return Key::Up;        case 0x49: return Key::PageUp;  case 0x4B: return Key::Left;
-        case 0x4D: return Key::Right;     case 0x4F: return Key::End;     case 0x50: return Key::Down;
-        case 0x51: return Key::PageDown;  case 0x52: return Key::Insert;  case 0x53: return Key::Delete;
-        case 0x5B: return Key::LGui;      case 0x5C: return Key::RGui;    case 0x45: return Key::NumLock;
-        default: return Key::Unknown;
-        }
-    }
-    if (scan == 0x45) return Key::Pause;   // Pause sends a non-extended 0x45 with a different prefix
-    return scan >= 0 && scan < 89 ? (Key)kTab[scan] : Key::Unknown;
-}
 
 std::string Utf8(const wchar_t* w, int n) {
     if (n <= 0) return std::string();
@@ -348,12 +327,15 @@ public:
         return out;
     }
 
-    // Audio: not written for Windows yet.
-    std::unique_ptr<AudioDevice> OpenAudio(const AudioSpec&, bool, const char*, AudioSpec*) override {
-        m_err = "the own Win32 backend has no audio device yet"; return nullptr;
+    // Audio: WASAPI shared mode (OwnWin32Audio.cpp).
+    std::unique_ptr<AudioDevice> OpenAudio(const AudioSpec& want, bool capture, const char* device, AudioSpec* got) override {
+        std::string err;
+        auto d = own::OpenWasapi(want, capture, device, got, err);
+        if (!d) m_err = err;
+        return d;
     }
-    int AudioDeviceCount(bool) override { return 0; }
-    std::string AudioDeviceName(int, bool) override { return std::string(); }
+    int AudioDeviceCount(bool capture) override { return own::WasapiDeviceCount(capture); }
+    std::string AudioDeviceName(int index, bool capture) override { return own::WasapiDeviceName(index, capture); }
 
     // Controllers: XInput, four slots, loaded on first use.
     int GamepadDeviceCount() override {
@@ -406,7 +388,7 @@ public:
         case WM_PAINT: { PAINTSTRUCT ps; BeginPaint(h, &ps); EndPaint(h, &ps); e.type = EventType::WindowExposed; b->m_pending.push_back(e); return 0; }
         case WM_KEYDOWN: case WM_SYSKEYDOWN: case WM_KEYUP: case WM_SYSKEYUP: {
             e.type = (m == WM_KEYDOWN || m == WM_SYSKEYDOWN) ? EventType::KeyDown : EventType::KeyUp;
-            e.key = KeyFromScan((int)((lp >> 16) & 0xFF), (lp & (1 << 24)) != 0);
+            e.key = win32keys::KeyFromScan((int)((lp >> 16) & 0xFF), (lp & (1 << 24)) != 0);
             e.repeat = e.type == EventType::KeyDown && (lp & (1 << 30)) != 0;
             e.mods = CurrentMods();
             b->m_pending.push_back(e);

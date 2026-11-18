@@ -3217,6 +3217,15 @@ add_executable(test_platform_gamepad test_platform_gamepad.cpp)
 target_link_libraries(test_platform_gamepad PRIVATE okay::engine)
 add_test(NAME platform_gamepad COMMAND test_platform_gamepad)
 
+# Pure tests for the Windows audio helpers (WASAPI formats, buffer maths, byte queue, pump decisions) and the
+# Win32 scan code table. They need no Windows, so they run everywhere the Windows code is checked from.
+if(NOT WIN32 AND NOT EMSCRIPTEN)
+    add_executable(test_platform_audio_pump test_platform_audio_pump.cpp)
+    target_include_directories(test_platform_audio_pump PRIVATE ${CMAKE_SOURCE_DIR}/engine/include ${CMAKE_SOURCE_DIR}/engine/src/Platform)
+    target_compile_features(test_platform_audio_pump PRIVATE cxx_std_17)
+    add_test(NAME platform_audio_pump COMMAND test_platform_audio_pump)
+endif()
+
 # Safety nets for library code that previously had no test naming it.
 add_executable(test_lightmap test_lightmap.cpp)
 target_link_libraries(test_lightmap PRIVATE okay::engine)

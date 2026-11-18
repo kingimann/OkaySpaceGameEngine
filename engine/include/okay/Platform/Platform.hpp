@@ -58,6 +58,7 @@ enum class Key : uint16_t {
     Right = 79, Left = 80, Down = 81, Up = 82,
     NumLock = 83, KpDivide = 84, KpMultiply = 85, KpMinus = 86, KpPlus = 87, KpEnter = 88,
     Kp1 = 89, Kp2, Kp3, Kp4, Kp5, Kp6, Kp7, Kp8, Kp9, Kp0 = 98, KpPeriod = 99,
+    NonUsBackslash = 100, Application = 101,
     LCtrl = 224, LShift = 225, LAlt = 226, LGui = 227,
     RCtrl = 228, RShift = 229, RAlt = 230, RGui = 231,
 };

@@ -3,6 +3,7 @@
 #include "XboxAppx.hpp"
 #include "XboxExport.hpp"
 #include "XboxExportTool.hpp"
+#include "XboxGameConfig.hpp"
 #include "XboxSdkCheck.hpp"
 #include <cstdio>
 #include <cstdlib>
@@ -125,6 +126,19 @@ static void ExportToolTests() {
     { std::ifstream f(tmp / "package" / "AppxManifest.xml"); std::stringstream ss; ss << f.rdbuf(); const std::string m = ss.str();
       CHECK(m.find("CN=OkaySpaceTest") != std::string::npos && m.find("Version=\"1.0.0.0\"") != std::string::npos && m.find("Executable=\"OkaySpaceXbox.exe\"") != std::string::npos); }
     { ExportToolOptions bad = e; bad.in.version = "not a version"; std::string m2; CHECK(!WriteTestExport(bad, m2)); CHECK(!m2.empty()); }
+    CHECK(!fs::exists(tmp / "package" / "Data" / "game.okayscene"));   // no scene unless asked
+    // --with-scene: a config and a tiny scene the game runtime can resolve
+    { ExportToolOptions s; CHECK(ParseExportArgs({"--out", (tmp.parent_path() / "scene").string(), "--with-scene"}, s, err) && s.withScene); std::string m3; CHECK(WriteTestExport(s, m3));
+      const fs::path d = tmp.parent_path() / "scene" / "package" / "Data";
+      CHECK(fs::exists(d / "game.okayconfig") && fs::exists(d / "game.okayscene"));
+      std::ifstream cf(d / "game.okayconfig"); std::stringstream cs; cs << cf.rdbuf(); const GameConfig gc = ParseGameConfig(cs.str());
+      CHECK(gc.title == "OkaySpace Test" && gc.startup == "game.okayscene" && gc.width == 1280);
+      CHECK(ResolveStartupScene(gc, [&](const std::string& r) { return fs::exists(d / r); }) == "game.okayscene");
+      std::ifstream sf(d / "game.okayscene"); std::stringstream ss; ss << sf.rdbuf(); const std::string sc = ss.str();
+      CHECK(sc.rfind("okayscene 3\n", 0) == 0 && sc.find("gameobject 0 \"Main Camera\"") != std::string::npos && sc.find("  camera ") != std::string::npos && sc.find("mesh \"Cube\"") != std::string::npos);
+      int gos = 0, ends = 0; std::istringstream ls(sc); std::string l; while (std::getline(ls, l)) { if (l.rfind("gameobject ", 0) == 0) ++gos; if (l == "end") ++ends; } CHECK(gos == 2 && ends == 2);   // every object is closed
+      // the field counts match the example scenes in examples/ (transform = 10 numbers; the camera line is the example's own)
+      std::istringstream ls2(sc); while (std::getline(ls2, l)) if (l.rfind("  transform ", 0) == 0) { std::istringstream f(l.substr(12)); int n = 0; double v; while (f >> v) ++n; CHECK(n == 10); } }
     fs::remove_all(fs::temp_directory_path() / "okay_xbox_tool_test");
 }
 

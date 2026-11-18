@@ -43,6 +43,15 @@ inline const std::vector<ForbiddenApi>& ForbiddenApis() {
         {"getenv(\"USERPROFILE\")", "environment folders", "ApplicationData"},
         {"xinput1_4.dll", "XInput by LoadLibrary", "Windows.Gaming.Input (XboxInput.hpp)"},
         {"X11/Xlib.h", "X11", "not Windows code"},
+        // Found by compiling the engine sources with MinGW and WINAPI_FAMILY=WINAPI_FAMILY_APP (its headers hide desktop-only APIs): the names
+        // below were reported "not declared". As remembered from Microsoft's pages; UNVERIFIED.
+        {"CheckRemoteDebuggerPresent", "debugger probe", "no remote-debugger check in UWP"},
+        {"GetModuleHandleW", "module handles", "GetModuleHandleExW / LoadPackagedLibrary"},
+        {"GetModuleHandleA", "module handles", "GetModuleHandleExW"},
+        {"GetWindowsDirectoryW", "system folders", "no Windows folder in a UWP app"},
+        {"CreateToolhelp32Snapshot", "process snapshots", "not available to UWP"},
+        {"EnumProcessModules", "process modules", "not available to UWP"},
+        {"_getpid", "process id", "GetCurrentProcessId"},
     };
     return k;
 }

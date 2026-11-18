@@ -1,0 +1,9 @@
+// okay-ms own standard header: min, max, clamp, swap (ISO/IEC 14882 [alg.min.max], [alg.clamp],
+// [utility.swap]). Written here from the wording of the standard.
+#pragma once
+namespace std {
+template <typename T> const T &min(const T &a, const T &b) { return b < a ? b : a; }
+template <typename T> const T &max(const T &a, const T &b) { return a < b ? b : a; }
+template <typename T> const T &clamp(const T &v, const T &lo, const T &hi) { return v < lo ? lo : hi < v ? hi : v; }
+template <typename T> void swap(T &a, T &b) { T t = a; a = b; b = t; }
+}

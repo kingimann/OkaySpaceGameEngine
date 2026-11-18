@@ -1,0 +1,15 @@
+// okay-ms own standard header: declarations only (ISO/IEC 14882 [c.math]); the functions come from the
+// C runtime the program is linked with.
+#pragma once
+namespace std {
+float sqrt(float x);
+float sin(float x);
+float cos(float x);
+float tan(float x);
+float atan2(float y, float x);
+float fabs(float x);
+float floor(float x);
+float ceil(float x);
+float pow(float x, float y);
+float fmod(float x, float y);
+}

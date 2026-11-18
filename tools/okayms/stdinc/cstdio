@@ -1,0 +1,7 @@
+// okay-ms own standard header: declarations only (ISO/IEC 14882 [cstdio.syn]).
+#pragma once
+namespace std {
+int printf(const char *fmt, ...);
+int snprintf(char *buf, unsigned int cap, const char *fmt, ...);
+int puts(const char *s);
+}

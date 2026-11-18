@@ -407,7 +407,7 @@ struct Preprocessor {
                 const char n = expanded[i + 1];
                 const char f = expanded[i];
                 if ((f == '&' && n == '&') || (f == '|' && n == '|') || (f == '=' && n == '=') || (f == '!' && n == '=') ||
-                    (f == '<' && n == '=') || (f == '>' && n == '=')) {
+                    (f == '<' && n == '=') || (f == '>' && n == '=') || (f == '<' && n == '<') || (f == '>' && n == '>')) {
                     tok.text.push_back(n);
                     ++i;
                 }
@@ -440,11 +440,12 @@ struct Preprocessor {
                     else next();
                     return value;
                 }
-                if (cur().kind == 3 && (cur().text == "!" || cur().text == "-" || cur().text == "+")) {
+                if (cur().kind == 3 && (cur().text == "!" || cur().text == "-" || cur().text == "+" || cur().text == "~")) {
                     const std::string op = cur().text;
                     next();
                     const int64_t value = primary();
                     if (op == "!") return value == 0 ? 1 : 0;
+                    if (op == "~") return ~value;
                     if (op == "-") return -value;
                     return value;
                 }
@@ -478,12 +479,27 @@ struct Preprocessor {
                 }
                 return left;
             }
-            int64_t rel() {
+            int64_t shift() {
                 int64_t left = add();
-                while (cur().kind == 3 && (cur().text == "<" || cur().text == ">" || cur().text == "<=" || cur().text == ">=")) {
+                while (cur().kind == 3 && (cur().text == "<<" || cur().text == ">>")) {
                     const std::string op = cur().text;
                     next();
                     const int64_t right = add();
+                    if (right < 0 || right > 63) {
+                        *ok = false;
+                        return 0;
+                    }
+                    if (op == "<<") left = static_cast<int64_t>(static_cast<uint64_t>(left) << right);
+                    else left = left >> right;
+                }
+                return left;
+            }
+            int64_t rel() {
+                int64_t left = shift();
+                while (cur().kind == 3 && (cur().text == "<" || cur().text == ">" || cur().text == "<=" || cur().text == ">=")) {
+                    const std::string op = cur().text;
+                    next();
+                    const int64_t right = shift();
                     if (op == "<") left = left < right;
                     else if (op == ">") left = left > right;
                     else if (op == "<=") left = left <= right;
@@ -501,16 +517,40 @@ struct Preprocessor {
                 }
                 return left;
             }
-            int64_t and_() {
+            int64_t band() {
                 int64_t left = eq();
+                while (cur().kind == 3 && cur().text == "&") {
+                    next();
+                    left &= eq();
+                }
+                return left;
+            }
+            int64_t bxor() {
+                int64_t left = band();
+                while (cur().kind == 3 && cur().text == "^") {
+                    next();
+                    left ^= band();
+                }
+                return left;
+            }
+            int64_t bor() {
+                int64_t left = bxor();
+                while (cur().kind == 3 && cur().text == "|") {
+                    next();
+                    left |= bxor();
+                }
+                return left;
+            }
+            int64_t and_() {
+                int64_t left = bor();
                 while (cur().kind == 3 && cur().text == "&&") {
                     next();
-                    const int64_t right = eq();
+                    const int64_t right = bor();
                     left = (left != 0 && right != 0) ? 1 : 0;
                 }
                 return left;
             }
-            int64_t expr() {
+            int64_t lor() {
                 int64_t left = and_();
                 while (cur().kind == 3 && cur().text == "||") {
                     next();
@@ -518,6 +558,21 @@ struct Preprocessor {
                     left = (left != 0 || right != 0) ? 1 : 0;
                 }
                 return left;
+            }
+            int64_t expr() {
+                const int64_t cond = lor();
+                if (cur().kind == 3 && cur().text == "?") {
+                    next();
+                    const int64_t yes = expr();
+                    if (cur().kind != 3 || cur().text != ":") {
+                        *ok = false;
+                        return 0;
+                    }
+                    next();
+                    const int64_t no = expr();
+                    return cond != 0 ? yes : no;
+                }
+                return cond;
             }
         };
         Ev ev{toks, 0, ok};
@@ -641,21 +696,64 @@ struct Preprocessor {
         return out;
     }
 
-    std::string find_include(const std::string& name, bool quote, const std::string& dir) {
+    // Files named by '#pragma once' (by the path they were found at).
+    std::set<std::string> once_files;
+    // The path of each file being read, innermost last (the main source has none).
+    std::vector<std::string> path_stack;
+
+    // Quoted names are looked up next to the including file first ([cpp.include]), then in the
+    // include paths. *found is the path the text was read from.
+    std::string find_include(const std::string& name, bool quote, const std::string& dir, std::string* found) {
         if (quote && !dir.empty()) {
             const std::string path = dir + "/" + name;
             std::string text;
-            if (read_file(path, &text)) return text;
+            if (read_file(path, &text)) {
+                *found = path;
+                return text;
+            }
         }
         for (const std::string& inc : includes) {
             const std::string path = inc + "/" + name;
             std::string text;
-            if (read_file(path, &text)) return text;
+            if (read_file(path, &text)) {
+                *found = path;
+                return text;
+            }
         }
         return "";
     }
 
-    std::string run(const std::string& text, const std::string& dir, int file = 0) {
+    // A backslash directly before a newline joins the two lines ([lex.phases] 2). The joined line is
+    // followed by one empty line for each line it took in, so the line count stays the same.
+    static std::string splice_lines(const std::string& in) {
+        if (in.find('\\') == std::string::npos) return in;
+        std::string out;
+        size_t i = 0;
+        int pending = 0;
+        while (i < in.size()) {
+            if (in[i] == '\\' && i + 1 < in.size() && in[i + 1] == '\n') {
+                i += 2;
+                ++pending;
+                continue;
+            }
+            if (in[i] == '\\' && i + 2 < in.size() && in[i + 1] == '\r' && in[i + 2] == '\n') {
+                i += 3;
+                ++pending;
+                continue;
+            }
+            out.push_back(in[i]);
+            if (in[i] == '\n') {
+                out.append(static_cast<size_t>(pending), '\n');
+                pending = 0;
+            }
+            ++i;
+        }
+        out.append(static_cast<size_t>(pending), '\n');
+        return out;
+    }
+
+    std::string run(const std::string& raw_text, const std::string& dir, int file = 0) {
+        const std::string text = splice_lines(raw_text);
         if (depth > 16) {
             error = "include nesting is too deep";
             return "";
@@ -709,14 +807,20 @@ struct Preprocessor {
                     }
                     const bool quote = rest[q1] == '"';
                     const std::string name = rest.substr(q1 + 1, q2 - q1 - 1);
-                    const std::string body = find_include(name, quote, dir);
-                    if (body.empty()) {
+                    std::string found;
+                    const std::string body = find_include(name, quote, dir, &found);
+                    if (body.empty() && found.empty()) {
                         error = "cannot open include " + name;
                         --depth;
                         return "";
                     }
+                    if (once_files.count(found) > 0) continue;
                     files.push_back(name);
-                    out += run(strip_comments(body), dir, static_cast<int>(files.size()) - 1);
+                    const size_t slash = found.rfind('/');
+                    path_stack.push_back(found);
+                    out += run(strip_comments(body), slash == std::string::npos ? std::string() : found.substr(0, slash),
+                               static_cast<int>(files.size()) - 1);
+                    path_stack.pop_back();
                     if (!error.empty()) {
                         --depth;
                         return "";
@@ -796,6 +900,34 @@ struct Preprocessor {
                         const bool taken = parent && value != 0;
                         stack.push_back({parent, taken, taken, false});
                     }
+                } else if (word("undef")) {
+                    if (!active()) continue;
+                    size_t b = 5;
+                    while (b < rest.size() && (rest[b] == ' ' || rest[b] == '\t')) ++b;
+                    size_t n = b;
+                    while (n < rest.size() && (std::isalnum(static_cast<unsigned char>(rest[n])) || rest[n] == '_')) ++n;
+                    macros.erase(rest.substr(b, n - b));
+                } else if (word("error")) {
+                    if (!active()) continue;
+                    error = "#error" + rest.substr(5);
+                    --depth;
+                    return "";
+                } else if (word("pragma")) {
+                    if (!active()) continue;
+                    size_t b = 6;
+                    while (b < rest.size() && (rest[b] == ' ' || rest[b] == '\t')) ++b;
+                    const std::string what = rest.substr(b);
+                    if (what.compare(0, 4, "once") == 0) {
+                        if (!path_stack.empty()) once_files.insert(path_stack.back());
+                    } else if (what.compare(0, 4, "pack") == 0) {
+                        // Ignoring it would change the layout of a struct without a word.
+                        error = "#pragma pack is not supported";
+                        --depth;
+                        return "";
+                    }
+                    // Any other pragma (warning, comment, ...) has no effect on the code made here.
+                } else if (rest.empty() || word("line")) {
+                    // A null directive and #line change nothing.
                 } else if (word("else")) {
                     if (stack.empty() || stack.back().saw_else) {
                         error = "else without if";
@@ -813,7 +945,7 @@ struct Preprocessor {
                     }
                     stack.pop_back();
                 } else if (active()) {
-                    error = "unknown preprocessor directive";
+                    error = "unknown preprocessor directive #" + rest.substr(0, rest.find_first_of(" \t("));
                     --depth;
                     return "";
                 }
@@ -1170,7 +1302,7 @@ std::vector<Token> lex(const std::string& text, std::string* error) {
             continue;
         } else if (c == ':') tok.kind = TColon;
         else {
-            *error = "unexpected character";
+            *error = std::string("unexpected character '") + static_cast<char>(c) + "' at line " + std::to_string(line);
             return {};
         }
         ++i;
@@ -1301,7 +1433,219 @@ struct Parser {
     std::map<std::string, uint64_t> enum_values;
     std::vector<Local>* cur_locals = nullptr;
     std::string current_fn;
+    // The namespaces open at the top level: "a::b" and its decorated form "b@a" (innermost first).
     std::string current_ns;
+    std::string ns_mangled{};
+    std::vector<std::string> ns_parts{};
+    std::vector<size_t> ns_open{};  // how many names each open brace pushed (0 for an unnamed namespace)
+    std::set<std::string> namespaces{};
+    void update_ns() {
+        current_ns.clear();
+        ns_mangled.clear();
+        for (size_t i = 0; i < ns_parts.size(); ++i) current_ns += (i == 0 ? "" : "::") + ns_parts[i];
+        for (size_t i = ns_parts.size(); i-- > 0;) ns_mangled += (ns_mangled.empty() ? "" : "@") + ns_parts[i];
+    }
+    // Spellings that only restate what the compiler already does are rewritten before parsing, each from
+    // its rule in ISO/IEC 14882:
+    //   constexpr -> const; inline, explicit, noexcept (with its operand), override, final, [[attributes]]
+    //   are dropped; static_assert(...) is dropped (it is not checked); nullptr -> 0
+    //   using Name = type; -> typedef type Name;  using namespace x; is dropped
+    //   enum class E : T { } and enum E : T { } -> enum E { } (the underlying type is int)
+    //   Scoped enumerators are renamed "E::X" (one token), so two enums may share an enumerator name
+    //   static_cast<T>(x), reinterpret_cast and const_cast -> (T)(x)
+    void lower_cxx_spellings() {
+        const auto is_word = [this](size_t i, const char* w) {
+            return i < tokens.size() && tokens[i].kind == TIdent && tokens[i].text == w;
+        };
+        std::set<std::string> scoped;
+        for (size_t i = 0; i + 2 < tokens.size(); ++i)
+            if (tokens[i].kind == TEnum && (tokens[i + 1].kind == TStruct) && tokens[i + 2].kind == TIdent)
+                scoped.insert(tokens[i + 2].text);
+        std::vector<Token> out;
+        out.reserve(tokens.size());
+        std::string in_scoped;  // the scoped enum whose braces are open
+        int enum_depth = 0;
+        bool want_name = false;
+        for (size_t i = 0; i < tokens.size(); ++i) {
+            const Token& t = tokens[i];
+            if (t.kind == TIdent && t.text == "constexpr") {
+                Token c = t;
+                c.kind = TConst;
+                c.text = "const";
+                out.push_back(c);
+                continue;
+            }
+            if (t.kind == TIdent && (t.text == "inline" || t.text == "explicit" || t.text == "override" ||
+                                      t.text == "final" || t.text == "consteval" || t.text == "constinit"))
+                continue;
+            if (t.kind == TIdent && t.text == "nullptr") {
+                Token z = t;
+                z.kind = TNumber;
+                z.number = 0;
+                out.push_back(z);
+                continue;
+            }
+            if (is_word(i, "noexcept")) {
+                if (i + 1 < tokens.size() && tokens[i + 1].kind == TLParen) {
+                    int depth = 0;
+                    ++i;
+                    do {
+                        if (tokens[i].kind == TLParen) ++depth;
+                        else if (tokens[i].kind == TRParen) --depth;
+                        ++i;
+                    } while (i < tokens.size() && depth > 0);
+                    --i;
+                }
+                continue;
+            }
+            if (t.kind == TLBrack && i + 1 < tokens.size() && tokens[i + 1].kind == TLBrack) {
+                size_t j = i + 2;
+                while (j + 1 < tokens.size() && !(tokens[j].kind == TRBrack && tokens[j + 1].kind == TRBrack)) ++j;
+                if (j + 1 < tokens.size()) {
+                    i = j + 1;
+                    continue;
+                }
+            }
+            if (is_word(i, "static_assert") && i + 1 < tokens.size() && tokens[i + 1].kind == TLParen) {
+                int depth = 0;
+                ++i;
+                do {
+                    if (tokens[i].kind == TLParen) ++depth;
+                    else if (tokens[i].kind == TRParen) --depth;
+                    ++i;
+                } while (i < tokens.size() && depth > 0);
+                if (i < tokens.size() && tokens[i].kind == TSemi) ++i;
+                --i;
+                continue;
+            }
+            if (is_word(i, "using") && i + 1 < tokens.size()) {
+                if (is_word(i + 1, "namespace")) {
+                    while (i < tokens.size() && tokens[i].kind != TSemi && tokens[i].kind != TEnd) ++i;
+                    continue;
+                }
+                if (tokens[i + 1].kind == TIdent && i + 2 < tokens.size() && tokens[i + 2].kind == TAssign) {
+                    size_t j = i + 3;
+                    while (j < tokens.size() && tokens[j].kind != TSemi && tokens[j].kind != TEnd) ++j;
+                    Token td = t;
+                    td.kind = TTypedef;
+                    td.text = "typedef";
+                    out.push_back(td);
+                    for (size_t k = i + 3; k < j; ++k) out.push_back(tokens[k]);
+                    out.push_back(tokens[i + 1]);
+                    i = j - 1;
+                    continue;
+                }
+            }
+            if (t.kind == TEnum) {
+                out.push_back(t);
+                size_t j = i + 1;
+                const bool is_scoped = j < tokens.size() && tokens[j].kind == TStruct;
+                if (is_scoped) ++j;
+                if (j < tokens.size() && tokens[j].kind == TIdent) {
+                    out.push_back(tokens[j]);
+                    if (is_scoped) in_scoped = tokens[j].text;
+                    ++j;
+                }
+                if (j < tokens.size() && tokens[j].kind == TColon) {  // : underlying type
+                    ++j;
+                    while (j < tokens.size() && tokens[j].kind != TLBrace && tokens[j].kind != TSemi && tokens[j].kind != TEnd) ++j;
+                }
+                if (j < tokens.size() && tokens[j].kind == TLBrace) {
+                    out.push_back(tokens[j]);
+                    enum_depth = is_scoped ? 1 : 0;
+                    want_name = is_scoped;
+                    ++j;
+                } else {
+                    in_scoped.clear();
+                }
+                i = j - 1;
+                continue;
+            }
+            if (enum_depth > 0) {
+                if (t.kind == TRBrace) {
+                    enum_depth = 0;
+                    in_scoped.clear();
+                } else if (t.kind == TComma) {
+                    want_name = true;
+                } else if (want_name && t.kind == TIdent) {
+                    Token n = t;
+                    n.text = in_scoped + "::" + t.text;
+                    out.push_back(n);
+                    want_name = false;
+                    continue;
+                } else {
+                    want_name = false;
+                }
+            }
+            if (t.kind == TIdent && scoped.count(t.text) > 0 && i + 2 < tokens.size() && tokens[i + 1].kind == TColonColon &&
+                tokens[i + 2].kind == TIdent) {
+                Token n = t;
+                n.text = t.text + "::" + tokens[i + 2].text;
+                out.push_back(n);
+                i += 2;
+                continue;
+            }
+            if (t.kind == TIdent && (t.text == "static_cast" || t.text == "reinterpret_cast" || t.text == "const_cast") &&
+                i + 1 < tokens.size() && tokens[i + 1].kind == TLt) {
+                int angle = 0;
+                size_t j = i + 1;
+                for (; j < tokens.size() && tokens[j].kind != TEnd; ++j) {
+                    if (tokens[j].kind == TLt) ++angle;
+                    else if (tokens[j].kind == TGt && --angle == 0) break;
+                }
+                if (j + 1 < tokens.size() && tokens[j].kind == TGt && tokens[j + 1].kind == TLParen) {
+                    Token open = tokens[i + 1];
+                    open.kind = TLParen;
+                    open.text = "(";
+                    Token close = tokens[j];
+                    close.kind = TRParen;
+                    close.text = ")";
+                    out.push_back(open);
+                    for (size_t k = i + 2; k < j; ++k) out.push_back(tokens[k]);
+                    out.push_back(close);
+                    i = j;
+                    continue;
+                }
+            }
+            out.push_back(t);
+        }
+        tokens = std::move(out);
+    }
+
+    // A name written with its namespaces in front (geo::unit::kScale, std::uint8_t) is read as the
+    // bare name: types, variables and enumerators of a namespace share one table. A call keeps its
+    // qualification, because functions are registered with it (and decorated with it).
+    void strip_namespace_qualifiers() {
+        for (size_t i = 0; i + 1 < tokens.size(); ++i) {
+            if (tokens[i].kind != TNamespace) continue;
+            for (size_t j = i + 1; j < tokens.size() && (tokens[j].kind == TIdent || tokens[j].kind == TColonColon); ++j)
+                if (tokens[j].kind == TIdent) namespaces.insert(tokens[j].text);
+        }
+        if (namespaces.empty()) return;
+        std::vector<Token> out;
+        out.reserve(tokens.size());
+        for (size_t i = 0; i < tokens.size(); ++i) {
+            if (tokens[i].kind == TNamespace) {
+                while (i < tokens.size() && tokens[i].kind != TLBrace && tokens[i].kind != TEnd) out.push_back(tokens[i++]);
+                if (i < tokens.size()) out.push_back(tokens[i]);
+                continue;
+            }
+            if (tokens[i].kind == TIdent && namespaces.count(tokens[i].text) > 0 && i + 1 < tokens.size() &&
+                tokens[i + 1].kind == TColonColon && !(i > 0 && tokens[i - 1].kind == TColonColon)) {
+                size_t k = i;
+                while (k + 1 < tokens.size() && tokens[k].kind == TIdent && namespaces.count(tokens[k].text) > 0 &&
+                       tokens[k + 1].kind == TColonColon)
+                    k += 2;
+                const bool call = k + 1 < tokens.size() && tokens[k].kind == TIdent && tokens[k + 1].kind == TLParen;
+                if (!call && k < tokens.size() && tokens[k].kind == TIdent) {
+                    i = k - 1;  // the leading namespace names and their '::' are dropped
+                    continue;
+                }
+            }
+            out.push_back(tokens[i]);
+        }
+        tokens = std::move(out);
+    }
     // The class whose member function body is being compiled, or -1.
     int cur_class = -1;
     int scope_depth = 0;
@@ -1684,7 +2028,17 @@ struct Parser {
         return true;
     }
 
+    // A type with the qualifiers around it ([dcl.type.cv]): const T and T const are read and the
+    // const is dropped (the type does not record it). The name to look for is after them.
     bool parse_type(Type* type, bool* imported, bool* exported) {
+        while (accept(TConst)) {
+        }
+        if (!parse_type_core(type, imported, exported)) return false;
+        while (accept(TConst)) {
+        }
+        return true;
+    }
+    bool parse_type_core(Type* type, bool* imported, bool* exported) {
         *imported = false;
         *exported = false;
         while (is(TDeclspec)) {
@@ -1719,6 +2073,7 @@ struct Parser {
         type->bit_off = 0;
         type->is_unsigned = false;
         type->is_const = false;
+        type->is_bool = false;
         if (is(TStruct) || is(TUnion)) {
             const bool as_union = is(TUnion);
             const bool as_class = is(TStruct) && cur().text == "class";
@@ -1771,7 +2126,13 @@ struct Parser {
                 type->base = 1;
                 return true;
             }
-            if (is(TIdent)) next();
+            if (is(TIdent)) {
+                // The enumeration's name is a type name too, as in C++ ([dcl.enum]); its values are int.
+                Type enum_type;
+                enum_type.base = 1;
+                typedefs[cur().text] = enum_type;
+                next();
+            }
             if (!parse_enum_body()) return false;
             type->base = 1;
             return true;
@@ -5130,22 +5491,34 @@ struct Parser {
     }
 
     bool parse() {
+        lower_cxx_spellings();
+        strip_namespace_qualifiers();
         for (const Token& t : tokens)
             if (t.kind == TIdent && (t.text == "try" || t.text == "throw")) eh_ = true;
         while (!is(TEnd)) {
-            if (!current_ns.empty() && accept(TRBrace)) {
-                current_ns.clear();
+            if (!ns_open.empty() && accept(TRBrace)) {
+                for (size_t n = 0; n < ns_open.back(); ++n) ns_parts.pop_back();
+                ns_open.pop_back();
+                update_ns();
                 continue;
             }
             if (is(TNamespace)) {
                 next();
-                if (!is(TIdent)) {
-                    error = "expected a namespace name";
-                    return false;
+                size_t pushed = 0;
+                if (is(TIdent)) {
+                    do {  // namespace a::b { } ([namespace.def])
+                        if (!is(TIdent)) {
+                            error = "expected a namespace name";
+                            return false;
+                        }
+                        ns_parts.push_back(cur().text);
+                        ++pushed;
+                        next();
+                    } while (accept(TColonColon));
                 }
-                current_ns = cur().text;
-                next();
                 if (!expect(TLBrace, "'{'")) return false;
+                ns_open.push_back(pushed);
+                update_ns();
                 continue;
             }
             if (is(TIdent) && cur().text == "template" && at + 1 < tokens.size() && tokens[at + 1].kind == TLt) {
@@ -5307,7 +5680,7 @@ struct Parser {
             }
             FuncDecl fn;
             fn.name = current_ns.empty() ? decl.name : current_ns + "::" + decl.name;
-            if (!current_ns.empty()) fn.symbol = cxx_symbol(current_ns, decl.name, decl.type, decl.params);
+            if (!current_ns.empty()) fn.symbol = cxx_symbol(ns_mangled, decl.name, decl.type, decl.params);
             fn.ret = decl.type;
             fn.params = decl.params;
             fn.param_names = decl.param_names;
@@ -6928,6 +7301,11 @@ bool Parser::parse_unary(Node* out) {
                 bytes = 4;
             }
             if (bytes == 0) {
+                // sizeof of any other expression: the size of its type, if the parser can tell it.
+                Type et;
+                if (static_type(inner, &et)) bytes = size_of(et);
+            }
+            if (bytes == 0) {
                 error = "sizeof needs a type or a name";
                 return false;
             }
@@ -7018,13 +7396,15 @@ bool Parser::parse_unary(Node* out) {
             scope_sid = inst.struct_id;
             name = "<inst>::" + cur().text;
             next();
-        } else if (accept(TColonColon)) {
-            if (!is(TIdent)) {
-                error = "expected a name after ::";
-                return false;
+        } else {
+            while (accept(TColonColon)) {  // a::b::c: namespaces, then a name
+                if (!is(TIdent)) {
+                    error = "expected a name after ::";
+                    return false;
+                }
+                name += "::" + cur().text;
+                next();
             }
-            name += "::" + cur().text;
-            next();
         }
         const size_t colons = name.find("::");
         if (scope_sid < 0 && colons != std::string::npos) scope_sid = scope_class(name.substr(0, colons));
@@ -7734,10 +8114,19 @@ bool Gen::gen_addr(const Node& node) {
             else if (Global* global = find_global(node.kids[0].text))
                 from_pointer = global->type.pointers > 0 && !global->type.is_array();
         }
-        if (from_pointer) {
-            if (!gen_expr(node.kids[0])) return false;
-        } else if (!gen_addr(node.kids[0])) {
-            return false;
+        const Node& inner = node.kids[0];
+        const bool lvalue = inner.kind == Node::Name || inner.kind == Node::Field || inner.kind == Node::Index ||
+                            (inner.kind == Node::Unary && inner.op == TStar);
+        if (from_pointer || !lvalue) {
+            if (!gen_expr(inner)) return false;
+        } else {
+            if (!gen_addr(inner)) return false;
+            if (last_type.pointers > 0 && !last_type.is_array()) {
+                // p[i] where p is a pointer field or a pointer element: the pointer is read first.
+                b(0x48);
+                b(0x8B);
+                b(0x00);
+            }
         }
         const Type base = last_type;
         const Type elem = element_type(base);
@@ -10223,7 +10612,18 @@ Result<CompileOutput> compile_c(const CompileInput& input) {
     if (!pp.error.empty()) return Result<CompileOutput>::fail(pp.error);
     std::string lex_error;
     std::vector<Token> tokens = lex(expanded, &lex_error);
-    if (!lex_error.empty()) return Result<CompileOutput>::fail(lex_error);
+    // "file:line: " for a line of the preprocessed text, from the origin table.
+    const auto where = [&pp](int line) {
+        if (line <= 0 || static_cast<size_t>(line) > pp.origin.size()) return std::string();
+        const auto& o = pp.origin[static_cast<size_t>(line) - 1];
+        const std::string name = o.first >= 0 && static_cast<size_t>(o.first) < pp.files.size() ? pp.files[static_cast<size_t>(o.first)] : "?";
+        return name + ":" + std::to_string(o.second) + ": ";
+    };
+    if (!lex_error.empty()) {
+        const size_t at_line = lex_error.rfind("at line ");
+        const int line = at_line == std::string::npos ? 0 : std::atoi(lex_error.c_str() + at_line + 8);
+        return Result<CompileOutput>::fail(where(line) + lex_error);
+    }
     Parser parser{tokens, 0, {}, {}, {}, {}, {}, {}, {}, {}, nullptr, {}, {}};
     {
         // bool is a one-byte unsigned type whose stored value is 0 or 1 ([basic.fundamental]).
@@ -10233,7 +10633,10 @@ Result<CompileOutput> compile_c(const CompileInput& input) {
         boolean.is_bool = true;
         parser.typedefs["bool"] = boolean;
     }
-    if (!parser.parse()) return Result<CompileOutput>::fail(parser.error.empty() ? "parse failed" : parser.error);
+    if (!parser.parse()) {
+        const size_t pos = std::min(parser.at, parser.tokens.size() - 1);
+        return Result<CompileOutput>::fail(where(parser.tokens[pos].line) + (parser.error.empty() ? "parse failed" : parser.error));
+    }
     LineSource line_source;
     line_source.enabled = input.debug_lines;
     line_source.origin = &pp.origin;

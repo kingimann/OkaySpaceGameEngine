@@ -1,0 +1,7 @@
+// okay-ms own standard header: declarations only (ISO/IEC 14882 [cstdlib.syn]).
+#pragma once
+namespace std {
+void *malloc(unsigned int n);
+void free(void *p);
+int abs(int v);
+}

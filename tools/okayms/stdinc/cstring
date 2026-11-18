@@ -1,0 +1,9 @@
+// okay-ms own standard header: declarations only (ISO/IEC 14882 [cstring.syn]).
+#pragma once
+namespace std {
+void *memcpy(void *dst, const void *src, unsigned int n);
+void *memset(void *dst, int value, unsigned int n);
+int memcmp(const void *a, const void *b, unsigned int n);
+unsigned int strlen(const char *s);
+int strcmp(const char *a, const char *b);
+}

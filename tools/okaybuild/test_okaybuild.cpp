@@ -775,10 +775,12 @@ static void testNativeManifest() {
     write("engine/src/Core/Core.cpp", "int core(){return 3;}\n");
     write("engine/third_party/ufbx/ufbx.c", "int ufbx_add(){return 4;}\n");
     write("engine/include/okay/Math/Math.hpp", "#pragma once\n");
+    write("shared/Shared.hpp", "#pragma once\n");
     write("tests/test_math.cpp", "extern \"C\" int ufbx_add(); int crypto(); int plat(); int core(); int main(){return crypto()+plat()+core()+ufbx_add()==10?0:1;}\n");
     int rc; string o = sh("native . -o build.okay", &rc);
     check(rc == 0 && o.find("test_math") != string::npos, "native writes a manifest", o);
     string man = readFile(gRoot / "build.okay");
+    check(man.find(" engine/third_party/ufbx shared /usr/include/SDL2") != string::npos, "the shared/ header directory is an include path", man);
     check(man.find("target okay_engine lib") != string::npos && man.find("target okay_crypto lib") != string::npos, "engine and crypto targets", man);
     check(man.find("ModelImportAssimp") == string::npos && man.find("OwnWin32") == string::npos, "optional files are left out", man);
     check(man.find("tests/test_math.cpp") != string::npos && man.find("ufbx.c") != string::npos, "test_math and ufbx are included", man);
@@ -787,6 +789,14 @@ static void testNativeManifest() {
     check(system(("'" + (gRoot / "build/test_math").string() + "' >/dev/null").c_str()) == 0, "test_math runs");
 }
 
+static void testRestoredObjectsStayTrusted() {
+    printf("test: objects restored from the cache do not make every later no-op re-read them\n"); fresh("restore"); basicProject();
+    sh("-j2");
+    write("inc/util.h", "#pragma once\nint util();\n// a comment: same preprocessed text, so the compiles are cache hits\n");
+    int rc; string o = sh("-j2", &rc); check(rc == 0 && o.find("cache hit") != string::npos, "the comment edit is served from the cache", o);
+    o = sh("-v", &rc); check(o.find("hashed 0 input file(s)") != string::npos, "the next no-op reads no file again", o);
+    o = sh("-v", &rc); check(ran(o) == 0 && o.find("hashed 0 input file(s)") != string::npos, "and neither does the one after", o);
+}
 static void testBinaryState() {
     printf("test: compact binary state, with the old text format still accepted\n");
     fresh("bstate");
@@ -1059,11 +1069,196 @@ static void testGraphTargets() {
     check(rc == 2 && o.find("unknown pool") != string::npos, "unknown pool is an error", o);
 }
 
+static void testToolchainAuto() {
+    printf("test: toolchain auto and --toolchain pick a detected compiler\n");
+    fresh("tcauto");
+    write("main.cpp", "int main(){return 0;}\n");
+    fs::path bin = gRoot / "probe"; fs::create_directories(bin);
+    string gxx = capture("command -v g++", nullptr); while (!gxx.empty() && (gxx.back() == '\n')) gxx.pop_back();
+    string gcc = capture("command -v gcc", nullptr); while (!gcc.empty() && (gcc.back() == '\n')) gcc.pop_back();
+    fs::create_symlink(gxx, bin / "g++"); fs::create_symlink(gcc, bin / "gcc");
+    write("build.okay", "toolchain auto\nend\ntarget app exe\n sources = main.cpp\nend\n");
+    int rc; string o = sh("-j1 --search '" + bin.string() + "'", &rc);
+    check(rc == 0 && fs::exists(gRoot / "build/app"), "toolchain auto builds with a detected gcc", o);
+    o = sh("compdb --search '" + bin.string() + "'", &rc);
+    check(readFile(gRoot / "compile_commands.json").find((bin / "g++").string()) != string::npos, "the build uses the detected compiler path", readFile(gRoot / "compile_commands.json"));
+    // a hand-set cc is kept
+    write("build.okay", "toolchain auto\n cxx = /opt/mine/g++\nend\ntarget app exe\n sources = main.cpp\nend\n");
+    o = sh("compdb --search '" + bin.string() + "'", &rc);
+    check(readFile(gRoot / "compile_commands.json").find("/opt/mine/g++") != string::npos, "a cxx set by hand wins over detection");
+    // --toolchain overrides the manifest, msvc comes from --msvc-root
+    write("build.okay", "target app exe\n sources = main.cpp\nend\n");
+    fs::create_directories(gRoot / "fakevs/VC/Tools/MSVC/14.40/bin/Hostx64/x64");
+    for (const char* n : {"cl.exe", "link.exe", "lib.exe"}) { write(string("fakevs/VC/Tools/MSVC/14.40/bin/Hostx64/x64/") + n, ""); fs::permissions(gRoot / "fakevs/VC/Tools/MSVC/14.40/bin/Hostx64/x64" / n, fs::perms::owner_all); }
+    o = sh("compdb --toolchain msvc --msvc-root '" + (gRoot / "fakevs").string() + "'", &rc);
+    string db = readFile(gRoot / "compile_commands.json");
+    check(rc == 0 && db.find("fakevs/VC/Tools/MSVC/14.40/bin/Hostx64/x64/cl.exe") != string::npos && db.find(".obj") != string::npos, "--toolchain msvc uses the detected cl.exe and .obj", o + db);
+    o = sh("compdb --toolchain msvc", &rc);
+    check(rc == 2 && o.find("msvc") != string::npos && o.find("not found") != string::npos, "a toolchain that is not installed is an error", o);
+    o = sh("compdb --toolchain nosuch", &rc);
+    check(rc == 2 && o.find("unknown toolchain") != string::npos, "an unknown toolchain name is an error", o);
+    write("build.okay", "toolchain auto\nend\ntarget app exe\n sources = main.cpp\nend\n");
+    o = capture("cd '" + gRoot.string() + "' && PATH=/nonexistent " + gTool + " compdb 2>&1", &rc);
+    check(rc == 2 && o.find("no compiler found") != string::npos, "toolchain auto with nothing installed says so", o);
+}
+
+static void testSharedCache() {
+    printf("test: a shared cache dir serves a second build tree, and a damaged entry is a miss\n");
+    fresh("sharedcache");
+    write("main.cpp", "int main(){return 0;}\n");
+    write("build.okay", "target app exe\n sources = main.cpp\nend\n");
+    string cd = (gRoot / "shared").string();
+    int rc; string o = sh("-j1 --build-dir b1 --cache-dir '" + cd + "'", &rc);
+    check(rc == 0 && o.find("cache miss") != string::npos, "first tree misses and fills the shared cache", o);
+    check(fs::exists(gRoot / "shared/index") && !fs::exists(gRoot / "b1/.okaybuild/cache"), "entries live in the shared dir, not the build tree");
+    o = sh("-j1 --build-dir b2 --cache-dir '" + cd + "'", &rc);
+    check(rc == 0 && o.find("cache hit") != string::npos && o.find("cache miss") == string::npos, "a different build tree hits the same entry", o);
+    check(system(("'" + (gRoot / "b2/build/app").string() + "'").c_str()) == 0, "program from the second tree runs");
+    // environment variable does the same as the option
+    o = capture("cd '" + gRoot.string() + "' && OKAY_CACHE_DIR='" + cd + "' " + gTool + " -j1 --build-dir b3 2>&1", &rc);
+    check(rc == 0 && o.find("cache hit") != string::npos, "OKAY_CACHE_DIR selects the shared cache", o);
+    // damage the stored object: the entry must be refused and rebuilt, not copied
+    string key; for (auto& e : fs::directory_iterator(gRoot / "shared")) if (e.is_directory()) key = e.path().filename().string();
+    check(!key.empty(), "found a cache entry");
+    { std::ofstream f(gRoot / "shared" / key / "obj", std::ios::trunc | std::ios::binary); f << "broken"; }
+    o = sh("-j1 --build-dir b4 --cache-dir '" + cd + "'", &rc);
+    check(rc == 0 && o.find("cache miss") != string::npos && o.find("cache hit") == string::npos, "a truncated entry is a miss", o);
+    o = sh("-j1 --build-dir b5 --cache-dir '" + cd + "'", &rc);
+    check(rc == 0 && o.find("cache hit") != string::npos, "the entry was replaced by a good one", o);
+    o = sh("cache stats --cache-dir '" + cd + "'", &rc);
+    check(rc == 0 && o.find("entries: 1") != string::npos, "cache stats reads the shared dir", o);
+}
+
+static void testReportCacheAndJson() {
+    printf("test: report shows cache changes in a diff, totals by kind, and a json form\n");
+    fresh("rjson");
+    write("a.cpp", "int main(){return 0;}\n");
+    write("build.okay", "target app exe\n sources = a.cpp\nend\n");
+    int rc; string o = sh("-j1", &rc);
+    check(rc == 0, "first build", o);
+    fs::remove(gRoot / ".okaybuild/obj/app/a.cpp.o"); fs::remove(gRoot / ".okaybuild/obj/app/a.cpp.o.d");
+    o = sh("-j1", &rc);
+    check(rc == 0 && o.find("cache hit") != string::npos, "second build restores the object from the cache", o);
+    o = sh("report diff 1 2", &rc);
+    check(rc == 0 && o.find("cache: a.cpp miss -> hit") != string::npos, "diff names a miss that became a hit", o);
+    o = sh("report", &rc);
+    check(rc == 0 && o.find("by kind:") != string::npos && o.find("CC\t1 step(s)") != string::npos, "report totals time by step kind", o);
+    o = sh("report json", &rc);
+    check(rc == 0 && o.find("{\"steps\": 1") != string::npos && o.find("\"hits\": 1") != string::npos && o.find("\"kind\": \"CC\"") != string::npos && o.find("\"cache\": \"hit\"") != string::npos, "report json carries steps, hits and per-step cache state", o);
+}
+
+static void testTestFilterTimeoutOutput() {
+    printf("test: okay-build test can pick programs, shows a failing test's output, and enforces --timeout\n");
+    fresh("tfilter");
+    write("ok.cpp", "int main(){return 0;}\n");
+    write("bad.cpp", "#include <cstdio>\nint main(){puts(\"expected 4 got 5\"); return 3;}\n");
+    write("hang.cpp", "#include <unistd.h>\nint main(){sleep(30); return 0;}\n");
+    write("app.cpp", "int main(){return 0;}\n");
+    write("build.okay",
+          "target test_ok exe\n sources = ok.cpp\n test = on\nend\n"
+          "target test_bad exe\n sources = bad.cpp\n test = on\nend\n"
+          "target test_hang exe\n sources = hang.cpp\n test = on\nend\n"
+          "target app exe\n sources = app.cpp\nend\n");
+    int rc; string o = sh("test test_ok -j2", &rc);
+    check(rc == 0 && o.find("PASS test_ok") != string::npos && o.find("1 tests, 0 failed") != string::npos && o.find("test_bad") == string::npos, "only the named test runs", o);
+    o = sh("test app -j2", &rc);
+    check(rc == 0 && o.find("PASS app") != string::npos, "any exe can be named", o);
+    o = sh("test nosuch", &rc);
+    check(rc == 2 && o.find("no test program named 'nosuch'") != string::npos, "an unknown name is an error", o);
+    o = sh("test test_bad", &rc);
+    check(rc == 1 && o.find("FAIL test_bad exit 3") != string::npos && o.find("| expected 4 got 5") != string::npos, "a failing test shows what it printed", o);
+    auto t0 = std::chrono::steady_clock::now();
+    o = sh("test test_hang --timeout 1", &rc);
+    double secs = std::chrono::duration<double>(std::chrono::steady_clock::now() - t0).count();
+    check(rc == 1 && o.find("FAIL test_hang exit 124") != string::npos && o.find("timed out after 1 s") != string::npos, "a hanging test is killed and reported", o);
+    check(secs < 15, "the timeout stopped it long before sleep(30) ended", std::to_string(secs));
+}
+
+static void testImporters() {
+    printf("test: importer blocks rebuild only changed assets, settings change rebuilds all, failures leave no output\n"); fresh("imp");
+    write("tools/conv.sh", "echo \"$1\" >> imports.log\nif grep -q FAIL \"$1\"; then echo half > \"$2\"; exit 1; fi\n{ printf '%s|' \"$3\"; cat \"$1\"; } > \"$2\"\n");
+    auto manifest = [&](const string& settings) {
+        write("build.okay", "importer text\n pattern = assets/*.txt\n output = out/{stem}.bin\n cmd = sh tools/conv.sh {input} {output} {settings}\n settings = " + settings + "\n inputs = tools/conv.sh\nend\n");
+    };
+    write("assets/a.txt", "AAA\n"); write("assets/b.txt", "BBB\n"); write("assets/c.txt", "CCC\n"); write("assets/skip.png", "x\n");
+    manifest("q1");
+    int rc; string o = sh("-j2", &rc);
+    check(rc == 0 && ran(o) == 3, "first build imports the 3 .txt files only", o);
+    check(readFile(gRoot / "out/b.bin") == "q1|BBB\n", "importer output has settings and content", readFile(gRoot / "out/b.bin"));
+    check(!fs::exists(gRoot / "out/skip.bin") && !fs::exists(gRoot / "out/b.partial.bin"), "non-matching file ignored, no partial file left");
+    o = sh("--explain", &rc); check(rc == 0 && ran(o) == 0, "no-op imports nothing", o);
+    fs::remove(gRoot / "imports.log");
+    write("assets/b.txt", "BBB2\n"); o = sh("--explain", &rc);
+    check(ran(o) == 1 && o.find("assets/b.txt changed") != string::npos, "only the changed asset is rebuilt", o);
+    check(readFile(gRoot / "imports.log") == "assets/b.txt\n", "importer command ran for b only", readFile(gRoot / "imports.log"));
+    fs::remove(gRoot / "imports.log"); manifest("q2"); o = sh("--explain");
+    check(ran(o) == 3 && o.find("command line changed") != string::npos, "changed importer settings rebuild all", o);
+    check(readFile(gRoot / "out/a.bin") == "q2|AAA\n", "new settings applied");
+    fs::remove(gRoot / "imports.log"); fs::remove(gRoot / "out/a.bin"); o = sh("--explain");
+    check(ran(o) == 1 && o.find("out/a.bin is missing") != string::npos, "a deleted output rebuilds only it", o);
+    fs::remove(gRoot / "imports.log"); write("assets/d.txt", "DDD\n"); o = sh();
+    check(ran(o) == 1 && fs::exists(gRoot / "out/d.bin"), "a new asset is picked up", o);
+    write("tools/conv.sh", "echo \"$1\" >> imports.log\n{ printf '%s|' \"$3\"; cat \"$1\"; } > \"$2\"\n"); o = sh("--explain");
+    check(ran(o) == 4 && o.find("tools/conv.sh changed") != string::npos, "a changed importer tool rebuilds everything", o);
+    // a failing importer leaves nothing behind, and a later fix works
+    write("tools/conv.sh", "if grep -q FAIL \"$1\"; then echo half > \"$2\"; exit 1; fi\n{ printf '%s|' \"$3\"; cat \"$1\"; } > \"$2\"\n");
+    write("assets/c.txt", "FAIL\n"); o = sh("-j1", &rc);
+    check(rc == 1 && o.find("FAILED") != string::npos, "failing importer fails the build", o);
+    check(!fs::exists(gRoot / "out/c.bin") && !fs::exists(gRoot / "out/c.partial.bin"), "no half-written output after a failure");
+    write("assets/c.txt", "CCC3\n"); o = sh("", &rc);
+    check(rc == 0 && readFile(gRoot / "out/c.bin") == "q2|CCC3\n", "fixing the asset builds it", o);
+    // recursive pattern, {dir}, depfile-free; unknown keys and missing fields are errors
+    fresh("imp2"); write("tools/conv.sh", "cat \"$1\" > \"$2\"\n");
+    write("assets/x/y.dat", "Y\n"); write("assets/z.dat", "Z\n");
+    write("build.okay", "importer d\n pattern = assets/**/*.dat\n output = out/{dir}/{name}.o\n cmd = sh tools/conv.sh {input} {output}\nend\n");
+    o = sh("-j2", &rc); check(rc == 0 && readFile(gRoot / "out/x/y.dat.o") == "Y\n" && readFile(gRoot / "out/z.dat.o") == "Z\n", "** walks sub directories and {dir} keeps them", o);
+    o = sh("targets", &rc); check(o.find("out/x/y.dat.o") != string::npos || rc == 0, "targets lists without crashing", o);
+    write("build.okay", "importer d\n pattern = a/*.x\n cmd = true\nend\n");
+    o = sh("", &rc); check(rc == 2 && o.find("has no output") != string::npos, "importer without output is an error", o);
+    write("build.okay", "importer d\n pattern = a/*.x\n output = same.bin\n cmd = true\nend\n");
+    o = sh("", &rc); check(rc == 2 && o.find("every file would write the same output") != string::npos, "one output for every file is an error", o);
+}
+static int countOf(const string& hay, const string& needle) { int n = 0; for (size_t p = 0; (p = hay.find(needle, p)) != string::npos; p += needle.size()) ++n; return n; }
+static void testPerConfigDirsAndTrace() {
+    printf("test: outdir with {config} keeps each configuration apart, and --trace writes Chrome trace JSON\n"); fresh("cfgdir"); basicProject();
+    write("build.okay", "outdir = build/{config}\nconfig debug\n optimize = 0\nend\nconfig release\n optimize = 2\nend\n"
+          "target util lib\n sources = src/util.cpp\n export_include = inc\nend\ntarget app exe\n sources = src/main.cpp\n deps = util\nend\n");
+    int rc; string o = sh("-j2 --config debug", &rc);
+    check(rc == 0 && ran(o) == 4 && fs::exists(gRoot / "build/debug/app") && !fs::exists(gRoot / "build/release"), "debug builds into build/debug only", o);
+    check(fs::exists(gRoot / ".okaybuild/obj/debug/util/src/util.cpp.o"), "objects live under .okaybuild/obj/debug");
+    o = sh("-j2 --config release", &rc);
+    check(rc == 0 && ran(o) == 4 && fs::exists(gRoot / "build/release/app") && fs::exists(gRoot / "build/debug/app"), "release builds beside it and leaves debug alone", o);
+    o = sh("--config debug", &rc); check(ran(o) == 0, "going back to debug rebuilds nothing", o);
+    o = sh("", &rc); check(ran(o) == 0, "no --config uses the first configuration (debug), still up to date", o);
+    o = sh("clean --config release", &rc); check(!fs::exists(gRoot / "build/release/app") && fs::exists(gRoot / "build/debug/app"), "clean --config release removes only that program folder", o);
+    fresh("nocfg"); basicProject();
+    write("build.okay", "outdir = out/{config}\ntarget util lib\n sources = src/util.cpp\n export_include = inc\nend\ntarget app exe\n sources = src/main.cpp\n deps = util\nend\n");
+    o = sh("", &rc); check(rc == 0 && fs::exists(gRoot / "out/default/app"), "without any config block the folder is named default", o);
+    // trace
+    fresh("trace"); basicProject();
+    o = sh("-j2 --trace out/trace.json", &rc);
+    string t = readFile(gRoot / "out/trace.json");
+    check(rc == 0 && t.find("\"traceEvents\"") != string::npos && countOf(t, "\"ph\":\"X\"") == 4, "trace has one complete event per step", t);
+    check(t.find("\"cat\":\"CC\"") != string::npos && t.find("\"cat\":\"LD\"") != string::npos && t.find("src/util.cpp") != string::npos, "events carry kind and step name", t);
+    check(t.find("\"dur\":") != string::npos && t.find("\"ts\":") != string::npos && t.find("\"tid\":1") != string::npos, "events have ts, dur and a worker row", t);
+    check(!fs::exists(gRoot / "out/trace.json.tmp") && countOf(t, "{") == countOf(t, "}") && countOf(t, "[") == countOf(t, "]"), "no temp file, braces balance");
+    o = sh("--trace out/noop.json", &rc); t = readFile(gRoot / "out/noop.json");
+    check(ran(o) == 0 && t.find("\"traceEvents\"") != string::npos && countOf(t, "\"ph\":\"X\"") == 0, "a no-op run writes a trace with no steps", t);
+    write("src/main.cpp", "#include \"nope.h\"\nint main(){}\n"); o = sh("-j1 --trace out/fail.json", &rc);
+    t = readFile(gRoot / "out/fail.json"); check(rc == 1 && countOf(t, "\"ph\":\"X\"") >= 1, "a failed build still writes its trace", o + t);
+    // importer outputs can be waited on with a target's needs
+    fresh("impneeds"); write("assets/a.txt", "1\n"); write("tools/c.sh", "cat \"$1\" > \"$2\"\n"); write("src/m.cpp", "int main(){return 0;}\n");
+    write("build.okay", "importer t\n pattern = assets/*.txt\n output = out/{stem}.bin\n cmd = sh tools/c.sh {input} {output}\nend\ntarget m exe\n sources = src/m.cpp\n needs = out/a.bin\nend\n");
+    o = sh("-j2 m", &rc); check(rc == 0 && fs::exists(gRoot / "out/a.bin") && fs::exists(gRoot / "build/m"), "a target can need an importer output", o);
+}
 int main(int argc, char** argv) {
     if (argc < 2) { puts("usage: test_okaybuild PATH_TO_okay-build"); return 2; }
     gTool = "'" + fs::absolute(argv[1]).string() + "'";
     testBasicAndNoop(); testHeaderTouch(); testDefine(); testMissingHeader(); testCycle(); testLinkOrder();
     testParallelDeterministic(); testCompdbCleanDry(); testManifestErrors(); testMingwCompdb(); testMingwSlice(); testStatShortcut(); testFreshNoopTrust(); testSpacesBuildDirRsp(); testRawActions(); testHashInCommandAndPath(); testImportGenerated();
-    testPools(); testGeneratorRestat(); testKeepGoing(); testRegenManifest(); testSharedInput(); testImportedCompdb(); testWindowsHost(); testModules(); testAuditHelp(); testConfigsAndToolchains(); testCompilerCache(); testReport(); testOwnTests(); testMemoryLimit(); testCancelAndRecover(); testMsvcFlags(); testJobserver(); testCacheLimit(); testPackages(); testPackage(); testHistoryAndChecks(); testBinaryState(); testFifoJobserver(); testReportDiff(); testDistLayout(); testNativeManifest(); testImportedCache(); testGraphTargets();
+    testPools(); testGeneratorRestat(); testKeepGoing(); testRegenManifest(); testSharedInput(); testImportedCompdb(); testWindowsHost(); testModules(); testAuditHelp(); testConfigsAndToolchains(); testCompilerCache(); testReport(); testOwnTests(); testMemoryLimit(); testCancelAndRecover(); testMsvcFlags(); testJobserver(); testCacheLimit(); testPackages(); testPackage(); testHistoryAndChecks(); testBinaryState(); testFifoJobserver(); testReportDiff(); testDistLayout(); testNativeManifest(); testImportedCache(); testGraphTargets(); testToolchainAuto(); testSharedCache(); testReportCacheAndJson(); testTestFilterTimeoutOutput();
+    testRestoredObjectsStayTrusted();
+    testImporters();
+    testPerConfigDirsAndTrace();
     printf("okaybuild tests: %d checks passed, %d failed\n", gPass, gFail); return gFail ? 1 : 0;
 }

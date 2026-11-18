@@ -4,39 +4,38 @@ Internal note, not a guide. Owner, 2026-11-17: start, do not replace CMake tomor
 Written from general knowledge of build systems (action graph, compiler depfiles, content hashes, worker pool).
 No code from CMake, Ninja, Make, Meson, Bazel, MSBuild, ccache or sccache was read or used (rule 19a).
 
-## Audit at 29e1b2b8 (owner brief: 12 subsystems, one build system)
-Read of `tools/okaybuild/okay-build.cpp` and `test_okaybuild.cpp` on `grok/okaybuild-1` at `29e1b2b8`. One executable, one manifest format (`build.okay`), one state file (`.okaybuild/state`). Nothing here is wired into CMake, CI or releases.
+## Audit, re-done at cf85d6db and updated for claude/okaybuild-2 (owner brief: 12 subsystems, one build system)
+Read of `tools/okaybuild/okay-build.cpp` (about 2800 lines) and `test_okaybuild.cpp` on `grok/okaybuild-1` at `cf85d6db`, then each claim checked by running the tool (`sh tools/okaybuild/build.sh`: 194 checks passed before this branch's changes). One executable, one manifest format (`build.okay`), one state file (`.okaybuild/state`, binary OKB1). Nothing is wired into CMake, CI or releases. No Windows machine was used: Windows code is only cross-compiled with MinGW (a test does that) and, where Wine exists, run under Wine.
 
 Dependency map, in the order a build walks them:
 
-1. **CLI** (`main`) picks a command and the options (`-f`, `-j`, `-k`, `--config` is not implemented yet, `--build-dir`, `--dry-run`, `--explain`, `-v`, `--profile`, `--no-stat`).
-2. **Manifest parser** reads `build.okay`: `toolchain`, `target`, `action`, `pool`, `buildfile`, `outdir`. `okay-build modules` writes that same manifest from `*.okaymodule` files. `okay-build import` writes it from an existing Ninja build.
-3. **Buildfile regen** (optional) reruns a command when declared inputs change, then the parser runs again.
-4. **Planner** turns targets and actions into a graph: compile, archive, link, or a raw command. It orders links, reports target cycles and action cycles, and wires generator outputs.
-5. **Incremental check** loads `.okaybuild/state` and decides each step from the output, the command-line hash, depfile headers, and a size+mtime shortcut. The hash is FNV-1a 64-bit. It is for change detection only. It is not collision-safe for security.
-6. **Scheduler** runs the dirty steps. POSIX uses a worker pool (`<thread>`, `<mutex>`, `<condition_variable>`), which the Windows build does not include. Windows waits on `CreateProcessW` handles with `WaitForMultipleObjects`. Both honour pools and `-k`.
-7. **Compdb** reads the same graph and writes `compile_commands.json`, including imported compiles.
+1. **CLI** (`main`) picks a command and options, then loads the manifest.
+2. **Manifest parser** (`build.okay`: `toolchain`, `config`, `option`, `if`, `target`, `action`, `pool`, `package`, `dist`, `buildfile`) and its generators (`modules`, `native`, `import`).
+3. **Configuration** (`config.okay`, `--config`, `--opt`) edits the toolchain flags. **Toolchain resolution** (`toolchain auto`, `--toolchain`) fills the compiler paths from detection. Both run before planning.
+4. **Planner** turns targets and actions into a graph (compile, archive, link, raw command), orders links, finds cycles, applies MSVC flag spelling.
+5. **Incremental check** loads the state file and decides each step from output, command hash, depfile headers and a stat shortcut. FNV-1a 64-bit, change detection only.
+6. **Compiler cache** is asked before a compile runs: preprocess, key, restore or compile and store.
+7. **Scheduler** (pools, `-k`, memory budget, jobserver, Ctrl+C, journal resume). POSIX uses `<thread>`, Windows uses `CreateProcessW` handles.
+8. **Reports** (per-step notes, `report`, history, diff, json), **tests** (`test`), **packages** (`okay.lock`, `package`), **compdb**.
 
-There is no second copy of any of those. Configurations, a compiler cache, a test runner, packages, assets and packaging are not in that chain yet.
+The coordinator's table (the first version of this note repeated it) was out of date, because Grok's rounds 3 to 6 had already added most of the missing rows. Corrected state, with what this branch adds:
 
-Claude's 12-row table, confirmed or corrected:
+| # | System | Exists | Incomplete | Missing |
+|---|---|---|---|---|
+| 1 | Configuration | Named configs, typed options, `config.okay`, `--config`, `--opt`, `if` blocks | Flags are written GNU-style and respelled for MSVC at plan time | Per-config build dirs (a config does not get its own output tree) |
+| 2 | Build graph | Compile/archive/link/raw, link order, target and action cycles, `needs`, `graph`, `targets` | | |
+| 3 | Scheduler | Pools, `-k`, memory budget, jobserver client and publisher, Ctrl+C, journal resume | Memory budget is a number the manifest author picks, not measured | Real memory measurement |
+| 4 | Incremental | Content hashes, depfiles, stat shortcut, restat, OKB1 state | | |
+| 5 | Compiler cache | Preprocessed-text key, LRU size limit, `cache stats|clean`, imported gcc/clang/cl compiles. **Added here:** one cache shared by many build trees (`--cache-dir`, `OKAY_CACHE_DIR`, keys no longer depend on the output path), atomic entry writes, size-checked entries (damaged entry is a miss and is removed) | Shared cache is not locked across processes beyond rename; two builds can both miss and both store the same entry (harmless) | Remote cache; compressed entries |
+| 6 | Toolchain manager | Presets gcc/clang/mingw/msvc, `toolchains` probe including MSVC roots and (Windows host) registry. **Added here:** `toolchain auto` and `--toolchain NAME` use the detected paths | MSVC needs `INCLUDE`/`LIB` from a Visual Studio prompt: detection finds `cl.exe` but does not set them | Version reporting; picking between several MSVC installs by version |
+| 7 | Packages | Local packages, `okay.lock` with tree hashes | | Download, registry |
+| 8 | Testing | `test` runs test exes in parallel with PASS/FAIL and check counts. **Added here:** `test NAME...`, a failing test's output, `--timeout` | | Test sharding, XML output |
+| 9 | Asset pipeline | Design only | | Everything; waits on the owner (see below) |
+| 10 | Packaging | `package` and the `dist` layout block | Not run against the real engine | |
+| 11 | Diagnostics | Per-step time, hit/miss per step, report history and diff. **Added here:** cache changes in `report diff`, totals by step kind, `report json` | No per-step start times, so no timeline or trace file | Trace export |
+| 12 | CLI | build, clean, compdb, import, graph, targets, modules, native, toolchains, report, test, cache, lock, package | | |
 
-| # | System | Audit |
-|---|---|---|
-| 1 | Configuration manager | Partial, as Claude said. `build.okay` has toolchain and target blocks, and `modules` can generate that file. No named Debug/Release/custom configuration, no typed options, no `config.okay`. |
-| 2 | Build graph | Exists, as Claude said. Compile, archive, link, raw actions, computed link order, target cycles and action cycles, generator outputs, `needs`. |
-| 3 | Scheduler | Exists, as Claude said: worker pool on POSIX, handle wait on Windows, pools, `-k`. Missing: a memory limit, Ctrl+C cancellation, recovery after a killed build. |
-| 4 | Incremental | Exists. Content hashes, depfiles, the stat shortcut, restat. A changed command line rebuilds that step. There is no separate "build settings" record beyond the command line. |
-| 5 | Compiler cache | Missing, as Claude said. Incremental rebuild is not a cache: deleting the object compiles it again. |
-| 6 | Toolchain manager | Partial, as Claude said. Hand-written `gcc`, `clang` and `mingw` presets. No detection. No MSVC. |
-| 7 | Packages | Missing, as Claude said. |
-| 8 | Testing | Missing, as Claude said. Discovering and running test executables is not a command. |
-| 9 | Asset pipeline | Missing, as Claude said. An engine change would be asked on the issue before any of it is built. |
-| 10 | Packaging | Missing in okay-build, as Claude said. `scripts/build-windows-dist.sh` is the engine's packager and is not called from here. |
-| 11 | Diagnostics | Partial. Claude said there is no timing report. `--profile` does print plan, dirty-check, command, hash and wall time, and `-v` / `--explain` name the reason for a step. There is still no per-step report, no cache hit rate, and no `okay-build report`. |
-| 12 | CLI | Partial. Claude's list missed `modules`, which is on this head. Commands today: `build`, `clean`, `compdb`, `import`, `graph`, `targets`, `modules`. No `test`, `report`, `package`, or `toolchains`. |
-
-Order after this audit, set by the owner and the coordinator together: configurations and toolchain detection, then the compiler cache, then diagnostics, then the test runner. Packages, assets and packaging stay later. The scheduler gaps (memory, Ctrl+C, a killed build) stay later too.
+The scheduler gaps, packages, assets and packaging keep their old order. This branch did configurations/toolchains, the cache, diagnostics and testing, in that order, one commit each.
 
 ## Configurations and toolchain detection
 Named configs live in the manifest: `config NAME` then `optimize` (0–3, emitted as `-O`), `debug` (on adds `-g`), `flags`, `link_flags`, `define`. `--config NAME` selects one. With no selection, the first config is used. A custom name is just another block.
@@ -321,3 +320,59 @@ Machine was loaded by other agents (load 5-8 on 4 cores) and disk fell under 4.5
   objects end in `.obj`); the Core slice imports as 62 compiles + 1 archive. It was NOT built (disk stop), so bytes vs Ninja are
   unverified for MinGW. The CMake configure used: toolchain cmake/mingw-w64-x86_64.toolchain.cmake, tests/sandbox/launcher/
   player/editor/assimp OFF (the launcher/player/editor targets need SDL2 for MinGW).
+
+## Added on claude/okaybuild-2 (what was written from)
+Written from general knowledge only (a content-addressed store, write-to-temp-then-rename, a process-group kill, JSON text), no other tool's code.
+- `toolchain auto` / `--toolchain auto|gcc|clang|mingw|msvc`: runs the same probe as `okay-build toolchains` (`--search`, `--msvc-root`, PATH). `auto` takes the first found: msvc, clang, gcc, mingw on a Windows host; gcc, clang, mingw, msvc elsewhere. `cc`, `cxx`, `ld`, `ar` set by hand in the `toolchain` block are kept. Nothing found is an error that says so. How to try: `okay-build compdb --toolchain gcc` and read `compile_commands.json`.
+- Cache: `--cache-dir DIR` or `OKAY_CACHE_DIR`. The key leaves out the values of `-o`, `-MF`, `-MT` and `/Fo`, `/Fd`, so a second build tree with the same sources hits. The key is still FNV-1a 64 bit: not cryptographic, not collision-safe, a speed-up only. Entry format `okaybuild-cache 2` (key, object size, depfile size); old format-1 entries are refused and rebuilt.
+- `okay-build report json`; `report` ends with totals by step kind; `report diff A B` prints `cache: STEP miss -> hit`.
+- `okay-build test [NAME...] [--timeout SECONDS]`. A timeout kills the test's process group (POSIX) or the process (Windows, `TerminateProcess`), exit code shown as 124. The Windows timeout code is only cross-compiled, never run.
+
+## Round 6 on claude/okaybuild-3: engine library and `test_math` from a native manifest (2026-11-17)
+Written from general knowledge only; no other tool's code was read. Linux only: nothing here was run on Windows.
+
+How to try it (Linux, g++, SDL2 and libsodium dev headers, about 2 GB of disk for the tree):
+`g++ -std=c++17 -O2 -pthread tools/okaybuild/okay-build.cpp -o /tmp/okay-build` then
+`sh tools/okaybuild/examples/native_test_math.sh /tmp/okay-build /tmp/okb-tree 2`.
+It runs `okay-build native` (writes a manifest from the source tree), builds `okay_crypto`, `okay_platform`, `ufbx`, `okay_engine` and `test_math` (340 steps, Debug `-O0 -g0`) with no CMake or Ninja, and runs `test_math`. You should see `15 checks, 0 failures`. Delete the tree afterwards.
+
+What this found and fixed:
+- The generated manifest missed the `shared/` include directory (`AntiCheatChecks.hpp`, `RobotoFontOwn.h`), so `Net/RelayServer.cpp` did not compile. `native` now adds `shared` to the include list when the folder exists. (CMake adds it per file; we add it for the whole engine target, which is a small difference in include paths and no difference in the result.)
+- After a build that restored objects from the cache, every later no-op re-read those object files (the saved size+mtime no longer matched), about 300 ms for 52 objects. The saved stamps are now refreshed when the bytes still match (`refreshStamps`), also on a no-op run.
+
+Result: the okay-build `test_math` printed `15 checks, 0 failures`, the same as the CMake/Ninja `test_math` built from the same tree. Not compared: object files byte for byte (the two builds use different flag sets, for example CMake adds `-DOKAY_DEFAULT_ACCOUNT_*` and per-file options), so only the final run result was compared.
+
+Timings, this machine (4 cores, `-j2`, Debug `-O0 -g0`, g++, one run each for the long ones, same source tree, CMake 339 steps vs okay-build 340; not Windows):
+| | okay-build | Ninja |
+|---|---|---|
+| cold build (cache on, 0 hits) | 8 min 40 s | 9 min 09 s |
+| one header edit (`Core/Time.hpp`, 52 compiles + archive + link), cache on, all misses | 4 min 59 s | 4 min 01 s |
+| same edit, `--no-cache` | 3 min 28 s | 4 min 01 s |
+| no-op, median of 15 | 12 ms | 34 ms |
+So with the compiler cache on, a miss costs one extra preprocess run per file (that is the 20% on the edit). The cache earns it back only on a hit: the same header edit as a comment only (same preprocessed text) took 7 s because all 52 compiles were hits. A cold build is compiler-bound in both tools, so the two cold numbers are close and one run each does not show a real difference. The first okay-build cold attempt (not counted) was disturbed by other work on the machine.
+
+## Importers (claude/okaybuild-3, written from general knowledge, no other tool's code)
+An `importer` block maps a file pattern to a command line, one action per matching file. It is a way to say "turn every `assets/*.png` into `out/*.tex` with this tool". The tool itself can be any program; okay-build links no engine code and the engine importers are untouched.
+```
+importer textures
+  pattern = assets/**/*.png        # one folder, or ** for sub folders; * and ? match inside a file name
+  output  = out/{dir}/{stem}.tex   # must use {stem}, {name} or {input}
+  cmd     = sh tools/conv.sh {input} {output} {settings}
+  settings = --quality 5           # part of the command key: changing it rebuilds every file
+  inputs  = tools/conv.sh          # extra files every output depends on (the tool, a shared table)
+  depfile = out/{stem}.d           # optional, make-style, like an action
+  pool    = none                   # optional
+end
+```
+Fillers: `{input}` the file, `{name}` its name, `{stem}` the name without extension, `{ext}` the extension without the dot, `{dir}` the folder under the pattern's base (empty at the top), `{output}`, `{depfile}`, `{settings}`.
+- Each file becomes an ordinary `RUN` step, so it is tracked, hashed, listed by `targets` and `graph`, and can be built by output name or waited on with a target's `needs`.
+- Only a changed asset rebuilds. A changed `settings`, `cmd` or `inputs` file rebuilds all. A deleted output rebuilds only itself. A new matching file is picked up on the next run. A removed source leaves its old output in place (nothing deletes outputs).
+- `{output}` in the command is really `out/{stem}.partial.tex`: the tool writes there and okay-build renames it to the real name only when the command succeeded. A failing importer leaves neither the partial nor the real output (an older good copy is removed too, so a later step cannot use it by mistake).
+How to try: `sh tools/okaybuild/build.sh /tmp/okb` runs the tests (`importer blocks ...` is the group). By hand: make `assets/a.txt`, `tools/conv.sh` containing `cat "$1" > "$2"`, the block above with `pattern = assets/*.txt`, `output = out/{stem}.bin`, `cmd = sh tools/conv.sh {input} {output}`, then `okay-build`, edit one file and run it again with `--explain`.
+Also fixed on this round: `poolStr` (the string pool the state records point into) was written from several worker threads without a lock, which could make a record lose an input on a parallel build (seen once as a flaky "new input" rebuild in the new test); it has its own lock now.
+
+## Per-configuration output folders and a build trace (claude/okaybuild-3)
+Written from general knowledge only (the Chrome trace event format is a public JSON description: complete events with name, category, phase `X`, start and duration in microseconds, process and thread ids).
+- `outdir = build/{config}` in the manifest: `{config}` becomes the selected configuration's name (`--config NAME`, `config.okay`, or the first `config` block), or `default` when the manifest has no config blocks. Programs go to `build/<config>/`, objects to `.okaybuild/obj/<config>/<target>/...`. Outputs are tracked by path, so building `release` after `debug` does not touch the debug files, and going back to `debug` rebuilds nothing. `clean --config release` removes only that folder. Without `{config}` in `outdir` nothing changes from before.
+- `--trace FILE` writes the steps of that run as Chrome-trace JSON (`{"traceEvents":[...]}`): one `X` event per step (`cat` is the step kind CC/AR/LD/RUN, `args.cache` is hit/miss/-/fail), one row per worker thread (`worker N`, named by `M` events), times from the first step. Open it in a trace viewer that reads this format (for example a browser's trace page). A no-op run writes a file with no steps; a failed build still writes it. It is written to a temp file and renamed. Windows builds record every step on row 1 (that path runs steps from one thread).
+How to try: `printf 'outdir = build/{config}\nconfig debug\n optimize = 0\nend\nconfig release\n optimize = 2\nend\ntarget app exe\n sources = main.cpp\nend\n' > build.okay`, then `okay-build --config debug --trace t.json`, `okay-build --config release`, `ls build`; the tests are the group `outdir with {config} ...` in `sh tools/okaybuild/build.sh /tmp/okb`.

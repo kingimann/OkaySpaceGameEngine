@@ -14,6 +14,7 @@ CL=${OKAY_CL:-tools/okayms/build/okay-cl}
 # A private copy of the compiler: rebuilding it while the run is going does not change the results.
 SNAP=$(mktemp /tmp/measure_cl_XXXXXX)
 cp "$CL" "$SNAP"
+chmod +x "$SNAP"
 CL=$SNAP
 LIMIT=${TIMEOUT_S:-60}
 OBJ=$(mktemp -u /tmp/measure_XXXXXX.obj)

@@ -11,6 +11,7 @@
 #include "EditorPerf.hpp"            // frame-time maths, idle throttle, viewport scale, performance mode (tests/test_editor_perf.cpp)
 #include "SaveBeforePrompt.hpp"         // the Save-before-Play/Stop/Open prompt's order: stop first, then save (#888)
 #include "ObjectRef.hpp"         // GUID-held object references that survive undo / scene rebuilds
+#include "OwnSwitches.hpp"   // the table of own replacements that can be switched on (View > Rendering & Performance)
 #include "OwnStack.hpp"   // OKAY_OWN_STACK=1 dogfood switch + the one-line startup stack report
 #include "CrashHandler.hpp"   // crash handlers + the crash context that fills okay_crash.txt (docs/crash_reports.md)
 #include "ActionExport.hpp"
@@ -7225,6 +7226,23 @@ static void DrawRenderingMenuItems(EditorState& ed) {
     if (ImGui::IsItemHovered()) ImGui::SetTooltip("Dear ImGui draws the editor. OkayUI (preview) is our own toolkit: pick it to draw the Console panel with it.\nEverything else stays Dear ImGui. Applies at once; the OKAY_UI_BACKEND environment variable overrides it.");
     }
 #endif
+    if (ImGui::BeginMenu("Experimental: try our own code")) {   // the same table and file as the launcher's Settings > Experimental (shared/OwnSwitches.hpp)
+        namespace osw = okay::ownswitches;
+        osw::State& st = osw::Global();
+        const osw::Context ctx = osw::Context::Here();
+        ImGui::TextDisabled("Off by default. A change works after you restart the editor.");
+        if (ImGui::MenuItem("Back to normal (all off)", nullptr, false, !st.chosen.empty())) { osw::AllOff(st.chosen); osw::SaveChosen(); }
+        ImGui::Separator();
+        for (const osw::Item& it : osw::Items()) {
+            if (!osw::Available(it, ctx)) continue;
+            const bool byUser = osw::SetByUser(it, osw::AppliedNow());
+            const osw::Status stt = osw::StatusOf(it, st.chosen, st.runningWith, byUser);
+            const std::string label = std::string(it.label) + "  (" + osw::StatusText(stt) + ")";
+            if (ImGui::MenuItem(label.c_str(), nullptr, osw::Has(st.chosen, it.id), !byUser)) { osw::Set(st.chosen, it.id, !osw::Has(st.chosen, it.id)); osw::SaveChosen(); }
+            if (ImGui::IsItemHovered()) ImGui::SetTooltip("%s", it.desc);
+        }
+        ImGui::EndMenu();
+    }
     DrawAutoModeMenu("VSync", g_vsyncMode, g_vsync, "Off = uncapped FPS (no 60 Hz limit). On = no tearing. Auto turns it on when the GPU draws the editor and off for the software renderer.");
     if (ImGui::MenuItem("Smooth frame time", nullptr, &g_smoothFrameTime)) SaveSettings();
     if (ImGui::IsItemHovered()) ImGui::SetTooltip("Play steps the game by an evened-out frame time (whole refresh periods with\nVSync), so movement and cameras don't micro-judder at a steady frame rate.");
@@ -50565,6 +50583,7 @@ int main(int argc, char** argv) {
     if (int code = okay::selfupdate::SelfCheck(argc, argv, OKAY_ENGINE_VERSION); code >= 0) return code;   // `--okay-selfcheck <v>`: the updater asks the new file who it is
     okay::restart::RememberArguments(argc, argv);
     okay::editor::ExamplesExeDir() = OkayExeDir();   // File > Examples finds the shipped "examples" folder beside the program
+    okay::ownswitches::Startup();   // View > Rendering & Performance > Experimental (same file as the launcher's Settings page): set the variables before anything reads them
     okay::ownstack::Startup();   // OKAY_OWN_STACK=1 sets the own-backend switches; logs which parts are ours (docs/own_stack_rollout.md)
     std::fprintf(stderr, "[updater] %s\n", okayupdate::SignatureStatus(okayupdate::BuiltInTrustedKeys()).line.c_str());   // OFF is never silent (docs/security.md "Updater signing")
     okaycrash::handler::Install(OKAY_ENGINE_VERSION, __DATE__ " " __TIME__);   // report crashes: Windows exception filter / Linux and macOS signals / std::terminate

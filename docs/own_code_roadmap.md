@@ -29,6 +29,16 @@ Our replacements stay **off by default** until the owner declares them ready and
 
 A step ships only when it is finished and tested; each step is one PR with an honest NOT DONE list. Nothing is declared ready on this page: the state column below is what the code does today.
 
+## One place to try our own parts at run time (2026-11-18)
+
+Launcher **Settings > Experimental** and editor **View > Rendering & Performance > Experimental: try our own code** list
+the own parts that can be chosen without a rebuild, all off by default: OkayUI screens (`OKAY_UI_BACKEND=okayui`), the own
+WAV decoder (`OKAY_OWN_WAV=1`), and on Linux the own HTTP client (`OKAY_OWN_HTTP=1`) and the own window layer
+(`OKAY_PLATFORM_BACKEND=own`). The choice is saved in `own_switches.cfg` and applied as environment variables at the top
+of `main()`; a variable the person set wins. The table is `Items()` in `shared/OwnSwitches.hpp`: a new run-time seam
+(okay::platform events, own ImGui renderer, okayui host) adds one line. Compile-time-only options and cryptography are not in
+it. Try it: `docs/try_it/own-switch.md`.
+
 ## Inventory and plan
 
 Everything third-party that is in the build or in the shipped binaries, taken from the CMake files, the vendored directories, the scripts and the workflows.

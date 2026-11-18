@@ -808,8 +808,7 @@ def render(ref, sha, infos, build_files, comment_only, commit_date):
     w("### 4a. GAPs in `okay::platform` itself, by call sites they block")
     w("")
     w("L / E / P = the programs that still have the call (shared and engine files count for every program that includes them). \"Call sites\" is the")
-    w("ranking number; \"refs\" breaks ties. `win.adopt` is not an SDL word: it is the structural blocker described under section 3, counted as the call")
-    w("sites of the window rows it holds back.")
+    w("ranking number; \"refs\" breaks ties.")
     w("")
     gap_rows = []
     for cid, fam, status, desc, cover, rx in CAPS:
@@ -828,11 +827,11 @@ def render(ref, sha, infos, build_files, comment_only, commit_date):
     w("")
     w("### 4b. HAVE in `okay::platform`, but the apps still call SDL (mechanical moves)")
     w("")
-    w("These need no new platform code, only moving call sites (the window rows after `win.adopt` exists).")
+    w("These need no new platform code, only moving call sites (the window rows can be moved now through `WrapSdl2Window`).")
     w("")
     have_rows = []
     for cid, fam, status, desc, cover, rx in CAPS:
-        if status != "HAVE":
+        if status != "HAVE" or cid == "win.adopt":
             continue
         calls, refs, who, per = cap_stats(cid)
         if refs == 0:

@@ -327,6 +327,11 @@ if(NOT EMSCRIPTEN)
     add_subdirectory(relay)
 endif()
 
+# ---- okay-texture: command line texture tool (mips, atlas, compress), no graphics deps -----
+if(NOT EMSCRIPTEN)
+    add_subdirectory(tools/okaytexture)
+endif()
+
 # ---- Xbox One Developer Mode export (experimental, OFF by default) -----
 if(OKAY_BUILD_XBOX_UWP)
     add_subdirectory(platform/xbox_uwp)

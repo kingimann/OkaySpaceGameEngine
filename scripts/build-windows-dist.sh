@@ -143,6 +143,8 @@ cp "$BUILD_DIR/bin/OkayEngine.exe" \
    "$SDL2_MINGW_PREFIX/bin/SDL2.dll" \
    "$OUT_DIR/Tools/"
 [ -f "$BUILD_DIR/bin/okayspace-relay.exe" ] && cp "$BUILD_DIR/bin/okayspace-relay.exe" "$OUT_DIR/Tools/"
+# okay-texture.exe: our texture tool (mips, atlas, compress to DDS); examples\texture shows how to use it.
+[ -f "$BUILD_DIR/bin/okay-texture.exe" ] && cp "$BUILD_DIR/bin/okay-texture.exe" "$OUT_DIR/Tools/"
 # OkayUI's standalone Direct3D 11 demo (no SDL): a raw DX11 app rendering OkayUI.
 [ -f "$BUILD_DIR/bin/okayui_d3d11_demo.exe" ] && cp "$BUILD_DIR/bin/okayui_d3d11_demo.exe" "$OUT_DIR/Tools/"
 # VERSION.txt is the single source of truth for the self-updater: the launcher
@@ -193,6 +195,7 @@ physics2d
 player
 security_paths
 spatial_audio
+texture
 touch_controls
 ui_library
 ui_text

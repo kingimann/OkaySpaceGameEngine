@@ -2520,6 +2520,7 @@ static int numberBefore(const string& s, const string& word) {
     return atoi(s.c_str() + i);
 }
 static long long gTestTimeoutSec = 0;
+static string gCmakeExtra; // cmake --extra FILE: text appended to the manifest (a dist block, say); kept when the manifest is regenerated
 static string gCmakeToolchainFile; // cmake --toolchain-file
 static bool gCtestRerunFailed = false; // ctest --rerun-failed
 static vector<string> gCtestInc, gCtestExc, gCtestLabels; // ctest -R / -E / -L
@@ -2663,8 +2664,14 @@ static int packageDist(const Manifest& m) {
     if (!d.textures.empty()) copyInto(d.textures, fs::path(root) / "Assets/Textures");
     if (!d.fonts.empty()) copyInto(d.fonts, fs::path(root) / "Assets/Fonts");
     for (auto& ex : d.examples) {
-        string folder = fs::path(ex).filename().generic_string();
-        copyInto(ex, fs::path(root) / "examples" / folder);
+        // keep the path below an "examples" folder (visual_script/playground stays two levels), else the folder's own name
+        string norm = fs::path(ex).lexically_normal().generic_string(), folder = fs::path(ex).filename().generic_string();
+        size_t at = norm.rfind("examples/"); if (at != string::npos && (at == 0 || norm[at - 1] == '/')) folder = norm.substr(at + 9);
+        vector<string> listed; copyTreeFiles(ex, fs::path(root) / "examples" / folder, "", listed);
+        for (auto& f : listed) { // the sample sources are not shipped, only what the editor opens
+            string ext = fs::path(f).extension().generic_string();
+            if (ext == ".py" || ext == ".cpp" || ext == ".hpp" || ext == ".txt" || ext == ".pyc" || f.find("__pycache__") != string::npos) { std::error_code ec; fs::remove(fs::path(root) / "examples" / folder / f, ec); }
+        }
     }
     printf("okay-build package: %s\n", root.c_str());
     return 0;
@@ -2899,12 +2906,14 @@ static int cmdCmake(const string& root, const string& outFile, const vector<std:
         string c = "\"" + self + "\" cmake \"" + co.root + "\" -o \"" + fs::absolute(outFile).generic_string() + "\"";
         for (auto& d : defs) c += " --opt \"" + d.first + "=" + d.second + "\"";
         if (!buildType.empty()) c += " --build-type " + buildType;
+        if (!gCmakeExtra.empty()) c += " --extra \"" + gCmakeExtra + "\"";
         if (!gCmakeToolchainFile.empty()) c += " --toolchain-file \"" + gCmakeToolchainFile + "\"";
         for (auto& f : fetched) c += " --fetched \"" + f.first + "=" + f.second + "\"";
         co.regenCmd = c;
     }
     cmr::Report rep; cmr::Tally tally; string text;
     try { text = cmr::readProject(co, rep, tally); } catch (const cmr::ReadError& e) { throw Fail("cmake: " + e.msg); }
+    if (!gCmakeExtra.empty()) { std::ifstream ex(gCmakeExtra); if (!ex) throw Fail("cannot read " + gCmakeExtra); text += "\n# appended from " + gCmakeExtra + "\n" + string((std::istreambuf_iterator<char>(ex)), {}); }
     { std::ofstream f(outFile, std::ios::trunc); if (!f) throw Fail("cannot write " + outFile); f << text; }
     printf("okay-build cmake: %d of %d targets written (%d skipped), %d of %d tests written -> %s\n", rep.emitted, rep.targetsDeclared, rep.skipped, rep.testsEmitted, rep.testsDeclared, outFile.c_str());
     if (!audit) return 0;
@@ -3827,6 +3836,7 @@ int main(int argc, char** argv) {
                 optSets.push_back({s.substr(0, eq), s.substr(eq + 1)});
             }
             else if (a == "--audit") cmakeAudit = true;
+            else if (a == "--extra" && i + 1 < argc) gCmakeExtra = fs::absolute(argv[++i]).generic_string();
             else if (a == "--toolchain-file" && i + 1 < argc) gCmakeToolchainFile = argv[++i];
             else if (a == "--rerun-failed") gCtestRerunFailed = true;
             else if (a == "-R" && i + 1 < argc) gCtestInc.push_back(argv[++i]);

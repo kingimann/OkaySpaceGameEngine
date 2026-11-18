@@ -33,4 +33,11 @@ Needs g++, the SDL2 development headers and about 2 GB of disk. Run from a check
    are only read). The programs appear as `/tmp/okb-tree/build/okay-player`, `OkayEngine` and `OkaySpace`.
 9. Time a no-op rebuild against Ninja: `sh tools/okaybuild/examples/noop_vs_ninja.sh OKAY_BUILD MANIFEST BUILD_DIR NINJA_DIR HEADER TARGET...`.
 
+10. More `ctest`: `FIXTURES_SETUP/CLEANUP/REQUIRED`, `RESOURCE_LOCK`, `PASS_REGULAR_EXPRESSION`/`FAIL_REGULAR_EXPRESSION` come from the CMake files;
+    `okay-build -f build.cmake.okay ctest --rerun-failed` runs only the tests that failed last time (the list is `<build>/build/ctest/last-failed.txt`).
+11. Object cache: the second clean build is all hits. `okay-build --cache-dir /tmp/oc -j2` (twice, deleting `build` and `.okaybuild` in between); the second run prints
+    `cache N hit, 0 miss`. `okay-build cache stats --cache-dir /tmp/oc` shows entries, bytes, total hits and misses and the hit rate. `--no-cache` turns it off.
+12. Windows programs from Linux (MinGW, no CMake): see `tools/okaybuild/examples/windows_dist.sh` (needs the SDL2 and libsodium MinGW folders, `scripts/fetch-libsodium-mingw.sh`
+    prints the second). `okay-build tool pe build/OkaySpace.exe` prints format, machine, subsystem (GUI or console), imported DLLs and the version description.
+
 Unverified: Windows (the reader and `ctest` were only run on Linux; `ctest` is not done on Windows), MSVC.

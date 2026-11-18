@@ -2901,6 +2901,7 @@ Word, then the number(s) to say. Back to the [overview](../FEATURE_MAP.md).
 - Node search popup (14.1.12)
 - node shader (26.1)
 - nodes (14.4)
+- Nodes explain themselves (14.1.13)
 - noise (29.3, 36.7)
 - Noise library (29.3.2)
 - Noise, curves, colour spaces and random streams (36.7)

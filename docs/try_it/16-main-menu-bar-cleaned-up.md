@@ -29,6 +29,6 @@ Where: the menu bar at the top of the editor, `Tools\OkayEngine.exe` (or start t
 6. The **Window** and **Engine** menus are gone: their items were duplicates (Items, Loot & Recipes is in View > Editors & Tools; Build
    Settings is in File) or moved (Check for Updates to Help).
 
-Screenshots of the real editor (built and run on Linux, in a virtual display; not Windows): [docs/images/editor_menus/](images/editor_menus/)
+Screenshots of the real editor (built and run on Linux, in a virtual display; not Windows): a picture folder (pictures are no longer stored in the repository)
 (`file.png`, `file_examples.png`, `file_play_save_greyed.png`, `edit_undo_named.png`, `gameobject.png`, `view.png`, `help.png`). What was and
 was not clicked is listed in [editor_menus.md](editor_menus.md) section 3b; "Checks run for this change" is at the end of section 17.

@@ -23,6 +23,10 @@ then this file gets updated. Keep this file short and true.
      duplicate found later is compared first, then merged or deleted.
    - Waiting for CI is not a reason to stop: start or continue one of those things while it runs, and never sit
      polling GitHub. If an agent or the main session has nothing running, start more agents on the next items.
+2a. **Do not give Claude 2 tasks.** (Owner rule, 2026-11-17: "stop giving claude 2 tasks".) The coordinator and its
+    agents do not assign, request or queue work for Claude 2, and do not post task requests for it on issue #422. Claude 2
+    chooses and claims its own work (rule 2). If a Claude 2 branch or PR needs fixing, the coordinator fixes it itself
+    (rules 8 and 25) and does not ask Claude 2 to.
 3. **Explain plainly.** Short, simple sentences. Say what you did, what it means and what is left. No jargon
    without a word of explanation.
 4. **Be honest.** Say exactly what was run and what was not. Say "unverified" when it is. Never call something
@@ -31,8 +35,16 @@ then this file gets updated. Keep this file short and true.
     notes and agents no longer write "How to try it" sections or `docs/try_it/` entries, and CI no longer checks them.
     Still say honestly what was run and what was not (rule 4). The old `docs/try_it/` files and `scripts/gen_try_it.py`
     stay for now; they are not required.
-5. **Update the docs as you go**, in the same change as the code: the matching guide, the feature map
-   (`python3 scripts/gen_feature_map.py`, then `--check`), the roadmap, and `docs/UNFINISHED.md` rows.
+4b. **No screenshots in the repository.** (Owner rule, 2026-11-17: "Remove any screenshots on GitHub, clean up the GitHub,
+    organize files better".) Pictures are never committed: `docs/images/` was deleted and is git-ignored, and `branch_lint.py`
+    refuses a picture under `docs/` or at the repo root. Make pictures outside the repo (`OKAY_SHOT_DIR` or a temp folder), show
+    them to the owner in chat, and describe them in words in docs. Only pictures that a test compares against stay
+    (`tests/`, `okayui/tests/`, `assets/`, `examples/`). Keep `docs/README.md` (the index) in step when a guide is added.
+5. **Docs are for our own use only.** (Owner rule, 2026-11-17: "No more guides, tutorials or anything, documents are for
+   our use only".) Do not write guides, tutorials, how-tos, quick starts or player/user-facing pages, and do not add new
+   ones. Keep only the internal records, short and in the same change as the code: the feature map
+   (`python3 scripts/gen_feature_map.py`, then `--check`), the roadmap, `docs/UNFINISHED.md` rows, and design or audit
+   notes when a decision needs one. Existing guides stay until the owner says to delete them; do not extend them.
 
 ## Pull requests and CI
 
@@ -150,6 +162,22 @@ then this file gets updated. Keep this file short and true.
     "unconfirmed". Every bug goes to Claude 2 (a bug fix may touch any file, with a failing test and a claim marked
     `Kind: bug`); the coordinator's agents fix a bug only inside a feature branch they are finishing.
     Cryptography findings follow rule 18 as well.
+24a. **Exception: Grok may write our own build tool and our own compiler (owner 2026-11-17: "Yes please", then "start
+    building our own MSVC and Clang too ... we are not replacing them any time soon, its so i have something to do").**
+    Only in `tools/okaybuild/` (build tool, `docs/own_build_plan.md`), `tools/okaycc/` (our own Clang-style compiler,
+    `docs/own_compiler_plan.md`) and `tools/okayms/` (our own MSVC-style compiler, linker and Windows toolchain,
+    `docs/own_msvc_plan.md`), on `grok/*` branches it pushes itself, never on main. Everything else in rule 24 still
+    holds for the rest of the repository, and rule 18 still holds (no cryptography). The code must be its own, written
+    from language standards, object-file and CPU manuals and general compiler ideas, with no code taken from CMake,
+    Ninja, GCC, Clang/LLVM, MSVC, tcc or any other project (rule 19a). Both stay OFF: not in CMake, CI or releases, and
+    nothing in the engine depends on them, until the owner says so. The coordinator's agents run the tests, read the
+    result, and open and merge the PR.
+24b. **Exception: experimental Xbox One export through Microsoft's public Windows SDK and UWP tools (owner 2026-11-18:
+    "For Xbox I'll allow it").** The Windows SDK, Visual Studio UWP tools, MakeAppx and SignTool are build tools the owner
+    installs on their own PC; nothing from them is copied into the repository or shipped. Only the public SDK: no GDKX
+    or other restricted Xbox code. Code lives in its own isolated folder behind a CMake option that is OFF by default,
+    and existing Windows export must keep working. Say "unverified" for anything not built and packaged on Windows, and
+    never claim console hardware support without a test on a real console. Rule 19a still holds for everything else.
 25. **Claude 2 reports its usage.** With each result Claude 2 posts `Usage: about N% left` on issue #422, and
     `HANDOFF SOON` at about 20% and `HANDOFF NOW` at about 5%, naming its branches and what is unfinished, so the
     coordinator can take its branches over. Claude 2 pushes only `claude2/*` branches, opens no PRs, and starts a

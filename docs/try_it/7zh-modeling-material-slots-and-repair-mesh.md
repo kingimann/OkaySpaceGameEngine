@@ -28,7 +28,7 @@ to one of them (it is in the Modeling window; the exact tab is unverified), or o
 
 
 **More modeling tools (same example folder).** Open `examples\modeling_tools\spin_path_curve.okayscene`. You should see a blue **Spun Vase**, a **Bent Horn**
-(a box with a curved horn pulled out of its top) and a row of small cubes called **Curve Array** following a curve. `docs/images/modeling_more/spin_path_curve.png` is a
+(a box with a curved horn pulled out of its top) and a row of small cubes called **Curve Array** following a curve. a picture folder (pictures are no longer stored in the repository) is a
 headless software render of it.
 1. **Array Along Curve.** Click **Curve Array**. In the Inspector find **Modifiers**: the first one is *Array Along Curve*, with a time like `0.05 ms` under its name.
    Drag one of the curve points: the cubes follow. Press **Wave** or **Helix** or **Arc**: the row takes that shape. Untick **Follow the curve**: the cubes stop turning.
@@ -72,7 +72,7 @@ headless software render of it.
 4. **Reduce Polygons.** Click the **Wrap Target** sphere (many triangles), Edit Mesh, set **Reduce to %** to 25, Ctrl+K, type `reduce`, Enter: the Console shows the triangle count dropping to about a quarter and the sphere still looks round.
 5. **Mesh library.** Use **Save as Mesh Asset** on a model, then Modeling > Import page > **Mesh library**: it appears (press Refresh); **Add** puts a copy in the scene.
 
-**Picture.** `docs/images/modeling_more/material_slots.png` is a headless software render of the example scene (not a GPU render, not the editor window).
+**Picture.** a picture folder (pictures are no longer stored in the repository) is a headless software render of the example scene (not a GPU render, not the editor window).
 
 **What was and was not checked.** The tests `modeling_more` and `modeling_more_scene` ran on Linux (slots through scene save/load, `.okaymesh` files,
 the software renderer drawing each slot's colour and picture, Repair Mesh, Spin, Extrude Along Path, Array Along Curve, measuring, snapping, the library, the dissolve/weld/delete fixes). Nobody has clicked these buttons in the real

@@ -1,4 +1,5 @@
 #pragma once
+#include "VisualScriptPanelWords.hpp"
 // The Visual Script editor's variable declarations: add a typed variable, pick its
 // scope, edit its default (numbers, vectors, colours, objects, lists, maps, structs)
 // and define struct types. The model lives in VsEditGraph (declare, setVarType...);
@@ -245,16 +246,16 @@ inline void VsDrawVariableDecls(Graph& g) {
     static char newField[64] = "";
     static std::string newFieldType = "Number";
     static int fieldStruct = -1;
-    static const char* kScopes[] = {"Object (this graph)", "Scene", "Global"};
+    static const char* kScopes[] = {kPanelScopes[0], kPanelScopes[1], kPanelScopes[2]};
     static const char* kScopeNames[] = {"object", "scene", "global"};
 
     ImGui::Spacing();
-    ImGui::TextUnformatted("Declared variables");
+    ImGui::TextUnformatted(kPanelSaved);
     ImGui::Separator();
-    ImGui::TextWrapped("Give a variable a type and a starting value. Object variables belong to this graph, scene ones are shared by every graph in the scene, global ones last for the whole run.");
+    ImGui::TextWrapped("%s", kPanelSavedHelp);
     if (!g.declError().empty()) {
         ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(1.0f, 0.45f, 0.4f, 1.0f));
-        ImGui::TextWrapped("A declaration doesn't load: %s", g.declError().c_str());
+        ImGui::TextWrapped(kPanelSavedBad, g.declError().c_str());
         ImGui::PopStyleColor();
     }
     std::vector<std::string> structNames;
@@ -271,17 +272,17 @@ inline void VsDrawVariableDecls(Graph& g) {
         if (ImGui::InputText("##vname", nb, sizeof(nb), ImGuiInputTextFlags_EnterReturnsTrue) || (ImGui::IsItemDeactivatedAfterEdit() && std::string(nb) != e.name)) {
             std::string err; msg = g.renameVar(i, nb, &err) ? "" : err;
         }
-        if (ImGui::IsItemHovered()) ImGui::SetTooltip("The variable's name. Press Enter to rename; nodes that use it follow.");
+        if (ImGui::IsItemHovered()) ImGui::SetTooltip("%s", kPanelNameTip);
         ImGui::SameLine();
         if (ImGui::SmallButton("x")) removeAt = (int)i;
-        if (ImGui::IsItemHovered()) ImGui::SetTooltip("Remove this declaration (nodes that use the name keep working, untyped)");
+        if (ImGui::IsItemHovered()) ImGui::SetTooltip("%s", kPanelRemoveTip);
         int sc = e.scope == "scene" ? 1 : e.scope == "global" ? 2 : 0;
         ImGui::SetNextItemWidth(-1);
         if (ImGui::Combo("##vscope", &sc, kScopes, 3)) { std::string err; msg = g.setVarScope(i, kScopeNames[sc], &err) ? "" : err; }
-        if (ImGui::IsItemHovered()) ImGui::SetTooltip("Who sees it: this graph's object, every graph in the scene, or the whole game run.");
+        if (ImGui::IsItemHovered()) ImGui::SetTooltip("%s", kPanelScopeTip);
         std::string ty = e.type;
         if (VsTypeCombo("##vtype", ty, structNames, true)) { std::string err; msg = g.setVarType(i, ty, &err) ? "" : err; }
-        if (ImGui::IsItemHovered()) ImGui::SetTooltip("The variable's type. A Set node that sends a value that doesn't fit is reported and the variable keeps its value.");
+        if (ImGui::IsItemHovered()) ImGui::SetTooltip("%s", kPanelTypeTip);
         // The default, edited with the widget for its type.
         VarType vt;
         VsValue val = VsExposedValue(e.type, e.value, e.typed, g.structDefs(), vt);
@@ -294,23 +295,23 @@ inline void VsDrawVariableDecls(Graph& g) {
         if (vt.base == PinType::List || vt.base == PinType::Map || vt.IsStruct() || vt.base == PinType::Object) {
             char lb[1024]; std::snprintf(lb, sizeof(lb), "%s", e.typed ? e.value.c_str() : VsToLiteral(val).c_str());
             ImGui::SetNextItemWidth(-1);
-            if (ImGui::InputTextWithHint("##vlit", "default as text, e.g. [1, 2, 3]", lb, sizeof(lb), ImGuiInputTextFlags_EnterReturnsTrue)) {
+            if (ImGui::InputTextWithHint("##vlit", kPanelStartHint, lb, sizeof(lb), ImGuiInputTextFlags_EnterReturnsTrue)) {
                 std::string err; msg = g.setVarDefault(i, lb, &err) ? "" : "default: " + err;
             }
-            if (ImGui::IsItemHovered()) ImGui::SetTooltip("Edit the default as text and press Enter. Lists [a, b], maps {key: v}, vectors (x, y, z), colours #rrggbb.");
+            if (ImGui::IsItemHovered()) ImGui::SetTooltip("%s", kPanelStartTip);
         }
         ImGui::PopID();
     }
     if (removeAt >= 0) g.removeVar((std::size_t)removeAt);
 
     ImGui::Separator();
-    ImGui::TextUnformatted("New variable");
+    ImGui::TextUnformatted(kPanelNewSaved);
     ImGui::SetNextItemWidth(-1);
-    ImGui::InputTextWithHint("##newvar", "name, e.g. health", newName, sizeof(newName));
+    ImGui::InputTextWithHint("##newvar", kPanelNameHint, newName, sizeof(newName));
     ImGui::SetNextItemWidth(-1);
     ImGui::Combo("##newscope", &newScope, kScopes, 3);
     VsTypeCombo("##newtype", newType, structNames, true);
-    if (ImGui::Button("Add variable##decl", ImVec2(-1, 0))) {
+    if (ImGui::Button((std::string(kPanelAddSaved) + "##decl").c_str(), ImVec2(-1, 0))) {
         std::string err;
         if (g.declare(newName, newType, kScopeNames[newScope], &err)) { newName[0] = '\0'; msg.clear(); }
         else msg = err;
@@ -323,9 +324,9 @@ inline void VsDrawVariableDecls(Graph& g) {
 
     // ---- Struct types ----
     ImGui::Spacing();
-    ImGui::TextUnformatted("Structs");
-    ImGui::Separator();
-    ImGui::TextWrapped("A struct is a record with named, typed fields (Enemy: health, position, tint). Declare one, then pick its name as a variable's type.");
+    // Folded away unless the script uses a bundle.
+    if (ImGui::CollapsingHeader(kPanelBundles, g.structs.empty() ? 0 : ImGuiTreeNodeFlags_DefaultOpen)) {
+    ImGui::TextWrapped("%s", kPanelBundlesHelp);
     int removeStruct = -1;
     for (std::size_t si = 0; si < g.structs.size(); ++si) {
         auto& st = g.structs[si];
@@ -350,30 +351,31 @@ inline void VsDrawVariableDecls(Graph& g) {
                 }
                 char fb[256]; std::snprintf(fb, sizeof(fb), "%s", f.value.c_str());
                 ImGui::SetNextItemWidth(-1);
-                if (ImGui::InputTextWithHint("##fdef", "default (blank = type's default)", fb, sizeof(fb))) { f.value = fb; g.declsChanged(); }
+                if (ImGui::InputTextWithHint("##fdef", kPanelPartStart, fb, sizeof(fb))) { f.value = fb; g.declsChanged(); }
                 ImGui::PopID();
             }
             if (removeField >= 0) g.removeStructField(si, (std::size_t)removeField);
             if (fieldStruct != (int)si) { /* add-field row is per struct */ }
             ImGui::SetNextItemWidth(ImGui::GetContentRegionAvail().x * 0.5f);
-            ImGui::InputTextWithHint("##nfield", "field name", newField, sizeof(newField));
+            ImGui::InputTextWithHint("##nfield", kPanelPartName, newField, sizeof(newField));
             ImGui::SameLine();
-            if (ImGui::SmallButton("+ field")) {
+            if (ImGui::SmallButton(kPanelAddPart)) {
                 std::string err;
                 if (g.addStructField(si, newField, "Number", &err)) { newField[0] = '\0'; msg.clear(); } else msg = err;
             }
-            if (ImGui::SmallButton("Remove struct")) removeStruct = (int)si;
+            if (ImGui::SmallButton(kPanelRemoveBundle)) removeStruct = (int)si;
             ImGui::TreePop();
         }
         ImGui::PopID();
     }
     if (removeStruct >= 0) g.removeStruct((std::size_t)removeStruct);
     ImGui::SetNextItemWidth(ImGui::GetContentRegionAvail().x * 0.6f);
-    ImGui::InputTextWithHint("##nstruct", "new struct name", newStruct, sizeof(newStruct));
+    ImGui::InputTextWithHint("##nstruct", kPanelBundleName, newStruct, sizeof(newStruct));
     ImGui::SameLine();
-    if (ImGui::SmallButton("+ struct")) {
+    if (ImGui::SmallButton(kPanelAddBundle)) {
         std::string err;
         if (g.declareStruct(newStruct, &err)) { newStruct[0] = '\0'; msg.clear(); } else msg = err;
+    }
     }
     (void)newFieldType;
 }

@@ -1,0 +1,15 @@
+// okay-ms own standard header: <ctime> ([ctime.syn]): time_t and clock_t as 64-bit integers, and the declarations of time and
+// clock. They are not in okay-ms's runtime: a program that calls them needs a C library that has them.
+#pragma once
+typedef long long time_t;
+typedef long clock_t;
+struct tm {
+    int tm_sec, tm_min, tm_hour, tm_mday, tm_mon, tm_year, tm_wday, tm_yday, tm_isdst;
+};
+namespace std {
+extern "C" {
+time_t time(time_t *t);
+clock_t clock(void);
+}
+}
+#define CLOCKS_PER_SEC 1000

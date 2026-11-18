@@ -1,0 +1,7 @@
+// okay-ms own standard header: <iosfwd>: the stream classes of <sstream> and <fstream> (okay-ms has no iostream hierarchy; these
+// names exist so that declarations naming them compile).
+#pragma once
+namespace std {
+class okay_istream;
+class okay_ostream;
+}

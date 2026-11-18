@@ -5,11 +5,20 @@
 // [alg.binary.search], [alg.sort]. Iterators are plain pointers here (our vector, string and array use pointers).
 // sort is a heap sort (any order of equal elements is allowed by [alg.sort]; it is not stable).
 #pragma once
+#include <initializer_list>
 #include <utility>
 namespace std {
 template <typename T> const T &min(const T &a, const T &b) { return b < a ? b : a; }
 template <typename T> const T &max(const T &a, const T &b) { return a < b ? b : a; }
 template <typename T> const T &clamp(const T &v, const T &lo, const T &hi) { return v < lo ? lo : hi < v ? hi : v; }
+// min and max of a braced list ([alg.min.max]): one overload per arithmetic type the engine uses (okay-ms cannot deduce the
+// element type from a braced argument); the last one declared is the one chosen for a list whose type it cannot tell.
+inline int max(initializer_list<int> l) { int r = l.begin()[0]; for (size_t i = 1; i < l.size(); ++i) if (r < l.begin()[i]) r = l.begin()[i]; return r; }
+inline int min(initializer_list<int> l) { int r = l.begin()[0]; for (size_t i = 1; i < l.size(); ++i) if (l.begin()[i] < r) r = l.begin()[i]; return r; }
+inline double max(initializer_list<double> l) { double r = l.begin()[0]; for (size_t i = 1; i < l.size(); ++i) if (r < l.begin()[i]) r = l.begin()[i]; return r; }
+inline double min(initializer_list<double> l) { double r = l.begin()[0]; for (size_t i = 1; i < l.size(); ++i) if (l.begin()[i] < r) r = l.begin()[i]; return r; }
+inline float max(initializer_list<float> l) { float r = l.begin()[0]; for (size_t i = 1; i < l.size(); ++i) if (r < l.begin()[i]) r = l.begin()[i]; return r; }
+inline float min(initializer_list<float> l) { float r = l.begin()[0]; for (size_t i = 1; i < l.size(); ++i) if (l.begin()[i] < r) r = l.begin()[i]; return r; }
 // minmax ([alg.min.max]): the pair (smaller, larger); it holds copies here, where the standard holds references.
 template <typename T> pair<T, T> minmax(const T &a, const T &b) { return b < a ? pair<T, T>(b, a) : pair<T, T>(a, b); }
 template <typename T> void swap(T &a, T &b) { T t = a; a = b; b = t; }
@@ -187,5 +196,39 @@ template <typename It> void stable_sort(It first, It last) {
     for (It i = first + 1; i < last; ++i) {
         for (It j = i; j > first && *j < *(j - 1); --j) swap(*j, *(j - 1));
     }
+}
+
+// unique ([alg.unique]): removes consecutive equal elements (the survivors move to the front); returns the new end.
+template <typename It> It unique(It first, It last) {
+    if (first == last) return last;
+    It out = first;
+    ++first;
+    for (; first != last; ++first)
+        if (!(*out == *first)) {
+            ++out;
+            *out = *first;
+        }
+    ++out;
+    return out;
+}
+template <typename It, typename P> It unique(It first, It last, P same) {
+    if (first == last) return last;
+    It out = first;
+    ++first;
+    for (; first != last; ++first)
+        if (!same(*out, *first)) {
+            ++out;
+            *out = *first;
+        }
+    ++out;
+    return out;
+}
+template <typename It> bool is_sorted(It first, It last) {
+    if (first == last) return true;
+    It next = first;
+    ++next;
+    for (; next != last; ++first, ++next)
+        if (*next < *first) return false;
+    return true;
 }
 }

@@ -1,0 +1,8 @@
+// okay-ms own standard header: <clocale> ([clocale.syn]): the declarations only. A program that calls setlocale needs a C library
+// that has it (okay-ms's runtime does not): the declaration is here so that code naming it compiles.
+#pragma once
+namespace std {
+extern "C" char *setlocale(int category, const char *locale);
+}
+#define LC_ALL 0
+#define LC_NUMERIC 4

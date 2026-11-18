@@ -226,6 +226,38 @@ public:
         return npos;
     }
     size_t find_first_of(const char* set) const { return find_first_of(set, 0); }
+    // find_last_of and find_last_not_of ([string.find]): the last position at or before pos (npos: the end) that is (not) in set.
+    size_t find_last_of(const char* set, size_t pos) const {
+        if (size_ == 0) return npos;
+        size_t i = pos < size_ ? pos : size_ - 1;
+        for (;; --i) {
+            for (size_t k = 0; set[k] != 0; ++k)
+                if (data_[i] == set[k]) return i;
+            if (i == 0) break;
+        }
+        return npos;
+    }
+    size_t find_last_of(const char* set) const { return find_last_of(set, npos); }
+    size_t find_last_of(char c, size_t pos) const {
+        char one[2];
+        one[0] = c;
+        one[1] = 0;
+        return find_last_of(one, pos);
+    }
+    size_t find_last_of(char c) const { return find_last_of(c, npos); }
+    size_t find_last_not_of(const char* set, size_t pos) const {
+        if (size_ == 0) return npos;
+        size_t i = pos < size_ ? pos : size_ - 1;
+        for (;; --i) {
+            bool in_set = false;
+            for (size_t k = 0; set[k] != 0; ++k)
+                if (data_[i] == set[k]) in_set = true;
+            if (!in_set) return i;
+            if (i == 0) break;
+        }
+        return npos;
+    }
+    size_t find_last_not_of(const char* set) const { return find_last_not_of(set, npos); }
     size_t find_first_not_of(const char* set, size_t pos) const {
         for (size_t i = pos; i < size_; ++i) {
             bool in = false;

@@ -1,0 +1,63 @@
+// okay-ms own standard header: std::string_view, written from ISO/IEC 14882 [string.view]: a pointer and a length, no ownership.
+// Supported: construction from a C string, a std::string, a pointer and a length; data, size, length, empty, operator[],
+// substr, find (char and string_view), compare, ==, !=, <; begin/end (pointers); remove_prefix, remove_suffix; conversion to
+// std::string by the std::string constructor below. No hashing, no literals, no ranges.
+#pragma once
+#include <cstddef>
+#include <cstring>
+#include <string>
+namespace std {
+class string_view {
+public:
+    const char* p_;
+    size_t n_;
+    static const size_t npos = (size_t)-1;
+    string_view() : p_(0), n_(0) {}
+    string_view(const char* s) : p_(s), n_(s ? strlen(s) : 0) {}
+    string_view(const char* s, size_t n) : p_(s), n_(n) {}
+    string_view(const string& s) : p_(s.data()), n_(s.size()) {}
+    const char* data() const { return p_; }
+    size_t size() const { return n_; }
+    size_t length() const { return n_; }
+    bool empty() const { return n_ == 0; }
+    char operator[](size_t i) const { return p_[i]; }
+    const char* begin() const { return p_; }
+    const char* end() const { return p_ + n_; }
+    void remove_prefix(size_t k) {
+        p_ += k;
+        n_ -= k;
+    }
+    void remove_suffix(size_t k) { n_ -= k; }
+    string_view substr(size_t pos, size_t n) const {
+        if (pos > n_) pos = n_;
+        if (n > n_ - pos) n = n_ - pos;
+        return string_view(p_ + pos, n);
+    }
+    string_view substr(size_t pos) const { return substr(pos, npos); }
+    size_t find(char c, size_t pos) const {
+        for (size_t i = pos; i < n_; ++i)
+            if (p_[i] == c) return i;
+        return npos;
+    }
+    size_t find(char c) const { return find(c, 0); }
+    size_t find(string_view s, size_t pos) const {
+        if (s.n_ == 0) return pos <= n_ ? pos : npos;
+        for (size_t i = pos; i + s.n_ <= n_; ++i) {
+            size_t k = 0;
+            while (k < s.n_ && p_[i + k] == s.p_[k]) ++k;
+            if (k == s.n_) return i;
+        }
+        return npos;
+    }
+    size_t find(string_view s) const { return find(s, 0); }
+    int compare(string_view o) const {
+        const size_t m = n_ < o.n_ ? n_ : o.n_;
+        for (size_t i = 0; i < m; ++i)
+            if (p_[i] != o.p_[i]) return (unsigned char)p_[i] < (unsigned char)o.p_[i] ? -1 : 1;
+        return n_ < o.n_ ? -1 : (n_ > o.n_ ? 1 : 0);
+    }
+};
+inline bool operator==(string_view a, string_view b) { return a.compare(b) == 0; }
+inline bool operator!=(string_view a, string_view b) { return a.compare(b) != 0; }
+inline bool operator<(string_view a, string_view b) { return a.compare(b) < 0; }
+}

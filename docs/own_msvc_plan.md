@@ -652,3 +652,28 @@ Measurement of the 36 files of the tables above (compile to an object with okay-
 | `shared/OkfDecode.hpp` | compiles |
 
 Still not done: COMDAT/dead-strip, the `.CRT$XCU` startup table, destructors on early exit from a range `for`, the Random link-and-run comparison, and everything must be re-run under Wine before merging into `claude/okayms-3`.
+
+### Round 26 (unverified: not run under Wine, Wine broken in this container)
+
+Compile-only; checked by the object and `objdump -d`. Written from ISO/IEC 14882 and 9899 only.
+
+1. **Preprocess dump:** setting the environment variable `OKAY_PREPROCESS_TO=<file>` makes okay-cl write the text after preprocessing (there is no `/E` flag; the lines in parse errors that say `line N` refer to that text). It found the `v ] =` construct in `Mesh.hpp`: `vertices[v] = {a, b, c}` inside a `[&]` lambda in a member function, i.e. a lambda using the members of its class. Fixed: a lambda that names a member of the enclosing class (or says `[this]`) captures `this` as a field `__this` and reaches fields, methods and statics through it (also in a static member function, where only statics can be named). Then, on the way through `Mesh.hpp`, in order: unary plus (`+1`); `std::max({a, b, c})` (an overload per element type, chosen by the first element's type), `std::cbrt`, `std::abs(float)`; `std::array<int, 3>` from `{a, b, c}` as a temporary (brace elision); an aggregate with a reference member `struct { V& r; } x{v};`; `a = b = Vec3{...}` for class values; `std::unique`, `std::is_sorted`; `fopen`/`fread`/`fwrite`/`fseek`/`ftell`/`fclose` (runtime/file.c, whole-file); `string::find_last_of`/`find_last_not_of`; a range `for` over `{&a, &b}` (a pointer element was refused as "initializer must be a constant"); and a real bug: the probe that finds a lambda's result type threw away template instances and class members the body needed, so `make_tuple` in a lambda gave "unknown function tuple<...>::<ctor>". Now only the lambda's own probe function is dropped.
+   **`LodGroup.cpp` still does not compile**: it now stops in `Mesh.hpp` with "large struct return has no destination (in __lam53::operator()/3)" (a lambda with two parameters returning a struct larger than 8 bytes; small reproductions of the shape compile, so the exact body is not yet found).
+2. **Whole library, `engine/src` (348 `.cpp` files), compile to an object, nothing run:** **22 compile, 326 do not.** Failures by kind (first error of each file):
+
+| kind | files |
+|---|---|
+| `cannot open include typeinfo` (`typeid`, `std::type_info`) | 80 |
+| `cannot open include typeindex` | 26 |
+| `cannot open include variant` | 23 |
+| `cannot open include iostream` | 19 |
+| `cannot open include locale` | 17 |
+| `cannot open include random` | 8 |
+| `cannot open include condition_variable` / `thread` (not allowed in Windows builds anyway, rule 21a) | 7 |
+| `expected an expression` or `expected a type` (about 37 + 13, mostly in `okay/Core`, `okay/Modeling`, `okay/Debug`; includes 19 in `Utf*.hpp`) | about 70 |
+| `large struct return has no destination` | 6 |
+| `expected a class template body` | 5 |
+| `no matching constructor in LocArg`, `cannot deduce template arguments of Barrier`, `expected a base class`, `expected a name`, `unknown name/function` and single ones | about 15 |
+
+   Added this round for it: `<clocale>`, `<cerrno>`, `<iosfwd>`, `<ctime>` (declarations only), `<string_view>`, `<queue>` (queue and a heap priority_queue). Before them the same run gave 21 compiling files and 236 files stopped on a missing header (`clocale` 35, `ctime` 25, `string_view` 15, `queue` 4, ...). The next steps by size: `<typeinfo>` and `typeid` (80 files, needs compiler support), `<typeindex>`, `<variant>`, `<iostream>`, `<locale>`, `<random>`, then the parse errors in `Utf*.hpp`.
+3. **Not done this round:** destruction of range-for iterators on `break`/`return` (still only at normal loop end), COMDAT-style dedup and the `.CRT$XCU` startup table (design above in Round 22/23 notes: an own PE-reader check would be the way to verify them; not started), the Random link-and-run comparison. All of it must be re-run under Wine before merging into `claude/okayms-3`.

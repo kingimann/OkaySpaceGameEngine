@@ -2,8 +2,18 @@
 // (tools/okayms/runtime/printf.c); the conversions a program can use are listed there (d i u x X c s f, flags - + 0
 // space, width, precision, length l ll z j t h).
 #pragma once
+#define SEEK_SET 0
+#define SEEK_CUR 1
+#define SEEK_END 2
+struct FILE;
 namespace std {
 extern "C" {
+FILE *fopen(const char *path, const char *mode);
+int fclose(FILE *f);
+unsigned long long fread(void *buf, unsigned long long size, unsigned long long count, FILE *f);
+unsigned long long fwrite(const void *buf, unsigned long long size, unsigned long long count, FILE *f);
+int fseek(FILE *f, long offset, int whence);
+long ftell(FILE *f);
 int printf(const char *fmt, ...);
 int snprintf(char *buf, unsigned long long cap, const char *fmt, ...);
 int puts(const char *s);

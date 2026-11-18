@@ -1,0 +1,59 @@
+// okay-ms own standard header: std::queue and std::priority_queue, written from ISO/IEC 14882 [queue] and [priority.queue]: a
+// queue over a std::deque (push, pop, front, back, size, empty); a priority_queue over a std::vector kept as a binary heap
+// ordered by operator< (the largest on top; no comparator argument).
+#pragma once
+#include <deque>
+#include <vector>
+namespace std {
+template <typename T, typename C = int>
+class queue {
+    deque<T> d_;
+
+public:
+    queue() {}
+    bool empty() const { return d_.empty(); }
+    size_t size() const { return d_.size(); }
+    T& front() { return d_.front(); }
+    T& back() { return d_.back(); }
+    void push(const T& v) { d_.push_back(v); }
+    void pop() { d_.pop_front(); }
+};
+template <typename T, typename C = int, typename Cmp = int>
+class priority_queue {
+    vector<T> v_;
+
+public:
+    priority_queue() {}
+    bool empty() const { return v_.empty(); }
+    size_t size() const { return v_.size(); }
+    const T& top() const { return v_[0]; }
+    void push(const T& x) {
+        v_.push_back(x);
+        size_t i = v_.size() - 1;
+        while (i > 0) {
+            const size_t parent = (i - 1) / 2;
+            if (!(v_[parent] < v_[i])) break;
+            T t = v_[parent];
+            v_[parent] = v_[i];
+            v_[i] = t;
+            i = parent;
+        }
+    }
+    void pop() {
+        const size_t n = v_.size() - 1;
+        v_[0] = v_[n];
+        v_.pop_back();
+        size_t i = 0;
+        for (;;) {
+            size_t l = 2 * i + 1, r = l + 1, big = i;
+            if (l < v_.size() && v_[big] < v_[l]) big = l;
+            if (r < v_.size() && v_[big] < v_[r]) big = r;
+            if (big == i) break;
+            T t = v_[big];
+            v_[big] = v_[i];
+            v_[i] = t;
+            i = big;
+        }
+    }
+};
+}

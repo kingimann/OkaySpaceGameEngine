@@ -1,0 +1,7 @@
+// okay-ms own standard header: <cerrno> ([cerrno.syn]): errno is one global int here (no thread-local copy) and the codes the engine tests.
+#pragma once
+extern int okay_errno;
+#define errno okay_errno
+#define ENOENT 2
+#define EINVAL 22
+#define ERANGE 34

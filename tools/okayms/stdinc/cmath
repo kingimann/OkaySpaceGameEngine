@@ -337,4 +337,17 @@ inline long lround(double x) { return (long)round(x); }
 inline long lround(float x) { return (long)round((double)x); }
 inline long long llround(double x) { return (long long)round(x); }
 inline long long llround(float x) { return (long long)round((double)x); }
+
+// abs for floating types, and cbrt (the real cube root: exp(log|x| / 3) then one Newton step x - (x^3 - a) / (3 x^2)).
+inline double abs(double x) { return x < 0.0 ? -x : (x == 0.0 ? 0.0 : x); }
+inline float abs(float x) { return x < 0.0f ? -x : (x == 0.0f ? 0.0f : x); }
+inline double cbrt(double a) {
+    if (a == 0.0 || a != a) return a;
+    const bool neg = a < 0.0;
+    const double m = neg ? -a : a;
+    double x = okay_math::exp_d(okay_math::log_d(m) / 3.0);
+    x = x - (x * x * x - m) / (3.0 * x * x);
+    return neg ? -x : x;
+}
+inline float cbrt(float a) { return (float)cbrt((double)a); }
 }

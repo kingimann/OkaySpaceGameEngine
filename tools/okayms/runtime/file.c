@@ -42,3 +42,96 @@ int okay_write_file(const char *path, const char *data, long long size, int appe
     CloseHandle(f);
     return done == (unsigned long)size;
 }
+
+/* ---- C stdio files (fopen, fread, fwrite, fseek, ftell, fclose), written from ISO/IEC 9899 7.21.5 and 7.21.8-7.21.9 ----
+   A file opened for reading is read whole into memory at fopen; a file opened for writing collects the bytes and writes them
+   at fclose (or when "a" is used, appends them). No buffering modes, no ungetc, no text-mode newline translation. */
+void free(void *p);
+void *memcpy(void *d, const void *s, unsigned long long n);
+typedef struct FILE {
+    char *data;
+    long long size;
+    long long cap;
+    long long pos;
+    int writing;
+    int append;
+    char path[260];
+} FILE;
+
+FILE *fopen(const char *path, const char *mode) {
+    FILE *f;
+    int i;
+    f = (FILE *)malloc(sizeof(FILE));
+    if (f == 0) return 0;
+    f->data = 0;
+    f->size = 0;
+    f->cap = 0;
+    f->pos = 0;
+    f->append = 0;
+    f->writing = mode[0] == 'w' || mode[0] == 'a';
+    if (mode[0] == 'a') f->append = 1;
+    for (i = 0; i < 259 && path[i] != 0; ++i) f->path[i] = path[i];
+    f->path[i] = 0;
+    if (!f->writing) {
+        long long n = okay_read_file(path, &f->data);
+        if (n < 0) {
+            free(f);
+            return 0;
+        }
+        f->size = n;
+        f->cap = n;
+    }
+    return f;
+}
+
+unsigned long long fread(void *buf, unsigned long long size, unsigned long long count, FILE *f) {
+    unsigned long long total = size * count;
+    unsigned long long avail;
+    if (f == 0 || f->writing || size == 0) return 0;
+    avail = (unsigned long long)(f->size - f->pos);
+    if (total > avail) total = avail - avail % size;
+    memcpy(buf, f->data + f->pos, total);
+    f->pos += (long long)total;
+    return total / size;
+}
+
+unsigned long long fwrite(const void *buf, unsigned long long size, unsigned long long count, FILE *f) {
+    unsigned long long total = size * count;
+    if (f == 0 || !f->writing || size == 0) return 0;
+    if ((long long)total + f->size > f->cap) {
+        long long ncap = (f->cap + (long long)total) * 2 + 64;
+        char *nd = (char *)malloc((unsigned long long)ncap);
+        if (nd == 0) return 0;
+        if (f->size > 0) memcpy(nd, f->data, (unsigned long long)f->size);
+        free(f->data);
+        f->data = nd;
+        f->cap = ncap;
+    }
+    memcpy(f->data + f->size, buf, total);
+    f->size += (long long)total;
+    f->pos = f->size;
+    return count;
+}
+
+int fseek(FILE *f, long offset, int whence) {
+    long long target;
+    if (f == 0) return -1;
+    target = whence == 0 ? offset : whence == 1 ? f->pos + offset : f->size + offset;
+    if (target < 0 || target > f->size) return -1;
+    f->pos = target;
+    return 0;
+}
+
+long ftell(FILE *f) {
+    if (f == 0) return -1;
+    return (long)f->pos;
+}
+
+int fclose(FILE *f) {
+    int ok = 0;
+    if (f == 0) return -1;
+    if (f->writing && !okay_write_file(f->path, f->data, f->size, f->append)) ok = -1;
+    if (f->data != 0) free(f->data);
+    free(f);
+    return ok;
+}

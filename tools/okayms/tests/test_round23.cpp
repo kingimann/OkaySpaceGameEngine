@@ -121,5 +121,13 @@ int main(int, char**) {
           "std::vector<int> v; v.push_back(1); std::deque<int> d; d.push_back(2); int s = 0; for (auto it = d.rbegin(); it != d.rend(); ++it) s += *it;\n"
           "W a, b; b = a; V p, q; q = p; return add(1, 2) + id(4) + (int)id(1.5f) + s + (int)f(true, \"ab\").size() + g(false) + (int)std::minmax(1, 2).second; }\n", &o);
     CHECK(t, has_symbol(o, "??4W@@") && has_symbol(o, "??4V@@") && has_symbol(o, "??R__lam1@@QEAAMM@Z"));
+    ++tests;
+    build(t, "round 26 front end: lambda this capture, unary plus, braced max, chained class assignment, aggregate with reference, string_view, queue",
+          "#include <algorithm>\n#include <string_view>\n#include <queue>\n#include <array>\n#include <vector>\nstruct V3 { float x, y, z; };\n"
+          "struct M { V3 verts[4]; int n; int helper(int a) { return a + n; }\n"
+          "int run(float step) { auto snap = [&](int v) { verts[v] = {step, step, 0}; n = helper(v); }; snap(1); return n; } };\n"
+          "int main() { M m; m.n = 1; V3 a, b; a = b = V3{1, 2, 3}; float mx = std::max({1.0f, 2.0f, 3.0f}); int k = +1; std::vector<int> src; src.push_back(1);\n"
+          "struct { std::vector<int>& second; } cv{src}; std::vector<std::array<int, 3>> g; int s = 1; g.push_back({s, k, 0}); std::string_view sv(\"abc\"); std::queue<int> q; q.push(1);\n"
+          "std::vector<int*> ptrs; int z = 0; for (int* p : {&z, &k}) ptrs.push_back(p); return m.run(2.0f) + (int)mx + (int)sv.size() + (int)q.size() + (int)cv.second.size() + g[0][0]; }\n", &o);
     return t.finish(tests);
 }

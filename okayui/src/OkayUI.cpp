@@ -130,6 +130,11 @@ PopupSlot* popupSlot(int id, bool create) {
 int      g_openPopupThisFrame = 0;   // popup id requested to open this frame
 int   g_hot = 0, g_active = 0;   // hovered id / pressed-and-holding id (0 = none)
 int   g_focus = 0;               // keyboard-focused widget id (TextField); 0 = none
+// Edit tracking (IsItemEdited / IsItemDeactivatedAfterEdit): the item whose value changed this frame, and the item that
+// changed at some point while it was held or focused (kept until it is neither, so a drag that edits for many frames
+// answers "edited" on the frame it is let go).
+int   g_edFrameId = 0, g_edStickyId = 0, g_focusAtFrameStart = 0, g_focusLostEnd = 0, g_focusLostPrev = 0;   // ...LostEnd: focus dropped by the end-of-frame click-away rule
+inline bool noteEdit(bool changed) { if (changed && g_lastId != 0) g_edFrameId = g_edStickyId = g_lastId; return changed; }
 int   g_nextOpen = -1;             // SetNextItemOpen: -1 none, 0 closed, 1 open (consumed by the next tree node / header)
 int   g_toggledId = 0;             // the tree node or header whose open state the user flipped this frame
 float g_dispW = 0.0f, g_dispH = 0.0f;   // Input::displayW / displayH of this frame
@@ -992,6 +997,10 @@ void BeginFrame(const Input& in) {
     g_rReleased = !in.rightDown && g_rPrevDown;
     g_rPrevDown = in.rightDown;
     g_activeAtFrameStart = g_active;
+    g_focusAtFrameStart = g_focus;
+    g_focusLostPrev = g_focusLostEnd; g_focusLostEnd = 0;
+    g_edFrameId = 0;
+    if (g_edStickyId != 0 && g_active != g_edStickyId && g_focus != g_edStickyId && g_focusLostPrev != g_edStickyId) g_edStickyId = 0;
     g_lastId = 0;
     g_disTop = g_disCount = 0; g_rawDraw = false;   // an unbalanced BeginDisabled never leaks into the next frame
     g_openPopupThisFrame = 0;
@@ -1605,7 +1614,7 @@ void mergeOverlay() {
 // End-of-frame interaction bookkeeping, shared by every backend.
 void finalizeFrame() {
     if (g_released) g_active = 0;                    // clear if the active item wasn't drawn
-    if (g_pressed && !g_focusClaimed) g_focus = 0;   // click on empty space drops keyboard focus
+    if (g_pressed && !g_focusClaimed) { if (g_focus != 0) g_focusLostEnd = g_focus; g_focus = 0; }   // click on empty space drops keyboard focus
     // A floating chip follows the cursor while dragging (drawn in the overlay so it's
     // on top). Any release ends the drag (a DropTarget already consumed it if hit).
     if (g_dd.active) {
@@ -2690,7 +2699,7 @@ void PopStyleVar(int count) {
     }
 }
 
-bool Checkbox(const char* label, bool* value) {
+static bool Checkbox_raw(const char* label, bool* value) {
     if (!g_lay.active || !value) return false;
     const float h = rowH(), sz = textH() + 6.0f;
     const float w = sz + 8.0f + labelW(label);
@@ -2698,7 +2707,7 @@ bool Checkbox(const char* label, bool* value) {
     return Checkbox(hashLabel(label), x, y + (h - sz) * 0.5f, sz, label, value);
 }
 
-bool RadioButton(const char* label, int* value, int option) {
+static bool RadioButton_raw(const char* label, int* value, int option) {
     if (!g_lay.active || !value) return false;
     const float h = rowH(), sz = textH() + 6.0f;
     const float w = sz + 8.0f + labelW(label);
@@ -2706,7 +2715,7 @@ bool RadioButton(const char* label, int* value, int option) {
     return RadioButton(hashLabel(label), x, y + (h - sz) * 0.5f, sz, label, value, option);
 }
 
-bool ToggleSwitch(const char* label, bool* value) {
+static bool ToggleSwitch_raw(const char* label, bool* value) {
     if (!g_lay.active || !value) return false;
     const float h = rowH();
     const float sh = textH() + 4.0f, sw = sh * 1.9f;   // switch pill size (track ~1.9:1)
@@ -2743,7 +2752,7 @@ int numberEdit(int id, float x, float y, float w, float h, bool inside, double c
 }
 } // namespace
 
-bool SliderFloat(const char* label, float* value, float minV, float maxV) {
+static bool SliderFloat_raw(const char* label, float* value, float minV, float maxV) {
     if (!g_lay.active || !value) return false;
     const float h = rowH();
     const float lw = labelW(label) > 0.0f ? labelW(label) + 8.0f : 0.0f;
@@ -2764,11 +2773,11 @@ bool SliderFloat(const char* label, float* value, float minV, float maxV) {
     return ch;
 }
 
-bool SliderInt(const char* label, int* value, int minV, int maxV) {
+static bool SliderInt_raw(const char* label, int* value, int minV, int maxV) {
     if (!g_lay.active || !value) return false;
     float f = (float)*value;
     // Reuse the float slider, then snap to the nearest integer.
-    bool ch = SliderFloat(label, &f, (float)minV, (float)maxV);
+    bool ch = SliderFloat_raw(label, &f, (float)minV, (float)maxV);
     int iv = (int)(f + (f >= 0.0f ? 0.5f : -0.5f));
     if (iv < minV) iv = minV;
     if (iv > maxV) iv = maxV;
@@ -2776,7 +2785,7 @@ bool SliderInt(const char* label, int* value, int minV, int maxV) {
     return ch && false;   // value unchanged after snapping
 }
 
-bool VSliderFloat(const char* label, float w, float h, float* value, float minV, float maxV) {
+static bool VSliderFloat_raw(const char* label, float w, float h, float* value, float minV, float maxV) {
     if (!g_lay.active || !value) return false;
     const int id = hashLabel(label);
     if (w <= 0.0f) w = rowH();
@@ -2805,7 +2814,7 @@ bool VSliderFloat(const char* label, float w, float h, float* value, float minV,
     return changed;
 }
 
-bool Knob(const char* label, float* value, float minV, float maxV, float size) {
+static bool Knob_raw(const char* label, float* value, float minV, float maxV, float size) {
     if (!g_lay.active || !value) return false;
     const int id = hashLabel(label);
     const float d = size > 0.0f ? size : rowH() * 2.0f;
@@ -2951,7 +2960,7 @@ bool ImageButton(const char* id, SDL_Texture* tex, float w, float h) {
     return clicked;
 }
 
-bool InputText(const char* label, char* buf, int cap, unsigned flags) {
+static bool InputText_raw(const char* label, char* buf, int cap, unsigned flags) {
     if (!g_lay.active || !buf) return false;
     const VisLabel vis(label);
     const float h = rowH();
@@ -2964,7 +2973,7 @@ bool InputText(const char* label, char* buf, int cap, unsigned flags) {
     return ch;
 }
 
-bool InputInt(const char* label, int* value, int step) {
+static bool InputInt_raw(const char* label, int* value, int step) {
     if (!g_lay.active || !value) return false;
     const int id = hashLabel(label);
     const float h = rowH();
@@ -3107,7 +3116,7 @@ bool IsMouseDragging(int button, float threshold) {
     return dx * dx + dy * dy > t * t;
 }
 
-bool Combo(const char* label, const char* const* items, int count, int* current) {
+static bool Combo_raw(const char* label, const char* const* items, int count, int* current) {
     if (!g_lay.active || !items || !current || count <= 0) return false;
     const int id = hashLabel(label);
     bool* open = openState(id, false);
@@ -3177,7 +3186,7 @@ bool dragBox(int id, float x, float y, float w, float h, bool inside, float& out
 }
 } // namespace
 
-bool DragFloat(const char* label, float* v, float speed, float minV, float maxV) {
+static bool DragFloat_raw(const char* label, float* v, float speed, float minV, float maxV) {
     if (!g_lay.active || !v) return false;
     const int id = hashLabel(label);
     const float h = rowH(), s = g_theme.textScale;
@@ -3208,7 +3217,7 @@ bool DragFloat(const char* label, float* v, float speed, float minV, float maxV)
     return changed;
 }
 
-bool DragInt(const char* label, int* v, float speed, int minV, int maxV) {
+static bool DragInt_raw(const char* label, int* v, float speed, int minV, int maxV) {
     if (!g_lay.active || !v) return false;
     const int id = hashLabel(label);
     const float h = rowH(), s = g_theme.textScale;
@@ -3309,13 +3318,13 @@ bool dragCells(const char* label, float* fv, int* iv, int n, float speed, float 
 }
 } // namespace
 
-bool DragFloat2(const char* label, float v[2], float speed, float minV, float maxV) { return dragCells(label, v, nullptr, 2, speed, minV, maxV, false); }
-bool DragFloat3(const char* label, float v[3], float speed, float minV, float maxV) { return dragCells(label, v, nullptr, 3, speed, minV, maxV, false); }
-bool DragFloat4(const char* label, float v[4], float speed, float minV, float maxV) { return dragCells(label, v, nullptr, 4, speed, minV, maxV, false); }
-bool DragInt2(const char* label, int v[2], float speed, int minV, int maxV) { return dragCells(label, nullptr, v, 2, speed, (float)minV, (float)maxV, false); }
-bool DragInt3(const char* label, int v[3], float speed, int minV, int maxV) { return dragCells(label, nullptr, v, 3, speed, (float)minV, (float)maxV, false); }
-bool DragInt4(const char* label, int v[4], float speed, int minV, int maxV) { return dragCells(label, nullptr, v, 4, speed, (float)minV, (float)maxV, false); }
-bool DragFloatRange2(const char* label, float* lo, float* hi, float speed, float minV, float maxV) {
+static bool DragFloat2_raw(const char* label, float v[2], float speed, float minV, float maxV) { return dragCells(label, v, nullptr, 2, speed, minV, maxV, false); }
+static bool DragFloat3_raw(const char* label, float v[3], float speed, float minV, float maxV) { return dragCells(label, v, nullptr, 3, speed, minV, maxV, false); }
+static bool DragFloat4_raw(const char* label, float v[4], float speed, float minV, float maxV) { return dragCells(label, v, nullptr, 4, speed, minV, maxV, false); }
+static bool DragInt2_raw(const char* label, int v[2], float speed, int minV, int maxV) { return dragCells(label, nullptr, v, 2, speed, (float)minV, (float)maxV, false); }
+static bool DragInt3_raw(const char* label, int v[3], float speed, int minV, int maxV) { return dragCells(label, nullptr, v, 3, speed, (float)minV, (float)maxV, false); }
+static bool DragInt4_raw(const char* label, int v[4], float speed, int minV, int maxV) { return dragCells(label, nullptr, v, 4, speed, (float)minV, (float)maxV, false); }
+static bool DragFloatRange2_raw(const char* label, float* lo, float* hi, float speed, float minV, float maxV) {
     if (!lo || !hi) return false;
     float pair[2] = {*lo, *hi};
     const bool changed = dragCells(label, pair, nullptr, 2, speed, minV, maxV, true);
@@ -3323,9 +3332,9 @@ bool DragFloatRange2(const char* label, float* lo, float* hi, float speed, float
     return changed;
 }
 
-bool InputTextWithHint(const char* label, const char* hint, char* buf, int cap, unsigned flags) {
+static bool InputTextWithHint_raw(const char* label, const char* hint, char* buf, int cap, unsigned flags) {
     g_hintText = hint;
-    const bool ch = InputText(label, buf, cap, flags);
+    const bool ch = InputText_raw(label, buf, cap, flags);
     g_hintText = nullptr;
     return ch;
 }
@@ -3359,11 +3368,11 @@ bool sliderCells(const char* label, float* v, int n, float minV, float maxV) {
 }
 } // namespace
 
-bool SliderFloat2(const char* label, float v[2], float minV, float maxV) { return sliderCells(label, v, 2, minV, maxV); }
-bool SliderFloat3(const char* label, float v[3], float minV, float maxV) { return sliderCells(label, v, 3, minV, maxV); }
-bool SliderFloat4(const char* label, float v[4], float minV, float maxV) { return sliderCells(label, v, 4, minV, maxV); }
+static bool SliderFloat2_raw(const char* label, float v[2], float minV, float maxV) { return sliderCells(label, v, 2, minV, maxV); }
+static bool SliderFloat3_raw(const char* label, float v[3], float minV, float maxV) { return sliderCells(label, v, 3, minV, maxV); }
+static bool SliderFloat4_raw(const char* label, float v[4], float minV, float maxV) { return sliderCells(label, v, 4, minV, maxV); }
 
-bool InputFloat(const char* label, float* value, float step) {
+static bool InputFloat_raw(const char* label, float* value, float step) {
     if (!g_lay.active || !value) return false;
     const int id = hashLabel(label);
     const float h = rowH();
@@ -3497,8 +3506,8 @@ static bool colorEditRow(const char* label, float* c, int n, int flags) {
     }
     return changed;
 }
-bool ColorEdit4(const char* label, float rgba[4], int flags) { return colorEditRow(label, rgba, 4, flags); }
-bool ColorEdit3(const char* label, float rgb[3], int flags) { return colorEditRow(label, rgb, 3, flags); }
+static bool ColorEdit4_raw(const char* label, float rgba[4], int flags) { return colorEditRow(label, rgba, 4, flags); }
+static bool ColorEdit3_raw(const char* label, float rgb[3], int flags) { return colorEditRow(label, rgb, 3, flags); }
 
 void NewLine() { if (g_lay.active) g_lay.pendingSameLine = false; }
 
@@ -4008,7 +4017,7 @@ bool DropTarget(int* outPayload) {
     return false;
 }
 
-bool ListBox(const char* label, int* current, const char* const* items, int count, int visibleRows) {
+static bool ListBox_raw(const char* label, int* current, const char* const* items, int count, int visibleRows) {
     if (!g_lay.active || !current || !items) return false;
     if (visibleRows < 1) visibleRows = 1;
     bool changed = false;
@@ -5144,6 +5153,21 @@ bool IsItemVisible() {                                                          
 bool IsItemActive()      { return g_lastId != 0 && g_active == g_lastId; }
 bool IsItemActivated()   { return IsItemActive() && g_activeAtFrameStart != g_lastId; }
 bool IsItemDeactivated() { return g_lastId != 0 && g_activeAtFrameStart == g_lastId && g_active != g_lastId; }
+bool IsItemEdited() { return g_lastId != 0 && g_edFrameId == g_lastId; }
+bool IsItemDeactivatedAfterEdit() {
+    if (g_lastId == 0 || g_edStickyId != g_lastId) return false;
+    return IsItemDeactivated() || (g_focusAtFrameStart == g_lastId && g_focus != g_lastId) || g_focusLostPrev == g_lastId;
+}
+float CalcItemWidth() { return g_lay.active ? availW() : 0.0f; }
+bool BeginPopupContextWindow(const char* id) {
+    const int pid = hashLabel(id);
+    // A right click on the window's own background (over the window, not over any item or a window above) opens it at the pointer.
+    if (g_lay.active && g_curWin.valid && g_rPressed && g_hot == 0 && g_active == 0 && IsWindowHovered()) {
+        PopupSlot* p = popupSlot(pid, true);
+        if (p) { p->open = true; p->x = g_in.mouseX; p->y = g_in.mouseY; p->w = 0.0f; g_openPopupThisFrame = pid; }
+    }
+    return beginPopupBody(pid);
+}
 bool IsItemClicked(int button) {
     if (!IsItemHovered()) return false;
     return button == 1 ? g_rPressed : g_pressed;
@@ -5175,7 +5199,7 @@ void ResetState() {
     g_font = &kFontDefault;
     g_in = Input();
     g_prevDown = g_pressed = g_released = g_rPrevDown = g_rPressed = g_rReleased = false;
-    g_posOverride = false; g_lastId = g_activeAtFrameStart = 0; g_disTop = g_disCount = 0; g_rawDraw = false; g_pathN = 0;
+    g_posOverride = false; g_lastId = g_activeAtFrameStart = 0; g_edFrameId = g_edStickyId = g_focusAtFrameStart = g_focusLostEnd = g_focusLostPrev = 0; g_disTop = g_disCount = 0; g_rawDraw = false; g_pathN = 0;
     g_prevMouseX = g_prevMouseY = g_mouseDX = g_mouseDY = 0.0f;
     g_frameCount = 0; g_clock = 0.0; g_lastPressTime = -1.0; g_dblClick = false;
     for (int k = 0; k < KeyId_COUNT; ++k) { g_keyNow[k] = g_keyPrev[k] = false; g_keySince[k] = g_keyNextRepeat[k] = 0.0; }
@@ -5201,5 +5225,34 @@ void ResetState() {
     g_ime = ImeRect();
     g_nv = g_ni = g_onv = g_oni = g_novSpans = g_nspans = 0; g_toOverlay = false; g_dropped = 0;
 }
+
+// ---- Edit tracking: every value widget below reports through noteEdit (see IsItemEdited) ----
+bool Checkbox(const char* label, bool* value) { return noteEdit(Checkbox_raw(label, value)); }
+bool RadioButton(const char* label, int* value, int option) { return noteEdit(RadioButton_raw(label, value, option)); }
+bool ToggleSwitch(const char* label, bool* value) { return noteEdit(ToggleSwitch_raw(label, value)); }
+bool SliderFloat(const char* label, float* value, float minV, float maxV) { return noteEdit(SliderFloat_raw(label, value, minV, maxV)); }
+bool SliderInt(const char* label, int* value, int minV, int maxV) { return noteEdit(SliderInt_raw(label, value, minV, maxV)); }
+bool VSliderFloat(const char* label, float w, float h, float* value, float minV, float maxV) { return noteEdit(VSliderFloat_raw(label, w, h, value, minV, maxV)); }
+bool Knob(const char* label, float* value, float minV, float maxV, float size) { return noteEdit(Knob_raw(label, value, minV, maxV, size)); }
+bool InputText(const char* label, char* buf, int cap, unsigned flags) { return noteEdit(InputText_raw(label, buf, cap, flags)); }
+bool InputInt(const char* label, int* value, int step) { return noteEdit(InputInt_raw(label, value, step)); }
+bool Combo(const char* label, const char* const* items, int count, int* current) { return noteEdit(Combo_raw(label, items, count, current)); }
+bool DragFloat(const char* label, float* v, float speed, float minV, float maxV) { return noteEdit(DragFloat_raw(label, v, speed, minV, maxV)); }
+bool DragInt(const char* label, int* v, float speed, int minV, int maxV) { return noteEdit(DragInt_raw(label, v, speed, minV, maxV)); }
+bool DragFloat2(const char* label, float v[2], float speed, float minV, float maxV) { return noteEdit(DragFloat2_raw(label, v, speed, minV, maxV)); }
+bool DragFloat3(const char* label, float v[3], float speed, float minV, float maxV) { return noteEdit(DragFloat3_raw(label, v, speed, minV, maxV)); }
+bool DragFloat4(const char* label, float v[4], float speed, float minV, float maxV) { return noteEdit(DragFloat4_raw(label, v, speed, minV, maxV)); }
+bool DragInt2(const char* label, int v[2], float speed, int minV, int maxV) { return noteEdit(DragInt2_raw(label, v, speed, minV, maxV)); }
+bool DragInt3(const char* label, int v[3], float speed, int minV, int maxV) { return noteEdit(DragInt3_raw(label, v, speed, minV, maxV)); }
+bool DragInt4(const char* label, int v[4], float speed, int minV, int maxV) { return noteEdit(DragInt4_raw(label, v, speed, minV, maxV)); }
+bool DragFloatRange2(const char* label, float* lo, float* hi, float speed, float minV, float maxV) { return noteEdit(DragFloatRange2_raw(label, lo, hi, speed, minV, maxV)); }
+bool InputTextWithHint(const char* label, const char* hint, char* buf, int cap, unsigned flags) { return noteEdit(InputTextWithHint_raw(label, hint, buf, cap, flags)); }
+bool SliderFloat2(const char* label, float v[2], float minV, float maxV) { return noteEdit(SliderFloat2_raw(label, v, minV, maxV)); }
+bool SliderFloat3(const char* label, float v[3], float minV, float maxV) { return noteEdit(SliderFloat3_raw(label, v, minV, maxV)); }
+bool SliderFloat4(const char* label, float v[4], float minV, float maxV) { return noteEdit(SliderFloat4_raw(label, v, minV, maxV)); }
+bool InputFloat(const char* label, float* value, float step) { return noteEdit(InputFloat_raw(label, value, step)); }
+bool ColorEdit4(const char* label, float rgba[4], int flags) { return noteEdit(ColorEdit4_raw(label, rgba, flags)); }
+bool ColorEdit3(const char* label, float rgb[3], int flags) { return noteEdit(ColorEdit3_raw(label, rgb, flags)); }
+bool ListBox(const char* label, int* current, const char* const* items, int count, int visibleRows) { return noteEdit(ListBox_raw(label, current, items, count, visibleRows)); }
 
 } // namespace OkayUI

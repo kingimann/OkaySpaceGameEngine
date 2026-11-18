@@ -1423,6 +1423,48 @@ static void testPathMap() {
     check(o == "a.cpp inc/h.hpp\n", "without path_map the relative spelling stays", o);
 }
 
+static int countEntries(const fs::path& d) { int n = 0; std::error_code ec; if (!fs::is_directory(d, ec)) return -1; for (auto& e : fs::directory_iterator(d)) if (e.is_directory() && e.path().filename().string().find(".tmp") == string::npos) ++n; return n; }
+static void testRemoteCacheFolder() {
+    printf("test: --remote-cache DIR shares cache entries through a folder (same keys), pull and push, read-only, damage\n");
+    string base = (fs::temp_directory_path() / "okaybuild_test_remote").string(); fs::remove_all(base);
+    string R = base + "/shared", cA = base + "/cacheA", cB = base + "/cacheB", cC = base + "/cacheC";
+    auto tree = [&](const string& name, const string& body) { fresh(name); write("a.cpp", body); write("build.okay", "target app exe\n sources = a.cpp\nend\n"); };
+    tree("rcA", "int main(){return 3;}\n");
+    int rc; string o = sh("-j1 --cache-dir '" + cA + "'", &rc);
+    check(rc == 0 && countEntries(R) == -1, "without --remote-cache nothing is written to the shared folder", o);
+    fs::remove_all(cA); fs::remove_all(gRoot / ".okaybuild"); fs::remove_all(gRoot / "build");
+    o = sh("-j1 --cache-dir '" + cA + "' --remote-cache '" + R + "'", &rc);
+    check(rc == 0 && countEntries(R) == 1, "a miss compiles and publishes one entry to the shared folder", o + "\n" + std::to_string(countEntries(R)));
+    string exeA = readFile(gRoot / "build/app");
+    tree("rcB", "int main(){return 3;}\n");
+    o = sh("-j1 --cache-dir '" + cB + "' --remote-cache '" + R + "' -v", &rc);
+    check(rc == 0 && o.find("cache hit") != string::npos && o.find("remote") != string::npos, "another tree with an empty local cache gets a remote hit", o);
+    check(readFile(gRoot / "build/app") == exeA, "the program from the remote hit is identical", "");
+    check(countEntries(cB) == 1, "the entry is pulled into the local cache too", std::to_string(countEntries(cB)));
+    tree("rcC", "int main(){return 4;}\n");
+    o = sh("-j1 --cache-dir '" + cC + "' --remote-cache '" + R + "' --remote-cache-readonly", &rc);
+    check(rc == 0 && countEntries(R) == 1 && countEntries(cC) == 1, "read-only: compiles, keeps a local entry, publishes nothing", o);
+    // damage the remote entry: it must be ignored (a miss), the build still works, and a normal push repairs it
+    string key; for (auto& e : fs::directory_iterator(R)) if (e.is_directory()) key = e.path().filename().string();
+    { std::ofstream(fs::path(R) / key / "obj", std::ios::binary | std::ios::trunc) << "x"; }
+    tree("rcD", "int main(){return 3;}\n");
+    o = sh("-j1 --cache-dir '" + base + "/cacheD' --remote-cache '" + R + "'", &rc);
+    check(rc == 0 && o.find("cache hit") == string::npos && readFile(gRoot / "build/app") == exeA, "a damaged remote entry is a miss and the rebuild is identical", o);
+    tree("rcE", "int main(){return 3;}\n");
+    o = sh("-j1 --cache-dir '" + base + "/cacheE' --remote-cache '" + R + "' -v", &rc);
+    check(rc == 0 && o.find("cache hit") != string::npos, "the damaged entry was replaced by the push", o);
+    // environment variable and an unusable folder
+    tree("rcF", "int main(){return 3;}\n");
+    setenv("OKAY_REMOTE_CACHE", R.c_str(), 1);
+    o = sh("-j1 --cache-dir '" + base + "/cacheF' -v", &rc); unsetenv("OKAY_REMOTE_CACHE");
+    check(rc == 0 && o.find("remote") != string::npos, "OKAY_REMOTE_CACHE works like the option", o);
+    tree("rcG", "int main(){return 3;}\n");
+    write("notafolder", "x");
+    o = sh("-j1 --cache-dir '" + base + "/cacheG' --remote-cache '" + (gRoot / "notafolder").string() + "'", &rc);
+    check(rc == 0 && o.find("remote cache") != string::npos, "an unusable shared folder is a warning, not a failure", o);
+    fs::remove_all(base);
+}
+
 static void testImporters() {
     printf("test: importer blocks rebuild only changed assets, settings change rebuilds all, failures leave no output\n"); fresh("imp");
     write("tools/conv.sh", "echo \"$1\" >> imports.log\nif grep -q FAIL \"$1\"; then echo half > \"$2\"; exit 1; fi\n{ printf '%s|' \"$3\"; cat \"$1\"; } > \"$2\"\n");
@@ -1518,5 +1560,6 @@ int main(int argc, char** argv) {
     testAccountDefines();
     testMeasuredMemory();
     testPathMap();
+    testRemoteCacheFolder();
     printf("okaybuild tests: %d checks passed, %d failed\n", gPass, gFail); return gFail ? 1 : 0;
 }

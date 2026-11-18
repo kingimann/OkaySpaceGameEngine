@@ -1476,14 +1476,43 @@ static string hashArgvForCache(const vector<string>& a) {
 }
 // An entry is usable only when meta names this key and both stored files still have the recorded size.
 // A truncated or half-written entry is removed and counts as a miss.
-static bool cacheEntryOk(const string& key, bool needDep) {
-    string dir = cacheDirOf(key);
+static bool cacheEntryOkAt(const string& dir, const string& key, bool needDep, bool removeBad) {
     std::ifstream in(dir + "/meta"); string l1, l2, l3, l4;
     bool ok = in && std::getline(in, l1) && std::getline(in, l2) && std::getline(in, l3) && std::getline(in, l4);
     if (ok) ok = l1 == "okaybuild-cache 2" && l2 == key && fileSizeOf(dir + "/obj") == atoll(l3.c_str());
     if (ok && needDep) ok = fileSizeOf(dir + "/dep") == atoll(l4.c_str()) && atoll(l4.c_str()) >= 0;
-    if (!ok && fs::exists(dir)) { std::error_code ec; fs::remove_all(dir, ec); }
+    if (!ok && removeBad && fs::exists(dir)) { std::error_code ec; fs::remove_all(dir, ec); }
     return ok;
+}
+static bool cacheEntryOk(const string& key, bool needDep) { return cacheEntryOkAt(cacheDirOf(key), key, needDep, true); }
+// ---- Shared-folder "remote" tier (--remote-cache DIR or OKAY_REMOTE_CACHE). Same keys and entry layout as the local cache:
+// DIR/<key>/{meta,obj,dep}. A local miss looks there and copies a good entry into the local cache; a new local entry is copied
+// there (unless --remote-cache-readonly). Entries are built beside the final name and renamed in, so a reader never sees half an
+// entry; a bad remote entry is ignored (never deleted by a reader) and replaced by the next push. A folder, not a network.
+static string gRemoteDir; static bool gRemoteReadOnly = false;
+static std::atomic<int> gRemoteSeq{0};
+static bool copyEntryDir(const string& from, const string& to) { // to must not exist; built as to.tmpPID_N then renamed
+    std::error_code ec; string tmp = to + ".tmp" + std::to_string(nowNs()) + "_" + std::to_string(gRemoteSeq++);
+    fs::remove_all(tmp, ec); fs::create_directories(tmp, ec);
+    for (const char* f : {"obj", "dep", "meta"}) { if (fs::exists(from + "/" + f, ec)) { fs::copy_file(from + "/" + f, tmp + "/" + f, fs::copy_options::overwrite_existing, ec); if (ec) { fs::remove_all(tmp, ec); return false; } } }
+    fs::rename(tmp, to, ec); if (ec) { fs::remove_all(tmp, ec); return fs::exists(to); }
+    return true;
+}
+static bool pullRemote(const string& key, bool needDep) {
+    if (gRemoteDir.empty()) return false;
+    string rdir = gRemoteDir + "/" + key;
+    if (!cacheEntryOkAt(rdir, key, needDep, false)) return false;
+    string local = cacheDirOf(key); std::error_code ec; fs::remove_all(local, ec); fs::create_directories(cacheRoot(), ec);
+    if (!copyEntryDir(rdir, local)) return false;
+    printf("        remote cache hit\n"); fflush(stdout);
+    return true;
+}
+static void pushRemote(const string& key) {
+    if (gRemoteDir.empty() || gRemoteReadOnly) return;
+    string rdir = gRemoteDir + "/" + key, local = cacheDirOf(key); std::error_code ec;
+    bool hasDep = fs::exists(local + "/dep", ec);
+    if (cacheEntryOkAt(rdir, key, hasDep, false)) return; // already there and good
+    fs::remove_all(rdir, ec); copyEntryDir(local, rdir);
 }
 static string slurpBin(const string& p) { std::ifstream f(p, std::ios::binary); return string((std::istreambuf_iterator<char>(f)), {}); }
 // Put the object into an entry folder, compressed when asked. Returns false on failure.
@@ -1513,7 +1542,7 @@ static int lookupCache(const Action& a, string& key, string& errOut) {
     uint64_t h = fnv(out.data(), out.size()); h = fnv(cmd.data(), cmd.size(), h); h = fnv(id.data(), id.size(), h);
     key = hex64(h);
     string dir = cacheDirOf(key);
-    if (!cacheEntryOk(key, !a.depfile.empty())) return 0;
+    if (!cacheEntryOk(key, !a.depfile.empty()) && !pullRemote(key, !a.depfile.empty())) return 0;
     std::error_code ec;
     if (!cacheGetObj(dir, a.output)) { std::error_code rm; fs::remove_all(dir, rm); return 0; } // a damaged entry is a miss and is removed
     if (!a.depfile.empty()) { fs::copy_file(dir + "/dep", a.depfile, fs::copy_options::overwrite_existing, ec); if (ec) { errOut += "okay-build: cache depfile copy failed\n"; return -1; } }
@@ -1542,6 +1571,7 @@ static void storeCache(const Action& a, const string& key) {
     fs::remove_all(dir, ec);
     fs::rename(tmp, dir, ec);
     if (ec) { std::error_code e2; fs::remove_all(tmp, e2); }
+    else pushRemote(key);
     rememberCache(key);
 }
 struct CacheRow { string key; uint64_t bytes = 0, used = 0; };
@@ -1865,7 +1895,7 @@ static int lookupImported(const Action& a, string& key, string& errOut) {
     uint64_t h = fnv(out.data(), out.size()); h = fnv(cmd.data(), cmd.size(), h); h = fnv(id.data(), id.size(), h);
     key = hex64(h);
     string dir = cacheDirOf(key);
-    if (!cacheEntryOk(key, !depfile.empty())) return 0;
+    if (!cacheEntryOk(key, !depfile.empty()) && !pullRemote(key, !depfile.empty())) return 0;
     std::error_code ec;
     if (!cacheGetObj(dir, dest)) { std::error_code rm; fs::remove_all(dir, rm); return 0; }
     if (!depfile.empty()) fs::copy_file(dir + "/dep", depfile, fs::copy_options::overwrite_existing, ec);
@@ -3305,6 +3335,7 @@ int main(int argc, char** argv) {
     }
     adoptJobserver();
     if (const char* e = getenv("OKAY_CACHE_DIR")) if (*e) gCacheDir = fs::absolute(e).string();
+    if (const char* e = getenv("OKAY_REMOTE_CACHE")) if (*e) gRemoteDir = fs::absolute(e).string();
     Opts o; string toolchainName, cmd = "build", runDir, importOut = "build.okay", configName, configFile; vector<string> want;
     vector<std::pair<string, string>> optSets; vector<string> searchDirs, msvcRoots; bool configFileSet = false;
     try {
@@ -3336,6 +3367,8 @@ int main(int argc, char** argv) {
                 gCacheMax = n;
             }
             else if (a == "--cache-compress") gCacheCompress = true;
+            else if (a == "--remote-cache" && i + 1 < argc) gRemoteDir = fs::absolute(argv[++i]).string();
+            else if (a == "--remote-cache-readonly") gRemoteReadOnly = true;
             else if (a == "--jobserver") gWantJobserver = true;
             else if (a == "--timeout" && i + 1 < argc) { gTestTimeoutSec = atoll(argv[++i]); if (gTestTimeoutSec < 1) throw Fail("--timeout wants a number of seconds"); }
             else if (a == "--versions") gShowVersions = true;
@@ -3364,12 +3397,16 @@ int main(int argc, char** argv) {
             else if (cmd == "cache" && (a == "stats" || a == "clean")) want.push_back(a);
             else if (a == "build" || a == "clean" || a == "compdb" || a == "import" || a == "graph" || a == "targets" || a == "modules" || a == "toolchains" || a == "report" || a == "test" || a == "cache" || a == "lock" || a == "package" || a == "native") cmd = a;
             else if (a == "-h" || a == "--help") {
-                puts("usage: okay-build [build|clean|compdb|import|graph|targets|modules|toolchains|report|test] [-f build.okay] [-j N] [-k] [--config NAME] [--toolchain auto|gcc|clang|mingw|msvc] [--opt name=value] [--build-dir DIR] [--no-stat] [--no-cache] [--cache-dir DIR] [--cache-compress] [--timeout SECONDS] [--msvc-version PREFIX] [--memory N] [--memory-mb MB] [--junit FILE] [--shard I/N] [--dry-run] [--explain] [-v] [--profile] [target...]");
+                puts("usage: okay-build [build|clean|compdb|import|graph|targets|modules|toolchains|report|test] [-f build.okay] [-j N] [-k] [--config NAME] [--toolchain auto|gcc|clang|mingw|msvc] [--opt name=value] [--build-dir DIR] [--no-stat] [--no-cache] [--cache-dir DIR] [--cache-compress] [--remote-cache DIR] [--remote-cache-readonly] [--timeout SECONDS] [--msvc-version PREFIX] [--memory N] [--memory-mb MB] [--junit FILE] [--shard I/N] [--dry-run] [--explain] [-v] [--profile] [target...]");
                 puts("audit: docs/own_build_plan.md (12 subsystems; this tool is off by default)");
                 return 0;
             }
             else if (!a.empty() && a[0] == '-') throw Fail("unknown option " + a);
             else want.push_back(a);
+        }
+        if (!gRemoteDir.empty()) { // the shared folder must be a folder we can use; otherwise carry on without it
+            std::error_code ec; if (!gRemoteReadOnly) fs::create_directories(gRemoteDir, ec);
+            if (!fs::is_directory(gRemoteDir, ec)) { fprintf(stderr, "okay-build: warning: remote cache folder '%s' is not usable, ignoring it\n", gRemoteDir.c_str()); gRemoteDir.clear(); }
         }
         if (cmd == "toolchains") return cmdToolchains(searchDirs, msvcRoots);
         if (cmd == "native") {

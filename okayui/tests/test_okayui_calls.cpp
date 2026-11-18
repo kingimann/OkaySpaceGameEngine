@@ -464,5 +464,51 @@ int main() {
         s3.Frame([&] { UI::BareNextWindow(); if (UI::Begin("w", 0, 0, 200, 40)) { UI::Button("##only"); w0 = UI::GetItemRect().w; UI::Button(""); w1 = UI::GetItemRect().w; } UI::End(); });
         CHECK(std::fabs(w0 - w1) < 0.01f);
     }
+    {   // type names, flag aliases and the new flags
+        UI::ImVec4 a(0.1f, 0.2f, 0.3f, 0.4f); UI::Vec4 v = a; UI::ImVec4 back = v;
+        CHECK(v.x == 0.1f && v.w == 0.4f && back.z == 0.3f && UI::ImVec4().w == 0.0f);
+        UI::ImRect r(10, 20, 50, 100);
+        CHECK(r.GetWidth() == 40 && r.GetHeight() == 80 && r.GetCenter().x == 30 && r.Contains({10, 20}) && !r.Contains({50, 20}) && r.Overlaps(UI::ImRect(40, 90, 60, 110)) && !r.Overlaps(UI::ImRect(50, 20, 60, 30)));
+        r.Expand(5); CHECK(r.Min.x == 5 && r.Max.y == 105);
+        UI::ImGuiID id = UI::GetID("x"); CHECK(id != 0);
+        UI::ImTextureID tex = nullptr; CHECK(tex == nullptr);
+        static_assert((int)UI::TabItem_SetSelected == (int)UI::Tab_SetSelected && (int)UI::TableColumn_WidthFixed == (int)UI::Col_WidthFixed && UI::TableColumn_WidthStretch == 0 &&
+                      UI::Col_TabSelected == UI::Col_TabActive && UI::StyleVar_FrameBorderSize == UI::StyleVar_BorderSize, "aliases");
+    }
+    {   // InputText_Password shows one star per byte and never copies; InputText_CharsNoBlank drops typed blanks
+        Reset(); Sim s(240, 40);
+        char pw[32] = "secret", plain[32] = "secret", nb[32] = ""; UI::Rect rpw, rnb;
+        int which = 0;
+        auto ui = [&] {
+            UI::BareNextWindow();
+            if (UI::Begin("w", 0, 0, 240, 40)) {
+                if (which == 0) { UI::InputText("##a", pw, sizeof pw, UI::InputText_Password); rpw = UI::GetItemRect(); }
+                if (which == 1) { UI::InputText("##a", plain, sizeof plain); }
+                if (which == 2) { UI::InputText("##a", nb, sizeof nb, UI::InputText_CharsNoBlank); rnb = UI::GetItemRect(); }
+            }
+            UI::End();
+        };
+        which = 0; s.Frames(2, ui); const Bitmap shown = s.Draw(5, 5, 5);
+        which = 1; s.Frames(2, ui); const Bitmap raw = s.Draw(5, 5, 5);
+        CHECK(shown.rgba != raw.rgba);                                       // the stars differ from the letters
+        // the star picture does not depend on what the characters are
+        std::strcpy(pw, "abcdef"); which = 0; s.Frames(2, ui); const Bitmap shown2 = s.Draw(5, 5, 5);
+        CHECK(shown.rgba == shown2.rgba);
+        // selecting everything and copying leaves the clipboard alone
+        UI::SetClipboardText("keep");
+        which = 0; s.Click(CenterX(rpw), CenterY(rpw), ui); s.Press(Key_SelectAll); s.Frame(ui); s.Press(Key_Copy); s.Frame(ui);
+        CHECK(std::string(UI::GetClipboardText()) == "keep");
+        // typing into the no-blank field
+        which = 2; s.Click(CenterX(rnb), CenterY(rnb), ui); s.Type("a b\tc"); s.Frame(ui);
+        CHECK(std::string(nb) == "abc");
+    }
+    {   // AddPolyline with DrawFlags_Closed closes the shape; flags 0 leaves it open
+        Reset(); Sim s(100, 100);
+        auto count = [&](int flags) {
+            s.Frame([&] { UI::BareNextWindow(); if (UI::Begin("w", 0, 0, 100, 100)) { const UI::Vec2 p[3] = {{10, 10}, {90, 10}, {90, 90}}; UI::GetWindowDrawList().AddPolyline(p, 3, 0xffffffffu, flags, 2.0f); } UI::End(); });
+            const Bitmap b = s.Draw(0, 0, 0); return PixelAt(b, 50, 50) != Rgba(0, 0, 0);   // the closing edge passes through the middle
+        };
+        CHECK(!count(0) && count(UI::DrawFlags_Closed));
+    }
     TEST_MAIN_RESULT();
 }

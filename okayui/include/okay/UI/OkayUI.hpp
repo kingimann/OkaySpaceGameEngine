@@ -178,6 +178,8 @@ enum InputTextFlags {
     InputText_EnterReturnsTrue = 1,   // return true when Enter is pressed instead of on every edit
     InputText_ReadOnly         = 2,   // selection and caret work, edits are ignored
     InputText_AutoSelectAll    = 4,   // clicking into the field selects all of its text
+    InputText_Password         = 8,   // shows one '*' per byte of text; copy and cut are off
+    InputText_CharsNoBlank     = 16,  // typed spaces and tabs are dropped (paste is not filtered)
 };
 bool TextField(int id, float x, float y, float w, float h, char* buf, int cap, unsigned flags = 0);
 
@@ -374,6 +376,8 @@ void TabBar(const char* const* labels, int count, int* current);
 enum TabItemFlags : int { Tab_None = 0, Tab_SetSelected = 1, Tab_Trailing = 2, Tab_NoTooltip = 4 /* accepted, there are no tab tooltips */ };
 bool BeginTabBar(const char* id);
 bool BeginTabItem(const char* label, bool* open = nullptr, int flags = 0);
+/// The same flags under the names ported code uses (aliases of the Tab_* values).
+enum TabItemFlagNames : int { TabItem_None = 0, TabItem_SetSelected = Tab_SetSelected, TabItem_Trailing = Tab_Trailing, TabItem_NoTooltip = Tab_NoTooltip };
 void EndTabItem();
 bool TabItemButton(const char* label, int flags = 0);
 void EndTabBar();
@@ -511,6 +515,8 @@ bool ArrowButton(const char* id, int dir);
 enum ColorEditFlags : int {
     ColorEdit_None = 0, ColorEdit_NoAlpha = 1, ColorEdit_NoPicker = 2, ColorEdit_NoInputs = 4, ColorEdit_NoLabel = 8,
     ColorEdit_NoSidePreview = 16, ColorEdit_NoAlphaBar = 32, ColorEdit_Hex = 64, ColorEdit_AlphaPreviewHalf = 128,
+    ColorEdit_AlphaBar = 0,       // the alpha bar is on unless ColorEdit_NoAlphaBar: accepted for ported code
+    ColorEdit_NoTooltip = 256,    // accepted and ignored: swatches have no tooltip
 };
 /// A square swatch showing rgba[0..3] (each 0..1, a checkerboard shows through the alpha) that can be clicked; `size` <= 0 uses the row height.
 bool ColorButton(const char* id, const float rgba[4], float size = 0.0f);
@@ -548,6 +554,7 @@ enum TreeNodeFlags {
     TreeNode_Bullet      = 32,       // a bullet instead of the arrow (the node still opens and closes)
     TreeNode_SpanFullWidth = 64,     // the row, its highlight and its click area start at the window's content edge, under the indent
     TreeNode_NoTreePushOnOpen = 128, // an open node does not indent: no TreePop() for it
+    TreeNode_SpanAvailWidth = 0,     // the row already runs from the node to the right edge: the default, accepted for ported code
     TreeNode_Framed      = 256,      // drawn with a header-style background (the Col_Header colours)
 };
 /// TreeNode with flags (TreeNodeFlags).
@@ -688,6 +695,9 @@ enum TableColumnFlags : int {
     Col_DefaultSort = 4,      // starts as a sort key
     Col_PreferSortDescending = 8,   // the first click sorts descending (the default is ascending)
 };
+/// The same column flags under the names ported code uses. Stretch is the default (flag 0), Fixed is Col_WidthFixed.
+enum TableColumnFlagNames : int { TableColumn_None = 0, TableColumn_WidthStretch = 0, TableColumn_WidthFixed = Col_WidthFixed, TableColumn_NoSort = Col_NoSort,
+                                  TableColumn_DefaultSort = Col_DefaultSort, TableColumn_PreferSortDescending = Col_PreferSortDescending };
 inline TableFlags operator|(TableFlags a, TableFlags b) { return (TableFlags)((int)a | (int)b); }
 bool BeginTable(const char* id, int columns, TableFlags flags);
 /// BeginTable with a box: `outerSize.x` <= 0 is the width left; `outerSize.y` <= 0 is the height left (at least four rows) for a
@@ -869,7 +879,8 @@ Color32 ColorMulAlpha(Color32 c, float alphaMul);
 enum DrawFlags : int {
     DrawFlags_RoundCornersTopLeft = 1, DrawFlags_RoundCornersTopRight = 2, DrawFlags_RoundCornersBottomRight = 4, DrawFlags_RoundCornersBottomLeft = 8,
     DrawFlags_RoundCornersTop = 3, DrawFlags_RoundCornersRight = 6, DrawFlags_RoundCornersBottom = 12, DrawFlags_RoundCornersLeft = 9,
-    DrawFlags_RoundCornersAll = 15, DrawFlags_None = 16
+    DrawFlags_RoundCornersAll = 15, DrawFlags_None = 16,
+    DrawFlags_Closed = 32      // AddPolyline: join the last point to the first
 };
 
 struct DrawList {
@@ -889,6 +900,8 @@ struct DrawList {
     void AddQuadFilled(Vec2 a, Vec2 b, Vec2 c, Vec2 d, Color32 col) const;
     /// 2 to 256 points. `closed` joins the last point to the first.
     void AddPolyline(const Vec2* points, int count, Color32 col, bool closed, float thickness = 1.0f) const;
+    /// The same with DrawFlags (DrawFlags_Closed joins the ends; other bits are ignored).
+    void AddPolyline(const Vec2* points, int count, Color32 col, int flags, float thickness = 1.0f) const;
     /// A convex polygon (a triangle fan; concave shapes draw wrongly: no ear clipping yet), 3 to 256 points.
     void AddConvexPolyFilled(const Vec2* points, int count, Color32 col) const;
     /// A cubic Bezier curve flattened to `segments` lines (0 = 24, at most 255).
@@ -1002,7 +1015,9 @@ bool IsKeyReleased(KeyId key);
 enum StyleVar : int {
     StyleVar_Alpha = 0, StyleVar_WindowPadding, StyleVar_WindowRounding, StyleVar_FramePadding, StyleVar_FrameRounding,
     StyleVar_ItemSpacing, StyleVar_ItemInnerSpacing, StyleVar_ChildRounding, StyleVar_BorderSize, StyleVar_ButtonTextAlign,
-    StyleVar_SelectableTextAlign, StyleVar_ScrollbarSize, StyleVar_COUNT
+    StyleVar_SelectableTextAlign, StyleVar_ScrollbarSize, StyleVar_COUNT,
+    // Names ported code uses for the border sizes (BorderSize sets all three, as before).
+    StyleVar_WindowBorderSize = StyleVar_BorderSize, StyleVar_FrameBorderSize = StyleVar_BorderSize, StyleVar_ChildBorderSize = StyleVar_BorderSize
 };
 void PushStyleVar(StyleVar var, float value);
 void PushStyleVar(StyleVar var, Vec2 value);
@@ -1086,6 +1101,7 @@ enum Col : int {
     Col_TableHeaderBg, Col_TableBorderStrong, Col_TableBorderLight, Col_TableRowBg, Col_TableRowBgAlt,
     Col_TextSelectedBg, Col_DragDropTarget, Col_NavHighlight, Col_NavWindowingHighlight, Col_NavWindowingDimBg, Col_ModalWindowDimBg,
     Col_COUNT,
+    Col_TabSelected = Col_TabActive,   // the newer Dear ImGui name for the selected tab colour
     // the button colours are the original three fields under their Dear ImGui names
     Col_Button = Col_Bg, Col_ButtonHovered = Col_BgHover, Col_ButtonActive = Col_BgDown,
 };

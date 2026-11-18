@@ -1506,12 +1506,13 @@ bool TextField(int id, float x, float y, float w, float h, char* buf, int cap, u
             for (const char* p = g_in.text; *p;) {
                 const int n = printableUtf8Len(p);
                 if (!n) { ++p; continue; }
+                if ((flags & InputText_CharsNoBlank) && n == 1 && (*p == ' ' || *p == '\t')) { p += n; continue; }   // CharsNoBlank
                 insertOne(p, n);
                 p += n;
             }
         }
         // Clipboard: copy and cut take the selection, paste replaces it (new lines and tabs become spaces: it is a one-line field).
-        if (!composing && (g_in.copy || g_in.cut) && ts->caret != ts->anchor) {
+        if (!composing && !(flags & InputText_Password) && (g_in.copy || g_in.cut) && ts->caret != ts->anchor) {   // a password is never copied
             const int lo = selLo(), hi = selHi();
             char tmp[kClipboardMax]; int n = hi - lo; if (n > kClipboardMax - 1) n = kClipboardMax - 1;
             for (int i = 0; i < n; ++i) tmp[i] = buf[lo + i];
@@ -1556,6 +1557,16 @@ bool TextField(int id, float x, float y, float w, float h, char* buf, int cap, u
     if (w > 2.0f * b && h > 2.0f * b) rrect(x + b, y + b, w - 2.0f * b, h - 2.0f * b, rd > b ? rd - b : 0.0f,
                                             pick(focused ? Col_FrameBgActive : (inside ? Col_FrameBgHovered : Col_FrameBg), g_theme.field));
 
+    // Password: show one '*' per byte (offsets stay equal to the real text's, so caret and selection need no mapping).
+    static char maskBuf[4096];
+    if (flags & InputText_Password) {
+        const int m = len < 4095 ? len : 4095;
+        for (int i = 0; i < m; ++i) maskBuf[i] = '*';
+        maskBuf[m] = 0; buf = maskBuf; len = m;
+        if (ts->caret > m) ts->caret = m;
+        if (ts->anchor > m) ts->anchor = m;
+        if (ts->first > m) ts->first = m;
+    }
     // Scroll horizontally so the caret stays visible: drop leading characters until the text
     // between the first shown character and the caret fits (whole UTF-8 characters only).
     const float innerW = w - 2.0f * pad;
@@ -5363,6 +5374,8 @@ void DrawList::AddPolyline(const Vec2* pts, int count, Color32 col, bool closed,
     ListScope s(overlay); unsigned char c[4]; unpack(col, c);
     strokePath(pts, count, closed, th, c);
 }
+
+void DrawList::AddPolyline(const Vec2* pts, int count, Color32 col, int flags, float th) const { AddPolyline(pts, count, col, (flags & DrawFlags_Closed) != 0, th); }
 
 void DrawList::AddConvexPolyFilled(const Vec2* pts, int count, Color32 col) const {
     if (!pts || count < 3 || count > kMaxPath) return;

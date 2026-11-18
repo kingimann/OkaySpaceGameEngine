@@ -117,7 +117,9 @@ KEYWORDS = {"if", "for", "while", "switch", "else", "return", "do", "catch", "si
 def type_covered(name, idents):
     """An ImGui type/flag/enum name is available when OkayUI has the same-named identifier or its obvious spelling."""
     if name in ("ImVec2", "ImVec4"):
-        return "Vec2" in idents if name == "ImVec2" else False
+        return "Vec2" in idents if name == "ImVec2" else "ImVec4" in idents
+    if name in ("ImTextureID", "ImRect"):
+        return name in idents
     if name == "ImU32":
         return "Color32" in idents
     if name in ("ImDrawList",):
@@ -126,7 +128,7 @@ def type_covered(name, idents):
         return "DrawFlags_" + name[len("ImDrawFlags_"):] in idents
     if name.startswith("ImGui"):
         base = name[5:]
-        cands = [base, base.replace("Flags_", "_"), base.replace("Flags", ""), re.sub(r"Flags_", "_", base)]
+        cands = [name, base, base.replace("Flags_", "_"), base.replace("Flags", ""), re.sub(r"Flags_", "_", base)]
         m = re.match(r"([A-Z][a-z]+)Flags_(\w+)", base)
         if m:
             cands += [m.group(1) + "_" + m.group(2), m.group(1) + "Flags"]

@@ -266,4 +266,37 @@ enum ChildFlags : int { Child_None = 0, Child_Borders = 1, Child_AlwaysUseWindow
                         Child_AutoResizeX = 16, Child_AutoResizeY = 32, Child_AlwaysAutoResize = 64, Child_FrameStyle = 128 };
 bool BeginChild(const char* id, Vec2 size, int childFlags = Child_None, int windowFlags = 0);
 
+
+// ---- Step 6.11 (continued): the type names host code spells ---------------------------------------------------------------------
+
+/// Dear ImGui's colour-vector type under its own name, for ported code that writes `ImVec4(r, g, b, a)` and reads `.x .y .z .w`. It
+/// converts both ways with Vec4 (so it can be passed to PushStyleColor and assigned from GetStyleColorVec4).
+struct ImVec4 {
+    float x = 0.0f, y = 0.0f, z = 0.0f, w = 0.0f;
+    ImVec4() {}
+    ImVec4(float x_, float y_, float z_, float w_) : x(x_), y(y_), z(z_), w(w_) {}
+    ImVec4(const Vec4& v) : x(v.x), y(v.y), z(v.z), w(v.w) {}
+    operator Vec4() const { return Vec4{x, y, z, w}; }
+};
+/// A texture handle as ported code spells it: the SDL texture pointer AddImage takes.
+typedef SDL_Texture* ImTextureID;
+/// An id (what GetID returns).
+typedef unsigned ImGuiID;
+/// A rectangle by its two corners (Dear ImGui's internal type under its name; own code, the usual helpers).
+struct ImRect {
+    Vec2 Min, Max;
+    ImRect() {}
+    ImRect(Vec2 mn, Vec2 mx) : Min(mn), Max(mx) {}
+    ImRect(float x1, float y1, float x2, float y2) : Min{x1, y1}, Max{x2, y2} {}
+    Vec2 GetCenter() const { return Vec2{(Min.x + Max.x) * 0.5f, (Min.y + Max.y) * 0.5f}; }
+    Vec2 GetSize() const { return Vec2{Max.x - Min.x, Max.y - Min.y}; }
+    float GetWidth() const { return Max.x - Min.x; }
+    float GetHeight() const { return Max.y - Min.y; }
+    bool Contains(Vec2 p) const { return p.x >= Min.x && p.y >= Min.y && p.x < Max.x && p.y < Max.y; }
+    bool Overlaps(const ImRect& r) const { return r.Min.y < Max.y && r.Max.y > Min.y && r.Min.x < Max.x && r.Max.x > Min.x; }
+    void Expand(float amount) { Min.x -= amount; Min.y -= amount; Max.x += amount; Max.y += amount; }
+};
+/// The last item's rectangle as an ImRect.
+inline ImRect GetItemImRect() { const Rect r = GetItemRect(); return ImRect(r.x, r.y, r.x + r.w, r.y + r.h); }
+
 } // namespace OkayUI

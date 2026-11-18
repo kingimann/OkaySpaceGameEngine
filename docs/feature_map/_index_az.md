@@ -5070,6 +5070,7 @@ Word, then the number(s) to say. Back to the [overview](../FEATURE_MAP.md).
 - two-bone (5.6, 36.5)
 - Two-bone solver (36.5.1)
 - Two-way bind (12.13.7)
+- Type names, flag aliases, password and no-blank input, closed polylines, `##id` labels hidden (40.9.5)
 - Typed actions, maps and local players (8.3.7)
 - typed OkayScript (13.2)
 - typed pins (14.2)

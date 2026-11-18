@@ -152,9 +152,20 @@ int main(int argc, char** argv) {
         g_rep.Add("window", (w == 640 && h == 400) ? Status::Pass : Status::Fail,
                   "asked 640x400, got " + std::to_string(w) + "x" + std::to_string(h) + ", drawable " + std::to_string(dw) + "x" + std::to_string(dh) +
                   (win->RefreshRateHz() ? ", refresh " + std::to_string(win->RefreshRateHz()) + " Hz" : ", refresh rate unknown"));
+        g_rep.Add("window DPI", Status::Info, std::to_string(win->Dpi()) + " (96 = 100 percent)");
         win->SetTitle("okay-platform-selftest (own platform layer) \xC3\xA4");
     }
 
+    {
+        const int n = be->DisplayCount();
+        std::string d;
+        for (int i = 0; i < n; ++i) {
+            DisplayInfo di;
+            if (be->DisplayAt(i, di)) d += (i ? "; " : "") + std::to_string(di.w) + "x" + std::to_string(di.h) + " at " + std::to_string(di.x) + "," + std::to_string(di.y) +
+                                          ", " + Num(di.dpi, "%.0f") + " DPI" + (di.primary ? ", primary" : "");
+        }
+        g_rep.Add("displays", n > 0 ? Status::Pass : Status::Skip, n > 0 ? std::to_string(n) + ": " + d : "this backend lists no displays");
+    }
     CheckClipboard(be);   // after the window: on X11 the clipboard owner is a window
 
     // ---- Audio ----
@@ -199,6 +210,12 @@ int main(int argc, char** argv) {
 
     // ---- Interactive loop ----
     be->StartTextInput();
+    // Icon: a small orange square, to see the window's icon change (Win32: title bar and task bar).
+    if (win) {
+        std::vector<uint8_t> ic(32 * 32 * 4, 0);
+        for (int y = 4; y < 28; ++y) for (int x = 4; x < 28; ++x) { uint8_t* p = &ic[((size_t)y * 32 + x) * 4]; p[0] = 255; p[1] = 128; p[2] = 0; p[3] = 255; }
+        g_rep.Add("window icon", win->SetIcon(ic.data(), 32, 32) ? Status::Pass : Status::Skip, "set an orange square as the icon (look at the title bar / task bar)");
+    }
     std::vector<uint8_t> px;
     int pw = 640, ph = 400, mx = -1, my = -1;
     if (win) win->GetSize(pw, ph);

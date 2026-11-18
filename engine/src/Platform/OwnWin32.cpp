@@ -8,6 +8,9 @@
 #include "Internal.hpp"
 #include "Win32Keys.hpp"
 #include "AudioPump.hpp"
+#include "Win32Display.hpp"
+#include "Win32Icon.hpp"
+#include "Win32Ime.hpp"
 #ifndef NOMINMAX
 #define NOMINMAX
 #endif
@@ -16,10 +19,12 @@
 #endif
 #include <windows.h>
 #include <shellapi.h>
+#include <imm.h>
 #include <xinput.h>
 #include <cstring>
 #include <deque>
 #include <map>
+#include <vector>
 
 namespace okay::platform {
 namespace {
@@ -52,6 +57,22 @@ uint32_t CurrentMods() {
     if (GetKeyState(VK_CAPITAL) & 1) m |= ModCaps;
     if (GetKeyState(VK_NUMLOCK) & 1) m |= ModNum;
     return m;
+}
+
+// DPI of one monitor (effective DPI: GetDpiForMonitor in shcore.dll, Windows 8.1+, looked up at run time) and of a
+// window (GetDpiForWindow, Windows 10 1607+); 96 when neither exists, so an old Windows just reads 100 percent.
+int MonitorDpi(HMONITOR mon) {
+    using Fn = HRESULT (WINAPI*)(HMONITOR, int, UINT*, UINT*);
+    static Fn fn = [] { HMODULE m = LoadLibraryW(L"shcore.dll"); return m ? (Fn)(void*)GetProcAddress(m, "GetDpiForMonitor") : nullptr; }();
+    UINT x = 0, y = 0;
+    if (fn && mon && SUCCEEDED(fn(mon, 0 /* MDT_EFFECTIVE_DPI */, &x, &y)) && x) return (int)x;
+    return win32disp::kBaseDpi;
+}
+int WindowDpi(HWND h) {
+    using Fn = UINT (WINAPI*)(HWND);
+    static Fn fn = [] { HMODULE m = GetModuleHandleW(L"user32.dll"); return m ? (Fn)(void*)GetProcAddress(m, "GetDpiForWindow") : nullptr; }();
+    if (fn) { const UINT d = fn(h); if (d) return (int)d; }
+    return MonitorDpi(MonitorFromWindow(h, MONITOR_DEFAULTTONEAREST));
 }
 
 class WinBackend;
@@ -104,6 +125,26 @@ public:
         m_full = on;
     }
     bool IsFocused() const override { return GetFocus() == m_hwnd; }
+    int Dpi() const override { return WindowDpi(m_hwnd); }
+    int RefreshRateHz() const override {
+        MONITORINFOEXW mi; mi.cbSize = sizeof(mi);
+        if (!GetMonitorInfoW(MonitorFromWindow(m_hwnd, MONITOR_DEFAULTTONEAREST), &mi)) return 0;
+        DEVMODEW dm; std::memset(&dm, 0, sizeof(dm)); dm.dmSize = sizeof(dm);
+        return EnumDisplaySettingsW(mi.szDevice, ENUM_CURRENT_SETTINGS, &dm) ? win32disp::RefreshFromDevMode((int)dm.dmDisplayFrequency) : 0;
+    }
+    bool SetIcon(const uint8_t* rgba, int w, int h) override {
+        if (!win32icon::ValidIcon(rgba, w, h)) return false;
+        // A big icon (Alt+Tab, task bar) and a small one (title bar), each at the size this system asks for.
+        HICON big = MakeIcon(rgba, w, h, GetSystemMetrics(SM_CXICON), GetSystemMetrics(SM_CYICON));
+        HICON small = MakeIcon(rgba, w, h, GetSystemMetrics(SM_CXSMICON), GetSystemMetrics(SM_CYSMICON));
+        if (!big || !small) { if (big) DestroyIcon(big); if (small) DestroyIcon(small); return false; }
+        SendMessageW(m_hwnd, WM_SETICON, ICON_BIG, (LPARAM)big);
+        SendMessageW(m_hwnd, WM_SETICON, ICON_SMALL, (LPARAM)small);
+        if (m_iconBig) DestroyIcon(m_iconBig);
+        if (m_iconSmall) DestroyIcon(m_iconSmall);
+        m_iconBig = big; m_iconSmall = small;
+        return true;
+    }
     bool PresentPixels(const uint8_t* rgba, int w, int h) override {
         if (!rgba || w <= 0 || h <= 0) return false;
         RECT rc; GetClientRect(m_hwnd, &rc);
@@ -149,8 +190,37 @@ public:
     }
     void GetDrawableSize(int& w, int& h) const override { GetSize(w, h); }
 
+    static HICON MakeIcon(const uint8_t* rgba, int w, int h, int tw, int th) {
+        if (tw < 1) tw = 32;
+        if (th < 1) th = 32;
+        std::vector<uint8_t> scaled;
+        if (tw != w || th != h) { scaled = win32icon::Resize(rgba, w, h, tw, th); rgba = scaled.data(); w = tw; h = th; }
+        const std::vector<uint8_t> bgra = win32icon::ToBgra(rgba, w, h);
+        const std::vector<uint8_t> mask = win32icon::AndMask(rgba, w, h);
+        BITMAPV5HEADER bi; ZeroMemory(&bi, sizeof(bi));
+        bi.bV5Size = sizeof(bi); bi.bV5Width = w; bi.bV5Height = -h; bi.bV5Planes = 1; bi.bV5BitCount = 32;
+        bi.bV5Compression = BI_BITFIELDS;
+        bi.bV5RedMask = 0x00FF0000; bi.bV5GreenMask = 0x0000FF00; bi.bV5BlueMask = 0x000000FF; bi.bV5AlphaMask = 0xFF000000;
+        HDC dc = GetDC(nullptr);
+        void* bits = nullptr;
+        HBITMAP color = CreateDIBSection(dc, reinterpret_cast<BITMAPINFO*>(&bi), DIB_RGB_COLORS, &bits, nullptr, 0);
+        ReleaseDC(nullptr, dc);
+        if (!color || !bits) { if (color) DeleteObject(color); return nullptr; }
+        std::memcpy(bits, bgra.data(), bgra.size());
+        // The mask bitmap: CreateBitmap takes top-down rows padded to 16 bits, exactly what AndMask makes.
+        HBITMAP msk = CreateBitmap(w, h, 1, 1, mask.data());
+        ICONINFO ii; ZeroMemory(&ii, sizeof(ii));
+        ii.fIcon = TRUE; ii.hbmColor = color; ii.hbmMask = msk;
+        HICON ic = msk ? CreateIconIndirect(&ii) : nullptr;
+        DeleteObject(color);
+        if (msk) DeleteObject(msk);
+        return ic;
+    }
+
     WinBackend* m_b;
     HWND m_hwnd;
+    HICON m_iconBig = nullptr, m_iconSmall = nullptr;
+    win32ime::Machine m_ime;
     HDC m_dc = nullptr;
     HGLRC m_rc = nullptr;
     int m_minW = 0, m_minH = 0;
@@ -285,6 +355,18 @@ public:
         return MouseState(nullptr, nullptr);
     }
     bool SupportsRelativeMouseState() override { return true; }
+    int DisplayCount() override { return (int)ListDisplays().size(); }
+    bool DisplayAt(int i, DisplayInfo& o) override {
+        const std::vector<DisplayInfo> v = ListDisplays();
+        if (i < 0 || i >= (int)v.size()) return false;
+        o = v[(size_t)i];
+        return true;
+    }
+    void SetTextInputRect(int x, int y, int w, int h) override {
+        m_imeRect = {x, y, x + (w > 0 ? w : 0), y + (h > 0 ? h : 0)};
+        m_imeRectSet = true;
+        if (HWND f = GetFocus()) ApplyImeRect(f);
+    }
     bool SetPerMonitorDpiAware() override {
         using SetCtx = BOOL (WINAPI*)(HANDLE);
         HMODULE u = GetModuleHandleW(L"user32.dll");
@@ -383,6 +465,46 @@ public:
                 return 0;
             }
             break;
+        case 0x02E0: {   // WM_DPICHANGED: wParam = the new DPI, lParam = the rectangle Windows suggests for the new scale
+            const RECT* r = reinterpret_cast<const RECT*>(lp);
+            if (r) SetWindowPos(h, nullptr, r->left, r->top, r->right - r->left, r->bottom - r->top, SWP_NOZORDER | SWP_NOACTIVATE);
+            e.type = EventType::WindowDpiChanged; e.x = win32disp::DpiFromWParam((uint64_t)wp);
+            b->m_pending.push_back(e);
+            return 0;
+        }
+        case WM_IME_SETCONTEXT: b->ApplyImeRect(h); break;
+        case WM_IME_STARTCOMPOSITION: {
+            win->m_ime.Start();
+            b->ApplyImeRect(h);
+            break;   // DefWindowProc opens the system composition window
+        }
+        case WM_IME_COMPOSITION: {
+            std::u16string comp;
+            int cursor = 0;
+            if (HIMC imc = ImmGetContext(h)) {
+                if (lp & GCS_COMPSTR) {
+                    const LONG bytes = ImmGetCompositionStringW(imc, GCS_COMPSTR, nullptr, 0);
+                    if (bytes > 0 && bytes < (1 << 16)) {
+                        comp.resize((size_t)bytes / sizeof(wchar_t));
+                        ImmGetCompositionStringW(imc, GCS_COMPSTR, &comp[0], (DWORD)bytes);
+                    }
+                }
+                if (lp & GCS_CURSORPOS) cursor = (int)(ImmGetCompositionStringW(imc, GCS_CURSORPOS, nullptr, 0) & 0xFFFF);
+                ImmReleaseContext(h, imc);
+            }
+            for (const win32ime::Editing& ed : win->m_ime.Composition((uint32_t)lp, comp, cursor)) {
+                Event t = e; t.type = EventType::TextEditing; t.text = ed.text; t.x = ed.cursor;
+                b->m_pending.push_back(t);
+            }
+            break;   // the finished text comes back through DefWindowProc as WM_CHAR, which becomes TextInput
+        }
+        case WM_IME_ENDCOMPOSITION: {
+            for (const win32ime::Editing& ed : win->m_ime.End()) {
+                Event t = e; t.type = EventType::TextEditing; t.text = ed.text; t.x = ed.cursor;
+                b->m_pending.push_back(t);
+            }
+            break;
+        }
         case WM_SETFOCUS: e.type = EventType::WindowFocusGained; b->m_pending.push_back(e); return 0;
         case WM_KILLFOCUS: e.type = EventType::WindowFocusLost; b->m_pending.push_back(e); return 0;
         case WM_PAINT: { PAINTSTRUCT ps; BeginPaint(h, &ps); EndPaint(h, &ps); e.type = EventType::WindowExposed; b->m_pending.push_back(e); return 0; }
@@ -465,6 +587,45 @@ public:
         return DefWindowProcW(h, m, wp, lp);
     }
 
+    // The caret rectangle for the input method's candidate window (client coordinates), set by SetTextInputRect.
+    void ApplyImeRect(HWND h) {
+        if (!m_imeRectSet) return;
+        if (HIMC imc = ImmGetContext(h)) {
+            CANDIDATEFORM cf; ZeroMemory(&cf, sizeof(cf));
+            cf.dwStyle = CFS_EXCLUDE; cf.ptCurrentPos = {m_imeRect.left, m_imeRect.bottom}; cf.rcArea = m_imeRect;
+            ImmSetCandidateWindow(imc, &cf);
+            COMPOSITIONFORM cp; ZeroMemory(&cp, sizeof(cp));
+            cp.dwStyle = CFS_POINT; cp.ptCurrentPos = {m_imeRect.left, m_imeRect.top};
+            ImmSetCompositionWindow(imc, &cp);
+            ImmReleaseContext(h, imc);
+        }
+    }
+    static BOOL CALLBACK MonitorEnum(HMONITOR mon, HDC, LPRECT, LPARAM lp) {
+        auto* out = reinterpret_cast<std::vector<DisplayInfo>*>(lp);
+        MONITORINFOEXW mi; mi.cbSize = sizeof(mi);
+        if (!GetMonitorInfoW(mon, &mi)) return TRUE;
+        DisplayInfo d;
+        d.name = Utf8(mi.szDevice, (int)wcslen(mi.szDevice));
+        d.x = mi.rcMonitor.left; d.y = mi.rcMonitor.top;
+        d.w = win32disp::FromLtrb(mi.rcMonitor.left, mi.rcMonitor.top, mi.rcMonitor.right, mi.rcMonitor.bottom).w;
+        d.h = win32disp::FromLtrb(mi.rcMonitor.left, mi.rcMonitor.top, mi.rcMonitor.right, mi.rcMonitor.bottom).h;
+        d.ux = mi.rcWork.left; d.uy = mi.rcWork.top;
+        d.uw = win32disp::FromLtrb(mi.rcWork.left, mi.rcWork.top, mi.rcWork.right, mi.rcWork.bottom).w;
+        d.uh = win32disp::FromLtrb(mi.rcWork.left, mi.rcWork.top, mi.rcWork.right, mi.rcWork.bottom).h;
+        d.primary = (mi.dwFlags & MONITORINFOF_PRIMARY) != 0;
+        d.dpi = (float)MonitorDpi(mon);
+        DEVMODEW dm; std::memset(&dm, 0, sizeof(dm)); dm.dmSize = sizeof(dm);
+        if (EnumDisplaySettingsW(mi.szDevice, ENUM_CURRENT_SETTINGS, &dm)) d.refreshHz = win32disp::RefreshFromDevMode((int)dm.dmDisplayFrequency);
+        out->push_back(d);
+        return TRUE;
+    }
+    static std::vector<DisplayInfo> ListDisplays() {
+        std::vector<DisplayInfo> v;
+        EnumDisplayMonitors(nullptr, nullptr, &WinBackend::MonitorEnum, reinterpret_cast<LPARAM>(&v));
+        win32disp::OrderDisplays(v);
+        return v;
+    }
+
     void CenterCursor() {
         HWND f = GetForegroundWindow();
         if (!f) return;
@@ -479,6 +640,8 @@ public:
     bool m_text = false, m_relative = false, m_cursorShown = true, m_inited = false;
     int m_lastX = 0, m_lastY = 0;
     int m_relAccX = 0, m_relAccY = 0;
+    RECT m_imeRect = {0, 0, 0, 0};
+    bool m_imeRectSet = false;
     std::string m_err;
 
 private:
@@ -507,6 +670,8 @@ private:
 
 WinWindow::~WinWindow() {
     DestroyGLContext();
+    if (m_iconBig) DestroyIcon(m_iconBig);
+    if (m_iconSmall) DestroyIcon(m_iconSmall);
     m_b->Unregister(m_hwnd);
     DestroyWindow(m_hwnd);
 }

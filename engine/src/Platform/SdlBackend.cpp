@@ -63,6 +63,11 @@ public:
         SDL_FreeSurface(surf);
         return true;
     }
+    int Dpi() const override {
+        float ddpi = 0;
+        const int idx = SDL_GetWindowDisplayIndex(m_win);
+        return (idx >= 0 && SDL_GetDisplayDPI(idx, &ddpi, nullptr, nullptr) == 0 && ddpi >= 48.0f && ddpi <= 1000.0f) ? (int)(ddpi + 0.5f) : 96;
+    }
     int RefreshRateHz() const override {
         SDL_DisplayMode dm;
         return (SDL_GetWindowDisplayMode(m_win, &dm) == 0 && dm.refresh_rate > 0) ? dm.refresh_rate : 0;
@@ -258,6 +263,24 @@ public:
     bool SupportsRelativeMouseState() override { return true; }
     uint32_t ModState() override { return ModsFromSdl((Uint16)SDL_GetModState()); }
     Key KeyForChar(char c) override { return (Key)SDL_GetScancodeFromKey((SDL_Keycode)(unsigned char)c); }
+    int DisplayCount() override { return SDL_GetNumVideoDisplays() > 0 ? SDL_GetNumVideoDisplays() : 0; }
+    bool DisplayAt(int i, DisplayInfo& o) override {
+        if (i < 0 || i >= SDL_GetNumVideoDisplays()) return false;
+        SDL_Rect b, u;
+        if (SDL_GetDisplayBounds(i, &b) != 0) return false;
+        if (SDL_GetDisplayUsableBounds(i, &u) != 0) u = b;
+        const char* nm = SDL_GetDisplayName(i);
+        float ddpi = 96.0f;
+        if (SDL_GetDisplayDPI(i, &ddpi, nullptr, nullptr) != 0 || ddpi < 48.0f || ddpi > 1000.0f) ddpi = 96.0f;
+        SDL_DisplayMode dm;
+        o.name = nm ? nm : "";
+        o.x = b.x; o.y = b.y; o.w = b.w; o.h = b.h;
+        o.ux = u.x; o.uy = u.y; o.uw = u.w; o.uh = u.h;
+        o.dpi = ddpi;
+        o.refreshHz = (SDL_GetCurrentDisplayMode(i, &dm) == 0 && dm.refresh_rate > 0) ? dm.refresh_rate : 0;
+        o.primary = (i == 0);   // SDL lists the primary display first
+        return true;
+    }
     bool SetPerMonitorDpiAware() override {
 #ifdef SDL_HINT_WINDOWS_DPI_AWARENESS   // SDL >= 2.24
         return SDL_SetHint(SDL_HINT_WINDOWS_DPI_AWARENESS, "permonitorv2") == SDL_TRUE;

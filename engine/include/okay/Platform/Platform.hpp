@@ -88,6 +88,8 @@ enum class EventType {
     GamepadAdded,      // deviceId = device index to pass to Backend::OpenGamepad
     GamepadRemoved,    // deviceId = Gamepad::InstanceId()
     FingerDown, FingerMotion, FingerUp,   // touch: fingerId, fx, fy (0..1 of the window). sdl2 only; own never fires them
+    WindowDpiChanged,  // x = the window's new DPI (96 = 100 percent); the window has already been resized to the OS's suggestion. own Windows only
+    TextEditing,       // input method composition: text = UTF-8 being composed ("" = cleared), x = caret in code points. own Windows only
 };
 
 struct Event {
@@ -162,6 +164,8 @@ public:
     virtual bool IsFullscreen() const { return false; }
     /// Window / task-bar icon from tightly packed RGBA8 pixels. False = not supported here.
     virtual bool SetIcon(const uint8_t* rgba, int w, int h) { (void)rgba; (void)w; (void)h; return false; }
+    /// DPI of the display the window is on (96 = 100 percent); 96 when the backend cannot tell.
+    virtual int Dpi() const { return 96; }
     /// Refresh rate (Hz) of the display the window is on; 0 = unknown.
     virtual int RefreshRateHz() const { return 0; }
     /// Show a finished software frame: tightly packed RGBA8 (alpha ignored), `w` x `h`, top row first, drawn at the
@@ -208,6 +212,16 @@ public:
     virtual uint32_t QueuedBytes() const = 0;         // playback: not yet played; capture: ready to Dequeue
     virtual void ClearQueued() = 0;
     virtual uint32_t Dequeue(void* out, uint32_t maxBytes) = 0; // capture, queue mode
+};
+
+// ---- Displays -----------------------------------------------------------------
+struct DisplayInfo {
+    std::string name;
+    int x = 0, y = 0, w = 0, h = 0;          // the whole display, desktop coordinates
+    int ux = 0, uy = 0, uw = 0, uh = 0;      // the part not covered by the task bar
+    float dpi = 96.0f;                       // effective DPI (96 = 100 percent)
+    int refreshHz = 0;                       // 0 = unknown
+    bool primary = false;
 };
 
 // ---- Game controllers ----------------------------------------------------------
@@ -318,6 +332,14 @@ public:
     /// layout, so a game's WASD follows an AZERTY layout. Key::Unknown when none.
     /// The base version assumes a US layout.
     virtual Key KeyForChar(char c);
+
+    /// Displays, primary first and then left to right. DisplayAt fills `out` and returns false for an index out of range.
+    /// The base versions know none (0 displays); the own Windows backend and the sdl2 backend list them.
+    virtual int DisplayCount() { return 0; }
+    virtual bool DisplayAt(int index, DisplayInfo& out) { (void)index; (void)out; return false; }
+    /// Where the input method should put its candidate list: the caret rectangle in window client pixels
+    /// (own Windows only; elsewhere nothing happens).
+    virtual void SetTextInputRect(int x, int y, int w, int h) { (void)x; (void)y; (void)w; (void)h; }
 
     // Process-level helpers the apps used to take from SDL directly.
     /// Per-monitor DPI awareness on Windows (a hint, call before the first window). False = nothing to do here.

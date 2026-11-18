@@ -89,6 +89,8 @@ inline std::string DescribeEvent(const platform::Event& e) {
     case EventType::WindowFocusGained: return "window focus gained";
     case EventType::WindowFocusLost: return "window focus lost";
     case EventType::WindowClose: return "window close requested";
+    case EventType::WindowDpiChanged: return "window DPI changed to " + std::to_string(e.x);
+    case EventType::TextEditing: return "composing \"" + e.text + "\" caret " + std::to_string(e.x);
     case EventType::DropFile: return "file dropped: " + e.text;
     case EventType::GamepadAdded: return "gamepad added (index " + std::to_string(e.deviceId) + ")";
     case EventType::GamepadRemoved: return "gamepad removed (id " + std::to_string(e.deviceId) + ")";

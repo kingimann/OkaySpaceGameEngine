@@ -85,6 +85,8 @@
 #include "okay/Render/Culling.hpp"     // frustum culling toggle + drawn/culled counts (Stats)
 #include "okay/Render/D3D11Renderer.hpp" // optional GPU (Direct3D 11) 3D renderer (Windows)
 #include "okay/Core/Profiler.hpp"        // CPU/GPU frame profiler
+#include "okay/Core/TraceCapture.hpp"    // frame capture to a Chrome trace file
+#include "okay/Core/Paths.hpp"           // where the trace file is written (LogDir)
 #include "okay/Core/SystemCost.hpp"      // Game view Stats: ms per system
 #include "okay/Components/ControllerPresets.hpp"   // Controller Preset combo
 #include "okay/Core/FrameOverlay.hpp"
@@ -49072,6 +49074,40 @@ void DrawProfiler(EditorState& ed) {
     }
     ImGui::Separator();
 
+    // ---- Frame capture: every scope on every thread, counters, as a Chrome trace file (chrome://tracing or Perfetto) ----
+    {
+        static int traceFrames = 120;
+        if (okay::TraceCapture::Active()) {
+            ImGui::Text("Capturing: frame %d of %d", okay::TraceCapture::FramesSeen(), okay::TraceCapture::FramesWanted());
+            ImGui::SameLine();
+            if (ImGui::SmallButton("Stop and save##trace")) {
+                okay::TraceCapture::Stop();
+                const std::string path = okay::TraceCapture::DefaultPath(okay::Paths::LogDir());
+                okay::Paths::EnsureDir(okay::Paths::LogDir());
+                if (okay::TraceCapture::WriteToFile(path)) ConsoleLog("Trace saved: " + path);
+                else ConsoleLog("Could not write the trace file: " + path);
+            }
+        } else {
+            ImGui::SetNextItemWidth(90);
+            ImGui::InputInt("frames##trace", &traceFrames, 0, 0);
+            if (traceFrames < 1) traceFrames = 1;
+            if (traceFrames > 5000) traceFrames = 5000;
+            ImGui::SameLine();
+            if (ImGui::SmallButton("Capture trace##trace")) {
+                okay::Paths::EnsureDir(okay::Paths::LogDir());
+                okay::TraceCapture::Start(traceFrames, okay::TraceCapture::DefaultPath(okay::Paths::LogDir()));
+                ConsoleLog("Trace capture started (" + std::to_string(traceFrames) + " frames).");
+            }
+            ImGui::SameLine(); ImGui::TextDisabled("records every scope on every thread + counters");
+        }
+        const std::string last = okay::TraceCapture::LastFile();
+        if (!last.empty()) {
+            ImGui::TextWrapped("Last trace: %s  (open it in chrome://tracing or ui.perfetto.dev)", last.c_str());
+            if (ImGui::SmallButton("Copy path##trace")) ImGui::SetClipboardText(last.c_str());
+        }
+        ImGui::Separator();
+    }
+
     // ---- CSV copy of the displayed frame ----
     if (ImGui::SmallButton("Copy CSV##prof")) {
         std::string csv = "Section,Self ms,Total ms,Calls,Avg ms,Min ms,Max ms\n";
@@ -51131,6 +51167,7 @@ int main(int argc, char** argv) {
         static const bool kPerfDump = std::getenv("OKAY_PERF_DUMP") != nullptr;   // dev: print frame breakdown to stdout
         okay::Prof().enabled = g_showProfiler || g_showPerfOverlay || kPerfDump || (g_gameStatsOverlay && ed.isPlaying());   // the Game view Stats overlay lists ms per system   // gate timers; set before BeginFrame/Tick this frame
         okay::Prof().BeginFrame();
+        if (okay::TraceCapture::Active()) okay::Prof().Counter("scene.objects", (double)ed.scene().Objects().size());   // a counter track in a frame capture
         // Pick up the background update check when it finishes (once).
         if (!g_autoCheckDone && g_updateCheck.valid() &&
             g_updateCheck.wait_for(std::chrono::seconds(0)) == std::future_status::ready) {

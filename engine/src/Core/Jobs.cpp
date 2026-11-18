@@ -1,5 +1,6 @@
 #include "okay/Core/Jobs.hpp"
 #include "CoreThreads.hpp"
+#include "okay/Core/TraceCapture.hpp"
 
 #include <algorithm>
 #include <atomic>
@@ -368,6 +369,8 @@ struct JobSystem::Impl {
         JobCounter* c = t->counter;
         if (wasStolen) stolenCount.fetch_add(1, std::memory_order_relaxed);
         if (!c->m_failed.load(std::memory_order_acquire)) {
+            TraceCapture::Begin("task");
+            struct EndGuard { ~EndGuard() { TraceCapture::End(); } } endGuard;
             try { t->run(t); }
             catch (...) {
                 if (!c->m_failed.exchange(true, std::memory_order_acq_rel)) c->m_error = std::current_exception();
@@ -538,6 +541,7 @@ struct JobSystem::Impl {
         t_ctx.depth = (prev.sys == this ? prev.depth : 0) + 1;
         t_ctx.job = job.get();
         const auto t0 = Clock::now();
+        TraceCapture::Begin(job->name.empty() ? "job" : job->name.c_str());   // a capture shows jobs on their worker's track
         try {
             job->fn();
         } catch (...) {
@@ -545,6 +549,7 @@ struct JobSystem::Impl {
             out.error = std::current_exception();
             try { out.text = Describe(out.error); } catch (...) {}
         }
+        TraceCapture::End();
         const auto dt = std::chrono::duration_cast<std::chrono::nanoseconds>(Clock::now() - t0).count();
         busyNs.fetch_add((std::uint64_t)(dt > 0 ? dt : 0), std::memory_order_relaxed);
         t_ctx = prev;
@@ -598,6 +603,7 @@ struct JobSystem::Impl {
         t_worker.impl = this;
         t_worker.index = nextIndex.fetch_add(1);
         t_worker.rng = 0x9e3779b9u * (std::uint32_t)(t_worker.index + 1);
+        { char nm[32]; std::snprintf(nm, sizeof nm, "worker %d", t_worker.index + 1); TraceCapture::NameThisThread(nm); }
         mu.Lock();
         bool spun = false;   // already spun once since the last piece of work
         for (;;) {

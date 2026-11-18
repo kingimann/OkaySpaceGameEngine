@@ -3018,7 +3018,8 @@ bool g_xboxExportOk = false;                       // set by the Xbox export blo
 std::vector<std::string> g_xboxExportWarnings;
 std::unique_ptr<okay::xbox::XboxBuildHost> g_xboxHost;
 std::unique_ptr<okay::xbox::BuildRunner> g_xboxRunner;
-bool g_xboxInstall = false;                        // "Install on this PC" (one administrator prompt)
+bool g_xboxInstall = false;
+bool g_xboxEngineMode = false;                     // link the engine and run the exported game (EXPERIMENTAL)                        // "Install on this PC" (one administrator prompt)
 bool g_xboxShowRunner = false;
 std::string g_xboxSignerLabel, g_xboxSourceRoot, g_xboxAppx;
 #endif
@@ -18760,6 +18761,9 @@ void DrawFileDialogs(EditorState& ed) {
             ImGui::Spacing();
             ImGui::TextWrapped("The big button below does everything in one go: check the tools, export, compile the UWP app, compile the shaders, pack and sign. "
                                "Signing uses: %s. The test certificate is made on this PC; its private key stays in your Windows certificate store.", okay::xbox::SignerLabel(okay::xbox::Signer::PowerShellSignTool));
+            ImGui::Checkbox("Engine mode: run my game inside the app (EXPERIMENTAL)", &g_xboxEngineMode);
+            ImGui::TextDisabled(g_xboxEngineMode ? "Links the engine and runs package\\Data. The engine has never been compiled with Microsoft's UWP compiler, so this may fail to build."
+                                                 : "Off: the app only draws a test triangle and reads the pad (proves the package works).");
             ImGui::Checkbox("Also install on this PC afterwards", &g_xboxInstall);
             if (g_xboxInstall) ImGui::TextDisabled("Windows will show ONE administrator (UAC) prompt near the end; accept it. Decline it and everything else is kept.");
             if (g_xboxRunner) {   // the log panel: per-step status, streamed output, cancel
@@ -19209,7 +19213,7 @@ void DrawFileDialogs(EditorState& ed) {
                 const xb::ManifestOptions xm = xb::ManifestFrom(xi);
                 xb::PlanInputs pi; pi.sdk = xb::CachedSdkReport(); pi.fs = xb::RealFs();
                 g_xboxSourceRoot = xb::FindSourceRoot(pi.fs, OkayExeDir(), std::getenv("OKAY_SOURCE_ROOT") ? std::getenv("OKAY_SOURCE_ROOT") : "");
-                pi.sourceRoot = g_xboxSourceRoot; pi.exportDir = g_buildDirBuf; pi.subject = xm.publisher; pi.installOnThisPc = g_xboxInstall;
+                pi.sourceRoot = g_xboxSourceRoot; pi.exportDir = g_buildDirBuf; pi.subject = xm.publisher; pi.installOnThisPc = g_xboxInstall; pi.engineMode = g_xboxEngineMode;
                 pi.appxPath = (std::filesystem::path(g_buildDirBuf) / (xm.identityName + "_" + xb::NormalizeVersion(xm.version) + "_x64.appx")).string();
                 g_xboxAppx = pi.appxPath; g_xboxSignerLabel = xb::SignerLabel(pi.signer);
                 xb::BuildHostConfig hc; hc.sdkAvailable = pi.sdk.available; hc.exportOk = g_xboxExportOk; hc.exportMessage = g_buildStatus;

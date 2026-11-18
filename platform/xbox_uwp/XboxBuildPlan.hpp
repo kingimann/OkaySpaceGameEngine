@@ -58,6 +58,7 @@ struct PlanInputs {
     Signer signer = Signer::PowerShellSignTool;
     bool signPackage = true;
     bool installOnThisPc = false;
+    bool engineMode = false;      // link okay_engine_uwp and run the exported game (EXPERIMENTAL); off = the triangle test shell
     std::string appxPath;         // exportDir/<name>_<version>_x64.appx
 };
 
@@ -109,6 +110,7 @@ inline std::vector<Step> PlanBuild(const PlanInputs& in) {
     internal("export", "Export the game data, manifest and tile images", "Writes package/Data, AppxManifest.xml and the images.");
     { Command c; c.exe = FindCmake(in.sdk, in.fs);
       c.args = {"-S", appSrc, "-B", appBuild, "-G", "Visual Studio 17 2022", "-A", "x64", "-DCMAKE_SYSTEM_NAME=WindowsStore", "-DCMAKE_SYSTEM_VERSION=10.0"};
+      if (in.engineMode) { c.args.push_back("-DOKAY_XBOX_APP_ENGINE=ON"); c.args.push_back("-DOKAY_SOURCE_ROOT=" + in.sourceRoot); }
       process("configure", "Set up the UWP app build", "cmake, with Visual Studio's UWP toolset.", c); }
     { Command c; c.exe = FindCmake(in.sdk, in.fs); c.args = {"--build", appBuild, "--config", in.configuration};
       process("build", "Compile the UWP app", "Microsoft's compiler builds OkaySpaceXbox.exe. This can take a few minutes.", c); }
@@ -194,7 +196,8 @@ inline std::string MapFailure(const std::string& stepId, int exitCode, bool coul
         if (stepId == "configure" || stepId == "build") m = "Could not start cmake. Open the Visual Studio Installer, choose Modify, and tick \"C++ CMake tools for Windows\" (part of the C++ desktop workload), or install cmake.";
         else m = "Could not start PowerShell. It comes with Windows 10 and 11; is it blocked on this PC?";
     } else if (stepId == "configure") m = "CMake could not set up the UWP app. Most often the \"Universal Windows Platform development\" workload or its C++ UWP tools are not installed (Visual Studio Installer > Modify).";
-    else if (stepId == "build") m = "The UWP app did not compile. The first error lines are below; send them if the cause is not clear.";
+    else if (stepId == "build") m = "The UWP app did not compile. The first error lines are below; send them if the cause is not clear. If \"Engine mode\" was ticked, "
+                                    "it is EXPERIMENTAL (the engine has never been compiled with Microsoft's compiler for UWP): untick it to build the triangle test only.";
     else if (stepId == "shaders") m = "The shaders did not compile. fxc.exe comes with the Windows SDK (Visual Studio Installer > Modify > a Windows 10/11 SDK).";
     else if (stepId == "sign") m = "Signing failed. The package is built and checked but unsigned, so Windows will not install it.";
     else if (stepId == "install") m = "Installing on this PC failed. If you closed the administrator prompt, run the build again with \"Install on this PC\" and accept it.";

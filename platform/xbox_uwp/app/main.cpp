@@ -5,7 +5,8 @@
 // app that proves the package pipeline: CoreApplication / IFrameworkView life cycle (suspend and resume),
 // a CoreWindow, a Direct3D 11 flip-model swap chain, one triangle, Windows.Gaming.Input gamepad reading
 // (left stick moves the triangle, A makes it jump to the centre, B exits cleanly) and a clean exit.
-// It does NOT load or run an OkaySpace game: the engine is not linked here (docs/xbox_uwp_audit.md).
+// By default it does NOT load or run an OkaySpace game. Built with -DOKAY_XBOX_APP_ENGINE=ON (okay_engine_uwp linked) it runs the
+// exported game in package\Data through engine_app.hpp when that folder is there, and falls back to the triangle when it is not.
 //
 // Written from Microsoft's public documentation: the C++/WinRT "Core app" pattern (IFrameworkViewSource,
 // IFrameworkView), the DXGI "CreateSwapChainForCoreWindow" page, "Windows.Gaming.Input.Gamepad", and the UWP
@@ -22,6 +23,8 @@
 #include <d3d11_1.h>
 #include <dxgi1_3.h>
 #include <wrl/client.h>
+
+#include "engine_app.hpp"
 
 #include <algorithm>
 #include <cmath>
@@ -167,6 +170,12 @@ private:
 } // namespace
 
 int __stdcall wWinMain(HINSTANCE, HINSTANCE, PWSTR, int) {
+#if defined(OKAY_XBOX_APP_ENGINE)
+    {   // an exported game is in package\Data: run it. Otherwise (no Data, or the engine was not built in) the triangle test below.
+        std::ifstream cfg(std::wstring(winrt::Windows::ApplicationModel::Package::Current().InstalledLocation().Path().c_str()) + L"\\Data\\game.okayconfig", std::ios::binary);
+        if (cfg.good()) { CoreApplication::Run(make<okay_xbox_app::GameApp>()); return 0; }
+    }
+#endif
     CoreApplication::Run(make<App>());
     return 0;
 }

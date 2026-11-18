@@ -12,6 +12,7 @@
 #include "XboxUwpBackend.hpp"
 #include "UwpPlatform.hpp"
 #include "XboxUwpAudit.hpp"
+#include "XboxGameConfig.hpp"
 #include "okay/Core/Paths.hpp"
 #include <cmath>
 #include <filesystem>
@@ -163,6 +164,9 @@ static void BuildPlanTests() {
     CHECK(p[5].cmd.Line().find("-OutDir \"C:/out/My Game/package/Shaders\"") != std::string::npos);
     CHECK(p[7].cmd.Line().find("-Subject \"CN=Me, O=Studio\"") != std::string::npos);
     for (auto& s : p) CHECK(!s.cmd.elevated);
+    CHECK(p[2].cmd.Line().find("OKAY_XBOX_APP_ENGINE") == std::string::npos);                      // the triangle shell is the default
+    { PlanInputs b = in; b.engineMode = true; const std::string l = PlanBuild(b)[2].cmd.Line(); CHECK(l.find("-DOKAY_XBOX_APP_ENGINE=ON") != std::string::npos && l.find("-DOKAY_SOURCE_ROOT=C:/src/OkaySpace") != std::string::npos);
+      CHECK(MapFailure("build", 2, false, {}).find("Engine mode") != std::string::npos); }
     { PlanInputs b = in; b.sdk.visualStudioPath = ""; CHECK(PlanBuild(b)[2].cmd.exe == "cmake"); }
     { PlanInputs b = in; b.fs.list = nullptr; CHECK(PlanBuild(b)[2].cmd.exe == "cmake"); }
     { PlanInputs b = in; b.signPackage = false; b.installOnThisPc = true; CHECK(PlanBuild(b).back().id == "pack"); }   // no install of an unsigned package
@@ -596,8 +600,28 @@ static void AuditTests() {
     CHECK(ParseEngineSourceList("nothing").empty());
 }
 
+// ---- game config ----
+static void ConfigTests() {
+    using namespace okay::xbox;
+    GameConfig c = ParseGameConfig("title=My Game\r\nwidth=1920\nheight=1080\nstartup=levels/one.okayscene\nscene=levels/one.okayscene\nscene=levels/two.okayscene\n"
+                                   "physics_hz=60\nphysics_smooth=0\nvolume=0.5\nfps_cap=60\nvsync=0\ndevelopment=1\nshadows=1\nanticheat=report\n# comment=1\nnonsense\n");
+    CHECK(c.title == "My Game" && c.width == 1920 && c.height == 1080 && c.startup == "levels/one.okayscene" && c.scenes.size() == 2);
+    CHECK(c.physicsHz == 60.0f && !c.smoothPhysics && c.sawPhysics && c.volume == 0.5f && c.fpsCap == 60 && !c.vsync && c.development);
+    CHECK((c.ignored == std::vector<std::string>{"shadows", "anticheat"}));
+    { GameConfig d = ParseGameConfig(""); CHECK(d.title == "OkaySpace Game" && d.width == 1280 && !d.sawPhysics && d.vsync && d.startup.empty()); }
+    { GameConfig d = ParseGameConfig("width=99999\nheight=-3\nphysics_hz=0\nvolume=9\nfps_cap=99999\n"); CHECK(d.width == 1280 && d.height == 720 && !d.sawPhysics && d.volume == 1.0f && d.fpsCap == 0); }   // nonsense falls back
+    { GameConfig d = ParseGameConfig("volume=-2\n"); CHECK(d.volume == 0.0f); }
+    std::set<std::string> have = {"game.okayscene", "levels/one.okayscene", "two.okayscene"};
+    auto ex = [&](const std::string& p) { return have.count(p) != 0; };
+    CHECK(ResolveStartupScene(c, ex) == "levels/one.okayscene");
+    { GameConfig d; d.startup = "missing.okayscene"; CHECK(ResolveStartupScene(d, ex) == "game.okayscene"); }
+    { GameConfig d; d.startup = "../../evil"; have.insert("../../evil"); CHECK(ResolveStartupScene(d, ex) == "game.okayscene"); have.erase("../../evil"); }   // an escaping name is never used
+    { GameConfig d; d.startup = "C:/x"; have.insert("C:/x"); d.scenes = {"two.okayscene"}; have.erase("game.okayscene"); CHECK(ResolveStartupScene(d, ex) == "two.okayscene"); }
+    { GameConfig d; have.clear(); CHECK(ResolveStartupScene(d, ex).empty()); }
+}
+
 int main() {
-    ShaderTests(); DisplayTests(); BuildPlanTests(); LogTests(); SourceRootTests(); RunnerTests(); HostTests(); LifecycleTests(); InputTests(); PadClassTests(); PathTests(); AudioTests(); BackendTests(); AuditTests();
+    ShaderTests(); DisplayTests(); BuildPlanTests(); LogTests(); SourceRootTests(); RunnerTests(); HostTests(); LifecycleTests(); InputTests(); PadClassTests(); PathTests(); AudioTests(); BackendTests(); AuditTests(); ConfigTests();
     if (g_fail) { std::printf("%d FAILED\n", g_fail); return 1; }
     std::printf("xbox_uwp_runtime: all passed\n");
     return 0;

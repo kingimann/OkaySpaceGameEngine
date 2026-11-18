@@ -172,7 +172,11 @@ private:
         UwpBackend* b_;
     };
     platform::Event Base(platform::EventType t) { platform::Event e; e.type = t; e.timestampMs = (std::uint32_t)TicksMs(); e.windowId = 1; return e; }
-    // Turn lifecycle changes into engine events and poll the pads once per frame.
+public:
+    /// Turn lifecycle changes into engine events (and run onSuspend / onResume) and poll the pads. PollEvent does this when its queue is
+    /// empty; the Windows glue also calls it from the Suspending handler, so the state is saved before the system's deadline.
+    void ServiceLifecycle() { Translate(); }
+private:
     void Translate() {
         const std::uint64_t now = TicksMs();
         for (BackendPad* p : pads_) p->Poll(now);

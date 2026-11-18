@@ -23,6 +23,15 @@
 #include <functiondiscoverykeys_devpkey.h>
 #include "Internal.hpp"
 #include "AudioPump.hpp"
+
+// The two WAVE_FORMAT_EXTENSIBLE sub-format identifiers, written out here from the public format description (the PCM and
+// IEEE-float GUIDs are the 4-byte format tag followed by the fixed 0000-0010-8000-00aa00389b71 tail) so this file does not need
+// the ksmedia.h definitions or a library that carries them: a MinGW link of a program that pulls in this object failed with
+// "undefined reference to KSDATAFORMAT_SUBTYPE_PCM" without them.
+namespace {
+const GUID kSubtypePcm   = {0x00000001, 0x0000, 0x0010, {0x80, 0x00, 0x00, 0xaa, 0x00, 0x38, 0x9b, 0x71}};
+const GUID kSubtypeFloat = {0x00000003, 0x0000, 0x0010, {0x80, 0x00, 0x00, 0xaa, 0x00, 0x38, 0x9b, 0x71}};
+}
 #include <algorithm>
 #include <atomic>
 #include <cstdio>
@@ -183,7 +192,7 @@ private:
             w->Format.cbSize = 22;
             w->Samples.wValidBitsPerSample = f.bits;
             w->dwChannelMask = f.channelMask;
-            w->SubFormat = f.subFloat ? KSDATAFORMAT_SUBTYPE_IEEE_FLOAT : KSDATAFORMAT_SUBTYPE_PCM;
+            w->SubFormat = f.subFloat ? kSubtypeFloat : kSubtypePcm;
         }
     }
     static pump::WaveFormat FromWindows(const WAVEFORMATEX* w) {
@@ -196,7 +205,7 @@ private:
         f.avgBytesPerSec = w->nAvgBytesPerSec;
         if (f.tag == pump::kTagExtensible && w->cbSize >= 22) {
             const WAVEFORMATEXTENSIBLE* x = reinterpret_cast<const WAVEFORMATEXTENSIBLE*>(w);
-            f.subFloat = IsEqualGUID(x->SubFormat, KSDATAFORMAT_SUBTYPE_IEEE_FLOAT) != 0;
+            f.subFloat = IsEqualGUID(x->SubFormat, kSubtypeFloat) != 0;
             f.channelMask = x->dwChannelMask;
         }
         return f;

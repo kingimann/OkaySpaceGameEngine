@@ -597,3 +597,58 @@ Step 2 (headers, compile-only): `<tuple>` (up to three elements, `make_tuple`, `
 
 Steps 3 and 4 (compile-only, objdump-checked): `T x = T(args);` is made in place by the constructor (one `??0Tok` call, no temporary, no copy); `f = lambda;` for a class with a converting constructor makes a temporary of the left class first (calls: converting constructor, `operator=`, destructor of the temporary); the temporaries a `for` or `while` condition needs are made again in each pass (`while (c) body` is read as `while (true) { make; if (!c) break; body }`, their destructors still run once after the loop; this was the stop at `TexturePath.hpp:81`); a braced index `m[{a, b}]`; `vector::insert(pos, {a, b, c})`; `lround`, `llround`; errors "no matching constructor", "cannot deduce template arguments" and "cannot work out the type of the auto variable" now name the function they were found in. Enumerators of a class are global names here and hid locals called `in` and `out`, so `ios_base` uses `static const int` constants.
 `engine/src/Optimize/LodGroup.cpp` now stops in `Mesh.hpp` at "cannot work out the type of the auto variable (in __lam41::operator()/2)": a lambda in `Mesh.hpp` that declares an `auto` variable whose type is not found. Generic lambdas (`auto` parameters, step 3 of the task) were NOT started, so `Undo.cpp` still stops; remaining ones in this round: generic lambdas, the `auto` variable above, everything under "Not done / pending" of Round 23.
+
+### Round 25 (unverified: not run under Wine, Wine broken in this container)
+
+Compile-only; each item checked by the object (symbols, calls, `objdump -d`). Written from ISO/IEC 14882 only.
+
+1. **Generic lambdas** (`[](auto a, const auto& b) {...}`, [expr.prim.lambda]/5): the closure remembers where its parameter list and body are; each call with new argument types makes one `operator()` from them by reading the parameter list again with `auto` bound to the argument type, and the body is compiled for it (the result type by the same probe as for other lambdas). Checked: `id(4)` and `id(1.5f)` make `??R__lam1@@QEAAHH@Z` and `??R__lam1@@QEAAMM@Z`; a generic lambda passed to `std::remove_if` works. A generic lambda always makes a closure object (a captureless one does not decay to a function pointer).
+2. **Implicit class assignment is member-wise** when a member class has an assignment of its own (`std::string`, containers, a nested such class): the compiler writes `operator=` that assigns each member by its own assignment. Checked in the object: `V::operator=` calls `W::operator=` which calls `string::operator=`. Members without one are still copied as bytes; arrays of class members are still copied as bytes.
+3. **Range `for` iterator objects are destroyed** when the loop ends (`??1It` after the loop). Not on a `break` out of an enclosing scope or a `return` inside the body.
+4. **Conditional as lvalue** `(c ? x : y)++`: already supported by the code generator; the disassembly shows the chosen address then one increment. A conditional whose branches are class values with destructors (`c ? std::string() : s`) now goes through a hidden object (copy constructor for an lvalue branch, the call result built in place for a call).
+Also: `<iterator>` (`reverse_iterator<T*>`), `rbegin`/`rend` for `vector` and `deque`, `std::minmax` (holds copies), `set(first, last)`; this made `engine/src/Core/Undo.cpp` compile.
+
+`engine/src/Optimize/LodGroup.cpp` is still the one file that does not compile: it stops inside `Mesh.hpp` (preprocessed line 8540, in the 66th lambda, `expected an expression` after `v ] =`); not identified further. Everything before that (`TexturePath.hpp`, `<fstream>`, tuples, `unordered_map`, `std::minmax`, `set` ranges, generic-lambda-free `auto`) now passes.
+
+Measurement of the 36 files of the tables above (compile to an object with okay-cl, `/c`, this branch, nothing run): **35 of 36 compile** (up from 33 at Round 22: `RandomExtras.cpp`, `PlayerInput.cpp` and `Undo.cpp` now compile; `LodGroup.cpp` does not).
+
+| file | result |
+|---|---|
+| `engine/include/okay/Components/Stance.hpp` | compiles |
+| `engine/include/okay/Core/ClockCursor.hpp` | compiles |
+| `engine/include/okay/Environment/Wind.hpp` | compiles |
+| `engine/include/okay/Input/InputBuffer.hpp` | compiles |
+| `engine/include/okay/Math/Bounds.hpp` | compiles |
+| `engine/include/okay/Math/ColorSpace.hpp` | compiles |
+| `engine/include/okay/Math/Curves.hpp` | compiles |
+| `engine/include/okay/Math/Easing.hpp` | compiles |
+| `engine/include/okay/Math/Mat3.hpp` | compiles |
+| `engine/include/okay/Math/Mat4.hpp` | compiles |
+| `engine/include/okay/Math/Mathf.hpp` | compiles |
+| `engine/include/okay/Math/Quat.hpp` | compiles |
+| `engine/include/okay/Math/Ray.hpp` | compiles |
+| `engine/include/okay/Math/Rect.hpp` | compiles |
+| `engine/include/okay/Math/Vec2.hpp` | compiles |
+| `engine/include/okay/Math/Vec3.hpp` | compiles |
+| `engine/include/okay/Math/VecInt.hpp` | compiles |
+| `engine/include/okay/Physics/ForceMode.hpp` | compiles |
+| `engine/include/okay/Physics/PhysicsMaterial.hpp` | compiles |
+| `engine/include/okay/Physics/PhysicsQuality.hpp` | compiles |
+| `engine/include/okay/Render/Color.hpp` | compiles |
+| `engine/include/okay/UI/TooltipPlace.hpp` | compiles |
+| `engine/include/okay/VisualScript/VsPinType.hpp` | compiles |
+| `engine/src/Audio/Mp3Tables.hpp` | compiles |
+| `engine/src/Core/RandomExtras.cpp` | compiles |
+| `engine/src/Crypto/Blake2b.cpp` | compiles |
+| `engine/src/Crypto/ChaCha20.cpp` | compiles |
+| `engine/src/Crypto/Sha512.cpp` | compiles |
+| `engine/src/Crypto/Util.cpp` | compiles |
+| `engine/src/Input/GestureRecognizer.cpp` | compiles |
+| `engine/src/Input/PlayerInput.cpp` | compiles |
+| `engine/src/Optimize/LodGroup.cpp` | okay/Render/Mesh.hpp:5036: expected an expression (in __lam66::operator()/1, after kinds 1 v/35 /16 , line 8540, token ) |
+| `engine/src/Optimize/PortalCells.cpp` | compiles |
+| `engine/src/UI/FocusGraph.cpp` | compiles |
+| `shared/LauncherTips.hpp` | compiles |
+| `shared/OkfDecode.hpp` | compiles |
+
+Still not done: COMDAT/dead-strip, the `.CRT$XCU` startup table, destructors on early exit from a range `for`, the Random link-and-run comparison, and everything must be re-run under Wine before merging into `claude/okayms-3`.

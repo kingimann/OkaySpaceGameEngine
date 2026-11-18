@@ -5,10 +5,13 @@
 // [alg.binary.search], [alg.sort]. Iterators are plain pointers here (our vector, string and array use pointers).
 // sort is a heap sort (any order of equal elements is allowed by [alg.sort]; it is not stable).
 #pragma once
+#include <utility>
 namespace std {
 template <typename T> const T &min(const T &a, const T &b) { return b < a ? b : a; }
 template <typename T> const T &max(const T &a, const T &b) { return a < b ? b : a; }
 template <typename T> const T &clamp(const T &v, const T &lo, const T &hi) { return v < lo ? lo : hi < v ? hi : v; }
+// minmax ([alg.min.max]): the pair (smaller, larger); it holds copies here, where the standard holds references.
+template <typename T> pair<T, T> minmax(const T &a, const T &b) { return b < a ? pair<T, T>(b, a) : pair<T, T>(a, b); }
 template <typename T> void swap(T &a, T &b) { T t = a; a = b; b = t; }
 
 template <typename It, typename V> It find(It first, It last, const V &value) {

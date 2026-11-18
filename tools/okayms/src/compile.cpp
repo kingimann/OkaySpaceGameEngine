@@ -151,6 +151,8 @@ struct Method {
     bool implicit = false;
     // The implicit copy constructor: copies the base and each member.
     bool implicit_copy = false;
+    // The copy assignment the compiler writes for a class with a member whose own assignment is not a plain copy.
+    bool implicit_assign = false;
     // A static member function: no this, decorated with S/C/K instead of the Q/A/I letters.
     bool is_static = false;
     // The decorated spelling of a member function template instance's name ("$add@H"), else empty.
@@ -203,6 +205,16 @@ struct StructDef {
     int outer = -1;
     // Named by `struct X;` or used by pointer before its definition; the definition fills this entry in.
     bool incomplete = false;
+    // A generic lambda ([expr.prim.lambda]/5, `auto` parameters): the closure keeps where its parameter list and body are;
+    // each call with new argument types makes one operator() from them.
+    bool generic = false;
+    size_t gen_params_at = 0;
+    size_t gen_body_at = 0;
+    size_t gen_body_end = 0;
+    bool gen_has_ret = false;
+    Type gen_ret{};
+    bool gen_returns_value = false;
+    std::set<std::string> gen_done;
 };
 
 struct Global {
@@ -2870,6 +2882,13 @@ struct Parser {
         }
         bool saw = false;
         bool had_typename = false;
+        if (is(TIdent) && cur().text == "auto" && auto_idx < auto_types.size()) {
+            // An `auto` parameter of a generic lambda being instantiated: the type of the argument.
+            *type = auto_types[auto_idx++];
+            type->is_ref = false;
+            next();
+            return true;
+        }
         if (is(TIdent) && cur().text == "typename") {
             next();
             had_typename = true;
@@ -3686,6 +3705,9 @@ struct Parser {
     }
     bool parse_range_for(Node* out, std::vector<Local>* locals, int stmt_line);
     bool parse_lambda(Node* out);
+    bool instantiate_generic_lambda(int sid, const std::vector<Node>& args);
+    std::vector<Type> auto_types{};
+    size_t auto_idx = 0;
     bool braced_temp(int bsid, Node* out);
     // At a '{': is there another '{' inside it, before its matching '}'?
     bool has_nested_braces_ahead() const {
@@ -4044,6 +4066,14 @@ struct Parser {
         return best;
     }
     bool class_has_copy(int sid) const { return copy_ctor(sid) != nullptr; }
+    // The class has an assignment from an object of its own class (written, or made by the compiler).
+    bool class_has_assign(int sid) const {
+        if (sid < 0 || sid >= static_cast<int>(structs.size())) return false;
+        for (const Method& m : structs[static_cast<size_t>(sid)].methods)
+            if (m.name == "operator=" && m.params.size() == 1 && m.params[0].base == 3 && m.params[0].struct_id == sid)
+                return true;
+        return false;
+    }
     const Method* move_ctor(int sid) const {
         if (sid < 0 || sid >= static_cast<int>(structs.size())) return nullptr;
         for (const Method& m : structs[static_cast<size_t>(sid)].methods)
@@ -4857,6 +4887,38 @@ struct Parser {
                 m.body_at = 1;
                 if (!add_method(&def, self, std::move(m))) return false;
             }
+            {
+                // The implicit copy assignment ([class.copy.assign]): a member that is a class with an assignment of its
+                // own (std::string, a container) is assigned by it, not copied byte by byte.
+                bool user_assign = false;
+                for (const Method& m : def.methods)
+                    if (m.name == "operator=" && m.owner == self && m.params.size() == 1 && m.params[0].base == 3 &&
+                        m.params[0].struct_id == self)
+                        user_assign = true;
+                bool member_assigns = false;
+                for (size_t fi = 0; fi < def.fields.size(); ++fi) {
+                    const Type& ft = def.fields[fi].type;
+                    if (ft.base == 3 && ft.pointers == 0 && !ft.is_ref && !ft.is_array() && ft.struct_id >= 0 &&
+                        ft.struct_id != self && !def.fields[fi].ref && class_has_assign(ft.struct_id))
+                        member_assigns = true;
+                }
+                if (!user_assign && member_assigns) {
+                    Method m;
+                    m.name = "operator=";
+                    m.ret.base = 0;
+                    Type self_ref;
+                    self_ref.base = 3;
+                    self_ref.struct_id = self;
+                    self_ref.is_ref = true;
+                    m.params.push_back(self_ref);
+                    m.param_names.push_back("__o");
+                    m.implicit = true;
+                    m.implicit_assign = true;
+                    m.has_body = true;
+                    m.body_at = 1;
+                    if (!add_method(&def, self, std::move(m))) return false;
+                }
+            }
             if (!has_dtor && class_needs_dtor(structs[static_cast<size_t>(self)])) {
                 Method m;
                 m.name = "<dtor>";
@@ -4991,7 +5053,7 @@ struct Parser {
             alias_args.push_back(inst_bind_args()[i]);
         }
         const auto alias_bound = bind_params(alias, alias_args);
-        const bool ok = parse_function_body(&fn, sid, m.name == "<ctor>" ? 1 : m.name == "<dtor>" ? 2 : 0, m.implicit);
+        const bool ok = parse_function_body(&fn, sid, m.name == "<ctor>" ? 1 : m.name == "<dtor>" ? 2 : m.implicit_assign ? 3 : 0, m.implicit);
         unbind_params(alias_bound);
         at = resume;
         if (!ok) return false;
@@ -5067,6 +5129,46 @@ struct Parser {
     // [class.dtor].
     bool parse_special_body(FuncDecl* fn, int cls, int special, bool implicit, std::vector<Local>* locals) {
         const StructDef def = structs[static_cast<size_t>(cls)];
+        if (special == 3) {
+            // The implicit copy assignment: each member in order, by its own assignment when it has one.
+            Node block;
+            block.kind = Node::Block;
+            block.text = "scope";
+            for (size_t fi = 0; fi < def.fields.size(); ++fi) {
+                const Field& field = def.fields[fi];
+                if (field.name == "__vptr") continue;
+                Node theirs;
+                theirs.kind = Node::Field;
+                theirs.op = TDot;
+                theirs.text = field.name;
+                theirs.kids.push_back(node_name("__o"));
+                const Type& ft = field.type;
+                if (ft.base == 3 && ft.pointers == 0 && !ft.is_ref && !ft.is_array() && ft.struct_id >= 0 &&
+                    !field.ref && class_has_assign(ft.struct_id)) {
+                    std::vector<Node> args;
+                    args.push_back(std::move(theirs));
+                    Node call;
+                    if (!method_call(&call, node_this_field(field.name), false, "operator=", {}, &args)) return false;
+                    Node stmt;
+                    stmt.kind = Node::ExprStmt;
+                    stmt.kids.push_back(std::move(call));
+                    block.kids.push_back(std::move(stmt));
+                } else {
+                    Node assign;
+                    assign.kind = Node::Assign;
+                    assign.op = TAssign;
+                    assign.number = 1;
+                    assign.kids.push_back(node_this_field(field.name));
+                    assign.kids.push_back(std::move(theirs));
+                    Node stmt;
+                    stmt.kind = Node::ExprStmt;
+                    stmt.kids.push_back(std::move(assign));
+                    block.kids.push_back(std::move(stmt));
+                }
+            }
+            fn->body = std::move(block);
+            return true;
+        }
         std::vector<Node> pre;
         std::vector<Node> post;
         int eh_held = 0;  // sub-objects recorded for unwinding while the constructor runs
@@ -8620,7 +8722,8 @@ bool Parser::parse_stmt_inner(Node* out, std::vector<Local>* locals, int stmt_li
             const size_t after_init = at;
             Type t;
             if (!static_type(init, &t)) {
-                error = "cannot work out the type of the auto variable (in " + current_fn + ")";
+                error = "cannot work out the type of the auto variable " + tokens[k].text + " (in " + current_fn + ", init node " +
+                        std::to_string(static_cast<int>(init.kind)) + " '" + init.text + "')";
                 return false;
             }
             t.is_ref = false;
@@ -9469,6 +9572,15 @@ bool Parser::parse_range_for(Node* out, std::vector<Local>* locals, int stmt_lin
         out->kids.push_back(std::move(stmt));
     }
     out->kids.push_back(std::move(loop));
+    if (iter_class && class_needs_dtor(structs[static_cast<size_t>(iter_type.struct_id)])) {
+        // The two iterator objects are destroyed when the loop ends (not on a `break` out of an enclosing scope or a
+        // `return` inside the body: those paths leave them undestroyed).
+        for (const std::string& nm : {range_end.name, index.name}) {
+            Node dcall;
+            if (!special_call(iter_type.struct_id, "<dtor>", node_addr(node_name(nm)), {}, &dcall)) return false;
+            out->kids.push_back(std::move(dcall));
+        }
+    }
     return true;
 }
 
@@ -9709,7 +9821,23 @@ bool Parser::parse_lambda(Node* out) {
     }
     if (!expect(TRBrack, "']'")) return false;
     Declarator decl;
-    if (accept(TLParen) && !parse_param_list(&decl)) return false;
+    bool generic = false;
+    size_t generic_params_at = 0;
+    if (is(TLParen)) {
+        // `auto` among the parameters makes a generic lambda: its parameter list is read again for each set of argument types.
+        size_t k = at + 1;
+        int depth = 1;
+        for (; k < tokens.size() && tokens[k].kind != TEnd; ++k) {
+            if (tokens[k].kind == TLParen) ++depth;
+            else if (tokens[k].kind == TRParen && --depth == 0) break;
+            else if (depth == 1 && tokens[k].kind == TIdent && tokens[k].text == "auto") generic = true;
+        }
+        if (generic) {
+            generic_params_at = at + 1;
+            at = k + 1;
+        }
+    }
+    if (!generic && accept(TLParen) && !parse_param_list(&decl)) return false;
     if (is(TIdent) && cur().text == "mutable") next();
     Type ret;
     ret.base = 0;
@@ -9797,6 +9925,50 @@ bool Parser::parse_lambda(Node* out) {
     def.align = align;
     def.size = std::max(1, (offset + align - 1) & ~(align - 1));
     const int sid = static_cast<int>(structs.size());
+    if (generic) {
+        def.generic = true;
+        def.gen_params_at = generic_params_at;
+        def.gen_body_at = body_at;
+        def.gen_body_end = body_end;
+        def.gen_has_ret = has_ret;
+        def.gen_ret = ret;
+        for (size_t i = body_at; i < body_end; ++i)
+            if (tokens[i].kind == TReturn && i + 1 < tokens.size() && tokens[i + 1].kind != TSemi) def.gen_returns_value = true;
+        structs.push_back(def);
+        at = body_end + 1;
+        if (list.empty() && cur_locals == nullptr) {
+            error = "a generic lambda needs a function around it";
+            return false;
+        }
+        Local hidden;
+        hidden.name = "__bt" + std::to_string(tmp_count++);
+        hidden.type.base = 3;
+        hidden.type.struct_id = sid;
+        place_local(cur_locals, hidden);
+        for (const Cap& c : list) {
+            Node target;
+            target.kind = Node::Field;
+            target.op = TDot;
+            target.text = c.name;
+            target.kids.push_back(node_name(hidden.name));
+            Node value = node_name(c.name);
+            Type vt;
+            static_type(value, &vt);
+            if (c.ref && !vt.is_array()) value = node_addr(std::move(value));
+            Node assign;
+            assign.kind = Node::Assign;
+            assign.op = TAssign;
+            assign.number = 1;
+            assign.kids.push_back(std::move(target));
+            assign.kids.push_back(std::move(value));
+            Node stmt;
+            stmt.kind = Node::ExprStmt;
+            stmt.kids.push_back(std::move(assign));
+            stmt_pre.push_back(std::move(stmt));
+        }
+        *out = node_name(hidden.name);
+        return true;
+    }
     structs.push_back(def);
     Method m;
     m.name = "operator()";
@@ -10626,7 +10798,7 @@ bool Parser::operator_binary(Tok op, Node* left, Node* right, bool* done) {
         std::vector<Node> args;
         args.push_back(*right);
         const Method* m = find_method(lt.struct_id, name, 1, &args);
-        if (m == nullptr || m->implicit || m->is_static) return true;
+        if (m == nullptr || (m->implicit && !m->implicit_assign) || m->is_static) return true;
         Node result;
         if (!method_call(&result, std::move(*left), false, name, {}, &args)) return false;
         *left = std::move(result);
@@ -10733,10 +10905,106 @@ bool Parser::operator_unary(Tok op, bool postfix, Node* operand, bool* done) {
     return true;
 }
 
+// A call of a generic lambda: the operator() for these argument types is made from the saved parameter list and body (the
+// same steps as parse_lambda: the result type is found by a probe of the body when it is not written).
+bool Parser::instantiate_generic_lambda(int sid, const std::vector<Node>& args) {
+    if (!structs[static_cast<size_t>(sid)].generic) return true;
+    std::vector<Type> types;
+    std::string key;
+    for (const Node& a : args) {
+        Type t;
+        if (!static_type(a, &t)) {
+            error = "cannot tell the type of an argument of a generic lambda";
+            return false;
+        }
+        t.is_ref = false;
+        t.rref = false;
+        t.pconst = false;
+        if (t.is_array()) {
+            t = peel_array(t);
+            t.pointers += 1;
+            t.array_len = -1;
+        }
+        key += cxx_type(t, &structs) + ";";
+        types.push_back(t);
+    }
+    if (structs[static_cast<size_t>(sid)].gen_done.count(key) > 0) return true;
+    structs[static_cast<size_t>(sid)].gen_done.insert(key);
+    const size_t params_at = structs[static_cast<size_t>(sid)].gen_params_at;
+    const size_t body_at = structs[static_cast<size_t>(sid)].gen_body_at;
+    const bool has_ret = structs[static_cast<size_t>(sid)].gen_has_ret;
+    const Type ret = structs[static_cast<size_t>(sid)].gen_ret;
+    const bool returns_value = structs[static_cast<size_t>(sid)].gen_returns_value;
+    const size_t keep_at = at;
+    auto_types = types;
+    auto_idx = 0;
+    at = params_at;
+    Declarator decl;
+    const bool params_ok = parse_param_list(&decl);
+    auto_types.clear();
+    auto_idx = 0;
+    at = keep_at;
+    if (!params_ok) return false;
+    Method m;
+    m.name = "operator()";
+    m.ret = ret;
+    if (!has_ret) m.ret.base = 0;
+    m.params = decl.params;
+    m.param_names = decl.param_names;
+    m.defaults = decl.param_defaults;
+    m.is_static = false;
+    m.has_body = true;
+    m.body_at = body_at;
+    if (!add_method(&structs[static_cast<size_t>(sid)], sid, m)) return false;
+    const size_t mi = structs[static_cast<size_t>(sid)].methods.size() - 1;
+    if (!has_ret && returns_value) {
+        const bool saved_probe = lam_probe;
+        const bool saved_seen = lam_probe_seen;
+        const Type saved_type = lam_probe_type;
+        lam_probe = true;
+        lam_probe_seen = false;
+        lam_probe_type = Type{};
+        lam_probe_type.base = 1;
+        structs[static_cast<size_t>(sid)].methods[mi].ret = Type{};
+        structs[static_cast<size_t>(sid)].methods[mi].ret.base = 1;
+        const size_t funcs_before = funcs.size();
+        std::vector<Node> keep_pre = std::move(stmt_pre);
+        stmt_pre.clear();
+        std::vector<Temp> keep_temps = std::move(stmt_temps);
+        stmt_temps.clear();
+        const size_t probe_at = at;
+        const bool probe_ok = define_method(sid, mi);
+        at = probe_at;
+        stmt_pre = std::move(keep_pre);
+        stmt_temps = std::move(keep_temps);
+        const Type found = lam_probe_type;
+        lam_probe = saved_probe;
+        lam_probe_seen = saved_seen;
+        lam_probe_type = saved_type;
+        if (!probe_ok) return false;
+        while (funcs.size() > funcs_before) funcs.pop_back();
+        Method& mm = structs[static_cast<size_t>(sid)].methods[mi];
+        mm.ret = found;
+        mm.body_at = body_at;
+        mm.symbol = cxx_method_symbol(structs, structs[static_cast<size_t>(sid)], mm);
+    }
+    std::vector<Node> keep_pre = std::move(stmt_pre);
+    stmt_pre.clear();
+    std::vector<Temp> keep_temps = std::move(stmt_temps);
+    stmt_temps.clear();
+    const size_t keep_at2 = at;
+    const bool ok = define_method(sid, mi);
+    at = keep_at2;
+    stmt_pre = std::move(keep_pre);
+    stmt_temps = std::move(keep_temps);
+    return ok;
+}
+
 bool Parser::operator_call(Node* object, std::vector<Node> args, bool* done) {
     *done = false;
     Type t;
     if (!class_object_type(*object, &t)) return true;
+    if (!instantiate_generic_lambda(t.struct_id, args)) return false;
     const Method* m = find_method(t.struct_id, "operator()", args.size(), &args, t.is_const || t.pconst ? 1 : 0);
     if (m == nullptr) return true;
     Node result;
@@ -11926,7 +12194,7 @@ bool Parser::parse_unary(Node* out) {
     } else if (is(TLBrack)) {
         if (!parse_lambda(out)) return false;
     } else {
-        error = "expected an expression" + (current_fn.empty() ? std::string() : " (in " + current_fn + ", token " + (is(TEnd) ? std::string("end") : cur().text) + ")");
+        error = "expected an expression" + (current_fn.empty() ? std::string() : " (in " + current_fn + ", after kinds " + (at >= 3 ? std::to_string((int)tokens[at - 3].kind) + " " + tokens[at - 3].text + "/" + std::to_string((int)tokens[at - 2].kind) + " " + tokens[at - 2].text + "/" + std::to_string((int)tokens[at - 1].kind) + " " + tokens[at - 1].text : std::string()) + ", line " + std::to_string(cur().line) + ", token " + (is(TEnd) ? std::string("end") : cur().text) + ")");
         return false;
     }
     return parse_postfix(out);
@@ -12173,8 +12441,9 @@ bool Parser::parse_expr(int min_prec, Node* out) {
                 };
                 if (cur_locals != nullptr && static_type(mid, &ta) && static_type(els, &tb) && ta.base == 3 &&
                     ta.pointers == 0 && !ta.is_ref && !ta.is_array() && tb.base == 3 && tb.pointers == 0 && !tb.is_ref &&
-                    ta.struct_id >= 0 && ta.struct_id == tb.struct_id &&
-                    !class_needs_dtor(structs[static_cast<size_t>(ta.struct_id)]) && !(lvalue(mid) && lvalue(els))) {
+                    ta.struct_id >= 0 && ta.struct_id == tb.struct_id && !(lvalue(mid) && lvalue(els))) {
+                    const bool owns = class_needs_dtor(structs[static_cast<size_t>(ta.struct_id)]) ||
+                                      class_needs_ctor(structs[static_cast<size_t>(ta.struct_id)]);
                     Local hidden;
                     hidden.name = "__tn" + std::to_string(tmp_count++);
                     hidden.type = ta;
@@ -12184,6 +12453,17 @@ bool Parser::parse_expr(int min_prec, Node* out) {
                     chosen.kind = Node::If;
                     chosen.kids.push_back(std::move(tern.kids[0]));
                     for (Node* branch : {&mid, &els}) {
+                        if (owns && lvalue(*branch)) {
+                            // An object that owns something is copied by its copy constructor, not byte by byte.
+                            std::vector<Node> cargs;
+                            cargs.push_back(std::move(*branch));
+                            Node ctor_stmt;
+                            if (!special_call(ta.struct_id, "<ctor>", node_addr(node_name(hidden.name)), std::move(cargs),
+                                              &ctor_stmt))
+                                return false;
+                            chosen.kids.push_back(std::move(ctor_stmt));
+                            continue;
+                        }
                         Node assign;
                         assign.kind = Node::Assign;
                         assign.op = TAssign;
@@ -12195,6 +12475,8 @@ bool Parser::parse_expr(int min_prec, Node* out) {
                         stmt.kids.push_back(std::move(assign));
                         chosen.kids.push_back(std::move(stmt));
                     }
+                    if (class_needs_dtor(structs[static_cast<size_t>(ta.struct_id)]))
+                        stmt_temps.push_back(Temp{hidden.name, ta.struct_id});
                     stmt_pre.push_back(std::move(chosen));
                     *out = node_name(hidden.name);
                     continue;

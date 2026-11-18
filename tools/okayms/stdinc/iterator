@@ -1,0 +1,27 @@
+// okay-ms own standard header: reverse_iterator over pointers (all containers here have pointer iterators), std::begin, std::end,
+// std::size and std::distance for them, written from ISO/IEC 14882 [reverse.iterators] and [iterator.range]. Only the pointer
+// form is made (`reverse_iterator<T*>`): okay-ms containers' iterators are plain pointers.
+#pragma once
+#include <cstddef>
+namespace std {
+template <typename It> struct reverse_iterator;
+template <typename T> struct reverse_iterator<T*> {
+    T* cur_;
+    reverse_iterator() : cur_(0) {}
+    explicit reverse_iterator(T* p) : cur_(p) {}
+    T* base() const { return cur_; }
+    T& operator*() const { return *(cur_ - 1); }
+    T* operator->() const { return cur_ - 1; }
+    reverse_iterator& operator++() {
+        --cur_;
+        return *this;
+    }
+    reverse_iterator& operator--() {
+        ++cur_;
+        return *this;
+    }
+    bool operator==(const reverse_iterator& o) const { return cur_ == o.cur_; }
+    bool operator!=(const reverse_iterator& o) const { return cur_ != o.cur_; }
+};
+template <typename T> ptrdiff_t distance(T* a, T* b) { return b - a; }
+}

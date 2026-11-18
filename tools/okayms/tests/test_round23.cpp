@@ -113,5 +113,13 @@ int main(int, char**) {
           "int main() { Tok t = Tok(5); std::function<void()> v; int c = 0; v = [&c]() { c = 1; }; v(); C k; It r; r.p = k.a; int n = 0; for (; r != k.end(); ++r.p) ++n;\n"
           "std::map<std::pair<int, int>, int> m; ++m[{1, 2}]; return t.v + made + n + m.count({1, 2}); }\n", &o);
     CHECK(t, has_symbol(o, "??0Tok@@QEAA@H@Z"));
+    ++tests;
+    build(t, "generic lambdas, member-wise assignment, class conditional, reverse iterators", "#include <vector>\n#include <deque>\n#include <string>\n#include <algorithm>\n"
+          "struct W { std::string s; int k; };\nstruct V { W w; int z; };\nstd::string f(bool c, const std::string& a) { return c ? std::string() : a; }\n"
+          "int g(bool c) { int x = 1, y = 2; (c ? x : y)++; return x + y; }\n"
+          "int main() { int k = 3; auto add = [k](auto a, const auto& b) { return a + b + k; }; auto id = [](auto x) { return x; };\n"
+          "std::vector<int> v; v.push_back(1); std::deque<int> d; d.push_back(2); int s = 0; for (auto it = d.rbegin(); it != d.rend(); ++it) s += *it;\n"
+          "W a, b; b = a; V p, q; q = p; return add(1, 2) + id(4) + (int)id(1.5f) + s + (int)f(true, \"ab\").size() + g(false) + (int)std::minmax(1, 2).second; }\n", &o);
+    CHECK(t, has_symbol(o, "??4W@@") && has_symbol(o, "??4V@@") && has_symbol(o, "??R__lam1@@QEAAMM@Z"));
     return t.finish(tests);
 }

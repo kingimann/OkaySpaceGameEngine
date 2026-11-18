@@ -33,6 +33,10 @@ public:
     typedef const T* const_iterator;
 
     set() {}
+    // set(first, last) ([set.cons]): the elements of the range (pointers or any iterator with ++, != and *).
+    template <typename It> set(It first, It last) {
+        for (; first != last; ++first) insert(*first);
+    }
     set(initializer_list<T> list) {
         for (size_t i = 0; i < list.size(); ++i) insert(list.begin()[i]);
     }

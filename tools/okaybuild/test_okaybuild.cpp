@@ -1365,6 +1365,33 @@ static void testQuotedDefine() {
     check(rc == 0 && ran(o) >= 1, "changing it rebuilds", o);
 }
 
+static void testMeasuredMemory() {
+    printf("test: --memory-mb uses each step's measured peak from the last run\n"); fresh("memmeas");
+    write("hog.cpp", "#include <cstdio>\n#include <cstdlib>\n#include <cstring>\n#include <fcntl.h>\n#include <unistd.h>\n"
+        "static void note(const char* s){ int fd = open(\"log.txt\", O_WRONLY|O_APPEND|O_CREAT, 0644); if (write(fd, s, 2) < 0) {} close(fd); }\n"
+        "int main(int c, char** v){ size_t mb = (size_t)atoi(v[1]); char* p = (char*)malloc(mb << 20); memset(p, 1, mb << 20); note(\"s\\n\"); usleep(400000); note(\"e\\n\");\n"
+        " FILE* f = fopen(v[2], \"w\"); fputs(p[100] == 1 ? \"x\" : \"y\", f); fclose(f); return 0; }\n");
+    int rc0 = system(("cd '" + gRoot.string() + "' && g++ -O0 hog.cpp -o hog").c_str()); check(rc0 == 0, "hog compiles");
+    string man; for (int i = 0; i < 3; ++i) man += "action\n  cmd = ./hog 150 o" + std::to_string(i) + "\n  output = o" + std::to_string(i) + "\nend\n";
+    write("build.okay", man);
+    auto maxConc = [&]() { string l = readFile(gRoot / "log.txt"); int cur = 0, mx = 0; for (size_t i = 0; i + 1 < l.size(); i += 2) { cur += l[i] == 's' ? 1 : -1; mx = std::max(mx, cur); } return mx; };
+    int rc; string o = sh("--memory-mb 400 -j3", &rc);
+    check(rc == 0 && maxConc() == 3, "first run has nothing measured, so all three overlap", o + "\nconc=" + std::to_string(maxConc()));
+    string mem = readFile(gRoot / ".okaybuild/memory");
+    long kb = 0; { auto at = mem.find("o0\t"); if (at != string::npos) kb = atol(mem.c_str() + at + 3); }
+    check(mem.compare(0, 18, "okaybuild-memory 1") == 0 && kb >= 150 * 1024 && kb < 400 * 1024, "the measured peak of o0 is saved and near 150 MiB", mem);
+    for (int i = 0; i < 3; ++i) fs::remove(gRoot / ("o" + std::to_string(i)));
+    fs::remove(gRoot / "log.txt");
+    o = sh("--memory-mb 400 -j3", &rc);
+    check(rc == 0 && maxConc() == 2, "second run: 3 x ~150 MiB does not fit in 400, so at most two overlap", o + "\nconc=" + std::to_string(maxConc()));
+    for (int i = 0; i < 3; ++i) fs::remove(gRoot / ("o" + std::to_string(i)));
+    fs::remove(gRoot / "log.txt");
+    o = sh("-j3", &rc);
+    check(rc == 0 && maxConc() == 3, "without --memory-mb the measurement is not used", o);
+    o = sh("--memory-mb 0", &rc);
+    check(rc == 2 && o.find("--memory-mb wants") != string::npos, "a bad value is an error", o);
+}
+
 static void testImporters() {
     printf("test: importer blocks rebuild only changed assets, settings change rebuilds all, failures leave no output\n"); fresh("imp");
     write("tools/conv.sh", "echo \"$1\" >> imports.log\nif grep -q FAIL \"$1\"; then echo half > \"$2\"; exit 1; fi\n{ printf '%s|' \"$3\"; cat \"$1\"; } > \"$2\"\n");
@@ -1458,5 +1485,6 @@ int main(int argc, char** argv) {
     testLzFormat();
     testQuotedDefine();
     testAccountDefines();
+    testMeasuredMemory();
     printf("okaybuild tests: %d checks passed, %d failed\n", gPass, gFail); return gFail ? 1 : 0;
 }

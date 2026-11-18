@@ -12,6 +12,10 @@
 #include <cstdlib>
 #include <cerrno>
 #include <cstring>
+#ifndef _WIN32
+#include <sys/resource.h>
+#include <sys/wait.h>
+#endif
 #include <filesystem>
 #include <fstream>
 #include <functional>
@@ -983,6 +987,7 @@ static bool dirty(const Action& a, string& why) {
 
 // ---------------------------------------------------------------- running commands
 static long long nowNs();
+static thread_local long gLastPeakKb = 0; // peak memory of the last command this thread ran, in KiB (0 = not measured)
 #ifdef _WIN32
 struct Live {
     HANDLE proc = nullptr;
@@ -1113,6 +1118,7 @@ static int waitChild(pid_t pid) {
     }
 }
 static int runCmd(const vector<string>& argv, string& out, bool stream = false, long long timeoutNs = 0) {
+    gLastPeakKb = 0;
     auto child = [&]() {
         vector<char*> av; for (auto& s : argv) av.push_back(const_cast<char*>(s.c_str())); av.push_back(nullptr);
         execvp(av[0], av.data()); dprintf(2, "okay-build: cannot run '%s': %s\n", av[0] ? av[0] : "(none)", strerror(errno)); _exit(127);
@@ -1132,8 +1138,8 @@ static int runCmd(const vector<string>& argv, string& out, bool stream = false, 
     for (;;) {
         pollfd pf{}; pf.fd = fd[0]; pf.events = POLLIN; poll(&pf, 1, 20);
         for (;;) { char b[4096]; ssize_t n = read(fd[0], b, sizeof b); if (n > 0) out.append(b, (size_t)n); else break; }
-        int st = 0; pid_t r = waitpid(pid, &st, WNOHANG);
-        if (r == pid) { close(fd[0]); return WIFEXITED(st) ? WEXITSTATUS(st) : 128; }
+        int st = 0; struct rusage ru{}; pid_t r = wait4(pid, &st, WNOHANG, &ru);
+        if (r == pid) { gLastPeakKb = ru.ru_maxrss; close(fd[0]); return WIFEXITED(st) ? WEXITSTATUS(st) : 128; } // Linux reports ru_maxrss in KiB
         if (r < 0 && errno != EINTR) { close(fd[0]); return 128; }
         if (gCancel.load()) { kill(-pid, SIGTERM); kill(pid, SIGTERM); while (waitpid(pid, &st, 0) < 0 && errno == EINTR) {} close(fd[0]); return 130; }
         if (timeoutNs && nowNs() - startedAt > timeoutNs) {
@@ -1289,6 +1295,35 @@ static void ensureJobserver(int jobs) {
     setenv("MAKEFLAGS", flags.c_str(), 1);
 #endif
     gJobOn = true;
+}
+// ---- Measured memory. On POSIX each command's peak resident size comes from wait4 (the kernel's own figure, covering the
+// command and the children it waited for). It is saved per step in .okaybuild/memory ("okaybuild-memory 1", then
+// "output<TAB>KiB"), and a later run with --memory-mb N uses it as that step's memory (in MiB, rounded up, at most N) when the
+// manifest did not declare one. Not measured on Windows. A cache hit runs nothing, so it measures nothing and keeps the old value.
+static int gMemMb = 0;
+static std::map<string, long> gPeaks;     // measured in this run
+static std::map<string, long> loadMemory() {
+    std::map<string, long> m; std::ifstream f(under(".okaybuild/memory")); string l;
+    if (!std::getline(f, l) || l != "okaybuild-memory 1") return m;
+    while (std::getline(f, l)) { auto t = l.rfind('\t'); if (t != string::npos) m[l.substr(0, t)] = atol(l.c_str() + t + 1); }
+    return m;
+}
+static void saveMemory() {
+    if (gPeaks.empty()) return;
+    auto m = loadMemory(); for (auto& kv : gPeaks) m[kv.first] = kv.second;
+    fs::create_directories(under(".okaybuild")); string tmp = under(".okaybuild/memory.tmp");
+    { std::ofstream f(tmp, std::ios::trunc); f << "okaybuild-memory 1\n"; for (auto& kv : m) f << kv.first << "\t" << kv.second << "\n"; }
+    fs::rename(tmp, under(".okaybuild/memory"));
+}
+static void applyMeasuredMemory(Graph& g) {
+    if (gMemMb <= 0) return;
+    gMemLimit = gMemMb;
+    auto m = loadMemory();
+    for (auto& a : g.acts) {
+        if (a.memory > 0) continue;
+        auto it = m.find(a.output.empty() ? a.desc : a.output); if (it == m.end() || it->second <= 0) continue;
+        long mb = (it->second + 1023) / 1024; a.memory = (int)std::min<long>(mb, gMemMb);
+    }
 }
 static void rejectOversized(const Graph& g) {
     if (gMemLimit <= 0) return;
@@ -2017,7 +2052,7 @@ static string commandLineFor(const Action& a, string& err) {
 }
 static int buildOnWindows(const Manifest& m, const vector<string>& want, const Opts& o) {
     gRspUtf16 = m.tc.rspUtf16;
-    long long tStart = nowNs(); Graph g = plan(m, want); rejectOversized(g);
+    long long tStart = nowNs(); Graph g = plan(m, want); applyMeasuredMemory(g); rejectOversized(g);
     long long tPlanOnly = nowNs() - tStart; tStart = nowNs(); loadState();
     long long tState = nowNs() - tStart; long long tPlan = tPlanOnly + tState; tStart = nowNs() - tPlan;
     int total = (int)g.acts.size(), ran = 0, upToDate = 0, finished = 0;
@@ -2152,7 +2187,7 @@ static int buildOnWindows(const Manifest& m, const vector<string>& want, const O
         noteStep(a.kind, a.desc, nowNs() - (L.began ? L.began : L.started), L.cacheTag.empty() ? "-" : L.cacheTag);
         done(L.id, ok, out, true);
     }
-    if (!o.dry) { refreshStamps(); saveState(); }
+    if (!o.dry) { refreshStamps(); saveState(); saveMemory(); }
     if (!o.dry) writeReport();
     if (gCancel.load()) return 130;
     if (anyFail) { printCache(); fprintf(stderr, "okay-build: build FAILED (%d step(s) ran, %d of %d finished)\n", ran, finished, total); return 1; }
@@ -2169,7 +2204,7 @@ static int build(const Manifest& m, const vector<string>& want, const Opts& o) {
     return buildOnWindows(m, want, o);
 #else
     gRspUtf16 = m.tc.rspUtf16;
-    long long tStart = nowNs(); Graph g = plan(m, want); rejectOversized(g);
+    long long tStart = nowNs(); Graph g = plan(m, want); applyMeasuredMemory(g); rejectOversized(g);
     long long tPlanOnly = nowNs() - tStart; tStart = nowNs(); loadState();
     long long tState = nowNs() - tStart; long long tPlan = tPlanOnly + tState; tStart = nowNs() - tPlan;
     int total = (int)g.acts.size(), ran = 0, upToDate = 0, running = 0, finished = 0;
@@ -2276,7 +2311,7 @@ static int build(const Manifest& m, const vector<string>& want, const Opts& o) {
                                 std::this_thread::sleep_for(std::chrono::milliseconds(20));
                             }
                             if (tok.kind < 0) ok = false;
-                            else { int rc = runCmd(argv, out, stream); ok = rc == 0; giveJob(tok); }
+                            else { int rc = runCmd(argv, out, stream); ok = rc == 0; giveJob(tok); if (gLastPeakKb > 0) { std::lock_guard<std::mutex> pl(mu); gPeaks[a.output.empty() ? a.desc : a.output] = gLastPeakKb; } }
                         }
                         gNsSpawn += nowNs() - ts;
                         if (ok && !cached && !cacheKey.empty()) storeCache(a, cacheKey);
@@ -2293,7 +2328,7 @@ static int build(const Manifest& m, const vector<string>& want, const Opts& o) {
     };
     vector<std::thread> th; for (int i = 0; i < jobs; ++i) th.emplace_back(worker);
     for (auto& t : th) t.join();
-    if (!o.dry) { refreshStamps(); saveState(); }
+    if (!o.dry) { refreshStamps(); saveState(); saveMemory(); }
     if (!o.dry) writeReport();
     if (gCancel.load()) return 130;
     if (anyFail) { printCache(); fprintf(stderr, "okay-build: build FAILED (%d step(s) ran, %d of %d finished)\n", ran, finished, total); return 1; }
@@ -3284,6 +3319,7 @@ int main(int argc, char** argv) {
                 gShardIdx = atoi(v.substr(0, sl).c_str()); gShardCnt = atoi(v.substr(sl + 1).c_str());
                 if (gShardCnt < 1 || gShardIdx < 1 || gShardIdx > gShardCnt) throw Fail("--shard wants I/N with 1 <= I <= N");
             }
+            else if (a == "--memory-mb" && i + 1 < argc) { gMemMb = atoi(argv[++i]); if (gMemMb < 1) throw Fail("--memory-mb wants a number of megabytes"); }
             else if (a == "--memory" && i + 1 < argc) gMemLimit = atoi(argv[++i]);
             else if (a == "--run-dir" && i + 1 < argc) runDir = argv[++i];
             else if (a == "-o" && i + 1 < argc) importOut = argv[++i];
@@ -3300,7 +3336,7 @@ int main(int argc, char** argv) {
             else if (cmd == "cache" && (a == "stats" || a == "clean")) want.push_back(a);
             else if (a == "build" || a == "clean" || a == "compdb" || a == "import" || a == "graph" || a == "targets" || a == "modules" || a == "toolchains" || a == "report" || a == "test" || a == "cache" || a == "lock" || a == "package" || a == "native") cmd = a;
             else if (a == "-h" || a == "--help") {
-                puts("usage: okay-build [build|clean|compdb|import|graph|targets|modules|toolchains|report|test] [-f build.okay] [-j N] [-k] [--config NAME] [--toolchain auto|gcc|clang|mingw|msvc] [--opt name=value] [--build-dir DIR] [--no-stat] [--no-cache] [--cache-dir DIR] [--cache-compress] [--timeout SECONDS] [--msvc-version PREFIX] [--junit FILE] [--shard I/N] [--dry-run] [--explain] [-v] [--profile] [target...]");
+                puts("usage: okay-build [build|clean|compdb|import|graph|targets|modules|toolchains|report|test] [-f build.okay] [-j N] [-k] [--config NAME] [--toolchain auto|gcc|clang|mingw|msvc] [--opt name=value] [--build-dir DIR] [--no-stat] [--no-cache] [--cache-dir DIR] [--cache-compress] [--timeout SECONDS] [--msvc-version PREFIX] [--memory N] [--memory-mb MB] [--junit FILE] [--shard I/N] [--dry-run] [--explain] [-v] [--profile] [target...]");
                 puts("audit: docs/own_build_plan.md (12 subsystems; this tool is off by default)");
                 return 0;
             }

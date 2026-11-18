@@ -50373,7 +50373,7 @@ int main(int argc, char** argv) {
     std::unique_ptr<okay::platform::Window> winSeam = sdlSeam->MakeWindow(mainDesc);
     if (!winSeam) { std::cerr << "CreateWindow failed: " << sdlSeam->LastError() << "\n"; return 1; }
     SDL_Window* window = (SDL_Window*)winSeam->NativeHandle();
-    okay::SetAppIcon(window);   // placeholder OkaySpace logo
+    okay::SetAppIcon(*winSeam);   // placeholder OkaySpace logo
 
     // SDL's 2D renderer (Direct3D/Metal/OpenGL, chosen by SDL); fall back to software.
 #if defined(_WIN32)

@@ -3268,6 +3268,21 @@ if(NOT WIN32 AND NOT EMSCRIPTEN)
     endforeach()
 endif()
 
+# The apps' renderer bridge (shared/PainterBridge.hpp) against the raw SDL calls it replaced, on two identical SDL software renderers.
+if(NOT WIN32 AND NOT EMSCRIPTEN AND SDL2_FOUND)
+    if(TARGET SDL2::SDL2)
+        set(_okay_bridge_sdl SDL2::SDL2)
+    else()
+        set(_okay_bridge_sdl ${SDL2_LIBRARIES})
+    endif()
+    add_executable(test_painter_bridge_vs_sdl test_painter_bridge_vs_sdl.cpp)
+    target_include_directories(test_painter_bridge_vs_sdl PRIVATE ${CMAKE_SOURCE_DIR}/shared ${CMAKE_SOURCE_DIR}/engine/include)
+    target_link_libraries(test_painter_bridge_vs_sdl PRIVATE okay::engine ${_okay_bridge_sdl})
+    target_include_directories(test_painter_bridge_vs_sdl PRIVATE ${SDL2_INCLUDE_DIRS})
+    target_compile_features(test_painter_bridge_vs_sdl PRIVATE cxx_std_17)
+    add_test(NAME painter_bridge_vs_sdl COMMAND test_painter_bridge_vs_sdl)
+endif()
+
 # The software okay::platform::Painter (okayui/soft) on a real own-backend window under Xvfb: what it draws is what
 # the X server holds. Own code, not ready, off by default; the test only checks it.
 if(NOT WIN32 AND NOT EMSCRIPTEN AND TARGET okay_ui_soft AND CMAKE_SYSTEM_NAME STREQUAL "Linux")

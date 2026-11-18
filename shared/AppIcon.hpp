@@ -1,5 +1,5 @@
 #pragma once
-#include <SDL.h>
+#include "okay/Platform/Platform.hpp"
 #include <cmath>
 #include <cstdint>
 #include <vector>
@@ -10,7 +10,7 @@ namespace okay {
 // image file: a rounded dark-navy tile with a cyan ringed planet and a few
 // stars — the "OkaySpace" space theme. Set as the window icon for the editor
 // and the launcher. Replace with real art later by loading a PNG instead.
-inline void SetAppIcon(SDL_Window* window) {
+inline void SetAppIcon(okay::platform::Window& window) {
     const int N = 64;
     std::vector<std::uint32_t> px(N * N);
 
@@ -83,12 +83,7 @@ inline void SetAppIcon(SDL_Window* window) {
             blend(x, y, 0.95f, 0.85f, 0.55f, band * 0.9f);
         }
 
-    SDL_Surface* surf = SDL_CreateRGBSurfaceWithFormatFrom(
-        px.data(), N, N, 32, N * 4, SDL_PIXELFORMAT_RGBA32);
-    if (surf) {
-        SDL_SetWindowIcon(window, surf);
-        SDL_FreeSurface(surf);
-    }
+    window.SetIcon(reinterpret_cast<const std::uint8_t*>(px.data()), N, N);   // RGBA8 bytes (the platform layer's icon format)
 }
 
 } // namespace okay

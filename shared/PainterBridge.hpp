@@ -27,6 +27,12 @@ inline std::unordered_map<void*, std::unique_ptr<okay::platform::Painter>>& Tabl
 }
 }
 
+/// A function that makes a painter for a window of the own backend (the software painter lives in okayui; the app that links it registers
+/// it). Without one, CreateRenderer for such a window returns null.
+using OwnPainterFactory = std::unique_ptr<okay::platform::Painter> (*)(okay::platform::Window&);
+inline OwnPainterFactory& OwnFactory() { static OwnPainterFactory f = nullptr; return f; }
+inline void SetOwnPainterFactory(OwnPainterFactory f) { OwnFactory() = f; }
+
 /// The painter that stands for `ren` (made on first use; null for a null renderer).
 inline okay::platform::Painter* For(SDL_Renderer* ren) {
     if (!ren) return nullptr;
@@ -91,10 +97,21 @@ inline SDL_Texture* GetRenderTarget(SDL_Renderer* ren) { auto* p = For(ren); ret
 inline bool SetRenderTarget(SDL_Renderer* ren, SDL_Texture* t) { auto* p = For(ren); return p && p->SetRenderTarget((okay::ui2d::Tex)t); }
 
 /// A renderer for an SDL window made by the sdl2 backend: accelerated, else any (what the apps asked SDL for). Null on failure.
+/// For an own-backend window the returned pointer is NOT an SDL_Renderer (it is only the key of the software painter): use it with these functions
+/// and the Painter, never with an SDL_* call.
 /// The table owns the painter and with it the renderer: end it with DestroyRenderer (before the window goes).
 inline SDL_Renderer* CreateRenderer(okay::platform::Window& w, bool vsync = false, std::string* err = nullptr, bool requireAccelerated = false) {
     okay::platform::PainterDesc d; d.vsync = vsync; d.requireAccelerated = requireAccelerated;
-    std::unique_ptr<okay::platform::Painter> p = okay::platform::CreateSdl2Painter(w, d, err);
+    std::unique_ptr<okay::platform::Painter> p;
+    if (w.Kind() == okay::platform::BackendKind::Own) {   // an own-backend window: no SDL_Renderer exists; the handle is the painter's own address
+        if (OwnFactory()) p = OwnFactory()(w);
+        else if (err) *err = "no painter factory for own-backend windows is registered";
+        if (!p) return nullptr;
+        SDL_Renderer* h = reinterpret_cast<SDL_Renderer*>(p.get());
+        detail::Table()[h] = std::move(p);
+        return h;
+    }
+    p = okay::platform::CreateSdl2Painter(w, d, err);
     if (!p) return nullptr;
     SDL_Renderer* r = (SDL_Renderer*)p->NativeRenderer();
     detail::Table()[r] = std::move(p);

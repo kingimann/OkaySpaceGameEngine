@@ -12,6 +12,7 @@ Find the window, page or symptom, then say the number. Back to the [overview](..
 | 3D looks different in the editor and the player | [2.1](02-rendering-world.md#21-renderers) Renderers |
 | a "Test build of ..." message in the launcher | [18.9](18-build-export-release.md#189-test-builds-the-dev-channel) Test builds (the dev channel) |
 | a .dae/.3ds file will not import without Assimp | [3.6](03-modeling-import.md#36-model-import) Model import |
+| a 10,000-row list is slow | [40.8](40-okayui-library.md#408-porting-helpers-tooltip-scope-style-fields-mapping-layer-list-clipper) Porting helpers: tooltip scope, style fields, mapping layer, list clipper |
 | a 2D level is made of flat coloured squares | [43.1](43-proposals.md#431-tilemaps-and-tilesets) Tilemaps and tilesets |
 | a ball does not bounce | [6.1](06-physics.md#61-2d-bodies-and-colliders) 2D bodies and colliders |
 | a ban banner on the launcher with an Appeal button | [39.6](39-security-anticheat.md#396-reports-bans-appeals-and-the-hardware-hash) Reports, bans, appeals and the hardware hash |
@@ -198,6 +199,8 @@ Find the window, page or symptom, then say the number. Back to the [overview](..
 | a plugin panel does not appear | [24.2](20-35-planned.md#242-editor-extensions) Editor extensions |
 | a plugin panel does not draw | [15.8](15-editor.md#158-plugin-system-and-plugins-menu) Plugin system and Plugins menu |
 | a point light casts no shadow | [2.3](02-rendering-world.md#23-lighting-and-shadows) Lighting and shadows |
+| a ported panel does not compile because of GetStyle | [40.8](40-okayui-library.md#408-porting-helpers-tooltip-scope-style-fields-mapping-layer-list-clipper) Porting helpers: tooltip scope, style fields, mapping layer, list clipper |
+| a ported tooltip with several lines draws nothing | [40.8](40-okayui-library.md#408-porting-helpers-tooltip-scope-style-fields-mapping-layer-list-clipper) Porting helpers: tooltip scope, style fields, mapping layer, list clipper |
 | a pose pops at a key | [5.2](05-animation-ik.md#52-clips-and-curves) Clips and curves |
 | a PR waits for a verdict | [19.3](19-docs-tests-health.md#193-qa-workflow-rig-sweep-test) QA workflow, rig sweep test |
 | a prebuilt screen overlaps another | [12.7](12-ingame-ui.md#127-themes-and-the-launcher-matching-ui-kit) Themes and the launcher-matching UI kit |

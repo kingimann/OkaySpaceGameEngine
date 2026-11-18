@@ -2,6 +2,7 @@
 #include <cmath>
 #include <cstdlib>
 #include "okay/UI/OkayUI.hpp"
+#include "okay/UI/OkayUICompat.hpp"   // BeginTooltip, GetStyle, ListClipper (defined here: they need the private layout state)
 #include "okay/Graphics/Font.hpp"   // okay::Font8x8 — a no-STL C API over a bitmap font
 #include "OkayUI_FontAtlas.hpp"     // the launcher font (TrueType) for UseLauncherLook()
 #include "okay/Graphics/TtfFont.hpp" // fallback fonts for characters the atlas lacks
@@ -3074,6 +3075,177 @@ void SetTooltip(const char* fmt, ...) {
     va_end(ap);
     drawTooltipBox(buf);   // unconditional: the caller decides when (usually `if (IsItemHovered()) SetTooltip(...)`)
 }
+
+// ---- Tooltip scope: BeginTooltip / EndTooltip --------------------------------------------------------------------------
+// The widgets between the two calls are laid out into the overlay batch at a provisional spot next to the cursor, with input
+// switched off. EndTooltip measures what they covered (their group box), moves their vertices to the final spot (flipped to the
+// left / above like SetTooltip when it would run off the display), draws the box and moves its indices in front of the content.
+namespace {
+struct TipScope {
+    bool open = false;
+    int nested = 0;                 // BeginTooltip calls made while one is open: they draw into the outer one
+    LayoutState lay;                // the layout to restore
+    int grpTop = 0, lastId = 0; bool blocked = false, posOverride = false, toOverlay = false, discard = false;
+    float nextItemW = -1.0f;
+    int startV = 0, startI = 0, spanBase = 0;
+};
+TipScope g_tip;
+} // namespace
+
+bool BeginTooltip() {
+    if (g_tip.open) { ++g_tip.nested; return true; }
+    if (!g_lay.active || g_grpTop >= 8) return false;
+    TipScope& t = g_tip;
+    t.open = true; t.nested = 0; t.lay = g_lay; t.grpTop = g_grpTop; t.lastId = g_lastId; t.blocked = g_in.blocked;
+    t.posOverride = g_posOverride; t.toOverlay = g_toOverlay; t.nextItemW = g_nextItemW;
+    t.discard = g_in.blocked;            // input is blocked (a window covers the pointer): the tooltip is not shown, its widgets still run
+    t.spanBase = g_novSpans;
+    g_toOverlay = true;
+    bindTexture(g_defTex);               // the box (drawn last, placed first) is flat: a flat span at the start of the tooltip
+    t.startV = g_onv; t.startI = g_oni;
+    g_in.blocked = true; g_posOverride = false; g_nextItemW = -1.0f;
+    const float pad = g_look ? 8.0f : 6.0f;
+    const float maxW = g_in.displayW > 0.0f ? std::max(120.0f, std::min(480.0f, g_in.displayW - 40.0f)) : 480.0f;
+    g_lay.winClip = false;
+    g_lay.ox = g_in.mouseX + 14.0f + pad; g_lay.oy = g_in.mouseY + 14.0f + pad;
+    g_lay.cx = g_lay.ox; g_lay.cy = g_lay.oy; g_lay.contentW = maxW; g_lay.indent = 0.0f;
+    g_lay.bottom = 1e7f; g_lay.maxRight = 0.0f; g_lay.pendingSameLine = false;
+    g_lay.prevX = g_lay.ox; g_lay.prevY = g_lay.oy; g_lay.prevW = 0.0f; g_lay.prevH = 0.0f;
+    g_grp[g_grpTop++] = GroupBox();      // the tooltip's own bounding box
+    return true;
+}
+
+void EndTooltip() {
+    if (!g_tip.open) return;
+    TipScope& t = g_tip;
+    if (t.nested > 0) { --t.nested; return; }
+    const GroupBox box = g_grp[--g_grpTop];
+    const float pad = g_look ? 8.0f : 6.0f;
+    if (!box.any || t.discard) {         // nothing to show: drop whatever was drawn
+        g_onv = t.startV; g_oni = t.startI; g_novSpans = t.spanBase;
+    } else {
+        // A text row is rowH tall (the text plus padding of its own), so the vertical inset is what is left of `pad` after that
+        // padding: a one-line tooltip then has the same box as SetTooltip.
+        const float padY = std::max(0.0f, pad - (rowH() - textH()) * 0.5f);
+        const float bw = (box.x1 - box.x0) + pad * 2.0f, bh = (box.y1 - box.y0) + padY * 2.0f;
+        float bx = g_in.mouseX + 14.0f, by = g_in.mouseY + 14.0f;
+        if (g_in.displayW > 0.0f && bx + bw > g_in.displayW - 2.0f) bx = std::max(2.0f, g_in.mouseX - 10.0f - bw);
+        if (g_in.displayH > 0.0f && by + bh > g_in.displayH - 2.0f) by = std::max(2.0f, g_in.mouseY - 10.0f - bh);
+        const float dx = bx + pad - box.x0, dy = by + padY - box.y0;
+        for (int i = t.startV; i < g_onv; ++i) { g_ovVerts[i].position.x += dx; g_ovVerts[i].position.y += dy; }
+        const int contentEndI = g_oni, spansBefore = g_novSpans;
+        g_toOverlay = true;
+        if (g_look) {
+            const unsigned char tip[4] = {38, 42, 51, 250};
+            rrect(bx, by, bw, bh, 7.0f, g_theme.border);
+            rrect(bx + 1.0f, by + 1.0f, bw - 2.0f, bh - 2.0f, 6.0f, tip);
+        } else {
+            quad(bx, by, bw, bh, g_theme.border);
+            quad(bx + 1.0f, by + 1.0f, bw - 2.0f, bh - 2.0f, g_theme.panel);
+        }
+        const int boxN = g_oni - contentEndI;
+        g_novSpans = spansBefore;        // the box takes the flat span at the start of the tooltip
+        if (boxN > 0 && contentEndI > t.startI) {
+            std::rotate(g_ovIdx + t.startI, g_ovIdx + contentEndI, g_ovIdx + g_oni);   // box indices first, then the content's
+            // The content's texture changes moved with it: shift them past the box, and keep a flat span at the start.
+            for (int i = t.spanBase; i < g_novSpans; ++i) if (g_ovSpans[i].startIdx >= t.startI) g_ovSpans[i].startIdx += boxN;
+            int first = t.spanBase; while (first < g_novSpans && g_ovSpans[first].startIdx < t.startI) ++first;
+            // after the shift no span starts at startI any more (the flat one from BeginTooltip was shifted too): put a flat one back
+            if (g_novSpans < 32) {
+                for (int i = g_novSpans; i > first; --i) g_ovSpans[i] = g_ovSpans[i - 1];
+                g_ovSpans[first] = OverlaySpan{t.startI, g_defTex}; ++g_novSpans;
+            }
+        }
+    }
+    g_lay = t.lay; g_grpTop = t.grpTop; g_lastId = t.lastId; g_in.blocked = t.blocked; g_posOverride = t.posOverride;
+    g_nextItemW = t.nextItemW; g_toOverlay = t.toOverlay;
+    { const bool keep = g_toOverlay; g_toOverlay = true; bindTexture(g_defTex); g_toOverlay = keep; }   // whatever the overlay draws next starts flat again
+    t.open = false;
+}
+
+// ---- GetStyle: the style as Dear ImGui-shaped fields, read off OkayUI's own settings each call ----------------------------
+const StyleInfo& GetStyle() {
+    static StyleInfo s;
+    const float rh = rowH(), th = textH();
+    s.Alpha = 1.0f;
+    s.WindowPadding = Vec2{g_theme.windowPadding, g_theme.windowPadding};
+    s.FramePadding = Vec2{8.0f, (rh - th) * 0.5f};
+    s.ItemSpacing = Vec2{g_lay.spacingX, g_lay.spacingY};
+    s.ItemInnerSpacing = Vec2{g_lay.spacingX * 0.5f, g_lay.spacingY};
+    s.CellPadding = Vec2{6.0f, 3.0f};
+    s.ScrollbarSize = kScrollbarW;
+    s.WindowRounding = g_theme.windowRounding; s.ChildRounding = g_theme.rounding; s.FrameRounding = g_theme.rounding;
+    s.WindowBorderSize = g_theme.borderPx; s.ChildBorderSize = g_theme.borderPx; s.FrameBorderSize = g_theme.borderPx;
+    s.FontScale = g_theme.textScale;
+    for (int i = 0; i < Col_COUNT && i < 64; ++i) s.Colors[i] = GetStyleColorVec4((Col)i);
+    return s;
+}
+
+// ---- ListClipper: lay out only the rows of a long list that can be seen --------------------------------------------------
+namespace {
+// The vertical span, in screen pixels, that is on screen right now: the innermost clip rectangle (a child or a clipped window), else
+// the current window, else the display; always cut to the display when the host gave one.
+void visibleSpanY(float& top, float& bottom) {
+    top = -1e30f; bottom = 1e30f;
+    if (g_clipTop > 0) { const SDL_Rect& r = g_clipStack[g_clipTop - 1]; top = (float)r.y; bottom = (float)(r.y + r.h); }
+    else if (g_curWin.valid) { top = g_curWin.y; bottom = g_curWin.y + g_curWin.h; }
+    if (g_dispH > 0.0f) { top = std::max(top, 0.0f); bottom = std::min(bottom, g_dispH); }
+}
+} // namespace
+
+ListClipper::ListClipper() {}
+ListClipper::~ListClipper() { End(); }
+
+void ListClipper::Begin(int itemsCount, float itemHeight) {
+    End();
+    ItemsCount = itemsCount > 0 ? itemsCount : 0;
+    ItemsHeight = (itemHeight > 0.0f && std::isfinite(itemHeight)) ? itemHeight : -1.0f;   // the step from one row to the next, spacing included
+    mStartY = g_lay.active ? g_lay.cy : 0.0f;
+    mStage = 1; mForceMin = mForceMax = -1;
+    DisplayStart = DisplayEnd = 0;
+    mActive = true; mMeasured = false;
+}
+
+void ListClipper::ForceDisplayRangeByIndices(int itemMin, int itemMax) { mForceMin = itemMin; mForceMax = itemMax; }
+
+bool ListClipper::Step() {
+    if (!mActive) return false;
+    if (!g_lay.active || ItemsCount == 0) { End(); return false; }
+    if (mStage == 1) {
+        if (ItemsHeight <= 0.0f) {       // row height unknown: show row 0 alone, measure it, then decide
+            mStage = 2; DisplayStart = 0; DisplayEnd = 1; mMeasured = true;
+            return true;
+        }
+        mStage = 3;                      // known: go straight to the visible range
+    } else if (mStage == 2) {
+        const float used = g_lay.cy - mStartY;
+        ItemsHeight = used > 0.5f ? used : rowH() + g_lay.spacingY;
+        mStage = 3;
+    }
+    if (mStage == 3) {
+        float top, bottom; visibleSpanY(top, bottom);
+        int first = (int)std::floor((top - mStartY) / ItemsHeight) - 1;
+        int last = (int)std::ceil((bottom - mStartY) / ItemsHeight) + 1;
+        if (mForceMin >= 0) { first = std::min(first, mForceMin); last = std::max(last, mForceMax + 1); }
+        const int already = mMeasured ? 1 : 0;                       // row 0 is on screen already when it was measured
+        if (first < already) first = already;
+        if (last > ItemsCount) last = ItemsCount;
+        mStage = 4;
+        if (last <= first) { g_lay.cy = mStartY + (float)ItemsCount * ItemsHeight; g_lay.pendingSameLine = false; End(); return false; }
+        g_lay.cy = mStartY + (float)first * ItemsHeight;             // skip the rows above: the cursor jumps to where row `first` belongs
+        g_lay.pendingSameLine = false;
+        DisplayStart = first; DisplayEnd = last;
+        return true;
+    }
+    if (mStage == 4) {                   // the caller's loop is done: jump past the rows below so the content height is right
+        g_lay.cy = mStartY + (float)ItemsCount * ItemsHeight;
+        g_lay.pendingSameLine = false;
+        End();
+    }
+    return false;
+}
+
+void ListClipper::End() { mActive = false; mStage = 0; mMeasured = false; }
 
 void TextUnformatted(const char* text, const char* textEnd) {
     if (!g_lay.active || !text) return;

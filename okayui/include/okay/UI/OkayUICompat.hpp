@@ -41,4 +41,51 @@ void SetNextWindowSizeConstraints(Vec2 minSize, Vec2 maxSize);
 void SetItemDefaultFocus();
 void SetNextItemAllowOverlap();
 
+
+/// A tooltip that takes widgets: `if (IsItemHovered() && BeginTooltip()) { Text("..."); Separator(); Text("..."); EndTooltip(); }`.
+/// The widgets between the calls are laid out in a box next to the cursor (on top of everything, flipped left / above when it would
+/// run off the display), sized to what they cover, with input switched off (a tooltip is for reading: buttons in it do not click).
+/// BeginTooltip returns false only outside a window; EndTooltip is safe to call when it returned false, and a tooltip begun inside
+/// a tooltip draws into the outer one. While a window covers the pointer (Input::blocked) the widgets still run but nothing is shown.
+/// Limits: no scrolling child inside (the clip rectangle does not apply to the overlay); a full-width item such as Separator makes
+/// the box as wide as the largest allowed (480 px, or the display less 40).
+bool BeginTooltip();
+void EndTooltip();
+
+/// The style as the fields ported code reads (Dear ImGui names), filled from OkayUI's own settings at each call, so it follows
+/// PushStyleVar and Style(). READ ONLY: a write to the returned struct is lost at the next call (use Style(), PushStyleVar and
+/// PushStyleColor to change things). Approximations are listed in docs/own_ui_toolkit.md section 6.7: FramePadding, ItemInnerSpacing
+/// and CellPadding are the values the layout uses, not separate settings; Alpha is always 1.
+struct StyleInfo {
+    float Alpha = 1.0f;
+    Vec2 WindowPadding, FramePadding, ItemSpacing, ItemInnerSpacing, CellPadding;
+    float ScrollbarSize = 10.0f;
+    float WindowRounding = 0.0f, ChildRounding = 0.0f, FrameRounding = 0.0f;
+    float WindowBorderSize = 0.0f, ChildBorderSize = 0.0f, FrameBorderSize = 0.0f;
+    float FontScale = 1.0f;                // the theme's text scale (2 = 16 px glyphs), not a multiplier of 1
+    Vec4 Colors[Col_COUNT];                // index with the Col ids
+};
+const StyleInfo& GetStyle();
+
+/// Lay out only the visible rows of a long list that is not a table. Usage:
+///     ListClipper clip; clip.Begin(count);                  // or Begin(count, rowStep) when every row has the same step
+///     while (clip.Step()) for (int i = clip.DisplayStart; i < clip.DisplayEnd; ++i) DrawRow(i);
+/// Without a row step, row 0 is shown alone first and measured (the cursor's advance, spacing included), then the range is chosen.
+/// The visible span is the innermost clip rectangle (a BeginChild or a clipped window), else the window, else the display, widened by
+/// one row each side. Skipped rows are replaced by moving the cursor, so scroll extents match the full list. Rows must all have the same
+/// step (a different-sized row is placed where the step says, not where its neighbours are). ForceDisplayRangeByIndices keeps rows
+/// (e.g. the one being edited) in the range. The destructor ends the clipper; Begin again re-uses it.
+struct ListClipper {
+    int ItemsCount = 0, DisplayStart = 0, DisplayEnd = 0;
+    float ItemsHeight = -1.0f;             // the row step; -1 until known
+    ListClipper(); ~ListClipper();
+    void Begin(int itemsCount, float itemHeight = -1.0f);
+    bool Step();
+    void End();
+    void ForceDisplayRangeByIndices(int itemMin, int itemMax);   // inclusive
+private:
+    bool mActive = false, mMeasured = false; int mStage = 0, mForceMin = -1, mForceMax = -1; float mStartY = 0.0f;
+    ListClipper(const ListClipper&); ListClipper& operator=(const ListClipper&);   // not copyable (declared, never defined)
+};
+
 } // namespace OkayUI

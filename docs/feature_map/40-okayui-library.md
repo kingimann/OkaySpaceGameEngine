@@ -146,3 +146,23 @@ OkayUI is the one own UI toolkit that is meant to replace Dear ImGui over time (
 - **Words:** draw list, GetWindowDrawList, custom drawing, canvas, InvisibleButton, BeginDisabled, cursor position, content region, CalcTextSize, polyline, bezier, replace Dear ImGui
 - **Seen as:** a custom-drawn panel does not clip; a disabled widget still reacts; a translucent line is darker at its corners
 - **Ask me like:** "work on 40.7.1, add AddConcavePolyFilled"; "render the draw list lab page to a PNG"
+
+### 40.8 Porting helpers: tooltip scope, style fields, mapping layer, list clipper
+- **What:** four things code ported from Dear ImGui needs: a tooltip that takes widgets (`BeginTooltip`/`EndTooltip`), `GetStyle()` with the style fields ported code reads, a mapping layer for vector and colour types and flag enums, and `ListClipper` for long lists that are not tables. Library only; nothing in the editor or launcher calls them yet.
+- **Parts:**
+  - 40.8.1 Tooltip scope - `okayui/src/OkayUI.cpp` - widgets laid out in the overlay, box sized to them, flips at the display edge, input off, surrounding layout untouched
+  - 40.8.2 Style fields - `okayui/src/OkayUI.cpp` - `GetStyle()` returns a read-only `StyleInfo` (spacing, padding, rounding, `Colors[]`) refreshed from the live settings
+  - 40.8.3 Mapping layer - `okayui/include/okay/UI/OkayUIMap.hpp`, `shared/OkayUIImGuiMap.hpp` - `FromVec4`, `ToVec4`, `FromColor`, `FlagMap`, `MapFlags`, `MapEnum`; ImGui window flag, colour and style variable tables on the host side
+  - 40.8.4 List clipper - `okayui/src/OkayUI.cpp` - `ListClipper::Begin/Step/End/ForceDisplayRangeByIndices`: only visible rows are laid out, same pixels as the full list
+- **Code:** `okayui/include/okay/UI/OkayUICompat.hpp`, `okayui/include/okay/UI/OkayUIMap.hpp`, `okayui/src/OkayUI.cpp`, `shared/OkayUIImGuiMap.hpp`, `okayui/tests/test_okayui_scopes.cpp`
+- **API:** `OkayUI::BeginTooltip`, `OkayUI::EndTooltip`, `OkayUI::GetStyle`, `OkayUI::StyleInfo`, `OkayUI::ListClipper`, `OkayUI::MapFlags`, `OkayUI::FromVec4`
+- **Editor:** none (library only)
+- **Docs:** `docs/own_ui_toolkit.md` (section 6.7)
+- **Tests:** `okayui_scopes`
+- **Status:** Works - implemented and tested headless; not run in the real editor or launcher. `GetStyle` is read-only; the ImGui tables file is not built in CI
+- **Open:** assigning to the style is not supported; no scrolling child inside a tooltip; the tab colour slots are not in the ImGui table; ports that use these (Audio Mixer tooltips, Crash Log rows) are not switched over
+- **Related:** 40.7
+- **Words:** tooltip, BeginTooltip, GetStyle, ImVec4, flag mapping, ListClipper, clipper, long list, replace Dear ImGui
+- **Seen as:** a ported tooltip with several lines draws nothing; a ported panel does not compile because of GetStyle; a 10,000-row list is slow
+- **Ask me like:** "work on 40.8.4, make the clipper handle rows of different height"
+

@@ -251,5 +251,11 @@ int main(int, char**) {
           "struct A { virtual ~A() {} }; struct B : A {}; struct C { int x; C(int a) : x(a) {} };\nstatic_assert(std::is_base_of<A, B>::value, \"x\");\n"
           "int main() { V c; auto a = f(c); int r = 0; if (std::is_base_of<B, A>::value) r += 10; if (std::is_default_constructible<C>::value) r += 100; if (std::is_polymorphic<B>::value) r += 1000; return (int)a[1].y + r; }\n", &o);
     CHECK(t, has_symbol(o, "main"));
+    ++tests;
+    build(t, "round 31: static_cast to a class template pointer then ->, f<T>() inside a member, cast to vector<T*>*",
+          "#include <memory>\n#include <vector>\ntemplate <typename T> int f(std::shared_ptr<void> p) { return (int)static_cast<std::vector<T*>*>(p.get())->size(); }\n"
+          "struct S { template <typename T> int h() const { return (int)sizeof(T); } int g() { return h<int>() + h<char>(); } };\n"
+          "int main() { std::shared_ptr<void> p; S s; return f<int>(p) + s.g(); }\n", &o);
+    CHECK(t, has_symbol(o, "main"));
     return t.finish(tests);
 }

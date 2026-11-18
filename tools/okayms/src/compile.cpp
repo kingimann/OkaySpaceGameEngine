@@ -2045,8 +2045,17 @@ struct Parser {
         std::string in_scoped;  // the scoped enum whose braces are open
         int enum_depth = 0;
         bool want_name = false;
+        std::set<size_t> wrap_close;  // the ')' that ends the operand of a rewritten cast: the cast is closed after it
         for (size_t i = 0; i < tokens.size(); ++i) {
             const Token& t = tokens[i];
+            if (wrap_close.count(i) > 0) {
+                out.push_back(t);
+                Token rp = t;
+                rp.kind = TRParen;
+                rp.text = ")";
+                out.push_back(rp);
+                continue;
+            }
             if (t.kind == TIdent && t.text == "constexpr" && !out.empty() && out.back().kind == TIf)
                 continue;  // `if constexpr (c)` is read as `if (c)`: both branches are compiled
             if (t.kind == TIdent && t.text == "constexpr") {
@@ -2231,6 +2240,23 @@ struct Parser {
                     else if (tokens[j].kind == TGt && --angle == 0) break;
                 }
                 if (j + 1 < tokens.size() && tokens[j].kind == TGt && tokens[j + 1].kind == TLParen) {
+                    // static_cast<T>(x) becomes ((T)(x)): the whole cast is one operand, so `static_cast<T*>(p)->f()` applies
+                    // `->f()` to the converted value.
+                    {
+                        size_t m = j + 1;
+                        int depth = 0;
+                        for (; m < tokens.size() && tokens[m].kind != TEnd; ++m) {
+                            if (tokens[m].kind == TLParen) ++depth;
+                            else if (tokens[m].kind == TRParen && --depth == 0) break;
+                        }
+                        if (m < tokens.size() && tokens[m].kind == TRParen) {
+                            Token wrap = tokens[i + 1];
+                            wrap.kind = TLParen;
+                            wrap.text = "(";
+                            out.push_back(wrap);
+                            wrap_close.insert(m);
+                        }
+                    }
                     Token open = tokens[i + 1];
                     open.kind = TLParen;
                     open.text = "(";
@@ -6071,6 +6097,23 @@ struct Parser {
     std::map<std::string, std::vector<Type>> type_packs{};
     std::map<std::string, std::vector<std::string>> param_packs{};
 
+    // At the '<' of `(Name<...>`: the matching '>' is followed by '*' or '&' and then ')' or more of them, which makes the
+    // parentheses a cast to a pointer or reference to the class template instance.
+    bool template_cast_close_ahead(size_t lt) const {
+        if (lt >= tokens.size() || tokens[lt].kind != TLt) return false;
+        int depth = 0;
+        size_t k = lt;
+        for (; k < tokens.size() && tokens[k].kind != TEnd; ++k) {
+            if (tokens[k].kind == TLt) ++depth;
+            else if (tokens[k].kind == TGt && --depth == 0) break;
+            else if (tokens[k].kind == TSemi || tokens[k].kind == TLBrace) return false;
+        }
+        if (k + 2 >= tokens.size() || tokens[k].kind != TGt) return false;
+        size_t m = k + 1;
+        if (tokens[m].kind != TStar && tokens[m].kind != TAmp) return false;
+        while (m < tokens.size() && (tokens[m].kind == TStar || tokens[m].kind == TAmp)) ++m;
+        return m < tokens.size() && tokens[m].kind == TRParen;
+    }
     bool is_template_name_at(size_t i) const {
         if (!(i + 1 < tokens.size() && tokens[i].kind == TIdent && tokens[i + 1].kind == TLt &&
               class_templates.count(tokens[i].text) > 0))
@@ -12676,6 +12719,24 @@ bool Parser::parse_unary(Node* out) {
                 }
                 return parse_postfix(out);
             }
+            if (is(TLt)) {
+                // f<int>(args) inside a member function, naming a member function template of the class.
+                int mt_owner = -1;
+                const MemberTmpl* mt = find_member_tmpl(cur_class, name, &mt_owner);
+                if (mt != nullptr) {
+                    std::vector<TArg> mtargs;
+                    if (!parse_template_args(mt->td, &mtargs, true)) return false;
+                    bool any_object_fn = false;
+                    for (const Method& m : def.methods)
+                        if (m.name == name && !m.is_static) any_object_fn = true;
+                    if (mt->is_static || (!any_object_fn && mt->is_static)) return qualified_call(out, cur_class, name, std::move(mtargs)) && parse_postfix(out);
+                    if (!expect(TLParen, "'('")) return false;
+                    Node self2;
+                    self2.kind = Node::Name;
+                    self2.text = "this";
+                    return method_call(out, std::move(self2), true, name, std::move(mtargs)) && parse_postfix(out);
+                }
+            }
             if (is(TLParen) && !def.methods.empty()) {
                 bool is_method = false;
                 for (const Method& m : def.methods)
@@ -12977,7 +13038,8 @@ bool Parser::parse_unary(Node* out) {
                                 ahead == TUnion || ahead == TEnum ||
                                 (ahead == TIdent && typedefs.find(tokens[at + 1].text) != typedefs.end() && !qualified_value_at(at + 1) &&
                                  !variable_named(tokens[at + 1].text)) ||
-                                (ahead == TIdent && class_name_at(at + 1) && !qualified_value_at(at + 1));
+                                (ahead == TIdent && class_name_at(at + 1) && !qualified_value_at(at + 1)) ||
+                                (ahead == TIdent && is_template_name_at(at + 1) && template_cast_close_ahead(at + 2));  // (vector<T*>*)p
         if (type_ahead) {
             next();
             Type ty;

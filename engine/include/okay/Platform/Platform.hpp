@@ -311,6 +311,8 @@ public:
     virtual bool IsKeyDown(Key k) = 0;
     virtual uint32_t MouseState(int* x, int* y) = 0;   // MouseMask bits; position in the focused window
     virtual bool SetRelativeMouse(bool on) = 0;
+    /// Whether relative (locked, endless) mouse mode is on right now.
+    virtual bool IsRelativeMouse() { return false; }
     virtual void ShowCursor(bool show) = 0;
     virtual void WarpMouse(Window* w, int x, int y) = 0;
     /// Whether the cursor is visible (what ShowCursor last asked for; starts true).

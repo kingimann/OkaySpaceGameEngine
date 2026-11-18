@@ -85,6 +85,15 @@ int WindowDpi(HWND h) {
     return MonitorDpi(MonitorFromWindow(h, MONITOR_DEFAULTTONEAREST));
 }
 
+// The monitor rectangle and the work area (without the task bar) of the monitor a window is on, as pure-code Rects.
+bool MonitorRects(HMONITOR mon, win32disp::Rect& whole, win32disp::Rect& work) {
+    MONITORINFO mi; mi.cbSize = sizeof(mi);
+    if (!mon || !GetMonitorInfo(mon, &mi)) return false;
+    whole = win32disp::FromLtrb(mi.rcMonitor.left, mi.rcMonitor.top, mi.rcMonitor.right, mi.rcMonitor.bottom);
+    work = win32disp::FromLtrb(mi.rcWork.left, mi.rcWork.top, mi.rcWork.right, mi.rcWork.bottom);
+    return true;
+}
+
 class WinBackend;
 WinBackend* g_backend = nullptr;   // the window procedure has no user pointer before WM_NCCREATE
 
@@ -104,9 +113,17 @@ public:
     }
     void SetPosition(int x, int y) override {
         if (x == kCentered || y == kCentered) {
+            // Centred in the work area of the monitor the window is on now (the primary one if that cannot be asked).
             RECT r; GetWindowRect(m_hwnd, &r);
-            if (x == kCentered) x = (GetSystemMetrics(SM_CXSCREEN) - (r.right - r.left)) / 2;
-            if (y == kCentered) y = (GetSystemMetrics(SM_CYSCREEN) - (r.bottom - r.top)) / 2;
+            win32disp::Rect whole, work;
+            if (MonitorRects(MonitorFromWindow(m_hwnd, MONITOR_DEFAULTTOPRIMARY), whole, work)) {
+                const win32disp::Rect c = win32disp::CentredRect(work, r.right - r.left, r.bottom - r.top);
+                if (x == kCentered) x = c.x;
+                if (y == kCentered) y = c.y;
+            } else {
+                if (x == kCentered) x = (GetSystemMetrics(SM_CXSCREEN) - (r.right - r.left)) / 2;
+                if (y == kCentered) y = (GetSystemMetrics(SM_CYSCREEN) - (r.bottom - r.top)) / 2;
+            }
         }
         SetWindowPos(m_hwnd, nullptr, x, y, 0, 0, SWP_NOSIZE | SWP_NOZORDER | SWP_NOACTIVATE);
     }
@@ -122,11 +139,13 @@ public:
         if (on) {
             m_style = GetWindowLongW(m_hwnd, GWL_STYLE);
             GetWindowRect(m_hwnd, &m_rect);
-            MONITORINFO mi; mi.cbSize = sizeof(mi);
-            GetMonitorInfoW(MonitorFromWindow(m_hwnd, MONITOR_DEFAULTTONEAREST), &mi);
+            // The whole monitor the window is mostly on (not the primary one), task bar included.
+            win32disp::Rect whole, work;
+            if (!MonitorRects(MonitorFromWindow(m_hwnd, MONITOR_DEFAULTTONEAREST), whole, work)) {
+                whole = win32disp::Rect{0, 0, GetSystemMetrics(SM_CXSCREEN), GetSystemMetrics(SM_CYSCREEN)};
+            }
             SetWindowLongW(m_hwnd, GWL_STYLE, (LONG)((m_style & ~(WS_OVERLAPPEDWINDOW)) | WS_POPUP));
-            SetWindowPos(m_hwnd, HWND_TOP, mi.rcMonitor.left, mi.rcMonitor.top, mi.rcMonitor.right - mi.rcMonitor.left,
-                         mi.rcMonitor.bottom - mi.rcMonitor.top, SWP_FRAMECHANGED | SWP_SHOWWINDOW);
+            SetWindowPos(m_hwnd, HWND_TOP, whole.x, whole.y, whole.w, whole.h, SWP_FRAMECHANGED | SWP_SHOWWINDOW);
         } else {
             SetWindowLongW(m_hwnd, GWL_STYLE, m_style);
             SetWindowPos(m_hwnd, nullptr, m_rect.left, m_rect.top, m_rect.right - m_rect.left, m_rect.bottom - m_rect.top,
@@ -292,15 +311,28 @@ public:
         DWORD style = d.borderless ? WS_POPUP : (d.resizable ? WS_OVERLAPPEDWINDOW : (WS_OVERLAPPED | WS_CAPTION | WS_SYSMENU | WS_MINIMIZEBOX));
         RECT r = {0, 0, d.width, d.height};
         // The frame is measured for the DPI of the monitor the window will open on (the one holding the requested
-        // position, the primary one when centred). The client size stays d.width x d.height device pixels.
+        // position, the one under the mouse pointer when centred). The client size stays d.width x d.height device pixels.
         {
-            const POINT at = {d.x == kCentered ? 0 : d.x, d.y == kCentered ? 0 : d.y};
+            POINT at = {d.x == kCentered ? 0 : d.x, d.y == kCentered ? 0 : d.y};
+            if (d.x == kCentered || d.y == kCentered) { POINT cp; if (GetCursorPos(&cp)) at = cp; }   // centred: opens on the display under the pointer
             AdjustRectForDpi(&r, style, 0, MonitorDpi(MonitorFromPoint(at, MONITOR_DEFAULTTOPRIMARY)));
         }
         int x = d.x, y = d.y;
         const int ww = r.right - r.left, wh = r.bottom - r.top;
-        if (x == kCentered) x = (GetSystemMetrics(SM_CXSCREEN) - ww) / 2;
-        if (y == kCentered) y = (GetSystemMetrics(SM_CYSCREEN) - wh) / 2;
+        if (x == kCentered || y == kCentered) {
+            // Centred in the work area of the display under the mouse pointer (the primary one when there is no pointer).
+            const std::vector<DisplayInfo> disp = ListDisplays();
+            POINT pt; const bool havePt = GetCursorPos(&pt) != 0;
+            const int di = win32disp::DisplayForNewWindow(disp, havePt, pt.x, pt.y);
+            if (di >= 0) {
+                const win32disp::Rect c = win32disp::CentredRect(win32disp::WorkArea(disp[(size_t)di]), ww, wh);
+                if (x == kCentered) x = c.x;
+                if (y == kCentered) y = c.y;
+            } else {
+                if (x == kCentered) x = (GetSystemMetrics(SM_CXSCREEN) - ww) / 2;
+                if (y == kCentered) y = (GetSystemMetrics(SM_CYSCREEN) - wh) / 2;
+            }
+        }
         HWND h = CreateWindowExW(0, L"OkaySpacePlatformWindow", Wide(d.title).c_str(), style, x, y, ww, wh,
                                  nullptr, nullptr, GetModuleHandleW(nullptr), nullptr);
         if (!h) { m_err = "CreateWindowEx failed"; return nullptr; }
@@ -370,6 +402,7 @@ public:
         if (GetAsyncKeyState(VK_RBUTTON) & 0x8000) m |= MouseMask(MouseRight);
         return m;
     }
+    bool IsRelativeMouse() override { return m_relative; }
     bool SetRelativeMouse(bool on) override {
         m_relative = on;
         if (on) { ::ShowCursor(FALSE); CenterCursor(); } else { ::ShowCursor(TRUE); ClipCursor(nullptr); }

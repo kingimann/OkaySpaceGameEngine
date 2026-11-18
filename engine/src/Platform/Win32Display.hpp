@@ -51,6 +51,26 @@ inline int DisplayForPoint(const std::vector<DisplayInfo>& v, int px, int py) {
     }
     return best;
 }
+/// The part of a display a window may use (not under the task bar); the whole display when it does not say.
+inline Rect WorkArea(const DisplayInfo& d) {
+    return d.uw > 0 && d.uh > 0 ? Rect{d.ux, d.uy, d.uw, d.uh} : Rect{d.x, d.y, d.w, d.h};
+}
+/// Top-left position that centres a w x h window in `area`. A window bigger than the area starts at the area's
+/// top-left corner (its title bar stays reachable) rather than hanging off the left or top edge.
+inline Rect CentredRect(const Rect& area, int w, int h) {
+    int x = area.x + (area.w - w) / 2, y = area.y + (area.h - h) / 2;
+    if (w >= area.w || x < area.x) x = area.x;
+    if (h >= area.h || y < area.y) y = area.y;
+    return Rect{x, y, w > 0 ? w : 0, h > 0 ? h : 0};
+}
+/// The rectangle a fullscreen window on display `d` covers: the whole display, task bar included.
+inline Rect FullscreenRect(const DisplayInfo& d) { return Rect{d.x, d.y, d.w, d.h}; }
+/// Where a centred window opens: on the display under the pointer, or the primary one (index 0 after OrderDisplays)
+/// when the pointer is nowhere useful. `-1` for no displays (the caller keeps the system default).
+inline int DisplayForNewWindow(const std::vector<DisplayInfo>& v, bool havePointer, int px, int py) {
+    if (v.empty()) return -1;
+    return havePointer ? DisplayForPoint(v, px, py) : 0;
+}
 /// A refresh rate from EnumDisplaySettings: 0 and 1 mean "hardware default" and are reported as unknown (0).
 inline int RefreshFromDevMode(int hz) { return hz > 1 && hz < 1000 ? hz : 0; }
 

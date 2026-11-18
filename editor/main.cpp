@@ -51152,7 +51152,7 @@ int main(int argc, char** argv) {
                 float sx = ow > 0 ? (float)ww / ow : 1.0f, sy = oh > 0 ? (float)wh / oh : 1.0f;
                 int cx = (int)((g_playCanvasPos.x + g_playCanvasSize.x * 0.5f) * sx);
                 int cy = (int)((g_playCanvasPos.y + g_playCanvasSize.y * 0.5f) * sy);
-                SDL_WarpMouseInWindow(window, cx, cy);
+                { if (okay::platform::Backend* pb = okay::platform::Default()) pb->WarpMouse(nullptr, cx, cy); }   // nullptr: the window the pointer is in
             }
             s_prevGameModal = gameModal;
             // Capture when the user asked OR the game requested a locked cursor, unless a
@@ -51165,7 +51165,7 @@ int main(int argc, char** argv) {
                 // Relative mode only on the transition. Calling it every frame
                 // re-warps, and that warp was added on top of the real delta.
                 if (!s_playLookLocked)
-                    SDL_SetRelativeMouseMode(SDL_TRUE);
+                    { if (okay::platform::Backend* pb = okay::platform::Default()) pb->SetRelativeMouse(true); }
                 int dxp = 0, dyp = 0;
                 Uint32 rmb = SDL_GetRelativeMouseState(&dxp, &dyp);
                 if (!s_playLookLocked) {
@@ -51185,7 +51185,7 @@ int main(int argc, char** argv) {
                 Input::FeedMouse(s_gameVMouse, mask);
             } else {
                 if (s_playLookLocked) {
-                    SDL_SetRelativeMouseMode(SDL_FALSE);
+                    { if (okay::platform::Backend* pb = okay::platform::Default()) pb->SetRelativeMouse(false); }
                     // The virtual cursor and the canvas cursor are not the same
                     // point. Without this the orbit treats that jump as a look.
                     NoteMouseSpaceChanged();
@@ -51199,7 +51199,7 @@ int main(int argc, char** argv) {
                     float sy = oh > 0 ? (float)wh / (float)oh : 1.0f;
                     int cx = (int)((g_playCanvasPos.x + g_playCanvasSize.x * 0.5f) * sx);
                     int cy = (int)((g_playCanvasPos.y + g_playCanvasSize.y * 0.5f) * sy);
-                    SDL_WarpMouseInWindow(window, cx, cy);
+                    { if (okay::platform::Backend* pb = okay::platform::Default()) pb->WarpMouse(nullptr, cx, cy); }   // nullptr: the window the pointer is in
                 }
                 s_playLookLocked = false;
                 // Mouse, relative to the Game/Scene canvas so UI buttons hit-test
@@ -51250,7 +51250,7 @@ int main(int argc, char** argv) {
             // grabbed it before the field took focus.
             s_playLookLocked = false;
             g_playPointerGrabbed = false;
-            if (SDL_GetRelativeMouseMode()) SDL_SetRelativeMouseMode(SDL_FALSE);
+            if (okay::platform::Default() && okay::platform::Default()->IsRelativeMouse()) { if (okay::platform::Backend* pb = okay::platform::Default()) pb->SetRelativeMouse(false); }
         } else if (!ed.isPlaying()) {
             s_playLookLocked = false;
             g_playPointerGrabbed = false;
@@ -51261,7 +51261,7 @@ int main(int argc, char** argv) {
             Input::FeedKeys({}); // release everything in edit mode
             // Keep the Capture mouse choice for the next Play; just free the pointer and
             // forget the last run's cursor lock.
-            if (SDL_GetRelativeMouseMode()) SDL_SetRelativeMouseMode(SDL_FALSE);
+            if (okay::platform::Default() && okay::platform::Default()->IsRelativeMouse()) { if (okay::platform::Backend* pb = okay::platform::Default()) pb->SetRelativeMouse(false); }
             g_gameCursorReleased = false;
             if (Cursor::IsLocked() || !Cursor::visible) Cursor::Capture(false);
         }

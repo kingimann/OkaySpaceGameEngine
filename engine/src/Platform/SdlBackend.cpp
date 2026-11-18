@@ -256,6 +256,7 @@ public:
         return st && (int)k > 0 && (int)k < SDL_NUM_SCANCODES && st[(int)k] != 0;
     }
     uint32_t MouseState(int* x, int* y) override { return SDL_GetMouseState(x, y); }
+    bool IsRelativeMouse() override { return SDL_GetRelativeMouseMode() == SDL_TRUE; }
     bool SetRelativeMouse(bool on) override { return SDL_SetRelativeMouseMode(on ? SDL_TRUE : SDL_FALSE) == 0; }
     void ShowCursor(bool s) override { SDL_ShowCursor(s ? SDL_ENABLE : SDL_DISABLE); }
     bool IsCursorShown() override { return SDL_ShowCursor(SDL_QUERY) != SDL_DISABLE; }

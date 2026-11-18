@@ -27,6 +27,7 @@ public:
     virtual bool IsKeyDown(Key k) = 0;
     virtual uint32_t MouseState(int* x, int* y) = 0;
     virtual bool SetRelativeMouse(bool on) = 0;
+    virtual bool IsRelativeMouse() const = 0;
     virtual void ShowCursor(bool show) = 0;
     virtual void WarpMouse(Window* w, int x, int y) = 0;
     virtual uint32_t RelativeMouseState(int* dx, int* dy) = 0;

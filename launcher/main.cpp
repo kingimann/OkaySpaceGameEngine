@@ -16679,15 +16679,25 @@ static void KeepWindowOnScreen(SDL_Window* w) {
     if (SDL_GetWindowFlags(w) & SDL_WINDOW_MINIMIZED) SDL_RestoreWindow(w);
     int x = 0, y = 0, ww = 0, wh = 0;
     SDL_GetWindowPosition(w, &x, &y); SDL_GetWindowSize(w, &ww, &wh);
-    for (int d = 0; d < SDL_GetNumVideoDisplays(); ++d) {
+    okay::platform::Backend* pb = okay::platform::Default();
+    const int nDisp = pb ? pb->DisplayCount() : 0;
+    // Usable area (without the task bar) of display d, from okay::platform.
+    auto usable = [&](int d, SDL_Rect& r) {
+        okay::platform::DisplayInfo di;
+        if (!pb || !pb->DisplayAt(d, di)) return false;
+        const bool has = di.uw > 0 && di.uh > 0;
+        r.x = has ? di.ux : di.x; r.y = has ? di.uy : di.y; r.w = has ? di.uw : di.w; r.h = has ? di.uh : di.h;
+        return true;
+    };
+    for (int d = 0; d < nDisp; ++d) {
         SDL_Rect b;
-        if (SDL_GetDisplayUsableBounds(d, &b) != 0) continue;
+        if (!usable(d, b)) continue;
         const int ix = std::min(x + ww, b.x + b.w) - std::max(x, b.x);
         const int iy = std::min(y + wh, b.y + b.h) - std::max(y, b.y);
         if (ix >= 160 && iy >= 80 && y >= b.y - 8 && y < b.y + b.h - 40) return;   // title bar visible
     }
     SDL_Rect b;
-    if (SDL_GetDisplayUsableBounds(0, &b) != 0) return;
+    if (!usable(0, b)) return;
     ww = std::min(ww, b.w - 40); wh = std::min(wh, b.h - 40);
     SDL_SetWindowSize(w, ww, wh);
     SDL_SetWindowPosition(w, b.x + (b.w - ww) / 2, b.y + (b.h - wh) / 2);

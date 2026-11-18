@@ -65,6 +65,7 @@ public:
         if (!m_x11) { if (x) *x = 0; if (y) *y = 0; return 0; }
         return m_x11->MouseState(x, y);
     }
+    bool IsRelativeMouse() override { return m_x11 && m_x11->IsRelativeMouse(); }
     bool SetRelativeMouse(bool on) override { return m_x11 && m_x11->SetRelativeMouse(on); }
     void ShowCursor(bool s) override { if (m_x11) m_x11->ShowCursor(s); }
     void WarpMouse(Window* w, int x, int y) override { if (m_x11) m_x11->WarpMouse(w, x, y); }

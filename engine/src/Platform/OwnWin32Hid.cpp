@@ -6,11 +6,15 @@
 // GetRawInputDeviceList, GetRawInputDeviceInfo (RIDI_PREPARSEDDATA, RIDI_DEVICEINFO), GetRawInputData (RAWHID),
 // WM_INPUT_DEVICE_CHANGE, HidP_GetCaps / HidP_GetButtonCaps / HidP_GetValueCaps / HidP_GetUsages / HidP_GetUsageValue.
 //
-// STATUS: COMPILES (MinGW -fsyntax-only), NEVER RUN. No Windows machine and no real pad has touched this. Pads read
-// through here have no built-in button layout (HasBuiltinMapping() is false): use RawAxis / RawButton / RawHat.
+// Standard layout: PadMap.hpp (our own text map file, see docs/platform_layer.md). A pad found in the map file has
+// HasBuiltinMapping() true; otherwise Axis()/Button() use a guess from the axis, button and hat counts and
+// HasBuiltinMapping() is false. RawAxis / RawButton / RawHat always work. The name comes from HidD_GetProductString.
+//
+// STATUS: COMPILES (MinGW -fsyntax-only), NEVER RUN. No Windows machine and no real pad has touched this.
 #ifdef _WIN32
 #include "Internal.hpp"
 #include "Win32Hid.hpp"
+#include "PadMap.hpp"
 #ifndef NOMINMAX
 #define NOMINMAX
 #endif
@@ -21,6 +25,7 @@
 #include <ntdef.h>
 #include <hidusage.h>
 #include <hidpi.h>
+#include <hidsdi.h>
 #include <cstdio>
 #include <cstring>
 #include <deque>
@@ -29,6 +34,59 @@
 namespace okay::platform::own {
 namespace {
 constexpr int kFirstRawPadId = 100;   // XInput slots use instance ids 1..4
+
+std::string Narrow(const wchar_t* w) {
+    const int len = WideCharToMultiByte(CP_UTF8, 0, w, -1, nullptr, 0, nullptr, nullptr);
+    if (len <= 1) return std::string();
+    std::string o((size_t)len - 1, '\0');
+    WideCharToMultiByte(CP_UTF8, 0, w, -1, &o[0], len, nullptr, nullptr);
+    return o;
+}
+bool ReadWholeFile(const std::wstring& path, std::string& out) {
+    FILE* f = _wfopen(path.c_str(), L"rb");
+    if (!f) return false;
+    char buf[4096]; size_t n;
+    out.clear();
+    while ((n = std::fread(buf, 1, sizeof(buf), f)) > 0 && out.size() <= (1u << 20)) out.append(buf, n);
+    std::fclose(f);
+    return true;
+}
+// The product string of a HID device (what the maker calls it), asking the device through its path. Empty when it
+// cannot be opened or has none. Opened with no access rights (enough to ask for strings, and it never blocks a game that has the pad open).
+std::string ProductString(const std::string& utf8Path) {
+    if (utf8Path.empty()) return std::string();
+    const int wl = MultiByteToWideChar(CP_UTF8, 0, utf8Path.c_str(), -1, nullptr, 0);
+    if (wl <= 1) return std::string();
+    std::vector<wchar_t> wp((size_t)wl);
+    MultiByteToWideChar(CP_UTF8, 0, utf8Path.c_str(), -1, wp.data(), wl);
+    HANDLE h = CreateFileW(wp.data(), 0, FILE_SHARE_READ | FILE_SHARE_WRITE, nullptr, OPEN_EXISTING, 0, nullptr);
+    if (h == INVALID_HANDLE_VALUE) return std::string();
+    wchar_t buf[128] = {0};                    // the call takes a size in bytes
+    const BOOLEAN ok = HidD_GetProductString(h, buf, sizeof(buf) - sizeof(wchar_t));
+    CloseHandle(h);
+    return ok ? Narrow(buf) : std::string();
+}
+// The map file(s): next to the program, then the working folder, then the file named by OKAY_GAMEPAD_MAP; a later one wins.
+void LoadMapFiles(padmap::Database& db) {
+    std::vector<std::wstring> paths;
+    wchar_t exe[MAX_PATH * 2] = {0};
+    const DWORD n = GetModuleFileNameW(nullptr, exe, (DWORD)(sizeof(exe) / sizeof(exe[0]) - 1));
+    if (n > 0) {
+        std::wstring d(exe, n);
+        const size_t sl = d.find_last_of(L"\\/");
+        if (sl != std::wstring::npos) paths.push_back(d.substr(0, sl + 1) + L"gamepad_map.okaypadmap");
+    }
+    paths.push_back(L"gamepad_map.okaypadmap");
+    wchar_t env[1024] = {0};
+    if (GetEnvironmentVariableW(L"OKAY_GAMEPAD_MAP", env, 1023) > 0) paths.push_back(env);
+    for (const std::wstring& p : paths) {
+        std::string text; std::vector<std::string> errs;
+        if (!ReadWholeFile(p, text)) continue;
+        const int c = db.Parse(text, &errs);
+        std::fprintf(stderr, "[platform] pad map file %s: %d entries\n", Narrow(p.c_str()).c_str(), c);
+        for (const std::string& e : errs) std::fprintf(stderr, "[platform]   %s\n", e.c_str());
+    }
+}
 }
 
 struct RawPads::Impl {
@@ -41,7 +99,11 @@ struct RawPads::Impl {
         win32hid::UsageLayout layout;
         std::vector<uint16_t> pressed;       // last successfully read button usages
         std::vector<uint32_t> rawAxes, rawHats;
+        padmap::PadMap map;
+        bool mapped = false;                 // map came from the map file (not a guess)
     };
+    padmap::Database mapDb;
+    bool mapsLoaded = false;
     std::vector<Dev> devs;
     std::deque<Change> changes;
     int nextId = kFirstRawPadId;
@@ -101,8 +163,13 @@ struct RawPads::Impl {
         if (!d.layout.Usable()) return;
         d.rawAxes.assign(d.layout.axes.size(), 0);
         d.rawHats.assign(d.layout.hats.size(), 0);
-        char nm[64]; std::snprintf(nm, sizeof(nm), "HID game controller %04X:%04X", d.vid, d.pid);
-        d.name = nm;
+        d.name = padmap::CleanProductName(ProductString(d.path));
+        if (d.name.empty()) d.name = padmap::FallbackPadName(d.vid, d.pid);
+        if (!mapsLoaded) { mapsLoaded = true; LoadMapFiles(mapDb); }
+        if (const padmap::Entry* e = mapDb.Find(d.vid, d.pid)) { d.map = e->map; d.mapped = true; }
+        else d.map = padmap::GuessMap((int)d.layout.axes.size(), (int)d.layout.buttons.size(), (int)d.layout.hats.size());
+        std::fprintf(stderr, "[platform] raw pad %04X:%04X \"%s\": %d axes, %d buttons, %d hats, standard layout from %s\n", d.vid, d.pid, d.name.c_str(),
+                     (int)d.layout.axes.size(), (int)d.layout.buttons.size(), (int)d.layout.hats.size(), d.mapped ? "the map file" : "a guess");
         d.id = nextId++;
         devs.push_back(std::move(d));
         if (announce) changes.push_back({true, devs.back().id, (int)devs.size() - 1});
@@ -184,12 +251,12 @@ public:
     RawPad(const RawPads::Impl* impl, int id, std::string name, uint16_t vid, uint16_t pid) : m_impl(impl), m_id(id), m_name(std::move(name)), m_vid(vid), m_pid(pid) {}
     int InstanceId() const override { return m_id; }
     const char* Name() const override { return m_name.c_str(); }
-    int16_t Axis(GamepadAxis) const override { return 0; }      // no standard layout known: use the raw readers
-    bool Button(GamepadButton) const override { return false; }
+    int16_t Axis(GamepadAxis a) const override { const auto* d = Dev(); if (!d) return 0; const Reading r(*d); return padmap::StandardAxis(d->map, a, r.v); }
+    bool Button(GamepadButton b) const override { const auto* d = Dev(); if (!d) return false; const Reading r(*d); return padmap::StandardButton(d->map, b, r.v); }
     bool Rumble(uint16_t, uint16_t, uint32_t) override { return false; }
     uint16_t VendorId() const override { return m_vid; }
     uint16_t ProductId() const override { return m_pid; }
-    bool HasBuiltinMapping() const override { return false; }
+    bool HasBuiltinMapping() const override { const auto* d = Dev(); return d && d->mapped; }   // false: Axis()/Button() use a guess
     int RawAxisCount() const override { const auto* d = Dev(); return d ? (int)d->layout.axes.size() : 0; }
     int RawButtonCount() const override { const auto* d = Dev(); return d ? (int)d->layout.buttons.size() : 0; }
     int RawHatCount() const override { const auto* d = Dev(); return d ? (int)d->layout.hats.size() : 0; }
@@ -200,6 +267,16 @@ public:
 private:
     const RawPads::Impl::Dev* Dev() const { for (const auto& d : m_impl->devs) if (d.id == m_id) return &d; return nullptr; }   // null once unplugged: reads as 0
     static win32hid::PadState State(const RawPads::Impl::Dev& d) { return win32hid::Evaluate(d.layout, d.pressed, d.rawAxes, d.rawHats); }
+    // The raw readings of one pad in the RawView form; owns the evaluated state the view points into.
+    struct Reading {
+        win32hid::PadState st; padmap::RawView v;
+        explicit Reading(const RawPads::Impl::Dev& d) : st(State(d)) {
+            v.axes = st.axes; v.axisCount = (int)d.layout.axes.size();
+            v.buttons = st.buttons; v.buttonCount = (int)d.layout.buttons.size();
+            v.hats = st.hats; v.hatCount = (int)d.layout.hats.size();
+        }
+        Reading(const Reading&) = delete;
+    };
     const RawPads::Impl* m_impl; int m_id; std::string m_name; uint16_t m_vid, m_pid;
 };
 }

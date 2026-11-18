@@ -3,6 +3,7 @@
 // Expected values are worked out by hand from the Microsoft and USB HID documents.
 #include "HidParser.hpp"
 #include "Win32Display.hpp"
+#include "PadMap.hpp"
 #include "Win32Hid.hpp"
 #include "Win32Icon.hpp"
 #include "Win32Ime.hpp"
@@ -35,6 +36,101 @@ static void Display() {
     CHECK(DisplayForPoint(v, 100, 100) == 0 && DisplayForPoint(v, -5, 5) == 1 && DisplayForPoint(v, 3000, 10) == 2);
     CHECK(DisplayForPoint(v, 5000, 500) == 2 && DisplayForPoint(v, -9000, 500) == 1);   // outside all: the nearest centre
     CHECK(DisplayForPoint({}, 0, 0) == -1);
+    // Centring and fullscreen on a chosen display (v: 0 main 1920x1080 with a 40 px task bar, 1 left at -1280, 2 right at 1920).
+    v[0].ux = 0; v[0].uy = 0; v[0].uw = 1920; v[0].uh = 1040;
+    CHECK(WorkArea(v[0]).h == 1040 && WorkArea(v[1]).x == -1280 && WorkArea(v[1]).h == 1024);   // no work area given: whole display
+    Rect c = CentredRect(WorkArea(v[0]), 800, 600);
+    CHECK(c.x == 560 && c.y == 220 && c.w == 800 && c.h == 600);
+    c = CentredRect(WorkArea(v[1]), 800, 600);                          // left display: negative coordinates
+    CHECK(c.x == -1280 + 240 && c.y == 212);
+    c = CentredRect(WorkArea(v[0]), 3000, 2000);                        // bigger than the display: top-left, not off screen
+    CHECK(c.x == 0 && c.y == 0);
+    CHECK(CentredRect(WorkArea(v[2]), 1920, 100).x == 1920);            // exactly as wide: left edge
+    Rect f = FullscreenRect(v[2]);
+    CHECK(f.x == 1920 && f.y == 0 && f.w == 1920 && f.h == 1080);
+    CHECK(DisplayForNewWindow(v, true, -100, 50) == 1 && DisplayForNewWindow(v, false, -100, 50) == 0 && DisplayForNewWindow({}, true, 0, 0) == -1);
+}
+
+static void PadMapT() {
+    using namespace padmap;
+    // Source syntax.
+    Source s;
+    CHECK(detail::ParseSource("b3", s) && s.kind == Kind::Button && s.index == 3 && !s.invert);
+    CHECK(detail::ParseSource(" -A1 ", s) && s.kind == Kind::Axis && s.index == 1 && s.invert && s.half == Half::Full);
+    CHECK(detail::ParseSource("a4+", s) && s.half == Half::Positive && detail::ParseSource("a4-", s) && s.half == Half::Negative);
+    CHECK(detail::ParseSource("h0.Left", s) && s.kind == Kind::Hat && s.hatBit == 8 && detail::ParseSource("h1.up", s) && s.index == 1 && s.hatBit == 1);
+    CHECK(!detail::ParseSource("", s) && !detail::ParseSource("x1", s) && !detail::ParseSource("a", s) && !detail::ParseSource("b-1", s) && !detail::ParseSource("-b1", s) &&
+          !detail::ParseSource("h0", s) && !detail::ParseSource("h0.diag", s) && !detail::ParseSource("a1x", s) && !detail::ParseSource("a99999", s) && !detail::ParseSource("-h0.up", s));
+    uint16_t h = 0;
+    CHECK(detail::ParseHex16("054c", h) && h == 0x054C && detail::ParseHex16("0xFFFF", h) && h == 0xFFFF && !detail::ParseHex16("10000", h) && !detail::ParseHex16("", h) && !detail::ParseHex16("0x", h) && !detail::ParseHex16("12g4", h));
+
+    // The text file.
+    const char* txt =
+        "# example\n[pad]\nvid = 054C\npid = 09cc   # comment after a value\nname = Test   Pad\n"
+        "a = b1\nb = b2\nleftx = a0\nlefty = -a1\nlefttrigger = a4\nrighttrigger = a5+\ndpup = h0.up\ndpdown = h0.down\nstart = b9\n"
+        "bogus = b1\nx = q7\n"
+        "[PAD]\nvid = 1234\nname = no pid\n"
+        "[pad]\nvid=1234\npid=5678\nleftx = a2\n"
+        "[pad]\nvid=1234\npid=5678\nleftx = a3\ntrailing junk line\n";
+    Database db; std::vector<std::string> errs;
+    CHECK(db.Parse(txt, &errs) == 3 && db.Size() == 2);                 // 054c:09cc, and 1234:5678 twice (replaced), the pid-less one skipped
+    CHECK(errs.size() == 4);                                            // bogus key, bad source, entry without pid, junk line
+    const Entry* e = db.Find(0x054C, 0x09CC);
+    CHECK(e && e->name == "Test   Pad" && e->map.buttons[(int)GamepadButton::A].index == 1 && e->map.axes[(int)GamepadAxis::LeftY].invert);
+    CHECK(e && e->map.buttons[(int)GamepadButton::Start].index == 9 && e->map.buttons[(int)GamepadButton::DpadDown].hatBit == 4);
+    CHECK(db.Find(0x1234, 0x5678) && db.Find(0x1234, 0x5678)->map.axes[0].index == 3);   // the later entry replaced the earlier
+    CHECK(!db.Find(0x1234, 0x0000) && !db.Find(1, 1));
+    CHECK(Database().Parse("key = value\n[pad]\nvid = zz\n") == 0);   // key before [pad]; bad vid, no entry
+    CHECK(Database().Parse("") == 0 && Database().Parse("\n\n[pad]") == 0);
+    CHECK(Database().Parse(std::string((1u << 20) + 1, 'x')) == 0);     // over 1 MB
+    Database d2; CHECK(d2.Parse("[pad]\r\nvid=1\r\npid=2\r\na=b0\r\n") == 1 && d2.Find(1, 2)->map.buttons[0].index == 0);   // CRLF, and no final newline
+
+    // Evaluating a map.
+    PadMap m = e->map;
+    int16_t axes[6] = {-32768, 32767, 0, 0, 32767, 0};
+    uint8_t hats[1] = {1 | 2};   // up + right
+    RawView r; r.axes = axes; r.axisCount = 6; r.buttons = (1u << 1) | (1u << 9); r.buttonCount = 12; r.hats = hats; r.hatCount = 1;
+    CHECK(StandardAxis(m, GamepadAxis::LeftX, r) == -32768);
+    CHECK(StandardAxis(m, GamepadAxis::LeftY, r) == -32767);            // inverted 32767; flipping -32768 clamps, 32767 -> -32767
+    CHECK(StandardAxis(m, GamepadAxis::TriggerLeft, r) == 32767);       // full range -> (v+32768)/2 = 32767
+    CHECK(StandardAxis(m, GamepadAxis::TriggerRight, r) == 0);          // positive half of 0
+    axes[4] = -32768; CHECK(StandardAxis(m, GamepadAxis::TriggerLeft, r) == 0);
+    axes[4] = 0;      CHECK(StandardAxis(m, GamepadAxis::TriggerLeft, r) == 16384);
+    axes[5] = 20000;  CHECK(StandardAxis(m, GamepadAxis::TriggerRight, r) == 20000);
+    CHECK(StandardAxis(m, GamepadAxis::RightX, r) == 0);                // not mapped
+    CHECK(StandardButton(m, GamepadButton::A, r) && !StandardButton(m, GamepadButton::B, r) && StandardButton(m, GamepadButton::Start, r));
+    CHECK(StandardButton(m, GamepadButton::DpadUp, r) && !StandardButton(m, GamepadButton::DpadDown, r) && !StandardButton(m, GamepadButton::DpadLeft, r));
+    r.axisCount = 2;                                                    // the pad reports fewer axes than the map names: reads 0, never out of range
+    CHECK(StandardAxis(m, GamepadAxis::TriggerLeft, r) == 0 && StandardAxis(m, GamepadAxis::TriggerRight, r) == 0);
+    r.buttonCount = 1; r.hatCount = 0;
+    CHECK(!StandardButton(m, GamepadButton::A, r) && !StandardButton(m, GamepadButton::DpadUp, r));
+    CHECK(StandardAxis(m, (GamepadAxis)9, r) == 0 && !StandardButton(m, (GamepadButton)99, r));
+    // Negative half, axis as a button, button as a trigger.
+    PadMap q; q.axes[(int)GamepadAxis::TriggerLeft] = Source{Kind::Axis, 0, false, Half::Negative, 0};
+    q.buttons[(int)GamepadButton::X] = Source{Kind::Axis, 1, false, Half::Full, 0};
+    q.axes[(int)GamepadAxis::TriggerRight] = Source{Kind::Button, 0, false, Half::Full, 0};
+    int16_t a2[2] = {-30000, 20000}; RawView r2; r2.axes = a2; r2.axisCount = 2; r2.buttons = 1; r2.buttonCount = 1;
+    CHECK(StandardAxis(q, GamepadAxis::TriggerLeft, r2) == 30000 && StandardButton(q, GamepadButton::X, r2) && StandardAxis(q, GamepadAxis::TriggerRight, r2) == 32767);
+    a2[1] = 10000; CHECK(!StandardButton(q, GamepadButton::X, r2));
+    a2[0] = -32768; CHECK(StandardAxis(q, GamepadAxis::TriggerLeft, r2) == 32767);   // never overflows
+
+    // The generic guess.
+    PadMap g = GuessMap(6, 12, 1);
+    int16_t ga[6] = {100, 200, 300, 400, 32767, -32768}; uint8_t gh[1] = {4};
+    RawView gr; gr.axes = ga; gr.axisCount = 6; gr.buttons = 1u << 4; gr.buttonCount = 12; gr.hats = gh; gr.hatCount = 1;
+    CHECK(StandardAxis(g, GamepadAxis::LeftY, gr) == 200 && StandardAxis(g, GamepadAxis::RightY, gr) == 400);
+    CHECK(StandardAxis(g, GamepadAxis::TriggerLeft, gr) == 32767 && StandardAxis(g, GamepadAxis::TriggerRight, gr) == 0);
+    CHECK(StandardButton(g, GamepadButton::LeftShoulder, gr) && !StandardButton(g, GamepadButton::A, gr) && StandardButton(g, GamepadButton::DpadDown, gr));
+    CHECK(GuessMap(2, 4, 0).axes[(int)GamepadAxis::RightX].kind == Kind::None && GuessMap(2, 4, 0).buttons[(int)GamepadButton::Start].kind == Kind::None);
+    CHECK(GuessMap(4, 12, 0).buttons[(int)GamepadButton::DpadUp].kind == Kind::None && GuessMap(4, 12, 0).axes[(int)GamepadAxis::RightY].index == 3);
+    CHECK(!GuessMap(0, 0, 0).Any() && GuessMap(2, 0, 0).Any());
+
+    // Product names.
+    CHECK(CleanProductName("  Wireless\tController \n ") == "Wireless Controller");
+    CHECK(CleanProductName("").empty() && CleanProductName(" \t\n").empty());
+    CHECK(CleanProductName(std::string(100, 'x')).size() == 63);
+    CHECK(CleanProductName(std::string(62, 'x') + "\xC3\xA9\xC3\xA9") == std::string(62, 'x'));   // 2-byte character would straddle byte 63: dropped whole
+    CHECK(FallbackPadName(0x054C, 0x9CC) == "HID game controller 054C:09CC");
 }
 
 static void Icon() {
@@ -232,7 +328,7 @@ static void HidP() {
 }
 
 int main() {
-    Display(); Icon(); Ime(); Hid(); HidP();
+    Display(); Icon(); Ime(); Hid(); HidP(); PadMapT();
     std::printf("platform_win32_pure: %d checks, %d failed\n", g_n, g_fail);
     return g_fail ? 1 : 0;
 }

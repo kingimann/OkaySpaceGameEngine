@@ -563,6 +563,7 @@ public:
         return kc ? KeyFromEvdev((int)kc - 8) : Key::Unknown;
     }
     bool IsCursorShown() override { return !m_cursorHidden; }
+    bool IsRelativeMouse() const override { return m_relative; }
     bool SetRelativeMouse(bool on) override {
         if (on == m_relative) return true;
         m_relAccX = m_relAccY = 0;   // no stale motion across a mode change

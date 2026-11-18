@@ -2107,6 +2107,21 @@ its pure parts: `ctest -R platform_audio_pump`.
 `--sdl2` runs the same checks on SDL2 to compare. `OKAY_OWN_PLATFORM=1` is a short way to write `OKAY_PLATFORM_BACKEND=own` for the player.
 It has only run on Linux (Xvfb) so far; the Windows run is the point.
 
+**Try the standard layout for non-Xbox pads (own Windows backend, 6 steps).** For pads that are not Xbox-type (Xbox-type pads use XInput and already have a layout).
+1. Plug in the pad. Run `set OKAY_PLATFORM_BACKEND=own` and then `Tools\okay-platform-selftest.exe` (or the player) from a console.
+2. The console shows one line per pad, for example `[platform] raw pad 054C:09CC "Wireless Controller": 6 axes, 14 buttons, 1 hats, standard layout from a guess`.
+   The name is the maker's product name (if the pad has none you see `HID game controller VVVV:PPPP`). `a guess` means no map entry was found: A/B/X/Y are buttons 0..3,
+   bumpers 4 and 5, left stick axes 0 and 1, right stick axes 2 and 3, triggers axes 4 and 5, d-pad hat 0. `Gamepad::HasBuiltinMapping()` is false in that case.
+3. Press the buttons and move the sticks in the self-test or a game: if the pad's A/B/X/Y and sticks are right, you are done.
+4. If they are not: copy `examples\input\gamepad_map.okaypadmap` next to the program, edit `vid` and `pid` to the numbers from step 2 and change the inputs
+   (`a = b1`, `lefty = -a1`, `dpup = h0.up`; the format is at the top of the file and in `docs/platform_layer.md`). Start again.
+5. The startup shows `[platform] pad map file ...: 1 entries` and the pad's line now ends with `from the map file` (`HasBuiltinMapping()` true). Lines that could not be read are listed under it.
+6. `OKAY_GAMEPAD_MAP=C:\path\to\file.okaypadmap` points at a map file somewhere else. Nothing has run on Windows or with a real pad.
+
+**Try centring and fullscreen on several monitors (own Windows backend).** With two monitors and `OKAY_PLATFORM_BACKEND=own`: put the mouse on the second
+monitor and start the player or the self-test: the window opens centred on that monitor (above the task bar), not on the main one. Drag it to another monitor
+and toggle fullscreen (the self-test and the player's fullscreen key): it covers that monitor only, and leaving fullscreen puts it back where it was. Unverified on Windows.
+
 ### 12. OkayUI
 
 `OKAY_UI_BACKEND=okayui` (or `OKAY_OWN_STACK=1`) starts the launcher and editor on OkayUI where it is compiled in. Only

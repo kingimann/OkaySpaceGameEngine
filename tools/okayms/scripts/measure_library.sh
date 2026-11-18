@@ -11,6 +11,10 @@ ROOT=$(CDPATH= cd "$(dirname "$0")/../../.." && pwd)
 cd "$ROOT"
 RES=${1:-tools/okayms/results/library.txt}
 CL=${OKAY_CL:-tools/okayms/build/okay-cl}
+# A private copy of the compiler: rebuilding it while the run is going does not change the results.
+SNAP=$(mktemp /tmp/measure_cl_XXXXXX)
+cp "$CL" "$SNAP"
+CL=$SNAP
 LIMIT=${TIMEOUT_S:-60}
 OBJ=$(mktemp -u /tmp/measure_XXXXXX.obj)
 touch "$RES"
@@ -26,6 +30,7 @@ if [ "${SUMMARY_ONLY:-0}" != 1 ]; then
     echo "$f|$r" >> "$RES"
   done
 fi
+rm -f "$SNAP"
 total=$(wc -l < "$RES")
 ok=$(grep -c '|OK$' "$RES")
 echo "files: $total, compile: $ok, fail: $((total - ok))"

@@ -10,6 +10,8 @@ namespace okay::tex {
 
 int BcBlockBytes(BcFormat f) { return (f == BcFormat::BC1 || f == BcFormat::BC4) ? 8 : 16; }
 
+float BcBytesPerPixel(BcFormat f) { return BcBlockBytes(f) / 16.0f; }
+
 const char* BcName(BcFormat f) {
     switch (f) { case BcFormat::BC1: return "bc1"; case BcFormat::BC3: return "bc3"; case BcFormat::BC4: return "bc4"; case BcFormat::BC5: return "bc5"; }
     return "?";

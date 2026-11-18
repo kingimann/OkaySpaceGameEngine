@@ -336,6 +336,8 @@ add_library(okay_engine
     src/Texture/Atlas.cpp
     src/Texture/Convert.cpp
     src/Texture/Bc.cpp
+    src/Texture/Dds.cpp
+    src/Texture/Stream.cpp
     src/Optimize/SceneOptimizationReport.cpp
     src/Testing/TestRegistry.cpp
     src/Testing/PlayTest.cpp

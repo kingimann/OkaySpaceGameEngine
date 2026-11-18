@@ -22,6 +22,7 @@ int         BcBlockBytes(BcFormat f);                              ///< 8 for BC
 const char* BcName(BcFormat f);
 bool        ParseBcFormat(const char* name, BcFormat* out);        ///< bc1 bc3 bc4 bc5 (any case)
 std::size_t BcImageBytes(BcFormat f, int w, int h);                ///< one level, edge blocks included; 0 for bad size
+float       BcBytesPerPixel(BcFormat f);                           ///< 0.5 for BC1 / BC4, 1 for BC3 / BC5 (for MipBudget)
 
 struct BcEncodeOptions {
     int quality = 1;            ///< 0 fast (axis fit only), 1 normal (+ least squares), 2 high (+ endpoint search)

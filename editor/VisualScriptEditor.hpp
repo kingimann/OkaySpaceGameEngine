@@ -3691,6 +3691,7 @@ inline bool VsDrawChoice(EditorState& ed, const VsEditGraph& g, std::string& val
 }
 }  // namespace okay::editor::vsed
 #include "VisualScriptClarity.hpp"
+#include "VisualScriptGuide.hpp"       // plain sentences, pin tips, next steps, Try this node, the help card
 #include "VisualScriptPan.hpp"
 #include "VisualScriptPalette.hpp"
 #include "VisualScriptEasyOps.hpp"   // graph-in, graph-out rules for the canvas (needs the graph model above)

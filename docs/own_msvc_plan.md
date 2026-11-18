@@ -159,3 +159,75 @@ Tried with `sh tools/okayms/build.sh` (full run on head 8bee7dc4 before this rou
 - Fold expressions: `(xs + ...)`, `(... + xs)`, `(init op ... op xs)`, `(xs op ... op init)` for `+ - * / % == != < > <= >= && ||` and `,`. An empty pack gives `true` for `&&`, `false` for `||` and the init value when there is one; any other empty unary fold is an error, as in the standard. The operand must be a cast-expression, so `((xs * xs) + ...)` needs its inner parentheses, as the standard says.
 - A class template specialization that matches a pack: `template <typename T, typename... R> struct Len<T, R...>` with the primary `template <typename... Ts> struct Len;` and `template <> struct Len<>`: the usual compile-time recursion (`1 + Len<R...>::value`) works.
 - Unverified / not done: only the programs in `test_templates4.cpp` were run (g++ agrees on all); a pack of values (`int... Ns`); expansion outside call arguments (initializer lists, base lists, `Ts...` in a template argument list other than the existing splice); the pattern of a fold or expansion naming the pack inside a nested lambda or a `sizeof...`; fold operators other than the ones listed (no `<<`, `>>`, `&`, `|`, `^`, assignments, `.*`: the compiler has no such binary nodes); a pattern with a comma inside template angle brackets in a call argument; a constructor template defined outside its class; a member function template used before its out-of-class definition; explicit arguments that start a pack in a function call (`f<int, char>(...)`); `bool` is not a type in okay-ms at all (the tests use `int`).
+
+### Round 18: bool, bit operators, real engine sources (measurement)
+
+Tried with `sh tools/okayms/build.sh` (new tests `test_bits.cpp`, `test_pp.cpp`, `test_cxx11.cpp`, `test_members.cpp`; each program is built by okay-ms and by MinGW g++ and run under Wine, exit codes must match; the whole suite was green on the final head, see the report in the issue for the exact run). okay-ms is a separate tool and off by default; nothing in the engine build calls it. Written from ISO/IEC 14882 ([basic.fundamental], [conv.bool], [expr.shift], [expr.bit.and], [expr.xor], [expr.or], [expr.prim.fold], [cpp.cond], [cpp.include], [cpp.pragma], [lex.phases], [dcl.enum], [namespace.def], [class.mem], [basic.lookup.unqual], [expr.const]); no code from other compilers.
+
+How to try it by hand (host tool, POSIX; Wine only for running the result):
+
+1. `sh tools/okayms/build.sh` builds `tools/okayms/build/okay-cl` and runs every test.
+2. Compile one engine file to an object (a header goes through a one-line `.cpp` that includes it): `printf '#include "okay/Physics/ForceMode.hpp"\n' > /tmp/w.cpp; tools/okayms/build/okay-cl /c /tmp/w.cpp /Fo/tmp/w.obj /I engine/include /I engine/src /I shared /I tools/okayms/stdinc`. No output and an object file means it compiled. A failing file prints `file:line: message`, where the file is the include name. `tools/okayms/stdinc/` holds our own small `<cstdint>`, `<cstddef>`, `<cmath>`, `<cstring>`, `<cstdlib>`, `<cstdio>`, `<algorithm>`, `<limits>`.
+
+What changed:
+
+- `bool`, `true`, `false`. `bool` is a one-byte unsigned type; a value stored into it (assignment, initializer, return, argument, cast, global data) is first compared with zero, so `bool b = 256;` holds 1. The decorated name letter is `_N`. `true` and `false` are the numbers 1 and 0 (their type is int, not bool: overloading on `bool` is not done).
+- `& | ^ << >> ~` and `&= |= ^= <<= >>=`, with the standard precedence (the table in the parser was renumbered: `|` < `^` < `&` < equality < relational < shift < additive). A `>>` is two adjacent `>` tokens that the expression parser joins, so `A<B<int>>` still closes twice. A right shift of an unsigned left operand is logical, otherwise arithmetic; the count goes through `cl`. Constant operands are folded (also `-x`, `~x`, `!x`, and casts of constants to integer types), so `case 1 << 1 | 1:`, `int a[1 << 3]`, `enum { E = 1 << 2 }`, `int g = (1 << 4) | 3;` work. Fold expressions over `| & ^ << >>` work (`(xs | ...)`, `(1 << ... << xs)`, `(xs >> ...)`).
+- Preprocessor: `#pragma once`, `#undef`, `#error`, `#line`, other `#pragma` lines are ignored except `#pragma pack`, which is an error (ignoring it would change struct layout silently). `#if` has `~ << >> & | ^ ?:`. A backslash before a newline joins lines. A quoted include is looked up next to the including file first. Errors now say `file:line:`.
+- C++ spellings, lowered before parsing (so they are read exactly as the rule says and nothing else changes): `constexpr` (as `const`), `inline`, `explicit`, `override`, `final`, `volatile`, `noexcept`, `[[attributes]]` are dropped; `static_assert(...)` is dropped (NOT checked); `nullptr` is 0; `using Name = type;` is a typedef; `enum class E : T {}` and `enum E : T {}` (the type is int; scoped enumerators are named `E::X`, so two enums may share a name); `static_cast`, `reinterpret_cast`, `const_cast` are a C cast; `int *const p`. `const` before or after a type is accepted in members, parameters and locals (it is not recorded in the type).
+- Namespaces: `namespace a::b { }`, unnamed namespaces, nesting. A function is decorated innermost first (`?f@b@a@@YAHH@Z`). Types, variables and enumerators of a namespace share one flat table, and a qualifier in front of them (`geo::unit::kScale`, `std::uint8_t`) is dropped; a call keeps its qualifier. A bare call inside a namespace finds the functions of that namespace and the ones around it. `std::min(a, b)` finds a function template registered by its bare name.
+- Classes: default member initializers (`float x = 0.25f;`, `int n{};`, run by the constructor for every member the constructor does not name; a class that only has such members gets an implicit constructor); several members in one declaration (`float x, y, z;`); `sizeof(S)` for a plain struct name, and `sizeof(expr)` for any expression the parser can type; unsized arrays with an initializer (`const char* const kCats[] = {...}`), a string literal in the initial data of a global (a hidden global plus an ADDR64 relocation, also `char s[] = "..."`).
+- Bugs found by the measurement and fixed (each has a test that failed before): `p[i]` where `p` is a pointer field or an element of a pointer array or a call result used the address of the pointer instead of the pointer (wrong value); reading a `float` or `double` through a field, `*p`, or a reference loaded the bits into `eax` and left `xmm0` as it was (wrong value, `v.x` was whatever the last float was).
+
+Measurement (36 small files that use only `<cstdint>`, `<cstddef>`, `<cmath>`, `<algorithm>`, `<limits>` or nothing, compiled one at a time with our own headers in `tools/okayms/stdinc/`, `okay-cl /c`, 2026-11-18). The first 23 of them were tried before any change and every one failed (the first error was `#pragma once` for all that got that far): 0 compiled. After: 5 of 36 compile to an object. Compiling is all this measures: none of these objects was linked or run, and "compiles" does not mean the code is right (default arguments, `static_assert`, 64-bit integers and others are left out or wrong, see below).
+
+| File | Result | First error |
+|---|---|---|
+| `engine/include/okay/Physics/ForceMode.hpp` | compiles | |
+| `engine/include/okay/Physics/PhysicsQuality.hpp` | compiles | |
+| `engine/include/okay/VisualScript/VsPinType.hpp` | compiles | |
+| `engine/src/Audio/Mp3Tables.hpp` | compiles | |
+| `shared/LauncherTips.hpp` | compiles | |
+| `engine/include/okay/Components/Stance.hpp` | fails | not an address |
+| `engine/include/okay/Core/ClockCursor.hpp` | fails | okay/Core/ClockCursor.hpp:19: expected a type |
+| `engine/include/okay/Environment/Wind.hpp` | fails | okay/Math/Mathf.hpp:11: global initializer must be a constant |
+| `engine/include/okay/Input/InputBuffer.hpp` | fails | okay/Input/InputBuffer.hpp:14: expected ')' |
+| `engine/include/okay/Math/Bounds.hpp` | fails | okay/Math/Mathf.hpp:11: global initializer must be a constant |
+| `engine/include/okay/Math/ColorSpace.hpp` | fails | cannot open include string |
+| `engine/include/okay/Math/Curves.hpp` | fails | cannot open include vector |
+| `engine/include/okay/Math/Easing.hpp` | fails | cannot open include cctype |
+| `engine/include/okay/Math/Mat3.hpp` | fails | okay/Math/Mathf.hpp:11: global initializer must be a constant |
+| `engine/include/okay/Math/Mat4.hpp` | fails | okay/Math/Mathf.hpp:11: global initializer must be a constant |
+| `engine/include/okay/Math/Mathf.hpp` | fails | okay/Math/Mathf.hpp:11: global initializer must be a constant |
+| `engine/include/okay/Math/Quat.hpp` | fails | okay/Math/Mathf.hpp:11: global initializer must be a constant |
+| `engine/include/okay/Math/Ray.hpp` | fails | okay/Math/Mathf.hpp:11: global initializer must be a constant |
+| `engine/include/okay/Math/Rect.hpp` | fails | okay/Math/Mathf.hpp:11: global initializer must be a constant |
+| `engine/include/okay/Math/Vec2.hpp` | fails | okay/Math/Mathf.hpp:11: global initializer must be a constant |
+| `engine/include/okay/Math/Vec3.hpp` | fails | okay/Math/Mathf.hpp:11: global initializer must be a constant |
+| `engine/include/okay/Math/VecInt.hpp` | fails | cannot open include functional |
+| `engine/include/okay/Physics/PhysicsMaterial.hpp` | fails | not an address |
+| `engine/include/okay/Render/Color.hpp` | fails | cannot open include string |
+| `engine/include/okay/UI/TooltipPlace.hpp` | fails | okay/UI/TooltipPlace.hpp:26: expected an expression |
+| `engine/src/Core/RandomExtras.cpp` | fails | cannot open include atomic |
+| `engine/src/Crypto/Blake2b.cpp` | fails | okay/Crypto/Sha256.hpp:62: expected ')' |
+| `engine/src/Crypto/ChaCha20.cpp` | fails | okay/Crypto/Sha256.hpp:62: expected ')' |
+| `engine/src/Crypto/Sha512.cpp` | fails | okay/Crypto/Sha256.hpp:62: expected ')' |
+| `engine/src/Crypto/Util.cpp` | fails | cannot open include CtAnnotate.hpp |
+| `engine/src/Input/GestureRecognizer.cpp` | fails | cannot open include string |
+| `engine/src/Input/PlayerInput.cpp` | fails | cannot open include array |
+| `engine/src/Optimize/LodGroup.cpp` | fails | cannot open include string |
+| `engine/src/Optimize/PortalCells.cpp` | fails | cannot open include string |
+| `engine/src/UI/FocusGraph.cpp` | fails | cannot open include vector |
+| `shared/OkfDecode.hpp` | fails | cannot open include vector |
+
+The first errors, counted: the standard library (`<string>` 5, `<vector>` 3, `<functional>`, `<cctype>`, `<atomic>`, `<array>`: 12 files stop at an include we have not written; a real `std::vector`/`std::string` is a very large piece of work for a template engine at this stage), `static constexpr float X = A / B;` (a float constant expression: 10 files, all through `Mathf.hpp`: a `static constexpr float` member is read back as an integer constant and float operations are not folded), `volatile T *p = static_cast<volatile T *>(q)` in `Sha256.hpp` (the cast text `volatile T *` is not lowered), `std::uint64_t` (okay-ms has no 64-bit integer: `long long` and `__int64` are read as 32-bit `int`; the stdinc `<cstdint>` leaves the 64-bit types out unless `OKAYMS_INT64` is set so a use fails instead of silently being 32 bits), default arguments (`float window = 0.15f` in a parameter list), a braced return `return {x, y, w, h};`, `const T&` result of a conditional expression ("not an address"), and a header that needs a Valgrind include.
+
+Not done / unverified / found and not fixed:
+
+- 64-bit integers do not exist (`long long`, `uint64_t`, `size_t` arithmetic, `std::size_t` as 8 bytes). `typedef long long` is still silently 32 bits. This blocks most real code and is the largest missing piece after the standard library.
+- Default arguments, a braced `return {...}`, `static_assert` evaluation, `= default` / `= delete`, lambdas, `auto`, range `for`, operator overloading are not there (not tried one by one: the measurement stops at the first error).
+- A float array element is wrong: `float a[2]; a[0] = 1.5f; a[1] = 2.5f; return (int)(a[1] * 4.0f);` returns 5, g++ 10 (seen with the old and the new build; not fixed, no test yet).
+- `static constexpr float` members, unqualified use of a namespace's variables from another namespace with the same member name, calls of constructors by a qualified name (`geo::Vec(1, 2)`), `using namespace`, `T a[] = {...}` inside a function that is also static, and aggregate default member initializers are not done. A namespace is flat for variables and types: two namespaces that declare the same variable name collide.
+- `#pragma pack` is refused, not ignored.
+- The `/O2` constant propagation was not looked at for the new compound operators; the tests run at the default level only.
+- Run on Linux with Wine only; not run on Windows.

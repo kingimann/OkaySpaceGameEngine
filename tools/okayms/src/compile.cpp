@@ -20,7 +20,10 @@ enum Tok {
     TAndAnd, TOrOr, TNot, TLBrack, TRBrack, TDot, TArrow, TEllipsis, TColon, TColonColon,
     TInt, TVoid, TChar, TIf, TElse, TWhile, TFor, TDo, TSwitch, TCase, TDefault, TBreak, TContinue, TReturn,
     TStruct, TUnion, TEnum, TTypedef, TUnsigned, TSigned, TLong, TShort, TDeclspec,
-    TSizeof, TConst, TStatic, TGoto, TFloat, TDouble, TNamespace, TTilde
+    TSizeof, TConst, TStatic, TGoto, TFloat, TDouble, TNamespace, TTilde,
+    // Bit operators. A '>>' is two adjacent TGt tokens (so A<B<int>> still closes twice) and the parser
+    // joins them into TShr / TShrEq where an operator is expected.
+    TPipe, TCaret, TShl, TShr, TAndEq, TOrEq, TXorEq, TShlEq, TShrEq
 };
 
 struct Token {
@@ -31,6 +34,8 @@ struct Token {
     int real = 0;
     // Line of the preprocessed text, counted from 1.
     int line = 0;
+    // A '>' written directly after another '>' (no space), used to read '>>' and '>>='.
+    bool adj = false;
 };
 
 struct Type {
@@ -50,6 +55,8 @@ struct Type {
     bool is_unsigned = false;
     bool is_const = false;
     bool is_ref = false;
+    // bool: one byte holding 0 or 1 (base 2, unsigned). A conversion to it compares with zero.
+    bool is_bool = false;
     // A function parameter pack (Rest... rest) while a template's parameter types are read.
     bool pack = false;
     bool pointer() const { return pointers > 0; }
@@ -945,11 +952,16 @@ std::vector<Token> lex(const std::string& text, std::string* error) {
         }
         Token tok;
         tok.line = line;
+        tok.adj = c == '>' && i > 0 && text[i - 1] == '>';
         if (std::isalpha(c) || c == '_') {
             size_t j = i + 1;
             while (j < text.size() && (std::isalnum(static_cast<unsigned char>(text[j])) || text[j] == '_')) ++j;
             tok.text = text.substr(i, j - i);
             tok.kind = keyword(tok.text);
+            if (tok.text == "true" || tok.text == "false") {
+                tok.kind = TNumber;
+                tok.number = tok.text == "true" ? 1 : 0;
+            }
             i = j;
             tokens.push_back(tok);
             continue;
@@ -1117,6 +1129,16 @@ std::vector<Token> lex(const std::string& text, std::string* error) {
         if (c == '>' && two('=', TGe)) continue;
         if (c == '&' && two('&', TAndAnd)) continue;
         if (c == '|' && two('|', TOrOr)) continue;
+        if (c == '<' && i + 2 < text.size() && text[i + 1] == '<' && text[i + 2] == '=') {
+            tok.kind = TShlEq;
+            i += 3;
+            tokens.push_back(tok);
+            continue;
+        }
+        if (c == '<' && two('<', TShl)) continue;
+        if (c == '&' && two('=', TAndEq)) continue;
+        if (c == '|' && two('=', TOrEq)) continue;
+        if (c == '^' && two('=', TXorEq)) continue;
         tok.kind = TEnd;
         if (c == '(') tok.kind = TLParen;
         else if (c == ')') tok.kind = TRParen;
@@ -1136,6 +1158,8 @@ std::vector<Token> lex(const std::string& text, std::string* error) {
         else if (c == '>') tok.kind = TGt;
         else if (c == '!') tok.kind = TNot;
         else if (c == '~') tok.kind = TTilde;
+        else if (c == '|') tok.kind = TPipe;
+        else if (c == '^') tok.kind = TCaret;
         else if (c == '[') tok.kind = TLBrack;
         else if (c == ']') tok.kind = TRBrack;
         else if (c == '.') tok.kind = TDot;
@@ -1174,7 +1198,7 @@ std::string cxx_type(const Type& type, const std::vector<StructDef>* structs = n
         return "PEA" + cxx_type(inner, structs);
     }
     if (type.base == 0) return "X";
-    if (type.base == 2) return type.is_unsigned ? "E" : "D";
+    if (type.base == 2) return type.is_bool ? "_N" : type.is_unsigned ? "E" : "D";
     if (type.base == 4) return type.is_unsigned ? "G" : "F";
     if (type.base == 5) return "M";
     if (type.base == 6) return "N";
@@ -1257,6 +1281,12 @@ std::string cxx_symbol(const std::string& ns, const std::string& name, const Typ
     out += "Z";
     return out;
 }
+
+bool is_assign_op(Tok op) {
+    return op == TAssign || op == TPlusEq || op == TMinusEq || op == TStarEq || op == TSlashEq || op == TPercentEq ||
+           op == TAndEq || op == TOrEq || op == TXorEq || op == TShlEq || op == TShrEq;
+}
+bool is_compound_op(Tok op) { return op != TAssign && is_assign_op(op); }
 
 struct Parser {
     std::vector<Token>& tokens;
@@ -1813,12 +1843,7 @@ struct Parser {
             const std::string name = cur().text;
             next();
             if (accept(TAssign)) {
-                if (!is(TNumber)) {
-                    error = "expected an enumerator value";
-                    return false;
-                }
-                next_value = cur().number;
-                next();
+                if (!parse_const(&next_value, "an enumerator value")) return false;
             }
             enum_values[name] = next_value;
             ++next_value;
@@ -1842,18 +1867,23 @@ struct Parser {
         else type->more.push_back(length);
         return true;
     }
+    // A constant expression ([expr.const]): read as a conditional-expression and folded by the parser.
+    bool parse_const(uint64_t* value, const char* what) {
+        Node n;
+        if (!parse_expr(2, &n)) return false;
+        if (n.kind != Node::IntLit || n.type.base >= 5) {
+            error = std::string("expected ") + what;
+            return false;
+        }
+        *value = n.number;
+        return true;
+    }
     bool parse_brackets(Type* type) {
         while (accept(TLBrack)) {
             int length = 0;
-            if (is(TNumber)) {
-                length = static_cast<int>(cur().number);
-            } else if (is(TIdent) && enum_values.count(cur().text) > 0) {
-                length = static_cast<int>(enum_values[cur().text]);  // an enumerator or a template value
-            } else {
-                error = "expected an array length";
-                return false;
-            }
-            next();
+            uint64_t folded = 0;
+            if (!parse_const(&folded, "an array length")) return false;  // numbers, enumerators, template values
+            length = static_cast<int>(folded);
             if (!expect(TRBrack, "']'")) return false;
             if (!add_dim(type, length)) return false;
         }
@@ -2040,6 +2070,9 @@ struct Parser {
         if (structs[static_cast<size_t>(id)].cxx) return true;
         // A plain struct named without the word struct, as C++ allows: only where a declaration
         // clearly follows (a name, '*' or '&').
+        if (i >= 2 && tokens[i - 1].kind == TLParen && tokens[i - 2].kind == TSizeof && i + 1 < tokens.size() &&
+            tokens[i + 1].kind == TRParen)
+            return true;  // sizeof(S)
         return i + 1 < tokens.size() &&
                (tokens[i + 1].kind == TIdent || tokens[i + 1].kind == TStar || tokens[i + 1].kind == TAmp);
     }
@@ -2119,18 +2152,50 @@ struct Parser {
     bool parse_stmt_inner(Node* out, std::vector<Local>* locals, int stmt_line);
     bool parse_block(Node* out, std::vector<Local>* locals);
 
+    // ISO/IEC 14882 [expr]: the binary operators from the loosest to the tightest.
     int prec(Tok op) const {
         if (op == TComma) return 0;
-        if (op == TAssign || op == TPlusEq || op == TMinusEq || op == TStarEq || op == TSlashEq || op == TPercentEq)
-            return 1;
+        if (is_assign_op(op)) return 1;
         if (op == TQuestion) return 2;
         if (op == TOrOr) return 3;
         if (op == TAndAnd) return 4;
-        if (op == TEq || op == TNe) return 5;
-        if (op == TLt || op == TGt || op == TLe || op == TGe) return 6;
-        if (op == TPlus || op == TMinus) return 7;
-        if (op == TStar || op == TSlash || op == TPercent) return 8;
+        if (op == TPipe) return 5;
+        if (op == TCaret) return 6;
+        if (op == TAmp) return 7;
+        if (op == TEq || op == TNe) return 8;
+        if (op == TLt || op == TGt || op == TLe || op == TGe) return 9;
+        if (op == TShl || op == TShr) return 10;
+        if (op == TPlus || op == TMinus) return 11;
+        if (op == TStar || op == TSlash || op == TPercent) return 12;
         return -1;
+    }
+
+    // The binary operator starting at token i and how many tokens it takes. '>' '>' written together
+    // is a right shift and '>' '>=' is '>>='; the lexer keeps them apart so that nested template
+    // argument lists close.
+    Tok op_at(size_t i, size_t* width) const {
+        *width = 1;
+        if (i >= tokens.size()) return TEnd;
+        if (tokens[i].kind == TGt && i + 1 < tokens.size() && tokens[i + 1].adj) {
+            if (tokens[i + 1].kind == TGt) {
+                *width = 2;
+                return TShr;
+            }
+            if (tokens[i + 1].kind == TGe) {
+                *width = 2;
+                return TShrEq;
+            }
+        }
+        return tokens[i].kind;
+    }
+    // The operator whose last token is token i (the one written before a fold's '...').
+    Tok op_ending_at(size_t i, size_t* width) const {
+        *width = 1;
+        if (i >= 1 && tokens[i].kind == TGt && tokens[i].adj && tokens[i - 1].kind == TGt) {
+            *width = 2;
+            return TShr;
+        }
+        return tokens[i].kind;
     }
 
     // Looks ahead from the current token: stars or '&', a name, then '('.
@@ -3416,7 +3481,7 @@ struct Parser {
             return true;
         }
         Node value;
-        if (!parse_expr(7, &value)) return false;
+        if (!parse_expr(11, &value)) return false;
         if (value.kind != Node::IntLit) {
             error = "a template argument must be a constant";
             return false;
@@ -5601,16 +5666,7 @@ bool Parser::parse_stmt_inner(Node* out, std::vector<Local>* locals, int stmt_li
             arm.kind = Node::Case;
             if (is(TCase)) {
                 next();
-                if (is(TNumber)) {
-                    arm.number = cur().number;
-                    next();
-                } else if (is(TIdent) && enum_values.find(cur().text) != enum_values.end()) {
-                    arm.number = enum_values[cur().text];
-                    next();
-                } else {
-                    error = "expected a case value";
-                    return false;
-                }
+                if (!parse_const(&arm.number, "a case value")) return false;
                 if (!expect(TColon, "':'")) return false;
             } else if (is(TDefault)) {
                 next();
@@ -6130,33 +6186,37 @@ bool Parser::try_fold(Node* out, bool* folded) {
         }
     }
     if (close == open || e == 0) return true;
-    const auto foldable = [this](Tok op) { return op == TComma || prec(op) >= 3; };
+    const auto foldable = [this](Tok op) { return op == TComma || (prec(op) >= 3 && !is_assign_op(op)); };
     Tok op = TEnd;
     size_t pat_from = 0, pat_to = 0, init_from = 0, init_to = 0;
     bool left = false;
     bool has_init = false;
-    if (e == open + 1 && e + 2 < close && foldable(tokens[e + 1].kind)) {
-        op = tokens[e + 1].kind;
+    // The operator after '...' (it may be two tokens, '>' '>') and the one before it.
+    size_t after_w = 1, before_w = 1;
+    const Tok after_op = e + 1 < close ? op_at(e + 1, &after_w) : TEnd;
+    const Tok before_op = e >= 1 ? op_ending_at(e - 1, &before_w) : TEnd;
+    if (e == open + 1 && e + 1 + after_w < close && foldable(after_op)) {
+        op = after_op;
         left = true;
-        pat_from = e + 2;
+        pat_from = e + 1 + after_w;
         pat_to = close;
-    } else if (e + 1 == close && e >= open + 3 && foldable(tokens[e - 1].kind)) {
-        op = tokens[e - 1].kind;
+    } else if (e + 1 == close && e >= open + 2 + before_w && foldable(before_op)) {
+        op = before_op;
         pat_from = open + 1;
-        pat_to = e - 1;
-    } else if (e > open + 2 && e + 2 < close && foldable(tokens[e - 1].kind) && tokens[e - 1].kind == tokens[e + 1].kind) {
-        op = tokens[e - 1].kind;
+        pat_to = e - before_w;
+    } else if (e > open + 1 + before_w && e + 1 + after_w < close && foldable(before_op) && before_op == after_op) {
+        op = before_op;
         has_init = true;
         if (!packs_in(e + 2, close).empty()) {
             left = true;
             init_from = open + 1;
-            init_to = e - 1;
-            pat_from = e + 2;
+            init_to = e - before_w;
+            pat_from = e + 1 + after_w;
             pat_to = close;
         } else {
             pat_from = open + 1;
-            pat_to = e - 1;
-            init_from = e + 2;
+            pat_to = e - before_w;
+            init_from = e + 1 + after_w;
             init_to = close;
         }
     } else {
@@ -7140,12 +7200,23 @@ bool Parser::parse_unary(Node* out) {
                 if (!expect(TRParen, "')'")) return false;
             }
         }
-    } else if (is(TStar) || is(TAmp) || is(TMinus) || is(TNot)) {
+    } else if (is(TStar) || is(TAmp) || is(TMinus) || is(TNot) || is(TTilde)) {
         out->kind = Node::Unary;
         out->op = cur().kind;
         next();
         Node inner;
         if (!parse_unary(&inner)) return false;
+        const Tok uop = out->op;
+        if ((uop == TMinus || uop == TTilde || uop == TNot) && inner.kind == Node::IntLit && inner.type.base < 5) {
+            // A constant operand is folded, so -16, ~0 and !1 can be used where a constant is needed.
+            const uint64_t v = inner.number;
+            out->kind = Node::IntLit;
+            out->op = TEnd;
+            out->number = uop == TMinus ? 0 - v : uop == TTilde ? ~v : (v == 0 ? 1 : 0);
+            out->type = Type{};
+            out->type.base = 1;
+            return parse_postfix(out);
+        }
         out->kids.push_back(std::move(inner));
     } else {
         error = "expected an expression";
@@ -7247,10 +7318,11 @@ bool Parser::parse_postfix(Node* out) {
 bool Parser::parse_expr(int min_prec, Node* out) {
     if (!parse_unary(out)) return false;
     while (true) {
-        const int p = prec(cur().kind);
+        size_t op_width = 1;
+        const Tok op = op_at(at, &op_width);
+        const int p = prec(op);
         if (p < min_prec) break;
-        const Tok op = cur().kind;
-        next();
+        for (size_t w = 0; w < op_width; ++w) next();
         if (op == TQuestion) {
             Node mid;
             Node els;
@@ -7266,13 +7338,10 @@ bool Parser::parse_expr(int min_prec, Node* out) {
             continue;
         }
         Node right;
-        const int next_min = op == TAssign || op == TPlusEq || op == TMinusEq || op == TStarEq || op == TSlashEq ||
-                                     op == TPercentEq
-                                 ? p
-                                 : p + 1;
+        const int next_min = is_assign_op(op) ? p : p + 1;
         if (!parse_expr(next_min, &right)) return false;
         Node bin;
-        const bool compound = op == TPlusEq || op == TMinusEq || op == TStarEq || op == TSlashEq || op == TPercentEq;
+        const bool compound = is_compound_op(op);
         bin.kind = op == TAssign || compound ? Node::Assign : Node::Binary;
         bin.op = op;
         bin.kids.push_back(std::move(*out));
@@ -7292,6 +7361,19 @@ bool Parser::parse_expr(int min_prec, Node* out) {
                     return false;
                 }
                 result = op == TSlash ? left / right_n : left % right_n;
+            } else if (op == TAmp) result = left & right_n;
+            else if (op == TPipe) result = left | right_n;
+            else if (op == TCaret) result = left ^ right_n;
+            else if (op == TShl || op == TShr) {
+                // A shift count is taken as an int; the left operand is an int, so a negative
+                // value (all high bits set) shifts right with its sign ([expr.shift]).
+                if (right_n >= 64) {
+                    error = "shift count is too large";
+                    return false;
+                }
+                if (op == TShl) result = left << right_n;
+                else if ((left >> 32) == 0xFFFFFFFFull) result = static_cast<uint64_t>(static_cast<int64_t>(left) >> right_n);
+                else result = left >> right_n;
             } else {
                 folded = false;
             }
@@ -7519,6 +7601,44 @@ struct Gen {
         const int32_t rel = static_cast<int32_t>(target - (at + 4));
         for (int i = 0; i < 4; ++i) text[at + i] = static_cast<uint8_t>(static_cast<uint32_t>(rel) >> (8 * i));
     }
+    // eax = r10d op eax for & | ^ << >>. The left operand is in r10d and the right in eax, as for the
+    // other integer operators. A shift count goes through cl, so rcx is saved around it (a local may
+    // live there). A right shift of an unsigned left operand is logical, otherwise arithmetic.
+    void emit_bit_op(Tok op, bool left_unsigned) {
+        if (op == TAmp || op == TAndEq || op == TPipe || op == TOrEq || op == TCaret || op == TXorEq) {
+            b(0x44);
+            b(op == TAmp || op == TAndEq ? 0x21 : op == TPipe || op == TOrEq ? 0x09 : 0x31);
+            b(0xD0);
+            return;
+        }
+        spill_reg(1);
+        b(0x89);  // mov ecx, eax
+        b(0xC1);
+        b(0x44);  // mov eax, r10d
+        b(0x89);
+        b(0xD0);
+        b(0xD3);  // shl / shr / sar eax, cl
+        b(op == TShl || op == TShlEq ? 0xE0 : left_unsigned ? 0xE8 : 0xF8);
+        reload_reg(1);
+    }
+    static bool bit_op(Tok op) {
+        return op == TAmp || op == TPipe || op == TCaret || op == TShl || op == TShr || op == TAndEq || op == TOrEq ||
+               op == TXorEq || op == TShlEq || op == TShrEq;
+    }
+
+    // eax = (eax != 0): the value a conversion to bool gives ([conv.bool]).
+    void normalize_bool() {
+        b(0x85);  // test eax, eax
+        b(0xC0);
+        b(0x0F);  // setne al
+        b(0x95);
+        b(0xC0);
+        b(0x0F);  // movzx eax, al
+        b(0xB6);
+        b(0xC0);
+    }
+    static bool is_bool_type(const Type& t) { return t.is_bool && t.pointers == 0 && !t.is_ref && !t.is_array(); }
+
     void cmp_set(uint8_t setcc) {
         b(0x41);
         b(0x39);
@@ -7743,6 +7863,7 @@ void Gen::promote(Type* type) const {
     if (type->pointers > 0 || type->is_array() || type->base == 3) return;
     if (size_of(*type) < 4) {
         type->base = 1;
+        type->is_bool = false;
         type->is_unsigned = false;
     }
 }
@@ -7774,7 +7895,7 @@ bool Gen::store_init(const Type& type, int offset, const Node& node) {
         return false;
     }
     const int width = type.pointers > 0 ? 8 : std::max(1, size_of(type));
-    const uint32_t value = static_cast<uint32_t>(node.number);
+    const uint32_t value = is_bool_type(type) ? (node.number != 0 ? 1u : 0u) : static_cast<uint32_t>(node.number);
     if (width == 1) {
         b(0xC6);
         b(0x85);
@@ -7987,6 +8108,7 @@ bool Gen::gen_expr(const Node& node) {
                 b(0x5A);
                 b(0xC0);
             }
+            if (is_bool_type(to) && !from_fp) normalize_bool();
             last_type = to;
             return true;
         }
@@ -8074,6 +8196,16 @@ bool Gen::gen_expr(const Node& node) {
             b(0xD8);
             return true;
         }
+        if (node.op == TTilde) {
+            if (last_type.pointers > 0 || last_type.base == 3 || last_type.base == 5 || last_type.base == 6) {
+                error = "operator ~ needs an integer";
+                return false;
+            }
+            b(0xF7);  // not eax
+            b(0xD0);
+            promote(&last_type);
+            return true;
+        }
         if (node.op == TNot) {
             b(0x85);
             b(0xC0);
@@ -8122,7 +8254,7 @@ bool Gen::gen_expr(const Node& node) {
                     last_type.is_ref = false;
                     return true;
                 }
-                if (local->reg != 0) {
+                if (local->reg != 0 && !is_bool_type(local->type)) {
                     if (!gen_expr(node.kids[1])) return false;
                     mov_reg_eax(local->reg);
                     return true;
@@ -8143,8 +8275,9 @@ bool Gen::gen_expr(const Node& node) {
                 }
             }
         }
-        if (node.op == TPlusEq || node.op == TMinusEq || node.op == TStarEq || node.op == TSlashEq || node.op == TPercentEq) {
+        if (is_compound_op(node.op)) {
             if (!gen_addr(node.kids[0])) return false;
+            const bool dest_unsigned = last_type.is_unsigned;
             const int width = std::max(1, size_of(last_type));
             const int addr = spill();
             if (!error.empty()) return false;
@@ -8157,7 +8290,9 @@ bool Gen::gen_expr(const Node& node) {
             if (!error.empty()) return false;
             if (!gen_expr(node.kids[1])) return false;
             reload_r10(left);
-            if (node.op == TPlusEq) {
+            if (bit_op(node.op)) {
+                emit_bit_op(node.op, dest_unsigned);
+            } else if (node.op == TPlusEq) {
                 b(0x44);
                 b(0x01);
                 b(0xD0);
@@ -8254,6 +8389,7 @@ bool Gen::gen_expr(const Node& node) {
         b(0x85);
         disp(slot);
         --temp_depth;
+        if (is_bool_type(last_type)) normalize_bool();
         if (last_type.pointers == 0 && (last_type.base == 5 || last_type.base == 6) && !rhs_fp) {
             b(last_type.base == 6 ? 0xF2 : 0xF3);
             b(0x0F);
@@ -8483,6 +8619,8 @@ bool Gen::gen_expr(const Node& node) {
                 b(0x00);
             } else if (!gen_expr(node.kids[arg0 + arg_i])) {
                 return false;
+            } else if (named && is_bool_type(param) && !(last_type.pointers == 0 && (last_type.base == 5 || last_type.base == 6))) {
+                normalize_bool();
             }
             saved_types.push_back(last_type);
             saved.push_back(spill());
@@ -8851,6 +8989,21 @@ bool Gen::gen_expr(const Node& node) {
             last_type = left_type;
             return true;
         }
+        if (bit_op(node.op)) {
+            if (left_type.pointers > 0 || left_type.base == 3 || last_type.pointers > 0 || last_type.base == 3) {
+                error = "a bit operator needs integers";
+                return false;
+            }
+            emit_bit_op(node.op, left_type.is_unsigned);
+            const bool shift = node.op == TShl || node.op == TShr;
+            // The result of a shift has the promoted type of the left operand; the others use the
+            // usual arithmetic conversions, where unsigned wins.
+            const bool uns = shift ? left_type.is_unsigned : left_type.is_unsigned || last_type.is_unsigned;
+            last_type = Type{};
+            last_type.base = 1;
+            last_type.is_unsigned = uns;
+            return true;
+        }
         const bool unsign = left_type.is_unsigned || last_type.is_unsigned;
         uint8_t setcc = 0x94;
         if (node.op == TEq) setcc = 0x94;
@@ -8917,6 +9070,9 @@ bool Gen::gen_stmt(const Node& node) {
             return true;
         }
         if (!node.kids.empty() && !gen_expr(node.kids[0])) return false;
+        if (current != nullptr && is_bool_type(current->ret) && !node.kids.empty() &&
+            !(last_type.pointers == 0 && (last_type.base == 5 || last_type.base == 6)))
+            normalize_bool();
         epilogue();
         return true;
     }
@@ -10069,6 +10225,14 @@ Result<CompileOutput> compile_c(const CompileInput& input) {
     std::vector<Token> tokens = lex(expanded, &lex_error);
     if (!lex_error.empty()) return Result<CompileOutput>::fail(lex_error);
     Parser parser{tokens, 0, {}, {}, {}, {}, {}, {}, {}, {}, nullptr, {}, {}};
+    {
+        // bool is a one-byte unsigned type whose stored value is 0 or 1 ([basic.fundamental]).
+        Type boolean;
+        boolean.base = 2;
+        boolean.is_unsigned = true;
+        boolean.is_bool = true;
+        parser.typedefs["bool"] = boolean;
+    }
     if (!parser.parse()) return Result<CompileOutput>::fail(parser.error.empty() ? "parse failed" : parser.error);
     LineSource line_source;
     line_source.enabled = input.debug_lines;

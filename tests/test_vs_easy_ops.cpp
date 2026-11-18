@@ -219,6 +219,29 @@ int main() {
         const auto made2 = VsInsertRecipe(e, VsRecipes()[0].graph);
         CHECK((int)made2.size() == VsGraphNodeCount(VsRecipes()[0].graph));
     }
+    // Undo: each operation above is one change to the graph text, so one snapshot brings the old graph back exactly
+    // (the canvas keeps whole-graph snapshots and commits one when the gesture ends), and the new graph saves
+    // and loads back the same.
+    {
+        auto roundTrips = [](const VsEditGraph& g) { VsEditGraph r; r.fromText(g.toText()); return r.toText() == g.toText(); };
+        VsEditGraph g;
+        const int ev = g.add("OnStart", 40, 40), a = g.add("ScoreAdd", 300, 40), z = g.add("Print", 600, 40);
+        g.linkExec(ev, 0, a); g.linkExec(a, 0, z);
+        const std::string before = g.toText();
+        const int mid = g.add("Delay", 450, 200);
+        const std::string loose = g.toText();
+        CHECK(VsInsertOnExecWire(g, 1, mid));
+        CHECK(g.toText() != loose && roundTrips(g));
+        VsEditGraph undone; undone.fromText(loose);
+        CHECK(undone.toText() == loose);
+        CHECK(VsDeleteBlock(g, mid, false));
+        CHECK(roundTrips(g) && g.toText() == before);       // delete-and-rejoin undoes the insert exactly
+        VsEditGraph e;
+        VsInsertRecipe(e, VsRecipes()[2].graph);
+        CHECK(roundTrips(e));
+        VsEditGraph back; back.fromText(VsEditGraph().toText());
+        CHECK(back.nodes.empty());                          // undo of a recipe on an empty graph: empty again
+    }
     okay::Log::sink = sink;
     TEST_MAIN_RESULT();
 }

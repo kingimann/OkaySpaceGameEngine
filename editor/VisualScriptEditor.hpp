@@ -3555,6 +3555,7 @@ inline bool VsDrawChoice(EditorState& ed, const VsEditGraph& g, std::string& val
 #include "VisualScriptPalette.hpp"
 #include "VisualScriptEasyOps.hpp"   // graph-in, graph-out rules for the canvas (needs the graph model above)
 #include "VisualScriptPlainWords.hpp" // every "something is wrong" sentence, in plain words
+#include "VisualScriptWhatHappened.hpp" // "Moved 3 steps right": the line under a block that ran
 #include "VisualScriptHints.hpp"      // the one-line next-step bar
 #include "VisualScriptStartDraw.hpp"  // the big recipe cards shown for an empty graph
 namespace okay::editor::vsed {
@@ -3979,7 +3980,7 @@ inline void Draw(EditorState& ed, bool* open) {
             ImGui::SameLine();
         }
         if (ImGui::Button("Fit")) st.frameAll = true;
-        if (ImGui::IsItemHovered()) ImGui::SetTooltip("Show every node (Home). F frames the selection.");
+        if (ImGui::IsItemHovered()) ImGui::SetTooltip("Show every block (Home, or F with nothing selected). F frames the selected blocks.");
         ImGui::SameLine();
         {   // the hand: while on, dragging with the left button moves the view instead of selecting
             if (st.panTool) ImGui::PushStyleColor(ImGuiCol_Button, ImVec4(0.26f, 0.46f, 0.78f, 1.0f));
@@ -4296,7 +4297,7 @@ inline void Draw(EditorState& ed, bool* open) {
         }
     }
     if (winFocused && !typing && ImGui::IsKeyPressed(ImGuiKey_Home, false)) st.frameAll = true;
-    if (winFocused && !typing && !io.KeyCtrl && ImGui::IsKeyPressed(ImGuiKey_F, false) && !st.sel.empty()) st.frameSel = true;
+    if (winFocused && !typing && !io.KeyCtrl && ImGui::IsKeyPressed(ImGuiKey_F, false)) { if (!st.sel.empty()) st.frameSel = true; else st.frameAll = true; }   // F fits the selection, or everything
     if (st.focusNode >= 0) {   // centre on one node, keeping the zoom readable
         if (const VsEditNode* fn = g.find(st.focusNode)) {
             z = std::max(z, 0.8f);
@@ -5100,6 +5101,27 @@ inline void Draw(EditorState& ed, bool* open) {
                 ImGui::SetTooltip("%s", reqGap.message.c_str());
         }
 
+        // Play feedback: a short "what happened" line under a block that has run (the glow is the flash above).
+        if (live && ln && ln->execCount > 0 && st.liveValues) {
+            std::vector<std::string> shown;
+            for (int pi = 0; pi < (int)d->dataIn.size(); ++pi) {
+                std::string val;
+                for (const auto& l : g.dataLinks)
+                    if (l.consumer == n.id && l.inPin == pi)
+                        if (okay::vs::VsNode* pn = liveNode(l.producer))
+                            if (l.outPin < (int)pn->lastOut.size()) val = VsDebugText(pn->lastOut[(std::size_t)l.outPin]);
+                if (val.empty()) { const auto it = n.pinDefault.find(pi); if (it != n.pinDefault.end()) val = it->second; }
+                shown.push_back(val);
+            }
+            const std::string said = VsWhatHappened(n.type, n.arg, shown, ln->execCount);
+            const ImVec2 sz = ImGui::CalcTextSize(said.c_str());
+            const ImVec2 q0(p0.x, p1.y + 6.0f * z), q1(p0.x + std::min(NODE_W + 40.0f * z, sz.x + 16.0f * z), q0.y + sz.y + 6.0f * z);
+            const float fade = 0.55f + 0.45f * (st.flash.count(n.id) ? st.flash[n.id] : 0.0f);
+            dl->AddRectFilled(q0, q1, IM_COL32(26, 64, 40, (int)(235 * fade)), 6.0f * z);
+            dl->PushClipRect(q0, q1, true);
+            dl->AddText(ImVec2(q0.x + 8.0f * z, q0.y + 3.0f * z), IM_COL32(190, 245, 205, (int)(255 * fade)), said.c_str());
+            dl->PopClipRect();
+        }
         ImGui::PopID();
     }
     // Move the dragged node and every other selected node with it.

@@ -272,5 +272,14 @@ int main(int, char**) {
           "struct Mixer { static inline V listener = V::Zero; };\nstruct Open { std::chrono::steady_clock::time_point start; };\n"
           "int main() { ::okay::ProfScope p1(\"a\"); int a = take(mk()); W w(mk()); W w2 = make(); Open o; o.start = std::chrono::steady_clock::now(); return a + p1.v + (int)Mixer::listener.x; }\n", &o);
     CHECK(t, has_symbol(o, "main"));
+    ++tests;
+    build(t, "round 32: same-named nested classes, Outer::Nested{}, Plain::Enumerator, captureless lambda with a by-value class argument, sscanf",
+          "#include <cstdio>\n#include <string>\n#include <vector>\nstruct P { struct Cell { int x; int y; }; };\n"
+          "struct L { struct Cell { int x = 0; int y = 0; float cost = 1.0f; }; std::vector<Cell> m_cells; std::vector<P::Cell> hit; void Set(int x, int y, float cost); };\n"
+          "void L::Set(int x, int y, float cost) { m_cells.push_back(Cell{x, y, cost}); hit.push_back(P::Cell{x, y}); }\n"
+          "struct TS { enum Filter { Point = 0, Bilinear = 1 }; int filter = Bilinear; };\nstd::string rd() { return std::string(\"Ab\"); }\n"
+          "int main() { L l; l.Set(1, 2, 3.0f); TS t; t.filter = TS::Point; auto low = [](std::string s) { for (auto& c : s) c += 1; return s; }; std::string f = low(rd()); int a = 0, b = 0; float c = 0; std::sscanf(\"1,2,3.5\", \"%d,%d,%f\", &a, &b, &c);\n"
+          "return (int)l.m_cells[0].cost + t.filter + (int)f.size() + a + b + (int)c; }\n", &o);
+    CHECK(t, has_symbol(o, "UCell@L@@") && has_symbol(o, "UCell@P@@") && has_symbol(o, "sscanf"));
     return t.finish(tests);
 }

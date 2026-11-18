@@ -1,0 +1,68 @@
+engine/src/AI/BehaviorTree.cpp|cannot open include mutex
+engine/src/AI/BehaviorTreeRunner.cpp|okay/Render/Mesh.hpp:5036: expected a type (in Mesh::WeldVertices/1, token , after )
+engine/src/AI/GridPath2D.cpp|engine/src/AI/GridPath2D.cpp:129: expected '(' (in GridCostLayer::SetTileCost/2)
+engine/src/AI/NavMesh.cpp|OK
+engine/src/AI/NavMeshAgent.cpp|okay/Components/NaturalGait.hpp:60: expected ';' (in okay::NaturalGait::ButtonTooltip)
+engine/src/AI/NavMeshBake.cpp|okay/Components/NaturalGait.hpp:60: expected ';' (in okay::NaturalGait::ButtonTooltip)
+engine/src/AI/NavMeshCarve.cpp|OK
+engine/src/AI/NavMeshSurface.cpp|cannot open include thread
+engine/src/AI/Navigation.cpp|cannot open include thread
+engine/src/AI/Pathfinding.cpp|OK
+engine/src/AI/Perception.cpp|OK
+engine/src/Animation/HumanoidActions.cpp|okay/Components/NaturalGait.hpp:60: expected ';' (in okay::NaturalGait::ButtonTooltip)
+engine/src/Animation/HumanoidLibrary.cpp|okay/Components/NaturalGait.hpp:60: expected ';' (in okay::NaturalGait::ButtonTooltip)
+engine/src/Animation/HumanoidMotion.cpp|OK
+engine/src/Animation/PlayerSetup.cpp|okay/Animation/HumanoidBones.hpp:93: a static local object takes no initializer and is not an array
+engine/src/Audio/AudioClip.cpp|engine/src/Audio/AudioClip.cpp:20: expected a type (in , token ostream, after )
+engine/src/Audio/AudioDecode.cpp|okay/Core/Log.hpp:326: expected ';' (in Log::OpenFile/3)
+engine/src/Audio/AudioMixer.cpp|OK
+engine/src/Audio/AudioStream.cpp|not an address (preprocessed line 2823, node kind 17) (in okay::TextureImportSampling)
+engine/src/Audio/FlacDecoder.cpp|OK
+engine/src/Audio/Mp3Decoder.cpp|unknown function std::exp2 (in Layer3Decoder::Requantize/5)
+engine/src/Audio/SpatialFx.cpp|engine/src/Audio/SpatialFx.cpp:78: no static member Ring in the class
+engine/src/Audio/VorbisDecoder.cpp|OK
+engine/src/Audio/WavDecoder.cpp|engine/src/Audio/WavDecoder.cpp:48: expected ')' (in okay::wav::MuLawToLinear)
+engine/src/Audio/WavPlayback.cpp|OK
+engine/src/Combat/WeaponBook.cpp|okay/Components/GridInventory.hpp:260: expected ')' (in GridInventory::CanMoveTo/5)
+engine/src/Components/ActionList.cpp|okay/Core/Log.hpp:326: expected ';' (in Log::OpenFile/3)
+engine/src/Components/AnimClip.cpp|engine/src/Components/AnimClip.cpp:488: expected ';' (in AnimClip::ParseAll/4)
+engine/src/Components/AnimControl.cpp|okay/Components/NaturalGait.hpp:60: expected ';' (in okay::NaturalGait::ButtonTooltip)
+engine/src/Components/AntiCheatConfig.cpp|okay/Components/NetValidator.hpp:133: expected ';' (in NetValidator::Park/2)
+engine/src/Components/BuildMode.cpp|okay/Components/Buildable.hpp:56: expected ')' (in Buildable::Of/1)
+engine/src/Components/Cable.cpp|OK
+engine/src/Components/Camera.cpp|OK
+engine/src/Components/Character.cpp|cannot open include iomanip
+engine/src/Components/CharacterAnimBackend.cpp|okay/Components/NaturalGait.hpp:60: expected ';' (in okay::NaturalGait::ButtonTooltip)
+engine/src/Components/Decal.cpp|engine/src/Components/Decal.cpp:107: expected ';' (in Decal::Project/0)
+engine/src/Components/DialogueGraph.cpp|StoryKv.hpp:26: expected ';'
+engine/src/Components/DialogueRunner.cpp|okay/Render/Mesh.hpp:5036: expected a type (in Mesh::WeldVertices/1, token , after )
+engine/src/Components/Draggable.cpp|okay/Components/GridInventory.hpp:260: expected ')' (in GridInventory::CanMoveTo/5)
+engine/src/Components/Foliage.cpp|okay/Components/NaturalGait.hpp:60: expected ';' (in okay::NaturalGait::ButtonTooltip)
+engine/src/Components/LODGroup.cpp|OK
+engine/src/Components/LineRenderer.cpp|engine/src/Components/LineRenderer.cpp:456: member call on something that is not a class object: RibbonInput
+engine/src/Components/LookAtIK.cpp|okay/Math/IKMath.hpp:34: expected ')' (in okay::IsUnder)
+engine/src/Components/MeleeAttacker.cpp|okay/Input/GameInput.hpp:22: expected an enumerator value
+engine/src/Components/ModelAnimatorPose.cpp|okay/Components/NaturalGait.hpp:60: expected ';' (in okay::NaturalGait::ButtonTooltip), found 'Crouch and Prone Speed change to 1.0 and 0.5 only if they are still the old 2.2 and 1
+engine/src/Components/NetworkObject.cpp|okay/Net/NetworkManager.hpp:444: expected a type (in , token uintmax_t, after const)
+engine/src/Components/PlayerController.cpp|okay/Core/Log.hpp:326: expected ';' (in Log::OpenFile/3), found 'sz' after 'uintmax_t' (token kinds 1/1)
+engine/src/Components/PlayerView.cpp|okay/Components/NaturalGait.hpp:60: expected ';' (in okay::NaturalGait::ButtonTooltip), found 'Crouch and Prone Speed change to 1.0 and 0.5 only if they are still the old 2.2 and 1
+engine/src/Components/QuestLog.cpp|StoryKv.hpp:26: expected ';', found '' after '' (token kinds 6/5)
+engine/src/Components/Ragdoll.cpp|okay/Animation/HumanoidBones.hpp:93: a static local object takes no initializer and is not an array
+engine/src/Components/RangedWeapon.cpp|okay/Input/GameInput.hpp:22: expected an enumerator value
+engine/src/Components/ScriptComponent.cpp|okay/Core/Log.hpp:326: expected ';' (in Log::OpenFile/3), found 'sz' after 'uintmax_t' (token kinds 1/1)
+engine/src/Components/Sequence.cpp|okay/Components/NaturalGait.hpp:60: expected ';' (in okay::NaturalGait::ButtonTooltip), found 'Crouch and Prone Speed change to 1.0 and 0.5 only if they are still the old 2.2 and 1
+engine/src/Components/SequencePlayer.cpp|okay/Core/Localization.hpp:179: no matching constructor in LocArg (in vector<ULocArg@@>::resize/1, 0 arguments)
+engine/src/Components/Spline.cpp|OK
+engine/src/Components/SplineMesh.cpp|okay/Components/NaturalGait.hpp:60: expected ';' (in okay::NaturalGait::ButtonTooltip), found 'Crouch and Prone Speed change to 1.0 and 0.5 only if they are still the old 2.2 and 1
+engine/src/Components/SpriteRenderer.cpp|OK
+engine/src/Components/SteamManager.cpp|okay/Core/Log.hpp:326: expected ';' (in Log::OpenFile/3), found 'sz' after 'uintmax_t' (token kinds 1/1)
+engine/src/Components/Terrain.cpp|cannot open include thread
+engine/src/Components/UIAnimation.cpp|okay/Components/GridInventory.hpp:260: expected ')' (in GridInventory::CanMoveTo/5), found '' after 'GridInventory' (token kinds 11/1)
+engine/src/Components/UIBarBind.cpp|okay/Render/Mesh.hpp:5036: expected a type (in Mesh::WeldVertices/1, token , after )
+engine/src/Components/UIContextMenu.cpp|okay/Components/UIContextMenu.hpp:54: no matching constructor in vector<Vstring@@> (in UIContextMenu::<ctor>/0, 4 arguments)
+engine/src/Components/UIDamageNumbers.cpp|okay/Core/Localization.hpp:179: no matching constructor in LocArg (in vector<ULocArg@@>::resize/1, 0 arguments)
+engine/src/Components/UIDialogueBox.cpp|okay/Components/GridInventory.hpp:260: expected ')' (in GridInventory::CanMoveTo/5), found '' after 'GridInventory' (token kinds 11/1)
+engine/src/Components/UIDocument.cpp|okay/Components/GridInventory.hpp:260: expected ')' (in GridInventory::CanMoveTo/5), found '' after 'GridInventory' (token kinds 11/1)
+engine/src/Components/UIDraggable.cpp|okay/Components/GridInventory.hpp:260: expected ')' (in GridInventory::CanMoveTo/5), found '' after 'GridInventory' (token kinds 11/1)
+engine/src/Components/UIKeybindField.cpp|engine/src/Components/UIKeybindField.cpp:132: expected ';' (in UIKeybindField::Update/1), found '' after '' (token kinds 5/2)
+engine/src/Components/UILayoutGroup.cpp|okay/Components/GridInventory.hpp:260: expected ')' (in GridInventory::CanMoveTo/5), found '' after 'GridInventory' (token kinds 11/1)

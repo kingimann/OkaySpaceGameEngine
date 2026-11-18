@@ -42,7 +42,7 @@ const char* kDir = "/tmp/okayms-el";
 bool build_runtime(Tally& tally, const std::string& cl, const std::string& root) {
     const std::string rt = root + "/tools/okayms/runtime";
     okayms::Archive archive;
-    for (const char* name : {"string", "printf", "startup", "mem", "env", "file", "rtti"}) {
+    for (const char* name : {"string", "printf", "startup", "mem", "env", "file", "rtti", "scan"}) {
         const std::string obj = std::string(kDir) + "/rt_" + name + ".obj";
         const int rc = run(cl + " /I" + rt + " /c /Fo" + obj + " " + rt + "/" + name + ".c", std::string(kDir) + "/rt.log");
         CHECK(tally, rc == 0);

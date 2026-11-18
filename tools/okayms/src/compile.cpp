@@ -2870,7 +2870,11 @@ struct Parser {
     }
     bool expect(Tok k, const char* what) {
         if (accept(k)) return true;
-        if (error.empty()) error = std::string("expected ") + what + (current_fn.empty() ? std::string() : " (in " + current_fn + ")");
+        if (error.empty()) {
+            error = std::string("expected ") + what + (current_fn.empty() ? std::string() : " (in " + current_fn + ")");
+            error += ", found '" + (is(TEnd) ? std::string("end") : cur().text) + "' after '" + (at > 0 ? tokens[at - 1].text : std::string()) +
+                     "' (token kinds " + std::to_string(static_cast<int>(cur().kind)) + "/" + std::to_string(at > 0 ? static_cast<int>(tokens[at - 1].kind) : -1) + ")";
+        }
         return false;
     }
 
@@ -3142,6 +3146,10 @@ struct Parser {
                 placeholder.name = name;
                 placeholder.incomplete = true;
                 placeholder.is_union = as_union;
+                if (inst_base_name.empty() && !class_ids.empty()) {
+                    placeholder.outer = class_ids.back();
+                    placeholder.sym_name = name + "@" + structs[static_cast<size_t>(class_ids.back())].symname();
+                }
                 structs.push_back(std::move(placeholder));
                 id = static_cast<int>(structs.size()) - 1;
             }
@@ -4768,12 +4776,21 @@ struct Parser {
         }
         const std::map<std::string, uint64_t> enums_before = enum_values;
         if (inst_base_name.empty() && !class_ids.empty()) def.outer = class_ids.back();
+        // A class nested in another is decorated with its outer class (?AUCell@Pathfinding@@), as MSVC does; two nested classes
+        // of the same name in different classes are then different types (and different template arguments).
+        if (def.outer >= 0 && def.sym_name.empty() && !is_instance_body)
+            def.sym_name = name + "@" + structs[static_cast<size_t>(def.outer)].symname();
         int self = -1;
         if (inst_base_name.empty() && !is_instance_body) {
             const int earlier = find_struct(name);
             if (earlier >= 0 && structs[static_cast<size_t>(earlier)].incomplete &&
-                structs[static_cast<size_t>(earlier)].outer == def.outer)
+                (structs[static_cast<size_t>(earlier)].outer == def.outer || def.outer < 0)) {
                 self = earlier;
+                if (def.outer < 0) {  // struct Outer::Inner { ... } written outside Outer: it is the placeholder's class
+                    def.outer = structs[static_cast<size_t>(earlier)].outer;
+                    def.sym_name = structs[static_cast<size_t>(earlier)].sym_name;
+                }
+            }
         }
         if (self >= 0) {
             structs[static_cast<size_t>(self)] = def;  // the incomplete entry becomes this class
@@ -12784,6 +12801,22 @@ bool Parser::parse_unary(Node* out) {
                 (class_name_text(suffix) || (typedefs.count(suffix) > 0 && typedefs[suffix].base == 3)))
                 name = suffix;
         }
+        if (name.find("::") != std::string::npos && (is(TLBrace) || is(TLParen))) {
+            // Outer::Nested{...} and Outer::Nested(...): a nested class named with its outer class is the class itself.
+            const size_t last = name.rfind("::");
+            int oid = scope_class(name.substr(0, last));
+            if (oid < 0 && typedefs.find(name.substr(0, last)) == typedefs.end()) oid = find_struct(name.substr(0, last));
+            const std::string member = name.substr(last + 2);
+            if (oid >= 0) {
+                int nested = find_nested(oid, member);
+                if (nested >= 0 && structs[static_cast<size_t>(nested)].name == member) {
+                    bool clash = structs[static_cast<size_t>(oid)].statics.count(member) > 0;
+                    for (const Method& hm : structs[static_cast<size_t>(oid)].methods)
+                        if (hm.name == member) clash = true;
+                    if (!clash) name = member;
+                }
+            }
+        }
         const size_t colons = name.find("::");
         if (building != nullptr && colons == std::string::npos && !is(TLParen) && !local_visible(name)) {
             const auto found = building->statics.find(name);
@@ -12793,6 +12826,19 @@ bool Parser::parse_unary(Node* out) {
             }
         }
         if (scope_sid < 0 && colons != std::string::npos) scope_sid = scope_class(name.substr(0, colons));
+        if (scope_sid < 0 && colons != std::string::npos && !is(TLParen)) {
+            // Plain::Enumerator for a class without member functions: its enumerators are global names here.
+            const std::string prefix = name.substr(0, colons);
+            const std::string suffix = name.substr(name.rfind("::") + 2);
+            auto ev = enum_values.find(suffix);
+            if (find_struct(prefix) >= 0 && ev != enum_values.end()) {
+                out->kind = Node::IntLit;
+                out->number = ev->second;
+                out->type = Type{};
+                out->type.base = 1;
+                return parse_postfix(out);
+            }
+        }
         if (scope_sid >= 0 && colons != std::string::npos) {
             const std::string member = name.substr(colons + 2);
             if (!is(TLParen) && static_member_expr(scope_sid, member, out)) return parse_postfix(out);
@@ -13151,7 +13197,7 @@ bool Parser::parse_unary(Node* out) {
                             source[i].pointers -= 1;
                             source[i].is_ref = true;
                         }
-                        if (source[i].is_ref) any_ref = true;
+                        if (source[i].is_ref || (source[i].base == 3 && source[i].pointers == 0 && source[i].struct_id >= 0)) any_ref = true;
                     }
                     if (any_ref && !adjust_args(source, &out->kids)) return false;
                 }
@@ -13444,7 +13490,7 @@ bool Parser::parse_postfix(Node* out) {
                             source[i].pointers -= 1;
                             source[i].is_ref = true;
                         }
-                        if (source[i].is_ref) any_ref = true;
+                        if (source[i].is_ref || (source[i].base == 3 && source[i].pointers == 0 && source[i].struct_id >= 0)) any_ref = true;
                     }
                     if (any_ref && !adjust_args(source, &pargs)) return false;
                 }

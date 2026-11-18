@@ -22,6 +22,7 @@ int puts(const char *s);
 int fprintf(FILE *f, const char *fmt, ...);
 int fputs(const char *s, FILE *f);
 int fflush(FILE *f);
+int sscanf(const char *input, const char *fmt, ...);
 FILE *__okay_get_stdout();
 FILE *__okay_get_stderr();
 }

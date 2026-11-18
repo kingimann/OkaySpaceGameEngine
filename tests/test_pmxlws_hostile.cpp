@@ -260,13 +260,31 @@ static void LwsPathsOnDisk() {
         asked.clear();
         return ReadLwsBuffer("LWSC\n3\nLoadObject Objects/ok.lwo\nLoadObject " + ref + "\n", scene.string() + "/", m, &err, &loader);
     };
-    const std::string refs[] = {(outside / "x.lwo").string(), "../outside/x.lwo", "Objects/../../outside/x.lwo", "..\\outside\\x.lwo", "/etc/passwd", "C:/x.lwo", "\\\\host\\share\\x.lwo", "//host/x.lwo"};
+    // one leading ../ to a LightWave object is LightWave's content directory (the folder above the scene, here `root`), so the
+    // outside paths below climb two folders, name another format, or climb inside the content directory again
+    const std::string refs[] = {(outside / "x.lwo").string(), "../../outside/x.lwo", "Objects/../../outside/x.lwo", "..\\..\\outside\\x.lwo", "/etc/passwd", "C:/x.lwo", "\\\\host\\share\\x.lwo", "//host/x.lwo",
+                                "../outside/x.obj", "../outside/../../x.lwo", "../scene/s.lws"};
     for (const std::string& ref : refs) {
         ImportedModel m; std::string err;
         const bool ok = readOne(ref, m, err);
         CHECK(ok && asked.size() == 1 && asked[0].find("ok.lwo") != std::string::npos && HasNote(m, "refused"));   // the one inside is read; the other is never asked for
     }
     if (link) { ImportedModel m; std::string err; CHECK(readOne("link/x.lwo", m, err) && asked.size() == 1 && HasNote(m, "refused")); }
+    // a link inside the content directory that leads out of it: refused there too
+    if (link) {
+        fs::create_directories(root / "deeper" / "scene", ec);
+        fs::create_directory_symlink(fs::temp_directory_path(), root / "deeper" / "out", ec);
+        if (!ec) {
+            ImportedModel m; std::string err; asked.clear();
+            CHECK(!ReadLwsBuffer("LWSC\n3\nLoadObject ../out/x.lwo\n", (root / "deeper" / "scene").string() + "/", m, &err, &loader) && asked.empty());
+        }
+    }
+    {   // the folder above the scene (LightWave's content directory): a LightWave object there is asked for, in either slash style
+        for (const char* ref : {"../outside/x.lwo", "..\\outside\\x.lwo"}) {
+            ImportedModel m; std::string err;
+            CHECK(readOne(ref, m, err) && asked.size() == 2 && m.parts.size() == 2 && HasNote(m, "read from the folder above the scene"));
+        }
+    }
     { ImportedModel m; std::string err; CHECK(readOne("Objects/ok.lwo", m, err) && asked.size() == 1 && m.parts.size() == 2); }   // the same file twice is asked for once
     fs::remove_all(root, ec);
 }

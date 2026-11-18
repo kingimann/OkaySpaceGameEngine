@@ -16,6 +16,7 @@
 #include "ActionExport.hpp"
 #include "MenuBarModel.hpp"          // the main menu bar and the Hierarchy menus as data (docs/editor_menus.md)
 #include "HierarchyContextModel.hpp"
+#include "SceneAddMenu.hpp"
 #include "MenuEntriesUI.hpp"          // draws those lists with Dear ImGui
 #include "ProjectState.hpp"           // project settings + build settings: the files inside the project folder
 #include "okay/Input/PlatformGamepad.hpp"   // controller -> Input (sticks, triggers, rumble), via okay::platform
@@ -107,6 +108,9 @@
 #include "InspectorPanel.hpp"           // reference fields, generic component card, undo for every field, prefab changes
 #include "PrefabEdit.hpp"               // prefab actions: revert / apply / variants / unpack, with undo
 #include "InspectorModel.hpp"           // Hierarchy filter, drag-drop reparenting, mixed values (ImGui-free)
+#include "UIMenuModel.hpp"               // GameObject > UI as data (groups, tips)
+#include "UIGalleryWindow.hpp"           // the UI Gallery window (Browse All UI...)
+#include "okay/Scene/UIScreens.hpp"      // ready-made screens as data, and the Starter Pack
 #include "UIRuntimeTools.hpp"            // UI themes + runtime UI widgets, File > Examples > UI Gallery
 #include "UIInspectorOverlay.hpp"       // modal / context menu / keybind inspectors
 #include "UIInspectorWidgetsMore.hpp"   // search, date, files, accordion, crumbs, pages, skeleton, sheet
@@ -950,6 +954,7 @@ static void RunEditorPlayKeyTest(int& failures) {
 #include "ProjectBrowser.hpp"     // the Project panel's logic: folder model, safe file operations, references
 #include "ProjectPanelUI.hpp"     // the Project panel's name prompt, delete confirmation, import settings
 #include "ProjectTabs.hpp"        // the Project panel's tab strip (Assets / Favourites / Recent / Search) and the remembered tab
+#include "ProjectLayout.hpp"      // the Project panel's One column / Two columns layouts: divider clamp, open-in-place rows, keys
 #include "ProjectNewAssets.hpp"   // the text of a new dialogue, quest file, behavior tree and cutscene (Project > Create)
 #include "ProjectDelete.hpp"      // okayproj::Normalized / IsSameOrInside: the launcher's "is this path inside that folder" test
 #include "LaunchFile.hpp"         // open a file with the system's program, in a text editor, or show it in the file manager (no shell)
@@ -3574,7 +3579,7 @@ static std::vector<ModelCmd> BuildModelCmds(EditorState& ed, MeshRenderer* mr) {
         g_meshSelMode = 1; g_meshSelFaces = pmo::SelectByArea(mr->mesh, 0.0f, avg * 0.1f);
     });
     // Editing
-    add("Set Crease on Selected Edges", "", "Edit", "Keep the selected edges sharp when the Subdivision modifier rounds the mesh (sharpness set in Edit Mesh; shown pink).", anyEdges, needEdges, [&ed, mr] {
+    add("Set Crease on Selected Edges", "", "Edit", "Keep the selected edges sharp when the Subdivision modifier rounds the mesh (sharpness set in Fix the surface; shown pink).", anyEdges, needEdges, [&ed, mr] {
         const pmo::EdgeList edges = SelectedPolyEdges(mr->mesh);
         EditUndoPoint(ed, mr);
         for (const auto& e : edges) mr->mesh.SetCrease(e.first, e.second, g_creaseW);
@@ -3586,7 +3591,7 @@ static std::vector<ModelCmd> BuildModelCmds(EditorState& ed, MeshRenderer* mr) {
         for (const auto& e : edges) mr->mesh.SetCrease(e.first, e.second, 0.0f);
         ed.dirty = true;
     });
-    add("Quad Remesh", "", "Edit", "Rebuild the whole mesh as quads: fewer faces (the Quads target in Edit Mesh), the same shape. Slots, vertex colours and UVs are dropped; Undo brings them back.", mr->mesh.TriangleCount() > 0, "The mesh has no triangles.", [&ed, mr] {
+    add("Quad Remesh", "", "Edit", "Rebuild the whole mesh as quads: fewer faces (the Quads target in Fix the surface), the same shape. Slots, vertex colours and UVs are dropped; Undo brings them back.", mr->mesh.TriangleCount() > 0, "The mesh has no triangles.", [&ed, mr] {
         okay::modeling::QuadRemeshOptions qo; qo.targetQuads = g_quadTarget; qo.allQuads = g_quadAllQuads;
         okay::modeling::QuadRemeshReport rep; const int before = mr->mesh.TriangleCount();
         const Mesh src = mr->mesh;
@@ -3597,7 +3602,7 @@ static std::vector<ModelCmd> BuildModelCmds(EditorState& ed, MeshRenderer* mr) {
         });
         ConsoleLog(ok ? "Quad Remesh: " + std::to_string(before) + " triangles -> " + std::to_string(rep.outputQuads) + " quads, " + std::to_string(rep.outputTriangles) + " triangles left" : "Quad Remesh: " + rep.error);
     });
-    add("Set Bevel Weight on Selected Edges", "", "Edit", "Mark the selected edges for the Bevel modifier's 'Use edge weights' option (weight set in Edit Mesh: 1 = full width).", anyEdges, needEdges, [&ed, mr] {
+    add("Set Bevel Weight on Selected Edges", "", "Edit", "Mark the selected edges for the Bevel modifier's 'Use edge weights' option (weight set in Fix the surface: 1 = full width).", anyEdges, needEdges, [&ed, mr] {
         const pmo::EdgeList edges = SelectedPolyEdges(mr->mesh);
         EditUndoPoint(ed, mr);
         for (const auto& e : edges) mr->mesh.SetBevelWeight(e.first, e.second, g_bevelWeight);
@@ -3609,7 +3614,7 @@ static std::vector<ModelCmd> BuildModelCmds(EditorState& ed, MeshRenderer* mr) {
         for (const auto& e : edges) mr->mesh.SetBevelWeight(e.first, e.second, 0.0f);
         ed.dirty = true;
     });
-    add("Reduce Polygons (Quality)", "", "Edit", "Cut the triangle count to the Reduce % in Edit Mesh by collapsing the least visible edges (keeps borders, UV seams and the shape; colours kept per face). Slots and vertex colours are dropped.", mr->mesh.TriangleCount() > 8, "The mesh is too small to reduce.", [&ed, mr] {
+    add("Reduce Polygons (Quality)", "", "Edit", "Cut the triangle count to the Reduce % in Fix the surface by collapsing the least visible edges (keeps borders, UV seams and the shape; colours kept per face). Slots and vertex colours are dropped.", mr->mesh.TriangleCount() > 8, "The mesh is too small to reduce.", [&ed, mr] {
         EditUndoPoint(ed, mr);
         okay::optimize::SimplifyOptions o; o.targetRatio = std::clamp(g_reduceRatio * 0.01f, 0.02f, 1.0f); o.lockBoundary = false;
         const int before = mr->mesh.TriangleCount();
@@ -3667,7 +3672,7 @@ static std::vector<ModelCmd> BuildModelCmds(EditorState& ed, MeshRenderer* mr) {
         auto* tmr = t->AddComponent<MeshRenderer>();
         tmr->mesh = pmo::MakeTable();
         ed.Select(t);
-        ConsoleLog("Added a table: Modeling > Edit Mesh to change it, Material Slots to recolour it");
+        ConsoleLog("Added a table: Modeling > Fix the surface to change it, Material Slots to recolour it");
         ed.dirty = true;
     });
     add("Apply Scale and Rotation", "", "Object", "Bake the object's scale and rotation into its mesh and reset them (so sizes read true).", mr->gameObject->transform->ChildCount() == 0, "Not available while the object has children (their placement would change).", [&ed, mr] {
@@ -3849,7 +3854,7 @@ static std::vector<ModelCmd> BuildModelCmds(EditorState& ed, MeshRenderer* mr) {
                 ed.dirty = true;
             };
         };
-        add("Snap Selection to Surface", "", "Object", "Move the selected vertices onto the nearest point of the other selected object's surface (offset in Edit Mesh).", target != nullptr && (anyVerts || anyFaces || !g_meshSelEdges.empty()), target ? "Select vertices, edges or faces first." : needTarget, wrap(pmo::WrapMode::Nearest, true));
+        add("Snap Selection to Surface", "", "Object", "Move the selected vertices onto the nearest point of the other selected object's surface (offset in Fix the surface).", target != nullptr && (anyVerts || anyFaces || !g_meshSelEdges.empty()), target ? "Select vertices, edges or faces first." : needTarget, wrap(pmo::WrapMode::Nearest, true));
         add("Shrinkwrap Whole Mesh to Other Object", "", "Object", "Wrap every vertex of this mesh onto the other selected object's surface (nearest point).", target != nullptr, needTarget, wrap(pmo::WrapMode::Nearest, false));
         add("Project Selection Down onto Other Object", "", "Object", "Drop the selected vertices straight down (along world Y) onto the other selected object.", target != nullptr && (anyVerts || anyFaces || !g_meshSelEdges.empty()), target ? "Select vertices, edges or faces first." : needTarget, wrap(pmo::WrapMode::Project, true));
     }
@@ -6430,182 +6435,342 @@ void UIStyleBar(EditorState& ed, Component* c) {
     ImGui::Spacing();
 }
 
-// The widget list shared by Create > UI and the UI view's "+ Add" button: plain
-// widgets, launcher-look kit pieces and whole prebuilt screens.
-void DrawUIWidgetItems(EditorState& ed, bool& created) {
-    auto addUI = [&](const char* nm, auto build) {
-        GameObject* parent = UIAddParent(ed);
-        GameObject* g = ed.CreateEmpty(nm);
-        build(g);
-        if (parent) g->transform->SetParent(parent->transform, /*worldPositionStays=*/false);
-        // Spawn centered (on screen, or in the panel it went into) so it's visible.
-        UIRect r = GetUIRect(g);
-        if (r.valid && r.anchorPtr && r.position) { *r.anchorPtr = UIAnchor::Center; *r.position = {0, 0}; }
-        ConvertToUIFrame(g);   // new widgets are placed by a UI Frame
-        ed.Select(g); ed.dirty = true; created = true;
+// GameObject > UI (and the UI view's "+ Add" button). The menu itself is DATA: editor/UIMenuModel.hpp lists the eight groups, every item with
+// a one-sentence tip, and a last entry "Browse All UI..." that opens the UI Gallery. The ready-made screens come from the screen registry
+// (okay/Scene/UIScreens.hpp), one submenu per section. This function draws that list and RunUIMenuItem runs the ids.
+// A widget goes inside the selected panel, else under the scene's Canvas, which is made (with an Event System) the first time it is needed,
+// so nobody has to know about Canvas before adding a button.
+GameObject* MakeUIWidget(EditorState& ed, const char* nm, const std::function<void(GameObject*)>& build) {
+    GameObject* parent = UIAddParent(ed);
+    GameObject* g = ed.CreateEmpty(nm);
+    build(g);
+    if (parent) g->transform->SetParent(parent->transform, /*worldPositionStays=*/false);
+    // Spawn centered (on screen, or in the panel it went into) so it's visible.
+    UIRect r = GetUIRect(g);
+    if (r.valid && r.anchorPtr && r.position) { *r.anchorPtr = UIAnchor::Center; *r.position = {0, 0}; }
+    ConvertToUIFrame(g);   // new widgets are placed by a UI Frame
+    ed.Select(g); ed.dirty = true;
+    return g;
+}
+
+// Runs one id of oked::uimenu::UIMenu. Returns true when it did something (an object was added or a window opened).
+bool RunUIMenuItem(EditorState& ed, const std::string& id, const std::string& label, bool& created) {
+    using namespace okay::UITemplates;
+    using BuildFn = void (*)(GameObject*);
+    auto widget = [&](const char* nm, const std::function<void(GameObject*)>& build) { ed.PushUndo(); MakeUIWidget(ed, nm, build); created = true; ConsoleLog("Added UI: " + label); return true; };
+    auto kit = [&](GameObject* (*fn)(okay::Scene&, GameObject*)) {
+        ed.PushUndo(); GameObject* g = fn(ed.scene(), UIAddParent(ed)); ed.Select(g); ed.dirty = true; created = true; ConsoleLog("Added UI: " + label); return true;
     };
-    if (ImGui::BeginMenu("Basic")) {
-        if (ImGui::MenuItem("Button"))       { addUI("Button",    [](GameObject* g){ g->AddComponent<UIButton>(); }); MakeButtonTextChild(ed, ed.selected()); }
-        if (ImGui::MenuItem("Panel"))        addUI("Panel",       [](GameObject* g){ g->AddComponent<UIPanel>(); });
-        if (ImGui::MenuItem("Image"))        addUI("Image",       [](GameObject* g){ g->AddComponent<UIImage>(); });
-        if (ImGui::MenuItem("Raw Image"))    addUI("RawImage",    [](GameObject* g){ g->AddComponent<UIRawImage>(); });
-        if (ImGui::MenuItem("Safe Area"))    addUI("Safe Area",   [](GameObject* g){ g->AddComponent<UISafeArea>(); });
-        if (ImGui::IsItemHovered()) ImGui::SetTooltip("A full-screen container that keeps its widgets clear of phone notches and home bars.");
-        if (ImGui::IsItemHovered()) ImGui::SetTooltip("A texture through a UV rect: show part of it, tile it or scroll it.");
-        if (ImGui::MenuItem("Text"))         addUI("Text",        [](GameObject* g){ auto* t = g->AddComponent<TextRenderer>(); t->screenSpace = true; t->pixelSize = 2.0f; t->align = 1; });
-        ImGui::EndMenu();
+    auto screen = [&](GameObject* (*fn)(okay::Scene&)) {
+        ed.PushUndo(); GameObject* g = fn(ed.scene()); HideOtherMenus(ed, g); ed.Select(g); ConsoleLog("Added UI: " + label); ed.dirty = true; created = true; return true;
+    };
+    auto sceneUI = [&](const std::function<GameObject*()>& make) { ed.PushUndo(); GameObject* g = make(); ed.Select(g); ed.dirty = true; created = true; ConsoleLog("Added UI: " + label); return true; };
+    okay::Scene& sc = ed.scene();
+    if (id.rfind("ui.scr.", 0) == 0) {   // a ready-made screen from the registry
+        const std::string sid = id.substr(7);
+        ed.PushUndo();
+        std::string look, style;
+        okay::editor::CurrentScreenLook(look, style);   // the look and style picked in the UI Gallery (none by default)
+        GameObject* g = okay::UIScreens::Build(sc, sid, 0, look, style);
+        if (!g) return false;
+        HideOtherMenus(ed, g); ed.Select(g); ed.dirty = true; created = true;
+        ConsoleLog("Added UI: " + label + " (more layouts: UI Gallery)");
+        return true;
     }
-    if (ImGui::BeginMenu("Controls")) {
-        if (ImGui::MenuItem("Slider"))       addUI("Slider",      [](GameObject* g){ g->AddComponent<UISlider>(); });
-        if (ImGui::MenuItem("Range Slider")) addUI("Range Slider", oked::BuildUIRangeSlider);
-        if (ImGui::MenuItem("Virtual Joystick")) addUI("Virtual Joystick", [](GameObject* g){ g->AddComponent<VirtualJoystick>(); });
-        if (ImGui::MenuItem("D-Pad"))        addUI("D-Pad",       [](GameObject* g){ g->AddComponent<TouchDPad>(); });
-        if (ImGui::MenuItem("Touch Button")) addUI("Touch Button", [](GameObject* g){ g->AddComponent<TouchButton>(); });
-        if (ImGui::MenuItem("Toggle"))       addUI("Toggle",      [](GameObject* g){ g->AddComponent<UIToggle>(); });
-        if (ImGui::MenuItem("Stepper"))      addUI("Stepper",     [](GameObject* g){ g->AddComponent<UIStepper>(); });
-        if (ImGui::MenuItem("Rating"))       addUI("Rating",      [](GameObject* g){ g->AddComponent<UIRating>(); });
-        if (ImGui::MenuItem("Tabs"))         addUI("Tabs",        [](GameObject* g){ g->AddComponent<UITabs>(); });
-        if (ImGui::MenuItem("Input Field"))  addUI("InputField",  [](GameObject* g){ g->AddComponent<UIInputField>(); });
-        if (ImGui::MenuItem("Input Field with Validation")) addUI("ValidatedInput", oked::BuildUIInputValidation);
-        if (ImGui::MenuItem("Dropdown"))     addUI("Dropdown",    [](GameObject* g){ g->AddComponent<UIDropdown>(); });
-        if (ImGui::MenuItem("Draggable"))    addUI("Draggable",   [](GameObject* g){ g->AddComponent<UIImage>(); g->AddComponent<UIDraggable>(); });
-        if (ImGui::MenuItem("Drop Target"))  addUI("DropTarget",  [](GameObject* g){ g->AddComponent<UIPanel>(); g->AddComponent<UIDropTarget>(); });
-        ImGui::EndMenu();
+    if (id == "ui.looks") { okay::editor::OpenUIGalleryWindow(); ConsoleLog("UI Gallery: pick a Screen, then its Look and Style; screens added from GameObject > UI use them."); return true; }
+    if (id == "ui.browse") {
+        okay::editor::SetUIGalleryAdder([](EditorState& e, const std::string& wid) { bool c = false; return RunUIMenuItem(e, wid, wid, c); });
+        okay::editor::OpenUIGalleryWindow();
+        return true;
     }
-    if (ImGui::BeginMenu("HUD")) {
-        if (ImGui::MenuItem("Progress Bar")) addUI("ProgressBar", [](GameObject* g){ g->AddComponent<UIProgressBar>(); });
-        if (ImGui::MenuItem("Radial Progress")) addUI("Radial",   [](GameObject* g){ g->AddComponent<UIRadialProgress>(); });
-        if (ImGui::MenuItem("Minimap"))      addUI("Minimap",     [](GameObject* g){ g->AddComponent<Minimap>(); });
-        if (ImGui::MenuItem("Crosshair"))    addUI("Crosshair",   [](GameObject* g){ g->AddComponent<Crosshair>(); });
-        if (ImGui::MenuItem("Color Picker")) addUI("ColorPicker", [](GameObject* g){ g->AddComponent<UIColorPicker>()->Rebuild(); }); // grok/ui-color
-        if (ImGui::MenuItem("Slot Grid"))    addUI("SlotGrid",   [](GameObject* g){ g->AddComponent<UISlotGrid>()->Rebuild(); }); // grok/ui-hud
-        if (ImGui::MenuItem("Tooltip"))      addUI("Tooltip",     [](GameObject* g){ g->AddComponent<UIPanel>(); g->AddComponent<UITooltip>(); });
-        ImGui::EndMenu();
-    }
-    if (ImGui::BeginMenu("Layout & Overlays")) {   // (was "Layout": the editor's panel layouts have a Layout menu of their own, in View)
-        if (ImGui::MenuItem("Scroll View"))  addUI("ScrollView",  [](GameObject* g){ g->AddComponent<UIScrollView>(); });
-        if (ImGui::MenuItem("Layout Group")) addUI("Layout",      [](GameObject* g){ g->AddComponent<UILayoutGroup>(); });
-        if (ImGui::MenuItem("Flex Box"))     addUI("FlexBox",     oked::BuildUIFlexBox);
-        if (ImGui::MenuItem("Aspect Ratio Box")) addUI("AspectBox", oked::BuildUIAspectRatio);
-        if (ImGui::MenuItem("Masked Panel")) addUI("Mask",        oked::BuildUIMaskedPanel);
-        if (ImGui::MenuItem("List View"))    addUI("ListView",    oked::BuildUIListView);
-        ImGui::Separator();
-        if (ImGui::MenuItem("Modal Dialog")) addUI("Dialog",      oked::BuildUIModalDialog);
-        if (ImGui::MenuItem("Toast Stack"))  addUI("Toasts",      oked::BuildUIToast);   // grok/ui-toast
-        if (ImGui::MenuItem("Context Menu Panel")) addUI("ContextPanel", oked::BuildUIContextMenu);
-        if (ImGui::MenuItem("Keybind Field")) addUI("Keybind",    oked::BuildUIKeybindField);
-        ImGui::EndMenu();
-    }
-    if (ImGui::BeginMenu("App")) {
-        if (ImGui::MenuItem("Search Bar"))         addUI("Search Bar",  oked::BuildUISearchBar);
-        if (ImGui::MenuItem("Date and Time"))      addUI("Date and Time", oked::BuildUIDateTimePicker);
-        if (ImGui::MenuItem("File Picker"))        addUI("File Picker", oked::BuildUIFilePicker);
-        if (ImGui::MenuItem("Accordion"))          addUI("Accordion",   oked::BuildUIAccordion);
-        if (ImGui::MenuItem("Breadcrumbs"))        addUI("Breadcrumbs", oked::BuildUIBreadcrumbs);
-        if (ImGui::MenuItem("Pagination"))         addUI("Pagination",  oked::BuildUIPagination);
-        if (ImGui::MenuItem("Skeleton"))           addUI("Skeleton",    oked::BuildUISkeleton);
-        if (ImGui::MenuItem("Bottom Sheet"))       addUI("Bottom Sheet", oked::BuildUIBottomSheet);
-        ImGui::EndMenu();
-    }
-    // Launcher-look building blocks: each is a small ready-styled group you can
-    // restyle. They go inside the selected panel/card when there is one.
-    if (ImGui::BeginMenu("Kit (launcher look)")) {
-        auto kit = [&](const char* label, const char* tip, auto fn) {
-            if (ImGui::MenuItem(label)) {
-                ed.PushUndo();
-                GameObject* g = fn(ed.scene(), UIAddParent(ed));
-                ed.Select(g); ed.dirty = true; created = true;
-                ConsoleLog(std::string("Added UI: ") + label);
-            }
-            if (tip && ImGui::IsItemHovered()) ImGui::SetTooltip("%s", tip);
-        };
-        using namespace okay::UITemplates;
-        kit("Card",             "A raised rounded card: caption, title, text and an action button.", &AddCard);
-        kit("Heading",          "A caption over a big title with the accent underline.", &AddHeading);
-        kit("List Row",         "Avatar + name + status, with a badge on the right (player lists, friends).", &AddListRow);
-        kit("Badge",            "A pill tag (\"Ready\", \"3 / 4\", \"New\").", &AddBadge);
-        kit("Avatar",           "A coloured circle with an initial.", &AddAvatar);
-        kit("Divider",          "A 1 px hairline.", &AddDivider);
-        ImGui::Separator();
-        kit("Primary Button",   "The accent call-to-action button.", [](okay::Scene& s, GameObject* p) { return AddButtonOfKind(s, p, ButtonKind::Primary); });
-        kit("Secondary Button", "A quieter button for other actions.", [](okay::Scene& s, GameObject* p) { return AddButtonOfKind(s, p, ButtonKind::Secondary); });
-        kit("Danger Button",    "A red button for destructive actions.", [](okay::Scene& s, GameObject* p) { return AddButtonOfKind(s, p, ButtonKind::Danger); });
-        kit("Ghost Button",     "A text-only button (Cancel, Back).", [](okay::Scene& s, GameObject* p) { return AddButtonOfKind(s, p, ButtonKind::Ghost); });
-        ImGui::Separator();
-        kit("Switch",           "An on/off switch.", &AddSwitch);
-        kit("Spinner",          "A busy spinner (loading, searching).", &AddSpinner);
-        kit("Notification",     "A toast that slides in at the top-right.", &AddNotification);
-        ImGui::EndMenu();
-    }
-    // Prebuilt, fully-editable UI screens. Drop one in, then customize it or save
-    // it as a reusable prefab ("Save Selected as UI").
-    if (ImGui::BeginMenu("Prebuilt Screens")) {
-        auto add = [&](const char* label, GameObject* (*fn)(okay::Scene&)) {
-            if (ImGui::MenuItem(label)) {
-                ed.PushUndo();
-                GameObject* g = fn(ed.scene());
-                HideOtherMenus(ed, g);
-                ed.Select(g);
-                ConsoleLog(std::string("Added UI: ") + label); ed.dirty = true; created = true;
-            }
-        };
-        ImGui::TextDisabled("Menus");
-        add("Main Menu",            &okay::UITemplates::AddMainMenu);
-        add("Pause Menu",           &okay::UITemplates::AddPauseMenu);
-        add("Settings",             &okay::UITemplates::AddSettings);
-        add("Save Slots",           &okay::UITemplates::AddSaveSlots);
-        add("Confirm Dialog",       &okay::UITemplates::AddConfirmDialog);
-        add("UI Notify",            &okay::UITemplates::AddUINotify);   // grok/ui-toast
-        if (ImGui::BeginMenu("Loading Screens")) {
-            ImGui::TextDisabled("UI you can edit (bar follows `loading`)");
-            add("Loading Screen",      &okay::UITemplates::AddLoadingScreen);
-            add("Minimal",             &okay::UITemplates::AddLoadingMinimal);
-            add("Card",                &okay::UITemplates::AddLoadingCard);
-            add("Splash (logo)",       &okay::UITemplates::AddLoadingSplash);
-            add("Cinematic",           &okay::UITemplates::AddLoadingCinematic);
-            ImGui::Separator();
-            ImGui::TextDisabled("Automatic overlay (shows on Play, times itself)");
-            static const char* kOverlay[] = {"Classic", "Minimal", "Cinematic", "Splash", "Card", "Corner", "Ring"};
-            for (int li = 0; li < (int)okay::LoadingScreen::Layout::Count; ++li) {
-                if (ImGui::MenuItem((std::string(kOverlay[li]) + " overlay").c_str())) {
-                    ed.PushUndo();
-                    GameObject* g = ed.scene().CreateGameObject("Loading Screen");
-                    auto* ls = g->AddComponent<okay::LoadingScreen>();
-                    okay::ApplyLoadingPreset(*ls, (okay::LoadingScreen::Layout)li);
-                    ls->tips = {"Tip: hold Shift to sprint.", "Tip: press Esc to pause."};
-                    ls->tipInterval = 2.5f;
-                    ed.Select(g);
-                    ConsoleLog(std::string("Added a ") + kOverlay[li] + " loading screen (pick another look in the Inspector)");
-                    ed.dirty = true; created = true;
-                }
-                if (ImGui::IsItemHovered()) ImGui::SetTooltip("A LoadingScreen component: covers the game when the scene starts\n(or call Begin(\"NextLevel\")), fills its bar, then reveals or loads a scene.");
-            }
-            ImGui::EndMenu();
+    if (id == "ui.starter") { return sceneUI([&] { std::string look, style; okay::editor::CurrentScreenLook(look, style); GameObject* g = okay::UIScreens::BuildStarterPack(sc, look, style); ConsoleLog("Starter Pack: only the Main Menu shows; press Play, then click Play, Settings, Pause..."); return g; }); }
+    // --- Basics
+    if (id == "ui.text")    return widget("Text", [](GameObject* g) { auto* t = g->AddComponent<TextRenderer>(); t->screenSpace = true; t->pixelSize = 2.0f; t->align = 1; });
+    if (id == "ui.button")  { widget("Button", [](GameObject* g) { g->AddComponent<UIButton>(); }); MakeButtonTextChild(ed, ed.selected()); return true; }
+    if (id == "ui.image")   return widget("Image", [](GameObject* g) { g->AddComponent<UIImage>(); });
+    if (id == "ui.panel")   return widget("Panel", [](GameObject* g) { g->AddComponent<UIPanel>(); });
+    if (id == "ui.rawimage") return widget("RawImage", [](GameObject* g) { g->AddComponent<UIRawImage>(); });
+    if (id == "ui.divider") return kit(&AddDivider);
+    // --- Input
+    if (id == "ui.inputfield")     return widget("InputField", [](GameObject* g) { g->AddComponent<UIInputField>(); });
+    if (id == "ui.validatedinput") return widget("ValidatedInput", oked::BuildUIInputValidation);
+    if (id == "ui.slider")         return widget("Slider", [](GameObject* g) { g->AddComponent<UISlider>(); });
+    if (id == "ui.rangeslider")    return widget("Range Slider", oked::BuildUIRangeSlider);
+    if (id == "ui.toggle")         return widget("Toggle", [](GameObject* g) { g->AddComponent<UIToggle>(); });
+    if (id == "ui.switch")         return kit(&AddSwitch);
+    if (id == "ui.radio") return sceneUI([&] {
+        GameObject* row = okay::UITemplates::detail::Group(sc, UIAddParent(ed), "Radio Buttons");
+        const char* n[] = {"Easy", "Normal", "Hard"};
+        for (int i = 0; i < 3; ++i) {
+            GameObject* r = okay::UITemplates::detail::Child(sc, row, n[i]);
+            auto* t = r->AddComponent<UIToggle>();
+            t->anchor = UIAnchor::TopLeft; t->position = {24.0f, 24.0f + i * 36.0f}; t->size = {24, 24};
+            t->style = UIToggle::Style::Radio; t->radioGroup = "Choice"; t->label = n[i]; t->on = (i == 1);
         }
-        ImGui::Separator();
-        ImGui::TextDisabled("In game");
-        add("HUD (health + score)", &okay::UITemplates::AddHUD);
-        add("Health Bar",           &okay::UITemplates::AddHealthBar);
-        add("Dialog Box",           &okay::UITemplates::AddDialogBox);
-        add("Notification",         &okay::UITemplates::AddNotificationScreen);
-        add("UI Showcase",          &okay::UITemplates::AddUIShowcase);   // grok/ui-theme
-        add("Shop",                 &okay::UITemplates::AddShop);
-        add("Game Over",            &okay::UITemplates::AddGameOver);
-        ImGui::Separator();
-        ImGui::TextDisabled("Multiplayer");
-        add("Lobby",                &okay::UITemplates::AddLobby);
-        add("Scoreboard",           &okay::UITemplates::AddScoreboard);
-        add("Leaderboard",          &okay::UITemplates::AddLeaderboard);
-        add("Matchmaking",          &okay::UITemplates::AddMatchmaking);
-        add("UI Color",             &okay::UITemplates::AddUIColor); // grok/ui-color
-        add("UI HUD",               &okay::UITemplates::AddUIHUD); // grok/ui-hud
-        add("UI Controls",          &okay::UITemplates::AddUIControls);   // grok/ui-controls
-        add("UI Notify",            &okay::UITemplates::AddUINotify);   // grok/ui-toast
-        add("UI Options",           &okay::UITemplates::AddUIOptions);   // grok/ui-options
-        ImGui::Separator();
-        oked::DrawUIAddMenuExtras(ed, UIAddParent(ed), created);   // window, radio buttons, damage numbers, nameplate, inventory, dialogue
-        ImGui::EndMenu();
+        return row; });
+    if (id == "ui.dropdown")    return widget("Dropdown", [](GameObject* g) { g->AddComponent<UIDropdown>(); });
+    if (id == "ui.stepper")     return widget("Stepper", [](GameObject* g) { g->AddComponent<UIStepper>(); });
+    if (id == "ui.rating")      return widget("Rating", [](GameObject* g) { g->AddComponent<UIRating>(); });
+    if (id == "ui.colorpicker") return widget("ColorPicker", [](GameObject* g) { g->AddComponent<UIColorPicker>()->Rebuild(); });
+    if (id == "ui.keybind")     return widget("Keybind", oked::BuildUIKeybindField);
+    if (id == "ui.searchbar")   return widget("Search Bar", oked::BuildUISearchBar);
+    if (id == "ui.datetime")    return widget("Date and Time", oked::BuildUIDateTimePicker);
+    if (id == "ui.filepicker")  return widget("File Picker", oked::BuildUIFilePicker);
+    if (id == "ui.formgroup")   return widget("Form Group", oked::BuildUIFormGroup);
+    // --- Layout
+    if (id == "ui.layoutgroup") return widget("Layout", [](GameObject* g) { g->AddComponent<UILayoutGroup>(); });
+    if (id == "ui.scrollview")  return widget("ScrollView", [](GameObject* g) { g->AddComponent<UIScrollView>(); });
+    if (id == "ui.tabs")        return widget("Tabs", [](GameObject* g) { g->AddComponent<UITabs>(); });
+    if (id == "ui.accordion")   return widget("Accordion", oked::BuildUIAccordion);
+    if (id == "ui.flexbox")     return widget("FlexBox", oked::BuildUIFlexBox);
+    if (id == "ui.aspectbox")   return widget("AspectBox", oked::BuildUIAspectRatio);
+    if (id == "ui.mask")        return widget("Mask", oked::BuildUIMaskedPanel);
+    if (id == "ui.safearea")    return widget("Safe Area", [](GameObject* g) { g->AddComponent<UISafeArea>(); });
+    if (id == "ui.draggable")   return widget("Draggable", [](GameObject* g) { g->AddComponent<UIImage>(); g->AddComponent<UIDraggable>(); });
+    if (id == "ui.droptarget")  return widget("DropTarget", [](GameObject* g) { g->AddComponent<UIPanel>(); g->AddComponent<UIDropTarget>(); });
+    if (id == "ui.canvas")      { ed.PushUndo(); ed.Select(ed.CreateEmpty("Canvas")); ed.selected()->AddComponent<Canvas>()->screenMatch = Canvas::ScreenMatch::Expand; ed.dirty = true; created = true; return true; }
+    if (id == "ui.eventsystem") { ed.PushUndo(); ed.Select(ed.CreateEmpty("EventSystem")); ed.selected()->AddComponent<EventSystem>(); ed.dirty = true; created = true; return true; }
+    // --- Game
+    if (id == "ui.progressbar") return widget("ProgressBar", [](GameObject* g) { g->AddComponent<UIProgressBar>(); });
+    if (id == "ui.hotbar")      return widget("SlotGrid", [](GameObject* g) { g->AddComponent<UISlotGrid>()->Rebuild(); });
+    if (id == "ui.minimap")     return widget("Minimap", [](GameObject* g) { g->AddComponent<Minimap>(); });
+    if (id == "ui.crosshair")   return widget("Crosshair", [](GameObject* g) { g->AddComponent<Crosshair>(); });
+    if (id == "ui.ammo")        return widget("Ammo Counter", oked::BuildUIAmmoCounter);
+    if (id == "ui.compass")     return widget("Compass", oked::BuildUICompass);
+    if (id == "ui.objective")   return widget("Objective Tracker", oked::BuildUIObjectiveTracker);
+    if (id == "ui.prompt")      return widget("Interaction Prompt", oked::BuildUIInteractionPrompt);
+    if (id == "ui.killfeed")    return widget("Kill Feed", oked::BuildUIKillFeed);
+    if (id == "ui.damage")      return sceneUI([&] { GameObject* g = okay::UITemplates::detail::Child(sc, UIAddParent(ed), "Damage Numbers"); g->AddComponent<UIDamageNumbers>(); return g; });
+    if (id == "ui.nameplate")   return sceneUI([&] { return UIGallery::AddNameplate(sc, false); });
+    if (id == "ui.nameplateworld") return sceneUI([&] {
+        GameObject* plate = UIGallery::AddNameplate(sc, true);
+        if (GameObject* sel = ed.selected(); sel && sel != plate && sel->transform) {
+            plate->transform->SetParent(sel->transform, false);
+            if (okay::uiowner::Find(plate) == sel) {            // a character: the plate hangs above it
+                float up = 1.3f;
+                if (auto* sr = sel->GetComponent<SpriteRenderer>()) up = sr->size.y * 0.5f + 0.25f;
+                plate->transform->localPosition = {0.0f, up, 0.0f};
+            } else plate->transform->SetParent(nullptr, false);   // not a character: leave the plate where it was made
+        }
+        return plate; });
+    if (id == "ui.worldlabel")  { ed.PushUndo(); ed.Select(ed.CreateEmpty("WorldLabel")); ed.selected()->AddComponent<WorldUI>(); ed.dirty = true; created = true; return true; }
+    if (id == "ui.abilityicon") return widget("Ability", oked::BuildUIAbilityIcon);
+    if (id == "ui.itemcard")    return widget("Item Card", oked::BuildUIItemTooltipCard);
+    if (id == "ui.radialmenu")  return widget("Radial Menu", oked::BuildUIRadialMenu);
+    if (id == "ui.radialprogress") return widget("Radial", [](GameObject* g) { g->AddComponent<UIRadialProgress>(); });
+    if (id == "ui.joystick")    return widget("Virtual Joystick", [](GameObject* g) { g->AddComponent<VirtualJoystick>(); });
+    if (id == "ui.dpad")        return widget("D-Pad", [](GameObject* g) { g->AddComponent<TouchDPad>(); });
+    if (id == "ui.touchbutton") return widget("Touch Button", [](GameObject* g) { g->AddComponent<TouchButton>(); });
+    // --- Data & Lists
+    if (id == "ui.listview")    return widget("ListView", oked::BuildUIListView);
+    if (id == "ui.datatable")   return widget("Data Table", oked::BuildUIDataTable);
+    if (id == "ui.treeview")    return widget("Tree View", oked::BuildUITreeView);
+    if (id == "ui.boundlist")   return widget("Bound List", oked::BuildUIBoundList);
+    if (id == "ui.boundslider") return widget("Bound Slider", oked::BuildUIBoundSlider);
+    if (id == "ui.visibleif")   return widget("Visible If", oked::BuildUIVisibleIf);
+    if (id == "ui.hotreload")   return widget("Hot Reload", oked::BuildUIHotReload);
+    if (id == "ui.pagination")  return widget("Pagination", oked::BuildUIPagination);
+    if (id == "ui.breadcrumbs") return widget("Breadcrumbs", oked::BuildUIBreadcrumbs);
+    if (id == "ui.skeleton")    return widget("Skeleton", oked::BuildUISkeleton);
+    if (id == "ui.menubar")     return widget("Menu Bar", oked::BuildUIMenuBar);
+    if (id == "ui.toolbar")     return widget("Toolbar", oked::BuildUIToolbar);
+    // --- Windows & Pop-ups
+    if (id == "ui.dialog")      return widget("Dialog", oked::BuildUIModalDialog);
+    if (id == "ui.toast")       return widget("Toasts", oked::BuildUIToast);
+    if (id == "ui.notice")      return kit(&AddNotification);
+    if (id == "ui.tooltip")     return widget("Tooltip", [](GameObject* g) { g->AddComponent<UIPanel>(); g->AddComponent<UITooltip>(); });
+    if (id == "ui.contextmenu") return widget("ContextPanel", oked::BuildUIContextMenu);
+    if (id == "ui.window")      return sceneUI([&] {
+        GameObject* w = UIGallery::AddWindow(sc, UIAddParent(ed), "Window", "Window", {200, 140}, {320, 220});
+        okay::UITemplates::detail::Text(sc, w, "Body", "Put your content here.", UIAnchor::TopLeft, {16, 52}, {288, 40}, 14.0f, slate::Dim());
+        return w; });
+    if (id == "ui.wizard")      return widget("Wizard", oked::BuildUIWizard);
+    if (id == "ui.bottomsheet") return widget("Bottom Sheet", oked::BuildUIBottomSheet);
+    if (id == "ui.spinner")     return kit(&AddSpinner);
+    // --- Ready-made pieces
+    if (id == "ui.card")        return kit(&AddCard);
+    if (id == "ui.heading")     return kit(&AddHeading);
+    if (id == "ui.listrow")     return kit(&AddListRow);
+    if (id == "ui.badge")       return kit(&AddBadge);
+    if (id == "ui.avatar")      return kit(&AddAvatar);
+    if (id == "ui.btn.primary")   return kit([](okay::Scene& s, GameObject* p) { return AddButtonOfKind(s, p, ButtonKind::Primary); });
+    if (id == "ui.btn.secondary") return kit([](okay::Scene& s, GameObject* p) { return AddButtonOfKind(s, p, ButtonKind::Secondary); });
+    if (id == "ui.btn.danger")    return kit([](okay::Scene& s, GameObject* p) { return AddButtonOfKind(s, p, ButtonKind::Danger); });
+    if (id == "ui.btn.ghost")     return kit([](okay::Scene& s, GameObject* p) { return AddButtonOfKind(s, p, ButtonKind::Ghost); });
+    if (id == "ui.inventory.mc") {
+
+            // The items live on the player (selected or tagged "Player") so its Crafting,
+            // Consumables and StructureBuilder find them; only the UI goes under the Canvas.
+            GameObject* player = (ed.selected() && ed.selected()->tag == "Player") ? ed.selected()
+                                                                                     : ed.scene().FindWithTag("Player");
+            GameObject* root = EnsureUIRoot(ed);   // inventories are UI → live under the Canvas
+            GameObject* g = ed.CreateEmpty("Inventory");
+            GameObject* holder = player ? player : g;
+            auto* inv = holder->GetComponent<Inventory>();
+            if (!inv) {
+                inv = holder->AddComponent<Inventory>();
+                inv->capacity = 36;   // 9 hotbar + 27 backpack, like Minecraft (= the UI's slots)
+                inv->Add("Dirt", 64); inv->Add("Stone", 64); inv->Add("Wood", 32);
+                inv->Add("Torch", 16); inv->Add("Sword", 1);
+            }
+            auto* iu = g->AddComponent<InventoryUI>();
+            if (player) iu->inventoryTarget = player->name;
+            if (root) g->transform->SetParent(root->transform, false);
+            ed.Select(g); ed.dirty = true; created = true;
+        
+        return true;
     }
+    if (id == "ui.inventory.grid") {
+
+            GameObject* root = EnsureUIRoot(ed);   // UI → under the Canvas
+            GameObject* g = ed.CreateEmpty("GridInventory");
+            auto* gi = g->AddComponent<GridInventory>();
+            gi->cols = 8; gi->rows = 6; gi->title = "Backpack";
+            gi->AddItem("Rifle", 2, 6, 1, 4.0f);
+            gi->AddItem("Backpack", 3, 3, 1, 1.0f);
+            gi->AddItem("Beans", 1, 1, 2, 0.4f);
+            gi->AddItem("Bandage", 1, 1, 3, 0.1f);
+            gi->AddItem("Water", 1, 2, 1, 0.6f);
+            g->AddComponent<GridInventoryUI>();
+            if (root) g->transform->SetParent(root->transform, false);
+            ed.Select(g); ed.dirty = true; created = true;
+        
+        return true;
+    }
+    if (id == "ui.inventory.unturned") {
+
+            // Everything lives under ONE tidy "Unturned Inventory" group so the
+            // hierarchy stays clean: a Player (body grid + screen UI) with a worn
+            // Vest and Backpack as children, and a single Loot Crate beside it.
+            GameObject* group = ed.CreateEmpty("Unturned Inventory");
+            GameObject* player = ed.CreateEmpty("Player");
+            player->transform->SetParent(group->transform, false);
+            auto* body = player->AddComponent<GridInventory>();
+            body->cols = 5; body->rows = 2; body->title = "Pockets"; body->category = "Pockets";
+            body->toggleKey = 'i';
+            body->AddItem("Knife", 1, 2, 1, 0.3f);
+            body->AddItem("Map", 2, 2, 1, 0.1f);
+            auto* screen = player->AddComponent<GridInventoryUI>();
+            screen->multiContainer = true; screen->nearbyRange = 4.0f;
+
+            auto worn = [&](const char* name, const char* cat, int c, int rr) {
+                GameObject* w = ed.CreateEmpty(name);
+                w->transform->SetParent(player->transform, false);
+                auto* gi = w->AddComponent<GridInventory>();
+                gi->cols = c; gi->rows = rr; gi->title = name; gi->category = cat; gi->toggleKey = 0;
+                return gi;
+            };
+            worn("Vest", "Vest", 5, 2)->AddItem("Mag", 1, 2, 3, 0.2f);
+            auto* pack = worn("Backpack", "Backpack", 6, 5);
+            pack->weightLimit = 30.0f;
+            pack->AddItem("Rifle", 2, 5, 1, 4.0f);
+            pack->AddItem("Water", 1, 2, 1, 0.6f);
+            pack->AddItem("Beans", 1, 1, 2, 0.4f);
+
+            GameObject* crate = ed.CreateEmpty("Loot Crate");
+            crate->transform->SetParent(group->transform, false);
+            crate->transform->localPosition = {2.0f, 0.0f, 0.0f};   // 2m away → in the Nearby column
+            auto* ci = crate->AddComponent<GridInventory>();
+            ci->cols = 5; ci->rows = 4; ci->title = "Loot Crate"; ci->worldItem = true; ci->toggleKey = 0;
+            ci->AddItem("Ammo", 1, 1, 30, 0.5f); ci->AddItem("Scope", 1, 2, 1, 0.3f); ci->AddItem("Medkit", 2, 2, 1, 1.2f);
+
+            ed.Select(player); ed.dirty = true; created = true;
+        
+        return true;
+    }
+    if (id == "ui.document") {
+
+            GameObject* root = EnsureUIRoot(ed);
+            GameObject* g = ed.CreateEmpty("UIDocument");
+            auto* doc = g->AddComponent<UIDocument>();
+            doc->markup =
+                "panel pos=40,40 size=360,240 color=30,36,52,220\n"
+                "  text \"MY GAME\" pos=70,70 size=5\n"
+                "  button \"Play\" pos=70,170 size=300,60 anchor=topleft\n";
+            if (root) g->transform->SetParent(root->transform, false);
+            doc->Rebuild(); ed.scene().Update(0.0f);
+            ed.Select(g); ed.dirty = true; created = true;
+        
+        return true;
+    }
+    if (id == "ui.saveprefab") {
+        if (!ed.selected()) { ConsoleLog("Select the UI first (a Canvas, or a menu Panel with its children), then save it.", 1); return false; }
+        namespace fs = std::filesystem;
+            fs::path assets = ed.projectDir().empty() ? fs::path("Assets") : fs::path(ed.projectDir()) / "Assets";
+            fs::path dir = assets / "UI"; std::error_code ec; fs::create_directories(dir, ec);
+            SavePrefabInto(ed.selected(), dir);
+            created = true;
+        return true;
+    }
+    if (id.rfind("ui.w3d.", 0) == 0) {   // 3D UI: each widget is its own standalone object in the world (a WorldSpaceUI marker), not under the Canvas
+        auto add3d = [&](const char* nm, auto build) {
+                GameObject* g = ed.CreateEmpty(nm);
+                build(g);
+                g->AddComponent<WorldSpaceUI>();
+                if (g->transform) g->transform->localPosition = ed.camTarget;
+                ed.Select(g); ed.dirty = true; created = true;
+            };
+        const std::string w = id.substr(7);
+        ed.PushUndo();
+        if (w == "button") add3d("Button3D", [](GameObject* g){ auto* b = g->AddComponent<UIButton>(); b->anchor = UIAnchor::Center; b->position = {0,0}; b->size = {220, 80}; b->label = "Button"; b->fontScale = 3.0f; });
+        else if (w == "text") add3d("Text3D", [](GameObject* g){ auto* t = g->AddComponent<TextRenderer>(); t->screenSpace = true; t->pixelSize = 3.0f; t->align = 1; t->anchor = UIAnchor::Center; });
+        else if (w == "panel") add3d("Panel3D", [](GameObject* g){ auto* p = g->AddComponent<UIPanel>(); p->anchor = UIAnchor::Center; p->position = {0,0}; });
+        else if (w == "image") add3d("Image3D", [](GameObject* g){ auto* im = g->AddComponent<UIImage>(); im->anchor = UIAnchor::Center; im->position = {0,0}; });
+        else return false;
+        return true;
+    }
+    // --- Automatic loading overlays
+    if (id.rfind("ui.o.", 0) == 0) {
+        const int li = std::atoi(id.c_str() + 5);
+        static const char* kOverlay[] = {"Classic", "Minimal", "Cinematic", "Splash", "Card", "Corner", "Ring"};
+        if (li < 0 || li >= (int)okay::LoadingScreen::Layout::Count) return false;
+        ed.PushUndo();
+        GameObject* g = ed.scene().CreateGameObject("Loading Screen");
+        auto* ls = g->AddComponent<okay::LoadingScreen>();
+        okay::ApplyLoadingPreset(*ls, (okay::LoadingScreen::Layout)li);
+        ls->tips = {"Tip: hold Shift to sprint.", "Tip: press Esc to pause."};
+        ls->tipInterval = 2.5f;
+        ed.Select(g);
+        ConsoleLog(std::string("Added a ") + kOverlay[li] + " loading screen (pick another look in the Inspector)");
+        ed.dirty = true; created = true;
+        return true;
+    }
+    (void)screen;
+    return false;
+}
+
+// The ready-made screens, grouped by the registry's sections, for the menu model.
+const std::vector<oked::uimenu::ScreenGroup>& UIScreenGroups() {
+    static const std::vector<oked::uimenu::ScreenGroup> groups = [] {
+        std::vector<oked::uimenu::ScreenGroup> v;
+        for (const okay::UIScreens::Section& sec : okay::UIScreens::Sections()) {
+            oked::uimenu::ScreenGroup g; g.name = sec.name; g.tip = sec.tip;
+            for (const okay::UIScreens::Def& d : okay::UIScreens::Screens())
+                if (d.section == sec.id) g.items.push_back({d.id, d.name, d.desc});
+            if (!g.items.empty()) v.push_back(std::move(g));
+        }
+        return v;
+    }();
+    return groups;
+}
+
+void DrawUIWidgetItems(EditorState& ed, bool& created) {
+    static const std::vector<oked::menubar::Entry> menu = oked::uimenu::UIMenu(UIScreenGroups());
+    std::function<void(const std::vector<oked::menubar::Entry>&)> draw = [&](const std::vector<oked::menubar::Entry>& es) {
+        for (const auto& e : es) {
+            using oked::menubar::Kind;
+            if (e.kind == Kind::Separator) { ImGui::Separator(); continue; }
+            if (e.kind == Kind::Submenu) {
+                const bool open = ImGui::BeginMenu(e.label.c_str());
+                if (!e.tip.empty() && ImGui::IsItemHovered()) ImGui::SetTooltip("%s", e.tip.c_str());
+                if (open) { draw(e.children); ImGui::EndMenu(); }
+                continue;
+            }
+            if (ImGui::MenuItem(e.label.c_str())) RunUIMenuItem(ed, e.id, e.label, created);
+            if (!e.tip.empty() && ImGui::IsItemHovered()) ImGui::SetTooltip("%s", e.tip.c_str());
+        }
+    };
+    draw(menu);
 }
 
 // Defined with the Animation window further down; entering Play must clear the
@@ -6768,7 +6933,7 @@ static bool* MenuFlag(const std::string& id) {
         {"tool.animation", &g_showAnimation}, {"tool.animator", &g_showAnimatorGraph}, {"tool.timeline", &g_showTimeline},
         {"tool.navigation", &g_showNavigation}, {"tool.dialogue", &g_showDialogue}, {"tool.behaviortree", &g_showBehaviorTree},
         {"tool.modeling", &g_showModeling}, {"tool.uveditor", &g_showUVEditor}, {"tool.spriteeditor", &g_showSpriteEditor},
-        {"tool.uieditor", &g_showUIEditor}, {"tool.uitheme", &g_showUIThemer}, {"tool.items", &g_showItemDatabase},
+        {"tool.uieditor", &g_showUIEditor}, {"tool.uigallery", &okay::editor::UIGalleryOpenFlag()}, {"tool.uitheme", &g_showUIThemer}, {"tool.items", &g_showItemDatabase},
         {"tool.weapons", &g_showWeapons}, {"tool.localization", &g_showLocalization}, {"tool.inputactions", &g_showInputActions}, {"view.uionly", &g_uiOnlyMode},
     };
     for (const auto& f : kFlags) if (id == f.first) return f.second;
@@ -7067,6 +7232,95 @@ static void DrawRenderingMenuItems(EditorState& ed) {
     if (ImGui::IsItemHovered()) ImGui::SetTooltip("Cheaper Scene view only (the Game view and your builds keep the scene's own look):\nno ambient occlusion, bloom, FXAA or supersampling, render scale at most 75%%,\nand one small shadow cascade while the Game panel is closed.");
 }
 
+// ---- Creators shared by GameObject > Create, the Hierarchy menus and the Scene view's right-click menu (and its search box). ----
+static GameObject* CreatePrimitiveByName(EditorState& ed, const std::string& mesh, const std::string& label) {
+    GameObject* go = mesh == "Cube" ? ed.CreateCube() : mesh == "Pyramid" ? ed.CreatePyramid() : ed.CreateMesh(mesh);
+    ConsoleLog("Created " + label);
+    return go;
+}
+static GameObject* AddLightObject(EditorState& ed, int kind) {   // 0 directional, 1 point, 2 spot
+    GameObject* go = nullptr;
+    if (kind == 0) {
+        go = ed.CreateEmpty("Directional Light");
+        go->AddComponent<Light>();
+        go->transform->localRotation = Quat::Euler({50, -30, 0}); // angled key light
+    } else if (kind == 1) {
+        go = ed.CreateEmpty("Point Light");
+        auto* l = go->AddComponent<Light>(); l->type = Light::Type::Point; l->range = 12.0f;
+        go->transform->localPosition = {0, 3, 0};
+    } else {
+        go = ed.CreateEmpty("Spot Light");
+        auto* l = go->AddComponent<Light>(); l->type = Light::Type::Spot; l->range = 16.0f; l->spotAngle = 50.0f;
+        go->transform->localPosition = {0, 5, 0};
+        go->transform->localRotation = Quat::Euler({90, 0, 0}); // aim down
+    }
+    ed.Select(go); ConsoleLog(std::string("Created ") + go->name);
+    return go;
+}
+static GameObject* AddAudioSourceObject(EditorState& ed) {
+    GameObject* g = ed.CreateEmpty("Audio Source");
+    g->AddComponent<AudioSource>()->clip = AudioClip::Sine(440.0f, 0.3f);
+    ed.Select(g); ed.dirty = true;
+    ConsoleLog("Created an Audio Source (a short test tone: pick your own sound in the Inspector)");
+    return g;
+}
+static GameObject* AddMusicPlayerObject(EditorState& ed) {
+    GameObject* g = ed.CreateEmpty("Music Player");
+    g->AddComponent<MusicPlayer>();
+    ed.Select(g); ed.dirty = true;
+    ConsoleLog("Created a Music Player");
+    return g;
+}
+static GameObject* AddParticleObject(EditorState& ed) {
+    GameObject* go = ed.CreateEmpty("Particles");
+    go->AddComponent<ParticleSystem>();
+    ConsoleLog("Created Particle System (press Play to see it)");
+    return go;
+}
+static GameObject* AddWaterObject(EditorState& ed) {
+    GameObject* go = ed.CreateEmpty("Water");
+    auto* w = go->AddComponent<Water>();
+    w->size = 80.0f; w->Apply();
+    ed.Select(go); ed.view3D = true; ed.dirty = true;
+    ConsoleLog("Created Water (animated reflective surface)");
+    return go;
+}
+static GameObject* AddTerrainObject(EditorState& ed) {
+    GameObject* go = ed.CreateEmpty("Terrain");
+    auto* tr = go->AddComponent<Terrain>();
+    tr->Resize(64); tr->size = 80.0f;
+    tr->Generate(1, 10.0f, 3.0f, 5, (unsigned)(ImGui::GetTime() * 1000.0)); // rolling hills
+    tr->Apply();
+    go->AddComponent<TerrainDigger>();   // dig/raise it at runtime out of the box
+    ed.Select(go); ed.view3D = true; ed.dirty = true;
+    ConsoleLog("Created Terrain (with a Terrain Digger: hold Left Mouse in Play to dig)");
+    return go;
+}
+static GameObject* AddCharacterObject(EditorState& ed) {
+    GameObject* g = ed.CreateEmpty("Character");
+    g->AddComponent<Character>()->Apply();
+    HumanoidLibrary::EnsureAnimator(g);
+    ed.SettleSpawn(g);
+    ed.Select(g); ed.view3D = true; ed.dirty = true;
+    ConsoleLog("Created Character");
+    return g;
+}
+static GameObject* AddTilemapObject(EditorState& ed) {
+    GameObject* go = ed.CreateEmpty("Tilemap");
+    auto* tm = go->AddComponent<Tilemap>();
+    tm->Resize(12, 8);
+    for (int x = 0; x < 12; ++x) tm->SetTile(x, 0, 1); // a ground row
+    ConsoleLog("Created Tilemap");
+    return go;
+}
+static GameObject* AddPlayerControllerObject(EditorState& ed) {
+    ed.PushUndo();
+    GameObject* g = ed.SettleSpawn(okay::Templates::AddThirdPersonPlayer(ed.scene()));
+    ed.Select(g);
+    ConsoleLog("Added Player Controller (View: Both, starts in third person; change View in the Inspector)"); ed.dirty = true;
+    return g;
+}
+
 // ---- GameObject > <category>, Hierarchy > Create: every creator the editor has, grouped (Create Child passes the parent). ----
 static void DrawCreateSlot(EditorState& ed, const std::string& id, GameObject* parent) {
     bool created = false;
@@ -7082,67 +7336,28 @@ static void DrawCreateSlot(EditorState& ed, const std::string& id, GameObject* p
                 }
             ImGui::EndMenu();
         }
-        if (ImGui::MenuItem("Tilemap")) {
-            GameObject* go = ed.CreateEmpty("Tilemap");
-            auto* tm = go->AddComponent<Tilemap>();
-            tm->Resize(12, 8);
-            for (int x = 0; x < 12; ++x) tm->SetTile(x, 0, 1); // a ground row
-            ConsoleLog("Created Tilemap");
-            created = true;
-        }
+        if (ImGui::MenuItem("Tilemap")) { AddTilemapObject(ed); created = true; }
     } else if (id == "create.3d") {
-        if (ImGui::MenuItem("Cube"))      { ed.CreateCube();    ConsoleLog("Created Cube"); created = true; }
-        if (ImGui::MenuItem("Sphere"))    { ed.CreateMesh("Sphere");    ConsoleLog("Created Sphere"); created = true; }
-        if (ImGui::MenuItem("Cylinder"))  { ed.CreateMesh("Cylinder");  ConsoleLog("Created Cylinder"); created = true; }
-        if (ImGui::MenuItem("Capsule"))   { ed.CreateMesh("Capsule");   ConsoleLog("Created Capsule"); created = true; }
-        if (ImGui::MenuItem("Cone"))      { ed.CreateMesh("Cone");      ConsoleLog("Created Cone"); created = true; }
-        if (ImGui::MenuItem("Plane"))     { ed.CreateMesh("Plane");     ConsoleLog("Created Plane"); created = true; }
-        if (ImGui::MenuItem("Pyramid"))   { ed.CreatePyramid(); ConsoleLog("Created Pyramid"); created = true; }
-        if (ImGui::MenuItem("Wedge"))     { ed.CreateMesh("Wedge");     ConsoleLog("Created Wedge"); created = true; }
-        if (ImGui::MenuItem("Torus"))     { ed.CreateMesh("Torus");     ConsoleLog("Created Torus"); created = true; }
-        if (ImGui::MenuItem("Torus Knot")){ ed.CreateMesh("TorusKnot"); ConsoleLog("Created Torus Knot"); created = true; }
-        if (ImGui::MenuItem("Icosphere")) { ed.CreateMesh("Icosphere"); ConsoleLog("Created Icosphere"); created = true; }
-        if (ImGui::MenuItem("Hemisphere")){ ed.CreateMesh("Hemisphere");ConsoleLog("Created Hemisphere"); created = true; }
-        if (ImGui::MenuItem("Stairs"))    { ed.CreateMesh("Stairs");    ConsoleLog("Created Stairs"); created = true; }
-        if (ImGui::MenuItem("Gear"))      { ed.CreateMesh("Gear");      ConsoleLog("Created Gear"); created = true; }
-        if (ImGui::MenuItem("Prism"))     { ed.CreateMesh("Prism");     ConsoleLog("Created Prism"); created = true; }
-        if (ImGui::MenuItem("Octahedron")){ ed.CreateMesh("Octahedron");ConsoleLog("Created Octahedron"); created = true; }
-        if (ImGui::MenuItem("Disc"))      { ed.CreateMesh("Disc");      ConsoleLog("Created Disc"); created = true; }
-        if (ImGui::MenuItem("Tetrahedron")){ ed.CreateMesh("Tetrahedron");ConsoleLog("Created Tetrahedron"); created = true; }
-        if (ImGui::MenuItem("Bipyramid")) { ed.CreateMesh("Bipyramid"); ConsoleLog("Created Bipyramid"); created = true; }
-        if (ImGui::MenuItem("Rounded Box")){ ed.CreateMesh("RoundedBox");ConsoleLog("Created Rounded Box"); created = true; }
-        if (ImGui::MenuItem("Quad"))      { ed.CreateMesh("Quad");      ConsoleLog("Created Quad"); created = true; }
+        for (const oked::sceneadd::MeshEntry& e : oked::sceneadd::kPrimitives)   // the same table the Scene view's right-click search reads
+            if (ImGui::MenuItem(e.label)) { CreatePrimitiveByName(ed, e.mesh, e.label); created = true; }
         ImGui::Separator();
         if (ImGui::BeginMenu("Nature")) {
-            const char* nat[] = {"Tree", "Pine", "PalmTree", "DeadTree", "Bush", "Rock", "Mushroom", "Cactus", "Crystal"};
-            for (const char* n : nat)
-                if (ImGui::MenuItem(n)) { ed.CreateMesh(n); ConsoleLog(std::string("Created ") + n); created = true; }
+            for (const oked::sceneadd::MeshEntry& e : oked::sceneadd::kNature)
+                if (ImGui::MenuItem(e.label)) { CreatePrimitiveByName(ed, e.mesh, e.label); created = true; }
             ImGui::EndMenu();
         }
         if (ImGui::BeginMenu("Props")) {
-            const char* pr[] = {"Barrel", "Crate", "Fence", "Well", "StreetLamp",
-                                "Campfire", "Lantern", "Chest", "Signpost", "Cart", "Tent", "Bench"};
-            for (const char* n : pr)
-                if (ImGui::MenuItem(n)) { ed.CreateMesh(n); ConsoleLog(std::string("Created ") + n); created = true; }
+            for (const oked::sceneadd::MeshEntry& e : oked::sceneadd::kProps)
+                if (ImGui::MenuItem(e.label)) { CreatePrimitiveByName(ed, e.mesh, e.label); created = true; }
             ImGui::EndMenu();
         }
         if (ImGui::BeginMenu("Structures")) {
-            const char* st[] = {"House", "Tower", "Windmill", "Bridge", "RockArch"};
-            for (const char* n : st)
-                if (ImGui::MenuItem(n)) { ed.CreateMesh(n); ConsoleLog(std::string("Created ") + n); created = true; }
+            for (const oked::sceneadd::MeshEntry& e : oked::sceneadd::kStructures)
+                if (ImGui::MenuItem(e.label)) { CreatePrimitiveByName(ed, e.mesh, e.label); created = true; }
             ImGui::EndMenu();
         }
         ImGui::Separator();
-        if (ImGui::MenuItem("Terrain")) {
-            GameObject* go = ed.CreateEmpty("Terrain");
-            auto* tr = go->AddComponent<Terrain>();
-            tr->Resize(64); tr->size = 80.0f;
-            tr->Generate(1, 10.0f, 3.0f, 5, (unsigned)(ImGui::GetTime() * 1000.0)); // rolling hills
-            tr->Apply();
-            go->AddComponent<TerrainDigger>();   // dig/raise it at runtime out of the box
-            ed.Select(go); ed.view3D = true; ed.dirty = true; created = true;
-            ConsoleLog("Created Terrain (with a Terrain Digger: hold Left Mouse in Play to dig)");
-        }
+        if (ImGui::MenuItem("Terrain")) { AddTerrainObject(ed); created = true; }
         if (ImGui::MenuItem("Voxel Terrain (caves)")) {
             GameObject* go = ed.CreateEmpty("Voxel Terrain");
             auto* v = go->AddComponent<VoxelTerrain>();
@@ -7153,29 +7368,12 @@ static void DrawCreateSlot(EditorState& ed, const std::string& id, GameObject* p
             ed.Select(go); ed.view3D = true; ed.dirty = true; created = true;
             ConsoleLog("Created Voxel Terrain (Voxel Digger: Left Mouse digs caves, Right Mouse adds)");
         }
-        if (ImGui::MenuItem("Water")) {
-            GameObject* go = ed.CreateEmpty("Water");
-            auto* w = go->AddComponent<Water>();
-            w->size = 80.0f; w->Apply();
-            ed.Select(go); ed.view3D = true; ed.dirty = true; created = true;
-            ConsoleLog("Created Water (animated reflective surface)");
-        }
-        if (ImGui::MenuItem("Character")) {
-            GameObject* g = ed.CreateEmpty("Character");
-            g->AddComponent<Character>()->Apply();
-            HumanoidLibrary::EnsureAnimator(g);
-            ed.SettleSpawn(g);
-            ed.Select(g); ed.view3D = true; ed.dirty = true; created = true;
-            ConsoleLog("Created Character");
-        }
+        if (ImGui::MenuItem("Water")) { AddWaterObject(ed); created = true; }
+        if (ImGui::MenuItem("Character")) { AddCharacterObject(ed); created = true; }
     } else if (id == "create.player") {
         // One Player Controller for first and third person: the View setting in its Inspector picks First, Third or Both
         // (V switches in Both). Third Person Shooter below is a different game mode (fires, own settings) and stays.
-        if (ImGui::MenuItem("Player Controller (first / third person)")) {
-            ed.PushUndo();
-            ed.Select(ed.SettleSpawn(okay::Templates::AddThirdPersonPlayer(ed.scene())));
-            ConsoleLog("Added Player Controller (View: Both, starts in third person; change View in the Inspector)"); ed.dirty = true; created = true;
-        }
+        if (ImGui::MenuItem("Player Controller (first / third person)")) { AddPlayerControllerObject(ed); created = true; }
         if (ImGui::MenuItem("Third Person Shooter")) {
             ed.PushUndo();
             ed.Select(ed.SettleSpawn(okay::Templates::AddThirdPersonShooterPlayer(ed.scene())));
@@ -7208,25 +7406,9 @@ static void DrawCreateSlot(EditorState& ed, const std::string& id, GameObject* p
         }
         if (ImGui::IsItemHovered()) ImGui::SetTooltip("Drops a fully set-up player (Character + controller + physics) into this scene.");
     } else if (id == "create.light") {
-        if (ImGui::MenuItem("Directional Light")) {
-            GameObject* go = ed.CreateEmpty("Directional Light");
-            go->AddComponent<Light>();
-            go->transform->localRotation = Quat::Euler({50, -30, 0}); // angled key light
-            ed.Select(go); ConsoleLog("Created Directional Light"); created = true;
-        }
-        if (ImGui::MenuItem("Point Light")) {
-            GameObject* go = ed.CreateEmpty("Point Light");
-            auto* l = go->AddComponent<Light>(); l->type = Light::Type::Point; l->range = 12.0f;
-            go->transform->localPosition = {0, 3, 0};
-            ed.Select(go); ConsoleLog("Created Point Light"); created = true;
-        }
-        if (ImGui::MenuItem("Spot Light")) {
-            GameObject* go = ed.CreateEmpty("Spot Light");
-            auto* l = go->AddComponent<Light>(); l->type = Light::Type::Spot; l->range = 16.0f; l->spotAngle = 50.0f;
-            go->transform->localPosition = {0, 5, 0};
-            go->transform->localRotation = Quat::Euler({90, 0, 0}); // aim down
-            ed.Select(go); ConsoleLog("Created Spot Light"); created = true;
-        }
+        if (ImGui::MenuItem("Directional Light")) { AddLightObject(ed, 0); created = true; }
+        if (ImGui::MenuItem("Point Light"))       { AddLightObject(ed, 1); created = true; }
+        if (ImGui::MenuItem("Spot Light"))        { AddLightObject(ed, 2); created = true; }
     } else if (id == "create.camera") {
         if (ImGui::MenuItem("Camera"))  { ed.CreateCamera();  ConsoleLog("Created Camera"); created = true; }
         ImGui::Separator();
@@ -7266,27 +7448,12 @@ static void DrawCreateSlot(EditorState& ed, const std::string& id, GameObject* p
         if (ImGui::IsItemHovered()) ImGui::SetTooltip("Glides along a Dolly Path; set its Path to the path's name.");
     } else if (id == "create.audio") {
         // The same two objects Add Component > Audio builds, here as ready-made objects.
-        if (ImGui::MenuItem("Audio Source")) {
-            GameObject* g = ed.CreateEmpty("Audio Source");
-            g->AddComponent<AudioSource>()->clip = AudioClip::Sine(440.0f, 0.3f);
-            ed.Select(g); ed.dirty = true; created = true;
-            ConsoleLog("Created an Audio Source (a short test tone: pick your own sound in the Inspector)");
-        }
+        if (ImGui::MenuItem("Audio Source")) { AddAudioSourceObject(ed); created = true; }
         if (ImGui::IsItemHovered()) ImGui::SetTooltip("Plays a sound. It starts with a short test tone; pick your own sound in the Inspector.");
-        if (ImGui::MenuItem("Music Player")) {
-            GameObject* g = ed.CreateEmpty("Music Player");
-            g->AddComponent<MusicPlayer>();
-            ed.Select(g); ed.dirty = true; created = true;
-            ConsoleLog("Created a Music Player");
-        }
+        if (ImGui::MenuItem("Music Player")) { AddMusicPlayerObject(ed); created = true; }
         if (ImGui::IsItemHovered()) ImGui::SetTooltip("Plays a playlist of music tracks.");
     } else if (id == "create.effects") {
-        if (ImGui::MenuItem("Particle System")) {
-            GameObject* go = ed.CreateEmpty("Particles");
-            go->AddComponent<ParticleSystem>();
-            ConsoleLog("Created Particle System (press Play to see it)");
-            created = true;
-        }
+        if (ImGui::MenuItem("Particle System")) { AddParticleObject(ed); created = true; }
         if (ImGui::MenuItem("Spline")) { CreateSplineFromMenu(ed); created = true; }
         if (ImGui::IsItemHovered()) ImGui::SetTooltip("A curve of three points in front of the camera: roads, rails, fences, paths.");
         LevelCreateMenuItems(ed, created);                // Foliage Layer, Decal Projector, Cable
@@ -7294,129 +7461,9 @@ static void DrawCreateSlot(EditorState& ed, const std::string& id, GameObject* p
     } else if (id == "create.ui") {
         // Widgets go under the scene's Canvas (made, plus an Event System, if
         // missing), or inside the selected panel; see DrawUIWidgetItems.
-        DrawUIWidgetItems(ed, created);
-        ImGui::Separator();
-        if (ImGui::MenuItem("Canvas"))       { ed.Select(ed.CreateEmpty("Canvas"));   ed.selected()->AddComponent<Canvas>()->screenMatch = Canvas::ScreenMatch::Expand; ed.dirty = true; created = true; }
-        if (ImGui::MenuItem("Event System")) { ed.Select(ed.CreateEmpty("EventSystem")); ed.selected()->AddComponent<EventSystem>();  ed.dirty = true; created = true; }
-        if (ImGui::MenuItem("World Label (3D)")) { ed.Select(ed.CreateEmpty("WorldLabel")); ed.selected()->AddComponent<WorldUI>(); ed.dirty = true; created = true; }
-        if (ImGui::IsItemHovered()) ImGui::SetTooltip("In-world UI: a label/marker that floats over a 3D point (nameplates, health bars). Shows in the Game view + built game.");
-        if (ImGui::MenuItem("Inventory (Minecraft-style)")) {
-            // The items live on the player (selected or tagged "Player") so its Crafting,
-            // Consumables and StructureBuilder find them; only the UI goes under the Canvas.
-            GameObject* player = (ed.selected() && ed.selected()->tag == "Player") ? ed.selected()
-                                                                                     : ed.scene().FindWithTag("Player");
-            GameObject* root = EnsureUIRoot(ed);   // inventories are UI → live under the Canvas
-            GameObject* g = ed.CreateEmpty("Inventory");
-            GameObject* holder = player ? player : g;
-            auto* inv = holder->GetComponent<Inventory>();
-            if (!inv) {
-                inv = holder->AddComponent<Inventory>();
-                inv->capacity = 36;   // 9 hotbar + 27 backpack, like Minecraft (= the UI's slots)
-                inv->Add("Dirt", 64); inv->Add("Stone", 64); inv->Add("Wood", 32);
-                inv->Add("Torch", 16); inv->Add("Sword", 1);
-            }
-            auto* iu = g->AddComponent<InventoryUI>();
-            if (player) iu->inventoryTarget = player->name;
-            if (root) g->transform->SetParent(root->transform, false);
-            ed.Select(g); ed.dirty = true; created = true;
-        }
-        if (ImGui::IsItemHovered()) ImGui::SetTooltip("Ready hotbar + backpack (1-9 / wheel to select, E to open), with sample items. The Inventory goes on the selected or \"Player\"-tagged object, so crafting and consumables there use it.");
-        if (ImGui::MenuItem("Grid Inventory (DayZ/Unturned-style)")) {
-            GameObject* root = EnsureUIRoot(ed);   // UI → under the Canvas
-            GameObject* g = ed.CreateEmpty("GridInventory");
-            auto* gi = g->AddComponent<GridInventory>();
-            gi->cols = 8; gi->rows = 6; gi->title = "Backpack";
-            gi->AddItem("Rifle", 2, 6, 1, 4.0f);
-            gi->AddItem("Backpack", 3, 3, 1, 1.0f);
-            gi->AddItem("Beans", 1, 1, 2, 0.4f);
-            gi->AddItem("Bandage", 1, 1, 3, 0.1f);
-            gi->AddItem("Water", 1, 2, 1, 0.6f);
-            g->AddComponent<GridInventoryUI>();
-            if (root) g->transform->SetParent(root->transform, false);
-            ed.Select(g); ed.dirty = true; created = true;
-        }
-        if (ImGui::IsItemHovered()) ImGui::SetTooltip("A grid bag where items take up w×h cells; press I in Play to open and drag items around. Comes with sample loot.");
-        if (ImGui::MenuItem("Unturned Inventory (worn bags + nearby loot)")) {
-            // Everything lives under ONE tidy "Unturned Inventory" group so the
-            // hierarchy stays clean: a Player (body grid + screen UI) with a worn
-            // Vest and Backpack as children, and a single Loot Crate beside it.
-            GameObject* group = ed.CreateEmpty("Unturned Inventory");
-            GameObject* player = ed.CreateEmpty("Player");
-            player->transform->SetParent(group->transform, false);
-            auto* body = player->AddComponent<GridInventory>();
-            body->cols = 5; body->rows = 2; body->title = "Pockets"; body->category = "Pockets";
-            body->toggleKey = 'i';
-            body->AddItem("Knife", 1, 2, 1, 0.3f);
-            body->AddItem("Map", 2, 2, 1, 0.1f);
-            auto* screen = player->AddComponent<GridInventoryUI>();
-            screen->multiContainer = true; screen->nearbyRange = 4.0f;
-
-            auto worn = [&](const char* name, const char* cat, int c, int rr) {
-                GameObject* w = ed.CreateEmpty(name);
-                w->transform->SetParent(player->transform, false);
-                auto* gi = w->AddComponent<GridInventory>();
-                gi->cols = c; gi->rows = rr; gi->title = name; gi->category = cat; gi->toggleKey = 0;
-                return gi;
-            };
-            worn("Vest", "Vest", 5, 2)->AddItem("Mag", 1, 2, 3, 0.2f);
-            auto* pack = worn("Backpack", "Backpack", 6, 5);
-            pack->weightLimit = 30.0f;
-            pack->AddItem("Rifle", 2, 5, 1, 4.0f);
-            pack->AddItem("Water", 1, 2, 1, 0.6f);
-            pack->AddItem("Beans", 1, 1, 2, 0.4f);
-
-            GameObject* crate = ed.CreateEmpty("Loot Crate");
-            crate->transform->SetParent(group->transform, false);
-            crate->transform->localPosition = {2.0f, 0.0f, 0.0f};   // 2m away → in the Nearby column
-            auto* ci = crate->AddComponent<GridInventory>();
-            ci->cols = 5; ci->rows = 4; ci->title = "Loot Crate"; ci->worldItem = true; ci->toggleKey = 0;
-            ci->AddItem("Ammo", 1, 1, 30, 0.5f); ci->AddItem("Scope", 1, 2, 1, 0.3f); ci->AddItem("Medkit", 2, 2, 1, 1.2f);
-
-            ed.Select(player); ed.dirty = true; created = true;
-        }
-        if (ImGui::IsItemHovered()) ImGui::SetTooltip("One tidy 'Unturned Inventory' group: a Player with a worn Vest + Backpack and a single nearby Loot Crate. Press I in Play; drag loot across bags.");
-        if (ImGui::MenuItem("UI Document"))  {
-            GameObject* root = EnsureUIRoot(ed);
-            GameObject* g = ed.CreateEmpty("UIDocument");
-            auto* doc = g->AddComponent<UIDocument>();
-            doc->markup =
-                "panel pos=40,40 size=360,240 color=30,36,52,220\n"
-                "  text \"MY GAME\" pos=70,70 size=5\n"
-                "  button \"Play\" pos=70,170 size=300,60 anchor=topleft\n";
-            if (root) g->transform->SetParent(root->transform, false);
-            doc->Rebuild(); ed.scene().Update(0.0f);
-            ed.Select(g); ed.dirty = true; created = true;
-        }
-        // Save the selected UI subtree as a reusable prefab under Assets/UI, so you
-        // can drop your own custom UI back into any scene from the Project panel.
-        if (ImGui::MenuItem("Save Selected as UI", nullptr, false, ed.selected() != nullptr)) {
-            namespace fs = std::filesystem;
-            fs::path assets = ed.projectDir().empty() ? fs::path("Assets") : fs::path(ed.projectDir()) / "Assets";
-            fs::path dir = assets / "UI"; std::error_code ec; fs::create_directories(dir, ec);
-            SavePrefabInto(ed.selected(), dir);
-            created = true;
-        }
-        if (ImGui::IsItemHovered(ImGuiHoveredFlags_AllowWhenDisabled))
-            ImGui::SetTooltip("%s", ed.selected() ? "Save the selected UI (e.g. a Canvas or a menu Panel + its children) as a reusable .okayprefab in Assets/UI.\nDrop it from the Project panel into any scene to reuse it."
-                                                  : "Select the UI first (a Canvas, or a menu Panel with its children), then save it as a reusable .okayprefab in Assets/UI.");
-        ImGui::Separator();
-        // 3D UI: each widget is its own standalone object in the world (a
-        // WorldSpaceUI marker), NOT under the 2D Canvas. Placed at the camera focus.
-        if (ImGui::BeginMenu("3D UI (in-world)")) {
-            auto add3d = [&](const char* nm, auto build) {
-                GameObject* g = ed.CreateEmpty(nm);
-                build(g);
-                g->AddComponent<WorldSpaceUI>();
-                if (g->transform) g->transform->localPosition = ed.camTarget;
-                ed.Select(g); ed.dirty = true; created = true;
-            };
-            if (ImGui::MenuItem("Button")) add3d("Button3D", [](GameObject* g){ auto* b = g->AddComponent<UIButton>(); b->anchor = UIAnchor::Center; b->position = {0,0}; b->size = {220, 80}; b->label = "Button"; b->fontScale = 3.0f; });
-            if (ImGui::MenuItem("Text"))   add3d("Text3D",   [](GameObject* g){ auto* t = g->AddComponent<TextRenderer>(); t->screenSpace = true; t->pixelSize = 3.0f; t->align = 1; t->anchor = UIAnchor::Center; });
-            if (ImGui::MenuItem("Panel"))  add3d("Panel3D",  [](GameObject* g){ auto* p = g->AddComponent<UIPanel>(); p->anchor = UIAnchor::Center; p->position = {0,0}; });
-            if (ImGui::MenuItem("Image"))  add3d("Image3D",  [](GameObject* g){ auto* im = g->AddComponent<UIImage>(); im->anchor = UIAnchor::Center; im->position = {0,0}; });
-            ImGui::EndMenu();
-        }
+        DrawUIWidgetItems(ed, created);   // everything GameObject > UI offers, as data: editor/UIMenuModel.hpp
     }
+
     const bool grew = ed.scene().Objects().size() > before;
     if (created || grew) ed.Achievement("FIRST_OBJECT");
     if (grew && ed.selected()) ed.Select(ed.selected());   // the creators set the active object; make it the whole selection so its row lights up
@@ -10385,6 +10432,10 @@ void DrawProject(EditorState& ed) {
     // Persisted view prefs + favorites — load once, before anything reads them.
     static bool s_prefsLoaded = false;
     if (!s_prefsLoaded) { LoadProjectViewPrefs(); s_prefsLoaded = true; }
+    // One column (a single list, folders open in place) or two columns (folder tree + contents); saved with the editor layout.
+    bool oneCol = oked::projectlayout::ColumnsFromInt(g_view.projectColumns) == oked::projectlayout::Columns::One;
+    static std::set<std::string> s_openFolders;   // folders opened in place in the one-column list (generic paths)
+    static std::uint64_t s_openVer = 0;           // bumped whenever s_openFolders changes, so the list is made again
     // A pending "ping": jump to the asset's folder, filter to its name, select it.
     static bool s_keepSearchOnce = false;   // the ping just SET the search — don't auto-clear it
     if (!g_pingAsset.empty()) {
@@ -10526,7 +10577,7 @@ void DrawProject(EditorState& ed) {
     const bool tbNarrow = ImGui::GetContentRegionAvail().x < 860.0f;   // a small dock: shorter search box, no slider (it is in "...")
     const float tbSearchW = tbNarrow ? 130.0f : 170.0f, tbFilterW = tbNarrow ? 92.0f : 104.0f;
     const float tbImportW = ImGui::CalcTextSize("Import").x + ImGui::GetStyle().FramePadding.x * 2.0f;
-    const float tbScopeW = 74.0f, tbSliderW = (g_projView == 0 && !tbNarrow) ? 78.0f : 0.0f;
+    const float tbScopeW = 74.0f, tbSliderW = (g_projView == 0 && !oneCol && !tbNarrow) ? 78.0f : 0.0f;
     const float tbRightW = tbFh * 3.0f + tbImportW + tbFilterW + tbSearchW + tbScopeW + tbSliderW +
                            ImGui::GetStyle().ItemSpacing.x * (tbSliderW > 0.0f ? 7.0f : 6.0f);
     {
@@ -10552,6 +10603,22 @@ void DrawProject(EditorState& ed) {
             }
         }
         if (active == pt::Tab::Favourites) { ImGui::SameLine(0, 10); ImGui::TextDisabled("starred files and folders; right-click an item > Add to Favourites"); }
+        {   // Layout switch at the right end of this row: One column | Two columns
+            namespace pl = oked::projectlayout;
+            const float fh = ImGui::GetFrameHeight() - 6.0f;
+            const float w1 = ImGui::CalcTextSize(pl::ColumnsLabel(pl::Columns::One)).x + ImGui::GetStyle().FramePadding.x * 2.0f + 4.0f;
+            const float w2 = ImGui::CalcTextSize(pl::ColumnsLabel(pl::Columns::Two)).x + ImGui::GetStyle().FramePadding.x * 2.0f + 4.0f;
+            const float wantX = ImGui::GetWindowContentRegionMax().x - w1 - w2 - 4.0f;
+            ImGui::SameLine(wantX > ImGui::GetCursorPosX() ? wantX : 0.0f, wantX > ImGui::GetCursorPosX() ? -1.0f : 8.0f);
+            const pl::Columns now = pl::ColumnsFromInt(g_view.projectColumns);
+            pl::Columns pick = now;
+            if (AccentToggleButton("One column##projcols1", now == pl::Columns::One, ImVec2(w1, fh))) pick = pl::Columns::One;
+            if (ImGui::IsItemHovered()) ImGui::SetTooltip("One list: folders open in place and show what is inside them.");
+            ImGui::SameLine(0, 2);
+            if (AccentToggleButton("Two columns##projcols2", now == pl::Columns::Two, ImVec2(w2, fh))) pick = pl::Columns::Two;
+            if (ImGui::IsItemHovered()) ImGui::SetTooltip("Folders on the left, what is inside the chosen folder on the right.");
+            if (pick != now) { g_view.projectColumns = pl::ColumnsToInt(pick); oneCol = pick == pl::Columns::One; g_treeFocused = false; SaveSettings(); }
+        }
         pt::Remembered rem;
         rem.smart = s_smart;
         {   // the folder, relative to Assets
@@ -10569,6 +10636,10 @@ void DrawProject(EditorState& ed) {
 
     // ---- Two panes: folder tree (left) + asset grid (right), with a
     //      draggable splitter between them (width persists) --------------
+    // Two columns: the tree keeps kMinTreeW.. and leaves the contents side its minimum (ProjectLayout.hpp). One column: no tree pane.
+    if (oneCol) g_treeFocused = false;
+    if (!oneCol) {
+    g_projTreeW = oked::projectlayout::ClampTreeWidth(ImGui::GetContentRegionAvail().x, g_projTreeW);
     ImGui::BeginChild("tree", ImVec2(g_projTreeW, 0), true, ImGuiWindowFlags_NoNavInputs);   // (the arrow keys are ours here: no second focus box)
     // Smart filters: every model / texture / sound / script / ... in the project at
     // once, with counts (a cached whole-project scan, refreshed every few seconds).
@@ -10715,11 +10786,10 @@ void DrawProject(EditorState& ed) {
     ImGui::InvisibleButton("##projsplit", ImVec2(7.0f, -1.0f));
     if (ImGui::IsItemHovered() || ImGui::IsItemActive()) ImGui::SetMouseCursor(ImGuiMouseCursor_ResizeEW);
     if (ImGui::IsItemActive()) {
-        g_projTreeW += ImGui::GetIO().MouseDelta.x;
-        g_projTreeW = g_projTreeW < 120.0f ? 120.0f : (g_projTreeW > 480.0f ? 480.0f : g_projTreeW);
+        g_projTreeW = oked::projectlayout::DragTreeWidth(ImGui::GetWindowContentRegionMax().x - ImGui::GetWindowContentRegionMin().x, g_projTreeW, ImGui::GetIO().MouseDelta.x);
     }
     if (ImGui::IsItemDeactivated()) SaveProjectViewPrefs();
-    if (ImGui::IsItemHovered() && ImGui::IsMouseDoubleClicked(ImGuiMouseButton_Left)) { g_projTreeW = 200.0f; SaveProjectViewPrefs(); }
+    if (ImGui::IsItemHovered() && ImGui::IsMouseDoubleClicked(ImGuiMouseButton_Left)) { g_projTreeW = oked::projectlayout::kDefaultTreeW; SaveProjectViewPrefs(); }
     {   // a subtle handle line so the splitter is discoverable
         ImVec2 mn = ImGui::GetItemRectMin(), mx = ImGui::GetItemRectMax();
         float cx = (mn.x + mx.x) * 0.5f;
@@ -10727,6 +10797,7 @@ void DrawProject(EditorState& ed) {
             ImGui::GetColorU32(ImGuiCol_Border, ImGui::IsItemHovered() || ImGui::IsItemActive() ? 1.0f : 0.5f));
     }
     ImGui::SameLine(0, 0);
+    }   // !oneCol
     ImGui::BeginChild("grid", ImVec2(0, 0), true);
 
     // Asset operations toolbar + the deferred rename target.
@@ -10902,6 +10973,7 @@ void DrawProject(EditorState& ed) {
     int&   s_filter = g_projFilter;
     int&   s_sort   = g_projSort;
     int&   s_view   = g_projView;
+    const int vw    = oneCol ? 1 : s_view;   // what is drawn: the one-column layout is always a list
     float& s_cell   = g_projCell;
 
     // Reserve room at the bottom for the selected-asset details strip and scroll
@@ -10915,7 +10987,9 @@ void DrawProject(EditorState& ed) {
     // The listing comes from the asset database (okaypb::Browser::List): no disk walk of the panel's own. It is made again only
     // when the folder, the search, the sort or a filter changes, or when the database's revision moves (a scan found a change,
     // or an operation here made one), so an idle panel does no work at all.
-    static std::string s_scanDir, s_scanSearch; static int s_scanSort = -2, s_scanFilter = -2, s_scanSmart = -2;
+    static std::string s_scanDir, s_scanSearch; static int s_scanSort = -2, s_scanFilter = -2, s_scanSmart = -2, s_scanCols = -1;
+    static std::uint64_t s_scanOpenVer = ~0ull;
+    static std::vector<int> s_scanDepth;   // one column: how deep each listed row sits (0 = in the shown folder)
     static bool s_scanAll = false;
     static std::uint64_t s_scanRev = ~0ull;
     static std::vector<okaypb::Entry> s_scanEntries;
@@ -10939,11 +11013,12 @@ void DrawProject(EditorState& ed) {
     const bool haveProject = !ed.projectDir().empty() && fs::is_directory(root, ec);
     {
         const bool changed = s_scanDir != dir.string() || s_scanSearch != std::string(search) || s_scanSort != s_sort ||
-                             s_scanFilter != s_filter || s_scanSmart != s_smart || s_scanAll != s_searchAll || s_scanRev != pb.Revision();
+                             s_scanFilter != s_filter || s_scanSmart != s_smart || s_scanAll != s_searchAll || s_scanRev != pb.Revision() ||
+                             s_scanCols != (oneCol ? 1 : 2) || s_scanOpenVer != s_openVer;
         if (changed) {
             s_scanDir = dir.string(); s_scanSearch = search; s_scanSort = s_sort; s_scanFilter = s_filter; s_scanSmart = s_smart;
-            s_scanAll = s_searchAll; s_scanRev = pb.Revision();
-            s_scanEntries.clear();
+            s_scanAll = s_searchAll; s_scanRev = pb.Revision(); s_scanCols = oneCol ? 1 : 2; s_scanOpenVer = s_openVer;
+            s_scanEntries.clear(); s_scanDepth.clear();
             if (haveProject) {
                 okaypb::ListOptions lo;
                 lo.text = dbText;
@@ -10980,6 +11055,24 @@ void DrawProject(EditorState& ed) {
                     if (qColor > 0 && colour != qColor) continue;
                     s_scanEntries.push_back(std::move(e));
                 }
+                s_scanDepth.assign(s_scanEntries.size(), 0);
+                if (oneCol && s_smart < 0 && dbText.empty() && qColor <= 0 && !s_openFolders.empty()) {
+                    // One column: folders the user opened show their contents right beneath them (rows come from oked::projectlayout).
+                    namespace pl = oked::projectlayout;
+                    std::map<std::string, okaypb::Entry> byId;
+                    const std::string rootId = dir.generic_string();
+                    auto kids = [&](const std::string& id) {
+                        std::vector<pl::Item> items;
+                        std::vector<okaypb::Entry> got;
+                        if (id == rootId) got = s_scanEntries;
+                        else { okaypb::ListOptions lo2 = lo; lo2.recursive = false; got = pb.List(id, lo2); }
+                        for (okaypb::Entry& ge : got) { items.push_back({ge.path, ge.isDir}); byId[ge.path] = std::move(ge); }
+                        return items;
+                    };
+                    const std::vector<pl::Row> rows = pl::FlattenOpen(rootId, s_openFolders, kids);
+                    s_scanEntries.clear(); s_scanDepth.clear();
+                    for (const pl::Row& r : rows) { s_scanEntries.push_back(byId[r.id]); s_scanDepth.push_back(r.depth); }
+                }
             }
         }
     }
@@ -11002,7 +11095,7 @@ void DrawProject(EditorState& ed) {
 
     // Clickable column headers for the list view — click Name / Type / Size / Date
     // to sort by that column (a small "v" marks the active sort).
-    if (s_view == 1) {
+    if (vw == 1) {
         float hx0 = ImGui::GetCursorPosX();
         ImGui::PushStyleColor(ImGuiCol_Button, ImVec4(0, 0, 0, 0));
         ImGui::PushStyleColor(ImGuiCol_ButtonHovered, ImVec4(1, 1, 1, 0.06f));
@@ -11093,7 +11186,7 @@ void DrawProject(EditorState& ed) {
         if (starts("sort:"))  { s_sort = std::clamp(act[5] - '0', 0, 3); SaveProjectViewPrefs(); return; }
         if (starts("tiles:")) {
             const int n = std::clamp(act[6] - '0', 1, 3);
-            s_cell = n == 1 ? 64.0f : n == 2 ? 96.0f : 128.0f; s_view = 0; SaveProjectViewPrefs();
+            s_cell = n == 1 ? 64.0f : n == 2 ? 96.0f : 128.0f; s_view = 0; if (oneCol) { g_view.projectColumns = 2; oneCol = false; SaveSettings(); } SaveProjectViewPrefs();
             return;
         }
         if (starts("label:")) {
@@ -11234,7 +11327,7 @@ void DrawProject(EditorState& ed) {
             if (selected.empty() && !shownPaths.empty()) selected = shownPaths.front();
             return;
         }
-        if (act == "view:grid") { s_view = 0; SaveProjectViewPrefs(); return; }
+        if (act == "view:grid") { s_view = 0; if (oneCol) { g_view.projectColumns = 2; oneCol = false; SaveSettings(); } SaveProjectViewPrefs(); return; }
         if (act == "view:list") { s_view = 1; SaveProjectViewPrefs(); return; }
         if (act == "up" && dir != root) {
             std::strncpy(dirBuf, dir.parent_path().string().c_str(), sizeof(dirBuf) - 1);
@@ -11337,7 +11430,7 @@ void DrawProject(EditorState& ed) {
         ImGui::PushID(shown);
         bool hov = false, dbl = false;
 
-        if (s_view == 0) {
+        if (vw == 0) {
             // ---- Grid tile (thumbnail / icon + wrapped name) ----
             ImGui::BeginGroup();
             ImVec4 cv = ImGui::ColorConvertU32ToFloat4(k.col);
@@ -11421,8 +11514,14 @@ void DrawProject(EditorState& ed) {
         } else {
             // ---- List row: icon chip + name, with right-aligned type & size ----
             float rowH = ImGui::GetTextLineHeight() + 6.0f;
+            const int rowDepth = (oneCol && shown < (int)s_scanDepth.size()) ? s_scanDepth[shown] : 0;
             if (ImGui::Selectable("##row", isSel, ImGuiSelectableFlags_AllowDoubleClick, ImVec2(0, rowH)))
                 pickItem(full);
+            if (oneCol && isDir && ImGui::IsItemClicked(ImGuiMouseButton_Left) &&
+                oked::projectlayout::OnDisclosureArrow(rowDepth, ImGui::GetItemRectMin().x + 5.0f, ImGui::GetIO().MousePos.x)) {
+                if (!s_openFolders.erase(e.path)) s_openFolders.insert(e.path);   // the arrow opens / closes the folder in place
+                ++s_openVer;
+            }
             hov = ImGui::IsItemHovered();
             if (hov && ImGui::IsMouseDoubleClicked(ImGuiMouseButton_Left)) dbl = true;
             if (ImGui::BeginDragDropSource()) {
@@ -11437,7 +11536,15 @@ void DrawProject(EditorState& ed) {
             ImVec2 mn = ImGui::GetItemRectMin(), mx = ImGui::GetItemRectMax();
             ImDrawList* dl = ImGui::GetWindowDrawList();
             float sq = rowH - 6.0f;
-            ImVec2 c0(mn.x + 5.0f, mn.y + 3.0f), c1(c0.x + sq, c0.y + sq);
+            const float oneColShift = oneCol ? oked::projectlayout::RowIndent(rowDepth) + oked::projectlayout::kArrowW : 0.0f;
+            if (oneCol && isDir) {   // open / close arrow: points right when closed, down when open
+                const bool isOpen = s_openFolders.count(e.path) != 0;
+                const float ax = mn.x + 5.0f + oked::projectlayout::RowIndent(rowDepth) + oked::projectlayout::kArrowW * 0.5f, ay = (mn.y + mx.y) * 0.5f, ar = rowH * 0.22f;
+                const ImU32 acol = ImGui::GetColorU32(ImGuiCol_Text);
+                if (isOpen) dl->AddTriangleFilled(ImVec2(ax - ar, ay - ar * 0.6f), ImVec2(ax + ar, ay - ar * 0.6f), ImVec2(ax, ay + ar * 0.8f), acol);
+                else dl->AddTriangleFilled(ImVec2(ax - ar * 0.6f, ay - ar), ImVec2(ax - ar * 0.6f, ay + ar), ImVec2(ax + ar * 0.8f, ay), acol);
+            }
+            ImVec2 c0(mn.x + 5.0f + oneColShift, mn.y + 3.0f), c1(c0.x + sq, c0.y + sq);
             // Real previews where they're cheap: image files show their pixels,
             // materials their albedo ball; everything else keeps its icon chip.
             SDL_Texture* rowThumb = isDir ? nullptr : ProjectThumb(full);
@@ -11476,7 +11583,7 @@ void DrawProject(EditorState& ed) {
         if (dbl) openAsset(full, ext, isDir);
 
         ImGui::PopID();
-        if (s_view == 0) { if (++col < cols) ImGui::SameLine(); else col = 0; }
+        if (vw == 0) { if (++col < cols) ImGui::SameLine(); else col = 0; }
         ++shown;
     }
     if (shown == 0) {
@@ -11847,11 +11954,30 @@ void DrawProject(EditorState& ed) {
             int cur = -1;
             for (int i = 0; i < (int)shownPaths.size(); ++i) if (shownPaths[i] == selected) cur = i;
             int step = 0;
-            if (ImGui::IsKeyPressed(ImGuiKey_RightArrow)) step = s_view == 0 ? 1 : 0;
-            if (ImGui::IsKeyPressed(ImGuiKey_LeftArrow))  step = s_view == 0 ? -1 : 0;
-            if (ImGui::IsKeyPressed(ImGuiKey_DownArrow))  step = s_view == 0 ? cols : 1;
-            if (ImGui::IsKeyPressed(ImGuiKey_UpArrow))    step = s_view == 0 ? -cols : -1;
+            if (ImGui::IsKeyPressed(ImGuiKey_RightArrow)) step = vw == 0 ? 1 : 0;
+            if (ImGui::IsKeyPressed(ImGuiKey_LeftArrow))  step = vw == 0 ? -1 : 0;
+            if (ImGui::IsKeyPressed(ImGuiKey_DownArrow))  step = vw == 0 ? cols : 1;
+            if (ImGui::IsKeyPressed(ImGuiKey_UpArrow))    step = vw == 0 ? -cols : -1;
             int target = -1;
+            if (oneCol && cur >= 0 && s_smart < 0 && search[0] == '\0' && entries.size() == shownPaths.size() &&
+                (ImGui::IsKeyPressed(ImGuiKey_RightArrow) || ImGui::IsKeyPressed(ImGuiKey_LeftArrow))) {
+                // One column: Right opens a folder in place (then steps into it), Left closes it (then steps out to the folder above).
+                namespace pl = oked::projectlayout;
+                std::vector<pl::Row> krows;
+                for (int i = 0; i < (int)entries.size(); ++i) {
+                    pl::Row r; r.id = entries[i].path; r.depth = i < (int)s_scanDepth.size() ? s_scanDepth[i] : 0;
+                    r.isFolder = entries[i].isDir; r.open = r.isFolder && s_openFolders.count(r.id) != 0;
+                    krows.push_back(r);
+                }
+                const pl::Move mv = pl::MoveSelection(krows, cur, ImGui::IsKeyPressed(ImGuiKey_RightArrow) ? pl::Key::Right : pl::Key::Left);
+                if (mv.expand >= 0) { s_openFolders.insert(krows[mv.expand].id); ++s_openVer; }
+                if (mv.collapse >= 0) { s_openFolders.erase(krows[mv.collapse].id); ++s_openVer; }
+                if (mv.select >= 0 && mv.select != cur) target = mv.select;
+                else if (mv.expand < 0 && mv.collapse < 0 && ImGui::IsKeyPressed(ImGuiKey_LeftArrow) && dir != root) {
+                    std::strncpy(dirBuf, dir.parent_path().string().c_str(), sizeof(dirBuf) - 1);   // top of the list: leave this folder
+                    dirBuf[sizeof(dirBuf) - 1] = '\0';
+                }
+            }
             if (step != 0) target = cur < 0 ? 0 : std::clamp(cur + step, 0, (int)shownPaths.size() - 1);
             if (ImGui::IsKeyPressed(ImGuiKey_Home)) target = 0;
             if (ImGui::IsKeyPressed(ImGuiKey_End))  target = (int)shownPaths.size() - 1;
@@ -11928,7 +12054,7 @@ void DrawProject(EditorState& ed) {
         if (ImGui::Button(s_searchAll ? "Project##scope" : "Folder##scope", ImVec2(tbScopeW, 0))) s_searchAll = !s_searchAll;
         if (ImGui::IsItemHovered()) ImGui::SetTooltip(s_searchAll ? "Search looks in the whole project.\nClick to search only this folder." : "Search looks in this folder and the folders in it.\nClick to search the whole project.");
         ImGui::SameLine();
-        if (s_view == 0 && tbSliderW > 0.0f) {   // how big the tiles are
+        if (s_view == 0 && !oneCol && tbSliderW > 0.0f) {   // how big the tiles are
             ImGui::SetNextItemWidth(tbSliderW);
             ImGui::PushStyleColor(ImGuiCol_FrameBg, ImVec4(0.26f, 0.28f, 0.33f, 1.0f));   // a visible track
             ImGui::SliderFloat("##tilesize", &s_cell, 48.0f, 128.0f, "");
@@ -11937,7 +12063,11 @@ void DrawProject(EditorState& ed) {
             if (ImGui::IsItemHovered()) ImGui::SetTooltip("Thumbnail size");
             ImGui::SameLine();
         }
-        if (IconButton("##pview", s_view == 0 ? TbIcon::List : TbIcon::Grid, s_view == 0 ? "List view" : "Grid view")) { s_view ^= 1; prefsChanged = true; }
+        if (IconButton("##pview", (s_view == 0 && !oneCol) ? TbIcon::List : TbIcon::Grid, oneCol ? "Grid view (two columns)" : (s_view == 0 ? "List view" : "Grid view"))) {
+            if (oneCol) { g_view.projectColumns = 2; oneCol = false; s_view = 0; SaveSettings(); }   // tiles need the two-column layout
+            else s_view ^= 1;
+            prefsChanged = true;
+        }
         ImGui::SameLine();
         if (IconButton("##pmore", TbIcon::More, "View options")) ImGui::OpenPopup("##projopts");
         if (ImGui::BeginPopup("##projopts")) {
@@ -11950,7 +12080,7 @@ void DrawProject(EditorState& ed) {
             ImGui::SliderFloat("##size", &s_cell, 48.0f, 128.0f, "%.0f px");
             prefsChanged |= ImGui::IsItemDeactivatedAfterEdit();
             for (const auto& sz : {std::pair<const char*, float>{"Small", 64.0f}, {"Medium", 96.0f}, {"Large", 128.0f}}) {
-                if (ImGui::SmallButton(sz.first)) { s_cell = sz.second; s_view = 0; prefsChanged = true; }
+                if (ImGui::SmallButton(sz.first)) { s_cell = sz.second; s_view = 0; if (oneCol) { g_view.projectColumns = 2; oneCol = false; SaveSettings(); } prefsChanged = true; }
                 ImGui::SameLine();
             }
             ImGui::NewLine();
@@ -28292,7 +28422,7 @@ static void DrawModelingSimple(EditorState& ed) {
     h.loadRecent = [] { return em::RecentFromCodes(g_view.modelingRecent, 4); };
     h.saveRecent = [](const std::vector<std::string>& r) { const auto c = em::RecentToCodes(r); for (int i = 0; i < 4; ++i) g_view.modelingRecent[i] = c[(std::size_t)i]; };
     h.setPicks = [&](const std::vector<int>& faces, const std::vector<int>& corners) { if (!faces.empty()) g_meshSelFaces = faces; if (!corners.empty()) g_meshSelVerts = corners; };
-    oked::easymodel_ui::DrawEasyModeling(h, g_view.modelingAdvanced);
+    oked::easymodel_ui::DrawEasyModeling(h);
 }
 
 #define Button(...) MdlHlButton(__VA_ARGS__)          // inside DrawModeling every button is outlined when it matches the tool search
@@ -28306,25 +28436,23 @@ void DrawModeling(EditorState& ed) {
     // A floating window remembered tiny has no room for the sidebar + page.
     if (!ImGui::IsWindowDocked() && (ImGui::GetWindowSize().x < 640.0f || ImGui::GetWindowSize().y < 420.0f))
         ImGui::SetWindowSize(ImVec2(std::max(ImGui::GetWindowSize().x, 900.0f), std::max(ImGui::GetWindowSize().y, 640.0f)));
-    if (!g_view.modelingAdvanced) { DrawModelingSimple(ed); ImGui::End(); return; }   // the simple view is the default
-    if (ImGui::SmallButton("Back to the simple view##mdl")) g_view.modelingAdvanced = false;
 
     // One page at a time, picked from a sidebar (instead of a tab strip under an
     // always-open Add library): Add, then the mesh tools in the order you use them.
     struct MdlPage { const char* name; const char* desc; bool needsMesh; };
     static const MdlPage kPages[] = {
-        {"Add",       "Create a shape or prop",           false},
-        {"Shape",     "Primitive, color, collision",      true},
-        {"Edit",      "Subdivide, loop cut, UVs",         true},
-        {"Modifiers", "Array, remesh, smooth...",         true},
-        {"Generate",  "Procedural shapes, pipes",         true},
-        {"Edit Mesh", "Select, move, sculpt, paint",      true},
-        {"Import",    "Bring in a model file",            true},
-        {"Guided",    "Fences and more, from designs",    false},   // appended (scenes and OKAY_UI_MODELPAGE use these numbers); drawn first
+        {"Add shapes", "Shapes, trees, props",       false},
+        {"Change the shape", "Size, colour, solid body", true},
+        {"Bend and cut", "Bend, cut, mirror",   true},
+        {"Effects",   "Copies, joins, simpler",         true},
+        {"Make shapes", "Spin, pipes and curves",       true},
+        {"Fix the surface", "Pick, sculpt, paint parts", true},
+        {"Bring in a model", "Bring in and save files",  true},
+        {"Step by step", "Fences, buildings, cars",    false},   // appended (scenes and OKAY_UI_MODELPAGE use these numbers); drawn first
+        {"Easy",      "Big buttons, start here",          false},   // page 8: the simple view, the default page
     };
-    static const int kPageOrder[] = {7, 0, 1, 2, 3, 4, 5, 6};
-    static int s_mdlPage = 0;
-    if (const char* mp = std::getenv("OKAY_UI_MODELPAGE")) { static bool once = false; if (!once) { once = true; s_mdlPage = std::atoi(mp); } }
+    static int s_mdlPage = 8;
+    if (const char* mp = std::getenv("OKAY_UI_MODELPAGE")) { static bool once = false; if (!once) { once = true; s_mdlPage = std::max(0, std::min(8, std::atoi(mp))); } }
     GameObject* selGo = ed.selected();
     const bool haveMesh = selGo && (selGo->GetComponent<MeshRenderer>() || selGo->GetComponent<Terrain>());   // terrain: its sculpt tools
     static oked::modeltools::SidebarState s_sb = oked::modeltools::SidebarFromPref(g_view.modelingSidebar);
@@ -28362,7 +28490,7 @@ void DrawModeling(EditorState& ed) {
         ImGui::PopID();
     }
     ImGui::EndChild();
-    if (kPages[s_mdlPage].needsMesh && !haveMesh) s_mdlPage = 0;
+    if (kPages[s_mdlPage].needsMesh && !haveMesh) s_mdlPage = 8;
     ImGui::SameLine();
     ImGui::BeginChild("##mdlpage", ImVec2(0, 0), ImGuiChildFlags_Borders);
     ImGui::PushStyleVar(ImGuiStyleVar_ItemSpacing, ImVec2(10, 10));
@@ -28393,7 +28521,9 @@ void DrawModeling(EditorState& ed) {
     ImGui::SameLine(); ImGui::TextDisabled("  %s", g_mdlHint.empty() ? kPages[s_mdlPage].desc : g_mdlHint.c_str());   // the hint of the button the mouse was over
     g_mdlHint.clear();
     ImGui::Separator();
-    if (s_mdlPage == 7) {
+    if (s_mdlPage == 8) {
+        DrawModelingSimple(ed);   // the simple view: five tabs, big buttons, "What do I click next?"
+    } else if (s_mdlPage == 7) {
         // Guided Creation: designs, parts and regeneration live in GuidedPanel.cpp; this lends it the edit-mode selection
         // and the thumbnail renderer.
         namespace gu = oked::guided_ui;
@@ -28513,7 +28643,7 @@ void DrawModeling(EditorState& ed) {
     auto* mr = go ? go->GetComponent<MeshRenderer>() : nullptr;
     if (!go) {
         EmptyState("\xE2\x9C\xB1", "No mesh selected",
-                   "Create a shape on the Add page, or select a mesh object to model it.");
+                   "Create a shape on the Add shapes page, or select a mesh object to model it.");
     } else if (mr) {
         // Auto-refit this object's colliders when its mesh changed since last frame
         // (subdivide / extrude / any deform), so physics tracks the new shape instead
@@ -28602,7 +28732,7 @@ void DrawModeling(EditorState& ed) {
         ShapeOpButton(ed, mr, okay::modeling::ShapeOp::Subdivide, false, "##model");
         if (ImGui::IsItemHovered())
             ImGui::SetTooltip(g_meshSelFaces.empty()
-                ? "Split every face into 4. Select faces first (Edit Mesh) to subdivide just those."
+                ? "Split every face into 4. Select faces first (Fix the surface) to subdivide just those."
                 : "Subdivides only the %d selected face(s). Deselect to subdivide the whole mesh.",
                 (int)g_meshSelFaces.size());
         ImGui::SameLine();
@@ -28619,7 +28749,7 @@ void DrawModeling(EditorState& ed) {
         if (ImGui::Button("Y##loop")) ModelOp(ed, mr, "Slice Y", [&](Mesh& m) { m.SliceAxis(1, s_loopCount); });
         ImGui::SameLine();
         if (ImGui::Button("Z##loop")) ModelOp(ed, mr, "Slice Z", [&](Mesh& m) { m.SliceAxis(2, s_loopCount); });
-        if (ImGui::IsItemHovered()) ImGui::SetTooltip("Cut the whole mesh with evenly spaced planes across an axis: adds editable divisions to a wall/box/cylinder.\nFor a real edge loop through a ring of quads, use Loop Cut (Ctrl+R) in Edit Mesh.");
+        if (ImGui::IsItemHovered()) ImGui::SetTooltip("Cut the whole mesh with evenly spaced planes across an axis: adds editable divisions to a wall/box/cylinder.\nFor a real edge loop through a ring of quads, use Loop Cut (Ctrl+R) in Fix the surface.");
         ImGui::SameLine();
         ShapeOpButton(ed, mr, okay::modeling::ShapeOp::SmoothRound, false, "##model");
         static float s_relax = 0.5f;
@@ -28998,7 +29128,7 @@ void DrawModeling(EditorState& ed) {
             ImGui::SameLine(); if (ImGui::SmallButton("Loop##curveloop")) { g_curvePts = {{2, 0, 0}, {0, 0, 2}, {-2, 0, 0}, {0, 0, -2}}; g_curveClosed = true; }
             if (g_meshEdit && g_meshEditObj == go) {
                 ImGui::SameLine();
-                if (ToolButton("From Selected Edges##curveedges", !g_meshSelEdges.empty(), "Select a chain of edges in Edit Mesh (key 2, Alt+click for a loop) first.", true)) {
+                if (ToolButton("From Selected Edges##curveedges", !g_meshSelEdges.empty(), "Select a chain of edges in Fix the surface (key 2, Alt+click for a loop) first.", true)) {
                     const auto chains = pmo::OrderChains(SelectedPolyEdges(mr->mesh));
                     const pmo::EdgeChain* best = nullptr;
                     for (const auto& ch : chains) if (!best || ch.verts.size() > best->verts.size()) best = &ch;
@@ -31227,7 +31357,7 @@ void DrawInspector(EditorState& ed) {
             ShapeOpButton(ed, mr, okay::modeling::ShapeOp::Subdivide, true, "##mesh");
             if (ImGui::IsItemHovered())
                 ImGui::SetTooltip(g_meshSelFaces.empty()
-                    ? "Split every face into 4. Select faces first (Edit Mesh) to subdivide just those."
+                    ? "Split every face into 4. Select faces first (Fix the surface) to subdivide just those."
                     : "Subdivides only the %d selected face(s). Deselect to subdivide the whole mesh.",
                     (int)g_meshSelFaces.size());
             ImGui::SameLine();
@@ -40927,6 +41057,18 @@ void DrawInspector(EditorState& ed) {
             if (ImGui::DragInt("Selected##ucp", &sel, 0.1f, 0, std::max(0, cp->Count() - 1))) { cp->SetValue(sel); ed.dirty = true; }
             oked::FieldTip("Selected##ucp");
             AnchorCombo("Anchor##ucp", cp->anchor, ed);
+            if (ImGui::Checkbox("Advanced (hue square, value and alpha sliders)##ucp", &cp->advanced)) { cp->SetAdvanced(cp->advanced); ed.dirty = true; }   // UI library slice 3
+            oked::FieldTip("Advanced (hue square, value and alpha sliders)##ucp");
+            if (cp->advanced) {
+                float h = cp->hue, sa = cp->sat, va = cp->val, al = cp->alpha;
+                bool edit = ImGui::DragFloat("Hue##ucp", &h, 1.0f, 0.0f, 360.0f);
+                edit = ImGui::DragFloat("Saturation##ucp", &sa, 0.005f, 0.0f, 1.0f) || edit;
+                edit = ImGui::DragFloat("Value##ucp", &va, 0.005f, 0.0f, 1.0f) || edit;
+                edit = ImGui::DragFloat("Alpha##ucp", &al, 0.005f, 0.0f, 1.0f) || edit;
+                if (edit) { cp->SetHSVA(h, sa, va, al); ed.dirty = true; }
+                if (ImGui::DragFloat("Square size##ucp", &cp->squareSize, 1.0f, 48.0f, 400.0f)) ed.dirty = true;
+                ImGui::TextDisabled("Colour now: %s   (script: Hex(), SetHSVA(h, s, v, a))", cp->Hex().c_str());
+            }
             cp->Rebuild();
             for (int i = 0; i < cp->Count(); ++i) {
                 Color c = cp->swatches[(std::size_t)i];
@@ -42248,6 +42390,26 @@ void DrawInspector(EditorState& ed) {
             if (item(!go->GetComponent<UIPagination>(), "UI Pagination")) { go->AddComponent<UIPagination>(); ed.dirty = true; }
             if (item(!go->GetComponent<UISkeleton>(), "UI Skeleton")) { go->AddComponent<UISkeleton>(); ed.dirty = true; }
             if (item(!go->GetComponent<UIBottomSheet>(), "UI Bottom Sheet")) { go->AddComponent<UIBottomSheet>(); ed.dirty = true; }
+            if (item(!go->GetComponent<UIMenuBar>(), "UI Menu Bar")) { go->AddComponent<UIMenuBar>(); ed.dirty = true; }
+            if (item(!go->GetComponent<UIToolbar>(), "UI Toolbar")) { go->AddComponent<UIToolbar>(); ed.dirty = true; }
+            if (item(!go->GetComponent<UITreeView>(), "UI Tree View")) { go->AddComponent<UITreeView>(); ed.dirty = true; }
+            if (item(!go->GetComponent<UIDataTable>(), "UI Data Table")) { go->AddComponent<UIDataTable>(); ed.dirty = true; }
+            if (item(!go->GetComponent<UIWizard>(), "UI Wizard")) { go->AddComponent<UIWizard>(); ed.dirty = true; }
+            if (item(!go->GetComponent<UIFormGroup>(), "UI Form Group")) { go->AddComponent<UIFormGroup>()->Rebuild(); ed.dirty = true; }
+            if (item(!go->GetComponent<UIBind>(), "UI Bind (widget <-> variable)")) { go->AddComponent<UIBind>(); ed.dirty = true; }
+            if (item(!go->GetComponent<UIVisibleIf>(), "UI Visible If (show from a condition)")) { go->AddComponent<UIVisibleIf>(); ed.dirty = true; }
+            if (item(!go->GetComponent<UIListBind>() && go->GetComponent<UIListView>(), "UI List Bind (array -> list)")) { go->AddComponent<UIListBind>(); ed.dirty = true; }
+            if (item(!go->GetComponent<UIHotReload>(), "UI Hot Reload (watch a UI file)")) { go->AddComponent<UIHotReload>(); ed.dirty = true; }
+            if (item(!go->GetComponent<UIFocusHint>(), "UI Focus Hint (tab order, links)")) { go->AddComponent<UIFocusHint>(); ed.dirty = true; }
+            if (item(!go->GetComponent<UIRichLinks>() && go->GetComponent<TextRenderer>(), "UI Rich Links (clickable [url] text)")) { go->AddComponent<UIRichLinks>(); ed.dirty = true; }
+            if (item(!go->GetComponent<UIRadialMenu>(), "UI Radial Menu")) { go->AddComponent<UIRadialMenu>(); ed.dirty = true; }
+            if (item(!go->GetComponent<UIKillFeed>(), "UI Kill Feed")) { go->AddComponent<UIKillFeed>(); ed.dirty = true; }
+            if (item(!go->GetComponent<UIAmmoCounter>(), "UI Ammo Counter")) { go->AddComponent<UIAmmoCounter>(); ed.dirty = true; }
+            if (item(!go->GetComponent<UIInteractionPrompt>(), "UI Interaction Prompt")) { go->AddComponent<UIInteractionPrompt>(); ed.dirty = true; }
+            if (item(!go->GetComponent<UIObjectiveTracker>(), "UI Objective Tracker")) { go->AddComponent<UIObjectiveTracker>(); ed.dirty = true; }
+            if (item(!go->GetComponent<UICompass>(), "UI Compass")) { go->AddComponent<UICompass>(); ed.dirty = true; }
+            if (item(!go->GetComponent<UIItemTooltipCard>(), "UI Item Tooltip Card")) { go->AddComponent<UIItemTooltipCard>(); ed.dirty = true; }
+            if (item(!go->GetComponent<UIAbilityIcon>() && go->GetComponent<UIRadialProgress>(), "UI Ability Icon (on a Radial Progress)")) { go->AddComponent<UIAbilityIcon>(); ed.dirty = true; }
             if (item(!go->GetComponent<UIRangeSlider>(), "UI Range Slider (two handles)")) { go->AddComponent<UIRangeSlider>(); ed.dirty = true; }
             if (item(!go->GetComponent<UIAspectRatio>(), "UI Aspect Ratio (keeps a shape)")) { go->AddComponent<UIAspectRatio>(); ed.dirty = true; }
             if (item(!go->GetComponent<UIInputValidator>() && go->GetComponent<UIInputField>(), "UI Input Validator (rules for an input field)")) { go->AddComponent<UIInputValidator>(); ed.dirty = true; }
@@ -43804,6 +43966,238 @@ static void SceneObjectDragChip(okay::GameObject* go, ImVec2 screen) {
     SceneObjectDragChipAt(go, ImVec2(screen.x - sz.x * 0.5f, screen.y - sz.y - 22.0f), 1.0f);
 }
 
+// ---- The Scene view's right-click "add here" menu ----------------------------------------------------------------------------
+// A right-click (a click, not a drag: dragging still orbits / looks / pans, and fly mode with the button held is untouched) on the Scene
+// view opens a menu at the cursor. Its create entries are the Hierarchy create slots (DrawCreateSlot) and the shared Add*Object
+// creators above, so there is one copy of the creation code. The clicked spot comes from oked::sceneadd (tested headless in
+// tests/test_scene_add_menu.cpp); this glue only gathers the ray / world position and runs the ids. docs/scene_right_click_add.md.
+struct SceneAddView {
+    bool is3D = true;
+    ImVec2 canvasPos{0, 0}, canvasSize{0, 0};
+    Mat4 vp; Vec3 eye{0, 0, 0};                         // 3D
+    ImVec2 center{0, 0}; Vec2 camPos{0, 0}; float scale = 1.0f;   // 2D
+};
+struct SceneAddState {
+    bool pressing = false; ImVec2 pressPos{0, 0}; double pressTime = 0.0;
+    oked::sceneadd::Placement place;
+    ObjectRef under;
+    char query[96] = "";
+    bool focusSearch = false;
+    int  sel = 0;
+    std::vector<std::string> prefabs;
+    ObjectRef renameTarget; bool renameOpen = false; char renameBuf[128] = "";
+};
+static SceneAddState g_sceneAdd;
+
+// Put a just-created object where the user clicked: the pivot on the clicked point, lifted so a mesh rests ON the surface or the
+// ground. UI pieces (they live under a Canvas and choose their own place) and anything already parented are left alone.
+static void SceneAddPlace(EditorState& ed, GameObject* go, const oked::sceneadd::Placement& pl) {
+    (void)ed;
+    if (!go || !go->transform || go->transform->Parent() || IsUIElement(go) || go->GetComponent<Canvas>() || go->GetComponent<EventSystem>()) return;
+    Transform* t = go->transform;
+    if (pl.source == oked::sceneadd::PlaceSource::World2D) {
+        t->SetPosition(Vec3{pl.pos.x, pl.pos.y, t->Position().z});
+        return;
+    }
+    float lift = 0.0f;
+    if (auto* mr = go->GetComponent<MeshRenderer>(); mr && !mr->DisplayMesh().vertices.empty()) {
+        Vec3 lo, hi; mr->DisplayMesh().Bounds(lo, hi);
+        lift = oked::sceneadd::RestOffsetY(pl.source, lo.y * std::fabs(t->LossyScale().y));
+    }
+    t->SetPosition(Vec3{pl.pos.x, pl.pos.y + lift, pl.pos.z});
+}
+
+static std::string SceneAddAssetsRoot() {
+    namespace fs = std::filesystem;
+    std::error_code ec;
+    return (g_pickerProjectDir.empty() ? fs::absolute(".", ec) : fs::path(g_pickerProjectDir) / "Assets").string();   // the folder CollectProjectPrefabs lists
+}
+
+// Run one id of the menu or of the search list. Creating goes through the same functions the Hierarchy menu uses; the new object is
+// then moved to the clicked spot. Every creator takes its own undo step first, and the move happens in the same frame, so one add = one step.
+static void SceneAddRun(EditorState& ed, const std::string& id, const std::string& label) {
+    namespace sa = oked::sceneadd;
+    SceneAddState& st = g_sceneAdd;
+    GameObject* under = st.under.Get(ed.scene());
+    GameObject* made = nullptr;
+    const std::size_t before = ed.scene().Objects().size();
+    if (id == sa::kIdEmpty || id == "empty") { HierEmptyAction(ed, "h.createempty"); made = ed.selected(); }
+    else if (id == sa::kIdFocus) { if (under) { ed.Select(under); FocusSelected(ed); } }
+    else if (id == sa::kIdRename) {
+        if (under) {
+            st.renameTarget.Set(under); st.renameOpen = true;
+            std::strncpy(st.renameBuf, under->name.c_str(), sizeof(st.renameBuf) - 1);
+            st.renameBuf[sizeof(st.renameBuf) - 1] = '\0';
+        }
+    }
+    else if (id == sa::kIdDuplicate) { if (under) { if (!ed.IsSelected(under)) ed.Select(under); ed.DuplicateSelected(); ConsoleLog("Duplicated"); } }
+    else if (id == sa::kIdCopy) { if (under) g_clipboard = SceneSerializer::SerializeObject(*under); }
+    else if (id == sa::kIdDelete) { if (under) { if (!ed.IsSelected(under)) ed.Select(under); ed.DeleteSelected(); ConsoleLog("Deleted"); } }
+    else if (id == sa::kIdPaste) {
+        if (!g_clipboard.empty()) {
+            ed.PushUndo();
+            made = SceneSerializer::InstantiateFromText(ed.scene(), g_clipboard);
+            if (made) { SceneAddPlace(ed, made, st.place); ed.Select(made); ed.dirty = true; }
+        }
+        return;
+    }
+    else if (!sa::PrefabPathFromId(id).empty()) {
+        namespace fs = std::filesystem;
+        const std::string path = (fs::path(SceneAddAssetsRoot()) / sa::PrefabPathFromId(id)).string();
+        ed.PushUndo();
+        std::string err;
+        made = SceneSerializer::InstantiateFromFile(ed.scene(), path, &err);
+        if (!made) ConsoleLog("Prefab load failed: " + err, 2);
+        else { SceneAddPlace(ed, made, st.place); ed.Select(made); ed.dirty = true; ConsoleLog("Placed " + made->name); }
+        return;
+    }
+    else if (id.rfind("mesh:", 0) == 0) made = CreatePrimitiveByName(ed, id.substr(5), label);
+    else if (id == "light:directional") made = AddLightObject(ed, 0);
+    else if (id == "light:point") made = AddLightObject(ed, 1);
+    else if (id == "light:spot") made = AddLightObject(ed, 2);
+    else if (id == "camera") { made = ed.CreateCamera(); ConsoleLog("Created Camera"); }
+    else if (id == "audio:source") made = AddAudioSourceObject(ed);
+    else if (id == "audio:music") made = AddMusicPlayerObject(ed);
+    else if (id == "particles") made = AddParticleObject(ed);
+    else if (id == "terrain") made = AddTerrainObject(ed);
+    else if (id == "water") made = AddWaterObject(ed);
+    else if (id == "character") made = AddCharacterObject(ed);
+    else if (id == "player:controller") made = AddPlayerControllerObject(ed);
+    else if (id == "2d:sprite") { made = ed.CreateSprite(); ConsoleLog("Created Sprite"); }
+    else if (id == "2d:tilemap") made = AddTilemapObject(ed);
+    if (made && ed.scene().Objects().size() > before) {
+        SceneAddPlace(ed, made, st.place);
+        ed.Select(made); ed.dirty = true;
+        ed.Achievement("FIRST_OBJECT");
+    }
+}
+
+static void SceneAddMenuTick(EditorState& ed, bool hovered, ImGuiIO& io, const SceneAddView& v) {
+    namespace sa = oked::sceneadd;
+    SceneAddState& st = g_sceneAdd;
+    const bool blocked = ed.isPlaying() || g_meshEdit || g_wpPlace != nullptr;   // mesh edit mode has its own right-click tool menu
+    const ImGuiPopupFlags anyPopup = ImGuiPopupFlags_AnyPopupId | ImGuiPopupFlags_AnyPopupLevel;
+    if (hovered && !blocked && ImGui::IsMouseClicked(ImGuiMouseButton_Right) && !ImGui::IsPopupOpen(nullptr, anyPopup)) {
+        st.pressing = true; st.pressPos = io.MousePos; st.pressTime = ImGui::GetTime();
+    }
+    if (st.pressing && ImGui::IsMouseReleased(ImGuiMouseButton_Right)) {
+        st.pressing = false;
+        const float secs = (float)(ImGui::GetTime() - st.pressTime);
+        if (!blocked && sa::IsClick(io.MousePos.x - st.pressPos.x, io.MousePos.y - st.pressPos.y, secs)) {
+            GameObject* under = nullptr;
+            sa::Placement pl;
+            if (v.is3D) {
+                const float nx = 2.0f * (st.pressPos.x - v.canvasPos.x) / v.canvasSize.x - 1.0f;
+                const float ny = 1.0f - 2.0f * (st.pressPos.y - v.canvasPos.y) / v.canvasSize.y;
+                const Mat4 inv = v.vp.Inverse();
+                const Vec3 p0 = inv.MultiplyPoint({nx, ny, -1.0f}), p1 = inv.MultiplyPoint({nx, ny, 1.0f});
+                const Vec3 rd = (p1 - p0).Normalized();
+                // The nearest thing under the cursor: a collider (physics ray) or a mesh's own box (so models without colliders are hit too).
+                float bestT = 1e30f;
+                RaycastHit3D rh = ed.scene().physics3D().Raycast(ed.scene(), p0, rd, 800.0f, nullptr);
+                if (rh.hit) { bestT = Vec3::Dot(rh.point - p0, rd); under = rh.gameObject; }
+                for (const auto& up : ed.scene().Objects()) {
+                    GameObject* go = up.get();
+                    auto* mr = go->GetComponent<MeshRenderer>();
+                    if (!mr || !go->active || go->transient || mr->DisplayMesh().vertices.empty()) continue;
+                    const Mat4 minv = go->transform->LocalToWorldMatrix().Inverse();
+                    const Vec3 lo0 = minv.MultiplyPoint(p0), ld = minv.MultiplyVector(rd);
+                    Vec3 blo, bhi; mr->DisplayMesh().Bounds(blo, bhi);
+                    float t = 0.0f;
+                    if (sa::RayBoxEntry({lo0.x, lo0.y, lo0.z}, {ld.x, ld.y, ld.z}, {blo.x, blo.y, blo.z}, {bhi.x, bhi.y, bhi.z}, t) && t < bestT) {
+                        bestT = t; under = go;
+                    }
+                }
+                const bool hit = under != nullptr && bestT < 1e29f;
+                const Vec3 hp = p0 + rd * bestT;
+                pl = sa::PlaceIn3D({{p0.x, p0.y, p0.z}, {rd.x, rd.y, rd.z}}, hit, {hp.x, hp.y, hp.z}, sa::kDefaultFallbackDistance);
+            } else {
+                const float wx = (st.pressPos.x - v.center.x) / v.scale + v.camPos.x;
+                const float wy = -(st.pressPos.y - v.center.y) / v.scale + v.camPos.y;
+                for (const auto& up : ed.scene().Objects()) {
+                    GameObject* go = up.get();
+                    auto* sr = go->GetComponent<SpriteRenderer>();
+                    if (!sr || !go->active || go->transient) continue;
+                    const Vec3 wp = go->transform->Position(), ls = go->transform->LossyScale();
+                    const float hx = std::fabs(sr->size.x * ls.x * 0.5f), hy = std::fabs(sr->size.y * ls.y * 0.5f);
+                    if (wx >= wp.x - hx && wx <= wp.x + hx && wy >= wp.y - hy && wy <= wp.y + hy) under = go;   // the last drawn wins
+                }
+                pl = sa::PlaceIn2D(wx, wy);
+            }
+            st.place = sa::SnapPlacement(pl, g_snapSize, g_snap);
+            st.under.Set(under);
+            if (under && !ed.IsSelected(under)) ed.Select(under);   // like the Hierarchy: right-click selects what it acts on
+            st.query[0] = '\0'; st.sel = 0; st.focusSearch = true;
+            st.prefabs = CollectProjectPrefabs();
+            ImGui::OpenPopup("##sceneadd");
+        }
+    }
+    if (!ImGui::IsMouseDown(ImGuiMouseButton_Right)) st.pressing = false;
+
+    if (ImGui::BeginPopup("##sceneadd")) {
+        GameObject* under = st.under.Get(ed.scene());
+        sa::MenuState ms;
+        ms.is2D = !v.is3D;
+        ms.hasObjectUnder = under != nullptr;
+        ms.underName = under ? under->name : std::string();
+        ms.clipboardHasObject = !g_clipboard.empty();
+        ms.prefabs = st.prefabs;
+        ImGui::TextDisabled("Add here");
+        ImGui::SetNextItemWidth(230.0f);
+        if (st.focusSearch) { ImGui::SetKeyboardFocusHere(); st.focusSearch = false; }
+        if (ImGui::InputTextWithHint("##sceneaddsearch", "Search: type a name (cube, light, tree...)", st.query, sizeof(st.query))) st.sel = 0;
+        const std::vector<sa::SearchItem> found = sa::Search(st.query, ms.is2D, st.prefabs);
+        if (st.query[0] != '\0') {
+            if (found.empty()) ImGui::TextDisabled("Nothing found. Try another word.");
+            if (ImGui::IsKeyPressed(ImGuiKey_DownArrow)) st.sel = sa::MoveSelection(st.sel, +1, (int)found.size());
+            if (ImGui::IsKeyPressed(ImGuiKey_UpArrow))   st.sel = sa::MoveSelection(st.sel, -1, (int)found.size());
+            st.sel = sa::MoveSelection(st.sel, 0, (int)found.size());
+            const sa::SearchItem* chosen = nullptr;
+            for (int i = 0; i < (int)found.size(); ++i) {
+                ImGui::PushID(i);
+                if (ImGui::Selectable(found[i].label.c_str(), i == st.sel)) chosen = &found[i];
+                ImGui::SameLine(0, 12.0f);
+                ImGui::TextDisabled("%s", found[i].group.c_str());
+                ImGui::PopID();
+            }
+            if (!chosen && !found.empty() && (ImGui::IsKeyPressed(ImGuiKey_Enter) || ImGui::IsKeyPressed(ImGuiKey_KeypadEnter))) chosen = &found[st.sel];
+            if (chosen) { SceneAddRun(ed, chosen->id, chosen->label); ImGui::CloseCurrentPopup(); }
+        } else {
+            ImGui::Separator();
+            oked::menubar::Host h;
+            h.run = [&ed](const oked::menubar::Entry& e) { SceneAddRun(ed, e.id, e.label); };
+            h.slot = [&ed](const oked::menubar::Entry& e) {
+                if (e.id.rfind("create.", 0) != 0) return;
+                const std::size_t before = ed.scene().Objects().size();
+                DrawCreateSlot(ed, e.id, nullptr);   // the Hierarchy's own create menu items
+                if (ed.scene().Objects().size() > before && ed.selected()) SceneAddPlace(ed, ed.selected(), g_sceneAdd.place);
+            };
+            oked::menubar::DrawEntries(sa::BuildMenu(ms), h);
+        }
+        ImGui::EndPopup();
+    }
+
+    // Rename (from the menu): a small box in the middle of the view; Enter or OK renames, Escape cancels.
+    if (st.renameOpen) { ImGui::OpenPopup("Rename Object##sceneadd"); st.renameOpen = false; }
+    ImGui::SetNextWindowPos(ImGui::GetMainViewport()->GetCenter(), ImGuiCond_Appearing, ImVec2(0.5f, 0.5f));
+    if (ImGui::BeginPopupModal("Rename Object##sceneadd", nullptr, ImGuiWindowFlags_AlwaysAutoResize)) {
+        GameObject* target = st.renameTarget.Get(ed.scene());
+        if (!target) { ImGui::TextUnformatted("That object is gone."); if (ImGui::Button("Close")) ImGui::CloseCurrentPopup(); }
+        else {
+            if (ImGui::IsWindowAppearing()) ImGui::SetKeyboardFocusHere();
+            const bool enter = ImGui::InputText("##sceneaddrename", st.renameBuf, sizeof(st.renameBuf), ImGuiInputTextFlags_EnterReturnsTrue);
+            ImGui::Spacing();
+            if ((ImGui::Button("OK") || enter) && st.renameBuf[0] != '\0') {
+                if (target->name != st.renameBuf) { ed.PushUndo("Rename"); target->name = st.renameBuf; ed.dirty = true; }
+                ImGui::CloseCurrentPopup();
+            }
+            ImGui::SameLine();
+            if (ImGui::Button("Cancel") || ImGui::IsKeyPressed(ImGuiKey_Escape)) ImGui::CloseCurrentPopup();
+        }
+        ImGui::EndPopup();
+    }
+}
+
 void DrawScene2D(EditorState& ed, ImDrawList* dl, ImVec2 canvasPos, ImVec2 canvasSize,
                  ImVec2 canvasEnd, bool hovered, ImGuiIO& io, bool gameView = false) {
     ImVec2 center(canvasPos.x + canvasSize.x * 0.5f, canvasPos.y + canvasSize.y * 0.5f);
@@ -44207,6 +44601,11 @@ void DrawScene2D(EditorState& ed, ImDrawList* dl, ImVec2 canvasPos, ImVec2 canva
     }
     // End of a 2D transform drag: drop the raw accumulator so the next drag reseeds.
     if (!ImGui::IsMouseDown(ImGuiMouseButton_Left)) g_dragRawValid = false;
+    {   // right-click (a click, not a drag, which pans) opens the "add here" menu
+        SceneAddView av; av.is3D = false; av.canvasPos = canvasPos; av.canvasSize = canvasSize;
+        av.center = center; av.camPos = camPos; av.scale = scale;
+        SceneAddMenuTick(ed, hovered, io, av);
+    }
 }
 
 // ---- Scene view overlays: stats line, camera readout, name labels -------------------------------
@@ -46314,7 +46713,7 @@ void DrawScene3D(EditorState& ed, ImDrawList* dl, ImVec2 canvasPos, ImVec2 canva
                     qs.push_back({"Sym X", "Mirror every G / R / S move across the local X = 0 plane.", true, g_meshSymX, "Toggle Symmetry X", 0});
                     qs.push_back({"Y", "Symmetry across the local Y = 0 plane.", true, g_meshSymY, "Toggle Symmetry Y", 0});
                     qs.push_back({"Z", "Symmetry across the local Z = 0 plane.", true, g_meshSymZ, "Toggle Symmetry Z", 0});
-                    qs.push_back({"Snap", "Snap moves, turns and scales (Ctrl also snaps while held). Set what it snaps to in Edit Mesh > Snapping and measuring.", true, g_snap, "Toggle Snap", 0});
+                    qs.push_back({"Snap", "Snap moves, turns and scales (Ctrl also snaps while held). Set what it snaps to in Fix the surface > Snapping and measuring.", true, g_snap, "Toggle Snap", 0});
                     qs.push_back({"Repeat", "Run the last tool again (Shift+R): " + (g_lastCmdName.empty() ? std::string("none yet") : g_lastCmdName), !g_lastCmdName.empty(), false, "", 1});
                     qs.push_back({"Find... (Ctrl+K)", "Search every modeling tool by name and run it.", true, false, "", 2});
                     const float pad = 7.0f, gap = 4.0f, lh2 = ImGui::GetTextLineHeight(), hgt2 = lh2 + 6.0f;
@@ -47211,6 +47610,10 @@ void DrawScene3D(EditorState& ed, ImDrawList* dl, ImVec2 canvasPos, ImVec2 canva
     }
     if (!gameView && chipPlan.valid && ed.selected() && ed.selected()->transform)
         SceneObjectDragChipAt(ed.selected(), chipPlan.pos, chipPlan.alpha);   // placed by the label pass above
+    if (!gameView) {   // right-click (a click, not a drag) opens the "add here" menu
+        SceneAddView av; av.is3D = true; av.canvasPos = canvasPos; av.canvasSize = canvasSize; av.vp = vp; av.eye = eye;
+        SceneAddMenuTick(ed, hovered, io, av);
+    }
 }
 
 // ---- Shared game / UI screen resolution ------------------------------------
@@ -51930,6 +52333,7 @@ int main(int argc, char** argv) {
         { OKAY_PROFILE("UI.PerfOverlay"); if (g_showPerfOverlay) DrawPerfOverlay(ed); }
         { OKAY_PROFILE("UI.Inspector"); if (g_showInspector) DrawInspector(ed); }
         DrawFpHandsPreviewWindow(ed);
+        okay::editor::DrawUIGalleryWindow(ed);   // UI Gallery: GameObject > UI > Browse All UI...
         { OKAY_PROFILE("UI.Console"); if (g_showConsole)   DrawConsole(); }
         { OKAY_PROFILE("UI.CrashLog"); if (g_showCrashLog)  DrawCrashLog(); }
         { OKAY_PROFILE("UI.AudioMixer"); if (g_showAudioMixer) DrawAudioMixer(); }

@@ -79,3 +79,17 @@ scene text format). No third-party code, fonts, images or SDKs were added.
 `ui_library` (maths, pointer, keys, rules, round trips), `ui_library_example` (loads and plays the shipped scene),
 `ui_library_shots` (headless pictures), plus the existing `ui_layer_table`, `save_coverage` and `property_registry`, which
 now list the new parts. Nothing in this slice was run on Windows or in a real window.
+
+## Internal record: slices 2 to 4 (branch claude/ui-lib-4)
+
+Kept short on purpose (internal notes, not a guide).
+
+- **What exists:** data-driven UI in `assets/ui/*.okaydata` (77 components, 126 styles, 62 looks, 408 icons, 62 screens), built by `UIScreens`, `UIStyleLib`
+  and `UIIcons`; HUD, app parts and the colour picker from slices 2 and 3; UI Gallery and the simplified GameObject > UI menu in the editor.
+  Looks and styles are per screen or widget (no scene-wide theme). Counts and lists: `docs/ui_catalogue.md`
+  (`python3 scripts/gen_ui_catalogue.py`, `--check`). Tests: `test_ui_library4*`, `test_ui_templates`, `test_runtime_ui`.
+- **Rules the tests enforce:** every look reaches 4.5 : 1 for text, muted text and button labels (`UITheme::MakeReadable`); no look or screen sets the pixel
+  font; text fits its box; a slider's value has its own space beside the track (`UISlider::ValueSpace`); no text outline or shadow unless a look sets
+  `textShadow`.
+- **Missing:** placeholder content on some screens (names, numbers, art); icons drawn by shapes only; real-GPU renderers not checked here (software path only).
+- **Pictures:** never kept in the repository; `test_ui_library4_shots` writes to `OKAY_SHOT_DIR` (default `<build>/tests/ui_library4`).

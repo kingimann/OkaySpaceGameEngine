@@ -38,7 +38,7 @@ int main() {
                                 K_Crosshair, K_FocusRing, K_Tooltip, K_Keybind, K_ModalDim, K_ContextMenu, K_Caption,
                                 K_TouchStick, K_TouchPad, K_TouchButton,
                                 K_Search, K_DateTime, K_FilePicker, K_Accordion, K_Breadcrumbs,
-                                K_Pagination, K_Skeleton, K_BottomSheet, K_RangeSlider, K_Validator};
+                                K_Pagination, K_Skeleton, K_BottomSheet, K_RangeSlider, K_Validator, K_GameHud, K_AppParts, K_AppPopup};
         CHECK((int)(sizeof(expected) / sizeof(expected[0])) == K_Count);
         for (int i = 0; i < K_Count; ++i) CHECK(expected[i] == i);   // contiguous, ascending
         CHECK(K_Minimap == 7);
@@ -89,6 +89,10 @@ int main() {
         { auto* g = mk("sk");  g->AddComponent<UISkeleton>();       cases.push_back({g, K_Skeleton}); }
         { auto* g = mk("sh");  g->AddComponent<UIBottomSheet>();    cases.push_back({g, K_BottomSheet}); }
         { auto* g = mk("rs");  g->AddComponent<UIRangeSlider>();    cases.push_back({g, K_RangeSlider}); }
+        { auto* g = mk("hk");  g->AddComponent<UIKillFeed>();       cases.push_back({g, K_GameHud}); }
+        { auto* g = mk("hc");  g->AddComponent<UICompass>();        cases.push_back({g, K_GameHud}); }
+        { auto* g = mk("at");  g->AddComponent<UITreeView>();       cases.push_back({g, K_AppParts}); }
+        { auto* g = mk("ad");  g->AddComponent<UIDataTable>();      cases.push_back({g, K_AppParts}); }
         for (const auto& c : cases) {
             CHECK(UIDefaultLayer(c.g) == c.kind);
             std::vector<int> k = KindsOf(c.g);

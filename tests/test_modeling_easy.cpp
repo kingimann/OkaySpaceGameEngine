@@ -2,7 +2,9 @@
 // recent tools and the click-count table. Pure logic, no ImGui.
 #include "ModelingEasy.hpp"
 #include <cstdio>
+#include <fstream>
 #include <set>
+#include <sstream>
 using namespace oked::easymodel;
 static int fails = 0;
 #define CHECK(c) do { if (!(c)) { std::printf("FAIL line %d: %s\n", __LINE__, #c); ++fails; } } while (0)
@@ -20,7 +22,7 @@ int main() {
         bool verb = false; for (const char* v : verbs) if (std::string(t.name).rfind(v, 0) == 0) verb = true;
         CHECK(verb);
         CHECK(std::string(t.tip).size() > 10 && std::string(t.example).size() > 5);
-        CHECK(t.tab != Tab::Advanced);
+        CHECK(std::string(TabName(t.tab)) != "Advanced");
         CHECK(TooltipFor(t).find("For example") != std::string::npos);
     }
     for (int i = 0; i < kBeginnerTabCount; ++i) CHECK(!ToolsOnTab((Tab)i).empty());
@@ -128,7 +130,17 @@ int main() {
     }
     std::printf("clicks, all 8 jobs: before %d, after %d\n", b, a);
 
-    EasyPrefs p; CHECK(!p.showAdvanced);   // beginner mode by default
+    // No Advanced tab or switch: no tab (even an out-of-range one) is called Advanced, and the tab help never sends anyone there.
+    for (int i = 0; i <= 8; ++i) { CHECK(std::string(TabName((Tab)i)) != "Advanced"); CHECK(std::string(TabHelp((Tab)i)).find("dvanced") == std::string::npos); }
+    CHECK(std::string(TabName(Tab::Pick)) == "Pick");
+    {   // The simple view is the only view: the UI header takes no "show advanced" switch and the sources have no such label.
+        const std::string dir = std::string(OKAY_SOURCE_DIR) + "/editor/";
+        for (const char* f : {"ModelingEasyUi.cpp", "ModelingEasyUi.hpp", "ModelingEasy.hpp"}) {
+            std::ifstream in(dir + f); std::stringstream ss; ss << in.rdbuf();
+            CHECK(!ss.str().empty());
+            CHECK(ss.str().find("showAdvanced") == std::string::npos && ss.str().find("Show advanced") == std::string::npos);
+        }
+    }
     if (fails) { std::printf("%d failure(s)\n", fails); return 1; }
     std::printf("modeling_easy: all passed\n");
     return 0;

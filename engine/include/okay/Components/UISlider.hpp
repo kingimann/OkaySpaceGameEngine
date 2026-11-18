@@ -1,4 +1,5 @@
 #pragma once
+#include <algorithm>
 #include "okay/Scene/Component.hpp"
 #include "okay/Scene/GameObject.hpp"
 #include "okay/Components/ScriptComponent.hpp"
@@ -63,12 +64,14 @@ public:
         return nv;
     }
     /// The readout next to the track. An empty format is the historical "%.2f".
-    std::string FormatValue() const {
+    std::string FormatValue() const { return FormatValueOf(value); }
+    /// The readout for any value (the track width reserves room for the longest one, so it never jumps while dragging).
+    std::string FormatValueOf(float v) const {
         char num[32];
         const char* spec = (wholeNumbers || step >= 1.0f) ? "%.0f" : "%.2f";
-        std::snprintf(num, sizeof(num), spec, value);
+        std::snprintf(num, sizeof(num), spec, v);
         if (valueFormat.empty()) {
-            std::snprintf(num, sizeof(num), "%.2f", value);
+            std::snprintf(num, sizeof(num), "%.2f", v);
             return num;
         }
         std::string out;
@@ -84,6 +87,16 @@ public:
         }
         return out;
     }
+    /// Width of the value readout's own space at the right end of a horizontal slider (0 when no value is shown). The track, fill and handle use what is left.
+    float ValueSpace() const {
+        if (!showValue || vertical) return 0.0f;
+        const std::size_t n = std::max(FormatValueOf(minValue).size(), std::max(FormatValueOf(maxValue).size(), FormatValue().size()));
+        float w = 12.0f + 9.0f * (float)n;
+        if (w > size.x * 0.45f) w = size.x * 0.45f;
+        return w;
+    }
+    /// The width of the track itself (the part you drag): the box minus the value's own space.
+    float TrackWidth() const { return size.x - ValueSpace(); }
     void SetStep(float s) { step = s < 0.0f ? 0.0f : s; }
     void SetFormat(const std::string& f) { valueFormat = f; }
     void SetValue(float v) {
@@ -122,6 +135,7 @@ public:
         if (!Input::GetMouseButton(0)) m_dragging = false;
         Vec2 trackO, trackSz;
         UIControlRect(anchor, position, size, trackO, trackSz);
+        if (size.x > 0.0f) trackSz.x *= TrackWidth() / size.x;   // the value readout is not part of the track
         if (m_dragging && trackSz.x > 0.0f && trackSz.y > 0.0f) {
             Vec2 lm = UIToLocal(gameObject, trackO, trackSz, m);
             // Horizontal: left->right. Vertical: bottom->top (natural for volume).

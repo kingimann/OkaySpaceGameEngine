@@ -1,5 +1,5 @@
 #pragma once
-// ModelingSidebar: the fold state and width maths of the advanced Modeling window's left page list. Open it is 196 px wide;
+// ModelingSidebar: the fold state and width maths of the Modeling window's left page list. Open it is 196 px wide;
 // folded it is a thin strip (36 px) of page buttons. Rules: a click on the chevron or Ctrl+\ is a manual choice and always wins;
 // without one, the list folds by itself when the window gets narrow, with two thresholds (fold below 760 px, unfold above 840 px)
 // so a small resize never makes it flip back and forth. The choice is kept as one number in the settings file.

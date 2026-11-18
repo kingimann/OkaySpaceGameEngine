@@ -1,6 +1,6 @@
 # Our own Q3D reader (`.q3o` `.q3s`)
 
-Status: **side by side, off by default** (`OKAY_OWN_Q3D`, same rules as `docs/own_3mf_reader.md`). Assimp (when built) is the only other reader. Nothing was flipped. **Unverified against real Quick3D files**: there is no `.q3o` or `.q3s` file in this repository, and the layout below comes from one public description that leaves some points open (see "Open points").
+Status: **side by side, off by default** (`OKAY_OWN_Q3D`, same rules as `docs/own_3mf_reader.md`). Assimp (when built) is the only other reader. Nothing was flipped. **Checked on the four Quick3D files of the model corpus** (`docs/model_corpus.md`; not in this repository): the description left three points of the layout open, and the first version of the reader guessed two of them wrong, so it refused all four files. The layout below is the one those files have (see "Checked against real files"); triangle counts, material counts and bounding boxes now equal Assimp's on all four.
 
 ## What it is
 
@@ -17,19 +17,26 @@ Quick3D is an old Mac and Windows modeller. A `.q3o` file is one object, a `.q3s
 
 ## What it reads
 
-The 22 byte header (signature `quick3Do` or `quick3Ds`, a 2 character version, the number of meshes, materials and textures), then chunks, each one type byte: `m` meshes, `c` materials, `t` textures, `s` scene. Each mesh: vertices, faces (a corner count per face, then the vertex indices), a material index per face, normals, and, when the header names textures, texture coordinates and per-corner texture indices; then a centre of mass and a bounding box (skipped). Faces are triangulated: up to 32 corners convex ones are fanned and concave ones ear clipped; bigger ones, and every polygon once the per-file ear clipping work (sum of corners cubed) passes 400,000,000, are fanned from their first corner (a note says so; a concave one may then come out wrong). One part per mesh and material; materials carry the diffuse colour, and the transparency as `alpha = 1 - transparency`. Stored normals are used when there is one per vertex and all are usable; otherwise smooth normals are made.
+The 22 byte header (signature `quick3Do` or `quick3Ds`, a 2 character version, the number of meshes, materials and textures), then chunks, each one type byte: `m` meshes, `c` materials, `t` textures, `s` scene. Each mesh: vertices, faces (a 16-bit corner count per face, then the vertex indices), a material index per face (-1 = none), normals, a **texture coordinate count (always there)**, and, only when the header names textures, the texture coordinates and per-corner texture indices; then a centre of mass and a bounding box (skipped). Each material: a NUL-ended name, ambient, diffuse and specular colours, a transparency and a **texture index** (-1 = none). A scene chunk is taken in any file and ends the read (the corpus file `WusonOrange.q3s` says `quick3Do` and has one; bytes after it are ignored). Faces are triangulated: up to 32 corners convex ones are fanned and concave ones ear clipped; bigger ones, and every polygon once the per-file ear clipping work (sum of corners cubed) passes 400,000,000, are fanned from their first corner (a note says so; a concave one may then come out wrong). One part per mesh and material; materials carry the diffuse colour, and the transparency as `alpha = 1 - transparency`, except that a transparency of 1 (fully clear) is read as opaque, with a note: the glass materials of the corpus carry 0.12 and 0.18 there, but the only material of `WusonOrange` carries exactly 1, which would make the whole model invisible (Assimp's materials come out opaque on all four files). Stored normals are used when there is one per vertex and all are usable; otherwise smooth normals are made.
 
 ## Not handled (each is a line in `out.notes`)
 
-Ambient and specular colours; the embedded textures (the description gives no link from a material to a texture, so they are skipped, not decoded); the scene chunk (placement, camera, lights, background, which is only skipped); faces with fewer than 3 corners; faces with an out-of-range index (skipped and counted).
+Ambient and specular colours; the embedded textures (skipped, not decoded; the material's texture index is read past); a texture coordinate count in a file whose header names no texture (`E-AT-AT.q3o` has one of 230 with no coordinates after it: counted in a note, no UVs); the scene chunk (placement, camera, lights, background, which is only skipped); faces with fewer than 3 corners; faces with an out-of-range index (skipped and counted).
 
-## Open points (the description does not say; these are the choices made)
+## Checked against real files (2026-11-16)
 
-1. **Byte order.** Not stated. The reader tries little endian first and, if that does not parse, big endian; the note says which one was used.
-2. **No textures in the header.** The description says the texture coordinate and texture index fields are left out then. The reader also leaves out the count of texture coordinates. If real files keep a zero count there, they would not read.
-3. **Normals.** The description lists a normal count but no per-corner normal index; the reader uses them only when the count equals the vertex count.
-4. **Transparency** is read as 0 = opaque, 1 = clear. **Up axis, winding and V direction** are kept as written (nothing is flipped).
-5. **Chunk order.** Any order, each type at most once; the scene chunk ends the read.
+The four corpus files (`models/Q3D/earth.q3o`, `E-AT-AT.q3o`, `WusonOrange.q3o`, `WusonOrange.q3s`) were walked byte by byte with a throw-away script that follows the layout above, and every one ends exactly at its last byte (the `.q3s` at its scene chunk). What the bytes settled:
+
+1. **Byte order:** little endian in all four (the big endian fallback stays for other files).
+2. **The texture coordinate count is always there**, also when the header names no texture; the coordinates and their indices are not. The first reader left the count out, read it as the next mesh's vertex count and refused `earth` and `E-AT-AT` ("bad vertex count").
+3. **A material ends with a 4-byte texture index** after the transparency (-1 in all four files). The first reader did not read it, so after the first material it was 4 bytes off: "an unexpected or repeated chunk type 158" on both `WusonOrange` files.
+4. **The scene chunk in a `quick3Do` file** (`WusonOrange.q3s`): read like in a `quick3Ds` file.
+5. **Normals:** one per vertex in every mesh of the four files (used when all are usable; `earth` and `E-AT-AT` each have a mesh with zero normals, so normals are made there, noted).
+6. **Transparency:** 0 = opaque, small values for glass, and 1 on `WusonOrange`'s only material, read as opaque (above). **Up axis, winding and V direction** are kept as written.
+
+`bench_model_readers --compare` (Assimp run from the same build, its code not read) on the four files: triangles 11,156 / 2,937 / 3,732 / 3,732, materials 7 / 2 / 1 / 1 and the bounding boxes equal Assimp's, except the `.q3s` box: Assimp applies the scene chunk's placement and ours does not read it (documented above). Parts and vertices differ by design: ours makes one part per mesh and material (35 on `E-AT-AT`, Assimp merges per material into 7) and welds vertices per mesh (6,262 against 6,238).
+
+Still open: a file **with** textures (none in the corpus): whether its texture coordinates, per-corner indices and texture records are laid out as the description says is unverified.
 
 ## Limits
 
@@ -37,10 +44,12 @@ File 256 MiB; 100,000 meshes, materials and textures each; 4,000,000 vertices an
 
 ## Tests and what was checked
 
-- `q3d_reader` (126 checks): a hand-built file (a unit quad and a triangle, two materials, four texture coordinates), in little and big endian, as object and as scene: parts, vertex and triangle counts, areas (1 + 1), every UV against its vertex, alpha 0.75, notes; the same without textures; refusals. Mutation checks (code broken, test red, code restored): alpha formula, texture index.
+- `q3d_reader` (131 checks): the fixture follows the real layout (texture coordinate count always written, a texture index per material); also the three corpus cases (a count of 230 with no coordinates, a scene chunk in a `quick3Do` file with bytes after it, transparency 1 read as opaque).
+- `model_corpus`: the four real files (rows `q3d` in `tests/data/model_corpus_manifest.tsv`).
+- Earlier checks, still in `q3d_reader`: a hand-built file (a unit quad and a triangle, two materials, four texture coordinates), in little and big endian, as object and as scene: parts, vertex and triangle counts, areas (1 + 1), every UV against its vertex, alpha 0.75, notes; the same without textures; refusals. Mutation checks (code broken, test red, code restored): alpha formula, texture index.
 - `batche2_hostile` (shared with RAW): every truncation, every 4-byte window of the file set to 0, 1, 0x7FFFFFFF, 0x80000000, 0xFFFFFFFF and 0x00FFFFFF, 5,000 bit flips per variant, 300 garbage files; 26,279 inputs read and 15,120 refused in all; every result checked for sanity (finite, indices in range). Also clean under `-fsanitize=address,undefined,float-cast-overflow`. This test found a real bug (texture coordinates that were NaN or infinite reached the mesh); it is fixed.
 - `batche2_budget`: 4,000,000 triangles read (peak 446 MB, 1 s); one quad more refused naming the budget; 4,200,000 output vertices refused (peak 538 MB); counts that claim more than the bytes hold refused with no allocation (a face-size claim of 16,000,000 corners in 8 KB peaks under 1 MB; removing that check turns the test red).
 
 ## Provenance (what this file was written from)
 
-`Q3dReader.cpp` was written from the public description "Quick3D Object File" on Paul Bourke's format pages (the header, the chunk types and the field lists). No importer source, and no code or snippet from any other project, was read. No sample file was available, so nothing was compared with another reader.
+`Q3dReader.cpp` was written from the public description "Quick3D Object File" on Paul Bourke's format pages (the header, the chunk types and the field lists). No importer source, and no code or snippet from any other project, was read. The 2026-11-16 fixes come from the bytes of the four corpus files (above); the description page itself could not be reached from the machine then. Assimp was only run (through `bench_model_readers --compare`) to compare counts and boxes.

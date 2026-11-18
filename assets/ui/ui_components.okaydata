@@ -1,0 +1,465 @@
+# The UI components, for the gallery and the catalogue. scripts/gen_ui_catalogue.py checks each class exists under engine/include/okay/Components.
+# menu = the id of its entry in GameObject > UI (editor/UIMenuModel.hpp); empty = added with Add Component or by another part.
+
+[component UIPanel]
+category = Basics
+tags = box,card,background,container
+desc = A coloured box with shape, border, gradient and shadow.
+menu = ui.panel
+
+[component UIButton]
+category = Basics
+tags = click,action,press
+desc = A clickable button with hover, press and disabled looks, an icon and an action.
+menu = ui.button
+
+[component UIImage]
+category = Basics
+tags = picture,icon,logo
+desc = A picture or a vector icon, with tint, shape, fill amount and 9-slice.
+menu = ui.image
+
+[component UIRawImage]
+category = Basics
+tags = tile,scroll,background
+desc = A picture shown through a window: tiled or scrolling.
+menu = ui.rawimage
+
+[component TextRenderer]
+category = Basics
+tags = text,label,words
+desc = Screen or world text with alignment, wrapping, outline and rich tags.
+menu = ui.text
+
+[component UIInputField]
+category = Input
+tags = text box,type,password,field
+desc = A box the player types into, with a hint, password mode and limits.
+menu = ui.inputfield
+
+[component UIInputValidator]
+category = Input
+tags = check,email,number,rules
+desc = Rules for a text field: email, number, length, must match.
+menu = ui.validatedinput
+
+[component UISlider]
+category = Input
+tags = volume,drag,value
+desc = Drag a handle to pick a number.
+menu = ui.slider
+
+[component UIRangeSlider]
+category = Input
+tags = two handles,from to,price
+desc = A slider with two handles for a from-to range.
+menu = ui.rangeslider
+
+[component UIToggle]
+category = Input
+tags = checkbox,switch,radio,on off
+desc = A tick box, on/off switch or radio button.
+menu = ui.toggle
+
+[component UIDropdown]
+category = Input
+tags = select,choose,list
+desc = A button that opens a list of choices.
+menu = ui.dropdown
+
+[component UIStepper]
+category = Input
+tags = plus minus,number,count
+desc = A number with plus and minus buttons.
+menu = ui.stepper
+
+[component UIRating]
+category = Input
+tags = stars,review
+desc = Stars the player clicks to rate.
+menu = ui.rating
+
+[component UIColorPicker]
+category = Input
+tags = colour,palette,hue
+desc = Pick a colour; the Advanced switch adds a colour square.
+menu = ui.colorpicker
+
+[component UIColorSquare]
+category = Input
+tags = colour,saturation
+desc = The hue and saturation square used by the colour picker.
+menu = ui.colorpicker
+
+[component UIKeybindField]
+category = Input
+tags = keys,rebind,controls
+desc = Press a key to rebind a control.
+menu = ui.keybind
+
+[component UISearchBar]
+category = Input
+tags = search,find,filter
+desc = A text box with a search icon and clear button.
+menu = ui.searchbar
+
+[component UIDateTimePicker]
+category = Input
+tags = date,time,calendar
+desc = Pick a date and a time.
+menu = ui.datetime
+
+[component UIFilePicker]
+category = Input
+tags = file,browse,open
+desc = Browse and choose a file.
+menu = ui.filepicker
+
+[component UIFormGroup]
+category = Input
+tags = form,submit,fields
+desc = Several fields with one Submit that checks them all.
+menu = ui.formgroup
+
+[component UILayoutGroup]
+category = Layout
+tags = row,column,grid,stack
+desc = Lines up children in a row, column or grid.
+menu = ui.layoutgroup
+
+[component UIFlexItem]
+category = Layout
+tags = flex,weight,grow
+desc = Gives a child a share of a flexible row or column.
+menu = ui.flexbox
+
+[component UIScrollView]
+category = Layout
+tags = scroll,overflow,list
+desc = A box that scrolls when its content is bigger.
+menu = ui.scrollview
+
+[component UITabs]
+category = Layout
+tags = tabs,pages,switch
+desc = A row of tabs that switch pages with no script.
+menu = ui.tabs
+
+[component UIAccordion]
+category = Layout
+tags = fold,sections,expand
+desc = Sections that open and close.
+menu = ui.accordion
+
+[component UIAspectRatio]
+category = Layout
+tags = 16:9,ratio,fit
+desc = Keeps a box at a fixed width-to-height shape.
+menu = ui.aspectbox
+
+[component UIMask]
+category = Layout
+tags = crop,clip,mask
+desc = Hides whatever sticks out of a panel.
+menu = ui.mask
+
+[component UISafeArea]
+category = Layout
+tags = notch,phone,safe
+desc = Keeps content clear of notches and home bars.
+menu = ui.safearea
+
+[component UIFrame]
+category = Layout
+tags = anchor,rect,transform
+desc = Places a widget by a rectangle, with scale and rotation.
+menu = 
+
+[component UIDraggable]
+category = Layout
+tags = drag,move,pick up
+desc = Makes a widget draggable.
+menu = ui.draggable
+
+[component UIDropTarget]
+category = Layout
+tags = drop,accept
+desc = A box that accepts a dragged item.
+menu = ui.droptarget
+
+[component UIProgressBar]
+category = Game HUD
+tags = health,bar,loading,fill
+desc = A bar that fills: health, stamina, loading.
+menu = ui.progressbar
+
+[component UIRadialProgress]
+category = Game HUD
+tags = circle,timer,cooldown
+desc = A circle that fills for timers and cooldowns.
+menu = ui.radialprogress
+
+[component UISlotGrid]
+category = Game HUD
+tags = inventory,hotbar,slots
+desc = A grid of item slots.
+menu = ui.hotbar
+
+[component Minimap]
+category = Game HUD
+tags = map,radar,corner
+desc = A small map showing where things are.
+menu = ui.minimap
+
+[component Crosshair]
+category = Game HUD
+tags = aim,reticle,sight
+desc = The aiming mark in the middle of the screen.
+menu = ui.crosshair
+
+[component UIRadialMenu]
+category = Game HUD
+tags = wheel,choices,quick menu
+desc = A wheel of choices.
+menu = ui.radialmenu
+
+[component UIKillFeed]
+category = Game HUD
+tags = events,feed,kills
+desc = A short list of the latest events.
+menu = ui.killfeed
+
+[component UIAmmoCounter]
+category = Game HUD
+tags = ammo,magazine,reload
+desc = Bullets in the magazine and reserve.
+menu = ui.ammo
+
+[component UIInteractionPrompt]
+category = Game HUD
+tags = press e,hint,use
+desc = A hint such as Press E with a hold ring.
+menu = ui.prompt
+
+[component UIObjectiveTracker]
+category = Game HUD
+tags = quest,goal,tracker
+desc = The quest or goal list at the side.
+menu = ui.objective
+
+[component UICompass]
+category = Game HUD
+tags = direction,heading
+desc = A strip showing which way you face.
+menu = ui.compass
+
+[component UIItemTooltipCard]
+category = Game HUD
+tags = item,stats,rarity
+desc = A card with an item's name, rarity and stats.
+menu = ui.itemcard
+
+[component UIAbilityIcon]
+category = Game HUD
+tags = skill,cooldown,key
+desc = A skill icon with a cooldown sweep.
+menu = ui.abilityicon
+
+[component UIDamageNumbers]
+category = Game HUD
+tags = damage,floating,hit
+desc = Numbers that float up when something is hit.
+menu = ui.damage
+
+[component VirtualJoystick]
+category = Game HUD
+tags = touch,stick,move
+desc = A thumb stick on a touch screen.
+menu = ui.joystick
+
+[component TouchDPad]
+category = Game HUD
+tags = touch,arrows,move
+desc = Four arrow buttons for a touch screen.
+menu = ui.dpad
+
+[component TouchButton]
+category = Game HUD
+tags = touch,action
+desc = A big round button for a touch screen.
+menu = ui.touchbutton
+
+[component UIListView]
+category = Data
+tags = list,rows,items
+desc = A scrolling list of rows.
+menu = ui.listview
+
+[component UIDataTable]
+category = Data
+tags = table,rows,columns,sort
+desc = Rows and columns; click a header to sort.
+menu = ui.datatable
+
+[component UITreeView]
+category = Data
+tags = tree,folders,nested
+desc = A list with folders that open and close.
+menu = ui.treeview
+
+[component UIListBind]
+category = Data
+tags = array,bind,list
+desc = Fills a list from a script array.
+menu = ui.boundlist
+
+[component UIBarBind]
+category = Data
+tags = bind,bar,variable
+desc = Links a bar to a game variable.
+menu = 
+
+[component UITextBind]
+category = Data
+tags = bind,text,variable
+desc = Shows a game variable in a text.
+menu = 
+
+[component UIBind]
+category = Data
+tags = bind,two way,variable
+desc = Two-way link between a widget and a variable.
+menu = ui.boundslider
+
+[component UIVisibleIf]
+category = Data
+tags = condition,show,hide
+desc = Shows its children only while a condition is true.
+menu = ui.visibleif
+
+[component UIInventoryBind]
+category = Data
+tags = inventory,bind,slots
+desc = Shows an Inventory in a slot grid.
+menu = 
+
+[component UIHotReload]
+category = Data
+tags = reload,watch,markup
+desc = Re-reads a UI text file whenever you save it.
+menu = ui.hotreload
+
+[component UIDocument]
+category = Data
+tags = markup,html,file
+desc = Builds UI from a markup text file.
+menu = 
+
+[component UIPagination]
+category = App
+tags = pages,next,previous
+desc = Previous, Next and page numbers.
+menu = ui.pagination
+
+[component UIBreadcrumbs]
+category = App
+tags = path,trail,navigation
+desc = A path such as Home > Shop.
+menu = ui.breadcrumbs
+
+[component UISkeleton]
+category = App
+tags = loading,placeholder,shimmer
+desc = Grey shapes that stand in while data loads.
+menu = ui.skeleton
+
+[component UIMenuBar]
+category = App
+tags = menu,file,edit
+desc = A row of drop-down menus.
+menu = ui.menubar
+
+[component UIToolbar]
+category = App
+tags = icons,buttons,bar
+desc = A row of icon buttons.
+menu = ui.toolbar
+
+[component UIWizard]
+category = App
+tags = steps,next,back,setup
+desc = A set-up in steps with Back and Next.
+menu = ui.wizard
+
+[component UIBottomSheet]
+category = App
+tags = sheet,slide up,phone
+desc = A panel that slides up from the bottom.
+menu = ui.bottomsheet
+
+[component UIModal]
+category = Popups
+tags = dialog,popup,blocking
+desc = A pop-up box that blocks what is behind.
+menu = ui.dialog
+
+[component UIToast]
+category = Popups
+tags = toast,message,snackbar
+desc = Small messages that slide in and fade.
+menu = ui.toast
+
+[component UIToastItem]
+category = Popups
+tags = toast,item
+desc = One message of a toast stack.
+menu = 
+
+[component UITooltip]
+category = Popups
+tags = hint,hover
+desc = A small hint that shows when the mouse rests.
+menu = ui.tooltip
+
+[component UIContextMenu]
+category = Popups
+tags = right click,menu
+desc = A list that opens on a right click.
+menu = ui.contextmenu
+
+[component UIDialogueBox]
+category = Popups
+tags = dialogue,talk,choices
+desc = Speaker, typing text and choice buttons.
+menu = ui.scr.dialogue_native
+
+[component UIAnimation]
+category = Effects
+tags = animate,fade,slide,pop
+desc = Intro, outro and loop animations for a widget.
+menu = 
+
+[component UITheme]
+category = Effects
+tags = theme,look,skin
+desc = A whole look for the UI: colours, shape, shadow, font.
+menu = 
+
+[component UIStyleVariant]
+category = Effects
+tags = style,role,variant
+desc = Gives a widget a role, a named style, a size and a density.
+menu = 
+
+[component UIFocusHint]
+category = Effects
+tags = focus,hint,controller
+desc = Shows which key or button does what.
+menu = 
+
+[component UIRichLinks]
+category = Effects
+tags = links,rich text,url
+desc = Clickable links inside rich text.
+menu = 
+

@@ -1,9 +1,11 @@
-// Test-only picture helper (NOT part of the product, not in CMake): a stand-in for the advanced Modeling window that draws the same
+// Test-only picture helper (NOT part of the product, not in CMake): a stand-in for the Modeling window (the Easy page is the real one) that draws the same
 // sidebar (pages under job headings), the tool search box with its result rows, the button outline for matches and the hint line,
 // using editor/ModelingToolIndex.hpp. The page body is built from the tool index (one button per tool, grouped by section), NOT the
 // real page code, which lives in editor/main.cpp and cannot be run headless. Build like tests/modeling_easy_shot.cpp.
 #include "ModelingToolIndex.hpp"
 #include "ModelingSidebar.hpp"
+#include "ModelingEasyUi.hpp"
+#include "ModelingStarters.hpp"
 #include "backends/imgui_impl_sdl2.h"
 #include "backends/imgui_impl_sdlrenderer2.h"
 #include <SDL.h>
@@ -45,6 +47,14 @@ static void Draw(int page, const std::string& query, const std::string& hint, bo
     ImGui::Separator();
     ImGui::TextUnformatted(mt::FindPage(page)->name); ImGui::SameLine(); ImGui::TextDisabled("  %s", hint.empty() ? mt::FindPage(page)->desc : hint.c_str());
     ImGui::Separator();
+    if (page == 8) {   // the Easy page: the real drawing code with a stand-in host
+        static okay::Mesh mesh = oked::easymodel::BuildStarter("house");
+        oked::easymodel_ui::Host h; h.mesh = &mesh; h.state.haveObject = true; h.state.editMode = true; h.state.selMode = 2; h.state.selCount = 2;
+        h.canUndo = [] { return true; }; h.canRedo = [] { return false; };
+        oked::easymodel_ui::DrawEasyModeling(h);
+        ImGui::PopStyleVar(2); ImGui::EndChild(); ImGui::End();
+        return;
+    }
     std::string sec;
     const float w = ImGui::GetContentRegionAvail().x; float x = 0;
     for (const mt::Tool& t : mt::Tools()) {
@@ -68,7 +78,8 @@ int main(int argc, char** argv) {
     if (argc > 2) io.Fonts->AddFontFromFileTTF(argv[2], 16.0f);
     ImGui_ImplSDL2_InitForSDLRenderer(win, rd); ImGui_ImplSDLRenderer2_Init(rd);
     struct S { const char* name; int page; const char* q; const char* hint; bool folded; };
-    const S shots[] = {{"07_advanced_edit_mesh_unfolded", 5, "", "", false}, {"07_advanced_edit_mesh_folded", 5, "", "", true}, {"07_advanced_search_round_folded", 5, "round", "Bevel: Round off sharp edges (a bevel).", true}};
+    const S shots[] = {{"10_easy_page_unfolded", 8, "", "", false}, {"11_easy_page_folded", 8, "", "", true}, {"12_fix_the_surface_unfolded", 5, "", "", false},
+                       {"13_fix_the_surface_folded", 5, "", "", true}, {"14_search_round", 8, "round", "", false}, {"15_add_shapes_narrow_text", 0, "", "", false}};
     for (const S& s : shots) for (int f = 0; f < 3; ++f) {
         ImGui_ImplSDLRenderer2_NewFrame(); ImGui_ImplSDL2_NewFrame(); ImGui::NewFrame();
         Draw(s.page, s.q, s.hint, s.folded); ImGui::Render();

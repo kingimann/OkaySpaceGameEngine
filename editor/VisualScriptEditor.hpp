@@ -2601,6 +2601,16 @@ struct VsEditState {
     bool   snapGrid = true;      // snap a moved node to the canvas grid on release
     bool   wasNodeDrag = false;
     bool   showHint = true;      // the one-line canvas hint
+    bool   panTool = false;      // the hand "Pan" button: plain left-drag pans
+    bool   scrollPans = false;   // trackpad mode: plain scroll pans (Ctrl+scroll zooms)
+    bool   panLeftNow = false;   // a left-drag pan is running this frame (nodes must not move)
+    bool   spaceDown = false; float spaceT = 0.0f, spaceMoved = 0.0f; bool spaceOpen = false;   // Space tap vs Space pan
+    float  rightT = 0.0f;        // how long the right button has been down (click vs pan)
+    bool   startedEmpty = false; // "Start empty" on the start card: no cards for this graph
+    std::size_t valueSig = 0; int sigNodes = 0;   // a fingerprint of the typed values: a change means a number was edited
+    int    lastUsed = -1;        // the block added last: the next added block joins it when nothing is selected
+    // A wire that was double-clicked: the block picked in the popup is put on it. (exec: from, pin, to; value: consumer, inPin)
+    bool   wireInsOn = false, wireInsExec = true; int wireInsA = 0, wireInsB = 0, wireInsC = 0;
     int    focusNode = -1;       // centre the view on this node next frame
     bool   addAtCenter = false;  // "+ Add" in the toolbar: palette, node placed mid-view
     bool   pasteTemplate = false; std::string templateText;   // a chosen template, placed mid-view
@@ -2837,6 +2847,8 @@ inline void ResetEditState(VsEditState& st) {
     st.pendingBase.clear(); st.trackInit = false; st.seenExec.clear(); st.flash.clear();
     st.dragging = st.linkPending = st.boxing = false;
     st.dragComment = st.resizeComment = st.renameComment = -1;
+    st.lastUsed = -1; st.wireInsOn = false;
+    st.startedEmpty = false;   // a graph that was just opened or reset shows the start cards again if it is empty
 }
 
 inline void VsSaveTabList();
@@ -3539,7 +3551,13 @@ inline bool VsDrawChoice(EditorState& ed, const VsEditGraph& g, std::string& val
 }
 }  // namespace okay::editor::vsed
 #include "VisualScriptClarity.hpp"
+#include "VisualScriptPan.hpp"
 #include "VisualScriptPalette.hpp"
+#include "VisualScriptEasyOps.hpp"   // graph-in, graph-out rules for the canvas (needs the graph model above)
+#include "VisualScriptPlainWords.hpp" // every "something is wrong" sentence, in plain words
+#include "VisualScriptWhatHappened.hpp" // "Moved 3 steps right": the line under a block that ran
+#include "VisualScriptHints.hpp"      // the one-line next-step bar
+#include "VisualScriptStartDraw.hpp"  // the big recipe cards shown for an empty graph
 namespace okay::editor::vsed {
 
 // ---- The editor window -----------------------------------------------------
@@ -3748,9 +3766,10 @@ inline void Draw(EditorState& ed, bool* open) {
         ImGui::MenuItem("Live values while playing", nullptr, &st.liveValues);
         ImGui::MenuItem("Show as OkayScript", nullptr, &st.showScript);
         ImGui::MenuItem("Canvas hint", nullptr, &st.showHint);
+        ImGui::MenuItem("Scroll moves the view (trackpad)", nullptr, &st.scrollPans);
         ImGui::Separator();
         ImGui::TextDisabled("Right-click or Space adds a node");
-        ImGui::TextDisabled("Scroll zooms. Home fits everything. F fits the selection.");
+        ImGui::TextDisabled("Scroll zooms (Ctrl+scroll always). Arrow keys, middle/right-drag or Space+drag move the view. Home fits everything. F fits the selection.");
         ImGui::EndPopup();
     }
     if (st.openTemplates) { ImGui::OpenPopup("##vsgraphtemplates"); st.openTemplates = false; }
@@ -3862,7 +3881,7 @@ inline void Draw(EditorState& ed, bool* open) {
     if (ImGui::Button("Save")) doSave();
     if (ImGui::IsItemHovered()) ImGui::SetTooltip("Save this graph (Ctrl+S)");
     ImGui::SameLine();
-    if (ImGui::Button("Recipes")) ImGui::OpenPopup("##vsrecipes");
+    if (ImGui::Button("Pick a recipe")) ImGui::OpenPopup("##vsrecipes");
     if (ImGui::IsItemHovered()) ImGui::SetTooltip("Start here. Drop in a ready-made graph: move with arrow keys, jump, coins and score, a door, an enemy that follows you.");
     if (ImGui::BeginPopup("##vsrecipes")) {
         struct Rec { const char* name; const char* text; };
@@ -3941,7 +3960,7 @@ inline void Draw(EditorState& ed, bool* open) {
         char probLbl[64];
         if (nErr + nWarn == 0) std::snprintf(probLbl, sizeof probLbl, "No problems");
         else std::snprintf(probLbl, sizeof probLbl, "%d problem%s", nErr + nWarn, nErr + nWarn == 1 ? "" : "s");
-        const float coreW = btnW(probLbl) + btnW("Fit") + btnW("-") + btnW("100%") + btnW("+");
+        const float coreW = btnW(probLbl) + btnW("Fit") + btnW("Pan") + btnW("-") + btnW("100%") + btnW("+");
         const float panelW = btnW("Outline") + btnW("Details");
         const float avail = ImGui::GetWindowContentRegionMax().x;
         const bool panelBtns = avail - ImGui::GetCursorPosX() >= coreW + panelW + 24.0f;
@@ -3961,8 +3980,16 @@ inline void Draw(EditorState& ed, bool* open) {
             ImGui::SameLine();
         }
         if (ImGui::Button("Fit")) st.frameAll = true;
-        if (ImGui::IsItemHovered()) ImGui::SetTooltip("Show every node (Home). F frames the selection.");
+        if (ImGui::IsItemHovered()) ImGui::SetTooltip("Show every block (Home, or F with nothing selected). F frames the selected blocks.");
         ImGui::SameLine();
+        {   // the hand: while on, dragging with the left button moves the view instead of selecting
+            if (st.panTool) ImGui::PushStyleColor(ImGuiCol_Button, ImVec4(0.26f, 0.46f, 0.78f, 1.0f));
+            if (ImGui::Button("Pan##vspantool")) st.panTool = !st.panTool;
+            if (st.panTool) ImGui::PopStyleColor();
+            if (ImGui::IsItemHovered())
+                ImGui::SetTooltip("Hand tool. While on, drag with the left button to move the view.\nAlways works: middle-drag, right-drag on empty space, hold Space and drag, arrow keys.");
+            ImGui::SameLine();
+        }
         if (ImGui::Button("-##vszoomout")) st.zoom = std::clamp(st.zoom / 1.12f, 0.28f, 2.2f);
         if (ImGui::IsItemHovered()) ImGui::SetTooltip("Zoom out");
         ImGui::SameLine();
@@ -4259,14 +4286,18 @@ inline void Draw(EditorState& ed, bool* open) {
     // them by the same factor the nodes grew, so saved graphs keep their gaps.
     const float kLayout = 1.4f;
     const ImVec2 mouse = io.MousePos;
-    if (canvasWindowHovered && io.MouseWheel != 0.0f && !ImGui::IsAnyItemActive() &&
+    if (canvasWindowHovered && (io.MouseWheel != 0.0f || io.MouseWheelH != 0.0f) && !ImGui::IsAnyItemActive() &&
         !ImGui::IsPopupOpen("", ImGuiPopupFlags_AnyPopupId)) {
-        float wx = (mouse.x - canvasMin.x - st.pan.x) / z, wy = (mouse.y - canvasMin.y - st.pan.y) / z;
-        z = std::clamp(z * (io.MouseWheel > 0 ? 1.12f : 1.0f / 1.12f), 0.28f, 2.2f);
-        st.pan = ImVec2(mouse.x - canvasMin.x - wx * z, mouse.y - canvasMin.y - wy * z);
+        const VsWheelResult wr = VsWheel(io.MouseWheelH, io.MouseWheel, io.KeyCtrl, io.KeyShift, st.scrollPans);
+        st.pan.x += wr.panX; st.pan.y += wr.panY;
+        if (wr.zoomSteps != 0.0f) {
+            float wx = (mouse.x - canvasMin.x - st.pan.x) / z, wy = (mouse.y - canvasMin.y - st.pan.y) / z;
+            z = std::clamp(z * std::pow(1.12f, wr.zoomSteps > 0 ? 1.0f : -1.0f), 0.28f, 2.2f);
+            st.pan = ImVec2(mouse.x - canvasMin.x - wx * z, mouse.y - canvasMin.y - wy * z);
+        }
     }
     if (winFocused && !typing && ImGui::IsKeyPressed(ImGuiKey_Home, false)) st.frameAll = true;
-    if (winFocused && !typing && !io.KeyCtrl && ImGui::IsKeyPressed(ImGuiKey_F, false) && !st.sel.empty()) st.frameSel = true;
+    if (winFocused && !typing && !io.KeyCtrl && ImGui::IsKeyPressed(ImGuiKey_F, false)) { if (!st.sel.empty()) st.frameSel = true; else st.frameAll = true; }   // F fits the selection, or everything
     if (st.focusNode >= 0) {   // centre on one node, keeping the zoom readable
         if (const VsEditNode* fn = g.find(st.focusNode)) {
             z = std::max(z, 0.8f);
@@ -4310,10 +4341,47 @@ inline void Draw(EditorState& ed, bool* open) {
             dl->AddLine(ImVec2(canvasMin.x, canvasMin.y + y), ImVec2(canvasMax.x, canvasMin.y + y), (j % 4 == 0) ? gridMajor : gridMinor);
     }
 
-    // Pan with middle or right drag (anywhere on the canvas); a right CLICK
-    // without dragging still opens the add menu.
-    if (canvasWindowHovered && (ImGui::IsMouseDragging(ImGuiMouseButton_Middle) || ImGui::IsMouseDragging(ImGuiMouseButton_Right, 6.0f))) {
-        st.pan.x += io.MouseDelta.x; st.pan.y += io.MouseDelta.y;
+    // Pan: middle drag, right drag on empty canvas, Space + left drag, the hand button + left drag, arrow keys.
+    // A right CLICK / Space TAP without dragging still opens the add menu (VisualScriptPan.hpp decides).
+    {
+        const bool spaceHeld = winFocused && !typing && ImGui::IsKeyDown(ImGuiKey_Space);
+        st.panLeftNow = false; st.spaceOpen = false;
+        if (canvasWindowHovered) {
+            if (ImGui::IsMouseDragging(ImGuiMouseButton_Middle, 1.0f) ||
+                (ImGui::IsMouseDragging(ImGuiMouseButton_Right, 1.0f) && VsRightDragPans(std::sqrt(io.MouseDragMaxDistanceSqr[ImGuiMouseButton_Right]), st.dragging)) ||
+                (VsLeftDragMode(spaceHeld, st.panTool) == VsLeftDrag::Pan && !st.boxing && ImGui::IsMouseDown(ImGuiMouseButton_Left) &&
+                 ImGui::IsMouseDragging(ImGuiMouseButton_Left, 1.0f))) {
+                st.pan.x += VsPanDeltaFromMouse(io.MouseDelta.x, z); st.pan.y += VsPanDeltaFromMouse(io.MouseDelta.y, z);
+                st.panLeftNow = ImGui::IsMouseDown(ImGuiMouseButton_Left);
+            }
+        }
+        // Space tap versus Space pan
+        if (spaceHeld) {
+            if (!st.spaceDown) { st.spaceDown = true; st.spaceT = 0.0f; st.spaceMoved = 0.0f; }
+            st.spaceT += io.DeltaTime;
+            st.spaceMoved += std::sqrt(io.MouseDelta.x * io.MouseDelta.x + io.MouseDelta.y * io.MouseDelta.y);
+        } else if (st.spaceDown) {
+            st.spaceDown = false;
+            st.spaceOpen = VsSpaceOpensPopup(st.spaceT, st.spaceMoved);
+        }
+        if (ImGui::IsMouseClicked(ImGuiMouseButton_Right)) st.rightT = 0.0f;
+        if (ImGui::IsMouseDown(ImGuiMouseButton_Right)) st.rightT += io.DeltaTime;
+        // Arrow keys (canvas focused, no text field)
+        if (winFocused && !typing && !io.KeyCtrl && !io.KeyAlt) {
+            float dx, dy;
+            VsKeyPan(ImGui::IsKeyDown(ImGuiKey_LeftArrow), ImGui::IsKeyDown(ImGuiKey_RightArrow), ImGui::IsKeyDown(ImGuiKey_UpArrow),
+                     ImGui::IsKeyDown(ImGuiKey_DownArrow), io.KeyShift, io.DeltaTime, dx, dy);
+            st.pan.x += dx; st.pan.y += dy;
+        }
+        // Keep some of the graph on screen (Fit works from anywhere)
+        if (!g.nodes.empty()) {
+            float x0 = 1e9f, y0 = 1e9f, x1 = -1e9f, y1 = -1e9f;
+            for (const auto& n : g.nodes) {
+                x0 = std::min(x0, n.x * kLayout); y0 = std::min(y0, n.y * kLayout);
+                x1 = std::max(x1, n.x * kLayout + 230.0f); y1 = std::max(y1, n.y * kLayout + 150.0f);
+            }
+            VsClampPan(st.pan.x, st.pan.y, canvasMax.x - canvasMin.x, canvasMax.y - canvasMin.y, x0, y0, x1, y1, z);
+        }
     }
 
     auto W2S = [&](float wx, float wy) { return ImVec2(canvasMin.x + st.pan.x + wx * kLayout * z, canvasMin.y + st.pan.y + wy * kLayout * z); };
@@ -4366,7 +4434,7 @@ inline void Draw(EditorState& ed, bool* open) {
             for (const auto& n : g.nodes)
                 if (n.x >= c.x && n.y >= c.y && n.x <= c.x + c.w && n.y <= c.y + c.h) st.commentNodes.push_back(n.id);
         }
-        if (st.dragComment == ci && ImGui::IsItemActive() && ImGui::IsMouseDragging(ImGuiMouseButton_Left)) {
+        if (st.dragComment == ci && !st.panLeftNow && ImGui::IsItemActive() && ImGui::IsMouseDragging(ImGuiMouseButton_Left)) {
             float dx = io.MouseDelta.x / (z * kLayout), dy = io.MouseDelta.y / (z * kLayout);
             c.x += dx; c.y += dy;
             for (int id : st.commentNodes) if (VsEditNode* n = g.find(id)) { n->x += dx; n->y += dy; }
@@ -4475,8 +4543,8 @@ inline void Draw(EditorState& ed, bool* open) {
         std::string inlineMsg;
         bool inlineErr = false;
         for (const auto& is : st.issues) if (is.node == n.id) {
-            if (is.severity == 0) { inlineMsg = is.message; inlineErr = true; break; }
-            if (inlineMsg.empty()) inlineMsg = is.message;
+            if (is.severity == 0) { inlineMsg = VsPlainIssue(is.message); inlineErr = true; break; }
+            if (inlineMsg.empty()) inlineMsg = VsPlainIssue(is.message);
         }
         const bool isSwitch = IsSwitchNode(n.type);
         bool targetWired = false;
@@ -4531,7 +4599,7 @@ inline void Draw(EditorState& ed, bool* open) {
         {
             int worst = 2; std::string tips;
             for (const auto& is : st.issues)
-                if (is.node == n.id) { worst = std::min(worst, is.severity); tips += (tips.empty() ? "" : "\n") + std::string(is.severity == 0 ? "Error: " : "Warning: ") + is.message; }
+                if (is.node == n.id) { worst = std::min(worst, is.severity); tips += (tips.empty() ? "" : "\n") + std::string(is.severity == 0 ? "Error: " : "Warning: ") + VsPlainIssue(is.message); }
             if (worst < 2) {
                 const ImVec2 bc(p1.x - 12.0f * z, p0.y + HEADER_H * 0.5f);
                 const ImU32 col = worst == 0 ? IM_COL32(255, 85, 75, 255) : IM_COL32(240, 185, 70, 255);
@@ -4610,7 +4678,7 @@ inline void Draw(EditorState& ed, bool* open) {
             } else if (!st.sel.count(n.id)) { st.sel.clear(); st.sel.insert(n.id); }
             st.selected = n.id;
         }
-        if (ImGui::IsItemActive() && ImGui::IsMouseDragging(ImGuiMouseButton_Left)) {
+        if (!st.panLeftNow && ImGui::IsItemActive() && ImGui::IsMouseDragging(ImGuiMouseButton_Left)) {
             startNodeDrag = true;   // move every selected node together (after the loop)
         }
         if (ImGui::IsItemHovered(ImGuiHoveredFlags_DelayNormal) && !ImGui::IsItemActive())
@@ -5033,6 +5101,27 @@ inline void Draw(EditorState& ed, bool* open) {
                 ImGui::SetTooltip("%s", reqGap.message.c_str());
         }
 
+        // Play feedback: a short "what happened" line under a block that has run (the glow is the flash above).
+        if (live && ln && ln->execCount > 0 && st.liveValues) {
+            std::vector<std::string> shown;
+            for (int pi = 0; pi < (int)d->dataIn.size(); ++pi) {
+                std::string val;
+                for (const auto& l : g.dataLinks)
+                    if (l.consumer == n.id && l.inPin == pi)
+                        if (okay::vs::VsNode* pn = liveNode(l.producer))
+                            if (l.outPin < (int)pn->lastOut.size()) val = VsDebugText(pn->lastOut[(std::size_t)l.outPin]);
+                if (val.empty()) { const auto it = n.pinDefault.find(pi); if (it != n.pinDefault.end()) val = it->second; }
+                shown.push_back(val);
+            }
+            const std::string said = VsWhatHappened(n.type, n.arg, shown, ln->execCount);
+            const ImVec2 sz = ImGui::CalcTextSize(said.c_str());
+            const ImVec2 q0(p0.x, p1.y + 6.0f * z), q1(p0.x + std::min(NODE_W + 40.0f * z, sz.x + 16.0f * z), q0.y + sz.y + 6.0f * z);
+            const float fade = 0.55f + 0.45f * (st.flash.count(n.id) ? st.flash[n.id] : 0.0f);
+            dl->AddRectFilled(q0, q1, IM_COL32(26, 64, 40, (int)(235 * fade)), 6.0f * z);
+            dl->PushClipRect(q0, q1, true);
+            dl->AddText(ImVec2(q0.x + 8.0f * z, q0.y + 3.0f * z), IM_COL32(190, 245, 205, (int)(255 * fade)), said.c_str());
+            dl->PopClipRect();
+        }
         ImGui::PopID();
     }
     // Move the dragged node and every other selected node with it.
@@ -5042,6 +5131,30 @@ inline void Draw(EditorState& ed, bool* open) {
             for (auto& n : g.nodes) if (st.sel.count(n.id)) { n.x += dx; n.y += dy; }
             g.dirty = true;
         }
+    }
+    // Every wire with its two plugs on screen (for dropping a block on a wire and double-clicking one).
+    auto wireEnds = [&]() {
+        std::vector<VsWireEnds> out;
+        for (int i = 0; i < (int)g.execLinks.size(); ++i) {
+            const auto& l = g.execLinks[(std::size_t)i];
+            auto a = pinPos.find(pk(l.from, 0, 1, l.pin)), b = pinPos.find(pk(l.to, 0, 0, 0));
+            if (a != pinPos.end() && b != pinPos.end()) out.push_back({true, i, a->second.x, a->second.y, b->second.x, b->second.y});
+        }
+        for (int i = 0; i < (int)g.dataLinks.size(); ++i) {
+            const auto& l = g.dataLinks[(std::size_t)i];
+            auto a = pinPos.find(pk(l.producer, 1, 1, l.outPin)), b = pinPos.find(pk(l.consumer, 1, 0, l.inPin));
+            if (a != pinPos.end() && b != pinPos.end()) out.push_back({false, i, a->second.x, a->second.y, b->second.x, b->second.y});
+        }
+        return out;
+    };
+    // A block with no wires, dropped with its middle on a wire: the wire goes through the block.
+    if (st.wasNodeDrag && !startNodeDrag && ImGui::IsMouseReleased(ImGuiMouseButton_Left) && st.sel.size() == 1 &&
+        VsIsLoose(g, *st.sel.begin()) && nodeRect.count(*st.sel.begin())) {
+        const auto& rc = nodeRect[*st.sel.begin()];
+        const std::vector<VsWireEnds> we = wireEnds();
+        const int hit = VsNearestWire(we, (rc.first.x + rc.second.x) * 0.5f, (rc.first.y + rc.second.y) * 0.5f, z, 26.0f * z);
+        if (hit >= 0 && VsSplitWire(g, VsRefOfWire(g, we[(std::size_t)hit].exec, we[(std::size_t)hit].index), *st.sel.begin()))
+            st.lastUsed = *st.sel.begin();
     }
     if (st.wasNodeDrag && !startNodeDrag && ImGui::IsMouseReleased(ImGuiMouseButton_Left) && st.snapGrid) {
         bool moved = false;
@@ -5084,13 +5197,13 @@ inline void Draw(EditorState& ed, bool* open) {
     }
     if (pendingDelete >= 0) {
         if (!st.sel.count(pendingDelete)) st.sel = {pendingDelete};
-        for (int id : st.sel) g.removeNode(id);
+        VsDeleteBlocks(g, st.sel, io.KeyShift);   // the blocks around it are joined; Shift cuts instead
         st.sel.clear(); st.selected = -1;
     }
     if (winFocused && !typing && (ImGui::IsKeyPressed(ImGuiKey_Delete) || ImGui::IsKeyPressed(ImGuiKey_Backspace)) &&
         (!st.sel.empty() || st.selected >= 0)) {
         if (st.selected >= 0) st.sel.insert(st.selected);
-        for (int id : st.sel) g.removeNode(id);
+        VsDeleteBlocks(g, st.sel, io.KeyShift);   // Delete joins the blocks around it; Shift+Delete cuts instead
         st.sel.clear(); st.selected = -1;
     }
 
@@ -5178,7 +5291,19 @@ inline void Draw(EditorState& ed, bool* open) {
 
     // Live drag wire + release handling.
     bool openPaletteNow = false;
+    const std::size_t wiresBeforeDrag = g.execLinks.size() + g.dataLinks.size();
     if (st.dragging) {
+        // While a wire is dragged: a green ring on every plug it can go into, a red ring on the ones that would refuse it.
+        {
+            const int wantSide = st.dragFromOutput ? 0 : 1, wantKind = st.dragExec ? 0 : 1;
+            const float rr = 11.0f * std::max(0.8f, z);
+            for (const auto& kvp : pinPos) {
+                const int node = (int)(kvp.first >> 20), kind = (int)((kvp.first >> 18) & 3), side = (int)((kvp.first >> 16) & 3), idx = (int)(kvp.first & 0xFFFF);
+                if (kind != wantKind || side != wantSide || node == st.dragNode) continue;
+                const bool fits = VsPlugAccepts(g, st.dragExec, st.dragFromOutput, st.dragNode, st.dragPin, node, idx);
+                dl->AddCircle(kvp.second, rr, fits ? IM_COL32(90, 230, 130, 255) : IM_COL32(245, 90, 80, 235), 20, 3.0f);
+            }
+        }
         auto from = pinPos.find(pk(st.dragNode, st.dragExec ? 0 : 1, st.dragFromOutput ? 1 : 0, st.dragPin));
         if (from != pinPos.end()) {
             ImVec2 m = io.MousePos;
@@ -5208,7 +5333,7 @@ inline void Draw(EditorState& ed, bool* open) {
                     const VsDef* dd = nullptr;
                     if (const VsEditNode* dn = g.find(dest)) dd = FindDef(dn->type);
                     if (dd && !dd->execIn) {
-                        st.refuseMsg = VsPlainRefuseEventIntoEvent();
+                        st.refuseMsg = VsPlainStartIntoStart();
                         st.refuseTime = 5.0f; st.offerOn = false;
                     } else if (st.dragFromOutput) g.linkExec(st.dragNode, st.dragPin, bestNode);
                     else g.linkExec(bestNode, bestIdx, st.dragNode);
@@ -5220,15 +5345,18 @@ inline void Draw(EditorState& ed, bool* open) {
                     std::vector<std::pair<int, int>> edges;
                     for (const auto& l : g.dataLinks) edges.push_back({l.producer, l.consumer});
                     if (VsDataWouldCycle(edges, prod, cons)) {
-                        st.refuseMsg = VsPlainRefuseLoop();
+                        st.refuseMsg = VsPlainWouldLoop();
                         st.refuseTime = 5.0f; st.offerOn = false;
                     } else if (VsWireOk(g, cons, inP, prod, outP, &why)) {
                         g.linkData(cons, inP, prod, outP); st.offerOn = false;
                     } else {
                         const auto offer = VsOfferConvert((char)VsOutPinType(g, prod, outP), (char)VsInPinType(g, cons, inP));
-                        st.refuseMsg = why.empty() ? offer.why : why;
-                        if (!offer.why.empty() && st.refuseMsg.find(offer.why) == std::string::npos && offer.type.empty())
-                            st.refuseMsg += " " + offer.why;
+                        (void)why;
+                        st.refuseMsg = VsPlainMismatch(VsOutPinType(g, prod, outP), VsInPinType(g, cons, inP));
+                        if (offer.type.empty()) {   // no one-click fix: a plain tip when there is one
+                            const std::string tip = VsPlainMismatchTip(VsOutPinType(g, prod, outP), VsInPinType(g, cons, inP));
+                            if (!tip.empty()) st.refuseMsg += " " + tip;
+                        }
                         st.refuseTime = 6.0f;
                         st.offerOn = !offer.type.empty();
                         st.offerCons = cons; st.offerIn = inP; st.offerProd = prod; st.offerOut = outP;
@@ -5248,9 +5376,7 @@ inline void Draw(EditorState& ed, bool* open) {
                     if (dx * dx + dy * dy < hitDist2) { nk = kind; ns = side; break; }
                 }
                 if (nk >= 0 && nk != (st.dragExec ? 0 : 1)) {
-                    st.refuseMsg = st.dragExec
-                        ? VsPlainRefuseFlowOnValue()
-                        : VsPlainRefuseValueOnFlow();
+                    st.refuseMsg = st.dragExec ? VsPlainFlowToValue() : VsPlainValueToFlow();
                     st.refuseTime = 5.0f; st.offerOn = false; (void)ns;
                 } else {
                 // Dropped in empty space: offer the palette and wire up what's picked.
@@ -5268,8 +5394,9 @@ inline void Draw(EditorState& ed, bool* open) {
         }
     }
 
+    const bool userWiredNow = g.execLinks.size() + g.dataLinks.size() > wiresBeforeDrag;   // a wire dropped on a plug
     // ---- Box selection --------------------------------------------------------------
-    if (bgClicked && !st.dragging && !io.KeyAlt) {
+    if (bgClicked && !st.dragging && !io.KeyAlt && VsLeftDragMode(ImGui::IsKeyDown(ImGuiKey_Space), st.panTool) == VsLeftDrag::Box) {
         st.boxing = true; st.boxStart = mouse;
         if (!io.KeyCtrl && !io.KeyShift) { st.sel.clear(); st.selected = -1; }
     }
@@ -5331,10 +5458,26 @@ inline void Draw(EditorState& ed, bool* open) {
         st.linkNode = pconn.node; st.linkPin = pconn.pin;
         openPaletteNow = true; pconnPlace = true;
     }
+    // Double-click a wire: the palette opens, and the block picked goes onto that wire.
+    if (canvasHovered && !st.dragging && !io.KeyAlt && ImGui::IsMouseDoubleClicked(ImGuiMouseButton_Left)) {
+        bool onNode = false;
+        for (const auto& kv : nodeRect)
+            if (mouse.x >= kv.second.first.x && mouse.x <= kv.second.second.x && mouse.y >= kv.second.first.y && mouse.y <= kv.second.second.y) onNode = true;
+        const std::vector<VsWireEnds> we = wireEnds();
+        const int hit = onNode ? -1 : VsNearestWire(we, mouse.x, mouse.y, z, 12.0f);
+        if (hit >= 0) {
+            const VsWireRef ref = VsRefOfWire(g, we[(std::size_t)hit].exec, we[(std::size_t)hit].index);
+            st.wireInsOn = ref.on; st.wireInsExec = ref.exec; st.wireInsA = ref.a; st.wireInsB = ref.b; st.wireInsC = ref.c;
+            st.linkPending = false;
+            openPaletteNow = ref.on;
+            st.sel.clear(); st.selected = -1;
+        }
+    }
     // Right-click empty canvas (or Space): node palette.
-    if ((canvasHovered && ImGui::IsMouseReleased(ImGuiMouseButton_Right) && io.MouseDragMaxDistanceSqr[ImGuiMouseButton_Right] < 36.0f && !st.dragging) ||
-        (winFocused && !typing && canvasWindowHovered && ImGui::IsKeyPressed(ImGuiKey_Space, false)) || openPaletteNow || st.addAtCenter) {
+    if ((canvasHovered && ImGui::IsMouseReleased(ImGuiMouseButton_Right) && VsRightClickOpensMenu(st.rightT, std::sqrt(io.MouseDragMaxDistanceSqr[ImGuiMouseButton_Right])) && !st.dragging) ||
+        (winFocused && !typing && canvasWindowHovered && st.spaceOpen) || openPaletteNow || st.addAtCenter) {
         st.openPalette = true;
+        st.spaceOpen = false;
         if (!openPaletteNow) st.linkPending = false;
         st.paletteWorld = st.addAtCenter ? S2W(ImVec2((canvasMin.x + canvasMax.x) * 0.5f - 100.0f, (canvasMin.y + canvasMax.y) * 0.5f - 40.0f))
                                          : S2W(io.MousePos);
@@ -5353,9 +5496,21 @@ inline void Draw(EditorState& ed, bool* open) {
     }
     // Add a node from the palette; wire it to the dropped pin when there is one.
     auto addFromPalette = [&](const VsDef& d, const std::string& arg = std::string()) {
+        const int prevSel = st.selected;   // the block this one should join, when nothing else says where it goes
         int nid = g.add(d.type, st.paletteWorld.x, st.paletteWorld.y);
         if (!arg.empty()) if (VsEditNode* nn = g.find(nid)) nn->arg = arg;
         st.selected = nid; st.sel = {nid};
+        if (st.wireInsOn) {
+            VsWireRef ref; ref.on = true; ref.exec = st.wireInsExec; ref.a = st.wireInsA; ref.b = st.wireInsB; ref.c = st.wireInsC;
+            st.wireInsOn = false;
+            if (!VsSplitWire(g, ref, nid)) {
+                g.removeNode(nid); st.sel.clear(); st.selected = -1;
+                st.refuseMsg = VsPlainDoesNotFitWire();
+                st.refuseTime = 4.0f; st.offerOn = false;
+                return;
+            }
+        } else if (!st.linkPending) VsConnectAndPlace(g, nid, prevSel, st.lastUsed);
+        st.lastUsed = nid;
         if (st.linkPending) {
             if (st.linkExec) {
                 if (st.linkFromOutput) { if (d.execIn) g.linkExec(st.linkNode, st.linkPin, nid); }
@@ -5391,15 +5546,36 @@ inline void Draw(EditorState& ed, bool* open) {
         DrawNodePalette(st, g, [&](const VsDef& d, const std::string& arg) { addFromPalette(d, arg); });
         ImGui::EndPopup();
 
-} else if (st.linkPending && !openPaletteNow) {
-        st.linkPending = false;   // palette dismissed without a pick
+} else if ((st.linkPending || st.wireInsOn) && !openPaletteNow) {
+        st.linkPending = false; st.wireInsOn = false;   // palette dismissed without a pick
     }
 
+    // Guided first steps: which one-line hint to show (VisualScriptHints.hpp), and what is already done.
+    VsHintResult guide;
+    {
+        VsHintFacts hf;
+        hf.nodeCount = (int)g.nodes.size();
+        hf.wireCount = (int)(g.execLinks.size() + g.dataLinks.size());
+        hf.playing = ed.isPlaying();
+        hf.userWired = userWiredNow;
+        std::size_t sig = 0;
+        for (const auto& n : g.nodes) {
+            sig = sig * 131u + std::hash<std::string>()(n.arg);
+            for (const auto& pd : n.pinDefault) sig = sig * 131u + std::hash<std::string>()(pd.second) + (std::size_t)pd.first;
+        }
+        hf.editedNumber = st.sigNodes > 0 && st.sigNodes == hf.nodeCount && sig != st.valueSig;
+        st.valueSig = sig; st.sigNodes = hf.nodeCount;
+        guide = VsHintStep(VsPrefs().hintsDone, hf, st.showHint && !st.missing);
+        if (guide.done != VsPrefs().hintsDone) { VsPrefs().hintsDone = guide.done; VsPrefsSave(); }
+        if (VsStartVisible(hf.nodeCount, VsPrefs().hideStart, st.startedEmpty, st.missing)) guide.hint = VsHint::None;   // the cards already say it
+    }
     if (st.missing) {
         const char* msg = "This graph file could not be opened.";
         const std::string path = g.path.empty() ? std::string("(no path)") : g.path;
         dl->AddText(ImVec2(canvasMin.x + 24.0f, canvasMin.y + 24.0f), IM_COL32(255, 170, 150, 255), msg);
         dl->AddText(ImVec2(canvasMin.x + 24.0f, canvasMin.y + 48.0f), IM_COL32(200, 206, 216, 255), path.c_str());
+    } else if (VsStartVisible((int)g.nodes.size(), VsPrefs().hideStart, st.startedEmpty, st.missing)) {
+        VsDrawStartScreen(ed, st, canvasMin, canvasMax);
     } else if (g.nodes.empty()) {
         const float cardW = 580.0f, cardH = 360.0f;
         const ImVec2 c0((canvasMin.x + canvasMax.x - cardW) * 0.5f, (canvasMin.y + canvasMax.y - cardH) * 0.5f);
@@ -5407,7 +5583,8 @@ inline void Draw(EditorState& ed, bool* open) {
         dl->AddRectFilled(c0, c1, IM_COL32(32, 36, 46, 245), 16.0f);
         dl->AddRect(c0, c1, IM_COL32(120, 140, 168, 160), 16.0f, 0, 1.5f);
         const char* title = "What is this?";
-        const char* hint = "A script is a chain of blocks: when something happens, do something. Pick one to start.";
+        const char* hint = "A script is a chain of blocks: when something happens, do something. Press Pick a recipe to start.";
+        const char* hint2 = "Or add a block and open the Starter group at the top of the list.";
         const ImVec2 ts = ImGui::CalcTextSize(title);
         dl->AddText(ImVec2(c0.x + (cardW - ts.x) * 0.5f, c0.y + 18.0f), IM_COL32(236, 240, 246, 255), title);
         const ImVec2 hs = ImGui::CalcTextSize(hint);
@@ -5435,9 +5612,23 @@ inline void Draw(EditorState& ed, bool* open) {
         const ImVec2 bp(canvasMin.x + 18.0f, canvasMin.y + 16.0f);
         dl->AddRectFilled(bp, ImVec2(bp.x + ts.x + 24.0f, bp.y + ts.y + 16.0f), IM_COL32(64, 48, 24, 230), 8.0f);
         dl->AddText(ImVec2(bp.x + 12.0f, bp.y + 8.0f), IM_COL32(245, 214, 150, 255), msg);
-    } else if (st.showHint) {
-        const char* msg = "Right-click or press Space to add a node    ·    Scroll to zoom    ·    Drag empty space to select";
+    } else if (st.showHint && guide.hint == VsHint::None) {
+        const char* msg = "Right-click or tap Space to add a node    ·    Move the view: middle-drag, right-drag, or hold Space and drag    ·    Scroll to zoom    ·    Drag empty space to select";
         dl->AddText(ImVec2(canvasMin.x + 16.0f, canvasMax.y - 28.0f), IM_COL32(168, 178, 194, 180), msg);
+    }
+    // The next-step bar: one thin line at the bottom, gone once each step has been done.
+    if (guide.hint != VsHint::None) {
+        const char* msg = VsHintText(guide.hint);
+        const ImVec2 ts = ImGui::CalcTextSize(msg);
+        const float maxW = std::max(120.0f, canvasMax.x - canvasMin.x - 260.0f);
+        const ImVec2 b0(canvasMin.x + 12.0f, canvasMax.y - ts.y - 24.0f);
+        const ImVec2 b1(b0.x + std::min(maxW, ts.x + 44.0f), canvasMax.y - 10.0f);
+        dl->AddRectFilled(b0, b1, IM_COL32(28, 58, 96, 238), 12.0f);
+        dl->AddRect(b0, b1, IM_COL32(110, 160, 235, 200), 12.0f);
+        dl->AddCircleFilled(ImVec2(b0.x + 16.0f, (b0.y + b1.y) * 0.5f), 4.5f, IM_COL32(120, 190, 255, 255));
+        dl->PushClipRect(b0, b1, true);
+        dl->AddText(ImVec2(b0.x + 30.0f, b0.y + 7.0f), IM_COL32(232, 240, 252, 255), msg);
+        dl->PopClipRect();
     }
     // Why the last wire was refused. Wrapped, so the suggestion is not cut off.
     if (st.refuseTime > 0.0f && !st.refuseMsg.empty()) {
@@ -5450,7 +5641,7 @@ inline void Draw(EditorState& ed, bool* open) {
         ImGui::PushTextWrapPos(boxW - 16.0f);
         ImGui::TextUnformatted(st.refuseMsg.c_str());
         ImGui::PopTextWrapPos();
-        if (st.offerOn && !st.offerType.empty() && ImGui::Button(st.offerWhy.empty() ? "Insert conversion" : st.offerWhy.c_str())) {
+        if (st.offerOn && !st.offerType.empty() && ImGui::Button(VsPlainFixIt())) {
             const VsEditNode* prod = g.find(st.offerProd);
             const VsEditNode* cons = g.find(st.offerCons);
             const float x = prod && cons ? (prod->x + cons->x) * 0.5f : 80.0f;
@@ -5475,13 +5666,22 @@ inline void Draw(EditorState& ed, bool* open) {
             const auto& is = st.issues[i];
             ImGui::PushID((int)i);
             ImGui::PushStyleColor(ImGuiCol_Text, is.severity == 0 ? ImVec4(1.0f, 0.5f, 0.45f, 1) : ImVec4(0.95f, 0.78f, 0.4f, 1));
-            std::string row = std::string(is.severity == 0 ? "Error: " : "Warning: ") + is.message;
-            if (ImGui::Selectable(row.c_str()) && is.node >= 0) { st.sel = {is.node}; st.selected = is.node; st.focusNode = is.node; }
+            std::string row = std::string(is.severity == 0 ? "Error: " : "Warning: ") + VsPlainIssue(is.message);
+            const bool canFix = VsFixAvailable(g, is.message, is.node, is.pin, is.pinDir);
+            if (ImGui::Selectable(row.c_str(), false, 0, ImVec2(canFix ? w - 190.0f : 0.0f, 0.0f)) && is.node >= 0) { st.sel = {is.node}; st.selected = is.node; st.focusNode = is.node; }
             if (ImGui::IsItemHovered()) {   // long messages: the whole text
                 ImGui::BeginTooltip(); ImGui::PushTextWrapPos(ImGui::GetFontSize() * 36.0f);
                 ImGui::TextUnformatted(row.c_str()); ImGui::PopTextWrapPos(); ImGui::EndTooltip();
             }
             ImGui::PopStyleColor();
+            if (canFix) {   // an obvious fix exists: one button
+                ImGui::SameLine();
+                if (ImGui::SmallButton(VsPlainFixIt())) {
+                    VsFixIssue(g, is.message, is.node, is.pin, is.pinDir);
+                    ImGui::PopID();
+                    break;   // the list is rebuilt next frame
+                }
+            }
             ImGui::PopID();
         }
         ImGui::EndChild();

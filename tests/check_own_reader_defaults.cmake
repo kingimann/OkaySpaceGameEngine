@@ -1,5 +1,5 @@
 # Every `option(OKAY_OWN_<FMT> "Read ..." ...)` of the root CMakeLists.txt must get its OKAY_OWN_<FMT>_DEFAULT definition in
-# engine/CMakeLists.txt, either by a literal target_compile_definitions line or by being in a literal one-line foreach(_fmt NAME NAME ...) list.
+# engine/CMakeLists.txt, either by a literal line (set_property(SOURCE src/Render/ModelImport.cpp ... COMPILE_DEFINITIONS ...) or target_compile_definitions) or by being in a literal one-line foreach(_fmt NAME NAME ...) list.
 # Run: cmake -DROOT=<source dir> -P check_own_reader_defaults.cmake
 cmake_policy(SET CMP0057 NEW)
 file(STRINGS "${ROOT}/CMakeLists.txt" _opts REGEX "^option\\(OKAY_OWN_[A-Z0-9]+ +\"Read ")
@@ -16,7 +16,7 @@ set(_count 0)
 foreach(_line IN LISTS _opts)
     string(REGEX REPLACE "^option\\(OKAY_OWN_([A-Z0-9]+) .*$" "\\1" _name "${_line}")
     math(EXPR _count "${_count} + 1")
-    string(FIND "${_eng}" "target_compile_definitions(okay_engine PRIVATE OKAY_OWN_${_name}_DEFAULT)" _lit)
+    string(FIND "${_eng}" "COMPILE_DEFINITIONS OKAY_OWN_${_name}_DEFAULT)" _lit)
     if(NOT _name IN_LIST _names AND _lit EQUAL -1)
         message(SEND_ERROR "OKAY_OWN_${_name}: option declared, no _DEFAULT definition in engine/CMakeLists.txt")
         set(_fail 1)

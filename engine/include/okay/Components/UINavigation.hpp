@@ -13,6 +13,7 @@
 #include "okay/Input/Input.hpp"
 #include "okay/UI/FocusGraph.hpp"
 #include "okay/Components/UIWidgetsMore.hpp"
+#include "okay/Components/UIDataGlue.hpp"
 #include "okay/UI/UIFocus.hpp"
 #include <algorithm>
 #include <vector>
@@ -244,8 +245,10 @@ inline GameObject* NavigateUI(Scene& scene) {
     bool right = Input::GetKeyDown('d') || Input::GetGamepadButtonDown(11);
     bool activate = Input::GetKeyDown(' ') || Input::GetKeyDown('\r') ||
                     Input::GetKeyDown('\n') || Input::GetGamepadButtonDown(0);
+    const bool tabKey = Input::GetKeyDown('\t');   // Tab / Shift+Tab walk the tab order (UIFocusHint.tabIndex, else reading order)
+    const bool shiftKey = Input::GetKey(Input::KeyShift);
     // The ring follows the device. A click in the same frame as a key hides it.
-    if (down || up || left || right || activate) UIFocus::NoteKeyboard();
+    if (down || up || left || right || activate || tabKey) UIFocus::NoteKeyboard();
     notePointer();
 
     auto asNode = [](const Item& it) {
@@ -269,9 +272,27 @@ inline GameObject* NavigateUI(Scene& scene) {
         return best;
     };
 
+    // The focus graph (okay/UI/FocusGraph.hpp) over these widgets: its tab order and each widget's UIFocusHint.
+    FocusGraph tabGraph;
+    if (tabKey) {
+        for (int i = 0; i < n; ++i) {
+            FocusNode fn = asNode(items[i]);
+            fn.id = i + 1;
+            if (auto* h = items[i].go->GetComponent<UIFocusHint>()) fn.tabIndex = h->tabIndex;
+            tabGraph.Add(fn);
+        }
+    }
+    auto hintTarget = [&](int from, const std::string UIFocusHint::*link) -> int {   // -2 no hint, -1 stay put, else an item
+        auto* h = items[from].go->GetComponent<UIFocusHint>();
+        if (!h || (h->*link).empty()) return -2;
+        if ((h->*link) == "-") return -1;
+        for (int i = 0; i < n; ++i) if (items[i].go->name == (h->*link)) return i;
+        return -2;   // a name nothing answers to falls back to the geometry
+    };
     bool moved = false;
     if (focused < 0) {
         focused = up ? n - 1 : 0;
+        if (tabKey) { const int t = shiftKey ? tabGraph.Last() : tabGraph.First(); if (t > 0) focused = t - 1; }
         left = right = false;
     } else {
         // Left/Right belong to the focused slider / dropdown / tabs; otherwise they move.
@@ -279,10 +300,19 @@ inline GameObject* NavigateUI(Scene& scene) {
         const bool valueKeys = fk == Slider || fk == Dropdown || fk == Tabs || fk == Stepper || fk == Rating
             || (fk == More && MoreNav::UsesArrows(items[focused].go));
         int to = -1;
-        if (down)      { to = nearest(focused, 0.0f, 1.0f);  if (to < 0) to = 0; }
-        else if (up)   { to = nearest(focused, 0.0f, -1.0f); if (to < 0) to = n - 1; }
-        else if (!valueKeys && left)  to = nearest(focused, -1.0f, 0.0f);
-        else if (!valueKeys && right) to = nearest(focused, 1.0f, 0.0f);
+        auto linked = [&](const std::string UIFocusHint::*link, float dx, float dy, bool wrapAround) {
+            const int h = hintTarget(focused, link);
+            if (h == -1) return focused;
+            if (h >= 0) return h;
+            int t = nearest(focused, dx, dy);
+            if (t < 0 && wrapAround) t = dy > 0.0f ? 0 : n - 1;
+            return t;
+        };
+        if (tabKey)    { const int t = tabGraph.Move(focused + 1, shiftKey ? FocusDir::Previous : FocusDir::Next); if (t > 0) to = t - 1; }
+        else if (down) to = linked(&UIFocusHint::down, 0.0f, 1.0f, true);
+        else if (up)   to = linked(&UIFocusHint::up, 0.0f, -1.0f, true);
+        else if (!valueKeys && left)  to = linked(&UIFocusHint::left, -1.0f, 0.0f, false);
+        else if (!valueKeys && right) to = linked(&UIFocusHint::right, 1.0f, 0.0f, false);
         if (!valueKeys) left = right = false;
         if (to >= 0 && to != focused) { focused = to; left = right = false; moved = true; }
     }

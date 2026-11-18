@@ -11,6 +11,8 @@
 #include <string>
 #include <vector>
 
+namespace okay { class GameObject; }
+
 namespace okay {
 class Scene;
 class TextRenderer;
@@ -79,6 +81,12 @@ float UITextW(const std::string& text, float px);
 /// Same measurement for an explicit font (nullptr = the scene UI font). Uses the
 /// TrueType face baked at the on-screen pixel size when one is in use.
 float UIMeasureText(TtfFont* font, const std::string& text, float px);
+/// A clickable [url=...] run of rich text as it was last drawn: the rectangle (in the space the UI was drawn in, the same as
+/// the mouse position when the canvas is not scaled) and the link's target.
+struct RichLinkRect { float x = 0, y = 0, w = 0, h = 0; std::string target; };
+/// The link rectangles the last frame drew for the text object `go` (empty for a text with no links). UIRichLinks reads this.
+const std::vector<RichLinkRect>& RichLinksOf(const okay::GameObject* go);
+
 /// An anti-aliased X (search clear, close). `size` is the box in logical pixels.
 void DrawUICross(Painter& ren, float x, float y, float size, RGBA col);
 /// Draw a string with the built-in 8x8 font as filled rects, top-left at (ox, oy), each

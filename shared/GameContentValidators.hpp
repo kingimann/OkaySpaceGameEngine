@@ -24,6 +24,26 @@ inline std::string ValidateContentFile(const Entry& e, const std::string& path) 
     std::string text;
     if (!detail::ReadAll(detail::P(path), text, 4u << 20) || text.empty()) return "the file is empty, too large (over 4 MB) or unreadable";
     if (ext == ".okayvs") {
+        // The graph loader quietly ignores lines it does not know, so garbage parses as an empty graph. A downloaded graph must be a graph:
+        // every line is blank, a '#' comment, or starts with a directive NodeGraph::Parse knows, and there is at least one node.
+        static const char* kDirectives[] = {"node", "exec", "data", "entry", "default", "var", "struct", "decl", "pos", "comment"};
+        int nodes = 0, lineNo = 0;
+        std::size_t at = 0;
+        while (at <= text.size()) {
+            std::size_t e = text.find('\n', at);
+            if (e == std::string::npos) e = text.size();
+            std::string line = text.substr(at, e - at);
+            at = e + 1;
+            ++lineNo;
+            const std::size_t a = line.find_first_not_of(" \t\r");
+            if (a == std::string::npos || line[a] == '#') continue;
+            const std::string word = line.substr(a, line.find_first_of(" \t\r", a) - a);
+            bool known = false;
+            for (const char* d : kDirectives) if (word == d) known = true;
+            if (!known) return "line " + std::to_string(lineNo) + " is not part of a graph";
+            if (word == "node") ++nodes;
+        }
+        if (nodes == 0) return "the graph has no nodes";
         for (const okay::vs::VsIssue& is : okay::vs::ValidateGraphText(text, std::string()))
             if (is.severity == 0) return "the graph has an error: " + is.message;
         return std::string();

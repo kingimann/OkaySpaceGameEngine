@@ -138,8 +138,11 @@ the game never asks for through one of the wired paths has no effect.
 Content of kind `script`, `dialogue` or `data` goes through the `validate` hook **after** it is verified and **before** it is
 visible (`shared/GameContentValidators.hpp`, used by the player):
 
-* `.okayvs`: `okay::vs::ValidateGraphText`, the checker the editor and Project diagnostics use. Any error (severity 0), parse
-  failures included, refuses the file and the **whole update** (warnings are allowed).
+* `.okayvs`: first a shape check (the graph loader quietly ignores lines it does not know, so garbage would parse as an empty
+  graph): every line must be blank, a `#` comment, or start with a directive the loader knows (`node exec data entry default var
+  struct decl pos comment`), and there must be at least one `node`. Then `okay::vs::ValidateGraphText`, the checker the editor and
+  Project diagnostics use. Any error (severity 0: unknown node type, a wire to a missing node, parse failures) refuses the file
+  and the **whole update**; warnings are allowed.
 * `.okayscript`: `okay::OkayScriptVM::Validate` (parse and syntax check; nothing runs).
 * Empty, over 4 MB or unreadable: refused. A refused file is deleted with its half-built version; the old version stays.
 
@@ -225,13 +228,13 @@ The `min-app` check compares with the engine version the player was built with (
 | Test | What it covers |
 |---|---|
 | `content_delivery` (`tests/test_content_delivery.cpp`, 250 checks) | manifest format and limits, hostile paths, signature (wrong key, tamper, domain separation, rotation, no key), URL helpers, sync (fresh, up to date, changed files only, dedup, resume, retry and backoff, cancel and resume, corrupt, over-long and lying servers, 404, replay floor, same-version change, game and app version, groups, budget), validator hook, rollback, overlay (precedence, fallback, escapes, case, links, tampering, stray files), start-up wiring (off by default, offline fallback) |
-| `content_validators` | the real graph checker and script parser refuse bad files before they are visible |
+| `content_validators` | the real graph checker and script parser (linked to the engine) refuse garbage, unknown node types, dangling wires, stray lines and script syntax errors before a file is visible |
 | `content_cli` | `okay-content` end to end, including a real HTTP download from a loopback server that cuts the first response (when built with the own HTTP client) |
 | `publish_content_script` | `scripts/publish-content.sh` against the fake storage server: upload order, no secret printed, refusals upload nothing |
 
 ## Verified, unverified, not done
 
-Verified on Linux: everything in the Tests table except where noted. `test_content_delivery` was also run under AddressSanitizer
+Verified on Linux: all four tests in the Tests table (`ctest -R content` and `publish_content`; the engine was built at `-O0` only for `content_validators`, 4 of 4 passed; the HTTP step of `content_cli` is skipped unless the tool is built with `-DOKAY_OWN_HTTP=ON`, and was run by hand). `test_content_delivery` was also run under AddressSanitizer
 and UBSan, clean. The HTTP path was exercised with the own HTTP client over plain `http://` on loopback.
 
 Verified under Wine (Linux, not a real Windows PC): `okay-content.exe` cross-compiled with the MinGW win32-thread-model compiler

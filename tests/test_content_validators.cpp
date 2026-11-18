@@ -53,7 +53,7 @@ int main() {
     fs::remove_all(root, ec);
 
     // A graph that parses and checks clean (an OnStart event that does nothing is a warning at most) and a script that parses.
-    const std::string goodGraph = "OkayVS 1\n";
+    const std::string goodGraph = "# a graph\nnode 1 OnStart\nentry OnStart 1\n";
     const std::string badGraph = "this is not a graph at all {{{\n";
     const std::string goodScript = "function start() { }\n";
     const std::string badScript = "function start( { \n";
@@ -63,13 +63,18 @@ int main() {
         Entry e; e.kind = Kind::Script;
         const fs::path d = root / "single"; fs::create_directories(d);
         auto write = [&](const char* n, const std::string& t) { std::ofstream(d / n, std::ios::binary) << t; return (d / n).string(); };
-        e.path = "s/bad.okayvs";    CHECK(!ValidateContentFile(e, write("bad.okayvs", badGraph)).empty());
+        e.path = "s/bad.okayvs";    CHECK(!ValidateContentFile(e, write("bad.okayvs", badGraph)).empty());          // not a graph at all
+        e.path = "s/good.okayvs";   CHECK(ValidateContentFile(e, write("good.okayvs", goodGraph)).empty());          // a graph (the checker only warns that nothing is wired)
+        e.path = "S/Good.OKAYVS";   CHECK(ValidateContentFile(e, write("good2.okayvs", goodGraph)).empty());         // extension case does not matter
+        e.path = "s/type.okayvs";   CHECK(!ValidateContentFile(e, write("type.okayvs", "node 1 NoSuchNodeType\n")).empty());                          // unknown node type
+        e.path = "s/wire.okayvs";   CHECK(!ValidateContentFile(e, write("wire.okayvs", "node 1 OnStart\nexec 1 0 9\nentry OnStart 1\n")).empty());   // wire to a missing node
+        e.path = "s/mixed.okayvs";  CHECK(!ValidateContentFile(e, write("mixed.okayvs", goodGraph + "run_this_program now\n")).empty());                // a stray line is refused, not ignored
+        e.path = "s/nonode.okayvs"; CHECK(!ValidateContentFile(e, write("nonode.okayvs", "# only a comment\n")).empty());
         e.path = "s/bad.okayscript"; CHECK(!ValidateContentFile(e, write("bad.okayscript", badScript)).empty());
         e.path = "s/good.okayscript"; CHECK(ValidateContentFile(e, write("good.okayscript", goodScript)).empty());
         e.path = "s/empty.okayvs";  CHECK(!ValidateContentFile(e, write("empty.okayvs", "")).empty());       // empty is refused
         e.path = "s/missing.okayvs"; CHECK(!ValidateContentFile(e, (d / "none").string()).empty());          // unreadable is refused
         e.kind = Kind::Data; e.path = "d/x.okaydata"; CHECK(ValidateContentFile(e, write("x.okaydata", "hp=1\n")).empty());   // data has no code
-        (void)goodGraph;
     }
     {
         RUN_SUITE("a refused script never becomes visible");

@@ -155,7 +155,8 @@ struct Interp {
     std::map<string, Target> targets; vector<string> order; // creation order
     vector<TestDef> tests;
     std::map<string, Func> funcs;
-    std::map<string, bool> fetchDeclared;
+    struct FetchInfo { string git, tag, url, sha256; };
+    std::map<string, FetchInfo> fetchDeclared; vector<string> fetchUsed; // FetchContent: what was declared, and what a target actually needs downloaded
     vector<string> dirDefs, dirOpts, dirIncs, dirLinkOpts;
     string curSrc, curBin; // CMAKE_CURRENT_SOURCE_DIR / BINARY_DIR
     vector<std::pair<string, string>> parentWrites; // PARENT_SCOPE writes seen in the running function/directory
@@ -773,12 +774,22 @@ inline void Interp::builtin(const Cmd& c) {
         for (size_t k = 0; k < p; ++k) for (auto& t : tests) if (t.name == a[k]) for (size_t q = p + 1; q + 1 < a.size(); q += 2) t.props[a[q]] = a[q + 1];
         return;
     }
-    if (n == "fetchcontent_declare") { if (!a.empty()) fetchDeclared[lower(a[0])] = true; return; }
+    if (n == "fetchcontent_declare") {
+        if (a.empty()) return; FetchInfo f;
+        for (size_t k = 1; k + 1 < a.size(); ++k) {
+            if (a[k] == "GIT_REPOSITORY") f.git = a[k + 1]; else if (a[k] == "GIT_TAG") f.tag = a[k + 1]; else if (a[k] == "URL") f.url = a[k + 1];
+            else if (a[k] == "URL_HASH" && a[k + 1].compare(0, 7, "SHA256=") == 0) f.sha256 = a[k + 1].substr(7);
+        }
+        fetchDeclared[lower(a[0])] = f; return;
+    }
     if (n == "fetchcontent_makeavailable") {
         for (auto& nm : a) {
             string l = lower(nm); auto f = opt.fetched.find(l);
             string dir = f != opt.fetched.end() ? f->second : "/okay-not-fetched/" + l;
-            vars[l + "_SOURCE_DIR"] = dir; vars[l + "_BINARY_DIR"] = opt.binDir + "/_deps/" + l + "-build"; vars[l + "_POPULATED"] = f != opt.fetched.end() ? "TRUE" : "";
+            if (f == opt.fetched.end() && fetchDeclared.count(l)) { // not given on disk: the manifest gets a `fetch` block and the sources are expected in _deps/<name>-src
+                dir = opt.root + "/_deps/" + l + "-src"; if (std::find(fetchUsed.begin(), fetchUsed.end(), l) == fetchUsed.end()) fetchUsed.push_back(l);
+            }
+            vars[l + "_SOURCE_DIR"] = dir; vars[l + "_BINARY_DIR"] = opt.binDir + "/_deps/" + l + "-build"; { std::error_code fe; vars[l + "_POPULATED"] = (f != opt.fetched.end() || fs::exists(dir, fe)) ? "TRUE" : ""; }
         }
         return;
     }
@@ -808,7 +819,7 @@ inline void Interp::runTop() {
 // ---- 3. Interpreter result to a build.okay manifest ----------------------------------------------------------------------
 struct Report {
     int targetsDeclared = 0, exes = 0, libs = 0, ifaces = 0, emitted = 0, skipped = 0, sources = 0, defines = 0, flags = 0, perFile = 0;
-    int testsDuplicate = 0, testsNoCommand = 0, testsDeclared = 0, testsExe = 0, testsScript = 0, testsEmitted = 0, testsSkipped = 0, testsNeedCmake = 0;
+    int fetches = 0, testsDuplicate = 0, testsNoCommand = 0, testsDeclared = 0, testsExe = 0, testsScript = 0, testsEmitted = 0, testsSkipped = 0, testsNeedCmake = 0;
     vector<std::pair<string, string>> skippedTargets; // name, reason
     vector<std::pair<string, string>> skippedTests;
     vector<string> unresolved; // link items that were neither a target nor a plain library name
@@ -894,7 +905,8 @@ static string emitManifest(Interp& in, Report& rep) {
             if (t.sources.empty()) t.skipReason = "no sources";
             for (auto& s : t.sources) {
                 if (s.compare(0, 5, "{bin}") == 0) { t.skipReason = "generated source " + s; break; }
-                std::error_code ec; if (!fs::exists(s, ec)) { t.skipReason = s.compare(0, 18, "/okay-not-fetched/") == 0 ? "needs a download: " + s.substr(18, s.find('/', 18) - 18) + " (give --fetched NAME=DIR)" : "missing source " + rootRel(s, root); break; }
+                std::error_code ec; bool willFetch = false; for (auto& fu : in.fetchUsed) if (s.rfind(root + "/_deps/" + fu + "-src/", 0) == 0) willFetch = true;
+                if (!willFetch && !fs::exists(s, ec)) { t.skipReason = s.compare(0, 18, "/okay-not-fetched/") == 0 ? "needs a download: " + s.substr(18, s.find('/', 18) - 18) + " (give --fetched NAME=DIR)" : "missing source " + rootRel(s, root); break; }
             }
         }
     }
@@ -917,6 +929,11 @@ static string emitManifest(Interp& in, Report& rep) {
     rep.accountDefines = account;
     if (account) out << "account_defines = on\n";
     out << "toolchain\n  path_map = on\nend\n";
+    for (auto& fu : in.fetchUsed) {
+        auto& f = in.fetchDeclared[fu]; out << "fetch " << qw(fu) << "\n";
+        if (!f.git.empty()) out << "  git = " << qw(f.git) << "\n  commit = " << qw(f.tag) << "\n"; else out << "  url = " << qw(f.url) << "\n  sha256 = " << qw(f.sha256) << "\n";
+        out << "  dir = _deps/" << fu << "-src\nend\n"; ++rep.fetches;
+    }
     std::set<string> emitted;
     for (auto& n : in.order) {
         Target& t = in.targets[n]; if (t.kind != "exe" && t.kind != "lib") continue;

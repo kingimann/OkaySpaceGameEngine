@@ -7,6 +7,7 @@
 #include <algorithm>
 #include <atomic>
 #include <cctype>
+#include <cmath>
 #include <chrono>
 #include <cstdio>
 #include <cstdlib>
@@ -132,6 +133,8 @@ struct PackageDecl {
     string name, path, version; int line = 0;
     vector<std::pair<string, string>> depends;
 };
+// A source tree to download, pinned: a git commit (40 hex digits) or a tarball with its SHA-256. Only `okay-build fetch` downloads; a build never does.
+struct FetchDecl { string name, git, commit, url, sha256, dir; int strip = 1; int line = 0; };
 struct DistDecl {
     bool on = false; string dir = "dist", launcher, dll, readme, version, textures, fonts;
     vector<string> tools, examples;
@@ -141,7 +144,7 @@ struct Manifest {
     Toolchain tc; string outdir = "build", objSub; // objSub: "CONFIG/" when outdir has {config}
      vector<Target> targets; vector<RawAction> actions; vector<ImporterDecl> importers; vector<PoolDecl> pools;
     vector<ConfigBlock> configs; vector<OptionDecl> options; vector<CondBlock> conds; vector<PackageDecl> packages;
-    DistDecl dist; vector<CTestDecl> ctests;
+    DistDecl dist; vector<CTestDecl> ctests; vector<FetchDecl> fetches;
     bool hasBuildfile = false; string buildCmd, buildDepfile; vector<string> buildInputs; int buildLine = 0;
 };
 
@@ -184,7 +187,7 @@ static Manifest parseManifest(const string& file) {
     std::ifstream in(file);
     if (!in) throw Fail("cannot open manifest " + file);
     Manifest m; string line; int ln = 0;
-    enum { TOP, TC, TARGET, ACTION, POOL, BUILDFILE, CONFIG, COND, PACKAGE, DIST, IMPORTER, CTEST } mode = TOP;
+    enum { TOP, TC, TARGET, ACTION, POOL, BUILDFILE, CONFIG, COND, PACKAGE, DIST, IMPORTER, CTEST, FETCH } mode = TOP;
     auto err = [&](const string& msg) { return Fail(file + ":" + std::to_string(ln) + ": " + msg); };
     auto oneFlag = [&](const vector<string>& v, const string& k) {
         if (v.size() != 1) throw err(k + " takes one value");
@@ -238,6 +241,11 @@ static Manifest parseManifest(const string& file) {
                 if (t.size() != 2) throw err("expected: package NAME");
                 for (auto& p : m.packages) if (p.name == t[1]) throw err("duplicate package '" + t[1] + "'");
                 PackageDecl p; p.name = t[1]; p.line = ln; m.packages.push_back(p); mode = PACKAGE; continue;
+            }
+            if (t[0] == "fetch") {
+                if (t.size() != 2) throw err("expected: fetch NAME");
+                for (auto& x : m.fetches) if (x.name == t[1]) throw err("duplicate fetch '" + t[1] + "'");
+                FetchDecl f; f.name = t[1]; f.line = ln; f.dir = "_deps/" + t[1] + "-src"; m.fetches.push_back(f); mode = FETCH; continue;
             }
             if (t[0] == "ctest") {
                 if (t.size() != 2) throw err("expected: ctest NAME");
@@ -346,6 +354,12 @@ static Manifest parseManifest(const string& file) {
             else if (k == "version") { if (v.size() != 1) throw err("version takes one value"); p.version = v[0]; }
             else if (k == "depend") { if (v.size() != 2) throw err("depend takes a package name and a version"); p.depends.push_back({v[0], v[1]}); }
             else throw err("unknown package key '" + k + "'");
+        } else if (mode == FETCH) {
+            FetchDecl& f = m.fetches.back();
+            if (v.size() != 1) throw err(k + " takes one value");
+            if (k == "git") f.git = v[0]; else if (k == "commit") f.commit = v[0]; else if (k == "url") f.url = v[0]; else if (k == "sha256") f.sha256 = v[0];
+            else if (k == "dir") f.dir = v[0]; else if (k == "strip") f.strip = atoi(v[0].c_str());
+            else throw err("unknown fetch key '" + k + "'");
         } else if (mode == CTEST) {
             CTestDecl& c = m.ctests.back();
             if (k == "cmd") { for (auto& w : v) c.cmd.push_back(w); }
@@ -403,6 +417,12 @@ static Manifest parseManifest(const string& file) {
         if (i.cmd.empty()) throw Fail(w + "has no cmd");
         if (i.output.find("{input}") == string::npos && i.output.find("{stem}") == string::npos && i.output.find("{name}") == string::npos)
             throw Fail(w + "output must use {stem}, {name} or {input}, or every file would write the same output");
+    }
+    for (auto& f : m.fetches) {
+        string w = file + ":" + std::to_string(f.line) + ": fetch '" + f.name + "' ";
+        if (f.git.empty() == f.url.empty()) throw Fail(w + "needs either git (with commit) or url (with sha256)");
+        if (!f.git.empty() && f.commit.empty()) throw Fail(w + "has git but no commit");
+        if (!f.url.empty() && f.sha256.empty()) throw Fail(w + "has url but no sha256");
     }
     if (m.hasBuildfile && m.buildCmd.empty()) throw Fail(file + ":" + std::to_string(m.buildLine) + ": buildfile has no cmd");
     for (auto& t : m.targets) if (t.isTest && t.isLib) throw Fail(file + ":" + std::to_string(t.line) + ": test target '" + t.name + "' is a library");
@@ -673,7 +693,10 @@ static Graph plan(const Manifest& m, const vector<string>& want) {
         for (auto& nd : t.needs) needKeys.push_back(resolve("", nd));
         for (auto& s : t.sources) {
             string srcKey = resolve("", s);
-            if (!produced.count(srcKey) && !fs::exists(s)) throw Fail("target '" + t.name + "': source '" + s + "' does not exist");
+            if (!produced.count(srcKey) && !fs::exists(s)) {
+                string hint; for (auto& f : m.fetches) if (s.compare(0, f.dir.size() + 1, f.dir + "/") == 0) hint = " (it comes from fetch '" + f.name + "': run okay-build fetch " + f.name + ")";
+                throw Fail("target '" + t.name + "': source '" + s + "' does not exist" + hint);
+            }
             bool isC = fs::path(s).extension() == ".c";
             string rel = fs::path(s).lexically_normal().generic_string();
             for (size_t p; (p = rel.find("..")) != string::npos;) rel.replace(p, 2, "__");
@@ -2801,6 +2824,7 @@ static int cmdCmake(const string& root, const string& outFile, const vector<std:
     printf("targets declared  %d (%d programs, %d libraries, %d interface libraries)\n", rep.targetsDeclared, rep.exes, rep.libs, rep.ifaces);
     printf("targets written   %d, sources %d, definitions %d, flags %d, per-file settings %d\n", rep.emitted, rep.sources, rep.defines, rep.flags, rep.perFile);
     printf("tests declared    %d (%d run a program of ours, %d run something else); written %d, skipped %d, run cmake itself %d; set aside: %d with a name already used, %d with no command\n", rep.testsDeclared, rep.testsExe, rep.testsScript, rep.testsEmitted, rep.testsSkipped, rep.testsNeedCmake, rep.testsDuplicate, rep.testsNoCommand);
+    if (rep.fetches) printf("downloads         %d fetch block(s) written (run okay-build fetch; nothing is downloaded by a build)\n", rep.fetches);
     printf("options           %d declared, %d set from the command line\n", tally.options, tally.setOptions);
     int cmds = 0; for (auto& c : tally.run) cmds += c.second;
     printf("commands run      %d\n", cmds);
@@ -3456,6 +3480,102 @@ static bool safeRelPath(const string& r) {
     while (i <= r.size()) { size_t e = r.find('/', i); if (e == string::npos) e = r.size(); string part = r.substr(i, e - i); if (part.empty() || part == "..") return false; i = e + 1; }
     return true;
 }
+
+// ---- SHA-256 (FIPS 180-4), written from the description of the algorithm. The round constants are the first 32 bits of the
+// fractional parts of the cube roots of the first 64 primes, and the start values those of the square roots of the first 8;
+// they are worked out here instead of typed in, and checked by the tests against the published test strings.
+struct Sha256 {
+    uint32_t h[8], k[64]; unsigned char buf[64]; uint64_t total = 0; size_t fill = 0;
+    static uint32_t frac32(long double v) { v -= floorl(v); return (uint32_t)floorl(v * 4294967296.0L); }
+    Sha256() {
+        int found = 0; for (int n = 2; found < 64; ++n) {
+            bool prime = true; for (int d = 2; d * d <= n; ++d) if (n % d == 0) { prime = false; break; }
+            if (!prime) continue;
+            if (found < 8) h[found] = frac32(sqrtl((long double)n));
+            k[found] = frac32(cbrtl((long double)n)); ++found;
+        }
+    }
+    static uint32_t rotr(uint32_t x, int n) { return (x >> n) | (x << (32 - n)); }
+    void block(const unsigned char* p) {
+        uint32_t w[64];
+        for (int i = 0; i < 16; ++i) w[i] = (uint32_t)p[4 * i] << 24 | (uint32_t)p[4 * i + 1] << 16 | (uint32_t)p[4 * i + 2] << 8 | p[4 * i + 3];
+        for (int i = 16; i < 64; ++i) {
+            uint32_t s0 = rotr(w[i - 15], 7) ^ rotr(w[i - 15], 18) ^ (w[i - 15] >> 3), s1 = rotr(w[i - 2], 17) ^ rotr(w[i - 2], 19) ^ (w[i - 2] >> 10);
+            w[i] = w[i - 16] + s0 + w[i - 7] + s1;
+        }
+        uint32_t a = h[0], b = h[1], c = h[2], d = h[3], e = h[4], f = h[5], g = h[6], hh = h[7];
+        for (int i = 0; i < 64; ++i) {
+            uint32_t t1 = hh + (rotr(e, 6) ^ rotr(e, 11) ^ rotr(e, 25)) + ((e & f) ^ (~e & g)) + k[i] + w[i];
+            uint32_t t2 = (rotr(a, 2) ^ rotr(a, 13) ^ rotr(a, 22)) + ((a & b) ^ (a & c) ^ (b & c));
+            hh = g; g = f; f = e; e = d + t1; d = c; c = b; b = a; a = t1 + t2;
+        }
+        h[0] += a; h[1] += b; h[2] += c; h[3] += d; h[4] += e; h[5] += f; h[6] += g; h[7] += hh;
+    }
+    void add(const void* data, size_t n) {
+        const unsigned char* p = (const unsigned char*)data; total += n;
+        while (n > 0) { size_t take = std::min(n, 64 - fill); memcpy(buf + fill, p, take); fill += take; p += take; n -= take; if (fill == 64) { block(buf); fill = 0; } }
+    }
+    string hex() {
+        uint64_t bits = total * 8; unsigned char pad[72] = {0x80}; size_t padLen = (fill < 56 ? 56 - fill : 120 - fill);
+        for (int i = 0; i < 8; ++i) pad[padLen + i] = (unsigned char)(bits >> (56 - 8 * i));
+        uint64_t keep = total; add(pad, padLen + 8); total = keep;
+        char out[65]; for (int i = 0; i < 8; ++i) snprintf(out + 8 * i, 9, "%08x", h[i]);
+        return string(out, 64);
+    }
+};
+static string sha256File(const string& path) {
+    std::ifstream in(path, std::ios::binary); if (!in) throw Fail("cannot read " + path);
+    Sha256 s; char b[65536]; while (in) { in.read(b, sizeof b); auto n = in.gcount(); if (n > 0) s.add(b, (size_t)n); }
+    return s.hex();
+}
+static bool isHex(const string& s, size_t n) { if (s.size() != n) return false; for (char c : s) if (!isxdigit((unsigned char)c)) return false; return true; }
+static string lowerStr(string s) { for (auto& c : s) c = (char)tolower((unsigned char)c); return s; }
+
+// okay-build fetch [NAME...]: download the `fetch` blocks into their folders. Off unless asked for: builds never download.
+// A git source is fetched by its commit (40 hex digits; a branch or tag name is refused because it can move) and the commit is
+// checked afterwards. A tarball must have a sha256 and is checked before it is unpacked. Downloads use the curl program (or wget);
+// our own HTTP client lives in the engine and is not linked into this tool. Unpacking uses tar, and git is the git program.
+static int cmdFetch(const Manifest& m, const vector<string>& names) {
+    if (m.fetches.empty()) throw Fail("no fetch blocks in the manifest");
+    int did = 0;
+    for (auto& f : m.fetches) {
+        if (!names.empty() && std::find(names.begin(), names.end(), f.name) == names.end()) continue;
+        string marker = f.dir + "/.okaybuild-fetched", pin = !f.git.empty() ? "git " + f.git + " " + lowerStr(f.commit) : "url " + f.url + " " + lowerStr(f.sha256);
+        if (!f.git.empty() && !isHex(f.commit, 40)) throw Fail("fetch " + f.name + ": the commit must be 40 hex digits (a branch or tag name can move, so it is not a pin)");
+        if (!f.url.empty() && !isHex(f.sha256, 64)) throw Fail("fetch " + f.name + ": sha256 must be 64 hex digits");
+        { std::ifstream mk(marker); string have((std::istreambuf_iterator<char>(mk)), {}); while (!have.empty() && (have.back() == '\n' || have.back() == ' ')) have.pop_back();
+          if (mk && have == pin) { printf("okay-build fetch: %s is already in %s\n", f.name.c_str(), f.dir.c_str()); continue; } }
+        std::error_code ec; fs::remove_all(f.dir + ".partial", ec); fs::create_directories(f.dir + ".partial", ec);
+        string part = f.dir + ".partial", out;
+        if (!f.git.empty()) {
+            vector<vector<string>> steps = {{"git", "init", "-q", part}, {"git", "-C", part, "fetch", "-q", "--depth", "1", f.git, lowerStr(f.commit)}, {"git", "-C", part, "checkout", "-q", "FETCH_HEAD"}};
+            for (auto& st : steps) { out.clear(); if (runCmd(st, out) != 0) { fs::remove_all(part, ec); throw Fail("fetch " + f.name + ": '" + st[st.size() > 3 ? 3 : 1] + "' failed: " + out); } }
+            out.clear(); runCmd({"git", "-C", part, "rev-parse", "HEAD"}, out); while (!out.empty() && isspace((unsigned char)out.back())) out.pop_back();
+            if (out != lowerStr(f.commit)) { fs::remove_all(part, ec); throw Fail("fetch " + f.name + ": git gave commit " + out + ", not the pinned " + f.commit); }
+            fs::remove_all(part + "/.git", ec); // the tree is the pinned content; no history is kept
+        } else {
+            string tmp = part + "/download.tmp"; out.clear();
+            int rc = runCmd({"curl", "-fsSL", "--retry", "2", "-o", tmp, f.url}, out);
+            if (rc == 127) { out.clear(); rc = runCmd({"wget", "-q", "-O", tmp, f.url}, out); }
+            if (rc != 0) { fs::remove_all(part, ec); throw Fail("fetch " + f.name + ": download failed (" + f.url + "): " + out); }
+            string got = sha256File(tmp);
+            if (got != lowerStr(f.sha256)) { fs::remove_all(part, ec); throw Fail("fetch " + f.name + ": the download has sha256 " + got + " but the pin is " + lowerStr(f.sha256) + "; nothing was unpacked"); }
+            out.clear(); string unpack = part + "/tree"; fs::create_directories(unpack, ec);
+            if (runCmd({"tar", "-xf", tmp, "-C", unpack, "--strip-components=" + std::to_string(f.strip)}, out) != 0) { fs::remove_all(part, ec); throw Fail("fetch " + f.name + ": cannot unpack: " + out); }
+            fs::remove(tmp, ec);
+            fs::path final = fs::path(part) / "tree"; // move the unpacked tree up so the folder holds the sources directly
+            for (auto& e : fs::directory_iterator(final, ec)) fs::rename(e.path(), fs::path(part) / e.path().filename(), ec);
+            fs::remove_all(final, ec);
+        }
+        { std::ofstream mk(part + "/.okaybuild-fetched"); mk << pin << "\n"; }
+        fs::remove_all(f.dir, ec); fs::create_directories(fs::path(f.dir).parent_path(), ec); fs::rename(part, f.dir, ec);
+        if (ec) throw Fail("fetch " + f.name + ": cannot move into " + f.dir + ": " + ec.message());
+        printf("okay-build fetch: %s -> %s (%s)\n", f.name.c_str(), f.dir.c_str(), !f.git.empty() ? "git commit checked" : "sha256 checked"); ++did;
+    }
+    if (!did && !names.empty()) throw Fail("no fetch block with that name");
+    return 0;
+}
+
 static int toolMain(const vector<string>& a) {
     if (a.empty()) throw Fail("usage: okay-build tool copy SRC DST | hash FILE... | pack DIR OUT | unpack PACK DIR | list PACK");
     const string& c = a[0];
@@ -3520,6 +3640,7 @@ static int toolMain(const vector<string>& a) {
         }
         return 0;
     }
+    if (c == "sha256") { if (a.size() < 2) throw Fail("usage: okay-build tool sha256 FILE..."); for (size_t i = 1; i < a.size(); ++i) printf("%s  %s\n", sha256File(a[i]).c_str(), a[i].c_str()); return 0; }
     throw Fail("unknown tool command '" + c + "'");
 }
 
@@ -3606,9 +3727,9 @@ int main(int argc, char** argv) {
             else if (a == "--search" && i + 1 < argc) searchDirs.push_back(argv[++i]);
             else if (a == "--msvc-root" && i + 1 < argc) msvcRoots.push_back(argv[++i]);
             else if (cmd == "cache" && (a == "stats" || a == "clean")) want.push_back(a);
-            else if (a == "build" || a == "clean" || a == "compdb" || a == "import" || a == "graph" || a == "targets" || a == "modules" || a == "toolchains" || a == "report" || a == "test" || a == "cache" || a == "lock" || a == "package" || a == "native" || a == "cmake" || a == "ctest") cmd = a;
+            else if (a == "build" || a == "clean" || a == "compdb" || a == "import" || a == "graph" || a == "targets" || a == "modules" || a == "toolchains" || a == "report" || a == "test" || a == "cache" || a == "lock" || a == "package" || a == "native" || a == "cmake" || a == "ctest" || a == "fetch") cmd = a;
             else if (a == "-h" || a == "--help") {
-                puts("usage: okay-build [build|clean|compdb|import|graph|targets|modules|toolchains|report|test|ctest|cmake|native] [-f build.okay] [-j N] [-k] [--config NAME] [--toolchain auto|gcc|clang|mingw|msvc] [--opt name=value] [--build-dir DIR] [--no-stat] [--no-cache] [--cache-dir DIR] [--cache-compress] [--remote-cache DIR] [--remote-cache-readonly] [--timeout SECONDS] [--msvc-version PREFIX] [--memory N] [--memory-mb MB] [--junit FILE] [--shard I/N] [--dry-run] [--explain] [-v] [--profile] [target...]");
+                puts("usage: okay-build [build|clean|compdb|import|graph|targets|modules|toolchains|report|test|ctest|cmake|fetch|native] [-f build.okay] [-j N] [-k] [--config NAME] [--toolchain auto|gcc|clang|mingw|msvc] [--opt name=value] [--build-dir DIR] [--no-stat] [--no-cache] [--cache-dir DIR] [--cache-compress] [--remote-cache DIR] [--remote-cache-readonly] [--timeout SECONDS] [--msvc-version PREFIX] [--memory N] [--memory-mb MB] [--junit FILE] [--shard I/N] [--dry-run] [--explain] [-v] [--profile] [target...]");
                 puts("audit: docs/own_build_plan.md (12 subsystems; this tool is off by default)");
                 return 0;
             }
@@ -3653,6 +3774,7 @@ int main(int argc, char** argv) {
         if (cmd == "package") return cmdPackage(m, want, o);
         if (cmd == "test") return cmdTest(m, o, want);
         if (cmd == "ctest") return cmdCTest(m, o, want);
+        if (cmd == "fetch") return cmdFetch(m, want);
         if (cmd == "clean") {
             Graph g = plan(m, {}); for (auto& a : g.acts) if (a.kind != "CC") for (auto& pth : a.outputs) fs::remove(pth);
             fs::remove_all(under(".okaybuild")); fs::remove("compile_commands.json"); printf("okay-build: cleaned\n"); return 0;

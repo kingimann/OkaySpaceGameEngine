@@ -1718,11 +1718,51 @@ static void testSharedObjectLibs() {
     fs::remove_all(gRoot / "build"); fs::remove_all(gRoot / ".okaybuild");
     o = sh("-f c.okay -j2", &rc); check(rc == 0 && system(("cd / && env -u LD_LIBRARY_PATH '" + (gRoot / "build/m").string() + "'").c_str()) == 0, "the CMake-derived manifest builds and runs", o);
 }
+
+static void testFetchAndSha256() {
+    printf("test: SHA-256, pinned fetch (git commit and tarball), FetchContent from CMake\n");
+    fresh("fetch");
+    write("abc.txt", "abc"); write("empty.txt", ""); { std::ofstream f(gRoot / "million.txt", std::ios::binary); string chunk(1000, 'a'); for (int i = 0; i < 1000; ++i) f << chunk; }
+    string o = sh("tool sha256 abc.txt empty.txt million.txt");
+    check(o.find("ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad  abc.txt") != string::npos, "SHA-256 of abc matches the published value", o);
+    check(o.find("e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855  empty.txt") != string::npos, "SHA-256 of nothing matches", o);
+    check(o.find("cdc76e5c9914fb9281a1c7e284d73e67f1809a48a497200e046d39ccc7112cd0  million.txt") != string::npos, "SHA-256 of a million a's matches (many blocks)", o);
+    // a tarball with a pin
+    write("src/pkg-1.0/lib.cpp", "int from_pkg(){return 6;}\n"); write("src/pkg-1.0/pkg.h", "#pragma once\n");
+    int rc; sh("tool pack src out/not_used.okpk"); // (just proves tool still works beside sha256)
+    string tarcmd = "cd '" + gRoot.string() + "/src' && tar -czf ../pkg.tar.gz pkg-1.0"; check(system(tarcmd.c_str()) == 0, "tar available for the test");
+    string pin = sh("tool sha256 pkg.tar.gz"); pin = pin.substr(0, 64);
+    write("t.okay", "fetch pkg\n url = file://" + gRoot.string() + "/pkg.tar.gz\n sha256 = " + pin + "\n dir = deps/pkg\nend\ntarget a lib\n sources = deps/pkg/lib.cpp\nend\n");
+    o = sh("-f t.okay build", &rc); check(rc != 0 && o.find("run okay-build fetch pkg") != string::npos, "a build never downloads and says how to", o);
+    o = sh("-f t.okay fetch", &rc); check(rc == 0 && fs::exists(gRoot / "deps/pkg/lib.cpp") && o.find("sha256 checked") != string::npos, "fetch downloads, checks and unpacks (strip 1)", o);
+    o = sh("-f t.okay fetch", &rc); check(rc == 0 && o.find("already in") != string::npos, "a second fetch does nothing", o);
+    o = sh("-f t.okay build", &rc); check(rc == 0, "the build then works", o);
+    string bad = pin; bad[0] = bad[0] == '0' ? '1' : '0';
+    write("t2.okay", "fetch pkg2\n url = file://" + gRoot.string() + "/pkg.tar.gz\n sha256 = " + bad + "\n dir = deps/pkg2\nend\n");
+    o = sh("-f t2.okay fetch", &rc); check(rc == 2 && o.find("nothing was unpacked") != string::npos && !fs::exists(gRoot / "deps/pkg2"), "a wrong pin refuses and leaves no folder", o);
+    write("t3.okay", "fetch p3\n url = file://" + gRoot.string() + "/pkg.tar.gz\nend\n"); o = sh("-f t3.okay graph", &rc); check(rc == 2 && (o.find("needs either git") != string::npos || o.find("sha256") != string::npos), "url without sha256 is refused at load", o);
+    // git: a local repository, pinned by commit
+    string g = "cd '" + gRoot.string() + "' && rm -rf repo && mkdir repo && cd repo && git init -q && git config user.email a@b && git config user.name n && echo 'int g(){return 1;}' > g.cpp && git add g.cpp && git commit -q -m one && git config uploadpack.allowAnySHA1InWant true";
+    if (system(g.c_str()) == 0) {
+        string commit = sh("tool sha256 abc.txt"); (void)commit; FILE* p = popen(("cd '" + gRoot.string() + "/repo' && git rev-parse HEAD").c_str(), "r"); char b[64] = {}; size_t n = fread(b, 1, 40, p); pclose(p); string c(b, n);
+        write("g.okay", "fetch gitpkg\n git = file://" + gRoot.string() + "/repo\n commit = " + c + "\n dir = deps/gitpkg\nend\n");
+        o = sh("-f g.okay fetch", &rc); check(rc == 0 && fs::exists(gRoot / "deps/gitpkg/g.cpp") && !fs::exists(gRoot / "deps/gitpkg/.git") && o.find("git commit checked") != string::npos, "git fetch by commit, checked, history dropped", o);
+        write("g2.okay", "fetch gitbad\n git = file://" + gRoot.string() + "/repo\n commit = main\n dir = deps/gitbad\nend\n");
+        o = sh("-f g2.okay fetch", &rc); check(rc == 2 && o.find("40 hex digits") != string::npos, "a branch name is not a pin", o);
+    }
+    // FetchContent in CMake files becomes a fetch block
+    write("CMakeLists.txt", "project(F)\ninclude(FetchContent)\nFetchContent_Declare(pkg URL file://" + gRoot.string() + "/pkg.tar.gz URL_HASH SHA256=" + pin + ")\nFetchContent_MakeAvailable(pkg)\nadd_library(l STATIC ${pkg_SOURCE_DIR}/lib.cpp)\ntarget_include_directories(l PUBLIC ${pkg_SOURCE_DIR})\n");
+    fs::remove_all(gRoot / "_deps");
+    o = sh("cmake . -o c.okay --audit", &rc); string man = readFile(gRoot / "c.okay");
+    check(rc == 0 && man.find("fetch pkg") != string::npos && man.find("sha256 = " + pin) != string::npos && man.find("dir = _deps/pkg-src") != string::npos && man.find("target l lib") != string::npos && man.find("sources = _deps/pkg-src/lib.cpp") != string::npos, "FetchContent_Declare gives a fetch block and the target is written", man + o);
+    o = sh("-f c.okay fetch", &rc); check(rc == 0 && fs::exists(gRoot / "_deps/pkg-src/lib.cpp"), "and fetch then works from it", o);
+    o = sh("-f c.okay -j2", &rc); check(rc == 0, "and it builds", o);
+}
 int main(int argc, char** argv) {
     if (argc < 2) { puts("usage: test_okaybuild PATH_TO_okay-build"); return 2; }
     gTool = "'" + fs::absolute(argv[1]).string() + "'";
     if (const char* only = getenv("OKB_ONLY")) { // OKB_ONLY=cmake runs just the CMake reader, ctest and library tests (quick while working on them)
-        if (string(only) == "cmake") { testCmakeReader(); testCmakeSyntax(); testSharedObjectLibs(); printf("okaybuild tests (cmake only): %d checks passed, %d failed\n", gPass, gFail); return gFail ? 1 : 0; }
+        if (string(only) == "cmake") { testCmakeReader(); testCmakeSyntax(); testSharedObjectLibs(); testFetchAndSha256(); printf("okaybuild tests (cmake only): %d checks passed, %d failed\n", gPass, gFail); return gFail ? 1 : 0; }
     }
     testBasicAndNoop(); testHeaderTouch(); testDefine(); testMissingHeader(); testCycle(); testLinkOrder();
     testParallelDeterministic(); testCompdbCleanDry(); testManifestErrors(); testMingwCompdb(); testMingwSlice(); testStatShortcut(); testFreshNoopTrust(); testSpacesBuildDirRsp(); testRawActions(); testHashInCommandAndPath(); testImportGenerated();
@@ -1743,5 +1783,6 @@ int main(int argc, char** argv) {
     testCmakeReader();
     testCmakeSyntax();
     testSharedObjectLibs();
+    testFetchAndSha256();
     printf("okaybuild tests: %d checks passed, %d failed\n", gPass, gFail); return gFail ? 1 : 0;
 }

@@ -27,6 +27,7 @@
 #include <d3dcompiler.h>   // run-time HLSL compile: desktop only. A UWP app loads the .cso bundle instead (ShaderBundle.hpp).
 #else
 #include "okay/Render/ShaderBundle.hpp"
+#include "okay/Render/D3D11OverlayHlsl.hpp"   // the text the bundle is built from (renderer HLSL + the UI overlay shaders)
 #include <fstream>
 #endif#include <cstdint>
 #include <array>
@@ -71,7 +72,7 @@ bool EnsureBundle() {
         out.assign(std::istreambuf_iterator<char>(in), std::istreambuf_iterator<char>());
         return true;
     };
-    g_bundleOk = g_bundle.Load(rd, kHLSL, &g_bundleErr);
+    g_bundleOk = g_bundle.Load(rd, D3D11BundleSourceText().c_str(), &g_bundleErr);
     if (!g_bundleOk) Log::Error("[d3d11] shader bundle: " + g_bundleErr);
     for (const std::string& w : g_bundle.Warnings()) Log::Warning("[d3d11] shader bundle: " + w);
     return g_bundleOk;
@@ -1861,6 +1862,16 @@ void* D3D11Renderer::BoundRenderTargetTexture() {
     res->QueryInterface(__uuidof(ID3D11Texture2D), (void**)&tex);
     res->Release();
     return tex;
+}
+bool D3D11Renderer::BundleShader(const char* entry, const void** data, std::size_t* size) {
+#if defined(OKAY_XBOX_UWP)
+    if (!entry || !data || !size || !EnsureBundle()) return false;
+    const std::vector<unsigned char>* b = g_bundle.Find(entry);
+    if (!b) return false;
+    *data = b->data(); *size = b->size(); return true;
+#else
+    (void)entry; (void)data; (void)size; return false;
+#endif
 }
 void D3D11Renderer::SetShaderBundleDir(const char* dir) {
 #if defined(OKAY_XBOX_UWP)

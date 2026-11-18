@@ -10,6 +10,7 @@
 #include "okay/Render/D3D11Renderer.hpp"
 #include <d3d11.h>
 #include <dxgi1_2.h>
+#include <functional>
 
 namespace okay::xbox {
 
@@ -67,11 +68,15 @@ public:
         ID3D11Texture2D* bb = nullptr;
         if (FAILED(sc_->GetBuffer(0, __uuidof(ID3D11Texture2D), (void**)&bb))) return false;
         const bool drew = renderer.RenderToTexture(scene, vp, eye, size_.w, size_.h, samples, r, g, b, a, bb);
+        if (drew && afterRender_) afterRender_(bb);   // the UI overlay is blended over the finished 3D frame here
         bb->Release();
         if (!drew) return false;
         tracker_.Report((std::int32_t)sc_->Present((UINT)syncInterval, 0));
         return !tracker_.DeviceLost();
     }
+
+    /// Called with the back buffer (an ID3D11Texture2D*) after the 3D frame is drawn and before Present: the 2D / UI overlay hooks in here.
+    void SetAfterRender(std::function<void(void*)> f) { afterRender_ = std::move(f); }
 
     void Release() { if (sc_) { sc_->Release(); sc_ = nullptr; } size_ = {}; }
 
@@ -79,6 +84,7 @@ private:
     IDXGISwapChain1* sc_ = nullptr;
     SizePx size_{};
     PresentTracker tracker_;
+    std::function<void(void*)> afterRender_;
 };
 
 } // namespace okay::xbox

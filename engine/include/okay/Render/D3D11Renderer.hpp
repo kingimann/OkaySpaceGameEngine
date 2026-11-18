@@ -77,6 +77,8 @@ public:
     /// UWP only (OKAY_XBOX_UWP): the folder with the pre-compiled shaders (shaders.manifest + okay3d_*.cso), set before Init().
     /// A UWP app cannot call D3DCompile. On the desktop build this does nothing (the HLSL is compiled at run time as always).
     static void SetShaderBundleDir(const char* dir);
+    /// UWP only: the pre-compiled bytes of one bundle entry (the Xbox UI overlay shaders); false on the desktop or when absent. Valid for the process lifetime.
+    static bool BundleShader(const char* entry, const void** data, std::size_t* size);
     /// The device (an ID3D11Device*, no reference added) or nullptr. For the swap-chain presenter (D3D11Present.hpp).
     void* DeviceForPresent() const;
 

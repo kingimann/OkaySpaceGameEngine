@@ -12,6 +12,10 @@
 #include "XboxPaths.hpp"
 #include "okay/Core/DataPack.hpp"
 #include "okay/Core/GameLoop.hpp"
+#include "okay/Components/UIAnchor.hpp"
+#include "okay/Components/UIElement.hpp"
+#include "okay/Components/UIWorldContext.hpp"
+#include "okay/UI/UILayoutUpdate.hpp"
 #include "okay/Core/Log.hpp"
 #include "okay/Input/Input.hpp"
 #include "okay/Input/PlatformGamepad.hpp"
@@ -87,10 +91,15 @@ public:
 
     /// One frame: feed the pads and keys, step the loop. `keysDown` = platform key state the shell collected as engine key chars.
     /// Returns false when the game asked to quit.
+    /// The size (pixels) the UI is laid out and drawn for: anchored widgets and their hit-tests use it. 0 x 0 = UI size not set yet.
+    void SetUiSize(int w, int h) { uiW_ = w; uiH_ = h; }
+    /// Mouse position in UI pixels and the button mask (bit 0 = left), once per frame.
+    void FeedMouse(float x, float y, unsigned mask) { Input::FeedMouse(Vec2{x, y}, mask); }
     bool Frame(double realDeltaSeconds, std::vector<char>& keysDown) {
         if (!started_) return false;
         pads_.Feed(keysDown);
         Input::FeedKeys(keysDown);
+        if (uiW_ > 0 && uiH_ > 0 && scene_) PrepareUi(*scene_, uiW_, uiH_);
         return loop_->BeginFrame(realDeltaSeconds);
     }
     void PadAdded(int deviceIndex) { pads_.Add(deviceIndex); }
@@ -109,6 +118,21 @@ public:
     void OnResume() { Log::Info("[xbox] resumed"); }
 
 private:
+    // Publish the UI size and the hit-test hooks before the scene updates, so anchored widgets and their clicks agree with what RenderSceneUI draws
+    // (the same things the player sets up each frame: canvas size, where a widget really is, world-space projection), then lay the UI out.
+    static void PrepareUi(Scene& scene, int cw, int ch) {
+        UICanvas::Set((float)cw, (float)ch);
+        UIWorld().active = false;
+        UIWorld().rectOf = [cw, ch](GameObject* go, Vec2& o, Vec2& sz) { if (UIHidden(go)) return false; return GetUIScreenRect(go, (float)cw, (float)ch, o, sz); };
+        UIWorld().clipContains = [cw, ch](GameObject* go, const Vec2& p) { return UIClipHitTest(go, p, (float)cw, (float)ch); };
+        if (Camera* cam = scene.mainCamera) {
+            UIWorld().active = true; UIWorld().screenW = (float)cw; UIWorld().screenH = (float)ch;
+            if (cam->gameObject && cam->gameObject->transform) UIWorld().right = cam->gameObject->transform->Right();
+            UIWorld().project = [cam, cw, ch](const Vec3& p, Vec2& out, float& depth) { return cam->WorldToScreen(p, (float)cw, (float)ch, out, &depth); };
+        }
+        UpdateUILayouts(scene);
+    }
+    int uiW_ = 0, uiH_ = 0;
     std::string dir_; GameConfig cfg_; std::unique_ptr<Scene> scene_; std::unique_ptr<GameLoop> loop_; PadSet pads_; bool started_ = false;
 };
 

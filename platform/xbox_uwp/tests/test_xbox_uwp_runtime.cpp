@@ -1,6 +1,6 @@
 // Linux tests for the Xbox UWP runtime pieces that are pure logic: offline shader bundle, display sizing, lifecycle, input mapping,
 // path mapping, audio conversion. The Windows-only glue (CoreWindow, WASAPI, Windows.Gaming.Input) is NOT covered: it is uncompiled.
-#include "okay/Render/D3D11Hlsl.hpp"
+#include "okay/Render/D3D11OverlayHlsl.hpp"
 #include "okay/Render/ShaderBundle.hpp"
 #include "XboxDisplay.hpp"
 #include "XboxBuildPlan.hpp"
@@ -46,18 +46,18 @@ static Files MakeBundle(const char* src, Manifest* mOut = nullptr) {
 }
 
 static void ShaderTests() {
-    const char* src = okay::D3D11HlslSource();
+    const char* src = okay::D3D11BundleSourceText().c_str();
     // every entry the renderer asks for really exists in the HLSL text
-    CHECK(Entries().size() == 15);
+    CHECK(Entries().size() == 17); CHECK(std::string(okay::D3D11BundleSourceText()).find(std::string(okay::D3D11HlslSource())) == 0);   // the renderer text is unchanged and comes first
     for (const EntryReq& q : Entries()) CHECK(std::strstr(src, (std::string(q.entry) + "(").c_str()) != nullptr);
     CHECK(Fnv1a64("", 0) == 14695981039346656037ull);              // FNV-1a published test vector
     CHECK(Fnv1a64("a", 1) == 0xaf63dc4c8601ec8cull);
     CHECK(Fnv1a64("foobar", 6) == 0x85944171f73967e8ull);
 
     Files f = MakeBundle(src);
-    { Bundle b; std::string e; CHECK(b.Load(Reader(f), src, &e)); CHECK(b.Count() == 15); CHECK(b.Find("VSMain") && b.Find("PSDof")); CHECK(!b.Find("Nope")); CHECK(b.Warnings().empty()); }
+    { Bundle b; std::string e; CHECK(b.Load(Reader(f), src, &e)); CHECK(b.Count() == 17); CHECK(b.Find("VSMain") && b.Find("PSDof")); CHECK(!b.Find("Nope")); CHECK(b.Warnings().empty()); }
     // the manifest round-trips
-    { Manifest m; std::string e; CHECK(ParseManifest(std::string(f["shaders.manifest"].begin(), f["shaders.manifest"].end()), m, &e)); CHECK(m.records.size() == 15); CHECK(WriteManifest(m) == std::string(f["shaders.manifest"].begin(), f["shaders.manifest"].end())); }
+    { Manifest m; std::string e; CHECK(ParseManifest(std::string(f["shaders.manifest"].begin(), f["shaders.manifest"].end()), m, &e)); CHECK(m.records.size() == 17); CHECK(WriteManifest(m) == std::string(f["shaders.manifest"].begin(), f["shaders.manifest"].end())); }
     // a different HLSL text is refused (stale bytecode)
     { Bundle b; std::string e; CHECK(!b.Load(Reader(f), "changed text", &e)); CHECK(e.find("different HLSL") != std::string::npos); CHECK(b.Count() == 0); }
     // no manifest
@@ -70,7 +70,7 @@ static void ShaderTests() {
     // not DXBC bytecode
     { Files g; for (const EntryReq& q : Entries()) g[FileNameFor(q.entry)] = Bytes("JUNKJUNK"); Manifest m; std::vector<std::string> w; std::string e; CHECK(!BuildManifest(Reader(g), src, m, w, &e)); }
     // build step: a missing required file refuses, a missing optional one warns
-    { Files g; for (const EntryReq& q : Entries()) g[FileNameFor(q.entry)] = Bytes("DXBCxx"); g.erase("okay3d_PSSky.cso"); Manifest m; std::vector<std::string> w; std::string e; CHECK(BuildManifest(Reader(g), src, m, w, &e)); CHECK(w.size() == 1); CHECK(m.records.size() == 14);
+    { Files g; for (const EntryReq& q : Entries()) g[FileNameFor(q.entry)] = Bytes("DXBCxx"); g.erase("okay3d_PSSky.cso"); Manifest m; std::vector<std::string> w; std::string e; CHECK(BuildManifest(Reader(g), src, m, w, &e)); CHECK(w.size() == 1); CHECK(m.records.size() == 16);
       g.erase("okay3d_VSMain.cso"); CHECK(!BuildManifest(Reader(g), src, m, w, &e)); }
     // hostile manifests
     { Manifest m; std::string e;

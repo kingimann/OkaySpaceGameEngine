@@ -24,7 +24,7 @@
 
 namespace okay { namespace shaderbundle {
 
-// Every entry point D3D11Renderer compiles (8 call sites, 15 entry points), in the order Init() asks for them.
+// Every entry point D3D11Renderer compiles (8 call sites, 15 entry points) plus the 2 overlay shaders of the Xbox build, in the order Init() asks for them.
 // `required` entries make the renderer fail to start when missing; the others only switch a feature off (as on desktop).
 struct EntryReq { const char* entry; const char* profile; bool required; };
 inline const std::vector<EntryReq>& Entries() {
@@ -35,6 +35,7 @@ inline const std::vector<EntryReq>& Entries() {
         {"PSBlur", "ps_4_0", false},     {"PSUber", "ps_4_0", false},   {"PSFxaa", "ps_4_0", false},
         {"PSAoDepth", "ps_4_0", false},  {"PSAo", "ps_4_0", false},     {"PSAoMul", "ps_4_0", false},
         {"PSDof", "ps_4_0", false},
+        {"VSOverlay", "vs_4_0", false}, {"PSOverlay", "ps_4_0", false},   // the Xbox UI overlay (D3D11OverlayHlsl.hpp); not used by the desktop renderer
     };
     return k;
 }

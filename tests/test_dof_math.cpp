@@ -71,7 +71,7 @@ int main() {
     std::string here = __FILE__;
     std::string root = here.substr(0, here.find_last_of("/\\") + 1) + "../engine/src/Render/";
     const std::string gl = Slurp(root + "GLRenderer.cpp");
-    const std::string dx = Slurp(root + "D3D11Renderer.cpp");
+    const std::string dx = Slurp(root + "D3D11Renderer.cpp") + Slurp(root + "../../include/okay/Render/D3D11Hlsl.hpp");   // HLSL text lives in D3D11Hlsl.hpp (moved out, same bytes)
     CHECK(!gl.empty() && !dx.empty());
     if (!gl.empty()) {
         CHECK(Has(gl, "dn >= 0.995 ? uFar * 4.0 : dn * uFar"));

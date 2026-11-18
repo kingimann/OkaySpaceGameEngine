@@ -29,7 +29,8 @@
 #include "okay/Render/ShaderBundle.hpp"
 #include "okay/Render/D3D11OverlayHlsl.hpp"   // the text the bundle is built from (renderer HLSL + the UI overlay shaders)
 #include <fstream>
-#endif#include <cstdint>
+#endif
+#include <cstdint>
 #include <array>
 #include <cstring>
 #include <cmath>

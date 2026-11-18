@@ -13,6 +13,7 @@
 #include "UwpPlatform.hpp"
 #include "XboxUwpAudit.hpp"
 #include "XboxGameConfig.hpp"
+#include "XboxOverlayMath.hpp"
 #include "okay/Core/Paths.hpp"
 #include <cmath>
 #include <filesystem>
@@ -635,8 +636,60 @@ static void ConfigTests() {
     { GameConfig d; have.clear(); CHECK(ResolveStartupScene(d, ex).empty()); }
 }
 
+// ---- UI overlay: raster core and overlay maths ----
+static void RasterTests() {
+    using namespace okay::xbox;
+    auto px = [](const SoftSurface& s, int x, int y) { const std::uint8_t* p = s.Data() + ((std::size_t)y * (std::size_t)s.Width() + (std::size_t)x) * 4; return std::vector<int>{p[0], p[1], p[2], p[3]}; };
+    const IRect all{0, 0, 8, 8};
+    { SoftSurface s(8, 8); CHECK(px(s, 0, 0) == (std::vector<int>{0, 0, 0, 0}));   // starts transparent
+      s.FillRect(IRect{1, 1, 3, 2}, 255, 0, 0, 255, true, all); CHECK(px(s, 1, 1) == (std::vector<int>{255, 0, 0, 255}) && px(s, 3, 2) == (std::vector<int>{255, 0, 0, 255}) && px(s, 4, 1)[3] == 0 && px(s, 1, 3)[3] == 0);
+      IRect d = s.TakeDirty(); CHECK(d.x == 1 && d.y == 1 && d.w == 3 && d.h == 2); CHECK(s.TakeDirty().Empty()); }
+    { SoftSurface s(4, 4); s.FillRect(IRect{0, 0, 4, 4}, 0, 0, 255, 128, true, IRect{0, 0, 4, 4});   // straight blue at 50%: premultiplied (0,0,128,128)
+      CHECK(px(s, 0, 0) == (std::vector<int>{0, 0, 128, 128}));
+      s.FillRect(IRect{0, 0, 4, 4}, 255, 0, 0, 128, true, IRect{0, 0, 4, 4});                     // red 50% over it: src + dst*(1-0.502)
+      auto p = px(s, 0, 0); CHECK(p[0] == 128 && p[2] == 64 && p[3] == 192);
+      s.FillRect(IRect{0, 0, 4, 4}, 10, 20, 30, 255, false, IRect{0, 0, 4, 4}); CHECK(px(s, 1, 1) == (std::vector<int>{10, 20, 30, 255})); }   // no blend: replace
+    { SoftSurface s(8, 8); s.FillRect(IRect{0, 0, 8, 8}, 255, 255, 255, 255, true, IRect{2, 2, 2, 2}); CHECK(px(s, 2, 2)[3] == 255 && px(s, 1, 2)[3] == 0 && px(s, 4, 2)[3] == 0 && px(s, 3, 3)[3] == 255); }   // clip
+    { SoftSurface s(8, 8); s.FillRect(IRect{-5, -5, 100, 100}, 1, 2, 3, 255, true, all); CHECK(px(s, 7, 7)[0] == 1); s.FillRect(IRect{20, 20, 3, 3}, 9, 9, 9, 255, true, all); s.FillRect(IRect{0, 0, 0, 5}, 9, 9, 9, 255, true, all); }   // off-surface and empty: no crash
+    { SoftSurface s(8, 8); s.Line(0, 0, 7, 7, 255, 255, 255, 255, true, all); for (int i = 0; i < 8; ++i) CHECK(px(s, i, i)[3] == 255); CHECK(px(s, 0, 7)[3] == 0);
+      SoftSurface h(8, 8); h.Line(1, 3, 6, 3, 9, 9, 9, 255, true, all); for (int x = 1; x <= 6; ++x) CHECK(px(h, x, 3)[3] == 255); CHECK(px(h, 0, 3)[3] == 0 && px(h, 7, 3)[3] == 0); }
+    // premultiply, texture blit
+    { std::uint8_t a[4] = {200, 100, 50, 128}; PremultiplyRgba(a, 1); CHECK(a[0] == 100 && a[1] == 50 && a[2] == 25 && a[3] == 128); std::uint8_t b[4] = {1, 2, 3, 255}; PremultiplyRgba(b, 1); CHECK(b[0] == 1); }
+    SoftTexture t; t.w = 2; t.h = 2; t.px = {255, 0, 0, 255,  0, 255, 0, 255,  0, 0, 255, 255,  255, 255, 255, 255};   // R G / B W
+    { SoftSurface s(8, 8); s.Blit(t, IRect{}, 0, 0, 4, 4, 0, 2, 2, false, false, all);   // 2x2 scaled to 4x4 nearest: each texel is 2x2
+      CHECK(px(s, 0, 0) == (std::vector<int>{255, 0, 0, 255}) && px(s, 1, 1)[0] == 255 && px(s, 2, 0)[1] == 255 && px(s, 0, 2)[2] == 255 && px(s, 3, 3) == (std::vector<int>{255, 255, 255, 255}) && px(s, 4, 0)[3] == 0);
+      SoftSurface f(8, 8); f.Blit(t, IRect{}, 0, 0, 4, 4, 0, 2, 2, true, false, all); CHECK(px(f, 0, 0)[1] == 255 && px(f, 2, 0)[0] == 255);   // flipped horizontally: G R / W B
+      SoftSurface v(8, 8); v.Blit(t, IRect{}, 0, 0, 4, 4, 0, 2, 2, false, true, all); CHECK(px(v, 0, 0)[2] == 255 && px(v, 0, 2)[0] == 255 && px(v, 2, 2)[1] == 255);   // flipped vertically
+      SoftSurface sub(8, 8); sub.Blit(t, IRect{1, 0, 1, 1}, 0, 0, 2, 2, 0, 1, 1, false, false, all); CHECK(px(sub, 0, 0)[1] == 255 && px(sub, 1, 1)[1] == 255);   // a sub-rectangle: only the green texel
+      SoftSurface rot(8, 8); rot.Blit(t, IRect{}, 2, 2, 4, 4, 90, 4, 4, false, false, all); CHECK(px(rot, 5, 2) == (std::vector<int>{255, 0, 0, 255}) && px(rot, 2, 2)[2] == 255 && px(rot, 5, 5)[1] == 255);   // 90 degrees clockwise about the centre (y down): R (was top left) is top right, G bottom right, B top left
+    }
+    { SoftTexture m = t; m.modA = 128; m.modR = 0; SoftSurface s(4, 4); s.Blit(m, IRect{}, 0, 0, 2, 2, 0, 1, 1, false, false, IRect{0, 0, 4, 4}); auto p = px(s, 0, 0); CHECK(p[0] == 0 && p[3] == 128);   // alpha mod 128 scales everything, colour mod zeroes red
+      SoftTexture nb = t; nb.blend = false; nb.modA = 255; SoftSurface s2(4, 4); s2.FillRect(IRect{0, 0, 4, 4}, 50, 50, 50, 255, true, IRect{0, 0, 4, 4}); s2.Blit(nb, IRect{}, 0, 0, 2, 2, 0, 1, 1, false, false, IRect{0, 0, 4, 4}); CHECK(px(s2, 0, 0)[0] == 255); }
+    { SoftTexture lin; lin.w = 2; lin.h = 1; lin.linear = true; lin.px = {0, 0, 0, 255,  255, 255, 255, 255}; SoftSurface s(4, 1); s.Blit(lin, IRect{}, 0, 0, 4, 1, 0, 2, 0.5f, false, false, IRect{0, 0, 4, 1}); CHECK(px(s, 0, 0)[0] < px(s, 1, 0)[0] && px(s, 1, 0)[0] < px(s, 2, 0)[0] && px(s, 2, 0)[0] < px(s, 3, 0)[0]); }   // bilinear gradient
+    // triangles: vertex colour, coverage, a degenerate one
+    { SoftSurface s(8, 8); SoftSurface::Vtx v[3] = {{0, 0, 255, 0, 0, 255, 0, 0}, {8, 0, 255, 0, 0, 255, 0, 0}, {0, 8, 255, 0, 0, 255, 0, 0}}; s.Triangles(nullptr, v, 3, nullptr, 0, all);
+      CHECK(px(s, 1, 1)[0] == 255 && px(s, 6, 6)[3] == 0 && px(s, 1, 6)[3] == 255);
+      SoftSurface d(8, 8); SoftSurface::Vtx z[3] = {{1, 1, 9, 9, 9, 255, 0, 0}, {2, 2, 9, 9, 9, 255, 0, 0}, {3, 3, 9, 9, 9, 255, 0, 0}}; d.Triangles(nullptr, z, 3, nullptr, 0, all); CHECK(px(d, 2, 2)[3] == 0);
+      SoftSurface i(8, 8); int idx[3] = {2, 1, 0}; s.TakeDirty(); i.Triangles(nullptr, v, 3, idx, 3, all); CHECK(px(i, 1, 1)[0] == 255);   // indexed, either winding
+      SoftSurface g(8, 8); SoftSurface::Vtx gv[3] = {{0, 0, 255, 0, 0, 255, 0, 0}, {8, 0, 0, 255, 0, 255, 0, 0}, {0, 8, 0, 0, 255, 255, 0, 0}}; g.Triangles(nullptr, gv, 3, nullptr, 0, all); CHECK(px(g, 0, 3)[0] > px(g, 6, 0)[0] && px(g, 6, 0)[1] > px(g, 0, 6)[1]); }   // colours interpolate
+    { SoftSurface s(4, 4); s.Clear(); CHECK(!s.TakeDirty().Empty()); s.Resize(0, -3); CHECK(s.Width() == 0 && s.Bytes() == 0); s.FillRect(IRect{0, 0, 2, 2}, 1, 1, 1, 255, true, IRect{0, 0, 2, 2}); }
+    CHECK(Intersect(IRect{0, 0, 4, 4}, IRect{2, 2, 4, 4}).w == 2 && Intersect(IRect{0, 0, 2, 2}, IRect{5, 5, 2, 2}).Empty()); CHECK(Union(IRect{0, 0, 2, 2}, IRect{3, 3, 2, 2}).w == 5 && Union(IRect{}, IRect{1, 1, 2, 2}).x == 1);
+}
+static void OverlayMathTests() {
+    using namespace okay::xbox;
+    CHECK((UiBufferSize({1920, 1080}) == SizePx{1920, 1080}) && (UiBufferSize({1280, 720}) == SizePx{1280, 720}) && (UiBufferSize({0, 0}) == SizePx{1, 1}));
+    { SizePx b = UiBufferSize({3840, 2160}); CHECK(b.w * b.h <= 1920 * 1080 + 4000 && b.w * 9 > b.h * 15 && b.w * 9 < b.h * 17); }   // 4K: shrunk to about 1080p, aspect kept
+    CHECK((UiLayoutSize({1920, 1080}, 1.0f) == SizePx{1920, 1080}) && (UiLayoutSize({1920, 1080}, 2.0f) == SizePx{960, 540}) && (UiLayoutSize({1920, 1080}, 0.0f) == SizePx{3840, 2160}) && (UiLayoutSize({1920, 1080}, 99.0f) == SizePx{480, 270}));
+    { int x, y; DipsToUiPixel(480, 270, {960, 540}, {1920, 1080}, x, y); CHECK(x == 960 && y == 540); DipsToUiPixel(-5, 9999, {960, 540}, {1920, 1080}, x, y); CHECK(x == 0 && y == 1079); DipsToUiPixel(1, 1, {0, 0}, {10, 10}, x, y); CHECK(x == 0 && y == 0); }
+    OverlayState o; CHECK(o.Next(false) == OverlayAction::Nothing); CHECK(o.Next(true) == OverlayAction::DrawAndUpload && o.Shown()); CHECK(o.Next(true) == OverlayAction::DrawAndUpload);
+    CHECK(o.Next(false) == OverlayAction::ClearOnce && !o.Shown()); CHECK(o.Next(false) == OverlayAction::Nothing);   // cleared exactly once
+    { std::vector<std::uint8_t> src(4 * 4 * 4, 7), dst(4 * 64, 0); CHECK(CopyDirtyRows(src.data(), 4, 4, IRect{0, 1, 4, 2}, dst.data(), 64) == 2 * 16);
+      CHECK(dst[0] == 0 && dst[64] == 7 && dst[64 + 15] == 7 && dst[64 + 16] == 0 && dst[128] == 7 && dst[192] == 0);   // rows 1 and 2 only, at the GPU's row pitch
+      CHECK(CopyDirtyRows(src.data(), 4, 4, IRect{}, dst.data(), 64) == 0 && CopyDirtyRows(src.data(), 4, 4, IRect{0, 0, 4, 99}, dst.data(), 64) == 4 * 16); }
+}
+
 int main() {
-    ShaderTests(); DisplayTests(); BuildPlanTests(); LogTests(); SourceRootTests(); RunnerTests(); HostTests(); LifecycleTests(); InputTests(); PadClassTests(); PathTests(); AudioTests(); BackendTests(); AuditTests(); ConfigTests();
+    ShaderTests(); DisplayTests(); BuildPlanTests(); LogTests(); SourceRootTests(); RunnerTests(); HostTests(); LifecycleTests(); InputTests(); PadClassTests(); PathTests(); AudioTests(); BackendTests(); AuditTests(); ConfigTests(); RasterTests(); OverlayMathTests();
     if (g_fail) { std::printf("%d FAILED\n", g_fail); return 1; }
     std::printf("xbox_uwp_runtime: all passed\n");
     return 0;

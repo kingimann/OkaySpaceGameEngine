@@ -16,7 +16,7 @@ struct ExportToolOptions {
     bool withScene = false;   // --with-scene: also write package\Data\game.okayconfig and a tiny scene (a cube and a camera) for engine mode
 };
 
-/// The tiny scene (a camera and a lit-by-default cube) in the engine's text scene format (`okayscene 3`), the same field layout the engine's
+/// The tiny scene (a camera, a lit-by-default cube and a UI panel with a label) in the engine's text scene format (`okayscene 3`), the same field layout the engine's
 /// serializer writes (taken from the example scenes in examples/: transform = position(3) rotation quaternion(4) scale(3); mesh "Cube" r g b a ...).
 /// The camera stands at +z and looks down its own -Z at the origin. UNVERIFIED against the engine on Windows; the format is checked on Linux
 /// only against the example scenes' lines, not by loading it.
@@ -41,6 +41,19 @@ inline std::string TinySceneText() {
            "  parent -1\n"
            "  transform 0 0 0 0 0.2588190 0 0.9659258 1 1 1\n"
            "  mesh \"Cube\" 0.85 0.62 0.25 1 0 \"\" 0\n"
+           "end\n"
+           // a screen-space UI panel with a text label (objects 7 and 8 of examples/ui_text/ui_text.okayscene, moved to the screen corner): the UI layer test
+           "gameobject 2 \"UI Panel\"\n"
+           "  guid \"11111111111111111111111111111111\"\n"
+           "  parent -1\n"
+           "  transform 0 0 0 0 0 0 1 1 1 1\n"
+           "  uipanel 40 40 360 110 0.0627451 0.07058824 0.09411765 0.74509805 0 12 1 1 1 1 0.08627451 0 0.039215688 0.047058824 0.07058824 0.78431374 0 0 0 0 0.47058824 6 6 1 0 0 0 0 0.47058824 0.7058824 1 0.7058824 0 1 1 1 0.15686275 15\n"
+           "end\n"
+           "gameobject 3 \"UI Label\"\n"
+           "  guid \"22222222222222222222222222222222\"\n"
+           "  parent 2\n"
+           "  transform 0 0 0 0 0 0 1 1 1 1\n"
+           "  text \"Hello Xbox (UI layer)\" 0.9098039 0.92156863 0.9411765 1 2.5 1 12 6 0 0 0 0 0 0.78431374 1 1 0 0 0 0 0 0.9019608 1 124 30 1 0 0 0 0 0.54901963 0 0 0 0 0 0 0.47058824 0.627451 1 1 -1 0 0 \"\" 1 0.6 2.5\n"
            "end\n";
 }
 inline std::string TinyConfigText(const std::string& title) {

@@ -136,7 +136,7 @@ static void ExportToolTests() {
       CHECK(ResolveStartupScene(gc, [&](const std::string& r) { return fs::exists(d / r); }) == "game.okayscene");
       std::ifstream sf(d / "game.okayscene"); std::stringstream ss; ss << sf.rdbuf(); const std::string sc = ss.str();
       CHECK(sc.rfind("okayscene 3\n", 0) == 0 && sc.find("gameobject 0 \"Main Camera\"") != std::string::npos && sc.find("  camera ") != std::string::npos && sc.find("mesh \"Cube\"") != std::string::npos);
-      int gos = 0, ends = 0; std::istringstream ls(sc); std::string l; while (std::getline(ls, l)) { if (l.rfind("gameobject ", 0) == 0) ++gos; if (l == "end") ++ends; } CHECK(gos == 2 && ends == 2);   // every object is closed
+      int gos = 0, ends = 0; std::istringstream ls(sc); std::string l; while (std::getline(ls, l)) { if (l.rfind("gameobject ", 0) == 0) ++gos; if (l == "end") ++ends; } CHECK(gos == 4 && ends == 4 && sc.find("uipanel ") != std::string::npos && sc.find("Hello Xbox") != std::string::npos);   // every object is closed
       // the field counts match the example scenes in examples/ (transform = 10 numbers; the camera line is the example's own)
       std::istringstream ls2(sc); while (std::getline(ls2, l)) if (l.rfind("  transform ", 0) == 0) { std::istringstream f(l.substr(12)); int n = 0; double v; while (f >> v) ++n; CHECK(n == 10); } }
     fs::remove_all(fs::temp_directory_path() / "okay_xbox_tool_test");

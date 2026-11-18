@@ -9,6 +9,7 @@
 #include "OkayUI_Soft.hpp"
 #include "okay/Core/ImageWrite.hpp"
 
+#include <algorithm>
 #include <cstdio>
 #include <cstdlib>
 #include <functional>
@@ -286,6 +287,34 @@ inline bool WritePng(const std::string& path, const Bitmap& b) {
     return okay::ImageWrite::WritePNG(path, b.w, b.h, 4, b.rgba.data());
 }
 
+/// What a failing golden prints: the box and the rows where the pictures differ, and the actual picture as base-64 PNG (when it is under 600 KB), so a CI log is
+/// enough to see what the other machine drew (decode: grep ACTUAL_PNG_BASE64 | cut -d' ' -f3 | base64 -d > x.png).
+inline void DiffReport(const std::string& name, const Png& g, const Bitmap& b) {
+    int x0 = b.w, y0 = b.h, x1 = -1, y1 = -1;
+    std::vector<int> rows((size_t)b.h, 0);
+    for (int y = 0; y < b.h; ++y) for (int x = 0; x < b.w; ++x) {
+        const size_t i = ((size_t)y * (size_t)b.w + (size_t)x) * 4;
+        bool d = false; for (int k = 0; k < 4; ++k) if (std::abs((int)g.rgba[i + (size_t)k] - (int)b.rgba[i + (size_t)k]) > 2) d = true;
+        if (d) { x0 = std::min(x0, x); x1 = std::max(x1, x); y0 = std::min(y0, y); y1 = std::max(y1, y); ++rows[(size_t)y]; }
+    }
+    std::fprintf(stderr, "  golden %s: differs inside x %d..%d, y %d..%d; differing pixels per 40 rows:", name.c_str(), x0, x1, y0, y1);
+    for (int y = 0; y < b.h; y += 40) { int n = 0; for (int k = y; k < y + 40 && k < b.h; ++k) n += rows[(size_t)k]; std::fprintf(stderr, " %d", n); }
+    std::fprintf(stderr, "\n");
+    std::FILE* f = std::fopen((name + ".actual.png").c_str(), "rb");
+    if (!f) { std::fprintf(stderr, "  (the actual picture could not be read back from %s.actual.png)\n", name.c_str()); return; }
+    std::string bytes; char buf[4096]; size_t n;
+    while ((n = std::fread(buf, 1, sizeof buf, f)) > 0) bytes.append(buf, n);
+    std::fclose(f);
+    if (bytes.size() > 600 * 1024) { std::fprintf(stderr, "  (the actual picture is %zu bytes: too big to print)\n", bytes.size()); return; }
+    static const char* t = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
+    std::string o;
+    for (size_t i = 0; i < bytes.size(); i += 3) {
+        const unsigned v = ((unsigned char)bytes[i] << 16) | (i + 1 < bytes.size() ? (unsigned char)bytes[i + 1] << 8 : 0) | (i + 2 < bytes.size() ? (unsigned char)bytes[i + 2] : 0);
+        o += t[(v >> 18) & 63]; o += t[(v >> 12) & 63]; o += i + 1 < bytes.size() ? t[(v >> 6) & 63] : '='; o += i + 2 < bytes.size() ? t[v & 63] : '=';
+    }
+    std::fprintf(stderr, "ACTUAL_PNG_BASE64 %s %s\n", name.c_str(), o.c_str());
+}
+
 /// Compare with a committed golden PNG (per-channel tolerance 2, up to 0.05 percent of pixels may differ
 /// beyond it, to survive compilers that round floats differently). OKAYUI_UPDATE_GOLDEN=1 rewrites the golden.
 /// On a mismatch the actual image is written to the working directory as <name>.actual.png.
@@ -303,7 +332,12 @@ inline bool MatchesGolden(const std::string& name, const Bitmap& b, std::string*
         if (differs) ++bad;
     }
     const size_t allowed = (size_t)b.w * b.h / 2000;
-    if (bad > allowed) { if (why) *why = std::to_string(bad) + " pixels differ"; WritePng(name + ".actual.png", b); return false; }
+    if (bad > allowed) {
+        if (why) *why = std::to_string(bad) + " pixels differ";
+        WritePng(name + ".actual.png", b);
+        DiffReport(name, g, b);   // CI logs are all anyone sees of a failing machine: say where, and carry the picture
+        return false;
+    }
     return true;
 }
 

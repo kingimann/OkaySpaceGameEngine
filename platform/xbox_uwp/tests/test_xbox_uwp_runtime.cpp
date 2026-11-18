@@ -204,7 +204,7 @@ static void LogTests() {
     CHECK(ClassifyLine("INSTALL: FAILED (x)") == LineClass::Error);
     CHECK(Redact("signtool sign /p hunter2 file.appx").find("hunter2") == std::string::npos);
     CHECK(Redact("password: abc123") == "password: ***");
-    CHECK(Redact("-----BEGIN PRIVATE KEY-----").find("hidden") != std::string::npos);
+    CHECK(Redact("-----BEGIN PRIVATE KEY-----").find("hidden") != std::string::npos); // lint-allow: secret (test string for the redaction check, not a key)
     CHECK(Redact("Exported cert.pfx now").find("hidden") != std::string::npos);
     CHECK(Redact("THUMBPRINT: 0123456789ABCDEF0123456789ABCDEF01234567") == "THUMBPRINT: 0123456789ABCDEF0123456789ABCDEF01234567");
     std::vector<std::string> ls = {"ok", "x.cpp(1): error C1: a", "y", "z.cpp(2): error C2: b", "fatal error C3: c"};

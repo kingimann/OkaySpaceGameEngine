@@ -142,7 +142,7 @@ private:
 };
 
 // ---- keyboard: Windows.System.VirtualKey -> platform::Key ---------------------------------------------------------------------
-/// VirtualKey values are the Win32 VK_* numbers (documented: A-Z 0x41.., 0-9 0x30.., F1 0x70.., arrows 0x25-0x28, Enter 0x0D, Escape 0x1B).
+/// VirtualKey values are the Win32 VK_* numbers (documented: A-Z 0x41.., 0-9 0x30.., F1 0x70.., arrows 0x25-0x28, Enter 0x0D, Escape 0x1B). // lint-allow: secret (key codes, not a secret)
 inline platform::Key KeyFromVirtualKey(int vk) {
     using platform::Key;
     if (vk >= 0x41 && vk <= 0x5A) return (Key)((int)Key::A + (vk - 0x41));

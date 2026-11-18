@@ -157,5 +157,17 @@ int main(int, char**) {
           "struct Vec3 { float x, y, z; };\nstruct Self { int k; };\nstruct Holder { clk::time_point s; std::shared_ptr<const Self> p; std::function<int(int count, const Vec3& v)> cb; Vec3 b; int n; Holder() : b{}, n{3} {} };\n"
           "int area(Vec3 v = Vec3{}) { return (int)v.x; }\nint main() { Holder h; h.s.v = 2; return h.s.v + area() + h.n; }\n", &o);
     CHECK(t, has_symbol(o, "main"));
+    ++tests;
+    build(t, "round 30: auto and decltype(auto) result types",
+          "auto f(int a) { return a + 1.5; }\ntemplate <typename T> decltype(auto) e(T a) { return a * 2.0; }\n"
+          "struct B { int er(int x) { return x; } };\nstruct S : B { template <class... A> decltype(auto) er(A&&... a) { return B::er(a...); } template <typename T> auto g(T t) { return t; } auto h() { return g(3); } };\n"
+          "int main() { S s; return (int)(f(2) + e(1) + s.h() + s.er(1)); }\n", &o);
+    CHECK(t, has_symbol(o, "??$e@H@@YANH@Z") && has_symbol(o, "??$g@H@S@@QEAAHH@Z"));
+    ++tests;
+    build(t, "round 30: base class with namespace in mem-init, inherited typedefs, static vector of strings from a list",
+          "#include <string>\n#include <vector>\nstruct T : public std::string { T(const char* s) : std::string(s ? s : \"\") {} T(const T&) = default; char& at2(size_type i) { return (*this)[i]; } };\n"
+          "const std::vector<std::string>& B() { static const std::vector<std::string> b = {\"a\", \"b\"}; return b; }\n"
+          "int main() { T t(\"xy\"); T u(t); return (int)(B().size() + u.size() + t.at2(0)); }\n", &o);
+    CHECK(t, has_symbol(o, "??0?$vector@Vstring@@@@QEAA@V?$initializer_list@Vstring@@@@@Z") && has_symbol(o, "main"));
     return t.finish(tests);
 }

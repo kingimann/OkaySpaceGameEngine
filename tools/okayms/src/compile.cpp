@@ -153,6 +153,8 @@ struct Method {
     bool implicit_copy = false;
     // The copy assignment the compiler writes for a class with a member whose own assignment is not a plain copy.
     bool implicit_assign = false;
+    // The result type is `auto` or `decltype(auto)`: found from the body's first return when the body is compiled.
+    bool auto_ret = false;
     // A static member function: no this, decorated with S/C/K instead of the Q/A/I letters.
     bool is_static = false;
     // The decorated spelling of a member function template instance's name ("$add@H"), else empty.
@@ -2917,6 +2919,27 @@ struct Parser {
             next();
             return true;
         }
+        if (is(TIdent) && cur().text == "auto" && at + 1 < tokens.size() &&
+            (tokens[at + 1].kind == TIdent || tokens[at + 1].kind == TLParen || tokens[at + 1].kind == TAmp ||
+             tokens[at + 1].kind == TStar)) {
+            // A deduced result type: auto f() { return x; } ([dcl.spec.auto]).
+            saw_auto_ret = true;
+            next();
+            type->base = 1;
+            type->pointers = 0;
+            return true;
+        }
+        if (is(TIdent) && cur().text == "decltype" && at + 3 < tokens.size() && tokens[at + 1].kind == TLParen &&
+            tokens[at + 2].kind == TIdent && tokens[at + 2].text == "auto" && tokens[at + 3].kind == TRParen) {
+            saw_auto_ret = true;  // decltype(auto): the type of the returned expression, kept as a value
+            next();
+            next();
+            next();
+            next();
+            type->base = 1;
+            type->pointers = 0;
+            return true;
+        }
         if (is(TIdent) && cur().text == "typename") {
             next();
             had_typename = true;
@@ -3795,6 +3818,7 @@ struct Parser {
     int lambda_count = 0;
     // While a lambda body is read once only to learn the type of its first return.
     bool lam_probe = false;
+    bool saw_auto_ret = false;
     bool lam_probe_seen = false;
     Type lam_probe_type{};
 
@@ -4153,8 +4177,13 @@ struct Parser {
     struct Temp {
         std::string name;
         int sid = -1;
+        int count = 0;  // more than 0: an array of this many objects
     };
     std::vector<Temp> stmt_temps{};
+    bool temp_dtor(const Temp& t, Node* call) {
+        if (t.count > 0) return element_loop(t.name, t.count, true, t.sid, "<dtor>", call);
+        return special_call(t.sid, "<dtor>", node_addr(node_name(t.name)), {}, call);
+    }
     std::vector<Node> stmt_pre{};
     int tmp_count = 0;
 
@@ -4485,6 +4514,7 @@ struct Parser {
             for (Method& inherited : def.methods) inherited.body_at = 0;
             def.vtable = base.vtable;
             def.statics = base.statics;
+            def.tdefs = base.tdefs;  // the base's typedefs (size_type, iterator) are names of the derived class too
         }
         const std::map<std::string, uint64_t> enums_before = enum_values;
         if (inst_base_name.empty() && !class_ids.empty()) def.outer = class_ids.back();
@@ -4515,6 +4545,17 @@ struct Parser {
             Type old{};
         };
         std::vector<ScopedTd> scoped_tds;
+        for (const auto& inherited_td : def.tdefs) {
+            ScopedTd saved_td;
+            saved_td.name = inherited_td.first;
+            auto old_td = typedefs.find(inherited_td.first);
+            if (old_td != typedefs.end()) {
+                saved_td.had = true;
+                saved_td.old = old_td->second;
+            }
+            scoped_tds.push_back(std::move(saved_td));
+            typedefs[inherited_td.first] = inherited_td.second;
+        }
         while (!is(TRBrace) && !is(TEnd)) {
             if (is(TTypedef) || (is(TIdent) && cur().text == "using" && at + 2 < tokens.size() &&
                                  tokens[at + 1].kind == TIdent && tokens[at + 2].kind == TAssign)) {
@@ -4712,7 +4753,10 @@ struct Parser {
             Field field;
             bool imp = false;
             bool exp = false;
+            saw_auto_ret = false;
             if (!parse_type(&field.type, &imp, &exp)) return false;
+            const bool member_auto_ret = saw_auto_ret;
+            saw_auto_ret = false;
             if (is(TSemi) && !static_member) {  // enum { E = 3 };
                 next();
                 continue;
@@ -4729,6 +4773,7 @@ struct Parser {
                 m.is_virtual = is_virtual;
                 m.is_static = static_member;
                 m.access = access;
+                m.auto_ret = member_auto_ret;
                 if (accept(TConst)) m.is_const = true;
                 if (accept(TAssign)) {
                     if (!is(TNumber) || cur().number != 0) {
@@ -5122,6 +5167,31 @@ struct Parser {
     }
 
     // Compiles the body of a member function from its saved token position.
+    // Compile the body once with the result type left open to learn the type of its first `return expr;`. The function the
+    // probe made is dropped; `at` is at the body's '{' and is left changed.
+    bool probe_auto_ret(FuncDecl fn, int cls, Type* found) {
+        const bool saved_probe = lam_probe;
+        const bool saved_seen = lam_probe_seen;
+        const Type saved_type = lam_probe_type;
+        lam_probe = true;
+        lam_probe_seen = false;
+        lam_probe_type = Type{};
+        lam_probe_type.base = 0;
+        fn.ret = Type{};
+        fn.ret.base = 1;
+        std::vector<Node> keep_pre = std::move(stmt_pre);
+        stmt_pre.clear();
+        std::vector<Temp> keep_temps = std::move(stmt_temps);
+        stmt_temps.clear();
+        const bool ok = parse_function_body(&fn, cls);
+        stmt_pre = std::move(keep_pre);
+        stmt_temps = std::move(keep_temps);
+        *found = lam_probe_seen ? lam_probe_type : Type{};
+        lam_probe = saved_probe;
+        lam_probe_seen = saved_seen;
+        lam_probe_type = saved_type;
+        return ok;
+    }
     bool define_method(int sid, size_t mi) {
         const Method m = structs[static_cast<size_t>(sid)].methods[mi];
         // The typedefs and aliases of the class mean what they mean in the class while its member bodies are read (a body
@@ -5175,6 +5245,23 @@ struct Parser {
             alias_args.push_back(inst_bind_args()[i]);
         }
         const auto alias_bound = bind_params(alias, alias_args);
+        if (m.auto_ret) {
+            Type found;
+            const bool probe_ok = probe_auto_ret(fn, sid, &found);
+            at = m.body_at;
+            if (!probe_ok) {
+                unbind_params(alias_bound);
+                at = resume;
+                return false;
+            }
+            Method& mm = structs[static_cast<size_t>(sid)].methods[mi];
+            mm.ret = found;
+            mm.auto_ret = false;
+            mm.symbol = cxx_method_symbol(structs, structs[static_cast<size_t>(sid)], mm);
+            fn.ret = found;
+            fn.symbol = mm.symbol;
+            finish_signature(&fn);
+        }
         const bool ok = parse_function_body(&fn, sid, m.name == "<ctor>" ? 1 : m.name == "<dtor>" ? 2 : m.implicit_assign ? 3 : 0, m.implicit);
         unbind_params(alias_bound);
         at = resume;
@@ -5308,6 +5395,11 @@ struct Parser {
                 Init init;
                 init.name = cur().text;
                 next();
+                while (is(TColonColon) && at + 1 < tokens.size() && tokens[at + 1].kind == TIdent) {
+                    next();  // std::string(s): the base class named with its namespace
+                    init.name = cur().text;
+                    next();
+                }
                 const bool braced_init = is(TLBrace);  // `member{a, b}` and `member{}` mean what `member(a, b)` and `member()` mean
                 if (braced_init) next();
                 else if (!expect(TLParen, "'('")) return false;
@@ -6390,7 +6482,7 @@ struct Parser {
             }
         }
         size_t paren = td.start;
-        while (paren < td.end && tokens[paren].kind != TLParen) ++paren;
+        paren = skip_decltype_parens(paren, td.end);
         if (paren == td.start || paren >= td.end) {
             error = "expected a function template";
             return false;
@@ -6577,6 +6669,23 @@ struct Parser {
 
     // In a class body, at 'template': a member function template. Its declaration is kept as a token
     // range together with the class's own template arguments at this point ([temp.mem]).
+    // The first '(' from `from` that is not the one of a decltype(...) result type.
+    size_t skip_decltype_parens(size_t from, size_t to) const {
+        size_t k = from;
+        while (k < to && tokens[k].kind != TLParen) ++k;
+        if (k < to && k > from && tokens[k - 1].kind == TIdent && tokens[k - 1].text == "decltype") {
+            int depth = 0;
+            for (; k < to; ++k) {
+                if (tokens[k].kind == TLParen) ++depth;
+                else if (tokens[k].kind == TRParen && --depth == 0) {
+                    ++k;
+                    break;
+                }
+            }
+            while (k < to && tokens[k].kind != TLParen) ++k;
+        }
+        return k;
+    }
     bool parse_member_template(int self) {
         next();  // template
         if (!expect(TLt, "'<'")) return false;
@@ -6611,7 +6720,7 @@ struct Parser {
         }
         mt.td.end = k;
         size_t paren = mt.td.start;
-        while (paren < mt.td.end && tokens[paren].kind != TLParen) ++paren;
+        paren = skip_decltype_parens(paren, mt.td.end);
         if (paren == mt.td.start || paren >= mt.td.end || tokens[paren - 1].kind != TIdent) {
             error = "expected a member function template";
             return false;
@@ -6793,7 +6902,10 @@ struct Parser {
         bool imported = false;
         bool exported = false;
         Type type;
+        saw_auto_ret = false;
         ok = parse_type(&type, &imported, &exported);
+        const bool tmpl_auto_ret = saw_auto_ret;
+        saw_auto_ret = false;
         if (ok && mt.bodyless && is(TIdent)) {
             // S :: or B<T> :: of the definition outside the class
             size_t q = at + 1;
@@ -6825,6 +6937,7 @@ struct Parser {
             m.param_names = decl.param_names;
             m.defaults = decl.param_defaults;
             m.is_static = mt.is_static;
+            m.auto_ret = tmpl_auto_ret;
             if (accept(TConst)) m.is_const = true;
             if (!is(TLBrace)) {
                 error = "a member function template needs a body in the class";
@@ -6962,12 +7075,30 @@ struct Parser {
         bool imported = false;
         bool exported = false;
         Type type;
+        saw_auto_ret = false;
         bool ok = parse_type(&type, &imported, &exported);
+        const bool inst_auto_ret = saw_auto_ret;
+        saw_auto_ret = false;
         Declarator decl;
         if (ok) ok = parse_declarator(type, &decl);
         if (ok && !decl.is_function) {
             error = "expected a function template";
             ok = false;
+        }
+        if (ok && inst_auto_ret && is(TLBrace)) {
+            FuncDecl pf;
+            pf.name = key;
+            pf.params = decl.params;
+            pf.param_names = decl.param_names;
+            pf.defaults = decl.param_defaults;
+            pf.vararg = decl.vararg;
+            pf.ret = decl.type;
+            finish_signature(&pf);
+            const size_t body_start = at;
+            Type found;
+            ok = probe_auto_ret(pf, -1, &found);
+            at = body_start;
+            decl.type = found;
         }
         if (ok) {
             FuncDecl fn;
@@ -7801,7 +7932,10 @@ struct Parser {
             bool imported = false;
             bool exported = false;
             Type type;
+            saw_auto_ret = false;
             if (!parse_type(&type, &imported, &exported)) return false;
+            const bool top_auto_ret = saw_auto_ret;
+            saw_auto_ret = false;
             while (!is_typedef && is(TStar) && at + 2 < tokens.size() && tokens[at + 1].kind == TIdent &&
                    tokens[at + 2].kind == TColonColon) {
                 ++type.pointers;
@@ -8107,6 +8241,23 @@ struct Parser {
                 if (!expect(TSemi, "';'")) return false;
                 continue;
             }
+            if (top_auto_ret && is(TLBrace)) {
+                // auto f(...) { return x; }: the result type is the type of the first return.
+                FuncDecl pf;
+                pf.name = decl.name;
+                pf.params = decl.params;
+                pf.param_names = decl.param_names;
+                pf.defaults = decl.param_defaults;
+                pf.vararg = decl.vararg;
+                pf.ret = decl.type;
+                finish_signature(&pf);
+                const size_t body_start = at;
+                Type found;
+                const bool probe_ok = probe_auto_ret(pf, -1, &found);
+                at = body_start;
+                if (!probe_ok) return false;
+                decl.type = found;
+            }
             FuncDecl fn;
             fn.name = current_ns.empty() ? decl.name : current_ns + "::" + decl.name;
             if (!current_ns.empty()) fn.symbol = cxx_symbol(ns_mangled, decl.name, decl.type, decl.params, &structs);
@@ -8388,7 +8539,7 @@ bool Parser::parse_stmt_core(Node* out, std::vector<Local>* locals) {
         block.kids.push_back(std::move(assign_stmt));
         for (size_t i = mine.size(); i-- > 0;) {
             Node call;
-            if (!special_call(mine[i].sid, "<dtor>", node_addr(node_name(mine[i].name)), {}, &call)) return false;
+            if (!temp_dtor(mine[i], &call)) return false;
             block.kids.push_back(std::move(call));
         }
         if (out->kind == Node::If) {
@@ -8434,7 +8585,7 @@ bool Parser::parse_stmt_core(Node* out, std::vector<Local>* locals) {
     wrapped.kids.push_back(std::move(*out));
     for (size_t i = mine.size(); i-- > 0;) {
         Node call;
-        if (!special_call(mine[i].sid, "<dtor>", node_addr(node_name(mine[i].name)), {}, &call)) return false;
+        if (!temp_dtor(mine[i], &call)) return false;
         wrapped.kids.push_back(std::move(call));
     }
     *out = std::move(wrapped);
@@ -8789,8 +8940,7 @@ bool Parser::parse_stmt_inner(Node* out, std::vector<Local>* locals, int stmt_li
             std::vector<Node> tdt;
             for (size_t i = stmt_temps.size(); i-- > 0;) {
                 Node call;
-                if (!special_call(stmt_temps[i].sid, "<dtor>", node_addr(node_name(stmt_temps[i].name)), {}, &call))
-                    return false;
+                if (!temp_dtor(stmt_temps[i], &call)) return false;
                 tdt.push_back(std::move(call));
             }
             stmt_temps.clear();
@@ -9018,7 +9168,7 @@ bool Parser::parse_local_decl_one(const Type& type, bool is_typedef, bool is_sta
             has_preset = false;
         } else if (have_paren_init) {
             init = std::move(paren_init);
-        } else if (is(TLBrace) && !is_static && !decl.type.is_array() && obj_needs_ctor(decl.type) &&
+        } else if (is(TLBrace) && !decl.type.is_array() && obj_needs_ctor(decl.type) &&
                    tokens[at + 1].kind != TRBrace && has_init_list_ctor(decl.type.struct_id, &list_type_local)) {
             // C x = {a, b}; for a class with an initializer-list constructor.
             Node list;
@@ -9764,11 +9914,8 @@ bool Parser::init_list_temp(const Type& list_type, Node* out) {
         return false;
     }
     const Type elem = lsd.targs[0].type;
-    if (elem.base == 3 && elem.pointers == 0 && elem.struct_id >= 0 &&
-        class_needs_dtor(structs[static_cast<size_t>(elem.struct_id)])) {
-        error = "an initializer_list of a class with a destructor is not supported";
-        return false;
-    }
+    const bool elem_obj = elem.base == 3 && elem.pointers == 0 && elem.struct_id >= 0 &&
+                          class_needs_dtor(structs[static_cast<size_t>(elem.struct_id)]);
     next();  // '{'
     std::vector<Node> items;
     while (!is(TRBrace) && !is(TEnd)) {
@@ -9788,6 +9935,7 @@ bool Parser::init_list_temp(const Type& list_type, Node* out) {
     array.type = elem;
     array.type.array_len = items.empty() ? 1 : static_cast<int>(items.size());
     place_local(cur_locals, array);
+    if (elem_obj && !items.empty()) stmt_temps.push_back(Temp{array.name, elem.struct_id, static_cast<int>(items.size())});
     for (size_t i = 0; i < items.size(); ++i) {
         Node idx;
         idx.kind = Node::IntLit;
@@ -9797,6 +9945,15 @@ bool Parser::init_list_temp(const Type& list_type, Node* out) {
         slot.kind = Node::Index;
         slot.kids.push_back(node_name(array.name));
         slot.kids.push_back(std::move(idx));
+        if (elem_obj) {
+            // The element is made in place by a constructor (copy or converting) and destroyed after the statement.
+            std::vector<Node> eargs;
+            eargs.push_back(std::move(items[i]));
+            Node ector;
+            if (!special_call(elem.struct_id, "<ctor>", node_addr(std::move(slot)), std::move(eargs), &ector)) return false;
+            stmt_pre.push_back(std::move(ector));
+            continue;
+        }
         Node assign;
         assign.kind = Node::Assign;
         assign.op = TAssign;

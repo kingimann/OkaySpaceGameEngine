@@ -1547,6 +1547,101 @@ static void testPerConfigDirsAndTrace() {
     write("build.okay", "importer t\n pattern = assets/*.txt\n output = out/{stem}.bin\n cmd = sh tools/c.sh {input} {output}\nend\ntarget m exe\n sources = src/m.cpp\n needs = out/a.bin\nend\n");
     o = sh("-j2 m", &rc); check(rc == 0 && fs::exists(gRoot / "out/a.bin") && fs::exists(gRoot / "build/m"), "a target can need an importer output", o);
 }
+
+// ---- the CMake reader (`okay-build cmake`) and `okay-build ctest`
+static void cmakeProject() {
+    write("CMakeLists.txt",
+        "cmake_minimum_required(VERSION 3.16)\n"
+        "project(Demo VERSION 1.2.3 LANGUAGES CXX)\n"
+        "set(CMAKE_CXX_STANDARD 17)\n"
+        "option(DEMO_FANCY \"fancy\" OFF)\n"
+        "option(DEMO_BREAK \"stop\" OFF)\n"
+        "if(DEMO_BREAK)\n  message(FATAL_ERROR \"asked to stop\")\nendif()\n"
+        "add_compile_options(-Wall)\n"
+        "set(DEMO_VERSION_DEFINE DEMO_VERSION=\"${PROJECT_VERSION}\")   # a quote inside an unquoted word\n"
+        "if(DEMO_FANCY)\n  set(_extra src/fancy.cpp)\nelse()\n  set(_extra \"\")\nendif()\n"
+        "add_library(core STATIC src/core.cpp ${_extra})\n"
+        "target_include_directories(core PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/include)\n"
+        "target_compile_definitions(core PUBLIC CORE_PUBLIC=1 PRIVATE CORE_PRIV=2)\n"
+        "add_library(demo::core ALIAS core)\n"
+        "add_library(viaiface INTERFACE)\n"
+        "target_compile_definitions(viaiface INTERFACE VIA_IFACE=3)\n"
+        "set_source_files_properties(src/core.cpp PROPERTIES COMPILE_DEFINITIONS \"${DEMO_VERSION_DEFINE}\")\n"
+        "list(APPEND _l a b c)\nlist(LENGTH _l _n)\nstring(REGEX REPLACE \"^D(.*)$\" \"\\\\1\" _x \"Demo\")\n"
+        "set(_good 0)\nif(\"${_x}\" STREQUAL \"emo\" AND _n EQUAL 3 AND NOT DEFINED NOPE AND (DEMO_FANCY OR NOT DEMO_FANCY) AND \"x${_n}\" MATCHES \"^x[0-9]$\")\n  set(_good 1)\nendif()\n"
+        "add_executable(app src/main.cpp)\n"
+        "target_link_libraries(app PRIVATE demo::core viaiface)\n"
+        "target_compile_definitions(app PRIVATE CHECK_GOOD=${_good})\n"
+        "add_executable(ghost src/ghost.cpp)\n"
+        "enable_testing()\n"
+        "add_subdirectory(tests)\n");
+    write("include/core.h", "#pragma once\nconst char* core_version();\nint core_pub();\n");
+    write("src/core.cpp", "#include \"core.h\"\n#ifndef CORE_PRIV\n#error private define missing\n#endif\nconst char* core_version(){return DEMO_VERSION;}\nint core_pub(){return CORE_PRIV;}\n");
+    write("src/fancy.cpp", "int fancy(){return 9;}\n");
+    write("src/main.cpp", "#include \"core.h\"\n#include <cstring>\n#if CHECK_GOOD != 1\n#error the if() conditions were evaluated wrongly\n#endif\n#if VIA_IFACE != 3 || CORE_PUBLIC != 1\n#error interface or public definitions did not arrive\n#endif\nint main(){return std::strcmp(core_version(), \"1.2.3\") == 0 && core_pub() == 2 ? 0 : 1;}\n");
+    write("tests/CMakeLists.txt",
+        "function(demo_test name)\n  add_executable(test_${name} test_${name}.cpp)\n  target_link_libraries(test_${name} PRIVATE demo::core)\n  add_test(NAME ${name} COMMAND test_${name} ${ARGN})\nendfunction()\n"
+        "demo_test(ok)\ndemo_test(args one two)\ndemo_test(cwd)\ndemo_test(fail)\nset_tests_properties(fail PROPERTIES WILL_FAIL TRUE)\n"
+        "demo_test(skip)\nset_tests_properties(skip PROPERTIES SKIP_RETURN_CODE 77 TIMEOUT 30)\n"
+        "add_test(NAME shell COMMAND sh -c \"exit 0\")\n"
+        "foreach(_n a b)\n  add_test(NAME loop_${_n} COMMAND sh -c \"test ${_n} = ${_n}\")\nendforeach()\n"
+        "add_test(NAME really_fails COMMAND sh -c \"echo boom; exit 3\")\n"
+        "add_test(NAME by_path COMMAND $<TARGET_FILE:test_ok>)\n"
+        "add_test(NAME slow COMMAND sh -c \"sleep 5\")\nset_tests_properties(slow PROPERTIES TIMEOUT 1)\n");
+    write("tests/test_ok.cpp", "#include \"core.h\"\n#include <cstring>\nint main(){return std::strcmp(core_version(), \"1.2.3\") == 0 ? 0 : 1;}\n");
+    write("tests/test_args.cpp", "#include <cstring>\nint main(int c, char** v){return c == 3 && !std::strcmp(v[1], \"one\") && !std::strcmp(v[2], \"two\") ? 0 : 1;}\n");
+    write("tests/test_cwd.cpp", "#include <cstdio>\nint main(){FILE* f = std::fopen(\"cwd_marker\", \"w\"); if (!f) return 1; std::fclose(f); return 0;}\n");
+    write("tests/test_fail.cpp", "int main(){return 1;}\n");
+    write("tests/test_skip.cpp", "int main(){return 77;}\n");
+}
+static void testCmakeReader() {
+    printf("test: okay-build cmake reads CMakeLists.txt itself; ctest runs the add_test lines\n");
+    fresh("cmakeread"); cmakeProject();
+    int rc; string o = sh("cmake . -o build.okay --audit", &rc);
+    check(rc == 0 && o.find("written") != string::npos, "cmake writes a manifest", o);
+    string man = readFile(gRoot / "build.okay");
+    check(man.find("target core lib") != string::npos && man.find("target app exe") != string::npos && man.find("target test_args exe") != string::npos, "libraries and programs (also from a function in a subfolder)", man);
+    check(man.find("target demo::core") == string::npos && man.find("target viaiface") == string::npos, "an ALIAS and an INTERFACE library are not targets of their own", man);
+    check(man.find("file_define = src/core.cpp \"DEMO_VERSION=\\\"1.2.3\\\"\"") != string::npos, "a per-file definition with quotes is written", man);
+    check(man.find("-Wall") != string::npos && man.find("-std=gnu++17") != string::npos, "directory options and the language standard", man);
+    check(man.find("fancy.cpp") == string::npos, "an option that is off leaves its source out", man);
+    check(o.find("skipped target   ghost: missing source src/ghost.cpp") != string::npos, "audit names the target it could not write", o);
+    check(man.find("target ghost") == string::npos, "a target with a missing source is not written", man);
+    check(o.find("tests declared") != string::npos && o.find("options           2 declared") != string::npos, "audit counts tests and options", o);
+    o = sh("cmake . -o fancy.okay --opt DEMO_FANCY=ON", &rc); string fm = readFile(gRoot / "fancy.okay");
+    check(rc == 0 && fm.find("src/fancy.cpp") != string::npos, "--opt NAME=VALUE changes an option the way -D does", fm);
+    o = sh("cmake . -o stop.okay --opt DEMO_BREAK=ON", &rc);
+    check(rc == 2 && o.find("asked to stop") != string::npos, "message(FATAL_ERROR) stops the read with its text", o);
+    o = sh("cmake . -o rel.okay --build-type Release", &rc); string rm = readFile(gRoot / "rel.okay");
+    check(rm.find("-O3") != string::npos && rm.find("NDEBUG") != string::npos, "--build-type Release adds -O3 and NDEBUG", rm);
+    // build and run the tests
+    o = sh("-f build.okay -j2 app", &rc); check(rc == 0, "the generated manifest builds the program (checks defines and if() at compile time)", o);
+    check(system(("'" + (gRoot / "build/app").string() + "'").c_str()) == 0, "the program runs");
+    o = sh("-f build.okay ctest -j2 '^(ok|args|cwd|fail|skip|shell|loop_.|by_path)$'", &rc);
+    check(rc == 0, "ctest passes the passing tests", o);
+    check(o.find("PASS ok") != string::npos && o.find("PASS args") != string::npos && o.find("PASS loop_a") != string::npos && o.find("PASS by_path") != string::npos, "PASS lines", o);
+    check(o.find("PASS fail") != string::npos, "WILL_FAIL: a failing command is a pass", o);
+    check(o.find("SKIP skip") != string::npos && o.find("1 skipped") != string::npos, "SKIP_RETURN_CODE gives a skip", o);
+    check(fs::exists(gRoot / "build/ctest/tests/cwd_marker"), "the default working folder is <build>/ctest/<folder>", o);
+    o = sh("-f build.okay ctest really_fails", &rc);
+    check(rc == 1 && o.find("FAIL really_fails exit 3") != string::npos && o.find("| boom") != string::npos, "a failing test shows exit code and output", o);
+    o = sh("-f build.okay ctest slow", &rc);
+    check(rc == 1 && o.find("timed out after 1 s") != string::npos, "TIMEOUT kills a test that runs too long", o);
+    o = sh("-f build.okay ctest nomatchhere", &rc);
+    check(rc == 2 && o.find("no ctest matches") != string::npos, "a filter that matches nothing is an error", o);
+    // ctest block errors
+    write("bad.okay", "ctest t\n  cmd = true\n  bogus = 1\nend\n"); o = sh("-f bad.okay ctest", &rc);
+    check(rc == 2 && o.find("unknown ctest key") != string::npos, "unknown ctest key is an error", o);
+    write("bad2.okay", "target a exe\n sources = src/main.cpp\n file_flag = src/main.cpp\nend\n"); o = sh("-f bad2.okay graph", &rc);
+    check(rc == 2 && o.find("file_flag takes a source path") != string::npos, "file_flag needs words", o);
+    // a manifest with file_flag / file_define / file_include by hand: only that file gets them
+    write("h/x.h", "#pragma once\n#define FROM_H 5\n");
+    write("one.cpp", "#include <x.h>\n#ifndef ONLY_ONE\n#error per-file define missing\n#endif\nint one(){return FROM_H;}\n");
+    write("two.cpp", "#ifdef ONLY_ONE\n#error per-file define leaked\n#endif\nint two(){return 2;}\n");
+    write("m.cpp", "int one(); int two(); int main(){return one()+two()==7?0:1;}\n");
+    write("pf.okay", "target m exe\n sources = one.cpp two.cpp m.cpp\n file_define = one.cpp ONLY_ONE=1\n file_include = one.cpp h\n file_flag = two.cpp -Wall -Wextra\nend\n");
+    o = sh("-f pf.okay -j2", &rc); check(rc == 0, "per-file define and include apply to that file only", o);
+}
 int main(int argc, char** argv) {
     if (argc < 2) { puts("usage: test_okaybuild PATH_TO_okay-build"); return 2; }
     gTool = "'" + fs::absolute(argv[1]).string() + "'";
@@ -1566,5 +1661,6 @@ int main(int argc, char** argv) {
     testMeasuredMemory();
     testPathMap();
     testRemoteCacheFolder();
+    testCmakeReader();
     printf("okaybuild tests: %d checks passed, %d failed\n", gPass, gFail); return gFail ? 1 : 0;
 }

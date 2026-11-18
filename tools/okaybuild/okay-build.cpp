@@ -25,6 +25,7 @@
 #include <unordered_map>
 #include <sstream>
 #include <stdexcept>
+#include <regex>
 #include <string>
 #include <vector>
 #ifdef _WIN32
@@ -49,6 +50,7 @@
 #endif
 
 namespace fs = std::filesystem;
+#include "cmake_reader.hpp"
 using std::string;
 using std::string_view;
 using std::vector;
@@ -109,7 +111,12 @@ struct ImporterDecl {
 struct Target {
     string name; bool isLib = false; bool isTest = false; int line = 0; string pool;
     vector<string> sources, includes, exportIncludes, defines, flags, linkFlags, libs, deps, needs, runtime, assets;
+    // per-file additions (CMake's set_source_files_properties): {source path, word}
+    vector<std::pair<string, string>> fileFlags, fileDefines, fileIncludes;
 };
+// A ctest-style test (from CMake's add_test): a command line whose first word may be a target name (then it is the built program),
+// an optional working folder, a time limit, "will_fail" (the test passes when the command fails) and a return code that means skipped.
+struct CTestDecl { string name; int line = 0; vector<string> cmd, needs; string cwd; long long timeout = 0; bool willFail = false; int skipCode = -1; bool serial = false; };
 struct ConfigBlock {
     string name; int line = 0; int optimize = -1; int debug = -1;
     vector<string> flags, linkFlags, defines;
@@ -132,7 +139,7 @@ struct Manifest {
     Toolchain tc; string outdir = "build", objSub; // objSub: "CONFIG/" when outdir has {config}
      vector<Target> targets; vector<RawAction> actions; vector<ImporterDecl> importers; vector<PoolDecl> pools;
     vector<ConfigBlock> configs; vector<OptionDecl> options; vector<CondBlock> conds; vector<PackageDecl> packages;
-    DistDecl dist;
+    DistDecl dist; vector<CTestDecl> ctests;
     bool hasBuildfile = false; string buildCmd, buildDepfile; vector<string> buildInputs; int buildLine = 0;
 };
 
@@ -175,7 +182,7 @@ static Manifest parseManifest(const string& file) {
     std::ifstream in(file);
     if (!in) throw Fail("cannot open manifest " + file);
     Manifest m; string line; int ln = 0;
-    enum { TOP, TC, TARGET, ACTION, POOL, BUILDFILE, CONFIG, COND, PACKAGE, DIST, IMPORTER } mode = TOP;
+    enum { TOP, TC, TARGET, ACTION, POOL, BUILDFILE, CONFIG, COND, PACKAGE, DIST, IMPORTER, CTEST } mode = TOP;
     auto err = [&](const string& msg) { return Fail(file + ":" + std::to_string(ln) + ": " + msg); };
     auto oneFlag = [&](const vector<string>& v, const string& k) {
         if (v.size() != 1) throw err(k + " takes one value");
@@ -229,6 +236,11 @@ static Manifest parseManifest(const string& file) {
                 if (t.size() != 2) throw err("expected: package NAME");
                 for (auto& p : m.packages) if (p.name == t[1]) throw err("duplicate package '" + t[1] + "'");
                 PackageDecl p; p.name = t[1]; p.line = ln; m.packages.push_back(p); mode = PACKAGE; continue;
+            }
+            if (t[0] == "ctest") {
+                if (t.size() != 2) throw err("expected: ctest NAME");
+                for (auto& x : m.ctests) if (x.name == t[1]) throw err("duplicate ctest '" + t[1] + "'");
+                CTestDecl c; c.name = t[1]; c.line = ln; m.ctests.push_back(c); mode = CTEST; continue;
             }
             if (t[0] == "target") {
                 if (t.size() != 3 || (t[2] != "exe" && t[2] != "lib")) throw err("expected: target NAME exe|lib");
@@ -332,6 +344,16 @@ static Manifest parseManifest(const string& file) {
             else if (k == "version") { if (v.size() != 1) throw err("version takes one value"); p.version = v[0]; }
             else if (k == "depend") { if (v.size() != 2) throw err("depend takes a package name and a version"); p.depends.push_back({v[0], v[1]}); }
             else throw err("unknown package key '" + k + "'");
+        } else if (mode == CTEST) {
+            CTestDecl& c = m.ctests.back();
+            if (k == "cmd") { for (auto& w : v) c.cmd.push_back(w); }
+            else if (k == "needs") { for (auto& w : v) c.needs.push_back(w); }
+            else if (k == "cwd") { if (v.size() != 1) throw err("cwd takes one value"); c.cwd = v[0]; }
+            else if (k == "timeout") { if (v.size() != 1 || v[0].empty() || v[0].find_first_not_of("0123456789") != string::npos) throw err("timeout takes whole seconds"); c.timeout = atoll(v[0].c_str()); }
+            else if (k == "will_fail") c.willFail = oneFlag(v, "will_fail");
+            else if (k == "serial") c.serial = oneFlag(v, "serial");
+            else if (k == "skip_code") { if (v.size() != 1) throw err("skip_code takes one number"); c.skipCode = atoi(v[0].c_str()); }
+            else throw err("unknown ctest key '" + k + "'");
         } else if (mode == DIST) {
             DistDecl& d = m.dist;
             if (k == "dir") { if (v.size() != 1) throw err("dir takes one value"); d.dir = v[0]; }
@@ -355,6 +377,11 @@ static Manifest parseManifest(const string& file) {
             else if (k == "assets") add(x.assets);
             else if (k == "pool") { if (v.size() != 1) throw err("pool takes one value"); x.pool = v[0]; }
             else if (k == "test") x.isTest = oneFlag(v, "test");
+            else if (k == "file_flag" || k == "file_define" || k == "file_include") {
+                if (v.size() < 2) throw err(k + " takes a source path and then one or more words");
+                auto& dst = k == "file_flag" ? x.fileFlags : k == "file_define" ? x.fileDefines : x.fileIncludes;
+                for (size_t i = 1; i < v.size(); ++i) dst.push_back({v[0], v[i]});
+            }
             else throw err("unknown target key '" + k + "'");
         }
     }
@@ -647,6 +674,9 @@ static Graph plan(const Manifest& m, const vector<string>& want) {
                 for (auto& i : t.exportIncludes) a.argv.push_back("/I" + i);
                 for (auto& l : libs) for (auto& i : byName[l]->exportIncludes) a.argv.push_back("/I" + i);
                 for (auto& d : t.defines) a.argv.push_back("/D" + d);
+                for (auto& pf : t.fileIncludes) if (pf.first == s) a.argv.push_back("/I" + pf.second);
+                for (auto& pf : t.fileDefines) if (pf.first == s) a.argv.push_back("/D" + pf.second);
+                for (auto& pf : t.fileFlags) if (pf.first == s) a.argv.push_back(spellMsvc(pf.second, false));
                 a.argv.push_back("/c"); a.argv.push_back("/Fo" + a.output); a.argv.push_back(s);
                 a.rspHead = 1; a.rspThreshold = m.tc.rspThreshold;
             } else {
@@ -657,6 +687,9 @@ static Graph plan(const Manifest& m, const vector<string>& want) {
                 for (auto& i : t.exportIncludes) a.argv.push_back("-I" + i);
                 for (auto& l : libs) for (auto& i : byName[l]->exportIncludes) a.argv.push_back("-I" + i);
                 for (auto& d : t.defines) a.argv.push_back("-D" + d);
+                for (auto& pf : t.fileIncludes) if (pf.first == s) a.argv.push_back("-I" + pf.second);
+                for (auto& pf : t.fileDefines) if (pf.first == s) a.argv.push_back("-D" + pf.second);
+                for (auto& pf : t.fileFlags) if (pf.first == s) a.argv.push_back(pf.second);
                 for (auto& x : {string("-MMD"), string("-MF"), a.depfile, string("-MT"), a.output, string("-c"), s, string("-o"), a.output}) a.argv.push_back(x);
                 if (m.tc.pathMap) { // spell the sources and include folders absolutely and map the checkout folder to a fixed name
                     string root = fs::current_path().generic_string();
@@ -1135,9 +1168,11 @@ static int waitChild(pid_t pid) {
         struct timespec ts; ts.tv_sec = 0; ts.tv_nsec = 20000000; nanosleep(&ts, nullptr);
     }
 }
+static thread_local string gChildCwd; // ctest: the folder the next runCmd child starts in (empty = keep ours)
 static int runCmd(const vector<string>& argv, string& out, bool stream = false, long long timeoutNs = 0) {
     gLastPeakKb = 0;
     auto child = [&]() {
+        if (!gChildCwd.empty() && chdir(gChildCwd.c_str()) != 0) { dprintf(2, "okay-build: cannot enter '%s': %s\n", gChildCwd.c_str(), strerror(errno)); _exit(127); }
         vector<char*> av; for (auto& s : argv) av.push_back(const_cast<char*>(s.c_str())); av.push_back(nullptr);
         execvp(av[0], av.data()); dprintf(2, "okay-build: cannot run '%s': %s\n", av[0] ? av[0] : "(none)", strerror(errno)); _exit(127);
     };
@@ -2614,6 +2649,96 @@ static int cmdTest(Manifest& m, const Opts& o, const vector<string>& only) {
     return executeTests(runs, jobs);
 }
 
+
+// ---- ctest: run the manifest's `ctest` blocks (from CMake's add_test) the way CTest would: name, command, folder, time limit,
+// "will fail", "skip code". Words may hold {src} (the manifest folder), {bin} (<build dir>/ctest) and {target:NAME} (a built program).
+// Several run at once (-j); tests marked serial run alone afterwards. Filters are regular expressions on the test name.
+static int cmdCTest(const Manifest& m, const Opts& o, const vector<string>& filters) {
+#ifdef _WIN32
+    (void)m; (void)o; (void)filters; throw Fail("ctest: not done on Windows yet");
+#else
+    if (m.ctests.empty()) throw Fail("no ctest blocks in the manifest (okay-build cmake writes them from add_test lines)");
+    vector<const CTestDecl*> pick;
+    for (auto& c : m.ctests) {
+        bool ok = filters.empty();
+        for (auto& f : filters) { try { if (std::regex_search(c.name, std::regex(f))) ok = true; } catch (const std::regex_error&) { throw Fail("bad test filter '" + f + "'"); } }
+        if (ok) pick.push_back(&c);
+    }
+    if (pick.empty()) throw Fail("no ctest matches the filter");
+    string srcDir = fs::current_path().generic_string();
+    string binDir = fs::absolute(under(m.outdir + "/ctest")).lexically_normal().generic_string();
+    auto scan = [&](const string& w, vector<string>& need) { for (size_t at = 0; (at = w.find("{target:", at)) != string::npos;) { size_t e = w.find('}', at); if (e == string::npos) break; need.push_back(w.substr(at + 8, e - at - 8)); at = e; } };
+    vector<string> need;
+    for (auto* c : pick) { for (auto& w : c->cmd) scan(w, need); for (auto& w : c->needs) need.push_back(w); }
+    std::sort(need.begin(), need.end()); need.erase(std::unique(need.begin(), need.end()), need.end());
+    if (!need.empty()) { int rc = build(m, need, o); if (rc != 0) return rc; }
+    auto subst = [&](string w) {
+        auto all = [&](const string& what, const string& with) { for (size_t at = 0; (at = w.find(what, at)) != string::npos; at += with.size()) w.replace(at, what.size(), with); };
+        all("{src}", srcDir); all("{bin}", binDir);
+        for (size_t at = 0; (at = w.find("{target:", at)) != string::npos;) {
+            size_t e = w.find('}', at); if (e == string::npos) break; string nm = w.substr(at + 8, e - at - 8);
+            string path = fs::absolute(under(m.outdir + "/" + nm + m.tc.exe)).generic_string(); w.replace(at, e - at + 1, path); at += path.size();
+        }
+        return w;
+    };
+    struct Run { const CTestDecl* c; int code = 0; string out; double secs = 0; };
+    vector<Run> runs; for (auto* c : pick) { Run r; r.c = c; runs.push_back(r); }
+    int jobs = o.jobs > 0 ? o.jobs : (int)std::max(1u, std::thread::hardware_concurrency());
+    auto runOne = [&](Run& r) {
+        vector<string> argv; for (auto& w : r.c->cmd) argv.push_back(subst(w));
+        string cwd = subst(r.c->cwd.empty() ? "{bin}" : r.c->cwd); std::error_code ec; fs::create_directories(cwd, ec);
+        gChildCwd = cwd; long long to = r.c->timeout > 0 ? r.c->timeout : (gTestTimeoutSec > 0 ? gTestTimeoutSec : 1500);
+        long long t0 = nowNs(); r.code = runCmd(argv, r.out, false, to * 1000000000ll); r.secs = (double)(nowNs() - t0) / 1e9; gChildCwd.clear();
+        if (r.code == 124) r.out += "\n(timed out after " + std::to_string(to) + " s)\n";
+    };
+    vector<int> par, ser; for (size_t i = 0; i < runs.size(); ++i) (runs[i].c->serial ? ser : par).push_back((int)i);
+    std::atomic<size_t> next{0}; vector<std::thread> th;
+    for (int t = 0; t < std::min<int>(jobs, (int)par.size()); ++t) th.emplace_back([&] { for (;;) { size_t k = next++; if (k >= par.size()) return; runOne(runs[(size_t)par[k]]); } });
+    for (auto& t : th) t.join();
+    for (int i : ser) runOne(runs[(size_t)i]);
+    int failed = 0, skipped = 0;
+    std::sort(runs.begin(), runs.end(), [](const Run& a, const Run& b) { return a.c->name < b.c->name; });
+    for (auto& r : runs) {
+        bool skip = r.c->skipCode >= 0 && r.code == r.c->skipCode;
+        bool pass = !skip && (r.c->willFail ? r.code != 0 : r.code == 0);
+        if (skip) { printf("SKIP %s (exit %d)\n", r.c->name.c_str(), r.code); ++skipped; continue; }
+        if (pass) { printf("PASS %s %.1fs\n", r.c->name.c_str(), r.secs); continue; }
+        ++failed; printf("FAIL %s exit %d %.1fs\n", r.c->name.c_str(), r.code, r.secs);
+        vector<string> ls; size_t pos = 0;
+        while (pos < r.out.size()) { size_t e = r.out.find('\n', pos); if (e == string::npos) e = r.out.size(); ls.push_back(r.out.substr(pos, e - pos)); pos = e + 1; }
+        for (size_t k = ls.size() > 30 ? ls.size() - 30 : 0; k < ls.size(); ++k) printf("  | %s\n", ls[k].c_str());
+    }
+    printf("%zu tests, %d failed, %d skipped\n", runs.size(), failed, skipped);
+    return failed ? 1 : 0;
+#endif
+}
+
+// ---- cmake: read the project's CMakeLists.txt files ourselves (no CMake) and write a build.okay. See cmake_reader.hpp.
+static int cmdCmake(const string& root, const string& outFile, const vector<std::pair<string, string>>& defs, const string& buildType,
+                    const std::map<string, string>& fetched, bool audit) {
+    cmr::Options co; co.root = fs::absolute(root).lexically_normal().generic_string(); while (co.root.size() > 1 && co.root.back() == '/') co.root.pop_back();
+    for (auto& d : defs) co.defs[d.first] = d.second;
+    co.fetched = fetched; if (!buildType.empty()) co.buildType = buildType;
+    cmr::Report rep; cmr::Tally tally; string text;
+    try { text = cmr::readProject(co, rep, tally); } catch (const cmr::ReadError& e) { throw Fail("cmake: " + e.msg); }
+    { std::ofstream f(outFile, std::ios::trunc); if (!f) throw Fail("cannot write " + outFile); f << text; }
+    printf("okay-build cmake: %d of %d targets written (%d skipped), %d of %d tests written -> %s\n", rep.emitted, rep.targetsDeclared, rep.skipped, rep.testsEmitted, rep.testsDeclared, outFile.c_str());
+    if (!audit) return 0;
+    printf("targets declared  %d (%d programs, %d libraries, %d interface libraries)\n", rep.targetsDeclared, rep.exes, rep.libs, rep.ifaces);
+    printf("targets written   %d, sources %d, definitions %d, flags %d, per-file settings %d\n", rep.emitted, rep.sources, rep.defines, rep.flags, rep.perFile);
+    printf("tests declared    %d (%d run a program of ours, %d run something else); written %d, skipped %d, run cmake itself %d\n", rep.testsDeclared, rep.testsExe, rep.testsScript, rep.testsEmitted, rep.testsSkipped, rep.testsNeedCmake);
+    printf("options           %d declared, %d set from the command line\n", tally.options, tally.setOptions);
+    int cmds = 0; for (auto& c : tally.run) cmds += c.second;
+    printf("commands run      %d\n", cmds);
+    int unk = 0; for (auto& c : tally.unknown) unk += c.second;
+    printf("not understood    %d", unk); if (unk) { printf(" ("); bool first = true; for (auto& c : tally.unknown) { printf("%s%s x%d", first ? "" : ", ", c.first.c_str(), c.second); first = false; } printf(")"); } printf("\n");
+    if (!tally.genex.empty()) { printf("generator expressions"); for (auto& g : tally.genex) printf(" %s x%d", g.first.c_str(), g.second); printf("\n"); }
+    for (auto& s : rep.skippedTargets) printf("skipped target   %s: %s\n", s.first.c_str(), s.second.c_str());
+    int shown = 0; for (auto& s : rep.skippedTests) { if (++shown > 20) { printf("skipped test     ... and %zu more\n", rep.skippedTests.size() - 20); break; } printf("skipped test     %s: %s\n", s.first.c_str(), s.second.c_str()); }
+    for (auto& u : rep.unresolved) printf("unresolved link  %s\n", u.c_str());
+    return 0;
+}
+
 static void listTargets(const Graph& g) {
     for (auto& tf : g.targetFinal) printf("%s\t%s\n", tf.first.c_str(), g.acts[tf.second].kind == "AR" ? "lib" : "exe");
     for (auto& a : g.acts) if (a.kind == "RUN") {
@@ -3338,6 +3463,7 @@ int main(int argc, char** argv) {
     if (const char* e = getenv("OKAY_CACHE_DIR")) if (*e) gCacheDir = fs::absolute(e).string();
     if (const char* e = getenv("OKAY_REMOTE_CACHE")) if (*e) gRemoteDir = fs::absolute(e).string();
     Opts o; string toolchainName, cmd = "build", runDir, importOut = "build.okay", configName, configFile; vector<string> want;
+    bool cmakeAudit = false; string cmakeBuildType; std::map<string, string> cmakeFetched;
     vector<std::pair<string, string>> optSets; vector<string> searchDirs, msvcRoots; bool configFileSet = false;
     try {
         for (int i = 1; i < argc; ++i) {
@@ -3392,13 +3518,20 @@ int main(int argc, char** argv) {
                 if (eq == string::npos || eq == 0) throw Fail("--opt wants name=value");
                 optSets.push_back({s.substr(0, eq), s.substr(eq + 1)});
             }
+            else if (a == "--audit") cmakeAudit = true;
+            else if (a == "--build-type" && i + 1 < argc) cmakeBuildType = argv[++i];
+            else if (a == "--fetched" && i + 1 < argc) {
+                string s = argv[++i]; auto eq = s.find('=');
+                if (eq == string::npos || eq == 0) throw Fail("--fetched wants name=folder");
+                cmakeFetched[s.substr(0, eq)] = fs::absolute(s.substr(eq + 1)).generic_string();
+            }
             else if (a == "--toolchain" && i + 1 < argc) toolchainName = argv[++i];
             else if (a == "--search" && i + 1 < argc) searchDirs.push_back(argv[++i]);
             else if (a == "--msvc-root" && i + 1 < argc) msvcRoots.push_back(argv[++i]);
             else if (cmd == "cache" && (a == "stats" || a == "clean")) want.push_back(a);
-            else if (a == "build" || a == "clean" || a == "compdb" || a == "import" || a == "graph" || a == "targets" || a == "modules" || a == "toolchains" || a == "report" || a == "test" || a == "cache" || a == "lock" || a == "package" || a == "native") cmd = a;
+            else if (a == "build" || a == "clean" || a == "compdb" || a == "import" || a == "graph" || a == "targets" || a == "modules" || a == "toolchains" || a == "report" || a == "test" || a == "cache" || a == "lock" || a == "package" || a == "native" || a == "cmake" || a == "ctest") cmd = a;
             else if (a == "-h" || a == "--help") {
-                puts("usage: okay-build [build|clean|compdb|import|graph|targets|modules|toolchains|report|test] [-f build.okay] [-j N] [-k] [--config NAME] [--toolchain auto|gcc|clang|mingw|msvc] [--opt name=value] [--build-dir DIR] [--no-stat] [--no-cache] [--cache-dir DIR] [--cache-compress] [--remote-cache DIR] [--remote-cache-readonly] [--timeout SECONDS] [--msvc-version PREFIX] [--memory N] [--memory-mb MB] [--junit FILE] [--shard I/N] [--dry-run] [--explain] [-v] [--profile] [target...]");
+                puts("usage: okay-build [build|clean|compdb|import|graph|targets|modules|toolchains|report|test|ctest|cmake|native] [-f build.okay] [-j N] [-k] [--config NAME] [--toolchain auto|gcc|clang|mingw|msvc] [--opt name=value] [--build-dir DIR] [--no-stat] [--no-cache] [--cache-dir DIR] [--cache-compress] [--remote-cache DIR] [--remote-cache-readonly] [--timeout SECONDS] [--msvc-version PREFIX] [--memory N] [--memory-mb MB] [--junit FILE] [--shard I/N] [--dry-run] [--explain] [-v] [--profile] [target...]");
                 puts("audit: docs/own_build_plan.md (12 subsystems; this tool is off by default)");
                 return 0;
             }
@@ -3414,6 +3547,10 @@ int main(int argc, char** argv) {
             if (want.empty()) throw Fail("usage: okay-build native <repo root> [-o build.okay]");
             return writeNative(want[0], importOut);
         }
+        if (cmd == "cmake") {
+            if (want.empty()) throw Fail("usage: okay-build cmake <repo root> [-o build.okay] [--opt NAME=VALUE ...] [--build-type Release|Debug|...] [--fetched NAME=DIR] [--audit]");
+            return cmdCmake(want[0], importOut, optSets, cmakeBuildType, cmakeFetched, cmakeAudit);
+        }
         if (cmd == "modules") {
             if (want.empty()) throw Fail("usage: okay-build modules <directory> [-o build.okay]");
             return writeModules(want[0], importOut);
@@ -3426,7 +3563,7 @@ int main(int argc, char** argv) {
         fs::path mp = fs::absolute(o.file); fs::current_path(mp.parent_path());
         Manifest m = cmd == "build" ? loadWithRegen(mp.string()) : parseManifest(mp.string());
         if (!configFileSet) configFile = "config.okay";
-        if (cmd == "build" || cmd == "test" || cmd == "package" || cmd == "graph" || cmd == "compdb") resolveToolchain(m, toolchainName, searchDirs, msvcRoots);
+        if (cmd == "build" || cmd == "test" || cmd == "ctest" || cmd == "package" || cmd == "graph" || cmd == "compdb") resolveToolchain(m, toolchainName, searchDirs, msvcRoots);
         applyConfiguration(m, configName, configFile, configFileSet, optSets);
         if (cmd == "cache") return cmdCache(want.empty() ? "" : want[0]);
         if (cmd == "lock") return syncLock(m, true);
@@ -3438,6 +3575,7 @@ int main(int argc, char** argv) {
         if (cmd == "build" || cmd == "test" || cmd == "package") syncLock(m, true);
         if (cmd == "package") return cmdPackage(m, want, o);
         if (cmd == "test") return cmdTest(m, o, want);
+        if (cmd == "ctest") return cmdCTest(m, o, want);
         if (cmd == "clean") {
             Graph g = plan(m, {}); for (auto& a : g.acts) if (a.kind != "CC") for (auto& pth : a.outputs) fs::remove(pth);
             fs::remove_all(under(".okaybuild")); fs::remove("compile_commands.json"); printf("okay-build: cleaned\n"); return 0;

@@ -4131,6 +4131,10 @@ bool Gen::gen_expr(const Node& node) {
             disp(spill_off);
         };
         spill_caller();
+        // rep movsb in the struct-argument copies below uses rsi and rdi, so
+        // a local kept there is stored first and loaded back after the copies.
+        spill_reg(6);
+        spill_reg(7);
         int copy_at = struct_copy;
         for (size_t arg_i = 0; arg_i < nargs; ++arg_i) {
             const bool named = arg_i < sig.params.size();

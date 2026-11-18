@@ -57,6 +57,10 @@ Written from: ISO/IEC 14882 (class, member function, virtual function, override 
 
 Tests: `tests/test_class.cpp` checks the decorated names, the `.rdata` table and its six ADDR64 relocations, and runs two programs under Wine; each is also built with MinGW g++ and the exit codes must match.
 
+## Fix: rsi and rdi around a call (round 11)
+
+`test_reg` and `test_spill` failed (the program hung or returned a wrong value). Cause: before the argument loads the call code reloaded a local kept in `rsi` or `rdi` from its stack slot, because the struct-argument copies use `rep movsb` (which clobbers `rsi` and `rdi`), but nothing had stored the register there first, so the loop counter was read from an unwritten slot. The call code now stores `rsi` and `rdi` locals before the copies. Reproduced first with the two failing tests (plus a one-function `/O1` program under Wine: loop of calls hung). Written from the x64 calling convention (rsi and rdi are callee-saved) and the Intel manual (`rep movsb`).
+
 ## CodeView line records
 
 `okay-cl /Z7` (or `CompileInput::debug_lines`) adds a `.debug$S` section to the object. It is off by default. Layout, from the CodeView C13 subsection description and the PE Format relocation list: a 4-byte signature (4); then subsections, each a kind (4 bytes), a length (4 bytes) and the data padded to 4 bytes.

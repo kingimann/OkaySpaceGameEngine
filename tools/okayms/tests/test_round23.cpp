@@ -197,6 +197,6 @@ int main(int, char**) {
           "std::vector<int> v; v.push_back(1); v.push_back(2); auto it = std::next(v.begin()); auto pv = std::prev(v.end());\n"
           "std::map<int, int> m; m[1] = 2; m[3] = 4; auto mi = std::next(m.begin()); D d; d.Load(); const char* dp = std::localeconv()->decimal_point;\n"
           "return a + b + *it + *pv + mi->second + (int)d.t + dp[0] + D::Get().a + (f ? 1 : 0); }\n", &o);
-    CHECK(t, has_symbol(o, "main") && has_symbol(o, "??1D@@QEAA@XZ"));
+    CHECK(t, has_symbol(o, "main") && has_symbol(o, "??1D@@UEAA@XZ"));
     return t.finish(tests);
 }

@@ -99,6 +99,8 @@ struct Field {
     // A default member initializer ([class.mem]): the token where its expression starts, or -1.
     // `T x{};` has no expression and gives zero (init_zero).
     int init_at = -1;
+    // `T x{a, b};`: init_at is the first argument, and the list ends at the '}'.
+    bool init_braced = false;
     bool init_zero = false;
 };
 
@@ -3199,6 +3201,7 @@ struct Parser {
     }
     bool parse_range_for(Node* out, std::vector<Local>* locals, int stmt_line);
     bool parse_lambda(Node* out);
+    bool braced_temp(int bsid, Node* out);
     int lambda_count = 0;
     // While a lambda body is read once only to learn the type of its first return.
     bool lam_probe = false;
@@ -3650,6 +3653,7 @@ struct Parser {
             }
         }
         field->init_at = static_cast<int>(at);
+        field->init_braced = braced;
         int depth = 0;
         while (!is(TEnd)) {
             const Tok k = cur().kind;
@@ -3657,7 +3661,7 @@ struct Parser {
             else if (k == TRParen || k == TRBrack || k == TRBrace) {
                 if (depth == 0) break;
                 --depth;
-            } else if (depth == 0 && (k == TSemi || k == TComma)) break;
+            } else if (depth == 0 && (k == TSemi || (k == TComma && !braced))) break;
             next();
         }
         if (braced && !expect(TRBrace, "'}'")) return false;
@@ -4403,7 +4407,38 @@ struct Parser {
                 if (obj_needs_ctor(field.type)) {
                     std::vector<Node> args;
                     if (init != nullptr) args = std::move(init->args);
+                    else if (field.init_at >= 0) {
+                        // A default member initializer of a class member: `T x{a, b};` or `T x = e;`.
+                        const size_t saved_at = at;
+                        at = static_cast<size_t>(field.init_at);
+                        bool ok = true;
+                        do {
+                            Node arg;
+                            ok = parse_expr(1, &arg);
+                            if (ok) args.push_back(std::move(arg));
+                        } while (ok && field.init_braced && accept(TComma));
+                        at = saved_at;
+                        if (!ok) return false;
+                    }
                     Node call;
+                    {
+                        // A member made from an object of its own class that has no copy constructor: the bytes are copied.
+                        Type at_arg;
+                        if (args.size() == 1 && !field.type.is_array() && static_type(args[0], &at_arg) &&
+                            at_arg.base == 3 && at_arg.pointers == 0 && !at_arg.is_array() &&
+                            at_arg.struct_id == field.type.struct_id && !class_has_copy(field.type.struct_id)) {
+                            Node assign;
+                            assign.kind = Node::Assign;
+                            assign.op = TAssign;
+                            assign.kids.push_back(node_this_field(field.name));
+                            assign.kids.push_back(std::move(args[0]));
+                            Node stmt;
+                            stmt.kind = Node::ExprStmt;
+                            stmt.kids.push_back(std::move(assign));
+                            pre.push_back(std::move(stmt));
+                            continue;
+                        }
+                    }
                     if (!special_call(field.type.struct_id, "<ctor>", node_addr(node_this_field(field.name)),
                                       std::move(args), &call))
                         return false;
@@ -6618,7 +6653,22 @@ struct Parser {
                     }
                     Node sinit;
                     bool has_init = false;
-                    if (accept(TAssign)) {
+                    if (is(TLBrace) && !sm->second.has_const && obj_needs_ctor(sm->second.type)) {
+                        // inline const V V::Zero {0, 0}; the braces are the constructor's arguments.
+                        next();
+                        std::vector<Node> sargs;
+                        if (!is(TRBrace)) {
+                            do {
+                                Node a;
+                                if (!parse_expr(1, &a)) return false;
+                                sargs.push_back(std::move(a));
+                            } while (accept(TComma));
+                        }
+                        if (!expect(TRBrace, "'}'") || !expect(TSemi, "';'")) return false;
+                        if (!register_global_object(sm->second.symbol, sm->second.type, std::move(sargs))) return false;
+                        continue;
+                    }
+                    if (accept(TAssign) || is(TLBrace)) {
                         if (!parse_init(&sinit)) return false;
                         has_init = true;
                     }
@@ -7464,13 +7514,25 @@ bool Parser::parse_local_decl_one(const Type& type, bool is_typedef, bool is_sta
     std::vector<Node> ctor_args;
     bool have_ctor_args = false;
     if (!is_typedef && obj_needs_ctor(type) && is(TIdent) && at + 1 < tokens.size() &&
-        tokens[at + 1].kind == TLParen) {
-        // C x(args); the arguments go to a constructor.
+        (tokens[at + 1].kind == TLParen || tokens[at + 1].kind == TLBrace)) {
+        // C x(args); and C x{args}; the arguments go to a constructor.
         decl.name = cur().text;
         decl.type = type;
         next();
+        const bool braced_args = is(TLBrace);
         next();
-        if (!parse_call_args(&ctor_args)) return false;
+        if (braced_args) {
+            if (!is(TRBrace)) {
+                do {
+                    Node a;
+                    if (!parse_expr(1, &a)) return false;
+                    ctor_args.push_back(std::move(a));
+                } while (accept(TComma));
+            }
+            if (!expect(TRBrace, "'}'")) return false;
+        } else if (!parse_call_args(&ctor_args)) {
+            return false;
+        }
         have_ctor_args = true;
     } else if (!parse_declarator(type, &decl)) {
         return false;
@@ -7493,7 +7555,7 @@ bool Parser::parse_local_decl_one(const Type& type, bool is_typedef, bool is_sta
     Node init;
     bool has_init = false;
     const bool preset = has_preset && (is(TAssign) || is(TColon));
-    if (preset || accept(TAssign)) {
+    if (preset || accept(TAssign) || (is(TLBrace) && !have_ctor_args)) {
         if (preset) {
             init = std::move(preset_init);
             at = preset_end;
@@ -7502,6 +7564,8 @@ bool Parser::parse_local_decl_one(const Type& type, bool is_typedef, bool is_sta
             return false;
         }
         has_init = true;
+        if (!decl.type.is_array() && decl.type.base != 3 && decl.type.base != 0 && !convert_class(&init, decl.type))
+            return false;
         if (!fix_unsized(&decl.type, init)) return false;
         local.type = decl.type;
         if (!is_static && wants_copy(decl.type, init)) {
@@ -7574,7 +7638,7 @@ bool Parser::parse_local_decl_one(const Type& type, bool is_typedef, bool is_sta
         if (is_static) {
             // A static local object: built the first time control reaches the declaration (a
             // guard flag in a hidden global), destroyed by the program end function.
-            if (has_init || have_ctor_args || decl.type.is_array()) {
+            if (has_init || decl.type.is_array()) {
                 error = "a static local object takes no initializer and is not an array";
                 return false;
             }
@@ -7601,7 +7665,8 @@ bool Parser::parse_local_decl_one(const Type& type, bool is_typedef, bool is_sta
             then_block.kids.push_back(std::move(set_stmt));
             if (obj_needs_ctor(decl.type)) {
                 Node call;
-                if (!special_call(sid, "<ctor>", node_addr(node_name(local.symbol)), {}, &call)) return false;
+                if (!special_call(sid, "<ctor>", node_addr(node_name(local.symbol)), std::move(ctor_args), &call))
+                    return false;
                 then_block.kids.push_back(std::move(call));
             }
             Node not_g;
@@ -7803,6 +7868,51 @@ bool Parser::parse_range_for(Node* out, std::vector<Local>* locals, int stmt_lin
     out->kind = Node::Block;
     out->text = "scope";
     out->kids.push_back(std::move(loop));
+    return true;
+}
+
+// C{args} ([expr.type.conv], [dcl.init.list]): a temporary object of class bsid made from the braced list at the
+// current token, by a constructor, or member by member for an aggregate. Its construction goes before the
+// statement and its destructor runs after it.
+bool Parser::braced_temp(int bsid, Node* out) {
+        Type bt;
+        bt.base = 3;
+        bt.struct_id = bsid;
+        Local hidden;
+        hidden.name = "__bt" + std::to_string(tmp_count++);
+        hidden.type = bt;
+        place_local(cur_locals, hidden);
+        if (obj_needs_ctor(bt)) {
+            next();
+            std::vector<Node> bargs;
+            if (!is(TRBrace)) {
+                do {
+                    Node a;
+                    if (!parse_expr(1, &a)) return false;
+                    bargs.push_back(std::move(a));
+                } while (accept(TComma));
+            }
+            if (!expect(TRBrace, "'}'")) return false;
+            Node ctor_stmt;
+            if (!special_call(bsid, "<ctor>", node_addr(node_name(hidden.name)), std::move(bargs), &ctor_stmt))
+                return false;
+            stmt_pre.push_back(std::move(ctor_stmt));
+        } else {
+            Node binit;
+            if (!parse_init(&binit)) return false;
+            Node assign;
+            assign.kind = Node::Assign;
+            assign.op = TAssign;
+            assign.number = 1;
+            assign.kids.push_back(node_name(hidden.name));
+            assign.kids.push_back(std::move(binit));
+            Node stmt;
+            stmt.kind = Node::ExprStmt;
+            stmt.kids.push_back(std::move(assign));
+            stmt_pre.push_back(std::move(stmt));
+        }
+        if (class_needs_dtor(structs[static_cast<size_t>(bsid)])) stmt_temps.push_back(Temp{hidden.name, bsid});
+    *out = node_name(hidden.name);
     return true;
 }
 
@@ -9517,6 +9627,25 @@ bool Parser::parse_unary(Node* out) {
                 }
             }
         }
+        if (is(TLBrace) && colons == std::string::npos && !local_visible(name) && cur_locals != nullptr) {
+            // C{args}: a temporary object of a class made from a braced list ([expr.type.conv], [dcl.init.list]):
+            // by a constructor, or member by member for an aggregate.
+            int bsid = -1;
+            auto btd = typedefs.find(name);
+            if (btd != typedefs.end()) {
+                if (btd->second.base == 3 && btd->second.pointers == 0 && btd->second.struct_id >= 0)
+                    bsid = btd->second.struct_id;
+            } else if (class_name_text(name)) {
+                bsid = find_struct(name);
+            }
+            bool named_function = false;
+            for (const FuncDecl& known : funcs)
+                if (known.name == name) named_function = true;
+            if (bsid >= 0 && !named_function) {
+                if (!braced_temp(bsid, out)) return false;
+                return parse_postfix(out);
+            }
+        }
         if (is(TLParen) && colons == std::string::npos && !local_visible(name) && cur_locals != nullptr) {
             // C(args): a temporary object of a class built by a constructor ([expr.type.conv]). It is
             // made before the statement that uses it and destroyed after it.
@@ -10015,7 +10144,13 @@ bool Parser::parse_expr(int min_prec, Node* out) {
         }
         Node right;
         const int next_min = is_assign_op(op) ? p : p + 1;
-        if (!parse_expr(next_min, &right)) return false;
+        Type assigned;
+        if (op == TAssign && is(TLBrace) && cur_locals != nullptr && class_object_type(*out, &assigned)) {
+            // x = {a, b}; assigns a temporary made from the list ([expr.ass]).
+            if (!braced_temp(assigned.struct_id, &right)) return false;
+        } else if (!parse_expr(next_min, &right)) {
+            return false;
+        }
         {
             bool handled = false;
             if (!operator_binary(op, out, &right, &handled)) return false;
@@ -11830,6 +11965,12 @@ bool Gen::gen_expr(const Node& node) {
                 return false;
             } else if (named) {
                 convert(last_type, param);
+                // The argument now has the parameter's type (a float parameter is passed in an xmm register).
+                if (param.pointers == 0 && !param.is_array() && (param.base == 5 || param.base == 6)) last_type = param;
+                else if (is_fp_t(last_type) && !is_fp_t(param) && param.pointers == 0 && param.base != 3) {
+                    last_type = param;
+                    last_type.is_ref = false;
+                }
             } else if (is_fp_t(last_type) && last_type.base == 5) {
                 Type promoted;  // a float passed through ... becomes a double ([expr.call])
                 promoted.base = 6;
@@ -12187,6 +12328,19 @@ bool Gen::gen_stmt(const Node& node) {
             if (node.kids.empty()) {
                 error = "missing return value";
                 return false;
+            }
+            if (node.kids[0].kind == Node::Ternary && node.kids[0].kids.size() == 3) {
+                // return c ? a : b; with a big struct: each branch returns its own value.
+                Node branch;
+                branch.kind = Node::If;
+                branch.kids.push_back(node.kids[0].kids[0]);
+                for (size_t side = 1; side <= 2; ++side) {
+                    Node ret;
+                    ret.kind = Node::Return;
+                    ret.kids.push_back(node.kids[0].kids[side]);
+                    branch.kids.push_back(std::move(ret));
+                }
+                return gen_stmt(branch);
             }
             if (node.kids[0].kind == Node::Call) {
                 sret_dest_set = true;
@@ -13175,7 +13329,7 @@ bool emit_functions(std::vector<FuncDecl>& funcs, const std::vector<StructDef>& 
             gen.mov_regs(local.reg, machine);
         }
         if (!gen.gen_stmt(fn.body)) {
-            *error = gen.error.empty() ? "codegen failed" : gen.error;
+            *error = (gen.error.empty() ? std::string("codegen failed") : gen.error) + " (in " + fn.name + ")";
             return false;
         }
         if (gen.debug_lines) gen.lines.push_back({static_cast<uint32_t>(gen.text.size()), fn.end_line});

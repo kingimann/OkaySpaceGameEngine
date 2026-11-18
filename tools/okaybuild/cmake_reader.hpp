@@ -597,7 +597,7 @@ inline void Interp::doFind(const string& name, const vector<string>& a) {
     if (name == "find_package") {
         if (a.empty()) return; const string& p = a[0]; bool required = std::find(a.begin(), a.end(), "REQUIRED") != a.end();
         bool found = false;
-        if (p == "Threads") { found = true; Target t; t.name = "Threads::Threads"; t.kind = "imported"; t.ifLinks = {"pthread"}; targets[t.name] = t; vars["CMAKE_THREAD_LIBS_INIT"] = "-pthread"; vars["Threads_FOUND"] = "TRUE"; vars["THREADS_FOUND"] = "TRUE"; }
+        if (p == "Threads") { found = true; Target t; t.name = "Threads::Threads"; t.kind = "imported"; if (get("WIN32") != "1") t.ifLinks = {"pthread"}; /* win32 threads need no library */ targets[t.name] = t; vars["CMAKE_THREAD_LIBS_INIT"] = "-pthread"; vars["Threads_FOUND"] = "TRUE"; vars["THREADS_FOUND"] = "TRUE"; }
         else if (p == "SDL2" && get("WIN32") == "1") { // config mode inside CMAKE_PREFIX_PATH (the MinGW SDL2 development files)
             for (auto& pre : splitList(get("CMAKE_PREFIX_PATH"))) {
                 std::error_code ec; if (!fs::exists(pre + "/lib/cmake/SDL2/sdl2-config.cmake", ec) && !fs::exists(pre + "/lib/cmake/SDL2/SDL2Config.cmake", ec)) continue;
@@ -764,10 +764,10 @@ inline void Interp::builtin(const Cmd& c) {
         string cmdline, outVar, resVar; bool inCmd = false, stripOut = false; vector<string> w;
         for (size_t k = 0; k < a.size(); ++k) {
             if (a[k] == "COMMAND") { inCmd = true; continue; }
+            if (a[k] == "OUTPUT_STRIP_TRAILING_WHITESPACE") { stripOut = true; continue; }
             if (a[k] == "OUTPUT_VARIABLE" && k + 1 < a.size()) { outVar = a[++k]; inCmd = false; continue; }
             if (a[k] == "RESULT_VARIABLE" && k + 1 < a.size()) { resVar = a[++k]; inCmd = false; continue; }
             if (a[k].rfind("OUTPUT_", 0) == 0 || a[k].rfind("ERROR_", 0) == 0 || a[k] == "TIMEOUT" || a[k] == "WORKING_DIRECTORY") { inCmd = false; if (a[k] == "TIMEOUT" || a[k] == "WORKING_DIRECTORY") ++k; continue; }
-            if (a[k] == "OUTPUT_STRIP_TRAILING_WHITESPACE") { stripOut = true; continue; }
             if (inCmd) w.push_back(physicalAll(a[k]));
         }
         if (w.size() >= 4 && w[0] == "cmake" && w[1] == "-E" && (w[2] == "copy_if_different" || w[2] == "copy")) { // the one cmake -E command the project uses at configure time

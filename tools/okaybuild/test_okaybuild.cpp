@@ -787,6 +787,17 @@ static void testNativeManifest() {
     o = sh("-j2 test_math", &rc);
     check(rc == 0, "the generated manifest builds test_math", o);
     check(system(("'" + (gRoot / "build/test_math").string() + "' >/dev/null").c_str()) == 0, "test_math runs");
+    { // member order follows engine/CMakeLists.txt when it lists the files
+        write("engine/src/Crypto/B.cpp", "int cb(){return 0;}\n");
+        write("engine/CMakeLists.txt", "add_library(okay_crypto STATIC\n  src/Crypto/B.cpp\n  src/Crypto/A.cpp\n)\n");
+        sh("native . -o b2.okay");
+        string m2 = readFile(gRoot / "b2.okay");
+        auto pb = m2.find("engine/src/Crypto/B.cpp"), pa = m2.find("engine/src/Crypto/A.cpp");
+        check(pb != string::npos && pa != string::npos && pb < pa, "crypto sources follow the order engine/CMakeLists.txt lists them", m2);
+        fs::remove(gRoot / "engine/CMakeLists.txt"); sh("native . -o b3.okay"); string m3 = readFile(gRoot / "b3.okay");
+        check(m3.find("engine/src/Crypto/A.cpp") < m3.find("engine/src/Crypto/B.cpp"), "without that file the order is by name", m3);
+        fs::remove(gRoot / "engine/src/Crypto/B.cpp");
+    }
     check(man.find("account_defines = on") != string::npos, "the native manifest asks for the account defines", man);
 }
 

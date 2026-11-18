@@ -48,6 +48,11 @@ void DockBuilderSetNodeSize(DockId id, Vec2 size);
 /// of the space (0.02 to 0.98). Returns the new node's id (0 when the node is unknown, already split, or the arguments are bad);
 /// `*outIdAtDir` gets the same, `*outIdAtOpposite` the id of the remaining half. Either pointer may be null.
 DockId DockBuilderSplitNode(DockId id, DockSide dir, float sizeRatio, DockId* outIdAtDir, DockId* outIdAtOpposite);
+/// With a Dear ImGui direction as an int: 0 left, 1 right, 2 up (top), 3 down (bottom); anything else is left.
+inline DockId DockBuilderSplitNode(DockId id, int imguiDir, float sizeRatio, DockId* outIdAtDir, DockId* outIdAtOpposite) {
+    const DockSide side = imguiDir == 1 ? DockSide_Right : imguiDir == 2 ? DockSide_Top : imguiDir == 3 ? DockSide_Bottom : DockSide_Left;
+    return DockBuilderSplitNode(id, side, sizeRatio, outIdAtDir, outIdAtOpposite);
+}
 /// Put the window in the node (a leaf, or the first leaf under a split). Moves it from any node it was in. On a node that has already
 /// been finished the window is docked into the live layout at once. Empty names are ignored.
 void DockBuilderDockWindow(const char* window, DockId node);

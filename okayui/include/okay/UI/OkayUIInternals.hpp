@@ -10,6 +10,7 @@ namespace OkayUI {
 /// A snapshot of the window between Begin and End (valid == false outside one). Not a live handle: reading it later shows the window
 /// as it was when GetCurrentWindow was called.
 struct CurrentWindow {
+    const CurrentWindow* operator->() const { return this; }   // `GetCurrentWindow()->Pos` as ported code writes it
     bool valid = false;
     unsigned id = 0;                      // the window id (hash of the title; the id PushID does not change)
     char title[96] = {0};

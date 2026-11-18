@@ -122,7 +122,7 @@ bool  g_rPressed  = false;       // right button went down this frame
 
 // Popup/context-menu registry. Each open popup remembers where it opened and its
 // measured height (so the background can be drawn before the content next frame).
-struct PopupSlot { int id = 0; bool open = false; bool used = false; float x = 0, y = 0; float w = 0; bool modal = false; };   // w <= 0: the default width; modal: a click outside does not close it
+struct PopupSlot { int id = 0; bool open = false; bool used = false; float x = 0, y = 0; float w = 0; bool modal = false; bool fixedW = false; };   // w <= 0: the default width; modal: a click outside does not close it
 PopupSlot g_popups[8];
 PopupSlot* popupSlot(int id, bool create) {
     for (PopupSlot& p : g_popups) if (p.used && p.id == id) return &p;
@@ -374,7 +374,7 @@ TableState g_tbl;
 int g_sortSpecsFor = 0; TableSortSpecs* g_sortSpecsOut = nullptr;   // the specs struct TableGetSortSpecs handed out (EndTable reads specsDirty back from it)
 
 // Popup body layout context (uses LayoutState, so defined after it).
-struct PopupCtx { LayoutState lay; int id; float x, y, w; float* hSlot; };
+struct PopupCtx { LayoutState lay; int id; float x, y, w; float* hSlot; float* wSlot; };
 PopupCtx g_popupStack[4];
 int      g_popupTop = 0;
 extern int g_textScaleTop;   // defined with the text-scale stack below (reset here in BeginFrame)
@@ -543,6 +543,10 @@ inline float availW() {
     return real;
 }
 
+// True when SetNextItemWidth / PushItemWidth set a width for the next item. In Dear ImGui that width is the FIELD's, the label comes on top of it;
+// the labelled widgets that take it that way add their label's room to it (see BeginCombo).
+inline bool widthOverridden() { return g_nextItemW > 0.0f || g_itemWTop > 0; }
+inline float realAvailW() { return g_lay.ox + g_lay.contentW - cursorX(); }
 // Reserve a w*h slot for the next item; returns its top-left and advances the cursor
 // to the next line (SameLine() keeps it on the current line instead).
 inline bool hit(float x, float y, float w, float h);
@@ -2455,6 +2459,7 @@ WindowInfo FindWindowByID(unsigned id) {
     return wi;
 }
 bool AnyWindowFocused() { return g_focusWin != 0; }
+bool AnyPopupOpen() { for (const PopupSlot& p : g_popups) if (p.used && p.open) return true; return false; }
 void ClosePopupToLevel(int level, bool) { if (level <= 0) for (PopupSlot& p : g_popups) p.open = false; else if (level == 1) for (PopupSlot& p : g_popups) if (p.open && !p.modal) p.open = false; }
 Context* RefreshContext() {
     static Context c; static WindowRef refs[3];   // hovered, active, current
@@ -3562,7 +3567,8 @@ static bool Combo_raw(const char* label, const char* const* items, int count, in
     const VisLabel vis(label);
     const float h = rowH(), s = g_theme.textScale, b = g_theme.borderPx;
     const float lw = labelW(vis.b) > 0.0f ? labelW(vis.b) + 8.0f : 0.0f;
-    const float w = availW();
+    float w = availW();
+    if (lw > 0.0f && widthOverridden()) { const float room = realAvailW(); w = w + lw < room ? w + lw : room; }   // an explicit width is the box's; the label is extra
     float x, y; place(w, h, x, y);
     float boxW = w - lw; if (boxW < 48.0f) boxW = 48.0f;
 
@@ -4242,7 +4248,7 @@ bool Selectable(const char* label, bool* p_selected, unsigned flags, Vec2 size) 
 
 void OpenPopup(const char* id) {
     PopupSlot* p = popupSlot(hashLabel(id), true);
-    if (p) { p->open = true; p->x = g_in.mouseX; p->y = g_in.mouseY; p->w = 0.0f; p->modal = false; g_openPopupThisFrame = p->id; }
+    if (p) { p->open = true; p->x = g_in.mouseX; p->y = g_in.mouseY; p->w = 0.0f; p->modal = false; p->fixedW = false; g_openPopupThisFrame = p->id; }
 }
 
 void CloseCurrentPopup() {
@@ -4258,8 +4264,13 @@ static bool beginPopupBody(int id) {
     if (g_popupTop >= 4) return false;
     PopupSlot* p = popupSlot(id, false);
     if (!p || !p->open) return false;
-    const float w = p->w > 0.0f ? p->w : 160.0f, pad = 6.0f;
+    const float pad = 6.0f;
     float* hSlot = floatState(id ^ 0x9090, rowH() * 3.0f);
+    float* wSlot = floatState(id ^ 0x9091, 0.0f);   // the widest line of last frame's content (plus padding): the popup grows to fit it
+    float w = p->w > 0.0f ? p->w : 160.0f;
+    if (!p->fixedW && *wSlot > w) w = *wSlot;   // a popup with a width asked for (SetNextWindowSize before a modal) keeps it: items that fill the width would make it grow every frame
+    if (g_dispW > 32.0f && w > g_dispW - 16.0f) w = g_dispW - 16.0f;
+    if (p->modal && g_dispW > 0.0f) p->x = (g_dispW - w) * 0.5f;   // a modal stays centred when it grew
     float px = p->x, py = p->y;
     // Frame (overlay so it sits above everything). Height is last frame's content.
     registerOverlay(px, py, w, *hSlot + pad * 2.0f, true);
@@ -4267,7 +4278,7 @@ static bool beginPopupBody(int id) {
     panelColored(px, py, w, *hSlot + pad * 2.0f, pick(Col_PopupBg, pick(Col_WindowBg, g_theme.panel)));
     // Save parent layout; set up the popup's inner layout.
     PopupCtx& c = g_popupStack[g_popupTop++];
-    c.lay = g_lay; c.id = id; c.x = px; c.y = py; c.w = w; c.hSlot = hSlot;
+    c.lay = g_lay; c.id = id; c.x = px; c.y = py; c.w = w; c.hSlot = hSlot; c.wSlot = wSlot;
     g_lay.active = true;
     g_lay.ox = px + pad; g_lay.oy = py + pad;
     g_lay.cx = g_lay.ox; g_lay.cy = g_lay.oy;
@@ -4275,6 +4286,7 @@ static bool beginPopupBody(int id) {
     g_lay.indent = 0.0f; g_lay.seed = id;
     g_lay.pendingSameLine = false;
     g_lay.prevX = g_lay.ox; g_lay.prevY = g_lay.oy; g_lay.prevW = 0.0f; g_lay.prevH = 0.0f;
+    g_lay.maxRight = px;   // measure how far the content reaches
     return true;
 }
 
@@ -4282,6 +4294,7 @@ void EndPopup() {
     if (g_popupTop <= 0) return;
     PopupCtx& c = g_popupStack[--g_popupTop];
     *c.hSlot = g_lay.cy - (c.y + 6.0f);   // measured content height for next frame
+    *c.wSlot = g_lay.maxRight > c.x ? (g_lay.maxRight - c.x) + 6.0f : 0.0f;   // and the width it needs, plus padding
     g_toOverlay = false;
     // Dismiss on a left-click outside the popup box (but not the click that opened it).
     PopupSlot* p = popupSlot(c.id, false);
@@ -4296,7 +4309,7 @@ bool BeginPopup(const char* id) { return beginPopupBody(hashLabel(id)); }
 // By id (what GetID(name) gives, which is also how a named popup is keyed): the popup opened with the same name or id.
 void OpenPopup(unsigned id, int) {
     PopupSlot* p = popupSlot((int)id, true);
-    if (p) { p->open = true; p->x = g_in.mouseX; p->y = g_in.mouseY; p->w = 0.0f; p->modal = false; g_openPopupThisFrame = p->id; }
+    if (p) { p->open = true; p->x = g_in.mouseX; p->y = g_in.mouseY; p->w = 0.0f; p->modal = false; p->fixedW = false; g_openPopupThisFrame = p->id; }
 }
 bool BeginPopupEx(unsigned id, int flags) { (void)flags; return beginPopupBody((int)id); }
 
@@ -4315,7 +4328,7 @@ bool BeginPopupModal(const char* name, bool* open) {
     if (!p || !p->open) { if (open) *open = false; return false; }
     p->modal = true;
     if (g_nextWinSize.set) {   // SetNextWindowSize before a modal sets its width (the height follows the content); the position is always the centre
-        if (g_nextWinSize.x > 0.0f && std::isfinite(g_nextWinSize.x)) p->w = g_nextWinSize.x < 120.0f ? 120.0f : (g_dispW > 0.0f && g_nextWinSize.x > g_dispW - 16.0f ? g_dispW - 16.0f : g_nextWinSize.x);
+        if (g_nextWinSize.x > 0.0f && std::isfinite(g_nextWinSize.x)) { p->w = g_nextWinSize.x < 120.0f ? 120.0f : (g_dispW > 0.0f && g_nextWinSize.x > g_dispW - 16.0f ? g_dispW - 16.0f : g_nextWinSize.x); p->fixedW = true; }
         g_nextWinSize.set = false;
     }
     g_nextWinPos.set = false;   // consumed: it must not move the next window
@@ -4360,7 +4373,8 @@ bool BeginCombo(const char* label, const char* preview) {
     const int id = hashLabel(label);
     const float h = rowH(), s = g_theme.textScale, b = g_theme.borderPx;
     const float lw = visW(label) > 0.0f ? visW(label) + 8.0f : 0.0f;
-    const float w = availW();
+    float w = availW();
+    if (lw > 0.0f && widthOverridden()) { const float room = realAvailW(); w = w + lw < room ? w + lw : room; }   // an explicit width is the box's; the label is extra
     float x, y; place(w, h, x, y);
     float boxW = w - lw; if (boxW < 48.0f) boxW = 48.0f;
     PopupSlot* ps = popupSlot(id ^ 0x77ca, true);
@@ -5509,6 +5523,37 @@ void DrawList::AddPolyline(const Vec2* pts, int count, Color32 col, bool closed,
 
 void DrawList::AddPolyline(const Vec2* pts, int count, Color32 col, int flags, float th) const { AddPolyline(pts, count, col, (flags & DrawFlags_Closed) != 0, th); }
 
+void DrawList::AddConcavePolyFilled(const Vec2* pts, int count, Color32 col) const {
+    if (!pts || count < 3 || count > kMaxPath) return;
+    for (int i = 0; i < count; ++i) if (!finite2(pts[i])) return;
+    int idx[kMaxPath]; for (int i = 0; i < count; ++i) idx[i] = i;
+    float area = 0.0f; for (int i = 0; i < count; ++i) { const Vec2 a = pts[i], b = pts[(i + 1) % count]; area += a.x * b.y - b.x * a.y; }
+    const float sgn = area < 0.0f ? -1.0f : 1.0f;
+    int n = count, guard = 0;
+    auto cross = [&](Vec2 a, Vec2 b, Vec2 c) { return ((b.x - a.x) * (c.y - a.y) - (b.y - a.y) * (c.x - a.x)) * sgn; };
+    while (n > 3 && guard++ < count * count) {
+        bool clipped = false;
+        for (int i = 0; i < n && !clipped; ++i) {
+            const int ia = idx[(i + n - 1) % n], ib = idx[i], ic = idx[(i + 1) % n];
+            const Vec2 a = pts[ia], b = pts[ib], c = pts[ic];
+            if (cross(a, b, c) <= 0.0f) continue;   // a reflex or flat corner is not an ear
+            bool inside = false;
+            for (int j = 0; j < n && !inside; ++j) {
+                const int ip = idx[j]; if (ip == ia || ip == ib || ip == ic) continue;
+                const Vec2 p = pts[ip];
+                if (cross(a, b, p) >= 0.0f && cross(b, c, p) >= 0.0f && cross(c, a, p) >= 0.0f) inside = true;
+            }
+            if (inside) continue;
+            const Vec2 tri[3] = {a, b, c};
+            AddConvexPolyFilled(tri, 3, col);
+            for (int j = i; j + 1 < n; ++j) idx[j] = idx[j + 1];
+            --n; clipped = true;
+        }
+        if (!clipped) break;   // degenerate outline: stop rather than loop
+    }
+    if (n == 3) { const Vec2 tri[3] = {pts[idx[0]], pts[idx[1]], pts[idx[2]]}; AddConvexPolyFilled(tri, 3, col); }
+}
+
 void DrawList::AddConvexPolyFilled(const Vec2* pts, int count, Color32 col) const {
     if (!pts || count < 3 || count > kMaxPath) return;
     for (int i = 0; i < count; ++i) if (!finite2(pts[i])) return;
@@ -5612,6 +5657,14 @@ void DrawList::AddRect(Vec2 mn, Vec2 mx, Color32 col, float rounding, int flags,
     if (flags == 0 || flags == DrawFlags_RoundCornersAll) { AddRect(mn, mx, col, rounding, th); return; }
     Vec2 p[4 * 17]; const int n = rectPath(mn, mx, rounding, flags, p);
     AddPolyline(p, n, col, true, th);
+}
+
+void DrawList::AddText(Vec2 pos, Color32 col, const char* text, const char* textEnd) const {
+    if (!text) return;
+    char buf[1024]; std::size_t n = textEnd && textEnd >= text ? (std::size_t)(textEnd - text) : std::strlen(text);
+    if (n > sizeof buf - 1) n = sizeof buf - 1;
+    std::memcpy(buf, text, n); buf[n] = 0;
+    AddText(pos, col, static_cast<const char*>(buf), 0.0f);
 }
 
 void DrawList::AddImageQuad(SDL_Texture* tex, Vec2 p1, Vec2 p2, Vec2 p3, Vec2 p4, Vec2 uv1, Vec2 uv2, Vec2 uv3, Vec2 uv4, Color32 tint) const {

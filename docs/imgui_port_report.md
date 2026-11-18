@@ -10,11 +10,11 @@ by name: a call counts as available when OkayUI declares a function of that name
 | What | Distinct | Call sites | Available in OkayUI | Coverage of call sites |
 |---|---:|---:|---:|---:|
 | `ImGui::` calls | 264 | 28025 | 28017 | 100.0% |
-| ImGui types, flags, enums | 330 | 12464 | 12437 | 99.8% |
+| ImGui types, flags, enums | 330 | 12464 | 12439 | 99.8% |
 | Draw-list methods | 26 | 2413 | 2413 | 100.0% |
 
 Distinct calls available: 258 of 264.
-Distinct types, flags and enums available: 325 of 330.
+Distinct types, flags and enums available: 326 of 330.
 
 ## Missing `ImGui::` calls, ranked by use
 
@@ -36,8 +36,7 @@ Missing draw-list methods: none.
 | 1 | `ImGuiDockNode` | 16 | 1 |
 | 2 | `ImGuiKey_MouseWheelY` | 5 | 4 |
 | 3 | `ImGuiTabItem` | 3 | 1 |
-| 4 | `ImGuiInputTextCallbackData` | 2 | 2 |
-| 5 | `ImGuiStyleVar_GrabMinSize` | 1 | 1 |
+| 4 | `ImGuiStyleVar_GrabMinSize` | 1 | 1 |
 
 ## Coverage per file
 

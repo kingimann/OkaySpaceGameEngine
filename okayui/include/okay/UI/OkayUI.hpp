@@ -592,7 +592,7 @@ enum TreeNodeFlags {
     TreeNode_Framed      = 256,      // drawn with a header-style background (the Col_Header colours)
 };
 /// TreeNode with flags (TreeNodeFlags).
-bool TreeNodeEx(const char* label, unsigned flags);
+bool TreeNodeEx(const char* label, unsigned flags = 0);
 /// The next TreeNode, TreeNodeEx or CollapsingHeader is forced open or closed (once).
 void SetNextItemOpen(bool open);
 /// True when the last TreeNode or CollapsingHeader was opened or closed by a click this frame.
@@ -961,6 +961,8 @@ struct DrawList {
     void AddBezierCubic(Vec2 p1, Vec2 p2, Vec2 p3, Vec2 p4, Color32 col, float thickness = 1.0f, int segments = 0) const;
     /// Text with its top-left at `pos`; `scale` 0 uses the theme text scale (a negative or non-finite scale draws nothing). One line (no newline handling).
     void AddText(Vec2 pos, Color32 col, const char* text, float scale = 0.0f) const;
+    /// Dear ImGui's (pos, col, text, textEnd): the text between the two pointers (`textEnd` null = to the zero).
+    void AddText(Vec2 pos, Color32 col, const char* text, const char* textEnd) const;
     /// The Dear ImGui form with a font and a pixel size: draws with OkayUI's active font scaled so glyphs are `fontSize` pixels tall (the `font` argument is not
     /// used to pick a typeface). `textEnd` null means up to the zero. `wrapWidth` and `clipRect` are ignored.
     void AddText(const Font* font, float fontSize, Vec2 pos, Color32 col, const char* text, const char* textEnd = nullptr, float wrapWidth = 0.0f, const ImVec4* clipRect = nullptr) const;
@@ -981,6 +983,8 @@ struct DrawList {
     /// A regular polygon with `n` corners (3 to 128), the first corner pointing right of the centre, corners going clockwise on screen.
     void AddNgon(Vec2 center, float radius, Color32 col, int n, float thickness = 1.0f) const;
     void AddNgonFilled(Vec2 center, float radius, Color32 col, int n) const;
+    /// A filled polygon that may be concave (ear clipping; 3 to 256 points, a self-crossing outline draws something unspecified; winding either way).
+    void AddConcavePolyFilled(const Vec2* points, int count, Color32 col) const;
     /// An ellipse outline (radii per axis, rotated by `rot` radians, `segments` 0 = 32).
     void AddEllipse(Vec2 center, Vec2 radius, Color32 col, float rot = 0.0f, int segments = 0, float thickness = 1.0f) const;
     void AddEllipseFilled(Vec2 center, Vec2 radius, Color32 col, float rot = 0.0f, int segments = 0) const;
@@ -1129,6 +1133,9 @@ struct IO {
     bool KeyCtrl = false, KeyShift = false, KeyAlt = false;
     bool WantCaptureMouse = false, WantCaptureKeyboard = false, WantTextInput = false;
     float DeltaTime = 1.0f / 60.0f, Framerate = 60.0f;
+    float MouseWheelH = 0.0f;                 // horizontal wheel: OkayUI has none (always 0)
+    float MouseDragThreshold = 6.0f, MouseDragMaxDistanceSqr[3] = {0, 0, 0};   // accepted; the drag threshold OkayUI uses is the argument of IsMouseDragging
+    Vec2 DisplayFramebufferScale{1.0f, 1.0f};
     int ConfigFlags = 0, BackendFlags = 0;
     const char* IniFilename = nullptr; const char* LogFilename = nullptr;
 };

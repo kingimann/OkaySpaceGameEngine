@@ -20,7 +20,7 @@ Viewport GetMainViewport() {
     Viewport vp;
     const IO& io = GetIO();
     vp.size = Vec2{ Finite(io.displaySize.x), Finite(io.displaySize.y) };
-    vp.Pos = vp.pos; vp.Size = vp.size;
+    vp.Pos = vp.pos; vp.Size = vp.size; vp.WorkPos = vp.pos; vp.WorkSize = vp.size;
     return vp;
 }
 
@@ -50,7 +50,7 @@ namespace OkayUI {
 WindowInfo FindWindowByName(const char* title) {
     WindowInfo w;
     w.found = FindWindowSlot(title, w.pos, w.size, w.focused);
-    if (w.found) w.docked = IsWindowDocked(title);
+    if (w.found) { w.docked = IsWindowDocked(title); std::snprintf(w.Name, sizeof w.Name, "%s", title); w.Pos = w.pos; w.Size = w.size; w.ID = GetID(title); }
     return w;
 }
 bool IsWindowDocked(const char* title) {
@@ -237,13 +237,13 @@ void StyleColorsClassic() {
     SetBase(Style(), bg, hov, down, bd, tx, pn, tr, ac, dm, ti, fl, false);
 }
 
-const char* SaveIniSettingsToMemory(unsigned long long* size) {
+const char* SaveIniSettingsToMemory(std::size_t* size) {
     static std::string s;
     s = DockSaveLayout();
     if (size) *size = (unsigned long long)s.size();
     return s.c_str();
 }
-void LoadIniSettingsFromMemory(const char* data, unsigned long long size) {
+void LoadIniSettingsFromMemory(const char* data, std::size_t size) {
     if (!data) return;
     const std::string blob = size ? std::string(data, (size_t)size) : std::string(data);
     DockLoadLayout(blob);
@@ -305,6 +305,54 @@ bool DockContextQueueUndockWindow(Context*, const WindowRef* window) {
 }
 bool BeginDragDropTargetCustom(const ImRect& bb, unsigned id) { return BeginDragDropTargetCustom(Rect{bb.Min.x, bb.Min.y, bb.Max.x - bb.Min.x, bb.Max.y - bb.Min.y}, id); }
 bool InputInt(const char* label, int* value, int step, int, int) { return InputInt(label, value, step > 0 ? step : 1); }
+bool DragFloat2(const char* l, float v[2], float sp, float mn, float mx, const char*, int) { return DragFloat2(l, v, sp, mn, mx); }
+bool DragFloat3(const char* l, float v[3], float sp, float mn, float mx, const char*, int) { return DragFloat3(l, v, sp, mn, mx); }
+bool DragFloat4(const char* l, float v[4], float sp, float mn, float mx, const char*, int) { return DragFloat4(l, v, sp, mn, mx); }
+bool DragFloatRange2(const char* l, float* lo, float* hi, float sp, float mn, float mx, const char*, const char*, int) { return DragFloatRange2(l, lo, hi, sp, mn, mx); }
+bool SliderFloat2(const char* l, float v[2], float mn, float mx, const char*, int) { return SliderFloat2(l, v, mn, mx); }
+bool SliderFloat3(const char* l, float v[3], float mn, float mx, const char*, int) { return SliderFloat3(l, v, mn, mx); }
+bool SliderFloat4(const char* l, float v[4], float mn, float mx, const char*, int) { return SliderFloat4(l, v, mn, mx); }
+bool InputFloat(const char* l, float* v, float step, float, const char*, int) { return InputFloat(l, v, step > 0.0f ? step : 0.1f); }
+void SetNextItemOpen(bool open, Cond) { SetNextItemOpen(open); }
+bool IsPopupOpen(const char* name, int flags) {
+    if (name && *name) return IsPopupOpen(name);
+    if (flags & Popup_AnyPopupId) return AnyPopupOpen();
+    return false;
+}
+bool BeginPopup(const char* id, int) { return BeginPopup(id); }
+void SetKeyboardFocusHere(int) { SetKeyboardFocusHere(); }
+bool RadioButton(const char* label, bool active) { int v = active ? 1 : 0; return RadioButton(label, &v, 1) && !active; }
+bool ColorButton(const char* id, const ImVec4& c, int flags, Vec2 size) { const float rgba[4] = {c.x, c.y, c.z, c.w}; return ColorButton(id, rgba, flags, size.x > 0.0f ? size.x : 0.0f); }
+void PlotLines(const char* l, const float* v, int n, int off, const char* ov, float mn, float mx, Vec2 sz) { PlotOptions o; o.valuesOffset = off; o.overlay = ov; o.scaleMin = mn; o.scaleMax = mx; o.size = sz; PlotLines(l, v, n, o); }
+void PlotHistogram(const char* l, const float* v, int n, int off, const char* ov, float mn, float mx, Vec2 sz) { PlotOptions o; o.valuesOffset = off; o.overlay = ov; o.scaleMin = mn; o.scaleMax = mx; o.size = sz; PlotHistogram(l, v, n, o); }
+namespace {
+Font* g_fontStack[8]; const Font* g_fontBefore[8]; int g_fontTop = 0;
+}
+void PushFont(Font* font) {
+    if (g_fontTop >= 8) return;
+    g_fontBefore[g_fontTop] = GetFont(); g_fontStack[g_fontTop] = font; ++g_fontTop;
+    if (font) SetFont(font);
+}
+void PushFont(Font* font, float) { PushFont(font); }
+void PopFont() { if (g_fontTop <= 0) return; --g_fontTop; SetFont(g_fontBefore[g_fontTop]); }
+void InputTextCallbackData::InsertChars(int pos, const char* text, const char* end) {
+    if (!Buf || !text || pos < 0 || pos > BufTextLen) return;
+    int n = end ? (int)(end - text) : (int)std::strlen(text);
+    if (BufTextLen + n >= BufSize) n = BufSize - 1 - BufTextLen;
+    if (n <= 0) return;
+    for (int i = BufTextLen; i >= pos; --i) Buf[i + n] = Buf[i];
+    std::memcpy(Buf + pos, text, (std::size_t)n); BufTextLen += n; BufDirty = true;
+}
+bool InputTextWithHint(const char* l, const char* h, char* b, int c, unsigned f, InputTextCallback, void*) { return InputTextWithHint(l, h, b, c, f); }
+bool InputText(const char* l, char* b, int c, unsigned f, InputTextCallback, void*) { return InputText(l, b, c, f); }
+bool IsWindowDocked() { const CurrentWindow w = GetCurrentWindow(); return w.valid && IsWindowDocked(w.title); }
+WindowInfo::operator WindowRef*() const {
+    if (!found) return nullptr;
+    static WindowRef ring[8]; static int next = 0;
+    WindowRef& r = ring[next]; next = (next + 1) & 7;
+    std::snprintf(r.Name, sizeof r.Name, "%s", Name); r.ID = ID; r.Pos = pos; r.Size = size; r.ParentWindow = nullptr;
+    return &r;
+}
 bool InvisibleButton(const char* id, Vec2 size, int) { return InvisibleButton(id, size.x, size.y); }
 bool BeginTabBar(const char* id, int) { return BeginTabBar(id); }
 bool BeginCombo(const char* label, const char* preview, int) { return BeginCombo(label, preview); }

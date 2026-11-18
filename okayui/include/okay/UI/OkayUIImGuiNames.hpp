@@ -169,6 +169,7 @@ constexpr auto ImGuiHoveredFlags_DelayShort = OkayUI::Hovered_DelayShort;
 constexpr auto ImGuiHoveredFlags_ForTooltip = OkayUI::Hovered_ForTooltip;
 typedef OkayUI::IO ImGuiIO;
 constexpr auto ImGuiInputFlags_Repeat = OkayUI::Input_Repeat;
+typedef OkayUI::InputTextCallbackData ImGuiInputTextCallbackData;
 typedef int ImGuiInputTextFlags;
 constexpr auto ImGuiInputTextFlags_AllowTabInput = OkayUI::InputText_AllowTabInput;
 constexpr auto ImGuiInputTextFlags_AutoSelectAll = OkayUI::InputText_AutoSelectAll;
@@ -375,5 +376,5 @@ inline ImVec2 ImLerp(const ImVec2& a, const ImVec2& b, float t) { return ImVec2(
 inline float ImSaturate(float f) { return f < 0.0f ? 0.0f : (f > 1.0f ? 1.0f : f); }
 
 // The namespace host code writes.
-namespace ImGui = OkayUI;
+namespace ImGui { using namespace ::OkayUI; }   // a real namespace (not an alias) so code can add to it, as a few editor headers do
 #endif // IMGUI_VERSION

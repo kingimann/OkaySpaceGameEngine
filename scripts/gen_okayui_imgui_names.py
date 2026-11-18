@@ -122,7 +122,7 @@ def main():
             lines.append("typedef int %s;" % name)
         elif ident in tdecl:
             lines.append("typedef OkayUI::%s %s;" % (ident, name))
-    text = PREAMBLE + "\n".join(lines) + "\n\n" + HELPERS + "// The namespace host code writes.\nnamespace ImGui = OkayUI;\n#endif // IMGUI_VERSION\n"
+    text = PREAMBLE + "\n".join(lines) + "\n\n" + HELPERS + "// The namespace host code writes.\nnamespace ImGui { using namespace ::OkayUI; }   // a real namespace (not an alias) so code can add to it, as a few editor headers do\n#endif // IMGUI_VERSION\n"
     if "--check" in sys.argv:
         cur = open(OUT).read() if os.path.exists(OUT) else ""
         if cur != text:

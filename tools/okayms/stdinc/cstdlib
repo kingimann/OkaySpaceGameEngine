@@ -16,4 +16,8 @@ float strtof(const char *s, char **end);
 double strtod(const char *s, char **end);
 double atof(const char *s);
 }
+// getenv ([cstdlib.syn], 9899 7.22.4.6): provided by the runtime (runtime/env.c, on kernel32 GetEnvironmentVariableA), so a
+// program that never calls it needs no import. The value is in a buffer the runtime owns (the next call overwrites it);
+// a null pointer when the name is not set.
+extern "C" char *getenv(const char *name);
 }

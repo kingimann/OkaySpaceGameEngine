@@ -217,4 +217,118 @@ inline float hypot(float x, float y) { return (float)okay_math::sqrt_d((double)x
 inline bool isnan(float x) { return x != x; }
 inline bool isfinite(float x) { return x <= 3.40282347e+38f && x >= -3.40282347e+38f; }
 inline bool isinf(float x) { return x > 3.40282347e+38f || x < -3.40282347e+38f; }
+
+// The double overloads (the float ones above round the result of these).
+inline double sqrt(double x) { return okay_math::sqrt_d(x); }
+inline double sin(double x) { return okay_math::sin_cos_d(x, true); }
+inline double cos(double x) { return okay_math::sin_cos_d(x, false); }
+inline double tan(double x) { return okay_math::sin_cos_d(x, true) / okay_math::sin_cos_d(x, false); }
+inline double atan(double x) { return okay_math::atan_d(x); }
+inline double atan2(double yd, double xd) {
+    const double pi = 3.141592653589793;
+    if (okay_math::isnan_d(yd) || okay_math::isnan_d(xd)) return okay_math::nan_d();
+    if (xd > 0.0) return okay_math::atan_d(yd / xd);
+    if (xd < 0.0) return yd >= 0.0 ? okay_math::atan_d(yd / xd) + pi : okay_math::atan_d(yd / xd) - pi;
+    if (yd > 0.0) return pi / 2.0;
+    if (yd < 0.0) return -pi / 2.0;
+    return 0.0;
+}
+inline double asin(double xd) {
+    if (xd > 1.0 || xd < -1.0) return okay_math::nan_d();
+    if (xd == 1.0) return 1.5707963267948966;
+    if (xd == -1.0) return -1.5707963267948966;
+    return okay_math::atan_d(xd / okay_math::sqrt_d(1.0 - xd * xd));
+}
+inline double acos(double x) { return 1.5707963267948966 - asin(x); }
+inline double fabs(double x) { return x < 0.0 ? -x : (x == 0.0 ? 0.0 : x); }
+inline double floor(double x) { return okay_math::floor_d(x); }
+inline double ceil(double x) { return -okay_math::floor_d(-x); }
+inline double trunc(double x) { return okay_math::trunc_d(x); }
+inline double round(double xd) { return xd < 0.0 ? -okay_math::floor_d(-xd + 0.5) : okay_math::floor_d(xd + 0.5); }
+inline double pow(double x, double y) { return okay_math::pow_d(x, y); }
+inline double fmod(double xd, double yd) {
+    if (yd == 0.0 || okay_math::isnan_d(xd) || okay_math::isnan_d(yd)) return okay_math::nan_d();
+    return xd - okay_math::trunc_d(xd / yd) * yd;
+}
+inline double exp(double x) { return okay_math::exp_d(x); }
+inline double log(double x) { return okay_math::log_d(x); }
+inline double log2(double x) { return okay_math::log_d(x) / 0.6931471805599453; }
+inline double log10(double x) { return okay_math::log_d(x) / 2.302585092994046; }
+inline double hypot(double x, double y) { return okay_math::sqrt_d(x * x + y * y); }
+inline bool isnan(double x) { return x != x; }
+inline bool isfinite(double x) { return x <= 1.7976931348623157e308 && x >= -1.7976931348623157e308; }
+inline bool isinf(double x) { return x > 1.7976931348623157e308 || x < -1.7976931348623157e308; }
+
+// fmin and fmax (9899 7.12.12): a NaN argument gives the other one.
+inline float fmin(float a, float b) { return a != a ? b : (b != b ? a : (b < a ? b : a)); }
+inline float fmax(float a, float b) { return a != a ? b : (b != b ? a : (a < b ? b : a)); }
+inline double fmin(double a, double b) { return a != a ? b : (b != b ? a : (b < a ? b : a)); }
+inline double fmax(double a, double b) { return a != a ? b : (b != b ? a : (a < b ? b : a)); }
+
+// nextafter (9899 7.12.11.3), from the IEEE-754 layout: one step in the bit pattern of the magnitude toward y.
+union FloatBits32 { float f; unsigned int u; };
+inline float nextafter(float x, float y) {
+    if (x != x || y != y) return x != x ? x : y;
+    if (x == y) return y;
+    FloatBits32 b;
+    if (x == 0.0f) {
+        b.u = 1u;
+        return y > 0.0f ? b.f : -b.f;
+    }
+    b.f = x;
+    if ((x < y) == (x > 0.0f)) ++b.u; else --b.u;
+    return b.f;
+}
+inline double nextafter(double x, double y) {
+    if (x != x || y != y) return x != x ? x : y;
+    if (x == y) return y;
+    okay_math::Bits64 b;
+    if (x == 0.0) {
+        b.u = 1ull;
+        return y > 0.0 ? b.d : -b.d;
+    }
+    b.d = x;
+    if ((x < y) == (x > 0.0)) ++b.u; else --b.u;
+    return b.d;
+}
+
+// log1p: log(1 + x) without losing the small bits of x (u = 1 + x rounds; log(u) * x / (u - 1) cancels the rounding).
+inline double log1p(double x) {
+    const double u = 1.0 + x;
+    if (u == 1.0) return x;
+    return okay_math::log_d(u) * x / (u - 1.0);
+}
+inline float log1p(float x) { return (float)log1p((double)x); }
+
+// lgamma: for x >= 12 the Stirling series (x - 1/2) ln x - x + ln(2 pi)/2 + 1/(12x) - 1/(360 x^3) + 1/(1260 x^5) - 1/(1680 x^7)
+// (coefficients B(2k) / (2k (2k - 1)), B the Bernoulli numbers); a smaller x is moved up with gamma(x + 1) = x gamma(x); a
+// negative x uses the reflection gamma(x) gamma(1 - x) = pi / sin(pi x).
+inline double lgamma_pos(double x) {
+    double shift = 0.0;
+    double prod = 1.0;
+    while (x < 12.0) {
+        prod *= x;
+        if (prod > 1e250) {
+            shift += okay_math::log_d(prod);
+            prod = 1.0;
+        }
+        x += 1.0;
+    }
+    shift += okay_math::log_d(prod);
+    const double inv = 1.0 / x;
+    const double inv2 = inv * inv;
+    const double series = inv * (1.0 / 12.0 - inv2 * (1.0 / 360.0 - inv2 * (1.0 / 1260.0 - inv2 * (1.0 / 1680.0))));
+    return (x - 0.5) * okay_math::log_d(x) - x + 0.9189385332046727 + series - shift;
+}
+inline double lgamma(double x) {
+    const double pi = 3.141592653589793;
+    if (x != x) return x;
+    if (x <= 0.0) {
+        if (x == okay_math::floor_d(x)) return okay_math::inf_d();
+        const double s = okay_math::sin_cos_d(pi * x, true);
+        return okay_math::log_d(pi / (s < 0.0 ? -s : s)) - lgamma_pos(1.0 - x);
+    }
+    return lgamma_pos(x);
+}
+inline float lgamma(float x) { return (float)lgamma((double)x); }
 }

@@ -72,5 +72,25 @@ int main(int, char**) {
     ++tests;
     build(t, "static members with values, class-scope using", "struct T { using Fn = double (*)(); static inline int a = 0, b = 2; static inline float c = 1.5f; static constexpr float PI = 3.14f; static constexpr float D = PI / 2.0f; };\n"
           "struct Vv { int x; static const Vv Zero; };\ninline const Vv Vv::Zero{0};\nint main() { return T::a + T::b + (int)T::c + (int)T::D; }\n", &o);
+    ++tests;
+    build(t, "std::function, shared_ptr, weak_ptr, map", "#include <functional>\n#include <memory>\n#include <map>\n#include <string>\n"
+          "struct Base { virtual int id() const { return 1; } virtual ~Base() {} };\nstruct Der : Base { int k; Der(int x) : k(x) {} int id() const override { return k; } };\n"
+          "struct Ev { int a; };\nint twice(int x) { return 2 * x; }\n"
+          "int main() { int k = 3, cnt = 0; std::function<int(int)> f = [k](int x) { return x + k; }; std::function<int(int)> g = twice;\n"
+          "std::function<void(const Ev&)> sink = [&cnt](const Ev& e) { cnt = e.a; }; Ev e; e.a = 4; sink(e);\n"
+          "std::shared_ptr<Der> a = std::make_shared<Der>(7); std::shared_ptr<Base> b = a; std::weak_ptr<Der> w = a;\n"
+          "std::map<std::string, int> m; m[\"b\"] = 2; return f(1) + g(2) + cnt + b->id() + (w.expired() ? 1 : 0) + m[\"b\"]; }\n", &o);
+    ++tests;
+    build(t, "cmath additions, atomic_flag, system_error, vector::emplace_back, getenv",
+          "#include <cmath>\n#include <atomic>\n#include <cstdlib>\n#include <vector>\n#include <system_error>\nstruct P { int a; P() : a(1) {} P(int x) : a(x) {} };\n"
+          "int main() { std::atomic<int> x(1); int e = 1; x.compare_exchange_weak(e, 2, std::memory_order_acquire, std::memory_order_relaxed);\n"
+          "std::atomic_flag fl = ATOMIC_FLAG_INIT; fl.test_and_set(); std::vector<P> v; v.emplace_back(); v.emplace_back(5); std::error_code ec;\n"
+          "double d = std::lgamma(5.0) + std::log1p(0.5) + std::fmax(1.0, 2.0) + std::nextafter(1.0, 2.0); const char* g = std::getenv(\"HOME\");\n"
+          "return (int)d + (g ? 1 : 0) + (ec ? 1 : 0); }\n", &o);
+    ++tests;
+    build(t, "std::filesystem path", "#include <filesystem>\nint main() { namespace fs = std::filesystem; fs::path p = fs::u8path(\"C:/a/./b/../c.txt\"); fs::path n = p.lexically_normal();\n"
+          "std::error_code ec; fs::path q = fs::weakly_canonical(fs::absolute(p, ec), ec); fs::path base = n.parent_path() / \"x\";\n"
+          "return (n.is_absolute() ? 1 : 0) + (int)n.extension().string().size() + (base == q ? 1 : 0) + (fs::is_directory(p, ec) ? 1 : 0); }\n", &o);
+    CHECK(t, has_symbol(o, "lexically_normal"));
     return t.finish(tests);
 }

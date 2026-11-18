@@ -1,8 +1,13 @@
 // okay-ms own standard header: the small part of <functional> that is class templates, written from ISO/IEC 14882
 // [function.objects]: hash for the integer types, and the comparison and arithmetic function objects.
-// std::function is not here yet (it needs a type-erased call through a function type, which okay-ms does not read).
+// std::function<R(Args...)> is here too, written from [func.wrap.func]: okay-ms reads `function<R(A, B)>` as
+// `function<R, A, B>` (the compiler splits the signature before parsing), so the class is a template over the return
+// type and the parameter types. The callable lives in a heap object behind a virtual base class (type erasure); copying a
+// function copies the callable. Differences from the standard: no allocator, no target(), the empty test is operator bool.
 #pragma once
 #include <cstddef>
+#include <cstdlib>
+#include <new>
 namespace std {
 template <typename T> struct hash;
 template <> struct hash<bool> { size_t operator()(bool v) const { return (size_t)v; } };
@@ -25,4 +30,34 @@ template <typename T> struct multiplies { T operator()(const T& a, const T& b) c
 template <typename T> struct divides { T operator()(const T& a, const T& b) const { return a / b; } };
 template <typename T> struct negate { T operator()(const T& a) const { return -a; } };
 template <typename T> struct logical_not { bool operator()(const T& a) const { return !a; } };
+
+template <typename R, typename... Args> struct function_base_ {
+    virtual R call(Args... a) = 0;
+    virtual function_base_<R, Args...>* clone() const = 0;
+    virtual ~function_base_() {}
+};
+template <typename F, typename R, typename... Args> struct function_impl_ : function_base_<R, Args...> {
+    F f;
+    function_impl_(const F& x) : f(x) {}
+    R call(Args... a) override { return f(a...); }
+    function_base_<R, Args...>* clone() const override { return new function_impl_<F, R, Args...>(f); }
+};
+template <typename R, typename... Args> struct function {
+    function_base_<R, Args...>* b;
+    function() : b(0) {}
+    function(const function& o) : b(o.b ? o.b->clone() : 0) {}
+    template <typename F> function(F f) : b(new function_impl_<F, R, Args...>(f)) {}
+    function& operator=(const function& o) {
+        if (this != &o) {
+            function_base_<R, Args...>* fresh = o.b ? o.b->clone() : 0;
+            delete b;
+            b = fresh;
+        }
+        return *this;
+    }
+    ~function() { delete b; }
+    R operator()(Args... a) const { return b->call(a...); }
+    bool operator!() const { return b == 0; }
+    explicit operator bool() const { return b != 0; }
+};
 }

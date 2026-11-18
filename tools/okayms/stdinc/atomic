@@ -25,6 +25,11 @@ struct atomic {
         v_ = desired;
         return old;
     }
+    bool compare_exchange_strong(T& expected, T desired, memory_order success, memory_order failure) {
+        (void)success;
+        (void)failure;
+        return compare_exchange_strong(expected, desired);
+    }
     bool compare_exchange_strong(T& expected, T desired, memory_order = memory_order_seq_cst) {
         if (v_ == expected) {
             v_ = desired;
@@ -32,6 +37,11 @@ struct atomic {
         }
         expected = v_;
         return false;
+    }
+    bool compare_exchange_weak(T& expected, T desired, memory_order success, memory_order failure) {
+        (void)success;
+        (void)failure;
+        return compare_exchange_weak(expected, desired);
     }
     bool compare_exchange_weak(T& expected, T desired, memory_order = memory_order_seq_cst) {
         return compare_exchange_strong(expected, desired);
@@ -64,6 +74,11 @@ struct atomic<float> {
     float load(memory_order = memory_order_seq_cst) const { return v_; }
     void store(float desired, memory_order = memory_order_seq_cst) { v_ = desired; }
     float exchange(float desired, memory_order = memory_order_seq_cst) { float old = v_; v_ = desired; return old; }
+    bool compare_exchange_strong(float& expected, float desired, memory_order success, memory_order failure) {
+        (void)success;
+        (void)failure;
+        return compare_exchange_strong(expected, desired);
+    }
     bool compare_exchange_strong(float& expected, float desired, memory_order = memory_order_seq_cst) {
         if (v_ == expected) {
             v_ = desired;
@@ -71,6 +86,11 @@ struct atomic<float> {
         }
         expected = v_;
         return false;
+    }
+    bool compare_exchange_weak(float& expected, float desired, memory_order success, memory_order failure) {
+        (void)success;
+        (void)failure;
+        return compare_exchange_weak(expected, desired);
     }
     bool compare_exchange_weak(float& expected, float desired, memory_order = memory_order_seq_cst) {
         return compare_exchange_strong(expected, desired);
@@ -93,6 +113,11 @@ struct atomic<double> {
     double load(memory_order = memory_order_seq_cst) const { return v_; }
     void store(double desired, memory_order = memory_order_seq_cst) { v_ = desired; }
     double exchange(double desired, memory_order = memory_order_seq_cst) { double old = v_; v_ = desired; return old; }
+    bool compare_exchange_strong(double& expected, double desired, memory_order success, memory_order failure) {
+        (void)success;
+        (void)failure;
+        return compare_exchange_strong(expected, desired);
+    }
     bool compare_exchange_strong(double& expected, double desired, memory_order = memory_order_seq_cst) {
         if (v_ == expected) {
             v_ = desired;
@@ -100,6 +125,11 @@ struct atomic<double> {
         }
         expected = v_;
         return false;
+    }
+    bool compare_exchange_weak(double& expected, double desired, memory_order success, memory_order failure) {
+        (void)success;
+        (void)failure;
+        return compare_exchange_weak(expected, desired);
     }
     bool compare_exchange_weak(double& expected, double desired, memory_order = memory_order_seq_cst) {
         return compare_exchange_strong(expected, desired);
@@ -122,6 +152,11 @@ struct atomic<T*> {
     T* load(memory_order = memory_order_seq_cst) const { return v_; }
     void store(T* desired, memory_order = memory_order_seq_cst) { v_ = desired; }
     T* exchange(T* desired, memory_order = memory_order_seq_cst) { T* old = v_; v_ = desired; return old; }
+    bool compare_exchange_strong(T*& expected, T* desired, memory_order success, memory_order failure) {
+        (void)success;
+        (void)failure;
+        return compare_exchange_strong(expected, desired);
+    }
     bool compare_exchange_strong(T*& expected, T* desired, memory_order = memory_order_seq_cst) {
         if (v_ == expected) {
             v_ = desired;
@@ -129,6 +164,11 @@ struct atomic<T*> {
         }
         expected = v_;
         return false;
+    }
+    bool compare_exchange_weak(T*& expected, T* desired, memory_order success, memory_order failure) {
+        (void)success;
+        (void)failure;
+        return compare_exchange_weak(expected, desired);
     }
     bool compare_exchange_weak(T*& expected, T* desired, memory_order = memory_order_seq_cst) {
         return compare_exchange_strong(expected, desired);
@@ -146,6 +186,18 @@ struct atomic<T*> {
     T* operator-=(long long arg) { v_ = v_ - arg; return v_; }
 };
 
+// atomic_flag ([atomics.flag]): single-thread subset like the rest of this header.
+struct atomic_flag {
+    bool v_;
+    atomic_flag() : v_(false) {}
+    bool test_and_set(memory_order = memory_order_seq_cst) {
+        const bool old = v_;
+        v_ = true;
+        return old;
+    }
+    void clear(memory_order = memory_order_seq_cst) { v_ = false; }
+};
+#define ATOMIC_FLAG_INIT {false}
 typedef atomic<bool> atomic_bool;
 typedef atomic<int> atomic_int;
 typedef atomic<unsigned> atomic_uint;

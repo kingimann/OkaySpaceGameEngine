@@ -1,0 +1,341 @@
+// okay-ms own standard header: a small std::filesystem, written from ISO/IEC 14882 [fs.path] and [fs.op] only (the grammar
+// of a path in [fs.path.generic], the append rule [fs.path.append], the lexical normalisation steps in [fs.path.generic]
+// and the operations in [fs.op.funcs]). It is the WINDOWS flavour, because okay-ms only targets Windows: '/' and '\' both
+// separate names, a root name is a drive letter and a colon (or "\\host"), the preferred separator is '\', and a path is
+// absolute only when it has a root name and a root directory. Here: path (construction from text, native, string,
+// u8string, generic_string, c_str, empty, / and /=, += , root_name, root_directory, root_path, relative_path, parent_path,
+// filename, stem, extension, has_* tests, is_absolute, is_relative, lexically_normal, compare and the comparison
+// operators, begin and end over the elements), u8path, absolute, weakly_canonical, exists, is_directory, is_regular_file,
+// current_path. Differences: no wide strings or char8_t (a path holds the bytes of a std::string); compare is exact
+// (case sensitive); weakly_canonical does NOT follow links (it is the lexically normal form); no directory iteration, no
+// file creation, copy, rename or removal; errors only through the error_code overloads (no filesystem_error).
+#pragma once
+#include <cstddef>
+#include <cstdlib>
+#include <string>
+#include <system_error>
+#include <vector>
+
+__declspec(dllimport) unsigned long GetFileAttributesA(const char *name);
+__declspec(dllimport) unsigned long GetCurrentDirectoryA(unsigned long size, char *buffer);
+
+namespace std {
+namespace filesystem {
+
+inline bool okay_fs_sep(char c) { return c == '/' || c == '\\'; }
+inline bool okay_fs_alpha(char c) { return (c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z'); }
+
+// The length of the root name at the start of s: "C:" is 2, "\\host" is 2 + the length of host, anything else is 0.
+inline size_t okay_fs_root_name_len(const std::string& s) {
+    if (s.size() >= 2 && okay_fs_alpha(s[0]) && s[1] == ':') return 2;
+    if (s.size() >= 3 && okay_fs_sep(s[0]) && okay_fs_sep(s[1]) && !okay_fs_sep(s[2])) {
+        size_t i = 2;
+        while (i < s.size() && !okay_fs_sep(s[i])) ++i;
+        return i;
+    }
+    return 0;
+}
+
+// The elements of s ([fs.path.itr]): the root name, the root directory (as one '\'), each file name, and an empty element
+// when the path ends in a separator after a file name.
+inline std::vector<std::string> okay_fs_elements(const std::string& s) {
+    std::vector<std::string> out;
+    size_t i = okay_fs_root_name_len(s);
+    if (i > 0) out.push_back(s.substr(0, i));
+    if (i < s.size() && okay_fs_sep(s[i])) {
+        out.push_back("\\");
+        while (i < s.size() && okay_fs_sep(s[i])) ++i;
+    }
+    while (i < s.size()) {
+        size_t j = i;
+        while (j < s.size() && !okay_fs_sep(s[j])) ++j;
+        out.push_back(s.substr(i, j - i));
+        const bool had_sep = j < s.size();
+        while (j < s.size() && okay_fs_sep(s[j])) ++j;
+        i = j;
+        if (had_sep && i >= s.size()) out.push_back(std::string());
+    }
+    return out;
+}
+
+class path {
+public:
+    std::string s_;
+
+    path() : s_() {}
+    path(const std::string& text) : s_(text) {}
+    path(const char* text) : s_(text) {}
+
+    const std::string& native() const { return s_; }
+    const char* c_str() const { return s_.c_str(); }
+    std::string string() const { return s_; }
+    std::string u8string() const { return s_; }
+    std::string generic_string() const {
+        std::string r = s_;
+        for (size_t i = 0; i < r.size(); ++i)
+            if (r[i] == '\\') r[i] = '/';
+        return r;
+    }
+    bool empty() const { return s_.empty(); }
+    void clear() { s_.clear(); }
+
+    size_t root_name_size() const { return okay_fs_root_name_len(s_); }
+    bool has_root_name() const { return root_name_size() > 0; }
+    bool has_root_directory() const {
+        const size_t n = root_name_size();
+        return n < s_.size() && okay_fs_sep(s_[n]);
+    }
+    size_t root_end() const {
+        size_t i = root_name_size();
+        if (i < s_.size() && okay_fs_sep(s_[i])) {
+            while (i < s_.size() && okay_fs_sep(s_[i])) ++i;
+        }
+        return i;
+    }
+    path root_name() const { return path(s_.substr(0, root_name_size())); }
+    path root_directory() const { return has_root_directory() ? path("\\") : path(); }
+    path root_path() const {
+        path r = root_name();
+        if (has_root_directory()) r.s_ += "\\";
+        return r;
+    }
+    path relative_path() const { return path(s_.substr(root_end())); }
+    bool has_relative_path() const { return root_end() < s_.size(); }
+    bool has_root_path() const { return has_root_name() || has_root_directory(); }
+    path filename() const {
+        const size_t rs = root_end();
+        size_t i = s_.size();
+        while (i > rs && !okay_fs_sep(s_[i - 1])) --i;
+        return path(s_.substr(i));
+    }
+    bool has_filename() const { return !filename().empty(); }
+    path parent_path() const {
+        const size_t rs = root_end();
+        if (rs >= s_.size()) return *this;
+        size_t i = s_.size();
+        while (i > rs && !okay_fs_sep(s_[i - 1])) --i;
+        size_t j = i;
+        while (j > rs && okay_fs_sep(s_[j - 1])) --j;
+        if (j == rs) return path(s_.substr(0, root_name_size() + (has_root_directory() ? 1 : 0)));
+        return path(s_.substr(0, j));
+    }
+    bool has_parent_path() const { return !parent_path().empty(); }
+    path stem() const {
+        const std::string f = filename().s_;
+        if (f == "." || f == "..") return path(f);
+        const size_t dot = f.rfind('.');
+        if (dot == std::string::npos || dot == 0) return path(f);
+        return path(f.substr(0, dot));
+    }
+    path extension() const {
+        const std::string f = filename().s_;
+        if (f == "." || f == "..") return path();
+        const size_t dot = f.rfind('.');
+        if (dot == std::string::npos || dot == 0) return path();
+        return path(f.substr(dot));
+    }
+    bool has_stem() const { return !stem().empty(); }
+    bool has_extension() const { return !extension().empty(); }
+    bool is_absolute() const { return has_root_name() && has_root_directory(); }
+    bool is_relative() const { return !is_absolute(); }
+
+    // [fs.path.append]
+    path& operator/=(const path& p) {
+        if (p.is_absolute() || (p.has_root_name() && !(p.root_name().s_ == root_name().s_))) {
+            s_ = p.s_;
+            return *this;
+        }
+        if (p.has_root_directory()) {
+            s_ = s_.substr(0, root_name_size()) + p.s_.substr(p.root_name_size());
+            return *this;
+        }
+        if (has_filename() || (!has_root_directory() && is_absolute())) s_ += "\\";
+        s_ += p.s_.substr(p.root_name_size());
+        return *this;
+    }
+    path& operator+=(const path& p) {
+        s_ += p.s_;
+        return *this;
+    }
+    path& operator+=(const std::string& text) {
+        s_ += text;
+        return *this;
+    }
+    path& operator+=(const char* text) {
+        s_ += text;
+        return *this;
+    }
+
+    // [fs.path.generic] lexically_normal: the numbered steps of the standard, on the elements.
+    path lexically_normal() const {
+        if (s_.empty()) return path();
+        const std::vector<std::string> el = okay_fs_elements(s_);
+        std::string root_name_text;
+        bool root_dir = false;
+        std::vector<std::string> names;
+        bool ends_with_sep = false;
+        for (size_t k = 0; k < el.size(); ++k) {
+            const std::string& e = el[k];
+            if (k == 0 && has_root_name()) {
+                root_name_text = e;
+                for (size_t c = 0; c < root_name_text.size(); ++c)
+                    if (root_name_text[c] == '/') root_name_text[c] = '\\';
+                continue;
+            }
+            if (e == "\\" && names.empty() && !root_dir && (k == 0 || (k == 1 && has_root_name()))) {
+                root_dir = true;
+                continue;
+            }
+            if (e.empty() || e == ".") {
+                ends_with_sep = true;
+                continue;
+            }
+            if (e == "..") {
+                if (!names.empty() && names.back() != "..") {
+                    names.pop_back();
+                    ends_with_sep = true;
+                } else if (!root_dir) {
+                    names.push_back("..");
+                    ends_with_sep = false;
+                }
+                continue;
+            }
+            names.push_back(e);
+            ends_with_sep = false;
+        }
+        std::string r = root_name_text;
+        if (root_dir) r += "\\";
+        for (size_t k = 0; k < names.size(); ++k) {
+            if (k > 0) r += "\\";
+            r += names[k];
+        }
+        if (ends_with_sep && !names.empty()) r += "\\";
+        if (r.empty()) r = ".";
+        return path(r);
+    }
+
+    // [fs.path.compare]: element by element.
+    int compare(const path& other) const {
+        const std::vector<std::string> a = okay_fs_elements(s_);
+        const std::vector<std::string> b = okay_fs_elements(other.s_);
+        size_t i = 0;
+        while (i < a.size() && i < b.size()) {
+            const int c = a[i].compare(b[i]);
+            if (c != 0) return c < 0 ? -1 : 1;
+            ++i;
+        }
+        if (i < a.size()) return 1;
+        if (i < b.size()) return -1;
+        return 0;
+    }
+
+    // [fs.path.itr]: a forward iterator over the elements (it keeps its own copy of the list and of the current element).
+    class iterator {
+    public:
+        std::vector<std::string> el_;
+        size_t i_;
+        path cur_;
+        iterator() : el_(), i_(0), cur_() {}
+        iterator(const std::vector<std::string>& el, size_t i) : el_(el), i_(i), cur_() { settle(); }
+        void settle() {
+            if (i_ < el_.size()) cur_ = path(el_[i_]);
+            else cur_ = path();
+        }
+        const path& operator*() const { return cur_; }
+        const path* operator->() const { return &cur_; }
+        iterator& operator++() {
+            ++i_;
+            settle();
+            return *this;
+        }
+        bool operator==(const iterator& o) const { return i_ == o.i_; }
+        bool operator!=(const iterator& o) const { return i_ != o.i_; }
+    };
+    iterator begin() const { return iterator(okay_fs_elements(s_), 0); }
+    iterator end() const {
+        const std::vector<std::string> el = okay_fs_elements(s_);
+        return iterator(el, el.size());
+    }
+};
+
+inline path operator/(const path& a, const path& b) {
+    path r = a;
+    r /= b;
+    return r;
+}
+inline bool operator==(const path& a, const path& b) { return a.compare(b) == 0; }
+inline bool operator!=(const path& a, const path& b) { return a.compare(b) != 0; }
+inline bool operator<(const path& a, const path& b) { return a.compare(b) < 0; }
+inline bool operator>(const path& a, const path& b) { return a.compare(b) > 0; }
+inline bool operator<=(const path& a, const path& b) { return a.compare(b) <= 0; }
+inline bool operator>=(const path& a, const path& b) { return a.compare(b) >= 0; }
+
+inline path u8path(const std::string& text) { return path(text); }
+
+inline path current_path(std::error_code& ec) {
+    char buffer[1024];
+    const unsigned long n = GetCurrentDirectoryA(1024, buffer);
+    if (n == 0 || n >= 1024) {
+        ec.assign(2);
+        return path();
+    }
+    ec.clear();
+    return path(std::string(buffer, (size_t)n));
+}
+
+// [fs.op.absolute]: an empty path is an error; a path with a root name and a root directory is already absolute; "\x" gets
+// the working folder's root name; "C:x" is kept as it is; "x" is appended to the working folder.
+inline path absolute(const path& p, std::error_code& ec) {
+    ec.clear();
+    if (p.empty()) {
+        ec.assign(22);
+        return path();
+    }
+    if (p.is_absolute()) return p;
+    std::error_code cwd_ec;
+    const path cwd = current_path(cwd_ec);
+    if (cwd_ec) {
+        ec = cwd_ec;
+        return path();
+    }
+    if (p.has_root_name()) return p;
+    if (p.has_root_directory()) return path(cwd.root_name().s_ + p.s_);
+    return cwd / p;
+}
+
+// [fs.op.weakly.canonical] without following links: the lexically normal form.
+inline path weakly_canonical(const path& p, std::error_code& ec) {
+    ec.clear();
+    return p.lexically_normal();
+}
+
+inline bool exists(const path& p, std::error_code& ec) {
+    const unsigned long a = GetFileAttributesA(p.c_str());
+    if (a == 0xFFFFFFFFul) {
+        ec.assign(2);
+        return false;
+    }
+    ec.clear();
+    return true;
+}
+inline bool is_directory(const path& p, std::error_code& ec) {
+    const unsigned long a = GetFileAttributesA(p.c_str());
+    if (a == 0xFFFFFFFFul) {
+        ec.assign(2);
+        return false;
+    }
+    ec.clear();
+    return (a & 0x10ul) != 0;
+}
+inline bool is_regular_file(const path& p, std::error_code& ec) {
+    const unsigned long a = GetFileAttributesA(p.c_str());
+    if (a == 0xFFFFFFFFul) {
+        ec.assign(2);
+        return false;
+    }
+    ec.clear();
+    return (a & 0x10ul) == 0;
+}
+
+}  // namespace filesystem
+}  // namespace std

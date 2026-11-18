@@ -1,0 +1,17 @@
+// okay-ms own standard header: std::error_code, written from ISO/IEC 14882 [syserr]. Only the value is kept: there are no
+// error categories, no error_condition and no system_error exception. 0 means success; <filesystem> here uses the Windows
+// values (2 not found, 22 invalid argument).
+#pragma once
+namespace std {
+struct error_code {
+    int v_;
+    error_code() : v_(0) {}
+    error_code(int value) : v_(value) {}
+    int value() const { return v_; }
+    void assign(int value) { v_ = value; }
+    void clear() { v_ = 0; }
+    operator bool() const { return v_ != 0; }
+};
+inline bool operator==(const error_code& a, const error_code& b) { return a.v_ == b.v_; }
+inline bool operator!=(const error_code& a, const error_code& b) { return a.v_ != b.v_; }
+}

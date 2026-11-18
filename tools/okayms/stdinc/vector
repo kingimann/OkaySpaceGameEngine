@@ -132,6 +132,14 @@ public:
         }
         ++size_;
     }
+    // emplace_back ([vector.modifiers]): built in place from the arguments (taken by value here; the standard forwards).
+    template <typename... A>
+    T& emplace_back(A... a) {
+        if (size_ == cap_) grow_to(size_ + 1);
+        new (data_ + size_) T(a...);
+        ++size_;
+        return data_[size_ - 1];
+    }
     void pop_back() {
         --size_;
         data_[size_].~T();

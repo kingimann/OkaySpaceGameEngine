@@ -197,6 +197,8 @@ struct StructDef {
     // The class template and the arguments of an instance, for deduction through Node<T>.
     std::string tmpl;
     std::vector<TArg> targs;
+    // The class has a constructor template (`template <typename T> C(T x)`): it is not an aggregate.
+    bool ctor_tmpl = false;
     // The class this one is declared inside (-1 for none): its statics can be named from the nested class.
     int outer = -1;
     // Named by `struct X;` or used by pointer before its definition; the definition fills this entry in.
@@ -1905,7 +1907,81 @@ struct Parser {
         tokens = std::move(out);
     }
 
+    // std::function<R(A, B)> is read as function<R, A, B>: okay-ms has no function types as template arguments, so
+    // <functional> declares `template <typename R, typename... Args> class function` ([func.wrap.func] with the signature
+    // split into its return type and its parameter types). This runs first, so it also reaches a `using` alias.
+    void rewrite_function_signatures() {
+        std::vector<Token> out;
+        out.reserve(tokens.size());
+        for (size_t i = 0; i < tokens.size(); ++i) {
+            const Token& t = tokens[i];
+            if (t.kind == TIdent && t.text == "function" && i + 2 < tokens.size() && tokens[i + 1].kind == TLt) {
+                size_t j = i + 2;
+                int angle = 1;
+                int paren = 0;
+                size_t open = 0;
+                size_t close = 0;
+                for (; j < tokens.size() && tokens[j].kind != TEnd; ++j) {
+                    const Tok k = tokens[j].kind;
+                    if (k == TLParen) {
+                        if (paren == 0 && angle == 1 && open == 0) open = j;
+                        ++paren;
+                    } else if (k == TRParen) {
+                        if (--paren == 0 && angle == 1 && close == 0 && open != 0) close = j;
+                    } else if (k == TLt && paren == 0) {
+                        ++angle;
+                    } else if (k == TGt && paren == 0) {
+                        if (--angle == 0) break;
+                    } else if (k == TSemi || k == TLBrace) {
+                        break;
+                    }
+                }
+                if (open != 0 && close != 0 && j < tokens.size() && tokens[j].kind == TGt && close + 1 == j &&
+                    open > i + 2) {
+                    for (size_t k2 = i; k2 < open; ++k2) out.push_back(tokens[k2]);
+                    if (close > open + 1) {
+                        Token comma = tokens[open];
+                        comma.kind = TComma;
+                        comma.text = ",";
+                        out.push_back(comma);
+                        for (size_t k2 = open + 1; k2 < close; ++k2) out.push_back(tokens[k2]);
+                    }
+                    out.push_back(tokens[j]);
+                    i = j;
+                    continue;
+                }
+            }
+            out.push_back(t);
+        }
+        tokens = std::move(out);
+    }
+    // `namespace fs = std::filesystem;` ([namespace.alias]): the declaration is dropped and each `fs::` is written out in full.
+    void expand_namespace_aliases() {
+        std::map<std::string, std::vector<Token>> aliases;
+        std::vector<Token> out;
+        out.reserve(tokens.size());
+        for (size_t i = 0; i < tokens.size(); ++i) {
+            const Token& t = tokens[i];
+            if (t.kind == TNamespace && i + 3 < tokens.size() && tokens[i + 1].kind == TIdent && tokens[i + 2].kind == TAssign) {
+                size_t j = i + 3;
+                std::vector<Token> target;
+                while (j < tokens.size() && tokens[j].kind != TSemi && tokens[j].kind != TEnd) target.push_back(tokens[j++]);
+                aliases[tokens[i + 1].text] = target;
+                i = j;
+                continue;
+            }
+            if (t.kind == TIdent && !aliases.empty() && i + 1 < tokens.size() && tokens[i + 1].kind == TColonColon &&
+                aliases.count(t.text) > 0 && !(i > 0 && tokens[i - 1].kind == TColonColon)) {
+                for (const Token& a : aliases[t.text]) out.push_back(a);
+                continue;
+            }
+            out.push_back(t);
+        }
+        tokens = std::move(out);
+    }
     void lower_cxx_spellings() {
+        expand_namespace_aliases();
+        rewrite_function_signatures();
         const auto is_word = [this](size_t i, const char* w) {
             return i < tokens.size() && tokens[i].kind == TIdent && tokens[i].text == w;
         };
@@ -2203,6 +2279,7 @@ struct Parser {
     bool class_needs_ctor(const StructDef& d) const {
         for (const Method& m : d.methods)
             if (m.name == "<ctor>") return true;
+        if (d.ctor_tmpl) return true;
         if (d.poly) return true;  // the constructor stores the table pointer
         if (d.base >= 0 && class_needs_ctor(structs[static_cast<size_t>(d.base)])) return true;
         for (size_t i = d.base_fields; i < d.fields.size(); ++i) {
@@ -2242,6 +2319,8 @@ struct Parser {
         if (sd.poly || sd.base >= 0 || sd.fields.empty()) return false;
         for (const Method& m : sd.methods)
             if (m.name == "<ctor>" && !m.implicit) return false;
+        for (auto it = member_tmpls.begin(); it != member_tmpls.end(); ++it)
+            if (it->first.first == sid && it->first.second == it->second.owner) return false;  // a constructor template
         if (args.size() == 1) {
             Type at;
             if (static_type(args[0], &at) && at.base == 3 && at.pointers == 0 && !at.is_array() && at.struct_id == sid)
@@ -3775,7 +3854,19 @@ struct Parser {
             return -1;
         }
         if (p.base == 3) {
-            if (a.pointers != 0 || a.base != 3) return -1;
+            if (a.pointers != 0 || a.base != 3) {
+                // A converting constructor of the parameter's class takes the argument (a string literal for a path or
+                // a std::string): a user-defined conversion, ranked after the standard ones ([over.ics.rank]).
+                if (p.struct_id >= 0 && p.pointers == 0 && !p.is_array()) {
+                    std::vector<Node> probe;
+                    probe.push_back(arg);
+                    const Method* c = find_ctor(p.struct_id, probe);
+                    if (c != nullptr && c->params.size() == 1 && !is_copy_param(*c, p.struct_id) &&
+                        !is_move_param(*c, p.struct_id) && call_score(c->params, probe) >= 0)
+                        return 4;
+                }
+                return -1;
+            }
             if (a.struct_id == p.struct_id) return want_ref && !want_rref && is_rvalue(arg) ? 1 : 0;
             return derives_from(a.struct_id, p.struct_id) ? 2 : -1;
         }
@@ -4006,6 +4097,46 @@ struct Parser {
                 at = saved;
                 if (!ok) return false;
                 arg = std::move(made);
+            }
+            if (pt.base == 3 && pt.pointers == 0 && pt.struct_id >= 0 && !pt.is_array() && cur_locals != nullptr &&
+                class_needs_ctor(structs[static_cast<size_t>(pt.struct_id)]) && !(arg.kind == Node::Block)) {
+                // An argument that is not an object of the parameter's class (a string literal for a std::string, a lambda
+                // for a std::function) is converted by a converting constructor into a temporary first ([over.best.ics],
+                // [class.conv.ctor]); the temporary lives to the end of the statement.
+                Type from;
+                bool convert = false;
+                if (static_type(arg, &from) && !from.is_array()) {
+                    const bool is_class = from.base == 3 && from.pointers == 0;
+                    bool related = false;
+                    if (is_class)
+                        for (int walk = from.struct_id; walk >= 0; walk = structs[static_cast<size_t>(walk)].base)
+                            if (walk == pt.struct_id) related = true;
+                    if (!related && !(is_class && conv_for(from.struct_id, pt) != nullptr)) {
+                        std::vector<Node> probe;
+                        probe.push_back(arg);
+                        const Method* c = find_ctor(pt.struct_id, probe);
+                        convert = (c != nullptr && c->params.size() == 1 && !is_copy_param(*c, pt.struct_id) &&
+                                   !is_move_param(*c, pt.struct_id) && call_score(c->params, probe) >= 0) ||
+                                  structs[static_cast<size_t>(pt.struct_id)].ctor_tmpl;
+                    }
+                }
+                if (convert) {
+                    Local hidden;
+                    hidden.name = "__cv" + std::to_string(tmp_count++);
+                    hidden.type = pt;
+                    hidden.type.is_ref = false;
+                    hidden.type.rref = false;
+                    place_local(cur_locals, hidden);
+                    std::vector<Node> cargs;
+                    cargs.push_back(std::move(arg));
+                    Node ctor_stmt;
+                    if (!special_call(pt.struct_id, "<ctor>", node_addr(node_name(hidden.name)), std::move(cargs), &ctor_stmt))
+                        return false;
+                    stmt_pre.push_back(std::move(ctor_stmt));
+                    if (class_needs_dtor(structs[static_cast<size_t>(pt.struct_id)]))
+                        stmt_temps.push_back(Temp{hidden.name, pt.struct_id});
+                    arg = node_name(hidden.name);
+                }
             }
             if (pt.is_ref) {
                 const bool object = arg.kind == Node::Name || arg.kind == Node::Field || arg.kind == Node::Index ||
@@ -5534,6 +5665,11 @@ struct Parser {
             bool exp = false;
             if (!parse_type(&a->type, &imp, &exp)) return false;
             while (accept(TStar)) ++a->type.pointers;
+            if (accept(TAmp)) a->type.is_ref = true;  // Box<const int&>: a reference type as an argument
+            else if (accept(TAndAnd)) {
+                a->type.is_ref = true;
+                a->type.rref = true;
+            }
             return true;
         }
         if (pat_values != nullptr && is(TIdent) && pat_values->count(cur().text) > 0 && at + 1 < tokens.size() &&
@@ -6259,6 +6395,7 @@ struct Parser {
         unbind_params(saved);
         if (!ok) return false;
         at = mt.td.end;
+        if (building != nullptr && mname == mt.owner) building->ctor_tmpl = true;
         member_tmpls[std::make_pair(self, mname)] = std::move(mt);
         return true;
     }
@@ -6301,8 +6438,15 @@ struct Parser {
                     if (walk == sid) return true;  // a copy
             }
         }
-        for (const Method& m : def.methods)
-            if (m.name == "<ctor>" && m.tsym.empty() && m.params.size() == args.size()) return true;
+        for (const Method& m : def.methods) {
+            if (m.name != "<ctor>" || !m.tsym.empty() || m.params.size() != args.size()) continue;
+            // The copy and move constructors take an object of this class: they do not stop a constructor template from
+            // taking something else.
+            if (args.size() == 1 && m.params[0].base == 3 && m.params[0].struct_id == sid && m.params[0].pointers <= 1)
+                continue;
+            if (call_score(m.params, args) < 0) continue;  // this one cannot take the arguments: the template may
+            return true;
+        }
         const MemberTmpl mt = *found;
         std::vector<TArg> targs;
         if (!deduce_args(mt.td, mt.owner, &targs, args)) return false;
@@ -8632,7 +8776,13 @@ bool Parser::parse_local_decl_one(const Type& type, bool is_typedef, bool is_sta
             // C x = value; with a value that is not an object of a class (std::string s = "abc"; V v = 5;): a converting
             // constructor makes x from it ([dcl.init], copy-initialisation, with the copy elided).
             Type from;
-            if (static_type(init, &from) && !(from.base == 3 && from.pointers == 0 && !from.is_array())) {
+            bool unrelated_class = false;
+            if (static_type(init, &from) && from.base == 3 && from.pointers == 0 && !from.is_array() && from.struct_id >= 0) {
+                unrelated_class = true;  // an object of another class (a lambda): a converting constructor takes it
+                for (int walk = from.struct_id; walk >= 0; walk = structs[static_cast<size_t>(walk)].base)
+                    if (walk == decl.type.struct_id) unrelated_class = false;
+            }
+            if (static_type(init, &from) && (unrelated_class || !(from.base == 3 && from.pointers == 0 && !from.is_array()))) {
                 ctor_args.push_back(std::move(init));
                 have_ctor_args = true;
                 has_init = false;
@@ -10135,8 +10285,28 @@ bool Parser::method_call(Node* out, Node object, bool arrow, const std::string& 
         call.text = m->qname;
     } else {
         if (has_effects(self)) {
-            error = "a virtual call needs an object expression without side effects";
-            return false;
+            // The object expression is used twice (to find the table and as `this`): it is evaluated once, into a hidden
+            // pointer, before the statement.
+            Type self_type;
+            if (cur_locals == nullptr || !static_type(self, &self_type)) {
+                error = "a virtual call needs an object expression without side effects";
+                return false;
+            }
+            Local hidden;
+            hidden.name = "__vo" + std::to_string(tmp_count++);
+            hidden.type = self_type;
+            place_local(cur_locals, hidden);
+            Node assign;
+            assign.kind = Node::Assign;
+            assign.op = TAssign;
+            assign.number = 1;
+            assign.kids.push_back(node_name(hidden.name));
+            assign.kids.push_back(std::move(self));
+            Node stmt;
+            stmt.kind = Node::ExprStmt;
+            stmt.kids.push_back(std::move(assign));
+            stmt_pre.push_back(std::move(stmt));
+            self = node_name(hidden.name);
         }
         FuncType ft;
         ft.ret = m->ret;
@@ -10145,7 +10315,15 @@ bool Parser::method_call(Node* out, Node object, bool arrow, const std::string& 
         self_ptr.struct_id = m->owner;
         self_ptr.pointers = 1;
         ft.params.push_back(self_ptr);
-        for (const Type& param : m->params) ft.params.push_back(param);
+        for (const Type& param : m->params) {
+            Type as_passed = param;
+            if (as_passed.is_ref) {  // a reference parameter is passed as a pointer
+                as_passed.is_ref = false;
+                as_passed.rref = false;
+                as_passed.pointers += 1;
+            }
+            ft.params.push_back(as_passed);
+        }
         Type fp;
         fp.base = 1;
         fp.pointers = 1;
@@ -11638,13 +11816,10 @@ bool Parser::parse_postfix(Node* out) {
             Node call;
             call.kind = Node::Call;
             call.kids.push_back(std::move(*out));
-            if (!accept(TRParen)) {
-                do {
-                    Node arg;
-                    if (!parse_expr(1, &arg)) return false;
-                    call.kids.push_back(std::move(arg));
-                } while (accept(TComma));
-                if (!expect(TRParen, "')'")) return false;
+            {
+                std::vector<Node> pargs;  // read like any call: a pack `a...` is expanded here too
+                if (!parse_call_args(&pargs)) return false;
+                for (Node& a : pargs) call.kids.push_back(std::move(a));
             }
             *out = std::move(call);
             continue;

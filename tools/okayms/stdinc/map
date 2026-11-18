@@ -1,0 +1,100 @@
+// okay-ms own standard header: std::map and std::unordered_map, written from ISO/IEC 14882 [map] and [unord.map]. Own
+// minimal version, like <set>: the entries are kept in an array sorted by key (binary search), so an iterator is a plain
+// pointer to a pair<Key, Value>, and an insert or erase in the middle moves the entries after it (linear time, where the
+// standard says logarithmic). Iterators and references are invalidated by an insert or erase. Ordering is by operator< on
+// the key (no comparator; the extra template parameters of the standard are accepted and ignored). unordered_map is the same
+// container: it iterates in key order and needs operator< on the key, not std::hash. The key in a pair is not const. No
+// allocator, no node handles, no exceptions (at() on a missing key makes the entry instead of throwing).
+#pragma once
+#include <cstddef>
+#include <initializer_list>
+#include <utility>
+#include <vector>
+namespace std {
+template <typename K, typename V, typename C = int, typename A = int>
+class map {
+    vector<pair<K, V>> items_;
+
+    size_t lower(const K& k) const {
+        size_t lo = 0;
+        size_t hi = items_.size();
+        while (lo < hi) {
+            const size_t mid = lo + (hi - lo) / 2;
+            if (items_[mid].first < k) lo = mid + 1;
+            else hi = mid;
+        }
+        return lo;
+    }
+
+public:
+    typedef K key_type;
+    typedef V mapped_type;
+    typedef pair<K, V> value_type;
+    typedef size_t size_type;
+    typedef pair<K, V>* iterator;
+    typedef const pair<K, V>* const_iterator;
+
+    map() {}
+    map(initializer_list<pair<K, V>> list) {
+        for (size_t i = 0; i < list.size(); ++i) insert(list.begin()[i]);
+    }
+    size_t size() const { return items_.size(); }
+    bool empty() const { return items_.empty(); }
+    pair<K, V>* begin() { return items_.begin(); }
+    const pair<K, V>* begin() const { return items_.begin(); }
+    pair<K, V>* end() { return items_.end(); }
+    const pair<K, V>* end() const { return items_.end(); }
+    void clear() { items_.clear(); }
+    size_t count(const K& k) const {
+        const size_t at = lower(k);
+        return at < items_.size() && !(k < items_[at].first) ? 1 : 0;
+    }
+    pair<K, V>* find(const K& k) {
+        const size_t at = lower(k);
+        if (at < items_.size() && !(k < items_[at].first)) return items_.begin() + at;
+        return items_.end();
+    }
+    const pair<K, V>* find(const K& k) const {
+        const size_t at = lower(k);
+        if (at < items_.size() && !(k < items_[at].first)) return items_.begin() + at;
+        return items_.end();
+    }
+    bool contains(const K& k) const { return count(k) != 0; }
+    V& operator[](const K& k) {
+        const size_t at = lower(k);
+        if (at < items_.size() && !(k < items_[at].first)) return items_[at].second;
+        pair<K, V> entry;
+        entry.first = k;
+        items_.insert(items_.begin() + at, entry);
+        return items_[at].second;
+    }
+    V& at(const K& k) { return (*this)[k]; }
+    pair<pair<K, V>*, bool> insert(const pair<K, V>& value) {
+        const size_t at = lower(value.first);
+        if (at < items_.size() && !(value.first < items_[at].first))
+            return pair<pair<K, V>*, bool>(items_.begin() + at, false);
+        items_.insert(items_.begin() + at, value);
+        return pair<pair<K, V>*, bool>(items_.begin() + at, true);
+    }
+    pair<pair<K, V>*, bool> emplace(const K& k, const V& v) { return insert(pair<K, V>(k, v)); }
+    size_t erase(const K& k) {
+        const size_t at = lower(k);
+        if (at < items_.size() && !(k < items_[at].first)) {
+            items_.erase(items_.begin() + at);
+            return 1;
+        }
+        return 0;
+    }
+    pair<K, V>* erase(pair<K, V>* pos) {
+        const size_t at = pos - items_.begin();
+        items_.erase(items_.begin() + at);
+        return items_.begin() + at;
+    }
+};
+
+template <typename K, typename V, typename H = int, typename E = int, typename A = int>
+class unordered_map : public map<K, V> {
+public:
+    unordered_map() {}
+};
+}

@@ -166,5 +166,16 @@ int main() {
         CHECK(HowItPlugsIn(true, true, true).find("step") != std::string::npos);
         CHECK(HowItPlugsIn(false, false, true).find("value") != std::string::npos);
     }
+    {   // Letters typed while the popup is still opening are kept (the first letter used to be lost).
+        char buf[8] = "";
+        const unsigned typed[] = {'s', 'o', 'u', 'n', 'd'};
+        CHECK(AppendTypedChars(buf, sizeof buf, typed, 5) == 5 && std::string(buf) == "sound");
+        const unsigned more[] = {'x', 'y', 'z', 'q'};                 // only room for two more (7 letters + NUL)
+        CHECK(AppendTypedChars(buf, sizeof buf, more, 4) == 2 && std::string(buf) == "soundxy");
+        char b2[8] = "a";
+        const unsigned odd[] = {9u, 'b', 0x20ACu, 127u, 'c'};         // tab, euro sign and DEL are not taken
+        CHECK(AppendTypedChars(b2, sizeof b2, odd, 5) == 2 && std::string(b2) == "abc");
+        CHECK(AppendTypedChars(nullptr, 4, typed, 5) == 0 && AppendTypedChars(b2, 0, typed, 5) == 0);
+    }
     TEST_MAIN_RESULT();
 }

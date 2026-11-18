@@ -5274,8 +5274,8 @@ inline void Draw(EditorState& ed, bool* open) {
         st.linkPending = false;
     }
     // The popup opens at the size you left it at (or the default for the Density), inside the screen.
-    ImGui::SetNextWindowSize(VsPaletteWantedSize(ImGui::GetMainViewport()->Size), ImGuiCond_Appearing);
-    if (ImGui::BeginPopup("##vspalette")) {
+    ImGui::SetNextWindowSize(VsPaletteWantedSize(ImGui::GetMainViewport()->Size), ImGuiCond_Always);   // Always: a popup otherwise falls back to its content size
+    if (ImGui::BeginPopup("##vspalette", ImGuiWindowFlags_NoResize | ImGuiWindowFlags_NoScrollbar | ImGuiWindowFlags_NoScrollWithMouse)) {
         DrawNodePalette(st, g, [&](const VsDef& d, const std::string& arg) { addFromPalette(d, arg); });
         ImGui::EndPopup();
 

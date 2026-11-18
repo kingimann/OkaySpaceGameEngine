@@ -10,6 +10,7 @@
 #include <algorithm>
 #include <cmath>
 #include <cstdlib>
+#include <cstring>
 #include <string>
 #include <vector>
 
@@ -219,6 +220,21 @@ inline std::string HowItPlugsIn(bool hasFlowIn, bool hasFlowOut, bool hasDataIn)
     if (!hasFlowIn && hasFlowOut && !hasDataIn) return "An event: it starts a flow when it happens.";
     if (hasFlowIn) return "A step: it runs when the flow reaches it.";
     return "A value: it gives something to other nodes.";
+}
+
+/// Text typed (or pasted) before the search box has the keyboard: append the printable ASCII characters of `chars` to the
+/// NUL-terminated `buf` (size `cap`), never past its end. Returns how many were added. Other characters are left to the
+/// text box. This is what keeps the first letters you type while the popup is still opening.
+inline int AppendTypedChars(char* buf, std::size_t cap, const unsigned* chars, int n) {
+    if (!buf || cap == 0) return 0;
+    std::size_t len = std::strlen(buf);
+    int added = 0;
+    for (int i = 0; i < n; ++i) {
+        if (chars[i] < 32u || chars[i] > 126u) continue;
+        if (len + 1 >= cap) break;
+        buf[len++] = (char)chars[i]; buf[len] = '\0'; ++added;
+    }
+    return added;
 }
 
 /// Number of single-letter edits (insert, delete, change) between two strings.

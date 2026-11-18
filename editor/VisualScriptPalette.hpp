@@ -530,50 +530,107 @@ inline void DrawNodePalette(VsEditState& st, const VsEditGraph& g,
     const bool wire = st.linkPending;
     if (ImGui::IsWindowAppearing()) {
         search[0] = '\0'; s_kb = 0; s_listFocus = false; s_showAll = false; s_scrollTop = true;
-        ImGui::SetKeyboardFocusHere();
+        s_focusSearch = true;   // asked for here, done just before the search box is drawn (not on the first widget)
         if (wire) s_side = -3;   // a wire dropped on empty space: start on the whole list, the nodes that fit
     }
     const bool fitOnly = wire && !s_showAll;
     const float winW = ImGui::GetWindowSize().x;
-    // Typing anywhere goes to the search box.
-    if (s_listFocus && io.InputQueueCharacters.Size > 0 && !io.KeyCtrl && !io.KeyAlt) { s_listFocus = false; s_focusSearch = true; }
+    // Typing anywhere goes to the search box. While the text box does not have the keyboard yet (the popup is still opening,
+    // or the list had the keys) it would drop the first letters, so those are put in the box here.
+    static bool s_searchActive = false;   // the text box had the keyboard last frame (then it takes typing itself)
+    static int  s_keepEnd = 0;            // frames left in which the box puts its cursor at the end instead of selecting all
+    if (ImGui::IsWindowAppearing()) s_searchActive = false;
+    if (!s_searchActive && io.InputQueueCharacters.Size > 0 && !io.KeyCtrl && !io.KeyAlt) {
+        std::vector<unsigned> typed;
+        for (int ci = 0; ci < io.InputQueueCharacters.Size; ++ci) typed.push_back((unsigned)io.InputQueueCharacters[ci]);
+        if (sn::AppendTypedChars(search, sizeof search, typed.data(), (int)typed.size()) > 0) { s_kb = 0; s_scrollTop = true; }
+        io.InputQueueCharacters.resize(0);
+        s_listFocus = false; s_focusSearch = true;
+    }
     if (ImGui::IsKeyPressed(ImGuiKey_Tab, false)) {
         s_listFocus = !s_listFocus;
         if (!s_listFocus) s_focusSearch = true;
     }
     if (ImGui::IsKeyPressed(ImGuiKey_Escape, false)) ImGui::CloseCurrentPopup();
-    if (wire) {
+    const float lhTop = ImGui::GetTextLineHeight();
+    if (wire) {   // a clear banner: why the list is short, and the switch to see everything
         const bool exec = st.linkExec;
-        ImGui::AlignTextToFramePadding();
-        ImGui::TextColored(ImVec4(0.55f, 0.8f, 1.0f, 1.0f), "%s", sn::PinContextLine(fitOnly));
-        if (!exec && fitOnly) { ImGui::SameLine(); ImGui::TextDisabled("(%s pin)", okay::vs::PinTypeName(dragged)); }
+        const float bh = std::max(36.0f, lhTop + 16.0f);
+        const ImVec2 b0 = ImGui::GetCursorScreenPos();
+        const float bw = ImGui::GetContentRegionAvail().x;
+        ImDrawList* bdl = ImGui::GetWindowDrawList();
+        bdl->AddRectFilled(b0, ImVec2(b0.x + bw, b0.y + bh), ImGui::GetColorU32(ImGuiCol_ButtonActive, 0.35f), 8.0f);
+        std::string msg = sn::PinContextLine(fitOnly);
+        if (!exec && fitOnly) msg += std::string("  (") + okay::vs::PinTypeName(dragged) + " pin)";
+        bdl->AddText(ImVec2(b0.x + 14.0f, b0.y + (bh - lhTop) * 0.5f), ImGui::GetColorU32(ImGuiCol_Text), msg.c_str());
         const char* sw = fitOnly ? "Show all" : "Only what fits";
-        ImGui::SameLine(std::max(ImGui::GetCursorPosX(), winW - ImGui::CalcTextSize(sw).x - 2.0f * dm.framePad.x - dm.windowPad.x));
-        if (ImGui::Button(sw)) { s_showAll = !s_showAll; s_kb = 0; s_scrollTop = true; }
+        const float swW = ImGui::CalcTextSize(sw).x + 28.0f;
+        ImGui::SetCursorScreenPos(ImVec2(b0.x + bw - swW - 4.0f, b0.y + 3.0f));
+        if (ImGui::Button(sw, ImVec2(swW, bh - 6.0f))) { s_showAll = !s_showAll; s_kb = 0; s_scrollTop = true; }
+        ImGui::SetCursorScreenPos(ImVec2(b0.x, b0.y + bh + ImGui::GetStyle().ItemSpacing.y));
     }
-    // The search box, with a Clear button at its right.
-    const float clearW = ImGui::CalcTextSize("Clear").x + 2.0f * dm.framePad.x;
-    if (s_focusSearch) { ImGui::SetKeyboardFocusHere(); s_focusSearch = false; }
-    ImGui::SetNextItemWidth(-(clearW + ImGui::GetStyle().ItemSpacing.x));
-    if (ImGui::InputTextWithHint("##vssearch", "Search nodes by name or what they do...", search, sizeof search,
-                                 s_listFocus ? ImGuiInputTextFlags_ReadOnly : ImGuiInputTextFlags_None)) { s_kb = 0; s_scrollTop = true; }
+    // The search box: 40 px tall with a magnifier, and a Clear button at its right.
+    const float boxH = 40.0f;
+    const float clearW = ImGui::CalcTextSize("Clear").x + 3.0f * dm.framePad.x;
+    if (s_focusSearch) { ImGui::SetKeyboardFocusHere(); s_focusSearch = false; s_keepEnd = 2; }
+    ImGui::PushStyleVar(ImGuiStyleVar_FramePadding, ImVec2(40.0f, (boxH - lhTop) * 0.5f));
+    ImGui::PushStyleVar(ImGuiStyleVar_FrameRounding, 8.0f);
+    const ImVec2 boxP = ImGui::GetCursorScreenPos();
+    if (s_listFocus) {
+        // The list has the keys: the box is only drawn (a text box that keeps the keyboard would write its old text back
+        // over what is typed next). Click it, press Tab or just type to go back to it.
+        const float fakeW = ImGui::GetContentRegionAvail().x - (clearW + ImGui::GetStyle().ItemSpacing.x);
+        if (ImGui::InvisibleButton("##vssearchfake", ImVec2(fakeW, boxH))) { s_listFocus = false; s_focusSearch = true; }
+        ImDrawList* fdl = ImGui::GetWindowDrawList();
+        fdl->AddRectFilled(boxP, ImVec2(boxP.x + fakeW, boxP.y + boxH), ImGui::GetColorU32(ImGuiCol_FrameBg), 8.0f);
+        const bool none = search[0] == '\0';
+        fdl->AddText(ImVec2(boxP.x + 40.0f, boxP.y + (boxH - lhTop) * 0.5f),
+                     ImGui::GetColorU32(none ? ImGuiCol_TextDisabled : ImGuiCol_Text), none ? "Search nodes by name or what they do..." : search);
+        s_searchActive = false;
+    } else {
+        ImGui::SetNextItemWidth(-(clearW + ImGui::GetStyle().ItemSpacing.x));
+        // A box focused by key selects all its text, so the next letter would replace what is already typed: the callback
+        // puts the cursor at the end instead (for the first frames after the focus).
+        auto keepEnd = [](ImGuiInputTextCallbackData* d) -> int {
+            if (*(int*)d->UserData > 0) { d->CursorPos = d->BufTextLen; d->SelectionStart = d->SelectionEnd = d->BufTextLen; }
+            return 0;
+        };
+        if (ImGui::InputTextWithHint("##vssearch", "Search nodes by name or what they do...", search, sizeof search,
+                                     ImGuiInputTextFlags_CallbackAlways, keepEnd, &s_keepEnd))
+            { s_kb = 0; s_scrollTop = true; }
+        s_searchActive = ImGui::IsItemActive();
+        if (s_keepEnd > 0 && s_searchActive) --s_keepEnd;
+    }
+    {   // the magnifier, drawn (the UI font has no glyph for it)
+        ImDrawList* mdl = ImGui::GetWindowDrawList();
+        const ImVec2 c(boxP.x + 20.0f, boxP.y + boxH * 0.5f - 2.0f);
+        const ImU32 mc = ImGui::GetColorU32(ImGuiCol_TextDisabled);
+        mdl->AddCircle(c, 7.0f, mc, 16, 2.2f);
+        mdl->AddLine(ImVec2(c.x + 5.0f, c.y + 5.0f), ImVec2(c.x + 11.0f, c.y + 11.0f), mc, 2.4f);
+    }
+    ImGui::PopStyleVar(2);
     const bool searchEmpty = search[0] == '\0';
     ImGui::SameLine();
     ImGui::BeginDisabled(searchEmpty);
-    if (ImGui::Button("Clear", ImVec2(clearW, 0))) { search[0] = '\0'; s_kb = 0; s_scrollTop = true; s_listFocus = false; s_focusSearch = true; }
+    if (ImGui::Button("Clear", ImVec2(clearW, boxH))) { search[0] = '\0'; s_kb = 0; s_scrollTop = true; s_listFocus = false; s_focusSearch = true; }
     ImGui::EndDisabled();
-    ImGui::PushStyleVar(ImGuiStyleVar_FramePadding, ImVec2(dm.paletteFilterPad.x, dm.paletteFilterPad.y));
-    const float filterW = (ImGui::GetContentRegionAvail().x - 3.0f * ImGui::GetStyle().ItemSpacing.x) / 4.0f;
-    for (int fi = 0; fi < 4; ++fi) {
-        if (fi) ImGui::SameLine();
-        const bool on = s_filter == fi;
-        if (on) ImGui::PushStyleColor(ImGuiCol_Button, ImGui::GetColorU32(ImGuiCol_ButtonActive));
-        if (ImGui::Button(VsLevelFilterName((VsLevelFilter)fi), ImVec2(filterW, 0))) {
-            s_filter = fi; s_kb = 0; s_scrollTop = true; saveLists();
+    // Level buttons: one big segmented row.
+    {
+        ImGui::PushStyleVar(ImGuiStyleVar_ItemSpacing, ImVec2(3.0f, ImGui::GetStyle().ItemSpacing.y));
+        ImGui::PushStyleVar(ImGuiStyleVar_FrameRounding, 6.0f);
+        const float filterW = (ImGui::GetContentRegionAvail().x - 3.0f * 3.0f) / 4.0f;
+        const float fh = std::max(36.0f, lhTop + 16.0f);
+        for (int fi = 0; fi < 4; ++fi) {
+            if (fi) ImGui::SameLine();
+            const bool on = s_filter == fi;
+            if (on) ImGui::PushStyleColor(ImGuiCol_Button, ImGui::GetColorU32(ImGuiCol_ButtonActive));
+            if (ImGui::Button(VsLevelFilterName((VsLevelFilter)fi), ImVec2(filterW, fh))) {
+                s_filter = fi; s_kb = 0; s_scrollTop = true; saveLists();
+            }
+            if (on) ImGui::PopStyleColor();
         }
-        if (on) ImGui::PopStyleColor();
+        ImGui::PopStyleVar(2);
     }
-    ImGui::PopStyleVar();
     const bool enter = ImGui::IsKeyPressed(ImGuiKey_Enter, false) || ImGui::IsKeyPressed(ImGuiKey_KeypadEnter, false);
     const std::string needle = lower(search);
 
@@ -619,7 +676,7 @@ inline void DrawNodePalette(VsEditState& st, const VsEditGraph& g,
 
     // ---- Topics (left) ----
     const float sideW = sn::CategoryPaneWidth(winW);
-    const float footH = ImGui::GetTextLineHeight() + ImGui::GetStyle().ItemSpacing.y + 2.0f;
+    const float footH = ImGui::GetTextLineHeight() + 16.0f;
     ImGui::PushStyleVar(ImGuiStyleVar_FramePadding, ImVec2(dm.paletteSideFramePad.x, dm.paletteSideFramePad.y));
     ImGui::PushStyleVar(ImGuiStyleVar_ItemSpacing, ImVec2(dm.paletteSideItemSpacing.x, dm.paletteSideItemSpacing.y));
     ImGui::BeginChild("##vspside", ImVec2(sideW, -footH), ImGuiChildFlags_Borders);
@@ -638,7 +695,8 @@ inline void DrawNodePalette(VsEditState& st, const VsEditGraph& g,
         char n[16] = ""; if (count >= 0) std::snprintf(n, sizeof n, "%d", count);
         const float nw = ImGui::CalcTextSize(n).x;
         sdl->PushClipRect(ImVec2(p.x, p.y), ImVec2(right - nw - 6, p.y + h + 2.0f * padY), true);
-        sdl->AddText(ImVec2(p.x + 18, p.y + padY), ImGui::GetColorU32(ImGuiCol_Text), label);
+        const std::string shown = sn::ElideDescription(label, [&](const std::string& t) { return ImGui::CalcTextSize(t.c_str()).x; }, right - nw - 6 - (p.x + 18));
+        sdl->AddText(ImVec2(p.x + 18, p.y + padY), ImGui::GetColorU32(ImGuiCol_Text), shown.c_str());
         sdl->PopClipRect();
         if (count >= 0) sdl->AddText(ImVec2(right - nw - 2, p.y + padY), ImGui::GetColorU32(ImGuiCol_TextDisabled), n);
         if (ImGui::IsItemHovered()) {
@@ -647,7 +705,8 @@ inline void DrawNodePalette(VsEditState& st, const VsEditGraph& g,
                               : id == -2 ? "The last nodes you added."
                               : id == -1 ? "Nodes you starred."
                               : nullptr;
-            if (blurb && *blurb) ImGui::SetTooltip("%s", blurb);
+            if (blurb && *blurb) ImGui::SetTooltip("%s\n%s", label, blurb);
+            else if (shown != label) ImGui::SetTooltip("%s", label);
         }
         ImGui::PopID();
         return clicked;
@@ -797,9 +856,12 @@ inline void DrawNodePalette(VsEditState& st, const VsEditGraph& g,
     s_kb = sn::MoveSelection(s_kb, count, sn::Move::None, pageRows);
     const bool kbMoved = s_kb != kbBefore;
 
+    // Three columns: topics | node rows | preview of the chosen node.
+    const float previewW = sn::PreviewPaneWidth(winW);
+    const Entry* hovered = nullptr;
     const Entry* toAdd = nullptr;
+    ImGui::BeginChild("##vspres", ImVec2(-(previewW + ImGui::GetStyle().ItemSpacing.x), -footH), ImGuiChildFlags_Borders);
     // What is said above the list: a suggestion line, or the friendly empty message.
-    ImGui::BeginChild("##vspres", ImVec2(-FLT_MIN, -footH), ImGuiChildFlags_Borders);
     if (rows.empty() || s_suggest) {
         ImGui::PushTextWrapPos(0.0f);
         if (s_suggest) {
@@ -812,7 +874,7 @@ inline void DrawNodePalette(VsEditState& st, const VsEditGraph& g,
         ImGui::Spacing();
     }
     const float lh = ImGui::GetTextLineHeight();
-    const float rowPad = dm.paletteRowPad;
+    const float rowPad = 8.0f;
     const float lineH = sn::RowHeight(dm.rowH, lh, rowPad);
     const float stride = lineH + ImGui::GetStyle().ItemSpacing.y;
     s_rowStride = stride; s_viewH = ImGui::GetWindowHeight();
@@ -826,6 +888,7 @@ inline void DrawNodePalette(VsEditState& st, const VsEditGraph& g,
     ImGui::PushStyleColor(ImGuiCol_HeaderActive, ImVec4(0, 0, 0, 0));
     const bool mouseMoved = io.MouseDelta.x != 0.0f || io.MouseDelta.y != 0.0f;
     const bool showCat = !needle.empty() || s_side < 0;
+    const float hitW = std::max(32.0f, dm.smallHit + 6.0f);   // the star's clickable square
     ImGuiListClipper clip;
     clip.Begin((int)rows.size(), stride);
     std::vector<int> hitsNow;
@@ -840,57 +903,63 @@ inline void DrawNodePalette(VsEditState& st, const VsEditGraph& g,
         ImDrawList* rdl = ImGui::GetWindowDrawList();
         const float w = ImGui::GetContentRegionAvail().x;
         const float right = p.x + w;
-        if (i == s_kb) rdl->AddRectFilled(p, ImVec2(right, p.y + lineH), ImGui::GetColorU32(ImGuiCol_ButtonHovered, 0.65f), 6.0f);
-        // Icon: a rounded tile in the topic's colour with the first letter of the name.
-        const float tile = std::min(lineH - 12.0f, 34.0f);
-        const ImVec2 t0(p.x + 8.0f, p.y + (lineH - tile) * 0.5f);
-        rdl->AddRectFilled(t0, ImVec2(t0.x + tile, t0.y + tile), e.col, 7.0f);
+        if (i == s_kb) rdl->AddRectFilled(p, ImVec2(right, p.y + lineH), ImGui::GetColorU32(ImGuiCol_ButtonHovered, 0.65f), 8.0f);
+        // Icon: a 36 px rounded tile in the topic's colour with the first letter of the name.
+        const float tile = 36.0f;
+        const ImVec2 t0(p.x + 12.0f, p.y + (lineH - tile) * 0.5f);
+        rdl->AddRectFilled(t0, ImVec2(t0.x + tile, t0.y + tile), e.col, 8.0f);
         if (!e.title.empty()) {
             const char letter[2] = {(char)std::toupper((unsigned char)e.title[0]), 0};
             const ImVec2 ls = ImGui::CalcTextSize(letter);
             rdl->AddText(ImVec2(t0.x + (tile - ls.x) * 0.5f, t0.y + (tile - ls.y) * 0.5f), IM_COL32(20, 24, 32, 255), letter);
         }
+        // Right column: the star (a big square to click). The level tag sits at the end of the name line.
+        const char* badge = VsLevelBadge(e.level);
+        const float badgeW = ImGui::CalcTextSize(badge).x + 16.0f;
+        const float starX = right - hitW - 4.0f;
         const float textX = t0.x + tile + 12.0f;
-        const float textTop = p.y + (lineH - (2.0f * lh + 2.0f)) * 0.5f;
-        const float starW = dm.smallHit + 6.0f;
+        const float textRight = starX - 6.0f;
+        const float textTop = p.y + (lineH - (3.0f * lh + 4.0f)) * 0.5f;
+        const float badgeX = textRight - badgeW;
+        {
+            const ImVec2 b0(badgeX, textTop - 2.0f), b1(badgeX + badgeW, b0.y + lh + 4.0f);
+            const ImU32 bg = e.level == VsLevel::Basic ? IM_COL32(46, 110, 78, 255)
+                           : e.level == VsLevel::Advanced ? IM_COL32(96, 72, 120, 255)
+                           : IM_COL32(52, 78, 120, 255);
+            rdl->AddRectFilled(b0, b1, bg, 5.0f);
+            rdl->AddText(ImVec2(b0.x + 8.0f, b0.y + 2.0f), IM_COL32(236, 240, 248, 255), badge);
+        }
         // Name, matched letters in the accent colour.
         float x = textX;
         const ImU32 normal = ImGui::GetColorU32(ImGuiCol_Text), hit = ImGui::GetColorU32(ImGuiCol_PlotLinesHovered);
         for (int c = 0; c < (int)e.title.size(); ++c) {
             const char buf[2] = {e.title[(std::size_t)c], 0};
             const bool h = std::find(hitsNow.begin(), hitsNow.end(), c) != hitsNow.end();
-            rdl->AddText(ImVec2(x, textTop), h ? hit : normal, buf);
-            x += ImGui::CalcTextSize(buf).x;
-        }
-        // Level badge after the name, topic name at the right (when it helps), then the star.
-        const float catW = showCat ? ImGui::CalcTextSize(e.cat.c_str()).x : 0.0f;
-        {
-            const char* badge = VsLevelBadge(e.level);
-            const ImVec2 bs = ImGui::CalcTextSize(badge);
-            const float bw = bs.x + 8.0f, bh = lh + 2.0f;
-            if (x + 8.0f + bw < right - starW - 16.0f) {
-                const ImVec2 b0(x + 8.0f, textTop - 1.0f), b1(b0.x + bw, b0.y + bh);
-                const ImU32 bg = e.level == VsLevel::Basic ? IM_COL32(46, 110, 78, 255)
-                               : e.level == VsLevel::Advanced ? IM_COL32(96, 72, 120, 255)
-                               : IM_COL32(52, 78, 120, 255);
-                rdl->AddRectFilled(b0, b1, bg, 3.0f);
-                rdl->AddText(ImVec2(b0.x + 4.0f, b0.y + 1.0f), IM_COL32(230, 236, 244, 255), badge);
-                x = b1.x;
+            const float cw = ImGui::CalcTextSize(buf).x;
+            if (x + cw > badgeX - 10.0f - ImGui::CalcTextSize("...").x) {   // a long name stops before the level tag
+                rdl->AddText(ImVec2(x, textTop), normal, "...");
+                x = badgeX; break;
             }
+            rdl->AddText(ImVec2(x, textTop), h ? hit : normal, buf);
+            x += cw;
         }
-        if (showCat && x + 24.0f < right - starW - catW - 8.0f)   // only when it does not touch the name or badge
-            rdl->AddText(ImVec2(right - starW - catW - 8.0f, textTop), ImGui::GetColorU32(ImGuiCol_TextDisabled), e.cat.c_str());
-        // One line under the name: what it does in plain words (RowDescription), cut to fit.
+        if (showCat && !e.cat.empty()) {   // the topic, next to the name, when there is room
+            const std::string tag = "  " + e.cat;
+            if (x + ImGui::CalcTextSize(tag.c_str()).x < badgeX - 8.0f)
+                rdl->AddText(ImVec2(x, textTop), ImGui::GetColorU32(ImGuiCol_TextDisabled), tag.c_str());
+        }
+        // Up to two lines under the name: what it does in plain words (RowDescription); "..." only when it runs out.
         {
-            const std::string line = sn::ElideDescription(sn::RowDescription(e.title, e.helpLine, e.sub),
-                [&](const std::string& s) { return ImGui::CalcTextSize(s.c_str()).x; }, right - starW - textX);
-            rdl->AddText(ImVec2(textX, textTop + lh + 2.0f), ImGui::GetColorU32(ImGuiCol_TextDisabled), line.c_str());
+            const auto lines = sn::WrapLines(sn::RowDescription(e.title, e.helpLine, e.sub),
+                [&](const std::string& t) { return ImGui::CalcTextSize(t.c_str()).x; }, textRight - textX, 2);
+            for (std::size_t li = 0; li < lines.size(); ++li)
+                rdl->AddText(ImVec2(textX, textTop + lh + 2.0f + (float)li * (lh + 1.0f)), ImGui::GetColorU32(ImGuiCol_Text, 0.72f), lines[li].c_str());
         }
-        // The favourite star at the right end of the row.
-        ImGui::SameLine(w - dm.smallHit + 4.0f);
+        // The favourite star.
+        ImGui::SetCursorScreenPos(ImVec2(starX, p.y));
         const bool fav = isFav(e.key);
         const ImVec2 sp = ImGui::GetCursorScreenPos();
-        if (ImGui::InvisibleButton("##fav", ImVec2(dm.smallHit, lineH))) {
+        if (ImGui::InvisibleButton("##fav", ImVec2(hitW, lineH))) {
             if (fav) s_fav.erase(std::remove(s_fav.begin(), s_fav.end(), e.key), s_fav.end());
             else s_fav.push_back(e.key);
             ++s_listVer;
@@ -899,33 +968,87 @@ inline void DrawNodePalette(VsEditState& st, const VsEditGraph& g,
         const bool sh = ImGui::IsItemHovered();
         if (sh) ImGui::SetTooltip(fav ? "Remove from favourites" : "Add to favourites");
         {   // a drawn star (the UI font has no star glyph)
-            const ImVec2 c(sp.x + dm.smallHit * 0.5f - 1.0f, sp.y + lineH * 0.5f);
+            const ImVec2 c(sp.x + hitW * 0.5f, sp.y + lineH * 0.5f);
             ImVec2 pts[10];
             for (int k = 0; k < 10; ++k) {
-                const float a = -1.5707963f + (float)k * 0.6283185f, r = (k % 2) ? 3.4f : 8.0f;
+                const float a = -1.5707963f + (float)k * 0.6283185f, r = (k % 2) ? 4.4f : 10.0f;
                 pts[k] = ImVec2(c.x + std::cos(a) * r, c.y + std::sin(a) * r);
             }
             const ImU32 sc = fav ? IM_COL32(255, 204, 64, 255) : sh ? ImGui::GetColorU32(ImGuiCol_Text) : ImGui::GetColorU32(ImGuiCol_TextDisabled);
-            if (fav) rdl->AddConcavePolyFilled(pts, 10, sc); else rdl->AddPolyline(pts, 10, sc, ImDrawFlags_Closed, 1.4f);
+            if (fav) rdl->AddConcavePolyFilled(pts, 10, sc); else rdl->AddPolyline(pts, 10, sc, ImDrawFlags_Closed, 1.6f);
         }
         ImGui::PopID();
     }
     ImGui::PopStyleColor(3);
     if (enter && !rows.empty()) toAdd = rows[(std::size_t)std::clamp(s_kb, 0, (int)rows.size() - 1)].e;
     ImGui::EndChild();
-    ImGui::TextDisabled("Up/Down choose   Enter add   Tab list or search   Left/Right topic   Esc close");
+    ImGui::SameLine();
+
+    // ---- Preview (right): what the chosen node does, before you add it ----
+    hovered = rows.empty() ? nullptr : rows[(std::size_t)std::clamp(s_kb, 0, (int)rows.size() - 1)].e;
+    ImGui::BeginChild("##vspinfo", ImVec2(0, -footH), ImGuiChildFlags_Borders);
+    if (hovered) {
+        const Entry& e = *hovered;
+        ImGui::PushTextWrapPos(0.0f);
+        ImGui::SetWindowFontScale(1.15f);
+        ImGui::TextUnformatted(e.title.c_str());
+        ImGui::SetWindowFontScale(1.0f);
+        ImGui::TextDisabled("%s  -  %s", VsLevelName(e.level), e.cat.c_str());
+        ImGui::Spacing();
+        const std::string what = sn::RowDescription(e.title, e.helpLine, std::string());
+        ImGui::TextWrapped("%s", what.empty() ? "No description yet." : what.c_str());
+        if (!e.example.empty()) {
+            ImGui::Spacing();
+            ImGui::TextDisabled("Example");
+            ImGui::TextWrapped("%s", e.example.c_str());
+        }
+        if (e.def && !e.step) {
+            auto names = [](const std::vector<const char*>& v) { std::vector<std::string> o; for (const char* c : v) if (c) o.push_back(c); return o; };
+            ImGui::Spacing();
+            ImGui::TextDisabled("How it plugs in");
+            ImGui::TextWrapped("%s", sn::HowItPlugsIn(e.def->execIn, !e.def->execOut.empty(), !e.def->dataIn.empty()).c_str());
+            ImGui::TextWrapped("Needs: %s", sn::NameList(names(e.def->dataIn)).c_str());
+            ImGui::TextWrapped("Gives: %s", sn::NameList(names(e.def->dataOut)).c_str());
+            if (!e.def->execOut.empty()) ImGui::TextWrapped("Then continues to: %s", sn::NameList(names(e.def->execOut)).c_str());
+        }
+        ImGui::PopTextWrapPos();
+        ImGui::Spacing();
+        if (ImGui::Button("Add this node", ImVec2(-FLT_MIN, 38.0f))) toAdd = hovered;
+    } else {
+        ImGui::TextWrapped("Pick a node on the left to read what it does before you add it.");
+    }
+    ImGui::EndChild();
+    // The key hints: readable, grouped (the main three first).
+    ImGui::AlignTextToFramePadding();
+    ImGui::TextUnformatted("Up/Down choose     Enter add     Esc close");
+    ImGui::SameLine(0.0f, 28.0f);
+    ImGui::TextColored(ImVec4(ImGui::GetStyle().Colors[ImGuiCol_Text].x, ImGui::GetStyle().Colors[ImGuiCol_Text].y, ImGui::GetStyle().Colors[ImGuiCol_Text].z, 0.7f),
+                       "Tab search or list     Left/Right topic");
     if (toAdd) add(*toAdd);
     ImGui::PopStyleVar(3);
-    // Remember the size the popup was left at (once you stop dragging an edge). The first frames after it opens are
-    // skipped: the window is still settling to the size it was asked for.
-    static int s_framesOpen = 0;
-    if (ImGui::IsWindowAppearing()) s_framesOpen = 0; else ++s_framesOpen;
-    if (s_framesOpen > 4 && !ImGui::IsMouseDown(ImGuiMouseButton_Left)) {
-        const ImVec2 ws = ImGui::GetWindowSize(), want = VsPaletteWantedSize(ImGui::GetMainViewport()->Size);
-        if (std::fabs(ws.x - want.x) > 1.5f || std::fabs(ws.y - want.y) > 1.5f) {   // only a size you chose is kept
-            store.size = {ws.x, ws.y};
-            saveLists();
+    // A grip at the bottom-right corner: drag it to resize; the size is kept (okay_vsnodes.txt). The popup itself is
+    // not resizable by ImGui (it would fall back to its content size), so the size is ours.
+    {
+        const ImVec2 wp = ImGui::GetWindowPos(), ws = ImGui::GetWindowSize();
+        const ImVec2 g0(wp.x + ws.x - 28.0f, wp.y + ws.y - 28.0f), g1(wp.x + ws.x, wp.y + ws.y);
+        static bool s_gripDrag = false;
+        const bool over = ImGui::IsMouseHoveringRect(g0, g1, false);
+        if (over) ImGui::SetMouseCursor(ImGuiMouseCursor_ResizeNWSE);
+        if (over && ImGui::IsMouseClicked(ImGuiMouseButton_Left)) s_gripDrag = true;
+        if (s_gripDrag) {
+            ImGui::SetMouseCursor(ImGuiMouseCursor_ResizeNWSE);
+            const ImVec2 scr = ImGui::GetMainViewport()->Size;
+            if (!ImGui::IsMouseDown(ImGuiMouseButton_Left)) { s_gripDrag = false; saveLists(); }
+            else if (io.MouseDelta.x != 0.0f || io.MouseDelta.y != 0.0f) {
+                const ImVec2 cur = VsPaletteWantedSize(scr);
+                const sn::PanelSize ns = sn::DragResize({cur.x, cur.y}, io.MouseDelta.x, io.MouseDelta.y, scr.x, scr.y);
+                store.size = ns;
+            }
         }
+        ImDrawList* gdl = ImGui::GetWindowDrawList();
+        const ImU32 gc = ImGui::GetColorU32(over || s_gripDrag ? ImGuiCol_Text : ImGuiCol_TextDisabled);
+        for (int k = 1; k <= 3; ++k)
+            gdl->AddLine(ImVec2(g1.x - 4.0f - (float)k * 6.0f, g1.y - 4.0f), ImVec2(g1.x - 4.0f, g1.y - 4.0f - (float)k * 6.0f), gc, 1.5f);
     }
 }
 

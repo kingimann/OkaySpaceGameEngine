@@ -65,7 +65,8 @@ bool build_runtime(Tally& tally, const std::string& cl, const std::string& root)
     for (const char* name : {"ExitProcess", "GetStdHandle", "WriteFile", "GetProcessHeap", "HeapAlloc", "HeapFree",
                              "QueryPerformanceCounter", "QueryPerformanceFrequency", "GetSystemTimeAsFileTime",
                              "GetEnvironmentVariableA", "GetFileAttributesA", "GetCurrentDirectoryA", "CreateFileA",
-                             "GetFileSize", "ReadFile", "CloseHandle"}) {
+                             "GetFileSize", "ReadFile", "CloseHandle", "DeleteFileA", "RemoveDirectoryA", "MoveFileExA",
+                             "CreateDirectoryA"}) {
         okayms::ArchiveMember member;
         member.name = name;
         member.is_import = true;

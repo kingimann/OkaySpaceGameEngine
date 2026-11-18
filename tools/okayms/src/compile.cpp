@@ -3006,7 +3006,7 @@ struct Parser {
                 }
             }
             if (t->base == 3 && t->struct_id >= 0 && t->pointers == 0 && tokens[at + 1].kind == TIdent &&
-                typedefs.find(tokens[at + 1].text) == typedefs.end()) {
+                (typedefs.find(tokens[at + 1].text) == typedefs.end() || find_nested(t->struct_id, tokens[at + 1].text) >= 0)) {
                 // Outer::Nested: nested classes are kept under their plain name.
                 int nested = find_nested(t->struct_id, tokens[at + 1].text);
                 if (nested < 0) nested = find_struct(tokens[at + 1].text);
@@ -4050,6 +4050,7 @@ struct Parser {
     // for (declaration : range): a ':' before any ';' at the top level of the parentheses ([stmt.ranged]).
     bool range_for_ahead() const {
         int depth = 0;
+        int questions = 0;  // `?` at depth 0 whose ':' has not been seen: that ':' is part of a conditional, not a range for
         for (size_t i = at; i < tokens.size() && tokens[i].kind != TEnd; ++i) {
             const Tok k = tokens[i].kind;
             if (k == TLParen || k == TLBrack || k == TLBrace) ++depth;
@@ -4057,7 +4058,11 @@ struct Parser {
                 if (depth == 0) return false;
                 --depth;
             } else if (depth == 0 && k == TSemi) return false;
-            else if (depth == 0 && k == TColon) return true;
+            else if (depth == 0 && k == TQuestion) ++questions;
+            else if (depth == 0 && k == TColon) {
+                if (questions > 0) --questions;
+                else return true;
+            }
         }
         return false;
     }
@@ -6411,6 +6416,38 @@ struct Parser {
         // std::chrono::duration) is the variable: `<` is a comparison.
         return !variable_named(tokens[i].text);
     }
+    // The expression a lambda captures for `name`: the local variable, or (in a lambda inside a lambda) the field of the
+    // enclosing closure that holds it (read through its reference when it was captured by reference).
+    Node capture_source(const std::string& name) const {
+        if (name == "this" || local_visible(name) || cur_class < 0 || cur_class >= static_cast<int>(structs.size())) return node_name(name);
+        const StructDef& cd = structs[static_cast<size_t>(cur_class)];
+        for (const Field& f : cd.fields)
+            if (f.name == name) {
+                Node field;
+                field.kind = Node::Field;
+                field.op = TArrow;
+                field.text = name;
+                field.kids.push_back(node_name("this"));
+                if (cd.ref_caps.count(name) > 0) {
+                    Node deref;
+                    deref.kind = Node::Unary;
+                    deref.op = TStar;
+                    deref.kids.push_back(std::move(field));
+                    return deref;
+                }
+                return field;
+            }
+        return node_name(name);
+    }
+    // A closure field named `name` (a variable the enclosing lambda captured).
+    bool closure_field_named(const std::string& name) const {
+        if (cur_class < 0 || cur_class >= static_cast<int>(structs.size())) return false;
+        const StructDef& cd = structs[static_cast<size_t>(cur_class)];
+        if (cd.name.compare(0, 5, "__lam") != 0) return false;
+        for (const Field& f : cd.fields)
+            if (f.name == name && f.name != "__this") return true;
+        return false;
+    }
     // A local variable, parameter or data member of the class being compiled has this name.
     bool variable_named(const std::string& name) const {
         if (local_visible(name)) return true;
@@ -7128,7 +7165,7 @@ struct Parser {
             std::string key = fname + "<";
             for (size_t i = 0; i < deduced.size(); ++i) {
                 if (!got[i]) {
-                    error = "cannot deduce template argument " + primary.params[i].name;
+                    error = "cannot deduce template argument " + primary.params[i].name + " (in " + current_fn + ")";
                     return false;
                 }
                 if (i) key += ",";
@@ -7561,7 +7598,7 @@ struct Parser {
             }
         for (size_t i = 0; i < td.params.size(); ++i)
             if (!given[i]) {
-                error = "cannot deduce template argument " + td.params[i].name;
+                error = "cannot deduce template argument " + td.params[i].name + " (in " + current_fn + ")";
                 return false;
             }
         return true;
@@ -9203,22 +9240,61 @@ bool Parser::parse_stmt_inner(Node* out, std::vector<Local>* locals, int stmt_li
     }
     if (is(TIf)) {
         next();
-        out->kind = Node::If;
         if (!expect(TLParen, "'('")) return false;
+        // if (init; condition): the initialisation statement is read first, in a scope that also holds the whole if
+        // ([stmt.select]/3): { init; if (condition) ... }.
+        bool has_init = false;
+        {
+            int depth = 0;
+            for (size_t k = at; k < tokens.size() && tokens[k].kind != TEnd; ++k) {
+                const Tok kk = tokens[k].kind;
+                if (kk == TLParen || kk == TLBrack || kk == TLBrace) ++depth;
+                else if (kk == TRParen || kk == TRBrack || kk == TRBrace) {
+                    if (depth == 0) break;
+                    --depth;
+                } else if (depth == 0 && kk == TSemi) {
+                    has_init = true;
+                    break;
+                }
+            }
+        }
+        const int saved_depth = scope_depth;
+        Node init_stmt;
+        if (has_init) {
+            push_scope();
+            dscopes.emplace_back();
+            if (!parse_stmt(&init_stmt, locals)) return false;
+        }
+        Node if_node;
+        if_node.kind = Node::If;
         Node cond;
         Node cond_decl;
         bool cond_scoped = false;
         if (!parse_condition(&cond, &cond_decl, &cond_scoped, locals)) return false;
         Node then_s;
         if (!parse_stmt(&then_s, locals)) return false;
-        out->kids.push_back(std::move(cond));
-        out->kids.push_back(std::move(then_s));
+        if_node.kids.push_back(std::move(cond));
+        if_node.kids.push_back(std::move(then_s));
         if (accept(TElse)) {
             Node else_s;
             if (!parse_stmt(&else_s, locals)) return false;
-            out->kids.push_back(std::move(else_s));
+            if_node.kids.push_back(std::move(else_s));
         }
-        close_condition_scope(out, std::move(cond_decl), cond_scoped);
+        close_condition_scope(&if_node, std::move(cond_decl), cond_scoped);
+        if (!has_init) {
+            *out = std::move(if_node);
+            return true;
+        }
+        std::vector<Node> dt;
+        if (!dtor_nodes(dscopes.size() - 1, &dt)) return false;
+        dscopes.pop_back();
+        pop_scope();
+        scope_depth = saved_depth;
+        out->kind = Node::Block;
+        out->text = "scope";
+        out->kids.push_back(std::move(init_stmt));
+        out->kids.push_back(std::move(if_node));
+        for (Node& n : dt) out->kids.push_back(std::move(n));
         return true;
     }
     if (is(TWhile)) {
@@ -10812,10 +10888,10 @@ bool Parser::parse_lambda(Node* out) {
     // The captured variables: the named ones, then (for = or &) every visible local the body mentions.
     std::vector<Cap> list;
     for (const Cap& c : caps)
-        if (local_visible(c.name)) list.push_back(c);
+        if (local_visible(c.name) || closure_field_named(c.name)) list.push_back(c);
     if (default_value || default_ref) {
         for (size_t i = body_at; i < body_end; ++i) {
-            if (tokens[i].kind != TIdent || !local_visible(tokens[i].text)) continue;
+            if (tokens[i].kind != TIdent || !(local_visible(tokens[i].text) || closure_field_named(tokens[i].text))) continue;
             if (i > 0 && (tokens[i - 1].kind == TDot || tokens[i - 1].kind == TArrow || tokens[i - 1].kind == TColonColon))
                 continue;
             bool is_param = false;
@@ -10832,7 +10908,7 @@ bool Parser::parse_lambda(Node* out) {
         // The body names a member of the enclosing class (not a local, not after . -> ::): `this` is captured too.
         const StructDef& ed = structs[static_cast<size_t>(cur_class)];
         for (size_t i = body_at; i < body_end && !uses_this; ++i) {
-            if (tokens[i].kind != TIdent || local_visible(tokens[i].text)) continue;
+            if (tokens[i].kind != TIdent || local_visible(tokens[i].text) || closure_field_named(tokens[i].text)) continue;
             if (i > 0 && (tokens[i - 1].kind == TDot || tokens[i - 1].kind == TArrow || tokens[i - 1].kind == TColonColon))
                 continue;
             for (const Field& f : ed.fields)
@@ -10862,7 +10938,7 @@ bool Parser::parse_lambda(Node* out) {
     int offset = 0;
     int align = 1;
     for (const Cap& c : list) {
-        Node probe = node_name(c.name);
+        Node probe = capture_source(c.name);
         Type vt;
         if (!static_type(probe, &vt)) {
             error = "cannot tell the type of the captured variable " + c.name;
@@ -10922,7 +10998,7 @@ bool Parser::parse_lambda(Node* out) {
             target.op = TDot;
             target.text = c.name == "this" ? std::string("__this") : c.name;
             target.kids.push_back(node_name(hidden.name));
-            Node value = node_name(c.name);
+            Node value = capture_source(c.name);
             Type vt;
             static_type(value, &vt);
             if (c.ref && !vt.is_array()) value = node_addr(std::move(value));
@@ -11024,7 +11100,7 @@ bool Parser::parse_lambda(Node* out) {
         target.op = TDot;
         target.text = c.name == "this" ? std::string("__this") : c.name;
         target.kids.push_back(node_name(hidden.name));
-        Node value = node_name(c.name);
+        Node value = capture_source(c.name);
         Type vt;
         static_type(value, &vt);
         if (c.ref && !vt.is_array()) value = node_addr(std::move(value));
@@ -11514,7 +11590,7 @@ bool Parser::method_call(Node* out, Node object, bool arrow, const std::string& 
     if (arrow && ot.pointers == 1) sid = ot.struct_id;
     if (!arrow && ot.pointers == 0 && !ot.is_array()) sid = ot.struct_id;
     if (sid < 0 || ot.base != 3) {
-        error = "member call on something that is not a class object: " + name;
+        error = "member call on something that is not a class object: " + name + " (in " + current_fn + ", object node kind " + std::to_string(static_cast<int>(object.kind)) + ")";
         return false;
     }
     if (!arrow && object.kind == Node::Call && cur_locals != nullptr) {
@@ -12830,6 +12906,10 @@ bool Parser::parse_unary(Node* out) {
         out->type.pointers = 1;
         out->type.base = 2;
         next();
+        while (is(TString)) {  // "a" "b": adjacent string literals are one literal ([lex.string]/13)
+            out->text += cur().text;
+            next();
+        }
     } else if (is(TIdent) || (is(TColonColon) && at + 1 < tokens.size() && tokens[at + 1].kind == TIdent)) {
         const bool from_global = is(TColonColon);
         if (from_global) next();  // ::name: looked up at global scope, not in the namespaces around the call

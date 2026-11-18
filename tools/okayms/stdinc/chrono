@@ -93,6 +93,9 @@ struct steady_clock {
 };
 struct system_clock {
     typedef nanoseconds duration;
+    // to_time_t / from_time_t ([time.clock.system]): whole seconds since the Unix epoch, and back.
+    static long long to_time_t(const time_point<system_clock, nanoseconds>& tp) { return (tp - time_point<system_clock, nanoseconds>()).count() / 1000000000LL; }
+    static time_point<system_clock, nanoseconds> from_time_t(long long t) { return time_point<system_clock, nanoseconds>(nanoseconds(t * 1000000000LL)); }
     typedef time_point<system_clock, nanoseconds> time_point;
     static time_point<system_clock, nanoseconds> now() {
         unsigned long long ft = 0;

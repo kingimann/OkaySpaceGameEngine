@@ -11,6 +11,7 @@
 // file creation, copy, rename or removal; errors only through the error_code overloads (no filesystem_error).
 #pragma once
 #include <cstddef>
+#include <cstdint>
 #include <cstdlib>
 #include <string>
 #include <system_error>
@@ -18,6 +19,15 @@
 
 __declspec(dllimport) unsigned long GetFileAttributesA(const char *name);
 __declspec(dllimport) unsigned long GetCurrentDirectoryA(unsigned long size, char *buffer);
+__declspec(dllimport) int DeleteFileA(const char *name);
+__declspec(dllimport) int RemoveDirectoryA(const char *name);
+__declspec(dllimport) int MoveFileExA(const char *from, const char *to, unsigned long flags);
+__declspec(dllimport) int CreateDirectoryA(const char *name, void *security);
+__declspec(dllimport) void *CreateFileA(const char *name, unsigned long access, unsigned long share, void *security,
+                                        unsigned long disposition, unsigned long flags, void *templ);
+__declspec(dllimport) unsigned long GetFileSize(void *file, unsigned long *high);
+__declspec(dllimport) int CloseHandle(void *file);
+
 
 namespace std {
 namespace filesystem {
@@ -70,6 +80,7 @@ public:
     const char* c_str() const { return s_.c_str(); }
     std::string string() const { return s_; }
     std::string u8string() const { return s_; }
+    std::string generic_u8string() const { return generic_string(); }
     std::string generic_string() const {
         std::string r = s_;
         for (size_t i = 0; i < r.size(); ++i)
@@ -335,6 +346,58 @@ inline bool is_regular_file(const path& p, std::error_code& ec) {
     }
     ec.clear();
     return (a & 0x10ul) == 0;
+}
+
+// remove, rename, create_directory(ies) and file_size ([fs.op.funcs]) on the Win32 calls; the error code is the Windows value (2 not
+// found) or 22 when the call failed for another reason. remove deletes a file or an empty directory.
+inline bool remove(const path& p, std::error_code& ec) {
+    const bool ok = DeleteFileA(p.c_str()) != 0 || RemoveDirectoryA(p.c_str()) != 0;
+    if (ok) ec.clear();
+    else ec.assign(GetFileAttributesA(p.c_str()) == 0xFFFFFFFFul ? 2 : 22);
+    return ok;
+}
+inline bool remove(const path& p) {
+    std::error_code ec;
+    return remove(p, ec);
+}
+inline void rename(const path& from, const path& to, std::error_code& ec) {
+    if (MoveFileExA(from.c_str(), to.c_str(), 1) != 0) ec.clear();
+    else ec.assign(GetFileAttributesA(from.c_str()) == 0xFFFFFFFFul ? 2 : 22);
+}
+inline bool create_directory(const path& p, std::error_code& ec) {
+    if (CreateDirectoryA(p.c_str(), 0) != 0) {
+        ec.clear();
+        return true;
+    }
+    ec.clear();  // an existing directory is not an error
+    return false;
+}
+inline bool create_directories(const path& p, std::error_code& ec) {
+    std::string so_far;
+    bool made = false;
+    const std::string text = p.string();
+    for (size_t i = 0; i <= text.size(); ++i) {
+        if (i == text.size() || okay_fs_sep(text[i])) {
+            if (!so_far.empty() && !(so_far.size() == 2 && so_far[1] == ':')) {
+                if (CreateDirectoryA(so_far.c_str(), 0) != 0) made = true;
+            }
+        }
+        if (i < text.size()) so_far.push_back(text[i]);
+    }
+    ec.clear();
+    return made;
+}
+inline unsigned long long file_size(const path& p, std::error_code& ec) {
+    void *h = CreateFileA(p.c_str(), 0x80000000ul, 7, 0, 3, 0x80, 0);
+    if (h == (void *)-1) {
+        ec.assign(2);
+        return (unsigned long long)-1;
+    }
+    unsigned long high = 0;
+    const unsigned long low = GetFileSize(h, &high);
+    CloseHandle(h);
+    ec.clear();
+    return ((unsigned long long)high << 32) | low;
 }
 
 }  // namespace filesystem

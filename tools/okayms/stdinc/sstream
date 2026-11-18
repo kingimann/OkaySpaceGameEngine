@@ -99,6 +99,18 @@ public:
     int precision_;  // setprecision: decimals of a floating-point value (-1: up to six, trailing zeros removed)
     okay_ostream() : out_(), sink_(0), width_(0), precision_(-1) {}
     operator bool() const { return true; }
+    // write(data, n) and put(c): raw bytes appended as they are ([ostream.unformatted]); tellp, flush and seekp-less access.
+    okay_ostream& write(const char* data, long long n) {
+        out_.append(data, (size_t)n);
+        if (sink_ != 0) {
+            okay_write_handle(sink_, out_.c_str(), (long long)out_.size());
+            out_.clear();
+        }
+        return *this;
+    }
+    okay_ostream& put(char c) { return write(&c, 1); }
+    long long tellp() const { return (long long)out_.size(); }
+    okay_ostream& flush() { return *this; }
     bool fail() const { return false; }
     // Appends the text, padded to width_, and writes it at once when the stream is a standard one.
     void put(const string& text) {

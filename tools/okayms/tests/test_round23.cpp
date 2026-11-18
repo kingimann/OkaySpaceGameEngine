@@ -340,5 +340,15 @@ int main(int, char**) {
                         ++dtor_relocs;
         CHECK(t, f_index != 0 && dtor_relocs >= 4);  // the loop's end and the goto each destroy both iterators
     }
+    ++tests;
+    build(t, "round 33: adjacent string literals, ?: in a for-init, if with init, lambda in lambda, filesystem remove/rename, ostream::write, to_time_t, Class::Nested with a typedef of the same name",
+          "#include <chrono>\n#include <filesystem>\n#include <fstream>\n#include <list>\n#include <string>\n"
+          "const char* tip() { return \"ab\\n\"\n    \"cd\"; }\nstruct T { T* Parent() const { return 0; } };\n"
+          "struct ST { static int f(); struct Model { int a; }; };\nusing Model = int;\nint g(const ST::Model& m) { return m.a; }\n"
+          "int main() { std::list<std::string> R; R.push_back(\"a\"); auto place = [&](const std::string& e) { auto ins = [&](const std::list<std::string>::iterator& i) { return !(i == R.end()); }; return ins(R.begin()) && !e.empty(); };\n"
+          "std::string line = \"a#b\"; if (const std::size_t h = line.find('#'); h != std::string::npos) line.erase(h); const T* t0 = 0; for (const T* p = t0 ? t0->Parent() : nullptr; p; p = p->Parent()) return 9;\n"
+          "std::error_code ec; std::filesystem::remove(\"x\", ec); std::filesystem::rename(\"a\", \"b\", ec); std::ofstream f(\"x\"); f.write(\"ab\", 2); long long tt = std::chrono::system_clock::to_time_t(std::chrono::system_clock::now());\n"
+          "ST::Model m; m.a = 1; return place(\"x\") + g(m) + tip()[0] + (int)tt; }\n", &o);
+    CHECK(t, has_symbol(o, "main"));
     return t.finish(tests);
 }

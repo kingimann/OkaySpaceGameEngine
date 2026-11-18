@@ -135,6 +135,11 @@ int main(int argc, char** argv) {
                 compile_only = true;
                 continue;
             }
+            if (low == "z7") {
+                // CodeView line records in the object. There is no PDB.
+                common.debug_lines = true;
+                continue;
+            }
             if (low == "o1") {
                 common.optimize = true;
                 common.opt_level = 1;
@@ -175,7 +180,10 @@ int main(int argc, char** argv) {
             continue;
         }
         const std::string low = lower_copy(arg);
-        if (low.size() >= 2 && low.compare(low.size() - 2, 2, ".c") == 0) sources.push_back(arg);
+        const bool is_cpp = (low.size() >= 4 && low.compare(low.size() - 4, 4, ".cpp") == 0) ||
+                            (low.size() >= 3 && low.compare(low.size() - 3, 3, ".cc") == 0) ||
+                            (low.size() >= 4 && low.compare(low.size() - 4, 4, ".cxx") == 0);
+        if (is_cpp || (low.size() >= 2 && low.compare(low.size() - 2, 2, ".c") == 0)) sources.push_back(arg);
         else if (low.size() >= 4 && low.compare(low.size() - 4, 4, ".lib") == 0) libs_in.push_back(arg);
         else objects_in.push_back(arg);
     }

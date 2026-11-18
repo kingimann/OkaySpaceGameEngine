@@ -10,6 +10,8 @@
 // software painter has no UWP present path wired. Audio: the mixer is not started by this file (the shell opens a platform AudioDevice).
 #include "XboxGameConfig.hpp"
 #include "XboxPaths.hpp"
+#include "XboxRecovery.hpp"
+#include "okay/Core/SaveFramework.hpp"
 #include "okay/Core/DataPack.hpp"
 #include "okay/Core/GameLoop.hpp"
 #include "okay/Components/UIAnchor.hpp"
@@ -82,6 +84,7 @@ public:
         scene_->Start();
         pads_.OpenAll();
         started_ = true;
+        RestoreIfPending();
         Log::Info("[xbox] started '", cfg_.title, "' scene ", rel);
         return true;
     }
@@ -112,12 +115,48 @@ public:
         eye = cam->gameObject && cam->gameObject->transform ? cam->gameObject->transform->Position() : Vec3{0, 0, 0};
         return true;
     }
-    /// Suspend hook: the engine has no generic "save everything" call; games save through their own save framework, which writes
-    /// into LocalFolder. This only logs, so a suspend is visible in the log (see docs/xbox_uwp.md, "Suspend").
-    void OnSuspend() { Log::Info("[xbox] suspending"); }
-    void OnResume() { Log::Info("[xbox] resumed"); }
+    /// Where the suspend save and its marker go (ApplicationData.LocalFolder\saves, from XboxPaths). Set before Start().
+    void SetSaveDir(const std::string& dir) { saveDir_ = dir; }
+    /// Suspend: capture the scene with the engine's save framework (objects marked Saveable: transforms, components that save, inventories, stats...)
+    /// into slot "xbox_suspend" in the save folder, then write a marker file. It runs before the system's suspend deadline (the shell calls it
+    /// synchronously). Objects without a Saveable component are NOT saved: that is the framework's rule, a game must mark what matters.
+    void OnSuspend() {
+        Log::Info("[xbox] suspending");
+        if (!scene_ || saveDir_.empty()) return;
+        namespace fs = std::filesystem; std::error_code ec; fs::create_directories(fs::u8path(saveDir_), ec);
+        SaveStore store(saveDir_);
+        SaveDocument doc = SaveSystem::CaptureScene(*scene_);
+        SaveSlotInfo meta; meta.slot = "xbox_suspend"; meta.label = "Saved when the app was suspended"; meta.scene = scene_->Name();
+        std::string err;
+        if (!store.Write("xbox_suspend", doc, meta, &err)) { Log::Warning("[xbox] suspend save failed: ", err); return; }
+        std::ofstream(fs::u8path(saveDir_ + "/xbox_suspend.marker"), std::ios::binary) << "1";
+        Log::Info("[xbox] suspend state saved");
+    }
+    /// Resume (the process was kept): the saved state is not needed any more, drop the marker. The scene never stopped existing, so nothing is reloaded.
+    void OnResume() {
+        Log::Info("[xbox] resumed");
+        std::error_code ec; if (!saveDir_.empty()) std::filesystem::remove(std::filesystem::u8path(saveDir_ + "/xbox_suspend.marker"), ec);
+    }
+    /// Clean exit: also drop the marker (an exit is not a suspended kill).
+    void OnExit() { OnResume(); }
 
 private:
+    // At start: if the marker is still there the last run ended while suspended; put the saved state back over the freshly loaded scene.
+    void RestoreIfPending() {
+        if (saveDir_.empty() || !scene_) return;
+        namespace fs = std::filesystem; std::error_code ec;
+        const bool marker = fs::exists(fs::u8path(saveDir_ + "/xbox_suspend.marker"), ec);
+        SaveStore store(saveDir_);
+        const StartAction a = DecideStart(marker, marker && store.Exists("xbox_suspend"));
+        if (a == StartAction::Fresh) return;
+        fs::remove(fs::u8path(saveDir_ + "/xbox_suspend.marker"), ec);
+        if (a == StartAction::DropStaleMarker) return;
+        SaveDocument doc; std::string err;
+        if (!store.Read("xbox_suspend", doc, nullptr, &err)) { Log::Warning("[xbox] could not read the suspend save: ", err); return; }
+        const SaveApplyReport rep = SaveSystem::ApplyScene(*scene_, doc);
+        Log::Info("[xbox] restored the suspended state: ", rep.restored, " objects restored, ", rep.spawned, " spawned");
+    }
+    std::string saveDir_;
     // Publish the UI size and the hit-test hooks before the scene updates, so anchored widgets and their clicks agree with what RenderSceneUI draws
     // (the same things the player sets up each frame: canvas size, where a widget really is, world-space projection), then lay the UI out.
     static void PrepareUi(Scene& scene, int cw, int ch) {

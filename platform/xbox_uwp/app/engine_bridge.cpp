@@ -6,11 +6,16 @@
 
 #include "UwpPlatform.hpp"
 #include "XboxGameRuntime.hpp"
+#include "XboxOverlay.hpp"
+#include "XboxRecovery.hpp"
+#include "XboxSoftPainter.hpp"
 #include "XboxPresent.hpp"
 #include "XboxUwpBackend.hpp"
 #include "XboxWasapi.hpp"
 #include "okay/Core/Paths.hpp"
+#include "okay/Components/UIElement.hpp"
 #include "okay/Render/D3D11Renderer.hpp"
+#include "okay/UI/UIRenderer.hpp"
 
 #include <dxgi1_3.h>   // IDXGIDevice3::Trim
 
@@ -65,6 +70,10 @@ struct Engine {
     okay::D3D11Renderer renderer;
     xb::SwapChainPresenter presenter;
     xb::XboxGameRuntime runtime;
+    xb::XboxSoftPainter painter;      // the 2D / UI layer, software-painted (premultiplied RGBA)
+    xb::UiOverlay overlay;            // ... uploaded and blended over the 3D frame
+    xb::OverlayState overlayState;
+    xb::DeviceRecovery recovery;      // GPU device loss: rebuild with backoff, give up after a few tries
 };
 
 Engine* Create(const ShellCallbacks& cb, const std::string& installDir, const std::string& localDir, const std::string& tempDir) {
@@ -108,19 +117,35 @@ void Suspending(Engine* e, std::uint64_t deadlineMs) {
 }
 void Resuming(Engine* e) { if (e) e->backend->Life().Resuming(); }
 
+namespace {
+bool SceneHasUi(okay::Scene& sc) {
+    for (const auto& up : sc.Objects()) if (up && okay::IsUIElement(up.get())) return true;
+    return false;
+}
+std::uint64_t NowMs() { return (std::uint64_t)std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::steady_clock::now().time_since_epoch()).count(); }
+}
+
 bool Run(Engine* e, std::string& err) {
     if (!e) { err = "no engine"; return false; }
     auto fail = [&](const std::string& why) { e->backend->Log("Xbox app: " + why); err = why; return false; };
     okay::D3D11Renderer::SetShaderBundleDir((e->roots.install + "Shaders").c_str());
-    if (!e->renderer.Init()) return fail("The Direct3D 11 renderer could not start (see the log). package\\Shaders must hold shaders.manifest and the .cso files.");
-    auto createChain = [&]() { return e->presenter.Create(e->renderer.DeviceForPresent(), e->host.CoreWindowHandle(), xb::ChooseBackBuffer(e->backend->Life().Size())); };
-    if (!createChain()) return fail("The swap chain could not be created.");
+    // Everything that depends on the GPU device, in one place: used at start and again after a device loss.
+    auto buildGpu = [&]() {
+        if (!e->renderer.Init()) return false;
+        if (!e->presenter.Create(e->renderer.DeviceForPresent(), e->host.CoreWindowHandle(), xb::ChooseBackBuffer(e->backend->Life().Size()))) return false;
+        e->presenter.SetAfterRender([e](void* bb) { if (e->overlayState.Shown()) e->overlay.Draw(bb); });
+        // The UI layer is optional: without the overlay shaders in the bundle the game runs without 2D / UI (logged).
+        if (!e->overlay.Create(e->renderer.DeviceForPresent(), xb::UiBufferSize(e->presenter.Size()))) e->backend->Log("Xbox app: no UI overlay (VSOverlay / PSOverlay are not in the shader bundle): 2D / UI is not drawn.");
+        return true;
+    };
+    if (!buildGpu()) return fail("The Direct3D 11 renderer or the swap chain could not start (see the log). package\\Shaders must hold shaders.manifest and the .cso files.");
+    e->runtime.SetSaveDir(e->roots.local + "/saves");
     std::string rerr;
     if (!e->runtime.Start(e->roots.install + "Data", rerr)) return fail(rerr);
     e->backend->onSuspend = [e] { e->runtime.OnSuspend(); };
     e->backend->onResume = [e] { e->runtime.OnResume(); };
     auto last = std::chrono::steady_clock::now();
-    bool quit = false;
+    bool quit = false, lostReported = false;
     while (!quit) {
         okay::platform::Event ev;
         while (e->backend->PollEvent(ev)) {
@@ -131,20 +156,59 @@ bool Run(Engine* e, std::string& err) {
         if (quit) break;
         xb::Lifecycle& life = e->backend->Life();
         if (!life.ShouldRender()) { if (e->host.cb.pump) e->host.cb.pump(e->host.cb.user, true); last = std::chrono::steady_clock::now(); continue; }
-        if (!e->presenter.Valid() && !createChain()) return fail("The swap chain could not be rebuilt after resuming.");
+        const std::uint64_t now = NowMs();
+        e->recovery.Tick(now);
+        // ---- device loss: rebuild with backoff, never loop forever ----
+        if (e->presenter.Valid() && e->presenter.Tracker().DeviceLost() && !lostReported) { lostReported = true; e->recovery.OnLost(now); e->backend->Log("Xbox app: the graphics device was lost; rebuilding it."); }
+        if (e->recovery.GaveUp()) return fail(std::string("Giving up: ") + e->recovery.Reason() + " (" + std::to_string(e->recovery.Attempts()) + " tries).");
+        if (!e->recovery.CanDraw()) {
+            if (e->recovery.ShouldRebuild(now)) {
+                e->overlay.Release(); e->presenter.Release(); e->renderer.Destroy();   // everything that held the old device
+                const bool ok = buildGpu();
+                if (ok) { e->presenter.Tracker().DeviceRebuilt(); lostReported = false; }
+                e->recovery.RebuildDone(ok, NowMs());
+                e->backend->Log(ok ? "Xbox app: the graphics device was rebuilt." : "Xbox app: rebuilding the graphics device failed; will retry.");
+            } else Sleep(16);   // waiting for the next attempt
+            last = std::chrono::steady_clock::now();
+            continue;
+        }
+        if (!e->presenter.Valid()) {   // released at suspend: only the swap chain is rebuilt (same device)
+            if (!e->presenter.Create(e->renderer.DeviceForPresent(), e->host.CoreWindowHandle(), xb::ChooseBackBuffer(life.Size()))) return fail("The swap chain could not be rebuilt after resuming.");
+            e->presenter.SetAfterRender([e](void* bb) { if (e->overlayState.Shown()) e->overlay.Draw(bb); });
+        }
         xb::PresentTracker& tr = e->presenter.Tracker();
         tr.WindowSized(life.Size());
         if (tr.NeedsResize() && !e->presenter.Resize(tr.Wanted())) return fail("Resizing the swap chain failed.");
-        if (tr.DeviceLost()) return fail("The graphics device was lost (no recovery in this version).");
-        const auto now = std::chrono::steady_clock::now();
-        const double dt = std::chrono::duration<double>(now - last).count(); last = now;
+        // ---- UI layer sizes and the mouse, before the scene updates (hit tests use them) ----
+        const xb::SizePx buf = xb::UiBufferSize(e->presenter.Size()), layout = xb::UiLayoutSize(buf);
+        e->runtime.SetUiSize(layout.w, layout.h);
+        { int mx = 0, my = 0; const unsigned m = e->backend->MouseState(&mx, &my); const xb::SizePx win = life.Size();
+          if (win.w > 0 && win.h > 0) e->runtime.FeedMouse((float)mx * (float)layout.w / (float)win.w, (float)my * (float)layout.h / (float)win.h, m); }
+        const auto tnow = std::chrono::steady_clock::now();
+        const double dt = std::chrono::duration<double>(tnow - last).count(); last = tnow;
         std::vector<char> keys = xb::KeysDown(*e->backend);
         if (!e->runtime.Frame(dt, keys)) break;
+        okay::Scene* scene = e->runtime.GetScene();
+        // ---- 2D / UI layer: software-paint into the buffer, upload, blended in the afterRender hook ----
+        if (scene && e->overlay.Valid()) {
+            const xb::OverlayAction act = e->overlayState.Next(SceneHasUi(*scene));
+            if (act != xb::OverlayAction::Nothing) {
+                if (e->painter.Surface().Width() != buf.w || e->painter.Surface().Height() != buf.h) { e->painter.Resize(buf.w, buf.h); if (e->overlay.Size().w != buf.w || e->overlay.Size().h != buf.h) e->overlay.Resize(buf); }
+                e->painter.SetDrawColor(0, 0, 0, 0); e->painter.Clear();   // transparent
+                if (act == xb::OverlayAction::DrawAndUpload) {
+                    e->painter.SetScale((float)buf.w / (float)layout.w, (float)buf.h / (float)layout.h);
+                    okay::ui2d::RenderSceneUI(*scene, e->painter, layout.w, layout.h);
+                    e->painter.SetScale(1.0f, 1.0f);
+                }
+                e->overlay.Upload(e->painter.Surface(), e->painter.Surface().TakeDirty());
+            }
+        }
         okay::Mat4 vp; okay::Vec3 eye;
         const xb::SizePx sz = e->presenter.Size();
-        if (e->runtime.View(sz.w, sz.h, vp, eye) && e->runtime.GetScene())
-            e->presenter.RenderAndPresent(e->renderer, *e->runtime.GetScene(), vp, eye, 4, 0.10f, 0.10f, 0.12f, 1.0f);
+        if (scene && e->runtime.View(sz.w, sz.h, vp, eye))
+            e->presenter.RenderAndPresent(e->renderer, *scene, vp, eye, 4, 0.10f, 0.10f, 0.12f, 1.0f);
     }
+    e->runtime.OnExit();
     return true;
 }
 

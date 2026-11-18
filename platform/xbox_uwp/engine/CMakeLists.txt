@@ -51,7 +51,8 @@ set_target_properties(okay_crypto_uwp PROPERTIES CXX_STANDARD 17 CXX_STANDARD_RE
 target_compile_features(okay_crypto_uwp PUBLIC cxx_std_17)
 target_link_libraries(okay_crypto_uwp PUBLIC bcrypt)
 
-add_library(okay_engine_uwp STATIC ${_kept} ${OKAY_SOURCE_ROOT}/platform/xbox_uwp/UwpPlatform.cpp)
+# Painter.cpp: the shared part of okay::platform::Painter (texture cache, font atlas upload); the engine adds it with target_sources, not in the add_library list.
+add_library(okay_engine_uwp STATIC ${_kept} ${OKAY_SOURCE_ROOT}/engine/src/Platform/Painter.cpp ${OKAY_SOURCE_ROOT}/platform/xbox_uwp/UwpPlatform.cpp)
 target_include_directories(okay_engine_uwp PUBLIC ${_incs} ${OKAY_SOURCE_ROOT}/platform/xbox_uwp)
 target_include_directories(okay_engine_uwp PRIVATE ${OKAY_SOURCE_ROOT}/engine/third_party/stb ${OKAY_SOURCE_ROOT}/engine/third_party/ufbx)
 target_compile_definitions(okay_engine_uwp PUBLIC ${_defs})

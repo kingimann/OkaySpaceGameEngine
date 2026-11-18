@@ -14,6 +14,7 @@
 #include "XboxUwpAudit.hpp"
 #include "XboxGameConfig.hpp"
 #include "XboxOverlayMath.hpp"
+#include "XboxRecovery.hpp"
 #include "okay/Core/Paths.hpp"
 #include <cmath>
 #include <filesystem>
@@ -688,8 +689,26 @@ static void OverlayMathTests() {
       CHECK(CopyDirtyRows(src.data(), 4, 4, IRect{}, dst.data(), 64) == 0 && CopyDirtyRows(src.data(), 4, 4, IRect{0, 0, 4, 99}, dst.data(), 64) == 4 * 16); }
 }
 
+// ---- recovery policies ----
+static void RecoveryTests() {
+    using namespace okay::xbox; using S = DeviceRecovery::State;
+    { DeviceRecovery r; CHECK(r.GetState() == S::Healthy && r.CanDraw() && !r.ShouldRebuild(0));
+      r.OnLost(1000); CHECK(r.GetState() == S::Waiting && !r.CanDraw()); CHECK(!r.ShouldRebuild(1050)); CHECK(r.ShouldRebuild(1100) && r.GetState() == S::Rebuilding && r.Attempts() == 1);
+      r.RebuildDone(true, 1200); CHECK(r.GetState() == S::Healthy && r.CanDraw()); r.Tick(1300); CHECK(r.Attempts() == 1); r.Tick(6300); CHECK(r.Attempts() == 0); }   // stable 5 s: count cleared
+    { DeviceRecovery r; r.OnLost(0); std::uint64_t t = 0; std::vector<std::uint64_t> waits;   // failing rebuilds: backoff 100, 200, 400, 800 then give up after 5 attempts
+      for (int i = 0; i < 10 && !r.GaveUp(); ++i) { std::uint64_t t0 = t; while (!r.ShouldRebuild(t)) ++t; waits.push_back(t - t0); r.RebuildDone(false, t); }
+      CHECK(r.GaveUp() && r.Attempts() == 5 && !r.CanDraw()); CHECK((waits == std::vector<std::uint64_t>{100, 200, 400, 800, 1600})); CHECK(std::string(r.Reason()).find("could not be rebuilt") != std::string::npos);
+      r.OnLost(t + 10); CHECK(r.GaveUp() && !r.ShouldRebuild(t + 99999)); }   // stays given up, never loops
+    { DeviceRecovery r; std::uint64_t t = 0; for (int i = 0; i < 4; ++i) { r.OnLost(t); while (!r.ShouldRebuild(t)) ++t; r.RebuildDone(true, t); t += 100; }   // "successful" rebuilds that die at once
+      CHECK(!r.GaveUp()); r.OnLost(t); CHECK(r.GaveUp() && std::string(r.Reason()).find("again and again") != std::string::npos); }
+    { DeviceRecovery r; std::uint64_t t = 0; for (int i = 0; i < 6; ++i) { r.OnLost(t); while (!r.ShouldRebuild(t)) ++t; r.RebuildDone(true, t); t += 30000; r.Tick(t); } CHECK(!r.GaveUp()); }   // losses far apart are fine
+    { DeviceRecovery::Config c; c.maxAttempts = 1; DeviceRecovery r(c); r.OnLost(0); while (!r.ShouldRebuild(5000)) {} r.RebuildDone(false, 5000); CHECK(r.GaveUp()); }
+    { DeviceRecovery r; r.RebuildDone(true, 5); CHECK(r.GetState() == S::Healthy); r.OnLost(0); r.RebuildDone(true, 1); CHECK(r.GetState() == S::Waiting); }   // out-of-order calls do nothing
+    CHECK(DecideStart(false, false) == StartAction::Fresh && DecideStart(false, true) == StartAction::Fresh && DecideStart(true, true) == StartAction::RestoreSuspended && DecideStart(true, false) == StartAction::DropStaleMarker);
+}
+
 int main() {
-    ShaderTests(); DisplayTests(); BuildPlanTests(); LogTests(); SourceRootTests(); RunnerTests(); HostTests(); LifecycleTests(); InputTests(); PadClassTests(); PathTests(); AudioTests(); BackendTests(); AuditTests(); ConfigTests(); RasterTests(); OverlayMathTests();
+    ShaderTests(); DisplayTests(); BuildPlanTests(); LogTests(); SourceRootTests(); RunnerTests(); HostTests(); LifecycleTests(); InputTests(); PadClassTests(); PathTests(); AudioTests(); BackendTests(); AuditTests(); ConfigTests(); RasterTests(); OverlayMathTests(); RecoveryTests();
     if (g_fail) { std::printf("%d FAILED\n", g_fail); return 1; }
     std::printf("xbox_uwp_runtime: all passed\n");
     return 0;

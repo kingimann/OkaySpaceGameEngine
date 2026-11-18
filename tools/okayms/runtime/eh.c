@@ -92,6 +92,19 @@ void __okay_throw(void *obj, int size, char *types, void *dtor) {
     unwind();
 }
 
+/* A thrown class object with a copy constructor: the compiler gets the storage here, builds the
+   copy in it with the constructor, then throws it without copying again. */
+void *__okay_eh_alloc(int size) {
+    return malloc(size);
+}
+
+void __okay_throw_built(void *obj, int size, char *types, void *dtor) {
+    __okay_exc_obj = obj;
+    __okay_exc_types = types;
+    __okay_exc_dtor = dtor;
+    unwind();
+}
+
 /* The names in 'types' are separated by newlines: the thrown class first, then its bases. */
 int __okay_eh_match(char *name) {
     char *t;

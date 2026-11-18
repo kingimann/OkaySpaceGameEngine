@@ -2223,6 +2223,34 @@ static int numberBefore(const string& s, const string& word) {
     return atoi(s.c_str() + i);
 }
 static long long gTestTimeoutSec = 0;
+static string gJunitPath;            // --junit FILE: write the test run as JUnit-style XML
+static int gShardIdx = 0, gShardCnt = 1; // --shard I/N: run only every N-th test (1-based I)
+static string xmlEsc(const string& s) {
+    string r;
+    for (unsigned char c : s) {
+        if (c == '&') r += "&amp;"; else if (c == '<') r += "&lt;"; else if (c == '>') r += "&gt;";
+        else if (c == '"') r += "&quot;"; else if (c == '\'') r += "&apos;";
+        else if (c < 32 && c != '\n' && c != '\t' && c != '\r') r += '?'; // XML 1.0 cannot hold other control bytes
+        else r += (char)c;
+    }
+    return r;
+}
+static void writeJunit(const vector<std::pair<string, string>>& tests, const vector<int>& order, const vector<int>& code, const vector<string>& outs) {
+    int failed = 0; for (int i : order) if (code[i] != 0) ++failed;
+    std::ofstream x(gJunitPath, std::ios::trunc);
+    if (!x) { fprintf(stderr, "okay-build: cannot write %s\n", gJunitPath.c_str()); return; }
+    x << "<?xml version=\"1.0\" encoding=\"UTF-8\"?>\n";
+    x << "<testsuites tests=\"" << tests.size() << "\" failures=\"" << failed << "\">\n";
+    x << "<testsuite name=\"okay-build\" tests=\"" << tests.size() << "\" failures=\"" << failed << "\">\n";
+    for (int i : order) {
+        x << "<testcase name=\"" << xmlEsc(tests[i].first) << "\" classname=\"okay-build\"";
+        if (code[i] == 0) { x << "/>\n"; continue; }
+        string out = i < (int)outs.size() ? outs[i] : string();
+        if (out.size() > 4000) out = out.substr(out.size() - 4000); // keep the tail, that is where the failure is
+        x << ">\n<failure message=\"" << (code[i] == 124 ? "timed out" : "exit " + std::to_string(code[i])) << "\">" << xmlEsc(out) << "</failure>\n</testcase>\n";
+    }
+    x << "</testsuite>\n</testsuites>\n";
+}
 static int printTestReport(const vector<std::pair<string, string>>& tests, const vector<int>& code, const vector<string>& outs) {
     vector<int> order(tests.size());
     for (size_t i = 0; i < order.size(); ++i) order[i] = (int)i;
@@ -2248,6 +2276,7 @@ static int printTestReport(const vector<std::pair<string, string>>& tests, const
         }
     }
     printf("%zu tests, %d failed\n", tests.size(), failed);
+    if (!gJunitPath.empty()) writeJunit(tests, order, code, outs);
     return failed ? 1 : 0;
 }
 static int executeTests(const vector<std::pair<string, string>>& tests, int jobs) {
@@ -2387,6 +2416,14 @@ static int cmdTest(Manifest& m, const Opts& o, const vector<string>& only) {
         }
     }
     if (names.empty()) throw Fail("no tests; set 'test = on' on an exe, or start its name with 'test'");
+    if (gShardCnt > 1) { // shard by position in the sorted name list, so every shard sees the same split
+        std::sort(names.begin(), names.end());
+        vector<string> mine;
+        for (size_t i = 0; i < names.size(); ++i) if ((int)(i % (size_t)gShardCnt) == gShardIdx - 1) mine.push_back(names[i]);
+        printf("okay-build: shard %d/%d runs %zu of %zu tests\n", gShardIdx, gShardCnt, mine.size(), names.size());
+        names = mine;
+        if (names.empty()) { if (!gJunitPath.empty()) { vector<std::pair<string, string>> none; writeJunit(none, {}, {}, {}); } printf("0 tests, 0 failed\n"); return 0; }
+    }
     int rc = build(m, names, o);
     if (rc != 0) return rc;
     vector<std::pair<string, string>> runs;
@@ -2759,14 +2796,34 @@ static vector<Detected> detectToolchains(const vector<string>& extra, const vect
     out.push_back(d);
     return out;
 }
+static bool gShowVersions = false; // toolchains --versions
+// The first line a compiler prints for --version (gcc, clang, mingw). Empty when it will not run.
+static string compilerVersionLine(const string& exe) {
+    string out; if (exe.empty() || runCmd({exe, "--version"}, out) != 0) return "";
+    string line = out.substr(0, out.find('\n'));
+    while (!line.empty() && (line.back() == '\r' || line.back() == ' ')) line.pop_back();
+    for (auto& c : line) if (c == '\t') c = ' ';
+    return line;
+}
+// cl.exe prints its version on stderr only when run with no arguments, and that needs the Visual Studio environment, so the
+// number is read from the folder name under VC/Tools/MSVC/<version>/ instead (empty when the path has no such folder).
+static string msvcVersionFromPath(const string& cl) {
+    string p = cl; for (auto& c : p) if (c == '\\') c = '/';
+    const string key = "/MSVC/"; auto at = p.rfind(key); if (at == string::npos) return "";
+    at += key.size(); auto end = p.find('/', at); if (end == string::npos) return "";
+    return p.substr(at, end - at);
+}
 static int cmdToolchains(const vector<string>& extra, const vector<string>& roots) {
     for (auto& d : detectToolchains(extra, roots)) {
+        string ver;
+        if (gShowVersions && d.found) ver = d.name == "msvc" ? msvcVersionFromPath(d.cc) : compilerVersionLine(d.cxx.empty() ? d.cc : d.cxx);
+        string tail = gShowVersions && d.found ? "\tversion=" + (ver.empty() ? string("unknown") : ver) : string();
         if (d.name == "msvc") {
-            if (d.found) printf("msvc\tfound\tcc=%s\tlink=%s\tprobe=%s\thost=%s\n", d.cc.c_str(), d.ld.c_str(), d.probe.c_str(), d.host.c_str());
+            if (d.found) printf("msvc\tfound\tcc=%s\tlink=%s\tprobe=%s\thost=%s%s\n", d.cc.c_str(), d.ld.c_str(), d.probe.c_str(), d.host.c_str(), tail.c_str());
             else printf("msvc\tmissing\tprobe=%s\thost=%s\n", d.probe.c_str(), d.host.c_str());
         } else if (!d.found) printf("%s\tmissing\n", d.name.c_str());
-        else if (d.name == "mingw") printf("mingw\tfound\tcxx=%s\n", d.cxx.c_str());
-        else printf("%s\tfound\tcc=%s\tcxx=%s\n", d.name.c_str(), d.cc.c_str(), d.cxx.c_str());
+        else if (d.name == "mingw") printf("mingw\tfound\tcxx=%s%s\n", d.cxx.c_str(), tail.c_str());
+        else printf("%s\tfound\tcc=%s\tcxx=%s%s\n", d.name.c_str(), d.cc.c_str(), d.cxx.c_str(), tail.c_str());
     }
     return 0;
 }
@@ -2970,6 +3027,14 @@ int main(int argc, char** argv) {
             }
             else if (a == "--jobserver") gWantJobserver = true;
             else if (a == "--timeout" && i + 1 < argc) { gTestTimeoutSec = atoll(argv[++i]); if (gTestTimeoutSec < 1) throw Fail("--timeout wants a number of seconds"); }
+            else if (a == "--versions") gShowVersions = true;
+            else if (a == "--junit" && i + 1 < argc) gJunitPath = argv[++i];
+            else if (a == "--shard" && i + 1 < argc) {
+                string v = argv[++i]; auto sl = v.find('/');
+                if (sl == string::npos || sl == 0 || sl + 1 >= v.size()) throw Fail("--shard wants I/N, for example 2/4");
+                gShardIdx = atoi(v.substr(0, sl).c_str()); gShardCnt = atoi(v.substr(sl + 1).c_str());
+                if (gShardCnt < 1 || gShardIdx < 1 || gShardIdx > gShardCnt) throw Fail("--shard wants I/N with 1 <= I <= N");
+            }
             else if (a == "--memory" && i + 1 < argc) gMemLimit = atoi(argv[++i]);
             else if (a == "--run-dir" && i + 1 < argc) runDir = argv[++i];
             else if (a == "-o" && i + 1 < argc) importOut = argv[++i];
@@ -2986,7 +3051,7 @@ int main(int argc, char** argv) {
             else if (cmd == "cache" && (a == "stats" || a == "clean")) want.push_back(a);
             else if (a == "build" || a == "clean" || a == "compdb" || a == "import" || a == "graph" || a == "targets" || a == "modules" || a == "toolchains" || a == "report" || a == "test" || a == "cache" || a == "lock" || a == "package" || a == "native") cmd = a;
             else if (a == "-h" || a == "--help") {
-                puts("usage: okay-build [build|clean|compdb|import|graph|targets|modules|toolchains|report|test] [-f build.okay] [-j N] [-k] [--config NAME] [--toolchain auto|gcc|clang|mingw|msvc] [--opt name=value] [--build-dir DIR] [--no-stat] [--no-cache] [--cache-dir DIR] [--timeout SECONDS] [--dry-run] [--explain] [-v] [--profile] [target...]");
+                puts("usage: okay-build [build|clean|compdb|import|graph|targets|modules|toolchains|report|test] [-f build.okay] [-j N] [-k] [--config NAME] [--toolchain auto|gcc|clang|mingw|msvc] [--opt name=value] [--build-dir DIR] [--no-stat] [--no-cache] [--cache-dir DIR] [--timeout SECONDS] [--junit FILE] [--shard I/N] [--dry-run] [--explain] [-v] [--profile] [target...]");
                 puts("audit: docs/own_build_plan.md (12 subsystems; this tool is off by default)");
                 return 0;
             }

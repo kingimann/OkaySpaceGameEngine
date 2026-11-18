@@ -1174,6 +1174,33 @@ static void testTestFilterTimeoutOutput() {
     check(secs < 15, "the timeout stopped it long before sleep(30) ended", std::to_string(secs));
 }
 
+static void testJunitShardVersions() {
+    printf("test: test --junit writes XML, --shard I/N splits the tests, toolchains --versions prints versions\n");
+    fresh("tjunit");
+    write("ok.cpp", "int main(){return 0;}\n");
+    write("bad.cpp", "#include <cstdio>\nint main(){puts(\"x < y & \\\"z\\\"\"); return 3;}\n");
+    write("build.okay",
+          "target test_a exe\n sources = ok.cpp\n test = on\nend\n"
+          "target test_b exe\n sources = bad.cpp\n test = on\nend\n"
+          "target test_c exe\n sources = ok.cpp\n test = on\nend\n"
+          "target test_d exe\n sources = ok.cpp\n test = on\nend\n");
+    int rc; string o = sh("test --junit r.xml -j2", &rc);
+    string x = readFile(gRoot / "r.xml");
+    check(rc == 1 && x.find("<testsuites tests=\"4\" failures=\"1\">") != string::npos, "junit file counts tests and failures", x);
+    check(x.find("<testcase name=\"test_a\" classname=\"okay-build\"/>") != string::npos, "a passing test is an empty testcase", x);
+    check(x.find("<failure message=\"exit 3\">x &lt; y &amp; &quot;z&quot;") != string::npos, "a failure carries its escaped output", x);
+    o = sh("test --shard 1/2 -j2", &rc);
+    check(rc == 0 && o.find("shard 1/2 runs 2 of 4") != string::npos && o.find("PASS test_a") != string::npos && o.find("test_b") == string::npos && o.find("PASS test_c") != string::npos, "shard 1/2 runs the 1st and 3rd sorted tests", o);
+    o = sh("test --shard 2/2 -j2", &rc);
+    check(rc == 1 && o.find("FAIL test_b") != string::npos && o.find("PASS test_d") != string::npos && o.find("test_a") == string::npos, "shard 2/2 runs the rest", o);
+    o = sh("test --shard 3/2", &rc);
+    check(rc == 2 && o.find("--shard wants I/N") != string::npos, "a bad shard is an error", o);
+    o = sh("test --shard 5/8 -j2", &rc);
+    check(rc == 0 && o.find("0 tests, 0 failed") != string::npos, "an empty shard passes", o);
+    o = sh("toolchains --versions", &rc);
+    check(rc == 0 && (o.find("\tversion=") != string::npos || o.find("found") == string::npos), "found toolchains show a version", o);
+}
+
 static void testImporters() {
     printf("test: importer blocks rebuild only changed assets, settings change rebuilds all, failures leave no output\n"); fresh("imp");
     write("tools/conv.sh", "echo \"$1\" >> imports.log\nif grep -q FAIL \"$1\"; then echo half > \"$2\"; exit 1; fi\n{ printf '%s|' \"$3\"; cat \"$1\"; } > \"$2\"\n");
@@ -1260,5 +1287,6 @@ int main(int argc, char** argv) {
     testRestoredObjectsStayTrusted();
     testImporters();
     testPerConfigDirsAndTrace();
+    testJunitShardVersions();
     printf("okaybuild tests: %d checks passed, %d failed\n", gPass, gFail); return gFail ? 1 : 0;
 }

@@ -89,6 +89,8 @@ struct Method {
     // A constructor or destructor the compiler made because a member or base
     // needs one. It has no tokens.
     bool implicit = false;
+    // The implicit copy constructor: copies the base and each member.
+    bool implicit_copy = false;
 };
 
 struct StructDef {
@@ -181,6 +183,9 @@ struct FuncDecl {
     int param_base = 0;
     Node body;
     std::vector<Local> locals;
+    // Which parameters are references. In params they are pointers (that is what is passed);
+    // the body sees them as references again.
+    std::vector<bool> param_ref;
     int nparams = 0;
     int max_args = 0;
     // First and last line of the body (the braces), for the line table.
@@ -1170,6 +1175,14 @@ std::string cxx_method_symbol(const std::vector<StructDef>& structs, const Struc
     return out;
 }
 
+// The scalar deleting destructor, ??_G: the function a virtual destructor's table slot holds. It
+// takes this and a flag word, runs the destructor, frees the memory when the flag is non-zero and
+// returns this. Written from the public MSVC decoration description.
+std::string sdd_symbol(const StructDef& owner, const Method& m) {
+    const char letter = m.access == 'A' ? 'E' : m.access == 'I' ? 'M' : 'U';
+    return "??_G" + owner.name + "@@" + letter + "EAAPEAXI@Z";
+}
+
 std::string cxx_symbol(const std::string& ns, const std::string& name, const Type& ret, const std::vector<Type>& params) {
     std::string out = "?" + name + "@" + ns + "@@YA" + cxx_type(ret);
     if (params.empty()) out += "X";
@@ -1210,11 +1223,14 @@ struct Parser {
     std::vector<size_t> brk_dbase{};
     std::vector<size_t> cont_dbase{};
     Type cur_ret{};
+    int cur_special = 0;
+    bool cur_implicit_copy = false;
     int rv_count = 0;
 
     bool class_needs_ctor(const StructDef& d) const {
         for (const Method& m : d.methods)
             if (m.name == "<ctor>") return true;
+        if (d.poly) return true;  // the constructor stores the table pointer
         if (d.base >= 0 && class_needs_ctor(structs[static_cast<size_t>(d.base)])) return true;
         for (size_t i = d.base_fields; i < d.fields.size(); ++i) {
             const Type& t = d.fields[i].type;
@@ -1247,7 +1263,8 @@ struct Parser {
 
     // A call of a constructor or destructor on the object whose address is 'self'.
     bool special_call(int sid, const char* which, Node self, std::vector<Node> args, Node* out) {
-        const Method* m = find_method(sid, which, args.size());
+        const Method* m = which[1] == 'c' ? find_ctor(sid, args) : find_method(sid, which, args.size());
+        if (m != nullptr && which[1] == 'c' && !adjust_args(m->params, &args)) return false;
         if (m == nullptr) {
             error = std::string("no matching ") + (which[1] == 'c' ? "constructor" : "destructor") + " in " +
                     structs[static_cast<size_t>(sid)].name;
@@ -1591,7 +1608,9 @@ struct Parser {
             Type pt;
             bool imp = false;
             bool exp = false;
+            accept(TConst);
             if (!parse_type(&pt, &imp, &exp)) return false;
+            accept(TConst);
             if (is(TLParen) && at + 1 < tokens.size() && tokens[at + 1].kind == TStar) {
                 next();
                 int stars = 0;
@@ -1619,6 +1638,7 @@ struct Parser {
                 continue;
             }
             while (accept(TStar)) ++pt.pointers;
+            if (accept(TAmp)) pt.is_ref = true;
             std::string pname;
             if (is(TIdent)) {
                 pname = cur().text;
@@ -1687,17 +1707,23 @@ struct Parser {
         if (i >= tokens.size() || tokens[i].kind != TIdent || typedefs.find(tokens[i].text) != typedefs.end())
             return false;
         const int id = find_struct(tokens[i].text);
-        return id >= 0 && structs[static_cast<size_t>(id)].cxx;
+        if (id < 0) return false;
+        if (structs[static_cast<size_t>(id)].cxx) return true;
+        // A plain struct named without the word struct, as C++ allows: only where a declaration
+        // clearly follows (a name, '*' or '&').
+        return i + 1 < tokens.size() &&
+               (tokens[i + 1].kind == TIdent || tokens[i + 1].kind == TStar || tokens[i + 1].kind == TAmp);
     }
     bool is_class_name() const {
         if (!is(TIdent) || typedefs.find(cur().text) != typedefs.end()) return false;
-        const int id = find_struct(cur().text);
-        return id >= 0 && structs[static_cast<size_t>(id)].cxx;
+        return class_name_at(at);
     }
 
     bool local_visible(const std::string& name) const;
     bool static_type(const Node& node, Type* out) const;
     bool parse_call_args(std::vector<Node>* args);
+    bool parse_new(Node* out);
+    bool parse_delete(Node* out);
     bool method_call(Node* out, Node object, bool arrow, const std::string& name);
     bool qualified_call(Node* out, int cls, const std::string& name);
     bool parse_expr(int min_prec, Node* out);
@@ -1762,6 +1788,97 @@ struct Parser {
         return nullptr;
     }
 
+    static bool same_shape(const Type& a, const Type& b) {
+        return a.base == b.base && a.pointers == b.pointers && a.is_ref == b.is_ref && a.struct_id == b.struct_id;
+    }
+    static bool is_copy_param(const Method& m, int sid) {
+        return m.name == "<ctor>" && m.params.size() == 1 && m.params[0].is_ref && m.params[0].base == 3 &&
+               m.params[0].pointers == 0 && m.params[0].struct_id == sid;
+    }
+    const Method* copy_ctor(int sid) const {
+        if (sid < 0 || sid >= static_cast<int>(structs.size())) return nullptr;
+        for (const Method& m : structs[static_cast<size_t>(sid)].methods)
+            if (is_copy_param(m, sid)) return &m;
+        return nullptr;
+    }
+    // Chooses among constructors with this many arguments: an argument that is an object of the
+    // class picks the copy constructor, anything else the others.
+    const Method* find_ctor(int sid, const std::vector<Node>& args) const {
+        const StructDef& def = structs[static_cast<size_t>(sid)];
+        const Method* best = nullptr;
+        for (const Method& m : def.methods) {
+            if (m.name != "<ctor>" || m.params.size() != args.size()) continue;
+            if (args.size() == 1) {
+                Type at;
+                bool is_obj = static_type(args[0], &at) && at.base == 3 && at.pointers == 0 && !at.is_array();
+                if (is_obj) {
+                    // The object is of the class or of a class derived from it.
+                    bool related = false;
+                    for (int walk = at.struct_id; walk >= 0; walk = structs[static_cast<size_t>(walk)].base)
+                        if (walk == sid) related = true;
+                    is_obj = related;
+                }
+                if (is_obj != is_copy_param(m, sid)) continue;
+            }
+            best = &m;
+        }
+        if (best == nullptr) return find_method(sid, "<ctor>", args.size());
+        return best;
+    }
+    bool class_has_copy(int sid) const { return copy_ctor(sid) != nullptr; }
+    // The object (not a pointer or array) is an lvalue expression of a class with a copy constructor.
+    bool wants_copy(const Type& t, const Node& arg) const {
+        if (!(t.base == 3 && t.pointers == 0 && !t.is_ref && t.struct_id >= 0 && !t.is_array())) return false;
+        if (!class_has_copy(t.struct_id)) return false;
+        Type at;
+        if (!(arg.kind == Node::Name || arg.kind == Node::Field || arg.kind == Node::Index ||
+              (arg.kind == Node::Unary && arg.op == TStar)))
+            return false;
+        return static_type(arg, &at) && at.base == 3 && at.pointers == 0 && at.struct_id == t.struct_id &&
+               !at.is_array();
+    }
+    struct Temp {
+        std::string name;
+        int sid = -1;
+    };
+    std::vector<Temp> stmt_temps{};
+    int tmp_count = 0;
+
+    // Arguments for a call: a reference parameter gets the address of its argument, a class
+    // parameter with a copy constructor gets a copy made by that constructor into a hidden local
+    // (destroyed after the statement).
+    bool adjust_args(const std::vector<Type>& params, std::vector<Node>* args, size_t first = 0) {
+        for (size_t i = first; i < args->size() && i - first < params.size(); ++i) {
+            const Type& pt = params[i - first];
+            Node& arg = (*args)[i];
+            if (pt.is_ref) {
+                Node a = node_addr(std::move(arg));
+                arg = std::move(a);
+            } else if (cur_locals != nullptr && wants_copy(pt, arg)) {
+                Local hidden;
+                hidden.name = "__tmp" + std::to_string(tmp_count++);
+                hidden.type = pt;
+                place_local(cur_locals, hidden);
+                const Method* cm = copy_ctor(pt.struct_id);
+                Node call;
+                call.kind = Node::Call;
+                call.text = cm->qname;
+                call.number = 1;
+                call.type = cm->ret;
+                call.kids.push_back(node_addr(node_name(hidden.name)));
+                call.kids.push_back(node_addr(std::move(arg)));
+                Node deref;
+                deref.kind = Node::Unary;
+                deref.op = TStar;
+                deref.kids.push_back(std::move(call));
+                arg = std::move(deref);
+                if (class_needs_dtor(structs[static_cast<size_t>(pt.struct_id)]))
+                    stmt_temps.push_back(Temp{hidden.name, pt.struct_id});
+            }
+        }
+        return true;
+    }
+
     // Adds or replaces a member function. A function with the same name and
     // parameter count that a base class declared is replaced; if that one was
     // virtual, this one is virtual in the same slot.
@@ -1769,7 +1886,13 @@ struct Parser {
         m.owner = self;
         size_t found = def->methods.size();
         for (size_t i = 0; i < def->methods.size(); ++i)
-            if (def->methods[i].name == m.name && def->methods[i].params.size() == m.params.size()) found = i;
+            if (def->methods[i].name == m.name && def->methods[i].params.size() == m.params.size()) {
+                bool same = true;
+                if (m.name == "<ctor>")
+                    for (size_t k = 0; k < m.params.size(); ++k)
+                        if (!same_shape(def->methods[i].params[k], m.params[k])) same = false;
+                if (same) found = i;
+            }
         if (found < def->methods.size() && def->methods[found].is_virtual) {
             m.is_virtual = true;
             m.slot = def->methods[found].slot;
@@ -1793,8 +1916,11 @@ struct Parser {
             }
         }
         m.qname = def->name + "::" + m.name + "/" + std::to_string(m.params.size());
+        if (m.name == "<ctor>")
+            for (const Type& param : m.params) m.qname += param.is_ref ? "r" : "v";  // constructors overload by type
         m.symbol = cxx_method_symbol(structs, *def, m);
-        if (m.is_virtual) def->vtable[static_cast<size_t>(m.slot)] = m.pure ? "" : m.symbol;
+        if (m.is_virtual)
+            def->vtable[static_cast<size_t>(m.slot)] = m.pure ? "" : m.name == "<dtor>" ? sdd_symbol(*def, m) : m.symbol;
         if (found < def->methods.size()) def->methods[found] = std::move(m);
         else def->methods.push_back(std::move(m));
         return true;
@@ -1855,6 +1981,12 @@ struct Parser {
                 Method m;
                 m.name = is_dtor ? "<dtor>" : "<ctor>";
                 m.ret.base = 0;
+                if (is_ctor) {
+                    // A constructor returns its object, so that "new C(args)" is one call.
+                    m.ret.base = 3;
+                    m.ret.struct_id = self;
+                    m.ret.pointers = 1;
+                }
                 m.params = decl.params;
                 m.param_names = decl.param_names;
                 m.is_virtual = is_virtual && is_dtor;
@@ -2006,11 +2138,42 @@ struct Parser {
                 if (m.name == "<dtor>" && m.owner == self) has_dtor = true;
             }
             structs[static_cast<size_t>(self)] = def;
+            bool user_copy = false;
+            for (const Method& m : def.methods)
+                if (is_copy_param(m, self)) user_copy = true;
+            bool part_copies = def.base >= 0 && class_has_copy(def.base);
+            for (size_t fi = def.base_fields; fi < def.fields.size(); ++fi) {
+                const Type& ft = def.fields[fi].type;
+                if (ft.base == 3 && ft.pointers == 0 && !ft.is_ref && !ft.is_array() && ft.struct_id >= 0 &&
+                    ft.struct_id != self && class_has_copy(ft.struct_id))
+                    part_copies = true;
+            }
             if (!has_ctor && class_needs_ctor(structs[static_cast<size_t>(self)])) {
                 Method m;
                 m.name = "<ctor>";
-                m.ret.base = 0;
+                m.ret.base = 3;
+                m.ret.struct_id = self;
+                m.ret.pointers = 1;
                 m.implicit = true;
+                m.has_body = true;
+                m.body_at = 1;
+                if (!add_method(&def, self, std::move(m))) return false;
+            }
+            if (!user_copy && part_copies) {
+                // The implicit copy constructor: copies the base and each member.
+                Method m;
+                m.name = "<ctor>";
+                m.ret.base = 3;
+                m.ret.struct_id = self;
+                m.ret.pointers = 1;
+                Type self_ref;
+                self_ref.base = 3;
+                self_ref.struct_id = self;
+                self_ref.is_ref = true;
+                m.params.push_back(self_ref);
+                m.param_names.push_back("__o");
+                m.implicit = true;
+                m.implicit_copy = true;
                 m.has_body = true;
                 m.body_at = 1;
                 if (!add_method(&def, self, std::move(m))) return false;
@@ -2067,10 +2230,68 @@ struct Parser {
         finish_signature(&fn);
         const size_t resume = at;
         at = m.body_at;
+        cur_implicit_copy = m.implicit_copy;
         const bool ok = parse_function_body(&fn, sid, m.name == "<ctor>" ? 1 : m.name == "<dtor>" ? 2 : 0, m.implicit);
         at = resume;
         if (!ok) return false;
         structs[static_cast<size_t>(sid)].methods[mi].body_at = 0;
+        funcs.push_back(std::move(fn));
+        if (m.name == "<dtor>" && m.is_virtual) return define_scalar_dtor(sid, m);
+        return true;
+    }
+
+    // void *C::`scalar deleting destructor'(unsigned flags) { this->~C(); if (flags) free(this); return this; }
+    bool define_scalar_dtor(int sid, const Method& m) {
+        FuncDecl fn;
+        fn.name = m.qname + "/sdd";
+        fn.symbol = sdd_symbol(structs[static_cast<size_t>(sid)], m);
+        fn.ret.base = 0;
+        fn.ret.pointers = 1;
+        Type self_ptr;
+        self_ptr.base = 3;
+        self_ptr.struct_id = sid;
+        self_ptr.pointers = 1;
+        fn.params.push_back(self_ptr);
+        fn.param_names.push_back("this");
+        Type flag;
+        flag.base = 1;
+        flag.is_unsigned = true;
+        fn.params.push_back(flag);
+        fn.param_names.push_back("flags");
+        finish_signature(&fn);
+        std::vector<Local> locals;
+        for (size_t p = 0; p < fn.params.size(); ++p) {
+            Local local;
+            local.name = fn.param_names[p];
+            local.type = fn.params[p];
+            place_local(&locals, local);
+        }
+        fn.nparams = static_cast<int>(fn.params.size());
+        Node block;
+        block.kind = Node::Block;
+        block.text = "scope";
+        Node call;
+        if (!special_call(sid, "<dtor>", node_name("this"), {}, &call)) return false;
+        block.kids.push_back(std::move(call));
+        Node release;
+        release.kind = Node::Call;
+        release.text = "free";
+        release.kids.push_back(node_name("this"));
+        Node release_stmt;
+        release_stmt.kind = Node::ExprStmt;
+        release_stmt.kids.push_back(std::move(release));
+        Node guard;
+        guard.kind = Node::If;
+        guard.kids.push_back(node_name("flags"));
+        guard.kids.push_back(std::move(release_stmt));
+        block.kids.push_back(std::move(guard));
+        Node ret;
+        ret.kind = Node::Return;
+        ret.kids.push_back(node_name("this"));
+        block.kids.push_back(std::move(ret));
+        fn.body = std::move(block);
+        fn.defined = true;
+        fn.locals = std::move(locals);
         funcs.push_back(std::move(fn));
         return true;
     }
@@ -2105,7 +2326,61 @@ struct Parser {
                 inits.push_back(std::move(init));
             } while (accept(TComma));
         }
-        if (special == 1) {
+        if (special == 1 && implicit && cur_implicit_copy) {
+            // Copy constructor made by the compiler: the base (its copy constructor if it has one,
+            // else its fields one by one), the table pointer, then each member.
+            auto other_field = [&](const std::string& f) {
+                Node o;
+                o.kind = Node::Field;
+                o.op = TDot;
+                o.text = f;
+                o.kids.push_back(node_name("__o"));
+                return o;
+            };
+            auto assign_field = [&](const std::string& f) {
+                Node assign;
+                assign.kind = Node::Assign;
+                assign.op = TAssign;
+                assign.number = 1;
+                assign.kids.push_back(node_this_field(f));
+                assign.kids.push_back(other_field(f));
+                Node stmt;
+                stmt.kind = Node::ExprStmt;
+                stmt.kids.push_back(std::move(assign));
+                return stmt;
+            };
+            if (def.base >= 0 && class_has_copy(def.base)) {
+                std::vector<Node> args;
+                args.push_back(node_name("__o"));
+                Node call;
+                if (!special_call(def.base, "<ctor>", node_name("this"), std::move(args), &call)) return false;
+                pre.push_back(std::move(call));
+            } else {
+                for (size_t fi = 0; fi < def.base_fields; ++fi)
+                    if (def.fields[fi].name != "__vptr") pre.push_back(assign_field(def.fields[fi].name));
+            }
+            if (def.poly) pre.push_back(vptr_store_this(def.vtable_sym));
+            for (size_t fi = def.base_fields; fi < def.fields.size(); ++fi) {
+                const Field& field = def.fields[fi];
+                if (field.name == "__vptr") continue;
+                const Type& ft = field.type;
+                if (ft.base == 3 && ft.pointers == 0 && !ft.is_ref && !ft.is_array() && ft.struct_id >= 0 &&
+                    class_has_copy(ft.struct_id)) {
+                    std::vector<Node> args;
+                    args.push_back(other_field(field.name));
+                    Node call;
+                    if (!special_call(ft.struct_id, "<ctor>", node_addr(node_this_field(field.name)),
+                                      std::move(args), &call))
+                        return false;
+                    pre.push_back(std::move(call));
+                } else if (obj_needs_ctor(ft) && !class_has_copy(ft.struct_id)) {
+                    // A member with only a non-copy constructor is copied bytewise.
+                    pre.push_back(assign_field(field.name));
+                } else {
+                    pre.push_back(assign_field(field.name));
+                }
+            }
+        } else if (special == 1) {
             if (def.base >= 0 && class_needs_ctor(structs[static_cast<size_t>(def.base)])) {
                 std::vector<Node> args;
                 for (Init& init : inits)
@@ -2180,6 +2455,12 @@ struct Parser {
             block.kids.push_back(std::move(user));
         }
         for (Node& n : post) block.kids.push_back(std::move(n));
+        if (special == 1) {
+            Node ret;
+            ret.kind = Node::Return;
+            ret.kids.push_back(node_name("this"));
+            block.kids.push_back(std::move(ret));
+        }
         fn->body = std::move(block);
         return true;
     }
@@ -2194,6 +2475,8 @@ struct Parser {
         dscopes.clear();
         fn_dbase = 0;
         cur_ret = fn->ret;
+        const int saved_special = cur_special;
+        cur_special = special;
         const std::string saved_fn = current_fn;
         const int saved_depth = scope_depth;
         const std::vector<int> saved_parent = scope_parent;
@@ -2217,6 +2500,10 @@ struct Parser {
             Local local;
             local.name = fn->param_names[p];
             local.type = fn->params[p];
+            if (p < fn->param_ref.size() && fn->param_ref[p]) {
+                local.type.pointers -= 1;
+                local.type.is_ref = true;
+            }
             place_local(&locals, local);
         }
         fn->nparams = static_cast<int>(fn->params.size());
@@ -2234,6 +2521,7 @@ struct Parser {
         dscopes = saved_dscopes;
         fn_dbase = saved_dbase;
         cur_ret = saved_ret;
+        cur_special = saved_special;
         cur_locals = nullptr;
         current_fn = saved_fn;
         scope_depth = saved_depth;
@@ -2246,6 +2534,13 @@ struct Parser {
     }
 
     void finish_signature(FuncDecl* fn) {
+        fn->param_ref.assign(fn->params.size(), false);
+        for (size_t i = 0; i < fn->params.size(); ++i) {
+            if (!fn->params[i].is_ref) continue;
+            fn->param_ref[i] = true;
+            fn->params[i].is_ref = false;
+            fn->params[i].pointers += 1;
+        }
         FuncType ft;
         ft.ret = fn->ret;
         ft.params = fn->params;
@@ -2457,9 +2752,25 @@ bool Parser::parse_block(Node* out, std::vector<Local>* locals) {
 
 bool Parser::parse_stmt(Node* out, std::vector<Local>* locals) {
     const int stmt_line = cur().line;
+    std::vector<Temp> outer = std::move(stmt_temps);
+    stmt_temps.clear();
     const bool ok = parse_stmt_inner(out, locals, stmt_line);
     out->line = stmt_line;
-    return ok;
+    std::vector<Temp> mine = std::move(stmt_temps);
+    stmt_temps = std::move(outer);
+    if (!ok || mine.empty()) return ok;
+    // Hidden copies made for this statement's arguments are destroyed after it, latest first.
+    Node wrapped;
+    wrapped.kind = Node::Block;
+    wrapped.line = stmt_line;
+    wrapped.kids.push_back(std::move(*out));
+    for (size_t i = mine.size(); i-- > 0;) {
+        Node call;
+        if (!special_call(mine[i].sid, "<dtor>", node_addr(node_name(mine[i].name)), {}, &call)) return false;
+        wrapped.kids.push_back(std::move(call));
+    }
+    *out = std::move(wrapped);
+    return true;
 }
 
 bool Parser::parse_stmt_inner(Node* out, std::vector<Local>* locals, int stmt_line) {
@@ -2632,6 +2943,7 @@ bool Parser::parse_stmt_inner(Node* out, std::vector<Local>* locals, int stmt_li
         }
         return expect(TRBrace, "'}'");
     }
+    if (is(TIdent) && cur().text == "delete") return parse_delete(out);
     if (is(TBreak) || is(TContinue)) {
         const bool is_break = is(TBreak);
         next();
@@ -2661,6 +2973,19 @@ bool Parser::parse_stmt_inner(Node* out, std::vector<Local>* locals, int stmt_li
             if (!parse_expr(0, &value)) return false;
             has_value = true;
             if (!expect(TSemi, "';'")) return false;
+            // Hidden argument copies of the return expression go first.
+            std::vector<Node> tdt;
+            for (size_t i = stmt_temps.size(); i-- > 0;) {
+                Node call;
+                if (!special_call(stmt_temps[i].sid, "<dtor>", node_addr(node_name(stmt_temps[i].name)), {}, &call))
+                    return false;
+                tdt.push_back(std::move(call));
+            }
+            stmt_temps.clear();
+            dt.insert(dt.begin(), std::make_move_iterator(tdt.begin()), std::make_move_iterator(tdt.end()));
+        } else if (cur_special == 1) {
+            value = node_name("this");
+            has_value = true;
         }
         if (dt.empty()) {
             if (has_value) ret.kids.push_back(std::move(value));
@@ -2745,6 +3070,12 @@ bool Parser::parse_stmt_inner(Node* out, std::vector<Local>* locals, int stmt_li
         if (accept(TAssign)) {
             if (!parse_init(&init)) return false;
             has_init = true;
+            if (!is_static && wants_copy(decl.type, init)) {
+                // C x = y; with y an object of the class: the copy constructor.
+                ctor_args.push_back(std::move(init));
+                have_ctor_args = true;
+                has_init = false;
+            }
         }
         if (is_static) {
             Global global;
@@ -2969,6 +3300,7 @@ bool Parser::qualified_call(Node* out, int cls, const std::string& name) {
         error = "no member function " + name;
         return false;
     }
+    if (!adjust_args(m->params, &args)) return false;
     if (cur_class < 0) {
         error = "a qualified member call needs this";
         return false;
@@ -3010,6 +3342,7 @@ bool Parser::method_call(Node* out, Node object, bool arrow, const std::string& 
         error = "no member function " + name + " with " + std::to_string(args.size()) + " arguments";
         return false;
     }
+    if (!adjust_args(m->params, &args)) return false;
     const bool dynamic = m->is_virtual && (arrow || ot.is_ref || (object.kind == Node::Unary && object.op == TStar));
     Node self;
     if (arrow) {
@@ -3073,7 +3406,165 @@ bool Parser::method_call(Node* out, Node object, bool arrow, const std::string& 
     return true;
 }
 
+// new T, new T(args): malloc, then the constructor (which returns its object). The program
+// declares malloc and free itself (the runtime provides them). Written from ISO/IEC 14882
+// [expr.new].
+bool Parser::parse_new(Node* out) {
+    next();
+    Type ty;
+    bool imp = false;
+    bool exp = false;
+    if (!parse_type(&ty, &imp, &exp)) return false;
+    while (accept(TStar)) ++ty.pointers;
+    if (is(TLBrack)) {
+        error = "new of an array is not supported";
+        return false;
+    }
+    std::vector<Node> args;
+    if (accept(TLParen)) {
+        if (!parse_call_args(&args)) return false;
+    }
+    const bool obj = ty.base == 3 && ty.pointers == 0 && ty.struct_id >= 0;
+    const bool ctor = obj && class_needs_ctor(structs[static_cast<size_t>(ty.struct_id)]);
+    if (!args.empty() && !ctor) {
+        error = "new with arguments needs a class with a constructor";
+        return false;
+    }
+    Node size;
+    size.kind = Node::IntLit;
+    size.number = static_cast<uint64_t>(size_of(ty));
+    size.type.base = 1;
+    Node alloc;
+    alloc.kind = Node::Call;
+    alloc.text = "malloc";
+    alloc.kids.push_back(std::move(size));
+    Node cast;
+    cast.kind = Node::Unary;
+    cast.type = ty;
+    cast.type.pointers += 1;
+    cast.kids.push_back(std::move(alloc));
+    if (!ctor) {
+        *out = std::move(cast);
+        return true;
+    }
+    const Method* m = find_ctor(ty.struct_id, args);
+    if (m == nullptr) {
+        error = "no matching constructor in " + structs[static_cast<size_t>(ty.struct_id)].name;
+        return false;
+    }
+    if (!adjust_args(m->params, &args)) return false;
+    Node call;
+    call.kind = Node::Call;
+    call.text = m->qname;
+    call.number = 1;
+    call.type = m->ret;
+    call.kids.push_back(std::move(cast));
+    for (Node& arg : args) call.kids.push_back(std::move(arg));
+    *out = std::move(call);
+    return true;
+}
+
+// delete p; the destructor, then free. A virtual destructor is reached through the table slot of
+// the scalar deleting destructor, which frees the memory itself. A null pointer does nothing.
+bool Parser::parse_delete(Node* out) {
+    next();
+    Node target;
+    if (!parse_unary(&target)) return false;
+    if (!expect(TSemi, "';'")) return false;
+    Type ot;
+    if (!static_type(target, &ot) || ot.pointers != 1) {
+        error = "delete needs a pointer";
+        return false;
+    }
+    if (has_effects(target)) {
+        error = "delete needs a pointer expression without side effects";
+        return false;
+    }
+    Node then_block;
+    then_block.kind = Node::Block;
+    const bool cls = ot.base == 3 && ot.struct_id >= 0 && class_needs_dtor(structs[static_cast<size_t>(ot.struct_id)]);
+    const Method* dm = cls ? find_method(ot.struct_id, "<dtor>", 0) : nullptr;
+    if (dm != nullptr && dm->is_virtual) {
+        FuncType ft;
+        ft.ret.base = 0;
+        ft.ret.pointers = 1;
+        Type self_ptr;
+        self_ptr.base = 3;
+        self_ptr.struct_id = dm->owner;
+        self_ptr.pointers = 1;
+        ft.params.push_back(self_ptr);
+        Type flag;
+        flag.base = 1;
+        flag.is_unsigned = true;
+        ft.params.push_back(flag);
+        Type fp;
+        fp.base = 1;
+        fp.pointers = 1;
+        fp.func_id = static_cast<int>(func_types.size());
+        func_types.push_back(ft);
+        Node table;
+        table.kind = Node::Field;
+        table.op = TArrow;
+        table.text = "__vptr";
+        table.kids.push_back(target);
+        Node slot;
+        slot.kind = Node::IntLit;
+        slot.number = static_cast<uint64_t>(dm->slot);
+        slot.type.base = 1;
+        Node entry_addr;
+        entry_addr.kind = Node::Binary;
+        entry_addr.op = TPlus;
+        entry_addr.kids.push_back(std::move(table));
+        entry_addr.kids.push_back(std::move(slot));
+        Node entry;
+        entry.kind = Node::Unary;
+        entry.op = TStar;
+        entry.kids.push_back(std::move(entry_addr));
+        Node fn_target;
+        fn_target.kind = Node::Unary;
+        fn_target.type = fp;
+        fn_target.kids.push_back(std::move(entry));
+        Node call;
+        call.kind = Node::Call;
+        call.number = 1;
+        call.type = ft.ret;
+        call.kids.push_back(std::move(fn_target));
+        call.kids.push_back(target);
+        Node one;
+        one.kind = Node::IntLit;
+        one.number = 1;
+        one.type.base = 1;
+        call.kids.push_back(std::move(one));
+        Node stmt;
+        stmt.kind = Node::ExprStmt;
+        stmt.kids.push_back(std::move(call));
+        then_block.kids.push_back(std::move(stmt));
+    } else {
+        if (dm != nullptr) {
+            Node call;
+            if (!special_call(ot.struct_id, "<dtor>", target, {}, &call)) return false;
+            then_block.kids.push_back(std::move(call));
+        }
+        Node release;
+        release.kind = Node::Call;
+        release.text = "free";
+        release.kids.push_back(target);
+        Node stmt;
+        stmt.kind = Node::ExprStmt;
+        stmt.kids.push_back(std::move(release));
+        then_block.kids.push_back(std::move(stmt));
+    }
+    out->kind = Node::If;
+    out->kids.push_back(std::move(target));
+    out->kids.push_back(std::move(then_block));
+    return true;
+}
+
 bool Parser::parse_unary(Node* out) {
+    if (is(TIdent) && cur().text == "new") {
+        if (!parse_new(out)) return false;
+        return parse_postfix(out);
+    }
     if (is(TSizeof)) {
         next();
         if (!expect(TLParen, "'('")) return false;
@@ -3206,6 +3697,17 @@ bool Parser::parse_unary(Node* out) {
                     out->kids.push_back(std::move(arg));
                 } while (accept(TComma));
                 if (!expect(TRParen, "')'")) return false;
+            }
+            for (const FuncDecl& known : funcs) {
+                if (known.name != name) continue;
+                std::vector<Type> source = known.params;
+                for (size_t i = 0; i < source.size() && i < known.param_ref.size(); ++i)
+                    if (known.param_ref[i]) {
+                        source[i].pointers -= 1;
+                        source[i].is_ref = true;
+                    }
+                if (!adjust_args(source, &out->kids)) return false;
+                break;
             }
         } else if (enum_values.find(name) != enum_values.end()) {
             out->kind = Node::IntLit;

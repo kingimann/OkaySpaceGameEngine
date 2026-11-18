@@ -2,6 +2,7 @@
 // The add-node panel: search, a topic list on the left (grouped under section headings), favourites, and a
 // details pane. Shared by the right-click menu, a wire dropped in empty space, and Add node.
 #include "VisualScriptNodeDocs.hpp"
+#include "VisualScriptSearch.hpp"   // plain-word search, synonyms, starter boost
 #include "ScriptingDensity.hpp"   // Density: every size below comes from this table
 #include "VisualScriptSearchNav.hpp"   // the popup's pure logic: size, selection movement, scrolling, recent list
 #include "imgui.h"
@@ -151,7 +152,7 @@ inline void VsNodeTooltip(const char* title, const VsNodeDoc* doc, const VsDef* 
     }
     if (doc) {
         ImGui::Spacing();
-        ImGui::TextWrapped("%s", doc->description.c_str());
+        ImGui::TextWrapped("%s", VsPlainText(doc->description).c_str());
         ImGui::Spacing();
         ImGui::TextDisabled("%s", doc->requirements.c_str());
         if (!doc->example.empty()) { ImGui::Spacing(); ImGui::TextWrapped("%s", doc->example.c_str()); }
@@ -324,6 +325,7 @@ inline bool VsPaletteStepIsDuplicate(const std::string& label) {
 struct VsPaletteStore {
     std::vector<std::string> fav, recent;
     int filter = 0;                         // VsLevelFilter: 0 all, 1 basic, 2 intermediate, 3 advanced
+    bool allNodes = false;                  // "Show all nodes": off lists the everyday blocks only
     searchnav::PanelSize size;              // 0 x 0 until the popup has been resized once
     bool loaded = false;
     void load() {
@@ -331,6 +333,7 @@ struct VsPaletteStore {
         std::ifstream f("okay_vsnodes.txt"); std::string kind, k;
         while (f >> kind >> k) {
             if (kind == "lvl") filter = std::clamp(std::atoi(k.c_str()), 0, 3);
+            else if (kind == "all") allNodes = k == "1";
             else if (kind == "size") { const searchnav::PanelSize p = searchnav::ParsePanelSize(k); if (!p.bad) size = p; }
             else if (kind == "fav") fav.push_back(k);
             else if (kind == "rec") recent.push_back(k);
@@ -340,6 +343,7 @@ struct VsPaletteStore {
     void save() const {
         std::ofstream f("okay_vsnodes.txt");
         f << "lvl " << filter << "\n";
+        f << "all " << (allNodes ? 1 : 0) << "\n";
         if (size.w > 0 && size.h > 0) f << "size " << searchnav::FormatPanelSize(size) << "\n";
         for (const auto& k : fav) f << "fav " << k << "\n";
         for (const auto& k : recent) f << "rec " << k << "\n";
@@ -431,10 +435,11 @@ inline void DrawNodePalette(VsEditState& st, const VsEditGraph& g,
         e.doc = VsNodeDocFor(d.type);
         e.rank = api ? 2 : 0;
         if (const char* what = VsNodeHelp(d.type)) e.helpLine = what;
-        else if (api && !api->doc.empty()) e.helpLine = api->doc;
+        else if (api && !api->doc.empty()) e.helpLine = VsPlainText(api->doc);
         else if (d.title && d.title[0]) e.helpLine = std::string(d.title) + ".";
         if (const char* ex = VsNodeExample(d.type)) e.example = ex;
         e.keywords = VsNodeSearchText(d.type);
+        if (const std::string syn = VsSynonymWords(std::string(d.title ? d.title : "") + " " + e.keywords); !syn.empty()) e.keywords += " " + syn;
         if (api) { if (!e.keywords.empty()) e.keywords += ' '; e.keywords += "engine api"; }
         // Where this node used to sit (Scene Atmosphere, Objects Survival ...): people who remember the old topic
         // still find it by typing that name.
@@ -455,7 +460,7 @@ inline void DrawNodePalette(VsEditState& st, const VsEditGraph& g,
         const std::string in = join(d.dataIn), out = join(d.dataOut), ex = join(d.execOut);
         // What it does in plain words (VisualScriptNodeHelp.hpp), then how it plugs in.
         if (const char* what = VsNodeHelp(d.type)) e.desc = std::string(what) + " ";
-        if (api) e.desc = api->doc + " In a script: " + api->code + ". ";
+        if (api) e.desc = VsPlainText(api->doc) + " In a script: " + api->code + ". ";
         if (!d.execIn && !d.execOut.empty() && d.dataIn.empty()) e.desc += "An event: starts a flow. ";
         else if (d.execIn) e.desc += "Runs when the flow reaches it. ";
         else e.desc += "Gives a value to other nodes. ";
@@ -498,6 +503,9 @@ inline void DrawNodePalette(VsEditState& st, const VsEditGraph& g,
     std::vector<std::string>& s_fav = store.fav;
     std::vector<std::string>& s_recent = store.recent;
     int& s_filter = store.filter;
+    bool& s_allNodes = store.allNodes;     // "Show all nodes" (not the wire switch s_showAll below)
+    static bool s_searchAll = false;       // "Search all nodes" was clicked: the search looks through hidden nodes too
+    static int s_hiddenHits = 0;           // how many hidden nodes the last search skipped
     static std::size_t s_listVer = 0;   // bumped when favourites or recents change (the cached rows depend on them)
     auto saveLists = [&] { store.save(); };
     const VsLevelFilter levelFilter = (VsLevelFilter)s_filter;
@@ -516,7 +524,7 @@ inline void DrawNodePalette(VsEditState& st, const VsEditGraph& g,
     // each pane scrolling on its own. Sidebar ids: -4 Starter, -2 Recent, -1 Favourites, -3 All, otherwise a topic index.
     namespace sn = searchnav;
     ImGuiIO& io = ImGui::GetIO();
-    static int s_side = -3;
+    static int s_side = -4;               // the Starter group first
     static int s_kb = 0;                  // the one highlighted row (mouse and keyboard share it)
     static bool s_listFocus = false;      // Tab: the keys drive the list and the text box is read-only
     static bool s_showAll = false;        // wire dragged: also list the nodes that do not fit
@@ -529,7 +537,7 @@ inline void DrawNodePalette(VsEditState& st, const VsEditGraph& g,
     static bool s_focusSearch = false;    // put the cursor in the search box (drawn this frame)
     const bool wire = st.linkPending;
     if (ImGui::IsWindowAppearing()) {
-        search[0] = '\0'; s_kb = 0; s_listFocus = false; s_showAll = false; s_scrollTop = true;
+        search[0] = '\0'; s_kb = 0; s_listFocus = false; s_showAll = false; s_searchAll = false; s_scrollTop = true;
         s_focusSearch = true;   // asked for here, done just before the search box is drawn (not on the first widget)
         if (wire) s_side = -3;   // a wire dropped on empty space: start on the whole list, the nodes that fit
     }
@@ -631,6 +639,9 @@ inline void DrawNodePalette(VsEditState& st, const VsEditGraph& g,
         }
         ImGui::PopStyleVar(2);
     }
+    if (ImGui::Checkbox("Show all nodes", &s_allNodes)) { s_kb = 0; s_scrollTop = true; ++s_listVer; saveLists(); }
+    if (ImGui::IsItemHovered()) ImGui::SetTooltip("Off: only the everyday blocks. On: the whole library, for advanced scripts.");
+    if (!s_allNodes && !(s_side == -1 || s_side == -2 || s_side == -3 || s_side <= -10)) s_side = -3;
     const bool enter = ImGui::IsKeyPressed(ImGuiKey_Enter, false) || ImGui::IsKeyPressed(ImGuiKey_KeypadEnter, false);
     const std::string needle = lower(search);
 
@@ -713,27 +724,41 @@ inline void DrawNodePalette(VsEditState& st, const VsEditGraph& g,
     };
     // The counts and the "fits the wire" flags only change when one of these does, not on every frame.
     static std::vector<int> s_catCount;
-    static int s_browseAll = 0, s_starterN = 0;
+    static int s_browseAll = 0, s_starterN = 0, s_quickN = 0, s_beginnerN = 0;
+    static int s_groupN[kGroupCount] = {};
     {
-        using SideKey = std::tuple<std::size_t, bool, bool, bool, int, long long, long long, int, bool>;
+        using SideKey = std::tuple<std::size_t, bool, bool, bool, int, long long, long long, int, bool, bool>;
         static SideKey s_sideKey{};
         static bool s_sideInit = false;
         const SideKey key{s_gen, st.linkPending, st.linkExec, st.linkFromOutput, (int)dragged,
-                          (long long)st.linkNode, (long long)st.linkPin, s_filter, s_showAll};
+                          (long long)st.linkNode, (long long)st.linkPin, s_filter, s_showAll, s_allNodes};
         if (!s_sideInit || !(key == s_sideKey)) {
             s_sideKey = key; s_sideInit = true;
             for (auto& e : all) e.fits = !st.linkPending || !e.def || fits(*e.def);
             s_catCount.assign((std::size_t)std::max(1, VsPaletteCategoryCount()), 0);
-            s_browseAll = 0; s_starterN = 0;
+            s_browseAll = 0; s_starterN = 0; s_quickN = 0; s_beginnerN = 0; for (int& gn : s_groupN) gn = 0;
             for (const auto& e : all) {
-                if (!sn::ShowEntry(st.linkPending, s_showAll, e.fits) || !e.browse || !passesLevel(e.level)) continue;
+                if (!sn::ShowEntry(st.linkPending, s_showAll, e.fits) || !e.browse || !passesLevel(e.level) || VsHiddenWhileBrowsing(e.def ? e.def->type : "", s_filter, s_allNodes)) continue;
                 ++s_browseAll;
                 if (e.def && VsIsStarter(e.def->type)) ++s_starterN;
+                if (e.def && okay::vs::FindQuickBlock(e.def->type)) ++s_quickN;
+                if (const int bg = e.def ? VsBeginnerGroup(e.def->type) : -1; bg >= 0) { ++s_beginnerN; ++s_groupN[bg]; }
                 if (e.catIndex >= 0 && e.catIndex < (int)s_catCount.size()) ++s_catCount[(std::size_t)e.catIndex];
             }
         }
     }
+    if (!s_allNodes) {
+        // Beginner mode: six big groups and nothing else (no topic tree). Each lists about ten blocks.
+        if (sideItem(-3, "Everything", 0, s_beginnerN, s_side == -3)) s_side = -3;
+        ImGui::Spacing();
+        for (int bg = 0; bg < kGroupCount; ++bg)
+            if (sideItem(-10 - bg, kVsBeginnerGroupNames[bg], 0, s_groupN[bg], s_side == -10 - bg)) s_side = -10 - bg;
+        ImGui::Separator();
+        if (sideItem(-2, "Recent", 0, (int)s_recent.size(), s_side == -2)) s_side = -2;
+        if (sideItem(-1, "Favourites", 0, (int)s_fav.size(), s_side == -1)) s_side = -1;
+    } else {
     if (sideItem(-4, "Starter", 0, s_starterN, s_side == -4)) s_side = -4;
+    if (sideItem(-5, "Quick blocks", 0, s_quickN, s_side == -5)) s_side = -5;
     if (sideItem(-2, "Recent", 0, (int)s_recent.size(), s_side == -2)) s_side = -2;
     if (sideItem(-1, "Favourites", 0, (int)s_fav.size(), s_side == -1)) s_side = -1;
     if (sideItem(-3, "All", 0, s_browseAll, s_side == -3)) s_side = -3;
@@ -750,6 +775,7 @@ inline void DrawNodePalette(VsEditState& st, const VsEditGraph& g,
             }
             if (sideItem(c, kPaletteCategories[c].name, bright(catColor(c)), n, s_side == c)) s_side = c;
         }
+    }
     }
     s_sideReveal = false;
     ImGui::EndChild();
@@ -769,10 +795,10 @@ inline void DrawNodePalette(VsEditState& st, const VsEditGraph& g,
         static RowKey s_rowKey{};
         static bool s_rowInit = false;
         const RowKey key{s_gen, s_listVer, st.linkPending, st.linkExec, st.linkFromOutput, (int)dragged,
-                         (long long)st.linkNode, (long long)st.linkPin, s_filter, s_side, s_showAll, needle};
+                         (long long)st.linkNode, (long long)st.linkPin, s_filter, s_side, s_showAll, needle + (s_allNodes ? "|all" : "") + (s_searchAll ? "|sa" : "")};
         if (!s_rowInit || !(key == s_rowKey)) {
             s_rowKey = key; s_rowInit = true;
-            s_rows.clear(); s_suggest = false;
+            s_rows.clear(); s_suggest = false; s_hiddenHits = 0;
             auto recentRank = [&](const std::string& k) {
                 const auto it = std::find(s_recent.begin(), s_recent.end(), k);
                 return it == s_recent.end() ? 10000 : (int)(it - s_recent.begin());
@@ -780,16 +806,22 @@ inline void DrawNodePalette(VsEditState& st, const VsEditGraph& g,
             std::vector<int> hits;
             for (const auto& e : all) {
                 if (!sn::ShowEntry(st.linkPending, s_showAll, e.fits) || !passesLevel(e.level)) continue;
-                if (needle.empty() && !e.browse) continue;
+                if (needle.empty() && (!e.browse || VsHiddenWhileBrowsing(e.def ? e.def->type : "", s_filter, s_allNodes))) continue;
+                if (!needle.empty() && !s_searchAll && VsHiddenWhileBrowsing(e.def ? e.def->type : "", s_filter, s_allNodes)) {
+                    if (score(e, hits) > 0) ++s_hiddenHits;   // found, but hidden: offered with "Search all nodes"
+                    continue;
+                }
                 // Typing searches every topic, so a name is found wherever it lives.
                 // Only the level filter still applies.
                 if (needle.empty()) {
                     if (s_side == -4 && !(e.def && VsIsStarter(e.def->type))) continue;
+                    if (s_side == -5 && !(e.def && okay::vs::FindQuickBlock(e.def->type))) continue;
+                    if (s_side <= -10 && !(e.def && VsBeginnerGroup(e.def->type) == -10 - s_side)) continue;
                     if (s_side >= 0 && e.catIndex != s_side) continue;
                     if (s_side == -1 && !isFav(e.key)) continue;
                     if (s_side == -2 && std::find(s_recent.begin(), s_recent.end(), e.key) == s_recent.end()) continue;
                 }
-                const int sc = score(e, hits);
+                const int sc = needle.empty() ? score(e, hits) : VsStarterBoost(score(e, hits), e.def && (VsIsStarter(e.def->type) || okay::vs::FindQuickBlock(e.def->type)), e.def && std::strncmp(e.def->type, "Fn.", 3) == 0);
                 if (sc > 0) s_rows.push_back(Row{&e, sc});
             }
             if (!needle.empty())
@@ -827,7 +859,8 @@ inline void DrawNodePalette(VsEditState& st, const VsEditGraph& g,
             if (s_rows.empty() && !needle.empty()) {
                 std::vector<const Entry*> pool; std::vector<std::string> titles;
                 for (const auto& e : all) {
-                    if (!sn::ShowEntry(st.linkPending, s_showAll, e.fits) || !passesLevel(e.level) || !e.browse) continue;
+                    if (!sn::ShowEntry(st.linkPending, s_showAll, e.fits) || !passesLevel(e.level) || !e.browse
+                        || VsHiddenWhileBrowsing(e.def ? e.def->type : "", s_filter, s_allNodes)) continue;
                     pool.push_back(&e); titles.push_back(e.titleLower);
                 }
                 for (int i : sn::NearestIndices(titles, needle, 5)) s_rows.push_back(Row{pool[(std::size_t)i], 0});
@@ -861,6 +894,11 @@ inline void DrawNodePalette(VsEditState& st, const VsEditGraph& g,
     const Entry* hovered = nullptr;
     const Entry* toAdd = nullptr;
     ImGui::BeginChild("##vspres", ImVec2(-(previewW + ImGui::GetStyle().ItemSpacing.x), -footH), ImGuiChildFlags_Borders);
+    if (!needle.empty() && !s_allNodes && !s_searchAll && s_hiddenHits > 0) {
+        ImGui::TextDisabled("%d more nodes match, but they are advanced.", s_hiddenHits);
+        ImGui::SameLine();
+        if (ImGui::SmallButton("Search all nodes")) { s_searchAll = true; ++s_listVer; }
+    }
     // What is said above the list: a suggestion line, or the friendly empty message.
     if (rows.empty() || s_suggest) {
         ImGui::PushTextWrapPos(0.0f);
@@ -1002,6 +1040,8 @@ inline void DrawNodePalette(VsEditState& st, const VsEditGraph& g,
             ImGui::TextDisabled("Example");
             ImGui::TextWrapped("%s", e.example.c_str());
         }
+        if (!needle.empty()) if (const char* mark = VsAdvancedMark(e.def ? e.def->type : "", s_allNodes); mark[0])
+            ImGui::TextColored(ImVec4(0.95f, 0.78f, 0.45f, 1.0f), "%s: turn on Show all nodes to browse it.", mark);
         if (e.def && !e.step) {
             auto names = [](const std::vector<const char*>& v) { std::vector<std::string> o; for (const char* c : v) if (c) o.push_back(c); return o; };
             ImGui::Spacing();

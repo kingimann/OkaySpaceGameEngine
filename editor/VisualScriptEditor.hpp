@@ -38,6 +38,12 @@
 #include "VisualScriptLevels.hpp"
 #include "VisualScriptCategories.hpp"
 #include "VisualScriptFriendly.hpp"
+#include "VisualScriptPlain.hpp"
+#include "okay/VisualScript/QuickBlocks.hpp"
+#include "VisualScriptRecipes.hpp"
+#include "VisualScriptAutoConnect.hpp"
+#include "VisualScriptAdvanced.hpp"
+#include "VisualScriptPlainWire.hpp"
 #include "DocRecovery.hpp"
 #include <algorithm>
 #include <cstdlib>
@@ -165,6 +171,27 @@ inline std::vector<VsDef> ApplyFriendlyNames(std::vector<VsDef> defs) {
     return defs;
 }
 
+// Quick blocks (okay/VisualScript/QuickBlocks.hpp): one node each, the typed fields are its data inputs.
+inline std::vector<VsDef> VsWithQuickBlockDefs(std::vector<VsDef> defs) {
+    for (const okay::vs::QuickBlock& b : okay::vs::QuickBlocks()) {
+        VsDef d{b.type, b.title, CAT_ACTION, b.flowIn, {}, {}, {}, 0, nullptr};
+        if (b.thenOut) d.execOut.push_back("Then do");
+        for (const okay::vs::QbField& f : b.fields) d.dataIn.push_back(f.name);
+        d.level = VsLevel::Basic;
+        defs.push_back(d);
+    }
+    return defs;
+}
+
+// Plain words (VisualScriptPlain.hpp): a hand-picked name, else the banned words swapped for everyday ones.
+inline std::vector<VsDef> ApplyPlainTitles(std::vector<VsDef> defs) {
+    for (VsDef& d : defs) {
+        if (const char* t = VsPlainTitleFor(d.type)) { d.title = t; continue; }
+        if (d.title && !VsGlossaryViolation(d.title).empty()) d.title = VsIntern(VsPlainText(d.title, true));
+    }
+    return defs;
+}
+
 // Levels come from VisualScriptLevels.hpp, not from the big list below, so a
 // new node (including one added on another branch) gets a level by name.
 inline std::vector<VsDef> ApplyLevels(std::vector<VsDef> defs) {
@@ -179,7 +206,7 @@ inline std::vector<VsDef> ApplyLevels(std::vector<VsDef> defs) {
 // A curated, genuinely-useful set of nodes (all supported by the engine runtime),
 // then the generated engine-API nodes.
 inline const std::vector<VsDef>& Registry() {
-    static const std::vector<VsDef> defs = ApplyLevels(ApplyFriendlyNames(VsWithBuiltinDefs(VsWithApiDefs(VsWithTargetPins({
+    static const std::vector<VsDef> defs = ApplyLevels(ApplyPlainTitles(ApplyFriendlyNames(VsWithQuickBlockDefs(VsWithBuiltinDefs(VsWithApiDefs(VsWithTargetPins({
         // Events
         {"OnStart",  "On Start",  CAT_EVENT, false, {""}, {}, {}, 0, nullptr},
         {"OnUpdate", "On Update", CAT_EVENT, false, {""}, {}, {}, 0, nullptr},
@@ -831,7 +858,7 @@ inline const std::vector<VsDef>& Registry() {
         {"IsValid",         "Is Valid",         CAT_LOGIC, false, {}, {"Value"}, {"Yes"}, 0, nullptr},
         {"CallScript",      "Call Script",      CAT_ACTION, true, {""}, {"Argument"}, {"Result"}, 1, "function"},
         {"RunGraph",        "Run Graph",        CAT_FLOW,  true, {""}, {}, {}, 1, "file.okayvs or file|Event"},
-    })))));
+    })))))));
     return defs;
 }
 
@@ -970,6 +997,11 @@ struct VsComment { float x = 0, y = 0, w = 300, h = 200; std::string text = "Com
 // The runtime entry name an event node registers under ("" = not an event):
 // "OnStart", "OnKey:space", "OnTimer:2", "OnEvent:Hit", "OnAnimEvent:step"...
 // Spaces become '_' so the name stays one token (the runtime does the same).
+/// A quick block that starts on its own event (no flow input) counts as the start of a script.
+inline bool VsStartsOnItsOwn(const std::string& type) {
+    const okay::vs::QuickBlock* b = okay::vs::FindQuickBlock(type);
+    return b && !b->flowIn;
+}
 inline std::string VsEntryName(const std::string& type, const std::string& arg) {
     auto tok = [](std::string v, const char* d) {
         if (v.empty()) v = d;
@@ -1076,6 +1108,11 @@ public:
             {"AddItem", "item"}, {"RemoveItem", "item"}, {"HasItem", "item"}, {"ItemCount", "item"}, {"EquipItem", "item"},
             {"CraftItem", "item"}, {"LootRoll", "loot"}, {"SpawnPickup", "item"}, {"SetWeapon", "sword"}};
         if (d) if (auto it = kArg.find(d->type); it != kArg.end()) n.arg = it->second;
+        // A quick block starts with the values its fields show, so it works the moment it is dropped.
+        if (const okay::vs::QuickBlock* qb = okay::vs::FindQuickBlock(type)) {
+            int pin = 0;
+            for (const okay::vs::QbField& f : qb->fields) n.pinDefault[pin++] = f.def;
+        }
         nodes.push_back(n); dirty = true; return n.id;
     }
     void removeNode(int id) {
@@ -2301,7 +2338,7 @@ inline std::string CompileToOkayScript(const VsEditGraph& g, std::vector<okay::v
         };
         for (const auto& n : g.nodes) {
             const int tp = okay::vs::TargetPinFor(n.type);
-            bool objectUse = n.type == "Self" || n.type == "Other" || n.type == "FindObject" || n.type == "Raycast3D" || n.type == "SpringStep" ||
+            bool objectUse = n.type.rfind("Qb", 0) == 0 || n.type == "Self" || n.type == "Other" || n.type == "FindObject" || n.type == "Raycast3D" || n.type == "SpringStep" ||
                              IsFunctionNode(n.type) || n.type == "SetLocal" || n.type == "GetLocal" || IsApiNode(n.type) ||
                              n.type == "ForEach" || n.type == "ForEachMap" || n.type.rfind("List", 0) == 0 || n.type == "NewList" ||
                              n.type == "NewMap" || n.type.rfind("Map", 0) == 0 || n.type == "RunGraph" || n.type == "CallScript" ||
@@ -2629,16 +2666,7 @@ inline ImU32 VsPinColor(okay::vs::PinType t) {
 inline bool VsWireOk(const VsEditGraph& g, int consumer, int inPin, int producer, int outPin, std::string* why = nullptr) {
     const okay::vs::PinType from = VsOutPinType(g, producer, outPin), to = VsInPinType(g, consumer, inPin);
     if (okay::vs::PinCompatible(from, to)) return true;
-    if (why) {
-        auto article = [](const char* w) {
-            const char c = w && w[0] ? (char)std::tolower((unsigned char)w[0]) : 'x';
-            return (c == 'a' || c == 'e' || c == 'i' || c == 'o' || c == 'u') ? "an " : "a ";
-        };
-        *why = std::string(article(okay::vs::PinTypeName(from))) + okay::vs::PinTypeName(from)
-             + " can't go into " + article(okay::vs::PinTypeName(to)) + okay::vs::PinTypeName(to) + " input";
-        const std::string h = okay::vs::ConversionHint(from, to);
-        if (!h.empty()) *why += " - " + h;
-    }
+    if (why) *why = VsPlainWireRefusal(from, to);
     return false;
 }
 
@@ -3084,6 +3112,56 @@ inline std::string VsSelectionText(const VsEditGraph& g, const std::set<int>& se
 }
 // Paste OkayVS text into the graph with fresh ids, its top-left at (wx, wy)
 // (world units). Returns the new node ids.
+/// A node just added from the popup joins the flow: the last node before it when that node still has a free
+/// "then" plug (the new node is placed beside it), else a nearby node with a free plug (VisualScriptAutoConnect.hpp).
+/// Returns the node it was connected after, or -1. The node must have a flow input.
+inline int VsAutoHook(VsEditGraph& g, int newId) {
+    VsEditNode* n = g.find(newId);
+    if (!n) return -1;
+    const VsDef* d = FindDef(n->type);
+    if (!d || !d->execIn) return -1;
+    std::vector<VsLayoutNode> layout;
+    int last = -1;
+    for (const VsEditNode& m : g.nodes) {
+        if (m.id == newId) continue;
+        const VsDef* md = FindDef(m.type);
+        if (!md) continue;
+        VsLayoutNode ln;
+        ln.id = m.id; ln.x = m.x; ln.y = m.y;
+        ln.hasFlowOut = !md->execOut.empty();
+        for (const VsExecLink& l : g.execLinks) if (l.from == m.id && l.pin == 0) ln.flowOutUsed = true;
+        layout.push_back(ln);
+        last = m.id;
+    }
+    int from = VsAutoConnectFrom(layout, n->x, n->y, true);
+    if (from < 0 && last >= 0)
+        for (const VsLayoutNode& ln : layout)
+            if (ln.id == last && ln.hasFlowOut && !ln.flowOutUsed) {
+                from = last;
+                n->x = ln.x + 260.0f; n->y = ln.y;   // put it beside the node it follows
+            }
+    if (from < 0) return -1;
+    g.linkExec(from, 0, newId);
+    return from;
+}
+
+/// A node dropped on a flow wire splits it: from -> node -> to. The node needs a flow input and a flow output and
+/// no flow wires of its own yet. `wireIndex` indexes g.execLinks. Returns true when it was inserted.
+inline bool VsInsertOnWire(VsEditGraph& g, int nodeId, int wireIndex) {
+    if (wireIndex < 0 || wireIndex >= (int)g.execLinks.size()) return false;
+    const VsEditNode* n = g.find(nodeId);
+    const VsDef* d = n ? FindDef(n->type) : nullptr;
+    if (!d || !d->execIn || d->execOut.empty()) return false;
+    for (const VsExecLink& l : g.execLinks) if (l.from == nodeId || l.to == nodeId) return false;
+    const VsExecLink wire = g.execLinks[(std::size_t)wireIndex];
+    if (wire.from == nodeId || wire.to == nodeId) return false;
+    for (const VsFlowLink& k : VsInsertOnWire(VsFlowLink{wire.from, wire.pin, wire.to}, nodeId, 0)) (void)k;
+    g.unlinkExec(wire.from, wire.pin, wire.to);
+    g.linkExec(wire.from, wire.pin, nodeId);
+    g.linkExec(nodeId, 0, wire.to);
+    return true;
+}
+
 inline std::set<int> VsPasteText(VsEditGraph& g, const std::string& text, float wx, float wy) {
     VsEditGraph part; part.fromText(text);
     std::set<int> made;
@@ -3785,7 +3863,7 @@ inline void Draw(EditorState& ed, bool* open) {
     if (ImGui::IsItemHovered()) ImGui::SetTooltip("Save this graph (Ctrl+S)");
     ImGui::SameLine();
     if (ImGui::Button("Recipes")) ImGui::OpenPopup("##vsrecipes");
-    if (ImGui::IsItemHovered()) ImGui::SetTooltip("Drop in a ready-made graph: coins, a chasing enemy, a door, a health pickup, a countdown.");
+    if (ImGui::IsItemHovered()) ImGui::SetTooltip("Start here. Drop in a ready-made graph: move with arrow keys, jump, coins and score, a door, an enemy that follows you.");
     if (ImGui::BeginPopup("##vsrecipes")) {
         struct Rec { const char* name; const char* text; };
         static const Rec recs[] = {
@@ -3806,6 +3884,24 @@ inline void Draw(EditorState& ed, bool* open) {
             {"Countdown then win",
              "node 1 OnStart\npos 1 40 40\nentry OnStart 1\nnode 2 Countdown 0.4\npos 2 300 40\nexec 1 0 2\nnode 3 Win\npos 3 560 40\nexec 2 0 3\n"},
         };
+        // The first things a beginner sees: small ready-made recipes (VisualScriptRecipes.hpp), one click each.
+        ImGui::TextDisabled("Start here. One click adds a small working graph.");
+        for (const VsRecipe& r : VsRecipes()) {
+            if (ImGui::MenuItem(r.name)) {
+                st.templateText = r.graph; st.pasteTemplate = true;
+                if (GameObject* go = ed.selected()) VsAddTemplateComponents(go, r.add);
+            }
+            if (ImGui::IsItemHovered()) {
+                ImGui::BeginTooltip();
+                ImGui::PushTextWrapPos(320);
+                ImGui::TextUnformatted(r.blurb);
+                if (r.needs[0]) ImGui::TextDisabled("%s", r.needs);
+                ImGui::PopTextWrapPos();
+                ImGui::EndTooltip();
+            }
+        }
+        ImGui::Separator();
+        ImGui::TextDisabled("More recipes");
         for (const Rec& r : recs)
             if (ImGui::MenuItem(r.name)) { st.templateText = r.text; st.pasteTemplate = true; }
         ImGui::EndPopup();
@@ -3966,7 +4062,7 @@ inline void Draw(EditorState& ed, bool* open) {
     {
         bool hasEvent = false;
         for (const auto& n : g.nodes)
-            if (!VsEntryName(n.type, n.arg).empty()) { hasEvent = true; break; }
+            if (!VsEntryName(n.type, n.arg).empty() || VsStartsOnItsOwn(n.type)) { hasEvent = true; break; }
         st.needsEvent = !g.nodes.empty() && !hasEvent;   // shown on the canvas
     }
     // The running instance of this graph (Play mode): the selected object's if it
@@ -4855,7 +4951,7 @@ inline void Draw(EditorState& ed, bool* open) {
                 if (kindOk && sideOk) {
                     if (st.dragExec) {
                         fit = !(side == 0 && d && !d->execIn);
-                        if (!fit) why = "Events start a chain. Wire this into a step, not into another event.";
+                        if (!fit) why = VsPlainRefuseEventIntoEvent();
                     } else {
                         const int cons = st.dragFromOutput ? n.id : st.dragNode;
                         const int inP = st.dragFromOutput ? idx : st.dragPin;
@@ -4865,7 +4961,7 @@ inline void Draw(EditorState& ed, bool* open) {
                         if (fit) {
                             std::vector<std::pair<int, int>> edges;
                             for (const auto& l : g.dataLinks) edges.push_back({l.producer, l.consumer});
-                            if (VsDataWouldCycle(edges, prod, cons)) { fit = false; why = "That would loop: this value already depends on the node you are wiring into."; }
+                            if (VsDataWouldCycle(edges, prod, cons)) { fit = false; why = VsPlainRefuseLoop(); }
                         }
                     }
                 } else if (!kindOk) {
@@ -4954,6 +5050,20 @@ inline void Draw(EditorState& ed, bool* open) {
             if (x != n.x || y != n.y) { n.x = x; n.y = y; moved = true; }
         }
         if (moved) g.dirty = true;
+    }
+    if (st.wasNodeDrag && !startNodeDrag && ImGui::IsMouseReleased(ImGuiMouseButton_Left) && st.sel.size() == 1) {
+        // Dropped on a flow wire: the node goes into the wire and both sides stay connected.
+        const int dropped = *st.sel.begin();
+        const auto at = pinPos.find(pk(dropped, 0, 0, 0));
+        if (at != pinPos.end()) {
+            std::vector<VsWireLine> lines;
+            for (const auto& l : g.execLinks) {
+                const auto a = pinPos.find(pk(l.from, 0, 1, l.pin)), b = pinPos.find(pk(l.to, 0, 0, 0));
+                lines.push_back(a != pinPos.end() && b != pinPos.end() ? VsWireLine{a->second.x, a->second.y, b->second.x, b->second.y}
+                                                                       : VsWireLine{-1e6f, -1e6f, -1e6f, -1e6f});
+            }
+            if (VsInsertOnWire(g, dropped, VsWireUnder(lines, at->second.x, at->second.y, 18.0f * z))) g.dirty = true;
+        }
     }
     st.wasNodeDrag = startNodeDrag;
     if (pendingDup >= 0 || (winFocused && !typing && io.KeyCtrl && ImGui::IsKeyPressed(ImGuiKey_D, false) && !st.sel.empty())) {
@@ -5098,7 +5208,7 @@ inline void Draw(EditorState& ed, bool* open) {
                     const VsDef* dd = nullptr;
                     if (const VsEditNode* dn = g.find(dest)) dd = FindDef(dn->type);
                     if (dd && !dd->execIn) {
-                        st.refuseMsg = "Events start a chain. Wire this into a step, not into another event.";
+                        st.refuseMsg = VsPlainRefuseEventIntoEvent();
                         st.refuseTime = 5.0f; st.offerOn = false;
                     } else if (st.dragFromOutput) g.linkExec(st.dragNode, st.dragPin, bestNode);
                     else g.linkExec(bestNode, bestIdx, st.dragNode);
@@ -5110,7 +5220,7 @@ inline void Draw(EditorState& ed, bool* open) {
                     std::vector<std::pair<int, int>> edges;
                     for (const auto& l : g.dataLinks) edges.push_back({l.producer, l.consumer});
                     if (VsDataWouldCycle(edges, prod, cons)) {
-                        st.refuseMsg = "That would loop: this value already depends on the node you are wiring into.";
+                        st.refuseMsg = VsPlainRefuseLoop();
                         st.refuseTime = 5.0f; st.offerOn = false;
                     } else if (VsWireOk(g, cons, inP, prod, outP, &why)) {
                         g.linkData(cons, inP, prod, outP); st.offerOn = false;
@@ -5139,8 +5249,8 @@ inline void Draw(EditorState& ed, bool* open) {
                 }
                 if (nk >= 0 && nk != (st.dragExec ? 0 : 1)) {
                     st.refuseMsg = st.dragExec
-                        ? "This wire carries the flow (the white triangle). Drop it on another triangle, not on a value circle."
-                        : "This wire carries a value. Drop it on a coloured circle, not on a flow triangle.";
+                        ? VsPlainRefuseFlowOnValue()
+                        : VsPlainRefuseValueOnFlow();
                     st.refuseTime = 5.0f; st.offerOn = false; (void)ns;
                 } else {
                 // Dropped in empty space: offer the palette and wire up what's picked.
@@ -5263,6 +5373,8 @@ inline void Draw(EditorState& ed, bool* open) {
             // Drop it beside the pin rather than under the cursor tip.
             if (VsEditNode* nn = g.find(nid)) { if (!st.linkFromOutput) nn->x -= 170.0f; }
             st.linkPending = false;
+        } else {
+            VsAutoHook(g, nid);   // joins the last node (or a close one) when it fits, so no wire to draw
         }
     };
     // "Connect to... > a node": add it already wired to the pin it was chosen for.
@@ -5289,26 +5401,36 @@ inline void Draw(EditorState& ed, bool* open) {
         dl->AddText(ImVec2(canvasMin.x + 24.0f, canvasMin.y + 24.0f), IM_COL32(255, 170, 150, 255), msg);
         dl->AddText(ImVec2(canvasMin.x + 24.0f, canvasMin.y + 48.0f), IM_COL32(200, 206, 216, 255), path.c_str());
     } else if (g.nodes.empty()) {
-        const float cardW = 480.0f, cardH = 220.0f;
+        const float cardW = 580.0f, cardH = 360.0f;
         const ImVec2 c0((canvasMin.x + canvasMax.x - cardW) * 0.5f, (canvasMin.y + canvasMax.y - cardH) * 0.5f);
         const ImVec2 c1(c0.x + cardW, c0.y + cardH);
         dl->AddRectFilled(c0, c1, IM_COL32(32, 36, 46, 245), 16.0f);
         dl->AddRect(c0, c1, IM_COL32(120, 140, 168, 160), 16.0f, 0, 1.5f);
-        const char* title = "This graph is empty";
-        const char* hint = "Right-click the canvas, or press Space, to add a node.";
-        const char* hint2 = "Start with an event such as On Start, then wire what happens next.";
+        const char* title = "What is this?";
+        const char* hint = "A script is a chain of blocks: when something happens, do something. Pick one to start.";
         const ImVec2 ts = ImGui::CalcTextSize(title);
-        dl->AddText(ImVec2(c0.x + (cardW - ts.x) * 0.5f, c0.y + 36.0f), IM_COL32(236, 240, 246, 255), title);
+        dl->AddText(ImVec2(c0.x + (cardW - ts.x) * 0.5f, c0.y + 18.0f), IM_COL32(236, 240, 246, 255), title);
         const ImVec2 hs = ImGui::CalcTextSize(hint);
-        dl->AddText(ImVec2(c0.x + (cardW - hs.x) * 0.5f, c0.y + 72.0f), IM_COL32(170, 180, 196, 255), hint);
-        const ImVec2 h2 = ImGui::CalcTextSize(hint2);
-        dl->AddText(ImVec2(c0.x + (cardW - h2.x) * 0.5f, c0.y + 96.0f), IM_COL32(150, 160, 176, 255), hint2);
-        ImGui::SetCursorScreenPos(ImVec2(c0.x + (cardW - 180.0f) * 0.5f, c0.y + 148.0f));
-        ImGui::PushStyleVar(ImGuiStyleVar_FramePadding, ImVec2(16.0f, 10.0f));
-        if (ImGui::Button("Add a node", ImVec2(180.0f, 0.0f))) st.addAtCenter = true;
-        ImGui::PopStyleVar();
+        dl->AddText(ImVec2(c0.x + (cardW - hs.x) * 0.5f, c0.y + 46.0f), IM_COL32(170, 180, 196, 255), hint);
+        // Big one-click cards: each is a small working graph (VisualScriptRecipes.hpp).
+        int shownCards = 0;
+        for (const VsRecipe& r : VsRecipes()) {
+            if (shownCards >= 8) break;
+            const int col = shownCards % 2, row = shownCards / 2;
+            ImGui::SetCursorScreenPos(ImVec2(c0.x + 24.0f + col * 272.0f, c0.y + 80.0f + row * 54.0f));
+            ImGui::PushID(shownCards);
+            if (ImGui::Button(r.name, ImVec2(262.0f, 46.0f))) {
+                st.templateText = r.graph; st.pasteTemplate = true;
+                if (GameObject* go = ed.selected()) VsAddTemplateComponents(go, r.add);
+            }
+            if (ImGui::IsItemHovered()) ImGui::SetTooltip("%s", r.blurb);
+            ImGui::PopID();
+            ++shownCards;
+        }
+        ImGui::SetCursorScreenPos(ImVec2(c0.x + (cardW - 180.0f) * 0.5f, c1.y - 46.0f));
+        if (ImGui::Button("Or add a block", ImVec2(180.0f, 0.0f))) st.addAtCenter = true;
     } else if (st.needsEvent) {
-        const char* msg = "Nothing runs yet. Add an event (On Start, On Update, On Key) and wire it to the first step.";
+        const char* msg = "Nothing runs yet. Add a block that starts with On (On Start, On Key Pressed) or a Quick block, and plug the first step into it.";
         const ImVec2 ts = ImGui::CalcTextSize(msg);
         const ImVec2 bp(canvasMin.x + 18.0f, canvasMin.y + 16.0f);
         dl->AddRectFilled(bp, ImVec2(bp.x + ts.x + 24.0f, bp.y + ts.y + 16.0f), IM_COL32(64, 48, 24, 230), 8.0f);

@@ -1862,6 +1862,14 @@ void* D3D11Renderer::BoundRenderTargetTexture() {
     res->Release();
     return tex;
 }
+void D3D11Renderer::SetShaderBundleDir(const char* dir) {
+#if defined(OKAY_XBOX_UWP)
+    g_shaderDir = dir ? dir : ""; g_bundleTried = false; g_bundleOk = false;
+#else
+    (void)dir;
+#endif
+}
+void* D3D11Renderer::DeviceForPresent() const { return m_impl ? static_cast<void*>(m_impl->dev) : nullptr; }
 void D3D11Renderer::ReleaseCom(void* unknown) { if (unknown) static_cast<IUnknown*>(unknown)->Release(); }
 
 

@@ -41,7 +41,7 @@ inline const std::vector<EntryReq>& Entries() {
 
 inline std::uint64_t Fnv1a64(const void* data, std::size_t n) {
     const unsigned char* p = static_cast<const unsigned char*>(data);
-    std::uint64_t h = 1469598103934665603ull;
+    std::uint64_t h = 14695981039346656037ull;
     for (std::size_t i = 0; i < n; ++i) { h ^= p[i]; h *= 1099511628211ull; }
     return h;
 }

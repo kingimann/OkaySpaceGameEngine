@@ -111,6 +111,8 @@ if(OKAY_BUILD_OKAYUI_TESTS AND OKAY_BUILD_TESTS)
     # Window mode (OKAY_UI_HOST=okayui): the three-switch gate and the window-mode screen through the frame loop, fake backend, software painter.
     okayui_port_test(okayui_hostmode ../editor/OkayUIHostMode.cpp)
     target_compile_definitions(test_okayui_hostmode PRIVATE OKAY_HAVE_OKAYUI=1)
+    okayui_port_test(okayui_hoststate ../editor/OkayUIHostMode.cpp)   # window-mode persistence: state file, sanitiser, saver, two simulated runs
+    target_compile_definitions(test_okayui_hoststate PRIVATE OKAY_HAVE_OKAYUI=1)
     okayui_port_test(okayui_port_scenemanager ../editor/SceneManagerPanel.cpp ../editor/ConsolePanel.cpp ../editor/EditorWidgets.cpp)
     target_compile_definitions(test_okayui_port_scenemanager PRIVATE OKAYUI_PORT_STAND_IN_EDITORSTATE)
 

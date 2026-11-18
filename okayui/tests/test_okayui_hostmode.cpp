@@ -63,7 +63,7 @@ int main() {
         be.queue.push_back(Move(cx, cy)); loop2.Frame([&] { oked::DrawHostModeUi(st2); });
         be.queue.push_back(Btn(true, cx, cy)); loop2.Frame([&] { oked::DrawHostModeUi(st2); });
         be.queue.push_back(Btn(false, cx, cy)); loop2.Frame([&] { oked::DrawHostModeUi(st2); }); loop2.Frame([&] { oked::DrawHostModeUi(st2); });
-        CHECK(!st2.showStatus && !UI::GetDockLayout().Contains("Window mode") && UI::GetDockLayout().Contains("Audio Mixer"));
+        CHECK(!st2.IsOpen("Window mode") && !UI::GetDockLayout().Contains("Window mode") && UI::GetDockLayout().Contains("Audio Mixer"));
     }
     // quitting
     be.queue.push_back(fakeplat::Ev(okay::platform::EventType::Quit));

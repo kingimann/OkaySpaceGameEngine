@@ -2,6 +2,6 @@
 #pragma once
 namespace std {
 int printf(const char *fmt, ...);
-int snprintf(char *buf, unsigned int cap, const char *fmt, ...);
+int snprintf(char *buf, unsigned long long cap, const char *fmt, ...);
 int puts(const char *s);
 }

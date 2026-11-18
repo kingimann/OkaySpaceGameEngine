@@ -347,6 +347,60 @@ static void test_std(Tally& tally) {
              0);
 }
 
+
+static void test_more(Tally& tally) {
+    std::printf("test_more\n");
+    // Templates over long long, a struct holding one, a constructor, a union, globals next to chars, a static
+    // local, wrap-around of unsigned int arithmetic and the conversions around it.
+    run_both(tally, "ll_more",
+             "template <typename T> struct Box { T v; T get() { return v; } };\n"
+             "template <typename T> T twice(T x) { return x + x; }\n"
+             "struct W { long long v; };\n"
+             "struct C { long long a; int b; C(long long x) : a(x), b(3) {} long long sum() const { return a + b; } };\n"
+             "union U { long long l; int i[2]; };\n"
+             "char pad; long long gwide; unsigned long long gu = 5000000000ull; char pad2;\n"
+             "W mk(long long v) { W w; w.v = v; return w; }\n"
+             "long long fib(int n) { long long a = 0, b = 1; for (int i = 0; i < n; i++) { long long t = a + b; a = b; b = t; } return a; }\n"
+             "long long counter() { static long long n = 1; n += 5000000000LL; return n; }\n"
+             "int entry(void) {\n"
+             "  Box<long long> b; b.v = 6000000000LL; CK(1, b.get() == 6000000000LL);\n"
+             "  Box<int> bi; bi.v = 7; CK(2, bi.get() == 7);\n"
+             "  CK(3, twice(3000000000LL) == 6000000000LL);\n"
+             "  CK(4, twice(5) == 10);\n"
+             "  W w5 = mk(1LL << 40); CK(5, w5.v == (1LL << 40));\n"
+             "  C c(4000000000LL); CK(6, c.sum() == 4000000003LL);\n"
+             "  U u; u.l = 0; u.i[1] = 1; CK(7, u.l == 4294967296LL);\n"
+             "  gwide = 1LL << 50; pad = 1; pad2 = 2; CK(8, gwide == 1125899906842624LL && gu == 5000000000ull);\n"
+             "  CK(9, fib(80) == 23416728348467685LL);\n"
+             "  counter(); CK(10, counter() == 10000000001LL);\n"
+             "  long long x = 0; x = x - 1; CK(11, x == -1 && (x >> 1) == -1 && ((unsigned long long)x >> 1) == 0x7FFFFFFFFFFFFFFFull);\n"
+             "  long long arr[3] = {1, 2, 3}; long long s = 0; for (int i = 0; i < 3; i++) s += arr[i] * 3000000000LL; CK(12, s == 18000000000LL);\n"
+             "  int i32 = -1; unsigned long long uu = i32; CK(13, uu == 0xFFFFFFFFFFFFFFFFull);\n"
+             "  unsigned u32 = 0xFFFFFFFFu; long long ll = u32 + 1; CK(14, ll == 0);   // unsigned arithmetic wraps\n"
+             "  long long ll2 = u32 + 1LL; CK(15, ll2 == 4294967296LL);\n"
+             "  CK(16, (long long)(int)3000000000u == -1294967296LL);\n"
+             "  return 0;\n"
+             "}\n",
+             0);
+    run_both(tally, "ll_switch",
+             "int pick(long long x) {\n"
+             "  switch (x) { case 2: return 1; case 5000000000LL: return 2; case -3: return 3; default: return 0; }\n"
+             "}\n"
+             "unsigned dv(unsigned a, unsigned b) { return a / b; }\n"
+             "unsigned md(unsigned a, unsigned b) { return a % b; }\n"
+             "int entry(void) {\n"
+             "  CK(1, pick(2) == 1 && pick(5000000000LL) == 2 && pick(-3) == 3 && pick(0) == 0);\n"
+             "  CK(2, pick(4294967298LL) == 0 && pick(2 + (1LL << 32)) == 0);\n"
+             "  CK(3, dv(0x80000000u, 2) == 0x40000000u && md(0xFFFFFFFFu, 10) == 5);\n"
+             "  unsigned x = 3000000000u; x /= 7; CK(4, x == 428571428u);\n"
+             "  x = 4000000000u; x %= 7; CK(5, x == 4000000000u % 7);\n"
+             "  unsigned long long y = 0xFFFFFFFFFFFFFFFFull; y /= 3; CK(6, y == 0x5555555555555555ull);\n"
+             "  y = 0xFFFFFFFFFFFFFFFFull; y %= 1000; CK(7, y == 615);\n"
+             "  return 0;\n"
+             "}\n",
+             0);
+}
+
 int main() {
     Tally tally;
     test_arith(tally);
@@ -357,5 +411,6 @@ int main() {
     test_mixed(tally);
     test_names(tally);
     test_std(tally);
-    return tally.finish(8);
+    test_more(tally);
+    return tally.finish(9);
 }

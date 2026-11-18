@@ -333,6 +333,69 @@ static void test_using_namespace(Tally& tally) {
              0);
 }
 
+static void test_members_and_misc(Tally& tally) {
+    std::printf("test_members_and_misc\n");
+    // Out-of-class constructors and destructors (also in a namespace), `= default` and `= delete`, sizeof
+    // without parentheses.
+    run_both(tally, "oc_defaulted",
+             "int dtor_count = 0;\n"
+             "struct S { int v; int w; S(); S(int a); ~S(); int sum(); };\n"
+             "S::S() : v(1), w(2) {}\n"
+             "S::S(int a) : v(a), w(a * 2) { w += 1; }\n"
+             "S::~S() { dtor_count++; }\n"
+             "int S::sum() { return v + w; }\n"
+             "namespace geo {\n"
+             "struct P { long long x; P(long long a); long long get() const; };\n"
+             "P::P(long long a) : x(a * 3) {}\n"
+             "long long P::get() const { return x; }\n"
+             "}\n"
+             "struct D { int k = 7; D() = default; D(int a) { k = a; } D(const D&) = default; D& operator=(const D&) = default; };\n"
+             "int entry(void) {\n"
+             "  { S a; S b(5); CK(1, a.sum() == 3 && b.sum() == 16); }\n"
+             "  CK(2, dtor_count == 2);\n"
+             "  geo::P p(2000000000LL); CK(3, p.get() == 6000000000LL);\n"
+             "  D d; D e(4); D f = e; CK(4, d.k == 7 && e.k == 4 && f.k == 4);\n"
+             "  CK(5, sizeof d == 4);\n"
+             "  return 0;\n"
+             "}\n",
+             0);
+    // A static member function called by its bare name from another static member, a namespace-relative call
+    // (inner::twice from namespace outer), functional casts, sizeof x, several declarators in one declaration,
+    // an empty statement, a constant-returning static function used as a float.
+    run_both(tally, "misc19",
+             "#include <cstdint>\n"
+             "namespace outer {\n"
+             "namespace inner { int twice(int v) { return v * 2; } }\n"
+             "struct Calc {\n"
+             "  static int clamp(int v, int lo, int hi) { return v < lo ? lo : (v > hi ? hi : v); }\n"
+             "  static int clamp01(int v) { return clamp(v, 0, 1); }\n"
+             "  int use(int v) { return inner::twice(v) + clamp01(v); }\n"
+             "  static constexpr float kHalf = 0.5f;\n"
+             "  static float half() { return kHalf; }\n"
+             "  static float infinity() { return 3.0e38f * 10.0f; }\n"
+             "};\n"
+             "}\n"
+             "int g = 5, h = 6;\n"
+             "int entry(void) {\n"
+             "  outer::Calc c;\n"
+             "  CK(1, c.use(3) == 7);\n"
+             "  CK(2, outer::Calc::clamp01(-4) == 0 && outer::Calc::clamp01(9) == 1);\n"
+             "  CK(3, (std::uint64_t(1) << 32) == 4294967296ull);\n"
+             "  CK(4, std::uint8_t(300) == 44 && int(2.9f) == 2);\n"
+             "  int arr[5]; CK(5, sizeof arr == 20 && sizeof g == 4 && sizeof(arr) / sizeof arr[0] == 5);\n"
+             "  int a = 1, b = 2, *p = &a, d[2] = {7, 8};\n"
+             "  CK(6, a + b + *p + d[1] == 12);\n"
+             "  CK(7, g + h == 11);\n"
+             "  for (int i = 0, j = 10; i < 3; i++, j--) a += j;\n"
+             "  CK(8, a == 1 + 10 + 9 + 8);\n"
+             "  ;\n"
+             "  CK(9, outer::Calc::half() == 0.5f);\n"
+             "  float inf = outer::Calc::infinity(); CK(10, inf > 1e38f && inf == inf * 2);\n"
+             "  return 0;\n"
+             "}\n",
+             0);
+}
+
 int main() {
     Tally tally;
     test_float_arrays(tally);
@@ -342,5 +405,6 @@ int main() {
     test_cond_ref(tally);
     test_volatile_cast(tally);
     test_using_namespace(tally);
-    return tally.finish(7);
+    test_members_and_misc(tally);
+    return tally.finish(8);
 }

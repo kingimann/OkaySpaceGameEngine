@@ -224,10 +224,83 @@ The first errors, counted: the standard library (`<string>` 5, `<vector>` 3, `<f
 
 Not done / unverified / found and not fixed:
 
-- 64-bit integers do not exist (`long long`, `uint64_t`, `size_t` arithmetic, `std::size_t` as 8 bytes). `typedef long long` is still silently 32 bits. This blocks most real code and is the largest missing piece after the standard library.
-- Default arguments, a braced `return {...}`, `static_assert` evaluation, `= default` / `= delete`, lambdas, `auto`, range `for`, operator overloading are not there (not tried one by one: the measurement stops at the first error).
-- A float array element is wrong: `float a[2]; a[0] = 1.5f; a[1] = 2.5f; return (int)(a[1] * 4.0f);` returns 5, g++ 10 (seen with the old and the new build; not fixed, no test yet).
-- `static constexpr float` members, unqualified use of a namespace's variables from another namespace with the same member name, calls of constructors by a qualified name (`geo::Vec(1, 2)`), `using namespace`, `T a[] = {...}` inside a function that is also static, and aggregate default member initializers are not done. A namespace is flat for variables and types: two namespaces that declare the same variable name collide.
+- (Round 19: done, see below.) 64-bit integers do not exist (`long long`, `uint64_t`, `size_t` arithmetic, `std::size_t` as 8 bytes). `typedef long long` is still silently 32 bits. This blocks most real code and is the largest missing piece after the standard library.
+- (Round 19: default arguments and a braced `return {...}` are done.) Default arguments, a braced `return {...}`, `static_assert` evaluation, `= default` / `= delete`, lambdas, `auto`, range `for`, operator overloading are not there (not tried one by one: the measurement stops at the first error).
+- (Round 19: fixed, with a test.) A float array element is wrong: `float a[2]; a[0] = 1.5f; a[1] = 2.5f; return (int)(a[1] * 4.0f);` returns 5, g++ 10 (seen with the old and the new build; not fixed, no test yet).
+- (Round 19: `static constexpr float` members and `using namespace` are done.) `static constexpr float` members, unqualified use of a namespace's variables from another namespace with the same member name, calls of constructors by a qualified name (`geo::Vec(1, 2)`), `using namespace`, `T a[] = {...}` inside a function that is also static, and aggregate default member initializers are not done. A namespace is flat for variables and types: two namespaces that declare the same variable name collide.
 - `#pragma pack` is refused, not ignored.
 - The `/O2` constant propagation was not looked at for the new compound operators; the tests run at the default level only.
 - Run on Linux with Wine only; not run on Windows.
+
+### Round 19: real 64-bit integers, float fixes, default arguments, braced return, and the correctness bugs the new tests found
+
+Tried with `sh tools/okayms/build.sh` on a fresh checkout of branch `claude/okayms-3` at head dece7b8b plus this round (full run: every test green, exit 0, 2026-11-18). New tests: `tests/test_int64.cpp` (9 programs) and `tests/test_round19.cpp` (13 programs in 8 test functions). Each program returns 0 when all its checks hold, or the number of the first check that failed; it is built by okay-ms at `/O0`, `/O1` and `/O2` (three optimization levels, not only the default as before), run under Wine, and also built by MinGW g++ and run under Wine; all four exit codes must be 0. Every new test failed before its code was written (the first errors seen: "expected an expression" for `3000000000LL`, exit codes of 9 and 7 for wrong 64-bit answers, "expected ')'" for default arguments, `return {...}`, `volatile` in a cast, "expected a type" for `using namespace`). okay-ms is a separate tool and off by default; nothing in the engine build calls it. Written from ISO/IEC 14882 ([lex.icon], [basic.fundamental], [conv.integral], [conv.fpint], [conv.double], [conv.bool], [expr.arith.conv], [expr.shift], [expr.cond], [expr.const], [expr.sizeof], [expr.type.conv], [stmt.return], [dcl.fct.default], [dcl.fct.def.default], [dcl.init.aggr], [dcl.dcl], [class.ctor], [namespace.udir], [basic.lookup.unqual]) and the x64 instruction encodings; no code from other compilers.
+
+How to try it by hand (host tool, POSIX; Wine only for running the result):
+
+1. `sh tools/okayms/build.sh` builds `tools/okayms/build/okay-cl` and runs every test (about 2 minutes). It prints `tests N, checks passed M, failed 0` for each test program.
+2. One sample program, `tools/okayms/examples/int64_demo.cpp` (64-bit integers, a float array, a default argument, a braced return): `tools/okayms/build/okay-cl tools/okayms/examples/int64_demo.cpp /Feint64_demo.exe /I tools/okayms/stdinc`, then `wine int64_demo.exe; echo $?`. It must print `0`. (A number is the first failed check; open the file and count.) This was run on Linux with Wine, not on Windows.
+3. The engine measurement below: `printf '#include "okay/Math/Mathf.hpp"\n' > /tmp/w.cpp; tools/okayms/build/okay-cl /c /tmp/w.cpp /Fo/tmp/w.obj /I engine/include /I engine/src /I shared /I tools/okayms/stdinc`. No output and an object file means it compiled.
+
+What changed:
+
+- **64-bit integers** (`Type::wide`: an int-family type of 8 bytes that lives in all of `rax`). `long long`, `unsigned long long`, `long long int`, `__int64`, `unsigned __int64`, and the typedefs `int64_t`, `uint64_t`, `size_t`, `ptrdiff_t`, `intptr_t`, `uintptr_t` (now real in the stdinc headers, no switch needed). `long` stays 32 bits (the Windows model). Size and alignment 8 in structs, arrays, globals and parameters; the decorated names are `_J` and `_K` (`?f@N@@YA_J_J@Z`). Integer literals follow the table in [lex.icc] with a 32-bit `long`: `3000000000LL`, `4294967296` (decimal too big for `int` is `long long`), `0x80000000` (hex that fits `unsigned int` is `unsigned int`), suffixes `u l ll ull` in any case and `i64`; octal (`0777`) and binary (`0b101`) literals now exist. Arithmetic `+ - * / %`, `& | ^ ~ << >>`, unary `-`, `++ --`, compound assignments, comparisons, `&& || ! ?:` and conditions test and use all 64 bits when an operand is wide; the result type follows the usual arithmetic conversions (a wide operand wins, unsigned wins over signed of the same width, `unsigned int` converts to `long long` by zero extension). Conversions are one function: int to wide (sign or zero extension), wide to int (cut), to and from `float`/`double` (including `unsigned long long` above 2^63), to `bool` (`b = 4294967296LL` is 1), narrow types by `movsx`/`movzx`; it is used by assignment, initializers, arguments, `return`, `?:` branches and casts. `switch` on a `long long` compares 64 bits. `sizeof` is a `size_t` (unsigned, 64 bits). `T(x)` and `unsigned(x)` function-style casts. Constants are folded with their real type (a wrapped `unsigned int`, `1LL << 40`, comparisons and `&& ||` of constants too). Pointer comparison and `p - q` use 64 bits (before, only the low 32 bits were compared), `n + p` and `p += n` scale by the element size, an array index is sign-extended.
+- **Float and double**: the miscompile from Round 18 (`float a[2]; a[0] = 1.5f; a[1] = 2.5f; return (int)(a[1] * 4.0f);` gave 5, now 10) came from the temporary-slot code taking the array type `float[2]` for a float value and saving `xmm0` instead of the address; the same mistake was in `x++`, `x += y` on a float lvalue and in binding a reference to an lvalue. Also fixed: reading a float or double global or static local (it loaded the bits into `eax`), `f++`, `f += 2`, `int n += 1.9`, `n = 2.9f`, `float f = 3`, `return 1;` in a float function, a `float` passed through `...` (now a `double`), `if (f)` and `!f` on a float, a float in a global initializer.
+- **Float constants**: `static constexpr float Deg2Rad = PI / 180.0f;` (a constant of the class named later in the class body), `1.5f * 2`, `10 / 4.0f`, `-0.5f`, `(float)1 / 3`, `(int)7.9`, float comparisons and `&&` of constants are folded (two floats are computed as floats, anything with a double as a double); a `const`/`constexpr` global with a constant initial value is a constant in later initializers (`constexpr float kTwoPi = kPi * 2;`, `float t[kN]`); `std::numeric_limits<float>::infinity()` (a static member function whose body is `return <constant>;`) is a constant; `static constexpr long long` and `unsigned long long` members keep their type. A decimal float literal with a long integer part is no longer overflowed (`9223372036854775808.0`).
+- **Default arguments** (`int add(int a, int b = 5)`, `float g(float w = 0.15f)`, a default given in a prototype and not repeated, in member functions, static members and constructors, `Base + 1` and other constants): the default is read where it is declared and copied into every call that leaves it out.
+- **Braced `return {...}`**: `Rect make(...) { return {x, y, w, h}; }` for an aggregate (elements are real expressions now, not only constants, and elements not named are zero) and for a class with a constructor (`return {a, b};` calls it). A class with a destructor is refused with an error.
+- **`const T&` from `?:`**: `const int& r = a > b ? a : b;`, `return first ? a : b;` in a function returning `const T&` or `T&`, `(a < b ? a : b) = 7;`.
+- **`volatile T*` in `static_cast`/`reinterpret_cast`**, `const` as the first word of a cast (`(const char*)p`), **`using namespace x;`** (the functions of `x` can be called by bare name, for the whole file; types and variables of a namespace were already one flat table), a call named relative to the enclosing namespace (`sha256_detail::Blocks(...)` written in `okay::crypto`).
+- **Found and fixed on the way** (each is in a test): `for (int i = 0; ...)` (a declaration in the `for` init, it did not parse at all), `int a = 1, b = 2, *p = &a;` (several declarators, locals and globals), an empty statement `;`, `(M::PI * 2.0f)` read as a cast to the class `M`, `sizeof x` without parentheses, a static member function calling another static member by its bare name, out-of-class `C::C(...) : m(1) {}` and `C::~C()` (also in a namespace), `= default` and `= delete` for constructors and `operator=`, `constexpr` in front of a constructor, a quoted `#include` in the main source file (looked up next to that file), a declared namespace function (`std::fabs`) that had no symbol of the decorated name. The `unsigned` `/` and `%` used signed division; `%` lost its result when a local lived in `rdx`.
+- **`/O1` and `/O2` were wrong in several ways and are now covered by the tests** (the old tests ran the default level only): at `/O1` `x++` and `x += 2` on a variable kept in a register changed the stack slot, not the register; two parameters with disjoint uses shared one register; `bool` locals were put in registers; at `/O2` constant propagation turned `while (i < 3) { ...; i = i + 1; }` into an endless loop (a value known before a loop was used inside it), kept a stale value after `if (c) x++;`, replaced `x` in `x++`, ignored `&x`, ran an assignment inside `&&`/`?:` as if it always ran, and the dead-store pass deleted `x = f(); x = 3;` including the call; the inliner dropped the conversion of an argument and of the result (`long long wide(int x) { return x; }` inlined as an `int` sum), inlined a function with a reference parameter, a static local or a hidden temporary, and treated a function with a `__`-named temporary as having none. The propagation now only tracks `int` and `long long` locals, with their own width and signedness.
+
+Measurement, second run (the same 36 files as Round 18, same command, our own headers in `tools/okayms/stdinc/`, 2026-11-18). Round 18: 5 of 36 compiled. After Round 19: **15 of 36 compile to an object** (ForceMode, PhysicsQuality, VsPinType, Mp3Tables, LauncherTips, Stance, ClockCursor, InputBuffer, Mathf, PhysicsMaterial, TooltipPlace, Blake2b, ChaCha20, Sha512, Util). A `.cpp` is compiled in place (so its quoted `#include "CtAnnotate.hpp"` is found next to it; in Round 18 the measurement copied it, which is why `Util.cpp` stopped there), a header through a one-line stub. Compiling is all this measures: none of these objects was linked or run, and "compiles" does not mean the code is right.
+
+| File | Result | First error |
+|---|---|---|
+| `engine/include/okay/Physics/ForceMode.hpp` | compiles | |
+| `engine/include/okay/Physics/PhysicsQuality.hpp` | compiles | |
+| `engine/include/okay/VisualScript/VsPinType.hpp` | compiles | |
+| `engine/src/Audio/Mp3Tables.hpp` | compiles | |
+| `shared/LauncherTips.hpp` | compiles | |
+| `engine/include/okay/Components/Stance.hpp` | compiles | (was "not an address") |
+| `engine/include/okay/Core/ClockCursor.hpp` | compiles | (was "expected a type") |
+| `engine/include/okay/Environment/Wind.hpp` | fails | `Vec2.hpp:15` `operator[]` |
+| `engine/include/okay/Input/InputBuffer.hpp` | compiles | (was "expected ')'", a default argument) |
+| `engine/include/okay/Math/Bounds.hpp` | fails | `Vec2.hpp:15` `operator[]` |
+| `engine/include/okay/Math/ColorSpace.hpp` | fails | cannot open include string |
+| `engine/include/okay/Math/Curves.hpp` | fails | cannot open include vector |
+| `engine/include/okay/Math/Easing.hpp` | fails | cannot open include cctype |
+| `engine/include/okay/Math/Mat3.hpp` | fails | `Vec2.hpp:15` `operator[]` |
+| `engine/include/okay/Math/Mat4.hpp` | fails | `Vec2.hpp:15` `operator[]` |
+| `engine/include/okay/Math/Mathf.hpp` | compiles | (was "global initializer must be a constant") |
+| `engine/include/okay/Math/Quat.hpp` | fails | `Vec2.hpp:15` `operator[]` |
+| `engine/include/okay/Math/Ray.hpp` | fails | `Vec2.hpp:15` `operator[]` |
+| `engine/include/okay/Math/Rect.hpp` | fails | `Vec2.hpp:15` `operator[]` |
+| `engine/include/okay/Math/Vec2.hpp` | fails | `Vec2.hpp:15` `operator[]` |
+| `engine/include/okay/Math/Vec3.hpp` | fails | `Vec2.hpp:15` `operator[]` |
+| `engine/include/okay/Math/VecInt.hpp` | fails | cannot open include functional |
+| `engine/include/okay/Physics/PhysicsMaterial.hpp` | compiles | (was "not an address") |
+| `engine/include/okay/Render/Color.hpp` | fails | cannot open include string |
+| `engine/include/okay/UI/TooltipPlace.hpp` | compiles | (was "expected an expression") |
+| `engine/src/Core/RandomExtras.cpp` | fails | cannot open include atomic |
+| `engine/src/Crypto/Blake2b.cpp` | compiles | (was `Sha256.hpp:62` `volatile` cast) |
+| `engine/src/Crypto/ChaCha20.cpp` | compiles | (was `Sha256.hpp:62` `volatile` cast) |
+| `engine/src/Crypto/Sha512.cpp` | compiles | (was `Sha256.hpp:62` `volatile` cast) |
+| `engine/src/Crypto/Util.cpp` | compiles | (was "cannot open include CtAnnotate.hpp": a quoted include in the main file is now looked up next to that file) |
+| `engine/src/Input/GestureRecognizer.cpp` | fails | cannot open include string |
+| `engine/src/Input/PlayerInput.cpp` | fails | cannot open include array |
+| `engine/src/Optimize/LodGroup.cpp` | fails | cannot open include string |
+| `engine/src/Optimize/PortalCells.cpp` | fails | cannot open include string |
+| `engine/src/UI/FocusGraph.cpp` | fails | cannot open include vector |
+| `shared/OkfDecode.hpp` | fails | cannot open include vector |
+
+The remaining first errors, counted: the standard library (`<string>` 5, `<vector>` 3, `<functional>`, `<cctype>`, `<atomic>`, `<array>`: 12 files) and operator overloading (`operator[]` in `Vec2.hpp` line 15, reached by the 9 files that include it, and `operator+` and others after it).
+
+Not done / unverified / found and not fixed:
+
+- Operator overloading (`operator[]`, `operator+`, `operator==`, ...) is not there; it is now the first thing between the math headers (`Vec2` to `Mat4`, 9 files) and an object. The standard library (`<string>`, `<vector>`, `<functional>`, `<array>`, `<atomic>`, `<cctype>`) is not there.
+- Lambdas, `auto`, range `for`, `static_assert` evaluation (it is dropped), overloading by parameter type (a function is found by name and argument count), default arguments in function templates, `return {...}` for a class with a destructor and for a non-class type, a field of a function result that is a struct (`f().x`: "not an address"), `switch` jump tables for `long long`, conversion of a `double` above 2^63 to `unsigned long long` (the conversion is the signed one), `long double`, and NaN in a float condition (`if (nan)` is false; the standard says true).
+- `using namespace` is remembered for the whole file, not for the block it is written in; two namespaces that declare the same variable name still collide (one flat table for variables and types).
+- `std::size_t` is `unsigned long long` in the stdinc headers, so a function from `<cstring>` and `<cstdlib>` declared there takes a 64-bit count; those headers are declarations only and their decorated names (`?memcpy@std@@...`) are not the C runtime's names, so a program that calls them is not linked by this tree (unchanged from Round 18; the test programs use their own functions).
+- Only the host tool was run, on Linux with Wine; not run on Windows. The measurement compiles each file to an object only: none was linked or run. The comparison with g++ covers the 22 test programs of the two new test files and the small programs written while debugging; the rest of the language was checked only by the older tests (all still green, now with the changes above).

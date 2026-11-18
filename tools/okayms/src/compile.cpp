@@ -2893,6 +2893,22 @@ struct Parser {
             out->number = const_norm(out->number, out->type);
         }
     }
+    // The scalar type a name stands for when it is written like a call, T(x): a typedef of an arithmetic type
+    // (also as std::uint64_t); base is -1 when the name is not such a type or a function of that name exists.
+    Type functional_cast_type(const std::string& name) const {
+        Type none;
+        none.base = -1;
+        for (const FuncDecl& fd : funcs)
+            if (fd.name == name) return none;
+        const size_t cc = name.rfind("::");
+        const std::string bare = cc == std::string::npos ? name : name.substr(cc + 2);
+        const auto td = typedefs.find(bare);
+        if (td == typedefs.end()) return none;
+        const Type& t = td->second;
+        if (t.pointers != 0 || t.array_len >= 0 || t.is_ref) return none;
+        if (t.base != 1 && t.base != 2 && t.base != 4 && t.base != 5 && t.base != 6) return none;
+        return t;
+    }
     // True while the operand of & is read: a name there stays a name so its address can be taken.
     bool no_const_subst = false;
     // A global declared const (or constexpr) with a constant initial value, as a literal node.
@@ -3399,6 +3415,10 @@ struct Parser {
                     next();
                 }
             }
+            // constexpr (read as const) in front of a constructor means nothing here.
+            if (is(TConst) && at + 2 < tokens.size() && tokens[at + 1].kind == TIdent && tokens[at + 1].text == ctor_name &&
+                tokens[at + 2].kind == TLParen)
+                next();
             const bool is_dtor = is(TTilde) && at + 2 < tokens.size() && tokens[at + 1].kind == TIdent &&
                                  tokens[at + 1].text == ctor_name && tokens[at + 2].kind == TLParen;
             const bool is_ctor = is(TIdent) && cur().text == ctor_name && at + 1 < tokens.size() &&
@@ -3412,6 +3432,32 @@ struct Parser {
                 if (is_dtor && !decl.params.empty()) {
                     error = "a destructor takes no arguments";
                     return false;
+                }
+                if (is(TAssign) && at + 2 < tokens.size() &&
+                    (tokens[at + 1].kind == TDefault || (tokens[at + 1].kind == TIdent && tokens[at + 1].text == "delete")) &&
+                    tokens[at + 2].kind == TSemi) {
+                    // `= default` and `= delete` ([dcl.fct.def.default], [dcl.fct.def.delete]). A defaulted
+                    // default constructor is the one the compiler makes (it runs the member initializers); a
+                    // defaulted copy constructor or destructor is what the compiler makes anyway; a deleted
+                    // function is simply not declared (a call of it then finds no such function).
+                    const bool want_default = tokens[at + 1].kind == TDefault;
+                    next();
+                    next();
+                    next();
+                    def.cxx = true;
+                    if (want_default && is_ctor && decl.params.empty()) {
+                        Method dm;
+                        dm.name = "<ctor>";
+                        dm.ret.base = 3;
+                        dm.ret.struct_id = self;
+                        dm.ret.pointers = 1;
+                        dm.implicit = true;
+                        dm.has_body = true;
+                        dm.body_at = 1;
+                        dm.access = access;
+                        if (!add_method(&def, self, std::move(dm))) return false;
+                    }
+                    continue;
                 }
                 Method m;
                 m.name = is_dtor ? "<dtor>" : "<ctor>";
@@ -3451,6 +3497,28 @@ struct Parser {
                 def.cxx = true;
                 if (!add_method(&def, self, std::move(m))) return false;
                 continue;
+            }
+            {
+                // `T& operator=(const T&) = default;` and `= delete;`: the compiler's own copy assignment (a
+                // plain member copy) is used, or none is declared. Other operators are not read.
+                size_t semi = at;
+                int paren_depth = 0;
+                bool has_operator = false;
+                for (; semi < tokens.size() && tokens[semi].kind != TEnd; ++semi) {
+                    if (tokens[semi].kind == TIdent && tokens[semi].text == "operator") has_operator = true;
+                    if (tokens[semi].kind == TLParen) ++paren_depth;
+                    else if (tokens[semi].kind == TRParen) --paren_depth;
+                    else if (paren_depth == 0 && (tokens[semi].kind == TSemi || tokens[semi].kind == TLBrace ||
+                                                  tokens[semi].kind == TRBrace))
+                        break;
+                }
+                if (has_operator && semi >= at + 3 && semi < tokens.size() && tokens[semi].kind == TSemi &&
+                    tokens[semi - 2].kind == TAssign &&
+                    (tokens[semi - 1].kind == TDefault || (tokens[semi - 1].kind == TIdent && tokens[semi - 1].text == "delete"))) {
+                    at = semi + 1;
+                    def.cxx = true;
+                    continue;
+                }
             }
             Field field;
             bool imp = false;
@@ -6120,6 +6188,54 @@ struct Parser {
                 ++type.pointers;
                 next();
             }
+            if (!is_typedef && type.base == 3 && type.pointers == 0 && !type.is_ref && type.struct_id >= 0 && is(TColonColon) &&
+                at + 3 < tokens.size() &&
+                ((tokens[at + 1].kind == TIdent && tokens[at + 2].kind == TLParen) ||
+                 (tokens[at + 1].kind == TTilde && tokens[at + 2].kind == TIdent && tokens[at + 3].kind == TLParen))) {
+                // C::C(args) : members { ... } and C::~C() { ... }: a constructor or destructor declared in the
+                // class and defined here.
+                const int sid = type.struct_id;
+                next();
+                const bool is_dtor = accept(TTilde);
+                if (cur().text != structs[static_cast<size_t>(sid)].name &&
+                    cur().text != (structs[static_cast<size_t>(sid)].tmpl.empty() ? std::string() : structs[static_cast<size_t>(sid)].tmpl)) {
+                    error = "expected the class name after ::";
+                    return false;
+                }
+                next();
+                next();
+                Declarator decl;
+                if (!parse_param_list(&decl)) return false;
+                StructDef& owner = structs[static_cast<size_t>(sid)];
+                size_t mi = owner.methods.size();
+                for (size_t i = 0; i < owner.methods.size(); ++i) {
+                    const Method& cand = owner.methods[i];
+                    if (cand.name != (is_dtor ? "<dtor>" : "<ctor>") || cand.owner != sid || cand.has_body ||
+                        cand.params.size() != decl.params.size())
+                        continue;
+                    bool same = true;
+                    for (size_t k = 0; k < cand.params.size(); ++k)
+                        if (!same_shape(cand.params[k], decl.params[k])) same = false;
+                    if (same) mi = i;
+                }
+                if (mi == owner.methods.size()) {
+                    error = std::string("no matching ") + (is_dtor ? "destructor" : "constructor") + " declared in the class";
+                    return false;
+                }
+                owner.methods[mi].has_body = true;
+                owner.methods[mi].body_at = at;
+                owner.methods[mi].param_names = decl.param_names;
+                while (!is(TLBrace) && !is(TEnd) && !is(TSemi)) next();
+                if (!is(TLBrace)) {
+                    error = "expected a constructor body";
+                    return false;
+                }
+                if (!skip_body()) return false;
+                const size_t resume = at;
+                if (!define_method(sid, mi)) return false;
+                at = resume;
+                continue;
+            }
             if (!is_typedef && is(TIdent) && at + 3 < tokens.size() && tokens[at + 1].kind == TColonColon &&
                 class_name_at(at)) {
                 // int C::f(int x) { ... } for a function declared in class C.
@@ -6238,23 +6354,33 @@ struct Parser {
                 continue;
             }
             if (!decl.is_function) {
-                Global global;
-                global.name = decl.name;
-                global.type = decl.type;
-                global.is_static = is_static;
-                if (accept(TAssign)) {
-                    Node init;
-                    if (!parse_init(&init)) return false;
-                    global.bss = false;
-                    if (!fix_unsized(&decl.type, init)) return false;
+                for (;;) {  // int a = 1, *b, c[2]; : every name gets the type read before the first one
+                    Global global;
+                    global.name = decl.name;
                     global.type = decl.type;
-                    init_relocs = &global.addr_relocs;
-                    const bool flat_ok = flatten_init(decl.type, init, &global.init_bytes, 0);
-                    init_relocs = nullptr;
-                    if (!flat_ok) return false;
+                    global.is_static = is_static;
+                    if (accept(TAssign)) {
+                        Node init;
+                        if (!parse_init(&init)) return false;
+                        global.bss = false;
+                        if (!fix_unsized(&decl.type, init)) return false;
+                        global.type = decl.type;
+                        init_relocs = &global.addr_relocs;
+                        const bool flat_ok = flatten_init(decl.type, init, &global.init_bytes, 0);
+                        init_relocs = nullptr;
+                        if (!flat_ok) return false;
+                    }
+                    globals.push_back(global);
+                    if (!accept(TComma)) break;
+                    decl = Declarator{};
+                    if (!parse_declarator(type, &decl)) return false;
+                    decl.type.is_const = is_const;
+                    if (decl.is_function || obj_needs_ctor(decl.type) || obj_needs_dtor(decl.type)) {
+                        error = "only plain data can follow a comma in a global declaration";
+                        return false;
+                    }
                 }
                 if (!expect(TSemi, "';'")) return false;
-                globals.push_back(global);
                 continue;
             }
             FuncDecl fn;
@@ -8016,9 +8142,11 @@ bool Parser::parse_unary(Node* out) {
     }
     if (is(TSizeof)) {
         next();
-        if (!expect(TLParen, "'('")) return false;
+        // sizeof unary-expression has no parentheses ([expr.sizeof]); sizeof ( type ) has them.
+        const bool sizeof_paren = is(TLParen);
+        if (sizeof_paren) next();
         int bytes = 0;
-        if (is_decl_start() && !is(TStatic)) {
+        if (sizeof_paren && is_decl_start() && !is(TStatic)) {
             Type ty;
             bool imp = false;
             bool exp = false;
@@ -8028,7 +8156,7 @@ bool Parser::parse_unary(Node* out) {
             bytes = size_of(ty);
         } else {
             Node inner;
-            if (!parse_expr(1, &inner)) return false;
+            if (sizeof_paren ? !parse_expr(1, &inner) : !parse_unary(&inner)) return false;
             if (inner.kind == Node::Name) {
                 if (cur_locals != nullptr) {
                     for (int i = static_cast<int>(cur_locals->size()) - 1; i >= 0; --i) {
@@ -8059,7 +8187,7 @@ bool Parser::parse_unary(Node* out) {
                 return false;
             }
         }
-        if (!expect(TRParen, "')'")) return false;
+        if (sizeof_paren && !expect(TRParen, "')'")) return false;
         out->kind = Node::IntLit;
         out->number = static_cast<uint64_t>(bytes);
         // sizeof gives a size_t: unsigned and 64 bits wide ([expr.sizeof]).
@@ -8164,7 +8292,11 @@ bool Parser::parse_unary(Node* out) {
                 next();
             }
         }
-        if (name.find("::") == std::string::npos && !current_ns.empty() && is(TLParen) && !local_visible(name)) {
+        bool exact_function = false;
+        if (name.find("::") != std::string::npos)
+            for (const FuncDecl& fd : funcs)
+                if (fd.name == name) exact_function = true;
+        if (!exact_function && !current_ns.empty() && is(TLParen) && !local_visible(name)) {
             // A bare name inside a namespace finds the functions of that namespace and of the ones around
             // it ([basic.lookup.unqual]), innermost first.
             std::string ns = current_ns;
@@ -8335,6 +8467,25 @@ bool Parser::parse_unary(Node* out) {
             out->text = "va_arg";
             out->type = ty;
             out->kids.push_back(std::move(ap));
+        } else if (is(TLParen) && !local_visible(name) && functional_cast_type(name).base >= 0) {
+            // T(x) for a type name T of a scalar type is the cast (T)(x) ([expr.type.conv]).
+            Type ty = functional_cast_type(name);
+            next();
+            Node inner;
+            if (!parse_expr(0, &inner)) return false;
+            if (!expect(TRParen, "')'")) return false;
+            if (inner.kind == Node::IntLit && ty.pointers == 0 && ty.base == 1 && !ty.is_bool) {
+                inner.number = const_norm(inner.number, ty);
+                inner.type = Type{};
+                inner.type.base = 1;
+                inner.type.wide = ty.wide;
+                inner.type.is_unsigned = ty.is_unsigned;
+                *out = std::move(inner);
+                return parse_postfix(out);
+            }
+            out->kind = Node::Unary;
+            out->type = ty;
+            out->kids.push_back(std::move(inner));
         } else if (accept(TLParen)) {
             out->kind = Node::Call;
             out->text = name;
@@ -8493,6 +8644,38 @@ bool Parser::parse_unary(Node* out) {
             }
             return parse_postfix(out);
         }
+        out->kids.push_back(std::move(inner));
+    } else if ((is(TInt) || is(TFloat) || is(TDouble) || is(TChar) || is(TShort) || is(TUnsigned) || is(TSigned) ||
+                is(TLong)) &&
+               [&]() {
+                   // int(x), unsigned(x), float(x): a type name of keywords written like a call.
+                   size_t k = at;
+                   while (k < tokens.size() && (tokens[k].kind == TInt || tokens[k].kind == TFloat || tokens[k].kind == TDouble ||
+                                                tokens[k].kind == TChar || tokens[k].kind == TShort ||
+                                                tokens[k].kind == TUnsigned || tokens[k].kind == TSigned ||
+                                                tokens[k].kind == TLong))
+                       ++k;
+                   return k < tokens.size() && tokens[k].kind == TLParen;
+               }()) {
+        Type ty;
+        bool imp = false;
+        bool exp = false;
+        if (!parse_type(&ty, &imp, &exp)) return false;
+        if (!expect(TLParen, "'('")) return false;
+        Node inner;
+        if (!parse_expr(0, &inner)) return false;
+        if (!expect(TRParen, "')'")) return false;
+        if (inner.kind == Node::IntLit && inner.type.base < 5 && ty.base == 1) {
+            inner.number = const_norm(inner.number, ty);
+            inner.type = Type{};
+            inner.type.base = 1;
+            inner.type.wide = ty.wide;
+            inner.type.is_unsigned = ty.is_unsigned;
+            *out = std::move(inner);
+            return parse_postfix(out);
+        }
+        out->kind = Node::Unary;
+        out->type = ty;
         out->kids.push_back(std::move(inner));
     } else {
         error = "expected an expression";
@@ -10848,6 +11031,8 @@ bool Gen::gen_stmt(const Node& node) {
     }
     if (node.kind == Node::Switch) {
         if (!gen_expr(node.kids[0])) return false;
+        // A long long selector is compared as 64 bits (a value above 2^32 must not match a small case).
+        const bool wide_selector = is_wide_t(last_type);
         const int slot = spill();
         if (!error.empty()) return false;
         break_stack.emplace_back();
@@ -10874,7 +11059,7 @@ bool Gen::gen_stmt(const Node& node) {
         }
         const int span = case_max - case_min;
         // A dense switch is a table of jmp instructions, one per value.
-        if (case_count >= 4 && span >= 0 && span <= 8) {
+        if (!wide_selector && case_count >= 4 && span >= 0 && span <= 8) {
             b(0x8B);
             b(0x85);
             disp(slot);
@@ -10943,11 +11128,24 @@ bool Gen::gen_stmt(const Node& node) {
                 has_default = true;
                 continue;
             }
-            b(0x8B);
-            b(0x85);
-            disp(slot);
-            b(0x3D);
-            u32(static_cast<uint32_t>(node.kids[i].number));
+            if (wide_selector) {
+                b(0x48);  // mov rax, [slot]
+                b(0x8B);
+                b(0x85);
+                disp(slot);
+                b(0x49);  // mov r10, imm64
+                b(0xBA);
+                for (int k = 0; k < 8; ++k) b(static_cast<uint8_t>(node.kids[i].number >> (8 * k)));
+                b(0x4C);  // cmp rax, r10
+                b(0x39);
+                b(0xD0);
+            } else {
+                b(0x8B);
+                b(0x85);
+                disp(slot);
+                b(0x3D);
+                u32(static_cast<uint32_t>(node.kids[i].number));
+            }
             case_jumps.push_back(emit_jcc(0x84));
         }
         const size_t fall = emit_jmp();
@@ -11324,6 +11522,9 @@ bool try_inline_stmt(Node* stmt, FuncDecl* caller, const std::vector<FuncDecl>& 
     if (fn->ret_ref) return false;
     for (bool is_ref : fn->param_ref)
         if (is_ref) return false;
+    // A static local keeps its value between calls: it cannot become a local of the caller.
+    for (const Local& static_local : fn->locals)
+        if (static_local.is_static) return false;
     // A hidden local (__rv, __br, __tmp) is not copied into the caller, so such a body is not inlined.
     for (const Local& hidden_local : fn->locals) {
         bool is_param_name = false;
@@ -12024,7 +12225,13 @@ Result<CompileOutput> compile_c(const CompileInput& input) {
     }
     const std::string stripped = strip_comments(input.source);
     pp.files.push_back(input.name);
-    const std::string expanded = pp.run(stripped, "");
+    // A quoted include in the main file is looked up next to that file first ([cpp.include]).
+    std::string main_dir;
+    {
+        const size_t slash = input.name.find_last_of("/\\");
+        if (slash != std::string::npos) main_dir = input.name.substr(0, slash);
+    }
+    const std::string expanded = pp.run(stripped, main_dir);
     if (!pp.error.empty()) return Result<CompileOutput>::fail(pp.error);
     std::string lex_error;
     std::vector<Token> tokens = lex(expanded, &lex_error);

@@ -23,11 +23,11 @@ inline const char* const kVsBeginnerGroupBlurbs[kGroupCount] = {
 
 struct VsBeginnerEntry { const char* type; int group; };
 /// The default palette: every row is one visible block. A test fails when this grows past the budget.
-inline constexpr int kVsDefaultPaletteBudget = 60;
+inline constexpr int kVsDefaultPaletteBudget = 55;   // the owner's cap: the default list stays small
 inline constexpr int kVsGroupBudget = 12;
 inline const VsBeginnerEntry kVsBeginner[] = {
     // Events
-    {"OnStart", kGroupEvents}, {"OnUpdate", kGroupEvents}, {"OnKey", kGroupEvents}, {"OnClick", kGroupEvents},
+    {"QbRule", kGroupEvents}, {"OnStart", kGroupEvents}, {"OnUpdate", kGroupEvents}, {"OnKey", kGroupEvents}, {"OnClick", kGroupEvents},
     {"OnTrigger", kGroupEvents}, {"OnCollision", kGroupEvents}, {"QbWhenTouchedDo", kGroupEvents},
     {"QbEverySeconds", kGroupEvents}, {"QbDoForever", kGroupEvents},
     // Move
@@ -36,19 +36,19 @@ inline const VsBeginnerEntry kVsBeginner[] = {
     {"SetPosition", kGroupMove},
     // Look
     {"QbSpinningObject", kGroupLook}, {"QbFlashColour", kGroupLook}, {"QbFollowWithCamera", kGroupLook},
-    {"SetActive", kGroupLook}, {"Spawn", kGroupLook}, {"Destroy", kGroupLook}, {"QbRemoveAfter", kGroupLook},
+    {"SetActive", kGroupLook}, {"Destroy", kGroupLook}, {"QbRemoveAfter", kGroupLook},
     {"QbSpawnCopyAt", kGroupLook}, {"QbSpawnEvery", kGroupLook}, {"QbShootOnKey", kGroupLook},
     // Game rules
     {"QbAddToScore", kGroupRules}, {"QbLoseHealth", kGroupRules}, {"QbGameOverAtZeroHealth", kGroupRules},
     {"QbGameOverOnTouch", kGroupRules}, {"QbWinAtScore", kGroupRules}, {"QbCollectOnTouch", kGroupRules},
-    {"QbOpenDoorWhenTouched", kGroupRules}, {"QbRespawnAtCheckpoint", kGroupRules}, {"LoadScene", kGroupRules},
+    {"QbOpenDoorWhenTouched", kGroupRules}, {"QbChangeNumber", kGroupRules}, {"QbRespawnAtCheckpoint", kGroupRules}, {"LoadScene", kGroupRules},
     // Sound and screen
     {"QbShowText", kGroupSound}, {"QbShowScore", kGroupSound}, {"QbPlaySoundOnKey", kGroupSound}, {"Print", kGroupSound},
-    {"SetText", kGroupSound}, {"PlaySound", kGroupSound},
+    {"SetText", kGroupSound}, {"PlaySound", kGroupSound}, {"QbPlayOrStopSound", kGroupSound},
     // Flow
     {"QbWaitThenDo", kGroupFlow}, {"QbRepeat", kGroupFlow}, {"QbIfKeyThenDo", kGroupFlow}, {"Branch", kGroupFlow},
-    {"Sequence", kGroupFlow}, {"GetVar", kGroupFlow}, {"SetVar", kGroupFlow}, {"AddVar", kGroupFlow},
-    {"Add", kGroupFlow}, {"Sub", kGroupFlow}, {"Mul", kGroupFlow}, {"Compare", kGroupFlow},
+    {"GetVar", kGroupFlow}, {"SetVar", kGroupFlow}, {"AddVar", kGroupFlow},
+    {"Add", kGroupFlow}, {"Compare", kGroupFlow}, {"QbIfNumberIs", kGroupFlow},
 };
 inline constexpr int kVsBeginnerCount = (int)(sizeof kVsBeginner / sizeof kVsBeginner[0]);
 

@@ -13,6 +13,9 @@
 #include <cstdlib>
 #include <ctime>
 #include <filesystem>
+#if defined(OKAY_XBOX_UWP)
+#include "okay/Core/Paths.hpp"
+#endif
 
 namespace okay {
 
@@ -27,7 +30,11 @@ class Achievements {
 public:
     // Per-user shared folder: %LOCALAPPDATA%\OkaySpace on Windows, ~/.okayspace else.
     static std::string Dir() {
-#if defined(_WIN32)
+#if defined(OKAY_XBOX_UWP)
+        // UWP: no usable %LOCALAPPDATA%; the app shell points Paths at ApplicationData.LocalFolder (platform/xbox_uwp/XboxPaths.hpp).
+        const std::string base = okay::Paths::Env::Current().localAppData;
+        std::string d = !base.empty() ? base + "/OkaySpace" : std::string("OkaySpace");
+#elif defined(_WIN32)
         const char* base = std::getenv("LOCALAPPDATA");
         std::string d = base && base[0] ? std::string(base) + "\\OkaySpace" : std::string("OkaySpace");
 #else

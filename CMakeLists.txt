@@ -1,6 +1,6 @@
 cmake_minimum_required(VERSION 3.16)
 project(OkaySpaceGameEngine
-    VERSION 2.886.0
+    VERSION 2.887.0
     DESCRIPTION "A modern C++ game engine"
     LANGUAGES C CXX)   # C enabled for vendored single-file C libs (ufbx)
 
@@ -86,6 +86,7 @@ option(OKAY_OWN_LWS      "Read .lws / .mot (LightWave scenes and motions) with o
 option(OKAY_OWN_FBX       "Use our own FBX reader (okay::fbx) instead of ufbx by default (ufbx stays compiled in; run-time env OKAY_OWN_FBX=0/1 overrides)" ON)
 option(OKAY_BUILD_PLATFORM_SELFTEST "Build okay-platform-selftest: tries the own okay::platform backend (window, input, audio, pad, clipboard) and prints what worked. OFF by default" OFF)
 option(OKAY_BUILD_TOOLS    "Build developer tools (texture generator, ...)"    OFF)
+option(OKAY_BUILD_XBOX_UWP "EXPERIMENTAL, UNVERIFIED Xbox One Developer Mode (UWP) export: its tests, the editor entry and (on a UWP toolchain) the app. platform/xbox_uwp, docs/xbox_uwp.md" OFF)
 
 # ---- One switch to dogfood the whole own stack (docs/own_stack_rollout.md) -------------------------------------
 # -DOKAY_OWN_STACK=ON turns on every own backend that is safe to try in a developer or CI build: our own model readers
@@ -120,6 +121,10 @@ if(MSVC)
     add_compile_options(/W4 /permissive-)
 else()
     add_compile_options(-Wall -Wextra -Wpedantic)
+    # No fused multiply-add contraction: on a compiler or CPU target with FMA, GCC fuses a*b+c differently in the scalar and
+    # the SSE code of the software renderer (TriangleSpan.hpp), so the two paths stop being bit for bit equal. Plain IEEE
+    # float arithmetic keeps every path (and every machine) giving the same pixels.
+    add_compile_options(-ffp-contract=off)
 endif()
 
 # Sanitizer build (GCC/Clang), used by CI's sanitizer job. Off by default, e.g.
@@ -324,6 +329,11 @@ endif()
 # Emscripten/WebGL, where raw UDP sockets don't exist in the browser sandbox.
 if(NOT EMSCRIPTEN)
     add_subdirectory(relay)
+endif()
+
+# ---- Xbox One Developer Mode export (experimental, OFF by default) -----
+if(OKAY_BUILD_XBOX_UWP)
+    add_subdirectory(platform/xbox_uwp)
 endif()
 
 # ---- Tests ------------------------------------------------------------

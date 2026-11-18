@@ -9,6 +9,7 @@
 #include "XboxInput.hpp"
 #include "XboxPaths.hpp"
 #include "XboxAudio.hpp"
+#include "XboxUwpBackend.hpp"
 #include "okay/Core/Paths.hpp"
 #include <cmath>
 #include <filesystem>
@@ -487,8 +488,83 @@ static void AudioTests() {
     { AudioSpec bad = want; bad.freq = 5; bad.channels = 0; bad.frames = 0; UwpAudioDevice d(bad, host.fmt, nullptr); CHECK(d.Spec().freq >= 8000 && d.Spec().channels >= 1 && d.Spec().frames >= 64); float o[4]; d.Render(o, 0); }
 }
 
+// ---- the UWP backend with a fake host ----
+// Platform.cpp (the base-class defaults) is not linked into this test: these definitions stand in for it. The backend overrides all of them.
+okay::platform::Key okay::platform::Backend::KeyForChar(char) { return okay::platform::Key::Unknown; }
+bool okay::platform::Backend::ShowErrorBox(const std::string&, const std::string&, okay::platform::Window*) { return false; }
+std::string okay::platform::Backend::BasePath() { return ""; }
+std::string okay::platform::Backend::PrefPath(const std::string&, const std::string&) { return ""; }
+std::vector<std::string> okay::platform::Backend::PreferredLocales() { return {}; }
+void okay::platform::Backend::Log(const std::string&) {}
+const char* okay::platform::BackendName(okay::platform::BackendKind k) { return k == okay::platform::BackendKind::Sdl2 ? "sdl2" : "own"; }
+namespace {
+struct FakeUwpHost : okay::xbox::UwpHost {
+    int pumps = 0; std::function<void()> onPump; FakePad pad; int pads = 1; FakeAudioHost audio; bool hasAudio = true; std::string title;
+    void* CoreWindowHandle() override { return this; }
+    void PumpEvents() override { ++pumps; if (onPump) onPump(); }
+    int PadCount() override { return pads; }
+    okay::xbox::PadDevice* Pad(int) override { return &pad; }
+    okay::xbox::AudioHost* Audio() override { return hasAudio ? &audio : nullptr; }
+    void SetTitle(const std::string& t) override { title = t; }
+    bool PresentPixels(const std::uint8_t*, int w, int h) override { return w > 0 && h > 0; }
+};
+std::vector<okay::platform::Event> Drain(okay::xbox::UwpBackend& b) { std::vector<okay::platform::Event> v; okay::platform::Event e; while (b.PollEvent(e)) v.push_back(e); return v; }
+}
+static void BackendTests() {
+    using namespace okay::xbox; using namespace okay::platform;
+    FakeUwpHost host; host.audio.fmt = {48000, 2};
+    PathRoots roots; roots.install = "C:/WindowsApps/Okay/"; roots.local = "/tmp/okay_xbox_backend_local"; roots.temp = "/tmp/okay_xbox_backend_temp";
+    std::filesystem::remove_all(roots.local);
+    UwpBackend b(&host, roots);
+    CHECK(b.Kind() == BackendKind::Own && b.Init(InitFlags()) && std::string(b.Name()) == "own");
+    CHECK(b.BasePath() == "C:/WindowsApps/Okay/");
+    { std::string p = b.PrefPath("Org", "My Game"); CHECK(p == "/tmp/okay_xbox_backend_local/saves/My Game/" && std::filesystem::is_directory(p)); CHECK(b.PrefPath("O", "../evil").empty()); }
+    // window: size comes from the lifecycle, GL and moving are refused, the handle is the CoreWindow
+    auto w = b.MakeWindow(WindowDesc()); int ww = 0, wh = 0;
+    b.Life().Launched(); b.Life().Resized(960, 540, 192); w->GetSize(ww, wh); CHECK(ww == 1920 && wh == 1080);
+    CHECK(w->NativeHandle() == &host && !w->CreateGLContext(GLAttributes()) && w->IsFullscreen() && w->IsFocused() && w->PresentPixels(nullptr, 4, 4) && !w->PresentPixels(nullptr, 0, 0));
+    w->SetTitle("Hi"); CHECK(host.title == "Hi");
+    // events: the host pump runs when the queue is empty; a resize and a key arrive in order
+    host.onPump = [&] { b.PushKey(0x41, true); };
+    { auto ev = Drain(b); CHECK(host.pumps >= 1); bool resized = false, key = false; for (auto& e : ev) { if (e.type == EventType::WindowResized && e.width == 1920 && e.height == 1080) resized = true; if (e.type == EventType::KeyDown && e.key == Key::A) key = true; } CHECK(resized && key); }
+    host.onPump = nullptr;
+    CHECK(b.IsKeyDown(Key::A)); b.PushKey(0x41, true); CHECK(Drain(b).empty());                           // no change, not a repeat: no event
+    b.PushKey(0x41, true, true); { auto ev = Drain(b); CHECK(ev.size() == 1 && ev[0].repeat); }
+    b.PushKey(0x41, false); { auto ev = Drain(b); CHECK(ev.size() == 1 && ev[0].type == EventType::KeyUp); } CHECK(!b.IsKeyDown(Key::A));
+    b.PushKey(0xFFFF, true); CHECK(Drain(b).empty());
+    b.PushKey(0xA0, true); CHECK((b.ModState() & ModShift) != 0); Drain(b);
+    // text only while text input is on
+    b.PushText("a"); CHECK(Drain(b).empty()); b.StartTextInput(); b.PushText("é"); { auto ev = Drain(b); CHECK(ev.size() == 1 && ev[0].text == "é"); } b.StopTextInput();
+    // mouse
+    b.PushPointerMove(10, 20); b.PushPointerMove(15, 18); b.PushPointerButton(MouseLeft, true, 15, 18); b.PushWheel(1.0f);
+    { int x, y; CHECK((b.MouseState(&x, &y) & MouseMask(MouseLeft)) && x == 15 && y == 18); int dx, dy; b.RelativeMouseState(&dx, &dy); CHECK(dx == 15 && dy == 18); b.RelativeMouseState(&dx, &dy); CHECK(dx == 0 && dy == 0); }
+    { auto ev = Drain(b); CHECK(ev.size() == 4 && ev[3].type == EventType::MouseWheel && ev[3].wheelY == 1.0f && ev[1].dx == 5 && ev[1].dy == -2); }
+    b.PushPointerButton(MouseLeft, false, 15, 18); Drain(b); { int x, y; CHECK(!(b.MouseState(&x, &y) & MouseMask(MouseLeft))); }
+    CHECK(b.KeyForChar('w') == Key::W && b.KeyForChar('W') == Key::W && b.KeyForChar('5') == Key::N5 && b.KeyForChar('0') == Key::N0 && b.KeyForChar('!') == Key::Unknown);
+    // pads: open through the backend, polled by PollEvent, closed pads leave the registry
+    CHECK(b.GamepadDeviceCount() == 1 && b.IsGamepad(0) && !b.IsGamepad(1));
+    { auto g = b.OpenGamepad(0); CHECK(g && g->InstanceId() == 1); host.pad.r.buttons = kPadA; CHECK(!g->Button(GamepadButton::A)); Drain(b); CHECK(g->Button(GamepadButton::A)); }   // the pad is read when the loop polls events
+    Drain(b);   // the destroyed pad is not polled any more (would crash otherwise)
+    CHECK(b.OpenGamepad(5) == nullptr);
+    b.PushPadAdded(0); b.PushPadRemoved(1); { auto ev = Drain(b); CHECK(ev.size() == 2 && ev[0].type == EventType::GamepadAdded && ev[1].deviceId == 1); }
+    // audio: through the host, capture refused, no host audio refused
+    { AudioSpec want; want.freq = 48000; want.channels = 2; AudioSpec got; auto a = b.OpenAudio(want, false, nullptr, &got); CHECK(a && host.audio.started && got.freq == 48000 && b.AudioDeviceCount(false) == 1); }
+    CHECK(b.OpenAudio(AudioSpec(), true, nullptr, nullptr) == nullptr && b.LastError().find("capture") != std::string::npos);
+    host.hasAudio = false; CHECK(b.OpenAudio(AudioSpec(), false, nullptr, nullptr) == nullptr && b.AudioDeviceCount(false) == 0); host.hasAudio = true;
+    // lifecycle through events: suspend saves BEFORE the focus event is handled, resume comes back, B / back gives exactly one Quit
+    int saved = 0, resumed = 0; b.onSuspend = [&] { ++saved; }; b.onResume = [&] { ++resumed; };
+    b.Life().Suspending(b.TicksMs()); { auto ev = Drain(b); CHECK(saved == 1); bool lost = false; for (auto& e : ev) if (e.type == EventType::WindowFocusLost) lost = true; CHECK(lost); CHECK(b.Life().SuspendReady()); }
+    b.Life().Resuming(); { auto ev = Drain(b); CHECK(resumed == 1); bool gained = false; for (auto& e : ev) if (e.type == EventType::WindowFocusGained) gained = true; CHECK(gained); }
+    b.Life().BackRequested(); { auto ev = Drain(b); int quits = 0; for (auto& e : ev) if (e.type == EventType::Quit) ++quits; CHECK(quits == 1); }
+    b.Life().BackRequested(); b.Life().WindowClosed(); { auto ev = Drain(b); int quits = 0; for (auto& e : ev) if (e.type == EventType::Quit) ++quits; CHECK(quits == 0); }   // already sent
+    b.SetClipboardText("clip"); CHECK(b.GetClipboardText() == "clip");
+    b.ShowErrorBox("T", "x", nullptr); CHECK(!b.LogLines().empty());
+    CHECK(b.PerfFrequency() == 1000000000ull); b.DelayMs(10);
+    std::filesystem::remove_all(roots.local);
+}
+
 int main() {
-    ShaderTests(); DisplayTests(); BuildPlanTests(); LogTests(); SourceRootTests(); RunnerTests(); HostTests(); LifecycleTests(); InputTests(); PadClassTests(); PathTests(); AudioTests();
+    ShaderTests(); DisplayTests(); BuildPlanTests(); LogTests(); SourceRootTests(); RunnerTests(); HostTests(); LifecycleTests(); InputTests(); PadClassTests(); PathTests(); AudioTests(); BackendTests();
     if (g_fail) { std::printf("%d FAILED\n", g_fail); return 1; }
     std::printf("xbox_uwp_runtime: all passed\n");
     return 0;

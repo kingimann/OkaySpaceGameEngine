@@ -130,8 +130,38 @@ static void test_copy(Tally& tally) {
              151);
 }
 
+static void test_cond(Tally& tally) {
+    std::printf("test_cond\n");
+    run_both(tally, "cond",
+             "int trace;\n"
+             "void t(int d) { trace = trace * 5 + d; }\n"
+             "struct A {\n"
+             "  int v;\n"
+             "  A(int x) : v(x) { t(1); }\n"
+             "  A(const A &o) : v(o.v + 1) { t(2); }\n"
+             "  ~A() { t(3); }\n"
+             "};\n"
+             "int val(A a) { t(4); return a.v; }\n"
+             "int entry(void) {\n"
+             "  A a(1);\n"
+             "  int r = 0;\n"
+             "  if (val(a) > 1) {\n"
+             "    t(1);\n"
+             "    r = 1;\n"
+             "  }\n"
+             "  int n = 0;\n"
+             "  while (val(a) < 4 && n < 2) {\n"
+             "    n = n + 1;\n"
+             "    t(2);\n"
+             "  }\n"
+             "  return (trace + r * 3 + n) % 256;\n"
+             "}\n",
+             135);
+}
+
 int main() {
     Tally tally;
     test_copy(tally);
-    return tally.finish(1);
+    test_cond(tally);
+    return tally.finish(2);
 }

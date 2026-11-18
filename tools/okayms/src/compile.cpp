@@ -2759,6 +2759,74 @@ bool Parser::parse_stmt(Node* out, std::vector<Local>* locals) {
     std::vector<Temp> mine = std::move(stmt_temps);
     stmt_temps = std::move(outer);
     if (!ok || mine.empty()) return ok;
+    if ((out->kind == Node::If && out->kids.size() >= 2) || (out->kind == Node::While && out->kids.size() == 2)) {
+        // The copies made in a condition die once the condition is evaluated: the value is kept
+        // in a hidden local, the copies are destroyed, then the branch (or, for a loop, the body
+        // or the exit) is chosen. A loop becomes while (1) { c = cond; dtors; if (!c) break; body }.
+        Local hidden;
+        hidden.name = "__cv" + std::to_string(rv_count++);
+        Type ct;
+        ct.base = 1;
+        if (!static_type(out->kids[0], &ct) || ct.base == 3 || ct.is_array()) {
+            ct = Type{};
+            ct.base = 1;
+        }
+        ct.is_ref = false;
+        hidden.type = ct;
+        place_local(locals, hidden);
+        Node assign;
+        assign.kind = Node::Assign;
+        assign.op = TAssign;
+        assign.kids.push_back(node_name(hidden.name));
+        assign.kids.push_back(std::move(out->kids[0]));
+        Node assign_stmt;
+        assign_stmt.kind = Node::ExprStmt;
+        assign_stmt.kids.push_back(std::move(assign));
+        Node block;
+        block.kind = Node::Block;
+        block.line = stmt_line;
+        block.kids.push_back(std::move(assign_stmt));
+        for (size_t i = mine.size(); i-- > 0;) {
+            Node call;
+            if (!special_call(mine[i].sid, "<dtor>", node_addr(node_name(mine[i].name)), {}, &call)) return false;
+            block.kids.push_back(std::move(call));
+        }
+        if (out->kind == Node::If) {
+            out->kids[0] = node_name(hidden.name);
+            block.kids.push_back(std::move(*out));
+        } else {
+            Node inner;
+            inner.kind = Node::Block;
+            Node first;
+            first = std::move(block);
+            // first holds: assign, dtors. Add the exit test and the original body.
+            Node not_c;
+            not_c.kind = Node::Unary;
+            not_c.op = TNot;
+            not_c.kids.push_back(node_name(hidden.name));
+            Node stop;
+            stop.kind = Node::If;
+            stop.kids.push_back(std::move(not_c));
+            Node brk;
+            brk.kind = Node::Break;
+            stop.kids.push_back(std::move(brk));
+            first.kids.push_back(std::move(stop));
+            first.kids.push_back(std::move(out->kids[1]));
+            Node forever;
+            forever.kind = Node::While;
+            Node one;
+            one.kind = Node::IntLit;
+            one.number = 1;
+            one.type.base = 1;
+            forever.kids.push_back(std::move(one));
+            forever.kids.push_back(std::move(first));
+            forever.line = stmt_line;
+            *out = std::move(forever);
+            return true;
+        }
+        *out = std::move(block);
+        return true;
+    }
     // Hidden copies made for this statement's arguments are destroyed after it, latest first.
     Node wrapped;
     wrapped.kind = Node::Block;

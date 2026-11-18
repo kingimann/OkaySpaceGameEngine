@@ -2384,3 +2384,18 @@ way as before (launcher: minimise to the tray and click the icon). Not run on Wi
    (also in the pop-out window), send a file, download an editor version with progress and cancel, start a voice call and the mic test, quit while a
    download runs. A freeze or a crash there is what a wrong lock would look like. Not run on Windows. `ctest -R "okay_threads|voice_races"`.
 
+## The launcher (and editor) on the own backend: OKAY_PLATFORM_BACKEND=own (off by default)
+
+Steps (Linux or Windows; Linux was run headless, Windows was not run):
+1. Start the launcher with the variable set. Windows: `set OKAY_PLATFORM_BACKEND=own` then `OkaySpace.exe`. Linux: `OKAY_PLATFORM_BACKEND=own ./OkaySpace`.
+   Same for the editor (`OkayEngine.exe`).
+2. How to tell it is on: the console / log prints `platform backend: own`, `ImGui input: own okay::platform feed ...` and
+   `ImGui drawing: own okay::platform::Painter renderer ...` (the own backend forces both), and the startup stack line says `platform=own`.
+3. What you should see: the same launcher window as without the variable (the Create page, sidebar, update banner). Software drawing, so it can feel slower on a big screen.
+4. Try: click the sidebar pages, type in a field, scroll, open the chat window, minimise and restore, drop a file on it. Report anything that looks or acts different.
+5. Without a screen to look at (a headless check): `scripts/headless_app_shot.sh build/bin/OkaySpace 25 own.png OKAY_PLATFORM_BACKEND=own` writes a screenshot
+   (needs Xvfb and ImageMagick). Two ready-made pictures from this branch: `docs/img/launcher_sdl2_headless.png` (default) and
+   `docs/img/launcher_own_backend_headless.png` (own); the two are the same picture to within 0 pixels at 4 percent.
+6. Checks: `ctest -R "thread_conversion_review|okay_threads|painter_bridge_vs_sdl|platform_events|platform_xdnd"`.
+7. Not run: clicking and typing in the own-backend launcher, the chat window, Windows, and the editor on the own backend (see `docs/platform_layer.md`, Round 12).
+

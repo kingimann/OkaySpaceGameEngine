@@ -1,0 +1,5 @@
+# Engine sources okay_engine_uwp does NOT compile (the UWP build of engine/CMakeLists.txt's add_library(okay_engine ...) list).
+# One path per line as written in engine/CMakeLists.txt, then "# reason". okay-uwp-audit checks the rest of the list for forbidden APIs.
+src/Render/GLRenderer.cpp            # OpenGL does not exist in UWP (Direct3D 11 only)
+src/Render/D3D12Renderer.cpp         # Direct3D 12 preview renderer: d3d12 + D3DCompile; a UWP app on Xbox One uses Direct3D 11
+src/Net/PhotonTransport.cpp          # third-party SDK adapter, an empty file unless that SDK is installed; reads SDL

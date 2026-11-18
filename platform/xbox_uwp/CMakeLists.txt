@@ -22,3 +22,24 @@ endif()
 add_executable(okay-appx tool/okay_appx.cpp)
 target_include_directories(okay-appx PRIVATE ${CMAKE_CURRENT_SOURCE_DIR} ${CMAKE_SOURCE_DIR}/engine/include)
 set_target_properties(okay-appx PROPERTIES RUNTIME_OUTPUT_DIRECTORY ${CMAKE_BINARY_DIR}/bin)
+
+# Offline shaders: okay-shaders writes the HLSL text and the manifest around fxc's .cso files (scripts/xbox-compile-shaders.ps1).
+add_executable(okay-shaders tool/okay_shaders.cpp)
+target_include_directories(okay-shaders PRIVATE ${CMAKE_SOURCE_DIR}/engine/include)
+set_target_properties(okay-shaders PROPERTIES RUNTIME_OUTPUT_DIRECTORY ${CMAKE_BINARY_DIR}/bin)
+
+# okay-uwp-audit: lists APIs a UWP app may not use in the engine sources the UWP target compiles (engine/uwp_exclude.txt).
+add_executable(okay-uwp-audit tool/okay_uwp_audit.cpp)
+target_include_directories(okay-uwp-audit PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})
+set_target_properties(okay-uwp-audit PROPERTIES RUNTIME_OUTPUT_DIRECTORY ${CMAKE_BINARY_DIR}/bin)
+
+if(OKAY_BUILD_TESTS)
+    # The pure runtime pieces (shader bundle, display, lifecycle, input, paths, audio, backend over a fake host, build runner, audit).
+    # NOT linked with okay::engine: UwpPlatform.cpp stands in for Platform.cpp here, exactly as in okay_engine_uwp.
+    add_executable(test_xbox_uwp_runtime tests/test_xbox_uwp_runtime.cpp UwpPlatform.cpp ${CMAKE_SOURCE_DIR}/engine/src/Core/Paths.cpp)
+    target_include_directories(test_xbox_uwp_runtime PRIVATE ${CMAKE_CURRENT_SOURCE_DIR} ${CMAKE_SOURCE_DIR}/engine/include)
+    add_test(NAME xbox_uwp_runtime COMMAND test_xbox_uwp_runtime)
+    # The engine source list is clean of forbidden APIs (text scan), and CMake and the C++ parser agree on the list.
+    add_test(NAME xbox_uwp_audit COMMAND okay-uwp-audit ${CMAKE_SOURCE_DIR})
+    add_test(NAME xbox_uwp_sources_cmake COMMAND ${CMAKE_COMMAND} -DOKAY_ROOT=${CMAKE_SOURCE_DIR} -P ${CMAKE_CURRENT_SOURCE_DIR}/engine/uwp_sources.cmake)
+endif()

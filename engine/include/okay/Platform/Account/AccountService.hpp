@@ -43,6 +43,9 @@
 
 #if defined(_WIN32)
 #  include <windows.h>
+#  if defined(OKAY_XBOX_UWP)
+#    include <bcrypt.h>
+#  endif
 #endif
 #include "okay/Crypto/Sha256.hpp"   // the engine's one SHA-256 / HMAC / PBKDF2
 #include "okay/Platform/NativeHttp.hpp"
@@ -102,7 +105,10 @@ inline std::string HashPassword(const std::string& password, const std::string& 
 // Random bytes from the operating system's CSPRNG (never a seeded Mersenne Twister): getrandom-style /dev/urandom on POSIX,
 // RtlGenRandom (SystemFunction036) on Windows, found at run time so nothing extra is linked. False when the system has none.
 inline bool OsRandom(std::uint8_t* out, std::size_t n) {
-#if defined(_WIN32)
+#if defined(OKAY_XBOX_UWP)
+    // UWP: no LoadLibrary. BCryptGenRandom with the system-preferred RNG needs no algorithm handle (Microsoft's BCryptGenRandom page).
+    return BCryptGenRandom(nullptr, reinterpret_cast<PUCHAR>(out), (ULONG)n, BCRYPT_USE_SYSTEM_PREFERRED_RNG) >= 0;
+#elif defined(_WIN32)
     typedef unsigned char (__stdcall *RtlGenRandomFn)(void*, unsigned long);
     static RtlGenRandomFn fn = [] {
         HMODULE m = LoadLibraryA("advapi32.dll");
@@ -178,7 +184,9 @@ inline bool SecureEquals(const std::string& a, const std::string& b) {
 // console window flashes for each curl request (CREATE_NO_WINDOW); elsewhere it
 // is std::system. Returns the process exit code (-1 on spawn failure).
 inline int RunCommand(const std::string& cmd) {
-#if defined(_WIN32)
+#if defined(OKAY_XBOX_UWP)
+    (void)cmd; return -1;   // a UWP app cannot start other programs (no curl fallback): "not reached"
+#elif defined(_WIN32)
     std::string full = "cmd /c " + cmd;
     std::vector<char> buf(full.begin(), full.end()); buf.push_back('\0');
     STARTUPINFOA si; ZeroMemory(&si, sizeof(si)); si.cb = sizeof(si);

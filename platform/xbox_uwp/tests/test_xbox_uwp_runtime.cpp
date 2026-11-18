@@ -10,6 +10,8 @@
 #include "XboxPaths.hpp"
 #include "XboxAudio.hpp"
 #include "XboxUwpBackend.hpp"
+#include "UwpPlatform.hpp"
+#include "XboxUwpAudit.hpp"
 #include "okay/Core/Paths.hpp"
 #include <cmath>
 #include <filesystem>
@@ -489,14 +491,7 @@ static void AudioTests() {
 }
 
 // ---- the UWP backend with a fake host ----
-// Platform.cpp (the base-class defaults) is not linked into this test: these definitions stand in for it. The backend overrides all of them.
-okay::platform::Key okay::platform::Backend::KeyForChar(char) { return okay::platform::Key::Unknown; }
-bool okay::platform::Backend::ShowErrorBox(const std::string&, const std::string&, okay::platform::Window*) { return false; }
-std::string okay::platform::Backend::BasePath() { return ""; }
-std::string okay::platform::Backend::PrefPath(const std::string&, const std::string&) { return ""; }
-std::vector<std::string> okay::platform::Backend::PreferredLocales() { return {}; }
-void okay::platform::Backend::Log(const std::string&) {}
-const char* okay::platform::BackendName(okay::platform::BackendKind k) { return k == okay::platform::BackendKind::Sdl2 ? "sdl2" : "own"; }
+// UwpPlatform.cpp (linked into this test) provides the base-class defaults and the registry, as it does in the UWP engine target.
 namespace {
 struct FakeUwpHost : okay::xbox::UwpHost {
     int pumps = 0; std::function<void()> onPump; FakePad pad; int pads = 1; FakeAudioHost audio; bool hasAudio = true; std::string title;
@@ -557,14 +552,52 @@ static void BackendTests() {
     b.Life().Resuming(); { auto ev = Drain(b); CHECK(resumed == 1); bool gained = false; for (auto& e : ev) if (e.type == EventType::WindowFocusGained) gained = true; CHECK(gained); }
     b.Life().BackRequested(); { auto ev = Drain(b); int quits = 0; for (auto& e : ev) if (e.type == EventType::Quit) ++quits; CHECK(quits == 1); }
     b.Life().BackRequested(); b.Life().WindowClosed(); { auto ev = Drain(b); int quits = 0; for (auto& e : ev) if (e.type == EventType::Quit) ++quits; CHECK(quits == 0); }   // already sent
+    { using namespace okay::platform; CHECK(Default() == nullptr && Get(BackendKind::Own) == nullptr);
+      InstallBackend(&b); CHECK(Default() == &b && Get(BackendKind::Own) == &b && Get(BackendKind::Sdl2) == nullptr && IsCompiledIn(BackendKind::Own) && !IsCompiledIn(BackendKind::Sdl2) && DefaultKind() == BackendKind::Own);
+      CHECK(TicksMs() <= b.TicksMs() + 5); okay::platform::Log("through the registry"); CHECK(!b.LogLines().empty() && b.LogLines().back() == "through the registry");
+      BackendKind k; CHECK(ParseBackendName("own", k) && k == BackendKind::Own && !ParseBackendName("x", k) && !ParseBackendName(nullptr, k)); InstallBackend(nullptr); CHECK(Default() == nullptr); }
     b.SetClipboardText("clip"); CHECK(b.GetClipboardText() == "clip");
     b.ShowErrorBox("T", "x", nullptr); CHECK(!b.LogLines().empty());
     CHECK(b.PerfFrequency() == 1000000000ull); b.DelayMs(10);
     std::filesystem::remove_all(roots.local);
 }
 
+// ---- UWP API audit scanner ----
+static void AuditTests() {
+    using namespace okay::xbox;
+    auto n = [](const std::string& s) { return ScanSource(s).size(); };
+    CHECK(n("int a;\nvoid f(){ D3DCompile(x); }\n") == 1);
+    CHECK(ScanSource("int a;\nvoid f(){ D3DCompile(x); }\n")[0].line == 2);
+    CHECK(n("// D3DCompile in a comment\n/* LoadLibraryA\n in a block */ int x;\n") == 0);
+    CHECK(n("#include <d3dcompiler.h>\n") == 1 && n("#include <d3d11.h>\n") == 0);
+    CHECK(n("MyD3DCompileHelper(1);\n") == 0 && n("D3DCompileFromFile(1);\n") == 0);                  // whole words only
+    CHECK(n("auto p = std::getenv(\"APPDATA\");\n") == 1 && n("auto p = std::getenv(\"HOME\");\n") == 0);
+    CHECK(n("SDL_Init(0); SDL_CreateWindow(0);\n") == 1);                                              // one finding per token per line
+    // fenced code is not reported
+    CHECK(n("#if !defined(OKAY_XBOX_UWP)\nLoadLibraryA(\"x\");\n#endif\n") == 0);
+    CHECK(n("#if defined(OKAY_XBOX_UWP)\nx();\n#else\nLoadLibraryA(\"x\");\n#endif\n") == 0);
+    CHECK(n("#if defined(OKAY_XBOX_UWP)\nLoadLibraryA(\"x\");\n#else\nx();\n#endif\n") == 1);
+    CHECK(n("#if defined(_WIN32) && !defined(OKAY_XBOX_UWP)\nLoadLibraryA(\"x\");\n#endif\n") == 0);
+    CHECK(n("#if defined(_WIN32)\nLoadLibraryA(\"x\");\n#endif\n") == 1);                                // Windows but not fenced: reported
+    CHECK(n("#if !defined(_WIN32)\nSDL_Init(0);\n#endif\n") == 0);
+    CHECK(n("#ifdef __linux__\nSDL_Init(0);\n#endif\n") == 0 && n("#ifndef _WIN32\nSDL_Init(0);\n#else\nx();\n#endif\n") == 0);
+    CHECK(n("#if defined(__APPLE__) || defined(__linux__)\nSDL_Init(0);\n#endif\n") == 0);
+    CHECK(n("#if defined(__linux__)\nA();\n#elif defined(_WIN32)\nLoadLibraryA(\"x\");\n#else\nB();\n#endif\n") == 1);
+    CHECK(n("#if defined(_WIN32)\n#if !defined(OKAY_XBOX_UWP)\nLoadLibraryA(\"x\");\n#endif\n#endif\n") == 0);   // nested
+    CHECK(n("#if SOMETHING_UNKNOWN\nLoadLibraryA(\"x\");\n#endif\n") == 1);                           // unknown condition: scanned (the safe direction)
+    CHECK(n("#if defined(OKAY_HTTP_WINHTTP)\nWinHttpOpen(0);\n#endif\n") == 0);
+    CHECK(n("#if 0\nLoadLibraryA(\"x\");\n#endif\n") == 0 && n("#if 1\nLoadLibraryA(\"x\");\n#endif\n") == 1);
+    CHECK(n("#if (defined(_WIN32) && !defined(__MINGW32__))\nLoadLibraryA(\"x\");\n#endif\n") == 1);
+    CHECK(n("#if defined(__GNUC__) && !defined(_MSC_VER)\nLoadLibraryA(\"x\");\n#endif\n") == 0);
+    { std::vector<std::string> inc; ScanSource("#include \"a.hpp\"\n#if defined(__linux__)\n#include <b.h>\n#endif\n#include <c.h>\n", &inc); CHECK((inc == std::vector<std::string>{"a.hpp", "c.h"})); }   // only active includes
+    // the engine source list parser
+    { auto l = ParseEngineSourceList("project(x)\nadd_library(okay_engine\n    src/A.cpp\n    src/B/C.cpp  # (note) src/Z.cpp\n    third_party/u.c\n    src/D.cpp)\nadd_library(other src/E.cpp)\n");
+      CHECK((l == std::vector<std::string>{"src/A.cpp", "src/B/C.cpp", "third_party/u.c", "src/D.cpp"})); }
+    CHECK(ParseEngineSourceList("nothing").empty());
+}
+
 int main() {
-    ShaderTests(); DisplayTests(); BuildPlanTests(); LogTests(); SourceRootTests(); RunnerTests(); HostTests(); LifecycleTests(); InputTests(); PadClassTests(); PathTests(); AudioTests(); BackendTests();
+    ShaderTests(); DisplayTests(); BuildPlanTests(); LogTests(); SourceRootTests(); RunnerTests(); HostTests(); LifecycleTests(); InputTests(); PadClassTests(); PathTests(); AudioTests(); BackendTests(); AuditTests();
     if (g_fail) { std::printf("%d FAILED\n", g_fail); return 1; }
     std::printf("xbox_uwp_runtime: all passed\n");
     return 0;

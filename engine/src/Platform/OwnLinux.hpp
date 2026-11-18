@@ -29,6 +29,7 @@ public:
     virtual uint32_t MouseFocusWindowId() = 0;
     virtual void* NativeHandleFromId(uint32_t id) = 0;
     virtual uint32_t MouseState(int* x, int* y) = 0;
+    virtual bool GlobalMouseState(int* x, int* y, uint32_t* buttons) = 0;
     virtual bool SetRelativeMouse(bool on) = 0;
     virtual bool IsRelativeMouse() const = 0;
     virtual void ShowCursor(bool show) = 0;

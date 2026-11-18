@@ -212,6 +212,16 @@ int main() {
             auto cw2 = b->MakeWindow(wd);   // a window made after a shape was chosen gets it
             CHECK(cw2 != nullptr);
             Event e; while (b->PollEvent(e)) {}
+            // The pointer on the whole screen: move it from a second connection and read it back.
+            Display* d2 = XOpenDisplay(nullptr);
+            XWarpPointer(d2, None, DefaultRootWindow(d2), 0, 0, 0, 0, 123, 77);
+            XFlush(d2); XSync(d2, False);
+            int gx = -1, gy = -1; uint32_t gb = 99;
+            CHECK(b->GlobalMouseState(&gx, &gy, &gb));
+            CHECK(gx == 123 && gy == 77 && gb == 0);
+            CHECK(b->GlobalMouseState(nullptr, nullptr, nullptr));   // every output is optional
+            XCloseDisplay(d2);
+            CHECK(!b->SetNativeMessageHook(nullptr, nullptr));       // Windows only: refused here
         }
         else std::cout << "[skip] no X display for the drop test\n";
     } else std::cout << "[skip] drop test needs the own backend and a display\n";

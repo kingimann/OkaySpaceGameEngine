@@ -50464,7 +50464,7 @@ int main(int argc, char** argv) {
         SDL_RaiseWindow(window);
         okay::DrawSplashStyled(renderer, sw, sh, splashStyle());
     }
-    SDL_EventState(SDL_DROPFILE, SDL_ENABLE);  // accept OS file drops (asset import)
+    // (File drops are accepted by the sdl2 backend's Init.)
 
     IMGUI_CHECKVERSION();
     ImGui::CreateContext();

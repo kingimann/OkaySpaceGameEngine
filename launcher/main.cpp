@@ -10892,7 +10892,7 @@ static void OkayTrayShowMenu() {
 // SDL pumps Win32 messages on the main thread, so this hook runs there too; it
 // just flags work the main loop performs (any left-click opens the app; a
 // right-click raises the menu; a broadcast from a 2nd launch also surfaces us).
-static void SDLCALL OkayMsgHook(void* userdata, void* hWnd, unsigned int msg, Uint64 wParam, Sint64 lParam) {
+static void OkayMsgHook(void* userdata, void* hWnd, unsigned int msg, uint64_t wParam, int64_t lParam) {   // okay::platform::NativeMessageHook
     (void)userdata; (void)hWnd; (void)wParam;
     if (msg == WM_OKAYTRAY) {
         UINT ev = (UINT)(lParam & 0xFFFF);
@@ -18255,7 +18255,7 @@ int main(int argc, char** argv) {
     lw::SetMinSize(window, 720, 480);   // the fixed layout needs this much
     okay::SetAppIcon(window);   // placeholder OkaySpace logo
 #if defined(_WIN32)
-    SDL_SetWindowsMessageHook(OkayMsgHook, nullptr);   // receive tray-icon clicks
+    sdlSeam->SetNativeMessageHook(OkayMsgHook, nullptr);   // receive tray-icon clicks
 #endif
     SDL_Renderer* renderer = SDL_CreateRenderer(window, -1,
         SDL_RENDERER_ACCELERATED | SDL_RENDERER_PRESENTVSYNC);
@@ -18511,7 +18511,7 @@ int main(int argc, char** argv) {
                 bool toChat = false;
                 if (g_chatWinOpen && g_chatDropOk && (!g_chatDropUid.empty() || g_chatDropGroup > 0)) {
                     int gx = 0, gy = 0, wx = 0, wy = 0;
-                    SDL_GetGlobalMouseState(&gx, &gy);
+                    sdlSeam->GlobalMouseState(&gx, &gy, nullptr);
                     lw::GetPos(window, &wx, &wy);
                     float mx = (float)(gx - wx), my = (float)(gy - wy);
                     toChat = mx >= g_chatDropMin.x && mx <= g_chatDropMax.x && my >= g_chatDropMin.y && my <= g_chatDropMax.y;

@@ -596,6 +596,21 @@ public:
         if (mask & Button3Mask) r |= MouseMask(MouseRight);
         return r;
     }
+    // The pointer on the whole screen: the root window's coordinates from XQueryPointer.
+    bool GlobalMouseState(int* x, int* y, uint32_t* buttons) override {
+        ::Window root, child; int rx = 0, ry = 0, wx, wy; unsigned mask = 0;
+        if (!m_x.XQueryPointer(m_dpy, m_root, &root, &child, &rx, &ry, &wx, &wy, &mask)) { if (x) *x = 0; if (y) *y = 0; if (buttons) *buttons = 0; return false; }
+        if (x) *x = rx;
+        if (y) *y = ry;
+        if (buttons) {
+            uint32_t r = 0;
+            if (mask & Button1Mask) r |= MouseMask(MouseLeft);
+            if (mask & Button2Mask) r |= MouseMask(MouseMiddle);
+            if (mask & Button3Mask) r |= MouseMask(MouseRight);
+            *buttons = r;
+        }
+        return true;
+    }
     uint32_t RelativeMouseState(int* dx, int* dy) override {
         if (dx) *dx = m_relAccX;
         if (dy) *dy = m_relAccY;

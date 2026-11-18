@@ -452,6 +452,21 @@ public:
         if (GetAsyncKeyState(VK_RBUTTON) & 0x8000) m |= MouseMask(MouseRight);
         return m;
     }
+    bool GlobalMouseState(int* x, int* y, uint32_t* buttons) override {
+        POINT p;
+        if (!GetCursorPos(&p)) { if (x) *x = 0; if (y) *y = 0; if (buttons) *buttons = 0; return false; }
+        if (x) *x = p.x;
+        if (y) *y = p.y;
+        if (buttons) {
+            uint32_t m = 0;
+            if (GetAsyncKeyState(VK_LBUTTON) & 0x8000) m |= MouseMask(MouseLeft);
+            if (GetAsyncKeyState(VK_MBUTTON) & 0x8000) m |= MouseMask(MouseMiddle);
+            if (GetAsyncKeyState(VK_RBUTTON) & 0x8000) m |= MouseMask(MouseRight);
+            *buttons = m;
+        }
+        return true;
+    }
+    bool SetNativeMessageHook(NativeMessageHook hook, void* user) override { m_msgHook = hook; m_msgHookUser = user; return true; }
     bool IsRelativeMouse() override { return m_relative; }
     bool SetRelativeMouse(bool on) override {
         m_relative = on;
@@ -566,6 +581,7 @@ public:
     static LRESULT CALLBACK WndProc(HWND h, UINT m, WPARAM wp, LPARAM lp) {
         WinBackend* b = g_backend;
         if (!b) return DefWindowProcW(h, m, wp, lp);
+        if (b->m_msgHook) b->m_msgHook(b->m_msgHookUser, (void*)h, (unsigned)m, (uint64_t)wp, (int64_t)lp);   // the app's hook sees every message first
         if (h == b->m_rawWnd && b->m_rawWnd) {   // the message-only window of the Raw Input pads
             if (m == WM_INPUT) { b->m_raw.OnInput((void*)lp); return DefWindowProcW(h, m, wp, lp); }   // DefWindowProc does the clean-up the docs ask for
             if (m == 0x00FE /* WM_INPUT_DEVICE_CHANGE */) { b->m_raw.OnDeviceChange((unsigned)wp, (void*)lp); return 0; }
@@ -768,6 +784,8 @@ public:
     std::map<HWND, WinWindow*> m_wins;
     std::deque<Event> m_pending;
     bool m_text = false, m_relative = false, m_cursorShown = true, m_inited = false;
+    NativeMessageHook m_msgHook = nullptr;
+    void* m_msgHookUser = nullptr;
     HCURSOR m_shapeCursor = nullptr;   // set by SetCursorShape; null = the window class's arrow
     int m_lastX = 0, m_lastY = 0;
     int m_relAccX = 0, m_relAccY = 0;

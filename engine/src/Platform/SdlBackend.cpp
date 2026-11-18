@@ -236,6 +236,7 @@ public:
         SDL_SetMainReady();   // the apps have their own main(); SDL must not insist on SDL_main
         const Uint32 missing = want & ~SDL_WasInit(0);
         if (missing && SDL_InitSubSystem(missing) != 0) return false;
+        SDL_EventState(SDL_DROPFILE, SDL_ENABLE);   // accept OS file drops (the apps import them)
         m_started |= missing;
         if (f.video) SDL_StopTextInput();   // SDL2 starts with it on; the seam's contract is off until StartTextInput
         return true;
@@ -357,6 +358,24 @@ public:
     uint32_t MouseFocusWindowId() override { SDL_Window* w = SDL_GetMouseFocus(); return w ? SDL_GetWindowID(w) : 0; }
     void* NativeHandleFromId(uint32_t id) override { return id ? (void*)SDL_GetWindowFromID(id) : nullptr; }
     uint32_t MouseState(int* x, int* y) override { return SDL_GetMouseState(x, y); }
+    bool GlobalMouseState(int* x, int* y, uint32_t* buttons) override {
+        int gx = 0, gy = 0;
+        const Uint32 b = SDL_GetGlobalMouseState(&gx, &gy);
+        if (x) *x = gx;
+        if (y) *y = gy;
+        if (buttons) *buttons = b;   // SDL's button bits are the MouseMask bits (button 1 = bit 0)
+        return true;
+    }
+    bool SetNativeMessageHook(NativeMessageHook hook, void* user) override {
+#if defined(_WIN32)
+        g_msgHook = hook; g_msgHookUser = user;
+        SDL_SetWindowsMessageHook(hook ? &SdlBackend::MsgTrampoline : nullptr, nullptr);
+        return true;
+#else
+        (void)hook; (void)user;
+        return false;
+#endif
+    }
     bool IsRelativeMouse() override { return SDL_GetRelativeMouseMode() == SDL_TRUE; }
     bool SetRelativeMouse(bool on) override { return SDL_SetRelativeMouseMode(on ? SDL_TRUE : SDL_FALSE) == 0; }
     void ShowCursor(bool s) override { SDL_ShowCursor(s ? SDL_ENABLE : SDL_DISABLE); }
@@ -543,6 +562,13 @@ private:
         default: return false;
         }
     }
+#if defined(_WIN32)
+    static inline NativeMessageHook g_msgHook = nullptr;
+    static inline void* g_msgHookUser = nullptr;
+    static void SDLCALL MsgTrampoline(void*, void* hwnd, unsigned msg, Uint64 wp, Sint64 lp) {
+        if (g_msgHook) g_msgHook(g_msgHookUser, hwnd, msg, (uint64_t)wp, (int64_t)lp);
+    }
+#endif
     Uint32 m_started = 0;
     SDL_Event m_last;
     bool m_reportUnmapped = false;

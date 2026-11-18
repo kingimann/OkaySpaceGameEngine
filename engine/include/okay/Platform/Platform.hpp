@@ -128,6 +128,9 @@ constexpr int kMaxWindowExtent = 16384;
 /// leaves the caller with no window at all.
 inline int ValidWindowExtent(int v, int fallback) { return v >= 1 && v <= kMaxWindowExtent ? v : fallback; }
 
+/// A Windows message hook: `user` as given to SetNativeMessageHook, the window's HWND, and the message (UINT, WPARAM, LPARAM).
+using NativeMessageHook = void (*)(void* user, void* hwnd, unsigned msg, uint64_t wParam, int64_t lParam);
+
 /// How a window asks for attention (task bar button flash). Stop ends a flash that is running.
 enum class FlashMode { Stop, Briefly, UntilFocused };
 
@@ -371,6 +374,14 @@ public:
     virtual void StopTextInput() = 0;
     virtual bool IsKeyDown(Key k) = 0;
     virtual uint32_t MouseState(int* x, int* y) = 0;   // MouseMask bits; position in the focused window
+    /// The pointer's position on the whole desktop (screen pixels) and the button mask (MouseMask bits), even when it is
+    /// outside every window of ours. False (outputs 0) when this backend cannot tell. (Used to see whether a file was dropped on
+    /// a part of a window: compare with Window::GetPosition.)
+    virtual bool GlobalMouseState(int* x, int* y, uint32_t* buttons) { if (x) *x = 0; if (y) *y = 0; if (buttons) *buttons = 0; return false; }
+    /// Windows only: a function that sees every window message of our windows before they are handled (the launcher's tray icon
+    /// sends its clicks that way). `hwnd` is the window's HWND. It cannot change what happens to the message. Pass null to remove
+    /// it. False when this backend has no such messages (every platform but Windows).
+    virtual bool SetNativeMessageHook(NativeMessageHook hook, void* user) { (void)hook; (void)user; return false; }
     virtual bool SetRelativeMouse(bool on) = 0;
     /// Whether relative (locked, endless) mouse mode is on right now.
     virtual bool IsRelativeMouse() { return false; }

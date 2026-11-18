@@ -566,7 +566,7 @@ int main() {
                   "exec 1 0 2\nexec 2 0 3\nexec 3 0 4\nexec 4 0 5\n");
             r.Start(); CHECK(std::fabs(r.vs->GetVariable("n").AsFloat() - 7.0f) < 1e-3f); }
         {   Rig r("node 1 OnStart\nentry OnStart 1\nnode 2 QbGiveItem\n" + Defaults(2, {"key", "2"}) + "node 3 QbIfHasItem\n" + Defaults(3, {"key", "2"}) +
-                  "node 4 ScoreAdd\nexec 1 0 2\nexec 2 0 3\nexec 3 0 4\n"); r.Start(); CHECK(Score(r.scene) == 1.0f); }
+                  "node 4 ScoreAdd\nexec 1 0 2\nexec 2 0 3\nexec 3 0 4\n"); r.go->AddComponent<Inventory>()->capacity = 8; r.Start(); CHECK(Score(r.scene) == 1.0f); }
         {   Rig r("node 1 OnStart\nentry OnStart 1\nnode 2 QbGiveItem\n" + Defaults(2, {"key", "1"}) + "node 3 QbIfHasItem\n" + Defaults(3, {"key", "2"}) +
                   "node 4 ScoreAdd\nexec 1 0 2\nexec 2 0 3\nexec 3 0 4\n"); r.go->AddComponent<Inventory>()->capacity = 8; r.Start(); CHECK(Score(r.scene) == 0.0f); }
         {   // Restart The Game: with no scene loaded the engine says so (a real game has one).

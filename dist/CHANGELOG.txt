@@ -1,5 +1,18 @@
 OkaySpace Game Engine — Changelog
 
+v2.887.0
+  Visual Script made simpler again
+  - The Visual Script side panel now uses plain words and has a "Saved values"
+    list. To make a saved value, type its name where you need it and pick
+    Me (only this object) or All (every object). No setup step first.
+  - About 30 new game-logic blocks: health, timers, chase and flee,
+    switches, saving a number, respawn and more.
+  - A new Rule block says "when this is true, do that" in one block.
+  - Set Value To has presets so common choices are one click.
+  - Move, Turn and Resize are one block, and Show and Hide are one block.
+  - Five new recipe cards on the empty-script start screen.
+  - The block that is running is highlighted while you press Play.
+
 v2.886.0
   Simpler Modeling, Project panel, Visual Script and Scene menu
   - Modeling no longer has an Advanced menu. Every tool is in the page list

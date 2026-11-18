@@ -3888,15 +3888,75 @@ The 10 recipes are 1 or 2 blocks and at most 1 wire each (budget: 3 blocks, 2 wi
 Also done: auto-connect when a block is added from the popup, insert-on-wire when a node is dropped on a flow wire (both
 tested on the real graph model), plain wire-refusal sentences with a banned-word test, recipe cards on the empty canvas.
 
-### Not done
+### Third pass (2026-11-18): field widgets, Rule block, merged blocks, presets, left panel words
 
-- The Rule super-block (WHEN / IF / DO list inside one node), block options and presets, the "Do this to all objects
-  named X" target, smart defaults from the selected object, and highlighting the running block in Play.
-- Merged blocks with dropdowns (Change Number, Compare, Play Sound Start/Stop ...) and the old-id alias for them. The old
-  nodes were NOT merged; they are only hidden from the default list. The alias table is still empty.
-- Fields are plain text boxes; there is no key picker, object picker or dropdown widget on a block yet.
-- Quick blocks are not translated to OkayScript text (the export lists them as not translated).
-- The editor window was never run on a real desktop.
+- **Field kinds** (`QbKind` in QuickBlocks.hpp): number (drag, or Ctrl+click to type), text, key (the existing key picker:
+  click, press a key), object (dropdown of scene objects plus "This object"), choice (dropdown), colour (swatch, saved
+  as `#rrggbb`) and presets. Pure value rules (`QbValidate`, `QbNormalize`, `QbChoices`) are tested for every kind and
+  every default; every dropdown label goes through the banned-word scan.
+- **Rule block** (`QbRule`): WHEN (8 events) ONLY IF (3 conditions) DO (up to 4 actions out of 20). It is one node with 12
+  fields (the sentence), saved as plain `default` lines, expanded at load by the same expander from three data tables
+  (`QbRuleEvents/Conditions/Actions`). Deviation from the design: four action slots instead of an open-ended
+  "+ Add action" list (the node's rows are fixed). Each event, condition and action kind is run headless in
+  `test_vs_quick_blocks`.
+- **Merged blocks:** Change Number (add / subtract / multiply / divide), If Number Is (six comparisons), Play Or Stop
+  Sound. The old nodes are unchanged and still load (they are only hidden from the default list);
+  `QuickBlockForOldNode` records which block and dropdown value covers AddVar, PlaySound and StopSound, but graphs are
+  not rewritten. Move / Turn / Scale and Show / Hide were not merged (Show Or Hide Object is already one node).
+- **Presets** (Coin pickup, Big gem, Door opens, Enemy chases, Jump pad, Lava hurts, Guard walks, Moving platform and six
+  for the Rule incl. Checkpoint and Game over) and **smart defaults** (the last key picked; an object field picks an
+  object that exists in the scene) are pure functions (`QbApplyPreset`, `QbSmartDefault`) with tests; the Presets field
+  is the last row of the block.
+- **Recipes** now use Rule blocks where the job is "when X do Y" (Say hello, Play a sound on click, Spawn a copy when I
+  click, Change scene when touched): all 10 recipes are 1 block, 0 wires. The small complete game stays at 6 blocks, 0 wires.
+- **Left panel words** (`VisualScriptPanelWords.hpp`): "Declared variables" is now "Saved values", "Variables used" is
+  "Where each value is used", "Structs" is "Bundles" and "Parameters" is "Action inputs"; the long help texts are one
+  short sentence; Bundles and Action inputs are folded away unless the script uses them. A test checks every label.
+- **Not done:** an open-ended "+ Add action" list inside the Rule (four fixed slots), "all objects named X" targets,
+  Play-mode highlight of the running block (expanded nodes get ids from 1,000,000 up that the editor does not map back
+  to the block; the runner would need a block-id map), OkayScript export of blocks, and nothing was rendered.
+
+### Mechanics plan: what a person builds, and the smallest set of blocks for it (2026-11-18)
+
+Start from the game mechanic, then ask for the fewest blocks and wires. "(rule)" means one Rule block does it.
+
+| Mechanic | Blocks | Wires | Status |
+| --- | --- | --- | --- |
+| Walk with keys | Move With Keys | 0 | built |
+| Run (hold Shift) | Move With Keys + a second one with a faster Speed | 0 | partly: no sprint option on the block yet |
+| Jump | Jump On Key | 0 | built |
+| Double jump, crouch | needs a "standing on the ground" check as a block | | NOT built (listed below) |
+| Dash | When Key Pressed Do + Launch This Object | 1 | built from two blocks |
+| Shoot a bullet | Shoot On Key | 0 | built |
+| Melee hit | needs the Melee Attacker component set up by hand | | NOT built |
+| Health, damage, heal | Lose Health, Heal Fully, Hurt Whatever Touches, Heal Whatever Touches, If Health Is Low | 0 to 1 | built |
+| Death, game over, respawn | Game Over When Health Is 0, Defeat This Object, Respawn This Object, Go Back To Checkpoint | 0 to 1 | built |
+| Heal over time | the Gl library has Heal Over Time; no quick block yet | | NOT built |
+| Enemy: patrol, chase, flee, wander | Walk Back And Forth, Follow Object, Run Away From, Wander Around | 0 | built |
+| Enemy attack, drop loot | Hurt Whatever Touches; Spawn Copy At | 0 to 1 | built from blocks |
+| Coin, key, ammo pickups | Collect Coin On Touch, Give Item, If Has Item, Change Number | 0 to 1 | built |
+| Power-up with a timer | When Touched Do + Count Down Then Do | 1 | built from blocks |
+| Doors, buttons, levers, plates | Open Door When Touched, When Touched Do, Switch On Or Off, If Switch Is On | 0 to 1 | built |
+| Moving platform | Walk Back And Forth | 0 | built |
+| Checkpoints, save and load | Save Checkpoint (plain node), Go Back To Checkpoint, Save A Number, Load A Saved Number | 0 to 1 | built |
+| Score, lives, timer, cooldown | Add To Score, Change Number, Show Score, Count Down Then Do, Only Every Few Seconds | 0 to 1 | built |
+| Win, lose, game over screen | Win When Score Reaches, Game Over When Touched; a custom screen needs the WinText / LoseText objects | 0 | partly |
+| Menus: start, restart, quit | Restart The Game, Load Scene (Rule: change scene); Pause Game (plain node) | 0 | partly: no Quit block, no menu screens |
+| Spawning waves, random spawns | Spawn Copy Every Few Seconds, Repeat Times + Spawn Copy At, Jump To A Random Spot | 0 to 1 | built |
+| Inventory counters | Give Item, If Has Item | 1 | built |
+| Dialogue, messages | Show Text On Screen, Show Text When Touched, Show Floating Text | 0 | built (single messages); the Dialogue Runner needs hand setup: NOT built |
+| Camera follow, shake, zoom | Follow With Camera, Zoom Camera, the plain Shake Camera node | 0 | built |
+| Sound and music triggers | Play Sound On Key, Play Or Stop Sound, Rule sound | 0 | built; music needs an audio file picker: NOT built |
+| Push, launch, bounce | Launch This Object | 0 | built; a bounce pad that launches the OTHER object needs a block with a Target: NOT built |
+| Gravity zones | needs an area that changes gravity: no engine feature found for a one-block version | | NOT built |
+| Teleporters | Teleport To Spot after When Touched Do | 1 | built from blocks |
+| Day and night, timed events | Do Every Few Seconds + a Rule | 0 | partly: no light or sky block |
+| Simple AI states | the plain Get State / Set State nodes exist; no block | | NOT built |
+
+Missing engine features to list instead of faking: a "standing on the ground" test usable without wires (needed for
+double jump and crouch), a Quit game node that is safe to call from a block, a music player block that takes a picked
+audio file, an area that changes gravity, day and night lighting, and an "apply this to the OTHER object" option on
+Launch. Each recipe card below has a test that runs it with a block and wire budget.
 
 ## Found on the way (listed, not fixed)
 

@@ -3177,6 +3177,7 @@ static int writeNative(const string& root, const string& outFile) {
     // member order, files named in that text are ordered by where their path first appears; the rest follow, sorted by name.
     // Only the order of names is read from that file; nothing else in it is used.
     string cmakeText; { std::ifstream cf(fs::path(root) / "engine/CMakeLists.txt"); cmakeText.assign(std::istreambuf_iterator<char>(cf), {}); }
+    { std::ifstream pf(fs::path(root) / "cmake/OkayPlatform.cmake"); string t2((std::istreambuf_iterator<char>(pf)), {}); cmakeText += "\n" + t2; } // the platform files are listed there
     auto byListing = [&](vector<string>& v) {
         auto posOf = [&](const string& r) { size_t at = r.compare(0, 7, "engine/") == 0 ? cmakeText.find(r.substr(7)) : string::npos; return at; };
         std::stable_sort(v.begin(), v.end(), [&](const string& a, const string& b) {

@@ -797,6 +797,11 @@ static void testNativeManifest() {
         fs::remove(gRoot / "engine/CMakeLists.txt"); sh("native . -o b3.okay"); string m3 = readFile(gRoot / "b3.okay");
         check(m3.find("engine/src/Crypto/A.cpp") < m3.find("engine/src/Crypto/B.cpp"), "without that file the order is by name", m3);
         fs::remove(gRoot / "engine/src/Crypto/B.cpp");
+        write("engine/src/Platform/SdlBackend.cpp", "int sdlb(){return 0;}\n");
+        write("cmake/OkayPlatform.cmake", "list(APPEND _srcs src/Platform/SdlBackend.cpp)\nlist(APPEND _srcs src/Platform/Platform.cpp)\n");
+        sh("native . -o b5.okay"); string m5 = readFile(gRoot / "b5.okay");
+        check(m5.find("engine/src/Platform/SdlBackend.cpp") < m5.find("engine/src/Platform/Platform.cpp"), "platform sources follow cmake/OkayPlatform.cmake", m5);
+        fs::remove(gRoot / "cmake/OkayPlatform.cmake"); fs::remove(gRoot / "engine/src/Platform/SdlBackend.cpp");
         write("CMakeLists.txt", "cmake_minimum_required(VERSION 3.16)\nproject(Fake\n    VERSION 1.2.3\n    LANGUAGES CXX)\n");
         sh("native . -o b4.okay"); string m4 = readFile(gRoot / "b4.okay");
         check(m4.find("\"OKAY_ENGINE_VERSION=\\\"1.2.3\\\"\"") != string::npos && m4.find("-Wno-narrowing") != string::npos, "the engine version from project(... VERSION x) becomes a define", m4);

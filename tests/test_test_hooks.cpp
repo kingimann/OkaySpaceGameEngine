@@ -43,7 +43,8 @@ int main() {
     CHECK(ev.size() == 3 && ev[0].type == EventType::MouseMove && ev[1].type == EventType::MouseButtonDown && ev[2].type == EventType::MouseButtonUp);
     CHECK(ev[1].button == 3 && ev[1].x == 10 && ev[1].y == 20 && ev[1].windowId == 7 && ev[1].clicks == 1);
     ev = ToEvents(ParseScript("0 key shift+Tab")[0], 7);
-    CHECK(ev.size() == 2 && ev[0].type == EventType::KeyDown && ev[0].key == Key::Tab && (ev[0].mods & ModShift) && ev[1].type == EventType::KeyUp);
+    CHECK(ev.size() == 4 && ev[0].type == EventType::KeyDown && ev[0].key == Key::LShift && ev[1].key == Key::Tab && (ev[1].mods & ModShift));
+    CHECK(ev[2].type == EventType::KeyUp && ev[2].key == Key::Tab && ev[3].type == EventType::KeyUp && ev[3].key == Key::LShift);
     ev = ToEvents(ParseScript("0 quit")[0], 7);
     CHECK(ev.size() == 1 && ev[0].type == EventType::Quit);
     ev = ToEvents(ParseScript("0 drop /a/b")[0], 7);

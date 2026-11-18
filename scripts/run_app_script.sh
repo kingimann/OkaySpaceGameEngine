@@ -16,8 +16,9 @@ want=${EXPECT_EXIT:-0}; maxdiff=${MAX_DIFF_PIXELS:-0}; fuzz=${FUZZ:-4%}
 status=0
 mkdir -p "$outdir"
 for b in $backends; do
-    tmp=$(mktemp -d) || exit 2
-    mkdir -p "$outdir/$b" "$tmp/home"
+    # a FIXED folder (not a random one): a path shown in the program (project location ...) must be the same text on every backend
+    tmp=/tmp/okay_run_app_script; rm -rf "$tmp"; mkdir -p "$tmp" || exit 2
+    rm -rf "$outdir/$b"; mkdir -p "$outdir/$b" "$tmp/home"   # a clean folder: the editor keeps some state files in the working folder
     Xvfb -displayfd 3 -screen 0 1280x800x24 -nolisten tcp 3>"$tmp/disp" >/dev/null 2>&1 &
     xp=$!
     i=0; while [ ! -s "$tmp/disp" ] && [ $i -lt 100 ]; do sleep 0.1; i=$((i+1)); done
@@ -40,7 +41,16 @@ if [ $# -ge 2 ]; then
         [ -f "$pic" ] || continue
         n=$(basename "$pic")
         if [ ! -f "$outdir/$b/$n" ]; then echo "[compare] $n: missing on $b"; status=1; continue; fi
-        d=$(compare -metric AE -fuzz "$fuzz" "$pic" "$outdir/$b/$n" null: 2>&1 | awk '{print $1}')
+        pa=$pic; pb=$outdir/$b/$n
+        if [ -n "$MASK" ]; then   # black out areas that legitimately differ (frame-rate counters ...): MASK="WxH+X+Y WxH+X+Y"
+            cp "$pic" "$outdir/.mask_a.png"; cp "$outdir/$b/$n" "$outdir/.mask_b.png"
+            for m in $MASK; do
+                w=${m%%x*}; r=${m#*x}; h=${r%%+*}; o=${r#*+}; x=${o%%+*}; y=${o#*+}
+                for f in "$outdir/.mask_a.png" "$outdir/.mask_b.png"; do convert "$f" -fill black -draw "rectangle $x,$y $((x+w)),$((y+h))" "$f"; done
+            done
+            pa="$outdir/.mask_a.png"; pb="$outdir/.mask_b.png"
+        fi
+        d=$(compare -metric AE -fuzz "$fuzz" "$pa" "$pb" null: 2>&1 | awk '{print $1}')
         if [ "${d:-x}" -le "$maxdiff" ] 2>/dev/null; then echo "[compare] $n: $d pixels differ (allowed $maxdiff)"; else echo "[compare] $n: $d pixels differ (allowed $maxdiff) FAIL"; status=1; fi
     done
 fi

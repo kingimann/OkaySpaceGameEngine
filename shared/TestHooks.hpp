@@ -10,7 +10,7 @@
 //   down X Y [button] / up X Y [button]
 //   wheel DY             mouse wheel, up = positive
 //   type TEXT            text input (the rest of the line, UTF-8)
-//   key NAME [down|up]   a key tap (or just the press / release); names: Return Escape Backspace Tab Space Left Right Up Down Home End
+//   key NAME [down|up]   a key tap (or just the press / release; a modifier prefix presses and releases that modifier key around it); names: Return Escape Backspace Tab Space Left Right Up Down Home End
 //                        Delete PageUp PageDown F1..F12, A..Z, 0..9; with `ctrl+` / `shift+` / `alt+` in front for the modifier
 //   drop PATH            a file dropped on the window
 //   quit                 the window system's quit request (EventType::Quit)
@@ -126,8 +126,15 @@ inline std::vector<okay::platform::Event> ToEvents(const Command& c, std::uint32
     } else if (c.verb == "wheel") { Event w = mk(EventType::MouseWheel); w.wheelY = (float)c.y; v.push_back(w); }
     else if (c.verb == "type") { Event t = mk(EventType::TextInput); t.text = c.text; v.push_back(t); }
     else if (c.verb == "key") {
+        // A real keyboard presses the modifier keys themselves first; the own feed learns the held modifiers from those events (not from `mods`).
+        std::vector<Key> mk2;
+        if (c.mods & ModCtrl) mk2.push_back(Key::LCtrl);
+        if (c.mods & ModShift) mk2.push_back(Key::LShift);
+        if (c.mods & ModAlt) mk2.push_back(Key::LAlt);
+        if (c.keyDown) for (Key m : mk2) { Event d = mk(EventType::KeyDown); d.key = m; d.mods = c.mods; v.push_back(d); }
         if (c.keyDown) { Event d = mk(EventType::KeyDown); d.key = (Key)c.key; d.mods = c.mods; v.push_back(d); }
         if (c.keyUp) { Event u = mk(EventType::KeyUp); u.key = (Key)c.key; u.mods = c.mods; v.push_back(u); }
+        if (c.keyUp) for (Key m : mk2) { Event u = mk(EventType::KeyUp); u.key = m; u.mods = 0; v.push_back(u); }
     } else if (c.verb == "drop") { Event d = mk(EventType::DropFile); d.text = c.text; v.push_back(d); }
     else if (c.verb == "quit") { Event q; q.type = EventType::Quit; v.push_back(q); }
     else if (c.verb == "close") { v.push_back(mk(EventType::WindowClose)); }

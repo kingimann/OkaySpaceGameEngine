@@ -3971,6 +3971,11 @@ add_executable(test_scripting_density test_scripting_density.cpp)
 target_include_directories(test_scripting_density PRIVATE ${CMAKE_SOURCE_DIR}/editor)
 target_compile_definitions(test_scripting_density PRIVATE OKAY_SOURCE_DIR="${PROJECT_SOURCE_DIR}")
 add_test(NAME scripting_density COMMAND test_scripting_density)
+
+# The Project panel's tab strip as data (editor/ProjectTabs.hpp): which tab is active, tab clicks, the remembered tab and folder.
+add_executable(test_project_tabs test_project_tabs.cpp)
+target_include_directories(test_project_tabs PRIVATE ${CMAKE_SOURCE_DIR}/editor)
+add_test(NAME project_tabs COMMAND test_project_tabs)
 add_executable(test_hierarchy_context_model test_hierarchy_context_model.cpp)
 target_include_directories(test_hierarchy_context_model PRIVATE ${CMAKE_SOURCE_DIR}/editor)
 target_compile_definitions(test_hierarchy_context_model PRIVATE OKAY_SOURCE_DIR="${PROJECT_SOURCE_DIR}")

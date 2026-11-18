@@ -943,6 +943,7 @@ static void RunEditorPlayKeyTest(int& failures) {
 #include "okay/Core/ThumbnailCache.hpp"   // Project panel thumbnails
 #include "ProjectBrowser.hpp"     // the Project panel's logic: folder model, safe file operations, references
 #include "ProjectPanelUI.hpp"     // the Project panel's name prompt, delete confirmation, import settings
+#include "ProjectTabs.hpp"        // the Project panel's tab strip (Assets / Favourites / Recent / Search) and the remembered tab
 #include "ProjectNewAssets.hpp"   // the text of a new dialogue, quest file, behavior tree and cutscene (Project > Create)
 #include "ProjectDelete.hpp"      // okayproj::Normalized / IsSameOrInside: the launcher's "is this path inside that folder" test
 #include "LaunchFile.hpp"         // open a file with the system's program, in a text editor, or show it in the file manager (no shell)
@@ -10461,7 +10462,7 @@ void DrawProject(EditorState& ed) {
     auto smartName = [](int id) -> const char* {
         switch (id) { case 8: return "All Models"; case 2: return "All Textures"; case 7: return "All Audio";
                       case 1: return "All Scripts"; case 3: return "All Scenes"; case 5: return "All Prefabs";
-                      case 4: return "All Materials"; case 6: return "All Data"; case 100: return "Recently Changed";
+                      case 4: return "All Materials"; case 6: return "All Data"; case 100: return "Recently Changed"; case 102: return "Favourites";
                       case 101: return "Unused Assets"; }
         if (id >= 200 && id < 200 + kAssetLabelCount) {
             static std::string lb; lb = std::string("Label: ") + kAssetLabelNames[id - 200]; return lb.c_str();
@@ -10555,6 +10556,17 @@ void DrawProject(EditorState& ed) {
         s_navSuppress = false;
         s_keepSearchOnce = false;
     }
+    // The tab and folder this project was left on (once per project; the folder change above would clear the smart view).
+    static std::string s_tabsLoadedFor, s_tabsSaved;
+    if (!ed.projectDir().empty() && s_tabsLoadedFor != ed.projectDir()) {
+        s_tabsLoadedFor = ed.projectDir();
+        const oked::projecttabs::Remembered rem = oked::projecttabs::Load((fs::path(ed.projectDir()) / ".okay" / "projectview.txt").string());
+        std::error_code te;
+        const fs::path want = rem.folder.empty() ? root : root / fs::u8path(rem.folder);
+        if (fs::is_directory(want, te)) { std::strncpy(dirBuf, want.string().c_str(), sizeof(dirBuf) - 1); dirBuf[sizeof(dirBuf) - 1] = '\0'; s_navLast = dirBuf; dir = want; }
+        s_smart = rem.smart;
+        s_tabsSaved = oked::projecttabs::Serialize(rem);
+    }
     ImGui::BeginDisabled(s_navBack.empty());
     if (ImGui::SmallButton("<##navb")) {
         s_navFwd.push_back(dirBuf);
@@ -10612,6 +10624,35 @@ void DrawProject(EditorState& ed) {
     }
     const ImVec2 tbPos = ImGui::GetCursorScreenPos();
     ImGui::Dummy(ImVec2(tbRightW, tbFh));
+    {   // Tab strip: Assets / Favourites / Recent / Search. The active tab follows the smart view and the search box.
+        namespace pt = oked::projecttabs;
+        const pt::Tab active = pt::ActiveTab(s_smart, search);
+        const int favCount = (int)g_fav.List().size();
+        for (int ti = 0; ti < 4; ++ti) {
+            const pt::Tab t = (pt::Tab)ti;
+            if (t == pt::Tab::Search && active != pt::Tab::Search) continue;   // only while a search is on screen
+            std::string lbl = pt::TabName(t);
+            if (t == pt::Tab::Favourites && favCount > 0) lbl += " " + pt::CountBadge(favCount);
+            lbl += "##projtab" + std::to_string(ti);
+            if (ti) ImGui::SameLine(0, 4);
+            if (AccentToggleButton(lbl.c_str(), active == t, ImVec2(0, ImGui::GetFrameHeight() - 6.0f)) && t != pt::Tab::Search) {
+                s_smart = pt::SmartForTab(t, s_smart); search[0] = '\0';
+            }
+        }
+        if (active == pt::Tab::Favourites) { ImGui::SameLine(0, 10); ImGui::TextDisabled("starred files and folders; right-click an item > Add to Favourites"); }
+        pt::Remembered rem;
+        rem.smart = s_smart;
+        {   // the folder, relative to Assets
+            std::error_code re2; const fs::path rl = fs::relative(dir, root, re2);
+            rem.folder = (re2 || rl.empty() || rl == ".") ? std::string() : rl.generic_string();
+        }
+        const std::string now = pt::Serialize(rem);
+        if (!ed.projectDir().empty() && now != s_tabsSaved && s_tabsLoadedFor == ed.projectDir()) {
+            s_tabsSaved = now;
+            std::error_code me; fs::create_directories(fs::path(ed.projectDir()) / ".okay", me);
+            pt::Save((fs::path(ed.projectDir()) / ".okay" / "projectview.txt").string(), rem);
+        }
+    }
     ImGui::Separator();
 
     // ---- Two panes: folder tree (left) + asset grid (right), with a
@@ -11004,13 +11045,18 @@ void DrawProject(EditorState& ed) {
                     if (s_smart >= 1 && s_smart <= 8) lo.filter = static_cast<okaypb::Filter>(s_smart);
                     else if (s_smart == kSmartRecent) { lo.modifiedWithinSeconds = 7 * 24 * 3600; lo.sort = okaypb::SortKey::Modified; lo.descending = true; lo.limit = 200; }
                     else if (s_smart == 101) lo.unusedOnly = true;
+                    else if (s_smart == oked::projecttabs::kSmartFavourites) lo.text.clear();
                 } else if (!dbText.empty() || qColor > 0) {
                     if (s_searchAll) scope = root.generic_string();   // a search looks in this folder and below, or the whole project
                     lo.recursive = true;
                 }
                 std::vector<okaypb::Entry> list = pb.List(scope, lo);
+                std::set<std::string> favSet;
+                if (s_smart == oked::projecttabs::kSmartFavourites)
+                    for (const std::string& f : g_fav.List()) favSet.insert(fs::path(f).generic_string());
                 for (okaypb::Entry& e : list) {
-                    if (s_smart >= 0 && e.isDir) continue;
+                    if (s_smart == oked::projecttabs::kSmartFavourites) { if (!favSet.count(fs::path(e.path).generic_string())) continue; }
+                    else if (s_smart >= 0 && e.isDir) continue;
                     if (s_smart == 101) {   // Unused Assets: the kinds a scene or script points at, that nothing points at
                         const okay::AssetType k = e.kind;
                         const bool referenceable = k == okay::AssetType::Texture || k == okay::AssetType::Audio || k == okay::AssetType::Model ||

@@ -186,6 +186,8 @@ struct FuncDecl {
     // Which parameters are references. In params they are pointers (that is what is passed);
     // the body sees them as references again.
     std::vector<bool> param_ref;
+    // The function returns a reference: ret is then a pointer and a call is dereferenced.
+    bool ret_ref = false;
     int nparams = 0;
     int max_args = 0;
     // First and last line of the body (the braces), for the line table.
@@ -1238,6 +1240,7 @@ struct Parser {
     std::vector<size_t> cont_dbase{};
     Type cur_ret{};
     int cur_special = 0;
+    bool cur_ret_ref = false;
     bool cur_implicit_copy = false;
     int rv_count = 0;
 
@@ -1296,6 +1299,17 @@ struct Parser {
         stmt.kids.push_back(std::move(call));
         *out = std::move(stmt);
         return true;
+    }
+    // A call of a function that returns a reference is the pointer it returns, dereferenced.
+    static Node reference_result(Node call, bool is_ref) {
+        if (!is_ref) return call;
+        call.type.is_ref = false;
+        call.type.pointers += 1;
+        Node d;
+        d.kind = Node::Unary;
+        d.op = TStar;
+        d.kids.push_back(std::move(call));
+        return d;
     }
     Node node_name(const std::string& n) const {
         Node name;
@@ -1820,6 +1834,7 @@ struct Parser {
         return id >= 0 && structs[static_cast<size_t>(id)].cxx;
     }
     bool parse_stmt(Node* out, std::vector<Local>* locals);
+    bool parse_stmt_core(Node* out, std::vector<Local>* locals);
     bool parse_stmt_inner(Node* out, std::vector<Local>* locals, int stmt_line);
     bool parse_block(Node* out, std::vector<Local>* locals);
 
@@ -1927,6 +1942,7 @@ struct Parser {
         int sid = -1;
     };
     std::vector<Temp> stmt_temps{};
+    std::vector<Node> stmt_pre{};
     int tmp_count = 0;
 
     // Arguments for a call: a reference parameter gets the address of its argument, a class
@@ -1937,6 +1953,30 @@ struct Parser {
             const Type& pt = params[i - first];
             Node& arg = (*args)[i];
             if (pt.is_ref) {
+                const bool object = arg.kind == Node::Name || arg.kind == Node::Field || arg.kind == Node::Index ||
+                                    (arg.kind == Node::Unary && arg.op == TStar);
+                if (!object && cur_locals != nullptr) {
+                    // A reference bound to a temporary: the value goes into a hidden local first.
+                    Local hidden;
+                    hidden.name = "__bt" + std::to_string(tmp_count++);
+                    hidden.type = pt;
+                    hidden.type.is_ref = false;
+                    place_local(cur_locals, hidden);
+                    Node assign;
+                    assign.kind = Node::Assign;
+                    assign.op = TAssign;
+                    assign.number = 1;
+                    assign.kids.push_back(node_name(hidden.name));
+                    assign.kids.push_back(std::move(arg));
+                    Node stmt;
+                    stmt.kind = Node::ExprStmt;
+                    stmt.kids.push_back(std::move(assign));
+                    stmt_pre.push_back(std::move(stmt));
+                    if (hidden.type.base == 3 && hidden.type.pointers == 0 && class_needs_dtor(structs[static_cast<size_t>(hidden.type.struct_id)]))
+                        stmt_temps.push_back(Temp{hidden.name, hidden.type.struct_id});
+                    arg = node_addr(node_name(hidden.name));
+                    continue;
+                }
                 Node a = node_addr(std::move(arg));
                 arg = std::move(a);
             } else if (cur_locals != nullptr && wants_copy(pt, arg)) {
@@ -2562,6 +2602,8 @@ struct Parser {
         cur_ret = fn->ret;
         const int saved_special = cur_special;
         cur_special = special;
+        const bool saved_ret_ref = cur_ret_ref;
+        cur_ret_ref = fn->ret_ref;
         const std::string saved_fn = current_fn;
         const int saved_depth = scope_depth;
         const std::vector<int> saved_parent = scope_parent;
@@ -2607,6 +2649,7 @@ struct Parser {
         fn_dbase = saved_dbase;
         cur_ret = saved_ret;
         cur_special = saved_special;
+        cur_ret_ref = saved_ret_ref;
         cur_locals = nullptr;
         current_fn = saved_fn;
         scope_depth = saved_depth;
@@ -2619,6 +2662,11 @@ struct Parser {
     }
 
     void finish_signature(FuncDecl* fn) {
+        if (fn->ret.is_ref) {
+            fn->ret_ref = true;
+            fn->ret.is_ref = false;
+            fn->ret.pointers += 1;
+        }
         fn->param_ref.assign(fn->params.size(), false);
         for (size_t i = 0; i < fn->params.size(); ++i) {
             if (!fn->params[i].is_ref) continue;
@@ -3034,7 +3082,30 @@ bool Parser::parse_block(Node* out, std::vector<Local>* locals) {
     return expect(TRBrace, "'}'");
 }
 
+// A statement, preceded by the assignments that give hidden locals their values for references
+// bound to temporaries (a reference parameter given an expression that is not an object).
 bool Parser::parse_stmt(Node* out, std::vector<Local>* locals) {
+    std::vector<Node> outer = std::move(stmt_pre);
+    stmt_pre.clear();
+    const bool loop = is(TWhile) || is(TFor) || is(TDo);
+    const bool ok = parse_stmt_core(out, locals);
+    std::vector<Node> mine = std::move(stmt_pre);
+    stmt_pre = std::move(outer);
+    if (!ok || mine.empty()) return ok;
+    if (loop) {
+        error = "a reference bound to a temporary in a loop condition is not supported";
+        return false;
+    }
+    Node block;
+    block.kind = Node::Block;
+    block.line = out->line;
+    for (Node& n : mine) block.kids.push_back(std::move(n));
+    block.kids.push_back(std::move(*out));
+    *out = std::move(block);
+    return true;
+}
+
+bool Parser::parse_stmt_core(Node* out, std::vector<Local>* locals) {
     const int stmt_line = cur().line;
     std::vector<Temp> outer = std::move(stmt_temps);
     stmt_temps.clear();
@@ -3325,6 +3396,7 @@ bool Parser::parse_stmt_inner(Node* out, std::vector<Local>* locals, int stmt_li
             if (!parse_expr(0, &value)) return false;
             has_value = true;
             if (!expect(TSemi, "';'")) return false;
+            if (cur_ret_ref) value = node_addr(std::move(value));  // a reference result is the address
             // Hidden argument copies of the return expression go first.
             std::vector<Node> tdt;
             for (size_t i = stmt_temps.size(); i-- > 0;) {
@@ -3734,7 +3806,7 @@ bool Parser::qualified_call(Node* out, int cls, const std::string& name) {
     self.text = "this";
     call.kids.push_back(std::move(self));
     for (Node& arg : args) call.kids.push_back(std::move(arg));
-    *out = std::move(call);
+    *out = reference_result(std::move(call), m->ret.is_ref);
     return true;
 }
 
@@ -3821,7 +3893,7 @@ bool Parser::method_call(Node* out, Node object, bool arrow, const std::string& 
     }
     call.kids.push_back(std::move(self));
     for (Node& arg : args) call.kids.push_back(std::move(arg));
-    *out = std::move(call);
+    *out = reference_result(std::move(call), m->ret.is_ref);
     return true;
 }
 
@@ -4354,6 +4426,7 @@ bool Parser::parse_unary(Node* out) {
                         source[i].is_ref = true;
                     }
                 if (!adjust_args(source, &out->kids)) return false;
+                if (known.ret_ref) *out = reference_result(std::move(*out), true);
                 break;
             }
         } else if (enum_values.find(name) != enum_values.end()) {

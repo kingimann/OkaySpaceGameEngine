@@ -159,9 +159,54 @@ static void test_cond(Tally& tally) {
              135);
 }
 
+// References: bound to temporaries (an expression or a returned object), and returned from functions.
+static void test_refs(Tally& tally) {
+    std::printf("test_refs\n");
+    run_both(tally, "refs",
+             "int sum(const int &a, const int &b) { return a + b; }\n"
+             "void bump(int &r) { r = r + 1; }\n"
+             "struct A {\n"
+             "  int v;\n"
+             "  A(int x) : v(x) { }\n"
+             "};\n"
+             "int peek(const A &a) { return a.v; }\n"
+             "A makeA(int n) {\n"
+             "  A a(n);\n"
+             "  return a;\n"
+             "}\n"
+             "struct P { int x; int y; };\n"
+             "P gp;\n"
+             "P &theGlobal() { return gp; }\n"
+             "int &fieldX(P &p) { return p.x; }\n"
+             "struct Counter {\n"
+             "  int n;\n"
+             "  Counter &inc() { n = n + 1; return *this; }\n"
+             "  Counter &add(int k) { n = n + k; return *this; }\n"
+             "  int get() const { return n; }\n"
+             "};\n"
+             "int entry(void) {\n"
+             "  int x = 3;\n"
+             "  int r = sum(x + 1, 10);\n"
+             "  if (sum(r, 2) > 5) r = r + 1;\n"
+             "  bump(x);\n"
+             "  P a;\n"
+             "  a.x = 1;\n"
+             "  a.y = 2;\n"
+             "  fieldX(a) = 7;\n"
+             "  theGlobal().x = 11;\n"
+             "  theGlobal().y = 12;\n"
+             "  Counter c;\n"
+             "  c.n = 0;\n"
+             "  c.inc().inc().add(10).inc();\n"
+             "  return r + x + peek(makeA(4)) + a.x + gp.x + gp.y + c.get();\n"
+             "}\n",
+             66);
+}
+
 int main() {
     Tally tally;
     test_copy(tally);
     test_cond(tally);
-    return tally.finish(2);
+    test_refs(tally);
+    return tally.finish(3);
 }

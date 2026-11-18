@@ -86,7 +86,7 @@ struct Fail : std::runtime_error { using std::runtime_error::runtime_error; };
 
 // ---------------------------------------------------------------- manifest
 struct Toolchain {
-    string name = "gcc", cc = "gcc", cxx = "g++", ld, ar = "ar", obj = ".o", exe, libp = "lib", libs = ".a";
+    string name = "gcc", cc = "gcc", cxx = "g++", ld, ar = "ar", rc = "windres", obj = ".o", exe, libp = "lib", libs = ".a";
     vector<string> flags, linkFlags; size_t rspThreshold = 30000; bool msvc = false; bool rspUtf16 = false;
     bool pathMap = false; // path_map = on: absolute source/include paths plus -ffile-prefix-map, so __FILE__ does not depend on the checkout folder
     bool autoPick = false; vector<string> setKeys; // 'toolchain auto'; tool fields the manifest set by hand
@@ -95,7 +95,7 @@ static bool applyPreset(Toolchain& c, const string& name) {
     Toolchain d; d.flags = c.flags; d.linkFlags = c.linkFlags; d.rspThreshold = c.rspThreshold; d.autoPick = c.autoPick; d.setKeys = c.setKeys;
     if (name == "gcc") {}
     else if (name == "clang") { d.cc = "clang"; d.cxx = "clang++"; }
-    else if (name == "mingw") { d.cc = "x86_64-w64-mingw32-gcc-win32"; d.cxx = "x86_64-w64-mingw32-g++-win32"; d.ar = "x86_64-w64-mingw32-ar"; d.exe = ".exe"; }
+    else if (name == "mingw") { d.cc = "x86_64-w64-mingw32-gcc-win32"; d.cxx = "x86_64-w64-mingw32-g++-win32"; d.ar = "x86_64-w64-mingw32-ar"; d.rc = "x86_64-w64-mingw32-windres"; d.exe = ".exe"; }
     else if (name == "msvc") { d.cc = "cl.exe"; d.cxx = "cl.exe"; d.ld = "link.exe"; d.ar = "lib.exe"; d.obj = ".obj"; d.exe = ".exe"; d.libp = ""; d.libs = ".lib"; d.msvc = true; d.rspUtf16 = true; }
     else return false;
     d.name = name; c = d; return true;
@@ -292,7 +292,7 @@ static Manifest parseManifest(const string& file) {
         auto add = [&](vector<string>& d) { d.insert(d.end(), v.begin(), v.end()); };
         if (mode == TC) {
             Toolchain& c = m.tc; auto one = [&](string& d) { c.setKeys.push_back(k); if (v.size() != 1 && !(v.empty() && (k == "exe_suffix" || k == "lib_prefix"))) throw err(k + " takes one value"); d = v.empty() ? "" : v[0]; };
-            if (k == "cc") one(c.cc); else if (k == "cxx") one(c.cxx); else if (k == "ld") one(c.ld); else if (k == "ar") one(c.ar);
+            if (k == "rc") one(c.rc); else if (k == "cc") one(c.cc); else if (k == "cxx") one(c.cxx); else if (k == "ld") one(c.ld); else if (k == "ar") one(c.ar);
             else if (k == "obj_suffix") one(c.obj); else if (k == "exe_suffix") one(c.exe);
             else if (k == "lib_prefix") one(c.libp); else if (k == "lib_suffix") one(c.libs);
             else if (k == "flags") add(c.flags); else if (k == "link_flags") add(c.linkFlags);
@@ -705,6 +705,22 @@ static Graph plan(const Manifest& m, const vector<string>& want) {
                 string hint; for (auto& f : m.fetches) if (s.compare(0, f.dir.size() + 1, f.dir + "/") == 0) hint = " (it comes from fetch '" + f.name + "': run okay-build fetch " + f.name + ")";
                 throw Fail("target '" + t.name + "': source '" + s + "' does not exist" + hint);
             }
+            if (fs::path(s).extension() == ".rc" && !m.tc.msvc) { // a Windows resource script: windres turns it into a COFF resource that the linker takes like an object
+                Action r; r.kind = "RC"; r.target = t.name; r.desc = s;
+                string rrel = fs::path(s).lexically_normal().generic_string(); for (size_t p; (p = rrel.find("..")) != string::npos;) rrel.replace(p, 2, "__");
+                r.output = under(".okaybuild/obj/" + m.objSub + t.name + "/" + rrel + ".res"); r.inputs = {srcKey}; r.outputs = {r.output}; r.waitFor = needKeys;
+                { std::ifstream rf(s); string line; while (std::getline(rf, line)) { // files the script names ("path" strings that exist, such as the manifest) are inputs too
+                    for (size_t q = line.find('"'); q != string::npos; q = line.find('"', q)) { size_t e = line.find('"', q + 1); if (e == string::npos) break; string name = line.substr(q + 1, e - q - 1); q = e + 1;
+                        for (size_t k = 0; (k = name.find("\\", k)) != string::npos;) name.replace(k, 2, "/");
+                        std::error_code ec; if (name.find('/') != string::npos && fs::is_regular_file(name, ec) && name != s) r.inputs.push_back(resolve("", name)); } } }
+                r.argv = {m.tc.rc, "-O", "coff"};
+                for (auto& d : t.defines) r.argv.push_back("-D" + fixBin(d));
+                for (auto& i : t.includes) r.argv.push_back("-I" + i);
+                for (auto& i : t.exportIncludes) r.argv.push_back("-I" + i);
+                for (auto& l : libs) for (auto& i : byName[l]->exportIncludes) r.argv.push_back("-I" + i);
+                r.argv.push_back(s); r.argv.push_back("-o"); r.argv.push_back(r.output);
+                objs.push_back(r.output); objActs.push_back(add(r)); continue;
+            }
             bool isC = fs::path(s).extension() == ".c";
             string rel = fs::path(s).lexically_normal().generic_string();
             for (size_t p; (p = rel.find("..")) != string::npos;) rel.replace(p, 2, "__");
@@ -776,7 +792,7 @@ static Graph plan(const Manifest& m, const vector<string>& want) {
                 if (shared) rpaths.insert(fs::absolute(fs::path(outPath(*byName[l])).parent_path()).lexically_normal().generic_string());
                 for (auto& s : byName[l]->libs) sys.push_back(s); }
             for (auto& r : rpaths) a.argv.push_back("-Wl,-rpath," + r); // the loader finds our shared libraries beside the build output
-            for (auto& s : sys) a.argv.push_back(m.tc.msvc ? s + ".lib" : "-l" + s);
+            for (auto& s : sys) a.argv.push_back(m.tc.msvc ? s + ".lib" : (s.find('/') != string::npos ? s : "-l" + s)); // a library given by path is passed as it is
             if (m.tc.msvc && (msvcLinkerIsCl(linker) || linker == m.tc.cc || linker == m.tc.cxx)) { a.argv.push_back("/Fe" + a.output); }
             else if (m.tc.msvc) { a.argv.push_back("/OUT:" + a.output); }
             else { a.argv.push_back("-o"); a.argv.push_back(a.output); }
@@ -1732,6 +1748,8 @@ static int cmdCache(const string& sub) {
     }
     printf("entries: %d\nbytes: %llu\nlimit: ", entries, (unsigned long long)bytes);
     if (limit == 0) printf("none\n"); else printf("%llu\n", (unsigned long long)limit);
+    { unsigned long long th = 0, tm = 0; std::ifstream in(root + "/stats"); in >> th >> tm;
+      printf("hits: %llu\nmisses: %llu\n", th, tm); if (th + tm > 0) printf("hit rate: %.1f%%\n", 100.0 * (double)th / (double)(th + tm)); }
     return 0;
 }
 static bool hasShowIncludes(const Action& a) {
@@ -1786,7 +1804,13 @@ static void commitStep(const Action& a, string& out, bool& ok, const vector<std:
 }
 static void printCache() {
     int h = gCacheHit.load(), m = gCacheMiss.load();
-    if (h + m > 0) printf("okay-build: cache %d hit, %d miss\n", h, m);
+    if (h + m > 0) {
+        printf("okay-build: cache %d hit, %d miss\n", h, m);
+        // running totals in the cache folder, shown by `okay-build cache stats`
+        string path = cacheRoot() + "/stats"; unsigned long long th = 0, tm = 0; { std::ifstream in(path); in >> th >> tm; }
+        th += (unsigned)h; tm += (unsigned)m; std::error_code ec; fs::create_directories(cacheRoot(), ec);
+        std::ofstream out(path + ".tmp", std::ios::trunc); out << th << " " << tm << "\n"; out.close(); fs::rename(path + ".tmp", path, ec);
+    }
 }
 struct StepNote { long long ns = 0; string kind, cache, desc; long long start = 0; int tid = 0; };
 static string gTracePath; // --trace FILE: Chrome trace JSON of the steps of this run
@@ -2490,6 +2514,7 @@ static int numberBefore(const string& s, const string& word) {
     return atoi(s.c_str() + i);
 }
 static long long gTestTimeoutSec = 0;
+static string gCmakeToolchainFile; // cmake --toolchain-file
 static vector<string> gCtestInc, gCtestExc, gCtestLabels; // ctest -R / -E / -L
 static string gJunitPath;            // --junit FILE: write the test run as JUnit-style XML
 static int gShardIdx = 0, gShardCnt = 1; // --shard I/N: run only every N-th test (1-based I)
@@ -2823,12 +2848,13 @@ static int cmdCmake(const string& root, const string& outFile, const vector<std:
                     const std::map<string, string>& fetched, bool audit) {
     cmr::Options co; co.root = fs::absolute(root).lexically_normal().generic_string(); while (co.root.size() > 1 && co.root.back() == '/') co.root.pop_back();
     for (auto& d : defs) co.defs[d.first] = d.second;
-    co.fetched = fetched; if (!buildType.empty()) co.buildType = buildType;
+    co.fetched = fetched; if (!buildType.empty()) co.buildType = buildType; co.toolchainFile = gCmakeToolchainFile;
     { // the command that makes this manifest again (run by `buildfile` when a CMake file changes)
         string self = "okay-build"; std::error_code ec; fs::path exe = fs::read_symlink("/proc/self/exe", ec); if (!ec) self = exe.generic_string();
         string c = "\"" + self + "\" cmake \"" + co.root + "\" -o \"" + fs::absolute(outFile).generic_string() + "\"";
         for (auto& d : defs) c += " --opt \"" + d.first + "=" + d.second + "\"";
         if (!buildType.empty()) c += " --build-type " + buildType;
+        if (!gCmakeToolchainFile.empty()) c += " --toolchain-file \"" + gCmakeToolchainFile + "\"";
         for (auto& f : fetched) c += " --fetched \"" + f.first + "=" + f.second + "\"";
         co.regenCmd = c;
     }
@@ -3730,6 +3756,7 @@ int main(int argc, char** argv) {
                 optSets.push_back({s.substr(0, eq), s.substr(eq + 1)});
             }
             else if (a == "--audit") cmakeAudit = true;
+            else if (a == "--toolchain-file" && i + 1 < argc) gCmakeToolchainFile = argv[++i];
             else if (a == "-R" && i + 1 < argc) gCtestInc.push_back(argv[++i]);
             else if (a == "-E" && i + 1 < argc) gCtestExc.push_back(argv[++i]);
             else if (a == "-L" && i + 1 < argc) gCtestLabels.push_back(argv[++i]);

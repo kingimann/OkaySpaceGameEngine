@@ -1797,11 +1797,30 @@ static void testGeneratedSourcesAndRegen() {
     sleepMs(); write("CMakeLists.txt", readFile(gRoot / "CMakeLists.txt") + "add_executable(extra main.cpp ${_cpp})\n");
     o = sh("-f build.okay targets", &rc); check(o.find("extra") != string::npos, "an edited CMakeLists.txt adds the new target by itself", o);
 }
+
+static void testCleanRebuildHitsCache() {
+    printf("test: a second clean build from the object cache hits 100 percent, with running totals in cache stats\n");
+    fresh("cachehit"); basicProject();
+    write("src/extra.cpp", "int extra(){return 1;}\n"); write("build.okay", "target util lib\n sources = src/util.cpp src/extra.cpp\n export_include = inc\nend\ntarget app exe\n sources = src/main.cpp\n deps = util\nend\n");
+    string cd = (gRoot / "objcache").string();
+    int rc; string o = sh("-j2 --cache-dir '" + cd + "'", &rc);
+    check(rc == 0 && o.find("cache 0 hit, 3 miss") != string::npos, "first build: every compile is a miss and is stored", o);
+    fs::remove_all(gRoot / "build"); fs::remove_all(gRoot / ".okaybuild");
+    o = sh("-j2 --cache-dir '" + cd + "'", &rc);
+    check(rc == 0 && o.find("cache 3 hit, 0 miss") != string::npos, "second clean build: all 3 compiles are cache hits (100%)", o);
+    check(system(("'" + (gRoot / "build/app").string() + "' >/dev/null").c_str()) == 0, "and the program built from cached objects runs");
+    o = sh("cache stats --cache-dir '" + cd + "'", &rc);
+    check(o.find("entries: 3") != string::npos && o.find("hits: 3") != string::npos && o.find("misses: 3") != string::npos && o.find("hit rate: 50.0%") != string::npos, "cache stats keeps running totals and the hit rate", o);
+    write("src/extra.cpp", "int extra(){return 2;}\n"); fs::remove_all(gRoot / "build"); fs::remove_all(gRoot / ".okaybuild");
+    o = sh("-j2 --cache-dir '" + cd + "'", &rc);
+    check(o.find("cache 2 hit, 1 miss") != string::npos, "one edited source is the only miss", o);
+    o = sh("-j2 --no-cache", &rc); check(o.find("cache ") == string::npos, "--no-cache turns the cache off", o);
+}
 int main(int argc, char** argv) {
     if (argc < 2) { puts("usage: test_okaybuild PATH_TO_okay-build"); return 2; }
     gTool = "'" + fs::absolute(argv[1]).string() + "'";
     if (const char* only = getenv("OKB_ONLY")) { // OKB_ONLY=cmake runs just the CMake reader, ctest and library tests (quick while working on them)
-        if (string(only) == "cmake") { testCmakeReader(); testCmakeSyntax(); testSharedObjectLibs(); testFetchAndSha256(); testOnlyAffectedTestsRebuild(); testGeneratedSourcesAndRegen(); printf("okaybuild tests (cmake only): %d checks passed, %d failed\n", gPass, gFail); return gFail ? 1 : 0; }
+        if (string(only) == "cmake") { testCmakeReader(); testCmakeSyntax(); testSharedObjectLibs(); testFetchAndSha256(); testOnlyAffectedTestsRebuild(); testGeneratedSourcesAndRegen(); testCleanRebuildHitsCache(); printf("okaybuild tests (cmake only): %d checks passed, %d failed\n", gPass, gFail); return gFail ? 1 : 0; }
     }
     testBasicAndNoop(); testHeaderTouch(); testDefine(); testMissingHeader(); testCycle(); testLinkOrder();
     testParallelDeterministic(); testCompdbCleanDry(); testManifestErrors(); testMingwCompdb(); testMingwSlice(); testStatShortcut(); testFreshNoopTrust(); testSpacesBuildDirRsp(); testRawActions(); testHashInCommandAndPath(); testImportGenerated();
@@ -1825,5 +1844,6 @@ int main(int argc, char** argv) {
     testFetchAndSha256();
     testOnlyAffectedTestsRebuild();
     testGeneratedSourcesAndRegen();
+    testCleanRebuildHitsCache();
     printf("okaybuild tests: %d checks passed, %d failed\n", gPass, gFail); return gFail ? 1 : 0;
 }

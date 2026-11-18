@@ -1331,6 +1331,69 @@ static vector<string> preprocessArgv(const Action& a) {
     return p;
 }
 static string gCacheDir; // --cache-dir or OKAY_CACHE_DIR: one cache shared by many build trees
+static void putLeCache(string& b, uint64_t v, int bytes) { for (int i = 0; i < bytes; ++i) b += (char)((v >> (8 * i)) & 0xff); }
+
+// ---- Compressed cache entries (--cache-compress). Our own byte-oriented LZ77 format "OKLZ", written from the general idea of
+// replacing repeated byte runs with (distance, length) pairs. Layout: "OKLZ", u64 original size, u64 FNV-1a of the original, then
+// sequences. A sequence is a token byte (high nibble = literal count, low nibble = match length - 4; a nibble of 15 continues in
+// following bytes that are added until one is below 255), the literal bytes, then (unless the output is already complete) a
+// 2-byte little-endian distance (1..65535) back into the output. Matches are at least 4 bytes and may overlap their own output.
+// The hash only detects damage. Decoding checks every length, so a bad file is an error and never a crash.
+static void lzLen(string& o, size_t n) { while (n >= 255) { o += (char)255; n -= 255; } o += (char)n; }
+static string lzPack(const string& in) {
+    string o = "OKLZ"; putLeCache(o, in.size(), 8); putLeCache(o, fnv(in.data(), in.size()), 8);
+    const size_t n = in.size(); vector<uint32_t> table(1u << 16, 0xffffffffu);
+    auto at4 = [&](size_t i) { uint32_t v; memcpy(&v, in.data() + i, 4); return v; };
+    auto hash4 = [&](size_t i) { return (uint32_t)((at4(i) * 2654435761u) >> 16); };
+    size_t i = 0, litStart = 0;
+    auto emit = [&](size_t litEnd, size_t mlen, size_t dist) {
+        size_t lits = litEnd - litStart;
+        unsigned char tok = (unsigned char)((lits >= 15 ? 15 : lits) << 4);
+        if (mlen) tok |= (unsigned char)((mlen - 4) >= 15 ? 15 : (mlen - 4));
+        o += (char)tok;
+        if (lits >= 15) lzLen(o, lits - 15);
+        o.append(in, litStart, lits);
+        if (mlen) { o += (char)(dist & 0xff); o += (char)(dist >> 8); if (mlen - 4 >= 15) lzLen(o, mlen - 4 - 15); }
+    };
+    while (i + 4 <= n) {
+        uint32_t h = hash4(i), cand = table[h]; table[h] = (uint32_t)i;
+        if (cand != 0xffffffffu && i - cand <= 65535 && at4(cand) == at4(i)) {
+            size_t len = 4; while (i + len < n && in[cand + len] == in[i + len]) ++len;
+            emit(i, len, i - cand);
+            i += len; litStart = i;
+            continue;
+        }
+        ++i;
+    }
+    if (litStart < n) emit(n, 0, 0);
+    return o;
+}
+// Returns false for a damaged or unknown block.
+static bool lzUnpack(const string& in, string& out) {
+    out.clear(); if (in.size() < 20 || in.compare(0, 4, "OKLZ") != 0) return false;
+    size_t at = 4; uint64_t size = 0, want = 0;
+    for (int k = 0; k < 8; ++k) size |= (uint64_t)(unsigned char)in[at + k] << (8 * k);
+    at += 8; for (int k = 0; k < 8; ++k) want |= (uint64_t)(unsigned char)in[at + k] << (8 * k); at += 8;
+    if (size > (1ull << 32)) return false;
+    out.reserve((size_t)size);
+    auto readLen = [&](size_t& len) { for (;;) { if (at >= in.size()) return false; unsigned char b = (unsigned char)in[at++]; len += b; if (b != 255) return true; } };
+    while (out.size() < size) {
+        if (at >= in.size()) return false;
+        unsigned char tok = (unsigned char)in[at++]; size_t lits = tok >> 4, mlen = tok & 15;
+        if (lits == 15 && !readLen(lits)) return false;
+        if (lits > in.size() - at || lits > size - out.size()) return false;
+        out.append(in, at, lits); at += lits;
+        if (out.size() == size) break;
+        if (at + 2 > in.size()) return false;
+        size_t dist = (unsigned char)in[at] | ((size_t)(unsigned char)in[at + 1] << 8); at += 2;
+        if (mlen == 15 && !readLen(mlen)) return false;
+        mlen += 4;
+        if (dist == 0 || dist > out.size() || mlen > size - out.size()) return false;
+        size_t from = out.size() - dist; for (size_t k = 0; k < mlen; ++k) out += out[from + k]; // byte by byte: it may overlap itself
+    }
+    return out.size() == size && fnv(out.data(), out.size()) == want;
+}
+static bool gCacheCompress = false; // --cache-compress: store new entries compressed (reading handles both)
 static string cacheRoot() { return gCacheDir.empty() ? under(".okaybuild/cache") : gCacheDir; }
 static string cacheDirOf(const string& key) { return cacheRoot() + "/" + key; }
 static long long fileSizeOf(const string& p) { std::error_code ec; auto n = fs::file_size(p, ec); return ec ? -1 : (long long)n; }
@@ -1356,6 +1419,23 @@ static bool cacheEntryOk(const string& key, bool needDep) {
     if (!ok && fs::exists(dir)) { std::error_code ec; fs::remove_all(dir, ec); }
     return ok;
 }
+static string slurpBin(const string& p) { std::ifstream f(p, std::ios::binary); return string((std::istreambuf_iterator<char>(f)), {}); }
+// Put the object into an entry folder, compressed when asked. Returns false on failure.
+static bool cachePutObj(const string& from, const string& dir, bool& packed) {
+    std::error_code ec; packed = false;
+    if (!gCacheCompress) { fs::copy_file(from, dir + "/obj", fs::copy_options::overwrite_existing, ec); return !ec; }
+    string z = lzPack(slurpBin(from)); packed = true;
+    std::ofstream f(dir + "/obj", std::ios::binary | std::ios::trunc); f.write(z.data(), (std::streamsize)z.size()); return (bool)f;
+}
+// Entry meta line 5 is "lz" when the object is compressed. Copy it out to dest; false when it cannot be restored.
+static bool cacheGetObj(const string& dir, const string& dest) {
+    std::ifstream in(dir + "/meta"); string l; bool packed = false;
+    for (int k = 0; k < 5 && std::getline(in, l); ++k) if (k == 4) packed = l == "lz";
+    std::error_code ec;
+    if (!packed) { fs::copy_file(dir + "/obj", dest, fs::copy_options::overwrite_existing, ec); return !ec; }
+    string raw; if (!lzUnpack(slurpBin(dir + "/obj"), raw)) return false;
+    std::ofstream f(dest, std::ios::binary | std::ios::trunc); f.write(raw.data(), (std::streamsize)raw.size()); return (bool)f;
+}
 static void rememberCache(const string&);
 // 1 hit, 0 miss, -1 could not preprocess.
 static int lookupCache(const Action& a, string& key, string& errOut) {
@@ -1368,8 +1448,7 @@ static int lookupCache(const Action& a, string& key, string& errOut) {
     string dir = cacheDirOf(key);
     if (!cacheEntryOk(key, !a.depfile.empty())) return 0;
     std::error_code ec;
-    fs::copy_file(dir + "/obj", a.output, fs::copy_options::overwrite_existing, ec);
-    if (ec) { errOut += "okay-build: cache copy failed: " + ec.message() + "\n"; return -1; }
+    if (!cacheGetObj(dir, a.output)) { std::error_code rm; fs::remove_all(dir, rm); return 0; } // a damaged entry is a miss and is removed
     if (!a.depfile.empty()) { fs::copy_file(dir + "/dep", a.depfile, fs::copy_options::overwrite_existing, ec); if (ec) { errOut += "okay-build: cache depfile copy failed\n"; return -1; } }
     rememberCache(key);
     return 1;
@@ -1388,11 +1467,11 @@ static void storeCache(const Action& a, const string& key) {
     static std::atomic<int> seq{0};
     string dir = cacheDirOf(key), tmp = dir + ".tmp" + std::to_string(ownPid()) + "_" + std::to_string(seq++);
     std::error_code ec; fs::remove_all(tmp, ec); fs::create_directories(tmp, ec);
-    fs::copy_file(a.output, tmp + "/obj", fs::copy_options::overwrite_existing, ec);
-    if (ec) { fs::remove_all(tmp, ec); return; }
+    bool packed = false;
+    if (!cachePutObj(a.output, tmp, packed)) { fs::remove_all(tmp, ec); return; }
     long long depSize = -1;
     if (!a.depfile.empty() && fs::is_regular_file(a.depfile)) { fs::copy_file(a.depfile, tmp + "/dep", fs::copy_options::overwrite_existing, ec); if (!ec) depSize = fileSizeOf(tmp + "/dep"); }
-    { std::ofstream m(tmp + "/meta", std::ios::trunc); m << "okaybuild-cache 2\n" << key << "\n" << fileSizeOf(tmp + "/obj") << "\n" << depSize << "\n"; }
+    { std::ofstream m(tmp + "/meta", std::ios::trunc); m << "okaybuild-cache 2\n" << key << "\n" << fileSizeOf(tmp + "/obj") << "\n" << depSize << "\n" << (packed ? "lz\n" : ""); }
     fs::remove_all(dir, ec);
     fs::rename(tmp, dir, ec);
     if (ec) { std::error_code e2; fs::remove_all(tmp, e2); }
@@ -1721,8 +1800,7 @@ static int lookupImported(const Action& a, string& key, string& errOut) {
     string dir = cacheDirOf(key);
     if (!cacheEntryOk(key, !depfile.empty())) return 0;
     std::error_code ec;
-    fs::copy_file(dir + "/obj", dest, fs::copy_options::overwrite_existing, ec);
-    if (ec) { errOut += "okay-build: cache copy failed: " + ec.message() + "\n"; return -1; }
+    if (!cacheGetObj(dir, dest)) { std::error_code rm; fs::remove_all(dir, rm); return 0; }
     if (!depfile.empty()) fs::copy_file(dir + "/dep", depfile, fs::copy_options::overwrite_existing, ec);
     rememberCache(key);
     return 1;
@@ -2706,19 +2784,48 @@ static string findNamed(const vector<string>& dirs, std::initializer_list<const 
     }
     return "";
 }
-static void considerMsvcBin(const string& bin, string& cl, string& link) {
-    if (cl.empty()) cl = findNamed({bin}, {"cl.exe", "cl"});
-    if (link.empty()) link = findNamed({bin}, {"link.exe", "link"});
+// MSVC installs are candidates (version text, cl, link). The version is the folder name under VC/Tools/MSVC (empty when unknown).
+struct MsvcCand { string ver, cl, link; };
+static string gMsvcPin; // --msvc-version PREFIX: only installs whose version starts with this
+static string msvcVersionOf(const string& cl) {
+    string p = cl; for (auto& c : p) if (c == '\\') c = '/';
+    const string key = "/MSVC/"; auto at = p.rfind(key); if (at == string::npos) return "";
+    at += key.size(); auto end = p.find('/', at); return end == string::npos ? "" : p.substr(at, end - at);
 }
-static void findMsvcUnder(const string& root, string& cl, string& link) {
-    considerMsvcBin(root, cl, link);
-    considerMsvcBin(root + "/bin/Hostx64/x64", cl, link);
+// Numeric, part by part: 14.10.2 is newer than 14.9.1 (a text sort gets that wrong). An unknown version is the oldest.
+static bool versionNewer(const string& a, const string& b) {
+    if (a.empty() || b.empty()) return !a.empty() && b.empty();
+    size_t i = 0, j = 0;
+    while (i < a.size() || j < b.size()) {
+        long long x = 0, y = 0;
+        while (i < a.size() && isdigit((unsigned char)a[i])) x = x * 10 + (a[i++] - '0');
+        while (j < b.size() && isdigit((unsigned char)b[j])) y = y * 10 + (b[j++] - '0');
+        if (x != y) return x > y;
+        while (i < a.size() && !isdigit((unsigned char)a[i])) ++i;
+        while (j < b.size() && !isdigit((unsigned char)b[j])) ++j;
+    }
+    return false;
+}
+static void addMsvcBin(const string& bin, vector<MsvcCand>& v) {
+    string cl = findNamed({bin}, {"cl.exe", "cl"}), link = findNamed({bin}, {"link.exe", "link"});
+    if (!cl.empty() && !link.empty()) v.push_back({msvcVersionOf(cl), cl, link});
+}
+static void findMsvcUnder(const string& root, vector<MsvcCand>& v) {
+    addMsvcBin(root, v);
+    addMsvcBin(root + "/bin/Hostx64/x64", v);
     string parent = root + "/VC/Tools/MSVC";
     std::error_code ec; if (!fs::is_directory(parent, ec)) return;
-    vector<string> vers;
-    for (auto& e : fs::directory_iterator(parent, ec)) if (!ec && e.is_directory()) vers.push_back(e.path().generic_string());
-    std::sort(vers.begin(), vers.end());
-    for (auto it = vers.rbegin(); it != vers.rend(); ++it) considerMsvcBin(*it + "/bin/Hostx64/x64", cl, link);
+    for (auto& e : fs::directory_iterator(parent, ec)) if (!ec && e.is_directory()) addMsvcBin(e.path().generic_string() + "/bin/Hostx64/x64", v);
+}
+// Picks one install: the one on PATH wins unless a version is pinned; otherwise the highest version among the roots.
+static MsvcCand chooseMsvc(const string& pathCl, const string& pathLink, vector<MsvcCand> v) {
+    if (!pathCl.empty() && !pathLink.empty()) v.insert(v.begin(), {msvcVersionOf(pathCl), pathCl, pathLink});
+    bool pinned = !gMsvcPin.empty();
+    if (pinned) { vector<MsvcCand> k; for (auto& c : v) if (c.ver.compare(0, gMsvcPin.size(), gMsvcPin) == 0) k.push_back(c); v = k; }
+    if (v.empty()) return {};
+    size_t best = 0;
+    if (pinned || pathCl.empty() || pathLink.empty()) for (size_t i = 1; i < v.size(); ++i) if (versionNewer(v[i].ver, v[best].ver)) best = i;
+    return v[best];
 }
 #ifdef _WIN32
 static string narrow(const wchar_t* w) {
@@ -2790,7 +2897,8 @@ static vector<Detected> detectToolchains(const vector<string>& extra, const vect
     string host = "posix", probe = roots.empty() ? "path" : "root+path";
 #endif
     for (auto& r : vsRootsFromRegistry()) all.push_back(r);
-    for (auto& r : all) findMsvcUnder(r, cl, link);
+    vector<MsvcCand> cands; for (auto& r : all) findMsvcUnder(r, cands);
+    { MsvcCand c = chooseMsvc(cl, link, cands); cl = c.cl; link = c.link; }
     Detected d; d.name = "msvc"; d.cc = cl; d.cxx = cl; d.ld = link; d.probe = probe; d.host = host; d.found = !cl.empty() && !link.empty();
     if (d.found) { string lib = findNamed({fs::path(link).parent_path().generic_string()}, {"lib.exe"}); d.ar = lib; }
     out.push_back(d);
@@ -2805,18 +2913,10 @@ static string compilerVersionLine(const string& exe) {
     for (auto& c : line) if (c == '\t') c = ' ';
     return line;
 }
-// cl.exe prints its version on stderr only when run with no arguments, and that needs the Visual Studio environment, so the
-// number is read from the folder name under VC/Tools/MSVC/<version>/ instead (empty when the path has no such folder).
-static string msvcVersionFromPath(const string& cl) {
-    string p = cl; for (auto& c : p) if (c == '\\') c = '/';
-    const string key = "/MSVC/"; auto at = p.rfind(key); if (at == string::npos) return "";
-    at += key.size(); auto end = p.find('/', at); if (end == string::npos) return "";
-    return p.substr(at, end - at);
-}
 static int cmdToolchains(const vector<string>& extra, const vector<string>& roots) {
     for (auto& d : detectToolchains(extra, roots)) {
         string ver;
-        if (gShowVersions && d.found) ver = d.name == "msvc" ? msvcVersionFromPath(d.cc) : compilerVersionLine(d.cxx.empty() ? d.cc : d.cxx);
+        if (gShowVersions && d.found) ver = d.name == "msvc" ? msvcVersionOf(d.cc) : compilerVersionLine(d.cxx.empty() ? d.cc : d.cxx);
         string tail = gShowVersions && d.found ? "\tversion=" + (ver.empty() ? string("unknown") : ver) : string();
         if (d.name == "msvc") {
             if (d.found) printf("msvc\tfound\tcc=%s\tlink=%s\tprobe=%s\thost=%s%s\n", d.cc.c_str(), d.ld.c_str(), d.probe.c_str(), d.host.c_str(), tail.c_str());
@@ -2987,12 +3087,111 @@ static int writeNative(const string& root, const string& outFile) {
     return 0;
 }
 
+
+// ---- okay-build tool: small helpers that manifests can call from importer/action commands (copy, hash, pack, unpack, list).
+// Written from the idea of an archive as "table of contents, then bytes" (like tar or zip in spirit); the layout below is our own.
+// Pack file "OKPK": magic, u32 version 1, u32 entry count, then per entry u32 path length, path bytes ('/' separated), u64 size,
+// u64 FNV-1a hash of the content; then the file bytes in the same order. All integers little-endian. Entries are sorted by
+// path and carry no times or owners, so the same folder always gives the same bytes. The hash is for damage detection only.
+static void putLe(string& b, uint64_t v, int bytes) { for (int i = 0; i < bytes; ++i) b += (char)((v >> (8 * i)) & 0xff); }
+static uint64_t getLe(const string& b, size_t& at, int bytes) {
+    if (at + (size_t)bytes > b.size()) throw Fail("pack file is cut short");
+    uint64_t v = 0; for (int i = 0; i < bytes; ++i) v |= (uint64_t)(unsigned char)b[at + i] << (8 * i);
+    at += (size_t)bytes; return v;
+}
+static string readAllBytes(const fs::path& p) {
+    std::ifstream f(p, std::ios::binary); if (!f) throw Fail("cannot read " + p.string());
+    return string((std::istreambuf_iterator<char>(f)), {});
+}
+static void writeAtomic(const fs::path& to, const string& bytes) {
+    if (!to.parent_path().empty()) fs::create_directories(to.parent_path());
+    fs::path tmp = to; tmp += ".partial";
+    { std::ofstream f(tmp, std::ios::binary | std::ios::trunc); f.write(bytes.data(), (std::streamsize)bytes.size()); if (!f) { f.close(); std::error_code ec; fs::remove(tmp, ec); throw Fail("cannot write " + to.string()); } }
+    fs::rename(tmp, to);
+}
+static bool safeRelPath(const string& r) {
+    if (r.empty() || r[0] == '/' || r[0] == '\\' || r.find(':') != string::npos || r.find('\\') != string::npos) return false;
+    size_t i = 0;
+    while (i <= r.size()) { size_t e = r.find('/', i); if (e == string::npos) e = r.size(); string part = r.substr(i, e - i); if (part.empty() || part == "..") return false; i = e + 1; }
+    return true;
+}
+static int toolMain(const vector<string>& a) {
+    if (a.empty()) throw Fail("usage: okay-build tool copy SRC DST | hash FILE... | pack DIR OUT | unpack PACK DIR | list PACK");
+    const string& c = a[0];
+    if (c == "copy") {
+        if (a.size() != 3) throw Fail("usage: okay-build tool copy SRC DST");
+        writeAtomic(a[2], readAllBytes(a[1])); return 0;
+    }
+    if (c == "z" || c == "unz") { // compress or decompress one file with the cache's own OKLZ format
+        if (a.size() != 3) throw Fail("usage: okay-build tool " + c + " IN OUT");
+        string in = readAllBytes(a[1]), out;
+        if (c == "z") out = lzPack(in); else if (!lzUnpack(in, out)) throw Fail("not a valid OKLZ block: " + a[1]);
+        writeAtomic(a[2], out); return 0;
+    }
+    if (c == "hash") {
+        if (a.size() < 2) throw Fail("usage: okay-build tool hash FILE...");
+        for (size_t i = 1; i < a.size(); ++i) { string b = readAllBytes(a[i]); printf("%s  %s\n", hex64(fnv(b.data(), b.size())).c_str(), a[i].c_str()); }
+        return 0;
+    }
+    if (c == "pack") {
+        if (a.size() != 3) throw Fail("usage: okay-build tool pack DIR OUT");
+        fs::path root = a[1]; if (!fs::is_directory(root)) throw Fail("pack: not a folder: " + a[1]);
+        fs::path outAbs = fs::absolute(a[2]).lexically_normal();
+        vector<string> rels;
+        for (auto& e : fs::recursive_directory_iterator(root)) {
+            if (!e.is_regular_file()) continue;
+            if (fs::absolute(e.path()).lexically_normal() == outAbs) continue; // never pack the output itself
+            rels.push_back(fs::relative(e.path(), root).generic_string());
+        }
+        std::sort(rels.begin(), rels.end());
+        string head = "OKPK", body; putLe(head, 1, 4); putLe(head, rels.size(), 4);
+        for (auto& r : rels) {
+            string b = readAllBytes(root / r);
+            putLe(head, r.size(), 4); head += r; putLe(head, b.size(), 8); putLe(head, fnv(b.data(), b.size()), 8);
+            body += b;
+        }
+        writeAtomic(a[2], head + body);
+        printf("okay-build tool pack: %zu file(s), %zu bytes -> %s\n", rels.size(), head.size() + body.size(), a[2].c_str());
+        return 0;
+    }
+    if (c == "unpack" || c == "list") {
+        if (a.size() != (c == "list" ? 2u : 3u)) throw Fail("usage: okay-build tool " + c + (c == "list" ? " PACK" : " PACK DIR"));
+        string b = readAllBytes(a[1]); size_t at = 0;
+        if (b.compare(0, 4, "OKPK") != 0) throw Fail("not an OKPK pack file: " + a[1]);
+        at = 4; if (getLe(b, at, 4) != 1) throw Fail("unknown pack version");
+        uint64_t n = getLe(b, at, 4);
+        struct Ent { string path; uint64_t size, hash; }; vector<Ent> es;
+        for (uint64_t i = 0; i < n; ++i) {
+            uint64_t pl = getLe(b, at, 4); if (at + pl > b.size()) throw Fail("pack file is cut short");
+            Ent e; e.path = b.substr(at, (size_t)pl); at += (size_t)pl; e.size = getLe(b, at, 8); e.hash = getLe(b, at, 8);
+            if (!safeRelPath(e.path)) throw Fail("pack holds an unsafe path: " + e.path);
+            es.push_back(e);
+        }
+        for (auto& e : es) {
+            if (at + e.size > b.size()) throw Fail("pack file is cut short");
+            if (c == "list") printf("%s\t%llu\t%s\n", hex64(e.hash).c_str(), (unsigned long long)e.size, e.path.c_str());
+            else {
+                string d = b.substr(at, (size_t)e.size);
+                if (fnv(d.data(), d.size()) != e.hash) throw Fail("pack entry is damaged: " + e.path);
+                writeAtomic(fs::path(a[2]) / e.path, d);
+            }
+            at += (size_t)e.size;
+        }
+        return 0;
+    }
+    throw Fail("unknown tool command '" + c + "'");
+}
+
 int main(int argc, char** argv) {
 #ifdef _WIN32
     SetConsoleCtrlHandler(onCtrl, TRUE);
 #else
     signal(SIGINT, onInt);
 #endif
+    if (argc >= 2 && string(argv[1]) == "tool") {
+        try { return toolMain(vector<string>(argv + 2, argv + argc)); }
+        catch (const std::exception& e) { fprintf(stderr, "okay-build: %s\n", e.what()); return 2; }
+    }
     adoptJobserver();
     if (const char* e = getenv("OKAY_CACHE_DIR")) if (*e) gCacheDir = fs::absolute(e).string();
     Opts o; string toolchainName, cmd = "build", runDir, importOut = "build.okay", configName, configFile; vector<string> want;
@@ -3025,9 +3224,11 @@ int main(int argc, char** argv) {
                 }
                 gCacheMax = n;
             }
+            else if (a == "--cache-compress") gCacheCompress = true;
             else if (a == "--jobserver") gWantJobserver = true;
             else if (a == "--timeout" && i + 1 < argc) { gTestTimeoutSec = atoll(argv[++i]); if (gTestTimeoutSec < 1) throw Fail("--timeout wants a number of seconds"); }
             else if (a == "--versions") gShowVersions = true;
+            else if (a == "--msvc-version" && i + 1 < argc) gMsvcPin = argv[++i];
             else if (a == "--junit" && i + 1 < argc) gJunitPath = argv[++i];
             else if (a == "--shard" && i + 1 < argc) {
                 string v = argv[++i]; auto sl = v.find('/');
@@ -3051,7 +3252,7 @@ int main(int argc, char** argv) {
             else if (cmd == "cache" && (a == "stats" || a == "clean")) want.push_back(a);
             else if (a == "build" || a == "clean" || a == "compdb" || a == "import" || a == "graph" || a == "targets" || a == "modules" || a == "toolchains" || a == "report" || a == "test" || a == "cache" || a == "lock" || a == "package" || a == "native") cmd = a;
             else if (a == "-h" || a == "--help") {
-                puts("usage: okay-build [build|clean|compdb|import|graph|targets|modules|toolchains|report|test] [-f build.okay] [-j N] [-k] [--config NAME] [--toolchain auto|gcc|clang|mingw|msvc] [--opt name=value] [--build-dir DIR] [--no-stat] [--no-cache] [--cache-dir DIR] [--timeout SECONDS] [--junit FILE] [--shard I/N] [--dry-run] [--explain] [-v] [--profile] [target...]");
+                puts("usage: okay-build [build|clean|compdb|import|graph|targets|modules|toolchains|report|test] [-f build.okay] [-j N] [-k] [--config NAME] [--toolchain auto|gcc|clang|mingw|msvc] [--opt name=value] [--build-dir DIR] [--no-stat] [--no-cache] [--cache-dir DIR] [--cache-compress] [--timeout SECONDS] [--msvc-version PREFIX] [--junit FILE] [--shard I/N] [--dry-run] [--explain] [-v] [--profile] [target...]");
                 puts("audit: docs/own_build_plan.md (12 subsystems; this tool is off by default)");
                 return 0;
             }

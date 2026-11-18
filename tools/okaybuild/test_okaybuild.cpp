@@ -1201,6 +1201,116 @@ static void testJunitShardVersions() {
     check(rc == 0 && (o.find("\tversion=") != string::npos || o.find("found") == string::npos), "found toolchains show a version", o);
 }
 
+static void testMsvcVersionChoice() {
+    printf("test: several MSVC installs: highest version by number, --msvc-version pins one\n"); fresh("msvcver");
+    for (const char* v : {"14.9.1", "14.10.2", "14.2.0"}) {
+        string d = string("vs/VC/Tools/MSVC/") + v + "/bin/Hostx64/x64/";
+        for (const char* n : {"cl.exe", "link.exe"}) { write(d + n, ""); fs::permissions(gRoot / d / n, fs::perms::owner_all); }
+    }
+    string root = "--msvc-root '" + (gRoot / "vs").string() + "'";
+    int rc; string o = sh("toolchains --versions " + root, &rc);
+    check(rc == 0 && o.find("MSVC/14.10.2/") != string::npos && o.find("version=14.10.2") != string::npos, "14.10.2 beats 14.9.1 (numeric, not text, order)", o);
+    o = sh("toolchains --versions --msvc-version 14.9 " + root, &rc);
+    check(rc == 0 && o.find("version=14.9.1") != string::npos, "a pinned prefix picks that install", o);
+    o = sh("toolchains --msvc-version 15 " + root, &rc);
+    check(rc == 0 && o.find("msvc\tmissing") != string::npos, "a pin that matches nothing leaves msvc missing", o);
+}
+
+static void testToolHelpers() {
+    printf("test: okay-build tool copy, hash, pack, unpack, list\n"); fresh("tool");
+    write("src/a.txt", "alpha\n"); write("src/sub/b.bin", string("b\0b", 3)); write("src/sub/deep/c.txt", "");
+    int rc; string o = sh("tool pack src out/p.okpk", &rc);
+    check(rc == 0 && o.find("3 file(s)") != string::npos, "pack reports the files", o);
+    string first = readFile(gRoot / "out/p.okpk");
+    sh("tool pack src out/p2.okpk");
+    check(first == readFile(gRoot / "out/p2.okpk") && first.compare(0, 4, "OKPK") == 0, "packing twice gives identical bytes", "");
+    o = sh("tool list out/p.okpk", &rc);
+    check(rc == 0 && o.find("\ta.txt") != string::npos && o.find("\tsub/b.bin") != string::npos && o.find("\t3\tsub/b.bin") != string::npos, "list shows size and path", o);
+    o = sh("tool unpack out/p.okpk back", &rc);
+    check(rc == 0 && readFile(gRoot / "back/a.txt") == "alpha\n" && readFile(gRoot / "back/sub/b.bin") == string("b\0b", 3) && fs::exists(gRoot / "back/sub/deep/c.txt"), "unpack restores the folder", o);
+    o = sh("tool pack src src/self.okpk", &rc);
+    sh("tool pack src src/self.okpk");
+    o = sh("tool list src/self.okpk", &rc);
+    check(o.find("self.okpk") == string::npos, "a pack inside its own folder does not contain itself", o);
+    { string d = first; d[d.size() - 1] ^= 1; std::ofstream(gRoot / "out/bad.okpk", std::ios::binary) << d; }
+    o = sh("tool unpack out/bad.okpk bad", &rc);
+    check(rc == 2 && o.find("damaged") != string::npos, "a flipped byte is caught", o);
+    { string d = first.substr(0, first.size() - 3); std::ofstream(gRoot / "out/cut.okpk", std::ios::binary) << d; }
+    o = sh("tool unpack out/cut.okpk cut", &rc);
+    check(rc == 2 && o.find("cut short") != string::npos, "a cut file is caught", o);
+    { string d = "OKPK"; d += string("\1\0\0\0\1\0\0\0", 8); d += string("\5\0\0\0../x", 9); d += string("\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0", 16); std::ofstream(gRoot / "out/evil.okpk", std::ios::binary) << d; }
+    o = sh("tool unpack out/evil.okpk evil", &rc);
+    check(rc == 2 && o.find("unsafe path") != string::npos && !fs::exists(gRoot / "x"), "a path that climbs out is refused", o);
+    o = sh("tool copy src/a.txt c/d/a.copy", &rc);
+    check(rc == 0 && readFile(gRoot / "c/d/a.copy") == "alpha\n" && !fs::exists(gRoot / "c/d/a.copy.partial"), "copy makes folders and leaves no partial", o);
+    o = sh("tool hash src/a.txt src/a.txt", &rc);
+    check(rc == 0 && o.substr(0, 16) == o.substr(o.find('\n') + 1, 16) && o.find("  src/a.txt") == 16, "hash prints 16 hex digits and the name", o);
+    o = sh("tool copy nosuch x", &rc);
+    check(rc == 2 && o.find("cannot read") != string::npos, "copy of a missing file fails", o);
+    // from an importer: pack a folder as a tracked step
+    string tool = gTool;
+    write("build.okay", "importer pk\n pattern = src/a.txt\n output = out/{stem}.k\n cmd = '" + tool + "' tool copy {input} {output}\nend\n");
+    o = sh("-j1", &rc);
+    check(rc == 0 && readFile(gRoot / "out/a.k") == "alpha\n", "an importer can use tool copy", o);
+}
+
+static void testCompressedCache() {
+    printf("test: --cache-compress stores smaller entries, hits restore the exact object, damage is a miss\n"); fresh("zcache");
+    string body; for (int i = 0; i < 400; ++i) body += "static const int v" + std::to_string(i) + " = " + std::to_string(i * 7) + ";\n";
+    write("a.cpp", body + "int main(){return v3 - 21;}\n");
+    write("build.okay", "target app exe\n sources = a.cpp\nend\n");
+    string cd = (gRoot / "zc").string();
+    int rc; string o = sh("-j1 --cache-dir '" + cd + "' --cache-compress", &rc);
+    check(rc == 0, "build with compression works", o);
+    string exe1 = readFile(gRoot / "build/app");
+    uint64_t packedBytes = 0, rawBytes = 0;
+    for (auto& e : fs::directory_iterator(cd)) if (e.is_directory()) {
+        packedBytes += fs::file_size(e.path() / "obj");
+        check(readFile(e.path() / "meta").find("\nlz\n") != string::npos, "meta marks the entry as compressed", "");
+    }
+    for (auto& e : fs::recursive_directory_iterator(gRoot / ".okaybuild/obj")) if (e.is_regular_file() && e.path().extension() == ".o") rawBytes += fs::file_size(e.path());
+    check(packedBytes > 0 && packedBytes * 2 < rawBytes, "the compressed object is less than half the raw one", std::to_string(packedBytes) + " vs " + std::to_string(rawBytes));
+    fs::remove_all(gRoot / "build"); fs::remove_all(gRoot / ".okaybuild/obj"); fs::remove(gRoot / ".okaybuild/state");
+    o = sh("-j1 --cache-dir '" + cd + "'", &rc);
+    check(rc == 0 && o.find("cache hit") != string::npos && readFile(gRoot / "build/app") == exe1, "a hit restores a byte-identical program (no flag needed to read)", o);
+    // damage: flip one byte in the stored object. It must be a miss that recompiles, never a bad object.
+    for (auto& e : fs::directory_iterator(cd)) if (e.is_directory()) { string d = readFile(e.path() / "obj"); d[d.size() / 2] ^= 0x55; std::ofstream(e.path() / "obj", std::ios::binary | std::ios::trunc) << d; }
+    fs::remove_all(gRoot / "build"); fs::remove_all(gRoot / ".okaybuild/obj"); fs::remove(gRoot / ".okaybuild/state");
+    o = sh("-j1 --cache-dir '" + cd + "' --cache-compress", &rc);
+    check(rc == 0 && o.find("cache hit") == string::npos && readFile(gRoot / "build/app") == exe1, "a damaged entry is a miss and the rebuild is identical", o);
+    // empty and incompressible inputs through the importer-less path: round trip via a source with random-ish bytes
+    string noise; unsigned x = 12345; for (int i = 0; i < 3000; ++i) { x = x * 1103515245u + 12345u; noise += "0x" + std::to_string(x >> 8) + ","; }
+    write("b.cpp", "const unsigned long long t[] = {" + noise + "0};\nint main(){return t[0] != 0 ? 0 : 1;}\n");
+    write("build.okay", "target app exe\n sources = b.cpp\nend\n");
+    o = sh("-j1 --cache-dir '" + cd + "' --cache-compress", &rc);
+    string exe2 = readFile(gRoot / "build/app");
+    fs::remove_all(gRoot / "build"); fs::remove_all(gRoot / ".okaybuild/obj"); fs::remove(gRoot / ".okaybuild/state");
+    o = sh("-j1 --cache-dir '" + cd + "'", &rc);
+    check(rc == 0 && o.find("cache hit") != string::npos && readFile(gRoot / "build/app") == exe2, "noisy data survives a compressed round trip", o);
+}
+
+static void testLzFormat() {
+    printf("test: OKLZ compression round-trips edge cases and refuses damage\n"); fresh("lz");
+    string noise; unsigned x = 7; for (int i = 0; i < 70000; ++i) { x = x * 1103515245u + 12345u; noise += (char)(x >> 16); }
+    string mixed; for (int i = 0; i < 300; ++i) mixed += "abcabcabc" + std::to_string(i % 17) + string(i % 40, 'q');
+    struct C { const char* name; string data; } cases[] = {{"empty", ""}, {"one", "x"}, {"three", "abc"}, {"four", "aaaa"}, {"zeros", string(1 << 20, '\0')},
+        {"noise", noise}, {"mixed", mixed}, {"far", noise.substr(0, 60000) + noise.substr(0, 60000)}};
+    for (auto& c : cases) {
+        std::ofstream(gRoot / "in", std::ios::binary | std::ios::trunc) << c.data;
+        int rc1, rc2; sh(string("tool z in z.bin"), &rc1); sh("tool unz z.bin out", &rc2);
+        check(rc1 == 0 && rc2 == 0 && readFile(gRoot / "out") == c.data, string("round trip: ") + c.name, "");
+        if (string(c.name) == "zeros") check(fs::file_size(gRoot / "z.bin") < 8000, "a megabyte of zeros packs small", std::to_string(fs::file_size(gRoot / "z.bin")));
+    }
+    // every truncation and a spread of single-byte flips of a real block must be refused or (only if the flip hits nothing that matters) never crash
+    std::ofstream(gRoot / "in", std::ios::binary | std::ios::trunc) << mixed; sh("tool z in z.bin");
+    string z = readFile(gRoot / "z.bin"); int refused = 0, tried = 0;
+    for (size_t cut = 0; cut < z.size(); cut += z.size() / 40 + 1) { std::ofstream(gRoot / "t.bin", std::ios::binary | std::ios::trunc) << z.substr(0, cut); int rc; sh("tool unz t.bin o2", &rc); ++tried; if (rc == 2) ++refused; }
+    check(refused == tried, "every truncated block is refused", std::to_string(refused) + "/" + std::to_string(tried));
+    refused = tried = 0;
+    for (size_t at = 0; at < z.size(); at += z.size() / 40 + 1) { string d = z; d[at] ^= 0x20; std::ofstream(gRoot / "t.bin", std::ios::binary | std::ios::trunc) << d; int rc; sh("tool unz t.bin o2", &rc); ++tried; if (rc == 2 || (rc == 0 && readFile(gRoot / "o2") == mixed)) ++refused; } // a flipped distance inside a repeated run can legitimately give the same bytes
+    check(refused == tried, "a flipped byte is refused or still gives the exact original (never wrong bytes, never a crash)", std::to_string(refused) + "/" + std::to_string(tried));
+}
+
 static void testImporters() {
     printf("test: importer blocks rebuild only changed assets, settings change rebuilds all, failures leave no output\n"); fresh("imp");
     write("tools/conv.sh", "echo \"$1\" >> imports.log\nif grep -q FAIL \"$1\"; then echo half > \"$2\"; exit 1; fi\n{ printf '%s|' \"$3\"; cat \"$1\"; } > \"$2\"\n");
@@ -1288,5 +1398,9 @@ int main(int argc, char** argv) {
     testImporters();
     testPerConfigDirsAndTrace();
     testJunitShardVersions();
+    testMsvcVersionChoice();
+    testToolHelpers();
+    testCompressedCache();
+    testLzFormat();
     printf("okaybuild tests: %d checks passed, %d failed\n", gPass, gFail); return gFail ? 1 : 0;
 }

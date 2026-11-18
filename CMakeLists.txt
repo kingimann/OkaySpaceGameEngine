@@ -27,6 +27,7 @@ option(OKAY_BUILD_EDITOR   "Build the desktop GUI editor (needs SDL2+OpenGL)" OF
 option(OKAY_BUILD_PLAYER   "Build the standalone game player runtime (needs SDL2)" OFF)
 option(OKAY_USE_SODIUM     "Authenticated packet encryption via libsodium"     ON)
 option(OKAY_REQUIRE_SODIUM "RELEASE builds: configuring FAILS unless libsodium is found and OKAY_OWN_CRYPTO is OFF (never silently fall back to our own unreviewed crypto; CLAUDE.md rule 18)" OFF)
+option(OKAY_OWN_SIGNING   "Build our OWN test-key signing library (big integers, Miller-Rabin, DER; docs/own_signing_plan.md). NOT INDEPENDENTLY REVIEWED, TEST KEY ONLY; keep OFF in shipped builds, releases refuse it" OFF)
 option(OKAY_OWN_CRYPTO    "Network encryption via our OWN okay::crypto instead of libsodium (UNREVIEWED; keep OFF in shipped builds)" OFF)
 option(OKAY_USE_ASSIMP     "Import FBX/DAE/STL/... via Assimp (FetchContent; downloads at configure time)" OFF)
 option(OKAY_PREFER_OWN_READERS "With OKAY_USE_ASSIMP: read STL/PLY with our own readers first (Assimp stays the fallback); no effect without Assimp" OFF)
@@ -312,6 +313,12 @@ endif()
 # Emscripten/WebGL, where raw UDP sockets don't exist in the browser sandbox.
 if(NOT EMSCRIPTEN)
     add_subdirectory(relay)
+endif()
+
+# ---- Own test-key signing (OFF by default; releases refuse it) ---------
+if(OKAY_OWN_SIGNING)
+    message(WARNING "OkaySpace: OKAY_OWN_SIGNING=ON builds our own UNREVIEWED test-key signing code (docs/own_signing_plan.md). Test build only: do not ship it")
+    add_subdirectory(signing)
 endif()
 
 # ---- Tests ------------------------------------------------------------

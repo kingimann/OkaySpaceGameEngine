@@ -131,7 +131,26 @@ OpenSSL only to compare against, never to ship.
 
 Each stage is its own branch and its own review of the docs; all of it stays OFF by default.
 
-1. DER writer and reader, big integer, SHA-256 glue; tests (no key material yet).
+1. DER writer and reader, big integer, Miller-Rabin; tests (no key material yet).
+   **Status 2026-11-18: written and tested, NOT independently reviewed, test key only, not wired to anything.**
+   Where: `signing/` (library `okay_sign`, headers `signing/include/okay/Sign/{BigInt,Prime,Der}.hpp`, sources `signing/src/`,
+   tests `signing/tests/`). Built only with `-DOKAY_OWN_SIGNING=ON` (default OFF; `scripts/check_release_own_stack.sh` refuses
+   it in releases and its self-test covers that). Not linked by the engine or the network code; it links `okay_crypto` only for
+   `RandomBytes` (Miller-Rabin bases). No new hash code: stage 1 does not need SHA-256 at all, it first appears in stage 2.
+   Written from Knuth TAOCP vol. 2 4.3.1 (add, subtract, multiply, long division "algorithm D"), the extended Euclidean
+   algorithm, FIPS 186-5 appendix B and ITU-T X.690. What exists: BigInt (add, sub, mul, divmod, shifts, gcd, modexp, modular
+   inverse, compare, big-endian bytes, hex), `IsProbablePrime` (trial division below 1000, then Miller-Rabin rounds with OS-random
+   bases), `MillerRabinRound` with a chosen base, DER writer (lengths, BOOLEAN, INTEGER, NULL, OCTET/BIT STRING, OID, UTF8/Printable
+   string, UTCTime/GeneralizedTime, SEQUENCE, SET, SET OF sorted, context tags) and a strict DER reader (rejects indefinite or
+   non-minimal lengths, non-minimal or negative INTEGERs, BER booleans, bad OIDs and bit strings). Tests: four programs, run
+   with ctest names `sign_bigint`, `sign_prime`, `sign_der`, `sign_openssl_crosscheck`; known answers from Python integers
+   (numbers only), X.690 byte examples and well-known OIDs, random identities ((a+b)-b, divmod, distributive, modexp against
+   repeated multiplication, inverse), edge-limb division that exercises the add-back step, Carmichael numbers and strong
+   pseudoprimes, a small reader fuzz, and an optional `openssl asn1parse` / `openssl prime` cross-check (skipped when openssl
+   is absent). Not done in stage 1: no constant-time code, no Montgomery multiplication (modexp is plain square-and-multiply
+   with long-division reduction: correct but slow, to be measured and improved in stage 2), no prime generation function, no
+   signed INTEGERs, no multi-byte tag numbers, no DER parser for whole certificates. Checked here with g++ 13 on Linux only
+   (also under AddressSanitizer and UndefinedBehaviorSanitizer); never compiled with MinGW or MSVC.
 2. RSA key generation, sign, verify (PKCS#1 v1.5 SHA-256); known-answer and OpenSSL cross-check tests.
 3. Self-signed X.509 v3 certificate (subject from the manifest Publisher, code signing EKU, key usage, validity);
    `.cer` output that `openssl x509` can read.

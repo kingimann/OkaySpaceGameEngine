@@ -17,12 +17,13 @@
 # in the build.ninja or compile_commands.json (a toolchain file `set(OKAY_OWN_CRYPTO ON)` leaves no cache entry but does
 # reach the compiler as -DOKAY_OWN_CRYPTO).
 #
-# Refused: the environment variables OKAY_OWN_CRYPTO, OKAY_OWN_STACK_CRYPTO_TEST and OKAY_OWN_STACK set to anything
+# Refused: the environment variables OKAY_OWN_CRYPTO, OKAY_OWN_STACK_CRYPTO_TEST, OKAY_OWN_STACK and OKAY_OWN_SIGNING (our own
+# unreviewed test-key signing code, docs/own_signing_plan.md) set to anything
 # that is not empty, 0, OFF or NO; and the same names set ON/1/TRUE/YES in a cmake cache or on a -D argument.
 # Exit 0 = fine, 1 = refused (the message names what), 2 = bad use.
 set -u
 
-NAMES="OKAY_OWN_CRYPTO OKAY_OWN_STACK_CRYPTO_TEST OKAY_OWN_STACK"
+NAMES="OKAY_OWN_CRYPTO OKAY_OWN_STACK_CRYPTO_TEST OKAY_OWN_STACK OKAY_OWN_SIGNING"
 
 is_on() {   # a value that means "on" for CMake
     case "$(printf '%s' "$1" | tr '[:lower:]' '[:upper:]')" in
@@ -132,6 +133,9 @@ self_test() {
     expect 1 "OKAY_OWN_CRYPTO=ON in the environment"   env OKAY_OWN_CRYPTO=ON bash "$me"
     expect 1 "OKAY_OWN_STACK_CRYPTO_TEST=1"            env OKAY_OWN_STACK_CRYPTO_TEST=1 bash "$me"
     expect 1 "OKAY_OWN_STACK=1"                        env OKAY_OWN_STACK=1 bash "$me"
+    expect 1 "OKAY_OWN_SIGNING=1"                      env OKAY_OWN_SIGNING=1 bash "$me"
+    expect 1 "-DOKAY_OWN_SIGNING=ON argument"          env -u OKAY_OWN_STACK -u OKAY_OWN_STACK_CRYPTO_TEST -u OKAY_OWN_CRYPTO bash "$me" -- -DOKAY_OWN_SIGNING=ON
+    expect 0 "-DOKAY_OWN_SIGNING=OFF argument"         env -u OKAY_OWN_STACK -u OKAY_OWN_STACK_CRYPTO_TEST -u OKAY_OWN_CRYPTO bash "$me" -- -DOKAY_OWN_SIGNING=OFF
     expect 0 "OKAY_OWN_CRYPTO=0 is off"                env -u OKAY_OWN_STACK -u OKAY_OWN_STACK_CRYPTO_TEST OKAY_OWN_CRYPTO=0 bash "$me"
     expect 0 "empty value is off"                      env -u OKAY_OWN_STACK -u OKAY_OWN_STACK_CRYPTO_TEST OKAY_OWN_CRYPTO= bash "$me"
     expect 1 "-DOKAY_OWN_CRYPTO=ON argument"           env -u OKAY_OWN_STACK -u OKAY_OWN_STACK_CRYPTO_TEST -u OKAY_OWN_CRYPTO bash "$me" -- -DCMAKE_BUILD_TYPE=Release -DOKAY_OWN_CRYPTO=ON

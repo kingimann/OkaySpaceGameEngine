@@ -1,15 +1,26 @@
 // okay-ms own standard header: declarations only (ISO/IEC 14882 [c.math]); the functions come from the
-// C runtime the program is linked with.
+// C runtime the program is linked with. One overload each (okay-ms picks a function by name and argument
+// count, not by type), the float one.
 #pragma once
 namespace std {
 float sqrt(float x);
 float sin(float x);
 float cos(float x);
 float tan(float x);
+float asin(float x);
+float acos(float x);
+float atan(float x);
 float atan2(float y, float x);
 float fabs(float x);
 float floor(float x);
 float ceil(float x);
+float round(float x);
+float trunc(float x);
 float pow(float x, float y);
 float fmod(float x, float y);
+float exp(float x);
+float log(float x);
+float log2(float x);
+float log10(float x);
+float hypot(float x, float y);
 }

@@ -32,6 +32,8 @@ struct Token {
     uint64_t number = 0;
     // 0 for an integer, 5 for a float literal, 6 for a double literal.
     int real = 0;
+    // Type of an integer literal ([lex.icc]): 0 int, 1 unsigned int, 2 long long, 3 unsigned long long.
+    int ity = 0;
     // Line of the preprocessed text, counted from 1.
     int line = 0;
     // A '>' written directly after another '>' (no space), used to read '>>' and '>>='.
@@ -57,6 +59,8 @@ struct Type {
     bool is_ref = false;
     // bool: one byte holding 0 or 1 (base 2, unsigned). A conversion to it compares with zero.
     bool is_bool = false;
+    // long long, unsigned long long, __int64: a base 1 integer that is 8 bytes wide and lives in rax.
+    bool wide = false;
     // A function parameter pack (Rest... rest) while a template's parameter types are read.
     bool pack = false;
     bool pointer() const { return pointers > 0; }
@@ -95,6 +99,8 @@ struct Field {
     bool init_zero = false;
 };
 
+struct Node;
+
 // A member function. The first parameter of the compiled function is an
 // implicit pointer to the object, named "this".
 struct Method {
@@ -117,6 +123,8 @@ struct Method {
     // Token index of the body's '{' (or of the ':' that starts a constructor's
     // initializer list) until the body has been compiled.
     size_t body_at = 0;
+    // Where the body's '{' was, kept after the body is compiled (body_at is then cleared).
+    size_t tok_body = 0;
     // Template parameter names of an out-of-class definition (template <typename U> U S<U>::f()).
     std::vector<std::string> ool_names;
     // A constructor or destructor the compiler made because a member or base
@@ -128,6 +136,8 @@ struct Method {
     bool is_static = false;
     // The decorated spelling of a member function template instance's name ("$add@H"), else empty.
     std::string tsym;
+    // Default arguments ([dcl.fct.default]): defaults[i] is the expression for parameter i, or an empty Block.
+    std::vector<Node> defaults;
 };
 
 // A static data member, or a constant (static const integral, an enumerator) of a class.
@@ -236,6 +246,8 @@ struct FuncDecl {
     bool is_static = false;
     bool vararg = false;
     bool sret = false;
+    // Default arguments, as for Method::defaults.
+    std::vector<Node> defaults;
     std::string symbol;
     int func_id = -1;
     int sret_off = 0;
@@ -1002,7 +1014,7 @@ Tok keyword(const std::string& text) {
 
 // value = sig * 10^pow10, written as an IEEE-754 double. A float is that
 // value rounded to 24 significant bits.
-uint64_t ieee_real(uint64_t sig, int pow10, bool neg, bool single) {
+uint64_t ieee_real(unsigned __int128 sig, int pow10, bool neg, bool single) {
     unsigned __int128 mag = sig;
     int bexp = 0;
     if (sig == 0) return neg ? (single ? 0x80000000ull : 0x8000000000000000ull) : 0;
@@ -1111,7 +1123,18 @@ std::vector<Token> lex(const std::string& text, std::string* error) {
             if (text[i] == '0' && i + 1 < text.size() && (text[i + 1] == 'x' || text[i + 1] == 'X')) {
                 base = 16;
                 j = i + 2;
+            } else if (text[i] == '0' && i + 1 < text.size() && (text[i + 1] == 'b' || text[i + 1] == 'B')) {
+                base = 2;
+                j = i + 2;
             }
+            // A leading 0 followed by digits only is octal ([lex.icon]); a '.', an exponent or an f after
+            // the digits makes it a decimal floating literal again.
+            size_t digits_end = i;
+            while (digits_end < text.size() && std::isdigit(static_cast<unsigned char>(text[digits_end]))) ++digits_end;
+            const char after_digits = digits_end < text.size() ? text[digits_end] : '\0';
+            if (base == 10 && text[i] == '0' && digits_end > i + 1 && after_digits != '.' && after_digits != 'e' &&
+                after_digits != 'E' && after_digits != 'f' && after_digits != 'F')
+                base = 8;
             uint64_t value = 0;
             bool any = false;
             while (j < text.size()) {
@@ -1121,11 +1144,23 @@ std::vector<Token> lex(const std::string& text, std::string* error) {
                 else if (base == 16 && d >= 'a' && d <= 'f') digit = d - 'a' + 10;
                 else if (base == 16 && d >= 'A' && d <= 'F') digit = d - 'A' + 10;
                 else break;
+                if (digit >= base) break;
                 any = true;
                 value = value * static_cast<uint64_t>(base) + static_cast<uint64_t>(digit);
                 ++j;
             }
-            if (j < text.size() && (text[j] == 'u' || text[j] == 'U' || text[j] == 'l' || text[j] == 'L')) ++j;
+            // Integer suffixes: u, l and ll in any order and case ([lex.icon]); i64 is the Microsoft spelling.
+            bool suf_u = false;
+            int suf_l = 0;
+            while (j < text.size() && (text[j] == 'u' || text[j] == 'U' || text[j] == 'l' || text[j] == 'L')) {
+                if (text[j] == 'u' || text[j] == 'U') suf_u = true;
+                else ++suf_l;
+                ++j;
+            }
+            if (suf_l == 0 && j + 2 < text.size() && text[j] == 'i' && text[j + 1] == '6' && text[j + 2] == '4') {
+                suf_l = 2;
+                j += 3;
+            }
             bool real = false;
             uint64_t frac = 0;
             int frac_digits = 0;
@@ -1161,20 +1196,28 @@ std::vector<Token> lex(const std::string& text, std::string* error) {
                 as_float = true;
                 ++j;
             }
-            if (!real && j < text.size() && (text[j] == 'u' || text[j] == 'U' || text[j] == 'l' || text[j] == 'L')) ++j;
             if (!any && !real) {
                 *error = "bad number";
                 return {};
             }
             tok.kind = TNumber;
             if (real) {
-                uint64_t sig = value;
+                unsigned __int128 sig = value;
                 for (int n = 0; n < frac_digits; ++n) sig *= 10u;
                 sig += frac;
                 tok.number = ieee_real(sig, exp10 - frac_digits, false, as_float);
                 tok.real = as_float ? 5 : 6;
             } else {
                 tok.number = value;
+                // [lex.icc] with a 32-bit long: a decimal number without u goes int, long long; a
+                // hexadecimal, octal or binary one goes int, unsigned int, long long, unsigned long long.
+                const bool dec = base == 10;
+                const bool fits_int = value <= 0x7FFFFFFFull;
+                const bool fits_uint = value <= 0xFFFFFFFFull;
+                const bool fits_ll = value <= 0x7FFFFFFFFFFFFFFFull;
+                if (suf_l >= 2) tok.ity = suf_u ? 3 : (fits_ll ? 2 : 3);
+                else if (!suf_u) tok.ity = fits_int ? 0 : (!dec && fits_uint) ? 1 : fits_ll ? 2 : 3;
+                else tok.ity = fits_uint ? 1 : 3;
             }
             i = j;
             tokens.push_back(tok);
@@ -1347,6 +1390,7 @@ std::string cxx_type(const Type& type, const std::vector<StructDef>* structs = n
         // U is struct, T is union, V is class; then the name and "@@".
         return std::string(def.is_union ? "T" : def.is_class ? "V" : "U") + def.symname() + "@@";
     }
+    if (type.wide) return type.is_unsigned ? "_K" : "_J";
     return type.is_unsigned ? "I" : "H";
 }
 
@@ -1427,6 +1471,225 @@ bool is_assign_op(Tok op) {
 }
 bool is_compound_op(Tok op) { return op != TAssign && is_assign_op(op); }
 
+// Constant folding of integers ([expr.const], [expr.arith.conv]). The value of an integer literal node is kept
+// as 64 bits in the form its type gives: sign-extended for int and long long, zero-extended for unsigned int.
+uint64_t const_norm(uint64_t v, const Type& t) {
+    if (t.wide) return v;
+    if (t.is_unsigned) return v & 0xFFFFFFFFull;
+    return static_cast<uint64_t>(static_cast<int64_t>(static_cast<int32_t>(static_cast<uint32_t>(v))));
+}
+
+// The type of an arithmetic operation on two integer types after the usual arithmetic conversions: the wide
+// operand wins; an unsigned operand wins over a signed one of the same width.
+Type const_common(const Type& a, const Type& b) {
+    Type r;
+    r.base = 1;
+    if (a.wide || b.wide) {
+        r.wide = true;
+        r.is_unsigned = (a.wide && b.wide) ? (a.is_unsigned || b.is_unsigned) : (a.wide ? a.is_unsigned : b.is_unsigned);
+    } else {
+        r.is_unsigned = a.is_unsigned || b.is_unsigned;
+    }
+    return r;
+}
+
+// The bytes a constant takes when it is stored in an object of arithmetic type `to` ([conv.integral],
+// [conv.fpint], [conv.double]): an integer literal given to a float, a float literal given to an int, and so
+// on. The low bytes of *bits are the object's value. Returns false for a type that is not arithmetic.
+// The value of a numeric literal node as a double (a float literal holds float bits).
+double lit_double(const Node& n) {
+    if (n.type.base == 5) {
+        float f = 0;
+        const uint32_t low = static_cast<uint32_t>(n.number);
+        std::memcpy(&f, &low, 4);
+        return f;
+    }
+    if (n.type.base == 6) {
+        double d = 0;
+        std::memcpy(&d, &n.number, 8);
+        return d;
+    }
+    if (n.type.is_unsigned && n.type.wide) return static_cast<double>(n.number);
+    return static_cast<double>(static_cast<int64_t>(n.number));
+}
+
+bool const_convert(const Node& lit, const Type& to, uint64_t* bits) {
+    if (to.pointers > 0) {
+        *bits = lit.number;
+        return true;
+    }
+    if (to.array_len >= 0 || to.is_ref || (to.base != 1 && to.base != 2 && to.base != 4 && to.base != 5 && to.base != 6))
+        return false;
+    const int from = lit.type.base;  // 1 integer, 5 float literal, 6 double literal
+    double value = 0;
+    bool value_is_int = false;
+    int64_t as_int = 0;
+    if (from == 5) {
+        float f = 0;
+        const uint32_t low = static_cast<uint32_t>(lit.number);
+        std::memcpy(&f, &low, 4);
+        value = f;
+    } else if (from == 6) {
+        std::memcpy(&value, &lit.number, 8);
+    } else {
+        value_is_int = true;
+        as_int = static_cast<int64_t>(lit.number);
+        value = lit.type.is_unsigned && lit.type.wide ? static_cast<double>(lit.number) : static_cast<double>(as_int);
+    }
+    if (to.base == 5) {
+        float f;
+        if (value_is_int) f = lit.type.is_unsigned && lit.type.wide ? static_cast<float>(lit.number) : static_cast<float>(as_int);
+        else f = static_cast<float>(value);
+        uint32_t low = 0;
+        std::memcpy(&low, &f, 4);
+        *bits = low;
+        return true;
+    }
+    if (to.base == 6) {
+        std::memcpy(bits, &value, 8);
+        return true;
+    }
+    int64_t v = as_int;
+    if (!value_is_int) {
+        if (value != value) v = 0;
+        else if (value >= 9223372036854775807.0) v = INT64_MAX;
+        else if (value <= -9223372036854775808.0) v = INT64_MIN;
+        else v = static_cast<int64_t>(value);
+    }
+    if (to.is_bool) {
+        *bits = value_is_int ? (lit.number != 0 ? 1u : 0u) : (value != 0 ? 1u : 0u);
+        return true;
+    }
+    *bits = static_cast<uint64_t>(v);
+    return true;
+}
+
+// Folds `left op right` when at least one operand is a float or double literal ([expr.arith.conv],
+// [expr.mul], [expr.add], [expr.rel]). Two floats are computed as floats, anything with a double as a double.
+// Returns false for an operator that does not fold.
+bool fold_fp_binary(Tok op, const Node& l, const Node& r, Node* out) {
+    const bool use_double = l.type.base == 6 || r.type.base == 6;
+    const bool cmp = op == TEq || op == TNe || op == TLt || op == TGt || op == TLe || op == TGe;
+    const double a = lit_double(l);
+    const double c = lit_double(r);
+    *out = Node{};
+    out->kind = Node::IntLit;
+    if (op == TAndAnd || op == TOrOr) {
+        out->type.base = 1;
+        out->number = op == TAndAnd ? (a != 0 && c != 0) : (a != 0 || c != 0);
+        return true;
+    }
+    if (cmp) {
+        const float fa = static_cast<float>(a);
+        const float fc = static_cast<float>(c);
+        const bool both_float = !use_double;
+        bool v = false;
+        if (op == TEq) v = both_float ? fa == fc : a == c;
+        else if (op == TNe) v = both_float ? fa != fc : a != c;
+        else if (op == TLt) v = both_float ? fa < fc : a < c;
+        else if (op == TGt) v = both_float ? fa > fc : a > c;
+        else if (op == TLe) v = both_float ? fa <= fc : a <= c;
+        else v = both_float ? fa >= fc : a >= c;
+        out->type.base = 1;
+        out->number = v ? 1 : 0;
+        return true;
+    }
+    if (op != TPlus && op != TMinus && op != TStar && op != TSlash) return false;
+    if (use_double) {
+        double v = 0;
+        if (op == TPlus) v = a + c;
+        else if (op == TMinus) v = a - c;
+        else if (op == TStar) v = a * c;
+        else v = a / c;
+        out->type.base = 6;
+        std::memcpy(&out->number, &v, 8);
+        return true;
+    }
+    const float fa = static_cast<float>(a);
+    const float fc = static_cast<float>(c);
+    volatile float v = 0;
+    if (op == TPlus) v = fa + fc;
+    else if (op == TMinus) v = fa - fc;
+    else if (op == TStar) v = fa * fc;
+    else v = fa / fc;
+    const float res = v;
+    uint32_t low = 0;
+    std::memcpy(&low, &res, 4);
+    out->type.base = 5;
+    out->number = low;
+    return true;
+}
+
+// Folds `left op right` for two integer literal nodes into *out. Returns false when the operator is not one
+// that folds; *err is set for an error (division by zero, a shift count that is too large).
+bool fold_int_binary(Tok op, const Node& l, const Node& r, Node* out, std::string* err) {
+    const bool shift = op == TShl || op == TShr;
+    const bool logic = op == TAndAnd || op == TOrOr;
+    Type rt = shift ? Type{} : const_common(l.type, r.type);
+    if (shift) {
+        rt.base = 1;
+        rt.wide = l.type.wide;
+        rt.is_unsigned = l.type.is_unsigned;
+    }
+    const uint64_t a = const_norm(l.number, shift ? rt : rt);
+    const uint64_t c = shift ? r.number : const_norm(r.number, rt);
+    const bool uns = rt.is_unsigned;
+    uint64_t result = 0;
+    bool int_result = false;  // the result is an int 0 or 1 (a comparison or && ||)
+    if (logic) {
+        result = op == TAndAnd ? (l.number != 0 && r.number != 0) : (l.number != 0 || r.number != 0);
+        int_result = true;
+    } else if (op == TPlus) result = a + c;
+    else if (op == TMinus) result = a - c;
+    else if (op == TStar) result = a * c;
+    else if (op == TSlash || op == TPercent) {
+        if (c == 0) {
+            *err = "division by zero";
+            return false;
+        }
+        if (uns) result = op == TSlash ? a / c : a % c;
+        else {
+            const int64_t sa = static_cast<int64_t>(a);
+            const int64_t sc = static_cast<int64_t>(c);
+            if (sc == -1) result = op == TSlash ? 0 - a : 0;
+            else result = static_cast<uint64_t>(op == TSlash ? sa / sc : sa % sc);
+        }
+    } else if (op == TAmp) result = a & c;
+    else if (op == TPipe) result = a | c;
+    else if (op == TCaret) result = a ^ c;
+    else if (shift) {
+        if (c >= 64) {
+            *err = "shift count is too large";
+            return false;
+        }
+        if (op == TShl) result = a << c;
+        else if (uns) result = a >> c;
+        else result = static_cast<uint64_t>(static_cast<int64_t>(a) >> c);
+    } else if (op == TEq || op == TNe || op == TLt || op == TGt || op == TLe || op == TGe) {
+        int_result = true;
+        const bool lt = uns ? a < c : static_cast<int64_t>(a) < static_cast<int64_t>(c);
+        const bool gt = uns ? a > c : static_cast<int64_t>(a) > static_cast<int64_t>(c);
+        if (op == TEq) result = a == c;
+        else if (op == TNe) result = a != c;
+        else if (op == TLt) result = lt;
+        else if (op == TGt) result = gt;
+        else if (op == TLe) result = !gt;
+        else result = !lt;
+    } else {
+        return false;
+    }
+    *out = Node{};
+    out->kind = Node::IntLit;
+    if (int_result) {
+        out->number = result;
+        out->type.base = 1;
+    } else {
+        out->type = rt;
+        out->number = const_norm(result, rt);
+    }
+    return true;
+}
+
 struct Parser {
     std::vector<Token>& tokens;
     size_t at = 0;
@@ -1442,6 +1705,8 @@ struct Parser {
     std::string current_fn;
     // The namespaces open at the top level: "a::b" and its decorated form "b@a" (innermost first).
     std::string current_ns;
+    // The namespaces named by `using namespace`, in the order written.
+    std::vector<std::string> using_namespaces{};
     std::string ns_mangled{};
     std::vector<std::string> ns_parts{};
     std::vector<size_t> ns_open{};  // how many names each open brace pushed (0 for an unnamed namespace)
@@ -1528,8 +1793,18 @@ struct Parser {
                 continue;
             }
             if (is_word(i, "using") && i + 1 < tokens.size()) {
-                if (is_word(i + 1, "namespace")) {
-                    while (i < tokens.size() && tokens[i].kind != TSemi && tokens[i].kind != TEnd) ++i;
+                if (tokens[i + 1].kind == TNamespace) {
+                    // using namespace a::b; : the functions of that namespace can be called by their bare names
+                    // (names of types and variables are in one table already). The directive is remembered for
+                    // the whole file, not only for the block it is written in.
+                    std::string ns;
+                    size_t j = i + 2;
+                    for (; j < tokens.size() && tokens[j].kind != TSemi && tokens[j].kind != TEnd; ++j) {
+                        if (tokens[j].kind == TIdent) ns += tokens[j].text;
+                        else if (tokens[j].kind == TColonColon) ns += "::";
+                    }
+                    if (!ns.empty()) using_namespaces.push_back(ns);
+                    i = j;
                     continue;
                 }
                 if (tokens[i + 1].kind == TIdent && i + 2 < tokens.size() && tokens[i + 2].kind == TAssign) {
@@ -1610,7 +1885,12 @@ struct Parser {
                     close.kind = TRParen;
                     close.text = ")";
                     out.push_back(open);
-                    for (size_t k = i + 2; k < j; ++k) out.push_back(tokens[k]);
+                    for (size_t k = i + 2; k < j; ++k) {
+                        // volatile is dropped here too; `T *const` inside the cast loses its const as above.
+                        if (tokens[k].kind == TIdent && tokens[k].text == "volatile") continue;
+                        if (tokens[k].kind == TConst && !out.empty() && out.back().kind == TStar) continue;
+                        out.push_back(tokens[k]);
+                    }
                     out.push_back(close);
                     i = j;
                     continue;
@@ -1734,6 +2014,7 @@ struct Parser {
         if (which[1] == 'c' && !ensure_ctor_template(sid, args, &tctor)) return false;
         const Method* m = which[1] == 'c' ? find_ctor(sid, args) : find_method(sid, which, args.size());
         if (!tctor.empty()) m = find_ctor_instance(sid, tctor);
+        if (m != nullptr && which[1] == 'c' && !pad_defaults(m->defaults, m->params.size(), &args)) return false;
         if (m != nullptr && which[1] == 'c' && !adjust_args(m->params, &args)) return false;
         if (m == nullptr) {
             error = std::string("no matching ") + (which[1] == 'c' ? "constructor" : "destructor") + " in " +
@@ -1975,7 +2256,7 @@ struct Parser {
         if (type.base == 3 && type.struct_id >= 0 && type.struct_id < static_cast<int>(structs.size()))
             return structs[type.struct_id].size;
         if (type.base == 0) return 0;
-        return 4;
+        return type.wide ? 8 : 4;
     }
     int align_of(const Type& type) const {
         if (type.is_ref) return 8;
@@ -1987,7 +2268,7 @@ struct Parser {
         if (type.base == 6) return 8;
         if (type.base == 3 && type.struct_id >= 0 && type.struct_id < static_cast<int>(structs.size()))
             return std::max(1, structs[type.struct_id].align);
-        return 4;
+        return type.wide ? 8 : 4;
     }
     bool fits_register(const Type& type) const {
         if (type.array_len >= 0 || type.pointers > 0) return true;
@@ -2087,6 +2368,7 @@ struct Parser {
         type->is_unsigned = false;
         type->is_const = false;
         type->is_bool = false;
+        type->wide = false;
         if (is(TStruct) || is(TUnion)) {
             const bool as_union = is(TUnion);
             const bool as_class = is(TStruct) && cur().text == "class";
@@ -2182,8 +2464,18 @@ struct Parser {
         }
         bool unsign = false;
         bool sign = false;
+        int longs = 0;
+        bool int64_word = false;
         while (is(TUnsigned) || is(TSigned) || is(TLong) || is(TShort) || is(TInt) || is(TVoid) || is(TChar) ||
-               is(TFloat) || is(TDouble)) {
+               is(TFloat) || is(TDouble) || (is(TIdent) && (cur().text == "__int64" || cur().text == "__int32"))) {
+            if (is(TIdent)) {
+                // __int64 is long long and __int32 is int (the Microsoft spellings).
+                if (cur().text == "__int64") int64_word = true;
+                saw = true;
+                next();
+                continue;
+            }
+            if (is(TLong)) ++longs;
             if (is(TVoid)) type->base = 0;
             else if (is(TChar)) type->base = 2;
             else if (is(TShort)) type->base = 4;
@@ -2198,6 +2490,7 @@ struct Parser {
             next();
         }
         type->is_unsigned = unsign && !sign;
+        if ((longs >= 2 || int64_word) && type->base == 1) type->wide = true;
         if (!saw) {
             error = "expected a type";
             return false;
@@ -2234,7 +2527,52 @@ struct Parser {
         bool vararg = false;
         std::vector<Type> params;
         std::vector<std::string> param_names;
+        std::vector<Node> param_defaults;
     };
+
+    // Default arguments ([dcl.fct.default]): defaults[i] is a real expression only when parameter i has one.
+    static bool has_default(const std::vector<Node>& defaults, size_t i) {
+        return i < defaults.size() && !(defaults[i].kind == Node::Block && defaults[i].text.empty());
+    }
+    // How many leading parameters have no default: the fewest arguments a call needs.
+    static size_t required_args(const std::vector<Node>& defaults, size_t nparams) {
+        for (size_t i = 0; i < nparams; ++i)
+            if (has_default(defaults, i)) return i;
+        return nparams;
+    }
+    // The same for a free function: a declaration may give a default that a later definition leaves out.
+    bool pad_func_defaults(const std::string& name, std::vector<Node>* args) {
+        size_t nparams = 0;
+        bool seen = false;
+        for (const FuncDecl& f : funcs)
+            if (f.name == name) {
+                nparams = f.params.size();
+                seen = true;
+                break;
+            }
+        if (!seen || args->size() >= nparams) return true;
+        std::vector<Node> merged;
+        for (const FuncDecl& f : funcs) {
+            if (f.name != name) continue;
+            for (size_t i = 0; i < f.defaults.size(); ++i) {
+                if (!has_default(f.defaults, i)) continue;
+                if (merged.size() <= i) merged.resize(i + 1);
+                if (!has_default(merged, i)) merged[i] = f.defaults[i];
+            }
+        }
+        return pad_defaults(merged, nparams, args);
+    }
+    // Appends the default of every parameter a call left out. Returns false (with an error) if one has none.
+    bool pad_defaults(const std::vector<Node>& defaults, size_t nparams, std::vector<Node>* args) {
+        while (args->size() < nparams) {
+            if (!has_default(defaults, args->size())) {
+                error = "too few arguments";
+                return false;
+            }
+            args->push_back(defaults[args->size()]);
+        }
+        return true;
+    }
 
     bool add_dim(Type* type, int length) {
         if (type->array_len < 0) type->array_len = length;
@@ -2375,6 +2713,14 @@ struct Parser {
                 pt.array_len = -1;
                 ++pt.pointers;
             }
+            const size_t param_index = out->params.size();
+            if (accept(TAssign)) {
+                // A default argument: read where it is declared, so its names mean what they mean here.
+                Node def_expr;
+                if (!parse_expr(1, &def_expr)) return false;
+                out->param_defaults.resize(param_index + 1);
+                out->param_defaults[param_index] = std::move(def_expr);
+            }
             out->params.push_back(pt);
             out->param_names.push_back(pname);
         } while (accept(TComma));
@@ -2450,6 +2796,19 @@ struct Parser {
         return false;
     }
 
+    // C::name where C is a class and name is not a type of it (a static member or constant): an expression,
+    // so a '(' in front of it does not start a cast.
+    bool qualified_value_at(size_t i) const {
+        if (i + 2 >= tokens.size() || tokens[i].kind != TIdent || tokens[i + 1].kind != TColonColon ||
+            tokens[i + 2].kind != TIdent)
+            return false;
+        const int id = find_struct(tokens[i].text);
+        if (id < 0) return false;
+        const std::string& member = tokens[i + 2].text;
+        if (structs[static_cast<size_t>(id)].tdefs.count(member) > 0) return false;
+        return find_struct(member) < 0;
+    }
+
     bool is_decl_start() const {
         if (qualified_expr_ahead()) return false;
         if (is(TInt) || is(TVoid) || is(TChar) || is(TUnsigned) || is(TSigned) || is(TLong) || is(TShort) ||
@@ -2514,16 +2873,93 @@ struct Parser {
         auto it = def.statics.find(name);
         if (it == def.statics.end()) return false;
         if (it->second.has_const) {
-            out->kind = Node::IntLit;
-            out->number = static_cast<uint64_t>(it->second.cval);
-            out->type = Type{};
-            out->type.base = it->second.type.base == 5 || it->second.type.base == 6 ? it->second.type.base : 1;
+            const_node(it->second, out);
             return true;
         }
         out->kind = Node::Name;
         out->text = it->second.symbol;
         return true;
     }
+    // The literal a class constant stands for: integers keep their width and signedness, a float or double
+    // its bits.
+    static void const_node(const StaticMem& sm, Node* out) {
+        out->kind = Node::IntLit;
+        out->number = static_cast<uint64_t>(sm.cval);
+        out->type = Type{};
+        out->type.base = sm.type.base == 5 || sm.type.base == 6 ? sm.type.base : 1;
+        if (out->type.base == 1) {
+            out->type.wide = sm.type.wide;
+            out->type.is_unsigned = sm.type.is_unsigned;
+            out->number = const_norm(out->number, out->type);
+        }
+    }
+    // True while the operand of & is read: a name there stays a name so its address can be taken.
+    bool no_const_subst = false;
+    // A global declared const (or constexpr) with a constant initial value, as a literal node.
+    bool global_const_node(const std::string& name, Node* out) const {
+        for (const Global& g : globals) {
+            if (g.name != name) continue;
+            const Type& t = g.type;
+            if (!t.is_const || g.bss || g.vtable || t.pointers != 0 || t.array_len >= 0 || t.is_ref) return false;
+            if (t.base != 1 && t.base != 2 && t.base != 4 && t.base != 5 && t.base != 6) return false;
+            const int width = size_of(t);
+            if (width < 1 || width > 8 || g.init_bytes.size() < static_cast<size_t>(width)) return false;
+            uint64_t v = 0;
+            for (int i = width; i-- > 0;) v = (v << 8) | g.init_bytes[static_cast<size_t>(i)];
+            *out = Node{};
+            out->kind = Node::IntLit;
+            if (t.base == 5 || t.base == 6) {
+                out->type.base = t.base;
+                out->number = v;
+                return true;
+            }
+            out->type.base = 1;
+            out->type.wide = t.wide;
+            if (t.is_bool) {
+                out->number = v != 0 ? 1 : 0;
+                return true;
+            }
+            if (t.base == 2) v = t.is_unsigned ? (v & 0xFFu) : static_cast<uint64_t>(static_cast<int64_t>(static_cast<int8_t>(v)));
+            else if (t.base == 4) v = t.is_unsigned ? (v & 0xFFFFu) : static_cast<uint64_t>(static_cast<int64_t>(static_cast<int16_t>(v)));
+            else {
+                out->type.is_unsigned = t.is_unsigned;
+                v = const_norm(v, out->type);
+            }
+            out->number = v;
+            return true;
+        }
+        return false;
+    }
+    // A call of a static member function without parameters whose body is just `return <constant>;` is that
+    // constant ([expr.const]: a constexpr function called with constant arguments), so
+    // std::numeric_limits<float>::infinity() can start a constant initializer.
+    bool try_const_call(const Method& m, Node* out) {
+        if (!m.params.empty() || !m.has_body || m.tok_body == 0 || m.tok_body + 3 >= tokens.size()) return false;
+        if (tokens[m.tok_body].kind != TLBrace || tokens[m.tok_body + 1].kind != TReturn) return false;
+        const size_t saved_at = at;
+        const std::string saved_error = error;
+        at = m.tok_body + 2;
+        Node value;
+        bool ok = parse_expr(0, &value) && is(TSemi) && at + 1 < tokens.size() && tokens[at + 1].kind == TRBrace;
+        at = saved_at;
+        error = saved_error;
+        if (!ok || value.kind != Node::IntLit) return false;
+        uint64_t bits = 0;
+        if (!const_convert(value, m.ret, &bits)) return false;
+        *out = Node{};
+        out->kind = Node::IntLit;
+        out->type.base = m.ret.base >= 5 ? m.ret.base : 1;
+        out->number = bits;
+        if (out->type.base == 1) {
+            out->type.wide = m.ret.wide;
+            out->type.is_unsigned = m.ret.is_unsigned;
+            out->number = const_norm(bits, out->type);
+        }
+        return true;
+    }
+    // The StructDef being read by parse_struct_body: a constant declared earlier in the class body can be
+    // used by the initializers that follow it.
+    StructDef* building = nullptr;
     // At a name, an optional template argument list and '::' name, where what follows is not a
     // declarator: an expression such as Box<int>::count = 1; or P::n + 2; ([class.static.data]).
     bool qualified_expr_ahead() const {
@@ -2549,6 +2985,17 @@ struct Parser {
     bool parse_stmt(Node* out, std::vector<Local>* locals);
     bool parse_stmt_core(Node* out, std::vector<Local>* locals);
     bool parse_stmt_inner(Node* out, std::vector<Local>* locals, int stmt_line);
+    bool parse_local_decl_one(const Type& type, bool is_typedef, bool is_static, bool is_const, Node* out,
+                              std::vector<Local>* locals, int stmt_line, bool* more);
+    // The end of a declarator: ',' means another follows, otherwise ';'.
+    bool end_decl(bool* more) {
+        if (accept(TComma)) {
+            *more = true;
+            return true;
+        }
+        *more = false;
+        return expect(TSemi, "';'");
+    }
     bool parse_block(Node* out, std::vector<Local>* locals);
 
     // ISO/IEC 14882 [expr]: the binary operators from the loosest to the tightest.
@@ -2630,6 +3077,11 @@ struct Parser {
         const StructDef& def = structs[static_cast<size_t>(sid)];
         for (size_t i = def.methods.size(); i-- > 0;)
             if (def.methods[i].name == name && def.methods[i].params.size() == nargs) return &def.methods[i];
+        // A function whose last parameters have defaults takes fewer arguments than it has parameters.
+        for (size_t i = def.methods.size(); i-- > 0;) {
+            const Method& m = def.methods[i];
+            if (m.name == name && nargs < m.params.size() && nargs >= required_args(m.defaults, m.params.size())) return &m;
+        }
         return nullptr;
     }
 
@@ -2839,6 +3291,12 @@ struct Parser {
     bool parse_struct_body(bool as_union, std::string name, int* out_id, bool is_class = false, int base_id = -1) {
         if (name.empty()) name = "__anon" + std::to_string(structs.size());
         StructDef def;
+        struct BuildGuard {
+            StructDef** slot;
+            StructDef* old;
+            ~BuildGuard() { *slot = old; }
+        } build_guard{&building, building};
+        building = &def;
         def.name = name;
         if (!pending_sym.empty()) {
             def.tmpl = inst_base_name;
@@ -2966,6 +3424,7 @@ struct Parser {
                 }
                 m.params = decl.params;
                 m.param_names = decl.param_names;
+                m.defaults = decl.param_defaults;
                 m.is_virtual = is_virtual && is_dtor;
                 if (is_virtual && !is_dtor) {
                     error = "a constructor cannot be virtual";
@@ -3009,6 +3468,7 @@ struct Parser {
                 m.ret = decl.type;
                 m.params = decl.params;
                 m.param_names = decl.param_names;
+                m.defaults = decl.param_defaults;
                 m.is_virtual = is_virtual;
                 m.is_static = static_member;
                 m.access = access;
@@ -3344,6 +3804,7 @@ struct Parser {
         unbind_params(alias_bound);
         at = resume;
         if (!ok) return false;
+        structs[static_cast<size_t>(sid)].methods[mi].tok_body = m.body_at;
         structs[static_cast<size_t>(sid)].methods[mi].body_at = 0;
         funcs.push_back(std::move(fn));
         if (m.name == "<dtor>" && m.is_virtual) return define_scalar_dtor(sid, m);
@@ -4706,6 +5167,7 @@ struct Parser {
         if (ok) {
             m.params = decl.params;
             m.param_names = decl.param_names;
+            m.defaults = decl.param_defaults;
             if (is(TColon)) {
                 m.body_at = at;
                 m.has_body = true;
@@ -4812,6 +5274,7 @@ struct Parser {
             m.ret = decl.type;
             m.params = decl.params;
             m.param_names = decl.param_names;
+            m.defaults = decl.param_defaults;
             m.is_static = mt.is_static;
             if (accept(TConst)) m.is_const = true;
             if (!is(TLBrace)) {
@@ -5800,6 +6263,7 @@ struct Parser {
             fn.ret = decl.type;
             fn.params = decl.params;
             fn.param_names = decl.param_names;
+            fn.defaults = decl.param_defaults;
             fn.vararg = decl.vararg;
             fn.imported = imported;
             fn.exported = exported;
@@ -5890,7 +6354,8 @@ bool Parser::flatten_init(const Type& type, const Node& node, std::vector<uint8_
     }
     const int width = std::max(1, size_of(type));
     ensure(at + width);
-    const uint64_t value = type.is_bool && type.pointers == 0 ? (node.number != 0 ? 1u : 0u) : node.number;
+    uint64_t value = type.is_bool && type.pointers == 0 ? (node.number != 0 ? 1u : 0u) : node.number;
+    if (!(type.is_bool && type.pointers == 0)) const_convert(node, type, &value);
     for (int i = 0; i < width && i < 8; ++i)
         (*bytes)[static_cast<size_t>(at + i)] = static_cast<uint8_t>(value >> (8 * i));
     return true;
@@ -6035,6 +6500,12 @@ bool Parser::parse_stmt_core(Node* out, std::vector<Local>* locals) {
 bool Parser::parse_stmt_inner(Node* out, std::vector<Local>* locals, int stmt_line) {
     cur_locals = locals;
     if (is(TLBrace)) return parse_block(out, locals);
+    if (is(TSemi)) {
+        // An empty statement ([stmt.expr]).
+        next();
+        out->kind = Node::Block;
+        return true;
+    }
     if (is(TIdent) && cur().text == "try" && at + 1 < tokens.size() && tokens[at + 1].kind == TLBrace)
         return parse_try(out, locals, stmt_line);
     if (is(TIdent) && cur().text == "throw") return parse_throw(out, locals);
@@ -6103,10 +6574,20 @@ bool Parser::parse_stmt_inner(Node* out, std::vector<Local>* locals, int stmt_li
         Node init;
         init.kind = Node::Block;
         init.text = "skip";
-        if (!is(TSemi)) {
-            if (!parse_expr(0, &init)) return false;
+        // for (int i = 0; ...): the declaration lives in a scope around the whole loop ([stmt.for]).
+        Node decl_init;
+        bool decl_scope = false;
+        if (is_decl_start() && !is(TStatic)) {
+            decl_scope = true;
+            push_scope();
+            dscopes.emplace_back();
+            if (!parse_stmt(&decl_init, locals)) return false;
+        } else {
+            if (!is(TSemi)) {
+                if (!parse_expr(0, &init)) return false;
+            }
+            if (!expect(TSemi, "';'")) return false;
         }
-        if (!expect(TSemi, "';'")) return false;
         Node cond;
         cond.kind = Node::Block;
         cond.text = "skip";
@@ -6132,6 +6613,19 @@ bool Parser::parse_stmt_inner(Node* out, std::vector<Local>* locals, int stmt_li
         out->kids.push_back(std::move(cond));
         out->kids.push_back(std::move(step));
         out->kids.push_back(std::move(body));
+        if (decl_scope) {
+            Node loop = std::move(*out);
+            *out = Node{};
+            out->kind = Node::Block;
+            out->text = "scope";
+            out->kids.push_back(std::move(decl_init));
+            out->kids.push_back(std::move(loop));
+            std::vector<Node> dt;
+            if (!dtor_nodes(dscopes.size() - 1, &dt)) return false;
+            for (Node& n : dt) out->kids.push_back(std::move(n));
+            dscopes.pop_back();
+            pop_scope();
+        }
         return true;
     }
     if (is(TDo)) {
@@ -6222,8 +6716,53 @@ bool Parser::parse_stmt_inner(Node* out, std::vector<Local>* locals, int stmt_li
         ret.kind = Node::Return;
         Node value;
         bool has_value = false;
-        if (!accept(TSemi)) {
-            if (!parse_expr(0, &value)) return false;
+        bool braced_ret = false;
+        if (is(TLBrace) && !cur_ret_ref && cur_ret.base == 3 && cur_ret.pointers == 0 && !cur_ret.is_ref &&
+            cur_ret.struct_id >= 0) {
+            // return {a, b}; ([stmt.return], [dcl.init.list]): the object is made in a hidden local, by a
+            // constructor taking the list, or member by member for an aggregate, and that local is returned.
+            Local hidden;
+            hidden.name = "__br" + std::to_string(rv_count++);
+            hidden.type = cur_ret;
+            place_local(locals, hidden);
+            if (obj_needs_ctor(cur_ret)) {
+                if (obj_needs_dtor(cur_ret)) {
+                    error = "a braced return of a class with a destructor is not supported";
+                    return false;
+                }
+                next();
+                std::vector<Node> cargs;
+                if (!is(TRBrace)) {
+                    do {
+                        Node a;
+                        if (!parse_expr(1, &a)) return false;
+                        cargs.push_back(std::move(a));
+                    } while (accept(TComma));
+                }
+                if (!expect(TRBrace, "'}'")) return false;
+                Node call;
+                if (!special_call(cur_ret.struct_id, "<ctor>", node_addr(node_name(hidden.name)), std::move(cargs), &call))
+                    return false;
+                stmt_pre.push_back(std::move(call));
+            } else {
+                Node init;
+                if (!parse_init(&init)) return false;
+                Node assign;
+                assign.kind = Node::Assign;
+                assign.op = TAssign;
+                assign.number = 1;
+                assign.kids.push_back(node_name(hidden.name));
+                assign.kids.push_back(std::move(init));
+                Node stmt;
+                stmt.kind = Node::ExprStmt;
+                stmt.kids.push_back(std::move(assign));
+                stmt_pre.push_back(std::move(stmt));
+            }
+            value = node_name(hidden.name);
+            braced_ret = true;
+        }
+        if (braced_ret || !accept(TSemi)) {
+            if (!braced_ret && !parse_expr(0, &value)) return false;
             has_value = true;
             if (!expect(TSemi, "';'")) return false;
             if (cur_ret_ref) value = node_addr(std::move(value));  // a reference result is the address
@@ -6289,223 +6828,24 @@ bool Parser::parse_stmt_inner(Node* out, std::vector<Local>* locals, int stmt_li
             out->kind = Node::Block;
             return true;
         }
-        Declarator decl;
-        std::vector<Node> ctor_args;
-        bool have_ctor_args = false;
-        if (!is_typedef && obj_needs_ctor(type) && is(TIdent) && at + 1 < tokens.size() &&
-            tokens[at + 1].kind == TLParen) {
-            // C x(args); the arguments go to a constructor.
-            decl.name = cur().text;
-            decl.type = type;
-            next();
-            next();
-            if (!parse_call_args(&ctor_args)) return false;
-            have_ctor_args = true;
-        } else if (!parse_declarator(type, &decl)) {
-            return false;
-        }
-        if (is_typedef) {
-            decl.type.is_const = is_const;
-            typedefs[decl.name] = decl.type;
-            return expect(TSemi, "';'");
-        }
-        if (decl.is_function) {
-            error = "a function cannot be nested";
-            return false;
-        }
-        decl.type.is_const = is_const;
-        Local local;
-        local.name = decl.name;
-        local.type = decl.type;
-        local.is_const = is_const;
-        local.is_static = is_static;
-        Node init;
-        bool has_init = false;
-        if (accept(TAssign)) {
-            if (!parse_init(&init)) return false;
-            has_init = true;
-            if (!fix_unsized(&decl.type, init)) return false;
-            local.type = decl.type;
-            if (!is_static && wants_copy(decl.type, init)) {
-                // C x = y; with y an object of the class: the copy constructor.
-                ctor_args.push_back(std::move(init));
-                have_ctor_args = true;
-                has_init = false;
-            }
-        }
-        if (is_static) {
-            Global global;
-            global.name = current_fn + "_" + decl.name + "_" + std::to_string(globals.size());
-            global.type = decl.type;
-            global.is_static = true;
-            global.bss = true;
-            if (has_init) {
-                global.bss = false;
-                if (!flatten_init(decl.type, init, &global.init_bytes, 0)) return false;
-                has_init = false;
-            }
-            local.symbol = global.name;
-            globals.push_back(global);
-        }
-        place_local(locals, local);
-        out->kind = Node::Block;
-        if (decl.type.base == 3 && decl.type.pointers == 0 && !decl.type.is_ref && decl.type.struct_id >= 0 &&
-            structs[static_cast<size_t>(decl.type.struct_id)].poly) {
-            // The table pointer is set where the object is declared (an array or static object gets
-            // it from its constructors).
-            if (!decl.type.is_array() && !is_static) {
-            const StructDef& cls = structs[static_cast<size_t>(decl.type.struct_id)];
-            Node table_name;
-            table_name.kind = Node::Name;
-            table_name.text = cls.vtable_sym;
-            Node table_addr;
-            table_addr.kind = Node::Unary;
-            table_addr.op = TAmp;
-            table_addr.kids.push_back(std::move(table_name));
-            Node as_ptr;
-            as_ptr.kind = Node::Unary;
-            as_ptr.type.base = 0;
-            as_ptr.type.pointers = 2;
-            as_ptr.kids.push_back(std::move(table_addr));
-            Node object;
-            object.kind = Node::Name;
-            object.text = decl.name;
-            Node field;
-            field.kind = Node::Field;
-            field.op = TDot;
-            field.text = "__vptr";
-            field.kids.push_back(std::move(object));
-            Node store;
-            store.kind = Node::Assign;
-            store.op = TAssign;
-            store.kids.push_back(std::move(field));
-            store.kids.push_back(std::move(as_ptr));
-            Node stmt;
-            stmt.kind = Node::ExprStmt;
-            stmt.line = stmt_line;
-            stmt.kids.push_back(std::move(store));
-            out->kids.push_back(std::move(stmt));
-            }
-        }
-        if (obj_needs_ctor(decl.type) || obj_needs_dtor(decl.type)) {
-            const int sid = decl.type.struct_id;
-            if (decl.type.is_array() && !decl.type.more.empty()) {
-                error = "an array of objects needs one dimension";
+        Type declared_type = type;
+        bool more = true;
+        Node combined;
+        combined.kind = Node::Block;
+        size_t count = 0;
+        while (more) {
+            Node one;
+            if (!parse_local_decl_one(declared_type, is_typedef, is_static, is_const, &one, locals, stmt_line, &more))
                 return false;
+            ++count;
+            if (!more && count == 1) {
+                *out = std::move(one);
+                return true;
             }
-            if (is_static) {
-                // A static local object: built the first time control reaches the declaration (a
-                // guard flag in a hidden global), destroyed by the program end function.
-                if (has_init || have_ctor_args || decl.type.is_array()) {
-                    error = "a static local object takes no initializer and is not an array";
-                    return false;
-                }
-                Global guard;
-                guard.name = local.symbol + "_guard";
-                guard.type.base = 1;
-                guard.bss = true;
-                guard.is_static = true;
-                globals.push_back(guard);
-                Node set;
-                set.kind = Node::Assign;
-                set.op = TAssign;
-                set.kids.push_back(node_name(guard.name));
-                Node one;
-                one.kind = Node::IntLit;
-                one.number = 1;
-                one.type.base = 1;
-                set.kids.push_back(std::move(one));
-                Node set_stmt;
-                set_stmt.kind = Node::ExprStmt;
-                set_stmt.kids.push_back(std::move(set));
-                Node then_block;
-                then_block.kind = Node::Block;
-                then_block.kids.push_back(std::move(set_stmt));
-                if (obj_needs_ctor(decl.type)) {
-                    Node call;
-                    if (!special_call(sid, "<ctor>", node_addr(node_name(local.symbol)), {}, &call)) return false;
-                    then_block.kids.push_back(std::move(call));
-                }
-                Node not_g;
-                not_g.kind = Node::Unary;
-                not_g.op = TNot;
-                not_g.kids.push_back(node_name(guard.name));
-                Node test;
-                test.kind = Node::If;
-                test.kids.push_back(std::move(not_g));
-                test.kids.push_back(std::move(then_block));
-                out->kids.push_back(std::move(test));
-                if (obj_needs_dtor(decl.type)) {
-                    GlobalObj g;
-                    g.name = local.symbol;
-                    g.sid = sid;
-                    g.guard = guard.name;
-                    static_objs.push_back(std::move(g));
-                }
-                return expect(TSemi, "';'");
-            }
-            if (decl.type.is_array()) {
-                if (has_init) {
-                    std::vector<Node> calls;
-                    if (!array_init_calls(decl.name, decl.type, init, &calls)) return false;
-                    for (Node& c : calls) out->kids.push_back(std::move(c));
-                    has_init = false;
-                } else if (obj_needs_ctor(decl.type)) {
-                    Node loop;
-                    if (!element_loop(decl.name, decl.type.array_len, false, sid, "<ctor>", &loop)) return false;
-                    out->kids.push_back(std::move(loop));
-                }
-                if (obj_needs_dtor(decl.type)) {
-                    std::vector<Node> rec_nodes;
-                    eh_push_object(&rec_nodes, node_name(decl.name), sid, decl.type.array_len, locals);
-                    for (Node& n : rec_nodes) out->kids.push_back(std::move(n));
-                    DObj obj;
-                    obj.name = decl.name;
-                    obj.sid = sid;
-                    obj.count = decl.type.array_len;
-                    if (dscopes.empty()) dscopes.emplace_back();
-                    dscopes.back().push_back(std::move(obj));
-                }
-                return expect(TSemi, "';'");
-            }
-            if (obj_needs_ctor(decl.type) && !has_init) {
-                Node call;
-                if (!special_call(decl.type.struct_id, "<ctor>", node_addr(node_name(decl.name)),
-                                  std::move(ctor_args), &call))
-                    return false;
-                call.line = stmt_line;
-                out->kids.push_back(std::move(call));
-            } else if (have_ctor_args) {
-                error = "constructor arguments together with an initializer";
-                return false;
-            }
-            if (obj_needs_dtor(decl.type)) {
-                std::vector<Node> rec_nodes;
-                eh_push_object(&rec_nodes, node_addr(node_name(decl.name)), decl.type.struct_id, 0, locals);
-                for (Node& n : rec_nodes) out->kids.push_back(std::move(n));
-                DObj obj;
-                obj.name = decl.name;
-                obj.sid = decl.type.struct_id;
-                if (dscopes.empty()) dscopes.emplace_back();
-                dscopes.back().push_back(std::move(obj));
-            }
+            combined.kids.push_back(std::move(one));
         }
-        if (has_init) {
-            Node assign;
-            assign.kind = Node::Assign;
-            assign.number = 1;
-            Node name;
-            name.kind = Node::Name;
-            name.text = decl.name;
-            assign.kids.push_back(std::move(name));
-            assign.kids.push_back(std::move(init));
-            Node stmt;
-            stmt.kind = Node::ExprStmt;
-            stmt.line = stmt_line;
-            stmt.kids.push_back(std::move(assign));
-            out->kids.push_back(std::move(stmt));
-        }
-        return expect(TSemi, "';'");
+        *out = std::move(combined);
+        return true;
     }
     out->kind = Node::ExprStmt;
     Node expr;
@@ -6513,6 +6853,230 @@ bool Parser::parse_stmt_inner(Node* out, std::vector<Local>* locals, int stmt_li
     out->kids.push_back(std::move(expr));
     return expect(TSemi, "';'");
 }
+
+// One declarator of a local declaration `T a = 1, *b;` ([dcl.dcl]): type is the part before the first
+// declarator. *more tells whether a ',' followed, so another declarator of the same type comes next.
+bool Parser::parse_local_decl_one(const Type& type, bool is_typedef, bool is_static, bool is_const, Node* out,
+                                  std::vector<Local>* locals, int stmt_line, bool* more) {
+    Declarator decl;
+    std::vector<Node> ctor_args;
+    bool have_ctor_args = false;
+    if (!is_typedef && obj_needs_ctor(type) && is(TIdent) && at + 1 < tokens.size() &&
+        tokens[at + 1].kind == TLParen) {
+        // C x(args); the arguments go to a constructor.
+        decl.name = cur().text;
+        decl.type = type;
+        next();
+        next();
+        if (!parse_call_args(&ctor_args)) return false;
+        have_ctor_args = true;
+    } else if (!parse_declarator(type, &decl)) {
+        return false;
+    }
+    if (is_typedef) {
+        decl.type.is_const = is_const;
+        typedefs[decl.name] = decl.type;
+        return end_decl(more);
+    }
+    if (decl.is_function) {
+        error = "a function cannot be nested";
+        return false;
+    }
+    decl.type.is_const = is_const;
+    Local local;
+    local.name = decl.name;
+    local.type = decl.type;
+    local.is_const = is_const;
+    local.is_static = is_static;
+    Node init;
+    bool has_init = false;
+    if (accept(TAssign)) {
+        if (!parse_init(&init)) return false;
+        has_init = true;
+        if (!fix_unsized(&decl.type, init)) return false;
+        local.type = decl.type;
+        if (!is_static && wants_copy(decl.type, init)) {
+            // C x = y; with y an object of the class: the copy constructor.
+            ctor_args.push_back(std::move(init));
+            have_ctor_args = true;
+            has_init = false;
+        }
+    }
+    if (is_static) {
+        Global global;
+        global.name = current_fn + "_" + decl.name + "_" + std::to_string(globals.size());
+        global.type = decl.type;
+        global.is_static = true;
+        global.bss = true;
+        if (has_init) {
+            global.bss = false;
+            if (!flatten_init(decl.type, init, &global.init_bytes, 0)) return false;
+            has_init = false;
+        }
+        local.symbol = global.name;
+        globals.push_back(global);
+    }
+    place_local(locals, local);
+    out->kind = Node::Block;
+    if (decl.type.base == 3 && decl.type.pointers == 0 && !decl.type.is_ref && decl.type.struct_id >= 0 &&
+        structs[static_cast<size_t>(decl.type.struct_id)].poly) {
+        // The table pointer is set where the object is declared (an array or static object gets
+        // it from its constructors).
+        if (!decl.type.is_array() && !is_static) {
+        const StructDef& cls = structs[static_cast<size_t>(decl.type.struct_id)];
+        Node table_name;
+        table_name.kind = Node::Name;
+        table_name.text = cls.vtable_sym;
+        Node table_addr;
+        table_addr.kind = Node::Unary;
+        table_addr.op = TAmp;
+        table_addr.kids.push_back(std::move(table_name));
+        Node as_ptr;
+        as_ptr.kind = Node::Unary;
+        as_ptr.type.base = 0;
+        as_ptr.type.pointers = 2;
+        as_ptr.kids.push_back(std::move(table_addr));
+        Node object;
+        object.kind = Node::Name;
+        object.text = decl.name;
+        Node field;
+        field.kind = Node::Field;
+        field.op = TDot;
+        field.text = "__vptr";
+        field.kids.push_back(std::move(object));
+        Node store;
+        store.kind = Node::Assign;
+        store.op = TAssign;
+        store.kids.push_back(std::move(field));
+        store.kids.push_back(std::move(as_ptr));
+        Node stmt;
+        stmt.kind = Node::ExprStmt;
+        stmt.line = stmt_line;
+        stmt.kids.push_back(std::move(store));
+        out->kids.push_back(std::move(stmt));
+        }
+    }
+    if (obj_needs_ctor(decl.type) || obj_needs_dtor(decl.type)) {
+        const int sid = decl.type.struct_id;
+        if (decl.type.is_array() && !decl.type.more.empty()) {
+            error = "an array of objects needs one dimension";
+            return false;
+        }
+        if (is_static) {
+            // A static local object: built the first time control reaches the declaration (a
+            // guard flag in a hidden global), destroyed by the program end function.
+            if (has_init || have_ctor_args || decl.type.is_array()) {
+                error = "a static local object takes no initializer and is not an array";
+                return false;
+            }
+            Global guard;
+            guard.name = local.symbol + "_guard";
+            guard.type.base = 1;
+            guard.bss = true;
+            guard.is_static = true;
+            globals.push_back(guard);
+            Node set;
+            set.kind = Node::Assign;
+            set.op = TAssign;
+            set.kids.push_back(node_name(guard.name));
+            Node one;
+            one.kind = Node::IntLit;
+            one.number = 1;
+            one.type.base = 1;
+            set.kids.push_back(std::move(one));
+            Node set_stmt;
+            set_stmt.kind = Node::ExprStmt;
+            set_stmt.kids.push_back(std::move(set));
+            Node then_block;
+            then_block.kind = Node::Block;
+            then_block.kids.push_back(std::move(set_stmt));
+            if (obj_needs_ctor(decl.type)) {
+                Node call;
+                if (!special_call(sid, "<ctor>", node_addr(node_name(local.symbol)), {}, &call)) return false;
+                then_block.kids.push_back(std::move(call));
+            }
+            Node not_g;
+            not_g.kind = Node::Unary;
+            not_g.op = TNot;
+            not_g.kids.push_back(node_name(guard.name));
+            Node test;
+            test.kind = Node::If;
+            test.kids.push_back(std::move(not_g));
+            test.kids.push_back(std::move(then_block));
+            out->kids.push_back(std::move(test));
+            if (obj_needs_dtor(decl.type)) {
+                GlobalObj g;
+                g.name = local.symbol;
+                g.sid = sid;
+                g.guard = guard.name;
+                static_objs.push_back(std::move(g));
+            }
+            return end_decl(more);
+        }
+        if (decl.type.is_array()) {
+            if (has_init) {
+                std::vector<Node> calls;
+                if (!array_init_calls(decl.name, decl.type, init, &calls)) return false;
+                for (Node& c : calls) out->kids.push_back(std::move(c));
+                has_init = false;
+            } else if (obj_needs_ctor(decl.type)) {
+                Node loop;
+                if (!element_loop(decl.name, decl.type.array_len, false, sid, "<ctor>", &loop)) return false;
+                out->kids.push_back(std::move(loop));
+            }
+            if (obj_needs_dtor(decl.type)) {
+                std::vector<Node> rec_nodes;
+                eh_push_object(&rec_nodes, node_name(decl.name), sid, decl.type.array_len, locals);
+                for (Node& n : rec_nodes) out->kids.push_back(std::move(n));
+                DObj obj;
+                obj.name = decl.name;
+                obj.sid = sid;
+                obj.count = decl.type.array_len;
+                if (dscopes.empty()) dscopes.emplace_back();
+                dscopes.back().push_back(std::move(obj));
+            }
+            return end_decl(more);
+        }
+        if (obj_needs_ctor(decl.type) && !has_init) {
+            Node call;
+            if (!special_call(decl.type.struct_id, "<ctor>", node_addr(node_name(decl.name)),
+                              std::move(ctor_args), &call))
+                return false;
+            call.line = stmt_line;
+            out->kids.push_back(std::move(call));
+        } else if (have_ctor_args) {
+            error = "constructor arguments together with an initializer";
+            return false;
+        }
+        if (obj_needs_dtor(decl.type)) {
+            std::vector<Node> rec_nodes;
+            eh_push_object(&rec_nodes, node_addr(node_name(decl.name)), decl.type.struct_id, 0, locals);
+            for (Node& n : rec_nodes) out->kids.push_back(std::move(n));
+            DObj obj;
+            obj.name = decl.name;
+            obj.sid = decl.type.struct_id;
+            if (dscopes.empty()) dscopes.emplace_back();
+            dscopes.back().push_back(std::move(obj));
+        }
+    }
+    if (has_init) {
+        Node assign;
+        assign.kind = Node::Assign;
+        assign.number = 1;
+        Node name;
+        name.kind = Node::Name;
+        name.text = decl.name;
+        assign.kids.push_back(std::move(name));
+        assign.kids.push_back(std::move(init));
+        Node stmt;
+        stmt.kind = Node::ExprStmt;
+        stmt.line = stmt_line;
+        stmt.kids.push_back(std::move(assign));
+        out->kids.push_back(std::move(stmt));
+    }
+    return end_decl(more);
+}
+
 
 
 bool Parser::local_visible(const std::string& name) const {
@@ -6602,6 +7166,47 @@ bool Parser::static_type(const Node& node, Type* out) const {
         }
         Type left;
         if (!static_type(node.kids[0], &left)) return false;
+        Type right;
+        const bool have_right = static_type(node.kids[1], &right);
+        left.is_ref = false;
+        const bool left_ptr = left.pointers > 0 || left.is_array();
+        const bool right_ptr = have_right && (right.pointers > 0 || right.is_array());
+        if (left_ptr && right_ptr && node.op == TMinus) {
+            *out = Type{};
+            out->base = 1;
+            out->wide = true;
+            return true;
+        }
+        const auto arith = [](const Type& t) { return t.pointers == 0 && !t.is_array() && t.base != 3 && t.base != 0; };
+        if (!left_ptr && have_right && !right_ptr && arith(left) && arith(right)) {
+            right.is_ref = false;
+            if (left.base == 6 || right.base == 6) {
+                *out = Type{};
+                out->base = 6;
+                return true;
+            }
+            if (left.base == 5 || right.base == 5) {
+                *out = Type{};
+                out->base = 5;
+                return true;
+            }
+            Type pl = left;
+            pl.base = 1;
+            pl.is_bool = false;
+            if (left.base == 1) pl.is_unsigned = left.is_unsigned;
+            else pl.is_unsigned = false;
+            Type pr = right;
+            pr.base = 1;
+            pr.is_bool = false;
+            if (right.base != 1) pr.is_unsigned = false;
+            if (node.op == TShl || node.op == TShr) {
+                *out = pl;
+                out->bits = -1;
+                return true;
+            }
+            *out = const_common(pl, pr);
+            return true;
+        }
         *out = left;
         return true;
     }
@@ -6855,7 +7460,9 @@ bool Parser::qualified_call(Node* out, int cls, const std::string& name, std::ve
         error = "no member function " + name;
         return false;
     }
+    if (!pad_defaults(m->defaults, m->params.size(), &args)) return false;
     if (!adjust_args(m->params, &args)) return false;
+    if (args.empty() && m->is_static && try_const_call(*m, out)) return true;
     if (cur_class < 0 && !m->is_static) {
         error = "a qualified member call needs this";
         return false;
@@ -6926,6 +7533,7 @@ bool Parser::method_call(Node* out, Node object, bool arrow, const std::string& 
         error = "no member function " + name + " with " + std::to_string(args.size()) + " arguments";
         return false;
     }
+    if (!pad_defaults(m->defaults, m->params.size(), &args)) return false;
     if (!adjust_args(m->params, &args)) return false;
     const bool dynamic = m->is_virtual && (arrow || ot.is_ref || (object.kind == Node::Unary && object.op == TStar));
     Node self;
@@ -7251,6 +7859,7 @@ bool Parser::parse_new(Node* out) {
         error = "no matching constructor in " + structs[static_cast<size_t>(ty.struct_id)].name;
         return false;
     }
+    if (!pad_defaults(m->defaults, m->params.size(), &args)) return false;
     if (!adjust_args(m->params, &args)) return false;
     Node call;
     call.kind = Node::Call;
@@ -7438,7 +8047,7 @@ bool Parser::parse_unary(Node* out) {
             } else if (inner.kind == Node::StringLit) {
                 bytes = static_cast<int>(inner.text.size()) + 1;
             } else if (inner.kind == Node::IntLit) {
-                bytes = 4;
+                bytes = inner.type.base == 6 ? 8 : inner.type.wide ? 8 : 4;
             }
             if (bytes == 0) {
                 // sizeof of any other expression: the size of its type, if the parser can tell it.
@@ -7453,7 +8062,10 @@ bool Parser::parse_unary(Node* out) {
         if (!expect(TRParen, "')'")) return false;
         out->kind = Node::IntLit;
         out->number = static_cast<uint64_t>(bytes);
+        // sizeof gives a size_t: unsigned and 64 bits wide ([expr.sizeof]).
         out->type.base = 1;
+        out->type.wide = true;
+        out->type.is_unsigned = true;
         return true;
     }
     if (is(TIdent) && cur().text == "throw" && eh_) {
@@ -7511,6 +8123,12 @@ bool Parser::parse_unary(Node* out) {
         out->kind = Node::IntLit;
         out->number = cur().number;
         out->type.base = cur().real != 0 ? cur().real : 1;
+        if (cur().real == 0) {
+            out->type.wide = cur().ity >= 2;
+            out->type.is_unsigned = cur().ity == 1 || cur().ity == 3;
+            // A number is kept in the form its type gives: sign-extended int, zero-extended unsigned int.
+            if (cur().ity == 0) out->number = static_cast<uint64_t>(static_cast<int64_t>(static_cast<int32_t>(out->number)));
+        }
         next();
     } else if (is(TString)) {
         out->kind = Node::StringLit;
@@ -7564,6 +8182,24 @@ bool Parser::parse_unary(Node* out) {
                 ns = ns.substr(0, cut);
             }
         }
+        if (name.find("::") == std::string::npos && is(TLParen) && !local_visible(name) && !using_namespaces.empty()) {
+            // A bare call that names no function of its own: look in the namespaces of `using namespace`.
+            bool own = false;
+            for (const FuncDecl& fd : funcs)
+                if (fd.name == name) own = true;
+            if (!own) {
+                for (const std::string& ns : using_namespaces) {
+                    const std::string candidate = ns + "::" + name;
+                    bool known = false;
+                    for (const FuncDecl& fd : funcs)
+                        if (fd.name == candidate) known = true;
+                    if (known) {
+                        name = candidate;
+                        break;
+                    }
+                }
+            }
+        }
         if (name.find("::") != std::string::npos && (is(TLParen) || is(TLt))) {
             // std::min(a, b): a function template of a namespace is registered by its bare name.
             const size_t first = name.find("::");
@@ -7572,6 +8208,13 @@ bool Parser::parse_unary(Node* out) {
             if (namespaces.count(name.substr(0, first)) > 0 && func_templates.count(suffix) > 0) name = suffix;
         }
         const size_t colons = name.find("::");
+        if (building != nullptr && colons == std::string::npos && !is(TLParen) && !local_visible(name)) {
+            const auto found = building->statics.find(name);
+            if (found != building->statics.end() && found->second.has_const) {
+                const_node(found->second, out);
+                return parse_postfix(out);
+            }
+        }
         if (scope_sid < 0 && colons != std::string::npos) scope_sid = scope_class(name.substr(0, colons));
         if (scope_sid >= 0 && colons != std::string::npos) {
             const std::string member = name.substr(colons + 2);
@@ -7606,6 +8249,13 @@ bool Parser::parse_unary(Node* out) {
                     if (m.name == name) is_method = true;
                 int tmpl_owner = -1;
                 if (find_member_tmpl(cur_class, name, &tmpl_owner) != nullptr) is_method = true;
+                bool any_object_fn = false;
+                for (const Method& m : def.methods)
+                    if (m.name == name && !m.is_static) any_object_fn = true;
+                if (is_method && !any_object_fn && find_member_tmpl(cur_class, name, &tmpl_owner) == nullptr) {
+                    // Only static functions have this name: there is no object to call it on.
+                    return qualified_call(out, cur_class, name, {}) && parse_postfix(out);
+                }
                 if (is_method) {
                     next();
                     return method_call(out, std::move(self), true, name) && parse_postfix(out);
@@ -7696,6 +8346,7 @@ bool Parser::parse_unary(Node* out) {
                 } while (accept(TComma));
                 if (!expect(TRParen, "')'")) return false;
             }
+            if (!pad_func_defaults(name, &out->kids)) return false;
             for (const FuncDecl& known : funcs) {
                 if (known.name != name) continue;
                 std::vector<Type> source = known.params;
@@ -7712,17 +8363,20 @@ bool Parser::parse_unary(Node* out) {
             out->kind = Node::IntLit;
             out->number = enum_values[name];
             out->type.base = 1;
+        } else if (!no_const_subst && !local_visible(name) && !is_assign_op(cur().kind) && !is(TPlusPlus) &&
+                   !is(TMinusMinus) && global_const_node(name, out)) {
+            // A const global with a constant initializer is a constant ([expr.const]).
         } else {
             out->kind = Node::Name;
             out->text = name;
         }
     } else if (is(TLParen)) {
         const Tok ahead = at + 1 < tokens.size() ? tokens[at + 1].kind : TEnd;
-        const bool type_ahead = ahead == TInt || ahead == TChar || ahead == TVoid || ahead == TShort || ahead == TUnsigned ||
+        const bool type_ahead = ahead == TInt || ahead == TConst || ahead == TChar || ahead == TVoid || ahead == TShort || ahead == TUnsigned ||
                                 ahead == TSigned || ahead == TLong || ahead == TFloat || ahead == TDouble || ahead == TStruct ||
                                 ahead == TUnion || ahead == TEnum ||
                                 (ahead == TIdent && typedefs.find(tokens[at + 1].text) != typedefs.end()) ||
-                                (ahead == TIdent && class_name_at(at + 1));
+                                (ahead == TIdent && class_name_at(at + 1) && !qualified_value_at(at + 1));
         if (type_ahead) {
             next();
             Type ty;
@@ -7733,19 +8387,56 @@ bool Parser::parse_unary(Node* out) {
             if (!expect(TRParen, "')'")) return false;
             Node inner;
             if (!parse_unary(&inner)) return false;
+            if (inner.kind == Node::IntLit && ty.pointers == 0 && !ty.is_array() && !ty.is_ref && ty.base >= 5 &&
+                ty.base <= 6) {
+                // (float)3 and (double)1.5f are constants: the literal is converted at compile time.
+                uint64_t bits = 0;
+                if (const_convert(inner, ty, &bits)) {
+                    out->kind = Node::IntLit;
+                    out->number = bits;
+                    out->type = Type{};
+                    out->type.base = ty.base;
+                    return parse_postfix(out);
+                }
+            }
+            if (inner.kind == Node::IntLit && inner.type.base >= 5 && ty.pointers == 0 && !ty.is_array() && !ty.is_ref &&
+                (ty.base == 1 || ty.base == 2 || ty.base == 4) && !ty.is_bool) {
+                // (int)2.5f is a constant: truncated toward zero.
+                uint64_t bits = 0;
+                if (const_convert(inner, ty, &bits)) {
+                    Type nt = Type{};
+                    nt.base = 1;
+                    if (ty.base == 1) {
+                        nt.wide = ty.wide;
+                        nt.is_unsigned = ty.is_unsigned;
+                    }
+                    uint64_t v = bits;
+                    if (ty.base == 2) v = ty.is_unsigned ? (v & 0xFFu) : static_cast<uint64_t>(static_cast<int64_t>(static_cast<int8_t>(v)));
+                    else if (ty.base == 4) v = ty.is_unsigned ? (v & 0xFFFFu) : static_cast<uint64_t>(static_cast<int64_t>(static_cast<int16_t>(v)));
+                    else v = const_norm(v, nt);
+                    out->kind = Node::IntLit;
+                    out->number = v;
+                    out->type = nt;
+                    return parse_postfix(out);
+                }
+            }
             if (inner.kind == Node::IntLit && inner.type.base < 5 && ty.pointers == 0 && !ty.is_array() && !ty.is_ref &&
-                (ty.base == 1 || ty.base == 2 || ty.base == 4)) {
+                (ty.base == 1 || ty.base == 2 || ty.base == 4) && ty.bits < 0) {
                 // A cast of a constant to an integer type is a constant ([expr.const]): the value is
                 // cut to the width of the type and, for a signed type, extended again.
                 uint64_t v = inner.number;
                 if (ty.is_bool) v = v != 0 ? 1 : 0;
                 else if (ty.base == 2) v = ty.is_unsigned ? (v & 0xFFu) : static_cast<uint64_t>(static_cast<int64_t>(static_cast<int8_t>(v)));
                 else if (ty.base == 4) v = ty.is_unsigned ? (v & 0xFFFFu) : static_cast<uint64_t>(static_cast<int64_t>(static_cast<int16_t>(v)));
-                else v = ty.is_unsigned ? (v & 0xFFFFFFFFu) : static_cast<uint64_t>(static_cast<int64_t>(static_cast<int32_t>(v)));
+                else if (!ty.wide) v = ty.is_unsigned ? (v & 0xFFFFFFFFu) : static_cast<uint64_t>(static_cast<int64_t>(static_cast<int32_t>(v)));
                 out->kind = Node::IntLit;
                 out->number = v;
                 out->type = Type{};
                 out->type.base = 1;
+                if (ty.base == 1) {
+                    out->type.wide = ty.wide;
+                    out->type.is_unsigned = ty.is_unsigned;
+                }
                 return parse_postfix(out);
             }
             out->kind = Node::Unary;
@@ -7765,16 +8456,41 @@ bool Parser::parse_unary(Node* out) {
         out->op = cur().kind;
         next();
         Node inner;
-        if (!parse_unary(&inner)) return false;
+        const bool saved_subst = no_const_subst;
+        if (out->op == TAmp) no_const_subst = true;
+        const bool inner_ok = parse_unary(&inner);
+        no_const_subst = saved_subst;
+        if (!inner_ok) return false;
         const Tok uop = out->op;
         if ((uop == TMinus || uop == TTilde || uop == TNot) && inner.kind == Node::IntLit && inner.type.base < 5) {
             // A constant operand is folded, so -16, ~0 and !1 can be used where a constant is needed.
             const uint64_t v = inner.number;
             out->kind = Node::IntLit;
             out->op = TEnd;
-            out->number = uop == TMinus ? 0 - v : uop == TTilde ? ~v : (v == 0 ? 1 : 0);
             out->type = Type{};
             out->type.base = 1;
+            if (uop == TNot) out->number = v == 0 ? 1 : 0;
+            else {
+                out->type.wide = inner.type.wide;
+                out->type.is_unsigned = inner.type.is_unsigned;
+                out->number = const_norm(uop == TMinus ? 0 - v : ~v, out->type);
+            }
+            return parse_postfix(out);
+        }
+        if ((uop == TMinus || uop == TNot) && inner.kind == Node::IntLit && inner.type.base >= 5) {
+            // -1.5f and !0.0 are constants too: the sign bit flips, or the value is compared with zero.
+            const int fbase = inner.type.base;
+            const uint64_t v = inner.number;
+            out->kind = Node::IntLit;
+            out->op = TEnd;
+            out->type = Type{};
+            if (uop == TMinus) {
+                out->type.base = fbase;
+                out->number = fbase == 5 ? ((v ^ 0x80000000ull) & 0xFFFFFFFFull) : (v ^ 0x8000000000000000ull);
+            } else {
+                out->type.base = 1;
+                out->number = lit_double(inner) == 0 ? 1 : 0;
+            }
             return parse_postfix(out);
         }
         out->kids.push_back(std::move(inner));
@@ -7907,41 +8623,17 @@ bool Parser::parse_expr(int min_prec, Node* out) {
         bin.kids.push_back(std::move(*out));
         bin.kids.push_back(std::move(right));
         if (bin.kind == Node::Binary && bin.kids[0].kind == Node::IntLit && bin.kids[1].kind == Node::IntLit &&
+            (bin.kids[0].type.base >= 5 || bin.kids[1].type.base >= 5)) {
+            Node folded_node;
+            if (fold_fp_binary(op, bin.kids[0], bin.kids[1], &folded_node)) bin = std::move(folded_node);
+        } else if (bin.kind == Node::Binary && bin.kids[0].kind == Node::IntLit && bin.kids[1].kind == Node::IntLit &&
             bin.kids[0].type.base < 5 && bin.kids[1].type.base < 5) {
-            const uint64_t left = bin.kids[0].number;
-            const uint64_t right_n = bin.kids[1].number;
-            bool folded = true;
-            uint64_t result = 0;
-            if (op == TPlus) result = left + right_n;
-            else if (op == TMinus) result = left - right_n;
-            else if (op == TStar) result = left * right_n;
-            else if (op == TSlash || op == TPercent) {
-                if (right_n == 0) {
-                    error = "division by zero";
-                    return false;
-                }
-                result = op == TSlash ? left / right_n : left % right_n;
-            } else if (op == TAmp) result = left & right_n;
-            else if (op == TPipe) result = left | right_n;
-            else if (op == TCaret) result = left ^ right_n;
-            else if (op == TShl || op == TShr) {
-                // A shift count is taken as an int; the left operand is an int, so a negative
-                // value (all high bits set) shifts right with its sign ([expr.shift]).
-                if (right_n >= 64) {
-                    error = "shift count is too large";
-                    return false;
-                }
-                if (op == TShl) result = left << right_n;
-                else if ((left >> 32) == 0xFFFFFFFFull) result = static_cast<uint64_t>(static_cast<int64_t>(left) >> right_n);
-                else result = left >> right_n;
-            } else {
-                folded = false;
-            }
-            if (folded) {
-                bin = Node{};
-                bin.kind = Node::IntLit;
-                bin.number = result;
-                bin.type.base = 1;
+            Node folded_node;
+            std::string fold_error;
+            if (fold_int_binary(op, bin.kids[0], bin.kids[1], &folded_node, &fold_error)) bin = std::move(folded_node);
+            else if (!fold_error.empty()) {
+                error = fold_error;
+                return false;
             }
         }
         *out = std::move(bin);
@@ -8054,7 +8746,7 @@ struct Gen {
         }
         const int off = temp_base - temp_depth * 8;
         ++temp_depth;
-        if (last_type.pointers == 0 && (last_type.base == 5 || last_type.base == 6)) {
+        if (is_fp_t(last_type)) {
             b(last_type.base == 6 ? 0xF2 : 0xF3);
             b(0x0F);
             b(0x11);
@@ -8063,6 +8755,15 @@ struct Gen {
             return off;
         }
         store_slot(off, true);
+        return off;
+    }
+    // Spills the address in rax (the last value was an lvalue of any type, possibly a float).
+    int spill_addr() {
+        const Type keep = last_type;
+        last_type = Type{};
+        last_type.pointers = 1;
+        const int off = spill();
+        last_type = keep;
         return off;
     }
     void reload_r10(int off) {
@@ -8170,25 +8871,141 @@ struct Gen {
         const int32_t rel = static_cast<int32_t>(target - (at + 4));
         for (int i = 0; i < 4; ++i) text[at + i] = static_cast<uint8_t>(static_cast<uint32_t>(rel) >> (8 * i));
     }
-    // eax = r10d op eax for & | ^ << >>. The left operand is in r10d and the right in eax, as for the
-    // other integer operators. A shift count goes through cl, so rcx is saved around it (a local may
-    // live there). A right shift of an unsigned left operand is logical, otherwise arithmetic.
-    void emit_bit_op(Tok op, bool left_unsigned) {
-        if (op == TAmp || op == TAndEq || op == TPipe || op == TOrEq || op == TCaret || op == TXorEq) {
-            b(0x44);
-            b(op == TAmp || op == TAndEq ? 0x21 : op == TPipe || op == TOrEq ? 0x09 : 0x31);
-            b(0xD0);
-            return;
+    // The operator an assignment form stands for (+= is +).
+    static Tok plain_op(Tok op) {
+        switch (op) {
+        case TPlusEq: return TPlus;
+        case TMinusEq: return TMinus;
+        case TStarEq: return TStar;
+        case TSlashEq: return TSlash;
+        case TPercentEq: return TPercent;
+        case TAndEq: return TAmp;
+        case TOrEq: return TPipe;
+        case TXorEq: return TCaret;
+        case TShlEq: return TShl;
+        case TShrEq: return TShr;
+        default: return op;
         }
-        spill_reg(1);
-        b(0x89);  // mov ecx, eax
-        b(0xC1);
-        b(0x44);  // mov eax, r10d
-        b(0x89);
-        b(0xD0);
-        b(0xD3);  // shl / shr / sar eax, cl
-        b(op == TShl || op == TShlEq ? 0xE0 : left_unsigned ? 0xE8 : 0xF8);
-        reload_reg(1);
+    }
+    // rax = r10 op rax for + - * / % & | ^ << >>, 64 bits wide when W, else 32. The left operand is in r10
+    // and the right in rax, as for every integer operator. `uns` picks unsigned division and remainder, and
+    // for >> a logical (rather than arithmetic) shift. A shift count goes through cl, so rcx is saved around
+    // it (a local may live there); the count is the low bits of the right operand.
+    void emit_int_op(Tok raw, bool W, bool uns) {
+        const Tok op = plain_op(raw);
+        const uint8_t rex_reg = W ? 0x4C : 0x44;  // REX.R (+W): r10 in the reg field
+        const uint8_t rex_rm = W ? 0x49 : 0x41;   // REX.B (+W): r10 in the r/m field
+        if (op == TPlus) {
+            b(rex_reg);
+            b(0x01);
+            b(0xD0);
+        } else if (op == TMinus) {
+            b(rex_rm);
+            b(0x29);
+            b(0xC2);
+            b(rex_reg);
+            b(0x89);
+            b(0xD0);
+        } else if (op == TStar) {
+            b(rex_rm);
+            b(0x0F);
+            b(0xAF);
+            b(0xC2);
+        } else if (op == TSlash || op == TPercent) {
+            spill_reg(2);
+            b(rex_rm);  // xchg rax, r10: rax = the left operand, r10 = the divisor
+            b(0x92);
+            if (uns) {
+                b(0x31);  // xor edx, edx
+                b(0xD2);
+            } else {
+                if (W) b(0x48);
+                b(0x99);  // cdq / cqo
+            }
+            b(rex_rm);
+            b(0xF7);
+            b(uns ? 0xF2 : 0xFA);  // div / idiv r10
+            if (op == TPercent) {
+                if (W) b(0x48);
+                b(0x89);  // mov rax, rdx
+                b(0xD0);
+            }
+            reload_reg(2);
+        } else if (op == TAmp || op == TPipe || op == TCaret) {
+            b(rex_reg);
+            b(op == TAmp ? 0x21 : op == TPipe ? 0x09 : 0x31);
+            b(0xD0);
+        } else {  // TShl, TShr
+            spill_reg(1);
+            b(0x89);  // mov ecx, eax
+            b(0xC1);
+            b(rex_reg);  // mov rax, r10
+            b(0x89);
+            b(0xD0);
+            if (W) b(0x48);
+            b(0xD3);  // shl / shr / sar rax, cl
+            b(op == TShl ? 0xE0 : uns ? 0xE8 : 0xF8);
+            reload_reg(1);
+        }
+    }
+    // The floating-point binary operators. The left operand was spilled at `off` with type lt, the right is
+    // in xmm0 or rax with type last_type. Both go to the wider floating type; a comparison gives an int.
+    bool fp_binary(Tok op, const Type& lt, int off) {
+        const Type rt = last_type;
+        Type ct;
+        ct.base = ((is_fp_t(lt) && lt.base == 6) || (is_fp_t(rt) && rt.base == 6)) ? 6 : 5;
+        const bool use_double = ct.base == 6;
+        const bool cmp = op == TEq || op == TNe || op == TLt || op == TGt || op == TLe || op == TGe;
+        if (!cmp && op != TPlus && op != TMinus && op != TStar && op != TSlash) {
+            error = "operator is not supported";
+            return false;
+        }
+        convert(rt, ct);
+        b(use_double ? 0xF2 : 0xF3);  // movss/movsd xmm1, xmm0
+        b(0x0F);
+        b(0x10);
+        b(0xC8);
+        if (is_fp_t(lt)) {
+            b(lt.base == 6 ? 0xF2 : 0xF3);
+            b(0x0F);
+            b(0x10);
+            b(0x85);
+            disp(off);
+        } else {
+            b(0x48);
+            b(0x8B);
+            b(0x85);
+            disp(off);
+        }
+        --temp_depth;
+        convert(lt, ct);
+        if (cmp) {
+            if (use_double) b(0x66);
+            b(0x0F);
+            b(0x2E);
+            b(0xC1);
+            uint8_t setcc = 0x94;
+            if (op == TNe) setcc = 0x95;
+            else if (op == TLt) setcc = 0x92;
+            else if (op == TGt) setcc = 0x97;
+            else if (op == TLe) setcc = 0x96;
+            else if (op == TGe) setcc = 0x93;
+            b(0x0F);
+            b(setcc);
+            b(0xC0);
+            b(0x0F);
+            b(0xB6);
+            b(0xC0);
+            last_type = Type{};
+            last_type.base = 1;
+        } else {
+            b(use_double ? 0xF2 : 0xF3);
+            b(0x0F);
+            b(op == TMinus ? 0x5C : op == TStar ? 0x59 : op == TSlash ? 0x5E : 0x58);
+            b(0xC1);
+            last_type = ct;
+        }
+        return true;
     }
     static bool bit_op(Tok op) {
         return op == TAmp || op == TPipe || op == TCaret || op == TShl || op == TShr || op == TAndEq || op == TOrEq ||
@@ -8207,6 +9024,188 @@ struct Gen {
         b(0xC0);
     }
     static bool is_bool_type(const Type& t) { return t.is_bool && t.pointers == 0 && !t.is_ref && !t.is_array(); }
+    // What a value in a register is. A float or double lives in xmm0; a long long, a pointer or an array
+    // address lives in all of rax; anything else in eax.
+    static bool is_fp_t(const Type& t) {
+        return t.pointers == 0 && !t.is_array() && !t.is_ref && (t.base == 5 || t.base == 6);
+    }
+    static bool is_wide_t(const Type& t) { return t.pointers == 0 && !t.is_array() && !t.is_ref && t.base == 1 && t.wide; }
+    static bool is_ptr_t(const Type& t) { return (t.pointers > 0 || t.is_array()) && !t.is_ref; }
+    static bool v64(const Type& t) { return is_wide_t(t) || is_ptr_t(t); }
+    static bool is_int_t(const Type& t) {
+        return t.pointers == 0 && !t.is_array() && !t.is_ref && (t.base == 1 || t.base == 2 || t.base == 4);
+    }
+    // The type of an arithmetic operation on two integer or pointer values (the usual arithmetic
+    // conversions, [expr.arith.conv]): the 64-bit operand wins, unsigned wins over signed of the same width.
+    static Type common_int(const Type& a, const Type& b) {
+        Type r;
+        r.base = 1;
+        const bool wa = v64(a);
+        const bool wb = v64(b);
+        const bool ua = is_ptr_t(a) || a.is_unsigned;
+        const bool ub = is_ptr_t(b) || b.is_unsigned;
+        if (wa || wb) {
+            r.wide = true;
+            r.is_unsigned = (wa && wb) ? (ua || ub) : (wa ? ua : ub);
+        } else {
+            r.is_unsigned = ua || ub;
+        }
+        return r;
+    }
+    // rax = the 64-bit value of the int in eax (sign-extended, or zero-extended when it is unsigned).
+    void ext_rax(bool uns) {
+        if (uns) {
+            b(0x89);
+            b(0xC0);
+        } else {
+            b(0x48);
+            b(0x63);
+            b(0xC0);
+        }
+    }
+    void ext_r10(bool uns) {
+        if (uns) {
+            b(0x45);
+            b(0x89);
+            b(0xD2);
+        } else {
+            b(0x4D);
+            b(0x63);
+            b(0xD2);
+        }
+    }
+    void reload_r10_64(int off) {
+        b(0x4C);
+        b(0x8B);
+        b(0x95);
+        disp(off);
+        --temp_depth;
+    }
+    // Sets the flags so that jz is taken when the value in last_type is zero (a condition).
+    void test_cond() {
+        if (is_fp_t(last_type)) {
+            b(0x0F);  // xorps xmm1, xmm1
+            b(0x57);
+            b(0xC9);
+            if (last_type.base == 6) b(0x66);
+            b(0x0F);  // ucomiss / ucomisd xmm0, xmm1
+            b(0x2E);
+            b(0xC1);
+            return;
+        }
+        if (v64(last_type)) b(0x48);
+        b(0x85);
+        b(0xC0);
+    }
+    void normalize_bool64() {
+        b(0x48);
+        b(0x85);
+        b(0xC0);
+        b(0x0F);
+        b(0x95);
+        b(0xC0);
+        b(0x0F);
+        b(0xB6);
+        b(0xC0);
+    }
+    // Converts the value in rax or xmm0 from type `from` to type `to` ([conv.integral], [conv.fpint],
+    // [conv.double], [conv.bool]). Only r10 is used besides rax and xmm0.
+    void convert(const Type& from, const Type& to) {
+        const bool from_fp = is_fp_t(from);
+        const bool to_fp = is_fp_t(to);
+        if (is_bool_type(to) && !from_fp) {
+            if (v64(from)) normalize_bool64();
+            else normalize_bool();
+            return;
+        }
+        if (from_fp && to_fp) {
+            if (from.base != to.base) {
+                b(to.base == 6 ? 0xF3 : 0xF2);
+                b(0x0F);
+                b(0x5A);
+                b(0xC0);
+            }
+            return;
+        }
+        if (!from_fp && to_fp) {
+            if (!is_int_t(from)) return;
+            const uint8_t prefix = to.base == 6 ? 0xF2 : 0xF3;
+            if (is_wide_t(from) && from.is_unsigned) {
+                // Above 2^63 the value is halved (keeping the low bit so rounding stays right), converted
+                // and doubled.
+                b(0x48);  // test rax, rax
+                b(0x85);
+                b(0xC0);
+                const size_t js = emit_jcc(0x88);
+                b(prefix);
+                b(0x48);
+                b(0x0F);
+                b(0x2A);
+                b(0xC0);
+                const size_t jmp = emit_jmp();
+                patch(js, text.size());
+                b(0x49);  // mov r10, rax
+                b(0x89);
+                b(0xC2);
+                b(0x48);  // shr rax, 1
+                b(0xD1);
+                b(0xE8);
+                b(0x41);  // and r10d, 1
+                b(0x83);
+                b(0xE2);
+                b(0x01);
+                b(0x4C);  // or rax, r10
+                b(0x09);
+                b(0xD0);
+                b(prefix);
+                b(0x48);
+                b(0x0F);
+                b(0x2A);
+                b(0xC0);
+                b(prefix);  // addss / addsd xmm0, xmm0
+                b(0x0F);
+                b(0x58);
+                b(0xC0);
+                patch(jmp, text.size());
+                return;
+            }
+            if (is_wide_t(from)) {
+                b(prefix);
+                b(0x48);
+                b(0x0F);
+                b(0x2A);
+                b(0xC0);
+                return;
+            }
+            if (from.is_unsigned) {
+                b(0x89);  // mov eax, eax: an unsigned int is converted as a 64-bit value
+                b(0xC0);
+                b(prefix);
+                b(0x48);
+                b(0x0F);
+                b(0x2A);
+                b(0xC0);
+                return;
+            }
+            b(prefix);
+            b(0x0F);
+            b(0x2A);
+            b(0xC0);
+            return;
+        }
+        if (from_fp && !to_fp) {
+            if (!is_int_t(to)) return;
+            const bool w = is_wide_t(to) || (to.base == 1 && to.is_unsigned);
+            b(from.base == 6 ? 0xF2 : 0xF3);
+            if (w) b(0x48);
+            b(0x0F);
+            b(0x2C);
+            b(0xC0);
+            if (is_bool_type(to)) normalize_bool();
+            return;
+        }
+        if (is_wide_t(to) && is_int_t(from) && !is_wide_t(from)) ext_rax(from.is_unsigned);
+    }
 
     void cmp_set(uint8_t setcc) {
         b(0x41);
@@ -8233,7 +9232,7 @@ int Gen::size_of(const Type& type) const {
         type.struct_id < static_cast<int>(structs->size()))
         return (*structs)[type.struct_id].size;
     if (type.base == 0) return 0;
-    return 4;
+    return type.wide ? 8 : 4;
 }
 
 bool Gen::fits_register(const Type& type) const {
@@ -8323,6 +9322,7 @@ bool Gen::gen_addr(const Node& node) {
         const int slot = spill();
         if (!error.empty()) return false;
         if (!gen_expr(node.kids[1])) return false;
+        if (!v64(last_type) && !is_fp_t(last_type)) ext_rax(last_type.is_unsigned);
         b(0x48);
         b(0x69);
         b(0xC0);
@@ -8369,6 +9369,20 @@ bool Gen::gen_addr(const Node& node) {
     if (node.kind == Node::Unary && node.op == TStar) {
         if (!gen_expr(node.kids[0])) return false;
         last_type = element_type(last_type);
+        return true;
+    }
+    if (node.kind == Node::Ternary) {
+        // c ? a : b as an lvalue (both are lvalues of one type): the address of the chosen one.
+        if (!gen_expr(node.kids[0])) return false;
+        test_cond();
+        const size_t jz = emit_jcc(0x84);
+        if (!gen_addr(node.kids[1])) return false;
+        const Type first = last_type;
+        const size_t jmp = emit_jmp();
+        patch(jz, text.size());
+        if (!gen_addr(node.kids[2])) return false;
+        patch(jmp, text.size());
+        last_type = first;
         return true;
     }
     error = "not an address";
@@ -8448,20 +9462,32 @@ void Gen::promote(Type* type) const {
 
 bool Gen::store_init(const Type& type, int offset, const Node& node) {
     if (node.kind == Node::Block && node.text == "init") {
+        // The elements not named are zero ([dcl.init.aggr]).
+        Node zero;
+        zero.kind = Node::IntLit;
+        zero.type.base = 1;
+        Node empty;
+        empty.kind = Node::Block;
+        empty.text = "init";
         if (type.array_len >= 0) {
             const Type elem = peel_array(type);
             const int step = std::max(1, size_of(elem));
-            for (size_t i = 0; i < node.kids.size(); ++i) {
-                if (!store_init(elem, offset + static_cast<int>(i) * step, node.kids[i])) return false;
+            for (int i = 0; i < type.array_len; ++i) {
+                const Node& item = static_cast<size_t>(i) < node.kids.size() ? node.kids[static_cast<size_t>(i)]
+                                   : (elem.array_len >= 0 || (elem.base == 3 && elem.pointers == 0)) ? empty : zero;
+                if (!store_init(elem, offset + i * step, item)) return false;
             }
             return true;
         }
         if (type.base == 3 && type.pointers == 0 && structs != nullptr && type.struct_id >= 0 &&
             type.struct_id < static_cast<int>(structs->size())) {
             const StructDef& def = (*structs)[static_cast<size_t>(type.struct_id)];
-            for (size_t i = 0; i < node.kids.size() && i < def.fields.size(); ++i) {
+            for (size_t i = 0; i < def.fields.size(); ++i) {
                 const Field& field = def.fields[i];
-                if (!store_init(field.type, offset + field.offset, node.kids[i])) return false;
+                if (field.name == "__vptr") continue;
+                const bool nested = field.type.array_len >= 0 || (field.type.base == 3 && field.type.pointers == 0);
+                const Node& item = i < node.kids.size() ? node.kids[i] : nested ? empty : zero;
+                if (!store_init(field.type, offset + field.offset, item)) return false;
             }
             return true;
         }
@@ -8469,11 +9495,33 @@ bool Gen::store_init(const Type& type, int offset, const Node& node) {
         return false;
     }
     if (node.kind != Node::IntLit) {
-        error = "initializer must be a constant";
-        return false;
+        // A value computed at run time: evaluated, converted to the element type and stored.
+        if (type.base == 3 || type.array_len >= 0) {
+            error = "initializer must be a constant";
+            return false;
+        }
+        if (!gen_expr(node)) return false;
+        convert(last_type, type);
+        if (is_fp_t(type)) {
+            b(type.base == 6 ? 0xF2 : 0xF3);
+            b(0x0F);
+            b(0x11);
+            b(0x85);
+            disp(offset);
+            return true;
+        }
+        const int bytes = type.pointers > 0 ? 8 : std::max(1, size_of(type));
+        if (bytes >= 8) b(0x48);
+        else if (bytes == 2) b(0x66);
+        b(bytes == 1 ? 0x88 : 0x89);
+        b(0x85);
+        disp(offset);
+        return true;
     }
     const int width = type.pointers > 0 ? 8 : std::max(1, size_of(type));
-    const uint32_t value = is_bool_type(type) ? (node.number != 0 ? 1u : 0u) : static_cast<uint32_t>(node.number);
+    uint64_t value = 0;
+    if (!const_convert(node, type, &value)) value = node.number;
+    if (is_bool_type(type)) value = node.number != 0 ? 1u : 0u;
     if (width == 1) {
         b(0xC6);
         b(0x85);
@@ -8490,7 +9538,13 @@ bool Gen::store_init(const Type& type, int offset, const Node& node) {
         b(0xC7);
         b(0x85);
         disp(offset);
-        u32(value);
+        u32(static_cast<uint32_t>(value));
+        if (width >= 8) {
+            b(0xC7);
+            b(0x85);
+            disp(offset + 4);
+            u32(static_cast<uint32_t>(value >> 32));
+        }
     }
     return true;
 }
@@ -8511,9 +9565,17 @@ bool Gen::gen_expr(const Node& node) {
             last_type.base = node.type.base;
             return true;
         }
-        mov_eax_imm(static_cast<uint32_t>(node.number));
         last_type = Type{};
         last_type.base = 1;
+        last_type.is_unsigned = node.type.is_unsigned;
+        if (node.type.wide) {
+            b(0x48);  // mov rax, imm64
+            b(0xB8);
+            for (int i = 0; i < 8; ++i) b(static_cast<uint8_t>(node.number >> (8 * i)));
+            last_type.wide = true;
+            return true;
+        }
+        mov_eax_imm(static_cast<uint32_t>(node.number));
         return true;
     }
     if (node.kind == Node::StringLit) {
@@ -8554,6 +9616,16 @@ bool Gen::gen_expr(const Node& node) {
             if (local->is_static) {
                 const int size = size_of(local->type);
                 const bool uns = local->type.is_unsigned;
+                if (is_fp_t(local->type)) {
+                    b(local->type.base == 6 ? 0xF2 : 0xF3);  // movss/movsd xmm0, [rip+symbol]
+                    b(0x0F);
+                    b(0x10);
+                    b(0x05);
+                    relocs.push_back({0, static_cast<uint32_t>(text.size()), local->symbol, kRelAmd64Rel32});
+                    u32(0);
+                    last_type = local->type;
+                    return true;
+                }
                 if (local->type.pointer() || size >= 8) {
                     b(0x48);
                     b(0x8B);
@@ -8596,6 +9668,16 @@ bool Gen::gen_expr(const Node& node) {
             }
             const int size = size_of(global->type);
             const bool uns = global->type.is_unsigned;
+            if (is_fp_t(global->type)) {
+                b(global->type.base == 6 ? 0xF2 : 0xF3);  // movss/movsd xmm0, [rip+symbol]
+                b(0x0F);
+                b(0x10);
+                b(0x05);
+                relocs.push_back({0, static_cast<uint32_t>(text.size()), global->name, kRelAmd64Rel32});
+                u32(0);
+                last_type = global->type;
+                return true;
+            }
             if (global->type.pointer() || size >= 8) {
                 b(0x48);
                 b(0x8B);
@@ -8655,14 +9737,47 @@ bool Gen::gen_expr(const Node& node) {
     }
     if (node.kind == Node::Ternary) {
         if (!gen_expr(node.kids[0])) return false;
-        b(0x85);
-        b(0xC0);
+        test_cond();
         const size_t jz = emit_jcc(0x84);
         if (!gen_expr(node.kids[1])) return false;
+        const Type first = last_type;
         const size_t jmp = emit_jmp();
         patch(jz, text.size());
         if (!gen_expr(node.kids[2])) return false;
-        patch(jmp, text.size());
+        const Type second = last_type;
+        // The two branches have one type after the usual arithmetic conversions ([expr.cond]); the
+        // first branch is converted by a stub placed after the second.
+        Type unified = first;
+        std::vector<uint8_t> stub;
+        if (is_fp_t(first) || is_fp_t(second)) {
+            if (is_fp_t(first) && is_fp_t(second)) unified.base = first.base == 6 || second.base == 6 ? 6 : 5;
+            else {
+                unified = Type{};
+                unified.base = (is_fp_t(first) ? first.base : second.base);
+            }
+        } else if (is_ptr_t(second) && is_int_t(first)) {
+            unified = second;
+        } else if (is_int_t(first) && is_int_t(second)) {
+            unified = common_int(first, second);
+            if (!is_wide_t(unified) && first.base == second.base && first.base != 1) unified = first;
+        }
+        if (is_int_t(first) || is_fp_t(first)) {
+            std::vector<uint8_t> keep;
+            keep.swap(text);
+            convert(first, unified);
+            stub.swap(text);
+            text.swap(keep);
+        }
+        convert(second, unified);
+        if (stub.empty()) {
+            patch(jmp, text.size());
+        } else {
+            const size_t jend = emit_jmp();
+            patch(jmp, text.size());
+            text.insert(text.end(), stub.begin(), stub.end());
+            patch(jend, text.size());
+        }
+        last_type = unified;
         return true;
     }
     if (node.kind == Node::Unary) {
@@ -8670,35 +9785,76 @@ bool Gen::gen_expr(const Node& node) {
             if (!gen_expr(node.kids[0])) return false;
             const Type from = last_type;
             const Type to = node.type;
-            const bool from_fp = from.pointers == 0 && (from.base == 5 || from.base == 6);
-            const bool to_fp = to.pointers == 0 && (to.base == 5 || to.base == 6);
-            if (!from_fp && to_fp) {
-                b(to.base == 6 ? 0xF2 : 0xF3);
+            convert(from, to);
+            if (is_int_t(to) && !is_bool_type(to) && (to.base == 2 || to.base == 4) && !is_fp_t(from)) {
+                // The value is cut to the width of the type and extended again (movsx / movzx eax, al or ax).
                 b(0x0F);
-                b(0x2A);
-                b(0xC0);
-            } else if (from_fp && !to_fp) {
-                b(from.base == 6 ? 0xF2 : 0xF3);
-                b(0x0F);
-                b(0x2C);
-                b(0xC0);
-            } else if (from_fp && to_fp && from.base != to.base) {
-                b(to.base == 6 ? 0xF3 : 0xF2);
-                b(0x0F);
-                b(0x5A);
+                b(to.base == 2 ? (to.is_unsigned ? 0xB6 : 0xBE) : (to.is_unsigned ? 0xB7 : 0xBF));
                 b(0xC0);
             }
-            if (is_bool_type(to) && !from_fp) normalize_bool();
             last_type = to;
+            if (is_int_t(to)) promote(&last_type);
             return true;
         }
         if (node.op == TPlusPlus || node.op == TMinusMinus) {
             if (!gen_addr(node.kids[0])) return false;
+            const Type lvalue_type = last_type;
             const bool pointer = last_type.pointers > 0;
             const int step = pointer ? std::max(1, size_of(element_type(last_type))) : 1;
             const int width = pointer ? 8 : std::max(1, size_of(last_type));
-            const int addr = spill();
+            const bool w64 = pointer || is_wide_t(lvalue_type);
+            const int addr = spill_addr();
             if (!error.empty()) return false;
+            if (is_fp_t(lvalue_type)) {
+                // f++ and f-- on a float or double: one is added to or taken from the value in memory.
+                const bool dbl = lvalue_type.base == 6;
+                b(0x48);  // mov rax, [addr]
+                b(0x8B);
+                b(0x85);
+                disp(addr);
+                b(dbl ? 0xF2 : 0xF3);  // movss/movsd xmm0, [rax]
+                b(0x0F);
+                b(0x10);
+                b(0x00);
+                int old_slot = 0;
+                if (node.number != 0) {
+                    last_type = lvalue_type;
+                    old_slot = spill();
+                    if (!error.empty()) return false;
+                }
+                b(0x48);  // mov rax, 1.0
+                b(0xB8);
+                const uint64_t one = dbl ? 0x3FF0000000000000ull : 0x3F800000ull;
+                for (int i = 0; i < 8; ++i) b(static_cast<uint8_t>(one >> (8 * i)));
+                b(0x66);  // movd/movq xmm1, eax/rax
+                if (dbl) b(0x48);
+                b(0x0F);
+                b(0x6E);
+                b(0xC8);
+                b(dbl ? 0xF2 : 0xF3);  // addss/subss xmm0, xmm1
+                b(0x0F);
+                b(node.op == TPlusPlus ? 0x58 : 0x5C);
+                b(0xC1);
+                b(0x48);  // mov rcx, [addr]
+                b(0x8B);
+                b(0x8D);
+                disp(addr);
+                b(dbl ? 0xF2 : 0xF3);  // movss/movsd [rcx], xmm0
+                b(0x0F);
+                b(0x11);
+                b(0x01);
+                if (node.number != 0) {
+                    b(dbl ? 0xF2 : 0xF3);
+                    b(0x0F);
+                    b(0x10);
+                    b(0x85);
+                    disp(old_slot);
+                    --temp_depth;
+                }
+                --temp_depth;
+                last_type = lvalue_type;
+                return true;
+            }
             b(0x48);
             b(0x8B);
             b(0x85);
@@ -8724,7 +9880,7 @@ bool Gen::gen_expr(const Node& node) {
                 old = spill();
                 if (!error.empty()) return false;
             }
-            if (pointer) b(0x48);
+            if (w64) b(0x48);
             b(0x83);
             b(node.op == TPlusPlus ? 0xC0 : 0xE8);
             b(static_cast<uint8_t>(step));
@@ -8738,6 +9894,8 @@ bool Gen::gen_expr(const Node& node) {
                 --temp_depth;
             }
             --temp_depth;
+            last_type = lvalue_type;
+            promote(&last_type);
             return true;
         }
         if (node.op == TAmp) {
@@ -8772,6 +9930,7 @@ bool Gen::gen_expr(const Node& node) {
                 b(0xC1);
                 return true;
             }
+            if (is_wide_t(last_type)) b(0x48);
             b(0xF7);
             b(0xD8);
             return true;
@@ -8781,14 +9940,14 @@ bool Gen::gen_expr(const Node& node) {
                 error = "operator ~ needs an integer";
                 return false;
             }
+            if (is_wide_t(last_type)) b(0x48);
             b(0xF7);  // not eax
             b(0xD0);
             promote(&last_type);
             return true;
         }
         if (node.op == TNot) {
-            b(0x85);
-            b(0xC0);
+            test_cond();
             b(0x0F);
             b(0x94);
             b(0xC0);
@@ -8820,7 +9979,7 @@ bool Gen::gen_expr(const Node& node) {
             if (Local* local = find_local(node.kids[0].text)) {
                 if (local->type.is_ref && node.number == 1) {
                     if (!gen_addr(node.kids[1])) return false;
-                    const int addr = spill();
+                    const int addr = spill_addr();
                     if (!error.empty()) return false;
                     b(0x48);
                     b(0x8B);
@@ -8837,6 +9996,7 @@ bool Gen::gen_expr(const Node& node) {
                 }
                 if (local->reg != 0 && !is_bool_type(local->type)) {
                     if (!gen_expr(node.kids[1])) return false;
+                    convert(last_type, local->type);
                     mov_reg_eax(local->reg);
                     return true;
                 }
@@ -8858,57 +10018,79 @@ bool Gen::gen_expr(const Node& node) {
         }
         if (is_compound_op(node.op)) {
             if (!gen_addr(node.kids[0])) return false;
-            const bool dest_unsigned = last_type.is_unsigned;
-            const int width = std::max(1, size_of(last_type));
-            const int addr = spill();
+            const Type lt = last_type;
+            const int width = std::max(1, size_of(lt));
+            const int addr = spill_addr();
             if (!error.empty()) return false;
             b(0x48);
             b(0x8B);
             b(0x85);
             disp(addr);
-            load_from_rax(width >= 8 ? 8 : width, false);
+            if (is_fp_t(lt)) {
+                b(lt.base == 6 ? 0xF2 : 0xF3);
+                b(0x0F);
+                b(0x10);
+                b(0x00);
+            } else {
+                load_from_rax(width >= 8 ? 8 : width, lt.is_unsigned);
+            }
+            Type value_type = lt;
+            value_type.bits = -1;
+            last_type = value_type;
             const int left = spill();
             if (!error.empty()) return false;
             if (!gen_expr(node.kids[1])) return false;
-            reload_r10(left);
-            if (bit_op(node.op)) {
-                emit_bit_op(node.op, dest_unsigned);
-            } else if (node.op == TPlusEq) {
-                b(0x44);
-                b(0x01);
-                b(0xD0);
-            } else if (node.op == TMinusEq) {
-                b(0x41);
-                b(0x29);
-                b(0xC2);
-                b(0x44);
-                b(0x89);
-                b(0xD0);
-            } else if (node.op == TStarEq) {
-                b(0x41);
-                b(0x0F);
-                b(0xAF);
-                b(0xC2);
+            const Type rt = last_type;
+            const Tok op = plain_op(node.op);
+            if (is_fp_t(lt) || is_fp_t(rt)) {
+                if (!fp_binary(op, lt, left)) return false;
+                convert(last_type, lt);
             } else {
-                spill_reg(2);
-                b(0x41);
-                b(0x92);
-                b(0x99);
-                b(0x41);
-                b(0xF7);
-                b(0xFA);
-                reload_reg(2);
-                if (node.op == TPercentEq) {
-                    b(0x89);
-                    b(0xD0);
+                const bool shift = op == TShl || op == TShr;
+                const bool lptr = is_ptr_t(lt);
+                Type ct = lt;
+                bool W;
+                if (lptr) {
+                    // p += n scales n by the size of the element ([expr.add]).
+                    if (!v64(rt)) ext_rax(rt.is_unsigned);
+                    b(0x48);
+                    b(0x69);
+                    b(0xC0);
+                    u32(static_cast<uint32_t>(std::max(1, size_of(element_type(lt)))));
+                    W = true;
+                } else if (shift) {
+                    W = is_wide_t(lt);
+                    ct = lt;
+                    if (!W) ct.wide = false;
+                } else {
+                    ct = common_int(lt, rt);
+                    W = ct.wide;
+                    if (W && !v64(rt)) ext_rax(rt.is_unsigned);
+                }
+                if (W) reload_r10_64(left);
+                else reload_r10(left);
+                if (W && !v64(lt)) ext_r10(lt.is_unsigned);
+                emit_int_op(op, W, shift ? lt.is_unsigned : ct.is_unsigned);
+                if (is_bool_type(lt)) {
+                    if (W) normalize_bool64();
+                    else normalize_bool();
                 }
             }
             b(0x48);
             b(0x8B);
             b(0x8D);
             disp(addr);
-            store_mem(width);
+            if (is_fp_t(lt)) {
+                b(lt.base == 6 ? 0xF2 : 0xF3);
+                b(0x0F);
+                b(0x11);
+                b(0x01);
+            } else {
+                store_mem(width);
+            }
             --temp_depth;
+            last_type = value_type;
+            promote(&last_type);
             return true;
         }
         if (node.kids[0].kind == Node::Name) {
@@ -8940,51 +10122,41 @@ bool Gen::gen_expr(const Node& node) {
             }
         }
         if (!gen_expr(node.kids[1])) return false;
-        const bool rhs_fp = last_type.pointers == 0 && (last_type.base == 5 || last_type.base == 6);
-        const int rhs_base = last_type.base;
+        const Type rhs_type = last_type;
+        const bool rhs_fp = is_fp_t(rhs_type);
         const int slot = spill();
         if (!error.empty()) return false;
         if (!gen_addr(node.kids[0])) return false;
+        const Type lt = last_type;
+        b(0x48);  // mov rcx, rax: the address
+        b(0x89);
+        b(0xC1);
         if (rhs_fp) {
-            b(0x48);
-            b(0x89);
-            b(0xC1);
-            b(rhs_base == 6 ? 0xF2 : 0xF3);
+            b(rhs_type.base == 6 ? 0xF2 : 0xF3);
             b(0x0F);
             b(0x10);
             b(0x85);
             disp(slot);
-            b(rhs_base == 6 ? 0xF2 : 0xF3);
-            b(0x0F);
-            b(0x11);
-            b(0x01);
-            --temp_depth;
-            return true;
+        } else {
+            b(0x48);
+            b(0x8B);
+            b(0x85);
+            disp(slot);
         }
-        const int size = std::max(1, size_of(last_type));
-        b(0x48);
-        b(0x89);
-        b(0xC1);
-        b(0x48);
-        b(0x8B);
-        b(0x85);
-        disp(slot);
         --temp_depth;
-        if (is_bool_type(last_type)) normalize_bool();
-        if (last_type.pointers == 0 && (last_type.base == 5 || last_type.base == 6) && !rhs_fp) {
-            b(last_type.base == 6 ? 0xF2 : 0xF3);
-            b(0x0F);
-            b(0x2A);
-            b(0xC0);
-            b(last_type.base == 6 ? 0xF2 : 0xF3);
+        convert(rhs_type, lt);
+        if (is_fp_t(lt)) {
+            b(lt.base == 6 ? 0xF2 : 0xF3);
             b(0x0F);
             b(0x11);
             b(0x01);
+            last_type = lt;
             return true;
         }
-        if (last_type.bits >= 0) {
-            const int bits = last_type.bits;
-            const int bit_off = last_type.bit_off;
+        const int size = std::max(1, size_of(lt));
+        if (lt.bits >= 0) {
+            const int bits = lt.bits;
+            const int bit_off = lt.bit_off;
             const uint32_t mask = bits >= 32 ? 0xFFFFFFFFu : (1u << static_cast<unsigned>(bits)) - 1u;
             b(0x89);
             b(0xC2);
@@ -9007,8 +10179,9 @@ bool Gen::gen_expr(const Node& node) {
         } else {
             store_mem(size);
         }
-        last_type = Type{};
-        last_type.base = 1;
+        last_type = lt;
+        last_type.bits = -1;
+        promote(&last_type);
         return true;
     }
     if (node.kind == Node::Call) {
@@ -9200,8 +10373,13 @@ bool Gen::gen_expr(const Node& node) {
                 b(0x00);
             } else if (!gen_expr(node.kids[arg0 + arg_i])) {
                 return false;
-            } else if (named && is_bool_type(param) && !(last_type.pointers == 0 && (last_type.base == 5 || last_type.base == 6))) {
-                normalize_bool();
+            } else if (named) {
+                convert(last_type, param);
+            } else if (is_fp_t(last_type) && last_type.base == 5) {
+                Type promoted;  // a float passed through ... becomes a double ([expr.call])
+                promoted.base = 6;
+                convert(last_type, promoted);
+                last_type = promoted;
             }
             saved_types.push_back(last_type);
             saved.push_back(spill());
@@ -9373,12 +10551,10 @@ bool Gen::gen_expr(const Node& node) {
     if (node.kind == Node::Binary) {
         if (node.op == TAndAnd || node.op == TOrOr) {
             if (!gen_expr(node.kids[0])) return false;
-            b(0x85);
-            b(0xC0);
+            test_cond();
             const size_t j1 = emit_jcc(node.op == TAndAnd ? 0x84 : 0x85);
             if (!gen_expr(node.kids[1])) return false;
-            b(0x85);
-            b(0xC0);
+            test_cond();
             const size_t j2 = emit_jcc(node.op == TAndAnd ? 0x84 : 0x85);
             mov_eax_imm(node.op == TAndAnd ? 1 : 0);
             const size_t jmp = emit_jmp();
@@ -9388,6 +10564,8 @@ bool Gen::gen_expr(const Node& node) {
             patch(j1, other);
             patch(j2, other);
             patch(jmp, end);
+            last_type = Type{};
+            last_type.base = 1;
             return true;
         }
         if (!gen_expr(node.kids[0])) return false;
@@ -9442,162 +10620,95 @@ bool Gen::gen_expr(const Node& node) {
             }
             return true;
         }
-        const bool left_fp = left_type.pointers == 0 && (left_type.base == 5 || left_type.base == 6);
-        const bool right_fp = last_type.pointers == 0 && (last_type.base == 5 || last_type.base == 6);
-        if (left_fp || right_fp) {
-            const bool use_double = (left_fp && left_type.base == 6) || (right_fp && last_type.base == 6);
-            auto as_xmm = [&](const Type& have) {
-                if (have.pointers == 0 && (have.base == 5 || have.base == 6)) {
-                    if (use_double && have.base == 5) {
-                        b(0xF3);
-                        b(0x0F);
-                        b(0x5A);
-                        b(0xC0);
-                    } else if (!use_double && have.base == 6) {
-                        b(0xF2);
-                        b(0x0F);
-                        b(0x5A);
-                        b(0xC0);
-                    }
-                } else {
-                    b(use_double ? 0xF2 : 0xF3);
-                    b(0x0F);
-                    b(0x2A);
-                    b(0xC0);
-                }
-            };
-            as_xmm(last_type);
-            b(use_double ? 0xF2 : 0xF3);
-            b(0x0F);
-            b(0x10);
-            b(0xC8);
-            if (left_fp) {
-                b(left_type.base == 6 ? 0xF2 : 0xF3);
-                b(0x0F);
-                b(0x10);
-                b(0x85);
-                disp(off);
-            } else {
-                b(0x8B);
-                b(0x85);
-                disp(off);
-            }
-            --temp_depth;
-            as_xmm(left_type);
-            uint8_t op = 0x58;
-            if (node.op == TMinus) op = 0x5C;
-            else if (node.op == TStar) op = 0x59;
-            else if (node.op == TSlash) op = 0x5E;
-            const bool cmp = node.op == TEq || node.op == TNe || node.op == TLt || node.op == TGt || node.op == TLe ||
-                             node.op == TGe;
-            if (!cmp && node.op != TPlus && node.op != TMinus && node.op != TStar && node.op != TSlash) {
-                error = "operator is not supported";
-                return false;
-            }
-            if (cmp && use_double) b(0x66);
-            if (cmp) {
-                b(0x0F);
-                b(0x2E);
-                b(0xC1);
-            } else {
-                b(use_double ? 0xF2 : 0xF3);
-                b(0x0F);
-                b(op);
-                b(0xC1);
-            }
-            if (cmp) {
-                uint8_t setcc = 0x94;
-                if (node.op == TNe) setcc = 0x95;
-                else if (node.op == TLt) setcc = 0x92;
-                else if (node.op == TGt) setcc = 0x97;
-                else if (node.op == TLe) setcc = 0x96;
-                else if (node.op == TGe) setcc = 0x93;
-                b(0x0F);
-                b(setcc);
-                b(0xC0);
-                b(0x0F);
-                b(0xB6);
-                b(0xC0);
-                last_type = Type{};
-                last_type.base = 1;
-            } else {
-                last_type = Type{};
-                last_type.base = use_double ? 6 : 5;
-            }
-            return true;
-        }
-        reload_r10(off);
+        const bool left_fp = is_fp_t(left_type);
+        const bool right_fp = is_fp_t(last_type);
+        if (left_fp || right_fp) return fp_binary(node.op, left_type, off);
+        const Type right_type = last_type;
         if (node.op == TComma) {
-            last_type = last_type;
+            --temp_depth;
             return true;
         }
-        if (node.op == TPlus) {
-            b(0x44);
-            b(0x01);
-            b(0xD0);
-            last_type = left_type;
-            return true;
-        }
-        if (node.op == TMinus) {
-            b(0x41);
-            b(0x29);
-            b(0xC2);
-            b(0x44);
-            b(0x89);
-            b(0xD0);
-            return true;
-        }
-        if (node.op == TStar) {
-            b(0x41);
-            b(0x0F);
-            b(0xAF);
-            b(0xC2);
-            return true;
-        }
-        if (node.op == TSlash || node.op == TPercent) {
-            spill_reg(2);
-            b(0x41);
-            b(0x92);
-            b(0x99);
-            b(0x41);
-            b(0xF7);
-            b(0xFA);
-            reload_reg(2);
-            if (node.op == TPercent) {
-                b(0x89);
-                b(0xD0);
-            }
-            last_type = left_type;
-            return true;
-        }
-        if (bit_op(node.op)) {
-            if (left_type.pointers > 0 || left_type.base == 3 || last_type.pointers > 0 || last_type.base == 3) {
+        const bool shift = node.op == TShl || node.op == TShr;
+        const bool left_ptr = is_ptr_t(left_type);
+        const bool right_ptr = is_ptr_t(right_type);
+        if (shift || node.op == TAmp || node.op == TPipe || node.op == TCaret) {
+            if (left_ptr || right_ptr || left_type.base == 3 || right_type.base == 3) {
                 error = "a bit operator needs integers";
                 return false;
             }
-            emit_bit_op(node.op, left_type.is_unsigned);
-            const bool shift = node.op == TShl || node.op == TShr;
-            // The result of a shift has the promoted type of the left operand; the others use the
-            // usual arithmetic conversions, where unsigned wins.
-            const bool uns = shift ? left_type.is_unsigned : left_type.is_unsigned || last_type.is_unsigned;
+        }
+        const Type ct = shift ? left_type : common_int(left_type, right_type);
+        const bool W = shift ? is_wide_t(left_type) : (v64(left_type) || v64(right_type));
+        if (W && !shift && !v64(right_type)) ext_rax(right_type.is_unsigned);
+        if (W) reload_r10_64(off);
+        else reload_r10(off);
+        if (W && !v64(left_type)) ext_r10(left_type.is_unsigned);
+        const bool cmp = node.op == TEq || node.op == TNe || node.op == TLt || node.op == TGt || node.op == TLe ||
+                         node.op == TGe;
+        if (cmp) {
+            const bool unsign = left_ptr || right_ptr || ct.is_unsigned;
+            uint8_t setcc = 0x94;
+            if (node.op == TEq) setcc = 0x94;
+            else if (node.op == TNe) setcc = 0x95;
+            else if (node.op == TLt) setcc = unsign ? 0x92 : 0x9C;
+            else if (node.op == TGt) setcc = unsign ? 0x97 : 0x9F;
+            else if (node.op == TLe) setcc = unsign ? 0x96 : 0x9E;
+            else setcc = unsign ? 0x93 : 0x9D;
+            if (W) b(0x49);
+            else b(0x41);
+            b(0x39);
+            b(0xC2);
+            b(0x0F);
+            b(setcc);
+            b(0xC0);
+            b(0x0F);
+            b(0xB6);
+            b(0xC0);
             last_type = Type{};
             last_type.base = 1;
-            last_type.is_unsigned = uns;
             return true;
         }
-        const bool unsign = left_type.is_unsigned || last_type.is_unsigned;
-        uint8_t setcc = 0x94;
-        if (node.op == TEq) setcc = 0x94;
-        else if (node.op == TNe) setcc = 0x95;
-        else if (node.op == TLt) setcc = unsign ? 0x92 : 0x9C;
-        else if (node.op == TGt) setcc = unsign ? 0x97 : 0x9F;
-        else if (node.op == TLe) setcc = unsign ? 0x96 : 0x9E;
-        else if (node.op == TGe) setcc = unsign ? 0x93 : 0x9D;
-        else {
+        if (node.op == TPlus && !left_ptr && right_ptr) {
+            // n + p: n is scaled by the size of the element.
+            b(0x4D);  // imul r10, r10, scale
+            b(0x69);
+            b(0xD2);
+            u32(static_cast<uint32_t>(std::max(1, size_of(element_type(right_type)))));
+        }
+        if (node.op == TMinus && left_ptr && right_ptr) {
+            // pointer - pointer: the byte difference divided by the element size, a 64-bit count.
+            emit_int_op(TMinus, true, false);
+            const int scale = std::max(1, size_of(element_type(left_type)));
+            if (scale > 1) {
+                spill_reg(2);
+                b(0x49);  // mov r10, scale
+                b(0xC7);
+                b(0xC2);
+                u32(static_cast<uint32_t>(scale));
+                b(0x48);  // cqo
+                b(0x99);
+                b(0x49);  // idiv r10
+                b(0xF7);
+                b(0xFA);
+                reload_reg(2);
+            }
+            last_type = Type{};
+            last_type.base = 1;
+            last_type.wide = true;
+            return true;
+        }
+        if (node.op != TPlus && node.op != TMinus && node.op != TStar && node.op != TSlash && node.op != TPercent &&
+            !bit_op(node.op)) {
             error = "operator is not supported";
             return false;
         }
-        cmp_set(setcc);
+        emit_int_op(node.op, W, shift ? left_type.is_unsigned : ct.is_unsigned);
+        if (node.op == TPlus && !left_ptr && right_ptr) last_type = right_type;
+        else if ((node.op == TPlus || node.op == TMinus) && left_ptr) last_type = left_type;
+        else {
+            last_type = ct;
+            if (!shift) last_type.bits = -1;
+        }
         return true;
     }
     error = "bad expression";
@@ -9651,9 +10762,7 @@ bool Gen::gen_stmt(const Node& node) {
             return true;
         }
         if (!node.kids.empty() && !gen_expr(node.kids[0])) return false;
-        if (current != nullptr && is_bool_type(current->ret) && !node.kids.empty() &&
-            !(last_type.pointers == 0 && (last_type.base == 5 || last_type.base == 6)))
-            normalize_bool();
+        if (current != nullptr && !node.kids.empty()) convert(last_type, current->ret);
         epilogue();
         return true;
     }
@@ -9665,8 +10774,7 @@ bool Gen::gen_stmt(const Node& node) {
             return true;
         }
         if (!gen_expr(node.kids[0])) return false;
-        b(0x85);
-        b(0xC0);
+        test_cond();
         const size_t jz = emit_jcc(0x84);
         if (!gen_stmt(node.kids[1])) return false;
         if (node.kids.size() == 3) {
@@ -9682,8 +10790,7 @@ bool Gen::gen_stmt(const Node& node) {
         continue_stack.emplace_back();
         const size_t start = text.size();
         if (!gen_expr(node.kids[0])) return false;
-        b(0x85);
-        b(0xC0);
+        test_cond();
         const size_t jz = emit_jcc(0x84);
         if (!gen_stmt(node.kids[1])) return false;
         for (size_t site : continue_stack.back()) patch(site, start);
@@ -9706,8 +10813,7 @@ bool Gen::gen_stmt(const Node& node) {
         bool has_cond = !skipped(node.kids[1]);
         if (has_cond) {
             if (!gen_expr(node.kids[1])) return false;
-            b(0x85);
-            b(0xC0);
+            test_cond();
             jz = emit_jcc(0x84);
         }
         if (!gen_stmt(node.kids[3])) return false;
@@ -9730,8 +10836,7 @@ bool Gen::gen_stmt(const Node& node) {
         if (!gen_stmt(node.kids[0])) return false;
         const size_t cond_at = text.size();
         if (!gen_expr(node.kids[1])) return false;
-        b(0x85);
-        b(0xC0);
+        test_cond();
         const size_t jne = emit_jcc(0x85);
         patch(jne, start);
         for (size_t site : continue_stack.back()) patch(site, cond_at);
@@ -9926,6 +11031,20 @@ bool address_taken(const Node& node, const std::string& name) {
     return false;
 }
 
+// True when the name is incremented, decremented or changed by a compound assignment: those go through the
+// variable's address, so it cannot live in a register.
+bool modified_in_place(const Node& node, const std::string& name) {
+    if (node.kind == Node::Unary && (node.op == TPlusPlus || node.op == TMinusMinus) && !node.kids.empty() &&
+        node.kids[0].kind == Node::Name && node.kids[0].text == name)
+        return true;
+    if (node.kind == Node::Assign && node.op != TAssign && node.op != TEnd && !node.kids.empty() &&
+        node.kids[0].kind == Node::Name && node.kids[0].text == name)
+        return true;
+    for (const Node& kid : node.kids)
+        if (modified_in_place(kid, name)) return true;
+    return false;
+}
+
 bool expr_uses(const Node& node, const std::string& name) {
     if (node.kind == Node::Name && node.text == name) return true;
     for (const Node& kid : node.kids)
@@ -9938,71 +11057,128 @@ Node* statement_value(Node* node) {
     return node;
 }
 
+// Forgets every name that is assigned, incremented or decremented anywhere inside the node.
 void kill_assigned(const Node& node, std::map<std::string, uint64_t>* known) {
     if (node.kind == Node::Assign && !node.kids.empty() && node.kids[0].kind == Node::Name) known->erase(node.kids[0].text);
+    if (node.kind == Node::Unary && (node.op == TPlusPlus || node.op == TMinusMinus) && !node.kids.empty() &&
+        node.kids[0].kind == Node::Name)
+        known->erase(node.kids[0].text);
     for (const Node& kid : node.kids) kill_assigned(kid, known);
 }
 
-void prop_node(Node* node, std::map<std::string, uint64_t>* known, const std::set<std::string>* shadowed) {
-    if (node->kind == Node::If || node->kind == Node::While || node->kind == Node::For || node->kind == Node::Do) {
-        std::map<std::string, uint64_t> inner = *known;
-        for (Node& kid : node->kids) prop_node(&kid, &inner, shadowed);
+// /O2 constant propagation: a local int or long long that was given a constant keeps that value until
+// anything can change it. A loop forgets what its body assigns before the loop is read (the second round
+// sees the new value), a branch works on a copy, a label or a case forgets everything (it can be reached
+// from elsewhere), and the right side of && || ?: only runs sometimes.
+void prop_node(Node* node, std::map<std::string, uint64_t>* known, const std::set<std::string>* shadowed,
+               const std::map<std::string, Type>* ltypes) {
+    using Known = std::map<std::string, uint64_t>;
+    if (node->kind == Node::While || node->kind == Node::Do) {
+        kill_assigned(*node, known);
+        Known inner = *known;
+        for (Node& kid : node->kids) prop_node(&kid, &inner, shadowed, ltypes);
+        return;
+    }
+    if (node->kind == Node::For && node->kids.size() == 4) {
+        prop_node(&node->kids[0], known, shadowed, ltypes);
+        kill_assigned(*node, known);
+        Known inner = *known;
+        for (size_t i = 1; i < node->kids.size(); ++i) prop_node(&node->kids[i], &inner, shadowed, ltypes);
+        return;
+    }
+    if (node->kind == Node::If && !node->kids.empty()) {
+        prop_node(&node->kids[0], known, shadowed, ltypes);
+        for (size_t i = 1; i < node->kids.size(); ++i) {
+            Known inner = *known;
+            prop_node(&node->kids[i], &inner, shadowed, ltypes);
+        }
         kill_assigned(*node, known);
         return;
     }
-    if (node->kind == Node::Block || node->kind == Node::Label) {
+    if (node->kind == Node::Ternary || (node->kind == Node::Binary && (node->op == TAndAnd || node->op == TOrOr))) {
+        if (!node->kids.empty()) prop_node(&node->kids[0], known, shadowed, ltypes);
+        for (size_t i = 1; i < node->kids.size(); ++i) {
+            Known inner = *known;
+            prop_node(&node->kids[i], &inner, shadowed, ltypes);
+        }
+        kill_assigned(*node, known);
+        return;
+    }
+    if (node->kind == Node::Switch) {
+        if (!node->kids.empty()) prop_node(&node->kids[0], known, shadowed, ltypes);
+        kill_assigned(*node, known);
+        Known inner = *known;
+        for (size_t i = 1; i < node->kids.size(); ++i) prop_node(&node->kids[i], &inner, shadowed, ltypes);
+        return;
+    }
+    if (node->kind == Node::Case || node->kind == Node::Label) known->clear();
+    if (node->kind == Node::Block || node->kind == Node::Label || node->kind == Node::Case) {
         if (node->kind == Node::Block) {
             for (size_t i = 0; i + 1 < node->kids.size(); ++i) {
                 Node* cur = statement_value(&node->kids[i]);
                 Node* nxt = statement_value(&node->kids[i + 1]);
+                // x = a; x = b; : the first store is dead unless b reads x or a does something else.
                 if (cur->kind == Node::Assign && nxt->kind == Node::Assign && cur->kids.size() == 2 && nxt->kids.size() == 2 &&
                     cur->kids[0].kind == Node::Name && nxt->kids[0].kind == Node::Name && cur->kids[0].text == nxt->kids[0].text &&
-                    !expr_uses(nxt->kids[1], cur->kids[0].text)) {
+                    (cur->op == TAssign || cur->op == TEnd) && (nxt->op == TAssign || nxt->op == TEnd) &&
+                    !expr_uses(nxt->kids[1], cur->kids[0].text) && !has_effects(cur->kids[1])) {
                     node->kids[i].kind = Node::Block;
                     node->kids[i].kids.clear();
                 }
             }
         }
-        for (Node& kid : node->kids) prop_node(&kid, known, shadowed);
+        for (Node& kid : node->kids) prop_node(&kid, known, shadowed, ltypes);
         return;
     }
     if (node->kind == Node::Assign && !node->kids.empty() && node->kids[0].kind == Node::Name &&
         (node->op == TAssign || node->op == TEnd)) {
-        prop_node(&node->kids[1], known, shadowed);
+        prop_node(&node->kids[1], known, shadowed, ltypes);
         if (shadowed != nullptr && shadowed->count(node->kids[0].text) != 0) {
             known->erase(node->kids[0].text);
             return;
         }
-        if (node->kids[1].kind == Node::IntLit && node->kids[1].type.base < 5) (*known)[node->kids[0].text] = node->kids[1].number;
+        // Only an int or long long local keeps a known value, cut to its type (a char or a bool would need
+        // its own conversion, a float its own bits).
+        const auto lt = ltypes != nullptr ? ltypes->find(node->kids[0].text) : std::map<std::string, Type>::const_iterator();
+        const bool plain = ltypes != nullptr && lt != ltypes->end() && lt->second.base == 1 && lt->second.pointers == 0 &&
+                           !lt->second.is_array() && !lt->second.is_ref && !lt->second.is_bool && lt->second.bits < 0;
+        if (plain && node->kids[1].kind == Node::IntLit && node->kids[1].type.base < 5)
+            (*known)[node->kids[0].text] = const_norm(node->kids[1].number, lt->second);
         else known->erase(node->kids[0].text);
         return;
     }
+    if (node->kind == Node::Assign && !node->kids.empty() && node->kids[0].kind == Node::Name) {
+        // x += e: x changes, and is not an operand that can be replaced by its old value.
+        for (size_t i = 1; i < node->kids.size(); ++i) prop_node(&node->kids[i], known, shadowed, ltypes);
+        known->erase(node->kids[0].text);
+        return;
+    }
+    if (node->kind == Node::Unary && (node->op == TPlusPlus || node->op == TMinusMinus) && !node->kids.empty() &&
+        node->kids[0].kind == Node::Name) {
+        known->erase(node->kids[0].text);
+        return;
+    }
+    if (node->kind == Node::Unary && node->op == TAmp && !node->kids.empty() && node->kids[0].kind == Node::Name) return;
     if (node->kind == Node::Name && known->count(node->text) != 0 &&
         (shadowed == nullptr || shadowed->count(node->text) == 0)) {
         const uint64_t value = (*known)[node->text];
+        const auto lt = ltypes != nullptr ? ltypes->find(node->text) : std::map<std::string, Type>::const_iterator();
         *node = Node{};
         node->kind = Node::IntLit;
         node->number = value;
         node->type.base = 1;
+        if (ltypes != nullptr && lt != ltypes->end()) {
+            node->type.wide = lt->second.wide;
+            node->type.is_unsigned = lt->second.is_unsigned;
+        }
         return;
     }
-    for (Node& kid : node->kids) prop_node(&kid, known, shadowed);
+    for (Node& kid : node->kids) prop_node(&kid, known, shadowed, ltypes);
     if (node->kind == Node::Binary && node->kids.size() == 2 && node->kids[0].kind == Node::IntLit &&
         node->kids[1].kind == Node::IntLit && node->kids[0].type.base < 5 && node->kids[1].type.base < 5) {
-        const uint64_t left = node->kids[0].number;
-        const uint64_t right = node->kids[1].number;
-        uint64_t value = 0;
-        bool folded = true;
-        if (node->op == TPlus) value = left + right;
-        else if (node->op == TMinus) value = left - right;
-        else if (node->op == TStar) value = left * right;
-        else folded = false;
-        if (folded) {
-            *node = Node{};
-            node->kind = Node::IntLit;
-            node->number = value;
-            node->type.base = 1;
-        }
+        Node folded_node;
+        std::string fold_error;
+        if (fold_int_binary(node->op, node->kids[0], node->kids[1], &folded_node, &fold_error)) *node = std::move(folded_node);
     }
 }
 
@@ -10047,10 +11223,28 @@ void inline_node(Node* node, const std::vector<FuncDecl>& funcs) {
         }
         const Node* expr = simple && args_ok ? single_return(fn->body) : nullptr;
         if (expr != nullptr) {
+            // The call converts each argument to its parameter type and the result to the return type;
+            // the inlined expression keeps that with casts ([expr.call], [stmt.return]).
+            const auto arithmetic = [](const Type& t) {
+                return t.pointers == 0 && !t.is_array() && !t.is_ref && (t.base == 1 || t.base == 2 || t.base == 4 || t.base == 5 || t.base == 6);
+            };
+            const auto cast_to = [](const Type& t, Node inner) {
+                Node cast;
+                cast.kind = Node::Unary;
+                cast.op = TEnd;
+                cast.type = t;
+                cast.kids.push_back(std::move(inner));
+                return cast;
+            };
             std::map<std::string, Node> repl;
-            for (int i = 0; i < fn->nparams; ++i) repl[fn->param_names[static_cast<size_t>(i)]] = node->kids[static_cast<size_t>(i)];
+            for (int i = 0; i < fn->nparams; ++i) {
+                Node arg = node->kids[static_cast<size_t>(i)];
+                if (arithmetic(fn->params[static_cast<size_t>(i)])) arg = cast_to(fn->params[static_cast<size_t>(i)], std::move(arg));
+                repl[fn->param_names[static_cast<size_t>(i)]] = std::move(arg);
+            }
             Node next = *expr;
             subst_names(&next, repl);
+            if (arithmetic(fn->ret)) next = cast_to(fn->ret, std::move(next));
             *node = std::move(next);
             inline_node(node, funcs);
             return;
@@ -10126,6 +11320,17 @@ bool try_inline_stmt(Node* stmt, FuncDecl* caller, const std::vector<FuncDecl>& 
     if (fn == nullptr || fn->vararg || fn->sret || static_cast<int>(call->kids.size()) != fn->nparams) return false;
     // Member functions are not inlined: their body names this->field.
     if (!fn->param_names.empty() && fn->param_names[0] == "this") return false;
+    // A reference parameter or result is not a plain value: the body would read the address as the value.
+    if (fn->ret_ref) return false;
+    for (bool is_ref : fn->param_ref)
+        if (is_ref) return false;
+    // A hidden local (__rv, __br, __tmp) is not copied into the caller, so such a body is not inlined.
+    for (const Local& hidden_local : fn->locals) {
+        bool is_param_name = false;
+        for (const std::string& pn : fn->param_names)
+            if (pn == hidden_local.name) is_param_name = true;
+        if (!is_param_name && !hidden_local.name.empty() && hidden_local.name[0] == '_') return false;
+    }
     if (!no_loop(fn->body) || contains_call(fn->body)) return false;
     std::map<std::string, std::string> ren;
     Node block;
@@ -10259,7 +11464,19 @@ bool emit_functions(std::vector<FuncDecl>& funcs, const std::vector<StructDef>& 
             if (item.second > 1) shadowed.insert(item.first);
         if (opt_level >= 2) {
             std::map<std::string, uint64_t> known;
-            prop_node(&fn.body, &known, &shadowed);
+            std::map<std::string, Type> ltypes;
+            std::set<std::string> no_prop = shadowed;
+            for (const Local& local : fn.locals) {
+                ltypes[local.name] = local.type;
+                if (address_taken(fn.body, local.name)) no_prop.insert(local.name);
+            }
+            const std::function<bool(const Node&)> sets_jmp = [&](const Node& n) {
+                if (n.kind == Node::Call && n.text == "__okay_setjmp") return true;
+                for (const Node& k : n.kids)
+                    if (sets_jmp(k)) return true;
+                return false;
+            };
+            if (!sets_jmp(fn.body)) prop_node(&fn.body, &known, &no_prop, &ltypes);
         }
         int max_args = count_args(fn.body);
         const int outgoing = max_args > 0 ? 32 + 8 * std::max(0, max_args - 4) : 0;
@@ -10308,12 +11525,14 @@ bool emit_functions(std::vector<FuncDecl>& funcs, const std::vector<StructDef>& 
                 if (local.is_static || local.name.empty() || local.name[0] == '_' || local.type.is_ref) continue;
                 if (shadowed.count(local.name) != 0) continue;
                 if (local.type.is_array() || local.type.pointers != 0 || local.type.base == 3 || local.type.base == 5 ||
-                    local.type.base == 6)
+                    local.type.base == 6 || local.type.wide || local.type.is_bool || local.type.bits >= 0)
                     continue;
-                if (address_taken(fn.body, local.name)) continue;
+                if (address_taken(fn.body, local.name) || modified_in_place(fn.body, local.name)) continue;
                 const auto found = range.find(local.name);
                 if (found == range.end()) continue;
-                spans.push_back({i, found->second.first, found->second.second});
+                // A parameter arrives in its register-home before the first use in the body.
+                const bool is_param = i >= fn.param_base && i < fn.param_base + fn.nparams;
+                spans.push_back({i, is_param ? -1 : found->second.first, found->second.second});
             }
             std::sort(spans.begin(), spans.end(), [](const Span& a, const Span& b) { return a.start < b.start; });
             // Callee-saved first, then caller-saved. r10 stays the scratch
@@ -10542,8 +11761,10 @@ bool emit_functions(std::vector<FuncDecl>& funcs, const std::vector<StructDef>& 
         add_sym(fn.name, fn.start, 1, fn.is_static ? kClassStatic : kClassExternal, 0x20);
     for (const FuncDecl& fn : funcs) {
         if (fn.defined) continue;
-        if (fn.imported) add_sym("__imp_" + fn.name, 0, 0, kClassExternal, 0);
-        else add_sym(fn.name, 0, 0, kClassExternal, 0);
+        // A call names the decorated symbol when the function has one (a namespace function).
+        const std::string extern_name = fn.symbol.empty() ? fn.name : fn.symbol;
+        if (fn.imported) add_sym("__imp_" + extern_name, 0, 0, kClassExternal, 0);
+        else add_sym(extern_name, 0, 0, kClassExternal, 0);
     }
     std::vector<uint8_t> data_bytes;
     uint32_t bss_size = 0;
@@ -10827,6 +12048,14 @@ Result<CompileOutput> compile_c(const CompileInput& input) {
         boolean.is_unsigned = true;
         boolean.is_bool = true;
         parser.typedefs["bool"] = boolean;
+        // __int64 is a 64-bit signed integer, __int32 an int (the Microsoft spellings).
+        Type wide64;
+        wide64.base = 1;
+        wide64.wide = true;
+        parser.typedefs["__int64"] = wide64;
+        Type int32;
+        int32.base = 1;
+        parser.typedefs["__int32"] = int32;
     }
     if (!parser.parse()) {
         const size_t pos = std::min(parser.at, parser.tokens.size() - 1);

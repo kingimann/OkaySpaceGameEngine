@@ -1592,6 +1592,33 @@ endif()
 target_compile_features(test_imgui_platform_feed PRIVATE cxx_std_17)
 add_test(NAME imgui_platform_feed COMMAND test_imgui_platform_feed)
 
+# Our own Dear ImGui renderer over okay::platform::Painter (shared/ImGuiPainterRenderer.hpp), headless on both painters.
+if(TARGET okay_ui_soft)
+    add_executable(test_imgui_painter_render test_imgui_painter_render.cpp)
+    target_include_directories(test_imgui_painter_render PRIVATE ${CMAKE_SOURCE_DIR}/shared ${CMAKE_SOURCE_DIR}/engine/include ${OKAY_VS_IMGUI_INCLUDE})
+    if(TARGET okay_imgui)
+        target_link_libraries(test_imgui_painter_render PRIVATE okay_imgui okay_ui_soft okay::engine)
+    else()
+        target_sources(test_imgui_painter_render PRIVATE ${imgui_SOURCE_DIR}/imgui.cpp ${imgui_SOURCE_DIR}/imgui_draw.cpp
+            ${imgui_SOURCE_DIR}/imgui_tables.cpp ${imgui_SOURCE_DIR}/imgui_widgets.cpp)
+        target_link_libraries(test_imgui_painter_render PRIVATE okay_ui_soft okay::engine)
+    endif()
+    target_compile_features(test_imgui_painter_render PRIVATE cxx_std_17)
+    add_test(NAME imgui_painter_render COMMAND test_imgui_painter_render)
+endif()
+
+# Our own threads, recursive mutexes and atomics (shared/OkayThreads.hpp): the launcher's replacement for SDL's thread calls.
+if(NOT EMSCRIPTEN AND NOT WIN32)   # (the test sleeps with nanosleep; the header itself is for Windows too)
+    add_executable(test_okay_threads test_okay_threads.cpp)
+    target_include_directories(test_okay_threads PRIVATE ${CMAKE_SOURCE_DIR}/shared)
+    target_compile_features(test_okay_threads PRIVATE cxx_std_17)
+    find_package(Threads)
+    if(TARGET Threads::Threads)
+        target_link_libraries(test_okay_threads PRIVATE Threads::Threads)
+    endif()
+    add_test(NAME okay_threads COMMAND test_okay_threads)
+endif()
+
 add_executable(test_vs_names test_vs_names.cpp)
 target_include_directories(test_vs_names PRIVATE ${CMAKE_SOURCE_DIR}/editor ${OKAY_VS_IMGUI_INCLUDE})
 target_link_libraries(test_vs_names PRIVATE okay::engine)

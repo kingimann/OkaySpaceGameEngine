@@ -599,8 +599,10 @@ struct JobSystem::Impl {
         t_worker.index = nextIndex.fetch_add(1);
         t_worker.rng = 0x9e3779b9u * (std::uint32_t)(t_worker.index + 1);
         mu.Lock();
+        bool spun = false;   // already spun once since the last piece of work
         for (;;) {
             if (StatePtr j = PopReadyLocked(false)) {
+                spun = false;
                 UnlockFlush();
                 Outcome o = Execute(j);
                 mu.Lock();
@@ -608,18 +610,30 @@ struct JobSystem::Impl {
                 continue;
             }
             if (lightPending.load(std::memory_order_seq_cst) > 0) {
+                spun = false;
                 mu.Unlock();
                 if (RunLight() == 0) corethreads::YieldThread();   // a push is in flight: let it land
                 mu.Lock();
                 continue;
             }
             if (stopWorkers) break;
+            if (!spun && corethreads::kThreadsAvailable) {
+                // Spin a little before sleeping: the next loop of a frame usually arrives within microseconds,
+                // and waking a sleeping thread costs far more than that.
+                mu.Unlock();
+                for (int i = 0; i < 4000 && lightPending.load(std::memory_order_relaxed) <= 0; ++i)
+                    if ((i & 63) == 63) corethreads::YieldThread();
+                mu.Lock();
+                spun = true;
+                continue;   // look again with the lock held (new work, or a stop request)
+            }
             sleepers.fetch_add(1, std::memory_order_seq_cst);
             if (lightPending.load(std::memory_order_seq_cst) > 0) { sleepers.fetch_sub(1); continue; }
             ++idleWorkers;
             workCv.Wait(mu);
             --idleWorkers;
             sleepers.fetch_sub(1);
+            spun = false;
         }
         UnlockFlush();
         t_worker.impl = nullptr;
@@ -1102,21 +1116,27 @@ void JobSystem::ParallelForImpl(std::size_t begin, std::size_t end, std::size_t 
         // half, until one chunk is left. Chunk boundaries are the same as in the serial path.
         struct Ctx {
             JobSystem* js; JobCounter* ctr; RangeFn fn;
-            std::size_t begin, end, g;
-        } ctx{this, nullptr, fn, begin, end, g};
+            std::size_t begin, end, g, leaf;
+        } ctx{this, nullptr, fn, begin, end, g, 1};
+        // Split down to about 8 leaves per thread, not to single chunks: each leaf runs its chunks one
+        // after the other, so a flat loop with tiny chunks does not pay for a task per chunk, while an
+        // uneven loop still has enough leaves to steal and balance.
+        ctx.leaf = (chunks + ((std::size_t)workers + 1) * 8 - 1) / (((std::size_t)workers + 1) * 8);
         JobCounter ctr;
         ctx.ctr = &ctr;
         struct Walk {
             static void Run(const Ctx* c, std::size_t c0, std::size_t c1) {
-                while (c1 - c0 > 1) {
+                while (c1 - c0 > c->leaf) {
                     const std::size_t mid = c0 + (c1 - c0) / 2;
                     c->js->Fork(*c->ctr, [c, mid, c1] { Run(c, mid, c1); });
                     c1 = mid;
                 }
-                if (c->ctr->Failed()) return;
-                const std::size_t b = c->begin + c0 * c->g;
-                const std::size_t e = (c->end - b) > c->g ? b + c->g : c->end;
-                c->fn.call(c->fn.obj, b, e);
+                for (std::size_t k = c0; k < c1; ++k) {
+                    if (c->ctr->Failed()) return;
+                    const std::size_t b = c->begin + k * c->g;
+                    const std::size_t e = (c->end - b) > c->g ? b + c->g : c->end;
+                    c->fn.call(c->fn.obj, b, e);
+                }
             }
         };
         try { Walk::Run(&ctx, 0, chunks); }

@@ -3090,6 +3090,13 @@ add_test(NAME property_registry COMMAND test_property_registry)
 add_executable(test_jobs test_jobs.cpp)
 target_link_libraries(test_jobs PRIVATE okay::engine)
 add_test(NAME jobs COMMAND test_jobs 3)
+# Work-stealing fork-join (JobCounter / Fork / Join, task arena, stealing ParallelFor) and its benchmark (prints a table).
+add_executable(test_jobs_steal test_jobs_steal.cpp)
+target_link_libraries(test_jobs_steal PRIVATE okay::engine)
+add_test(NAME jobs_steal COMMAND test_jobs_steal 3)
+add_executable(test_jobs_bench test_jobs_bench.cpp)
+target_link_libraries(test_jobs_bench PRIVATE okay::engine)
+add_test(NAME jobs_bench COMMAND test_jobs_bench)
 
 # FrameArena, PoolAllocator, SlotMap / Handle, StringId.
 add_executable(test_arena_handles test_arena_handles.cpp)

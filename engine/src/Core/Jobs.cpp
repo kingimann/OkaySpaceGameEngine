@@ -71,6 +71,203 @@ std::exception_ptr JobHandle::Exception() const {
     return (m_state && Finished(*m_state)) ? m_state->error : std::exception_ptr();
 }
 
+
+// ---- work stealing: spin lock, task arena, per-worker deques -----------------------
+
+namespace {
+
+class SpinLock {
+public:
+    void Lock() {
+        int spins = 0;
+        while (m_f.exchange(true, std::memory_order_acquire)) {
+            while (m_f.load(std::memory_order_relaxed)) {
+                if (++spins > 64) { corethreads::YieldThread(); spins = 0; }
+            }
+        }
+    }
+    void Unlock() { m_f.store(false, std::memory_order_release); }
+private:
+    std::atomic<bool> m_f{false};
+};
+struct SpinGuard {
+    explicit SpinGuard(SpinLock& l) : m_l(l) { m_l.Lock(); }
+    ~SpinGuard() { m_l.Unlock(); }
+    SpinLock& m_l;
+};
+
+/// Bump allocator for fork-join tasks. Allocation is lock free while the current chunk has room.
+/// Memory comes back all at once, by Reset, when no task is outstanding (see Alloc / Release).
+class TaskArena {
+public:
+    static constexpr int kMaxChunks = 48;
+    static constexpr std::size_t kFirstChunk = 64 * 1024;
+    static constexpr std::size_t kKeepBytes = 8u * 1024 * 1024;   // a Reset frees chunks beyond this much
+    static constexpr int kResetting = 1 << 30;
+
+    ~TaskArena() { for (int i = 0; i < m_nchunks; ++i) std::free(m_chunk[i].base); }
+
+    void* Alloc(std::size_t bytes, std::size_t align) {
+        for (;;) {   // count the task first, so a Reset cannot start under us
+            if (m_outstanding.fetch_add(1, std::memory_order_acq_rel) < kResetting / 2) break;
+            m_outstanding.fetch_sub(1, std::memory_order_acq_rel);
+            corethreads::YieldThread();
+        }
+        for (;;) {
+            const int ci = m_cur.load(std::memory_order_acquire);
+            Chunk& c = m_chunk[ci];
+            std::size_t off = c.off.load(std::memory_order_relaxed);
+            for (;;) {
+                const std::size_t start = (off + align - 1) & ~(align - 1);
+                if (start + bytes > c.size) break;
+                if (c.off.compare_exchange_weak(off, start + bytes, std::memory_order_relaxed)) {
+                    const std::size_t u = m_used.fetch_add(bytes, std::memory_order_relaxed) + bytes;
+                    std::size_t pk = m_peak.load(std::memory_order_relaxed);
+                    while (u > pk && !m_peak.compare_exchange_weak(pk, u, std::memory_order_relaxed)) {}
+                    return c.base + start;
+                }
+            }
+            Grow(ci, bytes + align);
+        }
+    }
+    /// Give one slot back; the last one back recycles the arena.
+    void Release() {
+        if (m_outstanding.fetch_sub(1, std::memory_order_acq_rel) == 1) TryReset();
+    }
+    bool TryReset() {
+        int zero = 0;
+        if (!m_outstanding.compare_exchange_strong(zero, kResetting, std::memory_order_acq_rel)) return false;
+        {
+            SpinGuard g(m_lock);
+            std::size_t keep = 0;
+            int kept = 0;
+            for (int i = 0; i < m_nchunks; ++i) {
+                if (i > 0 && keep + m_chunk[i].size > kKeepBytes) {   // free the tail
+                    for (int j = i; j < m_nchunks; ++j) { std::free(m_chunk[j].base); m_chunk[j].base = nullptr; m_chunk[j].size = 0; }
+                    m_nchunks = i;
+                    break;
+                }
+                keep += m_chunk[i].size;
+                ++kept;
+            }
+            (void)kept;
+            for (int i = 0; i < m_nchunks; ++i) m_chunk[i].off.store(0, std::memory_order_relaxed);
+            m_cur.store(0, std::memory_order_release);
+            m_used.store(0, std::memory_order_relaxed);
+            m_resets.fetch_add(1, std::memory_order_relaxed);
+        }
+        m_outstanding.fetch_sub(kResetting, std::memory_order_acq_rel);
+        return true;
+    }
+    int Outstanding() const { return m_outstanding.load(std::memory_order_acquire); }
+    std::uint64_t Reserved() const {
+        SpinGuard g(const_cast<SpinLock&>(m_lock));
+        std::uint64_t r = 0;
+        for (int i = 0; i < m_nchunks; ++i) r += m_chunk[i].size;
+        return r;
+    }
+    std::uint64_t Peak() const { return m_peak.load(std::memory_order_relaxed); }
+    std::uint64_t Resets() const { return m_resets.load(std::memory_order_relaxed); }
+    void ResetPeak() { m_peak.store(0, std::memory_order_relaxed); }
+
+private:
+    struct Chunk {
+        char* base = nullptr;
+        std::size_t size = 0;
+        std::atomic<std::size_t> off{0};
+    };
+    // Move on from chunk `seen` (it was full for a request of `need` bytes).
+    void Grow(int seen, std::size_t need) {
+        SpinGuard g(m_lock);
+        if (m_cur.load(std::memory_order_relaxed) != seen) return;   // someone else already did
+        if (seen + 1 < m_nchunks && m_chunk[seen + 1].size >= need) {   // a kept chunk from an earlier frame
+            m_cur.store(seen + 1, std::memory_order_release);
+            return;
+        }
+        if (seen + 1 < m_nchunks) {   // too small for this request: replace the rest
+            for (int j = seen + 1; j < m_nchunks; ++j) { std::free(m_chunk[j].base); m_chunk[j].base = nullptr; m_chunk[j].size = 0; }
+            m_nchunks = seen + 1;
+        }
+        if (m_nchunks >= kMaxChunks) throw std::bad_alloc();
+        std::size_t sz = kFirstChunk << (m_nchunks < 10 ? m_nchunks : 10);
+        if (sz < need) sz = need;
+        void* mem = std::malloc(sz + 64);
+        if (!mem) throw std::bad_alloc();
+        Chunk& c = m_chunk[m_nchunks];
+        c.base = static_cast<char*>(mem);
+        c.size = sz;
+        c.off.store(0, std::memory_order_relaxed);
+        ++m_nchunks;
+        m_cur.store(m_nchunks - 1, std::memory_order_release);
+    }
+    SpinLock m_lock;
+    Chunk m_chunk[kMaxChunks];
+    int m_nchunks = 0;
+    std::atomic<int> m_cur{0};
+    std::atomic<int> m_outstanding{0};
+    std::atomic<std::size_t> m_used{0}, m_peak{0};
+    std::atomic<std::uint64_t> m_resets{0};
+public:
+    TaskArena() {
+        m_chunk[0].base = static_cast<char*>(std::malloc(kFirstChunk + 64));
+        m_chunk[0].size = m_chunk[0].base ? kFirstChunk : 0;
+        m_nchunks = 1;
+    }
+};
+
+using jobs_detail::TaskNode;
+
+/// One worker's tasks, per priority. The owner pushes and pops at the back (newest first, good for
+/// the cache and for recursive splitting); other threads take from the front (oldest, biggest work).
+class LDeque {
+public:
+    void Push(int p, TaskNode* t) {
+        SpinGuard g(m_lock);
+        Ring& r = m_ring[p];
+        if (r.count == r.buf.size()) r.Grow();
+        r.buf[(r.head + r.count) % r.buf.size()] = t;
+        ++r.count;
+    }
+    TaskNode* PopBack(int p) {
+        SpinGuard g(m_lock);
+        Ring& r = m_ring[p];
+        if (r.count == 0) return nullptr;
+        --r.count;
+        return r.buf[(r.head + r.count) % r.buf.size()];
+    }
+    TaskNode* PopFront(int p) {
+        SpinGuard g(m_lock);
+        Ring& r = m_ring[p];
+        if (r.count == 0) return nullptr;
+        TaskNode* t = r.buf[r.head];
+        r.head = (r.head + 1) % r.buf.size();
+        --r.count;
+        return t;
+    }
+private:
+    struct Ring {
+        std::vector<TaskNode*> buf = std::vector<TaskNode*>(64, nullptr);
+        std::size_t head = 0, count = 0;
+        void Grow() {
+            std::vector<TaskNode*> nb(buf.size() * 2, nullptr);
+            for (std::size_t i = 0; i < count; ++i) nb[i] = buf[(head + i) % buf.size()];
+            buf.swap(nb);
+            head = 0;
+        }
+    };
+    SpinLock m_lock;
+    Ring m_ring[3];
+};
+
+struct WorkerCtx {
+    const void* impl = nullptr;
+    int index = -1;
+    std::uint32_t rng = 0x9e3779b9u;
+};
+thread_local WorkerCtx t_worker;
+
+} // namespace
+
 // ---- JobSystem::Impl ----------------------------------------------------------
 
 struct JobSystem::Impl {
@@ -112,7 +309,82 @@ struct JobSystem::Impl {
     std::atomic<std::uint64_t> ranWorkers{0}, ranHelping{0}, ranInline{0}, ranMain{0};
     std::atomic<std::uint64_t> busyNs{0};
 
+    // ---- work stealing ----
+    TaskArena arena;
+    std::unique_ptr<LDeque[]> deques;       // [0, lightWorkers) are the workers', [lightWorkers] takes tasks forked by other threads
+    int dequeCount = 0;
+    std::atomic<int> lightWorkers{0};       // 0 = Fork runs inline
+    std::atomic<int> lightPending{0};       // forked, not yet taken from a deque
+    std::atomic<int> sleepers{0};           // workers about to sleep or asleep (see PushTask)
+    std::atomic<int> nextIndex{0};
+    std::atomic<bool> stealing{true};
+    std::atomic<std::uint64_t> forked{0}, stolenCount{0};
+
     Impl() { mainTag.store(corethreads::CurrentThreadTag()); }
+
+    int SelfIndex() const { return t_worker.impl == this ? t_worker.index : -1; }
+
+    void PushTask(TaskNode* t, int prio) {
+        const int self = SelfIndex();
+        const int di = self >= 0 ? self : dequeCount - 1;
+        lightPending.fetch_add(1, std::memory_order_seq_cst);   // before the push: a worker that sees 0 under mu may sleep
+        deques[di].Push(prio, t);
+        forked.fetch_add(1, std::memory_order_relaxed);
+        if (sleepers.load(std::memory_order_seq_cst) > 0) {
+            mu.Lock();
+            workCv.NotifyOne();
+            mu.Unlock();
+        }
+    }
+
+    // Take one task: own deque first (newest), then steal the oldest of someone else's. High priority first everywhere.
+    TaskNode* FindTask(bool& wasStolen) {
+        wasStolen = false;
+        if (lightPending.load(std::memory_order_relaxed) <= 0 || dequeCount == 0) return nullptr;
+        const int self = SelfIndex();
+        if (t_worker.rng == 0) t_worker.rng = 1;
+        for (int p = 0; p < 3; ++p) {
+            if (self >= 0) {
+                if (TaskNode* t = deques[self].PopBack(p)) { lightPending.fetch_sub(1, std::memory_order_seq_cst); return t; }
+            }
+            std::uint32_t x = t_worker.rng;
+            x ^= x << 13; x ^= x >> 17; x ^= x << 5;
+            t_worker.rng = x;
+            const int start = (int)(x % (std::uint32_t)dequeCount);
+            for (int k = 0; k < dequeCount; ++k) {
+                const int v = (start + k) % dequeCount;
+                if (v == self) continue;
+                if (TaskNode* t = deques[v].PopFront(p)) {
+                    lightPending.fetch_sub(1, std::memory_order_seq_cst);
+                    wasStolen = v != dequeCount - 1 || self >= 0;
+                    return t;
+                }
+            }
+        }
+        return nullptr;
+    }
+
+    void RunTask(TaskNode* t, bool wasStolen) {
+        JobCounter* c = t->counter;
+        if (wasStolen) stolenCount.fetch_add(1, std::memory_order_relaxed);
+        if (!c->m_failed.load(std::memory_order_acquire)) {
+            try { t->run(t); }
+            catch (...) {
+                if (!c->m_failed.exchange(true, std::memory_order_acq_rel)) c->m_error = std::current_exception();
+            }
+        }
+        t->destroy(t);
+        arena.Release();
+        c->m_pending.fetch_sub(1, std::memory_order_acq_rel);   // last touch of the counter
+    }
+
+    // Run tasks until none can be found. Returns how many ran.
+    std::size_t RunLight() {
+        std::size_t n = 0;
+        bool st = false;
+        while (TaskNode* t = FindTask(st)) { RunTask(t, st); ++n; }
+        return n;
+    }
 
     bool IsMain() const { return corethreads::CurrentThreadTag() == mainTag.load(std::memory_order_relaxed); }
     int SelfDepth() const { return t_ctx.sys == this ? t_ctx.depth : 0; }
@@ -133,11 +405,17 @@ struct JobSystem::Impl {
         stopWorkers = false;
         mode = Mode::Running;
         try { threads.reserve((std::size_t)n); } catch (...) { n = 0; }
+        try { deques.reset(new LDeque[(std::size_t)n + 1]); dequeCount = n + 1; } catch (...) { n = 0; dequeCount = 0; }
+        nextIndex.store(0);
+        lightPending.store(0);
         for (int i = 0; i < n; ++i) {
             threads.emplace_back();
             if (!threads.back().Start(&Impl::WorkerMain, this)) { threads.pop_back(); break; }
         }
         liveWorkers = (int)threads.size();
+        // Deques are sized for n workers; a worker that failed to start leaves an unused deque that
+        // thieves still look in, so nothing is stranded.
+        lightWorkers.store(liveWorkers, std::memory_order_release);
     }
 
     // ---- queues (lock held) ----
@@ -317,6 +595,9 @@ struct JobSystem::Impl {
     }
 
     void WorkerLoop() {
+        t_worker.impl = this;
+        t_worker.index = nextIndex.fetch_add(1);
+        t_worker.rng = 0x9e3779b9u * (std::uint32_t)(t_worker.index + 1);
         mu.Lock();
         for (;;) {
             if (StatePtr j = PopReadyLocked(false)) {
@@ -326,12 +607,23 @@ struct JobSystem::Impl {
                 FinishLocked(j, o, Kind::Worker);
                 continue;
             }
+            if (lightPending.load(std::memory_order_seq_cst) > 0) {
+                mu.Unlock();
+                if (RunLight() == 0) corethreads::YieldThread();   // a push is in flight: let it land
+                mu.Lock();
+                continue;
+            }
             if (stopWorkers) break;
+            sleepers.fetch_add(1, std::memory_order_seq_cst);
+            if (lightPending.load(std::memory_order_seq_cst) > 0) { sleepers.fetch_sub(1); continue; }
             ++idleWorkers;
             workCv.Wait(mu);
             --idleWorkers;
+            sleepers.fetch_sub(1);
         }
         UnlockFlush();
+        t_worker.impl = nullptr;
+        t_worker.index = -1;
     }
 
     // Wake threads sleeping in HelpUntil (something they wait for changed without a job finishing).
@@ -442,6 +734,13 @@ struct JobSystem::Impl {
             if (stalled) CancelPendingLocked();   // nothing can ever run them: do not spin
             UnlockFlush();
         }
+        // Light tasks: new Forks run inline from now on; let the ones in flight finish.
+        lightWorkers.store(0, std::memory_order_release);
+        UnlockFlush();
+        while (arena.Outstanding() > 0) {
+            if (RunLight() == 0) corethreads::YieldThread();
+        }
+        mu.Lock();
         // Lock held, nothing left to run: stop the pool for good.
         mode = Mode::Stopped;
         stopWorkers = true;
@@ -720,6 +1019,49 @@ std::size_t JobSystem::CancelPending() {
 
 void JobSystem::Shutdown(bool cancelPending) { m_impl->Shutdown(cancelPending); }
 
+// ---- fork-join ----------------------------------------------------------------
+
+void* JobSystem::AllocTask(std::size_t bytes, std::size_t align) {
+    if (align < alignof(void*)) align = alignof(void*);
+    return m_impl->arena.Alloc(bytes, align);
+}
+void JobSystem::AbortTask() { m_impl->arena.Release(); }
+
+void JobSystem::SubmitTask(jobs_detail::TaskNode* node, JobCounter& counter, JobPriority priority) {
+    Impl& I = *m_impl;
+    node->counter = &counter;
+    node->priority = (int)priority < 0 ? 0 : ((int)priority > 2 ? 2 : (int)priority);
+    counter.m_pending.fetch_add(1, std::memory_order_acq_rel);
+    if (I.lightWorkers.load(std::memory_order_acquire) == 0) {   // no workers: run it here, now
+        I.forked.fetch_add(1, std::memory_order_relaxed);
+        I.RunTask(node, false);
+        return;
+    }
+    I.PushTask(node, node->priority);
+}
+
+void JobSystem::Join(JobCounter& counter) {
+    Impl& I = *m_impl;
+    int spins = 0;
+    while (counter.m_pending.load(std::memory_order_acquire) > 0) {
+        bool st = false;
+        if (TaskNode* t = I.FindTask(st)) { I.RunTask(t, st); spins = 0; continue; }
+        if (++spins < 64) continue;
+        if (spins < 512) corethreads::YieldThread();
+        else corethreads::SleepSeconds(50e-6);
+    }
+    if (counter.m_failed.load(std::memory_order_acquire)) {
+        std::exception_ptr err = std::move(counter.m_error);
+        counter.m_error = nullptr;
+        counter.m_failed.store(false, std::memory_order_release);
+        if (err) std::rethrow_exception(err);
+    }
+}
+
+bool JobSystem::BeginFrame() { return m_impl->arena.TryReset(); }
+void JobSystem::SetWorkStealing(bool on) { m_impl->stealing.store(on, std::memory_order_relaxed); }
+bool JobSystem::WorkStealing() const { return m_impl->stealing.load(std::memory_order_relaxed); }
+
 // ---- parallel loops -----------------------------------------------------------
 
 std::size_t JobSystem::EffectiveGrain(std::size_t count, std::size_t grain) const {
@@ -752,6 +1094,36 @@ void JobSystem::ParallelForImpl(std::size_t begin, std::size_t end, std::size_t 
             const std::size_t e = (end - b) > g ? b + g : end;
             fn.call(fn.obj, b, e);
         }
+        return;
+    }
+
+    if (I.stealing.load(std::memory_order_relaxed)) {
+        // Recursive halving over chunk indices: split off the upper half as a task, keep the lower
+        // half, until one chunk is left. Chunk boundaries are the same as in the serial path.
+        struct Ctx {
+            JobSystem* js; JobCounter* ctr; RangeFn fn;
+            std::size_t begin, end, g;
+        } ctx{this, nullptr, fn, begin, end, g};
+        JobCounter ctr;
+        ctx.ctr = &ctr;
+        struct Walk {
+            static void Run(const Ctx* c, std::size_t c0, std::size_t c1) {
+                while (c1 - c0 > 1) {
+                    const std::size_t mid = c0 + (c1 - c0) / 2;
+                    c->js->Fork(*c->ctr, [c, mid, c1] { Run(c, mid, c1); });
+                    c1 = mid;
+                }
+                if (c->ctr->Failed()) return;
+                const std::size_t b = c->begin + c0 * c->g;
+                const std::size_t e = (c->end - b) > c->g ? b + c->g : c->end;
+                c->fn.call(c->fn.obj, b, e);
+            }
+        };
+        try { Walk::Run(&ctx, 0, chunks); }
+        catch (...) {
+            if (!ctr.m_failed.exchange(true)) ctr.m_error = std::current_exception();
+        }
+        Join(ctr);   // rethrows the first exception
         return;
     }
 
@@ -819,6 +1191,11 @@ JobStats JobSystem::Stats() const {
     s.ranHelping = I.ranHelping.load(std::memory_order_relaxed);
     s.ranInline = I.ranInline.load(std::memory_order_relaxed);
     s.ranOnMainThread = I.ranMain.load(std::memory_order_relaxed);
+    s.forked = I.forked.load(std::memory_order_relaxed);
+    s.stolen = I.stolenCount.load(std::memory_order_relaxed);
+    s.taskArenaBytes = I.arena.Reserved();
+    s.taskArenaPeak = I.arena.Peak();
+    s.taskArenaResets = I.arena.Resets();
     s.busyMs = (double)I.busyNs.load(std::memory_order_relaxed) / 1.0e6;
     return s;
 }

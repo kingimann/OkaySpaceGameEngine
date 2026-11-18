@@ -652,6 +652,9 @@ static Graph plan(const Manifest& m, const vector<string>& want) {
         for (auto& o : r.outputs) produced.insert(resolve(r.dir, o));
     }
     auto add = [&](Action a) { a.id = (int)g.acts.size(); g.acts.push_back(a); return a.id; };
+    // {bin} in a definition, flag or include folder means <build dir>/<outdir>/ctest (what CMake calls CMAKE_BINARY_DIR in the `cmake` command's manifests)
+    string binTree = fs::absolute(under(m.outdir + "/ctest")).lexically_normal().generic_string();
+    auto fixBin = [&](string w) { for (size_t at; (at = w.find("{bin}")) != string::npos;) w.replace(at, 5, binTree); return w; };
     for (auto& n : order) {
         const Target& t = *byName[n]; vector<string> libs = transitive(t);
         vector<string> objs; vector<int> objActs; vector<string> needKeys;
@@ -673,22 +676,22 @@ static Graph plan(const Manifest& m, const vector<string>& want) {
                 for (auto& i : t.includes) a.argv.push_back("/I" + i);
                 for (auto& i : t.exportIncludes) a.argv.push_back("/I" + i);
                 for (auto& l : libs) for (auto& i : byName[l]->exportIncludes) a.argv.push_back("/I" + i);
-                for (auto& d : t.defines) a.argv.push_back("/D" + d);
+                for (auto& d : t.defines) a.argv.push_back("/D" + fixBin(d));
                 for (auto& pf : t.fileIncludes) if (pf.first == s) a.argv.push_back("/I" + pf.second);
-                for (auto& pf : t.fileDefines) if (pf.first == s) a.argv.push_back("/D" + pf.second);
+                for (auto& pf : t.fileDefines) if (pf.first == s) a.argv.push_back("/D" + fixBin(pf.second));
                 for (auto& pf : t.fileFlags) if (pf.first == s) a.argv.push_back(spellMsvc(pf.second, false));
                 a.argv.push_back("/c"); a.argv.push_back("/Fo" + a.output); a.argv.push_back(s);
                 a.rspHead = 1; a.rspThreshold = m.tc.rspThreshold;
             } else {
                 a.argv.push_back(isC ? m.tc.cc : m.tc.cxx);
                 for (auto& f : m.tc.flags) a.argv.push_back(f);
-                for (auto& f : t.flags) a.argv.push_back(f);
+                for (auto& f : t.flags) { if (isC && (f.rfind("-std=c++", 0) == 0 || f.rfind("-std=gnu++", 0) == 0)) continue; a.argv.push_back(f); } // a C++ standard does not apply to a C file
                 for (auto& i : t.includes) a.argv.push_back("-I" + i);
                 for (auto& i : t.exportIncludes) a.argv.push_back("-I" + i);
                 for (auto& l : libs) for (auto& i : byName[l]->exportIncludes) a.argv.push_back("-I" + i);
-                for (auto& d : t.defines) a.argv.push_back("-D" + d);
+                for (auto& d : t.defines) a.argv.push_back("-D" + fixBin(d));
                 for (auto& pf : t.fileIncludes) if (pf.first == s) a.argv.push_back("-I" + pf.second);
-                for (auto& pf : t.fileDefines) if (pf.first == s) a.argv.push_back("-D" + pf.second);
+                for (auto& pf : t.fileDefines) if (pf.first == s) a.argv.push_back("-D" + fixBin(pf.second));
                 for (auto& pf : t.fileFlags) if (pf.first == s) a.argv.push_back(pf.second);
                 for (auto& x : {string("-MMD"), string("-MF"), a.depfile, string("-MT"), a.output, string("-c"), s, string("-o"), a.output}) a.argv.push_back(x);
                 if (m.tc.pathMap) { // spell the sources and include folders absolutely and map the checkout folder to a fixed name

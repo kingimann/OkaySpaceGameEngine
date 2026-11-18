@@ -1560,7 +1560,7 @@ static void cmakeProject() {
         "add_compile_options(-Wall)\n"
         "set(DEMO_VERSION_DEFINE DEMO_VERSION=\"${PROJECT_VERSION}\")   # a quote inside an unquoted word\n"
         "if(DEMO_FANCY)\n  set(_extra src/fancy.cpp)\nelse()\n  set(_extra \"\")\nendif()\n"
-        "add_library(core STATIC src/core.cpp ${_extra})\n"
+        "add_library(core STATIC src/core.cpp src/c_part.c ${_extra})\n"
         "target_include_directories(core PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/include)\n"
         "target_compile_definitions(core PUBLIC CORE_PUBLIC=1 PRIVATE CORE_PRIV=2)\n"
         "add_library(demo::core ALIAS core)\n"
@@ -1572,13 +1572,18 @@ static void cmakeProject() {
         "add_executable(app src/main.cpp)\n"
         "target_link_libraries(app PRIVATE demo::core viaiface)\n"
         "target_compile_definitions(app PRIVATE CHECK_GOOD=${_good})\n"
+        "add_library(extra INTERFACE)\ntarget_include_directories(extra INTERFACE ${CMAKE_CURRENT_SOURCE_DIR}/incx)\n"
+        "find_path(_sysinc stdio.h)\ntarget_include_directories(app PRIVATE ${_sysinc} \"$<TARGET_PROPERTY:extra,INTERFACE_INCLUDE_DIRECTORIES>\")\n"
+        "target_compile_definitions(app PRIVATE OUT_DIR=\"${CMAKE_CURRENT_BINARY_DIR}/x\")\n"
         "add_executable(ghost src/ghost.cpp)\n"
         "enable_testing()\n"
         "add_subdirectory(tests)\n");
     write("include/core.h", "#pragma once\nconst char* core_version();\nint core_pub();\n");
-    write("src/core.cpp", "#include \"core.h\"\n#ifndef CORE_PRIV\n#error private define missing\n#endif\nconst char* core_version(){return DEMO_VERSION;}\nint core_pub(){return CORE_PRIV;}\n");
+    write("src/core.cpp", "#include \"core.h\"\n#ifndef CORE_PRIV\n#error private define missing\n#endif\nextern \"C\" int c_part();\nconst char* core_version(){return DEMO_VERSION;}\nint core_pub(){return CORE_PRIV + c_part() - 1;}\n");
+    write("incx/extra.h", "#pragma once\n#define FROM_EXTRA 4\n");
+    write("src/c_part.c", "int c_part(void){return 1;}\n");
     write("src/fancy.cpp", "int fancy(){return 9;}\n");
-    write("src/main.cpp", "#include \"core.h\"\n#include <cstring>\n#if CHECK_GOOD != 1\n#error the if() conditions were evaluated wrongly\n#endif\n#if VIA_IFACE != 3 || CORE_PUBLIC != 1\n#error interface or public definitions did not arrive\n#endif\nint main(){return std::strcmp(core_version(), \"1.2.3\") == 0 && core_pub() == 2 ? 0 : 1;}\n");
+    write("src/main.cpp", "#include \"core.h\"\n#include <extra.h>\n#include <cstring>\n#if FROM_EXTRA != 4\n#error include folder from TARGET_PROPERTY missing\n#endif\n#if CHECK_GOOD != 1\n#error the if() conditions were evaluated wrongly\n#endif\n#if VIA_IFACE != 3 || CORE_PUBLIC != 1\n#error interface or public definitions did not arrive\n#endif\nint main(){return std::strcmp(core_version(), \"1.2.3\") == 0 && core_pub() == 2 && std::strstr(OUT_DIR, \"/ctest/x\") != nullptr ? 0 : 1;}\n");
     write("tests/CMakeLists.txt",
         "function(demo_test name)\n  add_executable(test_${name} test_${name}.cpp)\n  target_link_libraries(test_${name} PRIVATE demo::core)\n  add_test(NAME ${name} COMMAND test_${name} ${ARGN})\nendfunction()\n"
         "demo_test(ok)\ndemo_test(args one two)\ndemo_test(cwd)\ndemo_test(fail)\nset_tests_properties(fail PROPERTIES WILL_FAIL TRUE)\n"
@@ -1604,6 +1609,8 @@ static void testCmakeReader() {
     check(man.find("target demo::core") == string::npos && man.find("target viaiface") == string::npos, "an ALIAS and an INTERFACE library are not targets of their own", man);
     check(man.find("file_define = src/core.cpp \"DEMO_VERSION=\\\"1.2.3\\\"\"") != string::npos, "a per-file definition with quotes is written", man);
     check(man.find("-Wall") != string::npos && man.find("-std=gnu++17") != string::npos, "directory options and the language standard", man);
+    check(man.find(" /usr/include ") == string::npos && man.find(" /usr/include\n") == string::npos, "the compiler's own include folder is not passed as -I", man);
+    check(man.find("{bin}/x") != string::npos, "CMAKE_CURRENT_BINARY_DIR reads {bin}", man);
     check(man.find("fancy.cpp") == string::npos, "an option that is off leaves its source out", man);
     check(o.find("skipped target   ghost: missing source src/ghost.cpp") != string::npos, "audit names the target it could not write", o);
     check(man.find("target ghost") == string::npos, "a target with a missing source is not written", man);
@@ -1614,6 +1621,11 @@ static void testCmakeReader() {
     check(rc == 2 && o.find("asked to stop") != string::npos, "message(FATAL_ERROR) stops the read with its text", o);
     o = sh("cmake . -o rel.okay --build-type Release", &rc); string rm = readFile(gRoot / "rel.okay");
     check(rm.find("-O3") != string::npos && rm.find("NDEBUG") != string::npos, "--build-type Release adds -O3 and NDEBUG", rm);
+    sh("-f build.okay compdb");
+    { string cdb = readFile(gRoot / "compile_commands.json");
+      auto at = cdb.find("\"file\": \"src/c_part.c\""); auto e = at == string::npos ? at : cdb.find('}', at);
+      string row = at == string::npos ? "" : cdb.substr(at, e - at);
+      check(at != string::npos && row.find("-std=") == string::npos && row.find("-Wall") != string::npos, "a C file does not get the C++ standard flag but keeps the other flags", row); }
     // build and run the tests
     o = sh("-f build.okay -j2 app", &rc); check(rc == 0, "the generated manifest builds the program (checks defines and if() at compile time)", o);
     check(system(("'" + (gRoot / "build/app").string() + "'").c_str()) == 0, "the program runs");

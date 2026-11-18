@@ -220,6 +220,14 @@ struct Interp {
         if (head == "BUILD_INTERFACE") { tally.genex["BUILD_INTERFACE"]++; return expand(rest); }
         if (head == "INSTALL_INTERFACE") { tally.genex["INSTALL_INTERFACE"]++; return ""; }
         if (head == "TARGET_FILE") { tally.genex["TARGET_FILE"]++; return "{target:" + expand(rest) + "}"; }
+        if (head == "TARGET_PROPERTY") {
+            tally.genex["TARGET_PROPERTY"]++; auto comma = rest.find(','); string tn = expand(rest.substr(0, comma)), pn = comma == string::npos ? "" : rest.substr(comma + 1);
+            Target* t = tgt(tn); if (!t) return ""; vector<string> v;
+            if (pn == "INTERFACE_INCLUDE_DIRECTORIES") { v = t->pubIncs; v.insert(v.end(), t->ifIncs.begin(), t->ifIncs.end()); }
+            else if (pn == "INTERFACE_COMPILE_DEFINITIONS") { v = t->pubDefs; v.insert(v.end(), t->ifDefs.begin(), t->ifDefs.end()); }
+            else if (pn == "INTERFACE_COMPILE_OPTIONS") { v = t->pubOpts; v.insert(v.end(), t->ifOpts.begin(), t->ifOpts.end()); }
+            return joinList(v);
+        }
         if (head == "CXX_COMPILER_ID") return "";
         tally.genex["$<" + head + ">"]++; return "";
     }
@@ -805,6 +813,7 @@ struct Report {
     bool accountDefines = false;
 };
 
+static bool implicitInclude(const string& p) { return p == "/usr/include" || p == "/usr/local/include" || p == "/usr/include/x86_64-linux-gnu"; } // the compiler already searches these, in its own order
 static string rootRel(const string& p, const string& root) {
     if (p.compare(0, root.size() + 1, root + "/") == 0) return p.substr(root.size() + 1);
     return p;
@@ -912,8 +921,8 @@ static string emitManifest(Interp& in, Report& rep) {
         if (!t.skipReason.empty()) { ++rep.skipped; rep.skippedTargets.push_back({n, t.skipReason}); continue; }
         Resolved& r = res[n]; ++rep.emitted; emitted.insert(n);
         vector<string> incs, defs, opts, linkFlags = r.linkFlags, libs = r.libs;
-        for (auto& x : t.dirIncs) addUnique(incs, rootRel(x, root)); for (auto& x : t.incs) addUnique(incs, rootRel(x, root)); for (auto& x : t.pubIncs) addUnique(incs, rootRel(x, root));
-        for (auto& x : r.incs) addUnique(incs, rootRel(x, root));
+        for (auto& x : t.dirIncs) if (!implicitInclude(x)) addUnique(incs, rootRel(x, root)); for (auto& x : t.incs) if (!implicitInclude(x)) addUnique(incs, rootRel(x, root)); for (auto& x : t.pubIncs) if (!implicitInclude(x)) addUnique(incs, rootRel(x, root));
+        for (auto& x : r.incs) if (!implicitInclude(x)) addUnique(incs, rootRel(x, root));
         for (auto& x : t.dirDefs) if (!isAccount(x)) addUnique(defs, x); for (auto& x : t.defs) addUnique(defs, x); for (auto& x : t.pubDefs) addUnique(defs, x);
         for (auto& x : r.defs) addUnique(defs, x);
         if (!btDef.empty()) addUnique(defs, btDef);

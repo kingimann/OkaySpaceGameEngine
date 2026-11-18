@@ -13529,9 +13529,22 @@ bool Parser::parse_unary(Node* out) {
             bool exp = false;
             if (!parse_type(&ty, &imp, &exp)) return false;
             while (accept(TStar)) ++ty.pointers;
+            bool cast_to_ref = false;
+            if (accept(TAmp) || accept(TAndAnd)) cast_to_ref = true;  // (T&)x: the object x viewed as a T ([expr.cast], const_cast<T&>)
             if (!expect(TRParen, "')'")) return false;
             Node inner;
             if (!parse_unary(&inner)) return false;
+            if (cast_to_ref) {
+                Type pt = ty;
+                pt.pointers += 1;
+                pt.is_ref = false;
+                Node deref;
+                deref.kind = Node::Unary;
+                deref.op = TStar;
+                deref.kids.push_back(cast_node(pt, node_addr(std::move(inner))));
+                *out = std::move(deref);
+                return parse_postfix(out);
+            }
             if (ty.base == 0 && ty.pointers == 0 && inner.kind == Node::Call && cur_locals != nullptr) {
                 // (void)f(): a call whose class result does not fit a register still needs somewhere to put it.
                 Type st;

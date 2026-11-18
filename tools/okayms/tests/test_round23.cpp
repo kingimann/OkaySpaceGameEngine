@@ -356,5 +356,10 @@ int main(int, char**) {
           "int main() { std::vector<A> v; v.push_back(A(1)); v.push_back(A(std::string(\"b\"))); return (int)v.size(); }\n", &o);
     CHECK(t, has_symbol(o, "main"));
     build(t, "round 33: ... and using such a member is an error", "#include <string>\n#include <vector>\nstruct A { A(int v) : n(v) {} int n; };\nint main() { std::vector<A> v; v.resize(3); return (int)v.size(); }\n", &o, false);
+    ++tests;
+    build(t, "round 34: const_cast<G*>(this)->f(const_cast<G&>(x)) inside a const member (reference casts)",
+          "struct G { int n; bool Move(int i, G& d, int x, bool f, bool c) { return true; } bool Can(int i, const G& dst, int x, bool r = false) const { return const_cast<G*>(this)->Move(i, const_cast<G&>(dst), x, r, false); } };\n"
+          "int main() { G g; return g.Can(0, g, 1); }\n", &o);
+    CHECK(t, has_symbol(o, "main"));
     return t.finish(tests);
 }

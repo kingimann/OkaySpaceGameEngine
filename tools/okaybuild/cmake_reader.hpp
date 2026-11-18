@@ -145,6 +145,7 @@ struct Options {
     std::map<string, string> fetched; // FetchContent name -> folder with the sources already on disk
     string buildType = "Release";
     bool quiet = true;
+    string regenCmd; // when set, the manifest gets a `buildfile` block that runs this to read the CMake files again when one of them changes
 };
 
 struct Tally { std::map<string, int> run, unknown, genex; vector<string> messages; int options = 0, setOptions = 0, widened = 0; };
@@ -163,6 +164,10 @@ struct Interp {
     int depth = 0; bool returning = false, breaking = false;
     std::map<string, string> srcProps; // "file|PROP" -> value (per-file properties collected as set_source_files_properties runs)
     bool testingOn = false;
+    std::set<string> readFiles; // every CMake file and file(READ) input this read looked at (they become the manifest's regeneration inputs)
+    string genDir() const { return opt.root + "/_deps/okaybuild-gen"; }
+    // a path under {bin} (the CMake binary dir) is a generated file: it is really written below _deps/okaybuild-gen
+    string physical(const string& p) const { return p.compare(0, 5, "{bin}") == 0 ? genDir() + p.substr(5) : p; }
 
     // ---- variables ----
     bool has(const string& k) const { return vars.count(k) || cache.count(k); }
@@ -360,6 +365,7 @@ struct Interp {
     void doTarget(const Cmd& c, const vector<string>& a);
     void doFind(const string& name, const vector<string>& a);
     void addTarget(const Cmd& c, const vector<string>& a, bool lib);
+    string rootRel2(const string& p) const { return p.compare(0, opt.root.size() + 1, opt.root + "/") == 0 ? p.substr(opt.root.size() + 1) : p; }
     Target* tgt(const string& n) { auto it = targets.find(n); if (it == targets.end()) return nullptr; if (!it->second.aliasOf.empty()) return tgt(it->second.aliasOf); return &it->second; }
     void setVar(const string& k, const string& v, bool parent) { if (parent) parentWrites.push_back({k, v}); else vars[k] = v; }
     void init();
@@ -448,7 +454,7 @@ inline void Interp::callFunc(const Func& f, const string& name, const vector<str
 
 inline void Interp::includeFile(const string& file) {
     std::ifstream in(file); if (!in) return;
-    string text((std::istreambuf_iterator<char>(in)), {});
+    string text((std::istreambuf_iterator<char>(in)), {}); readFiles.insert(fs::path(file).lexically_relative(opt.root).generic_string());
     auto cs = parseFile(text, fs::path(file).lexically_relative(opt.root).generic_string());
     string was = get("CMAKE_CURRENT_LIST_FILE"); vars["CMAKE_CURRENT_LIST_FILE"] = file;
     vars["CMAKE_CURRENT_LIST_DIR"] = fs::path(file).parent_path().generic_string();
@@ -458,7 +464,7 @@ inline void Interp::includeFile(const string& file) {
 inline void Interp::sub(const string& dir) {
     string src = abs(dir, curSrc); string file = src + "/CMakeLists.txt";
     std::ifstream in(file); if (!in) throw ReadError{"add_subdirectory: no CMakeLists.txt in " + src};
-    string text((std::istreambuf_iterator<char>(in)), {});
+    string text((std::istreambuf_iterator<char>(in)), {}); readFiles.insert(fs::path(file).lexically_relative(opt.root).generic_string());
     auto cs = parseFile(text, fs::path(file).lexically_relative(opt.root).generic_string());
     auto savedVars = vars; auto savedWrites = parentWrites; parentWrites.clear();
     auto sd = dirDefs, so = dirOpts, si = dirIncs, sl = dirLinkOpts; string ss = curSrc, sb = curBin;
@@ -549,9 +555,9 @@ inline void Interp::doString(const vector<string>& a) {
 
 inline void Interp::doFile(const vector<string>& a) {
     if (a.empty()) return; const string& op = a[0];
-    if (op == "READ" && a.size() >= 3) { std::ifstream in(abs(a[1], curSrc)); string t((std::istreambuf_iterator<char>(in)), {}); vars[a[2]] = t; return; }
+    if (op == "READ" && a.size() >= 3) { { string rf = physical(abs(a[1], curSrc)); readFiles.insert(rootRel2(rf)); } std::ifstream in(physical(abs(a[1], curSrc))); string t((std::istreambuf_iterator<char>(in)), {}); vars[a[2]] = t; return; }
     if (op == "STRINGS" && a.size() >= 3) {
-        std::ifstream in(abs(a[1], curSrc)); string line; vector<string> found; string re;
+        readFiles.insert(rootRel2(abs(a[1], curSrc))); std::ifstream in(abs(a[1], curSrc)); string line; vector<string> found; string re;
         for (size_t k = 3; k + 1 < a.size(); ++k) if (a[k] == "REGEX") re = a[k + 1];
         std::regex rx; bool use = !re.empty(); try { if (use) rx = std::regex(re); } catch (...) { use = false; }
         while (std::getline(in, line)) { if (!line.empty() && line.back() == '\r') line.pop_back(); if (!use || std::regex_search(line, rx)) { string esc; for (char ch : line) { if (ch == ';') esc += "\\;"; else esc += ch; } found.push_back(esc); } }
@@ -570,6 +576,15 @@ inline void Interp::doFile(const vector<string>& a) {
             else for (auto& e : fs::recursive_directory_iterator(dir, ec)) if (e.is_regular_file()) take(e.path());
         }
         std::sort(found.begin(), found.end()); vars[var] = joinList(found); return;
+    }
+    if ((op == "WRITE" || op == "APPEND") && a.size() >= 2) { // only generated files under {bin} are written; anything else is left alone
+        string target = abs(a[1], curSrc);
+        if (target.compare(0, 5, "{bin}") == 0) {
+            string text; for (size_t k = 2; k < a.size(); ++k) text += a[k];
+            string phys = physical(target); std::error_code ec; fs::create_directories(fs::path(phys).parent_path(), ec);
+            std::ofstream f(phys, op == "WRITE" ? std::ios::trunc | std::ios::binary : std::ios::app | std::ios::binary); f << text;
+        } else tally.unknown["file(" + op + ") outside the build folder"]++;
+        return;
     }
     if (op == "MAKE_DIRECTORY" || op == "WRITE" || op == "APPEND" || op == "COPY" || op == "REMOVE" || op == "REMOVE_RECURSE" || op == "TOUCH") return; // the build writes nothing here
     tally.unknown["file(" + op + ")"]++;
@@ -726,6 +741,12 @@ inline void Interp::builtin(const Cmd& c) {
             if (a[k].rfind("OUTPUT_", 0) == 0 || a[k].rfind("ERROR_", 0) == 0 || a[k] == "TIMEOUT" || a[k] == "WORKING_DIRECTORY") { inCmd = false; if (a[k] == "TIMEOUT" || a[k] == "WORKING_DIRECTORY") ++k; continue; }
             if (inCmd) w.push_back(a[k]);
         }
+        if (w.size() >= 4 && w[0] == "cmake" && w[1] == "-E" && (w[2] == "copy_if_different" || w[2] == "copy")) { // the one cmake -E command the project uses at configure time
+            std::error_code ec; fs::path from = physical(abs(w[3], curSrc)), to = w.size() > 4 ? fs::path(physical(abs(w[4], curSrc))) : fs::path();
+            if (!to.empty()) { fs::create_directories(to.parent_path(), ec); bool same = fs::exists(to, ec) && fs::file_size(from, ec) == fs::file_size(to, ec); if (same) { std::ifstream x(from, std::ios::binary), y(to, std::ios::binary); same = std::string((std::istreambuf_iterator<char>(x)), {}) == std::string((std::istreambuf_iterator<char>(y)), {}); }
+                if (!same || w[2] == "copy") fs::copy_file(from, to, fs::copy_options::overwrite_existing, ec); }
+            if (!resVar.empty()) vars[resVar] = ec ? "1" : "0"; return;
+        }
         for (auto& x : w) { string q = "'"; for (char ch : x) { if (ch == '\'') q += "'\\''"; else q += ch; } cmdline += q + "' "; }
         string out; int rc = 1;
         if (!w.empty()) { FILE* f = CMR_POPEN((cmdline + " 2>/dev/null").c_str(), "r"); if (f) { char b[512]; size_t k; while ((k = fread(b, 1, sizeof b, f)) > 0) out.append(b, k); int st = CMR_PCLOSE(f);
@@ -809,7 +830,7 @@ inline void Interp::init() {
 
 inline void Interp::runTop() {
     string file = opt.root + "/CMakeLists.txt"; std::ifstream in(file); if (!in) throw ReadError{"no CMakeLists.txt in " + opt.root};
-    string text((std::istreambuf_iterator<char>(in)), {});
+    string text((std::istreambuf_iterator<char>(in)), {}); readFiles.insert("CMakeLists.txt");
     auto cs = parseFile(text, "CMakeLists.txt");
     vars["CMAKE_CURRENT_LIST_FILE"] = file; vars["CMAKE_CURRENT_LIST_DIR"] = opt.root;
     run(cs, 0, cs.size());
@@ -827,6 +848,10 @@ struct Report {
 };
 
 static bool implicitInclude(const string& p) { return p == "/usr/include" || p == "/usr/local/include" || p == "/usr/include/x86_64-linux-gnu"; } // the compiler already searches these, in its own order
+static string genMap(const string& p, const string& root) { // a generated file written below _deps/okaybuild-gen is named by its real place
+    if (p.compare(0, 5, "{bin}") == 0) { string real = root + "/_deps/okaybuild-gen" + p.substr(5); std::error_code ec; if (fs::exists(real, ec)) return real; }
+    return p;
+}
 static string rootRel(const string& p, const string& root) {
     if (p.compare(0, root.size() + 1, root + "/") == 0) return p.substr(root.size() + 1);
     return p;
@@ -903,7 +928,7 @@ static string emitManifest(Interp& in, Report& rep) {
         Target& t = in.targets[n]; if (t.kind != "exe" && t.kind != "lib") continue;
         if (t.skipReason.empty()) {
             if (t.sources.empty()) t.skipReason = "no sources";
-            for (auto& s : t.sources) {
+            for (auto& s0 : t.sources) { string s = genMap(s0, root); s0 = s;
                 if (s.compare(0, 5, "{bin}") == 0) { t.skipReason = "generated source " + s; break; }
                 std::error_code ec; bool willFetch = false; for (auto& fu : in.fetchUsed) if (s.rfind(root + "/_deps/" + fu + "-src/", 0) == 0) willFetch = true;
                 if (!willFetch && !fs::exists(s, ec)) { t.skipReason = s.compare(0, 18, "/okay-not-fetched/") == 0 ? "needs a download: " + s.substr(18, s.find('/', 18) - 18) + " (give --fetched NAME=DIR)" : "missing source " + rootRel(s, root); break; }
@@ -928,6 +953,11 @@ static string emitManifest(Interp& in, Report& rep) {
     for (auto& n : in.order) { Target& t = in.targets[n]; if (t.kind == "exe" || t.kind == "lib") for (auto& d : t.dirDefs) if (isAccount(d)) account = true; }
     rep.accountDefines = account;
     if (account) out << "account_defines = on\n";
+    if (!in.opt.regenCmd.empty()) { // configure dependencies: the manifest is made again when a CMake file or a file the CMake files read changes
+        out << "buildfile\n  cmd = " << in.opt.regenCmd << "\n  inputs =";
+        for (auto& f : in.readFiles) out << " " << qw(f);
+        out << "\nend\n";
+    }
     out << "toolchain\n  path_map = on\nend\n";
     for (auto& fu : in.fetchUsed) {
         auto& f = in.fetchDeclared[fu]; out << "fetch " << qw(fu) << "\n";
@@ -940,8 +970,8 @@ static string emitManifest(Interp& in, Report& rep) {
         if (!t.skipReason.empty()) { ++rep.skipped; rep.skippedTargets.push_back({n, t.skipReason}); continue; }
         Resolved& r = res[n]; ++rep.emitted; emitted.insert(n);
         vector<string> incs, defs, opts, linkFlags = r.linkFlags, libs = r.libs;
-        for (auto& x : t.dirIncs) if (!implicitInclude(x)) addUnique(incs, rootRel(x, root)); for (auto& x : t.incs) if (!implicitInclude(x)) addUnique(incs, rootRel(x, root)); for (auto& x : t.pubIncs) if (!implicitInclude(x)) addUnique(incs, rootRel(x, root));
-        for (auto& x : r.incs) if (!implicitInclude(x)) addUnique(incs, rootRel(x, root));
+        for (auto& x : t.dirIncs) if (!implicitInclude(x)) addUnique(incs, rootRel(genMap(x, root), root)); for (auto& x : t.incs) if (!implicitInclude(x)) addUnique(incs, rootRel(genMap(x, root), root)); for (auto& x : t.pubIncs) if (!implicitInclude(x)) addUnique(incs, rootRel(genMap(x, root), root));
+        for (auto& x : r.incs) if (!implicitInclude(x)) addUnique(incs, rootRel(genMap(x, root), root));
         for (auto& x : t.dirDefs) if (!isAccount(x)) addUnique(defs, x); for (auto& x : t.defs) addUnique(defs, x); for (auto& x : t.pubDefs) addUnique(defs, x);
         for (auto& x : r.defs) addUnique(defs, x);
         if (!btDef.empty()) addUnique(defs, btDef);

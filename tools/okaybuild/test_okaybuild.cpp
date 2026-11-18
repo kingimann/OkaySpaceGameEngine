@@ -1773,11 +1773,34 @@ static void testOnlyAffectedTestsRebuild() {
     o = sh("-j2 --explain ctest", &rc); check(ran(o) == 2 && o.find("CC tb.cpp") == string::npos && o.find("LD tb") == string::npos, "a real edit recompiles and relinks only ta", o);
     o = sh("-j2 ctest", &rc); check(rc == 1 && o.find("FAIL ta") != string::npos && o.find("PASS tb") != string::npos, "the rebuilt program's result is what ctest reports", o);
 }
+
+static void testGeneratedSourcesAndRegen() {
+    printf("test: configure-time generated sources, and the manifest regenerates itself when a CMake file or a file it read changes\n");
+    fresh("gensrc");
+    write("data/greeting.txt", "hello");
+    write("CMakeLists.txt",
+        "project(G)\nfile(READ ${CMAKE_SOURCE_DIR}/data/greeting.txt _g)\n"
+        "set(_cpp ${CMAKE_CURRENT_BINARY_DIR}/gen/greet.cpp)\n"
+        "file(WRITE ${_cpp}.new \"const char* greeting(){return \\\"${_g}\\\";}\\n\")\n"
+        "execute_process(COMMAND ${CMAKE_COMMAND} -E copy_if_different ${_cpp}.new ${_cpp})\n"
+        "add_executable(g main.cpp ${_cpp})\n");
+    write("main.cpp", "#include <cstring>\nconst char* greeting();\nint main(){return std::strcmp(greeting(), \"hello\") == 0 ? 0 : 1;}\n");
+    int rc; string o = sh("cmake . -o build.okay", &rc); string man = readFile(gRoot / "build.okay");
+    check(rc == 0 && man.find("_deps/okaybuild-gen/gen/greet.cpp") != string::npos && fs::exists(gRoot / "_deps/okaybuild-gen/gen/greet.cpp"), "a file written with file(WRITE) under the binary folder becomes a real source", o + man);
+    check(man.find("buildfile") != string::npos && man.find("data/greeting.txt") != string::npos, "the files the CMake code read are the regeneration inputs", man);
+    o = sh("-f build.okay -j2", &rc); check(rc == 0 && system(("'" + (gRoot / "build/g").string() + "'").c_str()) == 0, "the generated source builds and runs", o);
+    o = sh("-f build.okay -j2", &rc); check(rc == 0 && ran(o) == 0 && o.find("regenerating") == string::npos, "nothing to do the second time, no regeneration", o);
+    sleepMs(); write("data/greeting.txt", "bye");
+    o = sh("-f build.okay -j2", &rc); check(o.find("regenerating build.okay") != string::npos && ran(o) >= 1, "a changed file the CMake code read regenerates the manifest and rebuilds the generated source", o);
+    check(system(("'" + (gRoot / "build/g").string() + "'").c_str()) != 0, "and the program now says bye");
+    sleepMs(); write("CMakeLists.txt", readFile(gRoot / "CMakeLists.txt") + "add_executable(extra main.cpp ${_cpp})\n");
+    o = sh("-f build.okay targets", &rc); check(o.find("extra") != string::npos, "an edited CMakeLists.txt adds the new target by itself", o);
+}
 int main(int argc, char** argv) {
     if (argc < 2) { puts("usage: test_okaybuild PATH_TO_okay-build"); return 2; }
     gTool = "'" + fs::absolute(argv[1]).string() + "'";
     if (const char* only = getenv("OKB_ONLY")) { // OKB_ONLY=cmake runs just the CMake reader, ctest and library tests (quick while working on them)
-        if (string(only) == "cmake") { testCmakeReader(); testCmakeSyntax(); testSharedObjectLibs(); testFetchAndSha256(); testOnlyAffectedTestsRebuild(); printf("okaybuild tests (cmake only): %d checks passed, %d failed\n", gPass, gFail); return gFail ? 1 : 0; }
+        if (string(only) == "cmake") { testCmakeReader(); testCmakeSyntax(); testSharedObjectLibs(); testFetchAndSha256(); testOnlyAffectedTestsRebuild(); testGeneratedSourcesAndRegen(); printf("okaybuild tests (cmake only): %d checks passed, %d failed\n", gPass, gFail); return gFail ? 1 : 0; }
     }
     testBasicAndNoop(); testHeaderTouch(); testDefine(); testMissingHeader(); testCycle(); testLinkOrder();
     testParallelDeterministic(); testCompdbCleanDry(); testManifestErrors(); testMingwCompdb(); testMingwSlice(); testStatShortcut(); testFreshNoopTrust(); testSpacesBuildDirRsp(); testRawActions(); testHashInCommandAndPath(); testImportGenerated();
@@ -1800,5 +1823,6 @@ int main(int argc, char** argv) {
     testSharedObjectLibs();
     testFetchAndSha256();
     testOnlyAffectedTestsRebuild();
+    testGeneratedSourcesAndRegen();
     printf("okaybuild tests: %d checks passed, %d failed\n", gPass, gFail); return gFail ? 1 : 0;
 }

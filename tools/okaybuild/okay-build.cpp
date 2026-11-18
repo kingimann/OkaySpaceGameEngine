@@ -2816,6 +2816,14 @@ static int cmdCmake(const string& root, const string& outFile, const vector<std:
     cmr::Options co; co.root = fs::absolute(root).lexically_normal().generic_string(); while (co.root.size() > 1 && co.root.back() == '/') co.root.pop_back();
     for (auto& d : defs) co.defs[d.first] = d.second;
     co.fetched = fetched; if (!buildType.empty()) co.buildType = buildType;
+    { // the command that makes this manifest again (run by `buildfile` when a CMake file changes)
+        string self = "okay-build"; std::error_code ec; fs::path exe = fs::read_symlink("/proc/self/exe", ec); if (!ec) self = exe.generic_string();
+        string c = "\"" + self + "\" cmake \"" + co.root + "\" -o \"" + fs::absolute(outFile).generic_string() + "\"";
+        for (auto& d : defs) c += " --opt \"" + d.first + "=" + d.second + "\"";
+        if (!buildType.empty()) c += " --build-type " + buildType;
+        for (auto& f : fetched) c += " --fetched \"" + f.first + "=" + f.second + "\"";
+        co.regenCmd = c;
+    }
     cmr::Report rep; cmr::Tally tally; string text;
     try { text = cmr::readProject(co, rep, tally); } catch (const cmr::ReadError& e) { throw Fail("cmake: " + e.msg); }
     { std::ofstream f(outFile, std::ios::trunc); if (!f) throw Fail("cannot write " + outFile); f << text; }
@@ -3759,7 +3767,7 @@ int main(int argc, char** argv) {
         }
         if (gBuildDir != ".") gBuildDir = fs::absolute(gBuildDir).string();
         fs::path mp = fs::absolute(o.file); fs::current_path(mp.parent_path());
-        Manifest m = cmd == "build" ? loadWithRegen(mp.string()) : parseManifest(mp.string());
+        Manifest m = cmd == "build" || cmd == "ctest" || cmd == "test" || cmd == "targets" || cmd == "graph" || cmd == "compdb" || cmd == "package" ? loadWithRegen(mp.string()) : parseManifest(mp.string());
         if (!configFileSet) configFile = "config.okay";
         if (cmd == "build" || cmd == "test" || cmd == "ctest" || cmd == "package" || cmd == "graph" || cmd == "compdb") resolveToolchain(m, toolchainName, searchDirs, msvcRoots);
         applyConfiguration(m, configName, configFile, configFileSet, optSets);

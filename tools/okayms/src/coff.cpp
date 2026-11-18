@@ -5,7 +5,7 @@
 namespace okayms {
 namespace {
 
-constexpr uint32_t kMaxSections = 96;
+constexpr uint32_t kMaxSections = 65279;  // the COFF limit (the section number is 16 bits; 65280 and up are reserved)
 constexpr uint32_t kMaxSymbolRecords = 100000;
 constexpr uint32_t kMaxSectionBytes = 32u * 1024u * 1024u;
 constexpr uint32_t kMaxStringBytes = 16u * 1024u * 1024u;

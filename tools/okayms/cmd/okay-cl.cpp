@@ -140,6 +140,16 @@ int main(int argc, char** argv) {
                 common.debug_lines = true;
                 continue;
             }
+            if (low == "okay:comdat") {
+                // Inline functions in COMDAT sections: the linker keeps one copy (off by default).
+                common.comdat_inline = true;
+                continue;
+            }
+            if (low == "okay:xcu") {
+                // Global constructors through a .CRT$XCU table walked by runtime/startup_xcu.c (off by default).
+                common.crt_init_table = true;
+                continue;
+            }
             if (low == "o1") {
                 common.optimize = true;
                 common.opt_level = 1;

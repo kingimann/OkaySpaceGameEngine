@@ -114,9 +114,11 @@ int validate(const std::string& name, const okayms::ObjectFile& o) {
     return bad;
 }
 
-bool compile_text(const std::string& source, okayms::ObjectFile* out, std::string* err) {
+bool compile_text(const std::string& source, okayms::ObjectFile* out, std::string* err, bool comdat = false, bool xcu = false) {
     okayms::CompileInput in;
     in.source = source;
+    in.comdat_inline = comdat;
+    in.crt_init_table = xcu;
     in.include_paths.push_back("tools/okayms/stdinc");
     in.include_paths.push_back("stdinc");
     in.include_paths.push_back("engine/include");
@@ -165,6 +167,21 @@ int main(int argc, char** argv) {
         "#include <variant>\n#include <string>\nint main() { std::variant<int, std::string> v = 5; return std::holds_alternative<int>(v) ? std::get<int>(v) : 0; }\n",
         "#include <cmath>\ndouble g[4] = {1.5, 2.5, 3.5, 4.5};\nint main() { double s = 0; for (int i = 0; i < 4; ++i) s += std::sqrt(g[i]) * std::sin(g[i]); return (int)s; }\n",
     };
+    // The same programs again with COMDAT inline functions and the .CRT$XCU table (the extra sections must be well formed too).
+    const char* flagged[] = {
+        "struct W { int f(int v) { return v * 3 + 1; } };\nstruct G { int v; G() { v = 1; } };\nG g;\nint main() { W w; return w.f(2) + g.v; }\n",
+        "#include <string>\n#include <vector>\nstruct G { std::string s; G() : s(\"x\") {} };\nG g;\nint main() { std::vector<std::string> v; v.push_back(g.s); return (int)v.size(); }\n",
+    };
+    for (const char* src : flagged) {
+        ++tests;
+        okayms::ObjectFile o;
+        std::string err;
+        std::printf("objcheck flagged program\n");
+        const bool ok = compile_text(src, &o, &err, true, true);
+        CHECK(t, ok);
+        if (!ok) std::fprintf(stderr, "  flagged program did not compile: %s\n", err.c_str());
+        else CHECK(t, validate("flagged program", o) == 0);
+    }
     int index = 0;
     for (const char* src : sources) {
         ++tests;

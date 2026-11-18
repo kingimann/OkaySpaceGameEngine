@@ -286,8 +286,14 @@ struct Local {
     int scope = 0;
 };
 
+// Options of the compile in progress (compile_c sets them; a compile is single-threaded).
+bool g_comdat_inline = false;   // inline functions go into COMDAT sections (the linker keeps one copy)
+bool g_crt_init_table = false;  // global constructors run from a .CRT$XCU table instead of a call at the start of main
+
 struct FuncDecl {
     std::string name;
+    // An inline function or a member defined in its class: with g_comdat_inline it is a COMDAT function (external symbol, one copy).
+    bool comdat = false;
     Type ret{};
     std::vector<Type> params;
     std::vector<std::string> param_names;
@@ -5580,6 +5586,8 @@ struct Parser {
         fn.symbol = m.symbol;
         fn.ret = m.ret;
         fn.is_static = !m.out_of_class;  // a member written in its class is an inline function: an internal symbol
+        fn.comdat = !m.out_of_class && anon_depth == 0 && structs[static_cast<size_t>(sid)].name.compare(0, 2, "__") != 0 &&
+                    !m.symbol.empty() && !m.implicit;
         Type self_ptr;
         self_ptr.base = 3;
         self_ptr.struct_id = sid;
@@ -8256,6 +8264,7 @@ struct Parser {
         if (init_used) {
             init_body.kind = Node::Block;
             make_fn("__okay_init", std::move(init_body), init_locals);
+            if (g_crt_init_table) funcs.back().is_static = true;  // one per file: reached through the .CRT$XCU table
         }
         if (need_fini) {
             std::vector<Local> fini_locals;
@@ -8304,7 +8313,7 @@ struct Parser {
             call_stmt.kids.push_back(std::move(call));
             start->body.kids.push_back(std::move(call_stmt));
         }
-        if (init_used) {
+        if (init_used && !g_crt_init_table) {
             Node call;
             call.kind = Node::Call;
             call.text = "__okay_init";
@@ -8811,6 +8820,7 @@ struct Parser {
             for (size_t k = decl_begin; k < at && k < tokens.size(); ++k)
                 if (tokens[k].inl) inline_fn = true;
             fn.is_static = is_static || anon_depth > 0 || inline_fn;
+            fn.comdat = inline_fn && !is_static && anon_depth == 0 && c_linkage == 0 && !fn.symbol.empty() && !decl.name.empty();
             finish_signature(&fn);
             if (c_single) {
                 --c_linkage;
@@ -17066,6 +17076,7 @@ bool emit_functions(std::vector<FuncDecl>& funcs, const std::vector<StructDef>& 
         uint32_t size = 0;
         bool exported = false;
         bool is_static = false;
+        bool comdat = false;
         std::vector<std::pair<uint32_t, int>> lines;
     };
     std::vector<PlacedFn> placed;
@@ -17365,7 +17376,7 @@ bool emit_functions(std::vector<FuncDecl>& funcs, const std::vector<StructDef>& 
         }
         if (gen.debug_lines) gen.lines.push_back({static_cast<uint32_t>(gen.text.size()), fn.end_line});
         gen.epilogue();
-        placed.push_back({fn.symbol.empty() ? fn.name : fn.symbol, start, static_cast<uint32_t>(gen.text.size()) - start, fn.exported, fn.is_static, {}});
+        placed.push_back({fn.symbol.empty() ? fn.name : fn.symbol, start, static_cast<uint32_t>(gen.text.size()) - start, fn.exported, fn.is_static, g_comdat_inline && fn.comdat, {}});
         placed.back().lines = gen.lines;
         for (const auto& site : gen.gotos) {
             const auto found = gen.labels.find(site.first);
@@ -17417,7 +17428,7 @@ bool emit_functions(std::vector<FuncDecl>& funcs, const std::vector<StructDef>& 
         symbols.push_back({name, value, section, type, storage});
     };
     for (const PlacedFn& fn : placed)
-        add_sym(fn.name, fn.start, 1, fn.is_static ? kClassStatic : kClassExternal, 0x20);
+        add_sym(fn.name, fn.start, 1, fn.is_static && !fn.comdat ? kClassStatic : kClassExternal, 0x20);
     for (const FuncDecl& fn : funcs) {
         if (fn.defined) continue;
         // A call names the decorated symbol when the function has one (a namespace function).
@@ -17674,6 +17685,86 @@ bool emit_functions(std::vector<FuncDecl>& funcs, const std::vector<StructDef>& 
         out_sym.storage = sym.storage;
         object.symbols.push_back(std::move(out_sym));
     }
+    if (g_comdat_inline) {
+        std::vector<std::pair<uint32_t, uint32_t>> comdat_cuts;  // (start, size) of what left .text
+        // Every function marked comdat moves into a section of its own (.text$mn, COMDAT, "pick any"): the part of .text it
+        // occupied, its relocations and its symbol go with it. The linker keeps the first copy of each and drops the others.
+        for (const PlacedFn& fn : placed) {
+            if (!fn.comdat) continue;
+            Section part;
+            part.name = ".text$mn";
+            part.virtual_size = fn.size;
+            part.data.assign(object.sections[0].data.begin() + fn.start, object.sections[0].data.begin() + fn.start + fn.size);
+            part.characteristics = kScnCntCode | kScnMemExecute | kScnMemRead | kScnAlign16 | kScnLnkComdat;
+            const uint32_t new_index = static_cast<uint32_t>(object.sections.size()) + 1;
+            std::vector<Relocation> keep;
+            for (const Relocation& r : object.sections[0].relocations) {
+                if (r.offset >= fn.start && r.offset < fn.start + fn.size) {
+                    Relocation moved = r;
+                    moved.offset = r.offset - fn.start;
+                    part.relocations.push_back(moved);
+                } else {
+                    keep.push_back(r);
+                }
+            }
+            object.sections[0].relocations = std::move(keep);
+            comdat_cuts.push_back({fn.start, fn.size});
+            for (Symbol& sym : object.symbols)
+                if (sym.name == fn.name && sym.section == 1) {
+                    sym.section = static_cast<int16_t>(new_index);
+                    sym.value = 0;
+                }
+            Symbol sec_sym;
+            sec_sym.name = ".text$mn";
+            sec_sym.section = static_cast<int16_t>(new_index);
+            sec_sym.storage = kClassStatic;
+            sec_sym.aux.assign(18, 0);
+            sec_sym.aux[0] = static_cast<uint8_t>(fn.size);
+            sec_sym.aux[1] = static_cast<uint8_t>(fn.size >> 8);
+            sec_sym.aux[2] = static_cast<uint8_t>(fn.size >> 16);
+            sec_sym.aux[3] = static_cast<uint8_t>(fn.size >> 24);
+            sec_sym.aux[4] = static_cast<uint8_t>(part.relocations.size());
+            sec_sym.aux[5] = static_cast<uint8_t>(part.relocations.size() >> 8);
+            sec_sym.aux[14] = 2;  // IMAGE_COMDAT_SELECT_ANY
+            object.sections.push_back(std::move(part));
+            object.symbols.push_back(std::move(sec_sym));
+        }
+        std::sort(comdat_cuts.begin(), comdat_cuts.end());
+        for (size_t ci = comdat_cuts.size(); ci-- > 0;) {
+            const uint32_t cut_at = comdat_cuts[ci].first;
+            const uint32_t cut_size = comdat_cuts[ci].second;
+            Section& text_section = object.sections[0];
+            text_section.data.erase(text_section.data.begin() + cut_at, text_section.data.begin() + cut_at + cut_size);
+            text_section.virtual_size = static_cast<uint32_t>(text_section.data.size());
+            for (Relocation& r : text_section.relocations)
+                if (r.offset >= cut_at + cut_size) r.offset -= cut_size;
+            for (Symbol& sym : object.symbols)
+                if (sym.section == 1 && sym.value >= cut_at + cut_size) sym.value -= cut_size;
+        }
+    }
+    if (g_crt_init_table) {
+        // .CRT$XCU: one pointer to this file's __okay_init, which the startup code calls with the other files' ones.
+        uint32_t init_symbol = 0;
+        bool have_init = false;
+        for (size_t k = 0; k < object.symbols.size(); ++k)
+            if (object.symbols[k].name == "__okay_init" && object.symbols[k].section > 0) {
+                init_symbol = static_cast<uint32_t>(k);
+                have_init = true;
+            }
+        if (have_init) {
+            Section table;
+            table.name = ".CRT$XCU";
+            table.virtual_size = 8;
+            table.data.assign(8, 0);
+            table.characteristics = kScnCntInitData | kScnMemRead | kScnAlign8;
+            Relocation r;
+            r.offset = 0;
+            r.symbol = init_symbol;
+            r.type = kRelAmd64Addr64;
+            table.relocations.push_back(r);
+            object.sections.push_back(std::move(table));
+        }
+    }
     out->object = std::move(object);
     (void)xdata_section;
     return true;
@@ -17682,6 +17773,8 @@ bool emit_functions(std::vector<FuncDecl>& funcs, const std::vector<StructDef>& 
 }  // namespace
 
 Result<CompileOutput> compile_c(const CompileInput& input) {
+    g_comdat_inline = input.comdat_inline;
+    g_crt_init_table = input.crt_init_table;
     Preprocessor pp;
     pp.includes = input.include_paths;
     for (const std::string& def : input.defines) {

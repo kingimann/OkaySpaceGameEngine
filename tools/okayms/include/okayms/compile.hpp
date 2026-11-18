@@ -25,6 +25,11 @@ struct CompileInput {
     // /Z7: write CodeView line records into a .debug$S section. There is no
     // PDB, no symbol records and no type records.
     bool debug_lines = false;
+    // Inline functions and members defined in their class go into COMDAT sections (the linker keeps one copy of each).
+    bool comdat_inline = false;
+    // Global constructors run from a .CRT$XCU pointer table that the startup code walks (runtime/startup_xcu.c), instead of a
+    // call at the start of main (which only the file with main has).
+    bool crt_init_table = false;
 };
 
 struct CompileOutput {

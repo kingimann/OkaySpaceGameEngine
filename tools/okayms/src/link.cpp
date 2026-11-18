@@ -3,6 +3,7 @@
 #include "okayms/archive.hpp"
 
 #include <algorithm>
+#include <array>
 #include <cstdio>
 #include <cstring>
 #include <map>
@@ -76,6 +77,10 @@ struct OutSection {
     uint32_t raw_pointer = 0;
     uint32_t raw_size = 0;
 };
+
+static uint32_t read_u32_le(const uint8_t* p) {
+    return static_cast<uint32_t>(p[0]) | (static_cast<uint32_t>(p[1]) << 8) | (static_cast<uint32_t>(p[2]) << 16) | (static_cast<uint32_t>(p[3]) << 24);
+}
 
 struct Placed {
     bool defined = false;
@@ -675,6 +680,28 @@ Result<std::vector<uint8_t>> link_executable(const std::vector<ObjectFile>& obje
         }
     }
 
+    {
+        // Symbols for the table of global-constructor pointers (the contributions named .CRT$XCU are gathered in the image section
+        // .CRT): __okay_xcu_begin is its start and __okay_xcu_end its end. Without such a section both name the same place, so
+        // the loop that walks the table in runtime/startup_xcu.c does nothing.
+        const auto crt = section_index.find(".CRT");
+        Placed begin_sym;
+        begin_sym.defined = true;
+        Placed end_sym = begin_sym;
+        if (crt != section_index.end()) {
+            begin_sym.out_section = crt->second;
+            begin_sym.offset = 0;
+            end_sym.out_section = crt->second;
+            end_sym.offset = outs[crt->second].virtual_size;
+        } else if (!outs.empty()) {
+            begin_sym.out_section = 0;
+            begin_sym.offset = 0;
+            end_sym.out_section = 0;
+            end_sym.offset = 0;
+        }
+        if (globals.find("__okay_xcu_begin") == globals.end()) globals["__okay_xcu_begin"] = begin_sym;
+        if (globals.find("__okay_xcu_end") == globals.end()) globals["__okay_xcu_end"] = end_sym;
+    }
     int entry_matches = 0;
     Placed entry;
     for (size_t oi = 0; oi < objects.size(); ++oi) {
@@ -716,6 +743,12 @@ Result<std::vector<uint8_t>> link_executable(const std::vector<ObjectFile>& obje
         if (symbol.section > 0 || symbol.section == kSectionAbsolute) {
             *out = placed[oi][symbol_index];
             if (!out->defined) {
+                // A symbol whose COMDAT section was dropped in favour of another copy means that copy.
+                const auto kept = globals.find(symbol.name);
+                if (symbol.storage == kClassExternal && kept != globals.end() && kept->second.defined) {
+                    *out = kept->second;
+                    return true;
+                }
                 *err = "undefined symbol " + symbol.name;
                 return false;
             }
@@ -929,7 +962,26 @@ Result<std::vector<uint8_t>> link_executable(const std::vector<ObjectFile>& obje
         put32(0xC8 + 96, outs[static_cast<size_t>(idata_section)].rva + import_iat_begin);
         put32(0xC8 + 100, import_iat_size);
     }
-    for (const OutSection& out : outs) {
+    for (OutSection& out : outs) {
+        if (out.name == ".pdata" && out.bytes.size() >= 12 && out.virtual_size % 12 == 0) {
+            // The function table must be sorted by start address and have one entry per function ([PE Format], .pdata). When a
+            // COMDAT copy of a function was dropped, the dropped copy's entry points at the kept function: it is merged here.
+            const size_t count = out.virtual_size / 12;
+            std::vector<std::array<uint8_t, 12>> entries(count);
+            for (size_t i = 0; i < count; ++i)
+                for (size_t b = 0; b < 12; ++b) entries[i][b] = out.bytes[i * 12 + b];
+            std::stable_sort(entries.begin(), entries.end(), [](const std::array<uint8_t, 12>& x, const std::array<uint8_t, 12>& y) {
+                return read_u32_le(x.data()) < read_u32_le(y.data());
+            });
+            size_t kept = 0;
+            for (size_t i = 0; i < count; ++i) {
+                if (kept > 0 && read_u32_le(entries[kept - 1].data()) == read_u32_le(entries[i].data())) continue;
+                entries[kept++] = entries[i];
+            }
+            for (size_t i = 0; i < count; ++i)
+                for (size_t b = 0; b < 12; ++b) out.bytes[i * 12 + b] = i < kept ? entries[i][b] : 0;
+            out.virtual_size = static_cast<uint32_t>(kept * 12);
+        }
         if (out.name == ".pdata") {
             put32(0xC8 + 24, out.rva);
             put32(0xC8 + 28, out.virtual_size);

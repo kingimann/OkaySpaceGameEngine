@@ -265,7 +265,23 @@ std::string mangleType(const Type& t) {
 
 // One source-level name part. A class template instance is spelled "Box<i,Pc>" where each
 // argument is already mangled; it becomes <name> I <args> E (Itanium C++ ABI 5.1.5).
+// Itanium C++ ABI 5.1.5 operator names (<operator-name>).
+std::string operatorCode(const std::string& op) {
+    static const char* const kTable[][2] = {
+        {"+", "pl"}, {"-", "mi"}, {"*", "ml"}, {"/", "dv"}, {"%", "rm"}, {"&", "an"}, {"|", "or"}, {"^", "eo"},
+        {"=", "aS"}, {"+=", "pL"}, {"-=", "mI"}, {"*=", "mL"}, {"/=", "dV"}, {"%=", "rM"}, {"&=", "aN"},
+        {"|=", "oR"}, {"^=", "eO"}, {"<<", "ls"}, {">>", "rs"}, {"<<=", "lS"}, {">>=", "rS"}, {"==", "eq"},
+        {"!=", "ne"}, {"<", "lt"}, {">", "gt"}, {"<=", "le"}, {">=", "ge"}, {"!", "nt"}, {"&&", "aa"},
+        {"||", "oo"}, {"++", "pp"}, {"--", "mm"}, {",", "cm"}, {"->", "pt"}, {"()", "cl"}, {"[]", "ix"},
+        {"~", "co"},
+    };
+    for (const auto& row : kTable)
+        if (op == row[0]) return row[1];
+    return "nw";
+}
+
 std::string manglePart(const std::string& part) {
+    if (part.compare(0, 8, "operator") == 0 && part.size() > 8) return operatorCode(part.substr(8));
     std::size_t lt = part.find('<');
     if (lt == std::string::npos || part.back() != '>') return std::to_string(part.size()) + part;
     std::string name = part.substr(0, lt);
@@ -807,6 +823,7 @@ private:
         bool sawVoid = false;
         bool uns = false;
         bool any = false;
+        bool qualOnly = false;  // const or volatile seen; a class or typedef name may follow
         while (!atEnd()) {
             if (eatKw("unsigned")) {
                 uns = true;
@@ -838,7 +855,7 @@ private:
                 continue;
             }
             if (eatKw("const") || eatKw("volatile")) {
-                any = true;
+                qualOnly = true;
                 continue;
             }
             if (eatKw("void")) {
@@ -850,6 +867,9 @@ private:
             if (eatKw("double")) return ty(Type::Kind::Double);
             break;
         }
+        if (qualOnly && !any && (isKw("struct") || isKw("union") || isKw("class"))) return parseStructType();
+        if (qualOnly && !any && isKw("enum")) return parseEnum();
+        if (qualOnly && !any && !atEnd() && !(cur().kind == Tok::Ident)) any = true;
         if (any) {
             std::unique_ptr<Type> t;
             if (sawVoid && !longs && !shorts && !sawInt && !sawChar && !uns) t = ty(Type::Kind::Void);
@@ -1730,6 +1750,14 @@ private:
             d.col = cur().column;
             d.file = cur().file;
             advance();
+            if (d.name == "operator" && !atEnd() && cur().kind == Tok::Punct) {
+                // operator+, operator==, operator[], operator() and the other overloadable symbols.
+                std::string op = cur().text;
+                advance();
+                if (op == "(" && eatP(")")) op = "()";
+                else if (op == "[" && eatP("]")) op = "[]";
+                d.name += op;
+            }
             while (eatP("::")) {
                 if (atEnd() || cur().kind != Tok::Ident) {
                     err("expected a name");
@@ -2456,6 +2484,18 @@ private:
         return s;
     }
 
+    static bool hasCopyCtor(const Type* cls) {
+        if (!cls) return false;
+        for (const Param& p : cls->params) {
+            if (p.name != "<ctor>" || !p.type || p.type->params.size() != 1) continue;
+            const Type* a = p.type->params[0].type.get();
+            if (a && a->kind == Type::Kind::Reference && a->inner && a->inner->kind == Type::Kind::Struct &&
+                a->inner->tag == cls->tag)
+                return true;
+        }
+        return false;
+    }
+
     // A local of class type: run its constructor right after the declaration and remember it so
     // that its destructor runs when the scope ends.
     void addLocal(std::vector<std::unique_ptr<Stmt>>& out, std::unique_ptr<Decl> decl,
@@ -2469,8 +2509,22 @@ private:
         Type* cls = ty0 && ty0->kind == Type::Kind::Struct && !ty0->tag.empty() ? classOf(ty0->tag) : nullptr;
         std::string tag = ty0 ? ty0->tag : "";
         bool hasInit = decl->init != nullptr;
+        std::unique_ptr<Expr> copyFrom;
+        if (cls && hasInit && !haveCtorArgs && decl->init->kind != Expr::Kind::Brace && hasCopyCtor(cls)) {
+            // "T x = y;" runs the copy constructor when y is an object (decided by the checker).
+            copyFrom = std::move(decl->init);
+            hasInit = false;
+        }
         out.push_back(declStmt(std::move(decl)));
         if (!cls || name.empty()) return;
+        if (copyFrom) {
+            std::vector<std::unique_ptr<Expr>> a;
+            a.push_back(eAddr(eName(name, p), p));
+            a.push_back(std::move(copyFrom));
+            out.push_back(sExpr(eCall(eName("\x01" "cinit:" + tag, p), std::move(a), p), p));
+            if (cls->needDtor && !dscopes_.empty()) dscopes_.back().push_back(DVar{name, tag});
+            return;
+        }
         if (cls->needCtor && (haveCtorArgs || !hasInit)) {
             out.push_back(sExpr(ctorCall(tag, eAddr(eName(name, p), p), std::move(ctorArgs), p), p));
         }
@@ -3200,6 +3254,39 @@ private:
                 advance();
                 return e;
             }
+            if (nextIs("(")) {
+                // T(args) for a class T: a temporary, constructed in a hidden local declared before
+                // the statement. Its destructor does not run (see the plan: temporaries).
+                const Type* td = findTypedef(cur().text);
+                if (td && td->kind == Type::Kind::Struct && !td->tag.empty()) {
+                    Token at = cur();
+                    advance();
+                    advance();
+                    std::vector<std::unique_ptr<Expr>> args;
+                    if (!eatP(")")) {
+                        args.push_back(parseAssign());
+                        while (eatP(",")) args.push_back(parseAssign());
+                        expectP(")", ")");
+                    }
+                    Pos pos;
+                    pos.line = at.line;
+                    pos.col = at.column;
+                    pos.file = at.file;
+                    std::string tmp = "__tmp" + std::to_string(newN_++);
+                    auto decl = std::make_unique<Decl>();
+                    decl->name = tmp;
+                    decl->line = at.line;
+                    decl->col = at.column;
+                    decl->file = at.file;
+                    decl->type = cloneType(*td);
+                    std::string tag = td->tag;
+                    preStmts_.push_back(declStmt(std::move(decl)));
+                    auto comma = ex(Expr::Kind::Comma, at);
+                    comma->kids.push_back(ctorCall(tag, eAddr(eName(tmp, pos), pos), std::move(args), pos));
+                    comma->kids.push_back(eName(tmp, pos));
+                    return comma;
+                }
+            }
             auto e = leafName(cur());
             advance();
             while (eatP("::")) {
@@ -3393,7 +3480,9 @@ private:
     const Type* method_ = nullptr;
     std::string inNs_;
 
+    int quiet_ = 0;  // above 0: a probing check that must not report
     void err(int line, int col, const std::string& msg) {
+        if (quiet_ > 0) return;
         diags_.error(file_.empty() ? "t.c" : file_, line, col, msg);
     }
 
@@ -3796,8 +3885,90 @@ private:
         return bad(e.line, e.col);
     }
 
+    // An operand that is cheap and safe to check twice: a name, a member, an index or a dereference
+    // built from those. (Checking a call twice is avoided; a chain would check itself too often.)
+    static bool simpleOperand(const Expr& e) {
+        switch (e.kind) {
+        case Expr::Kind::Name: return true;
+        case Expr::Kind::Member: return !e.kids.empty() && e.kids[0] && simpleOperand(*e.kids[0]);
+        case Expr::Kind::Unary: return e.text == "*" && !e.kids.empty() && e.kids[0] && simpleOperand(*e.kids[0]);
+        case Expr::Kind::Index:
+            return e.kids.size() == 2 && e.kids[0] && e.kids[1] && simpleOperand(*e.kids[0]) &&
+                   (e.kids[1]->kind == Expr::Kind::Int || e.kids[1]->kind == Expr::Kind::Name);
+        default: return false;
+        }
+    }
+
+    // C++ operator overloading for member operators: "a + b" on an object whose class declares
+    // operator+ becomes the call a.operator+(b). Written from ISO/IEC 14882 [over.match.oper]
+    // (member candidates only; no non-member operators, no conversion sequences).
+    // Returns false when the expression is left alone. Only a simple left operand is looked at.
+    bool rewriteOperator(Expr& e) {
+        std::string op;
+        std::size_t lhsAt = 0;
+        bool post = false;
+        switch (e.kind) {
+        case Expr::Kind::Bin:
+        case Expr::Kind::Assign:
+            if (e.kids.size() != 2 || (e.kind == Expr::Kind::Assign && e.ival == 3)) return false;
+            op = "operator" + e.text;
+            break;
+        case Expr::Kind::Index:
+            if (e.kids.size() != 2) return false;
+            op = "operator[]";
+            break;
+        case Expr::Kind::Pre:
+            if (e.kids.size() != 1) return false;
+            op = "operator" + e.text;
+            break;
+        case Expr::Kind::Post:
+            if (e.kids.size() != 1) return false;
+            op = "operator" + e.text;
+            post = true;
+            break;
+        case Expr::Kind::Unary:
+            if (e.kids.size() != 1 || (e.text != "-" && e.text != "+" && e.text != "!" && e.text != "~")) return false;
+            op = "operator" + e.text;
+            break;
+        case Expr::Kind::Call:
+            if (e.kids.empty() || !e.kids[0] || e.kids[0]->kind != Expr::Kind::Name) return false;
+            op = "operator()";
+            break;
+        default: return false;
+        }
+        if (!e.kids[lhsAt] || !simpleOperand(*e.kids[lhsAt])) return false;
+        Expr& lhs = *e.kids[lhsAt];
+        if (e.kind == Expr::Kind::Call && lhs.text.compare(0, 1, "\x01") == 0) return false;
+        ++quiet_;
+        ET probe = checkExpr(lhs);
+        --quiet_;
+        if (probe.bad || !probe.type || probe.type->kind != Type::Kind::Struct) return false;
+        const Type* st = canonOf(probe.type.get());
+        if (!st) return false;
+        bool found = false;
+        for (const Param& f : st->params)
+            if (f.name == op && !f.mangled.empty()) found = true;
+        if (!found || !probe.lvalue) return false;
+        auto member = mkE(Expr::Kind::Member, e);
+        member->text = ".";
+        member->kids.push_back(std::move(e.kids[lhsAt]));
+        member->kids.push_back(mkName(op, e));
+        std::vector<std::unique_ptr<Expr>> kids;
+        kids.push_back(std::move(member));
+        for (std::size_t i = 1; i < e.kids.size(); ++i) kids.push_back(std::move(e.kids[i]));
+        if (post) {
+            auto zero = mkE(Expr::Kind::Int, e);
+            kids.push_back(std::move(zero));
+        }
+        e.kids = std::move(kids);
+        e.kind = Expr::Kind::Call;
+        e.text.clear();
+        return true;
+    }
+
     ET checkExpr(Expr& e) {
         if (!e.file.empty()) file_ = e.file;
+        rewriteOperator(e);
         ET r = checkExprBody(e);
         if (r.type) e.checked = cloneType(*r.type);
         return r;
@@ -3898,6 +4069,11 @@ private:
     // Score how well an argument fits a parameter: 0 exact, 1 by conversion, -1 not at all.
     int fitScore(const Type& param, const ET& arg) {
         if (arg.bad || !arg.type) return 0;
+        if (param.kind == Type::Kind::Reference && param.inner) {
+            if (!arg.lvalue) return -1;
+            if (sameType(*param.inner, *arg.type)) return 0;
+            return derivedFrom(*arg.type, *param.inner) ? 1 : -1;
+        }
         if (sameType(param, *arg.type)) return 0;
         return canAssign(param, arg) ? 1 : -1;
     }
@@ -4064,6 +4240,28 @@ private:
             }
             const Param* pick = pickOverload(cands, e, 2);
             c0.text = pick->mangled;
+        } else if (c0.kind == Expr::Kind::Name && c0.text.compare(0, 7, "\x01" "cinit:") == 0 && e.kids.size() == 3) {
+            // T x = y: the copy constructor when y is an lvalue of class T, else a plain copy of
+            // the bytes (y is a temporary: the object is built in place).
+            std::string tag = c0.text.substr(7);
+            ET src = checkExpr(*e.kids[2]);
+            if (src.bad) return bad(e.line, e.col);
+            bool useCtor = src.lvalue && src.type && src.type->kind == Type::Kind::Struct && src.type->tag == tag;
+            if (useCtor) {
+                e.kids[0]->text = "\x01" "ctor:" + tag;
+                return checkCall(e);
+            }
+            auto self = std::move(e.kids[1]);
+            auto rhs = std::move(e.kids[2]);
+            // self is "&name": assign to the name itself.
+            std::unique_ptr<Expr> target = std::move(self->kids[0]);
+            e.kind = Expr::Kind::Assign;
+            e.text = "=";
+            e.ival = 3;  // an initialization: operator= must not be used
+            e.kids.clear();
+            e.kids.push_back(std::move(target));
+            e.kids.push_back(std::move(rhs));
+            return checkExpr(e);
         } else if (c0.kind == Expr::Kind::Name && c0.text == "\x01" "delete" && e.kids.size() == 2 && e.kids[1]) {
             ET a = decay(checkExpr(*e.kids[1]));
             if (a.bad || !a.type) return bad(e.line, e.col);
@@ -4212,6 +4410,37 @@ private:
             return bad(e.line, e.col);
         }
         for (std::size_t i = 0; i < fn.params.size(); ++i) {
+            if (fn.params[i].type && fn.params[i].type->kind == Type::Kind::Reference && fn.params[i].type->inner) {
+                // A reference parameter receives the address of an lvalue of the referred type.
+                if (e.kids[i + 1] && e.kids[i + 1]->kind == Expr::Kind::Unary && e.kids[i + 1]->ival == 1) {
+                    // Already wrapped by an earlier check of this call.
+                    if (checkExpr(*e.kids[i + 1]).bad) return bad(e.line, e.col);
+                    continue;
+                }
+                ET src = checkExpr(*e.kids[i + 1]);
+                if (src.bad) return bad(e.line, e.col);
+                if (!src.lvalue) {
+                    err(e.line, e.col, "a reference argument must be an lvalue");
+                    return bad(e.line, e.col);
+                }
+                const Type& want = *fn.params[i].type->inner;
+                if (src.type && !sameType(want, *src.type) && !derivedFrom(*src.type, want)) {
+                    err(e.line, e.col, "cannot bind this reference argument");
+                    return bad(e.line, e.col);
+                }
+                auto wrapped = std::make_unique<Expr>();
+                wrapped->kind = Expr::Kind::Unary;
+                wrapped->text = "&";
+                wrapped->ival = 1;
+                wrapped->line = e.kids[i + 1]->line;
+                wrapped->col = e.kids[i + 1]->col;
+                wrapped->file = e.kids[i + 1]->file;
+                wrapped->kids.push_back(std::move(e.kids[i + 1]));
+                e.kids[i + 1] = std::move(wrapped);
+                ET ptr = checkExpr(*e.kids[i + 1]);
+                if (ptr.bad) return bad(e.line, e.col);
+                continue;
+            }
             ET arg = decay(checkExpr(*e.kids[i + 1]));
             if (arg.bad) return bad(e.line, e.col);
             if (fn.params[i].type && !canAssign(*fn.params[i].type, arg)) {
@@ -4229,6 +4458,34 @@ private:
         r.line = e.line;
         r.col = e.col;
         r.type = fn.inner ? cloneType(*fn.inner) : prim(Type::Kind::Int);
+        if (r.type && r.type->kind == Type::Kind::Reference && r.type->inner && e.ival == 2) {
+            auto ptrTy = std::make_unique<Type>();
+            ptrTy->kind = Type::Kind::Pointer;
+            ptrTy->inner = cloneType(*r.type->inner);
+            r.type = std::move(ptrTy);
+        } else if (r.type && r.type->kind == Type::Kind::Reference && r.type->inner) {
+            // A call that returns a reference is the pointer it returns, dereferenced: the call
+            // moves into a child and this node becomes "*call".
+            auto ptrTy = std::make_unique<Type>();
+            ptrTy->kind = Type::Kind::Pointer;
+            ptrTy->inner = cloneType(*r.type->inner);
+            auto inner = std::make_unique<Expr>();
+            inner->kind = e.kind;
+            inner->text = e.text;
+            inner->ival = 2;
+            inner->line = e.line;
+            inner->col = e.col;
+            inner->file = e.file;
+            inner->kids = std::move(e.kids);
+            inner->checked = std::move(ptrTy);
+            e.kids.clear();
+            e.kind = Expr::Kind::Unary;
+            e.text = "*";
+            e.kids.push_back(std::move(inner));
+            r.type = cloneType(*r.type->inner);
+            r.lvalue = true;
+            r.mod = true;
+        }
         return r;
     }
 
@@ -4328,6 +4585,11 @@ private:
                 if (s.expr) err(s.line, s.col, "return type does not match");
             } else if (!s.expr) {
                 err(s.line, s.col, "return type does not match");
+            } else if (ret_->kind == Type::Kind::Reference && ret_->inner) {
+                ET v = checkExpr(*s.expr);
+                if (!v.bad && (!v.lvalue || !v.type ||
+                               (!sameType(*ret_->inner, *v.type) && !derivedFrom(*v.type, *ret_->inner))))
+                    err(s.line, s.col, "return type does not match");
             } else {
                 ET v = decay(checkExpr(*s.expr));
                 if (!v.bad && !canAssign(*ret_, v)) err(s.line, s.col, "return type does not match");
@@ -4486,6 +4748,7 @@ private:
     int vaSave_ = -1;
     bool retUns_ = false;
     bool retStruct_ = false;
+    bool retRef_ = false;
     int hiddenReg_ = -1;
     std::set<std::string> addr_;
     std::vector<std::map<std::string, Sym>> scopes_;
@@ -4526,6 +4789,7 @@ private:
         case Type::Kind::Struct:
         case Type::Kind::Union: {
             int a = 1;
+            t = canonOf(t);  // a use made before the class was complete has no fields of its own
             for (const Param& p : t->params) {
                 int fa = alignOf(p.type.get());
                 if (fa > a) a = fa;
@@ -4590,6 +4854,21 @@ private:
     static std::vector<FieldOff> layoutOf(const Type* t) {
         std::vector<FieldOff> out;
         if (!t || (t->kind != Type::Kind::Struct && t->kind != Type::Kind::Union)) return out;
+        // A use made before the class was complete has no fields of its own; take the finished
+        // type, unless this tag is being laid out right now (a pointer to itself).
+        static std::set<std::string> inProgress;
+        struct Mark {
+            std::string tag;
+            bool set = false;
+            ~Mark() {
+                if (set) inProgress.erase(tag);
+            }
+        } mark;
+        if (t->params.empty() && !t->tag.empty() && !inProgress.count(t->tag)) t = canonOf(t);
+        if (!t->tag.empty() && inProgress.insert(t->tag).second) {
+            mark.tag = t->tag;
+            mark.set = true;
+        }
         if (t->kind == Type::Kind::Union) {
             for (const Param& p : t->params) {
                 FieldOff f;
@@ -4703,6 +4982,10 @@ private:
         if (t->kind == Type::Kind::Struct || t->kind == Type::Kind::Union) {
             s.agg = true;
             s.fields = layoutOf(t);
+            if (s.fields.empty() && !t->tag.empty()) {
+                auto it = structLayouts().find(t->tag);
+                if (it != structLayouts().end()) s.fields = it->second;
+            }
         } else if (t->kind == Type::Kind::Pointer && t->inner &&
                    (t->inner->kind == Type::Kind::Struct || t->inner->kind == Type::Kind::Union)) {
             s.fields = layoutOf(t->inner.get());
@@ -5129,6 +5412,10 @@ private:
             if (s->ref) {
                 a.op = Operand::vreg(s->reg);
                 a.width = s->width > 0 ? s->width : 8;
+                a.step = s->step;
+                a.inner = s->inner;
+                a.agg = s->agg;
+                a.fields = s->fields;
                 a.ok = true;
                 return a;
             }
@@ -6281,6 +6568,14 @@ private:
         case Stmt::Kind::Return: {
             Inst in;
             in.op = Inst::Op::Ret;
+            if (s.expr && retRef_) {
+                Addr a = lowerAddr(*s.expr);
+                in.a = a.op;
+                in.extra = 8;
+                in.uns = true;
+                emit(in);
+                break;
+            }
             if (s.expr && retStruct_ && retWidth_ > 16 && hiddenReg_ >= 0) {
                 Operand hid = Operand::vreg(hiddenReg_);
                 if (s.expr->kind == Expr::Kind::Call) lowerCall(*s.expr, &hid);
@@ -6328,6 +6623,15 @@ private:
                         break;
                     }
                 }
+            }
+            if (s.expr && retStruct_ && s.expr->kind != Expr::Kind::Call && s.expr->kind != Expr::Kind::Name) {
+                // Any other object expression (a temporary, *p, a[i], s.f): its address is lowered.
+                Val v = lowerExpr(*s.expr);
+                in.a = loadBits(v.op, retWidth_);
+                in.extra = bitWidth(retWidth_);
+                in.uns = true;
+                emit(in);
+                break;
             }
             if (s.expr) {
                 Val v = lowerExpr(*s.expr);
@@ -6641,6 +6945,7 @@ private:
         retUns_ = false;
         retBool_ = false;
         retStruct_ = false;
+        retRef_ = d.type && d.type->inner && d.type->inner->kind == Type::Kind::Reference;
         hiddenReg_ = -1;
         if (d.body) scanStmt(*d.body);
         if (d.type && d.type->inner) {

@@ -37,20 +37,20 @@ name and description): they show the size of the problem, not a verdict on each 
 
 ### Numbers at a glance
 
-There are 3171 palette rows (358 api, 1438 builtin, 60 check, 241 gameplay, 224 library, 592 node, 258 step). 2620 are listed in the menu;
-2600 of those also show while you click through a topic. All the counts below are those 2600 rows.
+There are 3265 palette rows (379 api, 1511 builtin, 60 check, 241 gameplay, 224 library, 592 node, 258 step). 2699 are listed in the menu;
+2679 of those also show while you click through a topic. All the counts below are those 2679 rows.
 
 | | Before | After |
 |---|---:|---:|
 | Topics | 19 | 70 |
-| Subcategories | 52 | 99 |
+| Subcategories | 52 | 101 |
 | Sections (headings in the sidebar) | 0 | 14 |
-| Most nodes directly in one topic | 515 (Advanced) | 29 (Mouse & Touch) |
-| Largest single bucket (topic or subcategory) | 515 | 37 |
+| Most nodes directly in one topic | 564 (Advanced) | 29 (Mouse & Touch) |
+| Largest single bucket (topic or subcategory) | 564 | 37 |
 | Topics holding more than 30 nodes directly | 14 | 0 |
-| Rows whose name sounds like another topic (heuristic) | 258 | 39 |
-| Rows in a subcategory their topic's description never mentions | 626 | 0 |
-| Rows that changed place | | 2533 of 2600 |
+| Rows whose name sounds like another topic (heuristic) | 260 | 40 |
+| Rows in a subcategory their topic's description never mentions | 640 | 0 |
+| Rows that changed place | | 2612 of 2679 |
 
 ### Before: the old 19 topics
 
@@ -58,47 +58,47 @@ There are 3171 palette rows (358 api, 1438 builtin, 60 check, 241 gameplay, 224 
 |---|---:|---:|---|
 | Events | 10 | 10 |  |
 | Flow | 72 | 33 | Timing (23), Loops (11), Functions (5) |
-| Variables | 136 | 19 | Saved (70), Change (24), Compare (15), Shared (6), Story (2) |
+| Variables | 137 | 19 | Saved (71), Change (24), Compare (15), Shared (6), Story (2) |
 | Math | 293 | 116 | Compare (51), Vectors (48), Curves (43), Angles (17), Random (9), Progression (7), Color (2) |
 | Text | 89 | 83 | Language (6) |
-| Lists & Maps | 53 | 0 | Lists (35), Maps (15), Structs (3) |
+| Lists & Maps | 54 | 0 | Lists (36), Maps (15), Structs (3) |
 | Objects | 219 | 92 | Survival (57), Items (41), Lines (16), Groups (5), Combat (5), Appearance (3) |
 | Movement | 180 | 85 | Tweens (65), Turn (22), Size (8) |
 | Physics | 119 | 67 | Queries (38), Collisions (14) |
 | Animation | 96 | 63 | Character (19), IK (6), Procedural (4), Cutscenes (4) |
 | Audio | 38 | 38 |  |
-| Input | 115 | 54 | Mouse (21), Keys (17), Controls (15), Axes (8) |
+| Input | 135 | 61 | Controls (28), Mouse (21), Keys (17), Axes (8) |
 | Camera | 30 | 30 |  |
-| UI | 209 | 157 | Popups (16), Bars (12), Layout (8), Fields (7), Theme (5), Buttons (4) |
+| UI | 217 | 165 | Popups (16), Bars (12), Layout (8), Fields (7), Theme (5), Buttons (4) |
 | Scene | 128 | 34 | Story (41), Navigation (26), Atmosphere (12), Dialogue (9), Building (6) |
 | Time | 52 | 52 |  |
 | Online | 211 | 194 | Steam (11), PlayFab (6) |
 | Debug | 17 | 17 |  |
-| Advanced | 533 | 515 | Behavior (18) |
+| Advanced | 582 | 564 | Behavior (18) |
 
 The 15 biggest buckets:
 
 | Nodes | Bucket |
 |---:|---|
-| 515 | Advanced |
+| 564 | Advanced |
 | 194 | Online |
-| 157 | UI |
+| 165 | UI |
 | 116 | Math |
 | 92 | Objects |
 | 85 | Movement |
 | 83 | Text |
-| 70 | Variables / Saved |
+| 71 | Variables / Saved |
 | 67 | Physics |
 | 65 | Movement / Tweens |
 | 63 | Animation |
+| 61 | Input |
 | 57 | Objects / Survival |
-| 54 | Input |
 | 52 | Time |
 | 51 | Math / Compare |
 
 Nodes whose name or description sounds like another topic than the one they sat in (a heuristic: whole words in the id and the title):
 
-258 rows. The biggest groups:
+260 rows. The biggest groups:
 
 | Rows | Sat in | The name talks about | Examples |
 |---:|---|---|---|
@@ -115,24 +115,24 @@ Nodes whose name or description sounds like another topic than the one they sat 
 | 8 | Objects | weapons | Spawn Projectile, Shoot, Use Ammo, Swing Weapon, Fire Weapon ... |
 | 7 | Advanced | inventory | Can Craft, Drop Item, Inv Set Slot, Inv Slot, Item Def ... |
 
-626 rows sit in 35 subcategories that the one-line description of their topic does not mention:
+640 rows sit in 35 subcategories that the one-line description of their topic does not mention:
 
 | Rows | Subcategory |
 |---:|---|
-| 70 | Variables / Saved |
+| 71 | Variables / Saved |
 | 65 | Movement / Tweens |
 | 57 | Objects / Survival |
 | 51 | Math / Compare |
 | 43 | Math / Curves |
 | 41 | Objects / Items |
 | 38 | Physics / Queries |
+| 28 | Input / Controls |
 | 24 | Variables / Change |
 | 23 | Flow / Timing |
 | 22 | Movement / Turn |
 | 17 | Math / Angles |
 | 16 | UI / Popups |
 | 16 | Objects / Lines |
-| 15 | Input / Controls |
 | | and 21 more |
 
 110 groups of rows have the same name, or the same job under another name, and sit in different places:
@@ -171,14 +171,14 @@ Nodes whose name or description sounds like another topic than the one they sat 
 | Variables | 64 | 15 | Change a Variable (23), Check a Variable (15), Shared Variables (11) |
 | Saving & Loading | 73 | 12 | Save Slots (26), Save Files (19), Saved Values (16) |
 | Lists | 47 | 22 | Array Functions (16), Sorting & Searching (9) |
-| Maps & Structs | 23 | 23 |  |
+| Maps & Structs | 22 | 22 |  |
 | Numbers | 118 | 15 | Limits & Wrapping (24), Rounding & Snapping (19), Script Math Functions (16), More Arithmetic (14), Averages & Percentages (12), Bits (10), Types & Checks (8) |
 | Blending & Easing | 70 | 20 | Easing & Curves (37), Smoothing & Springs (13) |
 | Angles & Trigonometry | 31 | 17 | Angle Helpers (14) |
 | Vectors | 71 | 20 | Flat Vectors (20), Script Vector Functions (17), Directions & Axes (14) |
 | Comparisons & Logic | 52 | 26 | True & False Logic (15), Scores & Number Sets (11) |
 | Random | 19 | 19 |  |
-| Text | 98 | 14 | Clean Up & Padding (27), Search & Replace (18), Numbers & Text (15), Pieces & Words (14), Compare & Check (8), Clipboard (2) |
+| Text | 97 | 13 | Clean Up & Padding (27), Search & Replace (18), Numbers & Text (15), Pieces & Words (14), Compare & Check (8), Clipboard (2) |
 | Language & Translation | 7 | 7 |  |
 | Create & Destroy | 25 | 14 | Spawners & Pools (11) |
 | Find Objects | 39 | 24 | Names & Tags (15) |
@@ -211,7 +211,7 @@ Nodes whose name or description sounds like another topic than the one they sat 
 | Music & Volume | 22 | 22 |  |
 | Camera | 34 | 0 | Zoom & Shake (20), Follow & Switch (14) |
 | Screen Text | 42 | 13 | Script Text Widgets (15), Text Style & Format (10), Numbers in Text (4) |
-| Buttons & Inputs | 74 | 19 | Sliders & Toggles (20), Pickers & Search (19), Dropdowns & Text Fields (16) |
+| Buttons & Inputs | 80 | 20 | Sliders & Toggles (25), Pickers & Search (19), Dropdowns & Text Fields (16) |
 | Bars & Layout | 92 | 0 | Tabs & Pages (29), Progress Bars (23), Layout Helpers (21), Scroll Areas & Grids (10), Themes (9) |
 | Popups & Dialogs | 35 | 0 | Modals & Sheets (19), Toasts & Tooltips (16) |
 | Scenes & Levels | 15 | 15 |  |
@@ -220,13 +220,13 @@ Nodes whose name or description sounds like another topic than the one they sat 
 | Post Effects | 5 | 5 |  |
 | Window & Display | 19 | 19 |  |
 | Cutscenes | 8 | 8 |  |
-| Keyboard | 24 | 24 |  |
+| Keyboard | 25 | 25 |  |
 | Mouse & Touch | 38 | 29 | Touch & Gestures (9) |
-| Gamepad & Controls | 39 | 26 | Named Actions (13) |
-| Multiplayer | 132 | 0 | Matchmaking & Relay (27), Players & Matches (26), Messages & RPC (23), Hosting & Joining (22), Synced Objects & Variables (19), Server Browser (15) |
+| Gamepad & Controls | 115 | 28 | Local Players (36), Controllers (26), Named Actions (25) |
+| Multiplayer | 131 | 0 | Players & Matches (26), Matchmaking & Relay (26), Messages & RPC (23), Hosting & Joining (22), Synced Objects & Variables (19), Server Browser (15) |
 | Steam | 61 | 4 | Achievements & Stats (25), Lobbies & Friends (21), Cloud & Workshop (11) |
 | Server Security | 17 | 17 |  |
-| Accounts & Online Saves | 27 | 0 | Accounts (14), Leaderboards & PlayFab (8), Cloud Saves (5) |
+| Accounts & Online Saves | 26 | 0 | Accounts (13), Leaderboards & PlayFab (8), Cloud Saves (5) |
 | Debug | 17 | 17 |  |
 
 The 15 biggest buckets now:
@@ -234,24 +234,24 @@ The 15 biggest buckets now:
 | Nodes | Bucket |
 |---:|---|
 | 37 | Blending & Easing / Easing & Curves |
+| 36 | Gamepad & Controls / Local Players |
 | 29 | Mouse & Touch |
 | 29 | Bars & Layout / Tabs & Pages |
+| 28 | Gamepad & Controls |
 | 28 | Sight & Distance Checks |
 | 28 | Animation |
 | 28 | Quests & Dialogue / Quests |
 | 27 | Text / Clean Up & Padding |
 | 27 | Forces & Velocity / Body Settings |
-| 27 | Multiplayer / Matchmaking & Relay |
 | 26 | Comparisons & Logic |
-| 26 | Gamepad & Controls |
 | 26 | Forces & Velocity / Speed & Jumping |
 | 26 | Multiplayer / Players & Matches |
 | 26 | Saving & Loading / Save Slots |
-| 25 | Waiting & Timers |
+| 26 | Gamepad & Controls / Controllers |
 
 Same heuristic, new places:
 
-39 rows. The biggest groups:
+40 rows. The biggest groups:
 
 | Rows | Sat in | The name talks about | Examples |
 |---:|---|---|---|
@@ -270,7 +270,7 @@ Same heuristic, new places:
 
 0 rows sit in 0 subcategories that the one-line description of their topic does not mention.
 
-32 groups of rows have the same name, or the same job under another name, and sit in different places:
+35 groups of rows have the same name, or the same job under another name, and sit in different places:
 
 | Name | The rows | Where |
 |---|---|---|
@@ -280,6 +280,7 @@ Same heuristic, new places:
 | exists | Object Exists (node); Exists (api) | Find Objects; Saving & Loading / Save Slots |
 | flee | Flee From Threat (node); Flee (builtin) | Move & Follow; Move & Follow / Script Movement Functions |
 | formatnumber | Format Number (node); Format Number (gameplay) | Screen Text / Text Style & Format; Text / Numbers & Text |
+| forward | Forward (builtin); Object Forward (builtin) | Gamepad & Controls / Local Players; Position / Read a Position |
 | get | Get Object (api); Get (builtin) | Position / Read a Position; Variables / Shared Variables |
 | getvalue | Get Value (api); Get Object Value (builtin) | Buttons & Inputs / Sliders & Toggles; Variables |
 | indexof | Index Of (node); Index of (builtin) | Lists / Sorting & Searching; Text / Search & Replace |
@@ -287,28 +288,27 @@ Same heuristic, new places:
 | min | Min (node); Smallest (builtin) | Numbers; Numbers / Script Math Functions |
 | mod | Mod (%) (node); Mod (builtin) | Numbers; Numbers / Script Math Functions |
 | moveby | Move By (Vec3) (node); Move by (builtin) | Move & Follow / Script Movement Functions; Position |
-| moveto | Move to (builtin); Move To Point (step) | Move & Follow; Move & Follow / Script Movement Functions |
 
 ### Every node that moved
 
-2533 of 2600 rows changed place; 67 kept the same topic name and subcategory (for example Debug).
+2612 of 2679 rows changed place; 67 kept the same topic name and subcategory (for example Debug).
 
 #### By old place
 
 | Old place | Rows | Went to (rows) |
 |---|---:|---|
-| Advanced | 515 | Window & Display (18), Waiting & Timers / Delayed Calls (16), Build Mode (15), Move & Follow / Script Movement Functions (15), Accounts & Online Saves / Accounts (14), Color & Appearance / Sprites & Textures (13), Inventory & Items / Inventory Slots (12), Raycasts & Overlaps / Ray Results (12), and 95 more |
+| Advanced | 564 | Gamepad & Controls / Controllers (21), Gamepad & Controls / Local Players (21), Window & Display (18), Gamepad & Controls / Named Actions (17), Waiting & Timers / Delayed Calls (16), Build Mode (15), Move & Follow / Script Movement Functions (15), Accounts & Online Saves / Accounts (13), and 96 more |
 | Online | 194 | Multiplayer / Players & Matches (26), Multiplayer / Messages & RPC (23), Multiplayer / Hosting & Joining (22), Steam / Achievements & Stats (21), Multiplayer / Synced Objects & Variables (19), Multiplayer / Matchmaking & Relay (18), Server Security (17), Steam / Lobbies & Friends (15), and 4 more |
-| UI | 157 | Bars & Layout / Tabs & Pages (21), Bars & Layout / Layout Helpers (21), Buttons & Inputs / Pickers & Search (15), Buttons & Inputs / Sliders & Toggles (15), Screen Text / Script Text Widgets (15), Buttons & Inputs (13), Screen Text (11), Screen Text / Text Style & Format (10), and 9 more |
+| UI | 165 | Bars & Layout / Tabs & Pages (21), Bars & Layout / Layout Helpers (21), Buttons & Inputs / Sliders & Toggles (20), Buttons & Inputs / Pickers & Search (15), Screen Text / Script Text Widgets (15), Buttons & Inputs (14), Screen Text (11), Screen Text / Text Style & Format (10), and 10 more |
 | Math | 116 | Numbers / Limits & Wrapping (21), Numbers (15), Numbers / More Arithmetic (14), Numbers / Averages & Percentages (11), Numbers / Rounding & Snapping (10), Blending & Easing (10), Numbers / Script Math Functions (10), Vectors / Script Vector Functions (8), and 7 more |
 | Objects | 92 | Find Objects (16), Create & Destroy (13), Show & Hide (13), Find Objects / Names & Tags (11), Particles & Trails (5), Create & Destroy / Spawners & Pools (4), Messages & Signals (4), Sight & Distance Checks (3), and 13 more |
 | Movement | 85 | Position (21), Move & Follow (14), Move & Follow / Motion Patterns (8), Move & Follow / Script Movement Functions (8), Position / Read a Position (5), Position / Stay in Bounds (5), Rotation & Scale (4), Forces & Velocity / Speed & Jumping (4), and 10 more |
+| Variables / Saved | 71 | Saving & Loading / Save Slots (25), Saving & Loading / Save Files (17), Saving & Loading / Saved Values (14), Saving & Loading (12), Build Mode (1), Accounts & Online Saves / Cloud Saves (1), Gamepad & Controls / Controllers (1) |
 | Text | 70 | Text / Clean Up & Padding (20), Text / Search & Replace (16), Text / Pieces & Words (11), Text / Compare & Check (8), Text / Numbers & Text (7), Text / Clipboard (2), Variables / Shared Variables (1), Numbers / Types & Checks (1), and 4 more |
-| Variables / Saved | 70 | Saving & Loading / Save Slots (25), Saving & Loading / Save Files (17), Saving & Loading / Saved Values (14), Saving & Loading (12), Build Mode (1), Accounts & Online Saves / Cloud Saves (1) |
 | Physics | 67 | Forces & Velocity / Body Settings (27), Forces & Velocity / Speed & Jumping (21), Forces & Velocity (9), Raycasts & Overlaps (5), Raycasts & Overlaps / Ray Results (2), Game Events (1), Rotation & Scale / Facing & Looking (1), Raycasts & Overlaps / Overlaps & Shape Casts (1) |
 | Movement / Tweens | 65 | Tweens / Control Tweens (20), Tweens / Start a Tween (18), Tweens / Tween Options (13), Tweens (9), Tweens / Tween Events (5) |
+| Input | 61 | Gamepad & Controls (17), Mouse & Touch (12), Keyboard (10), Input Events (7), Mouse & Touch / Touch & Gestures (6), Buttons & Inputs / Dropdowns & Text Fields (3), Gamepad & Controls / Controllers (2), Gamepad & Controls / Named Actions (2), and 2 more |
 | Objects / Survival | 57 | Health & Damage / Resources & Buffs (15), Health & Damage (14), Health & Damage / Health Values (14), Health & Damage / Armor & Lives (11), Inventory & Items (3) |
-| Input | 54 | Gamepad & Controls (15), Mouse & Touch (12), Keyboard (9), Input Events (7), Mouse & Touch / Touch & Gestures (6), Buttons & Inputs / Dropdowns & Text Fields (3), Camera / Follow & Switch (1), Move & Follow / Script Movement Functions (1) |
 | Time | 52 | Time & Game Speed / Clock (15), Time & Game Speed / Time Math (13), Time & Game Speed / Game Speed (11), Time & Game Speed / Pausing (6), Tweens / Control Tweens (4), Game Events (1), Waiting & Timers (1), Tweens / Tween Options (1) |
 | Math / Compare | 51 | Comparisons & Logic (24), Comparisons & Logic / True & False Logic (15), Comparisons & Logic / Scores & Number Sets (11), Branches & Gates / State Machines (1) |
 | Math / Vectors | 48 | Vectors (20), Vectors / Flat Vectors (20), Vectors / Directions & Axes (8) |
@@ -318,10 +318,11 @@ Same heuristic, new places:
 | Audio | 38 | Music & Volume (20), Sound Effects (18) |
 | Animation | 38 | Animation / Animator Parameters (23), Inverse Kinematics (11), Game Events (2), Animation / Blend Shapes & Trees (2) |
 | Physics / Queries | 38 | Sight & Distance Checks (20), Raycasts & Overlaps (14), Find Objects (4) |
-| Lists & Maps / Lists | 35 | Lists (22), Lists / Array Functions (9), Numbers / Types & Checks (2), Accounts & Online Saves / Cloud Saves (1), Maps & Structs (1) |
+| Lists & Maps / Lists | 36 | Lists (22), Lists / Array Functions (9), Gamepad & Controls / Local Players (2), Numbers / Types & Checks (2), Accounts & Online Saves / Cloud Saves (1) |
 | Scene | 34 | Scenes & Levels (12), Navigation (7), Score & Winning (3), Game Events (3), Weather & Fog (2), Quests & Dialogue / Quests (2), Sight & Distance Checks (1), Find Objects (1), and 3 more |
 | Flow | 33 | Branches & Gates (23), Branches & Gates / State Machines (4), Functions & Calls (3), Messages & Signals (3) |
 | Camera | 30 | Camera / Zoom & Shake (18), Camera / Follow & Switch (9), Tweens / Start a Tween (3) |
+| Input / Controls | 28 | Gamepad & Controls / Local Players (13), Gamepad & Controls / Named Actions (5), Gamepad & Controls (4), Input Events (3), Mouse & Touch / Touch & Gestures (3) |
 | Scene / Navigation | 26 | Navigation (13), Navigation / Grid Paths (13) |
 | Variables / Change | 24 | Variables / Change a Variable (23), Tweens / Start a Tween (1) |
 | Flow / Timing | 23 | Waiting & Timers (23) |
@@ -333,7 +334,6 @@ Same heuristic, new places:
 | Math / Angles | 17 | Angles & Trigonometry / Angle Helpers (9), Angles & Trigonometry (8) |
 | UI / Popups | 16 | Popups & Dialogs / Modals & Sheets (9), Popups & Dialogs / Toasts & Tooltips (7) |
 | Objects / Lines | 16 | Paths & Splines (9), Particles & Trails (7) |
-| Input / Controls | 15 | Gamepad & Controls / Named Actions (5), Gamepad & Controls (4), Input Events (3), Mouse & Touch / Touch & Gestures (3) |
 | Lists & Maps / Maps | 15 | Maps & Structs (15) |
 | Variables / Compare | 15 | Variables / Check a Variable (15) |
 | Physics / Collisions | 14 | Collision & Trigger Events (13), Sight & Distance Checks (1) |
@@ -911,7 +911,6 @@ stores (a builtin starts with `Fn.`), or the step's short name.
 | Get Field | node | `StructGet` | Lists & Maps / Structs |
 | Json Parse | builtin | `Fn.json_parse` | Advanced |
 | Json Stringify | builtin | `Fn.json_stringify` | Advanced |
-| Map | builtin | `Fn.map` | Lists & Maps / Lists |
 | Map Clear | node | `MapClear` | Lists & Maps / Maps |
 | Map Copy | node | `MapCopy` | Lists & Maps / Maps |
 | Map Count | node | `MapCount` | Lists & Maps / Maps |
@@ -1396,12 +1395,6 @@ stores (a builtin starts with `Fn.`), or the step's short name.
 | Random Number | builtin | `Fn.random_float` | Math |
 | Random Range | node | `RandomRange` | Math / Random |
 | Roll Chance | gameplay | `GlRollChance` | Math / Progression |
-
-##### Text
-
-| Node | Kind | Id | Was |
-|---|---|---|---|
-| Join | builtin | `Fn.join` | Advanced |
 
 ##### Text / Search & Replace
 
@@ -2931,6 +2924,7 @@ stores (a builtin starts with `Fn.`), or the step's short name.
 |---|---|---|---|
 | Drop Source | builtin | `Fn.drop_source` | Advanced |
 | Drop Target | builtin | `Fn.drop_target` | Advanced |
+| Error | api | `UIInputValidator.Error/0` | UI |
 | Focus | api | `UIButton.Focus/0` | UI / Buttons |
 | Press | api | `UIButton.Press/0` | UI / Buttons |
 | Screen Button | builtin | `Fn.ui_button` | UI |
@@ -2954,6 +2948,8 @@ stores (a builtin starts with `Fn.`), or the step's short name.
 | Node | Kind | Id | Was |
 |---|---|---|---|
 | Get Value | api | `UISlider.GetValue/0` | UI / Bars |
+| High | api | `UIRangeSlider.High/0` | UI |
+| Low | api | `UIRangeSlider.Low/0` | UI |
 | Screen Checkbox | builtin | `Fn.ui_checkbox` | UI |
 | Screen Radio Value | builtin | `Fn.ui_radio_value` | UI |
 | Screen Set Radio | builtin | `Fn.ui_set_radio` | UI |
@@ -2966,6 +2962,9 @@ stores (a builtin starts with `Fn.`), or the step's short name.
 | Screen Switch | builtin | `Fn.ui_switch` | UI |
 | Screen Toggle Value | builtin | `Fn.ui_toggle_value` | UI |
 | Set Format | api | `UISlider.SetFormat/1` | UI / Bars |
+| Set High | api | `UIRangeSlider.SetHigh/1` | UI |
+| Set Low | api | `UIRangeSlider.SetLow/1` | UI |
+| Set Range | api | `UIRangeSlider.SetRange/2` | UI |
 | Set Slider | builtin | `Fn.set_slider` | UI |
 | Set Slider Format | builtin | `Fn.set_slider_format` | UI |
 | Set Slider Step | builtin | `Fn.set_slider_step` | UI |
@@ -3303,6 +3302,7 @@ stores (a builtin starts with `Fn.`), or the step's short name.
 | Key Is Held | check | `key` | Input / Keys |
 | Key Just Pressed | check | `key_down` | Input / Keys |
 | Key Just Released | check | `key_up` | Input / Keys |
+| Key Positions | builtin | `Fn.key_positions` | Input |
 | Key Pressed | builtin | `Fn.key_pressed` | Input |
 | Key Released | builtin | `Fn.key_released` | Input |
 | Key up | builtin | `Fn.key_up` | Input |
@@ -3365,6 +3365,8 @@ stores (a builtin starts with `Fn.`), or the step's short name.
 | Axis X | node | `AxisX` | Input / Axes |
 | Axis Y | node | `AxisY` | Input / Axes |
 | Gamepad | builtin | `Fn.gamepad` | Input |
+| Gamepad Connected | builtin | `Fn.gamepad_connected` | Input |
+| Gamepad Count | builtin | `Fn.gamepad_count` | Input |
 | Gamepad Down | builtin | `Fn.gamepad_down` | Input |
 | Gamepad Right | builtin | `Fn.gamepad_x` | Input |
 | Gamepad Vertical | builtin | `Fn.gamepad_y` | Input |
@@ -3391,7 +3393,15 @@ stores (a builtin starts with `Fn.`), or the step's short name.
 
 | Node | Kind | Id | Was |
 |---|---|---|---|
+| Action Buffered | builtin | `Fn.action_buffered` | Advanced |
+| Action Conflicts | builtin | `Fn.action_conflicts` | Advanced |
+| Action Consume | builtin | `Fn.action_consume` | Advanced |
+| Action Double Tap | builtin | `Fn.action_double_tap` | Advanced |
 | Action Down | builtin | `Fn.action_down` | Advanced |
+| Action Held | builtin | `Fn.action_held` | Advanced |
+| Action Hold | builtin | `Fn.action_hold` | Advanced |
+| Action Hold Done | builtin | `Fn.action_hold_done` | Advanced |
+| Action Label | builtin | `Fn.action_label` | Advanced |
 | Action Right | builtin | `Fn.action_x` | Advanced |
 | Action Time | builtin | `Fn.action_time` | Advanced |
 | Action up | builtin | `Fn.action_up` | Advanced |
@@ -3401,9 +3411,85 @@ stores (a builtin starts with `Fn.`), or the step's short name.
 | Define Direction | api | `Input.DefineDirection/3` | Input / Controls |
 | Get Action Value | api | `Input.GetActionValue/1` | Input / Controls |
 | Get Action Vector | api | `Input.GetActionVector/1` | Input / Axes |
-| Rebind | builtin | `Fn.rebind` | Advanced |
+| Input Preset | builtin | `Fn.input_preset` | Input |
+| Input Record | builtin | `Fn.input_record` | Input |
 | Rebind Action | api | `Input.RebindAction/2` | Input / Controls |
+| Rebind Swap | builtin | `Fn.rebind_swap` | Advanced |
 | Rumble | api | `Input.Rumble/3` | Input / Controls |
+| Set Per Player | builtin | `Fn.set_per_player` | Advanced |
+| Set Response | builtin | `Fn.set_response` | Advanced |
+
+##### Gamepad & Controls / Local Players
+
+| Node | Kind | Id | Was |
+|---|---|---|---|
+| Canceled | builtin | `Fn.ia_canceled` | Advanced |
+| Conflicts | builtin | `Fn.ia_conflicts` | Advanced |
+| Down | builtin | `Fn.ia_down` | Advanced |
+| Event | builtin | `Fn.ia_event` | Advanced |
+| Forward | builtin | `Fn.ia_z` | Advanced |
+| Join | builtin | `Fn.ia_join` | Advanced |
+| Leave | builtin | `Fn.ia_leave` | Advanced |
+| Map | builtin | `Fn.ia_map` | Lists & Maps / Lists |
+| Map Enabled | builtin | `Fn.ia_map_enabled` | Lists & Maps / Lists |
+| Performed | builtin | `Fn.ia_performed` | Advanced |
+| Player | api | `Input.MyPlayer/0` | Input / Controls |
+| Player Action Canceled | api | `Input.PlayerActionCanceled/2` | Input / Controls |
+| Player Action Held | api | `Input.PlayerActionHeld/2` | Input / Controls |
+| Player Action Performed | api | `Input.PlayerActionPerformed/2` | Input / Controls |
+| Player Action Phase | api | `Input.PlayerActionPhase/2` | Input / Controls |
+| Player Action Pressed | api | `Input.PlayerActionPressed/2` | Input / Controls |
+| Player Action Progress | api | `Input.PlayerActionProgress/2` | Input / Controls |
+| Player Action Released | api | `Input.PlayerActionReleased/2` | Input / Controls |
+| Player Action Started | api | `Input.PlayerActionStarted/2` | Input / Controls |
+| Player Action Value | api | `Input.PlayerActionValue/2` | Input / Controls |
+| Player Rebind | api | `Input.PlayerRebind/5` | Input / Controls |
+| Player Scheme | api | `Input.PlayerScheme/1` | Input / Controls |
+| Players | builtin | `Fn.ia_players` | Advanced |
+| Poll Join | builtin | `Fn.ia_poll_join` | Advanced |
+| Pressed | builtin | `Fn.ia_pressed` | Advanced |
+| Progress | builtin | `Fn.ia_progress` | Advanced |
+| Rebind | builtin | `Fn.ia_rebind` | Advanced |
+| Released | builtin | `Fn.ia_released` | Advanced |
+| Reset Bindings | builtin | `Fn.ia_reset_bindings` | Advanced |
+| Right | builtin | `Fn.ia_x` | Advanced |
+| Scheme | builtin | `Fn.ia_scheme` | Advanced |
+| Set Action Map Enabled | api | `Input.SetActionMapEnabled/3` | Input / Controls |
+| Set Scheme | builtin | `Fn.ia_set_scheme` | Advanced |
+| Started | builtin | `Fn.ia_started` | Advanced |
+| Use Default | builtin | `Fn.ia_use_default` | Advanced |
+| Vertical | builtin | `Fn.ia_y` | Advanced |
+
+##### Gamepad & Controls / Controllers
+
+| Node | Kind | Id | Was |
+|---|---|---|---|
+| Haptic | builtin | `Fn.haptic` | Advanced |
+| Haptic Strength | builtin | `Fn.haptic_strength` | Advanced |
+| Input Button Name | builtin | `Fn.input_button_name` | UI |
+| Input Device | builtin | `Fn.input_device` | Input |
+| Pad Battery | builtin | `Fn.pad_battery` | Advanced |
+| Pad Button Name | builtin | `Fn.pad_button_name` | UI |
+| Pad Event | builtin | `Fn.pad_event` | Advanced |
+| Pad Family | builtin | `Fn.pad_family` | Advanced |
+| Pad Gyro | builtin | `Fn.pad_gyro` | Advanced |
+| Pad Ids | builtin | `Fn.pad_ids` | Advanced |
+| Pad Info | builtin | `Fn.pad_info` | Advanced |
+| Pad Lightbar | builtin | `Fn.pad_lightbar` | Advanced |
+| Pad Mapping | builtin | `Fn.pad_mapping` | Advanced |
+| Pad Name | builtin | `Fn.pad_name` | Advanced |
+| Pad Raw | builtin | `Fn.pad_raw` | Advanced |
+| Pad Setup Active | builtin | `Fn.pad_setup_active` | Advanced |
+| Pad Setup Back | builtin | `Fn.pad_setup_back` | Advanced |
+| Pad Setup Cancel | builtin | `Fn.pad_setup_cancel` | Advanced |
+| Pad Setup Clear | builtin | `Fn.pad_setup_clear` | Advanced |
+| Pad Setup Prompt | builtin | `Fn.pad_setup_prompt` | Advanced |
+| Pad Setup Save | builtin | `Fn.pad_setup_save` | Variables / Saved |
+| Pad Setup Skip | builtin | `Fn.pad_setup_skip` | Advanced |
+| Pad Setup Start | builtin | `Fn.pad_setup_start` | Advanced |
+| Pad Swap | builtin | `Fn.pad_swap` | Advanced |
+| Pad Touch | builtin | `Fn.pad_touch` | Input |
+| Pad Trigger Rumble | builtin | `Fn.pad_trigger_rumble` | Advanced |
 
 ##### Multiplayer / Hosting & Joining
 
@@ -3476,7 +3562,6 @@ stores (a builtin starts with `Fn.`), or the step's short name.
 | Net Queue State | builtin | `Fn.net_queue_state` | Online |
 | Net Queue Time | builtin | `Fn.net_queue_time` | Online |
 | Net Relay Ready | builtin | `Fn.net_relay_ready` | Online |
-| Players | builtin | `Fn.mm_players` | Advanced |
 | Port | builtin | `Fn.mm_port` | Advanced |
 | Refresh | builtin | `Fn.mm_refresh` | Advanced |
 | Relay Ready | check | `net_relay_ready` | Online |
@@ -3685,7 +3770,6 @@ stores (a builtin starts with `Fn.`), or the step's short name.
 | Account Token | builtin | `Fn.account_token` | Advanced |
 | Account Username | builtin | `Fn.account_username` | Advanced |
 | Account Verify | builtin | `Fn.account_verify` | Advanced |
-| Error | builtin | `Fn.pf_error` | Advanced |
 | Identifier | builtin | `Fn.pf_id` | Advanced |
 | Logged in | builtin | `Fn.pf_logged_in` | Advanced |
 

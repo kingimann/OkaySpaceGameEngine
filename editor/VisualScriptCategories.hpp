@@ -104,7 +104,7 @@ inline const VsPaletteCategory kPaletteCategories[] = {
     // ---- Input
     {"Keyboard",        "Is a key held, pressed or released.", "Input"},
     {"Mouse & Touch",   "The mouse position and buttons, the cursor, taps and swipes.", "Input"},
-    {"Gamepad & Controls", "Movement axes, the gamepad, named actions and rebinding keys.", "Input"},
+    {"Gamepad & Controls", "Movement axes, the gamepad, named actions and rebinding keys, local players and the controllers they use.", "Input"},
     // ---- Online
     {"Multiplayer",     "Host or join, browse servers, matchmaking, messages, synced objects, players and matches.", "Online"},
     {"Steam",           "Steam achievements, stats, lobbies, friends, cloud files and the workshop.", "Online"},
@@ -239,6 +239,8 @@ inline const VsPaletteSub kPaletteSubs[] = {
     // Input
     {"Mouse & Touch", "Touch & Gestures", "Touch screens, swipes, pinches and twists."},
     {"Gamepad & Controls", "Named Actions", "Define an action, read its value, rebind its key and rumble the pad."},
+    {"Gamepad & Controls", "Local Players", "A local player's typed actions: values, phases, action maps, control scheme and rebinding."},
+    {"Gamepad & Controls", "Controllers", "Which controller is plugged in, its family and battery, lightbar, trigger rumble, Controller Setup and rumble patterns."},
     // Online
     {"Multiplayer", "Hosting & Joining", "Host, join, leave and ask who is the server."},
     {"Multiplayer", "Server Browser", "List servers and join one."},

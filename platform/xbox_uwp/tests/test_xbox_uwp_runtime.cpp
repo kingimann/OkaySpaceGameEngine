@@ -139,7 +139,7 @@ struct FakeHost : okay::xbox::BuildHost {
 };
 okay::xbox::PlanInputs Inputs() {
     okay::xbox::PlanInputs in;
-    in.sdk.visualStudioPath = "C:/VS/2022/Community"; in.sdk.sdkVersion = "10.0.19041.0"; in.sdk.signToolPath = "C:/Kits/signtool.exe";
+    in.sdk.visualStudioPath = "C:/VS/2022/Community"; in.sdk.generator = "Visual Studio 17 2022"; in.sdk.sdkVersion = "10.0.19041.0"; in.sdk.signToolPath = "C:/Kits/signtool.exe";
     in.fs.list = [](const std::string& d) { if (d == "C:/VS/2022/Community/Common7/IDE/CommonExtensions/Microsoft/CMake/CMake/bin") return std::vector<std::string>{"cmake.exe"}; return std::vector<std::string>(); };
     in.sourceRoot = "C:/src/OkaySpace"; in.exportDir = "C:/out/My Game"; in.subject = "CN=Me, O=Studio"; in.appxPath = "C:/out/My Game/My_1.0.0.0_x64.appx";
     return in;
@@ -159,6 +159,11 @@ static void BuildPlanTests() {
     CHECK(p[2].cmd.exe == "C:/VS/2022/Community/Common7/IDE/CommonExtensions/Microsoft/CMake/CMake/bin/cmake.exe");
     CHECK(p[2].kind == StepKind::Process && p[0].kind == StepKind::Internal && p[4].kind == StepKind::Internal);
     CHECK(p[2].cmd.Line().find("-DCMAKE_SYSTEM_NAME=WindowsStore") != std::string::npos);
+    CHECK(p[2].cmd.Line().find("-G \"Visual Studio 17 2022\"") != std::string::npos && p[2].cmd.Line().find("-DCMAKE_GENERATOR_INSTANCE=C:/VS/2022/Community") != std::string::npos);   // from the probe
+    { PlanInputs b = in; b.sdk.generator = "Visual Studio 18 2026"; b.sdk.toolsetVersion = "14.50.35717"; b.sdk.visualStudioPath = "C:/VS/18/Community";
+      const std::string l = PlanBuild(b)[2].cmd.Line(); CHECK(l.find("-G \"Visual Studio 18 2026\"") != std::string::npos && l.find("Visual Studio 17") == std::string::npos);
+      CHECK(l.find("-T version=14.50.35717") != std::string::npos && l.find("v143") == std::string::npos && l.find("-DCMAKE_GENERATOR_INSTANCE=C:/VS/18/Community") != std::string::npos); }
+    { PlanInputs b = in; b.sdk.generator = ""; const std::string l = PlanBuild(b)[2].cmd.Line(); CHECK(l.find(" -G ") == std::string::npos && l.find("-A x64") != std::string::npos); }
     CHECK(p[2].cmd.Line().find("\"C:/out/My Game/build/app\"") != std::string::npos);   // spaces quoted
     CHECK(p[3].cmd.Line().find("--config Release") != std::string::npos);
     CHECK(p[5].cmd.Line().find("-OutDir \"C:/out/My Game/package/Shaders\"") != std::string::npos);

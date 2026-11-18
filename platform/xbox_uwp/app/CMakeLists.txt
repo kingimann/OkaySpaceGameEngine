@@ -1,6 +1,6 @@
 # EXPERIMENTAL, UNCOMPILED, UNVERIFIED: the Xbox UWP app shell. Its own CMake project: it must NOT see the engine.
-# Started by scripts/build-xbox-uwp.ps1 on a Windows PC with Visual Studio 2022 + the UWP tools:
-#   cmake -S platform/xbox_uwp/app -B <dir> -G "Visual Studio 17 2022" -A x64 -DCMAKE_SYSTEM_NAME=WindowsStore -DCMAKE_SYSTEM_VERSION=10.0
+# Started by scripts/build-xbox-uwp.ps1 on a Windows PC with Visual Studio 2022 or newer + the UWP tools (the SDK check picks the generator, install and toolset):
+#   cmake -S platform/xbox_uwp/app -B <dir> -G "<generator for the installed Visual Studio, e.g. Visual Studio 17 2022>" -A x64 -DCMAKE_SYSTEM_NAME=WindowsStore -DCMAKE_SYSTEM_VERSION=10.0
 #   cmake --build <dir> --config Release
 # Written from Microsoft's CMake "cross compiling for UWP" notes and the Windows SDK's C++/WinRT, DXGI and Direct3D 11 headers.
 cmake_minimum_required(VERSION 3.20)

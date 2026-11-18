@@ -34,13 +34,29 @@ inline SdkInputs ProbeThisPc() {
     std::error_code ec;
     in.vswhereFound = std::filesystem::exists(std::filesystem::u8path(vswhere), ec);
     if (in.vswhereFound) {
-        // Fixed program, fixed arguments, nothing from the user: no injection surface. Newest first.
-        std::string cmd = "\"\"" + vswhere + "\" -products * -version [17.0,18.0) -sort -property installationPath\"";
-        for (char& c : cmd) if (c == '/') c = '\\';
-        if (FILE* p = _popen(cmd.c_str(), "r")) {
-            char buf[1024];
-            while (std::fgets(buf, sizeof buf, p)) in.vswhereInstallPaths.push_back(buf);
-            _pclose(p);
+        // Fixed program, fixed arguments, nothing from the user: no injection surface. Every install of any version (2017, 2019, 2022 and
+        // newer), same -sort for each call so the lists line up. `-requires` limits the last call to installs with the MSVC x64/x86 tools.
+        auto run = [&](const std::string& args) {
+            std::vector<std::string> lines;
+            std::string cmd = "\"\"" + vswhere + "\" " + args + "\"";
+            for (char& c : cmd) if (c == '/') c = '\\';
+            if (FILE* p = _popen(cmd.c_str(), "r")) {
+                char buf[1024];
+                while (std::fgets(buf, sizeof buf, p)) { std::string l = buf; while (!l.empty() && (l.back() == '\n' || l.back() == '\r')) l.pop_back(); if (!l.empty()) lines.push_back(l); }
+                _pclose(p);
+            }
+            return lines;
+        };
+        const std::vector<std::string> paths = run("-products * -sort -property installationPath");
+        const std::vector<std::string> vers = run("-products * -sort -property installationVersion");
+        const std::vector<std::string> names = run("-products * -sort -property displayName");
+        const std::vector<std::string> withVc = run(std::string("-products * -sort -requires ") + kVcToolsComponentId() + " -property installationPath");
+        for (std::size_t i = 0; i < paths.size(); ++i) {
+            VsInstall v; v.path = paths[i];
+            if (vers.size() == paths.size()) v.version = vers[i];   // only trusted when the lists line up
+            if (names.size() == paths.size()) v.displayName = names[i];
+            for (const std::string& w : withVc) if (w == v.path) v.vcComponent = true;
+            in.installs.push_back(v);
         }
     }
 #endif

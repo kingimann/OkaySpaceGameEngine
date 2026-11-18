@@ -54,7 +54,14 @@ if (-not (Test-Path $okayAppx)) { throw 'Could not build okay-appx (our packer).
 
 # 3. the UWP app
 $appBuild = Join-Path $work 'app'
-cmake -S (Join-Path $packSrc 'app') -B $appBuild -G 'Visual Studio 17 2022' -A x64 -DCMAKE_SYSTEM_NAME=WindowsStore -DCMAKE_SYSTEM_VERSION=10.0 2>&1 | Out-Host
+# generator, install and toolset come from the SDK check (Visual Studio 2022 or newer), not a fixed 2022 / v143
+$cmakeArgs = @('-S', (Join-Path $packSrc 'app'), '-B', $appBuild)
+if ($sdk.generator) { $cmakeArgs += @('-G', $sdk.generator) }
+$cmakeArgs += @('-A', 'x64')
+if ($sdk.visualStudioPath) { $cmakeArgs += "-DCMAKE_GENERATOR_INSTANCE=$($sdk.visualStudioPath)" }
+if ($sdk.toolsetVersion) { $cmakeArgs += @('-T', "version=$($sdk.toolsetVersion)") }
+$cmakeArgs += @('-DCMAKE_SYSTEM_NAME=WindowsStore', '-DCMAKE_SYSTEM_VERSION=10.0')
+cmake @cmakeArgs 2>&1 | Out-Host
 if ($LASTEXITCODE -ne 0) { throw 'CMake could not configure the UWP app.' }
 cmake --build $appBuild --config $Configuration 2>&1 | Out-Host
 if ($LASTEXITCODE -ne 0) { throw 'The UWP app did not build.' }

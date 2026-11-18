@@ -3,7 +3,7 @@
   EXPERIMENTAL, UNVERIFIED. Checks that this Windows PC can build the OkaySpace Xbox (UWP) package.
 .DESCRIPTION
   The same checks as platform/xbox_uwp/XboxSdkCheck.hpp (the editor's check), written for PowerShell.
-  Looks for Visual Studio 2022 (through vswhere), the C++ Universal Windows Platform tools, a Windows 10/11 SDK
+  Looks for Visual Studio 2022 or newer (through vswhere, any install), the C++ Universal Windows Platform tools, a Windows 10/11 SDK
   (17763 or newer) with the UWP headers and libraries, and SignTool.exe. MakeAppx.exe is reported but optional:
   our own packer (okay-appx) makes the package.
   Written without a Windows PC: this script has never been run. If it says something is missing that is
@@ -22,31 +22,48 @@ $items = New-Object System.Collections.ArrayList
 function Add-Item($id, $name, $found, $detail, $install, $required = $true) {
     [void]$items.Add([pscustomobject]@{ id = $id; name = $name; found = [bool]$found; required = $required; detail = $detail; install = $install })
 }
+function Newest-Version-Loose($names) {
+    # MSVC toolset folder names such as 14.38.33130 or 14.44.35207: numeric order, newest first
+    $names | Where-Object { $_ -match '^\d+(\.\d+)+$' } | Sort-Object { [version]$_ } -Descending
+}
 function Newest-Version($names) {
     # "10.0.19041.0" style folder names, numerically newest first (a text sort would put 9 after 10)
     $names | Where-Object { $_ -match '^\d+(\.\d+){3}$' } | Sort-Object { [version]$_ } -Descending
 }
 
-# 1. Visual Studio 2022 through vswhere
+# 1-2. Visual Studio (2022 or newer; any install vswhere lists) and its UWP C++ toolset (an MSVC folder with lib\x64\store).
+# The toolset folder is discovered, never assumed (14.38, 14.44 ... any name); versions are compared as numbers.
+# Component ids are from Microsoft's component directory as remembered (UNVERIFIED); the folders are what decide.
+$vcComponent = 'Microsoft.VisualStudio.Component.VC.Tools.x86.x64'
 $vswhere = Join-Path $pf86 'Microsoft Visual Studio\Installer\vswhere.exe'
-$vsPath = $null
+$vsPath = $null; $vsVersion = $null; $vsName = $null; $vsMajor = 0; $toolset = $null
+$cands = @()
 if (Test-Path $vswhere) {
-    $lines = & $vswhere -products * -version '[17.0,18.0)' -sort -property installationPath
-    foreach ($l in $lines) { if ($l -and (Test-Path (Join-Path $l 'VC\Tools\MSVC'))) { $vsPath = $l; break } }
-}
-$vsInstall = 'Install Visual Studio 2022 (the free Community edition is enough) from the Visual Studio downloads page on visualstudio.microsoft.com.'
-if (-not (Test-Path $vswhere)) { $vsInstall = 'vswhere.exe was not found (it installs with Visual Studio 2017 or newer). ' + $vsInstall }
-Add-Item 'vs' 'Visual Studio 2022' ($null -ne $vsPath) $vsPath $vsInstall
-
-# 2. the UWP C++ toolset: an MSVC folder with lib\x64\store
-$toolset = $null
-if ($vsPath) {
-    $msvc = Join-Path $vsPath 'VC\Tools\MSVC'
-    foreach ($v in (Newest-Version (Get-ChildItem $msvc -Directory | ForEach-Object Name))) {
-        if (Test-Path (Join-Path $msvc "$v\lib\x64\store")) { $toolset = $v; break }
+    $paths = @(& $vswhere -products * -sort -property installationPath)
+    $vers = @(& $vswhere -products * -sort -property installationVersion)
+    $names = @(& $vswhere -products * -sort -property displayName)
+    for ($i = 0; $i -lt $paths.Count; $i++) {
+        $p = $paths[$i]; $msvc = Join-Path $p 'VC\Tools\MSVC'
+        if (-not $p -or -not (Test-Path $msvc)) { continue }
+        $ts = $null
+        foreach ($v in (Newest-Version-Loose (Get-ChildItem $msvc -Directory | ForEach-Object Name))) {
+            if (Test-Path (Join-Path $msvc "$v\lib\x64\store")) { $ts = $v; break }   # an ARM64-only UWP install has lib\arm64\store, not this
+        }
+        $ver = if ($vers.Count -eq $paths.Count) { $vers[$i] } else { '' }
+        $cands += [pscustomobject]@{ path = $p; version = $ver; name = $(if ($names.Count -eq $paths.Count) { $names[$i] } else { '' }); toolset = $ts; order = $i }
     }
 }
-Add-Item 'uwp-toolset' 'C++ Universal Windows Platform tools' ($null -ne $toolset) $toolset 'Run the Visual Studio Installer, choose Modify, tick the workload "Universal Windows Platform development" and, under its optional parts, "C++ (v143) Universal Windows Platform tools".'
+# prefer an install with a UWP toolset, then the newest installationVersion (numeric), then vswhere's order
+$best = $cands | Sort-Object @{ e = { [bool]$_.toolset }; Descending = $true }, @{ e = { if ($_.version -match '^\d+(\.\d+)*$') { [version]$_.version } else { [version]'0.0' } }; Descending = $true }, order | Select-Object -First 1
+if ($best) { $vsPath = $best.path; $vsVersion = $best.version; $vsName = $best.name; $toolset = $best.toolset; if ($vsVersion -match '^(\d+)') { $vsMajor = [int]$Matches[1] } }
+$generators = @{ 15 = 'Visual Studio 15 2017'; 16 = 'Visual Studio 16 2019'; 17 = 'Visual Studio 17 2022'; 18 = 'Visual Studio 18 2026' }
+$generator = if ($generators.ContainsKey($vsMajor)) { $generators[$vsMajor] } else { '' }
+$vsInstall = 'Install Visual Studio 2022 or newer (the free Community edition is enough) from the Visual Studio downloads page on visualstudio.microsoft.com.'
+if (-not (Test-Path $vswhere)) { $vsInstall = 'vswhere.exe was not found (it installs with Visual Studio 2017 or newer). ' + $vsInstall }
+Add-Item 'vs' 'Visual Studio 2022 or newer' ($null -ne $vsPath) $(if ($vsPath) { "$vsName $vsVersion ($vsPath)" } else { $null }) $vsInstall
+$uwpInstall = 'Visual Studio 2022: Visual Studio Installer > Modify > the workload "Universal Windows Platform development" (with "C++ (v143) Universal Windows Platform tools" ticked). ' +
+    'Newer Visual Studio (no such workload): Modify > Individual components > "C++ Universal Windows Platform support for ... build tools" (the one for your newest MSVC build tools).'
+Add-Item 'uwp-toolset' 'C++ Universal Windows Platform tools' ($null -ne $toolset) $(if ($toolset) { "MSVC $toolset" } else { $null }) $uwpInstall
 
 # 3-4. Windows SDK 10.0.17763.0 or newer, and its UWP headers and libraries
 $kits = Join-Path $pf86 'Windows Kits\10'
@@ -79,7 +96,7 @@ Add-Item 'signtool' 'SignTool.exe' ($null -ne $st) $st 'Part of the Windows SDK 
 $missing = @($items | Where-Object { $_.required -and -not $_.found })
 $available = ($missing.Count -eq 0)
 if ($Json) {
-    [pscustomobject]@{ available = $available; visualStudioPath = $vsPath; toolsetVersion = $toolset; sdkVersion = $goodSdk; sdkRoot = $kits; signTool = $st; makeAppx = $mk; items = $items } | ConvertTo-Json -Depth 4
+    [pscustomobject]@{ available = $available; visualStudioPath = $vsPath; visualStudioVersion = $vsVersion; visualStudioMajor = $vsMajor; generator = $generator; toolsetVersion = $toolset; sdkVersion = $goodSdk; sdkRoot = $kits; signTool = $st; makeAppx = $mk; items = $items } | ConvertTo-Json -Depth 4
 } else {
     foreach ($i in $items) {
         $tag = if ($i.found) { 'FOUND  ' } elseif ($i.required) { 'MISSING' } else { 'missing (optional)' }

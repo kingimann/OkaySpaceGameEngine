@@ -48,12 +48,31 @@ struct FsView {
     }
 };
 
+/// One Visual Studio install as vswhere reports it (any version: 2017, 2019, 2022 and newer).
+struct VsInstall {
+    std::string path;          // installationPath
+    std::string version;       // installationVersion, e.g. "17.9.34728.123" or "18.0.1234.5" ("" = not reported)
+    std::string displayName;   // e.g. "Visual Studio Community 2022" ("" = not reported)
+    bool vcComponent = false;  // vswhere -requires Microsoft.VisualStudio.Component.VC.Tools.x86.x64 listed it (informational; the folders decide)
+};
+
 struct SdkInputs {
     FsView fs;
     std::string programFilesX86 = "C:/Program Files (x86)";
     bool vswhereFound = false;                     // vswhere.exe exists at its fixed install path
-    std::vector<std::string> vswhereInstallPaths;  // its output lines: the "installationPath" of each VS 2022 (version [17.0,18.0))
+    std::vector<VsInstall> installs;               // vswhere -products * -sort (newest first as vswhere lists them)
+    std::vector<std::string> vswhereInstallPaths;  // older input form: just the paths (used only when `installs` is empty)
 };
+
+// Component ids, from Microsoft's "Visual Studio component directory" as remembered: UNVERIFIED, so they are only shown to the person and
+// passed to vswhere as an informational query. The decision is made from the folders (lib/x64/store), which is what the build needs.
+inline const char* kVcToolsComponentId() { return "Microsoft.VisualStudio.Component.VC.Tools.x86.x64"; }
+inline std::vector<std::string> UwpComponentIds() {
+    return {"Microsoft.VisualStudio.ComponentGroup.UWP.VC.BuildTools",   // 2022: C++ (v143) Universal Windows Platform tools
+            "Microsoft.VisualStudio.ComponentGroup.UWP.VC",              // 2019 / 2022 workload part
+            "Microsoft.VisualStudio.Component.UWP.VC.v143",              // guess for the individual component (UNVERIFIED)
+            "Microsoft.VisualStudio.Component.UWP.VC"};                  // guess for newer installs (UNVERIFIED)
+}
 
 enum class Need { VisualStudio, UwpToolset, WindowsSdk, UwpHeadersLibs, MakeAppx, SignTool };
 
@@ -69,7 +88,11 @@ struct SdkItem {
 struct SdkReport {
     std::vector<SdkItem> items;
     bool available = false;        // every item found
-    std::string visualStudioPath;  // chosen install (the newest listed)
+    std::string visualStudioPath;  // chosen install
+    std::string visualStudioVersion;   // its installationVersion ("" if unknown)
+    std::string visualStudioName;      // its display name ("" if unknown)
+    int visualStudioMajor = 0;         // 17 for 2022, 18 for the next one; 0 = unknown
+    std::string generator;             // CMake generator for that major ("" = let CMake choose)
     std::string toolsetVersion;    // e.g. 14.38.33130 (newest MSVC folder with the UWP "store" libraries)
     std::string sdkVersion;        // e.g. 10.0.19041.0
     std::string sdkRoot;           // e.g. C:/Program Files (x86)/Windows Kits/10
@@ -93,27 +116,66 @@ inline std::vector<long> ParseDottedVersion(const std::string& s) {
     }
     return out;
 }
+/// "17.9.34728.123", "18.0", "17" -> numbers (one to four parts); anything else gives an empty vector. Numeric, never textual.
+inline std::vector<long> ParseDottedVersionLoose(const std::string& s) {
+    std::vector<long> out;
+    if (s.empty()) return out;
+    std::size_t i = 0;
+    while (i <= s.size()) {
+        std::size_t j = i;
+        while (j < s.size() && s[j] >= '0' && s[j] <= '9') ++j;
+        if (j == i || j - i > 9) return {};
+        out.push_back(std::strtol(s.substr(i, j - i).c_str(), nullptr, 10));
+        if (j == s.size()) break;
+        if (s[j] != '.') return {};
+        i = j + 1;
+    }
+    return out;
+}
 inline bool VersionLess(const std::vector<long>& a, const std::vector<long>& b) {
     return std::lexicographical_compare(a.begin(), a.end(), b.begin(), b.end());
+}
+
+inline int MajorOf(const std::string& version) { const std::vector<long> v = ParseDottedVersionLoose(version); return v.empty() ? 0 : (int)v[0]; }
+
+/// The CMake generator name for a Visual Studio major version. Table from CMake's generator list as remembered (UNVERIFIED for 18):
+/// 15 = 2017, 16 = 2019, 17 = 2022, 18 = 2026. Unknown: "" (the plan then omits -G and CMake picks its default).
+inline std::string GeneratorForMajor(int major) {
+    switch (major) {
+        case 15: return "Visual Studio 15 2017";
+        case 16: return "Visual Studio 16 2019";
+        case 17: return "Visual Studio 17 2022";
+        case 18: return "Visual Studio 18 2026";
+        default: return "";
+    }
 }
 
 // The oldest SDK this export asks for. 10.0.17763 is Windows 10 version 1809, the first with a UWP
 // minimum this feature uses. A choice, not a proven requirement (see docs/xbox_uwp.md).
 inline std::vector<long> MinSdkVersion() { return {10, 0, 17763, 0}; }
 
+/// How to install the UWP C++ tools. 2022 (and older) has the workload "Universal Windows Platform development"; newer installs have no such
+/// workload, only the individual component "C++ Universal Windows Platform support for ... build tools" (Individual components tab).
+inline std::string UwpInstallText(int major) {
+    const std::string w = "Visual Studio Installer > Modify > the workload \"Universal Windows Platform development\" (with \"C++ (v143) Universal Windows Platform tools\" ticked under its optional parts)";
+    const std::string c = "Visual Studio Installer > Modify > Individual components > \"C++ Universal Windows Platform support for ... build tools\" (pick the one for your newest MSVC build tools)";
+    if (major >= 18) return "Open the " + c + ". The workload " + "\"Universal Windows Platform development\" does not exist there.";
+    if (major > 0) return "Open the " + w + ".";
+    return "Open the " + w + ", or on a newer Visual Studio the " + c + ".";
+}
+
 inline SdkReport EvaluateSdk(const SdkInputs& in) {
     SdkReport r;
     r.items.reserve(8);   // add() hands out pointers into this vector: it must never reallocate
-    auto add = [&](Need n, const char* name, const char* install) {
+    auto add = [&](Need n, const char* name, const std::string& install) {
         SdkItem it; it.need = n; it.name = name; it.install = install; r.items.push_back(it); return &r.items.back();
     };
-    // 1. Visual Studio 2022
-    SdkItem* vs = add(Need::VisualStudio, "Visual Studio 2022",
-        "Install Visual Studio 2022 (the free Community edition is enough) from the Visual Studio downloads page on visualstudio.microsoft.com.");
+    // 1. Visual Studio 2022 or newer
+    SdkItem* vs = add(Need::VisualStudio, "Visual Studio 2022 or newer",
+        "Install Visual Studio 2022 or newer (the free Community edition is enough) from the Visual Studio downloads page on visualstudio.microsoft.com.");
     // 2. UWP C++ toolset
     SdkItem* ts = add(Need::UwpToolset, "C++ Universal Windows Platform tools",
-        "Run the Visual Studio Installer, choose Modify, and tick the workload \"Universal Windows Platform development\" "
-        "and, under its optional parts, \"C++ (v143) Universal Windows Platform tools\".");
+        UwpInstallText(0));
     // 3-4. Windows SDK
     SdkItem* sdk = add(Need::WindowsSdk, "Windows 10/11 SDK (17763 or newer)",
         "In the Visual Studio Installer tick a \"Windows 10 SDK\" or \"Windows 11 SDK\" (10.0.17763.0 or newer) under the Universal Windows Platform workload, "
@@ -126,34 +188,48 @@ inline SdkReport EvaluateSdk(const SdkInputs& in) {
     SdkItem* st = add(Need::SignTool, "SignTool.exe",
         "SignTool.exe is part of the Windows SDK (\"Windows SDK Signing Tools for Desktop Apps\"). Install the Windows SDK as above.");
 
-    // --- Visual Studio: the vswhere lines, newest-listed first; keep one that really has VC\Tools\MSVC ---
+    // --- Visual Studio: every install vswhere listed. Keep the ones that really have VC\Tools\MSVC, then prefer one that also has a UWP
+    //     toolset (an MSVC folder with lib/x64/store), the newest by NUMERIC installationVersion, else the first listed. ---
+    std::vector<VsInstall> installs = in.installs;
+    if (installs.empty()) for (const std::string& raw : in.vswhereInstallPaths) { VsInstall v; v.path = raw; installs.push_back(v); }
+    struct Cand { VsInstall vs; std::string toolset; std::vector<long> ver; std::size_t order; bool hasUwp; };
+    std::vector<Cand> cands;
     if (in.vswhereFound) {
-        for (const std::string& raw : in.vswhereInstallPaths) {
-            std::string p = raw;
+        std::size_t order = 0;
+        for (VsInstall v : installs) {
+            std::string& p = v.path;
             while (!p.empty() && (p.back() == '\r' || p.back() == '\n' || p.back() == ' ')) p.pop_back();
             for (char& c : p) if (c == '\\') c = '/';
-            if (p.empty()) continue;
-            if (!in.fs.list || in.fs.list(p + "/VC/Tools/MSVC").empty()) continue;
-            r.visualStudioPath = p;
-            vs->found = true; vs->detail = p;
-            break;
+            ++order;
+            if (p.empty() || !in.fs.list) continue;
+            const std::vector<std::string> names = in.fs.list(p + "/VC/Tools/MSVC");
+            if (names.empty()) continue;
+            Cand c; c.vs = v; c.order = order; c.ver = ParseDottedVersionLoose(v.version); c.hasUwp = false;
+            std::vector<long> best;
+            for (const std::string& n : names) {   // any toolset folder name: numeric ordering, nothing hard-coded (14.38, 14.44, 14.5x ...)
+                const std::vector<long> tv = ParseDottedVersion(n);
+                if (tv.empty()) continue;
+                if (!in.fs.Exists(p + "/VC/Tools/MSVC/" + n + "/lib/x64/store")) continue;   // an ARM64-only UWP install has lib/arm64/store, not this
+                if (best.empty() || VersionLess(best, tv)) { best = tv; c.toolset = n; c.hasUwp = true; }
+            }
+            cands.push_back(c);
         }
-        if (!vs->found) vs->detail = "";
+    }
+    const Cand* pick = nullptr;
+    for (const Cand& c : cands) {
+        if (!pick) { pick = &c; continue; }
+        if (c.hasUwp != pick->hasUwp) { if (c.hasUwp) pick = &c; continue; }
+        if (VersionLess(pick->ver, c.ver)) pick = &c;   // newer installationVersion wins; equal or unknown keeps vswhere's order
+    }
+    if (pick) {
+        r.visualStudioPath = pick->vs.path; r.visualStudioVersion = pick->vs.version; r.visualStudioName = pick->vs.displayName;
+        r.visualStudioMajor = MajorOf(pick->vs.version); r.generator = GeneratorForMajor(r.visualStudioMajor);
+        vs->found = true; vs->detail = pick->vs.displayName.empty() ? pick->vs.path : pick->vs.displayName + " " + pick->vs.version + " (" + pick->vs.path + ")";
+        if (pick->hasUwp) { r.toolsetVersion = pick->toolset; ts->found = true; ts->detail = "MSVC " + r.toolsetVersion; }
+        else ts->detail = "no MSVC toolset with x64 UWP libraries (lib/x64/store) in " + pick->vs.path;
+        ts->install = UwpInstallText(r.visualStudioMajor);
     }
     if (!in.vswhereFound) vs->install = "vswhere.exe was not found (it installs with Visual Studio 2017 or newer, into Program Files (x86)\\Microsoft Visual Studio\\Installer). " + vs->install;
-
-    // --- UWP toolset: newest MSVC folder that has lib/x64/store ---
-    if (vs->found) {
-        std::vector<std::string> names = in.fs.list(r.visualStudioPath + "/VC/Tools/MSVC");
-        std::vector<long> best;
-        for (const std::string& n : names) {
-            std::vector<long> v = ParseDottedVersion(n);
-            if (v.empty()) continue;
-            if (!in.fs.Exists(r.visualStudioPath + "/VC/Tools/MSVC/" + n + "/lib/x64/store")) continue;
-            if (best.empty() || VersionLess(best, v)) { best = v; r.toolsetVersion = n; }
-        }
-        if (!r.toolsetVersion.empty()) { ts->found = true; ts->detail = "MSVC " + r.toolsetVersion; }
-    }
 
     // --- Windows SDK: newest version >= minimum with Include/<v>/winrt and Lib/<v>/um/x64 ---
     const std::string kits = in.programFilesX86 + "/Windows Kits/10";

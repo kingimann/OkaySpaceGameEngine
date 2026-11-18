@@ -106,10 +106,16 @@ inline std::vector<Step> PlanBuild(const PlanInputs& in) {
         for (auto& x : a) c.args.push_back(x);
         return c;
     };
-    internal("sdk", "Check the Windows tools", "Visual Studio 2022 with the UWP tools, a Windows SDK, SignTool.");
+    internal("sdk", "Check the Windows tools", "Visual Studio 2022 or newer with the UWP C++ tools, a Windows SDK, SignTool.");
     internal("export", "Export the game data, manifest and tile images", "Writes package/Data, AppxManifest.xml and the images.");
     { Command c; c.exe = FindCmake(in.sdk, in.fs);
-      c.args = {"-S", appSrc, "-B", appBuild, "-G", "Visual Studio 17 2022", "-A", "x64", "-DCMAKE_SYSTEM_NAME=WindowsStore", "-DCMAKE_SYSTEM_VERSION=10.0"};
+      // The generator, the install and the MSVC toolset are the ones the SDK probe found (2022 or newer), not "Visual Studio 17 2022" / v143.
+      c.args = {"-S", appSrc, "-B", appBuild};
+      if (!in.sdk.generator.empty()) { c.args.push_back("-G"); c.args.push_back(in.sdk.generator); }   // empty: CMake picks its default VS generator
+      c.args.push_back("-A"); c.args.push_back("x64");
+      if (!in.sdk.visualStudioPath.empty()) c.args.push_back("-DCMAKE_GENERATOR_INSTANCE=" + in.sdk.visualStudioPath);   // the install the probe chose
+      if (!in.sdk.toolsetVersion.empty()) { c.args.push_back("-T"); c.args.push_back("version=" + in.sdk.toolsetVersion); }   // the MSVC folder with the UWP libraries
+      c.args.push_back("-DCMAKE_SYSTEM_NAME=WindowsStore"); c.args.push_back("-DCMAKE_SYSTEM_VERSION=10.0");
       if (in.engineMode) { c.args.push_back("-DOKAY_XBOX_APP_ENGINE=ON"); c.args.push_back("-DOKAY_SOURCE_ROOT=" + in.sourceRoot); }
       process("configure", "Set up the UWP app build", "cmake, with Visual Studio's UWP toolset.", c); }
     { Command c; c.exe = FindCmake(in.sdk, in.fs); c.args = {"--build", appBuild, "--config", in.configuration};
@@ -195,7 +201,7 @@ inline std::string MapFailure(const std::string& stepId, int exitCode, bool coul
     if (couldNotStart) {
         if (stepId == "configure" || stepId == "build") m = "Could not start cmake. Open the Visual Studio Installer, choose Modify, and tick \"C++ CMake tools for Windows\" (part of the C++ desktop workload), or install cmake.";
         else m = "Could not start PowerShell. It comes with Windows 10 and 11; is it blocked on this PC?";
-    } else if (stepId == "configure") m = "CMake could not set up the UWP app. Most often the \"Universal Windows Platform development\" workload or its C++ UWP tools are not installed (Visual Studio Installer > Modify).";
+    } else if (stepId == "configure") m = "CMake could not set up the UWP app. Most often the C++ UWP tools are not installed: Visual Studio 2022 workload \"Universal Windows Platform development\", or on newer Visual Studio the individual component \"C++ Universal Windows Platform support for ... build tools\" (Visual Studio Installer > Modify).";
     else if (stepId == "build") m = "The UWP app did not compile. The first error lines are below; send them if the cause is not clear. If \"Engine mode\" was ticked, "
                                     "it is EXPERIMENTAL (the engine has never been compiled with Microsoft's compiler for UWP): untick it to build the triangle test only.";
     else if (stepId == "shaders") m = "The shaders did not compile. fxc.exe comes with the Windows SDK (Visual Studio Installer > Modify > a Windows 10/11 SDK).";

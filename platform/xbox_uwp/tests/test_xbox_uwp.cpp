@@ -47,6 +47,57 @@ static SdkInputs In(const std::set<std::string>& p, bool vswhere = true) {
 }
 static std::string Item(const SdkReport& r, Need n) { for (auto& i : r.items) if (i.need == n) return i.found ? "found" : "missing"; return "?"; }
 
+// Visual Studio 2022 AND newer installs (fake vswhere output and folder layouts). The folders decide; versions are compared as numbers.
+static std::set<std::string> SdkOnly() {
+    std::set<std::string> f; const std::string k = "C:/Program Files (x86)/Windows Kits/10", v = "10.0.26100.0";
+    for (const char* x : {"/winrt/x.h", "/cppwinrt/x.h", "/um/x.h", "/ucrt/x.h"}) f.insert(k + "/Include/" + v + x);
+    f.insert(k + "/Lib/" + v + "/um/x64/WindowsApp.lib"); f.insert(k + "/Lib/" + v + "/um/x64/d3d11.lib");
+    f.insert(k + "/bin/" + v + "/x64/signtool.exe");
+    return f;
+}
+static VsInstall Vs(const char* path, const char* ver, const char* name) { VsInstall v; v.path = path; v.version = ver; v.displayName = name; v.vcComponent = true; return v; }
+static void NewerVsTests() {
+    // newer install (major 18), toolset 14.50 with x64 UWP libraries, plus ARM64 extras (lib/arm64, lib/arm64/store, Hostarm64)
+    { auto p = SdkOnly(); const std::string vs = "C:/VS/18/Community";
+      p.insert(vs + "/VC/Tools/MSVC/14.50.35717/lib/x64/store/vcruntime.lib"); p.insert(vs + "/VC/Tools/MSVC/14.50.35717/lib/arm64/store/vcruntime.lib");
+      p.insert(vs + "/VC/Tools/MSVC/14.50.35717/bin/Hostarm64/arm64/cl.exe");
+      SdkInputs i; i.fs = Fake(p); i.vswhereFound = true; i.installs = {Vs("C:\\VS\\18\\Community\r\n", "18.0.11111.22", "Visual Studio Community 2026")};
+      SdkReport r = EvaluateSdk(i);
+      CHECK(r.available); CHECK(r.toolsetVersion == "14.50.35717"); CHECK(r.visualStudioMajor == 18 && r.generator == "Visual Studio 18 2026"); CHECK(r.visualStudioPath == "C:/VS/18/Community");
+      CHECK(r.sdkVersion == "10.0.26100.0"); CHECK(r.items[0].detail.find("2026") != std::string::npos); }
+    // newer install with the UWP component missing, only ARM64 extras present: x64 UWP libraries are what count, so it is "missing" and the text is the newer one
+    { auto p = SdkOnly(); const std::string vs = "C:/VS/18/Community";
+      p.insert(vs + "/VC/Tools/MSVC/14.50.35717/lib/x64/x.lib"); p.insert(vs + "/VC/Tools/MSVC/14.50.35717/lib/arm64/store/vcruntime.lib");
+      SdkInputs i; i.fs = Fake(p); i.vswhereFound = true; i.installs = {Vs("C:\\VS\\18\\Community", "18.0.1.1", "Visual Studio Community 2026")};
+      SdkReport r = EvaluateSdk(i);
+      CHECK(!r.available); CHECK(Item(r, Need::VisualStudio) == "found"); CHECK(Item(r, Need::UwpToolset) == "missing");
+      const SdkItem* t = nullptr; for (auto& it : r.items) if (it.need == Need::UwpToolset) t = &it;
+      CHECK(t && t->install.find("Individual components") != std::string::npos && t->install.find("C++ Universal Windows Platform support for") != std::string::npos);
+      CHECK(t && t->install.find("workload \"Universal Windows Platform development\" does not exist") != std::string::npos);
+      CHECK(r.message.find("C++ Universal Windows Platform tools") != std::string::npos); }
+    // 2022 missing the UWP part gets the workload text
+    { auto p = SdkOnly(); p.insert("C:/VS/2022/Community/VC/Tools/MSVC/14.38.33130/lib/x64/x.lib");
+      SdkInputs i; i.fs = Fake(p); i.vswhereFound = true; i.installs = {Vs("C:\\VS\\2022\\Community", "17.9.34728.123", "Visual Studio Community 2022")};
+      SdkReport r = EvaluateSdk(i); CHECK(!r.available && r.generator == "Visual Studio 17 2022");
+      for (auto& it : r.items) if (it.need == Need::UwpToolset) CHECK(it.install.find("workload \"Universal Windows Platform development\"") != std::string::npos && it.install.find("Individual components") == std::string::npos); }
+    // both 2022 and a newer install, both complete: the newer installationVersion wins whatever vswhere's order (numeric: 18 > 17, 17.10 > 17.9)
+    { auto p = SdkOnly();
+      p.insert("C:/VS/2022/Community/VC/Tools/MSVC/14.44.35207/lib/x64/store/a.lib"); p.insert("C:/VS/18/Community/VC/Tools/MSVC/14.50.1/lib/x64/store/a.lib");
+      SdkInputs i; i.fs = Fake(p); i.vswhereFound = true; i.installs = {Vs("C:\\VS\\2022\\Community", "17.9.1.1", "2022"), Vs("C:\\VS\\18\\Community", "18.0.0.1", "2026")};
+      CHECK(EvaluateSdk(i).visualStudioPath == "C:/VS/18/Community");
+      i.installs = {Vs("C:\\VS\\2022\\Community", "17.9.1.1", "a"), Vs("C:\\VS\\2022\\Community", "17.10.1.1", "b")}; CHECK(EvaluateSdk(i).visualStudioVersion == "17.10.1.1"); }   // 17.10 > 17.9 numerically, not as text
+    // the newer install lacks the UWP tools but 2022 has them: the install that can build wins
+    { auto p = SdkOnly(); p.insert("C:/VS/2022/Community/VC/Tools/MSVC/14.44.35207/lib/x64/store/a.lib"); p.insert("C:/VS/18/Community/VC/Tools/MSVC/14.50.1/lib/x64/a.lib");
+      SdkInputs i; i.fs = Fake(p); i.vswhereFound = true; i.installs = {Vs("C:\\VS\\18\\Community", "18.0.0.1", "2026"), Vs("C:\\VS\\2022\\Community", "17.9.1.1", "2022")};
+      SdkReport r = EvaluateSdk(i); CHECK(r.available && r.visualStudioPath == "C:/VS/2022/Community"); }
+    // toolset folders are never hard-coded: several, numeric order (14.9 < 14.44 < 14.100)
+    { auto p = SdkOnly(); for (const char* t : {"14.9.1", "14.44.35207", "14.100.1"}) p.insert(std::string("C:/VS/18/Community/VC/Tools/MSVC/") + t + "/lib/x64/store/a.lib");
+      SdkInputs i; i.fs = Fake(p); i.vswhereFound = true; i.installs = {Vs("C:\\VS\\18\\Community", "18.0.0.1", "")}; CHECK(EvaluateSdk(i).toolsetVersion == "14.100.1"); }
+    // an unknown major gets no generator (CMake picks), a missing version is tolerated
+    CHECK(GeneratorForMajor(99).empty() && GeneratorForMajor(16) == "Visual Studio 16 2019" && MajorOf("") == 0 && MajorOf("17.9") == 17 && MajorOf("x") == 0);
+    CHECK(!UwpComponentIds().empty() && std::string(kVcToolsComponentId()) == "Microsoft.VisualStudio.Component.VC.Tools.x86.x64");
+}
+
 static void SdkTests() {
     SdkReport r = EvaluateSdk(In(Full()));
     CHECK(r.available);
@@ -281,7 +332,8 @@ static void AppxTests() {
 }
 
 int main() {
-    SdkTests(); ManifestTests(); AppxTests(); AssetTests(); ExportTests();
+    SdkTests();
+    NewerVsTests(); ManifestTests(); AppxTests(); AssetTests(); ExportTests();
     if (g_fail) { std::printf("%d check(s) FAILED\n", g_fail); return 1; }
     std::printf("xbox_uwp: all checks passed\n");
     return 0;

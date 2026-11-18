@@ -87,8 +87,8 @@ inline std::string ReadmeText(const ExportInputs& in, const ManifestOptions& m, 
          "scripts, physics, gamepad and keyboard). The 2D / UI layer is NOT drawn yet. Nobody has compiled it with Microsoft's compiler,\n"
          "so it may fail to build; untick it to get the triangle back.\n\n";
     t += "Next steps, on a Windows PC (see docs/xbox_uwp.md in the OkaySpace source):\n"
-         "  1. Install Visual Studio 2022 once (the 'Universal Windows Platform development' workload, with its C++ UWP tools\n"
-         "     and a Windows 10/11 SDK). The editor checks this for you.\n"
+         "  1. Install Visual Studio once: 2022 with the 'Universal Windows Platform development' workload, or a newer Visual Studio with the\n"
+         "     individual component 'C++ Universal Windows Platform support for ... build tools', plus a Windows 10/11 SDK. The editor checks this for you.\n"
          "  2. In the editor press the big button on File > Build Settings > Xbox (exp.). It checks the tools, exports, compiles\n"
          "     the UWP app and the shaders, packs with our own packer, signs with a test certificate (PowerShell + Microsoft's\n"
          "     SignTool) and, if you ticked it, installs on this PC. Accept the one administrator prompt (UAC) when it appears.\n"

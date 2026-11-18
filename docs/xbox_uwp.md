@@ -78,21 +78,29 @@ the top `CMakeLists.txt`, the lines in `editor/CMakeLists.txt` and `scripts/buil
 
 All free. Pages are named, not linked, so they cannot go stale: search for the name on microsoft.com.
 
-1. **Visual Studio 2022** (the Community edition is enough): the "Visual Studio downloads" page.
-2. In the Visual Studio Installer choose **Modify** and tick the workload **Universal Windows Platform development**. Under its optional
-   parts tick **C++ (v143) Universal Windows Platform tools** and a **Windows 10 SDK or Windows 11 SDK, 10.0.17763.0 or newer**. This
-   gives the compiler's UWP libraries, the Windows SDK's C++/WinRT headers (`cppwinrt`), `WindowsApp.lib`, `d3d11.lib`, `fxc.exe` and `SignTool.exe`.
+1. **Visual Studio 2022 or newer** (the Community edition is enough): the "Visual Studio downloads" page.
+2. In the Visual Studio Installer choose **Modify**. **Visual Studio 2022:** tick the workload **Universal Windows Platform development** and, under its optional parts,
+   **C++ (v143) Universal Windows Platform tools** and a **Windows 10 SDK or Windows 11 SDK, 10.0.17763.0 or newer**. **Newer Visual Studio** (it has no such workload): on the
+   **Individual components** tab tick **C++ Universal Windows Platform support for ... build tools** (the one for your newest MSVC build tools; the workload "Desktop development with C++"
+   gives the MSVC tools themselves) and a **Windows 10/11 SDK**. ARM64 / ARM64EC build tools are not needed and are ignored (the check wants the **x64** UWP libraries, `lib\x64\store`).
+   This gives the compiler's UWP libraries, the Windows SDK's C++/WinRT headers (`cppwinrt`), `WindowsApp.lib`, `d3d11.lib`, `fxc.exe` and `SignTool.exe`.
    (The "Windows SDK Signing Tools for Desktop Apps" feature carries SignTool and MakeAppx.)
 3. PowerShell 5.1 (comes with Windows 10/11).
 4. For the console: an Xbox One with **Developer Mode** turned on. Microsoft's page "Xbox One Developer Mode" / "Activate Developer Mode on your Xbox"
    describes the **Dev Mode Activation** app from the console's Store and the developer account it needs. Reported cost and account rules
    are on that page; we did not check them.
 
-`scripts/xbox-check-sdk.ps1` and the editor check Visual Studio 2022 (through `vswhere`, version range 17), the UWP toolset (a `VC\Tools\MSVC\<v>\lib\x64\store`
-folder), the SDK folders (`Windows Kits\10\Include\<v>\winrt`, `cppwinrt`, `um`, `ucrt`; `Lib\<v>\um\x64\WindowsApp.lib`, `d3d11.lib`) and `signtool.exe`.
+`scripts/xbox-check-sdk.ps1` and the editor check Visual Studio 2022 or newer (through `vswhere -products * -sort`, every install of any version; the newest by numeric `installationVersion` that has a UWP toolset wins), the UWP toolset (the newest `VC\Tools\MSVC\<any version>\lib\x64\store`
+folder; no toolset version or 2022 folder name is hard-coded), the SDK folders (`Windows Kits\10\Include\<v>\winrt`, `cppwinrt`, `um`, `ucrt`; `Lib\<v>\um\x64\WindowsApp.lib`, `d3d11.lib`) and `signtool.exe`.
 `makeappx.exe` is reported but **optional** (our packer replaces it). When something required is missing the editor shows **Xbox export
 unavailable**, lists what is missing with the install step, and the Export button is disabled. **These folder names are from memory and unverified**; if the
 check says "missing" for something that is installed, that is a bug in the check: send the output of `dir "C:\Program Files (x86)\Windows Kits\10\Include"` and the MSVC folder.
+
+**Visual Studio versions (added after the owner reported Visual Studio 2026):** the check also asks `vswhere -requires Microsoft.VisualStudio.Component.VC.Tools.x86.x64` (informational). The UWP component ids
+the texts refer to (`Microsoft.VisualStudio.ComponentGroup.UWP.VC.BuildTools`, `...ComponentGroup.UWP.VC`, and guessed `...Component.UWP.VC.v143` / `...Component.UWP.VC`) are **from memory of Microsoft's component directory and
+UNVERIFIED**; they are only shown, never used to decide: the folders decide. The CMake generator comes from the found major version (15 = 2017, 16 = 2019, 17 = 2022, 18 = "Visual Studio 18 2026", the last **unverified**; unknown = no `-G`,
+CMake picks), with `-DCMAKE_GENERATOR_INSTANCE=<install>` and `-T version=<discovered MSVC folder>` instead of a fixed `v143`. Tested on Linux with fake vswhere output and folders for 2022, a newer install, a newer install without the UWP
+component and with ARM64-only extras, both installed, and several toolset folders (`14.9` < `14.44` < `14.100`). Never run on Windows; the PowerShell version of the check was not run at all.
 
 ## The pipeline
 

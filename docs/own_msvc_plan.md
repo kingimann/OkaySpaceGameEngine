@@ -755,3 +755,11 @@ Added: `auto`/`decltype(auto)` result types; inherited typedefs; `std::Base(...)
 New Wine-free check: `tools/okayms/tests/test_objcheck.cpp` reads each object back and checks relocations, symbols, `.pdata` and the byte before every REL32. Run it on files: `tools/okayms/build/test_objcheck engine/src/Core/*.cpp`.
 
 Whole library: not re-measured with the final binary (the run was cut short). Last full run (earlier binary): 97 of 348 compile.
+
+## Round 31 (unverified: not run under Wine)
+
+Compile-only. 34 tests in `test_round23.cpp` pass. Whole-library table on the head: not finished (see the report). Found and fixed: variadic macros (`#define F(a, ...)`) made the preprocessor loop forever, so about 40 percent of the files in a partial run hit a 60 s timeout; `#` and `##` in macros added.
+
+Added: `dynamic_cast` (single inheritance; `runtime/rtti.c`, type records now hold a base link), `__is_base_of` family behind `<type_traits>`, heap algorithms, `fprintf/stdout/stderr`, `ifstream` `seekg/tellg/read`, out-of-class member templates returning `T*`, `f<T>()` inside members, casts to class template pointers (and `static_cast<T>(x)->f()` precedence), aggregates of classes from braced lists, by-value class arguments from calls, `return nullptr` for class results, leading `::ns::Type`, `static inline` class members, `steady_clock::time_point`.
+
+Not done: member-function pointers, COMDAT dedup, `.CRT$XCU` table, range-for iterator destruction, `test_objcheck` over all engine files.

@@ -9,6 +9,9 @@
 // This header is included from inside VisualScriptEditor.hpp, after the graph model (VsEditGraph, FindDef,
 // VsWireOk, VsPasteText), because it uses them. Written for this project from its own graph rules.
 // Layout numbers are in the same stored units as VsEditNode::x / y (the canvas multiplies them by 1.4).
+#include "VisualScriptAutoConnect.hpp"
+#include "VisualScriptChoices.hpp"
+#include "VisualScriptPlainWords.hpp"
 #include <algorithm>
 #include <cmath>
 #include <set>
@@ -277,6 +280,96 @@ inline float VsCurveDistance(float px, float py, float ax, float ay, float bx, f
         best = std::min(best, (x - px) * (x - px) + (y - py) * (y - py));
     }
     return std::sqrt(best);
+}
+
+/// Blocks a flow wire can reach from `id` (so a fix never wires a block back into its own chain).
+inline std::set<int> VsDownstream(const VsEditGraph& g, int id) {
+    std::set<int> seen;
+    std::vector<int> stack{id};
+    while (!stack.empty()) {
+        const int n = stack.back(); stack.pop_back();
+        for (const VsExecLink& l : g.execLinks)
+            if (l.from == n && seen.insert(l.to).second) stack.push_back(l.to);
+    }
+    return seen;
+}
+
+/// "This block is not connected to anything yet": plug it after the nearest block that has a free "then" plug
+/// (using the same rule as a new block, VsAutoConnectFrom), else after the first starting block with a free plug.
+inline bool VsFixNotConnected(VsEditGraph& g, int id) {
+    const VsEditNode* n = g.find(id);
+    const VsDef* d = n ? FindDef(n->type) : nullptr;
+    if (!d || !d->execIn) return false;
+    for (const VsExecLink& l : g.execLinks) if (l.to == id) return false;   // already has something before it
+    const std::set<int> below = VsDownstream(g, id);
+    std::vector<VsLayoutNode> lay;
+    for (const VsEditNode& o : g.nodes) {
+        if (o.id == id || below.count(o.id)) continue;
+        const VsDef* od = FindDef(o.type);
+        if (!od || od->execOut.empty()) continue;
+        bool used = false;
+        for (const VsExecLink& l : g.execLinks) if (l.from == o.id && l.pin == 0) used = true;
+        const VsBoxF b = VsEstBox(g, o);
+        lay.push_back({o.id, b.x, b.y, b.w, b.h, true, used});
+    }
+    int from = VsAutoConnectFrom(lay, n->x, n->y, true, 100000.0f, 100000.0f);
+    if (from < 0)
+        for (const VsLayoutNode& c : lay)
+            if (!c.flowOutUsed) { const VsEditNode* o = g.find(c.id); const VsDef* od = o ? FindDef(o->type) : nullptr; if (od && !od->execIn) { from = c.id; break; } }
+    if (from < 0) return false;
+    g.linkExec(from, 0, id);
+    return true;
+}
+
+/// A wire whose plugs do not fit (consumer's input `inPin`): put the one block between them that turns one into
+/// the other (the same offer the wire-refusal button makes). False when there is no single obvious block.
+inline bool VsFixMismatch(VsEditGraph& g, int consumer, int inPin) {
+    int idx = -1;
+    for (int i = 0; i < (int)g.dataLinks.size(); ++i)
+        if (g.dataLinks[(std::size_t)i].consumer == consumer && g.dataLinks[(std::size_t)i].inPin == inPin) idx = i;
+    if (idx < 0) return false;
+    const VsDataLink w = g.dataLinks[(std::size_t)idx];
+    const VsConvertOffer offer = VsOfferConvert((char)VsOutPinType(g, w.producer, w.outPin), (char)VsInPinType(g, consumer, inPin));
+    if (offer.type.empty()) return false;
+    const VsEditNode* p = g.find(w.producer);
+    const VsEditNode* c = g.find(consumer);
+    if (!p || !c) return false;
+    const int id = g.add(offer.type, (p->x + c->x) * 0.5f, (p->y + c->y) * 0.5f + 40.0f);
+    if (VsInsertOnDataWire(g, idx, id)) return true;
+    g.removeNode(id);
+    return false;
+}
+
+/// The one-click fix for a finding of the graph checker, when there is an obvious one: a plug that gets the wrong
+/// kind of value (a block that turns one into the other goes between), or a block nothing reaches (it is plugged
+/// in after the nearest free block). False, graph unchanged, otherwise.
+inline bool VsFixIssue(VsEditGraph& g, const std::string& message, int node, int pin, int pinDir) {
+    if (node < 0) return false;
+    if (pin >= 0 && pinDir == 0 && VsPlainIssue(message).rfind("This plug needs", 0) == 0) return VsFixMismatch(g, node, pin);
+    if (VsPlainIssue(message) == VsPlainNotConnected()) return VsFixNotConnected(g, node);
+    return false;
+}
+/// Would VsFixIssue do something? (Tried on a copy, so the button only shows when it will work.)
+inline bool VsFixAvailable(const VsEditGraph& g, const std::string& message, int node, int pin, int pinDir) {
+    VsEditGraph copy = g;
+    return VsFixIssue(copy, message, node, pin, pinDir);
+}
+
+/// While a wire is dragged from one plug: would the plug `node`/`idx` (on the opposite side, same kind) take it?
+/// Flow goes into a block that has a "then" input; a value must be the right kind and must not make a circle.
+inline bool VsPlugAccepts(const VsEditGraph& g, bool exec, bool dragFromOutput, int dragNode, int dragPin, int node, int idx) {
+    if (node == dragNode) return false;
+    if (exec) {
+        if (!dragFromOutput) return true;                       // dragging from an input: any "then" output will do
+        const VsEditNode* dn = VsFind(g, node);
+        const VsDef* dd = dn ? FindDef(dn->type) : nullptr;
+        return dd && dd->execIn;
+    }
+    const int cons = dragFromOutput ? node : dragNode, inP = dragFromOutput ? idx : dragPin;
+    const int prod = dragFromOutput ? dragNode : node, outP = dragFromOutput ? dragPin : idx;
+    std::vector<std::pair<int, int>> edges;
+    for (const VsDataLink& l : g.dataLinks) edges.push_back({l.producer, l.consumer});
+    return VsWireOk(g, cons, inP, prod, outP) && !VsDataWouldCycle(edges, prod, cons);
 }
 
 /// One wire as the canvas draws it: which kind, its place in the graph's list, and where its two plugs are on screen.

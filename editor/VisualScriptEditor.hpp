@@ -2607,6 +2607,7 @@ struct VsEditState {
     bool   spaceDown = false; float spaceT = 0.0f, spaceMoved = 0.0f; bool spaceOpen = false;   // Space tap vs Space pan
     float  rightT = 0.0f;        // how long the right button has been down (click vs pan)
     bool   startedEmpty = false; // "Start empty" on the start card: no cards for this graph
+    std::size_t valueSig = 0; int sigNodes = 0;   // a fingerprint of the typed values: a change means a number was edited
     int    lastUsed = -1;        // the block added last: the next added block joins it when nothing is selected
     // A wire that was double-clicked: the block picked in the popup is put on it. (exec: from, pin, to; value: consumer, inPin)
     bool   wireInsOn = false, wireInsExec = true; int wireInsA = 0, wireInsB = 0, wireInsC = 0;
@@ -3553,6 +3554,7 @@ inline bool VsDrawChoice(EditorState& ed, const VsEditGraph& g, std::string& val
 #include "VisualScriptPan.hpp"
 #include "VisualScriptPalette.hpp"
 #include "VisualScriptEasyOps.hpp"   // graph-in, graph-out rules for the canvas (needs the graph model above)
+#include "VisualScriptHints.hpp"      // the one-line next-step bar
 #include "VisualScriptStartDraw.hpp"  // the big recipe cards shown for an empty graph
 namespace okay::editor::vsed {
 
@@ -5266,6 +5268,7 @@ inline void Draw(EditorState& ed, bool* open) {
 
     // Live drag wire + release handling.
     bool openPaletteNow = false;
+    const std::size_t wiresBeforeDrag = g.execLinks.size() + g.dataLinks.size();
     if (st.dragging) {
         auto from = pinPos.find(pk(st.dragNode, st.dragExec ? 0 : 1, st.dragFromOutput ? 1 : 0, st.dragPin));
         if (from != pinPos.end()) {
@@ -5356,6 +5359,7 @@ inline void Draw(EditorState& ed, bool* open) {
         }
     }
 
+    const bool userWiredNow = g.execLinks.size() + g.dataLinks.size() > wiresBeforeDrag;   // a wire dropped on a plug
     // ---- Box selection --------------------------------------------------------------
     if (bgClicked && !st.dragging && !io.KeyAlt && VsLeftDragMode(ImGui::IsKeyDown(ImGuiKey_Space), st.panTool) == VsLeftDrag::Box) {
         st.boxing = true; st.boxStart = mouse;
@@ -5511,6 +5515,25 @@ inline void Draw(EditorState& ed, bool* open) {
         st.linkPending = false; st.wireInsOn = false;   // palette dismissed without a pick
     }
 
+    // Guided first steps: which one-line hint to show (VisualScriptHints.hpp), and what is already done.
+    VsHintResult guide;
+    {
+        VsHintFacts hf;
+        hf.nodeCount = (int)g.nodes.size();
+        hf.wireCount = (int)(g.execLinks.size() + g.dataLinks.size());
+        hf.playing = ed.isPlaying();
+        hf.userWired = userWiredNow;
+        std::size_t sig = 0;
+        for (const auto& n : g.nodes) {
+            sig = sig * 131u + std::hash<std::string>()(n.arg);
+            for (const auto& pd : n.pinDefault) sig = sig * 131u + std::hash<std::string>()(pd.second) + (std::size_t)pd.first;
+        }
+        hf.editedNumber = st.sigNodes > 0 && st.sigNodes == hf.nodeCount && sig != st.valueSig;
+        st.valueSig = sig; st.sigNodes = hf.nodeCount;
+        guide = VsHintStep(VsPrefs().hintsDone, hf, st.showHint && !st.missing);
+        if (guide.done != VsPrefs().hintsDone) { VsPrefs().hintsDone = guide.done; VsPrefsSave(); }
+        if (VsStartVisible(hf.nodeCount, VsPrefs().hideStart, st.startedEmpty, st.missing)) guide.hint = VsHint::None;   // the cards already say it
+    }
     if (st.missing) {
         const char* msg = "This graph file could not be opened.";
         const std::string path = g.path.empty() ? std::string("(no path)") : g.path;
@@ -5554,9 +5577,23 @@ inline void Draw(EditorState& ed, bool* open) {
         const ImVec2 bp(canvasMin.x + 18.0f, canvasMin.y + 16.0f);
         dl->AddRectFilled(bp, ImVec2(bp.x + ts.x + 24.0f, bp.y + ts.y + 16.0f), IM_COL32(64, 48, 24, 230), 8.0f);
         dl->AddText(ImVec2(bp.x + 12.0f, bp.y + 8.0f), IM_COL32(245, 214, 150, 255), msg);
-    } else if (st.showHint) {
+    } else if (st.showHint && guide.hint == VsHint::None) {
         const char* msg = "Right-click or tap Space to add a node    ·    Move the view: middle-drag, right-drag, or hold Space and drag    ·    Scroll to zoom    ·    Drag empty space to select";
         dl->AddText(ImVec2(canvasMin.x + 16.0f, canvasMax.y - 28.0f), IM_COL32(168, 178, 194, 180), msg);
+    }
+    // The next-step bar: one thin line at the bottom, gone once each step has been done.
+    if (guide.hint != VsHint::None) {
+        const char* msg = VsHintText(guide.hint);
+        const ImVec2 ts = ImGui::CalcTextSize(msg);
+        const float maxW = std::max(120.0f, canvasMax.x - canvasMin.x - 260.0f);
+        const ImVec2 b0(canvasMin.x + 12.0f, canvasMax.y - ts.y - 24.0f);
+        const ImVec2 b1(b0.x + std::min(maxW, ts.x + 44.0f), canvasMax.y - 10.0f);
+        dl->AddRectFilled(b0, b1, IM_COL32(28, 58, 96, 238), 12.0f);
+        dl->AddRect(b0, b1, IM_COL32(110, 160, 235, 200), 12.0f);
+        dl->AddCircleFilled(ImVec2(b0.x + 16.0f, (b0.y + b1.y) * 0.5f), 4.5f, IM_COL32(120, 190, 255, 255));
+        dl->PushClipRect(b0, b1, true);
+        dl->AddText(ImVec2(b0.x + 30.0f, b0.y + 7.0f), IM_COL32(232, 240, 252, 255), msg);
+        dl->PopClipRect();
     }
     // Why the last wire was refused. Wrapped, so the suggestion is not cut off.
     if (st.refuseTime > 0.0f && !st.refuseMsg.empty()) {

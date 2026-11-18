@@ -5,7 +5,7 @@
 // CoreApplication / IFrameworkView life cycle (suspend and resume), a CoreWindow, a Direct3D 11 flip-model swap chain, one triangle,
 // Windows.Gaming.Input gamepad reading (left stick moves the triangle, A makes it jump to the centre, B exits cleanly) and a clean exit.
 // By default it does NOT load or run an OkaySpace game. Built with -DOKAY_XBOX_APP_ENGINE=ON (okay_engine_uwp linked) it runs the exported game
-// in package\Data through engine_app.hpp when that folder is there, and falls back to the triangle when it is not.
+// in package\Data through engine_shell.hpp when that folder is there, and falls back to the triangle when it is not.
 //
 // Written from Microsoft's public documentation: the C++/WinRT "Core app" pattern (IFrameworkViewSource, IFrameworkView), the DXGI
 // "CreateSwapChainForCoreWindow" page, "Windows.Gaming.Input.Gamepad", and the UWP rule that an app must call IDXGIDevice3::Trim on suspend.
@@ -43,7 +43,7 @@
 #include <vector>
 
 #include "package_dir.hpp"
-#include "engine_app.hpp"   // empty unless OKAY_XBOX_APP_ENGINE; its own includes come first, and it has no global using-directive either
+#include "engine_shell.hpp"   // empty unless OKAY_XBOX_APP_ENGINE; plain-C++ boundary to the engine (engine_bridge.hpp), no global using-directive
 
 namespace wf = winrt::Windows::Foundation;
 namespace wam = winrt::Windows::ApplicationModel;

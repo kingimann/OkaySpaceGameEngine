@@ -11,16 +11,12 @@ if(NOT CMAKE_SYSTEM_NAME STREQUAL "WindowsStore")
                         "(scripts/build-xbox-uwp.ps1 does). It cannot be built on Linux or as a desktop program.")
 endif()
 
-# Language standard. C++/WinRT uses coroutines: in C++17 mode it falls back to <experimental/coroutine>, which newer MSVC STLs reject with
-# error STL1011 (the owner's first build, MSVC 14.52). The triangle shell therefore builds as C++20 (real <coroutine>). Engine mode keeps C++17
-# (the engine's headers were written for it: u8string() / u8path changed in C++20) and silences the experimental-coroutine error instead.
-# /await must never be on: it is removed from the flags below, and scripts/build-xbox-uwp.ps1 logs what the generated vcxproj really contains.
+# Language standards (the shell and the engine are DIFFERENT targets, so each has the standard it needs; only plain C++ crosses, engine_bridge.hpp).
+# The shell is C++/WinRT and builds as C++20: in C++17 mode C++/WinRT falls back to <experimental/coroutine>, which newer MSVC STLs reject with
+# error STL1011 (the owner's first build, MSVC 14.52). The engine (okay_engine_uwp + engine_bridge.cpp) stays C++17: its headers use u8string() /
+# u8path, which changed in C++20. /await and /ZW must never be on: removed from the flags below; scripts/build-xbox-uwp.ps1 logs the vcxproj.
 option(OKAY_XBOX_APP_ENGINE "Link okay_engine_uwp and run the exported game (EXPERIMENTAL, UNVERIFIED)" OFF)
-if(OKAY_XBOX_APP_ENGINE)
-    set(CMAKE_CXX_STANDARD 17)
-else()
-    set(CMAKE_CXX_STANDARD 20)
-endif()
+set(CMAKE_CXX_STANDARD 20)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 string(REPLACE "/await" "" CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS}")
 string(REPLACE "/ZW" "" CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS}")   # C++/WinRT is plain C++, not C++/CX
@@ -58,8 +54,17 @@ if(OKAY_XBOX_APP_ENGINE)
         message(FATAL_ERROR "OKAY_XBOX_APP_ENGINE=ON needs -DOKAY_SOURCE_ROOT=<the OkaySpace source folder>")
     endif()
     add_subdirectory(${OKAY_SOURCE_ROOT}/platform/xbox_uwp/engine ${CMAKE_BINARY_DIR}/engine_uwp)
-    target_include_directories(OkaySpaceXbox PRIVATE ${OKAY_SOURCE_ROOT}/platform/xbox_uwp)
+    # The engine side of the app: its own C++17 static library (the shell is C++20). Links okay_engine_uwp (d3d11, dxgi, ws2_32, bcrypt, WindowsApp)
+    # and mmdevapi (ActivateAudioInterfaceAsync, XboxWasapi.hpp). Nothing else: no d3dcompiler, d3d12, winhttp, dbghelp, user32, gdi32, opengl32, SDL2.
+    add_library(okay_xbox_engine_bridge STATIC engine_bridge.cpp)
+    set_target_properties(okay_xbox_engine_bridge PROPERTIES CXX_STANDARD 17 CXX_STANDARD_REQUIRED ON)
+    target_include_directories(okay_xbox_engine_bridge PRIVATE ${OKAY_SOURCE_ROOT}/platform/xbox_uwp ${CMAKE_CURRENT_SOURCE_DIR})
+    target_link_libraries(okay_xbox_engine_bridge PUBLIC okay_engine_uwp mmdevapi)
+    if(MSVC)
+        target_compile_options(okay_xbox_engine_bridge PRIVATE /EHsc /permissive- /bigobj)
+    endif()
+    target_include_directories(OkaySpaceXbox PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})   # engine_bridge.hpp only
     target_compile_definitions(OkaySpaceXbox PRIVATE OKAY_XBOX_APP_ENGINE=1)
-    target_link_libraries(OkaySpaceXbox PRIVATE okay_engine_uwp mmdevapi)   # mmdevapi.lib: ActivateAudioInterfaceAsync (XboxWasapi.hpp)
+    target_link_libraries(OkaySpaceXbox PRIVATE okay_xbox_engine_bridge)
 endif()
 set_target_properties(OkaySpaceXbox PROPERTIES RUNTIME_OUTPUT_DIRECTORY ${CMAKE_BINARY_DIR}/out)

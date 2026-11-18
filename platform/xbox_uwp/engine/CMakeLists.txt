@@ -47,6 +47,7 @@ set(_incs ${OKAY_SOURCE_ROOT}/engine/include ${OKAY_SOURCE_ROOT}/engine/src ${OK
 add_library(okay_crypto_uwp STATIC ${_crypto})
 target_include_directories(okay_crypto_uwp PUBLIC ${OKAY_SOURCE_ROOT}/engine/include)
 target_compile_definitions(okay_crypto_uwp PUBLIC OKAY_XBOX_UWP=1 WIN32_LEAN_AND_MEAN NOMINMAX)
+set_target_properties(okay_crypto_uwp PROPERTIES CXX_STANDARD 17 CXX_STANDARD_REQUIRED ON)
 target_compile_features(okay_crypto_uwp PUBLIC cxx_std_17)
 target_link_libraries(okay_crypto_uwp PUBLIC bcrypt)
 
@@ -54,6 +55,7 @@ add_library(okay_engine_uwp STATIC ${_kept} ${OKAY_SOURCE_ROOT}/platform/xbox_uw
 target_include_directories(okay_engine_uwp PUBLIC ${_incs} ${OKAY_SOURCE_ROOT}/platform/xbox_uwp)
 target_include_directories(okay_engine_uwp PRIVATE ${OKAY_SOURCE_ROOT}/engine/third_party/stb ${OKAY_SOURCE_ROOT}/engine/third_party/ufbx)
 target_compile_definitions(okay_engine_uwp PUBLIC ${_defs})
+set_target_properties(okay_engine_uwp PROPERTIES CXX_STANDARD 17 CXX_STANDARD_REQUIRED ON)   # the engine is C++17 even when the shell is C++20
 target_compile_features(okay_engine_uwp PUBLIC cxx_std_17)
 # libraries a UWP app may link: the umbrella WindowsApp.lib, Direct3D 11, DXGI, Winsock (internetClient capability), BCrypt. NOT linked:
 # d3dcompiler, d3d12, dxguid, winhttp, dbghelp, opengl32, user32/gdi32, SDL2.

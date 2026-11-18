@@ -1707,7 +1707,7 @@ inline void VoxelSandbox(Scene& scene, int gridX, int gridY, int gridZ,
     vox->DecodeDensity(vox->EncodeDensity());
     vox->Apply();
     auto* dig = ground->AddComponent<VoxelDigger>();
-    dig->radius = 3.0f; dig->strength = 10.0f;   // left = dig, right = add (defaults)
+    dig->radius = 3.0f; dig->strength = 10.0f; dig->reach = 14.0f;   // left = dig, right = add; reach is measured from the player
 
     // A lake in the low ground. 0.32 * SizeY is below every hill this Generate
     // builds (surface = SizeY * 0.55 ± amplitude), so the water used to sit
@@ -1769,7 +1769,15 @@ inline void VoxelSandbox(Scene& scene, int gridX, int gridY, int gridZ,
     }
     // Right mouse fills terrain (VoxelDigger). The controller's aim-down-sights
     // zoom is the same button, and it pulled the view from 60° to 40° while placing.
-    PlayerController::Add(player, PlayerController::ViewMode::First)->first()->zoomWithRightMouse = false;
+    // View = Both: starts in first person, V (or Back on a pad) switches to the third-person orbit. Digging and building
+    // aim through the crosshair in both views (VoxelDigger / VoxelAim.hpp).
+    {
+        auto* pc = PlayerController::Add(player, PlayerController::ViewMode::Both, PlayerView::View::First);
+        if (pc->first()) pc->first()->zoomWithRightMouse = false;
+        if (pc->third()) pc->third()->aimWithRightMouse = false;
+        if (auto* pv = pc->toggle()) pv->defaultView = PlayerView::View::First;
+        player->AddComponent<FirstPersonHands>();
+    }
     player->AddComponent<ProceduralObjectHolding>();   // G / middle mouse / pad X: pick up, hold to throw
 
     // Something to pick up and throw, a step in front of the spawn.
@@ -1792,11 +1800,11 @@ inline void VoxelSandbox(Scene& scene, int gridX, int gridY, int gridZ,
     camObj->transform->SetParent(player->transform, false);
     camObj->transform->localPosition = {0, 1.62f, 0.0f};
     camObj->AddComponent<Flashlight>();   // F to toggle — so you can see inside caves
-    camObj->AddComponent<FirstPersonHand>();   // Minecraft-style arm + punch on LMB
+    camObj->AddComponent<Crosshair>()->dot = true;   // the aim point in both views (third person aims through the screen centre)
 
     GameObject* help = scene.CreateGameObject("Help");
     auto* ht = help->AddComponent<TextRenderer>();
-    ht->text = "WASD + mouse. Dig: LMB. Fill: RMB. Jump / swim up: Space. Swim down: Ctrl. Throw: hold G. Light: F. Pause: Esc.";
+    ht->text = "WASD + mouse. Dig: left mouse / RT. Build: right mouse / LT. Pick material: T. Material: 1-9, wheel or bumpers. View: V. Jump: Space. Throw: hold G. Light: F. Pause: Esc.";
     ht->screenSpace = true;
     ht->anchor = UIAnchor::StretchHorizontal;
     // Top-aligned under the PLAYING badge. Centering a wrapped line in this

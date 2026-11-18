@@ -1200,6 +1200,10 @@ add_executable(test_voxel_materials test_voxel_materials.cpp)
 target_link_libraries(test_voxel_materials PRIVATE okay::engine)
 add_test(NAME voxel_materials COMMAND test_voxel_materials)
 
+add_executable(test_voxel_aim test_voxel_aim.cpp)
+target_link_libraries(test_voxel_aim PRIVATE okay::engine)
+add_test(NAME voxel_aim COMMAND test_voxel_aim)
+
 add_executable(test_voxel_digger_real test_voxel_digger_real.cpp)
 target_link_libraries(test_voxel_digger_real PRIVATE okay::engine)
 add_test(NAME voxel_digger_real COMMAND test_voxel_digger_real)

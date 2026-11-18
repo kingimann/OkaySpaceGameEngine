@@ -479,6 +479,46 @@ nothing changes unless the own backend is chosen:
 6. **Own Dear ImGui platform backend viewports** (the editor's pop-out panels), then delete `Event::native`, `ReportUnmappedEvents`,
    `WrapSdl2Window` and `TranslateSdl2Event` together with SDL2.
 
+## Round 11 (branch `claude/own-platform-5`): the 2D renderer calls, our own Dear ImGui renderer, and the launcher's threads
+
+Written from `imgui.h` (draw lists, the texture request protocol), the Win32 and POSIX thread documentation, and our own interfaces; no
+SDL, imgui_impl_sdlrenderer2 or other project code was read or followed.
+
+* **Painter additions (step 3 of the plan).** `TextureDesc::target` and `SetRenderTarget` / `GetRenderTarget` (render targets; the software
+  painter swaps its frame buffer with the texture's pixels and keeps clip and scale per target), `Flush`, `GetDrawColor`, `DriverName`,
+  `IsAccelerated`, `GeometryRaw` (separate position / colour / uv arrays with strides, 8-, 16- or 32-bit indices; a default builds a vertex array
+  and calls `Geometry`, so every painter has it), `PainterDesc::requireAccelerated`. Tested on both painters in `okayui_painter` (154 checks).
+* **The apps' renderer calls (steps 1, 2, 5).** `shared/PainterBridge.hpp` keeps one painter per `SDL_Renderer*` and has one function per thing
+  the apps did (`CreateTexture`, `UpdateTexture`, `DestroyTexture`, `QueryTexture`, texture blend / filter, `Clear`, `Present`, `OutputSize`,
+  `SetVSync`, `SetScale`, `SetDrawColor`, `Flush`, `ReadPixels`, `DriverName`, `IsAccelerated`, render target, `CreateRenderer`, `DestroyRenderer`).
+  Editor and launcher no longer call `SDL_CreateTexture`, `SDL_UpdateTexture`, `SDL_RenderClear`, `SDL_RenderPresent`, `SDL_GetRendererOutputSize`,
+  `SDL_CreateRenderer` / `SDL_DestroyRenderer`, `SDL_RenderReadPixels` and friends; the renderer is made by `CreateSdl2Painter` (accelerated, else any,
+  as before; the editor keeps its three-step fallback with the driver hint). The table is never destroyed on purpose (a renderer still open at exit
+  must not be freed by a static destructor after SDL is gone). The Windows-only Direct3D 11 interop in `editor/main.cpp` was converted the same way
+  and **could not be compiled here** (no Windows or MinGW SDL headers).
+* **Our own Dear ImGui renderer (step 4), OFF by default.** `shared/ImGuiPainterRenderer.hpp`: honours the `ImTextureData` requests (create,
+  update rectangles, destroy; RGBA32 and Alpha8), draws every command with its clip rectangle and texture through `Painter::GeometryRaw`, uses
+  `VtxOffset`, restores scale and clip. Switch: environment variable `OKAY_IMGUI_RENDER=own` (editor, launcher main window and chat window);
+  without it `imgui_impl_sdlrenderer2` runs as before. Both apps print which one runs at start-up. In multi-window mode the editor's secondary
+  windows keep their existing renderer. `ctest -R imgui_painter_render` draws a real Dear ImGui frame on the software painter and on SDL's
+  software renderer: flat shapes and clip edges exact at framebuffer scale 1 and 2, whole frame (text, window, button) 0.85 levels mean difference
+  between the two painters, texture protocol checked. It has **not** been run in a real editor or launcher window, nor compared with
+  `imgui_impl_sdlrenderer2` on the same frame.
+* **Not done from the plan:** step 5's own window surface for the own backend in the editor and launcher (they still make SDL windows, and
+  `OKAY_PLATFORM_BACKEND=own` still cannot run them), and step 6 (deleting `Event::native`, `WrapSdl2Window`, `TranslateSdl2Event`). Remaining
+  `SDL_*` in the apps: `SDL_Renderer` objects in function signatures and `SDL_Texture*` handle types, `SDL_RenderCopy*` / `SDL_RenderGeometry`
+  drawing and `SDL_SetTextureColorMod` / alpha mod in `UIPainterSDL.hpp`, `okay::DrawSplashStyled`, `OkayUI::EndFrame(SDL_Renderer*)`, the SDL
+  surfaces in `AppIcon.hpp`, and Dear ImGui's two SDL backends.
+* **Threads (`docs/sdl_removal_plan.md` step 2).** `shared/OkayThreads.hpp`: `okay::thr::CreateThread` / `DetachThread` / `WaitThread`, recursive
+  `Mutex` (`CreateMutex` / `LockMutex` / `UnlockMutex` / `DestroyMutex`), `AtomicInt` (`AtomicSet` / `Get` / `Add` / `CAS`), with SDL's conventions
+  (recursive locks, thread functions return an int, `Add` returns the old value). Win32 `CreateThread` + `CRITICAL_SECTION` on Windows, pthreads
+  elsewhere, `<atomic>` only: no `<mutex>`, `<thread>`, `<condition_variable>` or `std::call_once` (rule 21a). The launcher (`main.cpp`,
+  `VoiceChat.hpp`, `VersionsUI.cpp`) moved by name: 718 uses. `ctest -R okay_threads` (contention with 6 threads, exact counter, recursive locks,
+  600 detached threads, return values) passes normally and under AddressSanitizer + UBSan and under ThreadSanitizer; `ctest -R voice_races` passes.
+  It did not need `okay::corethreads`: that shim has a non-recursive POSIX mutex and no detach, which the launcher's 170 lock sites rely on.
+  **Not run:** the launcher itself (downloads, chat, voice, update), anything on Windows (the Win32 half compiles only under MinGW `-fsyntax-only` for
+  the test, the launcher was only checked on Linux), so a hang from a changed lock would show only in a real session.
+
 ## Not behind the seam yet (stage 1 list; see stage 2 above for what changed)
 
 The window, event loop and GL context of the editor, launcher and player still call SDL directly. Moving them needs more than

@@ -2372,3 +2372,15 @@ The checks that need no file manager: `ctest -R "platform_xdnd|platform_events"`
 the event queue stress test). On Windows the same drop uses `WM_DROPFILES`; the cursor shapes and the tray icon hook are reached the same
 way as before (launcher: minimise to the tray and click the icon). Not run on Windows.
 
+## Our own Dear ImGui renderer (OKAY_IMGUI_RENDER=own, off by default) and the launcher's own threads
+
+1. **Own ImGui renderer.** Windows: open a Command Prompt where `OkayEngine.exe` / `OkaySpace.exe` are, run `set OKAY_IMGUI_RENDER=own`, then start
+   the program (Linux: `OKAY_IMGUI_RENDER=own ./okay-editor`). The start-up line says `ImGui drawing: own okay::platform::Painter renderer
+   (OKAY_IMGUI_RENDER=own)`; without the variable it says `imgui_impl_sdlrenderer2 (default ...)`. Use the program as usual: text, buttons, panels,
+   scrolling lists, the 3D view, thumbnails, the launcher's chat window. Anything drawn wrong (missing text, wrong clipping, wrong colours) is a bug
+   to report with a screenshot. It has not been run in a real window yet. The checks that run without a window: `ctest -R imgui_painter_render`
+   and `ctest -R okayui_painter`.
+2. **Threads.** Nothing to switch: the launcher now uses `shared/OkayThreads.hpp` instead of SDL's thread calls. Try: sign in, chat both ways
+   (also in the pop-out window), send a file, download an editor version with progress and cancel, start a voice call and the mic test, quit while a
+   download runs. A freeze or a crash there is what a wrong lock would look like. Not run on Windows. `ctest -R "okay_threads|voice_races"`.
+

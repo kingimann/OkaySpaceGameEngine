@@ -62,6 +62,11 @@
 #include "okay/Modeling/MeshAsset.hpp"       // .okaymesh / .obj mesh files
 #include "okay/Modeling/PolyMesh.hpp"        // polygon mesh (quads, n-gons)
 #include "GuidedPanel.hpp"                    // Guided page of the Modeling window
+#include "ModelingEasyUi.hpp"                // the simple (beginner) view of the Modeling window
+#include "ModelingHighlight.hpp"            // button wrappers: outline matches of the tool search
+#include "ModelingSidebar.hpp"              // fold state and widths of the advanced Modeling window's page list
+#include "ModelingToolIndex.hpp"            // the advanced Modeling window as data: pages by job, search, hints
+#include "ModelingStarters.hpp"               // one-click ready-made models
 #include "okay/Modeling/PolyOps.hpp"         // edge-loop tools: loop cut, slide, bevel, knife...
 #include "okay/Modeling/UVUnwrap.hpp"        // seams, LSCM unwrap, island packing
 #include "okay/Render/SkyStars.hpp"    // deterministic skybox star field
@@ -3346,10 +3351,24 @@ static void NoteRecentTool(const char* label) {
     g_recentTools.insert(g_recentTools.begin(), n);
     if (g_recentTools.size() > 6) g_recentTools.resize(6);
 }
+// Modeling window tool search (ModelingToolIndex.hpp): the words typed, the page on screen, and the hint of the button under the mouse.
+static std::string g_mdlFind, g_mdlHint;
+static int g_mdlCurPage = 0;
+static const ImGuiWindow* g_mdlRoot = nullptr;   // the Modeling window itself: ShapeOpButton / ToolButton also draw in the Inspector
+static void MdlMark(const char* label) {   // call right after a button: outline it when it matches the search, remember its hint
+    if (!g_mdlRoot || ImGui::GetCurrentWindowRead()->RootWindow != g_mdlRoot) return;
+    const std::string l = label;
+    if (!g_mdlFind.empty() && oked::modeltools::HighlightLabel(g_mdlCurPage, l, g_mdlFind)) {
+        const ImVec2 a = ImGui::GetItemRectMin(), b = ImGui::GetItemRectMax();
+        ImGui::GetWindowDrawList()->AddRect(ImVec2(a.x - 2, a.y - 2), ImVec2(b.x + 2, b.y + 2), IM_COL32(255, 205, 60, 255), 4.0f, 0, 2.5f);
+    }
+    if (ImGui::IsItemHovered()) if (const auto* t = oked::modeltools::FindByLabel(g_mdlCurPage, l)) g_mdlHint = std::string(t->name) + ": " + t->hint;
+}
 static bool ToolButton(const char* label, bool ok, const char* why, bool small = false) {
     ImGui::BeginDisabled(!ok);
     const bool hit = small ? ImGui::SmallButton(label) : ImGui::Button(label);
     ImGui::EndDisabled();
+    MdlMark(label);
     if (!ok && ImGui::IsItemHovered(ImGuiHoveredFlags_AllowWhenDisabled)) ImGui::SetTooltip("%s", why);
     if (hit && ok) NoteRecentTool(label);
     return hit && ok;
@@ -3376,9 +3395,9 @@ static void LoadMeshFileInto(EditorState& ed, MeshRenderer* mr) {
 // "Save as Mesh Asset": write the object's mesh to <project>/Assets/<name>.okaymesh
 // (quads kept as quads) and point the object at it, so other objects and scenes
 // can use the same model. Saving the scene later writes edits back to the file.
-static void SaveMeshAssetButton(EditorState& ed, GameObject* go, MeshRenderer* mr) {
+static void SaveMeshAssetNow(EditorState& ed, GameObject* go, MeshRenderer* mr) {
     const bool isAsset = okay::modeling::IsOkayMeshPath(mr->meshPath);
-    if (ImGui::Button(isAsset ? "Save Mesh Asset##meshasset" : "Save as Mesh Asset##meshasset")) {
+    {
         std::filesystem::path path;
         if (isAsset) path = mr->meshPath;
         else {
@@ -3409,6 +3428,10 @@ static void SaveMeshAssetButton(EditorState& ed, GameObject* go, MeshRenderer* m
             ConsoleLog("Couldn't save the mesh asset: " + err, 2);
         }
     }
+}
+static void SaveMeshAssetButton(EditorState& ed, GameObject* go, MeshRenderer* mr) {
+    const bool isAsset = okay::modeling::IsOkayMeshPath(mr->meshPath);
+    if (ImGui::Button(isAsset ? "Save Mesh Asset##meshasset" : "Save as Mesh Asset##meshasset")) SaveMeshAssetNow(ed, go, mr);
     if (ImGui::IsItemHovered())
         ImGui::SetTooltip(isAsset ? "Write this mesh back to %s now (saving the scene does it too)."
                                   : "Save this mesh as a .okaymesh file in the project's Assets folder and use it from there,\nso other objects and scenes can share the model. Quads are kept as quads.",
@@ -28309,12 +28332,89 @@ static void DrawUVEditor(EditorState& ed) {
     ImGui::End();
 }
 
+// The simple (beginner) view of the Modeling window: logic in ModelingEasy*.hpp, drawing in ModelingEasyUi.cpp; this only lends it
+// the selection, undo and the editor's own operations. Pick-mode numbers differ: ours are 0 corners, 1 edges, 2 faces.
+static void DrawModelingSimple(EditorState& ed) {
+    namespace em = oked::easymodel;
+    GameObject* go = ed.selected();
+    MeshRenderer* mr = go ? go->GetComponent<MeshRenderer>() : nullptr;
+    const bool editing = mr && g_meshEdit && g_meshEditObj == go;
+    oked::easymodel_ui::Host h;
+    h.mesh = mr ? &mr->mesh : nullptr;
+    h.state.haveObject = mr != nullptr;
+    h.state.editMode = editing;
+    h.state.selMode = g_meshSelMode == 1 ? 2 : g_meshSelMode == 2 ? 1 : 0;
+    h.state.selCount = !editing ? 0 : (int)(g_meshSelMode == 1 ? g_meshSelFaces.size() : g_meshSelMode == 2 ? g_meshSelEdges.size() : g_meshSelVerts.size());
+    h.state.modalActive = editing && g_meModal.Active();
+    h.addShape = [&](const std::string& n) { ed.CreateMesh(n); ed.view3D = true; ed.dirty = true; ConsoleLog("Created " + n); };
+    h.addModel = [&](const Mesh& m, const std::string& n) {
+        GameObject* g = ed.CreateMesh("Cube");
+        if (MeshRenderer* r = g ? g->GetComponent<MeshRenderer>() : nullptr) { r->mesh = m; r->meshPath.clear(); r->color = okay::Color{1, 1, 1, 1}; g->name = n; FitColliders(g); }
+        ed.view3D = true; ed.dirty = true;
+    };
+    h.meshOp = [&](const std::string& label, const std::function<void(Mesh&)>& fn) { if (mr) ModelOp(ed, mr, label.c_str(), fn); };
+    h.args = [&] {
+        em::ToolArgs a;
+        if (editing && g_meshSelMode == 1) a.faces = g_meshSelFaces;
+        if (editing && g_meshSelMode == 0) a.corners = g_meshSelVerts;
+        return a;
+    };
+    h.setGizmo = [](int t) { g_tool = t == 0 ? Tool::Move : t == 1 ? Tool::Rotate : Tool::Scale; };
+    h.pickMode = [&](bool on, int mode) {
+        if (!go || !mr) return;
+        if (on) { if (!editing) SetMeshEditMode(ed, go, true); g_meshSelMode = mode == 2 ? 1 : mode == 1 ? 2 : 0; }
+        else if (editing) SetMeshEditMode(ed, go, false);
+    };
+    h.canUndo = [&] { return editing ? (!g_meshUndo.empty() || ed.CanUndo()) : ed.CanUndo(); };
+    h.canRedo = [&] { return editing ? (!g_meshRedo.empty() || ed.CanRedo()) : ed.CanRedo(); };
+    h.undo = [&] { if (!(editing && MeshUndo(false))) ed.Undo(); };
+    h.redo = [&] { if (!(editing && MeshUndo(true))) ed.Redo(); };
+    h.addSolid = [&] {
+        if (!go) return;
+        for (auto* c : go->GetComponents<Collider3D>()) go->RemoveComponent(c);
+        go->AddComponent<MeshCollider3D>(); ed.dirty = true;
+    };
+    h.saveAsset = [&] { if (go && mr) SaveMeshAssetNow(ed, go, mr); };
+    h.thumb = [](const std::string& key, const std::function<Mesh()>& build) -> void* {
+        static std::unordered_map<std::string, SDL_Texture*> cache;
+        auto it = cache.find(key);
+        if (it != cache.end()) return it->second;
+        static int s_frame = -1, s_made = 0;
+        if (s_frame != ImGui::GetFrameCount()) { s_frame = ImGui::GetFrameCount(); s_made = 0; }
+        if (s_made >= 2 || !g_sdlRenderer) return nullptr;
+        ++s_made;
+        okay::Scene sc;
+        GameObject* g = sc.CreateGameObject("easy thumb");
+        MeshRenderer* m = g->AddComponent<MeshRenderer>();
+        m->mesh = build(); m->color = okay::Color{1, 1, 1, 1};
+        sc.Update(0.0f);
+        SDL_Texture* tex = RenderObjectThumb(sc, g);
+        cache[key] = tex;
+        return tex;
+    };
+    h.log = [](const std::string& m, int lv) { ConsoleLog(m, lv); };
+    g_meshSymX = g_view.modelingMirror;   // the simple view's one mirror switch (on by default) drives X symmetry in edit mode
+    h.mirror = g_view.modelingMirror;
+    h.setMirror = [](bool on) { g_view.modelingMirror = on; g_meshSymX = on; };
+    h.loadRecent = [] { return em::RecentFromCodes(g_view.modelingRecent, 4); };
+    h.saveRecent = [](const std::vector<std::string>& r) { const auto c = em::RecentToCodes(r); for (int i = 0; i < 4; ++i) g_view.modelingRecent[i] = c[(std::size_t)i]; };
+    h.setPicks = [&](const std::vector<int>& faces, const std::vector<int>& corners) { if (!faces.empty()) g_meshSelFaces = faces; if (!corners.empty()) g_meshSelVerts = corners; };
+    oked::easymodel_ui::DrawEasyModeling(h, g_view.modelingAdvanced);
+}
+
+#define Button(...) MdlHlButton(__VA_ARGS__)          // inside DrawModeling every button is outlined when it matches the tool search
+#define SmallButton(...) MdlHlSmallButton(__VA_ARGS__)
+#define Checkbox(...) MdlHlCheckbox(__VA_ARGS__)
 void DrawModeling(EditorState& ed) {
     ImGui::SetNextWindowSize(ImVec2(900, 640), ImGuiCond_FirstUseEver);
     if (!ImGui::Begin("Modeling", &g_showModeling)) { ImGui::End(); return; }
+    g_mdlRoot = ImGui::GetCurrentWindowRead();
+    g_mdlMarkHook = MdlMark;
     // A floating window remembered tiny has no room for the sidebar + page.
     if (!ImGui::IsWindowDocked() && (ImGui::GetWindowSize().x < 640.0f || ImGui::GetWindowSize().y < 420.0f))
         ImGui::SetWindowSize(ImVec2(std::max(ImGui::GetWindowSize().x, 900.0f), std::max(ImGui::GetWindowSize().y, 640.0f)));
+    if (!g_view.modelingAdvanced) { DrawModelingSimple(ed); ImGui::End(); return; }   // the simple view is the default
+    if (ImGui::SmallButton("Back to the simple view##mdl")) g_view.modelingAdvanced = false;
 
     // One page at a time, picked from a sidebar (instead of a tab strip under an
     // always-open Add library): Add, then the mesh tools in the order you use them.
@@ -28334,12 +28434,28 @@ void DrawModeling(EditorState& ed) {
     if (const char* mp = std::getenv("OKAY_UI_MODELPAGE")) { static bool once = false; if (!once) { once = true; s_mdlPage = std::atoi(mp); } }
     GameObject* selGo = ed.selected();
     const bool haveMesh = selGo && (selGo->GetComponent<MeshRenderer>() || selGo->GetComponent<Terrain>());   // terrain: its sculpt tools
-    ImGui::BeginChild("##mdlnav", ImVec2(196, 0), ImGuiChildFlags_Borders);
-    ImGui::Dummy(ImVec2(0, 4));
-    for (int oi = 0; oi < (int)(sizeof(kPageOrder) / sizeof(kPageOrder[0])); ++oi) {
-        const int i = kPageOrder[oi];
+    static oked::modeltools::SidebarState s_sb = oked::modeltools::SidebarFromPref(g_view.modelingSidebar);
+    const auto sbToggle = [&] { oked::modeltools::SidebarToggle(s_sb); g_view.modelingSidebar = oked::modeltools::SidebarToPref(s_sb); SaveSettings(); };
+    // Ctrl+\ folds / opens the page list while this window is focused (Ctrl+B is taken: Build Game, and Bevel in edit mode).
+    if (ImGui::IsWindowFocused(ImGuiFocusedFlags_RootAndChildWindows) && ImGui::GetIO().KeyCtrl && ImGui::IsKeyPressed(ImGuiKey_Backslash, false)) sbToggle();
+    oked::modeltools::SidebarAuto(s_sb, ImGui::GetWindowSize().x);
+    ImGui::BeginChild("##mdlnav", ImVec2(oked::modeltools::SidebarWidth(s_sb, ImGui::GetWindowSize().x), 0), ImGuiChildFlags_Borders);
+    if (ImGui::Button(s_sb.folded ? ">##mdlfold" : "<##mdlfold", ImVec2(32, 32))) sbToggle();
+    if (ImGui::IsItemHovered()) ImGui::SetTooltip("%s  (Ctrl+\\)", s_sb.folded ? "Show the page list" : "Hide the page list");
+    const char* lastJob = "";
+    for (const oked::modeltools::Page& pi : oked::modeltools::Pages()) {   // pages grouped by job (ModelingToolIndex.hpp)
+        const int i = pi.legacy;
         const MdlPage& pg = kPages[i];
         const bool usable = !pg.needsMesh || haveMesh;
+        if (s_sb.folded) {   // the thin strip: two letters per page, the name in the tooltip
+            ImGui::PushID(i); ImGui::BeginDisabled(!usable);
+            if (ImGui::Selectable(pi.abbr, s_mdlPage == i, 0, ImVec2(0, 34))) s_mdlPage = i;
+            ImGui::EndDisabled();
+            if (ImGui::IsItemHovered(ImGuiHoveredFlags_AllowWhenDisabled)) ImGui::SetTooltip("%s\n%s", pi.name, usable ? pi.desc : "Select a mesh object first.");
+            ImGui::PopID();
+            continue;
+        }
+        if (std::string(pi.job) != lastJob) { lastJob = pi.job; ImGui::Dummy(ImVec2(0, 2)); ImGui::TextDisabled("%s", pi.job); }
         ImGui::PushID(i);
         ImGui::BeginDisabled(!usable);
         const ImVec2 r0 = ImGui::GetCursorScreenPos();
@@ -28348,8 +28464,8 @@ void DrawModeling(EditorState& ed) {
         if (!usable && ImGui::IsItemHovered(ImGuiHoveredFlags_AllowWhenDisabled)) ImGui::SetTooltip("Select a mesh object first.");
         ImDrawList* ndl = ImGui::GetWindowDrawList();
         const ImU32 tc = usable ? ImGui::GetColorU32(ImGuiCol_Text) : ImGui::GetColorU32(ImGuiCol_TextDisabled);
-        ndl->AddText(ImVec2(r0.x + 8, r0.y + 5), tc, pg.name);
-        ndl->AddText(ImVec2(r0.x + 8, r0.y + 5 + ImGui::GetTextLineHeight()), ImGui::GetColorU32(ImGuiCol_TextDisabled), pg.desc);
+        ndl->AddText(ImVec2(r0.x + 8, r0.y + 5), tc, pi.name);
+        ndl->AddText(ImVec2(r0.x + 8, r0.y + 5 + ImGui::GetTextLineHeight()), ImGui::GetColorU32(ImGuiCol_TextDisabled), pi.desc);
         ImGui::PopID();
     }
     ImGui::EndChild();
@@ -28358,8 +28474,31 @@ void DrawModeling(EditorState& ed) {
     ImGui::BeginChild("##mdlpage", ImVec2(0, 0), ImGuiChildFlags_Borders);
     ImGui::PushStyleVar(ImGuiStyleVar_ItemSpacing, ImVec2(10, 10));
     ImGui::PushStyleVar(ImGuiStyleVar_FramePadding, ImVec2(10, 6));
+    g_mdlCurPage = s_mdlPage;
+    {   // Find a tool: type "bevel" or "round"; matches are listed with their page and outlined on that page.
+        static char s_find[40] = "";
+        ImGui::SetNextItemWidth(-90);
+        if (ImGui::InputTextWithHint("##mdlfind", "Find a tool (try: bevel, round, mirror, uv)...", s_find, sizeof(s_find))) g_mdlFind = s_find;
+        ImGui::SameLine();
+        if (ImGui::Button("Clear##mdlfind")) { s_find[0] = 0; g_mdlFind.clear(); }
+        if (!g_mdlFind.empty()) {
+            const auto hits = oked::modeltools::Search(g_mdlFind, 8);
+            if (hits.empty()) ImGui::TextDisabled("No tool matches \"%s\".", g_mdlFind.c_str());
+            for (const auto& h : hits) {
+                const auto* pgi = oked::modeltools::FindPage(h.tool->page);
+                const bool usable = !kPages[h.tool->page].needsMesh || haveMesh;
+                std::string row = std::string(h.tool->name) + "   -   " + (pgi ? pgi->name : "") + " > " + h.tool->section;
+                ImGui::BeginDisabled(!usable);
+                if (ImGui::Selectable((row + "##hit" + h.tool->id).c_str(), s_mdlPage == h.tool->page)) s_mdlPage = h.tool->page;
+                ImGui::EndDisabled();
+                if (ImGui::IsItemHovered(ImGuiHoveredFlags_AllowWhenDisabled)) ImGui::SetTooltip("%s\n%s", h.tool->hint, usable ? "Click to open that page. The button is outlined." : "Select a mesh object first.");
+            }
+        }
+    }
+    ImGui::Separator();
     ImGui::TextUnformatted(kPages[s_mdlPage].name);
-    ImGui::TextDisabled("%s", kPages[s_mdlPage].desc);
+    ImGui::SameLine(); ImGui::TextDisabled("  %s", g_mdlHint.empty() ? kPages[s_mdlPage].desc : g_mdlHint.c_str());   // the hint of the button the mouse was over
+    g_mdlHint.clear();
     ImGui::Separator();
     if (s_mdlPage == 7) {
         // Guided Creation: designs, parts and regeneration live in GuidedPanel.cpp; this lends it the edit-mode selection
@@ -28707,6 +28846,7 @@ void DrawModeling(EditorState& ed) {
         if (mr->mesh.uvs.empty())
             ImGui::TextDisabled("No UVs yet — textures use a default mapping.");
 
+        SectionHeader("Symmetry, deform and shell");
         // Whole-mesh modeling ops (symmetry / deform / shell).
         if (ImGui::Button("Mirror X##model")) ModelOp(ed, mr, "Mirror X", [&](Mesh& m) { m.Mirror(0); });
         ImGui::SameLine(); if (ImGui::Button("Mirror Y##model")) ModelOp(ed, mr, "Mirror Y", [&](Mesh& m) { m.Mirror(1); });
@@ -29077,6 +29217,7 @@ void DrawModeling(EditorState& ed) {
             ImGui::TextDisabled("Click in the 3D view to select. G move, R rotate, S scale\n"
                                 "(then X/Y/Z to lock an axis, type a value, Ctrl to snap,\n"
                                 "Enter or click to confirm, Esc or right-click to cancel).");
+            SectionHeader("Pick parts");
             ImGui::RadioButton("Vertices##me", &g_meshSelMode, 0); ImGui::SameLine();
             ImGui::RadioButton("Edges##me", &g_meshSelMode, 2); ImGui::SameLine();
             ImGui::RadioButton("Faces##me", &g_meshSelMode, 1);
@@ -29158,6 +29299,7 @@ void DrawModeling(EditorState& ed) {
                 ImGui::DragFloat("##softr", &g_meshSoftRadius, 0.01f, 0.02f, 20.0f, "r %.2f");
             }
 
+            SectionHeader("Faces");
             ImGui::Spacing();
             ImGui::SetNextItemWidth(110);
             ImGui::DragFloat("##extdist", &g_extrudeDist, 0.01f, -10.0f, 10.0f, "%.2f");
@@ -29227,6 +29369,7 @@ void DrawModeling(EditorState& ed) {
                 ed.dirty = true;
             }
             if (ImGui::IsItemHovered()) ImGui::SetTooltip("One click clean-up: merge doubled vertices, drop collapsed triangles, cap holes and\nmake every face point outward. Painted colours and material slots stay. The result is in the Console.");
+            SectionHeader("Corners and edges");
             static float s_bevelAmt = 0.15f;
             ImGui::SetNextItemWidth(110);
             ImGui::DragFloat("##bevamt", &s_bevelAmt, 0.005f, 0.01f, 2.0f, "%.2f");
@@ -29407,6 +29550,7 @@ void DrawModeling(EditorState& ed) {
             // Edge-loop tools on the polygons (quads and n-gons). The interactive
             // versions run in the 3D view: Ctrl+R loop cut, G G slide, Ctrl+B bevel, K knife.
             ImGui::SeparatorText("Edge loops");
+            SectionHeader("Edge loops and joins");
             {
                 namespace pmo = okay::modeling;
                 const bool haveEdges = !SelectedPolyEdges(mr->mesh).empty();
@@ -30078,6 +30222,9 @@ void DrawModeling(EditorState& ed) {
     ImGui::EndChild();
     ImGui::End();
 }
+#undef Button
+#undef SmallButton
+#undef Checkbox
 
 void DrawInspector(EditorState& ed) {
     ImGui::Begin("Inspector", &g_showInspector);

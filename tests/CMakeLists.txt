@@ -4087,3 +4087,32 @@ add_test(NAME vs_search_connect COMMAND test_vs_search_connect)
 add_executable(test_vs_quick_blocks test_vs_quick_blocks.cpp)
 target_link_libraries(test_vs_quick_blocks PRIVATE okay::engine)
 add_test(NAME vs_quick_blocks COMMAND test_vs_quick_blocks)
+
+# Beginner layer of the Modeling window as pure data (editor/ModelingEasy.hpp): plain names, banned-jargon check, hints, quick actions, recent tools, click counts.
+add_executable(test_modeling_easy test_modeling_easy.cpp)
+target_include_directories(test_modeling_easy PRIVATE ${CMAKE_SOURCE_DIR}/editor)
+add_test(NAME modeling_easy COMMAND test_modeling_easy)
+
+# One-click starter models (editor/ModelingStarters.hpp) built headlessly: closed, sane size, a colour per face.
+add_executable(test_modeling_starters test_modeling_starters.cpp)
+target_include_directories(test_modeling_starters PRIVATE ${CMAKE_SOURCE_DIR}/editor)
+target_link_libraries(test_modeling_starters PRIVATE okay::engine)
+add_test(NAME modeling_starters COMMAND test_modeling_starters)
+
+# The beginner tools mapped onto the engine's own mesh operations (editor/ModelingEasyOps.hpp), run headless on real meshes.
+add_executable(test_modeling_easy_ops test_modeling_easy_ops.cpp)
+target_include_directories(test_modeling_easy_ops PRIVATE ${CMAKE_SOURCE_DIR}/editor)
+target_link_libraries(test_modeling_easy_ops PRIVATE okay::engine)
+add_test(NAME modeling_easy_ops COMMAND test_modeling_easy_ops)
+
+# The advanced Modeling window as data (editor/ModelingToolIndex.hpp): pages by job, every tool once, search by name and alias.
+# Also reads editor/main.cpp: a button added to the window without an index entry fails (OKAY_SOURCE_DIR).
+add_executable(test_modeling_tool_index test_modeling_tool_index.cpp)
+target_include_directories(test_modeling_tool_index PRIVATE ${CMAKE_SOURCE_DIR}/editor)
+target_compile_definitions(test_modeling_tool_index PRIVATE OKAY_SOURCE_DIR="${PROJECT_SOURCE_DIR}")
+add_test(NAME modeling_tool_index COMMAND test_modeling_tool_index)
+
+# Fold state and width maths of the advanced Modeling window's page list (editor/ModelingSidebar.hpp), its settings key and strip labels.
+add_executable(test_modeling_sidebar test_modeling_sidebar.cpp)
+target_include_directories(test_modeling_sidebar PRIVATE ${CMAKE_SOURCE_DIR}/editor)
+add_test(NAME modeling_sidebar COMMAND test_modeling_sidebar)

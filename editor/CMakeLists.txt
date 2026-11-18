@@ -144,3 +144,7 @@ if(OKAY_BUILD_XBOX_UWP)
     target_compile_definitions(okay-editor PRIVATE OKAY_XBOX_UWP=1)
     target_include_directories(okay-editor PRIVATE ${CMAKE_SOURCE_DIR}/platform/xbox_uwp)
 endif()
+
+if(OKAY_ENABLE_TEST_HOOKS)   # scripted input for headless runs (shared/TestHooks.hpp); off in every normal and release build
+    target_compile_definitions(okay-editor PRIVATE OKAY_ENABLE_TEST_HOOKS=1)
+endif()

@@ -142,6 +142,9 @@ namespace okayuihost { inline bool PopupCoversRect(float, float, float, float) {
 #include "VersionsNet.hpp"
 #include "VersionsUI.hpp"
 #include "MemberModeration.hpp"   // kick / ban / unban / admin role for servers and group chats
+#ifdef OKAY_ENABLE_TEST_HOOKS
+#include "TestHooks.hpp"   // scripted input and screenshots for headless test runs (OKAY_TEST_SCRIPT); not in normal builds
+#endif
 #include "ImGuiPainterRenderer.hpp"   // our own Dear ImGui renderer over okay::platform::Painter (OKAY_IMGUI_RENDER=own; default stays imgui_impl_sdlrenderer2)
 #include "PainterBridge.hpp"   // the 2D renderer calls (textures, clear, present, size) through okay::platform::Painter
 #include "OkayThreads.hpp"   // our own threads, recursive mutexes, atomics (replaces SDL's)
@@ -18484,6 +18487,11 @@ int main(int argc, char** argv) {
     if (std::getenv("OKAY_VOICE_DEMO_RING"))
         g_incoming = IncomingCall{"u-maya", "Maya Chen", "", "ring", "k", 1, okay::platform::TicksMs32()};
     bool running = true;
+#ifdef OKAY_ENABLE_TEST_HOOKS
+    okay::testhooks::Runner testHooks;
+    testHooks.Start(sdlSeam, mainWinOwner->Id());
+    int testExitCode = 0;
+#endif
     bool closeConfirm = false;    // the [X] raises an Exit / Minimize confirm dialog
     while (running) {
         okay::thr::AtomicSet(&g_programsRunning, AnyProgramRunning() ? 1 : 0);   // every frame, minimized or not (the update worker reads it before swapping files)
@@ -18493,6 +18501,10 @@ int main(int argc, char** argv) {
         // code reads naturally; the Settings tab may rebuild accountPtr (which
         // is why the Settings tab uses accountPtr-> directly, not this alias).
         acct::AccountService& account = *accountPtr;
+#ifdef OKAY_ENABLE_TEST_HOOKS
+        testHooks.Frame();   // due scripted events are pushed into the queue the loop below polls
+        if (testHooks.QuitNow()) { testExitCode = testHooks.ExitCode(); running = false; }
+#endif
         okay::platform::Event e;
         while (sdlSeam->PollEvent(e)) {
             using EvT = okay::platform::EventType;
@@ -27181,6 +27193,10 @@ int main(int argc, char** argv) {
 #ifdef OKAY_HAVE_OKAYUI
         if (okayFrame) okay::pb::OkayUIEndFrame(renderer);   // on top of everything ImGui drew, through the same renderer
 #endif
+#ifdef OKAY_ENABLE_TEST_HOOKS
+        for (const std::string& shot : testHooks.TakeShots())
+            if (!okay::testhooks::SavePicture(*okay::pb::For(renderer), shot)) std::fprintf(stderr, "[test-hook] could not save %s\n", shot.c_str());
+#endif
         okay::pb::Present(renderer);
         ChatHostFrame(account);
 
@@ -27235,5 +27251,8 @@ int main(int argc, char** argv) {
     okay::pb::DestroyRenderer(renderer);   // its painter owns it
     mainWinOwner.reset();   // destroys the main window (after its renderer)
     sdlSeam->Shutdown();
+#ifdef OKAY_ENABLE_TEST_HOOKS
+    return testExitCode;   // 0 unless the test script said `exit N`
+#endif
     return 0;
 }

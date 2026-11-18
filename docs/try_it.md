@@ -2441,3 +2441,21 @@ Steps (Linux or Windows; Linux was run headless, Windows was not run):
 6. Checks: `ctest -R "thread_conversion_review|okay_threads|painter_bridge_vs_sdl|platform_events|platform_xdnd"`.
 7. Not run: clicking and typing in the own-backend launcher, the chat window, Windows, and the editor on the own backend (see `docs/platform_layer.md`, Round 12).
 
+## Driving the real launcher or editor with a script, headless (test builds only)
+
+For people who test: a launcher or editor built with `-DOKAY_ENABLE_TEST_HOOKS=ON` (never in a release) reads `OKAY_TEST_SCRIPT=<file>` and clicks, types, drops files and takes
+pictures at the times you write. Example `launcher.txt`:
+```
+2500 click 655 441        # the project search box
+3000 type zebra
+3500 shot typed.png       # what the window shows, saved in the current folder
+4000 drop /tmp/some.txt   # a file dropped on the window (the launcher answers with a hint toast)
+7000 quit                 # the window's close request: the launcher asks "Exit or minimise?"
+8000 click 450 412        # the Exit button
+```
+1. Build: `cmake -S . -B build -DOKAY_ENABLE_TEST_HOOKS=ON` (add `-DOKAY_BUILD_EDITOR=ON` for the editor), then build `okayspace-launcher` / `okay-editor`.
+2. Run on both backends and compare: `scripts/run_app_script.sh build/bin/OkaySpace launcher.txt out 60 sdl2 own` (editor: `APP_ARGS=--dev`, program `build/bin/OkayEngine`). It starts a private Xvfb, runs the program
+   once per backend in a private copy (so no run sees the other's saved settings), checks the exit code is 0 and prints, for each picture, how many pixels differ between the backends.
+3. What you should see: `[sdl2] exited with code 0 (as wanted)`, the same for `[own]`, and `[compare] typed.png: 0 pixels differ`. Pictures stay in `out/<backend>/`.
+4. Command list and the parser tests: `shared/TestHooks.hpp`, `ctest -R test_hooks`.
+

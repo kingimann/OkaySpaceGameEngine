@@ -114,3 +114,7 @@ set_target_properties(okayspace-launcher PROPERTIES
 if(WIN32)
     set_target_properties(okayspace-launcher PROPERTIES WIN32_EXECUTABLE TRUE)
 endif()
+
+if(OKAY_ENABLE_TEST_HOOKS)   # scripted input for headless runs (shared/TestHooks.hpp); off in every normal and release build
+    target_compile_definitions(okayspace-launcher PRIVATE OKAY_ENABLE_TEST_HOOKS=1)
+endif()

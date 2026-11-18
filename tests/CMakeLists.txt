@@ -1638,6 +1638,15 @@ if(TARGET okay_ui_soft)
     add_test(NAME imgui_painter_render COMMAND test_imgui_painter_render)
 endif()
 
+# Scripted input for headless app runs (shared/TestHooks.hpp): parser, events, runner on a real backend queue.
+if(NOT WIN32 AND NOT EMSCRIPTEN)
+    add_executable(test_test_hooks test_test_hooks.cpp)
+    target_include_directories(test_test_hooks PRIVATE ${CMAKE_SOURCE_DIR}/shared ${CMAKE_SOURCE_DIR}/engine/include)
+    target_link_libraries(test_test_hooks PRIVATE okay::platform)
+    target_compile_features(test_test_hooks PRIVATE cxx_std_17)
+    add_test(NAME test_hooks COMMAND test_test_hooks)
+endif()
+
 # Our own threads, recursive mutexes and atomics (shared/OkayThreads.hpp): the launcher's replacement for SDL's thread calls.
 if(NOT EMSCRIPTEN AND NOT WIN32)   # (the test sleeps with nanosleep; the header itself is for Windows too)
     add_executable(test_okay_threads test_okay_threads.cpp)

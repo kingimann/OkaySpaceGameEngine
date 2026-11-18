@@ -128,6 +128,9 @@
 #include "AntiCheatIntegrity.hpp"       // Build Game's Data/manifest.json (opt-in anti-cheat)
 #include "FileDialog.hpp"                // open / save / folder dialogs: the system's own, or our built-in browser (asset import)
 #include "PlatformClipboard.hpp"         // Play mode clipboard (through okay::platform)
+#ifdef OKAY_ENABLE_TEST_HOOKS
+#include "TestHooks.hpp"   // scripted input and screenshots for headless test runs (OKAY_TEST_SCRIPT); not in normal builds
+#endif
 #include "ImGuiPainterRenderer.hpp"   // our own Dear ImGui renderer over okay::platform::Painter (OKAY_IMGUI_RENDER=own; default stays imgui_impl_sdlrenderer2)
 #include "PainterBridge.hpp"   // the 2D renderer calls, through okay::platform::Painter
 #include "ImGuiPlatformFeed.hpp"          // our own Dear ImGui input feed over okay::platform (OKAY_PLATFORM_EVENTS=own; default stays imgui_impl_sdl2)
@@ -51111,9 +51114,18 @@ int main(int argc, char** argv) {
         return true;
     });
     if (DocRecovery().StartSession()) g_docRecover = DocRecovery().FindRecoverable();
+#ifdef OKAY_ENABLE_TEST_HOOKS
+    okay::testhooks::Runner testHooks;
+    testHooks.Start(sdlSeam, winSeam->Id());
+    int testExitCode = 0;
+#endif
     while (running) {
         Uint64 g_frameT0 = okay::platform::PerfCounter();
         okaycrash::ctx::NextFrame();
+#ifdef OKAY_ENABLE_TEST_HOOKS
+        testHooks.Frame();   // due scripted events are pushed into the queue polled below
+        if (testHooks.QuitNow()) { testExitCode = testHooks.ExitCode(); running = false; }
+#endif
         {   // the crash report's picture of the editor: cheap every 8th frame, the file lookups every 300th
             static unsigned s_crashCtxTick = 0;
             if ((s_crashCtxTick & 7) == 0) UpdateCrashContext(ed, (s_crashCtxTick % 300) == 0);
@@ -52683,6 +52695,10 @@ int main(int argc, char** argv) {
                 std::fflush(stdout);
             }
         }
+#ifdef OKAY_ENABLE_TEST_HOOKS
+        for (const std::string& shot : testHooks.TakeShots())
+            if (!okay::testhooks::SavePicture(*okay::pb::For(renderer), shot)) std::fprintf(stderr, "[test-hook] could not save %s\n", shot.c_str());
+#endif
         { OKAY_PROFILE("Present"); okay::pb::Present(renderer); }
 
         // Multi-window panels: create/size/paint the extra OS windows (tabs
@@ -52760,6 +52776,9 @@ int main(int argc, char** argv) {
     okay::pb::DestroyRenderer(renderer);   // its painter owns it
     winSeam.reset();   // destroys the main window (after its renderer)
     sdlSeam->Shutdown();
+#ifdef OKAY_ENABLE_TEST_HOOKS
+    return testExitCode;   // 0 unless the test script said `exit N`
+#endif
     return 0;
 }
 #endif // OKAY_EDITOR_HEADLESS

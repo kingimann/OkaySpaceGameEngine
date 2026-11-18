@@ -559,6 +559,32 @@ backend both start, draw the full editor UI (menus, Hierarchy, Scene grid, Inspe
 had finished by the time of the picture; the own run's check had not, so the two pictures differ by that dialog, not by drawing). The own run showed 8 frames per second
 (software painter on a shared machine). Not tried: any click, the GL 3D view (needs a scene with a 3D camera), play mode, the file dialog, Windows.
 
+## Round 13: scripted input for headless app runs, and the plan for multi-window panels on the own backend
+
+**Scripted input (`shared/TestHooks.hpp`, compiled in only with `-DOKAY_ENABLE_TEST_HOOKS=ON`; the option is off by default, refuses to configure with
+`OKAY_REQUIRE_SODIUM` (a release), and nothing of it exists in a normal build).** `OKAY_TEST_SCRIPT=<file>` makes the launcher or editor push platform events
+(`Backend::PushEvent`) at the times in the file, so every click, key and drop goes through the real event loop on either backend, with no xdotool. One command per line,
+`<ms> <command>`: `move`, `click X Y [button]`, `down`, `up`, `wheel`, `type TEXT`, `key [ctrl+|shift+|alt+]NAME [down|up]`, `drop PATH`, `quit`, `close`, `shot PATH` (the frame just
+drawn, read back before the present, so it is exactly what the window would show) and `exit [CODE]` (leave the main loop at once; the program then returns CODE). The parser and
+the event each command makes are tested in `tests/test_test_hooks.cpp` (ctest `test_hooks`). `scripts/run_app_script.sh <program> <script> <outdir> [seconds] [backend...]` runs the program on a private
+Xvfb once per backend, checks the exit code, and compares the pictures of the two backends (ImageMagick `compare`; pictures stay in `<outdir>`, outside the repository).
+
+**Multi-window panels on the own backend: plan (not built).** What the editor's "multi-window" mode needs from a platform backend, and what exists:
+1. Dear ImGui's multi-viewport interface (`ImGuiPlatformIO`: `Platform_CreateWindow`, `DestroyWindow`, `ShowWindow`, `SetWindowPos/GetWindowPos`, `SetWindowSize/GetWindowSize`,
+   `SetWindowFocus/GetWindowFocus`, `GetWindowMinimized`, `SetWindowTitle`, `Renderer_*`). Written from `imgui.h`'s documentation of those callbacks onto `okay::platform::Window`
+   (`MakeWindow` borderless, `SetPosition/SetSize/Show/Raise/SetTitle/IsMinimized/HasInputFocus` all exist). Small and mostly mechanical: about 250 lines in `shared/ImGuiPlatformFeed.hpp`.
+2. Input across windows. The feed filters events by the main window's id; it must accept every viewport's window id, translate the pointer to desktop coordinates for `AddMousePosEvent`
+   (position in the window + `Window::GetPosition`, or `Backend::GlobalMouseState`, which exists) and report `io.AddMouseViewportEvent` from `Backend::MouseFocusWindowId` (exists).
+   A drag that leaves the window needs a pointer capture (`SDL_CaptureMouse` equivalent): X11 `XGrabPointer` / Win32 `SetCapture`, not in the seam yet (small).
+3. Drawing per viewport. Each secondary window gets its own painter (`okay::pb::CreateRenderer` on an own window already makes a software painter). A software painter's textures belong
+   to that painter, so the shared ImGui atlas and the apps' textures (thumbnails, covers, the 3D view) must be copied per painter, which is what the editor's SDL path does today with
+   `OkayVpTexture`; `imguirender::Render` needs the same per-painter texture map (about 150 lines) and the apps' own textures need a "shared texture" notion in the bridge.
+4. Window manager behaviour that cannot be tested headless: the borderless always-on-top flag for tool windows, `_NET_WM_WINDOW_TYPE`, monitor placement and DPI per window. Xvfb has no window
+   manager, so a test there only proves the plumbing. A real desktop run is required before this can be called working.
+5. Order of work: (1) + (2) behind `OKAY_PLATFORM_EVENTS=own` first, a test with fake windows in `test_imgui_platform_feed`; (3); then a scripted run with `OKAY_TEST_SCRIPT` that drags a panel
+   out (`down`, `move`, `up` with coordinates outside the window) under Xvfb; then a real-desktop try by the owner.
+Estimated size: medium to large; the unknown is (4).
+
 ## Not behind the seam yet (stage 1 list; see stage 2 above for what changed)
 
 The window, event loop and GL context of the editor, launcher and player still call SDL directly. Moving them needs more than

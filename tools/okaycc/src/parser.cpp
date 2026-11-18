@@ -2430,7 +2430,9 @@ private:
         // (only for a main defined later in this file, see the plan).
         if (!td && !ext && base && base->kind == Type::Kind::Struct && !base->tag.empty() && classOf(base->tag) &&
             (classOf(base->tag)->needCtor || classOf(base->tag)->needDtor) && !atEnd() &&
-            cur().kind == Tok::Ident && (nextIs("(") || nextIs(";"))) {
+            cur().kind == Tok::Ident &&
+            (nextIs(";") || (nextIs("(") && i_ + 2 < toks_.size() && !isP(toks_[i_ + 2], ")") &&
+                             !isTypeKw(toks_[i_ + 2])))) {
             Parsed gd;
             gd.name = cur().text;
             gd.line = cur().line;

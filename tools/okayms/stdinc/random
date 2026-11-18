@@ -1,0 +1,118 @@
+// okay-ms own standard header: <random>, written from ISO/IEC 14882 [rand]. mt19937 is the Mersenne Twister of [rand.eng.mers]
+// with the parameters the standard gives (n 624, m 397, r 31, a 0x9908B0DF, u 11, s 7, b 0x9D2C5680, t 15, c 0xEFC60000, l 18,
+// f 1812433253), so it makes the standard's sequence (the 10000th value from the default seed 5489 is 4123659995). The
+// distributions' algorithms are not fixed by the standard: uniform_int_distribution rejects values above the largest multiple
+// of the range, uniform_real_distribution maps 32 random bits to [a, b), normal_distribution uses the Box-Muller transform,
+// bernoulli_distribution compares a unit real. random_device is seeded from the clock (it is NOT a hardware source). Engines
+// are used through `engine()`; the distributions take the engine by reference.
+#pragma once
+#include <chrono>
+#include <cmath>
+#include <cstddef>
+namespace std {
+class mt19937 {
+public:
+    typedef unsigned int result_type;
+    unsigned int mt_[624];
+    int idx_;
+    mt19937() : idx_(624) { seed(5489u); }
+    explicit mt19937(unsigned int s) : idx_(624) { seed(s); }
+    void seed(unsigned int s) {
+        mt_[0] = s;
+        for (int i = 1; i < 624; ++i) mt_[i] = 1812433253u * (mt_[i - 1] ^ (mt_[i - 1] >> 30)) + (unsigned int)i;
+        idx_ = 624;
+    }
+    static unsigned int min() { return 0u; }
+    static unsigned int max() { return 0xFFFFFFFFu; }
+    void twist() {
+        for (int i = 0; i < 624; ++i) {
+            const unsigned int y = (mt_[i] & 0x80000000u) | (mt_[(i + 1) % 624] & 0x7FFFFFFFu);
+            unsigned int x = mt_[(i + 397) % 624] ^ (y >> 1);
+            if (y & 1u) x ^= 0x9908B0DFu;
+            mt_[i] = x;
+        }
+        idx_ = 0;
+    }
+    unsigned int operator()() {
+        if (idx_ >= 624) twist();
+        unsigned int y = mt_[idx_++];
+        y ^= (y >> 11);
+        y ^= (y << 7) & 0x9D2C5680u;
+        y ^= (y << 15) & 0xEFC60000u;
+        y ^= (y >> 18);
+        return y;
+    }
+};
+typedef mt19937 default_random_engine;
+
+class random_device {
+public:
+    typedef unsigned int result_type;
+    mt19937 e_;
+    random_device() : e_((unsigned int)(chrono::steady_clock::now().time_since_epoch().count() & 0xFFFFFFFFll)) {}
+    static unsigned int min() { return 0u; }
+    static unsigned int max() { return 0xFFFFFFFFu; }
+    unsigned int operator()() { return e_(); }
+};
+
+template <typename I>
+class uniform_int_distribution {
+public:
+    I a_;
+    I b_;
+    uniform_int_distribution() : a_(0), b_(2147483647) {}
+    uniform_int_distribution(I a, I b) : a_(a), b_(b) {}
+    I min() const { return a_; }
+    I max() const { return b_; }
+    template <typename G> I operator()(G& g) {
+        const unsigned long long range = (unsigned long long)(b_ - a_) + 1ull;
+        if (range == 0ull) return a_;
+        const unsigned long long top = 0x100000000ull - 0x100000000ull % range;
+        unsigned long long x;
+        if (range > 0x100000000ull) {
+            x = ((unsigned long long)g() << 32) | (unsigned long long)g();
+            return (I)((unsigned long long)a_ + x % range);
+        }
+        do {
+            x = (unsigned long long)g();
+        } while (x >= top);
+        return (I)((unsigned long long)a_ + x % range);
+    }
+};
+
+template <typename R>
+class uniform_real_distribution {
+public:
+    R a_;
+    R b_;
+    uniform_real_distribution() : a_(0), b_(1) {}
+    uniform_real_distribution(R a, R b) : a_(a), b_(b) {}
+    template <typename G> R operator()(G& g) {
+        const double u = (double)g() / 4294967296.0;
+        return (R)((double)a_ + u * ((double)b_ - (double)a_));
+    }
+};
+
+template <typename R>
+class normal_distribution {
+public:
+    R mean_;
+    R sd_;
+    normal_distribution() : mean_(0), sd_(1) {}
+    normal_distribution(R mean, R sd) : mean_(mean), sd_(sd) {}
+    template <typename G> R operator()(G& g) {
+        double u1 = ((double)g() + 1.0) / 4294967297.0;
+        const double u2 = (double)g() / 4294967296.0;
+        const double r = std::sqrt(-2.0 * std::log(u1));
+        return (R)((double)mean_ + (double)sd_ * r * std::cos(6.283185307179586 * u2));
+    }
+};
+
+class bernoulli_distribution {
+public:
+    double p_;
+    bernoulli_distribution() : p_(0.5) {}
+    explicit bernoulli_distribution(double p) : p_(p) {}
+    template <typename G> bool operator()(G& g) { return (double)g() / 4294967296.0 < p_; }
+};
+}

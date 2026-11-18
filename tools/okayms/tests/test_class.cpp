@@ -181,7 +181,7 @@ static void test_virtual(Tally& tally) {
     CHECK(tally, has_symbol(object, "?area@Rect@@UEAAHXZ"));
     CHECK(tally, has_symbol(object, "?sides@Rect@@UEAAHXZ"));
     CHECK(tally, has_symbol(object, "?area@Square@@UEAAHXZ"));
-    // One table per class, in .rdata, one ADDR64 per virtual function.
+    // One table per class, in .rdata, one ADDR64 per virtual function (and one for the type_info slot before it).
     CHECK(tally, has_symbol(object, "??_7Shape@@6B@"));
     CHECK(tally, has_symbol(object, "??_7Rect@@6B@"));
     CHECK(tally, has_symbol(object, "??_7Square@@6B@"));
@@ -191,7 +191,7 @@ static void test_virtual(Tally& tally) {
         int addr64 = 0;
         for (const auto& reloc : rdata->relocations)
             if (reloc.type == okayms::kRelAmd64Addr64) ++addr64;
-        CHECK(tally, addr64 == 6);
+        CHECK(tally, addr64 == 9);  // 6 virtual functions + one type_info address per table (vtable[-1], since round 27)
     }
 }
 

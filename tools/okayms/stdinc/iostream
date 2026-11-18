@@ -1,0 +1,81 @@
+// okay-ms own standard header: cout, cerr, clog and cin on the small stream classes of <sstream>, written from ISO/IEC 14882
+// [iostream.objects]. cout and cerr write at once to the Windows standard handles (runtime/file.c: okay_write_handle); cin
+// reads all of standard input when it is first used (okay_read_stdin) and then behaves like an istringstream. `<<` and `>>`
+// as in <sstream>, plus endl, flush, fixed, setw and setprecision (see there for the differences: width pads on the left, a
+// precision is a number of decimals). No tie, no sync_with_stdio, no wide streams, no stream state flags beyond truth value.
+#pragma once
+#include <sstream>
+#include <string>
+extern "C" long long okay_read_stdin(char** data);
+namespace std {
+class okay_cin : public okay_istream {
+public:
+    bool loaded_;
+    okay_cin() : loaded_(false) {}
+    void load() {
+        if (loaded_) return;
+        loaded_ = true;
+        char* data = 0;
+        const long long n = okay_read_stdin(&data);
+        if (n >= 0) {
+            buf_ = string(data, (size_t)n);
+            free(data);
+        }
+    }
+};
+class okay_stdout : public okay_ostream {
+public:
+    okay_stdout(int which) {
+        sink_ = which;
+    }
+};
+static okay_stdout cout(1);
+static okay_stdout cerr(2);
+static okay_stdout clog(2);
+static okay_cin cin;
+// cin >> x: standard input is loaded first.
+inline okay_istream& okay_load_cin(okay_cin& c) {
+    c.load();
+    return c;
+}
+inline okay_istream& operator>>(okay_cin& c, string& v) {
+    c.load();
+    okay_istream& base = c;
+    return base >> v;
+}
+inline okay_istream& operator>>(okay_cin& c, int& v) {
+    c.load();
+    okay_istream& base = c;
+    return base >> v;
+}
+inline okay_istream& operator>>(okay_cin& c, float& v) {
+    c.load();
+    okay_istream& base = c;
+    return base >> v;
+}
+inline okay_istream& operator>>(okay_cin& c, double& v) {
+    c.load();
+    okay_istream& base = c;
+    return base >> v;
+}
+inline okay_istream& operator>>(okay_cin& c, long long& v) {
+    c.load();
+    okay_istream& base = c;
+    return base >> v;
+}
+inline okay_istream& operator>>(okay_cin& c, char& v) {
+    c.load();
+    okay_istream& base = c;
+    return base >> v;
+}
+inline okay_istream& operator>>(okay_cin& c, unsigned& v) {
+    c.load();
+    okay_istream& base = c;
+    return base >> v;
+}
+inline okay_istream& getline(okay_cin& c, string& line) {
+    c.load();
+    okay_istream& base = c;
+    return getline(base, line);
+}
+}

@@ -2242,7 +2242,8 @@ struct Parser {
                        tokens[k + 1].kind == TColonColon)
                     k += 2;
                 const bool call = k + 1 < tokens.size() && tokens[k].kind == TIdent && tokens[k + 1].kind == TLParen;
-                if (!call && k < tokens.size() && tokens[k].kind == TIdent) {
+                const bool after_new = i > 0 && tokens[i - 1].kind == TIdent && tokens[i - 1].text == "new";  // new std::string(x): a type
+                if ((!call || after_new) && k < tokens.size() && tokens[k].kind == TIdent) {
                     if (tokens[i].inl) tokens[k].inl = true;  // `inline std::uint32_t f()`: the mark moves to the type name
                     i = k - 1;  // the leading namespace names and their '::' are dropped
                     continue;
@@ -4228,6 +4229,29 @@ struct Parser {
                 }
                 Node a = node_addr(std::move(arg));
                 arg = std::move(a);
+            } else if (cur_locals != nullptr && arg.kind == Node::Call && pt.base == 3 && pt.pointers == 0 && !pt.is_array() &&
+                       pt.struct_id >= 0 && !class_needs_dtor(structs[static_cast<size_t>(pt.struct_id)])) {
+                // A call that returns an object, passed by value: the result goes into a hidden local first (it has no address
+                // of its own), and that local is what the parameter is copied from.
+                Type rt_call;
+                if (static_type(arg, &rt_call) && rt_call.base == 3 && rt_call.pointers == 0 && rt_call.struct_id == pt.struct_id) {
+                    Local hidden;
+                    hidden.name = "__bt" + std::to_string(tmp_count++);
+                    hidden.type = pt;
+                    hidden.type.is_ref = false;
+                    place_local(cur_locals, hidden);
+                    Node assign;
+                    assign.kind = Node::Assign;
+                    assign.op = TAssign;
+                    assign.number = 1;
+                    assign.kids.push_back(node_name(hidden.name));
+                    assign.kids.push_back(std::move(arg));
+                    Node stmt;
+                    stmt.kind = Node::ExprStmt;
+                    stmt.kids.push_back(std::move(assign));
+                    stmt_pre.push_back(std::move(stmt));
+                    arg = node_name(hidden.name);
+                }
             } else if (cur_locals != nullptr && wants_copy(pt, arg)) {
                 Local hidden;
                 hidden.name = "__tmp" + std::to_string(tmp_count++);
@@ -7931,10 +7955,6 @@ struct Parser {
             if (!decl.is_function && (obj_needs_ctor(decl.type) || obj_needs_dtor(decl.type))) {
                 Node ginit;
                 bool has_ginit = false;
-                if (is_static) {
-                    error = "a global object with a constructor is not static";
-                    return false;
-                }
                 if (accept(TAssign)) {
                     if (!decl.type.is_array()) {
                         // T g = expr;  at namespace scope: the constructor (copy or converting) runs at startup with the
@@ -7955,6 +7975,7 @@ struct Parser {
                 global.name = decl.name;
                 global.type = decl.type;
                 global.bss = true;
+                global.is_static = is_static || anon_depth > 0;  // `static T x(args);` in a header: one copy per file
                 globals.push_back(global);
                 if (!register_global_object(decl.name, decl.type, std::move(gargs), has_ginit ? &ginit : nullptr))
                     return false;
@@ -11143,7 +11164,8 @@ bool Parser::operator_call(Node* object, std::vector<Node> args, bool* done) {
     if (!class_object_type(*object, &t)) return true;
     if (!instantiate_generic_lambda(t.struct_id, args)) return false;
     const Method* m = find_method(t.struct_id, "operator()", args.size(), &args, t.is_const || t.pconst ? 1 : 0);
-    if (m == nullptr) return true;
+    int call_tmpl_owner = -1;
+    if (m == nullptr && find_member_tmpl(t.struct_id, "operator()", &call_tmpl_owner) == nullptr) return true;  // a member template instantiates in method_call
     Node result;
     if (!method_call(&result, std::move(*object), false, "operator()", {}, &args)) return false;
     *object = std::move(result);

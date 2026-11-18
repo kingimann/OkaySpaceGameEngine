@@ -135,3 +135,39 @@ int fclose(FILE *f) {
     free(f);
     return ok;
 }
+
+/* ---- standard handles for <iostream> ---- */
+__declspec(dllimport) void *GetStdHandle(unsigned long which);
+
+/* Writes to standard output (which 1) or standard error (which 2). */
+void okay_write_handle(int which, const char *data, long long n) {
+    void *h = GetStdHandle(which == 2 ? (unsigned long)-12 : (unsigned long)-11);
+    unsigned long done = 0;
+    if (n > 0) WriteFile(h, data, (unsigned long)n, &done, 0);
+}
+
+/* Reads all of standard input into a new block (free it with free); returns its size. */
+long long okay_read_stdin(char **data) {
+    void *h = GetStdHandle((unsigned long)-10);
+    char *block = (char *)malloc(65536);
+    long long size = 0;
+    long long cap = 65536;
+    unsigned long done = 0;
+    if (block == 0) return -1;
+    for (;;) {
+        if (size + 4096 > cap) {
+            char *bigger = (char *)malloc((unsigned long long)cap * 2);
+            if (bigger == 0) break;
+            memcpy(bigger, block, (unsigned long long)size);
+            free(block);
+            block = bigger;
+            cap *= 2;
+        }
+        done = 0;
+        if (!ReadFile(h, block + size, 4096, &done, 0) || done == 0) break;
+        size += (long long)done;
+    }
+    block[size] = 0;
+    *data = block;
+    return size;
+}

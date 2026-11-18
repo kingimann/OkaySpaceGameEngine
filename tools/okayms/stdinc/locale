@@ -1,0 +1,21 @@
+// okay-ms own standard header: a minimal <locale> ([locales]): the classic "C" locale only. `std::locale` is an empty class
+// with `classic()` and a default constructor, `imbue` on the stream classes is a no-op that returns the old locale, and
+// `std::localeconv` (from <clocale>) is declared with the decimal point as ".". No facets, no use_facet, no named locales:
+// a name other than "C" or "" throws nothing and is treated as the classic locale.
+#pragma once
+#include <clocale>
+#include <string>
+namespace std {
+class locale {
+public:
+    int unused_;
+    locale() : unused_(0) {}
+    locale(const char* name) : unused_(0) { (void)name; }
+    locale(const locale& o) : unused_(o.unused_) {}
+    static locale classic() { return locale(); }
+    static locale global(const locale& l) { return l; }
+    string name() const { return string("C"); }
+    bool operator==(const locale& o) const { (void)o; return true; }
+    bool operator!=(const locale& o) const { (void)o; return false; }
+};
+}

@@ -146,5 +146,10 @@ int main(int, char**) {
           "struct V3 { float x, y, z; };\nint main() { L<int, float> l; l.n = 3; std::variant<std::monostate, int, std::string, V3> v; v = 5; int a = std::holds_alternative<int>(v) ? std::get<int>(v) : 0;\n"
           "v = std::string(\"hi\"); const std::string* s = std::get_if<std::string>(&v); std::variant<std::monostate, int, std::string, V3> w = v; return pick<int>(l) + a + (s ? (int)s->size() : 0) + (int)w.index(); }\n", &o);
     CHECK(t, has_symbol(o, "holds_alternative") && has_symbol(o, "get_if"));
+    ++tests;
+    build(t, "iostream: cout, cerr, cin, endl, setw, setprecision", "#include <iostream>\n#include <string>\n"
+          "int main() { int a = 0; std::string s; std::cin >> a >> s; std::getline(std::cin, s); std::cout << \"hello \" << 42 << ' ' << 1.5 << std::setw(5) << a << std::endl;\n"
+          "std::cerr << std::setprecision(2) << 2.5 << std::endl; return a; }\n", &o);
+    CHECK(t, has_symbol(o, "okay_write_handle") && has_symbol(o, "okay_read_stdin"));
     return t.finish(tests);
 }

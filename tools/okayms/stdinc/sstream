@@ -51,12 +51,28 @@ public:
     }
 };
 
+extern "C" void okay_write_handle(int which, const char* data, long long n);
 class okay_ostream {
 public:
     string out_;
-    okay_ostream() : out_() {}
+    int sink_;       // 0: collect in out_; 1: write to standard output as it comes; 2: standard error
+    int width_;      // setw: the next field is padded on the left to this many characters (then 0)
+    int precision_;  // setprecision: decimals of a floating-point value (-1: up to six, trailing zeros removed)
+    okay_ostream() : out_(), sink_(0), width_(0), precision_(-1) {}
     operator bool() const { return true; }
     bool fail() const { return false; }
+    // Appends the text, padded to width_, and writes it at once when the stream is a standard one.
+    void put(const string& text) {
+        if (width_ > 0) {
+            for (size_t i = text.size(); i < (size_t)width_; ++i) out_.push_back(' ');
+            width_ = 0;
+        }
+        out_ += text;
+        if (sink_ != 0) {
+            okay_write_handle(sink_, out_.c_str(), (long long)out_.size());
+            out_.clear();
+        }
+    }
 };
 
 inline okay_istream& operator>>(okay_istream& src, string& s) {
@@ -134,63 +150,72 @@ inline okay_istream& getline(okay_istream& src, string& line, char delim) {
 inline okay_istream& getline(okay_istream& src, string& line) { return getline(src, line, '\n'); }
 
 inline okay_ostream& operator<<(okay_ostream& o, const string& s) {
-    o.out_ += s;
+    o.put(s);
     return o;
 }
 inline okay_ostream& operator<<(okay_ostream& o, const char* s) {
-    o.out_ += s;
+    o.put(string(s));
     return o;
 }
 inline okay_ostream& operator<<(okay_ostream& o, char c) {
-    o.out_.push_back(c);
+    o.put(string(1, c));
     return o;
 }
 inline okay_ostream& operator<<(okay_ostream& o, long long v) {
-    o.out_ += to_string(v);
+    o.put(to_string(v));
     return o;
 }
 inline okay_ostream& operator<<(okay_ostream& o, int v) { return o << (long long)v; }
 inline okay_ostream& operator<<(okay_ostream& o, long v) { return o << (long long)v; }
 inline okay_ostream& operator<<(okay_ostream& o, unsigned v) { return o << (long long)v; }
 inline okay_ostream& operator<<(okay_ostream& o, unsigned long long v) {
-    o.out_ += to_string(v);
+    o.put(to_string(v));
     return o;
 }
 inline okay_ostream& operator<<(okay_ostream& o, double v) {
+    string text;
     if (v != v) {
-        o.out_ += "nan";
+        o.put(string("nan"));
         return o;
     }
     if (v < 0.0) {
-        o.out_.push_back('-');
+        text.push_back('-');
         v = -v;
     }
     if (v > 1.0e18) {
-        o.out_ += "inf";
+        text += "inf";
+        o.put(text);
         return o;
     }
+    const int decimals = o.precision_ < 0 ? 6 : (o.precision_ > 9 ? 9 : o.precision_);
+    double scale = 1.0;
+    for (int i = 0; i < decimals; ++i) scale *= 10.0;
     long long whole = (long long)v;
     double frac = v - (double)whole;
-    long long micro = (long long)(frac * 1000000.0 + 0.5);
-    if (micro >= 1000000) {
+    long long units = (long long)(frac * scale + 0.5);
+    if ((double)units >= scale) {
         ++whole;
-        micro -= 1000000;
+        units = 0;
     }
-    o.out_ += to_string(whole);
-    if (micro > 0) {
-        string digits = to_string(micro);
-        while (digits.size() < 6) digits = "0" + digits;
+    text += to_string(whole);
+    if (decimals > 0 && (units > 0 || o.precision_ >= 0)) {
+        string digits = to_string(units);
+        while (digits.size() < (size_t)decimals) digits = "0" + digits;
         size_t end = digits.size();
-        while (end > 0 && digits[end - 1] == '0') --end;
-        o.out_.push_back('.');
-        o.out_ += digits.substr(0, end);
+        if (o.precision_ < 0)
+            while (end > 0 && digits[end - 1] == '0') --end;
+        if (end > 0) {
+            text.push_back('.');
+            text += digits.substr(0, end);
+        }
     }
+    o.put(text);
     return o;
 }
 inline okay_ostream& operator<<(okay_ostream& o, float v) { return o << (double)v; }
 // `out << in.rdbuf()`: the rest of the input is appended.
 inline okay_ostream& operator<<(okay_ostream& o, okay_istream* src) {
-    o.out_ += src->rest();
+    o.put(src->rest());
     src->pos_ = src->buf_.size();
     return o;
 }
@@ -217,4 +242,41 @@ public:
     stringstream() {}
     string str() const { return out_; }
 };
+
+// Manipulators: endl, flush, setw, setprecision, fixed (a stream's precision then means decimals, as `fixed` makes it in
+// the standard; without setprecision up to six decimals are written with trailing zeros removed).
+// endl, flush and fixed are objects of small types (okay-ms cannot declare a pointer to a function returning a reference).
+struct okay_endl_t { int unused; };
+struct okay_flush_t { int unused; };
+struct okay_fixed_t { int unused; };
+static okay_endl_t endl;
+static okay_flush_t flush;
+static okay_fixed_t fixed;
+inline okay_ostream& operator<<(okay_ostream& o, okay_endl_t e) {
+    (void)e;
+    o.put(string(1, '\n'));
+    return o;
+}
+inline okay_ostream& operator<<(okay_ostream& o, okay_flush_t f) { (void)f; return o; }
+inline okay_ostream& operator<<(okay_ostream& o, okay_fixed_t f) { (void)f; return o; }
+struct okay_setw { int n; };
+struct okay_setprecision { int n; };
+inline okay_setw setw(int n) {
+    okay_setw r;
+    r.n = n;
+    return r;
+}
+inline okay_setprecision setprecision(int n) {
+    okay_setprecision r;
+    r.n = n;
+    return r;
+}
+inline okay_ostream& operator<<(okay_ostream& o, okay_setw w) {
+    o.width_ = w.n;
+    return o;
+}
+inline okay_ostream& operator<<(okay_ostream& o, okay_setprecision p) {
+    o.precision_ = p.n;
+    return o;
+}
 }

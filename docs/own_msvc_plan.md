@@ -702,3 +702,31 @@ First error of each failing file now (tool: okay-cl /c on every `engine/src/**/*
 | `large struct return has no destination` | 6 |
 | `expected a class template body` / `expected a base class` | 10 |
 | other single errors | rest |
+
+### Round 28 (unverified: not run under Wine, Wine broken in this container)
+
+Compile-only; checked by objects. Whole-library measurement of `engine/src` (348 `.cpp`, compile to an object, nothing run): **95 compile (up from 23)**. Tests for the round 27 typeid and wide-string work, and for each item below, are in `tests/test_round23.cpp` (19 tests, 30 checks, 0 failed). `tests/test_class.cpp` now expects one more ADDR64 per virtual table (the type_info slot added in round 27: 9 instead of 6).
+
+1. **Trailing-pack deduction and `<variant>`:** an empty pack that `parse_template_args` fills in after the written arguments was treated as written; it is now deduced (`pick<int>(l)` with `L<Ts...>&` works). `<variant>`: `variant`, `monostate`, `get<T>`, `get_if<T>`, `holds_alternative<T>`, `index()`, copy, converting construction and assignment from an alternative (an aligned buffer, a run-time index, recursive class templates over the pack); no `std::visit` yet, no `get<N>`. Compiler changes: class typedefs are in scope in member bodies and member template instances, an assignment of a non-class value to a class with a constructor template goes through a temporary (`v = 5`), and an `operator()` member template can be called.
+2. **`<iostream>`:** `cout`, `cerr`, `clog`, `cin` over the classes of `<sstream>` (output is written at once through `okay_write_handle` in `runtime/file.c`; `cin` reads all of standard input when first used), `endl`, `flush`, `fixed` (small objects, not function pointers), `setw` (pads on the left), `setprecision` (a number of decimals). The compiler now accepts `static T x(args);` at namespace scope (one copy per file) and a call result of a class type passed by value (it is put in a hidden local first).
+3. **`<random>`:** `mt19937` (the standard's Mersenne Twister parameters), `uniform_int_distribution`, `uniform_real_distribution`, `normal_distribution` (Box-Muller), `bernoulli_distribution`, `random_device` (clock seeded, not a hardware source).
+4. **`<locale>`:** the classic locale only (`locale`, `classic()`, `name()`); `new std::string(x)` and `new std::locale(...)` now parse (a namespace name after `new` is dropped).
+5. `vector::assign(first, last)` for pointer iterators was added; 8 files still stop at "no member function assign with N arguments" (not examined). The 6 `large struct return has no destination` cases were not looked at again.
+
+First error of each failing file now (253 files):
+
+| first error | files |
+|---|---|
+| `expected ...` (parse errors of many kinds) | about 58 |
+| `expected a type` | 39 |
+| `expected a base class` | 17 |
+| `expected a class template body` | 9 |
+| `cannot open include thread` / `mutex` / `condition_variable` (excluded, rule 21a) | 22 |
+| `no member function assign with N arguments` | 8 |
+| `cannot open include stdexcept` / `exception` | 11 |
+| `large struct return has no destination` | 6 |
+| `no matching constructor in LocArg` | 5 |
+| `global initializer must be a constant` | 4 |
+| other single errors | rest |
+
+Not done: `std::visit` and `get<N>` for `variant`; the parse-error groups above; `<stdexcept>`/`<exception>`; destruction of range-for iterators on `break`/`return`; COMDAT dedup and the `.CRT$XCU` startup table; everything must be re-run under Wine before merging into `claude/okayms-3`.

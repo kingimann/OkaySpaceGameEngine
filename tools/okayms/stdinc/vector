@@ -169,6 +169,13 @@ public:
         T zero = T();
         resize(n, zero);
     }
+    // assign(first, last) ([vector.modifiers]) for pointer iterators (the iterators of every container here).
+    void assign(const T* first, const T* last) {
+        vector<T> fresh;
+        for (const T* p = first; p != last; ++p) fresh.push_back(*p);
+        clear();
+        for (size_t i = 0; i < fresh.size(); ++i) push_back(fresh[i]);
+    }
     void assign(size_t n, const T& value) {
         clear();
         resize(n, value);

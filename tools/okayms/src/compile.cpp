@@ -3868,18 +3868,28 @@ struct Parser {
         text.init_bytes.assign(name.begin(), name.end());
         text.init_bytes.push_back(0);
         globals.push_back(text);
+        // The record of the single base class, for dynamic_cast (runtime/rtti.c): { name, base }.
+        std::string base_sym;
+        if (t.base == 3 && t.pointers == 0 && t.struct_id >= 0 && structs[static_cast<size_t>(t.struct_id)].base >= 0) {
+            Type bt;
+            bt.base = 3;
+            bt.struct_id = structs[static_cast<size_t>(t.struct_id)].base;
+            base_sym = typeinfo_global(bt);
+        }
         Global ti;
         ti.name = sym;
         ti.is_static = true;
         ti.bss = false;
         ti.type.base = 2;
-        ti.type.pointers = 1;
-        ti.init_bytes.assign(8, 0);
+        ti.type.array_len = 16;
+        ti.init_bytes.assign(16, 0);
         ti.addr_relocs.push_back({0, text.name});
+        if (!base_sym.empty()) ti.addr_relocs.push_back({8, base_sym});
         globals.push_back(ti);
         return sym;
     }
     bool parse_typeid(Node* out);
+    bool parse_dynamic_cast(Node* out);
     bool instantiate_generic_lambda(int sid, const std::vector<Node>& args);
     std::vector<Type> auto_types{};
     size_t auto_idx = 0;
@@ -7065,6 +7075,23 @@ struct Parser {
         ok = parse_type(&type, &imported, &exported);
         const bool tmpl_auto_ret = saw_auto_ret;
         saw_auto_ret = false;
+        if (ok && mt.bodyless && (is(TStar) || is(TAmp) || is(TAndAnd))) {
+            // `T* GameObject::GetComponent() const`: the pointer or reference marks come before the class name.
+            size_t look = at;
+            while (look < tokens.size() && (tokens[look].kind == TStar || tokens[look].kind == TAmp || tokens[look].kind == TAndAnd))
+                ++look;
+            if (look + 1 < tokens.size() && tokens[look].kind == TIdent) {
+                while (is(TStar)) {
+                    ++type.pointers;
+                    next();
+                }
+                if (is(TAmp) || is(TAndAnd)) {
+                    if (is(TAndAnd) && type.pointers == 0) type.rref = true;
+                    type.is_ref = true;
+                    next();
+                }
+            }
+        }
         if (ok && mt.bodyless && is(TIdent)) {
             // S :: or B<T> :: of the definition outside the class
             size_t q = at + 1;
@@ -12120,8 +12147,85 @@ bool Parser::parse_typeid(Node* out) {
     return parse_postfix(out);
 }
 
+// dynamic_cast<T*>(e) and dynamic_cast<T&>(e) ([expr.dynamic.cast]) for a class with virtual functions and single inheritance:
+// a call of the runtime function __okay_dyncast(pointer, type record of T), which walks from the object's real type up its
+// base chain. The pointer is returned unchanged (the base starts at the start of the object). A failed reference cast gives a
+// null reference here (there is no bad_cast).
+bool Parser::parse_dynamic_cast(Node* out) {
+    next();
+    next();  // dynamic_cast <
+    Type ty;
+    bool imp = false;
+    bool exp = false;
+    if (!parse_type(&ty, &imp, &exp)) return false;
+    int stars = 0;
+    while (accept(TStar)) ++stars;
+    bool by_ref = false;
+    if (accept(TAmp) || accept(TAndAnd)) by_ref = true;
+    if (!expect(TGt, "'>'")) return false;
+    if (!expect(TLParen, "'('")) return false;
+    Node e;
+    if (!parse_expr(0, &e)) return false;
+    if (!expect(TRParen, "')'")) return false;
+    if (ty.base != 3 || ty.struct_id < 0 || (!by_ref && stars != 1)) {
+        error = "dynamic_cast supports a pointer or reference to a class";
+        return false;
+    }
+    Type target = ty;
+    target.is_const = false;
+    target.pointers = 0;
+    target.is_ref = false;
+    const std::string sym = typeinfo_global(target);
+    bool have = false;
+    for (const FuncDecl& fn : funcs)
+        if (fn.name == "__okay_dyncast") have = true;
+    if (!have) {
+        FuncDecl fn;
+        fn.name = "__okay_dyncast";
+        fn.symbol = "__okay_dyncast";
+        fn.ret.base = 0;
+        fn.ret.pointers = 1;
+        Type vp;
+        vp.base = 0;
+        vp.pointers = 1;
+        fn.params.push_back(vp);
+        fn.params.push_back(vp);
+        fn.param_names = {"p", "t"};
+        fn.defined = false;
+        finish_signature(&fn);
+        funcs.push_back(std::move(fn));
+    }
+    Type vp;
+    vp.base = 0;
+    vp.pointers = 1;
+    Type src;
+    Node arg0;
+    if (by_ref) {
+        arg0 = node_addr(std::move(e));
+    } else {
+        arg0 = std::move(e);
+    }
+    Node call;
+    call.kind = Node::Call;
+    call.text = "__okay_dyncast";
+    call.kids.push_back(cast_node(vp, std::move(arg0)));
+    call.kids.push_back(cast_node(vp, node_addr(node_name(sym))));
+    Type result = target;
+    result.pointers = 1;
+    Node casted = cast_node(result, std::move(call));
+    if (by_ref) {
+        out->kind = Node::Unary;
+        out->op = TStar;
+        out->kids.push_back(std::move(casted));
+    } else {
+        *out = std::move(casted);
+    }
+    return parse_postfix(out);
+}
+
 bool Parser::parse_unary(Node* out) {
     if (is(TIdent) && cur().text == "typeid" && at + 1 < tokens.size() && tokens[at + 1].kind == TLParen) return parse_typeid(out);
+    if (is(TIdent) && cur().text == "dynamic_cast" && at + 1 < tokens.size() && tokens[at + 1].kind == TLt) return parse_dynamic_cast(out);
     if (is(TIdent) && cur().text == "new") {
         if (!parse_new(out)) return false;
         return parse_postfix(out);

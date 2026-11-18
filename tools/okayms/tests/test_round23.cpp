@@ -231,5 +231,11 @@ int main(int, char**) {
           "try { g(-1); } catch (const std::exception& e) { return e.what()[0]; }\n"
           "return b->v + a.use_count() + bp->a + d.f() + cd.hooked; }\n", &o);
     CHECK(t, has_symbol(o, "main") && has_symbol(o, "??$hook@UCD@@@@YAXPEAU?$Base@UCD@@@@H@Z"));
+    ++tests;
+    build(t, "round 31: dynamic_cast (pointer and reference), out-of-class member template returning T*",
+          "#include <cstdlib>\n#include <new>\nstruct C { virtual ~C() {} int id; template <typename X> X* Get() const; };\nstruct T : C { int x; };\nstruct U : C { int y; };\n"
+          "template <typename X> X* C::Get() const { return dynamic_cast<X*>(const_cast<C*>(this)); }\n"
+          "int main() { T t; t.x = 3; C* c = &t; U* u = dynamic_cast<U*>(c); T* tp = c->Get<T>(); C& r = t; T& tr = dynamic_cast<T&>(r); return (u == 0) + tp->x + tr.x; }\n", &o);
+    CHECK(t, has_symbol(o, "__okay_dyncast") && has_symbol(o, "__ti_UT@@"));
     return t.finish(tests);
 }

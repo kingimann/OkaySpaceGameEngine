@@ -1,14 +1,15 @@
 // okay-ms own standard header: std::type_info, written from ISO/IEC 14882 [type.info]. The compiler makes one object per type
 // per file (the object holds the address of the type's name, the same text the MSVC decoration gives), and `typeid` of an
 // object of a class with virtual functions reads it from vtable[-1]. Equality compares the NAME TEXT, not the object address
-// (there is one object per file). before() orders by name; hash_code() is a hash of the name. No bad_typeid, no RTTI for
-// dynamic_cast (not here).
+// (there is one object per file). before() orders by name; hash_code() is a hash of the name. No bad_typeid. dynamic_cast is built into
+// the compiler (single inheritance, see runtime/rtti.c).
 #pragma once
 #include <cstddef>
 namespace std {
 class type_info {
 public:
     const char* name_;
+    const type_info* base_;  // the record of the single base class, or 0 (used by dynamic_cast, runtime/rtti.c)
     const char* name() const { return name_; }
     bool operator==(const type_info& o) const {
         const char* a = name_;

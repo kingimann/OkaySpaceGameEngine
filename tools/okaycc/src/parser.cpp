@@ -30,8 +30,11 @@ struct Param {
     std::unique_ptr<Type> type;
     int bits = -1;
     std::string mangled;
+    int vslot = -1;     // virtual function table slot, or -1
+    bool pure = false;  // declared "= 0"
     Param();
     Param(Param&&) noexcept;
+    Param& operator=(Param&&) noexcept;
     ~Param();
 };
 
@@ -65,6 +68,13 @@ struct Type {
     bool unsized = false;
     bool variadic = false;
     std::vector<Param> params;
+    // Class facts (Itanium C++ ABI layout of a single-inheritance class).
+    std::string base;                // tag of the one base class, or empty
+    bool nonpod = false;             // not "POD for the purpose of layout"
+    bool hasVptr = false;            // has a vtable pointer at offset 0
+    bool needCtor = false;           // construction must run code
+    bool needDtor = false;           // destruction must run code
+    std::vector<std::string> vslots; // symbol that fills each vtable slot ("" = null)
     Type();
     ~Type();
 };
@@ -79,6 +89,7 @@ struct Decl {
     bool isStatic = false;
     std::string asmName;
     std::string methodTag;
+    std::vector<std::string> vt;  // vtable image: symbol per 8-byte slot ("" = zero)
     int line = 1;
     int col = 1;
     std::string file;
@@ -111,6 +122,7 @@ struct Tu {
 
 Param::Param() = default;
 Param::Param(Param&&) noexcept = default;
+Param& Param::operator=(Param&&) noexcept = default;
 Param::~Param() = default;
 Expr::Expr() = default;
 Expr::~Expr() = default;
@@ -148,6 +160,12 @@ std::unique_ptr<Type> cloneType(const Type& t) {
     n->unsign = t.unsign;
     n->unsized = t.unsized;
     n->variadic = t.variadic;
+    n->base = t.base;
+    n->nonpod = t.nonpod;
+    n->hasVptr = t.hasVptr;
+    n->needCtor = t.needCtor;
+    n->needDtor = t.needDtor;
+    n->vslots = t.vslots;
     if (t.inner) n->inner = cloneType(*t.inner);
     if (t.bound) n->bound = cloneExpr(*t.bound);
     for (const Param& p : t.params) {
@@ -155,6 +173,8 @@ std::unique_ptr<Type> cloneType(const Type& t) {
         c.name = p.name;
         c.bits = p.bits;
         c.mangled = p.mangled;
+        c.vslot = p.vslot;
+        c.pure = p.pure;
         if (p.type) c.type = cloneType(*p.type);
         n->params.push_back(std::move(c));
     }
@@ -219,6 +239,9 @@ std::string typeStr(const Type& t) {
     return "?";
 }
 
+std::string mangleNested(const std::string& qualified);
+std::string mangleTag(const std::string& qualified) { return mangleNested(qualified); }
+
 std::string mangleType(const Type& t) {
     switch (t.kind) {
     case Type::Kind::Void: return "v";
@@ -231,8 +254,26 @@ std::string mangleType(const Type& t) {
     case Type::Kind::Double: return "d";
     case Type::Kind::Pointer: return t.inner ? "P" + mangleType(*t.inner) : "Pv";
     case Type::Kind::Reference: return t.inner ? "R" + mangleType(*t.inner) : "Rv";
+    case Type::Kind::Struct:
+    case Type::Kind::Union:
+        if (t.tag.empty()) return "i";
+        if (t.tag.find("::") == std::string::npos) return mangleTag(t.tag);
+        return "N" + mangleTag(t.tag) + "E";
     default: return "i";
     }
+}
+
+// One source-level name part. A class template instance is spelled "Box<i,Pc>" where each
+// argument is already mangled; it becomes <name> I <args> E (Itanium C++ ABI 5.1.5).
+std::string manglePart(const std::string& part) {
+    std::size_t lt = part.find('<');
+    if (lt == std::string::npos || part.back() != '>') return std::to_string(part.size()) + part;
+    std::string name = part.substr(0, lt);
+    std::string args = part.substr(lt + 1, part.size() - lt - 2);
+    std::string joined;
+    for (char c : args)
+        if (c != ',') joined += c;
+    return std::to_string(name.size()) + name + "I" + joined + "E";
 }
 
 std::string mangleNested(const std::string& qualified) {
@@ -241,8 +282,7 @@ std::string mangleNested(const std::string& qualified) {
     while (i < qualified.size()) {
         std::size_t j = qualified.find("::", i);
         std::string part = qualified.substr(i, j == std::string::npos ? std::string::npos : j - i);
-        out += std::to_string(part.size());
-        out += part;
+        out += manglePart(part);
         if (j == std::string::npos) break;
         i = j + 2;
     }
@@ -257,6 +297,17 @@ std::string mangleFunc(const std::string& qualified, const Type& fn) {
             params += p.type ? mangleType(*p.type) : "i";
     }
     return "_ZN" + mangleNested(qualified) + "E" + params;
+}
+
+// Itanium C++ ABI 5.1.4: a constructor is <nested-name> C1 and a destructor D1 (complete
+// object) or D0 (deleting). "ctor" is the two letters to put after the class name.
+std::string mangleSpecial(const std::string& cls, const char* kind, const Type& fn) {
+    std::string params;
+    if (fn.params.empty()) params = "v";
+    else {
+        for (const Param& p : fn.params) params += p.type ? mangleType(*p.type) : "i";
+    }
+    return "_ZN" + mangleNested(cls) + kind + "E" + params;
 }
 
 std::string mangleData(const std::string& qualified) { return "_ZN" + mangleNested(qualified) + "E"; }
@@ -466,6 +517,89 @@ struct Parsed {
 };
 
 std::map<std::string, std::unique_ptr<Type>>& canonStructs();
+bool sameType(const Type& a, const Type& b);
+
+// ---- Templates ----
+// A function or class template is kept as a range of tokens. An instance is made by parsing those
+// tokens again with each template parameter bound (a type parameter becomes a typedef, a value
+// parameter becomes a constant). This is the model of ISO/IEC 14882 [temp.inst]. Function
+// templates called without explicit arguments are instantiated after the checker deduces the
+// arguments from the call, then the whole file is parsed again with the new requests.
+struct TArg {
+    std::unique_ptr<Type> type;
+    std::int64_t value = 0;
+    bool isValue = false;
+};
+
+std::vector<TArg> cloneArgs(const std::vector<TArg>& in) {
+    std::vector<TArg> out;
+    for (const TArg& a : in) {
+        TArg c;
+        if (a.type) c.type = cloneType(*a.type);
+        c.value = a.value;
+        c.isValue = a.isValue;
+        out.push_back(std::move(c));
+    }
+    return out;
+}
+
+struct TemplateSig {
+    std::vector<std::string> names;
+    std::vector<bool> isType;
+    std::unique_ptr<Type> fn;  // prototype, a type parameter T appears as a struct with tag "\x02T"
+};
+
+std::map<std::string, TemplateSig>& funcTemplateSigs() {
+    static std::map<std::string, TemplateSig> m;
+    return m;
+}
+
+struct InstReq {
+    std::string tmpl;
+    std::vector<TArg> args;
+    std::string name;
+};
+
+std::vector<InstReq>& instRequests() {
+    static std::vector<InstReq> v;
+    return v;
+}
+
+bool& instDirty() {
+    static bool d = false;
+    return d;
+}
+
+std::string argMangle(const TArg& a) {
+    if (a.isValue) return "Li" + std::to_string(a.value) + "E";
+    return a.type ? mangleType(*a.type) : "i";
+}
+
+std::unique_ptr<Type> substType(const Type& pat, const TemplateSig& sig, const std::vector<TArg>& args) {
+    if (pat.kind == Type::Kind::Struct && !pat.tag.empty() && pat.tag[0] == '\x02') {
+        for (std::size_t i = 0; i < sig.names.size() && i < args.size(); ++i)
+            if (sig.names[i] == pat.tag.substr(1) && args[i].type) return cloneType(*args[i].type);
+        return cloneType(pat);
+    }
+    auto n = cloneType(pat);
+    if (pat.inner) n->inner = substType(*pat.inner, sig, args);
+    for (std::size_t i = 0; i < pat.params.size(); ++i)
+        if (pat.params[i].type) n->params[i].type = substType(*pat.params[i].type, sig, args);
+    return n;
+}
+
+// Name of a function template instance: _Z <name> I <arguments> E <parameter types>.
+std::string instFuncName(const std::string& tmpl, const TemplateSig& sig, const std::vector<TArg>& args) {
+    std::string out = "_Z" + mangleNested(tmpl) + "I";
+    for (const TArg& a : args) out += argMangle(a);
+    out += "E";
+    if (!sig.fn || sig.fn->params.empty()) return out + "v";
+    for (const Param& p : sig.fn->params) {
+        auto t = p.type ? substType(*p.type, sig, args) : nullptr;
+        out += t ? mangleType(*t) : "i";
+    }
+    return out;
+}
 
 class Parser {
 public:
@@ -477,7 +611,9 @@ public:
         while (!atEnd()) {
             std::size_t before = i_;
             if (isKw("namespace")) parseNamespace(tu);
-            else if (isUnsupported()) {
+            else if (isKw("template")) parseTemplate();
+            else if (parseLinkage(tu)) {
+            } else if (isUnsupported()) {
                 err("'" + cur().text + "' is not in this subset");
                 syncSemi();
             } else if (!isTypeKw(cur())) {
@@ -489,6 +625,8 @@ public:
             if (stop_) break;
             if (i_ == before) advance();
         }
+        flushExtras(tu);
+        processInstances(tu);
         flushExtras(tu);
         return tu;
     }
@@ -505,6 +643,7 @@ private:
     bool enumDef_ = false;
     std::vector<std::map<std::string, std::unique_ptr<Type>>> tscopes_;
     std::vector<std::string> ns_;
+    std::set<std::string> implicitTags_;
     std::vector<std::unique_ptr<Decl>> extras_;
 
     const Type* findTypedef(const std::string& name) const {
@@ -548,13 +687,24 @@ private:
     bool isKw(const char* s) const { return !atEnd() && isKwTok(cur(), s); }
     bool isTypeKw(const Token& t) const {
         if (isKwTok(t, "void") || isKwTok(t, "char") || isKwTok(t, "short") || isKwTok(t, "int") ||
-            isKwTok(t, "long") || isKwTok(t, "struct") || isKwTok(t, "union") || isKwTok(t, "enum") ||
+            isKwTok(t, "long") || isKwTok(t, "struct") || isKwTok(t, "class") || isKwTok(t, "union") || isKwTok(t, "enum") ||
             isKwTok(t, "extern") || isKwTok(t, "float") || isKwTok(t, "double") ||
             isKwTok(t, "const") || isKwTok(t, "volatile") || isKwTok(t, "static") ||
             isKwTok(t, "unsigned") || isKwTok(t, "signed") || isKwTok(t, "bool") ||
             isKwTok(t, "typedef"))
             return true;
-        return t.kind == Tok::Ident && findTypedef(t.text) != nullptr;
+        if (t.kind == Tok::Ident && ctmpl_.count(t.text)) return true;
+        if (t.kind != Tok::Ident || findTypedef(t.text) == nullptr) return false;
+        if (!implicitTags_.count(t.text)) return true;
+        // A struct tag used as a plain type name (C++). Where C would see a variable of the same
+        // name, only treat it as a type when what follows can continue a declaration or a type.
+        const Token* base = toks_.data();
+        if (&t < base || &t >= base + toks_.size()) return true;
+        std::size_t idx = static_cast<std::size_t>(&t - base);
+        if (idx + 1 >= toks_.size()) return true;
+        const Token& n = toks_[idx + 1];
+        if (n.kind == Tok::Ident) return true;
+        return n.kind == Tok::Punct && (n.text == "*" || n.text == "&" || n.text == ")" || n.text == "::" || n.text == ">");
     }
     bool isUnsupported() const {
         if (atEnd() || cur().kind != Tok::Keyword) return false;
@@ -643,7 +793,7 @@ private:
     }
 
     std::unique_ptr<Type> parseBase() {
-        if (isKw("struct") || isKw("union")) return parseStructType();
+        if (isKw("struct") || isKw("union") || isKw("class")) return parseStructType();
         if (isKw("enum")) return parseEnum();
         if (eatKw("bool")) {
             auto t = ty(Type::Kind::Bool);
@@ -714,6 +864,8 @@ private:
             t->unsign = uns;
             return t;
         }
+        if (!atEnd() && cur().kind == Tok::Ident && ctmpl_.count(cur().text) && !findTypedef(cur().text))
+            return instantiateClass(cur().text);
         if (!atEnd() && cur().kind == Tok::Ident) {
             const Type* td = findTypedef(cur().text);
             if (td) {
@@ -759,9 +911,502 @@ private:
         return ty(Type::Kind::Int);
     }
 
+    // ---- C++ classes: single inheritance, constructors, destructors, virtual functions ----
+    // Written from ISO/IEC 14882 (class, constructor and destructor rules) and the Itanium C++
+    // ABI (data layout, vtable layout, name mangling).
+    struct Pos {
+        int line = 1;
+        int col = 1;
+        std::string file;
+    };
+    Pos here() const {
+        Pos p;
+        if (i_ < toks_.size()) {
+            p.line = toks_[i_].line;
+            p.col = toks_[i_].column;
+            p.file = toks_[i_].file;
+        }
+        return p;
+    }
+    struct MemInit {
+        std::string name;
+        std::vector<std::unique_ptr<Expr>> args;
+    };
+    struct CtorDef {
+        std::vector<Param> params;
+        std::vector<MemInit> inits;
+        std::unique_ptr<Stmt> body;
+        bool hasBody = false;
+        Pos pos;
+    };
+    struct ClassCtx {
+        std::string tag;
+        Type* t = nullptr;
+        std::vector<CtorDef> ctors;
+        bool dtorDeclared = false;
+        bool dtorVirtual = false;
+        std::unique_ptr<Stmt> dtorBody;
+        Pos dtorPos;
+        bool dtorInline = false;  // a body for the complete-object destructor is emitted at class end
+        bool cxx = false;
+    };
+    struct DVar {
+        std::string name;
+        std::string tag;
+    };
+    std::vector<std::vector<DVar>> dscopes_;
+    std::size_t dbase_ = 0;
+    std::vector<std::size_t> loopBases_;
+    std::vector<std::size_t> brkBases_;
+    const Type* curRet_ = nullptr;
+    std::vector<std::unique_ptr<Stmt>> preStmts_;
+    int newN_ = 0;
+
+    Type* classOf(const std::string& tag) {
+        auto it = structs_.find(tag);
+        return it == structs_.end() ? nullptr : it->second.get();
+    }
+    static std::string shortName(const std::string& tag) {
+        std::size_t c = tag.rfind("::");
+        return c == std::string::npos ? tag : tag.substr(c + 2);
+    }
+    static std::vector<Param> cloneParams(const std::vector<Param>& ps) {
+        std::vector<Param> out;
+        for (const Param& p : ps) {
+            Param c;
+            c.name = p.name;
+            c.bits = p.bits;
+            c.mangled = p.mangled;
+            c.vslot = p.vslot;
+            c.pure = p.pure;
+            if (p.type) c.type = cloneType(*p.type);
+            out.push_back(std::move(c));
+        }
+        return out;
+    }
+    static const Param* special(const Type* t, const char* name) {
+        if (!t) return nullptr;
+        for (const Param& p : t->params)
+            if (p.name == name) return &p;
+        return nullptr;
+    }
+    static bool isSpecialName(const std::string& n) { return n == "<ctor>" || n == "<dtor>" || n == "<dtor0>"; }
+    static bool isDataField(const Param& p) {
+        return p.mangled.empty() && p.type && p.type->kind != Type::Kind::Function && p.name != "__vptr" &&
+               p.name != "__basepad";
+    }
+    static std::string vtName(const std::string& tag) {
+        if (tag.find("::") == std::string::npos) return "_ZTV" + mangleNested(tag);
+        return "_ZTVN" + mangleNested(tag) + "E";
+    }
+
+    std::unique_ptr<Expr> eName(const std::string& n, const Pos& p) {
+        auto e = std::make_unique<Expr>();
+        e->kind = Expr::Kind::Name;
+        e->text = n;
+        e->line = p.line;
+        e->col = p.col;
+        e->file = p.file;
+        return e;
+    }
+    std::unique_ptr<Expr> eInt(std::uint64_t v, const Pos& p) {
+        auto e = std::make_unique<Expr>();
+        e->kind = Expr::Kind::Int;
+        e->ival = v;
+        e->line = p.line;
+        e->col = p.col;
+        e->file = p.file;
+        return e;
+    }
+    std::unique_ptr<Expr> eCall(std::unique_ptr<Expr> callee, std::vector<std::unique_ptr<Expr>> args,
+                                const Pos& p) {
+        auto e = std::make_unique<Expr>();
+        e->kind = Expr::Kind::Call;
+        e->line = p.line;
+        e->col = p.col;
+        e->file = p.file;
+        e->kids.push_back(std::move(callee));
+        for (auto& a : args) e->kids.push_back(std::move(a));
+        return e;
+    }
+    std::unique_ptr<Expr> eAddr(std::unique_ptr<Expr> x, const Pos& p) {
+        auto e = std::make_unique<Expr>();
+        e->kind = Expr::Kind::Unary;
+        e->text = "&";
+        e->line = p.line;
+        e->col = p.col;
+        e->file = p.file;
+        e->kids.push_back(std::move(x));
+        return e;
+    }
+    std::unique_ptr<Expr> eArrow(std::unique_ptr<Expr> obj, const std::string& field, const Pos& p) {
+        auto e = std::make_unique<Expr>();
+        e->kind = Expr::Kind::Member;
+        e->text = "->";
+        e->line = p.line;
+        e->col = p.col;
+        e->file = p.file;
+        e->kids.push_back(std::move(obj));
+        e->kids.push_back(eName(field, p));
+        return e;
+    }
+    std::unique_ptr<Expr> eAssign(std::unique_ptr<Expr> l, std::unique_ptr<Expr> r, const Pos& p) {
+        auto e = std::make_unique<Expr>();
+        e->kind = Expr::Kind::Assign;
+        e->text = "=";
+        e->line = p.line;
+        e->col = p.col;
+        e->file = p.file;
+        e->kids.push_back(std::move(l));
+        e->kids.push_back(std::move(r));
+        return e;
+    }
+    std::unique_ptr<Stmt> sExpr(std::unique_ptr<Expr> x, const Pos& p) {
+        auto s = std::make_unique<Stmt>();
+        s->kind = Stmt::Kind::Expr;
+        s->line = p.line;
+        s->col = p.col;
+        s->file = p.file;
+        s->expr = std::move(x);
+        return s;
+    }
+    std::unique_ptr<Stmt> sBlock(const Pos& p) {
+        auto s = std::make_unique<Stmt>();
+        s->kind = Stmt::Kind::Block;
+        s->line = p.line;
+        s->col = p.col;
+        s->file = p.file;
+        return s;
+    }
+    std::unique_ptr<Type> voidPtr() {
+        auto p = ty(Type::Kind::Pointer);
+        p->inner = ty(Type::Kind::Void);
+        return p;
+    }
+    std::unique_ptr<Type> ptrToTag(const std::string& tag) {
+        auto inner = ty(Type::Kind::Struct);
+        inner->tag = tag;
+        auto ptr = ty(Type::Kind::Pointer);
+        ptr->inner = std::move(inner);
+        return ptr;
+    }
+    std::unique_ptr<Type> fnTypeOf(const std::vector<Param>& ps) {
+        auto ft = ty(Type::Kind::Function);
+        ft->inner = ty(Type::Kind::Void);
+        ft->params = cloneParams(ps);
+        return ft;
+    }
+
+    // A call to a constructor. The checker picks the overload from the arguments.
+    std::unique_ptr<Expr> ctorCall(const std::string& tag, std::unique_ptr<Expr> self,
+                                   std::vector<std::unique_ptr<Expr>> args, const Pos& p) {
+        std::vector<std::unique_ptr<Expr>> all;
+        all.push_back(std::move(self));
+        for (auto& a : args) all.push_back(std::move(a));
+        return eCall(eName("\x01" "ctor:" + tag, p), std::move(all), p);
+    }
+    std::unique_ptr<Expr> dtorCall(const std::string& tag, std::unique_ptr<Expr> self, const Pos& p) {
+        const Param* d = special(classOf(tag), "<dtor>");
+        if (!d) return nullptr;
+        std::vector<std::unique_ptr<Expr>> args;
+        args.push_back(std::move(self));
+        return eCall(eName(d->mangled, p), std::move(args), p);
+    }
+    std::unique_ptr<Stmt> vptrStore(const std::string& tag, const Pos& p) {
+        auto cast = std::make_unique<Expr>();
+        cast->kind = Expr::Kind::Cast;
+        cast->line = p.line;
+        cast->col = p.col;
+        cast->file = p.file;
+        auto pp = ty(Type::Kind::Pointer);
+        pp->inner = voidPtr();
+        cast->ty = std::move(pp);
+        cast->kids.push_back(eName(vtName(tag), p));
+        auto sum = std::make_unique<Expr>();
+        sum->kind = Expr::Kind::Bin;
+        sum->text = "+";
+        sum->line = p.line;
+        sum->col = p.col;
+        sum->file = p.file;
+        sum->kids.push_back(std::move(cast));
+        sum->kids.push_back(eInt(2, p));
+        return sExpr(eAssign(eArrow(eName("this", p), "__vptr", p), std::move(sum), p), p);
+    }
+
+    int newSlot(ClassCtx& c, const Token& at) {
+        Type& T = *c.t;
+        if (!T.hasVptr) {
+            if (!T.base.empty()) {
+                diags_.error(at.file.empty() ? "t.c" : at.file, at.line, at.column,
+                             "a virtual function in a class whose base is not polymorphic is not supported");
+            } else {
+                Param v;
+                v.name = "__vptr";
+                v.type = voidPtr();
+                T.params.insert(T.params.begin(), std::move(v));
+                T.hasVptr = true;
+            }
+        }
+        T.vslots.push_back("");
+        return static_cast<int>(T.vslots.size()) - 1;
+    }
+
+    void registerDtor(ClassCtx& c, bool virt, const Token& at) {
+        Type& T = *c.t;
+        Param d;
+        d.name = "<dtor>";
+        auto ft = fnTypeOf({});
+        d.mangled = mangleSpecial(c.tag, "D1", *ft);
+        d.type = cloneType(*ft);
+        Param d0;
+        d0.name = "<dtor0>";
+        d0.mangled = mangleSpecial(c.tag, "D0", *ft);
+        d0.type = cloneType(*ft);
+        if (virt) {
+            const Param* bd = T.base.empty() ? nullptr : special(classOf(T.base), "<dtor>");
+            int s;
+            if (bd && bd->vslot >= 0) {
+                s = bd->vslot;
+            } else {
+                s = newSlot(c, at);
+                newSlot(c, at);
+            }
+            T.vslots[static_cast<std::size_t>(s)] = d.mangled;
+            T.vslots[static_cast<std::size_t>(s) + 1] = d0.mangled;
+            d.vslot = s;
+            d0.vslot = s + 1;
+        }
+        T.params.push_back(std::move(d));
+        T.params.push_back(std::move(d0));
+    }
+
+    bool sameParamTypes(const Type& a, const Type& b) {
+        if (a.params.size() != b.params.size()) return false;
+        for (std::size_t i = 0; i < a.params.size(); ++i) {
+            if (!a.params[i].type || !b.params[i].type || !sameType(*a.params[i].type, *b.params[i].type))
+                return false;
+        }
+        return true;
+    }
+
+    std::vector<std::pair<std::string, const Type*>> ownFields(const Type& T) {
+        std::vector<std::pair<std::string, const Type*>> out;
+        const Type* B = T.base.empty() ? nullptr : classOf(T.base);
+        for (const Param& p : T.params) {
+            if (!isDataField(p)) continue;
+            bool inherited = false;
+            if (B)
+                for (const Param& bp : B->params)
+                    if (isDataField(bp) && bp.name == p.name) inherited = true;
+            if (!inherited) out.emplace_back(p.name, p.type.get());
+        }
+        return out;
+    }
+
+    std::unique_ptr<Decl> newMethodDecl(const std::string& tag, const std::string& mangled, const Type& userFn,
+                                        const std::vector<Param>& params, const Pos& p) {
+        auto decl = std::make_unique<Decl>();
+        decl->name = mangled;
+        decl->function = true;
+        decl->methodTag = tag;
+        decl->line = p.line;
+        decl->col = p.col;
+        decl->file = p.file;
+        auto ft = ty(Type::Kind::Function);
+        ft->inner = userFn.inner ? cloneType(*userFn.inner) : ty(Type::Kind::Void);
+        Param self;
+        self.name = "this";
+        self.type = ptrToTag(tag);
+        ft->params.push_back(std::move(self));
+        for (const Param& q : params) {
+            Param c;
+            c.name = q.name;
+            if (q.type) c.type = cloneType(*q.type);
+            ft->params.push_back(std::move(c));
+        }
+        decl->type = std::move(ft);
+        return decl;
+    }
+
+    // A constructor body: base constructor, vtable pointer, members in declaration order, then the
+    // user's own statements (ISO C++ [class.base.init]).
+    std::unique_ptr<Decl> buildCtor(const std::string& tag, CtorDef& d) {
+        Type* T = classOf(tag);
+        if (!T) return nullptr;
+        Pos p = d.pos;
+        auto fn = fnTypeOf(d.params);
+        std::string mangled = mangleSpecial(tag, "C1", *fn);
+        auto decl = newMethodDecl(tag, mangled, *fn, d.params, p);
+        auto body = sBlock(p);
+        auto take = [&](const std::string& n, const std::string& alt) -> MemInit* {
+            for (MemInit& m : d.inits)
+                if (m.name == n || (!alt.empty() && m.name == alt)) return &m;
+            return nullptr;
+        };
+        Type* B = T->base.empty() ? nullptr : classOf(T->base);
+        if (B && B->needCtor) {
+            MemInit* mi = take(shortName(T->base), T->base);
+            std::vector<std::unique_ptr<Expr>> args;
+            if (mi) args = std::move(mi->args);
+            body->stmts.push_back(sExpr(ctorCall(T->base, eName("this", p), std::move(args), p), p));
+        }
+        if (T->hasVptr) body->stmts.push_back(vptrStore(tag, p));
+        for (auto& f : ownFields(*T)) {
+            MemInit* mi = take(f.first, "");
+            Type* ft = f.second && f.second->kind == Type::Kind::Struct && !f.second->tag.empty()
+                           ? classOf(f.second->tag)
+                           : nullptr;
+            if (ft && ft->needCtor) {
+                std::vector<std::unique_ptr<Expr>> args;
+                if (mi) args = std::move(mi->args);
+                body->stmts.push_back(sExpr(
+                    ctorCall(f.second->tag, eAddr(eArrow(eName("this", p), f.first, p), p), std::move(args), p), p));
+            } else if (mi && mi->args.size() == 1) {
+                body->stmts.push_back(
+                    sExpr(eAssign(eArrow(eName("this", p), f.first, p), std::move(mi->args[0]), p), p));
+            }
+        }
+        for (MemInit& m : d.inits) {
+            bool ok = (B && (m.name == shortName(T->base) || m.name == T->base));
+            for (auto& f : ownFields(*T))
+                if (f.first == m.name) ok = true;
+            if (!ok) diags_.error(p.file.empty() ? "t.c" : p.file, p.line, p.col, "'" + m.name + "' is not a member or base");
+        }
+        if (d.body) body->stmts.push_back(std::move(d.body));
+        decl->body = std::move(body);
+        return decl;
+    }
+
+    std::unique_ptr<Decl> buildDtor(const std::string& tag, std::unique_ptr<Stmt> user, const Pos& p, bool deleting) {
+        Type* T = classOf(tag);
+        if (!T) return nullptr;
+        auto fn = fnTypeOf({});
+        auto decl = newMethodDecl(tag, mangleSpecial(tag, deleting ? "D0" : "D1", *fn), *fn, {}, p);
+        auto body = sBlock(p);
+        if (deleting) {
+            std::vector<std::unique_ptr<Expr>> a1;
+            a1.push_back(eName("this", p));
+            body->stmts.push_back(sExpr(eCall(eName(special(T, "<dtor>")->mangled, p), std::move(a1), p), p));
+            auto cast = std::make_unique<Expr>();
+            cast->kind = Expr::Kind::Cast;
+            cast->line = p.line;
+            cast->col = p.col;
+            cast->file = p.file;
+            auto cp = ty(Type::Kind::Pointer);
+            cp->inner = ty(Type::Kind::Char);
+            cast->ty = std::move(cp);
+            cast->kids.push_back(eName("this", p));
+            std::vector<std::unique_ptr<Expr>> a2;
+            a2.push_back(std::move(cast));
+            body->stmts.push_back(sExpr(eCall(eName("free", p), std::move(a2), p), p));
+            decl->body = std::move(body);
+            return decl;
+        }
+        if (T->hasVptr) body->stmts.push_back(vptrStore(tag, p));
+        if (user) body->stmts.push_back(std::move(user));
+        auto fields = ownFields(*T);
+        for (int i = static_cast<int>(fields.size()) - 1; i >= 0; --i) {
+            const Type* ft = fields[static_cast<std::size_t>(i)].second;
+            if (ft && ft->kind == Type::Kind::Struct && !ft->tag.empty()) {
+                Type* c = classOf(ft->tag);
+                if (c && c->needDtor) {
+                    auto call = dtorCall(ft->tag,
+                                         eAddr(eArrow(eName("this", p), fields[static_cast<std::size_t>(i)].first, p), p), p);
+                    if (call) body->stmts.push_back(sExpr(std::move(call), p));
+                }
+            }
+        }
+        Type* B = T->base.empty() ? nullptr : classOf(T->base);
+        if (B && B->needDtor) {
+            auto call = dtorCall(T->base, eName("this", p), p);
+            if (call) body->stmts.push_back(sExpr(std::move(call), p));
+        }
+        decl->body = std::move(body);
+        return decl;
+    }
+
+    void finishClass(ClassCtx& c) {
+        Type& T = *c.t;
+        Type* B = T.base.empty() ? nullptr : classOf(T.base);
+        bool needCtor = !c.ctors.empty() || T.hasVptr || (B && B->needCtor);
+        bool needDtor = c.dtorDeclared || (B && B->needDtor);
+        for (auto& f : ownFields(T)) {
+            if (f.second && f.second->kind == Type::Kind::Struct && !f.second->tag.empty()) {
+                Type* m = classOf(f.second->tag);
+                if (m && m->needCtor) needCtor = true;
+                if (m && m->needDtor) needDtor = true;
+                if (m && (m->nonpod || m->needCtor || m->needDtor)) T.nonpod = true;
+            }
+        }
+        T.needCtor = needCtor;
+        T.needDtor = needDtor;
+        if (!c.ctors.empty() || c.dtorDeclared || T.hasVptr || needCtor || needDtor) T.nonpod = true;
+        Token at;
+        at.line = c.dtorPos.line;
+        at.column = c.dtorPos.col;
+        at.file = c.dtorPos.file;
+        Pos p = c.dtorPos;
+        if (c.ctors.empty() && needCtor) {
+            CtorDef d;
+            d.hasBody = true;
+            d.pos = p;
+            Param cp;
+            cp.name = "<ctor>";
+            auto fn = fnTypeOf({});
+            cp.mangled = mangleSpecial(c.tag, "C1", *fn);
+            cp.type = std::move(fn);
+            T.params.push_back(std::move(cp));
+            c.ctors.push_back(std::move(d));
+        }
+        bool baseVirt = B && special(B, "<dtor>") && special(B, "<dtor>")->vslot >= 0;
+        if (!c.dtorDeclared && needDtor) {
+            registerDtor(c, baseVirt, at);
+            c.dtorInline = true;
+        }
+    }
+
+    // Runs after the finished class is stored, so the builders can look it up by tag.
+    void emitClassDecls(ClassCtx& c) {
+        Type* T = classOf(c.tag);
+        if (!T) return;
+        for (CtorDef& d : c.ctors) {
+            if (!d.hasBody) continue;
+            auto decl = buildCtor(c.tag, d);
+            if (decl) extras_.push_back(std::move(decl));
+        }
+        const Param* d1 = special(T, "<dtor>");
+        if (d1 && c.dtorInline) {
+            auto decl = buildDtor(c.tag, std::move(c.dtorBody), c.dtorPos, false);
+            if (decl) extras_.push_back(std::move(decl));
+        }
+        if (d1 && d1->vslot >= 0) {
+            auto decl = buildDtor(c.tag, nullptr, c.dtorPos, true);
+            if (decl) extras_.push_back(std::move(decl));
+        }
+        if (T->hasVptr) {
+            auto vd = std::make_unique<Decl>();
+            vd->name = vtName(c.tag);
+            vd->line = c.dtorPos.line;
+            vd->col = c.dtorPos.col;
+            vd->file = c.dtorPos.file;
+            auto arr = ty(Type::Kind::Array);
+            arr->inner = voidPtr();
+            auto bound = std::make_unique<Expr>();
+            bound->kind = Expr::Kind::Int;
+            bound->ival = T->vslots.size() + 2;
+            arr->bound = std::move(bound);
+            vd->type = std::move(arr);
+            vd->vt.push_back("");
+            vd->vt.push_back("");
+            for (const std::string& sname : T->vslots) vd->vt.push_back(sname);
+            extras_.push_back(std::move(vd));
+        }
+    }
+
     std::unique_ptr<Type> parseStructType() {
         Token at = cur();
         bool isUnion = at.text == "union";
+        bool isClass = at.text == "class";
         advance();
         std::string tag;
         if (!atEnd() && cur().kind == Tok::Ident) {
@@ -777,6 +1422,39 @@ private:
                 advance();
             }
             if (tag.find("::") == std::string::npos) tag = qualify(tag);
+        }
+        std::string tplShort;
+        if (!instOverrideName_.empty() && (tag == instOverrideName_ || shortName(tag) == instOverrideName_)) {
+            tplShort = instOverrideName_;
+            tag = instOverrideTag_;
+            instOverrideName_.clear();
+        }
+        std::string baseTag;
+        if (!tag.empty() && !isUnion && isP(":")) {
+            advance();
+            while (isKw("public") || isKw("private") || isKw("protected") || isKw("virtual")) advance();
+            std::string bn;
+            if (!atEnd() && cur().kind == Tok::Ident && ctmpl_.count(cur().text) && nextIs("<")) {
+                auto bt = instantiateClass(cur().text);
+                if (bt && !bt->tag.empty() && classOf(bt->tag)) baseTag = bt->tag;
+                else err("unknown base class");
+            } else if (!atEnd() && cur().kind == Tok::Ident) {
+                bn = cur().text;
+                advance();
+                while (eatP("::")) {
+                    if (atEnd() || cur().kind != Tok::Ident) break;
+                    bn += "::";
+                    bn += cur().text;
+                    advance();
+                }
+            }
+            const Type* td = findTypedef(bn);
+            if (!baseTag.empty()) {
+            } else if (classOf(qualify(bn))) baseTag = qualify(bn);
+            else if (classOf(bn)) baseTag = bn;
+            else if (td && !td->tag.empty() && classOf(td->tag)) baseTag = td->tag;
+            else err("unknown base class '" + bn + "'");
+            if (isP(",")) err("multiple inheritance is not supported");
         }
         if (!eatP("{")) {
             if (tag.empty()) {
@@ -799,7 +1477,123 @@ private:
             structs_[tag] = std::move(inc);
             completing = true;
         }
+        ClassCtx cx;
+        cx.tag = tag;
+        cx.t = t.get();
+        cx.dtorPos.line = at.line;
+        cx.dtorPos.col = at.column;
+        cx.dtorPos.file = at.file;
+        bool classy = !tag.empty() && !isUnion;
+        std::string shortTag = tplShort.empty() ? shortName(tag) : tplShort;
+        bool pub = !isClass;
+        if (classy) cx.cxx = true;
+        if (!baseTag.empty()) {
+            Type* B = classOf(baseTag);
+            for (const Param& p : B->params) {
+                if (isSpecialName(p.name)) continue;
+                Param c;
+                c.name = p.name;
+                c.bits = p.bits;
+                c.mangled = p.mangled;
+                c.vslot = p.vslot;
+                c.pure = p.pure;
+                if (p.type) c.type = cloneType(*p.type);
+                t->params.push_back(std::move(c));
+            }
+            if (!B->nonpod) {
+                Param padp;
+                padp.name = "__basepad";
+                padp.type = cloneType(*B);
+                t->params.push_back(std::move(padp));
+            }
+            t->base = baseTag;
+            t->nonpod = true;
+            t->hasVptr = B->hasVptr;
+            t->vslots = B->vslots;
+            t->needCtor = B->needCtor;
+            t->needDtor = B->needDtor;
+        }
+        if (cx.cxx) {
+            auto ph = ty(Type::Kind::Struct);
+            ph->tag = tag;
+            addTypedef(shortTag, std::move(ph));
+            implicitTags_.insert(shortTag);
+        }
         while (!atEnd() && !isP("}")) {
+            if ((isKw("public") || isKw("private") || isKw("protected")) && nextIs(":")) {
+                pub = isKw("public");
+                advance();
+                advance();
+                continue;
+            }
+            bool isVirtual = false;
+            if (classy && isKw("virtual")) {
+                isVirtual = true;
+                advance();
+                cx.cxx = true;
+            }
+            if (classy && isP("~")) {
+                Token dt = cur();
+                advance();
+                if (!atEnd() && cur().kind == Tok::Ident && cur().text == shortTag) advance();
+                else err("expected the class name after '~'");
+                expectP("(", "(");
+                expectP(")", ")");
+                while (isKw("noexcept") || isKw("override") || isKw("final")) advance();
+                cx.cxx = true;
+                if (cx.dtorDeclared) err("a class has one destructor");
+                cx.dtorDeclared = true;
+                cx.dtorPos.line = dt.line;
+                cx.dtorPos.col = dt.column;
+                cx.dtorPos.file = dt.file;
+                bool baseVirt = !baseTag.empty() && special(classOf(baseTag), "<dtor>") &&
+                                special(classOf(baseTag), "<dtor>")->vslot >= 0;
+                registerDtor(cx, isVirtual || baseVirt, dt);
+                if (isP("{")) {
+                    auto vt = ty(Type::Kind::Void);
+                    cx.dtorBody = parseBody(vt.get());
+                    cx.dtorInline = true;
+                } else if (eatP("=")) {
+                    if (isKw("default")) cx.dtorInline = true;
+                    advance();
+                    expectP(";", ";");
+                    if (cx.dtorInline && !cx.dtorBody) cx.dtorBody = sBlock(cx.dtorPos);
+                } else {
+                    expectP(";", ";");
+                }
+                continue;
+            }
+            if (classy && !atEnd() && cur().kind == Tok::Ident && cur().text == shortTag && nextIs("(")) {
+                CtorDef cd;
+                cd.pos = here();
+                advance();
+                advance();
+                parseParams(cd.params);
+                cx.cxx = true;
+                parseInitList(cd);
+                Param cp;
+                cp.name = "<ctor>";
+                auto fn = fnTypeOf(cd.params);
+                cp.mangled = mangleSpecial(tag, "C1", *fn);
+                cp.type = std::move(fn);
+                t->params.push_back(std::move(cp));
+                if (isP("{")) {
+                    auto vt = ty(Type::Kind::Void);
+                    cd.body = parseBody(vt.get());
+                    cd.hasBody = true;
+                } else if (eatP("=")) {
+                    if (isKw("default")) {
+                        cd.hasBody = true;
+                        cd.body = sBlock(cd.pos);
+                    }
+                    advance();
+                    expectP(";", ";");
+                } else {
+                    expectP(";", ";");
+                }
+                cx.ctors.push_back(std::move(cd));
+                continue;
+            }
             if (!isTypeKw(cur())) {
                 err("expected a field");
                 break;
@@ -808,33 +1602,43 @@ private:
             Parsed d = parseDeclarator(true);
             auto fieldType = apply(std::move(base), d.mods);
             if (fieldType && fieldType->kind == Type::Kind::Function && !tag.empty() && !isUnion) {
+                cx.cxx = true;
+                if (cx.cxx && !classy) classy = true;
+                bool pure = false;
+                while (isKw("const") || isKw("override") || isKw("final") || isKw("noexcept")) advance();
+                if (isP("=")) {
+                    advance();
+                    if (!atEnd() && cur().kind == Tok::Int && cur().uval == 0) pure = true;
+                    advance();
+                }
                 Param field;
                 field.name = d.name;
                 field.mangled = mangleFunc(tag + "::" + d.name, *fieldType);
                 field.type = cloneType(*fieldType);
+                int slot = -1;
+                bool virt = isVirtual;
+                for (std::size_t j = 0; j < t->params.size(); ++j) {
+                    const Param& ex = t->params[j];
+                    if (ex.name != d.name || ex.mangled.empty() || isSpecialName(ex.name) || !ex.type) continue;
+                    if (!sameParamTypes(*ex.type, *fieldType)) continue;
+                    if (ex.vslot >= 0) {
+                        slot = ex.vslot;
+                        virt = true;
+                    }
+                    t->params.erase(t->params.begin() + static_cast<std::ptrdiff_t>(j));
+                    break;
+                }
+                if (virt) {
+                    if (slot < 0) slot = newSlot(cx, at);
+                    if (slot >= 0) t->vslots[static_cast<std::size_t>(slot)] = pure ? "" : field.mangled;
+                }
+                field.vslot = slot;
+                field.pure = pure;
                 t->params.push_back(std::move(field));
                 if (isP("{")) {
-                    auto decl = std::make_unique<Decl>();
-                    decl->name = t->params.back().mangled;
-                    decl->function = true;
-                    decl->methodTag = tag;
-                    decl->line = d.line;
-                    decl->col = d.col;
-                    decl->file = d.file;
-                    auto ft = cloneType(*fieldType);
-                    Param self;
-                    self.name = "this";
-                    auto inner = ty(Type::Kind::Struct);
-                    inner->tag = tag;
-                    auto ptr = ty(Type::Kind::Pointer);
-                    ptr->inner = std::move(inner);
-                    self.type = std::move(ptr);
-                    std::vector<Param> withThis;
-                    withThis.push_back(std::move(self));
-                    for (Param& p : ft->params) withThis.push_back(std::move(p));
-                    ft->params = std::move(withThis);
-                    decl->type = std::move(ft);
-                    decl->body = parseCompound();
+                    auto decl = newMethodDecl(tag, t->params.back().mangled, *fieldType, fieldType->params,
+                                              Pos{d.line, d.col, d.file});
+                    decl->body = parseBody(fieldType->inner.get());
                     extras_.push_back(std::move(decl));
                 } else {
                     expectP(";", ";");
@@ -849,6 +1653,7 @@ private:
                 if (!w || w->kind != Expr::Kind::Int) err("bitfield width is not a constant");
                 else field.bits = static_cast<int>(w->ival);
             }
+            if (!pub) t->nonpod = true;
             t->params.push_back(std::move(field));
             expectP(";", ";");
         }
@@ -859,11 +1664,34 @@ private:
             if (already) {
                 diags_.error(at.file.empty() ? "t.c" : at.file, at.line, at.column, "redefined struct '" + tag + "'");
             } else {
+                if (cx.cxx) finishClass(cx);
                 structs_[tag] = cloneType(*t);
                 canonStructs()[tag] = cloneType(*t);
+                if (cx.cxx) {
+                    addTypedef(shortTag, cloneType(*t));
+                    emitClassDecls(cx);
+                }
             }
         }
         return t;
+    }
+
+    // Parse a function body, noting the return type for destructor-before-return handling.
+    std::unique_ptr<Stmt> parseBody(const Type* ret) {
+        const Type* savedRet = curRet_;
+        std::size_t savedBase = dbase_;
+        auto savedLoops = std::move(loopBases_);
+        auto savedBrks = std::move(brkBases_);
+        loopBases_.clear();
+        brkBases_.clear();
+        curRet_ = ret;
+        dbase_ = dscopes_.size();
+        auto b = parseCompound();
+        curRet_ = savedRet;
+        dbase_ = savedBase;
+        loopBases_ = std::move(savedLoops);
+        brkBases_ = std::move(savedBrks);
+        return b;
     }
 
     Parsed parseDeclarator(bool needName) {
@@ -1030,6 +1858,11 @@ private:
         decl->init = std::move(init);
         decl->function = decl->type && decl->type->kind == Type::Kind::Function;
         decl->name = qualify(decl->name);
+        if (!instFnName_.empty() && decl->function) {
+            decl->name = instFnName_;
+            instFnName_.clear();
+            return decl;
+        }
         if (decl->name.find("::") != std::string::npos && decl->type) {
             if (decl->function) decl->asmName = mangleFunc(decl->name, *decl->type);
             else decl->asmName = mangleData(decl->name);
@@ -1050,8 +1883,355 @@ private:
     }
 
     void flushExtras(Tu& tu) {
+        if (!preStmts_.empty()) {
+            err("'new' with a constructor or an initial value is only supported inside a function");
+            preStmts_.clear();
+        }
         for (auto& d : extras_) tu.decls.push_back(std::move(d));
         extras_.clear();
+    }
+
+    // ---- template parsing ----
+    struct TParam {
+        std::string name;
+        bool isType = true;
+        bool hasDef = false;
+        std::size_t defStart = 0;
+    };
+    struct TDecl {
+        std::vector<TParam> params;
+        std::size_t start = 0;
+        std::size_t end = 0;
+    };
+    std::map<std::string, TDecl> ftmpl_;
+    std::map<std::string, TDecl> ctmpl_;
+    std::vector<InstReq> work_;
+    std::set<std::string> instDone_;
+    std::string instOverrideName_;
+    std::string instOverrideTag_;
+    std::string instFnName_;
+    bool halfGt_ = false;
+
+    std::size_t skipDecl(std::size_t from) const {
+        std::size_t k = from;
+        int paren = 0;
+        while (k < toks_.size() && toks_[k].kind != Tok::End) {
+            const Token& t = toks_[k];
+            if (isP(t, "(")) ++paren;
+            else if (isP(t, ")")) --paren;
+            else if (isP(t, "{") && paren == 0) {
+                int depth = 0;
+                while (k < toks_.size() && toks_[k].kind != Tok::End) {
+                    if (isP(toks_[k], "{")) ++depth;
+                    else if (isP(toks_[k], "}") && --depth == 0) break;
+                    ++k;
+                }
+                ++k;
+                if (k < toks_.size() && isP(toks_[k], ";")) ++k;
+                return k;
+            } else if (isP(t, ";") && paren == 0) {
+                return k + 1;
+            }
+            ++k;
+        }
+        return k;
+    }
+
+    bool isAngleClose() const { return halfGt_ || isP(">") || isP(">>"); }
+    void closeAngle() {
+        if (halfGt_) {
+            halfGt_ = false;
+            advance();
+            return;
+        }
+        if (isP(">")) advance();
+        else if (isP(">>")) halfGt_ = true;
+        else err("expected '>'");
+    }
+
+    std::int64_t constOf(const Expr& e) {
+        if (e.kind == Expr::Kind::Int || e.kind == Expr::Kind::Char) return static_cast<std::int64_t>(e.ival);
+        if (e.kind == Expr::Kind::Unary && e.text == "-" && !e.kids.empty() && e.kids[0])
+            return -constOf(*e.kids[0]);
+        err("template argument is not a constant");
+        return 0;
+    }
+
+    TArg parseOneArg(const TParam& tp) {
+        TArg a;
+        if (tp.isType) {
+            auto b = parseBase();
+            while (eatP("*")) {
+                auto ptr = ty(Type::Kind::Pointer);
+                ptr->inner = std::move(b);
+                b = std::move(ptr);
+            }
+            a.type = std::move(b);
+        } else {
+            auto e = parseAdd();
+            a.isValue = true;
+            a.value = constOf(*e);
+        }
+        return a;
+    }
+
+    // At '<': read the template arguments up to the closing '>', then fill in defaults.
+    void parseTemplateArgs(const TDecl& td, std::vector<TArg>& out) {
+        advance();
+        std::size_t idx = 0;
+        while (!atEnd() && !isAngleClose()) {
+            if (idx >= td.params.size()) {
+                err("too many template arguments");
+                break;
+            }
+            out.push_back(parseOneArg(td.params[idx]));
+            ++idx;
+            if (!eatP(",")) break;
+        }
+        closeAngle();
+        for (; idx < td.params.size(); ++idx) {
+            if (!td.params[idx].hasDef) {
+                err("too few template arguments");
+                break;
+            }
+            std::size_t saved = i_;
+            i_ = td.params[idx].defStart;
+            out.push_back(parseOneArg(td.params[idx]));
+            i_ = saved;
+        }
+    }
+
+    struct EnumSave {
+        std::string name;
+        bool had = false;
+        std::int64_t old = 0;
+    };
+    std::vector<EnumSave> bindParams(const TDecl& td, const std::vector<TArg>& args) {
+        std::vector<EnumSave> saved;
+        tscopes_.emplace_back();
+        for (std::size_t i = 0; i < td.params.size() && i < args.size(); ++i) {
+            const TParam& tp = td.params[i];
+            if (tp.isType && args[i].type) {
+                tscopes_.back()[tp.name] = cloneType(*args[i].type);
+            } else if (!tp.isType) {
+                EnumSave es;
+                es.name = tp.name;
+                auto it = enums_.find(tp.name);
+                if (it != enums_.end()) {
+                    es.had = true;
+                    es.old = it->second;
+                }
+                saved.push_back(es);
+                enums_[tp.name] = args[i].value;
+            }
+        }
+        return saved;
+    }
+    void unbindParams(const std::vector<EnumSave>& saved) {
+        for (const EnumSave& es : saved) {
+            if (es.had) enums_[es.name] = es.old;
+            else enums_.erase(es.name);
+        }
+        if (!tscopes_.empty()) tscopes_.pop_back();
+    }
+
+    void parseTemplate() {
+        advance();
+        if (!eatP("<")) {
+            err("expected '<' after 'template'");
+            syncSemi();
+            return;
+        }
+        TDecl td;
+        while (!atEnd() && !isP(">")) {
+            TParam tp;
+            if (isKw("typename") || isKw("class")) {
+                tp.isType = true;
+                advance();
+            } else {
+                tp.isType = false;
+                while (!atEnd() && cur().kind != Tok::Ident && !isP(",") && !isP(">")) advance();
+            }
+            if (!atEnd() && cur().kind == Tok::Ident) {
+                tp.name = cur().text;
+                advance();
+            } else {
+                err("expected a template parameter name");
+                break;
+            }
+            if (eatP("=")) {
+                tp.hasDef = true;
+                tp.defStart = i_;
+                int depth = 0;
+                while (!atEnd()) {
+                    if (isP("<")) ++depth;
+                    else if (isP(">")) {
+                        if (depth == 0) break;
+                        --depth;
+                    } else if (isP(",") && depth == 0) break;
+                    advance();
+                }
+            }
+            td.params.push_back(tp);
+            if (!eatP(",")) break;
+        }
+        expectP(">", ">");
+        td.start = i_;
+        td.end = skipDecl(i_);
+        if (isKw("class") || isKw("struct")) {
+            if (i_ + 1 < toks_.size() && toks_[i_ + 1].kind == Tok::Ident) ctmpl_[toks_[i_ + 1].text] = td;
+            else err("expected a class template name");
+            i_ = td.end;
+            return;
+        }
+        std::string name;
+        int paren = 0;
+        for (std::size_t k = td.start; k < td.end; ++k) {
+            if (isP(toks_[k], "(")) {
+                if (paren == 0 && k > td.start && toks_[k - 1].kind == Tok::Ident) {
+                    name = toks_[k - 1].text;
+                    break;
+                }
+                ++paren;
+            }
+        }
+        if (name.empty()) {
+            err("expected a function template");
+            i_ = td.end;
+            return;
+        }
+        // The prototype, with each type parameter standing for itself, is what deduction matches.
+        TemplateSig sig;
+        std::vector<EnumSave> saved;
+        tscopes_.emplace_back();
+        for (const TParam& tp : td.params) {
+            sig.names.push_back(tp.name);
+            sig.isType.push_back(tp.isType);
+            if (tp.isType) {
+                auto ph = ty(Type::Kind::Struct);
+                ph->tag = "\x02" + tp.name;
+                tscopes_.back()[tp.name] = std::move(ph);
+            } else {
+                EnumSave es;
+                es.name = tp.name;
+                auto it = enums_.find(tp.name);
+                if (it != enums_.end()) {
+                    es.had = true;
+                    es.old = it->second;
+                }
+                saved.push_back(es);
+                enums_[tp.name] = 0;
+            }
+        }
+        i_ = td.start;
+        auto base = parseBase();
+        Parsed d = parseDeclarator(true);
+        sig.fn = apply(std::move(base), d.mods);
+        for (const EnumSave& es : saved) {
+            if (es.had) enums_[es.name] = es.old;
+            else enums_.erase(es.name);
+        }
+        tscopes_.pop_back();
+        i_ = td.end;
+        funcTemplateSigs()[name] = std::move(sig);
+        ftmpl_[name] = td;
+    }
+
+    std::unique_ptr<Type> instantiateClass(const std::string& name) {
+        TDecl td = ctmpl_[name];
+        advance();
+        std::vector<TArg> args;
+        if (isP("<")) parseTemplateArgs(td, args);
+        else err("a class template needs its arguments in '<' '>'");
+        std::string tag = name + "<";
+        for (std::size_t i = 0; i < args.size(); ++i) {
+            if (i) tag += ",";
+            tag += argMangle(args[i]);
+        }
+        tag += ">";
+        if (!structs_.count(tag) && args.size() == td.params.size()) {
+            std::size_t saved = i_;
+            auto savedPre = std::move(preStmts_);
+            preStmts_.clear();
+            bool savedHalf = halfGt_;
+            halfGt_ = false;
+            auto es = bindParams(td, args);
+            instOverrideName_ = name;
+            instOverrideTag_ = tag;
+            i_ = td.start;
+            parseBase();
+            instOverrideName_.clear();
+            unbindParams(es);
+            i_ = saved;
+            preStmts_ = std::move(savedPre);
+            halfGt_ = savedHalf;
+        }
+        auto it = structs_.find(tag);
+        if (it == structs_.end() || !it->second) return ty(Type::Kind::Int);
+        return cloneType(*it->second);
+    }
+
+    void replayFunction(Tu& tu, const InstReq& r) {
+        auto it = ftmpl_.find(r.tmpl);
+        if (it == ftmpl_.end()) {
+            err("unknown function template '" + r.tmpl + "'");
+            return;
+        }
+        TDecl td = it->second;
+        std::size_t saved = i_;
+        auto es = bindParams(td, r.args);
+        instFnName_ = r.name;
+        i_ = td.start;
+        parseExternal(tu);
+        instFnName_.clear();
+        unbindParams(es);
+        i_ = saved;
+    }
+
+    void processInstances(Tu& tu) {
+        for (const InstReq& r : instRequests()) {
+            InstReq c;
+            c.tmpl = r.tmpl;
+            c.args = cloneArgs(r.args);
+            c.name = r.name;
+            work_.push_back(std::move(c));
+        }
+        while (!work_.empty() && !stop_) {
+            InstReq r = std::move(work_.back());
+            work_.pop_back();
+            if (!instDone_.insert(r.name).second) continue;
+            replayFunction(tu, r);
+        }
+    }
+
+    // extern "C" declaration  /  extern "C" { declarations }  (ISO C++ [dcl.link]). C linkage means
+    // the name is not mangled, which is already how plain names are emitted.
+    bool parseLinkage(Tu& tu) {
+        if (!isKw("extern") || i_ + 1 >= toks_.size() || toks_[i_ + 1].kind != Tok::StringLit) return false;
+        advance();
+        advance();
+        if (eatP("{")) {
+            while (!atEnd() && !isP("}")) {
+                std::size_t before = i_;
+                if (isUnsupported()) {
+                    err("'" + cur().text + "' is not in this subset");
+                    syncSemi();
+                } else if (!isTypeKw(cur())) {
+                    err("expected a declaration");
+                    syncSemi();
+                } else {
+                    parseExternal(tu);
+                }
+                if (stop_) break;
+                if (i_ == before) advance();
+            }
+            expectP("}", "}");
+        } else if (!atEnd() && (isTypeKw(cur()))) {
+            parseExternal(tu);
+        } else {
+            err("expected a declaration");
+        }
+        return true;
     }
 
     void parseNamespace(Tu& tu) {
@@ -1066,7 +2246,9 @@ private:
         while (!atEnd() && !isP("}")) {
             std::size_t before = i_;
             if (isKw("namespace")) parseNamespace(tu);
-            else if (isUnsupported()) {
+            else if (isKw("template")) parseTemplate();
+            else if (parseLinkage(tu)) {
+            } else if (isUnsupported()) {
                 err("'" + cur().text + "' is not in this subset");
                 syncSemi();
             } else if (!isTypeKw(cur())) {
@@ -1082,9 +2264,105 @@ private:
         if (!ns_.empty()) ns_.pop_back();
     }
 
+    void parseInitList(CtorDef& cd) {
+        if (!eatP(":")) return;
+        while (!atEnd() && !isP("{") && !isP(";")) {
+            MemInit mi;
+            if (cur().kind == Tok::Ident && ctmpl_.count(cur().text) && nextIs("<")) {
+                auto bt = instantiateClass(cur().text);
+                mi.name = bt ? bt->tag : "";
+            } else if (cur().kind == Tok::Ident) {
+                mi.name = cur().text;
+                advance();
+                while (eatP("::")) {
+                    if (atEnd() || cur().kind != Tok::Ident) break;
+                    mi.name += "::";
+                    mi.name += cur().text;
+                    advance();
+                }
+            } else {
+                err("expected a member name");
+                break;
+            }
+            if (eatP("(")) {
+                if (!eatP(")")) {
+                    mi.args.push_back(parseAssign());
+                    while (eatP(",")) mi.args.push_back(parseAssign());
+                    expectP(")", ")");
+                }
+            } else {
+                err("expected '(' after a member initializer");
+                break;
+            }
+            cd.inits.push_back(std::move(mi));
+            if (!eatP(",")) break;
+        }
+    }
+
+    // "S::S(...) : init { }" and "S::~S() { }" written outside the class.
+    bool tryOutOfClassSpecial() {
+        if (atEnd() || cur().kind != Tok::Ident || !nextIs("::") || i_ + 2 >= toks_.size()) return false;
+        const Type* td = findTypedef(cur().text);
+        if (!td || td->tag.empty() || !classOf(td->tag)) return false;
+        std::string tag = td->tag;
+        const Token& third = toks_[i_ + 2];
+        bool isCtor = third.kind == Tok::Ident && third.text == cur().text && i_ + 3 < toks_.size() &&
+                      isP(toks_[i_ + 3], "(");
+        bool isDtor = isP(third, "~");
+        if (!isCtor && !isDtor) return false;
+        Type* T = classOf(tag);
+        Pos pos = here();
+        if (isCtor) {
+            advance();
+            advance();
+            advance();
+            advance();
+            CtorDef cd;
+            cd.pos = pos;
+            parseParams(cd.params);
+            parseInitList(cd);
+            auto fn = fnTypeOf(cd.params);
+            std::string mangled = mangleSpecial(tag, "C1", *fn);
+            bool declared = false;
+            for (const Param& p : T->params)
+                if (p.name == "<ctor>" && p.mangled == mangled) declared = true;
+            if (!declared) err("no constructor with these parameters is declared in the class");
+            auto vt = ty(Type::Kind::Void);
+            if (isP("{")) {
+                cd.body = parseBody(vt.get());
+                cd.hasBody = true;
+                auto decl = buildCtor(tag, cd);
+                if (decl) extras_.push_back(std::move(decl));
+            } else {
+                err("expected a constructor body");
+            }
+            return true;
+        }
+        advance();
+        advance();
+        advance();
+        advance();
+        expectP("(", "(");
+        expectP(")", ")");
+        if (!special(T, "<dtor>")) err("the class does not declare a destructor");
+        auto vt = ty(Type::Kind::Void);
+        if (isP("{")) {
+            auto body = parseBody(vt.get());
+            auto decl = buildDtor(tag, std::move(body), pos, false);
+            if (decl) extras_.push_back(std::move(decl));
+        } else {
+            err("expected a destructor body");
+        }
+        return true;
+    }
+
     void parseExternal(Tu& tu) {
         Guard nest(*this);
         if (!nest) return;
+        if (tryOutOfClassSpecial()) {
+            flushExtras(tu);
+            return;
+        }
         bool ext = eatKw("extern");
         bool st = eatKw("static");
         bool td = eatKw("typedef");
@@ -1117,10 +2395,40 @@ private:
         };
         Parsed d = parseDeclarator(true);
         auto type = apply(cloneType(*base), d.mods);
+        if (type && type->kind == Type::Kind::Function)
+            while (isKw("const") || isKw("noexcept")) advance();
         if (!td && type && type->kind == Type::Kind::Function && isP("{")) {
+            std::size_t cc = d.name.rfind("::");
+            std::string prefix = cc == std::string::npos ? "" : d.name.substr(0, cc);
+            std::string clsTag;
+            if (!prefix.empty()) {
+                if (classOf(qualify(prefix))) clsTag = qualify(prefix);
+                else if (classOf(prefix)) clsTag = prefix;
+                else if (const Type* td2 = findTypedef(prefix)) {
+                    if (!td2->tag.empty() && classOf(td2->tag)) clsTag = td2->tag;
+                }
+            }
+            if (!clsTag.empty()) {
+                // A member function defined outside its class.
+                std::string fname = d.name.substr(cc + 2);
+                std::string mangled;
+                for (const Param& p : classOf(clsTag)->params)
+                    if (p.name == fname && !p.mangled.empty() && !isSpecialName(p.name) && p.type &&
+                        sameParamTypes(*p.type, *type))
+                        mangled = p.mangled;
+                if (mangled.empty()) {
+                    err("'" + fname + "' is not declared in class '" + clsTag + "' with these parameters");
+                } else {
+                    auto decl = newMethodDecl(clsTag, mangled, *type, type->params, Pos{d.line, d.col, d.file});
+                    decl->body = parseBody(type->inner.get());
+                    extras_.push_back(std::move(decl));
+                }
+                flushExtras(tu);
+                return;
+            }
             auto decl = makeDecl(d, std::move(type), nullptr);
             decl->isStatic = st;
-            decl->body = parseCompound();
+            decl->body = parseBody(decl->type ? decl->type->inner.get() : nullptr);
             tu.decls.push_back(std::move(decl));
             flushExtras(tu);
             return;
@@ -1148,6 +2456,27 @@ private:
         return s;
     }
 
+    // A local of class type: run its constructor right after the declaration and remember it so
+    // that its destructor runs when the scope ends.
+    void addLocal(std::vector<std::unique_ptr<Stmt>>& out, std::unique_ptr<Decl> decl,
+                  std::vector<std::unique_ptr<Expr>> ctorArgs, bool haveCtorArgs) {
+        std::string name = decl->name;
+        Pos p;
+        p.line = decl->line;
+        p.col = decl->col;
+        p.file = decl->file;
+        const Type* ty0 = decl->type.get();
+        Type* cls = ty0 && ty0->kind == Type::Kind::Struct && !ty0->tag.empty() ? classOf(ty0->tag) : nullptr;
+        std::string tag = ty0 ? ty0->tag : "";
+        bool hasInit = decl->init != nullptr;
+        out.push_back(declStmt(std::move(decl)));
+        if (!cls || name.empty()) return;
+        if (cls->needCtor && (haveCtorArgs || !hasInit)) {
+            out.push_back(sExpr(ctorCall(tag, eAddr(eName(name, p), p), std::move(ctorArgs), p), p));
+        }
+        if (cls->needDtor && !dscopes_.empty()) dscopes_.back().push_back(DVar{name, tag});
+    }
+
     void parseDeclInto(std::vector<std::unique_ptr<Stmt>>& out, bool forInit) {
         bool st = eatKw("static");
         bool td = eatKw("typedef");
@@ -1164,31 +2493,56 @@ private:
             return;
         }
         enumDef_ = false;
-        Parsed d = parseDeclarator(true);
-        auto type = apply(cloneType(*base), d.mods);
-        if (type && type->kind == Type::Kind::Function && isP("{")) {
-            err("a function definition is not allowed here");
-            return;
-        }
-        std::unique_ptr<Expr> init;
-        if (eatP("=")) init = parseInitializer();
-        if (td) addTypedef(d.name, std::move(type));
-        else {
-            auto decl = makeDecl(d, std::move(type), std::move(init));
-            decl->isStatic = st;
-            out.push_back(declStmt(std::move(decl)));
-        }
-        while (eatP(",")) {
-            Parsed d2 = parseDeclarator(true);
-            auto t2 = apply(cloneType(*base), d2.mods);
-            std::unique_ptr<Expr> init2;
-            if (eatP("=")) init2 = parseInitializer();
-            if (td) addTypedef(d2.name, std::move(t2));
-            else {
-                auto decl = makeDecl(d2, std::move(t2), std::move(init2));
+        bool classBase = !td && base && base->kind == Type::Kind::Struct && !base->tag.empty() && classOf(base->tag) &&
+                         (classOf(base->tag)->needCtor || classOf(base->tag)->needDtor);
+        for (;;) {
+            // "T x(args);" for a class: constructor arguments, not a function declarator.
+            if (classBase && !atEnd() && cur().kind == Tok::Ident && nextIs("(") && i_ + 2 < toks_.size() &&
+                !isP(toks_[i_ + 2], ")") && !isTypeKw(toks_[i_ + 2])) {
+                Parsed d;
+                d.name = cur().text;
+                d.line = cur().line;
+                d.col = cur().column;
+                d.file = cur().file;
+                advance();
+                advance();
+                std::vector<std::unique_ptr<Expr>> args;
+                args.push_back(parseAssign());
+                while (eatP(",")) args.push_back(parseAssign());
+                expectP(")", ")");
+                auto decl = makeDecl(d, cloneType(*base), nullptr);
                 decl->isStatic = st;
-                out.push_back(declStmt(std::move(decl)));
+                addLocal(out, std::move(decl), std::move(args), true);
+            } else {
+                Parsed d = parseDeclarator(true);
+                auto type = apply(cloneType(*base), d.mods);
+                if (type && type->kind == Type::Kind::Function && isP("{")) {
+                    err("a function definition is not allowed here");
+                    return;
+                }
+                std::unique_ptr<Expr> init;
+                if (eatP("=")) init = parseInitializer();
+                if (td) {
+                    addTypedef(d.name, std::move(type));
+                } else {
+                    auto decl = makeDecl(d, std::move(type), nullptr);
+                    decl->isStatic = st;
+                    bool direct = false;
+                    std::vector<std::unique_ptr<Expr>> args;
+                    // "T x = T(args);" runs the constructor directly.
+                    if (init && classBase && decl->type && decl->type->kind == Type::Kind::Struct &&
+                        init->kind == Expr::Kind::Call && !init->kids.empty() && init->kids[0] &&
+                        init->kids[0]->kind == Expr::Kind::Name &&
+                        (init->kids[0]->text == decl->type->tag || init->kids[0]->text == shortName(decl->type->tag))) {
+                        for (std::size_t k = 1; k < init->kids.size(); ++k) args.push_back(std::move(init->kids[k]));
+                        direct = true;
+                        init.reset();
+                    }
+                    decl->init = std::move(init);
+                    addLocal(out, std::move(decl), std::move(args), direct);
+                }
             }
+            if (!eatP(",")) break;
         }
         expectP(";", ";");
         (void)forInit;
@@ -1225,8 +2579,10 @@ private:
         s->kind = Stmt::Kind::Block;
         s->line = saved.line;
         s->col = saved.column;
+        dscopes_.emplace_back();
         while (!atEnd() && !isP("}")) {
             std::size_t before = i_;
+            std::size_t at0 = s->stmts.size();
             if (isUnsupported()) {
                 err("'" + cur().text + "' is not in this subset");
                 syncSemi();
@@ -1235,12 +2591,57 @@ private:
             } else {
                 s->stmts.push_back(parseStmt());
             }
+            flushPre(s->stmts, at0);
             if (stop_) break;
             if (i_ == before) advance();
         }
+        Pos endPos = here();
         expectP("}", "}");
+        {
+            auto ds = pendingDtors(dscopes_.size() - 1, endPos);
+            for (auto& d : ds) s->stmts.push_back(std::move(d));
+        }
+        if (!dscopes_.empty()) dscopes_.pop_back();
         if (!tscopes_.empty()) tscopes_.pop_back();
         return s;
+    }
+
+    // Statements that must run before the statement being parsed (temporaries for 'new').
+    void flushPre(std::vector<std::unique_ptr<Stmt>>& out, std::size_t at) {
+        if (preStmts_.empty()) return;
+        if (at > out.size()) at = out.size();
+        for (auto& p : preStmts_) {
+            out.insert(out.begin() + static_cast<std::ptrdiff_t>(at), std::move(p));
+            ++at;
+        }
+        preStmts_.clear();
+    }
+
+    // Destructor calls for the objects declared in scopes from 'base' up, innermost first.
+    std::vector<std::unique_ptr<Stmt>> pendingDtors(std::size_t base, const Pos& p) {
+        std::vector<std::unique_ptr<Stmt>> out;
+        for (std::size_t sc = dscopes_.size(); sc-- > base;) {
+            auto& vars = dscopes_[sc];
+            for (std::size_t i = vars.size(); i-- > 0;) {
+                auto call = dtorCall(vars[i].tag, eAddr(eName(vars[i].name, p), p), p);
+                if (call) out.push_back(sExpr(std::move(call), p));
+            }
+        }
+        return out;
+    }
+
+    std::unique_ptr<Stmt> wrapExit(std::unique_ptr<Stmt> st, bool have, std::size_t base) {
+        if (!have) return st;
+        Pos p;
+        p.line = st->line;
+        p.col = st->col;
+        p.file = st->file;
+        auto ds = pendingDtors(base, p);
+        if (ds.empty()) return st;
+        auto blk = sBlock(p);
+        for (auto& d : ds) blk->stmts.push_back(std::move(d));
+        blk->stmts.push_back(std::move(st));
+        return blk;
     }
 
     std::unique_ptr<Stmt> parseStmt() {
@@ -1284,13 +2685,14 @@ private:
             s->kind = Stmt::Kind::Break;
             s->line = cur().line;
             expectP(";", ";");
-            return s;
+            return wrapExit(std::move(s), !brkBases_.empty(), brkBases_.empty() ? 0 : brkBases_.back());
         }
         if (eatKw("continue")) {
             auto s = std::make_unique<Stmt>();
             s->kind = Stmt::Kind::Continue;
+            s->line = cur().line;
             expectP(";", ";");
-            return s;
+            return wrapExit(std::move(s), !loopBases_.empty(), loopBases_.empty() ? 0 : loopBases_.back());
         }
         if (isUnsupported()) {
             err("'" + cur().text + "' is not in this subset");
@@ -1332,7 +2734,11 @@ private:
         expectP("(", "(");
         s->expr = parseExpr();
         expectP(")", ")");
+        loopBases_.push_back(dscopes_.size());
+        brkBases_.push_back(dscopes_.size());
         s->body = parseStmt();
+        loopBases_.pop_back();
+        brkBases_.pop_back();
         return s;
     }
 
@@ -1367,7 +2773,11 @@ private:
         }
         if (!isP(")")) s->expr2 = parseExpr();
         expectP(")", ")");
+        loopBases_.push_back(dscopes_.size());
+        brkBases_.push_back(dscopes_.size());
         s->body = parseStmt();
+        loopBases_.pop_back();
+        brkBases_.pop_back();
         return s;
     }
 
@@ -1382,6 +2792,7 @@ private:
         s->expr = parseExpr();
         expectP(")", ")");
         expectP("{", "{");
+        brkBases_.push_back(dscopes_.size());
         while (!atEnd() && !isP("}")) {
             auto c = std::make_unique<Stmt>();
             c->kind = Stmt::Kind::Case;
@@ -1407,6 +2818,7 @@ private:
             c->body = std::move(body);
             s->stmts.push_back(std::move(c));
         }
+        brkBases_.pop_back();
         expectP("}", "}");
         return s;
     }
@@ -1419,7 +2831,35 @@ private:
         advance();
         if (!isP(";")) s->expr = parseExpr();
         expectP(";", ";");
-        return s;
+        Pos p;
+        p.line = s->line;
+        p.col = s->col;
+        p.file = s->file;
+        auto ds = pendingDtors(dbase_, p);
+        if (ds.empty() || !curRet_) return s;
+        auto blk = sBlock(p);
+        if (!s->expr) {
+            for (auto& d : ds) blk->stmts.push_back(std::move(d));
+            blk->stmts.push_back(std::move(s));
+        } else if (curRet_->kind == Type::Kind::Void) {
+            blk->stmts.push_back(sExpr(std::move(s->expr), p));
+            for (auto& d : ds) blk->stmts.push_back(std::move(d));
+            blk->stmts.push_back(std::move(s));
+        } else {
+            auto decl = std::make_unique<Decl>();
+            decl->name = "__rv" + std::to_string(newN_++);
+            decl->line = p.line;
+            decl->col = p.col;
+            decl->file = p.file;
+            decl->type = cloneType(*curRet_);
+            decl->init = std::move(s->expr);
+            std::string nm = decl->name;
+            blk->stmts.push_back(declStmt(std::move(decl)));
+            for (auto& d : ds) blk->stmts.push_back(std::move(d));
+            s->expr = eName(nm, p);
+            blk->stmts.push_back(std::move(s));
+        }
+        return blk;
     }
 
     std::unique_ptr<Expr> parseExpr() {
@@ -1568,7 +3008,27 @@ private:
         if (isKw("new")) {
             Token at = cur();
             advance();
-            auto tyName = parseTypeName();
+            auto tyName = parseBase();
+            while (eatP("*")) {
+                auto ptr = ty(Type::Kind::Pointer);
+                ptr->inner = std::move(tyName);
+                tyName = std::move(ptr);
+            }
+            std::vector<std::unique_ptr<Expr>> args;
+            bool paren = false;
+            if (isP("(")) {
+                advance();
+                paren = true;
+                if (!eatP(")")) {
+                    args.push_back(parseAssign());
+                    while (eatP(",")) args.push_back(parseAssign());
+                    expectP(")", ")");
+                }
+            }
+            Pos pos;
+            pos.line = at.line;
+            pos.col = at.column;
+            pos.file = at.file;
             auto call = ex(Expr::Kind::Call, at);
             auto name = std::make_unique<Expr>();
             name->kind = Expr::Kind::Name;
@@ -1582,30 +3042,50 @@ private:
             call->kids.push_back(std::move(sz));
             auto e = ex(Expr::Kind::Cast, at);
             auto ptr = ty(Type::Kind::Pointer);
-            ptr->inner = std::move(tyName);
+            ptr->inner = cloneType(*tyName);
             e->ty = std::move(ptr);
             e->kids.push_back(std::move(call));
+            Type* cls = tyName && tyName->kind == Type::Kind::Struct && !tyName->tag.empty()
+                            ? classOf(tyName->tag)
+                            : nullptr;
+            bool scalarInit = paren && args.size() == 1 && !cls;
+            if ((cls && cls->needCtor) || scalarInit) {
+                std::string tmp = "__new" + std::to_string(newN_++);
+                auto decl = std::make_unique<Decl>();
+                decl->name = tmp;
+                decl->line = at.line;
+                decl->col = at.column;
+                decl->file = at.file;
+                auto tp = ty(Type::Kind::Pointer);
+                tp->inner = cloneType(*tyName);
+                decl->type = std::move(tp);
+                preStmts_.push_back(declStmt(std::move(decl)));
+                auto comma = ex(Expr::Kind::Comma, at);
+                comma->kids.push_back(eAssign(eName(tmp, pos), std::move(e), pos));
+                if (cls && cls->needCtor) {
+                    comma->kids.push_back(ctorCall(tyName->tag, eName(tmp, pos), std::move(args), pos));
+                } else {
+                    auto deref = ex(Expr::Kind::Unary, at);
+                    deref->text = "*";
+                    deref->kids.push_back(eName(tmp, pos));
+                    comma->kids.push_back(eAssign(std::move(deref), std::move(args[0]), pos));
+                }
+                comma->kids.push_back(eName(tmp, pos));
+                return comma;
+            }
             return e;
         }
         if (isKw("delete")) {
             Token at = cur();
             advance();
             auto arg = parseCast();
-            auto call = ex(Expr::Kind::Call, at);
-            auto name = std::make_unique<Expr>();
-            name->kind = Expr::Kind::Name;
-            name->text = "free";
-            name->line = at.line;
-            name->col = at.column;
-            auto cast = ex(Expr::Kind::Cast, at);
-            auto ch = ty(Type::Kind::Char);
-            auto ptr = ty(Type::Kind::Pointer);
-            ptr->inner = std::move(ch);
-            cast->ty = std::move(ptr);
-            cast->kids.push_back(std::move(arg));
-            call->kids.push_back(std::move(name));
-            call->kids.push_back(std::move(cast));
-            return call;
+            Pos pos;
+            pos.line = at.line;
+            pos.col = at.column;
+            pos.file = at.file;
+            std::vector<std::unique_ptr<Expr>> args;
+            args.push_back(std::move(arg));
+            return eCall(eName("\x01" "delete", pos), std::move(args), pos);
         }
         if (isP("&") || isP("*") || isP("+") || isP("-") || isP("~") || isP("!")) {
             Token op = cur();
@@ -1680,10 +3160,36 @@ private:
             err("expected an expression");
             return zeroAt();
         }
+        if (isKw("this")) {
+            auto e = leafName(cur());
+            advance();
+            return e;
+        }
         if (isKw("nullptr")) {
             auto e = ex(Expr::Kind::Int, cur());
             e->ival = 0;
             advance();
+            return e;
+        }
+        if (cur().kind == Tok::Ident && ftmpl_.count(cur().text)) {
+            std::string name = cur().text;
+            Token at = cur();
+            TDecl td = ftmpl_[name];
+            advance();
+            auto e = ex(Expr::Kind::Name, at);
+            if (isP("<")) {
+                std::vector<TArg> args;
+                parseTemplateArgs(td, args);
+                const TemplateSig& sig = funcTemplateSigs()[name];
+                InstReq r;
+                r.tmpl = name;
+                r.name = instFuncName(name, sig, args);
+                r.args = cloneArgs(args);
+                e->text = r.name;
+                work_.push_back(std::move(r));
+            } else {
+                e->text = "\x01" "tmpl:" + name;
+            }
             return e;
         }
         if (cur().kind == Tok::Ident) {
@@ -1812,6 +3318,37 @@ bool sameType(const Type& a, const Type& b) {
     return true;
 }
 
+bool isSpecialName(const std::string& n) { return n == "<ctor>" || n == "<dtor>" || n == "<dtor0>"; }
+
+const Param* findSpecial(const Type* t, const char* name) {
+    if (!t) return nullptr;
+    for (const Param& p : t->params)
+        if (p.name == name) return &p;
+    return nullptr;
+}
+
+// True when 'd' is the same class as 'b' or is derived from it (single inheritance).
+bool derivedFrom(const Type& d, const Type& b) {
+    if (d.kind != Type::Kind::Struct || b.kind != Type::Kind::Struct || d.tag.empty() || b.tag.empty()) return false;
+    std::string cur = d.tag;
+    for (int guard = 0; guard < 64 && !cur.empty(); ++guard) {
+        if (cur == b.tag) return true;
+        auto it = canonStructs().find(cur);
+        if (it == canonStructs().end() || !it->second) return false;
+        cur = it->second->base;
+    }
+    return false;
+}
+
+bool hasSideEffects(const Expr& e) {
+    if (e.kind == Expr::Kind::Call || e.kind == Expr::Kind::Assign || e.kind == Expr::Kind::Pre ||
+        e.kind == Expr::Kind::Post)
+        return true;
+    for (const auto& k : e.kids)
+        if (k && hasSideEffects(*k)) return true;
+    return false;
+}
+
 struct ET {
     std::unique_ptr<Type> type;
     bool lvalue = false;
@@ -1828,6 +3365,11 @@ public:
 
     void check(Tu& tu) {
         scopes_.emplace_back();
+        // Declare every function first, so a call may come before the definition (class members).
+        for (auto& d : tu.decls) {
+            if (d && d->function && d->type) add(d->name, cloneType(*d->type), true, d->line, d->col);
+            else if (d && !d->vt.empty() && d->type) add(d->name, cloneType(*d->type), false, d->line, d->col);
+        }
         for (auto& d : tu.decls) {
             if (!d) continue;
             if (d->function) checkFunction(*d);
@@ -1947,6 +3489,7 @@ private:
         if (isPtr(dst) && src.nullc) return true;
         if (isPtr(dst) && isPtr(*src.type)) {
             if (isVoidPtr(dst) || isVoidPtr(*src.type)) return true;
+            if (dst.inner && src.type->inner && derivedFrom(*src.type->inner, *dst.inner)) return true;
             return dst.inner && src.type->inner && sameType(*dst.inner, *src.type->inner);
         }
         return false;
@@ -2047,6 +3590,24 @@ private:
                     scope = scope.substr(0, cut);
                 }
             }
+            if (e.text == "malloc" || e.text == "free") {
+                ET b;
+                b.line = e.line;
+                b.col = e.col;
+                b.type = prim(Type::Kind::Function);
+                if (e.text == "malloc") {
+                    b.type->inner = ptrTo(prim(Type::Kind::Void));
+                    Param a;
+                    a.type = prim(Type::Kind::Long);
+                    b.type->params.push_back(std::move(a));
+                } else {
+                    b.type->inner = prim(Type::Kind::Void);
+                    Param a;
+                    a.type = ptrTo(prim(Type::Kind::Char));
+                    b.type->params.push_back(std::move(a));
+                }
+                return b;
+            }
             return lookup(e.text, e.line, e.col);
         }
         case Expr::Kind::Unary: {
@@ -2092,7 +3653,7 @@ private:
                 }
                 r.type = cloneType(*inner.type->inner);
                 r.lvalue = true;
-                r.mod = isIntish(*r.type) || isPtr(*r.type) || isFp(*r.type);
+                r.mod = isIntish(*r.type) || isPtr(*r.type) || isFp(*r.type) || r.type->kind == Type::Kind::Struct;
                 return r;
             }
             ET inner = decay(checkExpr(*e.kids[0]));
@@ -2180,7 +3741,7 @@ private:
             }
             r.type = cloneType(*ptr->type->inner);
             r.lvalue = true;
-            r.mod = isIntish(*r.type) || isPtr(*r.type) || isFp(*r.type);
+            r.mod = isIntish(*r.type) || isPtr(*r.type) || isFp(*r.type) || r.type->kind == Type::Kind::Struct;
             return r;
         }
         case Expr::Kind::Member: {
@@ -2205,7 +3766,7 @@ private:
                 if (f.name != fname || !f.type) continue;
                 r.type = cloneType(*f.type);
                 r.lvalue = true;
-                r.mod = isIntish(*r.type) || isPtr(*r.type) || isFp(*r.type);
+                r.mod = isIntish(*r.type) || isPtr(*r.type) || isFp(*r.type) || r.type->kind == Type::Kind::Struct;
                 return r;
             }
             err(e.line, e.col, "struct has no field '" + fname + "'");
@@ -2320,8 +3881,271 @@ private:
         return r;
     }
 
+    std::unique_ptr<Expr> mkE(Expr::Kind k, const Expr& at) {
+        auto n = std::make_unique<Expr>();
+        n->kind = k;
+        n->line = at.line;
+        n->col = at.col;
+        n->file = at.file;
+        return n;
+    }
+    std::unique_ptr<Expr> mkName(const std::string& text, const Expr& at) {
+        auto n = mkE(Expr::Kind::Name, at);
+        n->text = text;
+        return n;
+    }
+
+    // Score how well an argument fits a parameter: 0 exact, 1 by conversion, -1 not at all.
+    int fitScore(const Type& param, const ET& arg) {
+        if (arg.bad || !arg.type) return 0;
+        if (sameType(param, *arg.type)) return 0;
+        return canAssign(param, arg) ? 1 : -1;
+    }
+
+    // Choose among overloads by argument count, then by how well the argument types fit.
+    // 'firstArg' is the index in call.kids of the first user argument.
+    const Param* pickOverload(const std::vector<const Param*>& cands, Expr& call, std::size_t firstArg) {
+        std::size_t nargs = call.kids.size() - firstArg;
+        std::vector<const Param*> same;
+        for (const Param* c : cands) {
+            if (!c->type) continue;
+            if (c->type->params.size() == nargs || (c->type->variadic && nargs >= c->type->params.size()))
+                same.push_back(c);
+        }
+        if (same.empty()) return cands.empty() ? nullptr : cands[0];
+        if (same.size() == 1) return same[0];
+        std::vector<ET> ets;
+        for (std::size_t i = 0; i < nargs; ++i) ets.push_back(decay(checkExpr(*call.kids[firstArg + i])));
+        const Param* best = nullptr;
+        int bestScore = 1 << 30;
+        for (const Param* c : same) {
+            int total = 0;
+            bool ok = true;
+            for (std::size_t i = 0; i < nargs && i < c->type->params.size(); ++i) {
+                if (!c->type->params[i].type) continue;
+                int sc = fitScore(*c->type->params[i].type, ets[i]);
+                if (sc < 0) {
+                    ok = false;
+                    break;
+                }
+                total += sc;
+            }
+            if (ok && total < bestScore) {
+                bestScore = total;
+                best = c;
+            }
+        }
+        return best ? best : same[0];
+    }
+
+    // ((R(*)(T*, ...))(*(void***)self)[slot]): the Itanium C++ ABI virtual call sequence.
+    std::unique_ptr<Expr> vcallee(const Expr& at, std::unique_ptr<Expr> self, int slot, const std::string& tag,
+                                  const Type& userFn) {
+        auto cast1 = mkE(Expr::Kind::Cast, at);
+        cast1->ty = ptrTo(ptrTo(ptrTo(prim(Type::Kind::Void))));
+        cast1->kids.push_back(std::move(self));
+        auto deref = mkE(Expr::Kind::Unary, at);
+        deref->text = "*";
+        deref->kids.push_back(std::move(cast1));
+        auto idx = mkE(Expr::Kind::Index, at);
+        idx->kids.push_back(std::move(deref));
+        auto n = mkE(Expr::Kind::Int, at);
+        n->ival = static_cast<std::uint64_t>(slot);
+        idx->kids.push_back(std::move(n));
+        auto fn = prim(Type::Kind::Function);
+        fn->inner = userFn.inner ? cloneType(*userFn.inner) : prim(Type::Kind::Void);
+        Param me;
+        me.name = "this";
+        auto st = prim(Type::Kind::Struct);
+        st->tag = tag;
+        me.type = ptrTo(std::move(st));
+        fn->params.push_back(std::move(me));
+        for (const Param& q : userFn.params) {
+            Param c;
+            c.name = q.name;
+            if (q.type) c.type = cloneType(*q.type);
+            fn->params.push_back(std::move(c));
+        }
+        auto cast2 = mkE(Expr::Kind::Cast, at);
+        cast2->ty = ptrTo(std::move(fn));
+        cast2->kids.push_back(std::move(idx));
+        return cast2;
+    }
+
+    // Match a prototype type (with "\x02T" placeholders) against an argument type and bind T.
+    bool deduceType(const Type& pat, const Type& arg, const TemplateSig& sig,
+                    std::vector<std::unique_ptr<Type>>& bound) {
+        if (pat.kind == Type::Kind::Struct && !pat.tag.empty() && pat.tag[0] == '\x02') {
+            for (std::size_t i = 0; i < sig.names.size(); ++i) {
+                if (sig.names[i] != pat.tag.substr(1)) continue;
+                std::unique_ptr<Type> a = cloneType(arg);
+                if (a->kind == Type::Kind::Array && a->inner) a = ptrTo(std::move(a->inner));
+                if (!bound[i]) {
+                    bound[i] = std::move(a);
+                    return true;
+                }
+                return sameType(*bound[i], *a);
+            }
+            return true;
+        }
+        if (pat.kind == Type::Kind::Pointer && pat.inner) {
+            if ((arg.kind == Type::Kind::Pointer || arg.kind == Type::Kind::Array) && arg.inner)
+                return deduceType(*pat.inner, *arg.inner, sig, bound);
+            return true;
+        }
+        if (pat.kind == Type::Kind::Reference && pat.inner) return deduceType(*pat.inner, arg, sig, bound);
+        if (pat.kind == Type::Kind::Array && pat.inner) {
+            if ((arg.kind == Type::Kind::Pointer || arg.kind == Type::Kind::Array) && arg.inner)
+                return deduceType(*pat.inner, *arg.inner, sig, bound);
+            return true;
+        }
+        return true;
+    }
+
     ET checkCall(Expr& e) {
         if (e.kids.empty() || !e.kids[0]) return bad(e.line, e.col);
+        Expr& c0 = *e.kids[0];
+        static const std::string kCtor = "\x01" "ctor:";
+        static const std::string kTmpl = "\x01" "tmpl:";
+        if (c0.kind == Expr::Kind::Name && c0.text.compare(0, kTmpl.size(), kTmpl) == 0) {
+            std::string name = c0.text.substr(kTmpl.size());
+            auto sit = funcTemplateSigs().find(name);
+            if (sit == funcTemplateSigs().end() || !sit->second.fn) {
+                err(e.line, e.col, "unknown function template '" + name + "'");
+                return bad(e.line, e.col);
+            }
+            const TemplateSig& sig = sit->second;
+            if (sig.fn->params.size() != e.kids.size() - 1) {
+                err(e.line, e.col, "wrong number of arguments");
+                return bad(e.line, e.col);
+            }
+            std::vector<std::unique_ptr<Type>> bound(sig.names.size());
+            for (std::size_t i = 0; i < sig.fn->params.size(); ++i) {
+                ET a = checkExpr(*e.kids[i + 1]);
+                if (a.bad || !a.type) return bad(e.line, e.col);
+                if (sig.fn->params[i].type && !deduceType(*sig.fn->params[i].type, *a.type, sig, bound)) {
+                    err(e.line, e.col, "conflicting types for a template argument");
+                    return bad(e.line, e.col);
+                }
+            }
+            std::vector<TArg> args;
+            for (std::size_t i = 0; i < sig.names.size(); ++i) {
+                if (!bound[i]) {
+                    err(e.line, e.col, "cannot deduce template argument '" + sig.names[i] + "'");
+                    return bad(e.line, e.col);
+                }
+                TArg a;
+                a.type = std::move(bound[i]);
+                args.push_back(std::move(a));
+            }
+            std::string inst = instFuncName(name, sig, args);
+            bool known = false;
+            for (const InstReq& r : instRequests())
+                if (r.name == inst) known = true;
+            if (!known) {
+                InstReq r;
+                r.tmpl = name;
+                r.name = inst;
+                r.args = std::move(args);
+                instRequests().push_back(std::move(r));
+                instDirty() = true;
+            }
+            c0.text = inst;
+        } else if (c0.kind == Expr::Kind::Name && c0.text.compare(0, kCtor.size(), kCtor) == 0) {
+            std::string tag = c0.text.substr(kCtor.size());
+            auto it = canonStructs().find(tag);
+            std::vector<const Param*> cands;
+            if (it != canonStructs().end() && it->second)
+                for (const Param& p : it->second->params)
+                    if (p.name == "<ctor>") cands.push_back(&p);
+            if (cands.empty()) {
+                err(e.line, e.col, "'" + tag + "' has no constructor");
+                return bad(e.line, e.col);
+            }
+            const Param* pick = pickOverload(cands, e, 2);
+            c0.text = pick->mangled;
+        } else if (c0.kind == Expr::Kind::Name && c0.text == "\x01" "delete" && e.kids.size() == 2 && e.kids[1]) {
+            ET a = decay(checkExpr(*e.kids[1]));
+            if (a.bad || !a.type) return bad(e.line, e.col);
+            const Type* cls = isPtr(*a.type) && a.type->inner ? canonOf(a.type->inner.get()) : nullptr;
+            const Param* d1 = cls && cls->kind == Type::Kind::Struct ? findSpecial(cls, "<dtor>") : nullptr;
+            auto freeCall = [&](const Expr& at, std::unique_ptr<Expr> arg) {
+                auto cast = mkE(Expr::Kind::Cast, at);
+                cast->ty = ptrTo(prim(Type::Kind::Char));
+                cast->kids.push_back(std::move(arg));
+                auto call = mkE(Expr::Kind::Call, at);
+                call->kids.push_back(mkName("free", at));
+                call->kids.push_back(std::move(cast));
+                return call;
+            };
+            if (!d1) {
+                c0.text = "free";
+                auto cast = mkE(Expr::Kind::Cast, e);
+                cast->ty = ptrTo(prim(Type::Kind::Char));
+                cast->kids.push_back(std::move(e.kids[1]));
+                e.kids[1] = std::move(cast);
+            } else {
+                if (hasSideEffects(*e.kids[1])) {
+                    err(e.line, e.col, "delete of an expression with side effects is not supported");
+                    return bad(e.line, e.col);
+                }
+                auto self = [&]() { return cloneExpr(*e.kids[1]); };
+                auto work = mkE(Expr::Kind::Comma, e);
+                if (d1->vslot >= 0) {
+                    const Param* d0 = findSpecial(cls, "<dtor0>");
+                    auto call = mkE(Expr::Kind::Call, e);
+                    call->kids.push_back(vcallee(e, self(), d0->vslot, a.type->inner->tag, *d0->type));
+                    call->kids.push_back(self());
+                    work->kids.push_back(std::move(call));
+                } else {
+                    auto call = mkE(Expr::Kind::Call, e);
+                    call->kids.push_back(mkName(d1->mangled, e));
+                    call->kids.push_back(self());
+                    work->kids.push_back(std::move(call));
+                    work->kids.push_back(freeCall(e, self()));
+                }
+                auto zero = mkE(Expr::Kind::Int, e);
+                work->kids.push_back(std::move(zero));
+                auto cond = mkE(Expr::Kind::Cond, e);
+                cond->kids.push_back(self());
+                cond->kids.push_back(std::move(work));
+                cond->kids.push_back(mkE(Expr::Kind::Int, e));
+                e.kind = Expr::Kind::Cond;
+                e.text.clear();
+                e.kids = std::move(cond->kids);
+                return checkExprBody(e);
+            }
+        } else if (c0.kind == Expr::Kind::Name && method_ && c0.text.find("::") == std::string::npos) {
+            const Type* st = canonOf(method_);
+            bool isMethod = false;
+            if (st)
+                for (const Param& f : st->params)
+                    if (f.name == c0.text && !f.mangled.empty() && !isSpecialName(f.name)) isMethod = true;
+            if (isMethod) {
+                std::string fname = c0.text;
+                c0.kind = Expr::Kind::Member;
+                c0.text = "->";
+                c0.kids.clear();
+                c0.kids.push_back(mkName("this", c0));
+                c0.kids.push_back(mkName(fname, c0));
+            }
+        } else if (c0.kind == Expr::Kind::Name && method_ && c0.text.find("::") != std::string::npos) {
+            std::size_t cc = c0.text.rfind("::");
+            std::string prefix = c0.text.substr(0, cc);
+            std::string fname = c0.text.substr(cc + 2);
+            auto it = canonStructs().find(prefix);
+            if (it == canonStructs().end() && !inNs_.empty()) it = canonStructs().find(inNs_ + "::" + prefix);
+            if (it != canonStructs().end() && it->second) {
+                std::vector<const Param*> cands;
+                for (const Param& f : it->second->params)
+                    if (f.name == fname && !f.mangled.empty() && !isSpecialName(f.name)) cands.push_back(&f);
+                if (!cands.empty()) {
+                    const Param* pick = pickOverload(cands, e, 1);
+                    c0.text = pick->mangled;
+                    e.kids.insert(e.kids.begin() + 1, mkName("this", e));
+                }
+            }
+        }
         if (e.kids[0]->kind == Expr::Kind::Member && e.kids[0]->kids.size() >= 2 && e.kids[0]->kids[0] &&
             e.kids[0]->kids[1]) {
             Expr& mem = *e.kids[0];
@@ -2330,13 +4154,13 @@ private:
             if (mem.text == "->" && st && isPtr(*st) && st->inner) st = st->inner.get();
             st = canonOf(st);
             if (st) {
-                for (const Param& f : st->params) {
-                    if (f.name != mem.kids[1]->text || f.mangled.empty()) continue;
-                    auto callee = std::make_unique<Expr>();
-                    callee->kind = Expr::Kind::Name;
-                    callee->text = f.mangled;
-                    callee->line = e.line;
-                    callee->col = e.col;
+                std::vector<const Param*> cands;
+                for (const Param& f : st->params)
+                    if (f.name == mem.kids[1]->text && !f.mangled.empty() && !isSpecialName(f.name))
+                        cands.push_back(&f);
+                if (!cands.empty()) {
+                    const Param* fp = pickOverload(cands, e, 1);
+                    const Param& f = *fp;
                     std::unique_ptr<Expr> selfArg;
                     if (mem.text == "->") {
                         selfArg = std::move(mem.kids[0]);
@@ -2348,12 +4172,25 @@ private:
                         selfArg->col = mem.col;
                         selfArg->kids.push_back(std::move(mem.kids[0]));
                     }
+                    std::unique_ptr<Expr> callee;
+                    if (f.vslot >= 0) {
+                        if (hasSideEffects(*selfArg)) {
+                            err(e.line, e.col, "a virtual call on an expression with side effects is not supported");
+                            return bad(e.line, e.col);
+                        }
+                        callee = vcallee(e, cloneExpr(*selfArg), f.vslot, st->tag, *f.type);
+                    } else {
+                        callee = std::make_unique<Expr>();
+                        callee->kind = Expr::Kind::Name;
+                        callee->text = f.mangled;
+                        callee->line = e.line;
+                        callee->col = e.col;
+                    }
                     std::vector<std::unique_ptr<Expr>> kids;
                     kids.push_back(std::move(callee));
                     kids.push_back(std::move(selfArg));
                     for (std::size_t i = 1; i < e.kids.size(); ++i) kids.push_back(std::move(e.kids[i]));
                     e.kids = std::move(kids);
-                    break;
                 }
             }
         }
@@ -2397,13 +4234,14 @@ private:
 
     void checkVar(Decl& d) {
         if (!d.type) return;
+        if (!d.vt.empty()) return;  // a vtable: already declared
         if (d.type->kind == Type::Kind::Reference) {
             if (!d.init || !d.type->inner) {
                 err(d.line, d.col, "a reference must be initialized");
             } else {
                 ET src = checkExpr(*d.init);
                 if (!src.bad && !src.lvalue) err(d.line, d.col, "a reference must bind to an lvalue");
-                if (!src.bad && src.type && !sameType(*d.type->inner, *src.type))
+                if (!src.bad && src.type && !sameType(*d.type->inner, *src.type) && !derivedFrom(*src.type, *d.type->inner))
                     err(d.line, d.col, "cannot bind this reference");
             }
             add(d.name, cloneType(*d.type), false, d.line, d.col);
@@ -2723,7 +4561,7 @@ private:
                 int e = f.offset + span;
                 if (e > end) end = e;
             }
-            if (end == 0) return 0;
+            if (end == 0) return t->tag.empty() ? 0 : 1;
             return alignUp(end, alignOf(t));
         }
         case Type::Kind::Union: {
@@ -2772,6 +4610,15 @@ private:
         int bitCursor = -1;
         for (const Param& p : t->params) {
             if (!p.mangled.empty() || (p.type && p.type->kind == Type::Kind::Function)) continue;
+            if (p.name == "__basepad") {
+                // Itanium C++ ABI 2.4: a base that is POD for layout keeps its tail padding.
+                if (bitCursor >= 0) {
+                    off += 4;
+                    bitCursor = -1;
+                }
+                off = alignUp(off, alignOf(p.type.get()));
+                continue;
+            }
             FieldOff f;
             f.name = p.name;
             if (p.bits >= 0) {
@@ -3166,6 +5013,13 @@ private:
         } else {
             err(d.line, d.col, "global initializer is not supported");
             g.size = 8;
+        }
+        if (!d.vt.empty()) {
+            g.size = static_cast<int>(d.vt.size()) * 8;
+            g.bytes.assign(static_cast<std::size_t>(g.size), 0);
+            for (std::size_t k = 0; k < d.vt.size(); ++k)
+                if (!d.vt[k].empty()) g.relocs.emplace_back(static_cast<int>(k) * 8, d.vt[k]);
+            g.rodata = true;
         }
         mod_.globals.push_back(std::move(g));
         globals_[d.name] = s;
@@ -4005,6 +5859,20 @@ private:
         }
     }
 
+    // Store a struct value into memory. 'rhs' is the address of the source object, or for a call
+    // the returned value (one register, a register pair, or the address of the hidden result).
+    void storeAggregate(Operand dst, int sz, const Val& rhs, bool fromCall) {
+        if (rhs.pair) {
+            storeBits(dst, rhs.op, 8);
+            storeBits(addAddr(dst, 8), rhs.hi, sz - 8);
+        } else if (sz > 8) {
+            copyMem(dst, rhs.op, sz);
+        } else {
+            Operand bits = fromCall ? rhs.op : loadBits(rhs.op, sz);
+            storeBits(dst, bits, sz);
+        }
+    }
+
     Val lowerAssign(Expr& e) {
         if (e.kids.size() < 2 || !e.kids[0] || !e.kids[1]) {
             err(e.line, e.col, "not lowered");
@@ -4043,6 +5911,15 @@ private:
         if (lhs.kind == Expr::Kind::Name && e.kids[1]->kind == Expr::Kind::Call) {
             Sym* s = find(lhs.text);
             if (s && s->agg) return storeCall(*s, *e.kids[1]);
+        }
+        if (lhs.kind != Expr::Kind::Name && lhs.checked && lhs.checked->kind == Type::Kind::Struct &&
+            e.kids[1]->kind != Expr::Kind::Call) {
+            // struct = struct through a pointer, a field or an index: copy the bytes.
+            Addr src = lowerAddr(*e.kids[1]);
+            Addr dst = lowerAddr(lhs);
+            if (!src.ok || !dst.ok) return {};
+            copyMem(dst.op, src.op, sizeOf(lhs.checked.get()));
+            return Val{dst.op, 0, 0};
         }
         Val rhs = lowerExpr(*e.kids[1]);
         if (lhs.kind == Expr::Kind::Name) {
@@ -4112,6 +5989,10 @@ private:
         }
         Addr a = lowerAddr(lhs);
         if (!a.ok) return {};
+        if (lhs.checked && lhs.checked->kind == Type::Kind::Struct) {
+            storeAggregate(a.op, sizeOf(lhs.checked.get()), rhs, e.kids[1]->kind == Expr::Kind::Call);
+            return rhs;
+        }
         if (a.bitWidth > 0) {
             unsigned mask = a.bitWidth >= 32 ? 0xffffffffu : ((1u << a.bitWidth) - 1u);
             unsigned fieldMask = mask << a.bitOff;
@@ -4561,6 +6442,15 @@ private:
                         storeBits(addAddr(Operand::vreg(addr), fields[i].offset), v.op, w);
                     }
                 }
+            } else if (d.init && d.type->kind == Type::Kind::Struct) {
+                // A struct initialized from another struct or from a call: copy the bytes.
+                Sym* me = find(d.name);
+                if (d.init->kind == Expr::Kind::Call && me) {
+                    storeCall(*me, *d.init);
+                } else {
+                    Addr src = lowerAddr(*d.init);
+                    if (src.ok) copyMem(Operand::vreg(addr), src.op, bytes);
+                }
             }
             return;
         }
@@ -4903,6 +6793,29 @@ private:
 
 void typecheckTu(Tu& tu, Diagnostics& diags);
 
+// Parse and check. A function template called without explicit arguments is only known after the
+// checker has deduced them, so the file is parsed again with the new instance requests until none
+// are new (at most eight rounds).
+Tu frontEnd(const std::vector<Token>& toks, Diagnostics& diags) {
+    instRequests().clear();
+    Tu result;
+    for (int round = 0; round < 8; ++round) {
+        Diagnostics local;
+        instDirty() = false;
+        Parser parser(toks, local);
+        Tu tu = parser.parseTu();
+        if (local.ok()) typecheckTu(tu, local);
+        if (instDirty() && round < 7) continue;
+        for (const Diag& d : local.items()) {
+            if (d.warning) diags.warning(d.file, d.line, d.column, d.message);
+            else diags.error(d.file, d.line, d.column, d.message);
+        }
+        result = std::move(tu);
+        break;
+    }
+    return result;
+}
+
 Module lowerProgram(const std::string& source, Diagnostics& diags, const std::string& fileName,
                      const std::vector<std::string>& includes) {
     MemoryFiles files;
@@ -4927,10 +6840,7 @@ Module lowerProgram(const std::string& source, Diagnostics& diags, const std::st
     end.line = line;
     end.column = col;
     toks.push_back(std::move(end));
-    Parser parser(std::move(toks), diags);
-    Tu tu = parser.parseTu();
-    if (!diags.ok()) return {};
-    typecheckTu(tu, diags);
+    Tu tu = frontEnd(toks, diags);
     if (!diags.ok()) return {};
     Lowerer lowerer(diags);
     return lowerer.run(tu);
@@ -5002,10 +6912,8 @@ void checkSource(const std::string& source, Diagnostics& diags, const std::strin
     end.line = line;
     end.column = col;
     toks.push_back(std::move(end));
-    Parser parser(std::move(toks), diags);
-    Tu tu = parser.parseTu();
-    if (!diags.ok()) return;
-    typecheckTu(tu, diags);
+    Tu tu = frontEnd(toks, diags);
+    (void)tu;
 }
 
 Module lowerSource(const std::string& source, Diagnostics& diags, const std::string& file,

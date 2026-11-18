@@ -151,6 +151,19 @@ static void linkTwo() {
     ++gOk;
 }
 
+// A message instead of a link failure: new T[n] for a class with no default constructor.
+static void expectNewArrayError() {
+    okaycc::Diagnostics d;
+    okaycc::compileToObject("struct A { int v; A(int x) : v(x) {} };\nint main() { A *a = new A[3]; return 0; }\n", d,
+                            "newarr.cpp");
+    if (d.ok() || d.format().find("needs a default constructor") == std::string::npos) {
+        std::fprintf(stderr, "FAIL new[] without a default constructor gave: %s\n", d.format().c_str());
+        ++okaycc_test::gFail;
+        return;
+    }
+    ++gOk;
+}
+
 int main() {
     DIR* dir = opendir("tests/progs_cpp");
     if (!dir) {
@@ -167,7 +180,10 @@ int main() {
         ++files;
     }
     closedir(dir);
-    if (!std::getenv("CPPDIFF_ONLY")) linkTwo();
+    if (!std::getenv("CPPDIFF_ONLY")) {
+        linkTwo();
+        expectNewArrayError();
+    }
     if (files == 0) {
         std::fprintf(stderr, "FAIL no programs\n");
         return 1;

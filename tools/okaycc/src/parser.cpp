@@ -588,6 +588,71 @@ bool& instDirty() {
     return d;
 }
 
+// Where the Itanium-style mangled type that starts at s[j] ends: a builtin letter, P/R and a type,
+// <length><name> (a class, possibly an instance "Box<...>" counted whole), or Li<n>E. Returns j when
+// there is no type there.
+std::size_t mangledEnd(const std::string& s, std::size_t j) {
+    if (j >= s.size()) return j;
+    char c = s[j];
+    if (c == 'P' || c == 'R') {
+        std::size_t k = mangledEnd(s, j + 1);
+        return k == j + 1 ? j : k;
+    }
+    if (c == 'L') {
+        std::size_t k = s.find('E', j);
+        return k == std::string::npos ? j : k + 1;
+    }
+    if (c >= '0' && c <= '9') {
+        std::size_t k = j;
+        std::size_t n = 0;
+        while (k < s.size() && s[k] >= '0' && s[k] <= '9') n = n * 10 + static_cast<std::size_t>(s[k++] - '0');
+        return k + n <= s.size() ? k + n : j;
+    }
+    if (std::string("vbchstijlmfd").find(c) != std::string::npos) return j + 1;
+    return j;
+}
+
+// The type a mangled string names (builtin letters, pointers and class names).
+std::unique_ptr<Type> typeFromMangle(const std::string& m) {
+    auto make = [](Type::Kind k) {
+        auto t = std::make_unique<Type>();
+        t->kind = k;
+        return t;
+    };
+    if (m.empty()) return nullptr;
+    char c = m[0];
+    if (c == 'P' || c == 'R') {
+        auto inner = typeFromMangle(m.substr(1));
+        if (!inner) return nullptr;
+        auto t = make(c == 'P' ? Type::Kind::Pointer : Type::Kind::Reference);
+        t->inner = std::move(inner);
+        return t;
+    }
+    if (c >= '0' && c <= '9') {
+        std::size_t k = 0;
+        std::size_t n = 0;
+        while (k < m.size() && m[k] >= '0' && m[k] <= '9') n = n * 10 + static_cast<std::size_t>(m[k++] - '0');
+        auto t = make(Type::Kind::Struct);
+        t->tag = m.substr(k, n);
+        return t;
+    }
+    switch (c) {
+    case 'v': return make(Type::Kind::Void);
+    case 'b': return make(Type::Kind::Bool);
+    case 'c': return make(Type::Kind::Char);
+    case 'h': { auto t = make(Type::Kind::Char); t->unsign = true; return t; }
+    case 's': return make(Type::Kind::Short);
+    case 't': { auto t = make(Type::Kind::Short); t->unsign = true; return t; }
+    case 'i': return make(Type::Kind::Int);
+    case 'j': { auto t = make(Type::Kind::Int); t->unsign = true; return t; }
+    case 'l': return make(Type::Kind::Long);
+    case 'm': { auto t = make(Type::Kind::Long); t->unsign = true; return t; }
+    case 'f': return make(Type::Kind::Float);
+    case 'd': return make(Type::Kind::Double);
+    default: return nullptr;
+    }
+}
+
 std::string argMangle(const TArg& a) {
     if (a.isValue) return "Li" + std::to_string(a.value) + "E";
     return a.type ? mangleType(*a.type) : "i";
@@ -778,7 +843,7 @@ private:
     }
     bool isUnsupported() const {
         if (atEnd() || cur().kind != Tok::Keyword) return false;
-        return !isTypeKw(cur()) && !isKw("if") && !isKw("else") && !isKw("while") && !isKw("for") &&
+        return !isTypeKw(cur()) && !isKw("if") && !isKw("else") && !isKw("while") && !isKw("for") && !isKw("do") &&
                !isKw("return") && !isKw("break") && !isKw("continue") && !isKw("switch") && !isKw("goto") &&
                !isKw("new") && !isKw("delete");
     }
@@ -938,7 +1003,8 @@ private:
             t->unsign = uns;
             return t;
         }
-        if (!atEnd() && cur().kind == Tok::Ident && ctmpl_.count(cur().text) && !findTypedef(cur().text))
+        if (!atEnd() && cur().kind == Tok::Ident && ctmpl_.count(cur().text) &&
+            (!findTypedef(cur().text) || nextIs("<")))
             return instantiateClass(cur().text);
         if (!atEnd() && cur().kind == Tok::Ident) {
             const Type* td = findTypedef(cur().text);
@@ -1339,6 +1405,14 @@ private:
             if (ft && ft->needCtor) {
                 std::vector<std::unique_ptr<Expr>> args;
                 if (mi) args = std::move(mi->args);
+                if (args.size() == 1) {
+                    // One argument: an object of the class is copied, anything else goes to a constructor.
+                    std::vector<std::unique_ptr<Expr>> a;
+                    a.push_back(eAddr(eArrow(eName("this", p), f.first, p), p));
+                    a.push_back(std::move(args[0]));
+                    body->stmts.push_back(sExpr(eCall(eName("\x01" "cinit:" + f.second->tag, p), std::move(a), p), p));
+                    continue;
+                }
                 body->stmts.push_back(sExpr(
                     ctorCall(f.second->tag, eAddr(eArrow(eName("this", p), f.first, p), p), std::move(args), p), p));
             } else if (mi && mi->args.size() == 1) {
@@ -2246,6 +2320,7 @@ private:
     std::map<std::string, TDecl> ctmpl_;
     std::vector<InstReq> work_;
     std::set<std::string> instDone_;
+    std::set<std::string> instInProgress_;
     std::string instOverrideName_;
     std::string instOverrideTag_;
     std::string instFnName_;
@@ -2315,7 +2390,7 @@ private:
     }
 
     // At '<': read the template arguments up to the closing '>', then fill in defaults.
-    void parseTemplateArgs(const TDecl& td, std::vector<TArg>& out) {
+    void parseTemplateArgs(const TDecl& td, std::vector<TArg>& out, bool partial = false) {
         advance();
         std::size_t idx = 0;
         while (!atEnd() && !isAngleClose()) {
@@ -2330,7 +2405,8 @@ private:
         closeAngle();
         for (; idx < td.params.size(); ++idx) {
             if (!td.params[idx].hasDef) {
-                err("too few template arguments");
+                // A function template may be given only its first arguments; the rest are deduced.
+                if (!partial) err("too few template arguments");
                 break;
             }
             std::size_t saved = i_;
@@ -2488,7 +2564,14 @@ private:
             tag += argMangle(args[i]);
         }
         tag += ">";
+        if (instInProgress_.count(tag)) {
+            // The class names itself (Node<T> *next inside Node<T>): the tag stands for it.
+            auto self = ty(Type::Kind::Struct);
+            self->tag = tag;
+            return self;
+        }
         if (!structs_.count(tag) && args.size() == td.params.size()) {
+            instInProgress_.insert(tag);
             std::size_t saved = i_;
             auto savedPre = std::move(preStmts_);
             preStmts_.clear();
@@ -2504,6 +2587,7 @@ private:
             i_ = saved;
             preStmts_ = std::move(savedPre);
             halfGt_ = savedHalf;
+            instInProgress_.erase(tag);
         }
         auto it = structs_.find(tag);
         if (it == structs_.end() || !it->second) return ty(Type::Kind::Int);
@@ -3223,6 +3307,7 @@ private:
         if (isP("{")) return parseCompound();
         if (isKw("if")) return parseIf();
         if (isKw("while")) return parseWhile();
+        if (isKw("do")) return parseDo();
         if (isKw("for")) return parseFor();
         if (isKw("return")) return parseReturn();
         if (isKw("switch")) return parseSwitch();
@@ -3286,6 +3371,49 @@ private:
         loopBases_.pop_back();
         brkBases_.pop_back();
         return s;
+    }
+
+    // do body while (cond); as { first = 1; while (first || cond) { first = 0; body } }. A
+    // continue in the body goes to the test, which then evaluates cond (first is 0 by then).
+    std::unique_ptr<Stmt> parseDo() {
+        Pos p = here();
+        advance();
+        std::string first = "__do" + std::to_string(newN_++);
+        loopBases_.push_back(dscopes_.size());
+        brkBases_.push_back(dscopes_.size());
+        auto body = parseStmt();
+        loopBases_.pop_back();
+        brkBases_.pop_back();
+        if (!isKw("while")) {
+            err("expected 'while' after the body of 'do'");
+            return body;
+        }
+        advance();
+        expectP("(", "(");
+        auto cond = parseExpr();
+        expectP(")", ")");
+        expectP(";", ";");
+        auto blk = sBlock(p);
+        auto d = std::make_unique<Decl>();
+        d->name = first;
+        d->line = p.line;
+        d->col = p.col;
+        d->file = p.file;
+        d->type = ty(Type::Kind::Int);
+        d->init = eInt(1, p);
+        blk->stmts.push_back(declStmt(std::move(d)));
+        auto w = std::make_unique<Stmt>();
+        w->kind = Stmt::Kind::While;
+        w->line = p.line;
+        w->col = p.col;
+        w->file = p.file;
+        w->expr = eBin("||", eName(first, p), std::move(cond), p);
+        auto inner = sBlock(p);
+        inner->stmts.push_back(sExpr(eAssign(eName(first, p), eInt(0, p), p), p));
+        inner->stmts.push_back(std::move(body));
+        w->body = std::move(inner);
+        blk->stmts.push_back(std::move(w));
+        return blk;
     }
 
     std::unique_ptr<Stmt> parseFor() {
@@ -3576,6 +3704,10 @@ private:
                 Type* vc = tyName && tyName->kind == Type::Kind::Struct && !tyName->tag.empty() ? classOf(tyName->tag)
                                                                                                  : nullptr;
                 if (vc && (vc->needCtor || vc->needDtor)) {
+                    bool defaultCtor = !vc->needCtor;
+                    for (const Param& q : vc->params)
+                        if (q.name == "<ctor>" && q.type && q.type->params.empty()) defaultCtor = true;
+                    if (!defaultCtor) err("new[] needs a default constructor for '" + tyName->tag + "'");
                     std::vector<std::unique_ptr<Expr>> a;
                     a.push_back(std::move(count));
                     return eCall(eName("__vnew_" + mangleNested(tyName->tag), vp), std::move(a), vp);
@@ -3762,7 +3894,23 @@ private:
             auto e = ex(Expr::Kind::Name, at);
             if (isP("<")) {
                 std::vector<TArg> args;
-                parseTemplateArgs(td, args);
+                parseTemplateArgs(td, args, true);
+                if (args.size() < td.params.size()) {
+                    // Only the first template arguments are given: the checker deduces the rest from
+                    // the call and finishes the instance. The given ones travel as carriers.
+                    e->text = "\x01" "tmpl:" + name;
+                    for (const TArg& a : args) {
+                        auto carrier = ex(Expr::Kind::Cast, at);
+                        if (a.isValue) {
+                            carrier->text = "v";
+                            carrier->ival = static_cast<std::uint64_t>(a.value);
+                        } else if (a.type) {
+                            carrier->ty = cloneType(*a.type);
+                        }
+                        e->kids.push_back(std::move(carrier));
+                    }
+                    return e;
+                }
                 const TemplateSig& sig = funcTemplateSigs()[name];
                 InstReq r;
                 r.tmpl = name;
@@ -3775,6 +3923,12 @@ private:
             }
             return e;
         }
+        if (cur().kind == Tok::Ident && (cur().text == "true" || cur().text == "false") && !nextIs("::")) {
+            auto e = ex(Expr::Kind::Int, cur());
+            e->ival = cur().text == "true" ? 1 : 0;
+            advance();
+            return e;
+        }
         if (cur().kind == Tok::Ident) {
             auto it = enums_.find(cur().text);
             if (it != enums_.end() && !nextIs("::")) {
@@ -3783,13 +3937,23 @@ private:
                 advance();
                 return e;
             }
-            if (nextIs("(")) {
+            std::unique_ptr<Type> instTd;
+            if (ctmpl_.count(cur().text) && nextIs("<")) {
+                // Name<args>(...) with a class template: the instance, then a temporary of it.
+                std::size_t saved = i_;
+                instTd = instantiateClass(cur().text);
+                if (!isP("(") || instTd->kind != Type::Kind::Struct) {
+                    i_ = saved;
+                    instTd.reset();
+                }
+            }
+            if (instTd || nextIs("(")) {
                 // T(args) for a class T: a temporary, constructed in a hidden local declared before
                 // the statement. Its destructor does not run (see the plan: temporaries).
-                const Type* td = findTypedef(cur().text);
+                const Type* td = instTd ? instTd.get() : findTypedef(cur().text);
                 if (td && td->kind == Type::Kind::Struct && !td->tag.empty()) {
                     Token at = cur();
-                    advance();
+                    if (!instTd) advance();
                     advance();
                     std::vector<std::unique_ptr<Expr>> args;
                     if (!eatP(")")) {
@@ -4740,6 +4904,18 @@ private:
                 return r;
             }
         }
+        if ((e.kind == Expr::Kind::Assign || e.kind == Expr::Kind::Pre || e.kind == Expr::Kind::Post) &&
+            !e.kids.empty() && e.kids[0] && e.kids[0]->kind == Expr::Kind::Cond && e.kids[0]->kids.size() == 3) {
+            // (c ? a : b) = v, ++(c ? a : b): with two lvalues of one type the conditional is an
+            // lvalue (ISO/IEC 14882 [expr.cond]); it becomes *(c ? &a : &b).
+            Expr& cond = *e.kids[0];
+            auto lv = mkE(Expr::Kind::Cond, cond);
+            lv->kids.push_back(std::move(cond.kids[0]));
+            lv->kids.push_back(eUnary("&", std::move(cond.kids[1]), cond));
+            lv->kids.push_back(eUnary("&", std::move(cond.kids[2]), cond));
+            auto d = eUnary("*", std::move(lv), cond);
+            e.kids[0] = std::move(d);
+        }
         rewriteOperator(e);
         ET r = checkExprBody(e);
         if (r.type) e.checked = cloneType(*r.type);
@@ -4939,6 +5115,38 @@ private:
             }
             return true;
         }
+        if (pat.kind == Type::Kind::Struct && pat.tag.find('\x02') != std::string::npos &&
+            arg.kind == Type::Kind::Struct) {
+            // A class template instance written with the parameters (Node<T>): its tag holds the
+            // marker; match it against the argument's tag piece by piece.
+            const std::string& P = pat.tag;
+            const std::string& Q = arg.tag;
+            std::size_t i = 0;
+            std::size_t j = 0;
+            while (i < P.size() && j < Q.size()) {
+                std::size_t k = i;
+                std::size_t n = 0;
+                while (k < P.size() && P[k] >= '0' && P[k] <= '9') n = n * 10 + static_cast<std::size_t>(P[k++] - '0');
+                if (k > i && k < P.size() && P[k] == '\x02' && n >= 1) {
+                    std::string name = P.substr(k + 1, n - 1);
+                    std::size_t end = mangledEnd(Q, j);
+                    if (end == j) return true;
+                    auto found = typeFromMangle(Q.substr(j, end - j));
+                    for (std::size_t b = 0; b < sig.names.size() && found; ++b)
+                        if (sig.names[b] == name) {
+                            if (!bound[b]) bound[b] = std::move(found);
+                            else if (!sameType(*bound[b], *found)) return false;
+                        }
+                    i = k + n;
+                    j = end;
+                    continue;
+                }
+                if (P[i] != Q[j]) return true;
+                ++i;
+                ++j;
+            }
+            return true;
+        }
         if (pat.kind == Type::Kind::Pointer && pat.inner) {
             if ((arg.kind == Type::Kind::Pointer || arg.kind == Type::Kind::Array) && arg.inner)
                 return deduceType(*pat.inner, *arg.inner, sig, bound);
@@ -4971,6 +5179,8 @@ private:
                 return bad(e.line, e.col);
             }
             std::vector<std::unique_ptr<Type>> bound(sig.names.size());
+            for (std::size_t i = 0; i < c0.kids.size() && i < bound.size(); ++i)
+                if (c0.kids[i] && c0.kids[i]->ty) bound[i] = cloneType(*c0.kids[i]->ty);
             for (std::size_t i = 0; i < sig.fn->params.size(); ++i) {
                 ET a = checkExpr(*e.kids[i + 1]);
                 if (a.bad || !a.type) return bad(e.line, e.col);
@@ -5025,7 +5235,10 @@ private:
                 e.kids[2]->ival = 8;  // built in place
                 eraseTemp(e.kids[2]->text);
             }
-            bool useCtor = src.lvalue && src.type && src.type->kind == Type::Kind::Struct && src.type->tag == tag;
+            const bool sameClass = src.type && src.type->kind == Type::Kind::Struct && src.type->tag == tag;
+            // Another type (an int for a constructor taking an int) is an ordinary constructor call;
+            // an object of the class is copied (copy constructor, else bytes).
+            bool useCtor = !sameClass || (src.lvalue && hasUserCopy(*src.type));
             if (useCtor) {
                 e.kids[0]->text = "\x01" "ctor:" + tag;
                 return checkCall(e);
@@ -5151,6 +5364,12 @@ private:
                     std::unique_ptr<Expr> selfArg;
                     if (mem.text == "->") {
                         selfArg = std::move(mem.kids[0]);
+                    } else if (!obj.lvalue && obj.type && obj.type->kind == Type::Kind::Struct && !obj.bad) {
+                        // A member call on an object that is a result (f().g()): the object goes into
+                        // a hidden local and the call is made on that.
+                        std::string tmp = newTemp(*obj.type, e, true);
+                        auto assign = withFlag(eAssignNode(mkName(tmp, e), std::move(mem.kids[0]), e), e);
+                        selfArg = eCommaNode(std::move(assign), eUnary("&", mkName(tmp, e), e), e);
                     } else {
                         selfArg = std::make_unique<Expr>();
                         selfArg->kind = Expr::Kind::Unary;
@@ -5697,17 +5916,68 @@ private:
             }
             break;
         }
-        case Stmt::Kind::For:
+        case Stmt::Kind::For: {
             blockify(s.body);
             scopes_.emplace_back();
             if (s.init) checkStmt(*s.init);
+            std::vector<TempInfo> outer = std::move(temps_);
+            temps_.clear();
             if (s.expr) checkCond(*s.expr);
+            std::vector<TempInfo> condTemps = std::move(temps_);
+            temps_ = std::move(outer);
             if (s.expr2) checkExpr(*s.expr2);
             ++loops_;
             if (s.body) checkStmt(*s.body);
             --loops_;
+            if (!condTemps.empty() && s.expr && s.body) {
+                // The condition's temporaries live for one test:
+                // for (init; ; step) { decls; c = cond; dtors; if (!c) break; body }.
+                Expr at;
+                at.line = s.line;
+                at.col = s.col;
+                at.file = s.file;
+                auto blk = std::make_unique<Stmt>();
+                blk->kind = Stmt::Kind::Block;
+                blk->line = s.line;
+                blk->col = s.col;
+                blk->file = s.file;
+                declareTemps(blk->stmts, condTemps);
+                std::string cv = "__cc" + std::to_string(tempN_++);
+                auto d = std::make_unique<Decl>();
+                d->name = cv;
+                d->line = s.line;
+                d->col = s.col;
+                d->file = s.file;
+                d->type = prim(Type::Kind::Long);
+                d->init = std::move(s.expr);
+                auto ds = std::make_unique<Stmt>();
+                ds->kind = Stmt::Kind::Decl;
+                ds->line = s.line;
+                ds->col = s.col;
+                ds->decl = std::move(d);
+                blk->stmts.push_back(std::move(ds));
+                for (auto& dt : dtorStmts(condTemps, s.line, s.col, s.file)) blk->stmts.push_back(std::move(dt));
+                auto notc = eUnary("!", mkName(cv, at), at);
+                notc->checked = prim(Type::Kind::Int);
+                notc->kids[0]->checked = prim(Type::Kind::Long);
+                auto stop = std::make_unique<Stmt>();
+                stop->kind = Stmt::Kind::If;
+                stop->line = s.line;
+                stop->col = s.col;
+                stop->file = s.file;
+                stop->expr = std::move(notc);
+                auto brk = std::make_unique<Stmt>();
+                brk->kind = Stmt::Kind::Break;
+                brk->line = s.line;
+                brk->file = s.file;
+                stop->thenS = std::move(brk);
+                blk->stmts.push_back(std::move(stop));
+                blk->stmts.push_back(std::move(s.body));
+                s.body = std::move(blk);
+            }
             scopes_.pop_back();
             break;
+        }
         case Stmt::Kind::Break:
             if (loops_ == 0 && switches_ == 0) err(s.line, s.col, "break is not inside a loop or switch");
             break;
@@ -7059,16 +7329,49 @@ private:
     }
 
     Val lowerInc(Expr& e, bool pre) {
-        if (e.kids.empty() || !e.kids[0] || e.kids[0]->kind != Expr::Kind::Name) {
+        if (e.kids.empty() || !e.kids[0]) {
             err(e.line, e.col, "not lowered");
             return {};
         }
-        Sym* s = find(e.kids[0]->text);
-        if (!s || s->global || s->array) {
-            err(e.line, e.col, "not lowered");
-            return {};
+        Sym* simple = e.kids[0]->kind == Expr::Kind::Name ? find(e.kids[0]->text) : nullptr;
+        if (!simple || simple->global || simple->array) {
+            // Any other object (a field, an element, *p, a global): x++ is (x += 1) - 1 and ++x is
+            // x += 1, with the object evaluated once.
+            auto one = std::make_unique<Expr>();
+            one->kind = Expr::Kind::Int;
+            one->ival = 1;
+            one->line = e.line;
+            one->col = e.col;
+            auto lhsType = e.kids[0]->checked ? cloneType(*e.kids[0]->checked) : nullptr;
+            one->checked = std::make_unique<Type>();
+            auto asg = std::make_unique<Expr>();
+            asg->kind = Expr::Kind::Assign;
+            asg->text = e.text == "--" ? "-=" : "+=";
+            asg->line = e.line;
+            asg->col = e.col;
+            asg->file = e.file;
+            asg->kids.push_back(std::move(e.kids[0]));
+            asg->kids.push_back(std::move(one));
+            if (lhsType) asg->checked = cloneType(*lhsType);
+            if (pre) return lowerExpr(*asg);
+            auto back = std::make_unique<Expr>();
+            back->kind = Expr::Kind::Bin;
+            back->text = e.text == "--" ? "+" : "-";
+            back->line = e.line;
+            back->col = e.col;
+            back->file = e.file;
+            auto one2 = std::make_unique<Expr>();
+            one2->kind = Expr::Kind::Int;
+            one2->ival = 1;
+            one2->checked = std::make_unique<Type>();
+            if (lhsType) back->checked = cloneType(*lhsType);
+            back->kids.push_back(std::move(asg));
+            back->kids.push_back(std::move(one2));
+            return lowerExpr(*back);
         }
-        Operand one = Operand::number(e.text == "--" ? -1 : 1);
+        Sym* s = simple;
+        // A pointer moves by the size of what it points to.
+        Operand one = Operand::number((e.text == "--" ? -1 : 1) * (s->step > 1 ? s->step : 1));
         if (s->mem) {
             Val cur = loadMem(s->reg, s->width, s->zext);
             int dst = fresh();
@@ -7281,6 +7584,7 @@ private:
                 }
                 if (s->width > 0 && s->width < 8) result = narrow(result, s->width, s->zext);
                 storeNamed(*s, result);
+                if (s->global) return Val{result, s->step, s->inner};
                 return Val{Operand::vreg(s->reg), s->step, s->inner};
             }
             storeBits(addr.op, result, addr.width > 0 ? addr.width : 8);

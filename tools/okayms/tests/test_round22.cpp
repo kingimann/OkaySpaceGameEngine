@@ -252,6 +252,35 @@ static void test_algorithms(Tally& tally) {
              0);
 }
 
+static void test_rvalue_references(Tally& tally) {
+    std::printf("test_rvalue_references\n");
+    run_both(tally, "rvalue_ref",
+             std::string(kAlloc) +
+             "#include <utility>\n"
+             "static int live = 0;\n"
+             "struct B { int* p; int n; B(int k) : p(new int(k)), n(1) { ++live; }\n"
+             "  B(const B& o) : p(new int(*o.p)), n(0) { ++live; }\n"
+             "  B(B&& o) : p(o.p), n(2) { o.p = 0; ++live; }\n"
+             "  ~B() { if (p) delete p; --live; }\n"
+             "  B& operator=(const B& o) { int* t = new int(*o.p); if (p) delete p; p = t; n = 3; return *this; }\n"
+             "  B& operator=(B&& o) { int* t = p; p = o.p; o.p = t; n = 4; return *this; } };\n"
+             "static B mk(int k) { B b(k); return b; }\n"
+             "static int which(const B&) { return 1; }\n"
+             "static int which(B&&) { return 2; }\n"
+             "int entry(void) {\n"
+             "  {\n"
+             "    B a(5); B c(a); B d(std::move(a)); B e(mk(7));\n"
+             "    CK(1, c.n == 0 && *c.p == 5 && d.n == 2 && *d.p == 5 && a.p == 0 && e.n != 0 && *e.p == 7);\n"
+             "    c = d; CK(2, c.n == 3 && *c.p == 5 && d.p != 0);\n"
+             "    B f(9); c = std::move(f); CK(3, c.n == 4 && *c.p == 9 && *f.p == 5);\n"
+             "    CK(4, which(c) == 1 && which(std::move(c)) == 2 && which(mk(1)) == 2);\n"
+             "  }\n"
+             "  CK(5, live == 0);\n"
+             "  return 0;\n"
+             "}\n",
+             0);
+}
+
 int main(int argc, char** argv) {
     const std::string root = argc > 1 ? argv[1] : ".";
     (void)root;
@@ -262,5 +291,6 @@ int main(int argc, char** argv) {
     test_member_defaults_braced(tally);
     test_initializer_list(tally);
     test_algorithms(tally);
-    return tally.finish(6);
+    test_rvalue_references(tally);
+    return tally.finish(7);
 }

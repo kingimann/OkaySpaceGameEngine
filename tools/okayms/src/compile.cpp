@@ -60,6 +60,9 @@ struct Type {
     // overload choice look at it.
     bool pconst = false;
     bool is_ref = false;
+    // `T&&` with a class (or template) T: an rvalue reference; is_ref is set too. It binds to a temporary or to the
+    // result of std::move, and takes part in the choice of a move constructor or a move assignment.
+    bool rref = false;
     // bool: one byte holding 0 or 1 (base 2, unsigned). A conversion to it compares with zero.
     bool is_bool = false;
     // long long, unsigned long long, __int64: a base 1 integer that is 8 bytes wide and lives in rax.
@@ -1382,6 +1385,8 @@ std::string cxx_type(const Type& type, const std::vector<StructDef>* structs = n
         // On x64 a reference is "AEA" (the E is the 64-bit pointer mark).
         Type inner = type;
         inner.is_ref = false;
+        inner.rref = false;
+        if (type.rref && type.pointers == 0) return std::string("$$QEA") + cxx_type(inner, structs);  // T&&
         return std::string(type.pconst && type.pointers == 0 ? "AEB" : "AEA") + cxx_type(inner, structs);
     }
     if (type.pointers > 0) {
@@ -2261,13 +2266,15 @@ struct Parser {
         return true;
     }
     // A call of a function that returns a reference is the pointer it returns, dereferenced.
-    static Node reference_result(Node call, bool is_ref) {
+    static Node reference_result(Node call, bool is_ref, bool rvalue = false) {
         if (!is_ref) return call;
         call.type.is_ref = false;
+        call.type.rref = false;
         call.type.pointers += 1;
         Node d;
         d.kind = Node::Unary;
         d.op = TStar;
+        if (rvalue) d.text = "xval";  // std::move(x) and the like: an rvalue
         d.kids.push_back(std::move(call));
         return d;
     }
@@ -3040,7 +3047,11 @@ struct Parser {
                 continue;
             }
             while (accept(TStar)) ++pt.pointers;
-            if (accept(TAmp) || accept(TAndAnd)) pt.is_ref = true;
+            if (accept(TAmp)) pt.is_ref = true;
+            else if (accept(TAndAnd)) {
+                pt.is_ref = true;
+                if (pt.pointers == 0) pt.rref = true;
+            }
             if (is(TEllipsis) && !type_name.empty()) {
                 // Rest... rest: a function parameter pack ([temp.variadic]).
                 next();
@@ -3143,7 +3154,11 @@ struct Parser {
             return true;
         }
         while (accept(TStar)) ++out->type.pointers;
-        if (accept(TAmp) || accept(TAndAnd)) out->type.is_ref = true;
+        if (accept(TAmp)) out->type.is_ref = true;
+        else if (accept(TAndAnd)) {
+            out->type.is_ref = true;
+            if (out->type.pointers == 0) out->type.rref = true;
+        }
         if (!is(TIdent)) {
             error = "expected a name";
             return false;
@@ -3223,6 +3238,7 @@ struct Parser {
             return true;  // sizeof(S)
         return i + 1 < tokens.size() &&
                (tokens[i + 1].kind == TIdent || tokens[i + 1].kind == TStar || tokens[i + 1].kind == TAmp ||
+                tokens[i + 1].kind == TAndAnd ||
                 ((tokens[i + 1].kind == TComma || tokens[i + 1].kind == TGt) && i >= 1 &&
                  (tokens[i - 1].kind == TLt || tokens[i - 1].kind == TComma)));  // a template argument: Box<P, 3>
     }
@@ -3399,7 +3415,7 @@ struct Parser {
         }
         if (i + 2 >= tokens.size() || tokens[i].kind != TColonColon || tokens[i + 1].kind != TIdent) return false;
         const Tok after = tokens[i + 2].kind;
-        return after != TIdent && after != TStar && after != TAmp && after != TColonColon;
+        return after != TIdent && after != TStar && after != TAmp && after != TAndAnd && after != TColonColon;
     }
     bool class_name_text(const std::string& text) const {
         if (typedefs.find(text) != typedefs.end()) return false;
@@ -3516,7 +3532,7 @@ struct Parser {
     // Looks ahead from the current token: stars or '&', a name, then '('.
     bool method_ahead() const {
         size_t i = at;
-        while (i < tokens.size() && (tokens[i].kind == TStar || tokens[i].kind == TAmp)) ++i;
+        while (i < tokens.size() && (tokens[i].kind == TStar || tokens[i].kind == TAmp || tokens[i].kind == TAndAnd)) ++i;
         return i + 1 < tokens.size() && tokens[i].kind == TIdent && tokens[i + 1].kind == TLParen;
     }
 
@@ -3569,11 +3585,26 @@ struct Parser {
         }
         return any;
     }
+    // An rvalue ([basic.lval]): a call that returns a class by value, the result of std::move, or a hidden temporary.
+    bool is_rvalue(const Node& arg) const {
+        if (arg.kind == Node::Unary && arg.op == TStar && arg.text == "xval") return true;
+        if (arg.kind == Node::Name && (arg.text.compare(0, 4, "__bt") == 0 || arg.text.compare(0, 5, "__tmp") == 0 ||
+                                       arg.text.compare(0, 4, "__br") == 0 || arg.text.compare(0, 4, "__il") == 0))
+            return true;
+        if (arg.kind == Node::Call) {
+            Type t;
+            return static_type(arg, &t) && t.base == 3 && t.pointers == 0 && !t.is_ref && !t.is_array();
+        }
+        return false;
+    }
     int arg_score(const Node& arg, Type p) const {
         Type a;
         if (!static_type(arg, &a)) return 1;
+        const bool want_ref = p.is_ref;
+        const bool want_rref = p.rref;
         a.is_ref = false;
         p.is_ref = false;
+        if (want_rref && p.pointers == 0 && p.base == 3 && !is_rvalue(arg)) return -1;
         if (a.is_array()) {
             a = peel_array(a);
             a.pointers += 1;
@@ -3590,7 +3621,7 @@ struct Parser {
         }
         if (p.base == 3) {
             if (a.pointers != 0 || a.base != 3) return -1;
-            if (a.struct_id == p.struct_id) return 0;
+            if (a.struct_id == p.struct_id) return want_ref && !want_rref && is_rvalue(arg) ? 1 : 0;
             return derives_from(a.struct_id, p.struct_id) ? 2 : -1;
         }
         if (a.pointers > 0) return p.is_bool && p.base == 2 ? 3 : -1;
@@ -3710,11 +3741,16 @@ struct Parser {
     }
 
     static bool same_shape(const Type& a, const Type& b) {
-        return a.base == b.base && a.pointers == b.pointers && a.is_ref == b.is_ref && a.struct_id == b.struct_id;
+        return a.base == b.base && a.pointers == b.pointers && a.is_ref == b.is_ref && a.rref == b.rref &&
+               a.struct_id == b.struct_id;
     }
     static bool is_copy_param(const Method& m, int sid) {
-        return m.name == "<ctor>" && m.params.size() == 1 && m.params[0].is_ref && m.params[0].base == 3 &&
-               m.params[0].pointers == 0 && m.params[0].struct_id == sid;
+        return m.name == "<ctor>" && m.params.size() == 1 && m.params[0].is_ref && !m.params[0].rref &&
+               m.params[0].base == 3 && m.params[0].pointers == 0 && m.params[0].struct_id == sid;
+    }
+    static bool is_move_param(const Method& m, int sid) {
+        return m.name == "<ctor>" && m.params.size() == 1 && m.params[0].is_ref && m.params[0].rref &&
+               m.params[0].base == 3 && m.params[0].pointers == 0 && m.params[0].struct_id == sid;
     }
     const Method* copy_ctor(int sid) const {
         if (sid < 0 || sid >= static_cast<int>(structs.size())) return nullptr;
@@ -3740,7 +3776,7 @@ struct Parser {
                         if (walk == sid) related = true;
                     is_obj = related;
                 }
-                if (is_obj != is_copy_param(m, sid)) continue;
+                if (is_obj != (is_copy_param(m, sid) || is_move_param(m, sid))) continue;
             }
             // Of several constructors of one arity the best match by the ranks of [over.match] wins; a tie, or no
             // viable one, goes to the one declared last (the order used before).
@@ -4634,7 +4670,12 @@ struct Parser {
                 init.name = cur().text;
                 next();
                 if (!expect(TLParen, "'('")) return false;
+                const size_t hoist_from = stmt_pre.size();
                 if (!parse_call_args(&init.args)) return false;
+                // Statements an argument needs before it (`p(new int(k))`: the allocation and the store) run before
+                // the members are made.
+                for (size_t h = hoist_from; h < stmt_pre.size(); ++h) pre.push_back(std::move(stmt_pre[h]));
+                stmt_pre.resize(hoist_from);
                 inits.push_back(std::move(init));
             } while (accept(TComma));
         }
@@ -9217,7 +9258,7 @@ bool Parser::qualified_call(Node* out, int cls, const std::string& name, std::ve
         call.kids.push_back(std::move(self));
     }
     for (Node& arg : args) call.kids.push_back(std::move(arg));
-    *out = reference_result(std::move(call), m->ret.is_ref);
+    *out = reference_result(std::move(call), m->ret.is_ref, m->ret.rref);
     return true;
 }
 
@@ -9334,7 +9375,7 @@ bool Parser::method_call(Node* out, Node object, bool arrow, const std::string& 
     }
     if (!m->is_static) call.kids.push_back(std::move(self));
     for (Node& arg : args) call.kids.push_back(std::move(arg));
-    *out = reference_result(std::move(call), m->ret.is_ref);
+    *out = reference_result(std::move(call), m->ret.is_ref, m->ret.rref);
     return true;
 }
 
@@ -9411,7 +9452,7 @@ bool Parser::free_call(const std::string& name, std::vector<Node> args, Node* ou
                 source[i].is_ref = true;
             }
         if (!adjust_args(source, &call.kids)) return false;
-        *out = known.ret_ref ? reference_result(std::move(call), true) : std::move(call);
+        *out = known.ret_ref ? reference_result(std::move(call), true, known.ret.rref) : std::move(call);
         return true;
     }
     return true;
@@ -9842,7 +9883,7 @@ bool Parser::parse_new(Node* out) {
                      from.struct_id == ty.struct_id;
     }
     const bool ctor = obj && class_needs_ctor(structs[static_cast<size_t>(ty.struct_id)]) && !plain_copy;
-    if (!args.empty() && !ctor && !(args.size() == 1 && (has_place || plain_copy))) {
+    if (!args.empty() && !ctor && !(args.size() == 1 && (has_place || plain_copy || !obj))) {
         error = "new with arguments needs a class with a constructor";
         return false;
     }
@@ -10430,7 +10471,7 @@ bool Parser::parse_unary(Node* out) {
                         source[i].is_ref = true;
                     }
                 if (!adjust_args(source, &out->kids)) return false;
-                if (known.ret_ref) *out = reference_result(std::move(*out), true);
+                if (known.ret_ref) *out = reference_result(std::move(*out), true, known.ret.rref);
                 break;
             }
             return parse_postfix(out);
@@ -10511,7 +10552,7 @@ bool Parser::parse_unary(Node* out) {
                         source[i].is_ref = true;
                     }
                 if (!adjust_args(source, &out->kids)) return false;
-                if (known.ret_ref) *out = reference_result(std::move(*out), true);
+                if (known.ret_ref) *out = reference_result(std::move(*out), true, known.ret.rref);
                 break;
             }
         } else if (enum_values.find(name) != enum_values.end()) {

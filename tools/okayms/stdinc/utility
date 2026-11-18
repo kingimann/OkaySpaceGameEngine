@@ -1,0 +1,10 @@
+// okay-ms own standard header: std::move, std::forward and std::swap, written from ISO/IEC 14882 [forward]
+// and [utility.swap]. std::move(x) is x as an rvalue: a call that takes `T&&` (a move constructor, a move
+// assignment) accepts it where a plain lvalue is refused. In this compiler a function that returns `T&&` hands back the
+// address of its argument and the call is marked as an rvalue.
+#pragma once
+namespace std {
+template <typename T> T&& move(T& x) { return x; }
+template <typename T> T&& forward(T& x) { return x; }
+template <typename T> void swap(T& a, T& b) { T t = move(a); a = move(b); b = move(t); }
+}

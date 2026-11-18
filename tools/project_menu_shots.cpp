@@ -1,4 +1,4 @@
-// Headless pictures of the Project panel's right-click menus and Properties window (docs/images/project_menus/), drawn with the REAL
+// Headless pictures of the Project panel's right-click menus and Properties window (pass an output folder; pictures are no longer stored in the repo), drawn with the REAL
 // drawing code (editor/ProjectMenuDraw.cpp) and the REAL item lists (editor/ProjectContextModel.hpp). Dear ImGui draws into a software
 // SDL surface: no window, no editor, no GPU. The look is ImGui's default dark style and its built-in font with the Project panel's roomy
 // spacing, NOT the editor's own skin, so colours and fonts differ from the real window; the items, their order, what is greyed and the

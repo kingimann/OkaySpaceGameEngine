@@ -152,26 +152,26 @@ cannot see; **Show Dependencies** lists them and a click shows each one), a *Loc
 `strings.okayloc`, edited in the Localization window) and *Animation* (animation clips come from a model or are captured on a model, not
 made empty). *Read-only package folders* do not exist in a project today, so nothing is greyed for them.
 
-**Pictures.** `docs/images/project_menus/` holds renders of these menus. They are **not screenshots of the editor window**: the real item
+**Pictures.** a picture folder (pictures are no longer stored in the repository) holds renders of these menus. They are **not screenshots of the editor window**: the real item
 lists (`ProjectContextModel.hpp`) are drawn by the real menu code (`ProjectMenuDraw.cpp`) with Dear ImGui into a software surface, using
 ImGui's default dark look and built-in font (made by `tools/project_menu_shots.cpp`, steps in its first lines), so colours and fonts differ
 from the editor's skin. The items, their order, what is greyed and the tooltips are the real ones.
 
 | Picture | What it shows |
 |---|---|
-| ![An asset](images/project_menus/asset-menu-picture.png) | Right-click a picture: Open greyed (no editor window for pictures), Open with Default App, the edit items, Move to..., Reimport, Tags, Label, Copy Text, Show in Explorer, Properties. |
-| ![Several items](images/project_menus/asset-menu-three-selected.png) | Three pictures selected, two files copied earlier: "Delete 3 Items", "Paste 2 Items", Rename greyed. |
-| ![A script](images/project_menus/asset-menu-script.png) | A script: Edit Script, **Open in External Editor** (an editor is named, never "open") and Open with Default App. |
-| ![A program](images/project_menus/asset-menu-program-or-script.png) | `tool.bat`: **Open with Default App is greyed** with the reason in its tooltip, and there is no Open in External Editor. |
-| ![A folder](images/project_menus/folder-menu-create.png) | A folder in the grid with **Create** open (grouped; Loot Table and Recipe Book make a file in this folder). |
-| ![The Assets folder](images/project_menus/tree-assets-menu.png) | **Assets** in the folder tree: Rename, Duplicate, Cut, Copy, Move to..., Delete and Favourites are greyed. |
-| ![Empty space](images/project_menus/empty-space-menu-view.png) | Empty space with **View** open (Grid, List, tile sizes ticked), Undo naming the last operation. |
-| ![A smart view](images/project_menus/empty-space-smart-view.png) | Empty space while a smart filter shows: Create, Paste, Undo, Import and Properties are greyed. |
-| ![The Create list](images/project_menus/create-menu.png) | The Create list (also the toolbar **+**). |
-| ![Favourites](images/project_menus/favourites-menu.png) | A starred folder under FAVOURITES. |
-| ![Properties of a picture](images/project_menus/properties-window.png) | **Properties...** of a picture: size, date in UTC with "2 days ago", GUID, uses, tags, label, both paths. |
-| ![Properties of a scene](images/project_menus/properties-scene.png) | A scene with broken references (orange) and a start scene note. |
-| ![Properties of a folder](images/project_menus/properties-folder.png) | A folder: how many files and folders it holds and how big it is. |
+|  | Right-click a picture: Open greyed (no editor window for pictures), Open with Default App, the edit items, Move to..., Reimport, Tags, Label, Copy Text, Show in Explorer, Properties. |
+|  | Three pictures selected, two files copied earlier: "Delete 3 Items", "Paste 2 Items", Rename greyed. |
+|  | A script: Edit Script, **Open in External Editor** (an editor is named, never "open") and Open with Default App. |
+|  | `tool.bat`: **Open with Default App is greyed** with the reason in its tooltip, and there is no Open in External Editor. |
+|  | A folder in the grid with **Create** open (grouped; Loot Table and Recipe Book make a file in this folder). |
+|  | **Assets** in the folder tree: Rename, Duplicate, Cut, Copy, Move to..., Delete and Favourites are greyed. |
+|  | Empty space with **View** open (Grid, List, tile sizes ticked), Undo naming the last operation. |
+|  | Empty space while a smart filter shows: Create, Paste, Undo, Import and Properties are greyed. |
+|  | The Create list (also the toolbar **+**). |
+|  | A starred folder under FAVOURITES. |
+|  | **Properties...** of a picture: size, date in UTC with "2 days ago", GUID, uses, tags, label, both paths. |
+|  | A scene with broken references (orange) and a start scene note. |
+|  | A folder: how many files and folders it holds and how big it is. |
 
 ## Safety
 

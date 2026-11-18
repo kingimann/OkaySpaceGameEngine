@@ -1,6 +1,7 @@
 // Run, not just compile: the launcher's Versions page (launcher/VersionsUI.cpp over launcher/VersionsManager.cpp and VersionsNet.cpp), a Dear ImGui page
 // compiled against OkayUI through the probe stand-in imgui.h and drawn headless. Fake state: a temporary launcher folder with two installed versions, an
 // offline host (the text fetch always fails; nothing is downloaded), no-op callbacks. See docs/own_ui_toolkit.md 6.14.
+#include <SDL.h>
 #include "test_framework.hpp"
 #include "OkayUITestKit.hpp"
 #include "VersionsUI.hpp"
@@ -35,7 +36,7 @@ int main() {
     int toasts = 0;
     host.toast = [&](const std::string&, int) { ++toasts; };
     host.openFolder = [](const std::string&) {}; host.savePrefs = [] {}; host.startUpdate = [] {}; host.channelChanged = [] {};
-    host.fetchText = [](const std::string&, std::string&) { return false; };   // offline
+    host.fetchText = [](const std::string&, std::string&) { return false; };   // offline (the lookup runs on a worker: the test waits for it, below)
 
     Reset(); UI::UseLauncherLook(true);   // the launcher draws its pages in this look
     Sim s(900, 620);
@@ -46,6 +47,19 @@ int main() {
         UI::End();
     };
     for (int i = 0; i < 6; ++i) s.Frame(ui);
+    // The version lookup is a background job (an SDL thread): the page shows "Looking up the version list" until it ends and "Couldn't reach ..." after. A
+    // golden taken at whatever moment the worker happened to finish differs from machine to machine (CI saw 7316 pixels differ), so keep drawing, with a
+    // short pause, until the picture has stopped changing for 40 frames in a row (at most 4 seconds), then take it.
+    auto pictureHash = [] {
+        const UI::DrawData dd = UI::GetDrawData();
+        const unsigned char* v = static_cast<const unsigned char*>(dd.vertices);
+        unsigned h = 2166136261u;
+        for (int i = 0; i < dd.vertexCount * dd.vertexStride; ++i) h = (h ^ v[i]) * 16777619u;
+        return h ^ (unsigned)dd.indexCount * 2654435761u;
+    };
+    unsigned last = 0; int stable = 0;
+    for (int i = 0; i < 800 && stable < 40; ++i) { SDL_Delay(5); s.Frame(ui); const unsigned h = pictureHash(); stable = (h == last && i > 0) ? stable + 1 : 0; last = h; }
+    CHECK(stable >= 40);
     const UI::DrawData d = UI::GetDrawData();
     CHECK(d.vertexCount > 300 && d.indexCount > 400 && d.dropped == 0);
     const Bitmap first = s.Draw(24, 26, 32);

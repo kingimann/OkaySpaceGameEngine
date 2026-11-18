@@ -21,6 +21,18 @@
 
 namespace okayuitest {
 
+/// Pictures must not depend on the machine: the engine looks for installed fonts (DejaVu, Noto, ...) when the embedded Roboto lacks a character, and a CI
+/// image has other fonts than a developer's computer, so every golden test runs with the installed fonts switched off (OKAY_NO_SYSTEM_FONTS, read once by
+/// the engine the first time a fallback font is looked up; this runs before main).
+inline const int kPinnedFonts = [] {
+#ifdef _WIN32
+    _putenv("OKAY_NO_SYSTEM_FONTS=1");
+#else
+    setenv("OKAY_NO_SYSTEM_FONTS", "1", 1);
+#endif
+    return 1;
+}();
+
 using OkayUI::soft::Bitmap;
 
 /// Forget all OkayUI state and make the caret steady (no blink), so frames are reproducible.

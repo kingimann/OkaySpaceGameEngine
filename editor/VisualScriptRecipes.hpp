@@ -5,6 +5,7 @@
 // headless scene by that test. Wording is for a 10 year old: short names, no programming words.
 #include "VisualScriptGlossary.hpp"
 #include <cstring>
+#include <initializer_list>
 #include <string>
 #include <vector>
 
@@ -22,6 +23,16 @@ struct VsRecipe {
 };
 
 namespace recipe {
+/// A Rule block (WHEN / ONLY IF / DO, up to four actions) with every field written out, so no default sneaks in.
+inline std::string Rule(const char* when, const char* wv, const char* cond, const char* cv,
+                        std::initializer_list<const char*> actions, int id = 1) {
+    std::string v[12] = {when, wv, cond, cv, "none", "", "none", "", "none", "", "none", ""};
+    int i = 4;
+    for (const char* a : actions) v[i++] = a;
+    std::string g = "node " + std::to_string(id) + " QbRule\npos " + std::to_string(id) + " 40 40\n";
+    for (int k = 0; k < 12; ++k) if (!v[k].empty()) g += "default " + std::to_string(id) + " " + std::to_string(k) + " " + v[k] + "\n";
+    return g;
+}
 inline std::string Note(const char* t) { return std::string("comment 16 8 520 90 1 \"") + t + "\"\n"; }
 } // namespace recipe
 
@@ -51,29 +62,25 @@ inline const std::vector<VsRecipe>& VsRecipes() {
          Note("This walks toward the object named Player. Change the name or the speed on the block.") +
          "node 1 QbFollowObject\npos 1 40 40\ndefault 1 0 Player\ndefault 1 1 3\n"},
         {"Say hello", "The object shows a message when the game starts. Example: show Hello! on the screen.",
-         "The object needs a text (it is added for you).", "Text", 2, 1, "Message",
-         Note("Shows a message when the game starts. Change the words on the block.") +
-         "node 1 OnStart\npos 1 40 40\nentry OnStart 1\n"
-         "node 2 QbShowText\npos 2 300 40\ndefault 2 0 \"Hello!\"\ndefault 2 1 3\nexec 1 0 2\n"},
+         "The object needs a text (it is added for you).", "Text", 1, 0, "Message",
+         Note("Shows a message when the game starts. Change the words in the Rule.") +
+         recipe::Rule("start", "", "none", "", {"text", "\"Hello!\""})},
         {"Play a sound on click", "A sound plays when you click the object. Example: click a button to hear a beep.",
-         "The object needs a sound (it is added for you).", "Audio", 2, 1, "",
+         "The object needs a sound (it is added for you).", "Audio", 1, 0, "",
          Note("Click this object to play its sound.") +
-         "node 1 OnClick\npos 1 40 40\nentry OnClick 1\n"
-         "node 2 PlaySound\npos 2 300 40\nexec 1 0 2\n"},
+         recipe::Rule("click", "", "none", "", {"sound"})},
         {"Game over when health is 0", "The game says You lose when the object has no health left. Example: a hero that can die.",
          "The object needs health (it is added for you).", "Health", 1, 0, "",
          Note("When health reaches 0, the game ends and shows You lose.") +
          "node 1 QbGameOverAtZeroHealth\npos 1 40 40\n"},
         {"Spawn a copy when I click", "A new copy of a saved object appears when you click. Example: click to drop a coin.",
-         "Type the name of a saved object in What (a .okayprefab file).", "", 2, 1, "",
-         Note("Click this object to make a copy of the saved object. Change What and the spot on the block.") +
-         "node 1 OnClick\npos 1 40 40\nentry OnClick 1\n"
-         "node 2 QbSpawnCopyAt\npos 2 300 40\ndefault 2 0 examples/node_playground/marker.okayprefab\ndefault 2 1 0\ndefault 2 2 2\ndefault 2 3 0\nexec 1 0 2\n"},
+         "Type the file of a saved object in the Rule (a .okayprefab file).", "", 1, 0, "",
+         Note("Click this object to make a copy of the saved object. Change the file in the Rule.") +
+         recipe::Rule("click", "", "none", "", {"spawn", "examples/node_playground/marker.okayprefab"})},
         {"Change scene when touched", "The game moves to another scene when something touches this. Example: walk into a door to reach Level2.",
-         "The object needs a touch zone (it is added for you). Type the scene name on the Load Scene block.", "Trigger", 2, 1, "",
-         Note("When something touches this, go to the scene named on the second block.") +
-         "node 1 QbWhenTouchedDo\npos 1 40 40\n"
-         "node 2 LoadScene Level2\npos 2 300 40\nexec 1 0 2\n"},
+         "The object needs a touch zone (it is added for you). Type the scene name in the Rule.", "Trigger", 1, 0, "",
+         Note("When something touches this, go to the scene named in the Rule.") +
+         recipe::Rule("touched", "", "none", "", {"scene", "Level2"})},
     };
     return all;
 }

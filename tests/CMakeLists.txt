@@ -3986,5 +3986,6 @@ target_link_libraries(test_vs_search_connect PRIVATE okay::engine)
 add_test(NAME vs_search_connect COMMAND test_vs_search_connect)
 
 add_executable(test_vs_quick_blocks test_vs_quick_blocks.cpp)
+target_include_directories(test_vs_quick_blocks PRIVATE ${CMAKE_SOURCE_DIR}/editor)
 target_link_libraries(test_vs_quick_blocks PRIVATE okay::engine)
 add_test(NAME vs_quick_blocks COMMAND test_vs_quick_blocks)

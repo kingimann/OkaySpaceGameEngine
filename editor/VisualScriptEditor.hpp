@@ -42,6 +42,7 @@
 #include "VisualScriptAutoConnect.hpp"
 #include "VisualScriptAdvanced.hpp"
 #include "VisualScriptPlainWire.hpp"
+#include "VisualScriptPanelWords.hpp"
 #include "DocRecovery.hpp"
 #include <algorithm>
 #include <cstdlib>
@@ -174,7 +175,7 @@ inline std::vector<VsDef> VsWithQuickBlockDefs(std::vector<VsDef> defs) {
     for (const okay::vs::QuickBlock& b : okay::vs::QuickBlocks()) {
         VsDef d{b.type, b.title, CAT_ACTION, b.flowIn, {}, {}, {}, 0, nullptr};
         if (b.thenOut) d.execOut.push_back("Then do");
-        for (const okay::vs::QbField& f : b.fields) d.dataIn.push_back(f.name);
+        for (const okay::vs::QbField& f : okay::vs::QbAllFields(b)) d.dataIn.push_back(f.name);
         d.level = VsLevel::Basic;
         defs.push_back(d);
     }
@@ -900,6 +901,8 @@ inline std::string VsCapturedKey() {
     for (const M& m : named) if (ImGui::IsKeyPressed(m.k, false)) return m.n;
     return {};
 }
+/// What a new Quick block fills itself in from: the last key picked, the selected object, the scene's objects.
+inline okay::vs::QbContext& VsQuickContext() { static okay::vs::QbContext c; return c; }
 inline bool KeyPicker(std::string& arg, float width) {
     bool changed = false;
     std::string lbl = "Key: " + VsKeyLabel(arg) + "##keypick";
@@ -1109,7 +1112,7 @@ public:
         // A quick block starts with the values its fields show, so it works the moment it is dropped.
         if (const okay::vs::QuickBlock* qb = okay::vs::FindQuickBlock(type)) {
             int pin = 0;
-            for (const okay::vs::QbField& f : qb->fields) n.pinDefault[pin++] = f.def;
+            for (const okay::vs::QbField& f : okay::vs::QbAllFields(*qb)) n.pinDefault[pin++] = okay::vs::QbSmartDefault(f, VsQuickContext());
         }
         nodes.push_back(n); dirty = true; return n.id;
     }
@@ -3350,6 +3353,82 @@ inline bool VsApplyDrop(EditorState& ed, VsEditState& st, okay::vs::VsRefKind ki
 }
 
 // One reference slot: name, picker, clear, and drag-drop. True when `value` changed.
+/// One field of a Quick block, drawn with the widget for its kind: a number you drag or type, a key to press, an object
+/// to pick, a dropdown, a colour swatch, or the presets list. Returns true when the value changed. Plain text fields
+/// return false (the caller draws the text box).
+inline bool VsDrawQuickField(EditorState& ed, VsEditNode& n, const okay::vs::QuickBlock& qb, int i, std::string& dv, float width) {
+    using okay::vs::QbKind;
+    const std::vector<okay::vs::QbField> fields = okay::vs::QbAllFields(qb);
+    if (i < 0 || i >= (int)fields.size()) return false;
+    const okay::vs::QbField& f = fields[(std::size_t)i];
+    bool changed = false;
+    char id[24]; std::snprintf(id, sizeof id, "##qf%d", i);
+    ImGui::SetNextItemWidth(width);
+    switch (f.kind) {
+        case QbKind::Number: {
+            float v = (float)std::atof((dv.empty() ? std::string(f.def) : dv).c_str());
+            if (ImGui::DragFloat(id, &v, 0.1f, 0.0f, 0.0f, "%g")) { char b[32]; std::snprintf(b, sizeof b, "%g", v); dv = b; changed = true; }
+            if (ImGui::IsItemHovered()) ImGui::SetTooltip("%s: drag, or Ctrl+click to type a number", f.name);
+            return changed;
+        }
+        case QbKind::Key: {
+            std::string k = dv.empty() ? std::string(f.def) : dv;
+            if (KeyPicker(k, width)) { dv = k; VsQuickContext().lastKey = k; changed = true; }
+            return changed;
+        }
+        case QbKind::Object: {
+            const std::string shown = dv.empty() ? std::string("This object") : dv;
+            if (ImGui::BeginCombo(id, shown.c_str())) {
+                if (ImGui::Selectable("This object", dv.empty())) { dv.clear(); changed = true; }
+                for (const auto& up : ed.scene().Objects())
+                    if (up && ImGui::Selectable(up->name.c_str(), dv == up->name)) { dv = up->name; changed = true; }
+                ImGui::EndCombo();
+            }
+            return changed;
+        }
+        case QbKind::Choice: {
+            const std::string cur = dv.empty() ? std::string(f.def) : dv;
+            std::string label = cur;
+            for (const auto& c : okay::vs::QbChoices(f.choices)) if (c.second == cur) label = c.first;
+            if (ImGui::BeginCombo(id, label.c_str())) {
+                for (const auto& c : okay::vs::QbChoices(f.choices))
+                    if (ImGui::Selectable(c.first.c_str(), c.second == cur)) { dv = c.second; changed = true; }
+                ImGui::EndCombo();
+            }
+            return changed;
+        }
+        case QbKind::Colour: {
+            const std::string cur = dv.empty() ? std::string(f.def) : dv;
+            float col[3] = {1, 1, 1};
+            if (okay::vs::QbValidate(QbKind::Colour, cur))
+                for (int k = 0; k < 3; ++k) col[k] = (float)std::strtol(cur.substr(1 + (std::size_t)k * 2, 2).c_str(), nullptr, 16) / 255.0f;
+            if (ImGui::ColorEdit3(id, col, ImGuiColorEditFlags_NoInputs | ImGuiColorEditFlags_NoLabel)) {
+                char b[16]; std::snprintf(b, sizeof b, "#%02x%02x%02x", (int)(col[0] * 255.0f + 0.5f), (int)(col[1] * 255.0f + 0.5f), (int)(col[2] * 255.0f + 0.5f));
+                dv = b; changed = true;
+            }
+            return changed;
+        }
+        case QbKind::Preset: {
+            if (ImGui::BeginCombo(id, "Choose a preset")) {
+                for (const auto& c : okay::vs::QbChoices(f.choices))
+                    if (ImGui::Selectable(c.first.c_str())) {
+                        std::vector<std::string> values;
+                        for (std::size_t k = 0; k < qb.fields.size(); ++k) {
+                            auto it = n.pinDefault.find((int)k);
+                            values.push_back(it != n.pinDefault.end() ? it->second : std::string(qb.fields[k].def));
+                        }
+                        if (okay::vs::QbApplyPreset(qb, c.second, values))
+                            for (std::size_t k = 0; k < values.size(); ++k) n.pinDefault[(int)k] = values[k];
+                        dv.clear(); changed = true;
+                    }
+                ImGui::EndCombo();
+            }
+            return changed;
+        }
+        default: return false;
+    }
+}
+
 inline bool VsDrawRefSlot(EditorState& ed, VsEditState& st, std::string& value, okay::vs::VsRefKind kind,
                           bool defaultSelf, float width, const char* id) {
     using okay::vs::VsRefKind;
@@ -4083,7 +4162,7 @@ inline void Draw(EditorState& ed, bool* open) {
         ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding, ImVec2(14.0f, 12.0f));
         ImGui::PushStyleVar(ImGuiStyleVar_ItemSpacing, ImVec2(8.0f, 6.0f));
         ImGui::BeginChild("vsoutline", ImVec2(268, 0), true);
-        ImGui::TextUnformatted("Events");
+        ImGui::TextUnformatted(kPanelEvents);
         ImGui::Separator();
         int shown = 0;
         for (const auto& n : g.nodes) {
@@ -4097,16 +4176,16 @@ inline void Draw(EditorState& ed, bool* open) {
             ImGui::PushID(n.id);
             const bool on = st.sel.count(n.id) > 0;
             if (ImGui::Selectable(lbl.c_str(), on, 0, ImVec2(0, 30))) { st.sel = {n.id}; st.selected = n.id; st.focusNode = n.id; }
-            if (ImGui::IsItemHovered()) ImGui::SetTooltip("%d step(s) after it. Click to jump there.", steps);
+            if (ImGui::IsItemHovered()) ImGui::SetTooltip(kPanelEventTip, steps);
             ImGui::PopID();
             ++shown;
         }
-        if (!shown) ImGui::TextWrapped("No events yet. Use Add node and pick an event such as On Start.");
+        if (!shown) ImGui::TextWrapped("%s", kPanelNoEvents);
         // The graph's functions (Function nodes), each with how often it's called.
         bool fnHeader = false;
         for (const auto& n : g.nodes) {
             if (n.type != "FunctionStart") continue;
-            if (!fnHeader) { ImGui::Spacing(); ImGui::TextUnformatted("Functions"); ImGui::Separator(); fnHeader = true; }
+            if (!fnHeader) { ImGui::Spacing(); ImGui::TextUnformatted(kPanelNamedActions); ImGui::Separator(); fnHeader = true; }
             const std::string nm = okay::vs::FunctionNameOf(n.arg);
             int calls = 0;
             for (const auto& m : g.nodes) if (m.type == "CallFunction" && okay::vs::FunctionNameOf(m.arg) == nm) ++calls;
@@ -4123,13 +4202,13 @@ inline void Draw(EditorState& ed, bool* open) {
             for (const auto& bp : dbg.Breakpoints()) {
                 if (bp.first != g.path) continue;
                 const VsEditNode* bn = g.find(bp.second);
-                if (!bpHeader) { ImGui::Spacing(); ImGui::TextUnformatted("Breakpoints"); ImGui::Separator(); bpHeader = true; }
+                if (!bpHeader) { ImGui::Spacing(); ImGui::TextUnformatted(kPanelStopPoints); ImGui::Separator(); bpHeader = true; }
                 const VsDef* bd = bn ? FindDef(bn->type) : nullptr;
-                std::string lbl = "\xE2\x97\x8F " + std::string(bd ? bd->title : bn ? bn->type.c_str() : "(deleted node)") +
+                std::string lbl = "\xE2\x97\x8F " + std::string(bd ? bd->title : bn ? bn->type.c_str() : kPanelStopGone) +
                                   " #" + std::to_string(bp.second);
                 ImGui::PushID(bp.second + 100000);
                 if (ImGui::Selectable(lbl.c_str(), st.sel.count(bp.second) > 0) && bn) { st.sel = {bp.second}; st.selected = bp.second; st.focusNode = bp.second; }
-                if (ImGui::IsItemHovered()) ImGui::SetTooltip("Click to jump there. Right-click to remove.");
+                if (ImGui::IsItemHovered()) ImGui::SetTooltip("%s", kPanelStopTip);
                 if (ImGui::IsItemClicked(ImGuiMouseButton_Right)) removeBp = bp.second;
                 ImGui::PopID();
             }
@@ -4150,9 +4229,9 @@ inline void Draw(EditorState& ed, bool* open) {
             const std::vector<VsParamRef> params = VsCollectParameters(refs);
             VsDrawVariableDecls(g);
             ImGui::Spacing();
-            ImGui::TextUnformatted("Variables used");
+            ImGui::TextUnformatted(kPanelUsed);
             ImGui::Separator();
-            if (vars.empty()) ImGui::TextWrapped("Names you type on Get Var, Set Var, scene and global variable nodes show up here.");
+            if (vars.empty()) ImGui::TextWrapped("%s", kPanelNoneUsed);
             VsVarScope last = VsVarScope::Object;
             bool anyScope = false;
             for (const auto& v : vars) {
@@ -4164,22 +4243,23 @@ inline void Draw(EditorState& ed, bool* open) {
                 if (ImGui::Selectable(v.name.c_str(), st.sel.count(v.nodeId) > 0, 0, ImVec2(0, 28))) {
                     st.sel = {v.nodeId}; st.selected = v.nodeId; st.focusNode = v.nodeId;
                 }
-                if (ImGui::IsItemHovered()) ImGui::SetTooltip("Click to jump to this variable's node.");
+                if (ImGui::IsItemHovered()) ImGui::SetTooltip("%s", kPanelUsedTip);
                 ImGui::PopID();
             }
             ImGui::Spacing();
-            ImGui::TextUnformatted("Parameters");
-            ImGui::Separator();
-            if (params.empty()) ImGui::TextWrapped("A Function node's signature lists its parameters here.");
+            // Folded away unless a named action has inputs.
+            if (ImGui::CollapsingHeader(kPanelInputs, params.empty() ? 0 : ImGuiTreeNodeFlags_DefaultOpen)) {
+            if (params.empty()) ImGui::TextWrapped("%s", kPanelNoInputs);
             for (const auto& p : params) {
                 std::string row = p.function;
                 if (!p.name.empty()) row += "  " + p.name + (p.type.empty() ? "" : " : " + p.type);
-                else row += "  (no parameters)";
+                else row += "  (no inputs)";
                 ImGui::PushID(p.nodeId + 800000);
                 if (ImGui::Selectable(row.c_str(), st.sel.count(p.nodeId) > 0, 0, ImVec2(0, 28))) {
                     st.sel = {p.nodeId}; st.selected = p.nodeId; st.focusNode = p.nodeId;
                 }
                 ImGui::PopID();
+            }
             }
         }
         ImGui::EndChild();
@@ -4693,7 +4773,12 @@ inline void Draw(EditorState& ed, bool* open) {
                 ImGui::SetCursorScreenPos(ImVec2(p0.x + PAD + inLabelW + 8 * z, pp.y - boxH * 0.5f));
                 const okay::vs::VsRefKind rk = VsPinKind(n.type, i, pt, d->dataIn[i]);
                 std::string& dv = n.pinDefault[i];
-                if (rk != okay::vs::VsRefKind::None) {
+                const okay::vs::QuickBlock* qbk = okay::vs::FindQuickBlock(n.type);
+                const auto qfields = qbk ? okay::vs::QbAllFields(*qbk) : std::vector<okay::vs::QbField>();
+                if (qbk && i < (int)qfields.size() && qfields[(std::size_t)i].kind != okay::vs::QbKind::Text) {
+                    if (VsDrawQuickField(ed, n, *qbk, i, dv, BOX_W)) g.dirty = true;
+                    if (dv.empty()) n.pinDefault.erase(i);
+                } else if (rk != okay::vs::VsRefKind::None) {
                     const bool selfDefault = okay::vs::TargetPinFor(n.type) == i;
                     char bid[16]; std::snprintf(bid, sizeof(bid), "pd%d", i);
                     if (VsDrawRefSlot(ed, st, dv, rk, selfDefault, BOX_W, bid)) g.dirty = true;
@@ -5326,6 +5411,12 @@ inline void Draw(EditorState& ed, bool* open) {
     }
     // Add a node from the palette; wire it to the dropped pin when there is one.
     auto addFromPalette = [&](const VsDef& d, const std::string& arg = std::string()) {
+        {   // a new Quick block fills itself in from the scene: the selected object, its neighbours, the last key
+            okay::vs::QbContext& qc = VsQuickContext();
+            qc.objectNames.clear();
+            for (const auto& up : ed.scene().Objects()) if (up) qc.objectNames.push_back(up->name);
+            qc.selfName = ed.selected() ? ed.selected()->name : std::string();
+        }
         int nid = g.add(d.type, st.paletteWorld.x, st.paletteWorld.y);
         if (!arg.empty()) if (VsEditNode* nn = g.find(nid)) nn->arg = arg;
         st.selected = nid; st.sel = {nid};

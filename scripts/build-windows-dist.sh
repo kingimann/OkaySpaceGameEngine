@@ -189,6 +189,9 @@ rm -rf "$XBOX_SRC/platform/xbox_uwp/tests"
 cp scripts/xbox-check-sdk.ps1 scripts/xbox-compile-shaders.ps1 scripts/xbox-sign.ps1 scripts/xbox-install-local.ps1 "$XBOX_SRC/scripts/"
 cp -r engine/include "$XBOX_SRC/engine/"
 mkdir -p "$XBOX_SRC/engine/src/Graphics" "$XBOX_SRC/engine/src/Core"   # okay-xbox-export (-MinimalTest) compiles the engine's image code for the placeholder PNGs
+# Engine mode (-EngineMode) compiles the whole engine for UWP: it needs the engine sources, its CMake list (read at configure time) and shared/.
+cp -r engine/src "$XBOX_SRC/engine/" && cp engine/CMakeLists.txt "$XBOX_SRC/engine/" && cp -r shared "$XBOX_SRC/"
+[ ! -d engine/third_party ] || cp -r engine/third_party "$XBOX_SRC/engine/"
 cp engine/src/Graphics/Image.cpp "$XBOX_SRC/engine/src/Graphics/"
 cp engine/src/Core/ImageDecode.cpp engine/src/Core/ImageDecodeJpeg.cpp engine/src/Core/ImageWrite.cpp engine/src/Core/ImageDecodeInternal.hpp "$XBOX_SRC/engine/src/Core/"
 [ ! -d engine/third_party/stb ] || { mkdir -p "$XBOX_SRC/engine/third_party" && cp -r engine/third_party/stb "$XBOX_SRC/engine/third_party/"; }

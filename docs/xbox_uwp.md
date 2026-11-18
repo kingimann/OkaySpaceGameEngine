@@ -72,12 +72,12 @@ all spawned programs, the PowerShell scripts, the Windows process glue (`XboxPro
 | Editor entry | File > Build Settings > platform **Xbox (exp.)** (`editor/main.cpp`, under `#if OKAY_XBOX_UWP`) | the editor code was compiled (syntax only) with g++ on Linux, with and without the option; **never seen on a screen** |
 | Offline shaders | `engine/include/okay/Render/D3D11Hlsl.hpp` (the HLSL text, moved out of `D3D11Renderer.cpp` byte for byte), `ShaderBundle.hpp` (manifest, hashes, loader), `tool/okay_shaders.cpp`, `scripts/xbox-compile-shaders.ps1` | manifest and loader tested on Linux; **fxc never run**; the renderer compiles (syntax) for desktop and UWP with MinGW |
 | Swap-chain present | `XboxPresent.hpp`, `XboxDisplay.hpp` | sizing, Present result handling tested; the DXGI calls only syntax-checked |
-| UWP platform backend | `XboxUwpBackend.hpp` (a `platform::Backend`, kind Own), `XboxLifecycle.hpp`, `UwpPlatform.cpp` (replaces `Platform.cpp` in the UWP target) | tested on Linux with a fake host; the CoreWindow glue in `app/engine_app.hpp` is **uncompiled** |
+| UWP platform backend | `XboxUwpBackend.hpp` (a `platform::Backend`, kind Own), `XboxLifecycle.hpp`, `UwpPlatform.cpp` (replaces `Platform.cpp` in the UWP target) | tested on Linux with a fake host; the CoreWindow glue in `app/engine_shell.hpp` is **uncompiled** |
 | Input | `XboxInput.hpp` (Windows.Gaming.Input mapping, dead zones, triggers, vibration timer, key table) | tested on Linux with fake readings |
 | Files | `XboxPaths.hpp`, `Paths::SetEnvOverride`, `#if OKAY_XBOX_UWP` in `Platform.cpp`, `Achievements.hpp`, `AccountService.hpp` | path mapping tested; the real folders come from `ApplicationData` (glue, uncompiled) |
 | Audio | `XboxAudio.hpp` (ring, conversion, resampler, `platform::AudioDevice`), `XboxWasapi.hpp` | conversion tested on Linux; WASAPI glue syntax-checked only |
 | Reduced engine | `engine/CMakeLists.txt` + `uwp_sources.cmake` + `uwp_exclude.txt` (target `okay_engine_uwp`), `XboxUwpAudit.hpp`, `tool/okay_uwp_audit.cpp` | source list and API audit tested on Linux; **never compiled** |
-| Game run | `XboxGameConfig.hpp` (tested), `XboxGameRuntime.hpp` (syntax-checked, not linked), `app/engine_app.hpp` (uncompiled) | see "Engine mode" |
+| Game run | `XboxGameConfig.hpp` (tested), `XboxGameRuntime.hpp` (syntax-checked, not linked), `app/engine_shell.hpp` (C++/WinRT, uncompiled), `app/engine_bridge.hpp/.cpp` (engine side, MinGW-syntax-checked) | see "Engine mode" |
 | One-click build | `XboxBuildPlan.hpp`, `XboxBuildHost.hpp`, `XboxProcess.hpp`, `scripts/xbox-sign.ps1`, `scripts/xbox-install-local.ps1` | see above |
 | Tests | `platform/xbox_uwp/tests/test_xbox_uwp.cpp` (ctest `xbox_uwp`) and `test_xbox_uwp_runtime.cpp` (ctest `xbox_uwp_runtime`, plus `xbox_uwp_audit` and `xbox_uwp_sources_cmake`) | run on Linux, see below |
 
@@ -114,6 +114,27 @@ the texts refer to (`Microsoft.VisualStudio.ComponentGroup.UWP.VC.BuildTools`, `
 UNVERIFIED**; they are only shown, never used to decide: the folders decide. The CMake generator comes from the found major version (15 = 2017, 16 = 2019, 17 = 2022, 18 = "Visual Studio 18 2026", the last **unverified**; unknown = no `-G`,
 CMake picks), with `-DCMAKE_GENERATOR_INSTANCE=<install>` and `-T version=<discovered MSVC folder>` instead of a fixed `v143`. Tested on Linux with fake vswhere output and folders for 2022, a newer install, a newer install without the UWP
 component and with ARM64-only extras, both installed, and several toolset folders (`14.9` < `14.44` < `14.100`). Never run on Windows; the PowerShell version of the check was not run at all.
+
+## Engine mode, round 2 (2026-11-18, evening): what is new, what the owner runs next (ALL UNVERIFIED)
+
+**Run this (needs Visual Studio with the UWP tools as before; the compile of the engine is long):**
+
+    powershell -ExecutionPolicy Bypass -File scripts\build-xbox-uwp.ps1 -SourceRoot . -ExportDir .\xbox-engine -MinimalTest -EngineMode -SkipInstall
+
+`-EngineMode` builds the app with the real engine (`-DOKAY_XBOX_APP_ENGINE=ON -DOKAY_SOURCE_ROOT=<repo>`) and, with `-MinimalTest`, the test export also contains `package\Data\game.okayconfig` and a tiny scene (a cube and a camera,
+`okay-xbox-export --with-scene`). It prints that engine mode is on, whether `Data\game.okayconfig` is in the package and the exe size. Then pack, sign and install exactly as for the triangle. If the engine fails to compile, send `<ExportDir>\build.log`; drop `-EngineMode` to get the triangle test back.
+Expected if it works: a window with an orange cube turning to face the camera on a blue sky (no UI layer), `B` closes it. Whether it even compiles is the open question.
+
+What is new:
+* **C++20 shell, C++17 engine.** The shell (`main.cpp`, `engine_shell.hpp`, C++/WinRT) is its own C++20 target; the engine and `engine_bridge.cpp` (UwpBackend, renderer, presenter, WASAPI, game runtime) are C++17 targets (`okay_engine_uwp`, `okay_xbox_engine_bridge`). Only plain C++ crosses, `app/engine_bridge.hpp`
+  (no Windows, WinRT or engine header): create, resize/visibility/activation/key/pointer events, suspend/resume, and one `Run` loop. The engine's `u8string()` use no longer matters for the shell.
+* **Sweep of every engine source.** All 310 sources of `okay_engine_uwp` (engine + crypto lists) were syntax-checked with MinGW (`-std=c++17 -D_WIN32 -DWINAPI_FAMILY=2 -DOKAY_XBOX_UWP=1`), whose headers hide desktop-only APIs when `WINAPI_FAMILY=WINAPI_FAMILY_APP`; and again with clang (see below). Three failed first:
+  `Net/ClockCheck.cpp` and `Net/RelayServer.cpp` (via `shared/AntiCheatChecks.hpp`: `CheckRemoteDebuggerPresent`, `GetModuleHandleW`, `GetWindowsDirectoryW`, module snapshots) and `Scripting/OkayScriptVM.cpp` (via `GameIpc.hpp`: `_getpid`).
+  Fixed behind `OKAY_XBOX_UWP`: the anti-cheat probes stay empty in a UWP app (the guard idles; anti-cheat is not offered there, nothing pretends to pass), `GetCurrentProcessId` replaces `_getpid`. The audit scanner learned those names. All 310 now pass the MinGW check and the audit finds nothing.
+  **A MinGW check is not an MSVC compile**: MSVC can still reject things MinGW accepts, and the UWP allow-list can differ from MinGW's header partition.
+* **The tiny scene** was loaded once with the engine's real `SceneSerializer` (against a prebuilt engine library of unknown revision found on this machine, so only a sanity check): 2 objects, 1 mesh renderer, 1 camera. The committed Linux test checks the text format (object count, field counts, config resolves) but does not load it.
+* **Link line of the engine target:** `WindowsApp`, `d3d11`, `dxgi`, `ws2_32`, `bcrypt`, `mmdevapi`. Not linked: `d3dcompiler`, `d3d12`, `dxguid`, `winhttp`, `dbghelp`, `user32`, `gdi32`, `opengl32`, SDL2, libsodium.
+* The Windows release's `xbox-src` folder now also carries `engine/src`, `engine/CMakeLists.txt`, `engine/third_party` and `shared/`, which engine mode needs.
 
 ## One command, no editor needed (`-MinimalTest`)
 
@@ -293,7 +314,7 @@ desktop build is unchanged (checked below).
    not reported); it found and I fenced: `winhttp` in `NativeHttp.hpp` (no native HTTP client under UWP: calls report "not reached"), `LoadLibraryA` and `CreateProcessA` in `AccountService.hpp` (random bytes now `BCryptGenRandom`, no curl fallback), `getenv("USERPROFILE")` in `TexturePath.hpp`. It now finds none (ctest `xbox_uwp_audit`).
    The forbidden list is from memory of Microsoft's pages: check it. Libsodium is not available: packet encryption is off and Ed25519 would use our unreviewed `okay::crypto`: this target is never a release (rule 18). 2D drawing: `SDL_Renderer` does not exist; the software painter is the plan and is **not wired** (no UI drawn).
    Not done: it has never been compiled; MSVC may reject GNU-style code in many of the 300 files; the `third_party/stb` and `ufbx` include paths and `_CRT_SECURE_NO_WARNINGS` are guesses; Winsock, `SaveFile.cpp`, `Recovery.cpp`, `Prefs.cpp`, `CoreThreads.hpp` (`CreateThread` is allowed) were not checked against the UWP allow-list.
-8. **App shell.** `app/engine_app.hpp` (+ `main.cpp`, `app/CMakeLists.txt` option `OKAY_XBOX_APP_ENGINE`, off by default): wires CoreWindow events to the backend, Windows.Gaming.Input to pads, starts WASAPI, creates the renderer and presenter, loads `package\Data` through `XboxGameRuntime.hpp` (config parser tested;
+8. **App shell.** `app/engine_shell.hpp` + `app/engine_bridge.cpp` (+ `main.cpp`, `app/CMakeLists.txt` option `OKAY_XBOX_APP_ENGINE`, off by default): wires CoreWindow events to the backend, Windows.Gaming.Input to pads, starts WASAPI, creates the renderer and presenter, loads `package\Data` through `XboxGameRuntime.hpp` (config parser tested;
    it loads the scene, adds a camera when the scene has none, steps the engine's `GameLoop` with the scene's fixed-step physics, scripts and animation, feeds pads and keys), and draws the 3D view. When there is no `package\Data\game.okayconfig` it runs the triangle test as before. Not done: the 2D/UI layer, a loading screen, error display (failures go to the log and the app exits), device-loss recovery, scene switching UI, networking checks, anything that needs a save
    framework to write outside LocalFolder.
 

@@ -16,6 +16,10 @@
   No editor export needed: builds the small export tool (cl.exe), writes a minimal TEST export into -ExportDir (which may not exist yet)
   and goes on with the normal steps. This is the owner's one command:
     powershell -ExecutionPolicy Bypass -File scripts\build-xbox-uwp.ps1 -SourceRoot . -ExportDir .\xbox-test -MinimalTest -SkipInstall
+.PARAMETER EngineMode
+  EXPERIMENTAL, UNVERIFIED. Builds the app in ENGINE MODE: the real engine (okay_engine_uwp, ~300 engine sources: a LONG compile) is linked and the app runs
+  the game in package\Data. With -MinimalTest the test export then also contains a tiny scene (a cube and a camera). Without it the app only draws the triangle.
+  The owner's command for this: powershell -ExecutionPolicy Bypass -File scripts\build-xbox-uwp.ps1 -SourceRoot . -ExportDir .\xbox-engine -MinimalTest -EngineMode -SkipInstall
 .PARAMETER SkipInstall
   Accepted for convenience. This script has no install step (the editor's one-click build has the optional install); it does nothing here.
 .PARAMETER SourceRoot
@@ -34,6 +38,7 @@ param(
     [Parameter(Mandatory = $true)][string]$ExportDir,
     [ValidateSet('Release', 'Debug')][string]$Configuration = 'Release',
     [switch]$MinimalTest,
+    [switch]$EngineMode,
     [switch]$SkipInstall,
     [switch]$SkipSign,
     [string]$Subject = ''
@@ -143,7 +148,9 @@ try {
         $code = Compile-Cpp 'export' (@((Join-Path $packSrc 'tool\okay_xbox_export.cpp')) + $img) @($packSrc, (Join-Path $SourceRoot 'engine\include'), (Join-Path $SourceRoot 'engine\src'), (Join-Path $SourceRoot 'engine\third_party\stb')) $exportExe
         Require-Ok $code 'Compiling okay-xbox-export'
         if (-not (Test-Path -LiteralPath $exportExe)) { throw 'okay-xbox-export.exe was not produced.' }
-        Require-Ok (Invoke-Tool $exportExe @('--out', $ExportDir)) 'okay-xbox-export'
+        $exportArgs = @('--out', $ExportDir)
+        if ($EngineMode) { $exportArgs += '--with-scene' }   # a tiny scene (cube + camera) + game.okayconfig for the engine
+        Require-Ok (Invoke-Tool $exportExe $exportArgs) 'okay-xbox-export'
     } else {
         Step 2 'Using the export folder'
         if (-not (Test-Path -LiteralPath $manifestPath)) { throw "No package\AppxManifest.xml in $ExportDir. Export from the editor first, or add -MinimalTest." }
@@ -176,6 +183,12 @@ try {
         $cmakeArgs += @('-T', $tsArg)
     }
     $cmakeArgs += @('-DCMAKE_SYSTEM_NAME=WindowsStore', '-DCMAKE_SYSTEM_VERSION=10.0')
+    if ($EngineMode) {
+        # the shell stays C++20 (C++/WinRT), the engine is its own C++17 target (okay_engine_uwp); only plain C++ crosses (app/engine_bridge.hpp)
+        $cmakeArgs += @('-DOKAY_XBOX_APP_ENGINE=ON', ('-DOKAY_SOURCE_ROOT=' + ($SourceRoot -replace '\\', '/')))
+        $m = 'ENGINE MODE is ON: the engine (okay_engine_uwp, about 300 sources) is compiled and linked. This is EXPERIMENTAL; the first compile takes a long time and may fail (the engine has never been through Microsoft''s UWP compiler).'
+        Write-Host $m -ForegroundColor Yellow; Log $m
+    } else { Write-Host 'Engine mode is OFF: the app is the triangle test (add -EngineMode to build the engine in).' }
     Require-Ok (Invoke-Tool $cmakeExe $cmakeArgs) 'CMake (setting up the UWP app)'
     # What the generated project really passes to the compiler: /ZW (C++/CX) and /await must NOT be there, /std:c++20 should be (STL1011 / C++/WinRT).
     $vcx = Get-ChildItem -LiteralPath $appBuild -Filter 'OkaySpaceXbox.vcxproj' -Recurse -ErrorAction SilentlyContinue | Select-Object -First 1
@@ -188,7 +201,7 @@ try {
         Write-Host $m; Log $m
         if ($zw -or $aw) { Write-Host 'WARNING: the project passes /ZW or /await; the C++/WinRT build is likely to fail (see docs/xbox_uwp.md).' -ForegroundColor Yellow }
     } else { Write-Host 'vcxproj check: OkaySpaceXbox.vcxproj not found (is the generator a Visual Studio one?).' }
-    Step 5 'Compiling the UWP app (can take a few minutes)'
+    Step 5 $(if ($EngineMode) { 'Compiling the UWP app WITH THE ENGINE (can take 10 minutes or much more)' } else { 'Compiling the UWP app (can take a few minutes)' })
     # Only the app target (not ALL_BUILD). MSBuild's AppX validation runs AFTER the exe is linked; if that validation (and nothing else) fails, the exe is
     # still good (our own packer makes the real package), so it is a warning, not a failure.
     $bcode = Invoke-Tool $cmakeExe @('--build', $appBuild, '--config', $Configuration, '--target', 'OkaySpaceXbox')
@@ -221,6 +234,11 @@ try {
         Copy-Item -LiteralPath $f.FullName -Destination $pkg -Force
     }
     Write-Host "Copied $($exe.Name) and the two triangle shaders."
+    if ($EngineMode) {
+        $hasData = Test-Path -LiteralPath (Join-Path $pkg 'Data\game.okayconfig')
+        Write-Host ("Engine mode: package\Data\game.okayconfig present: {0} (the app runs the triangle test instead when it is missing)." -f $hasData)
+        Write-Host ("Engine mode: OkaySpaceXbox.exe is {0:N1} MB." -f ($exe.Length / 1MB))
+    }
 
     # 7. the engine's own shaders: compiled to .cso at build time (D3DCompile does not exist in UWP) into package\Shaders
     Step 7 'Compiling the engine shaders (offline, fxc.exe)'

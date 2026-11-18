@@ -41,7 +41,7 @@ it does not use the restricted GDK, and the public SDK does not build one.
 
 | Adapter | State |
 |---|---|
-| App shell: `CoreApplication`, `IFrameworkView`, suspend and resume, `CoreWindow`, swap chain, clean exit | triangle shell written, **uncompiled**; engine mode (`app/engine_app.hpp`) written, **uncompiled** |
+| App shell: `CoreApplication`, `IFrameworkView`, suspend and resume, `CoreWindow`, swap chain, clean exit | triangle shell written, **uncompiled**; engine mode (`app/engine_shell.hpp` + `app/engine_bridge.cpp`) written, **uncompiled** |
 | Window, lifecycle, events | **done as pure code** (`XboxUwpBackend.hpp`, `XboxLifecycle.hpp`), tested on Linux with a fake host; the CoreWindow glue is uncompiled |
 | Gamepad through `Windows.Gaming.Input` | **behind `platform::Gamepad`** (`XboxInput.hpp`), mapping tested on Linux; the WinRT reader is uncompiled |
 | Offline shader compile | **done** (`ShaderBundle.hpp`, `okay-shaders`, `xbox-compile-shaders.ps1`); the renderer loads `.cso` under `OKAY_XBOX_UWP`; fxc never run |

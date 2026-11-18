@@ -169,6 +169,19 @@ public:
     virtual void Restore() = 0;
     virtual void SetFullscreen(bool on) = 0;
     virtual bool IsFocused() const = 0;
+    /// Keyboard (input) focus: the same as IsFocused().
+    bool HasInputFocus() const { return IsFocused(); }
+    /// True while the mouse pointer is over the window (SDL_WINDOW_MOUSE_FOCUS). False when a backend cannot tell.
+    virtual bool HasMouseFocus() const { return false; }
+    /// True while the window is minimized (iconic). False when a backend cannot tell.
+    virtual bool IsMinimized() const { return false; }
+    /// False once Hide() was called (or the window system hides it); a minimized window still counts as visible.
+    virtual bool IsVisible() const { return true; }
+    /// Ask for the keyboard focus for this window without raising it (SDL_SetWindowInputFocus). False = not supported.
+    virtual bool SetInputFocus() { return false; }
+    /// The Win32 HWND of this window (for the system-tray icon and other Win32 calls), or null off Windows. The
+    /// sdl2 backend asks SDL for it, the own Windows backend returns its own handle; Linux windows return null.
+    virtual void* Win32Handle() const { return nullptr; }
     /// True while in desktop fullscreen (set by WindowDesc::fullscreen or SetFullscreen).
     virtual bool IsFullscreen() const { return false; }
     /// Window / task-bar icon from tightly packed RGBA8 pixels. False = not supported here.
@@ -323,6 +336,13 @@ public:
     virtual bool RestoreGL(const GLCurrent& state) { (void)state; return false; }
     /// How many touch screens or touch pads the system has (0 = none, or this backend cannot tell).
     virtual int TouchDeviceCount() { return 0; }
+
+    /// Which window has the keyboard focus / is under the mouse (Window::Id()); 0 = none of ours, or unknown.
+    virtual uint32_t KeyboardFocusWindowId() { return 0; }
+    virtual uint32_t MouseFocusWindowId() { return 0; }
+    /// The backend's own handle (same kind as Window::NativeHandle()) of the window with this Id(); null when there is
+    /// none. Lets code that still holds a bare id (an ImGui viewport handle) reach the window.
+    virtual void* NativeHandleFromId(uint32_t id) { (void)id; return nullptr; }
 
     // Keyboard, mouse.
     virtual void StartTextInput() = 0;

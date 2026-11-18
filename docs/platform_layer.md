@@ -71,7 +71,7 @@ that is mostly types (renderer) reads larger than the number of calls. "Before" 
 
 | family | editor | launcher | player before -> after | shared | engine | okayui | tests | `okay::platform` has it? |
 |---|---|---|---|---|---|---|---|---|
-| window (create, size, position, fullscreen, icon, min size, flash, flags) | 49 | 84 | 37 -> 2 | 2 | 0 | 0 | 0 | HAVE. Added for the player: fullscreen/maximised at creation, `IsFullscreen`, `SetIcon`, `RefreshRateHz`. GAP: `SDL_FlashWindow` (launcher), `SDL_GetWindowFlags` minimised/mouse-focus queries (launcher) |
+| window (create, size, position, fullscreen, icon, min size, flash, flags) | 49 | 84 | 37 -> 2 | 2 | 0 | 0 | 0 | HAVE. Added for the player: fullscreen/maximised at creation, `IsFullscreen`, `SetIcon`, `RefreshRateHz`. Round 6 moved the minimised / mouse-focus / input-focus queries and the tray HWND. |
 | GL context | 33 | 0 | 21 -> 0 | 0 | 0 | 0 | 0 | HAVE (create, make current, swap, interval, proc address). Editor still on SDL |
 | events | 30 | 18 | 24 -> 0 | 0 | 0 | 0 | 13 | HAVE (quit, window close/focus/resize, keys, text, mouse, wheel, file drop, controller hot-plug). Added: touch (`FingerDown/Motion/Up`, sdl2 only) and `wheelFlipped`. GAP: `SDL_TEXTEDITING` (IME composition), `SDL_RENDER_*_RESET` (D3D11 device loss), Windows `SDL_SysWMEvent` |
 | keyboard, text input, mouse state | 75 | 2 | 58 -> 0 | 0 | 16 -> 1 | 1 | 20 | HAVE. Added: `RelativeMouseState`, `ModState`, `KeyForChar` (layout-aware), `IsCursorShown`. `Input/SdlKeys.hpp` is replaced by `Input/PlatformKeys.hpp` |
@@ -81,7 +81,7 @@ that is mostly types (renderer) reads larger than the number of calls. "Before" 
 | clipboard | 0 | 0 | 0 | 0 | 0 | 0 | 0 | HAVE; the apps use ImGui's clipboard, nothing calls ours yet |
 | cursors (system cursor shapes) | 0 | 0 | 0 | 0 | 0 | 0 | 0 | GAP (nothing uses them today either; ImGui sets cursors through its SDL backend) |
 | message box | 2 | 0 | 4 -> 0 | 0 | 0 | 0 | 0 | Added `ShowErrorBox`: sdl2 and Win32 real; own Linux returns false and logs (no toolkit to draw one with) |
-| display / DPI | 5 | 4 | 4 -> 0 | 0 | 0 | 0 | 0 | Added `SetPerMonitorDpiAware` (sdl2 hint, Win32 API; nothing elsewhere) and `Window::RefreshRateHz` (sdl2 only). GAP: display bounds / usable area / DPI queries (launcher, editor) |
+| display / DPI | 5 | 4 | 4 -> 0 | 0 | 0 | 0 | 0 | Added `SetPerMonitorDpiAware` (sdl2 hint, Win32 API; nothing elsewhere) and `Window::RefreshRateHz` (sdl2 only). First-run DPI moved (round 6). GAP: display bounds / usable area queries (launcher) |
 | misc runtime (init, log, paths, locales, hints, `SDL_free`, syswm) | 48 | 17 | 37 -> 3 | 2 | 0 | 25 | 5 | Added `BasePath`, `PrefPath`, `PreferredLocales`, `Log`. GAP: `SDL_GetWindowWMInfo` + `SDL_SetWindowsMessageHook` (launcher tray icon), `SDL_SaveBMP`, hints other than DPI |
 | threads, mutexes, atomics | 0 | 705 | 0 | 0 | 0 | 0 | 0 | Not a platform-layer feature. Not `std::thread` either: MinGW's win32 thread model cannot compile `<thread>` or `<mutex>` (rule 21a), so it needs our own wrapper, separately (launcher only) |
 | `SDL_Renderer`, textures, surfaces, colours, rects | 250 | 96 | 283 -> 280 | 48 | 92 | 107 | 101 | **Not behind the seam, and the main blocker.** A rendering library, not a platform one; needs an `SDL_Window*`. Needs our own 2D painter (see below) |
@@ -312,6 +312,28 @@ Left on SDL on purpose: `SDL_GetWindowFlags` minimised / hidden queries (no `Win
 Tests: `test_platform_win32_pure` (flash plan), `platform_window_sdl2` (wrapper identity with SDL, non-owning, refresh rate, touch count, flash calls,
 GL current save / restore through the wrapper). Try it (rule 4a): nothing visible changes; in the launcher, minimise it and let a chat message or
 an update notice arrive, and the taskbar button flashes as before; in the editor, Play with mouse look and the GPU view work as before.
+
+## Round 6: window state, focus queries, tray handle, first-run DPI (editor, launcher)
+
+Written from our own needs and the Microsoft docs for `IsIconic`, `IsWindowVisible`, `GetFocus`, `WindowFromPoint`, `GetAncestor`, `SetForegroundWindow`
+and `SetFocus`, and from the EWMH `_NET_WM_STATE_HIDDEN` state on X11 (specifications only; nothing taken from SDL).
+
+* `Window::IsMinimized()`, `IsVisible()`, `HasMouseFocus()`, `HasInputFocus()` (same as `IsFocused()`), `SetInputFocus()` (ask for the keyboard
+  without raising) and `Win32Handle()` (the HWND for the tray icon; null off Windows).
+* `Backend::KeyboardFocusWindowId()`, `MouseFocusWindowId()` (0 = none of ours) and `NativeHandleFromId(id)` (window from id).
+* All three backends: sdl2 (`SDL_GetWindowFlags` / `SDL_GetKeyboardFocus` / `SDL_GetMouseFocus` / `SDL_SetWindowInputFocus` / `SDL_GetWindowFromID` /
+  `SDL_GetWindowWMInfo`), own Windows (`IsIconic`, `IsWindowVisible`, the window under the cursor, `SetForegroundWindow` + `SetFocus`, the HWND itself),
+  own Linux (Enter/Leave events, `_NET_WM_STATE_HIDDEN`, map state, `XSetInputFocus`; `Win32Handle` null).
+* Pure decisions in `okay/Platform/WindowLogic.hpp`, tested in `platform_win32_pure`: `UiScaleFromDpi` (first-run UI scale), `ShouldReclaimInputFocus`
+  (the editor hands the keyboard back after a pop-out closes), `IsActiveForFrameRate`, `NeedsAttentionFlash`, `IsBackgroundWindow`.
+* Moved (SDL2 still the default, behaviour the same): the editor's `SDL_GetWindowFromID` (pop-out viewports), first-run `SDL_GetDisplayDPI`,
+  `SDL_GetKeyboardFocus` / `SDL_GetMouseFocus` / `SDL_SetWindowInputFocus` (twice); the launcher's `SDL_GetWindowFlags` (7 places),
+  `SDL_GetKeyboardFocus` and `SDL_GetWindowWMInfo` (tray HWND, so `SDL_syswm.h` is no longer included).
+* Difference: the first-run DPI now goes through `Window::Dpi()`, which is a whole number and 96 when SDL cannot tell (the old code used the float
+  and left the scale alone on failure; the scale is 1.0 on a fresh install either way).
+* Verified: `platform_win32_pure` and `platform_window_sdl2` / `_own` under Xvfb (no window manager there, so minimize is not exercised); the launcher
+  and editor `main.cpp` compile on Linux; `OwnWin32.cpp` passes a MinGW syntax check. Unverified: the Windows paths (no Windows machine here),
+  and the own-Linux minimized/mouse-focus answers under a real window manager.
 
 ## Not behind the seam yet (stage 1 list; see stage 2 above for what changed)
 

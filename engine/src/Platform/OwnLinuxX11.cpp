@@ -227,6 +227,10 @@ public:
     void Restore() override;
     void SetFullscreen(bool on) override;
     bool IsFocused() const override;
+    bool HasMouseFocus() const override { return m_mouseIn; }
+    bool IsMinimized() const override;
+    bool IsVisible() const override;
+    bool SetInputFocus() override;
     bool IsFullscreen() const override { return m_fullscreen; }
     bool SetIcon(const uint8_t* rgba, int w, int h) override;
     bool PresentPixels(const uint8_t* rgba, int w, int h) override;
@@ -243,6 +247,7 @@ public:
     GLXFBConfig m_fbc = nullptr;
     GLXContext m_ctx = nullptr;
     bool m_focused = false;
+    bool m_mouseIn = false;            // the pointer is inside the window (Enter / Leave events)
     bool m_fullscreen = false;
     bool m_resizable = true;
     int m_minW = 0, m_minH = 0;
@@ -273,6 +278,7 @@ public:
         m_aProtocols = m_x.XInternAtom(m_dpy, "WM_PROTOCOLS", False);
         m_aNetState = m_x.XInternAtom(m_dpy, "_NET_WM_STATE", False);
         m_aNetFull = m_x.XInternAtom(m_dpy, "_NET_WM_STATE_FULLSCREEN", False);
+        m_aNetHidden = m_x.XInternAtom(m_dpy, "_NET_WM_STATE_HIDDEN", False);
         m_aMaxH = m_x.XInternAtom(m_dpy, "_NET_WM_STATE_MAXIMIZED_HORZ", False);
         m_aMaxV = m_x.XInternAtom(m_dpy, "_NET_WM_STATE_MAXIMIZED_VERT", False);
         m_aNetIcon = m_x.XInternAtom(m_dpy, "_NET_WM_ICON", False);
@@ -321,7 +327,7 @@ public:
         swa.override_redirect = False;
         swa.event_mask = KeyPressMask | KeyReleaseMask | ButtonPressMask | ButtonReleaseMask |
                          PointerMotionMask | StructureNotifyMask | ExposureMask | FocusChangeMask |
-                         PropertyChangeMask;
+                         PropertyChangeMask | EnterWindowMask | LeaveWindowMask;
         ::Window w = m_x.XCreateWindow(m_dpy, m_root, x, y, (unsigned)d.width, (unsigned)d.height, 0, depth,
             InputOutput, visual, CWColormap | CWBorderPixel | CWBackPixel | CWEventMask, &swa);
         if (!w) { err = "XCreateWindow failed"; m_x.XFreeColormap(m_dpy, cmap); return nullptr; }
@@ -396,6 +402,14 @@ public:
                     m_pending.push_back(e);
                 }
             }
+            break;
+        case EnterNotify:
+            if (win && ev.xcrossing.mode != NotifyGrab && ev.xcrossing.mode != NotifyUngrab) win->m_mouseIn = true;
+            break;
+        case LeaveNotify:
+            // Moving onto a child window of ours is detail NotifyInferior: the pointer is still inside.
+            if (win && ev.xcrossing.mode != NotifyGrab && ev.xcrossing.mode != NotifyUngrab && ev.xcrossing.detail != NotifyInferior)
+                win->m_mouseIn = false;
             break;
         case FocusIn:
             if (win && ev.xfocus.mode != NotifyGrab && ev.xfocus.mode != NotifyUngrab) {
@@ -532,6 +546,15 @@ public:
             if ((keys[code / 8] >> (code % 8)) & 1)
                 if (KeyFromEvdev(code - 8) == k) return true;
         return false;
+    }
+    uint32_t KeyboardFocusWindowId() override { return m_focus && m_wins.count(m_focus) ? (uint32_t)m_focus : 0; }
+    uint32_t MouseFocusWindowId() override {
+        for (auto& kv : m_wins) if (kv.second->m_mouseIn) return (uint32_t)kv.first;
+        return 0;
+    }
+    void* NativeHandleFromId(uint32_t id) override {
+        auto it = m_wins.find((::Window)id);
+        return it == m_wins.end() ? nullptr : (void*)(uintptr_t)it->first;
     }
     uint32_t MouseState(int* x, int* y) override {
         ::Window root, child; int rx, ry, wx = 0, wy = 0; unsigned mask = 0;
@@ -711,7 +734,7 @@ public:
     ::Window m_root = 0;
     XIM m_im = nullptr;
     Atom m_aMaxH = 0, m_aMaxV = 0, m_aNetIcon = 0;
-    Atom m_aDelete = 0, m_aProtocols = 0, m_aNetState = 0, m_aNetFull = 0, m_aNetName = 0, m_aUtf8 = 0,
+    Atom m_aDelete = 0, m_aProtocols = 0, m_aNetState = 0, m_aNetFull = 0, m_aNetHidden = 0, m_aNetName = 0, m_aUtf8 = 0,
          m_aClipboard = 0, m_aTargets = 0, m_aProp = 0, m_aTextPlain = 0;
     std::unordered_map<::Window, X11Win*> m_wins;
     std::deque<Event> m_pending;
@@ -856,6 +879,30 @@ void X11Win::SetFullscreen(bool on) {
     XF.XFlush(XD);
 }
 bool X11Win::IsFocused() const { return m_focused; }
+// Minimized = the window manager put _NET_WM_STATE_HIDDEN in the window's state list (EWMH).
+bool X11Win::IsMinimized() const {
+    Atom type = 0; int fmt = 0; unsigned long n = 0, rest = 0; unsigned char* data = nullptr;
+    if (XF.XGetWindowProperty(XD, m_win, m_sys->m_aNetState, 0, 64, False, XA_ATOM, &type, &fmt, &n, &rest, &data) != Success || !data)
+        return false;
+    bool hidden = false;
+    if (type == XA_ATOM && fmt == 32) {
+        const unsigned long* a = (const unsigned long*)data;
+        for (unsigned long i = 0; i < n; ++i) if ((Atom)a[i] == m_sys->m_aNetHidden) hidden = true;
+    }
+    XF.XFree(data);
+    return hidden;
+}
+bool X11Win::IsVisible() const {
+    XWindowAttributes at;
+    if (!XF.XGetWindowAttributes(XD, m_win, &at)) return false;
+    return at.map_state != IsUnmapped || IsMinimized();   // a minimized window is unmapped but not hidden by us
+}
+bool X11Win::SetInputFocus() {
+    g_lastXError = 0;
+    XF.XSetInputFocus(XD, m_win, RevertToParent, CurrentTime);
+    XF.XSync(XD, False);
+    return g_lastXError == 0;
+}
 
 bool X11Win::CreateGLContext(const GLAttributes& a) {
     DestroyGLContext();

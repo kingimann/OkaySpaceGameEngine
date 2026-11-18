@@ -154,6 +154,21 @@ public:
         m_full = on;
     }
     bool IsFocused() const override { return GetFocus() == m_hwnd; }
+    // The pointer is over this window (or one of its child windows): the top-level window under the cursor is ours.
+    bool HasMouseFocus() const override {
+        POINT p;
+        if (!GetCursorPos(&p)) return false;
+        HWND under = WindowFromPoint(p);
+        return under && GetAncestor(under, GA_ROOT) == m_hwnd;
+    }
+    bool IsMinimized() const override { return IsIconic(m_hwnd) != FALSE; }
+    bool IsVisible() const override { return IsWindowVisible(m_hwnd) != FALSE || IsIconic(m_hwnd) != FALSE; }
+    bool SetInputFocus() override {
+        // Windows only lets the foreground program take the keyboard; our own window is asked for in both ways.
+        SetForegroundWindow(m_hwnd);
+        return SetFocus(m_hwnd) != nullptr || GetFocus() == m_hwnd;
+    }
+    void* Win32Handle() const override { return m_hwnd; }
     int Dpi() const override { return WindowDpi(m_hwnd); }
     int RefreshRateHz() const override {
         MONITORINFOEXW mi; mi.cbSize = sizeof(mi);
@@ -399,6 +414,21 @@ public:
         else if (ik >= (int)Key::F1 && ik <= (int)Key::F12) vk = VK_F1 + (ik - (int)Key::F1);
         else for (auto& m : kMap) if (m.k == k) vk = m.vk;
         return vk && (GetAsyncKeyState(vk) & 0x8000);
+    }
+    uint32_t KeyboardFocusWindowId() override {
+        HWND f = GetFocus();   // only ever one of this thread's windows
+        return f && m_wins.count(GetAncestor(f, GA_ROOT)) ? (uint32_t)(uintptr_t)GetAncestor(f, GA_ROOT) : 0;
+    }
+    uint32_t MouseFocusWindowId() override {
+        POINT p;
+        if (!GetCursorPos(&p)) return 0;
+        HWND under = WindowFromPoint(p);
+        HWND top = under ? GetAncestor(under, GA_ROOT) : nullptr;
+        return top && m_wins.count(top) ? (uint32_t)(uintptr_t)top : 0;
+    }
+    void* NativeHandleFromId(uint32_t id) override {
+        for (auto& kv : m_wins) if ((uint32_t)(uintptr_t)kv.first == id) return kv.first;   // the id is the handle's low 32 bits
+        return nullptr;
     }
     uint32_t MouseState(int* x, int* y) override {
         POINT p; GetCursorPos(&p);

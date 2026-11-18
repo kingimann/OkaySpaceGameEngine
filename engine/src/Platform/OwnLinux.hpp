@@ -25,6 +25,9 @@ public:
     virtual void StartTextInput() = 0;
     virtual void StopTextInput() = 0;
     virtual bool IsKeyDown(Key k) = 0;
+    virtual uint32_t KeyboardFocusWindowId() = 0;
+    virtual uint32_t MouseFocusWindowId() = 0;
+    virtual void* NativeHandleFromId(uint32_t id) = 0;
     virtual uint32_t MouseState(int* x, int* y) = 0;
     virtual bool SetRelativeMouse(bool on) = 0;
     virtual bool IsRelativeMouse() const = 0;

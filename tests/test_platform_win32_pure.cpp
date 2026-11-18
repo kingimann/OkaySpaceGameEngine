@@ -7,6 +7,7 @@
 #include "Win32Hid.hpp"
 #include "Win32Icon.hpp"
 #include "Win32Ime.hpp"
+#include "okay/Platform/WindowLogic.hpp"
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
@@ -331,8 +332,26 @@ static void HidP() {
     CHECK(Evaluate(ld, {}, {5, 0}, {}).axes[0] == 0);
 }
 
+static void WindowLogic() {
+    CHECK(UiScaleFromDpi(96) == 1.0f && UiScaleFromDpi(120) == 1.25f && UiScaleFromDpi(144) == 1.5f && UiScaleFromDpi(192) == 2.0f);
+    CHECK(UiScaleFromDpi(288) == 2.0f && UiScaleFromDpi(72) == 1.0f && UiScaleFromDpi(0) == 1.0f && UiScaleFromDpi(-4) == 1.0f);
+    CHECK(UiScaleFromDpi(108) == 1.25f && UiScaleFromDpi(107) == 1.0f);   // 1.125 rounds up to 1.25, 1.115 down to 1.0
+    CHECK(UiScaleFromDpi(132) == 1.5f && UiScaleFromDpi(131) == 1.25f);   // 1.375 rounds up, just under it down
+    CHECK(ShouldReclaimInputFocus(2, 1, false, 0, 7, 7));
+    CHECK(ShouldReclaimInputFocus(3, 0, false, 0, 7, 7));
+    CHECK(!ShouldReclaimInputFocus(1, 1, false, 0, 7, 7));    // no pop-out was open
+    CHECK(!ShouldReclaimInputFocus(2, 2, false, 0, 7, 7));    // still open
+    CHECK(!ShouldReclaimInputFocus(2, 1, true, 0, 7, 7));     // already has the keyboard
+    CHECK(!ShouldReclaimInputFocus(2, 1, false, 9, 7, 7));    // another window has it
+    CHECK(!ShouldReclaimInputFocus(2, 1, false, 0, 8, 7));    // pointer elsewhere
+    CHECK(!ShouldReclaimInputFocus(2, 1, false, 0, 0, 0));    // no window id
+    CHECK(IsActiveForFrameRate(true, false, false) && IsActiveForFrameRate(false, true, false) && IsActiveForFrameRate(false, false, true) && !IsActiveForFrameRate(false, false, false));
+    CHECK(NeedsAttentionFlash(true, true) && NeedsAttentionFlash(false, false) && NeedsAttentionFlash(true, false) && !NeedsAttentionFlash(false, true));
+    CHECK(IsBackgroundWindow(false, false) && IsBackgroundWindow(true, true) && !IsBackgroundWindow(true, false));
+}
+
 int main() {
-    Display(); Icon(); Ime(); Hid(); HidP(); PadMapT();
+    Display(); Icon(); Ime(); Hid(); HidP(); PadMapT(); WindowLogic();
     std::printf("platform_win32_pure: %d checks, %d failed\n", g_n, g_fail);
     return g_fail ? 1 : 0;
 }

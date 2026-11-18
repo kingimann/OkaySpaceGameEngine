@@ -9,6 +9,9 @@
 #define SDL_MAIN_HANDLED
 #endif
 #include <SDL.h>
+#if defined(_WIN32)
+#  include <SDL_syswm.h>   // the HWND of an SDL window (Window::Win32Handle)
+#endif
 #include <cstring>
 
 namespace okay::platform {
@@ -55,6 +58,17 @@ public:
     void SetFullscreen(bool on) override { SDL_SetWindowFullscreen(m_win, on ? SDL_WINDOW_FULLSCREEN_DESKTOP : 0); }
     bool IsFocused() const override { return (SDL_GetWindowFlags(m_win) & SDL_WINDOW_INPUT_FOCUS) != 0; }
     bool IsFullscreen() const override { return (SDL_GetWindowFlags(m_win) & SDL_WINDOW_FULLSCREEN) != 0; }
+    bool HasMouseFocus() const override { return (SDL_GetWindowFlags(m_win) & SDL_WINDOW_MOUSE_FOCUS) != 0; }
+    bool IsMinimized() const override { return (SDL_GetWindowFlags(m_win) & SDL_WINDOW_MINIMIZED) != 0; }
+    bool IsVisible() const override { return (SDL_GetWindowFlags(m_win) & SDL_WINDOW_HIDDEN) == 0; }
+    bool SetInputFocus() override { return SDL_SetWindowInputFocus(m_win) == 0; }
+    void* Win32Handle() const override {
+#if defined(_WIN32)
+        SDL_SysWMinfo wm; SDL_VERSION(&wm.version);
+        if (m_win && SDL_GetWindowWMInfo(m_win, &wm) && wm.subsystem == SDL_SYSWM_WINDOWS) return (void*)wm.info.win.window;
+#endif
+        return nullptr;
+    }
     bool Flash(FlashMode mode) override {
 #if SDL_VERSION_ATLEAST(2, 0, 16)
         SDL_FlashOperation op = mode == FlashMode::Stop ? SDL_FLASH_CANCEL
@@ -275,6 +289,9 @@ public:
         const Uint8* st = SDL_GetKeyboardState(nullptr);
         return st && (int)k > 0 && (int)k < SDL_NUM_SCANCODES && st[(int)k] != 0;
     }
+    uint32_t KeyboardFocusWindowId() override { SDL_Window* w = SDL_GetKeyboardFocus(); return w ? SDL_GetWindowID(w) : 0; }
+    uint32_t MouseFocusWindowId() override { SDL_Window* w = SDL_GetMouseFocus(); return w ? SDL_GetWindowID(w) : 0; }
+    void* NativeHandleFromId(uint32_t id) override { return id ? (void*)SDL_GetWindowFromID(id) : nullptr; }
     uint32_t MouseState(int* x, int* y) override { return SDL_GetMouseState(x, y); }
     bool IsRelativeMouse() override { return SDL_GetRelativeMouseMode() == SDL_TRUE; }
     bool SetRelativeMouse(bool on) override { return SDL_SetRelativeMouseMode(on ? SDL_TRUE : SDL_FALSE) == 0; }

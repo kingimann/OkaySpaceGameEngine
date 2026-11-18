@@ -8,6 +8,7 @@
 #define SDL_MAIN_HANDLED
 #include <SDL.h>
 #include "okay/Platform/Platform.hpp"   // okay::platform: timers (and the SDL seam)
+#include "okay/Platform/WindowLogic.hpp" // frame-rate / flash / background decisions
 
 // Window calls on the launcher's raw SDL windows, through the okay::platform seam (a non-owning wrapper per call; the
 // windows are still made and destroyed by SDL). A null window does nothing, like SDL's own calls with an error.
@@ -18,6 +19,12 @@ inline void Show(SDL_Window* w)     { if (auto s = okay::platform::WrapSdl2Windo
 inline void Hide(SDL_Window* w)     { if (auto s = okay::platform::WrapSdl2Window(w)) s->Hide(); }
 inline void Minimize(SDL_Window* w) { if (auto s = okay::platform::WrapSdl2Window(w)) s->Minimize(); }
 inline void GetPos(SDL_Window* w, int* x, int* y) { int a = 0, b = 0; if (auto s = okay::platform::WrapSdl2Window(w)) s->GetPosition(a, b); if (x) *x = a; if (y) *y = b; }
+inline bool IsMinimized(SDL_Window* w) { auto s = okay::platform::WrapSdl2Window(w); return s && s->IsMinimized(); }
+inline bool IsVisible(SDL_Window* w)   { auto s = okay::platform::WrapSdl2Window(w); return s && s->IsVisible(); }
+inline bool HasInputFocus(SDL_Window* w) { auto s = okay::platform::WrapSdl2Window(w); return s && s->HasInputFocus(); }
+inline bool HasMouseFocus(SDL_Window* w) { auto s = okay::platform::WrapSdl2Window(w); return s && s->HasMouseFocus(); }
+inline bool AnyKeyboardFocus() { auto* b = okay::platform::Get(okay::platform::BackendKind::Sdl2); return b && b->KeyboardFocusWindowId() != 0; }
+inline void* Win32Handle(SDL_Window* w) { auto s = okay::platform::WrapSdl2Window(w); return s ? s->Win32Handle() : nullptr; }
 inline void GetSize(SDL_Window* w, int* x, int* y) { int a = 0, b = 0; if (auto s = okay::platform::WrapSdl2Window(w)) s->GetSize(a, b); if (x) *x = a; if (y) *y = b; }
 inline void SetSize(SDL_Window* w, int x, int y) { if (auto s = okay::platform::WrapSdl2Window(w)) s->SetSize(x, y); }
 inline void SetPos(SDL_Window* w, int x, int y)  { if (auto s = okay::platform::WrapSdl2Window(w)) s->SetPosition(x, y); }
@@ -117,7 +124,6 @@ namespace okayuihost { inline bool PopupCoversRect(float, float, float, float) {
 #  include <windows.h>
 #  include <shellapi.h>   // Shell_NotifyIcon (system-tray icon)
 #  include <tlhelp32.h>   // process snapshot: is the editor still open?
-#  include <SDL_syswm.h>  // HWND of the SDL window, for the tray
 #else
 #  include <unistd.h>
 #  include <sys/wait.h>   // waitpid: playtime tracking of launched games
@@ -9953,7 +9959,7 @@ void DrawChatWindow(okay::account::AccountService& account) {
             peerTyping = g_chatPeerTyping;
             // We're looking at this conversation (window focused, not minimised):
             // lets the poller mark it read and tell the peer we're in the chat.
-            if (!selUid.empty() && SDL_GetKeyboardFocus() != nullptr) g_chatViewMs = okay::platform::TicksMs32();
+            if (!selUid.empty() && lw::AnyKeyboardFocus()) g_chatViewMs = okay::platform::TicksMs32();
             // Mark everything seen locally (clears the unread dot for this chat).
             long firstUnread = 0;
             for (const auto& m : log) {
@@ -10831,10 +10837,7 @@ static const UINT    OKAY_TRAY_UID = 1;
 static UINT          g_showMsg = 0;
 
 static HWND OkayWindowHWND(SDL_Window* w) {
-    SDL_SysWMinfo wm; SDL_VERSION(&wm.version);
-    if (w && SDL_GetWindowWMInfo(w, &wm) && wm.subsystem == SDL_SYSWM_WINDOWS)
-        return wm.info.win.window;
-    return nullptr;
+    return (HWND)lw::Win32Handle(w);
 }
 // Returns true only if the tray icon was actually registered. Retained for
 // possible future use; the launcher no longer hides itself to the tray.
@@ -16694,7 +16697,7 @@ static ChatWindowHost g_chatHost;
 // back in the middle of the first display, shrunk to fit.
 static void KeepWindowOnScreen(SDL_Window* w) {
     if (!w) return;
-    if (SDL_GetWindowFlags(w) & SDL_WINDOW_MINIMIZED) lw::Restore(w);
+    if (lw::IsMinimized(w)) lw::Restore(w);
     int x = 0, y = 0, ww = 0, wh = 0;
     lw::GetPos(w, &x, &y); lw::GetSize(w, &ww, &wh);
     okay::platform::Backend* pb = okay::platform::Default();
@@ -16722,7 +16725,7 @@ static void KeepWindowOnScreen(SDL_Window* w) {
 }
 static void ChatHostSaveGeometry() {
     if (!g_chatHost.win || !g_chatHost.shown) return;
-    if (SDL_GetWindowFlags(g_chatHost.win) & SDL_WINDOW_MINIMIZED) return;   // (its position is meaningless then)
+    if (lw::IsMinimized(g_chatHost.win)) return;   // (its position is meaningless then)
     lw::GetPos(g_chatHost.win, &g_chatWinX, &g_chatWinY);
     lw::GetSize(g_chatHost.win, &g_chatWinW, &g_chatWinH);
 }
@@ -16836,7 +16839,7 @@ static void PlaytimeTick(bool loggedIn) {
 // Draw + present one chat-window frame (call with the launcher's context current).
 static void ChatHostFrame(okay::account::AccountService& account) {
     if (!g_chatHost.shown) return;
-    if (SDL_GetWindowFlags(g_chatHost.win) & SDL_WINDOW_MINIMIZED) return;
+    if (lw::IsMinimized(g_chatHost.win)) return;
     ImGuiContext* mainCtx = ImGui::GetCurrentContext();
     const ImGuiStyle style = ImGui::GetStyle();            // follow the launcher's theme/accent/scale
     const float fontScale = ImGui::GetIO().FontGlobalScale;
@@ -18654,7 +18657,7 @@ int main(int argc, char** argv) {
                     UpsertNotif("update:" + latest, "Test build available",
                                 g_upAvailableTitle + " (v" + latest + ") is ready. It can be broken. Install it from the sidebar.", 3, -1);
                 }
-                if ((SDL_GetWindowFlags(window) & (SDL_WINDOW_MINIMIZED | SDL_WINDOW_INPUT_FOCUS)) != SDL_WINDOW_INPUT_FOCUS)
+                if (okay::platform::NeedsAttentionFlash(lw::IsMinimized(window), lw::HasInputFocus(window)))
                     lw::Flash(window, okay::platform::FlashMode::UntilFocused);   // taskbar attention while minimized/unfocused
             }
             if (us == Up_Updated || us == Up_UpToDate) {   // a real check/install supersedes the hint
@@ -18684,8 +18687,8 @@ int main(int argc, char** argv) {
         }
         ChatHostSync();
         if (g_raiseMainReq) { g_raiseMainReq = false; lw::Restore(window); lw::Raise(window); }
-        if ((SDL_GetWindowFlags(window) & (SDL_WINDOW_HIDDEN | SDL_WINDOW_MINIMIZED)) != 0) {
-            if (g_chatHost.shown && !(SDL_GetWindowFlags(g_chatHost.win) & SDL_WINDOW_MINIMIZED)) {
+        if (okay::platform::IsBackgroundWindow(lw::IsVisible(window), lw::IsMinimized(window))) {
+            if (g_chatHost.shown && !lw::IsMinimized(g_chatHost.win)) {
                 ChatHostFrame(account);   // the chat window keeps going on its own
                 okay::platform::DelayMs(ChatHostFocused() ? 15 : 45);
             } else okay::platform::DelayMs(120);
@@ -27124,8 +27127,7 @@ int main(int argc, char** argv) {
         // window is in the background. With real VSync the present already took a
         // frame, so the extra delay is ~0 when focused.
         {
-            Uint32 flags = SDL_GetWindowFlags(window);
-            bool focused = (flags & (SDL_WINDOW_INPUT_FOCUS | SDL_WINDOW_MOUSE_FOCUS)) != 0 || ChatHostFocused();
+            bool focused = okay::platform::IsActiveForFrameRate(lw::HasInputFocus(window), lw::HasMouseFocus(window), ChatHostFocused());
             double targetMs = focused ? (1000.0 / 60.0) : (1000.0 / 20.0);
             double elapsed = (double)(okay::platform::PerfCounter() - frameStart) * 1000.0
                            / (double)okay::platform::PerfFrequency();

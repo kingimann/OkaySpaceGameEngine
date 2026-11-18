@@ -729,6 +729,7 @@ int main(int argc, char** argv) {
 #define SDL_MAIN_HANDLED
 #include <SDL.h>
 #include "okay/Platform/Platform.hpp"   // okay::platform: timers (and the SDL seam)
+#include "okay/Platform/WindowLogic.hpp" // first-run UI scale, focus hand-back decision
 #include "AppIcon.hpp"
 #include "OkayTheme.hpp"   // shared Slate palette (launcher + editor)
 #include "imgui.h"
@@ -49989,7 +49990,8 @@ static SDL_Texture* OkayVpTexture(OkayVpData* d, ImTextureData* td) {
 }
 
 static void OkayVp_CreateWindow(ImGuiViewport* vp) {
-    SDL_Window* w = SDL_GetWindowFromID((Uint32)(intptr_t)vp->PlatformHandle);
+    okay::platform::Backend* pb = okay::platform::Get(okay::platform::BackendKind::Sdl2);   // the viewport windows are SDL windows
+    SDL_Window* w = pb ? (SDL_Window*)pb->NativeHandleFromId((uint32_t)(intptr_t)vp->PlatformHandle) : nullptr;
     if (!w) return;
     OkayVpData* d = new OkayVpData();
     d->ren = SDL_CreateRenderer(w, -1, SDL_RENDERER_ACCELERATED);
@@ -50762,13 +50764,7 @@ int main(int argc, char** argv) {
     // 125%/150%): size the UI to the display so it isn't tiny. Only on first run —
     // afterwards the user's own UI Scale choice (saved) wins.
     if (g_firstRun) {
-        float ddpi = 96.0f, hdpi = 96.0f, vdpi = 96.0f;
-        int disp = SDL_GetWindowDisplayIndex(window);
-        if (disp >= 0 && SDL_GetDisplayDPI(disp, &ddpi, &hdpi, &vdpi) == 0 && ddpi > 0.0f) {
-            float s = ddpi / 96.0f;
-            s = std::round(s * 4.0f) / 4.0f;              // snap to 1.0 / 1.25 / 1.5 ...
-            g_uiScale = s < 1.0f ? 1.0f : (s > 2.0f ? 2.0f : s);
-        }
+        g_uiScale = okay::platform::UiScaleFromDpi(winSeam->Dpi());   // snapped to 1.0 / 1.25 / 1.5 ... (1.0 when unknown)
     }
     LoadCustomActions();   // reusable custom instruction/condition library
     ApplyTheme();   // re-apply now that the saved theme/accent/UI-scale are loaded
@@ -50870,9 +50866,10 @@ int main(int argc, char** argv) {
             // another program's focus is never taken.
             static int s_prevViewports = 1;
             const int vps = ImGui::GetPlatformIO().Viewports.Size;
-            if (s_prevViewports > 1 && vps <= 1 && !winSeam->IsFocused() &&
-                SDL_GetKeyboardFocus() == nullptr && SDL_GetMouseFocus() == window)
-                SDL_SetWindowInputFocus(window);
+            okay::platform::Backend* pbf = okay::platform::Get(okay::platform::BackendKind::Sdl2);   // the editor window is an SDL window
+            if (pbf && okay::platform::ShouldReclaimInputFocus(s_prevViewports, vps, winSeam->HasInputFocus(),
+                    pbf->KeyboardFocusWindowId(), pbf->MouseFocusWindowId(), winSeam->Id()))
+                winSeam->SetInputFocus();
             s_prevViewports = vps;
         }
         SDL_Event e;
@@ -50902,8 +50899,8 @@ int main(int argc, char** argv) {
             // keyboard back (no window manager, or one that does not), Esc, F2 and the other keys would go nowhere and a
             // dialog could only be closed with the mouse. A click in the editor window takes the keyboard focus back.
             if (e.type == SDL_MOUSEBUTTONDOWN && e.button.windowID == winSeam->Id() &&
-                !winSeam->IsFocused())
-                SDL_SetWindowInputFocus(window);
+                !winSeam->HasInputFocus())
+                winSeam->SetInputFocus();
             // While the play cursor is grabbed, absolute motion is frozen where
             // the grab began. Feeding those events to ImGui clicks the Play
             // button and stops the game. The game still reads relative motion.

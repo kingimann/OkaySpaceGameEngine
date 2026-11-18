@@ -465,6 +465,22 @@ int main(int argc, char** argv) {
                 CHECK(ww->RefreshRateHz() == sdlHz);
                 CHECK(ww->IsFocused() == ((SDL_GetWindowFlags(raw) & SDL_WINDOW_INPUT_FOCUS) != 0));
                 CHECK(b->TouchDeviceCount() == SDL_GetNumTouchDevices());
+                // Window state and focus queries match what SDL says (the apps used SDL_GetWindowFlags and friends).
+                const Uint32 fl = SDL_GetWindowFlags(raw);
+                CHECK(ww->IsMinimized() == ((fl & SDL_WINDOW_MINIMIZED) != 0));
+                CHECK(ww->IsVisible() == ((fl & SDL_WINDOW_HIDDEN) == 0));
+                CHECK(ww->HasMouseFocus() == ((fl & SDL_WINDOW_MOUSE_FOCUS) != 0));
+                CHECK(ww->HasInputFocus() == ww->IsFocused());
+                SDL_Window* kf = SDL_GetKeyboardFocus(); SDL_Window* mf = SDL_GetMouseFocus();
+                CHECK(b->KeyboardFocusWindowId() == (kf ? SDL_GetWindowID(kf) : 0u));
+                CHECK(b->MouseFocusWindowId() == (mf ? SDL_GetWindowID(mf) : 0u));
+                CHECK(b->NativeHandleFromId(ww->Id()) == (void*)raw && b->NativeHandleFromId(0) == nullptr && b->NativeHandleFromId(0x7fffff) == nullptr);
+                CHECK(ww->Win32Handle() == nullptr);   // not Windows
+                (void)ww->SetInputFocus();             // refused or accepted by the video driver, never a crash
+                ww->Hide();
+                CHECK(!ww->IsVisible());
+                ww->Show();
+                CHECK(ww->IsVisible());
                 // Taskbar flash: accepted (or refused by the video driver) without a crash, and Stop ends it.
                 (void)ww->Flash(FlashMode::Briefly);
                 (void)ww->Flash(FlashMode::UntilFocused);
@@ -515,10 +531,24 @@ int main(int argc, char** argv) {
 #endif
 
     // ---- visibility / focus / destroy -----------------------------------------------------------
+    CHECK(win->IsVisible());
+    CHECK(b->NativeHandleFromId(win->Id()) == win->NativeHandle() && b->NativeHandleFromId(0) == nullptr);
+    CHECK(win->Win32Handle() == nullptr);   // not Windows
+    {   // The focus ids are 0 (none) or this window; the window with the keyboard agrees with HasInputFocus.
+        const uint32_t kf = b->KeyboardFocusWindowId(), mf = b->MouseFocusWindowId();
+        CHECK(kf == 0 || kf == win->Id());
+        CHECK(mf == 0 || mf == win->Id());
+        CHECK(win->HasInputFocus() == win->IsFocused());
+        if (win->HasInputFocus()) CHECK(kf == win->Id());
+        CHECK(!win->IsMinimized());   // nothing minimized it
+    }
     win->Hide();
     Pump(*b, 100);
+    CHECK(!win->IsVisible());
     win->Show();
     Pump(*b, 100);
+    CHECK(win->IsVisible());
+    (void)win->SetInputFocus();
     win->DestroyGLContext();
     win.reset();
     b->Shutdown();

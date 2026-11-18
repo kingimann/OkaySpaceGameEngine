@@ -3151,10 +3151,18 @@ static int writeNative(const string& root, const string& outFile) {
     };
     // shared/ holds headers the network and font files include (AntiCheatChecks.hpp, RobotoFontOwn.h); the CMake build adds it per file
     string sharedDir = fs::is_directory(fs::path(root) / "shared") ? " shared" : "";
+    // CMake gives BuildInfo.cpp -DOKAY_ENGINE_VERSION="<project version>" (read here from the top CMakeLists.txt) and
+    // ImageDecodeJpeg.cpp -Wno-narrowing. A manifest has no per-file flags, so both go to the whole engine: an unused macro changes no
+    // object, and -Wno-narrowing only stops a diagnostic.
+    string verDef;
+    { std::ifstream cf(fs::path(root) / "CMakeLists.txt"); string t((std::istreambuf_iterator<char>(cf)), {}); auto pr = t.find("project(");
+      if (pr != string::npos) { auto vv = t.find("VERSION", pr); auto close = t.find(')', pr);
+          if (vv != string::npos && vv < close) { size_t b = vv + 7; while (b < t.size() && isspace((unsigned char)t[b])) ++b; size_t e = b; while (e < t.size() && (isdigit((unsigned char)t[e]) || t[e] == '.')) ++e;
+              if (e > b) verDef = " \"OKAY_ENGINE_VERSION=\\\"" + t.substr(b, e - b) + "\\\"\""; } } }
     string inc =
-        "  flags = -std=c++17 -O0 -g0\n"
+        "  flags = -std=c++17 -O0 -g0 -Wno-narrowing\n"
         "  include = engine/include engine/third_party/stb engine/third_party/ufbx" + sharedDir + " /usr/include/SDL2\n"
-        "  define = OKAY_HAVE_SODIUM OKAY_NET_CRYPTO OKAY_PLATFORM_HAVE_SDL2 OKAY_PLATFORM_HAVE_OWN OKAY_PLATFORM_X11_HEADERS\n";
+        "  define = OKAY_HAVE_SODIUM OKAY_NET_CRYPTO OKAY_PLATFORM_HAVE_SDL2 OKAY_PLATFORM_HAVE_OWN OKAY_PLATFORM_X11_HEADERS" + verDef + "\n";
     block("okay_crypto", "lib", crypto, "  flags = -std=c++17 -O0 -g0\n  export_include = engine/include\n");
     if (!plat.empty()) block("okay_platform", "lib", plat, inc + "  export_include = engine/include\n");
     string eng = inc + "  export_include = engine/include\n  deps = okay_crypto";

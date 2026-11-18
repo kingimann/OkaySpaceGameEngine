@@ -1600,7 +1600,10 @@ private:
             d->body = std::move(body);
             extras_.push_back(std::move(d));
         };
-        {
+        bool defaultCtor = !T->needCtor;
+        for (const Param& q : T->params)
+            if (q.name == "<ctor>" && q.type && q.type->params.empty()) defaultCtor = true;
+        if (defaultCtor) {
             auto body = sBlock(p);
             body->stmts.push_back(local("raw", charPtr()));
             body->stmts.push_back(local("i", longT()));

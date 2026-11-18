@@ -2362,3 +2362,13 @@ the default). You cannot see a difference if it worked. To check:
 3. With `OKAY_PLATFORM_EVENTS=own` set (see the section above) the same things go through our own ImGui feed.
 4. Automatic checks on Linux: `ctest -R "platform_events|okayui_host|imgui_platform_feed"`.
 5. Not run on Windows when this was written.
+
+## Own backend: file drops, cursor shapes, global mouse (Linux X11 tested; Windows not run)
+
+Only with the own backend (`OKAY_PLATFORM_BACKEND=own`, off by default). Linux: `OKAY_PLATFORM_BACKEND=own ./okay-player` (or the self-test
+`okay-platform-selftest`), drag a picture or a `.okayscene` from the file manager onto the window: the program receives one drop per file
+(the editor and launcher still use SDL2 windows, so the drop there is SDL's own; with the own backend only the player and the self-test run).
+The checks that need no file manager: `ctest -R "platform_xdnd|platform_events"` (a fake drag source plays the XDND protocol under Xvfb;
+the event queue stress test). On Windows the same drop uses `WM_DROPFILES`; the cursor shapes and the tray icon hook are reached the same
+way as before (launcher: minimise to the tray and click the icon). Not run on Windows.
+

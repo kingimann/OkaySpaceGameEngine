@@ -417,6 +417,68 @@ Not moved (SDL calls that remain next to the loops): `SDL_EventState(SDL_DROPFIL
 position), the `SDL_PollEvent` in `editor/VsGraphShot.cpp` (a screenshot tool), the SDL window and renderer objects, Dear ImGui's SDL backends.
 Windows (own or sdl2) was not run; `OwnWin32.cpp` passes `-fsyntax-only` with MinGW.
 
+## Round 10: drops, cursors, global mouse, tray hook, the SDL second-poll bug, and the plan for `SDL_Renderer`
+
+Written from the freedesktop XDND protocol text, RFC 2483 / RFC 3986 (URI lists, percent-encoding), the X11 cursor font list and the Win32
+stock cursor ids; no SDL source was read or followed.
+
+* **SDL 2.30.0 `SDL_PollEvent` bug (found and fixed).** On SDL 2.30.0 (the Linux package used here) `SDL_PollEvent` returns 0 once when an
+  event was pushed after the previous poll emptied the queue, although `SDL_PeepEvents` already sees it; the event arrives on the call after.
+  Reproduced with a 20-line program, then by the new stress test. The sdl2 backend now does `SDL_PumpEvents` + `SDL_PeepEvents(GETEVENT, 1)`
+  in `PollEvent`. `tests/test_platform_events.cpp` pushes 3,000 events one at a time (push, poll, push, poll) and 3,000 more in a batch with
+  `PumpEvents` calls in between, on each backend, with no retries: none lost, none reordered, mixed kinds. Real input comes through the same
+  pump, so this is not known to have lost real events; it did make a poll right after `PushEvent` unreliable.
+* **Drops.** Own X11: XDND version 5 (`XdndAware` on every window, Enter / Position / Leave / Drop, `XdndStatus` and `XdndFinished` answers,
+  the `text/uri-list` selection; more than three types via `XdndTypeList`; an INCR transfer is refused). Paths come from
+  `UriListToPaths` (`engine/src/Platform/UriList.hpp`: `file://` and `file://localhost/`, percent-decoding, other hosts and schemes and `%00`
+  refused). One `DropFile` per file, `windowId` = the window it landed on. Own Windows already had `WM_DROPFILES` with a window id
+  (an earlier report of mine said it had none: wrong). The OLE drop target is not written (not needed for files). `SDL_EventState(SDL_DROPFILE)`
+  moved into the sdl2 backend's `Init`.
+* **Cursor shapes on the own backends.** X11 font cursors (`XCreateFontCursor`; the font has no diagonal resize arrows, so those use the window
+  corner cursors, and Progress is the watch like Wait), Win32 stock cursors (`LoadCursorW` + `SetCursor`, applied again on `WM_SETCURSOR`).
+  The shape tables are `engine/src/Platform/CursorMap.hpp` and are tested against the numbers in the system headers.
+* **`Backend::GlobalMouseState(x, y, buttons)`** (sdl2: `SDL_GetGlobalMouseState`; own X11: `XQueryPointer` on the root; own Windows:
+  `GetCursorPos`). The launcher's "was the file dropped on the chat box" check uses it.
+* **`Backend::SetNativeMessageHook(hook, user)`** (Windows only: sdl2 `SDL_SetWindowsMessageHook`, own Windows: called first in the window
+  procedure). The launcher's tray icon now installs its hook through it. Elsewhere it returns false.
+* `editor/VsGraphShot.cpp` (the `--vs-shot` screenshot tool) reads events through the seam.
+* **First step of the `SDL_Renderer` plan:** the launcher makes its six kinds of RGBA texture (game covers, remote images, emoji sheet,
+  animated frames, splash logo) with `okay::platform::Painter::CreateTexture` instead of `SDL_CreateRGBSurface...` +
+  `SDL_CreateTextureFromSurface` + `SDL_FreeSurface` (18 SDL calls fewer).
+
+Checked: `ctest -R "platform_events|platform_xdnd|okayui_host|imgui_platform_feed|^platform$"` on Linux (the drop and cursor tests under
+Xvfb with a second X connection acting as the drag source); `OwnWin32.cpp` with MinGW `-fsyntax-only`; editor, launcher, `VsGraphShot.cpp` and
+`SdlBackend.cpp` with `g++ -fsyntax-only`. **Not run:** anything on Windows (the Win32 drop, cursor, global mouse and message hook, and
+the sdl2 Windows hook trampoline, which no compiler here has the SDL headers for), a real file manager drag on Linux (the test source is
+written from the protocol text, so a real source may differ in detail), a window manager, Wayland, the launcher and editor with a window.
+
+### The biggest block left: `SDL_Renderer` drawing (plan)
+
+Measured by `docs/sdl_inventory.md` after this round: editor 126 calls, launcher 39 (of 722 / 220 reachable), plus Dear ImGui's two SDL
+backends (editor 17, launcher 13) and the window objects. Threads in the launcher (625) are bigger by count but are a separate job
+(`docs/sdl_removal_plan.md`, step 2). Plan, in order, each step small enough for one commit and each behind the default SDL2 painter so
+nothing changes unless the own backend is chosen:
+
+1. **Textures from pixels** (launcher: done this round; editor: `SDL_CreateTexture` 8, `SDL_UpdateTexture` 8, `SDL_SetTextureBlendMode` 8,
+   `SDL_SetTextureScaleMode` 8, `SDL_DestroyTexture` 6, `SDL_QueryTexture` 3 are the 3D view and thumbnail textures): move them to
+   `Painter::CreateTexture` / `UpdateTexture` / `SetTextureBlendMode` / `SetTextureScaleMode` / `DestroyTexture` / `QueryTexture`. All exist.
+2. **Frame calls** (editor and launcher: `SDL_RenderClear`, `SDL_RenderPresent`, `SDL_GetRendererOutputSize`, `SDL_RenderSetClipRect`,
+   `SDL_RenderSetScale`, `SDL_RenderSetVSync`, `SDL_RenderDrawPoint`): `Painter::Clear`, `Present`, `OutputSize`, `SetClipRect`, `SetScale`,
+   `SetVSync`, `DrawPoint` all exist. One `Painter` per renderer, made with `WrapSdl2Renderer`, kept next to the `SDL_Renderer*`.
+3. **What `Painter` lacks** (from the inventory): render targets (`SDL_SetRenderTarget`, editor 3), `SDL_RenderReadPixels` (2: screenshots),
+   `SDL_RenderFlush` (2: before raw GL calls), `SDL_RenderGeometryRaw` (1), `SDL_GetRendererInfo` (3: which driver), reading the draw colour,
+   and the Direct3D 11 device behind the renderer (the editor's interop). Add each with a default that says no, an sdl2 implementation, a
+   software-painter implementation where the software painter can do it, and a headless test against the SDL software renderer.
+4. **Our own Dear ImGui renderer backend** (replaces `ImGui_ImplSDLRenderer2_*`): turns `ImDrawData` into `Painter::Geometry` + `Copy` with
+   the per-command clip rectangle and texture, written from `imgui.h`'s documented draw-list structures. Compare it against the SDL
+   renderer backend on the same frame with the software painter (the `okayui_painter` method).
+5. **Window and renderer creation through the seam** (`SDL_CreateRenderer` editor 5, launcher 4; `SDL_CreateWindow` is already behind
+   `MakeWindow`): a `Painter` that owns its window surface on the own backend (GL or software). The speed on Windows is the unknown: the
+   software painter is fine for the player, but a 1080p editor needs a GPU path (OkayUI's GL and Direct3D 11 render backends exist and are
+   not wired).
+6. **Own Dear ImGui platform backend viewports** (the editor's pop-out panels), then delete `Event::native`, `ReportUnmappedEvents`,
+   `WrapSdl2Window` and `TranslateSdl2Event` together with SDL2.
+
 ## Not behind the seam yet (stage 1 list; see stage 2 above for what changed)
 
 The window, event loop and GL context of the editor, launcher and player still call SDL directly. Moving them needs more than

@@ -6364,6 +6364,7 @@ struct Parser {
             for (const TDecl& cand : extra->second) consider(cand);
         return *best;
     }
+    const TDecl* forced_func_td = nullptr;  // the overloaded template chosen by its explicit arguments
     std::string pending_sym{};
     std::string inst_base_name{};
 
@@ -7618,7 +7619,8 @@ struct Parser {
     // called. Returns its name through *out.
     bool instantiate_function(const std::string& name, std::vector<TArg> args, const std::vector<Node>& call_args,
                               std::string* out) {
-        const TDecl& td = pick_func_template(name, call_args.size());
+        const TDecl& td = forced_func_td != nullptr ? *forced_func_td : pick_func_template(name, call_args.size());
+        forced_func_td = nullptr;
         if (!deduce_args(td, name, &args, call_args)) return false;
         std::string key = name + "<";
         std::string codes;
@@ -9964,6 +9966,7 @@ bool Parser::parse_local_decl_one(const Type& type, bool is_typedef, bool is_sta
         }
     }
     if (is_static) {
+        bool keep_array_init = false;
         Global global;
         global.name = current_fn + "_" + decl.name + "_" + std::to_string(globals.size());
         global.type = decl.type;
@@ -9977,7 +9980,18 @@ bool Parser::parse_local_decl_one(const Type& type, bool is_typedef, bool is_sta
             if (!flat_ok) {
                 if (error != "global initializer must be a constant") return false;
                 const bool aggregate = decl.type.is_array() || init.kind == Node::Block;
-                if (aggregate && decl.type.base == 3 && decl.type.pointers == 0 && obj_needs_ctor(decl.type)) return false;
+                const bool object_array = aggregate && decl.type.is_array() && decl.type.base == 3 && decl.type.pointers == 0 &&
+                                          obj_needs_ctor(decl.type);
+                if (aggregate && decl.type.base == 3 && decl.type.pointers == 0 && obj_needs_ctor(decl.type) && !object_array) return false;
+                if (object_array) {
+                    // A static array of objects with a braced list: its elements are built under the guard below.
+                    error.clear();
+                    global.init_bytes.clear();
+                    global.addr_relocs.clear();
+                    global.bss = true;
+                    keep_array_init = true;
+                }
+                if (!object_array) {
                 // `static int n = f();`, `static const E tab[] = {{"a", K(1)}}`: not constant, so it is computed the first
                 // time control reaches the declaration (a guard flag in a hidden global, [stmt.dcl]/4; no lock).
                 error.clear();
@@ -10045,8 +10059,9 @@ bool Parser::parse_local_decl_one(const Type& type, bool is_typedef, bool is_sta
                     static_objs.push_back(std::move(g));
                 }
                 return end_decl(more);
+                }
             }
-            has_init = false;
+            if (!keep_array_init) has_init = false;
         }
         local.symbol = global.name;
         globals.push_back(global);
@@ -10105,7 +10120,7 @@ bool Parser::parse_local_decl_one(const Type& type, bool is_typedef, bool is_sta
         if (is_static) {
             // A static local object: built the first time control reaches the declaration (a
             // guard flag in a hidden global), destroyed by the program end function.
-            if (has_init || decl.type.is_array()) {
+            if (has_init && !decl.type.is_array()) {
                 error = "a static local object takes no initializer and is not an array";
                 return false;
             }
@@ -10130,7 +10145,20 @@ bool Parser::parse_local_decl_one(const Type& type, bool is_typedef, bool is_sta
             Node then_block;
             then_block.kind = Node::Block;
             then_block.kids.push_back(std::move(set_stmt));
-            if (obj_needs_ctor(decl.type)) {
+            if (decl.type.is_array()) {
+                // A static array of objects: built once under the guard, each element by its constructor (or by the
+                // braced list's elements).
+                if (has_init) {
+                    std::vector<Node> calls;
+                    if (!array_init_calls(local.symbol, decl.type, init, &calls)) return false;
+                    for (Node& c : calls) then_block.kids.push_back(std::move(c));
+                    has_init = false;
+                } else if (obj_needs_ctor(decl.type)) {
+                    Node loop;
+                    if (!element_loop(local.symbol, decl.type.array_len, false, sid, "<ctor>", &loop)) return false;
+                    then_block.kids.push_back(std::move(loop));
+                }
+            } else if (obj_needs_ctor(decl.type)) {
                 Node call;
                 if (!special_call(sid, "<ctor>", node_addr(node_name(local.symbol)), std::move(ctor_args), &call))
                     return false;
@@ -10149,6 +10177,7 @@ bool Parser::parse_local_decl_one(const Type& type, bool is_typedef, bool is_sta
                 GlobalObj g;
                 g.name = local.symbol;
                 g.sid = sid;
+                g.count = decl.type.is_array() ? decl.type.array_len : 0;
                 g.guard = guard.name;
                 static_objs.push_back(std::move(g));
             }
@@ -13325,10 +13354,56 @@ bool Parser::parse_unary(Node* out) {
         }
         if (func_templates.count(name) > 0 && (is(TLt) || is(TLParen)) && !local_visible(name)) {
             std::vector<TArg> targs;
-            if (is(TLt) && !parse_template_args(func_templates[name], &targs, true)) return false;
+            forced_func_td = nullptr;
+            std::vector<std::pair<const TDecl*, std::vector<TArg>>> accepting;  // overloads that accept the written arguments
+            size_t after_lt = at;
+            if (is(TLt) && func_template_extra.count(name) > 0) {
+                // Overloaded templates with explicit arguments (`get<0>(t)` next to `get<T>(v)`): the templates whose
+                // parameters accept the written arguments are the candidates; the call's argument count picks one.
+                const size_t at_lt = at;
+                std::vector<const TDecl*> cands{&func_templates[name]};
+                for (const TDecl& cand : func_template_extra[name]) cands.push_back(&cand);
+                for (const TDecl* cand : cands) {
+                    at = at_lt;
+                    error.clear();
+                    std::vector<TArg> trial;
+                    if (parse_template_args(*cand, &trial, true)) {
+                        accepting.emplace_back(cand, std::move(trial));
+                        after_lt = at;
+                    }
+                }
+                error.clear();
+                if (accepting.empty()) {
+                    error = "no template accepts these arguments";
+                    return false;
+                }
+                at = after_lt;
+                targs = accepting[0].second;
+            } else if (is(TLt) && !parse_template_args(func_templates[name], &targs, true)) return false;
             if (!expect(TLParen, "'('")) return false;
             std::vector<Node> cargs;
             if (!parse_call_args(&cargs)) return false;
+            const TDecl* chosen_td = nullptr;
+            if (!accepting.empty()) {
+                chosen_td = accepting[0].first;
+                bool exact = false;
+                for (auto& cand : accepting) {
+                    size_t fixed = 0;
+                    bool has_pack = false;
+                    for (const Type& pt : cand.first->proto) {
+                        if (pt.pack) has_pack = true;
+                        else ++fixed;
+                    }
+                    const bool fits = has_pack ? cargs.size() >= fixed : cargs.size() == cand.first->proto.size();
+                    if (!fits || (exact && has_pack)) continue;
+                    if (!exact || !has_pack) {
+                        chosen_td = cand.first;
+                        targs = cand.second;
+                        exact = !has_pack;
+                        if (exact) break;
+                    }
+                }
+            }
             std::string inst;
             bool braced_overload = false;
             for (const Node& a : cargs)
@@ -13370,7 +13445,10 @@ bool Parser::parse_unary(Node* out) {
                         }
                     }
                 }
-            if (!braced_overload && !instantiate_function(name, std::move(targs), cargs, &inst)) {
+            forced_func_td = chosen_td;
+            const bool inst_ok = braced_overload || instantiate_function(name, std::move(targs), cargs, &inst);
+            forced_func_td = nullptr;
+            if (!inst_ok) {
                 // A template that cannot be deduced from these arguments is not a candidate: an ordinary function of the
                 // same name ([over.match.funcs]) takes the call when one fits.
                 std::string ordinary = error.compare(0, 6, "cannot") == 0 ? pick_free(name, cargs) : std::string();

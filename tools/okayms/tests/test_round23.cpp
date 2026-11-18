@@ -361,5 +361,18 @@ int main(int, char**) {
           "struct G { int n; bool Move(int i, G& d, int x, bool f, bool c) { return true; } bool Can(int i, const G& dst, int x, bool r = false) const { return const_cast<G*>(this)->Move(i, const_cast<G&>(dst), x, r, false); } };\n"
           "int main() { G g; return g.Can(0, g, 1); }\n", &o);
     CHECK(t, has_symbol(o, "main"));
+    ++tests;
+    build(t, "round 34: get<0>(tuple) and get<T>(variant) together (overloaded templates told apart by their explicit arguments)",
+          "#include <map>\n#include <tuple>\n#include <variant>\n#include <vector>\n"
+          "int main() { std::variant<int, float> v = 3; std::tuple<long long, long long, long long> c = std::make_tuple(1LL, 2LL, 3LL);\n"
+          "std::map<std::tuple<long long, long long, long long>, int> g; g[c] = 4; auto it = g.find(std::make_tuple(std::get<0>(c) + 0, std::get<1>(c), std::get<2>(c)));\n"
+          "return std::get<int>(v) + (int)std::get<1>(c) + (it == g.end()); }\n", &o);
+    CHECK(t, has_symbol(o, "main"));
+    ++tests;
+    build(t, "round 34: static local arrays of objects, with and without a braced list (built once under a guard)",
+          "#include <string>\n#include <utility>\nstruct D { int n; D() : n(2) {} ~D() {} };\n"
+          "int f(const char* k) { static const std::pair<const char*, int> kE[] = { {\"a\", 1}, {\"b\", 2}, }; static D ds[2]; static const std::string names[] = {\"x\", \"y\"};\n"
+          "for (const auto& e : kE) if (k == e.first) return e.second + ds[1].n; return (int)names[1].size(); }\nint main() { return f(\"a\"); }\n", &o);
+    CHECK(t, has_symbol(o, "main"));
     return t.finish(tests);
 }

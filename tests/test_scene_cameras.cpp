@@ -34,7 +34,7 @@ int main() {
     struct T { const char* name; void (*build)(Scene&); };
     const T templates[] = {
         {"Platformer", Templates::Platformer}, {"Platformer3D", Templates::Platformer3D},
-        {"ThirdPerson", Templates::ThirdPerson}, {"Humanoid", Templates::Humanoid},
+        {"ThirdPerson", Templates::ThirdPerson},
         {"ThirdPersonShooter", Templates::ThirdPersonShooter}, {"PointAndClick", Templates::PointAndClick},
         {"FPS", Templates::FPS}, {"TopDown", Templates::TopDown}, {"Vehicle3D", Templates::Vehicle3D},
         {"Vehicle2D", Templates::Vehicle2D}, {"Multiplayer", Templates::Multiplayer},

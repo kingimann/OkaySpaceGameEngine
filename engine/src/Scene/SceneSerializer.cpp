@@ -1,6 +1,7 @@
 #include "okay/Scene/SceneSerializer.hpp"
 #include "okay/Scene/PrefabTools.hpp"
 #include "okay/Scene/SceneText.hpp"
+#include "okay/Core/TolerantNumbers.hpp"
 #include <cerrno>
 #include <iostream>
 #include <charconv>
@@ -185,6 +186,7 @@
 #include "okay/Components/PoseCapture.hpp"
 #include "okay/Components/ProceduralObjectHolding.hpp"
 #include "okay/Components/HoldPrompt.hpp"
+#include "okay/Components/LocalPlayerInput.hpp"
 #include "okay/Components/RootMotion.hpp"
 #include "okay/Components/PauseMenu.hpp"
 #include "okay/Components/AutoSave.hpp"
@@ -265,52 +267,7 @@ protected:
         return out;
     }
 };
-// Reads "nan" / "inf" (what the writer prints for a non-finite float) as well as numbers. The
-// standard stream reader fails on those words, which made a scene saved with one NaN in it
-// (a physics blow-up, then an autosave) a file that could not be opened at all. Other values
-// parse exactly as before: the sign is taken here and the digits go to the standard reader.
-class TolerantNumGet : public std::num_get<char> {
-public:
-    explicit TolerantNumGet(std::size_t refs) : std::num_get<char>(refs) {}
-protected:
-    using std::num_get<char>::do_get;
-    iter_type do_get(iter_type in, iter_type end, std::ios_base& str, std::ios_base::iostate& err, float& v) const override {
-        return Get(in, end, str, err, v);
-    }
-    iter_type do_get(iter_type in, iter_type end, std::ios_base& str, std::ios_base::iostate& err, double& v) const override {
-        return Get(in, end, str, err, v);
-    }
-private:
-    template <class F>
-    iter_type Get(iter_type in, iter_type end, std::ios_base& str, std::ios_base::iostate& err, F& v) const {
-        bool neg = false;
-        if (in != end && (*in == '-' || *in == '+')) {
-            neg = (*in == '-'); ++in;
-            if (in != end && (*in == '-' || *in == '+')) { v = 0; err |= std::ios_base::failbit; return in; }   // "--5" is not a number
-        }
-        if (in != end && (*in == 'n' || *in == 'N' || *in == 'i' || *in == 'I')) {
-            std::string word;
-            while (in != end && std::isalpha(static_cast<unsigned char>(*in))) { word += static_cast<char>(std::tolower(static_cast<unsigned char>(*in))); ++in; }
-            if (in != end && *in == '(') {   // nan(payload)
-                while (in != end && *in != ')') ++in;
-                if (in != end) ++in;
-            }
-            if (word == "nan")                        v = std::numeric_limits<F>::quiet_NaN();
-            else if (word == "inf" || word == "infinity") v = std::numeric_limits<F>::infinity();
-            else { v = 0; err |= std::ios_base::failbit; return in; }
-            if (neg) v = -v;
-            if (in == end) err |= std::ios_base::eofbit;
-            return in;
-        }
-        iter_type r = std::num_get<char>::do_get(in, end, str, err, v);
-        if (neg && !(err & std::ios_base::failbit)) v = -v;
-        return r;
-    }
-};
-const std::locale& TolerantLocale() {
-    static const std::locale* loc = new std::locale(std::locale::classic(), new TolerantNumGet(0));   // lives to the end of the process, like the writer's
-    return *loc;
-}
+// TolerantLocale() (reads "nan" / "inf" as numbers) lives in okay/Core/TolerantNumbers.hpp, shared with the .okaymat reader.
 void UseRoundTripFloats(std::ostream& o) {
     // The locale is allocated once and never destroyed (a static std::locale object would be torn down at exit,
     // orphaning the facet and tripping leak checkers, and streams used during static destruction need it alive).
@@ -1503,7 +1460,8 @@ void WriteComponentRecords(std::ostream& out, GameObject* go) {
             << " " << vd->power << " " << vd->hardnessScale << " " << (int)vd->shape << " " << vd->depthLimit << " " << vd->protectBelow
             << " " << (vd->snapToGrid ? 1 : 0) << " " << vd->debrisMax << " " << vd->debrisLife << " " << (vd->slump ? 1 : 0)
             << " " << (vd->collapse ? 1 : 0) << " " << (vd->giveItems ? 1 : 0) << " " << Quote(vd->hudTarget) << " " << vd->slumpPasses << " " << (vd->toolsFromInventory ? 1 : 0) << " " << (vd->buildFromItems ? 1 : 0)
-            << " " << vd->bareHandsPower << " " << Quote(vd->tools) << " " << vd->caveInSpan << " " << (int)(unsigned char)vd->pourKey << " " << vd->pourCells << "\n";
+            << " " << vd->bareHandsPower << " " << Quote(vd->tools) << " " << vd->caveInSpan << " " << (int)(unsigned char)vd->pourKey << " " << vd->pourCells
+            << " " << vd->reach << " " << ((vd->playerAim ? 1 : 0) | (vd->useActions ? 2 : 0) | (vd->hotbarKeys ? 4 : 0) | (vd->showProgress ? 8 : 0)) << "\n";
     }
     for (auto* pm : go->GetComponents<PauseMenu>()) {
         out << "  pausemenu " << (int)(unsigned char)pm->toggleKey
@@ -7693,7 +7651,9 @@ static bool ParseStep(Scene& scene, ParseSession& S, bool clear,
                             in >> std::ws;
                             if (std::isdigit(in.peek())) { in >> tf >> bf >> vd->bareHandsPower; vd->tools = ReadQuoted(in); vd->toolsFromInventory = tf != 0; vd->buildFromItems = bf != 0;
                                 in >> std::ws; if (std::isdigit(in.peek())) { in >> vd->caveInSpan; vd->caveInSpan = std::max(0, std::min(64, vd->caveInSpan));
-                                    in >> std::ws; if (std::isdigit(in.peek())) { int pk = 0; in >> pk >> vd->pourCells; vd->pourKey = (char)pk; vd->pourCells = std::max(1, std::min(2000, vd->pourCells)); } } }
+                                    in >> std::ws; if (std::isdigit(in.peek())) { int pk = 0; in >> pk >> vd->pourCells; vd->pourKey = (char)pk; vd->pourCells = std::max(1, std::min(2000, vd->pourCells));
+                                        in >> std::ws; if (std::isdigit(in.peek())) { int fl = 0; in >> vd->reach >> fl; vd->reach = std::max(0.5f, std::min(1000.0f, vd->reach));
+                                            vd->playerAim = (fl & 1) != 0; vd->useActions = (fl & 2) != 0; vd->hotbarKeys = (fl & 4) != 0; vd->showProgress = (fl & 8) != 0; } } } }
                         }
                         vd->collect = (VoxelDigger::Collect)std::max(0, std::min(3, col));
                         vd->needsMaterial = nm != 0; vd->creative = cr != 0; vd->snapToGrid = sn != 0;
@@ -9818,6 +9778,26 @@ void RegisterBuiltinComponentSerializers() {
         k.i("max", de->maxActive); k.f("life", de->lifetime); k.f("settled", de->settledLife); k.b("mutual", de->collideWithEachOther);
     };
     ComponentSerializerRegistry::Register(std::move(debris));
+
+    ComponentSerializerRegistry::Entry pin;
+    pin.name = "playerinput";
+    pin.write = [](const GameObject& go, std::ostream& out) {
+        for (const LocalPlayerInput* pi : go.GetComponents<LocalPlayerInput>()) {
+            if (!pi) continue;
+            out << "  playerinput";
+            KvOut k{out};
+            k.str("actions", pi->actions)("device", (int)pi->device)("pad", pi->controller).str("scheme", pi->scheme).b("auto", pi->autoSwitch).str("maps", pi->startMaps);
+            out << "\n";
+        }
+    };
+    pin.read = [](GameObject& go, std::istream& in) {
+        auto* pi = go.AddComponent<LocalPlayerInput>();
+        KvIn k(in);
+        int dev = (int)pi->device;
+        k.str("actions", pi->actions); k.i("device", dev); k.i("pad", pi->controller); k.str("scheme", pi->scheme); k.b("auto", pi->autoSwitch); k.str("maps", pi->startMaps);
+        pi->device = dev < 0 || dev > 2 ? LocalPlayerInput::Device::Any : (LocalPlayerInput::Device)dev;
+    };
+    ComponentSerializerRegistry::Register(std::move(pin));
 
     ComponentSerializerRegistry::Entry vol;
     vol.name = "volume";

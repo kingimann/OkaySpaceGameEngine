@@ -6,12 +6,30 @@
 #include "okay/Input/Input.hpp"
 #include "okay/Input/InputActions.hpp"
 #include "okay/Input/InputDebug.hpp"
+#include "okay/Input/ActionEditor.hpp"
+#include "okay/Input/InputRuntime.hpp"
 #include "okay/Input/InputRecorder.hpp"
 #include <imgui.h>
 #include <string>
 #include <vector>
 
 namespace okay::editor {
+
+/// The body of the "Controllers and typed actions" section: which controller is plugged in (family, ids, mapping), then every local player's
+/// actions: value, phase and the binding that drives it.
+inline void DrawControllersAndTypedActions() {
+        // Which controller is plugged in (family, ids, mapping), then every local player's actions: value, phase and the binding that drives it.
+        for (const std::string& l : ControllerDebugLines()) ImGui::TextWrapped("%s", l.c_str());
+        PlayerInputManager& pm = InputRuntime::Players();
+        for (int p = 0; p < pm.Count(); ++p) {
+            const ActionSet* s = pm.Player(p);
+            if (!s) continue;
+            ImGui::Separator();
+            ImGui::Text("Player %d", p + 1);
+            for (const std::string& l : ActionSetDebugLines(*s)) ImGui::TextWrapped("%s", l.c_str());
+        }
+        if (pm.Count() == 0) ImGui::TextDisabled("No local player yet (ia_join or the first ia_ read creates one).");
+}
 
 inline void DrawInputDebugger(bool* open, bool playing) {
     if (!open || !*open) { if (InputDebug::Enabled()) InputDebug::Enable(false); return; }
@@ -21,7 +39,9 @@ inline void DrawInputDebugger(bool* open, bool playing) {
     if (!playing) ImGui::TextDisabled("Press Play, then click the Game view: the game only receives input while it plays.");
 
     if (ImGui::CollapsingHeader("Right now", ImGuiTreeNodeFlags_DefaultOpen))
-        for (const std::string& l : InputDebug::Snapshot()) ImGui::TextUnformatted(l.c_str());
+        for (const std::string& l : InputDebug::Snapshot()) ImGui::TextWrapped("%s", l.c_str());
+
+    if (ImGui::CollapsingHeader("Controllers and typed actions", ImGuiTreeNodeFlags_DefaultOpen)) DrawControllersAndTypedActions();
 
     if (ImGui::CollapsingHeader("Last events", ImGuiTreeNodeFlags_DefaultOpen)) {
         if (ImGui::SmallButton("Clear")) InputDebug::Clear();

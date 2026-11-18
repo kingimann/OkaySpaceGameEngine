@@ -94,10 +94,16 @@ bool Backend::ShowErrorBox(const std::string& title, const std::string& text, Wi
 
 std::string Backend::BasePath() {
 #if defined(_WIN32)
-    wchar_t buf[MAX_PATH * 4];
-    const DWORD n = GetModuleFileNameW(nullptr, buf, (DWORD)(sizeof(buf) / sizeof(buf[0])));
-    if (n == 0 || n >= sizeof(buf) / sizeof(buf[0])) return std::string();
-    std::wstring w(buf, n);
+    // Grow the buffer until the whole path fits (a fixed one gave no path at all for a
+    // program in a very deep folder).
+    std::wstring w(512, L'\0');
+    for (;;) {
+        const DWORD n = GetModuleFileNameW(nullptr, w.data(), (DWORD)w.size());
+        if (n == 0) return std::string();
+        if (n < w.size()) { w.resize(n); break; }
+        if (w.size() >= 32768) return std::string();   // the longest path Windows has
+        w.assign(w.size() * 2, L'\0');
+    }
     const size_t cut = w.find_last_of(L"\\/");
     if (cut == std::wstring::npos) return std::string();
     w.resize(cut + 1);

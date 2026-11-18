@@ -163,6 +163,7 @@
 #include "okay/Components/FirstPersonHands.hpp"
 #include "okay/Components/ProceduralObjectHolding.hpp"
 #include "okay/Components/HoldPrompt.hpp"
+#include "okay/Components/LocalPlayerInput.hpp"
 #include "okay/Components/MoveSpeed.hpp"
 #include "okay/Render/Material.hpp"
 #include "okay/Components/Tilemap.hpp"

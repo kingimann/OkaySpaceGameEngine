@@ -87,6 +87,7 @@ std::vector<std::string> InputDebug::Snapshot() {
     std::string keys;
     for (int i = 1; i < 256; ++i) {
         if (i == Input::KeyShift || i == Input::KeyCtrl || i == Input::KeyAlt) continue;
+        if (i >= 'A' && i <= 'Z') continue;   // GetKey reads letters case-blind: the capital would list every held letter twice
         if (Input::GetKey((char)i)) { if (!keys.empty()) keys += ' '; keys += Input::KeyName((char)i); }
     }
     out.push_back("Keys held: " + (keys.empty() ? std::string("none") : keys));

@@ -1,4 +1,5 @@
 #include "okay/Input/InputActions.hpp"
+#include "okay/Input/InputRuntime.hpp"
 #include "okay/Core/AccessibilitySettings.hpp"
 #include "okay/Input/Input.hpp"
 #include "okay/Input/InputRecorder.hpp"
@@ -93,6 +94,14 @@ void DefineDefaults() {
     InputActions::Define("Aim", {"mouse:right", "pad:lt"});
     InputActions::Define("Interact", {"key:e", "pad:x"});
     InputActions::Define("Reload", {"key:r", "pad:y"});
+    // Voxel sandbox (VoxelDigger): dig, place, pick the material under the aim, and step the hotbar. Rebindable like the rest.
+    // Dig and Place start with no bindings of their own: until a player rebinds them the digger uses Fire (left mouse, RT) and
+    // Aim (right mouse, LT), so no two actions share a default key (the remap screen reports shared keys as conflicts).
+    InputActions::Define("Dig", {});
+    InputActions::Define("Place", {});
+    InputActions::Define("PickBlock", {"key:t", "pad:rs"});
+    InputActions::Define("HotbarNext", {"pad:rb"});
+    InputActions::Define("HotbarPrev", {"pad:lb"});
     InputActions::Define("Inventory", {"key:tab", "pad:back"});
     InputActions::Define("Pause", {"key:escape", "pad:start"});
 }
@@ -498,6 +507,7 @@ void InputActions::Tick(float dt) {
     g_now += g_dt;
     InputHaptics::Update(g_dt);
     InputRecorder::BeginFrame(g_dt);   // playback puts the recorded frame over what the runtime fed
+    InputRuntime::Update(g_dt);        // typed actions (ActionSet) and local players read the same frame
     auto& actions = Actions();
     const bool legacy = g_legacy;
     // Actions can be added behind our back (tests clear the list): keep the index and keys in step.

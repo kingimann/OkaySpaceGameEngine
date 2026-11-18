@@ -34,7 +34,7 @@ Escape hatches: **Get Property**, **Set Property**, **Call Method** (`Type.Metho
 
 ## Builtin parity
 
-Every text-script builtin whose name is a single token (letters, digits, `_`, `.`) is the node `Fn.<name>`. It runs that builtin on this object. Wire only the arguments it takes. 1459 builtins are nodes.
+Every text-script builtin whose name is a single token (letters, digits, `_`, `.`) is the node `Fn.<name>`. It runs that builtin on this object. Wire only the arguments it takes. 1512 builtins are nodes.
 
 | Builtin | Node |
 | --- | --- |
@@ -56,6 +56,7 @@ Every text-script builtin whose name is a single token (letters, digits, `_`, `.
 | `GameObject.Find` | `Fn.GameObject.Find` |
 | `GameObject.FindGameObjectWithTag` | `Fn.GameObject.FindGameObjectWithTag` |
 | `GameObject.FindGameObjectsWithTag` | `Fn.GameObject.FindGameObjectsWithTag` |
+| `GameObject.FindIncludingInactive` | `Fn.GameObject.FindIncludingInactive` |
 | `GameObject.FindWithTag` | `Fn.GameObject.FindWithTag` |
 | `GetComponent` | `Fn.GetComponent` |
 | `GetView` | `Fn.GetView` |
@@ -505,6 +506,35 @@ Every text-script builtin whose name is a single token (letters, digits, `_`, `.
 | `hold_throw` | `Fn.hold_throw` |
 | `hurt` | `Fn.hurt` |
 | `hypot` | `Fn.hypot` |
+| `ia_canceled` | `Fn.ia_canceled` |
+| `ia_conflicts` | `Fn.ia_conflicts` |
+| `ia_down` | `Fn.ia_down` |
+| `ia_event` | `Fn.ia_event` |
+| `ia_join` | `Fn.ia_join` |
+| `ia_label` | `Fn.ia_label` |
+| `ia_leave` | `Fn.ia_leave` |
+| `ia_load` | `Fn.ia_load` |
+| `ia_map` | `Fn.ia_map` |
+| `ia_map_enabled` | `Fn.ia_map_enabled` |
+| `ia_my_player` | `Fn.ia_my_player` |
+| `ia_performed` | `Fn.ia_performed` |
+| `ia_phase` | `Fn.ia_phase` |
+| `ia_players` | `Fn.ia_players` |
+| `ia_poll_join` | `Fn.ia_poll_join` |
+| `ia_pressed` | `Fn.ia_pressed` |
+| `ia_progress` | `Fn.ia_progress` |
+| `ia_rebind` | `Fn.ia_rebind` |
+| `ia_released` | `Fn.ia_released` |
+| `ia_reset_bindings` | `Fn.ia_reset_bindings` |
+| `ia_save` | `Fn.ia_save` |
+| `ia_scheme` | `Fn.ia_scheme` |
+| `ia_set_scheme` | `Fn.ia_set_scheme` |
+| `ia_started` | `Fn.ia_started` |
+| `ia_use_default` | `Fn.ia_use_default` |
+| `ia_value` | `Fn.ia_value` |
+| `ia_x` | `Fn.ia_x` |
+| `ia_y` | `Fn.ia_y` |
+| `ia_z` | `Fn.ia_z` |
 | `ik_clear_target` | `Fn.ik_clear_target` |
 | `ik_enable` | `Fn.ik_enable` |
 | `ik_foot` | `Fn.ik_foot` |
@@ -517,6 +547,7 @@ Every text-script builtin whose name is a single token (letters, digits, `_`, `.
 | `ik_set_target` | `Fn.ik_set_target` |
 | `ik_set_weight` | `Fn.ik_set_weight` |
 | `index_of` | `Fn.index_of` |
+| `input_button_name` | `Fn.input_button_name` |
 | `input_device` | `Fn.input_device` |
 | `input_horizontal` | `Fn.input_horizontal` |
 | `input_preset` | `Fn.input_preset` |
@@ -822,8 +853,30 @@ Every text-script builtin whose name is a single token (letters, digits, `_`, `.
 | `overlap_capsule` | `Fn.overlap_capsule` |
 | `overlap_capsule3` | `Fn.overlap_capsule3` |
 | `overlap_sphere3` | `Fn.overlap_sphere3` |
+| `pad_battery` | `Fn.pad_battery` |
+| `pad_button_name` | `Fn.pad_button_name` |
+| `pad_event` | `Fn.pad_event` |
+| `pad_family` | `Fn.pad_family` |
+| `pad_gyro` | `Fn.pad_gyro` |
+| `pad_ids` | `Fn.pad_ids` |
+| `pad_info` | `Fn.pad_info` |
 | `pad_left` | `Fn.pad_left` |
+| `pad_lightbar` | `Fn.pad_lightbar` |
+| `pad_mapping` | `Fn.pad_mapping` |
+| `pad_name` | `Fn.pad_name` |
+| `pad_raw` | `Fn.pad_raw` |
 | `pad_right` | `Fn.pad_right` |
+| `pad_setup_active` | `Fn.pad_setup_active` |
+| `pad_setup_back` | `Fn.pad_setup_back` |
+| `pad_setup_cancel` | `Fn.pad_setup_cancel` |
+| `pad_setup_clear` | `Fn.pad_setup_clear` |
+| `pad_setup_prompt` | `Fn.pad_setup_prompt` |
+| `pad_setup_save` | `Fn.pad_setup_save` |
+| `pad_setup_skip` | `Fn.pad_setup_skip` |
+| `pad_setup_start` | `Fn.pad_setup_start` |
+| `pad_swap` | `Fn.pad_swap` |
+| `pad_touch` | `Fn.pad_touch` |
+| `pad_trigger_rumble` | `Fn.pad_trigger_rumble` |
 | `parent_of` | `Fn.parent_of` |
 | `parse_int` | `Fn.parse_int` |
 | `particles_alive` | `Fn.particles_alive` |

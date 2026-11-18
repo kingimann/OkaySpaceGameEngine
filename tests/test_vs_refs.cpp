@@ -4,6 +4,7 @@
 #include "test_framework.hpp"
 #include <Okay.hpp>
 #include "okay/VisualScript/VsRefs.hpp"
+#include <cstdio>
 #include <fstream>
 
 using namespace okay;
@@ -56,7 +57,9 @@ int main() {
     }
 
     {
-        const std::string prefabPath = "/tmp/okay_vs_ref_marker.okayprefab";
+        // Relative: graphs may only spawn prefabs inside the game (absolute paths are refused, see
+        // tests/test_script_spawn_path_guard.cpp), so the file sits in the working directory.
+        const std::string prefabPath = "okay_vs_ref_marker.okayprefab";
         {
             std::ofstream f(prefabPath);
             f << "okayscene 3\n"
@@ -81,6 +84,7 @@ int main() {
         };
         run("@prefab:" + prefabPath);
         run(prefabPath);
+        std::remove(prefabPath.c_str());
     }
 
     {

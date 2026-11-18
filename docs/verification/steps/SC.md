@@ -55,7 +55,7 @@
 - **Where:** editor, GameObject menu
 - **Steps:**
   1. Open **GameObject > Volume** and pick a kind to draw (Checkpoint, Kill and so on), then drag a box in the Scene view.
-  2. Make a player (**GameObject > Player > Third Person**) and a floor, and put the volume where the player will walk.
+  2. Make a player (**GameObject > Player > Player Controller (first / third person)**) and a floor, and put the volume where the player will walk.
   3. Press Play and walk into the volume.
 - **See:** a Kill volume sends the body back to its last checkpoint; a Checkpoint volume sets the respawn point. Volumes are drawn as coloured translucent shapes in the Scene view (toggle with **View > Scene Overlays > Volumes**).
 - **Partial:** see docs/volumes.md for kinds that need other components (Ambience needs an Audio Source with a clip and Loop).

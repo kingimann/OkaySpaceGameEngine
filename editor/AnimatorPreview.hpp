@@ -24,8 +24,12 @@ namespace apreview {
 
 enum class Kind { None, State, Clip, Model };
 
-struct BoneSnap { GameObject* go; Vec3 p; Quat r; Vec3 s; };
-struct ShapeSnap { BlendShapes* bs; std::vector<float> w; };
+// Each snapshot also keeps its object's GUID: undo / redo rebuild every object, and a new one can take an old one's
+// address. A pose is only written back to the object that has both the address AND the GUID it was taken from, and a
+// BlendShapes component is only touched through its owner once that owner is confirmed live (never through a pointer
+// that may have been freed).
+struct BoneSnap { GameObject* go; Vec3 p; Quat r; Vec3 s; std::string guid; };
+struct ShapeSnap { BlendShapes* bs; std::vector<float> w; GameObject* owner = nullptr; std::string guid; };
 
 struct Preview {
     Kind kind = Kind::None;
@@ -39,6 +43,7 @@ struct Preview {
     float length = 0.0f;
     int keepAnim = 1;
     GameObject* target = nullptr;
+    std::string targetGuid;             // the target's GUID: the target counts as live only while both match
     std::string label;                  // state name, or the clip name
     std::string clip;
     std::vector<std::string> motions;   // blend-tree choices; empty otherwise
@@ -68,6 +73,15 @@ inline GameObject* FindAlive(Scene& sc, GameObject* go) {
     if (!go) return nullptr;
     for (const auto& up : sc.Objects()) if (up.get() == go) return go;
     return nullptr;
+}
+
+// The preview's target, if it is still the object the preview started on. After a rebuild (undo, redo, reload) the
+// object with that GUID is a new one at a new address, and whatever sits at the old address is someone else: both
+// count as gone, so the preview ends instead of posing the wrong object or restoring stale snapshots.
+inline GameObject* TargetAlive(Scene& sc, const Preview& p) {
+    GameObject* go = FindAlive(sc, p.target);
+    if (!go || go->IsDestroyed() || go->Guid() != p.targetGuid) return nullptr;
+    return go;
 }
 
 inline bool InFamily(GameObject* sel, GameObject* target) {
@@ -149,17 +163,17 @@ inline void RestoreBones(Scene& sc, Preview& p) {
     std::vector<GameObject*> alive;
     alive.reserve(sc.Objects().size());
     for (const auto& up : sc.Objects()) if (up) alive.push_back(up.get());
-    auto live = [&](GameObject* g) {
-        return g && std::find(alive.begin(), alive.end(), g) != alive.end();
+    auto live = [&](GameObject* g, const std::string& guid) {
+        return g && std::find(alive.begin(), alive.end(), g) != alive.end() && g->Guid() == guid;
     };
     for (const BoneSnap& b : p.bones)
-        if (live(b.go) && b.go->transform) {
+        if (live(b.go, b.guid) && b.go->transform) {
             b.go->transform->localPosition = b.p;
             b.go->transform->localRotation = b.r;
             b.go->transform->localScale = b.s;
         }
     for (const ShapeSnap& s : p.shapes)
-        if (s.bs && s.bs->gameObject && live(s.bs->gameObject)) {
+        if (s.bs && live(s.owner, s.guid) && s.owner->GetComponent<BlendShapes>() == s.bs) {
             for (std::size_t i = 0; i < s.w.size() && i < s.bs->shapes.size(); ++i)
                 s.bs->shapes[i].weight = s.w[i];
             s.bs->Apply();
@@ -174,7 +188,7 @@ inline void Clear(Preview& p) {
 inline void Stop(Scene& sc) {
     Preview& p = Cur();
     if (p.kind == Kind::None) return;
-    GameObject* go = FindAlive(sc, p.target);
+    GameObject* go = TargetAlive(sc, p);
     if (go) {
         if (p.kind != Kind::Model) {
             if (Character* ch = go->GetComponent<Character>()) {
@@ -199,7 +213,7 @@ inline void CaptureShapes(GameObject* g, std::vector<ShapeSnap>& out) {
     if (!g) return;
     auto take = [&](BlendShapes* bs) {
         if (!bs) return;
-        ShapeSnap s; s.bs = bs;
+        ShapeSnap s; s.bs = bs; s.owner = bs->gameObject; if (s.owner) s.guid = s.owner->Guid();
         for (const auto& sh : bs->shapes) s.w.push_back(sh.weight);
         out.push_back(std::move(s));
     };
@@ -217,7 +231,7 @@ inline void SnapshotCharacter(Scene& sc, Character* ch, Preview& p) {
         GameObject* g = up.get();
         if (!g || g == ch->gameObject || !g->transform) continue;
         if (!g->IsSelfOrDescendantOf(ch->gameObject)) continue;
-        p.bones.push_back({g, g->transform->localPosition, g->transform->localRotation, g->transform->localScale});
+        p.bones.push_back({g, g->transform->localPosition, g->transform->localRotation, g->transform->localScale, g->Guid()});
     }
 }
 
@@ -231,7 +245,7 @@ inline void SnapshotModel(Scene& sc, ModelAnimator* ma, Preview& p) {
         if (!g || !g->transform) return;
         if (std::find(seen.begin(), seen.end(), g) != seen.end()) return;
         seen.push_back(g);
-        p.bones.push_back({g, g->transform->localPosition, g->transform->localRotation, g->transform->localScale});
+        p.bones.push_back({g, g->transform->localPosition, g->transform->localRotation, g->transform->localScale, g->Guid()});
         CaptureShapes(g, p.shapes);
     };
     for (const auto& cl : ma->clips)
@@ -261,6 +275,7 @@ inline void Begin(Scene& sc, GameObject* target, Kind kind, const std::string& l
     Preview& p = Cur();
     p.kind = kind;
     p.target = target;
+    p.targetGuid = target ? target->Guid() : std::string();
     p.label = label;
     p.loop = loop;
     p.speed = speed > 0.0f ? speed : 1.0f;
@@ -541,7 +556,7 @@ inline void PoseModel(Scene& sc, ModelAnimator* ma, const Preview& p) {
 inline void Tick(Scene& sc, float dt) {
     Preview& p = Cur();
     if (p.kind == Kind::None) return;
-    GameObject* go = FindAlive(sc, p.target);
+    GameObject* go = TargetAlive(sc, p);
     if (!go) { Clear(p); return; }
     if (!p.snapped) {
         // Other previews restore in the editor tick before this runs, so the

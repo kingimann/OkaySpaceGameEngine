@@ -230,7 +230,7 @@ Pull request #554 ("Integrate owned animation and IK work", landed 2026-11-10) b
 ### 4.12 Premade players
 - **What:** The GameObject > Player menu: one-click players already wired with controller, camera, collider and animation, so a new scene is playable straight away.
 - **Parts:**
-  - 4.12.1 Player menu - `editor/main.cpp` - Third Person, Humanoid (foot IK), First Person, Third Person Shooter, Top Down (3D), Top Down Shooter (3D), 2.5D Platformer, Top Down (2D), Click To Move
+  - 4.12.1 Player menu - `editor/main.cpp` - Player Controller (first / third person, one entry), Third Person Shooter, Top Down (3D), Top Down Shooter (3D), 2.5D Platformer, Top Down (2D), Click To Move
 - **Code:** `editor/main.cpp`, `Components/PlayerController`
 - **API:** `PlayerController::Add`, `AttachCharacterModel`
 - **Editor:** GameObject > Player submenu

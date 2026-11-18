@@ -1,0 +1,53 @@
+okayinput 1
+scheme Keyboard+Mouse keyboard mouse
+scheme Gamepad gamepad
+scheme Touch touch
+map Gameplay priority=0 consume=0 enabled=1
+map UI priority=10 consume=1 enabled=0
+action Move vector2 map=Gameplay
+  bind vector2 key:w key:s key:a key:d group=Keyboard+Mouse
+  bind vector2 key:up key:down key:left key:right group=Keyboard+Mouse
+  bind single stick:left group=Gamepad proc=deadzone(0.18,1)
+  bind single dpad group=Gamepad
+action Look vector2 map=Gameplay
+  bind single mouse:delta group=Keyboard+Mouse
+  bind single stick:right group=Gamepad proc=deadzone(0.18,1);curve(2)
+action Jump button map=Gameplay
+  bind single key:space group=Keyboard+Mouse
+  bind single pad:a group=Gamepad
+action Sprint button map=Gameplay
+  bind single key:shift group=Keyboard+Mouse
+  bind single pad:ls group=Gamepad
+action Crouch button map=Gameplay
+  bind single key:ctrl group=Keyboard+Mouse
+  bind single pad:b group=Gamepad
+action Fire button map=Gameplay
+  bind single mouse:left group=Keyboard+Mouse
+  bind single pad:rt group=Gamepad
+action Aim button map=Gameplay
+  bind single mouse:right group=Keyboard+Mouse
+  bind single pad:lt group=Gamepad
+action Interact button map=Gameplay
+  bind single key:e group=Keyboard+Mouse
+  bind single pad:x group=Gamepad
+action Reload button map=Gameplay
+  bind single key:r group=Keyboard+Mouse
+  bind single pad:y group=Gamepad
+action Inventory button map=Gameplay
+  bind single key:tab group=Keyboard+Mouse
+  bind single pad:back group=Gamepad
+action Pause button map=Gameplay
+  bind single key:escape group=Keyboard+Mouse
+  bind single pad:start group=Gamepad
+action Navigate vector2 map=UI
+  bind vector2 key:w key:s key:a key:d group=Keyboard+Mouse
+  bind vector2 key:up key:down key:left key:right group=Keyboard+Mouse
+  bind single stick:left group=Gamepad proc=deadzone(0.3,1)
+  bind single dpad group=Gamepad
+action Submit button map=UI
+  bind single key:enter group=Keyboard+Mouse
+  bind single key:space group=Keyboard+Mouse
+  bind single pad:a group=Gamepad
+action Cancel button map=UI
+  bind single key:escape group=Keyboard+Mouse
+  bind single pad:b group=Gamepad

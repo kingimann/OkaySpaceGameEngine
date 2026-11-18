@@ -86,6 +86,15 @@ LodSelection SelectLodByHeight(const LodGroup& g, float screenHeight, int previo
 /// Distance at which a level is left for the next one (without hysteresis).
 float LodSwitchDistance(const LodGroup& g, int level, const LodView& view, float bias = 1.0f);
 
+/// Distance mode (the LODGroup component's default): leave level i once the object is farther than
+/// switchDistances[i] world units (the last level's entry is not used), and cull past cullDistance
+/// (0 = never), whatever the object's size. `hysteresis` works as in LodGroup: a level is left past
+/// d / (1 - h) and comes back inside d / (1 + h). Distances that do not rise are pushed out (each to
+/// twice the one before); levels whose switch distance is at or past cullDistance are never shown.
+/// Pass the previous `state` back as in SelectLod.
+LodSelection SelectLodByDistance(const std::vector<float>& switchDistances, float cullDistance, float hysteresis,
+                                 float distance, int previousLevel = -1);
+
 /// Build a group from a generated chain. `cullScreenHeight` 0 means never cull.
 LodGroup MakeLodGroup(const LodChain& chain, float cullScreenHeight = 0.0f);
 

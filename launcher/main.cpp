@@ -27,6 +27,7 @@
 #include "TicketClient.hpp"         // session tickets: the ban / ticket check before a game is started to join a server
 #include "ProjectDelete.hpp"  // Create page: which folders "Delete project" may remove
 #include "ProjectList.hpp"    // Create page: the project list, "Remove from list", prefs lines
+#include "LibraryScan.hpp"    // Play / Community: the library scan, each scene once
 #include "ProjectCreate.hpp"  // Create page: template list, name and version checks
 #include "NetGuard.hpp"   // Content-Length parsing, GIF dims bounds, SSRF host guard (tests/test_net_guard.cpp)
 #include "okay/Platform/Account/AccountService.hpp"
@@ -361,12 +362,24 @@ bool Download(const std::string& url, const fs::path& out) {
     if (!ShellSafeUrl(url)) return false;
     std::string u = BustCache(url);
     const std::string outUtf = okay::restart::Utf8(out);
-    // Native first (no curl process per file; pooled TLS connections).
+#if defined(OKAY_OWN_HTTP_ACTIVE)
+    // Own client (opt-in): temporary file renamed when complete, resume after a drop, retries with backoff.
+    // A clear refusal (404, full disk, too big) ends it like curl -f; an unclear answer falls through to curl below.
+    if (okay::http::NativeAvailable()) {
+        okay::http::OwnDownloadSpec sp;
+        sp.userAgent = "OkaySpace-Launcher"; sp.headers = {"Cache-Control: no-cache", "Pragma: no-cache"}; sp.retries = 2;
+        const okay::http::OwnDownloadResult r = okay::http::OwnDownload(u, outUtf, sp);
+        if (r.outcome == okay::http::OwnOutcome::Ok) return true;
+        if (r.outcome != okay::http::OwnOutcome::NotHandled) return false;
+    }
+#else
+    // Native first (no curl process per file; pooled TLS connections). Windows: WinHTTP.
     if (okay::http::NativeAvailable()) {
         okay::http::Result r = okay::http::Request("GET", u, {"Cache-Control: no-cache", "Pragma: no-cache"}, {}, {}, out.string());
         if (r.reached && r.status >= 200 && r.status < 300 && fs::exists(out, ec)) return true;
         fs::remove(out, ec);
     }
+#endif
     // argv, not a shell string, so the output path is not re-parsed by cmd.exe.
     const std::vector<std::string> curl = {
         "curl", "-L", "-s", "-f", "--connect-timeout", "30", "--speed-limit", "1024", "--speed-time", "60",   // (a stalled transfer ends by itself)
@@ -531,7 +544,7 @@ int DlWorker(void* data) {
 #if defined(OKAY_OWN_HTTP_ACTIVE)
     if (okay::http::NativeAvailable()) {   // own client first (opt-in); anything unclear falls through to curl below
         okay::http::OwnDownloadSpec sp;
-        sp.userAgent = "OkaySpace-Launcher"; sp.maxBytes = (uint64_t)kMaxDownloadBytes;
+        sp.userAgent = "OkaySpace-Launcher"; sp.maxBytes = (uint64_t)kMaxDownloadBytes; sp.retries = 2;   // a drop resumes with Range
         sp.onBytes = [&](uint64_t n) { set([&]{ d->received = (long long)n; }); };
         sp.cancelled = [&] { bool c; SDL_LockMutex(g_dlMutex); c = d->cancelReq; SDL_UnlockMutex(g_dlMutex); return c; };
         const okay::http::OwnDownloadResult r = okay::http::OwnDownload(d->url, d->part, sp);
@@ -1889,25 +1902,14 @@ static bool IsOfficialDir(const fs::directory_entry& e) {
 }
 
 // Scan a few likely folders for built games (*.okayscene).
+// The folders overlap (the launcher's folder holds the other three), so each file is listed once
+// (shared/LibraryScan.hpp); it used to show every community game twice.
 std::vector<fs::path> FindScenes() {
-    std::vector<fs::path> out;
-    std::error_code ec;
-    auto scan = [&](const fs::path& dir) {
-        if (!fs::exists(dir, ec) || !fs::is_directory(dir, ec)) return;
-        for (auto it = fs::recursive_directory_iterator(dir, ec);
-             it != fs::recursive_directory_iterator(); it.increment(ec)) {
-            if (IsOfficialDir(*it)) { it.disable_recursion_pending(); continue; }
-            if (it->is_regular_file(ec) && it->path().extension() == ".okayscene")
-                out.push_back(it->path());
-        }
-    };
     fs::path base(g_exeDir);
-    scan(base);
-    scan(base / "games");
-    scan(base / "Projects");
-    scan(base / "community");     // installed/shared community content
-    for (const auto& d : g_libraryDirs) scan(fs::path(d));   // user-added libraries
-    return out;
+    std::vector<fs::path> roots = {base, base / "games", base / "Projects",
+                                   base / "community"};   // installed/shared community content
+    for (const auto& d : g_libraryDirs) roots.push_back(fs::path(d));   // user-added libraries
+    return okaylib::FindScenesUnder(roots, [](const fs::directory_entry& e) { return IsOfficialDir(e); });
 }
 
 // Scan the same folders for HTML5 / JavaScript web games — a folder containing
@@ -3449,9 +3451,9 @@ void TemplateGlyph(ImDrawList* d, const std::string& t, ImVec2 p, float size, Im
         d->AddLine(P(20, 6), P(20, 13), col, th); d->AddLine(P(20, 27), P(20, 34), col, th);
         d->AddLine(P(6, 20), P(13, 20), col, th); d->AddLine(P(27, 20), P(34, 20), col, th);
         d->AddCircleFilled(P(20, 20), 1.6f * k, col, 8);
-    } else if (t == "Third Person") {
+    } else if (t == "Third Person" || t == "First and Third Person") {
         person(20, 21, 1.15f);
-        if (t == "Third Person") { d->PathArcTo(P(20, 33), 13 * k, 3.6f, 5.8f, 16); d->PathStroke(col, 0, th * 0.8f); }
+        if (true) { d->PathArcTo(P(20, 33), 13 * k, 3.6f, 5.8f, 16); d->PathStroke(col, 0, th * 0.8f); }
     } else if (t == "Third Person Shooter") {
         person(15, 21, 1.0f);
         d->AddCircle(P(29, 15), 5 * k, col, 16, th); d->AddLine(P(29, 8), P(29, 22), col, th * 0.8f); d->AddLine(P(22, 15), P(36, 15), col, th * 0.8f);
@@ -18256,8 +18258,7 @@ int main(int argc, char** argv) {
         {"Platformer",     "Side-scrolling jump-and-run starter.",  "Platformer"},
         {"Top-Down",       "Top-down movement and rooms.",          "Top-Down"},
         {"Main Menu (UI)", "A title screen with buttons.",          "Main Menu"},
-        {"First Person",   "FPS character: mouse-look, WASD, jump.", "First Person"},
-        {"Third Person",   "Orbit-camera character controller.",    "Third Person"},
+        {"First and Third Person", "One Player Controller: first person, third person or both.", "First and Third Person"},
         {"Multiplayer",    "Host / join networked starter.",        "Multiplayer"},
     };
 
@@ -19470,7 +19471,10 @@ int main(int argc, char** argv) {
         const bool upAvail = !g_upAvailable.empty() && !upBusy && st != Up_Updated;
         const bool upNote = upBusy || st == Up_Updated || st == Up_Failed || upAvail;
         const float profH = g_navCollapsed ? 44.0f : 52.0f;
-        const float upH = upNote ? (g_navCollapsed ? navRowH + 2.0f : ((g_upRelaunchNeeded && st == Up_Updated) || upAvail ? 84.0f : 58.0f)) : 0.0f;
+        // The card's button is a full frame tall (text + padding): a fixed 24 px button cut the bottom off
+        // "Install now" at the launcher's text size. The card grows to hold it.
+        const float upBtnH = std::max(24.0f, ImGui::GetFrameHeight());
+        const float upH = upNote ? (g_navCollapsed ? navRowH + 2.0f : ((g_upRelaunchNeeded && st == Up_Updated) || upAvail ? 50.0f + upBtnH + 18.0f : 58.0f)) : 0.0f;
         const float voiceH = g_call.kind ? (g_navCollapsed ? navRowH + 2.0f : VoicePanelHeight(true) + 4.0f) : 0.0f;
         const float footH = upH + voiceH + (navRowH + 2.0f) * 2 + 15.0f + profH;
         ImGui::BeginChild("navitems", ImVec2(0, ImGui::GetContentRegionAvail().y - footH), false, ImGuiWindowFlags_NoScrollbar);
@@ -19483,7 +19487,7 @@ int main(int argc, char** argv) {
         navSection("MENU");
         tabRow(0);
         tabRow(1, LibraryGameCount(scenes), navSoft);     // built + web games (not editor projects)
-        if (navRow("##navmp", "Multiplayer", kIcoGlobe, tab == 14 && !g_pfOpen, g_party.Valid() ? (int)g_party.members.size() : 0, navSoft)) { tab = 14; ClosePublicProfile(); }
+        // The Multiplayer and Tips sidebar entries were removed on the owner's request (2026-11-17); their pages (tab 14 and 13) stay in the code.
         tabRow(2);
         tabRow(7);
         tabRow(10, ActiveDownloads(), navAccent);         // in-flight downloads
@@ -19502,7 +19506,6 @@ int main(int argc, char** argv) {
         SyncNewsHistory();
         const bool newsUnseen = !g_newsHistory.empty() && g_newsHistory[0].ver != g_newsSeen;
         if (navRow("##navnews", "What's New", kIcoSpark, tab == 12 && !g_pfOpen, newsUnseen ? -1 : 0, navAccent)) { tab = 12; ClosePublicProfile(); }
-        if (navRow("##navtips", "Tips", kIcoBulb, tab == 13 && !g_pfOpen, 0, 0)) { tab = 13; ClosePublicProfile(); }
         if (navSignedIn && g_myRank >= 1) {
             navSection("MODERATION");
             if (navRow("##navadmin", "Admin", kIcoShield, tab == 11 && !g_pfOpen, 0, 0)) { tab = 11; ClosePublicProfile(); }
@@ -19561,7 +19564,7 @@ int main(int argc, char** argv) {
                 if (ImGui::IsItemHovered() && !upMsg.empty()) ImGui::SetTooltip("%s", upMsg.c_str());
                 if (upAvail) {
                     ImGui::SetCursorScreenPos(ImVec2(mn.x + 36, mn.y + 50));
-                    if (PrimaryButton("Install now", ImVec2(w - 48, 24))) StartUpdateCheck(true);
+                    if (PrimaryButton("Install now", ImVec2(w - 48, upBtnH))) StartUpdateCheck(true);
                 } else if (st == Up_Failed) {
                     ImGui::SameLine(0, 0);
                     ImGui::SetCursorScreenPos(ImVec2(mn.x + w - 50, mn.y + 7));
@@ -19569,7 +19572,7 @@ int main(int argc, char** argv) {
                 }
                 if (g_upRelaunchNeeded && st == Up_Updated) {
                     ImGui::SetCursorScreenPos(ImVec2(mn.x + 36, mn.y + 50));
-                    if (PrimaryButton("Restart now", ImVec2(w - 48, 24))) { if (EditorRunning()) g_afterEditor = 3; else { if (BeginUpdatedRestart()) running = false; } }
+                    if (PrimaryButton("Restart now", ImVec2(w - 48, upBtnH))) { if (EditorRunning()) g_afterEditor = 3; else { if (BeginUpdatedRestart()) running = false; } }
                 }
                 ImGui::SetCursorScreenPos(ImVec2(mn.x, mn.y + h + 8.0f));
             }

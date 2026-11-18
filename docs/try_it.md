@@ -1410,7 +1410,7 @@ then "Release Windows build") still works. Everything: `docs/fast_release.md`.
 **What you should see.** A table with the new version (for example "v2.881.0, next build after 2.880.0"), the commit, the CI gate
 ("passed: run ..., N jobs") and how many new changelog entries there are, then the ROADMAP row, the update card lines and the top of the
 new changelog. If main's newest commit has no finished green CI run, the run goes red with "Refused: ..." and says what is wrong
-(missing, still running, red). That is the safety check working, not a failure of the tool.
+(missing, red). If CI is still running the run now waits for it (log lines every 30 s) instead of failing. Optional input `gate`: `release` waits only for the jobs that build what ships. That is the safety check working, not a failure of the tool.
 
 **Steps (the first real release through it).**
 1. Set the repository variable `FAST_RELEASE_ENABLED` to `1` (Settings > Secrets and variables > Actions > Variables).
@@ -1434,6 +1434,46 @@ asset `digest` field. The first dry run and the first real release are the proof
 2. Click **File > Examples > Visual Script Node Playground**, **Node Playground** or **Guided modeling** and pick any entry.
 3. You should see the example scene open, with a line in the Console. Press Play (or open Modeling > Guided).
 4. If the examples folder is missing, or a scene fails to open, a popup now says so instead of doing nothing.
+
+## Bug fixes: particle fade, Scene Manager rename, Exit after a dialog, text box editing (#888: 140, 141, 142, 131)
+
+**140. Particle "Fade Out" now lasts the whole lifetime.** Before, a plain Particle System faded out in a fraction of a
+second (faster at higher frame rates), because the fade was multiplied again on every frame.
+
+1. Windows editor: **GameObject > Effects > Particle System**. In the Inspector set **Lifetime** to 4 and leave
+   **Fade Out** on and **Color Over Life** off. Press **Play**.
+2. You should see each particle fade smoothly over its full 4 seconds (half visible at 2 s). It looks the same with
+   VSync on or off.
+
+**141. Scene Manager > Rename no longer saves your unsaved edits or deletes the saved file.**
+
+1. Windows editor: save a scene (for example `MyLevel`). Change something without saving; the title says unsaved.
+2. **View > Panels > Scene Manager**, click **Rename** on that scene. The dialog now says "The file is renamed as last
+   saved. Your unsaved changes stay unsaved." Enter `MyLevel2` and click **Rename**.
+3. You should see: the title still says unsaved, your change is still in the scene, and `MyLevel2.okayscene` on disk
+   holds the last *saved* version (open it from the Project panel in another way, or press **File > Open** and choose
+   **Don't Save** to see it). Nothing was written until you press Save.
+
+**142. File > Exit and the window's close button keep working after a quit arrives while another dialog is open.**
+
+1. Windows editor: change the scene without saving. Open another scene (Project panel or **File > Open**) so the
+   "Save changes?" dialog is up.
+2. While it is up, click the window's close button (X). Then press **Cancel** in "Save changes?".
+3. You should see the "Unsaved Changes" quit prompt appear as soon as the first dialog closes. Press **Cancel**.
+4. Now **File > Exit**: the "Unsaved Changes" prompt appears again (before the fix, Exit and the X did nothing for the
+   rest of the session).
+
+**131. In-game text boxes: hold Backspace/Delete, the Delete key, and a movable caret.**
+
+1. Windows editor: **GameObject > UI > Input Field**, press **Play**, click the box and type `hello world`.
+2. Press **Left** five times, type `X`: you get `hello Xworld`, and the caret is drawn where you are typing.
+3. **Delete** removes the character after the caret, **Backspace** the one before it. **Home** / **End** jump to the
+   start / end. Holding Backspace or Delete keeps deleting (after a short pause, like a normal text box); holding Left
+   or Right keeps moving.
+
+Test: `ctest -R fix_140_141_142_131` (runs each repro headless: fade at 30, 60 and 144 fps; rename with a real
+EditorState and files on disk; the quit prompt's state machine; the input field with a real Input feed).
+Not verified on Windows; the editor GUI steps above were not run here (the editor files were only syntax-checked).
 
 ## hygiene1. Repository hygiene: one account config file, no built programs in git
 
@@ -1660,6 +1700,26 @@ not compiled into Windows programs, and `OKAY_OWN_HTTP=1` does nothing there. It
 (`-DOKAY_OWN_HTTP=ON` at build time, then `OKAY_OWN_HTTP=1`; the line then says `http=own`). To try it on Windows we
 would need our own TLS, which is cryptography and waits for the outside review (rule 18). Tested on main on Linux only:
 its test programs (`own_http`, `own_http_net`).
+
+What was added on 2026-11-16 (retries with backoff and `Retry-After`, downloads to a temporary file with SHA-256 while
+streaming, resume after a dropped connection, atomic rename) is in the same place: Linux builds only, not in the
+Windows release. On Windows nothing changed; the launcher's Versions download and the editor's update check use WinHTTP
+and curl exactly as before.
+
+On a Linux build (`cmake -DOKAY_OWN_HTTP=ON`, launcher and editor built), to try it:
+
+1. Start the launcher with `OKAY_OWN_HTTP=1 ./OkaySpace` (the launcher). Open **Versions** and download a version. Expect:
+   the download runs, a `<file>.<key>.<pid>-<random>.part` file grows next to the target (a name of its own for each
+   download, so two downloads of the same file never write into one file) and is renamed to the real name only when the
+   whole file has arrived; the version then installs as with curl. Pull the network cable (or stop Wi-Fi) for a few seconds
+   in the middle: the download continues where it stopped (up to two more tries) instead of starting over.
+2. Start the editor with `OKAY_OWN_HTTP=1 ./OkayEngine` and use **Engine > Check for Updates**. Expect: the version check and
+   (if there is an update) the download work as before. With `OKAY_HTTP_CURL=1` as well, curl is used instead.
+3. Without a desktop: build `test_own_http_download` and run it (`ctest -R own_http_download`), or compare with curl:
+   `python3 scripts/own_http_bench.py build/tests/test_own_http_download 200 3` (prints a table and MET or NOT MET).
+
+Unverified: steps 1 and 2 have not been run on a desktop here (the new code is covered by the loopback tests and the
+launcher and editor files were only syntax-checked).
 
 ### 11. Own platform layer (window, input, audio device)
 

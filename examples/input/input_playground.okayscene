@@ -177,3 +177,41 @@ gameobject 9 "G Record"
   text "" 1 1 1 1 1.5 1 24 521.75 0 0 0 0 0 0.78431374 1 1 0 0 0 0 0 0.9019608 0 220 48 1 0 0 0 0 0.54901963 0 0 0 0 0 0 0.47058824 0.627451 1 1 -1 0 0 "" 0 0.02 4
   comporder "TextRenderer" "ScriptComponent"
 end
+gameobject 10 "H Controller"
+  guid "b3f1c8e27a4d4f0e9c5a6d7e8f901a2b"
+  active 1
+  parent -1
+  transform 0 0 0 0 0 0 1 1 1 1
+  script "okayscript" "function start() {
+  set(\"hslot\", 0);
+  set(\"hevt\", \"\");
+}
+function update(dt) {
+  var slot = get(\"hslot\");
+  var ev = pad_event();
+  if (ev != \"\") { set(\"hevt\", ev); }
+  if (key_down(\"p\")) { slot = slot + 1; if (slot > 3) { slot = 0; } set(\"hslot\", slot); }
+  if (key_down(\"u\")) { pad_setup_start(slot); }
+  if (key_down(\"i\")) { pad_setup_skip(slot); }
+  if (key_down(\"o\")) { pad_setup_back(slot); }
+  if (key_down(\"m\")) { pad_setup_cancel(slot); }
+  if (key_down(\"n\")) { pad_setup_save(slot); }
+  if (key_down(\"l\")) { pad_setup_clear(slot); }
+  if (key_down(\"y\")) { pad_lightbar(slot, 255, 0, 80); }
+  if (key_down(\"t\")) { pad_trigger_rumble(slot, 1, 1, 0.4); }
+  var s = \"H. CONTROLLER   P next pad  U Controller Setup (I skip O back M cancel N save L clear)  Y light  T trigger\\n\";
+  s = s + pad_info(slot) + \"\\n\";
+  s = s + replace(pad_raw(slot), \"\\n\", \"  |  \") + \"\\n\";
+  s = s + \"names: A \" + pad_button_name(\"a\", slot) + \"  B \" + pad_button_name(\"b\", slot) + \"  Back \" + pad_button_name(\"back\", slot) + \"  Start \" + pad_button_name(\"start\", slot) + \"  LB \" + pad_button_name(\"lb\", slot) + \"  LT \" + pad_button_name(\"lt\", slot) + \"   Jump = \" + input_button_name(\"jump\") + \"   Fire = \" + input_button_name(\"fire\") + \"\\n\";
+  var t = pad_touch(slot);
+  if (t != \"\") { s = s + \"touchpad finger \" + t + \"\\n\"; }
+  var g = pad_gyro(slot);
+  if (g != \"\") { s = s + \"gyro \" + g + \"\\n\"; }
+  var q = pad_setup_prompt(slot);
+  if (q != \"\") { s = s + \">> \" + q + \"\\n\"; }
+  if (get(\"hevt\") != \"\") { s = s + \"last event: \" + get(\"hevt\"); }
+  set_text(s);
+}" "" 0
+  text "" 1 1 1 1 1.25 1 24 621 0 0 0 0 0 0.78431374 1 1 0 0 0 0 0 0.9019608 0 220 48 1 0 0 0 0 0.54901963 0 0 0 0 0 0 0.47058824 0.627451 1 1 -1 0 0 "" 0 0.02 4
+  comporder "TextRenderer" "ScriptComponent"
+end

@@ -1,6 +1,9 @@
 // okay::platform backend over SDL2: a thin translation layer, behaviour as the
 // engine always had it. Compiled only when SDL2 was found (or Emscripten's port).
 #ifdef OKAY_PLATFORM_HAVE_SDL2
+#include <algorithm>
+#include <cstdlib>
+#include <vector>
 #include "Internal.hpp"
 #ifndef SDL_MAIN_HANDLED
 #define SDL_MAIN_HANDLED
@@ -108,23 +111,77 @@ private:
     AudioSpec m_spec;
 };
 
+// Raw (unmapped) joysticks are opened too, so any controller can be used through our own
+// generic mapping and Controller Setup. OKAY_GENERIC_PADS=0 turns that off.
+bool GenericPadsOn() {
+    static const bool on = [] { const char* e = std::getenv("OKAY_GENERIC_PADS"); return !(e && e[0] == '0'); }();
+    return on;
+}
+std::vector<int>& RawInstances() { static std::vector<int> v; return v; }   // instance ids opened as plain joysticks
+
 class SdlGamepad final : public Gamepad {
 public:
-    explicit SdlGamepad(SDL_GameController* c) : m_c(c) {}
-    ~SdlGamepad() override { if (m_c) SDL_GameControllerClose(m_c); }
-    int InstanceId() const override { return (int)SDL_JoystickInstanceID(SDL_GameControllerGetJoystick(m_c)); }
-    const char* Name() const override { const char* n = SDL_GameControllerName(m_c); return n ? n : ""; }
+    explicit SdlGamepad(SDL_GameController* c) : m_c(c), m_j(SDL_GameControllerGetJoystick(c)) {}
+    explicit SdlGamepad(SDL_Joystick* j) : m_c(nullptr), m_j(j) {}
+    ~SdlGamepad() override { if (m_c) SDL_GameControllerClose(m_c); else if (m_j) SDL_JoystickClose(m_j); }
+    int InstanceId() const override { return (int)SDL_JoystickInstanceID(m_j); }
+    const char* Name() const override {
+        const char* n = m_c ? SDL_GameControllerName(m_c) : SDL_JoystickName(m_j);
+        return n ? n : "";
+    }
     int16_t Axis(GamepadAxis a) const override {
-        return SDL_GameControllerGetAxis(m_c, (SDL_GameControllerAxis)(int)a);
+        return m_c ? SDL_GameControllerGetAxis(m_c, (SDL_GameControllerAxis)(int)a) : (int16_t)0;
     }
     bool Button(GamepadButton b) const override {
-        return SDL_GameControllerGetButton(m_c, (SDL_GameControllerButton)(int)b) != 0;
+        return m_c && SDL_GameControllerGetButton(m_c, (SDL_GameControllerButton)(int)b) != 0;
     }
     bool Rumble(uint16_t lo, uint16_t hi, uint32_t ms) override {
-        return SDL_GameControllerRumble(m_c, lo, hi, ms) == 0;
+        return m_c ? SDL_GameControllerRumble(m_c, lo, hi, ms) == 0 : SDL_JoystickRumble(m_j, lo, hi, ms) == 0;
     }
+    uint16_t VendorId() const override { return SDL_JoystickGetVendor(m_j); }
+    uint16_t ProductId() const override { return SDL_JoystickGetProduct(m_j); }
+    int ControllerType() const override {
+#if SDL_VERSION_ATLEAST(2, 0, 12)
+        return m_c ? (int)SDL_GameControllerGetType(m_c) : -1;
+#else
+        return -1;
+#endif
+    }
+    bool HasBuiltinMapping() const override { return m_c != nullptr; }
+    int RawAxisCount() const override { const int n = SDL_JoystickNumAxes(m_j); return n < 0 ? 0 : n; }
+    int RawButtonCount() const override { const int n = SDL_JoystickNumButtons(m_j); return n < 0 ? 0 : n; }
+    int RawHatCount() const override { const int n = SDL_JoystickNumHats(m_j); return n < 0 ? 0 : n; }
+    int16_t RawAxis(int i) const override { return SDL_JoystickGetAxis(m_j, i); }
+    bool RawButton(int i) const override { return SDL_JoystickGetButton(m_j, i) != 0; }
+    uint8_t RawHat(int i) const override { return SDL_JoystickGetHat(m_j, i); }   // SDL_HAT_UP/RIGHT/DOWN/LEFT = 1/2/4/8
+    int PowerLevel() const override { return (int)SDL_JoystickCurrentPowerLevel(m_j); }
+#if SDL_VERSION_ATLEAST(2, 0, 14)
+    bool SetLightbar(uint8_t r, uint8_t g, uint8_t b) override { return m_c && SDL_GameControllerSetLED(m_c, r, g, b) == 0; }
+    bool RumbleTriggers(uint16_t l, uint16_t r, uint32_t ms) override { return m_c && SDL_GameControllerRumbleTriggers(m_c, l, r, ms) == 0; }
+    bool HasTriggerRumble() const override { return m_c && SDL_GameControllerHasRumbleTriggers(m_c) == SDL_TRUE; }
+    int TouchpadCount() const override { return m_c ? SDL_GameControllerGetNumTouchpads(m_c) : 0; }
+    bool TouchpadFinger(int pad, int finger, bool& down, float& x, float& y, float& pressure) const override {
+        Uint8 st = 0; x = y = pressure = 0; down = false;
+        if (!m_c || SDL_GameControllerGetTouchpadFinger(m_c, pad, finger, &st, &x, &y, &pressure) != 0) return false;
+        down = st != 0; return true;
+    }
+    bool HasSensor(int kind) const override { return m_c && SDL_GameControllerHasSensor(m_c, kind == 0 ? SDL_SENSOR_GYRO : SDL_SENSOR_ACCEL) == SDL_TRUE; }
+    bool SensorData(int kind, float out[3]) override {
+        out[0] = out[1] = out[2] = 0;
+        if (!HasSensor(kind)) return false;
+        bool& on = m_sensorOn[kind == 0 ? 0 : 1];
+        const SDL_SensorType t = kind == 0 ? SDL_SENSOR_GYRO : SDL_SENSOR_ACCEL;
+        if (!on) { if (SDL_GameControllerSetSensorEnabled(m_c, t, SDL_TRUE) != 0) return false; on = true; }
+        return SDL_GameControllerGetSensorData(m_c, t, out, 3) == 0;
+    }
+#endif
+#if SDL_VERSION_ATLEAST(2, 0, 12)
+    void SetPlayerIndex(int i) override { if (m_c) SDL_GameControllerSetPlayerIndex(m_c, i); }
+#endif
 private:
     SDL_GameController* m_c;
+    SDL_Joystick* m_j;
+    bool m_sensorOn[2] = {false, false};
 };
 
 class SdlBackend final : public Backend {
@@ -276,10 +333,15 @@ public:
         const int n = SDL_NumJoysticks();
         return n < 0 ? 0 : n;
     }
-    bool IsGamepad(int i) override { return SDL_IsGameController(i) == SDL_TRUE; }
+    bool IsGamepad(int i) override { return SDL_IsGameController(i) == SDL_TRUE || (GenericPadsOn() && SDL_NumJoysticks() > i && i >= 0); }
     std::unique_ptr<Gamepad> OpenGamepad(int i) override {
-        SDL_GameController* c = SDL_GameControllerOpen(i);
-        return c ? std::unique_ptr<Gamepad>(new SdlGamepad(c)) : nullptr;
+        if (SDL_IsGameController(i) == SDL_TRUE) {
+            SDL_GameController* c = SDL_GameControllerOpen(i);
+            return c ? std::unique_ptr<Gamepad>(new SdlGamepad(c)) : nullptr;
+        }
+        if (!GenericPadsOn()) return nullptr;
+        SDL_Joystick* j = SDL_JoystickOpen(i);
+        return j ? std::unique_ptr<Gamepad>(new SdlGamepad(j)) : nullptr;
     }
 
 private:
@@ -326,6 +388,17 @@ private:
             return true;
         case SDL_CONTROLLERDEVICEADDED:   r.type = EventType::GamepadAdded;   r.deviceId = e.cdevice.which; return true;
         case SDL_CONTROLLERDEVICEREMOVED: r.type = EventType::GamepadRemoved; r.deviceId = e.cdevice.which; return true;
+        case SDL_JOYDEVICEADDED:   // a device SDL has no controller layout for: offered as a generic pad
+            if (!GenericPadsOn() || SDL_IsGameController(e.jdevice.which) == SDL_TRUE) return false;
+            RawInstances().push_back((int)SDL_JoystickGetDeviceInstanceID(e.jdevice.which));
+            r.type = EventType::GamepadAdded; r.deviceId = e.jdevice.which; return true;
+        case SDL_JOYDEVICEREMOVED: {
+            auto& v = RawInstances();
+            auto it = std::find(v.begin(), v.end(), (int)e.jdevice.which);
+            if (it == v.end()) return false;   // a mapped controller: its CONTROLLERDEVICEREMOVED covers it
+            v.erase(it);
+            r.type = EventType::GamepadRemoved; r.deviceId = e.jdevice.which; return true;
+        }
         default: return false;
         }
     }

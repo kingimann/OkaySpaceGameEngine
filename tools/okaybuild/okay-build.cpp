@@ -133,15 +133,20 @@ struct Manifest {
 // split on whitespace; "double quoted" words may contain spaces
 static vector<string> tokens(const string& line) {
     vector<string> t; string cur; bool inq = false, have = false;
-    for (char c : line) {
-        if (c == '"') { inq = !inq; have = true; }
+    for (size_t i = 0; i < line.size(); ++i) {
+        char c = line[i];
+        if (c == '\\' && i + 1 < line.size() && line[i + 1] == '"') { cur += '"'; ++i; have = true; } // \" is a literal quote
+        else if (c == '"') { inq = !inq; have = true; }
         else if (!inq && isspace((unsigned char)c)) { if (have) { t.push_back(cur); cur.clear(); have = false; } }
         else { cur += c; have = true; }
     }
     if (have) t.push_back(cur);
     return t;
 }
-static string qtok(const string& s) { return s.find_first_of(" \t") == string::npos && !s.empty() ? s : "\"" + s + "\""; }
+static string qtok(const string& s) {
+    string e; for (char c : s) { if (c == '"') e += "\\\""; else e += c; } // a literal quote is written \"
+    return s.find_first_of(" \t") == string::npos && !s.empty() ? e : "\"" + e + "\"";
+}
 
 // '#' starts a comment only outside quotes. A cmd line is kept whole, because the command text
 // itself may contain '#' (a preprocessor line, a quoted path). A trailing comment on a cmd line

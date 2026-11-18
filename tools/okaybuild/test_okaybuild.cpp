@@ -1311,6 +1311,19 @@ static void testLzFormat() {
     check(refused == tried, "a flipped byte is refused or still gives the exact original (never wrong bytes, never a crash)", std::to_string(refused) + "/" + std::to_string(tried));
 }
 
+static void testQuotedDefine() {
+    printf("test: a define may hold a double quote when written as \\\"\n"); fresh("qdef");
+    write("a.cpp", "#include <cstdio>\nint main(){puts(GREETING); return 0;}\n");
+    write("build.okay", "target app exe\n sources = a.cpp\n define = \"GREETING=\\\"hello world\\\"\"\nend\n");
+    int rc; string o = sh("-j1", &rc);
+    check(rc == 0, "a define with escaped quotes compiles", o);
+    o = capture("'" + (gRoot / "build/app").string() + "'", &rc);
+    check(o == "hello world\n", "the program sees the string", o);
+    write("build.okay", "target app exe\n sources = a.cpp\n define = GREETING=\\\"hi\\\"\nend\n");
+    o = sh("-j1", &rc);
+    check(rc == 0 && ran(o) >= 1, "changing it rebuilds", o);
+}
+
 static void testImporters() {
     printf("test: importer blocks rebuild only changed assets, settings change rebuilds all, failures leave no output\n"); fresh("imp");
     write("tools/conv.sh", "echo \"$1\" >> imports.log\nif grep -q FAIL \"$1\"; then echo half > \"$2\"; exit 1; fi\n{ printf '%s|' \"$3\"; cat \"$1\"; } > \"$2\"\n");
@@ -1402,5 +1415,6 @@ int main(int argc, char** argv) {
     testToolHelpers();
     testCompressedCache();
     testLzFormat();
+    testQuotedDefine();
     printf("okaybuild tests: %d checks passed, %d failed\n", gPass, gFail); return gFail ? 1 : 0;
 }

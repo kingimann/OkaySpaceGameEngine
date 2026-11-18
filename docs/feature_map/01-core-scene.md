@@ -254,13 +254,14 @@ Everything is on main. 2.851.0 is live: it holds 2.850.0 (#574 tools wave 2, #57
   - 1.11.4 Async loading - `Core/AssetManager` - `LoadAsync` on one worker thread, callbacks from `Pump()` on the main thread, `Progress()`, duplicate requests share one decode
   - 1.11.5 Hot reload - `Core/AssetManager` - `SetHotReload` compares mtime and size in `Pump()` and re-decodes in place so handles stay valid
   - 1.11.6 Report - `Core/AssetManager` - `Report()` lists every cached asset with type, bytes, refcount and reload count
+  - 1.11.7 Memory budget and stats - `Core/AssetManager`, `Core/AssetCacheBridge` - `SetBudget` (0 = unlimited), LRU eviction in `Pump()` / `Trim()`, external caches (audio, pictures), `Stats()`, hash-checked hot reload, Console `assets`
 - **Code:** `Core/AssetManager`
 - **API:** `AssetManager::Instance`, `AssetHandle<T>`, `AssetManager::LoadAsync`, `AssetManager::Pump`, `SetHotReload`, `Report`
 - **Editor:** none yet (the editor's "Asset Manager" panel is the marketplace download tool, 17.6)
 - **Docs:** `docs/asset_manager.md`
 - **Tests:** `assetmanager`
-- **Status:** Partial - merged in #568 and tested, but no engine loader, editor or player path calls it (docs and grep agree); GPU textures are not tracked
-- **Open:** move existing loaders (`DataAsset::Cached`, `AudioClip::LoadCached`, the renderers' own loads) onto it; track GPU resources; an asset browser window on top (area 20)
+- **Status:** Partial - `DataAsset::Cached` is an entry of the manager; the audio decode cache and the picture cache (every renderer) report into it and are trimmed by its memory budget (off by default); hot reload checks a file hash; Console `assets` and the Project panel footer show the stats; the editor and player call `Pump()` each frame; GPU textures are not tracked
+- **Open:** audio clips and pictures keep their own storage (bridged, not moved onto handles: Terrain writes into the picture map directly); GPU resources are not tracked; an asset browser window on top (area 20)
 - **Related:** 1.12, 20, 2.9, 7.2
 - **Words:** AssetManager, asset handle, AssetHandle, hot reload, async load, resource cache, reference count, Pump
 - **Seen as:** the same texture loaded twice; an edited file does not show until restart; a hitch when a big file loads
@@ -275,13 +276,14 @@ Everything is on main. 2.851.0 is live: it holds 2.850.0 (#574 tools wave 2, #57
   - 1.12.4 Thumbnails - see 1.20 (`Core/ThumbnailCache` is its own sub-area)
   - 1.12.5 Search and paging - `Core/AssetDatabaseSearch` - filter, sort and page query with per-type counts
   - 1.12.6 Shared helpers - `Core/AssetDatabaseInternal` - private utilities used by the three database sources
+  - 1.12.7 GUID references in scenes - `Core/SceneAssetGuids` - `assetguid` records written on save, `Resolve` / `RepairFile` on load, `FindBroken`; old files load unchanged
 - **Code:** `Core/AssetDatabase`, `Core/AssetDatabaseDeps`, `Core/AssetDatabaseSearch`, `Core/AssetDatabaseInternal`, `Core/ImportSettings`
 - **API:** `AssetDatabase::Scan`, `AssetDatabase::BuildClosurePaths`, `AssetDatabase::Search`, `Guid`, `ImportSettings`
 - **Editor:** Project panel (`editor/ProjectBrowser.*`: listing, search, filters, counts, folder tree, info strip, Find References, Show Dependencies, tags, broken-reference badge, Broken References list with Fix)
 - **Docs:** `docs/asset_database.md`, `docs/project_panel.md`
 - **Tests:** `asset_database`, `project_panel`, `project_panel_db`
-- **Status:** Partial - the Project panel reads the listing, search, dependency graph, labels and import settings from it; no importer reads `srgb`, `compress` or the audio settings, scenes still store paths, the build/export code does not call it
-- **Open:** importers reading the remaining settings; GUID references inside scene files (the panel rewrites paths on rename and move); build/export closure wiring; binary formats such as `.fbx` have no dependency edges; no operating-system file watcher (the panel polls the incremental scan every 2 s or more); an asset has a `.okaymeta` only after it is given a tag or import settings, so its GUID is session-long until then
+- **Status:** Partial - the Project panel reads the listing, search, dependency graph, labels and import settings from it; no importer reads `srgb`, `compress` or the audio settings, scenes still store paths (plus an optional GUID table that repairs moved assets on load), the build/export code does not call it
+- **Open:** importers reading the remaining settings; GUID references are a repair table next to the paths (`Core/SceneAssetGuids`), not the only reference, and cover scenes and prefabs the editor saves under an Assets folder; build/export closure wiring; binary formats such as `.fbx` have no dependency edges; no operating-system file watcher (the panel polls the incremental scan every 2 s or more); an asset has a `.okaymeta` only after it is given a tag or import settings, so its GUID is session-long until then
 - **Related:** 1.11, 1.20, 20, 15.4, 18.1
 - **Words:** AssetDatabase, GUID, meta file, okaymeta, dependency, import settings, unused assets, missing assets, asset browser, reference, closure
 - **Seen as:** moving a file in the project loses its texture in scenes; the build ships unused files or misses one; a Project panel row without a type or a wrong Used By count
@@ -298,8 +300,8 @@ Everything is on main. 2.851.0 is live: it holds 2.850.0 (#574 tools wave 2, #57
 - **Editor:** none
 - **Docs:** `docs/scene_management.md`
 - **Tests:** `scene_load_pool`
-- **Status:** Partial - merged in #570 and tested; no component, script builtin or editor option uses it yet (grep)
-- **Open:** a script builtin and a no-code Spawner option; resetting Rigidbody velocities is each component's job
+- **Status:** Partial - tested; used by `Spawner::usePool` (the no-code option, saved in scenes), by Projectile components, and by the script calls `pool_get` / `pool_release` / `pool_prewarm` / `pool_idle`, also written as `Pool.Get` / `Pool.Release` / `Pool.Prewarm` / `Pool.Idle` in OkayScript (`tests/test_object_pool_audit.cpp`); Visual Script has Take From Pool / Release to Pool nodes and the generic `Fn.pool_prewarm` call
+- **Open:** a dedicated Visual Script Prewarm node (today `Fn.pool_prewarm`); resetting Rigidbody velocities is each component's job
 - **Related:** 1.4, 11.6
 - **Words:** ObjectPool, pool, pooling, Get, Release, Prewarm, bullet pool, reuse, object pool
 - **Seen as:** a frame hitch when many bullets spawn; a reused bullet keeps its old speed or state

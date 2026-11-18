@@ -115,6 +115,18 @@ the editor's one-click build has the optional install). `-SkipSign` stops before
 The tool's arguments (also testable alone): `okay-xbox-export --out <folder> [--name] [--company] [--version] [--bundle-id] [--icon]`. Tested on Linux: argument parsing and the folder layout (14 PNGs, manifest with the right publisher and version, folder created from nothing,
 a bad version refused). **Never run:** the PowerShell script (re-read by hand for quoting, `$LASTEXITCODE`, `Resolve-Path` on a missing folder and stderr under `$ErrorActionPreference = 'Stop'`), cl.exe on the tool (it compiles four engine image files; MSVC has not seen them).
 
+## First real Windows build (Visual Studio 2026, MSVC 14.52) and the fixes it forced
+
+The owner's first build log showed errors that no Linux check could catch. Fixed, all still **unverified until the next Windows run**:
+* `STL1011` (`<experimental/coroutine>` removed soon): C++/WinRT in C++17 mode uses experimental coroutines. The triangle shell now builds as **C++20**; engine mode stays C++17 (engine headers use `u8string()`, which is `std::u8string` in C++20) and silences the error with
+  `_SILENCE_EXPERIMENTAL_COROUTINE_DEPRECATION_WARNINGS` (also set in the C++20 build). `/await` and `/ZW` are removed from the flags and the build script logs what the generated `vcxproj` really contains (`/ZW`, `/await`, `LanguageStandard`).
+* `Windows::...` was ambiguous with the global `::Windows` while `using namespace winrt;` is active: every use is now `winrt::Windows::...`, with the includes `Windows.Storage.h`, `Windows.ApplicationModel.Activation.h`, `Windows.UI.Input.h` and `::IUnknown` written with the global scope.
+* Platform toolset: a newer Visual Studio's default toolset (v145 in 2026) can differ from the toolset that has the UWP libraries (v143 = MSVC 14.30-14.49). CMake gets `-T v143,version=<MSVC folder with lib\x64\store>` (14.50-14.59 = v145, otherwise only `version=`); the folder with the UWP libraries is the one picked when several toolsets are installed. The mapping is from memory: UNVERIFIED.
+* MSBuild wants a `Package.appxmanifest` for a WindowsStore executable: `platform/xbox_uwp/app` has a minimal stand-in (and three 1x1 images) and MSBuild is told not to sign or package; our packer writes the real package.
+* VC runtime: the app uses the dynamic runtime, so the generated manifest keeps the `Microsoft.VCLibs.140.00` dependency. **Static CRT (`/MT`) was not chosen** because UWP support for it is unverified; instead the build script prints the exact `Add-AppxPackage` line for the framework package found under `ExtensionSDKs\Microsoft.VCLibs` (administrator PowerShell, once), then the certificate import and the package install. Debug is not supported (warning).
+* Tools read arguments as UTF-8 through `wmain` (non-ASCII user folders), batch files are written as UTF-8 with `chcp 65001`, and the shader script builds its helper through a `.bat` (it failed on paths with spaces before).
+* On failure the script adds a hint when the text contains `v145`, `ZW`, `appxmanifest` or `VCLibs`.
+
 ## The pipeline
 
 1. **Editor:** File > Build Settings, platform **Xbox (exp.)**, set name, version and icon (Player page), Export. It writes

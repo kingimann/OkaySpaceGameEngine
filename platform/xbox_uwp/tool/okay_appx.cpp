@@ -8,7 +8,7 @@
 #include <iostream>
 #include <sstream>
 
-int main(int argc, char** argv) {
+int ToolMain(int argc, char** argv) {
     using namespace okay::xbox::appx;
     const std::string cmd = argc > 1 ? argv[1] : "";
     if (cmd == "pack" && argc == 4) {
@@ -37,3 +37,5 @@ int main(int argc, char** argv) {
     std::fprintf(stderr, "usage: okay-appx pack <folder> <out.appx> | okay-appx verify <file.appx>\n");
     return 2;
 }
+
+#include "XboxArgs.hpp"   // main / wmain (UTF-8 arguments on Windows)

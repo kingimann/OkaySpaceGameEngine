@@ -12,10 +12,13 @@
 #define WIN32_LEAN_AND_MEAN
 #endif
 #include <windows.h>
+#include <objidl.h>        // IAgileObject
 #include <audioclient.h>
 #include <mmdeviceapi.h>
 #include <atomic>
+#include <cstring>
 #include <string>
+#include <utility>
 
 #if defined(__MINGW32__)   // only for the Linux syntax check: MinGW's header lacks the declaration, the Windows SDK's mmdeviceapi.h has it
 extern "C" HRESULT WINAPI ActivateAudioInterfaceAsync(LPCWSTR, REFIID, PROPVARIANT*, IActivateAudioInterfaceCompletionHandler*, IActivateAudioInterfaceAsyncOperation**);
@@ -25,15 +28,17 @@ namespace okay::xbox {
 
 namespace detail {
 // Completion handler: signals an event; must be agile (callable from any thread).
-class ActivateHandler : public IActivateAudioInterfaceCompletionHandler {
+class ActivateHandler : public IActivateAudioInterfaceCompletionHandler, public IAgileObject {
 public:
     explicit ActivateHandler(HANDLE ev) : ev_(ev) {}
     ULONG STDMETHODCALLTYPE AddRef() override { return (ULONG)++ref_; }
     ULONG STDMETHODCALLTYPE Release() override { const ULONG r = (ULONG)--ref_; if (!r) delete this; return r; }
     HRESULT STDMETHODCALLTYPE QueryInterface(REFIID riid, void** out) override {
         if (!out) return E_POINTER;
+        // IAgileObject is required: Microsoft says the completion handler of ActivateAudioInterfaceAsync must be agile (called on another thread).
         if (riid == __uuidof(IUnknown) || riid == __uuidof(IActivateAudioInterfaceCompletionHandler)) { *out = static_cast<IActivateAudioInterfaceCompletionHandler*>(this); AddRef(); return S_OK; }
-        *out = nullptr; return E_NOINTERFACE;   // (IAgileObject: not answered here; see docs/xbox_uwp.md, "Audio", UNVERIFIED)
+        if (riid == __uuidof(IAgileObject)) { *out = static_cast<IAgileObject*>(this); AddRef(); return S_OK; }
+        *out = nullptr; return E_NOINTERFACE;
     }
     HRESULT STDMETHODCALLTYPE ActivateCompleted(IActivateAudioInterfaceAsyncOperation*) override { SetEvent(ev_); return S_OK; }
 private:

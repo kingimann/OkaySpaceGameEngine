@@ -3,7 +3,7 @@
 #include "XboxExportTool.hpp"
 #include <cstdio>
 
-int main(int argc, char** argv) {
+int ToolMain(int argc, char** argv) {
     std::vector<std::string> a(argv + 1, argv + argc);
     okay::xbox::ExportToolOptions o; std::string err;
     if (!okay::xbox::ParseExportArgs(a, o, err)) { std::fprintf(stderr, "okay-xbox-export: %s\n%s", err.c_str(), okay::xbox::ExportToolUsage()); return 2; }
@@ -12,3 +12,5 @@ int main(int argc, char** argv) {
     std::printf("%s%s\n", ok ? "okay-xbox-export: " : "okay-xbox-export FAILED: ", msg.c_str());
     return ok ? 0 : 1;
 }
+
+#include "XboxArgs.hpp"   // main / wmain (UTF-8 arguments on Windows)

@@ -7,6 +7,7 @@
 #include "okay/Render/D3D11Hlsl.hpp"
 #include "okay/Render/ShaderBundle.hpp"
 #include <cstdio>
+#include <filesystem>
 #include <fstream>
 #include <iterator>
 #include <string>
@@ -14,12 +15,12 @@
 using namespace okay::shaderbundle;
 
 static bool ReadAll(const std::string& p, std::vector<unsigned char>& out) {
-    std::ifstream in(p, std::ios::binary); if (!in) return false;
+    std::ifstream in(std::filesystem::u8path(p), std::ios::binary); if (!in) return false;
     out.assign(std::istreambuf_iterator<char>(in), std::istreambuf_iterator<char>()); return true;
 }
-static bool WriteAll(const std::string& p, const std::string& s) { std::ofstream o(p, std::ios::binary); if (!o) return false; o << s; return (bool)o; }
+static bool WriteAll(const std::string& p, const std::string& s) { std::ofstream o(std::filesystem::u8path(p), std::ios::binary); if (!o) return false; o << s; return (bool)o; }
 
-int main(int argc, char** argv) {
+int ToolMain(int argc, char** argv) {
     if (argc != 3) { std::fputs("usage: okay-shaders dump|manifest|verify <dir>\n", stderr); return 2; }
     const std::string cmd = argv[1], dir = argv[2];
     const std::string sep = "/";
@@ -49,3 +50,5 @@ int main(int argc, char** argv) {
     }
     std::fputs("unknown command\n", stderr); return 2;
 }
+
+#include "XboxArgs.hpp"   // main / wmain (UTF-8 arguments on Windows)

@@ -24,7 +24,13 @@ namespace okay { class TtfFont; }
 namespace OkayUI {
 
 /// A 2D point or size.
-struct Vec2 { float x = 0.0f, y = 0.0f; };
+struct Vec2 {
+    float x = 0.0f, y = 0.0f;
+    Vec2() = default;
+    constexpr Vec2(float x_, float y_) : x(x_), y(y_) {}   // so ported code can write Vec2(x, y) and ImVec2(x, y)
+    float& operator[](int i) { return i ? y : x; }
+    float operator[](int i) const { return i ? y : x; }
+};
 struct Vec4;
 typedef unsigned Color32;   // a packed colour, 0xAABBGGRR
 
@@ -963,6 +969,9 @@ struct DrawList {
     /// A regular polygon with `n` corners (3 to 128), the first corner pointing right of the centre, corners going clockwise on screen.
     void AddNgon(Vec2 center, float radius, Color32 col, int n, float thickness = 1.0f) const;
     void AddNgonFilled(Vec2 center, float radius, Color32 col, int n) const;
+    /// An ellipse outline (radii per axis, rotated by `rot` radians, `segments` 0 = 32).
+    void AddEllipse(Vec2 center, Vec2 radius, Color32 col, float rot = 0.0f, int segments = 0, float thickness = 1.0f) const;
+    void AddEllipseFilled(Vec2 center, Vec2 radius, Color32 col, float rot = 0.0f, int segments = 0) const;
     void PushClipRect(Vec2 min, Vec2 max) const;
     void PopClipRect() const;
     /// A path of up to 256 points shared by both lists (cleared by PathStroke and PathFillConvex).
@@ -1101,8 +1110,16 @@ struct IO {
     bool keyCtrl = false, keyShift = false, keyAlt = false;
     bool wantCaptureMouse = false, wantCaptureKeyboard = false, wantTextInput = false;
     float deltaTime = 1.0f / 60.0f;
+    // The same values under Dear ImGui's field names (filled by GetIO; writes to them are not read back), plus the fields a host sets.
+    Vec2 MousePos, MouseDelta, DisplaySize; float MouseWheel = 0.0f; bool MouseDown[3] = {false, false, false};
+    bool KeyCtrl = false, KeyShift = false, KeyAlt = false;
+    bool WantCaptureMouse = false, WantCaptureKeyboard = false, WantTextInput = false;
+    float DeltaTime = 1.0f / 60.0f, Framerate = 60.0f;
+    int ConfigFlags = 0, BackendFlags = 0;
+    const char* IniFilename = nullptr; const char* LogFilename = nullptr;
 };
-const IO& GetIO();
+/// Not const so ported code can write the host fields (ConfigFlags, IniFilename); OkayUI never reads those.
+IO& GetIO();
 
 // ---- Input method (IME) support: API only, no operating-system code. See Input::composition and Input::commit. -----------
 /// This frame's preedit after cleaning (printable valid UTF-8 only, at most 256 bytes, caret moved onto a character boundary).

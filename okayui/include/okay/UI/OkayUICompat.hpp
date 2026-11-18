@@ -90,7 +90,7 @@ struct StyleInfo {
     float FontScale = 1.0f;                // the theme's text scale (2 = 16 px glyphs), not a multiplier of 1
     Vec4 Colors[Col_COUNT];                // index with the Col ids
 };
-const StyleInfo& GetStyle();
+StyleInfo& GetStyle();   // not const only so `ImGuiStyle& st = GetStyle();` compiles; a write is still lost
 /// Dear ImGui's name for the style type, so `const ImGuiStyle& st = GetStyle();` compiles (read-only, see above).
 typedef StyleInfo ImGuiStyle;
 

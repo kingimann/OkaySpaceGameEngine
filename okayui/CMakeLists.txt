@@ -92,6 +92,18 @@ if(OKAY_BUILD_OKAYUI_TESTS AND OKAY_BUILD_TESTS)
     # The OpenGL and performance tests make a GL context with EGL through dlopen (no link-time GL).
     target_link_libraries(test_okayui_render_gl PRIVATE ${CMAKE_DL_LIBS})
     target_link_libraries(test_okayui_render_bench PRIVATE ${CMAKE_DL_LIBS})
+    # Port probe, run: editor panels written for Dear ImGui, compiled against OkayUI through the stand-in imgui.h in probe/ and drawn headless
+    # (docs/own_ui_toolkit.md 6.14). The probe directory comes FIRST so no real imgui.h is used. Fake engine state, stubs for what main.cpp gives.
+    function(okayui_port_test name)
+        add_executable(test_${name} tests/test_${name}.cpp ${ARGN})
+        target_include_directories(test_${name} BEFORE PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/probe)
+        target_include_directories(test_${name} PRIVATE ${CMAKE_SOURCE_DIR}/tests ${CMAKE_CURRENT_SOURCE_DIR}/tests ${CMAKE_SOURCE_DIR}/shared ${CMAKE_SOURCE_DIR}/editor ${CMAKE_SOURCE_DIR}/launcher ${CMAKE_CURRENT_SOURCE_DIR}/screens)
+        target_link_libraries(test_${name} PRIVATE okay_ui_render)
+        add_test(NAME ${name} COMMAND test_${name})
+        set_tests_properties(${name} PROPERTIES ENVIRONMENT "SDL_VIDEODRIVER=dummy")
+    endfunction()
+    okayui_port_test(okayui_port_console ../editor/ConsolePanel.cpp ../editor/EditorWidgets.cpp)
+
     # The script editor's adapter over CodeEdit (editor/ScriptEditorCodeEdit.cpp: no ImGui, no SDL).
     add_executable(test_okayui_script_adapter tests/test_okayui_script_adapter.cpp ../editor/ScriptEditorCodeEdit.cpp)
     target_link_libraries(test_okayui_script_adapter PRIVATE okay_ui_soft)

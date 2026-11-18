@@ -876,6 +876,16 @@ After that: 15 errors, none of them a missing OkayUI call. They are: the Dear Im
 
 **Not verified.** The probe is a compile check: it says the code is spelled right, not that it does the right thing. Nothing was run in the editor or launcher. New tests (`okayui_names`, 18 checks, and the existing 129 `okayui_calls` checks) were built by hand and run headless with the other 19 suites; not through CMake or ctest.
 
+### 6.14 Running the probed panels headless
+
+6.13 only compiled the panels. This step builds each as a headless test (`okayui_port_*`, helper `okayui_port_test` in `okayui/CMakeLists.txt`): the real editor or launcher source file, compiled against OkayUI through `okayui/probe/imgui.h`, with fake engine state and stubs for what `main.cpp` provides, drawn into the software backend. Built and run by hand (g++ and a hand link, not CMake or ctest; the CMake lines are untested).
+
+**Console (`editor/ConsolePanel.cpp` + `editor/EditorWidgets.cpp`, test `okayui_port_console`, 6 checks, golden `port_console_first`).** Five fake log lines, 4 frames, then clicks along the toolbar, typing, scrolling, 400 more lines, a blocked pointer and a 40 x 30 display: no crash, the draw data is not empty and nothing is dropped. The time stamps come from `time()`, so the test defines its own fixed `time()` (the golden would change every second otherwise). The first run showed real breakage, all in the compat layer, fixed here:
+- window titles with `###id` were drawn whole (`Console  [x 1]###Console`): the title now stops at `##` like every other label;
+- `BeginChild(id, ImVec2(0, -detailsHeight))` ignored the negative height (the list got four rows and the newest lines scrolled out of view): in the `Vec2` form a size of 0 is the space left and a negative size is the space left minus that much, on both axes;
+- `ImVec2` is now `Vec2` itself (it has a two-float constructor and `operator[]`), so `ImVec2 pts[6]` can go to `AddPolyline(const Vec2*, ...)`; `IM_PI`, `DrawList::AddEllipse` / `AddEllipseFilled`, the Dear ImGui field names on `IO` (`MousePos`, `DeltaTime`, `ConfigFlags`, ...; `GetIO()` is not const) and a non-const `GetStyle()` (a write is still lost) were needed by `EditorWidgets.cpp`.
+I looked at the picture: all five rows, the pills with counts, the search field, the category combo and the details area are where the Dear ImGui code puts them. Differences seen: the font is OkayUI's, icons are the panel's own drawing, no hover or active colours were checked.
+
 ## 7. The render interface: OkayUI on screen without a Dear ImGui backend
 
 Own code, off by default, wired into nothing: the editor and launcher still draw OkayUI (and everything else) through Dear ImGui's SDL backends. This section is the part that lets a later host put OkayUI's pixels on screen without any Dear ImGui backend code. (The numbered sections 5 and 6 of the draw-through-ImGui host live on another branch; this section is numbered 7 so the two cannot collide.)

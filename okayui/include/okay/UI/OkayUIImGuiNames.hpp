@@ -10,18 +10,13 @@
 #include "okay/UI/OkayUIDockBuilder.hpp"
 #include <cstdint>
 
-// ImVec2: two floats that convert to and from OkayUI::Vec2 (the hand-written part; own code).
-struct ImVec2 {
-    float x = 0.0f, y = 0.0f;
-    ImVec2() {}
-    ImVec2(float x_, float y_) : x(x_), y(y_) {}
-    ImVec2(const OkayUI::Vec2& v) : x(v.x), y(v.y) {}
-    operator OkayUI::Vec2() const { return OkayUI::Vec2{x, y}; }
-    float& operator[](int i) { return i ? y : x; }
-    float operator[](int i) const { return i ? y : x; }
-};
+// ImVec2 is OkayUI::Vec2 (two floats with a two-float constructor).
+typedef OkayUI::Vec2 ImVec2;
 #ifdef IMGUI_DEFINE_MATH_OPERATORS
 inline ImVec2 operator+(const ImVec2& a, const ImVec2& b) { return ImVec2(a.x + b.x, a.y + b.y); }
+inline ImVec2 operator*(const ImVec2& a, const ImVec2& b) { return ImVec2(a.x * b.x, a.y * b.y); }
+inline ImVec2 operator*(float f, const ImVec2& a) { return ImVec2(a.x * f, a.y * f); }
+inline ImVec2 operator-(const ImVec2& a) { return ImVec2(-a.x, -a.y); }
 inline ImVec2 operator-(const ImVec2& a, const ImVec2& b) { return ImVec2(a.x - b.x, a.y - b.y); }
 inline ImVec2 operator*(const ImVec2& a, float f) { return ImVec2(a.x * f, a.y * f); }
 inline ImVec2 operator/(const ImVec2& a, float f) { return ImVec2(a.x / f, a.y / f); }
@@ -37,6 +32,7 @@ typedef short ImS16;
 typedef int ImS32;
 typedef long long ImS64;
 typedef OkayUI::DrawList ImDrawList;
+#define IM_PI 3.14159265358979323846f
 #define IM_COL32(R, G, B, A) (OkayUI::RGBA((R), (G), (B), (A)))
 using OkayUI::ImVec4;
 using OkayUI::ImTextureID;

@@ -2130,7 +2130,7 @@ bool Begin(const char* title, float x, float y, float w, float h, bool* p_open) 
         const float s0 = g_theme.textScale;
         if (!noTitle) {
         if (!noCollapse) chevron(wx + btn * 0.5f, wy + titleH * 0.5f, 9.0f, !*collapsed, overCaret ? g_theme.text : pick(Col_TextDisabled, g_theme.textDim));
-        if (title && *title) drawText(noCollapse ? wx + 10.0f : wx + btn, wy + (titleH - textH()) * 0.5f, title, s0, g_theme.text);
+        if (title && *title) drawText(noCollapse ? wx + 10.0f : wx + btn, wy + (titleH - textH()) * 0.5f, VisLabel(title).b, s0, g_theme.text);
         }
         if (p_open && !noTitle) {
             unsigned char tmp[4];
@@ -2151,7 +2151,7 @@ bool Begin(const char* title, float x, float y, float w, float h, bool* p_open) 
     quad(wx, wy + titleH - 2.0f, w, 2.0f, g_theme.accent);
     const float s = g_theme.textScale;
     if (!noCollapse) drawText(wx + 8.0f, wy + (titleH - textH()) * 0.5f, *collapsed ? "+" : "-", s, g_theme.text);  // caret
-    if (title && *title) drawText(wx + 8.0f + (noCollapse ? 0.0f : fCharW() * s * 2.0f), wy + (titleH - textH()) * 0.5f, title, s, g_theme.text);
+    if (title && *title) drawText(wx + 8.0f + (noCollapse ? 0.0f : fCharW() * s * 2.0f), wy + (titleH - textH()) * 0.5f, VisLabel(title).b, s, g_theme.text);
     if (p_open) {
         const unsigned char* xcol = overClose ? g_theme.accent : g_theme.text;
         drawText(closeX + (btn - fCharW() * s) * 0.5f, wy + (titleH - textH()) * 0.5f, "x", s, xcol);
@@ -2270,10 +2270,15 @@ void SetWindowFontScale(float scale) {
 }
 void SetMouseCursor(MouseCursor cursor) { g_cursor = ((int)cursor >= 0 && (int)cursor < MouseCursor_COUNT) ? cursor : MouseCursor_Arrow; }
 MouseCursor GetMouseCursor() { return g_cursor; }
-const IO& GetIO() {
+IO& GetIO() {
     // These two depend on windows drawn since BeginFrame, so they are worked out when asked.
     g_io.mouseDelta = Vec2{g_mouseDX, g_mouseDY};
     g_io.wantCaptureMouse = !g_in.blocked && (g_ptrOverWindow || g_ptrOverWindowPrev || g_active != 0);
+    g_io.MousePos = g_io.mousePos; g_io.MouseDelta = g_io.mouseDelta; g_io.DisplaySize = g_io.displaySize; g_io.MouseWheel = g_io.mouseWheel;
+    g_io.MouseDown[0] = g_io.mouseDown[0]; g_io.MouseDown[1] = g_io.mouseDown[1];
+    g_io.KeyCtrl = g_io.keyCtrl; g_io.KeyShift = g_io.keyShift; g_io.KeyAlt = g_io.keyAlt;
+    g_io.WantCaptureMouse = g_io.wantCaptureMouse; g_io.WantCaptureKeyboard = g_io.wantCaptureKeyboard; g_io.WantTextInput = g_io.wantTextInput;
+    g_io.DeltaTime = g_io.deltaTime; g_io.Framerate = g_io.deltaTime > 0.0f ? 1.0f / g_io.deltaTime : 0.0f;
     return g_io;
 }
 
@@ -2506,6 +2511,14 @@ bool BeginChild(const char* id, Vec2 size, int childFlags, int /*windowFlags*/) 
     if (!id || !g_lay.active) return false;
     float h = std::isfinite(size.y) ? size.y : 0.0f;
     float w = std::isfinite(size.x) ? size.x : 0.0f;
+    // Dear ImGui sizes: 0 is the space left, a negative size is the space left minus that much (-40 leaves 40 px below), on each axis.
+    // (Not for an auto-resized height: that one follows the content.)
+    if (w <= 0.0f) { const float room = availW(); w = w < 0.0f ? (room + w > 8.0f ? room + w : 8.0f) : 0.0f; }
+    if (h <= 0.0f && !(childFlags & Child_AutoResizeY)) {
+        const Vec2 room = GetContentRegionAvail();
+        h = room.y + h;                           // h is 0 or negative here
+        if (h < rowH() * 2.0f) h = rowH() * 2.0f; // never smaller than two rows
+    }
     float* slot = nullptr;
     if (childFlags & Child_AutoResizeY) {
         slot = floatState(hashLabel(id) ^ 0x7a31, 0.0f);
@@ -3366,7 +3379,7 @@ void EndTooltip() {
 }
 
 // ---- GetStyle: the style as Dear ImGui-shaped fields, read off OkayUI's own settings each call ----------------------------
-const StyleInfo& GetStyle() {
+StyleInfo& GetStyle() {
     static StyleInfo s;
     const float rh = rowH(), th = textH();
     s.Alpha = 1.0f;
@@ -5567,6 +5580,28 @@ void DrawList::AddNgon(Vec2 center, float radius, Color32 col, int n, float th) 
     for (int i = 0; i < n; ++i) { const float a = 6.28318531f * (float)i / (float)n; p[i] = Vec2{ center.x + radius * SDL_cosf(a), center.y + radius * SDL_sinf(a) }; }
     AddPolyline(p, n, col, true, th);
 }
+static int ellipsePoints(Vec2 c, Vec2 r, float rot, int seg, Vec2* p) {
+    if (seg <= 0) seg = 32;
+    if (seg < 3) seg = 3;
+    if (seg > 128) seg = 128;
+    const float cr = SDL_cosf(rot), sr = SDL_sinf(rot);
+    for (int i = 0; i < seg; ++i) {
+        const float a = 6.28318531f * (float)i / (float)seg, ex = r.x * SDL_cosf(a), ey = r.y * SDL_sinf(a);
+        p[i] = Vec2{ c.x + ex * cr - ey * sr, c.y + ex * sr + ey * cr };
+    }
+    return seg;
+}
+void DrawList::AddEllipse(Vec2 c, Vec2 r, Color32 col, float rot, int seg, float th) const {
+    if (!finite2(c) || !finite2(r) || !finite1(rot) || r.x < 0.0f || r.y < 0.0f) return;
+    Vec2 p[128]; const int n = ellipsePoints(c, r, rot, seg, p);
+    AddPolyline(p, n, col, true, th);
+}
+void DrawList::AddEllipseFilled(Vec2 c, Vec2 r, Color32 col, float rot, int seg) const {
+    if (!finite2(c) || !finite2(r) || !finite1(rot) || r.x < 0.0f || r.y < 0.0f) return;
+    Vec2 p[128]; const int n = ellipsePoints(c, r, rot, seg, p);
+    AddConvexPolyFilled(p, n, col);
+}
+
 void DrawList::AddNgonFilled(Vec2 center, float radius, Color32 col, int n) const {
     if (!finite2(center) || !finite1(radius) || radius < 0.0f || n < 3) return;
     if (n > 128) n = 128;

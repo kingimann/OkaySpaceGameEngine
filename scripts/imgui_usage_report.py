@@ -93,7 +93,7 @@ def okayui_api():
     """(function names, type/enum/flag names, draw list methods) declared by the OkayUI headers."""
     funcs, idents, dl = set(), set(), set()
     for fn in sorted(os.listdir(API_DIR)):
-        if not fn.endswith(".hpp"):
+        if not fn.endswith(".hpp") or fn == "OkayUIImGuiNames.hpp":   # the generated spellings header would match itself
             continue
         t = strip_comments_and_strings(open(os.path.join(API_DIR, fn), encoding="utf-8", errors="replace").read())
         for m in re.finditer(r"\b([A-Za-z_]\w*)\s*\(", t):
@@ -114,18 +114,26 @@ FUNC_START = re.compile(r"^(?:static\s+|inline\s+|constexpr\s+|template\s*<[^>]*
 KEYWORDS = {"if", "for", "while", "switch", "else", "return", "do", "catch", "sizeof", "namespace"}
 
 
-def type_covered(name, idents):
-    """An ImGui type/flag/enum name is available when OkayUI has the same-named identifier or its obvious spelling."""
-    if name in ("ImVec2", "ImVec4"):
-        return "Vec2" in idents if name == "ImVec2" else "ImVec4" in idents
-    if name in ("ImTextureID", "ImRect"):
-        return name in idents
+TYPE_ALIASES = {"ImGuiKey": "KeyId", "ImGuiStorage": "StateStorage"}   # types OkayUI has under another name
+
+
+def resolve_type(name, idents):
+    """The OkayUI identifier an ImGui type / flag / enum name stands for (same spelling or the obvious one), or None."""
+    if name in TYPE_ALIASES:
+        return TYPE_ALIASES[name] if TYPE_ALIASES[name] in idents else None
+    if name in idents and not name.startswith("ImGui"):
+        return name   # ImFont, ImFontConfig, ImColor, ImWchar: same spelling
+    if name == "ImVec2":
+        return "Vec2" if "Vec2" in idents else None
+    if name in ("ImVec4", "ImTextureID", "ImRect"):
+        return name if name in idents else None
     if name == "ImU32":
-        return "Color32" in idents
-    if name in ("ImDrawList",):
-        return "DrawList" in idents
+        return "Color32" if "Color32" in idents else None
+    if name == "ImDrawList":
+        return "DrawList" if "DrawList" in idents else None
     if name.startswith("ImDrawFlags_"):
-        return "DrawFlags_" + name[len("ImDrawFlags_"):] in idents
+        c = "DrawFlags_" + name[len("ImDrawFlags_"):]
+        return c if c in idents else None
     if name.startswith("ImGui"):
         base = name[5:]
         cands = [name, base, base.replace("Flags_", "_"), base.replace("Flags", ""), re.sub(r"Flags_", "_", base)]
@@ -137,8 +145,17 @@ def type_covered(name, idents):
             cands += [base, m.group(1) + "_" + m.group(2)]
         if base.startswith("Key_"):
             cands += ["KeyId_" + base[4:]]
-        return any(c in idents for c in cands)
-    return False
+        for c in cands:
+            if "_" in name and "_" not in c:
+                continue   # an enumerator must match an enumerator, not the name of its enum type
+            if c in idents:
+                return c
+    return None
+
+
+def type_covered(name, idents):
+    """An ImGui type/flag/enum name is available when OkayUI has the same-named identifier or its obvious spelling."""
+    return resolve_type(name, idents) is not None
 
 
 def scan():

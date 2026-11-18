@@ -10,11 +10,11 @@ by name: a call counts as available when OkayUI declares a function of that name
 | What | Distinct | Call sites | Available in OkayUI | Coverage of call sites |
 |---|---:|---:|---:|---:|
 | `ImGui::` calls | 264 | 28025 | 28006 | 99.9% |
-| ImGui types, flags, enums | 330 | 12464 | 12158 | 97.5% |
+| ImGui types, flags, enums | 330 | 12464 | 12390 | 99.4% |
 | Draw-list methods | 26 | 2413 | 2413 | 100.0% |
 
 Distinct calls available: 251 of 264.
-Distinct types, flags and enums available: 247 of 330.
+Distinct types, flags and enums available: 319 of 330.
 
 ## Missing `ImGui::` calls, ranked by use
 
@@ -41,47 +41,16 @@ Missing draw-list methods: none.
 | # | Name | Uses | Files |
 |---:|---|---:|---:|
 | 1 | `ImGuiWindow` | 41 | 5 |
-| 2 | `ImGuiPayload` | 36 | 8 |
-| 3 | `ImFont` | 21 | 8 |
-| 4 | `ImGuiDockNode` | 16 | 1 |
-| 5 | `ImGuiKey` | 11 | 3 |
-| 6 | `ImGuiPopupFlags_AnyPopupId` | 8 | 3 |
-| 7 | `ImFontConfig` | 7 | 3 |
-| 8 | `ImGuiDragDropFlags_AcceptNoDrawDefaultRect` | 7 | 2 |
-| 9 | `ImGuiButtonFlags_MouseButtonLeft` | 6 | 2 |
-| 10 | `ImGuiButtonFlags_MouseButtonRight` | 6 | 2 |
-| 11 | `ImGuiConfigFlags_ViewportsEnable` | 6 | 1 |
-| 12 | `ImGuiPopupFlags_MouseButtonRight` | 6 | 2 |
-| 13 | `ImGuiSliderFlags_Logarithmic` | 6 | 2 |
-| 14 | `ImGuiKey_MouseWheelY` | 5 | 4 |
-| 15 | `ImGuiPopupFlags_AnyPopupLevel` | 5 | 2 |
-| 16 | `ImGuiComboFlags_HeightLarge` | 4 | 3 |
-| 17 | `ImGuiConfigFlags_NavEnableKeyboard` | 4 | 2 |
-| 18 | `ImGuiInputFlags_Repeat` | 4 | 1 |
-| 19 | `ImGuiInputTextFlags_CtrlEnterForNewLine` | 4 | 2 |
-| 20 | `ImGuiSliderFlags_AlwaysClamp` | 4 | 2 |
-| 21 | `ImGuiComboFlags_NoPreview` | 3 | 1 |
-| 22 | `ImGuiKey_Keypad0` | 3 | 2 |
-| 23 | `ImGuiKey_KeypadSubtract` | 3 | 1 |
-| 24 | `ImGuiKey_Minus` | 3 | 1 |
-| 25 | `ImGuiKey_Slash` | 3 | 1 |
-| 26 | `ImGuiStorage` | 3 | 1 |
-| 27 | `ImGuiTabBarFlags_FittingPolicyScroll` | 3 | 3 |
-| 28 | `ImGuiTabItem` | 3 | 1 |
-| 29 | `ImColor` | 2 | 1 |
-| 30 | `ImGuiBackendFlags_RendererHasViewports` | 2 | 1 |
-| 31 | `ImGuiButtonFlags_MouseButtonMiddle` | 2 | 2 |
-| 32 | `ImGuiCol_TabDimmed` | 2 | 2 |
-| 33 | `ImGuiCol_TabDimmedSelected` | 2 | 2 |
-| 34 | `ImGuiCol_TabDimmedSelectedOverline` | 2 | 2 |
-| 35 | `ImGuiColorEditFlags_Float` | 2 | 1 |
-| 36 | `ImGuiDockNodeFlags_NoTabBar` | 2 | 1 |
-| 37 | `ImGuiInputTextCallbackData` | 2 | 2 |
-| 38 | `ImGuiInputTextFlags_CallbackResize` | 2 | 1 |
-| 39 | `ImGuiInputTextFlags_CharsDecimal` | 2 | 2 |
-| 40 | `ImGuiKey_KeypadDecimal` | 2 | 1 |
-
-43 more with 51 uses in total.
+| 2 | `ImGuiDockNode` | 16 | 1 |
+| 3 | `ImGuiKey_MouseWheelY` | 5 | 4 |
+| 4 | `ImGuiTabItem` | 3 | 1 |
+| 5 | `ImGuiInputTextCallbackData` | 2 | 2 |
+| 6 | `ImGuiPopupFlags_NoOpenOverItems` | 2 | 1 |
+| 7 | `ImGuiAxis_Y` | 1 | 1 |
+| 8 | `ImGuiPlatformIO` | 1 | 1 |
+| 9 | `ImGuiSortDirection_Ascending` | 1 | 1 |
+| 10 | `ImGuiStyleVar_GrabMinSize` | 1 | 1 |
+| 11 | `ImGuiTableBgTarget_CellBg` | 1 | 1 |
 
 ## Coverage per file
 
@@ -149,7 +118,7 @@ available. Flags and types are listed too: a screen is only a quick port when th
 | 4 | `DrawUpdatePopup` | `editor/main.cpp:20128` | 31 | 100.0% | none | none |
 | 5 | `DrawAvailable` | `launcher/VersionsUI.cpp:556` | 31 | 100.0% | none | none |
 | 6 | `LocKeyInput` | `editor/LocalizationWindow.cpp:939` | 32 | 100.0% | none | none |
-| 7 | `HandleShortcuts` | `editor/main.cpp:18093` | 32 | 100.0% | none | ImGuiPopupFlags_AnyPopupId (1), ImGuiPopupFlags_AnyPopupLevel (1), ImGuiKey (1) |
+| 7 | `HandleShortcuts` | `editor/main.cpp:18093` | 32 | 100.0% | none | none |
 | 8 | `ChatLayoutTokens` | `launcher/main.cpp:3009` | 32 | 100.0% | none | none |
 | 9 | `DialogueRunnerInspector` | `editor/DialogueWindow.cpp:1786` | 33 | 100.0% | none | none |
 | 10 | `StoryStateInspector` | `editor/DialogueWindow.cpp:1953` | 33 | 100.0% | none | none |

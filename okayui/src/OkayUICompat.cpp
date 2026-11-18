@@ -20,6 +20,7 @@ Viewport GetMainViewport() {
     Viewport vp;
     const IO& io = GetIO();
     vp.size = Vec2{ Finite(io.displaySize.x), Finite(io.displaySize.y) };
+    vp.Pos = vp.pos; vp.Size = vp.size;
     return vp;
 }
 
@@ -266,4 +267,43 @@ void TextColoredFormatted(Vec4 color, const char* fmt, ...) {
     PushStyleColor(Col_Text, color); Text(static_cast<const char*>(b)); PopStyleColor();
 }
 #undef OKAYUI_FORMAT
+Color32 GetColorU32(Vec4 color) { return ColorConvertFloat4ToU32(color); }
+
+bool SliderFloat(const char* label, float* value, float minV, float maxV, const char*, int) { return SliderFloat(label, value, minV, maxV); }
+bool SliderInt(const char* label, int* value, int minV, int maxV, const char*, int) { return SliderInt(label, value, minV, maxV); }
+bool DragFloat(const char* label, float* v, float speed, float minV, float maxV, const char*, int) { return DragFloat(label, v, speed, minV, maxV); }
+bool DragInt(const char* label, int* v, float speed, int minV, int maxV, const char*, int) { return DragInt(label, v, speed, minV, maxV); }
+Vec2 CalcTextSize(const char* text, const char* textEnd, bool hideAfterHash, float) {
+    if (!text) return Vec2{0, 0};
+    char buf[1024]; std::size_t n = textEnd && textEnd >= text ? (std::size_t)(textEnd - text) : std::strlen(text);
+    if (n > sizeof buf - 1) n = sizeof buf - 1;
+    std::memcpy(buf, text, n); buf[n] = 0;
+    if (hideAfterHash) { const char* e = FindRenderedTextEnd(buf); buf[e - buf] = 0; }
+    return CalcTextSize(static_cast<const char*>(buf));
+}
+bool Combo(const char* label, int* current, const char* zs, int) {
+    const char* items[64]; int count = 0;
+    for (const char* p = zs; p && *p && count < 64; p += std::strlen(p) + 1) items[count++] = p;
+    return Combo(label, items, count, current);
+}
+bool InvisibleButton(const char* id, Vec2 size, int) { return InvisibleButton(id, size.x, size.y); }
+bool BeginTabBar(const char* id, int) { return BeginTabBar(id); }
+bool BeginCombo(const char* label, const char* preview, int) { return BeginCombo(label, preview); }
+bool Combo(const char* label, int* current, const char* const* items, int count) { return Combo(label, items, count, current); }
+void OpenPopup(const char* id, int) { OpenPopup(id); }
+namespace { bool RightButtonTrigger(int flags) { const int b = flags & (Popup_MouseButtonLeft | Popup_MouseButtonRight | Popup_MouseButtonMiddle); return b == 0 || (b & Popup_MouseButtonRight) != 0; } }
+bool BeginPopupContextItem(const char* id, int flags) { return RightButtonTrigger(flags) ? BeginPopupContextItem(id) : false; }
+bool BeginPopupContextWindow(const char* id, int flags) { return RightButtonTrigger(flags) ? BeginPopupContextWindow(id) : false; }
+void Image(ImTextureID tex, Vec2 size, Vec2 uv0, Vec2 uv1, Vec4 tint, Vec4) {
+    if (!tex) return;
+    Dummy(size);
+    const Rect r = GetItemRect();
+    GetWindowDrawList().AddImage(tex, Vec2{r.x, r.y}, Vec2{r.x + r.w, r.y + r.h}, uv0, uv1, ColorConvertFloat4ToU32(tint));
+}
+void TreeNodeExFormatted(bool* out, const char* id, unsigned flags, const char* fmt, ...) {
+    char text[512];
+    va_list ap; va_start(ap, fmt); std::vsnprintf(text, sizeof text, fmt ? fmt : "", ap); va_end(ap);
+    char label[640]; std::snprintf(label, sizeof label, "%s##%s", text, id ? id : "");
+    *out = TreeNodeEx(label, flags);
+}
 } // namespace OkayUI

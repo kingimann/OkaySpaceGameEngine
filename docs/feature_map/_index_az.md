@@ -3410,6 +3410,7 @@ Word, then the number(s) to say. Back to the [overview](../FEATURE_MAP.md).
 - pooling (1.13)
 - popup (12.4, 40.1)
 - port forwarding (16.14)
+- Port probe and spellings header (40.9.7)
 - portal (27.2)
 - Portal cells (#574) (27.2.4)
 - Ported-code calls: window, frame, context, style presets and child flags (40.9)

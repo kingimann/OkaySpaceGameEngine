@@ -13,7 +13,11 @@ namespace OkayUI {
 /// gave none). OkayUI has one viewport, so there is no per-window or multi-monitor variant.
 struct Viewport {
     Vec2 pos, size;
+    Vec2 Pos, Size;   // the same values under Dear ImGui's field names (filled by GetMainViewport)
     Vec2 GetCenter() const { return Vec2{ pos.x + size.x * 0.5f, pos.y + size.y * 0.5f }; }
+    Vec2 GetWorkPos() const { return pos; }
+    Vec2 GetWorkSize() const { return size; }
+    const Viewport* operator->() const { return this; }   // so `GetMainViewport()->GetCenter()` compiles as it does with Dear ImGui's pointer
 };
 Viewport GetMainViewport();
 
@@ -87,6 +91,8 @@ struct StyleInfo {
     Vec4 Colors[Col_COUNT];                // index with the Col ids
 };
 const StyleInfo& GetStyle();
+/// Dear ImGui's name for the style type, so `const ImGuiStyle& st = GetStyle();` compiles (read-only, see above).
+typedef StyleInfo ImGuiStyle;
 
 /// Lay out only the visible rows of a long list that is not a table. Usage:
 ///     ListClipper clip; clip.Begin(count);                  // or Begin(count, rowStep) when every row has the same step
@@ -269,15 +275,8 @@ bool BeginChild(const char* id, Vec2 size, int childFlags = Child_None, int wind
 
 // ---- Step 6.11 (continued): the type names host code spells ---------------------------------------------------------------------
 
-/// Dear ImGui's colour-vector type under its own name, for ported code that writes `ImVec4(r, g, b, a)` and reads `.x .y .z .w`. It
-/// converts both ways with Vec4 (so it can be passed to PushStyleColor and assigned from GetStyleColorVec4).
-struct ImVec4 {
-    float x = 0.0f, y = 0.0f, z = 0.0f, w = 0.0f;
-    ImVec4() {}
-    ImVec4(float x_, float y_, float z_, float w_) : x(x_), y(y_), z(z_), w(w_) {}
-    ImVec4(const Vec4& v) : x(v.x), y(v.y), z(v.z), w(v.w) {}
-    operator Vec4() const { return Vec4{x, y, z, w}; }
-};
+/// A packed colour from a float colour (what GetColorU32(ImVec4) does in Dear ImGui); components are clamped to 0..1.
+Color32 GetColorU32(Vec4 color);
 /// A texture handle as ported code spells it: the SDL texture pointer AddImage takes.
 typedef SDL_Texture* ImTextureID;
 /// An id (what GetID returns).
@@ -314,5 +313,102 @@ template <class A0, class... A> inline void TextDisabled(const char* fmt, A0 a0,
 template <class A0, class... A> inline void TextWrapped(const char* fmt, A0 a0, A... a) { TextWrappedFormatted(fmt, a0, a...); }
 template <class A0, class... A> inline void BulletText(const char* fmt, A0 a0, A... a) { BulletTextFormatted(fmt, a0, a...); }
 template <class... A> inline void TextColored(Vec4 color, const char* fmt, A... a) { TextColoredFormatted(color, fmt, a...); }
+
+
+// ---- Step 6.13: the argument shapes and flag families the panel probes found --------------------------------------------------------
+
+/// Slider and drag flags. Slider_AlwaysClamp: accepted (a slider here always clamps); Slider_Logarithmic: accepted, the scale stays
+/// linear (not done); the others are not offered. The `fmt` text in the overloads below is accepted and NOT used: values are shown with
+/// OkayUI's own number format.
+enum SliderFlags : int { Slider_None = 0, Slider_AlwaysClamp = 16, Slider_Logarithmic = 32, Slider_NoRoundToFormat = 64, Slider_NoInput = 128 };
+bool SliderFloat(const char* label, float* value, float minV, float maxV, const char* fmt, int flags = 0);
+bool SliderInt(const char* label, int* value, int minV, int maxV, const char* fmt, int flags = 0);
+bool DragFloat(const char* label, float* v, float speed, float minV, float maxV, const char* fmt, int flags = 0);
+bool DragInt(const char* label, int* v, float speed, int minV, int maxV, const char* fmt, int flags = 0);
+/// Combo flags for BeginCombo(label, preview, flags): accepted, no effect (the list height is fixed; the preview always shows).
+enum ComboFlags : int { Combo_None = 0, Combo_PopupAlignLeft = 1, Combo_HeightSmall = 2, Combo_HeightRegular = 4, Combo_HeightLarge = 8, Combo_HeightLargest = 16,
+                        Combo_NoArrowButton = 32, Combo_NoPreview = 64 };
+bool BeginCombo(const char* label, const char* preview, int flags);
+/// Dear ImGui's argument order: label, the int to edit, the items, the count.
+bool Combo(const char* label, int* current, const char* const* items, int count);
+/// Popup flags for OpenPopup(id, flags), BeginPopupContextItem(id, flags) and BeginPopupContextWindow(id, flags). Right mouse button is the
+/// only trigger OkayUI has, so Popup_MouseButtonRight and the default behave the same; MouseButtonLeft / Middle open nothing (the call
+/// returns false for them). AnyPopupId / AnyPopupLevel are accepted for IsPopupOpen-style queries and change nothing.
+enum PopupFlags : int { Popup_None = 0, Popup_MouseButtonLeft = 4, Popup_MouseButtonRight = 1, Popup_MouseButtonMiddle = 2,
+                        Popup_NoOpenOverExistingPopup = 32, Popup_AnyPopupId = 128, Popup_AnyPopupLevel = 256 };
+void OpenPopup(const char* id, int flags);
+bool BeginPopupContextItem(const char* id, int flags);
+bool BeginPopupContextWindow(const char* id, int flags);
+/// Configuration flags a host sets on the IO (ConfigFlags_NavEnableKeyboard, ViewportsEnable, DockingEnable, ...): the names exist so ported
+/// start-up code compiles; OkayUI has one viewport, one dock space and no keyboard navigation, so nothing reads them.
+enum ConfigFlags : int { ConfigFlags_None = 0, ConfigFlags_NavEnableKeyboard = 1, ConfigFlags_NavEnableGamepad = 2, ConfigFlags_NoMouse = 16,
+                         ConfigFlags_NoMouseCursorChange = 32, ConfigFlags_DockingEnable = 64, ConfigFlags_ViewportsEnable = 1024 };
+/// Auto-layout image from Dear ImGui's argument list (size as a vector; texture coordinates, tint and border as given).
+void Image(ImTextureID tex, Vec2 size, Vec2 uv0 = Vec2{0.0f, 0.0f}, Vec2 uv1 = Vec2{1.0f, 1.0f}, Vec4 tint = Vec4{1.0f, 1.0f, 1.0f, 1.0f}, Vec4 border = Vec4{});
+/// TreeNodeEx with a printf-style label (the label is formatted, then used as the id as well).
+void TreeNodeExFormatted(bool* out, const char* label, unsigned flags, const char* fmt, ...);
+template <class... A> inline bool TreeNodeEx(const char* id, unsigned flags, const char* fmt, A... a) { bool r = false; TreeNodeExFormatted(&r, id, flags, fmt, a...); return r; }
+
+
+// ---- Step 6.13 (continued): flag names. Each says whether it does anything. ----------------------------------------------------------
+
+/// Window flags beyond OkayUI's own. Window_NoDecoration is real (no title bar, no resize, no scrollbar, no collapse); NoBringToFrontOnFocus is
+/// Window_NoBringToFront. The rest are accepted and change nothing: no saved settings file, no navigation, no docking opt-out (the dock
+/// space decides), no menu bar flag (use BeginMenuBar), no wheel opt-out, no horizontal scrollbar.
+enum WindowFlagNames : int {
+    Window_NoDecoration = Window_NoTitleBar | Window_NoResize | Window_NoScrollbar | Window_NoCollapse,
+    Window_NoBringToFrontOnFocus = Window_NoBringToFront,
+    Window_NoSavedSettings = 1 << 9, Window_NoScrollWithMouse = 1 << 10, Window_NoNav = 1 << 11, Window_NoNavInputs = 1 << 12, Window_NoNavFocus = 1 << 13,
+    Window_NoDocking = 1 << 14, Window_NoInputs = 1 << 15, Window_MenuBar = 1 << 16, Window_HorizontalScrollbar = 1 << 17,
+    Window_AlwaysVerticalScrollbar = 1 << 18, Window_Modal = 1 << 19, Window_ChildMenu = 1 << 20
+};
+/// Table flags beyond OkayUI's own, all accepted and without effect except that Table_Resizable is the default (0) and Table_Borders is Table_BordersInnerH:
+/// column sizing policies, vertical and outer borders, outer padding and the saved-settings opt-out.
+enum TableFlagNames : int {
+    Table_Resizable = 0, Table_Borders = Table_BordersInnerH,
+    Table_BordersInnerV = 1 << 9, Table_BordersOuter = 1 << 10, Table_SizingFixedFit = 1 << 11, Table_SizingStretchProp = 1 << 12, Table_SizingStretchSame = 1 << 13,
+    Table_PadOuterX = 1 << 14, Table_NoSavedSettings = 1 << 15
+};
+enum TableColumnExtraFlags : int { TableColumn_NoResize = 64, TableColumn_NoHide = 128 };   // accepted, no effect
+/// Selectable flags: Selectable_DontClosePopups is the default here (0); AllowDoubleClick and AllowOverlap are accepted and change nothing.
+enum SelectableFlagNames : int { Selectable_DontClosePopups = 0, Selectable_AllowDoubleClick = 16, Selectable_AllowOverlap = 32 };
+/// Tree node, colour edit, drag and drop, button and tab bar flags: accepted, no effect, except ColorEdit_DisplayHex (= ColorEdit_Hex), ColorEdit_AlphaPreview
+/// (0, the default) and ColorEdit_Float (accepted; the sliders show 0..1 anyway).
+enum TreeNodeFlagNames : int { TreeNode_AllowOverlap = 1 << 12 };
+enum ColorEditFlagNames : int { ColorEdit_DisplayHex = ColorEdit_Hex, ColorEdit_AlphaPreview = 0, ColorEdit_Float = 1 << 12 };
+enum DragDropFlagNames : int { DragDrop_AcceptNoDrawDefaultRect = 1 << 8, DragDrop_SourceNoPreviewTooltip = 1 << 9, DragDrop_SourceAllowNullID = 1 << 10 };
+/// Button flags for InvisibleButton(id, size, flags): the mouse buttons are accepted; the button reports left clicks (use IsItemClicked(1) for right).
+enum ButtonFlags : int { Button_None = 0, Button_MouseButtonLeft = 1, Button_MouseButtonRight = 2, Button_MouseButtonMiddle = 4 };
+bool InvisibleButton(const char* id, Vec2 size, int flags = 0);
+enum TabBarFlags : int { TabBar_None = 0, TabBar_Reorderable = 1, TabBar_FittingPolicyResizeDown = 2, TabBar_FittingPolicyScroll = 4, TabBar_IsFocused = 8 };
+bool BeginTabBar(const char* id, int flags);
+enum TabItemExtraFlags : int { TabItem_Button = 16 };
+/// Input flags (Shortcut and key queries): Input_Repeat is Shortcut_AllowRepeat.
+enum InputFlags : int { Input_None = 0, Input_Repeat = Shortcut_AllowRepeat };
+/// Backend flags a host reports on the IO: accepted, nothing reads them.
+enum BackendFlags : int { BackendFlags_None = 0, BackendFlags_HasMouseCursors = 1, BackendFlags_PlatformHasViewports = 1 << 10, BackendFlags_RendererHasViewports = 1 << 11 };
+/// Item flag names under Dear ImGui's spelling (the ItemFlag_* values are the same).
+enum ItemFlagNames : int { Item_None = 0, Item_NoTabStop = ItemFlag_NoTabStop, Item_ButtonRepeat = ItemFlag_ButtonRepeat, Item_Disabled = ItemFlag_Disabled,
+                           Item_NoNav = ItemFlag_NoNav, Item_NoNavDefaultFocus = ItemFlag_NoNavDefaultFocus, Item_MixedValue = ItemFlag_MixedValue };
+/// Colour slot names of newer Dear ImGui versions, mapped onto the closest OkayUI slot.
+enum ColNames : int { Col_TabDimmed = Col_TabUnfocused, Col_TabDimmedSelected = Col_TabUnfocusedActive, Col_TabDimmedSelectedOverline = Col_TabUnfocusedActive,
+                      Col_TabSelectedOverline = Col_TabActive, Col_TextLink = Col_Accent, Col_NavCursor = Col_NavHighlight, Col_InputTextCursor = Col_Text };
+enum DirNone : int { Dir_None = -1 };
+typedef unsigned short ImWchar;
+/// CalcTextSize with Dear ImGui's extra arguments: `textEnd` (null = to the zero), `hideTextAfterDoubleHash` (measure only the text before "##"), `wrapWidth` (not used).
+Vec2 CalcTextSize(const char* text, const char* textEnd, bool hideTextAfterDoubleHash = false, float wrapWidth = -1.0f);
+/// Combo from one string of items separated by a zero byte and ended by two ("A\0B\0C\0"), as Dear ImGui takes it; up to 64 items.
+bool Combo(const char* label, int* current, const char* itemsSeparatedByZeros, int popupMaxHeightInItems = -1);
+/// A colour as ported code spells it: floats inside, converts to the vector and to the packed form.
+struct ImColor {
+    ImVec4 Value;
+    ImColor() {}
+    ImColor(float r, float g, float b, float a = 1.0f) : Value(r, g, b, a) {}
+    ImColor(int r, int g, int b, int a = 255) : Value(r / 255.0f, g / 255.0f, b / 255.0f, a / 255.0f) {}
+    ImColor(const ImVec4& v) : Value(v) {}
+    operator ImVec4() const { return Value; }
+    operator Vec4() const { return Value; }
+    operator Color32() const { return ColorConvertFloat4ToU32(Value); }
+};
 
 } // namespace OkayUI

@@ -175,12 +175,13 @@ OkayUI is the one own UI toolkit that is meant to replace Dear ImGui over time (
   - 40.9.3 Draw list - `okayui/src/OkayUI.cpp` - `AddNgon`, `AddNgonFilled`, `AddImageQuad`, `AddImageRounded`, `DrawFlags`
   - 40.9.5 Type names, flag aliases, password and no-blank input, closed polylines, `##id` labels hidden - `OkayUI.hpp`, `OkayUICompat.hpp`, `OkayUI.cpp` - `ImVec4`, `ImRect`, `ImTextureID`, `ImGuiID`, `TableColumn_*`, `TabItem_*`, `InputText_Password`, `InputText_CharsNoBlank`, `DrawFlags_Closed`
   - 40.9.6 Sized buttons, `SameLine(offset, spacing)`, printf-style `Text` family, `BeginPopupContextItem()` - `OkayUI.cpp`, `OkayUICompat.hpp`
+  - 40.9.7 Port probe and spellings header - `scripts/okayui_port_probe.sh`, `okayui/probe/imgui.h`, `okayui/include/okay/UI/OkayUIImGuiNames.hpp` (generated) - Dear ImGui spellings of types, flags and enumerators, `namespace ImGui = OkayUI`, `DrawListHandle`, `ImGuiStyle`
   - 40.9.4 Names and child flags - `okayui/include/okay/UI/OkayUICompat.hpp` - `MouseButton_*`, `Dir_*`, `Hovered_*`, `Focused_*`, `Child_*`, `KeyId_UpArrow` and friends, `IsItemHovered(flags)`, `IsWindowHovered(flags)`, `IsWindowFocused(flags)`, `BeginChild(id, size, childFlags)`
-- **Code:** `okayui/include/okay/UI/OkayUICompat.hpp`, `okayui/include/okay/UI/OkayUI.hpp`, `okayui/src/OkayUI.cpp`, `okayui/src/OkayUICompat.cpp`, `okayui/tests/test_okayui_calls.cpp`
+- **Code:** `okayui/include/okay/UI/OkayUICompat.hpp`, `okayui/include/okay/UI/OkayUI.hpp`, `okayui/src/OkayUI.cpp`, `okayui/src/OkayUICompat.cpp`, `okayui/tests/test_okayui_calls.cpp`, `okayui/tests/test_okayui_names.cpp`
 - **API:** `OkayUI::SetNextWindowBgAlpha`, `OkayUI::SetNextWindowCollapsed`, `OkayUI::PushMultiItemsWidths`, `OkayUI::StyleColorsLight`, `OkayUI::DrawList::AddImageRounded`, `OkayUI::BeginChild`
 - **Editor:** none (library only)
 - **Docs:** `docs/own_ui_toolkit.md` (section 6.10)
-- **Tests:** `okayui_calls`
+- **Tests:** `okayui_calls`, `okayui_names`
 - **Status:** Works - implemented and tested headless (golden images for the three colour presets); not run in the real editor or launcher. Textured draw-list calls are checked on the draw data only (the software backend skips textures)
 - **Open:** `AddImageRounded` rounds corners only for images; `AddRect` has no per-corner flags and `AddPolyline` no `Closed` flag; hover delays are accepted and ignored; Middle mouse never fires; `Child_AutoResizeX` and resizable children are accepted and ignored; `NewFrame`, the platform and viewport calls and the dock node internals are not offered
 - **Related:** 40.8

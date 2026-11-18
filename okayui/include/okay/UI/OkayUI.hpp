@@ -1,4 +1,5 @@
 #pragma once
+#include <cstring>
 // ---------------------------------------------------------------------------
 // OkayUI — a tiny immediate-mode UI toolkit that draws THROUGH SDL_Renderer, the
 // very same pipeline Dear ImGui uses in the editor. Because it shares that
@@ -24,6 +25,7 @@ namespace OkayUI {
 
 /// A 2D point or size.
 struct Vec2 { float x = 0.0f, y = 0.0f; };
+struct Vec4;
 typedef unsigned Color32;   // a packed colour, 0xAABBGGRR
 
 /// This frame's input, supplied by the host (OkayUI polls nothing itself).
@@ -37,7 +39,13 @@ enum KeyId : int {
     KeyId_0, KeyId_1, KeyId_2, KeyId_3, KeyId_4, KeyId_5, KeyId_6, KeyId_7, KeyId_8, KeyId_9,
     KeyId_F1, KeyId_F2, KeyId_F3, KeyId_F4, KeyId_F5, KeyId_F6, KeyId_F7, KeyId_F8, KeyId_F9, KeyId_F10, KeyId_F11, KeyId_F12,
     KeyId_Ctrl, KeyId_Shift, KeyId_Alt,
+    // Punctuation and keypad keys (the host fills Input::keyDown for them; a host that does not leaves them up).
+    KeyId_Minus, KeyId_Equal, KeyId_Slash, KeyId_Backslash, KeyId_Period, KeyId_Comma, KeyId_LeftBracket, KeyId_RightBracket,
+    KeyId_Keypad0, KeyId_Keypad1, KeyId_Keypad2, KeyId_Keypad3, KeyId_Keypad4, KeyId_Keypad5, KeyId_Keypad6, KeyId_Keypad7, KeyId_Keypad8, KeyId_Keypad9,
+    KeyId_KeypadAdd, KeyId_KeypadSubtract, KeyId_KeypadMultiply, KeyId_KeypadDivide, KeyId_KeypadDecimal,
     KeyId_COUNT,
+    // Left and right modifier keys are the one modifier key here.
+    KeyId_LeftCtrl = KeyId_Ctrl, KeyId_RightCtrl = KeyId_Ctrl, KeyId_LeftShift = KeyId_Shift, KeyId_RightShift = KeyId_Shift, KeyId_LeftAlt = KeyId_Alt, KeyId_RightAlt = KeyId_Alt,
     // Dear ImGui's spellings of the same keys (aliases, not new keys; the numeric-keypad Enter arrives as Enter).
     KeyId_UpArrow = KeyId_Up, KeyId_DownArrow = KeyId_Down, KeyId_LeftArrow = KeyId_Left, KeyId_RightArrow = KeyId_Right,
     KeyId_KeypadEnter = KeyId_Enter
@@ -180,6 +188,9 @@ enum InputTextFlags {
     InputText_AutoSelectAll    = 4,   // clicking into the field selects all of its text
     InputText_Password         = 8,   // shows one '*' per byte of text; copy and cut are off
     InputText_CharsNoBlank     = 16,  // typed spaces and tabs are dropped (paste is not filtered)
+    InputText_CharsDecimal     = 32,  // only 0-9 . - + * / are typed (paste is not filtered)
+    // Accepted for ported code, no effect here: multi-line Enter handling, resize / always callbacks (there are no callbacks), Tab typing.
+    InputText_CtrlEnterForNewLine = 64, InputText_CallbackResize = 128, InputText_CallbackAlways = 256, InputText_AllowTabInput = 512,
 };
 bool TextField(int id, float x, float y, float w, float h, char* buf, int cap, unsigned flags = 0);
 
@@ -332,6 +343,7 @@ void Separator();
 void Spacing(float h = 8.0f);
 /// Reserve an invisible `w`*`h` block at the cursor (for manual spacing/alignment).
 void Dummy(float w, float h);
+void Dummy(Vec2 size);
 /// Shift the content's left edge right (Indent) or back left (Unindent). `w` <= 0
 /// uses the default step. Pair each Indent with an Unindent.
 void Indent(float w = 0.0f);
@@ -600,6 +612,8 @@ void MenuSeparator();
 /// A full-width selectable row (list entries). Drawn highlighted when `selected`;
 /// returns true the frame it is clicked.
 bool Selectable(const char* label, bool selected);
+/// A selectable row that is never drawn selected (the one-argument Dear ImGui form).
+bool Selectable(const char* label);
 /// Selectable with flags and a size. `size.x` <= 0 fills the width to the right edge, `size.y` <= 0 is one row. With the pointer
 /// the row toggles *p_selected when clicked. Flags: Disabled (dim, no hover or click), ClosePopup (choosing it closes the innermost
 /// popup), SpanAllColumns (in a table: the row covers every column; the cell widgets after it stay in place), DoubleClickOnly (only a
@@ -626,6 +640,8 @@ bool BeginPopup(const char* id);
 /// line, and a click outside does NOT close it. Escape closes it; with `open` given it also has a close button and
 /// *open is cleared when it closes. Fill it with widgets and a button that calls CloseCurrentPopup(), then EndPopup().
 bool BeginPopupModal(const char* name, bool* open = nullptr);
+/// The Dear ImGui three-argument form: `flags` (window flags such as NoTitleBar, AlwaysAutoResize) are accepted; a modal here is always centred and auto-sized.
+bool BeginPopupModal(const char* name, bool* open, int flags);
 /// True while the named popup (or modal) is open.
 bool IsPopupOpen(const char* name);
 /// Close the popup body opened by the matching Begin*Popup. Pair each with End only
@@ -798,7 +814,14 @@ bool IsDragging();
 /// the source block are drawn in the window, not in a floating box; use SetDragDropPreview(text) for what follows the pointer.
 /// The older int-payload DragSource / DropTarget keep working next to this and share IsDragging().
 inline constexpr int kDragPayloadMax = 256;
-struct DragPayload { char type[33] = {0}; unsigned char data[kDragPayloadMax] = {0}; int size = 0; bool delivery = false; };
+struct DragPayload {
+    char type[33] = {0}; unsigned char data[kDragPayloadMax] = {0}; int size = 0; bool delivery = false;
+    // Dear ImGui's names for the same facts, filled in the copies AcceptDragDropPayload and GetDragDropPayload hand out (Data points at `data` of that copy).
+    const void* Data = nullptr; int DataSize = 0;
+    bool IsDataType(const char* t) const { return t && std::strncmp(type, t, sizeof type - 1) == 0; }
+    bool IsDelivery() const { return delivery; }
+};
+typedef DragPayload ImGuiPayload;
 enum DragDropFlags : int { DragDrop_None = 0, DragDrop_AcceptBeforeDelivery = 1 };
 bool BeginDragDropSource(int flags = 0);
 bool SetDragDropPayload(const char* type, const void* data, int size);
@@ -824,7 +847,13 @@ struct Font {
     int width  = 8;
     int height = 8;
     bool (*pixel)(char c, int x, int y) = nullptr;   // is pixel (x,y) of glyph `c` lit?
+    /// The size of `text` drawn at a glyph height of `size` pixels (Dear ImGui's CalcTextSizeA): the widest line by the lines' height. `maxWidth`
+    /// and `wrapWidth` are not used (no wrapping here). `remaining` (optional) is set to the end of the text.
+    Vec2 CalcTextSizeA(float size, float maxWidth, float wrapWidth, const char* text, const char** remaining = nullptr) const;
 };
+typedef Font ImFont;
+/// What Dear ImGui code puts in an ImFontConfig: accepted, nothing in it changes how OkayUI draws (fonts are set with SetFont / UseLauncherLook).
+struct ImFontConfig { float SizePixels = 0.0f; int OversampleH = 1, OversampleV = 1; bool PixelSnapH = false, MergeMode = false; Vec2 GlyphOffset; const unsigned short* GlyphRanges = nullptr; char Name[40] = {0}; };
 /// Set the active font (null restores the built-in 8x8).
 void SetFont(const Font* font);
 const Font* GetFont();
@@ -914,6 +943,12 @@ struct DrawList {
     void AddBezierCubic(Vec2 p1, Vec2 p2, Vec2 p3, Vec2 p4, Color32 col, float thickness = 1.0f, int segments = 0) const;
     /// Text with its top-left at `pos`; `scale` 0 uses the theme text scale (a negative or non-finite scale draws nothing). One line (no newline handling).
     void AddText(Vec2 pos, Color32 col, const char* text, float scale = 0.0f) const;
+    /// The Dear ImGui form with a font and a pixel size: draws with OkayUI's active font scaled so glyphs are `fontSize` pixels tall (the `font` argument is not
+    /// used to pick a typeface). `textEnd` null means up to the zero. `wrapWidth` and `clipRect` are ignored.
+    void AddText(const Font* font, float fontSize, Vec2 pos, Color32 col, const char* text, const char* textEnd = nullptr, float wrapWidth = 0.0f, const Vec4* clipRect = nullptr) const;
+    /// With corner flags (DrawFlags, 0 = all corners, DrawFlags_None = square). Rounded outlines are centred on their path.
+    void AddRect(Vec2 min, Vec2 max, Color32 col, float rounding, int flags, float thickness) const;
+    void AddRectFilled(Vec2 min, Vec2 max, Color32 col, float rounding, int flags) const;
     /// A textured rectangle. Always goes to the main batch, also on the foreground list. The software test backend
     /// skips textured commands.
     void AddImage(SDL_Texture* tex, Vec2 min, Vec2 max, Vec2 uv0 = Vec2{0.0f, 0.0f}, Vec2 uv1 = Vec2{1.0f, 1.0f},
@@ -938,8 +973,18 @@ struct DrawList {
     void PathStroke(Color32 col, bool closed = false, float thickness = 1.0f) const;
     void PathFillConvex(Color32 col) const;
 };
-const DrawList& GetWindowDrawList();
-const DrawList& GetForegroundDrawList();
+/// What GetWindowDrawList / GetForegroundDrawList return: a DrawList (so `GetWindowDrawList().AddLine(...)` and `const DrawList& dl = ...` work
+/// as before) that also behaves like the pointer Dear ImGui returns: `dl->AddLine(...)` and `DrawList* dl = GetWindowDrawList();` compile.
+/// There is one handle per list, living for the whole program.
+struct DrawListHandle : DrawList {
+    DrawListHandle(bool isOverlay) { overlay = isOverlay; }
+    const DrawListHandle* operator->() const { return this; }
+    operator DrawList*() const { return const_cast<DrawListHandle*>(this); }
+};
+const DrawListHandle& GetWindowDrawList();
+const DrawListHandle& GetForegroundDrawList();
+/// Dear ImGui's name for the draw list type.
+typedef DrawList ImDrawList;
 
 /// Width and height of one line of text in the current font and text scale (height is the line height).
 Vec2 CalcTextSize(const char* text);
@@ -1072,6 +1117,9 @@ void SetImeRect(const ImeRect& r);
 /// Where / how big the next ImGui-style window is (see Cond and the Begin below); the Begin that takes the title and flags.
 void SetNextWindowPos(Vec2 pos, Cond cond = Cond_Always);
 void SetNextWindowSize(Vec2 size, Cond cond = Cond_Always);
+/// With a pivot: the position is where the window's own point `pivot` (0,0 top-left, 0.5,0.5 centre, 1,1 bottom-right) goes. The window's size is the one
+/// from SetNextWindowSize, else its last size (a window that has never been drawn is placed with the 320 x 240 default).
+void SetNextWindowPos(Vec2 pos, Cond cond, Vec2 pivot);
 bool Begin(const char* title, bool* p_open = nullptr, int flags = 0);
 
 /// Widgets between BeginDisabled(true) and EndDisabled() take no input and draw with their colours halfway to the panel colour. Pairs nest; with
@@ -1117,6 +1165,16 @@ void PushStyleColor(Col which, unsigned char r, unsigned char g, unsigned char b
 /// The same with a packed colour (see RGBA) or four floats 0..1 (non-finite values count as 0; out of range ones are clamped).
 void PushStyleColor(Col which, Color32 color);
 struct Vec4 { float x = 0.0f, y = 0.0f, z = 0.0f, w = 0.0f; };
+/// Dear ImGui's colour-vector type under its own name, for ported code that writes `ImVec4(r, g, b, a)` and reads `.x .y .z .w`. It
+/// converts both ways with Vec4 (so it can be passed to PushStyleColor and assigned from GetStyleColorVec4).
+struct ImVec4 {
+    float x = 0.0f, y = 0.0f, z = 0.0f, w = 0.0f;
+    ImVec4() {}
+    ImVec4(float x_, float y_, float z_, float w_) : x(x_), y(y_), z(z_), w(w_) {}
+    ImVec4(const Vec4& v) : x(v.x), y(v.y), z(v.z), w(v.w) {}
+    operator Vec4() const { return Vec4{x, y, z, w}; }
+};
+
 void PushStyleColor(Col which, Vec4 rgba);
 void PopStyleColor(int count = 1);
 /// Set a colour until ResetStyleColor (or the next UseLauncherLook), outside the push / pop stack.
@@ -1124,7 +1182,7 @@ void SetStyleColor(Col which, unsigned char r, unsigned char g, unsigned char b,
 void ResetStyleColor(Col which);
 /// What the colour is now, as RGBA floats 0..1: the pushed / set value, or the base theme's value for a colour never set.
 /// An id outside the enum answers (0, 0, 0, 0). GetStyleColorName gives "Col_Text" for Col_Text (or "" outside the enum).
-Vec4 GetStyleColorVec4(Col which);
+ImVec4 GetStyleColorVec4(Col which);
 const char* GetStyleColorName(Col which);
 /// Dear ImGui style colour conversions (all components 0..1; hue wraps).
 Vec4 ColorConvertU32ToFloat4(Color32 c);

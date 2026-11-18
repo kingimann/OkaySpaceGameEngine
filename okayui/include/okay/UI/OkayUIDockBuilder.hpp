@@ -33,7 +33,7 @@
 namespace OkayUI {
 
 using DockId = unsigned;
-enum DockNodeFlags : int { DockNode_None = 0, DockNode_DockSpace = 1 };
+enum DockNodeFlags : int { DockNode_None = 0, DockNode_DockSpace = 1, DockNode_NoTabBar = 4 /* accepted, ignored */ };
 
 /// Start a plan whose root has `id` (0: make an id). Returns the id, or 0 when `id` is already in use. `flags` is accepted and ignored.
 DockId DockBuilderAddNode(DockId id = 0, int flags = DockNode_None);

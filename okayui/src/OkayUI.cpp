@@ -1507,6 +1507,7 @@ bool TextField(int id, float x, float y, float w, float h, char* buf, int cap, u
                 const int n = printableUtf8Len(p);
                 if (!n) { ++p; continue; }
                 if ((flags & InputText_CharsNoBlank) && n == 1 && (*p == ' ' || *p == '\t')) { p += n; continue; }   // CharsNoBlank
+                if ((flags & InputText_CharsDecimal) && !(n == 1 && ((*p >= '0' && *p <= '9') || *p == '.' || *p == '-' || *p == '+' || *p == '*' || *p == '/'))) { p += n; continue; }   // CharsDecimal
                 insertOne(p, n);
                 p += n;
             }
@@ -1903,7 +1904,7 @@ void SetStyleColor(Col which, unsigned char r, unsigned char g, unsigned char b,
     if (id >= 8) g_theme.colorSet |= 1ull << id;
 }
 void ResetStyleColor(Col which) { const int id = (int)which; if (id >= 8 && id < Col_COUNT) g_theme.colorSet &= ~(1ull << id); }
-Vec4 GetStyleColorVec4(Col which) {
+ImVec4 GetStyleColorVec4(Col which) {
     unsigned char tmp[4];
     const unsigned char* c = styleColor((int)which, tmp);
     return Vec4{c[0] / 255.0f, c[1] / 255.0f, c[2] / 255.0f, c[3] / 255.0f};
@@ -1976,7 +1977,7 @@ constexpr int kWinFlagStyle = 1 << 30;   // set by Begin(title, p_open, flags): 
 
 static int g_focusWin = 0;
 // SetNextWindowPos / SetNextWindowSize, consumed by the next Begin(title, p_open, flags).
-struct NextWin { bool set = false; float x = 0, y = 0; int cond = 0; };
+struct NextWin { bool set = false; float x = 0, y = 0; int cond = 0; float pivX = 0, pivY = 0; };
 static NextWin g_nextWinPos, g_nextWinSize;
 void PinNextWindow() { g_pinNext = true; }
 static bool g_bareNext = false;   // BareNextWindow: the next Begin has no title bar (a panel that fills a host's rectangle)
@@ -2277,6 +2278,10 @@ const IO& GetIO() {
 }
 
 void SetNextWindowPos(Vec2 pos, Cond cond) { g_nextWinPos = NextWin{true, pos.x, pos.y, (int)cond}; }
+void SetNextWindowPos(Vec2 pos, Cond cond, Vec2 pivot) {
+    const float px = std::isfinite(pivot.x) ? pivot.x : 0.0f, py = std::isfinite(pivot.y) ? pivot.y : 0.0f;
+    g_nextWinPos = NextWin{true, pos.x, pos.y, (int)cond, px, py};
+}
 void SetNextWindowSize(Vec2 size, Cond cond) { g_nextWinSize = NextWin{true, size.x, size.y, (int)cond}; }
 
 // A window's id is hashed from a fixed seed (as Begin does), whatever widget ids were being built before.
@@ -2290,6 +2295,10 @@ bool Begin(const char* title, bool* p_open, int flags) {
     if (!slot) for (WinSlot& ws : g_wins) if (!ws.used) { created = true; ws.used = true; ws.id = id; ws.x = 60.0f; ws.y = 60.0f; ws.w = 320.0f; ws.h = 240.0f; ws.sized = true; slot = &ws; break; }
     NextWin np = g_nextWinPos, ns = g_nextWinSize;
     g_nextWinPos.set = g_nextWinSize.set = false;
+    if (np.set && (np.pivX != 0.0f || np.pivY != 0.0f)) {   // SetNextWindowPos with a pivot: move the point of the window that sits at the position
+        const float pw = ns.set ? ns.x : (slot && slot->sized ? slot->w : 320.0f), ph = ns.set ? ns.y : (slot && slot->sized ? slot->h : 240.0f);
+        np.x -= np.pivX * pw; np.y -= np.pivY * ph;
+    }
     bool pin = false;
     if (slot) {
         const bool appearing = slot->lastFrame + 1 < g_frameCount;      // not drawn on the frame before
@@ -2370,7 +2379,7 @@ Vec2 GetMousePosOnOpeningCurrentPopup() {
 const DragPayload* GetDragDropPayload() {
     if (!g_tdd.active || !g_tdd.hasPayload) return nullptr;
     static DragPayload copy;
-    copy = g_tdd.pay; copy.delivery = false;
+    copy = g_tdd.pay; copy.delivery = false; copy.Data = copy.data; copy.DataSize = copy.size;
     return &copy;
 }
 unsigned GetActiveID() { return (unsigned)g_active; }
@@ -2695,6 +2704,7 @@ void SeparatorText(const char* label) {
     if (lineW > 2.0f) quad(lineX, y + h * 0.5f, lineW, 1.0f, g_theme.border);
 }
 
+void Dummy(Vec2 size) { Dummy(size.x, size.y); }
 void Dummy(float w, float h) {
     if (!g_lay.active) return;
     float x, y; place(w, h, x, y);
@@ -4137,6 +4147,7 @@ static bool selectableImpl(const char* label, bool selected, unsigned flags, Vec
     return clicked;
 }
 bool Selectable(const char* label, bool selected) { return selectableImpl(label, selected, 0, Vec2{}, nullptr); }
+bool Selectable(const char* label) { return selectableImpl(label, false, 0, Vec2{}, nullptr); }
 bool Selectable(const char* label, bool selected, unsigned flags, Vec2 size) { return selectableImpl(label, selected, flags, size, nullptr); }
 bool Selectable(const char* label, bool* p_selected, unsigned flags, Vec2 size) { return selectableImpl(label, false, flags, size, p_selected); }
 
@@ -4200,6 +4211,7 @@ bool IsPopupOpen(const char* name) {
     return p && p->open;
 }
 
+bool BeginPopupModal(const char* name, bool* open, int) { return BeginPopupModal(name, open); }
 bool BeginPopupModal(const char* name, bool* open) {
     if (!g_lay.active || !name) return false;
     const int id = hashLabel(name);
@@ -4348,7 +4360,7 @@ const DragPayload* AcceptDragDropPayload(const char* type, int flags) {
     if (!g_tddOver || !g_tdd.active || !g_tdd.hasPayload) return nullptr;
     if (type && *type && std::strncmp(type, g_tdd.pay.type, sizeof g_tdd.pay.type - 1) != 0) return nullptr;
     static DragPayload out;
-    out = g_tdd.pay;
+    out = g_tdd.pay; out.Data = out.data; out.DataSize = out.size;
     if (g_released) { out.delivery = true; g_tdd.active = false; g_tdd.hasPayload = false; return &out; }
     if (flags & DragDrop_AcceptBeforeDelivery) { out.delivery = false; return &out; }
     return nullptr;
@@ -5443,6 +5455,62 @@ static void texPoly(SDL_Texture* tex, const Vec2* p, const Vec2* uv, int n, cons
     setTexture(g_defTex);
 }
 
+Vec2 Font::CalcTextSizeA(float size, float, float, const char* text, const char** remaining) const {
+    if (remaining) *remaining = text ? text + std::strlen(text) : nullptr;
+    if (!text || !*text || !(size > 0.0f) || !std::isfinite(size)) return Vec2{0, 0};
+    const float scale = size / (height > 0 ? (float)height : 8.0f), cw = (float)width * scale;
+    float best = 0.0f; int lines = 1, cur = 0;
+    for (const char* p = text; *p; ++p) {
+        if (*p == '\n') { if ((float)cur > best) best = (float)cur; cur = 0; ++lines; }
+        else if (((unsigned char)*p & 0xC0) != 0x80) ++cur;   // count characters, not UTF-8 continuation bytes
+    }
+    if ((float)cur > best) best = (float)cur;
+    return Vec2{best * cw, (float)lines * size};
+}
+
+void DrawList::AddText(const Font* font, float fontSize, Vec2 pos, Color32 col, const char* text, const char* textEnd, float, const Vec4*) const {
+    if (!text || !finite1(fontSize) || fontSize <= 0.0f) return;
+    char buf[1024]; std::size_t n = textEnd && textEnd >= text ? (std::size_t)(textEnd - text) : std::strlen(text);
+    if (n > sizeof buf - 1) n = sizeof buf - 1;
+    std::memcpy(buf, text, n); buf[n] = 0;
+    const Font* f = font ? font : GetFont();
+    const float h = f && f->height > 0 ? (float)f->height : 8.0f;
+    AddText(pos, col, buf, fontSize / h);
+}
+
+// A rounded rectangle as a closed convex path, clockwise from the top-left; `flags` 0 means all four corners, DrawFlags_None none.
+static int rectPath(Vec2 mn, Vec2 mx, float rounding, int flags, Vec2* pts) {
+    const float w = mx.x - mn.x, h = mx.y - mn.y, maxR = 0.5f * (w < h ? w : h);
+    if (!std::isfinite(rounding) || rounding < 0.0f) rounding = 0.0f;
+    if (rounding > maxR) rounding = maxR;
+    if (flags == 0) flags = DrawFlags_RoundCornersAll;
+    if (flags & DrawFlags_None) flags = 0;
+    const int arc = circleSegments(rounding, 0) / 4 + 1 > 16 ? 16 : circleSegments(rounding, 0) / 4 + 1;
+    struct C { float cx, cy, a0; int bit; float px, py; };
+    const C cs[4] = { { mn.x + rounding, mn.y + rounding, 3.14159265f, DrawFlags_RoundCornersTopLeft, mn.x, mn.y },
+                      { mx.x - rounding, mn.y + rounding, 4.71238898f, DrawFlags_RoundCornersTopRight, mx.x, mn.y },
+                      { mx.x - rounding, mx.y - rounding, 0.0f, DrawFlags_RoundCornersBottomRight, mx.x, mx.y },
+                      { mn.x + rounding, mx.y - rounding, 1.57079633f, DrawFlags_RoundCornersBottomLeft, mn.x, mx.y } };
+    int n = 0;
+    for (const C& c : cs) {
+        if (rounding >= 0.5f && (flags & c.bit)) for (int i = 0; i <= arc; ++i) { const float a = c.a0 + 1.57079633f * (float)i / (float)arc; pts[n++] = Vec2{ c.cx + rounding * SDL_cosf(a), c.cy + rounding * SDL_sinf(a) }; }
+        else pts[n++] = Vec2{c.px, c.py};
+    }
+    return n;
+}
+void DrawList::AddRectFilled(Vec2 mn, Vec2 mx, Color32 col, float rounding, int flags) const {
+    if (!finite2(mn) || !finite2(mx) || mx.x <= mn.x || mx.y <= mn.y) return;
+    if (flags == 0 || flags == DrawFlags_RoundCornersAll) { AddRectFilled(mn, mx, col, rounding); return; }
+    Vec2 p[4 * 17]; const int n = rectPath(mn, mx, rounding, flags, p);
+    AddConvexPolyFilled(p, n, col);
+}
+void DrawList::AddRect(Vec2 mn, Vec2 mx, Color32 col, float rounding, int flags, float th) const {
+    if (!finite2(mn) || !finite2(mx) || mx.x <= mn.x || mx.y <= mn.y) return;
+    if (flags == 0 || flags == DrawFlags_RoundCornersAll) { AddRect(mn, mx, col, rounding, th); return; }
+    Vec2 p[4 * 17]; const int n = rectPath(mn, mx, rounding, flags, p);
+    AddPolyline(p, n, col, true, th);
+}
+
 void DrawList::AddImageQuad(SDL_Texture* tex, Vec2 p1, Vec2 p2, Vec2 p3, Vec2 p4, Vec2 uv1, Vec2 uv2, Vec2 uv3, Vec2 uv4, Color32 tint) const {
     if (!tex || !finite2(p1) || !finite2(p2) || !finite2(p3) || !finite2(p4) || !finite2(uv1) || !finite2(uv2) || !finite2(uv3) || !finite2(uv4)) return;
     ListScope s(false); unsigned char c[4]; unpack(tint, c);
@@ -5532,10 +5600,10 @@ void DrawList::PathFillConvex(Color32 col) const {
     g_pathN = 0;
 }
 
-static const DrawList g_windowList = { false };
-static const DrawList g_foregroundList = { true };
-const DrawList& GetWindowDrawList() { return g_windowList; }
-const DrawList& GetForegroundDrawList() { return g_foregroundList; }
+static const DrawListHandle g_windowList(false);
+static const DrawListHandle g_foregroundList(true);
+const DrawListHandle& GetWindowDrawList() { return g_windowList; }
+const DrawListHandle& GetForegroundDrawList() { return g_foregroundList; }
 
 // ---- Measurement and cursor -------------------------------------------------------------------
 Vec2 CalcTextSize(const char* text) {

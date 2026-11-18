@@ -7139,7 +7139,7 @@ static void DrawRenderingMenuItems(EditorState& ed) {
 #endif
 #ifdef OKAY_HAVE_OKAYUI
     if (okayuibackend::SettingRowVisible(okayuibackend::DevMode(std::getenv("OKAY_DEV")))) {   // developer-only: not offered to users until the OkayUI ports are declared ready
-    if (ImGui::BeginMenu("UI backend")) {   // which toolkit draws the panels that have an OkayUI port (the Console, today)
+    if (ImGui::BeginMenu("UI backend")) {   // which toolkit draws the panels that have an OkayUI port (the Console, Crash Log and Audio Mixer)
         const int src = okayuibackend::Source(std::getenv("OKAY_UI_BACKEND"), g_uiBackendSetting, true);
         for (okayuibackend::Backend opt : {okayuibackend::Backend::ImGui, okayuibackend::Backend::OkayUI})
             if (ImGui::MenuItem(okayuibackend::Label(opt), nullptr, g_uiBackend == opt, src != 2) && g_uiBackend != opt) {
@@ -7148,10 +7148,10 @@ static void DrawRenderingMenuItems(EditorState& ed) {
                 SaveSettings();
             }
         ImGui::Separator();
-        ImGui::TextDisabled(src == 2 ? "OKAY_UI_BACKEND is set and decides this." : "Preview: only the Console panel is ported.");
+        ImGui::TextDisabled(src == 2 ? "OKAY_UI_BACKEND is set and decides this." : "Preview: the Console, Crash Log and Audio Mixer panels are ported.");
         ImGui::EndMenu();
     }
-    if (ImGui::IsItemHovered()) ImGui::SetTooltip("Dear ImGui draws the editor. OkayUI (preview) is our own toolkit: pick it to draw the Console panel with it.\nEverything else stays Dear ImGui. Applies at once; the OKAY_UI_BACKEND environment variable overrides it.");
+    if (ImGui::IsItemHovered()) ImGui::SetTooltip("Dear ImGui draws the editor. OkayUI (preview) is our own toolkit: pick it to draw the Console, Crash Log and Audio Mixer panels with it.\nEverything else stays Dear ImGui. Applies at once; the OKAY_UI_BACKEND environment variable overrides it.");
     }
 #endif
     DrawAutoModeMenu("VSync", g_vsyncMode, g_vsync, "Off = uncapped FPS (no 60 Hz limit). On = no tearing. Auto turns it on when the GPU draws the editor and off for the software renderer.");

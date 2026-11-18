@@ -219,6 +219,18 @@ int main() {
         CHECK(c.res.lineCount == 6 && UI::DroppedGeometry() == 0);
     }
 
+    {   // ListClipper body: a long report with blank lines lays out few rows, the wheel reaches the oldest line, nothing drops
+        CrashRig c;
+        for (int i = 0; i < 5000; ++i) c.model.text += (i % 7 == 3) ? std::string("\n") : "row " + std::to_string(i) + " at Foo::Bar\n";
+        c.model.revision = 1; c.Frames(6);
+        CHECK(c.res.lineCount == 5000 && c.res.linesDrawn < 60 && c.res.lastDrawn >= 4998);
+        c.sim.Move(400, 300);
+        for (int i = 0; i < 400; ++i) { c.sim.wheel = 30.0f; c.Frame(); }
+        c.Frames(2);
+        CHECK(c.res.firstDrawn == 0 && c.res.linesDrawn < 60);            // back at the oldest line, still only the visible rows
+        CHECK(UI::DroppedGeometry() == 0);
+    }
+
     // ================= Audio Mixer =================
     {
         CHECK_NEAR(S::MeterDb(1.0f), 0.0f, 1e-5); CHECK_NEAR(S::MeterDb(0.1f), -20.0f, 1e-3); CHECK(S::MeterDb(0.0f) == -60.0f);
@@ -277,6 +289,18 @@ int main() {
         m.Frames(3);
         CHECK(m.res.duckToggle.w == 0);
         m.Click(m.res.resetButton);
+    }
+    {   // the meter tooltip is a tooltip scope: hovering a meter draws a box with the name and the dB; moving away removes it
+        MixRig m; m.Frames(3);
+        const Bitmap before = m.sim.Draw(kHostBg[0], kHostBg[1], kHostBg[2]);
+        m.sim.Move(CX(m.res.rightMeter), CY(m.res.rightMeter)); m.Frames(3);
+        const Bitmap hot = m.sim.Draw(kHostBg[0], kHostBg[1], kHostBg[2]);
+        CHECK(hot.rgba != before.rgba);                                // something was added: the tooltip box
+        CHECK(UI::DroppedGeometry() == 0);
+        Check("audiomixer_meter_tip", hot);
+        m.sim.Move(5, 5); m.Frames(3);
+        const Bitmap gone = m.sim.Draw(kHostBg[0], kHostBg[1], kHostBg[2]);
+        CHECK(gone.rgba == before.rgba);
     }
     TEST_MAIN_RESULT();
 }

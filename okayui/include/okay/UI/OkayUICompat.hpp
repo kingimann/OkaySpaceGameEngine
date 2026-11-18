@@ -29,6 +29,8 @@ void SetScrollHereY(float centerRatio = 0.5f);
 /// The visible height of the current scrolling child's content area (its height minus padding); 0 outside a child. Defined next to
 /// SetScrollY in OkayUI.cpp (it needs the child stack); SetScrollHereY uses it.
 float GetChildViewHeight();
+/// Hook for FindWindowByName (implemented next to the window slots in OkayUI.cpp): false when no window of that title has been drawn.
+bool FindWindowSlot(const char* title, Vec2& pos, Vec2& size, bool& focused);
 /// Horizontal scrolling does not exist in OkayUI: GetScrollX is always 0 and SetScrollX does nothing.
 float GetScrollX();
 void SetScrollX(float x);
@@ -41,6 +43,25 @@ void SetNextWindowSizeConstraints(Vec2 minSize, Vec2 maxSize);
 void SetItemDefaultFocus();
 void SetNextItemAllowOverlap();
 
+
+/// What the host can ask about a window by its title (ImGui's FindWindowByName, as a plain value instead of a pointer to internals).
+/// `found` is false for a title that was never drawn (and for null or empty). `pos` and `size` are where the window was last drawn;
+/// `focused` is the window SetNextWindowFocus / SetWindowFocus / a click gave the focus to; `docked` is true while the window sits in a
+/// leaf of the dock layout (OkayUIDock.hpp). A snapshot: nothing here changes the window.
+struct WindowInfo { bool found = false; Vec2 pos{0, 0}; Vec2 size{0, 0}; bool focused = false; bool docked = false; };
+WindowInfo FindWindowByName(const char* title);
+/// IsWindowDocked for a window by title (false for an unknown one).
+bool IsWindowDocked(const char* title);
+/// The next ImGui-style Begin(title, p_open, flags) takes the focus and comes to the front (as SetWindowFocus). Dropped by a Begin with a
+/// null title; one request, used up by the next Begin.
+void SetNextWindowFocus();
+/// How far the pointer has moved since the button went down, once that is more than `threshold` pixels (default 4); (0, 0) before that, after
+/// release, and for any button but the left one (0), the only one OkayUI tracks. Like IsMouseDragging, zero while the pointer is blocked.
+Vec2 GetMouseDragDelta(int button = 0, float threshold = -1.0f);
+/// Forget the drag so far: GetMouseDragDelta is zero until the pointer moves again from where it is now.
+void ResetMouseDragDelta(int button = 0);
+/// Some item was under the pointer (and not blocked by a window above) during this frame so far or the frame before.
+bool IsAnyItemHovered();
 
 /// A tooltip that takes widgets: `if (IsItemHovered() && BeginTooltip()) { Text("..."); Separator(); Text("..."); EndTooltip(); }`.
 /// The widgets between the calls are laid out in a box next to the cursor (on top of everything, flipped left / above when it would

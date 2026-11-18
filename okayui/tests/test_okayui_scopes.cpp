@@ -288,5 +288,63 @@ int main() {
             UI::ListClipper out3; out3.Begin(10, std::nanf("")); CHECK(!out3.Step());
         }
     }
+    // ---------------- window and mouse queries: FindWindowByName, SetNextWindowFocus, GetMouseDragDelta, IsAnyItemHovered ----------------
+    {   // FindWindowByName reports the position, size and focus of a window by title, and "not found" for an unknown one
+        Reset(); Sim s(400, 300);
+        auto ui = [&] {
+            UI::SetNextWindowPos(UI::Vec2{20, 30}); UI::SetNextWindowSize(UI::Vec2{200, 120});
+            if (UI::Begin("Alpha", nullptr, 0)) UI::Text("a");
+            UI::End();
+            UI::SetNextWindowPos(UI::Vec2{150, 90}); UI::SetNextWindowSize(UI::Vec2{200, 120});
+            if (UI::Begin("Beta", nullptr, 0)) UI::Text("b");
+            UI::End();
+        };
+        UI::WindowInfo none = UI::FindWindowByName("Alpha"); CHECK(!none.found);   // before any frame
+        s.Frame(ui); s.Frame(ui);
+        const UI::WindowInfo a = UI::FindWindowByName("Alpha"), b = UI::FindWindowByName("Beta");
+        CHECK(a.found && a.pos.x == 20 && a.pos.y == 30 && a.size.x == 200 && a.size.y == 120);
+        CHECK(b.found && b.pos.x == 150 && b.size.y == 120);
+        CHECK(!UI::FindWindowByName("Nope").found && !UI::FindWindowByName(nullptr).found && !UI::FindWindowByName("").found);
+        CHECK(!a.docked);
+    }
+    {   // SetNextWindowFocus gives the named next window the focus and raises it; without it the focus stays
+        Reset(); Sim s(400, 300);
+        bool focusBeta = false;
+        auto ui = [&] {
+            UI::SetNextWindowPos(UI::Vec2{20, 30}); UI::SetNextWindowSize(UI::Vec2{200, 120});
+            if (UI::Begin("Alpha", nullptr, 0)) UI::Text("a");
+            UI::End();
+            UI::SetNextWindowPos(UI::Vec2{150, 90}); UI::SetNextWindowSize(UI::Vec2{200, 120});
+            if (focusBeta) UI::SetNextWindowFocus();
+            if (UI::Begin("Beta", nullptr, 0)) UI::Text("b");
+            UI::End();
+        };
+        s.Frame(ui); s.Frame(ui);
+        focusBeta = true; s.Frame(ui); focusBeta = false; s.Frame(ui);
+        CHECK(UI::FindWindowByName("Beta").focused && !UI::FindWindowByName("Alpha").focused);
+        s.Frame([&] { UI::SetNextWindowFocus(); UI::Begin(nullptr, nullptr, 0); });   // a null title drops the request: no crash, nothing stuck
+        s.Frame(ui);
+        CHECK(UI::FindWindowByName("Beta").focused);
+    }
+    {   // GetMouseDragDelta: zero until the threshold, then the distance from the press; zero again after release
+        Reset(); Sim s(300, 200);
+        UI::Vec2 d{-1, -1};
+        auto ui = [&] { UI::BareNextWindow(); if (UI::Begin("w", 0, 0, 300, 200)) { UI::Button("b"); d = UI::GetMouseDragDelta(); } UI::End(); };
+        s.Move(50, 50); s.Frame(ui); CHECK(d.x == 0 && d.y == 0);
+        s.Down(); s.Frame(ui); CHECK(d.x == 0 && d.y == 0);
+        s.Move(52, 51); s.Frame(ui); CHECK(d.x == 0 && d.y == 0);        // under the 4 px threshold
+        s.Move(90, 70); s.Frame(ui); CHECK(d.x == 40 && d.y == 20);
+        UI::Vec2 d0 = UI::GetMouseDragDelta(0, 100.0f); (void)d0;
+        s.Up(); s.Frame(ui); CHECK(d.x == 0 && d.y == 0);
+        d = UI::GetMouseDragDelta(1); CHECK(d.x == 0 && d.y == 0);       // right button: not tracked, zero
+    }
+    {   // IsAnyItemHovered: true while the pointer is on any item, false over empty space and outside a frame
+        Reset(); Sim s(300, 200);
+        bool any = false;
+        auto ui = [&] { UI::BareNextWindow(); if (UI::Begin("w", 0, 0, 300, 200)) { UI::Button("hit me"); } any = UI::IsAnyItemHovered(); UI::End(); };
+        s.Move(150, 190); s.Frame(ui); s.Frame(ui); CHECK(!any);
+        s.Move(30, 20); s.Frame(ui); s.Frame(ui); CHECK(any);
+        s.Move(150, 190); s.Frame(ui); s.Frame(ui); CHECK(!any);
+    }
     TEST_MAIN_RESULT();
 }

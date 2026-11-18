@@ -1,4 +1,5 @@
 #include "okay/UI/OkayUICompat.hpp"
+#include "okay/UI/OkayUIDock.hpp"
 
 #include <cmath>
 #include <cstring>
@@ -37,4 +38,18 @@ void SetNextWindowSizeConstraints(Vec2 minSize, Vec2) { ResizableNextWindow(Fini
 void SetItemDefaultFocus() {}
 void SetNextItemAllowOverlap() {}
 
+} // namespace OkayUI
+
+namespace OkayUI {
+WindowInfo FindWindowByName(const char* title) {
+    WindowInfo w;
+    w.found = FindWindowSlot(title, w.pos, w.size, w.focused);
+    if (w.found) w.docked = IsWindowDocked(title);
+    return w;
+}
+bool IsWindowDocked(const char* title) {
+    if (!title || !*title) return false;
+    const DockLayout& l = GetDockLayout();
+    return l.Contains(title) && !l.IsFloating(title);
+}
 } // namespace OkayUI

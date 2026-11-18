@@ -428,6 +428,8 @@ bool g_ptrOverWindow = false, g_ptrOverWindowPrev = false;   // the pointer was 
 double g_clock = 0.0;                             // seconds: Input::time when the host gives it, else frames / 60
 double g_lastPressTime = -1.0; float g_lastPressX = 0, g_lastPressY = 0;   // for double clicks
 bool   g_dblClick = false;                        // this frame's press was the second of a double click
+bool   g_nextWinFocus = false;                    // SetNextWindowFocus: the next ImGui-style Begin takes the focus
+bool   g_anyHoverNow = false, g_anyHoverPrev = false;   // some item was under the pointer this frame so far / last frame
 float  g_pressX = 0, g_pressY = 0;                // where the left button went down (for dragging)
 bool   g_keyNow[KeyId_COUNT] = {}, g_keyPrev[KeyId_COUNT] = {};   // named keys: this frame and last
 double g_keySince[KeyId_COUNT] = {};              // when each held key went down
@@ -531,6 +533,7 @@ inline float availW() {
 
 // Reserve a w*h slot for the next item; returns its top-left and advances the cursor
 // to the next line (SameLine() keeps it on the current line instead).
+inline bool hit(float x, float y, float w, float h);
 void place(float w, float h, float& x, float& y) {
     bool sameLine = false;
     if (g_posOverride) {   // SetCursorScreenPos: this item goes exactly there
@@ -548,6 +551,7 @@ void place(float w, float h, float& x, float& y) {
         y = g_lay.cy;
     }
     g_lay.prevX = x; g_lay.prevY = y; g_lay.prevW = w; g_lay.prevH = h;
+    if (!g_anyHoverNow && hit(x, y, w, h)) g_anyHoverNow = true;
     if (x + w > g_lay.maxRight) g_lay.maxRight = x + w;
     groupAdd(x, y, w, h);
     g_lastId = 0;   // the widget that follows registers its own id
@@ -998,6 +1002,7 @@ void BeginFrame(const Input& in) {
     g_rReleased = !in.rightDown && g_rPrevDown;
     g_rPrevDown = in.rightDown;
     g_activeAtFrameStart = g_active;
+    g_anyHoverPrev = g_anyHoverNow; g_anyHoverNow = false;
     g_focusAtFrameStart = g_focus;
     g_focusLostPrev = g_focusLostEnd; g_focusLostEnd = 0;
     g_edFrameId = 0;
@@ -2243,7 +2248,7 @@ void SetNextWindowSize(Vec2 size, Cond cond) { g_nextWinSize = NextWin{true, siz
 static int windowId(const char* title) { const auto saved = g_lay.seed; g_lay.seed = 0; const int id = hashLabel(title); g_lay.seed = saved; return id; }
 
 bool Begin(const char* title, bool* p_open, int flags) {
-    if (!title) { g_nextWinPos.set = g_nextWinSize.set = false; return false; }
+    if (!title) { g_nextWinPos.set = g_nextWinSize.set = false; g_nextWinFocus = false; return false; }
     const int id = windowId(title);
     WinSlot* slot = nullptr; bool created = false;
     for (WinSlot& ws : g_wins) if (ws.used && ws.id == id) { slot = &ws; break; }
@@ -2268,6 +2273,7 @@ bool Begin(const char* title, bool* p_open, int flags) {
     const float x = slot ? slot->x : (np.set ? np.x : 60.0f), y = slot ? slot->y : (np.set ? np.y : 60.0f);
     const float w = slot ? slot->w : (ns.set ? ns.x : 320.0f), h = slot ? slot->h : (ns.set ? ns.y : 240.0f);
     if (pin) PinNextWindow();
+    if (g_nextWinFocus) { g_nextWinFocus = false; SetWindowFocus(title); }
     if (!(flags & (Window_NoResize | Window_AlwaysAutoResize))) ResizableNextWindow(96.0f, 64.0f);
     g_noTitleNext = (flags & Window_NoTitleBar) != 0;
     g_wflagsNext = flags | kWinFlagStyle;
@@ -2284,6 +2290,22 @@ bool IsWindowHovered() {
 }
 bool IsWindowFocused() { return g_curWin.valid && g_focusWin == g_curWin.id; }
 bool IsWindowAppearing() { return g_curWin.valid && g_curWin.appearing; }
+bool FindWindowSlot(const char* title, Vec2& pos, Vec2& size, bool& focused) {
+    if (!title || !*title) return false;
+    const int id = windowId(title);
+    for (const WinSlot& ws : g_wins) if (ws.used && ws.id == id) {
+        pos = Vec2{ws.x, ws.y}; size = Vec2{ws.w, ws.h}; focused = (g_focusWin == id);
+        return true;
+    }
+    return false;
+}
+void SetNextWindowFocus() { g_nextWinFocus = true; }
+Vec2 GetMouseDragDelta(int button, float threshold) {
+    if (!IsMouseDragging(button, threshold)) return Vec2{0, 0};
+    return Vec2{g_in.mouseX - g_pressX, g_in.mouseY - g_pressY};
+}
+void ResetMouseDragDelta(int button) { if (button == 0) { g_pressX = g_in.mouseX; g_pressY = g_in.mouseY; } }
+bool IsAnyItemHovered() { return g_lay.active && (g_anyHoverNow || g_anyHoverPrev); }
 void SetWindowFocus(const char* title) {
     if (!title) return;
     g_focusWin = windowId(title);

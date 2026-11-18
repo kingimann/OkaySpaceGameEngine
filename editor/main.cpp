@@ -31,6 +31,8 @@
 #include "okay/Net/DetectInspector.hpp"   // Anti-Cheat Config > Detection engine (fields, observe mode, text)
 #include "okay/Core/Game.hpp"
 #include "okay/Core/AssetManager.hpp"   // CachedCount() for the crash report
+#include "okay/Core/SceneAssetGuids.hpp"   // GUID table in scene files
+#include "okay/Testing/SceneValidator.hpp"   // File > Validate Scene
 #include "LocalizationWindow.hpp"      // the Localization window (string table), preview language, Localized fields
 #include "ContentEditors.hpp"          // Items, Loot & Recipes (items.okayitems, .okayloot, .okayrecipes)
 #include "WeaponEditor.hpp"            // the Weapons window (weapon definitions)
@@ -7525,6 +7527,67 @@ static void DrawMenuSlot(EditorState& ed, const std::string& id) {
     else if (id.rfind("create.", 0) == 0) DrawCreateSlot(ed, id, nullptr);
 }
 
+// GUID references in scene files (docs/core_assets_upgrade.md): after a save the scene file gets an `assetguid` table; before a
+// load, paths of assets that were moved or renamed are repaired through it (the old text is kept as <scene>.bak) and the broken
+// ones are listed in the Console. Off with the environment variable OKAY_SCENE_GUIDS=0. Needs the scene to be under an Assets folder.
+static okay::AssetDatabase* SceneGuidDb(const std::string& scenePath) {
+    namespace fs2 = std::filesystem;
+    static const bool off = [] { const char* e = std::getenv("OKAY_SCENE_GUIDS"); return e && e[0] == '0'; }();
+    if (off) return nullptr;
+    std::error_code ec;
+    fs2::path p = fs2::absolute(fs2::path(scenePath), ec).parent_path();
+    fs2::path assets;
+    for (; !p.empty() && p != p.root_path(); p = p.parent_path()) {
+        std::string n = p.filename().string();
+        for (auto& c : n) c = (char)std::tolower((unsigned char)c);
+        if (n == "assets") { assets = p; break; }
+    }
+    if (assets.empty()) return nullptr;
+    static okay::AssetDatabase db;
+    static std::string root;
+    okay::ScanOptions so;
+    so.createMetas = false; so.indexUnmetaed = true; so.logWarnings = false;
+    if (root != assets.generic_string()) { root = assets.generic_string(); db.Scan(root, so); }
+    else db.Rescan();
+    return &db;
+}
+
+static void InstallSceneGuidHooks() {
+    EditorState::beforeSceneRead = [](const std::string& path) {
+        okay::AssetDatabase* db = SceneGuidDb(path);
+        if (!db) return;
+        okay::sceneguids::Report rep;
+        std::string err;
+        if (!okay::sceneguids::RepairFile(path, *db, &rep, &err)) return;
+        if (rep.repaired > 0) ConsoleLog("Scene references: " + std::to_string(rep.repaired) + " moved or renamed asset path(s) repaired (old file kept as " + path + ".bak)", 1);
+        for (const auto& r : rep.repairs) ConsoleLog("  repaired " + r, 0);
+        for (const auto& b : rep.broken) ConsoleLog("  broken reference: " + b + " (the file is gone)", 1);
+    };
+    EditorState::afterSceneSave = [](const std::string& path) {
+        okay::AssetDatabase* db = SceneGuidDb(path);
+        if (db) okay::sceneguids::StampFile(path, *db);
+    };
+}
+
+// File > Validate Scene: runs the scene validator over the scene as it would be saved and lists every finding in the Console.
+static void ValidateSceneCmd(EditorState& ed) {
+    okay::testing::ValidatorOptions vo;
+    {
+        namespace fs2 = std::filesystem;
+        std::error_code ec;
+        const fs2::path a = fs2::path(ed.projectDir()) / "Assets";
+        vo.assetRoot = fs2::is_directory(a, ec) ? a.string() : ed.projectDir();
+    }
+    const okay::testing::ValidationReport rep = okay::testing::SceneValidator::ValidateText(okay::SceneSerializer::Serialize(ed.scene()), vo);
+    if (rep.Clean()) { ConsoleLog("Validate Scene: no problems found.", 0); return; }
+    ConsoleLog("Validate Scene: " + std::to_string(rep.Errors()) + " errors, " + std::to_string(rep.Warnings()) + " warnings, " +
+               std::to_string(rep.Infos()) + " notes.", rep.HasErrors() ? 2 : 1);
+    std::istringstream lines(rep.ToText());
+    std::string ln;
+    int shown = 0;
+    while (std::getline(lines, ln) && shown < 200) { if (!ln.empty()) { ConsoleLog("  " + ln, 0); ++shown; } }
+}
+
 // An item of the menu bar was clicked: do it.
 static void RunMenuAction(EditorState& ed, const std::string& id) {
     // File
@@ -7533,6 +7596,7 @@ static void RunMenuAction(EditorState& ed, const std::string& id) {
     else if (id == "file.open") g_showOpen = true;
     else if (id == "file.save") SaveSceneCmd(ed);
     else if (id == "file.saveas") SaveSceneAsCmd(ed);
+    else if (id == "file.validate") ValidateSceneCmd(ed);
     else if (id == "file.saveproject") SaveProject(ed, true);
     else if (id == "file.newproject") g_openNewProjectDialog = true;
     else if (id == "file.openproject") OpenProjectFolderDialog(ed, DefaultProjectsLocation());
@@ -51121,6 +51185,7 @@ int main(int argc, char** argv) {
         label = std::to_string(docs.size()) + " unsaved";
         return true;
     });
+    InstallSceneGuidHooks();
     if (DocRecovery().StartSession()) g_docRecover = DocRecovery().FindRecoverable();
     while (running) {
         Uint64 g_frameT0 = okay::platform::PerfCounter();

@@ -397,7 +397,42 @@ void TestEdges() {
 
 } // namespace
 
+// The dotted family Pool.Get / Pool.Release / Pool.Prewarm / Pool.Idle is the same as the pool_* calls.
+void TestDottedPoolApi() {
+    RUN_SUITE("script calls: Pool.Get, Pool.Release, Pool.Prewarm, Pool.Idle");
+    const std::string prefab = MakePrefab("test_pool_dotted_bullet.okayprefab", [](GameObject& g) {
+        g.AddComponent<SpriteRenderer>();
+        auto* s = g.AddComponent<ScriptComponent>("okayscript");
+        s->LoadSource("function update(d) { }\nfunction done() { Pool.Release(); }\n");
+    });
+    Scene sc("s");
+    GameObject* gun = sc.CreateGameObject("Gun");
+    auto* gs = gun->AddComponent<ScriptComponent>("okayscript");
+    const std::string src =
+        "function update(d) { }\n"
+        "function warm() { set(\"warm\", Pool.Prewarm(\"" + prefab + "\", 2)); }\n"
+        "function fire() { Pool.Get(\"" + prefab + "\", 1, 2, 3); }\n"
+        "function idle() { set(\"idle\", Pool.Idle(\"" + prefab + "\")); }\n";
+    std::string err;
+    CHECK(gs->LoadSource(src, &err));
+    sc.Start();
+    sc.Update(0.016f);
+    CHECK(gs->VM() != nullptr);
+    if (!gs->VM()) { std::remove(prefab.c_str()); return; }
+    gs->VM()->CallEvent("warm");
+    CHECK(gs->Host().globals["warm"].AsFloat() == 2.0f);
+    ObjectPool* pool = ObjectPool::ForPrefab(sc, prefab);
+    CHECK(pool != nullptr && pool->IdleCount() == 2);
+    sc.Update(0.016f);
+    gs->VM()->CallEvent("fire");
+    CHECK(pool->IdleCount() == 1 && pool->ActiveCount() == 1);
+    gs->VM()->CallEvent("idle");
+    CHECK(gs->Host().globals["idle"].AsFloat() == 1.0f);
+    std::remove(prefab.c_str());
+}
+
 int main() {
+    TestDottedPoolApi();
     TestSavedScene();
     TestShrink();
     TestDespawnLifetime();

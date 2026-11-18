@@ -156,7 +156,7 @@ int main() {
             "file.new2d", "file.new3d", "file.open", "file.recent", "---",
             "file.save", "file.saveas", "file.saveproject", "---",
             "file.newproject", "file.openproject", "file.upgrade", "---",
-            "file.import", "file.merge", "---", "file.autosave", "file.build", "---", "file.exit"}));
+            "file.import", "file.merge", "file.validate", "---", "file.autosave", "file.build", "---", "file.exit"}));
         CHECK(FindId(FileMenu(s), "file.open")->label == "Open Scene...");
         CHECK(FindId(FileMenu(s), "file.open")->shortcut == "Ctrl+O");
         CHECK(FindId(FileMenu(s), "file.save")->shortcut == "Ctrl+S");
@@ -311,7 +311,7 @@ int main() {
             {"File", "Project Upgrade...", "file.upgrade"}, {"File", "New 2D Scene", "file.new2d"}, {"File", "New 3D Scene", "file.new3d"},
             {"File", "Import Model...", "file.import"}, {"File", "Open...", "file.open"}, {"File", "Open Recent", "file.recent"},
             {"File", "Save Scene", "file.save"}, {"File", "Save Scene As...", "file.saveas"}, {"File", "Save Project", "file.saveproject"},
-            {"File", "Merge Scene into Current...", "file.merge"}, {"File", "Autosave", "file.autosave"},
+            {"File", "Merge Scene into Current...", "file.merge"}, {"File", "Validate Scene", "file.validate"}, {"File", "Autosave", "file.autosave"},
             {"File", "Build Settings...", "file.build"}, {"File", "Exit", "file.exit"},
             {"Edit", "Undo", "edit.undo"}, {"Edit", "Redo", "edit.redo"}, {"Edit", "Project Settings...", "edit.projectsettings"},
             {"View", "Panels", "view.panels"}, {"View", "Editors & Tools", "view.tools"},

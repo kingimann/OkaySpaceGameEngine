@@ -174,6 +174,9 @@ inline std::vector<Entry> FileMenu(const State& s) {
     m.push_back(Item("file.merge", "Merge Scene into Current...", "",
                      "Combine another scene into this one to build a seamless world.\nThe Hierarchy marks where each merged scene begins.\n"
                      "Tip: you can also drag a .okayscene from Project onto the Hierarchy."));
+    m.push_back(Item("file.validate", "Validate Scene", "",
+                     "Check this scene and list the problems in the Console: duplicate ids, parent links into nowhere or in a loop,\n"
+                     "missing assets, missing scripts, cameras, bad transforms. Nothing is changed."));
     m.push_back(Sep());
     m.push_back(SlotMenu("file.autosave", "Autosave"));
     m.push_back(Item("file.build", "Build Settings...", key::Build));

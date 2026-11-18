@@ -4346,6 +4346,8 @@ static bool ParseStep(Scene& scene, ParseSession& S, bool clear,
         // the host scene's own settings — only a full load (clear) applies them.
         if (token == "name") {
             std::string nm = ReadQuoted(in); if (clear) scene.SetName(nm);
+        } else if (token == "assetguid") {   // the GUID table (Core/SceneAssetGuids): read by the editor's load repair, not by the scene
+            std::string rest; std::getline(in, rest);
         } else if (token == "uifont") {
             std::string uf = ReadQuoted(in); if (clear) scene.uiFont = uf;
         } else if (token == "layermatrix") {

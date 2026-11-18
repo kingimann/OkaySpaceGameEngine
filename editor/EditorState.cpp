@@ -975,6 +975,7 @@ bool EditorState::Save(const std::string& path, std::string* error) {
     }
     SaveEditedMeshAssets();
     if (!SceneSerializer::SaveToFile(m_scene, path, error)) return false;
+    if (afterSceneSave) afterSceneSave(path);
     m_path = path;
     MarkClean();
     return true;
@@ -1021,6 +1022,7 @@ bool EditorState::Load(const std::string& path, std::string* error) {
     if (m_playing) Stop();
     StopNetwork();
     okay::filedialog::CancelBuiltin();   // a queued dialog may hold a pointer into the replaced scene (#732)
+    if (beforeSceneRead) beforeSceneRead(path);
     if (!SceneSerializer::LoadFromFile(m_scene, path, error)) return false;   // all or nothing: the scene is as it was
     m_path = path;
     if (const int v = SceneViewFor(m_scene); v >= 0) view3D = (v == 1);   // open the scene in the view it is made for

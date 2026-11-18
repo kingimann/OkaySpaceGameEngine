@@ -177,6 +177,9 @@ public:
     /// the project version gate here, so a scene of a project nobody has answered the version question for can't be
     /// opened by a path that skipped it. Unset (tests, tools): every file may be opened.
     static inline std::function<bool(const std::string& path, std::string* why)> beforeLoad;
+    /// Scene file hooks for GUID references (Core/SceneAssetGuids): `beforeSceneRead` runs before a scene file is read (repairs
+    /// the paths of assets that were moved or renamed), `afterSceneSave` after it was written (adds the GUID table).
+    static inline std::function<void(const std::string& path)> beforeSceneRead, afterSceneSave;
 
     // ---- Project (a folder on disk holding the scenes + assets) ---------
     const std::string& projectDir() const { return m_projectDir; }

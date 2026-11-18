@@ -10760,6 +10760,10 @@ struct OkayScriptVM::Impl {
         alias("Vector3.Dot", "vec_dot");
         alias("Vector3.Normalize", "vec_normalize");
         alias("Vector3.MoveTowards", "vec_move_towards");
+        alias("Pool.Get", "pool_get");          // one family: Pool.Get / Pool.Release / Pool.Prewarm / Pool.Idle
+        alias("Pool.Release", "pool_release");
+        alias("Pool.Prewarm", "pool_prewarm");
+        alias("Pool.Idle", "pool_idle");
         alias("Mathf.PerlinNoise", "noise");
         alias("Mathf.Clamp01", "clamp01");
         alias("Mathf.InverseLerp", "inverse_lerp");

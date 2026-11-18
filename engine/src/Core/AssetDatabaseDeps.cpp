@@ -116,7 +116,7 @@ std::vector<FoundRef> ExtractSceneRefs(const std::string& text) {
         TokenizeLine(text, lb, le, toks);
         if (toks.empty()) return;
         const std::string head = toks[0].quoted ? std::string() : toks[0].value;
-        if (head == "gameobject" || head == "name" || head == "tag") return;   // a name is not a path
+        if (head == "gameobject" || head == "name" || head == "tag" || head == "assetguid") return;   // a name is not a path
         if (head == "anticheat") {   // anticheat <en> <speed> ... "<rules .okayac file>" "<prefab>;<prefab>;..." : the file, and each prefab on the spawn list
             int quotedSeen = 0;
             for (std::size_t i = 1; i < toks.size(); ++i) {

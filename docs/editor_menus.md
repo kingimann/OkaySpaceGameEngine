@@ -212,6 +212,7 @@ eight Create categories.
 | Save Scene As... | Ctrl+Shift+S | save under a new name | 6514 | keep; greyed in Play | `file.saveas` |
 | Save Project | Ctrl+Alt+S | saves scene, scripts, graphs, settings | 6515 | keep | `file.saveproject` |
 | Merge Scene into Current... | | appends another scene | 6519 | keep | `file.merge` |
+| Validate Scene | | lists problems in the Console (duplicate ids, parent links, missing assets, scripts, cameras); changes nothing | - | new | `file.validate` |
 | Autosave > | | enable, interval, recovery copies | 6531 | keep | `file.autosave` (slot) |
 | Build Settings... | Ctrl+B | the export window | 6546 | keep (also in Engine: removed there) | `file.build` |
 | Exit | | quit | 6548 | keep | `file.exit` |

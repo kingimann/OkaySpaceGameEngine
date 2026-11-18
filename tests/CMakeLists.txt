@@ -4345,3 +4345,8 @@ endforeach()
 add_executable(test_asset_cache test_asset_cache.cpp)
 target_link_libraries(test_asset_cache PRIVATE okay::engine)
 add_test(NAME asset_cache COMMAND test_asset_cache)
+
+# GUID references in scene files (Stamp / Resolve over a real AssetDatabase, old-format fixtures).
+add_executable(test_scene_guids test_scene_guids.cpp)
+target_link_libraries(test_scene_guids PRIVATE okay::engine)
+add_test(NAME scene_guids COMMAND test_scene_guids)

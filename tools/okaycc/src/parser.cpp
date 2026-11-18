@@ -1517,10 +1517,162 @@ private:
         }
     }
 
+    // __vnew_<T>(n) and __vdel_<T>(p): new T[n] and delete[] p for a class with a constructor or
+    // destructor. The block has an 8-byte count in front when the destructor must run per element.
+    //   T *__vnew_T(long n) { char *raw; long i; T *p; raw = malloc(n * sizeof(T) + 8); *(long *)raw = n;
+    //     p = (T *)(raw + 8); for (i = 0; i < n; i = i + 1) ctor(&p[i]); return p; }
+    //   void __vdel_T(T *p) { long i; if (p) { for (i = *(long *)((char *)p - 8) - 1; i >= 0; i = i - 1)
+    //     dtor(&p[i]); free((char *)p - 8); } }
+    void emitVectorHelpers(ClassCtx& c, Type* T) {
+        if (!T->needCtor && !T->needDtor) return;
+        Pos p = c.dtorPos;
+        auto longT = [&]() { return ty(Type::Kind::Long); };
+        auto charPtr = [&]() {
+            auto cp = ty(Type::Kind::Pointer);
+            cp->inner = ty(Type::Kind::Char);
+            return cp;
+        };
+        auto cast = [&](std::unique_ptr<Type> to, std::unique_ptr<Expr> x) {
+            auto e = std::make_unique<Expr>();
+            e->kind = Expr::Kind::Cast;
+            e->line = p.line;
+            e->col = p.col;
+            e->file = p.file;
+            e->ty = std::move(to);
+            e->kids.push_back(std::move(x));
+            return e;
+        };
+        auto deref = [&](std::unique_ptr<Expr> x) {
+            auto e = std::make_unique<Expr>();
+            e->kind = Expr::Kind::Unary;
+            e->text = "*";
+            e->line = p.line;
+            e->col = p.col;
+            e->file = p.file;
+            e->kids.push_back(std::move(x));
+            return e;
+        };
+        auto index = [&](const std::string& arr, const std::string& i) {
+            auto e = std::make_unique<Expr>();
+            e->kind = Expr::Kind::Index;
+            e->line = p.line;
+            e->col = p.col;
+            e->file = p.file;
+            e->kids.push_back(eName(arr, p));
+            e->kids.push_back(eName(i, p));
+            return e;
+        };
+        auto local = [&](const std::string& n, std::unique_ptr<Type> t) {
+            auto d = std::make_unique<Decl>();
+            d->name = n;
+            d->line = p.line;
+            d->col = p.col;
+            d->file = p.file;
+            d->type = std::move(t);
+            return declStmt(std::move(d));
+        };
+        auto loop = [&](bool down, std::unique_ptr<Expr> start, std::unique_ptr<Expr> call) {
+            auto l = std::make_unique<Stmt>();
+            l->kind = Stmt::Kind::For;
+            l->line = p.line;
+            l->col = p.col;
+            l->file = p.file;
+            l->init = sExpr(eAssign(eName("i", p), std::move(start), p), p);
+            l->expr = down ? eBin(">=", eName("i", p), eInt(0, p), p) : eBin("<", eName("i", p), eName("n", p), p);
+            l->expr2 = eAssign(eName("i", p), eBin(down ? "-" : "+", eName("i", p), eInt(1, p), p), p);
+            l->body = sExpr(std::move(call), p);
+            return l;
+        };
+        const std::string mn = mangleNested(c.tag);
+        const bool cookie = T->needDtor;
+        auto elemPtr = [&]() { return ptrToTag(c.tag); };
+        auto mk = [&](const std::string& name, std::vector<Param> params, std::unique_ptr<Type> ret,
+                      std::unique_ptr<Stmt> body) {
+            auto fn = fnTypeOf(params);
+            fn->inner = std::move(ret);
+            auto d = std::make_unique<Decl>();
+            d->name = name;
+            d->line = p.line;
+            d->col = p.col;
+            d->file = p.file;
+            d->type = std::move(fn);
+            d->function = true;
+            d->body = std::move(body);
+            extras_.push_back(std::move(d));
+        };
+        {
+            auto body = sBlock(p);
+            body->stmts.push_back(local("raw", charPtr()));
+            body->stmts.push_back(local("i", longT()));
+            body->stmts.push_back(local("q", elemPtr()));
+            auto size = std::make_unique<Expr>();
+            size->kind = Expr::Kind::Unary;
+            size->text = "sizeof";
+            size->line = p.line;
+            size->col = p.col;
+            size->file = p.file;
+            size->ty = ty(Type::Kind::Struct);
+            size->ty->tag = c.tag;
+            std::unique_ptr<Expr> bytes = eBin("*", eName("n", p), std::move(size), p);
+            if (cookie) bytes = eBin("+", std::move(bytes), eInt(8, p), p);
+            std::vector<std::unique_ptr<Expr>> margs;
+            margs.push_back(std::move(bytes));
+            body->stmts.push_back(sExpr(eAssign(eName("raw", p), cast(charPtr(), eCall(eName("malloc", p), std::move(margs), p)), p), p));
+            if (cookie) body->stmts.push_back(sExpr(eAssign(deref(cast([&]() { auto lp = ty(Type::Kind::Pointer); lp->inner = longT(); return lp; }(), eName("raw", p))), eName("n", p), p), p));
+            std::unique_ptr<Expr> base = eName("raw", p);
+            if (cookie) base = eBin("+", std::move(base), eInt(8, p), p);
+            body->stmts.push_back(sExpr(eAssign(eName("q", p), cast(elemPtr(), std::move(base)), p), p));
+            if (T->needCtor)
+                body->stmts.push_back(loop(false, eInt(0, p),
+                                           ctorCall(c.tag, eAddr(index("q", "i"), p), {}, p)));
+            auto ret = std::make_unique<Stmt>();
+            ret->kind = Stmt::Kind::Return;
+            ret->line = p.line;
+            ret->col = p.col;
+            ret->file = p.file;
+            ret->expr = eName("q", p);
+            body->stmts.push_back(std::move(ret));
+            Param np;
+            np.name = "n";
+            np.type = longT();
+            std::vector<Param> params;
+            params.push_back(std::move(np));
+            mk("__vnew_" + mn, std::move(params), elemPtr(), std::move(body));
+        }
+        if (T->needDtor) {
+            auto body = sBlock(p);
+            body->stmts.push_back(local("i", longT()));
+            auto work = sBlock(p);
+            auto lp = ty(Type::Kind::Pointer);
+            lp->inner = longT();
+            auto countAt = deref(cast(std::move(lp), eBin("-", cast(charPtr(), eName("p", p)), eInt(8, p), p)));
+            work->stmts.push_back(loop(true, eBin("-", std::move(countAt), eInt(1, p), p),
+                                       dtorCall(c.tag, eAddr(index("p", "i"), p), p)));
+            std::vector<std::unique_ptr<Expr>> fargs;
+            fargs.push_back(eBin("-", cast(charPtr(), eName("p", p)), eInt(8, p), p));
+            work->stmts.push_back(sExpr(eCall(eName("free", p), std::move(fargs), p), p));
+            auto guard = std::make_unique<Stmt>();
+            guard->kind = Stmt::Kind::If;
+            guard->line = p.line;
+            guard->col = p.col;
+            guard->file = p.file;
+            guard->expr = eName("p", p);
+            guard->thenS = std::move(work);
+            body->stmts.push_back(std::move(guard));
+            Param pp;
+            pp.name = "p";
+            pp.type = elemPtr();
+            std::vector<Param> params;
+            params.push_back(std::move(pp));
+            mk("__vdel_" + mn, std::move(params), ty(Type::Kind::Void), std::move(body));
+        }
+    }
+
     // Runs after the finished class is stored, so the builders can look it up by tag.
     void emitClassDecls(ClassCtx& c) {
         Type* T = classOf(c.tag);
         if (!T) return;
+        emitVectorHelpers(c, T);
         for (CtorDef& d : c.ctors) {
             if (!d.hasBody) continue;
             auto decl = buildCtor(c.tag, d);
@@ -3407,6 +3559,37 @@ private:
             }
             std::vector<std::unique_ptr<Expr>> args;
             bool paren = false;
+            if (isP("[")) {
+                // new T[n]: a block of n objects (ISO/IEC 14882 [expr.new]). A class with a
+                // constructor or destructor goes through the generated __vnew_ helper (which
+                // stores the count in front of the block when the destructor must run per element).
+                advance();
+                auto count = parseExpr();
+                expectP("]", "]");
+                Pos vp;
+                vp.line = at.line;
+                vp.col = at.column;
+                vp.file = at.file;
+                Type* vc = tyName && tyName->kind == Type::Kind::Struct && !tyName->tag.empty() ? classOf(tyName->tag)
+                                                                                                 : nullptr;
+                if (vc && (vc->needCtor || vc->needDtor)) {
+                    std::vector<std::unique_ptr<Expr>> a;
+                    a.push_back(std::move(count));
+                    return eCall(eName("__vnew_" + mangleNested(tyName->tag), vp), std::move(a), vp);
+                }
+                auto size = ex(Expr::Kind::Unary, at);
+                size->text = "sizeof";
+                size->ty = cloneType(*tyName);
+                auto bytes = eBin("*", std::move(count), std::move(size), vp);
+                std::vector<std::unique_ptr<Expr>> a;
+                a.push_back(std::move(bytes));
+                auto cast = ex(Expr::Kind::Cast, at);
+                auto pt = ty(Type::Kind::Pointer);
+                pt->inner = cloneType(*tyName);
+                cast->ty = std::move(pt);
+                cast->kids.push_back(eCall(eName("malloc", vp), std::move(a), vp));
+                return cast;
+            }
             if (isP("(")) {
                 advance();
                 paren = true;
@@ -3469,6 +3652,12 @@ private:
         if (isKw("delete")) {
             Token at = cur();
             advance();
+            bool vec = false;
+            if (isP("[") && nextIs("]")) {
+                advance();
+                advance();
+                vec = true;
+            }
             auto arg = parseCast();
             Pos pos;
             pos.line = at.line;
@@ -3476,7 +3665,7 @@ private:
             pos.file = at.file;
             std::vector<std::unique_ptr<Expr>> args;
             args.push_back(std::move(arg));
-            return eCall(eName("\x01" "delete", pos), std::move(args), pos);
+            return eCall(eName(vec ? "\x01" "delete[]" : "\x01" "delete", pos), std::move(args), pos);
         }
         if (isP("&") || isP("*") || isP("+") || isP("-") || isP("~") || isP("!")) {
             Token op = cur();
@@ -4849,6 +5038,16 @@ private:
             e.kids.push_back(std::move(target));
             e.kids.push_back(std::move(rhs));
             return checkExpr(e);
+        } else if (c0.kind == Expr::Kind::Name && c0.text == "\x01" "delete[]" && e.kids.size() == 2 && e.kids[1]) {
+            // delete[] p: a class with a destructor goes through __vdel_ (count in front of the
+            // block); anything else is just freed.
+            ET a = decay(checkExpr(*e.kids[1]));
+            if (a.bad || !a.type) return bad(e.line, e.col);
+            const Type* cls = isPtr(*a.type) && a.type->inner ? canonOf(a.type->inner.get()) : nullptr;
+            const Param* d1 = cls && cls->kind == Type::Kind::Struct ? findSpecial(cls, "<dtor>") : nullptr;
+            if (d1) c0.text = "__vdel_" + mangleNested(cls->tag);
+            else c0.text = "\x01" "delete";
+            return checkCall(e);
         } else if (c0.kind == Expr::Kind::Name && c0.text == "\x01" "delete" && e.kids.size() == 2 && e.kids[1]) {
             ET a = decay(checkExpr(*e.kids[1]));
             if (a.bad || !a.type) return bad(e.line, e.col);

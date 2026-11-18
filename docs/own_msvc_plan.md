@@ -771,3 +771,23 @@ Compile-only. `tools/okayms/scripts/measure_library.sh` (resumable, 60 s per fil
 Added: pointers to member functions (virtual ones as slot*8+1), nested classes decorated with their outer class, `Outer::Nested{}`, enum aliases and `(Class::Enum)` casts, `std::list`, `<charconv>` (no float to_chars), `sscanf` (`runtime/scan.c`), swap and range constructors for set/map, range-for iterators destroyed on `return`, opt-in `/okay:comdat` (COMDAT inline members; one copy kept, .pdata sorted) and `/okay:xcu` (.CRT$XCU table, `runtime/startup_xcu.c`, linker symbols `__okay_xcu_begin/_end`). Both flags are off by default.
 
 Not done: the full-library table, objcheck over every engine file, LocArg constructors, and full `build.sh` (not re-run).
+
+## Round 33 (unverified: not run under Wine)
+
+Compile-only. Whole-library table (`tools/okayms/scripts/measure_library.sh`, results in `tools/okayms/results/library.txt`; the early files were compiled by slightly older builds, because the run was resumed): **82 of 348 files compile**, 266 fail. `test_objcheck` over the 82: **82 objects well formed, 0 malformed**.
+
+| first error | files |
+|---|---|
+| `expected ...` (various) | 70 |
+| no matching constructor in LocArg (vector<T> members of a class without a default constructor; fixed after the run) | 15 |
+| `expected a type` | 15 |
+| global initializer must be a constant | 14 |
+| thread / mutex / condition_variable (intentionally excluded) | 33 |
+| `expected a name` | 11 |
+| `expected an expression` | 7 |
+| unterminated character | 6 |
+| other (single cases) | rest |
+
+Fixed this round: decorated names for free inline functions (COMDAT now covers them), destructors on `goto` out of blocks, adjacent string literals, `?:` in a for-init, `if (init; cond)`, lambdas inside lambdas, `std::filesystem` remove/rename/create_directories/file_size, `ostream::write`, `to_time_t`, a nested class named like a typedef, and class template members that fail to compile now only matter when called.
+
+Still open: `Mesh::WeldVertices` (`expected a type`, still blocks a group of files), SceneMerge line 332, ThumbnailCache `ReadAll`.

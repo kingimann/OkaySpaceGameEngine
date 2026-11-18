@@ -126,7 +126,7 @@ static vector<Cmd> parseFile(const string& text, const string& file) {
 // ---- 2. What the evaluator builds ------------------------------------------------------------------------------------------
 struct Target {
     string name, kind; // exe | lib | iface | imported | alias
-    string aliasOf, dir;
+    string aliasOf, dir, libKind; // libKind: "", "shared" or "object"
     vector<string> sources, incs, pubIncs, ifIncs, defs, pubDefs, ifDefs, opts, pubOpts, ifOpts, links, pubLinks, ifLinks, linkOpts;
     // directory-wide settings captured when the target was made
     vector<string> dirIncs, dirDefs, dirOpts, dirLinkOpts;
@@ -634,7 +634,7 @@ inline void Interp::addTarget(const Cmd& c, const vector<string>& a, bool lib) {
         if (k < a.size() && a[k] == "IMPORTED") { t.kind = "imported"; targets[t.name] = t; return; }
     }
     t.kind = lib ? (type == "INTERFACE" ? "iface" : "lib") : "exe";
-    if (type == "SHARED" || type == "MODULE" || type == "OBJECT") { t.skipReason = "add_library(" + type + ") is not expressed (static libraries and programs only)"; }
+    if (type == "SHARED" || type == "MODULE") t.libKind = "shared"; else if (type == "OBJECT") t.libKind = "object";
     for (; k < a.size(); ++k) {
         if (a[k] == "WIN32" || a[k] == "MACOSX_BUNDLE") continue;
         if (a[k] == "EXCLUDE_FROM_ALL") { t.excluded = true; continue; }
@@ -935,7 +935,7 @@ static string emitManifest(Interp& in, Report& rep) {
         for (auto& x : t.dirOpts) addUnique(opts, x); for (auto& x : t.opts) addUnique(opts, x); for (auto& x : t.pubOpts) addUnique(opts, x);
         for (auto& x : r.opts) addUnique(opts, x);
         for (auto& x : t.dirLinkOpts) addUnique(linkFlags, x); for (auto& x : t.linkOpts) addUnique(linkFlags, x);
-        out << "target " << qw(n) << " " << (t.kind == "lib" ? "lib" : "exe") << "\n";
+        out << "target " << qw(n) << " " << (t.kind == "lib" ? (t.libKind.empty() ? "lib" : t.libKind.c_str()) : "exe") << "\n";
         out << "  sources =";
         for (auto& s : t.sources) { out << " " << qw(rootRel(s, root)); ++rep.sources; }
         out << "\n";
@@ -985,6 +985,12 @@ static string emitManifest(Interp& in, Report& rep) {
         if (!pr("TIMEOUT").empty()) out << "  timeout = " << (long long)atof(pr("TIMEOUT").c_str()) << "\n";
         if (Interp::isTrue(pr("WILL_FAIL")) && !pr("WILL_FAIL").empty()) out << "  will_fail = on\n";
         if (!pr("SKIP_RETURN_CODE").empty()) out << "  skip_code = " << atoi(pr("SKIP_RETURN_CODE").c_str()) << "\n";
+        for (const char* key : {"ENVIRONMENT", "LABELS", "DEPENDS"}) {
+            auto v = splitSemi(pr(key)); if (v.empty()) continue;
+            out << "  " << (string(key) == "ENVIRONMENT" ? "env" : string(key) == "LABELS" ? "labels" : "depends") << " =";
+            for (auto& w : v) out << " " << qw(string(key) == "ENVIRONMENT" ? srcWord(w, root) : w);
+            out << "\n";
+        }
         if (Interp::isTrue(pr("RUN_SERIAL")) && !pr("RUN_SERIAL").empty()) out << "  serial = on\n";
         out << "end\n";
     }

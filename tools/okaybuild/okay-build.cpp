@@ -110,6 +110,7 @@ struct ImporterDecl {
 };
 struct Target {
     string outName; // output_name: the program's file name when it differs from the target name (CMake's OUTPUT_NAME)
+    string libKind; // "" static archive, "shared" (.so, linked with -shared, -fPIC, found through an rpath), "object" (an archive that is linked whole, like CMake's OBJECT libraries)
     string name; bool isLib = false; bool isTest = false; int line = 0; string pool;
     vector<string> sources, includes, exportIncludes, defines, flags, linkFlags, libs, deps, needs, runtime, assets;
     // per-file additions (CMake's set_source_files_properties): {source path, word}
@@ -117,7 +118,7 @@ struct Target {
 };
 // A ctest-style test (from CMake's add_test): a command line whose first word may be a target name (then it is the built program),
 // an optional working folder, a time limit, "will_fail" (the test passes when the command fails) and a return code that means skipped.
-struct CTestDecl { string name; int line = 0; vector<string> cmd, needs; string cwd; long long timeout = 0; bool willFail = false; int skipCode = -1; bool serial = false; };
+struct CTestDecl { string name; int line = 0; vector<string> cmd, needs; string cwd; long long timeout = 0; bool willFail = false; int skipCode = -1; bool serial = false; vector<string> env, labels, depends; };
 struct ConfigBlock {
     string name; int line = 0; int optimize = -1; int debug = -1;
     vector<string> flags, linkFlags, defines;
@@ -244,9 +245,9 @@ static Manifest parseManifest(const string& file) {
                 CTestDecl c; c.name = t[1]; c.line = ln; m.ctests.push_back(c); mode = CTEST; continue;
             }
             if (t[0] == "target") {
-                if (t.size() != 3 || (t[2] != "exe" && t[2] != "lib")) throw err("expected: target NAME exe|lib");
+                if (t.size() != 3 || (t[2] != "exe" && t[2] != "lib" && t[2] != "shared" && t[2] != "object")) throw err("expected: target NAME exe|lib|shared|object");
                 for (auto& x : m.targets) if (x.name == t[1]) throw err("duplicate target '" + t[1] + "'");
-                Target x; x.name = t[1]; x.isLib = t[2] == "lib"; x.line = ln; m.targets.push_back(x); mode = TARGET; continue;
+                Target x; x.name = t[1]; x.isLib = t[2] != "exe"; x.libKind = t[2] == "shared" || t[2] == "object" ? t[2] : string(); x.line = ln; m.targets.push_back(x); mode = TARGET; continue;
             }
             if (t[0] == "option") {
                 if (t.size() < 5 || t[3] != "=") throw err("expected: option NAME bool|int|string = VALUE");
@@ -353,6 +354,9 @@ static Manifest parseManifest(const string& file) {
             else if (k == "timeout") { if (v.size() != 1 || v[0].empty() || v[0].find_first_not_of("0123456789") != string::npos) throw err("timeout takes whole seconds"); c.timeout = atoll(v[0].c_str()); }
             else if (k == "will_fail") c.willFail = oneFlag(v, "will_fail");
             else if (k == "serial") c.serial = oneFlag(v, "serial");
+            else if (k == "env") { for (auto& w : v) { if (w.find('=') == string::npos || w[0] == '=') throw err("env wants NAME=VALUE words"); c.env.push_back(w); } }
+            else if (k == "labels") { for (auto& w : v) c.labels.push_back(w); }
+            else if (k == "depends") { for (auto& w : v) c.depends.push_back(w); }
             else if (k == "skip_code") { if (v.size() != 1) throw err("skip_code takes one number"); c.skipCode = atoi(v[0].c_str()); }
             else throw err("unknown ctest key '" + k + "'");
         } else if (mode == DIST) {
@@ -637,7 +641,7 @@ static Graph plan(const Manifest& m, const vector<string>& want) {
     for (auto& t : m.targets) if (col[t.name] == 0) visit(t.name);
 
     Graph g; std::map<string, int> finalAct;
-    auto outPath = [&](const Target& t) { return under(m.outdir + "/" + (t.isLib ? m.tc.libp + (t.outName.empty() ? t.name : t.outName) + m.tc.libs : (t.outName.empty() ? t.name : t.outName) + m.tc.exe)); };
+    auto outPath = [&](const Target& t) { return under(m.outdir + "/" + (t.isLib ? m.tc.libp + (t.outName.empty() ? t.name : t.outName) + (t.libKind == "shared" && !m.tc.msvc ? string(".so") : m.tc.libs) : (t.outName.empty() ? t.name : t.outName) + m.tc.exe)); };
     std::set<string> done; vector<string> order;
     std::function<void(const string&)> post = [&](const string& n) { if (!done.insert(n).second) return; for (auto& d : byName[n]->deps) post(d); order.push_back(n); };
     for (auto& t : m.targets) post(t.name);
@@ -645,6 +649,12 @@ static Graph plan(const Manifest& m, const vector<string>& want) {
     auto transitive = [&](const Target& t) { // dependents first (link order)
         vector<string> po; std::set<string> seen;
         std::function<void(const string&)> go = [&](const string& n) { if (!seen.insert(n).second) return; for (auto& d : byName[n]->deps) go(d); po.push_back(n); };
+        for (auto& d : t.deps) go(d);
+        std::reverse(po.begin(), po.end()); return po;
+    };
+    auto linkClosure = [&](const Target& t) { // like transitive(), but a shared library carries its own dependencies, so we stop below it
+        vector<string> po; std::set<string> seen;
+        std::function<void(const string&)> go = [&](const string& n) { if (!seen.insert(n).second) return; if (byName[n]->libKind != "shared") for (auto& d : byName[n]->deps) go(d); po.push_back(n); };
         for (auto& d : t.deps) go(d);
         std::reverse(po.begin(), po.end()); return po;
     };
@@ -687,6 +697,7 @@ static Graph plan(const Manifest& m, const vector<string>& want) {
             } else {
                 a.argv.push_back(isC ? m.tc.cc : m.tc.cxx);
                 for (auto& f : m.tc.flags) a.argv.push_back(f);
+                if (t.libKind == "shared") a.argv.push_back("-fPIC");
                 for (auto& f : t.flags) { if (isC && (f.rfind("-std=c++", 0) == 0 || f.rfind("-std=gnu++", 0) == 0)) continue; a.argv.push_back(f); } // a C++ standard does not apply to a C file
                 for (auto& i : t.includes) a.argv.push_back("-I" + i);
                 for (auto& i : t.exportIncludes) a.argv.push_back("-I" + i);
@@ -710,7 +721,7 @@ static Graph plan(const Manifest& m, const vector<string>& want) {
             objs.push_back(a.output); objActs.push_back(add(a));
         }
         Action a; a.target = t.name; a.output = outPath(t); a.outputs = {a.output}; a.deps = objActs; a.inputs = objs; a.desc = a.output; a.rspThreshold = m.tc.rspThreshold; a.pool = t.pool; a.waitFor = needKeys;
-        if (t.isLib) {
+        if (t.isLib && t.libKind != "shared") {
             a.kind = "AR";
             if (m.tc.msvc) { a.argv = {m.tc.ar, "/nologo", "/OUT:" + a.output}; a.rspHead = 3; }
             else { a.argv = {m.tc.ar, "rcs", a.output}; a.rspHead = 3; }
@@ -720,12 +731,20 @@ static Graph plan(const Manifest& m, const vector<string>& want) {
             string linker = m.tc.ld.empty() ? m.tc.cxx : m.tc.ld;
             a.argv = {linker}; a.rspHead = 1;
             if (m.tc.msvc) a.argv.push_back("/nologo");
+            if (t.libKind == "shared" && !m.tc.msvc) a.argv.push_back("-shared");
+            if (t.libKind == "shared" && !m.tc.msvc) a.argv.push_back("-Wl,-soname," + fs::path(a.output).filename().string()); // so a program records "libX.so", not the path we linked with
             for (auto& o : objs) a.argv.push_back(o);
             for (auto& f : m.tc.linkFlags) a.argv.push_back(m.tc.msvc ? spellMsvc(f, true) : f);
             for (auto& f : t.linkFlags) a.argv.push_back(m.tc.msvc ? spellMsvc(f, true) : f);
-            vector<string> sys = t.libs;
-            for (auto& l : libs) { a.argv.push_back(outPath(*byName[l])); a.inputs.push_back(outPath(*byName[l])); a.deps.push_back(finalAct[l]);
-                                   for (auto& s : byName[l]->libs) sys.push_back(s); }
+            vector<string> sys = t.libs; std::set<string> rpaths;
+            for (auto& l : linkClosure(t)) {
+                bool whole = byName[l]->libKind == "object" && !m.tc.msvc, shared = byName[l]->libKind == "shared" && !m.tc.msvc;
+                if (whole) a.argv.push_back("-Wl,--whole-archive");
+                a.argv.push_back(outPath(*byName[l])); a.inputs.push_back(outPath(*byName[l])); a.deps.push_back(finalAct[l]);
+                if (whole) a.argv.push_back("-Wl,--no-whole-archive");
+                if (shared) rpaths.insert(fs::absolute(fs::path(outPath(*byName[l])).parent_path()).lexically_normal().generic_string());
+                for (auto& s : byName[l]->libs) sys.push_back(s); }
+            for (auto& r : rpaths) a.argv.push_back("-Wl,-rpath," + r); // the loader finds our shared libraries beside the build output
             for (auto& s : sys) a.argv.push_back(m.tc.msvc ? s + ".lib" : "-l" + s);
             if (m.tc.msvc && (msvcLinkerIsCl(linker) || linker == m.tc.cc || linker == m.tc.cxx)) { a.argv.push_back("/Fe" + a.output); }
             else if (m.tc.msvc) { a.argv.push_back("/OUT:" + a.output); }
@@ -1173,10 +1192,12 @@ static int waitChild(pid_t pid) {
         struct timespec ts; ts.tv_sec = 0; ts.tv_nsec = 20000000; nanosleep(&ts, nullptr);
     }
 }
+static thread_local vector<string> gChildEnv; // ctest: NAME=VALUE words the next runCmd child gets
 static thread_local string gChildCwd; // ctest: the folder the next runCmd child starts in (empty = keep ours)
 static int runCmd(const vector<string>& argv, string& out, bool stream = false, long long timeoutNs = 0) {
     gLastPeakKb = 0;
     auto child = [&]() {
+        for (auto& e : gChildEnv) { auto eq = e.find('='); setenv(e.substr(0, eq).c_str(), e.substr(eq + 1).c_str(), 1); }
         if (!gChildCwd.empty() && chdir(gChildCwd.c_str()) != 0) { dprintf(2, "okay-build: cannot enter '%s': %s\n", gChildCwd.c_str(), strerror(errno)); _exit(127); }
         vector<char*> av; for (auto& s : argv) av.push_back(const_cast<char*>(s.c_str())); av.push_back(nullptr);
         execvp(av[0], av.data()); dprintf(2, "okay-build: cannot run '%s': %s\n", av[0] ? av[0] : "(none)", strerror(errno)); _exit(127);
@@ -2438,6 +2459,7 @@ static int numberBefore(const string& s, const string& word) {
     return atoi(s.c_str() + i);
 }
 static long long gTestTimeoutSec = 0;
+static vector<string> gCtestInc, gCtestExc, gCtestLabels; // ctest -R / -E / -L
 static string gJunitPath;            // --junit FILE: write the test run as JUnit-style XML
 static int gShardIdx = 0, gShardCnt = 1; // --shard I/N: run only every N-th test (1-based I)
 static string xmlEsc(const string& s) {
@@ -2664,9 +2686,16 @@ static int cmdCTest(const Manifest& m, const Opts& o, const vector<string>& filt
 #else
     if (m.ctests.empty()) throw Fail("no ctest blocks in the manifest (okay-build cmake writes them from add_test lines)");
     vector<const CTestDecl*> pick;
+    auto matches = [&](const string& text, const string& re) { try { return std::regex_search(text, std::regex(re)); } catch (const std::regex_error&) { throw Fail("bad test filter '" + re + "'"); } };
     for (auto& c : m.ctests) {
-        bool ok = filters.empty();
-        for (auto& f : filters) { try { if (std::regex_search(c.name, std::regex(f))) ok = true; } catch (const std::regex_error&) { throw Fail("bad test filter '" + f + "'"); } }
+        bool ok = filters.empty() && gCtestInc.empty();
+        for (auto& f : filters) if (matches(c.name, f)) ok = true;
+        for (auto& f : gCtestInc) if (matches(c.name, f)) ok = true;     // -R: the name matches any of them
+        if (ok && !gCtestLabels.empty()) { // -L: some label matches any of the label expressions
+            bool lab = false; for (auto& l : c.labels) for (auto& f : gCtestLabels) if (matches(l, f)) lab = true;
+            ok = lab;
+        }
+        for (auto& f : gCtestExc) if (ok && matches(c.name, f)) ok = false; // -E: drop what matches
         if (ok) pick.push_back(&c);
     }
     if (pick.empty()) throw Fail("no ctest matches the filter");
@@ -2687,21 +2716,42 @@ static int cmdCTest(const Manifest& m, const Opts& o, const vector<string>& filt
         }
         return w;
     };
-    struct Run { const CTestDecl* c; int code = 0; string out; double secs = 0; };
+    struct Run { const CTestDecl* c; int code = 0; string out; double secs = 0; int state = 0; }; // state: 0 waiting, 1 running, 2 done
     vector<Run> runs; for (auto* c : pick) { Run r; r.c = c; runs.push_back(r); }
     int jobs = o.jobs > 0 ? o.jobs : (int)std::max(1u, std::thread::hardware_concurrency());
     auto runOne = [&](Run& r) {
         vector<string> argv; for (auto& w : r.c->cmd) argv.push_back(subst(w));
         string cwd = subst(r.c->cwd.empty() ? "{bin}" : r.c->cwd); std::error_code ec; fs::create_directories(cwd, ec);
-        gChildCwd = cwd; long long to = r.c->timeout > 0 ? r.c->timeout : (gTestTimeoutSec > 0 ? gTestTimeoutSec : 1500);
-        long long t0 = nowNs(); r.code = runCmd(argv, r.out, false, to * 1000000000ll); r.secs = (double)(nowNs() - t0) / 1e9; gChildCwd.clear();
+        gChildCwd = cwd; gChildEnv.clear(); for (auto& e : r.c->env) gChildEnv.push_back(subst(e));
+        long long to = r.c->timeout > 0 ? r.c->timeout : (gTestTimeoutSec > 0 ? gTestTimeoutSec : 1500);
+        long long t0 = nowNs(); r.code = runCmd(argv, r.out, false, to * 1000000000ll); r.secs = (double)(nowNs() - t0) / 1e9; gChildCwd.clear(); gChildEnv.clear();
         if (r.code == 124) r.out += "\n(timed out after " + std::to_string(to) + " s)\n";
     };
-    vector<int> par, ser; for (size_t i = 0; i < runs.size(); ++i) (runs[i].c->serial ? ser : par).push_back((int)i);
-    std::atomic<size_t> next{0}; vector<std::thread> th;
-    for (int t = 0; t < std::min<int>(jobs, (int)par.size()); ++t) th.emplace_back([&] { for (;;) { size_t k = next++; if (k >= par.size()) return; runOne(runs[(size_t)par[k]]); } });
-    for (auto& t : th) t.join();
-    for (int i : ser) runOne(runs[(size_t)i]);
+    { // DEPENDS: a test starts only after the picked tests it names have finished (their result does not matter); serial tests run alone, last
+        std::mutex mu; std::condition_variable cv; size_t doneCount = 0, running = 0; bool serialRunning = false;
+        auto depsDone = [&](const Run& r) { for (auto& d : r.c->depends) for (auto& o2 : runs) if (o2.c->name == d && o2.state != 2) return false; return true; };
+        auto worker = [&] {
+            for (;;) {
+                Run* mine = nullptr;
+                { std::unique_lock<std::mutex> lk(mu);
+                  for (;;) {
+                      if (doneCount == runs.size()) return;
+                      bool otherParallel = false; for (auto& r : runs) if (r.state == 0 && !r.c->serial) otherParallel = true;
+                      for (auto& r : runs) if (r.state == 0 && depsDone(r) && !serialRunning && (!r.c->serial || (!otherParallel && running == 0))) { mine = &r; break; }
+                      if (mine) break;
+                      cv.wait_for(lk, std::chrono::milliseconds(50));
+                  }
+                  mine->state = 1; ++running; if (mine->c->serial) serialRunning = true; }
+                runOne(*mine);
+                { std::lock_guard<std::mutex> lk(mu); mine->state = 2; --running; ++doneCount; if (mine->c->serial) serialRunning = false; }
+                cv.notify_all();
+            }
+        };
+        // a dependency cycle would wait forever: report it
+        for (auto& r : runs) { std::set<string> seen; std::function<void(const string&)> go = [&](const string& n) { if (n == r.c->name) throw Fail("ctest: tests depend on each other in a loop at '" + n + "'"); if (!seen.insert(n).second) return; for (auto& o2 : runs) if (o2.c->name == n) for (auto& d : o2.c->depends) go(d); }; for (auto& d : r.c->depends) go(d); }
+        vector<std::thread> th; for (int t = 0; t < std::min<int>(jobs, (int)runs.size()); ++t) th.emplace_back(worker);
+        for (auto& t : th) t.join();
+    }
     int failed = 0, skipped = 0;
     std::sort(runs.begin(), runs.end(), [](const Run& a, const Run& b) { return a.c->name < b.c->name; });
     for (auto& r : runs) {
@@ -2715,6 +2765,24 @@ static int cmdCTest(const Manifest& m, const Opts& o, const vector<string>& filt
         for (size_t k = ls.size() > 30 ? ls.size() - 30 : 0; k < ls.size(); ++k) printf("  | %s\n", ls[k].c_str());
     }
     printf("%zu tests, %d failed, %d skipped\n", runs.size(), failed, skipped);
+    if (!gJunitPath.empty()) {
+        { std::error_code mk; fs::create_directories(fs::path(gJunitPath).parent_path(), mk); }
+        std::ofstream x(gJunitPath, std::ios::trunc); if (!x) { fprintf(stderr, "okay-build: cannot write %s\n", gJunitPath.c_str()); }
+        else {
+            x << "<?xml version=\"1.0\" encoding=\"UTF-8\"?>\n<testsuites tests=\"" << runs.size() << "\" failures=\"" << failed << "\" skipped=\"" << skipped << "\">\n";
+            x << "<testsuite name=\"ctest\" tests=\"" << runs.size() << "\" failures=\"" << failed << "\" skipped=\"" << skipped << "\">\n";
+            for (auto& r : runs) {
+                bool skip = r.c->skipCode >= 0 && r.code == r.c->skipCode; bool pass = !skip && (r.c->willFail ? r.code != 0 : r.code == 0);
+                char tm[32]; snprintf(tm, sizeof tm, "%.3f", r.secs);
+                x << "<testcase name=\"" << xmlEsc(r.c->name) << "\" classname=\"ctest\" time=\"" << tm << "\"";
+                if (pass) { x << "/>\n"; continue; }
+                if (skip) { x << "><skipped message=\"exit " << r.code << "\"/></testcase>\n"; continue; }
+                string out = r.out; if (out.size() > 4000) out = out.substr(out.size() - 4000);
+                x << ">\n<failure message=\"" << (r.code == 124 ? "timed out" : "exit " + std::to_string(r.code)) << "\">" << xmlEsc(out) << "</failure>\n</testcase>\n";
+            }
+            x << "</testsuite>\n</testsuites>\n";
+        }
+    }
     return failed ? 1 : 0;
 #endif
 }
@@ -3525,6 +3593,9 @@ int main(int argc, char** argv) {
                 optSets.push_back({s.substr(0, eq), s.substr(eq + 1)});
             }
             else if (a == "--audit") cmakeAudit = true;
+            else if (a == "-R" && i + 1 < argc) gCtestInc.push_back(argv[++i]);
+            else if (a == "-E" && i + 1 < argc) gCtestExc.push_back(argv[++i]);
+            else if (a == "-L" && i + 1 < argc) gCtestLabels.push_back(argv[++i]);
             else if (a == "--build-type" && i + 1 < argc) cmakeBuildType = argv[++i];
             else if (a == "--fetched" && i + 1 < argc) {
                 string s = argv[++i]; auto eq = s.find('=');

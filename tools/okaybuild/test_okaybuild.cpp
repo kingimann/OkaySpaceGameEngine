@@ -1592,6 +1592,9 @@ static void cmakeProject() {
         "foreach(_n a b)\n  add_test(NAME loop_${_n} COMMAND sh -c \"test ${_n} = ${_n}\")\nendforeach()\n"
         "add_test(NAME really_fails COMMAND sh -c \"echo boom; exit 3\")\n"
         "add_test(NAME by_path COMMAND $<TARGET_FILE:test_ok>)\nadd_test(NAME app_runs COMMAND app)\n"
+        "add_test(NAME env_ok COMMAND sh -c \"test \\\"$DEMO_VAR\\\" = hello\")\nset_tests_properties(env_ok PROPERTIES ENVIRONMENT \"DEMO_VAR=hello\" LABELS \"fast;env\")\n"
+        "add_test(NAME first_step COMMAND sh -c \"echo one > order.txt\")\nadd_test(NAME second_step COMMAND sh -c \"grep -q one order.txt && echo two >> order.txt\")\n"
+        "set_tests_properties(second_step PROPERTIES DEPENDS first_step LABELS slowish)\n"
         "add_test(NAME slow COMMAND sh -c \"sleep 5\")\nset_tests_properties(slow PROPERTIES TIMEOUT 1)\n");
     write("tests/test_ok.cpp", "#include \"core.h\"\n#include <cstring>\nint main(){return std::strcmp(core_version(), \"1.2.3\") == 0 ? 0 : 1;}\n");
     write("tests/test_args.cpp", "#include <cstring>\nint main(int c, char** v){return c == 3 && !std::strcmp(v[1], \"one\") && !std::strcmp(v[2], \"two\") ? 0 : 1;}\n");
@@ -1636,6 +1639,16 @@ static void testCmakeReader() {
     check(o.find("PASS fail") != string::npos, "WILL_FAIL: a failing command is a pass", o);
     check(o.find("SKIP skip") != string::npos && o.find("1 skipped") != string::npos, "SKIP_RETURN_CODE gives a skip", o);
     check(fs::exists(gRoot / "build/ctest/tests/cwd_marker"), "the default working folder is <build>/ctest/<folder>", o);
+    o = sh("-f build.okay ctest -R 'env_ok|step' -j4 --junit out/j.xml", &rc);
+    check(rc == 0 && o.find("PASS env_ok") != string::npos && o.find("PASS second_step") != string::npos, "ENVIRONMENT reaches the test and DEPENDS orders two tests even with -j4", o);
+    { string x = readFile(gRoot / "out/j.xml"); check(x.find("<testsuite name=\"ctest\" tests=\"3\" failures=\"0\"") != string::npos && x.find("name=\"first_step\"") != string::npos && x.find("time=\"") != string::npos, "--junit writes one testcase per ctest with its time", x); }
+    o = sh("-f build.okay ctest -R step -E second", &rc); check(rc == 0 && o.find("1 tests") != string::npos && o.find("first_step") != string::npos && o.find("second_step") == string::npos, "-E drops what matches", o);
+    o = sh("-f build.okay ctest -L slowish", &rc); check(rc == 0 && o.find("1 tests") != string::npos && o.find("second_step") != string::npos, "-L picks tests by label", o);
+    o = sh("-f build.okay ctest -L fast -L slowish", &rc); check(rc == 0 && o.find("2 tests") != string::npos, "-L may be given twice (either label)", o);
+    write("loop.okay", "ctest a\n cmd = true\n depends = b\nend\nctest b\n cmd = true\n depends = a\nend\n"); o = sh("-f loop.okay ctest", &rc);
+    check(rc == 2 && o.find("depend on each other") != string::npos, "a DEPENDS loop is an error, not a hang", o);
+    write("fail.okay", "ctest f\n cmd = sh -c \"echo bad; exit 2\"\nend\nctest s\n cmd = sh -c \"exit 77\"\n skip_code = 77\nend\n"); sh("-f fail.okay ctest --junit out/k.xml");
+    { string x = readFile(gRoot / "out/k.xml"); check(x.find("<failure message=\"exit 2\">") != string::npos && x.find("bad") != string::npos && x.find("<skipped") != string::npos, "junit has failure text and skipped", x); }
     o = sh("-f build.okay ctest really_fails", &rc);
     check(rc == 1 && o.find("FAIL really_fails exit 3") != string::npos && o.find("| boom") != string::npos, "a failing test shows exit code and output", o);
     o = sh("-f build.okay ctest slow", &rc);
@@ -1683,9 +1696,34 @@ static void testCmakeSyntax() {
     write("CMakeLists.txt", "if(ON)\nadd_executable(t m.cpp)\n"); o = sh("cmake . -o c.okay", &rc);
     check(rc == 2 && o.find("no endif") != string::npos, "an if without endif is an error", o);
 }
+
+static void testSharedObjectLibs() {
+    printf("test: shared and object libraries (manifest and from CMake)\n");
+    fresh("sharedobj");
+    write("sh.cpp", "int shared_value(){return 40;}\n");
+    write("ob.cpp", "int object_value(){return 2;}\nstruct Reg{Reg(){}} reg_unused;\n");
+    write("st.cpp", "int static_value(){return 1;}\n");
+    write("m.cpp", "int shared_value(); int object_value(); int static_value(); int main(){return shared_value()+object_value()+static_value()==43?0:1;}\n");
+    write("build.okay", "target sh shared\n sources = sh.cpp\nend\ntarget ob object\n sources = ob.cpp\nend\ntarget st lib\n sources = st.cpp\nend\ntarget m exe\n sources = m.cpp\n deps = sh ob st\nend\n");
+    int rc; string o = sh("-j2", &rc);
+    check(rc == 0 && fs::exists(gRoot / "build/libsh.so") && fs::exists(gRoot / "build/libob.a"), "a shared library makes a .so and an object library an archive", o);
+    check(system(("cd / && env -u LD_LIBRARY_PATH '" + (gRoot / "build/m").string() + "' >/dev/null").c_str()) == 0, "the program finds the .so through its rpath with no LD_LIBRARY_PATH");
+    string cdb; sh("compdb"); cdb = readFile(gRoot / "compile_commands.json");
+    check(cdb.find("-fPIC") != string::npos, "shared library sources get -fPIC", cdb);
+    write("bad.okay", "target x weird\nend\n"); o = sh("-f bad.okay graph", &rc); check(rc == 2 && o.find("exe|lib|shared|object") != string::npos, "unknown kind is an error", o);
+    // from CMake
+    write("CMakeLists.txt", "project(P)\nadd_library(sh SHARED sh.cpp)\nadd_library(ob OBJECT ob.cpp)\nadd_library(st STATIC st.cpp)\nadd_executable(m m.cpp)\ntarget_link_libraries(m PRIVATE sh ob st)\n");
+    o = sh("cmake . -o c.okay", &rc); string man = readFile(gRoot / "c.okay");
+    check(rc == 0 && man.find("target sh shared") != string::npos && man.find("target ob object") != string::npos && man.find("target st lib") != string::npos, "cmake writes shared and object libraries", man);
+    fs::remove_all(gRoot / "build"); fs::remove_all(gRoot / ".okaybuild");
+    o = sh("-f c.okay -j2", &rc); check(rc == 0 && system(("cd / && env -u LD_LIBRARY_PATH '" + (gRoot / "build/m").string() + "'").c_str()) == 0, "the CMake-derived manifest builds and runs", o);
+}
 int main(int argc, char** argv) {
     if (argc < 2) { puts("usage: test_okaybuild PATH_TO_okay-build"); return 2; }
     gTool = "'" + fs::absolute(argv[1]).string() + "'";
+    if (const char* only = getenv("OKB_ONLY")) { // OKB_ONLY=cmake runs just the CMake reader, ctest and library tests (quick while working on them)
+        if (string(only) == "cmake") { testCmakeReader(); testCmakeSyntax(); testSharedObjectLibs(); printf("okaybuild tests (cmake only): %d checks passed, %d failed\n", gPass, gFail); return gFail ? 1 : 0; }
+    }
     testBasicAndNoop(); testHeaderTouch(); testDefine(); testMissingHeader(); testCycle(); testLinkOrder();
     testParallelDeterministic(); testCompdbCleanDry(); testManifestErrors(); testMingwCompdb(); testMingwSlice(); testStatShortcut(); testFreshNoopTrust(); testSpacesBuildDirRsp(); testRawActions(); testHashInCommandAndPath(); testImportGenerated();
     testPools(); testGeneratorRestat(); testKeepGoing(); testRegenManifest(); testSharedInput(); testImportedCompdb(); testWindowsHost(); testModules(); testAuditHelp(); testConfigsAndToolchains(); testCompilerCache(); testReport(); testOwnTests(); testMemoryLimit(); testCancelAndRecover(); testMsvcFlags(); testJobserver(); testCacheLimit(); testPackages(); testPackage(); testHistoryAndChecks(); testBinaryState(); testFifoJobserver(); testReportDiff(); testDistLayout(); testNativeManifest(); testImportedCache(); testGraphTargets(); testToolchainAuto(); testSharedCache(); testReportCacheAndJson(); testTestFilterTimeoutOutput();
@@ -1704,5 +1742,6 @@ int main(int argc, char** argv) {
     testRemoteCacheFolder();
     testCmakeReader();
     testCmakeSyntax();
+    testSharedObjectLibs();
     printf("okaybuild tests: %d checks passed, %d failed\n", gPass, gFail); return gFail ? 1 : 0;
 }

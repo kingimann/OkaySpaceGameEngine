@@ -234,12 +234,21 @@ The `min-app` check compares with the engine version the player was built with (
 Verified on Linux: everything in the Tests table except where noted. `test_content_delivery` was also run under AddressSanitizer
 and UBSan, clean. The HTTP path was exercised with the own HTTP client over plain `http://` on loopback.
 
-**Unverified:** anything on Windows (WinHTTP download, hard links on NTFS, `rename` over an existing file, Windows path
-spellings; the code follows the Windows rules but was not run there); `https://` (TLS is the existing client's job, not exercised
-here); the Windows build of `okay-content`; a real Supabase bucket (only the fake storage server was used; the bucket
-name, size limit and object-name characters are assumptions to check once); the player wiring on screen (the player compiles
-as a syntax check only, and was not started); the Xbox transport (a stub); behaviour with a very large file or a slow network;
-disk-full handling beyond a plain failure message.
+Verified under Wine (Linux, not a real Windows PC): `okay-content.exe` cross-compiled with the MinGW win32-thread-model compiler
+(`-fsyntax-only` is also clean for all new headers, so the Windows build rule holds) ran `make-manifest`, `verify` and `sync` with
+Windows paths from a `file:///Z:/...` folder (download, hard-link reuse of an unchanged file, a version 2 update that downloaded
+only the changed file), and a `sync` over `http://` through **WinHTTP** from the loopback server that cuts the first response
+(one retry, then complete). Wine is not Windows: treat this as a good sign, not as proof.
+
+Known Windows limit: the WinHTTP wrapper in `NativeHttp.hpp` throws away the body of a response that was cut short, so on Windows an
+interrupted download restarts that one file on the retry (finished files are kept). Resume with `Range` works for a file whose
+earlier part was saved by a cancelled run or by the own client (Linux).
+
+**Unverified:** anything on a real Windows PC (hard links on NTFS, `rename` over an existing file, Windows path spellings under
+real file locking and antivirus); `https://` (TLS is the existing client's job, not exercised here); a real Supabase bucket (only
+the fake storage server was used; the bucket name, size limit and object-name characters are assumptions to check once); the
+player wiring on screen (`player/main.cpp` was only compiled as a syntax check, and not started); the Xbox transport (a stub);
+behaviour with a very large file or a slow network; disk-full handling beyond a plain failure message.
 
 **Not done:** a Visual Script quick block "Update Game Content" (the node would need a place to hold a running sync and a
 progress display; no good small place was found, so it was left out rather than faked); a progress screen or background sync (the

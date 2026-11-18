@@ -261,7 +261,9 @@ try {
     $vclibs = $null
     $ext = Join-Path ${env:ProgramFiles(x86)} 'Microsoft SDKs\Windows Kits\10\ExtensionSDKs\Microsoft.VCLibs'
     if (Test-Path -LiteralPath $ext) { $vclibs = Get-ChildItem -LiteralPath $ext -Recurse -Filter 'Microsoft.VCLibs.x64.14.00.appx' -ErrorAction SilentlyContinue | Where-Object { $_.FullName -match 'Retail' } | Select-Object -First 1 }
-    if ($vclibs) { Write-Host ("  Add-AppxPackage -Path '{0}'     # the VC runtime framework the app depends on (once)" -f $vclibs.FullName) }
+    Write-Host '  1) Skip this line first. ONLY if step 3 reports a missing dependency (Microsoft.VCLibs), install the VC runtime framework:' -ForegroundColor DarkGray
+    Write-Host '     (it can fail harmlessly with 0x80073D02 when the framework is in use by running apps; if the app then installs, ignore that error)' -ForegroundColor DarkGray
+    if ($vclibs) { Write-Host ("  Add-AppxPackage -Path '{0}'     # OPTIONAL, only if a dependency is reported missing" -f $vclibs.FullName) }
     else { Write-Host '  (install the Microsoft.VCLibs.140.00 x64 framework package first; its .appx is under Microsoft SDKs\Windows Kits\10\ExtensionSDKs\Microsoft.VCLibs in Program Files (x86) if Visual Studio installed it)' }
     Write-Host ("  Import-Certificate -FilePath '{0}' -CertStoreLocation Cert:\LocalMachine\TrustedPeople" -f $cer)
     Write-Host ("  Add-AppxPackage -Path '{0}'" -f $appx)

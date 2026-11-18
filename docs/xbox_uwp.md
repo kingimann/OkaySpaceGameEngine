@@ -3,6 +3,19 @@
 Internal. **EXPERIMENTAL and UNVERIFIED.** Owner request 2026-11-18: a hobby target, not for publishing. Branches `claude/xbox-uwp-1` (packaging) and `claude/xbox-uwp-2` (engine inside UWP, one-click build; this page was updated there).
 The audit that led here is [xbox_uwp_audit.md](xbox_uwp_audit.md).
 
+## What is verified on Windows (2026-11-18) and what is not
+
+**Verified by the owner on a Windows 11 PC** with Visual Studio 2026 (Developer Command Prompt v18.12.1, MSBuild 18.12.3), MSVC 14.52.37025 (cl 19.52.37029), platform toolset **v145**, Windows SDK 10.0.26100.0, command
+`scripts\build-xbox-uwp.ps1 -SourceRoot . -ExportDir .\xbox-test4 -MinimalTest -SkipInstall` at branch head `422d23b7`:
+* The SDK check, the minimal test export, our packer tool, CMake setup (`-G "Visual Studio 18 2026" -T v145,version=14.52.37025`) and the UWP app compile and link all passed. On Visual Studio 2026 the working toolset was **v145 / 14.52**, the one that has the UWP libraries (`lib\x64\store`); the vcxproj check printed
+  `LanguageStandard stdcpp20`, no `/ZW` and no `/await`.
+* Our own `.appx` (`com.okayspace.test_1.0.0.0_x64.appx`, 40 files: manifest, block map, 14 tile PNGs, `Data\README.txt`, `OkaySpaceXbox.exe`, 17 engine shader files, `tri_ps.cso`, `tri_vs.cso`) was **accepted by Microsoft's MakeAppx `unpack`** (exit code 0, "Package extraction succeeded").
+* SignTool signed it with the test certificate `CN=OkaySpaceTest`; `Import-Certificate` into `LocalMachine\TrustedPeople` and `Add-AppxPackage` installed it without error. The installed app "OkaySpace Test" **started on Windows 11 and showed the colour-gradient triangle on a dark background in a normal window**
+  (a Direct3D 11 flip-model swap chain on a CoreWindow works there).
+* The `Microsoft.VCLibs` install line failed with **0x80073D02** because that framework was in use by running apps (Store, Widgets, Gaming Services). That is harmless: the already installed framework satisfied the dependency. The build script now prints that line as **optional** ("only if the next step reports a missing dependency").
+
+**Still NOT verified:** gamepad input (green background, stick, A, B), suspend and resume, anything on an **Xbox console** (no claim of console support is made), engine mode (running an exported game), the editor's one-click button and its log panel, the MSBuild AppX validation fix beyond this run (the placeholder manifest needed `mp:PhoneIdentity`), shader loading from `package\Shaders` at run time (the engine renderer is not used by the triangle test), the WASAPI audio code, the signing/trust steps on a console.
+
 ## What this is, and what it is not
 
 * It makes a **Universal Windows Platform (UWP)** package that an **Xbox One in Developer Mode** can run, using only Microsoft's public
@@ -219,6 +232,19 @@ Realistic order: first make the app C (no WinRT classes), then the three missing
 4. Start the app from Dev Home / the console's "Dev Mode" apps. Expected: a dark window with a coloured triangle; the background turns green once a pad is connected; the left stick moves the triangle; B exits.
 5. Whether a self-signed test certificate is accepted by the console without trusting it first is **unknown**. Microsoft's usual route is Visual Studio's "Remote Machine" deployment; if the Device
    Portal refuses the package, try that route and report what it said.
+
+## Console test plan (PREPARED, NOT STARTED, UNVERIFIED), in plain words
+
+Goal: see the same triangle on an Xbox One. Nothing here has been tried on a console; every step comes from Microsoft's public pages and may differ. Do not start until you have the signed package from the PC steps above.
+
+1. **Turn on Developer Mode.** On the Xbox, install the free **Dev Mode Activation** app from the Store, sign in with the Microsoft account you registered as a developer, and follow it. The console restarts into a **Dev Home** screen. (Microsoft's page "Activate Developer Mode on your Xbox" is the reference; account rules and cost are on that page. Dev Mode is a separate mode: your normal games are not available while it is on.)
+2. **Find the console's address.** Dev Home shows the console's IP address. Write it down. The console and your PC must be on the same network.
+3. **Open the Device Portal.** On the PC, open a browser and go to `https://<that address>:11443` (the usual port reported for Xbox; if it does not load, use the exact address and port Dev Home shows). The browser warns about the certificate: accept it. You may be asked for a PIN shown on the console.
+4. **Upload the package.** In the portal choose **Apps** (or "My games & apps") > **Add** (Install app). Pick the signed `.appx` from your export folder. If the page offers **dependencies**, add the VC runtime package `Microsoft.VCLibs.x64.14.00.appx` (the build script prints where it is under Program Files (x86) > Microsoft SDKs > Windows Kits > 10 > ExtensionSDKs > Microsoft.VCLibs). Press **Start/Go**.
+5. **Trust problem?** Whether the console accepts a package signed with our self-made test certificate is **unknown**. If the portal refuses it, write down the exact message; Microsoft's usual route is Visual Studio's "Remote Machine" deployment, which we have not set up.
+6. **Start the app.** In Dev Home open the list of Dev Mode apps and start **OkaySpace Test**. You should see a dark window with a coloured triangle. If you connect a pad: the background turns green, the left stick moves the triangle, A centres it, B closes the app.
+7. **Send back:** a photo or description of the screen at each step, the exact text of any error (the portal's message, or the console's error code), the console model (One, One S, One X), the Dev Mode / OS version shown in Dev Home, and whether the pad worked. Do not send passwords, codes or the contents of certificates.
+8. **Then:** suspend and resume (press the Xbox button and come back), and only later try "engine mode" on the PC first.
 
 ## Verify it yourself on a Windows PC (no Xbox needed for most of it)
 

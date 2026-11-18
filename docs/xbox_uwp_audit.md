@@ -54,3 +54,8 @@ it does not use the restricted GDK, and the public SDK does not build one.
 | One-click build | written (`XboxBuildPlan.hpp`...), plan and runner tested on Linux; the spawned programs never ran |
 
 Problems 2 to 8 in the ranked list above now have code. None of it is verified on Windows. What stays open: compiling the engine with Microsoft's compiler, the UI layer, device-loss recovery, WinHTTP-or-`Windows.Web.Http`, libsodium for UWP, every real run.
+
+## Update 2026-11-18: first real Windows run
+
+The triangle test package was built, packed with our packer, accepted by MakeAppx `unpack`, signed, installed and started on a Windows 11 PC (Visual Studio 2026, MSVC 14.52.37025, toolset v145, Windows SDK 10.0.26100.0) and showed the triangle through a Direct3D 11 flip-model swap chain on a CoreWindow.
+That confirms, for the triangle shell only: the compile with C++/WinRT (C++20, no `/ZW`, no `/await`), the manifest and package layout, the packer, signing and install. It confirms nothing about problems 1, 2, 4 to 8 above for the engine (they are untouched by that run), and nothing about a console. See `docs/xbox_uwp.md`, "What is verified on Windows".

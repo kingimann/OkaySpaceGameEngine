@@ -30,7 +30,7 @@ inline constexpr const char* kLimitationsText =
     "limited by the UWP sandbox (no desktop-only Windows APIs, memory and CPU budgets for a Developer Mode app, Direct3D 11 "
     "only). By default the Xbox app shell does not run your game: it opens a window, draws a test triangle and reads a "
     "gamepad, to prove the packaging steps. \"Engine mode\" (a tick box next to the build button, EXPERIMENTAL) also links the engine and runs your game's "
-    "3D scene, scripts, physics and gamepad; the 2D / UI layer is not drawn yet, and the engine has never been compiled with Microsoft's UWP compiler. Nothing here has been built on Windows or run on a console, so compatibility with "
+    "3D scene, scripts, physics and gamepad; the 2D / UI layer is not drawn yet, and the engine has never been compiled with Microsoft's UWP compiler. The triangle test package was built and run on a Windows 11 PC (2026-11-18) but nothing has run on a console, so compatibility with "
     "any console is unknown. The package is made unsigned by our own packer and signed on your PC with a test certificate.";
 
 struct ExportInputs {
@@ -73,8 +73,10 @@ inline std::string ReadmeText(const ExportInputs& in, const ManifestOptions& m, 
     std::string t;
     t += "OkaySpace - Xbox One (EXPERIMENTAL, Developer Mode) export of '" + in.gameName + "'\n";
     t += "====================================================================\n\n";
-    t += "STATUS: UNVERIFIED. This was written without a Windows PC, Visual Studio, the Windows SDK or an Xbox.\n"
-         "No package from this folder has been built, installed or run. Nothing here claims it works on hardware.\n\n";
+    t += "STATUS: PARTLY VERIFIED, NOT ON A CONSOLE. On 2026-11-18 the test package of this pipeline was built, packed, signed, unpacked by Microsoft's\n"
+         "MakeAppx, installed and started on a Windows 11 PC (Visual Studio 2026, MSVC 14.52, Windows SDK 10.0.26100.0): it showed the triangle test.\n"
+         "NOT verified: the gamepad, suspend/resume, an Xbox console, engine mode (running your game) and the editor's one-click button.\n"
+         "Everything not listed as verified is UNVERIFIED. Nothing here claims it works on an Xbox.\n\n";
     t += "What this is NOT: it is not a native Xbox console game, it does not use the Xbox GDK, and it cannot be\n"
          "published. It is a Universal Windows Platform (UWP) app for a console in Developer Mode.\n\n";
     t += "What is in this folder\n"

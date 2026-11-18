@@ -4,7 +4,7 @@ row: | xbox-uwp | Xbox One export (EXPERIMENTAL, UNVERIFIED): one-click build (c
 ---
 ## xbox-uwp. Xbox One (experimental, Developer Mode) export
 
-**Read this first: nothing here has been built on Windows or run on an Xbox.** It makes a UWP package for an Xbox One in Developer Mode, not a native console game. Full text: `docs/xbox_uwp.md`; audit: `docs/xbox_uwp_audit.md`.
+**Read this first: the triangle-test package was built, installed and run on a Windows 11 PC on 2026-11-18 (Visual Studio 2026, MSVC 14.52, toolset v145, Windows SDK 10.0.26100.0); nothing has run on an Xbox, and the editor button, the gamepad, suspend/resume and engine mode are not verified.** It makes a UWP package for an Xbox One in Developer Mode, not a native console game. Full text: `docs/xbox_uwp.md`; audit: `docs/xbox_uwp_audit.md`.
 
 What to do (needs a Windows PC and a release built with `-DOKAY_BUILD_XBOX_UWP=ON`, which `build-windows-dist.sh` sets; it also ships `xbox-src` next to the editor):
 
@@ -22,4 +22,4 @@ What to do (needs a Windows PC and a release built with `-DOKAY_BUILD_XBOX_UWP=O
 
 Checks you can run without Windows: `ctest -R xbox_uwp` (needs `-DOKAY_BUILD_XBOX_UWP=ON -DOKAY_BUILD_TESTS=ON`) runs the Linux tests: the old package/packer tests, `xbox_uwp_runtime` (shader bundle, display, lifecycle, pad mapping, paths, audio conversion, the backend over a fake host, the build plan and runner, the API audit, game config), `xbox_uwp_audit` (no forbidden UWP API in the engine sources the UWP target compiles) and `xbox_uwp_sources_cmake`.
 
-Verified on Linux: everything in those tests. Not verified: every program the build starts (cmake, MSBuild, fxc, SignTool, PowerShell scripts), the editor page drawing, the UWP app and engine mode, installing, the console.
+Verified on Windows (owner, 2026-11-18, the `-MinimalTest` command): the whole script, MakeAppx accepting our package, signing, install and the triangle on a PC. Verified on Linux: everything in the tests. Not verified: the editor page drawing and one-click button, the gamepad, suspend/resume, engine mode, the console. The `Microsoft.VCLibs` install line printed at the end is optional and may fail harmlessly with 0x80073D02 when the framework is in use.

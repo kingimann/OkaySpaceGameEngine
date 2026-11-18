@@ -68,6 +68,7 @@ function Step([int]$n, [string]$text) {
 # Native programs write progress to stderr: under $ErrorActionPreference = 'Stop' that would throw, so it is relaxed in here only.
 function Invoke-Tool([string]$exe, [string[]]$arguments) {
     Log ("> " + $exe + " " + ($arguments -join ' '))
+    $script:LastLines = New-Object System.Collections.ArrayList   # every output line of the tool that just ran (Tail keeps only the last 15)
     $old = $ErrorActionPreference; $ErrorActionPreference = 'Continue'
     try {
         & $exe @arguments 2>&1 | ForEach-Object {
@@ -75,6 +76,7 @@ function Invoke-Tool([string]$exe, [string[]]$arguments) {
             Write-Host $l
             Log $l
             [void]$script:Tail.Add($l)
+            [void]$script:LastLines.Add($l)
             if ($script:Tail.Count -gt 15) { $script:Tail.RemoveAt(0) }
         }
         $code = $LASTEXITCODE
@@ -187,7 +189,19 @@ try {
         if ($zw -or $aw) { Write-Host 'WARNING: the project passes /ZW or /await; the C++/WinRT build is likely to fail (see docs/xbox_uwp.md).' -ForegroundColor Yellow }
     } else { Write-Host 'vcxproj check: OkaySpaceXbox.vcxproj not found (is the generator a Visual Studio one?).' }
     Step 5 'Compiling the UWP app (can take a few minutes)'
-    Require-Ok (Invoke-Tool $cmakeExe @('--build', $appBuild, '--config', $Configuration)) 'The UWP app build'
+    # Only the app target (not ALL_BUILD). MSBuild's AppX validation runs AFTER the exe is linked; if that validation (and nothing else) fails, the exe is
+    # still good (our own packer makes the real package), so it is a warning, not a failure.
+    $bcode = Invoke-Tool $cmakeExe @('--build', $appBuild, '--config', $Configuration, '--target', 'OkaySpaceXbox')
+    if ($bcode -ne 0) {
+        $errLines = @($script:LastLines | Where-Object { $_ -match '(?i)\berror\b' })
+        $nonAppx = @($errLines | Where-Object { $_ -notmatch 'APPX\d+' })
+        $exeBuilt = @(Get-ChildItem -LiteralPath $appBuild -Recurse -Filter 'OkaySpaceXbox.exe' -ErrorAction SilentlyContinue |
+                      Where-Object { $_.FullName -match ('[\\/]' + [regex]::Escape($Configuration) + '[\\/]') })
+        if ($errLines.Count -gt 0 -and $nonAppx.Count -eq 0 -and $exeBuilt.Count -gt 0) {
+            Write-Host 'WARNING: MSBuild reported only AppX packaging validation errors (APPX####), but OkaySpaceXbox.exe was built. Continuing: our own packer makes the package.' -ForegroundColor Yellow
+            Log 'WARNING: build exit code non-zero with only APPX#### errors; continuing.'
+        } else { throw "The UWP app build failed (exit code $bcode)." }
+    }
 
     # 6. copy the program into the package folder. The manifest's Executable is OkaySpaceXbox.exe.
     Step 6 'Putting the program into the package'

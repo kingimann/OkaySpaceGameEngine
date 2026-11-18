@@ -141,7 +141,7 @@ private:
     int id_; PadDevice* dev_; PadConfig cfg_; PadState st_; VibrationTimer vib_; bool connected_ = false; std::uint64_t now_ = 0; double trigL_ = 0, trigR_ = 0;
 };
 
-// ---- keyboard: Windows.System.VirtualKey -> platform::Key ---------------------------------------------------------------------
+// ---- keyboard: Windows.System.VirtualKey -> platform::Key --------------------------------------------------------------------- // lint-allow: secret (a divider line, not a secret)
 /// VirtualKey values are the Win32 VK_* numbers (documented: A-Z 0x41.., 0-9 0x30.., F1 0x70.., arrows 0x25-0x28, Enter 0x0D, Escape 0x1B). // lint-allow: secret (key codes, not a secret)
 inline platform::Key KeyFromVirtualKey(int vk) {
     using platform::Key;

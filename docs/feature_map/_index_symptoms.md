@@ -482,6 +482,7 @@ Find the window, page or symptom, then say the number. Back to the [overview](..
 | Ctrl+Tab picks the wrong panel | [15.9](15-editor.md#159-layout-undo-autosave) Layout, undo, autosave |
 | Ctrl+Z also crouches | [8.7](08-input.md#87-input-upgrade-timing-curves-per-player-actions-recording-the-input-panel) Input upgrade: timing, curves, per-player actions, recording, the Input panel |
 | Ctrl+Z undoes the wrong thing after mesh editing | [22.1](20-35-planned.md#221-undo-history) Undo history |
+| cut-out leaves vanish in the distance | [2.13](02-rendering-world.md#213-texture-library-mipmaps-atlases-compression-streaming) Texture library (mipmaps, atlases, compression, streaming) |
 | D3D12 view lacks bump detail | [26.4](20-35-planned.md#264-pbr) PBR |
 | damage ignores armor | [11.9](11-gameplay-systems.md#119-rpg-stats-and-xp) RPG stats and XP |
 | death snaps to the floor or gets cut short by jump or fall | [5.12](05-animation-ik.md#512-built-in-action-clips) Built-in action clips |
@@ -531,6 +532,7 @@ Find the window, page or symptom, then say the number. Back to the [overview](..
 | faces dark | [3.6](03-modeling-import.md#36-model-import) Model import |
 | faces look dark or inside out after a weld or mirror | [3.1](03-modeling-import.md#31-edit-mode) Edit mode |
 | falls through the floor forever | [4.2](04-characters-cameras.md#42-stances-and-movement) Stances and movement |
+| far away textures shimmer or look dark | [2.13](02-rendering-world.md#213-texture-library-mipmaps-atlases-compression-streaming) Texture library (mipmaps, atlases, compression, streaming) |
 | far chunks pop in or never unload | [2.6](02-rendering-world.md#26-terrain-and-water) Terrain and water |
 | far mountains missing | [45.4](43-proposals.md#454-distant-scenery) Distant scenery |
 | FBX will not import in a default build | [3.6](03-modeling-import.md#36-model-import) Model import |
@@ -602,6 +604,7 @@ Find the window, page or symptom, then say the number. Back to the [overview](..
 | I do not know what to click first | [51.2](43-proposals.md#512-guided-tutorials-in-the-editor) Guided tutorials in the editor |
 | I imported an asset pack and cannot tell which version it is | [25.4](20-35-planned.md#254-dependency-management) Dependency management |
 | I need a quick texture | [42.7](42-examples-samples.md#427-starter-assets) Starter assets |
+| I need one picture from many sprites | [2.13](02-rendering-world.md#213-texture-library-mipmaps-atlases-compression-streaming) Texture library (mipmaps, atlases, compression, streaming) |
 | I need ten similar enemies and copy-pasting prefabs makes them drift apart | [21.3](20-35-planned.md#213-variants) Variants |
 | I tuned a value in Play and it was gone after Stop | [34.1](20-35-planned.md#341-properties-during-play) Properties during Play |
 | I tweaked one instance and it lost the change after the prefab was edited | [21.4](20-35-planned.md#214-overrides) Overrides |
@@ -929,6 +932,7 @@ Find the window, page or symptom, then say the number. Back to the [overview](..
 | texture stretched or mirrored on a modeled part | [3.4](03-modeling-import.md#34-uv-tools) UV tools |
 | texture tiles wrong | [2.2](02-rendering-world.md#22-materials-and-textures) Materials and textures |
 | textures blurry or too large | [20.4](20-35-planned.md#204-import-settings) Import settings |
+| textures use too much memory | [2.13](02-rendering-world.md#213-texture-library-mipmaps-atlases-compression-streaming) Texture library (mipmaps, atlases, compression, streaming) |
 | the 2.5D character runs on the spot against a wall | [4.3](04-characters-cameras.md#43-2d-and-25d-controllers) 2D and 2.5D controllers |
 | the 2D game looks blurry or jitters | [4.10](04-characters-cameras.md#410-camera-component-shake-and-zoom) Camera component, shake and zoom |
 | the 3D view is black or very slow | [38.1](38-render-backends.md#381-renderer-interface-and-backend-selection) Renderer interface and backend selection |

@@ -1,12 +1,13 @@
 // okay-ms own standard header: std::vector, written from ISO/IEC 14882 [vector] (a contiguous sequence that grows
 // by doubling). Own minimal version: no allocator argument, no exceptions (an allocation failure is not checked),
-// iterators are pointers, initializer_list is supported, no emplace. Storage comes from the global malloc and free
+// iterators are pointers, initializer_list and move construction are supported, no emplace. Storage comes from the global malloc and free
 // (see <cstdlib>); elements are made with placement new and destroyed with an explicit destructor call.
 #pragma once
 #include <cstddef>
 #include <cstdlib>
 #include <initializer_list>
 #include <new>
+#include <utility>
 namespace std {
 template <typename T>
 class vector {
@@ -20,7 +21,7 @@ class vector {
         while (cap < want) cap = cap * 2;
         T* fresh = (T*)malloc(cap * sizeof(T));
         for (size_t i = 0; i < size_; ++i) {
-            new (fresh + i) T(data_[i]);
+            new (fresh + i) T(std::move(data_[i]));
             data_[i].~T();
         }
         if (data_) free(data_);
@@ -42,6 +43,11 @@ public:
         for (size_t i = 0; i < other.size_; ++i) new (data_ + i) T(other.data_[i]);
         size_ = other.size_;
     }
+    vector(vector&& other) : data_(other.data_), size_(other.size_), cap_(other.cap_) {
+        other.data_ = 0;
+        other.size_ = 0;
+        other.cap_ = 0;
+    }
     vector(initializer_list<T> list) : data_(0), size_(0), cap_(0) {
         grow_to(list.size());
         for (size_t i = 0; i < list.size(); ++i) new (data_ + i) T(list.begin()[i]);
@@ -57,6 +63,18 @@ public:
         grow_to(other.size_);
         for (size_t i = 0; i < other.size_; ++i) new (data_ + i) T(other.data_[i]);
         size_ = other.size_;
+        return *this;
+    }
+    vector& operator=(vector&& other) {
+        if (this == &other) return *this;
+        clear();
+        if (data_) free(data_);
+        data_ = other.data_;
+        size_ = other.size_;
+        cap_ = other.cap_;
+        other.data_ = 0;
+        other.size_ = 0;
+        other.cap_ = 0;
         return *this;
     }
     vector& operator=(initializer_list<T> list) {
@@ -94,6 +112,16 @@ public:
             new (data_ + size_) T(copy);
         } else {
             new (data_ + size_) T(value);
+        }
+        ++size_;
+    }
+    void push_back(T&& value) {
+        if (size_ == cap_) {
+            T moved(std::move(value));
+            grow_to(size_ + 1);
+            new (data_ + size_) T(std::move(moved));
+        } else {
+            new (data_ + size_) T(std::move(value));
         }
         ++size_;
     }
@@ -153,14 +181,14 @@ public:
     }
     T* erase(T* pos) {
         const size_t at = (size_t)(pos - data_);
-        for (size_t i = at; i + 1 < size_; ++i) data_[i] = data_[i + 1];
+        for (size_t i = at; i + 1 < size_; ++i) data_[i] = std::move(data_[i + 1]);
         pop_back();
         return data_ + at;
     }
     T* erase(T* first, T* last) {
         const size_t a = (size_t)(first - data_);
         const size_t n = (size_t)(last - first);
-        for (size_t i = a; i + n < size_; ++i) data_[i] = data_[i + n];
+        for (size_t i = a; i + n < size_; ++i) data_[i] = std::move(data_[i + n]);
         for (size_t k = 0; k < n; ++k) pop_back();
         return data_ + a;
     }

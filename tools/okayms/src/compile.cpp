@@ -1951,6 +1951,22 @@ struct Parser {
                     i = j;
                     continue;
                 }
+                if (tokens[i + 1].kind == TIdent && i + 3 < tokens.size() && tokens[i + 2].kind == TColonColon) {
+                    // using a::b::name; ([namespace.udecl]): read as a directive for the namespace a::b, which is a
+                    // little wider than the declaration (every function of it can be called by its bare name).
+                    std::string ns;
+                    size_t j = i + 1;
+                    std::string last;
+                    for (; j < tokens.size() && tokens[j].kind != TSemi && tokens[j].kind != TEnd; ++j) {
+                        if (tokens[j].kind == TIdent) {
+                            if (!last.empty()) ns += (ns.empty() ? "" : "::") + last;
+                            last = tokens[j].text;
+                        }
+                    }
+                    if (!ns.empty()) using_namespaces.push_back(ns);
+                    i = j;
+                    continue;
+                }
                 if (tokens[i + 1].kind == TIdent && i + 2 < tokens.size() && tokens[i + 2].kind == TAssign) {
                     size_t j = i + 3;
                     while (j < tokens.size() && tokens[j].kind != TSemi && tokens[j].kind != TEnd) ++j;
@@ -4075,6 +4091,11 @@ struct Parser {
                 }
                 if (!parse_type(&aliased, &imp, &exp)) return false;
                 while (accept(TStar)) ++aliased.pointers;
+                if (accept(TAmp)) aliased.is_ref = true;  // typedef T& reference;
+                else if (accept(TAndAnd)) {
+                    aliased.is_ref = true;
+                    if (aliased.pointers == 0) aliased.rref = true;
+                }
                 if (!is_using) {
                     if (!is(TIdent)) {
                         error = "expected a typedef name";
@@ -11465,13 +11486,31 @@ struct Gen {
     // Sets the flags so that jz is taken when the value in last_type is zero (a condition).
     void test_cond() {
         if (is_fp_t(last_type)) {
+            // A NaN is true in a condition ([conv.bool]: it is not equal to zero): cmpneqss gives all ones when the
+            // value is unordered or not equal to zero, and the result is tested as an integer.
             b(0x0F);  // xorps xmm1, xmm1
             b(0x57);
             b(0xC9);
-            if (last_type.base == 6) b(0x66);
-            b(0x0F);  // ucomiss / ucomisd xmm0, xmm1
-            b(0x2E);
+            b(last_type.base == 6 ? 0xF2 : 0xF3);  // cmpneqss / cmpneqsd xmm0, xmm1
+            b(0x0F);
+            b(0xC2);
             b(0xC1);
+            b(0x04);
+            if (last_type.base == 6) {  // movq rax, xmm0 ; test rax, rax
+                b(0x66);
+                b(0x48);
+                b(0x0F);
+                b(0x7E);
+                b(0xC0);
+                b(0x48);
+            } else {  // movd eax, xmm0 ; test eax, eax
+                b(0x66);
+                b(0x0F);
+                b(0x7E);
+                b(0xC0);
+            }
+            b(0x85);
+            b(0xC0);
             return;
         }
         if (v64(last_type)) b(0x48);

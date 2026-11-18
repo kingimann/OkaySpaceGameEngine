@@ -281,6 +281,40 @@ static void test_rvalue_references(Tally& tally) {
              0);
 }
 
+static void test_move_containers_and_small_gaps(Tally& tally) {
+    std::printf("test_move_containers_and_small_gaps\n");
+    run_both(tally, "move_containers",
+             std::string(kAlloc) +
+             "#include <vector>\n"
+             "#include <string>\n"
+             "#include <utility>\n"
+             "namespace ns { int sq(int v) { return v * v; } struct W { int a; }; }\n"
+             "template <typename T> struct Box { T v; typedef T& reference; typedef const T& const_reference;\n"
+             "  reference get() { return v; } const_reference cget() const { return v; } };\n"
+             "static float nanf_() { float z = 0.0f; return z / z; }\n"
+             "static double nand_() { double z = 0.0; return z / z; }\n"
+             "static int cond(float x) { if (x) return 1; return 0; }\n"
+             "static int condd(double x) { int n = 0; while (x) { n = 1; break; } return n; }\n"
+             "int entry(void) {\n"
+             "  std::string a(\"hello world, this is long enough\"); std::string b(std::move(a));\n"
+             "  CK(1, b == \"hello world, this is long enough\" && a.size() == 0);\n"
+             "  std::string c; c = std::move(b); CK(2, c.size() == 32 && b.empty());\n"
+             "  std::vector<std::string> v; v.push_back(std::string(\"one\")); v.push_back(c); v.push_back(std::move(c));\n"
+             "  for (int i = 0; i < 20; ++i) v.push_back(std::string(\"x\"));\n"
+             "  CK(3, v.size() == 23 && v[0] == \"one\" && v[1].size() == 32 && v[2].size() == 32 && c.empty());\n"
+             "  std::vector<std::string> w(std::move(v)); CK(4, w.size() == 23 && v.size() == 0 && w[22] == \"x\");\n"
+             "  std::vector<std::string> z; z = std::move(w); CK(5, z.size() == 23 && w.empty());\n"
+             "  z.erase(z.begin()); CK(6, z.size() == 22 && z[0].size() == 32);\n"
+             "  using ns::sq; using ns::W; W ww; ww.a = 3; Box<int> bx; bx.v = 4; bx.get() = 5;\n"
+             "  CK(7, sq(ww.a) + bx.cget() == 14);\n"
+             "  CK(8, cond(nanf_()) == 1 && cond(0.0f) == 0 && cond(2.5f) == 1 && cond(-0.0f) == 0);\n"
+             "  CK(9, condd(nand_()) == 1 && condd(0.0) == 0 && condd(3.0) == 1);\n"
+             "  float f = nanf_(); int k = 0; if (f) k = 1; CK(10, k == 1);\n"
+             "  return 0;\n"
+             "}\n",
+             0);
+}
+
 int main(int argc, char** argv) {
     const std::string root = argc > 1 ? argv[1] : ".";
     (void)root;
@@ -292,5 +326,6 @@ int main(int argc, char** argv) {
     test_initializer_list(tally);
     test_algorithms(tally);
     test_rvalue_references(tally);
-    return tally.finish(7);
+    test_move_containers_and_small_gaps(tally);
+    return tally.finish(8);
 }

@@ -34,6 +34,10 @@
 #include "WeaponEditor.hpp"            // the Weapons window (weapon definitions)
 #include "okay/Core/Utf8.hpp"
 #include "okay/Core/BuildPipeline.hpp"   // the build pipeline: layout, dependency walk, manifest, report, zip
+#if defined(OKAY_XBOX_UWP)               // EXPERIMENTAL Xbox One Developer Mode (UWP) export: platform/xbox_uwp, docs/xbox_uwp.md
+#include "XboxExport.hpp"
+#include "XboxSdkProbe.hpp"
+#endif
 #include "okay/Core/BuildInfo.hpp"
 #include "okay/Core/Clock.hpp"        // ClockSet: the channels the Tween Animation inspector offers
 #include <cstdio>
@@ -3068,6 +3072,9 @@ static void LoadBuildProfilesFrom(const std::string& dir) {
         std::snprintf(g_buildNameBuf, sizeof(g_buildNameBuf), "%s", live.productName.c_str());
         std::snprintf(g_buildDirBuf, sizeof(g_buildDirBuf), "%s", live.outputDir.c_str());
         g_buildPlatform = live.platform;
+#if !defined(OKAY_XBOX_UWP)
+        if (g_buildPlatform > 3) g_buildPlatform = 0;   // a profile saved by a build with the Xbox target
+#endif
         for (std::size_t i = 0; i < g_buildProfiles.size(); ++i) if (g_buildProfiles[i].name == sel) g_buildProfileSel = (int)i;
     }
 }
@@ -5000,7 +5007,7 @@ std::string ExportForPlatform(EditorState& ed, const std::string& outDir,
 
     // Web preloads a 'game/' folder; Android expects app/src/main/assets — either
     // way it's just our scene + config + assets.
-    fs::path data = dir / (target == 2 ? "assets" : "game");
+    fs::path data = dir / (target == 2 ? "assets" : target == 4 ? fs::path("package") / "Data" : fs::path("game"));
     fs::create_directories(data, ec);
     if (!SceneSerializer::SaveToFile(ed.scene(), (data / "game.okayscene").string()))
         return "Failed to write game.okayscene.";
@@ -5025,6 +5032,16 @@ std::string ExportForPlatform(EditorState& ed, const std::string& outDir,
     }
     CopyLocalizationFiles(ed, data.u8string());   // strings.okayloc and its languages' fonts
 
+#if defined(OKAY_XBOX_UWP)
+    if (target == 4) {   // ---- Xbox One Developer Mode (UWP), EXPERIMENTAL and UNVERIFIED: manifest, assets, notes beside package/Data ----
+        okay::xbox::ExportInputs xi;
+        xi.gameName = gameName; xi.company = opt.company; xi.version = opt.version; xi.bundleId = opt.bundleId; xi.iconPath = opt.iconPath;
+        const okay::xbox::ExportResult xr = okay::xbox::WritePackage(dir.string(), xi);
+        std::string msg = xr.message;
+        for (const std::string& w : xr.warnings) msg += " Warning: " + w;
+        return msg;
+    }
+#endif
     if (target == 1) {   // ---- Web (Emscripten / WebGL) ----
         std::ofstream sh((dir / "build-web.sh").string());
         sh << "#!/usr/bin/env bash\n"
@@ -18551,19 +18568,27 @@ void DrawFileDialogs(EditorState& ed) {
         // Target platform: Desktop ships a Windows .exe; Web/Android export a
         // ready-to-build project (the editor can't run Emscripten / the Android NDK
         // itself, so it lays down the data + build script + instructions).
+        #if defined(OKAY_XBOX_UWP)
+        const int kPlatCount = 5;
+        const char* plats[] = {"Desktop (Windows .exe)", "Web (WebGL / WASM)", "Android (project)", "Dedicated Server", "Xbox One (experimental, Developer Mode)"};
+#else
+        const int kPlatCount = 4;
         const char* plats[] = {"Desktop (Windows .exe)", "Web (WebGL / WASM)", "Android (project)", "Dedicated Server"};
+#endif
         {   // Segmented platform picker (clearer than a dropdown for a few options).
-            const char* platShort[] = {"Desktop", "Web", "Android", "Server"};
+            const char* platShort[] = {"Desktop", "Web", "Android", "Server", "Xbox (exp.)"};
             const char* platTip[] = {
                 "Build a runnable Windows .exe right here.",
                 "Export game data + an Emscripten build script/README;\nfinish the build with Emscripten (WebGL / WASM).",
                 "Export an Android Studio project;\nfinish the build with Android Studio + NDK.",
                 "A headless multiplayer server for Linux or Windows: the game runs with no window\n"
                 "and players connect to it. Comes with server.cfg, start scripts, a one-command\n"
-                "deploy to a Linux VPS, a Dockerfile and a README."};
+                "deploy to a Linux VPS, a Dockerfile and a README.",
+                "EXPERIMENTAL, UNVERIFIED. A UWP package folder for an Xbox One in Developer Mode.\n"
+                "Not a native console game, not for publishing, never tested on hardware."};
             ImGui::TextDisabled("Platform");
             ImGui::SameLine();
-            for (int pi = 0; pi < 4; ++pi) {
+            for (int pi = 0; pi < kPlatCount; ++pi) {
                 if (pi) ImGui::SameLine(0, 2);
                 bool on = g_buildPlatform == pi;
                 if (on) {
@@ -18571,7 +18596,7 @@ void DrawFileDialogs(EditorState& ed) {
                     ImGui::PushStyleColor(ImGuiCol_ButtonHovered, AccentCol(1.0f));
                     ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(1, 1, 1, 1));
                 }
-                if (ImGui::Button(platShort[pi], ImVec2(86, 0))) g_buildPlatform = pi;
+                if (ImGui::Button(platShort[pi], ImVec2(pi == 4 ? 100 : 86, 0))) g_buildPlatform = pi;
                 if (on) ImGui::PopStyleColor(3);
                 if (ImGui::IsItemHovered()) ImGui::SetTooltip("%s", platTip[pi]);
             }
@@ -18601,8 +18626,15 @@ void DrawFileDialogs(EditorState& ed) {
                 if (ImGui::Selectable(labels[k], s_buildSec == ids[k], 0, ImVec2(0, ImGui::GetTextLineHeight() + 12))) s_buildSec = ids[k];
                 if (ImGui::IsItemHovered()) ImGui::SetTooltip("%s", tips[k]);
             }
+        } else if (g_buildPlatform == 4) {   // Xbox (experimental): Scenes, Player (name, version, icon), Xbox
+            if (s_buildSec != 0 && s_buildSec != 1 && s_buildSec != 7) s_buildSec = 7;
+            const int ids[] = {0, 1, 7};
+            const char* labels[] = {"Scenes", "Player", "Xbox"};
+            for (int k = 0; k < 3; ++k) {
+                if (ImGui::Selectable(labels[k], s_buildSec == ids[k], 0, ImVec2(0, ImGui::GetTextLineHeight() + 12))) s_buildSec = ids[k];
+            }
         } else {
-            if (s_buildSec == 6) s_buildSec = 0;
+            if (s_buildSec == 6 || s_buildSec == 7) s_buildSec = 0;
             for (int si = 0; si < IM_ARRAYSIZE(kBuildSecs); ++si) {
                 if (ImGui::Selectable(kBuildSecs[si], s_buildSec == si, 0, ImVec2(0, ImGui::GetTextLineHeight() + 12))) s_buildSec = si;
                 if (ImGui::IsItemHovered()) ImGui::SetTooltip("%s", kBuildSecTips[si]);
@@ -18685,6 +18717,30 @@ void DrawFileDialogs(EditorState& ed) {
                 if (ImGui::IsItemHovered()) ImGui::SetTooltip("Without a list: also bundle every .okayscene in Assets (the open scene starts the game).");
             }
         }
+#if defined(OKAY_XBOX_UWP)
+        if (s_buildSec == 7) {   // ---- Xbox One Developer Mode (UWP), EXPERIMENTAL ----
+            SectionHeader("Xbox One (experimental, Developer Mode)");
+            ImGui::TextColored(ImVec4(1.0f, 0.75f, 0.3f, 1.0f), "EXPERIMENTAL and UNVERIFIED. Never built on Windows, never run on an Xbox.");
+            ImGui::TextWrapped("%s", okay::xbox::kLimitationsText);
+            ImGui::Spacing();
+            const okay::xbox::SdkReport& s_xboxSdk = okay::xbox::CachedSdkReport(ImGui::Button("Check again"));
+            ImGui::TextWrapped("%s", s_xboxSdk.message.c_str());
+            for (const okay::xbox::SdkItem& it : s_xboxSdk.items) {
+                ImGui::TextColored(it.found ? ImVec4(0.4f, 0.9f, 0.4f, 1) : (it.required ? ImVec4(1.0f, 0.45f, 0.4f, 1) : ImVec4(0.7f, 0.7f, 0.7f, 1)),
+                                   "%s  %s", it.found ? "found  " : (it.required ? "MISSING" : "missing (optional)"), it.name.c_str());
+                if (!it.detail.empty()) { ImGui::SameLine(); ImGui::TextDisabled("%s", it.detail.c_str()); }
+                if (!it.found && it.required) ImGui::TextDisabled("    %s", it.install.c_str());
+            }
+            ImGui::Spacing();
+            okay::xbox::ExportInputs xi;
+            xi.gameName = g_buildNameBuf; xi.company = g_build.company; xi.version = g_build.version; xi.bundleId = g_build.bundleId;
+            const okay::xbox::ManifestOptions xm = okay::xbox::ManifestFrom(xi);
+            ImGui::TextDisabled("Package name %s  |  version %s  |  publisher %s", xm.identityName.c_str(), okay::xbox::NormalizeVersion(xm.version).c_str(), xm.publisher.c_str());
+            std::vector<std::string> xw;
+            for (const std::string& pr : okay::xbox::ValidateManifest(xm, &xw)) ImGui::TextColored(ImVec4(1.0f, 0.45f, 0.4f, 1), "%s", pr.c_str());
+            if (!g_build.icon[0]) ImGui::TextDisabled("No project icon: tile images will be generated PLACEHOLDERS (set one under Player).");
+        }
+#endif
         if (s_buildSec == 6) {   // ---- Dedicated server ----
             SectionHeader("Dedicated Server");
             ImGui::TextDisabled("The game runs headless (no window or GPU) and players connect to it over UDP.\n"
@@ -19030,7 +19086,15 @@ void DrawFileDialogs(EditorState& ed) {
         ImGui::PushStyleColor(ImGuiCol_Button, ImVec4(0.18f, 0.55f, 0.25f, 1.0f));
         ImGui::PushStyleColor(ImGuiCol_ButtonHovered, ImVec4(0.24f, 0.70f, 0.32f, 1.0f));
         ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(1, 1, 1, 1));
+#if defined(OKAY_XBOX_UWP)
+        const bool xboxBlocked = g_buildPlatform == 4 && !okay::xbox::CachedSdkReport().available;
+        ImGui::BeginDisabled(xboxBlocked);
+#endif
         if (ImGui::Button(buildLabel, ImVec2(bw, 0))) doBuild = true;
+#if defined(OKAY_XBOX_UWP)
+        ImGui::EndDisabled();
+        if (xboxBlocked && ImGui::IsItemHovered(ImGuiHoveredFlags_AllowWhenDisabled)) ImGui::SetTooltip("Xbox export is unavailable: a required Windows tool is missing (see the Xbox page).");
+#endif
         ImGui::PopStyleColor(3);
         if (g_vsBuildRetry) { doBuild = true; doRun = g_vsBuildRetry == 2; g_vsBuildRetry = 0; }
         else if (doBuild) {
@@ -19086,7 +19150,7 @@ void DrawFileDialogs(EditorState& ed) {
           } else if (g_buildPlatform != 0) {
             builder::Options wo;
             wo.company = g_build.company; wo.version = g_build.version;
-            wo.width = g_build.width; wo.height = g_build.height; wo.bundleId = g_build.bundleId;
+            wo.width = g_build.width; wo.height = g_build.height; wo.bundleId = g_build.bundleId; wo.iconPath = g_build.icon;
             g_buildReport = builder::BuildReport{};
             g_buildStatus = builder::ExportForPlatform(ed, g_buildDirBuf, g_buildNameBuf, wo, g_buildPlatform);
             g_openBuildResult = true;

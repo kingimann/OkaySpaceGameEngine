@@ -189,3 +189,24 @@ Release 2.851.0 is live (tag `v2.851.0`, 2026-11-09); the 2.852.0 release PR (#5
 - **Words:** test build, dev channel, dev folder, Get test builds, dev-build, publish-supabase-dev, DEV.txt, NOTES-DEV.txt, four-number version, try a branch, go back to the stable version
 - **Seen as:** the owner wants to try unmerged work without waiting for a release; a "Test build of ..." message in the launcher; a version with four numbers; "(test build)" after a version
 - **Ask me like:** "start a test build of walk-vs-run for the owner", "how do I turn test builds off?"
+
+### 18.10 Xbox One export (experimental, Developer Mode, UWP)
+- **What:** An EXPERIMENTAL, OFF-by-default export that lays down a Universal Windows Platform package for an Xbox One in Developer Mode, using only the public Windows SDK. Foundation written, unverified on Windows: nothing was built, signed or run on Windows or a console. It is not a native console game (no GDK) and the app shell does not run the game yet (a test triangle and a gamepad reader).
+- **Parts:**
+  - 18.10.1 SDK check - `platform/xbox_uwp/XboxSdkCheck.hpp`, `XboxSdkProbe.hpp`, `scripts/xbox-check-sdk.ps1` - finds Visual Studio 2022 (vswhere), the UWP C++ toolset, a Windows SDK 17763 or newer with UWP headers and libraries, SignTool (MakeAppx optional); pure decision logic tested with fake folders; the editor disables Export with the reason
+  - 18.10.2 Manifest and images - `XboxManifest.hpp`, `XboxAssets.hpp`, `XboxExport.hpp` - AppxManifest.xml (x64, Windows.Universal), name, version and publisher validation, 7 required tile sizes at 100% and 200% made from the project icon with our own area-average resize, or labelled placeholders
+  - 18.10.3 Own APPX packer - `XboxAppx.hpp`, `tool/okay_appx.cpp` - unsigned `.appx` (stored ZIP, content types, block map with SHA-256 per 64 KiB block) and a reader that re-checks every hash; no MakeAppx
+  - 18.10.4 Build and sign script - `scripts/build-xbox-uwp.ps1` - builds the app and packer, packs, test certificate, SignTool; never run
+  - 18.10.5 UWP app shell - `platform/xbox_uwp/app/` - CoreApplication, suspend and resume, D3D11 swap chain triangle, Windows.Gaming.Input; never compiled
+  - 18.10.6 Editor entry - `editor/main.cpp` (`OKAY_XBOX_UWP`) - File > Build Settings > Xbox (exp.): SDK list, limits text, identity preview, Export through the existing `ExportForPlatform`
+- **Code:** `platform/xbox_uwp/`, `scripts/xbox-check-sdk.ps1`, `scripts/build-xbox-uwp.ps1`, `editor/main.cpp`, `CMakeLists.txt` (`OKAY_BUILD_XBOX_UWP`, OFF)
+- **API:** `okay::xbox::EvaluateSdk`, `okay::xbox::GenerateManifest`, `okay::xbox::WritePackage`, `okay::xbox::appx::Pack`, `okay::xbox::appx::Verify`, `okay-appx pack|verify`
+- **Editor:** File > Build Settings > Xbox (exp.)
+- **Docs:** `docs/xbox_uwp.md`, `docs/xbox_uwp_audit.md`, `docs/try_it.md` (xbox-uwp)
+- **Tests:** `xbox_uwp`
+- **Status:** Basic - pure parts tested on Linux (and the package cross-checked with `unzip` and Python); everything needing Windows, UWP, signing or hardware is unverified
+- **Open:** never built or run on Windows; the packer's Windows rules (entry order, stored files and block Size, name encoding, LfhSize) unchecked; no signing code of ours by design (rule 18; SignTool signs); the app shell does not load the engine (no offline shaders in the engine, no swap-chain present path, no UWP audio, saves or window backend); okay-ms cannot compile it yet
+- **Related:** 18.6, 37, 38
+- **Words:** Xbox, Xbox One, UWP, Developer Mode, appx, msix, package, AppxManifest, MakeAppx, SignTool, Device Portal, console
+- **Seen as:** the owner wants to try the game on an Xbox One; "Xbox (exp.)" in Build Settings; a missing-tools message
+- **Ask me like:** "make an Xbox One Developer Mode package", "why is Xbox export greyed out?"

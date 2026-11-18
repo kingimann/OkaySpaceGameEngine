@@ -175,6 +175,9 @@ struct StructDef {
     std::map<std::string, Type> tdefs;
     // Static data members and class-scope constants, by name (ISO/IEC 14882 [class.static.data]).
     std::map<std::string, StaticMem> statics;
+    // A lambda's closure class: the captured variables kept by reference. The field holds the address; a use of
+    // the name reads through it.
+    std::set<std::string> ref_caps;
     // The class template and the arguments of an instance, for deduction through Node<T>.
     std::string tmpl;
     std::vector<TArg> targs;
@@ -3195,6 +3198,12 @@ struct Parser {
         return false;
     }
     bool parse_range_for(Node* out, std::vector<Local>* locals, int stmt_line);
+    bool parse_lambda(Node* out);
+    int lambda_count = 0;
+    // While a lambda body is read once only to learn the type of its first return.
+    bool lam_probe = false;
+    bool lam_probe_seen = false;
+    Type lam_probe_type{};
 
     // ISO/IEC 14882 [expr]: the binary operators from the loosest to the tightest.
     int prec(Tok op) const {
@@ -7287,6 +7296,19 @@ bool Parser::parse_stmt_inner(Node* out, std::vector<Local>* locals, int stmt_li
         }
         if (braced_ret || !accept(TSemi)) {
             if (!braced_ret && !parse_expr(0, &value)) return false;
+            if (lam_probe && !lam_probe_seen && !braced_ret) {
+                Type seen;
+                if (static_type(value, &seen)) {
+                    seen.is_ref = false;
+                    seen.pconst = false;
+                    if (seen.is_array()) {
+                        seen = peel_array(seen);
+                        seen.pointers += 1;
+                    }
+                    lam_probe_type = seen;
+                    lam_probe_seen = true;
+                }
+            }
             if (!braced_ret && cur_ret.base != 3 && cur_ret.base != 0 && !cur_ret_ref && !convert_class(&value, cur_ret))
                 return false;
             has_value = true;
@@ -7784,6 +7806,237 @@ bool Parser::parse_range_for(Node* out, std::vector<Local>* locals, int stmt_lin
     return true;
 }
 
+// A lambda expression ([expr.prim.lambda]) becomes a class with an operator(). One that captures nothing is
+// built with a static operator() and its value is the function's address (a function pointer); one that
+// captures gets a field for each captured variable (a copy, or its address for &x), and its value is a hidden
+// local of that class whose fields are filled before the statement. The return type is the written one, or the
+// type of the first `return e;` (the body is read once to find it), or void.
+bool Parser::parse_lambda(Node* out) {
+    next();  // '['
+    struct Cap {
+        std::string name;
+        bool ref = false;
+    };
+    std::vector<Cap> caps;
+    bool default_value = false;
+    bool default_ref = false;
+    while (!is(TRBrack)) {
+        if (is(TAssign)) {
+            default_value = true;
+            next();
+        } else if (is(TAmp)) {
+            next();
+            if (is(TIdent)) {
+                caps.push_back(Cap{cur().text, true});
+                next();
+            } else {
+                default_ref = true;
+            }
+        } else if (is(TIdent) && cur().text == "this") {
+            error = "a lambda that captures this is not supported";
+            return false;
+        } else if (is(TIdent)) {
+            Cap c;
+            c.name = cur().text;
+            next();
+            if (is(TAssign)) {
+                error = "an init-capture is not supported";
+                return false;
+            }
+            caps.push_back(c);
+        } else {
+            error = "unsupported lambda capture";
+            return false;
+        }
+        if (!accept(TComma)) break;
+    }
+    if (!expect(TRBrack, "']'")) return false;
+    Declarator decl;
+    if (accept(TLParen) && !parse_param_list(&decl)) return false;
+    if (is(TIdent) && cur().text == "mutable") next();
+    Type ret;
+    ret.base = 0;
+    bool has_ret = false;
+    if (accept(TArrow)) {
+        bool imp = false;
+        bool exp = false;
+        if (!parse_type(&ret, &imp, &exp)) return false;
+        while (accept(TStar)) ++ret.pointers;
+        if (accept(TAmp)) ret.is_ref = true;
+        has_ret = true;
+    }
+    if (!is(TLBrace)) {
+        error = "expected the lambda body";
+        return false;
+    }
+    const size_t body_at = at;
+    size_t body_end = at;
+    {
+        int depth = 0;
+        for (; body_end < tokens.size() && tokens[body_end].kind != TEnd; ++body_end) {
+            if (tokens[body_end].kind == TLBrace) ++depth;
+            else if (tokens[body_end].kind == TRBrace && --depth == 0) break;
+        }
+    }
+    // The captured variables: the named ones, then (for = or &) every visible local the body mentions.
+    std::vector<Cap> list;
+    for (const Cap& c : caps)
+        if (local_visible(c.name)) list.push_back(c);
+    if (default_value || default_ref) {
+        for (size_t i = body_at; i < body_end; ++i) {
+            if (tokens[i].kind != TIdent || !local_visible(tokens[i].text)) continue;
+            if (i > 0 && (tokens[i - 1].kind == TDot || tokens[i - 1].kind == TArrow || tokens[i - 1].kind == TColonColon))
+                continue;
+            bool is_param = false;
+            for (const std::string& pn : decl.param_names)
+                if (pn == tokens[i].text) is_param = true;
+            bool known = false;
+            for (const Cap& c : list)
+                if (c.name == tokens[i].text) known = true;
+            if (!is_param && !known) list.push_back(Cap{tokens[i].text, default_ref});
+        }
+    }
+    if (cur_locals == nullptr && !list.empty()) {
+        error = "a lambda that captures needs a function around it";
+        return false;
+    }
+    StructDef def;
+    def.name = "__lam" + std::to_string(lambda_count++);
+    def.cxx = true;
+    int offset = 0;
+    int align = 1;
+    for (const Cap& c : list) {
+        Node probe = node_name(c.name);
+        Type vt;
+        if (!static_type(probe, &vt)) {
+            error = "cannot tell the type of the captured variable " + c.name;
+            return false;
+        }
+        Field field;
+        field.name = c.name;
+        field.type = vt;
+        field.type.is_ref = false;
+        field.type.pconst = false;
+        if (c.ref) {
+            if (vt.is_array()) {
+                field.type = peel_array(field.type);
+                field.type.pointers += 1;
+            } else {
+                field.type.pointers += 1;
+                def.ref_caps.insert(c.name);
+            }
+        } else if (vt.is_array()) {
+            error = "a lambda cannot capture an array by value";
+            return false;
+        }
+        const int fa = std::max(1, align_of(field.type));
+        const int fs = std::max(1, size_of(field.type));
+        offset = (offset + fa - 1) & ~(fa - 1);
+        field.offset = offset;
+        offset += fs;
+        align = std::max(align, fa);
+        def.fields.push_back(field);
+    }
+    def.align = align;
+    def.size = std::max(1, (offset + align - 1) & ~(align - 1));
+    const int sid = static_cast<int>(structs.size());
+    structs.push_back(def);
+    Method m;
+    m.name = "operator()";
+    m.ret = ret;
+    if (!has_ret) m.ret.base = 0;
+    m.params = decl.params;
+    m.param_names = decl.param_names;
+    m.defaults = decl.param_defaults;
+    m.is_static = list.empty();
+    m.has_body = true;
+    m.body_at = body_at;
+    // Does the body return a value?
+    bool returns_value = false;
+    for (size_t i = body_at; i < body_end; ++i)
+        if (tokens[i].kind == TReturn && i + 1 < tokens.size() && tokens[i + 1].kind != TSemi) returns_value = true;
+    if (!add_method(&structs[static_cast<size_t>(sid)], sid, m)) return false;
+    const size_t mi = structs[static_cast<size_t>(sid)].methods.size() - 1;
+    const size_t resume = body_end + 1;
+    if (!has_ret && returns_value) {
+        const bool saved_probe = lam_probe;
+        const bool saved_seen = lam_probe_seen;
+        const Type saved_type = lam_probe_type;
+        lam_probe = true;
+        lam_probe_seen = false;
+        lam_probe_type = Type{};
+        lam_probe_type.base = 1;
+        structs[static_cast<size_t>(sid)].methods[mi].ret = Type{};
+        structs[static_cast<size_t>(sid)].methods[mi].ret.base = 1;
+        const size_t funcs_before = funcs.size();
+        std::vector<Node> keep_pre = std::move(stmt_pre);
+        stmt_pre.clear();
+        std::vector<Temp> keep_temps = std::move(stmt_temps);
+        stmt_temps.clear();
+        const size_t probe_at = at;
+        const bool probe_ok = define_method(sid, mi);
+        at = probe_at;
+        stmt_pre = std::move(keep_pre);
+        stmt_temps = std::move(keep_temps);
+        const Type found = lam_probe_type;
+        lam_probe = saved_probe;
+        lam_probe_seen = saved_seen;
+        lam_probe_type = saved_type;
+        if (!probe_ok) return false;
+        while (funcs.size() > funcs_before) funcs.pop_back();
+        Method& mm = structs[static_cast<size_t>(sid)].methods[mi];
+        mm.ret = found;
+        mm.body_at = body_at;
+        mm.symbol = cxx_method_symbol(structs, structs[static_cast<size_t>(sid)], mm);
+    }
+    {
+        std::vector<Node> keep_pre = std::move(stmt_pre);
+        stmt_pre.clear();
+        std::vector<Temp> keep_temps = std::move(stmt_temps);
+        stmt_temps.clear();
+        const size_t keep_at = at;
+        const bool ok = define_method(sid, mi);
+        at = keep_at;
+        stmt_pre = std::move(keep_pre);
+        stmt_temps = std::move(keep_temps);
+        if (!ok) return false;
+    }
+    at = resume;
+    const std::string qname = structs[static_cast<size_t>(sid)].methods[mi].qname;
+    if (list.empty()) {
+        *out = node_name(qname);
+        return true;
+    }
+    Local hidden;
+    hidden.name = "__bt" + std::to_string(tmp_count++);
+    hidden.type.base = 3;
+    hidden.type.struct_id = sid;
+    place_local(cur_locals, hidden);
+    for (const Cap& c : list) {
+        Node target;
+        target.kind = Node::Field;
+        target.op = TDot;
+        target.text = c.name;
+        target.kids.push_back(node_name(hidden.name));
+        Node value = node_name(c.name);
+        Type vt;
+        static_type(value, &vt);
+        if (c.ref && !vt.is_array()) value = node_addr(std::move(value));
+        Node assign;
+        assign.kind = Node::Assign;
+        assign.op = TAssign;
+        assign.number = 1;
+        assign.kids.push_back(std::move(target));
+        assign.kids.push_back(std::move(value));
+        Node stmt;
+        stmt.kind = Node::ExprStmt;
+        stmt.kids.push_back(std::move(assign));
+        stmt_pre.push_back(std::move(stmt));
+    }
+    *out = node_name(hidden.name);
+    return true;
+}
+
 bool Parser::local_visible(const std::string& name) const {
     if (cur_locals == nullptr) return false;
     for (int i = static_cast<int>(cur_locals->size()) - 1; i >= 0; --i) {
@@ -7942,6 +8195,21 @@ bool Parser::static_type(const Node& node, Type* out) const {
                     *out = fn.ret;
                     return true;
                 }
+            // A call through a variable that holds a function pointer.
+            Node callee;
+            callee.kind = Node::Name;
+            callee.text = node.text;
+            Type ct;
+            if (static_type(callee, &ct) && ct.func_id >= 0 && ct.func_id < static_cast<int>(func_types.size())) {
+                *out = func_types[static_cast<size_t>(ct.func_id)].ret;
+                return true;
+            }
+        } else if (!node.kids.empty()) {
+            Type ct;
+            if (static_type(node.kids[0], &ct) && ct.func_id >= 0 && ct.func_id < static_cast<int>(func_types.size())) {
+                *out = func_types[static_cast<size_t>(ct.func_id)].ret;
+                return true;
+            }
         }
         return false;
     default:
@@ -9220,6 +9488,14 @@ bool Parser::parse_unary(Node* out) {
                 out->op = TArrow;
                 out->text = name;
                 out->kids.push_back(std::move(self));
+                if (def.ref_caps.count(name) > 0) {
+                    // A variable a lambda captured by reference: the field holds its address.
+                    Node field = std::move(*out);
+                    *out = Node{};
+                    out->kind = Node::Unary;
+                    out->op = TStar;
+                    out->kids.push_back(std::move(field));
+                }
                 return parse_postfix(out);
             }
             if (is(TLParen) && !def.methods.empty()) {
@@ -9556,6 +9832,8 @@ bool Parser::parse_unary(Node* out) {
         out->kind = Node::Unary;
         out->type = ty;
         out->kids.push_back(std::move(inner));
+    } else if (is(TLBrack)) {
+        if (!parse_lambda(out)) return false;
     } else {
         error = "expected an expression";
         return false;

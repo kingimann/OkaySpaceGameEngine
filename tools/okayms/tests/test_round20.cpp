@@ -421,6 +421,70 @@ static void test_auto_range(Tally& tally) {
              0);
 }
 
+static void test_lambdas(Tally& tally) {
+    std::printf("test_lambdas\n");
+    run_both(tally, "lam_plain",
+             "int apply(int (*f)(int), int v) { return f(v); }\n"
+             "int twice(int (*f)(int, int), int a, int b) { return f(a, b) * 2; }\n"
+             "int entry(void) {\n"
+             "  auto sq = [](int x) { return x * x; };\n"
+             "  CK(1, sq(5) == 25);\n"
+             "  CK(2, apply(sq, 4) == 16);\n"
+             "  CK(3, apply([](int x) { return x + 1; }, 4) == 5);\n"
+             "  auto d = [](double v) { return v * 0.5; }; CK(4, d(5.0) == 2.5);\n"
+             "  auto v = []() { return 42; }(); CK(5, v == 42);\n"
+             "  auto add = [](int a, int b) -> int { return a + b; }; CK(6, twice(add, 3, 4) == 14);\n"
+             "  auto none = [](int x) { x += 1; }; none(3);\n"
+             "  auto cmp = [](int a, int b) { return a < b; }; CK(7, cmp(1, 2) && !cmp(2, 1));\n"
+             "  int arr[3]; arr[0] = 1; arr[1] = 2; arr[2] = 3;\n"
+             "  auto sum = [](int* p, int n) { int t = 0; for (int i = 0; i < n; i++) t += p[i]; return t; };\n"
+             "  CK(8, sum(arr, 3) == 6);\n"
+             "  int t = 0; for (int e : arr) t += sq(e); CK(9, t == 14);\n"
+             "  auto fp = [](int x) { return x * 3; }; int (*q)(int) = fp; CK(10, q(2) == 6);\n"
+             "  return 0;\n"
+             "}\n",
+             0);
+    run_both(tally, "lam_capture",
+             "struct P { int x; int y; };\n"
+             "template <typename F> int callit(F f, int v) { return f(v); }\n"
+             "int entry(void) {\n"
+             "  int k = 10;\n"
+             "  auto addk = [k](int x) { return x + k; };\n"
+             "  CK(1, addk(5) == 15);\n"
+             "  k = 99; CK(2, addk(5) == 15);\n"
+             "  int n = 0;\n"
+             "  auto inc = [&n](int d) { n += d; };\n"
+             "  inc(3); inc(4); CK(3, n == 7);\n"
+             "  int j = 2;\n"
+             "  auto both = [=, &n](int x) { n = x + j; return j * 2; };\n"
+             "  CK(4, both(1) == 4 && n == 3);\n"
+             "  auto all = [&](int x) { n += x; j += x; return n + j; };\n"
+             "  CK(5, all(5) == 15 && n == 8 && j == 7);\n"
+             "  P p; p.x = 3; p.y = 4;\n"
+             "  auto lenp = [p](int s) { return (p.x * p.x + p.y * p.y) * s; };\n"
+             "  CK(6, lenp(2) == 50);\n"
+             "  auto bump = [&p]() { p.x += 10; };\n"
+             "  bump(); CK(7, p.x == 13);\n"
+             "  double sc = 2.5;\n"
+             "  auto scale = [sc](double v) { return v * sc; };\n"
+             "  CK(8, scale(2.0) == 5.0);\n"
+             "  CK(9, callit(addk, 1) == 11);\n"
+             "  CK(10, callit([&n](int v) { return v + n; }, 1) == 9);\n"
+             "  int total = 0;\n"
+             "  for (int i = 0; i < 4; i++) { auto addi = [i, &total]() { total += i; }; addi(); }\n"
+             "  CK(11, total == 6);\n"
+             "  int arr[3]; arr[0] = 1; arr[1] = 2; arr[2] = 3;\n"
+             "  auto first = [&arr](int i) { return arr[i]; };\n"
+             "  CK(12, first(2) == 3);\n"
+             "  auto sumall = [&]() { int t = 0; for (int i = 0; i < 3; i++) t += arr[i]; return t; };\n"
+             "  CK(13, sumall() == 6);\n"
+             "  auto isbig = [k](int v) { return v > k; };\n"
+             "  CK(14, isbig(100) && !isbig(5));\n"
+             "  return 0;\n"
+             "}\n",
+             0);
+}
+
 int main() {
     Tally tally;
     test_member_operators(tally);
@@ -430,5 +494,6 @@ int main() {
     test_operator_more(tally);
     test_struct_results(tally);
     test_auto_range(tally);
-    return tally.finish(7);
+    test_lambdas(tally);
+    return tally.finish(8);
 }

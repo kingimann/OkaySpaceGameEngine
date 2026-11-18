@@ -11,6 +11,7 @@
 #include "okay/Platform/Platform.hpp"   // okay::platform: window, GL context, events, input, timers, audio, controllers
 
 #include <Okay.hpp>
+#include "okay/Core/AssetManager.hpp"
 #include "SdlClipboard.hpp"          // OS clipboard for games (SDL directly, not okay::platform)
 #include "okay/Components/SettingsScreen.hpp"
 #include "okay/Components/CaptionOverlay.hpp"
@@ -1937,6 +1938,7 @@ int main(int argc, char** argv) {
 #ifdef OKAY_HAVE_OKAYUI
         g_uiText[0] = '\0'; g_uiBack = false; g_uiWheel = 0.0f;
 #endif
+        okay::AssetManager::Instance().Pump();   // memory budget, hot reload by file hash (both off unless switched on)
         okay::platform::Event e;
         using ET = okay::platform::EventType;
         using PK = okay::platform::Key;

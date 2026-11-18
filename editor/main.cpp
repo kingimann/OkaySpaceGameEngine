@@ -11659,6 +11659,16 @@ void DrawProject(EditorState& ed) {
     // do the same so this is an inspector, not just a bare file list. Nothing
     // selected -> just the item count and clipboard hint.
     ImGui::Separator();
+    {   // the asset cache readout (memory in use, hits, evictions); the Console command `assets` has the details and the budget
+        static okay::AssetStats s_assetStats; static double s_assetStatsT = -1e9;
+        const double nowT = ImGui::GetTime();
+        if (nowT - s_assetStatsT > 1.0) { s_assetStats = okay::AssetManager::Instance().Stats(); s_assetStatsT = nowT; }
+        ImGui::TextDisabled("Asset cache: %.1f MB%s | hits %llu, loads %llu, evicted %llu",
+                            (double)s_assetStats.TotalBytes() / (1024.0 * 1024.0),
+                            s_assetStats.budget ? (" of " + std::to_string(s_assetStats.budget / (1024 * 1024)) + " MB").c_str() : " (no budget)",
+                            (unsigned long long)s_assetStats.hits, (unsigned long long)s_assetStats.loads, (unsigned long long)s_assetStats.evictions);
+        if (ImGui::IsItemHovered()) ImGui::SetTooltip("%s\nConsole: assets | assets list | assets budget <MB> | assets hot on", s_assetStats.ToString().c_str());
+    }
     if (selected.empty()) {
         ImGui::TextDisabled("%d item%s", shown, shown == 1 ? "" : "s");
         if (!s_assetClip.empty()) {
@@ -51115,6 +51125,7 @@ int main(int argc, char** argv) {
     while (running) {
         Uint64 g_frameT0 = okay::platform::PerfCounter();
         okaycrash::ctx::NextFrame();
+        okay::AssetManager::Instance().Pump();   // memory budget eviction, hot reload by file hash, finished background loads
         {   // the crash report's picture of the editor: cheap every 8th frame, the file lookups every 300th
             static unsigned s_crashCtxTick = 0;
             if ((s_crashCtxTick & 7) == 0) UpdateCrashContext(ed, (s_crashCtxTick % 300) == 0);

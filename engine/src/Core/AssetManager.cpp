@@ -1,5 +1,6 @@
 #include "okay/Core/AssetManager.hpp"
 #include "okay/Core/AssetCacheBridge.hpp"
+#include "okay/Core/Console.hpp"
 #include "okay/Audio/AudioClip.hpp"
 #include "okay/Core/DataAsset.hpp"
 #include "okay/Graphics/Image.hpp"
@@ -9,10 +10,12 @@
 #include <algorithm>
 #include <chrono>
 #include <cstdio>
+#include <cstdlib>
 #include <filesystem>
 #include <sstream>
 
 namespace okay {
+void RegisterAssetConsole(AssetManager& m);
 using assets_detail::Entry;
 using assets_detail::State;
 
@@ -124,8 +127,39 @@ AssetManager::~AssetManager() {
     if (m_worker.joinable()) m_worker.join();
 }
 
+// Console command `assets` (stats, list, budget <MB>, trim, evict, hot on|off); see docs/asset_manager.md.
+void RegisterAssetConsole(AssetManager& m) {
+    AssetManager* mp = &m;
+    Console::Register("assets", [mp](const std::vector<std::string>& a) -> std::string {
+        const std::string sub = a.empty() ? "stats" : a[0];
+        if (sub == "stats") return mp->Stats().ToString();
+        if (sub == "list") return mp->Report().ToString();
+        if (sub == "trim") return "dropped " + std::to_string(mp->Trim()) + " assets\n" + mp->Stats().ToString();
+        if (sub == "evict") return "dropped " + std::to_string(mp->EvictUnused()) + " unused assets";
+        if (sub == "budget") {
+            if (a.size() < 2) return "budget " + (mp->Budget() ? std::to_string(mp->Budget() / (1024 * 1024)) + " MB" : std::string("unlimited"));
+            char* end = nullptr;
+            const double mb = std::strtod(a[1].c_str(), &end);
+            if (end == a[1].c_str() || mb < 0 || mb > 1e6) return "error: usage: assets budget <megabytes, 0 = unlimited>";
+            mp->SetBudget(static_cast<std::size_t>(mb * 1024.0 * 1024.0));
+            return mb > 0 ? "budget set to " + a[1] + " MB" : std::string("budget off (unlimited)");
+        }
+        if (sub == "hot") {
+            if (a.size() < 2 || (a[1] != "on" && a[1] != "off")) return "error: usage: assets hot on|off";
+            mp->SetHotReload(a[1] == "on", 0.5);
+            return "hot reload " + a[1];
+        }
+        return "error: usage: assets [stats|list|trim|evict|budget <MB>|hot on|off]";
+    }, "asset cache: memory, hits, evictions, budget", "assets [stats|list|trim|evict|budget <MB>|hot on|off]");
+}
+
 AssetManager& AssetManager::Instance() {
-    static AssetManager* inst = [] { auto* m = new AssetManager(); m->RegisterDefaultLoaders(); return m; }();
+    static AssetManager* inst = [] {
+        auto* m = new AssetManager();
+        m->RegisterDefaultLoaders();
+        RegisterAssetConsole(*m);
+        return m;
+    }();
     return *inst;   // intentionally leaked: handles may outlive static destruction
 }
 

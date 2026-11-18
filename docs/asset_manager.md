@@ -1,9 +1,9 @@
 # Asset manager
 
 `okay::AssetManager` (`okay/Core/AssetManager.hpp`) is an opt-in central registry for
-files loaded from disk. Nothing in the engine uses it yet; existing loading paths
-(`DataAsset::Cached`, `AudioClip::LoadCached`, the renderers' own loads) are unchanged.
-Wiring consumers onto it is left for a later change.
+files loaded from disk. The existing caches now report into it: `DataAsset::Cached` is registered as a
+real entry, and the audio decode cache and the picture cache (used by every renderer) are bridged
+(see "Memory budget" below). The editor and the player call `Pump()` once a frame.
 
 ```cpp
 auto& assets = okay::AssetManager::Instance();      // default loaders registered
@@ -66,3 +66,21 @@ All manager methods are safe to call from any thread; `Pump()` is meant for one
 ## Not covered
 GPU textures and other renderer resources are not tracked here; only CPU-side assets.
 `DataAsset::Cached` is unchanged: it already retries files that failed to open.
+
+## Memory budget, hash-checked hot reload and stats (added with core assets upgrade)
+- `SetBudget(bytes)`: 0 (default) means unlimited and nothing changes. With a budget the manager keeps loaded
+  assets alive after their last handle and drops the least recently used ones nobody holds when the total is over.
+  A held handle is never evicted. `Pump()` only evicts assets not used since the previous `Pump()` (so a raw pointer
+  used this frame stays valid); `Trim()` evicts at once; `EvictUnused()` drops everything only the cache holds.
+- External caches (`RegisterExternalCache`, or `RegisterAssetCache` from `Core/AssetCacheBridge.hpp`) count towards the
+  total and are trimmed by the budget: the audio decode cache (`AudioClip::TrimCache`) and the picture cache (pictures
+  read from files are dropped and read again when next drawn; pictures registered by name, `@...`, stay).
+- `DataAsset::Cached` keeps its stable `DataAsset&`, and registers it with `Adopt` as `data:<path>`. Hot reload
+  (when on) re-reads it in place; the memory budget never evicts it (scripts hold references and may have unsaved `Set`s).
+- Hot reload: a changed time or size is a hint; the file is then hashed (FNV-1a 64) and a rewrite with the same
+  bytes is not decoded again (`Stats().reloadsSkippedSameHash`). Assets loaded while hot reload was off have no
+  hash and re-decode on the first change. A content change with an unchanged time and size is not noticed.
+- `Stats()` / `AssetStats::ToString()`: hits, misses, loads, failures, evictions, reloads, bytes, per-cache sizes.
+- Console command `assets`: `assets` (stats), `assets list`, `assets trim`, `assets evict`, `assets budget <MB>`
+  (0 = unlimited), `assets hot on|off`. The editor's Project panel footer shows the one-line readout with a tooltip.
+- Tests: `asset_cache` (tests/test_asset_cache.cpp).

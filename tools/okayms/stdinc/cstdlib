@@ -1,7 +1,18 @@
-// okay-ms own standard header: declarations only (ISO/IEC 14882 [cstdlib.syn]).
+// okay-ms own standard header (ISO/IEC 14882 [cstdlib.syn]). malloc and free are declared at global scope only:
+// okay-ms lowers `new` and `delete` to calls of the global functions of those names, and <vector> and <string> use
+// them for their storage. (std::malloc and std::free are not declared: a declaration inside namespace std would be a
+// different decorated name from the C runtime's.)
 #pragma once
-namespace std {
 void *malloc(unsigned long long n);
 void free(void *p);
-int abs(int v);
+namespace std {
+inline int abs(int v) { return v < 0 ? -v : v; }
+// Declarations only (the C runtime's functions): a program that calls them compiles but is not linked by this tree
+// yet, because a function declared in namespace std gets a decorated name that is not the C runtime's.
+long strtol(const char *s, char **end, int base);
+unsigned long strtoul(const char *s, char **end, int base);
+float strtof(const char *s, char **end);
+double strtod(const char *s, char **end);
+int atoi(const char *s);
+double atof(const char *s);
 }

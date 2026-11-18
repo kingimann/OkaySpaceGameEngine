@@ -102,6 +102,8 @@ struct Field {
     // `T x{a, b};`: init_at is the first argument, and the list ends at the '}'.
     bool init_braced = false;
     bool init_zero = false;
+    // `T x = {a, b};`: init_at is the '{' itself; an array or aggregate member is filled element by element.
+    bool init_aggr = false;
 };
 
 struct Node;
@@ -2155,6 +2157,27 @@ struct Parser {
         if (!tctor.empty()) m = find_ctor_instance(sid, tctor);
         if (m != nullptr && which[1] == 'c' && !pad_defaults(m->defaults, m->params.size(), &args)) return false;
         if (m != nullptr && which[1] == 'c' && !adjust_args(m->params, &args)) return false;
+        if (m == nullptr && which[1] == 'c' && args.size() == 1 && !class_has_copy(sid)) {
+            // C x(other) with no copy constructor written or implied: the members are copied as they are ([class.copy]).
+            Type from;
+            if (static_type(args[0], &from) && from.base == 3 && from.pointers == 0 && !from.is_array() && from.struct_id == sid) {
+                Node target;
+                target.kind = Node::Unary;
+                target.op = TStar;
+                target.kids.push_back(std::move(self));
+                Node copy;
+                copy.kind = Node::Assign;
+                copy.op = TAssign;
+                copy.number = 1;
+                copy.kids.push_back(std::move(target));
+                copy.kids.push_back(std::move(args[0]));
+                Node stmt;
+                stmt.kind = Node::ExprStmt;
+                stmt.kids.push_back(std::move(copy));
+                *out = std::move(stmt);
+                return true;
+            }
+        }
         if (m == nullptr) {
             error = std::string("no matching ") + (which[1] == 'c' ? "constructor" : "destructor") + " in " +
                     structs[static_cast<size_t>(sid)].name;
@@ -2196,6 +2219,77 @@ struct Parser {
         a.op = TAmp;
         a.kids.push_back(std::move(inner));
         return a;
+    }
+    // Fills `target` (an lvalue of `type`) from a braced list, element by element; what the list does not name is
+    // zero ([dcl.init.aggr]). `item` is null for "nothing named".
+    bool lower_aggr(const Type& type, const Node& target, const Node* item, std::vector<Node>* out) {
+        const bool list = item != nullptr && item->kind == Node::Block && item->text == "init";
+        if (type.is_array()) {
+            if (item != nullptr && !list) {
+                error = "an array member needs a braced initializer";
+                return false;
+            }
+            const Type elem = peel_array(type);
+            for (int i = 0; i < type.array_len; ++i) {
+                Node idx;
+                idx.kind = Node::IntLit;
+                idx.type.base = 1;
+                idx.number = static_cast<uint64_t>(i);
+                Node at_i;
+                at_i.kind = Node::Index;
+                at_i.kids.push_back(target);
+                at_i.kids.push_back(std::move(idx));
+                const Node* kid = list && static_cast<size_t>(i) < item->kids.size() ? &item->kids[static_cast<size_t>(i)] : nullptr;
+                if (!lower_aggr(elem, at_i, kid, out)) return false;
+            }
+            return true;
+        }
+        if (type.base == 3 && type.pointers == 0 && !type.is_ref && type.struct_id >= 0 && (item == nullptr || list)) {
+            const StructDef& sd = structs[static_cast<size_t>(type.struct_id)];
+            size_t k = 0;
+            for (const Field& f : sd.fields) {
+                if (f.name == "__vptr") continue;
+                Node fn;
+                fn.kind = Node::Field;
+                fn.op = TDot;
+                fn.text = f.name;
+                fn.kids.push_back(target);
+                const Node* kid = list && k < item->kids.size() ? &item->kids[k] : nullptr;
+                ++k;
+                if (!lower_aggr(f.type, fn, kid, out)) return false;
+            }
+            return true;
+        }
+        Node value;
+        if (list) {
+            if (item->kids.empty()) {
+                value.kind = Node::IntLit;
+                value.type.base = 1;
+            } else {
+                value = item->kids[0];
+            }
+        } else if (item != nullptr) {
+            value = *item;
+        } else {
+            value.kind = Node::IntLit;
+            value.type.base = 1;
+        }
+        Node assign;
+        assign.kind = Node::Assign;
+        assign.op = TAssign;
+        assign.kids.push_back(target);
+        assign.kids.push_back(std::move(value));
+        Node stmt;
+        stmt.kind = Node::ExprStmt;
+        stmt.kids.push_back(std::move(assign));
+        out->push_back(std::move(stmt));
+        return true;
+    }
+    bool field_is_aggr(const Field& field) const {
+        if (!(field.init_aggr || field.init_braced || field.init_zero)) return false;
+        if (field.type.is_array()) return !obj_needs_ctor(peel_array(field.type));
+        return field.type.base == 3 && field.type.pointers == 0 && !field.type.is_ref && field.type.struct_id >= 0 &&
+               !obj_needs_ctor(field.type);
     }
     Node node_this_field(const std::string& field) const {
         Node f;
@@ -2763,6 +2857,48 @@ struct Parser {
         }
         return true;
     }
+    // Brace elision ([dcl.init.aggr]): in `std::array<int, 4> a = {1, 2, 3, 4};` the list names the elements of the
+    // array inside the struct, not the struct's one member. Returns the list written with every level braced.
+    bool is_aggregate_type(const Type& t) const {
+        if (t.is_ref || t.pointers > 0) return false;
+        if (t.is_array()) return true;
+        return t.base == 3 && t.struct_id >= 0 && !structs[static_cast<size_t>(t.struct_id)].is_union &&
+               !class_needs_ctor(structs[static_cast<size_t>(t.struct_id)]);
+    }
+    Node fill_aggregate(const Type& t, const std::vector<Node>& items, size_t* pos) const {
+        Node list;
+        list.kind = Node::Block;
+        list.text = "init";
+        list.number = 7;  // already regular
+        std::vector<Type> parts;
+        if (t.is_array()) {
+            const Type elem = peel_array(t);
+            for (int i = 0; i < t.array_len; ++i) parts.push_back(elem);
+        } else {
+            for (const Field& f : structs[static_cast<size_t>(t.struct_id)].fields)
+                if (f.name != "__vptr") parts.push_back(f.type);
+        }
+        for (const Type& part : parts) {
+            if (*pos >= items.size()) break;
+            const Node& item = items[*pos];
+            const bool braced = item.kind == Node::Block && item.text == "init";
+            if (braced) {
+                ++*pos;
+                list.kids.push_back(is_aggregate_type(part) ? elide_braces(part, item) : item);
+            } else if (is_aggregate_type(part) && item.kind != Node::StringLit) {
+                list.kids.push_back(fill_aggregate(part, items, pos));
+            } else {
+                list.kids.push_back(item);
+                ++*pos;
+            }
+        }
+        return list;
+    }
+    Node elide_braces(const Type& t, const Node& list) const {
+        if (list.number == 7 || !is_aggregate_type(t)) return list;
+        size_t pos = 0;
+        return fill_aggregate(t, list.kids, &pos);
+    }
     bool parse_init(Node* out);
     bool flatten_init(const Type& type, const Node& node, std::vector<uint8_t>* bytes, int at);
 
@@ -2816,7 +2952,7 @@ struct Parser {
                 continue;
             }
             while (accept(TStar)) ++pt.pointers;
-            if (accept(TAmp)) pt.is_ref = true;
+            if (accept(TAmp) || accept(TAndAnd)) pt.is_ref = true;
             if (is(TEllipsis) && !type_name.empty()) {
                 // Rest... rest: a function parameter pack ([temp.variadic]).
                 next();
@@ -2898,7 +3034,7 @@ struct Parser {
             return true;
         }
         while (accept(TStar)) ++out->type.pointers;
-        if (accept(TAmp)) out->type.is_ref = true;
+        if (accept(TAmp) || accept(TAndAnd)) out->type.is_ref = true;
         if (!is(TIdent)) {
             error = "expected a name";
             return false;
@@ -2977,7 +3113,9 @@ struct Parser {
             tokens[i + 1].kind == TRParen)
             return true;  // sizeof(S)
         return i + 1 < tokens.size() &&
-               (tokens[i + 1].kind == TIdent || tokens[i + 1].kind == TStar || tokens[i + 1].kind == TAmp);
+               (tokens[i + 1].kind == TIdent || tokens[i + 1].kind == TStar || tokens[i + 1].kind == TAmp ||
+                ((tokens[i + 1].kind == TComma || tokens[i + 1].kind == TGt) && i >= 1 &&
+                 (tokens[i - 1].kind == TLt || tokens[i - 1].kind == TComma)));  // a template argument: Box<P, 3>
     }
     bool is_class_name() const {
         if (!is(TIdent) || typedefs.find(cur().text) != typedefs.end()) return false;
@@ -3468,6 +3606,7 @@ struct Parser {
     const Method* find_ctor(int sid, const std::vector<Node>& args) const {
         const StructDef& def = structs[static_cast<size_t>(sid)];
         const Method* best = nullptr;
+        int best_score = -1;
         for (const Method& m : def.methods) {
             if (m.name != "<ctor>" || m.params.size() != args.size()) continue;
             if (args.size() == 1) {
@@ -3482,7 +3621,19 @@ struct Parser {
                 }
                 if (is_obj != is_copy_param(m, sid)) continue;
             }
-            best = &m;
+            // Of several constructors of one arity the best match by the ranks of [over.match] wins; a tie, or no
+            // viable one, goes to the one declared last (the order used before).
+            const int score = args.empty() ? 0 : call_score(m.params, args);
+            if (best == nullptr || best_score < 0 || (score >= 0 && score <= best_score)) {
+                best = &m;
+                best_score = score;
+            }
+        }
+        if (best == nullptr && args.size() == 1) {
+            // An object of the class itself and no copy constructor: not a call of some other one-argument constructor.
+            Type at;
+            if (static_type(args[0], &at) && at.base == 3 && at.pointers == 0 && !at.is_array() && at.struct_id == sid)
+                return nullptr;
         }
         if (best == nullptr) return find_method(sid, "<ctor>", args.size());
         return best;
@@ -3599,7 +3750,7 @@ struct Parser {
                     same = param_sig(def->methods[i].params) == new_sig && def->methods[i].is_const == m.is_const;
                 }
                 if (same) found = i;
-                else if (m.name != "<ctor>") collide = true;
+                else collide = true;
             }
         if (found < def->methods.size() && def->methods[found].is_virtual) {
             m.is_virtual = true;
@@ -3642,8 +3793,22 @@ struct Parser {
         const bool braced = is(TLBrace);
         if (!braced && !accept(TAssign)) return true;
         if (is(TLBrace) && !braced) {
-            error = "an aggregate default member initializer is not supported";
-            return false;
+            // `T x = {...};` ([dcl.init.list]): the list is read again where it is used.
+            field->init_at = static_cast<int>(at);
+            field->init_aggr = true;
+            int brace_depth = 0;
+            while (!is(TEnd)) {
+                const Tok k = cur().kind;
+                if (k == TLParen || k == TLBrack || k == TLBrace) ++brace_depth;
+                else if (k == TRParen || k == TRBrack || k == TRBrace) {
+                    if (--brace_depth == 0) {
+                        next();
+                        break;
+                    }
+                }
+                next();
+            }
+            return true;
         }
         if (braced) {
             next();
@@ -4404,6 +4569,22 @@ struct Parser {
                 Init* init = nullptr;
                 for (Init& candidate : inits)
                     if (candidate.name == field.name) init = &candidate;
+                if (init == nullptr && field_is_aggr(field)) {
+                    // `float m[16] = {...};` or `P p = {1, 2};`: element by element, then the rest is zero.
+                    Node list;
+                    const Node* item = nullptr;
+                    if (field.init_at >= 0) {
+                        const size_t saved_at = at;
+                        at = static_cast<size_t>(field.init_at) - (field.init_aggr ? 0 : 1);
+                        const bool ok = parse_init(&list);
+                        at = saved_at;
+                        if (!ok) return false;
+                        if (list.kind == Node::Block && list.text == "init") list = elide_braces(field.type, list);
+                        item = &list;
+                    }
+                    if (!lower_aggr(field.type, node_this_field(field.name), item, &pre)) return false;
+                    continue;
+                }
                 if (obj_needs_ctor(field.type)) {
                     std::vector<Node> args;
                     if (init != nullptr) args = std::move(init->args);
@@ -4411,12 +4592,13 @@ struct Parser {
                         // A default member initializer of a class member: `T x{a, b};` or `T x = e;`.
                         const size_t saved_at = at;
                         at = static_cast<size_t>(field.init_at);
+                        if (field.init_aggr) ++at;  // `T x = {a, b};`: past the '{'
                         bool ok = true;
                         do {
                             Node arg;
                             ok = parse_expr(1, &arg);
                             if (ok) args.push_back(std::move(arg));
-                        } while (ok && field.init_braced && accept(TComma));
+                        } while (ok && (field.init_braced || field.init_aggr) && accept(TComma));
                         at = saved_at;
                         if (!ok) return false;
                     }
@@ -4470,6 +4652,9 @@ struct Parser {
                     stmt.kind = Node::ExprStmt;
                     stmt.kids.push_back(std::move(assign));
                     pre.push_back(std::move(stmt));
+                } else if (init != nullptr && init->args.empty()) {
+                    // `m()`: value-initialisation, zero for a scalar or an aggregate ([dcl.init]).
+                    if (!lower_aggr(field.type, node_this_field(field.name), nullptr, &pre)) return false;
                 } else if (init != nullptr) {
                     if (init->args.size() != 1) {
                         error = "member " + field.name + " takes one initializer";
@@ -5171,7 +5356,24 @@ struct Parser {
                 next();
             } else {
                 tp.is_type = false;
-                while (!is(TIdent) && !is(TComma) && !is(TGt) && !is(TEnd)) next();
+                // The parameter's type (int, unsigned, size_t, std::size_t, bool ...) is skipped; its name is the last
+                // identifier before ',', '=' or '>'.
+                size_t k = at;
+                size_t last_ident = 0;
+                bool seen_ident = false;
+                while (k < tokens.size() && tokens[k].kind != TComma && tokens[k].kind != TGt && tokens[k].kind != TAssign &&
+                       tokens[k].kind != TEnd) {
+                    if (tokens[k].kind == TIdent) {
+                        last_ident = k;
+                        seen_ident = true;
+                    }
+                    ++k;
+                }
+                if (seen_ident && tokens[last_ident].text != "typename") {
+                    while (at < last_ident) next();
+                } else {
+                    while (!is(TIdent) && !is(TComma) && !is(TGt) && !is(TEnd)) next();
+                }
             }
             if (tp.is_type && accept(TEllipsis)) tp.is_pack = true;
             if (!is(TIdent)) {
@@ -6735,7 +6937,14 @@ struct Parser {
                                         after == TUnsigned || after == TSigned || after == TLong || after == TShort ||
                                         after == TStruct || after == TUnion || after == TEnum || after == TFloat ||
                                         after == TDouble || after == TConst;
-                if (!type_start) {
+                // `Ease e`, `Vec3 v`, `const Name& n`: a type name and a parameter name are a parameter list.
+                const bool named_type_start =
+                    after == TIdent && at + 3 < tokens.size() &&
+                    (tokens[at + 3].kind == TIdent ||
+                     ((tokens[at + 3].kind == TAmp || tokens[at + 3].kind == TStar) && at + 4 < tokens.size() &&
+                      tokens[at + 4].kind == TIdent &&
+                      (typedefs.count(tokens[at + 2].text) > 0 || class_name_text(tokens[at + 2].text))));
+                if (!type_start && !named_type_start) {
                     // C g(args); a global object, the arguments go to a constructor.
                     decl.name = cur().text;
                     decl.type = type;
@@ -6881,10 +7090,14 @@ bool Parser::parse_init(Node* out) {
     return parse_expr(1, out);
 }
 
-bool Parser::flatten_init(const Type& type, const Node& node, std::vector<uint8_t>* bytes, int at) {
+bool Parser::flatten_init(const Type& type, const Node& node_given, std::vector<uint8_t>* bytes, int at) {
     auto ensure = [&](int n) {
         if (static_cast<int>(bytes->size()) < n) bytes->resize(static_cast<size_t>(n), 0);
     };
+    const Node regular = node_given.kind == Node::Block && node_given.text == "init" && type.array_len != 0
+                             ? elide_braces(type, node_given)
+                             : node_given;
+    const Node& node = regular;
     if (node.kind == Node::Block && node.text == "init") {
         if (type.array_len >= 0) {
             const Type elem = peel_array(type);
@@ -6970,7 +7183,14 @@ bool Parser::parse_block(Node* out, std::vector<Local>* locals) {
 bool Parser::parse_stmt(Node* out, std::vector<Local>* locals) {
     std::vector<Node> outer = std::move(stmt_pre);
     stmt_pre.clear();
-    const bool loop = is(TWhile) || is(TFor) || is(TDo);
+    bool loop = is(TWhile) || is(TFor) || is(TDo);
+    if (is(TFor) && at + 1 < tokens.size() && tokens[at + 1].kind == TLParen) {
+        // A range for evaluates its range once, before the loop: what that needs can go before the statement.
+        const size_t save = at;
+        at += 2;
+        if (range_for_ahead()) loop = false;
+        at = save;
+    }
     const bool ok = parse_stmt_core(out, locals);
     std::vector<Node> mine = std::move(stmt_pre);
     stmt_pre = std::move(outer);
@@ -7513,6 +7733,8 @@ bool Parser::parse_local_decl_one(const Type& type, bool is_typedef, bool is_sta
     Declarator decl;
     std::vector<Node> ctor_args;
     bool have_ctor_args = false;
+    Node paren_init;
+    bool have_paren_init = false;
     if (!is_typedef && obj_needs_ctor(type) && is(TIdent) && at + 1 < tokens.size() &&
         (tokens[at + 1].kind == TLParen || tokens[at + 1].kind == TLBrace)) {
         // C x(args); and C x{args}; the arguments go to a constructor.
@@ -7534,6 +7756,24 @@ bool Parser::parse_local_decl_one(const Type& type, bool is_typedef, bool is_sta
             return false;
         }
         have_ctor_args = true;
+    } else if (!is_typedef && !obj_needs_ctor(type) && type.pointers == 0 && !type.is_array() && is(TIdent) &&
+               at + 2 < tokens.size() && tokens[at + 1].kind == TLParen && tokens[at + 2].kind != TRParen &&
+               [&]() {
+                   // `int x(5);` ([dcl.init]): direct-initialisation of a scalar or an aggregate, when what is in the
+                   // parentheses is an expression and not a parameter list.
+                   const size_t save = at;
+                   at += 2;
+                   const bool is_type = is_decl_start();
+                   at = save;
+                   return !is_type;
+               }()) {
+        decl.name = cur().text;
+        decl.type = type;
+        next();
+        next();
+        if (!parse_expr(1, &paren_init)) return false;
+        if (!expect(TRParen, "')'")) return false;
+        have_paren_init = true;
     } else if (!parse_declarator(type, &decl)) {
         return false;
     }
@@ -7555,17 +7795,20 @@ bool Parser::parse_local_decl_one(const Type& type, bool is_typedef, bool is_sta
     Node init;
     bool has_init = false;
     const bool preset = has_preset && (is(TAssign) || is(TColon));
-    if (preset || accept(TAssign) || (is(TLBrace) && !have_ctor_args)) {
+    if (preset || have_paren_init || accept(TAssign) || (is(TLBrace) && !have_ctor_args)) {
         if (preset) {
             init = std::move(preset_init);
             at = preset_end;
             has_preset = false;
+        } else if (have_paren_init) {
+            init = std::move(paren_init);
         } else if (!parse_init(&init)) {
             return false;
         }
         has_init = true;
         if (!decl.type.is_array() && decl.type.base != 3 && decl.type.base != 0 && !convert_class(&init, decl.type))
             return false;
+        if (init.kind == Node::Block && init.text == "init" && decl.type.array_len != 0) init = elide_braces(decl.type, init);
         if (!fix_unsized(&decl.type, init)) return false;
         local.type = decl.type;
         if (!is_static && wants_copy(decl.type, init)) {
@@ -7573,6 +7816,15 @@ bool Parser::parse_local_decl_one(const Type& type, bool is_typedef, bool is_sta
             ctor_args.push_back(std::move(init));
             have_ctor_args = true;
             has_init = false;
+        }        else if (!is_static && !decl.type.is_array() && obj_needs_ctor(decl.type) && init.kind != Node::Block) {
+            // C x = value; with a value that is not an object of a class (std::string s = "abc"; V v = 5;): a converting
+            // constructor makes x from it ([dcl.init], copy-initialisation, with the copy elided).
+            Type from;
+            if (static_type(init, &from) && !(from.base == 3 && from.pointers == 0 && !from.is_array())) {
+                ctor_args.push_back(std::move(init));
+                have_ctor_args = true;
+                has_init = false;
+            }
         }
     }
     if (is_static) {
@@ -7583,7 +7835,10 @@ bool Parser::parse_local_decl_one(const Type& type, bool is_typedef, bool is_sta
         global.bss = true;
         if (has_init) {
             global.bss = false;
-            if (!flatten_init(decl.type, init, &global.init_bytes, 0)) return false;
+            init_relocs = &global.addr_relocs;  // a static array of string pointers: the addresses are relocations
+            const bool flat_ok = flatten_init(decl.type, init, &global.init_bytes, 0);
+            init_relocs = nullptr;
+            if (!flat_ok) return false;
             has_init = false;
         }
         local.symbol = global.name;
@@ -7767,16 +8022,89 @@ bool Parser::parse_range_for(Node* out, std::vector<Local>* locals, int stmt_lin
     }
     at = colon + 1;
     Node range;
-    if (!parse_expr(0, &range)) return false;
-    if (!expect(TRParen, "')'")) return false;
-    const size_t after_range = at;
+    Node list_init;
+    bool braced_range = false;
     Type range_type;
-    if (!static_type(range, &range_type) || !range_type.is_array() || range_type.array_len < 0) {
+    if (is(TLBrace)) {
+        // for (T x : {a, b, c}): the list is stored in a hidden array that the loop runs over ([stmt.ranged]).
+        if (!parse_init(&list_init)) return false;
+        if (!expect(TRParen, "')'")) return false;
+        if (list_init.kids.empty()) {
+            error = "a range for over an empty list is not supported";
+            return false;
+        }
+        const size_t after_list = at;
+        at = decl_start;
+        while (accept(TConst)) {}
+        Type elem_type;
+        if (is(TIdent) && cur().text == "auto") {
+            if (!static_type(list_init.kids[0], &elem_type)) {
+                error = "cannot work out the type of the range elements";
+                return false;
+            }
+            elem_type.is_ref = false;
+            if (elem_type.is_array()) {
+                elem_type = peel_array(elem_type);
+                elem_type.pointers += 1;
+            }
+        } else {
+            bool imp = false;
+            bool exp = false;
+            if (!parse_type(&elem_type, &imp, &exp)) return false;
+            while (accept(TStar)) ++elem_type.pointers;
+        }
+        elem_type.is_ref = false;
+        at = after_list;
+        Local array_local;
+        array_local.name = "__rl" + std::to_string(range_count++);
+        array_local.type = elem_type;
+        array_local.type.array_len = static_cast<int>(list_init.kids.size());
+        place_local(locals, array_local);
+        range = node_name(array_local.name);
+        range_type = array_local.type;
+        braced_range = true;
+    } else if (!parse_expr(0, &range)) {
+        return false;
+    } else if (!expect(TRParen, "')'")) {
+        return false;
+    }
+    const size_t after_range = at;
+    if (!braced_range && !static_type(range, &range_type)) {
         error = "a range for needs an array of known length";
         return false;
     }
-    const int count = range_type.array_len;
-    Type elem = peel_array(range_type);
+    // A class with begin() and end() that return pointers: the pointer runs from one to the other ([stmt.ranged]).
+    bool class_range = false;
+    Type iter_type;
+    Node begin_call, end_call;
+    if (range_type.base == 3 && range_type.pointers == 0 && !range_type.is_array() && range_type.struct_id >= 0 &&
+        (range.kind == Node::Name || range.kind == Node::Field || range.kind == Node::Index ||
+         (range.kind == Node::Unary && range.op == TStar))) {
+        const Method* mb = find_method(range_type.struct_id, "begin", 0);
+        const Method* me = find_method(range_type.struct_id, "end", 0);
+        if (mb == nullptr || me == nullptr || mb->ret.pointers != 1 || me->ret.pointers != 1) {
+            error = "a range for over a class needs begin() and end() that return pointers";
+            return false;
+        }
+        class_range = true;
+        iter_type = mb->ret;
+        for (int w = 0; w < 2; ++w) {
+            const Method* m = w == 0 ? mb : me;
+            Node call;
+            call.kind = Node::Call;
+            call.text = m->qname;
+            call.number = 1;
+            call.type = m->ret;
+            call.kids.push_back(node_addr(range));
+            (w == 0 ? begin_call : end_call) = std::move(call);
+        }
+    } else if (!range_type.is_array() || range_type.array_len < 0) {
+        error = "a range for needs an array of known length";
+        return false;
+    }
+    const int count = class_range ? 0 : range_type.array_len;
+    Type elem = class_range ? iter_type : peel_array(range_type);
+    if (class_range) elem.pointers -= 1;
     elem.is_const = false;
     at = decl_start;
     bool is_const = false;
@@ -7797,11 +8125,24 @@ bool Parser::parse_range_for(Node* out, std::vector<Local>* locals, int stmt_lin
     Local index;
     index.name = "__ri" + std::to_string(range_count++);
     index.type.base = 1;
+    Local range_end;
+    range_end.name = "__re" + std::to_string(range_count++);
+    if (class_range) {
+        index.type = iter_type;
+        range_end.type = iter_type;
+    }
     place_local(locals, index);
+    if (class_range) place_local(locals, range_end);
     Node element;
-    element.kind = Node::Index;
-    element.kids.push_back(range);
-    element.kids.push_back(node_name(index.name));
+    if (class_range) {
+        element.kind = Node::Unary;
+        element.op = TStar;
+        element.kids.push_back(node_name(index.name));
+    } else {
+        element.kind = Node::Index;
+        element.kids.push_back(range);
+        element.kids.push_back(node_name(index.name));
+    }
     has_preset = true;
     preset_init = std::move(element);
     preset_end = after_range;
@@ -7825,7 +8166,9 @@ bool Parser::parse_range_for(Node* out, std::vector<Local>* locals, int stmt_lin
     init.op = TAssign;
     init.number = 1;
     init.kids.push_back(node_name(index.name));
-    {
+    if (class_range) {
+        init.kids.push_back(std::move(begin_call));
+    } else {
         Node zero;
         zero.kind = Node::IntLit;
         zero.type.base = 1;
@@ -7833,9 +8176,11 @@ bool Parser::parse_range_for(Node* out, std::vector<Local>* locals, int stmt_lin
     }
     Node cond;
     cond.kind = Node::Binary;
-    cond.op = TLt;
+    cond.op = class_range ? TNe : TLt;
     cond.kids.push_back(node_name(index.name));
-    {
+    if (class_range) {
+        cond.kids.push_back(node_name(range_end.name));
+    } else {
         Node limit;
         limit.kind = Node::IntLit;
         limit.number = static_cast<uint64_t>(count);
@@ -7867,6 +8212,30 @@ bool Parser::parse_range_for(Node* out, std::vector<Local>* locals, int stmt_lin
     *out = Node{};
     out->kind = Node::Block;
     out->text = "scope";
+    if (braced_range) {
+        Node store;
+        store.kind = Node::Assign;
+        store.number = 1;
+        store.kids.push_back(range);
+        store.kids.push_back(std::move(list_init));
+        Node store_stmt;
+        store_stmt.kind = Node::ExprStmt;
+        store_stmt.kids.push_back(std::move(store));
+        out->kids.push_back(std::move(store_stmt));
+    }
+    if (class_range) {
+        // The end pointer is taken once, before the loop.
+        Node assign;
+        assign.kind = Node::Assign;
+        assign.op = TAssign;
+        assign.number = 1;
+        assign.kids.push_back(node_name(range_end.name));
+        assign.kids.push_back(std::move(end_call));
+        Node stmt;
+        stmt.kind = Node::ExprStmt;
+        stmt.kids.push_back(std::move(assign));
+        out->kids.push_back(std::move(stmt));
+    }
     out->kids.push_back(std::move(loop));
     return true;
 }
@@ -7972,7 +8341,7 @@ bool Parser::parse_lambda(Node* out) {
         bool exp = false;
         if (!parse_type(&ret, &imp, &exp)) return false;
         while (accept(TStar)) ++ret.pointers;
-        if (accept(TAmp)) ret.is_ref = true;
+        if (accept(TAmp) || accept(TAndAnd)) ret.is_ref = true;
         has_ret = true;
     }
     if (!is(TLBrace)) {
@@ -9122,11 +9491,29 @@ bool Parser::ensure_vector_helpers(int sid) {
 // [expr.new].
 bool Parser::parse_new(Node* out) {
     next();
+    // new (place) T(args) ([expr.new]): construct in storage that is already there; nothing is allocated.
+    bool has_place = false;
+    Node place;
+    if (is(TLParen)) {
+        const size_t save = at;
+        next();
+        if (!is_decl_start()) {
+            if (!parse_expr(1, &place)) return false;
+            if (!expect(TRParen, "')'")) return false;
+            has_place = true;
+        } else {
+            at = save;
+        }
+    }
     Type ty;
     bool imp = false;
     bool exp = false;
     if (!parse_type(&ty, &imp, &exp)) return false;
     while (accept(TStar)) ++ty.pointers;
+    if (has_place && is(TLBrack)) {
+        error = "placement new of an array is not supported";
+        return false;
+    }
     if (accept(TLBrack)) {
         // new T[n]: n objects. A class with a constructor or destructor goes through __vnew_C
         // (a count in front of the block when destructors must run per element).
@@ -9172,8 +9559,15 @@ bool Parser::parse_new(Node* out) {
         if (!parse_call_args(&args)) return false;
     }
     const bool obj = ty.base == 3 && ty.pointers == 0 && ty.struct_id >= 0;
-    const bool ctor = obj && class_needs_ctor(structs[static_cast<size_t>(ty.struct_id)]);
-    if (!args.empty() && !ctor) {
+    bool plain_copy = false;  // new C(other) where C has constructors but no copy constructor: the bytes are copied
+    if (obj && args.size() == 1 && class_needs_ctor(structs[static_cast<size_t>(ty.struct_id)]) &&
+        !class_has_copy(ty.struct_id)) {
+        Type from;
+        plain_copy = static_type(args[0], &from) && from.base == 3 && from.pointers == 0 && !from.is_array() &&
+                     from.struct_id == ty.struct_id;
+    }
+    const bool ctor = obj && class_needs_ctor(structs[static_cast<size_t>(ty.struct_id)]) && !plain_copy;
+    if (!args.empty() && !ctor && !(args.size() == 1 && (has_place || plain_copy))) {
         error = "new with arguments needs a class with a constructor";
         return false;
     }
@@ -9189,7 +9583,38 @@ bool Parser::parse_new(Node* out) {
     cast.kind = Node::Unary;
     cast.type = ty;
     cast.type.pointers += 1;
-    cast.kids.push_back(std::move(alloc));
+    cast.kids.push_back(has_place ? std::move(place) : std::move(alloc));
+    if (!ctor && !args.empty()) {
+        // new (p) int(v): the value is stored in a statement before this one, and the pointer is the result.
+        Local hidden;
+        hidden.name = "__pn" + std::to_string(tmp_count++);
+        hidden.type = cast.type;
+        place_local(cur_locals, hidden);
+        Node set_ptr;
+        set_ptr.kind = Node::Assign;
+        set_ptr.op = TAssign;
+        set_ptr.kids.push_back(node_name(hidden.name));
+        set_ptr.kids.push_back(std::move(cast));
+        Node target;
+        target.kind = Node::Unary;
+        target.op = TStar;
+        target.kids.push_back(node_name(hidden.name));
+        Node store;
+        store.kind = Node::Assign;
+        store.op = TAssign;
+        store.kids.push_back(std::move(target));
+        store.kids.push_back(std::move(args[0]));
+        Node set_stmt;
+        set_stmt.kind = Node::ExprStmt;
+        set_stmt.kids.push_back(std::move(set_ptr));
+        Node store_stmt;
+        store_stmt.kind = Node::ExprStmt;
+        store_stmt.kids.push_back(std::move(store));
+        stmt_pre.push_back(std::move(set_stmt));
+        stmt_pre.push_back(std::move(store_stmt));
+        *out = node_name(hidden.name);
+        return true;
+    }
     if (!ctor) {
         *out = std::move(cast);
         return true;
@@ -9564,6 +9989,17 @@ bool Parser::parse_unary(Node* out) {
             const std::string suffix = name.substr(last + 2);
             if (namespaces.count(name.substr(0, first)) > 0 && func_templates.count(suffix) > 0) name = suffix;
         }
+        if (name.find("::") != std::string::npos && (is(TLParen) || is(TLBrace))) {
+            // std::string("abc"): a class of a namespace is registered by its bare name, as in a declaration.
+            const size_t first = name.find("::");
+            const std::string suffix = name.substr(name.rfind("::") + 2);
+            bool is_function = false;
+            for (const FuncDecl& fd : funcs)
+                if (fd.name == name) is_function = true;
+            if (!is_function && namespaces.count(name.substr(0, first)) > 0 && scope_class(name.substr(0, first)) < 0 &&
+                (class_name_text(suffix) || (typedefs.count(suffix) > 0 && typedefs[suffix].base == 3)))
+                name = suffix;
+        }
         const size_t colons = name.find("::");
         if (building != nullptr && colons == std::string::npos && !is(TLParen) && !local_visible(name)) {
             const auto found = building->statics.find(name);
@@ -9635,7 +10071,7 @@ bool Parser::parse_unary(Node* out) {
             if (btd != typedefs.end()) {
                 if (btd->second.base == 3 && btd->second.pointers == 0 && btd->second.struct_id >= 0)
                     bsid = btd->second.struct_id;
-            } else if (class_name_text(name)) {
+            } else if (class_name_text(name) || find_struct(name) >= 0) {
                 bsid = find_struct(name);
             }
             bool named_function = false;
@@ -9654,7 +10090,7 @@ bool Parser::parse_unary(Node* out) {
             if (td != typedefs.end()) {
                 if (td->second.base == 3 && td->second.pointers == 0 && td->second.struct_id >= 0)
                     csid = td->second.struct_id;
-            } else if (class_name_text(name)) {
+            } else if (class_name_text(name) || find_struct(name) >= 0) {
                 csid = find_struct(name);
             }
             bool is_function = false;
@@ -9671,6 +10107,25 @@ bool Parser::parse_unary(Node* out) {
                 hidden.name = "__bt" + std::to_string(tmp_count++);
                 hidden.type = ct;
                 place_local(cur_locals, hidden);
+                if (!class_needs_ctor(structs[static_cast<size_t>(csid)]) && cargs.size() <= 1) {
+                    // P() and P(other) for a class without constructors: zero, or a copy ([dcl.init]).
+                    if (cargs.empty()) {
+                        if (!lower_aggr(ct, node_name(hidden.name), nullptr, &stmt_pre)) return false;
+                    } else {
+                        Node copy;
+                        copy.kind = Node::Assign;
+                        copy.op = TAssign;
+                        copy.number = 1;
+                        copy.kids.push_back(node_name(hidden.name));
+                        copy.kids.push_back(std::move(cargs[0]));
+                        Node copy_stmt;
+                        copy_stmt.kind = Node::ExprStmt;
+                        copy_stmt.kids.push_back(std::move(copy));
+                        stmt_pre.push_back(std::move(copy_stmt));
+                    }
+                    *out = node_name(hidden.name);
+                    return parse_postfix(out);
+                }
                 Node ctor_stmt;
                 if (!special_call(csid, "<ctor>", node_addr(node_name(hidden.name)), std::move(cargs), &ctor_stmt))
                     return false;
@@ -9738,8 +10193,15 @@ bool Parser::parse_unary(Node* out) {
             Type ty = functional_cast_type(name);
             next();
             Node inner;
-            if (!parse_expr(0, &inner)) return false;
-            if (!expect(TRParen, "')'")) return false;
+            if (is(TRParen)) {
+                // T(): a value-initialised scalar is zero ([expr.type.conv]).
+                next();
+                inner.kind = Node::IntLit;
+                inner.type.base = 1;
+            } else {
+                if (!parse_expr(0, &inner)) return false;
+                if (!expect(TRParen, "')'")) return false;
+            }
             if (!convert_class(&inner, ty)) return false;
             if (inner.kind == Node::IntLit && ty.pointers == 0 && ty.base == 1 && !ty.is_bool) {
                 inner.number = const_norm(inner.number, ty);
@@ -9800,7 +10262,7 @@ bool Parser::parse_unary(Node* out) {
         const bool type_ahead = ahead == TInt || ahead == TConst || ahead == TChar || ahead == TVoid || ahead == TShort || ahead == TUnsigned ||
                                 ahead == TSigned || ahead == TLong || ahead == TFloat || ahead == TDouble || ahead == TStruct ||
                                 ahead == TUnion || ahead == TEnum ||
-                                (ahead == TIdent && typedefs.find(tokens[at + 1].text) != typedefs.end()) ||
+                                (ahead == TIdent && typedefs.find(tokens[at + 1].text) != typedefs.end() && !qualified_value_at(at + 1)) ||
                                 (ahead == TIdent && class_name_at(at + 1) && !qualified_value_at(at + 1));
         if (type_ahead) {
             next();
@@ -10047,6 +10509,26 @@ bool Parser::parse_postfix(Node* out) {
             next();
             // s.template add<int>(1): 'template' only says that a '<' after the name opens arguments.
             if (is(TIdent) && cur().text == "template" && at + 1 < tokens.size() && tokens[at + 1].kind == TIdent) next();
+            if (is(TTilde) && at + 1 < tokens.size() && tokens[at + 1].kind == TIdent) {
+                // p->~T() and o.~T(): an explicit destructor call ([class.dtor]); for a type without a destructor
+                // (a scalar, a plain struct) it does nothing ([expr.prim.id.dtor]).
+                next();
+                next();
+                if (!expect(TLParen, "'('") || !expect(TRParen, "')'")) return false;
+                Type ot;
+                Node call_expr;
+                call_expr.kind = Node::IntLit;
+                call_expr.type.base = 1;
+                if (static_type(*out, &ot) && ot.base == 3 && ot.struct_id >= 0 && ot.pointers == (op == TArrow ? 1 : 0) &&
+                    class_needs_dtor(structs[static_cast<size_t>(ot.struct_id)])) {
+                    Node self = op == TArrow ? std::move(*out) : node_addr(std::move(*out));
+                    Node stmt;
+                    if (!special_call(ot.struct_id, "<dtor>", std::move(self), {}, &stmt)) return false;
+                    call_expr = std::move(stmt.kids[0]);
+                }
+                *out = std::move(call_expr);
+                continue;
+            }
             if (!is(TIdent)) {
                 error = "expected a field name";
                 return false;
@@ -10137,6 +10619,43 @@ bool Parser::parse_expr(int min_prec, Node* out) {
             tern.kind = Node::Ternary;
             if (!convert_class(out, bool_type())) return false;
             tern.kids.push_back(std::move(*out));
+            {
+                // c ? a : b with objects of one class where a branch is not an lvalue (a call result, a temporary):
+                // a hidden local gets the chosen value, in a statement before this one ([expr.cond]).
+                Type ta, tb;
+                const auto lvalue = [](const Node& n) {
+                    return n.kind == Node::Name || n.kind == Node::Field || n.kind == Node::Index ||
+                           (n.kind == Node::Unary && n.op == TStar);
+                };
+                if (cur_locals != nullptr && static_type(mid, &ta) && static_type(els, &tb) && ta.base == 3 &&
+                    ta.pointers == 0 && !ta.is_ref && !ta.is_array() && tb.base == 3 && tb.pointers == 0 && !tb.is_ref &&
+                    ta.struct_id >= 0 && ta.struct_id == tb.struct_id &&
+                    !class_needs_dtor(structs[static_cast<size_t>(ta.struct_id)]) && !(lvalue(mid) && lvalue(els))) {
+                    Local hidden;
+                    hidden.name = "__tn" + std::to_string(tmp_count++);
+                    hidden.type = ta;
+                    hidden.type.is_const = false;
+                    place_local(cur_locals, hidden);
+                    Node chosen;
+                    chosen.kind = Node::If;
+                    chosen.kids.push_back(std::move(tern.kids[0]));
+                    for (Node* branch : {&mid, &els}) {
+                        Node assign;
+                        assign.kind = Node::Assign;
+                        assign.op = TAssign;
+                        assign.number = 1;
+                        assign.kids.push_back(node_name(hidden.name));
+                        assign.kids.push_back(std::move(*branch));
+                        Node stmt;
+                        stmt.kind = Node::ExprStmt;
+                        stmt.kids.push_back(std::move(assign));
+                        chosen.kids.push_back(std::move(stmt));
+                    }
+                    stmt_pre.push_back(std::move(chosen));
+                    *out = node_name(hidden.name);
+                    continue;
+                }
+            }
             tern.kids.push_back(std::move(mid));
             tern.kids.push_back(std::move(els));
             *out = std::move(tern);
@@ -10282,7 +10801,7 @@ struct Gen {
         u32(value);
     }
     int spill() {
-        if (temp_depth >= 8) {
+        if (temp_depth >= 16) {
             error = "expression is too deep";
             return 0;
         }
@@ -10535,6 +11054,17 @@ struct Gen {
             b(0x0F);
             b(setcc);
             b(0xC0);
+            // An unordered compare (a NaN) sets ZF, PF and CF: == < <= must be false and != true ([expr.eq],
+            // [expr.rel], IEEE-754 unordered).
+            if (op == TEq || op == TLt || op == TLe || op == TNe) {
+                b(0x41);  // setnp r10b / setp r10b
+                b(0x0F);
+                b(op == TNe ? 0x9A : 0x9B);
+                b(0xC2);
+                b(0x44);  // and / or al, r10b
+                b(op == TNe ? 0x08 : 0x20);
+                b(0xD0);
+            }
             b(0x0F);
             b(0xB6);
             b(0xC0);
@@ -11156,6 +11686,12 @@ bool Gen::gen_expr(const Node& node) {
                 return true;
             }
             if (local->is_static) {
+                if (local->type.is_array()) {  // a static array used as a value is the address of its first element
+                    if (!gen_addr(node)) return false;
+                    last_type = element_type(local->type);
+                    last_type.pointers += 1;
+                    return true;
+                }
                 const int size = size_of(local->type);
                 const bool uns = local->type.is_unsigned;
                 if (is_fp_t(local->type)) {
@@ -11258,6 +11794,12 @@ bool Gen::gen_expr(const Node& node) {
     }
     if (node.kind == Node::Index || node.kind == Node::Field) {
         if (!gen_addr(node)) return false;
+        if (last_type.is_array()) {
+            // An array member (or a row of a 2-D array) used as a value is the address of its first element.
+            last_type = element_type(last_type);
+            last_type.pointers += 1;
+            return true;
+        }
         const int size = std::max(1, size_of(last_type));
         const bool uns = last_type.is_unsigned;
         const int bits = last_type.bits;
@@ -11664,7 +12206,9 @@ bool Gen::gen_expr(const Node& node) {
             }
         }
         if (node.kids[0].kind == Node::Field || node.kids[0].kind == Node::Index ||
-            (node.kids[0].kind == Node::Unary && node.kids[0].op == TStar)) {
+            (node.kids[0].kind == Node::Unary && node.kids[0].op == TStar) ||
+            (node.kids[0].kind == Node::Name && find_local(node.kids[0].text) != nullptr &&
+             find_local(node.kids[0].text)->type.is_ref)) {
             // A big struct stored into a member, an element or through a pointer: the bytes are copied, or the
             // callee writes the result straight there. The address is worked out first; when the target turns
             // out to be something else, the code is dropped and the general path below runs.
@@ -13110,7 +13654,7 @@ bool emit_functions(std::vector<FuncDecl>& funcs, const std::vector<StructDef>& 
         const int outgoing = max_args > 0 ? 32 + 8 * std::max(0, max_args - 4) : 0;
         const int local_end = fn.locals.empty() ? 0 : -fn.locals.back().offset;
         const int copy_bytes = struct_arg_space(fn.body, funcs, gen);
-        int frame = local_end + 64 + copy_bytes + outgoing;
+        int frame = local_end + 128 + copy_bytes + outgoing;
         frame = (frame + 15) & ~15;
         if (frame < 0x20) frame = 0x20;
         bool needs_nv = false;
@@ -13198,7 +13742,7 @@ bool emit_functions(std::vector<FuncDecl>& funcs, const std::vector<StructDef>& 
         gen.extra_pops.clear();
         gen.locals = fn.locals;
         gen.temp_base = -(((local_end + 7) & ~7) + 8);
-        gen.struct_copy = -((((local_end + 7) & ~7) + 64 + copy_bytes));
+        gen.struct_copy = -((((local_end + 7) & ~7) + 128 + copy_bytes));
         gen.frame = frame;
         const uint32_t start = static_cast<uint32_t>(gen.text.size());
         gen.lines.clear();
@@ -13271,12 +13815,43 @@ bool emit_functions(std::vector<FuncDecl>& funcs, const std::vector<StructDef>& 
         gen.current = &fn;
         for (int p = 0; p < fn.nparams; ++p) {
             const int reg = p + (fn.sret ? 1 : 0);
-            if (reg >= 4) continue;
+            if (reg >= 4) {
+                // The fifth and later arguments are on the caller's stack, above the return address, the 32-byte
+                // home area and the registers this function pushed first ([x64 calling convention]).
+                const Local& slot = fn.locals[static_cast<size_t>(fn.param_base + p)];
+                const int from = 16 + 8 * static_cast<int>(extra_regs.size()) + 8 * reg;
+                const int size = gen.size_of(slot.type);
+                gen.b(0x48);  // mov rax, [rbp+from]
+                gen.b(0x8B);
+                gen.b(0x85);
+                gen.disp(from);
+                if (slot.type.base == 3 && slot.type.pointers == 0 && !gen.fits_register(slot.type)) {
+                    gen.b(0x48);  // mov rsi, rax; lea rdi, [rbp+off]; mov ecx, size; rep movsb
+                    gen.b(0x89);
+                    gen.b(0xC6);
+                    gen.b(0x48);
+                    gen.b(0x8D);
+                    gen.b(0xBD);
+                    gen.disp(slot.offset);
+                    gen.b(0xB9);
+                    gen.u32(static_cast<uint32_t>(size));
+                    gen.b(0xF3);
+                    gen.b(0xA4);
+                } else {
+                    const bool wide = slot.type.pointer() || size == 8;
+                    if (size == 2) gen.b(0x66);
+                    else if (wide) gen.b(0x48);
+                    gen.b(size == 1 ? 0x88 : 0x89);
+                    gen.b(0x85);
+                    gen.disp(slot.offset);
+                }
+                continue;
+            }
             const Local& local = fn.locals[static_cast<size_t>(fn.param_base + p)];
             const Type& param = local.type;
             const int param_size = gen.size_of(param);
             const bool big = param.base == 3 && param.pointers == 0 && !gen.fits_register(param);
-            const bool fp = param.pointers == 0 && (param.base == 5 || param.base == 6);
+            const bool fp = param.pointers == 0 && !param.is_ref && (param.base == 5 || param.base == 6);
             const bool wide = param.pointer() || param_size == 8;
             if (fp) {
                 const uint8_t modrm = reg == 0 ? 0x85 : reg == 1 ? 0x8D : reg == 2 ? 0x95 : 0x9D;
@@ -13324,7 +13899,10 @@ bool emit_functions(std::vector<FuncDecl>& funcs, const std::vector<StructDef>& 
             const Local& local = fn.locals[static_cast<size_t>(fn.param_base + p)];
             if (local.reg == 0) continue;
             const int src = p + (fn.sret ? 1 : 0);
-            if (src >= 4) continue;
+            if (src >= 4) {
+                gen.load_reg_local(local.reg, local.offset);  // a parameter kept in a register: from its stack copy
+                continue;
+            }
             const int machine = src == 0 ? 1 : src == 1 ? 2 : src == 2 ? 8 : 9;
             gen.mov_regs(local.reg, machine);
         }

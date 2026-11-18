@@ -383,3 +383,102 @@ Not done / unverified / found and not fixed (Round 20):
 - A lambda that names a captured variable is found by scanning the body's tokens: a name that is also a local declared inside the lambda is captured too (harmless, but the capture list is larger than needed).
 - The `auto` deduction depends on the parser's static type: an initializer made of an expression kind it does not know (for example some template instance results, a `new` expression) gives "cannot work out the type of the auto variable".
 - Run on Linux with Wine only; not run on Windows. The measurement compiles to an object only. The comparison with g++ covers the 13 programs of `test_round20.cpp` and the small programs written while debugging; the rest of the language was checked only by the older tests.
+
+
+### Round 21: aggregate member initializers, our own standard headers (`<array>`, `<cctype>`, `<atomic>`, `<functional>`, `<vector>`, `<string>`), and the language gaps they showed
+
+Tried with `sh tools/okayms/build.sh` on branch `claude/okayms-3` (head 57750d54 plus this round) on Linux with Wine, 2026-11-18. New test: `tests/test_round21.cpp` (11 test functions: 14 programs, each at three levels, plus the example program; 211 checks). Each program returns 0 when all of its checks hold, or the number of the first check that failed; it is built by okay-cl at `/O0`, `/O1` and `/O2`, linked, run under Wine, and built again by MinGW g++ (with g++'s own library) and run under Wine; all four exit codes must be 0. Each test was written before its code (first errors seen: "an aggregate default member initializer is not supported", "expected '>'" for `size_t N`, "cannot open include array", "expected a type" for `new (p) T`, and a wrong exit code for the others). okay-ms is a separate tool and off by default; nothing in the engine build calls it.
+
+**Where each new file comes from (rule 19a).** The six headers in `tools/okayms/stdinc/` were written from ISO/IEC 14882 only: `<array>` [array], `<cctype>` [cctype.syn] with the character classes of ISO/IEC 9899 7.4 (ASCII, "C" locale), `<atomic>` [atomics], `<functional>` [function.objects], `<vector>` [vector], `<string>` [string.classes], and `<new>` [expr.new]. Nothing was copied, ported or followed from libstdc++, libc++, the MSVC STL or any other implementation; the data structures are the plainest ones the standard text allows (a pointer, a size and a capacity). They are our own minimal versions, not the whole of the standard types.
+
+How to try it by hand (host tool, POSIX; Wine only for running the result):
+
+1. `sh tools/okayms/build.sh` builds `tools/okayms/build/okay-cl` and runs every test (about 5 minutes). `test_round21` must print `tests 11, checks passed 211, failed 0`.
+2. The example program: real engine headers (`okay/Math/Vec3.hpp`, `okay/Math/Mat4.hpp`) plus our own `<vector>`, `<string>`, `<array>`, `<atomic>`: `tools/okayms/build/okay-cl tools/okayms/examples/engine_math.cpp /Feengine_math.exe /I engine/include /I engine/src /I shared /I tools/okayms/stdinc`, then `wine engine_math.exe; echo $?`. It must print `0`; a number is the first failed check (count the `CK(` lines). It is the same text that MinGW g++ builds with its own library (`x86_64-w64-mingw32-g++ -static -I engine/include tools/okayms/examples/engine_math.cpp`), and that also exits 0. The program brings its own `malloc` and square root because no C runtime is linked.
+3. The engine measurement, one file: `printf '#include "okay/Math/Mat4.hpp"\n' > /tmp/w.cpp; tools/okayms/build/okay-cl /c /tmp/w.cpp /Fo/tmp/w.obj /I engine/include /I engine/src /I shared /I tools/okayms/stdinc`. No output and an object file means it compiled (before this round: "an aggregate default member initializer is not supported").
+
+What changed in the compiler:
+
+- **Aggregate member default initializers.** `float m[16] = {1, 0, ...};`, `int n[3] = {5};`, `P p = {3, 4};`, `P arr[2] = {{1, 2}, {5, 6}};`, `T x[4]{};`: the list is read again in the constructor and stored element by element, the rest zero ([dcl.init.aggr]). A member that has a constructor still gets the list as constructor arguments. This unblocked `Mat3`, `Mat4`, `Bounds`.
+- **Brace elision.** `std::array<int, 4> a = {1, 2, 3, 4};` (a struct whose one member is an array) and flat lists for nested aggregates are written out with all braces before they are stored (locals, statics, globals, members).
+- **Class templates with a non-type parameter of a named type** (`template <typename T, size_t N>`; it stopped at the type name). A plain struct as a template argument (`array<P, 2>`) is read as a type.
+- **Range `for` over a class with `begin()` and `end()` that return pointers** (our `vector`, `string`, `array`), over a temporary (`for (char c : std::string("xyz"))`; the temporary is made before the loop and destroyed after it), and over a braced list (`for (const char* d : {"inout", "in", "out"})`).
+- **Placement new** `new (p) T(args)` (a class, a scalar, a plain struct copy), **explicit destructor calls** `p->~T()` and `o.~T()` (nothing for a scalar), `T()` for a scalar (zero) and for a class without constructors, `int x(5);`, `T x = "abc";` through a converting constructor (it was a raw copy of the pointer), `T x(other)` and `new (p) T(other)` for a class that has constructors but no copy constructor (members copied; before, some other one-argument constructor could be picked).
+- **Overload choice for constructors** by the ranks of Round 20 (`string(3, 'z')` took `string(const char*, size_t)`); two constructors of one arity no longer share an internal name (the second one was never called).
+- **Conditional `c ? a : b` of class objects** where a branch is a call or a temporary (it said "not an address").
+- **Qualified class names** `std::string("abc")`, `(Vec3::Dot(a, b) == 1)` after a typedef (read as a cast), `T&&` read as `T&` (no move semantics), `static const char* k[] = {"a", "b"};` in a function, a global function whose parameter is of a named type (`std::string ToName(Ease e)` was read as a global object).
+- **Bugs found by the new tests and fixed (all older than this round):**
+  - A function with **more than four parameters never read the fifth and later ones** from the stack (the callee used uninitialised slots); a `float`/`double`/struct parameter after the fourth was also wrong. Found by an engine function with nine `float` arguments.
+  - A **`const float&` parameter** was read as a `float` in an XMM register (it is a pointer in an integer register).
+  - **Array members and static arrays used as values** (`return elems_;`, `int* p = s.a;`, `static int a[4]; return a;`) loaded the first element instead of the address.
+  - **Float comparisons with a NaN**: `==`, `<`, `<=` were true and `!=` was false when a side was a NaN (the parity flag was not looked at). `if (nan)` as a condition is still wrong (see below).
+  - A big struct assigned from a call into a **reference parameter** (`rotation = Quat::From...(...)`) had no destination; an expression nested more than 8 deep ("expression is too deep") now has 16 temporary slots.
+  - `std::isnan`, `std::isfinite`, `std::isinf` were missing from `<cmath>` (written here from the IEEE-754 binary32 definition).
+- **Intrinsics:** none. `<atomic>` is plain reads and writes (single thread), see below.
+
+The standard headers (what is there, and what is not):
+
+- `<array>`: `array<T, N>` with `[]`, `at`, `front`, `back`, `data`, `begin`, `end`, `size`, `empty`, `fill`. Aggregate initialisation works.
+- `<cctype>`: `isdigit isupper islower isalpha isalnum isxdigit isspace isblank iscntrl isprint isgraph ispunct tolower toupper` (ASCII, "C" locale).
+- `<atomic>`: `atomic<T>` (integers, `bool`), `atomic<float>`, `atomic<double>`, `atomic<T*>`: `load store exchange compare_exchange_strong/weak fetch_add/sub/and/or/xor`, the operators, `memory_order` (ignored). **Not safe between threads**: every operation is a plain read and write, because the compiler has no lock-prefixed intrinsics yet. It is correct for one thread. A multi-thread build needs real atomic instructions first.
+- `<functional>`: `hash` for the integer types, `less greater equal_to plus minus multiplies divides negate` and friends. **`std::function` is not there** (it needs a type-erased call through a function type).
+- `<vector>`: `vector<T>` with constructors (empty, count, count and value, copy), `=`, `size capacity empty [] at front back data begin end reserve push_back pop_back clear resize assign insert erase swap`; storage from the global `malloc`/`free`; elements made with placement new. No allocator, no iterator classes (iterators are pointers), no initializer list, no `emplace_back`, no move constructor.
+- `<string>`: `string` with constructors (empty, `const char*`, pointer and length, count and char, copy), `=`, `+=`, `+`, `==`, `!=`, `<`, `>`, `<=`, `>=`, `[] at front back c_str data size length empty begin end reserve clear resize push_back pop_back append assign substr find rfind find_first_of find_first_not_of find_last_not_of erase insert compare swap`, `npos`, `to_string` for the integer types. No `to_string(double)`, no `string_view`, no `wstring`, no `getline`, no streams.
+- `<cstdlib>` now declares the global `malloc` and `free` (what `new` and `delete` call) and the C functions `strtol strtoul strtof strtod atoi atof` in `std` as declarations only. `<new>` is a comment (placement new is in the compiler).
+
+Measurement, fourth run (the same 36 files, same command, our own headers in `tools/okayms/stdinc/`, 2026-11-18). Round 18: 5. Round 19: 15. Round 20: 21. After Round 21: **28 of 36 compile to an object** (new: Bounds, Mat3, Mat4, VecInt, Curves, Easing, Color). Compiling is all this measures for these 36. In addition, one program that uses the real `Vec3` and `Mat4` headers with our `vector`, `string`, `array` and `atomic` was **linked and run** (`examples/engine_math.cpp`, exit 0 at `/O0`, `/O1`, `/O2`, and the same text built by g++ also exits 0); it supplies its own `malloc` and `std::sqrt`/`sin`/`cos`/`atan2` and the other `<cmath>` functions, because a function declared in `namespace std` has a decorated name that is not the C runtime's.
+
+| File | Result | First error |
+|---|---|---|
+| `engine/include/okay/Physics/ForceMode.hpp` | compiles |  |
+| `engine/include/okay/Physics/PhysicsQuality.hpp` | compiles |  |
+| `engine/include/okay/VisualScript/VsPinType.hpp` | compiles |  |
+| `engine/src/Audio/Mp3Tables.hpp` | compiles |  |
+| `shared/LauncherTips.hpp` | compiles |  |
+| `engine/include/okay/Components/Stance.hpp` | compiles |  |
+| `engine/include/okay/Core/ClockCursor.hpp` | compiles |  |
+| `engine/include/okay/Environment/Wind.hpp` | compiles |  |
+| `engine/include/okay/Input/InputBuffer.hpp` | compiles |  |
+| `engine/include/okay/Math/Bounds.hpp` | compiles |  (new in Round 21) |
+| `engine/include/okay/Math/ColorSpace.hpp` | fails | unknown function Color (in ColorSpace::ParseHex/2) |
+| `engine/include/okay/Math/Curves.hpp` | compiles |  (new in Round 21) |
+| `engine/include/okay/Math/Easing.hpp` | compiles |  (new in Round 21) |
+| `engine/include/okay/Math/Mat3.hpp` | compiles |  (new in Round 21) |
+| `engine/include/okay/Math/Mat4.hpp` | compiles |  (new in Round 21) |
+| `engine/include/okay/Math/Mathf.hpp` | compiles |  |
+| `engine/include/okay/Math/Quat.hpp` | compiles |  |
+| `engine/include/okay/Math/Ray.hpp` | compiles |  |
+| `engine/include/okay/Math/Rect.hpp` | compiles |  |
+| `engine/include/okay/Math/Vec2.hpp` | compiles |  |
+| `engine/include/okay/Math/Vec3.hpp` | compiles |  |
+| `engine/include/okay/Math/VecInt.hpp` | compiles |  (new in Round 21) |
+| `engine/include/okay/Physics/PhysicsMaterial.hpp` | compiles |  |
+| `engine/include/okay/Render/Color.hpp` | compiles |  (new in Round 21) |
+| `engine/include/okay/UI/TooltipPlace.hpp` | compiles |  |
+| `engine/src/Core/RandomExtras.cpp` | fails | cannot open include chrono |
+| `engine/src/Crypto/Blake2b.cpp` | compiles |  |
+| `engine/src/Crypto/ChaCha20.cpp` | compiles |  |
+| `engine/src/Crypto/Sha512.cpp` | compiles |  |
+| `engine/src/Crypto/Util.cpp` | compiles |  |
+| `engine/src/Input/GestureRecognizer.cpp` | fails | engine/src/Input/GestureRecognizer.cpp:45: expected a name |
+| `engine/src/Input/PlayerInput.cpp` | fails | cannot open include deque |
+| `engine/src/Optimize/LodGroup.cpp` | fails | cannot open include cwctype |
+| `engine/src/Optimize/PortalCells.cpp` | fails | engine/src/Optimize/PortalCells.cpp:67: no matching constructor in vector<UVisPlane@@> |
+| `engine/src/UI/FocusGraph.cpp` | fails | okay/UI/FocusGraph.hpp:109: expected an expression |
+| `shared/OkfDecode.hpp` | fails | assignment to const p (in okf::Unpack) |
+
+The remaining first errors, counted: three missing headers (`<chrono>`, `<deque>`, `<cwctype>`: 3 files), and language gaps (5 files): a default argument written `= {}` for a class reference (`FocusGraph.hpp:109`), a definition whose return type is a nested class named through its outer class (`GestureRecognizer::Finger* GestureRecognizer::Find(...)`), a constructor error inside a range `for` over a member `std::vector<VisPlane>` in `PortalCells.cpp`, `Color(...)` in a member function of `ColorSpace` ("unknown function Color"; cause not looked into), and `OkfDecode.hpp:115` ("assignment to const p"; cause not looked into, unconfirmed).
+
+Not done / unverified / found and not fixed (Round 21):
+
+- Not run on Windows; Linux with Wine only. 28 of the 36 files were only compiled to an object, not linked or run; one program (the example) was linked and run.
+- `if (nan)` as a plain float condition is still false (the standard says true); only comparisons were fixed.
+- `<atomic>` is not thread safe; `std::function`, `std::deque`, `std::chrono`, `<cwctype>`, `std::unique_ptr` (`<memory>`), `std::map`, `std::unordered_map`, streams are not there. `vector` and `string` do not move (a copy is made when the storage grows), do not check an index or an allocation failure, and have no exceptions.
+- `typedef T& reference;` (a typedef of a reference type) is not read, so the headers do not declare `reference` / `const_reference`.
+- `T&&` is read as `T&`: there is no move semantics and no perfect forwarding; a call with a temporary binds it to a hidden local.
+- The decorated name of a `const T&` return type is written `AEAM`, not `AEBM` (for example `array<float, 3>::operator[]() const`): it does not matter inside this tree, it would for a link with MSVC objects.
+- Functions of the C runtime that a header declares inside `namespace std` (`<cmath>`, `<cstring>`, `<cstdio>`, `<cstdlib>`) are still not found by the linker; `extern "C"` inside a namespace is not read. The example defines them itself.
+- Hoisting: a temporary made inside a conditional `c ? f(x) : g(y)`, `a && f(b)` or a loop condition is made before the statement, not where the expression is evaluated (a conditional of class objects now evaluates only the chosen branch, but a placement `new` or a temporary elsewhere in the statement is still made unconditionally).
+- `new (p) T[n]` (placement array new), `delete` as an expression, `new int(5)` without a place, overloading `operator new`, and `using okay::Vec3;` inside a function are not supported.
+- A `for` over a class whose `begin()` returns a class iterator (not a pointer) is refused.
+- The new headers are minimal: what the engine files need is there, much of the standard is not (see the lists above).

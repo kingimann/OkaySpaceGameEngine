@@ -23,4 +23,9 @@ float log(float x);
 float log2(float x);
 float log10(float x);
 float hypot(float x, float y);
+// Defined here (not declared): [c.math.fpclass], written from the IEEE-754 binary32 definition. A NaN compares
+// false with everything, so the range test is false for it.
+inline bool isnan(float x) { return x != x; }
+inline bool isfinite(float x) { return x <= 3.40282347e+38f && x >= -3.40282347e+38f; }
+inline bool isinf(float x) { return x > 3.40282347e+38f || x < -3.40282347e+38f; }
 }

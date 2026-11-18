@@ -60,7 +60,7 @@ patterns, BC palettes, DDS header offsets, projected pixels), not copied from th
 
 See `docs/try_it/` entry `tex1` (generated into `docs/try_it.md`): the `examples/texture` folder in the Windows
 release has `try_texture.bat`, and the editor's Project panel has a "Generate mipmaps / compress" section.
-Headless render of a generated mip chain (packed with our own atlas tool): `docs/images/texture_mips_sheet.png`.
+A headless render of a generated mip chain was looked at while writing this (not committed: no screenshots in the repo).
 
 ## Not done / unverified
 

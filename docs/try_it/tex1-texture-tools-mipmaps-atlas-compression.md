@@ -30,5 +30,5 @@ tools: nothing existing is switched off or replaced, so there is no switch to tu
    are not changed. The game and editor renderers do not load `.dds` yet (see the doc, "Not done").
 
 Verified: unit tests `tex_mip`, `tex_atlas`, `tex_convert`, `tex_bc`, `tex_dds_stream` and the six commands above
-run on Linux (headless; a render of the mip chain is `docs/images/texture_mips_sheet.png`). Not verified: the
+run on Linux (headless). Not verified: the
 Windows build of `okay-texture.exe`, the `.bat`, the editor section in a real window, and any DDS viewer.

@@ -229,6 +229,7 @@ struct Global {
     std::vector<uint8_t> init_bytes;
     // A virtual function table: read-only data, one ADDR64 slot per entry.
     bool vtable = false;
+    std::string rtti_sym;  // the type_info object of the class: stored in the slot just before the table (vtable[-1])
     std::vector<std::string> slots;
     // Pointers in the initial data (a string literal's address): offset in the data and the
     // symbol it points to, filled by an ADDR64 relocation.
@@ -3706,6 +3707,34 @@ struct Parser {
     }
     bool parse_range_for(Node* out, std::vector<Local>* locals, int stmt_line);
     bool parse_lambda(Node* out);
+    // The type_info object of a type: a global with the address of the type's name; the name text is what equality compares
+    // (one object per file, so the pointers differ between files). Returns its symbol.
+    std::string typeinfo_global(const Type& t) {
+        const std::string name = cxx_type(t, &structs);
+        const std::string sym = "__ti_" + name;
+        for (const Global& g : globals)
+            if (g.name == sym) return sym;
+        Global text;
+        text.name = "__gstr" + std::to_string(gstr_count++);
+        text.is_static = true;
+        text.bss = false;
+        text.type.base = 2;
+        text.type.array_len = static_cast<int>(name.size()) + 1;
+        text.init_bytes.assign(name.begin(), name.end());
+        text.init_bytes.push_back(0);
+        globals.push_back(text);
+        Global ti;
+        ti.name = sym;
+        ti.is_static = true;
+        ti.bss = false;
+        ti.type.base = 2;
+        ti.type.pointers = 1;
+        ti.init_bytes.assign(8, 0);
+        ti.addr_relocs.push_back({0, text.name});
+        globals.push_back(ti);
+        return sym;
+    }
+    bool parse_typeid(Node* out);
     bool instantiate_generic_lambda(int sid, const std::vector<Node>& args);
     std::vector<Type> auto_types{};
     size_t auto_idx = 0;
@@ -4934,6 +4963,12 @@ struct Parser {
             def.vtable_sym = "??_7" + def.symname() + "@@6B@";
             Global table;
             table.name = def.vtable_sym;
+            {
+                Type self_type;
+                self_type.base = 3;
+                self_type.struct_id = self;
+                table.rtti_sym = typeinfo_global(self_type);
+            }
             table.type.base = 0;
             table.type.pointers = 1;
             table.type.array_len = static_cast<int>(def.vtable.size());
@@ -11549,7 +11584,75 @@ bool Parser::parse_delete(Node* out) {
     return true;
 }
 
+// typeid(type) and typeid(expression) ([expr.typeid]): the value is a `const type_info&`. For an object of a class with virtual
+// functions the dynamic type is found through vtable[-1]; otherwise the static type is used. Needs <typeinfo>.
+bool Parser::parse_typeid(Node* out) {
+    next();
+    next();  // typeid (
+    const int tid = find_struct("type_info");
+    if (tid < 0) {
+        error = "typeid needs <typeinfo>";
+        return false;
+    }
+    Type ptr_type;
+    ptr_type.base = 3;
+    ptr_type.struct_id = tid;
+    ptr_type.pointers = 1;
+    Type ty;
+    if (is_decl_start()) {
+        bool imp = false;
+        bool exp = false;
+        if (!parse_type(&ty, &imp, &exp)) return false;
+        while (accept(TStar)) ++ty.pointers;
+        if (accept(TAmp) || accept(TAndAnd)) ty.is_ref = false;
+        if (!expect(TRParen, "')'")) return false;
+        ty.is_const = false;
+        const std::string sym = typeinfo_global(ty);
+        Node inner = cast_node(ptr_type, node_addr(node_name(sym)));
+        out->kind = Node::Unary;
+        out->op = TStar;
+        out->kids.push_back(std::move(inner));
+        return parse_postfix(out);
+    }
+    Node e;
+    if (!parse_expr(0, &e)) return false;
+    if (!expect(TRParen, "')'")) return false;
+    Type et;
+    if (!static_type(e, &et)) {
+        error = "cannot tell the type of the typeid operand";
+        return false;
+    }
+    et.is_ref = false;
+    et.is_const = false;
+    if (et.base == 3 && et.pointers == 0 && et.struct_id >= 0 && structs[static_cast<size_t>(et.struct_id)].poly) {
+        Node obj_ptr = node_addr(std::move(e));
+        Node vptr;
+        vptr.kind = Node::Field;
+        vptr.op = TArrow;
+        vptr.text = "__vptr";
+        vptr.kids.push_back(std::move(obj_ptr));
+        Node minus_one;
+        minus_one.kind = Node::IntLit;
+        minus_one.number = static_cast<uint64_t>(-1);
+        minus_one.type.base = 1;
+        Node slot;
+        slot.kind = Node::Index;
+        slot.kids.push_back(std::move(vptr));
+        slot.kids.push_back(std::move(minus_one));
+        out->kind = Node::Unary;
+        out->op = TStar;
+        out->kids.push_back(cast_node(ptr_type, std::move(slot)));
+        return parse_postfix(out);
+    }
+    const std::string sym = typeinfo_global(et);
+    out->kind = Node::Unary;
+    out->op = TStar;
+    out->kids.push_back(cast_node(ptr_type, node_addr(node_name(sym))));
+    return parse_postfix(out);
+}
+
 bool Parser::parse_unary(Node* out) {
+    if (is(TIdent) && cur().text == "typeid" && at + 1 < tokens.size() && tokens[at + 1].kind == TLParen) return parse_typeid(out);
     if (is(TIdent) && cur().text == "new") {
         if (!parse_new(out)) return false;
         return parse_postfix(out);
@@ -16022,6 +16125,10 @@ bool emit_functions(std::vector<FuncDecl>& funcs, const std::vector<StructDef>& 
             // Read-only: one 8-byte slot per virtual function, filled by an
             // ADDR64 relocation. A pure virtual slot stays zero.
             while (gen.rdata.size() % 8 != 0) gen.rdata.push_back(0);
+            // The slot before the table holds the address of the class's type_info (typeid of an object looks at vtable[-1]).
+            if (!global.rtti_sym.empty())
+                gen.relocs.push_back({1, static_cast<uint32_t>(gen.rdata.size()), global.rtti_sym, kRelAmd64Addr64});
+            for (int k = 0; k < 8; ++k) gen.rdata.push_back(0);
             const uint32_t at = static_cast<uint32_t>(gen.rdata.size());
             for (size_t i = 0; i < global.slots.size(); ++i) {
                 if (!global.slots[i].empty())

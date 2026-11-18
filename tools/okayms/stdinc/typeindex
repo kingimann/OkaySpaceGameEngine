@@ -1,0 +1,19 @@
+// okay-ms own standard header: std::type_index, written from ISO/IEC 14882 [type.index]: a copyable, comparable, hashable wrapper
+// of a type_info reference (kept as a pointer), usable as a key of std::map and std::unordered_map.
+#pragma once
+#include <functional>
+#include <typeinfo>
+namespace std {
+class type_index {
+public:
+    const type_info* p_;
+    type_index() : p_(0) {}  // not in the standard: pair<type_index, V> here builds its members by default first
+    type_index(const type_info& t) : p_(&t) {}
+    const char* name() const { return p_->name(); }
+    size_t hash_code() const { return p_->hash_code(); }
+    bool operator==(const type_index& o) const { return *p_ == *o.p_; }
+    bool operator!=(const type_index& o) const { return !(*p_ == *o.p_); }
+    bool operator<(const type_index& o) const { return p_->before(*o.p_); }
+};
+template <> struct hash<type_index> { size_t operator()(const type_index& t) const { return t.hash_code(); } };
+}

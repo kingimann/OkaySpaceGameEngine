@@ -63,8 +63,7 @@ public:
     V& operator[](const K& k) {
         const size_t at = lower(k);
         if (at < items_.size() && !(k < items_[at].first)) return items_[at].second;
-        pair<K, V> entry;
-        entry.first = k;
+        pair<K, V> entry(k, V());
         items_.insert(items_.begin() + at, entry);
         return items_[at].second;
     }

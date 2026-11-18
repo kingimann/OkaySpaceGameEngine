@@ -86,8 +86,7 @@ public:
     V& operator[](const K& k) {
         const int at = index_of(k);
         if (at >= 0) return items_[(size_t)at].second;
-        pair<K, V> entry;
-        entry.first = k;
+        pair<K, V> entry(k, V());
         pair<pair<K, V>*, bool> r = insert(entry);
         return r.first->second;
     }

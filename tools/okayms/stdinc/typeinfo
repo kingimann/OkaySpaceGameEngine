@@ -1,0 +1,38 @@
+// okay-ms own standard header: std::type_info, written from ISO/IEC 14882 [type.info]. The compiler makes one object per type
+// per file (the object holds the address of the type's name, the same text the MSVC decoration gives), and `typeid` of an
+// object of a class with virtual functions reads it from vtable[-1]. Equality compares the NAME TEXT, not the object address
+// (there is one object per file). before() orders by name; hash_code() is a hash of the name. No bad_typeid, no RTTI for
+// dynamic_cast (not here).
+#pragma once
+#include <cstddef>
+namespace std {
+class type_info {
+public:
+    const char* name_;
+    const char* name() const { return name_; }
+    bool operator==(const type_info& o) const {
+        const char* a = name_;
+        const char* b = o.name_;
+        while (*a != 0 && *a == *b) {
+            ++a;
+            ++b;
+        }
+        return *a == *b;
+    }
+    bool operator!=(const type_info& o) const { return !(*this == o); }
+    bool before(const type_info& o) const {
+        const char* a = name_;
+        const char* b = o.name_;
+        while (*a != 0 && *a == *b) {
+            ++a;
+            ++b;
+        }
+        return (unsigned char)*a < (unsigned char)*b;
+    }
+    size_t hash_code() const {
+        size_t h = 1469598103934665603ull;
+        for (const char* p = name_; *p != 0; ++p) h = (h ^ (size_t)(unsigned char)*p) * 1099511628211ull;
+        return h;
+    }
+};
+}

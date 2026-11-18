@@ -3224,6 +3224,21 @@ if(NOT WIN32 AND NOT EMSCRIPTEN)
     target_include_directories(test_platform_audio_pump PRIVATE ${CMAKE_SOURCE_DIR}/engine/include ${CMAKE_SOURCE_DIR}/engine/src/Platform)
     target_compile_features(test_platform_audio_pump PRIVATE cxx_std_17)
     add_test(NAME platform_audio_pump COMMAND test_platform_audio_pump)
+    add_executable(test_platform_selftest_logic test_platform_selftest_logic.cpp)
+    target_include_directories(test_platform_selftest_logic PRIVATE ${CMAKE_SOURCE_DIR}/engine/include ${CMAKE_SOURCE_DIR}/tools/platform_selftest)
+    target_compile_features(test_platform_selftest_logic PRIVATE cxx_std_17)
+    add_test(NAME platform_selftest_logic COMMAND test_platform_selftest_logic)
+    # OKAY_OWN_PLATFORM=1 is a short way to say OKAY_PLATFORM_BACKEND=own.
+    add_test(NAME platform_default_env_own_short COMMAND test_platform --print-default)
+    set_tests_properties(platform_default_env_own_short PROPERTIES
+        ENVIRONMENT "OKAY_OWN_PLATFORM=1" PASS_REGULAR_EXPRESSION "default=own")
+    # The selftest program itself, headless under Xvfb (only when it is built: -DOKAY_BUILD_PLATFORM_SELFTEST=ON).
+    if(TARGET okay-platform-selftest)
+        add_test(NAME platform_selftest_auto
+                 COMMAND sh ${CMAKE_CURRENT_SOURCE_DIR}/run_under_xvfb.sh $<TARGET_FILE:okay-platform-selftest> --auto)
+        set_tests_properties(platform_selftest_auto PROPERTIES SKIP_RETURN_CODE 77 TIMEOUT 120
+                             ENVIRONMENT "OKAY_ALSA_DEVICE=null")   # a machine without a sound card still has ALSA's null device
+    endif()
 endif()
 
 # Safety nets for library code that previously had no test naming it.

@@ -49,6 +49,10 @@ BackendKind DefaultKind() {
 #endif
         BackendKind fromEnv;
         if (ParseBackendName(std::getenv("OKAY_PLATFORM_BACKEND"), fromEnv)) k = fromEnv;
+        else if (const char* o = std::getenv("OKAY_OWN_PLATFORM")) {   // short switch: 1 / true / yes / on = own
+            const std::string v = o;
+            if (v == "1" || v == "true" || v == "yes" || v == "on") k = BackendKind::Own;
+        }
         return k;
     }();
     return kind;

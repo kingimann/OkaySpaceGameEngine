@@ -2098,6 +2098,15 @@ Audio on the own Windows backend (WASAPI) is new and has never run on Windows: w
 sound goes through it. If you hear nothing, or the startup log shows an audio error, that is the thing to report. A Linux check of
 its pure parts: `ctest -R platform_audio_pump`.
 
+**Try the own Windows backend with the self-test (4 steps).** The release does not build it unless asked
+(`-DOKAY_BUILD_PLATFORM_SELFTEST=ON`); when it is built it is `Tools\okay-platform-selftest.exe`.
+1. Plug in a pad if you have one. Double-click `Tools\okay-platform-selftest.exe`. A console and a window open for 20 seconds.
+2. In the window: move the mouse, click, scroll, type letters, press keys, move the pad, press T to hear the 440 Hz tone again. Esc ends it early.
+3. You should see colour bars, an orange square sliding along the bottom and a black cross at the mouse, and hear one second of a tone.
+4. The console shows PASS, FAIL or NOT TESTED per item and saves it to `okay-platform-selftest.txt` next to the program. Send that file.
+`--sdl2` runs the same checks on SDL2 to compare. `OKAY_OWN_PLATFORM=1` is a short way to write `OKAY_PLATFORM_BACKEND=own` for the player.
+It has only run on Linux (Xvfb) so far; the Windows run is the point.
+
 ### 12. OkayUI
 
 `OKAY_UI_BACKEND=okayui` (or `OKAY_OWN_STACK=1`) starts the launcher and editor on OkayUI where it is compiled in. Only

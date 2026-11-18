@@ -9,6 +9,7 @@
 #include "Win32Keys.hpp"
 #include "AudioPump.hpp"
 #include "Win32Display.hpp"
+#include "Win32Hid.hpp"
 #include "Win32Icon.hpp"
 #include "Win32Ime.hpp"
 #ifndef NOMINMAX
@@ -68,6 +69,15 @@ int MonitorDpi(HMONITOR mon) {
     if (fn && mon && SUCCEEDED(fn(mon, 0 /* MDT_EFFECTIVE_DPI */, &x, &y)) && x) return (int)x;
     return win32disp::kBaseDpi;
 }
+// AdjustWindowRectEx for a given DPI: the title bar and the borders are thicker at 150 percent, so a client size of
+// 1280x720 needs a bigger outer window there. AdjustWindowRectExForDpi exists on Windows 10 1607+ (looked up at run
+// time); older systems use the plain call, which measures at the system DPI.
+void AdjustRectForDpi(RECT* r, DWORD style, DWORD exStyle, int dpi) {
+    typedef BOOL (WINAPI *Fn)(LPRECT, DWORD, BOOL, DWORD, UINT);
+    static Fn fn = [] { HMODULE m = GetModuleHandleW(L"user32.dll"); return m ? (Fn)(void*)GetProcAddress(m, "AdjustWindowRectExForDpi") : nullptr; }();
+    if (fn && fn(r, style, FALSE, exStyle, (UINT)win32disp::ValidDpi(dpi))) return;
+    AdjustWindowRectEx(r, style, FALSE, exStyle);
+}
 int WindowDpi(HWND h) {
     using Fn = UINT (WINAPI*)(HWND);
     static Fn fn = [] { HMODULE m = GetModuleHandleW(L"user32.dll"); return m ? (Fn)(void*)GetProcAddress(m, "GetDpiForWindow") : nullptr; }();
@@ -89,7 +99,7 @@ public:
     void SetTitle(const std::string& t) override { SetWindowTextW(m_hwnd, Wide(t).c_str()); }
     void SetSize(int w, int h) override {
         RECT r = {0, 0, w, h};
-        AdjustWindowRectEx(&r, (DWORD)GetWindowLongW(m_hwnd, GWL_STYLE), FALSE, (DWORD)GetWindowLongW(m_hwnd, GWL_EXSTYLE));
+        AdjustRectForDpi(&r, (DWORD)GetWindowLongW(m_hwnd, GWL_STYLE), (DWORD)GetWindowLongW(m_hwnd, GWL_EXSTYLE), Dpi());
         SetWindowPos(m_hwnd, nullptr, 0, 0, r.right - r.left, r.bottom - r.top, SWP_NOMOVE | SWP_NOZORDER | SWP_NOACTIVATE);
     }
     void SetPosition(int x, int y) override {
@@ -188,6 +198,9 @@ public:
         Fn f = (Fn)(void*)wglGetProcAddress("wglSwapIntervalEXT");
         return f && f(i);
     }
+    // The client rectangle is already in device pixels for a per-monitor DPI aware window (SetPerMonitorDpiAware), and for a
+    // DPI-unaware process Windows scales the whole window bitmap, so the GL framebuffer is the client size either way:
+    // the drawable size equals GetSize on this backend and never needs a DPI factor (use Dpi() for the UI scale).
     void GetDrawableSize(int& w, int& h) const override { GetSize(w, h); }
 
     static HICON MakeIcon(const uint8_t* rgba, int w, int h, int tw, int th) {
@@ -247,7 +260,7 @@ private:
 class WinBackend final : public Backend {
 public:
     WinBackend() { g_backend = this; QueryPerformanceFrequency(&m_freq); QueryPerformanceCounter(&m_t0); }
-    ~WinBackend() override { if (g_backend == this) g_backend = nullptr; if (m_xinput) FreeLibrary(m_xinput); }
+    ~WinBackend() override { if (g_backend == this) g_backend = nullptr; if (m_rawWnd) DestroyWindow(m_rawWnd); if (m_xinput) FreeLibrary(m_xinput); }
     BackendKind Kind() const override { return BackendKind::Own; }
 
     bool Init(const InitFlags&) override {
@@ -261,6 +274,9 @@ public:
         wc.lpszClassName = L"OkaySpacePlatformWindow";
         if (!RegisterClassExW(&wc) && GetLastError() != ERROR_CLASS_ALREADY_EXISTS) { m_err = "RegisterClassEx failed"; return false; }
         m_inited = true;
+        // A hidden message-only window receives the Raw Input reports of non-XInput pads (RIDEV_INPUTSINK: also unfocused).
+        m_rawWnd = CreateWindowExW(0, L"OkaySpacePlatformWindow", L"", 0, 0, 0, 0, 0, HWND_MESSAGE, nullptr, GetModuleHandleW(nullptr), nullptr);
+        if (m_rawWnd) m_raw.Register(m_rawWnd);
         return true;
     }
     void Shutdown() override { m_pending.clear(); }
@@ -275,7 +291,12 @@ public:
         if (!Init(InitFlags())) return nullptr;
         DWORD style = d.borderless ? WS_POPUP : (d.resizable ? WS_OVERLAPPEDWINDOW : (WS_OVERLAPPED | WS_CAPTION | WS_SYSMENU | WS_MINIMIZEBOX));
         RECT r = {0, 0, d.width, d.height};
-        AdjustWindowRectEx(&r, style, FALSE, 0);
+        // The frame is measured for the DPI of the monitor the window will open on (the one holding the requested
+        // position, the primary one when centred). The client size stays d.width x d.height device pixels.
+        {
+            const POINT at = {d.x == kCentered ? 0 : d.x, d.y == kCentered ? 0 : d.y};
+            AdjustRectForDpi(&r, style, 0, MonitorDpi(MonitorFromPoint(at, MONITOR_DEFAULTTOPRIMARY)));
+        }
         int x = d.x, y = d.y;
         const int ww = r.right - r.left, wh = r.bottom - r.top;
         if (x == kCentered) x = (GetSystemMetrics(SM_CXSCREEN) - ww) / 2;
@@ -298,6 +319,13 @@ public:
             if (msg.message == WM_QUIT) { Event e; e.type = EventType::Quit; m_pending.push_back(e); continue; }
             TranslateMessage(&msg);
             DispatchMessageW(&msg);
+        }
+        own::RawPads::Change ch;
+        while (m_raw.PopChange(ch)) {
+            Event e; e.timestampMs = (uint32_t)TicksMs();
+            if (ch.added) { e.type = EventType::GamepadAdded; e.deviceId = XInputCount() + ch.index; }
+            else { e.type = EventType::GamepadRemoved; e.deviceId = ch.instanceId; }
+            m_pending.push_back(e);
         }
         if (m_pending.empty()) return false;
         out = std::move(m_pending.front());
@@ -420,16 +448,19 @@ public:
     std::string AudioDeviceName(int index, bool capture) override { return own::WasapiDeviceName(index, capture); }
 
     // Controllers: XInput, four slots, loaded on first use.
-    int GamepadDeviceCount() override {
+    // Indices: the connected XInput slots first, then the other HID pads found through Raw Input.
+    int XInputCount() {
         if (!LoadXInput()) return 0;
         int n = 0;
         for (int i = 0; i < 4; ++i) { XINPUT_STATE s; if (m_getState(i, &s) == ERROR_SUCCESS) ++n; }
         return n;
     }
-    bool IsGamepad(int i) override { return SlotOfIndex(i) >= 0; }
+    int GamepadDeviceCount() override { return XInputCount() + m_raw.Count(); }
+    bool IsGamepad(int i) override { return i >= 0 && i < GamepadDeviceCount(); }
     std::unique_ptr<Gamepad> OpenGamepad(int i) override {
         const int slot = SlotOfIndex(i);
-        return slot < 0 ? nullptr : std::unique_ptr<Gamepad>(new WinPad(this, slot, 1 + slot));
+        if (slot >= 0) return std::unique_ptr<Gamepad>(new WinPad(this, slot, 1 + slot));
+        return i >= XInputCount() ? m_raw.Open(i - XInputCount()) : nullptr;
     }
     bool XState(int slot, XINPUT_STATE& s) { return LoadXInput() && m_getState((DWORD)slot, &s) == ERROR_SUCCESS; }
     bool XVibrate(int slot, uint16_t lo, uint16_t hi) {
@@ -442,6 +473,11 @@ public:
     static LRESULT CALLBACK WndProc(HWND h, UINT m, WPARAM wp, LPARAM lp) {
         WinBackend* b = g_backend;
         if (!b) return DefWindowProcW(h, m, wp, lp);
+        if (h == b->m_rawWnd && b->m_rawWnd) {   // the message-only window of the Raw Input pads
+            if (m == WM_INPUT) { b->m_raw.OnInput((void*)lp); return DefWindowProcW(h, m, wp, lp); }   // DefWindowProc does the clean-up the docs ask for
+            if (m == 0x00FE /* WM_INPUT_DEVICE_CHANGE */) { b->m_raw.OnDeviceChange((unsigned)wp, (void*)lp); return 0; }
+            return DefWindowProcW(h, m, wp, lp);
+        }
         auto it = b->m_wins.find(h);
         WinWindow* win = it == b->m_wins.end() ? nullptr : it->second;
         if (!win) return DefWindowProcW(h, m, wp, lp);   // messages during creation
@@ -459,7 +495,7 @@ public:
         case WM_GETMINMAXINFO:
             if (win->m_minW || win->m_minH) {
                 RECT r = {0, 0, win->m_minW, win->m_minH};
-                AdjustWindowRectEx(&r, (DWORD)GetWindowLongW(h, GWL_STYLE), FALSE, (DWORD)GetWindowLongW(h, GWL_EXSTYLE));
+                AdjustRectForDpi(&r, (DWORD)GetWindowLongW(h, GWL_STYLE), (DWORD)GetWindowLongW(h, GWL_EXSTYLE), WindowDpi(h));
                 MINMAXINFO* mi = (MINMAXINFO*)lp;
                 mi->ptMinTrackSize.x = r.right - r.left; mi->ptMinTrackSize.y = r.bottom - r.top;
                 return 0;
@@ -643,6 +679,8 @@ public:
     RECT m_imeRect = {0, 0, 0, 0};
     bool m_imeRectSet = false;
     std::string m_err;
+    own::RawPads m_raw;
+    HWND m_rawWnd = nullptr;
 
 private:
     bool LoadXInput() {

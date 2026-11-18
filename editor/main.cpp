@@ -49835,7 +49835,7 @@ static bool PassesLauncherGate(int argc, char** argv) {
     if (launcher.empty())
         msg = "OkaySpace Editor must be opened from the OkaySpace Launcher,\n"
               "but the launcher was not found next to the editor.";
-    SDL_ShowSimpleMessageBox(SDL_MESSAGEBOX_WARNING, "OkaySpace", msg, nullptr);
+    if (okay::platform::Backend* pb = okay::platform::Default()) pb->ShowErrorBox("OkaySpace", msg);
     if (!launcher.empty()) {
 #if defined(_WIN32)
         std::string cmd = "start \"\" \"" + launcher.string() + "\"";
@@ -51070,7 +51070,7 @@ int main(int argc, char** argv) {
         // nothing, so Hierarchy, Pause and Pose Capture could not be clicked.
         const bool escapeEdge = g_escapeEdge;
         g_escapeEdge = false;
-        const bool escapeHeld = SDL_GetKeyboardState(nullptr)[SDL_SCANCODE_ESCAPE] != 0;
+        const bool escapeHeld = okay::platform::Default() && okay::platform::Default()->IsKeyDown(okay::platform::Key::Escape);
         const bool wasReleased = g_gameCursorReleased;
         const bool gameClicked = ed.isPlaying() && g_gameCanvasHovered &&
             ImGui::IsMouseClicked(ImGuiMouseButton_Left) && !escapeEdge && !escapeHeld;
@@ -51291,10 +51291,10 @@ int main(int argc, char** argv) {
         // optional Test UI demo panel) are flushed to the screen at render end via
         // OkayUI::EndFrame(). One BeginFrame/EndFrame brackets the whole editor frame.
         {
-            int mx, my; Uint32 mb = SDL_GetMouseState(&mx, &my);
+            int mx = 0, my = 0; uint32_t mb = okay::platform::Default() ? okay::platform::Default()->MouseState(&mx, &my) : 0;
             OkayUI::Input uin;
             uin.mouseX = (float)mx; uin.mouseY = (float)my;
-            uin.mouseDown = (mb & SDL_BUTTON(SDL_BUTTON_LEFT)) != 0;
+            uin.mouseDown = (mb & okay::platform::MouseMask(okay::platform::MouseLeft)) != 0;
             uin.blocked = io.WantCaptureMouse;
             uin.text = g_okayUITyped[0] ? g_okayUITyped : nullptr;
             uin.backspace = g_okayUIBack;
@@ -52274,7 +52274,7 @@ int main(int argc, char** argv) {
         if (UseOkayUIBackend() && OkayUI::WantsTextInput()) {   // a hosted OkayUI field has the keyboard: ImGui and the shortcuts must stay out
             GImGui->PlatformImeData.WantTextInput = true;
             ImGui::SetNextFrameWantCaptureKeyboard(true);
-            SDL_StartTextInput();
+            if (okay::platform::Backend* pb = okay::platform::Default()) pb->StartTextInput();
         }
 #endif
         { OKAY_PROFILE("ImGui.Render"); ImGui::Render(); }
@@ -52348,7 +52348,7 @@ int main(int argc, char** argv) {
         OkayUI::EndFrame(renderer);
         // Keep SDL text input alive for OkayUI text fields when ImGui isn't using it,
         // so they receive SDL_TEXTINPUT events (Test UI demo or a game's ui_inputtext).
-        if ((g_showTestUI || ed.isPlaying()) && !io.WantTextInput) SDL_StartTextInput();
+        if ((g_showTestUI || ed.isPlaying()) && !io.WantTextInput) { if (okay::platform::Backend* pb = okay::platform::Default()) pb->StartTextInput(); }
 #endif
         if (const char* shot = std::getenv("OKAY_UI_SHOT")) {
             static int shotFrames = 0;

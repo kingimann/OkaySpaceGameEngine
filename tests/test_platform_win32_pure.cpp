@@ -3,6 +3,7 @@
 // Expected values are worked out by hand from the Microsoft and USB HID documents.
 #include "HidParser.hpp"
 #include "Win32Display.hpp"
+#include "Win32Hid.hpp"
 #include "Win32Icon.hpp"
 #include "Win32Ime.hpp"
 #include <cstdio>
@@ -18,6 +19,7 @@ static void Display() {
     using namespace win32disp;
     CHECK(ScaleFromDpi(96) == 1.0f && ScaleFromDpi(144) == 1.5f && ScaleFromDpi(192) == 2.0f && ScaleFromDpi(0) == 1.0f && ScaleFromDpi(5000) == 1.0f);
     CHECK(ScaleLength(100, 144) == 150 && ScaleLength(-100, 144) == -150 && ScaleLength(1, 120) == 1 && ScaleLength(3, 144) == 5 && ScaleLength(100, 0) == 100 && ScaleLength(0, 192) == 0);
+    CHECK(ValidDpi(144) == 144 && ValidDpi(0) == 96 && ValidDpi(-5) == 96 && ValidDpi(47) == 96 && ValidDpi(5000) == 96);
     CHECK(DpiFromWParam(0x00A000A0) == 160 && DpiFromWParam(0x0060) == 96);
     const Rect r = FromLtrb(10, 20, 110, 70);
     CHECK(r.x == 10 && r.y == 20 && r.w == 100 && r.h == 50);
@@ -169,8 +171,68 @@ static void Hid() {
     CHECK(true);
 }
 
+
+// The Raw Input / HidP side: caps -> usage layout -> pad state. Caps are written by hand the way HidP_GetButtonCaps /
+// HidP_GetValueCaps describe the same descriptors the parser tests above use.
+static void HidP() {
+    using namespace win32hid;
+    CHECK(IsXInputDevicePath("\\\\?\\HID#VID_045E&PID_028E&IG_00#8&1234&0&0000#{4d1e55b2-f16f-11cf-88cb-001111000030}"));
+    CHECK(IsXInputDevicePath("\\\\?\\hid#vid_045e&pid_028e&ig_00#x") && !IsXInputDevicePath("\\\\?\\HID#VID_054C&PID_09CC#7&2&0&0000#{...}") && !IsXInputDevicePath(""));
+    CHECK(!IsXInputDevicePath("\\\\?\\HID#VID_1234&PID_5678#BIG_00"));   // "IG_" must start a token, not end a word
+    uint16_t v = 0, p = 0;
+    CHECK(ParseVidPid("\\\\?\\HID#VID_054C&PID_09CC#7&2&0&0000#{x}", v, p) && v == 0x054C && p == 0x09CC);
+    CHECK(ParseVidPid("\\\\?\\hid#vid_045e&pid_028e&ig_00#x", v, p) && v == 0x045E && p == 0x028E);
+    CHECK(!ParseVidPid("\\\\?\\HID#VID_05&PID_09CC", v, p) && !ParseVidPid("", v, p) && !ParseVidPid("VID_ZZZZ&PID_0001", v, p));
+    CHECK(SignedFromRaw(0xFF, 8, true) == -1 && SignedFromRaw(0x80, 8, true) == -128 && SignedFromRaw(0x7F, 8, true) == 127 && SignedFromRaw(0xFF, 8, false) == 255);
+    CHECK(SignedFromRaw(0xFFFF, 16, true) == -1 && SignedFromRaw(0xFFFFFFFFu, 32, true) == -1 && SignedFromRaw(5, 0, true) == 5);
+
+    // A pad: X, Y 8-bit 0..255 (logical max reported as -1 by Windows for a 0xFF written in one byte), Rz 16-bit signed,
+    // a hat 1..8, a range of 12 buttons and one more button on the vendor-less page that must be ignored.
+    std::vector<ButtonCap> bc;
+    bc.push_back({1, kPageButton, true, 1, 12});
+    bc.push_back({1, 0x0C, false, 0x40, 0x40});
+    std::vector<ValueCap> vc;
+    vc.push_back({1, kPageGenericDesktop, false, 0x30, 0x30, 8, 1, 0, -1});
+    vc.push_back({1, kPageGenericDesktop, false, 0x31, 0x31, 8, 1, 0, 255});
+    vc.push_back({1, kPageGenericDesktop, false, 0x35, 0x35, 16, 1, -32768, 32767});
+    vc.push_back({1, kPageGenericDesktop, false, 0x39, 0x39, 4, 1, 1, 8});
+    vc.push_back({1, 0xFF00, false, 0x01, 0x01, 8, 1, 0, 255});     // vendor page: not an axis
+    const UsageLayout l = BuildLayout(bc, vc);
+    CHECK(l.buttons.size() == 12 && l.buttons[0] == 1 && l.buttons[11] == 12);
+    CHECK(l.axes.size() == 3 && l.axes[0].usage == 0x30 && l.axes[0].hi == 255 && !l.axes[0].isSigned);   // -1 fixed to 255
+    CHECK(l.axes[2].usage == 0x35 && l.axes[2].isSigned && l.axes[2].lo == -32768 && l.axes[2].bitSize == 16);
+    CHECK(l.hats.size() == 1 && l.hats[0].lo == 1 && l.hats[0].hi == 8 && l.Usable());
+
+    PadState s = Evaluate(l, {1, 3, 12, 40}, {0, 255, (uint32_t)0x8000}, {3});
+    CHECK(s.buttons == ((1u << 0) | (1u << 2) | (1u << 11)));          // usage 40 is outside the 12 buttons
+    CHECK(s.axes[0] == -32768 && s.axes[1] == 32767 && s.axes[2] == -32768 /* 0x8000 as signed 16-bit = -32768 */);
+    CHECK(s.hats[0] == 2);                                              // value 3 with lo 1 = index 2 = right
+    s = Evaluate(l, {}, {128, 128, 0}, {0});                            // hat value 0 is outside 1..8: centred
+    CHECK(s.buttons == 0 && s.hats[0] == 0 && s.axes[2] == 0 && s.axes[0] >= 0 && s.axes[0] <= 256);
+    s = Evaluate(l, {}, {}, {});                                         // missing readings read as the low end / centre, never crash
+    CHECK(s.buttons == 0 && s.hats[0] == 0);
+
+    // Usage ranges of values: X..Rz as one range cap, report count equals the range; and a cap that is an array of values is skipped.
+    std::vector<ValueCap> vr;
+    vr.push_back({2, kPageGenericDesktop, true, 0x30, 0x32, 8, 3, 0, 255});
+    vr.push_back({2, kPageGenericDesktop, false, 0x33, 0x33, 8, 4, 0, 255});   // ReportCount 4 for one usage: array, skipped
+    const UsageLayout lr = BuildLayout({}, vr);
+    CHECK(lr.axes.size() == 3 && lr.axes[1].usage == 0x31 && lr.axes[1].reportId == 2 && lr.Usable());
+    // Limits: more than 8 axes, 32 buttons, 2 hats are cut; a hostile range cannot blow up.
+    std::vector<ButtonCap> many; many.push_back({0, kPageButton, true, 1, 65535});
+    std::vector<ValueCap> manyv; manyv.push_back({0, kPageGenericDesktop, true, 0x30, 0x39, 8, 10, 0, 255});
+    const UsageLayout lm = BuildLayout(many, manyv);
+    CHECK(lm.buttons.size() == 32 && lm.axes.size() <= 8 && lm.hats.size() <= 2);
+    CHECK(BuildLayout({{0, kPageButton, true, 9, 1}}, {}).buttons.empty());   // reversed range
+    CHECK(!BuildLayout({}, {}).Usable());
+    // A degenerate axis (max <= min) still yields a layout and reads 0.
+    std::vector<ValueCap> deg; deg.push_back({0, kPageGenericDesktop, false, 0x30, 0x30, 8, 1, 5, 5}); deg.push_back({0, kPageGenericDesktop, false, 0x31, 0x31, 8, 1, 0, 255});
+    const UsageLayout ld = BuildLayout({}, deg);
+    CHECK(Evaluate(ld, {}, {5, 0}, {}).axes[0] == 0);
+}
+
 int main() {
-    Display(); Icon(); Ime(); Hid();
+    Display(); Icon(); Ime(); Hid(); HidP();
     std::printf("platform_win32_pure: %d checks, %d failed\n", g_n, g_fail);
     return g_fail ? 1 : 0;
 }

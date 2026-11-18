@@ -20,6 +20,8 @@ inline int ScaleLength(int len, int dpi) {
     const long long n = (long long)len * dpi;
     return (int)(n >= 0 ? (n + kBaseDpi / 2) / kBaseDpi : -((-n + kBaseDpi / 2) / kBaseDpi));
 }
+/// A DPI value from an API that can fail or answer 0: anything that is not a plausible DPI reads as 96 (100 percent).
+inline int ValidDpi(int dpi) { return dpi >= 48 && dpi <= 1000 ? dpi : kBaseDpi; }
 /// WM_DPICHANGED: the new horizontal DPI is the low word of wParam (the high word is the vertical one, equal on Windows).
 inline int DpiFromWParam(uint64_t wp) { return (int)(wp & 0xFFFF); }
 

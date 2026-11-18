@@ -2607,6 +2607,9 @@ struct VsEditState {
     bool   spaceDown = false; float spaceT = 0.0f, spaceMoved = 0.0f; bool spaceOpen = false;   // Space tap vs Space pan
     float  rightT = 0.0f;        // how long the right button has been down (click vs pan)
     bool   startedEmpty = false; // "Start empty" on the start card: no cards for this graph
+    int    lastUsed = -1;        // the block added last: the next added block joins it when nothing is selected
+    // A wire that was double-clicked: the block picked in the popup is put on it. (exec: from, pin, to; value: consumer, inPin)
+    bool   wireInsOn = false, wireInsExec = true; int wireInsA = 0, wireInsB = 0, wireInsC = 0;
     int    focusNode = -1;       // centre the view on this node next frame
     bool   addAtCenter = false;  // "+ Add" in the toolbar: palette, node placed mid-view
     bool   pasteTemplate = false; std::string templateText;   // a chosen template, placed mid-view
@@ -2843,6 +2846,7 @@ inline void ResetEditState(VsEditState& st) {
     st.pendingBase.clear(); st.trackInit = false; st.seenExec.clear(); st.flash.clear();
     st.dragging = st.linkPending = st.boxing = false;
     st.dragComment = st.resizeComment = st.renameComment = -1;
+    st.lastUsed = -1; st.wireInsOn = false;
     st.startedEmpty = false;   // a graph that was just opened or reset shows the start cards again if it is empty
 }
 
@@ -5103,6 +5107,30 @@ inline void Draw(EditorState& ed, bool* open) {
             g.dirty = true;
         }
     }
+    // Every wire with its two plugs on screen (for dropping a block on a wire and double-clicking one).
+    auto wireEnds = [&]() {
+        std::vector<VsWireEnds> out;
+        for (int i = 0; i < (int)g.execLinks.size(); ++i) {
+            const auto& l = g.execLinks[(std::size_t)i];
+            auto a = pinPos.find(pk(l.from, 0, 1, l.pin)), b = pinPos.find(pk(l.to, 0, 0, 0));
+            if (a != pinPos.end() && b != pinPos.end()) out.push_back({true, i, a->second.x, a->second.y, b->second.x, b->second.y});
+        }
+        for (int i = 0; i < (int)g.dataLinks.size(); ++i) {
+            const auto& l = g.dataLinks[(std::size_t)i];
+            auto a = pinPos.find(pk(l.producer, 1, 1, l.outPin)), b = pinPos.find(pk(l.consumer, 1, 0, l.inPin));
+            if (a != pinPos.end() && b != pinPos.end()) out.push_back({false, i, a->second.x, a->second.y, b->second.x, b->second.y});
+        }
+        return out;
+    };
+    // A block with no wires, dropped with its middle on a wire: the wire goes through the block.
+    if (st.wasNodeDrag && !startNodeDrag && ImGui::IsMouseReleased(ImGuiMouseButton_Left) && st.sel.size() == 1 &&
+        VsIsLoose(g, *st.sel.begin()) && nodeRect.count(*st.sel.begin())) {
+        const auto& rc = nodeRect[*st.sel.begin()];
+        const std::vector<VsWireEnds> we = wireEnds();
+        const int hit = VsNearestWire(we, (rc.first.x + rc.second.x) * 0.5f, (rc.first.y + rc.second.y) * 0.5f, z, 26.0f * z);
+        if (hit >= 0 && VsSplitWire(g, VsRefOfWire(g, we[(std::size_t)hit].exec, we[(std::size_t)hit].index), *st.sel.begin()))
+            st.lastUsed = *st.sel.begin();
+    }
     if (st.wasNodeDrag && !startNodeDrag && ImGui::IsMouseReleased(ImGuiMouseButton_Left) && st.snapGrid) {
         bool moved = false;
         for (auto& n : g.nodes) if (st.sel.count(n.id)) {
@@ -5144,13 +5172,13 @@ inline void Draw(EditorState& ed, bool* open) {
     }
     if (pendingDelete >= 0) {
         if (!st.sel.count(pendingDelete)) st.sel = {pendingDelete};
-        for (int id : st.sel) g.removeNode(id);
+        VsDeleteBlocks(g, st.sel, io.KeyShift);   // the blocks around it are joined; Shift cuts instead
         st.sel.clear(); st.selected = -1;
     }
     if (winFocused && !typing && (ImGui::IsKeyPressed(ImGuiKey_Delete) || ImGui::IsKeyPressed(ImGuiKey_Backspace)) &&
         (!st.sel.empty() || st.selected >= 0)) {
         if (st.selected >= 0) st.sel.insert(st.selected);
-        for (int id : st.sel) g.removeNode(id);
+        VsDeleteBlocks(g, st.sel, io.KeyShift);   // Delete joins the blocks around it; Shift+Delete cuts instead
         st.sel.clear(); st.selected = -1;
     }
 
@@ -5391,6 +5419,21 @@ inline void Draw(EditorState& ed, bool* open) {
         st.linkNode = pconn.node; st.linkPin = pconn.pin;
         openPaletteNow = true; pconnPlace = true;
     }
+    // Double-click a wire: the palette opens, and the block picked goes onto that wire.
+    if (canvasHovered && !st.dragging && !io.KeyAlt && ImGui::IsMouseDoubleClicked(ImGuiMouseButton_Left)) {
+        bool onNode = false;
+        for (const auto& kv : nodeRect)
+            if (mouse.x >= kv.second.first.x && mouse.x <= kv.second.second.x && mouse.y >= kv.second.first.y && mouse.y <= kv.second.second.y) onNode = true;
+        const std::vector<VsWireEnds> we = wireEnds();
+        const int hit = onNode ? -1 : VsNearestWire(we, mouse.x, mouse.y, z, 12.0f);
+        if (hit >= 0) {
+            const VsWireRef ref = VsRefOfWire(g, we[(std::size_t)hit].exec, we[(std::size_t)hit].index);
+            st.wireInsOn = ref.on; st.wireInsExec = ref.exec; st.wireInsA = ref.a; st.wireInsB = ref.b; st.wireInsC = ref.c;
+            st.linkPending = false;
+            openPaletteNow = ref.on;
+            st.sel.clear(); st.selected = -1;
+        }
+    }
     // Right-click empty canvas (or Space): node palette.
     if ((canvasHovered && ImGui::IsMouseReleased(ImGuiMouseButton_Right) && VsRightClickOpensMenu(st.rightT, std::sqrt(io.MouseDragMaxDistanceSqr[ImGuiMouseButton_Right])) && !st.dragging) ||
         (winFocused && !typing && canvasWindowHovered && st.spaceOpen) || openPaletteNow || st.addAtCenter) {
@@ -5414,9 +5457,21 @@ inline void Draw(EditorState& ed, bool* open) {
     }
     // Add a node from the palette; wire it to the dropped pin when there is one.
     auto addFromPalette = [&](const VsDef& d, const std::string& arg = std::string()) {
+        const int prevSel = st.selected;   // the block this one should join, when nothing else says where it goes
         int nid = g.add(d.type, st.paletteWorld.x, st.paletteWorld.y);
         if (!arg.empty()) if (VsEditNode* nn = g.find(nid)) nn->arg = arg;
         st.selected = nid; st.sel = {nid};
+        if (st.wireInsOn) {
+            VsWireRef ref; ref.on = true; ref.exec = st.wireInsExec; ref.a = st.wireInsA; ref.b = st.wireInsB; ref.c = st.wireInsC;
+            st.wireInsOn = false;
+            if (!VsSplitWire(g, ref, nid)) {
+                g.removeNode(nid); st.sel.clear(); st.selected = -1;
+                st.refuseMsg = "That block does not fit on this wire.";
+                st.refuseTime = 4.0f; st.offerOn = false;
+                return;
+            }
+        } else if (!st.linkPending) VsConnectAndPlace(g, nid, prevSel, st.lastUsed);
+        st.lastUsed = nid;
         if (st.linkPending) {
             if (st.linkExec) {
                 if (st.linkFromOutput) { if (d.execIn) g.linkExec(st.linkNode, st.linkPin, nid); }
@@ -5452,8 +5507,8 @@ inline void Draw(EditorState& ed, bool* open) {
         DrawNodePalette(st, g, [&](const VsDef& d, const std::string& arg) { addFromPalette(d, arg); });
         ImGui::EndPopup();
 
-} else if (st.linkPending && !openPaletteNow) {
-        st.linkPending = false;   // palette dismissed without a pick
+} else if ((st.linkPending || st.wireInsOn) && !openPaletteNow) {
+        st.linkPending = false; st.wireInsOn = false;   // palette dismissed without a pick
     }
 
     if (st.missing) {

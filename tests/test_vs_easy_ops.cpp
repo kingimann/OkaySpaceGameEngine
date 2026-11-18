@@ -144,7 +144,23 @@ int main() {
         CHECK(!VsInsertOnDataWire(h, 0, mul2));
         CHECK(h.dataLinks.size() == 1 && h.dataLinks[0].producer == cmp);
     }
-    // Finding the wire under a point.
+    // Finding the wire under a point, and naming a wire so it can be found again.
+    {
+        std::vector<VsWireEnds> w = {{true, 0, 100, 100, 300, 100}, {false, 0, 100, 300, 300, 300}};
+        CHECK(VsNearestWire(w, 200, 104, 1.0f, 14.0f) == 0);
+        CHECK(VsNearestWire(w, 200, 296, 1.0f, 14.0f) == 1);
+        CHECK(VsNearestWire(w, 200, 200, 1.0f, 14.0f) == -1);
+        VsEditGraph g;
+        const int ev = g.add("OnStart", 0, 0), a = g.add("ScoreAdd", 0, 0), z = g.add("Print", 0, 0);
+        g.linkExec(ev, 0, a); g.linkExec(a, 0, z);
+        const VsWireRef ref = VsRefOfWire(g, true, 1);
+        g.execLinks.erase(g.execLinks.begin());          // the list changed: the reference still finds its wire
+        const int mid = g.add("Delay", 0, 0);
+        CHECK(VsSplitWire(g, ref, mid));
+        CHECK(ExecCount(g, a, mid) == 1 && ExecCount(g, mid, z) == 1);
+        CHECK(!VsSplitWire(g, ref, g.add("Delay", 0, 0)));   // that wire is gone now
+        CHECK(!VsRefOfWire(g, true, 99).on);
+    }
     {
         CHECK(VsCurveDistance(150, 100, 100, 100, 200, 100) < 20.0f);
         CHECK(VsCurveDistance(150, 400, 100, 100, 200, 100) > 100.0f);

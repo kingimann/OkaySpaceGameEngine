@@ -2573,6 +2573,7 @@ struct VsEditState {
     bool   snapGrid = true;      // snap a moved node to the canvas grid on release
     bool   wasNodeDrag = false;
     bool   showHint = true;      // the one-line canvas hint
+    bool   startedEmpty = false; // "Start empty" on the start card: no cards for this graph
     int    focusNode = -1;       // centre the view on this node next frame
     bool   addAtCenter = false;  // "+ Add" in the toolbar: palette, node placed mid-view
     bool   pasteTemplate = false; std::string templateText;   // a chosen template, placed mid-view
@@ -2818,6 +2819,7 @@ inline void ResetEditState(VsEditState& st) {
     st.pendingBase.clear(); st.trackInit = false; st.seenExec.clear(); st.flash.clear();
     st.dragging = st.linkPending = st.boxing = false;
     st.dragComment = st.resizeComment = st.renameComment = -1;
+    st.startedEmpty = false;   // a graph that was just opened or reset shows the start cards again if it is empty
 }
 
 inline void VsSaveTabList();
@@ -3472,6 +3474,7 @@ inline bool VsDrawChoice(EditorState& ed, const VsEditGraph& g, std::string& val
 #include "VisualScriptClarity.hpp"
 #include "VisualScriptPalette.hpp"
 #include "VisualScriptEasyOps.hpp"   // graph-in, graph-out rules for the canvas (needs the graph model above)
+#include "VisualScriptStartDraw.hpp"  // the big recipe cards shown for an empty graph
 namespace okay::editor::vsed {
 
 // ---- The editor window -----------------------------------------------------
@@ -3791,7 +3794,7 @@ inline void Draw(EditorState& ed, bool* open) {
     if (ImGui::Button("Save")) doSave();
     if (ImGui::IsItemHovered()) ImGui::SetTooltip("Save this graph (Ctrl+S)");
     ImGui::SameLine();
-    if (ImGui::Button("Recipes")) ImGui::OpenPopup("##vsrecipes");
+    if (ImGui::Button("Pick a recipe")) ImGui::OpenPopup("##vsrecipes");
     if (ImGui::IsItemHovered()) ImGui::SetTooltip("Start here. Drop in a ready-made graph: move with arrow keys, jump, coins and score, a door, an enemy that follows you.");
     if (ImGui::BeginPopup("##vsrecipes")) {
         struct Rec { const char* name; const char* text; };
@@ -5290,6 +5293,8 @@ inline void Draw(EditorState& ed, bool* open) {
         const std::string path = g.path.empty() ? std::string("(no path)") : g.path;
         dl->AddText(ImVec2(canvasMin.x + 24.0f, canvasMin.y + 24.0f), IM_COL32(255, 170, 150, 255), msg);
         dl->AddText(ImVec2(canvasMin.x + 24.0f, canvasMin.y + 48.0f), IM_COL32(200, 206, 216, 255), path.c_str());
+    } else if (VsStartVisible((int)g.nodes.size(), VsPrefs().hideStart, st.startedEmpty, st.missing)) {
+        VsDrawStartScreen(ed, st, canvasMin, canvasMax);
     } else if (g.nodes.empty()) {
         const float cardW = 480.0f, cardH = 220.0f;
         const ImVec2 c0((canvasMin.x + canvasMax.x - cardW) * 0.5f, (canvasMin.y + canvasMax.y - cardH) * 0.5f);
@@ -5297,7 +5302,7 @@ inline void Draw(EditorState& ed, bool* open) {
         dl->AddRectFilled(c0, c1, IM_COL32(32, 36, 46, 245), 16.0f);
         dl->AddRect(c0, c1, IM_COL32(120, 140, 168, 160), 16.0f, 0, 1.5f);
         const char* title = "What is this?";
-        const char* hint = "A script is a chain of blocks: when something happens, do something. Press Recipes to start.";
+        const char* hint = "A script is a chain of blocks: when something happens, do something. Press Pick a recipe to start.";
         const char* hint2 = "Or add a block and open the Starter group at the top of the list.";
         const ImVec2 ts = ImGui::CalcTextSize(title);
         dl->AddText(ImVec2(c0.x + (cardW - ts.x) * 0.5f, c0.y + 36.0f), IM_COL32(236, 240, 246, 255), title);

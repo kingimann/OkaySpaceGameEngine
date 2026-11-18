@@ -275,6 +275,9 @@ struct Local {
     int32_t offset = 0;
     bool is_static = false;
     bool is_const = false;
+    // A const integer local with a constant initializer is itself a constant ([expr.const]): int a[n];
+    bool has_cval = false;
+    uint64_t cval = 0;
     std::string symbol;
     int reg = 0;
     // 0 is the parameter scope. A nested block uses a higher number.
@@ -3186,7 +3189,11 @@ struct Parser {
     // A constant expression ([expr.const]): read as a conditional-expression and folded by the parser.
     bool parse_const(uint64_t* value, const char* what) {
         Node n;
-        if (!parse_expr(2, &n)) return false;
+        const bool saved_const_ctx = const_ctx;
+        const_ctx = true;  // a const local with a constant initializer counts as a constant here
+        const bool parsed = parse_expr(2, &n);
+        const_ctx = saved_const_ctx;
+        if (!parsed) return false;
         if (n.kind != Node::IntLit || n.type.base >= 5) {
             error = std::string("expected ") + what;
             return false;
@@ -3532,6 +3539,18 @@ struct Parser {
     }
 
     bool local_visible(const std::string& name) const;
+    bool local_const_value(const std::string& name, uint64_t* value) const {
+        if (cur_locals == nullptr) return false;
+        for (int i = static_cast<int>(cur_locals->size()) - 1; i >= 0; --i) {
+            const Local& local = (*cur_locals)[static_cast<size_t>(i)];
+            if (local.name == name && scope_visible(local.scope)) {
+                if (!local.has_cval) return false;
+                *value = local.cval;
+                return true;
+            }
+        }
+        return false;
+    }
     bool static_type(const Node& node, Type* out) const;
     bool parse_call_args(std::vector<Node>* args);
     bool expand_pack_arg(Node arg, std::vector<Node>* args);
@@ -3819,6 +3838,7 @@ struct Parser {
     // While a lambda body is read once only to learn the type of its first return.
     bool lam_probe = false;
     bool saw_auto_ret = false;
+    bool const_ctx = false;
     bool lam_probe_seen = false;
     Type lam_probe_type{};
 
@@ -4805,6 +4825,14 @@ struct Parser {
                 ++field.type.pointers;
                 field.ref = true;
             }
+            if (!static_member && is(TLParen) && at + 2 < tokens.size() && tokens[at + 1].kind == TStar &&
+                tokens[at + 2].kind == TIdent) {
+                // R (*name)(A, B); a pointer-to-function member, read like any declarator.
+                Declarator fdecl;
+                if (!parse_declarator(base_type, &fdecl)) return false;
+                field.name = fdecl.name;
+                field.type = fdecl.type;
+            } else {
             if (!is(TIdent)) {
                 error = "expected a field name";
                 return false;
@@ -4812,6 +4840,7 @@ struct Parser {
             field.name = cur().text;
             next();
             if (!parse_brackets(&field.type)) return false;
+            }
             if (field.type.array_len == 0 && !static_member) {
                 error = "an array member needs a length";
                 return false;
@@ -8122,7 +8151,7 @@ struct Parser {
                     (tokens[at + 3].kind == TIdent ||
                      ((tokens[at + 3].kind == TAmp || tokens[at + 3].kind == TStar) && at + 4 < tokens.size() &&
                       tokens[at + 4].kind == TIdent &&
-                      (typedefs.count(tokens[at + 2].text) > 0 || class_name_text(tokens[at + 2].text))));
+                      (typedefs.count(tokens[at + 2].text) > 0 || find_struct(tokens[at + 2].text) >= 0)));
                 const bool template_type_start = after == TIdent && is_template_name_at(at + 2);  // `Foo(vector<int>& n)`
                 if (!type_start && !named_type_start && !template_type_start) {
                     // C g(args); a global object, the arguments go to a constructor.
@@ -8133,6 +8162,23 @@ struct Parser {
                     if (!parse_call_args(&gargs)) return false;
                     gctor_args = true;
                 }
+            }
+            if (!gctor_args && !is_typedef && obj_needs_ctor(type) && type.pointers == 0 && is(TIdent) && at + 1 < tokens.size() &&
+                tokens[at + 1].kind == TLBrace) {
+                // C g{args}; a global object made by a constructor ([dcl.init.list]).
+                decl.name = cur().text;
+                decl.type = type;
+                next();
+                next();
+                if (!accept(TRBrace)) {
+                    do {
+                        Node arg;
+                        if (!parse_expr(1, &arg)) return false;
+                        gargs.push_back(std::move(arg));
+                    } while (accept(TComma));
+                    if (!expect(TRBrace, "'}'")) return false;
+                }
+                gctor_args = true;
             }
             if (!gctor_args && !parse_declarator(type, &decl)) return false;
             if (is_typedef) {
@@ -8198,7 +8244,7 @@ struct Parser {
                     // A const object at namespace scope and anything in an unnamed namespace has internal linkage
                     // ([basic.link]): every file keeps its own copy, so two files may use the same name.
                     global.is_static = is_static || decl.type.is_const || anon_depth > 0;
-                    if (accept(TAssign)) {
+                    if (accept(TAssign) || (is(TLBrace) && decl.type.base == 3 && decl.type.pointers == 0)) {  // also `P g{1, 2};`
                         Node init;
                         if (!parse_init(&init)) return false;
                         global.bss = false;
@@ -9369,6 +9415,11 @@ bool Parser::parse_local_decl_one(const Type& type, bool is_typedef, bool is_sta
         }
         local.symbol = global.name;
         globals.push_back(global);
+    }
+    if (is_const && !is_static && has_init && init.kind == Node::IntLit && init.type.base < 5 && decl.type.pointers == 0 &&
+        !decl.type.is_array() && !decl.type.is_ref && (decl.type.base == 1 || decl.type.base == 2 || decl.type.base == 4)) {
+        local.has_cval = true;
+        local.cval = init.number;
     }
     place_local(locals, local);
     out->kind = Node::Block;
@@ -12538,6 +12589,11 @@ bool Parser::parse_unary(Node* out) {
         } else if (enum_values.find(name) != enum_values.end()) {
             out->kind = Node::IntLit;
             out->number = enum_values[name];
+            out->type.base = 1;
+        } else if (const_ctx && !no_const_subst && !is_assign_op(cur().kind) && !is(TPlusPlus) && !is(TMinusMinus) &&
+                   local_const_value(name, &out->number)) {
+            out->kind = Node::IntLit;
+            out->type = Type{};
             out->type.base = 1;
         } else if (!no_const_subst && !local_visible(name) && !is_assign_op(cur().kind) && !is(TPlusPlus) &&
                    !is(TMinusMinus) && global_const_node(name, out)) {

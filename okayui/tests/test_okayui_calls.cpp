@@ -510,5 +510,44 @@ int main() {
         };
         CHECK(!count(0) && count(UI::DrawFlags_Closed));
     }
+    {   // printf-style text equals the plain call with the formatted string; one argument stays literal
+        Bitmap a, b;
+        for (int v = 0; v < 2; ++v) {
+            Reset(); Sim s(260, 140);
+            s.Frames(2, [&] {
+                UI::BareNextWindow();
+                if (UI::Begin("w", 0, 0, 260, 140)) {
+                    if (v == 0) { UI::Text("%d items, %s", 3, "ok"); UI::TextDisabled("%.1f%%", 12.5); UI::TextWrapped("n=%d", 7); UI::BulletText("b%d", 1); UI::TextColored(UI::Vec4{1, 0, 0, 1}, "red %d", 5); UI::Text("100%"); }
+                    else { UI::Text("3 items, ok"); UI::TextDisabled("12.5%"); UI::TextWrapped("n=7"); UI::BulletText("b1"); UI::TextColored(255, 0, 0, "red 5"); UI::Text("100%"); }
+                }
+                UI::End();
+            });
+            (v ? b : a) = s.Draw(5, 5, 5);
+        }
+        CHECK(a.rgba == b.rgba);
+    }
+    {   // Button with a size, SameLine with an offset, BeginPopupContextItem without an id
+        Reset(); Sim s(300, 160);
+        UI::Rect r1, r2, r3, r4, r5; float startX = 0; int clicks = 0;
+        auto ui = [&] {
+            UI::BareNextWindow();
+            if (UI::Begin("w", 0, 0, 300, 160)) {
+                startX = UI::GetCursorScreenPos().x;
+                if (UI::Button("Wide", UI::Vec2{200, 40})) ++clicks; r1 = UI::GetItemRect();
+                UI::Button("Fit", UI::Vec2{0, 0}); r2 = UI::GetItemRect();
+                UI::Button("Fill", UI::Vec2{-1, 0}); r3 = UI::GetItemRect();
+                UI::Button("a"); r4 = UI::GetItemRect(); UI::SameLine(150.0f, -1.0f); UI::Button("b"); r5 = UI::GetItemRect();
+                UI::Button("Nan", UI::Vec2{std::nanf(""), std::nanf("")});
+                UI::SameLine(0, 30); UI::Button("c");
+                if (UI::BeginPopupContextItem()) { UI::Text("ctx"); UI::EndPopup(); }
+            }
+            UI::End();
+        };
+        s.Frames(2, ui);
+        CHECK(r1.w == 200 && r1.h == 40 && r2.w < 100 && r2.h == r4.h && r3.w > 200);
+        CHECK(std::fabs(r5.x - (startX + 150.0f)) < 1.0f && r5.y == r4.y);
+        s.Click(CenterX(r1), CenterY(r1), ui); CHECK(clicks == 1);
+        s.rdown = true; s.Move(CenterX(r4), CenterY(r4)); s.Frame(ui); s.rdown = false; s.Frames(2, ui);   // right click on an item opens its own popup
+    }
     TEST_MAIN_RESULT();
 }

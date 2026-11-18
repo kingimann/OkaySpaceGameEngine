@@ -2556,6 +2556,15 @@ void SameLine(float spacing) {
     g_lay.sameLineSpacing = spacing;
 }
 
+void SameLine(float offsetFromStartX, float spacing) {
+    if (!g_lay.active) return;
+    g_lay.pendingSameLine = true;
+    if (std::isfinite(offsetFromStartX) && offsetFromStartX > 0.0f) {
+        const float target = g_lay.ox + offsetFromStartX, end = g_lay.prevX + g_lay.prevW;
+        g_lay.sameLineSpacing = target > end ? target - end : 0.0f;
+    } else g_lay.sameLineSpacing = std::isfinite(spacing) ? spacing : -1.0f;
+}
+
 void SetNextItemWidth(float w) { g_nextItemW = w; }
 void PushItemWidth(float w)    { if (g_itemWTop < 16) g_itemWStack[g_itemWTop++] = w; }
 void PopItemWidth()            { if (g_itemWTop > 0) --g_itemWTop; }
@@ -2729,6 +2738,14 @@ void PopID() { popIdSeed(); }
 bool Button(const char* label) {
     if (!g_lay.active) return false;
     const float w = visW(label) + 24.0f, h = rowH();
+    float x, y; place(w, h, x, y);
+    return Button(hashLabel(label), x, y, w, h, label);
+}
+
+bool Button(const char* label, Vec2 size) {
+    if (!g_lay.active) return false;
+    const float sx = std::isfinite(size.x) ? size.x : 0.0f, sy = std::isfinite(size.y) ? size.y : 0.0f;
+    const float w = sx > 0.0f ? sx : (sx < 0.0f ? availW() : visW(label) + 24.0f), h = sy > 0.0f ? sy : rowH();
     float x, y; place(w, h, x, y);
     return Button(hashLabel(label), x, y, w, h, label);
 }
@@ -4259,7 +4276,7 @@ bool BeginCombo(const char* label, const char* preview) {
 void EndCombo() { EndPopup(); }
 
 bool BeginPopupContextItem(const char* id) {
-    const int pid = hashLabel(id);
+    const int pid = id ? hashLabel(id) : (hashLabel("##ctxitem") ^ g_lastId);
     // Right-click on the last-issued widget opens the popup at the cursor.
     if (g_lay.active && g_rPressed && !g_in.blocked &&
         pointIn(g_in.mouseX, g_in.mouseY, g_lay.prevX, g_lay.prevY, g_lay.prevW, g_lay.prevH)) {

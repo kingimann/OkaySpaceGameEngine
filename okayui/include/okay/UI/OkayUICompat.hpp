@@ -299,4 +299,20 @@ struct ImRect {
 /// The last item's rectangle as an ImRect.
 inline ImRect GetItemImRect() { const Rect r = GetItemRect(); return ImRect(r.x, r.y, r.x + r.w, r.y + r.h); }
 
+
+// ---- printf-style text (the forms ported code calls: Text("%d items", n)) ----------------------------------------------------------
+/// Format into a 1,024-byte buffer (longer output is cut) and show it with the plain call of the same name. With one argument the plain
+/// call is chosen, so a literal "100%" stays literal. TextColored takes the colour as a Vec4 (a Dear ImGui ImVec4 converts to it).
+void TextFormatted(const char* fmt, ...);
+void TextDisabledFormatted(const char* fmt, ...);
+void TextWrappedFormatted(const char* fmt, ...);
+void BulletTextFormatted(const char* fmt, ...);
+void TextColoredFormatted(Vec4 color, const char* fmt, ...);
+// Templates (they need at least one argument after the format, so a call with only a string still picks the plain one).
+template <class A0, class... A> inline void Text(const char* fmt, A0 a0, A... a) { TextFormatted(fmt, a0, a...); }
+template <class A0, class... A> inline void TextDisabled(const char* fmt, A0 a0, A... a) { TextDisabledFormatted(fmt, a0, a...); }
+template <class A0, class... A> inline void TextWrapped(const char* fmt, A0 a0, A... a) { TextWrappedFormatted(fmt, a0, a...); }
+template <class A0, class... A> inline void BulletText(const char* fmt, A0 a0, A... a) { BulletTextFormatted(fmt, a0, a...); }
+template <class... A> inline void TextColored(Vec4 color, const char* fmt, A... a) { TextColoredFormatted(color, fmt, a...); }
+
 } // namespace OkayUI

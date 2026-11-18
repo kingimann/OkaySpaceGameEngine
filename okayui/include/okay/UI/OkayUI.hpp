@@ -317,6 +317,9 @@ void PopClipRect();
 /// Keep the next widget on the current line instead of starting a new one
 /// (`spacing` < 0 uses the theme default gap).
 void SameLine(float spacing = -1.0f);
+/// The Dear ImGui two-argument form: stay on the line, and when `offsetFromStartX` > 0 start the next item that far from the left edge of
+/// the content (never left of where the previous item ends); `spacing` >= 0 is the gap when the offset is 0 (negative: the default gap).
+void SameLine(float offsetFromStartX, float spacing);
 /// Set the width (in pixels) of the NEXT full-width widget (slider, input, combo,
 /// plot, ...). One-shot: applies to just the next item. Clamped to the space left.
 void SetNextItemWidth(float w);
@@ -359,6 +362,8 @@ void SeparatorText(const char* label);
 // hashed from the label). The explicit-coordinate versions above still work for
 // free-form placement.
 bool Button(const char* label);
+/// A button of a given size: `size.x` > 0 is the width in pixels (0 fits the label, negative fills the line), `size.y` > 0 the height (0 is the row height).
+bool Button(const char* label, Vec2 size);
 /// A compact button (tight padding, no full-line height) — for inline actions.
 bool SmallButton(const char* label);
 /// A row of tabs: clicking a tab sets *current to its index. Draw the selected
@@ -609,7 +614,8 @@ bool Selectable(const char* label, bool* p_selected, unsigned flags = 0, Vec2 si
 void OpenPopup(const char* id);
 /// Open a popup when the LAST widget is right-clicked; returns true while it's open
 /// (then add items; clicking one should call CloseCurrentPopup()).
-bool BeginPopupContextItem(const char* id);
+/// With no id the popup is keyed by the last item, so every item can have its own.
+bool BeginPopupContextItem(const char* id = nullptr);
 /// Open a popup when the empty background of the current window is right-clicked (not an item, not a window above it); returns
 /// true while it is open, like BeginPopupContextItem. Call it after the window's widgets, so the hovered item is known.
 bool BeginPopupContextWindow(const char* id);

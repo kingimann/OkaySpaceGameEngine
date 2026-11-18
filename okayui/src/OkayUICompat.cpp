@@ -3,6 +3,8 @@
 #include "okay/UI/OkayUIInternals.hpp"
 
 #include <cmath>
+#include <cstdarg>
+#include <cstdio>
 #include <cstdint>
 #include <cstring>
 #include <string>
@@ -253,4 +255,15 @@ bool IsWindowFocused(int flags) {
     if (flags & Focused_AnyWindow) return IsWindowFocused() || AnyWindowFocused();
     return IsWindowFocused();
 }
+
+#define OKAYUI_FORMAT(buf, fmt) char buf[1024]; { va_list ap; va_start(ap, fmt); std::vsnprintf(buf, sizeof buf, fmt ? fmt : "", ap); va_end(ap); }
+void TextFormatted(const char* fmt, ...) { OKAYUI_FORMAT(b, fmt); Text(static_cast<const char*>(b)); }
+void TextDisabledFormatted(const char* fmt, ...) { OKAYUI_FORMAT(b, fmt); TextDisabled(static_cast<const char*>(b)); }
+void TextWrappedFormatted(const char* fmt, ...) { OKAYUI_FORMAT(b, fmt); TextWrapped(static_cast<const char*>(b)); }
+void BulletTextFormatted(const char* fmt, ...) { OKAYUI_FORMAT(b, fmt); BulletText(static_cast<const char*>(b)); }
+void TextColoredFormatted(Vec4 color, const char* fmt, ...) {
+    OKAYUI_FORMAT(b, fmt);
+    PushStyleColor(Col_Text, color); Text(static_cast<const char*>(b)); PopStyleColor();
+}
+#undef OKAYUI_FORMAT
 } // namespace OkayUI

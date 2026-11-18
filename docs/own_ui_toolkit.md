@@ -845,6 +845,17 @@ By the same report: 13 calls and 83 types, flags and enums are still without a s
 
 Still without a name: `ImGuiWindow` (41; OkayUI has no window objects, `CurrentWindow` and `WindowInfo` are values, so pointer-using callers must change), `ImGuiPayload` (36, `DragPayload` has other field names), `ImFont` and `ImFontConfig` (28), `ImGuiDockNode` (16), `ImGuiKey` (11), the popup flags (`AnyPopupId`, `AnyPopupLevel`, `MouseButtonRight`), `ImGuiDragDropFlags_AcceptNoDrawDefaultRect` (the outline is drawn when the target begins, before the accept flags are known), `ButtonFlags_MouseButton*`, `ConfigFlags_*` (host configuration, no meaning here), `SliderFlags_Logarithmic` and `AlwaysClamp`, `ComboFlags_HeightLarge` and `NoPreview`, `InputFlags_Repeat`, `InputTextFlags_CtrlEnterForNewLine`, keypad keys, and about 60 more with 99 uses in all (`docs/imgui_port_report.md`).
 
+### 6.12 A real port probe: what stops `editor/ConsolePanel.cpp` from compiling against OkayUI
+
+To find what a mechanical port still breaks on, I compiled a scratch copy of the editor's Dear ImGui Console panel (`editor/ConsolePanel.cpp`, 399 lines, not committed) with `ImGui::` replaced by `OkayUI::` (syntax check only, `g++ -fsyntax-only`, real `imgui.h` still included for its types, plus ImGui's own hook macros `IM_VEC2_CLASS_EXTRA` / `IM_VEC4_CLASS_EXTRA` so `ImVec2` and `ImVec4` convert to `Vec2` and `Vec4`). First run: 23 errors. The real gaps behind them were closed in this step, all in `OkayUI.hpp` / `OkayUICompat.hpp`:
+
+- `Button(label, Vec2 size)` (412 call sites in the editor, launcher and shared code; size 0 fits the label or the row height, negative fills the line).
+- `SameLine(offsetFromStartX, spacing)` (321 sites with a second argument).
+- printf-style `Text`, `TextDisabled`, `TextWrapped`, `BulletText` and `TextColored(Vec4, fmt, ...)` (about 1,000 sites; 166 of the 181 `Text(` calls take arguments). They are templates that need one argument after the format, so `Text("100%")` still picks the plain call (a plain `const char*, ...` overload is ambiguous with it in C++).
+- `BeginPopupContextItem()` with no id (keyed by the last item).
+
+After that: 15 errors, none of them a missing OkayUI call. They are: the Dear ImGui enum types (`ImGuiCol_`, `ImGuiStyleVar_`; 10 errors, an artefact of still including `imgui.h`: a real port includes a mapping header instead, see `shared/OkayUIImGuiMap.hpp`), `GetWindowDrawList()` returning a reference where ported code writes `->` and passes an `ImDrawList*` (4 errors; the ported line changes `->` to `.`), and `GetStyle()` returning `StyleInfo` where a function takes `const ImGuiStyle&` (1 error). So the compile-level gap of this panel is now the type spelling, not missing widgets. It was **not run**: a compile check says nothing about behaviour. What does run headless is the OkayUI-native Console port (`okayui/screens`, `okayui_screens` and `okayui_panels` suites), as before. Not tried: the Project panel and any other panel.
+
 ## 7. The render interface: OkayUI on screen without a Dear ImGui backend
 
 Own code, off by default, wired into nothing: the editor and launcher still draw OkayUI (and everything else) through Dear ImGui's SDL backends. This section is the part that lets a later host put OkayUI's pixels on screen without any Dear ImGui backend code. (The numbered sections 5 and 6 of the draw-through-ImGui host live on another branch; this section is numbered 7 so the two cannot collide.)

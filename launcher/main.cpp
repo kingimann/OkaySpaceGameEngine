@@ -78,8 +78,10 @@ inline void Flash(SDL_Window* w, okay::platform::FlashMode m) { if (auto s = oka
 #include "okay/Net/MatchResults.hpp"
 #include "imgui.h"
 #include "imgui_internal.h"   // ClearActiveID: Esc leaves the name field
+#ifndef OKAY_NO_SDL
 #include "imgui_impl_sdl2.h"
 #include "imgui_impl_sdlrenderer2.h"
+#endif
 #include "RobotoFont.h"     // embedded Roboto Medium (Apache 2.0) — shared with the editor
 #include "JetBrainsMonoFont.h" // embedded JetBrains Mono (OFL) — `code` in chat
 #include "FileDialog.hpp"       // native file picker (chat attachments), or the built-in browser

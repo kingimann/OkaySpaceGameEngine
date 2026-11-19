@@ -133,6 +133,7 @@
 #include "TestHooks.hpp"   // scripted input and screenshots for headless test runs (OKAY_TEST_SCRIPT); not in normal builds
 #endif
 #include "ImGuiPainterRenderer.hpp"   // our own Dear ImGui renderer over okay::platform::Painter (OKAY_IMGUI_RENDER=own; default stays imgui_impl_sdlrenderer2)
+#include "WindowHandles.hpp"       // native handle -> okay::platform::Window
 #include "PainterBridge.hpp"   // the 2D renderer calls, through okay::platform::Painter
 #include "ImGuiPlatformFeed.hpp"          // our own Dear ImGui input feed over okay::platform (OKAY_PLATFORM_EVENTS=own; default stays imgui_impl_sdl2)
 
@@ -760,8 +761,10 @@ int main(int argc, char** argv) {
 #include "okay/Scripting/ScriptUI.hpp"
 #include "okay/Scripting/StarterScripts.hpp"
 #include "okay/Scene/EnsureCamera.hpp"       // every scene keeps a camera
+#ifndef OKAY_NO_SDL
 #include "backends/imgui_impl_sdl2.h"
 #include "backends/imgui_impl_sdlrenderer2.h"
+#endif
 #include "RobotoFont.h"     // embedded Roboto Medium (Apache 2.0) — the editor UI font
 #include "JetBrainsMonoFont.h" // embedded JetBrains Mono (OFL) — the code editor font
 #include "TextEditor.h"        // ImGuiColorTextEdit — the code-editor widget (editor/vendor)
@@ -50695,6 +50698,7 @@ int main(int argc, char** argv) {
     std::unique_ptr<okay::platform::Window> winSeam = sdlSeam->MakeWindow(mainDesc);
     if (!winSeam) { std::cerr << "CreateWindow failed: " << sdlSeam->LastError() << "\n"; return 1; }
     SDL_Window* window = (SDL_Window*)winSeam->NativeHandle();
+    okay::pb::RegisterWindow(*winSeam);   // the display helper finds the window by its native handle
     okay::SetAppIcon(*winSeam);   // placeholder OkaySpace logo
 
     // SDL's 2D renderer (Direct3D/Metal/OpenGL, chosen by SDL); fall back to software.

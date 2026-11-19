@@ -21,4 +21,15 @@ using SDL_Point = okay::ui2d::Point;
 using SDL_FPoint = okay::ui2d::FPoint;
 using SDL_Color = okay::ui2d::RGBA;
 using SDL_Vertex = okay::ui2d::Vertex;
+// Dear ImGui's two SDL backends do not exist in this build (the own platform feed and the own Painter renderer replace them, and both are forced on).
+// The few call sites stay readable as they are; here they become nothing. The arguments are never evaluated.
+#define ImGui_ImplSDL2_ProcessEvent(...) ((void)0)
+#define ImGui_ImplSDL2_InitForSDLRenderer(...) ((void)0)
+#define ImGui_ImplSDL2_NewFrame() ((void)0)
+#define ImGui_ImplSDL2_Shutdown() ((void)0)
+#define ImGui_ImplSDLRenderer2_Init(...) ((void)0)
+#define ImGui_ImplSDLRenderer2_NewFrame() ((void)0)
+#define ImGui_ImplSDLRenderer2_RenderDrawData(...) ((void)0)
+#define ImGui_ImplSDLRenderer2_UpdateTexture(...) ((void)0)
+#define ImGui_ImplSDLRenderer2_Shutdown() ((void)0)
 #endif

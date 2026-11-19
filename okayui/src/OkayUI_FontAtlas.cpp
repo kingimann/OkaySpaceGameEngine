@@ -1,7 +1,9 @@
 #include "OkayUI_FontAtlas.hpp"
 #include "okay/Graphics/TtfRaster.hpp"   // our own TrueType reader / rasterizer
 #include "okay/Graphics/TtfFont.hpp"   // EmbeddedUIFontData: the launcher's font (Roboto)
+#ifndef OKAY_NO_SDL
 #include "okay/UI/UIPainterSDL.hpp"    // SDLFontAtlas
+#endif
 
 #include <algorithm>
 #include <cstdlib>
@@ -133,7 +135,9 @@ okay::TtfFont* FallbackFont(const char* s) {
     return f && f->Valid() ? f : nullptr;
 }
 
+#ifndef OKAY_NO_SDL
 SDL_Texture* FallbackTexture(SDL_Renderer* r, okay::TtfFont* f) { return okay::ui2d::SDLFontAtlas(r, f); }
+#endif
 
 unsigned NextCodepoint(const char** sp) {
     const unsigned char* s = (const unsigned char*)*sp;

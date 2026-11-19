@@ -5,7 +5,22 @@
 #include "okay/Graphics/Font.hpp"   // okay::Font8x8 — a no-STL C API over a bitmap font
 #include "OkayUI_FontAtlas.hpp"     // the launcher font (TrueType) for UseLauncherLook()
 #include "okay/Graphics/TtfFont.hpp" // fallback fonts for characters the atlas lacks
+#ifndef OKAY_NO_SDL
 #include <SDL.h>
+#else
+// A build with no SDL (OKAY_NO_SDL): the vertex / colour / rectangle names are the engine's identical-layout types, the maths are the C library's,
+// and the SDL-renderer end of the frame (EndFrame(SDL_Renderer*), its atlas textures) is compiled out; a host draws through EndFrameData and a Painter.
+#include <cstdint>
+#include <cmath>
+#include "okay/UI/UIPainter.hpp"
+typedef std::uint32_t Uint32; typedef std::uint8_t Uint8; typedef std::int16_t Sint16; typedef std::uint16_t Uint16;
+struct SDL_Texture; struct SDL_Renderer;
+using SDL_Vertex = okay::ui2d::Vertex; using SDL_Color = okay::ui2d::RGBA; using SDL_FPoint = okay::ui2d::FPoint; using SDL_Rect = okay::ui2d::Rect;
+#define SDL_sqrtf(x) std::sqrt((float)(x))
+#define SDL_cosf(x) std::cos((float)(x))
+#define SDL_sinf(x) std::sin((float)(x))
+#define SDL_floorf(x) std::floor((float)(x))
+#endif
 #include "okay/Platform/Platform.hpp"   // okay::platform: timers (and the SDL seam)
 #include <cstddef>  // offsetof
 #include <cstdarg>
@@ -1690,6 +1705,7 @@ okay::TtfFont* FallbackFontOf(const void* texture) {
 
 void EndFrameData() { finalizeFrame(); }
 
+#ifndef OKAY_NO_SDL
 // The real texture behind a span's texture (kAtlasTex -> this renderer's atlas).
 SDL_Texture* resolveTex(SDL_Renderer* r, SDL_Texture* t) {
     for (int i = 0; i < g_nfb; ++i)
@@ -1709,6 +1725,8 @@ SDL_Texture* resolveTex(SDL_Renderer* r, SDL_Texture* t) {
     }
     return g_atlasTex;
 }
+
+#endif
 
 // Toasts: a few short messages stacked in the bottom-right corner (see Toast()).
 struct ToastSlot { char text[160]; int kind; Uint32 until; Uint32 born; };
@@ -1750,6 +1768,7 @@ void EndFrameData(int outputWidth, int outputHeight) {
     finalizeFrame();
 }
 
+#ifndef OKAY_NO_SDL
 void EndFrame(SDL_Renderer* r) {
     if (r && g_ntoasts) { int ow = 0, oh = 0; SDL_GetRendererOutputSize(r, &ow, &oh); drawToasts((float)ow, (float)oh); }
     finalizeFrame();
@@ -1785,6 +1804,7 @@ void EndFrame(SDL_Renderer* r) {
     }
     SDL_SetRenderDrawBlendMode(r, prev);
 }
+#endif
 
 Theme& Style() { return g_theme; }
 
@@ -4799,9 +4819,14 @@ void SetClipboardText(const char* text) {
     std::size_t n = std::strlen(text); if (n > (std::size_t)kClipboardMax - 1) n = (std::size_t)kClipboardMax - 1;
     std::memcpy(g_clip, text, n); g_clip[n] = 0;
     trimPartialChar(g_clip);
+#ifndef OKAY_NO_SDL
     SDL_SetClipboardText(g_clip);                      // fails quietly with no video: the copy above is enough
+#else
+    if (okay::platform::Backend* pb = okay::platform::Default()) pb->SetClipboardText(g_clip);
+#endif
 }
 const char* GetClipboardText() {
+#ifndef OKAY_NO_SDL
     if (char* sys = SDL_GetClipboardText()) {          // someone else may have copied something since
         if (sys[0] && std::strcmp(sys, g_clip) != 0) {
             std::size_t n = std::strlen(sys); if (n > (std::size_t)kClipboardMax - 1) n = (std::size_t)kClipboardMax - 1;
@@ -4809,6 +4834,15 @@ const char* GetClipboardText() {
         }
         SDL_free(sys);
     }
+#else
+    if (okay::platform::Backend* pb = okay::platform::Default()) {
+        const std::string sys = pb->GetClipboardText();   // someone else may have copied something since
+        if (!sys.empty() && sys != g_clip) {
+            std::size_t n = sys.size(); if (n > (std::size_t)kClipboardMax - 1) n = (std::size_t)kClipboardMax - 1;
+            std::memcpy(g_clip, sys.data(), n); g_clip[n] = 0; trimPartialChar(g_clip);
+        }
+    }
+#endif
     return g_clip;
 }
 

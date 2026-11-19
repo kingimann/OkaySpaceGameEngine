@@ -5,7 +5,7 @@
 #include "okay/Core/DisplayModes.hpp"
 #include <vector>
 
-struct SDL_Window;
+#include "PlainTypes.hpp"   // SDL_Window (an opaque handle) in either build
 
 namespace okay::sdldisplay {
 

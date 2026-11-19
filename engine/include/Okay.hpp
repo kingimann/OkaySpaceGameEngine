@@ -137,6 +137,8 @@
 #include "okay/Components/VoxelTerrain.hpp"
 #include "okay/Components/VoxelDigger.hpp"
 #include "okay/Components/Water.hpp"
+#include "okay/Components/Buoyancy.hpp"
+#include "okay/Components/BoatController.hpp"
 #include "okay/Components/Flashlight.hpp"
 #include "okay/Components/FirstPersonHand.hpp"
 #include "okay/Components/NetworkSync.hpp"

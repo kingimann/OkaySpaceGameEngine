@@ -242,7 +242,7 @@ int main() {
         for (const Entry& x : m) top.push_back(x.kind == Kind::Separator ? "---" : x.id);
         CHECK((top == std::vector<std::string>{
             "h.createempty", "---",
-            "create.2d", "create.3d", "create.player", "create.light", "create.camera", "create.audio", "create.effects", "create.ui", "---",
+            "create.2d", "create.3d", "create.player", "create.vehicles", "create.light", "create.camera", "create.audio", "create.effects", "create.ui", "---",
             "h.paste", "---", "h.selectall", "h.deselect", "---", "h.expandall", "h.collapseall", "h.sortaz"}));
         CHECK(!FindId(m, "h.paste")->enabled && FindId(m, "h.paste")->reason == oked::menubar::kNothingCopied);
         CHECK(!FindId(m, "h.selectall")->enabled && FindId(m, "h.selectall")->reason == "The scene has no objects.");

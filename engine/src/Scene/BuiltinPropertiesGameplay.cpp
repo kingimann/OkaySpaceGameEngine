@@ -53,6 +53,8 @@ namespace okay { void RegisterPhysicsToyProperties(); }
 #include "okay/Components/VehicleSeat.hpp"
 #include "okay/Components/Volume.hpp"
 #include "okay/Components/Water.hpp"
+#include "okay/Components/Buoyancy.hpp"
+#include "okay/Components/BoatController.hpp"
 
 namespace okay {
 namespace detail {
@@ -1070,7 +1072,60 @@ void RegisterWater() {
      .AddAssetPath("texture", &Water::texture, "image").Tooltip("Optional water/normal-ripple texture")
      .AddFloat("depth", &Water::depth).Range(0, kBig, 0.1)
      .AddFloat("fluidDensity", &Water::fluidDensity).Range(0, kBig, 0.1)
-     .AddFloat("linearDrag", &Water::linearDrag).Range(0, kBig, 0.1).Tooltip("How fast a submerged prop's velocity fades (1/s, scaled by how much of it is under)");
+     .AddFloat("linearDrag", &Water::linearDrag).Range(0, kBig, 0.1).Tooltip("How fast a submerged prop's velocity fades (1/s, scaled by how much of it is under)")
+     .AddEnum("style", &Water::style, {"Classic", "Ocean", "Calm lake"}).Tooltip("Classic = the original rolling sines. Ocean = travelling waves with sharp crests that boats and floating things follow exactly. Calm lake = the same, low and gentle")
+     .AddFloat("waveDirection", &Water::waveDirection).Range(-360, 360, 1).Tooltip("Which way the main swell runs, in degrees (Ocean and Calm lake)")
+     .AddFloat("waveSteepness", &Water::waveSteepness).Range(0, 1, 0.01).Tooltip("0 = round smooth waves, 1 = sharp crests (Ocean)")
+     .AddInt("waveCount", &Water::waveCount).Range(1, 8, 1).Tooltip("How many waves are added together (Ocean)")
+     .AddInt("waveSeed", &Water::waveSeed).Range(0, 1000000, 1).Tooltip("The same number always makes the same sea")
+     .AddVec2("current", &Water::current).Range(-kBig, kBig, 0.1).Tooltip("A steady stream in the water, metres per second along X and Z");
+    b.Commit();
+}
+
+// Buoyancy
+void RegisterBuoyancy() {
+    PropertyBuilder<Buoyancy> b("Buoyancy", "buoyancy", "Physics 3D");
+    b.AddInt("gridX", &Buoyancy::gridX).Range(1, 16, 1).Tooltip("Automatic float points across the width of the hull")
+     .AddInt("gridZ", &Buoyancy::gridZ).Range(1, 16, 1).Tooltip("Automatic float points along the length of the hull")
+     .AddFloat("volume", &Buoyancy::volume).Range(0, kBig, 0.1).Tooltip("Cubic metres of water the whole hull pushes aside. 0 = work it out from the collider")
+     .AddFloat("fullness", &Buoyancy::fullness).Range(0, 1, 0.01).Tooltip("How much of the collider box the hull really fills (1 = solid block, 0.5 = a hollow boat)")
+     .AddFloat("hullHeight", &Buoyancy::hullHeight).Range(0, kBig, 0.05).Tooltip("Height of the part that goes under as the hull sinks. 0 = the collider height")
+     .AddFloat("density", &Buoyancy::density).Range(0, kBig, 0.05).Tooltip("Water density to use. 0 = the Water's own")
+     .AddFloat("dragForward", &Buoyancy::dragForward).Range(0, kBig, 0.01).Tooltip("Slows the hull along its nose, per second")
+     .AddFloat("dragForward2", &Buoyancy::dragForward2).Range(0, kBig, 0.01).Tooltip("Extra slowing that grows with speed, along the nose")
+     .AddFloat("dragSide", &Buoyancy::dragSide).Range(0, kBig, 0.01).Tooltip("Slows sideways sliding, per second (the keel)")
+     .AddFloat("dragSide2", &Buoyancy::dragSide2).Range(0, kBig, 0.01).Tooltip("Extra slowing that grows with speed, sideways")
+     .AddFloat("dragUp", &Buoyancy::dragUp).Range(0, kBig, 0.01).Tooltip("Slows bobbing up and down, per second")
+     .AddFloat("dragUp2", &Buoyancy::dragUp2).Range(0, kBig, 0.01).Tooltip("Extra slowing that grows with speed, up and down")
+     .AddFloat("angularDamping", &Buoyancy::angularDamping).Range(0, kBig, 0.05).Tooltip("Slows spinning while in the water")
+     .AddFloat("maxPushAcceleration", &Buoyancy::maxPushAcceleration).Range(1, kBig, 1).Tooltip("The water never pushes harder than this (m/s^2): keeps very light things calm")
+     .AddBool("letTilt", &Buoyancy::letTilt).Tooltip("Let the body lean and roll on the waves (switches off Freeze Rotation when Play starts)")
+     .AddBool("splashEffect", &Buoyancy::splashEffect).Tooltip("Throw spray where the hull hits the water")
+     .AddFloat("splashMinSpeed", &Buoyancy::splashMinSpeed).Range(0, kBig, 0.1).Tooltip("Slower than this (m/s) makes no splash")
+     .Custom("points", PropertyType::String,
+             [](const Buoyancy& c) { return PropertyValue::MakeString(c.PointsText()); },
+             [](Buoyancy& c, const PropertyValue& v) { c.SetPointsText(v.AsString()); return true; })
+        .Tooltip("Your own float points as x,y,z;x,y,z in the object's own space. Empty = an automatic grid across the collider");
+    b.Commit();
+}
+
+// BoatController
+void RegisterBoatController() {
+    PropertyBuilder<BoatController> b("BoatController", "boat", "Vehicles");
+    b.AddBool("isPlayer", &BoatController::isPlayer).Tooltip("Drive it with the keyboard or stick (W/S throttle, A/D steer, Space brake). Off: only code moves it")
+     .AddFloat("maxSpeed", &BoatController::maxSpeed).Range(0, 1000, 0.1).Tooltip("Top speed forward, metres per second")
+     .AddFloat("reverseSpeed", &BoatController::reverseSpeed).Range(0, 1000, 0.1).Tooltip("Top speed backwards")
+     .AddFloat("enginePower", &BoatController::enginePower).Range(0, kBig, 0.1).Tooltip("How hard the engine pushes from a standstill (m/s^2)")
+     .AddFloat("brakePower", &BoatController::brakePower).Range(0, kBig, 0.1).Tooltip("Extra slowing when braking (Space) or pulling back while going forward")
+     .AddFloat("turnRate", &BoatController::turnRate).Range(0, 720, 1).Tooltip("How fast it turns at full rudder, degrees per second")
+     .AddFloat("steerResponse", &BoatController::steerResponse).Range(0, 100, 0.1).Tooltip("How quickly it swings into a turn")
+     .AddBool("wake", &BoatController::wake).Tooltip("A foam trail behind the stern")
+     .AddBool("bowSplash", &BoatController::bowSplash).Tooltip("Spray at the bow when going fast")
+     .AddBool("engineSound", &BoatController::engineSound).Tooltip("Tune an Audio Source on the same object to the engine speed")
+     .AddBool("followCamera", &BoatController::followCamera).Tooltip("Chase the main camera behind the boat")
+     .AddFloat("camDistance", &BoatController::camDistance).Range(0, kBig, 0.05).Tooltip("Distance of the chase camera behind the boat")
+     .AddFloat("camHeight", &BoatController::camHeight).Range(0, kBig, 0.05).Tooltip("Height of the chase camera above the boat")
+     .AddFloat("camLerp", &BoatController::camLerp).Range(0, 1000, 0.1).Tooltip("How fast the chase camera follows");
     b.Commit();
 }
 
@@ -1304,6 +1359,8 @@ void RegisterGameplayProperties() {
     RegisterJoint3D();
     RegisterDayNightCycle();
     RegisterWater();
+    RegisterBuoyancy();
+    RegisterBoatController();
     RegisterNavMeshAgent();
     RegisterNavMeshObstacle();
     RegisterNavMeshModifier();

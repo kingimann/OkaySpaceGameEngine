@@ -112,6 +112,7 @@
 #include "okay/Components/VirtualCamera.hpp"
 #include "okay/Components/CinemachineBrain.hpp"
 #include "okay/Components/CameraRoom.hpp"
+#include "okay/Components/CameraZone.hpp"
 #include "okay/Components/TextRenderer.hpp"
 #include "okay/Components/SpriteAnimator.hpp"
 #include "okay/Components/Animator.hpp"
@@ -3004,6 +3005,14 @@ void WriteComponentRecords(std::ostream& out, GameObject* go) {
              .b("cutscene", cb->yieldToCutscene);
             out << "\n";
         }
+    }
+    for (auto* cz : go->GetComponents<CameraZone>()) {
+        out << "  camzone";
+        KvOut k{out};
+        k("shape", (int)cz->shape)("sx", cz->size.x)("sy", cz->size.y)("sz", cz->size.z)("ox", cz->offset.x)("oy", cz->offset.y)("oz", cz->offset.z)
+         ("blend", cz->blend)("prio", cz->priority)("fov", cz->fieldOfView)("fx", cz->followOffset.x)("fy", cz->followOffset.y)("fz", cz->followOffset.z)
+         ("damp", cz->positionDamping).str("shot", cz->shot);
+        out << "\n";
     }
     for (auto* rm : go->GetComponents<CameraRoom>()) {
         out << "  camroom";
@@ -7372,6 +7381,15 @@ static bool ParseStep(Scene& scene, ParseSession& S, bool clear,
                         k.f("c0", cb->customCurve[0]); k.f("c1", cb->customCurve[1]); k.f("c2", cb->customCurve[2]); k.f("c3", cb->customCurve[3]);
                         k.b("cutscene", cb->yieldToCutscene);
                     }
+                } else if (field == "camzone") {
+                    KvIn k(in);
+                    auto* cz = go->AddComponent<CameraZone>();
+                    int sh = (int)cz->shape; k.i("shape", sh); cz->shape = (VolumeShape)std::clamp(sh, 0, kVolumeShapeCount - 1);
+                    k.f("sx", cz->size.x); k.f("sy", cz->size.y); k.f("sz", cz->size.z);
+                    k.f("ox", cz->offset.x); k.f("oy", cz->offset.y); k.f("oz", cz->offset.z);
+                    k.f("blend", cz->blend); k.i("prio", cz->priority); k.f("fov", cz->fieldOfView);
+                    k.f("fx", cz->followOffset.x); k.f("fy", cz->followOffset.y); k.f("fz", cz->followOffset.z);
+                    k.f("damp", cz->positionDamping); k.str("shot", cz->shot);
                 } else if (field == "camroom") {
                     KvIn k(in);
                     auto* rm = go->AddComponent<CameraRoom>();

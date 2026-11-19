@@ -144,7 +144,7 @@ private:
         cam::CamPose p;
         p.pos = v->SolvedPosition();
         p.rot = v->SolvedRotation();
-        p.fov = v->fieldOfView;
+        p.fov = v->SolvedFov();
         p.ortho = v->SolvedOrthoSize() > 0.0f ? v->SolvedOrthoSize() : (cam ? cam->orthographicSize : 5.0f);
         return p;
     }

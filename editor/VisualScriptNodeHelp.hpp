@@ -70,7 +70,7 @@ inline const char* VsNodeHelpRaw(const char* type) {
         if (t == "Fn.Vehicle.Horn") return "Presses the horn (1) or lets it go (0).";
         if (t == "Fn.Vehicle.Lights") return "Switches the headlights on (1) or off (0). Objects in the vehicle whose name starts with Headlight are shown or hidden.";
         if (t == "Fn.Vehicle.Recover") return "Puts the vehicle back on its wheels, a little above where it is.";
-        if (t == "Fn.Vehicle.Eject" || t == "Fn.Vehicle.Exit") return "Throws the driver out beside the vehicle. Gives 1 when someone was driving.";
+        if (t == "Fn.Vehicle.Eject") return "Throws the driver out beside the vehicle. Gives 1 when someone was driving.";
         if (t == "Fn.Vehicle.Enter") return "Makes a person (Second, an object name) sit in the vehicle's driver seat. Gives 1 when it worked.";
         if (t == "Fn.Vehicle.Speed") return "How fast the vehicle goes, in metres per second. Negative when it reverses.";
         if (t == "Fn.Vehicle.Gear") return "The gear: 1 and up going forward, -1 in reverse.";

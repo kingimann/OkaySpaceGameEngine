@@ -47,7 +47,7 @@ not merged here; this change does not depend on them.
 * Editor: `editor/VehicleEditorUi.hpp` (Create menu "Vehicles", Inspector tabs, Save and Load preset), three one-line hooks
   in `editor/main.cpp`, the `create.vehicles` slot in `MenuBarModel.hpp`, the "Driving World" template.
 * Scripts: `Vehicle.SetSetting`, `GetSetting`, `ApplyPreset`, `SetThrottle`, `SetBrake`, `SetSteer`, `SetHandbrake`, `Boost`,
-  `Horn`, `Lights`, `Recover`, `Eject`, `Exit`, `Enter`, `Speed`, `Gear`, `Rpm`; each is also a Visual Script node
+  `Horn`, `Lights`, `Recover`, `Eject`, `Enter`, `Speed`, `Gear`, `Rpm`; each is also a Visual Script node
   (`Fn.Vehicle.*`) with plain help text.
 * HUD: the driven vehicle publishes `vehicle_speed`, `vehicle_gear`, `vehicle_unit`, `vehicle_rpm`, `vehicle_boost`; the
   UI kit's Text Bind with `{vehicle_speed|0} {vehicle_unit|km/h}   Gear {vehicle_gear|N}` shows them (the example has it).

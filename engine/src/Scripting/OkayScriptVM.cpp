@@ -10842,7 +10842,6 @@ struct OkayScriptVM::Impl {
         b["Vehicle.Lights"] = [carOf](std::vector<Value>& a) -> Value { if (auto* v = carOf(a)) v->SetLights(a.size() < 2 || a[1].AsFloat() != 0.0f); return Value{}; };
         b["Vehicle.Recover"] = [carOf](std::vector<Value>& a) -> Value { if (auto* v = carOf(a)) v->Recover(); return Value{}; };
         b["Vehicle.Eject"]  = [carOf](std::vector<Value>& a) -> Value { return Value{VehicleSeat::EjectDriver(carOf(a)) ? 1.0f : 0.0f}; };
-        b["Vehicle.Exit"]   = b["Vehicle.Eject"];
         b["Vehicle.Enter"]  = [carOf, sceneOf](std::vector<Value>& a) -> Value {   // Vehicle.Enter(car, person): the person takes the driver seat
             VehicleController* v = carOf(a); Scene* s = sceneOf();
             GameObject* who = (s && a.size() > 1) ? ResolveObject(s, a[1]) : nullptr;

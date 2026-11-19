@@ -63,22 +63,23 @@ public:
         }
     }
 
-    /// Volume (cubic metres) of the colliders on this object: box, sphere, capsule and cylinder exactly, a mesh by its bounds.
+    /// Volume (cubic metres) of the colliders on this object: box, sphere, capsule, cylinder, cone, convex hull and compound exactly, a mesh (or a plane / heightfield) by its bounds.
     float Volume() const {
         float total = 0.0f;
         if (!gameObject) return 0.0f;
         for (Collider3D* c : gameObject->GetComponents<Collider3D>()) {
             if (c->isTrigger) continue;
             const float kPi = 3.14159265f;
+            { Vec3 com, in; float vol; if (c->MassShape(com, vol, in)) { total += vol; continue; } }   // Cylinder, Cone, Convex Hull, Compound: exact
             switch (c->shape()) {
             case Collider3D::Shape::Box: { Vec3 h = static_cast<BoxCollider3D*>(c)->HalfExtents(); total += 8.0f * h.x * h.y * h.z; break; }
             case Collider3D::Shape::Sphere: { float r = static_cast<SphereCollider3D*>(c)->WorldRadius(); total += 4.0f / 3.0f * kPi * r * r * r; break; }
-            case Collider3D::Shape::Capsule: case Collider3D::Shape::Cylinder: {
+            case Collider3D::Shape::Capsule: {
                 auto* cap = static_cast<CapsuleCollider3D*>(c);
                 float r = cap->WorldRadius(); Vec3 a, b; cap->Segment(a, b); float L = (b - a).Magnitude();
-                if (c->shape() == Collider3D::Shape::Cylinder) total += kPi * r * r * (L + 0.1f * r);
-                else total += kPi * r * r * L + 4.0f / 3.0f * kPi * r * r * r;
+                total += kPi * r * r * L + 4.0f / 3.0f * kPi * r * r * r;
                 break; }
+            case Collider3D::Shape::Plane: case Collider3D::Shape::Heightfield: break;   // ground with no mass
             default: { Vec3 mn, mx; c->WorldAABB(mn, mx); Vec3 s = mx - mn; total += std::max(0.0f, s.x * s.y * s.z); break; }
             }
         }

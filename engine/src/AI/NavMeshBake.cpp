@@ -180,6 +180,16 @@ void NavMeshBaker::Gather(Scene& scene, NavBakeInput& out, bool includeDynamic, 
                     out.capsules.push_back(k);
                     break;
                 }
+                case Collider3D::Shape::Cone:
+                case Collider3D::Shape::ConvexHull:
+                case Collider3D::Shape::Compound: {      // the box around the world bounds (the nav bake only knows boxes, spheres and capsules)
+                    Vec3 mn, mx; c->WorldAABB(mn, mx);
+                    out.boxes.push_back({(mn + mx) * 0.5f, (mx - mn) * 0.5f, Quat::Identity, area});
+                    break;
+                }
+                case Collider3D::Shape::Plane:           // endless ground and heightfield ground: the walkable surface itself, not an obstacle
+                case Collider3D::Shape::Heightfield:
+                    break;
             }
         }
     }

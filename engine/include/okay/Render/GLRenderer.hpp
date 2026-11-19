@@ -106,6 +106,8 @@ private:
     unsigned int m_resolveFbo = 0, m_resolveTex = 0;          // single-sample resolve
     unsigned int m_shadowFbo = 0, m_shadowTex = 0;            // sun cascade atlas (cascades side by side)
     int m_shadowW = 0, m_shadowH = 0;
+    unsigned int m_cookieTex = 0; std::size_t m_cookieCount = 0;   // light mask atlas (texture unit 8)
+    int m_uLRect = -1, m_uLRight = -1, m_uLUp = -1, m_uCookieTex = -1, m_uCookieRows = -1, m_uSunSoft = -1, m_uFadeDist = -1;
     unsigned int m_localFbo = 0, m_localTex = 0;              // spot/point light tile atlas (4x4)
     int m_localW = 0, m_localH = 0;
     // Bloom post chain: bright-pass into a half-res ping-pong pair, separable

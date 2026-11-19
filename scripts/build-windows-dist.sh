@@ -149,6 +149,8 @@ cp "$BUILD_DIR/bin/OkayEngine.exe" \
 [ -f "$BUILD_DIR/bin/okay-texture.exe" ] && cp "$BUILD_DIR/bin/okay-texture.exe" "$OUT_DIR/Tools/"
 # OkayUI's standalone Direct3D 11 demo (no SDL): a raw DX11 app rendering OkayUI.
 [ -f "$BUILD_DIR/bin/okayui_d3d11_demo.exe" ] && cp "$BUILD_DIR/bin/okayui_d3d11_demo.exe" "$OUT_DIR/Tools/"
+# Own platform layer check (built only with -DOKAY_BUILD_PLATFORM_SELFTEST=ON; docs/try_it/11-*.md).
+[ -f "$BUILD_DIR/bin/okay-platform-selftest.exe" ] && cp "$BUILD_DIR/bin/okay-platform-selftest.exe" "$OUT_DIR/Tools/"
 # VERSION.txt is the single source of truth for the self-updater: the launcher
 # compares its baked version against releases/latest/download/VERSION.txt and only
 # updates when the published one is strictly newer. Derive it from CMakeLists so it

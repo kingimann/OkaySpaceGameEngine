@@ -53,6 +53,10 @@ BackendKind DefaultKind() {
 #endif
         BackendKind fromEnv;
         if (ParseBackendName(std::getenv("OKAY_PLATFORM_BACKEND"), fromEnv)) k = fromEnv;
+        else if (const char* o = std::getenv("OKAY_OWN_PLATFORM")) {   // short switch: 1 / true / yes / on = own
+            const std::string v = o;
+            if (v == "1" || v == "true" || v == "yes" || v == "on") k = BackendKind::Own;
+        }
         return k;
     }();
     return kind;
@@ -89,6 +93,14 @@ Key Backend::KeyForChar(char c) {
     if (c == '0') return Key::N0;
     if (c == ' ') return Key::Space;
     return Key::Unknown;
+}
+
+char Backend::CharForKey(Key k) {
+    if (k == Key::Unknown) return 0;
+    static const char kChars[] = "abcdefghijklmnopqrstuvwxyz0123456789 ";
+    for (const char* c = kChars; *c; ++c)
+        if (KeyForChar(*c) == k) return *c;
+    return 0;
 }
 
 bool Backend::ShowErrorBox(const std::string& title, const std::string& text, Window*) {
@@ -235,6 +247,11 @@ void DelayMs(uint32_t ms) {
     if (Backend* b = Default()) { b->DelayMs(ms); return; }
     std::this_thread::sleep_for(std::chrono::milliseconds(ms));
 }
+
+#ifndef OKAY_PLATFORM_HAVE_SDL2
+bool TranslateSdl2Event(const void*, Event&) { return false; }
+std::unique_ptr<Window> WrapSdl2Window(void*) { return nullptr; }   // the real one is in SdlBackend.cpp
+#endif
 
 void Log(const std::string& line) {
     if (Backend* b = Default()) { b->Log(line); return; }

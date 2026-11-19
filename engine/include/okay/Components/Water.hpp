@@ -662,7 +662,7 @@ private:
             const Vec3 wp = toWorld.MultiplyPoint({px, py, pz});
             float depthHere = depth > 0.0f ? depth : assumedDepth, groundY = 0.0f;
             if (GroundWorldY(terrains, wp, groundY)) depthHere = wp.y - groundY;
-            const float crest = std::max(-1.0f, std::min(1.0f, waveY / maxAmp));
+            const float crest = std::max(-1.0f, std::min(1.0f, waveY / (0.45f * maxAmp)));   // a typical big crest reaches 1
             const float slope = 1.0f - nrm[i].y;
             const float pat = FoamPattern(px - current.x * m_time * 0.5f, pz - current.y * m_time * 0.5f, m_time);
             RGB body = DepthColor(depthHere, clarity, shallow, deep);

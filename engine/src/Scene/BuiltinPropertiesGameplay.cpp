@@ -51,6 +51,7 @@
 #include "okay/Components/VehicleController2D.hpp"
 #include "okay/Components/VehicleSeat.hpp"
 #include "okay/Components/Volume.hpp"
+#include "okay/Components/WindZone.hpp"
 #include "okay/Components/Water.hpp"
 
 namespace okay {
@@ -756,6 +757,61 @@ void RegisterVolume() {
     b.Commit();
 }
 
+// Wind (docs/wind.md)
+void RegisterWind() {
+    {
+        PropertyBuilder<WindZone> b("WindZone", "windzone", "Environment");
+        b.AddEnum("mode", &WindZone::mode, {"Everywhere", "Direction", "Pushes outward"}).Tooltip("Everywhere = the scene's wind. Direction = wind inside a region. Pushes outward = a fan or blast")
+         .AddEnum("shape", &WindZone::shape, {"Box", "Sphere", "Cylinder"}).Tooltip("The region's shape (not used by Everywhere)")
+         .AddVec3("size", &WindZone::size).Range(0.05, kBig, 0.1).Tooltip("The box the region fills, in local units (the Transform's scale multiplies it)")
+         .AddVec3("offset", &WindZone::offset).Range(-kBig, kBig, 0.1).Tooltip("Where the middle of the region sits, in local units")
+         .AddFloat("edge", &WindZone::edge).Range(0, 1, 0.01).Tooltip("How softly the wind fades in from the edge (0 = a hard edge)")
+         .AddFloat("falloff", &WindZone::falloff).Range(0, 1, 0.01).Tooltip("How much weaker the wind is near the edge than in the middle")
+         .AddVec3("direction", &WindZone::direction).Range(-1, 1, 0.05).Tooltip("The way the wind blows, in local units. Turn the object to aim it")
+         .AddFloat("strength", &WindZone::strength).Range(-200, 200, 0.1).Tooltip("Wind speed in metres per second (3 breeze, 10 gale). Outward: negative sucks in")
+         .AddFloat("gustAmount", &WindZone::gustAmount).Range(0, 1, 0.01).Tooltip("How much the wind swells and drops. 1 = from calm to double")
+         .AddFloat("gustFrequency", &WindZone::gustFrequency).Range(0, 10, 0.01).Tooltip("Gusts per second (0.2 = one every 5 seconds)")
+         .AddFloat("gustSpeed", &WindZone::gustSpeed).Range(0, 200, 0.5).Tooltip("How fast a gust travels downwind. 0 = it hits everywhere at once")
+         .AddFloat("turbulence", &WindZone::turbulence).Range(0, 1, 0.01).Tooltip("Random swirling, as a fraction of the strength")
+         .AddFloat("turbulenceScale", &WindZone::turbulenceScale).Range(0.001, 10, 0.01).Tooltip("Smaller = bigger swirls")
+         .AddInt("seed", &WindZone::seed).Range(0, 1000000, 1).Tooltip("Same number, same wind every time")
+         .AddString("curveKeys", &WindZone::curveKeys).Tooltip("Strength over time as seconds:multiplier pairs, e.g. 0:0.2, 10:1.5, 20:0.2. Empty = steady")
+         .AddFloat("curveLength", &WindZone::curveLength).Range(0.1, 100000, 1).Tooltip("Seconds before the strength curve repeats")
+         .AddInt("priority", &WindZone::priority).Range(-1000, 1000, 1).Tooltip("Where winds overlap, the higher number is applied last")
+         .AddBool("additive", &WindZone::additive).Tooltip("Add to the wind underneath instead of replacing it");
+        b.Commit();
+    }
+    {
+        PropertyBuilder<WindDrag> b("WindDrag", "winddrag", "Physics 3D");
+        b.AddFloat("area", &WindDrag::area).Range(0, 1000, 0.05).Tooltip("How big it looks to the wind, in square metres")
+         .AddFloat("dragCoefficient", &WindDrag::dragCoefficient).Range(0, 5, 0.05).Tooltip("0.5 = slippery, 1 = a flat box, 2 = a parachute")
+         .AddFloat("strength", &WindDrag::strength).Range(0, 10, 0.05).Tooltip("A volume knob for how hard the wind pushes")
+         .AddBool("includeChildren", &WindDrag::includeChildren).Tooltip("Also push every physics body below this object (a ragdoll's bones)");
+        b.Commit();
+    }
+    {
+        PropertyBuilder<WindSway> b("WindSway", "windsway", "Environment");
+        b.AddEnum("weight", &WindSway::weight, {"Height", "Flag", "Custom"}).Tooltip("Height: the top moves most (trees, grass). Flag: the far edge waves, the pole side stays")
+         .AddFloat("amount", &WindSway::amount).Range(0, 20, 0.01).Tooltip("Metres the top moves in a strong wind (12 m/s)")
+         .AddFloat("height", &WindSway::height).Range(0, 1000, 0.1).Tooltip("Metres of the mesh that bend. 0 = measure the mesh")
+         .AddFloat("stiffness", &WindSway::stiffness).Range(0.5, 6, 0.05).Tooltip("1 = bends evenly, 3 = only the top bends")
+         .AddFloat("flutter", &WindSway::flutter).Range(0, 1, 0.01).Tooltip("How much the leaves shiver")
+         .AddFloat("flutterSpeed", &WindSway::flutterSpeed).Range(0, 20, 0.1).Tooltip("Shivers per second")
+         .AddFloat("updateRate", &WindSway::updateRate).Range(1, 60, 1).Tooltip("Times a second the shape is redone (lower is lighter)")
+         .AddFloat("maxDistance", &WindSway::maxDistance).Range(0, 100000, 1).Tooltip("Stops moving when the camera is further than this. 0 = always")
+         .AddBool("turnToWind", &WindSway::turnToWind).Tooltip("Flag: swing round so it points downwind");
+        b.Commit();
+    }
+    {
+        PropertyBuilder<WindAmbience> b("WindAmbience", "windambience", "Audio");
+        b.AddFloat("volume", &WindAmbience::volume).Range(0, 1, 0.01).Tooltip("Loudest the wind sound gets")
+         .AddFloat("fullAt", &WindAmbience::fullAt).Range(0.1, 100, 0.1).Tooltip("Wind speed (m/s) at which the sound is loudest")
+         .AddFloat("quietBelow", &WindAmbience::quietBelow).Range(0, 50, 0.05).Tooltip("Silent in wind slower than this (m/s)")
+         .AddFloat("smoothing", &WindAmbience::smoothing).Range(0, 20, 0.1).Tooltip("Seconds it takes to follow a change");
+        b.Commit();
+    }
+}
+
 // Spawner
 void RegisterSpawner() {
     PropertyBuilder<Spawner> b("Spawner", "spawner", "Gameplay");
@@ -1283,6 +1339,7 @@ void RegisterGameplayProperties() {
     RegisterSpawner();
     RegisterDebrisEmitter();
     RegisterVolume();
+    RegisterWind();
     RegisterMusicPlayer();
     RegisterPlayerInput();
     RegisterCollectible();

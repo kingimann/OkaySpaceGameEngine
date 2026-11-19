@@ -4340,3 +4340,13 @@ foreach(vs_usage_test vs_easy_ops vs_start vs_hints vs_plain_words vs_what_happe
         add_test(NAME ${vs_usage_test} COMMAND test_${vs_usage_test})
     endif()
 endforeach()
+
+# Wind field maths: noise, gusts, zones, blending, curve (docs/wind.md)
+add_executable(test_wind_field test_wind_field.cpp)
+target_link_libraries(test_wind_field PRIVATE okay::engine)
+add_test(NAME wind_field COMMAND test_wind_field)
+
+# Wind components in a scene: zones, particles, drag, sway, foliage, cable, sound, save/load (docs/wind.md)
+add_executable(test_wind test_wind.cpp)
+target_link_libraries(test_wind PRIVATE okay::engine)
+add_test(NAME wind COMMAND test_wind)

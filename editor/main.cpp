@@ -31197,6 +31197,8 @@ void DrawInspector(EditorState& ed) {
             oked::FieldTip("Gravity##ps");
             if (ImGui::DragFloat("Gravity Mult##ps", &ps->gravityModifier, 0.02f, -10.0f, 10.0f)) ed.dirty = true;
             oked::FieldTip("Gravity Mult##ps");
+            if (ImGui::SliderFloat("Affected by wind##ps", &ps->windInfluence, 0.0f, 3.0f, "%.2f")) ed.dirty = true;
+            if (ImGui::IsItemHovered()) ImGui::SetTooltip("How much the wind carries these particles. 0 = ignore the wind, 1 = they drift at the wind's speed.\nThe wind comes from the weather and from Wind Zones (Add Component > Environment > Wind Zone).");
             if (ImGui::DragFloat("Damping / sec##ps", &ps->damping, 0.02f, 0.0f, 20.0f)) ed.dirty = true;
             oked::FieldTip("Damping / sec##ps");
 

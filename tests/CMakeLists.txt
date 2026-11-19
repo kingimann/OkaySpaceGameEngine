@@ -4350,3 +4350,8 @@ add_test(NAME asset_cache COMMAND test_asset_cache)
 add_executable(test_scene_guids test_scene_guids.cpp)
 target_link_libraries(test_scene_guids PRIVATE okay::engine)
 add_test(NAME scene_guids COMMAND test_scene_guids)
+
+# Several threads on one AssetManager (Get / Trim / SetBudget / Pump); also built with ThreadSanitizer by hand, see docs/asset_manager.md.
+add_executable(test_asset_stress test_asset_stress.cpp)
+target_link_libraries(test_asset_stress PRIVATE okay::engine)
+add_test(NAME asset_stress COMMAND test_asset_stress)

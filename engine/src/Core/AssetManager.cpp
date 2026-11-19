@@ -321,7 +321,7 @@ AssetManager::EntryPtr AssetManager::AcquireSync(std::type_index t, const std::s
         if (s == S(State::Failed)) { slot.reset(); continue; }
         if (s == S(State::Pending)) { e->state = S(State::Loading); break; }   // claim it from the queue
         m_entryCv.wait(lk, [&] { return e->state.load() != S(State::Loading); });
-        if (e->state.load() == S(State::Ready)) return e;
+        if (e->state.load() == S(State::Ready)) { ++m_counters.hits; return e; }   // another thread decoded it
         if (e->state.load() == S(State::Failed)) { if (error) *error = e->error; return nullptr; }
     }
     const bool hashIt = m_hot;

@@ -2,6 +2,8 @@
 #include "UIDesignerModel.hpp"
 #include "okay/Components/UIElement.hpp"
 #include "okay/Components/UIUserStyle.hpp"
+#include "PrefabEdit.hpp"
+#include <filesystem>
 #include <cstdio>
 #include <cstring>
 #include <functional>
@@ -206,6 +208,34 @@ void DrawStyles(EditorState& ed) {
         u->styleName = uid::UniqueName(taken, "New style"); g->name = "Style: " + u->styleName; ed.dirty = true;
     }
 }
+
+// Reusable UI: the engine's prefab system, shown as plain words. Save a group once, add copies, change a few things on
+// one copy (an override), save that as a variant, or push a change to every copy.
+void DrawReusable(EditorState& ed) {
+    GameObject* go = ed.selected();
+    if (!go) { ImGui::TextDisabled("Select a widget or group first."); return; }
+    auto say = [&](const oked::PrefabOpResult& r) { (void)r; ed.dirty = true; };
+    if (go->prefabSource.empty()) {
+        if (ImGui::Button("Save as reusable UI")) {
+            std::string p = go->name + ".okayprefab";
+            if (!ed.projectDir().empty()) {
+                std::error_code pe;
+                std::filesystem::create_directories(std::filesystem::path(ed.projectDir()) / "Assets" / "UI", pe);
+                p = (std::filesystem::path(ed.projectDir()) / "Assets" / "UI" / p).string();
+            }
+            if (oked::SaveAsPrefabFile(*go, p)) { ed.PushUndo("Save reusable UI"); go->prefabSource = p; ed.dirty = true; }
+        }
+        if (ImGui::IsItemHovered()) ImGui::SetTooltip("Keeps this group in Assets/UI. Drag the file into the scene for more copies.");
+        return;
+    }
+    ImGui::TextWrapped("Copy of: %s", std::filesystem::path(go->prefabSource).filename().string().c_str());
+    if (ImGui::Button("Save my changes as a variant")) say(oked::PrefabCreateVariant(ed, *go, oked::DefaultVariantPath(go->prefabSource)));
+    if (ImGui::IsItemHovered()) ImGui::SetTooltip("A new reusable UI that is this one plus the few things you changed here.");
+    if (ImGui::Button("Update the original from this copy")) say(oked::PrefabApplyAll(ed, *go));
+    if (ImGui::IsItemHovered()) ImGui::SetTooltip("Every copy of the original follows, keeping its own changes.");
+    if (ImGui::Button("Undo my changes on this copy")) say(oked::PrefabRevertAll(ed, *go));
+    if (ImGui::Button("Make it plain objects again")) say(oked::PrefabUnpack(ed, *go, false));
+}
 }  // namespace
 
 void UIDesignerLayersWindow(EditorState& ed) {
@@ -219,6 +249,7 @@ void UIDesignerLayersWindow(EditorState& ed) {
         ImGui::Separator();
         if (ImGui::Button("Clear guides")) g_guides.clear();
         if (ImGui::CollapsingHeader("Shared styles")) DrawStyles(ed);
+        if (ImGui::CollapsingHeader("Reusable UI")) DrawReusable(ed);
     }
     ImGui::End();
 }

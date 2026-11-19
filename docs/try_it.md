@@ -91,7 +91,9 @@ release job or the installer build for this change.
 | 16 | Main menu bar clean-up: one Examples, Edit clipboard commands, GameObject categories, View, Help | The bar at the top of `Tools\OkayEngine.exe` | New in this change; see section 16 for what was and was not seen |
 | 17 | Hierarchy right-click menus: Create Child with every category, Add Component, Select Same Type, "Delete 3 Objects" | Right-click in the Hierarchy panel of `Tools\OkayEngine.exe` | New in this change; see section 17 |
 | 87 | Project upgrade and saving fixes | Launcher project cards; File > Project Upgrade...; example `examples\old_project` | Tested headless (project_version, project_upgrade, project_state); the launcher and editor windows not run, Windows not run |
+| 88 | Safer Save As, recovery and newer scenes | File > Save Scene As...; File > Open; the restore question after a crash | Tested headless (project_save); editor window not run, Windows not run |
 | ac-cheat-sim | Anti-cheat: watch the server catch a cheater (cheat simulator), ban list, audit log | `OkaySpacePlayer.exe --server --cheat-sim --log cheat_sim.txt` (Tools folder), then open the log | New in this change; tested headless on Linux over loopback; Windows and a real network unverified |
+| boat1 | Water waves, floating things and a boat to drive | `examples\boat\boat_lake.okayscene` (File > Open, Play), **GameObject > Vehicles > Boat**, Add Component > Physics 3D > Buoyancy and Gameplay > Boat Controller, Water Inspector > Style | New in this change; headless tests only, Windows and GPU not run |
 | content-delivery | Downloadable game content: signed models, textures, scripts and data that an exported game fetches (off by default) | `okay-content.exe` in `Tools/`, or `content.okayconfig` / `OKAY_CONTENT_URL` for the player | Built; Linux-tested only |
 | editor-fps | Editor frame-time overlay and speed switches | Editor menu **View > Rendering**: Frame-time overlay, Frame rate limit, Slow down when idle, Viewport resolution, Performance mode. Heavy test scenes: `examples\perf\` | New in this change. Real Direct3D 11 numbers on a Windows machine are unverified; sent back by the owner |
 | fast1 | Fast release: one workflow dispatch, no version-bump PR | GitHub: Actions > "Fast release" > Run workflow (tick dry_run first); a change adds `dist/changelog.d/<id>.txt` | Built and tested offline with fake data; never run on GitHub; off until `FAST_RELEASE_ENABLED=1` |
@@ -102,6 +104,7 @@ release job or the installer build for this change.
 | security-sec1 | Security plan SEC1: script file paths, update signature status, relay caps, reactions SQL | examples\security_paths\script_paths.okayscene (Play, read Console); Settings > About and Help > About line; SQL and relay are owner steps | Tests on Linux only; editor/launcher lines not run; nothing on Windows or real Supabase |
 | tex1 | Texture tools (our own): mipmaps, atlas, BC compression, DDS | Windows release: `examples\texture\try_texture.bat` (needs `Tools\okay-texture.exe`); editor: Project panel > pick a picture > Import Settings > "Generate mipmaps / compress" | Unverified on Windows; Linux tests and CLI run |
 | vpa | Multi-window panels start cleanly on every video driver | `Tools\OkayEngine.exe`: drag a panel tab outside the editor | Linux only (Xvfb, a build with assertions on); Windows unverified |
+| vsclarity | Visual Script nodes explain themselves (plain line, What is this? card, Needs input, Next steps, Try this node, What do you want to do? list) | `Tools\OkayEngine.exe`: View > Editors & Tools > Visual Script, drop any node | Compiled and unit-tested (`vs_guide`); never drawn in a real window, Windows unverified |
 | xbox-next | Xbox UWP next: one-page guide (PC test, Dev Mode, IP, Device Portal, deploy, logs) and the new log file | Windows release: `xbox-src\scripts\build-xbox-uwp.ps1`; editor File > Build Settings > Xbox (exp.) | Linux-tested only; nothing here has run on a console |
 | xbox-uwp | Xbox One export (EXPERIMENTAL, UNVERIFIED): one-click build (check, export, compile, shaders, pack, sign, install), own .appx packer, engine mode | File > Build Settings > platform "Xbox (exp.)" > Build Xbox package | Linux-tested only |
 | 7n | Every own replacement in one table: the switch, the sample, how to tell it is on, and what is missing | section 7n below and `docs/own_flip_proposal.md` | Table is new. Read from the code and from CI logs, not run on Windows |
@@ -1451,6 +1454,20 @@ have, so the page and the clipboard line were not seen. The software renderer wa
 
 **Status.** The version logic is covered by tests that run on the build machine (`test_project_version`, `test_project_upgrade`, `test_project_state`). The launcher and editor windows were not run here and Windows was not run: unverified.
 
+## 88. Safer Save As, recovery and newer scenes
+
+**What it is.** Three small safety fixes. Save As into a different project is refused with a plain message instead of leaving the editor half in one project. Restoring a recovery copy never leaves a temp file behind and never touches the real file. A scene made by a newer version says so when you open it, and the original is kept as `<scene>.v<N>.bak` before this version saves over it.
+
+**Steps.**
+1. Open a project, then File > Save Scene As... and pick a folder inside a different project (one that has its own `Assets` folder). You see: "That folder belongs to another project ... Save the scene inside this project ..., or open the other project first." Nothing is written.
+2. Save As into a folder that is not in any project: it saves, and the project stays as it was.
+3. Recovery: edit a scene, wait for the autosave, end the editor from Task Manager, start it again and press Restore. The scene opens marked unsaved; the real scene file has not changed, and no `.recovery-tmp` file is next to it.
+4. Newer scene: open a scene file whose first line says `okayscene 99`. The Console shows a yellow note that it was made by a newer version. Save it: a copy `<name>.okayscene.v99.bak` appears beside it.
+
+**What you should see.** The messages above, in plain words, and no half-finished files.
+
+**Status.** The save, recovery, newer-scene and moved-project behaviour is covered by `test_project_save`. The editor windows and Windows were not run: unverified.
+
 ## ac-cheat-sim. Anti-cheat: watch the server catch a cheater (cheat simulator)
 
 What this is: a self-test of the server's anti-cheat. It starts a server on your own machine (nothing goes on the
@@ -1480,6 +1497,45 @@ the server did. Details: `docs/anticheat.md` ("The cheat simulator"), the status
 **What is verified.** The test `anticheat_hard` runs the same code (all eight steps, the files, the no-personal-data check),
 on Linux over loopback. **Unverified:** nothing was run on Windows or on a real network; the `macro` step hands the button presses to the
 detector instead of sending real input packets; the simulator's packets are not encrypted.
+
+## boat1. Water waves, floating things and a boat to drive
+
+**What it is.** The sea now has real waves that things can float on, crates bob and settle at the right depth, heavy things
+sink, and there is a boat you drive with the keyboard. Details and the list of what is not done: `docs/water_boat.md`.
+
+**Steps (the example lake).**
+1. Open the editor (`Tools\OkayEngine.exe`). **File > Open...** and pick `<install folder>\examples\boat\boat_lake.okayscene`.
+2. Press **Play**.
+3. **W** goes forward, **S** goes back, **A** turns left, **D** turns right, **Space** brakes. The camera follows the boat.
+
+**What you should see.** A lake with rolling waves, a wooden dock on the west shore, a white boat with a red stripe beside
+the dock pointing out over the water, six wooden crates floating near it that bob and drift, and a grey stone that
+sinks to the bottom. Hold W: the boat speeds up to about 12 metres per second, rises and falls with the waves, leaves two
+white foam trails behind and throws spray at the bow. Tap A or D while moving: it turns. Let go of W: it coasts and slows.
+Drive into a crate: it is pushed away and bobs. Pushing the boat onto the shore stops it. The Console says nothing about errors.
+
+**Steps (make your own boat).**
+1. New 3D scene. **GameObject > Vehicles > Boat**. If the scene has no Water, a lake is made with it. Press Play, W / S / A / D.
+2. Or by hand: make a Cube, scale it 2 x 0.8 x 4.6, add **Rigidbody3D** (mass 2.5), **Box Collider 3D**, **Buoyancy** (Fullness 0.55) and
+   **Boat Controller** (Add Component). Put a **Water** under it (GameObject > 3D Object > Water).
+
+**Steps (waves).** Select the Water. In the Inspector set **Style** to **Ocean** (sharp crests) or **Calm lake**. Change
+**Direction**, **Steepness**, **Wave count** and **Seed** (the same seed always makes the same sea), and **Current** (a stream:
+floating crates drift with it). Wave Height, Length and Speed work as before. Classic keeps the old look.
+
+**Steps (floating).** Make a Cube with Rigidbody3D (mass 0.5), Box Collider 3D and **Buoyancy** above the water, press Play: it falls,
+splashes, bobs and settles half under. Change the mass: 0.25 floats higher, 2 sinks. Select it and look at the Inspector:
+Grid X/Z, Fullness, Drag numbers, Splash Effect.
+
+**Steps (no more bouncing).** Open any old scene with Water (Depth above 0) and a Rigidbody crate, or make one: Cube + Rigidbody3D + Box Collider 3D (mass 0.5) 3 m above a Water with Depth 5. Press Play: it splashes in, dips once, and settles within a couple of seconds at the same height whatever the frame rate. Before this change it kept hopping at the surface.
+
+**How you know it worked.** The crate at mass 0.5 ends with its middle at the water line; the boat does not flip over in the
+waves; with the boat in the air (drag it up in the scene before Play) the engine does nothing until it lands.
+
+**Status.** Tested headless on Linux (`boat` test: wave formula, draft, sinking, frame rate 30/60/144, no NaN, energy, steering,
+reverse, saving and loading, the example file). **Unverified:** the Windows release, the editor window (the menu entry, Add
+Component entries and Water fields are syntax-checked only), a GPU, what the wake and spray look like on screen, and how the
+boat feels with a real keyboard. Boarding a boat with E is not done.
 
 ## Console: Collapse button (branch `claude/console-collapse`, not merged or released yet)
 
@@ -2104,6 +2160,35 @@ it, it ran for the whole 25-second check in both and printed the "Multi-window p
 ran in both backends without stopping, and with the change a Project tab dragged outside the editor still became its own window. The
 intermittent stop seen before under Xvfb was SDL falling back to the `offscreen` driver when the X server was not ready yet.
 Unverified: Windows (not built or run here), a real Wayland session.
+
+## vsclarity. Visual Script nodes explain themselves
+
+What changed: when you drop a node you now see what it does, what to plug in, and what to do next. Nothing about saved
+graphs or how scripts run changed. Notes and the full gap table: `docs/visual_script_clarity.md`.
+
+Try it on Windows (this is all in the normal editor, nothing to switch on):
+1. Start `Tools\OkayEngine.exe`, open a project, select an object and open View > Editors & Tools > Visual Script.
+2. Press "Or add a block" (or right-click the canvas, or tap Space) and drop **If Then Else**.
+   * Under its title you should see one plain sentence, not a blank line.
+   * The node shows an amber **Needs input** badge and the line "Plug the condition in here." The Condition box says "needed".
+   * Hover the Condition circle: the tip says what goes in and gives "Example: true".
+3. Look at the bottom-right corner of the canvas: the **What is this?** card for the selected node. It lists what it does,
+   what to plug in, a tiny example chain, common mistakes and what to do next. Press **Hide** to fold it; close and reopen
+   the editor and it stays folded (`helpcard 0` in `okay_vs_usage.txt`). Press **Show** to open it again.
+4. In the card, under "Next steps", click a chip (for example **Say Text**). The node is added next to the selected one and
+   wired in. Chips only suggest nodes that fit.
+5. Drop **Add Numbers** (a value node). Its chips add a node that takes a number, with the wire already drawn from the result.
+6. Press **Try this node** at the bottom of the card. A small ready-made graph (On Start, the node with sensible values, a
+   Say Text step) appears. Press Play: the Console shows the message, and for a value node it shows the result (Add Numbers: 10).
+7. Open the Add Node list (right-click the canvas). In the left list find **What do you want to do?** and click **Move things**,
+   **Show messages** and so on. Each row has its plain sentence under the name. Type `move things` in the search: the movement
+   nodes come up.
+8. Renamed nodes: search `Wait Seconds`, `Flip Flop` or `Every Seconds`. The nodes now called **Wait Then Continue**, **Switch
+   Between Two Paths** and **Repeat Every Few Seconds** are found. An old saved graph that used them loads unchanged.
+
+What was and was not verified: the rules behind every item were unit-tested over all nodes in the list on Linux (`vs_guide`,
+and the existing `vs_clarity`, `vs_node_docs`, `vs_names`, `vs_start` suites). The drawing was compile-checked only: it was never
+shown in a real window, on Linux or on Windows, so card size on a small window and the second line on a narrow node are unchecked.
 
 ## xbox-next. Xbox UWP next: PC test, Dev Mode, Device Portal, logs
 

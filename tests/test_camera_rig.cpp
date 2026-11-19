@@ -409,18 +409,34 @@ int main() {
             for (int i = 0; i < 90; ++i) s.Update(1.0f / 60.0f);
             CHECK_NEAR(c->FovOffset(), 0.0f, 0.05f);
         }
-        {   // hit pulse: darkens the edges on top of the scene's vignette, then leaves it exactly as it was
+        {   // hit pulse: darkens the edges for the renderer (a runtime-only add); the scene's own vignette is never touched
             Scene s("pulse"); s.physicsEnabled = false;
             s.renderSettings.vignette = 0.2f;
             GameObject* g = s.CreateGameObject("Cam"); Camera* c = g->AddComponent<Camera>();
             s.Start();
             c->HitPulse(1.0f);
             s.Update(1.0f / 60.0f);
-            CHECK(s.renderSettings.vignette > 0.4f);
+            CHECK_NEAR(s.renderSettings.vignette, 0.2f, 1e-6f);
+            CHECK(s.renderSettings.vignettePulse > 0.4f);
             CHECK(c->VignettePulse() > 0.9f);
+            {   // saving in the middle of a pulse writes the base value, and the pulse is not in the file
+                Scene b("pulseload"); std::string err;
+                CHECK(SceneSerializer::Deserialize(b, SceneSerializer::Serialize(s), &err, nullptr));
+                CHECK_NEAR(b.renderSettings.vignette, 0.2f, 1e-6f);
+                CHECK_NEAR(b.renderSettings.vignettePulse, 0.0f, 0.0f);
+            }
             for (int i = 0; i < 300; ++i) s.Update(1.0f / 60.0f);
-            CHECK_NEAR(s.renderSettings.vignette, 0.2f, 1e-4f);
+            CHECK_NEAR(s.renderSettings.vignettePulse, 0.0f, 1e-6f);
             CHECK_NEAR(c->VignettePulse(), 0.0f, 1e-6f);
+            // A camera that stops being the main one, or is destroyed, leaves no pulse behind.
+            c->HitPulse(1.0f); s.Update(1.0f / 60.0f);
+            CHECK(s.renderSettings.vignettePulse > 0.0f);
+            s.mainCamera = nullptr; s.Update(1.0f / 60.0f);
+            CHECK_NEAR(s.renderSettings.vignettePulse, 0.0f, 1e-6f);
+            s.mainCamera = c; c->HitPulse(1.0f); s.Update(1.0f / 60.0f);
+            s.DestroyImmediate(g);
+            CHECK_NEAR(s.renderSettings.vignettePulse, 0.0f, 1e-6f);
+            CHECK_NEAR(s.renderSettings.vignette, 0.2f, 1e-6f);
         }
     }
 
@@ -694,6 +710,66 @@ int main() {
             CHECK(cx > 16.0f && cx < 46.0f);                          // the view is in Room B (x from 16 to 44)
         }
         Input::FeedKeys({});
+    }
+
+    // ---- 18. Review fixes: collision measures from the real target, fade restores everywhere, group-only collision ----
+    {   // a wall just ahead of a moving target must not collapse the camera (the look-ahead point is inside the wall)
+        Rig w;
+        w.vc->ApplyStyle(0); w.vc->lookAt = ""; w.vc->aimAtFollow = true; w.vc->orbitInput = false;
+        w.vc->lookaheadTime = 1.0f; w.vc->lookaheadMax = 2.0f; w.vc->collision = true; w.vc->followOffset = {0, 3, -8};
+        GameObject* wall = w.s.CreateGameObject("Wall");
+        wall->transform->localPosition = {1.5f, 0, 0};
+        wall->AddComponent<BoxCollider3D>()->size = {1, 10, 10};   // near face at x = 1
+        const float dt = 1.0f / 60.0f;
+        float minDist = 1e9f;
+        for (int i = 0; i < 90; ++i) {
+            w.player->transform->localPosition = {-6.0f + i * dt * 4.0f, 0, 0};   // walks toward the wall at 4 m/s, stops short of it
+            if (w.player->transform->localPosition.x > 0.0f) w.player->transform->localPosition = {0, 0, 0};
+            w.Step(dt);
+            if (i > 20) minDist = std::min(minDist, (w.CamPos() - w.player->transform->Position()).Magnitude());
+        }
+        CHECK(minDist > 5.0f);                       // never pulled in onto the target
+    }
+    {   // fade: switching fadeOccluders off while collision stays on, and removing the shot, both put the alpha back; a save mid-fade keeps the original
+        auto build = [](Rig& w, GameObject*& wall, MeshRenderer*& mr) {
+            w.vc->collision = true; w.vc->collisionMask = 0u;       // nothing blocks: only the fade is under test
+            w.vc->fadeOccluders = true; w.vc->occlusionAlpha = 0.25f; w.vc->occlusionFadeSpeed = 20.0f;
+            w.vc->positionDamping = 0.0f; w.vc->followOffset = {0, 0, -8};
+            wall = w.s.CreateGameObject("Wall");
+            wall->transform->localPosition = {0, 0, -4};
+            wall->AddComponent<BoxCollider3D>()->size = {6, 6, 0.5f};
+            mr = wall->AddComponent<MeshRenderer>(); mr->color = Color{1, 1, 1, 1};
+        };
+        // collisionMask 0 would also hide the wall from the fade ray: use the real mask and put the wall on a layer the collision ignores instead
+        auto run = [&](int mode) {
+            Rig w; GameObject* wall = nullptr; MeshRenderer* mr = nullptr; build(w, wall, mr);
+            w.vc->collisionMask = 0xFFFFFFFFu; w.vc->collision = false;   // the fade alone needs a live rig; collision off keeps the camera still
+            for (int i = 0; i < 60; ++i) w.Step(1.0f / 60.0f);
+            CHECK(mr->color.a < 0.3f);
+            if (mode == 0) {      // saved mid-fade
+                Scene b("fadesave"); std::string err;
+                CHECK(SceneSerializer::Deserialize(b, SceneSerializer::Serialize(w.s), &err, nullptr));
+                auto* mr2 = b.Find("Wall")->GetComponent<MeshRenderer>();
+                CHECK_NEAR(mr2->color.a, 1.0f, 1e-6f);
+            } else if (mode == 1) {   // fade switched off while the rig stays live (collision on)
+                w.vc->collision = true; w.vc->collisionMask = 0u; w.vc->fadeOccluders = false;
+                w.Step(1.0f / 60.0f);
+                CHECK_NEAR(mr->color.a, 1.0f, 1e-6f);
+            } else {              // the shot is removed
+                w.s.DestroyImmediate(w.vcGO);
+                CHECK_NEAR(mr->color.a, 1.0f, 1e-6f);
+            }
+        };
+        run(0); run(1); run(2);
+    }
+    {   // a group-only rig (no Follow, no Look At) with collision on does not crash or collapse
+        Rig w;
+        GameObject* a = w.s.CreateGameObject("A"); a->transform->localPosition = {-2, 0, 0};
+        GameObject* b = w.s.CreateGameObject("B"); b->transform->localPosition = {2, 0, 0};
+        w.vc->follow = ""; w.vc->lookAt = ""; w.vc->groupTargets = {"A", "B"}; w.vc->aimAtFollow = true;
+        w.vc->collision = true; w.vc->fadeOccluders = true; w.vc->followOffset = {0, 3, -9};
+        for (int i = 0; i < 60; ++i) { w.Step(1.0f / 60.0f); CHECK(Finite3(w.CamPos())); }
+        CHECK((w.CamPos() - Vec3{0, 0, 0}).Magnitude() > 5.0f);
     }
 
     TEST_MAIN_RESULT();

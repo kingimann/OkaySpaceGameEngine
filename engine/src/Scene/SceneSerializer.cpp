@@ -862,7 +862,7 @@ void WriteComponentRecords(std::ostream& out, GameObject* go) {
     for (auto* mr : go->GetComponents<MeshRenderer>()) {
         out << "  mesh " << Quote(mr->mesh.name) << " "
             << mr->color.r << " " << mr->color.g << " " << mr->color.b << " "
-            << mr->color.a << " " << (mr->wireframe ? 1 : 0) << " "
+            << (mr->fadeBaseAlpha >= 0.0f ? mr->fadeBaseAlpha : mr->color.a) << " " << (mr->wireframe ? 1 : 0) << " "
             << Quote(mr->meshPath) << " " << (mr->doubleSided ? 1 : 0) << "\n";
         // Procedural variant of a named nature prop (compact: one int regenerates
         // the exact varied shape on load, instead of baking meshgeo/meshcolors).

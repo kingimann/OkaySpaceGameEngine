@@ -137,6 +137,10 @@ void Camera::KickFov(float degrees, float seconds) {
     m_fovKickV += degrees * std::min(1.0f, scale) * m_fovKickOmega * 2.71828183f;
 }
 
+void Camera::OnDestroy() {
+    if (m_pulseApplied > 0.0f) if (Scene* sc = GetScene()) sc->renderSettings.vignettePulse = 0.0f;
+}
+
 void Camera::SetFovOffset(float degrees, float seconds) {
     if (!std::isfinite(degrees)) return;
     m_fovHoldTarget = Accessibility::MotionScale() <= 0.0f ? 0.0f : degrees;
@@ -165,24 +169,17 @@ void Camera::LateUpdate(float dt) {
         cam::SpringStep(m_fovHold, m_fovHoldV, m_fovHoldTarget, m_fovHoldOmega, dt);
         if (std::fabs(m_fovHold - m_fovHoldTarget) < 1e-3f && std::fabs(m_fovHoldV) < 1e-3f) { m_fovHold = m_fovHoldTarget; m_fovHoldV = 0.0f; }
     }
-    // Hit pulse: fades by itself and rides on the scene's vignette while this is the main camera.
+    // Hit pulse: fades by itself. It is handed to the renderer as a runtime-only add (RenderSettings::vignettePulse),
+    // never written into the scene's own vignette, so saving mid-pulse writes the base value.
     {
         Scene* sc = GetScene();
-        if (sc && sc->mainCamera == this) {
-            auto& rs = sc->renderSettings;
-            if (m_pulseLast > -1e8f && rs.vignette == m_pulseLast) rs.vignette -= m_pulseApplied;   // take our share back out (unless something else wrote it)
-            m_pulseApplied = 0.0f; m_pulseLast = -1e9f;
-        }
         if (m_pulse > 0.0f) {
             m_pulse *= std::exp(-4.0f * dt);
             if (m_pulse < 1e-3f) m_pulse = 0.0f;
-            if (sc && sc->mainCamera == this && m_pulse > 0.0f) {
-                auto& rs = sc->renderSettings;
-                m_pulseApplied = m_pulse * hitPulseVignette;
-                rs.vignette += m_pulseApplied;
-                m_pulseLast = rs.vignette;
-            }
         }
+        const bool mine = sc && sc->mainCamera == this && m_pulse > 0.0f;
+        if (mine) { sc->renderSettings.vignettePulse = m_pulse * hitPulseVignette; m_pulseApplied = 1.0f; }
+        else if (m_pulseApplied > 0.0f) { if (sc) sc->renderSettings.vignettePulse = 0.0f; m_pulseApplied = 0.0f; }
     }
     if (Accessibility::MotionScale() <= 0.0f) { m_trauma = 0.0f; m_shaker.Clear(); }   // reduced motion switched on mid-shake: stop at once
     m_shaker.Step(dt);

@@ -230,6 +230,7 @@ public:
         Vec3 fp = tg.fp;
         const bool haveFp = tg.haveFp;
         const float fitDist = tg.fitDist, fitOrtho = tg.fitOrtho;
+        const Vec3 fpReal = tg.fp;   // where the target really is: collision and fading measure from here, not from the look-ahead point
         // Look ahead: lean the framing toward where the target is going.
         if (haveFp && lookaheadTime > 0.0f) fp = fp + m_look.Step(fp, lookaheadTime, lookaheadMax, lookaheadSmooth, dt);
         else m_look.Reset();
@@ -373,11 +374,12 @@ public:
 
         // Collision and see-through: the live shot only.
         Vec3 bodyPos = m_pos;
+        if (!fadeOccluders && !m_fade.Entries().empty()) RestoreFaded();   // switched off while the rig stays live
         if (live && (collision || fadeOccluders)) {
-            GameObject* pivotGo = f ? f : l;
+            GameObject* pivotGo = f ? f : (l ? l : gameObject);   // a group-only rig has neither: never null
             Vec3 pivot; bool havePivot = false;
             if (l && l->transform) { pivot = l->transform->Position() + lookAtOffset; havePivot = true; }
-            else if (haveFp) { pivot = freeLookActive ? flPivot : fp; havePivot = true; }
+            else if (haveFp) { pivot = freeLookActive ? fpReal + Vec3{0.0f, orbitHeight, 0.0f} : fpReal; havePivot = true; }
             if (havePivot) {
                 const Vec3 arm = m_pos - pivot;
                 const float dist = arm.Magnitude();
@@ -485,9 +487,12 @@ public:
 
     /// Put things this camera made see-through back to how they were.
     void RestoreFaded() {
-        for (const auto& e : m_fade.Entries()) if (auto* mr = static_cast<MeshRenderer*>(const_cast<void*>(e.id))) mr->color.a = e.original;
+        for (const auto& e : m_fade.Entries()) if (auto* mr = static_cast<MeshRenderer*>(const_cast<void*>(e.id))) { mr->color.a = e.original; mr->fadeBaseAlpha = -1.0f; }
         m_fade.Clear();
     }
+    /// Disabled or removed: put things back. Only renderers that still exist are touched.
+    void OnDisable() override { RestoreStillAlive(); }
+    void OnDestroy() override { RestoreStillAlive(); }
     void OnObjectsDestroyed(const std::unordered_set<const GameObject*>& dying) override {
         // A fading object that is going away: forget it (its renderer pointer would dangle).
         std::vector<const void*> gone;
@@ -498,6 +503,17 @@ public:
         for (const void* id : gone) m_fade.Forget(id);
     }
 
+    void RestoreStillAlive() {
+        if (m_fade.Entries().empty()) return;
+        Scene* s = GetScene();
+        if (!s) { m_fade.Clear(); return; }
+        const std::vector<MeshRenderer*> live = s->FindObjectsOfType<MeshRenderer>();
+        for (const auto& e : m_fade.Entries()) {
+            auto* mr = static_cast<MeshRenderer*>(const_cast<void*>(e.id));
+            if (std::find(live.begin(), live.end(), mr) != live.end()) { mr->color.a = e.original; mr->fadeBaseAlpha = -1.0f; }
+        }
+        m_fade.Clear();
+    }
     const Vec3& SolvedPosition() const { return m_solvedPos; }
     const Quat& SolvedRotation() const { return m_rot; }
     /// The 2D view size this shot wants (0 = leave the camera's size alone).
@@ -621,13 +637,17 @@ inline void VirtualCamera::FadeStep(Scene* s, GameObject* ignore, const Vec3& ca
             if (!g) continue;
             MeshRenderer* mr = g->GetComponent<MeshRenderer>();
             if (!mr && g->transform && g->transform->Parent()) mr = g->transform->Parent()->gameObject->GetComponent<MeshRenderer>();
-            if (mr) m_fade.Mark(mr, mr->color.a);
+            if (mr) {
+                const float orig = mr->fadeBaseAlpha >= 0.0f ? mr->fadeBaseAlpha : mr->color.a;
+                m_fade.Mark(mr, orig);
+                mr->fadeBaseAlpha = orig;     // a scene saved meanwhile stores this, not the faded value
+            }
         }
     }
     std::vector<cam::FadeTracker::Entry> done;
     m_fade.Step(occlusionAlpha, occlusionFadeSpeed, dt, done);
     for (const auto& e : m_fade.Entries()) static_cast<MeshRenderer*>(const_cast<void*>(e.id))->color.a = e.alpha;
-    for (const auto& e : done) static_cast<MeshRenderer*>(const_cast<void*>(e.id))->color.a = e.original;
+    for (const auto& e : done) { auto* mr = static_cast<MeshRenderer*>(const_cast<void*>(e.id)); mr->color.a = e.original; mr->fadeBaseAlpha = -1.0f; }
 }
 
 } // namespace okay

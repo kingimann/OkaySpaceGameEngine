@@ -2450,7 +2450,7 @@ const std::uint32_t* GLRenderer::RenderToPixels(const Scene& scene, const Mat4& 
     };
 
     const bool useChain = chain && EnsurePostTargets(w, h, m_hdr);
-    PostVignetteHandled() = useChain && rsTop.vignette > 0.0f;
+    PostVignetteHandled() = useChain && rsTop.vignette + rsTop.vignettePulse > 0.0f;
     unsigned int readFbo = m_resolveFbo;
     if (useChain) {
         const auto& ps = rsTop.post;
@@ -2533,7 +2533,7 @@ const std::uint32_t* GLRenderer::RenderToPixels(const Scene& scene, const Mat4& 
             g.Uniform3f(m_uuLift, ps.lift.x, ps.lift.y, ps.lift.z);
             g.Uniform3f(m_uuGamma, ps.gamma.x, ps.gamma.y, ps.gamma.z);
             g.Uniform3f(m_uuGain, ps.gain.x, ps.gain.y, ps.gain.z);
-            g.Uniform1f(m_uuVignette, rsTop.vignette > 1.0f ? 1.0f : rsTop.vignette);
+            g.Uniform1f(m_uuVignette, rsTop.vignette + rsTop.vignettePulse > 1.0f ? 1.0f : rsTop.vignette + rsTop.vignettePulse);
             g.Uniform1f(m_uuVignetteSmooth, ps.vignetteSmooth);
             g.Uniform1f(m_uuAspect, (float)w / (float)h);
             DrawQuad();

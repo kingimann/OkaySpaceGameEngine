@@ -238,6 +238,7 @@ public:
 
     void Awake() override;
     void LateUpdate(float deltaTime) override;
+    void OnDestroy() override;
 
 private:
     float m_trauma = 0.0f, m_shakeTime = 0.0f;
@@ -247,7 +248,7 @@ private:
     cam::CameraShaker m_shaker;
     float m_fovKick = 0.0f, m_fovKickV = 0.0f, m_fovKickOmega = 15.0f;
     float m_fovHold = 0.0f, m_fovHoldV = 0.0f, m_fovHoldTarget = 0.0f, m_fovHoldOmega = 20.0f;
-    float m_pulse = 0.0f, m_pulseApplied = 0.0f, m_pulseLast = -1e9f;
+    float m_pulse = 0.0f, m_pulseApplied = 0.0f;
 };
 
 } // namespace okay

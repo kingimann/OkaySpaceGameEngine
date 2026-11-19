@@ -98,6 +98,15 @@ this can make a merged event extend over a following sibling.
 Trace names are written as valid UTF-8: text that is not (a name read from a Latin-1 file) has its bad bytes replaced by
 U+FFFD, so the file always opens in a trace viewer. Quotes, backslashes and control characters are escaped as before.
 
+### Sections the engine already records
+
+`Scripts.Update` and `Scripts.LateUpdate` (every component's Update and LateUpdate), `Physics.2D` and `Physics.3D` (one
+physics step each), and, when the software renderer draws the frame, `Render.Visibility` (culling, LOD, batching),
+`Render.ShadowMaps`, `Render.Prewarm` (texture caches and what each object can reach), `Render.Raster`, `Render.Post` and
+`Render.Resolve`. In the editor open **View > Panels > Profiler** to see them while playing. The headless benchmark
+`tests/bench_frame.cpp` turns the profiler on and prints the same sections per frame for six fixed scenes
+(`docs/perf_log.md` has the command, the numbers and the log of changes made with it).
+
 ## What changed (core wave 6)
 
 | Was | Now |

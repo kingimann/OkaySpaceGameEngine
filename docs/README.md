@@ -3,6 +3,8 @@
 Pages are grouped by what you are trying to do. New here? Start with
 [making_a_game.md](making_a_game.md).
 
+Pictures and screenshots are not stored in the repository (owner rule, 2026-11-17); docs describe them in words.
+
 ## Get started
 - [try_it.md](try_it.md): the owner's page: everything that can be tried in the Windows release (zip or installer) today, with exact steps and what you should see, and what cannot be tried yet.
 - [THIRD_PARTY.md](THIRD_PARTY.md): what is custom code and which outside libraries we build on, with licences.
@@ -128,6 +130,7 @@ Pages are grouped by what you are trying to do. New here? Start with
 - [anticheat_hardening_status.md](anticheat_hardening_status.md): every item of the 2026-10-26 hardening audit and the server-side topics, done or not, with proof; the cheat simulator.
 - [supabase-backend.md](supabase-backend.md): the Supabase backend.
 - [updater.md](updater.md): the updater: integrity, signed feeds, self-update and rollback.
+- [content_delivery.md](content_delivery.md): downloadable game content: signed manifest, resumable sync, rollback, overlay lookup, scripts and graphs (data and scripts only, never code), Xbox/UWP notes.
 - [account_data.md](account_data.md): download my data and delete my account.
 - [member_moderation.md](member_moderation.md): kick, ban and admins in community servers and group chats.
 - [password-reset.md](password-reset.md): the password reset page.

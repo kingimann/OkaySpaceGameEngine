@@ -91,12 +91,16 @@ release job or the installer build for this change.
 | 16 | Main menu bar clean-up: one Examples, Edit clipboard commands, GameObject categories, View, Help | The bar at the top of `Tools\OkayEngine.exe` | New in this change; see section 16 for what was and was not seen |
 | 17 | Hierarchy right-click menus: Create Child with every category, Add Component, Select Same Type, "Delete 3 Objects" | Right-click in the Hierarchy panel of `Tools\OkayEngine.exe` | New in this change; see section 17 |
 | ac-cheat-sim | Anti-cheat: watch the server catch a cheater (cheat simulator), ban list, audit log | `OkaySpacePlayer.exe --server --cheat-sim --log cheat_sim.txt` (Tools folder), then open the log | New in this change; tested headless on Linux over loopback; Windows and a real network unverified |
+| content-delivery | Downloadable game content: signed models, textures, scripts and data that an exported game fetches (off by default) | `okay-content.exe` in `Tools/`, or `content.okayconfig` / `OKAY_CONTENT_URL` for the player | Built; Linux-tested only |
+| editor-fps | Editor frame-time overlay and speed switches | Editor menu **View > Rendering**: Frame-time overlay, Frame rate limit, Slow down when idle, Viewport resolution, Performance mode. Heavy test scenes: `examples\perf\` | New in this change. Real Direct3D 11 numbers on a Windows machine are unverified; sent back by the owner |
 | fast1 | Fast release: one workflow dispatch, no version-bump PR | GitHub: Actions > "Fast release" > Run workflow (tick dry_run first); a change adds `dist/changelog.d/<id>.txt` | Built and tested offline with fake data; never run on GitHub; off until `FAST_RELEASE_ENABLED=1` |
 | hygiene1 | Account address and key in one config file; no built programs in git | Nothing to open: build or release as usual, optional key rotation in Supabase | Verified on Linux (tests, configure); no release or Windows run |
 | input | Input upgrade: input playground, rumble patterns, vibration setting, key positions (AZERTY) | Editor: File > Open, `examples\input\input_playground.okayscene`, then Play | Tested headless on Linux; nothing run on Windows or with a real controller or AZERTY keyboard |
 | one-controller | One Player Controller for first and third person; no Humanoid or separate First and Third Person entries | Editor: GameObject > Player, Add Component > Gameplay, File > New Project (First and Third Person) | Tests run on Linux only; not run in a real editor or on Windows |
 | security-sec1 | Security plan SEC1: script file paths, update signature status, relay caps, reactions SQL | examples\security_paths\script_paths.okayscene (Play, read Console); Settings > About and Help > About line; SQL and relay are owner steps | Tests on Linux only; editor/launcher lines not run; nothing on Windows or real Supabase |
 | vpa | Multi-window panels start cleanly on every video driver | `Tools\OkayEngine.exe`: drag a panel tab outside the editor | Linux only (Xvfb, a build with assertions on); Windows unverified |
+| xbox-next | Xbox UWP next: one-page guide (PC test, Dev Mode, IP, Device Portal, deploy, logs) and the new log file | Windows release: `xbox-src\scripts\build-xbox-uwp.ps1`; editor File > Build Settings > Xbox (exp.) | Linux-tested only; nothing here has run on a console |
+| xbox-uwp | Xbox One export (EXPERIMENTAL, UNVERIFIED): one-click build (check, export, compile, shaders, pack, sign, install), own .appx packer, engine mode | File > Build Settings > platform "Xbox (exp.)" > Build Xbox package | Linux-tested only |
 | 7n | Every own replacement in one table: the switch, the sample, how to tell it is on, and what is missing | section 7n below and `docs/own_flip_proposal.md` | Table is new. Read from the code and from CI logs, not run on Windows |
 | 8 | Own model readers: **the default** since 2026-11-17 (`OKAY_THIRD_PARTY=1` = back to Assimp / ufbx) | import anything; `examples\own_readers`; `OKAY_THIRD_PARTY=1` or `OKAY_OWN_<FMT>=0` to go back | Not in a release yet (branch `claude2/own-readers-integration`); Linux tests only, Windows unverified |
 | 9 | Own WAV decoder (off by default) | `OKAY_OWN_WAV=1`, `examples\own_wav` | Switch works; no log line |
@@ -353,9 +357,6 @@ measurement in [visual_script_category_audit.md](visual_script_category_audit.md
 Screenshots (headless renders: the real Add Node panel code drawn with ImGui's software renderer and its default font, so
 the font and window frame differ from the editor):
 
-* [Numbers open, with its subcategories and the hover description](images/vs_palette_topics.png)
-* [Typing `weather`: nine nodes, all in Weather & Fog](images/vs_palette_search_weather.png)
-* [The Events section folded away](images/vs_palette_folded_section.png)
 
 Status: the topic list, the rule that every node has exactly one place, the size limits, the search words for old topic
 names and the favourites keys are checked by `tests/test_vs_categories.cpp` (compiled and run with g++ on Linux). The
@@ -575,7 +576,7 @@ and Standard Folders, Duplicate of a selection and the tags a menu lists are tes
 (`editor/LaunchFile.cpp`) is tested on Linux against fake programs on PATH (`launch_file`): a hostile file name reaches the program as one untouched argument and program and script types are
 refused before anything starts; its Windows half (`ShellExecuteW`) was only compile-checked with the MinGW cross compiler. **Unverified:** everything you see in the real window (drawing, tooltips, the Move to... and Properties
 windows, the Explorer, Notepad and default-app launches on Windows, the tree's expand and collapse, the panel following a renamed folder). Nothing here was run on Windows. The changed editor files (`editor/main.cpp`, `ProjectPanelUI.cpp`, `ProjectMenuDraw.cpp`, `ProjectBrowser.cpp`, `ContentEditors.cpp`, `LaunchFile.cpp`) were compiled with `-fsyntax-only` on Linux with the editor's real flags (no error; `main.cpp` has older warnings of its own) and the launcher, the panel and the menu drawing also with the MinGW Windows cross compiler; the editor was not linked or started.
-**Pictures:** `docs/images/project_menus/*.png` (listed in `docs/project_panel.md`) are headless renders, **not screenshots of the editor window**: the real item lists and the real menu drawing code, drawn by Dear ImGui into a software surface with ImGui's default look and font (`tools/project_menu_shots.cpp`). The editor itself could not be built and run on the machine that wrote this, so there is no screenshot of the real window; the OkayUI panels have no Project panel, so there is no second copy of this menu to keep in step.
+**Pictures:** a picture folder (pictures are no longer stored in the repository) (listed in `docs/project_panel.md`) are headless renders, **not screenshots of the editor window**: the real item lists and the real menu drawing code, drawn by Dear ImGui into a software surface with ImGui's default look and font (`tools/project_menu_shots.cpp`). The editor itself could not be built and run on the machine that wrote this, so there is no screenshot of the real window; the OkayUI panels have no Project panel, so there is no second copy of this menu to keep in step.
 
 ## 7j. Nameplates that show their own character, and a sign with rich text
 
@@ -623,7 +624,7 @@ inside the card at any size of the window.
 World Space UI object: the Game view and the player draw it; whether the Scene view previews it is unverified. The sign uses
 the 8x8 pixel font (no new font system). A big `[size]` run does not change how a line is wrapped or centred.
 
-**Pictures** (headless renders through the same UI pass as the game, not a real window; they are in `docs/images/ui_text/`;
+**Pictures** (headless renders through the same UI pass as the game, not a real window; they are in a picture folder (pictures are no longer stored in the repository);
 the test `ui_text_shots` makes the "after" ones again, the two "before" ones are the unmerged branches' own renders):
 
 | File | What it shows |
@@ -684,7 +685,7 @@ with two handles, input boxes with rules (email, number range, password and repe
    Range Slider** or **Input Field with Validation**, **Layout & Overlays > Aspect Ratio Box**.
 
 **What you should see.** A red ring and a sentence appear only after typing a wrong value; the range handles stop at each
-other; the blue frame is 16:9 at every window shape. Pictures: `docs/images/ui_library/`.
+other; the blue frame is 16:9 at every window shape. Pictures: a picture folder (pictures are no longer stored in the repository).
 
 **Status.** Logic and the shipped scene are tested headless (`ui_library`, `ui_library_example`: 179 checks, run on Linux).
 The pictures are software renders (`ui_library_shots`), not a real window. The editor menu entries and Inspector panels
@@ -817,7 +818,6 @@ ones grey, contacts red, joints orange.
 
 **Screenshots (headless Linux software renders of the same scene, not the editor window; camera and look differ from the editor):**
 
-* [Start of Play](images/physics/playground_0.png), [after 1.2 s](images/physics/playground_1.png), [after 3 s](images/physics/playground_2.png), [after 8 s](images/physics/playground_3.png)
 
 **Status.** Tested headless on Linux (`tests/test_physics_deep_*.cpp`: manifold, solver, bugs, improved, save, more; the existing physics, joint, hinge,
 ragdoll, vehicle, destructible, controller and net-prediction tests stay green). The playground was played headless for 10 seconds and the
@@ -904,7 +904,7 @@ stairs down hop, a jump from the platform loses its speed, and every frame costs
 Settings you can now change and that are saved: select the player, the **Player Controller** panel, **Step Offset** and **Slope
 Limit** (first and third person).
 
-**Pictures** (headless software render, flat shading, no signs or water shine, made by `tests/render_course.cpp`): `docs/images/player_course/` (`02_ramps.png`, `07_f3_player_lines_on_30_degree_ramp.png` shows the F3 lines as the 8x8 font draws them; the real F3 panel was not seen).
+**Pictures** (headless software render, flat shading, no signs or water shine, made by `tests/render_course.cpp`): a picture folder (pictures are no longer stored in the repository) (`02_ramps.png`, `07_f3_player_lines_on_30_degree_ramp.png` shows the F3 lines as the 8x8 font draws them; the real F3 panel was not seen).
 
 **Checks run here (Linux, headless)**: `tests/test_player_deep.cpp` (860 checks, each fails with `OKAY_OLD_PLAYER=1`),
 `tests/test_player_course.cpp` (the shipped file is what the code writes, and a player walks stations 1, 3, 7), and the older player,
@@ -956,7 +956,7 @@ feel with a real pad, whether the preset numbers feel right (they were chosen by
 **What it is.** Your own arm in first person (the player in the First Person starter). Before: no arm unless you held
 something, then a floating skin block, and a left click did nothing. Now: a hand and forearm in your shirt colour, always in
 view at the lower right, a left click swings it, and other players see the whole body. Before and after pictures:
-`docs/images/fp_hand/before/` and `docs/images/fp_hand/after/` (headless renders: left your camera, middle a camera in
+a picture folder (pictures are no longer stored in the repository) and a picture folder (pictures are no longer stored in the repository) (headless renders: left your camera, middle a camera in
 front of the player, right a camera at the side). Details: [fp_hand.md](fp_hand.md).
 
 **How to try it (Windows release).**
@@ -983,7 +983,7 @@ modeling; no code, models or assets from other projects. Design: `docs/guided_mo
 
 **Status.** The generation, the rebuild rules, the files and undo are tested on Linux (`ctest -R guided_modeling`, about
 600 checks). The editor page (`editor/GuidedPanel.cpp`) compiles but nobody has opened it in a real window yet, and
-nothing here ran on Windows. Pictures in `docs/images/guided_modeling/` are headless software renders of the generated
+nothing here ran on Windows. Pictures in a picture folder (pictures are no longer stored in the repository) are headless software renders of the generated
 meshes (our own small rasteriser), not screenshots of the editor.
 
 **Try it (the example scene).**
@@ -1046,7 +1046,7 @@ to one of them (it is in the Modeling window; the exact tab is unverified), or o
 
 
 **More modeling tools (same example folder).** Open `examples\modeling_tools\spin_path_curve.okayscene`. You should see a blue **Spun Vase**, a **Bent Horn**
-(a box with a curved horn pulled out of its top) and a row of small cubes called **Curve Array** following a curve. `docs/images/modeling_more/spin_path_curve.png` is a
+(a box with a curved horn pulled out of its top) and a row of small cubes called **Curve Array** following a curve. a picture folder (pictures are no longer stored in the repository) is a
 headless software render of it.
 1. **Array Along Curve.** Click **Curve Array**. In the Inspector find **Modifiers**: the first one is *Array Along Curve*, with a time like `0.05 ms` under its name.
    Drag one of the curve points: the cubes follow. Press **Wave** or **Helix** or **Arc**: the row takes that shape. Untick **Follow the curve**: the cubes stop turning.
@@ -1090,7 +1090,7 @@ headless software render of it.
 4. **Reduce Polygons.** Click the **Wrap Target** sphere (many triangles), Edit Mesh, set **Reduce to %** to 25, Ctrl+K, type `reduce`, Enter: the Console shows the triangle count dropping to about a quarter and the sphere still looks round.
 5. **Mesh library.** Use **Save as Mesh Asset** on a model, then Modeling > Import page > **Mesh library**: it appears (press Refresh); **Add** puts a copy in the scene.
 
-**Picture.** `docs/images/modeling_more/material_slots.png` is a headless software render of the example scene (not a GPU render, not the editor window).
+**Picture.** a picture folder (pictures are no longer stored in the repository) is a headless software render of the example scene (not a GPU render, not the editor window).
 
 **What was and was not checked.** The tests `modeling_more` and `modeling_more_scene` ran on Linux (slots through scene save/load, `.okaymesh` files,
 the software renderer drawing each slot's colour and picture, Repair Mesh, Spin, Extrude Along Path, Array Along Curve, measuring, snapping, the library, the dissolve/weld/delete fixes). Nobody has clicked these buttons in the real
@@ -1110,7 +1110,7 @@ model is an ordinary mesh, parts have names, and rebuilding never overwrites you
 **Status.** Generation and rebuild rules are tested on Linux (`ctest -R guided_architecture`, about 1400 checks:
 every design sound and closed, parts never overlap, every setting at its limits, a fuzz, swapping windows, door and roof of a
 building, your edits and your own additions surviving). The page itself was never opened in a real window; nothing ran on Windows.
-Pictures in `docs/images/guided_modeling/architecture_*.png` and `building_part_swap_before_after.png` are headless renders of the
+Pictures in a picture folder (pictures are no longer stored in the repository) and `building_part_swap_before_after.png` are headless renders of the
 generated meshes, not editor screenshots.
 
 **Try it.**
@@ -1142,8 +1142,8 @@ every guided model: **Detail** (Low, Medium, High, Ultra) with the triangle coun
 **Status.** Tested on Linux (`ctest -R "guided_vehicles|guided_detail"`: about 2300 and 980 checks: every design sound, parts never
 overlap, every setting at its limits, fuzz, swapping wheels, headlights and bumpers, your edits surviving, the triangle counts and
 level changes). The page was never opened in a real window; nothing ran on Windows. Pictures
-(`docs/images/guided_modeling/vehicle_*.png`, `vehicles_*.png`, `detail_*.png`) are headless renders of the generated meshes by our own
-small rasteriser (the detail pictures show triangle edges), not editor screenshots. Motorcycle pictures: `docs/images/guided_modeling/motorcycles_side_views.png` and `motorcycles_three_quarter.png` (Medium detail). The motorcycles are still blocky at Medium: tubes, boxes and simple profiles, not shaped like real tanks and engines.
+(a picture folder (pictures are no longer stored in the repository), `vehicles_*.png`, `detail_*.png`) are headless renders of the generated meshes by our own
+small rasteriser (the detail pictures show triangle edges), not editor screenshots. Motorcycle pictures: a picture folder (pictures are no longer stored in the repository) and `motorcycles_three_quarter.png` (Medium detail). The motorcycles are still blocky at Medium: tubes, boxes and simple profiles, not shaped like real tanks and engines.
 
 **Try it.**
 
@@ -1179,7 +1179,7 @@ The editor's Detail slider, Variation and check, and Remove/Add back controls co
 
 **Status.** Tested on Linux (`ctest -R guided_characters`, about 2000 checks: every design of every part sound and non-overlapping, every
 setting at its limits, fuzz, swapping hands, hair, hats, proportions, creature body plans, your edits and your own additions surviving). The page
-was never opened in a real window; nothing ran on Windows. Pictures (`docs/images/guided_modeling/characters_*.png` sheets and
+was never opened in a real window; nothing ran on Windows. Pictures (a picture folder (pictures are no longer stored in the repository) sheets and
 `character_<type>_<design>.png`, 26 files, plus `detail_human.png`) are headless renders by our own small rasteriser, not editor screenshots.
 Humans from Medium up are organic (lofted body, separate face parts); robots and creatures are blocky; spiders and insects have crude legs. Style, hair and clothes pictures: `characters_styles.png` (realistic, stylised low poly, cartoon, blocky at Medium and High) and `characters_hairstyles.png` (13 hairstyles from behind and the side). A human can be given a skeleton and skin weights (see step 8). What is checked: `ctest -R guided_animation`.
 
@@ -1210,7 +1210,7 @@ Humans from Medium up are organic (lofted body, separate face parts); robots and
 
 **What it is.** Seven environment templates on the Modeling window's **Guided** page, same rules as 7zg to 7zk: every one is a set of named parts that can be given another design, with a **Seed** setting for the random-looking shapes (the same seed always gives the same tree), the **Detail** level (Low to Ultra), Randomise within style, the model check and the save-as-template round trip.
 
-**Status.** Tested on Linux (`ctest -R "guided_environment|guided_detail|guided_quality"`): every start design of every template is sound at all four Detail levels; the road and hedge follow a path you draw; every setting at its limits; fuzz; swapping designs; your edits surviving. Picture: `docs/images/guided_modeling/environment_overview.png` (every start design, headless render by our own small rasteriser, not an editor screenshot). Rocks, plants and the street lamp parts are not always one connected piece by design (pebbles, flower beds).
+**Status.** Tested on Linux (`ctest -R "guided_environment|guided_detail|guided_quality"`): every start design of every template is sound at all four Detail levels; the road and hedge follow a path you draw; every setting at its limits; fuzz; swapping designs; your edits surviving. Picture: a picture folder (pictures are no longer stored in the repository) (every start design, headless render by our own small rasteriser, not an editor screenshot). Rocks, plants and the street lamp parts are not always one connected piece by design (pebbles, flower beds).
 
 **Try it.**
 
@@ -1226,7 +1226,7 @@ Humans from Medium up are organic (lofted body, separate face parts); robots and
 
 **What it is.** Four prop templates on the **Guided** page (category Props), same rules and the same Detail, Randomise, model check and template controls.
 
-**Status.** Tested on Linux (`ctest -R "guided_quality|guided_detail|guided"`): every start design of the four templates is one connected, sound object at all four Detail levels, every start is different, every slot has designs that change the model, 1000 random seeds per template without a failure. Picture: `docs/images/guided_modeling/props_overview.png` (headless render).
+**Status.** Tested on Linux (`ctest -R "guided_quality|guided_detail|guided"`): every start design of the four templates is one connected, sound object at all four Detail levels, every start is different, every slot has designs that change the model, 1000 random seeds per template without a failure. Picture: a picture folder (pictures are no longer stored in the repository) (headless render).
 
 **Try it.**
 
@@ -1290,7 +1290,7 @@ a few centimetres off the back (a design choice); `guided_pictures` renders were
 **Steps.** Open the Modeling window and follow these.
 
 More new steps (same branch):
-- **Curves and bevel weights example**: File > Open `examples\modeling_tools\curves_bevel.okayscene` (picture: `docs/images/modeling_more/curves_bevel.png`). You see a pipe, a flat ribbon, a swept square tube and a cube with only its top edges rounded, with three hint lines on screen. Press Play to look at it, Stop to edit. Select the cube, open Edit Mesh: its top edges are drawn green (bevel weights).
+- **Curves and bevel weights example**: File > Open `examples\modeling_tools\curves_bevel.okayscene` (picture: a picture folder (pictures are no longer stored in the repository)). You see a pipe, a flat ribbon, a swept square tube and a cube with only its top edges rounded, with three hint lines on screen. Press Play to look at it, Stop to edit. Select the cube, open Edit Mesh: its top edges are drawn green (bevel weights).
 - **Coloured edges**: in Edit Mesh, creased edges are pink and bevel-weighted edges are green. Select two edges, Ctrl+K, type "crease" or "bevel weight", run Set; the colours appear at once. Clear removes them.
 - **Quad Remesh**: add a Sphere, open Modeling > Edit Mesh, set "Quads target" to 300, press Ctrl+K and run "Quad Remesh". The Console says how many triangles became how many quads, and the sphere is now made of quads (switch on the wireframe to see them). Undo brings the old mesh back. Limits: it does not follow flow lines; slots, vertex colours and UVs are dropped.
 - **Reference images are saved**: Import page > Reference images: add a PNG, save the scene, reopen it: the picture plane is still there (path, plane, size, opacity, flip, visible).
@@ -1301,7 +1301,7 @@ More new steps (same branch):
 
 **What it is.** The 3D modeler can now give faces to numbered material slots. Each slot has a colour, and changing a slot's colour
 
-**Status.** The engine side is covered by the Linux tests `modeling_more`, `modeling_more_scene` and `modeling_fuzz` (headless). The editor buttons and menus here were not compiled with the editor on Linux and not clicked in the Windows editor; the Direct3D 11/12 and OpenGL per-slot drawing never ran on a GPU. The picture `docs/images/modeling_more/curves_bevel.png` is a headless software render.
+**Status.** The engine side is covered by the Linux tests `modeling_more`, `modeling_more_scene` and `modeling_fuzz` (headless). The editor buttons and menus here were not compiled with the editor on Linux and not clicked in the Windows editor; the Direct3D 11/12 and OpenGL per-slot drawing never ran on a GPU. The picture a picture folder (pictures are no longer stored in the repository) is a headless software render.
 
 ## 7zr. Damaged prefab variants and deep project folders
 
@@ -1385,7 +1385,7 @@ Where: the menu bar at the top of the editor, `Tools\OkayEngine.exe` (or start t
 6. The **Window** and **Engine** menus are gone: their items were duplicates (Items, Loot & Recipes is in View > Editors & Tools; Build
    Settings is in File) or moved (Check for Updates to Help).
 
-Screenshots of the real editor (built and run on Linux, in a virtual display; not Windows): [docs/images/editor_menus/](images/editor_menus/)
+Screenshots of the real editor (built and run on Linux, in a virtual display; not Windows): a picture folder (pictures are no longer stored in the repository)
 (`file.png`, `file_examples.png`, `file_play_save_greyed.png`, `edit_undo_named.png`, `gameobject.png`, `view.png`, `help.png`). What was and
 was not clicked is listed in [editor_menus.md](editor_menus.md) section 3b; "Checks run for this change" is at the end of section 17.
 
@@ -1408,7 +1408,7 @@ Where: the **Hierarchy** panel (left side by default). Map and the Existing / Ga
 7. Right-click the empty space under the rows: Create Empty, the eight Create categories, Paste, Select All, Deselect, Expand All, Collapse All,
    Sort A-Z. The **[+]** button at the top has Create Empty, Create Empty Child, Group Selected and the same categories.
 
-Screenshots of the real editor (Linux, virtual display): [docs/images/editor_menus/](images/editor_menus/) (`hierarchy_row_menu.png`,
+Screenshots of the real editor (Linux, virtual display): a picture folder (pictures are no longer stored in the repository) (`hierarchy_row_menu.png`,
 `hierarchy_create_child.png`, `hierarchy_create_child_result.png`, `hierarchy_three_selected.png`, `hierarchy_same_type_reason.png`,
 `hierarchy_add_component.png`, `hierarchy_empty_space.png`).
 
@@ -1484,6 +1484,46 @@ next to each other. `hp 10` and `hp 9` stay two rows. The pill counts still coun
 **Status.** Logic tested headless (`test_debug_console`, 136 checks, run on Linux). `editor/ConsolePanel.cpp` and
 `editor/main.cpp` were NOT compiled (no SDL in this environment); the button and label are unverified until you look.
 
+## content-delivery. Downloadable game content (off by default, Windows first)
+
+An exported game can download updated **data and scripts** (models, textures, animations, scenes, audio, dialogue, Visual Script
+and OkayScript files) from a folder or a server. Never code or programs. Full description: `docs/content_delivery.md`.
+Nothing changes in a game unless a content URL is set. Not tested on Windows or an Xbox yet.
+
+You need a Windows PC with the release folder (the `Tools` folder holds `okay-content.exe`), Git Bash or WSL for the
+publish script (only for step 6), and Python 3 once to make a key.
+
+1. **Make a key.** In a terminal in the repo: `python3 scripts/sign_index.py genkey`. It prints a seed (private: keep it, never
+   share it) and a public key. Write them down for the steps below (`SEED` and `PUB`).
+2. **Make a content folder** (for example `C:\test\content-v1`) holding a few real files, in the same layout your game uses:
+   `models\ship.obj`, `scripts\boss.okayvs` (copy a graph saved by the Visual Script editor), `strings.okayloc`.
+3. **Sign it.** `set OKAY_CONTENT_SIGNING_SEED=SEED` then
+   `okay-content.exe make-manifest C:\test\content-v1 --game mygame --version 1`. You should see "wrote content.manifest ... and
+   content.manifest.sig". Then `okay-content.exe verify C:\test\content-v1 --keys PUB --game mygame` should say `OK`.
+   Try a file named `run.exe` in the folder: make-manifest must refuse it.
+4. **Download it like a player.** `okay-content.exe sync C:\test\content-v1 C:\test\player-content --game mygame --keys PUB`.
+   You should see each file, then `status=updated ... downloaded=3`. Run it again: `status=up-to-date`, nothing downloaded.
+   Change one file, make version 2 (`--version 2`), sync again: only the changed file downloads.
+5. **Try a bad key.** Repeat the sync with a different public key: it must refuse and `C:\test\player-content\current.txt` must not
+   appear (or stay at the old version).
+6. **Use it in a game.** Build a game with Build Game, put a text file `content.okayconfig` beside `OkaySpacePlayer.exe` (next to the
+   game's `_Data` folder) with
+   ```
+   url=file:///C:/test/content-v1
+   game=mygame
+   keys=PUB
+   ```
+   (or set the environment variables `OKAY_CONTENT_URL`, `OKAY_CONTENT_GAME`, `OKAY_CONTENT_KEYS`). Start the game. The game's log
+   (the player prints it at start-up; a development build also writes it to `game.log`) shows `content: updated, serving downloaded content version 1`. A downloaded
+   `strings.okayloc`, `items.okayitems`, `weapons.okayweapon`, a scene named in the scene list, a UI image or an `.obj` mesh now
+   wins over the installed one. With no `content.okayconfig` and no variable the game is unchanged.
+7. **Publish for real (optional).** With Git Bash and a Supabase service key in `SUPABASE_SERVICE_KEY`:
+   `OKAY_CONTENT_SIGNING_SEED=SEED scripts/publish-content.sh C:/test/content-v1 --game mygame --version 3`. It prints the
+   `url=` line to use. `DRY_RUN=1` checks everything and uploads nothing.
+
+Tests (Linux): `ctest -R "content_"` and `ctest -R publish_content`. Not verified: Windows, a real bucket, the Xbox app (its
+network transport is a stub that says so).
+
 ## Remove from list and Delete project (launcher Create page)
 
 **Where.** Launcher > **Create**. Your projects are the folders inside the **Projects** folder next to `OkaySpace.exe`
@@ -1538,6 +1578,40 @@ Three bug fixes from issue #888 (findings 74, 75 and 78). Nothing new to click; 
 
 **Checked:** `test_data_load_checks` (headless, Linux). **Not checked:** the editor windows above (the editor was
 not built for this change); anything on Windows.
+
+## editor-fps. Editor frame-time overlay and speed switches
+
+**What it is.** A small window inside the editor that shows your FPS, the frame time in milliseconds, a graph of the last
+120 frames, and where each frame goes (3D view, panels, ImGui, present, Play mode). Plus a few switches to make the editor
+cheaper. All switches are off until you turn them on. Guide: `docs/editor_performance.md`.
+
+**Steps (read the numbers).**
+1. Open the editor (`Tools\OkayEngine.exe`). Open a project, or use **File > Open Scene** and pick `<install folder>\examples\perf\many_lights.okayscene`.
+2. Open the menu **View**, then **Rendering**. Click **Frame-time overlay**. A window called "Frame time" appears at the top right.
+   Drag it where you like. It stays open the next time you start the editor.
+3. Leave the mouse over the Scene view for a few seconds, then orbit the camera (hold the right mouse button and move).
+4. Read the top line (FPS and ms) and the bars below it. The bar that is longest is where the time goes.
+5. Press **Copy report** in the overlay. Paste it into a message to us. That is the number to send back. Also say your
+   graphics card and the window size, and whether the line "Renderer:" in the overlay says "Direct3D 11 (GPU, direct to the view)".
+6. For more detail, press **Open Profiler** (or **View > Rendering > Profiler window**).
+
+**Steps (try the switches).** All in **View > Rendering**, each takes effect at once. Look at the overlay after each one.
+1. **Viewport resolution** > **75%** then **50%**: the 3D view gets a little softer and the "3D view render" bar shrinks.
+2. **Performance mode (Scene view)**: the Scene view loses ambient occlusion, bloom and edge smoothing; the Game view does not change.
+3. **Frame rate limit** > **120 FPS**: the FPS settles near 120 and a new bar "Frame limiter sleep" shows the time slept on purpose.
+   The overlay also says what the frame costs without the sleep ("possible FPS").
+4. **Slow down when idle**: take your hands off the mouse and keyboard for a second: FPS drops to the idle rate (30 by default)
+   and the GPU rests. Move the mouse: full speed again. It never slows down while the game is playing.
+5. Turn each switch off again to compare.
+
+**What you should see.** The overlay's numbers move when you change a switch. The sections add up to the frame time
+(the line "Not timed" is what no timer covers).
+
+**Status.** Logic tested headless on Linux (`test_editor_perf`: section maths, history numbers, idle and limiter decisions,
+scale, performance mode). The editor was built and started on Linux with a virtual screen and SDL's software 2D renderer: the
+frame limiter was seen working (a 10 FPS cap gave 99.7 ms frames with a "Frame limiter sleep" section) and the sections add up.
+The overlay window was drawn only with the profiler data path (not looked at on screen), no scene viewport was exercised, and
+nothing was run on Windows or a real GPU, so the Direct3D 11 numbers are unverified until you send the report.
 
 ## fast1. Fast release: one dispatch, no version-bump PR
 
@@ -1913,6 +1987,87 @@ it, it ran for the whole 25-second check in both and printed the "Multi-window p
 ran in both backends without stopping, and with the change a Project tab dragged outside the editor still became its own window. The
 intermittent stop seen before under Xvfb was SDL falling back to the `offscreen` driver when the X server was not ready yet.
 Unverified: Windows (not built or run here), a real Wayland session.
+
+## xbox-next. Xbox UWP next: PC test, Dev Mode, Device Portal, logs
+
+**Read this first: EXPERIMENTAL and UNVERIFIED.** The triangle package ran on a Windows 11 PC (owner, 2026-11-18). Nothing has run on an Xbox. This makes a UWP app for an Xbox One in **Developer Mode**. It is not a native console game, and we make no claim that any console hardware is supported. Steps that talk to the Xbox are from Microsoft's public pages and may look different on your console: if a screen differs, write down what it says and send it. Background: `docs/xbox_uwp.md`.
+
+**What is new in this change.** (1) The app now writes a log file `okayspace.log` (see step 9). (2) The build script prints a "WHAT TO DO NEXT" line at every failure, re-uses its test certificate, and prints the install lines for the PC and the Xbox at the end. (3) Linux tests that run the pack-and-verify pipeline and check the PowerShell scripts without Windows: `ctest -R xbox_uwp`.
+
+### A. The PC test (do this first; no Xbox needed)
+
+1. Install Visual Studio (2022 or newer, free Community edition) with the workload **Universal Windows Platform development**. Check with: `powershell -ExecutionPolicy Bypass -File scripts\xbox-check-sdk.ps1`. Every line should say FOUND. A MISSING line tells you what to install.
+2. Open a normal PowerShell in the source folder (in the release: the `xbox-src` folder next to `OkayEngine.exe`). Run the triangle test (about a few minutes):
+   `powershell -ExecutionPolicy Bypass -File scripts\build-xbox-uwp.ps1 -SourceRoot . -ExportDir .\xbox-test -MinimalTest`
+   It prints `[1/9]` to `[9/9]`. If a step fails it prints `FAILED in step ...` and then **WHAT TO DO NEXT**. The full log is `xbox-test\build.log`: send it to us.
+3. At the end the script prints the lines for the PC (block A). In an **administrator** PowerShell run them (remove an older copy first if there is one, then `Import-Certificate ...`, then `Add-AppxPackage ...`).
+4. Start **OkaySpace Test** from the Start menu. You should see a dark window with a coloured triangle. With a pad connected the background turns green, the left stick moves the triangle, **A** centres it, **B** closes it.
+5. Then the engine mode (long compile, may fail; this has never been through Microsoft's compiler on a console path):
+   `powershell -ExecutionPolicy Bypass -File scripts\build-xbox-uwp.ps1 -SourceRoot . -ExportDir .\xbox-engine -MinimalTest -EngineMode`
+   Install it the same way. You should see an orange cube in a blue sky and a dark panel "Hello Xbox (UI layer)". **B** closes it. Press the Windows key and come back to test suspend and resume.
+6. If Windows refuses to install: `0x800B0109` = the certificate was not imported as administrator; `0x80073CFB` = an older copy with the same version is installed (`Get-AppxPackage com.okayspace.test | Remove-AppxPackage`); `0x80073CF3` with "dependency" = install the VCLibs package whose path the script prints.
+
+### B. Turn on Developer Mode on the Xbox (reported steps, unverified)
+
+7. On the Xbox install the free **Dev Mode Activation** app from the Microsoft Store and follow it (it needs a Microsoft account registered as a developer; cost and rules are on Microsoft's page "Activate Developer Mode on your Xbox"). The console restarts into **Dev Home**. Dev Mode is a separate mode: your normal games are not available while it is on.
+
+### C. Find the Xbox's address and open the Device Portal
+
+8. In Dev Home the console's **IP address** is shown (also under the console's Settings > Network > Advanced settings). Write it down. The PC and the Xbox must be on the same network.
+   In Dev Home open the remote-access settings and turn on **Windows Device Portal** (it asks for a user name and password: choose any, do not reuse a real password). Then on the PC open `https://<the IP address>:11443` in a browser. The browser warns about the certificate: continue. Sign in with the user name and password you just chose. (The "pair with Visual Studio" PIN screen is for Visual Studio, not needed here.)
+
+### D. Deploy the package
+
+9. In the Device Portal choose **Apps** (Add / Install app). Pick the signed `.appx` (`xbox-test\com.okayspace.test_1.0.0.0_x64.appx` or the one the script printed). Add `Microsoft.VCLibs.x64.14.00.appx` as a dependency if the page has the field (the script prints where that file is). If the page has a **certificate** field, choose `OkaySpaceXbox-test.cer`. Press Install / Go.
+10. Start **OkaySpace Test** from Dev Home's list of Dev Mode apps. Expected: the same triangle, a pad turns the background green, B exits. Whether the console accepts our self-made test certificate is **unknown**: if the portal refuses the package, write down the exact message. Microsoft's usual route is Visual Studio's Remote Machine deployment, which we have not set up.
+
+### E. Where the logs are (new)
+
+11. The app writes `okayspace.log` (and the older `okayspace.1.log` once it grew past 512 KB) into its **LocalState\logs** folder. Each line starts with the seconds since the app started. Look there first when something goes wrong: it lists the start-up line, the folders in use, pads connected, suspend and resume, and the reason the app exited.
+    * On a PC: in Explorer type `%LOCALAPPDATA%\Packages\` and open the folder whose name starts with `com.okayspace.test`, then `LocalState\logs`.
+    * On the Xbox: Device Portal > Apps > the app > its file browser (**LocalAppData / LocalState / logs**), if your portal has that page. Browser address form (unverified): `https://<ip>:11443/api/filesystem/apps/file?knownfolderid=LocalAppData&packagefullname=<package full name>&path=\LocalState\logs&filename=okayspace.log`.
+    * The build log is on the PC: `<ExportDir>\build.log`.
+
+### F. What to send back
+
+12. A photo or description of each screen, the exact text of any error (the script's `FAILED` block, the portal's message, the console's error code), the console model (One, One S, One X), the Dev Home / OS version, `okayspace.log` if the app started, and whether the pad worked. Never send passwords or the contents of certificates.
+
+### Without Windows
+
+`ctest -R xbox_uwp` (needs `-DOKAY_BUILD_XBOX_UWP=ON -DOKAY_BUILD_TESTS=ON`) now also runs: `xbox_uwp_next` (the log file: appending, rotation, bad folder), `xbox_uwp_pipeline` (export, pack with our packer, read back with our reader and with Python's zip reader, manifest rules, damaged packages refused) and `xbox_uwp_scripts` (every bracket and quote in the five PowerShell scripts balanced, files ASCII, every repo path the scripts name exists, a next-step hint for each of the 9 steps, the switches named in the docs exist).
+
+**Status.** Linux-tested: the log file code, the packer (it now also refuses device names such as `CON.txt`), the script checks. Compiled only by reading (never by Microsoft's compiler): the log wiring in `app/main.cpp`, `app/engine_bridge.cpp` and `app/engine_shell.hpp`. Never run: the PowerShell script changes, anything on an Xbox. Windows PowerShell was not available here, so the script was checked by a static scan only.
+
+## xbox-uwp. Xbox One (experimental, Developer Mode) export
+
+**Read this first: the triangle-test package was built, installed and run on a Windows 11 PC on 2026-11-18 (Visual Studio 2026, MSVC 14.52, toolset v145, Windows SDK 10.0.26100.0); nothing has run on an Xbox, and the editor button, the gamepad, suspend/resume and engine mode are not verified.** It makes a UWP package for an Xbox One in Developer Mode, not a native console game. Full text: `docs/xbox_uwp.md`; audit: `docs/xbox_uwp_audit.md`.
+
+What to do (needs a Windows PC and a release built with `-DOKAY_BUILD_XBOX_UWP=ON`, which `build-windows-dist.sh` sets; it also ships `xbox-src` next to the editor):
+
+1. **Once:** install Visual Studio 2022 (free Community edition) with the workload "Universal Windows Platform development", its C++ UWP tools and a Windows 10/11 SDK.
+2. Open the editor, **File > Build Settings**, click **Xbox (exp.)** at the top. You should see an orange "EXPERIMENTAL and UNVERIFIED" line, the limits text, the tools list (found / MISSING with the install step), and the package name, version and publisher. A missing required tool greys the button with a tooltip; **Check again** re-checks.
+3. Leave **Engine mode** unticked the first time (a triangle test, the safest). Tick **Also install on this PC afterwards** if you want it on this PC. Press **Build Xbox package**.
+4. Watch the page: a step list (Check the Windows tools, Export, Set up the UWP app build, Compile the UWP app, Put the program into the package, Compile the shaders, Pack and check the .appx, Sign, Install) with a status per step and a live log. **Cancel build** stops it. If a step fails you get a plain message and the first error lines: send us those.
+5. If you ticked install, Windows shows **one** administrator (UAC) prompt: accept it. Then start the app from the Start menu: you should see a dark window with a coloured triangle (the background turns green once a pad is connected; left stick moves it, A centres it, B exits).
+6. The result is `<output>\<name>_<version>_x64.appx` (signed with a test certificate from PowerShell + SignTool: the page says so) and `OkaySpaceXbox-test.cer` (public part only).
+7. **Engine mode** (EXPERIMENTAL): tick it and build again to try running your exported game (`package\Data`): 3D scene, scripts, physics, gamepad and keyboard. The 2D / UI layer is not drawn. It has never been compiled with Microsoft's compiler, so a compile error is likely: the page then tells you to untick it. Please send the first error lines.
+8. **No editor with the Xbox tab yet?** One command from a source checkout or `xbox-src`:
+   `powershell -ExecutionPolicy Bypass -File scripts\build-xbox-uwp.ps1 -SourceRoot . -ExportDir .\xbox-test -MinimalTest -SkipInstall`
+   It writes a test export, builds, packs and signs it (progress lines `[1/9]` ... `[9/9]`). On a failure it prints the step and the last 15 lines of output; send us `xbox-test\build.log`.
+9. **Engine mode round 2 (EXPERIMENTAL, nobody has compiled it with Microsoft's compiler):**
+   `powershell -ExecutionPolicy Bypass -File scripts\build-xbox-uwp.ps1 -SourceRoot . -ExportDir .\xbox-engine -MinimalTest -EngineMode -SkipInstall`
+   builds the real engine into the app and a tiny scene (a cube, a camera and a UI panel with a text label) into the package. The compile is long. If it works the installed app shows an orange cube in a blue sky and a dark UI panel with "Hello Xbox (UI layer)"; B closes it. Suspend/resume (Xbox button and back) writes `saves\xbox_suspend.okayslot` in the app's LocalState. If it fails, send `xbox-engine\build.log` (the failing step and its last lines are printed).
+10. For the console: `docs/xbox_uwp.md`, "Deploy to an Xbox in Developer Mode" (Device Portal upload).
+
+Checks you can run without Windows: `ctest -R xbox_uwp` (needs `-DOKAY_BUILD_XBOX_UWP=ON -DOKAY_BUILD_TESTS=ON`) runs the Linux tests: the old package/packer tests, `xbox_uwp_runtime` (shader bundle, display, lifecycle, pad mapping, paths, audio conversion, the backend over a fake host, the build plan and runner, the API audit, game config), `xbox_uwp_audit` (no forbidden UWP API in the engine sources the UWP target compiles) and `xbox_uwp_sources_cmake`.
+
+Verified on Windows (owner, 2026-11-18, the `-MinimalTest` command): the whole script, MakeAppx accepting our package, signing, install and the triangle on a PC. Verified on Linux: everything in the tests. Not verified: the editor page drawing and one-click button, the gamepad, suspend/resume, engine mode, the console. The `Microsoft.VCLibs` install line printed at the end is optional and may fail harmlessly with 0x80073D02 when the framework is in use.
+
+**Own code instead of third-party libraries (2026-11-18, UNVERIFIED on Windows):** the Xbox build links no SDL, Dear ImGui, Assimp, ufbx or libsodium; `docs/xbox_uwp_thirdparty.md` has the table. What you can try:
+
+* Open any export's `README_XBOX.txt` (made by Build Xbox package or `-MinimalTest`): it has a "Third-party code in this build" paragraph, including "own crypto, not independently reviewed; for experiments only; do not ship".
+* In a source checkout or `xbox-src` (needs the Windows PC set-up above): `powershell -ExecutionPolicy Bypass -File scripts\build-xbox-uwp.ps1 -SourceRoot . -ExportDir .\xbox-engine -MinimalTest -EngineMode -SkipInstall -Http own` builds engine mode with our own HTTP client (plain `http://` only). Add `-OwnCrypto` to switch on our own packet encryption (the script prints a yellow warning; never for a release). Without these two options you get Windows.Web.Http and no packet encryption.
+* Without Windows: `ctest -R xbox_uwp` now also runs `xbox_uwp_models` (17 sample models through our own readers only, with the UWP defines) and the HTTP choice tests; `ctest -R release_refuses_own_crypto` shows the release guard refusing `OKAY_XBOX_OWN_CRYPTO`.
 
 ## Switches that are off by default (own code)
 

@@ -1,4 +1,5 @@
 #include "okay/Scene/Scene.hpp"
+#include "okay/Scene/ComponentCache.hpp"
 #include "okay/Inventory/InventoryPersistence.hpp"
 #include "okay/VisualScript/VsVariables.hpp"
 #include "okay/Scripting/NextScriptVM.hpp"
@@ -616,7 +617,7 @@ void ShowPose(Transform* t, PoseHistory& h, bool stepped, float alpha) {
 }
 
 void CarryParents(Scene& scene, float frameDt) {
-    for (Rigidbody3D* rb : scene.FindObjectsOfType<Rigidbody3D>()) {
+    for (Rigidbody3D* rb : CachedComponents<Rigidbody3D>(scene)) {
         if (!rb->transform || rb->bodyType == Rigidbody3D::BodyType::Static) continue;
         Vec3 spin;
         const Vec3 add = ParentDetachVelocity(rb->parentCarry, rb->transform->Parent(),
@@ -627,7 +628,7 @@ void CarryParents(Scene& scene, float frameDt) {
             rb->WakeUp();
         }
     }
-    for (Rigidbody2D* rb : scene.FindObjectsOfType<Rigidbody2D>()) {
+    for (Rigidbody2D* rb : CachedComponents<Rigidbody2D>(scene)) {
         if (!rb->transform || rb->bodyType == Rigidbody2D::BodyType::Static) continue;
         Vec3 spin;
         const Vec3 add = ParentDetachVelocity(rb->parentCarry, rb->transform->Parent(),
@@ -702,8 +703,8 @@ void Scene::StepPhysics(float deltaTime) {
         m_physicsSteps = 1; m_physicsAlpha = 0.0f;
         return;
     }
-    const auto bodies3 = FindObjectsOfType<Rigidbody3D>();
-    const auto bodies2 = FindObjectsOfType<Rigidbody2D>();
+    const auto bodies3 = CachedComponents<Rigidbody3D>(*this);
+    const auto bodies2 = CachedComponents<Rigidbody2D>(*this);
     if (interpolatePhysics) {
         for (Rigidbody3D* rb : bodies3) if (rb->transform) RestorePose(rb->transform, rb->poseHistory);
         for (Rigidbody2D* rb : bodies2) if (rb->transform) RestorePose(rb->transform, rb->poseHistory);

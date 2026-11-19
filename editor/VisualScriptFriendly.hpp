@@ -393,7 +393,7 @@ inline const VsNodeDoc* VsQuickBlockDocFor(const std::string& type) {
     d.keywords = std::string(b->title) + " " + b->group + " quick block";
     if (b->flowIn) d.pins.push_back({true, true, "", "Flow", "The flow arrives here. The block does its job when a wire reaches this pin.", ""});
     if (b->thenOut) d.pins.push_back({false, true, "Then do", "Flow", "After the block is done, the flow carries on from here.", ""});
-    for (const okay::vs::QbField& f : b->fields)
+    for (const okay::vs::QbField& f : okay::vs::QbAllFields(*b))
         d.pins.push_back({true, false, f.name, "Any", std::string("Type the value on the block: ") + f.name + ".", f.def});
     return &cache.emplace(type, std::move(d)).first->second;
 }

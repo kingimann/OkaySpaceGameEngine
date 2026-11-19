@@ -108,7 +108,7 @@ calls `Register` from `RegisterBuiltinTemplates()`; the core, the editor page an
 New: `engine/include/okay/Modeling/Guided.hpp`, `engine/src/Modeling/Guided.cpp` (recipe, registry, analysis, regeneration,
 user parts, history), `engine/src/Modeling/GuidedFence.cpp` (fence, written from general parametric modelling: points
 along a path, boxes and extruded profiles), `tests/test_guided.cpp`, `tools/guided_pictures.cpp` (headless renders),
-`examples/modeling/`, `docs/images/guided_modeling/`.
+`examples/modeling/`, a picture folder (pictures are no longer stored in the repository).
 Changed: `engine/CMakeLists.txt`, `tests/CMakeLists.txt`, `editor/main.cpp` (a Guided page and its actions only),
 `docs/modeling.md`, `docs/try_it.md`, `docs/UNFINISHED.md`, feature map, `scripts/build-windows-dist.sh`.
 Reused: `PolyMesh` (`ToMesh`, `FromMesh`, `Serialize`, `Parse`, `FaceNormal`, `Check`), `SaveMeshAsset`, `ed.PushUndo`,

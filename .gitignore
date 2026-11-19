@@ -67,3 +67,10 @@ dist/*.so
 dist/*.dylib
 dist/*.zip
 build-win-dist/
+
+# Pictures and screenshots are not stored in the repository (owner rule, 2026-11-17)
+docs/images/
+
+# Failing golden tests write their actual picture here by accident when run by hand; never commit these
+*.actual.png
+dbg*.png

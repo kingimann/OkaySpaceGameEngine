@@ -19,7 +19,8 @@ binaries: fails when a branch ADDS or CHANGES a built program or library (.exe .
           is an asset type that is legitimately binary (fonts, png/jpg/gif/webp, audio, video, ico, .okaymesh/.okayscene
           examples, wycheproof/test fixtures under tests/). Programs are built by CI and the release workflow, never
           committed (the owner's rule, 2026-11-16). `lint-allow` cannot silence it: add an extension to ASSET_EXT in this file
-          (and say why in the PR) if a new asset type is really needed. Everything under docs/images/ is allowed.
+          (and say why in the PR) if a new asset type is really needed. Screenshots/pictures under docs/ or at the repo root are refused
+          (owner rule, 2026-11-17: no screenshots in the repo); test fixtures under tests/, okayui/tests/, assets/, examples/ are fine.
 docs:     warns when engine/ editor/ launcher/ code changed and no docs/*.md changed (CLAUDE.md rule 5).
 mingw:    compiles each changed header and source under engine/ with the MinGW cross compiler (MINGW_CXX, default
           x86_64-w64-mingw32-g++-win32, else x86_64-w64-mingw32-g++). Files that include SDL, imgui, GL, X11, sodium, curl
@@ -168,7 +169,10 @@ PROGRAM_EXT = (".exe", ".dll", ".so", ".dylib", ".a", ".lib", ".pdb", ".o", ".ms
 ASSET_EXT = (".png", ".jpg", ".jpeg", ".gif", ".webp", ".bmp", ".ico", ".tga", ".ttf", ".otf", ".woff", ".woff2", ".wav", ".ogg", ".mp3", ".flac", ".mp4", ".webm",
              ".okaymesh", ".okayscene", ".okaypack", ".okayanim", ".pdf")
 BIG_BINARY_BYTES = 200 * 1024
-ALLOW_PATH_PREFIXES = ("docs/images/",)
+ALLOW_PATH_PREFIXES = ()
+IMAGE_EXT = (".png", ".jpg", ".jpeg", ".gif", ".webp", ".bmp")
+# Owner rule (2026-11-17): no screenshots in the repository. Pictures a test compares against live under tests/, okayui/tests/, assets/ or examples/.
+NO_PICTURE_PREFIXES = ("docs/",)
 
 
 def check_binaries(root, base, head, rev=None):
@@ -183,6 +187,9 @@ def check_binaries(root, base, head, rev=None):
         if path.startswith(ALLOW_PATH_PREFIXES):
             continue
         ext = os.path.splitext(path)[1].lower()
+        if ext in IMAGE_EXT and (path.startswith(NO_PICTURE_PREFIXES) or "/" not in path):
+            findings.append({"sev": "error", "file": path, "line": 1, "text": "", "msg": "screenshots and pictures are not stored in the repository (owner rule, 2026-11-17). Keep pictures outside the repo (an OKAY_SHOT_DIR or temp folder) and describe them in words. Pictures that a test compares against belong under tests/, okayui/tests/, assets/ or examples/."})
+            continue
         if ext in PROGRAM_EXT:
             findings.append({"sev": "error", "file": path, "line": 1, "text": "", "msg": f"a built program, library or archive ({ext}) must not be committed. CI and the release workflow build it; add the path to .gitignore."})
             continue

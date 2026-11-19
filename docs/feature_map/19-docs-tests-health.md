@@ -14,7 +14,7 @@ run one. Since 2.848.0 the suite grew by about 65 `add_test` lines and 13 docs p
   - 19.1.2 Docs index - `docs/README.md` - links grouped by goal (get started, scripting, characters, gameplay, look and sound, game UI, multiplayer, engine work)
   - 19.1.3 Generated API page - `docs/engine_api.md` - generated from the engine binding table; `test_vs_types` fails if it is stale (`OKAY_WRITE_API_DOCS=1 ./tests/test_vs_types` rewrites it)
   - 19.1.4 SQL schema files - `docs/sql/*.sql` - the Supabase schema, run once in the SQL editor in the order given in each file header (mapped in 41.6)
-  - 19.1.5 Screenshots - `docs/images/anticheat/*.png` - 21 images used by `docs/anticheat.md` (taken from the launcher's built-in demo data)
+  - 19.1.5 Screenshots - a picture folder (pictures are no longer stored in the repository) - 21 images used by `docs/anticheat.md` (taken from the launcher's built-in demo data)
 - **Code:** `README.md`, `docs/README.md`, `docs/engine_api.md`
 - **API:** `OKAY_WRITE_API_DOCS=1`
 - **Editor:** none
@@ -119,7 +119,7 @@ run one. Since 2.848.0 the suite grew by about 65 `add_test` lines and 13 docs p
 | `docs/sql/profile_extras.sql` | playtime, social links, verified tag, staff badges | 17.7 |
 | `docs/sql/profile_showcase.sql` | profile showcase picks and mirrored achievements | 17.7 |
 | `docs/sql/social.sql` | profiles, friendships, messages, reactions, forums, workshop, community servers | 17 |
-| `docs/images/anticheat/*.png` | 21 screenshots for `docs/anticheat.md` (admin pages, launcher settings, player ban and appeal) | 39 |
+| a picture folder (pictures are no longer stored in the repository) | 21 screenshots for `docs/anticheat.md` (admin pages, launcher settings, player ban and appeal) | 39 |
 
 ### 19.2 Test suite
 - **What:** About 418 tests (414 `add_test` lines; one sits in a loop that registers five) in one `tests/CMakeLists.txt`, almost all of them a small program that prints `FAIL` lines and returns non-zero. Plus a few shell, SQL and CMake checks. This sub-area is how it is organised; each test belongs to the area it tests.

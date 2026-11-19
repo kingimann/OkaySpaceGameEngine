@@ -33,7 +33,7 @@ int main() {
 
     std::string here = __FILE__;
     std::string root = here.substr(0, here.find_last_of("/\\") + 1) + "../engine/src/Render/";
-    const std::string d11 = Slurp(root + "D3D11Renderer.cpp");
+    const std::string d11 = Slurp(root + "D3D11Renderer.cpp") + Slurp(root + "../../include/okay/Render/D3D11Hlsl.hpp");   // text moved to D3D11Hlsl.hpp
     CHECK(!d11.empty());
     // Direct3D 11 takes the text from the header and no longer carries its own copy.
     CHECK(Has(d11, "OKAY_POST_HLSL") && Has(d11, "D3DPostHLSL.hpp"));

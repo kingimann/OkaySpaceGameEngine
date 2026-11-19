@@ -926,6 +926,37 @@ target_compile_definitions(test_play_start_bench PRIVATE OKAY_TEST_OUTPUT_DIR="$
 target_link_libraries(test_play_start_bench PRIVATE okay::engine)
 add_test(NAME play_start_bench COMMAND test_play_start_bench)
 
+# Frame-time benchmark: whole frames (scene update, physics, animation, software render, UI) split by phase, with output
+# hashes to prove a speed-up changed nothing. NOT a test: run `bench_frame` by hand (docs/perf_log.md, docs/try_it.md).
+# The ctest below only checks that it still builds and runs, on a tiny scale.
+add_executable(bench_frame bench_frame.cpp)
+target_link_libraries(bench_frame PRIVATE okay::engine)
+target_compile_definitions(bench_frame PRIVATE OKAY_SOURCE_DIR="${PROJECT_SOURCE_DIR}")
+if(NOT MSVC)
+    target_compile_options(bench_frame PRIVATE -g)   # line numbers for callgrind / perf; no effect on speed
+endif()
+add_test(NAME bench_frame_smoke COMMAND bench_frame --scale 0.05 --frames 3 --warmup 1)
+
+# Physics broad phase: the sort-and-sweep pair finder gives the brute force pair list in the same order, and whole 2D and 3D
+# physics scenes move bit-for-bit the same with either one (docs/perf_log.md)
+add_executable(test_broadphase test_broadphase.cpp)
+target_link_libraries(test_broadphase PRIVATE okay::engine)
+add_test(NAME broadphase COMMAND test_broadphase)
+
+# Software renderer speed-ups change no pixel: row spans and four texel loop for the sun's shadow maps (TriangleSpan.hpp),
+# band skipping and per-mesh light culling in RenderMeshes (docs/perf_log.md)
+add_executable(test_triangle_span test_triangle_span.cpp)
+target_link_libraries(test_triangle_span PRIVATE okay::engine)
+add_test(NAME triangle_span COMMAND test_triangle_span)
+add_executable(test_software_perf_paths test_software_perf_paths.cpp)
+target_link_libraries(test_software_perf_paths PRIVATE okay::engine)
+add_test(NAME software_perf_paths COMMAND test_software_perf_paths)
+
+# CachedComponents: the cached scene-wide component lists always equal a fresh walk (docs/perf_log.md)
+add_executable(test_component_cache test_component_cache.cpp)
+target_link_libraries(test_component_cache PRIVATE okay::engine)
+add_test(NAME component_cache COMMAND test_component_cache)
+
 # The Hierarchy and Inspector logic (editor/InspectorModel, EditUndo; ImGui-free): search filter, drag-and-drop reparenting, mixed values, copy / paste / reset, prefab changes, one undo step per edit.
 add_executable(test_inspector_model test_inspector_model.cpp ${PROJECT_SOURCE_DIR}/editor/InspectorModel.cpp ${PROJECT_SOURCE_DIR}/editor/EditorState.cpp ${PROJECT_SOURCE_DIR}/shared/FileDialog.cpp)
 target_include_directories(test_inspector_model PRIVATE ${PROJECT_SOURCE_DIR}/editor)
@@ -2087,6 +2118,21 @@ target_include_directories(test_update_signature PRIVATE ${PROJECT_SOURCE_DIR}/l
 target_compile_definitions(test_update_signature PRIVATE OKAY_SOURCE_DIR="${PROJECT_SOURCE_DIR}")
 add_test(NAME update_signature COMMAND test_update_signature)
 
+# Content delivery (docs/content_delivery.md): manifest format and limits, signature, the download state machine (resume, retry, corrupt files,
+# budget, replay floor, rollback), the overlay lookup and the start-up wiring. A fake server behind the Transport interface; throwaway keys; no network.
+add_executable(test_content_delivery test_content_delivery.cpp)
+target_compile_features(test_content_delivery PRIVATE cxx_std_17)
+target_link_libraries(test_content_delivery PRIVATE okay::crypto)
+target_include_directories(test_content_delivery PRIVATE ${PROJECT_SOURCE_DIR}/shared ${PROJECT_SOURCE_DIR}/engine/include)
+add_test(NAME content_delivery COMMAND test_content_delivery)
+
+# The script / graph checks that downloaded content passes before it is visible (shared/GameContentValidators.hpp), with the real engine parsers.
+add_executable(test_content_validators test_content_validators.cpp)
+target_compile_features(test_content_validators PRIVATE cxx_std_17)
+target_link_libraries(test_content_validators PRIVATE okay::engine)
+target_include_directories(test_content_validators PRIVATE ${PROJECT_SOURCE_DIR}/shared)
+add_test(NAME content_validators COMMAND test_content_validators)
+
 # SEC1 item 3: the update path against a hostile release server (tampered / truncated / mixed-up files, damaged and replayed signed lists, the
 # signature ON/OFF status line). A map of address -> bytes plays the server; throwaway keys; no network.
 add_executable(test_update_security test_update_security.cpp ${PROJECT_SOURCE_DIR}/launcher/VersionsManager.cpp)
@@ -2112,6 +2158,14 @@ if(OKAY_PYTHON3 AND NOT WIN32)
 endif()
 if(OKAY_BASH AND OKAY_PYTHON3 AND NOT WIN32)
     add_test(NAME sign_index_script COMMAND ${OKAY_BASH} ${CMAKE_CURRENT_SOURCE_DIR}/scripts/test_sign_index.sh)
+    if(TARGET okay-content)
+        # okay-content end to end: signed manifest, refusals, file:// sync, and (when built with the own HTTP client) a resumed HTTP download from a loopback server.
+        add_test(NAME content_cli COMMAND ${OKAY_BASH} ${CMAKE_CURRENT_SOURCE_DIR}/scripts/test_content_cli.sh $<TARGET_FILE:okay-content>)
+        set_tests_properties(content_cli PROPERTIES TIMEOUT 120)
+        # scripts/publish-content.sh against the fake storage server: upload order (manifest last), no secret printed, refusals upload nothing.
+        add_test(NAME publish_content_script COMMAND ${OKAY_BASH} ${CMAKE_CURRENT_SOURCE_DIR}/scripts/test_publish_content.sh $<TARGET_FILE:okay-content>)
+        set_tests_properties(publish_content_script PROPERTIES TIMEOUT 120)
+    endif()
     add_test(NAME sign_release_script COMMAND ${OKAY_BASH} ${CMAKE_CURRENT_SOURCE_DIR}/scripts/test_sign_release.sh)
     # The test builds' publisher (scripts/publish-supabase-dev.sh) against a fake storage server on loopback, and the real publisher's refusals.
     add_test(NAME dev_publish_script COMMAND ${OKAY_BASH} ${CMAKE_CURRENT_SOURCE_DIR}/scripts/test_dev_publish.sh)
@@ -3503,6 +3557,12 @@ add_executable(test_editor_layout test_editor_layout.cpp)
 target_include_directories(test_editor_layout PRIVATE ${CMAKE_SOURCE_DIR}/editor)
 add_test(NAME editor_layout COMMAND test_editor_layout)
 
+# The editor's frame-time maths (editor/EditorPerf.hpp, UI-library free): section breakdown, history numbers, idle throttle, viewport scale, performance mode.
+add_executable(test_editor_perf test_editor_perf.cpp)
+target_include_directories(test_editor_perf PRIVATE ${CMAKE_SOURCE_DIR}/editor)
+target_link_libraries(test_editor_perf PRIVATE okay::engine)
+add_test(NAME editor_perf COMMAND test_editor_perf)
+
 add_executable(test_net_reconnect test_net_reconnect.cpp)
 target_link_libraries(test_net_reconnect PRIVATE okay::engine)
 add_test(NAME net_reconnect COMMAND test_net_reconnect)
@@ -4261,6 +4321,7 @@ target_link_libraries(test_vs_search_connect PRIVATE okay::engine)
 add_test(NAME vs_search_connect COMMAND test_vs_search_connect)
 
 add_executable(test_vs_quick_blocks test_vs_quick_blocks.cpp)
+target_include_directories(test_vs_quick_blocks PRIVATE ${CMAKE_SOURCE_DIR}/editor)
 target_link_libraries(test_vs_quick_blocks PRIVATE okay::engine)
 add_test(NAME vs_quick_blocks COMMAND test_vs_quick_blocks)
 

@@ -150,8 +150,8 @@ jobs:
           ls ~/apt-cache/*.deb 2>/dev/null | wc -l > ~/apt-debs-before
           APT="-o Acquire::Retries=3 -o Acquire::http::Timeout=30 -o Acquire::https::Timeout=30 -o Dir::Cache::archives=$HOME/apt-cache"
           for i in 1 2 3; do
-            if timeout 240 sudo apt-get $APT update && \
-               timeout 600 sudo apt-get $APT install -y --no-install-recommends cmake ninja-build g++-mingw-w64-x86-64 binutils-mingw-w64-x86-64 mingw-w64-x86-64-dev zip nsis ccache osslsigncode; then
+            if timeout 120 sudo apt-get $APT update && \
+               timeout 240 sudo apt-get $APT install -y --no-install-recommends cmake ninja-build g++-mingw-w64-x86-64 binutils-mingw-w64-x86-64 mingw-w64-x86-64-dev zip nsis ccache osslsigncode; then
               exit 0
             fi
             echo "apt attempt $i failed or timed out; retrying"
@@ -438,8 +438,8 @@ jobs:
         run: |
           APT="-o Acquire::Retries=3 -o Acquire::http::Timeout=30 -o Acquire::https::Timeout=30"
           for i in 1 2 3; do
-            if timeout 240 sudo apt-get $APT update && \
-               timeout 600 sudo apt-get $APT install -y --no-install-recommends cmake ninja-build g++ libsdl2-dev libsodium-dev ccache; then
+            if timeout 120 sudo apt-get $APT update && \
+               timeout 240 sudo apt-get $APT install -y --no-install-recommends cmake ninja-build g++ libsdl2-dev libsodium-dev ccache; then
               exit 0
             fi
             echo "apt attempt $i failed or timed out; retrying"

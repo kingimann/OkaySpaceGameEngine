@@ -13,6 +13,7 @@
 #include <cstdio>
 #include <cstdlib>
 #include <functional>
+#include <filesystem>
 #include <string>
 #include <vector>
 
@@ -283,6 +284,14 @@ inline Png ReadPng(const std::string& path) {
     return png;
 }
 
+/// Where a failing golden writes its actual picture: $OKAYUI_ACTUAL_DIR, else the system temp folder. Never the working directory (that is the source tree
+/// when a test is run by hand, and pictures must not be committed by accident).
+inline std::string ActualPath(const std::string& name) {
+    const char* d = std::getenv("OKAYUI_ACTUAL_DIR");
+    std::error_code ec;
+    const std::filesystem::path dir = d && d[0] ? std::filesystem::path(d) : std::filesystem::temp_directory_path(ec);
+    return (dir / (name + ".actual.png")).string();
+}
 inline bool WritePng(const std::string& path, const Bitmap& b) {
     return okay::ImageWrite::WritePNG(path, b.w, b.h, 4, b.rgba.data());
 }
@@ -300,8 +309,8 @@ inline void DiffReport(const std::string& name, const Png& g, const Bitmap& b) {
     std::fprintf(stderr, "  golden %s: differs inside x %d..%d, y %d..%d; differing pixels per 40 rows:", name.c_str(), x0, x1, y0, y1);
     for (int y = 0; y < b.h; y += 40) { int n = 0; for (int k = y; k < y + 40 && k < b.h; ++k) n += rows[(size_t)k]; std::fprintf(stderr, " %d", n); }
     std::fprintf(stderr, "\n");
-    std::FILE* f = std::fopen((name + ".actual.png").c_str(), "rb");
-    if (!f) { std::fprintf(stderr, "  (the actual picture could not be read back from %s.actual.png)\n", name.c_str()); return; }
+    std::FILE* f = std::fopen(ActualPath(name).c_str(), "rb");
+    if (!f) { std::fprintf(stderr, "  (the actual picture could not be read back from %s)\n", ActualPath(name).c_str()); return; }
     std::string bytes; char buf[4096]; size_t n;
     while ((n = std::fread(buf, 1, sizeof buf, f)) > 0) bytes.append(buf, n);
     std::fclose(f);
@@ -317,14 +326,14 @@ inline void DiffReport(const std::string& name, const Png& g, const Bitmap& b) {
 
 /// Compare with a committed golden PNG (per-channel tolerance 2, up to 0.05 percent of pixels may differ
 /// beyond it, to survive compilers that round floats differently). OKAYUI_UPDATE_GOLDEN=1 rewrites the golden.
-/// On a mismatch the actual image is written to the working directory as <name>.actual.png.
+/// On a mismatch the actual image is written as <name>.actual.png into $OKAYUI_ACTUAL_DIR or the temp folder.
 inline bool MatchesGolden(const std::string& name, const Bitmap& b, std::string* why = nullptr) {
     const std::string path = std::string(OKAYUI_GOLDEN_DIR) + "/" + name + ".png";
     const char* up = std::getenv("OKAYUI_UPDATE_GOLDEN");
     if (up && up[0] == '1') return WritePng(path, b);
     Png g = ReadPng(path);
-    if (!g.ok) { if (why) *why = "cannot read golden " + path; WritePng(name + ".actual.png", b); return false; }
-    if (g.w != b.w || g.h != b.h) { if (why) *why = "size differs"; WritePng(name + ".actual.png", b); return false; }
+    if (!g.ok) { if (why) *why = "cannot read golden " + path; WritePng(ActualPath(name), b); return false; }
+    if (g.w != b.w || g.h != b.h) { if (why) *why = "size differs"; WritePng(ActualPath(name), b); return false; }
     size_t bad = 0;
     for (size_t i = 0; i < b.rgba.size(); i += 4) {
         bool differs = false;
@@ -334,7 +343,7 @@ inline bool MatchesGolden(const std::string& name, const Bitmap& b, std::string*
     const size_t allowed = (size_t)b.w * b.h / 2000;
     if (bad > allowed) {
         if (why) *why = std::to_string(bad) + " pixels differ";
-        WritePng(name + ".actual.png", b);
+        WritePng(ActualPath(name), b);
         DiffReport(name, g, b);   // CI logs are all anyone sees of a failing machine: say where, and carry the picture
         return false;
     }

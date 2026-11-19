@@ -1,4 +1,4 @@
-// Headless pictures for the guided modeling docs (docs/images/guided_modeling/). A tiny software rasteriser of our own
+// Headless pictures for the guided modeling docs (a picture folder given on the command line; pictures are no longer stored in the repo). A tiny software rasteriser of our own
 // (z-buffer, flat shading, face colours) and a minimal PNG writer, so no window or GPU is needed. These are
 // renders of the generated meshes, not screenshots of the editor.
 //   guided_pictures <picture folder> [<example folder>]
@@ -155,7 +155,7 @@ static std::string CameraRecord(int id, double x, double y, double z) {
 }
 
 int main(int argc, char** argv) {
-    const std::string dir = argc > 1 ? argv[1] : "docs/images/guided_modeling";
+    const std::string dir = argc > 1 ? argv[1] : (std::filesystem::temp_directory_path() / "okay_guided_pictures").string();
     std::filesystem::create_directories(dir);
     RegisterBuiltinTemplates();
     const Template& T = *Registry::Instance().Find("fence");

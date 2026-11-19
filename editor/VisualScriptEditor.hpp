@@ -365,6 +365,8 @@ inline const std::vector<VsDef>& Registry() {
         {"IkHand",       "IK Hand Reach",  CAT_ACTION, true, {""}, {"Point","Weight"}, {}, 1, "left / right"},
         // --- Look: weather, fog, post-processing (docs/rendering.md) ---
         {"SetWeather",    "Set Weather",     CAT_ACTION, true, {""}, {"Intensity"}, {}, 1, "none / rain / snow / storm"},
+        {"SetWind",       "Set Wind",        CAT_ACTION, true, {""}, {"Strength","Direction"}, {}, 0, nullptr},
+        {"WindSpeed",     "Wind Speed",      CAT_DATA, false, {}, {}, {"Speed"}, 0, nullptr},
         {"SetFog",        "Set Fog",         CAT_ACTION, true, {""}, {"On","Start","End"}, {}, 0, nullptr},
         {"SetPostEffect", "Set Post Effect", CAT_ACTION, true, {""}, {"Value"}, {}, 1, "bloom / exposure / saturation / ..."},
         // --- Navigation (Nav Mesh Agent) ---
@@ -1737,6 +1739,7 @@ inline std::string VsDataExpr(const VsEditGraph& g, int nodeId, int outPin) {
     if (t == "MouseX")     return "mouse_x()";
     if (t == "MouseY")     return "mouse_y()";
     if (t == "Time")       return "time()";
+    if (t == "WindSpeed")  return "wind_speed()";
     if (t == "DeltaTime")  return "Time.deltaTime";
     if (t == "VelX")       return "velocity_x()";
     if (t == "VelY")       return "velocity_y()";
@@ -2094,6 +2097,7 @@ inline void VsEmitNode(const VsEditGraph& g, int nodeId, std::string& out,
     else if (t=="CompleteObjective") out += ind + "complete_objective(" + q(arg("")) + ", " + in(0, "0") + ")\n";
     else if (t=="IkLook")      out += ind + "ik_look(vec_x(" + in(0) + "), vec_y(" + in(0) + "), vec_z(" + in(0) + "), " + in(1, "1") + ")\n";
     else if (t=="IkHand")      out += ind + "ik_hand(" + q(arg("right")) + ", vec_x(" + in(0) + "), vec_y(" + in(0) + "), vec_z(" + in(0) + "), " + in(1, "1") + ")\n";
+    else if (t=="SetWind")     out += ind + "wind_set(" + in(0, "5") + ", " + in(1, "0") + ")\n";
     else if (t=="SetWeather")  out += ind + "weather_set(" + q(arg("rain")) + ", " + in(0, "1") + ")\n";
     else if (t=="SetFog")      out += ind + "fog_set(" + in(0, "true") + ", " + in(1, "20") + ", " + in(2, "90") + ")\n";
     else if (t=="SetPostEffect") out += ind + "post_set(" + q(arg("bloom")) + ", " + in(0, "1") + ")\n";

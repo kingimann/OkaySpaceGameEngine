@@ -414,6 +414,8 @@ inline const char* VsNodeHelpRaw(const char* type) {
         {"SetBlendShape",  "Sets a blend shape (face shape / morph) weight on this object's model."},
         {"IkLook",         "Makes the character's head look at a point (Weight 0..1, 0 lets go)."},
         {"IkHand",         "Makes the character's left or right hand reach for a point (Weight 0 lets go)."},
+        {"SetWind",        "Sets how hard the scene's wind blows (Strength, in metres per second: 3 is a breeze, 10 is strong) and which way (Direction, a compass angle: 0 blows forward, 90 blows to the right). Trees, flags and loose boxes with Wind components follow it."},
+        {"WindSpeed",      "Gives how hard the wind blows right now where the camera is, in metres per second. 0 means calm."},
         {"SetWeather",     "Switches the scene's weather to none / rain / snow / storm at an Intensity 0..1 (it fades over the scene's weather fade time)."},
         {"SetFog",         "Turns the scene's fog On or off, fading from Start to End world units from the camera."},
         {"SetPostEffect",  "Sets one post-processing value by name (bloom, exposure, saturation, vignette, fxaa, ...; see docs/rendering.md). 0 / 1 for switches."},

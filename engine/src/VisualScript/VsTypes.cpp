@@ -156,6 +156,8 @@ const Row kRows[] = {
         {"IkLook", true, "VN", ""},
         {"IkHand", true, "VN", ""},
         {"SetWeather", true, "N", ""},
+        {"SetWind", true, "NN", ""},
+        {"WindSpeed", false, "", "N"},
         {"SetFog", true, "BNN", ""},
         {"SetPostEffect", true, "N", ""},
         {"NavMoveTo", true, "V", ""},

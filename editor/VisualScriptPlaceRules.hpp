@@ -386,7 +386,7 @@ inline const VsRule kNodeRules[] = {
     {"GetStoryVar", "Quests & Dialogue", "Story Flags"}, {"LoadScene", "Scenes & Levels", ""},
     {"PauseGame", "Time & Game Speed", "Pausing"}, {"QuitGame", "Scenes & Levels", ""},
     // ---- Animation, sound, camera, screen, world
-    {"Music*", "Music & Volume", ""}, {"GlSetVolume", "Sound Effects", ""}, {"SetWeather", "Weather & Fog", ""},
+    {"Music*", "Music & Volume", ""}, {"GlSetVolume", "Sound Effects", ""}, {"SetWeather", "Weather & Fog", ""}, {"SetWind", "Weather & Fog", ""}, {"WindSpeed", "Weather & Fog", ""},
     {"SetFog", "Weather & Fog", ""}, {"SetPostEffect", "Post Effects", ""}, {"Grid*", "Navigation", "Grid Paths"},
     {"EnterBuildMode", "Build Mode", ""},
     // ---- Time

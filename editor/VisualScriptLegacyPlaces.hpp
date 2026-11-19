@@ -299,7 +299,7 @@ inline VsPlace VsLegacyPlaceForNode(const char* type) {
     if (VsPre(type, "Net") || VsPre(type, "SyncVar") || VsPre(type, "Steam") || VsIs(type, "RejectRpc") ||
         VsIs(type, "RejectHit") || VsIs(type, "ServerBudget")) return VsAt("Online");
     // Scene
-    if (VsIs(type, "SetWeather") || VsIs(type, "SetFog") || VsIs(type, "SetPostEffect")) return VsAt("Scene", "Atmosphere");
+    if (VsIs(type, "SetWind") || VsIs(type, "WindSpeed") || VsIs(type, "SetWeather") || VsIs(type, "SetFog") || VsIs(type, "SetPostEffect")) return VsAt("Scene", "Atmosphere");
     if (VsIs(type, "LoadScene") || VsIs(type, "PauseGame") || VsIs(type, "QuitGame")) return VsAt("Scene");
     if (VsPre(type, "Nav") || VsIs(type, "NavArrived")) return VsAt("Scene", "Navigation");
     if (VsPre(type, "Grid")) return VsAt("Scene", "Navigation");

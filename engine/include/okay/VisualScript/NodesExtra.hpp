@@ -10,6 +10,8 @@
 #include "okay/VisualScript/VsRefs.hpp"
 #include "okay/VisualScript/VsWhole.hpp"
 #include "okay/Scene/Scene.hpp"
+#include "okay/Components/WindZone.hpp"   // SetWind / WindSpeed (docs/wind.md)
+#include "okay/Components/Camera.hpp"
 #include "okay/Scene/SceneManager.hpp"
 #include "okay/Core/SaveData.hpp"
 #include "okay/Core/Log.hpp"
@@ -438,6 +440,28 @@ struct SetWeatherNode : VsNode {   // arg = none / rain / snow / storm; in0 = in
             if (in >= 0.0f) w.intensity = Mathf::Clamp01(in);
         }
         return 0;
+    }
+};
+// ---- Wind (docs/wind.md) ----
+struct SetWindNode : VsNode {   // in0 = strength m/s, in1 = direction in degrees (0 = toward +Z, 90 = toward +X); unwired: keep
+    int ExecOutCount() const override { return 1; }
+    int Exec(NodeGraph& g, VsContext& ctx) override {
+        if (Scene* s = ctx.gameObject ? ctx.gameObject->scene() : nullptr) {
+            const float st = In(0, g, ctx, VsValue{-1000.0f}).AsFloat(), yaw = In(1, g, ctx, VsValue{-1000.0f}).AsFloat();
+            WindZone* z = (st > -999.0f || yaw > -999.0f) ? WindZone::EnsureGlobal(*s) : nullptr;
+            if (z && st > -999.0f && std::isfinite(st)) z->strength = Mathf::Clamp(st, -200.0f, 200.0f);
+            if (z && yaw > -999.0f && std::isfinite(yaw)) z->Aim({std::sin(yaw * 0.0174532925f), 0.0f, std::cos(yaw * 0.0174532925f)});
+        }
+        return 0;
+    }
+};
+struct WindSpeedNode : VsNode {   // how hard the wind blows where the camera is (this object when there is no camera)
+    VsValue Eval(int, NodeGraph&, VsContext& ctx) override {
+        Vec3 p{0, 0, 0};
+        if (ctx.gameObject && ctx.gameObject->transform) p = ctx.gameObject->transform->Position();
+        if (Scene* s = ctx.gameObject ? ctx.gameObject->scene() : nullptr)
+            if (s->mainCamera && s->mainCamera->transform) p = s->mainCamera->transform->Position();
+        return VsValue(WindField::At(p).Magnitude());
     }
 };
 struct SetFogNode : VsNode {   // in0 = on, in1 = start, in2 = end (unwired: keep the scene's)

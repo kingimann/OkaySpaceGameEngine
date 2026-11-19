@@ -642,6 +642,15 @@ void Physics3D::BeginDebugFrame() {
 
 void Physics3D::Step(Scene& scene, float dt) {
     if (dt <= 0.0f) return;
+    if (quality == PhysicsQuality::Improved && dt > kMaxSolveSlice * 1.001f) {
+        const int n = (int)std::ceil(dt / kMaxSolveSlice - 0.001f);
+        for (int i = 0; i < n; ++i) StepSlice(scene, dt / (float)n);
+        return;
+    }
+    StepSlice(scene, dt);
+}
+
+void Physics3D::StepSlice(Scene& scene, float dt) {
     MeshCollider3D::AdvanceEpoch();
 
     // Sleeping thresholds: under these speeds for kSleepTime seconds, a dynamic body
@@ -956,7 +965,7 @@ void Physics3D::Step(Scene& scene, float dt) {
         }
     }
     if (improved) {   // solve every queued pair, then move the bodies by their solved speeds
-        m_solver->Solve(gone);
+        m_solver->Solve(gone, gravity);
         int sweeps = 0;
         m_solver->Move(*this, scene, bodies, dt, gone, sweeps);
         m_stats.manifolds = (int)m_solver->manifolds.size();
@@ -2158,16 +2167,28 @@ void Physics3D::SweepBodyBy(Scene& scene, Rigidbody3D* rb, const Vec3& motion, b
     Vec3 dir = motion * (1.0f / len);
     // The colliders the sweep looks at: all of them, or (automatic continuous collision) the ones that are not dynamic bodies.
     const std::vector<Collider3D*>* list = &QueryLists(scene).colliders;
+    std::vector<Collider3D*> extraList;
     if (onlyStatics && m_solver) {
         if (!m_solver->staticListBuilt) {
-            m_solver->staticList.clear();
+            m_solver->staticList.clear(); m_solver->movingList.clear();
             for (Collider3D* c : *list) {
                 Rigidbody3D* body = BodyOfCollider(c);
                 if (!body || body->bodyType != Rigidbody3D::BodyType::Dynamic) m_solver->staticList.push_back(c);
+                else m_solver->movingList.push_back(c);
             }
             m_solver->staticListBuilt = true;
         }
         list = &m_solver->staticList;
+        // Other moving bodies too, but only the ones thin enough to be jumped over in one step (a ball at 100 m/s against a
+        // light plate): a thick body is caught by the normal overlap test, and sweeping against all of them would cost too much.
+        extraList = m_solver->staticList;
+        for (Collider3D* c : m_solver->movingList) {
+            if (!Alive(c) || c->gameObject == rb->gameObject || c->isTrigger) continue;
+            Vec3 cmn, cmx; c->WorldAABB(cmn, cmx);
+            const float thin = Mathf::Min(cmx.x - cmn.x, Mathf::Min(cmx.y - cmn.y, cmx.z - cmn.z));
+            if (thin < len + 2.0f * r) extraList.push_back(c);
+        }
+        list = &extraList;
     }
     // (A compound body's own child colliders never block it.)
     const IgnoreHierarchy own(quality == PhysicsQuality::Improved && rb->compoundChildren ? rb->gameObject : nullptr);

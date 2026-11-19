@@ -53,6 +53,7 @@ struct Manifold {
     Point pts[4];
     Vec3 rollImpulse{0, 0, 0};    // running rolling push (in = warm start)
     Vec3 t1{0, 0, 0}, t2{0, 0, 0};   // scratch
+    int   iters = 0;                 // passes this pair takes part in (0 = all of them); a small group of bodies needs fewer
     float sA = 1.0f, sB = 1.0f;      // scratch: how much more strongly body A / B answers a push here (mass ratio limit)
 };
 
@@ -131,6 +132,7 @@ inline void SolveVelocities(std::vector<Body>& bodies, std::vector<Manifold>& ms
         const bool reverse = s.alternateOrder && (it & 1);
         for (int mi = 0; mi < count; ++mi) {
             Manifold& m = ms[(std::size_t)(reverse ? count - 1 - mi : mi)];
+            if (m.iters > 0 && it >= m.iters) continue;
             Body& A = bodies[(std::size_t)m.a];
             Body& B = bodies[(std::size_t)m.b];
             // Friction first, so keeping the bodies apart wins when the two disagree.

@@ -325,6 +325,7 @@ struct Physics3D::Solver {
     struct Meta { Collider3D* a; Collider3D* b; Rigidbody3D* ra; Rigidbody3D* rb; };
     std::vector<Meta> meta;
     std::vector<Collider3D*> staticList;           // colliders that are not dynamic bodies (swept by automatic continuous collision)
+    std::vector<Collider3D*> movingList;           // colliders of dynamic bodies (a fast body is also swept against the thin ones)
     bool staticListBuilt = false;
     contactsolver::Settings set;
     float dt = 0.02f;
@@ -333,7 +334,7 @@ struct Physics3D::Solver {
     void Begin(const std::vector<Rigidbody3D*>& all, float stepDt, int iterations) {
         dt = stepDt; ++stepNo;
         bodies.clear(); slotRb.clear(); manifolds.clear(); meta.clear();
-        staticList.clear(); staticListBuilt = false;
+        staticList.clear(); movingList.clear(); staticListBuilt = false;
         warmCount = 0;
         bodies.emplace_back(); slotRb.push_back(nullptr);          // slot 0: the world
         for (Rigidbody3D* rb : all) rb->m_solverIndex = -1;
@@ -403,8 +404,60 @@ struct Physics3D::Solver {
         meta.push_back({a, b, ra, rb});
     }
 
+    /// Bigger groups of touching bodies get more passes: a push has to cross every body of a tower, so a tower of ten needs about
+    /// twice that many passes, and a lone crate needs the few it always did. The setting is the least a group gets; the most
+    /// is 50 for a group of up to 24 bodies and 24 for a bigger one, and a group only pays for what it needs, so a pile of separate crates costs
+    /// what it did. Groups are found with union-find over the bodies that can move.
+    void ScaleIterations() {
+        const std::size_t n = bodies.size();
+        std::vector<int> parent(n), count(n, 1);
+        for (std::size_t i = 0; i < n; ++i) parent[i] = (int)i;
+        auto find = [&](int x) { while (parent[(std::size_t)x] != x) { parent[(std::size_t)x] = parent[(std::size_t)parent[(std::size_t)x]]; x = parent[(std::size_t)x]; } return x; };
+        for (const contactsolver::Manifold& m : manifolds) {
+            if (m.a <= 0 || m.b <= 0 || bodies[(std::size_t)m.a].invMass <= 0.0f || bodies[(std::size_t)m.b].invMass <= 0.0f) continue;
+            int ra = find(m.a), rb = find(m.b);
+            if (ra != rb) { parent[(std::size_t)ra] = rb; count[(std::size_t)rb] += count[(std::size_t)ra]; }
+        }
+        const int base = set.velocityIterations;
+        int most = base;
+        for (contactsolver::Manifold& m : manifolds) {
+            int root = find(m.a > 0 && bodies[(std::size_t)m.a].invMass > 0.0f ? m.a : m.b);
+            int k = root > 0 ? count[(std::size_t)root] : 1;
+            int want = std::max(base, std::min(k <= 24 ? 50 : 24, 2 * k + 2));   // (a big pile is wide, not tall: it does not get the tower's passes)
+            m.iters = want; most = std::max(most, want);
+        }
+        set.velocityIterations = most;
+    }
+
+    /// Visit the lowest contacts first (lowest = furthest along gravity). A push has to travel up a stack from the floor, and a
+    /// pass that starts at the floor carries it all the way in one sweep instead of one crate per pass; with the pass order
+    /// alternating, the weight also travels down. Written from the usual Gauss-Seidel observation that ordering the rows along
+    /// the direction information flows converges faster. Ties keep their order, so the result is the same every run.
+    void SortBottomUp(const Vec3& gravity) {
+        Vec3 down = gravity;
+        const float gl = down.Magnitude();
+        down = gl > 1e-4f ? down * (1.0f / gl) : Vec3{0, -1, 0};
+        const std::size_t n = manifolds.size();
+        std::vector<float> key(n);
+        for (std::size_t i = 0; i < n; ++i) {
+            const contactsolver::Manifold& m = manifolds[i];
+            float k = 0.0f;
+            for (int p = 0; p < m.count; ++p) k += Vec3::Dot(m.pts[p].pos, down);
+            key[i] = m.count > 0 ? k / (float)m.count : 0.0f;
+        }
+        std::vector<std::size_t> order(n);
+        for (std::size_t i = 0; i < n; ++i) order[i] = i;
+        std::stable_sort(order.begin(), order.end(), [&](std::size_t a, std::size_t b) { return key[a] > key[b]; });   // most "down" first
+        std::vector<contactsolver::Manifold> m2; m2.reserve(n);
+        std::vector<Meta> t2; t2.reserve(n);
+        for (std::size_t i : order) { m2.push_back(manifolds[i]); t2.push_back(meta[i]); }
+        manifolds.swap(m2); meta.swap(t2);
+    }
+
     /// Solve, store the pushes and hand the new speeds back to the rigidbodies.
-    void Solve(const Scene::RemovalWatch& gone) {
+    void Solve(const Scene::RemovalWatch& gone, const Vec3& gravity) {
+        if (manifolds.size() > 1) SortBottomUp(gravity);
+        if (!manifolds.empty()) ScaleIterations();
         if (!manifolds.empty()) {
             contactsolver::Prepare(bodies, manifolds, dt, set);
             contactsolver::SolveVelocities(bodies, manifolds, set);

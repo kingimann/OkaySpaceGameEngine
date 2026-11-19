@@ -90,6 +90,9 @@ public:
     struct Solver;                      // (the Improved step's memory; defined in Physics3DImproved.inl)
 
     /// Advance the simulation for `scene` by `dt` seconds.
+    /// Longest slice the Improved step solves in one go (seconds). A longer step (30 steps a second, a slow frame) is cut into
+    /// equal slices no longer than this, so a tower of crates is as steady at 30 steps a second as at 60. Classic is not cut.
+    static constexpr float kMaxSolveSlice = 1.0f / 45.0f;
     void Step(Scene& scene, float dt);
 
     // ---- Collision layers (0..31) -------------------------------------
@@ -215,6 +218,7 @@ private:
     std::vector<PhysicsDebugJoint3D>   m_debugJoints;
     /// Continuous collision for one fast body: sweep it along this step's motion
     /// and stop it at the first solid it would otherwise pass through.
+    void StepSlice(Scene& scene, float dt);   // one slice of Step (the whole old Step body)
     void SweepBody(Scene& scene, Rigidbody3D* rb, float dt);
     /// The same for a given motion (the Improved step moves a body by its solved speed). `onlyStatics` tests the
     /// colliders that are not dynamic bodies, found through a list kept for the step (automatic continuous collision).

@@ -180,6 +180,34 @@ bool DrawBuildPageExtra(BuildWindowCtx& c, int page) {
     return false;
 }
 
+void DrawBuildPageMore(BuildWindowCtx& c, int page) {
+    BuildSettings& b = *c.settings;
+    if (page == kGraphics) {
+        Header("3D renderer and effects");
+        static const char* names[] = {"Automatic (best for the computer)", "Direct3D 11 only", "OpenGL only", "Software only"};
+        ImGui::SetNextItemWidth(300);
+        ImGui::Combo("3D renderer", &b.renderer, names, 4);
+        Tip("Automatic tries Direct3D 12 (if chosen above), Direct3D 11, then OpenGL, then software.\nThe other choices try only that one. Any choice that cannot start falls back to software, so the game always shows.");
+        ImGui::SetNextItemWidth(220);
+        ImGui::InputInt("Particle limit", &b.particleCap, 50, 500);
+        b.particleCap = std::max(0, std::min(100000, b.particleCap));
+        Tip("The most particles any one effect may keep alive. 0 means no extra limit. Lower it for weaker computers.");
+    }
+    if (page == kAudioInput) {
+        Header("Controller and sound quality");
+        ImGui::SetNextItemWidth(220);
+        ImGui::SliderFloat("Gamepad dead zone", &b.gamepadDeadzone, 0.0f, 0.95f, "%.2f");
+        b.gamepadDeadzone = std::max(0.0f, std::min(0.95f, b.gamepadDeadzone));
+        Tip("How far a stick must move before the game notices. Raise it if sticks drift. 0.18 is the engine's usual value.");
+        static const int rates[] = {0, 22050, 44100, 48000};
+        static const char* rateNames[] = {"Default (44100 Hz)", "22050 Hz (smaller, duller)", "44100 Hz", "48000 Hz"};
+        int cur = 0; for (int i = 0; i < 4; ++i) if (rates[i] == b.sampleRate) cur = i;
+        ImGui::SetNextItemWidth(260);
+        if (ImGui::Combo("Sound quality (sample rate)", &cur, rateNames, 4)) b.sampleRate = rates[cur];
+        Tip("The rate the game asks the sound card for. The sound card may still use its own.");
+    }
+}
+
 bool DrawBuildSummary(BuildWindowCtx& c) {
     BuildSettings& b = *c.settings;
     SummaryInput si; si.s = b; si.productName = c.name ? c.name : ""; si.outputDir = c.dir ? c.dir : ""; si.platform = c.platform; si.enabledScenes = c.enabledScenes;

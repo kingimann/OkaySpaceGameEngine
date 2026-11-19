@@ -19177,6 +19177,7 @@ void DrawFileDialogs(EditorState& ed) {
                 if (ImGui::IsItemHovered()) ImGui::SetTooltip("Package the build folder into a .zip (named by Archive name) beside it, ready to share or upload. The Zip layout does this and keeps only the zip.");
             }
         }
+        oked::DrawBuildPageMore(bctx, s_buildSec);   // settings added after the older pages were written
         ImGui::EndChild();
 
         ImGui::Spacing();

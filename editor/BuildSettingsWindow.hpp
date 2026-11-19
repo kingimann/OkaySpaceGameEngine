@@ -33,6 +33,9 @@ void DrawBuildPageHeader(BuildWindowCtx& c, int page);
 /// The Game and Advanced pages. Returns false for any other page (main.cpp draws those).
 bool DrawBuildPageExtra(BuildWindowCtx& c, int page);
 
+/// More settings at the END of the older pages (Graphics, Audio & Input, Scenes, Output): the ones added after those pages were written.
+void DrawBuildPageMore(BuildWindowCtx& c, int page);
+
 /// "What will happen" in plain words, and the checks with Fix buttons. Returns true if a check found an error.
 bool DrawBuildSummary(BuildWindowCtx& c);
 

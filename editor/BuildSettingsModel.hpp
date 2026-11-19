@@ -129,6 +129,10 @@ inline const std::vector<SettingInfo>& Registry() {
         OKAY_BS_FIELD("Supersampling", kGraphics, "anti-aliasing smooth edges antialias", antialias),
         OKAY_BS_FIELD("GPU renderer", kGraphics, "direct3d opengl software", gpuRenderer),
         OKAY_BS_FIELD("Prefer Direct3D 12", kGraphics, "dx12 renderer", preferD3D12),
+        OKAY_BS_FIELD("3D renderer", kGraphics, "direct3d directx opengl software fallback gpu", renderer),
+        OKAY_BS_FIELD("Particle limit", kGraphics, "particles cap effects fewer", particleCap),
+        OKAY_BS_FIELD("Gamepad dead zone", kAudioInput, "controller stick drift", gamepadDeadzone),
+        OKAY_BS_FIELD("Sound quality (sample rate)", kAudioInput, "audio hz khz output", sampleRate),
         OKAY_BS_FIELD("Master volume", kAudioInput, "sound loudness", masterVolume),
         OKAY_BS_FIELD("Quit on Escape", kAudioInput, "key exit", quitOnEscape),
         OKAY_BS_FIELD("Hide cursor", kAudioInput, "mouse pointer", hideCursor),
@@ -257,6 +261,7 @@ inline void ApplyQuality(BuildSettings& b, int level) {
     b.antialias = level == 3 ? 2 : 1;
     b.ssao = level >= 3;
     b.bloom = level >= 2;
+    b.particleCap = level == 0 ? 100 : level == 1 ? 300 : 0;   // High and Ultra: no extra limit
 }
 
 // ---- summary: what will happen, in plain words -------------------------------------------------------------
@@ -408,6 +413,7 @@ inline okay::buildpipe::ExtraConfig ExtraFrom(const BuildSettings& s) {
     c.logFile = s.logToFile ? "game.log" : "";
     for (const char* p = s.description; *p; ++p) c.description.push_back(*p == '\n' || *p == '\r' ? ' ' : *p);
     c.env = okay::buildpipe::ParseEnvList(s.envVars);
+    c.renderer = s.renderer; c.particleCap = s.particleCap; c.gamepadDeadzone = s.gamepadDeadzone; c.sampleRate = s.sampleRate;
     return c;
 }
 

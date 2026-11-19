@@ -251,7 +251,13 @@ public:
 
     /// Clamp the pool size so a malformed/hand-edited scene (negative or absurd
     /// maxParticles) can't trigger length_error / bad_alloc.
-    int SafeMax() const { return maxParticles < 0 ? 0 : (maxParticles > 100000 ? 100000 : maxParticles); }
+    /// A limit on every particle system's pool, set by the game (Build Settings > Graphics > Particle limit). 0 = none.
+    static int& GlobalCap() { static int cap = 0; return cap; }
+    int SafeMax() const {
+        int n = maxParticles < 0 ? 0 : (maxParticles > 100000 ? 100000 : maxParticles);
+        if (GlobalCap() > 0 && n > GlobalCap()) n = GlobalCap();
+        return n;
+    }
 
     void Awake() override { m_rng.Seed(seed); m_particles.assign(SafeMax(), Particle{}); m_age = 0.0f; m_burstFired = false; m_hasLast = false; m_playOnReuse = playing; m_awake = true; }
     /// A pooled effect that is reused starts again: no particle of the last use is left and it plays if it did at the start.

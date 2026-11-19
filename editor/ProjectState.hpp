@@ -130,6 +130,11 @@ struct BuildSettings {
     bool  allowBuildCommands = false;      // the two commands below only run when this is on
     char  preBuildCommand[260] = "";       // run before the build; a failure stops it
     char  postBuildCommand[260] = "";      // run after a successful build
+    // ---- round 2 ----
+    int   renderer = 0;                    // 0 automatic, 1 Direct3D 11, 2 OpenGL, 3 software
+    int   particleCap = 0;                 // 0 = no extra limit
+    float gamepadDeadzone = 0.18f;         // stick dead zone
+    int   sampleRate = 0;                  // 0 = 44100
 };
 // ---- Build profiles -------------
 // Persist the full Build Settings under named profiles in the project's
@@ -220,6 +225,8 @@ inline void WriteBuildProfileBlock(std::ostream& o, const BuildProfile& p) {
     o << "logToFile=" << b.logToFile << "\n" << "envVars=" << EscapeProfileValue(b.envVars) << "\n";
     o << "description=" << EscapeProfileValue(b.description) << "\n" << "allowCommands=" << b.allowBuildCommands << "\n";
     o << "preBuild=" << EscapeProfileValue(b.preBuildCommand) << "\n" << "postBuild=" << EscapeProfileValue(b.postBuildCommand) << "\n";
+    o << "renderer=" << b.renderer << "\n" << "particleCap=" << b.particleCap << "\n";
+    o << "gamepadDeadzone=" << FloatText(b.gamepadDeadzone) << "\n" << "sampleRate=" << b.sampleRate << "\n";
     for (const BuildScene& sc : b.scenes) o << "scene=" << (sc.on ? 1 : 0) << "|" << EscapeProfileValue(sc.path) << "\n";
 }
 
@@ -315,6 +322,10 @@ inline void ApplyBuildProfileKV(BuildProfile& p, const std::string& k, const std
     else if (k == "allowCommands") b.allowBuildCommands = B();
     else if (k == "preBuild")  S(b.preBuildCommand, sizeof(b.preBuildCommand));
     else if (k == "postBuild") S(b.postBuildCommand, sizeof(b.postBuildCommand));
+    else if (k == "renderer")  b.renderer = std::max(0, std::min(3, I()));
+    else if (k == "particleCap") b.particleCap = std::max(0, I());
+    else if (k == "gamepadDeadzone") b.gamepadDeadzone = F();
+    else if (k == "sampleRate") b.sampleRate = I();
 }
 
 

@@ -24,6 +24,11 @@ struct ExtraConfig {
     std::string logFile;             // "" = no log file, else a file name inside the game's save folder
     std::string description;         // one line about the game (logged at start)
     std::vector<std::pair<std::string, std::string>> env;   // environment variables set before the game starts
+    // ---- round 2 ----
+    int   renderer = 0;              // 3D drawing: 0 automatic, 1 Direct3D 11 only, 2 OpenGL only, 3 software only (each falls back to software)
+    int   particleCap = 0;           // most particles any one particle system keeps alive; 0 = no extra limit
+    float gamepadDeadzone = 0.18f;   // the part of a stick's throw that reads 0 (0..0.95); 0.18 is the engine's own default
+    int   sampleRate = 0;            // sound output rate in Hz (22050, 44100, 48000); 0 = 44100
 };
 
 inline bool IsValidEnvName(const std::string& n) {
@@ -91,6 +96,10 @@ inline bool ApplyExtraKey(ExtraConfig& c, const std::string& k, const std::strin
     else if (k == "log_level")         c.logLevel = NormalizeLogLevel(v);
     else if (k == "log_file")          c.logFile = CleanLogFileName(v);
     else if (k == "description")       c.description = v;
+    else if (k == "renderer")          { const int n = std::atoi(v.c_str()); c.renderer = n < 0 || n > 3 ? 0 : n; }
+    else if (k == "particle_cap")      { const int n = std::atoi(v.c_str()); c.particleCap = n < 0 ? 0 : (n > 100000 ? 100000 : n); }
+    else if (k == "gamepad_deadzone")  c.gamepadDeadzone = F(0.0f, 0.95f);
+    else if (k == "sample_rate")       { const int n = std::atoi(v.c_str()); c.sampleRate = (n == 22050 || n == 44100 || n == 48000) ? n : 0; }
     else if (k == "env") {
         const auto items = ParseEnvList(v);
         for (const auto& kv : items) c.env.push_back(kv);
@@ -111,6 +120,10 @@ inline std::string WriteExtraConfig(const ExtraConfig& c) {
     if (!c.logLevel.empty())                o << "log_level=" << c.logLevel << "\n";
     if (!c.logFile.empty())                 o << "log_file=" << c.logFile << "\n";
     if (!c.description.empty())             o << "description=" << c.description << "\n";
+    if (c.renderer != d.renderer)           o << "renderer=" << c.renderer << "\n";
+    if (c.particleCap != d.particleCap)     o << "particle_cap=" << c.particleCap << "\n";
+    if (c.gamepadDeadzone != d.gamepadDeadzone) o << "gamepad_deadzone=" << c.gamepadDeadzone << "\n";
+    if (c.sampleRate != d.sampleRate)       o << "sample_rate=" << c.sampleRate << "\n";
     for (const auto& kv : c.env)            o << "env=" << kv.first << "=" << kv.second << "\n";
     return o.str();
 }

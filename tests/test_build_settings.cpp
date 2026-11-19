@@ -103,7 +103,8 @@ int main() {
         ApplyBuildPreset(b, BuildPreset::Release);
         CHECK(!b.developmentBuild && !b.showFps && b.stripAssets && b.compress && !b.logToFile && !b.logLevel[0]);
         ApplyQuality(b, 0); CHECK(!b.shadows && !b.ssao && !b.bloom && b.antialias == 1);
-        ApplyQuality(b, 3); CHECK(b.shadows && b.ssao && b.bloom && b.antialias == 2 && b.shadowResolution == 4096);
+        ApplyQuality(b, 3); CHECK(b.shadows && b.ssao && b.bloom && b.antialias == 2 && b.shadowResolution == 4096 && b.particleCap == 0);
+        ApplyQuality(b, 0); CHECK(b.particleCap == 100);
         ApplyQuality(b, 99); CHECK(b.shadowResolution == 4096);
     }
     {
@@ -236,6 +237,13 @@ int main() {
         CHECK(c.timeScale == 0.5f && c.maxFixedSteps == 6 && c.musicVolume == 0.25f && c.sfxVolume == 0.75f && c.defaultLanguage == "de");
         CHECK(c.logLevel == "warn" && c.logFile == "game.log" && c.env.size() == 2 && c.env[1].first == "BAD" && c.description == "A moon game second line");
         CHECK(bp::WriteExtraConfig(c) == text);
+        s.renderer = 2; s.particleCap = 200; s.gamepadDeadzone = 0.4f; s.sampleRate = 48000;
+        { const std::string t2 = bp::WriteExtraConfig(ExtraFrom(s)); bp::ExtraConfig r; std::istringstream in2(t2);
+          for (std::string line; std::getline(in2, line);) { const auto eq = line.find('='); bp::ApplyExtraKey(r, line.substr(0, eq), line.substr(eq + 1)); }
+          CHECK(r.renderer == 2 && r.particleCap == 200 && r.gamepadDeadzone == 0.4f && r.sampleRate == 48000); }
+        { bp::ExtraConfig r; bp::ApplyExtraKey(r, "renderer", "9"); bp::ApplyExtraKey(r, "sample_rate", "12345"); bp::ApplyExtraKey(r, "gamepad_deadzone", "5"); bp::ApplyExtraKey(r, "particle_cap", "-3");
+          CHECK(r.renderer == 0 && r.sampleRate == 0 && r.gamepadDeadzone == 0.95f && r.particleCap == 0); }
+        s.renderer = 0; s.particleCap = 0; s.gamepadDeadzone = 0.18f; s.sampleRate = 0;
         // Hostile or broken lines are tamed, and other keys are left to the player's own reader.
         bp::ExtraConfig h;
         CHECK(!bp::ApplyExtraKey(h, "width", "10") && !bp::ApplyExtraKey(h, "title", "x"));

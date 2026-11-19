@@ -245,6 +245,7 @@ int main() {
         Put(a.defaultLanguage, "de"); Put(a.logLevel, "warn"); a.logToFile = true; Put(a.envVars, "A=1;B=two words");
         Put(a.description, "A = tricky | description"); a.allowBuildCommands = true;
         Put(a.preBuildCommand, "echo pre = 1"); Put(a.postBuildCommand, "echo post | cat");
+        a.renderer = 2; a.particleCap = 150; a.gamepadDeadzone = 0.3f; a.sampleRate = 48000;
 
         const std::string text = WriteBuildProfiles({pa});
         const std::vector<BuildProfile> back = ParseBuildProfiles(text);
@@ -274,12 +275,13 @@ int main() {
             COVER(a, b, d, timeScale); COVER(a, b, d, maxFixedSteps); COVER(a, b, d, musicVolume); COVER(a, b, d, sfxVolume);
             COVER(a, b, d, defaultLanguage); COVER(a, b, d, logLevel); COVER(a, b, d, logToFile); COVER(a, b, d, envVars);
             COVER(a, b, d, description); COVER(a, b, d, allowBuildCommands); COVER(a, b, d, preBuildCommand); COVER(a, b, d, postBuildCommand);
-            g_values += 80 - 1 + 3 + 4;   // scenes count as three entries, plus the profile's own four fields
+            COVER(a, b, d, renderer); COVER(a, b, d, particleCap); COVER(a, b, d, gamepadDeadzone); COVER(a, b, d, sampleRate);
+            g_values += 84 - 1 + 3 + 4;   // scenes count as three entries, plus the profile's own four fields
             const std::set<std::string> declared = DeclaredFields(header, "BuildSettings");
             CHECK(g_covered == declared);
             for (const auto& f : declared) if (!g_covered.count(f)) std::cerr << "    BuildSettings." << f << " has no line in this test\n";
             for (const auto& f : g_covered) if (!declared.count(f)) std::cerr << "    " << f << " is not a BuildSettings member\n";
-            CHECK(declared.size() == 80);
+            CHECK(declared.size() == 84);
             CHECK(WriteBuildProfiles(back) == text);                      // stable
         }
         {   // the profile's own members

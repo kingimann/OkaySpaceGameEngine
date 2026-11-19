@@ -1730,6 +1730,12 @@ int main(int argc, char** argv) {
     ShadowCascades()   = cfg.shadowCascades;
     ShadowMapResolution() = cfg.shadowResolution;
     BloomEnabled()     = cfg.bloom;
+    okay::ParticleSystem::GlobalCap() = cfg.extra.particleCap;   // Build Settings > Graphics > Particle limit
+    if (cfg.extra.gamepadDeadzone != 0.18f)   // Build Settings > Audio & Input > Gamepad dead zone (every player's sticks)
+        for (int gp = 0; gp < okay::Input::kMaxGamepads; ++gp) {
+            okay::Input::GamepadSettings(gp).left.deadZone = cfg.extra.gamepadDeadzone;
+            okay::Input::GamepadSettings(gp).right.deadZone = cfg.extra.gamepadDeadzone;
+        }
     SSAOEnabled()      = cfg.ssao;
     FXAAEnabled()      = cfg.fxaa;
     if (!cfg.sawCursorMode && cfg.lockCursor) cfg.cursorMode = 1;
@@ -1752,24 +1758,30 @@ int main(int argc, char** argv) {
     bool                 glCtx = false;                 // its GL context exists
     bool                 glReady = false, d3dReady = false, d3d12Ready = false;
 #ifndef __EMSCRIPTEN__
+    // Build Settings > Graphics > 3D renderer: 1 = only Direct3D 11, 2 = only OpenGL, 3 = software only. Whatever is
+    // chosen and cannot start falls back to software, as before.
+    const int rendererChoice = cfg.extra.renderer;
+    if (rendererChoice == 3) cfg.gpu = false;
     if (cfg.gpu) {
 #if defined(_WIN32)
         // Opt-in Direct3D 12 backend, preferred when enabled; otherwise D3D11.
-        if (cfg.d3d12) {
+        if (cfg.d3d12 && rendererChoice != 2) {
             d3d12Renderer = new okay::D3D12Renderer();
             if (d3d12Renderer->Init()) d3d12Ready = true;
             else { delete d3d12Renderer; d3d12Renderer = nullptr; }
         }
-        d3dRenderer = new okay::D3D11Renderer();
-        if (d3dRenderer->Init()) d3dReady = true;
-        else { delete d3dRenderer; d3dRenderer = nullptr; }
+        if (rendererChoice != 2) {
+            d3dRenderer = new okay::D3D11Renderer();
+            if (d3dRenderer->Init()) d3dReady = true;
+            else { delete d3dRenderer; d3dRenderer = nullptr; }
+        }
 #endif
         // A 3.2 compatibility context: core FBOs/MSAA + our #version 120 shaders
         // (GLAttributes' defaults: 3.2, compatibility profile, 24-bit depth).
         okay::platform::WindowDesc gd;
         gd.title = "okay-gl"; gd.x = 0; gd.y = 0; gd.width = 16; gd.height = 16;
         gd.resizable = false; gd.opengl = true; gd.hidden = true;
-        glWindow = pb->MakeWindow(gd);
+        if (rendererChoice != 1) glWindow = pb->MakeWindow(gd);   // "Direct3D 11 only" never starts OpenGL
         if (glWindow) {
             glCtx = glWindow->CreateGLContext(okay::platform::GLAttributes());
             if (glCtx) {   // CreateGLContext also made it current
@@ -1787,7 +1799,8 @@ int main(int argc, char** argv) {
     int gpuFails = 0;   // self-heal: after repeated GPU failures, fall back for good
 
     okay::platform::AudioSpec want, have;
-    want.freq = 44100; want.format = okay::platform::SampleFormat::F32; want.channels = 2; want.frames = 1024;
+    want.freq = cfg.extra.sampleRate > 0 ? cfg.extra.sampleRate : 44100;   // Build Settings > Audio & Input > Sound quality
+     want.format = okay::platform::SampleFormat::F32; want.channels = 2; want.frames = 1024;
     want.allowChange = true;
     // Float output at whatever rate and channel count the device gives us.
     std::unique_ptr<okay::platform::AudioDevice> audioDev;

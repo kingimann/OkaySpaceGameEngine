@@ -369,8 +369,48 @@ class FileInfo:
         return calls, refs
 
 
+NO_SDL_MODE = False
+
+
+def resolve_no_sdl(src):
+    """The source as a -DOKAY_NO_SDL build sees it: #ifndef OKAY_NO_SDL / #if !defined(OKAY_NO_SDL) keep only the #else part,
+    #ifdef OKAY_NO_SDL / #if defined(OKAY_NO_SDL) keep only the first part. Other #if lines are left alone (their nesting is tracked)."""
+    out, stack = [], []   # stack of [kind, keeping]: kind "no" = a OKAY_NO_SDL conditional, "x" = any other
+    def keeping():
+        return all(k for _, k in stack)
+    for line in src.split("\n"):
+        t = line.strip()
+        m = re.match(r"#\s*(if|ifdef|ifndef|elif|else|endif)\b\s*(.*)", t)
+        if m:
+            d, rest = m.group(1), m.group(2)
+            if d in ("if", "ifdef", "ifndef"):
+                neg = d == "ifndef" or bool(re.match(r"!\s*defined", rest))
+                if "OKAY_NO_SDL" in rest and not re.search(r"&&|\|\|", rest):
+                    stack.append(["no", not neg])
+                else:
+                    stack.append(["x", True])
+                out.append("")
+                continue
+            if d == "else" and stack:
+                if stack[-1][0] == "no":
+                    stack[-1][1] = not stack[-1][1]
+                out.append("")
+                continue
+            if d == "elif" and stack:
+                out.append("")
+                continue
+            if d == "endif" and stack:
+                stack.pop()
+                out.append("")
+                continue
+        out.append(line if keeping() else "")
+    return "\n".join(out)
+
+
 def scan_file(ref, path):
     src = git("show", "%s:%s" % (ref, path)).decode("utf-8", "replace")
+    if NO_SDL_MODE:
+        src = resolve_no_sdl(src)
     nocomment, code = split_code(src)
     code = re.sub(r"^[ \t]*#[ \t]*include[^\n]*", "", code, flags=re.M)
     fi = FileInfo(path)
@@ -924,8 +964,11 @@ def main():
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     ap.add_argument("--ref", default="HEAD", help="git ref to read (a commit sha is best: it keeps the page reproducible)")
     ap.add_argument("--out", help="write the page here")
+    ap.add_argument("--no-sdl", action="store_true", help="count the source as a -DOKAY_NO_SDL build sees it (OKAY_NO_SDL branches resolved)")
     ap.add_argument("--check", help="compare the result with this file; exit 1 when it differs")
     args = ap.parse_args()
+    global NO_SDL_MODE
+    NO_SDL_MODE = args.no_sdl
     sha = git("rev-parse", "--verify", args.ref + "^{commit}").decode().strip()
     files = list_sdl_files(sha)
     scanned = {p: scan_file(sha, p) for p in files}

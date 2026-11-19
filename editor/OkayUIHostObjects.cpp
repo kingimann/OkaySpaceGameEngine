@@ -343,7 +343,7 @@ void DrawInspectorWindow(okay::editor::EditorState& ed, HostModeState* st) {
                 if (!g_probe.firstAddItem.w) g_probe.firstAddItem = GetItemRect();
                 if (pick) { ed.PushUndo("Add Component"); info->add(*go); ed.dirty = true; CloseCurrentPopup(); }
             }
-            EndMenu();
+            OkayUI::EndMenu();
         }
         EndPopup();
     }

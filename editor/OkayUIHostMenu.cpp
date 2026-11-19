@@ -156,14 +156,14 @@ void AddMenuBar(HostModeState::Panels& panels, HostModeState* st, okay::editor::
                     const float bw = CalcTextSize(t.label.c_str()).x + 16.0f;
                     if (i < 6) g_probe.topMenu[i] = Rect{bar0.x + barAcc, bar0.y, bw, GetFrameHeight()};
                     barAcc += bw;
-                    if (t.hostDrawn) { if (BeginMenu(t.label.c_str())) { TextDisabled("Plugins are not available in window mode yet."); EndMenu(); } ++i; continue; }
+                    if (t.hostDrawn) { if (BeginMenu(t.label.c_str())) { TextDisabled("Plugins are not available in window mode yet."); OkayUI::EndMenu(); } ++i; continue; }
                     const bool open = BeginMenu(t.label.c_str());
                     ++i;
                     if (!open) continue;
                     menubar::DrawEntries(menubar::BuildMenu(t.id, MakeState(*ed, true)), host);
                     g_probe.itemsDrawn += (int)menubar::BuildMenu(t.id, MakeState(*ed, true)).size();
                     g_probe.lastItem = GetItemRect();
-                    EndMenu();
+                    OkayUI::EndMenu();
                 }
                 EndMenuBar();
             }

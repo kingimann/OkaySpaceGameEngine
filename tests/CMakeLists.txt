@@ -4340,3 +4340,8 @@ foreach(vs_usage_test vs_easy_ops vs_start vs_hints vs_plain_words vs_what_happe
         add_test(NAME ${vs_usage_test} COMMAND test_${vs_usage_test})
     endif()
 endforeach()
+
+# Camera upgrade (docs/camera_upgrade.md): the pure camera maths over simulated frames at 30, 60 and 144 fps.
+add_executable(test_camera_math test_camera_math.cpp)
+target_link_libraries(test_camera_math PRIVATE okay::engine)
+add_test(NAME camera_math COMMAND test_camera_math)

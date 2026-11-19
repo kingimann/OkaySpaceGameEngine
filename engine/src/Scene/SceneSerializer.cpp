@@ -40,6 +40,8 @@
 #include "okay/Components/SequencePlayer.hpp"
 #include "okay/Components/VehicleController.hpp"
 #include "okay/Components/VehicleController2D.hpp"
+#include "okay/Components/Buoyancy.hpp"
+#include "okay/Components/BoatController.hpp"
 #include "okay/Components/BlockBuilder.hpp"
 #include "okay/Components/StructureBuilder.hpp"
 #include "okay/Components/BuilderMode.hpp"
@@ -9726,6 +9728,87 @@ void RegisterBuiltinComponentSerializers() {
         ReadGradientKv(k, "g", tr->colorGradient);
     };
     ComponentSerializerRegistry::Register(std::move(trail));
+
+    // Water waves beyond the old sines (style, direction, steepness, count, seed, current), kept as their own record
+    // so older scene files and older readers are untouched.
+    ComponentSerializerRegistry::Entry waterwaves;
+    waterwaves.name = "waterwaves";
+    waterwaves.write = [](const GameObject& go, std::ostream& out) {
+        for (auto* w : go.GetComponents<Water>()) {
+            if (w->style == Water::WaveStyle::Classic && w->current.x == 0.0f && w->current.y == 0.0f) continue;   // nothing new to say
+            out << "  waterwaves";
+            KvOut k{out};
+            k("style", (int)w->style)("dir", w->waveDirection)("steep", w->waveSteepness)("count", w->waveCount)
+             ("seed", w->waveSeed)("curx", w->current.x)("cury", w->current.y);
+            out << "\n";
+        }
+    };
+    waterwaves.read = [](GameObject& go, std::istream& in) {
+        auto ws = go.GetComponents<Water>();
+        Water* w = ws.empty() ? nullptr : ws.back();
+        KvIn k(in);
+        if (!w) return;
+        int style = 0;
+        k.i("style", style); k.f("dir", w->waveDirection); k.f("steep", w->waveSteepness); k.i("count", w->waveCount);
+        k.i("seed", w->waveSeed); k.f("curx", w->current.x); k.f("cury", w->current.y);
+        w->style = style == 1 ? Water::WaveStyle::Ocean : style == 2 ? Water::WaveStyle::Calm : Water::WaveStyle::Classic;
+        if (!std::isfinite(w->waveDirection)) w->waveDirection = 0.0f;
+        if (!std::isfinite(w->waveSteepness)) w->waveSteepness = 0.5f;
+        w->waveSteepness = std::min(1.0f, std::max(0.0f, w->waveSteepness));
+        w->waveCount = std::min(8, std::max(1, w->waveCount));
+        if (!std::isfinite(w->current.x) || !std::isfinite(w->current.y)) w->current = Vec2{0.0f, 0.0f};
+    };
+    ComponentSerializerRegistry::Register(std::move(waterwaves));
+
+    ComponentSerializerRegistry::Entry buoy;
+    buoy.name = "buoyancy";
+    buoy.write = [](const GameObject& go, std::ostream& out) {
+        for (auto* b : go.GetComponents<Buoyancy>()) {
+            out << "  buoyancy";
+            KvOut k{out};
+            k("gridX", b->gridX)("gridZ", b->gridZ)("volume", b->volume)("fullness", b->fullness)("hullH", b->hullHeight)
+             ("density", b->density)("dfw", b->dragForward)("dfw2", b->dragForward2)("dsd", b->dragSide)("dsd2", b->dragSide2)
+             ("dup", b->dragUp)("dup2", b->dragUp2)("angd", b->angularDamping)("maxpush", b->maxPushAcceleration)
+             .b("tilt", b->letTilt).b("splash", b->splashEffect)("splashmin", b->splashMinSpeed)
+             .str("points", b->PointsText());
+            out << "\n";
+        }
+    };
+    buoy.read = [](GameObject& go, std::istream& in) {
+        auto* b = go.AddComponent<Buoyancy>();
+        KvIn k(in);
+        k.i("gridX", b->gridX); k.i("gridZ", b->gridZ); k.f("volume", b->volume); k.f("fullness", b->fullness);
+        k.f("hullH", b->hullHeight); k.f("density", b->density);
+        k.f("dfw", b->dragForward); k.f("dfw2", b->dragForward2); k.f("dsd", b->dragSide); k.f("dsd2", b->dragSide2);
+        k.f("dup", b->dragUp); k.f("dup2", b->dragUp2); k.f("angd", b->angularDamping); k.f("maxpush", b->maxPushAcceleration);
+        k.b("tilt", b->letTilt); k.b("splash", b->splashEffect); k.f("splashmin", b->splashMinSpeed);
+        std::string pts; k.str("points", pts); b->SetPointsText(pts);
+        b->gridX = std::min(16, std::max(1, b->gridX)); b->gridZ = std::min(16, std::max(1, b->gridZ));
+    };
+    ComponentSerializerRegistry::Register(std::move(buoy));
+
+    ComponentSerializerRegistry::Entry boat;
+    boat.name = "boat";
+    boat.write = [](const GameObject& go, std::ostream& out) {
+        for (auto* b : go.GetComponents<BoatController>()) {
+            out << "  boat";
+            KvOut k{out};
+            k.b("player", b->isPlayer)("maxSpeed", b->maxSpeed)("revSpeed", b->reverseSpeed)("power", b->enginePower)
+             ("brake", b->brakePower)("turn", b->turnRate)("steerResp", b->steerResponse)
+             .b("wake", b->wake).b("bow", b->bowSplash).b("sound", b->engineSound).b("cam", b->followCamera)
+             ("camDist", b->camDistance)("camH", b->camHeight)("camLerp", b->camLerp);
+            out << "\n";
+        }
+    };
+    boat.read = [](GameObject& go, std::istream& in) {
+        auto* b = go.AddComponent<BoatController>();
+        KvIn k(in);
+        k.b("player", b->isPlayer); k.f("maxSpeed", b->maxSpeed); k.f("revSpeed", b->reverseSpeed); k.f("power", b->enginePower);
+        k.f("brake", b->brakePower); k.f("turn", b->turnRate); k.f("steerResp", b->steerResponse);
+        k.b("wake", b->wake); k.b("bow", b->bowSplash); k.b("sound", b->engineSound); k.b("cam", b->followCamera);
+        k.f("camDist", b->camDistance); k.f("camH", b->camHeight); k.f("camLerp", b->camLerp);
+    };
+    ComponentSerializerRegistry::Register(std::move(boat));
 
     ComponentSerializerRegistry::Entry lod;
     lod.name = "lodgroup";

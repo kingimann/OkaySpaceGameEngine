@@ -182,6 +182,7 @@ fi
 # One folder per line, sorted, so two branches that add a folder do not fight over one long line.
 EXAMPLE_DIRS="
 behavior_trees
+boat
 cutscene
 fp_hand
 input
@@ -236,6 +237,7 @@ cp engine/src/Core/ImageDecode.cpp engine/src/Core/ImageDecodeJpeg.cpp engine/sr
 [ ! -e "$XBOX_SRC/engine/third_party" ] || { echo "error: xbox-src must not carry engine/third_party (no third-party code in the Xbox build)" >&2; exit 1; }
 [ -f "$XBOX_SRC/platform/xbox_uwp/app/CMakeLists.txt" ] || { echo "error: xbox-src did not get the UWP app" >&2; exit 1; }
 [ -s "$OUT_DIR/examples/vehicle/vehicle_test.okayscene" ] || { echo "error: examples/vehicle/vehicle_test.okayscene did not make it into the distribution" >&2; exit 1; }
+[ -s "$OUT_DIR/examples/boat/boat_lake.okayscene" ] || { echo "error: examples/boat/boat_lake.okayscene did not make it into the distribution" >&2; exit 1; }
 [ -s "$OUT_DIR/examples/ui_text/ui_text.okayscene" ] || { echo "error: examples/ui_text/ui_text.okayscene did not make it into the distribution" >&2; exit 1; }
 
 # When built against the real Steamworks SDK, ship its redistributable DLL next to
@@ -262,6 +264,8 @@ Everything else lives in  Tools/:
 examples/ example scenes to try: in the editor use File > Open and pick
                         examples\vehicle\vehicle_test.okayscene, then press Play
                         (get in the car with E), or
+                        examples\boat\boat_lake.okayscene (a lake with waves: drive the
+                        boat with W S A D, Space brakes), or
                         examples\ui_text\ui_text.okayscene (a nameplate over each of
                         two characters and a sign with rich text; keys 1 2 3 H).
                         More in docs/try_it.md.

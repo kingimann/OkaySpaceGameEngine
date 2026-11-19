@@ -140,7 +140,7 @@ the debris bodies assume the terrain object is at the origin with no rotation or
 
 ## Water
 
-**GameObject > 3D Object > Water** builds an animated wave mesh with a reflective, semi-transparent material. It follows the global wind. Rigidbodies float according to `fluidDensity` and `linearDrag`.
+**GameObject > 3D Object > Water** builds an animated wave mesh with a reflective, semi-transparent material. It follows the global wind. Rigidbodies float according to `fluidDensity` and `linearDrag`. Water also has wave styles (Classic, Ocean, Calm lake), a current and `SurfaceAt`, and a Buoyancy component floats a hull on several points and a Boat Controller drives it: see `docs/water_boat.md`.
 
 ## What is not here
 

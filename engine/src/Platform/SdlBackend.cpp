@@ -9,6 +9,9 @@
 #define SDL_MAIN_HANDLED
 #endif
 #include <SDL.h>
+#if defined(_WIN32)
+#  include <SDL_syswm.h>   // the HWND of an SDL window (Window::Win32Handle)
+#endif
 #include <cstring>
 
 namespace okay::platform {
@@ -25,15 +28,26 @@ uint32_t ModsFromSdl(Uint16 m) {
     return r;
 }
 
+Uint16 ModsToSdl(uint32_t m) {
+    Uint16 r = 0;
+    if (m & ModShift) r |= KMOD_LSHIFT;
+    if (m & ModCtrl)  r |= KMOD_LCTRL;
+    if (m & ModAlt)   r |= KMOD_LALT;
+    if (m & ModGui)   r |= KMOD_LGUI;
+    if (m & ModCaps)  r |= KMOD_CAPS;
+    if (m & ModNum)   r |= KMOD_NUM;
+    return r;
+}
+
 SDL_AudioFormat ToSdlFormat(SampleFormat f) { return f == SampleFormat::F32 ? AUDIO_F32SYS : AUDIO_S16SYS; }
 SampleFormat FromSdlFormat(SDL_AudioFormat f) { return SDL_AUDIO_ISFLOAT(f) ? SampleFormat::F32 : SampleFormat::S16; }
 
 class SdlWindow final : public Window {
 public:
-    SdlWindow(SDL_Window* w) : m_win(w) {}
+    explicit SdlWindow(SDL_Window* w, bool owns = true) : m_win(w), m_owns(owns) {}
     ~SdlWindow() override {
         DestroyGLContext();
-        if (m_win) SDL_DestroyWindow(m_win);
+        if (m_win && m_owns) SDL_DestroyWindow(m_win);
     }
     uint32_t Id() const override { return SDL_GetWindowID(m_win); }
     BackendKind Kind() const override { return BackendKind::Sdl2; }
@@ -55,6 +69,26 @@ public:
     void SetFullscreen(bool on) override { SDL_SetWindowFullscreen(m_win, on ? SDL_WINDOW_FULLSCREEN_DESKTOP : 0); }
     bool IsFocused() const override { return (SDL_GetWindowFlags(m_win) & SDL_WINDOW_INPUT_FOCUS) != 0; }
     bool IsFullscreen() const override { return (SDL_GetWindowFlags(m_win) & SDL_WINDOW_FULLSCREEN) != 0; }
+    bool HasMouseFocus() const override { return (SDL_GetWindowFlags(m_win) & SDL_WINDOW_MOUSE_FOCUS) != 0; }
+    bool IsMinimized() const override { return (SDL_GetWindowFlags(m_win) & SDL_WINDOW_MINIMIZED) != 0; }
+    bool IsVisible() const override { return (SDL_GetWindowFlags(m_win) & SDL_WINDOW_HIDDEN) == 0; }
+    bool SetInputFocus() override { return SDL_SetWindowInputFocus(m_win) == 0; }
+    void* Win32Handle() const override {
+#if defined(_WIN32)
+        SDL_SysWMinfo wm; SDL_VERSION(&wm.version);
+        if (m_win && SDL_GetWindowWMInfo(m_win, &wm) && wm.subsystem == SDL_SYSWM_WINDOWS) return (void*)wm.info.win.window;
+#endif
+        return nullptr;
+    }
+    bool Flash(FlashMode mode) override {
+#if SDL_VERSION_ATLEAST(2, 0, 16)
+        SDL_FlashOperation op = mode == FlashMode::Stop ? SDL_FLASH_CANCEL
+                              : mode == FlashMode::Briefly ? SDL_FLASH_BRIEFLY : SDL_FLASH_UNTIL_FOCUSED;
+        return SDL_FlashWindow(m_win, op) == 0;
+#else
+        (void)mode; return false;
+#endif
+    }
     bool SetIcon(const uint8_t* rgba, int w, int h) override {
         if (!rgba || w <= 0 || h <= 0) return false;
         SDL_Surface* surf = SDL_CreateRGBSurfaceWithFormatFrom((void*)rgba, w, h, 32, w * 4, SDL_PIXELFORMAT_ABGR8888);
@@ -62,6 +96,11 @@ public:
         SDL_SetWindowIcon(m_win, surf);
         SDL_FreeSurface(surf);
         return true;
+    }
+    int Dpi() const override {
+        float ddpi = 0;
+        const int idx = SDL_GetWindowDisplayIndex(m_win);
+        return (idx >= 0 && SDL_GetDisplayDPI(idx, &ddpi, nullptr, nullptr) == 0 && ddpi >= 48.0f && ddpi <= 1000.0f) ? (int)(ddpi + 0.5f) : 96;
     }
     int RefreshRateHz() const override {
         SDL_DisplayMode dm;
@@ -93,6 +132,7 @@ public:
 
 private:
     SDL_Window* m_win = nullptr;
+    bool m_owns = true;
     SDL_GLContext m_ctx = nullptr;
 };
 
@@ -196,6 +236,7 @@ public:
         SDL_SetMainReady();   // the apps have their own main(); SDL must not insist on SDL_main
         const Uint32 missing = want & ~SDL_WasInit(0);
         if (missing && SDL_InitSubSystem(missing) != 0) return false;
+        SDL_EventState(SDL_DROPFILE, SDL_ENABLE);   // accept OS file drops (the apps import them)
         m_started |= missing;
         if (f.video) SDL_StopTextInput();   // SDL2 starts with it on; the seam's contract is off until StartTextInput
         return true;
@@ -203,6 +244,7 @@ public:
     void Shutdown() override {
         if (m_started) SDL_QuitSubSystem(m_started);
         m_started = 0;
+        for (SDL_Cursor*& c : m_cursors) { if (c) SDL_FreeCursor(c); c = nullptr; }
     }
     std::string LastError() const override { return SDL_GetError(); }
 
@@ -234,15 +276,77 @@ public:
     }
 
     bool PollEvent(Event& out) override {
-        SDL_Event e;
-        while (SDL_PollEvent(&e)) {
+        // m_last outlives this call (Event::native points at it until the next poll). A drop's string is taken and freed by Translate.
+        // Not SDL_PollEvent: SDL 2.30.0's version returns 0 once on a queue that holds an event pushed after the previous
+        // poll emptied it (found by tests/test_platform_events.cpp: the event arrives on the next call). Pump then take one is
+        // what it is meant to do and has no such gap.
+        for (;;) {
+            SDL_PumpEvents();
+            if (SDL_PeepEvents(&m_last, 1, SDL_GETEVENT, SDL_FIRSTEVENT, SDL_LASTEVENT) != 1) break;
             Event r;
-            if (Translate(e, r)) { out = std::move(r); return true; }
+            if (Translate(m_last, r)) { r.native = &m_last; out = std::move(r); return true; }
+            if (m_reportUnmapped) { r.type = EventType::Other; r.timestampMs = m_last.common.timestamp; r.native = &m_last; out = std::move(r); return true; }
         }
+        return false;
+    }
+    void PumpEvents() override { SDL_PumpEvents(); }
+    void ReportUnmappedEvents(bool on) override { m_reportUnmapped = on; }
+    bool PushEvent(const Event& r) override {
+        SDL_Event e;
+        SDL_zero(e);
+        switch (r.type) {
+        case EventType::Quit: e.type = SDL_QUIT; break;
+        case EventType::WindowClose: case EventType::WindowFocusGained: case EventType::WindowFocusLost:
+            e.type = SDL_WINDOWEVENT; e.window.windowID = r.windowId;
+            e.window.event = r.type == EventType::WindowClose ? SDL_WINDOWEVENT_CLOSE
+                           : r.type == EventType::WindowFocusGained ? SDL_WINDOWEVENT_FOCUS_GAINED : SDL_WINDOWEVENT_FOCUS_LOST;
+            break;
+        case EventType::KeyDown: case EventType::KeyUp:
+            e.type = r.type == EventType::KeyDown ? SDL_KEYDOWN : SDL_KEYUP;
+            e.key.windowID = r.windowId; e.key.state = r.type == EventType::KeyDown ? SDL_PRESSED : SDL_RELEASED;
+            e.key.repeat = r.repeat ? 1 : 0; e.key.keysym.scancode = (SDL_Scancode)r.key;
+            e.key.keysym.sym = SDL_GetKeyFromScancode((SDL_Scancode)r.key); e.key.keysym.mod = ModsToSdl(r.mods);
+            break;
+        case EventType::TextInput:
+            e.type = SDL_TEXTINPUT; e.text.windowID = r.windowId;
+            std::strncpy(e.text.text, r.text.c_str(), sizeof(e.text.text) - 1);   // SDL's text event holds 32 bytes; the zeroed tail ends it
+            break;
+        case EventType::MouseMove:
+            e.type = SDL_MOUSEMOTION; e.motion.windowID = r.windowId;
+            e.motion.x = r.x; e.motion.y = r.y; e.motion.xrel = r.dx; e.motion.yrel = r.dy;
+            break;
+        case EventType::MouseButtonDown: case EventType::MouseButtonUp:
+            e.type = r.type == EventType::MouseButtonDown ? SDL_MOUSEBUTTONDOWN : SDL_MOUSEBUTTONUP;
+            e.button.windowID = r.windowId; e.button.button = (Uint8)r.button; e.button.clicks = (Uint8)r.clicks;
+            e.button.state = r.type == EventType::MouseButtonDown ? SDL_PRESSED : SDL_RELEASED; e.button.x = r.x; e.button.y = r.y;
+            break;
+        case EventType::MouseWheel:
+            e.type = SDL_MOUSEWHEEL; e.wheel.windowID = r.windowId;
+            e.wheel.x = (Sint32)(r.wheelFlipped ? -r.wheelX : r.wheelX); e.wheel.y = (Sint32)(r.wheelFlipped ? -r.wheelY : r.wheelY);
+            e.wheel.direction = r.wheelFlipped ? SDL_MOUSEWHEEL_FLIPPED : SDL_MOUSEWHEEL_NORMAL;
+            break;
+        case EventType::DropFile:
+            e.type = SDL_DROPFILE; e.drop.windowID = r.windowId; e.drop.file = SDL_strdup(r.text.c_str());   // Translate frees it
+            if (!e.drop.file) return false;
+            break;
+        default: return false;
+        }
+        if (SDL_PushEvent(&e) == 1) return true;
+        if (e.type == SDL_DROPFILE) SDL_free(e.drop.file);
         return false;
     }
     void* GLProcAddress(const char* n) override { return SDL_GL_GetProcAddress(n); }
     void ReleaseCurrent() override { SDL_GL_MakeCurrent(nullptr, nullptr); }
+    GLCurrent CurrentGL() override {
+        GLCurrent c;
+        c.window = SDL_GL_GetCurrentWindow();
+        c.context = SDL_GL_GetCurrentContext();
+        return c;
+    }
+    bool RestoreGL(const GLCurrent& s) override {
+        return SDL_GL_MakeCurrent((SDL_Window*)s.window, (SDL_GLContext)s.context) == 0;
+    }
+    int TouchDeviceCount() override { return SDL_GetNumTouchDevices(); }
 
     void StartTextInput() override { SDL_StartTextInput(); }
     void StopTextInput() override { SDL_StopTextInput(); }
@@ -250,14 +354,66 @@ public:
         const Uint8* st = SDL_GetKeyboardState(nullptr);
         return st && (int)k > 0 && (int)k < SDL_NUM_SCANCODES && st[(int)k] != 0;
     }
+    uint32_t KeyboardFocusWindowId() override { SDL_Window* w = SDL_GetKeyboardFocus(); return w ? SDL_GetWindowID(w) : 0; }
+    uint32_t MouseFocusWindowId() override { SDL_Window* w = SDL_GetMouseFocus(); return w ? SDL_GetWindowID(w) : 0; }
+    void* NativeHandleFromId(uint32_t id) override { return id ? (void*)SDL_GetWindowFromID(id) : nullptr; }
     uint32_t MouseState(int* x, int* y) override { return SDL_GetMouseState(x, y); }
+    bool GlobalMouseState(int* x, int* y, uint32_t* buttons) override {
+        int gx = 0, gy = 0;
+        const Uint32 b = SDL_GetGlobalMouseState(&gx, &gy);
+        if (x) *x = gx;
+        if (y) *y = gy;
+        if (buttons) *buttons = b;   // SDL's button bits are the MouseMask bits (button 1 = bit 0)
+        return true;
+    }
+    bool SetNativeMessageHook(NativeMessageHook hook, void* user) override {
+#if defined(_WIN32)
+        g_msgHook = hook; g_msgHookUser = user;
+        SDL_SetWindowsMessageHook(hook ? &SdlBackend::MsgTrampoline : nullptr, nullptr);
+        return true;
+#else
+        (void)hook; (void)user;
+        return false;
+#endif
+    }
+    bool IsRelativeMouse() override { return SDL_GetRelativeMouseMode() == SDL_TRUE; }
     bool SetRelativeMouse(bool on) override { return SDL_SetRelativeMouseMode(on ? SDL_TRUE : SDL_FALSE) == 0; }
     void ShowCursor(bool s) override { SDL_ShowCursor(s ? SDL_ENABLE : SDL_DISABLE); }
     bool IsCursorShown() override { return SDL_ShowCursor(SDL_QUERY) != SDL_DISABLE; }
+    bool SetCursorShape(CursorShape shape) override {
+        static const SDL_SystemCursor kMap[] = {
+            SDL_SYSTEM_CURSOR_ARROW, SDL_SYSTEM_CURSOR_IBEAM, SDL_SYSTEM_CURSOR_SIZEALL, SDL_SYSTEM_CURSOR_SIZENS,
+            SDL_SYSTEM_CURSOR_SIZEWE, SDL_SYSTEM_CURSOR_SIZENESW, SDL_SYSTEM_CURSOR_SIZENWSE, SDL_SYSTEM_CURSOR_HAND,
+            SDL_SYSTEM_CURSOR_WAIT, SDL_SYSTEM_CURSOR_WAITARROW, SDL_SYSTEM_CURSOR_NO };
+        const int i = (int)shape;
+        if (i < 0 || i >= (int)(sizeof(kMap) / sizeof(kMap[0]))) return false;
+        if (!m_cursors[i]) m_cursors[i] = SDL_CreateSystemCursor(kMap[i]);
+        if (!m_cursors[i]) return false;
+        SDL_SetCursor(m_cursors[i]);
+        return true;
+    }
     uint32_t RelativeMouseState(int* dx, int* dy) override { return SDL_GetRelativeMouseState(dx, dy); }
     bool SupportsRelativeMouseState() override { return true; }
     uint32_t ModState() override { return ModsFromSdl((Uint16)SDL_GetModState()); }
     Key KeyForChar(char c) override { return (Key)SDL_GetScancodeFromKey((SDL_Keycode)(unsigned char)c); }
+    int DisplayCount() override { return SDL_GetNumVideoDisplays() > 0 ? SDL_GetNumVideoDisplays() : 0; }
+    bool DisplayAt(int i, DisplayInfo& o) override {
+        if (i < 0 || i >= SDL_GetNumVideoDisplays()) return false;
+        SDL_Rect b, u;
+        if (SDL_GetDisplayBounds(i, &b) != 0) return false;
+        if (SDL_GetDisplayUsableBounds(i, &u) != 0) u = b;
+        const char* nm = SDL_GetDisplayName(i);
+        float ddpi = 96.0f;
+        if (SDL_GetDisplayDPI(i, &ddpi, nullptr, nullptr) != 0 || ddpi < 48.0f || ddpi > 1000.0f) ddpi = 96.0f;
+        SDL_DisplayMode dm;
+        o.name = nm ? nm : "";
+        o.x = b.x; o.y = b.y; o.w = b.w; o.h = b.h;
+        o.ux = u.x; o.uy = u.y; o.uw = u.w; o.uh = u.h;
+        o.dpi = ddpi;
+        o.refreshHz = (SDL_GetCurrentDisplayMode(i, &dm) == 0 && dm.refresh_rate > 0) ? dm.refresh_rate : 0;
+        o.primary = (i == 0);   // SDL lists the primary display first
+        return true;
+    }
     bool SetPerMonitorDpiAware() override {
 #ifdef SDL_HINT_WINDOWS_DPI_AWARENESS   // SDL >= 2.24
         return SDL_SetHint(SDL_HINT_WINDOWS_DPI_AWARENESS, "permonitorv2") == SDL_TRUE;
@@ -344,6 +500,8 @@ public:
         return j ? std::unique_ptr<Gamepad>(new SdlGamepad(j)) : nullptr;
     }
 
+public:
+    static bool TranslateEvent(const SDL_Event& e, Event& r) { return Translate(e, r); }
 private:
     static bool Translate(const SDL_Event& e, Event& r) {
         r.timestampMs = e.common.timestamp;
@@ -383,9 +541,11 @@ private:
                    : e.type == SDL_FINGERMOTION ? EventType::FingerMotion : EventType::FingerUp;
             r.fingerId = (long long)e.tfinger.fingerId; r.fx = e.tfinger.x; r.fy = e.tfinger.y; return true;
         case SDL_DROPFILE:
-            r.type = EventType::DropFile; r.text = e.drop.file ? e.drop.file : "";
+            r.type = EventType::DropFile; r.windowId = e.drop.windowID; r.text = e.drop.file ? e.drop.file : "";
             if (e.drop.file) SDL_free(e.drop.file);
             return true;
+        case SDL_RENDER_TARGETS_RESET: r.type = EventType::RenderTargetsReset; return true;
+        case SDL_RENDER_DEVICE_RESET:  r.type = EventType::RenderDeviceReset; return true;
         case SDL_CONTROLLERDEVICEADDED:   r.type = EventType::GamepadAdded;   r.deviceId = e.cdevice.which; return true;
         case SDL_CONTROLLERDEVICEREMOVED: r.type = EventType::GamepadRemoved; r.deviceId = e.cdevice.which; return true;
         case SDL_JOYDEVICEADDED:   // a device SDL has no controller layout for: offered as a generic pad
@@ -402,12 +562,41 @@ private:
         default: return false;
         }
     }
+#if defined(_WIN32)
+    static inline NativeMessageHook g_msgHook = nullptr;
+    static inline void* g_msgHookUser = nullptr;
+    static void SDLCALL MsgTrampoline(void*, void* hwnd, unsigned msg, Uint64 wp, Sint64 lp) {
+        if (g_msgHook) g_msgHook(g_msgHookUser, hwnd, msg, (uint64_t)wp, (int64_t)lp);
+    }
+#endif
     Uint32 m_started = 0;
+    SDL_Event m_last;
+    bool m_reportUnmapped = false;
+    SDL_Cursor* m_cursors[11] = {};
 };
 
 } // namespace
 
 std::unique_ptr<Backend> CreateSdl2Backend() { return std::unique_ptr<Backend>(new SdlBackend()); }
+
+bool TranslateSdl2Event(const void* sdlEvent, Event& out) {
+    if (!sdlEvent) return false;
+    const SDL_Event& e = *(const SDL_Event*)sdlEvent;
+    switch (e.type) {   // only the kinds a UI feed needs; no side effects (a drop's string is left alone)
+    case SDL_QUIT: case SDL_WINDOWEVENT: case SDL_KEYDOWN: case SDL_KEYUP: case SDL_TEXTINPUT:
+    case SDL_MOUSEMOTION: case SDL_MOUSEBUTTONDOWN: case SDL_MOUSEBUTTONUP: case SDL_MOUSEWHEEL: {
+        Event r;
+        if (!SdlBackend::TranslateEvent(e, r)) return false;
+        out = std::move(r); return true;
+    }
+    default: return false;
+    }
+}
+
+std::unique_ptr<Window> WrapSdl2Window(void* sdlWindow) {
+    if (!sdlWindow) return nullptr;
+    return std::unique_ptr<Window>(new SdlWindow((SDL_Window*)sdlWindow, false));
+}
 
 } // namespace okay::platform
 #endif // OKAY_PLATFORM_HAVE_SDL2

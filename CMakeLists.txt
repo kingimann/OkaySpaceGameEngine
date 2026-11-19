@@ -84,6 +84,7 @@ option(OKAY_OWN_XML      "Read .xml (an Irrlicht scene or mesh, COLLADA, XGL or 
 option(OKAY_OWN_LXO      "Read .lxo (Modo objects) with our own LWO reader by default (Assimp, when built, stays the fallback; run-time env OKAY_OWN_LXO=0/1 and SetImportBackend override)" ON)
 option(OKAY_OWN_LWS      "Read .lws / .mot (LightWave scenes and motions) with our own LWS reader by default (Assimp, when built, stays the fallback; run-time env OKAY_OWN_LWS=0/1 and SetImportBackend override)" ON)
 option(OKAY_OWN_FBX       "Use our own FBX reader (okay::fbx) instead of ufbx by default (ufbx stays compiled in; run-time env OKAY_OWN_FBX=0/1 overrides)" ON)
+option(OKAY_BUILD_PLATFORM_SELFTEST "Build okay-platform-selftest: tries the own okay::platform backend (window, input, audio, pad, clipboard) and prints what worked. OFF by default" OFF)
 option(OKAY_BUILD_TOOLS    "Build developer tools (texture generator, ...)"    OFF)
 option(OKAY_BUILD_XBOX_UWP "EXPERIMENTAL, UNVERIFIED Xbox One Developer Mode (UWP) export: its tests, the editor entry and (on a UWP toolchain) the app. platform/xbox_uwp, docs/xbox_uwp.md" OFF)
 
@@ -335,6 +336,9 @@ if(WIN32 AND NOT OKAY_STATIC_SDL AND DEFINED SDL2_DIR)
 endif()
 
 # ---- Developer tools (opt-in) ----------------------------------------
+if(OKAY_BUILD_PLATFORM_SELFTEST AND NOT EMSCRIPTEN)
+    add_subdirectory(tools/platform_selftest)
+endif()
 if(OKAY_BUILD_TOOLS)
     add_subdirectory(tools)
 endif()

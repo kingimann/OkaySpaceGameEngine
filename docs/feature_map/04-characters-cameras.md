@@ -115,7 +115,7 @@ Pull request #554 ("Integrate owned animation and IK work", landed 2026-11-10) b
 - **What:** The over-the-shoulder orbit camera used by the third-person controller and the view toggle, and the simple chase camera for 2D and 3D scenes.
 - **Parts:**
   - 4.6.1 Shared orbit placement - `Components/PlayerCamera` - PlaceThirdPersonOrbit: pivot, aim blend, look smoothing, spring arm and landing shake in one function so controller and toggle agree
-  - 4.6.2 Spring arm and wall collision - `Components/ControllerFeel` - SpringArm sphere sweep against solid colliders (triggers ignored), snaps in, glides out
+  - 4.6.2 Spring arm and wall collision - `Components/CameraCollision` (moved out of ControllerFeel so the camera rigs share it) - SpringArm sphere sweep against solid colliders (triggers ignored), snaps in, glides out; the virtual-camera rig uses the same one
   - 4.6.3 Follow pivot, look smoothing, auto-recenter - `Components/ControllerFeel`, `Components/ThirdPersonController` - FollowPivot (head point, separate horizontal and vertical lag, snaps on teleports over 2 m), LookSmoother, autoRecenter with delay and speed
   - 4.6.4 Chase camera - `Components/CameraFollow` - eases toward a named target plus offset
 - **Code:** `Components/PlayerCamera`, `Components/CameraFollow`, `Components/ControllerFeel`, `Components/ThirdPersonController`
@@ -157,14 +157,17 @@ Pull request #554 ("Integrate owned animation and IK work", landed 2026-11-10) b
   - 4.8.2 Cinemachine brain - `Components/CinemachineBrain` - on the real camera: picks the live vcam by priority, eases pose and FOV over blendTime (0 = cut), ease in/out
   - 4.8.3 Dolly path and cart - `Components/DollyPath` - Catmull-Rom waypoints (open or looped), DollyCart rides it; Tracked Dolly vcam
   - 4.8.4 Camera stack - `Components/Camera`, `Scene/EnsureCamera` - Scene::CameraStack sorted by depth, ClearPlan (Skybox, SolidColor, DepthOnly, DontClear), depth decides the main camera (#570), EnsureSceneCamera guarantees one camera
-  - 4.8.5 Cutscene camera shots - `Components/SequencePlayer` (owned by 10.1) - the Sequence camera track drives the main camera and hands it back at the end
-- **Code:** `Components/VirtualCamera`, `Components/CinemachineBrain`, `Components/DollyPath`, `Components/Camera`, `Scene/EnsureCamera`
-- **API:** `VirtualCamera::priority`, `BindingMode`, `AddImpulse`, `CinemachineBrain::blendTime`, `LiveCamera()`, `DollyPath`, `DollyCart`, `Scene::CameraStack()`, `Camera::ClearPlan`
-- **Editor:** Inspector panels for Virtual Camera, Cinemachine Brain, Dolly Path, Dolly Cart; Add Component menu "Virtual Camera"
-- **Docs:** `docs/layers_tags_cameras.md` (Cameras), `docs/splines.md`, `docs/cutscenes.md`
-- **Tests:** `cinemachine`, `layers_tags_cameras`, `scene_cameras`, `camera_cine`
+  - 4.8.5 Cutscene camera shots - `Components/SequencePlayer` (owned by 10.1) - the Sequence camera track drives the main camera and hands it back at the end; the brain now steps aside while a sequence plays and blends back when it ends
+  - 4.8.6 Camera rig layer - `Components/VirtualCamera`, `Components/CameraMath` - Camera Rig styles (Follow, Orbit, Look At), spring damping (frame-rate independent, no overshoot), screen dead zone and soft zone, look ahead, target groups (frame several objects, step back to fit), wall collision (sphere sweep, triggers and chosen layers ignored), see-through blockers, a shot's own blend time and style
+  - 4.8.7 Blends and priority - `Components/CinemachineBrain` - Cut, Linear, Ease In and Out, Ease In, Ease Out and a custom curve; the shot being left keeps moving during a blend, an interrupted blend starts from the picture on screen (no pop), `ForceLive` cuts to a named shot until released
+  - 4.8.8 2D rigs - `Components/VirtualCamera`, `Components/CameraRoom` - flat 2D camera with zones, confine to the picture edges, Camera Room boxes the view is held in, sliding to the next room
+- **Code:** `Components/VirtualCamera`, `Components/CinemachineBrain`, `Components/CameraMath`, `Components/CameraCollision`, `Components/CameraRoom`, `Components/DollyPath`, `Components/Camera`, `Scene/EnsureCamera`
+- **API:** `VirtualCamera::priority`, `BindingMode`, `AddImpulse`, `CinemachineBrain::blendTime`, `LiveCamera()`, `DollyPath`, `DollyCart`, `Scene::CameraStack()`, `Camera::ClearPlan`, `VirtualCamera::ApplyStyle`, `DampingMode`, `groupTargets`, `CameraRoom`, `cam::BlendStyle`, `CinemachineBrain::ForceLive`; scripts `Camera.BlendTo`, `Camera.SetTarget`, `Camera.AddToGroup`, `Camera.RemoveFromGroup`
+- **Editor:** Inspector panels for Virtual Camera (Camera Rig, Framing, Group, 2D camera, Walls sections), Cinemachine Brain (blend style and curve), Camera Room, Dolly Path, Dolly Cart; Add Component "Camera Rig" and "Camera Room"; GameObject > Camera > Camera Rig: Follow / Orbit / Look At and Camera Room; Scene view gizmo (frustum, dead and soft zone, wall probe, group circle, room boxes); Camera Preview for a selected rig
+- **Docs:** `docs/camera_upgrade.md`, `docs/layers_tags_cameras.md` (Cameras), `docs/splines.md`, `docs/cutscenes.md`
+- **Tests:** `cinemachine`, `layers_tags_cameras`, `scene_cameras`, `camera_cine`, `camera_math`, `camera_rig`
 - **Status:** Works - cinemachine, scene_cameras and layers_tags_cameras tests exist; the depth rule for the main camera landed in #570
-- **Open:** the player and editor still draw only the main camera; looping their render path over `CameraStack()` with ClearPlan, viewport rect and culling mask is not done (per docs/layers_tags_cameras.md)
+- **Open:** the shot now really faces its Look At target (before the camera upgrade it aimed the opposite way: the vcam rotated +Z to the target but a camera looks down -Z); no dialogue hook exists, scripts call `Camera.BlendTo` from a dialogue event; the camera upgrade was checked headless only (`docs/camera_upgrade.md`); the player and editor still draw only the main camera; looping their render path over `CameraStack()` with ClearPlan, viewport rect and culling mask is not done (per docs/layers_tags_cameras.md)
 - **Related:** 4.10, 10.1, 2.7, 1.3
 - **Words:** virtual camera, vcam, Cinemachine, brain, priority, dolly, track, rail, Follow, LookAt, confiner, Dutch, camera stack, depth, main camera, shot
 - **Seen as:** camera cuts instead of blending; the wrong camera is live; two cameras fight for main; a scene has no camera and renders black; the camera leaves the level
@@ -198,11 +201,12 @@ Pull request #554 ("Integrate owned animation and IK work", landed 2026-11-10) b
   - 4.10.2 Shake and zoom - `Components/Camera` - Shake(strength) trauma squared noise with recovery, ZoomTo(target, seconds)
   - 4.10.3 Screen conversions - `Components/Camera` - WorldToScreen, WorldToViewportPoint, ScreenPointToRay, IsPointVisible
   - 4.10.4 Pixel-perfect 2D - `Components/Camera` - pixelPerfect and pixelsPerUnit snapping in RenderPosition
+  - 4.10.5 Shake presets, FOV kick and hit flash - `Components/Camera`, `Components/CameraMath` - Impact, Explosion, Footstep, Handheld from deterministic noise (several at once), KickFov, SetFovOffset for sprint or aim, HitPulse that rides on the scene vignette; all stopped by Reduce Motion
 - **Code:** `Components/Camera`
-- **API:** `Camera`, `Camera::Shake`, `ZoomTo`, `WorldToScreen`, `ScreenPointToRay`, `ViewMatrix`, `ProjectionMatrix`; scripts such as `look_at`, camera builtins; visual-script Camera Shake node
-- **Editor:** Camera inspector; GameObject > Camera > Camera
-- **Docs:** `docs/layers_tags_cameras.md`
-- **Tests:** `camera_cine`, `script_camera`, `scene_cameras`
+- **API:** `Camera`, `Camera::Shake`, `ShakePreset`, `AddShake`, `SetHandheld`, `KickFov`, `SetFovOffset`, `HitPulse`, `cam::CameraShaker`, `ZoomTo`, `WorldToScreen`, `ScreenPointToRay`, `ViewMatrix`, `ProjectionMatrix`; scripts such as `look_at`, camera builtins, `Camera.Shake("impact", 1)`, `Camera.FovKick`, `Camera.SetFovOffset`, `Camera.HitPulse`, `Camera.SetHandheld`; visual-script Camera Shake node and a node for every one of those builtins
+- **Editor:** Camera inspector (with Camera Effects buttons for Play); GameObject > Camera > Camera
+- **Docs:** `docs/camera_upgrade.md`, `docs/layers_tags_cameras.md`
+- **Tests:** `camera_cine`, `script_camera`, `scene_cameras`, `camera_math`, `camera_rig`
 - **Status:** Works - camera_cine checks projection and visibility maths; script_camera covers script control
 - **Open:** none recorded; GPU culling uses the camera frustum (2.8)
 - **Related:** 4.8, 2.1, 2.8, 13.4

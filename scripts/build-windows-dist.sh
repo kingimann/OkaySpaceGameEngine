@@ -180,6 +180,7 @@ fi
 # One folder per line, sorted, so two branches that add a folder do not fight over one long line.
 EXAMPLE_DIRS="
 behavior_trees
+camera
 cutscene
 fp_hand
 input

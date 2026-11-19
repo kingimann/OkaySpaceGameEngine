@@ -87,7 +87,41 @@ to the default first, then sets its own, so it is the same wherever it is applie
 ## Tests and numbers
 
 `tests/test_vehicle_drive.cpp` (suite `vehicle_drive`) and `tests/test_vehicle_world.cpp` (suite `vehicle_world`), headless and
-deterministic (the input is set with `SetInput`, not read from the keyboard). RESULTS_PLACEHOLDER
+deterministic (the input is set with `SetInput`, not read from the keyboard). Run on Linux, Release build, headless. 831 checks in `vehicle_drive` and 51 in `vehicle_world` pass, and the old
+`vehicle` (29) and `vehicle_seat` (266) suites still pass. What they check: every preset applies and round-trips through
+the `.okayvehicle` text and a scene file; an old scene stays on the older model; 0 to 100 km/h and top speed for five
+vehicles; the same drive at 30, 60 and 144 fps agrees (speed within 3 percent, position within 5 percent); braking
+distances on tarmac and on ice with and without ABS; all-wheel against rear-wheel on ice; automatic against manual gearbox;
+hold-brake-to-reverse and roll on release; steering lock shrinking with speed and D turning right; drift entry (slip angle
+over 15 degrees, flagged as drifting), exit (slip back under 6 degrees, speed kept) and a bus that slides less; a minute of
+wild input at speed stays finite and under 80 m/s, plus 0.0001 s, 0.5 s and 2 s frames; boost raises top speed and empties;
+a flipped car recovers after 2 s, or stays until Recover when auto flip is off; headlights switch; the shipped Driving World
+scene loads, a player walks to the Sedan, E seats them, W drives it, D steers right, E gets out. Numbers printed by the test
+(a 1.0 grip surface unless it says ice):
+
+```
+  Sports Car  0-100 km/h: 4.36 s, top speed after 40 s: 48.8 m/s (setting 48.0), gear 6
+  Sedan       0-100 km/h: 5.70 s, top speed after 40 s: 34.5 m/s (setting 34.0), gear 5
+  Muscle Car  0-100 km/h: 5.38 s, top speed after 40 s: 44.4 m/s (setting 44.0), gear 4
+  Pickup      0-100 km/h: 5.66 s, top speed after 40 s: 30.5 m/s (setting 30.0), gear 5
+  Bus         0-100 km/h: not reached s, top speed after 40 s: 20.3 m/s (setting 20.0), gear 5
+  frame rate: z 148.6 / 148.1 / 147.9   speed 49.33 / 49.32 / 49.32 (30 / 60 / 144 fps)
+  braking from 100 km/h on tarmac: 33.3 m. From 72 km/h on ice: ABS 66.6 m, no ABS 86.2 m
+  ice, 5 s flat out: rear-wheel 22.1 m, all-wheel 36.2 m
+  8 s flat out: automatic 34.5 m/s (gear 5), manual left in gear 1 9.7 m/s
+  full steering: turns 60 deg/s at 6 m/s, 21 deg/s at 30 m/s
+  drift: biggest slip angle 77 deg; after letting go: 0.0 deg, speed 24.6 m/s
+  boost: top speed 34.5 m/s without, 48.0 with a full tank held 15 s (tank left 0.00)
+```
+
+Read the numbers as the model's, not as real cars: the Sports Car (RWD, 48 m/s top) reaches 100 km/h in 4.4 s because
+the tyre limit (about 6.4 m/s^2 with its grip 1.15) rather than the engine is what holds it. The drift test slides to a
+77 degree slip angle, which is a big drift: whether that looks right is a feel question nobody has judged yet. Other suites
+re-run after the change and green: `save_coverage`, `property_registry` (every setting saves and loads alone), `templates`,
+`templates_work` (the Driving World template: get in, drive, get out), `menu_bar_model`, `hierarchy_context_model`,
+`scene_cameras`, `serialize`, `scene_serializer_audit`, `examples_work` (the example scene opens and plays), `vs_node_docs`,
+`vs_palette_categories`, `vs_script_coverage` (every `Vehicle.*` builtin runs as a node; the coverage graph and doc were regenerated).
+`duplicate_components` was not run to the end here (its compile was killed by the machine running out of memory twice).
 
 ## Not done, and unverified
 

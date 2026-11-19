@@ -20,7 +20,7 @@ using namespace okay;
 
 namespace {
 
-bool Finite(const Vec3& v) { return std::isfinite(v.x) && std::isfinite(v.y) && std::isfinite(v.z); }
+bool AllFinite(const Vec3& v) { return std::isfinite(v.x) && std::isfinite(v.y) && std::isfinite(v.z); }
 
 // A scene with one big Water. flat = no waves at all (waveHeight 0). depth 20 m.
 struct World {
@@ -30,7 +30,7 @@ struct World {
         scene.fixedTimeStep = 1.0f / 50.0f;
         GameObject* lake = scene.CreateGameObject("Lake");
         water = lake->AddComponent<Water>();
-        water->size = 200.0f; water->resolution = 8; water->depth = 20.0f;
+        water->size = 1000.0f; water->resolution = 8; water->depth = 20.0f;
         water->style = style;
         if (flat) water->waveHeight = 0.0f;
         else { water->waveHeight = 0.6f; water->waveLength = 14.0f; water->waveSteepness = 0.35f; water->waveSeed = 11; }
@@ -137,8 +137,8 @@ int main() {
         CHECK(std::isfinite(s.height));
         CHECK_NEAR(std::sqrt(s.normal.x * s.normal.x + s.normal.y * s.normal.y + s.normal.z * s.normal.z), 1.0, 1e-3);
         CHECK(s.floorY < s.height - 19.0f && s.floorY > s.height - 21.0f);   // depth 20
-        CHECK(!w.water->SurfaceAt({500, 0, 0}, s));                          // off the edge
-        CHECK(w.water->SurfaceAt({101, 0, 0}, s, 2.0f));                     // inside the margin
+        CHECK(!w.water->SurfaceAt({600, 0, 0}, s));                          // off the edge
+        CHECK(w.water->SurfaceAt({501, 0, 0}, s, 2.0f));                     // inside the margin
         // The drawn mesh is the same surface: every vertex lies on the height the physics asks for.
         auto* mr = w.water->gameObject->GetComponent<MeshRenderer>();
         double worst = 0.0;
@@ -180,7 +180,7 @@ int main() {
             w.Run(10.0f, 60.0f);
             CHECK_NEAR(YOf(c), expectY[i], 0.03);
             auto* rb = c->GetComponent<Rigidbody3D>();
-            CHECK(Finite(rb->velocity) && rb->velocity.Magnitude() < 0.05f);   // and it has come to rest
+            CHECK(AllFinite(rb->velocity) && rb->velocity.Magnitude() < 0.05f);   // and it has come to rest
             CHECK(c->transform->Up().y > 0.999f);                              // still upright
         }
         // A heavy crate sinks, and keeps going down (it does not bob up again).
@@ -192,7 +192,7 @@ int main() {
             for (int i = 0; i < 20; ++i) { w.Run(0.25f, 60.0f); if (YOf(c) > prev + 1e-3f) monotone = false; prev = YOf(c); }
             CHECK(monotone);
             CHECK(YOf(c) < -2.0f);
-            CHECK(Finite(c->GetComponent<Rigidbody3D>()->velocity));
+            CHECK(AllFinite(c->GetComponent<Rigidbody3D>()->velocity));
         }
         // Frame rate: the same scene at 30, 60 and 144 fps gives the same bobbing and the same rest height.
         {
@@ -219,7 +219,7 @@ int main() {
             const int frames = (int)(20.0f * fps);
             for (int i = 0; i < frames; ++i) {
                 w.scene.Update(1.0f / fps);
-                if (!Finite(rb->velocity) || !Finite(c->transform->Position())) { ok = false; break; }
+                if (!AllFinite(rb->velocity) || !AllFinite(c->transform->Position())) { ok = false; break; }
                 vmax = std::fmax(vmax, rb->velocity.Magnitude());
                 if (i > (int)(2.0f * fps)) ymax = std::fmax(ymax, YOf(c));
             }
@@ -228,20 +228,36 @@ int main() {
             CHECK(ymax < 1.5f);                                     // after landing it stays with the waves
             CHECK(rb->velocity.Magnitude() < 3.0f);
         }
-        // A very light body (mass 0.02) is pushed hard but stays calm: the push is capped.
+        // A very light body (mass 0.02): resting at its draft it stays calm; flung deep under it is pushed hard but the
+        // push is capped, so nothing is thrown out of the scene and nothing turns NaN (at the worst frame rate too).
         {
             World w;
-            GameObject* c = w.Crate({0, 0.0f, 0}, 0.02f, "Balloon");
+            GameObject* c = w.Crate({0, 0.48f, 0}, 0.02f, "Balloon");
+            auto* rb = c->GetComponent<Rigidbody3D>();
             float vmax = 0.0f; bool ok = true;
             for (int i = 0; i < 600; ++i) {
                 w.scene.Update(1.0f / 30.0f);
-                auto* rb = c->GetComponent<Rigidbody3D>();
-                if (!Finite(rb->velocity)) { ok = false; break; }
+                if (!AllFinite(rb->velocity)) { ok = false; break; }
                 vmax = std::fmax(vmax, rb->velocity.Magnitude());
             }
             CHECK(ok);
-            CHECK(vmax < 8.0f);
-            CHECK_NEAR(YOf(c), 0.48f, 0.08);   // draft 0.02
+            CHECK(vmax < 1.0f);
+            CHECK_NEAR(YOf(c), 0.48f, 0.05);   // draft 0.02
+            World d;
+            GameObject* e = d.Crate({0, -1.0f, 0}, 0.02f, "Balloon2");
+            auto* rb2 = e->GetComponent<Rigidbody3D>();
+            float v2 = 0.0f, y2 = -1e9f; bool ok2 = true;
+            for (int i = 0; i < 1200; ++i) {
+                d.scene.Update(1.0f / 30.0f);
+                if (!AllFinite(rb2->velocity)) { ok2 = false; break; }
+                v2 = std::fmax(v2, rb2->velocity.Magnitude());
+                y2 = std::fmax(y2, YOf(e));
+            }
+            CHECK(ok2);
+            // The push is capped at 12 g, so from 1 m down it cannot go faster than sqrt(2 * (120 - 9.81) * 1 m) = 14.9 m/s
+            // and so cannot rise above about 11 m: a cork can pop out of the water, but nothing blows up.
+            CHECK(v2 < 15.5f);
+            CHECK(y2 < 12.0f);
         }
         // A box tipped 20 degrees in still water rights itself (the points on the low side go deeper).
         {
@@ -286,7 +302,11 @@ int main() {
             auto* bu = c->GetComponent<Buoyancy>();
             bu->SetPointsText("0.5,0,0.5;-0.5,0,0.5;0.5,0,-0.5;-0.5,0,-0.5; nonsense ;1,2");
             CHECK(bu->points.size() == 4);
+            bu->SetPointsText("0.5,0,0.5;-0.5,0,0.5;0.5,0,-0.5;-0.5,0,-0.5");
             CHECK(bu->PointsText() == "0.5,0,0.5;-0.5,0,0.5;0.5,0,-0.5;-0.5,0,-0.5");
+            bu->points.push_back({0, 0, 0});   // changed from code: the text follows
+            CHECK(bu->PointsText() == "0.5,0,0.5;-0.5,0,0.5;0.5,0,-0.5;-0.5,0,-0.5;0,0,0");
+            bu->points.pop_back();
             std::vector<Vec3> pts; float vol = 0, h = 0;
             bu->WorldPoints(pts, vol, h);
             CHECK(pts.size() == 4);
@@ -306,6 +326,83 @@ int main() {
         }
     }
 
+    // ---------------------------------------------------------------- bouncing at the surface (owner: "why do things start bouncing on the water")
+    {
+        // Trace the height of a 1 m crate dropped from 3 m. A "bounce" is a rise of at least 5 cm after the splash.
+        struct Trace { std::vector<float> y; float t0 = 0; };
+        auto bounces = [](const std::vector<float>& y, int from) {
+            // local minima followed by a rise of >= 0.05 m, counted after the first minimum (the splash)
+            int n = 0; float lowest = y[from]; bool rising = false, started = false; float lastMin = y[from];
+            for (size_t i = (size_t)from + 1; i < y.size(); ++i) {
+                if (y[i] < y[i - 1]) { if (rising && y[i - 1] - lastMin >= 0.05f && started) ++n; rising = false; lastMin = y[i]; started = true; }
+                else rising = true;
+                lowest = std::fmin(lowest, y[i]);
+            }
+            return n;
+        };
+        auto runCrate = [&](bool autoBuoy, float mass, float waveH, float fps, float& range5, int& bnc, float& meanY) {
+            World w(waveH <= 0.0f);
+            if (waveH > 0.0f) w.water->waveHeight = waveH;
+            w.water->autoBuoyancy = autoBuoy;
+            w.water->Apply();
+            GameObject* o = w.scene.CreateGameObject("Plain Crate");   // no Buoyancy: only the Water floats it
+            o->transform->localPosition = {0, 3.0f, 0};
+            o->AddComponent<BoxCollider3D>()->size = {1, 1, 1};
+            auto* rb = o->AddComponent<Rigidbody3D>(); rb->mass = mass; rb->allowSleep = false;
+            std::vector<float> y; float lo = 1e9f, hi = -1e9f, sum = 0; int cnt = 0;
+            const int frames = (int)(10.0f * fps);
+            for (int i = 0; i < frames; ++i) {
+                w.scene.Update(1.0f / fps);
+                const float t = (i + 1) / fps;
+                y.push_back(YOf(o));
+                if (t >= 5.0f) { lo = std::fmin(lo, y.back()); hi = std::fmax(hi, y.back()); sum += y.back(); ++cnt; }
+            }
+            range5 = hi - lo; meanY = sum / (float)cnt;
+            bnc = bounces(y, (int)(0.7f * fps));   // from the first contact on (a 3 m drop lands at about 0.7 s)
+        };
+        for (float mass : {0.5f, 0.9f}) {
+            const float draft = mass;                 // density 1: draft = mass
+            for (float fps : {30.0f, 60.0f, 144.0f}) {
+                float rOld, rNew, mOld, mNew; int bOld, bNew;
+                runCrate(false, mass, 0.0f, fps, rOld, bOld, mOld);
+                runCrate(true, mass, 0.0f, fps, rNew, bNew, mNew);
+                std::printf("  bounce mass %.1f fps %3.0f  OLD: bounces %d, motion after 5 s %.4f m, rest y %.3f   NEW: bounces %d, motion %.4f m, rest y %.3f\n",
+                            mass, fps, bOld, rOld, mOld, bNew, rNew, mNew);
+                CHECK(bNew <= 2);
+                CHECK(rNew < 0.009f);                       // under 5% of the wave amplitude (0.175 m at height 0.35)
+                CHECK_NEAR(mNew, 0.5f - draft, 0.03);       // the right draft
+            }
+        }
+        // On waves (height 0.35 and 1.0): it follows the water, does not hop, and sits at the right draft on average.
+        for (float waveH : {0.35f, 1.0f}) {
+            for (float fps : {30.0f, 144.0f}) {
+                float r, m; int b;
+                runCrate(true, 0.5f, waveH, fps, r, b, m);
+                std::printf("  waves %.2f fps %3.0f  NEW: bounces after splash %d, motion %.3f m (wave amplitude %.3f), mean y %.3f\n", waveH, fps, b, r, waveH * 0.5f, m);
+                CHECK(r < waveH * 1.3f);                     // never moves more than the waves do
+                CHECK_NEAR(m, 0.0f, 0.12 + waveH * 0.1);
+            }
+        }
+        // A bouncy ball (restitution 1) does not bounce off the water: Water has no collider, so it just goes in.
+        {
+            World w;
+            GameObject* o = w.scene.CreateGameObject("Ball");
+            o->transform->localPosition = {0, 3.0f, 0};
+            o->AddComponent<SphereCollider3D>()->radius = 0.5f;
+            auto* rb = o->AddComponent<Rigidbody3D>(); rb->mass = 0.45f; rb->bounciness = 1.0f; rb->allowSleep = false;
+            float lowest = 1e9f, rebound = 0.0f; bool landed = false;
+            for (int i = 0; i < 6 * 60; ++i) {
+                w.scene.Update(1.0f / 60.0f);
+                const float y = YOf(o);
+                if (y < lowest) lowest = y;
+                else if (lowest < 0.5f) { landed = true; rebound = std::fmax(rebound, y - lowest); }
+            }
+            std::printf("  ball restitution 1: lowest %.3f m, highest rise after that %.3f m\n", lowest, rebound);
+            CHECK(landed);
+            CHECK(rebound < 0.5f);
+        }
+    }
+
     // ---------------------------------------------------------------- (3) the boat
     {
         // Afloat and level with no input.
@@ -318,7 +415,7 @@ int main() {
             CHECK(YOf(boat) > -0.3f && YOf(boat) < 0.3f);
             CHECK(boat->transform->Up().y > 0.995f);
             CHECK(bu->InWater());
-            CHECK(Finite(boat->GetComponent<Rigidbody3D>()->velocity));
+            CHECK(AllFinite(boat->GetComponent<Rigidbody3D>()->velocity));
         }
         // Throttle: full ahead reaches the top speed. Half throttle about half of it. Let go and it coasts down.
         {
@@ -419,7 +516,7 @@ int main() {
                 bc->throttleInput = std::sin(t * 0.7f) > -0.3f ? 1.0f : -1.0f;
                 bc->steerInput = std::sin(t * 1.3f);
                 w.scene.Update(1.0f / fps);
-                if (!Finite(rb->velocity) || !Finite(boat->transform->Position()) || !Finite(rb->angularVelocity)) { ok = false; break; }
+                if (!AllFinite(rb->velocity) || !AllFinite(boat->transform->Position()) || !AllFinite(rb->angularVelocity)) { ok = false; break; }
                 vmax = std::fmax(vmax, rb->velocity.Magnitude());
                 upMin = std::fmin(upMin, boat->transform->Up().y);
                 ymin = std::fmin(ymin, YOf(boat)); ymax = std::fmax(ymax, YOf(boat));
@@ -557,7 +654,13 @@ int main() {
         std::ifstream in(path);
         std::stringstream ss; ss << in.rdbuf();
         CHECK(in.good() || !ss.str().empty());
-        CHECK(ss.str() == text);
+        // Object ids are made fresh every time, so the lines that hold them are left out of the comparison.
+        auto noGuids = [](const std::string& t) {
+            std::string out, line; std::istringstream is(t);
+            while (std::getline(is, line)) if (line.rfind("  guid ", 0) != 0) out += line + "\n";
+            return out;
+        };
+        CHECK(noGuids(ss.str()) == noGuids(text));
 
         // Open the file as a person would, press Play for 12 seconds: crates float, the stone sinks, the boat floats and drives.
         Scene s("play");
@@ -575,9 +678,9 @@ int main() {
         CHECK(YOf(boat) > -0.5f && YOf(boat) < 0.5f);
         auto* bc = boat->GetComponent<BoatController>();
         bc->isPlayer = false; bc->throttleInput = 1.0f;
-        for (int i = 0; i < 8 * 60; ++i) s.Update(1.0f / 60.0f);
+        for (int i = 0; i < 5 * 60; ++i) s.Update(1.0f / 60.0f);   // 5 s ahead is about 45 m: still on the lake
         CHECK(bc->Speed() > 6.0f);
-        CHECK(Finite(boat->transform->Position()));
+        CHECK(AllFinite(boat->transform->Position()));
 
         // The menu's boat: into an empty scene it brings its own lake and floats at once.
         Scene m("menu");

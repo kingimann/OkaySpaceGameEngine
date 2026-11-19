@@ -21,7 +21,7 @@ and the branches `claude2/water-vehicle-fixed-step`, `claude2/vehicle-seat`, `cl
 | Effects | `ParticleSystem` (`Emit(n)`, world space), `TrailRenderer` (flat ribbons) | no water effects | Boat wake (two foam trails) and bow splash (spray) built from those, plus a splash spray from Buoyancy |
 | Scene file | hand-written chain plus `ComponentSerializerRegistry` | | New records `waterwaves`, `buoyancy`, `boat` through the registry; old files load unchanged |
 | Example | `examples/vehicle/` (car) | no water example | `examples/boat/boat_lake.okayscene` (`Templates::BoatLake`) and **GameObject > Vehicles > Boat** |
-| Fixed step for Water's own prop float | branch `claude2/water-vehicle-fixed-step` (unmerged, Claude 2) moves `Water::BuoyBodies` to `FixedUpdate` | | Not duplicated here. The new Buoyancy component already runs in `FixedUpdate`. When that branch merges, `Water.hpp` will need a small conflict fix (both edit the file) |
+| Fixed step for Water's own prop float | branch `claude2/water-vehicle-fixed-step` (unmerged, Claude 2) moves `Water::BuoyBodies` to `FixedUpdate` | | Superseded for floating: plain props now get a Buoyancy that runs in `FixedUpdate` (see the section above). When that branch merges, `Water.hpp` needs a conflict fix (both edit `BuoyBodies`); keep this change's version
 
 ## What was written, and from what (rule 19a)
 
@@ -36,6 +36,43 @@ Every new file was written by us from general knowledge, not copied from or mode
 * `engine/include/okay/Components/BoatController.hpp`: a small design of our own: a cruise-style engine push, a rudder that
   needs flowing water, control scaled by how much of the hull is in the water.
 * `Templates::AddBoat`, `Templates::BoatLake`: our own block models.
+
+## Why things bounced on the water, and the fix
+
+Owner question: "why do things start bouncing on the water". Cause, found in `Water::BuoyBodies` (the old float) and shown by
+the `boat` test (it runs the old code with `Water.autoBuoyancy` off, then the new code):
+
+1. It ran in `Update` with the frame time, but physics runs in fixed steps. The push it added per frame was applied once
+   per step, so the same scene floated at a different height at 30, 60 and 144 fps.
+2. One force at the box centre, from the water height at one column; no tilt, no slope.
+3. The push switched off hard (`submerged <= 0.0001`), and the drag only worked while under water and was one number, so at the
+   surface gravity and the push took turns.
+4. Weak vertical damping, so the energy never left.
+
+Measured (1 m crate dropped from 3 m onto flat water, density 1; "motion" = how far it still moves between 5 s and 10 s):
+
+| Crate mass | fps | OLD bounces / motion / rest height | NEW bounces / motion / rest height |
+|---|---|---|---|
+| 0.5 (right answer 0.00) | 30 | 2 / 0.146 m / -0.324 | 1 / 0.0000 m / 0.000 |
+| 0.5 | 60 | 3 / 0.020 m / 0.084 | 1 / 0.0000 m / 0.000 |
+| 0.5 | 144 | 4 / 0.012 m / 0.326 | 1 / 0.0000 m / 0.000 |
+| 0.9 (right answer -0.40) | 30 | 0 / 6.5 m / -11.3 (it sank) | 1 / 0.0000 m / -0.400 |
+| 0.9 | 60 | 1 / 0.003 m / -0.247 | 1 / 0.0000 m / -0.400 |
+| 0.9 | 144 | 2 / 0.002 m / 0.188 | 1 / 0.0000 m / -0.400 |
+
+On waves (Classic style, height 0.35 and 1.0) the crate follows the water at both 30 and 144 fps (mean height 0.04 and 0.10)
+and never moves more than the waves do. A ball with bounciness 1 dropped from 3 m goes in and rises 0.25 m at most (Water has
+no collider, so it cannot be bounced off).
+
+The fix is one system: a plain prop that touches a Water at Play gets a Buoyancy (not saved; `Water.autoBuoyancy`, on by default;
+off keeps the old single-force code only to compare). So old scenes keep working with the same fields (`depth`, `fluidDensity`,
+`linearDrag`), but now: fixed step, several points, a push that rises smoothly with depth (no on/off switch), up and down
+damping against the water's own velocity (a wave lifting the crate does not fling it) that is at full strength once a quarter of
+the hull is wet, angular damping, a cap on the push for very light bodies, and balls and cylinders use their real volume (pi/6, pi/4
+of the box). `SwimVertical` (the swimmer) is not touched.
+
+Honest limits: a body only a little heavier or lighter than water (mass 0.9) sinks deep after a hard drop and rises slowly,
+as it would in real water; the test drops it from 3 m and it is at rest by 5 s because the entry is damped hard.
 
 ## The water surface
 

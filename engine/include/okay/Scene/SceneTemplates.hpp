@@ -1079,7 +1079,7 @@ inline void DrivingWorld(Scene& scene) {
         if (tag[0]) o->SetTag(tag);
         return o;
     };
-    slab("Ground", {0, -0.5f, 0}, {500, 1, 500}, rgb(84, 128, 70), true);
+    slab("Ground", {0, -0.5f, 0}, {300, 1, 300}, rgb(84, 128, 70), true);
     // Roads: a 3 x 3 grid, 12 m wide, look-only slabs on the ground.
     for (int i = -1; i <= 1; ++i) {
         slab("Road (across)", {0, 0.01f, i * 70.0f}, {300, 0.04f, 12}, rgb(58, 60, 66), false);
@@ -1107,11 +1107,11 @@ inline void DrivingWorld(Scene& scene) {
         o->AddComponent<BoxCollider3D>()->size = {1, 1, 1};
         o->AddComponent<Rigidbody3D>()->bodyType = Rigidbody3D::BodyType::Static;
     }
-    // Parked vehicles, one of each kind, side by side along the road, facing +Z.
+    // Parked vehicles, one of each kind, side by side along the east-west road, facing +X.
     const char* kinds[] = {"Sedan", "Sports Car", "Muscle Car", "Pickup", "Buggy", "Bus", "Heavy Truck", "Rally Car", "Drift Car"};
     const Color paints[] = {rgb(205, 60, 55), rgb(240, 200, 40), rgb(40, 90, 200), rgb(90, 140, 90), rgb(230, 130, 40), rgb(230, 230, 235), rgb(120, 60, 150), rgb(40, 170, 180), rgb(30, 30, 34)};
-    for (int i = 0; i < 9; ++i) VehicleBuilder::Make(scene, kinds[i], {-30.0f + 7.5f * (float)i, 0.0f, -20.0f}, 0.0f, paints[i], true, false);
-    AddThirdPersonPlayer(scene, {-32.5f, 1.0f, -26.0f});    // standing next to the first car
+    for (int i = 0; i < 9; ++i) VehicleBuilder::Make(scene, kinds[i], {-48.0f + 11.0f * (float)i, 0.0f, -3.5f}, 90.0f, paints[i], true, false);
+    AddThirdPersonPlayer(scene, {-48.0f, 1.0f, -0.8f});    // standing at the first car's driver door
     // A speedometer in the corner: the UI kit's Text Bind reads the numbers the driven vehicle publishes.
     GameObject* hud = scene.CreateGameObject("Speedometer");
     auto* htr = hud->AddComponent<TextRenderer>();

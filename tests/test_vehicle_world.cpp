@@ -53,13 +53,14 @@ int main() {
             press('e');
             CHECK(seat->Occupant() == player);
             run({}, 30);
-            const float z0 = car->transform->Position().z;
+            const Vec3 p0 = car->transform->Position(); const Vec3 fwd0 = car->transform->Forward();
             run({'w'}, 180);
             const float speed = v->Speed();
-            std::printf("  Driving World: Sedan after 3 s of W: %.1f m/s, moved %.1f m, gear %d\n", speed, car->transform->Position().z - z0, v->Gear());
-            CHECK(speed > 5.0f); CHECK(std::isfinite(speed)); CHECK(car->transform->Position().z > z0 + 5.0f);
+            std::printf("  Driving World: Sedan after 3 s of W: %.1f m/s, moved %.1f m, gear %d\n", speed, Vec3::Dot(car->transform->Position() - p0, fwd0), v->Gear());
+            CHECK(speed > 5.0f); CHECK(std::isfinite(speed)); CHECK(Vec3::Dot(car->transform->Position() - p0, fwd0) > 5.0f);
             CHECK(v->Gear() >= 2);
-            run({'w', 'd'}, 60); CHECK(car->transform->Forward().x < -0.05f);   // D turns right (towards -X when facing +Z)
+            run({'w', 'd'}, 60); CHECK(Vec3::Dot(car->transform->Forward(), fwd0) < 0.99f);   // D turns right: the heading changes
+            CHECK(car->transform->Forward().z < -0.05f);                       // facing +X, right is -Z
             run({'s'}, 240);                                                   // brake, then reverse is allowed
             CHECK(v->Speed() < 3.0f);
             run({}, 120);

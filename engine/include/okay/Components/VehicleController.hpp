@@ -342,8 +342,15 @@ private:
         m_surfaceCheckT -= dt;
         auto* rb = gameObject ? gameObject->GetComponent<Rigidbody3D>() : nullptr;
         Vec3 vel = rb ? rb->velocity : m_kinematicVel;
+        // Ground friction in the physics step nibbles the speed we set last frame. Keep our own speed unless something
+        // really changed it (a wall, a hit, a script or a push bigger than that).
+        if (m_haveCmd && rb) {
+            const float dx = vel.x - m_cmdX, dz = vel.z - m_cmdZ, thr = 0.4f + 10.0f * dt;
+            if (dx * dx + dz * dz < thr * thr) { vel.x = m_cmdX; vel.z = m_cmdZ; }
+        }
         m_vx = vel.x; m_vz = vel.z;
 
+        m_unmanned = unmanned;
         DriveInput in = unmanned ? DriveInput{} : ReadInput(dt);
         if (unmanned) in.brake = 1.0f;                        // nobody at the wheel: brakes on
         // Shape the raw inputs (smoothing, sensitivity, dead zone, invert).
@@ -415,7 +422,7 @@ private:
 
         // Commit.
         AnimateWheels(dt, m_speed, Mathf::Clamp(m_wheelAngle / std::max(1.0f, maxSteerAngle), -1.0f, 1.0f));
-        if (rb) { rb->velocity.x = m_vx; rb->velocity.z = m_vz; }
+        if (rb) { rb->velocity.x = m_vx; rb->velocity.z = m_vz; m_cmdX = m_vx; m_cmdZ = m_vz; m_haveCmd = true; }
         else {
             m_kinematicVel = {m_vx, 0.0f, m_vz};
             transform->Translate(Vec3{m_vx, 0.0f, m_vz} * dt);
@@ -479,6 +486,7 @@ private:
             else push = in.throttle;
             braking = std::max(braking, in.brake);
         }
+        if (m_unmanned) { push = 0.0f; braking = 1.0f; rev = false; }   // nobody at the wheel: brake to a stop, never reverse away
         m_reversing = rev;
         if (m_shiftT > 0.0f) m_shiftT -= h;
 
@@ -648,7 +656,7 @@ public:
     }
 private:
 
-    DriveInput m_in; bool m_scripted = false;
+    DriveInput m_in; bool m_scripted = false, m_unmanned = false, m_haveCmd = false; float m_cmdX = 0, m_cmdZ = 0;
     bool  m_init = false, m_horn = false, m_lights = false, m_lookBack = false, m_reversing = false, m_drifting = false, m_flipped = false;
     float m_vx = 0, m_vz = 0, m_rpm = 900, m_shiftT = 0, m_boostLeft = 1, m_wheelAngle = 0, m_slip = 0, m_yawRate = 0, m_aLong = 0;
     float m_thrS = 0, m_brkS = 0, m_steerS = 0, m_flipT = 0, m_airPitch = 0, m_airRoll = 0, m_shake = 0, m_shakeT = 0;

@@ -17,9 +17,16 @@ int main() {
     CHECK(AvailableScriptLanguages().size() == 2);   // okayscript, lua
     CHECK(CreateScriptVM("lua") != nullptr);
     CHECK(RemovedScriptLanguageMessage("lua").empty());
+    // "csharp" is a language again (hosted .NET, rule 24c). With OKAY_WITH_CSHARP off its VM exists but says so.
     for (const char* lang : {"csharp", "cs"}) {
-        CHECK(CreateScriptVM(lang) == nullptr);
-        CHECK(RemovedScriptLanguageMessage(lang).find("no longer supported") != std::string::npos);
+        auto vm = CreateScriptVM(lang);
+        CHECK(vm != nullptr);
+        CHECK(RemovedScriptLanguageMessage(lang).empty());
+#ifndef OKAY_WITH_CSHARP
+        std::string e;
+        if (vm) CHECK(!vm->Load("public class S : Behaviour { }", &e));
+        CHECK(e.find("C# is not enabled in this build") != std::string::npos);
+#endif
     }
     CHECK(RemovedScriptLanguageMessage("okayscript").empty());
     CHECK(RemovedScriptLanguageMessage("nonsense").empty());
@@ -58,11 +65,11 @@ int main() {
     if (lb) {
         CHECK(lb->Language() == "csharp");
         std::string e;
-        CHECK(!lb->LoadSource(lb->Source(), &e));
-        CHECK(e.find("no longer supported") != std::string::npos);
+        CHECK(!lb->LoadSource(lb->Source(), &e));       // this old script has no Behaviour class (and C# may be off)
+        CHECK(!e.empty());
     }
     bool sawMsg = false;
-    for (const auto& m : logged) if (m.find("no longer supported") != std::string::npos) sawMsg = true;
+    for (const auto& m : logged) if (!m.empty()) sawMsg = true;
     CHECK(sawMsg);   // the Console shows it too, not just the return value
 
     // Running the scene does nothing and does not crash.

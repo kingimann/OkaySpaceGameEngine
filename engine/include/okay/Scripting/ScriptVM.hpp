@@ -123,7 +123,7 @@ std::vector<std::string> AvailableScriptLanguages();
 /// Create a VM for the given language, or nullptr if unsupported in this build.
 std::unique_ptr<IScriptVM> CreateScriptVM(const std::string& language);
 
-/// Old scenes and projects may still name the removed third-party backends
+/// Kept for old callers: no language name is "removed" now (empty for every name). Was: old scenes naming the removed third-party backends
 /// ("lua", "csharp"/"cs"). Returns a clear "no longer supported" message for those
 /// language names, or an empty string for any other name. Loading such a script
 /// fails with this message instead of failing silently.

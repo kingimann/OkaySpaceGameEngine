@@ -2069,6 +2069,7 @@ void WriteComponentRecords(std::ostream& out, GameObject* go) {
             << " " << v->handbrakeGrip << " " << v->groundCheckDistance
             << " " << (v->followCamera ? 1 : 0) << " " << v->camDistance << " " << v->camHeight
             << " " << v->camLerp << " " << (int)(unsigned char)v->handbrakeKey << "\n";
+        if (v->openWorld) out << "  vehicletune " << v->ToLine() << "\n";   // the open-world settings that differ from the defaults
         if (v->suspension)
             out << "  vehiclesusp 1 " << v->rideHeight << " " << v->springStrength << " "
                 << v->springDamping << " " << v->suspensionTravel << " " << v->wheelBase << " "
@@ -5943,6 +5944,10 @@ static bool ParseStep(Scene& scene, ParseSession& S, bool clear,
                     int fc = 0; in >> fc; v->followCamera = (fc != 0);
                     in >> v->camDistance >> v->camHeight >> v->camLerp;
                     int hk = 32; in >> hk; v->handbrakeKey = (char)hk;
+                } else if (field == "vehicletune") {
+                    auto* v = LastOf(go->GetComponents<VehicleController>());
+                    std::string rest; std::getline(in, rest);
+                    if (v) v->FromLine(rest);
                 } else if (field == "vehiclesusp") {
                     auto* v = LastOf(go->GetComponents<VehicleController>());
                     int on = 0; in >> on;

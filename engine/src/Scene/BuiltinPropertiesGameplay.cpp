@@ -657,18 +657,33 @@ void RegisterPlatformer25DController() {
 
 // ---- Vehicles, projectiles and spawners ------------------------------------
 
+// The open-world tuning settings come from one table (VehicleTuning.hpp): the same rows the presets, the scene file and
+// SetSetting use. Grouped so the Inspector shows Simple first, then Engine, Drivetrain, Steering and so on.
+static void AddVehicleTuningRows(PropertyBuilder<VehicleController>& b) {
+    for (const VehicleTuning::Desc& d : VehicleTuning::Table()) {
+        switch (d.kind) {
+            case VehicleTuning::KFloat:
+                b.AddFloat(d.name, static_cast<float VehicleController::*>(d.f)).Range(d.lo, d.hi, d.step); break;
+            case VehicleTuning::KInt:
+                b.AddInt(d.name, static_cast<int VehicleController::*>(d.i)).Range(d.lo, d.hi, 1); break;
+            case VehicleTuning::KBool:
+                b.AddBool(d.name, static_cast<bool VehicleController::*>(d.b)); break;
+            case VehicleTuning::KEnum: {
+                std::vector<std::string> opts; std::string cur;
+                for (const char* c = d.options; ; ++c) { if (*c == '|' || !*c) { opts.push_back(cur); cur.clear(); if (!*c) break; } else cur += *c; }
+                b.AddEnum(d.name, static_cast<int VehicleController::*>(d.i), opts); break; }
+            case VehicleTuning::KKey:
+                b.AddKey(d.name, static_cast<char VehicleController::*>(d.k)); break;
+        }
+        b.Group(d.group).Tooltip(d.tip);
+    }
+}
+
 // VehicleController
 void RegisterVehicleController() {
     PropertyBuilder<VehicleController> b("VehicleController", "vehicle", "Vehicles");
-    b.AddFloat("acceleration", &VehicleController::acceleration).Range(0, kBig, 1).Tooltip("How quickly it reaches top speed (units/s^2)")
-     .AddFloat("maxSpeed", &VehicleController::maxSpeed).Range(0, 10000, 0.1).Tooltip("Forward top speed (units/s)")
-     .AddFloat("reverseSpeed", &VehicleController::reverseSpeed).Range(0, 10000, 0.1).Tooltip("Top reverse speed")
-     .AddFloat("brakeForce", &VehicleController::brakeForce).Range(0, kBig, 0.1).Tooltip("Deceleration when braking (units/s^2)")
-     .AddFloat("drag", &VehicleController::drag).Range(0, kBig, 0.1).Tooltip("Rolling resistance while coasting (no throttle)")
-     .AddFloat("turnSpeed", &VehicleController::turnSpeed).Range(0, 36000, 1).Tooltip("Steering rate at speed (degrees/s)")
-     .AddFloat("grip", &VehicleController::grip).Range(0, 1000, 0.01).Tooltip("How fast sideways slide is killed (higher = sticky)")
-     .AddFloat("handbrakeGrip", &VehicleController::handbrakeGrip).Range(0, 1000, 0.01).Tooltip("Grip while the handbrake is held (low = drifty)")
-     .AddFloat("groundCheckDistance", &VehicleController::groundCheckDistance).Range(0, kBig, 0.05).Tooltip("Down-ray length for \"on the ground\"")
+    AddVehicleTuningRows(b);
+    b.AddFloat("groundCheckDistance", &VehicleController::groundCheckDistance).Range(0, kBig, 0.05).Tooltip("Down-ray length for \"on the ground\"")
      .Section("Per-wheel raycast suspension")
      .AddBool("suspension", &VehicleController::suspension).Tooltip("Enable spring suspension + body tilt")
      .AddFloat("rideHeight", &VehicleController::rideHeight).Range(0, kBig, 0.05).Tooltip("Chassis height the spring rests at (units)")

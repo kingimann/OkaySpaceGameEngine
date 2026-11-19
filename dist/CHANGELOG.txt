@@ -1,5 +1,19 @@
 OkaySpace Game Engine — Changelog
 
+v2.891.0
+  Wind, a bigger Build Settings window, upgrade fixes
+  - New Wind: add a Wind Zone and objects with Wind Sway or Wind Drag
+    move with it. Particles can be pushed by wind too.
+  - Build Settings has been rebuilt. Search for any setting, see a blue dot
+    on pages you changed, reset a page, save and load build profiles, and
+    read a "What will happen" summary with Fix buttons. Many new settings
+    (game speed, volume, language, log detail, files left out of the build,
+    and more) are really used by the game.
+  - Fixed: after you upgraded a project, the launcher kept saying it was
+    older. It now updates within a second, and Open picks the right editor.
+  - Fixed: File > Project Upgrade could upgrade the wrong project, and a
+    build profile name with a slash or equals sign came back changed.
+
 v2.890.0
   Boats and water, clearer Visual Script blocks, Xbox editor lag fix
   - New Boat: GameObject > Vehicles > Boat makes a boat you can drive on

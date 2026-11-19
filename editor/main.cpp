@@ -29,6 +29,7 @@
 #include "NavigationWindow.hpp"        // the Navigation window (navmesh bake, overlays, agent inspectors)
 #include "DialogueWindow.hpp"          // the Dialogue window (graph editor + Quests tab) and the story inspectors
 #include "BehaviorTreeWindow.hpp"      // the Behavior Tree window (NPC AI trees, runner inspector)
+#include "okay/Components/PhysicsToyPresets.hpp"   // GameObject > 3D Object > Physics Toys
 #include "okay/Components/BehaviorTreeRunner.hpp"
 #include "okay/Net/DetectInspector.hpp"   // Anti-Cheat Config > Detection engine (fields, observe mode, text)
 #include "okay/Core/Game.hpp"
@@ -56,6 +57,8 @@
 #include "okay/Components/HoldPrompt.hpp"
 #include "okay/Components/LocalPlayerInput.hpp"
 #include "okay/Components/UIOwnerData.hpp"   // Inspector: which character a UI Text Bind / UI Bar Bind belongs to
+#include "okay/Render/LightingPresets.hpp"
+#include "okay/Render/LightProbeBake.hpp"
 #include "okay/Render/Lightmap.hpp"    // offline lightmap/shadow/AO baking
 #include "okay/Modeling/EditTransform.hpp"   // G / R / S modal transforms in mesh edit mode
 #include "okay/Modeling/MaterialLibrary.hpp"   // ready colours and slot palettes
@@ -2336,6 +2339,61 @@ static bool PhysicsMaterialFields(Col* c, const char* id) {
     bool changed = false;
     const std::string sid = id;
     if (!ImGui::TreeNode(("Physics Material##pm" + sid).c_str())) return false;
+    // The named material (a preset or a project .okayphysmat): a dropdown, a "+ New material" button and live sliders.
+    // It lives in a Physics Surface component on this object (made on the first pick, removed by "(none)").
+    if (c->gameObject) {
+        okay::GameObject* go = c->gameObject;
+        auto* surf = go->template GetComponent<okay::PhysicsSurface>();
+        const std::string cur = surf ? surf->material : std::string();
+        if (ImGui::BeginCombo(("Material##pmn" + sid).c_str(), cur.empty() ? "(none: use the numbers below)" : cur.c_str())) {
+            if (ImGui::Selectable("(none: use the numbers below)", cur.empty()) && surf) { go->RemoveComponent(surf); surf = nullptr; changed = true; }
+            for (const std::string& n : okay::PhysicsMaterials::AllNames())
+                if (ImGui::Selectable(n.c_str(), n == cur)) { okay::AssignPhysicsMaterial(*go, n); surf = go->template GetComponent<okay::PhysicsSurface>(); changed = true; }
+            ImGui::EndCombo();
+        }
+        if (ImGui::IsItemHovered()) ImGui::SetTooltip("How this surface feels: a ready-made material (Ice, Rubber, Wood...) or one of your own .okayphysmat files.");
+        ImGui::SameLine();
+        if (ImGui::SmallButton(("+ New material##pmnew" + sid).c_str())) {
+            okay::PhysicsMaterialData d = surf && surf->Data() ? *surf->Data() : okay::PhysicsMaterialData{};
+            const std::string dir = okay::Paths::Join(okay::Paths::AssetBaseDir(), "Materials");
+            okay::Paths::EnsureDir(dir);
+            for (int i = 1; i < 1000; ++i) { d.name = "My Material " + std::to_string(i); if (!okay::PhysicsMaterials::Find(d.name)) break; }
+            if (okay::PhysicsMaterials::SaveFile(d, okay::Paths::Join(dir, d.name + ".okayphysmat"))) {
+                okay::PhysicsMaterials::Register(d); okay::AssignPhysicsMaterial(*go, d.name);
+                surf = go->template GetComponent<okay::PhysicsSurface>(); changed = true;
+                ConsoleLog("Created " + d.name + ".okayphysmat in Assets/Materials");
+            }
+        }
+        if (ImGui::IsItemHovered()) ImGui::SetTooltip("Makes a copy of this material as a file in your project that you can change. Built-in materials cannot be edited.");
+        const okay::PhysicsMaterialData* md = surf ? surf->Data() : nullptr;
+        bool builtIn = false;
+        if (md) for (const auto& pm : okay::PhysicsMaterials::Presets()) if (&pm == md) builtIn = true;
+        if (md && !builtIn) {   // live sliders on the project material (saved back to its file)
+            okay::PhysicsMaterialData e = *md; bool ed2 = false;
+            ed2 |= ImGui::SliderFloat(("Grip when still##pm" + sid).c_str(), &e.staticFriction, 0.0f, 3.0f);
+            if (ImGui::IsItemHovered()) ImGui::SetTooltip("How hard it is to start something sliding. 0 = like ice, 1 = like rubber.");
+            ed2 |= ImGui::SliderFloat(("Grip when sliding##pm" + sid).c_str(), &e.dynamicFriction, 0.0f, 3.0f);
+            if (ImGui::IsItemHovered()) ImGui::SetTooltip("How slippery? 0 = like ice, 1 = like rubber.");
+            ed2 |= ImGui::SliderFloat(("Bounciness##pmb" + sid).c_str(), &e.bounciness, 0.0f, 1.0f);
+            if (ImGui::IsItemHovered()) ImGui::SetTooltip("0 = a dead thud, 1 = bounces back to where it fell from.");
+            ed2 |= ImGui::SliderFloat(("Density##pm" + sid).c_str(), &e.density, 10.0f, 20000.0f, "%.0f kg/m3");
+            if (ImGui::IsItemHovered()) ImGui::SetTooltip("Heavy or light for its size. Water 1000, wood 600, steel 7800. Used when the body takes its mass from density.");
+            ed2 |= ImGui::SliderFloat(("Rolling friction##pm" + sid).c_str(), &e.rollingFriction, -1.0f, 1.0f);
+            if (ImGui::IsItemHovered()) ImGui::SetTooltip("How hard it is to roll over. -1 = use the body's own setting.");
+            ed2 |= ImGui::SliderFloat(("Slows things down##pm" + sid).c_str(), &e.linearDamping, 0.0f, 10.0f);
+            if (ImGui::IsItemHovered()) ImGui::SetTooltip("Mud and sand slow what touches them. 0 = not at all.");
+            ed2 |= ImGui::SliderFloat(("Slope grip##pm" + sid).c_str(), &e.slopeGrip, 0.0f, 5.0f);
+            if (ImGui::IsItemHovered()) ImGui::SetTooltip("Multiplies the still grip so things stay put on steeper slopes. 1 = normal.");
+            if (ed2) {
+                okay::PhysicsMaterials::Register(e); surf->Apply();
+                okay::PhysicsMaterials::SaveFile(e, okay::Paths::Join(okay::Paths::Join(okay::Paths::AssetBaseDir(), "Materials"), e.name + ".okayphysmat"));
+                changed = true;
+            }
+        } else if (md) {
+            ImGui::TextDisabled("Built-in material. Press + New material to make an editable copy.");
+        }
+        ImGui::Separator();
+    }
     const char* modes[] = {"Default", "Average", "Minimum", "Multiply", "Maximum"};
     bool ownF = c->friction >= 0.0f;
     if (ImGui::Checkbox(("Own Friction##pm" + sid).c_str(), &ownF)) { c->friction = ownF ? 0.5f : -1.0f; changed = true; }
@@ -7121,6 +7179,24 @@ static void DrawExampleMenuItems(EditorState& ed) {
         }
         if (uilib.empty() && ImGui::IsItemHovered(ImGuiHoveredFlags_AllowWhenDisabled)) ImGui::SetTooltip("The UI library examples (examples/ui_library) were not found next to the editor.");
     }
+    // Lighting: one scene per lighting preset (Sunny day, Sunset, Night with lamps, Indoor, Spooky fog).
+    {
+        namespace fs = std::filesystem;
+        const std::vector<std::string> lit = okay::editor::ExampleScenes("lighting");
+        if (ImGui::BeginMenu("Lighting presets (sun, sunset, night, indoor, fog)", !lit.empty())) {
+            ImGui::TextDisabled("Open one, then look in the Lighting window (View menu) to change it.");
+            for (const std::string& p : lit) {
+                const std::string name = fs::path(p).stem().string();
+                if (ImGui::MenuItem(name.c_str())) {
+                    std::string err;
+                    if (ed.Load(p, &err)) { ConsoleLog("Opened " + p); AddRecent(p); }
+                    else { ConsoleLog("Open failed: " + err, 2); ShowErrorPopup("Couldn't open the example", p + "\n" + err); }
+                }
+            }
+            ImGui::EndMenu();
+        }
+        if (lit.empty() && ImGui::IsItemHovered(ImGuiHoveredFlags_AllowWhenDisabled)) ImGui::SetTooltip("The lighting examples (examples/lighting) were not found next to the editor.");
+    }
 }
 
 static void DrawAutosaveMenuItems() {
@@ -7472,6 +7548,44 @@ static void DrawCreateSlot(EditorState& ed, const std::string& id, GameObject* p
         }
         if (ImGui::MenuItem("Water")) { AddWaterObject(ed); created = true; }
         if (ImGui::MenuItem("Character")) { AddCharacterObject(ed); created = true; }
+        ImGui::Separator();
+        if (ImGui::BeginMenu("Physics Toys")) {     // ready-made physics objects (Components/PhysicsToyPresets.hpp); each is placed at the view target
+            using namespace okay::toypresets;
+            struct Toy { const char* label; const char* tip; std::function<GameObject*(Scene&, const Vec3&)> make; };
+            static const Toy toys[] = {
+                {"Conveyor Belt", "A belt that carries crates and balls standing on it. Change Speed in the Inspector.", [](Scene& s, const Vec3& p) { return ConveyorBeltPreset(s, p); }},
+                {"Jump Pad", "Launches whatever lands on it.", [](Scene& s, const Vec3& p) { return JumpPadPreset(s, p); }},
+                {"Attractor", "Pulls nearby bodies toward it.", [](Scene& s, const Vec3& p) { return ForceFieldPreset(s, p + Vec3{0, 2, 0}, 0); }},
+                {"Repeller", "Pushes nearby bodies away.", [](Scene& s, const Vec3& p) { return ForceFieldPreset(s, p + Vec3{0, 2, 0}, 1); }},
+                {"Gravity Well", "A little planet: pulls harder the closer you get.", [](Scene& s, const Vec3& p) { return ForceFieldPreset(s, p + Vec3{0, 2, 0}, 2); }},
+                {"Whirlpool", "Spins bodies around it.", [](Scene& s, const Vec3& p) { return ForceFieldPreset(s, p + Vec3{0, 2, 0}, 3); }},
+                {"Zero-G Zone", "A box of space with no gravity.", [](Scene& s, const Vec3& p) { return GravityZonePreset(s, p + Vec3{0, 4, 0}, Vec3{0, 0, 0}); }},
+                {"Moon Gravity Zone", "A box of space with weak gravity.", [](Scene& s, const Vec3& p) { return GravityZonePreset(s, p + Vec3{0, 4, 0}, Vec3{0, -1.6f, 0}); }},
+                {"Turntable", "A round plate that turns and carries things.", [](Scene& s, const Vec3& p) { return TurntablePreset(s, p); }},
+                {"Moving Platform", "A platform that glides to and fro and carries riders.", [](Scene& s, const Vec3& p) { return MovingPlatformPreset(s, p); }},
+                {"Bomb (3 s)", "Goes off three seconds after Play and shoves everything near it.", [](Scene& s, const Vec3& p) { return BombPreset(s, p + Vec3{0, 1, 0}); }},
+                {"Breakable Crate", "Breaks into pieces when hit hard.", [](Scene& s, const Vec3& p) { return BreakableCratePreset(s, p + Vec3{0, 1, 0}); }},
+                {"Pendulum", "A weight swinging on a rod.", [](Scene& s, const Vec3& p) { return PendulumPreset(s, p + Vec3{0, 6, 0}); }},
+                {"Rope", "A chain of linked balls hanging from a point.", [](Scene& s, const Vec3& p) { return RopePreset(s, p + Vec3{0, 6, 0}); }},
+                {"Wrecking Ball", "A 50 kg ball on a chain.", [](Scene& s, const Vec3& p) { return WreckingBallPreset(s, p + Vec3{0, 8, 0}); }},
+                {"Door (hinge)", "A door that swings on a hinge with stops.", [](Scene& s, const Vec3& p) { return DoorPreset(s, p); }},
+                {"Dominoes", "A row of 14 dominoes. Push the first one.", [](Scene& s, const Vec3& p) { auto d = DominoPackPreset(s, p); return d.empty() ? nullptr : d[0]; }},
+                {"Ice Patch", "A slab of slippery ice.", [](Scene& s, const Vec3& p) { return SurfacePatchPreset(s, p, "Ice"); }},
+                {"Sticky Patch", "A slab that grips hard.", [](Scene& s, const Vec3& p) { return SurfacePatchPreset(s, p, "Sticky"); }},
+                {"Trampoline Patch", "A slab that throws things back up.", [](Scene& s, const Vec3& p) { return SurfacePatchPreset(s, p, "Trampoline"); }},
+                {"Mud Patch", "A slab that slows what moves on it.", [](Scene& s, const Vec3& p) { return SurfacePatchPreset(s, p, "Mud"); }},
+            };
+            for (const Toy& t : toys) {
+                if (ImGui::MenuItem(t.label)) {
+                    ed.PushUndo();
+                    GameObject* made = t.make(ed.scene(), ed.camTarget);
+                    if (made) ed.Select(ed.SettleSpawn(made));
+                    ConsoleLog(std::string("Created ") + t.label); ed.dirty = true; created = true;
+                }
+                if (ImGui::IsItemHovered()) ImGui::SetTooltip("%s", t.tip);
+            }
+            ImGui::EndMenu();
+        }
     } else if (id == "create.vehicles") {
         if (ImGui::MenuItem("Boat")) { AddBoatObject(ed); created = true; }
         if (ImGui::IsItemHovered()) ImGui::SetTooltip("A boat that floats on Water and drives with W / S / A / D. Adds a lake if the scene has no water.");
@@ -12970,6 +13084,60 @@ void DrawSceneSettings(EditorState& ed) {
         else if (pixel)             ImGui::TextDisabled("Built-in 8x8 bitmap font.");
         else if (okay::GetFont(uf)) ImGui::TextColored(ImVec4(0.5f,0.85f,0.5f,1.0f), "TTF font loaded.");
         else                        ImGui::TextColored(ImVec4(0.9f,0.5f,0.4f,1.0f), "Font not found / failed to load.");
+    }
+
+    // Lighting presets: one click sets the sky, ambient, fog, post look and the lights (sun / moon, lamps, panel, lantern).
+    if (ImGui::CollapsingHeader("Lighting Presets", ImGuiTreeNodeFlags_DefaultOpen)) {
+        ImGui::TextWrapped("One click sets the sky, ambient light, fog and the lights. Lights it adds are named \"Lighting: ...\" "
+                           "(select and edit them like any light); a preset replaces them. Ctrl+Z undoes it.");
+        int np = 0; const okay::LightingPresetInfo* presets = okay::LightingPresetList(np);
+        for (int pi = 0; pi < np; ++pi) {
+            if (pi) ImGui::SameLine(0, 6);
+            if (pi == 3) ImGui::NewLine();
+            if (ImGui::Button(presets[pi].name)) {
+                ed.PushUndo();
+                okay::ApplyLightingPreset(ed.scene(), presets[pi].name);
+                ed.dirty = true;
+            }
+            if (ImGui::IsItemHovered()) ImGui::SetTooltip("%s", presets[pi].blurb);
+        }
+        auto& prs = ed.scene().renderSettings;
+        if (ImGui::Checkbox("Auto brightness", &prs.autoBrightness)) ed.dirty = true;
+        if (ImGui::IsItemHovered())
+            ImGui::SetTooltip("For lights set to Real world units (lux, lumens): scale everything so the scene's brightest light\n"
+                              "shows as fully lit, like an eye adapting. Off = a fixed level (a bright overcast day).");
+        bool classicLook = okay::ClassicLighting();
+        if (ImGui::Checkbox("Classic lighting look", &classicLook)) okay::ClassicLighting() = classicLook;
+        if (ImGui::IsItemHovered())
+            ImGui::SetTooltip("Goes back to the lighting before the 2026-11 upgrade (hard light clamp, straight spot ramp, fixed shadow blur,\n"
+                              "no stable cascades) so you can compare. Software renderer only. Not saved. Env var OKAY_CLASSIC_LIGHTING=1 does the same.");
+        DrawRendererNote(okay::RenderFeature::LightShapes);
+    }
+
+    // Light probes: ambient light that changes from place to place, baked here and saved with the scene.
+    if (ImGui::CollapsingHeader("Light Probes")) {
+        auto& pg = ed.scene().renderSettings.probes;
+        static float probeSpacing = 2.0f;
+        ImGui::TextWrapped("A grid of baked light samples. Surfaces get their ambient light from the probes around them, so a room under a roof "
+                           "is darker than open ground and a red wall tints the floor beside it.");
+        ImGui::SliderFloat("Probe spacing##probes", &probeSpacing, 0.5f, 8.0f, "%.1f m");
+        if (ImGui::IsItemHovered()) ImGui::SetTooltip("Distance between probes. Smaller = more detail, slower bake (the grid is at most 12 x 6 x 12).");
+        if (ImGui::Button("Bake probes")) {
+            ed.PushUndo();
+            const okay::LightProbeBakeResult br = okay::BakeLightProbes(ed.scene(), pg, probeSpacing);
+            ConsoleLog(br.message, br.ok ? 0 : 2);
+            if (br.ok) ed.dirty = true;
+        }
+        if (ImGui::IsItemHovered()) ImGui::SetTooltip("Bakes the scene's lights, sky and walls into the probes. Bake again after you move things or change the lights.");
+        if (pg.Baked()) {
+            ImGui::SameLine();
+            if (ImGui::Button("Clear probes")) { ed.PushUndo(); pg.Clear(); ed.dirty = true; }
+            if (ImGui::Checkbox("Use probes##probes", &pg.enabled)) ed.dirty = true;
+            ImGui::TextDisabled("%d probes (%d x %d x %d), every %.1f m.", pg.Count(), pg.nx, pg.ny, pg.nz, pg.spacing);
+        } else {
+            ImGui::TextDisabled("No probes baked: the flat / hemisphere ambient is used.");
+        }
+        ImGui::TextDisabled("Drawn by the software renderer only for now (OpenGL and Direct3D 11 keep the normal ambient).");
     }
 
     // Environment: the scene's skybox + ambient, saved with the scene so the
@@ -33577,8 +33745,38 @@ void DrawInspector(EditorState& ed) {
                 if (ImGui::ColorEdit4("Color##light", c)) { li->color = {c[0], c[1], c[2], c[3]}; ed.dirty = true; }
                 oked::FieldTip("Color##light");
             }
-            if (ImGui::DragFloat("Intensity##light", &li->intensity, 0.02f, 0.0f, 8.0f)) ed.dirty = true;
-            oked::FieldTip("Intensity##light");
+            {
+                // Units: Simple (1 = normal) or real-world (lux for the sun, lumens for lamps) with Auto brightness.
+                const bool real = li->unit == Light::Unit::RealWorld;
+                const bool sun = li->type == Light::Type::Directional;
+                if (!real) {
+                    if (ImGui::DragFloat("Intensity##light", &li->intensity, 0.02f, 0.0f, 8.0f)) ed.dirty = true;
+                } else {
+                    if (ImGui::DragFloat("Intensity##light", &li->intensity, 1.0f, 0.0f, 1000000.0f, sun ? "%.1f lux" : "%.0f lumens",
+                                         ImGuiSliderFlags_Logarithmic)) ed.dirty = true;
+                }
+                oked::FieldTip("Intensity##light");
+                const char* units[] = {"Simple (1 = normal)", "Real world (lux / lumens)"};
+                int un = (int)li->unit;
+                if (ImGui::Combo("Units##light", &un, units, 2)) {
+                    li->unit = (Light::Unit)un;
+                    li->intensity = un == 1 ? (sun ? 20000.0f : 800.0f) : 1.0f;   // a sensible starting value for the new unit
+                    ed.dirty = true;
+                }
+                if (ImGui::IsItemHovered())
+                    ImGui::SetTooltip("Simple: the number is the brightness, 1 = normal.\nReal world: lux for the sun (noon 100000, overcast 10000, moon 0.3),\nlumens for lamps (candle 12, 60 W bulb 800, street lamp 20000).\nThe scene's Auto brightness (Lighting window) keeps it readable.");
+                if (real) {
+                    static const struct { const char* n; float v; bool sunOnly; } kReal[] = {
+                        {"Noon sun", 100000.0f, true}, {"Overcast", 10000.0f, true}, {"Moon", 0.3f, true},
+                        {"Candle", 12.0f, false}, {"Bulb", 800.0f, false}, {"Street lamp", 20000.0f, false}};
+                    int shown = 0;
+                    for (const auto& r : kReal) {
+                        if (r.sunOnly != sun) continue;
+                        if (shown++) ImGui::SameLine(0, 4);
+                        if (ImGui::SmallButton((std::string(r.n) + "##real").c_str())) { li->intensity = r.v; ed.dirty = true; }
+                    }
+                }
+            }
 
             SectionHeader("Ambient (scene floor)");
             if (ImGui::SliderFloat("Ambient##light", &li->ambient, 0.0f, 1.0f)) ed.dirty = true;
@@ -33597,11 +33795,42 @@ void DrawInspector(EditorState& ed) {
                 if (ImGui::Combo("Falloff##light", &fo, falls, 2)) { li->falloff = (Light::Falloff)fo; ed.dirty = true; }
                 if (ImGui::IsItemHovered()) ImGui::SetTooltip("Linear = predictable (1-d/range)^2 rolloff.\nInverse Square = physically-based 1/d^2, brighter near the source.");
             }
+            if (li->type == Light::Type::Area) {
+                if (ImGui::DragFloat("Panel Width##light", &li->areaWidth, 0.05f, 0.0f, 100.0f, "%.2f m")) ed.dirty = true;
+                if (ImGui::DragFloat("Panel Height##light", &li->areaHeight, 0.05f, 0.0f, 100.0f, "%.2f m")) ed.dirty = true;
+                if (ImGui::IsItemHovered()) ImGui::SetTooltip("A real rectangle that shines along the light's blue (forward) arrow.\nBroad panels give wide soft light. 0 x 0 = the classic soft glow.");
+                DrawRendererNote(okay::RenderFeature::LightShapes);
+            }
             if (li->type == Light::Type::Spot) {
                 if (ImGui::SliderFloat("Spot Angle##light", &li->spotAngle, 5.0f, 170.0f)) ed.dirty = true;
                 oked::FieldTip("Spot Angle##light");
                 if (ImGui::SliderFloat("Softness##light", &li->spotSoftness, 0.0f, 1.0f)) ed.dirty = true;
                 if (ImGui::IsItemHovered()) ImGui::SetTooltip("0 = crisp cone edge, 1 = very feathered");
+            }
+
+            if (li->type == Light::Type::Directional || li->type == Light::Type::Spot) {
+                // Light mask (cookie): a window, blinds, leaves... the light shines through it.
+                SectionHeader("Mask (cookie)");
+                int nb = 0; const char* const* builtin = okay::LightCookies::BuiltinNames(nb);
+                int cur = 0;
+                if (!li->cookie.empty()) { cur = nb + 1; for (int i = 0; i < nb; ++i) if (li->cookie == builtin[i]) cur = i + 1; }
+                std::string preview = cur == 0 ? "None" : (cur <= nb ? std::string(builtin[cur - 1]).substr(8) : std::string("Picture file"));
+                if (ImGui::BeginCombo("Mask##lightck", preview.c_str())) {
+                    if (ImGui::Selectable("None", cur == 0)) { li->cookie.clear(); ed.dirty = true; }
+                    for (int i = 0; i < nb; ++i)
+                        if (ImGui::Selectable(std::string(builtin[i]).substr(8).c_str(), cur == i + 1)) { li->cookie = builtin[i]; ed.dirty = true; }
+                    if (ImGui::Selectable("Picture file...", cur == nb + 1)) { if (cur != nb + 1) li->cookie = "Assets/Textures/mask.png"; ed.dirty = true; }
+                    ImGui::EndCombo();
+                }
+                if (ImGui::IsItemHovered()) ImGui::SetTooltip("The light shines only through the bright parts of the mask.\nSpot: the mask fits the cone. Sun: it repeats across the ground.");
+                if (cur == nb + 1) {
+                    char buf[260]; std::snprintf(buf, sizeof buf, "%s", li->cookie.c_str());
+                    if (ImGui::InputText("File##lightck", buf, sizeof buf)) { li->cookie = buf; ed.dirty = true; }
+                    if (ImGui::IsItemHovered()) ImGui::SetTooltip("A picture: white lets light through, black blocks it.");
+                }
+                if (cur != 0 && li->type == Light::Type::Directional)
+                    if (ImGui::DragFloat("Metres per repeat##lightck", &li->cookieScale, 0.1f, 0.1f, 200.0f, "%.1f m")) ed.dirty = true;
+                if (cur != 0) DrawRendererNote(okay::RenderFeature::LightShapes);
             }
 
             SectionHeader("Shadows");
@@ -33620,6 +33849,9 @@ void DrawInspector(EditorState& ed) {
             if (li->castShadows) {
                 if (ImGui::SliderFloat("Strength##lightsh", &li->shadowStrength, 0.0f, 1.0f)) ed.dirty = true;
                 if (ImGui::IsItemHovered()) ImGui::SetTooltip("0 = invisible, 1 = fully dark (down to the ambient light)");
+                if (ImGui::SliderFloat("Soft Edges##lightsh", &li->shadowSoftness, 0.0f, 1.0f)) ed.dirty = true;
+                if (ImGui::IsItemHovered()) ImGui::SetTooltip("0 = the same soft edge everywhere.\nHigher = a shadow is sharp where the object touches the ground and softer the farther it falls.");
+                DrawRendererNote(okay::RenderFeature::LightShapes);
                 if (ImGui::SliderFloat("Bias##lightsh", &li->shadowBias, 0.0f, 4.0f)) ed.dirty = true;
                 if (ImGui::IsItemHovered()) ImGui::SetTooltip("Raise if surfaces get dark speckles/stripes (shadow acne).\nLower if shadows look detached from the objects casting them.");
             }
@@ -46158,6 +46390,25 @@ void DrawScene3D(EditorState& ed, ImDrawList* dl, ImVec2 canvasPos, ImVec2 canva
                     line(a + v * r, b + v * r, cc); line(a - v * r, b - v * r, cc);
                 }
             }
+        }
+        for (const auto& up : objs) {   // velocity arrows (cyan): how fast and which way each awake body moves
+            if (!up->active) continue;
+            auto* vrb = up->GetComponent<Rigidbody3D>();
+            if (!vrb || vrb->bodyType == Rigidbody3D::BodyType::Static || vrb->sleeping || !up->transform) continue;
+            const float sp2 = vrb->velocity.SqrMagnitude();
+            if (!(sp2 > 0.04f)) continue;
+            const Vec3 from = up->transform->Position(), to = from + vrb->velocity * 0.3f;
+            const ImU32 vc = IM_COL32(60, 220, 240, 255);
+            line(from, to, vc, 2.0f);
+            const Vec3 dirn = vrb->velocity.Normalized(); Vec3 hu, hv; basis(dirn, hu, hv);
+            line(to, to - dirn * 0.25f + hu * 0.1f, vc, 2.0f); line(to, to - dirn * 0.25f - hu * 0.1f, vc, 2.0f);
+        }
+        {   // the stats readout: what the last physics step did
+            const PhysicsStepStats& ps = ed.scene().physics3D().Stats();
+            char buf[160];
+            std::snprintf(buf, sizeof buf, "Physics: %d bodies (%d awake, %d asleep), %d contacts, %d groups, %d fast bodies swept",
+                          ps.bodies, ps.awake, ps.asleep, ps.contacts, ps.islands, ps.sweeps);
+            dl->AddText(ImVec2(view3dMin.x + 8.0f, view3dMin.y + 8.0f), IM_COL32(255, 255, 255, 230), buf);
         }
         for (const PhysicsDebugContact3D& ct : ed.scene().physics3D().DebugContacts()) {
             ImU32 kc = ct.trigger ? IM_COL32(90, 170, 255, 255) : IM_COL32(255, 80, 70, 255);

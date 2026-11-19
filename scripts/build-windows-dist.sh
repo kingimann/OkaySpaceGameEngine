@@ -192,6 +192,7 @@ boat
 cutscene
 fp_hand
 input
+lighting
 modeling
 modeling_tools
 node_playground
@@ -201,6 +202,8 @@ own_readers
 own_wav
 perf
 physics
+physics_toys
+physics_materials
 physics2d
 player
 security_paths

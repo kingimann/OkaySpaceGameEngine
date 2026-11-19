@@ -29,7 +29,7 @@ inline const char* D3D11HlslSource() {
     "  float4 uPbr2;\n"                       // x=aoStrength y=envOn z=texOffset.x w=texOffset.y
     "  float4 uSky[3];\n"                     // [0]=top [1]=horizon [2]=bottom (xyz) for reflections
     "  float4 uLightCount;\n"                 // .x = number of scene lights (0 = use uLightDir)
-    "  float4 uLights[64];\n"                 // 16 lights x 4: [dir,type][pos,range][col,cosOut][cosIn,..]
+    "  float4 uLights[96];\n"                 // 16 lights x 6: [dir,type][pos,range][col,cosOut][cosIn,falloff,halfW,halfH][right,cookie row][up,cookie scale]
     "  float4 uFog;\n"                        // x=on y=start z=end (distance fog) w=receive shadows
     "  float4 uFogCol;\n"                     // xyz = fog colour, w = filmic pipeline flag
     "  float4 uFog2;\n"                       // x=mode (0 linear 1 exponential 2 height) y=density z=height w=falloff
@@ -47,6 +47,7 @@ inline const char* D3D11HlslSource() {
     "  float4 uAmbGround;\n"                  // ... and down-facing ones
     "  float4x4 uLocalVP[16];\n"
     "  float4 uLShadow[16];\n"                // per light: x=first tile (-1 none) y=strength z=bias w=texel at 1m
+    "  float4 uSunExtra;\n"                  // x=sun Soft Edges (0..1) y=sun shadow fade distance (0 = none) z=cookie atlas rows
     "};\n"
     "Texture2D uTex : register(t0);\n"
     "Texture2D uNormalTex : register(t1);\n"        // bump/normal map (tangent-space)
@@ -56,8 +57,51 @@ inline const char* D3D11HlslSource() {
     "Texture2D uEmisTex : register(t7);\n"          // glTF emissive
     "Texture2D uShadowTex : register(t4);\n"        // sun cascade atlas (depth)
     "Texture2D uLocalTex : register(t5);\n"         // spot/point light tile atlas (depth)
+    "Texture2D uCookieTex : register(t8);\n"        // light masks: 64 px wide, one 64 px row per mask (R)
     "SamplerState uSamp : register(s0);\n"
     "SamplerComparisonState uShadowCmp : register(s1);\n"   // filtered depth compare (hardware PCF)
+    // ---- 2026-11 lighting upgrade: the same maths as okay::ShadowMath / okay::Lighting (UNVERIFIED on a GPU) ----
+    "float softClip(float x){ return x <= 1.0 ? max(x, 0.0) : 1.0 + 0.3 * (1.0 - exp(-(x - 1.0) / 0.3)); }\n"
+    "float3 softClip3(float3 v){ return float3(softClip(v.x), softClip(v.y), softClip(v.z)); }\n"
+    "float distFade(float d, float dist){\n"
+    "  if (dist <= 0.0) return 1.0;\n"
+    "  float st = dist * 0.8; if (d <= st) return 1.0; if (d >= dist) return 0.0;\n"
+    "  float t = (d - st) / (dist - st); return 1.0 - t * t * (3.0 - 2.0 * t);\n"
+    "}\n"
+    "float lightAtten(float d, float rng, float fo){\n"
+    "  if (fo > 0.5) { float dr = d / rng; float win = max(1.0 - dr*dr*dr*dr, 0.0); win *= win; return win / (1.0 + 8.0 * d * d / (rng * rng)); }\n"
+    "  float a = max(1.0 - d / rng, 0.0); return a * a;\n"
+    "}\n"
+    "float rectTerm(float3 axis, float3 pos, float3 rt, float3 up, float hw, float hh, float rng, float fo, float3 p, float3 N){\n"
+    "  float sum = 0.0;\n"
+    "  [unroll] for (int j = 0; j < 3; j++) {\n"
+    "    [unroll] for (int i = 0; i < 3; i++) {\n"
+    "      float fu = ((float)i - 1.0) * 0.6666667; float fv = ((float)j - 1.0) * 0.6666667;\n"
+    "      float3 q = pos + rt * (fu * hw) + up * (fv * hh); float3 v = q - p; float d = length(v);\n"
+    "      if (d < 1e-4) { sum += 1.0; }\n"
+    "      else { float3 l = v / d; float recv = dot(N, l); float emit = dot(axis, -l);\n"
+    "        if (recv > 0.0 && emit > 0.0) sum += recv * emit * lightAtten(d, rng, fo); }\n"
+    "    }\n"
+    "  }\n"
+    "  return sum / 9.0;\n"
+    "}\n"
+    "float cookieSample(float row, float2 uv, bool wrapIt){\n"
+    "  if (!wrapIt && (uv.x < 0.0 || uv.x > 1.0 || uv.y < 0.0 || uv.y > 1.0)) return 0.0;\n"
+    "  if (wrapIt) uv = frac(uv);\n"
+    "  uv = clamp(uv, 0.0078125, 0.9921875);\n"                         // half a texel inside the 64 px tile
+    "  return uCookieTex.SampleLevel(uSamp, float2(uv.x, (row + uv.y) / max(uSunExtra.z, 1.0)), 0).r;\n"
+    "}\n"
+    "float cookieAt(float4 d0, float4 d1, float4 d2, float4 d4, float4 d5, float3 p){\n"
+    "  if (d4.w < -0.5) return 1.0;\n"                                  // no mask
+    "  if (d0.w > 0.5 && d0.w < 1.5) return 1.0;\n"                      // point lights have none
+    "  if (d0.w > 2.5) return 1.0;\n"                                    // nor do area lights
+    "  if (d0.w < 0.5) { float sc = max(d5.w, 0.05);\n"                  // sun: laid across the world, repeating
+    "    return cookieSample(d4.w, float2(dot(p, d4.xyz) / sc + 0.5, 0.5 - dot(p, d5.xyz) / sc), true); }\n"
+    "  float3 dd = p - d1.xyz; float z = dot(dd, normalize(d0.xyz)); if (z <= 1e-4) return 0.0;\n"   // spot: fits the cone
+    "  float co = d2.w; float th = sqrt(max(1.0 - co * co, 0.0)) / max(co, 1e-3);\n"
+    "  float k = 0.5 / (z * max(th, 1e-3));\n"
+    "  return cookieSample(d4.w, float2(0.5 + dot(dd, d4.xyz) * k, 0.5 - dot(dd, d5.xyz) * k), false);\n"
+    "}\n"
     "static float2x2 gRot;\n"                       // per-pixel Poisson rotation
     "float sunTap(float2 uv, float2 o, float z, float ci){\n"
     "  float e = 1.0 / uShadow.z;\n"                                  // stay a texel inside the cascade tile
@@ -68,12 +112,30 @@ inline const char* D3D11HlslSource() {
     "  float tx = uCasInfo[ci].x;\n"
     // World-space bias (same as GL): along the normal, more for a wider filter,
     // plus a little toward the sun.
-    "  float3 p = wp + n * (tx * (1.0 + 0.6 * uShadow.w) * uShadow2.z) + uLightDir * (tx * 0.75 * uShadow2.z);\n"
+    "  float ndlS = saturate(dot(n, uLightDir)); float sinT = sqrt(max(1.0 - ndlS * ndlS, 0.0));\n"   // slope: shadowmath::NormalOffset
+    "  float3 p = wp + n * (tx * (0.6 + 1.6 * sinT + 0.6 * uShadow.w) * uShadow2.z) + uLightDir * (tx * 0.75 * uShadow2.z);\n"
     "  float4 sc = mul(uCasVP[ci], float4(p, 1.0));\n"
     "  float2 uv = float2(sc.x * 0.5 + 0.5, -sc.y * 0.5 + 0.5);\n"        // D3D texture v is top-down
     "  float z = sc.z * 0.5 + 0.5;\n"                                   // GL clip z [-1,1] -> [0,1]
     "  if (z >= 1.0) return 1.0;\n"
-    "  float r = uShadow.w / uShadow.z; float c = (float)ci; float s = 0.0;\n"
+    "  float c = (float)ci; float s = 0.0;\n"
+    "  float r0 = uShadow.w / uShadow.z; float r = r0;\n"                  // minimum filter radius (tile uv units)
+    "  float dr = uCasInfo[ci].y;\n"                                       // world length of this cascade's depth range
+    "  if (dr > 0.0) {\n"                                                  // blocker search -> penumbra (okay::shadowmath::PenumbraTexels)
+    "    float sr = r0 + (1.5 + 4.0 * uSunExtra.x) / uShadow.z;\n"
+    "    float zb = z - 3.0 * tx / dr; float bl = 0.0; float gs = 0.0; float e1 = 1.0 / uShadow.z;\n"
+    "    [unroll] for (int k = 0; k < 6; k++) {\n"
+    "      float ang = (float)k * 2.39996323; float rr = sqrt(((float)k + 0.5) / 6.0);\n"
+    "      float2 o = mul(gRot, float2(cos(ang), sin(ang)) * rr) * sr;\n"
+    "      float2 t = clamp(uv + o, e1, 1.0 - e1);\n"
+    "      float2 ap = float2((c + t.x) / uShadow.y, t.y) * float2(uShadow.y * uShadow.z, uShadow.z);\n"
+    "      float dd = uShadowTex.Load(int3((int2)ap, 0)).r;\n"
+    "      if (zb > dd) { bl += 1.0; gs += (z - dd) * dr; }\n"
+    "    }\n"
+    "    if (bl < 0.5) return 1.0;\n"                                      // nothing in the way
+    "    float pen = r0 * uShadow.z + 0.35 * saturate(uSunExtra.x) * (gs / bl) / max(tx, 1e-5);\n"
+    "    r = min(pen, 14.0) / uShadow.z;\n"
+    "  }\n"
     "  s += sunTap(uv, float2(-0.326,-0.406)*r, z, c); s += sunTap(uv, float2(-0.840,-0.074)*r, z, c);\n"
     "  s += sunTap(uv, float2(-0.696, 0.457)*r, z, c); s += sunTap(uv, float2(-0.203, 0.621)*r, z, c);\n"
     "  s += sunTap(uv, float2( 0.962,-0.195)*r, z, c); s += sunTap(uv, float2( 0.473,-0.480)*r, z, c);\n"
@@ -92,7 +154,7 @@ inline const char* D3D11HlslSource() {
     "    float edge = R * 0.82;\n"                                        // blend into the next cascade (no seam)
     "    if (d > edge) { float f = (d - edge) / (R - edge);\n"
     "      s = lerp(s, (ci + 1 < cnt) ? sunCascade(ci + 1, wp, n) : 1.0, f); }\n"
-    "    return 1.0 - uShadow2.y * (1.0 - s);\n"
+    "    return 1.0 - uShadow2.y * distFade(length(wp - uEye), uSunExtra.y) * (1.0 - s);\n"
     "  }\n"
     "  return 1.0;\n"
     "}\n"
@@ -234,8 +296,9 @@ inline const char* D3D11HlslSource() {
     "      spec = pow(max(dot(N,H),0.0), max(shiny,1.0)) * specK * sh; }\n"
     "  } else {\n"
     "    [loop] for (int li = 0; li < 16; li++) { if (li >= lc) break;\n"   // directional + point + spot + area
-    "      float4 d0 = uLights[li*4+0]; float4 d1 = uLights[li*4+1];\n"
-    "      float4 d2 = uLights[li*4+2]; float4 d3 = uLights[li*4+3];\n"
+    "      float4 d0 = uLights[li*6+0]; float4 d1 = uLights[li*6+1];\n"
+    "      float4 d2 = uLights[li*6+2]; float4 d3 = uLights[li*6+3];\n"
+    "      float4 d4 = uLights[li*6+4]; float4 d5 = uLights[li*6+5];\n"
     "      float3 ld; float at = 1.0; float wrap = 0.0; float dist = 0.0;\n"
     "      if (d0.w < 0.5) { ld = normalize(-d0.xyz); }\n"             // directional
     "      else { float3 toL = d1.xyz - i.world; dist = length(toL); ld = toL / max(dist, 1e-4);\n"
@@ -246,8 +309,12 @@ inline const char* D3D11HlslSource() {
     "        if (d0.w > 2.5) { wrap = 0.5; }\n"                               // area: soft wrap fill
     "        else if (d0.w > 1.5) { float cs = dot(normalize(d0.xyz), -ld);\n"   // spot cone
     "          float dn = d3.x - d2.w; float sp = dn > 1e-4 ? saturate((cs - d2.w) / dn) : (cs >= d2.w ? 1.0 : 0.0);\n"
-    "          at *= sp * sp; } }\n"
-    "      float ndl = max((dot(N, ld) + wrap) / (1.0 + wrap), 0.0); if (toon) ndl = ceil(ndl*uToonBands)/uToonBands;\n"
+    "          at *= sp * sp * (3.0 - 2.0 * sp); } }\n"   // smoothstep cone (okay::SpotCone)
+    "      bool rect = d0.w > 2.5 && d3.z > 0.0 && d3.w > 0.0;\n"             // Area light with a Panel size: a real rectangle
+    "      float ndl = max((dot(N, ld) + wrap) / (1.0 + wrap), 0.0);\n"
+    "      if (rect) { ndl = rectTerm(normalize(d0.xyz), d1.xyz, d4.xyz, d5.xyz, d3.z, d3.w, max(d1.w, 1e-4), d3.y, i.world, N); at = 1.0; }\n"
+    "      if (toon) ndl = ceil(ndl*uToonBands)/uToonBands;\n"
+    "      if (d4.w > -0.5) at *= cookieAt(d0, d1, d2, d4, d5, i.world);\n"   // light mask
     "      if (ndl * at <= 0.0) continue;\n"                     // no light reaches here: skip the shadow lookup
     "      float lsh = 1.0;\n"
     "      if (d0.w < 0.5) { if (abs((float)li - uShadow2.x) < 0.5) lsh = sh; }\n"   // only the main sun has cascades
@@ -267,6 +334,7 @@ inline const char* D3D11HlslSource() {
     "  float metal = saturate(metalK);\n"                       // metalness
     "  float diffK = 1.0 - 0.9 * metal;\n"
     "  float3 f0 = lerp(float3(1,1,1), base, metal);\n"
+    "  if (!lin && !toon) lit = softClip3(lit);\n"                // roll-off above 1.0 (the filmic path has ACES instead)
     "  float3 diff = base * lit * diffK;\n"
     "  float3 rim = float3(0,0,0);\n"
     "  float rs = uRimStr; if ((fres || holo) && rs < 0.8) rs = 1.6;\n"

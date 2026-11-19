@@ -249,6 +249,8 @@ const char* kFrag =
     "uniform float uLType[16]; uniform vec3 uLPos[16]; uniform vec3 uLDir[16];\n"
     "uniform vec3 uLCol[16]; uniform float uLRange[16]; uniform float uLCosOut[16]; uniform float uLCosIn[16];\n"
     "uniform float uLFalloff[16];\n"   // 0 = linear (1-d/r)^2, 1 = physical inverse-square
+    "uniform vec4 uLRect[16]; uniform vec3 uLRight[16]; uniform vec3 uLUp[16];\n"   // x=panel half width y=half height z=mask row (-1 none) w=mask scale; panel axes
+    "uniform sampler2D uCookieTex; uniform float uCookieRows; uniform float uSunSoft; uniform float uFadeDist;\n"   // light masks (unit 8), sun Soft Edges, shadow fade distance
     "uniform float uFogOn; uniform vec3 uFogColor; uniform float uFogStart; uniform float uFogEnd;\n"  // distance fog
     "uniform float uFogMode; uniform float uFogDensity; uniform float uFogHeight; uniform float uFogFalloff;\n"  // linear / exponential / height (Atmosphere.hpp)
     "uniform float uTonemap;\n"                                                                        // filmic ACES tonemap toggle
@@ -274,6 +276,45 @@ const char* kFrag =
     "uniform float uLocalSize; uniform float uReceive;\n"
     "uniform vec3 uAmbSky; uniform vec3 uAmbGround;\n"                                          // ambient mode (up / down)
     "varying vec3 vN; varying vec3 vWorld; varying vec2 vUV; varying vec3 vCol; varying vec3 vTan;\n"
+    // ---- 2026-11 lighting upgrade: same maths as okay::Lighting / okay::ShadowMath (UNVERIFIED on a GPU) ----
+    "float softClip(float x){ return x <= 1.0 ? max(x, 0.0) : 1.0 + 0.3 * (1.0 - exp(-(x - 1.0) / 0.3)); }\n"
+    "float distFade(float d, float dist){\n"
+    "  if (dist <= 0.0) return 1.0;\n"
+    "  float st = dist * 0.8; if (d <= st) return 1.0; if (d >= dist) return 0.0;\n"
+    "  float t = (d - st) / (dist - st); return 1.0 - t * t * (3.0 - 2.0 * t);\n"
+    "}\n"
+    "float lightAtten(float d, float rng, float fo){\n"
+    "  if (fo > 0.5) { float dr = d / rng; float win = max(1.0 - dr*dr*dr*dr, 0.0); win *= win; return win / (1.0 + 8.0 * d * d / (rng * rng)); }\n"
+    "  float a = max(1.0 - d / rng, 0.0); return a * a;\n"
+    "}\n"
+    "float rectTerm(int li, vec3 p, vec3 N){\n"
+    "  vec3 axis = normalize(uLDir[li]); float sum = 0.0;\n"
+    "  for (int j = 0; j < 3; j++) { for (int k = 0; k < 3; k++) {\n"
+    "    float fu = (float(k) - 1.0) * 0.6666667; float fv = (float(j) - 1.0) * 0.6666667;\n"
+    "    vec3 q = uLPos[li] + uLRight[li] * (fu * uLRect[li].x) + uLUp[li] * (fv * uLRect[li].y); vec3 v = q - p; float d = length(v);\n"
+    "    if (d < 1e-4) { sum += 1.0; }\n"
+    "    else { vec3 l = v / d; float recv = dot(N, l); float emit = dot(axis, -l);\n"
+    "      if (recv > 0.0 && emit > 0.0) sum += recv * emit * lightAtten(d, max(uLRange[li], 1e-4), uLFalloff[li]); }\n"
+    "  } }\n"
+    "  return sum / 9.0;\n"
+    "}\n"
+    "float cookieSample(float row, vec2 uv, bool wrapIt){\n"
+    "  if (!wrapIt && (uv.x < 0.0 || uv.x > 1.0 || uv.y < 0.0 || uv.y > 1.0)) return 0.0;\n"
+    "  if (wrapIt) uv = fract(uv);\n"
+    "  uv = clamp(uv, vec2(0.0078125), vec2(0.9921875));\n"
+    "  return texture2D(uCookieTex, vec2(uv.x, (row + uv.y) / max(uCookieRows, 1.0))).r;\n"
+    "}\n"
+    "float cookieAt(int li, vec3 p){\n"
+    "  float row = uLRect[li].z; if (row < -0.5) return 1.0;\n"
+    "  if (uLType[li] > 0.5 && uLType[li] < 1.5) return 1.0;\n"           // point lights have none
+    "  if (uLType[li] > 2.5) return 1.0;\n"                               // nor do area lights
+    "  if (uLType[li] < 0.5) { float sc = max(uLRect[li].w, 0.05);\n"       // sun: laid across the world, repeating
+    "    return cookieSample(row, vec2(dot(p, uLRight[li]) / sc + 0.5, 0.5 - dot(p, uLUp[li]) / sc), true); }\n"
+    "  vec3 dd = p - uLPos[li]; float z = dot(dd, normalize(uLDir[li])); if (z <= 1e-4) return 0.0;\n"   // spot: fits the cone
+    "  float co = uLCosOut[li]; float th = sqrt(max(1.0 - co * co, 0.0)) / max(co, 1e-3);\n"
+    "  float k = 0.5 / (z * max(th, 1e-3));\n"
+    "  return cookieSample(row, vec2(0.5 + dot(dd, uLRight[li]) * k, 0.5 - dot(dd, uLUp[li]) * k), false);\n"
+    "}\n"
     "mat2 gRot;\n"                                                                              // per-pixel Poisson rotation
     "float sunTap(vec2 uv, vec2 o, float z, float ci){\n"
     "  float e = 1.0 / uCasSize;\n"                                                             // stay a texel inside the cascade tile
@@ -284,10 +325,18 @@ const char* kFrag =
     "  float tx = uCasTexel[i];\n"
     // World-space bias: push the receiver off its surface along the normal (more
     // for a wider filter) and a little toward the sun. Same rule for every cascade.
-    "  vec3 p = wp + n * (tx * (1.0 + 0.6 * uShadowSoft) * uSunBias) + uLightDir * (tx * 0.75 * uSunBias);\n"
+    "  float sinT = sqrt(max(1.0 - clamp(dot(n, uLightDir), 0.0, 1.0) * clamp(dot(n, uLightDir), 0.0, 1.0), 0.0));\n"   // slope: shadowmath::NormalOffset
+    "  vec3 p = wp + n * (tx * (0.6 + 1.6 * sinT + 0.6 * uShadowSoft) * uSunBias) + uLightDir * (tx * 0.75 * uSunBias);\n"
     "  vec3 q = (uCasVP[i] * vec4(p, 1.0)).xyz * 0.5 + 0.5;\n"
     "  if (q.z >= 1.0) return 1.0;\n"
-    "  float r = uShadowSoft / uCasSize; float ci = float(i); float s = 0.0;\n"
+    "  float r0 = uShadowSoft / uCasSize; float ci = float(i); float s = 0.0;\n"
+    "  float sr = r0 + (1.5 + 4.0 * uSunSoft) / uCasSize; float bl = 0.0;\n"      // is anything in the way within a slightly wider ring?
+    "  bl += 1.0 - sunTap(q.xy, vec2( 0.000, 1.000)*sr, q.z, ci); bl += 1.0 - sunTap(q.xy, vec2( 0.866, 0.500)*sr, q.z, ci);\n"
+    "  bl += 1.0 - sunTap(q.xy, vec2( 0.866,-0.500)*sr, q.z, ci); bl += 1.0 - sunTap(q.xy, vec2( 0.000,-1.000)*sr, q.z, ci);\n"
+    "  bl += 1.0 - sunTap(q.xy, vec2(-0.866,-0.500)*sr, q.z, ci); bl += 1.0 - sunTap(q.xy, vec2(-0.866, 0.500)*sr, q.z, ci);\n"
+    "  if (bl < 0.05) return 1.0;\n"                                                // nothing in the way: no need to filter
+    "  float r = r0 * (1.0 + 2.0 * uSunSoft * (bl / 6.0));\n"                      // wider where more of the ring is blocked (no raw depth read: an approximation of the gap)
+
     "  s += sunTap(q.xy, vec2(-0.326,-0.406)*r, q.z, ci); s += sunTap(q.xy, vec2(-0.840,-0.074)*r, q.z, ci);\n"
     "  s += sunTap(q.xy, vec2(-0.696, 0.457)*r, q.z, ci); s += sunTap(q.xy, vec2(-0.203, 0.621)*r, q.z, ci);\n"
     "  s += sunTap(q.xy, vec2( 0.962,-0.195)*r, q.z, ci); s += sunTap(q.xy, vec2( 0.473,-0.480)*r, q.z, ci);\n"
@@ -305,7 +354,7 @@ const char* kFrag =
     "    float edge = R * 0.82;\n"                                                              // blend into the next cascade (no seam)
     "    if (d > edge) { float f = (d - edge) / (R - edge);\n"
     "      s = mix(s, (i + 1 < cnt) ? sunCascade(i + 1, wp, n) : 1.0, f); }\n"                // last one fades out at the distance
-    "    return 1.0 - uSunStrength * (1.0 - s);\n"
+    "    return 1.0 - uSunStrength * distFade(length(wp - uEye), uFadeDist) * (1.0 - s);\n"
     "  }\n"
     "  return 1.0;\n"
     "}\n"
@@ -416,8 +465,12 @@ const char* kFrag =
     "        else if (uLType[i] > 1.5) { float cs = dot(normalize(uLDir[i]), -ld);\n"   // spot cone
     "          float dn = uLCosIn[i] - uLCosOut[i];\n"
     "          float sp = dn > 1e-4 ? clamp((cs - uLCosOut[i]) / dn, 0.0, 1.0) : (cs >= uLCosOut[i] ? 1.0 : 0.0);\n"
-    "          at *= sp * sp; } }\n"
-    "      float ndl = max((dot(N, ld) + wrap) / (1.0 + wrap), 0.0); if (toon) ndl = ceil(ndl*uToonBands)/uToonBands;\n"
+    "          at *= sp * sp * (3.0 - 2.0 * sp); } }\n"   // smoothstep cone (okay::SpotCone)
+    "      bool rect = uLType[i] > 2.5 && uLRect[i].x > 0.0 && uLRect[i].y > 0.0;\n"    // Area light with a Panel size: a real rectangle
+    "      float ndl = max((dot(N, ld) + wrap) / (1.0 + wrap), 0.0);\n"
+    "      if (rect) { ndl = rectTerm(i, vWorld, N); at = 1.0; }\n"
+    "      if (toon) ndl = ceil(ndl*uToonBands)/uToonBands;\n"
+    "      if (uLRect[i].z > -0.5) at *= cookieAt(i, vWorld);\n"                       // light mask
     "      if (ndl * at <= 0.0) continue;\n"                      // no light reaches here: skip the shadow lookup
     "      float lsh = 1.0;\n"
     "      if (uLType[i] < 0.5) { if (abs(float(i) - uSunIndex) < 0.5) lsh = sh; }\n"   // only the main sun has cascades
@@ -437,6 +490,7 @@ const char* kFrag =
     "  float metal = clamp(metalK, 0.0, 1.0);\n"                 // metalness: kill diffuse, tint spec/reflection
     "  float diffK = 1.0 - 0.9 * metal;\n"
     "  vec3 f0 = mix(vec3(1.0), base, metal);\n"                  // dielectric = white, metal = albedo-tinted
+    "  if (uTonemap < 0.5 && !toon) lit = vec3(softClip(lit.x), softClip(lit.y), softClip(lit.z));\n"   // roll-off above 1.0 (the filmic path has ACES)
     "  vec3 diff = base * lit * diffK;\n"
     "  vec3 rim = vec3(0.0);\n"                                   // rim glow (Fresnel/Hologram or rimStr>0)
     "  float rs = uRimStr; if ((fres || holo) && rs < 0.8) rs = 1.6;\n"
@@ -648,6 +702,10 @@ bool GLRenderer::EnsureProgram() {
     m_uLFalloff = g.GetUniformLocation(m_prog, "uLFalloff");
     m_uLCosOut = g.GetUniformLocation(m_prog, "uLCosOut");
     m_uLCosIn  = g.GetUniformLocation(m_prog, "uLCosIn");
+    m_uLRect = g.GetUniformLocation(m_prog, "uLRect"); m_uLRight = g.GetUniformLocation(m_prog, "uLRight");
+    m_uLUp = g.GetUniformLocation(m_prog, "uLUp"); m_uCookieTex = g.GetUniformLocation(m_prog, "uCookieTex");
+    m_uCookieRows = g.GetUniformLocation(m_prog, "uCookieRows"); m_uSunSoft = g.GetUniformLocation(m_prog, "uSunSoft");
+    m_uFadeDist = g.GetUniformLocation(m_prog, "uFadeDist");
     m_uNormalTex = g.GetUniformLocation(m_prog, "uNormalTex");
     m_uHasNormal = g.GetUniformLocation(m_prog, "uHasNormal");
     m_uNormalStrength = g.GetUniformLocation(m_prog, "uNormalStrength");
@@ -702,6 +760,7 @@ bool GLRenderer::EnsureProgram() {
     g.Uniform1i(m_uLocalTex, 5);
     g.Uniform1i(m_uMrTex, 6);
     g.Uniform1i(m_uEmisTex, 7);
+    if (m_uCookieTex >= 0) g.Uniform1i(m_uCookieTex, 8);   // light masks
     g.UseProgram(0);
     g.GenBuffers(1, &m_vbo);
     // A core-profile context refuses to draw without a bound VAO (and some drivers
@@ -767,6 +826,7 @@ void GLRenderer::DestroyShadow() {
     if (m_shadowTex) { g.DeleteTextures(1, &m_shadowTex); m_shadowTex = 0; }
     if (m_shadowFbo) { g.DeleteFramebuffers(1, &m_shadowFbo); m_shadowFbo = 0; }
     if (m_localTex) { g.DeleteTextures(1, &m_localTex); m_localTex = 0; }
+    if (m_cookieTex) { g.DeleteTextures(1, &m_cookieTex); m_cookieTex = 0; m_cookieCount = 0; }
     if (m_localFbo) { g.DeleteFramebuffers(1, &m_localFbo); m_localFbo = 0; }
     m_shadowW = m_shadowH = m_localW = m_localH = 0;
 }
@@ -2006,6 +2066,8 @@ const std::uint32_t* GLRenderer::RenderToPixels(const Scene& scene, const Mat4& 
         g.Uniform1f(m_uSunIndex, (float)plan.sunLight);
         g.Uniform1f(m_uSunStrength, sun ? sun->shadowStrength : 1.0f);
         g.Uniform1f(m_uSunBias, sun ? sun->shadowBias : 1.0f);
+        if (m_uSunSoft >= 0) g.Uniform1f(m_uSunSoft, sun ? sun->shadowSoftness : 0.5f);
+        if (m_uFadeDist >= 0) g.Uniform1f(m_uFadeDist, ShadowDistance() > 0.0f ? ShadowDistance() : 0.0f);
     }
     if (shadowOn) {
         float cvp[16 * ShadowPlan::kMaxCascades] = {0}, csph[4 * ShadowPlan::kMaxCascades] = {0};
@@ -2073,6 +2135,45 @@ const std::uint32_t* GLRenderer::RenderToPixels(const Scene& scene, const Mat4& 
             ld[i*3+0] = d.x; ld[i*3+1] = d.y; ld[i*3+2] = d.z;
             lc[i*3+0] = s.color.x; lc[i*3+1] = s.color.y; lc[i*3+2] = s.color.z;
             lr[i] = s.range; lco[i] = s.cosOuter; lci[i] = s.cosInner;
+        }
+        // Panel size, panel axes and light mask row per light (see okay::Lighting: rectangle Area lights and masks).
+        float lrect[16 * 4] = {0}, lright[48] = {0}, lup[48] = {0}; bool anyCookie = false;
+        for (int i = 0; i < n; ++i) {
+            const LightSample& s = L[i];
+            lrect[i*4+0] = s.halfW; lrect[i*4+1] = s.halfH;
+            lrect[i*4+2] = (s.cookie >= 0 && s.cookie < 8) ? (float)s.cookie : -1.0f; if (lrect[i*4+2] >= 0.0f) anyCookie = true;
+            lrect[i*4+3] = s.cookieScale;
+            lright[i*3+0] = s.right.x; lright[i*3+1] = s.right.y; lright[i*3+2] = s.right.z;
+            lup[i*3+0] = s.up.x; lup[i*3+1] = s.up.y; lup[i*3+2] = s.up.z;
+        }
+        for (int i = n; i < 16; ++i) lrect[i*4+2] = -1.0f;
+        if (m_uLRect >= 0 && g.Uniform4fv) g.Uniform4fv(m_uLRect, 16, lrect);
+        if (m_uLRight >= 0) g.Uniform3fv(m_uLRight, 16, lright);
+        if (m_uLUp >= 0) g.Uniform3fv(m_uLUp, 16, lup);
+        if (m_uCookieRows >= 0) g.Uniform1f(m_uCookieRows, 8.0f);
+        if (anyCookie) {   // the mask atlas: 64 px wide, 8 rows of 64 px, the mask in every channel (unit 8)
+            if (!m_cookieTex || m_cookieCount != LightCookies::Store().size()) {
+                std::vector<unsigned char> px((size_t)64 * 64 * 8 * 4, 255);
+                const auto& st = LightCookies::Store();
+                for (int r = 0; r < 8 && r < (int)st.size(); ++r) {
+                    const LightCookie& ck = st[(size_t)r];
+                    if (ck.w <= 0 || ck.h <= 0) continue;
+                    for (int y = 0; y < 64; ++y) for (int x = 0; x < 64; ++x) {
+                        float v = ck.At(x * ck.w / 64, y * ck.h / 64); v = v < 0.0f ? 0.0f : (v > 1.0f ? 1.0f : v);
+                        const unsigned char b = (unsigned char)(v * 255.0f + 0.5f);
+                        unsigned char* d = &px[(((size_t)r * 64 + y) * 64 + x) * 4]; d[0] = d[1] = d[2] = d[3] = b;
+                    }
+                }
+                if (!m_cookieTex) g.GenTextures(1, &m_cookieTex);
+                g.BindTexture(GL_TEXTURE_2D, m_cookieTex);
+                g.TexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR);
+                g.TexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
+                g.TexImage2D(GL_TEXTURE_2D, 0, GL_RGBA8, 64, 64 * 8, 0, GL_RGBA, GL_UNSIGNED_BYTE, px.data());
+                m_cookieCount = st.size();
+            }
+            g.ActiveTexture(GL_TEXTURE0 + 8);
+            g.BindTexture(GL_TEXTURE_2D, m_cookieTex);
+            g.ActiveTexture(GL_TEXTURE0);
         }
         g.Uniform1i(m_uLightCount, n);
         if (n > 0) {

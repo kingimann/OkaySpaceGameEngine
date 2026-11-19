@@ -119,13 +119,15 @@ Mostly on main and tested. Nothing is open: #574 added the optimization tools (L
   - 2.6.3 Voxel terrain - `Components/VoxelTerrain` - 3D density field meshed with marching cubes: caves, tunnels, overhangs; Dig, Add, Smooth, DigBox, RemoveFloaters
   - 2.6.4 Voxel digging - `Components/VoxelDigger`, `Components/VoxelAim` - left mouse / RT digs, right mouse / LT adds, aim through the crosshair in first and third person (reach from the character, no digging inside the body or through a wall), marker with dig progress, rebindable Dig / Place / PickBlock / Hotbar actions, number-key and wheel hotbar; skips rebuilds when nothing changed
   - 2.6.5 Water - `Components/Water` - animated wave mesh, reflective semi-transparent material that follows the wind, buoyancy (`fluidDensity`, `linearDrag`) for rigidbodies
+  - 2.6.8 Water surface and waves - `Components/Water`, `Environment/WaterWaves` - Style (Classic, Ocean, Calm lake), a seeded Gerstner wave sum (direction, steepness, count, seed), a current, and `SurfaceAt` (height, slope, flow) that the picture and the physics share
+  - 2.6.9 Buoyancy - `Components/Buoyancy` - sample points across the hull, Archimedes push per point, drag per hull direction against the moving water, angular damping, splash events, runs in FixedUpdate; crates float at the right draft, heavy things sink
   - 2.6.6 World streaming - `Components/WorldStreamer` - cell prefabs `<prefix>_<x>_<z>.okayprefab` loaded within a radius and unloaded past a larger one (hysteresis)
   - 2.6.7 Tilemap - `Components/Tilemap`, `Components/TilemapCollider2D` - integer tile grid with cell/world conversion; static box colliders merged per row
-- **Code:** `Components/Terrain`, `Components/TerrainDigger`, `Components/VoxelTerrain`, `Components/VoxelDigger`, `Components/Water`, `Components/WorldStreamer`, `Components/Tilemap`, `Components/TilemapCollider2D`
+- **Code:** `Components/Terrain`, `Components/TerrainDigger`, `Components/VoxelTerrain`, `Components/VoxelDigger`, `Components/Water`, `Environment/WaterWaves`, `Components/Buoyancy`, `Components/WorldStreamer`, `Components/Tilemap`, `Components/TilemapCollider2D`
 - **API:** `Terrain::RaiseAt`, `Terrain::Erode`, `VoxelTerrain::Dig`, `TerrainDigger`, `Water`, `WorldStreamer`, `Tilemap`, `TilemapCollider2D`
 - **Editor:** GameObject > 3D Object > Terrain, Voxel Terrain (caves), Water and GameObject > 2D Object > Tilemap; their Inspector sections and the Terrain sculpt tools (editor/main.cpp)
-- **Docs:** `docs/terrain_water.md`
-- **Tests:** `terrain`, `terrain_ops`, `voxel`, `voxel_dig`, `worldstreamer`, `tilemap_collision`, `particles_tilemap`
+- **Docs:** `docs/terrain_water.md`, `docs/water_boat.md`
+- **Tests:** `boat`, `terrain`, `terrain_ops`, `voxel`, `voxel_dig`, `worldstreamer`, `tilemap_collision`, `particles_tilemap`
 - **Status:** Works - read the headers of every component above; `terrain` also covers water, flashlight and the sandbox template
 - **Open:** vegetation and detail painting, procedural scatter and a proper sculpting UI are area 29; streaming is by prefab cell files baked by hand, not by the `Optimize/StreamingGrid` planner of #574 (area 27)
 - **Related:** 2.2, 2.4, 6.2, 27, 29, 1.6

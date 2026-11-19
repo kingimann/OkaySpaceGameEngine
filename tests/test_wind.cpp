@@ -258,7 +258,7 @@ int main() {
 
         Scene w("water");
         GameObject* wg = w.CreateGameObject("Sea");
-        auto* wa = wg->AddComponent<Water>(); wa->Apply();
+        auto* wa = wg->AddComponent<Water>(); wa->depth = 3.0f; wa->Apply();
         Run(w, 5);
         float calm = 0, fl = 0, sy = 0;
         CHECK(wa->Column({3, 0, 2}, calm, fl));

@@ -4,6 +4,10 @@
 // default settings write nothing new into the built game's config (old projects build as before).
 #include "test_framework.hpp"
 #include "../editor/BuildSettingsModel.hpp"
+#include "../editor/BuildOutputTexts.hpp"
+#include "okay/Audio/AudioMixer.hpp"
+#include "okay/Input/Input.hpp"
+#include "okay/Render/Lighting.hpp"
 
 #include <fstream>
 #include <regex>
@@ -90,7 +94,7 @@ int main() {
     }
     {
         RUN_SUITE("pages per platform");
-        CHECK(PagesFor(0).size() == 8 && PageShown(kGame, 0) && PageShown(kAdvanced, 0));
+        CHECK(PagesFor(0).size() == 9 && PageShown(kGame, 0) && PageShown(kAdvanced, 0));
         CHECK(!PageShown(kGame, 1) && !PageShown(kGame, 3) && PageShown(kServer, 3) && !PageShown(kDisplay, 3));
         CHECK(PageShown(kXbox, 4) && !PageShown(kXbox, 0));
         for (int p = 0; p < kPageCount; ++p) CHECK(PageName(p)[0] && PageTip(p)[0]);
@@ -179,6 +183,113 @@ int main() {
         const auto lines = BuildLogLines("Built 'G' to out  [3 MB total]  (2 scenes)  WARNING: 1 referenced asset(s) not found and not copied.", {"w1"});
         CHECK(lines.size() == 5 && lines[0] == "Built 'G' to out" && lines[3].rfind("WARNING", 0) == 0 && lines[4] == "Warning: w1");
         CHECK(BuildLogLines("", {}).empty());
+    }
+    {
+        RUN_SUITE("round 3: engine hooks");
+        // light limit keeps the sun
+        okay::SceneLights::Clear();
+        for (int i = 0; i < 6; ++i) { okay::LightSample l; okay::SceneLights::Add(l); }
+        okay::SceneLights::SunIndex() = 4;
+        okay::SceneLights::LimitTo(3);
+        CHECK(okay::SceneLights::List().size() == 3 && okay::SceneLights::SunIndex() == 0);
+        okay::SceneLights::LimitTo(0); CHECK(okay::SceneLights::List().size() == 3);
+        okay::SceneLights::LimitTo(9); CHECK(okay::SceneLights::List().size() == 3);
+        okay::SceneLights::Clear();
+        // voice limit: the loudest stay
+        const std::vector<bool> keep = okay::AudioMixer::PickLoudest({0.2f, 0.9f, 0.5f, 0.9f, 0.1f}, 2);
+        CHECK(!keep[0] && keep[1] && !keep[2] && keep[3] && !keep[4]);                       // ties: the lower index first
+        CHECK(okay::AudioMixer::PickLoudest({1, 2}, 0) == std::vector<bool>({true, true}) && okay::AudioMixer::PickLoudest({1, 2}, 5) == std::vector<bool>({true, true}));
+        CHECK(okay::AudioMixer::PickLoudest({}, 3).empty());
+        // look scale default is 1 (no change for old games)
+        CHECK(okay::Input::LookScale() == 1.0f);
+    }
+    {
+        RUN_SUITE("round 3: config keys, arguments and defines");
+        BuildSettings s;
+        CHECK(bp::WriteExtraConfig(ExtraFrom(s)).empty());
+        s.renderScale = 0.5f; s.maxLights = 4; s.fogOff = true; s.mouseSensitivity = 2.0f; s.maxVoices = 16; s.crashReports = true;
+        std::snprintf(s.crashFolder, 64, "Crash Reports"); std::snprintf(s.launchArgs, 256, "--windowed \"two words\" -x"); std::snprintf(s.defines, 512, "net.tick=30; bad name=1; a_b=x y");
+        const std::string t = bp::WriteExtraConfig(ExtraFrom(s));
+        CHECK(t.find("render_scale=0.5\n") != std::string::npos && t.find("max_lights=4\n") != std::string::npos && t.find("fog_off=1\n") != std::string::npos);
+        CHECK(t.find("arg=--windowed\narg=two words\narg=-x\n") != std::string::npos);
+        CHECK(t.find("define=net.tick=30\n") != std::string::npos && t.find("define=a_b=x y\n") != std::string::npos && t.find("bad name") == std::string::npos);
+        bp::ExtraConfig c; std::istringstream in(t);
+        for (std::string line; std::getline(in, line);) { const auto eq = line.find('='); CHECK(bp::ApplyExtraKey(c, line.substr(0, eq), line.substr(eq + 1))); }
+        CHECK(c.renderScale == 0.5f && c.maxLights == 4 && c.fogOff && c.mouseSensitivity == 2.0f && c.maxVoices == 16 && c.crashReports && c.crashFolder == "Crash Reports");
+        CHECK(c.args.size() == 3 && c.args[1] == "two words" && c.defines.size() == 2 && c.defines[1].second == "x y");
+        CHECK(bp::WriteExtraConfig(c) == t);
+        bp::ExtraConfig h;
+        bp::ApplyExtraKey(h, "render_scale", "0"); CHECK(h.renderScale == 0.25f);
+        bp::ApplyExtraKey(h, "render_scale", "9"); CHECK(h.renderScale == 1.0f);
+        bp::ApplyExtraKey(h, "mouse_sensitivity", "-5"); CHECK(h.mouseSensitivity == 0.1f);
+        bp::ApplyExtraKey(h, "max_lights", "100000"); CHECK(h.maxLights == 256);
+        bp::ApplyExtraKey(h, "crash_folder", "../x"); CHECK(h.crashFolder.empty());
+        bp::ApplyExtraKey(h, "arg", std::string(300, 'a')); CHECK(h.args.empty());
+        for (int i = 0; i < 40; ++i) bp::ApplyExtraKey(h, "arg", "x"); CHECK(h.args.size() == 32);
+        CHECK(bp::SplitArgs("  a   \"b c\"  \"\" d\t e ").size() == 4 && bp::SplitArgs("").empty() && bp::SplitArgs("\"unclosed words").size() == 1);
+        CHECK(bp::SplitArgs(std::string(250, 'z')).empty());                               // one over-long argument is dropped
+        CHECK(bp::IsValidDefineName("net.tick-rate_1") && !bp::IsValidDefineName("a b") && !bp::IsValidDefineName(""));
+    }
+    {
+        RUN_SUITE("round 3: per-platform differences");
+        BuildSettings s;
+        std::snprintf(s.overridesWeb, 512, "width=800; vsync=0 ;nonsense=1;fpsCap=30;product=Evil;overridesWeb=x");
+        std::snprintf(s.overridesServer, 512, "srvPort=46000");
+        std::vector<std::string> bad;
+        BuildSettings w = EffectiveSettings(s, 1, &bad);
+        CHECK(w.width == 800 && !w.vsync && w.fpsCap == 30 && w.height == 720);
+        CHECK(bad.size() == 3 && bad[0] == "nonsense");                                   // unknown, "product" and "overridesWeb" are refused
+        CHECK(std::string(w.overridesWeb) == std::string(s.overridesWeb));                // the boxes themselves are never changed
+        CHECK(EffectiveSettings(s, 0).width == 1280 && EffectiveSettings(s, 3).srvPort == 46000 && EffectiveSettings(s, 2).width == 1280 && EffectiveSettings(s, 4).vsync);
+        CHECK(SettingsKey(s) != SettingsKey(w) && SettingsKey(s) == SettingsKey(BuildSettings(s)));
+        const auto& keys = OverrideKeys();
+        CHECK(std::find(keys.begin(), keys.end(), "width") != keys.end() && std::find(keys.begin(), keys.end(), "overridesWeb") == keys.end() && std::find(keys.begin(), keys.end(), "scene") == keys.end());
+        ValidateInput vi; vi.productName = "G"; vi.outputDir = "o"; vi.enabledScenes = 1; vi.s = s;
+        bool found = false; for (const Issue& i : Validate(vi)) if (i.text.find("does not exist") != std::string::npos) found = true;
+        CHECK(found);
+    }
+    {
+        RUN_SUITE("round 3: generated Web, Android and installer text");
+        namespace ot = oked::outtext;
+        // Defaults: exactly the script older exports wrote.
+        const std::string old =
+            "#!/usr/bin/env bash\n# Build this game for the web (WebAssembly + WebGL) with Emscripten.\n# Prereqs: install emsdk (https://emscripten.org), 'source emsdk_env.sh',\n"
+            "# and set OKAY_SRC to your OkaySpace engine source checkout.\nset -euo pipefail\ncd \"$(dirname \"$0\")\"\n"
+            ": \"${OKAY_SRC:?Set OKAY_SRC to the OkaySpace engine source folder}\"\n"
+            "command -v emcmake >/dev/null || { echo 'Emscripten not found: source emsdk_env.sh'; exit 1; }\n"
+            "emcmake cmake -S \"$OKAY_SRC\" -B build-web -DCMAKE_BUILD_TYPE=Release \\\n"
+            "  -DOKAY_BUILD_PLAYER=ON -DOKAY_BUILD_TESTS=OFF -DOKAY_BUILD_SANDBOX=OFF -DOKAY_BUILD_LAUNCHER=OFF \\\n"
+            "  -DCMAKE_EXE_LINKER_FLAGS=\"--preload-file game@/\"\n"
+            "cmake --build build-web -j\n"
+            "echo 'Built build-web/web/okay-player.html — serve it: python3 -m http.server -d build-web/web'\n";
+        CHECK(ot::WebBuildScript({}) == old);
+        const std::string w = ot::WebBuildScript({512, true});
+        CHECK(w.find("--preload-file game@/ -sINITIAL_MEMORY=512MB -sALLOW_MEMORY_GROWTH=1\"") != std::string::npos && w.find("gzip -kf9") != std::string::npos);
+        CHECK(ot::WebBuildScript({1, false}).find("-sINITIAL_MEMORY=16MB") != std::string::npos && ot::WebBuildScript({99999, false}).find("2048MB") != std::string::npos);
+        CHECK(ot::AndroidPackageName("com.acme.great-game") == "com.acme.great_game" && ot::AndroidPackageName("MyGame") == "com.mygame" && ot::AndroidPackageName("com.9lives.x") == "com.g9lives.x" && ot::AndroidPackageName("") == "com.game");
+        ot::AndroidInfo a; a.appName = "Moon <&> Hop"; a.package = "com.acme.moon"; a.version = "2.1.0"; a.buildNumber = 7; a.minSdk = 26; a.targetSdk = 34; a.orientation = 1; a.permissions = "internet; VIBRATE;com.x.PERM;bad name;INTERNET;;";
+        const std::string m = ot::AndroidManifest(a);
+        CHECK(m.find("package=\"com.acme.moon\"") != std::string::npos && m.find("android:versionCode=\"7\"") != std::string::npos && m.find("android:versionName=\"2.1.0\"") != std::string::npos);
+        CHECK(m.find("android:minSdkVersion=\"26\" android:targetSdkVersion=\"34\"") != std::string::npos && m.find("sensorLandscape") != std::string::npos);
+        CHECK(m.find("android:label=\"Moon &lt;&amp;&gt; Hop\"") != std::string::npos);
+        CHECK(m.find("android.permission.INTERNET") != std::string::npos && m.find("android.permission.VIBRATE") != std::string::npos && m.find("com.x.PERM") != std::string::npos && m.find("bad name") == std::string::npos);
+        CHECK(m.find("android.permission.INTERNET") == m.rfind("android.permission.INTERNET"));      // once
+        CHECK(ot::AndroidManifest({}).find("fullSensor") != std::string::npos);
+        a.orientation = 2; CHECK(ot::AndroidManifest(a).find("sensorPortrait") != std::string::npos);
+        const std::string g = ot::AndroidGradle(a);
+        CHECK(g.find("applicationId \"com.acme.moon\"") != std::string::npos && g.find("minSdkVersion 26") != std::string::npos && g.find("versionCode 7") != std::string::npos);
+        ot::InstallerInfo ii; ii.gameName = "Moon \"Hop\" $1"; ii.company = "Acme"; ii.version = "2.1.0"; ii.exeName = "Moon_Hop.exe"; ii.installFolder = "Moon/Hop:Game"; ii.licenseFile = "license.txt"; ii.scriptName = "Moon-installer.nsi"; ii.desktopShortcut = true;
+        const std::string n = ot::InstallerScript(ii);
+        CHECK(n.find("Name \"Moon $\\\"Hop$\\\" $$1 2.1.0\"") != std::string::npos);
+        CHECK(n.find("InstallDir \"$LOCALAPPDATA\\MoonHopGame\"") != std::string::npos);         // path characters are removed from the folder name
+        CHECK(n.find("MUI_PAGE_LICENSE \"license.txt\"") != std::string::npos && n.find("RequestExecutionLevel user") != std::string::npos);
+        CHECK(n.find("$SMPROGRAMS\\MoonHopGame\\Moon $\\\"Hop$\\\" $$1.lnk") != std::string::npos && n.find("$DESKTOP\\Moon $\\\"Hop$\\\" $$1.lnk") != std::string::npos);
+        CHECK(n.find("WriteUninstaller") != std::string::npos && n.find("Section \"Uninstall\"") != std::string::npos && n.find("UninstallString") != std::string::npos);
+        CHECK(n.find("/x \"Moon-installer.nsi\" /x \"license.txt\"") != std::string::npos);
+        ii.licenseFile.clear(); ii.startMenu = false; ii.desktopShortcut = false;
+        const std::string n2 = ot::InstallerScript(ii);
+        CHECK(n2.find("MUI_PAGE_LICENSE") == std::string::npos && n2.find("$SMPROGRAMS") == n2.rfind("$SMPROGRAMS") && n2.find("CreateShortcut") == std::string::npos);
+        CHECK(ot::InstallFolderName("", "Fallback") == "Fallback" && ot::InstallFolderName("???", "F") == "Game");
     }
     {
         RUN_SUITE("history");

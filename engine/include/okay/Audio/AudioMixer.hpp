@@ -1,4 +1,5 @@
 #pragma once
+#include <algorithm>
 #include <vector>
 #include "okay/Math/Vec3.hpp"
 #include "okay/Components/AudioSource.hpp"
@@ -33,7 +34,15 @@ struct AudioMixer {
     static inline int   maxVoices = 0;
     /// Which of `scores` (one per sounding source) may play under a limit of `cap`: the `cap` highest, ties by lower index.
     /// cap <= 0 or cap >= the count: all of them.
-    static std::vector<bool> PickLoudest(const std::vector<float>& scores, int cap);
+    static std::vector<bool> PickLoudest(const std::vector<float>& scores, int cap) {
+        std::vector<bool> keep(scores.size(), true);
+        if (cap <= 0 || cap >= (int)scores.size()) return keep;
+        std::vector<int> order(scores.size());
+        for (std::size_t i = 0; i < order.size(); ++i) order[i] = (int)i;
+        std::stable_sort(order.begin(), order.end(), [&](int a, int b) { return scores[(std::size_t)a] > scores[(std::size_t)b]; });
+        for (std::size_t i = (std::size_t)cap; i < order.size(); ++i) keep[(std::size_t)order[i]] = false;
+        return keep;
+    }
 
     /// Per-group level [0..1] and mute, under the master (AudioGroup order).
     static inline float groupVolume[(int)AudioGroup::Count] = {1.0f, 1.0f, 1.0f, 1.0f};

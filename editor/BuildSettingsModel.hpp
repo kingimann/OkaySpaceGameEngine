@@ -31,10 +31,10 @@ namespace oked::bsm {
 
 // ---- pages -------------------------------------------------------------------------------------------------
 // The ids are the ones the window already used (kBuildSecs in main.cpp), plus two new pages at the end.
-enum Page { kScenes = 0, kPlayer = 1, kDisplay = 2, kGraphics = 3, kAudioInput = 4, kOutput = 5, kServer = 6, kXbox = 7, kGame = 8, kAdvanced = 9, kPageCount = 10 };
+enum Page { kScenes = 0, kPlayer = 1, kDisplay = 2, kGraphics = 3, kAudioInput = 4, kOutput = 5, kServer = 6, kXbox = 7, kGame = 8, kAdvanced = 9, kWeb = 10, kAndroid = 11, kInstaller = 12, kPageCount = 13 };
 
 inline const char* PageName(int p) {
-    static const char* n[kPageCount] = {"Scenes", "Player", "Display", "Graphics", "Audio & Input", "Output", "Server", "Xbox", "Game", "Advanced"};
+    static const char* n[kPageCount] = {"Scenes", "Player", "Display", "Graphics", "Audio & Input", "Output", "Server", "Xbox", "Game", "Advanced", "Web", "Android", "Installer"};
     return p >= 0 && p < kPageCount ? n[p] : "";
 }
 inline const char* PageTip(int p) {
@@ -48,7 +48,10 @@ inline const char* PageTip(int p) {
         "Name, port, players, password, public listing and anti-cheat (written to server.cfg).",
         "Xbox One Developer Mode package (experimental).",
         "How the game runs: speed, starting language and volumes, logging, environment variables.",
-        "Commands before and after the build, version control file, build history."};
+        "Commands before and after the build, command-line arguments, custom defines, version control file, build history.",
+        "Memory and compression for the web build (written into build-web.sh).",
+        "Package, Android versions, screen direction and permissions (written into AndroidManifest.xml).",
+        "A Windows installer script for your game: install folder, licence, Start menu, shortcut, uninstaller."};
     return p >= 0 && p < kPageCount ? t[p] : "";
 }
 /// platform: 0 Desktop, 1 Web, 2 Android, 3 Server, 4 Xbox. The order is the order of the left list.
@@ -56,8 +59,9 @@ inline std::vector<int> PagesFor(int platform) {
     switch (platform) {
         case 3: return {kScenes, kServer, kOutput};
         case 4: return {kScenes, kPlayer, kXbox};
-        case 0: return {kScenes, kPlayer, kDisplay, kGraphics, kAudioInput, kGame, kOutput, kAdvanced};
-        default: return {kScenes, kPlayer, kDisplay, kGraphics, kAudioInput, kOutput};
+        case 0: return {kScenes, kPlayer, kDisplay, kGraphics, kAudioInput, kGame, kOutput, kInstaller, kAdvanced};
+        case 1: return {kScenes, kPlayer, kDisplay, kGraphics, kAudioInput, kOutput, kWeb};
+        default: return {kScenes, kPlayer, kDisplay, kGraphics, kAudioInput, kOutput, kAndroid};
     }
 }
 inline bool PageShown(int page, int platform) {
@@ -134,6 +138,29 @@ inline const std::vector<SettingInfo>& Registry() {
         OKAY_BS_FIELD("Gamepad dead zone", kAudioInput, "controller stick drift", gamepadDeadzone),
         OKAY_BS_FIELD("Sound quality (sample rate)", kAudioInput, "audio hz khz output", sampleRate),
         OKAY_BS_FIELD("Files left out of the build", kOutput, "exclude skip ignore assets", excludeList),
+        OKAY_BS_FIELD("3D picture size (render scale)", kGraphics, "resolution scale smaller faster pixels", renderScale),
+        OKAY_BS_FIELD("Most lights at once", kGraphics, "light limit lamps", maxLights),
+        OKAY_BS_FIELD("Switch fog off", kGraphics, "mist haze", fogOff),
+        OKAY_BS_FIELD("Mouse sensitivity", kAudioInput, "look speed aim camera", mouseSensitivity),
+        OKAY_BS_FIELD("Most sounds at once", kAudioInput, "voices limit audio channels", maxVoices),
+        OKAY_BS_FIELD("Crash reports", kGame, "crash handler report dump", crashReports),
+        OKAY_BS_FIELD("Crash report folder", kGame, "crash handler where", crashFolder),
+        OKAY_BS_FIELD("Command-line arguments", kAdvanced, "args flags start options", launchArgs),
+        OKAY_BS_FIELD("Custom defines", kAdvanced, "cvar variables settings values", defines),
+        OKAY_BS_FIELD("Web: starting memory", kWeb, "emscripten ram heap", webMemoryMB),
+        OKAY_BS_FIELD("Web: compress the files", kWeb, "gzip size download", webCompress),
+        OKAY_BS_FIELD("Android: lowest Android version", kAndroid, "min sdk api level", androidMinSdk),
+        OKAY_BS_FIELD("Android: target version", kAndroid, "target sdk api level", androidTargetSdk),
+        OKAY_BS_FIELD("Android: screen direction", kAndroid, "orientation landscape portrait rotate", androidOrientation),
+        OKAY_BS_FIELD("Android: permissions", kAndroid, "internet vibrate manifest", androidPermissions),
+        OKAY_BS_FIELD("Create an installer script", kInstaller, "setup nsis exe install", createInstaller),
+        OKAY_BS_FIELD("Install folder name", kInstaller, "directory appdata", installFolder),
+        OKAY_BS_FIELD("License text file", kInstaller, "licence eula terms", licenseFile),
+        OKAY_BS_FIELD("Start menu entry", kInstaller, "shortcut programs", startMenuEntry),
+        OKAY_BS_FIELD("Desktop shortcut", kInstaller, "icon", desktopShortcut),
+        OKAY_BS_FIELD("Differences for Web", kOutput, "platform override", overridesWeb),
+        OKAY_BS_FIELD("Differences for Android", kOutput, "platform override", overridesAndroid),
+        OKAY_BS_FIELD("Differences for Server", kOutput, "platform override", overridesServer),
         OKAY_BS_FIELD("Master volume", kAudioInput, "sound loudness", masterVolume),
         OKAY_BS_FIELD("Quit on Escape", kAudioInput, "key exit", quitOnEscape),
         OKAY_BS_FIELD("Hide cursor", kAudioInput, "mouse pointer", hideCursor),
@@ -205,6 +232,56 @@ inline int ResetPage(int page, BuildSettings& now) {
     int n = 0;
     for (const SettingInfo& s : Registry()) if (s.page == page && s.differs(now, d)) { s.reset(now, d); ++n; }
     return n;
+}
+
+// ---- per-platform differences ------------------------------------------------------------------------------
+/// The setting keys a profile file uses ("width", "vsync", "srvPort" ...), read from the text the profile writer produces,
+/// so the list cannot fall behind the struct. Keys that are not settings (product, dir, platform, scene, the overrides) are left out.
+inline const std::vector<std::string>& OverrideKeys() {
+    static const std::vector<std::string> keys = [] {
+        std::vector<std::string> v;
+        BuildProfile p; p.name = "x";
+        std::ostringstream o; WriteBuildProfileBlock(o, p);
+        std::istringstream in(o.str());
+        for (std::string line; std::getline(in, line);) {
+            const std::size_t eq = line.find('=');
+            if (eq == std::string::npos || line[0] == '@') continue;
+            const std::string k = line.substr(0, eq);
+            if (k == "product" || k == "dir" || k == "platform" || k == "scene" || k.rfind("overrides", 0) == 0) continue;
+            v.push_back(k);
+        }
+        return v;
+    }();
+    return keys;
+}
+inline const char* OverrideText(const BuildSettings& s, int platform) {
+    return platform == 1 ? s.overridesWeb : platform == 2 ? s.overridesAndroid : platform == 3 ? s.overridesServer : "";
+}
+/// The settings to build `platform` with: the base settings, then that platform's "key=value;key=value" differences on top.
+/// Unknown keys are skipped and listed in `bad`. Desktop (0) and Xbox (4) have no differences: the base settings.
+inline BuildSettings EffectiveSettings(const BuildSettings& base, int platform, std::vector<std::string>* bad = nullptr) {
+    BuildProfile p; p.settings = base;
+    const std::string text = OverrideText(base, platform);
+    std::size_t pos = 0;
+    const std::vector<std::string>& known = OverrideKeys();
+    while (pos <= text.size()) {
+        std::size_t e = text.find(';', pos); if (e == std::string::npos) e = text.size();
+        std::string it = text.substr(pos, e - pos); pos = e + 1;
+        const std::size_t a = it.find_first_not_of(' '); if (a == std::string::npos) continue;
+        it = it.substr(a);
+        const std::size_t eq = it.find('=');
+        std::string k = it.substr(0, eq == std::string::npos ? it.size() : eq);
+        while (!k.empty() && k.back() == ' ') k.pop_back();
+        if (eq == std::string::npos || std::find(known.begin(), known.end(), k) == known.end()) { if (bad) bad->push_back(k); continue; }
+        ApplyBuildProfileKV(p, k, it.substr(eq + 1));
+    }
+    return p.settings;
+}
+/// A text that changes whenever any setting changes (the build-size estimate is "out of date" when it differs).
+inline std::string SettingsKey(const BuildSettings& s) {
+    BuildProfile p; p.settings = s; p.name = "k";
+    std::ostringstream o; WriteBuildProfileBlock(o, p);
+    return o.str();
 }
 
 // ---- search ------------------------------------------------------------------------------------------------
@@ -362,6 +439,16 @@ inline std::vector<std::string> BuildSummary(const SummaryInput& in) {
     }
     L.push_back(in.outputDir.empty() ? "No output folder is chosen yet." : "It is written to " + in.outputDir + ".");
     if (in.estimateBytes) L.push_back("The last Dry Run said this build would be " + HumanSize(in.estimateBytes) + ".");
+    if (in.platform == 0) {
+        if (s.renderScale != 1.0f) L.push_back("The 3D picture is drawn at " + std::to_string((int)(s.renderScale * 100 + 0.5f)) + "% size and stretched to the window.");
+        if (s.maxLights > 0) L.push_back("At most " + std::to_string(s.maxLights) + " lights are used at once.");
+        if (s.mouseSensitivity != 1.0f) L.push_back("Mouse look runs at " + FloatText(s.mouseSensitivity) + " times the usual speed.");
+        if (s.crashReports) L.push_back("If the game crashes it writes a crash report" + (s.crashFolder[0] ? std::string(" into the folder \"") + s.crashFolder + "\" in its save folder." : std::string(" beside its files.")));
+        if (s.launchArgs[0]) L.push_back(std::string("It starts with these command-line arguments: ") + s.launchArgs);
+        if (s.createInstaller && s.layout != 2) L.push_back("An installer script (.nsi) is written next to the build. Run NSIS on it to make the setup program.");
+    }
+    if (in.platform == 1 && (s.webMemoryMB > 0 || s.webCompress)) L.push_back(std::string("The web build script ") + (s.webMemoryMB > 0 ? "asks for " + std::to_string(s.webMemoryMB) + " MB of memory" : std::string("keeps the default memory")) + (s.webCompress ? " and writes .gz copies." : "."));
+    if (in.platform == 2) L.push_back(std::string("An AndroidManifest.xml and a Gradle file are written for the package ") + s.bundleId + ".");
     if (!ExcludeEntries(s.excludeList).empty()) L.push_back(std::to_string(ExcludeEntries(s.excludeList).size()) + " file or folder entries are left out of the build (Output page).");
     if (in.lastBytes) L.push_back("The last build was " + HumanSize(in.lastBytes) + ". Use Dry Run to see the size of this one without writing it.");
     return L;
@@ -369,7 +456,7 @@ inline std::vector<std::string> BuildSummary(const SummaryInput& in) {
 
 // ---- validation --------------------------------------------------------------------------------------------
 enum class Severity { Info, Warning, Error };
-enum class Fix { None, CleanName, DefaultVersion, DropBorderless, RaiseMinSize, ClearIcon, ClearSplash, ResetTimeScale, ClearZipAlso, ClearLogLevel, DropBadEnv, RaiseSize };
+enum class Fix { ClearInstaller, ClearLicense, LowerMinSdk, None, CleanName, DefaultVersion, DropBorderless, RaiseMinSize, ClearIcon, ClearSplash, ResetTimeScale, ClearZipAlso, ClearLogLevel, DropBadEnv, RaiseSize };
 struct Issue { Severity sev = Severity::Warning; std::string text; Fix fix = Fix::None; const char* fixLabel = ""; int page = -1; };
 struct ValidateInput {
     BuildSettings s;
@@ -379,6 +466,7 @@ struct ValidateInput {
     bool openSceneSaved = true;     // the open scene has a file (else "only the open scene" has nothing to ship)
     bool iconMissing = false;       // an icon is set but the file is not there
     bool splashMissing = false;
+    bool licenseMissing = false;     // a licence file is set but is not there
 };
 inline bool NameHasBadChars(const std::string& n) {
     for (char c : n) if (c == '<' || c == '>' || c == ':' || c == '"' || c == '/' || c == '\\' || c == '|' || c == '?' || c == '*' || (unsigned char)c < 32) return true;
@@ -423,6 +511,15 @@ inline std::vector<Issue> Validate(const ValidateInput& in) {
         std::vector<std::string> bad; okay::buildpipe::ParseEnvList(s.envVars, &bad);
         if (!bad.empty()) add(Severity::Warning, kGame, "These environment variables are not allowed or not written NAME=VALUE and are skipped: " + bad.front() + (bad.size() > 1 ? " and others." : "."), Fix::DropBadEnv, "Remove them");
     }
+    if (s.createInstaller && s.layout == 2) add(Severity::Warning, kInstaller, "An installer needs the folder layout, and the Zip layout keeps only the zip. No installer script is written.", Fix::ClearInstaller, "Turn the installer off");
+    if (s.licenseFile[0] && in.licenseMissing) add(Severity::Warning, kInstaller, "The licence file cannot be found, so the installer will have no licence page.", Fix::ClearLicense, "Forget the licence");
+    if (s.androidMinSdk > s.androidTargetSdk) add(Severity::Warning, kAndroid, "The lowest Android version is higher than the target version.", Fix::LowerMinSdk, "Make them equal");
+    {
+        std::vector<std::string> bad;
+        for (int pf = 1; pf <= 3; ++pf) { EffectiveSettings(s, pf, &bad); }
+        if (!bad.empty()) add(Severity::Warning, kOutput, "A \"Differences for\" box has a setting name that does not exist (" + bad.front() + "). It is ignored.");
+    }
+    if (s.defines[0]) { std::vector<std::string> bad; okay::buildpipe::ParseDefines(s.defines, &bad); if (!bad.empty()) add(Severity::Warning, kAdvanced, "A custom define is not written NAME=VALUE (" + bad.front() + "). It is skipped."); }
     if (s.layout == 2 && s.zipAfter) add(Severity::Info, kOutput, "The Zip layout already makes a .zip, so \"Also create a .zip\" does nothing.", Fix::ClearZipAlso, "Turn it off");
     if ((s.preBuildCommand[0] || s.postBuildCommand[0]) && !s.allowBuildCommands)
         add(Severity::Info, kAdvanced, "You wrote build commands but \"Allow build commands\" is off, so they will not run.");
@@ -442,6 +539,9 @@ inline bool ApplyFix(Fix f, BuildSettings& s, std::string& productName) {
         case Fix::ResetTimeScale: s.timeScale = 1.0f; return true;
         case Fix::ClearZipAlso: s.zipAfter = false; return true;
         case Fix::ClearLogLevel: s.logLevel[0] = '\0'; return true;
+        case Fix::ClearInstaller: s.createInstaller = false; return true;
+        case Fix::ClearLicense: s.licenseFile[0] = '\0'; return true;
+        case Fix::LowerMinSdk: s.androidMinSdk = s.androidTargetSdk; return true;
         case Fix::RaiseSize: s.width = 1280; s.height = 720; return true;
         case Fix::DropBadEnv: {
             std::string keep;
@@ -463,6 +563,10 @@ inline okay::buildpipe::ExtraConfig ExtraFrom(const BuildSettings& s) {
     c.logFile = s.logToFile ? "game.log" : "";
     for (const char* p = s.description; *p; ++p) c.description.push_back(*p == '\n' || *p == '\r' ? ' ' : *p);
     c.env = okay::buildpipe::ParseEnvList(s.envVars);
+    c.renderScale = s.renderScale; c.maxLights = s.maxLights; c.fogOff = s.fogOff; c.mouseSensitivity = s.mouseSensitivity; c.maxVoices = s.maxVoices;
+    c.crashReports = s.crashReports; c.crashFolder = okay::buildpipe::CleanLogFileName(s.crashFolder);
+    { std::string a = s.launchArgs; for (char& ch : a) if (ch == '\n' || ch == '\r') ch = ' '; c.args = okay::buildpipe::SplitArgs(a); }
+    c.defines = okay::buildpipe::ParseDefines(s.defines);
     c.renderer = s.renderer; c.particleCap = s.particleCap; c.gamepadDeadzone = s.gamepadDeadzone; c.sampleRate = s.sampleRate;
     return c;
 }

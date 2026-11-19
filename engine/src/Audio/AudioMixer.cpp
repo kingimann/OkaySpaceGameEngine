@@ -248,16 +248,6 @@ void AudioMixer::ResetSpatial() {
     Motion() = MotionMemory{};
 }
 
-std::vector<bool> AudioMixer::PickLoudest(const std::vector<float>& scores, int cap) {
-    std::vector<bool> keep(scores.size(), true);
-    if (cap <= 0 || cap >= (int)scores.size()) return keep;
-    std::vector<int> order(scores.size());
-    for (std::size_t i = 0; i < order.size(); ++i) order[i] = (int)i;
-    std::stable_sort(order.begin(), order.end(), [&](int a, int b) { return scores[(std::size_t)a] > scores[(std::size_t)b]; });
-    for (std::size_t i = (std::size_t)cap; i < order.size(); ++i) keep[(std::size_t)order[i]] = false;
-    return keep;
-}
-
 int AudioMixer::RenderStereo(Scene& scene, float* out, int frames) {
     for (int i = 0; i < 2 * frames; ++i) out[i] = 0.0f;
     const int outRate = sampleRate > 0 ? sampleRate : 44100;

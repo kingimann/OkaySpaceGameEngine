@@ -3691,6 +3691,7 @@ inline bool VsDrawChoice(EditorState& ed, const VsEditGraph& g, std::string& val
 }
 }  // namespace okay::editor::vsed
 #include "VisualScriptClarity.hpp"
+#include "VisualScriptGuide.hpp"       // plain sentences, pin tips, next steps, Try this node, the help card
 #include "VisualScriptPan.hpp"
 #include "VisualScriptPalette.hpp"
 #include "VisualScriptEasyOps.hpp"   // graph-in, graph-out rules for the canvas (needs the graph model above)
@@ -3698,6 +3699,7 @@ inline bool VsDrawChoice(EditorState& ed, const VsEditGraph& g, std::string& val
 #include "VisualScriptWhatHappened.hpp" // "Moved 3 steps right": the line under a block that ran
 #include "VisualScriptHints.hpp"      // the one-line next-step bar
 #include "VisualScriptStartDraw.hpp"  // the big recipe cards shown for an empty graph
+#include "VisualScriptGuideDraw.hpp"  // the "What is this?" card, next-step chips, Try this node
 namespace okay::editor::vsed {
 
 // ---- The editor window -----------------------------------------------------
@@ -4737,7 +4739,7 @@ inline void Draw(EditorState& ed, bool* open) {
         if (isStep) titleTextW = std::max(titleTextW, std::min(ImGui::CalcTextSize(stepLine.c_str()).x, 320.0f * z));
         // The width rule (title + the status badge beside it, input labels + value box + output labels) is in the header.
         oked::scriptui::NodeWidthIn nwi;
-        nwi.zoom = z; nwi.titleW = titleTextW; nwi.badgeW = ImGui::CalcTextSize("Missing").x + 10.0f * z;
+        nwi.zoom = z; nwi.titleW = titleTextW; nwi.badgeW = ImGui::CalcTextSize("Needs input").x + 10.0f * z;
         nwi.hasDataIn = !d->dataIn.empty(); nwi.inLabelW = inLabelW; nwi.outLabelW = outLabelW; nwi.boxW = BOX_W;
         const float NODE_W = oked::scriptui::NodeWidth(dm, nwi);
         ImVec2 p0 = W2S(n.x, n.y), p1 = ImVec2(p0.x + NODE_W, p0.y + h);
@@ -4794,28 +4796,35 @@ inline void Draw(EditorState& ed, bool* open) {
             dl->AddRect(p0, p1, hovered ? IM_COL32(150, 154, 166, 200) : IM_COL32(0, 0, 0, 170), ROUND, 0, hovered ? 1.5f : 1.0f);
         }
         {   // a title longer than the widest node is cut with "..." (the full name is in the node's help)
-            const float titleRoom = NODE_W - PAD * 2.0f - (ImGui::CalcTextSize("Missing").x + 10.0f * z + PAD * 0.5f);
+            const float titleRoom = NODE_W - PAD * 2.0f - (ImGui::CalcTextSize("Needs input").x + 10.0f * z + PAD * 0.5f);
             const std::string shownTitle = oked::scriptui::ElideToWidth(title, titleRoom,
                 [](const std::string& t) { return ImGui::CalcTextSize(t.c_str()).x; });
             text(ImVec2(p0.x + PAD, p0.y + 6.0f * z), IM_COL32(244, 246, 250, 255), shownTitle.c_str());
         }
         {
-            const char* help = VsNodeHelp(d->type);
-            std::string hint = help ? help : (d->paramHint ? std::string("Needs: ") + d->paramHint : std::string());
+            const std::string full = VsPlainLineCached(*d);   // one plain sentence for every node (VisualScriptGuide.hpp)
+            std::string hint = full;
             const float maxW = NODE_W - PAD * 2.0f - 78.0f * z;
             while (hint.size() > 8 && ImGui::CalcTextSize(hint.c_str()).x > maxW) hint.pop_back();
-            if (help && hint.size() < std::strlen(help)) hint += "...";
-            if (!hint.empty())
-                text(ImVec2(p0.x + PAD, p0.y + 8.0f * z + fs), IM_COL32(230, 236, 244, 210), hint.c_str());
+            if (hint.size() < full.size()) hint += "...";
             bool hasErr = false;
             std::string miss;
             for (const auto& is : st.issues) if (is.node == n.id && is.severity == 0) hasErr = true;
-            const VsReady ready = VsNodeReadiness(n.type, !n.arg.empty(), [&](int pin) {
+            auto pinFilled = [&](int pin) {
                 if (inputLinked(n.id, pin)) return true;
                 auto it = n.pinDefault.find(pin);
                 return it != n.pinDefault.end() && !it->second.empty();
-            }, hasErr, &miss);
-            const char* badge = VsReadyName(ready);
+            };
+            VsReady ready = VsNodeReadiness(n.type, !n.arg.empty(), pinFilled, hasErr, &miss);
+            if (ready != VsReady::Error) {   // an empty input the node cannot work without: say so on the node, not just on hover
+                for (int pi = 0; pi < (int)d->dataIn.size(); ++pi)
+                    if (VsPinNeedsInput(*d, pi) && !pinFilled(pi)) {
+                        ready = VsReady::Missing;
+                        if (miss.empty() || miss.rfind("Required: ", 0) == 0) { miss = VsMissingHint(*d, pi) + "."; miss[0] = (char)std::toupper((unsigned char)miss[0]); }
+                        break;
+                    }
+            }
+            const char* badge = ready == VsReady::Missing ? "Needs input" : VsReadyName(ready);
             const ImVec2 bts = ImGui::CalcTextSize(badge);
             const ImVec2 br(p1.x - PAD - bts.x - 10.0f * z, p0.y + 5.0f * z);
             const ImU32 bg = ready == VsReady::Error ? IM_COL32(150, 48, 44, 255)
@@ -4823,8 +4832,11 @@ inline void Draw(EditorState& ed, bool* open) {
                            : IM_COL32(36, 110, 72, 255);
             dl->AddRectFilled(br, ImVec2(br.x + bts.x + 10.0f * z, br.y + bts.y + 4.0f * z), bg, 4.0f * z);
             text(ImVec2(br.x + 5.0f * z, br.y + 2.0f * z), IM_COL32(255, 248, 240, 255), badge);
+            // Under the title: the plain sentence, or (when an input is empty) what to plug in, in amber.
             if (ready == VsReady::Missing && !miss.empty())
-                text(ImVec2(p0.x + PAD, p0.y + HEADER_H - fs - 2.0f * z), IM_COL32(255, 196, 140, 255), miss.c_str());
+                text(ImVec2(p0.x + PAD, p0.y + 8.0f * z + fs), IM_COL32(255, 196, 140, 255), miss.c_str());
+            else if (!hint.empty())
+                text(ImVec2(p0.x + PAD, p0.y + 8.0f * z + fs), IM_COL32(230, 236, 244, 210), hint.c_str());
         }
         if (!g.path.empty() && dbg.HasBreakpoint(g.path, n.id)) {   // breakpoint: a red dot left of the header
             const ImVec2 bc(p0.x - 11.0f * z, p0.y + HEADER_H * 0.5f);
@@ -4945,7 +4957,7 @@ inline void Draw(EditorState& ed, bool* open) {
             for (const auto& is : st.issues)
                 if (is.node == n.id && is.pin == i && is.pinDir == 0 && is.severity == 0) badPin = true;
             dataDot(pp, linked || badPin, badPin ? IM_COL32(255, 72, 64, 255) : VsPinColor(pt));
-            const bool req = VsRequiredWhat(n.type, i) && !linked && n.pinDefault.count(i) == 0;
+            const bool req = VsPinNeedsInput(*d, i) && !linked && n.pinDefault.count(i) == 0;
             if (req) dl->AddCircle(pp, PIN_R + 3.0f * z, IM_COL32(255, 80, 70, 255), 16, 2.0f * z);
             text(ImVec2(p0.x + PAD, pp.y - fs * 0.5f), labelCol, d->dataIn[i]);
             pinPos[pk(n.id, 1, 0, i)] = pp;
@@ -4971,9 +4983,12 @@ inline void Draw(EditorState& ed, bool* open) {
                     ImGui::SetNextItemWidth(BOX_W);
                     char vb[128]; std::snprintf(vb, sizeof(vb), "%s", dv.c_str());
                     char bid[16]; std::snprintf(bid, sizeof(bid), "##pd%d", i);
-                    if (ImGui::InputTextWithHint(bid, "value", vb, sizeof(vb))) { dv = vb; g.dirty = true; }
-                    if (ImGui::IsItemHovered())
-                        ImGui::SetTooltip("%s: type a value (text, a number, true/false), or wire a node in", d->dataIn[i]);
+                    const bool needsHere = VsPinNeedsInput(*d, i);
+                    if (ImGui::InputTextWithHint(bid, needsHere ? "needed" : "value", vb, sizeof(vb))) { dv = vb; g.dirty = true; }
+                    if (ImGui::IsItemHovered()) {
+                        if (needsHere) ImGui::SetTooltip("%s: %s. Or type it here.", d->dataIn[i], VsMissingHint(*d, i).c_str());
+                        else ImGui::SetTooltip("%s: type a value (text, a number, true/false), or wire a node in", d->dataIn[i]);
+                    }
                     if (dv.empty()) n.pinDefault.erase(i);
                 }
                 ImGui::PopStyleVar(2);
@@ -5244,9 +5259,12 @@ inline void Draw(EditorState& ed, bool* open) {
                     const VsNodeDoc* nd = VsNodeDocFor(n.type);
                     const VsPinDoc* pd = nd ? VsPinDocFor(*nd, input, exec, pname) : nullptr;
                     const char* tn = exec ? "Flow" : okay::vs::PinTypeName(input ? VsInPinType(g, n.id, idx) : VsOutPinType(g, n.id, idx));
+                    const bool needsNow = input && !exec && !inputLinked(n.id, idx) && n.pinDefault.count(idx) == 0 && VsPinNeedsInput(*d, idx);
+                    const std::string needText = needsNow ? VsMissingHint(*d, idx) : std::string();
+                    const std::string plainTip = VsPinTip(*d, input, exec, idx);
                     VsPinTooltip(pd, pname.c_str(), tn,
                                  exec ? okay::vs::PinType::Any : (input ? VsInPinType(g, n.id, idx) : VsOutPinType(g, n.id, idx)), !input, exec,
-                                 (input && !exec && !inputLinked(n.id, idx) && n.pinDefault.count(idx) == 0) ? VsRequiredWhat(n.type, idx) : nullptr);
+                                 needsNow ? needText.c_str() : nullptr, plainTip.c_str());
                 }
             }
         };
@@ -5834,6 +5852,8 @@ inline void Draw(EditorState& ed, bool* open) {
         ImGui::EndChild();
         ImGui::PopStyleColor(2);
     }
+    // The "What is this?" card for the selected node (bottom right), with next-step chips and Try this node.
+    if (!st.missing && !g.nodes.empty()) VsDrawHelpCard(st, canvasMin, canvasMax);
     // The checker's list (toolbar button): click a row to jump to its node.
     if (st.showIssues && !st.issues.empty()) {
         const float w = std::min(820.0f, canvasMax.x - canvasMin.x - 36.0f);

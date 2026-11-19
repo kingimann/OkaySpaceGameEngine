@@ -240,7 +240,7 @@ int main() {
         State none;
         CHECK((Ids(GameObjectMenu(none)) == std::vector<std::string>{
             "go.empty", "go.emptychild", "go.emptyparent", "---",
-            "create.2d", "create.3d", "create.player", "create.light", "create.camera", "create.audio", "create.effects", "create.ui", "---",
+            "create.2d", "create.3d", "create.player", "create.vehicles", "create.light", "create.camera", "create.audio", "create.effects", "create.ui", "---",
             "go.instantiate", "---", "go.arraydup", "go.snap"}));
         CHECK(FindId(GameObjectMenu(none), "go.empty")->enabled);
         for (const char* id : {"go.emptychild", "go.emptyparent", "go.arraydup", "go.snap"}) {
@@ -259,7 +259,7 @@ int main() {
             const Entry* c = FindLabel(goMenu, label);
             CHECK(c != nullptr && c->kind == Kind::SlotMenu);
         }
-        CHECK(CreateCategories().size() == 8);
+        CHECK(CreateCategories().size() == 9);
     }
 
     {   // View: the windows (each listed once) and the layouts, then the Scene view's commands, overlays and rendering settings.

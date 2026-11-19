@@ -12,9 +12,10 @@ drifts. Details: `docs/vehicle_controls.md`.
 **Steps (the example world).**
 1. Open the editor (`Tools\OkayEngine.exe`). **File > New Project**, pick the template **Driving World (open-world cars)**.
    Or **File > Open...** and paste `<install folder>\examples\driving\driving_world.okayscene`.
-2. Press **Play**. You are a walking person next to a red Sedan. Nine vehicles stand in a row; a mud patch, an ice patch,
-   two ramps and a circle of cones are further away.
-3. **W A S D** walk to the driver door (the side facing the road's start, -X). The prompt says **Drive**. Press **E**.
+2. Press **Play**. You are a walking person standing at the driver door of a red Sedan on the east-west road. Nine
+   vehicles stand in a row to the west (walk with **W A S D** to try another); a mud patch, an ice patch, two ramps and a
+   circle of cones are further away.
+3. The prompt says **Drive**. Press **E**.
 4. Drive: **W** gas, **S** brake and, when stopped, reverse (let go to roll), **A / D** steer, **Space** handbrake,
    **Left Shift** boost, **R** put the car back on its wheels, **H** horn flag, **L** headlights, **C** changes camera
    (chase, far, hood, bonnet), **B** hold to look behind. **E** gets you out beside the door.

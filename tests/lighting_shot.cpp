@@ -12,7 +12,7 @@ namespace {
 void AddCamera(Scene& s, const CamView& v) {
     GameObject* cam = s.CreateGameObject("Main Camera");
     cam->transform->localPosition = v.eye;
-    cam->transform->localRotation = Quat::LookRotation((v.target - v.eye).Normalized(), Vec3{0, 1, 0});
+    cam->transform->localRotation = Quat::LookRotation((v.eye - v.target).Normalized(), Vec3{0, 1, 0});   // the camera looks down its own -Z
     auto* c = cam->AddComponent<Camera>();
     c->main = true; c->fieldOfView = v.fov;
 }

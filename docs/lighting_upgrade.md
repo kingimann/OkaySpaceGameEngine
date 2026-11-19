@@ -53,3 +53,27 @@ leaves, star, soft circle) are drawn by our own code, so there are no image asse
   light as a soft point light and ignore masks. The Light Inspector says so (`RenderFeature::LightShapes`).
 - The cascade fix, slope bias and smoothstep cone **were** changed in the OpenGL, Direct3D 11 and Direct3D 12 code but **never run on a GPU** here.
 
+## How it was checked (and what was not)
+
+Run on a Linux machine, software renderer, `-O0` build, 2026-11-19. Pictures were looked at but are **not** in the repository.
+
+| Check | Result |
+|---|---|
+| `lighting_upgrade` (`tests/test_lighting_upgrade.cpp`: shadow maths, stable cascades, bias, fade, spot cone, roll-off, units and auto brightness, masks, rectangle panel, save and load, glow lights, presets, a closed room keeps the sun out, repeatable renders) | 168 checks, 0 failures |
+| Stable cascades, measured: how far a fixed point's shadow-map position drifts when the camera creeps by fractions of a texel | new code 0.0001 texel, classic code 0.49 texel (the shimmer; the test fails on the old code) |
+| `light_shadows`, `lighting`, `shadows`, `lightmap`, `software_renderer`, `software_local_shadows`, `software_default_shadows`, `software_scene_post`, `software_perf_paths`, `serialize`, `scene_serializer_audit`, `property_registry`, `post_sky`, `inspector_model`, `renderer_features` | all pass (these run the old and the new code paths side by side) |
+| `examples_work` (loads and plays every shipped example scene, including the five new ones) | 89 scenes, 0 failed |
+| `editor/main.cpp` syntax-only compile (`g++ -fsyntax-only`, with the editor's include folders) | no errors. **The editor was not linked or run**; the new panels were never drawn |
+| `D3D11Renderer.cpp`, `D3D12Renderer.cpp` syntax-only with MinGW (win32 thread model) | no errors. **Never run on Windows or a GPU** |
+| `GLRenderer.cpp` | the two shader-string edits were read; **not compiled as GLSL, not run** |
+
+Seen in the pictures: softer, graded shadow edges and no ring in the spot cone (software renderer); the five presets look clearly
+different; the window mask draws panes of sun on the floor. One thing that is not perfect: with 16 filter taps and no per-pixel
+rotation a wide soft shadow shows faint bands at its far edge. A per-pixel rotation would hide that but makes renders depend on
+position noise, so it was left out.
+
+### Try it
+
+`docs/try_it/7lit-*.md` has the steps. In short: File > Examples > Lighting presets, then View > Lighting > Lighting Presets; a Light's
+Inspector for Units, Panel Width / Height, Mask and Soft Edges; and the headless tool
+`lighting_shot <out dir> [tag]` (set `OKAY_CLASSIC_LIGHTING=1` for the old look) that writes the test pictures.

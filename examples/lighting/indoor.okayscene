@@ -7,7 +7,7 @@ fog 0 0.5882353 0.7254902 0.88235295 20 90
 tonemap 1
 post 1 1 0 1 0.6 1 1 0.06 0 1 1 0 0 0 0 0 0 0 0 0 0.5 1 0 0.5 0.8 0 10 8
 gameobject 0 "Floor"
-  guid "44727bf5ee9cf161776c014cf2bfe6fd"
+  guid "a8410e3353e82651567b62d6823ffce2"
   active 1
   parent -1
   transform 0 -0.1 0 0 0 0 1 8 0.2 8
@@ -15,7 +15,7 @@ gameobject 0 "Floor"
   material 0 0 0 0 16 0 "" 1 1
 end
 gameobject 1 "Ceiling"
-  guid "b081551fa67129343675883353633b2c"
+  guid "64982002f89f811ad0cb757da0da71a0"
   active 1
   parent -1
   transform 0 3.1 0 0 0 0 1 8 0.2 8
@@ -23,7 +23,7 @@ gameobject 1 "Ceiling"
   material 0 0 0 0 16 0 "" 1 1
 end
 gameobject 2 "WallBack"
-  guid "e175ca00ba9098d11a5bb7b5ec9573e4"
+  guid "ca8ae69e8de2f4fe3529ba177773c28b"
   active 1
   parent -1
   transform 0 1.5 4.1 0 0 0 1 8.4 3.2 0.2
@@ -31,7 +31,7 @@ gameobject 2 "WallBack"
   material 0 0 0 0 16 0 "" 1 1
 end
 gameobject 3 "WallLeft low"
-  guid "e0bae661f2fc5e1231ccf3d7f513ae10"
+  guid "20fabad38f5b9a3de5804d04bcce6e4a"
   active 1
   parent -1
   transform -4.1 0.45 0 0 0 0 1 0.2 0.9 8.4
@@ -39,7 +39,7 @@ gameobject 3 "WallLeft low"
   material 0 0 0 0 16 0 "" 1 1
 end
 gameobject 4 "WallLeft high"
-  guid "a0da086535472e05bd194e15f0a9455d"
+  guid "bd6d75afe6669f6c7ba70afbea6b8f2d"
   active 1
   parent -1
   transform -4.1 2.8 0 0 0 0 1 0.2 0.8 8.4
@@ -47,7 +47,7 @@ gameobject 4 "WallLeft high"
   material 0 0 0 0 16 0 "" 1 1
 end
 gameobject 5 "WallLeft front"
-  guid "83ee7c54bcf17fbc5fe8f29bda74ef8c"
+  guid "3066bfbc4ef6815ac6e6142e3f0e2db9"
   active 1
   parent -1
   transform -4.1 1.65 -1.8 0 0 0 1 0.2 1.5 4.8
@@ -55,7 +55,7 @@ gameobject 5 "WallLeft front"
   material 0 0 0 0 16 0 "" 1 1
 end
 gameobject 6 "WallLeft back"
-  guid "5d1567a4b165e1a67686ab6e59dfec2e"
+  guid "9a6d5dec851eb21cfc23c269d9326080"
   active 1
   parent -1
   transform -4.1 1.65 3.6 0 0 0 1 0.2 1.5 1.2
@@ -63,7 +63,7 @@ gameobject 6 "WallLeft back"
   material 0 0 0 0 16 0 "" 1 1
 end
 gameobject 7 "WallRight"
-  guid "21eaa81fae4ab6ebc399ab6041f0194b"
+  guid "2b6ea75d9c2209107576c05db4bb5687"
   active 1
   parent -1
   transform 4.1 1.5 0 0 0 0 1 0.2 3.2 8.4
@@ -71,7 +71,7 @@ gameobject 7 "WallRight"
   material 0 0 0 0 16 0 "" 1 1
 end
 gameobject 8 "Table"
-  guid "491e1409c0c7bde6cf834b82ee159654"
+  guid "82a12f71a53be3549002792b0652fae6"
   active 1
   parent -1
   transform 0 0.5 1 0 0 0 1 2.2 0.12 1.2
@@ -79,7 +79,7 @@ gameobject 8 "Table"
   material 0 0 0 0 16 0 "" 1 1
 end
 gameobject 9 "Leg"
-  guid "6614415c51291365cbeaf0157a0f60d8"
+  guid "daf76874d896b2544e2599b4ccfaaf7c"
   active 1
   parent -1
   transform -0.95 0.22 0.55 0 0 0 1 0.12 0.45 0.12
@@ -87,7 +87,7 @@ gameobject 9 "Leg"
   material 0 0 0 0 16 0 "" 1 1
 end
 gameobject 10 "Leg"
-  guid "5e98cc5a88284edfa8aee93f236c0141"
+  guid "257a2042b23c6eb8b0347466cfb5e94e"
   active 1
   parent -1
   transform 0.95 0.22 0.55 0 0 0 1 0.12 0.45 0.12
@@ -95,7 +95,7 @@ gameobject 10 "Leg"
   material 0 0 0 0 16 0 "" 1 1
 end
 gameobject 11 "Leg"
-  guid "855bd1bd833f59ed203574deca888605"
+  guid "127d1128026d85ca5ff37704bc4d5acd"
   active 1
   parent -1
   transform -0.95 0.22 1.45 0 0 0 1 0.12 0.45 0.12
@@ -103,7 +103,7 @@ gameobject 11 "Leg"
   material 0 0 0 0 16 0 "" 1 1
 end
 gameobject 12 "Leg"
-  guid "0a6dedd7107e7f051a4f9bd8d88470e8"
+  guid "c4c80d8d78a9efdd13eb3838d6becfd2"
   active 1
   parent -1
   transform 0.95 0.22 1.45 0 0 0 1 0.12 0.45 0.12
@@ -111,7 +111,7 @@ gameobject 12 "Leg"
   material 0 0 0 0 16 0 "" 1 1
 end
 gameobject 13 "Crate"
-  guid "3259766778c94190b944d85d6a28a95c"
+  guid "bf15ba78c889b5e081934f5dc382215d"
   active 1
   parent -1
   transform -2.6 0.6 2.8 0 0 0 1 1.2 1.2 1.2
@@ -119,7 +119,7 @@ gameobject 13 "Crate"
   material 0 0 0 0 16 0 "" 1 1
 end
 gameobject 14 "Lamp"
-  guid "abd84e21c9c71cff3d51cf2f12e6fae9"
+  guid "75c0090bf8b23bac07b4ec8713892b6a"
   active 1
   parent -1
   transform 0 2.5 1 0 0 0 1 0.2 0.2 0.2
@@ -128,7 +128,7 @@ gameobject 14 "Lamp"
   meshshadows 0 1
 end
 gameobject 15 "Lighting: Window sun"
-  guid "4c783431ce1bb2e63530500bcb591b8d"
+  guid "acacf7df693959f92459117940abb562"
   active 1
   parent -1
   transform 0 10 0 0.2092712 0.7243092 -0.24939969 0.60776764 1 1 1
@@ -136,7 +136,7 @@ gameobject 15 "Lighting: Window sun"
   lightx 0.3 0 0 4.5 0 "builtin:window"
 end
 gameobject 16 "Lighting: Ceiling panel"
-  guid "a7c5b34ee1259ddbec642d32344041a2"
+  guid "19b278ed4ffae4927e427c585f293be9"
   active 1
   parent -1
   transform 0 2.95 0 0.7071068 0 0 0.7071068 1 1 1
@@ -144,9 +144,9 @@ gameobject 16 "Lighting: Ceiling panel"
   lightx 0.8 2.4 1.6 4 0 ""
 end
 gameobject 17 "Main Camera"
-  guid "31b0b2ce95b827e34329c1a1baa5d364"
+  guid "0de3a634760b125277410950edd70f6c"
   active 1
   parent -1
-  transform 0 1.8 -3.6 0.0533425 0 0 0.9985763 1 1 1
+  transform 0 1.8 -3.6 0 0.9985763 0.0533425 0 1 1 1
   camera 1 5 70 0.19215687 0.3019608 0.4745098 1 1 0 0 0.3 4000 0 0 0 1 1 -1 0 50 24 1 0 0 0 0 32 0.3 2 18 1.5
 end

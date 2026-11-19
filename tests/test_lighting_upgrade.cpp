@@ -53,6 +53,35 @@ int main() {
         CHECK_NEAR(tx(b) - tx(a) - std::round(tx(b) - tx(a)), 0.0f, 2e-2f);
     }
 
+    // ---- The software renderer's real cascades are stable too (the bug, and the fix) --------------------------------
+    {
+        ShadowsEnabled() = true; ShadowDistance() = 60.0f; ShadowCascades() = 3;
+        Scene sc("stable"); BuildSun(sc);
+        ApplySceneLight(sc);
+        const Vec3 P{3.1f, 0.2f, 9.7f};
+        auto texelPos = [&](const Vec3& eye, int casc, float& fx, float& fy) {
+            const Mat4 vp = Mat4::Perspective(55.0f, 1.6f, 0.1f, 200.0f) * Mat4::LookAt(eye, eye + Vec3{0.2f, -0.1f, 1.0f}, Vec3{0, 1, 0});
+            RenderShadowMap(sc, vp, eye);
+            const ShadowCascade& c = Shadows().cascade[casc];
+            const Vec4 q = c.viewProj * Vec4{P, 1.0f};
+            fx = (q.x / q.w * 0.5f + 0.5f) * c.size; fy = (q.y / q.w * 0.5f + 0.5f) * c.size;
+        };
+        double worst[2] = {0, 0};
+        for (int pass = 0; pass < 2; ++pass) {
+            ClassicLighting() = pass == 1;                    // pass 1 = the old behaviour: it must show the drift
+            float ax, ay; texelPos(Vec3{0, 3, 0}, 0, ax, ay);
+            for (int k = 1; k <= 5; ++k) {
+                float bx, by; texelPos(Vec3{0.0371f * k, 3.0f, 0.0613f * k}, 0, bx, by);
+                const double dx = bx - ax, dy = by - ay;
+                worst[pass] = std::fmax(worst[pass], std::fmax(std::fabs(dx - std::round(dx)), std::fabs(dy - std::round(dy))));
+            }
+        }
+        ClassicLighting() = false;
+        std::printf("cascade drift (texels, worst): new %.4f, classic %.4f\n", worst[0], worst[1]);
+        CHECK(worst[0] < 0.03);                                // stable: only whole texels
+        CHECK(worst[1] > 0.1);                                 // the old code drifted by fractions of a texel (the shimmer)
+    }
+
     // ---- Bias, penumbra and fade maths ------------------------------------------------------------------------
     {
         CHECK(SlopeTan(1.0f) < 1e-4f);

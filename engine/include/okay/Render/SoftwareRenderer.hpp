@@ -2056,7 +2056,8 @@ inline void RenderMeshes(Raster& r, const Scene& scene, const Mat4& vp, const Ve
                     std::isfinite(L.color.x + L.color.y + L.color.z)) {
                     auto gap = [margin](float p, float a, float b) { return p < a - margin ? (a - margin) - p : (p > b + margin ? p - (b + margin) : 0.0f); };
                     const float dx = gap(L.pos.x, wlo.x, whi.x), dy = gap(L.pos.y, wlo.y, whi.y), dz = gap(L.pos.z, wlo.z, whi.z);
-                    const float reach = L.range * 1.0001f + 1e-3f;
+                    const float panel = L.type == 3 ? std::sqrt(L.halfW * L.halfW + L.halfH * L.halfH) : 0.0f;   // a panel reaches a bit farther than its centre
+                    const float reach = (L.range + panel) * 1.0001f + 1e-3f;
                     if (L.range <= 0.0f || dx * dx + dy * dy + dz * dz >= reach * reach) reaches = false;
                 }
                 if (reaches) lightPool.push_back((int)li);

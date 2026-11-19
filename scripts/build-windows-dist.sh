@@ -183,6 +183,7 @@ behavior_trees
 cutscene
 fp_hand
 input
+lighting
 modeling
 modeling_tools
 node_playground

@@ -68,7 +68,8 @@ inline const char* D3D11HlslSource() {
     "  float tx = uCasInfo[ci].x;\n"
     // World-space bias (same as GL): along the normal, more for a wider filter,
     // plus a little toward the sun.
-    "  float3 p = wp + n * (tx * (1.0 + 0.6 * uShadow.w) * uShadow2.z) + uLightDir * (tx * 0.75 * uShadow2.z);\n"
+    "  float ndlS = saturate(dot(n, uLightDir)); float sinT = sqrt(max(1.0 - ndlS * ndlS, 0.0));\n"   // slope: shadowmath::NormalOffset
+    "  float3 p = wp + n * (tx * (0.6 + 1.6 * sinT + 0.6 * uShadow.w) * uShadow2.z) + uLightDir * (tx * 0.75 * uShadow2.z);\n"
     "  float4 sc = mul(uCasVP[ci], float4(p, 1.0));\n"
     "  float2 uv = float2(sc.x * 0.5 + 0.5, -sc.y * 0.5 + 0.5);\n"        // D3D texture v is top-down
     "  float z = sc.z * 0.5 + 0.5;\n"                                   // GL clip z [-1,1] -> [0,1]
@@ -246,7 +247,7 @@ inline const char* D3D11HlslSource() {
     "        if (d0.w > 2.5) { wrap = 0.5; }\n"                               // area: soft wrap fill
     "        else if (d0.w > 1.5) { float cs = dot(normalize(d0.xyz), -ld);\n"   // spot cone
     "          float dn = d3.x - d2.w; float sp = dn > 1e-4 ? saturate((cs - d2.w) / dn) : (cs >= d2.w ? 1.0 : 0.0);\n"
-    "          at *= sp * sp; } }\n"
+    "          at *= sp * sp * (3.0 - 2.0 * sp); } }\n"   // smoothstep cone (okay::SpotCone)
     "      float ndl = max((dot(N, ld) + wrap) / (1.0 + wrap), 0.0); if (toon) ndl = ceil(ndl*uToonBands)/uToonBands;\n"
     "      if (ndl * at <= 0.0) continue;\n"                     // no light reaches here: skip the shadow lookup
     "      float lsh = 1.0;\n"

@@ -7080,6 +7080,24 @@ static void DrawExampleMenuItems(EditorState& ed) {
         }
         if (uilib.empty() && ImGui::IsItemHovered(ImGuiHoveredFlags_AllowWhenDisabled)) ImGui::SetTooltip("The UI library examples (examples/ui_library) were not found next to the editor.");
     }
+    // Lighting: one scene per lighting preset (Sunny day, Sunset, Night with lamps, Indoor, Spooky fog).
+    {
+        namespace fs = std::filesystem;
+        const std::vector<std::string> lit = okay::editor::ExampleScenes("lighting");
+        if (ImGui::BeginMenu("Lighting presets (sun, sunset, night, indoor, fog)", !lit.empty())) {
+            ImGui::TextDisabled("Open one, then look in the Lighting window (View menu) to change it.");
+            for (const std::string& p : lit) {
+                const std::string name = fs::path(p).stem().string();
+                if (ImGui::MenuItem(name.c_str())) {
+                    std::string err;
+                    if (ed.Load(p, &err)) { ConsoleLog("Opened " + p); AddRecent(p); }
+                    else { ConsoleLog("Open failed: " + err, 2); ShowErrorPopup("Couldn't open the example", p + "\n" + err); }
+                }
+            }
+            ImGui::EndMenu();
+        }
+        if (lit.empty() && ImGui::IsItemHovered(ImGuiHoveredFlags_AllowWhenDisabled)) ImGui::SetTooltip("The lighting examples (examples/lighting) were not found next to the editor.");
+    }
 }
 
 static void DrawAutosaveMenuItems() {

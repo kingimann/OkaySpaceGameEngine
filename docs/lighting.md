@@ -116,3 +116,20 @@ Highlights (specular) take each light's colour and intensity.
   cascades, no spot or point shadows). The Light Inspector says so under Cast
   Shadows: "Spot and point light shadows are not drawn on Direct3D 12."
 - At most 16 lights are shaded per frame on the GPU (the first 16 Light objects).
+
+## Lighting upgrade (2026-11)
+
+The full list of what changed, with the "Existing / Gap" table, is in [lighting_upgrade.md](lighting_upgrade.md). In short:
+
+- **Lighting presets** (Lighting window, top): *Sunny day*, *Sunset*, *Night with lamps*, *Indoor*, *Spooky fog*. One click sets sky,
+  ambient, fog, post look and the lights. One scene per preset is in `examples/lighting/` (File > Examples > Lighting presets).
+- **Sun shadows** no longer shimmer when the camera moves (the cascade grid is tied to the world), use a bias that follows the slope
+  of the surface, and (software renderer) get softer the farther the shadow falls from the object (**Soft Edges**) and fade out at the
+  shadow distance instead of stopping at a line.
+- **Spot lights** have a smooth cone edge (all renderers). **Area lights** can be a real rectangle (**Panel Width / Height**) and
+  **Directional / Spot lights** can shine through a **Mask** (window, blinds, dots, leaves, star, soft circle, or your own picture):
+  software renderer only for now.
+- **Units**: a Light can use **Real world** units (lux for the sun, lumens for lamps); **Auto brightness** (Lighting window) keeps the
+  scene readable like an eye adapting (all renderers).
+- **Glow Light Range** on a Mesh Renderer: a glowing (Emissive) object also lights its surroundings (all renderers).
+- **Classic lighting look** (Lighting window, or `OKAY_CLASSIC_LIGHTING=1`): the software renderer's old shadows and light roll-off, to compare.

@@ -284,7 +284,8 @@ const char* kFrag =
     "  float tx = uCasTexel[i];\n"
     // World-space bias: push the receiver off its surface along the normal (more
     // for a wider filter) and a little toward the sun. Same rule for every cascade.
-    "  vec3 p = wp + n * (tx * (1.0 + 0.6 * uShadowSoft) * uSunBias) + uLightDir * (tx * 0.75 * uSunBias);\n"
+    "  float sinT = sqrt(max(1.0 - clamp(dot(n, uLightDir), 0.0, 1.0) * clamp(dot(n, uLightDir), 0.0, 1.0), 0.0));\n"   // slope: shadowmath::NormalOffset
+    "  vec3 p = wp + n * (tx * (0.6 + 1.6 * sinT + 0.6 * uShadowSoft) * uSunBias) + uLightDir * (tx * 0.75 * uSunBias);\n"
     "  vec3 q = (uCasVP[i] * vec4(p, 1.0)).xyz * 0.5 + 0.5;\n"
     "  if (q.z >= 1.0) return 1.0;\n"
     "  float r = uShadowSoft / uCasSize; float ci = float(i); float s = 0.0;\n"
@@ -416,7 +417,7 @@ const char* kFrag =
     "        else if (uLType[i] > 1.5) { float cs = dot(normalize(uLDir[i]), -ld);\n"   // spot cone
     "          float dn = uLCosIn[i] - uLCosOut[i];\n"
     "          float sp = dn > 1e-4 ? clamp((cs - uLCosOut[i]) / dn, 0.0, 1.0) : (cs >= uLCosOut[i] ? 1.0 : 0.0);\n"
-    "          at *= sp * sp; } }\n"
+    "          at *= sp * sp * (3.0 - 2.0 * sp); } }\n"   // smoothstep cone (okay::SpotCone)
     "      float ndl = max((dot(N, ld) + wrap) / (1.0 + wrap), 0.0); if (toon) ndl = ceil(ndl*uToonBands)/uToonBands;\n"
     "      if (ndl * at <= 0.0) continue;\n"                      // no light reaches here: skip the shadow lookup
     "      float lsh = 1.0;\n"

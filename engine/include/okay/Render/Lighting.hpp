@@ -254,6 +254,49 @@ inline float RectLightTerm(const LightSample& L, const Vec3& p, const Vec3& nn) 
     return sum * (1.0f / 9.0f);
 }
 
+
+/// One light's diffuse factor at point `p` with unit normal `nn`: N.L (or the panel's average), distance falloff, spot cone and
+/// mask, NOT shadows. Shared by SceneLights::ShadeNormalized and the light-subset path (LightSubset.hpp) so they cannot differ.
+inline float LightDiffuseTerm(const LightSample& L, const Vec3& p, const Vec3& nn) {
+    float ndl, atten = 1.0f;
+    if (L.type == 0) {
+        ndl = Vec3::Dot(nn, L.dir.Normalized() * -1.0f);
+    } else if (L.type == 3 && L.halfW > 0.0f && L.halfH > 0.0f) {
+        ndl = RectLightTerm(L, p, nn);                    // a real panel (all of its own falloff is inside)
+    } else {
+        Vec3 toL = L.pos - p; float d = toL.Magnitude();
+        Vec3 ld = d > 1e-5f ? toL * (1.0f / d) : Vec3{0, 1, 0};
+        ndl = Vec3::Dot(nn, ld);
+        if (L.type == 3) ndl = AreaWrap(ndl);            // area: soft wrap fill
+        atten = LightAttenuation(d, L.range, L.falloff);
+        if (L.type == 2) {                               // spot cone
+            float cs = Vec3::Dot(L.dir.Normalized(), ld * -1.0f);
+            atten *= SpotCone(cs, L.cosOuter, L.cosInner);
+        }
+    }
+    if (ndl < 0.0f) ndl = 0.0f;
+    float k = ndl * atten;
+    if (L.cookie >= 0) k *= CookieAt(L, p);
+    return k;
+}
+/// Direction to the light (`ld`) and its strength at `p` for the Blinn-Phong highlight; false when no light arrives.
+inline bool LightSpecularSetup(const LightSample& L, const Vec3& p, Vec3& ld, float& atten) {
+    atten = 1.0f;
+    if (L.type == 0) {
+        ld = L.dir.Normalized() * -1.0f;
+    } else {
+        Vec3 toL = L.pos - p; float d = toL.Magnitude();
+        ld = d > 1e-5f ? toL * (1.0f / d) : Vec3{0, 1, 0};
+        atten = LightAttenuation(d, L.range, L.falloff);
+        if (L.type == 2) {
+            float cs = Vec3::Dot(L.dir.Normalized(), ld * -1.0f);
+            atten *= SpotCone(cs, L.cosOuter, L.cosInner);
+        }
+    }
+    if (L.cookie >= 0) atten *= CookieAt(L, p);
+    return atten > 0.0f;
+}
+
 /// Multi-light shading: the player/editor fill this list from the scene's Light
 /// components each frame, then the software renderer accumulates colored diffuse
 /// from every light (directional + point + spot) plus an ambient floor.
@@ -324,26 +367,7 @@ struct SceneLights {
         int li = -1;
         for (const auto& L : lights) {
             ++li;
-            float ndl, atten = 1.0f;
-            if (L.type == 0) {
-                ndl = Vec3::Dot(nn, L.dir.Normalized() * -1.0f);
-                if (ndl < 0.0f) ndl = 0.0f;
-            } else if (L.type == 3 && L.halfW > 0.0f && L.halfH > 0.0f) {
-                ndl = RectLightTerm(L, p, nn);                    // a real panel (all of its own falloff is inside)
-            } else {
-                Vec3 toL = L.pos - p; float d = toL.Magnitude();
-                Vec3 ld = d > 1e-5f ? toL * (1.0f / d) : Vec3{0, 1, 0};
-                ndl = Vec3::Dot(nn, ld);
-                if (L.type == 3) ndl = AreaWrap(ndl);            // area: soft wrap fill
-                atten = LightAttenuation(d, L.range, L.falloff);
-                if (L.type == 2) {                               // spot cone
-                    float cs = Vec3::Dot(L.dir.Normalized(), ld * -1.0f);
-                    atten *= SpotCone(cs, L.cosOuter, L.cosInner);
-                }
-            }
-            if (ndl < 0.0f) ndl = 0.0f;
-            float k = ndl * atten;
-            if (L.cookie >= 0) k *= CookieAt(L, p);
+            float k = LightDiffuseTerm(L, p, nn);               // diffuse x distance x cone x panel x mask (no shadow)
             if (perLight && li < kMaxShadowedLights) k *= perLight[li];
             acc.x += L.color.x * k; acc.y += L.color.y * k; acc.z += L.color.z * k;
         }
@@ -381,20 +405,8 @@ struct SceneLights {
         int li = -1;
         for (const auto& L : lights) {
             ++li;
-            Vec3 ld; float atten = 1.0f;
-            if (L.type == 0) {
-                ld = L.dir.Normalized() * -1.0f;
-            } else {
-                Vec3 toL = L.pos - p; float d = toL.Magnitude();
-                ld = d > 1e-5f ? toL * (1.0f / d) : Vec3{0, 1, 0};
-                atten = LightAttenuation(d, L.range, L.falloff);
-                if (L.type == 2) {
-                    float cs = Vec3::Dot(L.dir.Normalized(), ld * -1.0f);
-                    atten *= SpotCone(cs, L.cosOuter, L.cosInner);
-                }
-            }
-            if (L.cookie >= 0) atten *= CookieAt(L, p);
-            if (atten <= 0.0f) continue;
+            Vec3 ld; float atten;
+            if (!LightSpecularSetup(L, p, ld, atten)) continue;
             Vec3 h = ld + toEye; float hl = h.Magnitude();
             if (hl < 1e-6f) continue;
             h = h * (1.0f / hl);

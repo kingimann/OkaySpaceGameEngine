@@ -21,6 +21,8 @@ public:
     /// Size (xs, s, m, l, xl) and density (compact, cosy, comfortable, spacious) used with `style`. Empty = m and cosy.
     std::string styleSize;
     std::string styleDensity;
+    /// A shared style by name (okay/Components/UIUserStyle.hpp). Empty = none; saved only when set.
+    std::string userStyle;
 };
 
 } // namespace okay

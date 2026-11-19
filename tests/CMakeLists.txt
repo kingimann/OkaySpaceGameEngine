@@ -1017,6 +1017,11 @@ add_executable(test_build_settings test_build_settings.cpp)
 target_link_libraries(test_build_settings PRIVATE okay::engine)
 add_test(NAME build_settings COMMAND test_build_settings)
 
+# Shared UI styles: a named style restyles every widget that uses it.
+add_executable(test_ui_user_styles test_ui_user_styles.cpp)
+target_link_libraries(test_ui_user_styles PRIVATE okay::engine)
+add_test(NAME ui_user_styles COMMAND test_ui_user_styles)
+
 # The UI designer's logic (zoom, rulers, snapping, handles, align, z-order, layers, anchor picker, responsive preview).
 add_executable(test_ui_designer test_ui_designer.cpp)
 target_link_libraries(test_ui_designer PRIVATE okay::engine)

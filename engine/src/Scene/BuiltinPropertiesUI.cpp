@@ -33,6 +33,7 @@
 #include "okay/Components/UIToggle.hpp"
 #include "okay/Components/UITheme.hpp"
 #include "okay/Components/UIStyleVariant.hpp"
+#include "okay/Components/UIUserStyle.hpp"
 #include "okay/Components/UIDamageNumbers.hpp"
 #include "okay/Components/UIDialogueBox.hpp"
 #include "okay/Components/UIInventoryBind.hpp"
@@ -548,7 +549,23 @@ void RegisterUIStyleVariant() {
      .AddString("themeName", &UIStyleVariant::themeName).Tooltip("Theme to take colours from (empty = the scene's first theme). A name from the theme list keeps this widget on that theme when the scene's theme changes.")
      .AddString("style", &UIStyleVariant::style).Tooltip("A named look from the style library: Glass, Neon Pill, Pixel, Chamfer... Empty = none")
      .AddString("styleSize", &UIStyleVariant::styleSize).Tooltip("xs, s, m, l or xl (empty = m)")
-     .AddString("styleDensity", &UIStyleVariant::styleDensity).Tooltip("compact, cosy, comfortable or spacious (empty = cosy)");
+     .AddString("styleDensity", &UIStyleVariant::styleDensity).Tooltip("compact, cosy, comfortable or spacious (empty = cosy)")
+     .AddString("userStyle", &UIStyleVariant::userStyle).Tooltip("A shared style by name (see Shared Style). Editing the style restyles every widget that names it. Empty = none");
+    b.Commit();
+}
+
+void RegisterUIUserStyle() {
+    PropertyBuilder<UIUserStyle> b("UIUserStyle", "uiuserstyle", "UI");
+    b.AddString("styleName", &UIUserStyle::styleName).Tooltip("The name widgets point to, e.g. Primary button or Title")
+     .AddBool("applyFill", &UIUserStyle::applyFill).Tooltip("Set the fill colour of the widgets that use this style")
+     .AddColor("fill", &UIUserStyle::fill).Range(0, 1, 0.01).Tooltip("Fill colour (buttons and panels)")
+     .AddBool("applyText", &UIUserStyle::applyText).Tooltip("Set the text colour")
+     .AddColor("textColor", &UIUserStyle::textColor).Range(0, 1, 0.01).Tooltip("Text colour")
+     .AddBool("applyBorder", &UIUserStyle::applyBorder).Tooltip("Set the border")
+     .AddColor("borderColor", &UIUserStyle::borderColor).Range(0, 1, 0.01).Tooltip("Border colour")
+     .AddFloat("borderWidth", &UIUserStyle::borderWidth).Range(0, 20, 0.5).Tooltip("Border width in pixels (0 = none)")
+     .AddFloat("cornerRadius", &UIUserStyle::cornerRadius).Range(-1, 200, 0.5).Tooltip("Corner roundness in pixels (-1 = leave each widget as it is)")
+     .AddFloat("textSize", &UIUserStyle::textSize).Range(0, 2, 0.01).Tooltip("Text size (0 = leave each text as it is)");
     b.Commit();
 }
 
@@ -1073,6 +1090,7 @@ void RegisterUIProperties() {
     RegisterUIDraggable();
     RegisterUITheme();
     RegisterUIStyleVariant();
+    RegisterUIUserStyle();
     RegisterUIDamageNumbers();
     RegisterUIDialogueBox();
     RegisterUIInventoryBind();

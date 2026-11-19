@@ -1,6 +1,7 @@
 #include "UIDesignerWindow.hpp"
 #include "UIDesignerModel.hpp"
 #include "okay/Components/UIElement.hpp"
+#include "okay/Components/UIUserStyle.hpp"
 #include <cstdio>
 #include <cstring>
 #include <functional>
@@ -161,6 +162,50 @@ void DrawTree(GameObject* g, EditorState& ed, int depth) {
     const auto kids = g->transform->Children();
     for (int i = (int)kids.size() - 1; i >= 0; --i) if (kids[i]) DrawTree(kids[i]->gameObject, ed, depth + 1);   // front first
 }
+
+// Shared styles: named looks. Editing one restyles every widget that uses it (ApplyUserStyles), one undo step per edit.
+void DrawStyles(EditorState& ed) {
+    ImGui::TextDisabled("Name a look once, use it on many widgets.");
+    std::vector<UIUserStyle*> all;
+    for (const auto& up : ed.scene().Objects()) if (up) for (auto* u : up->GetComponents<UIUserStyle>()) all.push_back(u);
+    auto commit = [&](const char* what) { ed.PushUndo(what); };
+    for (UIUserStyle* u : all) {
+        ImGui::PushID(u);
+        if (ImGui::TreeNode(u->styleName.empty() ? "(unnamed style)" : u->styleName.c_str())) {
+            bool ch = false;
+            char nb[96]; std::snprintf(nb, sizeof(nb), "%s", u->styleName.c_str());
+            if (ImGui::InputText("Name", nb, sizeof(nb), ImGuiInputTextFlags_EnterReturnsTrue)) { commit("Rename style"); u->styleName = nb; ch = true; }
+            auto col = [&](const char* l, Color& c, bool* on) {
+                float v[4] = {c.r, c.g, c.b, c.a};
+                if (on) { ImGui::Checkbox((std::string("##on") + l).c_str(), on); ImGui::SameLine(); }
+                if (ImGui::ColorEdit4(l, v)) { if (ImGui::IsItemActivated()) {} c = Color(v[0], v[1], v[2], v[3]); ch = true; }
+                if (ImGui::IsItemActivated()) commit("Edit style colour");
+            };
+            col("Fill", u->fill, &u->applyFill); col("Text colour", u->textColor, &u->applyText); col("Border colour", u->borderColor, &u->applyBorder);
+            if (ImGui::DragFloat("Border width", &u->borderWidth, 0.1f, 0.0f, 20.0f)) ch = true;
+            if (ImGui::IsItemActivated()) commit("Edit style");
+            if (ImGui::DragFloat("Corner roundness", &u->cornerRadius, 0.2f, -1.0f, 200.0f, u->cornerRadius < 0 ? "leave as is" : "%.1f")) ch = true;
+            if (ImGui::IsItemActivated()) commit("Edit style");
+            if (ImGui::DragFloat("Text size", &u->textSize, 0.005f, 0.0f, 2.0f, u->textSize <= 0 ? "leave as is" : "%.3f")) ch = true;
+            if (ImGui::IsItemActivated()) commit("Edit style");
+            if (ch) { ApplyUserStyles(ed.scene()); ed.dirty = true; }
+            if (ImGui::Button("Use on selected")) {
+                int n = 0; commit("Use shared style");
+                for (GameObject* g : ed.MultiSelection()) if (g) { auto* v = g->GetComponent<UIStyleVariant>(); if (!v) v = g->AddComponent<UIStyleVariant>(); v->userStyle = u->styleName; ++n; }
+                if (n) { ApplyUserStyles(ed.scene()); ed.dirty = true; }
+            }
+            ImGui::TreePop();
+        }
+        ImGui::PopID();
+    }
+    if (ImGui::Button("New style")) {
+        ed.PushUndo("New shared style");
+        GameObject* g = ed.scene().CreateGameObject("Style");
+        auto* u = g->AddComponent<UIUserStyle>();
+        std::vector<std::string> taken; for (auto* o : all) taken.push_back(o->styleName);
+        u->styleName = uid::UniqueName(taken, "New style"); g->name = "Style: " + u->styleName; ed.dirty = true;
+    }
+}
 }  // namespace
 
 void UIDesignerLayersWindow(EditorState& ed) {
@@ -173,6 +218,7 @@ void UIDesignerLayersWindow(EditorState& ed) {
         for (int i = (int)roots.size() - 1; i >= 0; --i) DrawTree(roots[i], ed, 0);
         ImGui::Separator();
         if (ImGui::Button("Clear guides")) g_guides.clear();
+        if (ImGui::CollapsingHeader("Shared styles")) DrawStyles(ed);
     }
     ImGui::End();
 }

@@ -4424,6 +4424,7 @@ Word, then the number(s) to say. Back to the [overview](../FEATURE_MAP.md).
 - Shared pieces (40.5.3)
 - Shared plumbing (5.6.5)
 - Shared shading maths (2.3.2)
+- Shared styles (12.10.11)
 - Shared timeline widgets (15.5.5)
 - shatter (6.6, 52.4)
 - ShellSafeUrl (39.9)

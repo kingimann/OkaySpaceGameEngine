@@ -34,6 +34,7 @@
 #include "okay/Components/PlayerController.hpp"
 #include "okay/Components/UITheme.hpp"          // grok/ui-theme
 #include "okay/Components/UIStyleVariant.hpp"
+#include "okay/Components/UIUserStyle.hpp"
 #include "okay/Components/UIDamageNumbers.hpp"
 #include "okay/Components/UIDialogueBox.hpp"
 #include "okay/Components/UIInventoryBind.hpp"
@@ -3641,6 +3642,7 @@ void WriteComponentRecords(std::ostream& out, GameObject* go) {
         if (!sv->style.empty()) k.str("vstyle", sv->style);
         if (!sv->styleSize.empty()) k.str("vsize", sv->styleSize);
         if (!sv->styleDensity.empty()) k.str("vdens", sv->styleDensity);
+        if (!sv->userStyle.empty()) k.str("vuser", sv->userStyle);
         out << "\n";
     }
     for (auto* dn : go->GetComponents<UIDamageNumbers>()) {
@@ -6770,7 +6772,7 @@ static bool ParseStep(Scene& scene, ParseSession& S, bool clear,
                     KvIn k(in);
                     k.i("variant", sv->variant);
                     k.str("vtheme", sv->themeName);
-                    k.str("vstyle", sv->style); k.str("vsize", sv->styleSize); k.str("vdens", sv->styleDensity);
+                    k.str("vstyle", sv->style); k.str("vsize", sv->styleSize); k.str("vdens", sv->styleDensity); k.str("vuser", sv->userStyle);
                 } else if (field == "uidamage") {
                     auto* dn = go->AddComponent<UIDamageNumbers>();
                     KvIn k(in);
@@ -9729,6 +9731,27 @@ void RegisterBuiltinComponentSerializers() {
         ReadGradientKv(k, "g", tr->colorGradient);
     };
     ComponentSerializerRegistry::Register(std::move(trail));
+
+    // Shared UI styles: a named style object (okay/Components/UIUserStyle.hpp). Written only when an object carries one.
+    ComponentSerializerRegistry::Entry ustyle;
+    ustyle.name = "uiuserstyle";
+    ustyle.write = [](const GameObject& go, std::ostream& out) {
+        for (auto* us : go.GetComponents<UIUserStyle>()) {
+            out << "  uiuserstyle";
+            KvOut k{out};
+            k.str("name", us->styleName).b("fillOn", us->applyFill).b("textOn", us->applyText).b("borderOn", us->applyBorder)
+             .col("fill", us->fill).col("text", us->textColor).col("border", us->borderColor)("bw", us->borderWidth)("radius", us->cornerRadius)("tsize", us->textSize);
+            out << "\n";
+        }
+    };
+    ustyle.read = [](GameObject& go, std::istream& in) {
+        auto* us = go.AddComponent<UIUserStyle>();
+        KvIn k(in);
+        k.str("name", us->styleName); k.b("fillOn", us->applyFill); k.b("textOn", us->applyText); k.b("borderOn", us->applyBorder);
+        k.col("fill", us->fill); k.col("text", us->textColor); k.col("border", us->borderColor);
+        k.f("bw", us->borderWidth); k.f("radius", us->cornerRadius); k.f("tsize", us->textSize);
+    };
+    ComponentSerializerRegistry::Register(std::move(ustyle));
 
     // Water waves beyond the old sines (style, direction, steepness, count, seed, current), kept as their own record
     // so older scene files and older readers are untouched.

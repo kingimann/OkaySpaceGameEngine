@@ -3641,7 +3641,7 @@ void WriteComponentRecords(std::ostream& out, GameObject* go) {
             }
             bl("surf", ps->shapeSurfaceOnly, def.shapeSurfaceOnly);
             bl("rcol", ps->randomStartColor, def.randomStartColor); bl("rhue", ps->randomHue, def.randomHue);
-            if (ps->randomStartColor && !ps->randomHue) k.col("c2", ps->startColor2);
+            if (ps->startColor2.r != 1.0f || ps->startColor2.g != 1.0f || ps->startColor2.b != 1.0f || ps->startColor2.a != 1.0f) k.col("c2", ps->startColor2);
             in_("blend", (int)ps->blendMode, (int)def.blendMode); in_("sort", (int)ps->sortMode, (int)def.sortMode);
             in_("shc", ps->sheetColumns, def.sheetColumns); in_("shr", ps->sheetRows, def.sheetRows);
             in_("shm", (int)ps->sheetMode, (int)def.sheetMode); fl("shy", ps->sheetCycles, def.sheetCycles); bl("shb", ps->sheetBlendFrames, def.sheetBlendFrames);

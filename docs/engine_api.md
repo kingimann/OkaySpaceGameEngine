@@ -732,6 +732,19 @@ A Particle System: fire, smoke, sparks, rain and the rest. The object needs a Pa
 | `GetComponent<Particles>().SetColor(red, green, blue, alpha)` | `Particles.SetColor/4` | step | red (Number), green (Number), blue (Number), alpha (Number), Target (Object) | - | Give new particles one colour (each number from 0 to 1). Their own colour changes over life are switched off. |
 | `GetComponent<Particles>().UsePreset(name)` | `Particles.UsePreset/1` | step | name (Text), Target (Object) | Result (Bool) | Change the look to a ready-made one: "Fire", "Smoke", "Rain", "Confetti" ... True when the name was found. |
 
+## Wind
+
+The wind field: how hard and which way the air moves at a point (weather, wind zones and the scene's own wind together).
+
+| In a script | Node | Kind | Inputs | Gives | What it does |
+|---|---|---|---|---|---|
+| `Wind.Strength` | `Wind.Strength` | value | - | Strength (Number) | The wind speed (metres per second) where this object is. |
+| `Wind.Direction` | `Wind.Direction` | value | - | Direction (Vector3) | The way the wind blows where this object is, as a unit vector (0, 0, 0 when it is calm). |
+| `Wind.At(position)` | `Wind.At/1` | value | position (Vector3) | Result (Vector3) | The wind (speed and direction, metres per second) at a world position, right now. |
+| `Wind.SetStrength(metresPerSecond)` | `Wind.SetStrength/1` | step | metresPerSecond (Number) | - | Set the scene's own wind speed (about 3 is a breeze, 10 a strong wind). Makes the wind object if the scene has none. |
+| `Wind.SetDirection(direction)` | `Wind.SetDirection/1` | step | direction (Vector3) | - | Aim the scene's own wind along a direction, for example Wind.SetDirection(Vec3(1, 0, 0)) blows toward +X. |
+| `Wind.SetGust(amount, perSecond)` | `Wind.SetGust/2` | step | amount (Number), perSecond (Number) | - | How much the scene's wind swells and drops (0 steady, 1 calm to double) and how many gusts come each second (0.2 = one every 5 seconds). |
+
 ## NavMeshAgent
 
 Walks the object along the scene's navigation mesh (the grid when none is baked). The object needs a Nav Mesh Agent.

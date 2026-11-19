@@ -144,7 +144,7 @@ struct Manifest {
     Toolchain tc; string outdir = "build", objSub; // objSub: "CONFIG/" when outdir has {config}
      vector<Target> targets; vector<RawAction> actions; vector<ImporterDecl> importers; vector<PoolDecl> pools;
     vector<ConfigBlock> configs; vector<OptionDecl> options; vector<CondBlock> conds; vector<PackageDecl> packages;
-    DistDecl dist; vector<CTestDecl> ctests; vector<FetchDecl> fetches;
+    DistDecl dist; vector<CTestDecl> ctests; vector<FetchDecl> fetches; vector<std::pair<string, string>> genfiles; // {bin} path, file to copy it from
     bool hasBuildfile = false; string buildCmd, buildDepfile; vector<string> buildInputs; int buildLine = 0;
 };
 
@@ -187,7 +187,7 @@ static Manifest parseManifest(const string& file) {
     std::ifstream in(file);
     if (!in) throw Fail("cannot open manifest " + file);
     Manifest m; string line; int ln = 0;
-    enum { TOP, TC, TARGET, ACTION, POOL, BUILDFILE, CONFIG, COND, PACKAGE, DIST, IMPORTER, CTEST, FETCH } mode = TOP;
+    enum { TOP, TC, TARGET, ACTION, POOL, BUILDFILE, CONFIG, COND, PACKAGE, DIST, IMPORTER, CTEST, FETCH, GENFILE } mode = TOP;
     auto err = [&](const string& msg) { return Fail(file + ":" + std::to_string(ln) + ": " + msg); };
     auto oneFlag = [&](const vector<string>& v, const string& k) {
         if (v.size() != 1) throw err(k + " takes one value");
@@ -246,6 +246,10 @@ static Manifest parseManifest(const string& file) {
                 if (t.size() != 2) throw err("expected: fetch NAME");
                 for (auto& x : m.fetches) if (x.name == t[1]) throw err("duplicate fetch '" + t[1] + "'");
                 FetchDecl f; f.name = t[1]; f.line = ln; f.dir = "_deps/" + t[1] + "-src"; m.fetches.push_back(f); mode = FETCH; continue;
+            }
+            if (t[0] == "genfile") {
+                if (t.size() != 2) throw err("expected: genfile PATH");
+                m.genfiles.push_back({t[1], ""}); mode = GENFILE; continue;
             }
             if (t[0] == "ctest") {
                 if (t.size() != 2) throw err("expected: ctest NAME");
@@ -360,6 +364,9 @@ static Manifest parseManifest(const string& file) {
             if (k == "git") f.git = v[0]; else if (k == "commit") f.commit = v[0]; else if (k == "url") f.url = v[0]; else if (k == "sha256") f.sha256 = v[0];
             else if (k == "dir") f.dir = v[0]; else if (k == "strip") f.strip = atoi(v[0].c_str());
             else throw err("unknown fetch key '" + k + "'");
+        } else if (mode == GENFILE) {
+            if (k != "from" || v.size() != 1) throw err("genfile takes `from = FILE`");
+            m.genfiles.back().second = v[0];
         } else if (mode == CTEST) {
             CTestDecl& c = m.ctests.back();
             if (k == "cmd") { for (auto& w : v) c.cmd.push_back(w); }
@@ -687,12 +694,17 @@ static Graph plan(const Manifest& m, const vector<string>& want) {
     // {bin} in a definition, flag or include folder means <build dir>/<outdir>/ctest (what CMake calls CMAKE_BINARY_DIR in the `cmake` command's manifests)
     string binTree = fs::absolute(under(m.outdir + "/ctest")).lexically_normal().generic_string();
     auto fixBin = [&](string w) { for (size_t at; (at = w.find("{bin}")) != string::npos;) w.replace(at, 5, binTree); return w; };
+    for (auto& gf : m.genfiles) { // files the CMake files wrote at configure time: put them in the build tree (only when the text changed, so objects stay up to date)
+        string dst = fixBin(gf.first); std::ifstream in(gf.second, std::ios::binary); if (!in) throw Fail("genfile " + gf.first + ": cannot read " + gf.second);
+        string text((std::istreambuf_iterator<char>(in)), {}); std::ifstream old(dst, std::ios::binary); string cur((std::istreambuf_iterator<char>(old)), {});
+        if (!old || cur != text) { std::error_code ec; fs::create_directories(fs::path(dst).parent_path(), ec); std::ofstream o(dst, std::ios::binary | std::ios::trunc); o << text; if (!o) throw Fail("cannot write " + dst); }
+    }
     for (auto& n : order) {
         const Target& t = *byName[n]; vector<string> libs = transitive(t);
         vector<string> objs; vector<int> objActs; vector<string> needKeys;
         for (auto& nd : t.needs) needKeys.push_back(resolve("", nd));
-        for (auto& s : t.sources) {
-            string srcKey = resolve("", s);
+        for (auto& s0 : t.sources) {
+            string s = fixBin(s0); string srcKey = resolve("", s);
             if (!produced.count(srcKey) && !fs::exists(s)) {
                 string hint; for (auto& f : m.fetches) if (s.compare(0, f.dir.size() + 1, f.dir + "/") == 0) hint = " (it comes from fetch '" + f.name + "': run okay-build fetch " + f.name + ")";
                 throw Fail("target '" + t.name + "': source '" + s + "' does not exist" + hint);
@@ -2815,7 +2827,7 @@ static int cmdCmake(const string& root, const string& outFile, const vector<std:
                     const std::map<string, string>& fetched, bool audit) {
     cmr::Options co; co.root = fs::absolute(root).lexically_normal().generic_string(); while (co.root.size() > 1 && co.root.back() == '/') co.root.pop_back();
     for (auto& d : defs) co.defs[d.first] = d.second;
-    co.fetched = fetched; if (!buildType.empty()) co.buildType = buildType;
+    co.fetched = fetched; co.genDir = outFile + ".gen"; if (!buildType.empty()) co.buildType = buildType;
     cmr::Report rep; cmr::Tally tally; string text;
     try { text = cmr::readProject(co, rep, tally); } catch (const cmr::ReadError& e) { throw Fail("cmake: " + e.msg); }
     { std::ofstream f(outFile, std::ios::trunc); if (!f) throw Fail("cannot write " + outFile); f << text; }

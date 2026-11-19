@@ -140,6 +140,7 @@ struct Func { vector<string> params; vector<Cmd> body; bool macro = false; };
 
 struct Options {
     string root; // absolute source folder
+    string genDir; // where generated files (file(WRITE) into the build tree) are saved for `genfile` blocks; empty = none
     string binDir = "{bin}"; // what CMAKE_BINARY_DIR reads as
     std::map<string, string> defs; // -D NAME=VALUE
     std::map<string, string> fetched; // FetchContent name -> folder with the sources already on disk
@@ -154,6 +155,7 @@ struct Interp {
     std::map<string, string> vars, cache; std::set<string> cacheForced;
     std::map<string, Target> targets; vector<string> order; // creation order
     vector<TestDef> tests;
+    std::map<string, string> genFiles; // files the CMake files write into the build tree at configure time (file(WRITE/APPEND), copy_if_different): {bin}/... -> text
     std::map<string, Func> funcs;
     struct FetchInfo { string git, tag, url, sha256; };
     std::map<string, FetchInfo> fetchDeclared; vector<string> fetchUsed; // FetchContent: what was declared, and what a target actually needs downloaded
@@ -571,6 +573,11 @@ inline void Interp::doFile(const vector<string>& a) {
         }
         std::sort(found.begin(), found.end()); vars[var] = joinList(found); return;
     }
+    if ((op == "WRITE" || op == "APPEND") && a.size() >= 2) { // only files inside the build tree are kept; the manifest carries them as `genfile` blocks
+        string path = abs(a[1], curSrc); string text; for (size_t k = 2; k < a.size(); ++k) text += a[k];
+        if (path.compare(0, 5, "{bin}") == 0) { if (op == "WRITE") genFiles[path] = text; else genFiles[path] += text; }
+        return;
+    }
     if (op == "MAKE_DIRECTORY" || op == "WRITE" || op == "APPEND" || op == "COPY" || op == "REMOVE" || op == "REMOVE_RECURSE" || op == "TOUCH") return; // the build writes nothing here
     tally.unknown["file(" + op + ")"]++;
 }
@@ -725,6 +732,10 @@ inline void Interp::builtin(const Cmd& c) {
             if (a[k] == "RESULT_VARIABLE" && k + 1 < a.size()) { resVar = a[++k]; inCmd = false; continue; }
             if (a[k].rfind("OUTPUT_", 0) == 0 || a[k].rfind("ERROR_", 0) == 0 || a[k] == "TIMEOUT" || a[k] == "WORKING_DIRECTORY") { inCmd = false; if (a[k] == "TIMEOUT" || a[k] == "WORKING_DIRECTORY") ++k; continue; }
             if (inCmd) w.push_back(a[k]);
+        }
+        if (w.size() == 5 && w[1] == "-E" && (w[2] == "copy_if_different" || w[2] == "copy") && !genFiles.empty()) { // our own copy of a generated file; nothing is run
+            string from = abs(w[3], curSrc), to = abs(w[4], curSrc); auto g = genFiles.find(from);
+            if (g != genFiles.end() && to.compare(0, 5, "{bin}") == 0) { string t = g->second; genFiles[to] = t; if (!resVar.empty()) vars[resVar] = "0"; return; }
         }
         for (auto& x : w) { string q = "'"; for (char ch : x) { if (ch == '\'') q += "'\\''"; else q += ch; } cmdline += q + "' "; }
         string out; int rc = 1;
@@ -904,7 +915,7 @@ static string emitManifest(Interp& in, Report& rep) {
         if (t.skipReason.empty()) {
             if (t.sources.empty()) t.skipReason = "no sources";
             for (auto& s : t.sources) {
-                if (s.compare(0, 5, "{bin}") == 0) { t.skipReason = "generated source " + s; break; }
+                if (s.compare(0, 5, "{bin}") == 0) { if (!in.genFiles.count(s)) { t.skipReason = "generated source " + s; break; } continue; }
                 std::error_code ec; bool willFetch = false; for (auto& fu : in.fetchUsed) if (s.rfind(root + "/_deps/" + fu + "-src/", 0) == 0) willFetch = true;
                 if (!willFetch && !fs::exists(s, ec)) { t.skipReason = s.compare(0, 18, "/okay-not-fetched/") == 0 ? "needs a download: " + s.substr(18, s.find('/', 18) - 18) + " (give --fetched NAME=DIR)" : "missing source " + rootRel(s, root); break; }
             }
@@ -1010,6 +1021,12 @@ static string emitManifest(Interp& in, Report& rep) {
         }
         if (Interp::isTrue(pr("RUN_SERIAL")) && !pr("RUN_SERIAL").empty()) out << "  serial = on\n";
         out << "end\n";
+    }
+    for (auto& g : in.genFiles) { // generated files: saved next to the manifest, copied into the build tree when the manifest is built
+        if (in.opt.genDir.empty()) break;
+        fs::path side = fs::path(in.opt.genDir) / g.first.substr(6); std::error_code ge; fs::create_directories(side.parent_path(), ge);
+        std::ofstream f(side, std::ios::binary | std::ios::trunc); f << g.second; if (!f) throw ReadError{"cannot write " + side.generic_string()};
+        out << "genfile " << qw(g.first) << "\n  from = " << qw(fs::absolute(side).generic_string()) << "\nend\n";
     }
     return out.str();
 }

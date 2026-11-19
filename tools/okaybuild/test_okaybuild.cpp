@@ -1697,6 +1697,28 @@ static void testCmakeSyntax() {
     check(rc == 2 && o.find("no endif") != string::npos, "an if without endif is an error", o);
 }
 
+static void testGeneratedSource() {
+    printf("test: okay-build cmake: a source written by file(WRITE) into the build tree and copied with copy_if_different\n");
+    fresh("cmakegen");
+    write("CMakeLists.txt",
+        "project(G CXX)\nset(g \"${CMAKE_CURRENT_BINARY_DIR}/gen.cpp\")\n"
+        "set(text \"int gen(){return 7;}\\n\")\nstring(APPEND text \"int gen2(){return 0;}\\n\")\n"
+        "file(WRITE \"${g}.new\" \"${text}\")\n"
+        "execute_process(COMMAND ${CMAKE_COMMAND} -E copy_if_different \"${g}.new\" \"${g}\")\n"
+        "add_executable(t m.cpp)\ntarget_sources(t PRIVATE \"${g}\")\n"
+        "add_executable(bad m.cpp)\ntarget_sources(bad PRIVATE \"${CMAKE_CURRENT_BINARY_DIR}/never_written.cpp\")\n");
+    write("m.cpp", "int gen();int gen2();int main(){return gen()==7&&gen2()==0?0:1;}\n");
+    int rc; string o = sh("cmake . -o g.okay --audit", &rc); string man = readFile(gRoot / "g.okay");
+    check(rc == 0 && man.find("genfile {bin}/gen.cpp") != string::npos, "the generated file is a genfile block", man);
+    check(man.find("target t exe") != string::npos, "a target with a generated source is written", man);
+    check(o.find("skipped target   bad: generated source") != string::npos && man.find("target bad") == string::npos, "a source nobody writes still skips the target", o);
+    check(readFile(gRoot / "g.okay.gen/gen.cpp").find("gen2") != string::npos, "the text is saved next to the manifest");
+    o = sh("-f g.okay --build-dir gb t", &rc);
+    check(rc == 0, "the target builds from the copied file", o);
+    o = sh("-f g.okay --build-dir gb t", &rc);
+    check(rc == 0 && o.find("nothing to do") != string::npos || o.find("up to date") != string::npos || o.find("0 steps") != string::npos, "a second run does not rebuild", o);
+}
+
 static void testSharedObjectLibs() {
     printf("test: shared and object libraries (manifest and from CMake)\n");
     fresh("sharedobj");
@@ -1777,7 +1799,7 @@ int main(int argc, char** argv) {
     if (argc < 2) { puts("usage: test_okaybuild PATH_TO_okay-build"); return 2; }
     gTool = "'" + fs::absolute(argv[1]).string() + "'";
     if (const char* only = getenv("OKB_ONLY")) { // OKB_ONLY=cmake runs just the CMake reader, ctest and library tests (quick while working on them)
-        if (string(only) == "cmake") { testCmakeReader(); testCmakeSyntax(); testSharedObjectLibs(); testFetchAndSha256(); testOnlyAffectedTestsRebuild(); printf("okaybuild tests (cmake only): %d checks passed, %d failed\n", gPass, gFail); return gFail ? 1 : 0; }
+        if (string(only) == "cmake") { testCmakeReader(); testCmakeSyntax(); testGeneratedSource(); testSharedObjectLibs(); testFetchAndSha256(); testOnlyAffectedTestsRebuild(); printf("okaybuild tests (cmake only): %d checks passed, %d failed\n", gPass, gFail); return gFail ? 1 : 0; }
     }
     testBasicAndNoop(); testHeaderTouch(); testDefine(); testMissingHeader(); testCycle(); testLinkOrder();
     testParallelDeterministic(); testCompdbCleanDry(); testManifestErrors(); testMingwCompdb(); testMingwSlice(); testStatShortcut(); testFreshNoopTrust(); testSpacesBuildDirRsp(); testRawActions(); testHashInCommandAndPath(); testImportGenerated();
@@ -1797,6 +1819,7 @@ int main(int argc, char** argv) {
     testRemoteCacheFolder();
     testCmakeReader();
     testCmakeSyntax();
+    testGeneratedSource();
     testSharedObjectLibs();
     testFetchAndSha256();
     testOnlyAffectedTestsRebuild();

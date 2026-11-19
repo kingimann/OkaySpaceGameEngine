@@ -1,5 +1,26 @@
 OkaySpace Game Engine — Changelog
 
+v2.890.0
+  Boats and water, clearer Visual Script blocks, Xbox editor lag fix
+  - New Boat: GameObject > Vehicles > Boat makes a boat you can drive on
+    water. W and S for speed, A and D to steer, Space to brake. Open
+    examples\boat\boat_lake.okayscene and press Play to try it.
+  - Water now has real wave shapes (Water > Style: Ocean or Calm lake) and
+    things float properly. Crates and balls no longer bounce on the water:
+    they settle at the right height at any frame rate. Plain Water settings
+    keep their old look.
+  - Visual Script blocks explain themselves: every block has a plain
+    sentence under its name, a "What is this?" card for the selected block
+    shows what to plug in, a block that is missing an input says "Needs
+    input", "Next steps" buttons add the blocks that usually come next, and
+    "Try this node" adds a small working example. Some block names are
+    plainer now; the old names still work in search.
+  - Fixed: the editor no longer freezes for several seconds when you switch
+    Build Settings to the Xbox platform. It checks your PC in the
+    background and remembers the answer.
+  - Behind the scenes: more of our own UI toolkit (OkayUI) is in, off by
+    default.
+
 v2.889.0
   Try our own code, texture tools, Xbox fixes
   - New Settings > Experimental page in the launcher (and View > Rendering >

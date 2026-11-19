@@ -36,6 +36,7 @@ inline void Flash(SDL_Window* w, okay::platform::FlashMode m) { if (auto s = oka
 #include "WavPlayback.hpp"   // the one WAV loading seam (SDL_LoadWAV, or our own decoder with OKAY_OWN_WAV)
 #include "VoiceChat.hpp"   // voice calls (first: winsock2.h must precede windows.h)
 #include "AppIcon.hpp"
+#include "OwnSwitches.hpp"   // Settings > Experimental: the table of own replacements that can be switched on
 #include "ImGuiPlatformFeed.hpp"   // our own Dear ImGui input feed over okay::platform (OKAY_PLATFORM_EVENTS=own; default stays imgui_impl_sdl2)
 #include "OwnStack.hpp"   // OKAY_OWN_STACK=1 dogfood switch + the one-line startup stack report
 #include "OkayTheme.hpp"  // shared Slate palette (launcher + editor)
@@ -18179,6 +18180,7 @@ int main(int argc, char** argv) {
     if (int code = okay::restart::DispatchHelper(argc, argv); code >= 0) return code;
     if (int code = okay::selfupdate::SelfCheck(argc, argv, OKAY_ENGINE_VERSION); code >= 0) return code;   // `--okay-selfcheck <v>`: the updater asks the new file who it is
     okay::restart::RememberArguments(argc, argv);
+    okay::ownswitches::Startup();   // Settings > Experimental: set the chosen own-code variables BEFORE anything reads them (the editor started from here inherits them)
     okay::ownstack::Startup();   // OKAY_OWN_STACK=1 sets the own-backend switches; logs which parts are ours (docs/own_stack_rollout.md)
     SDL_SetMainReady();
     {
@@ -22617,8 +22619,9 @@ int main(int argc, char** argv) {
                 {"Privacy & Safety",     3,           "Who can reach you, what others see, and who you've blocked."},
                 {"Voice & Audio",        kIcoChat,    "Microphone, speakers and voice calls."},
                 {"Crash reports",        kIcoAlert,   "What went wrong when the editor closed unexpectedly."},
+                {"Experimental",         kIcoRefresh, "Try our own code instead of the third-party parts. All off by default."},
             };
-            static const int kSetOrder[] = {0, 1, 7, 8, 2, 3, 4, 5, 9, 6};   // rail order (new pages sit with Chat)
+            static const int kSetOrder[] = {0, 1, 7, 8, 2, 3, 4, 10, 5, 9, 6};   // rail order (new pages sit with Chat)
             const int nCats = (int)(sizeof(kSetCats) / sizeof(kSetCats[0]));
             setCat = std::clamp(setCat, 0, nCats - 1);
             const float availW = ImGui::GetContentRegionAvail().x;
@@ -23238,6 +23241,35 @@ int main(int argc, char** argv) {
                             Toast("Library folder added", 1);
                             libBuf[0] = '\0';
                         }
+                    }
+                    cardEnd();
+                } else if (setCat == 10) {   // ---- Experimental: try our own code (shared/OwnSwitches.hpp) ----
+                    namespace osw = okay::ownswitches;
+                    osw::State& st = osw::Global();
+                    const osw::Context ctx = osw::Context::Here();
+                    cardBegin("##sc_own", "TRY OUR OWN CODE");
+                    ImGui::PushTextWrapPos(0.0f);
+                    ImGui::TextDisabled("Each switch swaps one third-party part for our own. All are off until you turn them on. A change starts working after you restart the launcher and editor.");
+                    ImGui::PopTextWrapPos();
+                    ImGui::Dummy(ImVec2(0, 6));
+                    bool anyOn = !st.chosen.empty();
+                    ImGui::BeginDisabled(!anyOn);
+                    if (ImGui::Button("Back to normal (all off)", ImVec2(220, 30))) { osw::AllOff(st.chosen); osw::SaveChosen(); }
+                    ImGui::EndDisabled();
+                    ImGui::Dummy(ImVec2(0, 4));
+                    for (const osw::Item& it : osw::Items()) {
+                        if (!osw::Available(it, ctx)) continue;
+                        rowDivider();
+                        const bool byUser = osw::SetByUser(it, osw::AppliedNow());
+                        const osw::Status stt = osw::StatusOf(it, st.chosen, st.runningWith, byUser);
+                        settingRow(it.label, it.desc, 300.0f, 22.0f, [&](float) {
+                            bool v = osw::Has(st.chosen, it.id);
+                            ImGui::BeginDisabled(byUser);
+                            if (ToggleSwitch((std::string("##own_") + it.id).c_str(), &v)) { osw::Set(st.chosen, it.id, v); osw::SaveChosen(); }
+                            ImGui::EndDisabled();
+                            ImGui::SameLine();
+                            ImGui::TextDisabled("%s", osw::StatusText(stt));
+                        });
                     }
                     cardEnd();
                 } else if (setCat == 9) {   // ---- Crash reports ----

@@ -11,6 +11,7 @@
 #include "EditorPerf.hpp"            // frame-time maths, idle throttle, viewport scale, performance mode (tests/test_editor_perf.cpp)
 #include "SaveBeforePrompt.hpp"         // the Save-before-Play/Stop/Open prompt's order: stop first, then save (#888)
 #include "ObjectRef.hpp"         // GUID-held object references that survive undo / scene rebuilds
+#include "OwnSwitches.hpp"   // the table of own replacements that can be switched on (View > Rendering & Performance)
 #include "OwnStack.hpp"   // OKAY_OWN_STACK=1 dogfood switch + the one-line startup stack report
 #include "CrashHandler.hpp"   // crash handlers + the crash context that fills okay_crash.txt (docs/crash_reports.md)
 #include "ActionExport.hpp"
@@ -7213,7 +7214,7 @@ static void DrawRenderingMenuItems(EditorState& ed) {
 #endif
 #ifdef OKAY_HAVE_OKAYUI
     if (okayuibackend::SettingRowVisible(okayuibackend::DevMode(std::getenv("OKAY_DEV")))) {   // developer-only: not offered to users until the OkayUI ports are declared ready
-    if (ImGui::BeginMenu("UI backend")) {   // which toolkit draws the panels that have an OkayUI port (the Console, today)
+    if (ImGui::BeginMenu("UI backend")) {   // which toolkit draws the panels that have an OkayUI port (the Console, Crash Log and Audio Mixer)
         const int src = okayuibackend::Source(std::getenv("OKAY_UI_BACKEND"), g_uiBackendSetting, true);
         for (okayuibackend::Backend opt : {okayuibackend::Backend::ImGui, okayuibackend::Backend::OkayUI})
             if (ImGui::MenuItem(okayuibackend::Label(opt), nullptr, g_uiBackend == opt, src != 2) && g_uiBackend != opt) {
@@ -7222,12 +7223,29 @@ static void DrawRenderingMenuItems(EditorState& ed) {
                 SaveSettings();
             }
         ImGui::Separator();
-        ImGui::TextDisabled(src == 2 ? "OKAY_UI_BACKEND is set and decides this." : "Preview: only the Console panel is ported.");
+        ImGui::TextDisabled(src == 2 ? "OKAY_UI_BACKEND is set and decides this." : "Preview: the Console, Crash Log and Audio Mixer panels are ported.");
         ImGui::EndMenu();
     }
-    if (ImGui::IsItemHovered()) ImGui::SetTooltip("Dear ImGui draws the editor. OkayUI (preview) is our own toolkit: pick it to draw the Console panel with it.\nEverything else stays Dear ImGui. Applies at once; the OKAY_UI_BACKEND environment variable overrides it.");
+    if (ImGui::IsItemHovered()) ImGui::SetTooltip("Dear ImGui draws the editor. OkayUI (preview) is our own toolkit: pick it to draw the Console, Crash Log and Audio Mixer panels with it.\nEverything else stays Dear ImGui. Applies at once; the OKAY_UI_BACKEND environment variable overrides it.");
     }
 #endif
+    if (ImGui::BeginMenu("Experimental: try our own code")) {   // the same table and file as the launcher's Settings > Experimental (shared/OwnSwitches.hpp)
+        namespace osw = okay::ownswitches;
+        osw::State& st = osw::Global();
+        const osw::Context ctx = osw::Context::Here();
+        ImGui::TextDisabled("Off by default. A change works after you restart the editor.");
+        if (ImGui::MenuItem("Back to normal (all off)", nullptr, false, !st.chosen.empty())) { osw::AllOff(st.chosen); osw::SaveChosen(); }
+        ImGui::Separator();
+        for (const osw::Item& it : osw::Items()) {
+            if (!osw::Available(it, ctx)) continue;
+            const bool byUser = osw::SetByUser(it, osw::AppliedNow());
+            const osw::Status stt = osw::StatusOf(it, st.chosen, st.runningWith, byUser);
+            const std::string label = std::string(it.label) + "  (" + osw::StatusText(stt) + ")";
+            if (ImGui::MenuItem(label.c_str(), nullptr, osw::Has(st.chosen, it.id), !byUser)) { osw::Set(st.chosen, it.id, !osw::Has(st.chosen, it.id)); osw::SaveChosen(); }
+            if (ImGui::IsItemHovered()) ImGui::SetTooltip("%s", it.desc);
+        }
+        ImGui::EndMenu();
+    }
     DrawAutoModeMenu("VSync", g_vsyncMode, g_vsync, "Off = uncapped FPS (no 60 Hz limit). On = no tearing. Auto turns it on when the GPU draws the editor and off for the software renderer.");
     if (ImGui::MenuItem("Smooth frame time", nullptr, &g_smoothFrameTime)) SaveSettings();
     if (ImGui::IsItemHovered()) ImGui::SetTooltip("Play steps the game by an evened-out frame time (whole refresh periods with\nVSync), so movement and cameras don't micro-judder at a steady frame rate.");
@@ -18869,7 +18887,10 @@ void DrawFileDialogs(EditorState& ed) {
             ImGui::TextColored(ImVec4(1.0f, 0.75f, 0.3f, 1.0f), "EXPERIMENTAL and UNVERIFIED. Never built on Windows, never run on an Xbox.");
             ImGui::TextWrapped("%s", okay::xbox::kLimitationsText);
             ImGui::Spacing();
-            const okay::xbox::SdkReport& s_xboxSdk = okay::xbox::CachedSdkReport(ImGui::Button("Check again"));
+            // The probe runs on a worker thread (XboxAsyncProbe.hpp): this call never waits. While it runs the report says "Checking ...".
+            const bool s_xboxCheckAgain = ImGui::Button("Check again");
+            const okay::xbox::SdkReport& s_xboxSdk = okay::xbox::CachedSdkReport(s_xboxCheckAgain);
+            if (s_xboxSdk.checking) { ImGui::SameLine(); ImGui::TextDisabled("%c  working in the background, the editor stays usable", "|/-\\"[(int)(ImGui::GetTime() * 8.0) & 3]); }
             ImGui::TextWrapped("%s", s_xboxSdk.message.c_str());
             for (const okay::xbox::SdkItem& it : s_xboxSdk.items) {
                 ImGui::TextColored(it.found ? ImVec4(0.4f, 0.9f, 0.4f, 1) : (it.required ? ImVec4(1.0f, 0.45f, 0.4f, 1) : ImVec4(0.7f, 0.7f, 0.7f, 1)),
@@ -18895,7 +18916,6 @@ void DrawFileDialogs(EditorState& ed) {
             if (g_xboxInstall) ImGui::TextDisabled("Windows will show ONE administrator (UAC) prompt near the end; accept it. Decline it and everything else is kept.");
             if (g_xboxRunner) {   // the log panel: per-step status, streamed output, cancel
                 namespace xb = okay::xbox;
-                g_xboxRunner->Tick();
                 ImGui::Separator();
                 const auto& st = g_xboxRunner->Status(); const auto& sp = g_xboxRunner->Steps();
                 for (std::size_t i = 0; i < sp.size(); ++i) {
@@ -18906,14 +18926,20 @@ void DrawFileDialogs(EditorState& ed) {
                 if (g_xboxRunner->Running() && ImGui::Button("Cancel build")) g_xboxRunner->Cancel();
                 if (g_xboxRunner->Succeeded()) {
                     ImGui::TextColored(ImVec4(0.4f, 0.9f, 0.4f, 1), "Finished. Package: %s", g_xboxAppx.c_str());
-                    const std::string who = g_xboxRunner->Fact("SIGNER"); ImGui::TextDisabled("Signed with: %s", who.empty() ? g_xboxSignerLabel.c_str() : who.c_str());
+                    static const void* s_whoFor = nullptr; static std::string s_who;   // Fact() copies the whole log: once per finished build, not every frame
+                    if (s_whoFor != g_xboxRunner.get()) { s_whoFor = g_xboxRunner.get(); s_who = g_xboxRunner->Fact("SIGNER"); }
+                    ImGui::TextDisabled("Signed with: %s", s_who.empty() ? g_xboxSignerLabel.c_str() : s_who.c_str());
                     ImGui::TextDisabled("UNVERIFIED: nothing here has run on Windows or an Xbox yet. Tell us what you see.");
                 } else if (g_xboxRunner->Finished()) {
                     ImGui::PushTextWrapPos(560.0f); ImGui::TextColored(ImVec4(1, 0.45f, 0.4f, 1), "%s", g_xboxRunner->FailureMessage().c_str()); ImGui::PopTextWrapPos();
                 }
                 if (ImGui::BeginChild("##xboxlog", ImVec2(560, 180), true)) {
-                    for (const xb::LogLine& l : g_xboxRunner->Log())
+                    const std::vector<xb::LogLine>& xlog = g_xboxRunner->Log();   // up to 3000 lines: only the visible ones are drawn
+                    ImGuiListClipper xclip; xclip.Begin((int)xlog.size());
+                    while (xclip.Step()) for (int li = xclip.DisplayStart; li < xclip.DisplayEnd; ++li) {
+                        const xb::LogLine& l = xlog[(std::size_t)li];
                         ImGui::TextColored(l.cls == xb::LineClass::Error ? ImVec4(1, 0.5f, 0.45f, 1) : l.cls == xb::LineClass::Warning ? ImVec4(1, 0.8f, 0.4f, 1) : ImVec4(0.8f, 0.8f, 0.8f, 1), "%s", l.text.c_str());
+                    }
                     if (g_xboxRunner->Running()) ImGui::SetScrollHereY(1.0f);
                 }
                 ImGui::EndChild();
@@ -19266,13 +19292,14 @@ void DrawFileDialogs(EditorState& ed) {
         ImGui::PushStyleColor(ImGuiCol_ButtonHovered, ImVec4(0.24f, 0.70f, 0.32f, 1.0f));
         ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(1, 1, 1, 1));
 #if defined(OKAY_XBOX_UWP)
-        const bool xboxBlocked = g_buildPlatform == 4 && (!okay::xbox::CachedSdkReport().available || (g_xboxRunner && g_xboxRunner->Running()));
+        const bool xboxChecking = g_buildPlatform == 4 && okay::xbox::CachedSdkReport().checking;   // the probe starts here too if the page was not shown yet; never waits
+        const bool xboxBlocked = g_buildPlatform == 4 && (xboxChecking || !okay::xbox::CachedSdkReport().available || (g_xboxRunner && g_xboxRunner->Running()));
         ImGui::BeginDisabled(xboxBlocked);
 #endif
         if (ImGui::Button(buildLabel, ImVec2(bw, 0))) doBuild = true;
 #if defined(OKAY_XBOX_UWP)
         ImGui::EndDisabled();
-        if (xboxBlocked && ImGui::IsItemHovered(ImGuiHoveredFlags_AllowWhenDisabled)) ImGui::SetTooltip("Xbox export is unavailable: a required Windows tool is missing (see the Xbox page).");
+        if (xboxBlocked && ImGui::IsItemHovered(ImGuiHoveredFlags_AllowWhenDisabled)) ImGui::SetTooltip("%s", xboxChecking ? "Checking your PC for the Xbox tools... (a few seconds; the button turns on when it is done)" : (g_xboxRunner && g_xboxRunner->Running()) ? "An Xbox build is already running (see the log on the Xbox page)." : "Xbox export is unavailable: a required Windows tool is missing (see the Xbox page).");
 #endif
         ImGui::PopStyleColor(3);
         if (g_vsBuildRetry) { doBuild = true; doRun = g_vsBuildRetry == 2; g_vsBuildRetry = 0; }
@@ -50662,6 +50689,7 @@ int main(int argc, char** argv) {
     if (int code = okay::selfupdate::SelfCheck(argc, argv, OKAY_ENGINE_VERSION); code >= 0) return code;   // `--okay-selfcheck <v>`: the updater asks the new file who it is
     okay::restart::RememberArguments(argc, argv);
     okay::editor::ExamplesExeDir() = OkayExeDir();   // File > Examples finds the shipped "examples" folder beside the program
+    okay::ownswitches::Startup();   // View > Rendering & Performance > Experimental (same file as the launcher's Settings page): set the variables before anything reads them
     okay::ownstack::Startup();   // OKAY_OWN_STACK=1 sets the own-backend switches; logs which parts are ours (docs/own_stack_rollout.md)
     std::fprintf(stderr, "[updater] %s\n", okayupdate::SignatureStatus(okayupdate::BuiltInTrustedKeys()).line.c_str());   // OFF is never silent (docs/security.md "Updater signing")
     okaycrash::handler::Install(OKAY_ENGINE_VERSION, __DATE__ " " __TIME__);   // report crashes: Windows exception filter / Linux and macOS signals / std::terminate

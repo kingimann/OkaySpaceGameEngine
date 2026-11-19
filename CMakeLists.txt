@@ -1,6 +1,6 @@
 cmake_minimum_required(VERSION 3.16)
 project(OkaySpaceGameEngine
-    VERSION 2.888.0
+    VERSION 2.889.0
     DESCRIPTION "A modern C++ game engine"
     LANGUAGES C CXX)   # C enabled for vendored single-file C libs (ufbx)
 
@@ -348,6 +348,11 @@ endif()
 # Emscripten/WebGL, where raw UDP sockets don't exist in the browser sandbox.
 if(NOT EMSCRIPTEN)
     add_subdirectory(relay)
+endif()
+
+# ---- okay-texture: command line texture tool (mips, atlas, compress), no graphics deps -----
+if(NOT EMSCRIPTEN)
+    add_subdirectory(tools/okaytexture)
 endif()
 
 # ---- Xbox One Developer Mode export (experimental, OFF by default) -----

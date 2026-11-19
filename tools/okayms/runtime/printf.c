@@ -37,10 +37,12 @@ int format_out(char *buf, unsigned int cap, char *fmt, va_list ap) {
             int pad;
             int i;
             char fill;
-            unsigned int u;
+            unsigned long long u;
             unsigned int base;
             unsigned int digit;
-            int v;
+            long long v;
+            int wide;
+            int upper;
             char *s;
             double fval;
             int fwhole;
@@ -54,6 +56,8 @@ int format_out(char *buf, unsigned int cap, char *fmt, va_list ap) {
             width = 0;
             prec = 6;
             has_prec = 0;
+            wide = 0;
+            upper = 0;
             fmt = fmt + 1;
             if (fmt[0] == '%') {
                 if (n + 1 < cap) {
@@ -82,6 +86,11 @@ int format_out(char *buf, unsigned int cap, char *fmt, va_list ap) {
                         fmt = fmt + 1;
                     }
                 }
+                while (fmt[0] == 'l' || fmt[0] == 'h' || fmt[0] == 'z' || fmt[0] == 'j' || fmt[0] == 't') {
+                    /* ll, z, j and t are 64 bits wide; l and h are 32 bits or less on Windows. */
+                    if ((fmt[0] == 'l' && fmt[1] == 'l') || fmt[0] == 'z' || fmt[0] == 'j' || fmt[0] == 't') wide = 1;
+                    fmt = fmt + 1;
+                }
                 spec = fmt[0];
                 if (spec == 0) {
                     buf[n] = 0;
@@ -92,8 +101,9 @@ int format_out(char *buf, unsigned int cap, char *fmt, va_list ap) {
                 sign = 0;
                 base = 0;
                 u = 0;
-                if (spec == 'd') {
-                    v = va_arg(ap, int);
+                if (spec == 'd' || spec == 'i') {
+                    if (wide) v = va_arg(ap, long long);
+                    else v = va_arg(ap, int);
                     if (v < 0) {
                         sign = '-';
                         v = -v;
@@ -102,11 +112,14 @@ int format_out(char *buf, unsigned int cap, char *fmt, va_list ap) {
                     u = v;
                     base = 10;
                 } else if (spec == 'u') {
-                    u = va_arg(ap, unsigned int);
+                    if (wide) u = va_arg(ap, unsigned long long);
+                    else u = va_arg(ap, unsigned int);
                     base = 10;
-                } else if (spec == 'x') {
-                    u = va_arg(ap, unsigned int);
+                } else if (spec == 'x' || spec == 'X') {
+                    if (wide) u = va_arg(ap, unsigned long long);
+                    else u = va_arg(ap, unsigned int);
                     base = 16;
+                    if (spec == 'X') upper = 1;
                 } else if (spec == 'c') {
                     v = va_arg(ap, int);
                     tmp[0] = v;
@@ -144,6 +157,7 @@ int format_out(char *buf, unsigned int cap, char *fmt, va_list ap) {
                     while (u != 0 && ri < 30) {
                         digit = u % base;
                         if (digit < 10) rev[ri] = '0' + digit;
+                        else if (upper) rev[ri] = 'A' + digit - 10;
                         else rev[ri] = 'a' + digit - 10;
                         ri = ri + 1;
                         u = u / base;

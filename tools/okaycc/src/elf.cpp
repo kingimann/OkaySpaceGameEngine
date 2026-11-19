@@ -641,6 +641,30 @@ void emitInst(Image& im, const Function& f, const Inst& in, const std::vector<in
                 u8(im, 0xFF);
                 u8(im, 0xD0);
             }
+        } else if (in.func == "__okay_setjmp") {
+            // The register state of a try frame goes to buf (rdi): rbx rbp r12 r13 r14 r15 rsp and the
+            // address after this sequence. Entered again by __okay_longjmp with rax = 1.
+            static const unsigned char save[] = {0x48, 0x89, 0x1F, 0x48, 0x89, 0x6F, 0x08, 0x4C, 0x89, 0x67, 0x10,
+                                                 0x4C, 0x89, 0x6F, 0x18, 0x4C, 0x89, 0x77, 0x20, 0x4C, 0x89, 0x7F,
+                                                 0x28, 0x48, 0x89, 0x67, 0x30};
+            for (unsigned char c : save) u8(im, c);
+            u8(im, 0x48);  // lea rax, [rip + 6]
+            u8(im, 0x8D);
+            u8(im, 0x05);
+            u32(im, 6);
+            u8(im, 0x48);  // mov [rdi + 56], rax
+            u8(im, 0x89);
+            u8(im, 0x47);
+            u8(im, 0x38);
+            u8(im, 0x31);  // xor eax, eax
+            u8(im, 0xC0);
+        } else if (in.func == "__okay_longjmp") {
+            // buf in rdi, value in rsi: restore the registers and jump to the saved address.
+            static const unsigned char restore[] = {0x48, 0x89, 0xF0, 0x48, 0x8B, 0x1F, 0x48, 0x8B, 0x6F, 0x08,
+                                                    0x4C, 0x8B, 0x67, 0x10, 0x4C, 0x8B, 0x6F, 0x18, 0x4C, 0x8B,
+                                                    0x77, 0x20, 0x4C, 0x8B, 0x7F, 0x28, 0x48, 0x8B, 0x67, 0x30,
+                                                    0xFF, 0x67, 0x38};
+            for (unsigned char c : restore) u8(im, c);
         } else if (in.func == "syscall") {
             // Linux syscall: C call syscall(number, a, b, c) is already in rdi, rsi, rdx, rcx.
             movReg(im, Rax, Rdi);
@@ -881,6 +905,21 @@ void emitData(Image& im, const Module& m) {
             f.target = g.reloc;
             im.fixes.push_back(f);
             u64(im, 0);
+        } else if (!g.relocs.empty()) {
+            int total = g.size > 0 ? g.size : static_cast<int>(g.bytes.size());
+            for (int off = 0; off < total; off += 8) {
+                std::string sym;
+                for (const auto& r : g.relocs)
+                    if (r.first == off) sym = r.second;
+                if (!sym.empty()) {
+                    Fix f;
+                    f.kind = FixKind::Abs64;
+                    f.at = im.bytes.size();
+                    f.target = sym;
+                    im.fixes.push_back(f);
+                }
+                u64(im, 0);
+            }
         } else if (!g.bytes.empty()) {
             bool zero = true;
             for (unsigned char c : g.bytes)
@@ -1192,7 +1231,18 @@ std::vector<unsigned char> compileToElf(const std::string& source, Diagnostics& 
     }
     std::size_t entry = im.bytes.size();
     im.labels["_start"] = entry;
+    // Global objects: __okay_init_* before main, __okay_fini_* after it.
+    std::vector<std::string> finis;
+    for (const auto& kv : im.labels) {
+        if (kv.first.compare(0, 12, "__okay_init_") == 0) callRel(im, kv.first);
+        if (kv.first.compare(0, 12, "__okay_fini_") == 0) finis.insert(finis.begin(), kv.first);
+    }
     callRel(im, "main");
+    u8(im, 0x50);  // push rax twice: keeps the stack aligned
+    u8(im, 0x50);
+    for (const std::string& n : finis) callRel(im, n);
+    u8(im, 0x58);
+    u8(im, 0x58);
     movReg(im, Rdi, Rax);
     movImm(im, Rax, 60);
     u8(im, 0x0F);

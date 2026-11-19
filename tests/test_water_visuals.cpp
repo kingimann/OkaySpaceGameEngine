@@ -3,6 +3,8 @@
 #include "test_framework.hpp"
 #include "water_scenes.hpp"
 #include "okay/Environment/WaterShading.hpp"
+#include "okay/Components/BoatController.hpp"
+#include "okay/Scene/SceneTemplates.hpp"
 #include "okay/Render/SoftwareRenderer.hpp"
 #include "okay/Scene/PropertyRegistry.hpp"
 #include <cmath>
@@ -369,6 +371,19 @@ int main() {
         CHECK(std::abs(c.water->RingCount() - d.water->RingCount()) <= 1);
         for (int i = 0; i < 400; ++i) c.water->AddRipple({0, 0, 0}, 1.0f);
         CHECK(c.water->RingCount() <= 64);                          // never grows without limit
+    }
+    {   // the boat lays a wake on a Water with the realistic look, and none on one without it
+        for (int rich = 0; rich < 2; ++rich) {
+            Scene sc("boatwake"); sc.fixedTimeStep = 1.0f / 50.0f;
+            Water* w = watersc::MakeWater(sc, 1, 200.0f, 16, 20.0f);
+            w->waveHeight = 0.0f; w->realisticLook = rich == 1; w->Apply();
+            GameObject* boat = Templates::AddBoat(sc, {0, 0.0f, -40.0f});
+            auto* bc = boat->GetComponent<BoatController>();
+            bc->isPlayer = false; bc->followCamera = false; bc->throttleInput = 1.0f;
+            Step(sc, 6.0f, 50);
+            if (rich) CHECK(w->RingCount() >= 5); else CHECK(w->RingCount() == 0);
+            CHECK(boat->transform->Position().z > -35.0f);
+        }
     }
     {   // a crate that falls in makes a ring and spray; something standing still on dry land does not
         Sea s(1);

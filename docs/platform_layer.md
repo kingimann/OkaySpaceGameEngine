@@ -569,6 +569,15 @@ drawn, read back before the present, so it is exactly what the window would show
 the event each command makes are tested in `tests/test_test_hooks.cpp` (ctest `test_hooks`). `scripts/run_app_script.sh <program> <script> <outdir> [seconds] [backend...]` runs the program on a private
 Xvfb once per backend, checks the exit code, and compares the pictures of the two backends (ImageMagick `compare`; pictures stay in `<outdir>`, outside the repository).
 
+**What the scripted runs showed (Xvfb, Linux).** Launcher, scripts `click`, `type`, `drop`, `shot`, `quit`, then a click on the dialog's Exit button: both backends exited with code 0 and
+the pictures were identical to 0 pixels at a 4 percent threshold (first page, Play, Settings pages, typed text in the search box, the drop hint toast, `ctrl+a` then typing replaces the text,
+Backspace). Pictures taken while the toast faded differed by timing only. Editor (`--dev`): the project gate (name field, template list, Create project), the File menu and a quit request:
+both backends exited with code 0; the differences left were the frame-rate counter, the console warning count (the own backend has no SDL dummy audio, so its ALSA open fails and logs one
+more warning) and, before the fix below, the typed name. **Found and fixed by this:** `key ctrl+a` on the own backend did not select all, because the own feed learns held modifiers from
+modifier key events, not from the `mods` field; the hook now presses and releases the modifier keys around the key (a real keyboard does), and the two backends then agree.
+**Not run after that fix:** the editor (its main source file could not be rebuilt in the time and memory available; the editor runs above used the build before the fix) and anything on Windows.
+The scripts and pictures are kept out of the repository.
+
 **Multi-window panels on the own backend: plan (not built).** What the editor's "multi-window" mode needs from a platform backend, and what exists:
 1. Dear ImGui's multi-viewport interface (`ImGuiPlatformIO`: `Platform_CreateWindow`, `DestroyWindow`, `ShowWindow`, `SetWindowPos/GetWindowPos`, `SetWindowSize/GetWindowSize`,
    `SetWindowFocus/GetWindowFocus`, `GetWindowMinimized`, `SetWindowTitle`, `Renderer_*`). Written from `imgui.h`'s documentation of those callbacks onto `okay::platform::Window`

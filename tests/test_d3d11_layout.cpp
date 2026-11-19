@@ -2,6 +2,8 @@
 #include "okay/Render/D3D11Hlsl.hpp"
 #include "okay/Render/D3D11Layout.hpp"
 #include <cctype>
+#include <fstream>
+#include <sstream>
 #include <cstring>
 #include <map>
 #include <string>
@@ -98,5 +100,31 @@ int main() {
     CHECK(hlsl.find("Load(int3((int2)ap, 0)).r") != std::string::npos);
     // The light-mask atlas row count and the shader agree (the shader divides by uSunExtra.z, filled from kCookieRows).
     CHECK(d3d11layout::kCookieRows == 8);
+
+    // ---- OpenGL: the same pieces (text checks of GLRenderer.cpp; the GLSL is not compiled here, UNVERIFIED on a GPU) ----
+    {
+        std::string here = __FILE__;
+        std::ifstream f(here.substr(0, here.find_last_of("/\\") + 1) + "../engine/src/Render/GLRenderer.cpp", std::ios::binary);
+        std::ostringstream o; o << f.rdbuf();
+        const std::string gl = o.str();
+        CHECK(!gl.empty());
+        for (const char* u : {"uLRect", "uLRight", "uLUp", "uCookieTex", "uCookieRows", "uSunSoft", "uFadeDist"}) {
+            const std::string name = u;
+            CHECK(gl.find("uniform vec4 " + name) != std::string::npos || gl.find("uniform vec3 " + name) != std::string::npos ||
+                  gl.find("uniform float " + name) != std::string::npos || gl.find("uniform sampler2D " + name) != std::string::npos);   // declared in the shader
+            CHECK(gl.find("GetUniformLocation(m_prog, \"" + name + "\")") != std::string::npos);                                         // looked up by the host
+        }
+        for (const char* fn : {"softClip", "distFade", "lightAtten", "rectTerm", "cookieSample", "cookieAt"}) {
+            const size_t def = gl.find(std::string("float ") + fn + "(");
+            CHECK(def != std::string::npos);
+            CHECK(gl.find(std::string(fn) + "(") >= def);                    // first mention is the definition
+        }
+        // GLSL 1.20 style: no HLSL names in the new GLSL.
+        const size_t a = gl.find("2026-11 lighting upgrade"), b = gl.find("mat2 gRot;");
+        CHECK(a != std::string::npos && b != std::string::npos && a < b);
+        const std::string block = gl.substr(a, b - a);
+        for (const char* bad : {"float3", "float2", "saturate(", "lerp(", "frac(", "SampleLevel", "[unroll]"}) CHECK(block.find(bad) == std::string::npos);
+        CHECK(gl.find("g.Uniform1i(m_uCookieTex, 8)") != std::string::npos);   // the mask atlas has its own texture unit (0-7 are taken)
+    }
     TEST_MAIN_RESULT();
 }

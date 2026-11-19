@@ -91,6 +91,7 @@
 #include "okay/Render/Culling.hpp"     // frustum culling toggle + drawn/culled counts (Stats)
 #include "okay/Render/D3D11Renderer.hpp" // optional GPU (Direct3D 11) 3D renderer (Windows)
 #include "okay/Core/Profiler.hpp"        // CPU/GPU frame profiler
+#include "okay/Debug/MemoryTracker.hpp"   // tagged allocators published as "alloc.<tag>" categories
 #include "okay/Core/TraceCapture.hpp"    // frame capture to a Chrome trace file
 #include "okay/Core/Paths.hpp"           // where the trace file is written (LogDir)
 #include "okay/Core/SystemCost.hpp"      // Game view Stats: ms per system
@@ -49343,6 +49344,14 @@ void DrawProfiler(EditorState& ed) {
         if (P.selected < 0) P.selected = n - 1;
     } else ImGui::TextDisabled("(pause to scrub frames)");
     ImGui::SameLine(); ImGui::TextDisabled("16.7ms=60FPS  33.3ms=30FPS");
+    if (P.jobsSampled) {   // job system: queue depth, who ran the jobs, time per priority
+        const okay::JobStats& js = P.jobs;
+        ImGui::TextUnformatted(okay::FormatJobStats(js).c_str());
+        ImGui::TextDisabled("this frame: %d jobs, %.2f ms; ran on workers %llu, helping waits %llu, inline %llu; by priority High %llu (%.1f ms) Normal %llu (%.1f ms) Low %llu (%.1f ms)",
+            P.jobRunsDelta, P.jobBusyDelta, (unsigned long long)js.ranOnWorkers, (unsigned long long)js.ranHelping, (unsigned long long)js.ranInline,
+            (unsigned long long)js.ranByPriority[0], js.busyMsByPriority[0], (unsigned long long)js.ranByPriority[1], js.busyMsByPriority[1],
+            (unsigned long long)js.ranByPriority[2], js.busyMsByPriority[2]);
+    }
 
     // ---- Timeline graphs (oldest -> newest) ----
     static std::vector<float> gTotal, gGpu, gScripts, gPhysics, gRender, gOther;
@@ -53142,6 +53151,8 @@ int main(int argc, char** argv) {
         {   // Close out the profiler frame (total wall time incl. present).
             Uint64 f1 = okay::platform::PerfCounter();
             double frameMs = (double)(f1 - g_frameT0) / (double)okay::platform::PerfFrequency() * 1000.0;
+            okay::Prof().SampleJobs(okay::JobSystem::Global().Stats());
+            if (okay::MemTrack::Enabled()) { okay::MemoryTracker::Global().PublishAllocators(); okay::MemoryTracker::Global().EndFrame(); }
             okay::Prof().EndFrame(frameMs);
             if (kPerfDump) {   // every ~2 s: average ms per section (inclusive), biggest first
                 static std::map<std::string, double> acc; static double accFrame = 0; static int n = 0;

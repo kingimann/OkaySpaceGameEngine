@@ -7,6 +7,27 @@ using namespace okay;
 int main() {
     RUN_SUITE("profiler");
 
+    {   // job system numbers reach the profiler: queue depth, runs and time per priority
+        JobSystem js(2);
+        JobOptions lo; lo.priority = JobPriority::Low;
+        JobHandle h1 = js.Submit([] {});
+        JobHandle h2 = js.Submit([] {}, lo);
+        js.Wait(h1); js.Wait(h2);
+        Profiler p;
+        p.SampleJobs(js.Stats());
+        CHECK(p.jobsSampled);
+        CHECK(p.jobs.workers == 2);
+        CHECK(p.jobRunsDelta == 2);
+        CHECK(p.jobs.ranByPriority[1] == 1 && p.jobs.ranByPriority[2] == 1 && p.jobs.ranByPriority[0] == 0);
+        js.Submit([] {});
+        js.WaitIdle();
+        p.SampleJobs(js.Stats());
+        CHECK(p.jobRunsDelta == 1);                           // per-frame change, not the running total
+        js.ResetStats();
+        p.SampleJobs(js.Stats());
+        CHECK(p.jobRunsDelta == 0);                           // a reset must not underflow
+    }
+
     Profiler& P = Prof();
 
     // Disabled by default: scopes are no-ops, nothing is recorded.

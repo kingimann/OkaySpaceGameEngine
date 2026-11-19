@@ -102,6 +102,7 @@ struct ScanOptions {
     bool logWarnings = true;           ///< also send warnings to the engine log
     std::vector<std::string> ignoreDirs;   ///< folder names to skip anywhere (folders starting with '.' are always skipped)
     std::vector<std::string> ignoreExtensions = {"okaymeta", "okayasset", "part", "tmp", "bak", "swp", "corrupt"};
+    bool parallelHash = true;          ///< hash files on the job system's workers (same result as one thread; inline with 0 workers)
     std::size_t fullHashLimit = 512u << 20;   ///< files above this are hashed from their head, tail and size
 };
 

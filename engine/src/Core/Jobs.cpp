@@ -309,6 +309,7 @@ struct JobSystem::Impl {
     std::atomic<std::uint64_t> submitted{0}, completed{0}, failed{0}, cancelled{0};
     std::atomic<std::uint64_t> ranWorkers{0}, ranHelping{0}, ranInline{0}, ranMain{0};
     std::atomic<std::uint64_t> busyNs{0};
+    std::atomic<std::uint64_t> prioRan[3]{{0}, {0}, {0}}, prioBusyNs[3]{{0}, {0}, {0}};
 
     // ---- work stealing ----
     TaskArena arena;
@@ -552,6 +553,11 @@ struct JobSystem::Impl {
         TraceCapture::End();
         const auto dt = std::chrono::duration_cast<std::chrono::nanoseconds>(Clock::now() - t0).count();
         busyNs.fetch_add((std::uint64_t)(dt > 0 ? dt : 0), std::memory_order_relaxed);
+        {
+            const int pr = job->priority < 0 ? 0 : (job->priority > 2 ? 2 : job->priority);
+            prioRan[pr].fetch_add(1, std::memory_order_relaxed);
+            prioBusyNs[pr].fetch_add((std::uint64_t)(dt > 0 ? dt : 0), std::memory_order_relaxed);
+        }
         t_ctx = prev;
         try { job->fn = nullptr; } catch (...) {}   // drop what the job captured right away
         if (out.failed) {
@@ -1225,6 +1231,10 @@ JobStats JobSystem::Stats() const {
     s.taskArenaPeak = I.arena.Peak();
     s.taskArenaResets = I.arena.Resets();
     s.busyMs = (double)I.busyNs.load(std::memory_order_relaxed) / 1.0e6;
+    for (int i = 0; i < 3; ++i) {
+        s.ranByPriority[i] = I.prioRan[i].load(std::memory_order_relaxed);
+        s.busyMsByPriority[i] = (double)I.prioBusyNs[i].load(std::memory_order_relaxed) / 1.0e6;
+    }
     return s;
 }
 
@@ -1237,6 +1247,7 @@ void JobSystem::ResetStats() {
     I.submitted = 0; I.completed = 0; I.failed = 0; I.cancelled = 0;
     I.ranWorkers = 0; I.ranHelping = 0; I.ranInline = 0; I.ranMain = 0;
     I.busyNs = 0;
+    for (int i = 0; i < 3; ++i) { I.prioRan[i] = 0; I.prioBusyNs[i] = 0; }
 }
 
 std::string FormatJobStats(const JobStats& s) {

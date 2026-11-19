@@ -120,6 +120,13 @@ public:
     void Remove(const std::string& category, std::int64_t bytes, std::int64_t count = 1) { Remove(Category(category), bytes, count); }
     void Resize(const std::string& category, std::int64_t oldBytes, std::int64_t newBytes) { Resize(Category(category), oldBytes, newBytes); }
 
+    // ---- runtime allocators ----------------------------------------------
+    /// Copy what the tagged FrameArena / PoolAllocator / StackAllocator report (MemTrack, opt-in: OKAY_MEMTRACK=1
+    /// or MemTrack::Enable) into categories named `prefix + tag` ("alloc.scene.cams"), so they show up in the
+    /// snapshots, history and leak suspects like every other category. Call it before EndFrame. Returns how many
+    /// tags were published (0 while tracking is off). The categories are replaced each call (Set), not added to.
+    int PublishAllocators(const std::string& prefix = "alloc.");
+
     // ---- reading ---------------------------------------------------------
     std::int64_t Bytes(int category) const;
     std::int64_t Count(int category) const;

@@ -10,6 +10,7 @@
 #include <algorithm>
 #include <fstream>
 #include "okay/Core/Utf8.hpp"
+#include "okay/Core/Jobs.hpp"
 #include "okay/Core/TraceCapture.hpp"
 #include "okay/Core/MemoryTrack.hpp"
 
@@ -46,6 +47,9 @@ public:
         double total = 0.0, cpu = 0.0, gpu = 0.0;
         double startMs = 0.0;    // frame start, ms since the profiler's first frame
         int objects = 0, triangles = 0, particles = 0;
+        int jobQueue = 0;        // job queue depth when the frame ended (SampleJobs)
+        int jobRuns = 0;         // jobs run during the frame
+        double jobBusyMs = 0.0;  // job body time during the frame, all threads
     };
     struct Stat { double mn = 0, avg = 0, mx = 0; int frames = 0; };  // per-section over the window
 
@@ -56,6 +60,23 @@ public:
     // ---- live-frame render stats (set by the editor each frame) ----
     int drawObjects = 0, drawTriangles = 0, particles = 0;
     void Stat3(int objects, int tris, int parts) { drawObjects = objects; drawTriangles = tris; particles = parts; }
+
+    // ---- job system numbers (the job system never calls the Profiler; the loop copies them here) ----
+    /// Call once per frame before EndFrame with JobSystem::Global().Stats(). Keeps the latest snapshot
+    /// (queue depth, helping waits, runs and time per priority) and the per-frame change for the frame ring.
+    void SampleJobs(const JobStats& s) {
+        const std::uint64_t run = s.ranOnWorkers + s.ranHelping + s.ranInline + s.ranOnMainThread;
+        jobRunsDelta = run >= m_prevJobRuns ? (int)(run - m_prevJobRuns) : 0;   // a stats reset makes the counters go back
+        jobBusyDelta = s.busyMs >= m_prevJobBusy ? s.busyMs - m_prevJobBusy : 0.0;
+        m_prevJobRuns = run; m_prevJobBusy = s.busyMs;
+        jobs = s; jobsSampled = true;
+        TraceCapture::Counter("jobs.queue", s.queueDepth);
+        TraceCapture::Counter("jobs.runs", jobRunsDelta);
+    }
+    JobStats jobs;
+    bool jobsSampled = false;
+    int jobRunsDelta = 0;
+    double jobBusyDelta = 0.0;
 
     double gpuMs = 0.0;          // most recent synchronous render/read-back time (GPU proxy)
     void Gpu(double ms) { gpuMs = std::isfinite(ms) && ms > 0.0 ? ms : 0.0; }
@@ -172,6 +193,7 @@ public:
         f.total = frameMs; f.cpu = cpu; f.gpu = gpuMs;
         f.startMs = m_haveEpoch ? Ms(m_frameStart - m_epoch) : 0.0;
         f.objects = drawObjects; f.triangles = drawTriangles; f.particles = particles;
+        f.jobQueue = (int)jobs.queueDepth; f.jobRuns = jobRunsDelta; f.jobBusyMs = jobBusyDelta;
         histPos = (histPos + 1) % kHistory;
         if (m_count < kHistory * 2) ++m_count;
     }
@@ -320,6 +342,8 @@ private:
     std::vector<Bucket> m_build;
     Frame   m_ring[kHistory];
     Frame   m_empty;
+    std::uint64_t m_prevJobRuns = 0;
+    double m_prevJobBusy = 0.0;
     int     m_count = 0;
     std::chrono::steady_clock::time_point m_frameStart{}, m_epoch{};
     bool    m_haveEpoch = false;

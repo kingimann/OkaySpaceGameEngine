@@ -1,4 +1,5 @@
 #include "okay/Debug/MemoryTracker.hpp"
+#include "okay/Core/MemoryTrack.hpp"
 
 #include <algorithm>
 #include <cstdio>
@@ -254,6 +255,18 @@ std::vector<MemoryLeakSuspect> MemoryTracker::LeakSuspects(const MemoryLeakOptio
 // ---------------------------------------------------------------------------
 // Snapshots
 // ---------------------------------------------------------------------------
+
+int MemoryTracker::PublishAllocators(const std::string& prefix) {
+    if (!MemTrack::Enabled()) return 0;
+    int n = 0;
+    for (const MemTrack::TagReport& t : MemTrack::Snapshot()) {
+        const int id = Category(prefix + t.tag);
+        if (id < 0) break;   // out of categories
+        Set(id, (std::int64_t)t.usedBytes, (std::int64_t)t.liveObjects);
+        ++n;
+    }
+    return n;
+}
 
 MemorySnapshot MemoryTracker::Snapshot(const std::string& label) const {
     MemorySnapshot snap;

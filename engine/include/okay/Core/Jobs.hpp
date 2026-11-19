@@ -129,6 +129,8 @@ struct JobStats {
     std::uint64_t taskArenaPeak = 0;     // most bytes one frame of tasks has used
     std::uint64_t taskArenaResets = 0;   // times the arena was recycled
     double busyMs = 0.0;                 // time spent inside job bodies, summed over all threads
+    std::uint64_t ranByPriority[3] = {0, 0, 0};   // jobs run, indexed by JobPriority (High, Normal, Low)
+    double busyMsByPriority[3] = {0.0, 0.0, 0.0}; // body time per priority
     std::string lastError;               // the last failure's job name and message
 };
 

@@ -1,4 +1,5 @@
 #include "okay/Core/AssetDatabase.hpp"
+#include "okay/Core/Jobs.hpp"
 #include "AssetDatabaseInternal.hpp"
 #include "okay/Core/AssetManager.hpp"
 #include "okay/Core/Log.hpp"
@@ -613,6 +614,7 @@ ScanReport AssetDatabase::Scan(const std::string& rootIn, const ScanOptions& opt
         c.hashed = true;
         if (c.hash != 0) c.fe.size = sz;
     };
+    std::vector<Cand*> toHash;
     for (Cand& c : cands) {
         if (!c.hasMeta) {   // no meta: an asset indexed earlier at this path with the same size and time keeps its hash
             auto pi = m_pathIndex.find(KeyOf(c.fe.rel));
@@ -631,8 +633,17 @@ ScanReport AssetDatabase::Scan(const std::string& rootIn, const ScanOptions& opt
             c.hash = c.pm.hash;
             c.hashed = true;
         } else {
-            ensureHash(c);
+            toHash.push_back(&c);   // hashed below, in parallel (each file is independent)
         }
+    }
+    if (!toHash.empty()) {
+        // Reading and hashing many files is the slow part of a first scan. Every file writes only its own
+        // candidate, so the result is the same with any worker count (0 workers: plain loop on this thread).
+        JobSystem& js = JobSystem::Global();
+        if (opt.parallelHash && toHash.size() >= 8 && js.WorkerCount() > 0)
+            js.ParallelFor(0, toHash.size(), 1, [&](std::size_t b, std::size_t e) { for (std::size_t i = b; i < e; ++i) ensureHash(*toHash[i]); });
+        else
+            for (Cand* c : toHash) ensureHash(*c);
     }
 
     // 5. Moves and renames. First the assets whose meta travelled with them.

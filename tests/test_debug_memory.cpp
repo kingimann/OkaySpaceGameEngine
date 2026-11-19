@@ -1,5 +1,6 @@
 #include "test_framework.hpp"
 #include "okay/Debug/MemoryTracker.hpp"
+#include "okay/Core/Memory.hpp"
 
 #include <cstdint>
 #include <string>
@@ -230,6 +231,38 @@ int main() {
         CHECK(b.ToText().find("Memory snapshot \"after\"") != std::string::npos);
         CHECK(Balanced(d.ToJson()) && Balanced(a.ToJson()) && Balanced(MemoryDiff().ToJson()));
         CHECK(d.ToJson().find("\"deltaBytes\":8192") != std::string::npos);
+    }
+
+    {   // FrameArena / PoolAllocator numbers published into the tracker (opt-in, by tag)
+        MemoryTracker m;
+        MemTrack::Reset();
+        MemTrack::Enable(false);
+        CHECK(m.PublishAllocators() == 0);                    // off: nothing published
+        CHECK(m.FindCategory("alloc.dm.arena") < 0);
+        MemTrack::Enable(true);
+        {
+            FrameArena arena; arena.SetTag("dm.arena");
+            PoolAllocator<int> pool; pool.SetTag("dm.pool");
+            arena.Allocate(100);
+            int* a = pool.Create(1); int* b = pool.Create(2);
+            CHECK(m.PublishAllocators() >= 2);
+            const int ia = m.FindCategory("alloc.dm.arena"), ip = m.FindCategory("alloc.dm.pool");
+            CHECK(ia >= 0 && ip >= 0);
+            CHECK(m.Bytes(ia) >= 100);
+            CHECK(m.Count(ip) == 2);
+            CHECK(m.Bytes(ip) >= (std::int64_t)(2 * sizeof(int)));
+            pool.Destroy(a);
+            m.PublishAllocators();                            // Set replaces, it does not add
+            CHECK(m.Count(ip) == 1);
+            arena.Reset();
+            m.PublishAllocators();
+            CHECK(m.Bytes(ia) == 0);
+            pool.Destroy(b);
+        }
+        m.PublishAllocators("mem.");
+        CHECK(m.FindCategory("mem.dm.arena") >= 0);          // custom prefix
+        MemTrack::Enable(false);
+        MemTrack::Reset();
     }
 
 #ifndef _WIN32

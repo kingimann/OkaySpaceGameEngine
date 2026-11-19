@@ -42,6 +42,7 @@ public:
         int allocators = 0;              // live allocators with this tag
         std::size_t usedBytes = 0;       // now
         std::size_t reservedBytes = 0;   // now
+        std::size_t liveObjects = 0;     // now (arena: allocations since Reset; pool: live objects)
         std::size_t peakBytes = 0;       // largest high water of any one allocator, live or retired
         std::uint64_t allocations = 0;
         std::uint64_t failures = 0;
@@ -115,7 +116,7 @@ public:
             const AllocStats s = e.fn();
             TagReport& t = Slot(out, e.tag, e.kind);
             ++t.allocators;
-            t.usedBytes += s.used; t.reservedBytes += s.reserved;
+            t.usedBytes += s.used; t.reservedBytes += s.reserved; t.liveObjects += s.live;
             t.peakBytes = s.highWater > t.peakBytes ? s.highWater : t.peakBytes;
             t.allocations += s.allocations; t.failures += s.failures;
         }

@@ -110,6 +110,7 @@ struct LodChainOptions {
     float pixelError = 1.0f;       ///< a level is used once its error projects below this many pixels
     /// Largest world-space size of the object (bounding sphere diameter). <= 0 measures it from the mesh.
     float objectSize = -1.0f;
+    bool parallel = true;          ///< simplify the levels on the job system's workers (same chain as one thread)
 };
 
 struct LodMeshLevel {

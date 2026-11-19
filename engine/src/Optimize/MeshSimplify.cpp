@@ -1,5 +1,6 @@
 // Quadric error metric edge-collapse simplifier. See MeshSimplify.hpp.
 #include "okay/Optimize/MeshSimplify.hpp"
+#include "okay/Core/Jobs.hpp"
 #include <algorithm>
 #include <cmath>
 #include <cstdint>
@@ -713,13 +714,25 @@ LodChain GenerateLodChain(const Mesh& mesh, const std::vector<float>& ratios, co
     const float tanHalf = std::tan(std::max(opt.fovYDeg, 1e-3f) * 0.5f * 0.01745329252f);
     const float pxPerUnit = opt.viewportHeightPx / (2.0f * std::max(tanHalf, 1e-6f));
     const float pxErr = std::max(opt.pixelError, 1e-3f);
-    for (std::size_t i = 0; i < ratios.size(); ++i) {
-        LodMeshLevel lv;
-        lv.ratio = ratios[i];
+    // Every level is simplified from the original mesh and does not read another level, so the simplifying
+    // runs in parallel (inline with 0 workers). The chain is then assembled in order, so the result does not
+    // depend on the worker count.
+    std::vector<SimplifyResult> results(ratios.size());
+    auto simplifyLevel = [&](std::size_t i) {
         SimplifyOptions so = opt.base;
         so.targetRatio = std::min(std::max(ratios[i], 0.0f), 1.0f);
         so.targetTriangles = -1;
-        SimplifyResult r = SimplifyMesh(mesh, so);
+        results[i] = SimplifyMesh(mesh, so);
+    };
+    JobSystem& js = JobSystem::Global();
+    if (opt.parallel && ratios.size() > 1 && js.WorkerCount() > 0 && mesh.TriangleCount() >= 2000)
+        js.ParallelFor(0, ratios.size(), 1, [&](std::size_t b, std::size_t e) { for (std::size_t i = b; i < e; ++i) simplifyLevel(i); });
+    else
+        for (std::size_t i = 0; i < ratios.size(); ++i) simplifyLevel(i);
+    for (std::size_t i = 0; i < ratios.size(); ++i) {
+        LodMeshLevel lv;
+        lv.ratio = ratios[i];
+        SimplifyResult& r = results[i];
         if (r.skinned && !r.skinSupported) chain.skinSupported = false;
         if (i > 0 && r.trianglesAfter > chain.levels.back().triangles) {
             // Never let a level grow past the one above it.

@@ -135,7 +135,27 @@ std::string line = FormatJobStats(s);
 ```
 
 `JobStats` is a plain struct for the Profiler window or a debug overlay to copy; the job system does not
-write to the Profiler itself. `busyMs` is time inside job bodies summed over all threads.
+write to the Profiler itself. `busyMs` is time inside job bodies summed over all threads. `ranByPriority[3]` and
+`busyMsByPriority[3]` split runs and body time by `JobPriority`.
+
+The loop copies the numbers once a frame: `Prof().SampleJobs(JobSystem::Global().Stats())` (editor: before
+`EndFrame`). The Profiler keeps the latest snapshot (`Prof().jobs`), the per-frame change and, in each frame of its
+ring, `jobQueue`, `jobRuns` and `jobBusyMs`; the editor Profiler window shows the line and the per-priority numbers,
+and a trace capture gets `jobs.queue` / `jobs.runs` counters.
+
+### Where the jobs are used
+
+- `AssetDatabase::Scan` hashes the files it must hash with `ParallelFor` (`ScanOptions::parallelHash`, on by default).
+- `GenerateLodChain` simplifies the levels in parallel (`LodChainOptions::parallel`), then builds the chain in order.
+- Both keep the plain loop with 0 workers (WebGL) and give the same result with 0, 1 and 4 workers
+  (`tests/test_jobs_adoption.cpp`, which also prints one-thread against 4-worker times).
+
+### Allocators in the memory tracker
+
+`MemoryTracker::PublishAllocators(prefix)` copies the tagged `FrameArena` / `PoolAllocator` / `StackAllocator` numbers
+(from `MemTrack`, opt-in with `OKAY_MEMTRACK=1`) into categories `alloc.<tag>`. `MemTrack` stays the registry the
+allocators report to; the tracker is where snapshots, history and leak suspects live. The editor calls it once a frame
+while tracking is on.
 
 ### Limits
 

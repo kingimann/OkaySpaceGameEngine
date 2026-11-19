@@ -315,6 +315,7 @@ void NewFrame() {
     Input in = GetFrameInput(); MergePendingIo(in);
     static double clock = 0.0;
     const IO& r = IoRaw();   // a platform feed (shared/ImGuiPlatformFeed.hpp) writes the display size and the frame time here
+
     if (r.DisplaySize.x > 0.0f && r.DisplaySize.y > 0.0f) { in.displayW = r.DisplaySize.x; in.displayH = r.DisplaySize.y; }
     if (r.DeltaTime > 0.0f && r.DeltaTime < 1.0f) { clock += (double)r.DeltaTime; in.time = clock; }
     BeginFrame(in);

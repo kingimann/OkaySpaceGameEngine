@@ -448,7 +448,7 @@ Key names are a single letter/digit, or a named key: `"space"`, `"up"`, `"down"`
 | `fps()` | real frames per second over the last half second (a pause or slow motion does not change it, a stall shows) |
 | `hitch_count()` | frames that took over a tenth of a second since this Play began |
 | `hit_stop(seconds [, scale])` | a freeze frame (scale 0, the default) or a brief slow-down for an impact; real time, ends by itself, composes with `set_timescale` |
-| `slow_motion(scale, seconds)` | bullet time: `slow_motion(0.2, 2)` runs at a fifth speed for two real seconds, then back to normal |
+| `slow_motion(scale, seconds [, ease])` | bullet time: `slow_motion(0.2, 2)` runs at a fifth speed for two real seconds, then back to normal. With a third number the speed eases down over the first `ease` seconds and back up over the last (`slow_motion(0.2, 3, 0.5)`) |
 | `ramp_timescale(target, seconds)` | ease the time scale to `target` over `seconds` real seconds, in a straight line |
 | `get(name)` / `set(name, value)` | shared host globals (in memory) |
 | `spawn(prefabPath, x, y)` | instantiate a `.okayprefab` at a position |
@@ -632,6 +632,8 @@ sections, see [rendering.md](rendering.md)) at runtime:
 | `fog_set(on[, "#rrggbb"][, start, end][, mode[, density]])` | fog on/off, its colour, the linear start / end, and a mode (`"linear"`, `"exponential"`, `"height"`) with its density |
 | `weather_set(preset[, intensity])` | `"none"`, `"rain"`, `"snow"` or `"storm"` at an intensity 0..1; cross-fades over the scene's fade time |
 | `time_of_day([hours])` | the Day/Night Cycle's clock (0..24); with an argument sets it. -1 when the scene has none |
+| `day_number()` / `season()` / `clock_text()` | the Day/Night Cycle's day counter (1 first), season (0 Spring .. 3 Winter) and "08:30" text. -1 / "" when the scene has none |
+| `skip_to_hour(h)` | run the day clock forward to the next time it is `h`, sending the hour, sunrise, sunset and day events on the way (sleep until morning) |
 
 ```cs
 post_set("bloom", 1);

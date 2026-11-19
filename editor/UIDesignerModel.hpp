@@ -129,6 +129,45 @@ inline Rect Resize(const Rect& b, Handle h, float dx, float dy, bool keepAspect,
     return {l, t, r - l, bt - t};
 }
 
+// ---- the editor's drag maths (moved here from main.cpp unchanged, so a test can pin it) --------------------------
+/// Nearest candidate to one dragged edge within `thr`: returns it (else v) and sets guide / hit.
+inline float SnapEdge(float v, const std::vector<float>& cs, float thr, float& guide, bool& hit) {
+    float best = thr, res = v;
+    for (float c : cs) { float d = v > c ? v - c : c - v; if (d < best) { best = d; res = c; guide = c; hit = true; } }
+    return res;
+}
+/// The shift that lines the nearest of lo / mid / hi up with a candidate (0 when none is within `thr`).
+inline float BestSnap(float lo, float mid, float hi, const std::vector<float>& cands, float thr, float& guide) {
+    float best = thr, adj = 0.0f; bool found = false;
+    for (float m : {lo, mid, hi})
+        for (float c : cands) { float d = m > c ? m - c : c - m; if (d < best) { best = d; adj = c - m; guide = c; found = true; } }
+    return found ? adj : 0.0f;
+}
+/// An edge clinging to its parent's two edges (the nearer one within `thr`).
+inline float ParentEdgeSnap(float v, float lo, float hi, float thr, float& guide, bool& hit) {
+    float dl = v > lo ? v - lo : lo - v, dh = v > hi ? v - hi : hi - v;
+    if (dl < thr && dl <= dh) { guide = lo; hit = true; return lo; }
+    if (dh < thr)             { guide = hi; hit = true; return hi; }
+    return v;
+}
+/// Shift keeps the original shape, Alt mirrors each dragged edge about the original middle. Edges in/out.
+inline void ConstrainResize(float& l, float& t, float& rr, float& bb, float ox, float oy, float sw, float sh,
+                            bool left, bool right, bool top, bool bottom, bool shift, bool alt) {
+    const float cx0 = ox + sw * 0.5f, cy0 = oy + sh * 0.5f;
+    if (shift && sw > 1e-3f && sh > 1e-3f) {
+        float aspect0 = sw / sh;
+        if ((left || right) && (top || bottom)) { float newH = (rr - l) / aspect0; if (top) t = bb - newH; else bb = t + newH; }
+        else if (left || right) { float newH = (rr - l) / aspect0; t = cy0 - newH * 0.5f; bb = cy0 + newH * 0.5f; }
+        else if (top || bottom) { float newW = (bb - t) * aspect0; l = cx0 - newW * 0.5f; rr = cx0 + newW * 0.5f; }
+    }
+    if (alt) {
+        if (left)   rr = 2.0f * cx0 - l;
+        if (right)  l  = 2.0f * cx0 - rr;
+        if (top)    bb = 2.0f * cy0 - t;
+        if (bottom) t  = 2.0f * cy0 - bb;
+    }
+}
+
 // ---- nudge ------------------------------------------------------------------------------------------------------
 /// Arrow keys: (ax, ay) is -1, 0 or 1 per axis. One pixel; with Shift the grid step (10 when there is no grid).
 inline bool Nudge(int ax, int ay, bool shift, float gridStep, float& dx, float& dy) {

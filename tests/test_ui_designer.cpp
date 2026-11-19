@@ -172,5 +172,56 @@ int main() {
         CHECK(s.w == 780 && s.h == 580);
         CHECK(OutsideCanvas({-50, 0, 40, 10}, 800, 600) && !OutsideCanvas({10, 10, 40, 10}, 800, 600));
     }
+    {
+        RUN_SUITE("editor drag maths: the moved functions give the same answers as the old inline code");
+        // verbatim copies of the lambdas that used to live in main.cpp
+        auto oldEdge = [&](float v, const std::vector<float>& cs, float thr, float& guide, bool& hit) {
+            float best = thr, res = v;
+            for (float c : cs) { float d = v > c ? v - c : c - v; if (d < best) { best = d; res = c; guide = c; hit = true; } }
+            return res; };
+        auto oldBest = [&](float lo, float mid, float hi, const std::vector<float>& cands, float thr, float& guide) -> float {
+            float best = thr, adj = 0.0f; bool found = false;
+            for (float m : {lo, mid, hi}) for (float c : cands) { float d = m > c ? m - c : c - m; if (d < best) { best = d; adj = c - m; guide = c; found = true; } }
+            return found ? adj : 0.0f; };
+        auto oldPs = [&](float v, float lo, float hi, float pthr, float& guide, bool& hit) {
+            float dl = v > lo ? v - lo : lo - v, dh = v > hi ? v - hi : hi - v;
+            if (dl < pthr && dl <= dh) { guide = lo; hit = true; return lo; }
+            if (dh < pthr) { guide = hi; hit = true; return hi; }
+            return v; };
+        unsigned seed = 12345; auto rnd = [&]() { seed = seed * 1664525u + 1013904223u; return (float)((seed >> 8) % 20000) / 10.0f; };
+        int same = 0;
+        for (int it = 0; it < 400; ++it) {
+            std::vector<float> c; for (int i = 0; i < 1 + it % 9; ++i) c.push_back(rnd());
+            const float v = rnd(), thr = 4.0f + it % 12;
+            float g1 = -1, g2 = -1; bool h1 = false, h2 = false;
+            const float a = oldEdge(v, c, thr, g1, h1), b = SnapEdge(v, c, thr, g2, h2);
+            CHECK(a == b && g1 == g2 && h1 == h2);
+            g1 = g2 = -1; CHECK(oldBest(v, v + 20, v + 40, c, thr, g1) == BestSnap(v, v + 20, v + 40, c, thr, g2) && g1 == g2);
+            g1 = g2 = -1; h1 = h2 = false;
+            const float lo = rnd(), hi = lo + rnd();
+            CHECK(oldPs(v, lo, hi, thr, g1, h1) == ParentEdgeSnap(v, lo, hi, thr, g2, h2) && g1 == g2 && h1 == h2);
+            ++same;
+        }
+        CHECK(same == 400);
+        // Shift / Alt resize against the old block, for every handle
+        for (int hnd = 0; hnd < 8; ++hnd) for (int mod = 0; mod < 4; ++mod) {
+            const bool left = hnd == 0 || hnd == 7 || hnd == 6, right = hnd == 2 || hnd == 3 || hnd == 4;
+            const bool top = hnd == 0 || hnd == 1 || hnd == 2, bottom = hnd == 4 || hnd == 5 || hnd == 6;
+            const bool shift = mod & 1, alt = mod & 2;
+            const float ox = 100, oy = 50, sw = 200, sh = 80;
+            float l = left ? 80 : ox, t = top ? 30 : oy, rr = right ? 340 : ox + sw, bb = bottom ? 160 : oy + sh;
+            float l2 = l, t2 = t, r2 = rr, b2 = bb;
+            const float cx0 = ox + sw * 0.5f, cy0 = oy + sh * 0.5f;
+            if (shift && sw > 1e-3f && sh > 1e-3f) {
+                float aspect0 = sw / sh;
+                if ((left || right) && (top || bottom)) { float newH = (rr - l) / aspect0; if (top) t = bb - newH; else bb = t + newH; }
+                else if (left || right) { float newH = (rr - l) / aspect0; t = cy0 - newH * 0.5f; bb = cy0 + newH * 0.5f; }
+                else if (top || bottom) { float newW = (bb - t) * aspect0; l = cx0 - newW * 0.5f; rr = cx0 + newW * 0.5f; }
+            }
+            if (alt) { if (left) rr = 2.0f * cx0 - l; if (right) l = 2.0f * cx0 - rr; if (top) bb = 2.0f * cy0 - t; if (bottom) t = 2.0f * cy0 - bb; }
+            ConstrainResize(l2, t2, r2, b2, ox, oy, sw, sh, left, right, top, bottom, shift, alt);
+            CHECK(l == l2 && t == t2 && rr == r2 && bb == b2);
+        }
+    }
     TEST_MAIN_RESULT();
 }

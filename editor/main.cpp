@@ -49,6 +49,7 @@
 #include "okay/Core/BuildInfo.hpp"
 #include "okay/Core/Clock.hpp"        // ClockSet: the channels the Tween Animation inspector offers
 #include <cstdio>
+#include "UIDesignerModel.hpp"
 #include "UIDesignerWindow.hpp"      // UI designer: rulers, guides, layers panel
 #include "LevelTools.hpp"              // foliage brush, terrain layers, decals, cables, measuring, orthographic views
 #include "SplineTools.hpp"             // splines: Scene-view editing, inspectors, line / trail drawing
@@ -43840,24 +43841,7 @@ void EditUIWidgets(EditorState& ed, ImVec2 canvasPos, ImVec2 canvasSize,
                     float rr = right  ? g_uiResizeRaw[2] : o.x + sz.x, bb = bottom ? g_uiResizeRaw[3] : o.y + sz.y;
                     // Resize modifiers: Shift = keep the original
                     // aspect ratio, Alt = resize symmetrically about the original center.
-                    const float cx0 = o.x + sz.x * 0.5f, cy0 = o.y + sz.y * 0.5f;
-                    if (io.KeyShift && sz.x > 1e-3f && sz.y > 1e-3f) {
-                        float aspect0 = sz.x / sz.y;
-                        if ((left || right) && (top || bottom)) {   // corner: width drives, opposite corner fixed
-                            float newH = (rr - l) / aspect0;
-                            if (top) t = bb - newH; else bb = t + newH;
-                        } else if (left || right) {                 // horizontal edge: height about center
-                            float newH = (rr - l) / aspect0; t = cy0 - newH * 0.5f; bb = cy0 + newH * 0.5f;
-                        } else if (top || bottom) {                 // vertical edge: width about center
-                            float newW = (bb - t) * aspect0; l = cx0 - newW * 0.5f; rr = cx0 + newW * 0.5f;
-                        }
-                    }
-                    if (io.KeyAlt) {                                 // mirror each dragged edge about the center
-                        if (left)   rr = 2.0f * cx0 - l;
-                        if (right)  l  = 2.0f * cx0 - rr;
-                        if (top)    bb = 2.0f * cy0 - t;
-                        if (bottom) t  = 2.0f * cy0 - bb;
-                    }
+                    oked::uid::ConstrainResize(l, t, rr, bb, o.x, o.y, sz.x, sz.y, left, right, top, bottom, io.KeyShift, io.KeyAlt);   // tested in test_ui_designer
                     // Snap the dragged edge to canvas/sibling guide lines — skipped while
                     // Shift/Alt is held so the constrained (aspect / centered) size isn't
                     // broken by a guide pulling one edge on its own.
@@ -43884,11 +43868,7 @@ void EditUIWidgets(EditorState& ed, ImVec2 canvasPos, ImVec2 canvasSize,
                             }
                         }
                         const float thr = g_uiSnapDist;
-                        auto edge = [&](float v, const std::vector<float>& cs, float& guide, bool& hit) {
-                            float best = thr, res = v;
-                            for (float c : cs) { float d = v > c ? v - c : c - v; if (d < best) { best = d; res = c; guide = c; hit = true; } }
-                            return res;
-                        };
+                        auto edge = [&](float v, const std::vector<float>& cs, float& guide, bool& hit) { return oked::uid::SnapEdge(v, cs, thr, guide, hit); };
                         if (left)   l  = edge(l,  cx, g_uiGuideX, gxHit);
                         if (right)  rr = edge(rr, cx, g_uiGuideX, gxHit);
                         if (top)    t  = edge(t,  cy, g_uiGuideY, gyHit);
@@ -43901,12 +43881,7 @@ void EditUIWidgets(EditorState& ed, ImVec2 canvasPos, ImVec2 canvasSize,
                             Vec2 po, ps;
                             if (GetUIScreenRect(par, canvasSize.x, canvasSize.y, po, ps)) {
                                 const float pthr = g_uiSnapDist * 1.6f;
-                                auto psnap = [&](float v, float lo, float hi, float& guide, bool& hit) {
-                                    float dl = v > lo ? v - lo : lo - v, dh = v > hi ? v - hi : hi - v;
-                                    if (dl < pthr && dl <= dh) { guide = lo; hit = true; return lo; }
-                                    if (dh < pthr)             { guide = hi; hit = true; return hi; }
-                                    return v;
-                                };
+                                auto psnap = [&](float v, float lo, float hi, float& guide, bool& hit) { return oked::uid::ParentEdgeSnap(v, lo, hi, pthr, guide, hit); };
                                 if (left)   l  = psnap(l,  po.x, po.x + ps.x, g_uiGuideX, gxHit);
                                 if (right)  rr = psnap(rr, po.x, po.x + ps.x, g_uiGuideX, gxHit);
                                 if (top)    t  = psnap(t,  po.y, po.y + ps.y, g_uiGuideY, gyHit);
@@ -43975,15 +43950,8 @@ void EditUIWidgets(EditorState& ed, ImVec2 canvasPos, ImVec2 canvasSize,
                             }
                         }
                         const float thr = g_uiSnapDist;
-                        auto bestSnap = [&](float lo, float mid, float hi, const std::vector<float>& cands,
-                                            float& guide) -> float {
-                            float best = thr, adj = 0.0f; bool found = false;
-                            for (float m : {lo, mid, hi})
-                                for (float c : cands) {
-                                    float d = m > c ? m - c : c - m;
-                                    if (d < best) { best = d; adj = c - m; guide = c; found = true; }
-                                }
-                            return found ? adj : 0.0f;
+                        auto bestSnap = [&](float lo, float mid, float hi, const std::vector<float>& cands, float& guide) -> float {
+                            return oked::uid::BestSnap(lo, mid, hi, cands, thr, guide);
                         };
                         float gx = -1.0f, gy = -1.0f;
                         float adjX = bestSnap(o.x, o.x + sz.x * 0.5f, o.x + sz.x, cx, gx);
@@ -44008,10 +43976,7 @@ void EditUIWidgets(EditorState& ed, ImVec2 canvasPos, ImVec2 canvasSize,
                                 std::vector<float> px{po.x, po.x + ps.x / 3.0f, po.x + ps.x * 0.5f, po.x + ps.x * 2.0f / 3.0f, po.x + ps.x};
                                 std::vector<float> py{po.y, po.y + ps.y / 3.0f, po.y + ps.y * 0.5f, po.y + ps.y * 2.0f / 3.0f, po.y + ps.y};
                                 auto stick = [&](float lo, float mid, float hi, const std::vector<float>& cands, float& guide) {
-                                    float best = pthr, adj = 0.0f; bool found = false;
-                                    for (float m : {lo, mid, hi})
-                                        for (float c : cands) { float d = std::fabs(m - c); if (d < best) { best = d; adj = c - m; guide = c; found = true; } }
-                                    return found ? adj : 0.0f;
+                                    return oked::uid::BestSnap(lo, mid, hi, cands, pthr, guide);
                                 };
                                 float pgx = -1.0f, pgy = -1.0f;   // measured on the same (raw) rect
                                 float pax = stick(o.x, o.x + sz.x * 0.5f, o.x + sz.x, px, pgx);

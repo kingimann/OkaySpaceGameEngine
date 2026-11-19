@@ -31,7 +31,7 @@ using namespace okay;
 #define OKAY_SAVE_COMPONENTS(X) \
     X(ActionList) X(AimIK) X(AimOffset) X(AnimStateMachine) X(Animator) X(AntiCheatConfig) X(AudioSource) \
     X(AutoSave) X(BehaviorTreeRunner) X(BleedingStat) X(BlendShapes) X(BlockBuilder) X(BoatController) X(Buoyancy) X(BoxCollider2D) \
-    X(BoxCollider3D) X(BuildMode) X(BuildPiece) X(Buildable) X(BuilderMode) X(Cable) X(Camera) X(CameraFollow) X(CameraRoom) X(Canvas) \
+    X(BoxCollider3D) X(BuildMode) X(BuildPiece) X(Buildable) X(BuilderMode) X(Cable) X(Camera) X(CameraFollow) X(CameraRoom) X(CameraZone) X(Canvas) \
     X(CapsuleCollider2D) X(CapsuleCollider3D) X(CarryWeightStat) X(ChainIK) X(Character) X(CharacterController2D) \
     X(CharacterController3D) X(CheckpointTrigger) X(ChestInventory) X(CinemachineBrain) X(CircleCollider2D) \
     X(ClickToMoveController) X(Collectible) X(Consumables) X(Crafting) X(CraftingMenu) X(CraftingStation) \

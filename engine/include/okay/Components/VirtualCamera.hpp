@@ -12,6 +12,7 @@
 #include "okay/Components/CameraCollision.hpp"
 #include "okay/Components/CameraMath.hpp"
 #include "okay/Components/CameraRoom.hpp"
+#include "okay/Components/CameraZone.hpp"
 #include "okay/Components/DollyPath.hpp"
 #include "okay/Components/MeshRenderer.hpp"
 #include "okay/Components/Spline.hpp"
@@ -231,6 +232,11 @@ public:
         const bool haveFp = tg.haveFp;
         const float fitDist = tg.fitDist, fitOrtho = tg.fitOrtho;
         const Vec3 fpReal = tg.fp;   // where the target really is: collision and fading measure from here, not from the look-ahead point
+        // Camera zones the followed point is standing in change the field of view, offset and damping.
+        float effFov = fieldOfView, effDamp = positionDamping;
+        Vec3 effOff = followOffset;
+        if (haveFp) ApplyZones(s, tg.fp, effFov, effDamp, effOff);
+        m_solvedFov = effFov;
         // Look ahead: lean the framing toward where the target is going.
         if (haveFp && lookaheadTime > 0.0f) fp = fp + m_look.Step(fp, lookaheadTime, lookaheadMax, lookaheadSmooth, dt);
         else m_look.Reset();
@@ -271,14 +277,14 @@ public:
                     dollyPosition = sp->NearestDistance(fp) / len;
                 desiredPos = sp->SampleAtDistance(dollyPosition * len).position;
             } else if (haveFp) {
-                desiredPos = fp + followOffset;
+                desiredPos = fp + effOff;
             }
         } else if (haveFp) {
             // LockToTarget orbits the offset with the target's heading (chase cam);
             // WorldSpace keeps it axis-aligned (a fixed framing).
             Vec3 worldOffset = (bindingMode == BindingMode::LockToTarget && haveF)
-                                   ? (f->transform->Rotation() * followOffset)
-                                   : followOffset;
+                                   ? (f->transform->Rotation() * effOff)
+                                   : effOff;
             if (fitDist > 0.0f) {     // a group: never closer than the offset, back far enough to fit
                 const float len = worldOffset.Magnitude();
                 if (len > 1e-4f && fitDist > len) worldOffset = worldOffset * (fitDist / len);
@@ -295,17 +301,17 @@ public:
         else if (ortho2D && useZones && haveFp) {
             // Zones on the screen plane: the camera holds still while the target is in the dead zone.
             const float halfW = std::max(0.01f, ortho * aspect), halfH = std::max(0.01f, ortho);
-            const Vec3 focus = fp + Vec3{followOffset.x, followOffset.y, 0.0f};
+            const Vec3 focus = fp + Vec3{effOff.x, effOff.y, 0.0f};
             const float nx = (focus.x - m_pos.x) / halfW, ny = (focus.y - m_pos.y) / halfH;
             m_pos.x += cam::ZoneCorrection(nx, deadZoneW, softZoneW, zoneDamping, dt) * halfW;
             m_pos.y += cam::ZoneCorrection(ny, deadZoneH, softZoneH, zoneDamping, dt) * halfH;
             float vz = 0.0f, z = m_pos.z;
-            cam::SpringStep(z, vz, desiredPos.z, positionDamping <= 0.0f ? 0.0f : positionDamping, dt);
+            cam::SpringStep(z, vz, desiredPos.z, effDamp <= 0.0f ? 0.0f : effDamp, dt);
             m_pos.z = z;
         } else if (dampingMode == DampingMode::Spring) {
-            cam::SpringStep(m_pos, m_vel, desiredPos, positionDamping <= 0.0f ? 0.0f : positionDamping, dt);
+            cam::SpringStep(m_pos, m_vel, desiredPos, effDamp <= 0.0f ? 0.0f : effDamp, dt);
         } else {
-            float tp = (positionDamping <= 0.0f) ? 1.0f : (1.0f - std::exp(-positionDamping * dt));
+            float tp = (effDamp <= 0.0f) ? 1.0f : (1.0f - std::exp(-effDamp * dt));
             m_pos = Vec3::Lerp(m_pos, desiredPos, tp);
         }
         if (!cam::AllFinite(m_pos)) { m_pos = desiredPos; m_vel = {0.0f, 0.0f, 0.0f}; }
@@ -417,6 +423,42 @@ public:
         transform->SetPosition(m_solvedPos);
         if (!transform->Parent()) transform->localRotation = m_rot;
     }
+
+    /// Camera presets: a starting point for a kind of game. 0 Platformer (flat 2D side view), 1 Top-down, 2 Third person,
+    /// 3 First person, 4 Racing, 5 Cinematic. Sets the framing, smoothing and lens; the Follow / Look At names stay.
+    static constexpr int kPresetCount = 6;
+    static const char* PresetName(int p) {
+        static const char* n[kPresetCount] = {"Platformer", "Top-down", "Third person", "First person", "Racing", "Cinematic"};
+        return p >= 0 && p < kPresetCount ? n[p] : "Platformer";
+    }
+    void ApplyPreset(int preset) {
+        dampingMode = DampingMode::Spring; aimAtFollow = true; freeLook = false; ortho2D = false; dolly = false;
+        bindingMode = BindingMode::WorldSpace; useZones = false; lookaheadTime = 0.0f; collision = false; dutch = 0.0f;
+        rotationDamping = 8.0f; orbitInput = false;
+        switch (preset) {
+            case 0:   // Platformer
+                ortho2D = true; orthoSize = 6.0f; followOffset = {0.0f, 1.5f, -12.0f}; positionDamping = 6.0f;
+                useZones = true; deadZoneW = 0.15f; deadZoneH = 0.2f; softZoneW = 0.6f; softZoneH = 0.7f; zoneDamping = 6.0f;
+                lookaheadTime = 0.25f; lookaheadMax = 2.0f; break;
+            case 1:   // Top-down
+                followOffset = {0.0f, 14.0f, -5.0f}; positionDamping = 6.0f; fieldOfView = 50.0f; rotationDamping = 12.0f; break;
+            case 2:   // Third person
+                freeLook = true; orbitInput = true; orbitRadius = 4.5f; orbitHeight = 1.6f; orbitPitch = 12.0f; positionDamping = 10.0f;
+                fieldOfView = 60.0f; collision = true; break;
+            case 3:   // First person
+                followOffset = {0.0f, 1.65f, 0.0f}; bindingMode = BindingMode::LockToTarget; positionDamping = 0.0f; rotationDamping = 0.0f;
+                fieldOfView = 75.0f; aimAtFollow = false; break;
+            case 4:   // Racing
+                followOffset = {0.0f, 2.4f, -7.0f}; bindingMode = BindingMode::LockToTarget; positionDamping = 7.0f; rotationDamping = 5.0f;
+                fieldOfView = 70.0f; lookaheadTime = 0.3f; lookaheadMax = 3.0f; collision = true; break;
+            default:  // Cinematic
+                followOffset = {0.0f, 1.5f, -9.0f}; positionDamping = 1.6f; rotationDamping = 2.5f; fieldOfView = 35.0f;
+                useZones = true; deadZoneW = 0.25f; deadZoneH = 0.25f; softZoneW = 0.75f; softZoneH = 0.75f; zoneDamping = 2.0f; break;
+        }
+    }
+
+    /// The field of view the shot ends up with after camera zones (what the brain blends to).
+    float SolvedFov() const { return m_solvedFov; }
 
     /// What the shot is pointed at this frame (shared by Solve and the editor's preview).
     struct Targets {
@@ -557,6 +599,19 @@ private:
     }
 
     bool RoomBox(Scene* s, const Vec3& p, float dt, Vec3& outMin, Vec3& outMax);
+    void ApplyZones(Scene* s, const Vec3& p, float& fov, float& damp, Vec3& off) const {
+        std::vector<CameraZone*> zones = s->FindObjectsOfType<CameraZone>();
+        std::stable_sort(zones.begin(), zones.end(), [](const CameraZone* a, const CameraZone* b) { return a->priority < b->priority; });
+        for (const CameraZone* z : zones) {
+            if (!z->enabled || !z->gameObject || !z->gameObject->active || !z->transform) continue;
+            if (!z->shot.empty() && gameObject && z->shot != gameObject->name) continue;
+            const float w = z->WeightAt(p);
+            if (!(w > 0.0f)) continue;
+            if (z->fieldOfView > 0.0f) fov += (z->fieldOfView - fov) * w;
+            off = off + z->followOffset * w;
+            if (z->positionDamping >= 0.0f) damp += (z->positionDamping - damp) * w;
+        }
+    }
     void FadeStep(Scene* s, GameObject* ignore, const Vec3& camPos, const Vec3& pivot, float dt);
 
     bool m_init = false;
@@ -565,6 +620,7 @@ private:
     Quat m_rot = Quat::Identity;
     Vec3 m_solvedPos{0.0f, 0.0f, 0.0f};
     float m_solvedOrtho = 0.0f;
+    float m_solvedFov = 60.0f;
     float m_zoneDt = 0.0f;
     float m_noiseT = 0.0f;
     float m_impulse = 0.0f;   // current one-shot impulse amplitude (decays)

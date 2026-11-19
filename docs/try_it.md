@@ -65,6 +65,7 @@ release job or the installer build for this change.
 | 7h | Project panel right-click menus (asset, folder, tree, Favourites, empty space, Create) | Editor: **View > Panels > Project**, right-click | New in this change; unverified in the real window |
 | 7j | Nameplates bound to their characters, and a rich-text sign | `examples\ui_text\ui_text.okayscene` (File > Open..., then Play) | New in this change; real window unverified |
 | 7k | UI library slice 1: range slider, input validation, aspect-ratio box | File > Examples > UI library > ui_library_1 (then Play), or GameObject > UI > Controls and Layout & Overlays; file `examples\ui_library\ui_library_1.okayscene` | New in this change; headless pictures only, real window unverified |
+| 7lit | Lighting upgrade: presets, soft shadows, masks, panels, real-world units | Editor: **View > Lighting** (Lighting Presets), **File > Examples > Lighting presets**, any Light's Inspector | New in this change (branch `claude/lighting-2`); only the software renderer was run, no GPU, no Windows |
 | 7pl | Project panel: One column / Two columns | Editor: **View > Panels > Project**, buttons at the right end of the Assets / Favourites / Recent row | New in this change; unverified in the real window (only syntax-checked) |
 | 7r | The character walks when you walk and runs when you hold Shift | New Project > Third Person (or First Person, press V), Play, W then Shift+W; older project: Player Controller > Use natural walk and run speeds | New in this change; the stride is measured by a test and drawn in pictures, the feel in the real editor and on Windows is unverified |
 | 7s | Digging the voxel terrain no longer drops the frame rate | `examples\voxel\voxel_big_world.okayscene`, or New Project > Sandbox; `OKAY_VOXEL_OLD_REMESH=1` for the old behaviour | New in this change; CPU numbers measured, GPU and Windows unverified |
@@ -110,6 +111,7 @@ release job or the installer build for this change.
 | tex1 | Texture tools (our own): mipmaps, atlas, BC compression, DDS | Windows release: `examples\texture\try_texture.bat` (needs `Tools\okay-texture.exe`); editor: Project panel > pick a picture > Import Settings > "Generate mipmaps / compress" | Unverified on Windows; Linux tests and CLI run |
 | vpa | Multi-window panels start cleanly on every video driver | `Tools\OkayEngine.exe`: drag a panel tab outside the editor | Linux only (Xvfb, a build with assertions on); Windows unverified |
 | vsclarity | Visual Script nodes explain themselves (plain line, What is this? card, Needs input, Next steps, Try this node, What do you want to do? list) | `Tools\OkayEngine.exe`: View > Editors & Tools > Visual Script, drop any node | Compiled and unit-tested (`vs_guide`); never drawn in a real window, Windows unverified |
+| water1 | Water that is never flat: presets, sea states, foam, splashes | `examples\water\lake.okayscene`, `ocean`, `river`, `shore` (File > Open, Play), **GameObject > 3D Object > Water** (pick a kind), Water Inspector > **Look** | New in this change; software-renderer pictures and headless tests only, Windows, GPU and the editor window not run |
 | wind-field | Wind: trees, grass, flags, leaves, a pushed box and the sound of wind | Editor: File > Open `examples\wind\wind.okayscene`, press Play; GameObject > Effects > Environment; Add Component > Environment; Lighting window > Wind | Tests pass on Linux (`wind_field`, `wind`); the editor and the example were not run on Windows or on a screen |
 | xbox-next | Xbox UWP next: one-page guide (PC test, Dev Mode, IP, Device Portal, deploy, logs) and the new log file | Windows release: `xbox-src\scripts\build-xbox-uwp.ps1`; editor File > Build Settings > Xbox (exp.) | Linux-tested only; nothing here has run on a console |
 | xbox-uwp | Xbox One export (EXPERIMENTAL, UNVERIFIED): one-click build (check, export, compile, shaders, pack, sign, install), own .appx packer, engine mode | File > Build Settings > platform "Xbox (exp.)" > Build Xbox package | Linux-tested only |
@@ -702,6 +704,49 @@ other; the blue frame is 16:9 at every window shape. Pictures: a picture folder 
 The pictures are software renders (`ui_library_shots`), not a real window. The editor menu entries and Inspector panels
 were written but the editor was not built or run here, and nothing ran on Windows. The aspect box does not follow a
 world-space Canvas yet.
+
+## 7lit. Lighting upgrade: presets, soft shadows, masks, panels, real-world units
+
+**What it is.** The lights and shadows got better. What changed and why: `docs/lighting_upgrade.md` (it has the Existing / Gap
+table). Code: `ShadowMath.hpp`, `Lighting.hpp`, `LightingPresets.hpp`, `SoftwareRenderer.hpp`.
+
+**Which renderer shows what.** Press **F3** in the editor: the overlay says which renderer is drawing. The Light Inspector prints a
+grey note under Soft Edges, Mask and Panel Width/Height when the renderer ignores them.
+* Software renderer: everything below (run headless).
+* Direct3D 11 and OpenGL (round 2, **written without a GPU and never run**): presets, real-world units, Auto brightness, Glow Light
+  Range, the smooth spot cone, stable sun shadows, Soft Edges, light masks, rectangle panels, the shadow fade. If a GPU picture looks
+  wrong (black light, wrong mask), the shader text in `D3D11Hlsl.hpp` / `GLRenderer.cpp` is the place to look. OpenGL softens by an
+  approximation. **Light probes** show in the software renderer only.
+
+**Steps: the five looks.**
+1. Open the editor. **File > Examples > Lighting presets (sun, sunset, night, indoor, fog)** and pick `sunny_day`. (Windows release:
+   `examples\lighting\sunny_day.okayscene` next to the programs.) Press **Play**.
+2. Open **View > Lighting**. At the top is **Lighting Presets**: click **Sunset**, then **Night with lamps**, **Indoor**,
+   **Spooky fog**, **Sunny day**. The sky, fog, ambient light and lights change at once. **Ctrl+Z** undoes a click.
+3. Look in the Hierarchy: lights a preset added are named `Lighting: ...`. Select one and change it in the Inspector like any light.
+
+**Steps: the Light Inspector.** Select a Light.
+* **Units**: switch Simple to *Real world*. The sun is in lux (try the **Noon sun**, **Overcast**, **Moon** buttons), lamps in lumens
+  (**Candle**, **Bulb**, **Street lamp**). In View > Lighting, **Auto brightness** keeps the scene readable (untick it to see the
+  fixed level).
+* **Panel Width / Height** (Area light only): set 2 and 1.4. The light becomes a rectangle shining along its blue arrow. 0 and 0 is
+  the old soft glow.
+* **Mask** (Directional or Spot): pick *window*. The sun now shines through window panes; *Metres per repeat* sets their size. A
+  Spot light shows the mask inside its cone. *Picture file...* takes your own picture (white lets light through).
+* **Soft Edges** (under Shadows): 0 = the same soft edge everywhere, 1 = a shadow is sharp where the object touches the ground and
+  gets softer the farther it falls.
+* On a Mesh Renderer, **Glow** section: give the object an Emissive colour, set **Glow Light Range** to 5: it now lights its
+  surroundings.
+* View > Lighting > **Light Probes**: press **Bake probes**; ambient light now differs between a room under a roof and open ground (software renderer). **Clear probes** removes them.
+* Scene Ambient occlusion (Post-processing) now also darkens corners in the software renderer.
+* View > Lighting: **Classic lighting look** (software renderer only) goes back to the old shadows and light roll-off, to compare.
+
+**What you should see.** Five clearly different moods; soft shadows that are sharp at the foot of an object; a window pattern on the
+floor; a bright panel over a table. Sun shadows stay still when you fly the camera slowly.
+
+**Status.** Verified here: the maths and the software renderer, headless (`test_lighting_upgrade`, 194 checks; `light_shadows`,
+`renderer_features`; before and after pictures were looked at, not committed). **Not verified:** OpenGL, Direct3D 11 and Direct3D 12 (the
+cascade fix, the slope bias and the smooth cone were edited in their code but never run on a GPU); Windows; the editor panels (the new Inspector fields, the Lighting window buttons and the File > Examples entry were only compile-checked with `g++ -fsyntax-only`; the editor was not linked or run, so nothing was drawn or clicked).
 
 ## 7pl. Project panel: One column / Two columns
 
@@ -2278,6 +2323,37 @@ Try it on Windows (this is all in the normal editor, nothing to switch on):
 What was and was not verified: the rules behind every item were unit-tested over all nodes in the list on Linux (`vs_guide`,
 and the existing `vs_clarity`, `vs_node_docs`, `vs_names`, `vs_start` suites). The drawing was compile-checked only: it was never
 shown in a real window, on Linux or on Windows, so card size on a small window and the second line on a narrow node are unchecked.
+
+## water1. Water that is never flat: presets, sea states, foam, splashes
+
+**What it is.** The water now has real wave shapes (sharp crests), small ripples that never stop, turquoise shallows and deep blue
+depths, white foam on the waves and along the shore, a glow in the crests, rings and spray when something falls in, and a blue-green
+murk when the camera goes under. There are eight ready kinds of water and four sea states. Details: `docs/water_visuals.md`.
+
+**Steps (the example scenes).**
+1. Open the editor (`Tools\OkayEngine.exe`). **File > Open...** and pick `<install folder>\examples\water\lake.okayscene`. Press **Play**.
+2. Look at the lake: the surface is never one flat colour. Small ripples drift in two directions, the water is turquoise near the shore and
+   dark blue in the middle, the sky is mirrored in it. A dock, a rock, a red rowing target and three crates float or stand in it.
+3. Press **Stop**. In the Hierarchy select **Crate 1**, drag it up in the Scene view, press **Play**: it falls in, rings spread across the
+   water and a little spray jumps up.
+4. Open `ocean.okayscene` and press Play: big rolling waves with white caps. Select **Water**. In the Inspector, **Look > Sea State**:
+   Calm, Light, Rough, Storm. The waves, their sharpness and the foam change at once. The crates ride the same waves.
+5. Open `river.okayscene`: ripples and foam flow to the right and the crates drift downstream. Open `shore.okayscene`: a white foam line
+   surges along the waterline and round the rocks; the water goes from clear turquoise to deep blue.
+
+**Steps (make your own).**
+1. **GameObject > 3D Object > Water** and pick **Calm Lake**, **Pond**, **Ocean**, **Stormy Sea**, **River**, **Swamp**, **Tropical** or **Ice-cold**.
+2. Select it and open **Look** in the Inspector: **Preset** switches kind, **Realistic look** turns the whole new look on or off (off = the old
+   plain blue plane), **Clarity**, **Foam**, **Shore foam**, **Ripples**, **Rings of detail**, **Splashes and ripples**, **Underwater look**, **Bubbles**.
+3. Put a Terrain under it: the colour and shore foam follow the real depth. Move the Scene camera under the surface (or Play with a camera
+   below it): blue-green fog, and bubbles with **Bubbles** on.
+
+**How you know it worked.** With **Realistic look** off the water looks like it did before this change (a scene saved before it loads with
+the look off). With it on, the Ocean preset shows white caps and a sea that has no edge near you.
+
+**Status.** Pictures made with the software renderer on Linux and a headless test (`water_visuals`). **Unverified:** the Windows release, the
+editor window (menu, Inspector fields: syntax-checked only), the GL and D3D11 renderers (they draw the same vertex colours and normal map but
+nothing was run), per-vertex clear water over the bottom (see the Not done list in `docs/water_visuals.md`).
 
 ## wind-field. Wind: trees, grass, flags, leaves, a pushed box and the sound
 

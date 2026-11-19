@@ -103,7 +103,7 @@ void ScriptComponent::Start() {
     m_host.component  = this;
     m_vm->Bind(&m_host);
     ConsoleSourceScope scope(ScriptLogSource(gameObject, Path()));
-    m_vm->CallStart();
+    { scriptprof::ScriptScope ps(ProfName(), "start"); m_vm->CallStart(); }
     m_started = true;
 }
 
@@ -117,15 +117,18 @@ void ScriptComponent::Update(float dt) {
     m_fixedAcc = std::min(m_fixedAcc + dt, kFixedStep * 5.0f);
     if (m_fixedAcc >= kFixedStep) {
         m_host.deltaTime = kFixedStep;
+        scriptprof::ScriptScope pf(ProfName(), "on_fixed_update");
         while (m_fixedAcc >= kFixedStep) { m_fixedAcc -= kFixedStep; m_vm->CallEvent("on_fixed_update"); }
     }
     m_host.deltaTime = dt;
+    scriptprof::ScriptScope ps(ProfName(), "update");
     m_vm->CallUpdate(dt);
 }
 
 void ScriptComponent::LateUpdate(float) {
     if (m_vm && !m_startDeferred && ScriptsRun(gameObject)) {
         ConsoleSourceScope scope(ScriptLogSource(gameObject, Path()));
+        scriptprof::ScriptScope ps(ProfName(), "on_late_update");
         m_vm->CallEvent("on_late_update");
     }
 }

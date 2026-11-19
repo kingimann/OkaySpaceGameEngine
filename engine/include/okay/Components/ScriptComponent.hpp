@@ -1,4 +1,5 @@
 #pragma once
+#include "okay/Scripting/ScriptProfile.hpp"
 #include "okay/Scene/Component.hpp"
 #include "okay/Scene/Scene.hpp"   // ScriptsRun
 #include "okay/Scripting/ScriptVM.hpp"
@@ -38,6 +39,17 @@ public:
         return m_path.empty() ? false : LoadFile(m_path, error);
     }
     IScriptVM* VM() const { return m_vm.get(); }
+    /// Name the profiler shows for this script: the file name without folders, else "(inline) <object>".
+    const std::string& ProfName() const {
+        if (m_profFor != m_path || (m_path.empty() && m_profName.empty())) {
+            m_profFor = m_path;
+            std::string n = m_path;
+            auto cut = n.find_last_of("/\\"); if (cut != std::string::npos) n = n.substr(cut + 1);
+            if (n.empty()) n = "(inline)";
+            m_profName = n;
+        }
+        return m_profName;
+    }
     ScriptHost& Host() { return m_host; }
 
     /// Per-instance overrides for the script's public variables, shown and edited
@@ -106,7 +118,7 @@ private:
     bool  m_started = false;         // Start() ran the script's Awake/OnEnable/Start
     bool  m_startDeferred = false;   // Start() arrived while scripts were off
     float m_fixedAcc = 0.0f;   // time banked toward the next FixedUpdate()
-    void Fire(const char* event) { if (m_vm && ScriptsRun(gameObject)) m_vm->CallEvent(event); }
+    void Fire(const char* event) { if (m_vm && ScriptsRun(gameObject)) { scriptprof::ScriptScope ps(ProfName(), event); m_vm->CallEvent(event); } }
     void FireOther(const char* event, Collider2D* c);
     void FireOther(const char* event, Collider3D* c);
     void FireOther(const char* event, const Collision2D& c);
@@ -118,6 +130,7 @@ private:
     std::string m_source;
     std::string m_path;
     std::unique_ptr<IScriptVM> m_vm;
+    mutable std::string m_profName, m_profFor;
     ScriptHost m_host;
 };
 

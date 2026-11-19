@@ -4521,3 +4521,8 @@ foreach(_t IN ITEMS mip atlas convert bc dds_stream)
     add_test(NAME tex_${_t} COMMAND test_tex_${_t} WORKING_DIRECTORY ${CMAKE_CURRENT_BINARY_DIR})
     set_tests_properties(tex_${_t} PROPERTIES TIMEOUT 240)
 endforeach()
+
+# Per-script/per-function profiling model
+add_executable(test_script_profile test_script_profile.cpp)
+target_link_libraries(test_script_profile PRIVATE okay::engine)
+add_test(NAME script_profile COMMAND test_script_profile)

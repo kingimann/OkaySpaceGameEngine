@@ -90,6 +90,7 @@
 #include "okay/Render/GLRenderer.hpp"   // optional GPU (OpenGL) 3D renderer
 #include "okay/Render/Culling.hpp"     // frustum culling toggle + drawn/culled counts (Stats)
 #include "okay/Render/D3D11Renderer.hpp" // optional GPU (Direct3D 11) 3D renderer (Windows)
+#include "okay/Scripting/ScriptProfile.hpp"
 #include "okay/Core/Profiler.hpp"        // CPU/GPU frame profiler
 #include "okay/Core/SystemCost.hpp"      // Game view Stats: ms per system
 #include "okay/Components/ControllerPresets.hpp"   // Controller Preset combo
@@ -49487,6 +49488,35 @@ void DrawProfiler(EditorState& ed) {
     if (F.buckets.empty())
         ImGui::TextDisabled(ed.isPlaying() ? "Collecting samples..."
                                            : "Press Play to time Scripts/Physics; the editor render is always timed.");
+    // ---- Scripts: one row per script and entry point (any language), click a header to sort ----
+    okay::scriptprof::SetEnabled(true);
+    if (ImGui::CollapsingHeader("Scripts##prof", ImGuiTreeNodeFlags_DefaultOpen)) {
+        if (ImGui::Button("Reset##profscripts")) okay::scriptprof::Global().Reset();
+        std::vector<okay::scriptprof::Row> rows = okay::scriptprof::Global().Rows();
+        if (rows.empty()) ImGui::TextDisabled("No script ran yet (press Play).");
+        else if (ImGui::BeginTable("##scriptprof", 6, ImGuiTableFlags_Sortable | ImGuiTableFlags_RowBg | ImGuiTableFlags_Borders)) {
+            ImGui::TableSetupColumn("Script"); ImGui::TableSetupColumn("Function");
+            ImGui::TableSetupColumn("Calls"); ImGui::TableSetupColumn("Total ms", ImGuiTableColumnFlags_DefaultSort | ImGuiTableColumnFlags_PreferSortDescending);
+            ImGui::TableSetupColumn("Avg ms"); ImGui::TableSetupColumn("Max ms");
+            ImGui::TableHeadersRow();
+            using SK = okay::scriptprof::SortKey;
+            static const SK keys[] = {SK::Script, SK::Function, SK::Calls, SK::Total, SK::Avg, SK::Max};
+            SK key = SK::Total; bool desc = true;
+            if (ImGuiTableSortSpecs* sp = ImGui::TableGetSortSpecs())
+                if (sp->SpecsCount > 0) { int c = sp->Specs[0].ColumnIndex; key = keys[c < 6 ? c : 3]; desc = sp->Specs[0].SortDirection == ImGuiSortDirection_Descending; }
+            okay::scriptprof::Table::Sort(rows, key, desc);
+            for (const auto& r : rows) {
+                ImGui::TableNextRow();
+                ImGui::TableNextColumn(); ImGui::TextUnformatted(r.script.c_str());
+                ImGui::TableNextColumn(); ImGui::TextUnformatted(r.function.c_str());
+                ImGui::TableNextColumn(); ImGui::Text("%lld", r.calls);
+                ImGui::TableNextColumn(); ImGui::Text("%.3f", r.totalMs);
+                ImGui::TableNextColumn(); ImGui::Text("%.4f", r.avgMs());
+                ImGui::TableNextColumn(); ImGui::Text("%.3f", r.maxMs);
+            }
+            ImGui::EndTable();
+        }
+    }
     ImGui::End();
 }
 

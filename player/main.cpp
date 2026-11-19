@@ -25,6 +25,7 @@
 #endif
 #include "okay/Input/PlatformGamepad.hpp"   // controller -> Input (sticks, triggers, rumble), via okay::platform
 #include "okay/Scene/EnsureCamera.hpp"
+#include "okay/Scripting/ScriptProfile.hpp"
 #include "okay/Core/SystemCost.hpp"       // F3 second page: ms per system
 #include "okay/Core/FrameOverlay.hpp"     // the F3 overlay text (shared with the editor)
 #include "okay/Core/GameLoop.hpp"        // the per-frame driver (clamp, smoothing, Time, update, quit)
@@ -2324,6 +2325,8 @@ int main(int argc, char** argv) {
 #else
         okay::Prof().enabled = false;   // the F3 page is an OkayUI panel: builds without OkayUI (web) never measure
 #endif
+        okay::scriptprof::SetEnabled(okay::Prof().enabled);   // per-script timings, this frame only
+        if (okay::Prof().enabled) okay::scriptprof::Global().Reset();
         okay::Prof().BeginFrame();
         if (!loop.BeginFrame(tick ? (double)measuredDt : 0.0)) running = false;   // false: a PauseMenu / script asked to quit
         if (acGuard.Tick()) {   // only ever true in enforce mode
@@ -2860,6 +2863,7 @@ int main(int argc, char** argv) {
             std::vector<float> plot = okay::FrameOverlay::RecentFps(loop.Stats(), 90);   // chronological
             if (g_statsPage == 1) {   // page 2: which system eats the frame (ms each) + the last 120 frame times
                 overlayLines = okay::SystemCost::Lines(okay::Prof());
+                overlayLines.push_back(okay::scriptprof::Global().Summary(3));   // the three costliest scripts
                 plot = okay::SystemCost::Plot(okay::Prof());
             }
 

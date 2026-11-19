@@ -18265,7 +18265,7 @@ int main(int argc, char** argv) {
     SDL_Window* window = (SDL_Window*)mainWinOwner->NativeHandle();
     okay::pb::RegisterWindow(*mainWinOwner);   // the lw:: helpers find the window by its native handle
 #ifdef OKAY_HAVE_OKAYUI
-    okay::pb::SetOwnPainterFactory([](okay::platform::Window& w) { return OkayUI::soft::CreateWindowPainter(w); });   // the software painter, for own-backend windows
+    okay::pb::SetOwnPainterFactory(&okay::pb::OwnWindowPainter);   // the software painter, for own-backend windows
 #endif
     g_launcherWindow = window;   // games ask us to come forward (Invite friends)
     lw::SetMinSize(window, 720, 480);   // the fixed layout needs this much

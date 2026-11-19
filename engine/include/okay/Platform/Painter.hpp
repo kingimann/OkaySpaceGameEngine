@@ -24,7 +24,7 @@
 
 namespace okay::platform {
 
-enum class PainterKind { Sdl2, Software };
+enum class PainterKind { Sdl2, Software, D3D11 };
 enum class BlendMode { None, Blend };      // SDL_BLENDMODE_NONE / SDL_BLENDMODE_BLEND (source-over)
 enum class ScaleMode { Nearest, Linear };
 
@@ -43,7 +43,7 @@ public:
     ~Painter() override = default;
 
     virtual PainterKind Kind() const = 0;
-    const char* Name() const { return Kind() == PainterKind::Sdl2 ? "sdl2" : "software"; }
+    const char* Name() const { return Kind() == PainterKind::Sdl2 ? "sdl2" : Kind() == PainterKind::D3D11 ? "d3d11" : "software"; }
     /// The SDL_Renderer* behind an sdl2 painter, else null. Only for libraries that still speak SDL
     /// (OkayUI::EndFrame(SDL_Renderer*), Dear ImGui's backend).
     virtual void* NativeRenderer() = 0;
@@ -134,6 +134,9 @@ struct PainterDesc {
 /// sdl2: a renderer on an sdl2 window (accelerated, else any), as the player always made one.
 /// Null when `w` is not an sdl2 window or the renderer cannot be made (`err`, when given, says why).
 std::unique_ptr<Painter> CreateSdl2Painter(Window& w, const PainterDesc& d = PainterDesc(), std::string* err = nullptr);
+/// Direct3D 11 (Windows only; null with `err` set elsewhere, or when no Direct3D 11 device can be made on this machine). A window of the OWN Win32 backend:
+/// the painter owns the device and the swap chain. Written from the Direct3D 11 API documentation; see docs/platform_layer.md for what is tested.
+std::unique_ptr<Painter> CreateD3D11Painter(Window& w, const PainterDesc& d = PainterDesc(), std::string* err = nullptr);
 /// sdl2 over a renderer somebody else owns (the editor's and the launcher's). `sdlRenderer` is an
 /// SDL_Renderer*; the painter never destroys it.
 std::unique_ptr<Painter> WrapSdl2Renderer(void* sdlRenderer);

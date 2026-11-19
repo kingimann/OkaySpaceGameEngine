@@ -7339,6 +7339,15 @@ static GameObject* AddWaterObject(EditorState& ed) {
     ConsoleLog("Created Water (animated reflective surface)");
     return go;
 }
+// GameObject > Vehicles > Boat: a hull that floats and drives (W/S, A/D). With no water in the scene it brings a lake.
+static GameObject* AddBoatObject(EditorState& ed) {
+    ed.PushUndo();
+    Vec3 at = ed.camTarget;
+    GameObject* boat = okay::Templates::AddBoat(ed.scene(), {at.x, 0.0f, at.z});
+    ed.Select(boat); ed.view3D = true; ed.dirty = true;
+    ConsoleLog("Created Boat (press Play: W / S go and reverse, A / D steer, Space brakes)");
+    return boat;
+}
 static GameObject* AddTerrainObject(EditorState& ed) {
     GameObject* go = ed.CreateEmpty("Terrain");
     auto* tr = go->AddComponent<Terrain>();
@@ -7424,6 +7433,9 @@ static void DrawCreateSlot(EditorState& ed, const std::string& id, GameObject* p
         }
         if (ImGui::MenuItem("Water")) { AddWaterObject(ed); created = true; }
         if (ImGui::MenuItem("Character")) { AddCharacterObject(ed); created = true; }
+    } else if (id == "create.vehicles") {
+        if (ImGui::MenuItem("Boat")) { AddBoatObject(ed); created = true; }
+        if (ImGui::IsItemHovered()) ImGui::SetTooltip("A boat that floats on Water and drives with W / S / A / D. Adds a lake if the scene has no water.");
     } else if (id == "create.player") {
         // One Player Controller for first and third person: the View setting in its Inspector picks First, Third or Both
         // (V switches in Both). Third Person Shooter below is a different game mode (fires, own settings) and stays.
@@ -32032,6 +32044,22 @@ void DrawInspector(EditorState& ed) {
             oked::FieldTip("Length##wat");
             if (ImGui::DragFloat("Speed##wat", &w->waveSpeed, 0.05f, 0.0f, 8.0f)) ed.dirty = true;
             oked::FieldTip("Speed##wat");
+            {
+                int st = (int)w->style;
+                if (ImGui::Combo("Style##wat", &st, "Classic\0Ocean\0Calm lake\0")) { w->style = (Water::WaveStyle)st; w->Apply(); ed.dirty = true; }
+                if (ImGui::IsItemHovered()) ImGui::SetTooltip("Classic: the original rolling waves.\nOcean: travelling waves with sharp crests.\nCalm lake: the same, low and gentle.\nBoats and floating things follow Ocean and Calm exactly.");
+                if (w->style != Water::WaveStyle::Classic) {
+                    if (ImGui::DragFloat("Direction##wat", &w->waveDirection, 1.0f, -360.0f, 360.0f, "%.0f deg")) ed.dirty = true;
+                    if (ImGui::IsItemHovered()) ImGui::SetTooltip("Which way the main swell runs (degrees from +X towards +Z).");
+                    if (ImGui::SliderFloat("Steepness##wat", &w->waveSteepness, 0.0f, 1.0f)) ed.dirty = true;
+                    if (ImGui::IsItemHovered()) ImGui::SetTooltip("0 = round, smooth waves. 1 = sharp crests.");
+                    if (ImGui::SliderInt("Wave count##wat", &w->waveCount, 1, 8)) ed.dirty = true;
+                    if (ImGui::DragInt("Seed##wat", &w->waveSeed, 1.0f, 0, 1000000)) ed.dirty = true;
+                    if (ImGui::IsItemHovered()) ImGui::SetTooltip("The same number always makes the same sea.");
+                }
+                if (ImGui::DragFloat2("Current##wat", &w->current.x, 0.05f, -20.0f, 20.0f)) ed.dirty = true;
+                if (ImGui::IsItemHovered()) ImGui::SetTooltip("A steady stream in the water (metres per second, X and Z). Floating things drift with it.");
+            }
             SectionHeader("Surface");
             if (ImGui::SliderFloat("Reflectivity##wat", &w->reflectivity, 0.0f, 1.0f)) { w->Apply(); ed.dirty = true; }
             oked::FieldTip("Reflectivity##wat");
@@ -42294,6 +42322,7 @@ void DrawInspector(EditorState& ed) {
         { bool o = BeginCat("Physics 3D");
           if (o) {
             if (item(!go->GetComponent<Rigidbody3D>(), "Rigidbody3D")) { go->AddComponent<Rigidbody3D>(); ed.dirty = true; }
+            if (item(!go->GetComponent<Buoyancy>(), "Buoyancy (floats on Water)")) { ed.PushUndo(); go->AddComponent<Buoyancy>(); if (!go->GetComponent<Rigidbody3D>()) go->AddComponent<Rigidbody3D>(); if (!go->GetComponent<Collider3D>()) { go->AddComponent<BoxCollider3D>(); FitColliders(go); } ed.dirty = true; }
             if (item(!go->GetComponent<Joint3D>(), "Joint 3D (distance/spring/pin/hinge/slider)")) { go->AddComponent<Joint3D>(); ed.dirty = true; }
             if (item(!go->GetComponent<BoxCollider3D>(), "Box Collider 3D")) { go->AddComponent<BoxCollider3D>(); FitColliders(go); ed.dirty = true; }
             if (item(!go->GetComponent<SphereCollider3D>(), "Sphere Collider 3D")) { go->AddComponent<SphereCollider3D>(); FitColliders(go); ed.dirty = true; }
@@ -42392,6 +42421,7 @@ void DrawInspector(EditorState& ed) {
             if (item(!go->GetComponent<ThirdPersonShooterController>(), "Third Person Shooter Controller")) { ed.PushUndo(); go->AddComponent<ThirdPersonShooterController>(); SetupControllerBody(ed, go); ed.dirty = true; }
             if (item(!go->GetComponent<FreeRoamController>(), "Free Roam (Fly) Controller")) { go->AddComponent<FreeRoamController>(); ed.dirty = true; }
             if (item(!go->GetComponent<VehicleController>(), "Vehicle Controller (Car)")) { go->AddComponent<VehicleController>(); if (!go->GetComponent<Rigidbody3D>()) go->AddComponent<Rigidbody3D>(); ed.dirty = true; }
+            if (item(!go->GetComponent<BoatController>(), "Boat Controller (floats and drives on water)")) { ed.PushUndo(); go->AddComponent<BoatController>(); if (!go->GetComponent<Rigidbody3D>()) go->AddComponent<Rigidbody3D>(); if (!go->GetComponent<Collider3D>()) { go->AddComponent<BoxCollider3D>(); FitColliders(go); } ed.dirty = true; }
             if (item(!go->GetComponent<VehicleController2D>(), "Vehicle Controller 2D")) { go->AddComponent<VehicleController2D>(); if (!go->GetComponent<Rigidbody2D>()) go->AddComponent<Rigidbody2D>(); ed.dirty = true; }
             if (item(!go->GetComponent<BlockBuilder>(), "Block Builder (voxel)")) { go->AddComponent<BlockBuilder>(); ed.dirty = true; }
             if (item(!go->GetComponent<StructureBuilder>(), "Structure Builder (Rust-style)")) { go->AddComponent<StructureBuilder>(); ed.dirty = true; }

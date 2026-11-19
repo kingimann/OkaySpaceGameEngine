@@ -16,6 +16,7 @@
 #include <winrt/Windows.UI.ViewManagement.h>
 
 #include <cstring>
+#include <exception>
 
 namespace okay_xbox_app {
 
@@ -99,18 +100,22 @@ struct GameApp : winrt::implements<GameApp, wac::IFrameworkViewSource, wac::IFra
     void Run() {
         m_window.Activate();
         std::string err;
-        const bool ok = bridge::Run(m_engine, err);   // on failure the engine side has logged `err`; there is no UI to show it on yet
-        (void)ok;
+        bool ok = false;
+        try { ok = bridge::Run(m_engine, err); }   // on failure the engine side has logged `err` into the log file
+        catch (const std::exception& ex) { bridge::Log(m_engine, std::string("Xbox app: the game stopped with an exception: ") + ex.what()); }
+        catch (...) { bridge::Log(m_engine, "Xbox app: the game stopped with an unknown exception."); }
+        if (!ok) bridge::Log(m_engine, "Xbox app: exiting after a failure" + (err.empty() ? std::string() : ": " + err));
         wac::CoreApplication::Exit();
     }
 
 private:
     void OnSuspending(wf::IInspectable const&, winrt::Windows::ApplicationModel::SuspendingEventArgs const& a) {
         auto deferral = a.SuspendingOperation().GetDeferral();
+        if (m_engine) bridge::Log(m_engine, "Xbox app: suspending (the system gives about 5 seconds).");
         if (m_engine) bridge::Suspending(m_engine, 4500);   // saves and trims synchronously
         deferral.Complete();   // Microsoft: complete within the deadline or the app is terminated
     }
-    void OnResuming(wf::IInspectable const&, wf::IInspectable const&) { if (m_engine) bridge::Resuming(m_engine); }
+    void OnResuming(wf::IInspectable const&, wf::IInspectable const&) { if (m_engine) { bridge::Log(m_engine, "Xbox app: resumed."); bridge::Resuming(m_engine); } }
 
     wui::CoreWindow m_window{nullptr};
     bridge::Engine* m_engine = nullptr;

@@ -245,8 +245,29 @@ Mostly on main and tested. Nothing is open: #574 added the optimization tools (L
 - **Docs:** -
 - **Tests:** `spriteanim`, `2d_expand`
 - **Status:** Works - read both headers; `2d_expand` also covers 2D physics, so part of it belongs to 6.1
-- **Open:** no dedicated doc page; no sprite atlas importer or slicing tool; sprite masks and 9-slice are UI-only (12.2)
+- **Open:** no dedicated doc page; no sprite atlas importer or slicing tool in the editor (the `okay-texture atlas` command packs sprites, 2.13); sprite masks and 9-slice are UI-only (12.2)
 - **Related:** 2.10, 2.6, 6.1, 12.2
 - **Words:** sprite, SpriteRenderer, SpriteAnimator, sprite sheet, atlas, flip book, sorting layer, order in layer, flipX, pixel art
 - **Seen as:** sprites draw in the wrong order; pixel art looks blurry; a sprite animation plays the wrong row; a character faces the wrong way
 - **Ask me like:** "Put the player in front of the foreground trees"; "Play the 'run' row of this sprite sheet at 12 fps"
+### 2.13 Texture library (mipmaps, atlases, compression, streaming)
+- **What:** Our own CPU texture processing: build mip chains, pack sprite atlases, convert pixel formats, block-compress to BC1/BC3/BC4/BC5, write and read DDS files, and plan which mip of each texture to keep for a memory budget.
+- **Parts:**
+  - 2.13.1 Mip chains - `Texture/Mip` - box, Lanczos3 and Kaiser filters for any size; sRGB-correct (linear light), alpha-weighted, alpha-test coverage kept, normal-map renormalising
+  - 2.13.2 Atlas packer - `Texture/Atlas` - MaxRects with padding, bleed, optional rotation, power-of-two growth, composed sheet and a stable JSON manifest
+  - 2.13.3 Format conversion - `Texture/Convert` - RGBA8, BGRA8, RGB565, RGBA16F, R8; premultiply and un-premultiply; swizzle and channel pack; half-float conversion
+  - 2.13.4 Block compression - `Texture/Bc`, `Texture/Dds` - our own BC1/BC3/BC4/BC5 encoder (axis fit, least squares, endpoint search) and decoder; DDS writer and reader with mips
+  - 2.13.5 Streaming planner - `Texture/Stream` - camera distance and screen size to the mip each texture needs, memory budget through `Optimize/MipBudget`, load and evict amounts, per-frame upload cap
+  - 2.13.6 Tool and editor hook - `tools/okaytexture`, `Texture/Export`, `editor/ProjectPanelUI` - `okay-texture mips|compress|atlas|info|stream`; Project panel Import Settings "Generate mipmaps / compress" writes a .dds beside the picture
+- **Code:** `Texture/Texture`, `Texture/Mip`, `Texture/Atlas`, `Texture/Convert`, `Texture/Bc`, `Texture/Dds`, `Texture/Stream`, `Texture/Export`, `tools/okaytexture/main.cpp`, `examples/texture`, `editor/ProjectPanelUI.cpp`
+- **API:** `okay::tex::GenerateMips`, `GenerateMipsRGBA8`, `MipOptions`, `PackAtlas`, `ComposeAtlasRGBA8`, `AtlasToJson`, `ConvertPixels`, `FloatToHalf`, `EncodeBc`, `DecodeBc`, `WriteDds`, `ReadDds`, `StreamPlanner`, `BuildDdsFile`, `BuildAtlasFiles`; command `okay-texture`
+- **Editor:** Project panel > picture > Import Settings > "Generate mipmaps / compress"
+- **Docs:** `docs/own_texture_library.md`
+- **Tests:** `tex_mip`, `tex_atlas`, `tex_convert`, `tex_bc`, `tex_dds_stream`
+- **Status:** Partial - the library, tool and editor button work and are unit-tested on Linux; no renderer loads the .dds files yet, the import `compress` flag is still not applied, and nothing was run on Windows
+- **Open:** renderers (GL, D3D) do not read DDS or upload BC data; BC6H/BC7/ASTC/ETC are not written; no streaming loop in the renderer (the planner is the planning half); the glyph `ShelfPacker` is separate on purpose; Windows build and editor section unverified
+- **Related:** 2.9, 2.12, 20.4, 27.4
+- **Words:** mipmap, mip chain, atlas, sprite sheet, texture packer, BC1, BC3, BC4, BC5, DXT1, DXT5, DDS, texture compression, Lanczos, Kaiser, premultiplied alpha, alpha coverage, normal map mips, half float, RGB565, texture streaming, okay-texture
+- **Seen as:** far away textures shimmer or look dark; cut-out leaves vanish in the distance; I need one picture from many sprites; textures use too much memory
+- **Ask me like:** "Pack these icons into one atlas"; "Make mipmaps and compress this picture"; "Which mip does this texture need at 100 pixels?"
+

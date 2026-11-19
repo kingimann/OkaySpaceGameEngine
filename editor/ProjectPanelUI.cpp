@@ -1,5 +1,6 @@
 #include "ProjectPanelUI.hpp"
 #include "okay/Render/SoftwareRenderer.hpp"   // InvalidateAllTextureCaches
+#include "okay/Texture/Export.hpp"             // okay::tex: Make mipmaps / compress (docs/own_texture_library.md)
 
 #include <imgui.h>
 
@@ -535,6 +536,35 @@ bool DrawImportSettings(okaypb::Browser& browser, const std::string& assetPath) 
             ImGui::Checkbox("Mipmaps", &e.texture.mipmaps);
             Hint("Smaller copies for far away. Off: always full size.");
             Hint("Applies in the editor view and OpenGL / software games.");
+            }
+            // Texture tools (our own library, okay::tex): write a .dds with mipmaps, uncompressed or block compressed,
+            // next to the picture. It does not change the picture or the import settings above.
+            {
+                ImGui::Separator();
+                ImGui::TextDisabled("MIPMAPS AND COMPRESSION");
+                static int outKind = 1;
+                static int filterKind = 1;
+                static bool colour = true, normal = false, cutout = false;
+                static std::string texMsg, texMsgFor;
+                Combo("Write", outKind, {"Mipmaps (DDS, full quality)", "Mipmaps + compressed (BC1/BC3/BC5 DDS)"});
+                Combo("Filter", filterKind, {"Box (fast)", "Lanczos (sharper)", "Kaiser (smooth)"});
+                ImGui::Checkbox("Colour picture (filter in linear light)", &colour);
+                ImGui::Checkbox("Normal map", &normal);
+                ImGui::Checkbox("Cut-out (keep see-through share)", &cutout);
+                if (ImGui::Button("Generate mipmaps / compress")) {
+                    okay::tex::TextureBuildOptions bo;
+                    bo.compress = outKind == 1;
+                    bo.mip.filter = filterKind == 0 ? okay::tex::MipFilter::Box : filterKind == 1 ? okay::tex::MipFilter::Lanczos3 : okay::tex::MipFilter::Kaiser;
+                    bo.mip.srgb = colour && !normal;
+                    bo.mip.normalMap = normal;
+                    bo.mip.alphaCoverage = cutout;
+                    std::string out, terr;
+                    if (okay::tex::BuildDdsFile(assetPath, &out, bo, &terr)) texMsg = "Wrote " + out;
+                    else texMsg = terr.empty() ? "Could not write the file." : terr;
+                    texMsgFor = assetPath;
+                }
+                Hint("Writes a .dds next to the picture. Open it in any DDS viewer.");
+                if (texMsgFor == assetPath && !texMsg.empty()) ImGui::TextWrapped("%s", texMsg.c_str());
             }
             break;
         }

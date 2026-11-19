@@ -443,6 +443,69 @@ int main(int argc, char** argv) {
         }
         CHECK(b->BasePath().size() > 1);
     }
+
+#ifdef OKAY_TEST_HAVE_SDL_HEADERS
+    // ---- WrapSdl2Window: a non-owning Window over a window the app made itself ------------------
+    if (kind == BackendKind::Sdl2) {
+        SDL_Window* raw = SDL_CreateWindow("wrapped", 50, 50, 210, 130, SDL_WINDOW_OPENGL | SDL_WINDOW_HIDDEN);
+        CHECK(raw != nullptr);
+        CHECK(WrapSdl2Window(nullptr) == nullptr);
+        if (raw) {
+            auto ww = WrapSdl2Window(raw);
+            CHECK(ww != nullptr);
+            if (ww) {
+                CHECK(ww->Kind() == BackendKind::Sdl2 && ww->NativeHandle() == raw);
+                CHECK(ww->Id() == SDL_GetWindowID(raw));
+                int gw = 0, gh = 0, sw = 0, sh = 0;
+                ww->GetSize(gw, gh);
+                SDL_GetWindowSize(raw, &sw, &sh);
+                CHECK(gw == sw && gh == sh && gw == 210 && gh == 130);
+                SDL_DisplayMode dm;
+                const int sdlHz = (SDL_GetWindowDisplayMode(raw, &dm) == 0 && dm.refresh_rate > 0) ? dm.refresh_rate : 0;
+                CHECK(ww->RefreshRateHz() == sdlHz);
+                CHECK(ww->IsFocused() == ((SDL_GetWindowFlags(raw) & SDL_WINDOW_INPUT_FOCUS) != 0));
+                CHECK(b->TouchDeviceCount() == SDL_GetNumTouchDevices());
+                // Window state and focus queries match what SDL says (the apps used SDL_GetWindowFlags and friends).
+                const Uint32 fl = SDL_GetWindowFlags(raw);
+                CHECK(ww->IsMinimized() == ((fl & SDL_WINDOW_MINIMIZED) != 0));
+                CHECK(ww->IsVisible() == ((fl & SDL_WINDOW_HIDDEN) == 0));
+                CHECK(ww->HasMouseFocus() == ((fl & SDL_WINDOW_MOUSE_FOCUS) != 0));
+                CHECK(ww->HasInputFocus() == ww->IsFocused());
+                SDL_Window* kf = SDL_GetKeyboardFocus(); SDL_Window* mf = SDL_GetMouseFocus();
+                CHECK(b->KeyboardFocusWindowId() == (kf ? SDL_GetWindowID(kf) : 0u));
+                CHECK(b->MouseFocusWindowId() == (mf ? SDL_GetWindowID(mf) : 0u));
+                CHECK(b->NativeHandleFromId(ww->Id()) == (void*)raw && b->NativeHandleFromId(0) == nullptr && b->NativeHandleFromId(0x7fffff) == nullptr);
+                CHECK(ww->Win32Handle() == nullptr);   // not Windows
+                (void)ww->SetInputFocus();             // refused or accepted by the video driver, never a crash
+                ww->Hide();
+                CHECK(!ww->IsVisible());
+                ww->Show();
+                CHECK(ww->IsVisible());
+                // Taskbar flash: accepted (or refused by the video driver) without a crash, and Stop ends it.
+                (void)ww->Flash(FlashMode::Briefly);
+                (void)ww->Flash(FlashMode::UntilFocused);
+                (void)ww->Flash(FlashMode::Stop);
+                // A GL context made through the wrapper, and the current-GL save / restore the editor uses.
+                const GLCurrent before = b->CurrentGL();
+                if (ww->CreateGLContext(GLAttributes{})) {
+                    const GLCurrent mine = b->CurrentGL();
+                    CHECK(mine.window == raw && mine.context != nullptr);
+                    CHECK(b->RestoreGL(before));
+                    const GLCurrent back = b->CurrentGL();
+                    CHECK(back.window == before.window && back.context == before.context);
+                    CHECK(ww->MakeCurrent());
+                    CHECK(b->CurrentGL().context == mine.context);
+                    b->ReleaseCurrent();
+                } else {
+                    std::cout << "  (no GL context for the wrapped window: GL part skipped)\n";
+                }
+            }
+            ww.reset();
+            CHECK(SDL_GetWindowID(raw) != 0);   // the wrapper did not destroy the app's window
+            SDL_DestroyWindow(raw);
+        }
+    }
+#endif
 #ifdef OKAY_TEST_HAVE_SDL_HEADERS
     if (kind == BackendKind::Sdl2) {
         // Touch and natural-scrolling events cannot come from XTEST: push them as SDL would.
@@ -468,10 +531,24 @@ int main(int argc, char** argv) {
 #endif
 
     // ---- visibility / focus / destroy -----------------------------------------------------------
+    CHECK(win->IsVisible());
+    CHECK(b->NativeHandleFromId(win->Id()) == win->NativeHandle() && b->NativeHandleFromId(0) == nullptr);
+    CHECK(win->Win32Handle() == nullptr);   // not Windows
+    {   // The focus ids are 0 (none) or this window; the window with the keyboard agrees with HasInputFocus.
+        const uint32_t kf = b->KeyboardFocusWindowId(), mf = b->MouseFocusWindowId();
+        CHECK(kf == 0 || kf == win->Id());
+        CHECK(mf == 0 || mf == win->Id());
+        CHECK(win->HasInputFocus() == win->IsFocused());
+        if (win->HasInputFocus()) CHECK(kf == win->Id());
+        CHECK(!win->IsMinimized());   // nothing minimized it
+    }
     win->Hide();
     Pump(*b, 100);
+    CHECK(!win->IsVisible());
     win->Show();
     Pump(*b, 100);
+    CHECK(win->IsVisible());
+    (void)win->SetInputFocus();
     win->DestroyGLContext();
     win.reset();
     b->Shutdown();

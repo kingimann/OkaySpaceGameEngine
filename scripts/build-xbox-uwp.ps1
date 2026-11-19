@@ -53,9 +53,15 @@ param(
 )
 $ErrorActionPreference = 'Stop'
 
+if ($env:OS -ne 'Windows_NT') { Write-Host 'FAILED: this script builds the Xbox app with Visual Studio and only runs on Windows. WHAT TO DO NEXT: run it on the Windows PC.' -ForegroundColor Red; exit 1 }
 # Paths first. -ExportDir may not exist yet (Resolve-Path would fail on it), so it is made absolute by hand.
 if (-not (Test-Path -LiteralPath $SourceRoot)) { Write-Host "FAILED: -SourceRoot '$SourceRoot' does not exist." -ForegroundColor Red; exit 1 }
 $SourceRoot = (Resolve-Path -LiteralPath $SourceRoot).Path
+if (-not (Test-Path -LiteralPath (Join-Path $SourceRoot 'platform\xbox_uwp\app\CMakeLists.txt'))) {
+    Write-Host "FAILED: '$SourceRoot' is not the OkaySpace source folder (platform\xbox_uwp\app\CMakeLists.txt is missing)." -ForegroundColor Red
+    Write-Host 'WHAT TO DO NEXT: point -SourceRoot at the folder that contains platform\xbox_uwp. In the Windows release that is the xbox-src folder next to OkayEngine.exe; in a git checkout it is the top folder.' -ForegroundColor Cyan
+    exit 1
+}
 if (-not [System.IO.Path]::IsPathRooted($ExportDir)) { $ExportDir = Join-Path (Get-Location).Path $ExportDir }
 $ExportDir = [System.IO.Path]::GetFullPath($ExportDir)
 New-Item -ItemType Directory -Force -Path $ExportDir | Out-Null
@@ -67,11 +73,25 @@ $script:LogFile = Join-Path $ExportDir 'build.log'
 Set-Content -LiteralPath $script:LogFile -Value ("OkaySpace Xbox build log, started " + (Get-Date -Format 's')) -Encoding UTF8
 $script:Tail = New-Object System.Collections.ArrayList   # the last output lines of the tool that is running
 $script:StepName = 'start'
+$script:StepNo = 0
 $script:Total = 9
+# "What to do next" for each step, printed when that step fails (scripts/check_xbox_uwp.py checks that every step 1..Total has one).
+$script:Hints = @{
+    1 = 'Install what the MISSING lines above say (Visual Studio Installer > Modify > "Universal Windows Platform development"), then run the SAME command again. To re-check only the tools: powershell -ExecutionPolicy Bypass -File scripts\xbox-check-sdk.ps1'
+    2 = 'Check -SourceRoot is the OkaySpace source folder (it has platform\xbox_uwp) and -ExportDir is writable. Without -MinimalTest the folder must already hold package\AppxManifest.xml from the editor (File > Build Settings > Xbox). If cl.exe failed, open a "x64 Native Tools Command Prompt" and run cl to see whether the C++ compiler works at all.'
+    3 = 'cl.exe could not compile our package tool. Send the last lines above and build.log. Nothing on the Xbox side is involved yet.'
+    4 = 'CMake could not set up the app. Most often the "C++ Universal Windows Platform tools" component is missing or CMake picked the wrong Visual Studio. Run xbox-check-sdk.ps1 and send its output together with build.log.'
+    5 = 'The app did not compile. Send build.log (the first line with the word error is the one that matters). Engine mode (-EngineMode) is the most likely to fail: try the same command WITHOUT -EngineMode first to see whether the basic triangle app builds.'
+    6 = 'The build finished but the files are not where the script looks. Send build.log and the list from: dir <ExportDir>\build\app -Recurse -Filter OkaySpaceXbox.exe'
+    7 = 'The shader compile failed. Check that fxc.exe exists under C:\Program Files (x86)\Windows Kits\10\bin\<version>\x64 (it comes with the Windows SDK) and send build.log.'
+    8 = 'Our packer refused the folder. The message above names the file. If it says a file name is not allowed, rename that file in <ExportDir>\package. Send build.log if unsure.'
+    9 = 'Signing failed. Open PowerShell as a normal user (not a service account), check that "dir Cert:\CurrentUser\My" works, and that signtool.exe exists (xbox-check-sdk.ps1). You can still use the unsigned file with -SkipSign to test the packer only.'
+}
 
 function Log([string]$line) { Add-Content -LiteralPath $script:LogFile -Value $line -Encoding UTF8 }
 function Step([int]$n, [string]$text) {
     $script:StepName = "$n/$($script:Total) $text"
+    $script:StepNo = $n
     $script:Tail.Clear()
     Write-Host ""
     Write-Host ("[{0}/{1}] {2}" -f $n, $script:Total, $text) -ForegroundColor Cyan
@@ -124,6 +144,7 @@ function Fail-With([string]$message) {
     if ($all -match 'ZW') { Write-Host 'Hint: "ZW" in the error: the project compiled as C++/CX (/ZW). It must be plain C++ with C++/WinRT (uwp_cpp.props sets CompileAsWinRT false).' -ForegroundColor Yellow }
     if ($all -match '(?i)appxmanifest') { Write-Host 'Hint: "appxmanifest" in the error: the MSBuild project wants a Package.appxmanifest (platform/xbox_uwp/app has a minimal one; check it was picked up).' -ForegroundColor Yellow }
     if ($all -match '(?i)VCLibs') { Write-Host 'Hint: "VCLibs": the package depends on Microsoft.VCLibs.140.00; install it first (see the next-steps lines of a successful run or docs/xbox_uwp.md).' -ForegroundColor Yellow }
+    if ($script:Hints.ContainsKey($script:StepNo)) { Write-Host ''; Write-Host ('WHAT TO DO NEXT: ' + $script:Hints[$script:StepNo]) -ForegroundColor Cyan }
     Write-Host ("Full log (paste it to us): " + $script:LogFile) -ForegroundColor Yellow
     Log ("FAILED in step " + $script:StepName + ": " + $message)
     exit 1
@@ -153,7 +174,7 @@ try {
         Step 2 'Writing a minimal TEST export (a tiny tool is compiled first)'
         $exportExe = Join-Path $work 'okay-xbox-export.exe'
         $img = 'engine\src\Graphics\Image.cpp', 'engine\src\Core\ImageDecode.cpp', 'engine\src\Core\ImageDecodeJpeg.cpp', 'engine\src\Core\ImageWrite.cpp' | ForEach-Object { Join-Path $SourceRoot $_ }
-        $code = Compile-Cpp 'export' (@((Join-Path $packSrc 'tool\okay_xbox_export.cpp')) + $img) @($packSrc, (Join-Path $SourceRoot 'engine\include'), (Join-Path $SourceRoot 'engine\src'), (Join-Path $SourceRoot 'engine\third_party\stb')) $exportExe
+        $code = Compile-Cpp 'export' (@((Join-Path $packSrc 'tool\okay_xbox_export.cpp')) + $img) @($packSrc, (Join-Path $SourceRoot 'engine\include'), (Join-Path $SourceRoot 'engine\src')) $exportExe
         Require-Ok $code 'Compiling okay-xbox-export'
         if (-not (Test-Path -LiteralPath $exportExe)) { throw 'okay-xbox-export.exe was not produced.' }
         $exportArgs = @('--out', $ExportDir)
@@ -277,8 +298,13 @@ try {
     # 9. test certificate (a self-signed code-signing certificate; the subject must equal the manifest Publisher), then sign
     Step 9 'Signing with a test certificate (PowerShell + SignTool)'
     if (-not $Subject) { $Subject = $ident.Publisher }
-    $cert = New-SelfSignedCertificate -Type Custom -Subject $Subject -KeyUsage DigitalSignature -FriendlyName 'OkaySpace Xbox test certificate' `
-        -CertStoreLocation 'Cert:\CurrentUser\My' -TextExtension @('2.5.29.37={text}1.3.6.1.5.5.7.3.3', '2.5.29.19={text}')
+    # Re-use the test certificate of an earlier run (same subject, still valid, private key present) so the PC and the Xbox only have to trust ONE certificate.
+    $cert = Get-ChildItem -Path 'Cert:\CurrentUser\My' | Where-Object { $_.Subject -eq $Subject -and $_.HasPrivateKey -and $_.NotAfter -gt (Get-Date).AddDays(7) } | Sort-Object NotAfter -Descending | Select-Object -First 1
+    if ($cert) { Write-Host ("Re-using the test certificate from an earlier run (thumbprint {0})." -f $cert.Thumbprint) }
+    else {
+        $cert = New-SelfSignedCertificate -Type Custom -Subject $Subject -KeyUsage DigitalSignature -FriendlyName 'OkaySpace Xbox test certificate' `
+            -CertStoreLocation 'Cert:\CurrentUser\My' -TextExtension @('2.5.29.37={text}1.3.6.1.5.5.7.3.3', '2.5.29.19={text}')
+    }
     $cer = Join-Path $ExportDir 'OkaySpaceXbox-test.cer'
     Export-Certificate -Cert $cert -FilePath $cer | Out-Null   # the PUBLIC part only; the private key stays in your certificate store
     Require-Ok (Invoke-Tool $sdk.signTool @('sign', '/fd', 'SHA256', '/sha1', $cert.Thumbprint, $appx)) 'SignTool'   # by thumbprint: no password anywhere
@@ -287,18 +313,27 @@ try {
     Write-Host "Done. Signed test package: $appx" -ForegroundColor Green
     Write-Host "Test certificate (public): $cer"
     Write-Host "Full log: $script:LogFile"
+    $pfn = $ident.Name
     Write-Host ''
-    Write-Host 'TO INSTALL ON THIS PC (UNVERIFIED), in an ADMINISTRATOR PowerShell:' -ForegroundColor Cyan
+    Write-Host 'A) TO TRY IT ON THIS PC (UNVERIFIED), in an ADMINISTRATOR PowerShell (right-click PowerShell > Run as administrator):' -ForegroundColor Cyan
     $vclibs = $null
     $ext = Join-Path ${env:ProgramFiles(x86)} 'Microsoft SDKs\Windows Kits\10\ExtensionSDKs\Microsoft.VCLibs'
     if (Test-Path -LiteralPath $ext) { $vclibs = Get-ChildItem -LiteralPath $ext -Recurse -Filter 'Microsoft.VCLibs.x64.14.00.appx' -ErrorAction SilentlyContinue | Where-Object { $_.FullName -match 'Retail' } | Select-Object -First 1 }
-    Write-Host '  1) Skip this line first. ONLY if step 3 reports a missing dependency (Microsoft.VCLibs), install the VC runtime framework:' -ForegroundColor DarkGray
-    Write-Host '     (it can fail harmlessly with 0x80073D02 when the framework is in use by running apps; if the app then installs, ignore that error)' -ForegroundColor DarkGray
-    if ($vclibs) { Write-Host ("  Add-AppxPackage -Path '{0}'     # OPTIONAL, only if a dependency is reported missing" -f $vclibs.FullName) }
-    else { Write-Host '  (install the Microsoft.VCLibs.140.00 x64 framework package first; its .appx is under Microsoft SDKs\Windows Kits\10\ExtensionSDKs\Microsoft.VCLibs in Program Files (x86) if Visual Studio installed it)' }
+    Write-Host ("  Get-AppxPackage {0} | Remove-AppxPackage      # only if an older copy is installed (otherwise Windows says 0x80073CFB: same version, different contents)" -f $pfn) -ForegroundColor DarkGray
     Write-Host ("  Import-Certificate -FilePath '{0}' -CertStoreLocation Cert:\LocalMachine\TrustedPeople" -f $cer)
     Write-Host ("  Add-AppxPackage -Path '{0}'" -f $appx)
-    Write-Host 'For the console: open the Windows Device Portal (address shown in Dev Home on the Xbox), Apps > Add, upload the .appx and the VCLibs package (docs/xbox_uwp.md, "Deploy to an Xbox in Developer Mode").'
+    Write-Host '  Then start "OkaySpace Test" from the Start menu. A pad: left stick moves the triangle, A centres it, B closes it.'
+    Write-Host '  If Add-AppxPackage says a dependency is missing (Microsoft.VCLibs), install the framework first (it can print 0x80073D02 when it is in use: harmless):' -ForegroundColor DarkGray
+    if ($vclibs) { Write-Host ("  Add-AppxPackage -Path '{0}'" -f $vclibs.FullName) }
+    else { Write-Host '  (the Microsoft.VCLibs.x64.14.00.appx file is under Program Files (x86)\Microsoft SDKs\Windows Kits\10\ExtensionSDKs\Microsoft.VCLibs when Visual Studio installed it)' }
+    Write-Host '  If Windows says 0x800B0109 / "certificate chain": the Import-Certificate line was not run as administrator. If it says 0x80073CF3: a dependency or the manifest is wrong (send build.log).'
+    Write-Host ''
+    Write-Host 'B) FOR THE XBOX (Developer Mode): open https://<the Xbox IP>:11443 in a browser on the PC, Apps > Add, choose the .appx above, add the VCLibs package under dependencies, and the .cer file above if the page offers a certificate field.' -ForegroundColor Cyan
+    Write-Host '   Step by step with every screen: docs/try_it/ (the "Xbox UWP next" page) or docs/xbox_uwp.md, "Deploy to an Xbox in Developer Mode".'
+    Write-Host ''
+    Write-Host 'C) WHERE THE APP WRITES ITS LOG (UNVERIFIED): file okayspace.log in the app''s LocalState\logs folder.' -ForegroundColor Cyan
+    Write-Host '   On this PC: %LOCALAPPDATA%\Packages\<the package family name>\LocalState\logs   (type %LOCALAPPDATA%\Packages\ in Explorer and look for a folder starting with com.okayspace.test).'
+    Write-Host '   On the Xbox: Device Portal > Apps > this app > its file / "LocalState" browser (or Visual Studio''s Device Portal Files page).'
     exit 0
 } catch {
     Fail-With $_.Exception.Message

@@ -1,0 +1,188 @@
+// okay-ms own standard header: min, max, clamp, swap, and the sequence algorithms the engine uses (find, find_if,
+// count, count_if, any_of, all_of, none_of, remove, remove_if, reverse, fill, copy, min_element, max_element,
+// lower_bound, upper_bound, binary_search, sort, stable_sort). Written from the wording of ISO/IEC 14882 [alg.min.max], [alg.clamp],
+// [utility.swap], [alg.find], [alg.count], [alg.all.of], [alg.remove], [alg.reverse], [alg.fill], [alg.copy],
+// [alg.binary.search], [alg.sort]. Iterators are plain pointers here (our vector, string and array use pointers).
+// sort is a heap sort (any order of equal elements is allowed by [alg.sort]; it is not stable).
+#pragma once
+namespace std {
+template <typename T> const T &min(const T &a, const T &b) { return b < a ? b : a; }
+template <typename T> const T &max(const T &a, const T &b) { return a < b ? b : a; }
+template <typename T> const T &clamp(const T &v, const T &lo, const T &hi) { return v < lo ? lo : hi < v ? hi : v; }
+template <typename T> void swap(T &a, T &b) { T t = a; a = b; b = t; }
+
+template <typename It, typename V> It find(It first, It last, const V &value) {
+    for (; first != last; ++first)
+        if (*first == value) return first;
+    return last;
+}
+template <typename It, typename P> It find_if(It first, It last, P pred) {
+    for (; first != last; ++first)
+        if (pred(*first)) return first;
+    return last;
+}
+template <typename It, typename V> long long count(It first, It last, const V &value) {
+    long long n = 0;
+    for (; first != last; ++first)
+        if (*first == value) ++n;
+    return n;
+}
+template <typename It, typename P> long long count_if(It first, It last, P pred) {
+    long long n = 0;
+    for (; first != last; ++first)
+        if (pred(*first)) ++n;
+    return n;
+}
+template <typename It, typename P> bool any_of(It first, It last, P pred) {
+    for (; first != last; ++first)
+        if (pred(*first)) return true;
+    return false;
+}
+template <typename It, typename P> bool all_of(It first, It last, P pred) {
+    for (; first != last; ++first)
+        if (!pred(*first)) return false;
+    return true;
+}
+template <typename It, typename P> bool none_of(It first, It last, P pred) {
+    for (; first != last; ++first)
+        if (pred(*first)) return false;
+    return true;
+}
+template <typename It, typename P> It remove_if(It first, It last, P pred) {
+    It out = first;
+    for (; first != last; ++first) {
+        if (!pred(*first)) {
+            if (out != first) *out = *first;
+            ++out;
+        }
+    }
+    return out;
+}
+template <typename It, typename V> It remove(It first, It last, const V &value) {
+    It out = first;
+    for (; first != last; ++first) {
+        if (!(*first == value)) {
+            if (out != first) *out = *first;
+            ++out;
+        }
+    }
+    return out;
+}
+template <typename It> void reverse(It first, It last) {
+    while (first != last) {
+        --last;
+        if (first == last) break;
+        swap(*first, *last);
+        ++first;
+    }
+}
+template <typename It, typename V> void fill(It first, It last, const V &value) {
+    for (; first != last; ++first) *first = value;
+}
+template <typename It, typename Out> Out copy(It first, It last, Out out) {
+    for (; first != last; ++first, ++out) *out = *first;
+    return out;
+}
+template <typename It> It min_element(It first, It last) {
+    It best = first;
+    if (first == last) return last;
+    for (++first; first != last; ++first)
+        if (*first < *best) best = first;
+    return best;
+}
+template <typename It> It max_element(It first, It last) {
+    It best = first;
+    if (first == last) return last;
+    for (++first; first != last; ++first)
+        if (*best < *first) best = first;
+    return best;
+}
+template <typename It, typename V> It lower_bound(It first, It last, const V &value) {
+    long long n = last - first;
+    while (n > 0) {
+        long long half = n / 2;
+        It mid = first + half;
+        if (*mid < value) {
+            first = mid + 1;
+            n = n - half - 1;
+        } else {
+            n = half;
+        }
+    }
+    return first;
+}
+template <typename It, typename V> It upper_bound(It first, It last, const V &value) {
+    long long n = last - first;
+    while (n > 0) {
+        long long half = n / 2;
+        It mid = first + half;
+        if (!(value < *mid)) {
+            first = mid + 1;
+            n = n - half - 1;
+        } else {
+            n = half;
+        }
+    }
+    return first;
+}
+template <typename It, typename Less> void sift_down_(It base, long long root, long long n, Less less) {
+    for (;;) {
+        long long child = root * 2 + 1;
+        if (child >= n) return;
+        if (child + 1 < n && less(base[child], base[child + 1])) ++child;
+        if (!less(base[root], base[child])) return;
+        swap(base[root], base[child]);
+        root = child;
+    }
+}
+template <typename It, typename Less> void sort(It first, It last, Less less) {
+    long long n = last - first;
+    for (long long i = n / 2 - 1; i >= 0; --i) sift_down_(first, i, n, less);
+    for (long long end = n - 1; end > 0; --end) {
+        swap(first[0], first[end]);
+        sift_down_(first, 0, end, less);
+    }
+}
+template <typename It> void sort(It first, It last) {
+    long long n = last - first;
+    for (long long i = n / 2 - 1; i >= 0; --i) {
+        long long root = i;
+        for (;;) {
+            long long child = root * 2 + 1;
+            if (child >= n) break;
+            if (child + 1 < n && first[child] < first[child + 1]) ++child;
+            if (!(first[root] < first[child])) break;
+            swap(first[root], first[child]);
+            root = child;
+        }
+    }
+    for (long long end = n - 1; end > 0; --end) {
+        swap(first[0], first[end]);
+        long long root = 0;
+        for (;;) {
+            long long child = root * 2 + 1;
+            if (child >= end) break;
+            if (child + 1 < end && first[child] < first[child + 1]) ++child;
+            if (!(first[root] < first[child])) break;
+            swap(first[root], first[child]);
+            root = child;
+        }
+    }
+}
+template <typename It, typename V> bool binary_search(It first, It last, const V &value) {
+    It at = lower_bound(first, last, value);
+    return at != last && !(value < *at);
+}
+// A stable sort by insertion: elements that compare equal keep their order ([alg.sort] stable_sort). Quadratic in the
+// worst case, which is fine for the short sequences the engine sorts.
+template <typename It, typename Less> void stable_sort(It first, It last, Less less) {
+    for (It i = first + 1; i < last; ++i) {
+        for (It j = i; j > first && less(*j, *(j - 1)); --j) swap(*j, *(j - 1));
+    }
+}
+template <typename It> void stable_sort(It first, It last) {
+    for (It i = first + 1; i < last; ++i) {
+        for (It j = i; j > first && *j < *(j - 1); --j) swap(*j, *(j - 1));
+    }
+}
+}

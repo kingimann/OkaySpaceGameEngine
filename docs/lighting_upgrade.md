@@ -81,3 +81,12 @@ Round 2 results (same machine): `lighting_upgrade` 194 checks, 0 failures (adds 
 `docs/try_it/7lit-*.md` has the steps. In short: File > Examples > Lighting presets, then View > Lighting > Lighting Presets; a Light's
 Inspector for Units, Panel Width / Height, Mask and Soft Edges; and the headless tool
 `lighting_shot <out dir> [tag]` (set `OKAY_CLASSIC_LIGHTING=1` for the old look) that writes the test pictures.
+
+### Bias, corrected after CI (round 3)
+
+The first slope bias grew with the shadow-map texel size, so in a coarse cascade (one 256-texel map over 80 m: 0.6 m a texel) it was
+metres wide and small casters lost their shadow (the `fp_hand` test found it: a head's shadow vanished). The software renderer now compares every filter tap
+with the receiver's own depth at that tap (`shadowmath::ReceiverPlaneShift`) plus a constant of about one texel, and the blocker search
+includes the centre and an inner ring so a one-texel caster is found. Not fixed, and not fixable by bias: a caster narrower than a
+texel can still fall between texel centres (the `fp_hand` test now uses a 12 m shadow distance for that reason). The GPU shaders keep their
+own world-space bias and were not changed in this round.

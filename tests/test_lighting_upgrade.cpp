@@ -15,6 +15,12 @@ using namespace lightscene;
 // light shapes and masks (smooth spot, real rectangle area light, cookies), the light roll-off, real-world units, glow
 // lights, save/load of the new settings, and deterministic software renders with a tolerance.
 namespace {
+// RenderShadowMap reads the visibility pass's cached shadow meshes (visibility::Current()), which RenderMeshes builds first. Calling it
+// on its own after other scenes were drawn reads stale pointers (a flaky crash that only showed on some machines), so build it here.
+void PrepareShadows(const Scene& sc, const Mat4& vp, const Vec3& eye) {
+    visibility::Build(sc, vp, eye, 160, 100, visibility::RenderViewFovY(), nullptr);
+    RenderShadowMap(sc, vp, eye);
+}
 float Luma(const Image& im, int x, int y) { Color c = im.GetPixel(x, y); return 0.299f * c.r + 0.587f * c.g + 0.114f * c.b; }
 float MeanLuma(const Image& im, int x0, int y0, int x1, int y1) {
     double s = 0; int n = 0;
@@ -63,7 +69,7 @@ int main() {
         const Vec3 P{3.1f, 0.2f, 9.7f};
         auto texelPos = [&](const Vec3& eye, int casc, float& fx, float& fy) {
             const Mat4 vp = Mat4::Perspective(55.0f, 1.6f, 0.1f, 200.0f) * Mat4::LookAt(eye, eye + Vec3{0.2f, -0.1f, 1.0f}, Vec3{0, 1, 0});
-            RenderShadowMap(sc, vp, eye);
+            PrepareShadows(sc, vp, eye);
             const ShadowCascade& c = Shadows().cascade[casc];
             const Vec4 q = c.viewProj * Vec4{P, 1.0f};
             fx = (q.x / q.w * 0.5f + 0.5f) * c.size; fy = (q.y / q.w * 0.5f + 0.5f) * c.size;
@@ -384,7 +390,7 @@ int main() {
         const Mat4 vp = Mat4::Perspective(70.0f, 1.6f, 0.1f, 200.0f) * Mat4::LookAt(eye, Vec3{0, 1.2f, 2.0f}, Vec3{0, 1, 0});
         for (int pass = 0; pass < 2; ++pass) {
             ClassicLighting() = pass == 1;
-            RenderShadowMap(r, vp, eye);
+            PrepareShadows(r, vp, eye);
             const float back = ShadowFactor(Vec3{0, 1.5f, 3.98f}, Vec3{0, 0, -1});
             const float floorP = ShadowFactor(Vec3{1.0f, 0.01f, 0.0f}, Vec3{0, 1, 0});
             const float leftWall = ShadowFactor(Vec3{-3.98f, 1.5f, 0.0f}, Vec3{1, 0, 0});

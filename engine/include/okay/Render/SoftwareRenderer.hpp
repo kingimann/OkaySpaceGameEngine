@@ -1301,13 +1301,15 @@ inline float ShadowFactor(const Vec3& wpos, const Vec3& n) {
             dOut = cas.depth[(std::size_t)py * cas.size + px];
             return true;
         };
-        // 1. Blocker search: a few taps over a reach a bit wider than the minimum filter.
+        // 1. Blocker search: the centre, a ring as wide as the minimum filter, and a ring a bit wider (13 taps). The inner ring matters: a
+        //    small caster (a head) can be one texel wide in a coarse cascade, and a sparse wide ring alone would step over it.
         const float searchR = baseR + 1.5f + 4.0f * soft;
         int blockers = 0; float gapSum = 0.0f;
-        for (int k = 0; k < 6; ++k) {
-            float tx, ty; shadowmath::DiscTap(k, 6, tx, ty);
+        for (int k = -1; k < 12; ++k) {
+            float tx = 0.0f, ty = 0.0f, rr = 0.0f;
+            if (k >= 0) { shadowmath::DiscTap(k % 6, 6, tx, ty); const float len = std::sqrt(tx * tx + ty * ty); if (len > 1e-4f) { tx /= len; ty /= len; } rr = k < 6 ? baseR : searchR; }
             float d, sh;
-            if (!tapDepth(tx * searchR, ty * searchR, d, sh)) continue;
+            if (!tapDepth(tx * rr, ty * rr, d, sh)) continue;
             if (z + sh - constBias > d) { ++blockers; gapSum += (z + sh - d) / zPerWorld; }
         }
         if (blockers == 0) return 1.0f;                           // nothing in the way: no need to filter

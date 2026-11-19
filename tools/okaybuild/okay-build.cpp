@@ -685,6 +685,13 @@ static Graph plan(const Manifest& m, const vector<string>& want) {
         for (auto& d : t.deps) go(d);
         std::reverse(po.begin(), po.end()); return po;
     };
+    string binTree = fs::absolute(under(m.outdir + "/ctest")).lexically_normal().generic_string();
+    auto fixBin = [&](string w) { for (size_t at; (at = w.find("{bin}")) != string::npos;) w.replace(at, 5, binTree); return w; };
+    auto fixInc = [&](const string& w) { size_t at = w.find("{bin}"); return at == string::npos ? w : binTree + w.substr(at + 5); }; // an include folder may have been joined to a base before {bin} was seen
+    for (auto& r : raws) { // {bin} in an action (from the cmake command's custom commands)
+        r.dir = fixBin(r.dir); r.cmd = fixBin(r.cmd); r.output = fixBin(r.output); r.depfile = fixBin(r.depfile);
+        for (auto& x : r.inputs) x = fixBin(x); for (auto& x : r.outputs) x = fixBin(x);
+    }
     std::set<string> produced; // outputs of raw actions, so a generated source need not exist yet
     for (auto& r : raws) {
         if (!r.output.empty()) produced.insert(resolve(r.dir, r.output));
@@ -692,8 +699,6 @@ static Graph plan(const Manifest& m, const vector<string>& want) {
     }
     auto add = [&](Action a) { a.id = (int)g.acts.size(); g.acts.push_back(a); return a.id; };
     // {bin} in a definition, flag or include folder means <build dir>/<outdir>/ctest (what CMake calls CMAKE_BINARY_DIR in the `cmake` command's manifests)
-    string binTree = fs::absolute(under(m.outdir + "/ctest")).lexically_normal().generic_string();
-    auto fixBin = [&](string w) { for (size_t at; (at = w.find("{bin}")) != string::npos;) w.replace(at, 5, binTree); return w; };
     for (auto& gf : m.genfiles) { // files the CMake files wrote at configure time: put them in the build tree (only when the text changed, so objects stay up to date)
         string dst = fixBin(gf.first); std::ifstream in(gf.second, std::ios::binary); if (!in) throw Fail("genfile " + gf.first + ": cannot read " + gf.second);
         string text((std::istreambuf_iterator<char>(in)), {}); std::ifstream old(dst, std::ios::binary); string cur((std::istreambuf_iterator<char>(old)), {});
@@ -720,11 +725,11 @@ static Graph plan(const Manifest& m, const vector<string>& want) {
                 a.argv.push_back("/nologo"); a.argv.push_back("/showIncludes");
                 for (auto& f : m.tc.flags) a.argv.push_back(spellMsvc(f, false));
                 for (auto& f : t.flags) a.argv.push_back(spellMsvc(f, false));
-                for (auto& i : t.includes) a.argv.push_back("/I" + i);
-                for (auto& i : t.exportIncludes) a.argv.push_back("/I" + i);
-                for (auto& l : libs) for (auto& i : byName[l]->exportIncludes) a.argv.push_back("/I" + i);
+                for (auto& i : t.includes) a.argv.push_back("/I" + fixInc(i));
+                for (auto& i : t.exportIncludes) a.argv.push_back("/I" + fixInc(i));
+                for (auto& l : libs) for (auto& i : byName[l]->exportIncludes) a.argv.push_back("/I" + fixInc(i));
                 for (auto& d : t.defines) a.argv.push_back("/D" + fixBin(d));
-                for (auto& pf : t.fileIncludes) if (pf.first == s) a.argv.push_back("/I" + pf.second);
+                for (auto& pf : t.fileIncludes) if (pf.first == s) a.argv.push_back("/I" + fixInc(pf.second));
                 for (auto& pf : t.fileDefines) if (pf.first == s) a.argv.push_back("/D" + fixBin(pf.second));
                 for (auto& pf : t.fileFlags) if (pf.first == s) a.argv.push_back(spellMsvc(pf.second, false));
                 a.argv.push_back("/c"); a.argv.push_back("/Fo" + a.output); a.argv.push_back(s);
@@ -734,11 +739,11 @@ static Graph plan(const Manifest& m, const vector<string>& want) {
                 for (auto& f : m.tc.flags) a.argv.push_back(f);
                 if (t.libKind == "shared") a.argv.push_back("-fPIC");
                 for (auto& f : t.flags) { if (isC && (f.rfind("-std=c++", 0) == 0 || f.rfind("-std=gnu++", 0) == 0)) continue; a.argv.push_back(f); } // a C++ standard does not apply to a C file
-                for (auto& i : t.includes) a.argv.push_back("-I" + i);
-                for (auto& i : t.exportIncludes) a.argv.push_back("-I" + i);
-                for (auto& l : libs) for (auto& i : byName[l]->exportIncludes) a.argv.push_back("-I" + i);
+                for (auto& i : t.includes) a.argv.push_back("-I" + fixInc(i));
+                for (auto& i : t.exportIncludes) a.argv.push_back("-I" + fixInc(i));
+                for (auto& l : libs) for (auto& i : byName[l]->exportIncludes) a.argv.push_back("-I" + fixInc(i));
                 for (auto& d : t.defines) a.argv.push_back("-D" + fixBin(d));
-                for (auto& pf : t.fileIncludes) if (pf.first == s) a.argv.push_back("-I" + pf.second);
+                for (auto& pf : t.fileIncludes) if (pf.first == s) a.argv.push_back("-I" + fixInc(pf.second));
                 for (auto& pf : t.fileDefines) if (pf.first == s) a.argv.push_back("-D" + fixBin(pf.second));
                 for (auto& pf : t.fileFlags) if (pf.first == s) a.argv.push_back(pf.second);
                 for (auto& x : {string("-MMD"), string("-MF"), a.depfile, string("-MT"), a.output, string("-c"), s, string("-o"), a.output}) a.argv.push_back(x);

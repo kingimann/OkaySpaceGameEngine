@@ -1737,6 +1737,60 @@ static void testGeneratedSource() {
     check(rc == 0 && o.find("nothing to do") != string::npos || o.find("up to date") != string::npos || o.find("0 steps") != string::npos, "a second run does not rebuild", o);
 }
 
+static void testMd5() {
+    printf("test: string(MD5) matches the RFC 1321 test suite\n");
+    fresh("md5");
+    const char* in[] = {"", "a", "abc", "message digest", "abcdefghijklmnopqrstuvwxyz",
+        "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789",
+        "12345678901234567890123456789012345678901234567890123456789012345678901234567890"};
+    const char* want[] = {"d41d8cd98f00b204e9800998ecf8427e", "0cc175b9c0f1b6a831c399e269772661", "900150983cd24fb0d6963f7d28e17f72",
+        "f96b697d7cb7938d525a2f31aaf161d0", "c3fcd3d76192e4007dfb496cca67e13b", "d174ab98d277d9f5a5611c2c9f419d9f", "57edf4a22be3c955ac49da2e2107b67a"};
+    string cm = "project(M)\n";
+    for (int i = 0; i < 7; ++i) cm += string("string(MD5 h") + std::to_string(i) + " \"" + in[i] + "\")\n";
+    cm += "file(WRITE \"${CMAKE_CURRENT_BINARY_DIR}/md5.txt\" \"${h0} ${h1} ${h2} ${h3} ${h4} ${h5} ${h6}\")\n";
+    write("CMakeLists.txt", cm);
+    int rc; string o = sh("cmake . -o m.okay --audit", &rc);
+    string got = readFile(gRoot / "m.okay.gen/md5.txt"), exp;
+    for (int i = 0; i < 7; ++i) exp += string(i ? " " : "") + want[i];
+    check(rc == 0 && got == exp, "all seven RFC 1321 vectors", got + "\n" + o);
+    check(o.find("string(MD5)") == string::npos, "string(MD5) is no longer counted as not understood", o);
+}
+
+static void testConfigureFileCustomCommand() {
+    printf("test: configure_file, add_custom_command(OUTPUT), find_library\n");
+    fresh("cfgcc");
+    fs::create_directories(gRoot / "libs"); write("libs/libfoo.a", "x");
+    write("cfg.h.in", "#define NAME \"@NAME@\"\n#define VER \"${VER}\"\n#cmakedefine ON_FLAG\n#cmakedefine OFF_FLAG\n#cmakedefine VAL @VAL@\n#cmakedefine01 ONE01\n#cmakedefine01 ZERO01\n#define KEEP ${NOT_REPLACED_WITH_ONLY}\n");
+    write("in.txt", "five\n");
+    write("m.cpp", "#include \"cfg.h\"\n#include <cstring>\nint made();\nint main(){\n#ifdef OFF_FLAG\nreturn 9;\n#endif\n#ifndef ON_FLAG\nreturn 8;\n#endif\nreturn made()==5 && !strcmp(NAME,\"nm\") && !strcmp(VER,\"1.2\") && VAL==3 && ONE01==1 && ZERO01==0 ? 0 : 1;}\n");
+    write("CMakeLists.txt",
+        "project(C CXX)\nset(NAME nm)\nset(VER 1.2)\nset(VAL 3)\nset(ON_FLAG ON)\nset(OFF_FLAG OFF)\nset(ONE01 ON)\n"
+        "configure_file(cfg.h.in ${CMAKE_CURRENT_BINARY_DIR}/gen/cfg.h)\n"
+        "add_custom_command(OUTPUT ${CMAKE_CURRENT_BINARY_DIR}/made.cpp COMMAND sh -c \"printf 'int made(){return 5;}\\\\n' > ${CMAKE_CURRENT_BINARY_DIR}/made.cpp\" DEPENDS ${CMAKE_CURRENT_SOURCE_DIR}/in.txt COMMENT \"make it\")\n"
+        "find_library(FOO_LIB NAMES foo PATHS ${CMAKE_CURRENT_SOURCE_DIR}/libs NO_DEFAULT_PATH)\n"
+        "find_library(NOPE_LIB NAMES nopexyz NO_DEFAULT_PATH PATHS ${CMAKE_CURRENT_SOURCE_DIR}/libs)\n"
+        "file(WRITE ${CMAKE_CURRENT_BINARY_DIR}/found.txt \"${FOO_LIB}|${NOPE_LIB}\")\n"
+        "add_executable(t m.cpp ${CMAKE_CURRENT_BINARY_DIR}/made.cpp)\ntarget_include_directories(t PRIVATE ${CMAKE_CURRENT_BINARY_DIR}/gen)\n");
+    int rc; string o = sh("cmake . -o c.okay --audit", &rc); string man = readFile(gRoot / "c.okay");
+    string cfg = readFile(gRoot / "c.okay.gen/gen/cfg.h");
+    check(cfg.find("#define NAME \"nm\"") != string::npos && cfg.find("#define VER \"1.2\"") != string::npos, "@VAR@ and ${VAR} are replaced", cfg);
+    check(cfg.find("#define ON_FLAG\n") != string::npos && cfg.find("/* #undef OFF_FLAG */") != string::npos, "#cmakedefine defines or undefines", cfg);
+    check(cfg.find("#define VAL 3") != string::npos, "#cmakedefine VAL @VAL@ keeps the value", cfg);
+    check(cfg.find("#define ONE01 1") != string::npos && cfg.find("#define ZERO01 0") != string::npos, "#cmakedefine01 writes 1 or 0", cfg);
+    check(readFile(gRoot / "c.okay.gen/found.txt") == (gRoot / "libs/libfoo.a").generic_string() + "|NOPE_LIB-NOTFOUND", "find_library finds libfoo.a and reports NOTFOUND otherwise", readFile(gRoot / "c.okay.gen/found.txt"));
+    check(man.find("made.cpp") != string::npos && man.find("target t exe") != string::npos, "the target with a custom-command source is written", man);
+    check(o.find("add_custom_command") == string::npos && o.find("configure_file") == string::npos, "neither command is counted as not understood", o);
+    o = sh("-f c.okay --build-dir cb t", &rc);
+    check(rc == 0, "builds", o);
+    int run = system(("'" + (gRoot / "cb/build/t").string() + "'").c_str());
+    check(run == 0, "the program runs: configured header and generated source are right");
+    o = sh("-f c.okay --build-dir cb t", &rc);
+    check(rc == 0 && ran(o) == 0, "second run does nothing", o);
+    sleepMs(); sleepMs(); write("in.txt", "six\n");
+    o = sh("-f c.okay --build-dir cb --explain t", &rc);
+    check(rc == 0 && ran(o) >= 1, "a changed DEPENDS file reruns the command", o);
+}
+
 static void testSharedObjectLibs() {
     printf("test: shared and object libraries (manifest and from CMake)\n");
     fresh("sharedobj");
@@ -1817,7 +1871,7 @@ int main(int argc, char** argv) {
     if (argc < 2) { puts("usage: test_okaybuild PATH_TO_okay-build"); return 2; }
     gTool = "'" + fs::absolute(argv[1]).string() + "'";
     if (const char* only = getenv("OKB_ONLY")) { // OKB_ONLY=cmake runs just the CMake reader, ctest and library tests (quick while working on them)
-        if (string(only) == "cmake") { testCmakeReader(); testCmakeSyntax(); testGeneratedSource(); testSharedObjectLibs(); testFetchAndSha256(); testOnlyAffectedTestsRebuild(); printf("okaybuild tests (cmake only): %d checks passed, %d failed\n", gPass, gFail); return gFail ? 1 : 0; }
+        if (string(only) == "cmake") { testCmakeReader(); testCmakeSyntax(); testGeneratedSource(); testMd5(); testConfigureFileCustomCommand(); testSharedObjectLibs(); testFetchAndSha256(); testOnlyAffectedTestsRebuild(); printf("okaybuild tests (cmake only): %d checks passed, %d failed\n", gPass, gFail); return gFail ? 1 : 0; }
     }
     testBasicAndNoop(); testHeaderTouch(); testDefine(); testMissingHeader(); testCycle(); testLinkOrder();
     testParallelDeterministic(); testCompdbCleanDry(); testManifestErrors(); testMingwCompdb(); testMingwSlice(); testStatShortcut(); testFreshNoopTrust(); testSpacesBuildDirRsp(); testRawActions(); testHashInCommandAndPath(); testImportGenerated();
@@ -1838,6 +1892,8 @@ int main(int argc, char** argv) {
     testCmakeReader();
     testCmakeSyntax();
     testGeneratedSource();
+    testMd5();
+    testConfigureFileCustomCommand();
     testSharedObjectLibs();
     testFetchAndSha256();
     testOnlyAffectedTestsRebuild();

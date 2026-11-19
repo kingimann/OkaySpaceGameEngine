@@ -9,6 +9,8 @@
 #pragma GCC diagnostic ignored "-Wmisleading-indentation"
 #endif
 #include <algorithm>
+#include <cmath>
+#include <cstdint>
 #include <cstdio>
 #include <cstdlib>
 #include <filesystem>
@@ -34,6 +36,33 @@
 namespace cmr {
 using std::string; using std::vector;
 namespace fs = std::filesystem;
+
+// MD5 (RFC 1321), written from the RFC's description: pad to 56 mod 64 bytes, append the bit length, run 64 steps per 64-byte block
+// over four 32-bit words. The step constants are floor(2^32 * |sin(i+1)|), worked out here instead of typed in.
+static inline string md5Hex(const string& msg) {
+    static const int shifts[16] = {7, 12, 17, 22, 5, 9, 14, 20, 4, 11, 16, 23, 6, 10, 15, 21}; // four rounds, four shifts each, repeated
+    uint32_t k[64]; for (int i = 0; i < 64; ++i) k[i] = (uint32_t)(long long)(4294967296.0 * std::fabs(std::sin((double)(i + 1))));
+    uint32_t a0 = 0x67452301u, b0 = 0xefcdab89u, c0 = 0x98badcfeu, d0 = 0x10325476u;
+    string m = msg; m += (char)0x80; while (m.size() % 64 != 56) m += (char)0;
+    uint64_t bits = (uint64_t)msg.size() * 8; for (int i = 0; i < 8; ++i) m += (char)((bits >> (8 * i)) & 0xff);
+    for (size_t off = 0; off < m.size(); off += 64) {
+        uint32_t w[16]; for (int i = 0; i < 16; ++i) { w[i] = 0; for (int j = 3; j >= 0; --j) w[i] = (w[i] << 8) | (unsigned char)m[off + 4 * i + j]; }
+        uint32_t a = a0, b = b0, c = c0, d = d0;
+        for (int i = 0; i < 64; ++i) {
+            uint32_t f; int g; int round = i / 16;
+            if (round == 0) { f = (b & c) | (~b & d); g = i; }
+            else if (round == 1) { f = (d & b) | (~d & c); g = (5 * i + 1) % 16; }
+            else if (round == 2) { f = b ^ c ^ d; g = (3 * i + 5) % 16; }
+            else { f = c ^ (b | ~d); g = (7 * i) % 16; }
+            uint32_t t = a + f + k[i] + w[g]; int sh = shifts[round * 4 + i % 4];
+            a = d; d = c; c = b; b = b + ((t << sh) | (t >> (32 - sh)));
+        }
+        a0 += a; b0 += b; c0 += c; d0 += d;
+    }
+    string out; char buf[3]; uint32_t parts[4] = {a0, b0, c0, d0};
+    for (uint32_t v : parts) for (int j = 0; j < 4; ++j) { snprintf(buf, sizeof buf, "%02x", (v >> (8 * j)) & 0xff); out += buf; }
+    return out;
+}
 
 struct Arg { string text; bool quoted = false, bracket = false; };
 struct Cmd { string name; vector<Arg> args; int line = 0; string file; };
@@ -155,6 +184,8 @@ struct Interp {
     std::map<string, string> vars, cache; std::set<string> cacheForced;
     std::map<string, Target> targets; vector<string> order; // creation order
     vector<TestDef> tests;
+    struct Custom { vector<string> outputs, inputs; vector<vector<string>> commands; string workDir, comment; };
+    vector<Custom> customs; std::set<string> customOuts; // add_custom_command(OUTPUT ...): written as raw `action` blocks
     std::map<string, string> genFiles; // files the CMake files write into the build tree at configure time (file(WRITE/APPEND), copy_if_different): {bin}/... -> text
     std::map<string, Func> funcs;
     struct FetchInfo { string git, tag, url, sha256; };
@@ -358,6 +389,7 @@ struct Interp {
     void doSet(const Cmd& c);
     void doList(const vector<string>& a);
     void doString(const vector<string>& a);
+    void doConfigureFile(const vector<string>& a); void doCustomCommand(const vector<string>& a);
     void doFile(const vector<string>& a);
     void doTarget(const Cmd& c, const vector<string>& a);
     void doFind(const string& name, const vector<string>& a);
@@ -544,9 +576,68 @@ inline void Interp::doString(const vector<string>& a) {
                 vars[a[3]] = joinList(found); return;
             }
         }
-        if (op == "MD5" || op == "SHA1" || op == "SHA256") { vars[a[2]] = "0"; tally.unknown["string(" + op + ")"]++; return; }
+        if (op == "MD5" && a.size() >= 3) { string in; for (size_t k = 2; k < a.size(); ++k) in += a[k]; vars[a[1]] = md5Hex(in); return; }
+        if (op == "MD5" || op == "SHA1" || op == "SHA256") { if (a.size() >= 2) vars[a[1]] = "0"; tally.unknown["string(" + op + ")"]++; return; }
     } catch (const std::regex_error&) { tally.unknown["string(regex)"]++; return; }
     tally.unknown["string(" + op + ")"]++;
+}
+
+// configure_file(IN OUT [COPYONLY] [@ONLY]): @VAR@ always, ${VAR} unless @ONLY, and the #cmakedefine / #cmakedefine01 lines.
+// Only an OUTPUT inside the build tree is kept (a manifest `genfile`); one in the source tree is counted as not understood.
+inline void Interp::doConfigureFile(const vector<string>& a) {
+    if (a.size() < 2) return;
+    bool copyOnly = false, atOnly = false; for (size_t k = 2; k < a.size(); ++k) { if (a[k] == "COPYONLY") copyOnly = true; else if (a[k] == "@ONLY") atOnly = true; }
+    string in = abs(a[0], curSrc), out = abs(a[1], curBin);
+    std::error_code ec; if (!a[1].empty() && (a[1].back() == '/' || fs::is_directory(out, ec))) out += "/" + fs::path(in).filename().string();
+    if (out.compare(0, 5, "{bin}") != 0) { tally.unknown["configure_file(output in the source tree)"]++; return; }
+    std::ifstream f(in, std::ios::binary); if (!f) throw ReadError{"configure_file: cannot read " + in};
+    string text((std::istreambuf_iterator<char>(f)), {});
+    if (copyOnly) { genFiles[out] = text; return; }
+    auto subst = [&](const string& line) { // @VAR@ then ${VAR}
+        string r; for (size_t i = 0; i < line.size(); ++i) {
+            if (line[i] == '@') { size_t e = line.find('@', i + 1); if (e != string::npos && e > i + 1) { string nm = line.substr(i + 1, e - i - 1); bool ok = true; for (char ch : nm) if (!isalnum((unsigned char)ch) && ch != '_' && ch != '.' && ch != '-') ok = false; if (ok) { r += get(nm); i = e; continue; } } }
+            r += line[i];
+        }
+        return atOnly ? r : expand(r);
+    };
+    string res; std::stringstream ss(text); string line; bool last = !text.empty() && text.back() == '\n';
+    vector<string> lines; while (std::getline(ss, line)) lines.push_back(line);
+    for (size_t li = 0; li < lines.size(); ++li) {
+        string& ln = lines[li]; string o;
+        size_t ws = ln.find_first_not_of(" \t");
+        auto starts = [&](const char* w) { return ws != string::npos && ln.compare(ws, strlen(w), w) == 0 && ln.size() > ws + strlen(w) && (ln[ws + strlen(w)] == ' ' || ln[ws + strlen(w)] == '\t'); };
+        if (starts("#cmakedefine01")) { size_t b = ln.find_first_not_of(" \t", ws + 14); string nm = ln.substr(b == string::npos ? ln.size() : b); nm = nm.substr(0, nm.find_first_of(" \t")); o = "#define " + nm + (isTrue(get(nm)) ? " 1" : " 0"); }
+        else if (starts("#cmakedefine")) {
+            size_t b = ln.find_first_not_of(" \t", ws + 12); string rest = ln.substr(b == string::npos ? ln.size() : b); string nm = rest.substr(0, rest.find_first_of(" \t")); string val = rest.size() > nm.size() ? rest.substr(nm.size()) : "";
+            o = isTrue(get(nm)) ? "#define " + nm + subst(val) : "/* #undef " + nm + " */";
+        } else o = subst(ln);
+        res += o; if (li + 1 < lines.size() || last) res += "\n";
+    }
+    genFiles[out] = res;
+}
+
+// add_custom_command(OUTPUT out... COMMAND c args... [COMMAND ...] [DEPENDS d...] [WORKING_DIRECTORY dir]): one raw action in the manifest.
+// The TARGET form (PRE_BUILD/POST_BUILD) and a command that names one of our own targets are counted as not understood.
+inline void Interp::doCustomCommand(const vector<string>& a) {
+    Custom c; int mode = 0; bool bad = false;
+    if (!a.empty() && a[0] == "TARGET") { tally.unknown["add_custom_command(TARGET)"]++; return; }
+    for (size_t k = 0; k < a.size(); ++k) {
+        const string& w = a[k];
+        if (w == "OUTPUT") { mode = 1; continue; } if (w == "COMMAND") { mode = 2; c.commands.emplace_back(); continue; }
+        if (w == "DEPENDS" || w == "MAIN_DEPENDENCY") { mode = 3; continue; } if (w == "WORKING_DIRECTORY") { mode = 4; continue; }
+        if (w == "COMMENT") { mode = 5; continue; }
+        if (w == "BYPRODUCTS" || w == "DEPFILE" || w == "IMPLICIT_DEPENDS") { mode = 0; if (w == "DEPFILE") bad = true; continue; }
+        if (w == "VERBATIM" || w == "USES_TERMINAL" || w == "COMMAND_EXPAND_LISTS" || w == "APPEND" || w == "DEPENDS_EXPLICIT_ONLY") { mode = 0; if (w == "APPEND") bad = true; continue; }
+        if (mode == 1) c.outputs.push_back(abs(w, curBin));
+        else if (mode == 2) { if (w.find("$<") != string::npos) bad = true; c.commands.back().push_back(w); }
+        else if (mode == 3) { std::error_code ec; string p = abs(w, curSrc); if (fs::exists(p, ec) || p.compare(0, 5, "{bin}") == 0 || w.find('/') != string::npos) c.inputs.push_back(p == abs(w, curSrc) && !fs::exists(p, ec) && p.compare(0, 5, "{bin}") != 0 ? abs(w, curBin) : p); else if (targets.count(w)) bad = true; }
+        else if (mode == 4) c.workDir = abs(w, curBin); else if (mode == 5 && c.comment.empty()) c.comment = w;
+    }
+    for (auto& cm : c.commands) if (!cm.empty() && targets.count(cm[0])) bad = true; // a command that runs a program we build
+    if (bad || c.outputs.empty() || c.commands.empty()) { tally.unknown["add_custom_command"]++; return; }
+    if (c.workDir.empty()) c.workDir = curBin;
+    for (auto& o : c.outputs) customOuts.insert(o);
+    customs.push_back(c);
 }
 
 inline void Interp::doFile(const vector<string>& a) {
@@ -701,8 +792,26 @@ inline void Interp::builtin(const Cmd& c) {
         for (size_t k = 1; k + 1 < a.size(); ++k) if (a[k] == "VERSION") { vars["PROJECT_VERSION"] = a[k + 1]; vars[a[0] + "_VERSION"] = a[k + 1]; }
         vars["PROJECT_SOURCE_DIR"] = curSrc; vars["PROJECT_BINARY_DIR"] = curBin; return;
     }
-    if (n == "cmake_minimum_required" || n == "cmake_policy" || n == "enable_language" || n == "mark_as_advanced" || n == "configure_file" || n == "add_custom_target" || n == "add_custom_command" || n == "install" || n == "add_dependencies" || n == "source_group" || n == "include_guard" || n == "math") {
-        if (n == "configure_file" || n == "add_custom_target" || n == "add_custom_command" || n == "install" || n == "add_dependencies") tally.unknown[n]++;
+    if (n == "configure_file") { doConfigureFile(a); return; }
+    if (n == "add_custom_command") { doCustomCommand(a); return; }
+    if (n == "find_library") {
+        if (a.empty()) return; const string& var = a[0]; vector<string> names, paths; int mode = 0; bool noDefault = false;
+        for (size_t k = 1; k < a.size(); ++k) {
+            if (a[k] == "NAMES") { mode = 1; continue; } if (a[k] == "PATHS" || a[k] == "HINTS") { mode = 2; continue; }
+            if (a[k] == "PATH_SUFFIXES" || a[k] == "DOC" || a[k] == "NAMES_PER_DIR") { mode = 3; continue; }
+            if (a[k] == "NO_DEFAULT_PATH") { noDefault = true; mode = 0; continue; }
+            if (a[k] == "REQUIRED" || a[k] == "NO_CACHE" || a[k] == "QUIET") { mode = 0; continue; }
+            if (mode == 1 || (mode == 0 && names.empty())) names.push_back(a[k]); else if (mode == 2) paths.push_back(abs(a[k], curSrc));
+        }
+        if (!noDefault) for (const char* d : {"/usr/lib", "/usr/lib64", "/usr/local/lib", "/usr/lib/x86_64-linux-gnu", "/lib", "/lib/x86_64-linux-gnu"}) paths.push_back(d);
+        for (auto& d : paths) for (auto& nm : names) for (const char* pre : {"lib", ""}) for (const char* ext : {".so", ".a", ""}) {
+            if (string(pre).empty() && string(ext).empty() && nm.find('.') == string::npos) continue; // a bare name is not a library file
+            std::error_code ec; string cand = d + "/" + pre + nm + ext; if (fs::is_regular_file(cand, ec) || fs::is_symlink(cand, ec)) { cache[var] = cand; return; }
+        }
+        cache[var] = var + "-NOTFOUND"; return;
+    }
+    if (n == "cmake_minimum_required" || n == "cmake_policy" || n == "enable_language" || n == "mark_as_advanced" || n == "add_custom_target" || n == "install" || n == "add_dependencies" || n == "source_group" || n == "include_guard" || n == "math") {
+        if (n == "add_custom_target" || n == "install" || n == "add_dependencies") tally.unknown[n]++;
         if (n == "add_custom_target" && !a.empty()) { Target t; t.name = a[0]; t.kind = "custom"; t.skipReason = "add_custom_target is not expressed"; targets[t.name] = t; }
         return;
     }
@@ -915,7 +1024,7 @@ static string emitManifest(Interp& in, Report& rep) {
         if (t.skipReason.empty()) {
             if (t.sources.empty()) t.skipReason = "no sources";
             for (auto& s : t.sources) {
-                if (s.compare(0, 5, "{bin}") == 0) { if (!in.genFiles.count(s)) { t.skipReason = "generated source " + s; break; } continue; }
+                if (s.compare(0, 5, "{bin}") == 0) { if (!in.genFiles.count(s) && !in.customOuts.count(s)) { t.skipReason = "generated source " + s; break; } continue; }
                 std::error_code ec; bool willFetch = false; for (auto& fu : in.fetchUsed) if (s.rfind(root + "/_deps/" + fu + "-src/", 0) == 0) willFetch = true;
                 if (!willFetch && !fs::exists(s, ec)) { t.skipReason = s.compare(0, 18, "/okay-not-fetched/") == 0 ? "needs a download: " + s.substr(18, s.find('/', 18) - 18) + " (give --fetched NAME=DIR)" : "missing source " + rootRel(s, root); break; }
             }
@@ -1020,6 +1129,17 @@ static string emitManifest(Interp& in, Report& rep) {
             out << "\n";
         }
         if (Interp::isTrue(pr("RUN_SERIAL")) && !pr("RUN_SERIAL").empty()) out << "  serial = on\n";
+        out << "end\n";
+    }
+    for (auto& c : in.customs) { // custom commands: one raw action each; {bin} is resolved when the manifest is planned
+        auto sq = [](const string& w) { string r = "'"; for (char ch : w) { if (ch == '\'') r += "'\\''"; else r += ch; } return r + "'"; };
+        string cmd = "mkdir -p " + sq(c.workDir) + " && cd " + sq(c.workDir);
+        for (auto& cm : c.commands) { cmd += " &&"; for (auto& w : cm) cmd += " " + sq(w); }
+        out << "action\n";
+        out << "  cmd = " << cmd << "\n  outputs =";
+        for (auto& o : c.outputs) out << " " << qw(o);
+        out << "\n";
+        if (!c.inputs.empty()) { out << "  inputs ="; for (auto& i : c.inputs) out << " " << qw(i); out << "\n"; }
         out << "end\n";
     }
     for (auto& g : in.genFiles) { // generated files: saved next to the manifest, copied into the build tree when the manifest is built

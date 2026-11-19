@@ -4521,3 +4521,8 @@ foreach(_t IN ITEMS mip atlas convert bc dds_stream)
     add_test(NAME tex_${_t} COMMAND test_tex_${_t} WORKING_DIRECTORY ${CMAKE_CURRENT_BINARY_DIR})
     set_tests_properties(tex_${_t} PROPERTIES TIMEOUT 240)
 endforeach()
+
+# Inspector component fold state (editor/ComponentFoldModel.hpp): per component TYPE, survives selection / Play / undo / reload, saved with the preferences.
+add_executable(test_component_fold test_component_fold.cpp)
+target_include_directories(test_component_fold PRIVATE ${PROJECT_SOURCE_DIR}/editor)
+add_test(NAME component_fold COMMAND test_component_fold)

@@ -34,13 +34,22 @@ Escape hatches: **Get Property**, **Set Property**, **Call Method** (`Type.Metho
 
 ## Builtin parity
 
-Every text-script builtin whose name is a single token (letters, digits, `_`, `.`) is the node `Fn.<name>`. It runs that builtin on this object. Wire only the arguments it takes. 1517 builtins are nodes.
+Every text-script builtin whose name is a single token (letters, digits, `_`, `.`) is the node `Fn.<name>`. It runs that builtin on this object. Wire only the arguments it takes. 1526 builtins are nodes.
 
 | Builtin | Node |
 | --- | --- |
 | `AddComponent` | `Fn.AddComponent` |
 | `Application.Quit` | `Fn.Application.Quit` |
 | `ApplyUITheme` | `Fn.ApplyUITheme` |
+| `Camera.AddToGroup` | `Fn.Camera.AddToGroup` |
+| `Camera.BlendTo` | `Fn.Camera.BlendTo` |
+| `Camera.FovKick` | `Fn.Camera.FovKick` |
+| `Camera.HitPulse` | `Fn.Camera.HitPulse` |
+| `Camera.RemoveFromGroup` | `Fn.Camera.RemoveFromGroup` |
+| `Camera.SetFovOffset` | `Fn.Camera.SetFovOffset` |
+| `Camera.SetHandheld` | `Fn.Camera.SetHandheld` |
+| `Camera.SetTarget` | `Fn.Camera.SetTarget` |
+| `Camera.Shake` | `Fn.Camera.Shake` |
 | `CancelInvoke` | `Fn.CancelInvoke` |
 | `Color` | `Fn.Color` |
 | `Color.Lerp` | `Fn.Color.Lerp` |

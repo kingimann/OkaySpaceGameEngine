@@ -4349,4 +4349,5 @@ add_test(NAME camera_math COMMAND test_camera_math)
 # Camera rigs over simulated frames (docs/camera_upgrade.md): follow, zones, look ahead, groups, collision, blends, effects, 2D, saves.
 add_executable(test_camera_rig test_camera_rig.cpp)
 target_link_libraries(test_camera_rig PRIVATE okay::engine)
+target_compile_definitions(test_camera_rig PRIVATE OKAY_SOURCE_DIR="${PROJECT_SOURCE_DIR}")
 add_test(NAME camera_rig COMMAND test_camera_rig)

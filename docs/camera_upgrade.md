@@ -86,12 +86,25 @@ See `docs/try_it.md`, entry `camera-rigs`, and the example scenes `examples/came
 
 ## Tests
 
-RESULTS_PLACEHOLDER
+Run on Linux, headless, a Release build with `-O0`, on the branch head. All pass.
+
+| Test | What | Result |
+|---|---|---|
+| `camera_math` (new) | spring (30/60/144 fps same place, no overshoot, no NaN, a five second hitch), noise, shake presets (bounded, die away, same at any rate), blend curves, zones, look ahead (also under 50 Hz stepping), groups, confine, rooms, pixel snap, fade tracker | 4043 checks, 0 failures |
+| `camera_rig` (new) | a shot faces its target; spring follow and 50 Hz stepped target at 30/60/144 fps; dead and soft zone; look ahead; group; wall collision (pull in, glide out, triggers and layers ignored, same at every rate); see-through fade; blends (cut, linear, ease, custom, interrupted, per-shot, forced); effects (presets, reduce motion, FOV kick, sprint FOV, hit flash); 2D zones, confine, rooms, pixel snap; NaN and zero or huge steps; save and load and old files; `ApplyStyle`; script builtins; the two example scenes played | 11768 checks, 0 failures |
+| `cinemachine`, `camera_cine`, `script_camera`, `scene_cameras`, `layers_tags_cameras`, `camera_stack` | the existing camera tests | pass |
+| `player`, `view_ground` | the third-person controller (uses the moved `SpringArm`) | pass |
+| `save_coverage`, `duplicate_components`, `property_registry` | every component saves, loads and is in the registry (now with `CameraRoom`, the rigs) | pass |
+| `vs_script_coverage` | every builtin has a visual-script node (the new `Camera.*` ones too; `docs/visual_script_coverage.md` and the coverage graph were regenerated) | pass |
+| `examples_work` | every example scene plays 60 frames cleanly, the two new ones included | 86 scenes, 0 failed |
+
+The editor (`editor/main.cpp`) was syntax-checked with the compiler (`-fsyntax-only`, no errors) but not linked or run.
+
 
 ## Unverified
 
 * Windows: nothing was run. The editor was not built or opened (Linux, no screen), so the menu entries, Inspector panels, gizmo and the
-  preview inset were compiled only if listed above and never looked at.
+  preview inset were syntax-checked only and never looked at.
 * GPU: nothing was drawn. The see-through fade assumes the renderers draw a mesh with alpha below 1 as transparent (the renderers' own code
   says so); it was checked on the number (the renderer's colour alpha), not on a picture.
 * Mouse look of the Orbit style and the keys of the example scene need a person at the keyboard.

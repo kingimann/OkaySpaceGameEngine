@@ -132,8 +132,8 @@ void Camera::KickFov(float degrees, float seconds) {
     if (scale <= 0.0f || !std::isfinite(degrees)) return;
     seconds = std::isfinite(seconds) ? std::max(0.05f, seconds) : 0.4f;
     // A kick adds speed, not position: the view widens smoothly (no jump) and peaks
-    // about a sixth of the way through `seconds`, then settles to under 5% by the end.
-    m_fovKickOmega = 6.0f / seconds;
+    // about a fifth of the way through `seconds`, then settles to under 10% by the end.
+    m_fovKickOmega = 5.0f / seconds;
     m_fovKickV += degrees * std::min(1.0f, scale) * m_fovKickOmega * 2.71828183f;
 }
 

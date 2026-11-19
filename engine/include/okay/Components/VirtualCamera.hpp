@@ -562,6 +562,7 @@ private:
     bool m_roomInit = false;
     int m_room = -1;
     cam::Box2 m_roomBox;
+    float m_roomV[4] = {0.0f, 0.0f, 0.0f, 0.0f};
 
     /// Smooth 1-D value noise in [-1,1] (interpolated hash). Good enough for shake.
     static float Noise(float t, float seed) {
@@ -592,12 +593,14 @@ inline bool VirtualCamera::RoomBox(Scene* s, const Vec3& p, float dt, Vec3& outM
     if (room < 0) return false;
     m_room = room;
     const cam::Box2& tgt = boxes[(std::size_t)room];
-    if (!m_roomInit) { m_roomBox = tgt; m_roomInit = true; }
+    if (!m_roomInit) { m_roomBox = tgt; m_roomInit = true; m_roomV[0] = m_roomV[1] = m_roomV[2] = m_roomV[3] = 0.0f; }
     else {
-        const float k = roomBlendTime > 1e-3f ? 3.0f / roomBlendTime : 0.0f;
-        const float e = EaseFactor(k, m_zoneDt);
-        m_roomBox.minX += (tgt.minX - m_roomBox.minX) * e; m_roomBox.maxX += (tgt.maxX - m_roomBox.maxX) * e;
-        m_roomBox.minY += (tgt.minY - m_roomBox.minY) * e; m_roomBox.maxY += (tgt.maxY - m_roomBox.maxY) * e;
+        // Each edge of the box glides with a critically damped spring: the slide starts and ends softly.
+        const float w = roomBlendTime > 1e-3f ? 6.0f / roomBlendTime : 0.0f;
+        cam::SpringStep(m_roomBox.minX, m_roomV[0], tgt.minX, w, m_zoneDt);
+        cam::SpringStep(m_roomBox.maxX, m_roomV[1], tgt.maxX, w, m_zoneDt);
+        cam::SpringStep(m_roomBox.minY, m_roomV[2], tgt.minY, w, m_zoneDt);
+        cam::SpringStep(m_roomBox.maxY, m_roomV[3], tgt.maxY, w, m_zoneDt);
     }
     (void)dt;
     outMin.x = m_roomBox.minX; outMin.y = m_roomBox.minY; outMax.x = m_roomBox.maxX; outMax.y = m_roomBox.maxY;

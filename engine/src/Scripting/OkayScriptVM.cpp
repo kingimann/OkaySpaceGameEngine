@@ -5077,8 +5077,10 @@ struct OkayScriptVM::Impl {
         auto liveVcam = [sceneOf]() -> VirtualCamera* {
             Scene* s = sceneOf();
             if (!s) return nullptr;
-            for (CinemachineBrain* br : s->FindObjectsOfType<CinemachineBrain>())
+            for (CinemachineBrain* br : s->FindObjectsOfType<CinemachineBrain>()) {
+                if (br->enabled && br->Forced()) return br->Forced();
                 if (br->enabled && br->LiveCamera()) return br->LiveCamera();
+            }
             for (VirtualCamera* v : s->FindObjectsOfType<VirtualCamera>())
                 if (v->enabled && v->gameObject && v->gameObject->active) return v;
             return nullptr;

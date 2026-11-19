@@ -10,6 +10,8 @@
 #include "okay/Net/NetOwnership.hpp"
 #include "okay/Math/Mathf.hpp"
 #include "okay/Components/VehicleTuning.hpp"
+#include "okay/Core/DrivingSettings.hpp"
+#include "okay/Components/ActionList.hpp"
 #include <cmath>
 #include <string>
 #include <unordered_set>
@@ -69,6 +71,7 @@ public:
     float maxTilt          = 16.0f;      // clamp body roll/pitch (degrees)
     float tiltSmooth       = 9.0f;       // how fast tilt eases toward target
 
+    bool  usePlayerSettings = true;      ///< open-world model: apply the player's Driving options (Prefs) when it starts
     bool  followCamera = false;          // chase the scene's main camera behind the car
     float camDistance  = 8.0f;
     float camHeight    = 3.5f;
@@ -334,6 +337,7 @@ private:
             Vec3 F = transform->Forward();
             m_yaw = std::atan2(F.x, F.z) * kDeg; m_init = true; m_boostLeft = 1.0f; m_rpm = idleRpm; m_view = camView;
             ResetRuntimeKeepView();
+            if (usePlayerSettings) ApplyPlayerSettings();
         }
         m_surfaceCheckT -= dt;
         auto* rb = gameObject ? gameObject->GetComponent<Rigidbody3D>() : nullptr;
@@ -416,7 +420,28 @@ private:
             m_kinematicVel = {m_vx, 0.0f, m_vz};
             transform->Translate(Vec3{m_vx, 0.0f, m_vz} * dt);
         }
+        if (!unmanned) PublishHud();
         if (followCamera && !unmanned && !m_seatCamera) UpdateOpenCamera(dt);
+    }
+    // Speedometer and gear for a HUD text: the UI kit's Text Bind with the format
+    // "{vehicle_speed|0} {vehicle_unit|km/h}  Gear {vehicle_gear|N}" shows them (no new component).
+    void PublishHud() {
+        const DrivingSettings d = DrivingSettings::Load();
+        ActionList::Vars()["vehicle_speed"] = std::floor(d.DisplaySpeed(m_speed) + 0.5f);
+        ActionList::Vars()["vehicle_rpm"] = std::floor(m_rpm);
+        ActionList::Vars()["vehicle_boost"] = std::floor(m_boostLeft * 100.0f);
+        const int g = Gear();
+        ActionList::StrVars()["vehicle_gear"] = g < 0 ? "R" : (std::fabs(m_speed) < 0.3f && g == 1 ? "N" : std::to_string(g));
+        ActionList::StrVars()["vehicle_unit"] = d.UnitName();
+    }
+    // The player's own driving options (Prefs "driving.*", see DrivingSettings.hpp). Only when the player saved something.
+    void ApplyPlayerSettings() {
+        const DrivingSettings d = DrivingSettings::Load();
+        if (!d.hasUserChoice) return;
+        steerSensitivity *= d.steerSensitivity;
+        if (d.invertSteer) invertSteer = !invertSteer;
+        if (d.cameraView >= 0) m_view = d.cameraView;
+        if (!d.assists) { abs = false; tractionControl = false; stabilityControl = 0.0f; steerAssist = false; counterSteerAssist = 0.0f; }
     }
     void ResetRuntimeKeepView() { m_gear = 1; m_shiftT = 0; }
     void UpdateGroundedOpen() {
@@ -565,9 +590,16 @@ private:
 
     // The camera of the open-world model: views, drift swing, look-ahead, speed FOV and distance, collision, shake.
     void UpdateOpenCamera(float dt) {
+        Scene* s0 = gameObject ? gameObject->scene() : nullptr;
+        if (s0 && s0->mainCamera) DriveCamera(s0->mainCamera, dt);
+    }
+public:
+    /// Move `cam` like the open-world chase camera (VehicleSeat calls this for a seated player, so the camera
+    /// glides from the on-foot view to the car view). Only while openWorld.
+    void DriveCamera(Camera* cam, float dt) {
         Scene* s = gameObject ? gameObject->scene() : nullptr;
-        if (!s || !s->mainCamera || !s->mainCamera->gameObject) return;
-        Transform* ct = s->mainCamera->gameObject->transform;
+        if (!s || !cam || !cam->gameObject) return;
+        Transform* ct = cam->gameObject->transform;
         if (!ct || ct == transform) return;
         const float yaw = m_yaw / kDeg;
         Vec3 fwd{std::sin(yaw), 0.0f, std::cos(yaw)};
@@ -607,10 +639,14 @@ private:
         m_shakeT += dt;
         ct->SetPosition(np);
         const Vec3 look = lookAt - np;
-        if (look.x * look.x + look.y * look.y + look.z * look.z > 1e-6f) ct->SetRotation(Quat::LookRotation(look * -1.0f));
+        if (look.x * look.x + look.y * look.y + look.z * look.z > 1e-6f) {
+            const Quat want = Quat::LookRotation(look * -1.0f);
+            ct->SetRotation(m_view >= 2 ? want : Quat::Slerp(ct->Rotation(), want, std::max(t, 0.05f) * 1.5f > 1.0f ? 1.0f : std::max(t, 0.05f) * 1.5f));
+        }
         const float fov = camFov + camSpeedFov * sp;
-        s->mainCamera->fieldOfView += (fov - s->mainCamera->fieldOfView) * (1.0f - std::exp(-5.0f * dt));
+        cam->fieldOfView += (fov - cam->fieldOfView) * (1.0f - std::exp(-5.0f * dt));
     }
+private:
 
     DriveInput m_in; bool m_scripted = false;
     bool  m_init = false, m_horn = false, m_lights = false, m_lookBack = false, m_reversing = false, m_drifting = false, m_flipped = false;

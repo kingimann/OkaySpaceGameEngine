@@ -301,6 +301,7 @@ private:
             return;
         }
         VehicleController* v = Vehicle();
+        if (v && v->openWorld && v->HasDriverSeat() && v->Driver() == m_who) { v->DriveCamera(m_cam, dt); return; }   // the open-world chase camera
         const float dist = v ? v->camDistance : 6.5f, high = v ? v->camHeight : 2.6f, lerp = v ? v->camLerp : 5.0f;
         const Vec3 carPos = car->Position();
         const Vec3 want = carPos - fp * dist + Vec3{0.0f, high, 0.0f};

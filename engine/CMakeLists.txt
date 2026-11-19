@@ -128,6 +128,11 @@ add_library(okay_engine
     src/Components/UIAnimation.cpp
     src/Scripting/OkayScriptVM.cpp
     src/Scripting/ScriptVM.cpp
+    src/Lua/LuaCompile.cpp
+    src/Lua/LuaVM.cpp
+    src/Lua/LuaLib.cpp
+    src/Lua/LuaInterp.cpp
+    src/Lua/LuaScriptVM.cpp
     src/Script/Lexer.cpp
     src/Script/Parser.cpp
     src/Script/Checker.cpp

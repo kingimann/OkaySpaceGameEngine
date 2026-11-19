@@ -10,7 +10,16 @@ namespace okay {
 ///
 /// OkayScript has no class or base type: the file's fields and functions ARE the
 /// component, and the engine calls Start and Update by name.
-inline const char* StarterScriptSource(const std::string& /*lang*/) {
+inline const char* StarterScriptSource(const std::string& lang) {
+    // Lua: the two global functions the engine calls, empty (okay::LuaScriptVM).
+    if (lang == "lua")
+        return "-- Runs once, before the first frame.\n"
+               "function Start()\n"
+               "end\n"
+               "\n"
+               "-- Runs every frame. dt is the seconds since the last frame.\n"
+               "function Update(dt)\n"
+               "end\n";
     return "// Runs once, before the first frame.\n"
            "void Start()\n"
            "{\n"

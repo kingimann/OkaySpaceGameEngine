@@ -94,6 +94,20 @@ bool ScriptComponent::LoadFile(const std::string& path, std::string* error) {
     return LoadSource(ss.str(), error);
 }
 
+bool ScriptComponent::Reload(std::string* error) {
+    if (m_path.empty()) return false;
+    if (m_vm && m_vm->SupportsHotReload()) {
+        std::ifstream f(m_path);
+        if (!f) { if (error) *error = "cannot open " + m_path; return false; }
+        std::stringstream ss;
+        ss << f.rdbuf();
+        if (!m_vm->HotReload(ss.str(), error)) return false;   // the old script keeps running
+        m_source = ss.str();
+        return true;
+    }
+    return LoadFile(m_path, error);
+}
+
 void ScriptComponent::Start() {
     if (!m_vm) return;
     if (!ScriptsRun(gameObject)) { m_startDeferred = true; return; }

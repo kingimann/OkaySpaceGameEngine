@@ -4137,10 +4137,10 @@ static bool AttachScriptAsset(okay::editor::EditorState& ed, okay::GameObject* g
     std::string ext;
     if (auto d = path.find_last_of('.'); d != std::string::npos) ext = path.substr(d);
     for (auto& c : ext) c = (char)std::tolower((unsigned char)c);
-    if (ext == ".okay") {
+    if (ext == ".okay" || ext == ".lua") {
         ed.PushUndo();
         // Always a new component (objects can hold several, even the same script twice).
-        auto* nsc = go->AddComponent<okay::ScriptComponent>("okayscript");
+        auto* nsc = go->AddComponent<okay::ScriptComponent>(ext == ".lua" ? "lua" : "okayscript");
         std::string err; nsc->LoadFile(path, &err); nsc->SetPath(path);
         if (!err.empty()) ConsoleLog("Script error in " + path + ": " + err, 2);
         SetCodeBuffer(nsc, nsc->Source());
@@ -15673,6 +15673,7 @@ static bool g_seSearchReq = false, g_seGotoReq = false, g_seFindReq = false, g_s
 static void ScriptEditorNewScriptPopup(EditorState& ed) {
     static char name[96] = "NewScript";
     static bool attach = false;
+    static int langIdx = 0;   // 0 = OkayScript (.okay), 1 = Lua (.lua)
     if (g_seNewReq) { g_seNewReq = false; std::snprintf(name, sizeof(name), "NewScript"); attach = false; ImGui::OpenPopup("New Script##se"); }
     if (!ImGui::BeginPopupModal("New Script##se", nullptr, ImGuiWindowFlags_AlwaysAutoResize)) return;
     namespace fs = std::filesystem;
@@ -15682,13 +15683,19 @@ static void ScriptEditorNewScriptPopup(EditorState& ed) {
         if (std::isalnum((unsigned char)*c) || *c == '_') stem += *c;
     if (stem.size() > 5 && stem.substr(stem.size() - 4) == "okay") stem.erase(stem.size() - 4);
     if (stem.empty() || std::isdigit((unsigned char)stem[0])) stem = "Script" + stem;
-    fs::path p = dir / (stem + ".okay");
+    const char* scriptExt = langIdx == 1 ? ".lua" : ".okay";
+    fs::path p = dir / (stem + scriptExt);
     ImGui::TextDisabled("A new script file you can attach to any object.");
     ImGui::Spacing();
+    {
+        static const char* const kLangNames[] = {"OkayScript (.okay)", "Lua (.lua)"};
+        ImGui::SetNextItemWidth(320);
+        ImGui::Combo("Language", &langIdx, kLangNames, 2);
+    }
     if (ImGui::IsWindowAppearing()) ImGui::SetKeyboardFocusHere();
     ImGui::SetNextItemWidth(320);
     bool enter = ImGui::InputText("Name", name, sizeof(name), ImGuiInputTextFlags_EnterReturnsTrue);
-    ImGui::TextDisabled("Assets/Scripts/%s.okay", stem.c_str());
+    ImGui::TextDisabled("Assets/Scripts/%s%s", stem.c_str(), scriptExt);
     std::error_code ec;
     const bool exists = fs::exists(p, ec);
     if (exists) ImGui::TextColored(ImVec4(0.95f, 0.75f, 0.35f, 1.0f), "That file exists - it will be opened.");
@@ -15700,7 +15707,10 @@ static void ScriptEditorNewScriptPopup(EditorState& ed) {
     if (ImGui::Button("Cancel", ImVec2(100, 0)) || ImGui::IsKeyPressed(ImGuiKey_Escape)) ImGui::CloseCurrentPopup();
     if (create) {
         fs::create_directories(dir, ec);
-        if (!exists) std::ofstream(p) << extide::StarterScriptNamed("okayscript", stem);
+        if (!exists) {
+            if (langIdx == 1) std::ofstream(p) << okay::StarterScriptSource("lua");
+            else std::ofstream(p) << extide::StarterScriptNamed("okayscript", stem);
+        }
         if (attach && sel) AttachScriptAsset(ed, sel, p.string());   // its tab opens with the selection
         else OpenScriptFileInEditor(p.string());
         ConsoleLog((exists ? "Opened " : "Created ") + p.string());

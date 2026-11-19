@@ -7,14 +7,17 @@
 using namespace okay;
 using namespace okay::testing;
 
-// The optional Lua and Mono C# backends were removed. An old scene that names one of
-// those languages must still load (no crash), keep its script text, and say clearly
-// that the language is no longer supported, instead of failing silently.
+// The optional third-party Mono C# backend was removed (and the third-party Lua with it; Lua is
+// back as our own, engine/src/Lua). An old scene that names a removed language must still load
+// (no crash), keep its script text, and say clearly that the language is no longer supported,
+// instead of failing silently. "lua" now works and is not a removed language.
 int main() {
     RUN_SUITE("script_removed_langs");
 
-    CHECK(AvailableScriptLanguages().size() == 1);
-    for (const char* lang : {"lua", "csharp", "cs"}) {
+    CHECK(AvailableScriptLanguages().size() == 2);   // okayscript, lua
+    CHECK(CreateScriptVM("lua") != nullptr);
+    CHECK(RemovedScriptLanguageMessage("lua").empty());
+    for (const char* lang : {"csharp", "cs"}) {
         CHECK(CreateScriptVM(lang) == nullptr);
         CHECK(RemovedScriptLanguageMessage(lang).find("no longer supported") != std::string::npos);
     }
@@ -24,7 +27,7 @@ int main() {
     std::vector<std::string> logged;
     Log::sink = [&](Log::Level l, const std::string& m) { if (l >= Log::Level::Error) logged.push_back(m); };
 
-    // Build a scene as an old version would have saved it: a Lua script and a C# script.
+    // Build a scene as an old version would have saved it: a Lua script (still supported) and a C# script.
     std::string text;
     {
         Scene scene("Old");
@@ -69,7 +72,7 @@ int main() {
 
     // The scene validator names the problem clearly.
     ValidationReport rep = SceneValidator::Validate(loaded);
-    CHECK(rep.CountCode("script.backend") == 2);
+    CHECK(rep.CountCode("script.backend") == 1);   // only the C# one
     bool clear = false;
     for (const auto& i : rep.issues)
         if (i.code == "script.backend" && i.message.find("no longer supported") != std::string::npos) clear = true;

@@ -8,8 +8,9 @@
 
 namespace okay {
 
-/// Runs a text script (OkayScript by default; the old Lua / C# Mono backends were
-/// removed, and a script naming them fails to load with a clear message) on a GameObject. The script's start() runs once and update(dt)
+/// Runs a text script (OkayScript by default, or our own Lua 5.4 with language "lua"; the old
+/// third-party Mono C# backend was removed, and a script naming it fails to load with a clear
+/// message) on a GameObject. The script's start() runs once and update(dt)
 /// runs every frame — a component written in a scripting language.
 class ScriptComponent : public Behaviour {
 public:
@@ -33,10 +34,10 @@ public:
     /// up changes). Empty for inline scripts.
     const std::string& Path() const { return m_path; }
     void SetPath(const std::string& path) { m_path = path; }
-    /// Re-read and recompile from the external file (no-op without a path).
-    bool Reload(std::string* error = nullptr) {
-        return m_path.empty() ? false : LoadFile(m_path, error);
-    }
+    /// Re-read and recompile from the external file (no-op without a path). A language that supports
+    /// hot reload (Lua) swaps the code and keeps the script's public fields; if the new file has an
+    /// error the old script keeps running and the error is returned. Other languages start fresh.
+    bool Reload(std::string* error = nullptr);
     IScriptVM* VM() const { return m_vm.get(); }
     ScriptHost& Host() { return m_host; }
 

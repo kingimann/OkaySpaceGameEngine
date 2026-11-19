@@ -105,9 +105,19 @@ public:
     /// The names of the script's own variables (globals, or a component class's
     /// instance fields), for save games. Empty when the backend can't list them.
     virtual std::vector<std::string> GlobalNames() const { return {}; }
+
+    /// Hot reload: replace the running script with `source`, keeping the values of its public fields.
+    /// On an error the old script keeps running and false is returned. Default: not supported (the
+    /// caller then loads a fresh VM).
+    virtual bool HotReload(const std::string& /*source*/, std::string* error) {
+        if (error) *error = "this script language does not support hot reload";
+        return false;
+    }
+    /// True when HotReload really swaps the code and keeps the fields (Lua).
+    virtual bool SupportsHotReload() const { return false; }
 };
 
-/// Names of the script backends in this build: "okayscript" (our own VM).
+/// Names of the script backends in this build: "okayscript" and "lua" (both our own).
 std::vector<std::string> AvailableScriptLanguages();
 
 /// Create a VM for the given language, or nullptr if unsupported in this build.

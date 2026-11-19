@@ -44,6 +44,7 @@ Pictures and screenshots are not stored in the repository (owner rule, 2026-11-1
 - [scripting.md](scripting.md): the OkayScript language guide.
 - [scripting_reference.md](scripting_reference.md): built-in functions, area by area (networking, Steam, JSON, collections, timers, physics events).
 - [visual_scripting.md](visual_scripting.md): the visual scripting text format (OkayVS) and Action Lists.
+- [scripting_migration.md](scripting_migration.md): the decision record for replacing OkayScript with Lua and C#: what exists, the plan, risks, our own Lua, the C# options and a compatibility table.
 - [engine_api.md](engine_api.md): the engine API reference.
 - [core_logging_profiling.md](core_logging_profiling.md): logging (categories, file sink, OKAY_LOG) and the frame profiler (trace and CSV export).
 - [debug_tools.md](debug_tools.md): profiling and debugging data layers (frame timeline, GPU and render stats, memory tracking, frame debugger, error console, stats overlay).

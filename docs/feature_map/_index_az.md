@@ -1459,6 +1459,7 @@ Word, then the number(s) to say. Back to the [overview](../FEATURE_MAP.md).
 - exit time (5.1)
 - Expand (12.1)
 - experience (11.9)
+- Explain and "Why isn't it working?" (14.1.14)
 - explicit API (38.4)
 - Explicit-coordinate widgets (40.1.1)
 - explosion (2.7, 6.8)

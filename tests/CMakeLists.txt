@@ -4485,7 +4485,7 @@ add_executable(test_vs_pan test_vs_pan.cpp)
 target_include_directories(test_vs_pan PRIVATE ${CMAKE_SOURCE_DIR}/editor)
 add_test(NAME vs_pan COMMAND test_vs_pan)
 # Easier canvas use: auto-connect, place beside, split a wire, delete and rejoin, start screen, hints, plain words.
-foreach(vs_usage_test vs_easy_ops vs_start vs_hints vs_plain_words vs_what_happened)
+foreach(vs_usage_test vs_easy_ops vs_start vs_hints vs_plain_words vs_what_happened vs_explain)
     if(EXISTS ${CMAKE_CURRENT_SOURCE_DIR}/test_${vs_usage_test}.cpp)
         add_executable(test_${vs_usage_test} test_${vs_usage_test}.cpp)
         target_include_directories(test_${vs_usage_test} PRIVATE ${CMAKE_SOURCE_DIR}/editor ${OKAY_VS_IMGUI_INCLUDE})

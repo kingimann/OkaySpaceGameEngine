@@ -23,12 +23,30 @@ inline std::string VsStartSentence(const char* blurb) {
     return s;
 }
 
-/// The cards, in the order the recipes are listed. At most `maxCards` (8 by default).
+/// The goals a beginner has in mind, in the order the start screen lists them: recipe name -> the goal in plain words.
+struct VsStartGoal { const char* recipe; const char* goal; };
+inline const VsStartGoal kVsStartGoals[] = {
+    {"Move with arrow keys", "Make it move when I press a key"},
+    {"Open a door when touched", "Do something when two things touch"},
+    {"Show the score", "Show a score"},
+    {"Play a sound on click", "Play a sound"},
+    {"Spawn a copy when I click", "Spawn something"},
+    {"Wait, then do something", "Wait then do something"},
+};
+
+/// The cards: the goals above first (titled with the goal), then the other recipes in listed order. At most `maxCards` (8).
 inline std::vector<VsStartCard> VsStartCards(int maxCards = 8) {
     std::vector<VsStartCard> out;
     const auto& r = VsRecipes();
+    std::vector<bool> used(r.size(), false);
+    for (const VsStartGoal& g : kVsStartGoals)
+        for (int i = 0; i < (int)r.size() && (int)out.size() < maxCards; ++i)
+            if (!used[(std::size_t)i] && std::string(r[(std::size_t)i].name) == g.recipe) {
+                used[(std::size_t)i] = true;
+                out.push_back({i, g.goal, VsStartSentence(r[(std::size_t)i].blurb)});
+            }
     for (int i = 0; i < (int)r.size() && (int)out.size() < maxCards; ++i)
-        out.push_back({i, r[(std::size_t)i].name, VsStartSentence(r[(std::size_t)i].blurb)});
+        if (!used[(std::size_t)i]) out.push_back({i, r[(std::size_t)i].name, VsStartSentence(r[(std::size_t)i].blurb)});
     return out;
 }
 

@@ -97,6 +97,15 @@ inline const std::vector<VsRecipe>& VsRecipes() {
          "Name the thing to run from Player.", "", 1, 0, "",
          Note("Runs away from the object named Player.") +
          "node 1 QbRunAwayFrom\npos 1 40 40\ndefault 1 0 Player\ndefault 1 1 3\n"},
+        {"Show the score", "The score is written on the screen all the time. Example: show Score: 3 in the corner.",
+         "The object needs a text (it is added for you).", "Text", 1, 0, "Score readout",
+         Note("Shows the score. Change the label on the block.") +
+         "node 1 QbShowScore\npos 1 40 40\ndefault 1 0 \"Score: \"\n"},
+        {"Wait, then do something", "Waits a moment after the game starts, then shows a message. Example: wait 2 seconds, then say Go!",
+         "The object needs a text (it is added for you).", "Text", 3, 2, "",
+         Note("Starts, waits, then shows a message. Change the seconds or the words on the blocks.") +
+         "node 1 QbWhenStartDo\npos 1 40 40\nnode 2 QbWaitThenDo\npos 2 300 40\ndefault 2 0 2\n"
+         "node 3 QbShowText\npos 3 560 40\ndefault 3 0 \"Go!\"\ndefault 3 1 2\nexec 1 0 2\nexec 2 0 3\n"},
         {"Bobbing coin", "The object bobs up and down. Example: a coin that bobs above the ground.",
          "", "", 1, 0, "",
          Note("Bobs up and down. Change the height or the speed on the block.") +

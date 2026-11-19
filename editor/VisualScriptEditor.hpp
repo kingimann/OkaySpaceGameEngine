@@ -2668,6 +2668,7 @@ struct VsEditState {
     // The graph checker's findings for the graph on screen (recomputed when it changes).
     std::string checkedText; std::vector<okay::vs::VsIssue> issues;
     bool   showIssues = false;
+    bool   showWhy = false;   // the "Why isn't it working?" panel (VisualScriptExplain.hpp)
     std::string refuseMsg; float refuseTime = 0.0f;   // why a wire was refused (shown a few seconds)
     // Text last saved (or the text a new graph was created with). Dirty is true
     // only while the graph differs from this, including after undo and redo.
@@ -3696,6 +3697,7 @@ inline bool VsDrawChoice(EditorState& ed, const VsEditGraph& g, std::string& val
 #include "VisualScriptPalette.hpp"
 #include "VisualScriptEasyOps.hpp"   // graph-in, graph-out rules for the canvas (needs the graph model above)
 #include "VisualScriptPlainWords.hpp" // every "something is wrong" sentence, in plain words
+#include "VisualScriptExplain.hpp"    // one-sentence summary of a graph, and the "Why isn't it working?" checklist
 #include "VisualScriptWhatHappened.hpp" // "Moved 3 steps right": the line under a block that ran
 #include "VisualScriptHints.hpp"      // the one-line next-step bar
 #include "VisualScriptStartDraw.hpp"  // the big recipe cards shown for an empty graph
@@ -5827,6 +5829,49 @@ inline void Draw(EditorState& ed, bool* open) {
         dl->PushClipRect(b0, b1, true);
         dl->AddText(ImVec2(b0.x + 30.0f, b0.y + 7.0f), IM_COL32(232, 240, 252, 255), msg);
         dl->PopClipRect();
+    }
+    // "Why isn't it working?": a plain summary of the graph and the usual reasons it does nothing, each with a Fix where one exists.
+    if (!st.missing && !g.nodes.empty()) {
+        const char* bl = st.showWhy ? "Close##vswhy" : "Why isn't it working?##vswhy";
+        const float bw = ImGui::CalcTextSize(bl, nullptr, true).x + 24.0f;
+        ImGui::SetCursorScreenPos(ImVec2(canvasMax.x - bw - 14.0f, canvasMax.y - 40.0f));
+        if (ImGui::Button(bl)) st.showWhy = !st.showWhy;
+        if (st.showWhy) {
+            VsWhyFacts wf;
+            wf.playing = ed.isPlaying();
+            wf.attached = false;
+            for (const auto& up : ed.scene().Objects())
+                for (auto* vc : up->GetComponents<VisualScriptComponent>())
+                    if (!g.path.empty() && vc->Path() == g.path) wf.attached = true;
+            if (live) for (const VsEditNode& n : g.nodes) if (live->BlockExecCount(n.id) > 0) wf.anyEventRan = true;
+            const std::vector<VsWhyItem> why = VsWhyNotWorking(g, wf);
+            const float w = std::min(520.0f, canvasMax.x - canvasMin.x - 36.0f);
+            ImGui::SetCursorScreenPos(ImVec2(canvasMax.x - w - 14.0f, canvasMax.y - 52.0f - std::min(300.0f, 120.0f + 40.0f * (float)why.size())));
+            ImGui::PushStyleColor(ImGuiCol_ChildBg, IM_COL32(28, 29, 34, 245));
+            ImGui::BeginChild("##vswhylist", ImVec2(w, std::min(300.0f, 120.0f + 40.0f * (float)why.size())), ImGuiChildFlags_Borders);
+            ImGui::TextDisabled("What this graph does");
+            ImGui::PushTextWrapPos(w - 16.0f);
+            ImGui::TextUnformatted(VsExplainGraph(g).c_str());
+            ImGui::PopTextWrapPos();
+            ImGui::Separator();
+            if (why.empty()) ImGui::TextUnformatted("Nothing obvious is wrong. Check the numbers on the blocks and that the thing it waits for really happens.");
+            for (std::size_t i = 0; i < why.size(); ++i) {
+                ImGui::PushID((int)i);
+                ImGui::PushTextWrapPos(w - 100.0f);
+                if (ImGui::Selectable(why[i].text.c_str(), false) && why[i].node >= 0) { st.sel = {why[i].node}; st.selected = why[i].node; st.focusNode = why[i].node; }
+                ImGui::PopTextWrapPos();
+                if (why[i].fix != VsWhyFix::None && why[i].fix != VsWhyFix::Attach) {
+                    ImGui::SameLine(w - 70.0f);
+                    if (ImGui::SmallButton(VsPlainFixIt())) { VsApplyWhyFix(g, why[i]); g.dirty = true; ImGui::PopID(); break; }
+                } else if (why[i].fix == VsWhyFix::Attach && ed.selected()) {
+                    ImGui::SameLine(w - 70.0f);
+                    if (ImGui::SmallButton("Attach")) { doAttach(ed.selected()); ImGui::PopID(); break; }
+                }
+                ImGui::PopID();
+            }
+            ImGui::EndChild();
+            ImGui::PopStyleColor();
+        }
     }
     // Why the last wire was refused. Wrapped, so the suggestion is not cut off.
     if (st.refuseTime > 0.0f && !st.refuseMsg.empty()) {

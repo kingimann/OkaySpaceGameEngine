@@ -139,6 +139,29 @@ int main() {
         scene.Update(0.5f);
         CHECK(vs->gameObject->transform->localPosition.x > 0.5f);
     }
+    {   // Show the score: the text follows the score variable.
+        Scene scene("Score");
+        auto* vs = Attach(scene, R("Show the score"));
+        scene.Start();
+        okay::vs::SceneVariables(&scene)["score"] = okay::vs::Value(3.0f);
+        scene.Update(0.1f);
+        auto* tr = vs->gameObject->GetComponent<TextRenderer>();
+        CHECK(tr != nullptr);
+        CHECK(tr && tr->text.find("3") != std::string::npos);
+        CHECK(tr && tr->text.find("Score") != std::string::npos);
+    }
+    {   // Wait, then do something: nothing at once, the message after the wait.
+        Scene scene("Wait");
+        auto* vs = Attach(scene, R("Wait, then do something"));
+        scene.Start();
+        auto* tr = vs->gameObject->GetComponent<TextRenderer>();
+        CHECK(tr != nullptr);
+        CHECK(tr && tr->text.empty());
+        scene.Update(1.0f);
+        CHECK(tr && tr->text.empty());
+        scene.Update(1.5f);
+        CHECK(tr && tr->text == "Go!");
+    }
     {   // Say hello: the text says Hello!
         Scene scene("Hello");
         auto* vs = Attach(scene, R("Say hello"));

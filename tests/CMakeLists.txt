@@ -3910,6 +3910,11 @@ function(okay_batchd_reader_test fmt src)
 endfunction()
 okay_batchd_reader_test(ac3d Ac3dReader.cpp)
 okay_batchd_reader_test(ogre OgreXmlReader.cpp)
+# OGRE skeleton (.skeleton.xml) and bone assignments in the same reader: skin, bind pose, animation, hostile skeletons, the file-name rule
+add_executable(test_ogre_skeleton test_ogre_skeleton.cpp ${PROJECT_SOURCE_DIR}/engine/src/Render/OgreXmlReader.cpp)
+target_include_directories(test_ogre_skeleton PRIVATE ${PROJECT_SOURCE_DIR}/engine/include ${PROJECT_SOURCE_DIR}/engine/src/Core)
+target_compile_definitions(test_ogre_skeleton PRIVATE OKAY_STANDALONE_TEST OKAY_SOURCE_DIR="${PROJECT_SOURCE_DIR}")
+add_test(NAME ogre_skeleton COMMAND test_ogre_skeleton WORKING_DIRECTORY ${CMAKE_CURRENT_BINARY_DIR})
 # the XGL reader unpacks ZGL with the engine's own inflate
 okay_batchd_reader_test(xgl XglReader.cpp ${PROJECT_SOURCE_DIR}/engine/src/Core/ImageDecode.cpp ${PROJECT_SOURCE_DIR}/engine/src/Core/ImageDecodeJpeg.cpp)
 okay_batchd_reader_test(irr IrrSceneReader.cpp)

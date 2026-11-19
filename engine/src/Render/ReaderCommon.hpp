@@ -150,8 +150,11 @@ struct BuildStats { int degenerate = 0; };
 // creaseDeg: faces meeting at a vertex share a smooth normal when their normals are within this angle. 0 = flat,
 // >= 180 = fully smooth. Positions are never merged here: two corners share an output vertex only when they use the
 // same position index, the same normal cluster and the same UV.
-inline bool BuildMesh(const Soup& s, double creaseDeg, Mesh& out, BuildStats* st, std::size_t maxOutVerts = 40000000) {
+// srcPos (optional): for each output vertex, the index into s.pos it was made from (readers with per-vertex data, such as skin
+// weights, use it to carry that data over to the welded or split output vertices).
+inline bool BuildMesh(const Soup& s, double creaseDeg, Mesh& out, BuildStats* st, std::size_t maxOutVerts = 40000000, std::vector<std::uint32_t>* srcPos = nullptr) {
     out = Mesh{};
+    if (srcPos) srcPos->clear();
     const std::size_t nt = s.Tris();
     const bool haveUv = s.cuv.size() == s.ci.size() && !s.cuv.empty();
     const bool haveN = s.cnrm.size() == s.ci.size() && !s.cnrm.empty();
@@ -244,6 +247,7 @@ inline bool BuildMesh(const Soup& s, double creaseDeg, Mesh& out, BuildStats* st
                 if (out.vertices.size() >= maxOutVerts) return false;
                 const int idx = got;
                 out.vertices.push_back(s.pos[s.ci[c]]);
+                if (srcPos) srcPos->push_back(s.ci[c]);
                 Vec3 n = haveN ? s.cnrm[c] : csum[cbase[s.ci[c]] + cluster[c]];
                 const double l = std::sqrt((double)n.x * n.x + (double)n.y * n.y + (double)n.z * n.z);
                 n = l > 1e-20 ? Vec3{(float)(n.x / l), (float)(n.y / l), (float)(n.z / l)} : fn[t];

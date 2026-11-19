@@ -245,10 +245,14 @@ bool ReadAc3dBuffer(const std::string& text, const std::string& baseDir, Importe
 /// OGRE XML mesh (.mesh.xml): one part per submesh (shared or own vertex buffers; position, normal and the first texture
 /// coordinate set; triangle lists, strips and fans as written), the submesh's material name, and from `materialScripts`
 /// (the text of .material files; ReadOgreXmlFile reads the ones next to the mesh) the first pass's diffuse, emissive and
-/// shininess and the first texture unit's texture. Skeletons, bone assignments, poses and morph animation, level of
-/// detail and vertex colours are not read (reported in `out.notes`). Coordinates, winding and texture coordinates as written.
+/// shininess and the first texture unit's texture. With `skeletonXml` (the text of the linked .skeleton.xml; ReadOgreXmlFile
+/// reads "<link>.xml" next to the mesh) the bones become nodes under the root, each part is skinned (four strongest bone
+/// weights per vertex from the submesh's or the mesh's <boneassignments>, inverse bind matrices from the bind pose) and each
+/// animation is a clip (keyframes are deltas from the bind pose, linear keys); a skeleton that cannot be read leaves the mesh
+/// rigid and says why in `out.notes`. Poses and morph animation, level of detail and vertex colours are not read (reported
+/// in `out.notes`). Coordinates, winding and texture coordinates as written.
 bool ReadOgreXmlBuffer(const std::string& text, const std::string& baseDir, ImportedModel& out, std::string* err = nullptr,
-                       const std::vector<std::string>* materialScripts = nullptr);
+                       const std::vector<std::string>* materialScripts = nullptr, const std::string* skeletonXml = nullptr);
 /// OGRE binary mesh (.mesh, little endian, serializer v1.8 and later): the same parts, materials and notes as the XML reader
 /// gives for the XML form of the same mesh (position, normal and the first texture coordinate set of 32-bit float vertex
 /// elements; triangle lists, strips and fans). Skeleton, bone assignments, levels of detail, edge lists, poses and animations

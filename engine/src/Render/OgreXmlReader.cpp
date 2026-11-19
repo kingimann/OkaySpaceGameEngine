@@ -6,6 +6,7 @@
 #include "BinReader.hpp"
 #include "ReaderCommon.hpp"
 #include "TextReaderUtil.hpp"
+#include "SceneRefPath.hpp"
 #include "XmlLite.hpp"
 #include "okay/Render/ModelData.hpp"
 #include <algorithm>
@@ -13,6 +14,7 @@
 #include <cstdint>
 #include <cstring>
 #include <filesystem>
+#include <functional>
 #include <map>
 #include <string>
 #include <system_error>
@@ -155,6 +157,227 @@ void ParseScript(const std::string& script, std::map<std::string, Mat>& mats) {
     }
 }
 
+// ---- the skeleton (.skeleton.xml) and the bone assignments of a mesh ----
+// Written from the public description of the OGRE skeleton XML (<skeleton> with <bones>, <bonehierarchy> and <animations>; a
+// bone has a position, a rotation as angle and axis and a scale; a keyframe holds a translate, a rotate and a scale that are
+// applied on top of the bone's bind pose: the translation is added to the bind position in the parent's space, the rotation is
+// multiplied on the right of the bind rotation, the scales multiply). No code from OGRE or any importer.
+constexpr std::size_t kMaxBones = 10000, kMaxAnims = 2000, kMaxKeys = 4000000;
+
+struct Infl { int idx[4] = {-1, -1, -1, -1}; float w[4] = {0, 0, 0, 0}; };
+using InflTab = std::unordered_map<std::uint32_t, Infl>;   // vertex index -> its four strongest influences (OGRE bone ids)
+
+struct Skin {
+    bool on = false;
+    std::vector<ImportedBone> bones;
+    std::unordered_map<int, int> boneOfId;   // OGRE bone id -> index into bones
+    bool needRoot = false;                   // some vertex has no usable weight: it is tied to a root bone (identity)
+    int boneCount = 0, clipCount = 0;
+    int unweighted = 0, badAssign = 0, droppedInfl = 0, rigidSubmeshes = 0;
+    int badParents = 0, loops = 0, dupNames = 0, singular = 0, unknownTracks = 0, badKeys = 0, emptyClips = 0;
+};
+
+Quat AxisAngleQ(double angle, double x, double y, double z) {
+    const double l = std::sqrt(x * x + y * y + z * z);
+    if (!(l > 1e-12) || !std::isfinite(l) || !std::isfinite(angle)) return Quat{0, 0, 0, 1};
+    const double h = angle * 0.5, sn = std::sin(h) / l;
+    return Quat{(float)(x * sn), (float)(y * sn), (float)(z * sn), (float)std::cos(h)};
+}
+
+// attribute as a number, `dflt` when it is missing; false when it is there and is not a number
+bool NumOr(const detail::xml::FlatDoc& d, int i, std::string_view key, double dflt, double& v) {
+    std::string_view s;
+    if (!d.Attr(i, key, s)) { v = dflt; return true; }
+    return detail::rc::ParseNumber(s.data(), s.data() + s.size(), v);
+}
+bool XYZ(const detail::xml::FlatDoc& d, int e, double dflt, double v[3]) {
+    return NumOr(d, e, "x", dflt, v[0]) && NumOr(d, e, "y", dflt, v[1]) && NumOr(d, e, "z", dflt, v[2]);
+}
+// <rotation angle="..."><axis x y z/></rotation> (also <rotate>): false only on a bad number
+bool ReadRot(const detail::xml::FlatDoc& d, int e, Quat& q) {
+    double a = 0, ax[3] = {0, 0, 1};
+    if (!NumOr(d, e, "angle", 0, a)) return false;
+    const int axn = d.First(e, "axis");
+    if (axn >= 0 && !XYZ(d, axn, 0, ax)) return false;
+    q = AxisAngleQ(a, ax[0], ax[1], ax[2]);
+    return true;
+}
+bool ReadScale(const detail::xml::FlatDoc& d, int e, Vec3& s) {
+    double v[3], f = 1;
+    if (!XYZ(d, e, 1, v) || !NumOr(d, e, "factor", 1, f)) return false;
+    s = Vec3{(float)(v[0] * f), (float)(v[1] * f), (float)(v[2] * f)};
+    return true;
+}
+
+struct SkelBone { int id = 0; std::string name; Vec3 t{0, 0, 0}; Quat r{0, 0, 0, 1}; Vec3 s{1, 1, 1}; };
+
+// Reads a skeleton into `out` (nodes after the root, clips) and `skin` (bones with inverse bind matrices). On false nothing was
+// added to `out` and `why` says what is wrong; the caller then imports the mesh rigid.
+bool LoadSkeleton(std::string text, ImportedModel& out, Skin& skin, std::string& why) {
+    bool converted = false;
+    if (!detail::txt::NormalizeEncoding(text, converted, why, kMaxFileBytes)) return false;
+    detail::xml::FlatDoc d;
+    std::string xerr;
+    if (!detail::xml::ParseFlat(text, d, xerr)) { why = xerr; return false; }
+    if (d.Name(0) != "skeleton") { why = "not an OGRE skeleton (the root element is <" + std::string(d.Name(0)) + ">, not <skeleton>)"; return false; }
+    const int bn = d.First(0, "bones");
+    if (bn < 0) { why = "the skeleton has no <bones>"; return false; }
+    std::vector<SkelBone> bones;
+    std::unordered_map<int, int> byId;
+    std::unordered_map<std::string, int> byName;
+    for (int e = d.Kid(bn); e >= 0; e = d.Next(e)) {
+        if (d.Name(e) != "bone") continue;
+        if (bones.size() >= kMaxBones) { why = "too many bones"; return false; }
+        SkelBone b;
+        double id = (double)bones.size();
+        if (!NumOr(d, e, "id", id, id) || id < 0 || id > 1e9 || id != std::floor(id)) { why = "bad bone id '" + d.AttrOr(e, "id", "") + "'"; return false; }
+        b.id = (int)id;
+        b.name = d.AttrOr(e, "name", "");
+        if (byId.count(b.id)) { why = "two bones have the id " + std::to_string(b.id); return false; }
+        double v[3];
+        const int pe = d.First(e, "position");
+        if (pe >= 0) { if (!XYZ(d, pe, 0, v)) { why = "bad bone position"; return false; } b.t = Vec3{(float)v[0], (float)v[1], (float)v[2]}; }
+        const int re = d.First(e, "rotation");
+        if (re >= 0 && !ReadRot(d, re, b.r)) { why = "bad bone rotation"; return false; }
+        const int se = d.First(e, "scale");
+        if (se >= 0 && !ReadScale(d, se, b.s)) { why = "bad bone scale"; return false; }
+        byId[b.id] = (int)bones.size();
+        if (!b.name.empty() && !byName.count(b.name)) byName[b.name] = (int)bones.size();
+        bones.push_back(std::move(b));
+    }
+    if (bones.empty()) { why = "the skeleton has no bones"; return false; }
+    const std::size_t nb = bones.size();
+    std::vector<int> par(nb, -1);
+    int badParents = 0;
+    const int bh = d.First(0, "bonehierarchy");
+    if (bh >= 0) for (int e = d.Kid(bh); e >= 0; e = d.Next(e)) {
+        if (d.Name(e) != "boneparent") continue;
+        auto c = byName.find(d.AttrOr(e, "bone", "")), p = byName.find(d.AttrOr(e, "parent", ""));
+        if (c == byName.end() || p == byName.end() || c->second == p->second) { ++badParents; continue; }
+        par[(std::size_t)c->second] = p->second;
+    }
+    std::vector<int> order;
+    const int loops = detail::txt::OrderParentsFirst(par, order);
+
+    // nodes (parent first) and global bind matrices
+    std::vector<ImportedNode> nodes;
+    std::vector<std::string> nodeName(nb);
+    std::vector<int> nodeOf(nb, 0);
+    std::vector<Mat4> abs(nb);
+    std::unordered_map<std::string, int> used;
+    used[out.nodes.empty() ? "OGRE" : out.nodes[0].name] = 1;
+    int dupNames = 0;
+    const int base = (int)out.nodes.size();
+    for (int bi : order) {
+        const SkelBone& b = bones[(std::size_t)bi];
+        std::string nm = b.name.empty() ? "bone" + std::to_string(b.id) : b.name;
+        int& u = used[nm];
+        if (u++) { ++dupNames; std::string cand; do { cand = nm + "_" + std::to_string(u++); } while (used.count(cand)); nm = cand; used[nm] = 1; }
+        nodeName[(std::size_t)bi] = nm;
+        ImportedNode nd;
+        nd.name = nm;
+        nd.parent = par[(std::size_t)bi] < 0 ? 0 : nodeOf[(std::size_t)par[(std::size_t)bi]];
+        nd.position = b.t; nd.rotation = b.r; nd.scale = b.s;
+        const Mat4 l = Mat4::TRS(b.t, b.r, b.s);
+        abs[(std::size_t)bi] = par[(std::size_t)bi] < 0 ? l : abs[(std::size_t)par[(std::size_t)bi]] * l;
+        nodeOf[(std::size_t)bi] = base + (int)nodes.size();
+        nodes.push_back(std::move(nd));
+    }
+    for (const Mat4& m : abs) for (int k = 0; k < 16; ++k) if (!std::isfinite(m.m[k]) || std::fabs(m.m[k]) > 1e30f) { why = "the bone transforms multiply out to values that are too large"; return false; }
+
+    // animations: keyframes are deltas from the bind pose
+    std::vector<ImportedClip> clips;
+    std::size_t keyTotal = 0;
+    int unknownTracks = 0, badKeys = 0, emptyClips = 0;
+    const int an = d.First(0, "animations");
+    if (an >= 0) for (int a = d.Kid(an); a >= 0; a = d.Next(a)) {
+        if (d.Name(a) != "animation") continue;
+        if (clips.size() + (std::size_t)emptyClips >= kMaxAnims) { why = "too many animations"; return false; }
+        ImportedClip clip;
+        clip.name = d.AttrOr(a, "name", "");
+        if (clip.name.empty()) clip.name = "animation" + std::to_string(clips.size());
+        const int tr = d.First(a, "tracks");
+        if (tr >= 0) for (int t = d.Kid(tr); t >= 0; t = d.Next(t)) {
+            if (d.Name(t) != "track") continue;
+            auto bi = byName.find(d.AttrOr(t, "bone", ""));
+            if (bi == byName.end()) { ++unknownTracks; continue; }
+            const SkelBone& b = bones[(std::size_t)bi->second];
+            const int kf = d.First(t, "keyframes");
+            if (kf < 0) continue;
+            struct K { float time; Vec3 p; Quat q; Vec3 s; };
+            std::vector<K> ks;
+            bool anyT = false, anyR = false, anyS = false;
+            for (int k = d.Kid(kf); k >= 0; k = d.Next(k)) {
+                if (d.Name(k) != "keyframe") continue;
+                if (++keyTotal > kMaxKeys) { why = "too many keyframes"; return false; }
+                double tm;
+                if (!NumOr(d, k, "time", 0, tm) || tm < 0) { ++badKeys; continue; }
+                K key{(float)tm, b.t, b.r, b.s};
+                const int te = d.First(k, "translate"), ro = d.First(k, "rotate"), sc = d.First(k, "scale");
+                double v[3];
+                if (te >= 0) { if (!XYZ(d, te, 0, v)) { ++badKeys; continue; } key.p = Vec3{(float)(b.t.x + v[0]), (float)(b.t.y + v[1]), (float)(b.t.z + v[2])}; anyT = true; }
+                if (ro >= 0) { Quat q; if (!ReadRot(d, ro, q)) { ++badKeys; continue; } key.q = b.r * q; anyR = true; }
+                if (sc >= 0) { Vec3 sv; if (!ReadScale(d, sc, sv)) { ++badKeys; continue; } key.s = Vec3{b.s.x * sv.x, b.s.y * sv.y, b.s.z * sv.z}; anyS = true; }
+                ks.push_back(key);
+            }
+            if (ks.empty()) continue;
+            std::stable_sort(ks.begin(), ks.end(), [](const K& x, const K& y) { return x.time < y.time; });
+            ImportedChannel ch;
+            ch.node = nodeName[(std::size_t)bi->second];
+            for (const K& key : ks) {
+                if (anyT) ch.position.push_back({key.time, key.p});
+                if (anyS) ch.scale.push_back({key.time, key.s});
+                if (anyR) {
+                    Quat q = key.q.Normalized();
+                    if (!ch.rotation.empty() && Quat::Dot(q, ch.rotation.back().value) < 0.0f) q = Quat{-q.x, -q.y, -q.z, -q.w};   // stay on one side so interpolation takes the short way
+                    ch.rotation.push_back({key.time, q});
+                }
+            }
+            if (!ch.position.empty() || !ch.rotation.empty() || !ch.scale.empty()) clip.channels.push_back(std::move(ch));
+        }
+        if (clip.channels.empty()) ++emptyClips; else clips.push_back(std::move(clip));
+    }
+
+    // commit
+    skin.on = true;
+    skin.boneCount = (int)nb;
+    skin.clipCount = (int)clips.size();
+    skin.bones.resize(nb);
+    for (std::size_t i = 0; i < nb; ++i) {
+        ImportedBone& ib = skin.bones[i];
+        ib.name = nodeName[i];
+        if (detail::rc::Singular3(abs[i])) { ib.inverseBind = Mat4::Identity(); ++skin.singular; } else ib.inverseBind = abs[i].Inverse();
+        skin.boneOfId[bones[i].id] = (int)i;
+    }
+    for (ImportedNode& nd : nodes) out.nodes.push_back(std::move(nd));
+    for (ImportedClip& c : clips) out.clips.push_back(std::move(c));
+    skin.badParents = badParents; skin.loops = loops; skin.dupNames = dupNames; skin.unknownTracks = unknownTracks; skin.badKeys = badKeys; skin.emptyClips = emptyClips;
+    return true;
+}
+
+// <boneassignments>: vertexboneassignment vertexindex / boneindex / weight. Keeps the four strongest per vertex (a bone named twice
+// adds up). A bad entry is counted and skipped.
+void ReadAssign(const detail::xml::FlatDoc& d, int ba, std::int64_t vcount, InflTab& tab, Skin& skin) {
+    for (int e = d.Kid(ba); e >= 0; e = d.Next(e)) {
+        if (d.Name(e) != "vertexboneassignment") continue;
+        double vi, bi, w;
+        if (!Num(d, e, "vertexindex", vi) || !Num(d, e, "boneindex", bi) || !Num(d, e, "weight", w) ||
+            vi < 0 || vi >= (double)vcount || vi != std::floor(vi) || bi < 0 || bi > 1e9 || bi != std::floor(bi)) { ++skin.badAssign; continue; }
+        if (!(w > 0)) continue;
+        Infl& in = tab[(std::uint32_t)vi];
+        int same = -1, empty = -1, weakest = -1;
+        for (int k = 0; k < 4; ++k) {
+            if (in.idx[k] == (int)bi) { same = k; break; }
+            if (in.idx[k] < 0) { if (empty < 0) empty = k; }
+            else if (weakest < 0 || in.w[k] < in.w[weakest]) weakest = k;
+        }
+        if (same >= 0) in.w[same] += (float)w;
+        else if (empty >= 0) { in.idx[empty] = (int)bi; in.w[empty] = (float)w; }
+        else if ((float)w > in.w[weakest]) { in.idx[weakest] = (int)bi; in.w[weakest] = (float)w; ++skin.droppedInfl; }
+        else ++skin.droppedInfl;
+    }
+}
+
 // ---- shared by the XML and the binary mesh: one submesh into one part ----
 struct Build {
     explicit Build(ImportedModel& o) : out(o) {}
@@ -163,6 +386,8 @@ struct Build {
     std::map<std::string, Mat> mats;
     std::map<std::string, int> matOut;
     std::map<int, std::string> names;   // submesh index -> name (<submeshnames> / the binary name table)
+    Skin skin;
+    std::string skelWhy;   // why a linked skeleton was not read (empty: no skeleton was supplied)
     std::size_t outVerts = 0;
     int extraUv = 0, colours = 0, tangents = 0, boneAssign = 0, lines = 0, noGeom = 0, degenerate = 0, badIdx = 0;
 };
@@ -178,8 +403,9 @@ void ExpandSequence(const std::vector<std::uint32_t>& seq, bool strip, std::vect
 
 // The triangles of submesh `myIdx` (three indices into `g` each) as one part with its material. False only on a hard error
 // (too many output vertices, a vertex out of range); a submesh with nothing to draw is counted and skipped.
-bool AddSubmesh(Build& b, const Geom& g, const std::vector<std::uint32_t>& faceIdx, int myIdx, const std::string& matName, bool hasBoneAssign, std::string* err) {
+bool AddSubmesh(Build& b, const Geom& g, const std::vector<std::uint32_t>& faceIdx, int myIdx, const std::string& matName, bool hasBoneAssign, std::string* err, const InflTab* infl = nullptr) {
     detail::rc::Soup soup;
+    std::vector<std::uint32_t> orig;   // soup position index -> vertex index of the geometry
     const std::size_t nv = (std::size_t)g.count;
     // positions are the geometry's; only the vertices the faces use are copied (a submesh may use a few of a big shared buffer)
     std::unordered_map<std::uint32_t, std::uint32_t> remap;
@@ -189,7 +415,7 @@ bool AddSubmesh(Build& b, const Geom& g, const std::vector<std::uint32_t>& faceI
         for (int c = 0; c < 3; ++c) {
             const std::uint32_t v = faceIdx[t + (std::size_t)c];
             auto r = remap.emplace(v, (std::uint32_t)soup.pos.size());
-            if (r.second) soup.pos.push_back(g.pos[v]);
+            if (r.second) { soup.pos.push_back(g.pos[v]); orig.push_back(v); }
             soup.ci.push_back(r.first->second);
             soup.cuv.push_back(g.uv[v]);
             soup.cnrm.push_back(g.nrm[v]);
@@ -203,11 +429,35 @@ bool AddSubmesh(Build& b, const Geom& g, const std::vector<std::uint32_t>& faceI
     if (!allNrm) soup.cnrm.clear();
     ImportedPart part;
     detail::rc::BuildStats st;
-    if (!detail::rc::BuildMesh(soup, 180.0, part.mesh, &st, kMaxOutVerts - std::min(b.outVerts, kMaxOutVerts))) return Fail(err, "too many output vertices");
+    std::vector<std::uint32_t> srcPos;
+    if (!detail::rc::BuildMesh(soup, 180.0, part.mesh, &st, kMaxOutVerts - std::min(b.outVerts, kMaxOutVerts), infl ? &srcPos : nullptr)) return Fail(err, "too many output vertices");
     b.degenerate += st.degenerate;
     b.outVerts += part.mesh.vertices.size();
     if (part.mesh.triangles.empty()) return true;
     if (!detail::rc::PartInRange(part)) return Fail(err, "a vertex is out of range");
+    if (infl && b.skin.on) {   // skin weights follow the vertices through the welding
+        const int rootIdx = (int)b.skin.bones.size();
+        part.bones = b.skin.bones;
+        part.jointIdx.reserve(part.mesh.vertices.size());
+        part.jointWt.reserve(part.mesh.vertices.size());
+        for (std::size_t o = 0; o < part.mesh.vertices.size(); ++o) {
+            std::array<int, 4> ji{0, 0, 0, 0};
+            std::array<float, 4> jw{0, 0, 0, 0};
+            int cnt = 0;
+            float used = 0;
+            auto it = infl->find(orig[srcPos[o]]);
+            if (it != infl->end()) for (int k = 0; k < 4; ++k) {
+                if (it->second.idx[k] < 0) continue;
+                auto bi = b.skin.boneOfId.find(it->second.idx[k]);
+                if (bi == b.skin.boneOfId.end()) { ++b.skin.badAssign; continue; }
+                ji[(std::size_t)cnt] = bi->second; jw[(std::size_t)cnt] = it->second.w[k]; used += it->second.w[k]; ++cnt;
+            }
+            if (cnt == 0 || !(used > 0.0f) || !std::isfinite(used)) { b.skin.needRoot = true; ++b.skin.unweighted; ji = {rootIdx, 0, 0, 0}; jw = {1, 0, 0, 0}; }
+            else for (float& w : jw) w /= used;
+            part.jointIdx.push_back(ji);
+            part.jointWt.push_back(jw);
+        }
+    } else if (b.skin.on) ++b.skin.rigidSubmeshes;
     std::string pname = matName.empty() ? "submesh" + std::to_string(myIdx) : matName;
     { auto nm = b.names.find(myIdx); if (nm != b.names.end()) pname = nm->second; }
     part.mesh.name = pname;
@@ -241,8 +491,23 @@ bool AddSubmesh(Build& b, const Geom& g, const std::vector<std::uint32_t>& faceI
 // What the file holds that was not read. `skeleton` is the linked skeleton's name (null: no link).
 void AddNotes(Build& b, const std::string* skeleton, bool meshBoneAssign, bool posesOrAnims, bool lod, bool noScripts) {
     auto note = [&](const std::string& s) { b.out.notes.push_back("OGRE: " + s); };
-    if (skeleton) note("skeleton '" + *skeleton + "' (and the bone assignments of " + std::to_string(b.boneAssign + (meshBoneAssign ? 1 : 0)) + " mesh part(s)) not read: the mesh is imported at its bind pose, rigid");
-    else if (meshBoneAssign) note("bone assignments without a skeleton link not read");
+    if (skeleton && !b.skin.on) note("skeleton '" + *skeleton + "' (and the bone assignments of " + std::to_string(b.boneAssign + (meshBoneAssign ? 1 : 0)) + " mesh part(s)) not read" + (b.skelWhy.empty() ? "" : " (" + b.skelWhy + ")") + ": the mesh is imported at its bind pose, rigid");
+    else if (!skeleton && meshBoneAssign) note("bone assignments without a skeleton link not read");
+    if (b.skin.on) {
+        const Skin& k = b.skin;
+        note("skeleton read: " + std::to_string(k.boneCount) + " bone(s), " + std::to_string(k.clipCount) + " animation(s); keys play with linear interpolation (the interpolation modes of the file are not read)");
+        if (k.rigidSubmeshes) note(std::to_string(k.rigidSubmeshes) + " submesh(es) have no bone assignments and stay rigid at node 0");
+        if (k.unweighted) note(std::to_string(k.unweighted) + " vertex(es) without a usable bone weight are tied to a root bone (they do not move)");
+        if (k.badAssign) note(std::to_string(k.badAssign) + " bone assignment(s) with a bad number, a vertex out of range or an unknown bone skipped");
+        if (k.droppedInfl) note(std::to_string(k.droppedInfl) + " bone influence(s) beyond the four strongest per vertex dropped");
+        if (k.badParents) note(std::to_string(k.badParents) + " bone parent link(s) naming an unknown bone skipped");
+        if (k.loops) note(std::to_string(k.loops) + " bone parent loop(s) cut");
+        if (k.dupNames) note(std::to_string(k.dupNames) + " bone name(s) repeated; renamed");
+        if (k.singular) note(std::to_string(k.singular) + " bone(s) with a flat bind transform got an identity inverse bind");
+        if (k.unknownTracks) note(std::to_string(k.unknownTracks) + " animation track(s) naming an unknown bone skipped");
+        if (k.badKeys) note(std::to_string(k.badKeys) + " keyframe(s) with a bad number or a negative time skipped");
+        if (k.emptyClips) note(std::to_string(k.emptyClips) + " animation(s) without keys skipped");
+    }
     if (posesOrAnims) note("morph / pose animations of the mesh are not read");
     if (lod) note("levels of detail are not read");
     if (b.lines) note(std::to_string(b.lines) + " submesh(es) that are not triangle lists, strips or fans (lines, points) skipped");
@@ -474,7 +739,9 @@ bool ReadSubmesh(Reader& R, Sub& s, Build& b) {
 } // namespace ogre
 } // namespace
 
-static bool ReadOgreImpl(std::string text, const std::string& baseDir, ImportedModel& out, std::string* err, const std::vector<std::string>* scripts) {
+using SkeletonLoader = std::function<bool(const std::string& linkName, std::string& text, std::string& why)>;
+
+static bool ReadOgreImpl(std::string text, const std::string& baseDir, ImportedModel& out, std::string* err, const std::vector<std::string>* scripts, const SkeletonLoader* loadSkeleton = nullptr) {
     using namespace ogre;
     bool converted = false;
     std::string why;
@@ -501,6 +768,15 @@ static bool ReadOgreImpl(std::string text, const std::string& baseDir, ImportedM
     ImportedNode root;
     root.name = "OGRE";
     out.nodes.push_back(root);
+
+    const int skel = doc.First(0, "skeletonlink");
+    const std::string skelName = skel >= 0 ? doc.AttrOr(skel, "name", "") : std::string();
+    if (skel >= 0 && loadSkeleton && *loadSkeleton) {
+        std::string stext, why;
+        if (!(*loadSkeleton)(skelName, stext, why) || !LoadSkeleton(std::move(stext), out, b.skin, why)) b.skelWhy = why.empty() ? "it could not be read" : why;
+    }
+    InflTab meshAssign;   // <boneassignments> of the mesh: for the shared vertices
+    if (b.skin.on) { const int mba = doc.First(0, "boneassignments"); if (mba >= 0) ReadAssign(doc, mba, shared.count, meshAssign, b.skin); }
 
     {   // <submeshnames>: index -> name
         const int sn = doc.First(0, "submeshnames");
@@ -561,13 +837,21 @@ static bool ReadOgreImpl(std::string text, const std::string& baseDir, ImportedM
             else { const int last = has[2] ? 2 : has[1] ? 1 : 0; seq.push_back(toIdx(v[last])); }
         }
         if (strip || fan) ExpandSequence(seq, strip, faceIdx);
-        if (!AddSubmesh(b, *g, faceIdx, myIdx, doc.AttrOr(s, "material", ""), doc.First(s, "boneassignments") >= 0, err)) return false;
+        InflTab subAssign;
+        const InflTab* infl = nullptr;
+        const int sba = doc.First(s, "boneassignments");
+        if (b.skin.on) {
+            if (sba >= 0) { ReadAssign(doc, sba, g->count, subAssign, b.skin); infl = &subAssign; }
+            else if (useShared && !meshAssign.empty()) infl = &meshAssign;
+        }
+        if (!AddSubmesh(b, *g, faceIdx, myIdx, doc.AttrOr(s, "material", ""), sba >= 0, err, infl)) return false;
     }
     if (out.parts.empty()) return Fail(err, "no submesh has both vertices and triangles");
     out.backend = "own";
 
-    const int skel = doc.First(0, "skeletonlink");
-    const std::string skelName = skel >= 0 ? doc.AttrOr(skel, "name", "") : std::string();
+    if (b.skin.on) {
+        if (b.skin.needRoot) { ImportedBone rb; rb.name = out.nodes[0].name; rb.inverseBind = Mat4::Identity(); for (ImportedPart& p : out.parts) if (!p.bones.empty()) p.bones.push_back(rb); }
+    }
     AddNotes(b, skel >= 0 ? &skelName : nullptr, doc.First(0, "boneassignments") >= 0, doc.First(0, "poses") >= 0 || doc.First(0, "animations") >= 0,
              doc.First(0, "levelofdetail") >= 0, !scripts || scripts->empty());
     return true;
@@ -662,9 +946,11 @@ static bool ReadOgreBinImpl(const std::string& bytes, const std::string& baseDir
     return true;
 }
 
-bool ReadOgreXmlBuffer(const std::string& text, const std::string& baseDir, ImportedModel& out, std::string* err, const std::vector<std::string>* materialScripts) {
+bool ReadOgreXmlBuffer(const std::string& text, const std::string& baseDir, ImportedModel& out, std::string* err, const std::vector<std::string>* materialScripts, const std::string* skeletonXml) {
     out = ImportedModel{};
-    const bool ok = ReadOgreImpl(text, baseDir, out, err, materialScripts);
+    SkeletonLoader loader;
+    if (skeletonXml) loader = [skeletonXml](const std::string&, std::string& t, std::string&) { t = *skeletonXml; return true; };
+    const bool ok = ReadOgreImpl(text, baseDir, out, err, materialScripts, skeletonXml ? &loader : nullptr);
     if (!ok) out = ImportedModel{};
     return ok;
 }
@@ -677,7 +963,15 @@ bool ReadOgreXmlFile(const std::string& path, ImportedModel& out, std::string* e
     std::vector<std::string> scripts = ogre::ScriptsNextTo(path, 9, dir);   // ".mesh.xml"
     // the bytes are handed over, not copied (ReadOgreXmlBuffer copies the caller's text)
     out = ImportedModel{};
-    const bool ok = ReadOgreImpl(std::move(bytes), dir, out, err, &scripts);
+    // the linked skeleton, "<name>.xml" next to the mesh (name is "x.skeleton": the file is x.skeleton.xml), only inside the mesh's folder
+    SkeletonLoader loader = [&dir](const std::string& link, std::string& t, std::string& why) {
+        std::string joined, e1, e2;
+        if (link.empty()) { why = "the skeleton link has no name"; return false; }
+        if (!detail::ResolveInsideDir(dir, link + ".xml", joined, e1)) { why = e1; return false; }
+        if (!detail::txt::ReadFileCapped(joined, 64u * 1024u * 1024u, t, &e2)) { why = "no readable " + link + ".xml next to the mesh"; return false; }
+        return true;
+    };
+    const bool ok = ReadOgreImpl(std::move(bytes), dir, out, err, &scripts, &loader);
     if (!ok) out = ImportedModel{};
     return ok;
 }

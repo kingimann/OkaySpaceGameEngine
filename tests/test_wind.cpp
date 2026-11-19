@@ -73,7 +73,7 @@ int main() {
         WindZone* all = MakeZone(s, "All", WindZone::Mode::Everywhere, {0, 0, 0}, 4.0f, {0, 0, 1});
         all->additive = true; all->gustAmount = 0.5f; all->gustFrequency = 0.25f; all->gustSpeed = 0.0f;
         WindZone* calm = MakeZone(s, "Calm", WindZone::Mode::Direction, {50, 0, 0}, 0.0f);
-        calm->size = {10, 10, 10};
+        calm->size = {10, 10, 10}; calm->priority = 5;
         Run(s, 1);
         const float t0 = WindField::Clock();
         const Vec3 outside = WindField::At({0, 0, 0});
@@ -201,6 +201,7 @@ int main() {
         CHECK(withSway == 0);   // default: off, nothing added
         f->windSway = 0.5f;
         f->RebuildAll();
+        Run(s, 2);   // new chunk objects join the scene at the next update
         for (const auto& go : s.Objects()) if (go && go->GetComponent<WindSway>()) ++withSway;
         CHECK(withSway > 0);
         Run(s, 10);

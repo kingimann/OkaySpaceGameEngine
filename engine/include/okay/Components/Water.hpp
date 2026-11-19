@@ -314,6 +314,8 @@ public:
             mr->normalStrength = 0.25f + 0.9f * ripples;
             const float tile = RippleTile();
             mr->uvScroll = {flow.x + current.x / tile, flow.y + current.y / tile};
+        } else if (mr->normalMap == "proc:water_normal") {
+            mr->normalMap.clear(); mr->normalStrength = 1.0f;     // the look was switched off again
         }
         Animate();                    // seat the first frame's waves
     }
@@ -641,7 +643,8 @@ private:
                 py += RippleHeight(px, pz, m_time, ripples, rippleSize, current.x, current.y);
                 RippleSlope(px, pz, m_time, ripples, rippleSize, current.x, current.y, rsx, rsz);
             }
-            if (haveRings) for (const Ring& r : m_rings) py += RingHeight(r, px, pz, m_time);
+            float ringLift = 0.0f;
+            if (haveRings) { for (const Ring& r : m_rings) ringLift += RingHeight(r, px, pz, m_time); py += ringLift; }
             m.vertices[i] = {px, py, pz};
             Vec3 nn{w.nx - rsx, w.ny, w.nz - rsz};
             const float nl = std::sqrt(nn.x * nn.x + nn.y * nn.y + nn.z * nn.z);
@@ -666,7 +669,7 @@ private:
             body.r += glow * 0.10f; body.g += glow * 0.55f; body.b += glow * 0.35f;
             float foam = CrestFoam(crest, slope, foamAmount, pat);
             foam = std::max(foam, ShoreFoam(depthHere, shoreFoamWidth, m_time, pat, std::max(0.3f, foamAmount)));
-            if (haveRings) foam = std::max(foam, std::min(1.0f, std::fabs(py - waveY) * 9.0f * pat));
+            if (haveRings) foam = std::max(foam, std::min(1.0f, std::fabs(ringLift) * 9.0f * pat));
             RGB c = Mix(body, foamRGB, Clamp01(foam));
             m.vertexColors[i] = Color{Clamp01(c.r), Clamp01(c.g), Clamp01(c.b), 1.0f};
         }

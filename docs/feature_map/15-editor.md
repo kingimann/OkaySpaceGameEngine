@@ -34,7 +34,7 @@ Line ranges for `editor/main.cpp` are approximate (as of 2026-11-08) and move wh
 - **Parts:**
   - 15.2.1 Inspector shell - `editor/main.cpp` (`DrawInspector` ~27452-37264) - object header, per-component cards, enable checkbox, Remove, multi-edit
   - 15.2.2 Component headers and tints - `editor/main.cpp` (`CompHeader` ~25416), `editor/EditorWidgets.*` - category tint and icon per component, accent colour, icon and search buttons
-  - 15.2.3 Add Component menu - `editor/main.cpp` (~36708) - categories (Rendering, Animation, Physics, Lighting, Camera, Scripts, Audio, Gameplay, UI) with search; Scripts lists project `.okay` files and New Script
+  - 15.2.3 Add Component menu - `editor/AddComponentModel.*` (no ImGui: plain categories, descriptions, search ranking, Recent / Favorites file `okay_addcomponent.txt`, suggestions, greyed reasons, keys), `editor/AddComponentMenu.*` (the popup), the rows in `editor/main.cpp` (~42070 on, `s_acSession`) - wide popup, big search, 13 plain groups plus For this object / Recent / Favorites, cards; Scripts lists project `.okay` files and New Script (`docs/add_component_menu.md`)
   - 15.2.4 Component inspectors in main - `editor/main.cpp` - about 175 component headers by name (Sprite Renderer ~28032, Mesh Renderer ~28259, Character ~29603, Camera ~30006, controllers ~33446-34050, UI widgets ~34698-36498, Script ~31140, Visual Script ~28850)
   - 15.2.5 Inspectors in their own files - `editor/NavigationWindow.*`, `editor/BehaviorTreeWindow.*`, `editor/DialogueWindow.*`, `editor/SplineTools.*`, `editor/UIInspectorLayout.*`, `editor/UIInspectorOverlay.*` - split-out inspector bodies called from the main loop
   - 15.2.6 Character Model panel - `editor/main.cpp` (`CharacterModelPanel` ~7269-7390, auto-rig ~7391-7642) - swap model by drag and drop, Rig Model onto the humanoid skeleton
@@ -46,8 +46,8 @@ Line ranges for `editor/main.cpp` are approximate (as of 2026-11-08) and move wh
 - **Code:** `editor/main.cpp`, `editor/EditorWidgets.*`, `editor/UIInspectorLayout.*`, `editor/UIInspectorOverlay.*`
 - **API:** View > Panels > Inspector; Add Component button under the component list
 - **Editor:** Inspector panel
-- **Docs:** `docs/editor.md` (Add Component, Component headers)
-- **Tests:** `editor` (selftest), `char_editor_parts` (editor-built part rig of a Character)
+- **Docs:** `docs/editor.md` (Add Component, Component headers), `docs/add_component_menu.md`
+- **Tests:** `editor` (selftest), `char_editor_parts` (editor-built part rig of a Character), `add_component_model` (Add Component search, groups, keys, Recent)
 - **Status:** Works - one header per component type exists; the 9.8k-line function is the biggest part of `main.cpp`; the editor-wide undo hooks that watch Inspector fields (`WatchEditUndo`) are compiled but not run in the GUI (`docs/editor_undo.md`); the model behind them is tested headless
 - **Open:** polish (carried from the earlier map); `DrawInspector` is one 9.8k-line function (a splitting candidate, 15.10); values edited during Play are discarded when Play stops, on purpose (the Inspector shows a note, `DrawPlayModeNote`); keeping them is a planned feature (area 34); prefab overrides are shown and edited in the Inspector header, per property and in the Hierarchy (area 21)
 - **Related:** 15.10, 12.10, 13.4, 14.1, 21, 34

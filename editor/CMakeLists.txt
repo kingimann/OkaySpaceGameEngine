@@ -59,6 +59,7 @@ add_executable(okay-editor main.cpp EditorState.cpp FpHandsWindow.cpp
     LevelTools.cpp                                                     # foliage brush, terrain layers, decals, cables, measuring tool, orthographic views
     SplineTools.cpp                                                    # splines: Scene-view editing, inspectors, lines / trails
     VolumeTools.cpp                                                    # volumes: Scene-view shapes, handles, draw tool, inspector, menus
+    AddComponentModel.cpp AddComponentMenu.cpp                         # the Add Component browser (model: categories, search, recents; window)
     EditorWidgets.cpp                                                  # shared widgets (accent, icons, search field)
     ConsolePanel.cpp                                                   # ConsoleLog + Console panel
     OkayPanels.cpp                                                     # Crash Log and Audio Mixer hosted by OkayUI (opt-in backend)

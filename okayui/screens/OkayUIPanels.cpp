@@ -1,4 +1,5 @@
 #include "OkayUIPanels.hpp"
+#include "okay/UI/OkayUICompat.hpp"   // ListClipper, BeginTooltip
 
 #include <algorithm>
 #include <cmath>
@@ -195,34 +196,31 @@ CrashLogResult DrawCrashLog(const CrashLogModel& m, CrashLogState& st, const Cra
             UI::TextDisabled(info);
             UI::BeginChild("##crashbody", 0.0f, UI::GetContentRegionAvail().y, true);
             res.body = UI::GetItemRect();
-            // One row per line, only the visible ones laid out; the rows above and below are one spacer each.
-            // The row pitch is measured from the rows themselves (it depends on the look and the text scale) and kept for the next
-            // frame; until then a guess is used. A spacer of n rows is n pitches minus the gap the spacer item adds below itself.
-            const float rowH = st.pitch > 0.0f ? st.pitch : UI::GetTextLineHeightWithSpacing();
-            const float gap = st.pitch > 0.0f ? st.gap : 0.0f;
-            const int n = (int)st.lines.size();
-            const float viewH = UI::GetContentRegionAvail().y;
-            int first = (int)(UI::GetScrollY() / rowH) - 1;
-            int last = first + (int)(viewH / rowH) + 3;
-            first = std::max(first, 0);
-            last = std::min(last, n);
-            if (first > 0) UI::Dummy(1.0f, rowH * (float)first - gap);
+            // One row per line, only the visible ones laid out by UI::ListClipper (the rows above and below are skipped by moving the
+            // cursor, so the scroll range is the full list's). The row pitch is measured from the first drawn row each frame (it depends
+            // on the look and the text scale) and handed to the clipper next frame; the first frame lets the clipper measure row 0.
+            UI::ListClipper clip;
+            clip.Begin((int)st.lines.size(), st.pitch > 0.0f ? st.pitch : -1.0f);
             std::string row;
-            for (int i = first; i < last; ++i) {
-                const auto& ln = st.lines[(std::size_t)i];
-                row.assign(m.text, ln.first, ln.second);
-                for (char& c : row) if (c == '\t') c = ' ';
-                const float y0 = UI::GetCursorScreenPos().y;
-                if (row.empty()) UI::Dummy(1.0f, std::max(rowH - gap, 1.0f)); else UI::Text(row.c_str());
-                if (i == first && !row.empty()) {
-                    const float pitch = UI::GetCursorScreenPos().y - y0;
-                    if (pitch > 1.0f) { st.pitch = pitch; st.gap = std::max(pitch - UI::GetItemRect().h, 0.0f); }
+            bool measured = false;
+            while (clip.Step()) {
+                for (int i = clip.DisplayStart; i < clip.DisplayEnd; ++i) {
+                    const auto& ln = st.lines[(std::size_t)i];
+                    row.assign(m.text, ln.first, ln.second);
+                    for (char& c : row) if (c == '\t') c = ' ';
+                    if (row.empty()) row = " ";            // a blank line keeps the same row height as the others
+                    const float y0 = UI::GetCursorScreenPos().y;
+                    UI::Text(row.c_str());
+                    if (!measured) {
+                        measured = true;
+                        const float pitch = UI::GetCursorScreenPos().y - y0;
+                        if (pitch > 1.0f) st.pitch = pitch;
+                    }
+                    if (res.linesDrawn == 0 || i < res.firstDrawn) res.firstDrawn = i;
+                    if (i > res.lastDrawn || res.linesDrawn == 0) res.lastDrawn = i;
+                    ++res.linesDrawn;
                 }
-                if (res.linesDrawn == 0) res.firstDrawn = i;
-                res.lastDrawn = i;
-                ++res.linesDrawn;
             }
-            if (last < n) UI::Dummy(1.0f, rowH * (float)(n - last) - gap);
             if (st.scrollToEnd) {   // the extent is measured a frame late: keep asking until the end is reached (or a few frames pass)
                 UI::SetScrollY(1e9f);
                 const bool atEnd = UI::GetScrollMaxY() > 0.0f && UI::GetScrollY() >= UI::GetScrollMaxY() - 1.0f;
@@ -259,7 +257,12 @@ AudioMixerResult DrawAudioMixer(AudioMixerModel& m, float x, float y, float w, f
             if (t > 0.0f) dl.AddRectFilled(p, UI::Vec2{p.x + width * t, p.y + 6.0f}, fill, 2.0f);
             UI::Dummy(width, 6.0f);
             out = UI::GetItemRect();
-            if (UI::IsItemHovered()) { char tip[64]; std::snprintf(tip, sizeof(tip), "%s: %.1f dB", name, MeterDb(v)); UI::SetTooltip("%s", tip); }
+            if (UI::IsItemHovered() && UI::BeginTooltip()) {   // a tooltip scope: the meter name, then the level in dB on its own line
+                UI::Text(name);
+                char tip[64]; std::snprintf(tip, sizeof(tip), "%.1f dB", MeterDb(v));
+                UI::TextDisabled(tip);
+                UI::EndTooltip();
+            }
         };
         UI::TextDisabled("Output");
         meter("Left", m.peakLeft, res.leftMeter);

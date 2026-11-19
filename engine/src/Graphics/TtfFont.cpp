@@ -1,3 +1,4 @@
+#include <cstdlib>
 #include "okay/Graphics/TtfFont.hpp"
 #include "okay/Graphics/TtfRaster.hpp"
 #include "okay/UI/UIFontPolicy.hpp"
@@ -269,6 +270,8 @@ TtfFont* ActiveUIFont() { return g_activeUIFont; }
 // ---- Glyph fallback ------------------------------------------------------------
 const std::vector<std::string>& SystemFallbackFonts() {
     static const std::vector<std::string> found = [] {
+        // OKAY_NO_SYSTEM_FONTS=1: use no installed font at all (tests that compare pictures must not depend on the machine's fonts)
+        if (const char* off = std::getenv("OKAY_NO_SYSTEM_FONTS"); off && off[0] && off[0] != '0') return std::vector<std::string>();
         // Fonts the major desktops install, covering Latin, Greek, Cyrillic, CJK and more.
         static const char* const kCandidates[] = {
 #if defined(_WIN32)

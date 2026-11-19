@@ -99,13 +99,14 @@ inline float SpotCone(float cs, float cosOuter, float cosInner) {
     return t * t * (3.0f - 2.0f * t);
 }
 
-/// Brightness roll-off for the summed light: exact up to 0.8, then it bends smoothly towards 1.0 and never passes it. The
-/// old hard clamp made every light brighter than 1 look the same flat white (a 3x lamp and a 1.1x lamp were identical,
-/// and a colour channel that hit 1 first shifted the hue). This keeps the order of brightness and the colour.
+/// Brightness roll-off for the summed light: exactly as before up to 1.0 (so ordinary lighting does not change), and above 1.0 a
+/// smooth shoulder that keeps climbing towards 1.3 instead of stopping dead. The old hard clamp made every light brighter than 1
+/// look the same flat white (a 3x lamp and a 1.1x lamp were identical, and a colour channel that hit 1 first shifted the hue).
+/// Over-bright light now washes a surface out a little beyond its own colour, in the order of the light's strength.
 inline float SoftClipLight(float x) {
     if (ClassicLighting()) return x < 0.0f ? 0.0f : (x > 1.0f ? 1.0f : x);
-    if (x <= 0.8f) return x < 0.0f ? 0.0f : x;
-    return 1.0f - 0.2f * std::exp(-(x - 0.8f) / 0.2f);
+    if (x <= 1.0f) return x < 0.0f ? 0.0f : x;
+    return 1.0f + 0.3f * (1.0f - std::exp(-(x - 1.0f) / 0.3f));
 }
 
 /// Real-world light units, shown to the user as lux (sun, moon, sky: light arriving on a surface) and lumens (lamps:

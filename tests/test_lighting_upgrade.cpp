@@ -1,6 +1,7 @@
 #include "test_framework.hpp"
 #include "lighting_scenes.hpp"
 #include "okay/Render/ShadowSetup.hpp"
+#include "okay/Render/LightingPresets.hpp"
 #include <cmath>
 #include <cstdio>
 #include <string>
@@ -78,10 +79,11 @@ int main() {
     // ---- Light roll-off, spot cone, units ---------------------------------------------------------------------
     {
         CHECK_NEAR(SoftClipLight(0.5f), 0.5f, 1e-6f);
-        CHECK_NEAR(SoftClipLight(0.8f), 0.8f, 1e-6f);
-        CHECK(SoftClipLight(1.0f) < SoftClipLight(2.0f) && SoftClipLight(2.0f) < SoftClipLight(6.0f));   // order kept
-        CHECK(SoftClipLight(50.0f) <= 1.0f);
-        CHECK(std::fabs(SoftClipLight(0.8f + 1e-3f) - SoftClipLight(0.8f - 1e-3f)) < 2.5e-3f);           // no kink
+        CHECK_NEAR(SoftClipLight(1.0f), 1.0f, 1e-6f);                                      // ordinary lighting is unchanged
+        CHECK(SoftClipLight(1.5f) > 1.0f && SoftClipLight(1.5f) < SoftClipLight(3.0f) && SoftClipLight(3.0f) < SoftClipLight(8.0f));   // order kept
+        CHECK(SoftClipLight(50.0f) <= 1.3001f);
+        CHECK(std::fabs(SoftClipLight(1.0f + 1e-3f) - SoftClipLight(1.0f - 1e-3f)) < 2.5e-3f);   // no kink
+        CHECK_NEAR(SoftClipLight(-1.0f), 0.0f, 1e-6f);
         const float co = std::cos(0.5f), ci = std::cos(0.25f);
         CHECK_NEAR(SpotCone(1.0f, co, ci), 1.0f, 1e-6f);
         CHECK_NEAR(SpotCone(co - 0.01f, co, ci), 0.0f, 1e-6f);
@@ -210,6 +212,58 @@ int main() {
         CHECK_NEAR(ps.halfW, 1.5f, 1e-5f); CHECK_NEAR(ps.halfH, 0.5f, 1e-5f);
         CHECK(ps.cookie >= 0);   // (an Area light carries the mask but does not apply it; spot and sun do)
         CHECK_NEAR(Vec3::Dot(ps.right, ps.up), 0.0f, 1e-4f);
+    }
+
+    // ---- Lighting presets -----------------------------------------------------------------------------------------------
+    {
+        int np = 0; const LightingPresetInfo* list = LightingPresetList(np);
+        CHECK(np == 5);
+        Scene s("presets"); BuildVillage(s);
+        CHECK(!ApplyLightingPreset(s, "No such preset"));
+        auto presetObjects = [&](int* lights) {
+            int n = 0; if (lights) *lights = 0;
+            for (const auto& go : s.Objects()) if (go->name.compare(0, 10, "Lighting: ") == 0) { ++n; if (lights && go->GetComponent<Light>()) ++*lights; }
+            return n;
+        };
+        float meanSky[5]; int idx = 0;
+        for (int i = 0; i < np; ++i) {
+            CHECK(ApplyLightingPreset(s, list[i].name));
+            s.Update(0.0f);                                     // the end of the frame frees what the last preset removed
+            int nl = 0; presetObjects(&nl);
+            ApplySceneLight(s);
+            CHECK(!SceneLights::List().empty());
+            CHECK(SceneLights::Sun() != nullptr);               // always a sun or moon
+            if (std::string(list[i].name) == "Night with lamps") CHECK(nl == 5);          // the moon and four lamps (the bulbs are meshes)
+            if (std::string(list[i].name) == "Spooky fog") { CHECK(s.renderSettings.fog); CHECK(nl == 2); }   // moon + lantern
+            if (std::string(list[i].name) == "Indoor") CHECK(SceneLights::Sun()->cookie >= 0);
+            meanSky[idx++] = s.renderSettings.ambient;
+        }
+        CHECK(meanSky[0] > meanSky[2] && meanSky[0] > meanSky[4]);   // day is brighter than night and fog
+        ApplyLightingPreset(s, "Sunny day"); s.Update(0.0f);
+        int lights = 0; presetObjects(&lights);
+        CHECK(lights == 1);                                          // applying again replaces; one sun, no leftovers
+        // the user's own sun is reused, not duplicated
+        Scene t("own sun"); BuildVillage(t);
+        Light* mine = AddLight(t, "My sun", Light::Type::Directional, {0, 5, 0}, 50, 0, Color::White, 1.0f);
+        ApplyLightingPreset(t, "Sunset"); t.Update(0.0f);
+        int dirs = 0; for (const auto& go : t.Objects()) if (auto* l = go->GetComponent<Light>()) if (l->type == Light::Type::Directional) ++dirs;
+        CHECK(dirs == 1);
+        CHECK(mine->useTemperature && mine->temperature < 3500.0f);   // it became the warm low sun
+        // a preset changes the picture: day and night differ a lot, and both are lit (not black)
+        Scene d("day"); CamView dv = BuildVillage(d); ApplyLightingPreset(d, "Sunny day"); d.Update(0.0f);
+        Scene n("night"); BuildVillage(n); ApplyLightingPreset(n, "Night with lamps"); n.Update(0.0f);
+        Image di = RenderScene(d, dv, 160, 100), ni = RenderScene(n, dv, 160, 100);
+        const float dm = MeanLuma(di, 0, 50, 160, 100), nm = MeanLuma(ni, 0, 50, 160, 100);
+        CHECK(dm > nm + 0.1f);
+        CHECK(nm > 0.01f);
+        // saved and reloaded, a preset scene lights the same way
+        const std::string path = "lighting_upgrade_preset.okayscene";
+        CHECK(SceneSerializer::SaveToFile(n, path));
+        Scene back("back");
+        CHECK(SceneSerializer::LoadFromFile(back, path));
+        ApplySceneLight(back);
+        CHECK(SceneLights::List().size() >= 5);                     // moon + four lamps (+ glow of nothing)
+        std::remove(path.c_str());
     }
 
     // ---- A closed room keeps the sun out (no light leaks through thin walls) ---------------------------------------------

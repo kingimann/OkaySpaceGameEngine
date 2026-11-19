@@ -649,9 +649,9 @@ public:
                 // the surface reads as flat cartoon shades instead of a smooth ramp.
                 if (toonBands > 0) {
                     float q = (float)toonBands;
-                    lit.x = std::ceil(lit.x * q) / q;
-                    lit.y = std::ceil(lit.y * q) / q;
-                    lit.z = std::ceil(lit.z * q) / q;
+                    lit.x = std::ceil(std::fmin(lit.x, 1.0f) * q) / q;   // bands stop at 1 (over-bright light has no extra band)
+                    lit.y = std::ceil(std::fmin(lit.y, 1.0f) * q) / q;
+                    lit.z = std::ceil(std::fmin(lit.z, 1.0f) * q) / q;
                 }
                 if (aoMap) { lit.x *= ao; lit.y *= ao; lit.z *= ao; }   // occlude ambient + diffuse
                 // Colored Blinn-Phong specular from every light (sun + point + spot),

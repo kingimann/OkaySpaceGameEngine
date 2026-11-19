@@ -51,8 +51,7 @@ slideSound squish
 hitEffect fx_goo
 ```
 
-Load it with `PhysicsMaterials::LoadFile(path)` or a whole folder with `PhysicsMaterials::ScanFolder(dir)`. **The editor and the player do not scan your project folder yet:
-call this from a script or startup code** (listed in UNFINISHED). A project material with the same name as a preset replaces it.
+Load it with `PhysicsMaterials::LoadFile(path)` or a whole folder with `PhysicsMaterials::ScanFolder(dir)`. A Physics Surface whose material name is not a preset scans the project's asset folder once by itself, in the editor and in the player, so a `.okayphysmat` file just works by name. A project material with the same name as a preset replaces it.
 
 ## What the physics does with it
 
@@ -68,7 +67,8 @@ Written from textbook contact friction (a still and a sliding coefficient, still
 
 ## Not done
 
-* A dropdown of presets and a "+ New material" button in the Inspector (type the name instead).
-* Character controller and vehicles do not yet read the ground material (they slide the same on ice).
+* The Inspector part (dropdown of presets and project materials, "+ New material", live sliders inside the collider's Physics Material section) is editor source that was **compiled-not-run**. Edited project materials are saved to `Materials/` under the asset folder.
+* The character controller (`CharacterController3D`) and `VehicleController` now scale acceleration, braking and sideways grip by the ground material (`Physics/GroundGrip.hpp`; ice 0.04, rubber 2). Tested for the character (slides 7.5 m on ice, 0.24 m on plain ground); the vehicle change is not tested by a driving test.
+* Other controllers (first/third person players) are not changed.
 * Terrain / voxel material defaults.
 * Visual Script nodes ("Make this object icy"): use the property `PhysicsSurface.material`.

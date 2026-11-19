@@ -2330,6 +2330,61 @@ static bool PhysicsMaterialFields(Col* c, const char* id) {
     bool changed = false;
     const std::string sid = id;
     if (!ImGui::TreeNode(("Physics Material##pm" + sid).c_str())) return false;
+    // The named material (a preset or a project .okayphysmat): a dropdown, a "+ New material" button and live sliders.
+    // It lives in a Physics Surface component on this object (made on the first pick, removed by "(none)").
+    if (c->gameObject) {
+        okay::GameObject* go = c->gameObject;
+        auto* surf = go->template GetComponent<okay::PhysicsSurface>();
+        const std::string cur = surf ? surf->material : std::string();
+        if (ImGui::BeginCombo(("Material##pmn" + sid).c_str(), cur.empty() ? "(none: use the numbers below)" : cur.c_str())) {
+            if (ImGui::Selectable("(none: use the numbers below)", cur.empty()) && surf) { go->RemoveComponent(surf); surf = nullptr; changed = true; }
+            for (const std::string& n : okay::PhysicsMaterials::AllNames())
+                if (ImGui::Selectable(n.c_str(), n == cur)) { okay::AssignPhysicsMaterial(*go, n); surf = go->template GetComponent<okay::PhysicsSurface>(); changed = true; }
+            ImGui::EndCombo();
+        }
+        if (ImGui::IsItemHovered()) ImGui::SetTooltip("How this surface feels: a ready-made material (Ice, Rubber, Wood...) or one of your own .okayphysmat files.");
+        ImGui::SameLine();
+        if (ImGui::SmallButton(("+ New material##pmnew" + sid).c_str())) {
+            okay::PhysicsMaterialData d = surf && surf->Data() ? *surf->Data() : okay::PhysicsMaterialData{};
+            const std::string dir = okay::Paths::Join(okay::Paths::AssetBaseDir(), "Materials");
+            okay::Paths::EnsureDir(dir);
+            for (int i = 1; i < 1000; ++i) { d.name = "My Material " + std::to_string(i); if (!okay::PhysicsMaterials::Find(d.name)) break; }
+            if (okay::PhysicsMaterials::SaveFile(d, okay::Paths::Join(dir, d.name + ".okayphysmat"))) {
+                okay::PhysicsMaterials::Register(d); okay::AssignPhysicsMaterial(*go, d.name);
+                surf = go->template GetComponent<okay::PhysicsSurface>(); changed = true;
+                ConsoleLog("Created " + d.name + ".okayphysmat in Assets/Materials");
+            }
+        }
+        if (ImGui::IsItemHovered()) ImGui::SetTooltip("Makes a copy of this material as a file in your project that you can change. Built-in materials cannot be edited.");
+        const okay::PhysicsMaterialData* md = surf ? surf->Data() : nullptr;
+        bool builtIn = false;
+        if (md) for (const auto& pm : okay::PhysicsMaterials::Presets()) if (&pm == md) builtIn = true;
+        if (md && !builtIn) {   // live sliders on the project material (saved back to its file)
+            okay::PhysicsMaterialData e = *md; bool ed2 = false;
+            ed2 |= ImGui::SliderFloat(("Grip when still##pm" + sid).c_str(), &e.staticFriction, 0.0f, 3.0f);
+            if (ImGui::IsItemHovered()) ImGui::SetTooltip("How hard it is to start something sliding. 0 = like ice, 1 = like rubber.");
+            ed2 |= ImGui::SliderFloat(("Grip when sliding##pm" + sid).c_str(), &e.dynamicFriction, 0.0f, 3.0f);
+            if (ImGui::IsItemHovered()) ImGui::SetTooltip("How slippery? 0 = like ice, 1 = like rubber.");
+            ed2 |= ImGui::SliderFloat(("Bounciness##pmb" + sid).c_str(), &e.bounciness, 0.0f, 1.0f);
+            if (ImGui::IsItemHovered()) ImGui::SetTooltip("0 = a dead thud, 1 = bounces back to where it fell from.");
+            ed2 |= ImGui::SliderFloat(("Density##pm" + sid).c_str(), &e.density, 10.0f, 20000.0f, "%.0f kg/m3");
+            if (ImGui::IsItemHovered()) ImGui::SetTooltip("Heavy or light for its size. Water 1000, wood 600, steel 7800. Used when the body takes its mass from density.");
+            ed2 |= ImGui::SliderFloat(("Rolling friction##pm" + sid).c_str(), &e.rollingFriction, -1.0f, 1.0f);
+            if (ImGui::IsItemHovered()) ImGui::SetTooltip("How hard it is to roll over. -1 = use the body's own setting.");
+            ed2 |= ImGui::SliderFloat(("Slows things down##pm" + sid).c_str(), &e.linearDamping, 0.0f, 10.0f);
+            if (ImGui::IsItemHovered()) ImGui::SetTooltip("Mud and sand slow what touches them. 0 = not at all.");
+            ed2 |= ImGui::SliderFloat(("Slope grip##pm" + sid).c_str(), &e.slopeGrip, 0.0f, 5.0f);
+            if (ImGui::IsItemHovered()) ImGui::SetTooltip("Multiplies the still grip so things stay put on steeper slopes. 1 = normal.");
+            if (ed2) {
+                okay::PhysicsMaterials::Register(e); surf->Apply();
+                okay::PhysicsMaterials::SaveFile(e, okay::Paths::Join(okay::Paths::Join(okay::Paths::AssetBaseDir(), "Materials"), e.name + ".okayphysmat"));
+                changed = true;
+            }
+        } else if (md) {
+            ImGui::TextDisabled("Built-in material. Press + New material to make an editable copy.");
+        }
+        ImGui::Separator();
+    }
     const char* modes[] = {"Default", "Average", "Minimum", "Multiply", "Maximum"};
     bool ownF = c->friction >= 0.0f;
     if (ImGui::Checkbox(("Own Friction##pm" + sid).c_str(), &ownF)) { c->friction = ownF ? 0.5f : -1.0f; changed = true; }

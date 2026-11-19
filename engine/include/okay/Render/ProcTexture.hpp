@@ -88,7 +88,7 @@ inline Color Lerp(const Color& a, const Color& b, float t) {
 inline const std::vector<std::string>& ProcTextureNames() {
     static const std::vector<std::string> names = {
         "checker", "grid", "brick", "wood", "stone", "tiles",
-        "marble", "metal", "noise", "grass", "sand", "lava",
+        "marble", "metal", "noise", "grass", "sand", "lava", "water_normal",
     };
     return names;
 }
@@ -179,6 +179,20 @@ inline Image GenerateProcTexture(const std::string& id) {
         forEach([&](float u, float v, int, int) {
             float n = Fbm(u, v, 8, 42u);
             return Color(n, n, n, 1);
+        });
+    } else if (name == "water_normal") {
+        // A tileable ripple NORMAL map for the Water component (RGB = tangent-space normal, blue is up).
+        // Heights are fractal noise; the slope comes from wrapped neighbour differences, so it tiles.
+        std::vector<float> h((std::size_t)S * S);
+        for (int y = 0; y < S; ++y)
+            for (int x = 0; x < S; ++x) h[(std::size_t)y * S + x] = Fbm((x + 0.5f) / S, (y + 0.5f) / S, 8, 91u);
+        forEach([&](float, float, int x, int y) {
+            const float l = h[(std::size_t)y * S + ((x + S - 1) % S)], r = h[(std::size_t)y * S + ((x + 1) % S)];
+            const float d = h[(std::size_t)((y + S - 1) % S) * S + x], u = h[(std::size_t)((y + 1) % S) * S + x];
+            float nx = (l - r) * 9.0f, ny = (d - u) * 9.0f, nz = 1.0f;
+            const float len = std::sqrt(nx * nx + ny * ny + nz * nz);
+            nx /= len; ny /= len; nz /= len;
+            return Color(nx * 0.5f + 0.5f, ny * 0.5f + 0.5f, nz * 0.5f + 0.5f, 1);
         });
     } else if (name == "grass") {
         forEach([&](float u, float v, int, int) {

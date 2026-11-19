@@ -22,6 +22,8 @@ int g_dragGuide = -1;              // index being dragged, -1 none
 bool g_showLayers = false;
 std::unordered_set<const GameObject*> g_locked;
 Scene* g_scene = nullptr;           // the scene the guides belong to (for keeping them)
+ImVec2 g_panelPos{0, 0}, g_panelEnd{0, 0};
+uid::Rect g_area; int g_areaFrame = -10;   // the free area inside the rulers, from the last frame they were drawn
 GameObject* g_renaming = nullptr;
 char g_nameBuf[128];
 
@@ -56,73 +58,94 @@ void UIDesignerSyncScene(Scene& scene) {
 
 bool UIDesignerLocked(const GameObject* g) { return g && g_locked.count(g) > 0; }
 
-void UIDesignerGuideCandidates(std::vector<float>& xs, std::vector<float>& ys, float zoom) {
-    for (const auto& g : g_guides) (g.vertical ? xs : ys).push_back(g.pos * zoom);
-}
-
-bool UIDesignerRulerInput(ImVec2 pp, ImVec2 pe, ImVec2 vp, float zoom, bool hovered, const ImGuiIO& io) {
+bool UIDesignerRulerInput(ImVec2 pp, ImVec2 pe, ImVec2 vp, float zoom, bool hovered, const ImGuiIO& io, bool* fit) {
     if (zoom < 1e-3f) zoom = 1.0f;
     const ImVec2 m = io.MousePos;
+    const uid::RulerLayout L = uid::MakeRulerLayout(pp.x, pp.y, pe.x - pp.x, pe.y - pp.y);
+    g_area = L.content; g_areaFrame = ImGui::GetFrameCount(); g_panelPos = pp; g_panelEnd = pe;
     if (g_dragGuide >= 0) {   // a guide is being dragged
         if (g_dragGuide >= (int)g_guides.size()) { g_dragGuide = -1; return false; }
         uid::Guide& g = g_guides[g_dragGuide];
         g.pos = g.vertical ? (m.x - vp.x) / zoom : (m.y - vp.y) / zoom;
         if (ImGui::IsMouseReleased(ImGuiMouseButton_Left)) {
-            const bool onRuler = g.vertical ? m.x < pp.x + kRuler : m.y < pp.y + kRuler;
+            const bool onRuler = g.vertical ? m.x < L.content.x : m.y < L.content.y;
             if (onRuler || !InRect(m, pp, pe)) g_guides.erase(g_guides.begin() + g_dragGuide);   // dragged back: remove it
             g_dragGuide = -1; WriteBackGuides();
         }
         return true;
     }
     if (!hovered || !InRect(m, pp, pe)) return false;
-    const bool top = m.y < pp.y + kRuler, left = m.x < pp.x + kRuler;
-    if (top && left) return true;   // the corner buttons
+    const bool inChrome = L.Contains(L.bar, m.x, m.y) || L.Contains(L.topRuler, m.x, m.y) || L.Contains(L.leftRuler, m.x, m.y) || L.Contains(L.corner, m.x, m.y);
     if (ImGui::IsMouseClicked(ImGuiMouseButton_Left)) {
-        if (top)  { g_guides.push_back({false, (m.y - vp.y) / zoom}); g_dragGuide = (int)g_guides.size() - 1; return true; }
-        if (left) { g_guides.push_back({true,  (m.x - vp.x) / zoom}); g_dragGuide = (int)g_guides.size() - 1; return true; }
+        switch (uid::RulerPress(L, m.x, m.y)) {   // tested in test_ui_designer: the buttons win over the rulers
+            case uid::RulerHit::ToggleLayers: g_showLayers = !g_showLayers; return true;
+            case uid::RulerHit::Fit: if (fit) *fit = true; return true;
+            case uid::RulerHit::NewGuideFromTop: g_guides.push_back({false, (m.y - vp.y) / zoom}); g_dragGuide = (int)g_guides.size() - 1; return true;
+            case uid::RulerHit::NewGuideFromLeft: g_guides.push_back({true, (m.x - vp.x) / zoom}); g_dragGuide = (int)g_guides.size() - 1; return true;
+            case uid::RulerHit::None: break;
+        }
         for (int i = 0; i < (int)g_guides.size(); ++i) {   // grab an existing guide
             const float d = g_guides[i].vertical ? std::fabs(m.x - (vp.x + g_guides[i].pos * zoom))
                                                  : std::fabs(m.y - (vp.y + g_guides[i].pos * zoom));
             if (d <= 4.0f) { g_dragGuide = i; return true; }
         }
     }
-    return false;
+    return inChrome;   // the bar and rulers never pass a press to the widgets under them
 }
 
-void UIDesignerDrawRulers(ImDrawList* dl, ImVec2 pp, ImVec2 pe, ImVec2 vp, float zoom, bool* fit) {
+void UIDesignerDrawRulers(ImDrawList* dl, ImVec2 pp, ImVec2 pe, ImVec2 vp, float zoom) {
     if (zoom < 1e-3f) zoom = 1.0f;
-    const ImU32 bg = IM_COL32(34, 36, 44, 235), fg = IM_COL32(190, 196, 210, 255), tick = IM_COL32(120, 128, 148, 255);
-    const ImU32 guideCol = IM_COL32(40, 200, 220, 230);
-    // guides first, so the strips sit over their ends
-    for (const auto& g : g_guides) {
-        if (g.vertical) { const float x = vp.x + g.pos * zoom; dl->AddLine({x, pp.y}, {x, pe.y}, guideCol, 1.0f); }
-        else            { const float y = vp.y + g.pos * zoom; dl->AddLine({pp.x, y}, {pe.x, y}, guideCol, 1.0f); }
+    const uid::RulerLayout L = uid::MakeRulerLayout(pp.x, pp.y, pe.x - pp.x, pe.y - pp.y);
+    const ImU32 bg = IM_COL32(34, 36, 44, 245), fg = IM_COL32(190, 196, 210, 255), tick = IM_COL32(120, 128, 148, 255);
+    const ImU32 guideCol = IM_COL32(40, 200, 220, 230), btn = IM_COL32(52, 56, 68, 255), btnOn = IM_COL32(70, 130, 220, 255);
+    auto A = [](const uid::Rect& r) { return ImVec2(r.x, r.y); };
+    auto B = [](const uid::Rect& r) { return ImVec2(r.R(), r.B()); };
+    for (const auto& g : g_guides) {   // guides, kept out of the bar and rulers
+        if (g.vertical) { const float x = vp.x + g.pos * zoom; if (x > L.content.x) dl->AddLine({x, L.content.y}, {x, pe.y}, guideCol, 1.0f); }
+        else            { const float y = vp.y + g.pos * zoom; if (y > L.content.y) dl->AddLine({L.content.x, y}, {pe.x, y}, guideCol, 1.0f); }
     }
-    dl->AddRectFilled(pp, {pe.x, pp.y + kRuler}, bg);
-    dl->AddRectFilled(pp, {pp.x + kRuler, pe.y}, bg);
-    for (const auto& t : uid::RulerTicks((pp.x - vp.x) / zoom, (pe.x - vp.x) / zoom, zoom)) {
-        const float x = vp.x + t.pos * zoom; if (x < pp.x + kRuler) continue;
-        dl->AddLine({x, pp.y + (t.major ? 3.0f : 10.0f)}, {x, pp.y + kRuler}, tick);
-        if (t.major) { char b[24]; std::snprintf(b, sizeof(b), "%g", t.pos); dl->AddText({x + 2, pp.y}, fg, b); }
+    dl->AddRectFilled(A(L.bar), B(L.bar), bg);
+    dl->AddRectFilled(A(L.topRuler), B(L.topRuler), bg);
+    dl->AddRectFilled(A(L.leftRuler), B(L.leftRuler), bg);
+    dl->AddRectFilled(A(L.corner), B(L.corner), bg);
+    dl->PushClipRect(A(L.topRuler), B(L.topRuler), true);
+    for (const auto& t : uid::RulerTicks((L.topRuler.x - vp.x) / zoom, (pe.x - vp.x) / zoom, zoom)) {
+        const float x = vp.x + t.pos * zoom; if (x < L.content.x) continue;
+        dl->AddLine({x, L.topRuler.y + (t.major ? 3.0f : 10.0f)}, {x, L.topRuler.B()}, tick);
+        if (t.major) { char b[24]; std::snprintf(b, sizeof(b), "%g", t.pos); dl->AddText({x + 2, L.topRuler.y}, fg, b); }
     }
-    for (const auto& t : uid::RulerTicks((pp.y - vp.y) / zoom, (pe.y - vp.y) / zoom, zoom)) {
-        const float y = vp.y + t.pos * zoom; if (y < pp.y + kRuler) continue;
-        dl->AddLine({pp.x + (t.major ? 3.0f : 10.0f), y}, {pp.x + kRuler, y}, tick);
-        if (t.major) { char b[24]; std::snprintf(b, sizeof(b), "%g", t.pos); dl->AddText({pp.x + 1, y + 1}, fg, b); }
+    dl->PopClipRect();
+    dl->PushClipRect(A(L.leftRuler), B(L.leftRuler), true);
+    for (const auto& t : uid::RulerTicks((L.content.y - vp.y) / zoom, (pe.y - vp.y) / zoom, zoom)) {
+        const float y = vp.y + t.pos * zoom; if (y < L.content.y) continue;
+        dl->AddLine({L.leftRuler.x + (t.major ? 3.0f : 10.0f), y}, {L.leftRuler.R(), y}, tick);
+        if (t.major) { char b[24]; std::snprintf(b, sizeof(b), "%g", t.pos); dl->AddText({L.leftRuler.x + 1, y + 1}, fg, b); }
     }
-    // corner: toggles the Layers panel; a small Fit button just right of it on the top ruler
-    const ImGuiIO& io = ImGui::GetIO();
-    dl->AddRectFilled(pp, {pp.x + kRuler, pp.y + kRuler}, g_showLayers ? IM_COL32(70, 130, 220, 255) : IM_COL32(52, 56, 68, 255));
-    dl->AddText({pp.x + 4, pp.y}, fg, "L");
-    const ImVec2 fa{pp.x + kRuler + 2, pp.y}, fb{pp.x + kRuler + 34, pp.y + kRuler};
-    dl->AddRectFilled(fa, fb, IM_COL32(52, 56, 68, 255)); dl->AddText({fa.x + 5, fa.y}, fg, "Fit");
-    if (ImGui::IsMouseClicked(ImGuiMouseButton_Left) && g_dragGuide < 0) {
-        if (InRect(io.MousePos, pp, {pp.x + kRuler, pp.y + kRuler})) g_showLayers = !g_showLayers;
-        else if (fit && InRect(io.MousePos, fa, fb)) *fit = true;
-    }
-    if (InRect(io.MousePos, pp, {pp.x + kRuler, pp.y + kRuler})) ImGui::SetTooltip("Layers panel");
+    dl->PopClipRect();
+    dl->AddRectFilled(A(L.layersBtn), B(L.layersBtn), g_showLayers ? btnOn : btn, 3.0f); dl->AddText({L.layersBtn.x + 6, L.layersBtn.y}, fg, "L");
+    dl->AddRectFilled(A(L.fitBtn), B(L.fitBtn), btn, 3.0f); dl->AddText({L.fitBtn.x + 7, L.fitBtn.y}, fg, "Fit");
     char z[24]; std::snprintf(z, sizeof(z), "%d%%", (int)(zoom * 100.0f + 0.5f));
-    dl->AddText({fb.x + 6, pp.y}, fg, z);
+    dl->AddText({L.zoomSlot.x, L.zoomSlot.y + 1}, fg, z);
+    const ImVec2 mp = ImGui::GetIO().MousePos;
+    if (L.Contains(L.layersBtn, mp.x, mp.y)) ImGui::SetTooltip("Layers, styles and tools (Ctrl+P: every action)");
+    else if (L.Contains(L.fitBtn, mp.x, mp.y)) ImGui::SetTooltip("Fit: show the whole screen at 100%%");
+}
+
+bool UIDesignerRulersShown(ImVec2 panelPos) {
+    return g_areaFrame >= ImGui::GetFrameCount() - 1 && g_panelPos.x == panelPos.x && g_panelPos.y == panelPos.y;
+}
+ImVec2 UIDesignerClampPoint(ImVec2 p) {
+    if (g_areaFrame < ImGui::GetFrameCount() - 1) return p;
+    float x = p.x, y = p.y; uid::ClampPoint(g_area, x, y); return {x, y};
+}
+ImVec2 UIDesignerClampLabel(ImVec2 pos, ImVec2 size) {
+    if (g_areaFrame < ImGui::GetFrameCount() - 1) return pos;
+    const uid::Rect b = uid::ClampBox(g_area, {pos.x, pos.y, size.x, size.y});
+    return {b.x, b.y};
+}
+
+void UIDesignerGuideCandidates(std::vector<float>& xs, std::vector<float>& ys, float zoom) {
+    for (const auto& g : g_guides) (g.vertical ? xs : ys).push_back(g.pos * zoom);
 }
 
 namespace {
@@ -262,9 +285,15 @@ void DrawReusable(EditorState& ed) {
 
 void UIDesignerLayersWindow(EditorState& ed) {
     if (!g_showLayers) return;
-    ImGui::SetNextWindowSize({260, 340}, ImGuiCond_FirstUseEver);
+    {   // first open: docked down the right side of the view, tall, so it never covers the ruler bar or the top-left
+        const float w = 280.0f, h = std::max(300.0f, g_panelEnd.y - g_panelPos.y - 60.0f);
+        ImGui::SetNextWindowPos({g_panelEnd.x - w - 10.0f, g_panelPos.y + 40.0f}, ImGuiCond_FirstUseEver);
+        ImGui::SetNextWindowSize({w, h}, ImGuiCond_FirstUseEver);
+    }
     if (ImGui::Begin("UI Layers", &g_showLayers)) {
+        ImGui::PushTextWrapPos(0.0f);
         ImGui::TextDisabled("Front first. Drag a row to reorder; drop on the middle to put it inside.");
+        ImGui::PopTextWrapPos();
         std::vector<GameObject*> roots;
         for (const auto& up : ed.scene().Objects()) if (up && up->transform && !up->transform->Parent()) roots.push_back(up.get());
         for (int i = (int)roots.size() - 1; i >= 0; --i) DrawTree(roots[i], ed, 0);

@@ -15,6 +15,7 @@
 //   responsive    common screen sizes, and where an anchored widget lands on each
 #include <algorithm>
 #include <cmath>
+#include <cstdio>
 #include <string>
 #include <vector>
 #include "okay/Components/UIAnchor.hpp"
@@ -291,5 +292,57 @@ inline Rect PlaceAt(okay::UIAnchor a, const okay::Vec2& pos, const okay::Vec2& s
 }
 /// Is the rectangle completely off the screen (a warning in the preview)?
 inline bool OutsideCanvas(const Rect& r, float cw, float ch) { return r.R() < 0 || r.B() < 0 || r.x > cw || r.y > ch; }
+
+// ---- the ruler bar: where each control sits, so nothing prints over anything else ---------------------------------
+enum class RulerHit { None, ToggleLayers, Fit, NewGuideFromTop, NewGuideFromLeft };
+constexpr float kBarH = 18.0f, kRulerW = 16.0f;
+struct RulerLayout {
+    Rect bar, layersBtn, fitBtn, zoomSlot;   // a strip along the top: L, Fit, then the zoom percentage
+    Rect topRuler, leftRuler, corner;        // the rulers sit below the bar; the corner box stays empty
+    Rect content;                            // what is left for the design screen (handles and labels stay inside)
+    bool Contains(const Rect& r, float x, float y) const { return x >= r.x && y >= r.y && x <= r.R() && y <= r.B(); }
+};
+inline RulerLayout MakeRulerLayout(float x, float y, float w, float h) {
+    RulerLayout L;
+    L.bar = {x, y, w, kBarH};
+    L.layersBtn = {x + 2, y + 1, 22, kBarH - 2};
+    L.fitBtn = {x + 28, y + 1, 36, kBarH - 2};
+    L.zoomSlot = {x + 70, y, 56, kBarH};
+    L.corner = {x, y + kBarH, kRulerW, kRulerW};
+    L.topRuler = {x + kRulerW, y + kBarH, w - kRulerW, kRulerW};
+    L.leftRuler = {x, y + kBarH + kRulerW, kRulerW, h - kBarH - kRulerW};
+    L.content = {x + kRulerW, y + kBarH + kRulerW, w - kRulerW, h - kBarH - kRulerW};
+    return L;
+}
+/// What a mouse press at (mx, my) does. The buttons win over everything; a press on a ruler starts a guide.
+inline RulerHit RulerPress(const RulerLayout& L, float mx, float my) {
+    if (L.Contains(L.layersBtn, mx, my)) return RulerHit::ToggleLayers;
+    if (L.Contains(L.fitBtn, mx, my)) return RulerHit::Fit;
+    if (L.Contains(L.bar, mx, my) || L.Contains(L.corner, mx, my)) return RulerHit::None;   // empty parts of the bar swallow the press
+    if (L.Contains(L.topRuler, mx, my)) return RulerHit::NewGuideFromTop;
+    if (L.Contains(L.leftRuler, mx, my)) return RulerHit::NewGuideFromLeft;
+    return RulerHit::None;
+}
+/// Fit: zoom 100% and no pan (the whole design screen is shown).
+inline void FitReset(float& zoom, float& panX, float& panY) { zoom = 1.0f; panX = 0.0f; panY = 0.0f; }
+/// A point pulled inside the rectangle (handles and labels at the edge of the view).
+inline void ClampPoint(const Rect& area, float& x, float& y) {
+    x = std::min(std::max(x, area.x), area.R()); y = std::min(std::max(y, area.y), area.B());
+}
+/// Move a w x h box so it lies inside `area` (as far as it fits).
+inline Rect ClampBox(const Rect& area, Rect b) {
+    if (b.R() > area.R()) b.x = area.R() - b.w;
+    if (b.B() > area.B()) b.y = area.B() - b.h;
+    if (b.x < area.x) b.x = area.x;
+    if (b.y < area.y) b.y = area.y;
+    return b;
+}
+/// A pixel value as the readout shows it: at most one decimal, none when it is whole ("25", "13.5", not "25.0001").
+inline std::string FormatPx(float v) {
+    const float r = std::round(v * 10.0f) / 10.0f;
+    char b[32];
+    if (std::fabs(r - std::round(r)) < 0.05f) std::snprintf(b, sizeof(b), "%d", (int)std::lround(r)); else std::snprintf(b, sizeof(b), "%.1f", r);
+    return b;
+}
 
 }  // namespace oked::uid

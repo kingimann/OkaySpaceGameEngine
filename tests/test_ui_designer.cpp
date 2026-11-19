@@ -223,5 +223,31 @@ int main() {
             CHECK(l == l2 && t == t2 && rr == r2 && bb == b2);
         }
     }
+    {
+        RUN_SUITE("ruler bar: every control has its own slot, Fit wins its click, readouts stay inside");
+        const RulerLayout L = MakeRulerLayout(32, 150, 1200, 600);
+        const Rect* slots[] = {&L.layersBtn, &L.fitBtn, &L.zoomSlot};
+        for (int i = 0; i < 3; ++i) for (int j = i + 1; j < 3; ++j) {   // no two overlap
+            const Rect &a = *slots[i], &b = *slots[j];
+            CHECK(a.R() <= b.x || b.R() <= a.x);
+        }
+        CHECK(L.topRuler.y >= L.bar.B() && L.leftRuler.y >= L.bar.B());   // ruler labels never share rows with the buttons
+        CHECK(L.content.x >= L.leftRuler.R() && L.content.y >= L.topRuler.B());
+        // the bug: a press on Fit must be Fit, not the start of a guide
+        CHECK(RulerPress(L, L.fitBtn.x + 5, L.fitBtn.y + 5) == RulerHit::Fit);
+        CHECK(RulerPress(L, L.layersBtn.x + 5, L.layersBtn.y + 5) == RulerHit::ToggleLayers);
+        CHECK(RulerPress(L, 500, L.topRuler.y + 5) == RulerHit::NewGuideFromTop);
+        CHECK(RulerPress(L, L.leftRuler.x + 5, 400) == RulerHit::NewGuideFromLeft);
+        CHECK(RulerPress(L, L.zoomSlot.x + 5, L.zoomSlot.y + 5) == RulerHit::None);
+        CHECK(RulerPress(L, 600, 400) == RulerHit::None);
+        float z = 1.3f, px = 40, py = -20; FitReset(z, px, py);
+        CHECK(z == 1.0f && px == 0 && py == 0);
+        // readouts: clamped into the content, rounded
+        Rect lab = ClampBox(L.content, {1180, 155, 120, 16});
+        CHECK(lab.R() <= L.content.R() && lab.x >= L.content.x && lab.y >= L.content.y);
+        CHECK(ClampBox(L.content, {100, 300, 50, 10}).x == 100);   // already inside: unchanged
+        float hx = 5, hy = 5; ClampPoint(L.content, hx, hy); CHECK(hx == L.content.x && hy == L.content.y);
+        CHECK(FormatPx(25.0001f) == "25" && FormatPx(13.0f) == "13" && FormatPx(13.46f) == "13.5" && FormatPx(-0.04f) == "0");
+    }
     TEST_MAIN_RESULT();
 }

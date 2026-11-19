@@ -43110,6 +43110,7 @@ static void UIHandlePositions(ImVec2 a, ImVec2 b, ImVec2 out[8]) {
     out[0] = ImVec2(a.x, a.y); out[1] = ImVec2(mx, a.y); out[2] = ImVec2(b.x, a.y);
     out[3] = ImVec2(b.x, my);  out[4] = ImVec2(b.x, b.y); out[5] = ImVec2(mx, b.y);
     out[6] = ImVec2(a.x, b.y); out[7] = ImVec2(a.x, my);
+    for (int i = 0; i < 8; ++i) out[i] = oked::UIDesignerClampPoint(out[i]);   // a widget at the view edge keeps its handles off the rulers
 }
 
 // The 9 anchor-pip positions on a rect, row-major (TL,T,TR, L,C,R, BL,B,BR) —
@@ -43219,6 +43220,7 @@ void DrawUIOverlay(EditorState& ed, ImDrawList* dl, ImVec2 canvasPos,
     // and scissor coordinates to a hardware backend (Direct3D) can crash the driver,
     // where the software rasterizer merely clips them. RAII so it's popped on every
     // return path. Covers the Scene overlay, the Game view, and the UI-Only view.
+    const ImVec2 clipA = canvasPos, clipB(canvasPos.x + canvasSize.x, canvasPos.y + canvasSize.y);   // the panel, before the authoring zoom
     struct UIClipGuard {
         ImDrawList* d;
         UIClipGuard(ImDrawList* dl_, ImVec2 a, ImVec2 b) : d(dl_) { d->PushClipRect(a, b, true); }
@@ -43317,11 +43319,17 @@ void DrawUIOverlay(EditorState& ed, ImDrawList* dl, ImVec2 canvasPos,
             // Live position + size readout above the box (the unscaled pixel values
             // you author), on a dark chip so it stays legible over any content.
             char dims[80];
-            std::snprintf(dims, sizeof(dims), "%g, %g   %g x %g",
-                          r.position ? r.position->x : 0.0f, r.position ? r.position->y : 0.0f,
-                          r.size.x, r.size.y);
-            ImVec2 tp(a.x, a.y - 17);
+            std::snprintf(dims, sizeof(dims), "%s, %s   %s x %s",
+                          oked::uid::FormatPx(r.position ? r.position->x : 0.0f).c_str(), oked::uid::FormatPx(r.position ? r.position->y : 0.0f).c_str(),
+                          oked::uid::FormatPx(r.size.x).c_str(), oked::uid::FormatPx(r.size.y).c_str());
             ImVec2 ts = ImGui::CalcTextSize(dims);
+            ImVec2 tp(a.x, a.y - 17);
+            {   // keep the readout inside the view (inside the panel, and off the rulers)
+                ImVec2 want = oked::UIDesignerClampLabel(ImVec2(tp.x - 3, tp.y - 1), ImVec2(ts.x + 6, ts.y + 2));
+                tp = ImVec2(want.x + 3, want.y + 1);
+                tp.x = std::min(tp.x, clipB.x - ts.x - 3); tp.y = std::min(tp.y, clipB.y - ts.y - 1);
+                tp.x = std::max(tp.x, clipA.x + 3);        tp.y = std::max(tp.y, clipA.y + 1);
+            }
             dl->AddRectFilled(ImVec2(tp.x - 3, tp.y - 1), ImVec2(tp.x + ts.x + 3, tp.y + ts.y + 1),
                               IM_COL32(0, 0, 0, 140), 3.0f);
             dl->AddText(tp, IM_COL32(255, 220, 120, 255), dims);
@@ -45108,7 +45116,8 @@ std::string SceneStatsLineText(const EditorState& ed, ImVec2 canvasPos, ImVec2 c
 // the scene's own UI text is drawn at the top left (it used to be drawn straight over an example's instructions).
 Rc SceneStatsLineRect(ImVec2 canvasPos, ImVec2 canvasSize, const std::string& text) {
     const ImVec2 ts = ImGui::CalcTextSize(text.c_str());
-    const Rc canvasRc{canvasPos.x, canvasPos.y, canvasPos.x + canvasSize.x, canvasPos.y + canvasSize.y};
+    Rc canvasRc{canvasPos.x, canvasPos.y, canvasPos.x + canvasSize.x, canvasPos.y + canvasSize.y};
+    if (oked::UIDesignerRulersShown(canvasPos)) { canvasRc.x0 += 16.0f; canvasRc.y0 += 34.0f; }   // keep clear of the ruler bar (L, Fit, zoom)
     static const std::vector<Rc> kNone;
     const bool fresh = g_sceneUIRects.canvas.x == canvasPos.x && g_sceneUIRects.canvas.y == canvasPos.y &&
                        ImGui::GetFrameCount() - g_sceneUIRects.frame <= 1;
@@ -48815,7 +48824,7 @@ void DrawViewport(EditorState& ed, bool uiPanel = false) {
     // With "Show UI in Scene view" the UI is drawn over the scene, so it's editable there too.
     if (uiOnly) oked::UIDesignerSyncScene(ed.scene());
     bool rulerBusy = false;   // a guide is being dragged or a ruler clicked: the widgets leave the mouse alone
-    if (uiOnly) { ImVec2 vp0 = uiCanvasPos, vs0 = uiCanvasSize; ApplyUIEditZoom(vp0, vs0); rulerBusy = oked::UIDesignerRulerInput(canvasPos, canvasEnd, vp0, g_uiEditZoom, hovered, io); }
+    if (uiOnly) { ImVec2 vp0 = uiCanvasPos, vs0 = uiCanvasSize; ApplyUIEditZoom(vp0, vs0); bool rfit = false; rulerBusy = oked::UIDesignerRulerInput(canvasPos, canvasEnd, vp0, g_uiEditZoom, hovered, io, &rfit); if (rfit) { g_uiEditZoom = 1.0f; g_uiEditPan = ImVec2(0.0f, 0.0f); } }
     if (!rulerBusy && ownsUIInteraction && (uiOnly || g_showUIOverlay)) EditUIWidgets(ed, uiCanvasPos, uiCanvasSize, hovered, io, uiOnly);
     else                             g_uiHandled = rulerBusy;   // scene view (or not the active viewport): leave clicks for object pick / gizmos
 
@@ -48893,9 +48902,7 @@ void DrawViewport(EditorState& ed, bool uiPanel = false) {
             }
         }
         {   // rulers, draggable guides, Fit and the Layers toggle (editor/UIDesignerWindow.cpp)
-            bool fit = false;
-            oked::UIDesignerDrawRulers(dl, canvasPos, canvasEnd, viewPos, g_uiEditZoom, &fit);
-            if (fit) { g_uiEditZoom = 1.0f; g_uiEditPan = ImVec2(0.0f, 0.0f); }
+            oked::UIDesignerDrawRulers(dl, canvasPos, canvasEnd, viewPos, g_uiEditZoom);
             oked::UIDesignerLayersWindow(ed);
         }
         // Safe-area inset (5% of the game screen): keep important UI inside this on TVs

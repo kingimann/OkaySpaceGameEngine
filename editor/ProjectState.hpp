@@ -212,7 +212,7 @@ inline void WriteBuildProfileBlock(std::ostream& o, const BuildProfile& p) {
     o << "gpu=" << b.gpuRenderer << "\n" << "d3d12=" << b.preferD3D12 << "\n";
     o << "openFolder=" << b.openFolderAfter << "\n" << "zip=" << b.zipAfter << "\n";
     o << "layout=" << b.layout << "\n" << "strip=" << b.stripAssets << "\n" << "compress=" << b.compress << "\n";
-    o << "buildNumber=" << b.buildNumber << "\n" << "autoBuild=" << b.autoBuildNumber << "\n" << "archiveName=" << b.archiveName << "\n";
+    o << "buildNumber=" << b.buildNumber << "\n" << "autoBuild=" << b.autoBuildNumber << "\n" << "archiveName=" << EscapeProfileValue(b.archiveName) << "\n";
     o << "fsToggle=" << b.fullscreenToggle << "\n";
     o << "srvTarget=" << b.srvTarget << "\n" << "srvName=" << EscapeProfileValue(b.srvName) << "\n" << "srvPort=" << b.srvPort << "\n";
     o << "srvMax=" << b.srvMaxPlayers << "\n" << "srvTick=" << b.srvTick << "\n" << "srvPassword=" << EscapeProfileValue(b.srvPassword) << "\n";

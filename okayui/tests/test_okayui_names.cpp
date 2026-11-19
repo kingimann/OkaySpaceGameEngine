@@ -168,8 +168,8 @@ int main() {
         CHECK(ImGui::GetFrameCount() == fc + 1);
         ImGui::UpdatePlatformWindows(); ImGui::RenderPlatformWindowsDefault();
         ImGuiPlatformIO& pio = ImGui::GetPlatformIO();
-        pio.Renderer_CreateWindow = reinterpret_cast<void*>(1);
-        CHECK(pio.Viewports.Size == 1 && ImGui::GetPlatformIO().Renderer_CreateWindow == reinterpret_cast<void*>(1));
+        pio.Renderer_CreateWindow = reinterpret_cast<void (*)(OkayUI::Viewport*)>(1);
+        CHECK(pio.Viewports.Size == 1 && ImGui::GetPlatformIO().Renderer_CreateWindow == reinterpret_cast<void (*)(OkayUI::Viewport*)>(1));
         bool open = true;
         auto ui = [&] {
             OkayUI::BareNextWindow();
@@ -187,6 +187,22 @@ int main() {
         OkayUI::WindowRef ref; std::strcpy(ref.Name, "nowhere"); ref.Size = {100, 80};
         CHECK(!ImGui::DockContextQueueUndockWindow(ImGui::GetCurrentContext(), &ref) && !ImGui::DockContextQueueUndockWindow(nullptr, nullptr));
         static_assert(ImGuiAxis_Y == 1 && ImGuiSortDirection_Ascending == 1 && ImGuiTableBgTarget_CellBg == OkayUI::TableBg_CellBg, "names");
+    }
+    {   // popups by id: OpenPopup(GetID(name)) opens the popup BeginPopup(name) / BeginPopupEx(id) draws
+        Reset(); Sim s(300, 200);
+        bool opened = false; int bodies = 0, bodiesEx = 0;
+        auto ui = [&] {
+            OkayUI::BareNextWindow();
+            if (OkayUI::Begin("w", 0, 0, 300, 200)) {
+                const ImGuiID id = OkayUI::GetID("##byid");
+                if (!opened) { ImGui::OpenPopup(id); opened = true; }
+                if (OkayUI::BeginPopup("##byid")) { ++bodies; OkayUI::Text("named"); OkayUI::EndPopup(); }
+                if (ImGui::BeginPopupEx(id, ImGuiWindowFlags_AlwaysAutoResize | ImGuiWindowFlags_NoTitleBar)) { ++bodiesEx; OkayUI::Text("by id"); OkayUI::EndPopup(); }
+            }
+            OkayUI::End();
+        };
+        s.Frames(4, ui);
+        CHECK(bodies > 0 && bodiesEx > 0 && OkayUI::IsPopupOpen("##byid"));
     }
     TEST_MAIN_RESULT();
 }

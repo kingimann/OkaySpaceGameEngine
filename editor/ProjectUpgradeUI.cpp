@@ -348,7 +348,7 @@ void DrawUpgradeWindow(okay::editor::EditorState& ed) {
     const bool upgrade = Accent((std::string("Upgrade project") + (rv.empty() ? "" : " to v" + rv) + "...").c_str());
     ImGui::EndDisabled();
     if (upgrade) {
-        const std::string scene = ed.path().empty() ? (fs::path(dir) / "Assets" / "project.okayscene").string() : ed.path();   // only its folder matters here
+        const std::string scene = okayup::SceneKeyForProject(dir);   // the project's own folder, never the open scene's (a loose scene belongs to no project)
         ImGui::CloseCurrentPopup();
         RunAfterSavePrompt(ed, "upgrading the project", [&ed, scene] {
             g_gate.Upgrade(scene, [&ed] {   // the scene on disk may have been rewritten: open it again

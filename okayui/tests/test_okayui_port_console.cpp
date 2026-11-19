@@ -11,6 +11,8 @@
 #include <ctime>
 #include <cstdlib>
 #include <string>
+#include <vector>
+#include <utility>
 
 // A fixed wall clock so the time stamps in the rows (and the golden image) do not change: the panel reads time() and localtime().
 extern "C" std::time_t time(std::time_t* t) { const std::time_t v = 1700000000; if (t) *t = v; return v; }
@@ -70,5 +72,15 @@ int main() {
     Sim tiny(40, 30); tiny.Frame(ui);
     oked::ConsoleClear(); s.Frames(3, ui);
     CHECK(UI::GetDrawData().vertexCount > 50);
+    // the mirror (window mode's second Console): every line stored is also handed to it with its text and level; none after it is unplugged
+    {
+        static std::vector<std::pair<std::string, int>> got;
+        oked::ConsoleSetMirror([](const std::string& m, int l) { got.emplace_back(m, l); });
+        oked::ConsoleLog("one", 0); oked::ConsoleLog("two", 2); oked::ConsoleLog("three", 9);   // a level out of range is held to 2, like the stored line
+        CHECK(got.size() == 3 && got[0].first == "one" && got[0].second == 0 && got[1].second == 2 && got[2].second == 2);
+        oked::ConsoleSetMirror(nullptr);
+        oked::ConsoleLog("four", 0);
+        CHECK(got.size() == 3);
+    }
     TEST_MAIN_RESULT();
 }

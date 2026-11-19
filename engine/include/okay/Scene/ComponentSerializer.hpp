@@ -43,6 +43,7 @@ public:
 namespace detail {
 /// Defined in SceneSerializer.cpp: registers the components that use the registry.
 void RegisterBuiltinComponentSerializers();
+void RegisterPhysicsToySerializers();   // Physics Surface and the physics toys (src/Physics/PhysicsToys.cpp)
 }
 
 } // namespace okay

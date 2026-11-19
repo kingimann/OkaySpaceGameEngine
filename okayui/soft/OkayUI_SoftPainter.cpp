@@ -26,6 +26,7 @@ struct STex {
     std::vector<std::uint8_t> px;
     BlendMode blend = BlendMode::Blend;
     ScaleMode scale = ScaleMode::Nearest;
+    bool target = false;
     std::uint8_t mr = 255, mg = 255, mb = 255, ma = 255;
     raster::Tex View() const {
         raster::Tex t;
@@ -98,7 +99,7 @@ public:
     ui2d::Tex CreateTexture(const TextureDesc& d, const std::uint8_t* rgba) override {
         if (d.width <= 0 || d.height <= 0 || d.width > kMaxDim || d.height > kMaxDim) return nullptr;
         STex* t = new STex();
-        t->w = d.width; t->h = d.height; t->blend = d.blend; t->scale = d.scale;
+        t->w = d.width; t->h = d.height; t->blend = d.blend; t->scale = d.scale; t->target = d.target;
         t->px.assign((std::size_t)d.width * (std::size_t)d.height * 4, 0);
         if (rgba) std::memcpy(t->px.data(), rgba, t->px.size());
         m_texs.insert(t);
@@ -116,7 +117,27 @@ public:
             std::memcpy(&t->px[((std::size_t)(rc.y + y) * (std::size_t)t->w + (std::size_t)rc.x) * 4], src + (std::size_t)y * (std::size_t)pitch, (std::size_t)rc.w * 4);
         return true;
     }
+    // ---- render targets: the frame buffer is swapped with the texture's pixels, clip and scale kept per target ------------
+    bool SetRenderTarget(ui2d::Tex tex) override {
+        STex* nt = nullptr;
+        if (tex) { nt = (STex*)tex; if (!m_texs.count(nt) || !nt->target) return false; }
+        if (nt == m_target) return true;
+        LeaveTarget();
+        if (nt) {
+            m_winPx = std::move(m_px); m_winW = m_w; m_winH = m_h;
+            m_winClip = m_clip; m_winClipOn = m_clipOn; m_winSx = m_sx; m_winSy = m_sy;
+            m_px = std::move(nt->px); m_w = nt->w; m_h = nt->h;
+            m_clipOn = false; m_sx = m_sy = 1.0f;
+            m_target = nt;
+        }
+        return true;
+    }
+    ui2d::Tex GetRenderTarget() override { return m_target; }
+    void Flush() override {}
+    bool GetDrawColor(std::uint8_t* r, std::uint8_t* g, std::uint8_t* b, std::uint8_t* a) override { if (r) *r = m_r; if (g) *g = m_g; if (b) *b = m_b; if (a) *a = m_a; return true; }
+    std::string DriverName() override { return "software"; }
     void DestroyTexture(ui2d::Tex tex) override {
+        if ((STex*)tex == m_target) LeaveTarget();
         STex* t = T(tex);
         if (!t) return;
         m_texs.erase(t);
@@ -125,7 +146,7 @@ public:
     void SetTextureBlendMode(ui2d::Tex t, BlendMode m) override { if (STex* s = T(t)) s->blend = m; }
     void SetTextureScaleMode(ui2d::Tex t, ScaleMode m) override { if (STex* s = T(t)) s->scale = m; }
     void QueryTexture(ui2d::Tex t, int* w, int* h) override {
-        STex* s = T(t);
+        STex* s = (STex*)t == m_target ? m_target : T(t);
         if (w) *w = s ? s->w : 0;
         if (h) *h = s ? s->h : 0;
     }
@@ -196,20 +217,27 @@ public:
     }
 
 private:
-    STex* T(ui2d::Tex t) const {
+    STex* T(ui2d::Tex t) const {   // a texture that is the render target right now is not available as a source
         STex* s = (STex*)t;
-        return s && m_texs.count(s) ? s : nullptr;
+        return s && s != m_target && m_texs.count(s) ? s : nullptr;
     }
     static int Round(double v) { return Pin(std::floor(v + 0.5)); }
     static int CeilC(double v) { return Pin(std::ceil(v - 0.5)); }   // first pixel whose centre is >= v
 
+    void LeaveTarget() {   // give the target its pixels back and restore the window's frame buffer
+        if (!m_target) return;
+        m_target->px = std::move(m_px);
+        m_px = std::move(m_winPx); m_w = m_winW; m_h = m_winH;
+        m_clip = m_winClip; m_clipOn = m_winClipOn; m_sx = m_winSx; m_sy = m_winSy;
+        m_target = nullptr;
+    }
     void Resize(int w, int h) {
         w = std::max(1, std::min(kMaxDim, w)); h = std::max(1, std::min(kMaxDim, h));
         m_w = w; m_h = h;
         m_px.assign((std::size_t)w * (std::size_t)h * 4, 0);
     }
     void SyncSize() {
-        if (!m_win) return;
+        if (!m_win || m_target) return;   // a render target keeps its own size
         int w = 0, h = 0;
         m_win->GetDrawableSize(w, h);
         if (w > 0 && h > 0 && (w != m_w || h != m_h)) Resize(w, h);
@@ -356,6 +384,8 @@ private:
     bool m_vsync;
     int m_w = 0, m_h = 0;
     std::vector<std::uint8_t> m_px;
+    STex* m_target = nullptr;                     // the render target, or null (the window)
+    std::vector<std::uint8_t> m_winPx; int m_winW = 0, m_winH = 0; ui2d::Rect m_winClip{0, 0, 0, 0}; bool m_winClipOn = false; float m_winSx = 1, m_winSy = 1;
     std::uint8_t m_r = 0, m_g = 0, m_b = 0, m_a = 255;
     BlendMode m_blend = BlendMode::None;     // SDL's default draw blend mode
     bool m_clipOn = false;

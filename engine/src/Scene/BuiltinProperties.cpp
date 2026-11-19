@@ -222,6 +222,7 @@ void RegisterLight() {
      .AddFloat("ambient", &Light::ambient).Range(0, 1, 0.01).Tooltip("Unlit floor, taken from the first light")
      .AddColor("ambientColor", &Light::ambientColor).Range(0, 16, 0.01).Tooltip("Tint of the ambient floor")
      .Section("Shape")
+     .AddEnum("unit", &Light::unit, {"Simple", "RealWorld"}).Tooltip("Simple: the number is the brightness. RealWorld: lux for the sun, lumens for lamps")
      .AddFloat("range", &Light::range).Range(0, kBig, 0.5).Tooltip("Reach of a point, spot or area light")
      .AddFloat("spotAngle", &Light::spotAngle).Range(1, 179, 0.5).Tooltip("Spot cone, full angle in degrees")
      .AddFloat("spotSoftness", &Light::spotSoftness).Range(0, 1, 0.01)
@@ -233,6 +234,12 @@ void RegisterLight() {
      .AddBool("castShadows", &Light::castShadows)
      .AddFloat("shadowStrength", &Light::shadowStrength).Range(0, 1, 0.01)
      .AddFloat("shadowBias", &Light::shadowBias).Range(0, 100, 0.05)
+     .AddFloat("shadowSoftness", &Light::shadowSoftness).Range(0, 1, 0.01).Tooltip("Soft edges: shadows get softer the farther they fall from the object (0 = even edge)")
+     .Section("Shape and mask")
+     .AddFloat("areaWidth", &Light::areaWidth).Range(0, 100, 0.1).Tooltip("Area light panel width in metres (0 = soft glow)")
+     .AddFloat("areaHeight", &Light::areaHeight).Range(0, 100, 0.1).Tooltip("Area light panel height in metres (0 = soft glow)")
+     .AddString("cookie", &Light::cookie).Tooltip("A mask the light shines through: builtin:window, builtin:blinds, builtin:dots, builtin:leaves, builtin:star, builtin:soft-circle, or an image file")
+     .AddFloat("cookieScale", &Light::cookieScale).Range(0.1, 200, 0.1).Tooltip("Sun only: metres per repeat of the mask")
      .Section("Flicker")
      .AddFloat("flicker", &Light::flicker).Range(0, 1, 0.01).Tooltip("How far the intensity may dim")
      .AddFloat("flickerSpeed", &Light::flickerSpeed).Range(0, 1000, 0.5);
@@ -307,7 +314,9 @@ void RegisterMeshRenderer() {
      .AddBool("receiveShadows", &MeshRenderer::receiveShadows)
      .AddBool("groundShadow", &MeshRenderer::groundShadow).Tooltip("A flat blob shadow while real shadow maps are off")
      .AddFloat("groundShadowY", &MeshRenderer::groundShadowY).Range(-kBig, kBig, 0.1)
-     .AddFloat("groundShadowStrength", &MeshRenderer::groundShadowStrength).Range(0, 1, 0.01);
+     .AddFloat("groundShadowStrength", &MeshRenderer::groundShadowStrength).Range(0, 1, 0.01)
+     .Section("Glow")
+     .AddFloat("glowLightRange", &MeshRenderer::glowLightRange).Range(0, kBig, 0.5).Tooltip("A glowing object also lights things around it, this many metres out (0 = off). Set the Emissive colour first.");
     b.Commit();
 }
 

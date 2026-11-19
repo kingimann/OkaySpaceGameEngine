@@ -4,6 +4,7 @@
 #include "okay/Components/ProceduralObjectHolding.hpp"
 #include "imgui.h"
 #include <SDL.h>
+#include "PainterBridge.hpp"
 #include <cstdint>
 #include <cstring>
 #include <string>
@@ -452,13 +453,11 @@ void DrawFpHandsPreviewWindow(EditorState& ed) {
         auto other = g_preview.Render(false, W, H);
         if (oked::g_sdlRenderer) {
             auto up = [&](SDL_Texture*& slot, const std::vector<std::uint32_t>& px) {
-                if (slot && (texW != W || texH != H)) { SDL_DestroyTexture(slot); slot = nullptr; }
+                if (slot && (texW != W || texH != H)) { okay::pb::DestroyTexture(oked::g_sdlRenderer, slot); slot = nullptr; }
                 if (!slot) {
-                    slot = SDL_CreateTexture(oked::g_sdlRenderer, SDL_PIXELFORMAT_ABGR8888,
-                                             SDL_TEXTUREACCESS_STATIC, W, H);
-                    if (slot) SDL_SetTextureBlendMode(slot, SDL_BLENDMODE_NONE);
+                    slot = okay::pb::CreateTexture(oked::g_sdlRenderer, W, H, okay::pb::Access::Static, false, false);   // opaque
                 }
-                if (slot) SDL_UpdateTexture(slot, nullptr, px.data(), W * 4);
+                if (slot) okay::pb::UpdateTexture(oked::g_sdlRenderer, slot, nullptr, px.data(), W * 4);
                 return slot;
             };
             up(g_playerTex, player);

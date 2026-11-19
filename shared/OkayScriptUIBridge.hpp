@@ -6,6 +6,7 @@
 #include "okay/UI/OkayUI.hpp"
 #include "okay/Graphics/Image.hpp"
 #include "okay/Platform/Painter.hpp"
+#include "PainterBridge.hpp"
 
 #include <SDL.h>
 #include <cstring>
@@ -74,11 +75,9 @@ struct OkayUIScriptBridge : ScriptUIBridge {
     okay::platform::Painter* painter = nullptr;   ///< set by the host; lets Image() make textures
     /// For a host that only has an SDL_Renderer (the editor): the sdl2 painter over it, owned here.
     void SetRenderer(SDL_Renderer* r) {
-        m_wrapped = okay::platform::WrapSdl2Renderer(r);
-        painter = m_wrapped.get();
+        painter = okay::pb::For(r);   // owned by the bridge table (sdl2 or software painter)
     }
 private:
-    std::unique_ptr<okay::platform::Painter> m_wrapped;
     struct Field { char buf[256] = ""; std::string lastOut; };
     std::map<std::string, Field> m_fields;
 };

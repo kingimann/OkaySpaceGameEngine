@@ -290,6 +290,13 @@ int main() {
             CHECK(declared == have);
         }
 
+        {   // a zip name with a backslash, a bar or an equals sign came back changed: it was written as it is but read with the escapes undone
+            BuildProfile q; q.name = "Odd";
+            Put(q.settings.archiveName, "a\\b|c=d {name}");
+            const auto r = ParseBuildProfiles(WriteBuildProfiles({q}));
+            CHECK(r.size() == 1 && std::string(r[0].settings.archiveName) == "a\\b|c=d {name}");
+        }
+
         // Several profiles keep their order and their own values; a default profile is itself.
         BuildProfile dev; dev.name = "Dev"; dev.settings.developmentBuild = true; dev.productName = "G Dev"; dev.outputDir = "build/dev";
         BuildProfile rel; rel.name = "Release"; rel.settings.encryptData = true; rel.platform = 1;

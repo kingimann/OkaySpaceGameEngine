@@ -129,6 +129,16 @@ Shows the project's version and this editor's, and the backups next to the proje
   version question is asked afresh (nothing in memory can be written over the restored files). A backup made by Open anyway has nothing to
   restore. Folders that are not ours are listed with "open the folder to copy files by hand".
 
+## The launcher's project cards stay current
+
+The editor, a different program, writes the stamp when it upgrades a project, while the launcher may stay open. The launcher therefore
+re-reads each card's stamp about once a second (`okayver::RefreshStamp`, which always reads the file: a same-length stamp such as
+`2.850.0` to `2.900.0` within one clock tick is still seen), and a plain Open reads it fresh before choosing which editor to start. Before
+this, a card kept the version from the first scan, so it kept saying "older" after the upgrade and a plain Open could start an old editor.
+File > Project Upgrade... asks about the open project by its folder (`okayup::SceneKeyForProject`), not through the open scene's path,
+which may be a loose file of no project. A scene saved with Save As marks the open project only when the scene is inside it.
+A shipped fixture to try all this: `examples/old_project` (flat layout, `engine_version=2.1.0`, a version 1 scene).
+
 ## The launcher's side: the Versions folder and `--keep-version`
 
 This is the contract the launcher builds on (all of it in `shared/ProjectVersion.hpp`):

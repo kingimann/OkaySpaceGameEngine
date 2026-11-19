@@ -49713,7 +49713,10 @@ static bool SaveSceneTo(EditorState& ed, std::string p) {
     g_lastSaveError.clear();
     g_lastSavedAt = okay::platform::TicksMs();
     ConsoleLog("Saved scene: " + p);
-    StampProjectAfterSave(ed.projectDir());   // project.okayproj says which version last saved the project
+    // project.okayproj says which version last saved the project. Only the open project is stamped, and only when the scene went
+    // into it: a Save As into another project must not mark that one "up to date" (its other scenes were not upgraded), and a
+    // loose file belongs to no project.
+    if (const std::string saved = okayup::ProjectRootForScene(p); !saved.empty() && okayup::RootKey(saved) == okayup::RootKey(ed.projectDir())) StampProjectAfterSave(ed.projectDir());
     AddRecent(p); ed.Achievement("FIRST_SAVE");
     fs::remove(p + ".autosave", ec);
     return true;

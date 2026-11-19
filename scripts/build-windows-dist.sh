@@ -192,6 +192,7 @@ modeling
 modeling_tools
 node_playground
 obj_texture_paths
+old_project
 own_readers
 own_wav
 perf

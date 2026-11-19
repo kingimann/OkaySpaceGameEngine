@@ -19843,7 +19843,7 @@ int main(int argc, char** argv) {
                               ? (fs::path(g_exeDir) / "Projects").string().c_str() : g_projectsDir.c_str());
 
             // ---- Projects: every <Location>/<Name>/Assets folder, plus ones opened from elsewhere ----
-            struct CrProj { std::string name, scene; long long mtime = 0; bool extra = false; bool ready = false; bool missing = false; std::string ver; };   // ver: engine_version in project.okayproj ("" = none)
+            struct CrProj { std::string name, scene, root; long long mtime = 0; bool extra = false; bool ready = false; bool missing = false; std::string ver; };   // ver: engine_version in project.okayproj ("" = none)
             static std::vector<CrProj> s_projects;
             static std::string s_projScanned = "\x01";   // never equals a real path -> first scan
             auto sceneIn = [](const fs::path& root) -> std::string { return okayproj::SceneIn(root); };
@@ -19858,7 +19858,7 @@ int main(int argc, char** argv) {
                     pr.ready = fs::exists(fs::path(scene), e);
                     pr.missing = extra && !pr.ready;   // moved or deleted outside the launcher
                     if (pr.ready) pr.mtime = (long long)fs::last_write_time(fs::path(scene), e).time_since_epoch().count();
-                    if (pr.ready) pr.ver = okayver::ReadProjectVersion(okayproj::RootOfScene(fs::path(scene)).string());   // read only: the launcher never writes into a project
+                    if (pr.ready) { pr.root = okayproj::RootOfScene(fs::path(scene)).string(); pr.ver = okayver::ReadProjectVersion(pr.root); }   // read only: the launcher never writes into a project
                     s_projects.push_back(pr);
                 };
                 for (const auto& lp : okayproj::ScanProjects(fs::path(npLoc), g_hiddenProjects, g_extraProjects))
@@ -19891,7 +19891,9 @@ int main(int argc, char** argv) {
             // version recorded goes to the default editor when one is set (Versions page).
             auto openProject = [&](const CrProj& pr) {
                 if (editor.empty() || !pr.ready) return;
-                const okayversions::OpenTarget t = okayversions::ChooseEditorForOpen(pr.ver, LocalVersion(),
+                std::string freshVer = pr.ver;   // the editor may have upgraded the project since the list was made: ask the disk, not the card
+                okayver::RefreshStamp(pr.root, freshVer);
+                const okayversions::OpenTarget t = okayversions::ChooseEditorForOpen(freshVer, LocalVersion(),
                     okayversionsui::InstalledVersionsCached(LauncherDirPath()), okayversions::GlobalSettings().defaultEditor);
                 openProjectWith(pr, t.version);
             };
@@ -20085,6 +20087,13 @@ int main(int argc, char** argv) {
             ImGui::Dummy(ImVec2(0, 4));
             std::vector<const CrProj*> projList;
             {
+                // A project is upgraded by the editor, a different program: keep the version on each card in step with the file.
+                static Uint32 s_stampAt = 0;
+                const Uint32 nowMs = okay::platform::TicksMs32();
+                if (nowMs - s_stampAt > 1000) {
+                    s_stampAt = nowMs;
+                    for (auto& pr : s_projects) if (pr.ready && !pr.root.empty()) okayver::RefreshStamp(pr.root, pr.ver);
+                }
                 std::string q; for (const char* c = projQ; *c; ++c) q += (char)std::tolower((unsigned char)*c);
                 for (const auto& pr : s_projects) {
                     std::string n = pr.name; for (auto& ch : n) ch = (char)std::tolower((unsigned char)ch);

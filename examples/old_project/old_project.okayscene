@@ -1,0 +1,17 @@
+okayscene 1
+name "Old Level"
+gravity 0 -9.81
+gameobject 0 "Hero"
+  active 1
+  parent -1
+  transform 1 2 0 0 0 0 1 1 1 1
+  sprite 64 1 0 0 1 1 1
+  rigidbody2d 1 1 1 0 0
+  boxcollider2d 1 1 0 0 0
+end
+gameobject 1 "Cam"
+  active 1
+  parent 0
+  transform 0 0 -10 0 0 0 1 1 1 1
+  camera 0 5 60 0.1 0.1 0.1 1 1
+end

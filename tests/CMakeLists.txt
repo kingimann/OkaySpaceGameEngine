@@ -4521,3 +4521,8 @@ foreach(_t IN ITEMS mip atlas convert bc dds_stream)
     add_test(NAME tex_${_t} COMMAND test_tex_${_t} WORKING_DIRECTORY ${CMAKE_CURRENT_BINARY_DIR})
     set_tests_properties(tex_${_t} PROPERTIES TIMEOUT 240)
 endforeach()
+
+# Colliders behave as the shapes they are (not boxes): Cylinder, Cone, Convex Hull, Compound, Plane, Heightfield, 2D polygon / capsule / composite.
+add_executable(test_collider_shapes test_collider_shapes.cpp)
+target_link_libraries(test_collider_shapes PRIVATE okay::engine)
+add_test(NAME collider_shapes COMMAND test_collider_shapes)

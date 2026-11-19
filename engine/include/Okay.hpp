@@ -111,6 +111,8 @@
 #include "okay/Components/Joint2D.hpp"
 #include "okay/Physics/Rigidbody3D.hpp"
 #include "okay/Physics/Collider3D.hpp"
+#include "okay/Physics/ColliderShapes3D.hpp"
+#include "okay/Physics/ColliderShapes2D.hpp"
 #include "okay/Physics/Physics3D.hpp"
 #include "okay/Physics/DebrisPool.hpp"
 #include "okay/Components/DebrisEmitter.hpp"

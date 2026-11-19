@@ -43,6 +43,8 @@ public:
 namespace detail {
 /// Defined in SceneSerializer.cpp: registers the components that use the registry.
 void RegisterBuiltinComponentSerializers();
+void RegisterColliderShape2DSerializers();   // the Composite 2D collider (src/Physics/ColliderShapes2D.cpp)
+void RegisterColliderShapeSerializers();   // the Cone / Convex Hull / Plane / Compound / Heightfield colliders (src/Physics/ColliderShapes3D.cpp)
 void RegisterPhysicsToySerializers();   // Physics Surface and the physics toys (src/Physics/PhysicsToys.cpp)
 }
 

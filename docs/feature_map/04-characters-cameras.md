@@ -98,18 +98,15 @@ Pull request #554 ("Integrate owned animation and IK work", landed 2026-11-10) b
   - 4.5.2 Raycast suspension - `Components/VehicleController` - four down-rays at wheelBase x trackWidth, spring to rideHeight, chassis roll and pitch, maxTilt
   - 4.5.3 2D vehicle - `Components/VehicleController2D` - top-down (local +Y) or side view
   - 4.5.4 Driver seat - `Components/VehicleSeat` - driver, sitPoint, exitPoint, useRadius, enterKey, prompt, Enter, Exit, Occupant, sit pose (BeginVehicleSit), ride camera (CameraTarget)
+  - 4.5.6 Boat - `Components/BoatController`, `Components/Buoyancy` - W/S throttle (the throttle sets the target speed), A/D steer through a rudder that needs flowing water, Space brake, less control out of the water, wake, bow splash, engine-revs hook, chase camera; GameObject > Vehicles > Boat; `examples/boat/`
   - 4.5.5 Wheel visuals - `Components/VehicleController` - objects named Wheel... with a Tire child roll with the speed, Front wheels steer; WheelSpin(), SteerAngle()
-  - 4.5.6 Open-world driving model - `Components/VehicleController` - openWorld, handling (Realistic to Arcade), gears and rpm, brake to reverse, speed-sensitive steering, handbrake drift, ABS, traction control, drivetrain, boost, flip recovery, air control, surface grip by tag
-  - 4.5.7 Vehicle tuning table and presets - `Components/VehicleTuning` - one table of every setting (Inspector rows, scene save, SetSetting), 9 built-in presets, .okayvehicle files, ApplyPreset, SavePresetText, LoadPresetText
-  - 4.5.8 Vehicle builder and Driving World - `Scene/VehicleBuilder`, `Scene/SceneTemplates` - GameObject > Vehicles > Sedan / Sports Car / Pickup ..., the Driving World template and example scene
-  - 4.5.9 Driving options - `Core/DrivingSettings` - km/h or mph, steering sensitivity, camera view, assists on or off, saved in Prefs (driving.*)
-- **Code:** `Components/VehicleController`, `Components/VehicleTuning`, `Scene/VehicleBuilder`, `Core/DrivingSettings`, `Components/VehicleController2D`, `Components/VehicleSeat`
-- **API:** `VehicleController`, `VehicleController2D`, `VehicleSeat`, `Speed()`, `IsGrounded()`, `Driver()`, `Enter()`, `Exit()`, `ApplyPreset()`, `SetSetting()`, `SetInput()`, `Boost()`, `Recover()`, `Rpm()`, `Gear()`, `SlipAngle()`, `VehicleSeat::EjectDriver()`
-- **Editor:** Add Component > Gameplay > Vehicle Controller (Car) / Vehicle Controller 2D / Vehicle Seat; GameObject > Vehicles > (type); New Project > Driving World (open-world cars); File > Open examples/vehicle/vehicle_test.okayscene or examples/driving/driving_world.okayscene
-- **Docs:** `docs/vehicle_controller.md`, `docs/vehicle_controls.md`
-- **Tests:** `vehicle`, `vehicle_seat`, `vehicle_drive`
+- **Code:** `Components/VehicleController`, `Components/VehicleController2D`, `Components/VehicleSeat`, `Components/BoatController`, `Components/Buoyancy`
+- **API:** `VehicleController`, `VehicleController2D`, `VehicleSeat`, `Speed()`, `IsGrounded()`, `Driver()`, `Enter()`, `Exit()`
+- **Editor:** Add Component > Gameplay > Vehicle Controller (Car) / Vehicle Controller 2D / Vehicle Seat / Boat Controller; GameObject > Vehicles > Boat; File > Open examples/vehicle/vehicle_test.okayscene or examples/boat/boat_lake.okayscene
+- **Docs:** `docs/vehicle_controller.md`, `docs/water_boat.md`
+- **Tests:** `vehicle`, `vehicle_seat`, `boat`
 - **Status:** Works - vehicle test covers throttle, steering, grip and serialization; suspension is opt-in; the seat test covers get in and out, sitting pose set and cleared, ride camera, rolling and steering wheels, one driver, exit fallback, destroy and save
-- **Open:** the open-world model is new (see docs/vehicle_controls.md for what is not done: bike, engine sound, skid marks, smoke, damage, fuel, AI driver, Windows run); no script or visual-script access to seats; seat state is not replicated over the network; no sit animation; torque-based body dynamics are a roadmap item in the doc
+- **Open:** a person cannot press E to board a boat yet (the seat only knows VehicleController); no script or visual-script access to seats; seat state is not replicated over the network; no sit animation; torque-based body dynamics are a roadmap item in the doc
 - **Related:** 4.4, 6.2
 - **Words:** vehicle, car, drift, handbrake, grip, suspension, ride height, VehicleController
 - **Seen as:** the car skates sideways; it does not stay on slopes; it flips; the camera sits inside the roof

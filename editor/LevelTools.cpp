@@ -453,6 +453,8 @@ static void FoliageInspector(EditorState& ed, Foliage* f) {
     Tip("Copies throw shadows. Off by default: with thousands of copies the shadow pass makes the Scene view slow.");
     if (ImGui::DragFloat("Chunk Size##fol", &f->chunkSize, 0.5f, 4.0f, 256.0f, "%.0f")) shape = true;
     Tip("Plants are merged one mesh per square of this size; whole squares out of view are skipped.");
+    if (ImGui::SliderFloat("Sway in the wind##fol", &f->windSway, 0.0f, 2.0f, "%.2f m")) shape = true;
+    Tip("How far the top of a tall plant (4 m) moves in a strong wind (12 m/s). Small plants move less. 0 = they stand still.\nThe wind comes from Wind Zones and the weather (Add Component > Environment > Wind Zone).");
     ImGui::TextDisabled("%d copies in %d chunks, %d triangles (room for %d)", f->Count(), f->ChunkCount(), f->TotalTriangles(), f->Capacity());
     if (ImGui::Button("Clear All##fol") && f->Count() > 0) { f->Clear(); f->EnsureBuilt(); ed.dirty = true; }
     Tip("Remove every copy in this layer.");
@@ -492,6 +494,8 @@ static void CableInspector(EditorState& ed, Cable* c) {
     if (ImGui::DragFloat3(c->endObject.empty() ? "To Offset (from start)##cable" : "To Offset##cable", eo, 0.05f)) { c->endOffset = {eo[0], eo[1], eo[2]}; changed = true; }
     changed |= ImGui::DragFloat("Sag##cable", &c->sag, 0.02f, 0.0f, 100.0f, "%.2f");
     Tip("How far the middle hangs below the straight line between the two ends.");
+    changed |= ImGui::DragFloat("Sway in the wind##cable", &c->windSwing, 0.02f, 0.0f, 20.0f, "%.2f m");
+    Tip("How far the middle swings sideways in a strong wind (12 m/s). 0 = the cable ignores the wind.");
     changed |= ImGui::SliderInt("Segments##cable", &c->segments, 2, 200);
     changed |= ImGui::DragFloat("Width##cable", &c->width, 0.005f, 0.005f, 5.0f, "%.3f");
     float col[4] = {c->color.r, c->color.g, c->color.b, c->color.a};

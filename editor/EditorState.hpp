@@ -1,4 +1,7 @@
 #pragma once
+#ifdef OKAYUI_PORT_STAND_IN_EDITORSTATE   // only the okayui port tests define this: a small stand-in class (okayui/tests/shadow/EditorState.hpp) for headless panel runs
+#include "../okayui/tests/shadow/EditorState.hpp"
+#else
 #include "okay/Render/TexturePath.hpp"
 #include <cstdint>
 #include <functional>
@@ -505,3 +508,4 @@ private:
 };
 
 } // namespace okay::editor
+#endif // OKAYUI_PORT_STAND_IN_EDITORSTATE

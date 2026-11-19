@@ -1,6 +1,6 @@
 cmake_minimum_required(VERSION 3.16)
 project(OkaySpaceGameEngine
-    VERSION 2.888.0
+    VERSION 2.891.0
     DESCRIPTION "A modern C++ game engine"
     LANGUAGES C CXX)   # C enabled for vendored single-file C libs (ufbx)
 
@@ -24,9 +24,13 @@ option(OKAY_BUILD_SANDBOX  "Build the sandbox demo game"       ON)
 option(OKAY_BUILD_TESTS    "Build the unit tests"              ON)
 option(OKAY_BUILD_LAUNCHER "Build the self-updating launcher"  ON)
 option(OKAY_BUILD_EDITOR   "Build the desktop GUI editor (needs SDL2+OpenGL)" OFF)
+option(OKAY_ENABLE_TEST_HOOKS "Compile scripted input and screenshots (OKAY_TEST_SCRIPT, shared/TestHooks.hpp) into the launcher and editor for headless test runs. Never for a release." OFF)
 option(OKAY_BUILD_PLAYER   "Build the standalone game player runtime (needs SDL2)" OFF)
 option(OKAY_USE_SODIUM     "Authenticated packet encryption via libsodium"     ON)
 option(OKAY_REQUIRE_SODIUM "RELEASE builds: configuring FAILS unless libsodium is found and OKAY_OWN_CRYPTO is OFF (never silently fall back to our own unreviewed crypto; CLAUDE.md rule 18)" OFF)
+if(OKAY_ENABLE_TEST_HOOKS AND OKAY_REQUIRE_SODIUM)
+    message(FATAL_ERROR "OKAY_ENABLE_TEST_HOOKS (scripted input) must never be on in a release build (OKAY_REQUIRE_SODIUM marks one)")
+endif()
 option(OKAY_OWN_CRYPTO    "Network encryption via our OWN okay::crypto instead of libsodium (UNREVIEWED; keep OFF in shipped builds)" OFF)
 option(OKAY_USE_ASSIMP     "Import FBX/DAE/STL/... via Assimp (FetchContent; downloads at configure time)" OFF)
 option(OKAY_PREFER_OWN_READERS "With OKAY_USE_ASSIMP: read STL/PLY with our own readers first (Assimp stays the fallback); no effect without Assimp" ON)
@@ -99,6 +103,8 @@ option(OKAY_BUILD_XBOX_UWP "EXPERIMENTAL, UNVERIFIED Xbox One Developer Mode (UW
 # (scripts/check_release_own_stack.sh, called by scripts/build-windows-dist.sh and release.yml).
 option(OKAY_OWN_STACK "Developer/CI dogfood build: own readers, own HTTP, own platform backend and OkayUI by default (never crypto; see docs/own_stack_rollout.md). NEVER for releases" OFF)
 option(OKAY_OWN_STACK_CRYPTO_TEST "With OKAY_OWN_STACK: ALSO use our own UNREVIEWED crypto (OKAY_OWN_CRYPTO). Test builds and CI only; releases refuse it" OFF)
+option(OKAY_LAUNCHER_ON_OKAYUI "Also build OkaySpaceOkayUI(.exe): the SAME launcher sources compiled against OkayUI's Dear ImGui compatibility layer (no Dear ImGui). Off by default; docs/own_ui_toolkit.md" OFF)
+option(OKAY_EDITOR_ON_OKAYUI   "Also build OkayEngineOkayUI(.exe): the SAME editor sources compiled against OkayUI's Dear ImGui compatibility layer (no Dear ImGui). Off by default; docs/own_ui_toolkit.md" OFF)
 if(NOT OKAY_OWN_STACK_CRYPTO_TEST AND "$ENV{OKAY_OWN_STACK_CRYPTO_TEST}" STREQUAL "1")
     set(OKAY_OWN_STACK_CRYPTO_TEST ON)
 endif()
@@ -348,6 +354,11 @@ endif()
 # Emscripten/WebGL, where raw UDP sockets don't exist in the browser sandbox.
 if(NOT EMSCRIPTEN)
     add_subdirectory(relay)
+endif()
+
+# ---- okay-texture: command line texture tool (mips, atlas, compress), no graphics deps -----
+if(NOT EMSCRIPTEN)
+    add_subdirectory(tools/okaytexture)
 endif()
 
 # ---- Xbox One Developer Mode export (experimental, OFF by default) -----

@@ -56,13 +56,14 @@ Mostly on main and tested. Nothing is open: #574 added the optimization tools (L
   - 2.3.4 Lightmap bake - `Render/Lightmap` - `BakeFaceLighting` writes lighting, shadows and ambient occlusion into a static mesh's per-face colours; editor Bake Lighting button
   - 2.3.5 Day and night - `Components/DayNightCycle` - 24 h clock rotates the sun, tints and dims it, eases ambient, blends the camera sky; publishes `hour`; `SetTime`, `AddHours`
   - 2.3.6 Flashlight - `Components/Flashlight` - toggleable spot light that shines where the camera looks (key F by default) for caves and dark rooms; spawns a child Light and saves with the scene (tested inside `terrain`)
-- **Code:** `Render/Lighting`, `Render/ShadowSetup`, `Render/Lightmap`, `Components/Light`, `Components/DayNightCycle`, `Components/Flashlight`
+  - 2.3.7 Lighting upgrade - `Render/ShadowMath`, `Render/Lighting`, `Render/LightingPresets` - stable cascades (grid tied to the world), slope bias, soft penumbra and distance fade (software), smooth spot cone (all renderers), soft light roll-off, rectangle Area light, light masks (cookies), real-world lux/lumens with Auto brightness, glow lights from emissive meshes, five lighting presets, baked light probes, scene SSAO in the software renderer; `docs/lighting_upgrade.md`
+- **Code:** `Render/Lighting`, `Render/ShadowSetup`, `Render/ShadowMath`, `Render/LightingPresets`, `Render/Lightmap`, `Components/Light`, `Components/DayNightCycle`, `Components/Flashlight`
 - **API:** `Light`, `Light::Type`, `ApplySceneLight`, `SceneLights`, `PlanShadows`, `BakeFaceLighting`, `DayNightCycle::SetTime`, script `set_light`, `set_ambient`
 - **Editor:** View > Lighting panel (Environment, Bake Lighting, Rendering with shadow resolution); GameObject > Light menu; Light and Day/Night inspectors (editor/main.cpp)
-- **Docs:** `docs/lighting.md`, `docs/day_night_cycle.md`
-- **Tests:** `lighting`, `light_shadows`, `shadows`, `daynight`, `terrain`, `lightmap`
+- **Docs:** `docs/lighting.md`, `docs/lighting_upgrade.md`, `docs/day_night_cycle.md`
+- **Tests:** `lighting`, `light_shadows`, `lighting_upgrade`, `shadows`, `daynight`, `terrain`, `lightmap`
 - **Status:** Works - read `Lighting.hpp`, `ShadowSetup.hpp`, `Light.hpp`; tests cover the GPU shadow plan, flicker, save/reload and the software renderer's switches
-- **Open:** one Directional light casts sun shadows (the first one with Cast Shadows on; the Inspector warns when more than one asks); at most 16 lights shaded per frame on the GPU; the software renderer has sun shadows only; the Direct3D 12 backend has one sun map, no cascades or local shadows (all docs/lighting.md); lightmap bake stores per-face colours, not UV lightmap textures (Lightmap.hpp)
+- **Open:** one Directional light casts sun shadows (the first one with Cast Shadows on; the Inspector warns when more than one asks); at most 16 lights shaded per frame on the GPU; Soft Edges, light masks and rectangle panels run in the software renderer and are written but never run in the Direct3D 11 and OpenGL shaders (OpenGL softens by an approximation); light probes (`Render/LightProbes`, `LightProbeBake`, Lighting window > Light Probes) are software only; no reflection probes; the Direct3D 12 backend has one sun map, no cascades or local shadows (all docs/lighting.md); lightmap bake stores per-face colours, not UV lightmap textures (Lightmap.hpp)
 - **Related:** 2.4, 2.5, 38.2, 38.3, 38.5, 15.3
 - **Words:** Light, sun, point light, spot light, area light, shadow, cascade, shadow map, PCF, lightmap, bake, ambient, flicker, DayNightCycle, day night, time of day, lights, shadows, day/night
 - **Seen as:** shadows look wrong, blocky or shimmer; a point light casts no shadow; the scene is too dark; sunrise does not change the sky; a flashlight does not light the ground
@@ -75,20 +76,22 @@ Mostly on main and tested. Nothing is open: #574 added the optimization tools (L
   - 2.4.2 Sky - `Render/Atmosphere`, `Render/SkyStars` - colour gradient, or a procedural sky from the sun's height (day blue, dusk orange, night with stars, sun disc and halo, haze, drifting clouds); deterministic star placement
   - 2.4.3 Fog - `Render/Atmosphere` - Linear, Exponential and Height fog; `FogFactor`; match-sky colour option
   - 2.4.4 Weather - `Environment/Weather` - Rain, Snow, Storm presets built from the particle system on a transient rig that follows the camera; cross-fade, gusts, lightning flash, thunder clip
-  - 2.4.5 Wind - `Environment/Wind` - global `WindVector()` and `LightningFlash()` read by particles and water
+  - 2.4.5 Wind - `Environment/Wind` - global `WindVector()` (the weather's wind) and `LightningFlash()` read by particles and water; the base the wind field starts from
   - 2.4.6 Look presets - `Render/Atmosphere` - Default, Cinematic, Vivid, Noir, Sunset, Night, Foggy morning, Storm; `ApplyLookPreset`, `ResetLook`
   - 2.4.7 Script access - `Render/Atmosphere` - `PostSet`, name lookups behind `post_set`, `fog_set`, `weather_set`, `time_of_day`
-- **Code:** `Render/Atmosphere`, `Render/SkyStars`, `Environment/Weather`, `Environment/Wind`, `Scene/Scene`
-- **API:** `Scene::RenderSettings`, `SkyPaletteFor`, `FogFactor`, `UpdateWeather`, `WindVector`, `ApplyLookPreset`, script `weather_set`, `fog_set`, `Weather.Set`
-- **Editor:** View > Lighting panel: Sky, Fog and Weather sections and the Look Preset combo (`DrawLookSections` in editor/main.cpp)
-- **Docs:** `docs/rendering.md`
-- **Tests:** `post_sky`
+  - 2.4.8 Wind field - `Environment/WindField` - the wind at any world position and time: weather wind plus Wind Zones (everywhere, directional, outward; box, sphere, cylinder), gusts that travel downwind, deterministic value-noise swirl, a strength-over-time curve, priority blending; `WindField::At`
+  - 2.4.9 Wind components - `Components/WindZone` - Wind Zone, Wind Drag (the wind pushes a Rigidbody 3D or a ragdoll's bones), Wind Sway (trees, grass, flags bend on the CPU in every renderer), Wind Sound (our own looping noise); Foliage, Cable and Particle "Affected by wind" read the same field
+- **Code:** `Render/Atmosphere`, `Render/SkyStars`, `Environment/Weather`, `Environment/Wind`, `Environment/WindField`, `Components/WindZone`, `Scene/Scene`
+- **API:** `Scene::RenderSettings`, `SkyPaletteFor`, `FogFactor`, `UpdateWeather`, `WindVector`, `WindField::At`, `WindZone`, `WindDrag`, `WindSway`, `WindAmbience`, `ApplyLookPreset`, script `weather_set`, `fog_set`, `Weather.Set`, `wind_speed`, `wind_set`, `wind_gust`, `Wind.At`, `Wind.SetGust`
+- **Editor:** View > Lighting panel: Sky, Fog, Weather and Wind sections and the Look Preset combo (`DrawLookSections` in editor/main.cpp); GameObject > Effects > Environment and Add Component > Environment (`editor/WindTools.cpp`); wind arrows in the Scene view
+- **Docs:** `docs/rendering.md`, `docs/wind.md`
+- **Tests:** `post_sky`, `wind_field`, `wind`
 - **Status:** Works - read `Atmosphere.hpp` and `Weather.hpp`; the procedural sky and clouds are drawn by the GPU backends (docs), the software renderer shows a plain gradient
-- **Open:** old scenes load with everything off by design; the procedural sky, cloud layer and lightning exposure flash have no software-renderer version; weather depends on the particle system drawn by the host (2.7); no volumetric fog or sky reflections beyond the ambient and reflective-material colours
+- **Open:** old scenes load with everything off by design; the procedural sky, cloud layer and lightning exposure flash have no software-renderer version; weather depends on the particle system drawn by the host (2.7); no volumetric fog or sky reflections beyond the ambient and reflective-material colours; wind: sway is done on the CPU (not in a GPU vertex shader), trails, spline followers and fog are not linked to the wind, Water still reads only the weather's wind, no multiplayer sync of the wind, no Visual Script nodes (script names only), nothing run on Windows or a GPU (`docs/wind.md`)
 - **Related:** 2.3, 2.5, 2.7, 38.8
-- **Words:** sky, skybox, procedural sky, clouds, stars, fog, weather, rain, snow, storm, lightning, wind, look preset, Atmosphere, Weather, WindVector
-- **Seen as:** the sky does not change with the sun; distant objects pop in without fog; rain follows the camera in the editor preview; wind does not move particles
-- **Ask me like:** "Add a foggy morning preset that also lowers the sun"; "Make storms play thunder 2 seconds after the flash"
+- **Words:** sky, skybox, procedural sky, clouds, stars, fog, weather, rain, snow, storm, lightning, wind, gust, breeze, sway, flag, trees blowing, wind zone, fan, look preset, Atmosphere, Weather, WindVector
+- **Seen as:** the sky does not change with the sun; distant objects pop in without fog; rain follows the camera in the editor preview; wind does not move particles; trees and grass stand still in the wind; a flag does not wave; a box is not pushed by the wind
+- **Ask me like:** "Add a foggy morning preset that also lowers the sun"; "Make storms play thunder 2 seconds after the flash"; "Make the trees sway in a gusty wind"; "Add a fan that blows the leaves away"
 
 ### 2.5 Post-processing
 - **What:** Screen effects on the finished frame: exposure, tonemap, bloom, colour grading, vignette, anti-aliasing, ambient occlusion and depth of field, with a software fallback for some.
@@ -117,13 +120,15 @@ Mostly on main and tested. Nothing is open: #574 added the optimization tools (L
   - 2.6.3 Voxel terrain - `Components/VoxelTerrain` - 3D density field meshed with marching cubes: caves, tunnels, overhangs; Dig, Add, Smooth, DigBox, RemoveFloaters
   - 2.6.4 Voxel digging - `Components/VoxelDigger`, `Components/VoxelAim` - left mouse / RT digs, right mouse / LT adds, aim through the crosshair in first and third person (reach from the character, no digging inside the body or through a wall), marker with dig progress, rebindable Dig / Place / PickBlock / Hotbar actions, number-key and wheel hotbar; skips rebuilds when nothing changed
   - 2.6.5 Water - `Components/Water` - animated wave mesh, reflective semi-transparent material that follows the wind, buoyancy (`fluidDensity`, `linearDrag`) for rigidbodies
+  - 2.6.8 Water surface and waves - `Components/Water`, `Environment/WaterWaves` - Style (Classic, Ocean, Calm lake), a seeded Gerstner wave sum (direction, steepness, count, seed), a current, and `SurfaceAt` (height, slope, flow) that the picture and the physics share
+  - 2.6.9 Buoyancy - `Components/Buoyancy` - sample points across the hull, Archimedes push per point, drag per hull direction against the moving water, angular damping, splash events, runs in FixedUpdate; crates float at the right draft, heavy things sink
   - 2.6.6 World streaming - `Components/WorldStreamer` - cell prefabs `<prefix>_<x>_<z>.okayprefab` loaded within a radius and unloaded past a larger one (hysteresis)
   - 2.6.7 Tilemap - `Components/Tilemap`, `Components/TilemapCollider2D` - integer tile grid with cell/world conversion; static box colliders merged per row
-- **Code:** `Components/Terrain`, `Components/TerrainDigger`, `Components/VoxelTerrain`, `Components/VoxelDigger`, `Components/Water`, `Components/WorldStreamer`, `Components/Tilemap`, `Components/TilemapCollider2D`
+- **Code:** `Components/Terrain`, `Components/TerrainDigger`, `Components/VoxelTerrain`, `Components/VoxelDigger`, `Components/Water`, `Environment/WaterWaves`, `Components/Buoyancy`, `Components/WorldStreamer`, `Components/Tilemap`, `Components/TilemapCollider2D`
 - **API:** `Terrain::RaiseAt`, `Terrain::Erode`, `VoxelTerrain::Dig`, `TerrainDigger`, `Water`, `WorldStreamer`, `Tilemap`, `TilemapCollider2D`
 - **Editor:** GameObject > 3D Object > Terrain, Voxel Terrain (caves), Water and GameObject > 2D Object > Tilemap; their Inspector sections and the Terrain sculpt tools (editor/main.cpp)
-- **Docs:** `docs/terrain_water.md`
-- **Tests:** `terrain`, `terrain_ops`, `voxel`, `voxel_dig`, `worldstreamer`, `tilemap_collision`, `particles_tilemap`
+- **Docs:** `docs/terrain_water.md`, `docs/water_boat.md`
+- **Tests:** `boat`, `terrain`, `terrain_ops`, `voxel`, `voxel_dig`, `worldstreamer`, `tilemap_collision`, `particles_tilemap`
 - **Status:** Works - read the headers of every component above; `terrain` also covers water, flashlight and the sandbox template
 - **Open:** vegetation and detail painting, procedural scatter and a proper sculpting UI are area 29; streaming is by prefab cell files baked by hand, not by the `Optimize/StreamingGrid` planner of #574 (area 27)
 - **Related:** 2.2, 2.4, 6.2, 27, 29, 1.6
@@ -244,8 +249,29 @@ Mostly on main and tested. Nothing is open: #574 added the optimization tools (L
 - **Docs:** -
 - **Tests:** `spriteanim`, `2d_expand`
 - **Status:** Works - read both headers; `2d_expand` also covers 2D physics, so part of it belongs to 6.1
-- **Open:** no dedicated doc page; no sprite atlas importer or slicing tool; sprite masks and 9-slice are UI-only (12.2)
+- **Open:** no dedicated doc page; no sprite atlas importer or slicing tool in the editor (the `okay-texture atlas` command packs sprites, 2.13); sprite masks and 9-slice are UI-only (12.2)
 - **Related:** 2.10, 2.6, 6.1, 12.2
 - **Words:** sprite, SpriteRenderer, SpriteAnimator, sprite sheet, atlas, flip book, sorting layer, order in layer, flipX, pixel art
 - **Seen as:** sprites draw in the wrong order; pixel art looks blurry; a sprite animation plays the wrong row; a character faces the wrong way
 - **Ask me like:** "Put the player in front of the foreground trees"; "Play the 'run' row of this sprite sheet at 12 fps"
+### 2.13 Texture library (mipmaps, atlases, compression, streaming)
+- **What:** Our own CPU texture processing: build mip chains, pack sprite atlases, convert pixel formats, block-compress to BC1/BC3/BC4/BC5, write and read DDS files, and plan which mip of each texture to keep for a memory budget.
+- **Parts:**
+  - 2.13.1 Mip chains - `Texture/Mip` - box, Lanczos3 and Kaiser filters for any size; sRGB-correct (linear light), alpha-weighted, alpha-test coverage kept, normal-map renormalising
+  - 2.13.2 Atlas packer - `Texture/Atlas` - MaxRects with padding, bleed, optional rotation, power-of-two growth, composed sheet and a stable JSON manifest
+  - 2.13.3 Format conversion - `Texture/Convert` - RGBA8, BGRA8, RGB565, RGBA16F, R8; premultiply and un-premultiply; swizzle and channel pack; half-float conversion
+  - 2.13.4 Block compression - `Texture/Bc`, `Texture/Dds` - our own BC1/BC3/BC4/BC5 encoder (axis fit, least squares, endpoint search) and decoder; DDS writer and reader with mips
+  - 2.13.5 Streaming planner - `Texture/Stream` - camera distance and screen size to the mip each texture needs, memory budget through `Optimize/MipBudget`, load and evict amounts, per-frame upload cap
+  - 2.13.6 Tool and editor hook - `tools/okaytexture`, `Texture/Export`, `editor/ProjectPanelUI` - `okay-texture mips|compress|atlas|info|stream`; Project panel Import Settings "Generate mipmaps / compress" writes a .dds beside the picture
+- **Code:** `Texture/Texture`, `Texture/Mip`, `Texture/Atlas`, `Texture/Convert`, `Texture/Bc`, `Texture/Dds`, `Texture/Stream`, `Texture/Export`, `tools/okaytexture/main.cpp`, `examples/texture`, `editor/ProjectPanelUI.cpp`
+- **API:** `okay::tex::GenerateMips`, `GenerateMipsRGBA8`, `MipOptions`, `PackAtlas`, `ComposeAtlasRGBA8`, `AtlasToJson`, `ConvertPixels`, `FloatToHalf`, `EncodeBc`, `DecodeBc`, `WriteDds`, `ReadDds`, `StreamPlanner`, `BuildDdsFile`, `BuildAtlasFiles`; command `okay-texture`
+- **Editor:** Project panel > picture > Import Settings > "Generate mipmaps / compress"
+- **Docs:** `docs/own_texture_library.md`
+- **Tests:** `tex_mip`, `tex_atlas`, `tex_convert`, `tex_bc`, `tex_dds_stream`
+- **Status:** Partial - the library, tool and editor button work and are unit-tested on Linux; no renderer loads the .dds files yet, the import `compress` flag is still not applied, and nothing was run on Windows
+- **Open:** renderers (GL, D3D) do not read DDS or upload BC data; BC6H/BC7/ASTC/ETC are not written; no streaming loop in the renderer (the planner is the planning half); the glyph `ShelfPacker` is separate on purpose; Windows build and editor section unverified
+- **Related:** 2.9, 2.12, 20.4, 27.4
+- **Words:** mipmap, mip chain, atlas, sprite sheet, texture packer, BC1, BC3, BC4, BC5, DXT1, DXT5, DDS, texture compression, Lanczos, Kaiser, premultiplied alpha, alpha coverage, normal map mips, half float, RGB565, texture streaming, okay-texture
+- **Seen as:** far away textures shimmer or look dark; cut-out leaves vanish in the distance; I need one picture from many sprites; textures use too much memory
+- **Ask me like:** "Pack these icons into one atlas"; "Make mipmaps and compress this picture"; "Which mip does this texture need at 100 pixels?"
+

@@ -254,6 +254,13 @@ bool DockLayout::SetActive(const std::string& w) {
     return false;
 }
 
+bool DockLayout::SetNoTabBar(int leaf, bool on) {
+    Node* n = Mut(leaf);
+    if (!n || n->IsSplit()) return false;
+    if (n->noTabBar != on) { n->noTabBar = on; ++version_; }
+    return true;
+}
+
 bool DockLayout::MoveTab(const std::string& w, int index) {
     const int id = NodeOf(w);
     if (!id) return false;
@@ -297,7 +304,7 @@ Vec2 DockLayout::MinSizeRec(int id, float tabH, int depth) const {
     if (!n->IsSplit()) {
         float w = kMinLeafW, h = kMinLeafH;
         for (const std::string& t : n->tabs) { w = std::max(w, MinWOf(t)); h = std::max(h, MinHOf(t)); }
-        return Vec2{w, tabH + h};
+        return Vec2{w, (n->noTabBar ? 0.0f : tabH) + h};
     }
     const Vec2 a = MinSizeRec(n->child[0], tabH, depth + 1), b = MinSizeRec(n->child[1], tabH, depth + 1);
     if (n->horizontal) return Vec2{a.x + b.x + kSplitter, std::max(a.y, b.y)};
@@ -336,7 +343,7 @@ Rect DockLayout::ContentRect(int leaf) const {
     const Node* n = Find(leaf);
     if (!n) return Rect{};
     Rect r = n->rect;
-    const float th = std::min(tabH_, r.h);
+    const float th = n->noTabBar ? 0.0f : std::min(tabH_, r.h);
     r.y += th; r.h -= th;
     return r;
 }

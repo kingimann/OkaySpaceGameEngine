@@ -59,6 +59,9 @@ public:
     /// big terrain that never occludes anything; receiving off for emissive props.
     bool   castShadows    = true;
     bool   receiveShadows = true;
+    /// Glow light: a glowing (emissive) object also lights its surroundings, like a small lamp of its colour that reaches this
+    /// many metres. 0 = off (the object only glows itself).
+    float  glowLightRange = 0.0f;
 
     /// Ground contact shadow: cast a flat "blob" shadow projected onto the horizontal
     /// plane y = groundShadowY along the light, so objects sit on the ground instead of

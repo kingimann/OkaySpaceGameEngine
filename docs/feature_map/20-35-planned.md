@@ -106,7 +106,7 @@ About 61 sub-areas. Work packages use S (a day or less), M (a few days), L (a we
   3. Done - the model importer applies `scale`, `normals`, `smoothingAngle`, `importAnimations` (`Render/ModelImport`).
   4. S - Audio loader honours `loadMode` and `forceMono` (done; `quality` is not applied because audio is not re-encoded). Depends on: package 1, 7.2.
   5. S - On `SettingsChanged` reload the asset in the open scene. Depends on: packages 2-4.
-- **Open:** no audio options in the UI, no sRGB or compress effect; two places currently own texture options (the asset meta and the MeshRenderer fields), the plan must say which wins; compressed GPU formats are only a flag (`compress`).
+- **Open:** no audio options in the UI, no sRGB or compress effect; two places currently own texture options (the asset meta and the MeshRenderer fields), the plan must say which wins; compressed GPU formats are only a flag (`compress`; the Project panel can write a mipmapped or BC-compressed .dds beside a picture through the texture library, 2.13, but nothing loads it yet).
 - **Related:** 20.1, 3.6, 2.2, 7.2
 - **Words:** import settings, texture import, model import, sRGB, mipmaps, max size, compress, reimport, importer, scale factor
 - **Seen as:** textures blurry or too large; imported model is the wrong size; normal maps look wrong because they are treated as colour; I changed a setting and nothing happened

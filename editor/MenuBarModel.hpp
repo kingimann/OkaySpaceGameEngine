@@ -127,7 +127,7 @@ inline std::vector<Entry> CreateCategories() {
         SlotMenu("create.2d", "2D Object", "Sprites, premade shapes, sprite-sheet characters and tilemaps."),
         SlotMenu("create.3d", "3D Object", "Primitives, nature, props, structures, terrain, water and characters."),
         SlotMenu("create.player", "Player", "A fully set-up player (character, controller and physics) dropped into the scene."),
-        SlotMenu("create.vehicles", "Vehicles", "Ready-made vehicles you can drive: cars, trucks, a bus and a buggy."),
+        SlotMenu("create.vehicles", "Vehicles", "Ready-made vehicles you can drive: cars, trucks, a bus, a buggy and a boat on the water."),
         SlotMenu("create.light", "Light", "Directional, point and spot lights."),
         SlotMenu("create.camera", "Camera", "A camera, and the Cinemachine virtual cameras, brain and dolly rails."),
         SlotMenu("create.audio", "Audio", "A sound source and a music player."),

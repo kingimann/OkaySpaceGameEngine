@@ -428,6 +428,52 @@ int main() {
         CHECK(sd != nullptr);
         if (sd) Suite(*sd, "sdl2 (SDL software renderer on a surface)", false);
     }
+    {   // render targets, flush, driver name and GeometryRaw, the same on both painters
+        for (int which = 0; which < 2; ++which) {
+            auto p = which == 0 ? UI::soft::CreateBitmapPainter(32, 32) : plat::CreateSdl2SurfacePainter(32, 32);
+            if (!p) { CHECK(false); continue; }
+            CHECK(!p->DriverName().empty());
+            CHECK(p->GetRenderTarget() == nullptr);
+            plat::TextureDesc td; td.width = 8; td.height = 8; td.target = true;
+            ui2d::Tex tgt = p->CreateTexture(td, nullptr);
+            CHECK(tgt != nullptr);
+            plat::TextureDesc plain; plain.width = 8; plain.height = 8;
+            ui2d::Tex notTarget = p->CreateTexture(plain, nullptr);
+            CHECK(!p->SetRenderTarget(notTarget) || which == 1);   // sdl2 refuses it too, but only the software painter is required to say so here
+            if (!tgt) continue;
+            Fill(*p, 0, 0, 255);                                   // the window is blue
+            CHECK(p->SetRenderTarget(tgt));
+            CHECK(p->GetRenderTarget() == tgt);
+            int tw = 0, th = 0; p->QueryTexture(tgt, &tw, &th);
+            CHECK(tw == 8 && th == 8);
+            Fill(*p, 255, 0, 0);                                   // clears the target (8 x 8), not the window
+            Color(*p, 0, 255, 0);
+            ui2d::Rect inner{2, 2, 4, 4};
+            p->FillRect(&inner);
+            p->Flush();
+            CHECK(p->SetRenderTarget(nullptr));
+            CHECK(p->GetRenderTarget() == nullptr);
+            Img w0 = Read(*p);
+            CHECK(w0.w == 32 && w0.h == 32 && Is(w0, 1, 1, 0, 0, 255) && Is(w0, 20, 20, 0, 0, 255));   // the window was not touched
+            ui2d::Rect dst{10, 10, 8, 8};
+            p->SetBlendMode(plat::BlendMode::None);
+            p->Copy(tgt, nullptr, &dst);                           // and the target's picture is what we drew
+            Img w1 = Read(*p);
+            CHECK(Is(w1, 10, 10, 255, 0, 0) && Is(w1, 13, 13, 0, 255, 0) && Is(w1, 17, 17, 255, 0, 0) && Is(w1, 9, 9, 0, 0, 255));
+            // GeometryRaw with 16-bit indices equals what Geometry draws: one flat red triangle pair (a quad) on the window
+            Fill(*p, 0, 0, 0);
+            const float xy[8] = {4, 4, 12, 4, 12, 12, 4, 12};
+            const std::uint8_t col[16] = {255, 0, 0, 255, 255, 0, 0, 255, 255, 0, 0, 255, 255, 0, 0, 255};
+            const std::uint16_t idx[6] = {0, 1, 2, 0, 2, 3};
+            p->GeometryRaw(nullptr, xy, 8, col, 4, nullptr, 0, 4, idx, 6, 2);
+            Img w2 = Read(*p);
+            CHECK(Is(w2, 8, 8, 255, 0, 0) && Is(w2, 2, 2, 0, 0, 0) && Is(w2, 14, 14, 0, 0, 0));
+            p->DestroyTexture(notTarget);
+            p->SetRenderTarget(tgt);
+            p->DestroyTexture(tgt);                                // destroying the target hands the window back
+            CHECK(p->GetRenderTarget() == nullptr);
+        }
+    }
     CHECK(UI::soft::CreateBitmapPainter(0, 10) == nullptr && UI::soft::CreateBitmapPainter(10, 100000) == nullptr);
     {   // the shared cache and font atlas upload, on both painters
         for (int which = 0; which < 2; ++which) {

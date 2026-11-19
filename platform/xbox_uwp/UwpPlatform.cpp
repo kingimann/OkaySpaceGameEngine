@@ -45,6 +45,12 @@ Key Backend::KeyForChar(char c) {   // the same US-layout rule as the desktop de
     if (c == ' ') return Key::Space;
     return Key::Unknown;
 }
+char Backend::CharForKey(Key k) {   // the reverse of KeyForChar for the letters, digits and space (added with the own platform layer, #1009)
+    if (k == Key::Unknown) return 0;
+    static const char kChars[] = "abcdefghijklmnopqrstuvwxyz0123456789 ";
+    for (const char* c = kChars; *c; ++c) if (KeyForChar(*c) == k) return *c;
+    return 0;
+}
 bool Backend::ShowErrorBox(const std::string& title, const std::string& text, Window*) { std::fprintf(stderr, "ERROR: %s: %s\n", title.c_str(), text.c_str()); return false; }
 std::string Backend::BasePath() { return std::string(); }
 std::string Backend::PrefPath(const std::string&, const std::string&) { return std::string(); }

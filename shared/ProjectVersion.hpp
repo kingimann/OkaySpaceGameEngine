@@ -9,6 +9,7 @@
 //   Decide(projectVersion, runningVersion)           Same, SamePatchLine, Older, Newer, Unknown or DevBuild
 //   ResolveKeepTarget                                which installed editor "Keep" starts: the newest of the project's line
 //   ReadProjectStamp / ReadProjectVersion            the `engine_version` line of <project>/project.okayproj
+//   RefreshStamp                                     re-read a remembered stamp (a list that stays open while the editor upgrades)
 //   WriteProjectVersion                              change only that line (every other byte of the file stays)
 //   SetStampInText / FindStampInText                 the same on the text, for callers that write the file whole
 //   KeepUnknownLines                                 lines of an existing file a writer does not know, to carry over
@@ -357,6 +358,17 @@ inline Stamp ReadProjectStamp(const std::string& projectDir) {
 /// The project's stamped version, normalized; "" when there is none (a project made before versions were recorded),
 /// when the file is missing or unreadable, or when the line is not a version.
 inline std::string ReadProjectVersion(const std::string& projectDir) { return ReadProjectStamp(projectDir).version; }
+
+/// Bring a remembered version up to date with the disk: re-read the stamp of the project in `projectDir` into `cached`
+/// and say whether it changed. For a list that stays on screen while another program (the editor, which upgrades a
+/// project) writes the stamp: the launcher's project cards. It always re-reads (the file is a few hundred bytes), so a
+/// stamp rewritten to a same-length version within one clock tick is still noticed. A missing file gives "".
+inline bool RefreshStamp(const std::string& projectDir, std::string& cached) {
+    const std::string now = ReadProjectVersion(projectDir);
+    if (now == cached) return false;
+    cached = now;
+    return true;
+}
 
 /// Set the project's `engine_version` and change nothing else in project.okayproj (see SetStampInText). A missing file
 /// is created holding just that line. Written whole or not at all (the existing atomic writer); a file that already

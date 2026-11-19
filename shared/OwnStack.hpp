@@ -23,6 +23,7 @@
 
 #include "AntiCheatCrypto.hpp"   // okayac::ed25519::UseSodium(): what Ed25519 really uses at run time
 #include "OkayUIBackend.hpp"
+#include "OwnSwitches.hpp"   // the Settings screen's switches: their ids are added to the line
 #include "okay/Platform/Platform.hpp"
 #include "okay/Render/FbxReader.hpp"
 #include "okay/Render/ModelData.hpp"
@@ -99,6 +100,7 @@ struct Info {
     bool assimp = false;                // Assimp is compiled in (the fallback, and the reader of the formats not listed)
     std::string crypto;                 // "libsodium" / "own(no libsodium)" / "own" / "own(test)"
     std::string ui;                     // "imgui" / "okayui" / "none"
+    std::string switches;               // ids turned on from the Settings screen (OwnSwitches.hpp), "" = none
 };
 
 /// Pure text: `[okay] stack: platform=own http=curl readers=own(fbx,dae,3ds,bvh)+assimp crypto=libsodium ui=imgui`.
@@ -113,7 +115,8 @@ inline std::string FormatLine(const Info& i) {
     if (i.ufbx) add("ufbx");
     if (i.assimp) add("assimp");
     if (readers.empty()) readers = "none";
-    return "[okay] stack: platform=" + i.platform + " http=" + i.http + " readers=" + readers + " crypto=" + i.crypto + " ui=" + i.ui;
+    return "[okay] stack: platform=" + i.platform + " http=" + i.http + " readers=" + readers + " crypto=" + i.crypto + " ui=" + i.ui +
+           (i.switches.empty() ? std::string() : " switches=" + i.switches);
 }
 
 /// The `crypto=` word of the startup line, honest about what Ed25519 (updates, anti-cheat manifest, host identity) really uses:
@@ -172,6 +175,7 @@ inline Info Gather(const char* ui = nullptr) {
 
     if (ui) i.ui = ui;
     else i.ui = okayuibackend::Name(okayuibackend::Resolve(std::getenv("OKAY_UI_BACKEND"), std::string(), okayuibackend::DevMode(std::getenv("OKAY_DEV"))));
+    i.switches = ownswitches::JoinIds(ownswitches::AppliedNow());
     return i;
 }
 

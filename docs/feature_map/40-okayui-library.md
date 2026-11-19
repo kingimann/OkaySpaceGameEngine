@@ -17,10 +17,10 @@ OkayUI is the one own UI toolkit that is meant to replace Dear ImGui over time (
   - 40.1.5 Data display - `okayui/src/OkayUI.cpp` - `PlotLines`, `PlotHistogram`, `LabelText`, `Image`, `ImageButton`, bullets, wrapped and coloured text
   - 40.1.6 Drag and drop - `okayui/src/OkayUI.cpp` - `DragSource(payload)`, `DropTarget(&payload)`, `IsDragging`
 - **Code:** `okayui/include/okay/UI/OkayUI.hpp`, `okayui/src/OkayUI.cpp`
-- **API:** namespace `OkayUI`: `BeginFrame(Input)`, widgets above, `Style()`, `Input` struct (mouse, buttons, typed text, key edges for Backspace, Delete, arrows, Home, End, Enter, Escape, select-all, shift, wheel, `blocked`), `GetItemRect`, `IsItemHovered`, `WantsTextInput`, `ResetState`, `ResizableNextWindow`, `InputText` flags
+- **API:** namespace `OkayUI`: `BeginFrame(Input)`, widgets above, `Style()`, `Input` struct (mouse, buttons, typed text, key edges for Backspace, Delete, arrows, Home, End, Enter, Escape, select-all, shift, wheel, `blocked`), `GetItemRect`, `IsItemHovered`, `IsItemEdited`, `IsItemDeactivatedAfterEdit`, `CalcItemWidth`, `BeginPopupContextWindow`, `WantsTextInput`, `ResetState`, `ResizableNextWindow`, `InputText` flags
 - **Editor:** View > Rendering & Performance > Test UI draws the sample panel over the editor; Game view overlays
 - **Docs:** `docs/game_ui.md` (Building blocks, Theming), `docs/scripting_reference.md` (OkayUI section)
-- **Tests:** `okayui` (SDL software renderer, reads pixels back: widgets, windows, launcher look), `okayui_behaviour` (synthetic mouse, keys and text: button, checkbox, sliders, input text, combo, tree, scrolling child, layout, windows, popups), `okayui_fuzz`
+- **Tests:** `okayui` (SDL software renderer, reads pixels back: widgets, windows, launcher look), `okayui_behaviour` (synthetic mouse, keys and text: button, checkbox, sliders, input text, combo, tree, scrolling child, layout, windows, popups), `okayui_fuzz`, `okayui_itemedit` (edit tracking, item width, window context popup)
 - **Status:** Works - implemented (about 2.8k-line .cpp) and used by the player and editor; text field edits whole UTF-8 characters with caret and selection; open combos and popups block the mouse below them
 - **Open:** see "Not done" in `docs/own_ui_toolkit.md` (no window z-order, no `BeginGroup`, no `##` label hiding, no public draw-list API, no cursor and content-region queries, no docking); stale header comment says "v1 scope: OkayUI::Button" while the file has about 70 widgets; header says "no STL" but the .cpp includes `<algorithm>`
 - **Related:** 40.2, 40.4, 12.4
@@ -146,3 +146,52 @@ OkayUI is the one own UI toolkit that is meant to replace Dear ImGui over time (
 - **Words:** draw list, GetWindowDrawList, custom drawing, canvas, InvisibleButton, BeginDisabled, cursor position, content region, CalcTextSize, polyline, bezier, replace Dear ImGui
 - **Seen as:** a custom-drawn panel does not clip; a disabled widget still reacts; a translucent line is darker at its corners
 - **Ask me like:** "work on 40.7.1, add AddConcavePolyFilled"; "render the draw list lab page to a PNG"
+
+### 40.8 Porting helpers: tooltip scope, style fields, mapping layer, list clipper
+- **What:** four things code ported from Dear ImGui needs: a tooltip that takes widgets (`BeginTooltip`/`EndTooltip`), `GetStyle()` with the style fields ported code reads, a mapping layer for vector and colour types and flag enums, and `ListClipper` for long lists that are not tables. Library only; nothing in the editor or launcher calls them yet.
+- **Parts:**
+  - 40.8.1 Tooltip scope - `okayui/src/OkayUI.cpp` - widgets laid out in the overlay, box sized to them, flips at the display edge, input off, surrounding layout untouched
+  - 40.8.2 Style fields - `okayui/src/OkayUI.cpp` - `GetStyle()` returns a read-only `StyleInfo` (spacing, padding, rounding, `Colors[]`) refreshed from the live settings
+  - 40.8.3 Mapping layer - `okayui/include/okay/UI/OkayUIMap.hpp`, `shared/OkayUIImGuiMap.hpp` - `FromVec4`, `ToVec4`, `FromColor`, `FlagMap`, `MapFlags`, `MapEnum`; ImGui window flag, colour and style variable tables on the host side
+  - 40.8.4 List clipper - `okayui/src/OkayUI.cpp` - `ListClipper::Begin/Step/End/ForceDisplayRangeByIndices`: only visible rows are laid out, same pixels as the full list
+- **Code:** `okayui/include/okay/UI/OkayUICompat.hpp`, `okayui/include/okay/UI/OkayUIMap.hpp`, `okayui/src/OkayUI.cpp`, `shared/OkayUIImGuiMap.hpp`, `okayui/tests/test_okayui_scopes.cpp`
+- **API:** `OkayUI::BeginTooltip`, `OkayUI::EndTooltip`, `OkayUI::GetStyle`, `OkayUI::StyleInfo`, `OkayUI::ListClipper`, `OkayUI::MapFlags`, `OkayUI::FromVec4`
+- **Editor:** none (library only)
+- **Docs:** `docs/own_ui_toolkit.md` (section 6.7)
+- **Tests:** `okayui_scopes`
+- **Status:** Works - implemented and tested headless; not run in the real editor or launcher. `GetStyle` is read-only; the ImGui tables file is not built in CI
+- **Open:** assigning to the style is not supported; no scrolling child inside a tooltip; the tab colour slots are not in the ImGui table; ports that use these (Audio Mixer tooltips, Crash Log rows) are not switched over
+- **Related:** 40.7
+- **Words:** tooltip, BeginTooltip, GetStyle, ImVec4, flag mapping, ListClipper, clipper, long list, replace Dear ImGui
+- **Seen as:** a ported tooltip with several lines draws nothing; a ported panel does not compile because of GetStyle; a 10,000-row list is slow
+- **Ask me like:** "work on 40.8.4, make the clipper handle rows of different height"
+
+
+### 40.9 Ported-code calls: window, frame, context, style presets and child flags
+- **What:** the calls and names that editor and launcher code written for Dear ImGui still needed after 40.8: collapse, background alpha and position of windows, raising a window, a modal check, a keyboard-capture override, item flags, multi-item widths, context shims, the Dark / Light / Classic colour presets, the dock layout as text, regular polygons and textured quads and rounded images on the draw list, mouse button, direction, hover, focus and child flag names, and `BeginChild` with flags (a bordered or content-sized child). Library only; nothing in the editor or launcher calls them yet.
+- **Parts:**
+  - 40.9.1 Window calls - `okayui/src/OkayUI.cpp` - `SetNextWindowCollapsed`, `SetNextWindowBgAlpha`, `SetWindowPos` (by title or current), `BringWindowToDisplayFront`, `FindWindowByID`, `GetTopMostPopupModal`, `SetNextFrameWantCaptureKeyboard`, `GetTreeNodeToLabelSpacing`
+  - 40.9.2 Small helpers - `okayui/src/OkayUICompat.cpp` - `GetCursorStartPos`, `GetWindowViewport`, `PushItemFlag`, `PushMultiItemsWidths`, `FindRenderedTextEnd`, context shims, `StyleColorsDark/Light/Classic`, `SaveIniSettingsToMemory`, `LoadIniSettingsFromMemory`
+  - 40.9.3 Draw list - `okayui/src/OkayUI.cpp` - `AddNgon`, `AddNgonFilled`, `AddImageQuad`, `AddImageRounded`, `DrawFlags`
+  - 40.9.5 Type names, flag aliases, password and no-blank input, closed polylines, `##id` labels hidden - `OkayUI.hpp`, `OkayUICompat.hpp`, `OkayUI.cpp` - `ImVec4`, `ImRect`, `ImTextureID`, `ImGuiID`, `TableColumn_*`, `TabItem_*`, `InputText_Password`, `InputText_CharsNoBlank`, `DrawFlags_Closed`
+  - 40.9.6 Sized buttons, `SameLine(offset, spacing)`, printf-style `Text` family, `BeginPopupContextItem()` - `OkayUI.cpp`, `OkayUICompat.hpp`
+  - 40.9.7 Port probe and spellings header - `scripts/okayui_port_probe.sh`, `okayui/probe/imgui.h`, `okayui/include/okay/UI/OkayUIImGuiNames.hpp` (generated) - Dear ImGui spellings of types, flags and enumerators, `namespace ImGui = OkayUI`, `DrawListHandle`, `ImGuiStyle`
+  - 40.9.8 Panels run headless and accessor layer - `okayui/tests/test_okayui_port_*.cpp`, `OkayUIInternals.hpp` (`GImGui`, `ImGuiContext`, `ImGuiWindow` values), `NewFrame`, `GetPlatformIO`, popup `MenuItem` / `BeginMenu`
+  - 40.9.10 Dock-node view, window table, draw-list channels and host shapes - `okayui/src/OkayUIDockNodes.cpp`, `OkayUIInternals.hpp` (`DockNodeRef`, `WindowRef` table), `DrawList::Channels*`, `ImDrawData` bridge, `okayui/tests/test_okayui_{docknodes,channels,host_shapes}.cpp`, `docs/own_ui_toolkit.md` 6.20 to 6.22
+  - 40.9.13 Window mode views, dialogs, Hierarchy and Inspector - `editor/SceneViewCore.hpp`, `editor/OkayUIHostViews.cpp`, `editor/DialogService.hpp`, `editor/OkayUIHostDialogs.cpp`, `editor/OkayUIHostObjects.cpp` (InspectorPanel.cpp again as `*_WO`), `ConsoleSetMirror`, tests `okayui_{sceneview,hostviews,hostdialogs,hostobjects}`, `docs/own_ui_toolkit.md` 6.24 (Round 10)
+  - 40.9.14 Window mode menu bar and shortcuts - `editor/OkayUIHostMenu.cpp` (real `MenuBarModel` through `MenuEntriesUI.hpp`), test `okayui_hostmenu`, `docs/own_ui_toolkit.md` 6.24 (Round 12)
+  - 40.9.12 Window mode panels and persistence - `editor/OkayUIHostPanels.cpp` (real Console, Scene Manager and dialogs on OkayUI, Project window), `shared/OkayUIHostState.hpp`, `editor/EditorFrameTick.hpp`, `editor/OkayUIHostRun.cpp`, dock-aware `Begin` (`SetDockAwareBegin`), tests `okayui_{hoststate,frametick,dockaware,hostpanels}`, `docs/own_ui_toolkit.md` 6.24
+  - 40.9.11 Real fonts and window mode - `AddFontTtf` / `PushFont` multi-font store (`OkayUICompat.cpp`), `shared/OkayUIFrameLoop.hpp`, `shared/OkayUIHostMode.hpp`, `editor/OkayUIHostMode.cpp`, tests `okayui_{fonts,frameloop,hostmode}`, `docs/own_ui_toolkit.md` 6.23 and 6.24
+  - 40.9.9 Platform-event host and editor probe - `shared/OkayUIHost.hpp` (`okayuihost::platform`: `EventCollector`, `Host`), `okayui/probe/backends/`, `docs/own_ui_toolkit.md` 6.18
+  - 40.9.4 Names and child flags - `okayui/include/okay/UI/OkayUICompat.hpp` - `MouseButton_*`, `Dir_*`, `Hovered_*`, `Focused_*`, `Child_*`, `KeyId_UpArrow` and friends, `IsItemHovered(flags)`, `IsWindowHovered(flags)`, `IsWindowFocused(flags)`, `BeginChild(id, size, childFlags)`
+- **Code:** `okayui/include/okay/UI/OkayUICompat.hpp`, `okayui/include/okay/UI/OkayUI.hpp`, `okayui/src/OkayUI.cpp`, `okayui/src/OkayUICompat.cpp`, `okayui/tests/test_okayui_calls.cpp`, `okayui/tests/test_okayui_names.cpp`
+- **API:** `OkayUI::SetNextWindowBgAlpha`, `OkayUI::SetNextWindowCollapsed`, `OkayUI::PushMultiItemsWidths`, `OkayUI::StyleColorsLight`, `OkayUI::DrawList::AddImageRounded`, `OkayUI::BeginChild`
+- **Editor:** none (library only)
+- **Docs:** `docs/own_ui_toolkit.md` (section 6.10)
+- **Tests:** `okayui_calls`, `okayui_names`, `okayui_port_console`, `okayui_port_project`, `okayui_port_versions`, `okayui_port_project2`, `okayui_port_scenemanager`, `okayui_host_platform`
+- **Status:** Works - implemented and tested headless (golden images for the three colour presets); not run in the real editor or launcher. Textured draw-list calls are checked on the draw data only (the software backend skips textures)
+- **Open:** `AddImageRounded` rounds corners only for images; `AddRect` has no per-corner flags and `AddPolyline` no `Closed` flag; hover delays are accepted and ignored; Middle mouse never fires; `Child_AutoResizeX` and resizable children are accepted and ignored; `NewFrame`, the platform and viewport calls and the dock node internals are not offered
+- **Related:** 40.8
+- **Words:** SetNextWindowBgAlpha, SetNextWindowCollapsed, PushMultiItemsWidths, StyleColorsLight, AddNgon, AddImageRounded, ChildFlags, HoveredFlags, MouseButton, context, replace Dear ImGui
+- **Seen as:** a ported panel does not compile because of a missing call name; a child window with a content-sized height is the wrong size; a light theme call has no effect
+- **Ask me like:** "work on 40.9.4, add Child_AutoResizeX"

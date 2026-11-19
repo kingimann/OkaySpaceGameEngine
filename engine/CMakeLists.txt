@@ -194,6 +194,7 @@ add_library(okay_engine
     src/Components/LineRenderer.cpp
     src/Components/BuildMode.cpp
     src/Components/Volume.cpp
+    src/Components/WindZone.cpp
     src/Components/DialogueGraph.cpp
     src/Components/DialogueRunner.cpp
     src/Components/QuestLog.cpp
@@ -203,6 +204,7 @@ add_library(okay_engine
     src/Platform/Account/Account.cpp
     src/Physics/Physics2D.cpp
     src/Physics/Physics3D.cpp
+    src/Physics/PhysicsToys.cpp
     src/Physics/TriMesh.cpp
     src/Physics/MeshCollider3D.cpp
     src/Audio/AudioMixer.cpp
@@ -331,6 +333,14 @@ add_library(okay_engine
     src/Optimize/BatchPlanner.cpp
     src/Optimize/StreamingGrid.cpp
     src/Optimize/MipBudget.cpp
+    src/Texture/Texture.cpp
+    src/Texture/Mip.cpp
+    src/Texture/Atlas.cpp
+    src/Texture/Convert.cpp
+    src/Texture/Bc.cpp
+    src/Texture/Dds.cpp
+    src/Texture/Stream.cpp
+    src/Texture/Export.cpp
     src/Optimize/SceneOptimizationReport.cpp
     src/Testing/TestRegistry.cpp
     src/Testing/PlayTest.cpp

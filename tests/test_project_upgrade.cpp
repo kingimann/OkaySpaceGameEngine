@@ -176,6 +176,17 @@ int main() {
         WriteFile(td.path / "loose" / "Desktop.okayscene", "x");
         CHECK(ProjectRootForScene((td.path / "loose" / "Desktop.okayscene").string()).empty());                // a loose file is no project
         CHECK(ProjectRootForScene("").empty());
+        // The upgrade window asks about the open PROJECT by its folder. Going through the open scene's path upgraded the wrong
+        // project (or none) whenever that scene was a loose file somewhere else.
+        CHECK(ProjectRootForScene(SceneKeyForProject(root)) == root);
+        CHECK(ProjectRootForScene(SceneKeyForProject(root + "/")) == root);
+        CHECK(SceneKeyForProject((td.path / "loose").string()).empty() && SceneKeyForProject("").empty());
+        {
+            TempDir flat;
+            WriteFile(flat.path / "project.okayproj", "company=x\n");
+            WriteFile(flat.path / "Main.okayscene", "x");
+            CHECK(ProjectRootForScene(SceneKeyForProject(flat.path.string())) == flat.path.string());   // the old flat layout (no Assets folder)
+        }
         CHECK(IsProjectRoot(p.root) && !IsProjectRoot(td.path / "loose") && !IsProjectRoot(td.path / "nowhere"));
         CHECK(RootKey(root) == RootKey(root + "/") && RootKey(root) == RootKey((p.root / "Assets" / "..").string()));
     }

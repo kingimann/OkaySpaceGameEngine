@@ -27,6 +27,7 @@
 #include "okay/Core/Profiler.hpp"
 #include "okay/Net/NetTransport.hpp"   // per-frame pump for non-native transports
 #include "okay/Environment/Weather.hpp"   // rain / snow / storm rig following the camera
+#include "okay/Components/WindZone.hpp"   // the wind field (docs/wind.md)
 #include "okay/Physics/BodyPose.hpp"
 #include "okay/Physics/Rigidbody2D.hpp"
 #include "okay/Physics/Rigidbody3D.hpp"
@@ -429,6 +430,7 @@ void Scene::Update(float deltaTime) {
 
     m_scheduler.Update(deltaTime);
     UpdateWeather(*this, deltaTime);   // the scene's weather preset -> emitters, wind, lightning
+    WindZone::UpdateAll(deltaTime);    // wind zones -> the shared wind field (before anything that reads the wind)
     {   // Tweens set to ignore the time scale use the real frame time.
         m_tweens.Update(deltaTime, Time::UnscaledFor(deltaTime));   // exact even in a frame where a hit stop ends or a ramp runs
     }

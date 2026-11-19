@@ -3921,6 +3921,7 @@ Word, then the number(s) to say. Back to the [overview](../FEATURE_MAP.md).
 - Retired Flow Graph window (14.6.7)
 - return (14.3)
 - Reusable objects (21.1)
+- Reusable UI buttons (12.10.12)
 - reuse (1.13)
 - Reverb (11.12.7)
 - Reverb bus (7.1.7)

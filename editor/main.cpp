@@ -50,6 +50,7 @@
 #include "okay/Core/Clock.hpp"        // ClockSet: the channels the Tween Animation inspector offers
 #include <cstdio>
 #include "UIDesignerModel.hpp"
+#include "UIDesignerActions.hpp"
 #include "UIDesignerWindow.hpp"      // UI designer: rulers, guides, layers panel
 #include "LevelTools.hpp"              // foliage brush, terrain layers, decals, cables, measuring, orthographic views
 #include "SplineTools.hpp"             // splines: Scene-view editing, inspectors, line / trail drawing
@@ -48362,20 +48363,13 @@ void DrawViewport(EditorState& ed, bool uiPanel = false) {
         if (ImGui::IsKeyPressed(ImGuiKey_E, false)) g_tool = Tool::Rotate;
         if (ImGui::IsKeyPressed(ImGuiKey_R, false)) g_tool = Tool::Scale;
         if (ImGui::IsKeyPressed(ImGuiKey_X, false)) g_gizmoLocal = !g_gizmoLocal;
-        // Arrow keys nudge a selected UI widget: 1px, or a grid step with Shift.
-        if (ed.selected()) {
-            UIRect nr = GetUIRect(ed.selected());
-            if (nr.valid && nr.position) {
-                float step = ImGui::GetIO().KeyShift ? (float)(g_uiGrid > 0 ? g_uiGrid : 1) : 1.0f;
-                float nx = 0.0f, ny = 0.0f;
-                if (ImGui::IsKeyPressed(ImGuiKey_LeftArrow,  true)) nx -= step;
-                if (ImGui::IsKeyPressed(ImGuiKey_RightArrow, true)) nx += step;
-                if (ImGui::IsKeyPressed(ImGuiKey_UpArrow,    true)) ny -= step;
-                if (ImGui::IsKeyPressed(ImGuiKey_DownArrow,  true)) ny += step;
-                if (nx != 0.0f || ny != 0.0f) {
-                    nr.position->x += nx; nr.position->y += ny; ed.dirty = true;
-                }
-            }
+        // Arrow keys nudge the selected UI widgets: 1px, or a grid step with Shift. One undo step each press
+        // (editor/UIDesignerActions.hpp, tested in test_ui_designer_actions).
+        if (ed.selected() && GetUIRect(ed.selected()).valid) {
+            const int nax = (ImGui::IsKeyPressed(ImGuiKey_RightArrow, true) ? 1 : 0) - (ImGui::IsKeyPressed(ImGuiKey_LeftArrow, true) ? 1 : 0);
+            const int nay = (ImGui::IsKeyPressed(ImGuiKey_DownArrow, true) ? 1 : 0) - (ImGui::IsKeyPressed(ImGuiKey_UpArrow, true) ? 1 : 0);
+            oked::uid::NudgeSelection(ed, nax, nay, ImGui::GetIO().KeyShift, (float)(g_uiGrid > 0 ? g_uiGrid : 1),
+                                      [](GameObject* g) { return oked::UIDesignerLocked(g); });
         }
     }
     if (!uiPanel) DrawPrefabModeBar(ed);   // prefab mode: where you are, Back, Save, Revert

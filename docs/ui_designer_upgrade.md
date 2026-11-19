@@ -36,3 +36,14 @@ behaviour-rich and cannot be run headless here, so replacing it blind risked reg
 
 Status: the model and its test (`ui_designer`) exist. The editor window does not call it yet (next step: replace the
 matching code in `DrawUIOverlay`, add a rulers strip, a layers panel and a responsive size menu).
+
+## Third step (branch claude/ui-designer-3)
+
+| Item | Result |
+| --- | --- |
+| Snap and resize maths onto the model | `SnapEdge`, `BestSnap`, `ParentEdgeSnap`, `ConstrainResize` moved out of `EditUIWidgets` unchanged; `test_ui_designer` replays 400 random cases and every handle with Shift / Alt against verbatim copies of the old code. The inline pixel clamping, grid rounding and child scaling stay in main.cpp. |
+| Shared styles | New `UIUserStyle` component (a named style object) and `UIStyleVariant::userStyle`; `ApplyUserStyles` restyles every widget that names a style. Saved as `uiuserstyle` records and `vuser`, only when used. Listed in `test_save_coverage`. Panel: Layers window > Shared styles. Test: `ui_user_styles`. There is no runtime re-apply: values are copied onto the widgets when the style is edited or used, so saved scenes carry them. |
+| UI prefab variants | Already built (`PrefabTools`, `editor/PrefabEdit`: instances, overrides, variants, apply, update all). Not rebuilt. Added plain-word buttons in Layers window > Reusable UI that call it. No new logic, so no new test. |
+| Image asset picker with thumbnails | Already there: UI Image uses `AssetSlot` with a thumbnail and Set Native Size. Not rebuilt. |
+| Guides saved per scene | New `UIGuides` component, created only by "Keep guides with the scene"; scenes without it write nothing. Test: `ui_user_styles` (saved guides). |
+| Undo audit | Audited `EditUIWidgets` and the new panel: move, resize, anchor pip, rename, hide, reorder, styles, guides toggle all call `PushUndo` first. Found one gap: arrow-key nudge had no undo (and moved only one widget). Fixed in `editor/UIDesignerActions.hpp` (`NudgeSelection`, one undo step, all selected, skips locked); test `ui_designer_actions`. Dragging a guide is session-only and has no undo by design. |

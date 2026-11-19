@@ -1022,6 +1022,12 @@ add_executable(test_ui_user_styles test_ui_user_styles.cpp)
 target_link_libraries(test_ui_user_styles PRIVATE okay::engine)
 add_test(NAME ui_user_styles COMMAND test_ui_user_styles)
 
+# UI designer canvas actions are one undo step each.
+add_executable(test_ui_designer_actions test_ui_designer_actions.cpp ${PROJECT_SOURCE_DIR}/editor/EditorState.cpp ${PROJECT_SOURCE_DIR}/shared/FileDialog.cpp)
+target_include_directories(test_ui_designer_actions PRIVATE ${PROJECT_SOURCE_DIR}/editor)
+target_link_libraries(test_ui_designer_actions PRIVATE okay::engine)
+add_test(NAME ui_designer_actions COMMAND test_ui_designer_actions)
+
 # The UI designer's logic (zoom, rulers, snapping, handles, align, z-order, layers, anchor picker, responsive preview).
 add_executable(test_ui_designer test_ui_designer.cpp)
 target_link_libraries(test_ui_designer PRIVATE okay::engine)

@@ -17,6 +17,7 @@
 #include "SdlDisplays.hpp"             // monitor list and display modes (SDL directly; not the platform seam)
 #include "okay/Input/PlatformKeys.hpp"   // F1-F12, nav keys, left / right modifiers (physical keys, via okay::platform)
 #include "okay/Core/BuildPipeline.hpp"   // FindDataDir (<Name>_Data layout) and build.json
+#include "CrashHandler.hpp"   // Build Settings > Game > Crash reports: the shared crash handler (docs/crash_reports.md)
 #include "okay/Core/BuildConfigExtra.hpp"   // game speed, start volumes, language, logging, environment variables from Build Settings > Game
 #include "okay/Core/Paths.hpp"
 #include <filesystem>
@@ -1144,6 +1145,31 @@ int main(int argc, char** argv) {
     // Windows 11 / high-DPI: per-monitor-DPI-aware so the game renders at native
     // resolution instead of being bitmap-stretched (blurry) on scaled displays.
     pb->SetPerMonitorDpiAware();   // Windows only; a hint on SDL >= 2.24, nothing elsewhere
+    // Build Settings > Advanced > Command-line arguments: the arguments written into game.okayconfig count as if they were typed
+    // first, so anything typed on the real command line comes later and wins.
+    std::vector<std::string> bakedStore;
+    std::vector<char*> bakedArgv;
+    {
+        std::ifstream cfRaw(ResolveGameBaseDir(argc > 0 ? argv[0] : "") + "game.okayconfig", std::ios::binary);
+        if (cfRaw) {
+            std::stringstream cfBuf; cfBuf << cfRaw.rdbuf();
+            std::istringstream cf(okay::DataPack::Unpack(cfBuf.str()));
+            okay::buildpipe::ExtraConfig early;
+            for (std::string line; std::getline(cf, line);) {
+                if (!line.empty() && line.back() == '\r') line.pop_back();
+                const std::size_t eq = line.find('=');
+                if (eq != std::string::npos && line.compare(0, eq, "arg") == 0) okay::buildpipe::ApplyExtraKey(early, "arg", line.substr(eq + 1));
+            }
+            if (!early.args.empty()) {
+                bakedStore.push_back(argc > 0 ? argv[0] : "game");
+                for (const std::string& a : early.args) bakedStore.push_back(a);
+                for (int i = 1; i < argc; ++i) bakedStore.push_back(argv[i]);
+                for (std::string& s : bakedStore) bakedArgv.push_back(s.data());
+                bakedArgv.push_back(nullptr);
+                argc = (int)bakedStore.size(); argv = bakedArgv.data();
+            }
+        }
+    }
     // `--server`: run headless as the game's dedicated server (no window, GPU or
     // audio). See okay/Net/DedicatedServer.hpp for the flags.
     for (int i = 1; i < argc; ++i)
@@ -1454,6 +1480,27 @@ int main(int argc, char** argv) {
     if (!cfg.extra.logLevel.empty()) okay::Log::Configure(cfg.extra.logLevel);
     if (!cfg.extra.logFile.empty()) okay::Log::OpenFile(saveDir + cfg.extra.logFile);
     if (!cfg.extra.description.empty()) pb->Log("game: " + cfg.title + " - " + cfg.extra.description);
+    if (cfg.extra.crashReports) {   // Build Settings > Game > Crash reports: write okay_crash.txt into the chosen folder if the game crashes
+        std::string crashDir = cfg.extra.crashFolder.empty() ? std::string() : saveDir + cfg.extra.crashFolder;
+        if (!crashDir.empty()) {
+            std::error_code cde; std::filesystem::create_directories(crashDir, cde);
+            if (!cde) {
+#if defined(_WIN32)
+                _putenv_s("OKAY_CRASH_DIR", crashDir.c_str());
+#else
+                ::setenv("OKAY_CRASH_DIR", crashDir.c_str(), 1);
+#endif
+            }
+        }
+        okaycrash::handler::Install(std::string(okay::BuildInfo::Version()).c_str(), __DATE__ " " __TIME__);
+        pb->Log("crash reports are on" + (crashDir.empty() ? std::string(" (beside the game files)") : " (folder " + crashDir + ")"));
+    }
+    for (const auto& kv : cfg.extra.defines) {   // Build Settings > Advanced > Custom defines: engine variables
+        std::string derr;
+        if (!okay::Cvars::Set(kv.first, kv.second, &derr)) pb->Log("define " + kv.first + ": " + derr);
+    }
+    okay::Input::LookScale() = cfg.extra.mouseSensitivity;   // Build Settings > Audio & Input > Mouse sensitivity
+    okay::AudioMixer::maxVoices = cfg.extra.maxVoices;       // Build Settings > Audio & Input > Most sounds at once
 
     // Optional downloaded content (docs/content_delivery.md): OFF unless a content URL is set (content.okayconfig beside the game, or the
     // environment variable OKAY_CONTENT_URL). With no URL nothing below does anything and the game is exactly as before. With one, the game
@@ -2472,6 +2519,8 @@ int main(int argc, char** argv) {
             Mat4 vp = cam->ProjectionMatrix(vh > 0 ? (float)vw / vh : 1.0f) * cam->ViewMatrix();
             if (w > 0 && h > 0) {
                 ApplySceneLight(scene);                 // a Light object aims the shading
+                if (cfg.extra.maxLights > 0) okay::SceneLights::LimitTo(cfg.extra.maxLights);   // Build Settings > Graphics > Most lights at once
+                if (cfg.extra.fogOff) scene.renderSettings.fog = false;                         // Build Settings > Graphics > Switch fog off
                 const GameObject* ignore = cam ? cam->ignoreObject : nullptr;
                 okay::RenderCullingMask() = cam ? cam->cullingMask : ~0;   // honor the camera's layer mask (software + GPU)
                 if (cam && cam->projection == Camera::Projection::Perspective)
@@ -2521,6 +2570,13 @@ int main(int argc, char** argv) {
                         px = stackHold.data();
                         vx = 0; vy = 0; vw = w; vh = h; fullView = true;
                     }
+                }
+                // Build Settings > Graphics > 3D picture size: render fewer pixels and let the window stretch the picture.
+                // (vw, vh are what is DRAWN to; dispVw, dispVh are the size it is shown at.)
+                const int dispVw = vw, dispVh = vh;
+                if (!px && cfg.extra.renderScale < 1.0f && (!cam || cam->renderTarget.empty())) {
+                    vw = std::max(1, (int)((float)vw * cfg.extra.renderScale + 0.5f));
+                    vh = std::max(1, (int)((float)vh * cfg.extra.renderScale + 0.5f));
                 }
                 // GPU path first: D3D11 (Windows) then OpenGL, each rendering to an
                 // offscreen target and reading back RGBA8. A self-heal counter disables
@@ -2583,13 +2639,14 @@ int main(int argc, char** argv) {
                     if (fullView) renderer->Copy(mesh3DTex, nullptr, nullptr);
                     else {   // outside the camera's rect stays black, like an empty screen area
                         renderer->SetDrawColor(0, 0, 0, 255);
-                        const SDL_Rect bars[4] = {{0, 0, w, vy}, {0, vy + vh, w, h - vy - vh},
-                                                  {0, vy, vx, vh}, {vx + vw, vy, w - vx - vw, vh}};
+                        const SDL_Rect bars[4] = {{0, 0, w, vy}, {0, vy + dispVh, w, h - vy - dispVh},
+                                                  {0, vy, vx, dispVh}, {vx + dispVw, vy, w - vx - dispVw, dispVh}};
                         for (const SDL_Rect& b : bars) if (b.w > 0 && b.h > 0) renderer->FillRect((const ui2d::Rect*)&b);
-                        const SDL_Rect dst{vx, vy, vw, vh};
+                        const SDL_Rect dst{vx, vy, dispVw, dispVh};
                         renderer->Copy(mesh3DTex, nullptr, (const ui2d::Rect*)&dst);
                     }
                 }
+                vw = dispVw; vh = dispVh;   // back to the size the picture is shown at
                 // Depth occlusion on the GPU color path: the GPU renderers don't read
                 // their depth back, so when one of them drew the frame, run a cheap
                 // HALF-resolution software depth pre-pass to fill the occlusion buffer so

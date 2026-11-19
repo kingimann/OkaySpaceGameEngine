@@ -396,6 +396,7 @@ struct SummaryInput {
     int enabledScenes = 0;        // scenes ticked in the list (0 = only the open scene)
     std::uintmax_t lastBytes = 0; // size of the last build (0 = never built), from the history
     std::uintmax_t estimateBytes = 0; // size a Dry Run of these settings reported (0 = no dry run yet)
+    bool estimateFresh = true;        // the settings are the ones that Dry Run used
 };
 inline std::string HumanSize(std::uintmax_t b) {
     char t[40]; double v = (double)b;
@@ -438,7 +439,8 @@ inline std::vector<std::string> BuildSummary(const SummaryInput& in) {
         }
     }
     L.push_back(in.outputDir.empty() ? "No output folder is chosen yet." : "It is written to " + in.outputDir + ".");
-    if (in.estimateBytes) L.push_back("The last Dry Run said this build would be " + HumanSize(in.estimateBytes) + ".");
+    if (in.estimateBytes) L.push_back(in.estimateFresh ? "Estimated size of this build (from a Dry Run of these exact settings): " + HumanSize(in.estimateBytes) + "."
+                                                       : "The last Dry Run said " + HumanSize(in.estimateBytes) + ", but settings have changed since: press Dry Run for a new estimate.");
     if (in.platform == 0) {
         if (s.renderScale != 1.0f) L.push_back("The 3D picture is drawn at " + std::to_string((int)(s.renderScale * 100 + 0.5f)) + "% size and stretched to the window.");
         if (s.maxLights > 0) L.push_back("At most " + std::to_string(s.maxLights) + " lights are used at once.");

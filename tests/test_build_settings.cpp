@@ -163,7 +163,9 @@ int main() {
         CHECK(ToggleExcluded(l, "Assets/a-very-long-name.png", 12, &ok) == l && !ok);       // does not fit: unchanged
         SummaryInput si; std::snprintf(si.s.excludeList, 1024, "a;b/"); si.estimateBytes = 2048;
         std::string all; for (const auto& x : BuildSummary(si)) all += x + "\n";
-        CHECK(all.find("2 file or folder entries") != std::string::npos && all.find("Dry Run said") != std::string::npos);
+        CHECK(all.find("2 file or folder entries") != std::string::npos && all.find("Dry Run said") == std::string::npos && all.find("Estimated size of this build") != std::string::npos);
+        si.estimateFresh = false; all.clear(); for (const auto& x : BuildSummary(si)) all += x + "\n";
+        CHECK(all.find("Dry Run said 2 KB") != std::string::npos && all.find("settings have changed") != std::string::npos);
     }
     {
         RUN_SUITE("drag reorder of the scene list");

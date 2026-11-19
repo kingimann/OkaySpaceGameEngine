@@ -6,6 +6,7 @@
 #include <functional>
 #include <string>
 #include <vector>
+#include "BuildOutputTexts.hpp"
 #include "BuildSettingsModel.hpp"
 #include "imgui.h"
 
@@ -19,6 +20,7 @@ struct BuildWindowCtx {
     int    platform = 0;        // 0 Desktop, 1 Web, 2 Android, 3 Server, 4 Xbox
     int    enabledScenes = 0;   // scenes ticked in the Scenes list
     std::uintmax_t estimateBytes = 0;   // what the last Dry Run reported
+    bool   estimateFresh = false;       // the settings have not changed since that Dry Run
     bool   openSceneSaved = true;
     std::string projectDir;
     std::function<void(const std::string&)> openFolder;   // "Open output folder"

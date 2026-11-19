@@ -124,6 +124,13 @@ bool DrawBuildPageExtra(BuildWindowCtx& c, int page) {
         }
         ImGui::Checkbox("Write a log file (game.log)", &b.logToFile);
         Tip("Saves the log in the game's save folder, so you can ask a tester to send it. It never grows without limit: old copies are rotated.");
+        Header("Crash reports");
+        ImGui::Checkbox("Write a crash report if the game crashes", &b.crashReports);
+        Tip("Installs the engine's crash handler in the built game. When it crashes, a report (okay_crash.txt) is written so a tester can send it to you.\nNothing is sent anywhere by the game itself.");
+        ImGui::BeginDisabled(!b.crashReports);
+        Text("Folder name##crashdir", b.crashFolder, "beside the game files (or a name, like CrashReports)", 300);
+        Tip("A folder inside the game's save folder. Leave empty to write beside the game files.");
+        ImGui::EndDisabled();
         Header("About and environment");
         Text("Description##desc", b.description, "one line about your game", 420);
         Tip("Written into the game's config and its start-up log line.");
@@ -143,6 +150,11 @@ bool DrawBuildPageExtra(BuildWindowCtx& c, int page) {
         ImGui::EndDisabled();
         if (!b.allowBuildCommands) ImGui::TextColored(kInfo, "Commands are switched off, so they will not run.");
         else ImGui::TextColored(kWarn, "These commands run on your computer when you press Build.");
+        Header("Start-up options");
+        Text("Command-line arguments##args", b.launchArgs, "for example: --windowed --log game.log", 460);
+        Tip("Baked into the game as if typed first. Anything typed on the real command line comes after and wins. Use \"double quotes\" around an argument with spaces.");
+        Text("Custom defines##defs", b.defines, "NAME=VALUE;OTHER=VALUE", 460);
+        Tip("Engine variables (Cvars) set when the game starts, separated by semicolons. A name the engine does not know is reported in the log.");
         Header("Version control");
         ImGui::TextWrapped("Make a .gitignore in the project so build output, logs and editor scratch files stay out of version control. Lines you already have are kept.");
         ImGui::BeginDisabled(c.projectDir.empty());
@@ -194,6 +206,46 @@ bool DrawBuildPageExtra(BuildWindowCtx& c, int page) {
         }
         return true;
     }
+    if (page == kWeb) {
+        Header("Web build");
+        ImGui::SetNextItemWidth(200);
+        ImGui::InputInt("Starting memory (MB, 0 = default)", &b.webMemoryMB, 16, 128);
+        b.webMemoryMB = std::max(0, std::min(2048, b.webMemoryMB));
+        Tip("Written into build-web.sh as the memory the game asks the browser for at the start. The game may grow past it. 0 keeps Emscripten's default.\nThe picture size follows the window size on the Display page.");
+        ImGui::Checkbox("Also write .gz copies of the built files", &b.webCompress);
+        Tip("build-web.sh makes a .gz copy of the .wasm, .js and .data files. Your web server must send them with Content-Encoding: gzip.");
+        ImGui::TextDisabled("These go into build-web.sh in the export folder. Emscripten itself is not run by the editor.");
+        return true;
+    }
+    if (page == kAndroid) {
+        Header("Android project");
+        ImGui::TextDisabled("Package name: %s  (made from the Identifier on the Player page)", oked::outtext::AndroidPackageName(b.bundleId).c_str());
+        ImGui::SetNextItemWidth(140); ImGui::InputInt("Lowest Android version (API)", &b.androidMinSdk);
+        ImGui::SetNextItemWidth(140); ImGui::InputInt("Target Android version (API)", &b.androidTargetSdk);
+        b.androidMinSdk = std::max(16, std::min(40, b.androidMinSdk)); b.androidTargetSdk = std::max(16, std::min(40, b.androidTargetSdk));
+        Tip("API levels, for example 24 is Android 7.0 and 34 is Android 14.");
+        static const char* orient[] = {"Any direction (follows the phone)", "Landscape (wide)", "Portrait (tall)"};
+        ImGui::SetNextItemWidth(280); ImGui::Combo("Screen direction", &b.androidOrientation, orient, 3);
+        Text("Permissions##perm", b.androidPermissions, "INTERNET;VIBRATE", 360);
+        Tip("Separated by semicolons, written into AndroidManifest.xml (android.permission. is added in front of short names).");
+        ImGui::TextDisabled("These are written into AndroidManifest.xml and app-build.gradle.txt in the export folder.");
+        return true;
+    }
+    if (page == kInstaller) {
+        Header("Windows installer");
+        ImGui::Checkbox("Create an installer script when building", &b.createInstaller);
+        Tip("Writes <Name>-installer.nsi next to the build. NSIS (a free installer maker) turns it into a setup program. The editor does not run NSIS, and the Zip layout cannot have one.");
+        ImGui::BeginDisabled(!b.createInstaller);
+        Text("Install folder name##inf", b.installFolder, "the game name", 260);
+        Tip("The folder the game is installed into under the player's own programs folder (no administrator needed).");
+        Text("Licence text file##lic", b.licenseFile, "optional, for example Assets/license.txt", 360);
+        Tip("A plain text file shown on a licence page the player must accept. The file is copied beside the script.");
+        ImGui::Checkbox("Start menu entry", &b.startMenuEntry);
+        ImGui::Checkbox("Desktop shortcut", &b.desktopShortcut);
+        ImGui::TextDisabled("An uninstaller and an entry in Apps & features are always included.");
+        ImGui::EndDisabled();
+        return true;
+    }
     return false;
 }
 
@@ -209,6 +261,16 @@ void DrawBuildPageMore(BuildWindowCtx& c, int page) {
         ImGui::InputInt("Particle limit", &b.particleCap, 50, 500);
         b.particleCap = std::max(0, std::min(100000, b.particleCap));
         Tip("The most particles any one effect may keep alive. 0 means no extra limit. Lower it for weaker computers.");
+        ImGui::SetNextItemWidth(220);
+        ImGui::SliderFloat("3D picture size", &b.renderScale, 0.25f, 1.0f, "%.2fx");
+        b.renderScale = std::max(0.25f, std::min(1.0f, b.renderScale));
+        Tip("Draw the 3D picture with fewer pixels and stretch it to the window: faster on weak computers, softer to look at. The menus and text stay sharp. 1 = full size.");
+        ImGui::SetNextItemWidth(220);
+        ImGui::InputInt("Most lights at once", &b.maxLights);
+        b.maxLights = std::max(0, std::min(256, b.maxLights));
+        Tip("Lights beyond this number are dropped (the main sun always stays). 0 means no limit.");
+        ImGui::Checkbox("Switch fog off", &b.fogOff);
+        Tip("Ignores the fog set in your scenes, for a clearer picture on weak computers.");
     }
     if (page == kOutput) {
         Header("Files left out of the build");
@@ -217,6 +279,12 @@ void DrawBuildPageMore(BuildWindowCtx& c, int page) {
         Tip("Paths are relative to the project folder. Not case sensitive.");
         ImGui::SameLine();
         if (ImGui::Button("Clear##excl")) b.excludeList[0] = '\0';
+        Header("Differences for one platform");
+        ImGui::TextWrapped("Settings that should be different when you build for Web, Android or the Server, written as name=value separated by semicolons. For example: width=800;vsync=0;fpsCap=30. The names are the ones .okaybuild files use.");
+        Text("Web##ovw", b.overridesWeb, "width=800;vsync=0", 460);
+        Text("Android##ova", b.overridesAndroid, "fullscreen=1;shadows=0", 460);
+        Text("Server##ovs", b.overridesServer, "srvPort=46000", 460);
+        Tip("These replace the normal setting only when you build for that platform. Desktop always uses the normal settings.");
         const auto entries = ExcludeEntries(b.excludeList);
         if (!entries.empty()) ImGui::TextDisabled("%d entr%s. Use Dry Run to see the size of the build without them.", (int)entries.size(), entries.size() == 1 ? "y" : "ies");
     }
@@ -232,13 +300,21 @@ void DrawBuildPageMore(BuildWindowCtx& c, int page) {
         ImGui::SetNextItemWidth(260);
         if (ImGui::Combo("Sound quality (sample rate)", &cur, rateNames, 4)) b.sampleRate = rates[cur];
         Tip("The rate the game asks the sound card for. The sound card may still use its own.");
+        ImGui::SetNextItemWidth(220);
+        ImGui::SliderFloat("Mouse sensitivity", &b.mouseSensitivity, 0.1f, 5.0f, "%.2fx");
+        b.mouseSensitivity = std::max(0.1f, std::min(5.0f, b.mouseSensitivity));
+        Tip("Multiplies the look speed of every first-person, third-person shooter, free-roam and virtual camera in the game. 1 = each one's own setting.");
+        ImGui::SetNextItemWidth(220);
+        ImGui::InputInt("Most sounds at once", &b.maxVoices);
+        b.maxVoices = std::max(0, std::min(256, b.maxVoices));
+        Tip("When more sounds play than this, only the loudest ones are heard. 0 means no limit.");
     }
 }
 
 bool DrawBuildSummary(BuildWindowCtx& c) {
     BuildSettings& b = *c.settings;
     SummaryInput si; si.s = b; si.productName = c.name ? c.name : ""; si.outputDir = c.dir ? c.dir : ""; si.platform = c.platform; si.enabledScenes = c.enabledScenes;
-    si.lastBytes = LastGoodSize(History(c.projectDir)); si.estimateBytes = c.estimateBytes;
+    si.lastBytes = LastGoodSize(History(c.projectDir)); si.estimateBytes = c.estimateBytes; si.estimateFresh = c.estimateFresh;
     ValidateInput vi; vi.s = b; vi.productName = si.productName; vi.outputDir = si.outputDir; vi.platform = c.platform; vi.enabledScenes = c.enabledScenes; vi.openSceneSaved = c.openSceneSaved;
     {
         std::error_code ec;

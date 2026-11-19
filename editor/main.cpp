@@ -20,6 +20,7 @@
 #include "SceneAddMenu.hpp"
 #include "MenuEntriesUI.hpp"          // draws those lists with Dear ImGui
 #include "ProjectState.hpp"           // project settings + build settings: the files inside the project folder
+#include "BuildOutputTexts.hpp"        // the Web script, Android manifest and installer script texts (pure, tested)
 #include "BuildSettingsWindow.hpp"     // the Build Settings window: pages, search, summary, checks, history (own files)
 #include "okay/Input/PlatformGamepad.hpp"   // controller -> Input (sticks, triggers, rumble), via okay::platform
 #include "okay/Input/PlatformKeys.hpp"      // F-keys, Tab, navigation block, left / right modifiers
@@ -2910,6 +2911,7 @@ int   g_buildPlatform = 0;   // 0 = Desktop (Windows), 1 = Web (WASM/WebGL), 2 =
 
 // BuildScene, BuildSettings, BuildProfile and ProjectSettings live in ProjectState.hpp (with their file text).
 BuildSettings g_build;
+std::string g_buildDryKey;           // the settings the Dry Run size was worked out for
 std::uintmax_t g_buildDryBytes = 0;   // the size the last Dry Run reported (shown in the Build Settings summary)
 
 // ---- Build profiles -------------
@@ -4299,6 +4301,7 @@ struct Options {
     std::string archiveName = "{name}-{version}-{platform}";
     std::vector<std::string> sceneList;     // Scenes In Build, in order (empty = the open scene)
     okay::buildpipe::ExtraConfig extra;     // Build Settings > Game: speed, start volumes, language, logging, environment (game.okayconfig)
+    BuildSettings bs;                       // all the settings (the Web, Android and installer texts read theirs from here)
     std::string excludeList;                // Build Settings > Output > Files left out of the build ("Assets/a.png;Assets/Old/")
     bool allowCommands = false;             // Build Settings > Advanced: run the two commands below (off = never)
     std::string preCommand, postCommand;    // run before the build (a failure stops it) / after a good build
@@ -4884,6 +4887,22 @@ std::string Build(EditorState& ed, const std::string& outDir,
     if (!rp.excluded.empty()) msg += "  " + std::to_string(rp.excluded.size()) + " unused project file(s) left out (" + human(rp.excludedBytes) + ").";
     if (R.missing) msg += "  WARNING: " + std::to_string(R.missing) + " referenced asset(s) not found and not copied.";
     if (!integrity.message.empty()) msg += "  (" + integrity.message + ")";
+    if (opt.bs.createInstaller && !opt.dryRun && plan.effective != bp::Layout::Zip) {   // Build Settings > Installer
+        oked::outtext::InstallerInfo ii;
+        ii.gameName = gameName; ii.company = opt.company; ii.version = opt.version; ii.exeName = exeName;
+        ii.installFolder = opt.bs.installFolder; ii.startMenu = opt.bs.startMenuEntry; ii.desktopShortcut = opt.bs.desktopShortcut;
+        ii.scriptName = bp::FileSafeName(gameName, "Game") + "-installer.nsi";
+        std::error_code ice;
+        if (opt.bs.licenseFile[0]) {   // the licence text goes beside the script, so the installer can show it
+            fs::path lic(opt.bs.licenseFile);
+            if (lic.is_relative() && !ed.projectDir().empty()) lic = fs::path(ed.projectDir()) / lic;
+            if (fs::is_regular_file(lic, ice)) { fs::copy_file(lic, dir / "license.txt", fs::copy_options::overwrite_existing, ice); if (!ice) ii.licenseFile = "license.txt"; }
+        }
+        std::ofstream nsi((dir / ii.scriptName).string(), std::ios::binary | std::ios::trunc);
+        nsi << oked::outtext::InstallerScript(ii);
+        if (nsi.good())
+            msg += "  (installer script " + ii.scriptName + " written: run NSIS on it to make the setup program; the script was not run here)";
+    }
     {   // Build Settings > Advanced: the command to run AFTER a good build (it cannot undo the build, so a failure is only reported)
         const std::string post = oked::bsm::CommandToRun(opt.postCommand, opt.allowCommands, opt.dryRun, cmdVars);
         if (!post.empty()) {
@@ -4930,7 +4949,7 @@ Options OptionsFromSettings(const BuildSettings& g, const ProjectSettings& pr) {
     o.bootAccentOverride = pr.splashAccentOverride; o.bootBar = pr.splashShowBar;
     o.layout = g.layout; o.stripAssets = g.stripAssets; o.compress = g.compress; o.zipAlso = g.zipAfter && g.layout != 2;
     o.buildNumber = g.buildNumber; o.archiveName = g.archiveName;
-    o.extra = oked::bsm::ExtraFrom(g); o.excludeList = g.excludeList;
+    o.extra = oked::bsm::ExtraFrom(g); o.excludeList = g.excludeList; o.bs = g;
     o.allowCommands = g.allowBuildCommands; o.preCommand = g.preBuildCommand; o.postCommand = g.postBuildCommand;
     return o;
 }
@@ -4989,19 +5008,7 @@ std::string ExportForPlatform(EditorState& ed, const std::string& outDir,
 #endif
     if (target == 1) {   // ---- Web (Emscripten / WebGL) ----
         std::ofstream sh((dir / "build-web.sh").string());
-        sh << "#!/usr/bin/env bash\n"
-              "# Build this game for the web (WebAssembly + WebGL) with Emscripten.\n"
-              "# Prereqs: install emsdk (https://emscripten.org), 'source emsdk_env.sh',\n"
-              "# and set OKAY_SRC to your OkaySpace engine source checkout.\n"
-              "set -euo pipefail\n"
-              "cd \"$(dirname \"$0\")\"\n"
-              ": \"${OKAY_SRC:?Set OKAY_SRC to the OkaySpace engine source folder}\"\n"
-              "command -v emcmake >/dev/null || { echo 'Emscripten not found: source emsdk_env.sh'; exit 1; }\n"
-              "emcmake cmake -S \"$OKAY_SRC\" -B build-web -DCMAKE_BUILD_TYPE=Release \\\n"
-              "  -DOKAY_BUILD_PLAYER=ON -DOKAY_BUILD_TESTS=OFF -DOKAY_BUILD_SANDBOX=OFF -DOKAY_BUILD_LAUNCHER=OFF \\\n"
-              "  -DCMAKE_EXE_LINKER_FLAGS=\"--preload-file game@/\"\n"
-              "cmake --build build-web -j\n"
-              "echo 'Built build-web/web/okay-player.html — serve it: python3 -m http.server -d build-web/web'\n";
+        sh << oked::outtext::WebBuildScript({opt.bs.webMemoryMB, opt.bs.webCompress});   // Build Settings > Web
         std::ofstream rd((dir / "README.txt").string());
         rd << "OkaySpace - Web (WebGL / WebAssembly) export of '" << gameName << "'\n"
               "======================================================\n\n"
@@ -5019,6 +5026,13 @@ std::string ExportForPlatform(EditorState& ed, const std::string& outDir,
     }
 
     // target == 2: ---- Android (SDL2 + NDK) ----
+    {   // Build Settings > Android: the manifest and the Gradle values, from the settings
+        oked::outtext::AndroidInfo ai;
+        ai.appName = gameName; ai.package = oked::outtext::AndroidPackageName(opt.bundleId); ai.version = opt.version; ai.buildNumber = opt.buildNumber;
+        ai.minSdk = opt.bs.androidMinSdk; ai.targetSdk = opt.bs.androidTargetSdk; ai.orientation = opt.bs.androidOrientation; ai.permissions = opt.bs.androidPermissions;
+        std::ofstream am((dir / "AndroidManifest.xml").string(), std::ios::binary | std::ios::trunc); am << oked::outtext::AndroidManifest(ai);
+        std::ofstream ag((dir / "app-build.gradle.txt").string(), std::ios::binary | std::ios::trunc); ag << oked::outtext::AndroidGradle(ai);
+    }
     std::ofstream rd((dir / "README.txt").string());
     rd << "OkaySpace - Android export of '" << gameName << "'\n"
           "==============================================\n\n"
@@ -5031,6 +5045,8 @@ std::string ExportForPlatform(EditorState& ed, const std::string& outDir,
           "     they build against SDL2's Android port.\n"
           "  3. Copy this 'assets/' folder into app/src/main/assets/.\n"
           "  4. Build/run from Android Studio (Gradle + NDK).\n\n"
+          "AndroidManifest.xml and app-build.gradle.txt: written from Build Settings > Android (package, versions, screen direction,\n"
+          "permissions). Use them as app/src/main/AndroidManifest.xml and in app/build.gradle.\n\n"
           "Config: identifier " << opt.bundleId << ", version " << opt.version << ".\n";
     return "Exported Android data + guide to " + dir.string() + " (" + std::to_string(copied) +
            " asset(s)). See README.txt - an APK needs Android Studio + the NDK.";
@@ -18687,7 +18703,7 @@ void DrawFileDialogs(EditorState& ed) {
         bctx.settings = &g_build; bctx.name = g_buildNameBuf; bctx.nameCap = sizeof(g_buildNameBuf); bctx.dir = g_buildDirBuf; bctx.dirCap = sizeof(g_buildDirBuf);
         bctx.platform = g_buildPlatform; bctx.projectDir = ed.projectDir(); bctx.openSceneSaved = !ed.path().empty();
         for (const BuildScene& bs : g_build.scenes) if (bs.on) ++bctx.enabledScenes;
-        bctx.estimateBytes = g_buildDryBytes;
+        bctx.estimateBytes = g_buildDryBytes; bctx.estimateFresh = !g_buildDryKey.empty() && g_buildDryKey == oked::bsm::SettingsKey(g_build);
         bctx.openFolder = [](const std::string& p) { extide::RevealInFiles(p); };
         if (g_buildPlatform == 3) ImGui::TextDisabled("Export a dedicated server:  the game with no window, plus server.cfg and deploy scripts");
         else ImGui::TextDisabled("Export a standalone game:  <Name>.exe + <Name>_Data/ (scenes, only the assets they use, StreamingAssets, build.json)");
@@ -19334,18 +19350,20 @@ void DrawFileDialogs(EditorState& ed) {
             }
         }
         if (doBuild) {
+          // Build Settings > Output > "Differences for ..." : this platform's own values over the base settings.
+          const BuildSettings eff = oked::bsm::EffectiveSettings(g_build, g_buildPlatform);
           if (g_buildPlatform == 3) {   // dedicated server folder
             builder::Options so;
-            so.company = g_build.company; so.version = g_build.version; so.bundleId = g_build.bundleId;
-            so.cleanOutput = g_build.cleanOutput; so.dataFolder = g_build.dataFolder; so.encryptData = g_build.encryptData;
-            so.includeAllProjectScenes = g_build.includeAllProjectScenes;
-            for (const BuildScene& sc : g_build.scenes) if (sc.on) so.sceneList.push_back(sc.path);
+            so.company = eff.company; so.version = eff.version; so.bundleId = eff.bundleId;
+            so.cleanOutput = eff.cleanOutput; so.dataFolder = eff.dataFolder; so.encryptData = eff.encryptData;
+            so.includeAllProjectScenes = eff.includeAllProjectScenes;
+            for (const BuildScene& sc : eff.scenes) if (sc.on) so.sceneList.push_back(sc.path);
             builder::ServerOptions sv;
-            sv.target = g_build.srvTarget; sv.name = g_build.srvName; sv.password = g_build.srvPassword;
-            sv.publicAddr = g_build.srvPublicAddr; sv.region = g_build.srvRegion;
-            sv.port = g_build.srvPort; sv.maxPlayers = g_build.srvMaxPlayers; sv.tick = g_build.srvTick;
-            sv.auth = g_build.srvAuth; sv.advertise = g_build.srvAdvertise;
-            sv.maxSpeed = g_build.srvMaxSpeed; sv.rateLimit = g_build.srvRateLimit; sv.kickAfter = g_build.srvKickAfter;
+            sv.target = eff.srvTarget; sv.name = eff.srvName; sv.password = eff.srvPassword;
+            sv.publicAddr = eff.srvPublicAddr; sv.region = eff.srvRegion;
+            sv.port = eff.srvPort; sv.maxPlayers = eff.srvMaxPlayers; sv.tick = eff.srvTick;
+            sv.auth = eff.srvAuth; sv.advertise = eff.srvAdvertise;
+            sv.maxSpeed = eff.srvMaxSpeed; sv.rateLimit = eff.srvRateLimit; sv.kickAfter = eff.srvKickAfter;
             g_buildReport = builder::BuildReport{};
             g_buildStatus = builder::BuildServer(ed, g_buildDirBuf, g_buildNameBuf, so, sv, &g_buildReport);
             g_openBuildResult = true;
@@ -19359,8 +19377,9 @@ void DrawFileDialogs(EditorState& ed) {
             ImGui::CloseCurrentPopup();
           } else if (g_buildPlatform != 0) {
             builder::Options wo;
-            wo.company = g_build.company; wo.version = g_build.version;
-            wo.width = g_build.width; wo.height = g_build.height; wo.bundleId = g_build.bundleId; wo.iconPath = g_build.icon;
+            wo.company = eff.company; wo.version = eff.version;
+            wo.width = eff.width; wo.height = eff.height; wo.bundleId = eff.bundleId; wo.iconPath = eff.icon;
+            wo.bs = eff; wo.buildNumber = eff.buildNumber;
             g_buildReport = builder::BuildReport{};
             g_buildStatus = builder::ExportForPlatform(ed, g_buildDirBuf, g_buildNameBuf, wo, g_buildPlatform);
             ConsoleLog("Export (" + std::string(plats[g_buildPlatform]) + "): " + g_buildStatus);
@@ -19396,7 +19415,7 @@ void DrawFileDialogs(EditorState& ed) {
             ImGui::CloseCurrentPopup();
 #endif
           } else {
-            builder::Options o = builder::OptionsFromSettings(g_build, g_project);
+            builder::Options o = builder::OptionsFromSettings(eff, g_project);
             o.dryRun = g_buildDryRun;
             g_buildReport = builder::BuildReport{};
             g_buildStatus = builder::Build(ed, g_buildDirBuf, g_buildNameBuf, o, &g_buildReport);
@@ -19404,7 +19423,7 @@ void DrawFileDialogs(EditorState& ed) {
             ConsoleLog(std::string(g_buildDryRun ? "Build Game (dry run): " : "Build Game: ") + g_buildStatus);
             const bool wasDry = g_buildDryRun;
             g_buildDryRun = false;
-            if (wasDry && g_buildReport.ok) g_buildDryBytes = g_buildReport.r.total;
+            if (wasDry && g_buildReport.ok) { g_buildDryBytes = g_buildReport.r.total; g_buildDryKey = oked::bsm::SettingsKey(g_build); }
             { std::vector<std::string> lw; for (const std::string& w : g_buildReport.r.warnings) lw.push_back(w); oked::SetBuildLog(g_buildStatus, lw); }   // Build Settings > Advanced > Last build log
             // A finished real build counts the build number up, so the next one is told apart from this one.
             if (!wasDry) oked::RecordBuildInHistory(bctx, g_build.buildNumber, g_buildReport.r.total, g_buildReport.ok);   // the build history list

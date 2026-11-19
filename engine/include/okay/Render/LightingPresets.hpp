@@ -18,6 +18,7 @@
 #include "okay/Scene/Scene.hpp"
 #include <cmath>
 #include <string>
+#include <vector>
 
 namespace okay {
 
@@ -102,8 +103,11 @@ inline bool ApplyLightingPreset(Scene& scene, const std::string& name) {
     for (int i = 0; i < n; ++i) if (name == list[i].name) known = true;
     if (!known) return false;
 
-    for (const auto& go : scene.Objects())               // replace what an earlier preset added
-        if (IsPresetObject(*go)) scene.Destroy(go.get());
+    {   // replace what an earlier preset added. Collect first: Destroy may remove from the list at once (outside a frame).
+        std::vector<GameObject*> old;
+        for (const auto& go : scene.Objects()) if (IsPresetObject(*go)) old.push_back(go.get());
+        for (GameObject* go : old) scene.Destroy(go);
+    }
 
     Vec3 lo, hi; SceneBox(scene, lo, hi);
     const Vec3 ctr{(lo.x + hi.x) * 0.5f, lo.y, (lo.z + hi.z) * 0.5f};

@@ -47,6 +47,22 @@ inline float NormalOffset(float ndl, float texelWorld, float mul) {
     return texelWorld * (0.6f + 1.8f * sinT) * mul;
 }
 
+/// Receiver-plane depth shift: how much farther from the light (along its direction `lightDir`, unit) the SURFACE is at a filter tap
+/// that lies (`ox`, `oy`) shadow-map texels away from the shaded point, where `axisX` / `axisY` are the world directions of the
+/// shadow map's x and y and `ny` flips y (texel rows run downwards). The surface through the point has normal `n`; moving along
+/// it by d changes its depth along the light by -(n.d)/(n.L). Comparing each tap with this depth, instead of one depth for all taps,
+/// is what stops stripes on sloped ground WITHOUT a big bias: a big bias lets thin or low objects lose their shadow, which is worst
+/// in the far cascades where one texel is large. Clamped to +-8 texels for surfaces almost edge-on to the light.
+inline float ReceiverPlaneShift(const Vec3& n, const Vec3& lightDir, const Vec3& axisX, const Vec3& axisY,
+                                float ox, float oy, float texelWorld) {
+    float nl = Vec3::Dot(n, lightDir);                       // negative for a surface facing the light
+    const float mag = std::fabs(nl) < 0.1f ? 0.1f : std::fabs(nl);
+    const float nd = Vec3::Dot(n, axisX) * ox * texelWorld - Vec3::Dot(n, axisY) * oy * texelWorld;
+    float s = -nd / (nl < 0.0f ? -mag : mag);
+    const float lim = 8.0f * texelWorld;
+    return s > lim ? lim : (s < -lim ? -lim : s);
+}
+
 /// Depth bias in WORLD units (along the light direction). A filter that reads `filterTexels` away from the centre
 /// sees a sloped surface that much nearer or farther, so the slope term is multiplied by the filter's reach: this is
 /// what stops stripes ("acne") on sloped ground without detaching shadows on flat ground. Capped, because an unlimited bias

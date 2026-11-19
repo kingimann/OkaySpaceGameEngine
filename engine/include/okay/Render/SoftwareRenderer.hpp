@@ -75,6 +75,7 @@ struct ShadowCascade {
     Vec3  center{0, 0, 0};      // world-space centre of the region this cascade covers
     float radius = 0.0f;        // world-space radius of that region (for cascade selection)
     float depthRange = 1.0f;    // world length of the depth range (NDC z -1..1), turns depth gaps into metres
+    Vec3  axisX{1, 0, 0}, axisY{0, 1, 0};   // world directions of the shadow map's x and y (for the receiver-plane depth)
 };
 struct ShadowMap {
     static const int kMaxCascades = 4;
@@ -1031,6 +1032,8 @@ inline void BuildCascade(const Scene& scene, ShadowCascade& cas, const Vec3& cen
     cas.viewProj = Mat4::Ortho(-radius, radius, -radius, radius, 0.05f, farZ)
                  * Mat4::Translate(ClassicLighting() ? Vec3{0, 0, 0} : shadowmath::CascadeSnapShift(view, texel)) * view;
     cas.depthRange = farZ - 0.05f;
+    { const Mat4 inv = view.Inverse(); const Vec3 o = inv.MultiplyPoint({0, 0, 0});
+      cas.axisX = (inv.MultiplyPoint({1, 0, 0}) - o).Normalized(); cas.axisY = (inv.MultiplyPoint({0, 1, 0}) - o).Normalized(); }
     cas.depth.assign((std::size_t)S * S, 2.0f);
     RenderCascadeDepth(scene, cas, cull);
 }
@@ -1290,34 +1293,34 @@ inline float ShadowFactor(const Vec3& wpos, const Vec3& n) {
         }
         const float fx = (x * 0.5f + 0.5f) * cas.size, fy = (1.0f - (y * 0.5f + 0.5f)) * cas.size;
         const float zPerWorld = 2.0f / (cas.depthRange > 1e-4f ? cas.depthRange : 1.0f);   // NDC depth per metre
-        auto texel = [&](float tx, float ty, float& dOut) {
-            const int px = (int)(tx), py = (int)(ty);
+        const float constBias = cas.texelWorld * 1.0f * biasMul * zPerWorld;                  // about one texel; the slope is handled per tap
+        auto tapDepth = [&](float ox, float oy, float& dOut, float& shiftNdc) {
+            shiftNdc = shadowmath::ReceiverPlaneShift(n, sm.lightDir, cas.axisX, cas.axisY, ox, oy, cas.texelWorld) * zPerWorld;
+            const int px = (int)(fx + ox), py = (int)(fy + oy);
             if (px < 0 || py < 0 || px >= cas.size || py >= cas.size) return false;
             dOut = cas.depth[(std::size_t)py * cas.size + px];
             return true;
         };
         // 1. Blocker search: a few taps over a reach a bit wider than the minimum filter.
         const float searchR = baseR + 1.5f + 4.0f * soft;
-        const float searchBias = shadowmath::DepthBias(ndl, cas.texelWorld, searchR, biasMul) * zPerWorld;
         int blockers = 0; float gapSum = 0.0f;
         for (int k = 0; k < 6; ++k) {
             float tx, ty; shadowmath::DiscTap(k, 6, tx, ty);
-            float d;
-            if (!texel(fx + tx * searchR, fy + ty * searchR, d)) continue;
-            if (z - searchBias > d) { ++blockers; gapSum += (z - d) / zPerWorld; }
+            float d, sh;
+            if (!tapDepth(tx * searchR, ty * searchR, d, sh)) continue;
+            if (z + sh - constBias > d) { ++blockers; gapSum += (z + sh - d) / zPerWorld; }
         }
         if (blockers == 0) return 1.0f;                           // nothing in the way: no need to filter
         const float gap = gapSum / (float)blockers;
-        // 2. Filter radius from the gap, then a disc of taps against a slope-scaled bias.
+        // 2. Filter radius from the gap, then a disc of taps, each compared with the receiver plane at that tap.
         const float radius = shadowmath::PenumbraTexels(gap, cas.texelWorld, soft, baseR);
-        const float bias = shadowmath::DepthBias(ndl, cas.texelWorld, radius, biasMul) * zPerWorld;
         const int taps = radius > 3.0f ? 16 : 8;
         float lit = 0.0f;
         for (int k = 0; k < taps; ++k) {
             float tx, ty; shadowmath::DiscTap(k, taps, tx, ty);
-            float d;
-            if (!texel(fx + tx * radius, fy + ty * radius, d)) { lit += 1.0f; continue; }
-            if (z - bias <= d) lit += 1.0f;
+            float d, sh;
+            if (!tapDepth(tx * radius, ty * radius, d, sh)) { lit += 1.0f; continue; }
+            if (z + sh - constBias <= d) lit += 1.0f;
         }
         return 1.0f - strength * (1.0f - lit / (float)taps);
     }

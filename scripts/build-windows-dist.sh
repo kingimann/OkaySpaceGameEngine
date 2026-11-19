@@ -189,6 +189,7 @@ node_playground
 obj_texture_paths
 own_readers
 own_wav
+particles
 perf
 physics
 physics2d

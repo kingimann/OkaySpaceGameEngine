@@ -369,15 +369,14 @@ void ParticleSystem::StepRange(int begin, int end, float dt, const Ctx& c) {
         const float t = 1.0f - Mathf::Clamp01(life / maxLife);
         Vec3 pos{px[i], py[i], pz[i]};
         Vec3 vel{vx[i], vy[i], vz[i]};
-        const Vec3 vel0 = vel;
         Vec3 acc = c.gravCurve ? grav * gravityCurve.Evaluate(t) : grav;
         if (c.hasForce) acc += c.forceCurve ? force * forceCurve.Evaluate(t) : force;
-        vel += acc * dt;
+        Vec3 dv{0, 0, 0};   // velocity changes from the wind and the vortex (small, applied half-and-half)
         if (c.windy) {
             const Vec3 w = WindAt(pos, c.origin);
-            vel.x += (w.x - vel.x) * c.windK;
-            vel.z += (w.z - vel.z) * c.windK;
-            vel.y += w.y * dt;
+            dv.x += (w.x - vel.x) * c.windK;
+            dv.z += (w.z - vel.z) * c.windK;
+            dv.y += w.y * dt;
         }
         if (c.vortex) {
             const Vec3 d = pos - c.origin;
@@ -385,12 +384,25 @@ void ParticleSystem::StepRange(int begin, int end, float dt, const Ctx& c) {
             const float rl = VLen(radial);
             if (rl > 1e-5f) {
                 const Vec3 rn = radial * (1.0f / rl);
-                vel += (Vec3::Cross(c.axis, rn) * vortexStrength - rn * vortexPull) * dt;
+                dv += (Vec3::Cross(c.axis, rn) * vortexStrength - rn * vortexPull) * dt;
             }
         }
-        if (c.drag != 1.0f) vel *= c.drag;
+        // Constant acceleration with drag has an exact answer: v' = a/k + (v - a/k) e^(-k dt), so the motion is the
+        // same at 30, 60 or 144 frames per second. Without drag it is the plain trapezoid (also exact).
+        Vec3 vNew, disp;
+        if (c.drag != 1.0f) {
+            const float k = damping;
+            const Vec3 vt = acc * (1.0f / k);
+            vNew = vt + (vel - vt) * c.drag;
+            disp = vt * dt + (vel - vt) * ((1.0f - c.drag) / k);
+        } else {
+            vNew = vel + acc * dt;
+            disp = (vel + vNew) * (0.5f * dt);
+        }
+        vNew += dv; disp += dv * (0.5f * dt);
         const float speedMul = c.speedCurve ? speedCurve.Evaluate(t) : 1.0f;
-        pos += (vel0 + vel) * (0.5f * dt * speedMul);   // trapezoid: exact for constant acceleration
+        vel = vNew;
+        pos += disp * speedMul;
         if (c.hasLin || c.hasRadial) {
             const float vm = c.velCurve ? velocityCurve.Evaluate(t) : 1.0f;
             if (c.hasLin) pos += linearVelocity * (vm * dt);
@@ -533,17 +545,25 @@ void ParticleSystem::Update(float dt) {
     if (!simulateOffscreen && m_culled) return;
     const int steps = dt > kMaxTick ? std::min(20, (int)std::ceil(dt / kMaxTick)) : 1;
     const float h = dt / (float)steps;
-    for (int s = 0; s < steps; ++s) Tick(h);
+    if (steps == 1) { Tick(h); return; }
+    // A long frame is cut into steps; the emitter moves a little in each, so its speed (inherited velocity) and its path are kept.
+    const Vec3 end = transform ? transform->Position() : Vec3::Zero;
+    const Quat rot = transform ? transform->Rotation() : Quat::Identity;
+    const Vec3 start = m_hasLast ? m_lastOrigin : end;
+    for (int s = 0; s < steps; ++s) {
+        const Vec3 o = start + (end - start) * ((float)(s + 1) / (float)steps);
+        Tick(h, &o, &rot);
+    }
 }
 
-void ParticleSystem::Tick(float dt) {
+void ParticleSystem::Tick(float dt, const Vec3* originOverride, const Quat* rotOverride) {
     EnsurePool();
     if (m_cap == 0) { m_time += dt; return; }
     if (m_depth > 0) return;
     ++m_depth;
 
-    const Vec3 origin = transform ? transform->Position() : Vec3::Zero;
-    const Quat rot = transform ? transform->Rotation() : Quat::Identity;
+    const Vec3 origin = originOverride ? *originOverride : (transform ? transform->Position() : Vec3::Zero);
+    const Quat rot = rotOverride ? *rotOverride : (transform ? transform->Rotation() : Quat::Identity);
     m_time += dt;
     const Vec3 prevOrigin = m_hasLast ? m_lastOrigin : origin;
     if (m_hasLast) {
@@ -580,7 +600,8 @@ void ParticleSystem::Tick(float dt) {
     c.hasLin = linearVelocity.x != 0.0f || linearVelocity.y != 0.0f || linearVelocity.z != 0.0f;
     c.hasRadial = radialVelocity != 0.0f;
     c.velCurve = velocityCurve.Active();
-    c.windy = windInfluence != 0.0f;
+    // Only while there is wind to follow (a calm scene must not slow particles down). A wind that varies in space plugs in at WindAt.
+    c.windy = windInfluence != 0.0f && WindVector().SqrMagnitude() > 1e-6f;
     c.trailN = SafeTrail();
 
     // 1. Move what is already alive.

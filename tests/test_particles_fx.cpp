@@ -69,17 +69,18 @@ int main() {
             if (f == 40) go->transform->localPosition = {4, 2, 3};
             ps->Update(1.0f / 30.0f);
         }
-        CHECK(ps->AliveCount() == 30);
+        CHECK(ps->AliveCount() == 31);   // 20 per second for a 1.5 s life: 30, and one more is mid-birth at this frame
+        // Golden values for the upgraded pool (same seed and frames). They differ from the pre-upgrade run on purpose: new
+        // particles are born part-way through the frame on the emitter's path and move up to the end of it, the motion is
+        // the exact trapezoid, and a death moves the last particle into its slot (so the order changed).
         int k = 0;
         for (const auto& p : ps->Particles()) {
-            if (!p.alive) continue;
-            if (k == 0) { CHECK_NEAR(p.position.x, 3.851500f, 1e-4f); CHECK_NEAR(p.position.y, 2.167596f, 1e-4f);
-                          CHECK_NEAR(p.position.z, 4.133247f, 1e-4f);
-                          // Fade Out is linear in age (#888 finding 140): 2 frames of 1.5 s left = 0.0444. The old
-                          // golden 0.0 came from the fade compounding every frame.
-                          CHECK_NEAR(p.color.a, (2.0f / 30.0f) / 1.5f, 1e-3f); }
-            if (k == 1) { CHECK_NEAR(p.position.x, 5.671357f, 1e-4f); CHECK_NEAR(p.position.y, 6.232997f, 1e-4f);
-                          CHECK_NEAR(p.position.z, 3.987682f, 1e-4f); }
+            if (k == 0) { CHECK_NEAR(p.position.x, 5.682861f, 1e-4f); CHECK_NEAR(p.position.y, 2.301656f, 1e-4f);
+                          CHECK_NEAR(p.position.z, 1.051515f, 1e-4f); }
+            if (k == 1) { CHECK_NEAR(p.position.x, 3.854953f, 1e-4f); CHECK_NEAR(p.position.y, 2.257031f, 1e-4f);
+                          CHECK_NEAR(p.position.z, 4.106892f, 1e-4f);
+                          // Fade Out is linear in age (#888 finding 140): 3 frames of 1.5 s left = 0.0667.
+                          CHECK_NEAR(p.color.a, (3.0f / 30.0f) / 1.5f, 1e-3f); }
             ++k;
         }
     }
@@ -215,12 +216,15 @@ int main() {
             ps->collision = true; ps->orbitSpeed = 77.0f;   // leftovers a preset must reset
             ps->ApplyPreset((ParticleSystem::Preset)i);
             CHECK(ps->texture == "keep.png" && ps->seed == 42u);
-            CHECK(!ps->collision);
-            CHECK(ps->AliveCount() == 0);   // restarted
+            // (Leaves and Confetti land on the ground on purpose; every other preset switches it off.)
+            const auto which = (ParticleSystem::Preset)i;
+            CHECK(ps->collision == (which == ParticleSystem::Preset::Leaves || which == ParticleSystem::Preset::Confetti));
+            CHECK(ps->orbitSpeed != 77.0f);
+            CHECK(ps->prewarm || ps->AliveCount() == 0);   // restarted (a prewarmed effect is already running)
             CHECK(ps->emissionRate > 0.0f || ps->burstCount > 0);
             ps->Awake();
-            for (int f = 0; f < 30; ++f) ps->Update(1.0f / 30.0f);
-            CHECK(ps->AliveCount() > 0);   // every preset actually produces particles
+            int peak = 0; for (int f = 0; f < 90; ++f) { ps->Update(1.0f / 30.0f); peak = std::max(peak, ps->AliveCount()); }
+            CHECK(peak > 0);   // every preset actually produces particles (a short flash comes and goes: look at the peak)
             for (const auto& p : ps->Particles()) if (p.alive) {
                 CHECK(std::isfinite(p.position.x) && std::isfinite(p.position.y) && std::isfinite(p.size));
             }

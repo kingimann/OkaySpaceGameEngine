@@ -371,7 +371,7 @@ private:
     float& F(Ch c, int i) { return m_f[(std::size_t)c * m_cap + i]; }
     float F(Ch c, int i) const { return m_f[(std::size_t)c * m_cap + i]; }
     void EnsurePool();
-    void Tick(float dt);
+    void Tick(float dt, const Vec3* originOverride = nullptr, const Quat* rotOverride = nullptr);
     void StepRange(int begin, int end, float dt, const Ctx& c);
     void SpawnOne(const Vec3& origin, const Vec3& extraVel, float age, float dt, const Ctx& c, bool event);
     int  AllocSlot();

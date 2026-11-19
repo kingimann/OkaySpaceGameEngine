@@ -42,6 +42,7 @@
 #include "okay/Components/SequencePlayer.hpp"
 #include "okay/Render/Atmosphere.hpp"   // PostProcess / Fog / Weather
 #include "okay/Components/NavMeshAgent.hpp"
+#include "okay/Components/ParticleSystem.hpp"
 #include "okay/Components/GridPathAgent2D.hpp"
 #include "okay/Components/GridCostLayer.hpp"
 #include "okay/Components/GridObstacle2D.hpp"
@@ -1751,6 +1752,62 @@ EngineApi Build() {
             [look](const Value&, CallContext& c) { return Value{std::string(WeatherPresetName(look(c).weather.preset))}; },
             "The current preset's name."));
         api.types.push_back(std::move(we));
+    }
+    // ---- Particles (the Particle System on this object) ----
+    {
+        ApiType pa; pa.name = "Particles"; pa.isComponent = true;
+        pa.doc = "A Particle System: fire, smoke, sparks, rain and the rest. The object needs a Particle System (Add Component > Particle System, or GameObject > Effects).";
+        pa.find = [](GameObject* go) -> Component* { return go ? go->GetComponent<ParticleSystem>() : nullptr; };
+        auto psOf = [](const Value& self, CallContext& c) -> ParticleSystem* {
+            GameObject* g = Resolve(std::get<ObjRef>(self), c.loc);
+            auto* p = g->GetComponent<ParticleSystem>();
+            if (!p) throw RuntimeError("'" + g->name + "' has no Particle System (add one in the Inspector)", c.loc);
+            return p;
+        };
+        pa.methods.push_back(method("Play", {}, {}, tVoid,
+            [psOf](const Value& s, std::vector<Value>&, CallContext& c) { psOf(s, c)->Play(); return Value{}; },
+            "Start making particles (the ones already alive keep going)."));
+        pa.methods.push_back(method("Stop", {}, {}, tVoid,
+            [psOf](const Value& s, std::vector<Value>&, CallContext& c) { psOf(s, c)->Stop(); return Value{}; },
+            "Stop making new particles. The ones already alive finish their life."));
+        pa.methods.push_back(method("Restart", {}, {}, tVoid,
+            [psOf](const Value& s, std::vector<Value>&, CallContext& c) { psOf(s, c)->Restart(); psOf(s, c)->Play(); return Value{}; },
+            "Clear every particle and start the effect again from the beginning."));
+        pa.methods.push_back(method("Burst", {tFloat}, {"count"}, tVoid,
+            [psOf](const Value& s, std::vector<Value>& a, CallContext& c) { psOf(s, c)->Emit(std::max(0, (int)std::min(F(a[0]), 100000.0f))); return Value{}; },
+            "Make this many particles right now (an explosion, a pickup, a hit)."));
+        pa.methods.push_back(method("SetRate", {tFloat}, {"perSecond"}, tVoid,
+            [psOf](const Value& s, std::vector<Value>& a, CallContext& c) { psOf(s, c)->SetRate(F(a[0])); return Value{}; },
+            "How many particles are made every second (0 = none)."));
+        pa.methods.push_back(method("SetColor", {tFloat, tFloat, tFloat, tFloat}, {"red", "green", "blue", "alpha"}, tVoid,
+            [psOf](const Value& s, std::vector<Value>& a, CallContext& c) {
+                psOf(s, c)->SetColor(Color{Mathf::Clamp01(F(a[0])), Mathf::Clamp01(F(a[1])), Mathf::Clamp01(F(a[2])), Mathf::Clamp01(F(a[3]))}); return Value{}; },
+            "Give new particles one colour (each number from 0 to 1). Their own colour changes over life are switched off."));
+        pa.methods.push_back(method("UsePreset", {tString}, {"name"}, tBool,
+            [psOf](const Value& s, std::vector<Value>& a, CallContext& c) {
+                ParticleSystem* p = psOf(s, c);
+                auto lower = [](std::string x) { for (char& ch : x) ch = (char)std::tolower((unsigned char)ch); return x; };
+                const std::string want = lower(S(a[0]));
+                for (int i = 0; i < (int)ParticleSystem::Preset::Count; ++i)
+                    if (lower(ParticleSystem::PresetName((ParticleSystem::Preset)i)) == want) { p->ApplyPreset((ParticleSystem::Preset)i); p->Play(); return Value{true}; }
+                return Value{false}; },
+            "Change the look to a ready-made one: \"Fire\", \"Smoke\", \"Rain\", \"Confetti\" ... True when the name was found."));
+        pa.props.push_back(prop("rate", tFloat,
+            [psOf](const Value& s, CallContext& c) { return Value{psOf(s, c)->emissionRate}; },
+            [psOf](const Value& s, const Value& v, CallContext& c) { psOf(s, c)->SetRate(F(v)); },
+            "Particles made per second."));
+        pa.props.push_back(prop("isPlaying", tBool,
+            [psOf](const Value& s, CallContext& c) { return Value{psOf(s, c)->playing}; },
+            [psOf](const Value& s, const Value& v, CallContext& c) { psOf(s, c)->playing = std::get<bool>(v); },
+            "True while it makes new particles."));
+        pa.props.push_back(prop("windFactor", tFloat,
+            [psOf](const Value& s, CallContext& c) { return Value{psOf(s, c)->windInfluence}; },
+            [psOf](const Value& s, const Value& v, CallContext& c) { psOf(s, c)->windInfluence = std::max(0.0f, F(v)); },
+            "Affected by wind: 0 ignores the wind, 1 drifts at the wind's speed."));
+        pa.props.push_back(ro("aliveCount", tFloat,
+            [psOf](const Value& s, CallContext& c) { return Value{(float)psOf(s, c)->AliveCount()}; },
+            "How many particles are alive right now."));
+        api.types.push_back(std::move(pa));
     }
     // ---- NavMeshAgent ----
     {

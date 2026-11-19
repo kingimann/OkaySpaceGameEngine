@@ -202,7 +202,7 @@ private:
                 for (Water* w : sc->FindObjectsOfType<Water>()) {
                     Water::Surface ws;
                     if (!w || !w->enabled || !w->realisticLook || !w->SurfaceAt({c.x, surfY, c.z}, ws, 0.0f)) continue;
-                    w->AddWake({c.x, surfY, c.z}, wrb->velocity, dt, (int)(std::intptr_t)this);
+                    w->AddWake({c.x, surfY, c.z}, wrb->velocity, dt, (int)(std::intptr_t)wrb);
                     break;
                 }
             }

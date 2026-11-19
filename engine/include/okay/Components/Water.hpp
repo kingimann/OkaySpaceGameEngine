@@ -248,6 +248,10 @@ public:
     /// Wake hook: tell the water a thing at `world` moves with `velocity` for `dt` seconds. It lays rings along the path (one
     /// per 0.5 m travelled, bigger when faster), so a boat leaves a trail. Safe to call every frame at any frame rate.
     void AddWake(const Vec3& world, const Vec3& velocity, float dt, int id = 0) {
+        m_wakeSeen[id] = m_time;          // someone feeds this emitter itself: the automatic wake leaves it alone
+        LayWake(world, velocity, dt, id);
+    }
+    void LayWake(const Vec3& world, const Vec3& velocity, float dt, int id) {
         const float sp = std::sqrt(velocity.x * velocity.x + velocity.z * velocity.z);
         float& acc = m_wakeAcc[id];
         acc += sp * (dt > 0.0f ? dt : 0.0f);
@@ -430,6 +434,7 @@ private:
 
     // ===== the look (docs/water_visuals.md) ===========================================================================
     std::vector<watershade::Ring> m_rings;          ///< splash rings alive (water-local)
+    std::unordered_map<int, float> m_wakeSeen;      ///< water time each emitter was last fed through AddWake
     std::unordered_map<int, float> m_wakeAcc;       ///< distance travelled since the last wake ring, per emitter id
     struct BodyState { Rigidbody3D* rb = nullptr; bool in = false; float acc = 0.0f; };
     bool m_underwater = false;
@@ -508,7 +513,9 @@ private:
                 AddRipple(at, str);
                 Splash(at, str);
             } else if (in && c.y > s.height - (mx.y - mn.y) && hsp > 0.4f) {
-                AddWake(at, v, dt, (int)(std::intptr_t)rb);
+                const int wid = (int)(std::intptr_t)rb;
+                auto seen = m_wakeSeen.find(wid);
+                if (seen == m_wakeSeen.end() || m_time - seen->second > 0.5f) LayWake(at, v, dt, wid);
             }
             st.in = in;
             next.push_back(st);

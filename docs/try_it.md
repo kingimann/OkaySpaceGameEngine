@@ -102,6 +102,7 @@ release job or the installer build for this change.
 | security-sec1 | Security plan SEC1: script file paths, update signature status, relay caps, reactions SQL | examples\security_paths\script_paths.okayscene (Play, read Console); Settings > About and Help > About line; SQL and relay are owner steps | Tests on Linux only; editor/launcher lines not run; nothing on Windows or real Supabase |
 | tex1 | Texture tools (our own): mipmaps, atlas, BC compression, DDS | Windows release: `examples\texture\try_texture.bat` (needs `Tools\okay-texture.exe`); editor: Project panel > pick a picture > Import Settings > "Generate mipmaps / compress" | Unverified on Windows; Linux tests and CLI run |
 | vpa | Multi-window panels start cleanly on every video driver | `Tools\OkayEngine.exe`: drag a panel tab outside the editor | Linux only (Xvfb, a build with assertions on); Windows unverified |
+| vsclarity | Visual Script nodes explain themselves (plain line, What is this? card, Needs input, Next steps, Try this node, What do you want to do? list) | `Tools\OkayEngine.exe`: View > Editors & Tools > Visual Script, drop any node | Compiled and unit-tested (`vs_guide`); never drawn in a real window, Windows unverified |
 | water1 | Water that is never flat: presets, sea states, foam, splashes | `examples\water\lake.okayscene`, `ocean`, `river`, `shore` (File > Open, Play), **GameObject > 3D Object > Water** (pick a kind), Water Inspector > **Look** | New in this change; software-renderer pictures and headless tests only, Windows, GPU and the editor window not run |
 | xbox-next | Xbox UWP next: one-page guide (PC test, Dev Mode, IP, Device Portal, deploy, logs) and the new log file | Windows release: `xbox-src\scripts\build-xbox-uwp.ps1`; editor File > Build Settings > Xbox (exp.) | Linux-tested only; nothing here has run on a console |
 | xbox-uwp | Xbox One export (EXPERIMENTAL, UNVERIFIED): one-click build (check, export, compile, shaders, pack, sign, install), own .appx packer, engine mode | File > Build Settings > platform "Xbox (exp.)" > Build Xbox package | Linux-tested only |
@@ -2129,6 +2130,35 @@ ran in both backends without stopping, and with the change a Project tab dragged
 intermittent stop seen before under Xvfb was SDL falling back to the `offscreen` driver when the X server was not ready yet.
 Unverified: Windows (not built or run here), a real Wayland session.
 
+## vsclarity. Visual Script nodes explain themselves
+
+What changed: when you drop a node you now see what it does, what to plug in, and what to do next. Nothing about saved
+graphs or how scripts run changed. Notes and the full gap table: `docs/visual_script_clarity.md`.
+
+Try it on Windows (this is all in the normal editor, nothing to switch on):
+1. Start `Tools\OkayEngine.exe`, open a project, select an object and open View > Editors & Tools > Visual Script.
+2. Press "Or add a block" (or right-click the canvas, or tap Space) and drop **If Then Else**.
+   * Under its title you should see one plain sentence, not a blank line.
+   * The node shows an amber **Needs input** badge and the line "Plug the condition in here." The Condition box says "needed".
+   * Hover the Condition circle: the tip says what goes in and gives "Example: true".
+3. Look at the bottom-right corner of the canvas: the **What is this?** card for the selected node. It lists what it does,
+   what to plug in, a tiny example chain, common mistakes and what to do next. Press **Hide** to fold it; close and reopen
+   the editor and it stays folded (`helpcard 0` in `okay_vs_usage.txt`). Press **Show** to open it again.
+4. In the card, under "Next steps", click a chip (for example **Say Text**). The node is added next to the selected one and
+   wired in. Chips only suggest nodes that fit.
+5. Drop **Add Numbers** (a value node). Its chips add a node that takes a number, with the wire already drawn from the result.
+6. Press **Try this node** at the bottom of the card. A small ready-made graph (On Start, the node with sensible values, a
+   Say Text step) appears. Press Play: the Console shows the message, and for a value node it shows the result (Add Numbers: 10).
+7. Open the Add Node list (right-click the canvas). In the left list find **What do you want to do?** and click **Move things**,
+   **Show messages** and so on. Each row has its plain sentence under the name. Type `move things` in the search: the movement
+   nodes come up.
+8. Renamed nodes: search `Wait Seconds`, `Flip Flop` or `Every Seconds`. The nodes now called **Wait Then Continue**, **Switch
+   Between Two Paths** and **Repeat Every Few Seconds** are found. An old saved graph that used them loads unchanged.
+
+What was and was not verified: the rules behind every item were unit-tested over all nodes in the list on Linux (`vs_guide`,
+and the existing `vs_clarity`, `vs_node_docs`, `vs_names`, `vs_start` suites). The drawing was compile-checked only: it was never
+shown in a real window, on Linux or on Windows, so card size on a small window and the second line on a narrow node are unchecked.
+
 ## water1. Water that is never flat: presets, sea states, foam, splashes
 
 **What it is.** The water now has real wave shapes (sharp crests), small ripples that never stop, turquoise shallows and deep blue
@@ -2217,7 +2247,7 @@ nothing was run), per-vertex clear water over the bottom (see the Not done list 
 What to do (needs a Windows PC and a release built with `-DOKAY_BUILD_XBOX_UWP=ON`, which `build-windows-dist.sh` sets; it also ships `xbox-src` next to the editor):
 
 1. **Once:** install Visual Studio 2022 (free Community edition) with the workload "Universal Windows Platform development", its C++ UWP tools and a Windows 10/11 SDK.
-2. Open the editor, **File > Build Settings**, click **Xbox (exp.)** at the top. You should see an orange "EXPERIMENTAL and UNVERIFIED" line, the limits text, the tools list (found / MISSING with the install step), and the package name, version and publisher. A missing required tool greys the button with a tooltip; **Check again** re-checks.
+2. Open the editor, **File > Build Settings**, click **Xbox (exp.)** at the top. **The editor must not freeze** (it did before: the tool check ran on the editor thread and called Visual Studio's `vswhere` four times). Now you first see "Checking your PC for the Xbox tools..." with a small spinner, the **Build Xbox package** button is greyed (hover it: "Checking your PC ..."), you can keep clicking and typing in the editor, and after a short moment (a few seconds the first time, instant on the next editor start because the answer is cached in `%LOCALAPPDATA%\OkaySpace\xbox_vswhere_cache.txt`) the text changes to the list. If `vswhere` does not answer within 5 seconds it is stopped and the page says so. **Check again** asks again (and ignores the cache). If the editor still lags when you switch to Xbox, tell us (UNVERIFIED on Windows: nobody has run this fix). You should see an orange "EXPERIMENTAL and UNVERIFIED" line, the limits text, the tools list (found / MISSING with the install step), and the package name, version and publisher. A missing required tool greys the button with a tooltip; **Check again** re-checks.
 3. Leave **Engine mode** unticked the first time (a triangle test, the safest). Tick **Also install on this PC afterwards** if you want it on this PC. Press **Build Xbox package**.
 4. Watch the page: a step list (Check the Windows tools, Export, Set up the UWP app build, Compile the UWP app, Put the program into the package, Compile the shaders, Pack and check the .appx, Sign, Install) with a status per step and a live log. **Cancel build** stops it. If a step fails you get a plain message and the first error lines: send us those.
 5. If you ticked install, Windows shows **one** administrator (UAC) prompt: accept it. Then start the app from the Start menu: you should see a dark window with a coloured triangle (the background turns green once a pad is connected; left stick moves it, A centres it, B exits).

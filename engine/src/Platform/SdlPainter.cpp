@@ -57,7 +57,7 @@ public:
     ui2d::Tex CreateTexture(const TextureDesc& d, const std::uint8_t* rgba) override {
         if (d.width <= 0 || d.height <= 0) return nullptr;
         SDL_Texture* t = SDL_CreateTexture(m_r, SDL_PIXELFORMAT_ABGR8888,
-                                           d.streaming ? SDL_TEXTUREACCESS_STREAMING : SDL_TEXTUREACCESS_STATIC, d.width, d.height);
+                                           d.target ? SDL_TEXTUREACCESS_TARGET : d.streaming ? SDL_TEXTUREACCESS_STREAMING : SDL_TEXTUREACCESS_STATIC, d.width, d.height);
         if (!t) return nullptr;
         if (rgba) SDL_UpdateTexture(t, nullptr, rgba, d.width * 4);
         SDL_SetTextureBlendMode(t, ToSdl(d.blend));
@@ -89,6 +89,24 @@ public:
         SDL_RenderGeometry(m_r, (SDL_Texture*)t, (const SDL_Vertex*)v, nv, idx, ni);
     }
 
+    bool SetRenderTarget(ui2d::Tex t) override { return SDL_SetRenderTarget(m_r, (SDL_Texture*)t) == 0; }
+    ui2d::Tex GetRenderTarget() override { return SDL_GetRenderTarget(m_r); }
+    void Flush() override { SDL_RenderFlush(m_r); }
+    bool GetDrawColor(std::uint8_t* r, std::uint8_t* g, std::uint8_t* b, std::uint8_t* a) override {
+        Uint8 rr = 0, gg = 0, bb = 0, aa = 0;
+        const bool ok = SDL_GetRenderDrawColor(m_r, &rr, &gg, &bb, &aa) == 0;
+        if (r) *r = rr;
+        if (g) *g = gg;
+        if (b) *b = bb;
+        if (a) *a = aa;
+        return ok;
+    }
+    std::string DriverName() override { SDL_RendererInfo ri; return SDL_GetRendererInfo(m_r, &ri) == 0 && ri.name ? ri.name : ""; }
+    bool IsAccelerated() override { SDL_RendererInfo ri; return SDL_GetRendererInfo(m_r, &ri) == 0 && (ri.flags & SDL_RENDERER_ACCELERATED) != 0; }
+    void GeometryRaw(ui2d::Tex t, const float* xy, int xyStride, const std::uint8_t* rgba, int rgbaStride, const float* uv, int uvStride,
+                     int numVerts, const void* indices, int numIndices, int indexSize) override {
+        SDL_RenderGeometryRaw(m_r, (SDL_Texture*)t, xy, xyStride, (const SDL_Color*)rgba, rgbaStride, uv, uvStride, numVerts, indices, numIndices, indexSize);
+    }
     void Present() override { SDL_RenderPresent(m_r); }
     bool SetVSync(bool on) override { return SDL_RenderSetVSync(m_r, on ? 1 : 0) == 0 && on; }
     bool ReadPixels(std::vector<std::uint8_t>& rgba, int& w, int& h) override {
@@ -115,7 +133,7 @@ std::unique_ptr<Painter> CreateSdl2Painter(Window& w, const PainterDesc& d, std:
     SDL_Window* sw = (SDL_Window*)w.NativeHandle();
     Uint32 flags = SDL_RENDERER_ACCELERATED | (d.vsync ? SDL_RENDERER_PRESENTVSYNC : 0);
     SDL_Renderer* r = SDL_CreateRenderer(sw, -1, flags);
-    if (!r) r = SDL_CreateRenderer(sw, -1, 0);
+    if (!r && !d.requireAccelerated) r = SDL_CreateRenderer(sw, -1, 0);
     if (!r) { if (err) *err = SDL_GetError(); return nullptr; }
     return std::unique_ptr<Painter>(new SdlPainter(r, true));
 }

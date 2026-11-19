@@ -80,6 +80,9 @@ target_link_libraries(okayspace-launcher PRIVATE launcher_imgui ${OKAY_LAUNCHER_
 # default; OKAY_UI_DEFAULT_BACKEND=okayui flips the build's default. Without okay_ui (no SDL2) the setting is absent.
 if(TARGET okay_ui_screens)
     target_link_libraries(okayspace-launcher PRIVATE okay_ui_screens)
+    if(TARGET okay_ui_soft)   # the software painter: the launcher's window on the own platform backend (OKAY_PLATFORM_BACKEND=own)
+        target_link_libraries(okayspace-launcher PRIVATE okay_ui_soft)
+    endif()
     target_compile_definitions(okayspace-launcher PRIVATE OKAY_HAVE_OKAYUI=1)
 endif()
 if(OKAY_UI_DEFAULT_BACKEND STREQUAL "okayui" OR OKAY_OWN_STACK)   # OKAY_OWN_STACK: the dogfood build starts on OkayUI
@@ -112,6 +115,10 @@ if(WIN32)
     set_target_properties(okayspace-launcher PROPERTIES WIN32_EXECUTABLE TRUE)
 endif()
 
+if(OKAY_ENABLE_TEST_HOOKS)   # scripted input for headless runs (shared/TestHooks.hpp); off in every normal and release build
+    target_compile_definitions(okayspace-launcher PRIVATE OKAY_ENABLE_TEST_HOOKS=1)
+endif()
+
 # ---- The launcher on OkayUI (OKAY_LAUNCHER_ON_OKAYUI, off by default) ----------------------------------------------------------------------------
 # The SAME sources, compiled against OkayUI's Dear ImGui compatibility header (okayui/probe first on the include path: <imgui.h> is OkayUI's) instead of
 # Dear ImGui. The input is shared/ImGuiPlatformFeed.hpp (OKAY_ON_OKAYUI makes it the only path); the backend entry points are shared/OkayUIImGuiBackendShim.cpp.
@@ -136,4 +143,7 @@ if(OKAY_LAUNCHER_ON_OKAYUI AND TARGET okay_ui AND TARGET okay_ui_screens)
         set_target_properties(okayspace-launcher-okayui PROPERTIES WIN32_EXECUTABLE TRUE)
     endif()
     set_target_properties(okayspace-launcher-okayui PROPERTIES RUNTIME_OUTPUT_DIRECTORY ${CMAKE_BINARY_DIR}/bin OUTPUT_NAME "OkaySpaceOkayUI")
+    if(OKAY_ENABLE_TEST_HOOKS)
+        target_compile_definitions(okayspace-launcher-okayui PRIVATE OKAY_ENABLE_TEST_HOOKS=1)
+    endif()
 endif()

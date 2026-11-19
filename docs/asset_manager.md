@@ -75,7 +75,7 @@ GPU textures and other renderer resources are not tracked here; only CPU-side as
 - External caches (`RegisterExternalCache`, or `RegisterAssetCache` from `Core/AssetCacheBridge.hpp`) count towards the
   total and are trimmed by the budget: the audio decode cache (`AudioClip::TrimCache`) and the picture cache (pictures
   read from files are dropped and read again when next drawn; pictures registered by name, `@...`, stay).
-- `DataAsset::Cached` keeps its stable `DataAsset&`, and registers it with `Adopt` as `data:<path>`. Hot reload
+- `DataAsset::Cached` keeps its stable `DataAsset&`, and registers it with `Adopt(path, object)` (it becomes the (DataAsset, path) entry). Hot reload
   (when on) re-reads it in place; the memory budget never evicts it (scripts hold references and may have unsaved `Set`s).
 - Hot reload: a changed time or size is a hint; the file is then hashed (FNV-1a 64) and a rewrite with the same
   bytes is not decoded again (`Stats().reloadsSkippedSameHash`). Assets loaded while hot reload was off have no
@@ -84,3 +84,12 @@ GPU textures and other renderer resources are not tracked here; only CPU-side as
 - Console command `assets`: `assets` (stats), `assets list`, `assets trim`, `assets evict`, `assets budget <MB>`
   (0 = unlimited), `assets hot on|off`. The editor's Project panel footer shows the one-line readout with a tooltip.
 - Tests: `asset_cache` (tests/test_asset_cache.cpp).
+
+## Locking (for people changing the manager)
+The old state (cache, jobs, loaders) is guarded by `m_mutex`. The budget state (pins, external caches, adopted objects) has its
+own `debugutil::SpinLock` (`m_stateLock`), and the counters, budget, tick and frame mark are atomics. Strict order: the two locks are
+never held at the same time, and neither is held while a loader, an external-cache callback, a `Pump` callback or an asset
+destructor runs (rule 21a: no new `<mutex>` use). Resident count and bytes are atomics that each entry updates itself, so
+`Stats()` and the eviction loop need no cache walk. `tests/test_asset_stress.cpp` runs several threads over Get / Trim /
+SetBudget / Pump. ThreadSanitizer, by hand: compile `engine/src/Core/AssetManager.cpp` and `tests/test_asset_stress.cpp` with
+`-fsanitize=thread` and link them before `libokay_engine.a` (run clean here, 3 runs).

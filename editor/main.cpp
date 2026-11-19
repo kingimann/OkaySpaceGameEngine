@@ -17,6 +17,7 @@
 #include "ActionExport.hpp"
 #include "MenuBarModel.hpp"          // the main menu bar and the Hierarchy menus as data (docs/editor_menus.md)
 #include "HierarchyContextModel.hpp"
+#include "ComponentFoldModel.hpp"   // Inspector component folds, per type, saved
 #include "SceneAddMenu.hpp"
 #include "MenuEntriesUI.hpp"          // draws those lists with Dear ImGui
 #include "ProjectState.hpp"           // project settings + build settings: the files inside the project folder
@@ -2587,6 +2588,7 @@ void AddRecent(const std::string& path) {
 // Persisted editor preferences (a tiny key/value file beside the working dir).
 void SaveSettings();   // defined below; LoadSettings calls it for the one-time migration
 void LoadSettings() {
+    okay::editor::LoadComponentFolds();
     std::ifstream f("okay_settings.txt");
     g_firstRun = !f.good();   // no settings file yet → brand-new install (auto-scale UI to the display)
     std::string k; int v;
@@ -27635,18 +27637,10 @@ static bool AcceptAssetPathField(std::string& field) {
 // header title, and a right-click context menu offering "Remove Component"
 // (which sets *toRemove, removed safely after the inspector finishes drawing).
 // Returns whether the component body should be drawn.
-// Remembered collapse state per component type (keyed by header label). Persisting
-// it ourselves — rather than relying on ImGui's per-ID storage — keeps a section
-// collapsed across Play/Stop, Undo/Redo and reselection, all of which rebuild the
-// components (new pointers), which would otherwise reset the headers to open.
-static std::unordered_map<std::string, bool> sCompOpen;
-
-// "Set every component open/closed" request (from the header context menu):
-// -1 = none, 0 = collapse all, 1 = expand all. The request is latched and applied
-// across the NEXT inspector frame so every header gets it exactly once (a menu
-// click lands mid-loop, after some headers have already drawn).
-static int sCompForceRequest = -1;
-static int sCompForceOpen    = -1;
+// Component folds live in okay::editor::GlobalComponentFold() (ComponentFoldModel.hpp): per component TYPE, so they survive
+// reselection, Play/Stop, Undo/Redo and scene reload, and are saved in okay_inspector_folds.txt. (The old store was keyed by
+// the component's address, which changes in all of those cases.) Headers drawn this frame / last frame, for Collapse All.
+static std::vector<std::string> sFoldShownNow, sFoldShownPrev;
 
 // Deferred component reorder request, applied after the inspector finishes drawing
 // so the component vector isn't mutated mid-iteration.
@@ -28011,12 +28005,14 @@ static bool CompHeader(const char* label, okay::Component* comp, okay::Component
         title += nm;
     }
     title += "###hdr";
-    // Default to open the first time we see this component, then honor what the user
-    // toggled it to (per INSTANCE, so several Actions don't fold together).
-    char okey[32]; std::snprintf(okey, sizeof(okey), "%p", (void*)comp);
-    auto it = sCompOpen.find(okey);
-    bool want = it == sCompOpen.end() ? managed == nullptr : it->second;   // managed ones start folded
-    if (sCompForceOpen != -1) want = sCompForceOpen == 1;   // Expand/Collapse All
+    // Open state: per component type (an object's own override first); a managed one starts folded.
+    okay::editor::ComponentFoldModel& fold = okay::editor::GlobalComponentFold();
+    const std::string objKey = comp->gameObject ? comp->gameObject->Guid() : std::string();
+    int foldOrd = 0;
+    for (const std::string& t : sFoldShownNow) if (t == label || t.rfind(std::string(label) + " #", 0) == 0) ++foldOrd;
+    const std::string foldKey = okay::editor::ComponentFoldKey(label, foldOrd);
+    sFoldShownNow.push_back(foldKey);
+    const bool want = fold.IsOpen(foldKey, objKey, managed == nullptr);
     if (g_inspSectionGap > 0.0f) ImGui::Dummy(ImVec2(0, g_inspSectionGap));   // air between components
     ImGui::SetNextItemOpen(want, ImGuiCond_Always);
     if (!en) ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(0.60f, 0.62f, 0.66f, 1.0f));
@@ -28033,7 +28029,9 @@ static bool CompHeader(const char* label, okay::Component* comp, okay::Component
         ImGui::EndDragDropSource();
     }
     if (!en) ImGui::PopStyleColor();
-    sCompOpen[okey] = open;
+    if (ImGui::IsItemClicked(ImGuiMouseButton_Left) && ImGui::GetIO().KeyCtrl)   // Ctrl+click: this one toggles, all the others fold
+        fold.SetOnly(foldKey, sFoldShownPrev, objKey, open);
+    else if (open != want) fold.Set(foldKey, objKey, open);
     if (managed && ImGui::IsItemHovered())
         ImGui::SetTooltip("Managed by Character Model: you normally don't edit this.\n%s", managed);
     const ImVec2 hmn = ImGui::GetItemRectMin(), hmx = ImGui::GetItemRectMax();
@@ -28106,8 +28104,13 @@ static bool CompHeader(const char* label, okay::Component* comp, okay::Component
         if (ImGui::MenuItem("Move Up"))   { sMoveComp = comp; sMoveDelta = -1; }
         if (ImGui::MenuItem("Move Down")) { sMoveComp = comp; sMoveDelta = +1; }
         ImGui::Separator();
-        if (ImGui::MenuItem("Expand All Components"))   sCompForceRequest = 1;
-        if (ImGui::MenuItem("Collapse All Components")) sCompForceRequest = 0;
+        if (ImGui::MenuItem("Expand All Components"))   okay::editor::GlobalComponentFold().SetAll(sFoldShownPrev, comp->gameObject ? comp->gameObject->Guid() : std::string(), true);
+        if (ImGui::MenuItem("Collapse All Components")) okay::editor::GlobalComponentFold().SetAll(sFoldShownPrev, comp->gameObject ? comp->gameObject->Guid() : std::string(), false);
+        {   // an object's own state for this type, or back to the type's
+            const std::string ok = comp->gameObject ? comp->gameObject->Guid() : std::string();
+            const bool own = okay::editor::GlobalComponentFold().HasOverride(label, ok);
+            if (ImGui::MenuItem("Remember Fold For This Object Only", nullptr, own)) okay::editor::GlobalComponentFold().SetOverride(label, ok, !own, open);
+        }
         oked::ComponentValueMenu(comp);   // Copy Values / Paste Values / Reset
         ImGui::Separator();
         if (removable && ImGui::MenuItem("Remove Component")) *toRemove = comp;
@@ -42386,9 +42389,8 @@ void DrawInspector(EditorState& ed) {
         ed.dirty = true;
     }
     sMoveComp = nullptr;
-    // Promote a pending Expand/Collapse All so it drives every header next frame.
-    sCompForceOpen = sCompForceRequest;
-    sCompForceRequest = -1;
+    sFoldShownPrev.swap(sFoldShownNow); sFoldShownNow.clear();   // Collapse All / Ctrl+click act on the headers last frame showed
+    okay::editor::SaveComponentFoldsIfDirty();                   // remembered across restarts
 
     ImGui::Spacing();
     ImGui::Separator();

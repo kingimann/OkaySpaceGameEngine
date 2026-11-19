@@ -8,6 +8,8 @@
 // Only the per-type state is saved (Serialize / Deserialize, one "type 0|1" line each); overrides last for the session
 // and nothing is ever written to a scene file.
 #pragma once
+#include <cstdio>
+#include <fstream>
 #include <map>
 #include <sstream>
 #include <string>
@@ -93,6 +95,31 @@ private:
 // so they fold on their own; `ordinal` is 0 for the first of its type on the object.
 inline std::string ComponentFoldKey(const std::string& label, int ordinal) {
     return ordinal <= 0 ? label : label + " #" + std::to_string(ordinal + 1);
+}
+
+// The one model both Inspectors (the Dear ImGui one in main.cpp and the window-mode one) share, and its preferences file
+// (next to okay_settings.txt, in the working directory).
+inline ComponentFoldModel& GlobalComponentFold() { static ComponentFoldModel m; return m; }
+inline const char* ComponentFoldFile() { return "okay_inspector_folds.txt"; }
+inline void LoadComponentFolds() {
+    std::ifstream f(ComponentFoldFile());
+    if (!f.good()) return;
+    std::ostringstream o; o << f.rdbuf();
+    GlobalComponentFold().Deserialize(o.str());
+}
+// Writes only when something changed; whole file or nothing (temp file, then rename).
+inline void SaveComponentFoldsIfDirty() {
+    ComponentFoldModel& m = GlobalComponentFold();
+    if (!m.Dirty()) return;
+    const std::string tmp = std::string(ComponentFoldFile()) + ".tmp";
+    {
+        std::ofstream f(tmp, std::ios::trunc);
+        if (!f.good()) return;
+        f << m.Serialize();
+        if (!f.good()) return;
+    }
+    if (std::rename(tmp.c_str(), ComponentFoldFile()) != 0) { std::remove(ComponentFoldFile()); if (std::rename(tmp.c_str(), ComponentFoldFile()) != 0) return; }
+    m.ClearDirty();
 }
 
 }  // namespace okay::editor

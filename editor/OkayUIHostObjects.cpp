@@ -2,6 +2,7 @@
 // editor sources is OkayUI's compatibility header and no Dear ImGui is involved), the names the editor sources DEFINE renamed (the *_WO macros) so this copy of
 // InspectorPanel.cpp and EditorWidgets.cpp can live in the same program as the Dear ImGui editor's own, and the headers they need included at global scope first.
 #include "OkayUIHostObjects.hpp"
+#include "ComponentFoldModel.hpp"
 
 #undef OKAY_HAVE_OKAYUI   // the editor sources must take their Dear ImGui API path (compiled against OkayUI): never the hosted-in-ImGui OkayUI path
 
@@ -264,13 +265,21 @@ void DrawHierarchyWindow(okay::editor::EditorState& ed, HierState& hs, HostModeS
 bool InspectorHeader(const char* label, Component* comp, Component** toRemove, bool) {
     using namespace OkayUI;
     PushID(comp);
+    // The fold is kept per component TYPE (ComponentFoldModel.hpp), not by the widget id (which holds the component's address
+    // and changes with every object, undo, Play and reload, and whose table holds only 128 entries).
+    okay::editor::ComponentFoldModel& fold = okay::editor::GlobalComponentFold();
+    const std::string objKey = comp->gameObject ? comp->gameObject->Guid() : std::string();
+    const std::string foldKey = okay::editor::ComponentFoldKey(label, 0);
     bool en = comp->enabled;
     if (Checkbox("##en", &en)) comp->enabled = en;
     SameLine();
     if (SmallButton("x") && toRemove) *toRemove = comp;   // remove this component (before the header, which takes the rest of the row)
     if (!g_probe.firstRemoveButton.w) g_probe.firstRemoveButton = GetItemRect();
     SameLine();
+    const bool want = fold.IsOpen(foldKey, objKey, true);
+    SetNextItemOpen(want);
     const bool open = CollapsingHeader(label, true);
+    if (open != want) { fold.Set(foldKey, objKey, open); okay::editor::SaveComponentFoldsIfDirty(); }
     PopID();
     return open;
 }

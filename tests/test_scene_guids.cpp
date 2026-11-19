@@ -28,9 +28,12 @@ std::string ReadText(const fs::path& p) { std::ifstream f(p, std::ios::binary); 
 bool Has(const std::string& h, const std::string& n) { return h.find(n) != std::string::npos; }
 
 std::string SceneText(int version, const std::string& tex) {
-    return "okayscene " + std::to_string(version) + "\nname \"Level\"\ngravity 0 -9.81\n"
-           "gameobject 0 \"Hero\"\n  active 1\n  parent -1\n  spriterenderer \"" + tex + "\" 1\n"
-           "gameobject 1 \"Boss\"\n  active 1\n  parent -1\n  spriterenderer \"" + tex + "\" 1\nend\n";
+    Scene sc("Level"); sc.physicsEnabled = false;
+    sc.CreateGameObject("Hero")->AddComponent<SpriteRenderer>()->texture = tex;
+    sc.CreateGameObject("Boss")->AddComponent<SpriteRenderer>()->texture = tex;
+    std::string t = SceneSerializer::Serialize(sc);
+    const std::size_t nl = t.find('\n');
+    return "okayscene " + std::to_string(version) + t.substr(nl);
 }
 }
 
@@ -93,7 +96,7 @@ int main() {
         sg::Report rep;
         const std::string fixed = sg::Resolve(stamped, db, &rep);
         CHECK(rep.repaired == 1 && rep.broken.empty());
-        CHECK(Has(fixed, "spriterenderer \"art/heroes/knight.png\" 1"));
+        CHECK(Has(fixed, "\"art/heroes/knight.png\""));
         CHECK(!Has(sg::StripTable(fixed), "art/hero.png"));
         CHECK(sg::Resolve(fixed, db) == fixed);           // a second pass has nothing left to do
         CHECK(sg::FindBroken(fixed, db).empty());
@@ -109,7 +112,7 @@ int main() {
 
     // --- Moved through the database (MoveAsset keeps a redirect): still repaired by GUID, spelled with the prefix style kept
     {
-        const std::string t = "okayscene 3\ngameobject 0 \"X\"\n  spriterenderer \"Assets/art/other.png\" 1\nend\n";
+        const std::string t = "okayscene 3\ngameobject 0 \"X\"\n  active 1\n  sprite \"Assets/art/other.png\" 1 1 1 1\nend\n";
         // "Assets/" is not part of the project path here, so nothing resolves and nothing is recorded.
         sg::Report rep;
         CHECK(sg::Stamp(t, db, &rep) == t && rep.stamped == 0);
@@ -148,7 +151,7 @@ int main() {
 
     // --- Remote and in-memory names are never recorded
     {
-        const std::string t = "okayscene 3\ngameobject 0 \"X\"\n  spriterenderer \"@proc\" 1\n  netprefab \"https://example.com/a.png\"\nend\n";
+        const std::string t = "okayscene 3\ngameobject 0 \"X\"\n  active 1\n  sprite \"@proc\" 1 1 1 1\n  netprefab \"https://example.com/a.png\"\nend\n";
         CHECK(sg::Stamp(t, db) == t);
         CHECK(sg::FindBroken(t, db).empty());
     }

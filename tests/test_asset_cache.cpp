@@ -68,9 +68,8 @@ int main() {
         CHECK(m.CachedCount() == 3);                     // kept alive by the cache
         { AssetStats s = m.Stats(); CHECK(s.pinnedCount == 3 && s.residentBytes == 180 && s.budget == 100); }
         { auto a = m.Get<Blob>(d + "/a.txt"); CHECK(g_loads == 3); }   // a hit: no new decode; a is now the most recent
-        CHECK(m.Trim() == 1);                            // b is the least recently used; 120 bytes is still over 100: wait
-        // 180 -> evict b (120) -> evict c (60): two drops in total, so Trim returned after the loop
-        CHECK(m.CachedCount() <= 2);
+        CHECK(m.Trim() == 2);                            // order of use b, c, a: 180 -> drop b (120) -> drop c (60)
+        CHECK(m.CachedCount() == 1);
     }
     {
         AssetManager m; RegisterBlob(m); g_loads = 0;

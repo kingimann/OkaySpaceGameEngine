@@ -296,6 +296,7 @@ public:
         Translate(e, m_windowId, acts);
         if (acts.empty()) return false;
         for (const Action& a : acts) {
+            if (a.kind == Action::MousePos || a.kind == Action::MouseButton) m_recentMouse = 3;   // a pointer event came in the last 3 frames: the "pointer left" poll waits (a press and release that arrive together, scripted or remote input with no "mouse focus", must still hit what is under the pointer)
             if (a.kind == Action::MousePos) m_pointerOut = false;
             if (a.kind == Action::Key) {
                 const int bit = ModBitOfKey((ImGuiKey)a.key);
@@ -333,7 +334,8 @@ public:
         } else if (io.DeltaTime <= 0.0f) io.DeltaTime = 1.0f / 60.0f;
 
         // The pointer left the window (and no button holds it): tell ImGui there is no mouse, once.
-        if (m_host.hasMouseFocus && !m_host.hasMouseFocus() && m_buttonsDown == 0 && !m_pointerOut) {
+        if (m_recentMouse > 0) --m_recentMouse;
+        if (m_host.hasMouseFocus && !m_host.hasMouseFocus() && m_buttonsDown == 0 && !m_pointerOut && m_recentMouse == 0) {
             io.AddMousePosEvent(-FLT_MAX, -FLT_MAX); m_pointerOut = true;
         }
         if (io.WantSetMousePos && m_host.warpMouse) m_host.warpMouse((int)io.MousePos.x, (int)io.MousePos.y);
@@ -360,6 +362,7 @@ private:
     std::string m_clip;
     double m_lastTime = 0; bool m_haveTime = false;
     bool m_pointerOut = false;
+    int m_recentMouse = 0;   // frames left in which a pointer event keeps the "pointer left the window" poll quiet
     int m_buttonsDown = 0;
     unsigned m_mods = 0;   // held physical modifier keys, one bit each (ModBitOfKey)
     ImGuiMouseCursor m_lastCursor = -2;   // not a real cursor, so the first frame always applies one

@@ -116,6 +116,20 @@ scripts/check_release_own_stack.sh --cache "$BUILD_DIR"
 JOBS="${JOBS:-$(nproc 2>/dev/null || sysctl -n hw.ncpu 2>/dev/null || echo 4)}"
 cmake --build "$BUILD_DIR" -j "$JOBS"
 
+# The same launcher and editor built on our own UI (OkayUI, no Dear ImGui): OkaySpaceOkayUI.exe and OkayEngineOkayUI.exe (docs/own_ui_toolkit.md 6.26). The owner
+# tries them from Settings > Experimental > "Run on our own UI". They are extras: they are built AFTER everything that is released, a failure here only prints a
+# warning (no half-built file is kept) and never fails the release, and OKAY_OKAYUI_APPS=OFF skips them (they add a second compile of the two big main.cpp files).
+# They are NOT in the checksum list of versions.json (that list is the three programs the updater replaces); they travel in the zip and the installer.
+if [ "${OKAY_OKAYUI_APPS:-ON}" = "ON" ]; then
+    if cmake -S . -B "$BUILD_DIR" -DOKAY_LAUNCHER_ON_OKAYUI=ON -DOKAY_EDITOR_ON_OKAYUI=ON >/dev/null \
+       && cmake --build "$BUILD_DIR" -j "$JOBS" --target okayspace-launcher-okayui okay-editor-okayui; then
+        echo "OkayUI programs built: OkaySpaceOkayUI.exe, OkayEngineOkayUI.exe"
+    else
+        echo "warning: the OkayUI programs did not build; this release goes out without them" >&2
+        rm -f "$BUILD_DIR/bin/OkaySpaceOkayUI.exe" "$BUILD_DIR/bin/OkayEngineOkayUI.exe"
+    fi
+fi
+
 # ---- Distribution layout ------------------------------------------------------
 # Keep the thing you double-click at the top and tuck the rest away:
 #

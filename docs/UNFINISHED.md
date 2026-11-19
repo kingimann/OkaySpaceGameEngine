@@ -4,7 +4,7 @@ What is not finished yet, so we can pick it off. Anything unfinished is hidden o
 
 Sources: the feature map (`docs/FEATURE_MAP.md`, rows marked Partial or Planned, with their Open notes) and the hand-written lists below.
 
-The feature map currently has **125** rows that are Partial or Planned.
+The feature map currently has **126** rows that are Partial or Planned.
 
 ## Audits
 
@@ -170,6 +170,7 @@ These are "-style" subsets, not the real languages: code written for the real Lu
 | [1.16](feature_map/01-core-scene.md#116-localization-tools) | Localization tools | Partial | JSON import and export in the window, a confirm step before CSV import, the font coverage report, and right-to-left layout (the window shows a mirrored preview of the selected key)... |
 | [1.19](feature_map/01-core-scene.md#119-property-reflection) | Property reflection | Partial | not registered yet: controllers, scripts, the other UI widgets, navigation, networking; animation and IK components are left to... |
 | [1.20](feature_map/01-core-scene.md#120-asset-thumbnails) | Asset thumbnails | Partial | pictures are made on the main thread inside a per-frame time budget, not on a worker thread; one 128 px size scaled to the tile size; no pictures for fonts or data assets; a scene picture loads the whole scene... |
+| [1.21](feature_map/01-core-scene.md#121-entity-and-component-handles-run-order-and-scene-stats) | Entity and component handles, run order, scene stats | Partial | handles are C++ only (not visual scripting or C#); `GetComponent<T>` miss still a `dynamic_cast` per component; components not pooled; by-GUID references in a duplicated object not remapped; Scene Stats window and Run order section compiled but never opened; Windows not run |
 
 ### 3. 3D modeling & import
 

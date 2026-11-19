@@ -373,7 +373,7 @@ T* GameObject::AddComponent(Args&&... args) {
     auto owned = std::make_unique<T>(std::forward<Args>(args)...);
     T* ptr = owned.get();
     ptr->gameObject = this;
-    ptr->m_serial   = detail::g_nextComponentSerial.fetch_add(1, std::memory_order_relaxed);
+    static_cast<Component*>(ptr)->m_serial = detail::g_nextComponentSerial.fetch_add(1, std::memory_order_relaxed);   // (a subclass may have an m_serial of its own)
     ptr->transform  = transform ? transform : dynamic_cast<Transform*>(ptr);
     m_components.push_back(std::move(owned));
     NotifyComponentAdded(ptr); // declared in Scene.hpp, defined in Scene.cpp

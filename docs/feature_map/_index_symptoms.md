@@ -248,10 +248,12 @@ Find the window, page or symptom, then say the number. Back to the [overview](..
 | a score label stays at its first value | [12.13](12-ingame-ui.md#1213-data-binding-ui-animation-and-script-control) Data binding, UI animation and script control |
 | a script cannot find a widget by name | [12.13](12-ingame-ui.md#1213-data-binding-ui-animation-and-script-control) Data binding, UI animation and script control |
 | a script clip is overwritten by locomotion | [5.11](05-animation-ik.md#511-animation-script-control) Animation script control |
+| a script crashes after an enemy is destroyed | [1.21](01-core-scene.md#121-entity-and-component-handles-run-order-and-scene-stats) Entity and component handles, run order and scene stats |
 | a script does nothing or errors at runtime | [13.1](13-scripting.md#131-okayscript-vm) OkayScript VM |
 | a script edit does not reload | [13.4](13-scripting.md#134-script-components-and-script-ui) Script components and script UI |
 | a script is rejected with "isn't supported yet | [13.2](13-scripting.md#132-c-style-language-core) C#-style language core |
 | A script needs a class | [13.2](13-scripting.md#132-c-style-language-core) C#-style language core |
+| a script reads input after another already used it | [1.21](01-core-scene.md#121-entity-and-component-handles-run-order-and-scene-stats) Entity and component handles, run order and scene stats |
 | a script reads or writes files outside the game folder (should be refused with a Console line) | [17.11](17-launcher-platform.md#1711-security-plan-sec1) Security plan SEC1 |
 | a script UI window and a scene HUD overlap | [40.5](40-okayui-library.md#405-how-okayui-relates-to-scene-ui) How OkayUI relates to scene UI |
 | a script's file call returns false or does nothing for an absolute path | [39.9](39-security-anticheat.md#399-script-and-file-path-safety) Script and file path safety |
@@ -745,6 +747,7 @@ Find the window, page or symptom, then say the number. Back to the [overview](..
 | no way to draw a level with my art | [43.1](43-proposals.md#431-tilemaps-and-tilesets) Tilemaps and tilesets |
 | no way to pass options to the player | [1.18](01-core-scene.md#118-core-runtime-utilities) Core runtime utilities |
 | no way to see what is different | [21.4](20-35-planned.md#214-overrides) Overrides |
+| no way to see which component type costs the most per frame | [1.21](01-core-scene.md#121-entity-and-component-handles-run-order-and-scene-stats) Entity and component handles, run order and scene stats |
 | no way to share a replay | [46.3](43-proposals.md#463-replay-files-and-viewer) Replay files and viewer |
 | no way to take a picture of my game | [50.1](43-proposals.md#501-screenshots) Screenshots |
 | nodes do not light up in Play | [9.4](09-ai-navigation.md#94-behavior-trees) Behavior trees |

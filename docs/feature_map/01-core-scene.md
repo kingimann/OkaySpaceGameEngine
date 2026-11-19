@@ -443,3 +443,25 @@ Everything is on main. 2.851.0 is live: it holds 2.850.0 (#574 tools wave 2, #57
 - **Words:** thumbnail, ThumbnailCache, preview, icon, asset preview, placeholder, BoxDownscale, asset browser
 - **Seen as:** no preview pictures for models or scenes in the Project panel; a thumbnail shows an old version of a texture; a red tile for a broken image
 - **Ask me like:** "Render a thumbnail for each `.okaymesh` in the asset browser"
+
+### 1.21 Entity and component handles, run order and scene stats
+- **What:** Safe handles to objects and components (they turn into null when the thing is destroyed), a per-type "Run early / Normal / Run late" setting, a radius query over the scene, and a Scene Stats window with time per component type. Extends 1.3 (scene graph), it does not replace it.
+- **Parts:**
+  - 1.21.1 Handles - `Scene/Refs`, `Scene/Component` - `ObjectRef` (instance id) and `ComponentRef<T>` (instance id + `Component::ComponentId()`, a number never reused, so a new component at a freed address is never mistaken for the old one); `Get`, `Alive`, `IsDestroyPending`, hashable
+  - 1.21.2 Run order - `Scene/ExecutionOrder`, `Scene/ProjectLists`, `Scene/Scene` - `ExecutionOrderSettings::Set(type, RunWhen::Early|Normal|Late)` wins over `Component::ExecutionOrder()`; saved as `run_order_<Type>=early|late` in `project.okayproj`; the scene sorts its update list again when it changes (order value, then creation order)
+  - 1.21.3 Fast lookups - `Scene/Scene`, `Scene/Component` - `FindObjectOfType<T>` answers from the cached per-type list; removing a component no longer scans the whole update list (each component remembers its slot)
+  - 1.21.4 Radius query - `Scene/SceneGrid` - `FindObjectsInRadius(scene, point, r)` and `SceneGrid::Build/Query` (uniform grid, nearest first, ties by instance id)
+  - 1.21.5 Time per type - `Scene/Scene` - `SetComponentTiming(true)` then `LastFrameTimings()` (off by default)
+  - 1.21.6 Scene Stats window - `editor/SceneStatsWindow` - View > Scene Stats window (counts, components by type, time per type) and Project Settings > Run order
+- **Code:** `Scene/Refs`, `Scene/ExecutionOrder`, `Scene/SceneGrid`, `Scene/Scene`, `Scene/ProjectLists`, `editor/SceneStatsWindow`
+- **API:** `ObjectRef`, `ComponentRef`, `Component::ComponentId`, `ExecutionOrderSettings`, `RunWhen`, `FindObjectsInRadius`, `SceneGrid`, `Scene::SetComponentTiming`, `Scene::LastFrameTimings`
+- **Editor:** View > Scene Stats window; Edit > Project Settings > Run order
+- **Docs:** `docs/ecs_guide.md`, `docs/ecs_upgrade.md`
+- **Tests:** `ecs_refs`, `ecs_fuzz`, `ecs_bench`
+- **Status:** Partial - engine part built and tested on Linux; the editor window was only compiled for syntax and never opened; Windows not run
+- **Open:** handles are C++ only (not in visual scripting or C#); `GetComponent<T>` still does a `dynamic_cast` per component on a miss; components are not pooled; by-GUID references inside a duplicated object are not remapped; no per-object small-buffer component list
+- **Related:** 1.3, 1.13, 1.19
+- **Words:** ObjectRef, ComponentRef, handle, dangling pointer, destroyed object, run order, execution order, run early, run late, Scene Stats, FindObjectsInRadius, SceneGrid, spatial query, component timing
+- **Seen as:** a script crashes after an enemy is destroyed; a script reads input after another already used it; no way to see which component type costs the most per frame
+- **Ask me like:** "Keep a reference to the boss that is null after he dies"; "Make my input script run before everything else"; "Which of my components is slowest?"
+

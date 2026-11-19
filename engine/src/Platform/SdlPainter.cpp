@@ -16,7 +16,7 @@ static_assert(sizeof(ui2d::Rect) == sizeof(SDL_Rect) && sizeof(ui2d::FRect) == s
               sizeof(ui2d::RGBA) == sizeof(SDL_Color) && sizeof(ui2d::Vertex) == sizeof(SDL_Vertex),
               "ui2d types must match SDL's layout");
 
-SDL_BlendMode ToSdl(BlendMode m) { return m == BlendMode::None ? SDL_BLENDMODE_NONE : SDL_BLENDMODE_BLEND; }
+SDL_BlendMode ToSdl(BlendMode m) { return m == BlendMode::None ? SDL_BLENDMODE_NONE : (m == BlendMode::Add ? SDL_BLENDMODE_ADD : SDL_BLENDMODE_BLEND); }
 SDL_ScaleMode ToSdl(ScaleMode m) { return m == ScaleMode::Linear ? SDL_ScaleModeLinear : SDL_ScaleModeNearest; }
 
 class SdlPainter final : public Painter {
@@ -39,7 +39,7 @@ public:
     BlendMode GetBlendMode() override {
         SDL_BlendMode m = SDL_BLENDMODE_NONE;
         SDL_GetRenderDrawBlendMode(m_r, &m);
-        return m == SDL_BLENDMODE_NONE ? BlendMode::None : BlendMode::Blend;
+        return m == SDL_BLENDMODE_NONE ? BlendMode::None : (m == SDL_BLENDMODE_ADD ? BlendMode::Add : BlendMode::Blend);
     }
 
     void SetDrawColor(std::uint8_t r, std::uint8_t g, std::uint8_t b, std::uint8_t a) override { SDL_SetRenderDrawColor(m_r, r, g, b, a); }

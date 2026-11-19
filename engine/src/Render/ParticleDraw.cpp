@@ -1,6 +1,7 @@
 #include "okay/Render/ParticleDraw.hpp"
 #include "okay/Render/Lighting.hpp"
 #include "okay/Render/SoftwareRenderer.hpp"   // SceneOcclusionDepth
+#include "okay/Platform/Painter.hpp"
 #include "okay/UI/UIPainter.hpp"
 #include "okay/UI/UIRenderer.hpp"
 #include "okay/Scene/GameObject.hpp"
@@ -168,7 +169,7 @@ void AppendSystem(BuildCtx& cx, ParticleSystem* ps, const Vec3& origin) {
         else if (sortMode == ParticleSystem::SortMode::None) key = sysDepth;
 
         float r = cr[i] * lightMul[0], g = cg[i] * lightMul[1], b = cb[i] * lightMul[2];
-        if (additive) { r = std::min(1.0f, r * 1.25f); g = std::min(1.0f, g * 1.25f); b = std::min(1.0f, b * 1.25f); alpha *= 0.85f; }
+        if (additive && !view.trueAdditive) { r = std::min(1.0f, r * 1.25f); g = std::min(1.0f, g * 1.25f); b = std::min(1.0f, b * 1.25f); alpha *= 0.85f; }
         const float theta = rot[i] * kDeg2Rad;
         const float ct = std::cos(theta), stt = std::sin(theta);
 
@@ -436,11 +437,27 @@ void DrawParticleDrawPainter(ui2d::Painter& r, const std::vector<ParticleDrawIte
     };
     ui2d::Vertex v[4];
     const int idx[6] = {0, 1, 2, 0, 2, 3};
+    platform::Painter* pp = dynamic_cast<platform::Painter*>(&r);
+    platform::BlendMode drawMode = platform::BlendMode::Blend;
+    auto setDraw = [&](bool add) { if (!pp) return; const auto m = add ? platform::BlendMode::Add : platform::BlendMode::Blend; if (m != drawMode) { pp->SetBlendMode(m); drawMode = m; } };
+    // Flat shapes in Glow use a 2x2 white picture: a picture's own blend mode is honoured by every SDL renderer, while
+    // the draw blend mode of untextured triangles is not (the software one ignores it).
+    ui2d::Tex whiteTex = nullptr;
+    auto white = [&]() -> ui2d::Tex {
+        if (!whiteTex && pp) {
+            platform::TextureDesc d; d.width = d.height = 2;
+            const std::uint8_t px[16] = {255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255};
+            whiteTex = pp->CreateTexture(d, px);
+            if (whiteTex) pp->SetTextureBlendMode(whiteTex, platform::BlendMode::Add);
+        }
+        return whiteTex;
+    };
     for (const ParticleDrawItem& it : items) {
+        const bool add = pp && it.blend == ParticleSystem::BlendMode::Additive;
         if (it.kind == ParticleDrawItem::Poly) {
             const ui2d::RGBA c = rgba(it.color, 1.0f);
             for (int k = 0; k < it.npts && k < 4; ++k) { v[k].position = {it.px[k], it.py[k]}; v[k].color = c; v[k].tex_coord = {0, 0}; }
-            if (it.npts == 4) r.Geometry(nullptr, v, 4, idx, 6);
+            if (it.npts == 4) { ui2d::Tex wt = add ? white() : nullptr; if (wt) { for (int k = 0; k < 4; ++k) v[k].tex_coord = {0.5f, 0.5f}; } else setDraw(add); r.Geometry(wt, v, 4, idx, 6); }
             continue;
         }
         ui2d::Tex tex = (it.texture && loadTex) ? (ui2d::Tex)loadTex(*it.texture) : nullptr;
@@ -452,14 +469,20 @@ void DrawParticleDrawPainter(ui2d::Painter& r, const std::vector<ParticleDrawIte
                 v[k].position = {it.sx + cx[k] * it.axx + cy[k] * it.ayx, it.sy + cx[k] * it.axy + cy[k] * it.ayy};
                 v[k].color = c; v[k].tex_coord = {uu[k], vv[k]};
             }
+            if (tex && pp) pp->SetTextureBlendMode(tex, add ? platform::BlendMode::Add : platform::BlendMode::Blend);
+            else if (!tex && add && white()) { tex = whiteTex; for (int k = 0; k < 4; ++k) v[k].tex_coord = {0.5f, 0.5f}; }
+            else setDraw(add);
             r.Geometry(tex, v, 4, idx, 6);
         } else {
+            setDraw(add);
             const int cx = (int)it.sx, cy = (int)it.sy;
             ui2d::MMFillCircle(r, cx, cy, (int)(it.rad * 1.6f), rgba(it.color, 0.22f));    // soft outer glow
             ui2d::MMFillCircle(r, cx, cy, (int)(it.rad * 1.15f), rgba(it.color, 0.4f));
             ui2d::MMFillCircle(r, cx, cy, (int)(it.rad * 0.75f), rgba(it.color, 0.85f));   // bright core
         }
     }
+    setDraw(false);   // leave the painter as it was found: normal blend
+    if (whiteTex && pp) pp->DestroyTexture(whiteTex);
 }
 
 } // namespace okay

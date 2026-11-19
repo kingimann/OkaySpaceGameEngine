@@ -5,6 +5,7 @@
 #include <Okay.hpp>
 #include "okay/Render/ParticleDraw.hpp"
 #include "okay/Core/ImageWrite.hpp"
+#include <array>
 #include <chrono>
 #include <cstdio>
 #include <cstdlib>
@@ -12,6 +13,7 @@
 #include <sstream>
 #include <vector>
 #include "ParticlePresetList.hpp"
+#include "okay/Platform/Painter.hpp"
 
 using namespace okay;
 
@@ -527,6 +529,31 @@ int main() {
             RasterizeParticleDraw(items, 320, 240, img.data());
             std::string name = ParticleSystem::PresetName((ParticleSystem::Preset)pi); for (char& c : name) if (c == ' ') c = '_';
             ImageWrite::WritePNG(std::string(dir) + "/" + name + ".png", 320, 240, 4, img.data());
+        }
+    }
+
+    // ---- Glow adds light in the painter (a real add on an SDL software surface), normal blend darkens ----
+    {
+        auto painter = okay::platform::CreateSdl2SurfacePainter(64, 64);
+        CHECK(painter != nullptr);
+        if (painter) {
+            auto pixel = [&](ParticleSystem::BlendMode bm) {
+                painter->SetBlendMode(okay::platform::BlendMode::None); painter->SetDrawColor(60, 60, 60, 255); painter->Clear();
+                painter->SetBlendMode(okay::platform::BlendMode::Blend);
+                ParticleDrawItem it; it.kind = ParticleDrawItem::Quad; it.streak = false; it.rad = 12; it.blend = bm;   // the round puff: discs drawn with the draw blend mode
+                it.sx = 32; it.sy = 32; it.axx = 20; it.axy = 0; it.ayx = 0; it.ayy = 20; it.color = Color{1, 0, 0, 0.5f};
+                DrawParticleDrawPainter(*painter, {it}, nullptr);
+                std::vector<std::uint8_t> px; int w = 0, h = 0;
+                CHECK(painter->ReadPixels(px, w, h));
+                const std::uint8_t* q = &px[((size_t)32 * w + 32) * 4];
+                return std::array<int, 3>{q[0], q[1], q[2]};
+            };
+            const auto glow = pixel(ParticleSystem::BlendMode::Additive), normal = pixel(ParticleSystem::BlendMode::Alpha);
+            std::printf("  painter pixel on grey 60: Glow = %d %d %d, Normal = %d %d %d\n", glow[0], glow[1], glow[2], normal[0], normal[1], normal[2]);
+            CHECK(glow[1] >= 58 && glow[1] <= 62 && glow[0] > 200);     // light is added: green stays, red rises
+            CHECK(normal[1] < 50 && normal[0] > 100);                    // normal blend mixes: green falls
+            // (SDL's software renderer ignores the blend mode of triangles, so streaks, ribbons and pictures are not checked here.)
+            CHECK(painter->GetBlendMode() == okay::platform::BlendMode::Blend);   // the painter is left as it was found
         }
     }
 

@@ -46132,7 +46132,7 @@ void DrawScene3D(EditorState& ed, ImDrawList* dl, ImVec2 canvasPos, ImVec2 canva
     {
         static std::vector<okay::ParticleDrawItem> pitems;
         okay::ParticleView pview;
-        pview.vp = vp; pview.camPos = eye;
+        pview.vp = vp; pview.camPos = eye; pview.trueAdditive = true;   // Glow adds light (a draw callback sets the SDL add blend, ParticleEditor.cpp)
         pview.x0 = center.x - canvasSize.x * 0.5f; pview.y0 = center.y - canvasSize.y * 0.5f; pview.w = canvasSize.x; pview.h = canvasSize.y;
         pview.maxRadius = 200.0f;
         okay::BuildParticleDraw(ed.scene(), pview, pitems);

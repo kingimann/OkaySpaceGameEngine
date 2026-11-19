@@ -38,7 +38,7 @@ public:
         if (d.width < 1 || d.height < 1) return nullptr;
         SoftTexture* t = new SoftTexture(); t->w = d.width; t->h = d.height; t->px.assign((std::size_t)d.width * (std::size_t)d.height * 4, 0);
         if (rgba) { std::memcpy(t->px.data(), rgba, t->px.size()); PremultiplyRgba(t->px.data(), (std::size_t)d.width * (std::size_t)d.height); }
-        t->blend = d.blend == okay::platform::BlendMode::Blend; t->linear = d.scale == okay::platform::ScaleMode::Linear;
+        t->blend = d.blend != okay::platform::BlendMode::None; t->linear = d.scale == okay::platform::ScaleMode::Linear;
         textures_.insert(t); return t;
     }
     bool UpdateTexture(okay::ui2d::Tex tex, const okay::ui2d::Rect* r, const void* rgba, int pitch) override {
@@ -54,7 +54,7 @@ public:
         return true;
     }
     void DestroyTexture(okay::ui2d::Tex tex) override { SoftTexture* t = Get(tex); if (t) { textures_.erase(t); delete t; } }
-    void SetTextureBlendMode(okay::ui2d::Tex tex, okay::platform::BlendMode m) override { if (SoftTexture* t = Get(tex)) t->blend = m == okay::platform::BlendMode::Blend; }
+    void SetTextureBlendMode(okay::ui2d::Tex tex, okay::platform::BlendMode m) override { if (SoftTexture* t = Get(tex)) t->blend = m != okay::platform::BlendMode::None; }
     void SetTextureScaleMode(okay::ui2d::Tex tex, okay::platform::ScaleMode m) override { if (SoftTexture* t = Get(tex)) t->linear = m == okay::platform::ScaleMode::Linear; }
     void Present() override {}                 // the app uploads Surface() to the GPU (XboxOverlay.hpp)
     bool SetVSync(bool) override { return false; }
@@ -119,7 +119,7 @@ public:
 
 private:
     SoftTexture* Get(okay::ui2d::Tex tex) { SoftTexture* t = static_cast<SoftTexture*>(tex); return t && textures_.count(t) ? t : nullptr; }
-    bool Blend() const { return blend_ == okay::platform::BlendMode::Blend; }
+    bool Blend() const { return blend_ != okay::platform::BlendMode::None; }
     IRect DevRect(const okay::ui2d::Rect& r) const { return IRect{(int)std::lround(r.x * sx_), (int)std::lround(r.y * sy_), (int)std::lround(r.w * sx_), (int)std::lround(r.h * sy_)}; }
     IRect ClipDev() const { return clipOn_ ? DevRect(clip_) : IRect{0, 0, surf_.Width(), surf_.Height()}; }
     SoftSurface surf_;

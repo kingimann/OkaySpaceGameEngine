@@ -25,6 +25,7 @@ struct ParticleView {
     float maxRadius = 400.0f;       // a particle is never drawn bigger than this many pixels
     bool  useDepth = true;          // hide / soften behind solid geometry when a depth picture exists
     bool  frustumCull = true;       // skip systems wholly outside the picture (and tell them: SetCulled)
+    bool  trueAdditive = false;     // the drawing host really adds light for Glow items; false = Glow is brightened normal blend
 };
 
 /// One thing to draw. Kind Quad: centre (sx, sy) with half-axes (axx, axy) and (ayx, ayy): the corners are
@@ -74,7 +75,7 @@ namespace ui2d { class Painter; }
 /// Draw the list with the engine's 2D painter (the player and the game windows). `loadTex` turns a texture path
 /// into a painter texture (null = draw the soft puff instead). Quads with a picture go through Painter::Geometry
 /// (exact corners and sheet UVs); the plain puff is three soft discs; ribbons and cube faces are flat triangles.
-/// Additive blend is drawn as a brighter normal blend: the painter has no additive mode (docs/particles_upgrade.md).
+/// Glow (Additive) items use Painter blend mode Add when the painter is an okay::platform::Painter (SDL: real add).
 void DrawParticleDrawPainter(ui2d::Painter& painter, const std::vector<ParticleDrawItem>& items,
                              const std::function<void*(const std::string&)>& loadTex);
 

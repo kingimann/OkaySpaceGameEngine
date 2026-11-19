@@ -25,7 +25,7 @@
 namespace okay::platform {
 
 enum class PainterKind { Sdl2, Software };
-enum class BlendMode { None, Blend };      // SDL_BLENDMODE_NONE / SDL_BLENDMODE_BLEND (source-over)
+enum class BlendMode { None, Blend, Add };  // SDL_BLENDMODE_NONE / SDL_BLENDMODE_BLEND (source-over) / SDL_BLENDMODE_ADD (dst + src * alpha: glow). A painter without a true add draws Add as Blend.
 enum class ScaleMode { Nearest, Linear };
 
 struct TextureDesc {

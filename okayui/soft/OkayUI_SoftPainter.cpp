@@ -155,7 +155,7 @@ public:
         STex* st = tex ? T(tex) : nullptr;
         if (tex && !st) return;
         raster::Tex view; if (st) view = st->View();
-        const bool blend = (st ? st->blend : m_blend) == BlendMode::Blend;
+        const bool blend = (st ? st->blend : m_blend) != BlendMode::None;   // Add is drawn as Blend here (no true add in the soft painter)
         const int n = idx ? ni : nv;
         if (n < 3) return;
         raster::Surface surf{m_px.data(), m_w, m_h};
@@ -231,7 +231,7 @@ private:
         x0 = (int)std::max<std::int64_t>(x0, c.x0); y0 = (int)std::max<std::int64_t>(y0, c.y0);
         x1 = (int)std::min<std::int64_t>(x1, c.x1); y1 = (int)std::min<std::int64_t>(y1, c.y1);
         if (x0 >= x1 || y0 >= y1) return;
-        const bool blend = m_blend == BlendMode::Blend;
+        const bool blend = m_blend != BlendMode::None;   // Add is drawn as Blend here (no true add in the soft painter)
         if (blend && m_a == 0) return;
         for (int y = y0; y < y1; ++y) {
             std::uint8_t* d = &m_px[((std::size_t)y * (std::size_t)m_w + (std::size_t)x0) * 4];
@@ -240,7 +240,7 @@ private:
     }
     void Line(int x0, int y0, int x1, int y1) {   // device pixels, both ends included
         const raster::Clip c = DevClip();
-        const bool blend = m_blend == BlendMode::Blend;
+        const bool blend = m_blend != BlendMode::None;   // Add is drawn as Blend here (no true add in the soft painter)
         if (blend && m_a == 0) return;
         const long long dx = std::llabs((long long)x1 - x0), dy = -std::llabs((long long)y1 - y0);
         if (dx > 100000 || -dy > 100000) {   // absurd: clip against the clip box by walking only the visible part is not worth it
@@ -269,7 +269,7 @@ private:
         if (src) sr = *src;
         if (sr.x < 0 || sr.y < 0 || sr.w <= 0 || sr.h <= 0 || sr.x + (long long)sr.w > st->w || sr.y + (long long)sr.h > st->h) return;
         const raster::Tex view = st->View();
-        const bool blend = st->blend == BlendMode::Blend;
+        const bool blend = st->blend != BlendMode::None;   // Add is drawn as Blend here (no true add in the soft painter)
         const raster::Clip clip = DevClip();
         // device rectangle
         const double X = dx * m_sx, Y = dy * m_sy, W = dw * m_sx, H = dh * m_sy;

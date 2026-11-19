@@ -5,6 +5,7 @@
 #include "okay/Components/ParticleSystem.hpp"
 #include "okay/Scene/GameObject.hpp"
 #include "okay/Math/Mat4.hpp"
+#include <SDL.h>   // the editor draws Dear ImGui through the SDL renderer backend: a draw callback switches the blend of its textures
 #include <algorithm>
 #include <cmath>
 #include <cstring>
@@ -34,9 +35,45 @@ PreviewState& Preview() { static PreviewState p; return p; }
 
 } // namespace
 
+namespace {
+// Glow (additive) needs the renderer's add blend. Dear ImGui's draw list has no blend state, but it runs a callback in
+// the middle of the command stream: ours sets SDL_BLENDMODE_ADD (or back to normal) on the textures the shapes use.
+struct BlendCmd { int add; int n; ImTextureID tex[8]; };
+void BlendCallback(const ImDrawList*, const ImDrawCmd* cmd) {
+    const BlendCmd* c = (const BlendCmd*)cmd->UserCallbackData;
+    if (!c) return;
+    for (int i = 0; i < c->n && i < 8; ++i)
+        if (c->tex[i]) SDL_SetTextureBlendMode((SDL_Texture*)(intptr_t)c->tex[i], c->add ? SDL_BLENDMODE_ADD : SDL_BLENDMODE_BLEND);
+}
+} // namespace
+
 void DrawParticleItemsImGui(ImDrawList* dl, const std::vector<ParticleDrawItem>& items,
                             const std::function<ImTextureID(const std::string&)>& tex) {
+    // Which textures the Glow shapes draw with (the font's white pixel for plain shapes, and each picture).
+    BlendCmd cmd{0, 0, {}};
+    bool anyAdd = false;
+    const ImTextureID white = dl->_CmdHeader.TexRef.GetTexID();
+    auto addTex = [&](ImTextureID t) {
+        if (!t) return;
+        for (int i = 0; i < cmd.n; ++i) if (cmd.tex[i] == t) return;
+        if (cmd.n < 8) cmd.tex[cmd.n++] = t;
+    };
     for (const ParticleDrawItem& it : items) {
+        if (it.blend != ParticleSystem::BlendMode::Additive) continue;
+        anyAdd = true;
+        ImTextureID t = (it.kind == ParticleDrawItem::Quad && it.texture && tex) ? tex(*it.texture) : (ImTextureID)0;
+        addTex(t ? t : white);
+    }
+    anyAdd = anyAdd && cmd.n > 0;
+    bool addNow = false;
+    auto setAdd = [&](bool add) {
+        if (!anyAdd || add == addNow) return;
+        BlendCmd c = cmd; c.add = add ? 1 : 0;
+        dl->AddCallback(BlendCallback, &c, sizeof(c));
+        addNow = add;
+    };
+    for (const ParticleDrawItem& it : items) {
+        setAdd(it.blend == ParticleSystem::BlendMode::Additive);
         const ImU32 col = Pack(it.color);
         if (it.kind == ParticleDrawItem::Poly) {
             ImVec2 pts[4];
@@ -56,6 +93,7 @@ void DrawParticleItemsImGui(ImDrawList* dl, const std::vector<ParticleDrawItem>&
             dl->AddCircleFilled(c, it.rad * 0.75f, Pack(it.color, 0.85f), 12);  // bright core
         }
     }
+    setAdd(false);
 }
 
 GameObject* CreateParticlePresetObject(okay::editor::EditorState& ed, int index) {
@@ -141,7 +179,7 @@ static void DrawPreview(okay::editor::EditorState& ed, ParticleSystem& ps) {
     const Vec3 eye = target + Vec3{std::sin(ang) * 6.0f, 1.5f, std::cos(ang) * 6.0f};
     ParticleView view;
     view.vp = Mat4::Perspective(50.0f, w / h, 0.1f, 200.0f) * Mat4::LookAt(eye, target, Vec3{0, 1, 0});
-    view.camPos = eye; view.x0 = p0.x; view.y0 = p0.y; view.w = w; view.h = h; view.maxRadius = 120.0f; view.frustumCull = false; view.useDepth = false;
+    view.camPos = eye; view.x0 = p0.x; view.y0 = p0.y; view.w = w; view.h = h; view.maxRadius = 120.0f; view.frustumCull = false; view.useDepth = false; view.trueAdditive = true;
     // A little ground ring so the eye has something to turn against.
     for (int k = 0; k < 24; ++k) {
         const float a0 = k / 24.0f * 6.2831853f, a1 = (k + 1) / 24.0f * 6.2831853f;

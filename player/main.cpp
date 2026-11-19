@@ -2576,7 +2576,7 @@ int main(int argc, char** argv) {
                 {
                     static std::vector<okay::ParticleDrawItem> pitems;
                     okay::ParticleView pview;
-                    pview.vp = vp; pview.camPos = camPos; pview.w = (float)w; pview.h = (float)h; pview.maxRadius = 400.0f;
+                    pview.vp = vp; pview.camPos = camPos; pview.trueAdditive = true; pview.w = (float)w; pview.h = (float)h; pview.maxRadius = 400.0f;
                     okay::BuildParticleDraw(scene, pview, pitems, nullptr, [](const GameObject* g) { return !UIHidden(const_cast<GameObject*>(g)); });
                     okay::DrawParticleDrawPainter(*renderer, pitems, [&](const std::string& path) -> void* { return (void*)GetTexture(renderer, path); });
                 }

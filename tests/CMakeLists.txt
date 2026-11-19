@@ -3349,6 +3349,15 @@ if(NOT WIN32 AND NOT EMSCRIPTEN AND SDL2_FOUND)
     add_test(NAME painter_bridge_vs_sdl COMMAND test_painter_bridge_vs_sdl)
 endif()
 
+# The Direct3D 11 painter's geometry (engine/src/Platform/D3D11Batch.hpp), no Direct3D needed: by-hand numbers, and its coverage against the software painter.
+if(NOT EMSCRIPTEN AND TARGET okay_ui_soft)
+    add_executable(test_d3d11_batch test_d3d11_batch.cpp)
+    target_include_directories(test_d3d11_batch PRIVATE ${CMAKE_SOURCE_DIR}/engine/src ${CMAKE_SOURCE_DIR}/engine/include)
+    target_link_libraries(test_d3d11_batch PRIVATE okay_ui_soft okay::engine)
+    target_compile_features(test_d3d11_batch PRIVATE cxx_std_17)
+    add_test(NAME d3d11_batch COMMAND test_d3d11_batch)
+endif()
+
 # The software okay::platform::Painter (okayui/soft) on a real own-backend window under Xvfb: what it draws is what
 # the X server holds. Own code, not ready, off by default; the test only checks it.
 if(NOT WIN32 AND NOT EMSCRIPTEN AND TARGET okay_ui_soft AND CMAKE_SYSTEM_NAME STREQUAL "Linux")

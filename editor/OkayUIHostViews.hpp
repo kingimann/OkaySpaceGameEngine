@@ -8,7 +8,7 @@
 
 #include <functional>
 
-namespace okay { class Scene; struct Vec3; namespace platform { class Painter; } }
+namespace okay { class Scene; class GameObject; struct Vec3; namespace platform { class Painter; } }
 
 namespace oked {
 namespace wm {
@@ -18,7 +18,13 @@ struct ViewSource {
     std::function<okay::Scene*()> scene;
     float* yaw = nullptr; float* pitch = nullptr; float* dist = nullptr;   // degrees, degrees, distance
     okay::Vec3* target = nullptr;
+    // selection and edits (the editor's EditorState behind them); all optional: without `select` clicking does not pick, without `selected` there is no gizmo
+    std::function<okay::GameObject*()> selected;
+    std::function<void(okay::GameObject*, bool toggle)> select;   // null object = clear the selection
+    std::function<void(const char* what)> beginEdit;               // called once when a gizmo drag starts (one undo step); `what` is "Move", "Rotate" or "Scale"
+    std::function<void()> edited;                                  // called each frame the drag changes the object
 };
+enum class GizmoMode { Move, Rotate, Scale };
 
 /// Wire the "Scene" and "Game" windows (kPanelScene, kPanelGame) into `panels`. `painter` must outlive the panels' use of it and be the painter the frame loop draws
 /// through. `st` (may be null) is the host state the windows' close buttons write to.
@@ -30,6 +36,14 @@ struct ViewProbe {
     int texW = 0, texH = 0;      // the render size
     int litPixels = 0;           // pixels of the picture that are not transparent
     int frames = 0;              // pictures drawn so far
+    int gridLines = 0;           // grid lines drawn
+    int outlineEdges = 0;        // selection outline edges drawn
+    int gizmoAxes = 0;           // gizmo handles drawn (3 when an object is selected)
+    bool gizmoDragging = false;
+    GizmoMode mode = GizmoMode::Move;
+    okay::GameObject* picked = nullptr;   // what the last click picked
+    OkayUI::Rect gizmoHandle[3];          // the end of each axis handle (x, y, z), window pixels
+    OkayUI::Rect modeButton[3], gridCheck;   // the toolbar
     const char* note = "";       // why nothing was drawn ("" when something was)
 };
 const ViewProbe& GetViewProbe(bool game);

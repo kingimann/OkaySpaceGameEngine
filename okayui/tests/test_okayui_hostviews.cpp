@@ -33,6 +33,11 @@ int main() {
     FakeBackend be; okayuihost::platform::FrameLoop loop(be, *painter);
     oked::HostModeState st;
     oked::wm::ViewSource src; src.scene = [&] { return &scene; }; src.yaw = &yaw; src.pitch = &pitch; src.dist = &dist; src.target = &target;
+    okay::GameObject* selected = nullptr; int edits = 0, edited = 0; std::string lastEdit;
+    src.selected = [&] { return selected; };
+    src.select = [&](okay::GameObject* g, bool) { selected = g; };
+    src.beginEdit = [&](const char* w) { ++edits; lastEdit = w; };
+    src.edited = [&] { ++edited; };
     oked::wm::AddSceneViews(st.panels, &st, painter.get(), src);
     CHECK(st.panels.scene && st.panels.game);
     auto frame = [&] { be.now += 16; return loop.Frame([&] { oked::DrawHostModeUi(st); }); };
@@ -89,5 +94,70 @@ int main() {
     scene.mainCamera = nullptr; camGo->GetComponent<okay::Camera>()->enabled = false;
     for (int i = 0; i < 3; ++i) frame();
     CHECK(std::string(gp.note) == "no camera");
+
+    // ---- round 11: grid, picking, outline, gizmos ----
+    for (const UI::DockTabInfo& t : UI::GetDockTabs()) if (t.window == oked::kPanelScene) {   // back to the Scene tab
+        const int tx = (int)(t.rect.x + t.rect.w * 0.4f), ty = (int)(t.rect.y + t.rect.h * 0.5f);
+        be.queue.push_back(Move(tx, ty)); frame(); be.queue.push_back(Btn(true, tx, ty)); frame(); be.queue.push_back(Btn(false, tx, ty)); frame(); frame();
+    }
+    scene.mainCamera = camGo->GetComponent<okay::Camera>(); camGo->GetComponent<okay::Camera>()->enabled = true;
+    yaw = 35; pitch = 22; dist = 8; target = {0, 0, 0};
+    for (int i = 0; i < 3; ++i) frame();
+    const oked::wm::ViewProbe& sp2 = oked::wm::GetViewProbe(false);
+    CHECK(sp2.gridLines > 20 && sp2.outlineEdges == 0 && sp2.gizmoAxes == 0);   // a grid, nothing selected
+    // click the cube: it is picked and gets an outline and three gizmo handles
+    {
+        const int px = (int)(sp2.image.x + sp2.image.w * 0.5f), py = (int)(sp2.image.y + sp2.image.h * 0.5f);
+        be.queue.push_back(Move(px, py)); frame(); be.queue.push_back(Btn(true, px, py)); frame(); be.queue.push_back(Btn(false, px, py)); frame(); frame();
+        CHECK(selected == cube && oked::wm::GetViewProbe(false).picked == cube);
+        CHECK(oked::wm::GetViewProbe(false).outlineEdges == 12 && oked::wm::GetViewProbe(false).gizmoAxes == 3);
+        if (const char* shot = std::getenv("OKAYUI_SHOT2")) { std::vector<std::uint8_t> px2; int w = 0, h = 0; if (painter->ReadPixels(px2, w, h)) okay::ImageWrite::WritePNG(shot, w, h, 4, px2.data()); }
+        // click on empty space clears the selection
+        const int ex = (int)(sp2.image.x + 8), ey = (int)(sp2.image.y + 8);
+        be.queue.push_back(Move(ex, ey)); frame(); be.queue.push_back(Btn(true, ex, ey)); frame(); be.queue.push_back(Btn(false, ex, ey)); frame(); frame();
+        CHECK(selected == nullptr);
+        selected = cube; frame(); frame();
+    }
+    // Move gizmo: drag the X handle to the right: the cube moves along +X only, one undo step, then the same for Scale and Rotate
+    auto dragHandle = [&](int axis, int dx, int dy) {
+        const oked::wm::ViewProbe& q = oked::wm::GetViewProbe(false);
+        const int hx = (int)(q.gizmoHandle[axis].x + 5), hy = (int)(q.gizmoHandle[axis].y + 5);
+        be.queue.push_back(Move(hx, hy)); frame(); be.queue.push_back(Btn(true, hx, hy)); frame();
+        be.queue.push_back(Move(hx + dx / 2, hy + dy / 2)); frame(); be.queue.push_back(Move(hx + dx, hy + dy)); frame(); frame();
+        be.queue.push_back(Btn(false, hx + dx, hy + dy)); frame(); frame();
+    };
+    cube->transform->SetPosition({0, 0, 0}); cube->transform->localScale = {1, 1, 1};
+    const int edits0 = edits;
+    dragHandle(0, 60, 0);
+    CHECK(edits == edits0 + 1 && lastEdit == "Move" && edited > 0);
+    CHECK(cube->transform->Position().x > 0.3f && std::fabs(cube->transform->Position().y) < 1e-3f && std::fabs(cube->transform->Position().z) < 1e-3f);
+    CHECK(!oked::wm::GetViewProbe(false).gizmoDragging && selected == cube);   // released: not dragging, and the cube stays selected
+    // Scale
+    {
+        const oked::wm::ViewProbe& q = oked::wm::GetViewProbe(false);
+        const int bx = (int)(q.modeButton[2].x + q.modeButton[2].w / 2), by = (int)(q.modeButton[2].y + q.modeButton[2].h / 2);
+        be.queue.push_back(Move(bx, by)); frame(); be.queue.push_back(Btn(true, bx, by)); frame(); be.queue.push_back(Btn(false, bx, by)); frame(); frame();
+        CHECK(q.mode == oked::wm::GizmoMode::Scale);
+    }
+    cube->transform->SetPosition({0, 0, 0}); frame(); frame();
+    dragHandle(1, 0, -50);   // up the Y handle: taller
+    CHECK(lastEdit == "Scale" && cube->transform->localScale.y > 1.2f && std::fabs(cube->transform->localScale.x - 1.0f) < 1e-3f);
+    // Rotate
+    {
+        const oked::wm::ViewProbe& q = oked::wm::GetViewProbe(false);
+        const int bx = (int)(q.modeButton[1].x + q.modeButton[1].w / 2), by = (int)(q.modeButton[1].y + q.modeButton[1].h / 2);
+        be.queue.push_back(Move(bx, by)); frame(); be.queue.push_back(Btn(true, bx, by)); frame(); be.queue.push_back(Btn(false, bx, by)); frame(); frame();
+        CHECK(q.mode == oked::wm::GizmoMode::Rotate);
+    }
+    const okay::Quat r0 = cube->transform->Rotation();
+    dragHandle(1, 60, 0);
+    CHECK(lastEdit == "Rotate" && std::fabs(cube->transform->Rotation().y - r0.y) > 0.01f);
+    // the grid can be switched off
+    {
+        const oked::wm::ViewProbe& q = oked::wm::GetViewProbe(false);
+        const int gx = (int)(q.gridCheck.x + 6), gy = (int)(q.gridCheck.y + q.gridCheck.h / 2);
+        be.queue.push_back(Move(gx, gy)); frame(); be.queue.push_back(Btn(true, gx, gy)); frame(); be.queue.push_back(Btn(false, gx, gy)); frame(); frame();
+        CHECK(q.gridLines == 0);
+    }
     TEST_MAIN_RESULT();
 }

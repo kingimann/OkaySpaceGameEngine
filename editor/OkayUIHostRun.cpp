@@ -55,6 +55,10 @@ int RunOkayUIHostMode(int, char**) {
     }
     {   // the Scene and Game views: the engine's software renderer into a painter texture (OkayUIHostViews.cpp); the orbit camera is the editor's own
         wm::ViewSource vs; vs.scene = [&editor] { return &editor.scene(); };
+        vs.selected = [&editor] { return editor.selected(); };
+        vs.select = [&editor](okay::GameObject* g, bool toggle) { if (toggle && g) editor.ToggleSelect(g); else editor.Select(g); };
+        vs.beginEdit = [&editor](const char* what) { editor.PushUndo(what); };
+        vs.edited = [&editor] { editor.dirty = true; };
         vs.yaw = &editor.camYaw; vs.pitch = &editor.camPitch; vs.dist = &editor.camDist; vs.target = &editor.camTarget;
         wm::AddSceneViews(state.panels, &state, painter.get(), vs);
         wm::AddObjectPanels(state.panels, &state, &editor);   // the Hierarchy and the Inspector

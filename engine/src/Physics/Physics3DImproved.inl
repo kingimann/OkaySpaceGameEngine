@@ -321,6 +321,7 @@ struct Physics3D::Solver {
     // This step.
     std::vector<contactsolver::Body> bodies;       // slot 0 is the immovable world
     std::vector<Rigidbody3D*> slotRb;
+    std::vector<Vec3> v0, w0;                      // each slot's speeds when it was made (a callback that sets a speed before the solve is kept)
     std::vector<contactsolver::Manifold> manifolds;
     struct Meta { Collider3D* a; Collider3D* b; Rigidbody3D* ra; Rigidbody3D* rb; };
     std::vector<Meta> meta;
@@ -335,10 +336,10 @@ struct Physics3D::Solver {
 
     void Begin(const std::vector<Rigidbody3D*>& all, float stepDt, int iterations) {
         dt = stepDt; ++stepNo;
-        bodies.clear(); slotRb.clear(); manifolds.clear(); meta.clear(); damp.clear();
+        bodies.clear(); slotRb.clear(); v0.clear(); w0.clear(); manifolds.clear(); meta.clear(); damp.clear();
         staticList.clear(); movingList.clear(); staticListBuilt = false;
         warmCount = 0;
-        bodies.emplace_back(); slotRb.push_back(nullptr);          // slot 0: the world
+        bodies.emplace_back(); slotRb.push_back(nullptr); v0.emplace_back(); w0.emplace_back();   // slot 0: the world
         for (Rigidbody3D* rb : all) rb->m_solverIndex = -1;
         set = contactsolver::Settings{};
         set.velocityIterations = std::max(4, std::min(30, iterations));
@@ -360,7 +361,7 @@ struct Physics3D::Solver {
             b.pos = rb->transform->Position();                     // kinematic: carries things, is not moved by them
         }
         rb->m_solverIndex = (int)bodies.size();
-        bodies.push_back(b); slotRb.push_back(rb);
+        bodies.push_back(b); slotRb.push_back(rb); v0.push_back(b.v); w0.push_back(b.w);
         return rb->m_solverIndex;
     }
 
@@ -471,6 +472,14 @@ struct Physics3D::Solver {
 
     /// Solve, store the pushes and hand the new speeds back to the rigidbodies.
     void Solve(const Scene::RemovalWatch& gone, const Vec3& gravity) {
+        // A game script may change a body's speed between the moment its contacts were found and now (a jump pad's launch, a
+        // blast in OnCollisionEnter). That change must survive the solve: take the new speed in as this step's start.
+        for (std::size_t i = 1; i < bodies.size(); ++i) {
+            Rigidbody3D* rb = slotRb[i];
+            if (!rb || gone.Gone(rb) || rb->bodyType != Rigidbody3D::BodyType::Dynamic) continue;
+            if (rb->velocity.x != v0[i].x || rb->velocity.y != v0[i].y || rb->velocity.z != v0[i].z) bodies[i].v = rb->velocity;
+            if (rb->angularVelocity.x != w0[i].x || rb->angularVelocity.y != w0[i].y || rb->angularVelocity.z != w0[i].z) bodies[i].w = rb->angularVelocity;
+        }
         if (manifolds.size() > 1) SortBottomUp(gravity);
         if (!manifolds.empty()) ScaleIterations();
         if (!manifolds.empty()) {

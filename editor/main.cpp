@@ -27,6 +27,7 @@
 #include "NavigationWindow.hpp"        // the Navigation window (navmesh bake, overlays, agent inspectors)
 #include "DialogueWindow.hpp"          // the Dialogue window (graph editor + Quests tab) and the story inspectors
 #include "BehaviorTreeWindow.hpp"      // the Behavior Tree window (NPC AI trees, runner inspector)
+#include "okay/Components/PhysicsToyPresets.hpp"   // GameObject > 3D Object > Physics Toys
 #include "okay/Components/BehaviorTreeRunner.hpp"
 #include "okay/Net/DetectInspector.hpp"   // Anti-Cheat Config > Detection engine (fields, observe mode, text)
 #include "okay/Core/Game.hpp"
@@ -7403,6 +7404,44 @@ static void DrawCreateSlot(EditorState& ed, const std::string& id, GameObject* p
         }
         if (ImGui::MenuItem("Water")) { AddWaterObject(ed); created = true; }
         if (ImGui::MenuItem("Character")) { AddCharacterObject(ed); created = true; }
+        ImGui::Separator();
+        if (ImGui::BeginMenu("Physics Toys")) {     // ready-made physics objects (Components/PhysicsToyPresets.hpp); each is placed at the view target
+            using namespace okay::toypresets;
+            struct Toy { const char* label; const char* tip; std::function<GameObject*(Scene&, const Vec3&)> make; };
+            static const Toy toys[] = {
+                {"Conveyor Belt", "A belt that carries crates and balls standing on it. Change Speed in the Inspector.", [](Scene& s, const Vec3& p) { return ConveyorBeltPreset(s, p); }},
+                {"Jump Pad", "Launches whatever lands on it.", [](Scene& s, const Vec3& p) { return JumpPadPreset(s, p); }},
+                {"Attractor", "Pulls nearby bodies toward it.", [](Scene& s, const Vec3& p) { return ForceFieldPreset(s, p + Vec3{0, 2, 0}, 0); }},
+                {"Repeller", "Pushes nearby bodies away.", [](Scene& s, const Vec3& p) { return ForceFieldPreset(s, p + Vec3{0, 2, 0}, 1); }},
+                {"Gravity Well", "A little planet: pulls harder the closer you get.", [](Scene& s, const Vec3& p) { return ForceFieldPreset(s, p + Vec3{0, 2, 0}, 2); }},
+                {"Whirlpool", "Spins bodies around it.", [](Scene& s, const Vec3& p) { return ForceFieldPreset(s, p + Vec3{0, 2, 0}, 3); }},
+                {"Zero-G Zone", "A box of space with no gravity.", [](Scene& s, const Vec3& p) { return GravityZonePreset(s, p + Vec3{0, 4, 0}, Vec3{0, 0, 0}); }},
+                {"Moon Gravity Zone", "A box of space with weak gravity.", [](Scene& s, const Vec3& p) { return GravityZonePreset(s, p + Vec3{0, 4, 0}, Vec3{0, -1.6f, 0}); }},
+                {"Turntable", "A round plate that turns and carries things.", [](Scene& s, const Vec3& p) { return TurntablePreset(s, p); }},
+                {"Moving Platform", "A platform that glides to and fro and carries riders.", [](Scene& s, const Vec3& p) { return MovingPlatformPreset(s, p); }},
+                {"Bomb (3 s)", "Goes off three seconds after Play and shoves everything near it.", [](Scene& s, const Vec3& p) { return BombPreset(s, p + Vec3{0, 1, 0}); }},
+                {"Breakable Crate", "Breaks into pieces when hit hard.", [](Scene& s, const Vec3& p) { return BreakableCratePreset(s, p + Vec3{0, 1, 0}); }},
+                {"Pendulum", "A weight swinging on a rod.", [](Scene& s, const Vec3& p) { return PendulumPreset(s, p + Vec3{0, 6, 0}); }},
+                {"Rope", "A chain of linked balls hanging from a point.", [](Scene& s, const Vec3& p) { return RopePreset(s, p + Vec3{0, 6, 0}); }},
+                {"Wrecking Ball", "A 50 kg ball on a chain.", [](Scene& s, const Vec3& p) { return WreckingBallPreset(s, p + Vec3{0, 8, 0}); }},
+                {"Door (hinge)", "A door that swings on a hinge with stops.", [](Scene& s, const Vec3& p) { return DoorPreset(s, p); }},
+                {"Dominoes", "A row of 14 dominoes. Push the first one.", [](Scene& s, const Vec3& p) { auto d = DominoPackPreset(s, p); return d.empty() ? nullptr : d[0]; }},
+                {"Ice Patch", "A slab of slippery ice.", [](Scene& s, const Vec3& p) { return SurfacePatchPreset(s, p, "Ice"); }},
+                {"Sticky Patch", "A slab that grips hard.", [](Scene& s, const Vec3& p) { return SurfacePatchPreset(s, p, "Sticky"); }},
+                {"Trampoline Patch", "A slab that throws things back up.", [](Scene& s, const Vec3& p) { return SurfacePatchPreset(s, p, "Trampoline"); }},
+                {"Mud Patch", "A slab that slows what moves on it.", [](Scene& s, const Vec3& p) { return SurfacePatchPreset(s, p, "Mud"); }},
+            };
+            for (const Toy& t : toys) {
+                if (ImGui::MenuItem(t.label)) {
+                    ed.PushUndo();
+                    GameObject* made = t.make(ed.scene(), ed.camTarget);
+                    if (made) ed.Select(ed.SettleSpawn(made));
+                    ConsoleLog(std::string("Created ") + t.label); ed.dirty = true; created = true;
+                }
+                if (ImGui::IsItemHovered()) ImGui::SetTooltip("%s", t.tip);
+            }
+            ImGui::EndMenu();
+        }
     } else if (id == "create.player") {
         // One Player Controller for first and third person: the View setting in its Inspector picks First, Third or Both
         // (V switches in Both). Third Person Shooter below is a different game mode (fires, own settings) and stays.
@@ -46052,6 +46091,25 @@ void DrawScene3D(EditorState& ed, ImDrawList* dl, ImVec2 canvasPos, ImVec2 canva
                     line(a + v * r, b + v * r, cc); line(a - v * r, b - v * r, cc);
                 }
             }
+        }
+        for (const auto& up : objs) {   // velocity arrows (cyan): how fast and which way each awake body moves
+            if (!up->active) continue;
+            auto* vrb = up->GetComponent<Rigidbody3D>();
+            if (!vrb || vrb->bodyType == Rigidbody3D::BodyType::Static || vrb->sleeping || !up->transform) continue;
+            const float sp2 = vrb->velocity.SqrMagnitude();
+            if (!(sp2 > 0.04f)) continue;
+            const Vec3 from = up->transform->Position(), to = from + vrb->velocity * 0.3f;
+            const ImU32 vc = IM_COL32(60, 220, 240, 255);
+            line(from, to, vc, 2.0f);
+            const Vec3 dirn = vrb->velocity.Normalized(); Vec3 hu, hv; basis(dirn, hu, hv);
+            line(to, to - dirn * 0.25f + hu * 0.1f, vc, 2.0f); line(to, to - dirn * 0.25f - hu * 0.1f, vc, 2.0f);
+        }
+        {   // the stats readout: what the last physics step did
+            const PhysicsStepStats& ps = ed.scene().physics3D().Stats();
+            char buf[160];
+            std::snprintf(buf, sizeof buf, "Physics: %d bodies (%d awake, %d asleep), %d contacts, %d groups, %d fast bodies swept",
+                          ps.bodies, ps.awake, ps.asleep, ps.contacts, ps.islands, ps.sweeps);
+            dl->AddText(ImVec2(view3dMin.x + 8.0f, view3dMin.y + 8.0f), IM_COL32(255, 255, 255, 230), buf);
         }
         for (const PhysicsDebugContact3D& ct : ed.scene().physics3D().DebugContacts()) {
             ImU32 kc = ct.trigger ? IM_COL32(90, 170, 255, 255) : IM_COL32(255, 80, 70, 255);

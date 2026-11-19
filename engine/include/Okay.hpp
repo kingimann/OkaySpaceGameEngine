@@ -114,6 +114,9 @@
 #include "okay/Physics/Physics3D.hpp"
 #include "okay/Physics/DebrisPool.hpp"
 #include "okay/Components/DebrisEmitter.hpp"
+#include "okay/Components/PhysicsSurface.hpp"
+#include "okay/Components/PhysicsToys.hpp"
+#include "okay/Components/PhysicsToyPresets.hpp"
 #include "okay/Components/Joint3D.hpp"
 #include "okay/Physics/ColliderFit.hpp"
 

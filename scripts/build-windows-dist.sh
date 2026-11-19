@@ -191,6 +191,8 @@ own_readers
 own_wav
 perf
 physics
+physics_toys
+physics_materials
 physics2d
 player
 security_paths

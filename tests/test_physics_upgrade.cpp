@@ -2,6 +2,7 @@
 // plates, momentum and energy kept, nothing turns into NaN. Numbers before and after are in docs/physics_upgrade.md.
 #include "test_framework.hpp"
 #include <Okay.hpp>
+#include "okay/Components/Joint3D.hpp"
 #include <cmath>
 #include <string>
 #include <vector>
@@ -28,6 +29,15 @@ Rigidbody3D* R(GameObject* o) { return o->GetComponent<Rigidbody3D>(); }
 float Tilt(GameObject* o) { Vec3 up = o->transform->Rotation() * Vec3{0, 1, 0}; return std::acos(std::max(-1.0f, std::min(1.0f, up.y))) * 57.29578f; }
 bool Finite(GameObject* o) { Vec3 p = P(o); return std::isfinite(p.x) && std::isfinite(p.y) && std::isfinite(p.z); }
 }
+
+// A callback that sets a speed while a contact is being handled (a jump pad, a blast) must keep it.
+struct Kick : Component {
+    Vec3 v{0, 12, 0};
+    void OnCollisionEnter3D(const Collision3D& c) override {
+        if (c.gameObject && c.gameObject->name == "Floor") return;
+        if (auto* r = gameObject->GetComponent<Rigidbody3D>()) r->velocity = v;
+    }
+};
 
 int main() {
     RUN_SUITE("physics_upgrade");
@@ -91,6 +101,64 @@ int main() {
     {
         World w(50.0f); w.Floor(); GameObject* c = w.Box({0, 0.6f, 0}); w.Run(10.0f);
         CHECK(R(c)->sleeping); CHECK_NEAR(P(c).y, 0.5f, 0.01);
+    }
+    // ---- A speed set inside OnCollisionEnter3D is not overwritten by the solve (a jump pad launched nothing before).
+    {
+        World w(50.0f); w.Floor();
+        GameObject* pad = w.Box({0, 0.1f, 0}, {2, 0.2f, 2}); R(pad)->bodyType = Rigidbody3D::BodyType::Static;
+        GameObject* ball = w.Ball({0, 1.5f, 0}); ball->AddComponent<Kick>();
+        float peak = 0;
+        for (int i = 0; i < 100; ++i) { w.Run(0.02f); peak = std::max(peak, P(ball).y); }
+        std::cout << "  ball launched by a callback: peak " << peak << " m (12 m/s should reach about 7)\n";
+        CHECK(peak > 5.0f);
+    }
+    // ---- Joints under a 50:1 mass ratio: a rope of eight 1 kg balls with a 50 kg ball on the end hangs close to its real length at every
+    // step rate (it hung 0.7 m, 6 m and 10.1 m of the true 11 m at 30, 60 and 144 Hz before the joint passes were ordered both ways).
+    for (float hz : {30.0f, 50.0f, 60.0f, 144.0f}) {
+        World w(hz); w.Floor();
+        GameObject* prev = nullptr;
+        for (int i = 0; i < 8; ++i) {
+            GameObject* b = w.Ball({0, 19.0f - (float)i, 0}, 0.2f, 1.0f); R(b)->freezeRotation = true;
+            auto* j = b->AddComponent<Joint3D>(); j->mode = (int)Joint3D::Mode::Distance;
+            if (prev) j->connectedBody = prev->name; else j->anchor = {0, 20, 0};
+            prev = b;
+        }
+        GameObject* heavy = w.Ball({0, 11.0f, 0}, 0.5f, 50.0f); R(heavy)->freezeRotation = true;
+        auto* jh = heavy->AddComponent<Joint3D>(); jh->mode = (int)Joint3D::Mode::Distance; jh->connectedBody = prev->name;
+        w.Run(10.0f);
+        std::cout << "  50:1 rope " << hz << " Hz: end at y " << P(heavy).y << " (true 11)\n";
+        CHECK(Finite(heavy));
+        CHECK(P(heavy).y > 10.2f && P(heavy).y < 11.05f);
+    }
+    // ---- A fixed (pin) joint between a 50 kg box and a 1 kg box keeps their gap and does not fall or spin off.
+    for (float hz : {30.0f, 60.0f, 144.0f}) {
+        World w(hz); w.Floor();
+        GameObject* a = w.Box({0, 5, 0}, {1, 1, 1}, 50.0f); GameObject* b = w.Box({1.2f, 5, 0}, {0.5f, 0.5f, 0.5f}, 1.0f);
+        auto* j0 = a->AddComponent<Joint3D>(); j0->mode = (int)Joint3D::Mode::Pin; j0->anchor = {0, 5, 0};
+        auto* j = b->AddComponent<Joint3D>(); j->mode = (int)Joint3D::Mode::Pin; j->connectedBody = a->name;
+        w.Run(5.0f);
+        CHECK(Finite(a) && Finite(b));
+        CHECK((P(b) - P(a) - Vec3{1.2f, 0, 0}).Magnitude() < 0.02f);
+        CHECK_NEAR(P(a).y, 5.0, 0.05);
+    }
+    // ---- A pendulum keeps its energy (the old step lost 31 percent in 20 s at 50 Hz; now under 6 percent in 10 s at any rate).
+    for (float hz : {30.0f, 60.0f, 144.0f}) {
+        World w(hz);
+        GameObject* b = w.Ball({2.12f, 10.0f - 2.12f, 0}, 0.2f, 1.0f);
+        auto* j = b->AddComponent<Joint3D>(); j->mode = (int)Joint3D::Mode::Distance; j->anchor = {0, 10, 0};
+        w.Run(10.0f);
+        const float v2 = R(b)->velocity.SqrMagnitude();
+        const float e = 0.5f * v2 + 9.81f * P(b).y, e0 = 9.81f * (10.0f - 2.12f);
+        CHECK(e / e0 > 0.93f && e / e0 < 1.02f);
+    }
+    // ---- A breakable joint snaps when pulled hard and then lets the body go.
+    {
+        World w(60.0f); w.s.physics3D().gravity = Vec3::Zero;
+        GameObject* b = w.Ball({1, 0, 0}, 0.2f, 1.0f);
+        auto* j = b->AddComponent<Joint3D>(); j->mode = (int)Joint3D::Mode::Distance; j->anchor = {0, 0, 0}; j->breakable = true; j->breakForce = 0.3f;
+        w.Run(0.5f); CHECK(!j->broken);
+        R(b)->velocity = {20, 0, 0}; w.Run(0.5f);
+        CHECK(j->broken); CHECK(P(b).x > 5.0f);
     }
     TEST_MAIN_RESULT();
 }

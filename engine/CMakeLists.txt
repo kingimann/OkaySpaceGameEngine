@@ -332,6 +332,14 @@ add_library(okay_engine
     src/Optimize/BatchPlanner.cpp
     src/Optimize/StreamingGrid.cpp
     src/Optimize/MipBudget.cpp
+    src/Texture/Texture.cpp
+    src/Texture/Mip.cpp
+    src/Texture/Atlas.cpp
+    src/Texture/Convert.cpp
+    src/Texture/Bc.cpp
+    src/Texture/Dds.cpp
+    src/Texture/Stream.cpp
+    src/Texture/Export.cpp
     src/Optimize/SceneOptimizationReport.cpp
     src/Testing/TestRegistry.cpp
     src/Testing/PlayTest.cpp

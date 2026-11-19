@@ -12,6 +12,7 @@ Find the window, page or symptom, then say the number. Back to the [overview](..
 | 3D looks different in the editor and the player | [2.1](02-rendering-world.md#21-renderers) Renderers |
 | a "Test build of ..." message in the launcher | [18.9](18-build-export-release.md#189-test-builds-the-dev-channel) Test builds (the dev channel) |
 | a .dae/.3ds file will not import without Assimp | [3.6](03-modeling-import.md#36-model-import) Model import |
+| a 10,000-row list is slow | [40.8](40-okayui-library.md#408-porting-helpers-tooltip-scope-style-fields-mapping-layer-list-clipper) Porting helpers: tooltip scope, style fields, mapping layer, list clipper |
 | a 2D level is made of flat coloured squares | [43.1](43-proposals.md#431-tilemaps-and-tilesets) Tilemaps and tilesets |
 | a ball does not bounce | [6.1](06-physics.md#61-2d-bodies-and-colliders) 2D bodies and colliders |
 | a ban banner on the launcher with an Appeal button | [39.6](39-security-anticheat.md#396-reports-bans-appeals-and-the-hardware-hash) Reports, bans, appeals and the hardware hash |
@@ -56,6 +57,7 @@ Find the window, page or symptom, then say the number. Back to the [overview](..
 | a chest opens for the wrong player | [11.1](11-gameplay-systems.md#111-inventory-bag-grid-chests-equipment) Inventory: bag, grid, chests, equipment |
 | a child jumps when re-parented | [1.3](01-core-scene.md#13-scene-graph) Scene graph |
 | a child still collides under a switched-off parent | [1.17](01-core-scene.md#117-scene-hierarchy-search-and-validation) Scene hierarchy, search and validation |
+| a child window with a content-sized height is the wrong size | [40.9](40-okayui-library.md#409-ported-code-calls-window-frame-context-style-presets-and-child-flags) Ported-code calls: window, frame, context, style presets and child flags |
 | a choice never shows | [10.2](10-story-cinematics.md#102-dialogue-graphs-and-dialogue-runner) Dialogue graphs and Dialogue Runner |
 | a click selects the wrong object | [36.6](36-math-geometry.md#366-geometry-helpers-elsewhere) Geometry helpers elsewhere |
 | a client can't connect or says "encryption required | [16.1](16-networking.md#161-transport-sealed-channels-packets) Transport, sealed channels, packets |
@@ -138,6 +140,7 @@ Find the window, page or symptom, then say the number. Back to the [overview](..
 | a launcher feature is hidden until a SQL file is run | [41.6](41-build-tools-infra.md#416-supabase-functions-and-sql-schema) Supabase functions and SQL schema |
 | a launcher warning in report mode | [39.4](39-security-anticheat.md#394-client-integrity-signed-manifest-and-launch-check) Client integrity: signed manifest and launch check |
 | a level gets slower with each change and nobody notices | [58.1](43-proposals.md#581-performance-budgets) Performance budgets |
+| a light theme call has no effect | [40.9](40-okayui-library.md#409-ported-code-calls-window-frame-context-style-presets-and-child-flags) Ported-code calls: window, frame, context, style presets and child flags |
 | a lighting setting does not save | [15.14](15-editor.md#1514-scene-settings-project-settings-and-help-windows) Scene settings, project settings and help windows |
 | a limb flips | [5.6](05-animation-ik.md#56-foot-limb-and-chain-ik) Foot, limb and chain IK |
 | a limb pops at full extension | [36.5](36-math-geometry.md#365-ik-math) IK math |
@@ -200,6 +203,9 @@ Find the window, page or symptom, then say the number. Back to the [overview](..
 | a plugin panel does not appear | [24.2](20-35-planned.md#242-editor-extensions) Editor extensions |
 | a plugin panel does not draw | [15.8](15-editor.md#158-plugin-system-and-plugins-menu) Plugin system and Plugins menu |
 | a point light casts no shadow | [2.3](02-rendering-world.md#23-lighting-and-shadows) Lighting and shadows |
+| a ported panel does not compile because of a missing call name | [40.9](40-okayui-library.md#409-ported-code-calls-window-frame-context-style-presets-and-child-flags) Ported-code calls: window, frame, context, style presets and child flags |
+| a ported panel does not compile because of GetStyle | [40.8](40-okayui-library.md#408-porting-helpers-tooltip-scope-style-fields-mapping-layer-list-clipper) Porting helpers: tooltip scope, style fields, mapping layer, list clipper |
+| a ported tooltip with several lines draws nothing | [40.8](40-okayui-library.md#408-porting-helpers-tooltip-scope-style-fields-mapping-layer-list-clipper) Porting helpers: tooltip scope, style fields, mapping layer, list clipper |
 | a pose pops at a key | [5.2](05-animation-ik.md#52-clips-and-curves) Clips and curves |
 | a PR waits for a verdict | [19.3](19-docs-tests-health.md#193-qa-workflow-rig-sweep-test) QA workflow, rig sweep test |
 | a prebuilt screen overlaps another | [12.7](12-ingame-ui.md#127-themes-and-the-launcher-matching-ui-kit) Themes and the launcher-matching UI kit |
@@ -482,6 +488,7 @@ Find the window, page or symptom, then say the number. Back to the [overview](..
 | Ctrl+Tab picks the wrong panel | [15.9](15-editor.md#159-layout-undo-autosave) Layout, undo, autosave |
 | Ctrl+Z also crouches | [8.7](08-input.md#87-input-upgrade-timing-curves-per-player-actions-recording-the-input-panel) Input upgrade: timing, curves, per-player actions, recording, the Input panel |
 | Ctrl+Z undoes the wrong thing after mesh editing | [22.1](20-35-planned.md#221-undo-history) Undo history |
+| cut-out leaves vanish in the distance | [2.13](02-rendering-world.md#213-texture-library-mipmaps-atlases-compression-streaming) Texture library (mipmaps, atlases, compression, streaming) |
 | D3D12 view lacks bump detail | [26.4](20-35-planned.md#264-pbr) PBR |
 | damage ignores armor | [11.9](11-gameplay-systems.md#119-rpg-stats-and-xp) RPG stats and XP |
 | death snaps to the floor or gets cut short by jump or fall | [5.12](05-animation-ik.md#512-built-in-action-clips) Built-in action clips |
@@ -531,6 +538,7 @@ Find the window, page or symptom, then say the number. Back to the [overview](..
 | faces dark | [3.6](03-modeling-import.md#36-model-import) Model import |
 | faces look dark or inside out after a weld or mirror | [3.1](03-modeling-import.md#31-edit-mode) Edit mode |
 | falls through the floor forever | [4.2](04-characters-cameras.md#42-stances-and-movement) Stances and movement |
+| far away textures shimmer or look dark | [2.13](02-rendering-world.md#213-texture-library-mipmaps-atlases-compression-streaming) Texture library (mipmaps, atlases, compression, streaming) |
 | far chunks pop in or never unload | [2.6](02-rendering-world.md#26-terrain-and-water) Terrain and water |
 | far mountains missing | [45.4](43-proposals.md#454-distant-scenery) Distant scenery |
 | FBX will not import in a default build | [3.6](03-modeling-import.md#36-model-import) Model import |
@@ -602,6 +610,7 @@ Find the window, page or symptom, then say the number. Back to the [overview](..
 | I do not know what to click first | [51.2](43-proposals.md#512-guided-tutorials-in-the-editor) Guided tutorials in the editor |
 | I imported an asset pack and cannot tell which version it is | [25.4](20-35-planned.md#254-dependency-management) Dependency management |
 | I need a quick texture | [42.7](42-examples-samples.md#427-starter-assets) Starter assets |
+| I need one picture from many sprites | [2.13](02-rendering-world.md#213-texture-library-mipmaps-atlases-compression-streaming) Texture library (mipmaps, atlases, compression, streaming) |
 | I need ten similar enemies and copy-pasting prefabs makes them drift apart | [21.3](20-35-planned.md#213-variants) Variants |
 | I tuned a value in Play and it was gone after Stop | [34.1](20-35-planned.md#341-properties-during-play) Properties during Play |
 | I tweaked one instance and it lost the change after the prefab was edited | [21.4](20-35-planned.md#214-overrides) Overrides |
@@ -929,6 +938,7 @@ Find the window, page or symptom, then say the number. Back to the [overview](..
 | texture stretched or mirrored on a modeled part | [3.4](03-modeling-import.md#34-uv-tools) UV tools |
 | texture tiles wrong | [2.2](02-rendering-world.md#22-materials-and-textures) Materials and textures |
 | textures blurry or too large | [20.4](20-35-planned.md#204-import-settings) Import settings |
+| textures use too much memory | [2.13](02-rendering-world.md#213-texture-library-mipmaps-atlases-compression-streaming) Texture library (mipmaps, atlases, compression, streaming) |
 | the 2.5D character runs on the spot against a wall | [4.3](04-characters-cameras.md#43-2d-and-25d-controllers) 2D and 2.5D controllers |
 | the 2D game looks blurry or jitters | [4.10](04-characters-cameras.md#410-camera-component-shake-and-zoom) Camera component, shake and zoom |
 | the 3D view is black or very slow | [38.1](38-render-backends.md#381-renderer-interface-and-backend-selection) Renderer interface and backend selection |

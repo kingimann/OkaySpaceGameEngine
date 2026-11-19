@@ -1,0 +1,16 @@
+// okay-ms own standard header (written from ISO/IEC 14882 [cstdint.syn]). On Windows x64 (LLP64) long is 32
+// bits, so the 64-bit types are long long.
+#pragma once
+namespace std {
+typedef signed char int8_t;
+typedef short int16_t;
+typedef int int32_t;
+typedef long long int64_t;
+typedef unsigned char uint8_t;
+typedef unsigned short uint16_t;
+typedef unsigned int uint32_t;
+typedef unsigned long long uint64_t;
+typedef unsigned long long size_t;
+typedef long long intptr_t;
+typedef unsigned long long uintptr_t;
+}

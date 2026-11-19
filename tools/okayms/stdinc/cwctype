@@ -1,0 +1,36 @@
+// okay-ms own standard header: wide character classes for the "C" locale, written from ISO/IEC 14882 [cwctype.syn]
+// and the character classes of ISO/IEC 9899 7.30 (ASCII only: a character above 127 is in no class and is not
+// converted). Defined in std, and also at global scope (a call of the global one is a call of the std one), so both
+// `iswalpha(c)` and `std::iswalpha(c)` work.
+#pragma once
+typedef unsigned short wint_t;
+namespace std {
+inline int iswdigit(wint_t c) { return c >= 48 && c <= 57; }
+inline int iswupper(wint_t c) { return c >= 65 && c <= 90; }
+inline int iswlower(wint_t c) { return c >= 97 && c <= 122; }
+inline int iswalpha(wint_t c) { return (c >= 65 && c <= 90) || (c >= 97 && c <= 122); }
+inline int iswalnum(wint_t c) { return (c >= 65 && c <= 90) || (c >= 97 && c <= 122) || (c >= 48 && c <= 57); }
+inline int iswxdigit(wint_t c) { return (c >= 48 && c <= 57) || (c >= 65 && c <= 70) || (c >= 97 && c <= 102); }
+inline int iswspace(wint_t c) { return c == 32 || (c >= 9 && c <= 13); }
+inline int iswblank(wint_t c) { return c == 32 || c == 9; }
+inline int iswcntrl(wint_t c) { return c < 32 || c == 127; }
+inline int iswprint(wint_t c) { return c >= 32 && c < 127; }
+inline int iswgraph(wint_t c) { return c > 32 && c < 127; }
+inline int iswpunct(wint_t c) { return c > 32 && c < 127 && !((c >= 65 && c <= 90) || (c >= 97 && c <= 122) || (c >= 48 && c <= 57)); }
+inline wint_t towlower(wint_t c) { return (c >= 65 && c <= 90) ? (wint_t)(c + 32) : c; }
+inline wint_t towupper(wint_t c) { return (c >= 97 && c <= 122) ? (wint_t)(c - 32) : c; }
+}
+inline int iswdigit(wint_t c) { return std::iswdigit(c); }
+inline int iswupper(wint_t c) { return std::iswupper(c); }
+inline int iswlower(wint_t c) { return std::iswlower(c); }
+inline int iswalpha(wint_t c) { return std::iswalpha(c); }
+inline int iswalnum(wint_t c) { return std::iswalnum(c); }
+inline int iswxdigit(wint_t c) { return std::iswxdigit(c); }
+inline int iswspace(wint_t c) { return std::iswspace(c); }
+inline int iswblank(wint_t c) { return std::iswblank(c); }
+inline int iswcntrl(wint_t c) { return std::iswcntrl(c); }
+inline int iswprint(wint_t c) { return std::iswprint(c); }
+inline int iswgraph(wint_t c) { return std::iswgraph(c); }
+inline int iswpunct(wint_t c) { return std::iswpunct(c); }
+inline wint_t towlower(wint_t c) { return std::towlower(c); }
+inline wint_t towupper(wint_t c) { return std::towupper(c); }

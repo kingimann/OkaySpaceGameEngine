@@ -1,0 +1,75 @@
+// okay-ms own standard header: std::set and std::multiset, written from ISO/IEC 14882 [set] and [multiset]. Own
+// minimal version: the elements are kept in a sorted array (found by binary search), so iterators are plain pointers
+// and an insert or erase in the middle moves the elements after it (linear time, where the standard says
+// logarithmic). Iterators and references are invalidated by an insert or erase (the standard keeps them valid).
+// Ordering is by operator< on the element type (no comparator argument). No allocator, no exceptions.
+#pragma once
+#include <cstddef>
+#include <initializer_list>
+#include <utility>
+#include <vector>
+namespace std {
+template <typename T>
+class set {
+    vector<T> items_;
+
+    // The index of the first element that is not less than value.
+    size_t lower(const T& value) const {
+        size_t lo = 0;
+        size_t hi = items_.size();
+        while (lo < hi) {
+            const size_t mid = lo + (hi - lo) / 2;
+            if (items_[mid] < value) lo = mid + 1;
+            else hi = mid;
+        }
+        return lo;
+    }
+
+public:
+    typedef T key_type;
+    typedef T value_type;
+    typedef size_t size_type;
+    typedef const T* iterator;
+    typedef const T* const_iterator;
+
+    set() {}
+    set(initializer_list<T> list) {
+        for (size_t i = 0; i < list.size(); ++i) insert(list.begin()[i]);
+    }
+    size_t size() const { return items_.size(); }
+    bool empty() const { return items_.empty(); }
+    const T* begin() const { return items_.begin(); }
+    const T* end() const { return items_.end(); }
+    void clear() { items_.clear(); }
+    size_t count(const T& value) const {
+        const size_t at = lower(value);
+        return at < items_.size() && !(value < items_[at]) ? 1 : 0;
+    }
+    const T* find(const T& value) const {
+        const size_t at = lower(value);
+        if (at < items_.size() && !(value < items_[at])) return items_.begin() + at;
+        return items_.end();
+    }
+    // The position of the value and whether it was new.
+    pair<const T*, bool> insert(const T& value) {
+        const size_t at = lower(value);
+        if (at < items_.size() && !(value < items_[at])) return pair<const T*, bool>(items_.begin() + at, false);
+        items_.insert(items_.begin() + at, value);
+        return pair<const T*, bool>(items_.begin() + at, true);
+    }
+    size_t erase(const T& value) {
+        const size_t at = lower(value);
+        if (at < items_.size() && !(value < items_[at])) {
+            items_.erase(items_.begin() + at);
+            return 1;
+        }
+        return 0;
+    }
+    const T* erase(const T* pos) {
+        const size_t at = (size_t)(pos - items_.begin());
+        items_.erase(items_.begin() + at);
+        return items_.begin() + at;
+    }
+    const T* lower_bound(const T& value) const { return items_.begin() + lower(value); }
+};
+}

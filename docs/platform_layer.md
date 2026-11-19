@@ -71,7 +71,7 @@ that is mostly types (renderer) reads larger than the number of calls. "Before" 
 
 | family | editor | launcher | player before -> after | shared | engine | okayui | tests | `okay::platform` has it? |
 |---|---|---|---|---|---|---|---|---|
-| window (create, size, position, fullscreen, icon, min size, flash, flags) | 49 | 84 | 37 -> 2 | 2 | 0 | 0 | 0 | HAVE. Added for the player: fullscreen/maximised at creation, `IsFullscreen`, `SetIcon`, `RefreshRateHz`. GAP: `SDL_FlashWindow` (launcher), `SDL_GetWindowFlags` minimised/mouse-focus queries (launcher) |
+| window (create, size, position, fullscreen, icon, min size, flash, flags) | 49 | 84 | 37 -> 2 | 2 | 0 | 0 | 0 | HAVE. Added for the player: fullscreen/maximised at creation, `IsFullscreen`, `SetIcon`, `RefreshRateHz`. Round 6 moved the minimised / mouse-focus / input-focus queries and the tray HWND. |
 | GL context | 33 | 0 | 21 -> 0 | 0 | 0 | 0 | 0 | HAVE (create, make current, swap, interval, proc address). Editor still on SDL |
 | events | 30 | 18 | 24 -> 0 | 0 | 0 | 0 | 13 | HAVE (quit, window close/focus/resize, keys, text, mouse, wheel, file drop, controller hot-plug). Added: touch (`FingerDown/Motion/Up`, sdl2 only) and `wheelFlipped`. GAP: `SDL_TEXTEDITING` (IME composition), `SDL_RENDER_*_RESET` (D3D11 device loss), Windows `SDL_SysWMEvent` |
 | keyboard, text input, mouse state | 75 | 2 | 58 -> 0 | 0 | 16 -> 1 | 1 | 20 | HAVE. Added: `RelativeMouseState`, `ModState`, `KeyForChar` (layout-aware), `IsCursorShown`. `Input/SdlKeys.hpp` is replaced by `Input/PlatformKeys.hpp` |
@@ -81,7 +81,7 @@ that is mostly types (renderer) reads larger than the number of calls. "Before" 
 | clipboard | 0 | 0 | 0 | 0 | 0 | 0 | 0 | HAVE; the apps use ImGui's clipboard, nothing calls ours yet |
 | cursors (system cursor shapes) | 0 | 0 | 0 | 0 | 0 | 0 | 0 | GAP (nothing uses them today either; ImGui sets cursors through its SDL backend) |
 | message box | 2 | 0 | 4 -> 0 | 0 | 0 | 0 | 0 | Added `ShowErrorBox`: sdl2 and Win32 real; own Linux returns false and logs (no toolkit to draw one with) |
-| display / DPI | 5 | 4 | 4 -> 0 | 0 | 0 | 0 | 0 | Added `SetPerMonitorDpiAware` (sdl2 hint, Win32 API; nothing elsewhere) and `Window::RefreshRateHz` (sdl2 only). GAP: display bounds / usable area / DPI queries (launcher, editor) |
+| display / DPI | 5 | 4 | 4 -> 0 | 0 | 0 | 0 | 0 | Added `SetPerMonitorDpiAware` (sdl2 hint, Win32 API; nothing elsewhere) and `Window::RefreshRateHz` (sdl2 only). First-run DPI moved (round 6). GAP: display bounds / usable area queries (launcher) |
 | misc runtime (init, log, paths, locales, hints, `SDL_free`, syswm) | 48 | 17 | 37 -> 3 | 2 | 0 | 25 | 5 | Added `BasePath`, `PrefPath`, `PreferredLocales`, `Log`. GAP: `SDL_GetWindowWMInfo` + `SDL_SetWindowsMessageHook` (launcher tray icon), `SDL_SaveBMP`, hints other than DPI |
 | threads, mutexes, atomics | 0 | 705 | 0 | 0 | 0 | 0 | 0 | Not a platform-layer feature. Not `std::thread` either: MinGW's win32 thread model cannot compile `<thread>` or `<mutex>` (rule 21a), so it needs our own wrapper, separately (launcher only) |
 | `SDL_Renderer`, textures, surfaces, colours, rects | 250 | 96 | 283 -> 280 | 48 | 92 | 107 | 101 | **Not behind the seam, and the main blocker.** A rendering library, not a platform one; needs an `SDL_Window*`. Needs our own 2D painter (see below) |
@@ -267,6 +267,218 @@ again with the OkayUI test panels and toasts (`OKAY_TESTUI=1 OKAY_DEV=1`) and wi
   typing in a non-ASCII layout, the editor and launcher splash screens (their call sites compile through the wrapper but the
   apps were not built or run), the web build, and long sessions (memory growth of the frame buffer was not measured).
 
+## Round 4: a small batch of leftover SDL calls moved (editor, player)
+
+Found with `grep` (per-file counts are in `docs/sdl_inventory.md`, section 5): calls that were still direct SDL although the seam had the
+feature. Moved, SDL2 still the default backend so nothing changes there:
+
+* `shared/SdlClipboard.hpp` became `shared/PlatformClipboard.hpp` (Play mode and player clipboard: `SDL_GetClipboardText`, `SDL_SetClipboardText`, `SDL_free`).
+* `Gestures::Tick` in the player and the editor: `SDL_GetTicks64()` / `SDL_GetTicks()` with a version `#if` became `okay::platform::TicksMs()`.
+* Editor `g_lastSavedAt = SDL_GetTicks64()` became `okay::platform::TicksMs()`. It was **compared with `okay::platform::TicksMs()`** two other
+  places, so on the own backend (a different zero point) the "Saved" toast would have shown or vanished at the wrong time.
+* Editor `SDL_GetBasePath()` (two places: default projects folder and the launcher message files) became `Backend::BasePath()`.
+
+Checked: `player/main.cpp` passes `g++ -fsyntax-only`. **`editor/main.cpp` was not compiled** (48,000 lines, not built here): the edits are
+the five lines above and follow the player's pattern. Not moved: `SDL_ShowSimpleMessageBox` in the editor start-up check (a warning icon,
+the seam's box is an error box), touch-device count, the renderer, ImGui backends, threads.
+
+## Round 5: window-bound calls, taskbar flash, touch count, GL current state (editor, launcher)
+
+New seam pieces (own code, written from the Microsoft `FLASHWINFO` documentation and from our own needs; nothing taken from SDL):
+
+* `okay::platform::WrapSdl2Window(void*)`: a non-owning `Window` over an `SDL_Window*` the app made itself. It is the bridge that lets window
+  calls move before windows are created by `Backend::MakeWindow`. It destroys nothing but a GL context made through it. Temporary, goes with SDL2.
+* `Window::Flash(FlashMode::Stop / Briefly / UntilFocused)`. sdl2: `SDL_FlashWindow` (guarded by the SDL 2.0.16 version check). Own Windows:
+  `FlashWindowEx` with the plan from `win32disp::PlanFlash` (briefly = caption and taskbar, 3 flashes; until focused = those plus
+  `FLASHW_TIMERNOFG`; stop = 0). Own Linux: not done (default returns false; the urgency hint is on `claude/platform-gaps2`).
+* `Backend::TouchDeviceCount()` (sdl2 only; own backends say 0 because they never produce finger events).
+* `Backend::CurrentGL()` / `RestoreGL()` with an opaque `GLCurrent` (the window and context pointers of the backend): the save and
+  restore the editor does around its hidden GPU-renderer context.
+
+Moved, SDL2 still the default (behaviour identical):
+
+* Launcher: `SDL_RestoreWindow / RaiseWindow / ShowWindow / HideWindow / MinimizeWindow`, `SDL_Get/SetWindowPosition`, `SDL_Get/SetWindowSize`,
+  `SDL_SetWindowMinimumSize`, `SDL_GetWindowID`, the chat window's focus test, and both `SDL_FlashWindow` calls now go through small `lw::` helpers
+  that wrap the window per call.
+* Editor: window size, id and focus queries on the main window (`winSeam`), the display refresh rate (`SDL_GetWindowDisplayMode`), relative mouse
+  motion (`SDL_GetRelativeMouseState` through `Backend::RelativeMouseState`), `SDL_GetNumTouchDevices`, and the hidden GL context of the GPU renderer
+  (context creation, make current, save and restore, `SDL_GL_GetProcAddress`) through the wrapper and the sdl2 backend.
+
+Left on SDL on purpose: `SDL_GetWindowFlags` minimised / hidden queries (no `Window` method yet), `SDL_GetKeyboardFocus` and friends,
+`SDL_GetWindowWMInfo` and the Windows message hook (tray icon), `SDL_GetWindowDisplayIndex` + `SDL_GetDisplayDPI` for the editor's first-run UI scale
+(`Window::Dpi()` rounds to a whole DPI and treats an absurd value as 96, which could differ by a quarter step in rare cases), `SDL_GetWindowFromID`
+(ImGui viewports), the windows' creation, and the `SDL_Renderer`.
+
+Tests: `test_platform_win32_pure` (flash plan), `platform_window_sdl2` (wrapper identity with SDL, non-owning, refresh rate, touch count, flash calls,
+GL current save / restore through the wrapper). Try it (rule 4a): nothing visible changes; in the launcher, minimise it and let a chat message or
+an update notice arrive, and the taskbar button flashes as before; in the editor, Play with mouse look and the GPU view work as before.
+
+## Round 6: window state, focus queries, tray handle, first-run DPI (editor, launcher)
+
+Written from our own needs and the Microsoft docs for `IsIconic`, `IsWindowVisible`, `GetFocus`, `WindowFromPoint`, `GetAncestor`, `SetForegroundWindow`
+and `SetFocus`, and from the EWMH `_NET_WM_STATE_HIDDEN` state on X11 (specifications only; nothing taken from SDL).
+
+* `Window::IsMinimized()`, `IsVisible()`, `HasMouseFocus()`, `HasInputFocus()` (same as `IsFocused()`), `SetInputFocus()` (ask for the keyboard
+  without raising) and `Win32Handle()` (the HWND for the tray icon; null off Windows).
+* `Backend::KeyboardFocusWindowId()`, `MouseFocusWindowId()` (0 = none of ours) and `NativeHandleFromId(id)` (window from id).
+* All three backends: sdl2 (`SDL_GetWindowFlags` / `SDL_GetKeyboardFocus` / `SDL_GetMouseFocus` / `SDL_SetWindowInputFocus` / `SDL_GetWindowFromID` /
+  `SDL_GetWindowWMInfo`), own Windows (`IsIconic`, `IsWindowVisible`, the window under the cursor, `SetForegroundWindow` + `SetFocus`, the HWND itself),
+  own Linux (Enter/Leave events, `_NET_WM_STATE_HIDDEN`, map state, `XSetInputFocus`; `Win32Handle` null).
+* Pure decisions in `okay/Platform/WindowLogic.hpp`, tested in `platform_win32_pure`: `UiScaleFromDpi` (first-run UI scale), `ShouldReclaimInputFocus`
+  (the editor hands the keyboard back after a pop-out closes), `IsActiveForFrameRate`, `NeedsAttentionFlash`, `IsBackgroundWindow`.
+* Moved (SDL2 still the default, behaviour the same): the editor's `SDL_GetWindowFromID` (pop-out viewports), first-run `SDL_GetDisplayDPI`,
+  `SDL_GetKeyboardFocus` / `SDL_GetMouseFocus` / `SDL_SetWindowInputFocus` (twice); the launcher's `SDL_GetWindowFlags` (7 places),
+  `SDL_GetKeyboardFocus` and `SDL_GetWindowWMInfo` (tray HWND, so `SDL_syswm.h` is no longer included).
+* Difference: the first-run DPI now goes through `Window::Dpi()`, which is a whole number and 96 when SDL cannot tell (the old code used the float
+  and left the scale alone on failure; the scale is 1.0 on a fresh install either way).
+* Verified: `platform_win32_pure` and `platform_window_sdl2` / `_own` under Xvfb (no window manager there, so minimize is not exercised); the launcher
+  and editor `main.cpp` compile on Linux; `OwnWin32.cpp` passes a MinGW syntax check. Unverified: the Windows paths (no Windows machine here),
+  and the own-Linux minimized/mouse-focus answers under a real window manager.
+
+## Round 7: window and platform start-up/shut-down creation moved onto the seam (editor, launcher; the player was done in stage 2)
+
+Written from our own needs; no new platform code (the SDL2 backend already had `Init`, `MakeWindow`, `CreateGLContext`, `Shutdown`).
+
+* Editor: `SDL_SetHint(DPI)`, `SDL_Init`, `SDL_CreateWindow` (main window and the hidden `okay-gl` GL window), `SDL_DestroyWindow` and `SDL_Quit`
+  became `Backend::SetPerMonitorDpiAware`, `Init`, `MakeWindow` (the seam window now owns the SDL window; the `SDL_Window*` for the ImGui backends and
+  `SDL_Renderer` comes from `NativeHandle()`), destroying the window object, and `Shutdown`. The GL context was already created through the seam.
+* Launcher: the same for the main window, the chat pop-out window, start-up / early exit / shutdown, and the on-demand audio start
+  (`SDL_InitSubSystem(AUDIO)` is `Init` with audio only). Display bounds queries were moved in round 5/6 (`DisplayCount/DisplayAt`).
+* Both apps ask for `BackendKind::Sdl2` explicitly, so `OKAY_PLATFORM_BACKEND=own` cannot hand an SDL-only code path a window with no `SDL_Window`.
+  SDL2 stays the default and the behaviour is meant to be identical. One deliberate detail: the SDL2 backend's `Init` switches text input off (the
+  seam's contract), SDL2 itself starts with it on, so both apps call `StartTextInput()` right after `Init`.
+* Not moved (stopped here): the `SDL_PollEvent` loops (editor 1, launcher 1) and `SDL_WINDOWPOS`/`SDL_Event` use feed Dear ImGui's `imgui_impl_sdl2`, which takes
+  an `SDL_Event`; they move with an own ImGui platform backend. `SDL_Renderer` creation needs the `SDL_Window*`. The launcher's `SDL_SetWindowsMessageHook`
+  (tray icon) is still SDL's. `editor/main.cpp` line 871 (`SDL_Init(SDL_INIT_EVENTS)` in the headless helper) is untouched.
+* Checked: launcher and editor `main.cpp` pass `g++ -fsyntax-only` with the real include paths. Not built to executables, not run.
+
+## Round 8: our own Dear ImGui platform feed (`shared/ImGuiPlatformFeed.hpp`), OFF by default
+
+Written from Dear ImGui's public header (`io.Add*Event`, `ImGuiKey`, `ImGuiPlatformIO`) and the `okay::platform` seam; imgui_impl_sdl2 and SDL
+code were not read or followed.
+
+* `Translate()` (pure): platform `Event` -> list of `Action`s (key, mouse position, button, wheel, text, focus), filtered by window id.
+  Key repeats are dropped (Dear ImGui repeats keys itself). `KeyToImGui()` is the key table (HID numbers, including F13-F24 and keypad `=`
+  by value). Dear ImGui also wants `ImGuiMod_Ctrl/Shift/Alt/Super` as their own key events; the feed keeps a held-modifier mask so
+  left + right keys of one kind work.
+* `Feed` (per ImGui context; the launcher has two): `ProcessEvent`, `NewFrame` (display size and framebuffer scale, delta time never zero,
+  "no mouse" when the pointer leaves and no button is held, cursor shape and hide, `WantSetMousePos` warp), clipboard and IME
+  position through `ImGuiPlatformIO` callbacks that go to the seam, window DPI remembered (`Dpi()`, not applied to ImGui's scale).
+  `FeedHost` hides the window and backend, so the tests use a fake one.
+* Seam additions: `CursorShape` and `Backend::SetCursorShape` (SDL2 backend: system cursors; own Linux / Windows backends: not written,
+  they return false), `TranslateSdl2Event()` (SDL event -> platform event with no side effects, temporary).
+* Wired into `editor/main.cpp` and `launcher/main.cpp` (main window and chat window) behind `OKAY_PLATFORM_EVENTS=own`. Default
+  stays `imgui_impl_sdl2`. Both apps log which one is active. In own mode the editor's multi-viewport pop-out panels are off (the feed
+  does not set `PlatformHasViewports`) and there is no gamepad navigation.
+* **Not moved yet:** the two `SDL_PollEvent` loops themselves. They still poll SDL because dozens of other consumers in them (`g_okayInput.Feed`,
+  controller add/remove, drop files, render reset, chat window routing) read `SDL_Event`; the own feed gets each event translated.
+  Moving the loops to `Backend::PollEvent` is the next step. Also not done: `SDL_CaptureMouse` (drag that leaves the window), IME
+  composition display, own-backend cursor shapes (X11, Win32), touch.
+* Checked: `ctest -R imgui_platform_feed` logic (built here with g++ against the pinned Dear ImGui commit; 82 checks), and `g++ -fsyntax-only`
+  of `launcher/main.cpp`, `editor/main.cpp` and `SdlBackend.cpp`. Not built to executables, not run on Windows, not tried with a real window.
+
+## Round 9: the editor and launcher event loops poll `okay::platform` (SDL2 still the default backend)
+
+Written from the seam's own header and the OS-neutral event meaning; no SDL source was read or followed. This moves the two
+big `SDL_PollEvent` loops (editor 1, launcher 1) and their small neighbours behind the seam. The own backend stays off by default and
+the apps still ask for the SDL2 backend (they still draw through `SDL_Renderer` and Dear ImGui's SDL backends).
+
+What the seam gained (each with a default, so a backend that cannot do it says so):
+
+| API | sdl2 | own Linux / own Windows |
+|---|---|---|
+| `Backend::PumpEvents()` | `SDL_PumpEvents` | reads waiting input into the backend's queue; the next `PollEvent` returns it, in order, nothing lost |
+| `Backend::PushEvent(Event)` | `SDL_PushEvent` for Quit, WindowClose, focus gained / lost, KeyDown / Up, TextInput, MouseMove, button down / up, wheel, DropFile | queues any event type except `NoEvent` and `Other` |
+| `Event::native` | `const SDL_Event*` of the event just returned (valid until the next poll) | null |
+| `Backend::ReportUnmappedEvents(bool)` and `EventType::Other` | with `true`, events the seam has no type for (pointer enter / leave, display changes, IME composition ...) come back as `Other` with `native` set, so imgui_impl_sdl2 still sees every event | nothing to report |
+| `EventType::RenderTargetsReset`, `RenderDeviceReset` | `SDL_RENDER_TARGETS_RESET`, `SDL_RENDER_DEVICE_RESET` | never fired |
+| `Backend::CharForKey(Key)` | inverse of `KeyForChar`: the letter, digit or space a key types on the current layout | the same (follows that backend's `KeyForChar`) |
+| `Event::windowId` on `DropFile` | set | the own Windows backend does not fill it (its drop has no per-window id) |
+
+Call sites moved:
+
+* **Editor** (`editor/main.cpp`): the main loop is `sdlSeam->PollEvent`. Escape edge, key taps for the playing game (layout-aware through
+  `CharForKey`), focus click, grabbed-pointer filter, quit / close / focus lost, controller add / remove, render resets, game text and wheel
+  (the wheel keeps SDL's raw OS direction: `wheelFlipped ? -wheelY : wheelY`), touch, OkayUI demo text and Backspace, file drops. The splash's
+  `SDL_PumpEvents` is `PumpEvents`; the `OKAY_UI_DROP` test hook pushes a platform `DropFile` through `PushEvent`.
+* **Launcher** (`launcher/main.cpp`): the main loop, `ChatHostEvent` (routes events to the chat window by window id; the kinds the seam has
+  no type for are routed by the id inside `native`), quit / close / focus gained, file drops (main window and chat window), and the verify-wait
+  `SDL_PumpEvents`.
+* **Dear ImGui**: `FeedImGuiEvent` in both apps takes a platform event. Default: `ImGui_ImplSDL2_ProcessEvent(event.native)`. With
+  `OKAY_PLATFORM_EVENTS=own`: `Feed::ProcessEvent(event)` directly (no more `TranslateSdl2Event` in the apps; the function stays for tests).
+* `shared/OkayUIHost.hpp`: `InputCollector::Feed(const okay::platform::Event&, char layoutChar)` next to the SDL overload. A test feeds both
+  with the same events and compares every field of `OkayUI::Input`.
+
+Tests: `ctest -R platform_events` (headless: round trip of every pushable event kind on each compiled-in backend, `PumpEvents` order,
+`native`, unmapped events, render resets, flipped wheel, drop strings, CharForKey; SDL 2.30 sometimes hands a just-pushed event over on the
+second poll, so the SDL part of the test polls up to five times), `ctest -R okayui_host` (SDL / platform parity), `ctest -R imgui_platform_feed`.
+
+Not moved (SDL calls that remain next to the loops): `SDL_EventState(SDL_DROPFILE)` (editor), `SDL_GetGlobalMouseState` (launcher drop
+position), the `SDL_PollEvent` in `editor/VsGraphShot.cpp` (a screenshot tool), the SDL window and renderer objects, Dear ImGui's SDL backends.
+Windows (own or sdl2) was not run; `OwnWin32.cpp` passes `-fsyntax-only` with MinGW.
+
+## Round 10: drops, cursors, global mouse, tray hook, the SDL second-poll bug, and the plan for `SDL_Renderer`
+
+Written from the freedesktop XDND protocol text, RFC 2483 / RFC 3986 (URI lists, percent-encoding), the X11 cursor font list and the Win32
+stock cursor ids; no SDL source was read or followed.
+
+* **SDL 2.30.0 `SDL_PollEvent` bug (found and fixed).** On SDL 2.30.0 (the Linux package used here) `SDL_PollEvent` returns 0 once when an
+  event was pushed after the previous poll emptied the queue, although `SDL_PeepEvents` already sees it; the event arrives on the call after.
+  Reproduced with a 20-line program, then by the new stress test. The sdl2 backend now does `SDL_PumpEvents` + `SDL_PeepEvents(GETEVENT, 1)`
+  in `PollEvent`. `tests/test_platform_events.cpp` pushes 3,000 events one at a time (push, poll, push, poll) and 3,000 more in a batch with
+  `PumpEvents` calls in between, on each backend, with no retries: none lost, none reordered, mixed kinds. Real input comes through the same
+  pump, so this is not known to have lost real events; it did make a poll right after `PushEvent` unreliable.
+* **Drops.** Own X11: XDND version 5 (`XdndAware` on every window, Enter / Position / Leave / Drop, `XdndStatus` and `XdndFinished` answers,
+  the `text/uri-list` selection; more than three types via `XdndTypeList`; an INCR transfer is refused). Paths come from
+  `UriListToPaths` (`engine/src/Platform/UriList.hpp`: `file://` and `file://localhost/`, percent-decoding, other hosts and schemes and `%00`
+  refused). One `DropFile` per file, `windowId` = the window it landed on. Own Windows already had `WM_DROPFILES` with a window id
+  (an earlier report of mine said it had none: wrong). The OLE drop target is not written (not needed for files). `SDL_EventState(SDL_DROPFILE)`
+  moved into the sdl2 backend's `Init`.
+* **Cursor shapes on the own backends.** X11 font cursors (`XCreateFontCursor`; the font has no diagonal resize arrows, so those use the window
+  corner cursors, and Progress is the watch like Wait), Win32 stock cursors (`LoadCursorW` + `SetCursor`, applied again on `WM_SETCURSOR`).
+  The shape tables are `engine/src/Platform/CursorMap.hpp` and are tested against the numbers in the system headers.
+* **`Backend::GlobalMouseState(x, y, buttons)`** (sdl2: `SDL_GetGlobalMouseState`; own X11: `XQueryPointer` on the root; own Windows:
+  `GetCursorPos`). The launcher's "was the file dropped on the chat box" check uses it.
+* **`Backend::SetNativeMessageHook(hook, user)`** (Windows only: sdl2 `SDL_SetWindowsMessageHook`, own Windows: called first in the window
+  procedure). The launcher's tray icon now installs its hook through it. Elsewhere it returns false.
+* `editor/VsGraphShot.cpp` (the `--vs-shot` screenshot tool) reads events through the seam.
+* **First step of the `SDL_Renderer` plan:** the launcher makes its six kinds of RGBA texture (game covers, remote images, emoji sheet,
+  animated frames, splash logo) with `okay::platform::Painter::CreateTexture` instead of `SDL_CreateRGBSurface...` +
+  `SDL_CreateTextureFromSurface` + `SDL_FreeSurface` (18 SDL calls fewer).
+
+Checked: `ctest -R "platform_events|platform_xdnd|okayui_host|imgui_platform_feed|^platform$"` on Linux (the drop and cursor tests under
+Xvfb with a second X connection acting as the drag source); `OwnWin32.cpp` with MinGW `-fsyntax-only`; editor, launcher, `VsGraphShot.cpp` and
+`SdlBackend.cpp` with `g++ -fsyntax-only`. **Not run:** anything on Windows (the Win32 drop, cursor, global mouse and message hook, and
+the sdl2 Windows hook trampoline, which no compiler here has the SDL headers for), a real file manager drag on Linux (the test source is
+written from the protocol text, so a real source may differ in detail), a window manager, Wayland, the launcher and editor with a window.
+
+### The biggest block left: `SDL_Renderer` drawing (plan)
+
+Measured by `docs/sdl_inventory.md` after this round: editor 126 calls, launcher 39 (of 722 / 220 reachable), plus Dear ImGui's two SDL
+backends (editor 17, launcher 13) and the window objects. Threads in the launcher (625) are bigger by count but are a separate job
+(`docs/sdl_removal_plan.md`, step 2). Plan, in order, each step small enough for one commit and each behind the default SDL2 painter so
+nothing changes unless the own backend is chosen:
+
+1. **Textures from pixels** (launcher: done this round; editor: `SDL_CreateTexture` 8, `SDL_UpdateTexture` 8, `SDL_SetTextureBlendMode` 8,
+   `SDL_SetTextureScaleMode` 8, `SDL_DestroyTexture` 6, `SDL_QueryTexture` 3 are the 3D view and thumbnail textures): move them to
+   `Painter::CreateTexture` / `UpdateTexture` / `SetTextureBlendMode` / `SetTextureScaleMode` / `DestroyTexture` / `QueryTexture`. All exist.
+2. **Frame calls** (editor and launcher: `SDL_RenderClear`, `SDL_RenderPresent`, `SDL_GetRendererOutputSize`, `SDL_RenderSetClipRect`,
+   `SDL_RenderSetScale`, `SDL_RenderSetVSync`, `SDL_RenderDrawPoint`): `Painter::Clear`, `Present`, `OutputSize`, `SetClipRect`, `SetScale`,
+   `SetVSync`, `DrawPoint` all exist. One `Painter` per renderer, made with `WrapSdl2Renderer`, kept next to the `SDL_Renderer*`.
+3. **What `Painter` lacks** (from the inventory): render targets (`SDL_SetRenderTarget`, editor 3), `SDL_RenderReadPixels` (2: screenshots),
+   `SDL_RenderFlush` (2: before raw GL calls), `SDL_RenderGeometryRaw` (1), `SDL_GetRendererInfo` (3: which driver), reading the draw colour,
+   and the Direct3D 11 device behind the renderer (the editor's interop). Add each with a default that says no, an sdl2 implementation, a
+   software-painter implementation where the software painter can do it, and a headless test against the SDL software renderer.
+4. **Our own Dear ImGui renderer backend** (replaces `ImGui_ImplSDLRenderer2_*`): turns `ImDrawData` into `Painter::Geometry` + `Copy` with
+   the per-command clip rectangle and texture, written from `imgui.h`'s documented draw-list structures. Compare it against the SDL
+   renderer backend on the same frame with the software painter (the `okayui_painter` method).
+5. **Window and renderer creation through the seam** (`SDL_CreateRenderer` editor 5, launcher 4; `SDL_CreateWindow` is already behind
+   `MakeWindow`): a `Painter` that owns its window surface on the own backend (GL or software). The speed on Windows is the unknown: the
+   software painter is fine for the player, but a 1080p editor needs a GPU path (OkayUI's GL and Direct3D 11 render backends exist and are
+   not wired).
+6. **Own Dear ImGui platform backend viewports** (the editor's pop-out panels), then delete `Event::native`, `ReportUnmappedEvents`,
+   `WrapSdl2Window` and `TranslateSdl2Event` together with SDL2.
+
 ## Not behind the seam yet (stage 1 list; see stage 2 above for what changed)
 
 The window, event loop and GL context of the editor, launcher and player still call SDL directly. Moving them needs more than
@@ -306,8 +518,34 @@ never fires), touch, DPI / multi-monitor queries, window icons, IME composition 
 ### Windows (compiles, untested)
 
 `OwnWin32.cpp`: Win32 window and input, `WM_CHAR` text, WGL context, Win32 clipboard, `QueryPerformanceCounter`, XInput pads,
-`WM_DROPFILES`. **Only syntax-checked with MinGW (`-fsyntax-only`) on Linux. Never run on Windows.** No audio device
-(`OpenAudio` returns null).
+`WM_DROPFILES`. **Only syntax-checked with MinGW (`-fsyntax-only`) on Linux. Never run on Windows.**
+
+Round 4 (this slice): **audio device** and the **scan code table**.
+
+| New file | What | Written from | Tested where |
+|---|---|---|---|
+| `engine/src/Platform/OwnWin32Audio.cpp` | WASAPI shared mode, event driven, playback and capture, queue and callback mode, device list (index 0 is `default`, then the active endpoints by friendly name). One `CreateThread` per device owns its COM objects (no `std::thread`, rule 21a). Asks for the exact format with `AUTOCONVERTPCM` + `SRC_DEFAULT_QUALITY`; if the engine refuses and `allowChange` is set it runs at the mix format (16-bit PCM or 32-bit float only) and says so in the `got` spec. Links `ole32`. | The public Microsoft documentation of `IMMDeviceEnumerator`, `IAudioClient`, `IAudioRenderClient`, `IAudioCaptureClient` | **MinGW `-fsyntax-only` only. Never run.** |
+| `engine/src/Platform/AudioPump.hpp` | The parts with no Windows in them: 100 ns time maths, period and buffer sizes, `WAVEFORMATEX(EXTENSIBLE)` field values and default speaker masks, the mix-format fallback rule, a growable byte queue with a spin flag (no mutex), what the pump does with one playback or capture buffer (underrun silence, silent capture packets, queue cap) | The WAVEFORMATEX, speaker position and `REFERENCE_TIME` documentation | `platform_audio_pump` (343 checks, also run under ASan and UBSan), on Linux |
+| `engine/src/Platform/Win32Keys.hpp` | The scan code to HID key table, moved out of `OwnWin32.cpp`. Two keys were missing and are now there: the ISO key (scan 0x56) and the menu key (extended 0x5D). `Key::NonUsBackslash = 100` and `Key::Application = 101` are new (HID numbers, SDL's too). | The Microsoft scan code table (set 1) and the USB HID keyboard page | `platform_audio_pump` |
+| `tools/platform_selftest/` (`okay-platform-selftest`) | A check program that uses only `okay::platform` with the own backend forced: timers, folders, GL context + version string (hidden window), a software frame shown with `PresentPixels` (colour bars, moving square, mouse cross), window size, clipboard round trip, audio devices, a 440 Hz tone through the audio device, microphone capture, first gamepad, keyboard, text, mouse and wheel events counted. Prints PASS / FAIL / NOT TESTED and saves `okay-platform-selftest.txt` beside the exe. CMake `-DOKAY_BUILD_PLATFORM_SELFTEST=ON` (off by default); `scripts/build-windows-dist.sh` copies it to `Tools/` when present. `--auto` runs headless for 2 s. Pure parts (tone, tally, summary text) in `SelfTestLogic.hpp`. | General knowledge (sine oscillator, zero crossings) | `platform_selftest_logic` (27 checks); `platform_selftest_auto` under Xvfb with ALSA's null device (10 pass, 0 fail, 6 need a human); MinGW syntax check. Not run on Windows |
+
+| `engine/src/Platform/Win32Display.hpp` + `OwnWin32.cpp` | **Per-monitor DPI and displays.** `Window::Dpi()` (GetDpiForWindow, else GetDpiForMonitor, else 96), `EventType::WindowDpiChanged` (from `WM_DPICHANGED`; the window is moved to the rectangle Windows suggests), `Backend::DisplayCount/DisplayAt` (`DisplayInfo`: bounds, usable area, DPI, refresh rate, primary; EnumDisplayMonitors), `Window::RefreshRateHz` on Win32. The sdl2 backend implements the same three queries. Pure maths: DPI to scale, rounding, rectangle from RECT, display order and point lookup. | Microsoft docs: `WM_DPICHANGED`, `GetDpiForMonitor`, `EnumDisplayMonitors`, `MONITORINFOEX` | maths: `platform_win32_pure`; the Win32 calls: MinGW syntax check only; sdl2 queries: compile check only (no display data tested) |
+| `Win32Icon.hpp` | **Window icon** (`Window::SetIcon` on Win32): RGBA to BGRA, the 1-bit AND mask, a box-filter resize to the system's big and small icon sizes, `CreateIconIndirect` + `WM_SETICON`. Assumes straight (not premultiplied) alpha in the 32-bit bitmap: unverified. | Microsoft docs: `ICONINFO`, `CreateIconIndirect`, `SM_CXICON` | pixel functions: `platform_win32_pure`; the Windows calls: syntax check only |
+| `Win32Ime.hpp` | **IME composition.** `EventType::TextEditing` (text being composed, caret in code points; empty = cleared) from `WM_IME_STARTCOMPOSITION / COMPOSITION / ENDCOMPOSITION`, `Backend::SetTextInputRect` (candidate window position). The finished text still arrives as `WM_CHAR` -> `TextInput`. The system's own composition window stays on. A state machine decides when an event is worth sending (no repeats, one clear). | Microsoft docs: IME messages, `ImmGetCompositionStringW`, `GCS_*` | state machine and UTF-16 to UTF-8: `platform_win32_pure`; the Imm calls: syntax check only; no real IME tried |
+| `HidParser.hpp` | **Raw HID pads (parser, math).** A report descriptor parser (short and long items, push/pop, usage ranges, report ids, input fields), bit reading, axis normalisation to -32768..32767, hat to direction bits, and a pad layout (axes, hats, buttons). Its `Parse` is for hidraw; on Windows only its `NormalizeAxis` and `HatBits` are used (Windows does not hand out the raw descriptor). | USB HID 1.11 (item format) and the HID usage tables | `platform_win32_pure` with descriptors assembled byte by byte, plus 3,000 random inputs under ASan/UBSan (the fuzz found a count that allocated 4 billion entries; fixed) |
+| `Win32Hid.hpp` + `OwnWin32Hid.cpp` + `OwnWin32.cpp` | **Non-XInput pads on Windows (Raw Input + `HidP_*`).** A message-only window gets `WM_INPUT` and `WM_INPUT_DEVICE_CHANGE` (`RegisterRawInputDevices` for joystick and game pad usages, `RIDEV_INPUTSINK \| RIDEV_DEVNOTIFY`). Per device: `HidP_GetCaps / GetButtonCaps / GetValueCaps` become a layout (up to 8 axes, 2 hats, 32 buttons), each report is read with `HidP_GetUsages / GetUsageValue`. XInput devices (`IG_` in the device name) are skipped; they stay on XInput. Index order: XInput slots first, then raw pads; `GamepadAdded/Removed` events for raw pads. These pads have **no built-in layout** (`HasBuiltinMapping()` false): the game reads `RawAxis / RawButton / RawHat`. Pure parts: the `IG_` rule, VID/PID from the name, caps to layout, sign extension, a logical maximum of -1 on an unsigned byte, evaluation of a report. | Microsoft docs: Raw Input, `HIDP_BUTTON_CAPS`, `HIDP_VALUE_CAPS`, `HidP_GetUsageValue`; HID 1.11 | maths: `platform_win32_pure`; Win32 side: MinGW syntax check only, **never run, no real pad tried** |
+| `PadMap.hpp` + `OwnWin32Hid.cpp` | **Standard layout for raw pads, product name.** Our own text file format (`gamepad_map.okaypadmap`, `[pad]` entries with `vid`, `pid`, `name` and one line per standard control: `a = b0`, `leftx = a0`, `lefty = -a1`, `righttrigger = a5+`, `dpup = h0.up`, a button on a trigger reads 0 or 32767, an axis on a trigger turns -32768..32767 into 0..32767) and a pure evaluator: `StandardAxis`, `StandardButton`. A pad found in the file by vid/pid has `HasBuiltinMapping()` true; any other raw pad gets `GuessMap` from its axis, button and hat counts (axes 0-1 left stick, 2-3 right stick, 4-5 triggers; buttons 0-3 A B X Y, 4-5 bumpers, 6 Back, 7 Start, 8-9 stick clicks, 10 Guide; hat 0 the d-pad) and `HasBuiltinMapping()` stays false, but `Axis()` / `Button()` work from the guess. Files read in order, later wins: next to the program, the working folder, the path in `OKAY_GAMEPAD_MAP`. Bad lines are skipped and printed to stderr. Sample: `examples/input/gamepad_map.okaypadmap` (a made-up pad, no real device data; **no map database of real pads is shipped**, we do not copy anyone's). The name is `HidD_GetProductString` on the device path (opened with no access rights), cleaned (`CleanProductName`: control characters, spaces, 63 bytes at a UTF-8 boundary), else `HID game controller VID:PID`. | Own design; Microsoft docs for `HidD_GetProductString` | pure parts: `platform_win32_pure`; Win32 side: MinGW syntax check only, **never run, no real pad tried; the guess may be wrong for many pads** |
+| `Win32Display.hpp` + `OwnWin32.cpp` | **Multi-monitor centring and fullscreen.** A window asked to be centred (`kCentered`) opens in the work area (task bar excluded) of the display under the mouse pointer (`DisplayForNewWindow`, `CentredRect`), and `SetPosition(kCentered, ...)` centres on the monitor the window is on; a window larger than the area starts at its top-left corner. Fullscreen covers the whole monitor the window is mostly on (`MonitorFromWindow`), leaving restores the old rectangle. The frame is measured at that monitor's DPI. | Microsoft docs (`MonitorFromWindow`, `GetMonitorInfo`, `GetCursorPos`) | pure maths in `platform_win32_pure`; Win32 side MinGW syntax check only, never run on two monitors |
+| `Backend::IsRelativeMouse()` (new) | The editor's Play mode asks and sets the locked mouse (`SetRelativeMouse`, `IsRelativeMouse`) and warps the pointer to the Game view centre (`WarpMouse(nullptr, ...)`, the window the pointer is in) through the seam: 6 `SDL_SetRelativeMouseMode / GetRelativeMouseMode` and 2 `SDL_WarpMouseInWindow` calls. The launcher's `KeepWindowOnScreen` reads the display list and usable areas from `DisplayCount / DisplayAt` instead of `SDL_GetNumVideoDisplays / GetDisplayUsableBounds`. SDL2 backend, own Win32 and own Linux implement it. | own | compiled (g++ syntax-only: editor, launcher, platform files; MinGW for Win32); not run |
+| `OwnWin32.cpp` DPI | **DPI-aware frame.** `AdjustWindowRectExForDpi` (looked up at run time, plain `AdjustWindowRectEx` before Windows 10 1607) is used at window creation (DPI of the monitor holding the requested position), `SetSize` and the minimum size. Drawable size is the client size (device pixels for a per-monitor aware window; a DPI-unaware process gets a scaled bitmap) so it needs no factor: use `Window::Dpi()` for the UI scale. | Microsoft docs: `AdjustWindowRectExForDpi`, high DPI desktop apps | `ValidDpi` in `platform_win32_pure`; the calls: MinGW syntax check only |
+
+`OKAY_OWN_PLATFORM=1` is now accepted as a short form of `OKAY_PLATFORM_BACKEND=own` (the long variable wins when both are set; test `platform_default_env_own_short`).
+
+Honest limits: nothing here has opened a real audio endpoint. Open questions only a Windows run answers: whether `AUTOCONVERTPCM`
+is accepted for 6 and 8 channels on common drivers (the mix-format fallback covers a refusal), device-removal handling (the pump
+stops and the device goes silent, it does not reopen), and latency (three periods, at least 20 ms, is a guess). `QueuedBytes`
+counts only our queue, not what is already inside the engine's buffer (the Linux device does the same).
+Still missing on Windows: rumble and battery for non-XInput pads, the app drawing its own IME candidate list. Nothing here has run on Windows.
 
 ### macOS (not written)
 
@@ -319,6 +557,8 @@ MinGW cross-compiler, so nothing was written rather than writing code that was n
 | ctest name | What | Needs |
 |---|---|---|
 | `platform` | registry, key numbering vs SDL scancodes, timers (both backends), `BasePath` (equals the executable's directory), `PrefPath` (created, writable, under `$XDG_DATA_HOME`), `PreferredLocales` (own parsing of `$LANGUAGE` / `$LC_ALL` is exact), error box / DPI on own report "not supported", the US `KeyForChar` table, audio devices on both backends (queue, clear, pause, callback, capture; SDL dummy driver / ALSA `null` device), controllers enumeration, own evdev mapping fed through a pipe | nothing; audio parts print `SKIP` when no device can be opened |
+| `platform_win32_pure` | Display/DPI maths, icon pixels, IME state machine, HID parser (see "Windows" above) | nothing |
+| `platform_audio_pump` | Pure Windows helpers (see "Windows" above): time maths, wave formats, speaker masks, mix-format fallback, byte queue against a plain model, playback and capture buffer rules, the scan code table | nothing |
 | `platform_window_sdl2`, `platform_window_own` | create / resize / title, GL clear colour read back with `glReadPixels` (and for `own`, the window's pixels read back from the X server with `XGetImage`), keyboard, modifiers, text input (incl. a non-ASCII character), mouse buttons / wheel / motion, relative mouse, clipboard (incl. a second X client reading ours and vice versa). Stage 2 added: `KeyForChar` on the US and the German layout (z and y swap places), `ModState`, `AppendExtendedKeys` (F-keys, Tab, navigation, left/right modifiers) with keys held through xdotool, `RelativeMouseState` sums (12,7 then 0,0 then -5,3), `IsCursorShown`, fullscreen at creation and toggled, maximised, `SetIcon` (valid and invalid), refresh rate, base path; on sdl2 also touch events and flipped / normal wheel events pushed as SDL would | Xvfb, `xdotool` (XTEST input). Skipped (exit 77) when either is missing |
 | `platform_default_env_sdl2`, `platform_default_env_own` | `OKAY_PLATFORM_BACKEND` in the environment overrides the build's default backend (`test_platform --print-default`) | nothing |
 

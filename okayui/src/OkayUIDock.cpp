@@ -1,6 +1,7 @@
 // OkayUI docking: the dock space, tab strips, splitters, drag to float / dock, drop-target preview.
 // The data model is in OkayUIDockLayout.cpp. See okay/UI/OkayUIDock.hpp.
 #include "okay/UI/OkayUIDock.hpp"
+#include "okay/UI/OkayUIDockBuilder.hpp"
 
 #include <algorithm>
 #include <cmath>
@@ -149,6 +150,7 @@ DockDropInfo GetDockDrop() { return C().drop; }
 void DockReset() {
     Ctx& c = C();
     c = Ctx();
+    DockBuilderReset();
 }
 
 std::string DockSaveLayout() { return C().layout.Save(); }
@@ -314,16 +316,18 @@ bool DockBegin(const char* title, bool* p_open, int flags) {
     Ctx& c = C();
     if (c.inBegin) DockEnd();   // an unmatched DockBegin
     c.inBegin = true; c.began = c.clipped = c.floating = false; c.curName.clear(); c.pOpen = p_open;
-    if (!title || !*title) return false;
+    if (!title || !*title) { DockBuilderDropNext(); return false; }
     std::string name = title;
     if ((int)name.size() > DockLayout::kMaxNameLen) name.resize((size_t)DockLayout::kMaxNameLen);
     c.curName = name;
     for (size_t i = 0; i < c.closed.size(); ++i) if (c.closed[i] == name) {
         c.closed.erase(c.closed.begin() + (long)i);
         if (p_open) *p_open = false;
+        DockBuilderDropNext();
         return false;
     }
-    if (p_open && !*p_open) return false;
+    if (p_open && !*p_open) { DockBuilderDropNext(); return false; }
+    DockBuilderApplyNext(name);   // SetNextWindowDockID
     if (!c.layout.Contains(name)) {
         const float k = (float)(c.layout.FloatingWindows().size() % 8) * 26.0f;
         if (!c.layout.AddFloating(name, Rect{c.area.x + 40.0f + k, c.area.y + 40.0f + k, 320.0f, 240.0f})) return false;   // layout full

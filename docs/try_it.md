@@ -109,6 +109,8 @@ release job or the installer build for this change.
 | 10 | Own HTTP client (off by default) | none | **Cannot be tried on Windows** |
 | 11 | Own platform layer (off by default) | `OKAY_PLATFORM_BACKEND=own` | Unverified on Windows, never run there |
 | 12 | OkayUI instead of Dear ImGui (off by default) | `OKAY_UI_BACKEND=okayui` | Unverified, only a few screens |
+| 12b | OkayUI Crash Log (visible rows only) and Audio Mixer (meter tooltip), off by default | `OKAY_DEV=1` and `OKAY_UI_BACKEND=okayui`, editor View menu | Headless tests and images only; never run in the Windows editor |
+| 12c | OkayUI DockBuilder, SetNextWindowDockID, Shortcut and eleven small calls (library only, nothing uses them yet) | none in the Windows release; headless tests only: `ctest -R "okayui_dockbuilder|okayui_internals"` | **Cannot be tried in the Windows release yet**; Linux headless tests only |
 | 13 | Own crypto | none, on purpose | **Cannot and must not be tried** |
 | 15 | One shared inflate (zlib/gzip) decoder: PNG, `.blend`, FBX, `.x`, `.zgl`, 3MF/AMF, HTTP gzip | open a PNG texture; `examples\own_readers\cube_gzip.blend`, `cube_compressed_arrays.fbx` | PNG always on; the readers need their switch; HTTP gzip is Linux only |
 | 15b | Blender reader applies Mirror and Subdivision Surface modifiers (off by default, like the reader) | `OKAY_OWN_BLEND=1`, `examples\own_readers\mirror_subdiv_box.blend` | Tests only (Linux); not run in a Windows editor |
@@ -2371,9 +2373,68 @@ Unplug and replug it: a "gamepad removed / added" event is counted. Xbox pads st
 ### 12. OkayUI
 
 `OKAY_UI_BACKEND=okayui` (or `OKAY_OWN_STACK=1`) starts the launcher and editor on OkayUI where it is compiled in. Only
-the screens that have an OkayUI port change (in the editor, the Console panel today); everything else stays Dear ImGui.
+the screens that have an OkayUI port change (in the editor, the Console, Crash Log and Audio Mixer panels; see 12b); everything else stays Dear ImGui.
 The About popup shows `ui=okayui` when it took effect. Whether the Windows release contains OkayUI is unverified: if not,
 the line stays `ui=imgui`. Nothing was run in a real window.
+
+### 12b. OkayUI: Crash Log and Audio Mixer panels
+
+**What it is.** Two editor windows can be drawn by our own UI toolkit (OkayUI) instead of Dear ImGui. The Crash Log now uses the
+new `ListClipper` (only the rows you can see are laid out, so a report of 100,000 lines scrolls as fast as one of 10), and the
+Audio Mixer meters now show a small tooltip box (the meter name, then the level in dB on its own line) built with the new
+`BeginTooltip` / `EndTooltip`. With the switch off (the default) you get exactly the old Dear ImGui windows.
+
+**Switch (developer only, off by default).** In a Windows command prompt:
+
+    set OKAY_DEV=1
+    set OKAY_UI_BACKEND=okayui
+    OkayEngine.exe
+
+(Without `OKAY_DEV=1` the switch is ignored on purpose: owner rule, no own code is turned on for users yet.)
+
+**How to tell it is on.** The startup stack line in the console says `ui=okayui` (`[okay] stack: ... ui=okayui`), Help > About shows
+`ui=okayui`, and View > Rendering & Performance > UI backend has "OkayUI (preview)" ticked and says "OKAY_UI_BACKEND is set and decides this."
+
+**Steps: Crash Log.**
+1. Open **View > Debug & Data > Crash Log**. With no reports you see "No crash reports - nice." in green.
+2. To get something to look at, copy any long text file to `okay_crashlog.txt` next to `OkayEngine.exe` (for example a few thousand lines
+   of a log) and press **Refresh**. You should see the newest line at the bottom, "Newest report is at the bottom", and a scroll bar. Scroll with
+   the wheel to the top: the window stays smooth however long the file is.
+3. **Copy All** puts the text on the clipboard, **Open Folder** opens the folder, **Clear** asks first (Cancel keeps the file, Delete removes it).
+4. Unset `OKAY_UI_BACKEND` and start again: the same window, drawn by Dear ImGui. It should behave the same (differences below).
+
+**Steps: Audio Mixer.**
+1. Open **View > World & Gameplay > Audio Mixer** and play a scene with sound (Play) so the meters move.
+2. Hover the mouse over the green "Output" bars. A box appears with `Left` or `Right` and, under it, the level in dB (for example `-12.3 dB`).
+3. Drag the volume sliders, click the mute boxes, tick "Duck music under voice" (three more sliders appear) and press **Reset**.
+
+**Differences from the Dear ImGui versions (said plainly).** Report text cannot be selected with the mouse (use Copy All); a very long line is
+cut at the window edge; the meter tooltip has two lines, not one (`Left` / `-12.3 dB`, was `Left: -12.3 dB`); sliders show no number text.
+
+**What was checked.** `ctest -R "okayui_panels|okayui_scopes"` (headless): a 5,000-line report lays out fewer than 60 rows, scrolls to the oldest and
+newest line, and its picture is pixel for pixel the same as before the change (the three Crash Log golden images did not change); the meter
+tooltip has a golden image (`okayui/tests/golden/audiomixer_meter_tip.png`, a headless software render, not a screenshot of the editor window).
+**Not verified:** the Windows editor was not built or run with these changes; a real GPU and real mouse were not used.
+
+### 12c. OkayUI: DockBuilder, SetNextWindowDockID, Shortcut and small calls
+
+**Cannot be tried in the Windows release yet.** These are calls in the OkayUI library (`okayui/`) that ported editor code will use
+(the editor's layout presets, its keyboard shortcuts, its drag and drop). No editor or launcher screen calls them yet, so there is
+no menu, switch or sample scene that shows them. What is missing for that: a ported editor dock space (the editor's own dock space
+still runs on Dear ImGui). The first screen that will show them is the OkayUI dock space when the editor's layout presets are ported.
+
+**What you can run (Linux or a Windows build with the OkayUI tests on):**
+
+    ctest -R "okayui_dockbuilder|okayui_internals" --output-on-failure
+
+**What you should see.** Both tests print `PASS`. `okayui_dockbuilder` builds the editor's "Default" layout (Hierarchy on the left,
+Inspector on the right, Console / Problems / Project / ... as seven tabs along the bottom, Scene and Game as tabs in the middle) with
+the same call sequence the editor's `BuildLayoutPreset` uses, draws it, and prints the measured widths and heights next to the expected
+ones (for 1280 x 720: left 255.2, right 427.1, bottom 157.5 px). `okayui_internals` covers Shortcut (Ctrl+S style chords), resizing a
+window by title, the drag-and-drop payload, and the state store.
+
+**Not verified:** nothing here was run in the Windows editor or launcher, and the preset call sequence was copied by hand from the
+editor source, not run through it. See `docs/own_ui_toolkit.md` section 6.9.
 
 ### 13. Own cryptography
 

@@ -62,6 +62,7 @@ struct SdkInputs {
     bool vswhereFound = false;                     // vswhere.exe exists at its fixed install path
     std::vector<VsInstall> installs;               // vswhere -products * -sort (newest first as vswhere lists them)
     std::vector<std::string> vswhereInstallPaths;  // older input form: just the paths (used only when `installs` is empty)
+    std::string probeNote;                         // set when the probe itself had a problem (e.g. "vswhere did not answer within 5 seconds"); shown in the message
 };
 
 // Component ids, from Microsoft's "Visual Studio component directory" as remembered: UNVERIFIED, so they are only shown to the person and
@@ -99,6 +100,7 @@ struct SdkReport {
     std::string sdkRoot;           // e.g. C:/Program Files (x86)/Windows Kits/10
     std::string makeAppxPath, signToolPath;
     std::string message;           // one plain paragraph for the editor
+    bool checking = false;         // true while the probe still runs on its worker thread (XboxAsyncProbe.hpp): items are empty, nothing is decided yet
 };
 
 // "10.0.19041.0" -> {10,0,19041,0}. A name that is not four or more numbers gives an empty vector.
@@ -282,6 +284,7 @@ inline SdkReport EvaluateSdk(const SdkInputs& in) {
         r.message = "All required tools were found. This only means the files exist: no Xbox package has been built or run from this editor yet (experimental, unverified).";
     else
         r.message = "Xbox export is unavailable on this PC. Missing: " + missing + ". Install them (steps below) and press Check again.";
+    if (!in.probeNote.empty()) r.message += " Note: " + in.probeNote + ".";
     return r;
 }
 

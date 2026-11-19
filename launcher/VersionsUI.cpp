@@ -690,6 +690,8 @@ bool TakePageRequest() {
     return r;
 }
 bool InstallRunning() { return S().job != nullptr; }
+bool IndexBusy() { return S().indexJob != nullptr; }
+bool IndexLoaded() { return S().haveIndex; }
 
 const std::vector<std::string>& InstalledVersionsCached(const fs::path& launcherDir) {
     State& st = S();

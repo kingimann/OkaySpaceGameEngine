@@ -24,6 +24,22 @@ static string sh(const string& args = "", int* rc = nullptr) {
 }
 static int ran(const string& out) { auto p = out.find("ran "); return p == string::npos ? -1 : atoi(out.c_str() + p + 4); }
 static void check(bool c, const string& what, const string& ctx = "") { if (c) ++gPass; else { ++gFail; printf("  FAIL: %s\n%s\n", what.c_str(), ctx.c_str()); } }
+// __FILE__ is relative when the test was compiled with a relative path, and the test then runs from another folder.
+// Find this file's folder by trying the spelling as given, then walking up from the working directory.
+static fs::path srcDir() {
+    static fs::path d;
+    if (!d.empty()) return d;
+    fs::path f = fs::path(__FILE__);
+    std::error_code ec;
+    if (f.is_absolute() && fs::exists(f, ec)) return d = f.parent_path();
+    fs::path rel = fs::path("tools/okaybuild") / f.filename();
+    for (fs::path c = fs::current_path(); ; c = c.parent_path()) {
+        if (fs::exists(c / rel, ec)) return d = (c / rel).parent_path();
+        if (fs::exists(c / f, ec)) return d = fs::absolute(c / f).parent_path();
+        if (c == c.parent_path()) break;
+    }
+    return d = f.parent_path();
+}
 static void fresh(const string& name) { gRoot = fs::temp_directory_path() / ("okaybuild_test_" + name); fs::remove_all(gRoot); fs::create_directories(gRoot); }
 static void sleepMs() { std::this_thread::sleep_for(std::chrono::milliseconds(20)); }
 static long long mtimeNs(const fs::path& p) { struct stat st{}; if (stat(p.c_str(), &st) != 0) return -1; return (long long)st.st_mtim.tv_sec * 1000000000ll + st.st_mtim.tv_nsec; }
@@ -641,7 +657,7 @@ static void testImportedCompdb() {
 
 static void testWindowsHost() {
     printf("test: okay-build compiles as a Windows program and runs under wine\n");
-    fs::path cpp = fs::path(__FILE__).parent_path() / "okay-build.cpp";
+    fs::path cpp = srcDir() / "okay-build.cpp";
     if (!fs::exists(cpp)) { printf("  skipped (okay-build.cpp not beside the test)\n"); return; }
     if (system("x86_64-w64-mingw32-g++-win32 -v >/dev/null 2>&1") != 0) { printf("  skipped (no mingw)\n"); return; }
     fs::path exe = fs::temp_directory_path() / "okay-build-win-host.exe";
@@ -718,8 +734,9 @@ static void testReportDiff() {
 static void testDistLayout() {
     printf("test: package dist matches the Windows distribution layout\n");
     fresh("distl");
-    string script = readFile(fs::path(__FILE__).parent_path().parent_path().parent_path() / "scripts/build-windows-dist.sh");
+    string script = readFile(srcDir().parent_path().parent_path() / "scripts/build-windows-dist.sh");
     check(script.find("OkaySpace.exe") != string::npos && script.find("EXAMPLE_DIRS=") != string::npos, "read the dist script");
+    if (script.find("EXAMPLE_DIRS=") == string::npos) return; // do not throw from substr below
     string examples = script.substr(script.find("EXAMPLE_DIRS="));
     auto q1 = examples.find('"'); auto q2 = examples.find('"', q1 + 1);
     examples = examples.substr(q1 + 1, q2 - q1 - 1);

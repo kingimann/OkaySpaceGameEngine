@@ -1,0 +1,105 @@
+// okay-ms own standard header: a small std::chrono, written from ISO/IEC 14882 [time.duration], [time.point],
+// [time.clock]. A duration is a count and a period given as a ratio of seconds; steady_clock reads the Windows
+// performance counter and system_clock reads the system time (QueryPerformanceCounter, QueryPerformanceFrequency and
+// GetSystemTimeAsFileTime from kernel32). Own minimal version: the common units (nanoseconds to hours),
+// +, -, comparisons, duration_cast, time_point arithmetic; no calendar, no zones, no literals.
+#pragma once
+__declspec(dllimport) int QueryPerformanceCounter(long long* counter);
+__declspec(dllimport) int QueryPerformanceFrequency(long long* frequency);
+__declspec(dllimport) void GetSystemTimeAsFileTime(unsigned long long* time);
+namespace std {
+template <long long N, long long D = 1>
+struct ratio {
+    static const long long num = N;
+    static const long long den = D;
+};
+typedef ratio<1, 1000000000> nano;
+typedef ratio<1, 1000000> micro;
+typedef ratio<1, 1000> milli;
+namespace chrono {
+template <typename Rep, typename Period = ratio<1, 1> >
+class duration {
+    Rep count_;
+
+public:
+    typedef Rep rep;
+    typedef Period period;
+    duration() : count_(0) {}
+    explicit duration(Rep c) : count_(c) {}
+    Rep count() const { return count_; }
+    static double scale_num() { return (double)Period::num; }
+    static double scale_den() { return (double)Period::den; }
+    static duration from_double(double v) { return duration((Rep)v); }
+    duration operator+(const duration& o) const { return duration(count_ + o.count_); }
+    duration operator-(const duration& o) const { return duration(count_ - o.count_); }
+    duration& operator+=(const duration& o) { count_ += o.count_; return *this; }
+    duration& operator-=(const duration& o) { count_ -= o.count_; return *this; }
+    bool operator==(const duration& o) const { return count_ == o.count_; }
+    bool operator!=(const duration& o) const { return count_ != o.count_; }
+    bool operator<(const duration& o) const { return count_ < o.count_; }
+    bool operator>(const duration& o) const { return count_ > o.count_; }
+    bool operator<=(const duration& o) const { return count_ <= o.count_; }
+    bool operator>=(const duration& o) const { return count_ >= o.count_; }
+};
+typedef duration<long long, nano> nanoseconds;
+typedef duration<long long, micro> microseconds;
+typedef duration<long long, milli> milliseconds;
+typedef duration<long long, ratio<1, 1> > seconds;
+typedef duration<long long, ratio<60, 1> > minutes;
+typedef duration<long long, ratio<3600, 1> > hours;
+
+// The count in the units of To: count * (FromNum / FromDen) / (ToNum / ToDen), in the type of To's count.
+template <typename To, typename Rep, typename Period>
+To duration_cast(const duration<Rep, Period>& d) {
+    // count * (FromNum / FromDen) / (ToNum / ToDen): multiply first and divide once, so whole results stay exact.
+    const double top = (double)d.count() * duration<Rep, Period>::scale_num() * To::scale_den();
+    const double bottom = duration<Rep, Period>::scale_den() * To::scale_num();
+    return To::from_double(top / bottom);
+}
+
+template <typename Clock, typename Dur>
+class time_point {
+    Dur since_;
+
+public:
+    typedef Dur duration;
+    time_point() : since_() {}
+    explicit time_point(const Dur& d) : since_(d) {}
+    Dur time_since_epoch() const { return since_; }
+    time_point operator+(const Dur& d) const { return time_point(since_ + d); }
+    Dur operator-(const time_point& o) const { return since_ - o.since_; }
+    bool operator<(const time_point& o) const { return since_ < o.since_; }
+    bool operator>(const time_point& o) const { return since_ > o.since_; }
+    bool operator<=(const time_point& o) const { return since_ <= o.since_; }
+    bool operator>=(const time_point& o) const { return since_ >= o.since_; }
+    bool operator==(const time_point& o) const { return since_ == o.since_; }
+    bool operator!=(const time_point& o) const { return since_ != o.since_; }
+};
+
+struct steady_clock {
+    typedef nanoseconds duration;
+    typedef time_point<steady_clock, nanoseconds> time_point_type;
+    static time_point<steady_clock, nanoseconds> now() {
+        long long counter = 0;
+        long long frequency = 1;
+        QueryPerformanceCounter(&counter);
+        QueryPerformanceFrequency(&frequency);
+        // counter * 1e9 / frequency without overflow: whole seconds first, then the rest.
+        const long long whole = counter / frequency;
+        const long long rest = counter % frequency;
+        return time_point<steady_clock, nanoseconds>(nanoseconds(whole * 1000000000LL + rest * 1000000000LL / frequency));
+    }
+};
+struct system_clock {
+    typedef nanoseconds duration;
+    static time_point<system_clock, nanoseconds> now() {
+        unsigned long long ft = 0;
+        GetSystemTimeAsFileTime(&ft);
+        // 100 ns steps since 1601-01-01; the Unix epoch is 11644473600 seconds later.
+        const long long since_unix = (long long)ft - 116444736000000000LL;
+        return time_point<system_clock, nanoseconds>(nanoseconds(since_unix * 100LL));
+    }
+};
+typedef steady_clock high_resolution_clock;
+}
+}

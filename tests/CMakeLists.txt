@@ -1207,6 +1207,9 @@ add_test(NAME ui_backend COMMAND test_ui_backend)
 add_executable(test_own_stack test_own_stack.cpp)
 target_include_directories(test_own_stack PRIVATE ${CMAKE_SOURCE_DIR}/shared)
 target_link_libraries(test_own_stack PRIVATE okay::engine)
+add_executable(test_own_switches test_own_switches.cpp)
+target_include_directories(test_own_switches PRIVATE ${CMAKE_SOURCE_DIR}/shared)
+add_test(NAME own_switches COMMAND test_own_switches)
 add_test(NAME own_stack COMMAND test_own_stack)
 add_test(NAME own_stack_env COMMAND test_own_stack env)
 add_test(NAME own_stack_third_party COMMAND test_own_stack thirdparty)
@@ -1607,6 +1610,21 @@ target_include_directories(test_vs_editor_model PRIVATE ${CMAKE_SOURCE_DIR}/edit
 target_link_libraries(test_vs_editor_model PRIVATE okay::engine)
 target_compile_definitions(test_vs_editor_model PRIVATE OKAY_SOURCE_DIR="${PROJECT_SOURCE_DIR}")
 add_test(NAME vs_editor_model COMMAND test_vs_editor_model)
+
+# Our own Dear ImGui platform feed (shared/ImGuiPlatformFeed.hpp): key table, event translation, and a real ImGui context
+# fed through a fake host (no window, no SDL). Links the editor's okay_imgui when it is in the build, else compiles the
+# ImGui core files from the same source tree.
+add_executable(test_imgui_platform_feed test_imgui_platform_feed.cpp)
+target_include_directories(test_imgui_platform_feed PRIVATE ${CMAKE_SOURCE_DIR}/shared ${CMAKE_SOURCE_DIR}/engine/include ${OKAY_VS_IMGUI_INCLUDE})
+if(TARGET okay_imgui)
+    target_link_libraries(test_imgui_platform_feed PRIVATE okay_imgui okay::engine)
+else()
+    target_sources(test_imgui_platform_feed PRIVATE ${imgui_SOURCE_DIR}/imgui.cpp ${imgui_SOURCE_DIR}/imgui_draw.cpp
+        ${imgui_SOURCE_DIR}/imgui_tables.cpp ${imgui_SOURCE_DIR}/imgui_widgets.cpp)
+    target_link_libraries(test_imgui_platform_feed PRIVATE okay::engine)
+endif()
+target_compile_features(test_imgui_platform_feed PRIVATE cxx_std_17)
+add_test(NAME imgui_platform_feed COMMAND test_imgui_platform_feed)
 
 add_executable(test_vs_names test_vs_names.cpp)
 target_include_directories(test_vs_names PRIVATE ${CMAKE_SOURCE_DIR}/editor ${OKAY_VS_IMGUI_INCLUDE})
@@ -3242,6 +3260,27 @@ if(NOT WIN32 AND NOT EMSCRIPTEN)
             ENVIRONMENT "OKAY_PLATFORM_BACKEND=${_okay_pb}" PASS_REGULAR_EXPRESSION "default=${_okay_pb}")
     endforeach()
 
+    # File drops on the own X11 backend (XDND) with a fake drag source on a second X connection, and the URI list parser.
+    add_executable(test_platform_xdnd test_platform_xdnd.cpp)
+    target_link_libraries(test_platform_xdnd PRIVATE okay::platform)
+    target_include_directories(test_platform_xdnd PRIVATE ${CMAKE_SOURCE_DIR}/engine/src)
+    find_library(OKAY_TEST_X11_LIB X11)
+    if(OKAY_TEST_X11_LIB AND EXISTS /usr/include/X11/Xlib.h)
+        target_compile_definitions(test_platform_xdnd PRIVATE OKAY_TEST_HAVE_X11)
+        target_link_libraries(test_platform_xdnd PRIVATE ${OKAY_TEST_X11_LIB})
+    endif()
+    add_test(NAME platform_xdnd COMMAND sh ${CMAKE_CURRENT_SOURCE_DIR}/run_under_xvfb.sh $<TARGET_FILE:test_platform_xdnd>)
+    set_tests_properties(platform_xdnd PROPERTIES SKIP_RETURN_CODE 77 TIMEOUT 120)
+
+    # The event queue (push, poll, pump, native pointer, unmapped events, render resets, CharForKey): no display needed.
+    add_executable(test_platform_events test_platform_events.cpp)
+    target_link_libraries(test_platform_events PRIVATE okay::platform)
+    if(TARGET SDL2::SDL2)
+        target_link_libraries(test_platform_events PRIVATE SDL2::SDL2)
+    endif()
+    add_test(NAME platform_events COMMAND test_platform_events)
+    set_tests_properties(platform_events PROPERTIES TIMEOUT 60)
+
     add_executable(test_platform_window test_platform_window.cpp)
     target_link_libraries(test_platform_window PRIVATE okay::platform)
     if(TARGET SDL2::SDL2)
@@ -4367,4 +4406,12 @@ foreach(vs_usage_test vs_easy_ops vs_start vs_hints vs_plain_words vs_what_happe
         target_link_libraries(test_${vs_usage_test} PRIVATE okay::engine)
         add_test(NAME ${vs_usage_test} COMMAND test_${vs_usage_test})
     endif()
+endforeach()
+
+# okay::tex, our own texture library (docs/own_texture_library.md). Pure CPU, deterministic.
+foreach(_t IN ITEMS mip atlas convert bc dds_stream)
+    add_executable(test_tex_${_t} test_tex_${_t}.cpp)
+    target_link_libraries(test_tex_${_t} PRIVATE okay::engine)
+    add_test(NAME tex_${_t} COMMAND test_tex_${_t} WORKING_DIRECTORY ${CMAKE_CURRENT_BINARY_DIR})
+    set_tests_properties(tex_${_t} PROPERTIES TIMEOUT 240)
 endforeach()

@@ -242,6 +242,11 @@ int main(int argc, char** argv) {
             bool btn = false;
             for (int b = 0; b <= (int)GamepadButton::DpadRight; ++b) if (pad->Button((GamepadButton)b)) { btn = true; std::printf("  pad button %d down\n", b); }
             if (std::abs((int)big) > 8000) { padMoved = true; padMaxAxis = big; std::printf("  pad axis value %d\n", (int)big); }
+            if (!pad->HasBuiltinMapping()) {   // a plain HID pad (own Windows Raw Input path): raw axes, buttons, hats
+                for (int a = 0; a < pad->RawAxisCount(); ++a) { const int16_t v = pad->RawAxis(a); if (std::abs((int)v) > 8000) { padMoved = true; padMaxAxis = v; std::printf("  pad raw axis %d value %d\n", a, (int)v); } }
+                for (int b = 0; b < pad->RawButtonCount(); ++b) if (pad->RawButton(b)) { padMoved = true; std::printf("  pad raw button %d down\n", b); }
+                for (int h = 0; h < pad->RawHatCount(); ++h) if (pad->RawHat(h)) { padMoved = true; std::printf("  pad raw hat %d bits %d\n", h, (int)pad->RawHat(h)); }
+            }
             if (btn) padMoved = true;
         }
         if (win && pw > 0 && ph > 0) {

@@ -1,0 +1,34 @@
+// okay-ms own standard header: accumulate, iota, inner_product, partial_sum, written from the wording of
+// ISO/IEC 14882 [accumulate], [iota], [inner.product], [partial.sum]. Iterators are plain pointers here.
+#pragma once
+namespace std {
+template <typename It, typename T> T accumulate(It first, It last, T init) {
+    for (; first != last; ++first) init = init + *first;
+    return init;
+}
+template <typename It, typename T, typename Op> T accumulate(It first, It last, T init, Op op) {
+    for (; first != last; ++first) init = op(init, *first);
+    return init;
+}
+template <typename It, typename T> void iota(It first, It last, T value) {
+    for (; first != last; ++first) {
+        *first = value;
+        ++value;
+    }
+}
+template <typename It1, typename It2, typename T> T inner_product(It1 first1, It1 last1, It2 first2, T init) {
+    for (; first1 != last1; ++first1, ++first2) init = init + (*first1) * (*first2);
+    return init;
+}
+template <typename It, typename Out> Out partial_sum(It first, It last, Out out) {
+    if (first == last) return out;
+    auto sum = *first;
+    *out = sum;
+    ++out;
+    for (++first; first != last; ++first, ++out) {
+        sum = sum + *first;
+        *out = sum;
+    }
+    return out;
+}
+}

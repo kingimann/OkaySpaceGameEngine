@@ -14,6 +14,7 @@
 // OkayUI draws on top of every ImGui window, so a hosted region must not be one that other ImGui windows or menus are
 // meant to cover (documented in docs/own_ui_toolkit.md, section 5).
 #include "okay/UI/OkayUI.hpp"
+#include "okay/Platform/Platform.hpp"
 
 // SDL.h on Windows renames every `main` to SDL_main (which breaks members such as Camera::main in the engine headers):
 // the apps run their own entry point, so keep that rename off wherever this header is the first to include SDL.
@@ -85,6 +86,66 @@ public:
         }
     }
 
+    /// The same as Feed(SDL_Event) for an okay::platform event, so an app that polls the seam needs no SDL event here.
+    /// Only the kinds OkayUI wants are read (text, left and right button down, wheel, key down and up); any other is ignored.
+    /// `layoutChar` is what the key types on the current layout ('a'..'z', '0'..'9', ' '; 0 = none): Backend::CharForKey(e.key).
+    /// It decides the Ctrl+A/C/X/V shortcuts and the letter keys the way the SDL version does with the key symbol (an AZERTY
+    /// keyboard's Ctrl+Q is select-all there, because its "a" key is where "q" is). Pass 0 to assume a US layout.
+    void Feed(const okay::platform::Event& e, char layoutChar = 0) {
+        using okay::platform::EventType;
+        using okay::platform::Key;
+        switch (e.type) {
+        case EventType::TextInput: {
+            const std::size_t have = std::strlen(m_text);
+            const std::size_t add = e.text.size();
+            if (have + add < sizeof(m_text)) { std::memcpy(m_text + have, e.text.data(), add); m_text[have + add] = 0; }   // a full buffer drops the rest
+            break;
+        }
+        case EventType::MouseButtonDown:
+            if (e.button == okay::platform::MouseLeft) m_leftTap = true;
+            else if (e.button == okay::platform::MouseRight) m_rightTap = true;
+            break;
+        case EventType::MouseWheel:
+            m_wheel += e.wheelY;   // already "up = +y" whatever the OS scrolling setting is (the SDL path undoes SDL's flip to get the same)
+            break;
+        case EventType::KeyDown:
+        case EventType::KeyUp: {
+            const bool down = e.type == EventType::KeyDown;
+            m_shift = (e.mods & okay::platform::ModShift) != 0;
+            const bool ctrl = (e.mods & (okay::platform::ModCtrl | okay::platform::ModGui)) != 0;
+            m_ctrl = ctrl;
+            if (!layoutChar) layoutChar = UsCharOf(e.key);
+            {
+                const int id = KeyIdOf(e.key, layoutChar);
+                if (id != OkayUI::KeyId_None) { m_keyHeld[id] = down; if (down) m_keyTap[id] = true; }
+            }
+            if (!down) break;
+            switch (e.key) {
+            case Key::Backspace: m_back = true; break;
+            case Key::Delete:    m_del = true; break;
+            case Key::Left:      m_left = true; break;
+            case Key::Right:     m_right = true; break;
+            case Key::Home:      m_home = true; break;
+            case Key::End:       m_end = true; break;
+            case Key::Return: case Key::KpEnter: m_enter = true; break;
+            case Key::Escape:    m_escape = true; break;
+            case Key::Up:        m_up = true; break;
+            case Key::Down:      m_down = true; break;
+            default:
+                if (ctrl) {
+                    if (layoutChar == 'a') m_selectAll = true;
+                    else if (layoutChar == 'c') m_copy = true;
+                    else if (layoutChar == 'x') m_cut = true;
+                    else if (layoutChar == 'v') m_paste = true;
+                }
+                break;
+            }
+            break;
+        }
+        default: break;
+        }
+    }
+
     /// The input of the frame about to start. A mouse button that went down and up again between two frames (a fast click, or a
 /// slow frame) is reported down for this frame and up for the next, so the click is not lost. `deliverKeys` is whether OkayUI may have the keyboard this frame (a text
     /// field has focus and no ImGui field does); when it is false the typed text and key edges are dropped, not kept, so
@@ -132,7 +193,39 @@ public:
         }
     }
 
+    /// The OkayUI key a platform key stands for. `layoutChar` is the character the key types on the current layout (the letters and
+    /// digits follow the layout, as SDL's key symbols do); everything else goes by the physical key.
+    static int KeyIdOf(okay::platform::Key k, char layoutChar) {
+        using namespace OkayUI;
+        using K = okay::platform::Key;
+        if (layoutChar >= 'a' && layoutChar <= 'z') return KeyId_A + (layoutChar - 'a');
+        if (layoutChar >= '0' && layoutChar <= '9') return KeyId_0 + (layoutChar - '0');
+        if (layoutChar == ' ') return KeyId_Space;
+        const int v = (int)k;
+        if (v >= (int)K::F1 && v <= (int)K::F12) return KeyId_F1 + (v - (int)K::F1);
+        switch (k) {
+        case K::Tab: return KeyId_Tab;       case K::Left: return KeyId_Left;     case K::Right: return KeyId_Right;
+        case K::Up: return KeyId_Up;         case K::Down: return KeyId_Down;     case K::PageUp: return KeyId_PageUp;
+        case K::PageDown: return KeyId_PageDown; case K::Home: return KeyId_Home; case K::End: return KeyId_End;
+        case K::Insert: return KeyId_Insert; case K::Delete: return KeyId_Delete; case K::Backspace: return KeyId_Backspace;
+        case K::Space: return KeyId_Space;   case K::Return: case K::KpEnter: return KeyId_Enter;
+        case K::Escape: return KeyId_Escape;
+        case K::LCtrl: case K::RCtrl: return KeyId_Ctrl;
+        case K::LShift: case K::RShift: return KeyId_Shift;
+        case K::LAlt: case K::RAlt: return KeyId_Alt;
+        default: return KeyId_None;
+        }
+    }
+
 private:
+    /// The character a key types on a US layout (the fallback when the caller gives none).
+    static char UsCharOf(okay::platform::Key k) {
+        const int v = (int)k;
+        if (v >= (int)okay::platform::Key::A && v <= (int)okay::platform::Key::Z) return (char)('a' + (v - (int)okay::platform::Key::A));
+        if (v >= (int)okay::platform::Key::N1 && v <= (int)okay::platform::Key::N9) return (char)('1' + (v - (int)okay::platform::Key::N1));
+        if (k == okay::platform::Key::N0) return '0';
+        return 0;
+    }
     bool  m_up = false, m_down = false, m_copy = false, m_cut = false, m_paste = false, m_ctrl = false;
     bool  m_keyHeld[OkayUI::KeyId_COUNT] = {}, m_keyTap[OkayUI::KeyId_COUNT] = {};
     char  m_text[64] = {0};

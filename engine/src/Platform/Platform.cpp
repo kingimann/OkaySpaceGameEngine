@@ -95,6 +95,14 @@ Key Backend::KeyForChar(char c) {
     return Key::Unknown;
 }
 
+char Backend::CharForKey(Key k) {
+    if (k == Key::Unknown) return 0;
+    static const char kChars[] = "abcdefghijklmnopqrstuvwxyz0123456789 ";
+    for (const char* c = kChars; *c; ++c)
+        if (KeyForChar(*c) == k) return *c;
+    return 0;
+}
+
 bool Backend::ShowErrorBox(const std::string& title, const std::string& text, Window*) {
     std::fprintf(stderr, "ERROR: %s: %s\n", title.c_str(), text.c_str());
     return false;
@@ -239,6 +247,11 @@ void DelayMs(uint32_t ms) {
     if (Backend* b = Default()) { b->DelayMs(ms); return; }
     std::this_thread::sleep_for(std::chrono::milliseconds(ms));
 }
+
+#ifndef OKAY_PLATFORM_HAVE_SDL2
+bool TranslateSdl2Event(const void*, Event&) { return false; }
+std::unique_ptr<Window> WrapSdl2Window(void*) { return nullptr; }   // the real one is in SdlBackend.cpp
+#endif
 
 void Log(const std::string& line) {
     if (Backend* b = Default()) { b->Log(line); return; }

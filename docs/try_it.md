@@ -97,7 +97,9 @@ release job or the installer build for this change.
 | hygiene1 | Account address and key in one config file; no built programs in git | Nothing to open: build or release as usual, optional key rotation in Supabase | Verified on Linux (tests, configure); no release or Windows run |
 | input | Input upgrade: input playground, rumble patterns, vibration setting, key positions (AZERTY) | Editor: File > Open, `examples\input\input_playground.okayscene`, then Play | Tested headless on Linux; nothing run on Windows or with a real controller or AZERTY keyboard |
 | one-controller | One Player Controller for first and third person; no Humanoid or separate First and Third Person entries | Editor: GameObject > Player, Add Component > Gameplay, File > New Project (First and Third Person) | Tests run on Linux only; not run in a real editor or on Windows |
+| own-switch | One place to switch our own code on and off (launcher Settings > Experimental, editor View menu) | Launcher: Settings > Experimental. Editor: View > Rendering & Performance > Experimental | Linux build only; Windows unverified |
 | security-sec1 | Security plan SEC1: script file paths, update signature status, relay caps, reactions SQL | examples\security_paths\script_paths.okayscene (Play, read Console); Settings > About and Help > About line; SQL and relay are owner steps | Tests on Linux only; editor/launcher lines not run; nothing on Windows or real Supabase |
+| tex1 | Texture tools (our own): mipmaps, atlas, BC compression, DDS | Windows release: `examples\texture\try_texture.bat` (needs `Tools\okay-texture.exe`); editor: Project panel > pick a picture > Import Settings > "Generate mipmaps / compress" | Unverified on Windows; Linux tests and CLI run |
 | vpa | Multi-window panels start cleanly on every video driver | `Tools\OkayEngine.exe`: drag a panel tab outside the editor | Linux only (Xvfb, a build with assertions on); Windows unverified |
 | xbox-next | Xbox UWP next: one-page guide (PC test, Dev Mode, IP, Device Portal, deploy, logs) and the new log file | Windows release: `xbox-src\scripts\build-xbox-uwp.ps1`; editor File > Build Settings > Xbox (exp.) | Linux-tested only; nothing here has run on a console |
 | xbox-uwp | Xbox One export (EXPERIMENTAL, UNVERIFIED): one-click build (check, export, compile, shaders, pack, sign, install), own .appx packer, engine mode | File > Build Settings > platform "Xbox (exp.)" > Build Xbox package | Linux-tested only |
@@ -1721,6 +1723,31 @@ What changes for you:
 
 **Status.** Tested headless on Linux (`input_deep`, `input_playground`; the playground test presses H, 0 and K and renders a software picture). Unverified: Windows, a real controller (rumble was only checked as the request the host takes), a real AZERTY keyboard. No Settings-screen toggle yet.
 
+## okay-build: our own replacement for CMake (not part of the Windows release; Linux checkout only, off by default)
+
+CMake stays the default build. okay-build is a second way to build the engine that does not need CMake or Ninja. Nothing in the release
+uses it. Plan and numbers: [own_build_plan.md](own_build_plan.md), section "Round 11".
+
+Needs g++, the SDL2 development headers and about 2 GB of disk. Run from a checkout of the repository.
+
+1. Build the tool and its tests: `sh tools/okaybuild/build.sh /tmp/okb`. You should see `okaybuild tests: N checks passed` (a few checks need
+   wine or libsodium and may fail on a machine without them; the failing names are printed).
+2. Read the project's CMake files with okay-build itself and see what it can express:
+   `/tmp/okb/okay-build cmake . -o build.cmake.okay --audit`.
+   You should see `okay-build cmake: 815 of 820 targets written ...` and a table (targets, sources, definitions, tests, what was not understood).
+   Options work like `-D`: `--opt OKAY_BUILD_EDITOR=ON --opt OKAY_BUILD_PLAYER=ON`. `--build-type None` gives plain `-O0` flags (Release is the default,
+   as in CMake). `--fetched imgui=/folder/with/imgui` says where the Dear ImGui sources already are (okay-build does not download).
+3. Build one program and its tests with no CMake: `/tmp/okb/okay-build -f build.cmake.okay -j2 --build-dir /tmp/okb-tree test_math`
+   (about 350 steps; delete `/tmp/okb-tree` and `build.cmake.okay` afterwards).
+4. Run the project's `add_test` lines like ctest: `/tmp/okb/okay-build -f build.cmake.okay -j2 --build-dir /tmp/okb-tree ctest '^(math|scene|serialize)$'`.
+   You should see `PASS math 0.0s` lines and `3 tests, 0 failed, 0 skipped`. The argument is a regular expression on the test name; with none, every test runs.
+5. Compare with CMake (needs cmake and ninja): configure with `cmake -G Ninja -B /tmp/cm -DCMAKE_EXPORT_COMPILE_COMMANDS=ON`, then
+   `okay-build -f build.cmake.okay compdb --build-dir /tmp/okb-tree` and
+   `python3 tools/okaybuild/examples/compare_cmake_commands.py /tmp/cm/compile_commands.json compile_commands.json $PWD`.
+   You should see `identical settings: N, different: 0`.
+
+Unverified: Windows (the reader and `ctest` were only run on Linux; `ctest` is not done on Windows), MSVC.
+
 ## OkayScript: object references, Rigidbody calls and Find (bug fixes, branch `claude2/okayscript-object-refs`, not merged or released yet)
 
 Issue #888, Findings 108 to 111. Before: a bullet that hit the third "Enemy" destroyed the first one,
@@ -1776,6 +1803,49 @@ settings. The Console says "Added Player Controller (View: Both ...)" when you u
 **Status.** Unverified in a real editor and on Windows. Tests run on Linux: `one_controller` (an old-format Humanoid scene and
 an old First plus Third scene load as one Player Controller and keep their settings), `templates_work` (one template, old titles
 still build, Humanoid gone), `scene_cameras`, `player_controller`, `view_upgrade`.
+
+## own-switch. One place to try our own code (no environment variables)
+
+**Read this first: built and unit-tested on Linux; nothing of this was run on Windows.** The screens and the file logic are
+new; the own parts they switch on are the ones described in `docs/own_code_roadmap.md`.
+
+What it is: a list of switches. Each one swaps a third-party part for our own. **All are off until you turn them on.** The
+choice is saved in one small file, `own_switches.cfg` (Windows: `%LOCALAPPDATA%\OkaySpace\own_switches.cfg`; Linux:
+`~/.config/okayspace/own_switches.cfg`). The launcher and the editor read the same file.
+
+What to do:
+
+1. Start `OkaySpace.exe` (the launcher). Click **Settings**, then **Experimental** in the list on the left.
+2. You see one row per switch (our own WAV reader, plus OkayUI screens where the build has OkayUI, and two more on Linux), each with a
+   one-line description and a word on the right: **off**. Click a switch. The word changes to **on after restart**.
+3. Close the launcher and start it again. The word is now **on now**. The launcher also printed one line at start
+   (Linux: in the terminal; Windows: **Help > About** in the editor shows the same text), and it ends with
+   `switches=wav` (the ids that are on). With nothing on, the line has no `switches=` part.
+4. Open the editor from the launcher. It inherits the choice. In the editor open **View > Rendering & Performance >
+   Experimental: try our own code**. The same switches are there, with the same words. Clicking one there changes the
+   same file.
+5. Click **Back to normal (all off)** (launcher page or editor menu). Every switch goes to off and the words say
+   **off after restart**. After a restart everything is as in a normal release.
+6. To check a switch really does something: turn on **Our own WAV reader**, restart, add a `.wav` file to a scene and press
+   Play. It plays through our decoder (`docs/own_wav_decoder.md` lists the formats). **Our own web client** and **Our own
+   window layer** are not shown on Windows (Windows uses WinHTTP and its own window code).
+7. An environment variable you set yourself always wins. Start the launcher from a Command Prompt with
+   `set OKAY_OWN_WAV=1`: the row says **set by an environment variable** and its switch is greyed out.
+
+Good to know:
+
+* The numbered model readers (FBX, COLLADA, 3DS ...) are already our own code by default since 2026-11-17 and do not need a
+  switch. `OKAY_THIRD_PARTY=1` sends them back to Assimp and ufbx.
+* Options chosen only when the program is built (`-DOKAY_OWN_CRYPTO`, `-DOKAY_OWN_STACK`, `-DOKAY_UI_DEFAULT_BACKEND`) are not
+  in this list. Cryptography is never on here (owner rule 18).
+* The old developer row **UI backend** (shown only with `OKAY_DEV=1`) still works. The **OkayUI screens** switch sets
+  `OKAY_UI_BACKEND=okayui`, which already overrides that row.
+* To add a switch later (okay::platform events, our own ImGui renderer, the okayui host): add one line to `Items()` in
+  `shared/OwnSwitches.hpp`.
+
+Tested on Linux: the `own_switches` test (reading and writing the file, master off, an environment variable you set winning,
+the status words, items hidden where they cannot work) and the `own_stack` test (the `switches=` part of the line).
+Unverified: the Settings page and the editor menu were compiled but not looked at on a desktop; Windows not run.
 
 ## Importing a `.raw` file with several groups no longer crashes (bug fix, branch `claude2/own-readers-speed-3`, not released yet)
 
@@ -1896,6 +1966,37 @@ How to try the collaboration tools ([collaboration.md](collaboration.md)); these
 3. Push a branch named `claude2/x` that adds `#include <mutex>` to a header under `engine/include`: the **Branch lint** check
    fails with the file and line and says to use `debugutil::SpinLock`.
 4. Open a PR without a "How to try it" section: the **PR hygiene** check fails and says what to add.
+
+## tex1. Texture tools: mipmaps, atlas, compression
+
+What it is: our own texture library (`docs/own_texture_library.md`). It makes mip chains (box, Lanczos, Kaiser,
+colour-correct), packs sprites into an atlas with a manifest, compresses pictures to BC1/BC3/BC4/BC5 and writes
+`.dds` files you can open in a DDS viewer, and plans which mip each texture needs for a memory budget. It only adds
+tools: nothing existing is switched off or replaced, so there is no switch to turn on.
+
+**Try it from the release (command line)**
+1. Unzip the Windows release. Open `examples\texture` and double-click `try_texture.bat`.
+2. A console runs six steps and a new `out` folder appears with: `checker_0.png` ... `checker_7.png` (the mip
+   levels, each half the size), `checker.dds`, `fence.dds`, `bumps.dds`, `icons.png` and `icons.json`.
+3. What you should see in the console: `wrote 8 mip level(s)`, then `BC1 128x128, 8 mip level(s)` with a list of
+   level sizes (128x128 down to 1x1), `BC3` for the fence (it has see-through parts), `BC5` for the normal map,
+   `packed 3 picture(s)`, and the last line says which mip the streaming planner keeps at 100 pixels on screen.
+4. Open `out\icons.png` in any picture viewer: three icons side by side, one turned sideways (`"rotated": true` in
+   `icons.json`). Open `out\checker_3.png`: a smaller, smooth checker, not a blocky one.
+5. Your own pictures: `Tools\okay-texture.exe compress my.png` writes `my.dds`; run `okay-texture.exe` alone for
+   every command and option (`--filter box|lanczos|kaiser`, `--srgb`, `--normal`, `--cutout`, `--format bc1|bc3|bc4|bc5`).
+
+**Try it in the editor**
+1. Open the editor (OkayEngine.exe), open any project, click a `.png` in the Project panel.
+2. In the details strip, Import Settings, scroll to "MIPMAPS AND COMPRESSION". Pick "Mipmaps + compressed",
+   a filter, tick "Colour picture" for photos and colours, then click "Generate mipmaps / compress".
+3. You should see a line "Wrote <your picture>.dds" under the button, and the `.dds` file next to the picture
+   (open it in a DDS viewer; the Project panel may need a refresh to list it). The picture and its import settings
+   are not changed. The game and editor renderers do not load `.dds` yet (see the doc, "Not done").
+
+Verified: unit tests `tex_mip`, `tex_atlas`, `tex_convert`, `tex_bc`, `tex_dds_stream` and the six commands above
+run on Linux (headless). Not verified: the
+Windows build of `okay-texture.exe`, the `.bat`, the editor section in a real window, and any DDS viewer.
 
 ## Lock Inspector keeps the right object after Undo (bug fix)
 
@@ -2264,6 +2365,11 @@ its pure parts: `ctest -R platform_audio_pump`.
 4. The console shows PASS, FAIL or NOT TESTED per item and saves it to `okay-platform-selftest.txt` next to the program. Send that file.
 `--sdl2` runs the same checks on SDL2 to compare. `OKAY_OWN_PLATFORM=1` is a short way to write `OKAY_PLATFORM_BACKEND=own` for the player.
 It has only run on Linux (Xvfb) so far; the Windows run is the point.
+
+**Try a non-XInput pad (Windows, own backend, never run yet).** Use a DirectInput-only pad (an old generic USB pad, not an Xbox pad).
+In step 2 of the self-test above, move its sticks and press its buttons. You should see lines like `pad raw axis 0 value 32767`,
+`pad raw button 3 down`, `pad raw hat 0 bits 2` in the console, and "gamepads found" should name it "HID game controller VVVV:PPPP".
+Unplug and replug it: a "gamepad removed / added" event is counted. Xbox pads still go through XInput. If nothing appears, send the file.
 
 ### 12. OkayUI
 

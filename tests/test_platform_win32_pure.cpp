@@ -3,8 +3,11 @@
 // Expected values are worked out by hand from the Microsoft and USB HID documents.
 #include "HidParser.hpp"
 #include "Win32Display.hpp"
+#include "PadMap.hpp"
+#include "Win32Hid.hpp"
 #include "Win32Icon.hpp"
 #include "Win32Ime.hpp"
+#include "okay/Platform/WindowLogic.hpp"
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
@@ -18,6 +21,7 @@ static void Display() {
     using namespace win32disp;
     CHECK(ScaleFromDpi(96) == 1.0f && ScaleFromDpi(144) == 1.5f && ScaleFromDpi(192) == 2.0f && ScaleFromDpi(0) == 1.0f && ScaleFromDpi(5000) == 1.0f);
     CHECK(ScaleLength(100, 144) == 150 && ScaleLength(-100, 144) == -150 && ScaleLength(1, 120) == 1 && ScaleLength(3, 144) == 5 && ScaleLength(100, 0) == 100 && ScaleLength(0, 192) == 0);
+    CHECK(ValidDpi(144) == 144 && ValidDpi(0) == 96 && ValidDpi(-5) == 96 && ValidDpi(47) == 96 && ValidDpi(5000) == 96);
     CHECK(DpiFromWParam(0x00A000A0) == 160 && DpiFromWParam(0x0060) == 96);
     const Rect r = FromLtrb(10, 20, 110, 70);
     CHECK(r.x == 10 && r.y == 20 && r.w == 100 && r.h == 50);
@@ -33,6 +37,105 @@ static void Display() {
     CHECK(DisplayForPoint(v, 100, 100) == 0 && DisplayForPoint(v, -5, 5) == 1 && DisplayForPoint(v, 3000, 10) == 2);
     CHECK(DisplayForPoint(v, 5000, 500) == 2 && DisplayForPoint(v, -9000, 500) == 1);   // outside all: the nearest centre
     CHECK(DisplayForPoint({}, 0, 0) == -1);
+    // Centring and fullscreen on a chosen display (v: 0 main 1920x1080 with a 40 px task bar, 1 left at -1280, 2 right at 1920).
+    v[0].ux = 0; v[0].uy = 0; v[0].uw = 1920; v[0].uh = 1040;
+    CHECK(WorkArea(v[0]).h == 1040 && WorkArea(v[1]).x == -1280 && WorkArea(v[1]).h == 1024);   // no work area given: whole display
+    Rect c = CentredRect(WorkArea(v[0]), 800, 600);
+    CHECK(c.x == 560 && c.y == 220 && c.w == 800 && c.h == 600);
+    c = CentredRect(WorkArea(v[1]), 800, 600);                          // left display: negative coordinates
+    CHECK(c.x == -1280 + 240 && c.y == 212);
+    c = CentredRect(WorkArea(v[0]), 3000, 2000);                        // bigger than the display: top-left, not off screen
+    CHECK(c.x == 0 && c.y == 0);
+    CHECK(CentredRect(WorkArea(v[2]), 1920, 100).x == 1920);            // exactly as wide: left edge
+    Rect f = FullscreenRect(v[2]);
+    CHECK(f.x == 1920 && f.y == 0 && f.w == 1920 && f.h == 1080);
+    CHECK(DisplayForNewWindow(v, true, -100, 50) == 1 && DisplayForNewWindow(v, false, -100, 50) == 0 && DisplayForNewWindow({}, true, 0, 0) == -1);
+    // Taskbar flash: stop clears, briefly flashes window and taskbar a few times, until-focused keeps going until foreground.
+    CHECK(PlanFlash(FlashMode::Stop).flags == 0 && PlanFlash(FlashMode::Stop).count == 0);
+    CHECK(PlanFlash(FlashMode::Briefly).flags == 3 && PlanFlash(FlashMode::Briefly).count == 3);
+    CHECK(PlanFlash(FlashMode::UntilFocused).flags == (3u | 0xCu) && PlanFlash(FlashMode::UntilFocused).count == 0);
+}
+
+static void PadMapT() {
+    using namespace padmap;
+    // Source syntax.
+    Source s;
+    CHECK(detail::ParseSource("b3", s) && s.kind == Kind::Button && s.index == 3 && !s.invert);
+    CHECK(detail::ParseSource(" -A1 ", s) && s.kind == Kind::Axis && s.index == 1 && s.invert && s.half == Half::Full);
+    CHECK(detail::ParseSource("a4+", s) && s.half == Half::Positive && detail::ParseSource("a4-", s) && s.half == Half::Negative);
+    CHECK(detail::ParseSource("h0.Left", s) && s.kind == Kind::Hat && s.hatBit == 8 && detail::ParseSource("h1.up", s) && s.index == 1 && s.hatBit == 1);
+    CHECK(!detail::ParseSource("", s) && !detail::ParseSource("x1", s) && !detail::ParseSource("a", s) && !detail::ParseSource("b-1", s) && !detail::ParseSource("-b1", s) &&
+          !detail::ParseSource("h0", s) && !detail::ParseSource("h0.diag", s) && !detail::ParseSource("a1x", s) && !detail::ParseSource("a99999", s) && !detail::ParseSource("-h0.up", s));
+    uint16_t h = 0;
+    CHECK(detail::ParseHex16("054c", h) && h == 0x054C && detail::ParseHex16("0xFFFF", h) && h == 0xFFFF && !detail::ParseHex16("10000", h) && !detail::ParseHex16("", h) && !detail::ParseHex16("0x", h) && !detail::ParseHex16("12g4", h));
+
+    // The text file.
+    const char* txt =
+        "# example\n[pad]\nvid = 054C\npid = 09cc   # comment after a value\nname = Test   Pad\n"
+        "a = b1\nb = b2\nleftx = a0\nlefty = -a1\nlefttrigger = a4\nrighttrigger = a5+\ndpup = h0.up\ndpdown = h0.down\nstart = b9\n"
+        "bogus = b1\nx = q7\n"
+        "[PAD]\nvid = 1234\nname = no pid\n"
+        "[pad]\nvid=1234\npid=5678\nleftx = a2\n"
+        "[pad]\nvid=1234\npid=5678\nleftx = a3\ntrailing junk line\n";
+    Database db; std::vector<std::string> errs;
+    CHECK(db.Parse(txt, &errs) == 3 && db.Size() == 2);                 // 054c:09cc, and 1234:5678 twice (replaced), the pid-less one skipped
+    CHECK(errs.size() == 4);                                            // bogus key, bad source, entry without pid, junk line
+    const Entry* e = db.Find(0x054C, 0x09CC);
+    CHECK(e && e->name == "Test   Pad" && e->map.buttons[(int)GamepadButton::A].index == 1 && e->map.axes[(int)GamepadAxis::LeftY].invert);
+    CHECK(e && e->map.buttons[(int)GamepadButton::Start].index == 9 && e->map.buttons[(int)GamepadButton::DpadDown].hatBit == 4);
+    CHECK(db.Find(0x1234, 0x5678) && db.Find(0x1234, 0x5678)->map.axes[0].index == 3);   // the later entry replaced the earlier
+    CHECK(!db.Find(0x1234, 0x0000) && !db.Find(1, 1));
+    CHECK(Database().Parse("key = value\n[pad]\nvid = zz\n") == 0);   // key before [pad]; bad vid, no entry
+    CHECK(Database().Parse("") == 0 && Database().Parse("\n\n[pad]") == 0);
+    CHECK(Database().Parse(std::string((1u << 20) + 1, 'x')) == 0);     // over 1 MB
+    Database d2; CHECK(d2.Parse("[pad]\r\nvid=1\r\npid=2\r\na=b0\r\n") == 1 && d2.Find(1, 2)->map.buttons[0].index == 0);   // CRLF, and no final newline
+
+    // Evaluating a map.
+    PadMap m = e->map;
+    int16_t axes[6] = {-32768, 32767, 0, 0, 32767, 0};
+    uint8_t hats[1] = {1 | 2};   // up + right
+    RawView r; r.axes = axes; r.axisCount = 6; r.buttons = (1u << 1) | (1u << 9); r.buttonCount = 12; r.hats = hats; r.hatCount = 1;
+    CHECK(StandardAxis(m, GamepadAxis::LeftX, r) == -32768);
+    CHECK(StandardAxis(m, GamepadAxis::LeftY, r) == -32767);            // inverted 32767; flipping -32768 clamps, 32767 -> -32767
+    CHECK(StandardAxis(m, GamepadAxis::TriggerLeft, r) == 32767);       // full range -> (v+32768)/2 = 32767
+    CHECK(StandardAxis(m, GamepadAxis::TriggerRight, r) == 0);          // positive half of 0
+    axes[4] = -32768; CHECK(StandardAxis(m, GamepadAxis::TriggerLeft, r) == 0);
+    axes[4] = 0;      CHECK(StandardAxis(m, GamepadAxis::TriggerLeft, r) == 16384);
+    axes[5] = 20000;  CHECK(StandardAxis(m, GamepadAxis::TriggerRight, r) == 20000);
+    CHECK(StandardAxis(m, GamepadAxis::RightX, r) == 0);                // not mapped
+    CHECK(StandardButton(m, GamepadButton::A, r) && !StandardButton(m, GamepadButton::B, r) && StandardButton(m, GamepadButton::Start, r));
+    CHECK(StandardButton(m, GamepadButton::DpadUp, r) && !StandardButton(m, GamepadButton::DpadDown, r) && !StandardButton(m, GamepadButton::DpadLeft, r));
+    r.axisCount = 2;                                                    // the pad reports fewer axes than the map names: reads 0, never out of range
+    CHECK(StandardAxis(m, GamepadAxis::TriggerLeft, r) == 0 && StandardAxis(m, GamepadAxis::TriggerRight, r) == 0);
+    r.buttonCount = 1; r.hatCount = 0;
+    CHECK(!StandardButton(m, GamepadButton::A, r) && !StandardButton(m, GamepadButton::DpadUp, r));
+    CHECK(StandardAxis(m, (GamepadAxis)9, r) == 0 && !StandardButton(m, (GamepadButton)99, r));
+    // Negative half, axis as a button, button as a trigger.
+    PadMap q; q.axes[(int)GamepadAxis::TriggerLeft] = Source{Kind::Axis, 0, false, Half::Negative, 0};
+    q.buttons[(int)GamepadButton::X] = Source{Kind::Axis, 1, false, Half::Full, 0};
+    q.axes[(int)GamepadAxis::TriggerRight] = Source{Kind::Button, 0, false, Half::Full, 0};
+    int16_t a2[2] = {-30000, 20000}; RawView r2; r2.axes = a2; r2.axisCount = 2; r2.buttons = 1; r2.buttonCount = 1;
+    CHECK(StandardAxis(q, GamepadAxis::TriggerLeft, r2) == 30000 && StandardButton(q, GamepadButton::X, r2) && StandardAxis(q, GamepadAxis::TriggerRight, r2) == 32767);
+    a2[1] = 10000; CHECK(!StandardButton(q, GamepadButton::X, r2));
+    a2[0] = -32768; CHECK(StandardAxis(q, GamepadAxis::TriggerLeft, r2) == 32767);   // never overflows
+
+    // The generic guess.
+    PadMap g = GuessMap(6, 12, 1);
+    int16_t ga[6] = {100, 200, 300, 400, 32767, -32768}; uint8_t gh[1] = {4};
+    RawView gr; gr.axes = ga; gr.axisCount = 6; gr.buttons = 1u << 4; gr.buttonCount = 12; gr.hats = gh; gr.hatCount = 1;
+    CHECK(StandardAxis(g, GamepadAxis::LeftY, gr) == 200 && StandardAxis(g, GamepadAxis::RightY, gr) == 400);
+    CHECK(StandardAxis(g, GamepadAxis::TriggerLeft, gr) == 32767 && StandardAxis(g, GamepadAxis::TriggerRight, gr) == 0);
+    CHECK(StandardButton(g, GamepadButton::LeftShoulder, gr) && !StandardButton(g, GamepadButton::A, gr) && StandardButton(g, GamepadButton::DpadDown, gr));
+    CHECK(GuessMap(2, 4, 0).axes[(int)GamepadAxis::RightX].kind == Kind::None && GuessMap(2, 4, 0).buttons[(int)GamepadButton::Start].kind == Kind::None);
+    CHECK(GuessMap(4, 12, 0).buttons[(int)GamepadButton::DpadUp].kind == Kind::None && GuessMap(4, 12, 0).axes[(int)GamepadAxis::RightY].index == 3);
+    CHECK(!GuessMap(0, 0, 0).Any() && GuessMap(2, 0, 0).Any());
+
+    // Product names.
+    CHECK(CleanProductName("  Wireless\tController \n ") == "Wireless Controller");
+    CHECK(CleanProductName("").empty() && CleanProductName(" \t\n").empty());
+    CHECK(CleanProductName(std::string(100, 'x')).size() == 63);
+    CHECK(CleanProductName(std::string(62, 'x') + "\xC3\xA9\xC3\xA9") == std::string(62, 'x'));   // 2-byte character would straddle byte 63: dropped whole
+    CHECK(FallbackPadName(0x054C, 0x9CC) == "HID game controller 054C:09CC");
 }
 
 static void Icon() {
@@ -169,8 +272,86 @@ static void Hid() {
     CHECK(true);
 }
 
+
+// The Raw Input / HidP side: caps -> usage layout -> pad state. Caps are written by hand the way HidP_GetButtonCaps /
+// HidP_GetValueCaps describe the same descriptors the parser tests above use.
+static void HidP() {
+    using namespace win32hid;
+    CHECK(IsXInputDevicePath("\\\\?\\HID#VID_045E&PID_028E&IG_00#8&1234&0&0000#{4d1e55b2-f16f-11cf-88cb-001111000030}"));
+    CHECK(IsXInputDevicePath("\\\\?\\hid#vid_045e&pid_028e&ig_00#x") && !IsXInputDevicePath("\\\\?\\HID#VID_054C&PID_09CC#7&2&0&0000#{...}") && !IsXInputDevicePath(""));
+    CHECK(!IsXInputDevicePath("\\\\?\\HID#VID_1234&PID_5678#BIG_00"));   // "IG_" must start a token, not end a word
+    uint16_t v = 0, p = 0;
+    CHECK(ParseVidPid("\\\\?\\HID#VID_054C&PID_09CC#7&2&0&0000#{x}", v, p) && v == 0x054C && p == 0x09CC);
+    CHECK(ParseVidPid("\\\\?\\hid#vid_045e&pid_028e&ig_00#x", v, p) && v == 0x045E && p == 0x028E);
+    CHECK(!ParseVidPid("\\\\?\\HID#VID_05&PID_09CC", v, p) && !ParseVidPid("", v, p) && !ParseVidPid("VID_ZZZZ&PID_0001", v, p));
+    CHECK(SignedFromRaw(0xFF, 8, true) == -1 && SignedFromRaw(0x80, 8, true) == -128 && SignedFromRaw(0x7F, 8, true) == 127 && SignedFromRaw(0xFF, 8, false) == 255);
+    CHECK(SignedFromRaw(0xFFFF, 16, true) == -1 && SignedFromRaw(0xFFFFFFFFu, 32, true) == -1 && SignedFromRaw(5, 0, true) == 5);
+
+    // A pad: X, Y 8-bit 0..255 (logical max reported as -1 by Windows for a 0xFF written in one byte), Rz 16-bit signed,
+    // a hat 1..8, a range of 12 buttons and one more button on the vendor-less page that must be ignored.
+    std::vector<ButtonCap> bc;
+    bc.push_back({1, kPageButton, true, 1, 12});
+    bc.push_back({1, 0x0C, false, 0x40, 0x40});
+    std::vector<ValueCap> vc;
+    vc.push_back({1, kPageGenericDesktop, false, 0x30, 0x30, 8, 1, 0, -1});
+    vc.push_back({1, kPageGenericDesktop, false, 0x31, 0x31, 8, 1, 0, 255});
+    vc.push_back({1, kPageGenericDesktop, false, 0x35, 0x35, 16, 1, -32768, 32767});
+    vc.push_back({1, kPageGenericDesktop, false, 0x39, 0x39, 4, 1, 1, 8});
+    vc.push_back({1, 0xFF00, false, 0x01, 0x01, 8, 1, 0, 255});     // vendor page: not an axis
+    const UsageLayout l = BuildLayout(bc, vc);
+    CHECK(l.buttons.size() == 12 && l.buttons[0] == 1 && l.buttons[11] == 12);
+    CHECK(l.axes.size() == 3 && l.axes[0].usage == 0x30 && l.axes[0].hi == 255 && !l.axes[0].isSigned);   // -1 fixed to 255
+    CHECK(l.axes[2].usage == 0x35 && l.axes[2].isSigned && l.axes[2].lo == -32768 && l.axes[2].bitSize == 16);
+    CHECK(l.hats.size() == 1 && l.hats[0].lo == 1 && l.hats[0].hi == 8 && l.Usable());
+
+    PadState s = Evaluate(l, {1, 3, 12, 40}, {0, 255, (uint32_t)0x8000}, {3});
+    CHECK(s.buttons == ((1u << 0) | (1u << 2) | (1u << 11)));          // usage 40 is outside the 12 buttons
+    CHECK(s.axes[0] == -32768 && s.axes[1] == 32767 && s.axes[2] == -32768 /* 0x8000 as signed 16-bit = -32768 */);
+    CHECK(s.hats[0] == 2);                                              // value 3 with lo 1 = index 2 = right
+    s = Evaluate(l, {}, {128, 128, 0}, {0});                            // hat value 0 is outside 1..8: centred
+    CHECK(s.buttons == 0 && s.hats[0] == 0 && s.axes[2] == 0 && s.axes[0] >= 0 && s.axes[0] <= 256);
+    s = Evaluate(l, {}, {}, {});                                         // missing readings read as the low end / centre, never crash
+    CHECK(s.buttons == 0 && s.hats[0] == 0);
+
+    // Usage ranges of values: X..Rz as one range cap, report count equals the range; and a cap that is an array of values is skipped.
+    std::vector<ValueCap> vr;
+    vr.push_back({2, kPageGenericDesktop, true, 0x30, 0x32, 8, 3, 0, 255});
+    vr.push_back({2, kPageGenericDesktop, false, 0x33, 0x33, 8, 4, 0, 255});   // ReportCount 4 for one usage: array, skipped
+    const UsageLayout lr = BuildLayout({}, vr);
+    CHECK(lr.axes.size() == 3 && lr.axes[1].usage == 0x31 && lr.axes[1].reportId == 2 && lr.Usable());
+    // Limits: more than 8 axes, 32 buttons, 2 hats are cut; a hostile range cannot blow up.
+    std::vector<ButtonCap> many; many.push_back({0, kPageButton, true, 1, 65535});
+    std::vector<ValueCap> manyv; manyv.push_back({0, kPageGenericDesktop, true, 0x30, 0x39, 8, 10, 0, 255});
+    const UsageLayout lm = BuildLayout(many, manyv);
+    CHECK(lm.buttons.size() == 32 && lm.axes.size() <= 8 && lm.hats.size() <= 2);
+    CHECK(BuildLayout({{0, kPageButton, true, 9, 1}}, {}).buttons.empty());   // reversed range
+    CHECK(!BuildLayout({}, {}).Usable());
+    // A degenerate axis (max <= min) still yields a layout and reads 0.
+    std::vector<ValueCap> deg; deg.push_back({0, kPageGenericDesktop, false, 0x30, 0x30, 8, 1, 5, 5}); deg.push_back({0, kPageGenericDesktop, false, 0x31, 0x31, 8, 1, 0, 255});
+    const UsageLayout ld = BuildLayout({}, deg);
+    CHECK(Evaluate(ld, {}, {5, 0}, {}).axes[0] == 0);
+}
+
+static void WindowLogic() {
+    CHECK(UiScaleFromDpi(96) == 1.0f && UiScaleFromDpi(120) == 1.25f && UiScaleFromDpi(144) == 1.5f && UiScaleFromDpi(192) == 2.0f);
+    CHECK(UiScaleFromDpi(288) == 2.0f && UiScaleFromDpi(72) == 1.0f && UiScaleFromDpi(0) == 1.0f && UiScaleFromDpi(-4) == 1.0f);
+    CHECK(UiScaleFromDpi(108) == 1.25f && UiScaleFromDpi(107) == 1.0f);   // 1.125 rounds up to 1.25, 1.115 down to 1.0
+    CHECK(UiScaleFromDpi(132) == 1.5f && UiScaleFromDpi(131) == 1.25f);   // 1.375 rounds up, just under it down
+    CHECK(ShouldReclaimInputFocus(2, 1, false, 0, 7, 7));
+    CHECK(ShouldReclaimInputFocus(3, 0, false, 0, 7, 7));
+    CHECK(!ShouldReclaimInputFocus(1, 1, false, 0, 7, 7));    // no pop-out was open
+    CHECK(!ShouldReclaimInputFocus(2, 2, false, 0, 7, 7));    // still open
+    CHECK(!ShouldReclaimInputFocus(2, 1, true, 0, 7, 7));     // already has the keyboard
+    CHECK(!ShouldReclaimInputFocus(2, 1, false, 9, 7, 7));    // another window has it
+    CHECK(!ShouldReclaimInputFocus(2, 1, false, 0, 8, 7));    // pointer elsewhere
+    CHECK(!ShouldReclaimInputFocus(2, 1, false, 0, 0, 0));    // no window id
+    CHECK(IsActiveForFrameRate(true, false, false) && IsActiveForFrameRate(false, true, false) && IsActiveForFrameRate(false, false, true) && !IsActiveForFrameRate(false, false, false));
+    CHECK(NeedsAttentionFlash(true, true) && NeedsAttentionFlash(false, false) && NeedsAttentionFlash(true, false) && !NeedsAttentionFlash(false, true));
+    CHECK(IsBackgroundWindow(false, false) && IsBackgroundWindow(true, true) && !IsBackgroundWindow(true, false));
+}
+
 int main() {
-    Display(); Icon(); Ime(); Hid();
+    Display(); Icon(); Ime(); Hid(); HidP(); PadMapT(); WindowLogic();
     std::printf("platform_win32_pure: %d checks, %d failed\n", g_n, g_fail);
     return g_fail ? 1 : 0;
 }

@@ -130,7 +130,7 @@ inline void Build(Scene& scene, const std::string& texturePath, int quality = 1)
 }
 
 /// The example scene (examples/ui_quality): the same small card drawn by three canvases at a scale of 1x, 1.5x and 2x, side by
-/// side on a 1280x720 window, so the sharpness at each scale can be compared at a glance.
+/// side on a 1280x720 window (each canvas has its own Scale With Screen Size reference), so the sharpness at each scale can be compared at a glance.
 inline void BuildExample(Scene& scene, const std::string& texturePath, int quality = 1) {
     scene.physicsEnabled = false;
     scene.uiFont = "";
@@ -141,8 +141,9 @@ inline void BuildExample(Scene& scene, const std::string& texturePath, int quali
         const float S = scales[k];
         GameObject* cvo = scene.CreateGameObject(k == 0 ? "Canvas 1x" : (k == 1 ? "Canvas 1.5x" : "Canvas 2x"));
         Canvas* cv = cvo->AddComponent<Canvas>();
-        cv->scaleMode = Canvas::ScaleMode::ConstantPixelSize;
-        cv->scaleFactor = S;
+        // Scale With Screen Size with a reference of 1280/S x 720/S: on a 1280x720 window this canvas is drawn at exactly S.
+        cv->scaleMode = Canvas::ScaleMode::ScaleWithScreenSize;
+        cv->referenceResolution = {1280.0f / S, 720.0f / S};
         const float ox = screenX / S, oy = 24.0f / S;
         auto add = [&](const char* name) {
             GameObject* g = scene.CreateGameObject(name);
@@ -172,8 +173,10 @@ inline void BuildExample(Scene& scene, const std::string& texturePath, int quali
         pb->position = {ox + 12, oy + 122}; pb->size = {150, 8}; pb->value = 0.7f; pb->cornerRadius = 4.0f;
         auto* pic = add("Picture")->AddComponent<UIImage>();     // 128 px picture shown at 28
         pic->position = {ox + 12, oy + 138}; pic->size = {24, 24}; pic->texture = texturePath;
+        pic->gameObject->uiDrawOrder = 3;   // pictures sit under panels by default; this one is on the card
         auto* rnd = add("Round")->AddComponent<UIImage>();
         rnd->position = {ox + 44, oy + 138}; rnd->size = {24, 24}; rnd->texture = texturePath; rnd->shape = UIShape::Circle;
+        rnd->gameObject->uiDrawOrder = 3;
         auto* line = add("Line")->AddComponent<UIPanel>();
         line->position = {ox + 80, oy + 150}; line->size = {100, 1}; line->color = Color::FromBytes(230, 230, 240, 255);
         screenX += 200.0f * S + 24.0f;

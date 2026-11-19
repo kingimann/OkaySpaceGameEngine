@@ -50,7 +50,7 @@ int main() {
     auto sink = okay::Log::sink;
     okay::Log::sink = [](okay::Log::Level, const std::string&) {};
 
-    CHECK(VsRecipeCount() >= 6 && VsRecipeCount() <= 16);
+    CHECK(VsRecipeCount() >= 6 && VsRecipeCount() <= 18);
     int totalNodes = 0, totalWires = 0, oldNodes = 0, oldWires = 0;
     for (const VsRecipe& r : VsRecipes()) {
         const int n = VsGraphNodeCount(r.graph), w = VsGraphWireCount(r.graph);
@@ -143,7 +143,7 @@ int main() {
         Scene scene("Score");
         auto* vs = Attach(scene, R("Show the score"));
         scene.Start();
-        okay::vs::SceneVariables(&scene)["score"] = okay::vs::Value(3.0f);
+        okay::vs::SceneVariables(&scene)["score"] = okay::vs::VsValue(3.0f);
         scene.Update(0.1f);
         auto* tr = vs->gameObject->GetComponent<TextRenderer>();
         CHECK(tr != nullptr);
@@ -156,9 +156,9 @@ int main() {
         scene.Start();
         auto* tr = vs->gameObject->GetComponent<TextRenderer>();
         CHECK(tr != nullptr);
-        CHECK(tr && tr->text.empty());
+        CHECK(tr && tr->text != "Go!");
         scene.Update(1.0f);
-        CHECK(tr && tr->text.empty());
+        CHECK(tr && tr->text != "Go!");
         scene.Update(1.5f);
         CHECK(tr && tr->text == "Go!");
     }

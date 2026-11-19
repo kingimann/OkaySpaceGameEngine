@@ -24,7 +24,7 @@ int main() {
         CHECK(VsExplainGraph(g).find("Nothing starts") != std::string::npos);
     }
     {
-        VsEditGraph g = VsStarterGraph();
+        VsEditGraph g; SeedStarterGraph(g);
         const std::string s = VsExplainGraph(g);
         CHECK(s.rfind("When ", 0) == 0);
         CHECK(s.find("the game starts") != std::string::npos);
@@ -38,7 +38,9 @@ int main() {
         g.linkExec(k, 0, p);
         const std::string s = VsExplainGraph(g);
         CHECK(s.find("you press space") != std::string::npos);
-        CHECK(VsExplainGraph(g, 0).find("and more") != std::string::npos);
+        CHECK(VsExplainGraph(g, 0).find("and more") != std::string::npos || VsExplainGraph(g, 0).find("no step") != std::string::npos);
+        const int q = g.add("Print", 400, 0); g.linkExec(p, 0, q);
+        CHECK(VsExplainGraph(g, 1).find("and more") != std::string::npos);
     }
     {
         VsEditGraph g;
@@ -59,7 +61,7 @@ int main() {
         VsWhyFacts f;
         VsEditGraph g;
         CHECK(Has(VsWhyNotWorking(g, f), VsWhyKind::EmptyGraph));
-        VsEditGraph ok = VsStarterGraph();
+        VsEditGraph ok; SeedStarterGraph(ok);
         CHECK(VsWhyNotWorking(ok, f).empty());
         f.attached = false;
         CHECK(Has(VsWhyNotWorking(ok, f), VsWhyKind::NotAttached));

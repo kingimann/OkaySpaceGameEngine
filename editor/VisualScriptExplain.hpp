@@ -68,7 +68,8 @@ inline std::string VsExplainGraph(const VsEditGraph& g, std::size_t maxSteps = 5
             for (const VsExecLink& l : g.execLinks) if (l.from == queue[qi]) out.push_back(&l);
             for (const VsExecLink* l : out) {
                 if (!seen.insert(l->to).second) continue;
-                const VsEditNode* t = g.find(l->to);
+                const VsEditNode* t = nullptr;
+                for (const VsEditNode& m : g.nodes) if (m.id == l->to) t = &m;
                 const VsDef* td = t ? FindDef(t->type) : nullptr;
                 if (!td) continue;
                 if (steps.size() >= maxSteps) { more = true; continue; }

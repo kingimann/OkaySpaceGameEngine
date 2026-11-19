@@ -1,0 +1,17 @@
+engine/src/AI/BehaviorTree.cpp|cannot open include mutex
+engine/src/AI/BehaviorTreeRunner.cpp|okay/Components/ModelAnimator.hpp:36: only one base class is supported
+engine/src/AI/GridPath2D.cpp|OK
+engine/src/AI/NavMesh.cpp|OK
+engine/src/AI/NavMeshAgent.cpp|okay/Components/ModelAnimator.hpp:36: only one base class is supported
+engine/src/AI/NavMeshBake.cpp|okay/Components/ModelAnimator.hpp:36: only one base class is supported
+engine/src/AI/NavMeshCarve.cpp|OK
+engine/src/AI/NavMeshSurface.cpp|cannot open include thread
+engine/src/AI/Navigation.cpp|cannot open include thread
+engine/src/AI/Pathfinding.cpp|OK
+engine/src/AI/Perception.cpp|OK
+engine/src/Animation/HumanoidActions.cpp|okay/Components/ModelAnimator.hpp:36: only one base class is supported
+engine/src/Animation/HumanoidLibrary.cpp|okay/Components/ModelAnimator.hpp:36: only one base class is supported
+engine/src/Animation/HumanoidMotion.cpp|OK
+engine/src/Animation/PlayerSetup.cpp|okay/Components/ModelAnimator.hpp:36: only one base class is supported
+engine/src/Audio/AudioClip.cpp|engine/src/Audio/AudioClip.cpp:20: expected a type (in , token ostream, after )
+engine/src/Audio/AudioDecode.cpp|engine/src/Audio/AudioDecode.cpp:31: expected an expression (in okay::ReadFile, after kinds 4 /1 istreambuf_iterator/19 , line 5092, token char)

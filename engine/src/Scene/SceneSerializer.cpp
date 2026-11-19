@@ -9735,7 +9735,9 @@ void RegisterBuiltinComponentSerializers() {
     waterwaves.name = "waterwaves";
     waterwaves.write = [](const GameObject& go, std::ostream& out) {
         for (auto* w : go.GetComponents<Water>()) {
-            if (w->style == Water::WaveStyle::Classic && w->current.x == 0.0f && w->current.y == 0.0f) continue;   // nothing new to say
+            const Water d;   // a fresh one: write the record only when something differs from it
+            if (w->style == d.style && w->waveDirection == d.waveDirection && w->waveSteepness == d.waveSteepness &&
+                w->waveCount == d.waveCount && w->waveSeed == d.waveSeed && w->current.x == d.current.x && w->current.y == d.current.y) continue;
             out << "  waterwaves";
             KvOut k{out};
             k("style", (int)w->style)("dir", w->waveDirection)("steep", w->waveSteepness)("count", w->waveCount)
@@ -9764,6 +9766,7 @@ void RegisterBuiltinComponentSerializers() {
     buoy.name = "buoyancy";
     buoy.write = [](const GameObject& go, std::ostream& out) {
         for (auto* b : go.GetComponents<Buoyancy>()) {
+            if (b->autoAdded) continue;   // made by a Water at Play for a plain prop
             out << "  buoyancy";
             KvOut k{out};
             k("gridX", b->gridX)("gridZ", b->gridZ)("volume", b->volume)("fullness", b->fullness)("hullH", b->hullHeight)

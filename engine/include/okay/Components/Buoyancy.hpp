@@ -90,9 +90,10 @@ public:
     /// for the three hull directions: along the nose, sideways, and up/down.
     float dragForward = 0.3f,  dragForward2 = 0.05f;
     float dragSide    = 1.0f,  dragSide2    = 0.3f;
-    float dragUp      = 2.0f,  dragUp2      = 0.3f;
+    float dragUp      = 6.0f,  dragUp2      = 0.5f;   // up/down damping is felt as soon as the hull is wet (see FixedUpdate)
     float angularDamping = 1.5f;   ///< spin slows by this per second while under water
     float maxPushAcceleration = 120.0f;   ///< the push is never more than this many m/s^2 (keeps tiny bodies stable)
+    bool  autoAdded = false;    ///< made by a Water for a plain prop (not saved; the prop keeps its old no-tilt behaviour)
     bool  letTilt = true;       ///< switch the Rigidbody's "freeze rotation" off at Start so the hull can lean on waves
 
     // ---- Splashes ----
@@ -131,7 +132,7 @@ public:
         out.clear();
         Vec3 c, h; Quat q;
         const bool haveBounds = Bounds(c, h, q);
-        const float boxVolume = 8.0f * h.x * h.y * h.z;
+        const float boxVolume = 8.0f * h.x * h.y * h.z * ShapeFill();
         const float totalVolume = volume > 0.0f ? volume : std::max(0.0f, boxVolume * fullness);
         cellHeight = hullHeight > 0.0f ? hullHeight : (haveBounds ? std::max(0.05f, 2.0f * h.y) : 1.0f);
         if (!points.empty()) {
@@ -149,8 +150,10 @@ public:
         cellVolume = out.empty() ? 0.0f : totalVolume / (float)out.size();
     }
 
-    /// The points as text "x,y,z;x,y,z" (how they are saved and edited as one property).
+    /// The points as text "x,y,z;x,y,z" (how they are saved and edited as one property). Text that was set and
+    /// still means the same points comes back exactly as it was typed.
     std::string PointsText() const {
+        if (!m_raw.empty()) { std::vector<Vec3> p = Parse(m_raw); if (SamePoints(p, points)) return m_raw; }
         std::string t;
         char b[96];
         for (const Vec3& p : points) {
@@ -161,18 +164,7 @@ public:
         return t;
     }
     /// Read points from that text. Bad pieces are skipped; at most 64 points are kept.
-    void SetPointsText(const std::string& t) {
-        points.clear();
-        size_t i = 0;
-        while (i < t.size() && points.size() < 64) {
-            size_t j = t.find(';', i);
-            if (j == std::string::npos) j = t.size();
-            float x, y, z;
-            if (std::sscanf(t.substr(i, j - i).c_str(), "%f , %f , %f", &x, &y, &z) == 3 &&
-                std::isfinite(x) && std::isfinite(y) && std::isfinite(z)) points.push_back({x, y, z});
-            i = j + 1;
-        }
-    }
+    void SetPointsText(const std::string& t) { m_raw = t; points = Parse(t); }
 
     /// Centre, half sizes (world units) and turn of the hull box the points are laid out in. False when there is no
     /// collider (then it is a one-metre block scaled by the object).
@@ -196,9 +188,6 @@ public:
         Vec3 flowSum{0, 0, 0}; int flowN = 0;
         float rho = density;
         Water::Surface sur;
-        struct Hit { Vec3 p; float frac; float vy; };
-        std::vector<Hit> hits;
-        hits.reserve(pts.size());
         Vec3 push{0, 0, 0}, torque{0, 0, 0};
         const Vec3 com = transform->Position();
         for (size_t i = 0; i < pts.size(); ++i) {
@@ -261,8 +250,15 @@ public:
                 const float k = 1.0f + (std::max(0.0f, lin) + std::max(0.0f, quad) * std::fabs(v)) * s * dt;
                 return v / k;
             };
+            // Up and down: a hull that is only a little under still feels the water on its whole bottom, so this damping
+            // reaches full strength at a quarter submerged (and is continuous from zero). This is what stops bobbing.
+            const float sv = std::min(1.0f, s * 4.0f);
+            auto slowUp = [&](float v, float lin, float quad) {
+                const float k = 1.0f + (std::max(0.0f, lin) + std::max(0.0f, quad) * std::fabs(v)) * sv * dt;
+                return v / k;
+            };
             const Vec3 nv = flow + fw * slow(vf, dragForward, dragForward2) + rt * slow(vs, dragSide, dragSide2)
-                          + up * slow(vu, dragUp, dragUp2);
+                          + up * slowUp(vu, dragUp, dragUp2);
             rb->velocity = nv;
             if (!rb->freezeRotation && angularDamping > 0.0f)
                 rb->angularVelocity = rb->angularVelocity * (1.0f / (1.0f + angularDamping * s * dt));
@@ -271,6 +267,25 @@ public:
 
 private:
     Rigidbody3D* Body() const { return gameObject ? gameObject->GetComponent<Rigidbody3D>() : nullptr; }
+    static std::vector<Vec3> Parse(const std::string& t) {
+        std::vector<Vec3> out;
+        size_t i = 0;
+        while (i < t.size() && out.size() < 64) {
+            size_t j = t.find(';', i);
+            if (j == std::string::npos) j = t.size();
+            float x, y, z;
+            if (std::sscanf(t.substr(i, j - i).c_str(), "%f , %f , %f", &x, &y, &z) == 3 &&
+                std::isfinite(x) && std::isfinite(y) && std::isfinite(z)) out.push_back({x, y, z});
+            i = j + 1;
+        }
+        return out;
+    }
+    static bool SamePoints(const std::vector<Vec3>& a, const std::vector<Vec3>& b) {
+        if (a.size() != b.size()) return false;
+        for (size_t i = 0; i < a.size(); ++i) if (a[i].x != b[i].x || a[i].y != b[i].y || a[i].z != b[i].z) return false;
+        return true;
+    }
+    std::string m_raw;   // the text last set (kept so odd text round-trips exactly)
 
     static Vec3 PointVelocity(const Rigidbody3D* rb, const Vec3& p, const Vec3& com) {
         return rb->velocity + Vec3::Cross(rb->angularVelocity, p - com);
@@ -282,6 +297,20 @@ private:
             if (w->SurfaceAt(p, s, 0.0f) && s.height > best) { best = s.height; d = w->fluidDensity; }
         }
         return d > 0.0f ? d : 1.0f;
+    }
+
+    // How much of its bounding box the collider's shape fills: a ball pi/6, a capsule or cylinder pi/4, else 1.
+    float ShapeFill() const {
+        if (!gameObject) return 1.0f;
+        for (Collider3D* col : gameObject->GetComponents<Collider3D>()) {
+            if (!col || col->isTrigger) continue;
+            switch (col->shape()) {
+                case Collider3D::Shape::Sphere: return 0.5235988f;
+                case Collider3D::Shape::Capsule: case Collider3D::Shape::Cylinder: return 0.7853982f;
+                default: return 1.0f;
+            }
+        }
+        return 1.0f;
     }
 
     // Local-space box of the hull (centre and half sizes in world units, plus the object's turn).
@@ -332,5 +361,20 @@ private:
     std::vector<float> m_cool;
     ParticleSystem* m_spray = nullptr;
 };
+
+inline void Water::AutoBuoy(Rigidbody3D* rb) {
+    if (!rb || !rb->gameObject || rb->gameObject->GetComponent<Buoyancy>()) return;
+    // Only bodies whose centre is over this water (same test the old version used).
+    Surface sf;
+    if (!SurfaceAt(rb->transform->Position(), sf, 0.5f)) return;
+    auto* b = rb->gameObject->AddComponent<Buoyancy>();
+    b->autoAdded = true;
+    b->letTilt = false;                 // the old float never tipped things over
+    b->splashEffect = false;
+    b->density = 0.0f;                  // this water's own density
+    b->dragForward = b->dragSide = std::max(0.0f, linearDrag);   // the old "Drag" number, sideways and along
+    b->dragForward2 = b->dragSide2 = 0.0f;
+    b->dragUp = std::max(std::max(0.0f, linearDrag), b->dragUp);   // up and down at least as damped as a default hull
+}
 
 } // namespace okay

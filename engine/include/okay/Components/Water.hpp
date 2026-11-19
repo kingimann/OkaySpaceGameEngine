@@ -45,6 +45,12 @@ public:
     /// How fast a submerged prop's velocity fades (1/s, scaled by how much of it is under).
     float linearDrag = 4.0f;
 
+    /// Plain floating props (a Rigidbody3D with no Buoyancy of its own) get a Buoyancy added when they touch this
+    /// water at Play (not saved), so one system floats everything: several points, a smooth push near the surface,
+    /// drag against the moving water, all in the fixed step. false = the old single-force version run every frame
+    /// (kept only to compare; it bounces things at the surface).
+    bool autoBuoyancy = true;
+
     /// What the waves look like and how they move.
     ///   Classic - the original crossing sine waves (kept so old scenes look the same).
     ///   Ocean   - a few travelling waves with sharp crests and long swells (Environment/WaterWaves.hpp).
@@ -283,6 +289,7 @@ private:
     // upward force of (displaced volume * fluidDensity * g) and some drag.
     // Gravity in this engine is an acceleration, and AddForce is a force, so a
     // body floats when its mass is less than fluidDensity times its volume.
+    void AutoBuoy(Rigidbody3D* rb);   // defined in Buoyancy.hpp
     void BuoyBodies() {
         Scene* sc = gameObject ? gameObject->scene() : nullptr;
         if (!sc || fluidDensity <= 0.0f) return;
@@ -295,6 +302,7 @@ private:
             for (Component* c : rb->gameObject->GetComponents<Component>())
                 if (c && c->IgnoresBuoyancy()) { driven = true; break; }
             if (driven) continue;
+            if (autoBuoyancy) { AutoBuoy(rb); continue; }
             Vec3 mn, mx;
             bool have = false;
             for (Collider3D* col : rb->gameObject->GetComponents<Collider3D>()) {
@@ -344,3 +352,5 @@ inline void SwimVertical(Rigidbody3D& rb, float feetY, float surfaceY, bool up, 
 }
 
 } // namespace okay
+
+#include "okay/Components/Buoyancy.hpp"   // Water::AutoBuoy lives there (the two headers belong together)

@@ -31,6 +31,8 @@ floating crates drift with it). Wave Height, Length and Speed work as before. Cl
 splashes, bobs and settles half under. Change the mass: 0.25 floats higher, 2 sinks. Select it and look at the Inspector:
 Grid X/Z, Fullness, Drag numbers, Splash Effect.
 
+**Steps (no more bouncing).** Open any old scene with Water (Depth above 0) and a Rigidbody crate, or make one: Cube + Rigidbody3D + Box Collider 3D (mass 0.5) 3 m above a Water with Depth 5. Press Play: it splashes in, dips once, and settles within a couple of seconds at the same height whatever the frame rate. Before this change it kept hopping at the surface.
+
 **How you know it worked.** The crate at mass 0.5 ends with its middle at the water line; the boat does not flip over in the
 waves; with the boat in the air (drag it up in the scene before Play) the engine does nothing until it lands.
 

@@ -4504,6 +4504,18 @@ add_executable(test_camera_rig test_camera_rig.cpp)
 target_link_libraries(test_camera_rig PRIVATE okay::engine)
 target_compile_definitions(test_camera_rig PRIVATE OKAY_SOURCE_DIR="${PROJECT_SOURCE_DIR}")
 add_test(NAME camera_rig COMMAND test_camera_rig)
+
+# Water visuals: shading maths, ring grid, depth colour, foam, ripples, splashes, underwater, presets, pictures (docs/water_visuals.md).
+add_executable(test_water_visuals test_water_visuals.cpp)
+target_link_libraries(test_water_visuals PRIVATE okay::engine)
+target_include_directories(test_water_visuals PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})
+add_test(NAME water_visuals COMMAND test_water_visuals)
+
+# Water pictures, example scenes (examples/water/) and speed numbers. A tool, not a test.
+add_executable(water_shot water_shot.cpp)
+target_link_libraries(water_shot PRIVATE okay::engine)
+target_include_directories(water_shot PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})
+
 # Headless pictures of the lighting test scenes (a tool, not a test). docs/lighting_upgrade.md
 add_executable(lighting_shot lighting_shot.cpp)
 target_link_libraries(lighting_shot PRIVATE okay::engine)

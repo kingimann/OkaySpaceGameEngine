@@ -1134,7 +1134,25 @@ void RegisterWater() {
      .AddFloat("waveSteepness", &Water::waveSteepness).Range(0, 1, 0.01).Tooltip("0 = round smooth waves, 1 = sharp crests (Ocean)")
      .AddInt("waveCount", &Water::waveCount).Range(1, 8, 1).Tooltip("How many waves are added together (Ocean)")
      .AddInt("waveSeed", &Water::waveSeed).Range(0, 1000000, 1).Tooltip("The same number always makes the same sea")
-     .AddVec2("current", &Water::current).Range(-kBig, kBig, 0.1).Tooltip("A steady stream in the water, metres per second along X and Z");
+     .AddVec2("current", &Water::current).Range(-kBig, kBig, 0.1).Tooltip("A steady stream in the water, metres per second along X and Z")
+     .AddInt("seaState", &Water::seaState).Range(0, 4, 1).Tooltip("0 your own waves, 1 Calm, 2 Light, 3 Rough, 4 Storm (the Inspector slider sets the wave numbers)")
+     .AddBool("realisticLook", &Water::realisticLook).Tooltip("Depth colour, foam, glow in the crests and ripples")
+     .AddColor("shallowColor", &Water::shallowColor).Tooltip("Colour of shallow water")
+     .AddColor("deepColor", &Water::deepColor).Tooltip("Colour of deep water")
+     .AddFloat("clarity", &Water::clarity).Range(0.05, 200, 0.1).Tooltip("How many metres of depth before the water looks deep. Small = murky")
+     .AddFloat("assumedDepth", &Water::assumedDepth).Range(0, 10000, 0.5).Tooltip("Depth used where there is no Terrain under the water and Depth is 0")
+     .AddFloat("foamAmount", &Water::foamAmount).Range(0, 1, 0.01).Tooltip("White caps on the crests and steep waves")
+     .AddFloat("shoreFoamWidth", &Water::shoreFoamWidth).Range(0, 50, 0.05).Tooltip("Metres of foam where the water meets the ground. 0 = none")
+     .AddColor("foamColor", &Water::foamColor).Tooltip("Colour of the foam")
+     .AddFloat("scatter", &Water::scatter).Range(0, 1, 0.01).Tooltip("Green-blue glow in the crests when the sun is behind them")
+     .AddFloat("ripples", &Water::ripples).Range(0, 1, 0.01).Tooltip("Small ripples that never stop, even on a calm lake")
+     .AddFloat("rippleSize", &Water::rippleSize).Range(0.05, 20, 0.05).Tooltip("Size of the small ripples. 1 is normal")
+     .AddBool("lod", &Water::lod).Tooltip("Rings of squares: fine near the camera, coarse far away. Detail is the cells per ring side")
+     .AddInt("lodRings", &Water::lodRings).Range(1, 8, 1).Tooltip("How many rings. Each is twice as coarse as the one inside it")
+     .AddBool("infinite", &Water::infinite).Tooltip("With rings: the sea follows the camera and has no edge")
+     .AddBool("interactive", &Water::interactive).Tooltip("Things that fall in or move through the water make rings and splashes")
+     .AddBool("underwaterEffect", &Water::underwaterEffect).Tooltip("Blue-green fog when the camera is under the surface")
+     .AddBool("bubbles", &Water::bubbles).Tooltip("Bubbles rise around the camera under the surface");
     b.Commit();
 }
 

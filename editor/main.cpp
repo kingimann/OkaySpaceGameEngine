@@ -7446,12 +7446,15 @@ static GameObject* AddParticleObject(EditorState& ed) {
     ConsoleLog("Created Particle System (press Play to see it)");
     return go;
 }
-static GameObject* AddWaterObject(EditorState& ed) {
-    GameObject* go = ed.CreateEmpty("Water");
+// preset 1..8 (Water::PresetName) makes a ready water plane with the whole look on; 0 is the plain old surface.
+static GameObject* AddWaterObject(EditorState& ed, int preset = 1) {
+    GameObject* go = ed.CreateEmpty(preset >= 1 && preset <= 8 ? Water::PresetName(preset) : "Water");
     auto* w = go->AddComponent<Water>();
-    w->size = 80.0f; w->Apply();
+    w->size = 80.0f;
+    if (preset >= 1 && preset <= 8) { w->ApplyPreset(preset); w->depth = 6.0f; w->lod = true; w->resolution = 48; }
+    w->Apply();
     ed.Select(go); ed.view3D = true; ed.dirty = true;
-    ConsoleLog("Created Water (animated reflective surface)");
+    ConsoleLog("Created Water (select it and try Preset and Sea State in the Inspector; press Play for splashes)");
     return go;
 }
 // GameObject > Vehicles > Boat: a hull that floats and drives (W/S, A/D). With no water in the scene it brings a lake.
@@ -7575,7 +7578,14 @@ static void DrawCreateSlot(EditorState& ed, const std::string& id, GameObject* p
             ed.Select(go); ed.view3D = true; ed.dirty = true; created = true;
             ConsoleLog("Created Voxel Terrain (Voxel Digger: Left Mouse digs caves, Right Mouse adds)");
         }
-        if (ImGui::MenuItem("Water")) { AddWaterObject(ed); created = true; }
+        if (ImGui::BeginMenu("Water")) {
+            for (int wp = 1; wp <= 8; ++wp)
+                if (ImGui::MenuItem(Water::PresetName(wp))) { AddWaterObject(ed, wp); created = true; }
+            ImGui::Separator();
+            if (ImGui::MenuItem("Plain (old look)")) { AddWaterObject(ed, 0); created = true; }
+            ImGui::EndMenu();
+        }
+        if (ImGui::IsItemHovered()) ImGui::SetTooltip("A ready water plane with waves, ripples, foam and depth colour. Pick the kind of water.");
         if (ImGui::MenuItem("Character")) { AddCharacterObject(ed); created = true; }
         ImGui::Separator();
         if (ImGui::BeginMenu("Physics Toys")) {     // ready-made physics objects (Components/PhysicsToyPresets.hpp); each is placed at the view target
@@ -32325,6 +32335,52 @@ void DrawInspector(EditorState& ed) {
             oked::FieldTip("Glint##wat");
             if (ImGui::DragFloat2("Flow##wat", &w->flow.x, 0.005f, -1.0f, 1.0f)) { w->Apply(); ed.dirty = true; }
             if (ImGui::IsItemHovered()) ImGui::SetTooltip("UV scroll speed — the current the surface drifts at.");
+            SectionHeader("Look");
+            {
+                static int pick = 0;
+                if (ImGui::Combo("Preset##wat", &pick, "Pick a kind of water...\0Calm Lake\0Pond\0Ocean\0Stormy Sea\0River\0Swamp\0Tropical\0Ice-cold\0")) {
+                    if (pick > 0) { w->ApplyPreset(pick); w->Apply(); ed.dirty = true; }
+                    pick = 0;
+                }
+                if (ImGui::IsItemHovered()) ImGui::SetTooltip("One click sets the waves, colours, foam and ripples for a kind of water. You can change everything after.");
+                int ss = w->seaState;
+                if (ImGui::Combo("Sea State##wat", &ss, "Custom\0Calm\0Light\0Rough\0Storm\0")) { w->SetSeaState(ss); w->Apply(); ed.dirty = true; }
+                if (ImGui::IsItemHovered()) ImGui::SetTooltip("How rough the sea is. Sets the wave height, length, sharpness and foam in one go.");
+                if (ImGui::Checkbox("Realistic look##wat", &w->realisticLook)) { w->Apply(); ed.dirty = true; }
+                if (ImGui::IsItemHovered()) ImGui::SetTooltip("Turquoise shallows and deep blue, white foam on the waves and the shore, a glow in the crests, small ripples.");
+                if (w->realisticLook) {
+                    float sc3[3] = {w->shallowColor.r, w->shallowColor.g, w->shallowColor.b};
+                    if (ImGui::ColorEdit3("Shallow colour##wat", sc3)) { w->shallowColor = Color{sc3[0], sc3[1], sc3[2], 1.0f}; ed.dirty = true; }
+                    float dc3[3] = {w->deepColor.r, w->deepColor.g, w->deepColor.b};
+                    if (ImGui::ColorEdit3("Deep colour##wat", dc3)) { w->deepColor = Color{dc3[0], dc3[1], dc3[2], 1.0f}; ed.dirty = true; }
+                    if (ImGui::DragFloat("Clarity##wat", &w->clarity, 0.1f, 0.1f, 200.0f, "%.1f m")) ed.dirty = true;
+                    if (ImGui::IsItemHovered()) ImGui::SetTooltip("How many metres down before the water looks deep. Small = murky, big = clear.");
+                    if (ImGui::DragFloat("Assumed depth##wat", &w->assumedDepth, 0.5f, 0.0f, 10000.0f, "%.1f m")) ed.dirty = true;
+                    if (ImGui::IsItemHovered()) ImGui::SetTooltip("Used where there is no Terrain under the water and Depth is 0. With a Terrain the real depth is used.");
+                    if (ImGui::SliderFloat("Foam##wat", &w->foamAmount, 0.0f, 1.0f)) ed.dirty = true;
+                    if (ImGui::IsItemHovered()) ImGui::SetTooltip("White caps on the tops of waves and on steep waves.");
+                    if (ImGui::DragFloat("Shore foam##wat", &w->shoreFoamWidth, 0.05f, 0.0f, 50.0f, "%.1f m")) ed.dirty = true;
+                    if (ImGui::IsItemHovered()) ImGui::SetTooltip("Width of the white line where the water meets the ground or a rock. 0 = none.");
+                    if (ImGui::SliderFloat("Crest glow##wat", &w->scatter, 0.0f, 1.0f)) ed.dirty = true;
+                    if (ImGui::IsItemHovered()) ImGui::SetTooltip("A green-blue glow in the tops of waves when the sun is behind them.");
+                    if (ImGui::SliderFloat("Ripples##wat", &w->ripples, 0.0f, 1.0f)) { w->Apply(); ed.dirty = true; }
+                    if (ImGui::IsItemHovered()) ImGui::SetTooltip("Tiny ripples that keep moving, even when the water is calm.");
+                    if (ImGui::DragFloat("Ripple size##wat", &w->rippleSize, 0.05f, 0.05f, 20.0f)) { w->Apply(); ed.dirty = true; }
+                }
+                if (ImGui::Checkbox("Rings of detail##wat", &w->lod)) { w->Apply(); ed.dirty = true; }
+                if (ImGui::IsItemHovered()) ImGui::SetTooltip("Lots of detail close to the camera and less far away, so big waves stay smooth and fast. Detail above sets the cells.");
+                if (w->lod) {
+                    if (ImGui::SliderInt("Rings##wat", &w->lodRings, 1, 8)) { w->Apply(); ed.dirty = true; }
+                    if (ImGui::Checkbox("Sea with no edge##wat", &w->infinite)) { w->Apply(); ed.dirty = true; }
+                    if (ImGui::IsItemHovered()) ImGui::SetTooltip("The water follows the camera, so you never see the edge of the square.");
+                }
+                if (ImGui::Checkbox("Splashes and ripples##wat", &w->interactive)) ed.dirty = true;
+                if (ImGui::IsItemHovered()) ImGui::SetTooltip("Things that fall in or move through the water make rings and spray (Play mode).");
+                if (ImGui::Checkbox("Underwater look##wat", &w->underwaterEffect)) ed.dirty = true;
+                if (ImGui::IsItemHovered()) ImGui::SetTooltip("Blue-green murk when the camera goes under the surface.");
+                if (ImGui::Checkbox("Bubbles##wat", &w->bubbles)) ed.dirty = true;
+                if (ImGui::IsItemHovered()) ImGui::SetTooltip("Bubbles rise around the camera when it is under the water.");
+            }
             if (ImGui::SmallButton("Remove##wat")) toRemove = w;
         }
     }

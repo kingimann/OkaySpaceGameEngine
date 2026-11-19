@@ -187,6 +187,21 @@ void PackCov(const Color& c, float op, float cov, std::uint8_t out[4]) {
     out[3] = (std::uint8_t)(a * 255.0f + 0.5f);
 }
 
+// Like PackCov, but each colour channel is rounded with a 4x4 ordered (Bayer) threshold at device pixel (x, y), so a slow gradient
+// shows fine noise instead of wide bands (a smooth ramp over 20 levels is 20 flat strips otherwise).
+void PackCovDither(const Color& c, float op, float cov, int x, int y, std::uint8_t out[4]) {
+    static const std::uint8_t kBayer[16] = {0, 8, 2, 10, 12, 4, 14, 6, 3, 11, 1, 9, 15, 7, 13, 5};
+    const float thr = ((float)kBayer[(y & 3) * 4 + (x & 3)] + 0.5f) / 16.0f;
+    auto q = [&](float v) {
+        float f = std::floor(v * 255.0f + thr);
+        return (std::uint8_t)(f < 0.0f ? 0.0f : (f > 255.0f ? 255.0f : f));
+    };
+    out[0] = q(c.r); out[1] = q(c.g); out[2] = q(c.b);
+    float a = c.a * op * cov;
+    a = a < 0.0f ? 0.0f : (a > 1.0f ? 1.0f : a);
+    out[3] = (std::uint8_t)(a * 255.0f + 0.5f);
+}
+
 Color LerpC(const Color& a, const Color& b, float t) {
     return Color{a.r + (b.r - a.r) * t, a.g + (b.g - a.g) * t, a.b + (b.b - a.b) * t, a.a + (b.a - a.a) * t};
 }
@@ -227,15 +242,32 @@ void EmitSpan(FloatRun& run, float ox, float ly, float lh, float S, float a, flo
     if (s1 == i1 - 1 && c1 >= 0.2f) put(i1 - 1, c1, 1.0f);
 }
 
+// Where a logical rect lands on the device pixel grid: its edges rounded to whole device pixels (so at a canvas scale of 1.5 a
+// 15 px wide card is 22 or 23 device pixels, with hard, even borders, instead of starting half way through a pixel). Returns the
+// origin in logical units and the size in device pixels. The Old look keeps the unsnapped origin and the exact size.
+void SnapToDevice(const Rect& r, float S, float& ox, float& oy, float& dw, float& dh) {
+    ox = (float)r.x; oy = (float)r.y;
+    dw = std::max(1.0f, (float)r.w * S); dh = std::max(1.0f, (float)r.h * S);
+    if (g_uiQuality == UIQuality::Old || std::fabs(S - 1.0f) < 1e-4f) return;
+    const float x0 = std::floor((float)r.x * S + 0.5f), y0 = std::floor((float)r.y * S + 0.5f);
+    const float x1 = std::floor((float)(r.x + r.w) * S + 0.5f), y1 = std::floor((float)(r.y + r.h) * S + 0.5f);
+    ox = x0 / S; oy = y0 / S;
+    dw = std::max(1.0f, x1 - x0); dh = std::max(1.0f, y1 - y0);
+}
+
 void FillUIShapeSmooth(Painter& ren, const Rect& r, UIShape shape, float radius,
                        const Color& top, const Color& bottom, bool gradient, bool horizontal,
                        float op, int diag, int cornerMask) {
     const float S = g_uiDeviceScale > 0.05f ? g_uiDeviceScale : 1.0f;
-    const float dw = std::max(1.0f, (float)r.w * S);
-    const float dh = std::max(1.0f, (float)r.h * S);
+    float ox0, oy0, dw, dh;
+    SnapToDevice(r, S, ox0, oy0, dw, dh);
     const float rad = (shape == UIShape::Pill) ? std::min(dw, dh) * 0.5f : std::max(0.0f, radius * S);
     const int rows = std::max(1, (int)std::ceil(dh - 1e-3f));
     const bool varyX = gradient && (horizontal || diag != 0);
+    // Best: a gradient on a modest area is dithered per pixel (an ordered threshold on the 8-bit rounding). Bigger areas keep the
+    // one-rect-per-row fill: a pixel per rect would cost too much, and a big gradient hides its bands less than a small card.
+    const bool dither = gradient && g_uiQuality == UIQuality::Best && dw * dh <= 30000.0f;
+    const bool perPixel = varyX || dither;
     const bool sideRun = shape == UIShape::Rounded || shape == UIShape::Pill || shape == UIShape::TabTop;
     const int cap = sideRun ? (int)std::ceil(rad) : rows;
     const bool flat = !gradient;
@@ -244,23 +276,23 @@ void FillUIShapeSmooth(Painter& ren, const Rect& r, UIShape shape, float radius,
     FloatRun run;
     run.ren = &ren;
     for (int row = 0; row < rows; ++row) {
-        const float ly = (float)r.y + (float)row / S;
+        const float ly = oy0 + (float)row / S;
         const float lh = 1.0f / S;
         if (sideRun && flat && row >= cap && (shape == UIShape::TabTop || row < rows - cap)) {
-            run.Add((float)r.x, ly, (float)r.w, lh, solid);
+            run.Add(ox0, ly, dw / S, lh, solid);
             continue;
         }
         float a, b;
         if (!UIShapeSpanAt(shape, dw, dh, shape == UIShape::Pill ? 0.0f : rad, (float)row + 0.5f, a, b, cornerMask))
             continue;
         Color tint = top;
-        if (gradient && !varyX) {
+        if (gradient && !perPixel) {
             const float fy = dh > 1.0f ? ((float)row + 0.5f) / (dh - 1.0f) : 0.0f;
             tint = LerpC(top, bottom, fy < 0.0f ? 0.0f : (fy > 1.0f ? 1.0f : fy));
             PackCov(tint, op, 1.0f, solid);
         }
-        if (!varyX) {
-            EmitSpan(run, (float)r.x, ly, lh, S, a, b, solid, tint, op, true);
+        if (!perPixel) {
+            EmitSpan(run, ox0, ly, lh, S, a, b, solid, tint, op, true);
             continue;
         }
         const int i0 = (int)std::floor(a), i1 = (int)std::ceil(b - 1e-4f);
@@ -269,11 +301,11 @@ void FillUIShapeSmooth(Painter& ren, const Rect& r, UIShape shape, float radius,
             if (cov <= 0.004f) continue;
             const float fy = dh > 1.0f ? ((float)row + 0.5f) / (dh - 1.0f) : 0.0f;
             const float fx = dw > 1.0f ? ((float)x + 0.5f) / (dw - 1.0f) : 0.0f;
-            const float t = diag == 1 ? (fx + fy) * 0.5f : diag == 2 ? (fx + (1.0f - fy)) * 0.5f : fx;
+            const float t = !varyX ? fy : (diag == 1 ? (fx + fy) * 0.5f : diag == 2 ? (fx + (1.0f - fy)) * 0.5f : fx);
             const Color c = LerpC(top, bottom, t < 0.0f ? 0.0f : (t > 1.0f ? 1.0f : t));
             std::uint8_t col[4];
-            PackCov(c, op, cov, col);
-            run.Add((float)r.x + (float)x / S, ly, 1.0f / S, lh, col);
+            if (dither) PackCovDither(c, op, cov, x, row, col); else PackCov(c, op, cov, col);
+            run.Add(ox0 + (float)x / S, ly, 1.0f / S, lh, col);
         }
     }
     run.Flush();
@@ -282,10 +314,10 @@ void FillUIShapeSmooth(Painter& ren, const Rect& r, UIShape shape, float radius,
 void FillUIRingSmooth(Painter& ren, const Rect& r, UIShape shape, float radius,
                       const Color& c, int width, float op, int cornerMask) {
     const float S = g_uiDeviceScale > 0.05f ? g_uiDeviceScale : 1.0f;
-    const float dw = std::max(1.0f, (float)r.w * S);
-    const float dh = std::max(1.0f, (float)r.h * S);
+    float gx0, gy0, dw, dh;
+    SnapToDevice(r, S, gx0, gy0, dw, dh);
     const float rad = (shape == UIShape::Pill) ? std::min(dw, dh) * 0.5f : std::max(0.0f, radius * S);
-    const float inset = std::max(1.0f, (float)width * S);
+    const float inset = g_uiQuality == UIQuality::Old ? std::max(1.0f, (float)width * S) : std::max(1.0f, std::floor((float)width * S + 0.5f));
     const float iw = dw - 2.0f * inset, ih = dh - 2.0f * inset;
     const float irad = std::max(0.0f, rad - inset);
     const int rows = std::max(1, (int)std::ceil(dh - 1e-3f));
@@ -296,13 +328,13 @@ void FillUIRingSmooth(Painter& ren, const Rect& r, UIShape shape, float radius,
     std::uint8_t solid[4];
     PackCov(c, op, 1.0f, solid);
     for (int row = 0; row < rows; ++row) {
-        const float ly = (float)r.y + (float)row / S;
+        const float ly = gy0 + (float)row / S;
         const float lh = 1.0f / S;
         // Straight sides of a rounded ring: a strip on the left and the right.
         if (sideRun && row >= cap && (shape == UIShape::TabTop || row < rows - cap)) {
             const float band = inset / S;
-            run.Add((float)r.x, ly, band, lh, solid);
-            run.Add((float)r.x + (float)r.w - band, ly, band, lh, solid);
+            run.Add(gx0, ly, band, lh, solid);
+            run.Add(gx0 + dw / S - band, ly, band, lh, solid);
             continue;
         }
         float ox0, ox1;
@@ -312,11 +344,11 @@ void FillUIRingSmooth(Painter& ren, const Rect& r, UIShape shape, float radius,
         const bool inner = iw > 0.5f && ih > 0.5f &&
                            UIShapeSpanAt(shape, iw, ih, irad, (float)row + 0.5f - inset, ix0, ix1, cornerMask);
         if (!inner) {
-            EmitSpan(run, (float)r.x, ly, lh, S, ox0, ox1, solid, c, op, true);
+            EmitSpan(run, gx0, ly, lh, S, ox0, ox1, solid, c, op, true);
             continue;
         }
-        EmitSpan(run, (float)r.x, ly, lh, S, ox0, ix0 + inset, solid, c, op, true);
-        EmitSpan(run, (float)r.x, ly, lh, S, ix1 + inset, ox1, solid, c, op, true);
+        EmitSpan(run, gx0, ly, lh, S, ox0, ix0 + inset, solid, c, op, true);
+        EmitSpan(run, gx0, ly, lh, S, ix1 + inset, ox1, solid, c, op, true);
     }
     run.Flush();
 }
@@ -336,7 +368,7 @@ void FillUIShape(Painter& ren, const Rect& r, UIShape shape, float radius,
     if (r.w <= 0 || r.h <= 0) return;
     // Rectangles already sit on the pixel grid. Curves get a one-pixel coverage fringe
     // unless the scene asked for the pixel-art look.
-    if (g_uiSmoothEdges && shape != UIShape::Rectangle) {
+    if (g_uiSmoothEdges && (shape != UIShape::Rectangle || (gradient && g_uiQuality == UIQuality::Best))) {
         FillUIShapeSmooth(ren, r, shape, radius, top, bottom, gradient, horizontal, op, diag, cornerMask);
         return;
     }

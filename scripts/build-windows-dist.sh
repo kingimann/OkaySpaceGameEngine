@@ -198,6 +198,7 @@ player
 security_paths
 spatial_audio
 touch_controls
+driving
 ui_library
 ui_text
 vehicle

@@ -217,6 +217,22 @@ bool DrawParticleInspectorExtras(okay::editor::EditorState& ed, ParticleSystem& 
         if (C(ImGui::Combo("When full##psx", &cp, caps, 2))) ps.capPolicy = (ParticleSystem::CapPolicy)cp;
         Tip("What happens when Max Particles is reached: skip the new ones, or make room by replacing an old one.");
         ImGui::TextDisabled("More bursts (a burst fires a number of particles at a time in each round)");
+        ImGui::TextDisabled("Start values that change while the effect plays (1 = as set above)");
+        {
+            const char* names[] = {"Size changes over the round", "Speed changes over the round", "Lifetime changes over the round"};
+            ParticleCurve* cv[] = {&ps.startSizeCurve, &ps.startSpeedCurve, &ps.startLifetimeCurve};
+            for (int q = 0; q < 3; ++q) {
+                ImGui::PushID(100 + q);
+                bool on = cv[q]->Active();
+                if (ImGui::Checkbox(names[q], &on)) { if (on) cv[q]->SetLinear(1.0f, 1.0f); else cv[q]->Clear(); ed.dirty = true; any = true; }
+                if (on && curveEditor && curveEditor(q == 0 ? "psxssz" : (q == 1 ? "psxssp" : "psxslf"), *cv[q])) { ed.dirty = true; any = true; }
+                ImGui::PopID();
+            }
+            if (cv[0]->Active() || cv[1]->Active() || cv[2]->Active()) {
+                C(ImGui::DragFloat("Round length (s)##psx", &ps.startCurvePeriod, 0.05f, 0.01f, 10000.0f));
+                Tip("How long one round of these curves takes. When the effect has a Duration, that is the round.");
+            }
+        }
         int remove = -1;
         for (int b = 0; b < ps.extraBurstCount; ++b) {
             ImGui::PushID(b);
@@ -304,7 +320,9 @@ bool DrawParticleInspectorExtras(okay::editor::EditorState& ed, ParticleSystem& 
         Tip("A particle disappears the first time it touches the ground or something solid.");
         C(ImGui::Checkbox("Hit things in the scene##psx", &ps.worldCollision));
         Tip("Bounce off walls and floors that have a collider. Needs a little more time for each particle.");
-        if (ps.worldCollision) {
+        C(ImGui::Checkbox("Hit 2D things in the scene##psx", &ps.worldCollision2D));
+        Tip("For 2D games: bounce off sprites that have a 2D collider (box, circle, capsule, edge, polygon).");
+        if (ps.worldCollision || ps.worldCollision2D) {
             C(ImGui::DragInt("Checks per frame##psx", &ps.collisionRaysPerFrame, 1.0f, 1, 100000));
             Tip("How many particles are checked each frame. Lower is faster but fast particles may slip through for a moment.");
             ImGui::TextDisabled("Bounce, Friction and Life Loss are in the Collision rows above.");

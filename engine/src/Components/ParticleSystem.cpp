@@ -250,9 +250,17 @@ void ParticleSystem::SpawnOne(const Vec3& origin, const Vec3& extraVel, float ag
     const int idx = AllocSlot();
     if (idx < 0) return;
     ++m_emitCount;
+    // Start-value curves: where is the emitter in its round? (0 at the start of the round, 1 at its end)
+    float cyc = 0.0f;
+    if (startSizeCurve.Active() || startSpeedCurve.Active() || startLifetimeCurve.Active()) {
+        if (duration > 0.0f) cyc = Mathf::Clamp01(m_age / duration);
+        else { const float per = startCurvePeriod > 0.01f ? startCurvePeriod : 0.01f; cyc = std::fmod(m_time, per) / per; }
+    }
     float life = startLifetime + (startLifetimeRandom > 0.0f ? m_rng.Range(-startLifetimeRandom, startLifetimeRandom) : 0.0f);
+    if (startLifetimeCurve.Active()) life *= startLifetimeCurve.Evaluate(cyc);
     if (life < 0.01f) life = 0.01f;
     float size = startSize + (startSizeRandom > 0.0f ? m_rng.Range(-startSizeRandom, startSizeRandom) : 0.0f);
+    if (startSizeCurve.Active()) size *= startSizeCurve.Evaluate(cyc);
     if (size < 0.0f) size = 0.0f;
     const float rot = startRotation + (startRotationRandom > 0.0f ? m_rng.Range(-startRotationRandom, startRotationRandom) : 0.0f);
     const float ang = rotationSpeed + (rotationSpeedRandom > 0.0f ? m_rng.Range(-rotationSpeedRandom, rotationSpeedRandom) : 0.0f);
@@ -330,6 +338,7 @@ void ParticleSystem::SpawnOne(const Vec3& origin, const Vec3& extraVel, float ag
         const Quat q = transform->Rotation();
         off = q * off; vel = q * vel;
     }
+    if (startSpeedCurve.Active()) vel *= startSpeedCurve.Evaluate(cyc);
     if (speedRandom > 0.0f) vel *= (1.0f + m_rng.Range(-speedRandom, speedRandom));
     if (velocityRandom > 0.0f)
         vel += Vec3{m_rng.Range(-velocityRandom, velocityRandom), m_rng.Range(-velocityRandom, velocityRandom), m_rng.Range(-velocityRandom, velocityRandom)};
@@ -482,13 +491,30 @@ void ParticleSystem::StepRange(int begin, int end, float dt, const Ctx& c) {
 
 void ParticleSystem::WorldCollide(float /*dt*/) {
     m_lastRays = 0;
-    if (!worldCollision || m_n == 0 || !gameObject || !gameObject->scene()) return;
+    if ((!worldCollision && !worldCollision2D) || m_n == 0 || !gameObject || !gameObject->scene()) return;
     Scene& scene = *gameObject->scene();
-    Physics3D& phys = scene.physics3D();
     const int budget = collisionRaysPerFrame < 1 ? 1 : collisionRaysPerFrame;
     const int n = m_n;
     const int start = m_rayCursor % n;
     int used = 0, k = 0;
+    // What a hit does: put the particle on the surface, turn its velocity (bounce, friction), lose life, maybe end.
+    auto react = [&](int i, const Vec3& point, const Vec3& normal) {
+        Vec3 nrm = normal; const float nl = VLen(nrm); nrm = nl > 1e-6f ? nrm * (1.0f / nl) : Vec3{0, 1, 0};
+        const Vec3 np = point + nrm * 0.005f;
+        F(PX, i) = np.x; F(PY, i) = np.y; F(PZ, i) = np.z;
+        Vec3 v{F(VX, i), F(VY, i), F(VZ, i)};
+        const float vn = Vec3::Dot(v, nrm);
+        if (vn < 0.0f) {
+            const Vec3 vnorm = nrm * vn;
+            const Vec3 vtan = v - vnorm;
+            v = vtan * (1.0f - Mathf::Clamp01(collisionFriction)) - vnorm * bounce;
+        }
+        F(VX, i) = v.x; F(VY, i) = v.y; F(VZ, i) = v.z;
+        if (collisionLifeLoss > 0.0f) F(LIFE, i) -= F(MAXLIFE, i) * Mathf::Clamp01(collisionLifeLoss);
+        if (dieOnCollision) F(LIFE, i) = 0.0f;
+        m_hit[i] = 1;
+        F(OX, i) = np.x; F(OY, i) = np.y; F(OZ, i) = np.z;
+    };
     for (; k < n && used < budget; ++k) {
         const int i = (start + k) % n;
         if (F(LIFE, i) <= 0.0f) continue;
@@ -498,26 +524,20 @@ void ParticleSystem::WorldCollide(float /*dt*/) {
         const float len = VLen(d);
         if (len < 1e-4f) continue;   // has not moved: nothing to hit, and the start point stays
         ++used;
-        const RaycastHit3D h = phys.Raycast(scene, o, d * (1.0f / len), len, gameObject, Physics3D::kAllLayers, false);
-        if (h.hit) {
-            Vec3 nrm = h.normal; const float nl = VLen(nrm); nrm = nl > 1e-6f ? nrm * (1.0f / nl) : Vec3{0, 1, 0};
-            const Vec3 np = h.point + nrm * 0.005f;
-            F(PX, i) = np.x; F(PY, i) = np.y; F(PZ, i) = np.z;
-            Vec3 v{F(VX, i), F(VY, i), F(VZ, i)};
-            const float vn = Vec3::Dot(v, nrm);
-            if (vn < 0.0f) {
-                const Vec3 vnorm = nrm * vn;
-                const Vec3 vtan = v - vnorm;
-                v = vtan * (1.0f - Mathf::Clamp01(collisionFriction)) - vnorm * bounce;
-            }
-            F(VX, i) = v.x; F(VY, i) = v.y; F(VZ, i) = v.z;
-            if (collisionLifeLoss > 0.0f) F(LIFE, i) -= F(MAXLIFE, i) * Mathf::Clamp01(collisionLifeLoss);
-            if (dieOnCollision) F(LIFE, i) = 0.0f;
-            m_hit[i] = 1;
-            F(OX, i) = np.x; F(OY, i) = np.y; F(OZ, i) = np.z;
-        } else {
-            F(OX, i) = p.x; F(OY, i) = p.y; F(OZ, i) = p.z;
+        bool hit = false;
+        if (worldCollision) {
+            const RaycastHit3D h = scene.physics3D().Raycast(scene, o, d * (1.0f / len), len, gameObject, Physics3D::kAllLayers, false);
+            if (h.hit) { react(i, h.point, h.normal); hit = true; }
         }
+        if (!hit && worldCollision2D) {
+            const Vec2 d2{d.x, d.y};
+            const float len2 = std::sqrt(d2.x * d2.x + d2.y * d2.y);
+            if (len2 > 1e-5f) {
+                const RaycastHit2D h = scene.physics().Raycast(scene, Vec2{o.x, o.y}, Vec2{d2.x / len2, d2.y / len2}, len2, gameObject, Physics2D::kAllLayers, false);
+                if (h.hit) { react(i, Vec3{h.point.x, h.point.y, p.z}, Vec3{h.normal.x, h.normal.y, 0.0f}); hit = true; }
+            }
+        }
+        if (!hit) { F(OX, i) = p.x; F(OY, i) = p.y; F(OZ, i) = p.z; }
     }
     m_rayCursor = (start + k) % std::max(1, n);
     m_lastRays = used;

@@ -202,6 +202,10 @@ public:
     bool  randomStartColor = false;
     bool  randomHue = false;            // each particle gets any colour (a random hue, the start colour's strength)
     Vec3  startVelocity{0.0f, 3.0f, 0.0f};
+    /// Start values that change while the effect plays: multipliers for the size, speed and lifetime of the particles being
+    /// born, read at how far through the emitter's round (`duration`, or `startCurvePeriod` seconds when it runs forever) it is.
+    ParticleCurve startSizeCurve, startSpeedCurve, startLifetimeCurve;
+    float startCurvePeriod = 4.0f;
     float velocityRandom = 1.5f;        // +/- added to each velocity component
     float speedRandom = 0.0f;           // +/- scale on the launch speed
 
@@ -287,6 +291,8 @@ public:
     /// world). `collisionRaysPerFrame` is the most rays one frame may use; the others are checked next frame.
     bool  worldCollision = false;
     int   collisionRaysPerFrame = 64;
+    /// The same for a 2D game: the particle's X and Y against the 2D colliders (box, circle, capsule, edge, polygon); Z is left alone.
+    bool  worldCollision2D = false;
 
     // ---- Sub-emitters: names of CHILD objects that carry their own Particle System ----
     std::string subEmitterBirth;        // a few sparks at the place each particle is born

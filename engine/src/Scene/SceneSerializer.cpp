@@ -3652,7 +3652,7 @@ void WriteComponentRecords(std::ostream& out, GameObject* go) {
             v3("lin", ps->linearVelocity, def.linearVelocity); fl("rad", ps->radialVelocity, def.radialVelocity);
             v3("frc", ps->force, def.force);
             in_("nox", ps->noiseOctaves, def.noiseOctaves);
-            bl("die", ps->dieOnCollision, def.dieOnCollision); bl("wcol", ps->worldCollision, def.worldCollision);
+            bl("die", ps->dieOnCollision, def.dieOnCollision); bl("wcol", ps->worldCollision, def.worldCollision); bl("wcol2", ps->worldCollision2D, def.worldCollision2D);
             in_("rays", ps->collisionRaysPerFrame, def.collisionRaysPerFrame);
             if (!ps->subEmitterBirth.empty()) k.str("subb", ps->subEmitterBirth);
             if (!ps->subEmitterDeath.empty()) k.str("subd", ps->subEmitterDeath);
@@ -3666,6 +3666,7 @@ void WriteComponentRecords(std::ostream& out, GameObject* go) {
                 x << ' ' << key << "=" << (c.smooth ? 1 : 0) << ',' << c.count;
                 for (int i = 0; i < c.count; ++i) x << ',' << c.keys[i].time << ',' << c.keys[i].value;
             };
+            fl("cper", ps->startCurvePeriod, def.startCurvePeriod); curve("csz", ps->startSizeCurve); curve("csp", ps->startSpeedCurve); curve("clf", ps->startLifetimeCurve);
             curve("crot", ps->rotationCurve); curve("cvel", ps->velocityCurve); curve("cfrc", ps->forceCurve); curve("cgrv", ps->gravityCurve);
             const std::string body = x.str();
             if (!body.empty()) out << "  particlesx" << body << "\n";
@@ -8944,7 +8945,7 @@ static bool ParseStep(Scene& scene, ParseSession& S, bool clear,
                     k.f("linX", ps->linearVelocity.x); k.f("linY", ps->linearVelocity.y); k.f("linZ", ps->linearVelocity.z); k.f("rad", ps->radialVelocity);
                     k.f("frcX", ps->force.x); k.f("frcY", ps->force.y); k.f("frcZ", ps->force.z);
                     k.i("nox", ps->noiseOctaves); ps->noiseOctaves = std::clamp(ps->noiseOctaves, 1, 3);
-                    k.b("die", ps->dieOnCollision); k.b("wcol", ps->worldCollision); k.i("rays", ps->collisionRaysPerFrame);
+                    k.b("die", ps->dieOnCollision); k.b("wcol", ps->worldCollision); k.b("wcol2", ps->worldCollision2D); k.i("rays", ps->collisionRaysPerFrame);
                     k.str("subb", ps->subEmitterBirth); k.str("subd", ps->subEmitterDeath); k.str("subc", ps->subEmitterCollision);
                     k.i("sbn", ps->subBirthCount); k.i("sdn", ps->subDeathCount); k.i("scn", ps->subCollisionCount);
                     k.f("lodn", ps->lodNear); k.f("lodf", ps->lodFar); k.f("lodm", ps->lodMinimum);
@@ -8964,6 +8965,7 @@ static bool ParseStep(Scene& scene, ParseSession& S, bool clear,
                         const int cnt = std::clamp((int)nums[1], 0, ParticleCurve::kMaxKeys);
                         for (int i = 0; i < cnt && (std::size_t)(3 + i * 2) < nums.size(); ++i) c.Add(nums[2 + i * 2], nums[3 + i * 2]);
                     };
+                    k.f("cper", ps->startCurvePeriod); curveIn("csz", ps->startSizeCurve); curveIn("csp", ps->startSpeedCurve); curveIn("clf", ps->startLifetimeCurve);
                     curveIn("crot", ps->rotationCurve); curveIn("cvel", ps->velocityCurve); curveIn("cfrc", ps->forceCurve); curveIn("cgrv", ps->gravityCurve);
                 } else if (field == "particleswind") {
                     auto* ps = LastOf(go->GetComponents<ParticleSystem>());   // the one the `particles` record above made

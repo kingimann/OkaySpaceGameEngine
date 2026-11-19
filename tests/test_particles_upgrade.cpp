@@ -286,6 +286,44 @@ int main() {
         CHECK(resting > 100);   // most were caught and now sit near the floor
     }
 
+    // ---- start-value curves: what is born later is bigger / faster / longer-lived ----
+    {
+        Scene s("SC"); auto* ps = s.CreateGameObject("E")->AddComponent<ParticleSystem>();
+        Quiet(ps); ps->maxParticles = 1000; ps->emissionRate = 100.0f; ps->duration = 2.0f; ps->loop = false; ps->startSize = 1.0f; ps->startVelocity = {0, 2, 0}; ps->startLifetime = 50.0f;
+        ps->startSizeCurve.SetLinear(1.0f, 3.0f); ps->startSpeedCurve.SetLinear(1.0f, 0.5f); ps->startLifetimeCurve.SetLinear(1.0f, 0.5f);
+        ps->Awake(); Run(ps, 1.99f, 60.0f);
+        float firstS = 0, lastS = 0, firstV = 0, lastV = 0, firstL = 0, lastL = 0; float minAge = 9, maxAge = -1;
+        for (int i = 0; i < ps->AliveCount(); ++i) { const auto p = ps->Get(i); const float age = p.maxLife - p.life;
+            if (age > maxAge) { maxAge = age; firstS = p.size0; firstV = p.velocity.Magnitude(); firstL = p.maxLife; }
+            if (age < minAge) { minAge = age; lastS = p.size0; lastV = p.velocity.Magnitude(); lastL = p.maxLife; } }
+        std::printf("  start curves: first born size %.2f speed %.2f life %.1f; last born size %.2f speed %.2f life %.1f\n", firstS, firstV, firstL, lastS, lastV, lastL);
+        CHECK(firstS < 1.1f && lastS > 2.8f && firstV > 1.9f && lastV < 1.1f && firstL > 48.0f && lastL < 26.0f);
+        // Without a Duration the round is `startCurvePeriod` seconds and repeats.
+        Scene s2("SC2"); auto* p2 = s2.CreateGameObject("E")->AddComponent<ParticleSystem>();
+        Quiet(p2); p2->maxParticles = 1000; p2->startSize = 1.0f; p2->startCurvePeriod = 2.0f; p2->startSizeCurve.SetLinear(1.0f, 3.0f); p2->Awake();
+        p2->Update(1.0f); p2->Emit(1); p2->Update(1.0f - 0.001f); p2->Emit(1); p2->Update(0.002f); p2->Emit(1);   // at 1 s: half way, 1.999 s: the top, 2.001 s: the start again
+        std::printf("  start curve, no duration: %.2f %.2f %.2f\n", p2->Get(0).size0, p2->Get(1).size0, p2->Get(2).size0);
+        CHECK_NEAR(p2->Get(0).size0, 2.0f, 0.05f); CHECK(p2->Get(1).size0 > 2.9f); CHECK(p2->Get(2).size0 < 1.1f);
+    }
+
+    // ---- 2D collision: a Box Collider 2D floor catches the particles (X and Y only) ----
+    {
+        Scene w("W2"); GameObject* floor = w.CreateGameObject("Floor"); floor->transform->localPosition = {0, -0.5f, 0};
+        auto* fb = floor->AddComponent<BoxCollider2D>(); fb->size = {40, 1};
+        GameObject* eg = w.CreateGameObject("E"); eg->transform->localPosition = {0, 4, 0};
+        auto* pw = eg->AddComponent<ParticleSystem>();
+        Quiet(pw); pw->gravity = {0, -10, 0}; pw->maxParticles = 200; pw->worldCollision2D = true; pw->bounce = 0.2f; pw->collisionRaysPerFrame = 200;
+        pw->shape = ParticleSystem::Shape::Box; pw->boxSize = {8, 0, 0}; pw->Awake(); pw->Emit(100);
+        for (int i = 0; i < 100; ++i) { auto q = pw->Get(i); q.position.z = 0.7f; pw->Set(i, q); }
+        float minY = 9; for (int i = 0; i < 180; ++i) { pw->Update(1.0f / 60.0f); for (int k = 0; k < pw->AliveCount(); ++k) minY = std::min(minY, pw->Get(k).position.y); }
+        std::printf("  2D collision: lowest y %.3f (floor top 0.0), z kept %.2f\n", minY, pw->Get(0).position.z);
+        CHECK(minY > -0.05f);                       // all 100 caught (budget is large enough)
+        CHECK_NEAR(pw->Get(0).position.z, 0.7f, 1e-4f);   // Z untouched
+        Scene w2("W3"); w2.CreateGameObject("Floor")->AddComponent<BoxCollider2D>();
+        GameObject* eg2 = w2.CreateGameObject("E"); auto* p2 = eg2->AddComponent<ParticleSystem>(); Quiet(p2); p2->worldCollision2D = true; p2->dieOnCollision = true;
+        p2->Awake(); p2->Emit(1); CHECK(p2->AliveCount() == 1);   // a particle inside a collider from the start does not crash or vanish at once
+    }
+
     // ---- sub-emitters: birth, death, collision ----
     {
         Scene s("S"); GameObject* parent = s.CreateGameObject("Parent");
@@ -395,7 +433,7 @@ int main() {
         ps->emitPerDistance = 2.5f; ps->capPolicy = ParticleSystem::CapPolicy::ReplaceOldest; ps->shapeSurfaceOnly = true;
         ps->sheetColumns = 4; ps->sheetRows = 2; ps->sheetMode = ParticleSystem::SheetMode::Loop; ps->sheetCycles = 12.0f; ps->softDistance = 0.7f; ps->lit = true;
         ps->subEmitterDeath = "Puff \"1\""; ps->subDeathCount = 5; ps->worldCollision = true; ps->collisionRaysPerFrame = 20; ps->dieOnCollision = true;
-        ps->rotationCurve.SetLinear(1.0f, 0.25f); ps->rotationCurve.smooth = true; ps->rotationOverLife = true; ps->forceCurve.Add(0.0f, 2.0f); ps->forceCurve.Add(1.0f, 0.0f);
+        ps->startSizeCurve.SetLinear(0.5f, 2.0f); ps->startCurvePeriod = 3.5f; ps->worldCollision2D = true; ps->rotationCurve.SetLinear(1.0f, 0.25f); ps->rotationCurve.smooth = true; ps->rotationOverLife = true; ps->forceCurve.Add(0.0f, 2.0f); ps->forceCurve.Add(1.0f, 0.0f);
         ps->linearVelocity = {1, 2, 3}; ps->radialVelocity = -0.5f; ps->force = {0, 0.5f, 0}; ps->noiseOctaves = 3; ps->lodNear = 12; ps->lodFar = 90; ps->lodMinimum = 0.1f;
         ps->windInfluence = 0.5f; ps->startColor2 = {0.1f, 0.2f, 0.3f, 1.0f}; ps->randomStartColor = true; ps->blendMode = ParticleSystem::BlendMode::Premultiplied; ps->sortMode = ParticleSystem::SortMode::YoungestFirst;
         ps->simulateOffscreen = false; ps->parallelThreshold = 99;
@@ -413,6 +451,7 @@ int main() {
             CHECK(q->linearVelocity.z == 3.0f && q->radialVelocity == -0.5f && q->force.y == 0.5f && q->noiseOctaves == 3);
             CHECK(q->lodNear == 12 && q->lodFar == 90 && q->lodMinimum == 0.1f && q->windInfluence == 0.5f);
             CHECK(q->randomStartColor && q->startColor2.g == 0.2f && !q->simulateOffscreen && q->parallelThreshold == 99);
+            CHECK(q->startSizeCurve.count == 2 && q->startCurvePeriod == 3.5f && q->worldCollision2D);
             CHECK(q->prewarm == ps->prewarm && q->orbitSpeed == ps->orbitSpeed && q->colorGradient.count == ps->colorGradient.count);
             // And once more: saving the loaded copy gives the same text.
             CHECK(SceneSerializer::Serialize(b) == text);

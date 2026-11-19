@@ -1,13 +1,12 @@
 # Wind
 
 Wind blows trees, grass, flags, cables, particles and physics bodies, and it has a sound. One wind field drives all of
-it, so you set the wind once. Added in version 0.x of this branch (`claude/wind-1`). Everything here is off unless the
+it, so you set the wind once. Branch `claude/wind-1`. Everything here is off unless the
 scene has a wind object or you turn a setting on: **a scene without a Wind Zone looks and plays exactly as before.**
 
 ## Try it (plain steps)
 
-See `docs/try_it/wind-field.md` (generated into `docs/try_it.md`). Short version: File > Examples is not used; open
-`examples\wind\wind.okayscene` in the editor and press Play.
+See `docs/try_it/wind-field.md` (generated into `docs/try_it.md`). Short version: open `examples\wind\wind.okayscene` in the editor (File > Open) and press Play.
 
 ## What was already there, and the gap
 
@@ -93,12 +92,15 @@ with all of them off. Properties are registered with the property registry (Insp
 
 ## Scripting
 
-OkayScript: `wind_strength()` (the wind speed at the camera), `wind_dir()` is not a single value, so use
-`wind_x(x, y, z)`, `wind_y(...)`, `wind_z(...)` or the API object below. API object (`Wind`):
+OkayScript builtins (also listed in `docs/scripting.md`):
 
-- `Wind.Strength` (read): speed at the scene's origin... see `docs/scripting.md` after the next release for the final list.
+- `wind_speed([x, y, z])`: speed in m/s at a point (default: where the camera is). `wind_x(x, y, z)`, `wind_y(...)`, `wind_z(...)`: the parts along each axis.
+- `wind_set(strength[, yawDegrees])`: the scene's own wind (0 = toward +Z, 90 = toward +X). Makes a "Wind" object if there is none.
+- `wind_gust(amount[, perSecond])`: how much it swells (0..1) and how many gusts a second.
 
-(The exact script names are listed in the "Scripting" section at the end of this file once built.)
+The newer script language has a `Wind` object: `Wind.Strength` and `Wind.Direction` (where the script's object is),
+`Wind.At(position)` (a vector), `Wind.SetStrength(x)`, `Wind.SetDirection(vec)`, `Wind.SetGust(amount, perSecond)`.
+Visual Script nodes were **not** added (see below).
 
 ## What each file was written from (rule 19a)
 

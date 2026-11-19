@@ -128,7 +128,7 @@ struct WindSource {
     /// The point in the region's own units: 0 at the centre, +-1 on the faces. An axis with no size gives infinity.
     Vec3 ToUnit(const Vec3& p) const {
         const Vec3 d = p - center;
-        auto u = [](float v, float h) { return h > 1e-6f ? v / h : (std::fabs(v) < 1e-9f ? 0.0f : INFINITY); };
+        auto u = [](float v, float h) { return h > 1e-6f ? v / h : INFINITY; };   // no size on an axis: nothing is inside
         return {u(Vec3::Dot(d, axisX), half.x), u(Vec3::Dot(d, axisY), half.y), u(Vec3::Dot(d, axisZ), half.z)};
     }
     /// How deep inside: 1 at the centre, 0 on the surface, negative outside.

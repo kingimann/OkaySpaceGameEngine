@@ -2234,6 +2234,7 @@ if(OKAY_BASH AND OKAY_PYTHON3 AND NOT WIN32)
     add_test(NAME dev_publish_script COMMAND ${OKAY_BASH} ${CMAKE_CURRENT_SOURCE_DIR}/scripts/test_dev_publish.sh)
     # .github/workflows/dev-build.yml read and its shell steps run offline (exit 77 = PyYAML missing: shown as skipped, never as passed).
     add_test(NAME dev_workflow_lint COMMAND ${OKAY_PYTHON3} -I ${CMAKE_CURRENT_SOURCE_DIR}/scripts/test_dev_workflow.py)
+    add_test(NAME branch_lint_winpaths COMMAND ${OKAY_PYTHON3} -I ${CMAKE_CURRENT_SOURCE_DIR}/scripts/test_branch_lint_winpaths.py)   # file names Windows cannot check out (scripts/branch_lint.py winpaths)
     set_tests_properties(dev_workflow_lint PROPERTIES SKIP_RETURN_CODE 77)
     # The one-dispatch fast release (scripts/fast_release.py, .github/workflows/fast-release.yml): version, CI gate, changelog entries, stamp,
     # after-check with fake data, the workflows read as YAML, and every real entry in dist/changelog.d checked.

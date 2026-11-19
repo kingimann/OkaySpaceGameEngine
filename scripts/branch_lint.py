@@ -5,7 +5,8 @@
   python3 scripts/branch_lint.py secrets  ...
   python3 scripts/branch_lint.py docs     ...
   python3 scripts/branch_lint.py binaries ...      (no built programs or big binary files in git)
-  python3 scripts/branch_lint.py all      ...      (includes + secrets + docs)
+  python3 scripts/branch_lint.py winpaths ...      (no file name Windows cannot check out)
+  python3 scripts/branch_lint.py all      ...      (includes + secrets + binaries + winpaths + docs)
   python3 scripts/branch_lint.py mingw    ...      -fsyntax-only with the MinGW win32 compiler on the changed engine/ files
 
 includes: CLAUDE.md rule 21a. The Windows programs are cross-compiled with MinGW's "win32" thread model, which has no
@@ -21,6 +22,10 @@ binaries: fails when a branch ADDS or CHANGES a built program or library (.exe .
           committed (the owner's rule, 2026-11-16). `lint-allow` cannot silence it: add an extension to ASSET_EXT in this file
           (and say why in the PR) if a new asset type is really needed. Screenshots/pictures under docs/ or at the repo root are refused
           (owner rule, 2026-11-17: no screenshots in the repo); test fixtures under tests/, okayui/tests/, assets/, examples/ are fine.
+winpaths: fails when a branch ADDS or CHANGES a file whose path Windows cannot create: a character from < > : " | ? * or a control
+          character 0x00-0x1f in any part, a part that ends in a space or a dot, or a part whose name (before the first dot) is a
+          reserved device name (CON PRN AUX NUL COM1-9 LPT1-9). One such file stops `git checkout` on the Windows CI runners
+          ("error: invalid path"). Typical causes: an unquoted shell redirect or a typo'd path in a tool call.
 docs:     warns when engine/ editor/ launcher/ code changed and no docs/*.md changed (CLAUDE.md rule 5).
 mingw:    compiles each changed header and source under engine/ with the MinGW cross compiler (MINGW_CXX, default
           x86_64-w64-mingw32-g++-win32, else x86_64-w64-mingw32-g++). Files that include SDL, imgui, GL, X11, sodium, curl
@@ -203,6 +208,38 @@ def check_binaries(root, base, head, rev=None):
     return findings
 
 
+WIN_BAD_CHARS = set('<>:"|?*') | {chr(c) for c in range(0, 32)}
+WIN_RESERVED = {"CON", "PRN", "AUX", "NUL"} | {f"COM{i}" for i in range(1, 10)} | {f"LPT{i}" for i in range(1, 10)}
+
+
+def windows_path_problem(path):
+    """Why Windows cannot create this repository path, or None. Pure function (tested in tests/scripts/test_branch_lint_winpaths.py)."""
+    for part in path.split("/"):
+        bad = sorted({c for c in part if c in WIN_BAD_CHARS})
+        if bad:
+            shown = ", ".join("0x%02x" % ord(c) if ord(c) < 32 else repr(c) for c in bad)
+            return f"the name '{part.encode('unicode_escape').decode()}' has a character Windows forbids ({shown})"
+        if part.endswith((" ", ".")) and part not in (".", ".."):
+            return f"the name '{part}' ends in a space or a dot, which Windows removes"
+        if part.split(".")[0].upper() in WIN_RESERVED:
+            return f"'{part}' is a reserved Windows device name"
+    return None
+
+
+def check_winpaths(root, base, head, rev=None):
+    """Added or changed files whose path Windows cannot check out (git's -z output, so odd names arrive unquoted)."""
+    args = ["diff", "--name-only", "-z", "--no-renames", "--diff-filter=AM"] + ([f"{rev}^", rev] if rev else [f"{base}...{head}"])
+    findings = []
+    for path in L.git(root, *args).split("\0"):
+        if not path:
+            continue
+        why = windows_path_problem(path)
+        if why:
+            findings.append({"sev": "error", "file": path.encode("unicode_escape").decode(), "line": 1, "text": "",
+                             "msg": f"Windows cannot check this file out ({why}); the Windows CI jobs would fail at checkout with 'invalid path'. Rename or delete it (a stray file is usually an unquoted shell redirect or a typo in a path)."})
+    return findings
+
+
 def emit(findings, label):
     err = 0
     for f in findings:
@@ -214,7 +251,7 @@ def emit(findings, label):
 
 def main():
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
-    ap.add_argument("check", choices=["includes", "secrets", "docs", "binaries", "mingw", "all"])
+    ap.add_argument("check", choices=["includes", "secrets", "docs", "binaries", "winpaths", "mingw", "all"])
     ap.add_argument("--root", default=".")
     ap.add_argument("--base", default="origin/main")
     ap.add_argument("--head", default="HEAD")
@@ -231,6 +268,9 @@ def main():
     if a.check in ("binaries", "all"):
         f = check_binaries(root, a.base, a.head, a.rev); err += emit(f, "binary-file")
         print(f"binaries: {len(f)} finding(s)", file=sys.stderr)
+    if a.check in ("winpaths", "all"):
+        f = check_winpaths(root, a.base, a.head, a.rev); err += emit(f, "winpaths")
+        print(f"winpaths: {len(f)} finding(s)", file=sys.stderr)
     if a.check in ("docs", "all"):
         f = check_docs(root, a.base, a.head, a.rev); emit(f, "docs")
         print(f"docs: {len(f)} finding(s)", file=sys.stderr)

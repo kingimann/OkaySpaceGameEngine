@@ -1,0 +1,37 @@
+{
+ "launcher/VersionsUI.cpp": {
+  "okay::thr::CreateMutex": 1,
+  "okay::thr::CreateThread": 2,
+  "okay::thr::DestroyMutex": 1,
+  "okay::thr::LockMutex": 2,
+  "okay::thr::Mutex": 1,
+  "okay::thr::Thread": 2,
+  "okay::thr::UnlockMutex": 2,
+  "okay::thr::WaitThread": 4
+ },
+ "launcher/VoiceChat.hpp": {
+  "okay::thr::CreateMutex": 1,
+  "okay::thr::CreateThread": 1,
+  "okay::thr::LockMutex": 10,
+  "okay::thr::Mutex": 3,
+  "okay::thr::Thread": 1,
+  "okay::thr::UnlockMutex": 10,
+  "okay::thr::WaitThread": 1
+ },
+ "launcher/main.cpp": {
+  "okay::thr::AtomicAdd": 6,
+  "okay::thr::AtomicCAS": 2,
+  "okay::thr::AtomicGet": 16,
+  "okay::thr::AtomicInt": 14,
+  "okay::thr::AtomicSet": 24,
+  "okay::thr::CreateMutex": 58,
+  "okay::thr::CreateThread": 65,
+  "okay::thr::DestroyMutex": 5,
+  "okay::thr::DetachThread": 56,
+  "okay::thr::LockMutex": 170,
+  "okay::thr::Mutex": 45,
+  "okay::thr::Thread": 67,
+  "okay::thr::UnlockMutex": 176,
+  "okay::thr::WaitThread": 12
+ }
+}

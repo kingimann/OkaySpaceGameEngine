@@ -479,6 +479,121 @@ nothing changes unless the own backend is chosen:
 6. **Own Dear ImGui platform backend viewports** (the editor's pop-out panels), then delete `Event::native`, `ReportUnmappedEvents`,
    `WrapSdl2Window` and `TranslateSdl2Event` together with SDL2.
 
+## Round 11 (branch `claude/own-platform-5`): the 2D renderer calls, our own Dear ImGui renderer, and the launcher's threads
+
+Written from `imgui.h` (draw lists, the texture request protocol), the Win32 and POSIX thread documentation, and our own interfaces; no
+SDL, imgui_impl_sdlrenderer2 or other project code was read or followed.
+
+* **Painter additions (step 3 of the plan).** `TextureDesc::target` and `SetRenderTarget` / `GetRenderTarget` (render targets; the software
+  painter swaps its frame buffer with the texture's pixels and keeps clip and scale per target), `Flush`, `GetDrawColor`, `DriverName`,
+  `IsAccelerated`, `GeometryRaw` (separate position / colour / uv arrays with strides, 8-, 16- or 32-bit indices; a default builds a vertex array
+  and calls `Geometry`, so every painter has it), `PainterDesc::requireAccelerated`. Tested on both painters in `okayui_painter` (154 checks).
+* **The apps' renderer calls (steps 1, 2, 5).** `shared/PainterBridge.hpp` keeps one painter per `SDL_Renderer*` and has one function per thing
+  the apps did (`CreateTexture`, `UpdateTexture`, `DestroyTexture`, `QueryTexture`, texture blend / filter, `Clear`, `Present`, `OutputSize`,
+  `SetVSync`, `SetScale`, `SetDrawColor`, `Flush`, `ReadPixels`, `DriverName`, `IsAccelerated`, render target, `CreateRenderer`, `DestroyRenderer`).
+  Editor and launcher no longer call `SDL_CreateTexture`, `SDL_UpdateTexture`, `SDL_RenderClear`, `SDL_RenderPresent`, `SDL_GetRendererOutputSize`,
+  `SDL_CreateRenderer` / `SDL_DestroyRenderer`, `SDL_RenderReadPixels` and friends; the renderer is made by `CreateSdl2Painter` (accelerated, else any,
+  as before; the editor keeps its three-step fallback with the driver hint). The table is never destroyed on purpose (a renderer still open at exit
+  must not be freed by a static destructor after SDL is gone). The Windows-only Direct3D 11 interop in `editor/main.cpp` was converted the same way
+  and **could not be compiled here** (no Windows or MinGW SDL headers).
+* **Our own Dear ImGui renderer (step 4), OFF by default.** `shared/ImGuiPainterRenderer.hpp`: honours the `ImTextureData` requests (create,
+  update rectangles, destroy; RGBA32 and Alpha8), draws every command with its clip rectangle and texture through `Painter::GeometryRaw`, uses
+  `VtxOffset`, restores scale and clip. Switch: environment variable `OKAY_IMGUI_RENDER=own` (editor, launcher main window and chat window);
+  without it `imgui_impl_sdlrenderer2` runs as before. Both apps print which one runs at start-up. In multi-window mode the editor's secondary
+  windows keep their existing renderer. `ctest -R imgui_painter_render` draws a real Dear ImGui frame on the software painter and on SDL's
+  software renderer: flat shapes and clip edges exact at framebuffer scale 1 and 2, whole frame (text, window, button) 0.85 levels mean difference
+  between the two painters, texture protocol checked. It has **not** been run in a real editor or launcher window, nor compared with
+  `imgui_impl_sdlrenderer2` on the same frame.
+* **Not done from the plan:** step 5's own window surface for the own backend in the editor and launcher (they still make SDL windows, and
+  `OKAY_PLATFORM_BACKEND=own` still cannot run them), and step 6 (deleting `Event::native`, `WrapSdl2Window`, `TranslateSdl2Event`). Remaining
+  `SDL_*` in the apps: `SDL_Renderer` objects in function signatures and `SDL_Texture*` handle types, `SDL_RenderCopy*` / `SDL_RenderGeometry`
+  drawing and `SDL_SetTextureColorMod` / alpha mod in `UIPainterSDL.hpp`, `okay::DrawSplashStyled`, `OkayUI::EndFrame(SDL_Renderer*)`, the SDL
+  surfaces in `AppIcon.hpp`, and Dear ImGui's two SDL backends.
+* **Threads (`docs/sdl_removal_plan.md` step 2).** `shared/OkayThreads.hpp`: `okay::thr::CreateThread` / `DetachThread` / `WaitThread`, recursive
+  `Mutex` (`CreateMutex` / `LockMutex` / `UnlockMutex` / `DestroyMutex`), `AtomicInt` (`AtomicSet` / `Get` / `Add` / `CAS`), with SDL's conventions
+  (recursive locks, thread functions return an int, `Add` returns the old value). Win32 `CreateThread` + `CRITICAL_SECTION` on Windows, pthreads
+  elsewhere, `<atomic>` only: no `<mutex>`, `<thread>`, `<condition_variable>` or `std::call_once` (rule 21a). The launcher (`main.cpp`,
+  `VoiceChat.hpp`, `VersionsUI.cpp`) moved by name: 718 uses. `ctest -R okay_threads` (contention with 6 threads, exact counter, recursive locks,
+  600 detached threads, return values) passes normally and under AddressSanitizer + UBSan and under ThreadSanitizer; `ctest -R voice_races` passes.
+  It did not need `okay::corethreads`: that shim has a non-recursive POSIX mutex and no detach, which the launcher's 170 lock sites rely on.
+  **Not run:** the launcher itself (downloads, chat, voice, update), anything on Windows (the Win32 half compiles only under MinGW `-fsyntax-only` for
+  the test, the launcher was only checked on Linux), so a hang from a changed lock would show only in a real session.
+
+## Round 12 (branch `claude/own-platform-5`): checking the round-11 moves 1:1, and the launcher and editor on the own backend
+
+**Why a review first.** The thread move (718 uses) and the renderer bridge change what the *default* launcher and editor run, and until now nobody had run
+a launcher. So before anything new:
+
+* **Threads, mechanical review** (`scripts/review_thread_conversion.py`, ctest `thread_conversion_review`). Counts of every `okay::thr::` name per file equal
+  the number of SDL uses in the last SDL commit (`tests/data/thread_conversion_baseline.json`: 58 `CreateMutex`, 65 `CreateThread`, 56 `DetachThread`,
+  170 + 10 + 2 `LockMutex`, the same `UnlockMutex`, 24 `AtomicSet`, 16 `AtomicGet`, 6 `AtomicAdd`, 2 `AtomicCAS` ...), no SDL thread name is left, and with
+  `--base 2eda734e` every line that holds a thread name equals the old line after the name mapping (the only edits by hand are `SDL_AtomicIncRef` / `DecRef`, whose
+  result no site used, now `AtomicAdd(+1 / -1)`). Result: CLEAN, no mismatch. Read by hand: no call site uses the return value of `AtomicSet`, `AtomicAdd` or
+  `AtomicCAS`; the thread name argument was only a label in SDL; `WaitThread(t, nullptr)` and `DetachThread` have SDL's meaning (checked by `okay_threads`: 24 checks, also under
+  ASan, UBSan and TSan). One difference found and fixed: on Windows SDL starts threads with `_beginthreadex`, ours used a bare `CreateThread`; now `_beginthreadex`
+  (MinGW `-fsyntax-only` only).
+* **Renderer bridge, behaviour test** (`tests/test_painter_bridge_vs_sdl.cpp`, ctest `painter_bridge_vs_sdl`, 48 checks, 0 failures). Two identical SDL software
+  renderers on surfaces; one driven with the exact old call sequences, one through the bridge. Equal afterwards: texture format, access, size, blend mode and scale mode for
+  the five creation sequences the apps use (streaming 3D view, static thumbnail, nearest sprite texture, opaque FpHands texture, render target); pixels after a rectangle update with
+  its own pitch and a scaled `SDL_RenderCopy`; clear colour, draw colour, output size, driver name, `ReadPixels` bytes; scale 2 + clip + `SDL_RenderGeometryRaw` with
+  16-bit and 32-bit indices (the ImGui path); render target draw and copy back. Also `CreateRenderer` on a window of the sdl2 backend (dummy video driver). Not covered by a test: the
+  Direct3D 11 interop, and OKAY_RENDER_DRIVER hints.
+* **A real launcher run, headless.** `okayspace-launcher` (`bin/OkaySpace`) built from this branch and run on Xvfb with SDL's dummy audio
+  (`scripts/headless_app_shot.sh`): on the DEFAULT backend (sdl2, imgui_impl_sdl2, imgui_impl_sdlrenderer2) it starts, draws the whole Create page, its update-check worker thread reaches
+  the update server and the page shows "Update available v2.887.0" (so `CreateThread`, the mutexes and atomics, and the textures, clear, present of the bridge all ran in a real
+  process). Left alone with the default settings (without `OKAY_UPDATE_ON_LAUNCH=0`) it downloaded the newest release into the build folder and tried to swap it in, which is also a real run of the
+  download threads. The two pictures (made with `scripts/headless_app_shot.sh`, not kept in the repository) differ by 0 pixels at a
+  4 percent threshold (RMSE 0.06 percent). Not tried: clicking, typing, the chat window, voice, a download in the UI, quitting (SDL turns SIGTERM into a close
+  request, which makes the launcher ask Exit or Minimise).
+
+**Own window surface (step 5), launcher done, editor written but not run.** With `OKAY_PLATFORM_BACKEND=own` the launcher now makes its windows on the own backend
+(X11 here), uses our own Dear ImGui input feed and our own Dear ImGui renderer (both forced on for the own backend, since the SDL ones cannot see such a window) and draws
+with the software painter. How, in order: `okay::platform::Default()` instead of a fixed sdl2 backend; `shared/WindowHandles.hpp` (native handle to `Window`, used by the `lw::` helpers,
+registered for the main and chat window); `okay::pb::CreateRenderer` on an own-backend window asks a registered factory (`OkayUI::soft::CreateWindowPainter`) and returns the
+painter's address as the "renderer" handle (never an SDL renderer: use it only with `okay::pb` and the Painter); Splash, the script UI bridge and OkayUI's end-of-frame
+(`shared/OkayUIFrame.hpp`: `EndFrame` on SDL, `EndFrameData` + `FrameDrawer` on a painter) take the handle through `okay::pb::For`; `okay::SetAppIcon` is `Window::SetIcon`; the mouse
+state and text-input calls are seam calls. The launcher has no direct `SDL_*` call left except `SDL_SetMainReady` and audio-format macros. The editor got the same changes (window title, show,
+raise, restore, held keys, cursor visibility through the seam; feed and renderer forced; painter factory) and compiles on Linux (`-fsyntax-only` and a full build, see the run notes), and it was **built and run headless** on both backends (`bin/OkayEngine --dev` on Xvfb, `APP_ARGS=--dev scripts/headless_app_shot.sh ...`): default backend and own
+backend both start, draw the full editor UI (menus, Hierarchy, Scene grid, Inspector, Console, status bar) and keep running 60 s; the own backend run logs
+`platform backend: own`, own feed, own renderer and, as designed, "Multi-window panels are off" (no multi-viewport on the own feed). The two pictures (not kept in the repository; the default run happened to show the "Engine Update" dialog because its update check
+had finished by the time of the picture; the own run's check had not, so the two pictures differ by that dialog, not by drawing). The own run showed 8 frames per second
+(software painter on a shared machine). Not tried: any click, the GL 3D view (needs a scene with a 3D camera), play mode, the file dialog, Windows.
+
+## Round 13: scripted input for headless app runs, and the plan for multi-window panels on the own backend
+
+**Scripted input (`shared/TestHooks.hpp`, compiled in only with `-DOKAY_ENABLE_TEST_HOOKS=ON`; the option is off by default, refuses to configure with
+`OKAY_REQUIRE_SODIUM` (a release), and nothing of it exists in a normal build).** `OKAY_TEST_SCRIPT=<file>` makes the launcher or editor push platform events
+(`Backend::PushEvent`) at the times in the file, so every click, key and drop goes through the real event loop on either backend, with no xdotool. One command per line,
+`<ms> <command>`: `move`, `click X Y [button]`, `down`, `up`, `wheel`, `type TEXT`, `key [ctrl+|shift+|alt+]NAME [down|up]`, `drop PATH`, `quit`, `close`, `shot PATH` (the frame just
+drawn, read back before the present, so it is exactly what the window would show) and `exit [CODE]` (leave the main loop at once; the program then returns CODE). The parser and
+the event each command makes are tested in `tests/test_test_hooks.cpp` (ctest `test_hooks`). `scripts/run_app_script.sh <program> <script> <outdir> [seconds] [backend...]` runs the program on a private
+Xvfb once per backend, checks the exit code, and compares the pictures of the two backends (ImageMagick `compare`; pictures stay in `<outdir>`, outside the repository).
+
+**What the scripted runs showed (Xvfb, Linux).** Launcher, scripts `click`, `type`, `drop`, `shot`, `quit`, then a click on the dialog's Exit button: both backends exited with code 0 and
+the pictures were identical to 0 pixels at a 4 percent threshold (first page, Play, Settings pages, typed text in the search box, the drop hint toast, `ctrl+a` then typing replaces the text,
+Backspace). Pictures taken while the toast faded differed by timing only. Editor (`--dev`): the project gate (name field, template list, Create project), the File menu and a quit request:
+both backends exited with code 0; the differences left were the frame-rate counter, the console warning count (the own backend has no SDL dummy audio, so its ALSA open fails and logs one
+more warning) and, before the fix below, the typed name. **Found and fixed by this:** `key ctrl+a` on the own backend did not select all, because the own feed learns held modifiers from
+modifier key events, not from the `mods` field; the hook now presses and releases the modifier keys around the key (a real keyboard does), and the two backends then agree.
+**Not run after that fix:** the editor (its main source file could not be rebuilt in the time and memory available; the editor runs above used the build before the fix) and anything on Windows.
+The scripts and pictures are kept out of the repository.
+
+**Multi-window panels on the own backend: plan (not built).** What the editor's "multi-window" mode needs from a platform backend, and what exists:
+1. Dear ImGui's multi-viewport interface (`ImGuiPlatformIO`: `Platform_CreateWindow`, `DestroyWindow`, `ShowWindow`, `SetWindowPos/GetWindowPos`, `SetWindowSize/GetWindowSize`,
+   `SetWindowFocus/GetWindowFocus`, `GetWindowMinimized`, `SetWindowTitle`, `Renderer_*`). Written from `imgui.h`'s documentation of those callbacks onto `okay::platform::Window`
+   (`MakeWindow` borderless, `SetPosition/SetSize/Show/Raise/SetTitle/IsMinimized/HasInputFocus` all exist). Small and mostly mechanical: about 250 lines in `shared/ImGuiPlatformFeed.hpp`.
+2. Input across windows. The feed filters events by the main window's id; it must accept every viewport's window id, translate the pointer to desktop coordinates for `AddMousePosEvent`
+   (position in the window + `Window::GetPosition`, or `Backend::GlobalMouseState`, which exists) and report `io.AddMouseViewportEvent` from `Backend::MouseFocusWindowId` (exists).
+   A drag that leaves the window needs a pointer capture (`SDL_CaptureMouse` equivalent): X11 `XGrabPointer` / Win32 `SetCapture`, not in the seam yet (small).
+3. Drawing per viewport. Each secondary window gets its own painter (`okay::pb::CreateRenderer` on an own window already makes a software painter). A software painter's textures belong
+   to that painter, so the shared ImGui atlas and the apps' textures (thumbnails, covers, the 3D view) must be copied per painter, which is what the editor's SDL path does today with
+   `OkayVpTexture`; `imguirender::Render` needs the same per-painter texture map (about 150 lines) and the apps' own textures need a "shared texture" notion in the bridge.
+4. Window manager behaviour that cannot be tested headless: the borderless always-on-top flag for tool windows, `_NET_WM_WINDOW_TYPE`, monitor placement and DPI per window. Xvfb has no window
+   manager, so a test there only proves the plumbing. A real desktop run is required before this can be called working.
+5. Order of work: (1) + (2) behind `OKAY_PLATFORM_EVENTS=own` first, a test with fake windows in `test_imgui_platform_feed`; (3); then a scripted run with `OKAY_TEST_SCRIPT` that drags a panel
+   out (`down`, `move`, `up` with coordinates outside the window) under Xvfb; then a real-desktop try by the owner.
+Estimated size: medium to large; the unknown is (4).
+
 ## Not behind the seam yet (stage 1 list; see stage 2 above for what changed)
 
 The window, event loop and GL context of the editor, launcher and player still call SDL directly. Moving them needs more than

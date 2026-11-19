@@ -34,6 +34,8 @@ struct TextureDesc {
     ScaleMode scale = ScaleMode::Nearest;
     /// A texture that is re-uploaded every frame (the 3D view). A hint only; every backend can update any texture.
     bool streaming = false;
+    /// A texture that can be drawn into (SetRenderTarget) and then drawn from.
+    bool target = false;
 };
 
 class Painter : public ui2d::Painter {
@@ -63,6 +65,25 @@ public:
     virtual void DestroyTexture(ui2d::Tex t) = 0;
     virtual void SetTextureBlendMode(ui2d::Tex t, BlendMode m) = 0;
     virtual void SetTextureScaleMode(ui2d::Tex t, ScaleMode m) = 0;
+
+    // ---- render targets, flush, driver (each has a default that says "not supported") ------------
+    /// Draw into `t` (a texture made with TextureDesc::target) until the next call; null = back to the window. Clip rectangle and scale are
+    /// kept per target. False when unsupported or `t` is not a target. The texture must not be drawn from while it is the target.
+    virtual bool SetRenderTarget(ui2d::Tex t) { (void)t; return false; }
+    /// The current render target (null = the window).
+    virtual ui2d::Tex GetRenderTarget() { return nullptr; }
+    /// The current draw colour (false = this painter cannot say; the outputs are then 0).
+    virtual bool GetDrawColor(std::uint8_t* r, std::uint8_t* g, std::uint8_t* b, std::uint8_t* a) { if (r) *r = 0; if (g) *g = 0; if (b) *b = 0; if (a) *a = 0; return false; }
+    /// Send what was queued to the graphics API now (before code that draws on the same surface another way, e.g. raw GL).
+    virtual void Flush() {}
+    /// The graphics driver's name ("direct3d11", "opengl", "software", "" = unknown) and whether it is GPU accelerated.
+    virtual std::string DriverName() { return std::string(); }
+    virtual bool IsAccelerated() { return false; }
+    /// Triangles from separate position / colour / uv arrays with byte strides, like SDL_RenderGeometryRaw: positions are float pairs,
+    /// colours RGBA bytes, uvs float pairs; `indices` (null = none) are `indexSize` 1, 2 or 4 byte unsigned numbers. The default builds
+    /// a Vertex array and calls Geometry, so every painter has it.
+    virtual void GeometryRaw(ui2d::Tex t, const float* xy, int xyStride, const std::uint8_t* rgba, int rgbaStride, const float* uv, int uvStride,
+                             int numVerts, const void* indices, int numIndices, int indexSize);
 
     // ---- the frame --------------------------------------------------------------------------
     /// Show what was drawn. Software: copies the frame buffer to the window, then (with SetVSync(true))
@@ -106,6 +127,8 @@ private:
 
 struct PainterDesc {
     bool vsync = true;
+    /// Fail instead of falling back to a software renderer when no accelerated one can be made (the caller tries something else first).
+    bool requireAccelerated = false;
 };
 
 /// sdl2: a renderer on an sdl2 window (accelerated, else any), as the player always made one.

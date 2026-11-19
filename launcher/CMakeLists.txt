@@ -80,6 +80,9 @@ target_link_libraries(okayspace-launcher PRIVATE launcher_imgui ${OKAY_LAUNCHER_
 # default; OKAY_UI_DEFAULT_BACKEND=okayui flips the build's default. Without okay_ui (no SDL2) the setting is absent.
 if(TARGET okay_ui_screens)
     target_link_libraries(okayspace-launcher PRIVATE okay_ui_screens)
+    if(TARGET okay_ui_soft)   # the software painter: the launcher's window on the own platform backend (OKAY_PLATFORM_BACKEND=own)
+        target_link_libraries(okayspace-launcher PRIVATE okay_ui_soft)
+    endif()
     target_compile_definitions(okayspace-launcher PRIVATE OKAY_HAVE_OKAYUI=1)
 endif()
 if(OKAY_UI_DEFAULT_BACKEND STREQUAL "okayui" OR OKAY_OWN_STACK)   # OKAY_OWN_STACK: the dogfood build starts on OkayUI
@@ -110,4 +113,8 @@ set_target_properties(okayspace-launcher PROPERTIES
 # window behind the launcher. (Child commands are already run hidden.)
 if(WIN32)
     set_target_properties(okayspace-launcher PROPERTIES WIN32_EXECUTABLE TRUE)
+endif()
+
+if(OKAY_ENABLE_TEST_HOOKS)   # scripted input for headless runs (shared/TestHooks.hpp); off in every normal and release build
+    target_compile_definitions(okayspace-launcher PRIVATE OKAY_ENABLE_TEST_HOOKS=1)
 endif()

@@ -2562,3 +2562,93 @@ already made from them still open and play, and the scene builders stay in the e
 * Run here: `bash -n` on the script, and the new copy block on its own against the real source tree, then a listing of
   the result. **Not run:** the full Windows cross build, the zip, `makensis`, the installer, anything on Windows.
 * `release.yml` was not changed and no workflow was run.
+
+## Own Dear ImGui input feed in the editor and launcher (OKAY_PLATFORM_EVENTS=own, off by default)
+
+Dear ImGui got its keyboard, mouse, text, wheel and clipboard from `imgui_impl_sdl2` (SDL's code). There is now our own
+replacement, `shared/ImGuiPlatformFeed.hpp`, that takes `okay::platform` events instead. It is **off by default**: nothing
+changes unless you set the switch.
+
+1. Windows: open a Command Prompt in the folder with `OkayEngine.exe` and `OkaySpace.exe` and run
+   `set OKAY_PLATFORM_EVENTS=own` then `OkayEngine.exe` (or `OkaySpace.exe` for the launcher). Linux: `OKAY_PLATFORM_EVENTS=own ./okay-editor`.
+2. How to tell it is on: the program prints one line to its console / log at start-up. With the switch:
+   `ImGui input: own okay::platform feed (OKAY_PLATFORM_EVENTS=own)`. Without it:
+   `ImGui input: imgui_impl_sdl2 (default; set OKAY_PLATFORM_EVENTS=own for the own feed)`.
+3. Try it: click buttons, type in a text field (including a letter with an accent, and paste with Ctrl+V; copy with Ctrl+C and paste
+   into Notepad), scroll a list with the wheel, drag a window, press Tab and the arrow keys, hover a text field (the pointer
+   becomes an I-beam) and a window edge (resize arrows). In the launcher, also open the chat pop-out window and type in it.
+4. What is different in this mode on purpose: the editor's pop-out panels (drag a tab out into its own OS window) are off
+   (the own feed has no multi-window support yet), and gamepad navigation of the UI is off. Everything else should behave as before.
+5. Not tested on a real Windows machine when this was written. The own feed's logic is covered by `ctest -R imgui_platform_feed`
+   (key table, event translation, a real Dear ImGui context fed through a fake window: modifiers, repeats, focus loss, pointer
+   leaving, clipboard, cursor shape, display size, delta time).
+
+## Editor and launcher event loops now go through `okay::platform` (nothing to switch; try that nothing changed)
+
+Both programs used to read input straight from SDL. They now read it from the platform layer (SDL2 is still the backend underneath,
+the default). You cannot see a difference if it worked. To check:
+
+1. Editor (`OkayEngine.exe`): click around, type in a field, scroll a list, drag a panel tab out into its own window (multi-window
+   still works in the default mode), press Play and use WASD, the mouse and (if you have one) a game pad, press Esc to leave Play,
+   drag a picture from Explorer onto the window (it lands in the Project panel's Assets folder), alt-tab away while playing
+   (the pointer is released).
+2. Launcher (`OkaySpace.exe`): click, type, scroll, open the chat pop-out window and type there, drop an `.okayscene` or a folder on
+   the main window (it plays / installs), drop a file on the open chat window (it is sent), press the window's [X] (the Exit / Minimize
+   question appears), minimise and bring it back (it checks for updates).
+3. With `OKAY_PLATFORM_EVENTS=own` set (see the section above) the same things go through our own ImGui feed.
+4. Automatic checks on Linux: `ctest -R "platform_events|okayui_host|imgui_platform_feed"`.
+5. Not run on Windows when this was written.
+
+## Own backend: file drops, cursor shapes, global mouse (Linux X11 tested; Windows not run)
+
+Only with the own backend (`OKAY_PLATFORM_BACKEND=own`, off by default). Linux: `OKAY_PLATFORM_BACKEND=own ./okay-player` (or the self-test
+`okay-platform-selftest`), drag a picture or a `.okayscene` from the file manager onto the window: the program receives one drop per file
+(the editor and launcher still use SDL2 windows, so the drop there is SDL's own; with the own backend only the player and the self-test run).
+The checks that need no file manager: `ctest -R "platform_xdnd|platform_events"` (a fake drag source plays the XDND protocol under Xvfb;
+the event queue stress test). On Windows the same drop uses `WM_DROPFILES`; the cursor shapes and the tray icon hook are reached the same
+way as before (launcher: minimise to the tray and click the icon). Not run on Windows.
+
+## Our own Dear ImGui renderer (OKAY_IMGUI_RENDER=own, off by default) and the launcher's own threads
+
+1. **Own ImGui renderer.** Windows: open a Command Prompt where `OkayEngine.exe` / `OkaySpace.exe` are, run `set OKAY_IMGUI_RENDER=own`, then start
+   the program (Linux: `OKAY_IMGUI_RENDER=own ./okay-editor`). The start-up line says `ImGui drawing: own okay::platform::Painter renderer
+   (OKAY_IMGUI_RENDER=own)`; without the variable it says `imgui_impl_sdlrenderer2 (default ...)`. Use the program as usual: text, buttons, panels,
+   scrolling lists, the 3D view, thumbnails, the launcher's chat window. Anything drawn wrong (missing text, wrong clipping, wrong colours) is a bug
+   to report with a screenshot. It has not been run in a real window yet. The checks that run without a window: `ctest -R imgui_painter_render`
+   and `ctest -R okayui_painter`.
+2. **Threads.** Nothing to switch: the launcher now uses `shared/OkayThreads.hpp` instead of SDL's thread calls. Try: sign in, chat both ways
+   (also in the pop-out window), send a file, download an editor version with progress and cancel, start a voice call and the mic test, quit while a
+   download runs. A freeze or a crash there is what a wrong lock would look like. Not run on Windows. `ctest -R "okay_threads|voice_races"`.
+
+## The launcher (and editor) on the own backend: OKAY_PLATFORM_BACKEND=own (off by default)
+
+Steps (Linux or Windows; Linux was run headless, Windows was not run):
+1. Start the launcher with the variable set. Windows: `set OKAY_PLATFORM_BACKEND=own` then `OkaySpace.exe`. Linux: `OKAY_PLATFORM_BACKEND=own ./OkaySpace`.
+   Same for the editor (`OkayEngine.exe`).
+2. How to tell it is on: the console / log prints `platform backend: own`, `ImGui input: own okay::platform feed ...` and
+   `ImGui drawing: own okay::platform::Painter renderer ...` (the own backend forces both), and the startup stack line says `platform=own`.
+3. What you should see: the same launcher window as without the variable (the Create page, sidebar, update banner). Software drawing, so it can feel slower on a big screen.
+4. Try: click the sidebar pages, type in a field, scroll, open the chat window, minimise and restore, drop a file on it. Report anything that looks or acts different.
+5. Without a screen to look at (a headless check): `scripts/headless_app_shot.sh build/bin/OkaySpace 25 own.png OKAY_PLATFORM_BACKEND=own` writes a screenshot
+   (needs Xvfb and ImageMagick). Run it once without the variable and once with it and compare the two pictures (they were the same to within 0 pixels at 4 percent when checked).
+6. Checks: `ctest -R "thread_conversion_review|okay_threads|painter_bridge_vs_sdl|platform_events|platform_xdnd"`.
+7. Not run: clicking and typing in the own-backend launcher, the chat window, Windows, and the editor on the own backend (see `docs/platform_layer.md`, Round 12).
+
+## Driving the real launcher or editor with a script, headless (test builds only)
+
+For people who test: a launcher or editor built with `-DOKAY_ENABLE_TEST_HOOKS=ON` (never in a release) reads `OKAY_TEST_SCRIPT=<file>` and clicks, types, drops files and takes
+pictures at the times you write. Example `launcher.txt`:
+```
+2500 click 655 441        # the project search box
+3000 type zebra
+3500 shot typed.png       # what the window shows, saved in the current folder
+4000 drop /tmp/some.txt   # a file dropped on the window (the launcher answers with a hint toast)
+7000 quit                 # the window's close request: the launcher asks "Exit or minimise?"
+8000 click 450 412        # the Exit button
+```
+1. Build: `cmake -S . -B build -DOKAY_ENABLE_TEST_HOOKS=ON` (add `-DOKAY_BUILD_EDITOR=ON` for the editor), then build `okayspace-launcher` / `okay-editor`.
+2. Run on both backends and compare: `scripts/run_app_script.sh build/bin/OkaySpace launcher.txt out 60 sdl2 own` (editor: `APP_ARGS=--dev`, program `build/bin/OkayEngine`). It starts a private Xvfb, runs the program
+   once per backend in a private copy (so no run sees the other's saved settings), checks the exit code is 0 and prints, for each picture, how many pixels differ between the backends.
+3. What you should see: `[sdl2] exited with code 0 (as wanted)`, the same for `[own]`, and `[compare] typed.png: 0 pixels differ`. Pictures stay in `out/<backend>/`.
+4. Command list and the parser tests: `shared/TestHooks.hpp`, `ctest -R test_hooks`.
+

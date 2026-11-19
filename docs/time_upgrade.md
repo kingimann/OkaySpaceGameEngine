@@ -78,10 +78,11 @@ Windows and the editor and player windows were not run** (they were syntax-check
 
 ## Tests
 
-- `test_time_sim` (new, 28 checks): hitches, 1 and 100 hour runs, frame rates, bad numbers, 10 minute physics step counts.
-- `test_time_upgrade` (new): nanosecond clock (1 h, 100 h at 144 fps), clock parents, overflow policy, scheduler additions, OkayScript timers, day clock and events,
+- `test_time_sim` (new, 28 checks; the old float step figure is printed there too): hitches, 1 and 100 hour runs, frame rates, bad numbers, 10 minute physics step counts.
+- `test_time_upgrade` (new, 244 checks): nanosecond clock (1 h, 100 h at 144 fps), clock parents, overflow policy, scheduler additions, OkayScript timers, day clock and events,
   Time settings text and clamps, frame limiter model, physics policy and alpha, overlay lines, eased slow motion at 30, 60, 144 and 7 fps.
-- The time tests that existed were rebuilt and run (listed in the report of the change): see below.
+- Also rebuilt and run, all passing: `timescale`, `time_pause`, `time_extras`, `time_snapshot`, `countdown`, `loop_audit2` to `5`, `frame_step`, `capture_mode`, `frame_record`, `frame_stats`, `frame_pacing`, `scheduler_reentry`, `scheduler_hardening`, `scheduler_owner_clock`, `scheduler_scale`, `timers_tweens`, `timers_audit`, `timers_fifth`, `script_lib`, `script_time`, `application_loop`, `tick_pacer`, `loop_player_style`, `core_features`, `core_fixes`, `stop_save_timeline_lod`, `tween`, `tween_edges`, `tween_features`, `game_state`, `timer_debug`, `vs_runtime`, `vs_types`, `fixed_step`, `game_loop`, `clock`, `daynight`, `save_scene`, `okayscript_csharp`, `editor_hooks` and `examples_work` (85 scenes, with the new `examples/time/time_playground.okayscene`). Built at -O0 on Linux.
+- `test_time_upgrade` section 13 loads the shipped example scene, presses its keys with fake input and checks slow motion (blue cube 18 degrees in the slow second against 90 for the orange one), pause, sleep until 6:00 and hit stop.
 
 ## Not done (and why)
 

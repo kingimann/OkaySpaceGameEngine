@@ -4340,3 +4340,11 @@ foreach(vs_usage_test vs_easy_ops vs_start vs_hints vs_plain_words vs_what_happe
         add_test(NAME ${vs_usage_test} COMMAND test_${vs_usage_test})
     endif()
 endforeach()
+
+# Headless pictures of the lighting test scenes (a tool, not a test). docs/lighting_upgrade.md
+add_executable(lighting_shot lighting_shot.cpp)
+target_link_libraries(lighting_shot PRIVATE okay::engine)
+
+add_executable(test_lighting_upgrade test_lighting_upgrade.cpp)
+target_link_libraries(test_lighting_upgrade PRIVATE okay::engine)
+add_test(NAME lighting_upgrade COMMAND test_lighting_upgrade)

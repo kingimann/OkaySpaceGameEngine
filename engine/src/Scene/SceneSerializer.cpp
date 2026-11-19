@@ -1032,6 +1032,7 @@ void WriteComponentRecords(std::ostream& out, GameObject* go) {
                 << mr->groundShadowY << " " << mr->groundShadowStrength << "\n";
         if (!mr->castShadows || !mr->receiveShadows)
             out << "  meshshadows " << (mr->castShadows ? 1 : 0) << " " << (mr->receiveShadows ? 1 : 0) << "\n";
+        if (mr->glowLightRange != 0.0f) out << "  meshglow " << mr->glowLightRange << "\n";
         // A hidden mesh (e.g. a Boolean modifier's cutter) stays hidden after a reload.
         if (!mr->enabled) out << "  meshenabled 0\n";
     }
@@ -1682,6 +1683,12 @@ void WriteComponentRecords(std::ostream& out, GameObject* go) {
             out << " " << (li->castShadows ? 1 : 0) << " " << li->shadowStrength << " " << li->shadowBias
                 << " " << li->flicker << " " << li->flickerSpeed << " " << (li->enabled ? 1 : 0);
         out << "\n";
+        // Newer light settings: an append-only record of its own for the light just written, only when something differs
+        // from the defaults. Older builds keep it as an unknown record.
+        if (li->shadowSoftness != 0.5f || li->areaWidth != 0.0f || li->areaHeight != 0.0f || !li->cookie.empty() ||
+            li->cookieScale != 4.0f || li->unit != Light::Unit::Simple)
+            out << "  lightx " << li->shadowSoftness << " " << li->areaWidth << " " << li->areaHeight << " "
+                << li->cookieScale << " " << (int)li->unit << " " << Quote(li->cookie) << "\n";
     }
     for (auto* rb : go->GetComponents<Rigidbody2D>()) {
         out << "  rigidbody2d " << (int)rb->bodyType << " " << rb->gravityScale << " "
@@ -4001,6 +4008,7 @@ std::string SceneSerializer::Serialize(const Scene& scene) {
             out << "skystars 1 " << rs.skyStarDensity << " " << rs.skyStarBright << "\n";
         if (rs.ambientMode != Scene::RenderSettings::AmbientHemisphere || rs.ambientSkyTint != 0.7f)
             out << "ambientmode " << rs.ambientMode << " " << rs.ambientSkyTint << "\n";
+        if (!rs.autoBrightness) out << "lightunits 0\n";
         // Fog modes, the procedural sky, post-processing and weather: each an
         // append-only record of its own, written only when it differs from the
         // defaults, so an untouched scene's text stays exactly as it was.
@@ -4421,6 +4429,9 @@ static bool ParseStep(Scene& scene, ParseSession& S, bool clear,
             int m = Scene::RenderSettings::AmbientHemisphere; float tint = 0.7f; in >> m >> tint;
             if (m < 0 || m > 2) m = Scene::RenderSettings::AmbientHemisphere;
             if (clear) { scene.renderSettings.ambientMode = m; scene.renderSettings.ambientSkyTint = tint; }
+        } else if (token == "lightunits") {
+            int on = 1; in >> on;
+            if (clear) scene.renderSettings.autoBrightness = (on != 0);
         } else if (token == "fogmode") {
             Scene::RenderSettings v;   // defaults for anything the record leaves out
             int ms = 0; in >> v.fogMode >> v.fogDensity >> v.fogHeight >> v.fogFalloff >> ms;
@@ -5339,6 +5350,16 @@ static bool ParseStep(Scene& scene, ParseSession& S, bool clear,
                 } else if (field == "meshshadows") {
                     int cs = 1, rs = 1; in >> cs >> rs;
                     if (auto* mr = LastOf(go->GetComponents<MeshRenderer>())) { mr->castShadows = (cs != 0); mr->receiveShadows = (rs != 0); }
+                } else if (field == "meshglow") {
+                    if (auto* mr = LastOf(go->GetComponents<MeshRenderer>())) in >> mr->glowLightRange;
+                } else if (field == "lightx") {
+                    if (auto* li = LastOf(go->GetComponents<Light>())) {
+                        int unit = 0;
+                        in >> li->shadowSoftness >> li->areaWidth >> li->areaHeight >> li->cookieScale >> unit;
+                        li->unit = unit == 1 ? Light::Unit::RealWorld : Light::Unit::Simple;
+                        in >> std::ws;
+                        if (in.peek() == '"') li->cookie = ReadQuoted(in);
+                    }
                 } else if (field == "groundshadow") {
                     if (auto* mr = LastOf(go->GetComponents<MeshRenderer>())) {
                         int gs = 1; in >> gs >> mr->groundShadowY >> mr->groundShadowStrength;

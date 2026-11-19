@@ -101,10 +101,9 @@ inline void FitCascade(ShadowCascadeGpu& c, const Vec3& center, float R, const V
     float back = R * 2.0f + depthPad;
     Mat4 view = Mat4::LookAt(center - L * back, center, up);
     Mat4 proj = Mat4::Ortho(-R, R, -R, R, 0.05f, back + R * 2.0f + depthPad);
-    Vec4 lc = view * Vec4{center, 1.0f};
-    float sx = std::floor(lc.x / texel) * texel;
-    float sy = std::floor(lc.y / texel) * texel;
-    c.vp = proj * Mat4::Translate({sx - lc.x, sy - lc.y, 0.0f}) * view;
+    // The texel grid is tied to the world (see shadowmath::CascadeSnapShift): the earlier snap here rounded the box
+    // centre in the light's own view, where it is always (0, 0), so it never snapped anything.
+    c.vp = proj * Mat4::Translate(shadowmath::CascadeSnapShift(view, texel)) * view;
     c.center = center;
     c.radius = R;
     c.texelWorld = texel;

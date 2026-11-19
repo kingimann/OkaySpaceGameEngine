@@ -7,6 +7,7 @@
 #include "okay/Render/Lighting.hpp"
 #include "okay/Render/LightSubset.hpp"
 #include "okay/Render/LocalShadowMath.hpp"
+#include "okay/Render/ShadowMath.hpp"
 #include "okay/Render/Atmosphere.hpp"
 #include "okay/Scene/Scene.hpp"
 #include "okay/Scene/GameObject.hpp"
@@ -73,12 +74,16 @@ struct ShadowCascade {
     float texelWorld = 0.0f;    // world size of one shadow texel (for normal-offset bias)
     Vec3  center{0, 0, 0};      // world-space centre of the region this cascade covers
     float radius = 0.0f;        // world-space radius of that region (for cascade selection)
+    float depthRange = 1.0f;    // world length of the depth range (NDC z -1..1), turns depth gaps into metres
 };
 struct ShadowMap {
     static const int kMaxCascades = 4;
     ShadowCascade cascade[kMaxCascades];
     int   count   = 0;          // active cascades
     bool  enabled = false;
+    Vec3  eye{0, 0, 0};         // camera position this frame (for the distance fade)
+    Vec3  lightDir{0, -1, 0};   // the way the sun shines (unit)
+    float fadeDistance = 0.0f;  // sun shadows fade out towards this distance (0 = no fade)
 };
 inline ShadowMap& Shadows();
 inline float ShadowFactor(const Vec3& wpos, const Vec3& n);
@@ -1011,17 +1016,21 @@ inline void BuildCascade(const Scene& scene, ShadowCascade& cas, const Vec3& cen
     cas.size = S;
     cas.radius = radius;
     float texel = (2.0f * radius) / (float)S;
-    // Snap the centre to whole-texel steps (reduces edge crawling under motion).
-    Vec3 ctr{std::floor(center.x / texel) * texel,
-             std::floor(center.y / texel) * texel,
-             std::floor(center.z / texel) * texel};
+    // (Classic lighting rounds the centre on the world axes instead, which still shimmers.)
+    const Vec3 ctr = ClassicLighting() ? Vec3{std::floor(center.x / texel) * texel, std::floor(center.y / texel) * texel,
+                                              std::floor(center.z / texel) * texel} : center;
     cas.center = ctr;
     cas.texelWorld = texel;
     Vec3 up = std::fabs(L.y) > 0.99f ? Vec3{1, 0, 0} : Vec3{0, 1, 0};
     float back = radius * 2.0f + depthPad;
     Vec3 eye = ctr - L * back;
-    cas.viewProj = Mat4::Ortho(-radius, radius, -radius, radius, 0.05f, back + radius * 2.0f + depthPad)
-                 * Mat4::LookAt(eye, ctr, up);
+    const float farZ = back + radius * 2.0f + depthPad;
+    const Mat4 view = Mat4::LookAt(eye, ctr, up);
+    // Stable cascades: the texel grid is tied to the world (shadowmath::CascadeSnapShift), so the shadow edges do not
+    // crawl when the camera moves or turns.
+    cas.viewProj = Mat4::Ortho(-radius, radius, -radius, radius, 0.05f, farZ)
+                 * Mat4::Translate(ClassicLighting() ? Vec3{0, 0, 0} : shadowmath::CascadeSnapShift(view, texel)) * view;
+    cas.depthRange = farZ - 0.05f;
     cas.depth.assign((std::size_t)S * S, 2.0f);
     RenderCascadeDepth(scene, cas, cull);
 }
@@ -1059,6 +1068,8 @@ inline void RenderShadowMap(const Scene& scene, const Mat4& vp, const Vec3& eye)
     if (!any) { sm.enabled = false; return; }
 
     Vec3 L = SceneLight::Direction(); { float m = L.Magnitude(); L = m > 1e-6f ? L * (1.0f / m) : Vec3{0, -1, 0}; }
+    sm.eye = eye; sm.lightDir = L;
+    sm.fadeDistance = ShadowDistance() > 0.0f ? ShadowDistance() : 0.0f;
     const int S = std::min(ShadowMapResolution(), std::max(64, SoftwareShadowCap()));
     // Depth padding = the scene's vertical extent, so a caster anywhere above a
     // cascade region is still inside the light frustum's depth range.
@@ -1164,10 +1175,7 @@ inline bool ComputeDirectionalShadowVP(const Scene& scene, const Mat4& camVp, co
     // making the shadows "swim"/shimmer/glitch. Rounding the centre's light-space
     // X/Y to the texel grid and folding the sub-texel remainder back in as a
     // post-view translation keeps the grid rock-steady frame to frame.
-    Vec4 lc = lightView * Vec4{ctr, 1.0f};
-    float sx = std::floor(lc.x / texel) * texel;
-    float sy = std::floor(lc.y / texel) * texel;
-    Mat4 snap = Mat4::Translate({sx - lc.x, sy - lc.y, 0.0f});
+    Mat4 snap = Mat4::Translate(shadowmath::CascadeSnapShift(lightView, texel));   // grid tied to the world
     outVP = lightProj * snap * lightView;
     outTexelWorld = texel;
     return true;
@@ -1199,17 +1207,10 @@ inline void SceneAmbientColors(const Scene::RenderSettings& rs, const Vec3& amb,
 /// softer, fuzzier shadow edges; smaller = crisp/hard. ~2.5 reads as soft-ish.
 inline float& ShadowSoftness() { static float v = 2.5f; return v; }
 
-/// 0 = fully shadowed, 1 = fully lit, for a world position (Poisson-disk PCF).
-/// Picks the tightest cascade that contains the point (crispest available), pushes
-/// the sample a few texels along the normal ("normal-offset bias", anti-acne),
-/// then does a 6-tap Poisson-disk PCF lookup.
-inline float ShadowFactor(const Vec3& wpos, const Vec3& n) {
+/// The shadow lookup as it was before the lighting upgrade (see ClassicLighting()).
+inline float ShadowFactorClassic(const Vec3& wpos, const Vec3& n) {
     ShadowMap& sm = Shadows();
     if (!sm.enabled || sm.count <= 0) return 1.0f;
-
-    // 6-tap Poisson-disk PCF (center + 5 ring taps): scattered samples give a
-    // smoother penumbra than a rigid grid at roughly half the cost of a 12-tap
-    // kernel — this runs per shaded pixel so the tap count matters for FPS.
     static const float kPoisson[6][2] = {
         { 0.000f,  0.000f}, {-0.326f, -0.406f}, { 0.840f, -0.074f},
         {-0.696f,  0.457f}, { 0.185f,  0.893f}, { 0.507f, -0.640f},
@@ -1217,20 +1218,17 @@ inline float ShadowFactor(const Vec3& wpos, const Vec3& n) {
     const float radius = ShadowSoftness();
     const float bias = 0.004f;
     const LightSample* sun = SceneLights::Sun();
-    const float strength = sun ? sun->shadowStrength : 1.0f;   // per-light Strength
-    const float biasMul = sun ? sun->shadowBias : 1.0f;         // per-light Bias
-
-    // Choose the smallest cascade whose region contains the fragment (its texels
-    // are the densest available there); fall back to the last (widest) cascade.
+    const float strength = sun ? sun->shadowStrength : 1.0f;
+    const float biasMul = sun ? sun->shadowBias : 1.0f;
     for (int ci = 0; ci < sm.count; ++ci) {
         const ShadowCascade& cas = sm.cascade[ci];
         if (cas.size <= 0) continue;
         bool last = (ci == sm.count - 1);
         if (!last) {
             Vec3 d = wpos - cas.center;
-            if (d.x * d.x + d.y * d.y + d.z * d.z > cas.radius * cas.radius) continue;  // try the next ring out
+            if (d.x * d.x + d.y * d.y + d.z * d.z > cas.radius * cas.radius) continue;
         }
-        Vec3 p = wpos + n * (cas.texelWorld * 3.5f * biasMul);   // normal-offset bias
+        Vec3 p = wpos + n * (cas.texelWorld * 3.5f * biasMul);
         Vec4 lc = cas.viewProj * Vec4{p, 1.0f};
         if (lc.w == 0) return 1.0f;
         float iw = 1.0f / lc.w, x = lc.x * iw, y = lc.y * iw, z = lc.z * iw;
@@ -1246,6 +1244,82 @@ inline float ShadowFactor(const Vec3& wpos, const Vec3& n) {
             if (z - bias * biasMul <= cas.depth[(std::size_t)py * cas.size + px]) lit += 1.0f;
         }
         return 1.0f - strength * (1.0f - lit / 6.0f);
+    }
+    return 1.0f;
+}
+
+/// 0 = fully shadowed, 1 = fully lit, for a world position.
+/// Picks the tightest cascade that contains the point (crispest available), then:
+///   1. pushes the point along its normal by an amount that grows with the slope (normal offset),
+///   2. looks for blockers around it and measures the gap between blocker and receiver,
+///   3. filters a disc whose size grows with that gap (soft penumbra: sharp where an object touches the ground,
+///      softer the farther the shadow falls), comparing depths with a slope-scaled bias,
+///   4. fades the whole shadow out over the last fifth of the shadow distance.
+/// `ShadowSoftness()` is the smallest filter radius; the sun's Soft Edges setting widens it with the gap.
+inline float ShadowFactor(const Vec3& wpos, const Vec3& n) {
+    if (ClassicLighting()) return ShadowFactorClassic(wpos, n);
+    ShadowMap& sm = Shadows();
+    if (!sm.enabled || sm.count <= 0) return 1.0f;
+
+    const float fade = shadowmath::DistanceFade((wpos - sm.eye).Magnitude(), sm.fadeDistance);
+    if (fade <= 0.0f) return 1.0f;
+    const float baseR = ShadowSoftness();
+    const LightSample* sun = SceneLights::Sun();
+    const float strength = (sun ? sun->shadowStrength : 1.0f) * fade;   // per-light Strength, faded with distance
+    const float biasMul = sun ? sun->shadowBias : 1.0f;                  // per-light Bias
+    const float soft = sun ? sun->shadowSoftness : 0.5f;                 // per-light Soft Edges
+    float ndl = Vec3::Dot(n, sm.lightDir * -1.0f);
+    ndl = ndl < 0.0f ? 0.0f : (ndl > 1.0f ? 1.0f : ndl);
+
+    // Choose the smallest cascade whose region contains the fragment (its texels
+    // are the densest available there); fall back to the last (widest) cascade.
+    for (int ci = 0; ci < sm.count; ++ci) {
+        const ShadowCascade& cas = sm.cascade[ci];
+        if (cas.size <= 0) continue;
+        bool last = (ci == sm.count - 1);
+        if (!last) {
+            Vec3 d = wpos - cas.center;
+            if (d.x * d.x + d.y * d.y + d.z * d.z > cas.radius * cas.radius) continue;  // try the next ring out
+        }
+        Vec3 p = wpos + n * shadowmath::NormalOffset(ndl, cas.texelWorld, biasMul);   // normal-offset bias
+        Vec4 lc = cas.viewProj * Vec4{p, 1.0f};
+        if (lc.w == 0) return 1.0f;
+        float iw = 1.0f / lc.w, x = lc.x * iw, y = lc.y * iw, z = lc.z * iw;
+        if (x < -1 || x > 1 || y < -1 || y > 1 || z > 1) {
+            if (last) return 1.0f; else continue;
+        }
+        const float fx = (x * 0.5f + 0.5f) * cas.size, fy = (1.0f - (y * 0.5f + 0.5f)) * cas.size;
+        const float zPerWorld = 2.0f / (cas.depthRange > 1e-4f ? cas.depthRange : 1.0f);   // NDC depth per metre
+        auto texel = [&](float tx, float ty, float& dOut) {
+            const int px = (int)(tx), py = (int)(ty);
+            if (px < 0 || py < 0 || px >= cas.size || py >= cas.size) return false;
+            dOut = cas.depth[(std::size_t)py * cas.size + px];
+            return true;
+        };
+        // 1. Blocker search: a few taps over a reach a bit wider than the minimum filter.
+        const float searchR = baseR + 1.5f + 4.0f * soft;
+        const float searchBias = shadowmath::DepthBias(ndl, cas.texelWorld, searchR, biasMul) * zPerWorld;
+        int blockers = 0; float gapSum = 0.0f;
+        for (int k = 0; k < 6; ++k) {
+            float tx, ty; shadowmath::DiscTap(k, 6, tx, ty);
+            float d;
+            if (!texel(fx + tx * searchR, fy + ty * searchR, d)) continue;
+            if (z - searchBias > d) { ++blockers; gapSum += (z - d) / zPerWorld; }
+        }
+        if (blockers == 0) return 1.0f;                           // nothing in the way: no need to filter
+        const float gap = gapSum / (float)blockers;
+        // 2. Filter radius from the gap, then a disc of taps against a slope-scaled bias.
+        const float radius = shadowmath::PenumbraTexels(gap, cas.texelWorld, soft, baseR);
+        const float bias = shadowmath::DepthBias(ndl, cas.texelWorld, radius, biasMul) * zPerWorld;
+        const int taps = radius > 3.0f ? 16 : 8;
+        float lit = 0.0f;
+        for (int k = 0; k < taps; ++k) {
+            float tx, ty; shadowmath::DiscTap(k, taps, tx, ty);
+            float d;
+            if (!texel(fx + tx * radius, fy + ty * radius, d)) { lit += 1.0f; continue; }
+            if (z - bias <= d) lit += 1.0f;
+        }
+        return 1.0f - strength * (1.0f - lit / (float)taps);
     }
     return 1.0f;
 }

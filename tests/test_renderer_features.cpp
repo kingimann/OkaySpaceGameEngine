@@ -76,6 +76,9 @@ static FeatureSupport Expect(RenderFeature feature, RenderBackend backend) {
 
         {F::SoftwareColorGrade, B::Software, S::Yes}, {F::SoftwareColorGrade, B::OpenGL, S::No},
         {F::SoftwareColorGrade, B::Direct3D11, S::No}, {F::SoftwareColorGrade, B::Direct3D12, S::No},
+
+        {F::LightShapes, B::Software, S::Yes}, {F::LightShapes, B::OpenGL, S::No},
+        {F::LightShapes, B::Direct3D11, S::No}, {F::LightShapes, B::Direct3D12, S::No},
     };
     for (const Cell& c : k)
         if (c.f == feature && c.b == backend) return c.s;

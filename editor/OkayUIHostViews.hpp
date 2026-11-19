@@ -8,7 +8,9 @@
 
 #include <functional>
 
-namespace okay { class Scene; class GameObject; struct Vec3; namespace platform { class Painter; } }
+#include "okay/Math/Vec2.hpp"
+#include "okay/Math/Vec3.hpp"
+namespace okay { class Scene; class GameObject; namespace platform { class Painter; } }
 
 namespace oked {
 namespace wm {
@@ -18,6 +20,9 @@ struct ViewSource {
     std::function<okay::Scene*()> scene;
     float* yaw = nullptr; float* pitch = nullptr; float* dist = nullptr;   // degrees, degrees, distance
     okay::Vec3* target = nullptr;
+    // the 2D view (used when `is2D` says the scene is 2D): the editor's camera position and zoom (world units visible vertically)
+    std::function<bool()> is2D;
+    okay::Vec2* cam2dPos = nullptr; float* cam2dZoom = nullptr;
     // selection and edits (the editor's EditorState behind them); all optional: without `select` clicking does not pick, without `selected` there is no gizmo
     std::function<okay::GameObject*()> selected;
     std::function<void(okay::GameObject*, bool toggle)> select;   // null object = clear the selection
@@ -36,6 +41,8 @@ struct ViewProbe {
     int texW = 0, texH = 0;      // the render size
     int litPixels = 0;           // pixels of the picture that are not transparent
     int frames = 0;              // pictures drawn so far
+    bool view2D = false;         // the last Scene picture was the 2D view
+    int spritesDrawn = 0;        // sprites in the 2D picture
     int gridLines = 0;           // grid lines drawn
     int outlineEdges = 0;        // selection outline edges drawn
     int gizmoAxes = 0;           // gizmo handles drawn (3 when an object is selected)

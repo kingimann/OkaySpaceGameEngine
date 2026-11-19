@@ -105,5 +105,31 @@ int main() {
         float deg = 0;   // a quarter turn about Y seen from above: grab at +X, now at -Z
         CHECK(sv::RotateAngle({0, 0, 0}, sv::Axis::Y, sv::Ray3{{1, 5, 0}, {0, -1, 0}}, sv::Ray3{{0, 5, -1}, {0, -1, 0}}, deg) && std::fabs(deg - 90.0f) < 0.1f);
     }
+
+    // ---- round 12: the 2D view ----
+    {
+        Scene s2("Flat");
+        GameObject* back = s2.CreateGameObject("Back"); auto* sb = back->AddComponent<SpriteRenderer>(); sb->size = {4, 4}; sb->color = Color(1, 0, 0, 1); sb->sortOrder = 0;
+        GameObject* front = s2.CreateGameObject("Front"); auto* sf = front->AddComponent<SpriteRenderer>(); sf->size = {2, 2}; sf->color = Color(0, 0, 1, 1); sf->sortOrder = 5;
+        front->transform->SetPosition({1, 0, 0});
+        GameObject* hidden = s2.CreateGameObject("Hidden"); hidden->AddComponent<SpriteRenderer>()->size = {1, 1}; hidden->active = false;
+        s2.Start(); s2.Update(0.0f);
+        CHECK(sv::SpritesBackToFront(s2).size() == 2 && sv::SpritesBackToFront(s2)[1] == front);
+        CHECK(sv::Pick2D(s2, 1.0f, 0.0f) == front && sv::Pick2D(s2, -1.5f, 0.0f) == back && sv::Pick2D(s2, 9.0f, 0.0f) == nullptr);
+        sv::Cam2D c; c.zoom = 10.0f;   // 10 world units over 100 pixels: 10 px per unit
+        float px, py; sv::World2DToPixel(c, 200, 100, 0, 0, px, py); CHECK(px == 100.0f && py == 50.0f);
+        float wx, wy; sv::Pixel2DToWorld(c, 200, 100, 110, 40, wx, wy); CHECK(std::fabs(wx - 1.0f) < 1e-4f && std::fabs(wy - 1.0f) < 1e-4f);
+        sv::Renderer2D r2; const std::uint32_t* im = r2.Render(s2, c, 200, 100);
+        auto at = [&](int x, int y) { return im[y * 200 + x]; };
+        CHECK(at(100 - 15, 50) == 0xFF0000FFu);          // inside only Back: red (ABGR memory RGBA)
+        CHECK(at(100 + 10, 50) == 0xFFFF0000u);          // Front over Back: blue
+        CHECK((at(5, 5) >> 24) == 0 && (at(195, 95) >> 24) == 0);   // empty corners
+        front->transform->SetEulerAngles({0, 0, 90}); front->AddComponent<SpriteRenderer>();   // (a second renderer is ignored: the first one draws)
+        sf->size = {4, 1};                                // a long bar, turned a quarter: now tall
+        im = r2.Render(s2, c, 200, 100);
+        CHECK(sv::SpriteContains(*front, *sf, 1.0f, 1.8f) && !sv::SpriteContains(*front, *sf, 2.8f, 0.0f));
+        const int lit = [&] { int n = 0; for (int i = 0; i < 200 * 100; ++i) n += (im[i] >> 24) != 0; return n; }();
+        CHECK(lit > 1000);
+    }
     TEST_MAIN_RESULT();
 }

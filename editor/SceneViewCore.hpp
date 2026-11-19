@@ -6,6 +6,7 @@
 #include "okay/Components/Camera.hpp"
 #include "okay/Components/Light.hpp"
 #include "okay/Components/MeshRenderer.hpp"
+#include "okay/Components/SpriteRenderer.hpp"
 #include "okay/Render/Lightmap.hpp"
 #include "okay/Render/SoftwareRenderer.hpp"
 #include "okay/Scene/EnsureCamera.hpp"
@@ -231,6 +232,71 @@ inline bool RotateAngle(const okay::Vec3& centre, Axis a, const Ray3& grab, cons
     degrees = std::atan2(cr, dt) * 57.29577951f;
     return true;
 }
+
+// ---- The 2D view: sprites as flat coloured rectangles (round 12). Written from what a 2D scene is: each SpriteRenderer is a size x scale rectangle at the object's
+// position, turned by its Z rotation, drawn back to front by its sorting layer and order. Textures, flips and atlas regions are NOT drawn (a flat tint). ----
+struct Cam2D { okay::Vec2 pos{0, 0}; float zoom = 18.0f; };   // zoom = world units visible vertically
+
+inline float Scale2D(const Cam2D& c, int h) { return (float)h / (c.zoom > 0.01f ? c.zoom : 0.01f); }
+inline void World2DToPixel(const Cam2D& c, int w, int h, float wx, float wy, float& px, float& py) { const float k = Scale2D(c, h); px = (float)w * 0.5f + (wx - c.pos.x) * k; py = (float)h * 0.5f - (wy - c.pos.y) * k; }
+inline void Pixel2DToWorld(const Cam2D& c, int w, int h, float px, float py, float& wx, float& wy) { const float k = Scale2D(c, h); wx = (px - (float)w * 0.5f) / k + c.pos.x; wy = -(py - (float)h * 0.5f) / k + c.pos.y; }
+
+/// Is world point (wx, wy) inside the sprite's rectangle?
+inline bool SpriteContains(const okay::GameObject& go, const okay::SpriteRenderer& sr, float wx, float wy) {
+    if (!go.transform) return false;
+    const okay::Vec3 p = go.transform->Position(), sc = go.transform->LossyScale();
+    const float rz = go.transform->EulerAngles().z * 0.01745329252f, c = std::cos(rz), s = std::sin(rz);
+    const float dx = wx - p.x, dy = wy - p.y;
+    const float lx = dx * c + dy * s, ly = -dx * s + dy * c;   // into the sprite's own axes
+    const float hw = std::fabs(sr.size.x * sc.x) * 0.5f, hh = std::fabs(sr.size.y * sc.y) * 0.5f;
+    return std::fabs(lx) <= hw && std::fabs(ly) <= hh;
+}
+
+/// The visible sprites, back to front.
+inline std::vector<okay::GameObject*> SpritesBackToFront(const okay::Scene& scene) {
+    std::vector<okay::GameObject*> v;
+    for (const auto& up : scene.Objects()) { okay::GameObject* g = up.get(); if (g && g->active && g->transform) { auto* sr = g->GetComponent<okay::SpriteRenderer>(); if (sr && sr->enabled) v.push_back(g); } }
+    std::stable_sort(v.begin(), v.end(), [](okay::GameObject* a, okay::GameObject* b) { return a->GetComponent<okay::SpriteRenderer>()->SortKey() < b->GetComponent<okay::SpriteRenderer>()->SortKey(); });
+    return v;
+}
+
+/// The topmost sprite under world point (wx, wy), or null.
+inline okay::GameObject* Pick2D(const okay::Scene& scene, float wx, float wy) {
+    const auto v = SpritesBackToFront(scene);
+    for (auto it = v.rbegin(); it != v.rend(); ++it) if (SpriteContains(**it, *(*it)->GetComponent<okay::SpriteRenderer>(), wx, wy)) return *it;
+    return nullptr;
+}
+
+/// A w*h RGBA picture of the 2D scene (transparent where nothing is drawn). Own buffer, valid until the next call.
+class Renderer2D {
+public:
+    const std::uint32_t* Render(const okay::Scene& scene, const Cam2D& cam, int w, int h) {
+        w = std::max(w, 1); h = std::max(h, 1);
+        m_buf.assign((std::size_t)w * h, 0u);
+        for (okay::GameObject* go : SpritesBackToFront(scene)) {
+            auto* sr = go->GetComponent<okay::SpriteRenderer>();
+            const okay::Vec3 p = go->transform->Position(), sc = go->transform->LossyScale();
+            const float hw = std::fabs(sr->size.x * sc.x) * 0.5f, hh = std::fabs(sr->size.y * sc.y) * 0.5f, ext = std::sqrt(hw * hw + hh * hh);
+            float x0, y0, x1, y1;
+            World2DToPixel(cam, w, h, p.x - ext, p.y + ext, x0, y0); World2DToPixel(cam, w, h, p.x + ext, p.y - ext, x1, y1);
+            const int ix0 = std::max(0, (int)std::floor(x0)), iy0 = std::max(0, (int)std::floor(y0)), ix1 = std::min(w - 1, (int)std::ceil(x1)), iy1 = std::min(h - 1, (int)std::ceil(y1));
+            const unsigned r = (unsigned)(std::min(std::max(sr->color.r, 0.0f), 1.0f) * 255.0f), g = (unsigned)(std::min(std::max(sr->color.g, 0.0f), 1.0f) * 255.0f),
+                           b = (unsigned)(std::min(std::max(sr->color.b, 0.0f), 1.0f) * 255.0f), a = (unsigned)(std::min(std::max(sr->color.a, 0.0f), 1.0f) * 255.0f);
+            for (int y = iy0; y <= iy1; ++y) for (int x = ix0; x <= ix1; ++x) {
+                float wx, wy; Pixel2DToWorld(cam, w, h, (float)x + 0.5f, (float)y + 0.5f, wx, wy);
+                if (!SpriteContains(*go, *sr, wx, wy)) continue;
+                std::uint32_t& d = m_buf[(std::size_t)y * w + x];
+                const unsigned da = d >> 24, dr = d & 255u, dg = (d >> 8) & 255u, db = (d >> 16) & 255u;
+                const unsigned oa = a + da * (255u - a) / 255u;   // source over
+                auto mix = [&](unsigned s, unsigned t) { return oa ? (s * a + t * da * (255u - a) / 255u) / oa : 0u; };
+                d = (oa << 24) | (std::min(mix(b, db), 255u) << 16) | (std::min(mix(g, dg), 255u) << 8) | std::min(mix(r, dr), 255u);
+            }
+        }
+        return m_buf.data();
+    }
+private:
+    std::vector<std::uint32_t> m_buf;
+};
 
 } // namespace sceneview
 } // namespace oked

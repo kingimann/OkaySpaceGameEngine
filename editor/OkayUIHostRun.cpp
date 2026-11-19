@@ -60,6 +60,8 @@ int RunOkayUIHostMode(int, char**) {
         vs.select = [&editor](okay::GameObject* g, bool toggle) { if (toggle && g) editor.ToggleSelect(g); else editor.Select(g); };
         vs.beginEdit = [&editor](const char* what) { editor.PushUndo(what); };
         vs.edited = [&editor] { editor.dirty = true; };
+        vs.is2D = [&editor] { return !editor.view3D; };
+        vs.cam2dPos = &editor.cameraPos; vs.cam2dZoom = &editor.cameraZoom;
         vs.yaw = &editor.camYaw; vs.pitch = &editor.camPitch; vs.dist = &editor.camDist; vs.target = &editor.camTarget;
         wm::AddSceneViews(state.panels, &state, painter.get(), vs);
         wm::AddObjectPanels(state.panels, &state, &editor);   // the Hierarchy and the Inspector

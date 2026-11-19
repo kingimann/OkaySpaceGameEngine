@@ -19,7 +19,7 @@ struct ViewWindow {
     bool game = false;
     okay::platform::Painter* painter = nullptr;
     ViewSource src;
-    sceneview::Renderer renderer;
+    sceneview::Renderer renderer; sceneview::Renderer2D renderer2d;
     okay::ui2d::Tex tex = nullptr;
     int tw = 0, th = 0;
     bool dragging = false; float lastX = 0, lastY = 0;
@@ -55,8 +55,17 @@ void Draw(ViewWindow& v, HostModeState* st, const char* title) {
     if (avail.x < 8.0f || avail.y < 8.0f) { pr.note = "too small"; DockEnd(); return; }
     sceneview::Frame f;
     int tw = 0, th = 0;
+    const bool is2D = v.src.is2D && v.src.is2D();   // a 2D scene: sprites, no orbit camera
+    pr.view2D = is2D;
+    sceneview::Cam2D cam2;
     sceneview::FitSize((int)avail.x, (int)avail.y, 1.0f, 1920, tw, th);
-    if (v.game) {
+    if (is2D) {
+        if (v.game) {
+            okay::Camera* cam = sceneview::GameCamera(*sc);
+            if (!cam || !cam->gameObject || !cam->gameObject->transform) { pr.note = "no camera"; TextDisabled("No main Camera in the scene."); DockEnd(); return; }
+            const okay::Vec3 cp = cam->gameObject->transform->Position(); cam2.pos = okay::Vec2{cp.x, cp.y}; cam2.zoom = cam->EffectiveOrthoSize() * 2.0f;
+        } else { if (v.src.cam2dPos) cam2.pos = *v.src.cam2dPos; if (v.src.cam2dZoom) cam2.zoom = *v.src.cam2dZoom; }
+    } else if (v.game) {
         okay::Camera* cam = sceneview::GameCamera(*sc);
         if (!sceneview::GameFrame(cam, tw, th, f)) { pr.note = "no camera"; TextDisabled("No main Camera in the scene."); DockEnd(); return; }
     } else {
@@ -67,7 +76,7 @@ void Draw(ViewWindow& v, HostModeState* st, const char* title) {
         if (v.src.target) oc.target = *v.src.target;
         f = sceneview::EditorFrame(oc, tw, th);
     }
-    const std::uint32_t* px = v.renderer.Render(*sc, f, 1, nullptr);
+    const std::uint32_t* px = is2D ? v.renderer2d.Render(*sc, cam2, tw, th) : v.renderer.Render(*sc, f, 1, nullptr);
     if (!px || !v.painter) { pr.note = px ? "no painter" : "no picture"; DockEnd(); return; }
     if (!v.tex || v.tw != tw || v.th != th) {
         if (v.tex) v.painter->DestroyTexture(v.tex);
@@ -87,7 +96,40 @@ void Draw(ViewWindow& v, HostModeState* st, const char* title) {
     pr.texW = tw; pr.texH = th; pr.litPixels = sceneview::AnyPixel(px, tw, th) ? 1 : 0;
     if (pr.litPixels) { int n = 0; for (long i = 0, m = (long)tw * th; i < m; ++i) if (px[i] >> 24) ++n; pr.litPixels = n; }
     ++pr.frames;
-    if (!v.game) {
+    if (!v.game && is2D) {   // the 2D Scene view: grid every world unit, click picks the topmost sprite, right-drag pans, the wheel zooms
+        const float sx = avail.x / (float)tw, sy = avail.y / (float)th;
+        const DrawListHandle& dl = GetWindowDrawList();
+        const Input& in = GetFrameInput();
+        pr.gridLines = 0; pr.outlineEdges = 0; pr.gizmoAxes = 0; pr.spritesDrawn = (int)sceneview::SpritesBackToFront(*sc).size();
+        if (v.showGrid && cam2.zoom < 120.0f) {
+            float wx0, wy0, wx1, wy1; sceneview::Pixel2DToWorld(cam2, tw, th, 0, 0, wx0, wy0); sceneview::Pixel2DToWorld(cam2, tw, th, (float)tw, (float)th, wx1, wy1);
+            for (int gx = (int)std::floor(wx0); gx <= (int)std::ceil(wx1); ++gx) { float px0, py0; sceneview::World2DToPixel(cam2, tw, th, (float)gx, 0, px0, py0); dl->AddLine(Vec2{p.x + px0 * sx, p.y}, Vec2{p.x + px0 * sx, p.y + avail.y}, gx == 0 ? RGBA(70, 110, 220, 190) : RGBA(80, 84, 92, 110)); ++pr.gridLines; }
+            for (int gy = (int)std::floor(wy1); gy <= (int)std::ceil(wy0); ++gy) { float px0, py0; sceneview::World2DToPixel(cam2, tw, th, 0, (float)gy, px0, py0); dl->AddLine(Vec2{p.x, p.y + py0 * sy}, Vec2{p.x + avail.x, p.y + py0 * sy}, gy == 0 ? RGBA(200, 70, 70, 190) : RGBA(80, 84, 92, 110)); ++pr.gridLines; }
+        }
+        okay::GameObject* sel = v.src.selected ? v.src.selected() : nullptr;
+        if (sel) if (auto* sr = sel->GetComponent<okay::SpriteRenderer>()) {   // the selection outline: the sprite's rectangle
+            const okay::Vec3 sp = sel->transform->Position(), ss = sel->transform->LossyScale();
+            const float rz = sel->transform->EulerAngles().z * 0.01745329252f, c = std::cos(rz), s2 = std::sin(rz), hw = std::fabs(sr->size.x * ss.x) * 0.5f, hh = std::fabs(sr->size.y * ss.y) * 0.5f;
+            const float cx[4] = {-hw, hw, hw, -hw}, cy[4] = {-hh, -hh, hh, hh}; float qx[4], qy[4];
+            for (int i = 0; i < 4; ++i) sceneview::World2DToPixel(cam2, tw, th, sp.x + cx[i] * c - cy[i] * s2, sp.y + cx[i] * s2 + cy[i] * c, qx[i], qy[i]);
+            for (int i = 0; i < 4; ++i) { dl->AddLine(Vec2{p.x + qx[i] * sx, p.y + qy[i] * sy}, Vec2{p.x + qx[(i + 1) % 4] * sx, p.y + qy[(i + 1) % 4] * sy}, RGBA(255, 170, 40, 255), 1.5f); ++pr.outlineEdges; }
+        }
+        const bool over = in.mouseX >= p.x && in.mouseX < p.x + avail.x && in.mouseY >= p.y && in.mouseY < p.y + avail.y && IsItemHovered();
+        const bool left = in.mouseDown, right = in.rightDown;
+        const float mx = (in.mouseX - p.x) / sx, my = (in.mouseY - p.y) / sy;
+        if (left && !v.pressed && over) { v.pressed = true; v.downX = in.mouseX; v.downY = in.mouseY; v.moved = false; }
+        if (v.pressed && left) { const float ddx = in.mouseX - v.downX, ddy = in.mouseY - v.downY; if (ddx * ddx + ddy * ddy > 16.0f) v.moved = true; }
+        if (v.pressed && !left) {
+            if (!v.moved && v.src.select) { float wx, wy; sceneview::Pixel2DToWorld(cam2, tw, th, mx, my, wx, wy); okay::GameObject* hit = sceneview::Pick2D(*sc, wx, wy); pr.picked = hit; v.src.select(hit, in.ctrl); }
+            v.pressed = false;
+        }
+        if (right && !v.dragging && over) v.dragging = true;
+        if (v.dragging && right && v.src.cam2dPos) { const float k = sceneview::Scale2D(cam2, th); v.src.cam2dPos->x -= (in.mouseX - v.lastX) / sx / k; v.src.cam2dPos->y += (in.mouseY - v.lastY) / sy / k; }
+        if (!right) v.dragging = false;
+        if (over && in.wheel != 0.0f && v.src.cam2dZoom) *v.src.cam2dZoom = std::max(1.0f, std::min(400.0f, *v.src.cam2dZoom * (1.0f - in.wheel * 0.1f)));
+        v.lastX = in.mouseX; v.lastY = in.mouseY;
+    }
+    if (!v.game && !is2D) {
         const float sx = avail.x / (float)tw, sy = avail.y / (float)th;   // picture pixels -> window pixels
         const DrawListHandle& dl = GetWindowDrawList();
         auto line = [&](const sceneview::Seg& g, Color32 col, float th2) { dl->AddLine(Vec2{p.x + g.x0 * sx, p.y + g.y0 * sy}, Vec2{p.x + g.x1 * sx, p.y + g.y1 * sy}, col, th2); };

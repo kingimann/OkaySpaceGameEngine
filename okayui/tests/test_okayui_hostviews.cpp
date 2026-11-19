@@ -10,6 +10,7 @@
 #include "FakePlatformBackend.hpp"
 #include "okay/UI/OkayUIDock.hpp"
 
+#include <cstdio>
 #include <cstdlib>
 #include <vector>
 
@@ -33,6 +34,8 @@ int main() {
     FakeBackend be; okayuihost::platform::FrameLoop loop(be, *painter);
     oked::HostModeState st;
     oked::wm::ViewSource src; src.scene = [&] { return &scene; }; src.yaw = &yaw; src.pitch = &pitch; src.dist = &dist; src.target = &target;
+    bool twoD = false; okay::Vec2 cam2pos{0, 0}; float cam2zoom = 12.0f;
+    src.is2D = [&] { return twoD; }; src.cam2dPos = &cam2pos; src.cam2dZoom = &cam2zoom;
     okay::GameObject* selected = nullptr; int edits = 0, edited = 0; std::string lastEdit;
     src.selected = [&] { return selected; };
     src.select = [&](okay::GameObject* g, bool) { selected = g; };
@@ -158,6 +161,42 @@ int main() {
         const int gx = (int)(q.gridCheck.x + 6), gy = (int)(q.gridCheck.y + q.gridCheck.h / 2);
         be.queue.push_back(Move(gx, gy)); frame(); be.queue.push_back(Btn(true, gx, gy)); frame(); be.queue.push_back(Btn(false, gx, gy)); frame(); frame();
         CHECK(q.gridLines == 0);
+    }
+
+    // ---- round 12: the 2D view ----
+    {
+        okay::GameObject* sprite = scene.CreateGameObject("Sprite1"); auto* sr = sprite->AddComponent<okay::SpriteRenderer>(); sr->size = {3, 3}; sr->color = okay::Color(0.9f, 0.3f, 0.2f, 1.0f);
+        okay::GameObject* sprite2 = scene.CreateGameObject("Sprite2"); auto* sr2 = sprite2->AddComponent<okay::SpriteRenderer>(); sr2->size = {2, 2}; sr2->sortOrder = 3; sprite2->transform->SetPosition({-4, 0, 0});
+        twoD = true; selected = nullptr;
+        for (int i = 0; i < 3; ++i) frame();
+        const oked::wm::ViewProbe& q = oked::wm::GetViewProbe(false);
+        { const int gx = (int)(q.gridCheck.x + 6), gy = (int)(q.gridCheck.y + q.gridCheck.h / 2); be.queue.push_back(Move(gx, gy)); frame(); be.queue.push_back(Btn(true, gx, gy)); frame(); be.queue.push_back(Btn(false, gx, gy)); frame(); frame(); }   // the grid was switched off above: on again
+        CHECK(q.view2D && q.spritesDrawn == 2 && q.gridLines > 10 && q.litPixels > 1000);
+        if (const char* shot = std::getenv("OKAYUI_SHOT3")) { std::vector<std::uint8_t> px2; int w = 0, h = 0; if (painter->ReadPixels(px2, w, h)) okay::ImageWrite::WritePNG(shot, w, h, 4, px2.data()); }
+        // click the middle: Sprite1 is picked (not the cube: the 2D view picks sprites), outline = 4 edges
+        const int px = (int)(q.image.x + q.image.w * 0.5f), py = (int)(q.image.y + q.image.h * 0.5f);
+        be.queue.push_back(Move(px, py)); frame(); be.queue.push_back(Btn(true, px, py)); frame(); be.queue.push_back(Btn(false, px, py)); frame(); frame();
+        CHECK(selected == sprite && q.outlineEdges == 4);
+        const int ex = (int)(q.image.x + q.image.w - 10), ey = (int)(q.image.y + q.image.h - 10);
+        be.queue.push_back(Move(ex, ey)); frame(); be.queue.push_back(Btn(true, ex, ey)); frame(); be.queue.push_back(Btn(false, ex, ey)); frame(); frame();
+        CHECK(selected == nullptr);
+        // the wheel zooms, a right drag pans (the world moves with the pointer)
+        const float z0 = cam2zoom;
+        { plat::Event e; e.type = plat::EventType::MouseWheel; e.wheelY = 2.0f; e.x = px; e.y = py; be.queue.push_back(e); }
+        frame(); frame();
+        CHECK(cam2zoom < z0);
+        const float cx0 = cam2pos.x;
+        { plat::Event e; e.type = plat::EventType::MouseMove; e.x = px; e.y = py; be.queue.push_back(e); }
+        frame();
+        { plat::Event e; e.type = plat::EventType::MouseButtonDown; e.button = plat::MouseRight; e.x = px; e.y = py; be.queue.push_back(e); }
+        frame();
+        { plat::Event e; e.type = plat::EventType::MouseMove; e.x = px + 60; e.y = py; be.queue.push_back(e); }
+        frame(); frame();
+        { plat::Event e; e.type = plat::EventType::MouseButtonUp; e.button = plat::MouseRight; e.x = px + 60; e.y = py; be.queue.push_back(e); }
+        frame();
+        CHECK(cam2pos.x < cx0 - 0.5f);   // dragged right: the camera moves left
+        twoD = false; for (int i = 0; i < 2; ++i) frame();
+        CHECK(!q.view2D);
     }
     TEST_MAIN_RESULT();
 }

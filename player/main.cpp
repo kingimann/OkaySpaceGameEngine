@@ -2914,8 +2914,8 @@ int main(int argc, char** argv) {
         okay::Prof().EndFrame((okay::platform::PerfCounter() - fStart) * 1000.0 / (double)okay::platform::PerfFrequency());
 
         // Frame rate cap: sleep most of the rest of the frame, then wait out the last 1.5 ms, and carry the
-        // deadline so the average rate is the cap exactly (the old whole-millisecond sleep ran a 60 fps cap
-        // at 62.5). With vsync on a cap at or above the refresh rate is left to vsync, and an inactive
+        // deadline so the average rate is the cap exactly (the old whole-millisecond sleep ran a cap
+        // up to 8% off, see docs/time_upgrade.md). With vsync on a cap at or above the refresh rate is left to vsync, and an inactive
         // window may be held to a lower rate (Project Settings > Time > "When the window is not active").
         {
             static okay::FrameLimiter s_limiter;

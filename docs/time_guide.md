@@ -40,7 +40,7 @@ nodes **Slow Motion**, **Hit Stop**, **Ramp Time Scale**, **Pause** (the eased s
 All of these run on **game time**, so they stop in a pause and slow in slow motion. They keep their rhythm: a timer
 that should run every 0.1 seconds runs 10 times a second at 30, 60 or 144 frames per second. If the computer stalls
 for 5 seconds the timer runs the missed turns at once (up to a limit) and carries on. A timer that is cancelled by
-another timer in the same frame does not run. A timer you start inside a timer starts counting in the next frame.
+another timer in the same frame does not run. A timer you start inside a timer is counted from this frame if it is due (use `NextFrame` to say "not before the next frame").
 
 Behind the scenes there is one timer service for the whole engine (`okay::Scheduler`, `docs/timers_and_tweens.md`);
 script timers use it. C++ and plugin code can also use `NextFrame`, `At(time)`, `EndOfFrame`, jitter (each run waits a
@@ -93,8 +93,8 @@ in one frame). What is left is **forgotten** (the game falls a little behind, wh
 | Frame rate when the window is not active | saves battery when you are in another window (0 = no extra limit) |
 | Clocks | your own clocks, and which clock each one follows |
 
-The frame rate limit itself is in **Build Settings** (Frame rate cap). It now holds the rate exactly (it used to
-overshoot by up to 4 percent); with vsync on, a cap at or above the screen's refresh rate is left to vsync.
+The frame rate limit itself is in **Build Settings** (Frame rate cap). It now holds the rate exactly (it used to be
+up to 8 percent off); with vsync on, a cap at or above the screen's refresh rate is left to vsync.
 
 ## Watching time while you play
 

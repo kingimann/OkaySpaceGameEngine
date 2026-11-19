@@ -101,6 +101,16 @@ int main() {
         CHECK(std::isfinite(Time::ElapsedTimeD()));
     }
 
+    // ---- 2b. What the old float step did: one hour of (float)(1/60) added up ------------------------------------
+    {
+        double sum = 0.0;
+        const float f = (float)(1.0 / 60.0);
+        for (int i = 0; i < 216000; ++i) sum += (double)f;
+        std::printf("[old float step] 1 h of (float)(1/60) summed: %.6f s (%+.3f ms an hour, %+.1f ms in 100 hours)\n",
+                    sum, (sum - 3600.0) * 1000.0, (sum - 3600.0) * 100000.0);
+        CHECK(sum > 3600.0001 && sum < 3600.0003);
+    }
+
     // ---- 3. The float views lose precision on a long run ------------------------------------------
     {
         const double at24h = 86400.0 + 1.0 / 60.0;

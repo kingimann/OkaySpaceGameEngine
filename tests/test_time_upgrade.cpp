@@ -67,7 +67,7 @@ int main() {
         GameLoop loop;
         for (int i = 0; i < 216000; ++i) loop.BeginFrame(1.0 / 60.0);
         std::printf("[loop] 1 h of 1/60 frames: game time %.6f s\n", Time::ElapsedTimeD());
-        CHECK(std::fabs(Time::ElapsedTimeD() - 3600.0) < 1e-4);   // it was 3600.19 with the float step
+        CHECK(std::fabs(Time::ElapsedTimeD() - 3600.0) < 1e-4);   // it was 3600.0002 with the float step (see time_sim)
         Fresh();
     }
 
@@ -103,7 +103,7 @@ int main() {
         Clock& parent = s2.Add("parent", Clock::Source::Unscaled);
         child.SetParent("parent"); parent.SetScale(2.0f);
         s2.Tick(0.1, 0.1, false);
-        CHECK_NEAR(child.Delta(), 0.2, 1e-9);
+        CHECK_NEAR(child.DeltaD(), 0.2, 1e-12);
         // A loop in the chain is cut (no hang, no NaN); a missing parent reads real time; self-parent is ignored.
         ClockSet s3;
         Clock& a = s3.Add("a"); Clock& b = s3.Add("b");
@@ -112,7 +112,7 @@ int main() {
         CHECK(std::isfinite(a.Delta()) && std::isfinite(b.Delta()));
         Clock& orphan = s3.Add("orphan"); orphan.SetParent("nobody");
         s3.Tick(0.1, 0.1, false);
-        CHECK_NEAR(orphan.Delta(), 0.1, 1e-9);
+        CHECK_NEAR(orphan.DeltaD(), 0.1, 1e-12);
         orphan.SetParent("orphan");
         CHECK(orphan.Parent() == "nobody");
         orphan.SetParent("");
@@ -164,25 +164,29 @@ int main() {
     // ---- 5. Scheduler ---------------------------------------------------------------------------------
     {
         Scheduler s;
-        // A callback that re-arms itself with no delay used to keep one Update running for ever.
+        // NextFrame from inside a callback runs in the NEXT update, not the one that scheduled it.
         int runs = 0;
         std::function<void()> again = [&] { ++runs; if (runs < 1000) s.NextFrame(again); };
         s.NextFrame(again);
         s.Update(0.016f);
-        CHECK(runs == 1);                 // the first run; the one it scheduled waits for the next update
+        CHECK(runs == 1);
         s.Update(0.016f);
         CHECK(runs == 2);
         s.Clear();
-        // A timer scheduled in a callback is not advanced by the frame that scheduled it (it used to be, so a
-        // 0.5 s delay scheduled in a 0.4 s frame fired 0.4 s early... after the next frame only).
+        // A callback that re-arms itself with Invoke(0) used to keep one Update running for ever: it is cut.
+        Scheduler sf; long long spins = 0;
+        std::function<void()> forever = [&] { ++spins; sf.Invoke(0.0f, forever); };
+        sf.Invoke(0.0f, forever);
+        sf.Update(0.016f);
+        std::printf("[scheduler] a self re-arming Invoke(0) ran %lld times in one update, then the update ended\n", spins);
+        CHECK(spins > 1 && spins <= Scheduler::kMaxSpawnedPerUpdate + 1);
+        CHECK(sf.ActiveCount() >= 1);
+        sf.Clear();
+        // A timer scheduled in a callback gets that frame's share (documented): Invoke(0.1) made in a 0.4 s frame fires at once.
         Scheduler s2;
         int innerFired = 0;
-        s2.Invoke(0.1f, [&] { s2.Invoke(0.5f, [&] { ++innerFired; }); });
-        s2.Update(0.4f);                  // outer fires; inner is created
-        CHECK(innerFired == 0 && s2.ActiveCount() == 1);
-        s2.Update(0.4f);                  // inner has had 0.4 s
-        CHECK(innerFired == 0);
-        s2.Update(0.2f);                  // 0.6 s total
+        s2.Invoke(0.1f, [&] { s2.Invoke(0.3f, [&] { ++innerFired; }); });
+        s2.Update(0.4f);
         CHECK(innerFired == 1);
 
         // Same due time: scheduling order. Earlier due time: earlier or same update.
@@ -477,7 +481,7 @@ int main() {
                         cap, oldFps, (oldFps / cap - 1.0) * 100.0, newFps, (newFps / cap - 1.0) * 100.0);
             CHECK(std::fabs(newFps / cap - 1.0) < 0.002);
         }
-        CHECK(std::fabs(OldCapFps(60.0, 0.002) / 60.0 - 1.0) > 0.02);   // the old formula really was off by more than 2%
+        CHECK(std::fabs(OldCapFps(120.0, 0.002) / 120.0 - 1.0) > 0.05);   // the old formula really was off by more than 5% at some caps
         // What the cap means with vsync and focus.
         CHECK(FrameLimiter::EffectiveTargetFps(0, true, 60, true, 0) == 0.0);
         CHECK(FrameLimiter::EffectiveTargetFps(60, true, 60, true, 0) == 0.0);       // vsync paces it
@@ -552,7 +556,7 @@ int main() {
             while (real < 3.0 - 1e-9) {
                 Time::StepD(1.0 / fps);
                 real += 1.0 / fps;
-                if (real <= 2.0) game += Time::DeltaTimeD();
+                if (real <= 2.0 + 1e-9) game += Time::DeltaTimeD();
                 const float m = Time::EffectiveTimeScale();
                 lowest = std::min(lowest, m);
                 if (fps >= 30.0 && std::fabs(m - prev) > 0.2f) smooth = false;   // no sudden jump to the low speed
@@ -560,7 +564,7 @@ int main() {
             }
             // 0.5 s easing down (average 0.6), 1 s at 0.2, 0.5 s easing up (average 0.6): 0.3 + 0.2 + 0.3 = 0.8 game seconds in 2 real seconds.
             std::printf("[slowmo] ease at %.0f fps: %.4f game seconds in 2 real seconds (0.8 expected), lowest speed %.2f\n", fps, game, (double)lowest);
-            CHECK_NEAR(game, fps < 10 ? 0.8 : 0.8, fps < 10 ? 0.12 : 0.02);
+            CHECK_NEAR(game, 0.8, 0.01);
             CHECK(lowest >= 0.19f && lowest <= 0.35f);
             CHECK(smooth);
             CHECK(!Time::HitStopActive() && Time::EffectiveTimeScale() == 1.0f);
@@ -573,6 +577,79 @@ int main() {
         Time::SlowMotion(0.0f, 1.0f, 0.25f); Time::SlowMotion(std::nanf(""), -1.0f, std::nanf(""));   // frozen with an ease; bad numbers ignored
         for (int i = 0; i < 120; ++i) Time::StepD(1.0 / 60.0);
         CHECK(std::isfinite(Time::ElapsedTimeD()) && Time::ElapsedTimeD() > 0.9 && Time::ElapsedTimeD() < 1.9);
+        Fresh();
+    }
+
+    // ---- 13. The shipped example scene (examples/time/time_playground.okayscene) -------------------------------
+    {
+        Fresh();
+        Scene s("example");
+        std::string err;
+        const bool loaded = SceneSerializer::LoadFromFile(s, std::string(OKAY_SOURCE_DIR) + "/examples/time/time_playground.okayscene", &err);
+        if (!loaded) std::printf("  load failed: %s\n", err.c_str());
+        CHECK(loaded);
+        if (loaded) {
+            s.UseFixedStepPhysics(true);
+            s.runScripts = true;
+            s.Start();
+            GameObject* blue = s.Find("Game Time Spinner");
+            GameObject* orange = s.Find("Real Time Spinner");
+            DayNightCycle* day = s.FindObjectOfType<DayNightCycle>();
+            CHECK(blue && orange && day && s.Find("Clock Text") && s.Find("Director"));
+            if (blue && orange && day) {
+                GameLoop::Options o; o.maxDelta = 0.0f;
+                GameLoop loop(o);
+                loop.OnUpdate = [&](float dt) { s.Update(dt); };
+                loop.BeginSession();
+                auto rot = [](GameObject* g) { return g->transform->localRotation; };
+                auto turned = [](const Quat& p, const Quat& q) {   // the angle between two orientations, degrees
+                    float d = std::fabs(p.x * q.x + p.y * q.y + p.z * q.z + p.w * q.w);
+                    if (d > 1.0f) d = 1.0f;
+                    return 2.0f * std::acos(d) * 57.29578f;
+                };
+                auto Frames = [&](int n, const std::vector<char>& keys) {
+                    for (int i = 0; i < n; ++i) { Input::FeedKeys(i == 0 ? keys : std::vector<char>{}); loop.BeginFrame(1.0 / 60.0); }
+                };
+                Frames(30, {});
+                Quat b0 = rot(blue), o0 = rot(orange);
+                Frames(60, {});
+                const float dBlue = turned(b0, rot(blue)), dOrange = turned(o0, rot(orange));
+                std::printf("[example] one normal second: blue turned %.1f, orange %.1f degrees\n", (double)dBlue, (double)dOrange);
+                CHECK(dBlue > 80.0f && dOrange > 80.0f && std::fabs(dBlue - dOrange) < 5.0f);   // both turn 90 degrees a second
+                // 1: slow motion. The blue cube slows to a fifth in the hold, the orange one does not.
+                Frames(1, {'1'});
+                Frames(60, {});                  // 1 s in: eased down and holding
+                Quat b1 = rot(blue), o1 = rot(orange);
+                Frames(60, {});
+                const float sBlue = turned(b1, rot(blue)), sOrange = turned(o1, rot(orange));
+                std::printf("[example] slow motion second: blue turned %.1f, orange %.1f degrees\n", (double)sBlue, (double)sOrange);
+                CHECK(sBlue < 25.0f && sOrange > 80.0f);
+                // The slow motion ends by itself (3 s): normal speed again.
+                Frames(120, {});
+                Quat b2 = rot(blue);
+                Frames(60, {});
+                CHECK(turned(b2, rot(blue)) > 80.0f);
+                // 3: pause. The blue cube stops, the orange one keeps turning, 3 again resumes.
+                Frames(1, {'3'});
+                Quat b3 = rot(blue), o3 = rot(orange);
+                Frames(60, {});
+                CHECK(Game::Paused() && turned(b3, rot(blue)) < 0.1f && turned(o3, rot(orange)) > 80.0f);
+                Frames(1, {'3'});
+                CHECK(!Game::Paused());
+                // 4: sleep until 6:00 sends the sunrise event; the clock reads about 6:00.
+                Frames(1, {'4'});
+                CHECK(std::fabs(day->Hour() - 6.0f) < 0.2f);
+                // 2: a hit stop freezes the blue cube for 0.15 s.
+                Frames(2, {});
+                Quat b4 = rot(blue);
+                Frames(1, {'2'});
+                Frames(6, {});                    // 0.1 s: inside the freeze
+                CHECK(turned(b4, rot(blue)) < 3.0f);
+                Frames(30, {});
+                CHECK(turned(b4, rot(blue)) > 20.0f);
+                Input::FeedKeys({});
+            }
+        }
         Fresh();
     }
 

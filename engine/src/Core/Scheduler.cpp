@@ -181,7 +181,10 @@ float Scheduler::RollJitter(float base, float jitter) {
 
 Scheduler::Handle Scheduler::NextFrame(std::function<void()> fn) { return NextFrame(std::move(fn), Options{}); }
 Scheduler::Handle Scheduler::NextFrame(std::function<void()> fn, const Options& options) {
-    return Invoke(0.0f, std::move(fn), options);
+    const Handle h = Invoke(0.0f, std::move(fn), options);
+    // From inside an update the task waits for the next update (a plain delay of 0 would run in this one).
+    if (m_updateDepth > 0) if (Task* t = FindMut(h)) t->skipUntil = m_serial + 1;
+    return h;
 }
 
 Scheduler::Handle Scheduler::At(double seconds, std::function<void()> fn) { return At(seconds, std::move(fn), Options{}); }
@@ -557,6 +560,7 @@ void Scheduler::RunTask(std::size_t i, float dt, float unscaledDt) {
     // step it again. Its callbacks are moved out of the slot while they run, so running it from here would
     // use up its period (and a repeat) without calling anything.
     if (m_tasks[i].running) return;
+    if (m_tasks[i].skipUntil > m_serial) return;   // NextFrame from inside an update: not before the next one
     struct Busy {
         Scheduler& s; std::size_t slot; Handle handle;
         Busy(Scheduler& sch, std::size_t i) : s(sch), slot(i), handle(sch.m_tasks[i].handle) { s.m_tasks[slot].running = true; }
@@ -625,11 +629,12 @@ void Scheduler::Update(float dt, float unscaledDt) {
     // of its task while it runs, so it stays alive whatever the list does.
     std::exception_ptr failure;
     ++m_updateDepth;
-    // Only the tasks that existed when this update began are stepped: a timer a callback schedules waits
-    // for the next update (it used to be stepped at once, so it fired up to a frame early, and a callback
-    // that re-armed itself with a delay of 0 kept this loop running for ever).
-    const std::size_t count = m_tasks.size();
-    for (std::size_t i = 0; i < count && i < m_tasks.size(); ++i) {
+    // Tasks a callback adds are stepped in this same update when they are due (documented, and tests rely on it).
+    // To keep a callback that re-arms itself with no delay from holding the update for ever, an update steps
+    // at most kMaxSpawnedPerUpdate tasks that were added while it ran; the rest wait for the next update.
+    if (m_updateDepth == 1) ++m_serial;
+    const std::size_t limit = m_tasks.size() + (std::size_t)kMaxSpawnedPerUpdate;
+    for (std::size_t i = 0; i < m_tasks.size() && i < limit; ++i) {
         if (m_tasks[i].handle == InvalidHandle) continue;
         try {
             RunTask(i, dt, unscaledDt);

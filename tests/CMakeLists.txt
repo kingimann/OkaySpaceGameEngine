@@ -4424,4 +4424,5 @@ add_test(NAME time_sim COMMAND test_time_sim)
 # The time upgrade: nanosecond clocks, clock parents, scheduler additions, calendar, settings, limiter.
 add_executable(test_time_upgrade test_time_upgrade.cpp)
 target_link_libraries(test_time_upgrade PRIVATE okay::engine)
+target_compile_definitions(test_time_upgrade PRIVATE OKAY_SOURCE_DIR="${PROJECT_SOURCE_DIR}")
 add_test(NAME time_upgrade COMMAND test_time_upgrade)

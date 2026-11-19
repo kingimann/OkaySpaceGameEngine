@@ -102,7 +102,7 @@ void TimeSettings::ApplyToLoop(GameLoop::Options& o, float stepSeconds) const {
     o.maxDelta = Fix(maxFrameSeconds, 0.01f, 5.0f, kDefaultMaxFrame);
     const float step = stepSeconds > 0.0f && std::isfinite(stepSeconds) ? stepSeconds : Time::FixedDeltaTime();
     const float catchUp = Fix(maxCatchUpSeconds, 0.02f, 5.0f, kDefaultCatchUp);
-    const int steps = (int)std::ceil((double)catchUp / (double)step - 1e-9);
+    const int steps = (int)std::ceil((double)catchUp / (double)step - 1e-4);   // 0.5 / 0.02f is 25.0000003: not 26
     o.maxFixedSteps = std::max(1, std::min(steps, GameLoop::kMaxFixedStepsPerFrame));
     o.spreadFixedOverflow = spreadCatchUp;
 }

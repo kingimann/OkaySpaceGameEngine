@@ -95,6 +95,7 @@ void DayNightCycle::MoveForward(double hours) {
     int days = 0;
     while (left > 0.0 && days < kMaxDaysPerStep) {
         const double end = std::min(cur + left, 24.0);
+        if (!(end > cur)) break;   // what is left is smaller than the clock can show at this hour: nothing more to count
         // Hours 1..23 passed inside this day (hour 24 is the next day's 0, handled at the wrap).
         for (int h = (int)std::floor(cur) + 1; h <= (int)std::floor(end) && h < 24; ++h)
             if ((double)h > cur) events.push_back({0, h});

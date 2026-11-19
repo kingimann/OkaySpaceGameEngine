@@ -36,6 +36,9 @@ public:
     /// at most this many times in one Update; the rest of the backlog is dropped and
     /// the timer keeps its rhythm from there.
     static constexpr int kMaxCatchUp = 4096;
+    /// An update steps at most this many tasks that were added while it ran (a callback that re-arms itself with
+    /// no delay used to keep the update running for ever); the rest wait for the next update.
+    static constexpr int kMaxSpawnedPerUpdate = 100000;
 
     /// Optional per-task settings.
     struct Options {
@@ -85,8 +88,8 @@ public:
     Handle Tween(float duration, std::function<void(float)> onUpdate,
                  std::function<void()> onComplete, const Options& options);
 
-    /// Run `fn` on the next Update, as soon as the task is stepped (a delay of 0 that is also safe to
-    /// call from inside a callback: it runs in the NEXT update, never in the one that scheduled it).
+    /// Run `fn` on the next Update. Unlike Invoke(0), called from inside a callback it waits for the NEXT update
+    /// (Invoke(0) from a callback runs in the same update, as any due task a callback adds does).
     Handle NextFrame(std::function<void()> fn);
     Handle NextFrame(std::function<void()> fn, const Options& options);
     /// Run `fn` at `seconds` on the clock the task follows: the game clock (Time::ElapsedTimeD()) by
@@ -218,6 +221,7 @@ private:
         std::string actionName;       // RegisterAction name (saved by SaveState); empty = plain code
         float  baseline = 0.0f;       // the period before jitter
         bool   firstPending = false;  // period is Options::firstDelay until the first run
+        std::uint64_t skipUntil = 0;  // not stepped while the update serial is below this (NextFrame inside an update)
         float  jitter = 0.0f;
         ClockCursor cursor;           // what this task has already taken from its channel
         std::uint64_t objectId = 0;   // GameObject::InstanceId() of Options::object
@@ -269,6 +273,7 @@ private:
     Handle m_nextHandle = 1;
     std::vector<std::function<void()>> m_endOfFrame;
     std::unordered_map<std::string, std::function<void()>> m_actions;
+    std::uint64_t m_serial = 0;   // counts outermost Updates
     std::uint64_t m_jitterState = 0x9E3779B97F4A7C15ULL;
     int m_loadSkipped = 0;
     float RollJitter(float base, float jitter);

@@ -1,5 +1,24 @@
 OkaySpace Game Engine — Changelog
 
+v2.889.0
+  Try our own code, texture tools, Xbox fixes
+  - New Settings > Experimental page in the launcher (and View > Rendering >
+    Experimental in the editor). Switch our own replacements on to try them:
+    our own sound-file reader and our own UI toolkit (OkayUI). Everything is
+    off until you turn it on. "Back to normal" turns everything off again.
+    Changes apply after you restart.
+  - New texture tools: make mipmaps, pack pictures into an atlas and compress
+    pictures to DDS. In the editor, click a picture in the Project panel and
+    use "Generate mipmaps / compress" in Import Settings. The okay-texture
+    tool and a try-it example are in the Tools and examples folders.
+  - Xbox test export: clearer messages when a step fails (each one says what
+    to do next), the test certificate is reused between runs, and the app
+    writes a log file you can read from the Device Portal. Still experimental
+    and never run on a real Xbox.
+  - Behind the scenes: our own window and input layer is used for the event
+    loops of the launcher and editor (still off by default; SDL2 is used
+    unless you turn it on), plus our own build tools for developers.
+
 v2.888.0
   Editor speed tools, Xbox test export, downloadable game content
   - The editor has a frame-time overlay: View > Rendering > Frame-time overlay

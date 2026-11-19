@@ -99,6 +99,8 @@ release job or the installer build for this change.
 | fast1 | Fast release: one workflow dispatch, no version-bump PR | GitHub: Actions > "Fast release" > Run workflow (tick dry_run first); a change adds `dist/changelog.d/<id>.txt` | Built and tested offline with fake data; never run on GitHub; off until `FAST_RELEASE_ENABLED=1` |
 | hygiene1 | Account address and key in one config file; no built programs in git | Nothing to open: build or release as usual, optional key rotation in Supabase | Verified on Linux (tests, configure); no release or Windows run |
 | input | Input upgrade: input playground, rumble patterns, vibration setting, key positions (AZERTY) | Editor: File > Open, `examples\input\input_playground.okayscene`, then Play | Tested headless on Linux; nothing run on Windows or with a real controller or AZERTY keyboard |
+| okayui-apps | The launcher and editor built on OkayUI (OkaySpaceOkayUI / OkayEngineOkayUI), off by default | CMake `OKAY_LAUNCHER_ON_OKAYUI` / `OKAY_EDITOR_ON_OKAYUI`; Settings > Experimental > Run on our own UI | Launcher ran headless on Linux; the editor on OkayUI not built or run yet |
+| okayui-window | OkayUI window mode (editor window and frame run by OkayUI, no Dear ImGui): Scene and Game views, Hierarchy, Inspector, Console, Project, dialogs, menu bar | `OKAY_DEV=1 OKAY_UI_BACKEND=okayui OKAY_UI_HOST=okayui`; steps in the section "OkayUI window mode" | Headless tests only; the editor was never built or started with it |
 | one-controller | One Player Controller for first and third person; no Humanoid or separate First and Third Person entries | Editor: GameObject > Player, Add Component > Gameplay, File > New Project (First and Third Person) | Tests run on Linux only; not run in a real editor or on Windows |
 | own-switch | One place to switch our own code on and off (launcher Settings > Experimental, editor View menu) | Launcher: Settings > Experimental. Editor: View > Rendering & Performance > Experimental | Linux build only; Windows unverified |
 | security-sec1 | Security plan SEC1: script file paths, update signature status, relay caps, reactions SQL | examples\security_paths\script_paths.okayscene (Play, read Console); Settings > About and Help > About line; SQL and relay are owner steps | Tests on Linux only; editor/launcher lines not run; nothing on Windows or real Supabase |
@@ -1853,6 +1855,26 @@ Details: [scripting.md](scripting.md#object-references).
 
 **Status.** Engine tests run on Linux (see the PR). The editor and the Windows build were not run here, so steps 4
 to 6 are unverified on Windows; the same scene file is loaded and played headless by `test_okayscript_object_refs`.
+
+## The launcher (and editor) on our own UI: OkaySpaceOkayUI / OkayEngineOkayUI (off by default)
+
+What it is: the same launcher and editor programs, compiled against OkayUI instead of Dear ImGui (`docs/own_ui_toolkit.md` 6.26). They are extra programs; the normal ones are unchanged.
+
+1. Build: configure CMake with `-DOKAY_LAUNCHER_ON_OKAYUI=ON` (and `-DOKAY_EDITOR_ON_OKAYUI=ON` with `-DOKAY_BUILD_EDITOR=ON`), then build the targets `okayspace-launcher-okayui` and `okay-editor-okayui`. They are written to the same `bin` folder as `OkaySpaceOkayUI` and `OkayEngineOkayUI` (`.exe` on Windows). `scripts/build-windows-dist.sh` copies them into the Windows folder when they were built (the launcher beside `OkaySpace.exe`, the editor in `Tools\`).
+2. Run: double-click `OkaySpaceOkayUI.exe`, or in the normal launcher open Settings > Experimental and press Restart on "Run on our own UI (restart into OkaySpaceOkayUI.exe)" (the row appears only when that file is next to the launcher). In the OkayUI launcher the same page has "Back to the normal UI".
+3. What you should see: the launcher looks like the normal one (same pages, fonts, colours). The start-up text line says "UI drawing: OkayUI frame through okay::platform::Painter (the OkayUI build; Dear ImGui is not in this program)". Starting a project from the OkayUI launcher opens `OkayEngineOkayUI` when it is next to it.
+4. Honest status: the launcher ran only headless on Linux (scripted clicks, pictures looked at); the editor on OkayUI has not been built or run yet; nothing was run on Windows. Report anything that looks or behaves differently from the normal programs.
+
+## OkayUI window mode (off by default; Scene, Game, Hierarchy, Inspector, Console, Project, dialogs)
+
+What it is: the editor's window, frame and panels run by OkayUI alone, with Dear ImGui not started. It is a dev switch, so three settings are needed.
+
+1. Start the editor (Windows: `OkayEngine.exe`, from a console or a shortcut) with the environment variables `OKAY_DEV=1`, `OKAY_UI_BACKEND=okayui` and `OKAY_UI_HOST=okayui`. Optional: `OKAY_UI_HOST_PROJECT=<a project folder>` (otherwise the current folder is used if it has an `Assets` folder; without a project the Project window and Scene Manager are not offered) and `OKAY_UI_HOST_STATE=<file>` (where the layout is remembered).
+2. You should see: a window titled "OkaySpace Editor (OkayUI window mode)" and, in the console, the line `[okayui-host] window mode on (OKAY_UI_HOST=okayui): OkayUI owns the window; Dear ImGui is not started`. Any other combination of settings opens the normal editor.
+3. Try: the tabs Scene and Game in the middle (the Scene tab shows the scene's meshes; drag with the mouse over the picture to orbit, use the wheel to zoom; Game looks through the main camera; 2D scenes show nothing yet). Hierarchy and Project on the left (click a row to select, `+` adds an object, right-click Duplicate or Delete, type in the search box), Inspector on the right (the selected object's fields; change one and the scene is marked unsaved), the Console along the bottom (it shows the lines the editor logs). Drag a tab to move a panel, click its x to close it; close and reopen the window and the layout comes back.
+4. To see the error and save questions: with an unsaved scene, use the Scene Manager's open-scene button on another scene; "Save changes?" appears (Save, Don't Save, Cancel). A failed action shows "Something went wrong".
+5. Pictures: `OKAYUI_SHOT=file.png` with the headless tests `okayui_hostviews`, `okayui_hostobjects`, `okayui_hostdialogs` writes a picture of the window (software-rendered, 8x8 test font; the real window uses the launcher look). **These are headless renders, not screenshots of the real editor window.**
+6. **Honest status:** the editor program itself was not built or started with this; everything above was run only in headless tests. If something in steps 1 to 4 does not work in the real window, that is a bug to report.
 
 ## one-controller. One Player Controller for first and third person (no Humanoid)
 

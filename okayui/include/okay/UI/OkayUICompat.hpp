@@ -7,6 +7,8 @@
 // What each call does here, and where it differs from Dear ImGui, is written at the declaration.
 #include "okay/UI/OkayUI.hpp"
 #include <cstdint>
+#include <cstdio>
+#include <cstring>
 
 namespace OkayUI {
 
@@ -14,11 +16,19 @@ namespace OkayUI {
 /// gave none). OkayUI has one viewport, so there is no per-window or multi-monitor variant.
 struct Viewport {
     Vec2 pos, size;
-    Vec2 Pos, Size;   // the same values under Dear ImGui's field names (filled by GetMainViewport)
+    Vec2 Pos, Size, WorkPos, WorkSize;   // the same values under Dear ImGui's field names (filled by GetMainViewport; the work area is the whole display)
     Vec2 GetCenter() const { return Vec2{ pos.x + size.x * 0.5f, pos.y + size.y * 0.5f }; }
     Vec2 GetWorkPos() const { return pos; }
     Vec2 GetWorkSize() const { return size; }
     const Viewport* operator->() const { return this; }   // so `GetMainViewport()->GetCenter()` compiles as it does with Dear ImGui's pointer
+    // What a host reads and writes on a viewport (docs/own_ui_toolkit.md 6.22): the id, two handles the host keeps for itself (OkayUI never touches
+    // them) and the frame's draw data (what GetDrawData() converts to). These three persist in the one main-viewport object that the pointer
+    // conversion below hands out.
+    unsigned ID = 0x4F4B5650u;                 // fixed ("OKVP"): OkayUI has one viewport
+    void* PlatformHandle = nullptr; void* RendererUserData = nullptr; void* PlatformUserData = nullptr;
+    ImDrawData* DrawData = nullptr;
+    /// `ImGuiViewport* vp = GetMainViewport();`: a pointer to the one persistent main-viewport object, refreshed from the display size at each call.
+    operator Viewport*() const;
 };
 Viewport GetMainViewport();
 
@@ -53,10 +63,19 @@ void SetNextItemAllowOverlap();
 /// `found` is false for a title that was never drawn (and for null or empty). `pos` and `size` are where the window was last drawn;
 /// `focused` is the window SetNextWindowFocus / SetWindowFocus / a click gave the focus to; `docked` is true while the window sits in a
 /// leaf of the dock layout (OkayUIDock.hpp). A snapshot: nothing here changes the window.
-struct WindowInfo { bool found = false; Vec2 pos{0, 0}; Vec2 size{0, 0}; bool focused = false; bool docked = false; };
+struct WindowRef;   // OkayUIInternals.hpp
+struct WindowInfo {
+    bool found = false; Vec2 pos{0, 0}; Vec2 size{0, 0}; bool focused = false; bool docked = false;
+    // Dear ImGui's field names for the same facts, and the pointer-like use ported code makes of `FindWindowByName(...)`: `w->Pos`, `ImGuiWindow* w = ...`
+    // (the pointer is into a small ring of snapshots, valid until eight more windows were looked up).
+    char Name[64] = {0}; Vec2 Pos{0, 0}, Size{0, 0}; unsigned ID = 0;
+    const WindowInfo* operator->() const { return this; }
+    operator WindowRef*() const;
+};
 WindowInfo FindWindowByName(const char* title);
-/// IsWindowDocked for a window by title (false for an unknown one).
+/// IsWindowDocked for a window by title (false for an unknown one), or for the current window (no argument; false outside a window).
 bool IsWindowDocked(const char* title);
+bool IsWindowDocked();
 /// The next ImGui-style Begin(title, p_open, flags) takes the focus and comes to the front (as SetWindowFocus). Dropped by a Begin with a
 /// null title; one request, used up by the next Begin.
 void SetNextWindowFocus();
@@ -89,7 +108,18 @@ struct StyleInfo {
     float WindowRounding = 0.0f, ChildRounding = 0.0f, FrameRounding = 0.0f;
     float WindowBorderSize = 0.0f, ChildBorderSize = 0.0f, FrameBorderSize = 0.0f;
     float FontScale = 1.0f;                // the theme's text scale (2 = 16 px glyphs), not a multiplier of 1
-    Vec4 Colors[Col_COUNT];                // index with the Col ids
+    // Style fields OkayUI has no setting for: filled with fixed values so reads compile and give a sensible number (a write is lost, as for the others).
+    float PopupRounding = 4.0f, PopupBorderSize = 1.0f, GrabMinSize = 10.0f, GrabRounding = 3.0f, TabRounding = 4.0f, TabBorderSize = 0.0f, TabBarBorderSize = 1.0f;
+    float TabBarOverlineSize = 0.0f, TabMinWidthBase = 1.0f, TabMinWidthShrink = 80.0f, TabCloseButtonMinWidthSelected = -1.0f, TabCloseButtonMinWidthUnselected = 0.0f;
+    float SeparatorTextBorderSize = 1.0f, DockingSeparatorSize = 2.0f;
+    Vec2 WindowTitleAlign{0.0f, 0.5f}, ButtonTextAlign{0.5f, 0.5f}, SelectableTextAlign{0.0f, 0.0f}, DisplayWindowPadding{19.0f, 19.0f}, DisplaySafeAreaPadding{3.0f, 3.0f};
+    int WindowMenuButtonPosition = 0;
+    float DisabledAlpha = 0.6f;            // accepted; disabled widgets blend halfway to the panel colour
+    float ScrollbarRounding = 9.0f, IndentSpacing = 21.0f;
+    Vec2 SeparatorTextAlign{0.0f, 0.5f}, SeparatorTextPadding{20.0f, 3.0f};
+    bool DockingNodeHasCloseButton = true;
+    void ScaleAllSizes(float) {}           // accepted; OkayUI scales through the text scale and the display scale
+    ImVec4 Colors[Col_COUNT];              // index with the Col ids
 };
 StyleInfo& GetStyle();   // not const only so `ImGuiStyle& st = GetStyle();` compiles; a write is still lost
 /// Dear ImGui's name for the style type, so `const ImGuiStyle& st = GetStyle();` compiles (read-only, see above).
@@ -121,7 +151,7 @@ private:
 /// A key chord for Shortcut: one named key plus the modifiers that must be held with it. `Chord(KeyId_S, Mod_Ctrl | Mod_Shift)`.
 /// (Own encoding: the key id in the low byte, the modifier bits above it; not Dear ImGui's chord values.)
 using KeyChord = int;
-enum KeyMods : int { Mod_None = 0, Mod_Ctrl = 1, Mod_Shift = 2, Mod_Alt = 4 };
+enum KeyMods : int { Mod_None = 0, Mod_Ctrl = 1, Mod_Shift = 2, Mod_Alt = 4, Mod_Super = 8 };
 constexpr KeyChord Chord(KeyId key, int mods = Mod_None) { return (int)key | ((mods & 7) << 8); }
 enum ShortcutFlags : int { Shortcut_None = 0, Shortcut_AllowRepeat = 1, Shortcut_RouteAlways = 2 };
 /// True on the frame the chord's key goes down while exactly the chord's modifiers are held (a chord without Ctrl does not fire while
@@ -135,6 +165,8 @@ bool Shortcut(KeyChord chord, int flags = Shortcut_None);
 /// kept between 1 and 1e6. Cond_Always applies now; Once and FirstUseEver apply only when the window has never been sized by the
 /// host; Appearing only on the frame the window reappears. Takes effect when the window is next begun.
 bool SetWindowSize(const char* title, Vec2 size, Cond cond = Cond_Always);
+/// The current window (nothing outside a window).
+void SetWindowSize(Vec2 size, Cond cond = Cond_Always);
 
 /// The top-left of the current window's content region in window coordinates (the padding, and the title bar's height). Zero outside a
 /// window. Note the pair is not symmetric here: GetWindowContentRegionMax stays "cursor plus the space left" measured from the content
@@ -178,7 +210,8 @@ bool BringWindowToDisplayFront(const CurrentWindow& w);
 WindowInfo FindWindowByID(unsigned id);
 /// True while an open popup is a modal (BeginPopupModal): Dear ImGui returns the window, OkayUI has no window objects, so this is the
 /// yes / no answer callers use (`if (GetTopMostPopupModal() && ...)`).
-bool GetTopMostPopupModal();
+/// The topmost open modal popup as a window entry (Name empty, ID the popup's id), or null: usable as a yes / no answer and as `ImGuiWindow*`.
+WindowRef* GetTopMostPopupModal();
 /// For the next frame only, report IO::wantCaptureKeyboard as `want` whatever the widgets say (a host that wants a shortcut to wait or
 /// to go through). Used up by the next BeginFrame.
 void SetNextFrameWantCaptureKeyboard(bool want);
@@ -227,8 +260,8 @@ void StyleColorsClassic();
 /// The dock layout as text (DockSaveLayout) and back. Only the dock layout is stored (not window positions or sizes). The returned
 /// pointer is valid until the next call. `size` (optional) receives the length. LoadIniSettingsFromMemory takes `size` 0 as "up to the
 /// terminating zero"; text that does not load leaves the layout as it was.
-const char* SaveIniSettingsToMemory(unsigned long long* size = nullptr);
-void LoadIniSettingsFromMemory(const char* data, unsigned long long size = 0);
+const char* SaveIniSettingsToMemory(std::size_t* size = nullptr);
+void LoadIniSettingsFromMemory(const char* data, std::size_t size = 0);
 
 
 // ---- Step 6.11: the names ported code uses for buttons, directions, hover / focus flags and child windows --------------------------
@@ -261,6 +294,8 @@ bool IsWindowHovered(int flags);
 enum FocusedFlags : int { Focused_None = 0, Focused_ChildWindows = 1, Focused_RootWindow = 2, Focused_RootAndChildWindows = 3, Focused_AnyWindow = 4,
                           Focused_NoPopupHierarchy = 8 };
 bool IsWindowFocused(int flags);
+/// Some popup (of any kind) is open (implemented next to the popup slots in OkayUI.cpp).
+bool AnyPopupOpen();
 /// Some OkayUI window has the focus (implemented next to the window slots in OkayUI.cpp; IsWindowFocused(Focused_AnyWindow) uses it).
 bool AnyWindowFocused();
 
@@ -272,6 +307,14 @@ bool AnyWindowFocused();
 enum ChildFlags : int { Child_None = 0, Child_Borders = 1, Child_AlwaysUseWindowPadding = 2, Child_ResizeX = 4, Child_ResizeY = 8,
                         Child_AutoResizeX = 16, Child_AutoResizeY = 32, Child_AlwaysAutoResize = 64, Child_FrameStyle = 128 };
 bool BeginChild(const char* id, Vec2 size, int childFlags = Child_None, int windowFlags = 0);
+/// By numeric id (a GetID value): the same child as the one named "##<id>".
+bool BeginChild(unsigned id, Vec2 size, int childFlags = Child_None, int windowFlags = 0);
+/// Dear ImGui's ImageButton: a size vector, uv corners, a background and a tint (uv, background and tint are ignored; the picture fills the button).
+bool ImageButton(const char* id, SDL_Texture* tex, Vec2 size, Vec2 uv0 = Vec2{0, 0}, Vec2 uv1 = Vec2{1, 1}, Vec4 bg = Vec4{}, Vec4 tint = Vec4{1, 1, 1, 1});
+/// PushClipRect with corners (min, max) and the intersect flag (always intersects).
+void PushClipRect(Vec2 min, Vec2 max, bool intersectWithCurrent);
+/// Finish the frame's drawing calls (Dear ImGui's Render): EndFrameData() without an output size. GetDrawData() then converts to an ImDrawData.
+void Render();
 
 
 // ---- Step 6.11 (continued): the type names host code spells ---------------------------------------------------------------------
@@ -279,7 +322,7 @@ bool BeginChild(const char* id, Vec2 size, int childFlags = Child_None, int wind
 /// A packed colour from a float colour (what GetColorU32(ImVec4) does in Dear ImGui); components are clamped to 0..1.
 Color32 GetColorU32(Vec4 color);
 /// A texture handle as ported code spells it: the SDL texture pointer AddImage takes.
-typedef SDL_Texture* ImTextureID;
+
 /// An id (what GetID returns).
 typedef unsigned ImGuiID;
 /// A rectangle by its two corners (Dear ImGui's internal type under its name; own code, the usual helpers).
@@ -294,6 +337,7 @@ struct ImRect {
     float GetHeight() const { return Max.y - Min.y; }
     bool Contains(Vec2 p) const { return p.x >= Min.x && p.y >= Min.y && p.x < Max.x && p.y < Max.y; }
     bool Overlaps(const ImRect& r) const { return r.Min.y < Max.y && r.Max.y > Min.y && r.Min.x < Max.x && r.Max.x > Min.x; }
+    void ClipWith(const ImRect& r) { Min.x = Min.x > r.Min.x ? Min.x : r.Min.x; Min.y = Min.y > r.Min.y ? Min.y : r.Min.y; Max.x = Max.x < r.Max.x ? Max.x : r.Max.x; Max.y = Max.y < r.Max.y ? Max.y : r.Max.y; }
     void Expand(float amount) { Min.x -= amount; Min.y -= amount; Max.x += amount; Max.y += amount; }
 };
 /// The last item's rectangle as an ImRect.
@@ -368,12 +412,54 @@ void RenderPlatformWindowsDefault();
 struct PlatformViewports { int Size = 1; int size() const { return Size; } };
 struct PlatformIO {
     PlatformViewports Viewports;
-    void* Renderer_CreateWindow = nullptr; void* Renderer_DestroyWindow = nullptr; void* Renderer_RenderWindow = nullptr; void* Renderer_SwapBuffers = nullptr;
-    void* Platform_CreateWindow = nullptr; void* Platform_DestroyWindow = nullptr;
+    void (*Renderer_CreateWindow)(Viewport*) = nullptr; void (*Renderer_DestroyWindow)(Viewport*) = nullptr;
+    void (*Renderer_RenderWindow)(Viewport*, void*) = nullptr; void (*Renderer_SwapBuffers)(Viewport*, void*) = nullptr;
+    void (*Platform_CreateWindow)(Viewport*) = nullptr; void (*Platform_DestroyWindow)(Viewport*) = nullptr;
+    // What a platform feed (shared/ImGuiPlatformFeed.hpp) installs: the clipboard and the input-method position. OkayUI's own clipboard (GetClipboardText /
+    // SetClipboardText) calls them when set.
+    void* Platform_ClipboardUserData = nullptr;
+    const char* (*Platform_GetClipboardTextFn)(Context*) = nullptr; void (*Platform_SetClipboardTextFn)(Context*, const char*) = nullptr;
+    void* Platform_ImeUserData = nullptr;
+    void (*Platform_SetImeDataFn)(Context*, Viewport*, struct PlatformImeData*) = nullptr;
 };
+inline void SetMouseCursor(int c) { SetMouseCursor((MouseCursor)c); }   // a platform feed passes the cursor as a plain number
+struct PlatformImeData { bool WantVisible = false, WantTextInput = false; Vec2 InputPos{0, 0}; float InputLineHeight = 0.0f; };
 struct WindowRef;   // OkayUIInternals.hpp
 PlatformIO& GetPlatformIO();
+/// io.Fonts: Dear ImGui hosts ask the atlas for fonts at start-up. OkayUI loads none here: each Add* call is RECORDED (what, how big, where from) in a
+/// list the host reads with FontRequests(), and returns a stable ImFont* that works with PushFont / PopFont (it is a copy of the default font; the
+/// size asked for is kept in `FontRequest::px`). A host that wants those faces builds them itself (the launcher look's atlas, UseLauncherLook) and
+/// maps the returned pointers. Compressed base-85 TTF data is not decoded.
+struct FontRequest { enum Kind { Default, FromMemoryTTF, FromCompressedBase85, FromFile } kind = Default; float px = 0.0f; const void* data = nullptr; int dataSize = 0; char file[260] = {0}; bool merge = false; ImFont* font = nullptr; };
+/// ---- Real fonts (a multi-font store) ----
+/// Register a TrueType font from bytes (copied) at a pixel size: the returned Font works with SetFont, PushFont / PopFont and DrawList::AddText(font, size, ...),
+/// and text drawn or measured while it is active uses it (own rasteriser, okay::TtfFont; a glyph the font lacks is skipped). The same bytes registered
+/// again at another size share one font (one glyph atlas). Up to 5 different font files and 32 sizes in all; null past that or for bytes that are no font.
+/// Draw data: the glyph atlas is a fallback-font texture (FallbackFontOf(texture)), uploaded by the backend like the launcher look's fallback fonts.
+Font* AddFontTtf(const unsigned char* data, std::size_t size, float px, const char* name = nullptr);
+Font* AddFontTtfFile(const char* path, float px);
+/// Dear ImGui hosts load the editor's two faces from base-85 compressed arrays. OkayUI has no decoder for that format (the engine dropped it on purpose;
+/// the same fonts ship as our own OKF1 data, decoded by okay::EmbeddedUIFontData). A host maps each array to the decoded TTF bytes once, and
+/// AddFontFromMemoryCompressedBase85TTF(array, px) then registers that font. An array that was not mapped gives the default font (and is recorded).
+void RegisterBase85FontSource(const char* array, const unsigned char* ttf, std::size_t size);
+struct FontAtlasRef {
+    ImFont* AddFontDefault(const ImFontConfig* cfg = nullptr);
+    ImFont* AddFontFromMemoryTTF(void* data, int size, float px, const ImFontConfig* cfg = nullptr, const unsigned short* ranges = nullptr);
+    ImFont* AddFontFromMemoryCompressedBase85TTF(const char* data, float px, const ImFontConfig* cfg = nullptr, const unsigned short* ranges = nullptr);
+    ImFont* AddFontFromFileTTF(const char* file, float px, const ImFontConfig* cfg = nullptr, const unsigned short* ranges = nullptr);
+    bool Build() { return true; }
+    void Clear();
+    int FontCount() const;
+};
+FontAtlasRef* GetFontAtlasRef();
+typedef FontAtlasRef ImFontAtlas;
+/// The requests made so far, oldest first (up to 32; later ones are still answered with a font but not listed).
+const FontRequest* FontRequests(int* count);
 typedef PlatformIO ImGuiPlatformIO;
+/// Popups by id (the value GetID(name) returns; a popup opened or begun by name has the same id, so the forms can be mixed). BeginPopupEx takes
+/// window flags (accepted: a popup here is always auto-sized and has no title bar) and is true while the popup is open.
+void OpenPopup(unsigned id, int flags = 0);
+bool BeginPopupEx(unsigned id, int flags);
 /// Close the open popups from stack depth `level` outward (0 closes all of them). `restoreFocus` is accepted and not used.
 void ClosePopupToLevel(int level, bool restoreFocus);
 /// DockContextQueueUndockWindow(ctx, window): make the window a floating one at its current place (OkayUIDock.hpp's layout). The context
@@ -383,6 +469,60 @@ bool DockContextQueueUndockWindow(Context* ctx, const WindowRef* window);
 enum Axis : int { Axis_None = -1, Axis_X = 0, Axis_Y = 1 };
 enum SortDirection : int { SortDirection_None = 0, SortDirection_Ascending = 1, SortDirection_Descending = 2 };
 enum PopupExtraFlags : int { Popup_NoOpenOverItems = 512 };   // accepted, no effect
+/// A drop target over an ImRect (the Dear ImGui form takes the rectangle type of its own).
+bool BeginDragDropTargetCustom(const ImRect& bb, unsigned id = 0);
+/// InputInt with the step arguments of Dear ImGui (`stepFast` and `flags` are accepted and not used; a `step` of 0 still shows the +/- buttons).
+bool InputInt(const char* label, int* value, int step, int stepFast, int flags = 0);
+void TreeNodeExFormatted(bool* out, const char* label, unsigned flags, const char* fmt, ...);
+/// TreeNode with an id and a printf-style label: `TreeNode("##id", "Incoming (%d)", n)`.
+template <class A0, class... A> inline bool TreeNode(const char* id, const char* fmt, A0 a0, A... a) { bool r = false; TreeNodeExFormatted(&r, id, 0u, fmt, a0, a...); return r; }
+// ---- Step 6.18: argument shapes found by probing editor/main.cpp (the Hierarchy panel and the rest of the editor) ----------------------
+/// `fmt` (a printf format for the shown number) and `flags` are accepted and not used: OkayUI shows its own number format. Same for the vector forms.
+bool DragFloat2(const char* label, float v[2], float speed, float minV, float maxV, const char* fmt, int flags = 0);
+bool DragFloat3(const char* label, float v[3], float speed, float minV, float maxV, const char* fmt, int flags = 0);
+bool DragFloat4(const char* label, float v[4], float speed, float minV, float maxV, const char* fmt, int flags = 0);
+bool DragFloatRange2(const char* label, float* lo, float* hi, float speed, float minV, float maxV, const char* fmt, const char* fmtMax = nullptr, int flags = 0);
+bool SliderFloat2(const char* label, float v[2], float minV, float maxV, const char* fmt, int flags = 0);
+bool SliderFloat3(const char* label, float v[3], float minV, float maxV, const char* fmt, int flags = 0);
+bool SliderFloat4(const char* label, float v[4], float minV, float maxV, const char* fmt, int flags = 0);
+bool InputFloat(const char* label, float* value, float step, float stepFast, const char* fmt = "%.3f", int flags = 0);
+/// SetNextItemOpen with a condition (Always, Once, FirstUseEver; Appearing counts as Always here).
+void SetNextItemOpen(bool open, Cond cond);
+/// IsPopupOpen with popup flags: with Popup_AnyPopupId (and an empty name) it answers "is any popup open"; with a name it is the plain form.
+bool IsPopupOpen(const char* name, int flags);
+/// BeginPopup with window flags (accepted: a popup here has no title bar and fits its content); SetKeyboardFocusHere(offset) (only 0, the next item, is supported).
+bool BeginPopup(const char* id, int windowFlags);
+void SetKeyboardFocusHere(int offset);
+/// Dear ImGui's RadioButton(label, active): a radio that is shown filled when `active`; true on the click.
+bool RadioButton(const char* label, bool active);
+/// ColorButton with a vector colour (and, in the long form, flags and a size as a vector).
+bool ColorButton(const char* id, const ImVec4& col, int flags = 0, Vec2 size = Vec2{0.0f, 0.0f});
+/// PlotLines / PlotHistogram with Dear ImGui's argument list (values, count, offset, overlay, scaleMin, scaleMax, size; stride is not offered).
+void PlotLines(const char* label, const float* values, int count, int offset, const char* overlay, float scaleMin, float scaleMax, Vec2 size);
+void PlotHistogram(const char* label, const float* values, int count, int offset, const char* overlay, float scaleMin, float scaleMax, Vec2 size);
+/// TreeNodeEx / TreeNode keyed by a pointer: `TreeNodeEx(obj, flags, "%s", name)` (the pointer is the id, the formatted text the label).
+template <class T, class... A> inline bool TreeNodeEx(const T* ptrId, unsigned flags, const char* fmt, A... a) {
+    char id[32]; std::snprintf(id, sizeof id, "p%llx", (unsigned long long)reinterpret_cast<std::uintptr_t>(ptrId));
+    bool r = false; TreeNodeExFormatted(&r, id, flags, fmt, a...); return r;
+}
+template <class T, class... A> inline bool TreeNodeEx(T* ptrId, unsigned flags, const char* fmt, A... a) { return TreeNodeEx(static_cast<const T*>(ptrId), flags, fmt, a...); }
+/// PushFont / PopFont: the font used for text until the matching PopFont (nests up to 8 deep; a null font means the current one). Text size is the
+/// theme's text scale, not the font's pixel size, so only the typeface changes.
+void PushFont(Font* font);
+void PushFont(Font* font, float sizePixels);   // the size is accepted and not used (see above)
+void PopFont();
+/// What Dear ImGui hands a text callback. OkayUI text fields have no callbacks: the type exists so the code that defines one compiles, and the callback
+/// pointer passed to the InputText overloads below is stored nowhere and never called.
+struct InputTextCallbackData {
+    int EventFlag = 0, Flags = 0, EventChar = 0, EventKey = 0; void* UserData = nullptr; char* Buf = nullptr; int BufTextLen = 0, BufSize = 0; bool BufDirty = false;
+    int CursorPos = 0, SelectionStart = 0, SelectionEnd = 0;
+    void DeleteChars(int pos, int bytes) { if (!Buf || pos < 0 || bytes <= 0 || pos >= BufTextLen) return; if (pos + bytes > BufTextLen) bytes = BufTextLen - pos; for (int i = pos; i + bytes <= BufTextLen; ++i) Buf[i] = Buf[i + bytes]; BufTextLen -= bytes; BufDirty = true; }
+    void InsertChars(int pos, const char* text, const char* end = nullptr);
+    bool HasSelection() const { return SelectionStart != SelectionEnd; }
+};
+typedef int (*InputTextCallback)(InputTextCallbackData* data);
+bool InputTextWithHint(const char* label, const char* hint, char* buf, int cap, unsigned flags, InputTextCallback callback, void* userData = nullptr);
+bool InputText(const char* label, char* buf, int cap, unsigned flags, InputTextCallback callback, void* userData = nullptr);
 /// TreeNodeEx with a printf-style label (the label is formatted, then used as the id as well).
 void TreeNodeExFormatted(bool* out, const char* label, unsigned flags, const char* fmt, ...);
 template <class... A> inline bool TreeNodeEx(const char* id, unsigned flags, const char* fmt, A... a) { bool r = false; TreeNodeExFormatted(&r, id, flags, fmt, a...); return r; }
@@ -424,7 +564,7 @@ enum TabItemExtraFlags : int { TabItem_Button = 16 };
 /// Input flags (Shortcut and key queries): Input_Repeat is Shortcut_AllowRepeat.
 enum InputFlags : int { Input_None = 0, Input_Repeat = Shortcut_AllowRepeat };
 /// Backend flags a host reports on the IO: accepted, nothing reads them.
-enum BackendFlags : int { BackendFlags_None = 0, BackendFlags_HasMouseCursors = 1, BackendFlags_PlatformHasViewports = 1 << 10, BackendFlags_RendererHasViewports = 1 << 11 };
+enum BackendFlags : int { BackendFlags_None = 0, BackendFlags_HasMouseCursors = 1, BackendFlags_HasSetMousePos = 4, BackendFlags_PlatformHasViewports = 1 << 10, BackendFlags_RendererHasViewports = 1 << 11 };
 /// Item flag names under Dear ImGui's spelling (the ItemFlag_* values are the same).
 enum ItemFlagNames : int { Item_None = 0, Item_NoTabStop = ItemFlag_NoTabStop, Item_ButtonRepeat = ItemFlag_ButtonRepeat, Item_Disabled = ItemFlag_Disabled,
                            Item_NoNav = ItemFlag_NoNav, Item_NoNavDefaultFocus = ItemFlag_NoNavDefaultFocus, Item_MixedValue = ItemFlag_MixedValue };
@@ -444,6 +584,7 @@ struct ImColor {
     ImColor(float r, float g, float b, float a = 1.0f) : Value(r, g, b, a) {}
     ImColor(int r, int g, int b, int a = 255) : Value(r / 255.0f, g / 255.0f, b / 255.0f, a / 255.0f) {}
     ImColor(const ImVec4& v) : Value(v) {}
+    ImColor(unsigned packed) : Value(ColorConvertU32ToFloat4(packed)) {}   // from a packed 0xAABBGGRR colour
     operator ImVec4() const { return Value; }
     operator Vec4() const { return Value; }
     operator Color32() const { return ColorConvertFloat4ToU32(Value); }

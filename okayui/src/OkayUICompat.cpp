@@ -1,3 +1,6 @@
+#include <memory>
+#include <vector>
+#include "okay/Graphics/TtfFont.hpp"
 #include "okay/UI/OkayUICompat.hpp"
 #include "okay/UI/OkayUIDock.hpp"
 #include "okay/UI/OkayUIInternals.hpp"
@@ -20,8 +23,15 @@ Viewport GetMainViewport() {
     Viewport vp;
     const IO& io = GetIO();
     vp.size = Vec2{ Finite(io.displaySize.x), Finite(io.displaySize.y) };
-    vp.Pos = vp.pos; vp.Size = vp.size;
+    vp.Pos = vp.pos; vp.Size = vp.size; vp.WorkPos = vp.pos; vp.WorkSize = vp.size;
     return vp;
+}
+namespace { Viewport g_mainViewport; }
+Viewport::operator Viewport*() const {
+    const Viewport now = GetMainViewport();
+    g_mainViewport.pos = now.pos; g_mainViewport.size = now.size; g_mainViewport.Pos = now.Pos; g_mainViewport.Size = now.Size;
+    g_mainViewport.WorkPos = now.WorkPos; g_mainViewport.WorkSize = now.WorkSize;
+    return &g_mainViewport;
 }
 
 Vec2 GetContentRegionMax() {
@@ -50,7 +60,7 @@ namespace OkayUI {
 WindowInfo FindWindowByName(const char* title) {
     WindowInfo w;
     w.found = FindWindowSlot(title, w.pos, w.size, w.focused);
-    if (w.found) w.docked = IsWindowDocked(title);
+    if (w.found) { w.docked = IsWindowDocked(title); std::snprintf(w.Name, sizeof w.Name, "%s", title); w.Pos = w.pos; w.Size = w.size; w.ID = GetID(title); }
     return w;
 }
 bool IsWindowDocked(const char* title) {
@@ -109,6 +119,7 @@ Entry* Find(unsigned scope, unsigned id, bool create) {
     return freeSlot;
 }
 }
+StateStorage::operator StateStorage*() const { static StateStorage ring[4]; static int next = 0; StateStorage& r = ring[next]; next = (next + 1) & 3; r = *this; return &r; }
 StateStorage GetStateStorage() {
     StateStorage s;
     const CurrentWindow w = GetCurrentWindow();
@@ -129,6 +140,11 @@ float StateStorage::GetFloat(unsigned id, float def) const {
     const Entry* e = Find(scope_, id, false);
     if (!e) return def;
     const std::uint32_t lo = (std::uint32_t)e->bits; float v; std::memcpy(&v, &lo, sizeof v); return v;
+}
+float* StateStorage::GetFloatRef(unsigned id, float def) {
+    Entry* e = Find(scope_, id, false);
+    if (!e) { e = Find(scope_, id, true); if (!e) return nullptr; SetFloat(id, def); }
+    return reinterpret_cast<float*>(&e->bits);   // the low 32 bits (little-endian targets; the store reads and writes the same bytes with memcpy)
 }
 void StateStorage::SetFloat(unsigned id, float value) {
     Entry* e = Find(scope_, id, true);
@@ -237,13 +253,13 @@ void StyleColorsClassic() {
     SetBase(Style(), bg, hov, down, bd, tx, pn, tr, ac, dm, ti, fl, false);
 }
 
-const char* SaveIniSettingsToMemory(unsigned long long* size) {
+const char* SaveIniSettingsToMemory(std::size_t* size) {
     static std::string s;
     s = DockSaveLayout();
     if (size) *size = (unsigned long long)s.size();
     return s.c_str();
 }
-void LoadIniSettingsFromMemory(const char* data, unsigned long long size) {
+void LoadIniSettingsFromMemory(const char* data, std::size_t size) {
     if (!data) return;
     const std::string blob = size ? std::string(data, (size_t)size) : std::string(data);
     DockLoadLayout(blob);
@@ -293,16 +309,72 @@ bool BeginMenu(const char* label, bool enabled) {
 bool BeginTable(const char* id, int columns, int flags) { return BeginTable(id, columns, static_cast<TableFlags>(flags)); }
 bool BeginTable(const char* id, int columns, int flags, Vec2 outerSize, float innerWidth) { return BeginTable(id, columns, static_cast<TableFlags>(flags), outerSize, innerWidth); }
 bool IsMouseHoveringRect(Vec2 mn, Vec2 mx, bool) { return IsMouseHoveringRect(mn, mx); }
-void NewFrame() { Input in = GetFrameInput(); BeginFrame(in); }
+void MergePendingIo(Input& in);   // OkayUI.cpp: IO::AddKeyEvent / AddInputCharacter
+IO& IoRaw();
+void NewFrame() {
+    Input in = GetFrameInput(); MergePendingIo(in);
+    static double clock = 0.0;
+    const IO& r = IoRaw();   // a platform feed (shared/ImGuiPlatformFeed.hpp) writes the display size and the frame time here
+
+    if (r.DisplaySize.x > 0.0f && r.DisplaySize.y > 0.0f) { in.displayW = r.DisplaySize.x; in.displayH = r.DisplaySize.y; }
+    if (r.DeltaTime > 0.0f && r.DeltaTime < 1.0f) { clock += (double)r.DeltaTime; in.time = clock; }
+    BeginFrame(in);
+}
 void UpdatePlatformWindows() {}
 void RenderPlatformWindowsDefault() {}
 PlatformIO& GetPlatformIO() { static PlatformIO pio; return pio; }
+bool PlatformClipboardSet(const char* text) { PlatformIO& p = GetPlatformIO(); if (!p.Platform_SetClipboardTextFn) return false; p.Platform_SetClipboardTextFn(nullptr, text); return true; }
+const char* PlatformClipboardGet() { PlatformIO& p = GetPlatformIO(); return p.Platform_GetClipboardTextFn ? p.Platform_GetClipboardTextFn(nullptr) : nullptr; }
 bool DockContextQueueUndockWindow(Context*, const WindowRef* window) {
     if (!window || !window->Name[0]) return false;
     DockLayout& l = GetDockLayout();
     if (!l.Contains(window->Name) || l.IsFloating(window->Name)) return false;
     return l.Float(window->Name, Rect{ window->Pos.x, window->Pos.y, window->Size.x > 1.0f ? window->Size.x : 320.0f, window->Size.y > 1.0f ? window->Size.y : 240.0f });
 }
+bool BeginDragDropTargetCustom(const ImRect& bb, unsigned id) { return BeginDragDropTargetCustom(Rect{bb.Min.x, bb.Min.y, bb.Max.x - bb.Min.x, bb.Max.y - bb.Min.y}, id); }
+bool InputInt(const char* label, int* value, int step, int, int) { return InputInt(label, value, step > 0 ? step : 1); }
+bool DragFloat2(const char* l, float v[2], float sp, float mn, float mx, const char*, int) { return DragFloat2(l, v, sp, mn, mx); }
+bool DragFloat3(const char* l, float v[3], float sp, float mn, float mx, const char*, int) { return DragFloat3(l, v, sp, mn, mx); }
+bool DragFloat4(const char* l, float v[4], float sp, float mn, float mx, const char*, int) { return DragFloat4(l, v, sp, mn, mx); }
+bool DragFloatRange2(const char* l, float* lo, float* hi, float sp, float mn, float mx, const char*, const char*, int) { return DragFloatRange2(l, lo, hi, sp, mn, mx); }
+bool SliderFloat2(const char* l, float v[2], float mn, float mx, const char*, int) { return SliderFloat2(l, v, mn, mx); }
+bool SliderFloat3(const char* l, float v[3], float mn, float mx, const char*, int) { return SliderFloat3(l, v, mn, mx); }
+bool SliderFloat4(const char* l, float v[4], float mn, float mx, const char*, int) { return SliderFloat4(l, v, mn, mx); }
+bool InputFloat(const char* l, float* v, float step, float, const char*, int) { return InputFloat(l, v, step > 0.0f ? step : 0.1f); }
+void SetNextItemOpen(bool open, Cond) { SetNextItemOpen(open); }
+bool IsPopupOpen(const char* name, int flags) {
+    if (name && *name) return IsPopupOpen(name);
+    if (flags & Popup_AnyPopupId) return AnyPopupOpen();
+    return false;
+}
+bool BeginPopup(const char* id, int) { return BeginPopup(id); }
+void SetKeyboardFocusHere(int) { SetKeyboardFocusHere(); }
+bool RadioButton(const char* label, bool active) { int v = active ? 1 : 0; return RadioButton(label, &v, 1) && !active; }
+bool ColorButton(const char* id, const ImVec4& c, int flags, Vec2 size) { const float rgba[4] = {c.x, c.y, c.z, c.w}; return ColorButton(id, rgba, flags, size.x > 0.0f ? size.x : 0.0f); }
+void PlotLines(const char* l, const float* v, int n, int off, const char* ov, float mn, float mx, Vec2 sz) { PlotOptions o; o.valuesOffset = off; o.overlay = ov; o.scaleMin = mn; o.scaleMax = mx; o.size = sz; PlotLines(l, v, n, o); }
+void PlotHistogram(const char* l, const float* v, int n, int off, const char* ov, float mn, float mx, Vec2 sz) { PlotOptions o; o.valuesOffset = off; o.overlay = ov; o.scaleMin = mn; o.scaleMax = mx; o.size = sz; PlotHistogram(l, v, n, o); }
+namespace {
+Font* g_fontStack[8]; const Font* g_fontBefore[8]; int g_fontTop = 0;
+}
+void PushFont(Font* font) {
+    if (g_fontTop >= 8) return;
+    g_fontBefore[g_fontTop] = GetFont(); g_fontStack[g_fontTop] = font; ++g_fontTop;
+    if (font) SetFont(font);
+}
+void PushFont(Font* font, float) { PushFont(font); }
+void PopFont() { if (g_fontTop <= 0) return; --g_fontTop; SetFont(g_fontBefore[g_fontTop]); }
+void InputTextCallbackData::InsertChars(int pos, const char* text, const char* end) {
+    if (!Buf || !text || pos < 0 || pos > BufTextLen) return;
+    int n = end ? (int)(end - text) : (int)std::strlen(text);
+    if (BufTextLen + n >= BufSize) n = BufSize - 1 - BufTextLen;
+    if (n <= 0) return;
+    for (int i = BufTextLen; i >= pos; --i) Buf[i + n] = Buf[i];
+    std::memcpy(Buf + pos, text, (std::size_t)n); BufTextLen += n; BufDirty = true;
+}
+bool InputTextWithHint(const char* l, const char* h, char* b, int c, unsigned f, InputTextCallback, void*) { return InputTextWithHint(l, h, b, c, f); }
+bool InputText(const char* l, char* b, int c, unsigned f, InputTextCallback, void*) { return InputText(l, b, c, f); }
+bool IsWindowDocked() { const CurrentWindow w = GetCurrentWindow(); return w.valid && IsWindowDocked(w.title); }
+WindowInfo::operator WindowRef*() const { return found ? FindWindowRefByName(Name) : nullptr; }
 bool InvisibleButton(const char* id, Vec2 size, int) { return InvisibleButton(id, size.x, size.y); }
 bool BeginTabBar(const char* id, int) { return BeginTabBar(id); }
 bool BeginCombo(const char* label, const char* preview, int) { return BeginCombo(label, preview); }
@@ -324,3 +396,74 @@ void TreeNodeExFormatted(bool* out, const char* id, unsigned flags, const char* 
     *out = TreeNodeEx(label, flags);
 }
 } // namespace OkayUI
+
+// ---- io.Fonts: recorded requests -------------------------------------------------------------------------------------------------------------------
+namespace OkayUI {
+namespace {
+struct TtfEntry { const unsigned char* key = nullptr; std::unique_ptr<okay::TtfFont> font; };
+TtfEntry g_ttfs[5]; int g_nTtfs = 0;
+Font g_userFonts[32]; int g_nUserFonts = 0;
+struct B85 { const char* array; const unsigned char* ttf; std::size_t size; };
+B85 g_b85[8]; int g_nB85 = 0;
+FontRequest g_fontReqs[32]; int g_nFontReqs = 0; ImFont g_fontPool[33]; int g_nFontPool = 0;
+ImFont* Record(FontRequest::Kind kind, float px, const void* data, int size, const char* file, const ImFontConfig* cfg, ImFont* made) {
+    ImFont* f = made;
+    if (!f) { f = g_nFontPool < 33 ? &g_fontPool[g_nFontPool++] : &g_fontPool[32]; *f = *FontDefault(); }   // no real font: a copy of the default (PushFont keeps the look)
+    if (g_nFontReqs < 32) {
+        FontRequest& r = g_fontReqs[g_nFontReqs++];
+        r = FontRequest(); r.kind = kind; r.px = px > 0.0f ? px : (cfg && cfg->SizePixels > 0.0f ? cfg->SizePixels : 13.0f); r.data = data; r.dataSize = size; r.merge = cfg && cfg->MergeMode; r.font = f;
+        if (file) std::snprintf(r.file, sizeof r.file, "%s", file);
+    }
+    return f;
+}
+FontAtlasRef g_atlasRef;
+}
+Font* AddFontTtf(const unsigned char* data, std::size_t size, float px, const char* name) {
+    if (!data || size < 12 || !(px >= 4.0f && px <= 512.0f) || g_nUserFonts >= 32) return nullptr;
+    TtfEntry* e = nullptr;
+    for (int i = 0; i < g_nTtfs; ++i) if (g_ttfs[i].key == data) e = &g_ttfs[i];
+    if (!e) {
+        if (g_nTtfs >= 5) return nullptr;
+        auto f = std::make_unique<okay::TtfFont>();
+        if (!f->LoadFromMemory(data, size, 48.0f, name ? name : "(user font)")) return nullptr;
+        g_ttfs[g_nTtfs].key = data; g_ttfs[g_nTtfs].font = std::move(f); e = &g_ttfs[g_nTtfs++];
+    }
+    Font& u = g_userFonts[g_nUserFonts++];
+    u = *FontDefault(); u.ttf = e->font.get(); u.px = px;
+    return &u;
+}
+Font* AddFontTtfFile(const char* path, float px) {
+    if (!path || !*path) return nullptr;
+    FILE* fp = std::fopen(path, "rb");
+    if (!fp) return nullptr;
+    static std::vector<std::vector<unsigned char>> keep;   // the bytes of files read here (the font copies them; the key must stay unique per file)
+    std::vector<unsigned char> b; unsigned char tmp[4096]; std::size_t n;
+    while ((n = std::fread(tmp, 1, sizeof tmp, fp)) > 0 && b.size() < (64u << 20)) b.insert(b.end(), tmp, tmp + n);
+    std::fclose(fp);
+    if (keep.size() >= 8) return nullptr;
+    keep.push_back(std::move(b));
+    return AddFontTtf(keep.back().data(), keep.back().size(), px, path);
+}
+void RegisterBase85FontSource(const char* array, const unsigned char* ttf, std::size_t size) {
+    if (!array || !ttf || size == 0) return;
+    for (int i = 0; i < g_nB85; ++i) if (g_b85[i].array == array) { g_b85[i] = B85{array, ttf, size}; return; }
+    if (g_nB85 < 8) g_b85[g_nB85++] = B85{array, ttf, size};
+}
+ImFont* FontAtlasRef::AddFontDefault(const ImFontConfig* cfg) { return Record(FontRequest::Default, 13.0f, nullptr, 0, nullptr, cfg, nullptr); }
+ImFont* FontAtlasRef::AddFontFromMemoryTTF(void* data, int size, float px, const ImFontConfig* cfg, const unsigned short*) {
+    return Record(FontRequest::FromMemoryTTF, px, data, size, nullptr, cfg, size > 0 ? AddFontTtf(static_cast<const unsigned char*>(data), (std::size_t)size, px) : nullptr);
+}
+ImFont* FontAtlasRef::AddFontFromMemoryCompressedBase85TTF(const char* data, float px, const ImFontConfig* cfg, const unsigned short*) {
+    ImFont* made = nullptr;
+    for (int i = 0; i < g_nB85; ++i) if (g_b85[i].array == data) made = AddFontTtf(g_b85[i].ttf, g_b85[i].size, px > 0.0f ? px : (cfg ? cfg->SizePixels : 0.0f));
+    return Record(FontRequest::FromCompressedBase85, px, data, data ? (int)std::strlen(data) : 0, nullptr, cfg, made);
+}
+ImFont* FontAtlasRef::AddFontFromFileTTF(const char* file, float px, const ImFontConfig* cfg, const unsigned short*) { return Record(FontRequest::FromFile, px, nullptr, 0, file, cfg, AddFontTtfFile(file, px)); }
+void FontAtlasRef::Clear() { g_nFontReqs = 0; g_nFontPool = 0; }
+int FontAtlasRef::FontCount() const { return g_nFontPool + g_nUserFonts; }
+FontAtlasRef* GetFontAtlasRef() { return &g_atlasRef; }
+const FontRequest* FontRequests(int* count) { if (count) *count = g_nFontReqs; return g_fontReqs; }
+}   // namespace OkayUI
+
+namespace OkayUI { void ColorConvertHSVtoRGB(float h, float s, float v, float& r, float& g, float& b) { ColorConvertHSVtoRGB(h, s, v, &r, &g, &b); } }
+namespace OkayUI { void Columns(int count, const char*, bool) { Columns(count); } }

@@ -14,7 +14,7 @@ OUT = os.path.join(usage.ROOT, "okayui", "include", "okay", "UI", "OkayUIImGuiNa
 # Defined by hand in the preamble (or by OkayUI itself), so not generated.
 HAND = {"ImVec2", "ImU32", "ImDrawList"}
 # Typedef'd to int, as Dear ImGui does for the ids that are passed around as plain numbers.
-AS_INT = {"ImGuiCol", "ImGuiCond", "ImGuiStyleVar", "ImGuiMouseButton", "ImGuiDir", "ImGuiSortDirection"}
+AS_INT = {"ImGuiCol", "ImGuiCond", "ImGuiStyleVar", "ImGuiMouseButton", "ImGuiDir", "ImGuiSortDirection", "ImGuiMouseCursor"}
 # Names that already exist in namespace OkayUI under the same spelling.
 SAME_SPELLING_TYPES = {"ImVec4", "ImTextureID", "ImRect", "ImGuiID"}
 
@@ -29,6 +29,9 @@ PREAMBLE = r'''#pragma once
 #include "okay/UI/OkayUIDock.hpp"
 #include "okay/UI/OkayUIDockBuilder.hpp"
 #include <cstdint>
+#include <cassert>
+#include <cfloat>
+#include <cmath>
 
 // ImVec2 is OkayUI::Vec2 (two floats with a two-float constructor).
 typedef OkayUI::Vec2 ImVec2;
@@ -53,11 +56,39 @@ typedef int ImS32;
 typedef long long ImS64;
 typedef OkayUI::DrawList ImDrawList;
 #define IM_PI 3.14159265358979323846f
+#define IM_ARRAYSIZE(_ARR) ((int)(sizeof(_ARR) / sizeof(*(_ARR))))
+#define IMGUI_VERSION "okayui"
+#define IMGUI_VERSION_NUM 0
+#define IMGUI_CHECKVERSION() ((void)0)
+#define IM_COL32_R_SHIFT 0
+#define IM_COL32_G_SHIFT 8
+#define IM_COL32_B_SHIFT 16
+#define IM_COL32_A_SHIFT 24
+#define IM_COL32_A_MASK 0xFF000000
+#define IM_COL32_WHITE (OkayUI::RGBA(255, 255, 255, 255))
+#define IM_COL32_BLACK (OkayUI::RGBA(0, 0, 0, 255))
+#define IM_COL32_BLACK_TRANS (OkayUI::RGBA(0, 0, 0, 0))
 #define GImGui (::OkayUI::RefreshContext())
 #define IM_COL32(R, G, B, A) (OkayUI::RGBA((R), (G), (B), (A)))
 using OkayUI::ImVec4;
 using OkayUI::ImTextureID;
 using OkayUI::ImRect;
+using OkayUI::ImVector;
+using OkayUI::ImHashStr;
+using OkayUI::ImDrawVert;
+using OkayUI::ImDrawIdx;
+using OkayUI::ImDrawCmd;
+using OkayUI::ImDrawData;
+using OkayUI::ImDrawCallback;
+using OkayUI::ImTextureData;
+using OkayUI::ImTextureRect;
+using OkayUI::ImTextureRef;
+using OkayUI::ImTextureStatus;
+using OkayUI::ImTextureStatus_OK;
+using OkayUI::ImTextureStatus_Destroyed;
+using OkayUI::ImTextureStatus_WantCreate;
+using OkayUI::ImTextureStatus_WantUpdates;
+using OkayUI::ImTextureStatus_WantDestroy;
 using OkayUI::ImGuiID;
 using OkayUI::ImGuiStyle;
 // Plain-int typedefs Dear ImGui code uses for flag arguments.
@@ -65,6 +96,28 @@ typedef int ImDrawFlags;
 
 // The generated names.
 '''
+
+
+HELPERS = r"""// Small math helpers Dear ImGui code calls.
+template <class T> inline T ImMin(T a, T b) { return a < b ? a : b; }
+template <class T> inline T ImMax(T a, T b) { return a < b ? b : a; }
+template <class T> inline T ImClamp(T v, T mn, T mx) { return v < mn ? mn : (v > mx ? mx : v); }
+inline ImVec2 ImMin(const ImVec2& a, const ImVec2& b) { return ImVec2(a.x < b.x ? a.x : b.x, a.y < b.y ? a.y : b.y); }
+inline ImVec2 ImMax(const ImVec2& a, const ImVec2& b) { return ImVec2(a.x < b.x ? b.x : a.x, a.y < b.y ? b.y : a.y); }
+inline ImVec2 ImClamp(const ImVec2& v, const ImVec2& mn, const ImVec2& mx) { return ImVec2(v.x < mn.x ? mn.x : (v.x > mx.x ? mx.x : v.x), v.y < mn.y ? mn.y : (v.y > mx.y ? mx.y : v.y)); }
+inline float ImLerp(float a, float b, float t) { return a + (b - a) * t; }
+inline ImVec2 ImLerp(const ImVec2& a, const ImVec2& b, float t) { return ImVec2(a.x + (b.x - a.x) * t, a.y + (b.y - a.y) * t); }
+inline float ImLengthSqr(const ImVec2& v) { return v.x * v.x + v.y * v.y; }
+inline float ImLengthSqr(const ImVec4& v) { return v.x * v.x + v.y * v.y + v.z * v.z + v.w * v.w; }
+inline ImVec2 ImBezierCubicCalc(const ImVec2& p1, const ImVec2& p2, const ImVec2& p3, const ImVec2& p4, float t) {
+    const float u = 1.0f - t, w1 = u * u * u, w2 = 3 * u * u * t, w3 = 3 * u * t * t, w4 = t * t * t;
+    return ImVec2(w1 * p1.x + w2 * p2.x + w3 * p3.x + w4 * p4.x, w1 * p1.y + w2 * p2.y + w3 * p3.y + w4 * p4.y);
+}
+inline ImVec4 operator*(const OkayUI::Vec4& a, const ImVec4& b) { return ImVec4(a.x * b.x, a.y * b.y, a.z * b.z, a.w * b.w); }
+inline float ImSaturate(float f) { return f < 0.0f ? 0.0f : (f > 1.0f ? 1.0f : f); }
+
+"""
+
 
 def declared_types():
     """(type names, enumerator names) declared in the OkayUI headers."""
@@ -106,7 +159,7 @@ def main():
             lines.append("typedef int %s;" % name)
         elif ident in tdecl:
             lines.append("typedef OkayUI::%s %s;" % (ident, name))
-    text = PREAMBLE + "\n".join(lines) + "\n\n// The namespace host code writes.\nnamespace ImGui = OkayUI;\n#endif // IMGUI_VERSION\n"
+    text = PREAMBLE + "\n".join(lines) + "\n\n" + HELPERS + "// The namespace host code writes.\nnamespace ImGui { using namespace ::OkayUI; }   // a real namespace (not an alias) so code can add to it, as a few editor headers do\n#endif // IMGUI_VERSION\n"
     if "--check" in sys.argv:
         cur = open(OUT).read() if os.path.exists(OUT) else ""
         if cur != text:

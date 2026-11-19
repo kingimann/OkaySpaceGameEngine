@@ -26,7 +26,11 @@
 namespace okay::imguifeed {
 
 /// True when OKAY_PLATFORM_EVENTS is "own" (anything else, or unset, keeps imgui_impl_sdl2).
+#ifdef OKAY_ON_OKAYUI
+inline bool OwnRequested(const char*) { return true; }   // the OkayUI build has no imgui_impl_sdl2: this feed is the only input path
+#else
 inline bool OwnRequested(const char* envValue) { return envValue && std::string(envValue) == "own"; }
+#endif
 /// The line the apps log at start-up so you can tell which one runs.
 inline const char* ActiveLine(bool own) {
     return own ? "ImGui input: own okay::platform feed (OKAY_PLATFORM_EVENTS=own)"
@@ -112,7 +116,11 @@ inline int ModBitOfKey(ImGuiKey k) {
 }
 /// The ImGuiMod_ key for a pair of bits (bit / 2).
 inline ImGuiKey ModKeyOfPair(int pair) {
+#ifdef OKAY_ON_OKAYUI   // OkayUI's own key ids for the modifier flags (its ImGuiMod_* are chord flags, not keys)
+    static const ImGuiKey k[4] = { OkayUI::KeyId_ModCtrl, OkayUI::KeyId_ModShift, OkayUI::KeyId_ModAlt, OkayUI::KeyId_ModSuper };
+#else
     static const ImGuiKey k[4] = { ImGuiMod_Ctrl, ImGuiMod_Shift, ImGuiMod_Alt, ImGuiMod_Super };
+#endif
     return k[pair & 3];
 }
 

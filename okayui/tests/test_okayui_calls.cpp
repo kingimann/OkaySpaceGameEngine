@@ -253,7 +253,7 @@ int main() {
     }
     {   // SaveIniSettingsToMemory / LoadIniSettingsFromMemory: the dock layout as text
         Reset();
-        unsigned long long n = 99;
+        std::size_t n = 99;
         const char* a = UI::SaveIniSettingsToMemory(&n);
         CHECK(a != nullptr && n == std::strlen(a) && UI::SaveIniSettingsToMemory() != nullptr);
         const std::string before = UI::DockSaveLayout();

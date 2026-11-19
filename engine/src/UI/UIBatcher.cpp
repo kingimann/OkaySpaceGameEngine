@@ -294,6 +294,36 @@ void BatchPainter::FillRectF(const FRect* r) {
     WhiteQuad(r->x, r->y, r->w, r->h);
 }
 
+void BatchPainter::FillRectsF(const ColoredRect* q, int n) {
+    if (!q || n <= 0) return;
+    const int page = m_batchPage >= 0 ? m_batchPage : 0;
+    if (m_passthrough || !EnsurePage(page)) {
+        for (int i = 0; i < n; ++i) { m_b.SetDrawColor(q[i].c.r, q[i].c.g, q[i].c.b, q[i].c.a); m_b.FillRectF(&q[i].r); }
+        return;
+    }
+    UseTexture(page);
+    const Page& pg = m_pages[page];
+    const float u = U(page, pg.whiteX + 0.5f), v = V(page, pg.whiteY + 0.5f);
+    const float s = m_scale;
+    const int base0 = (int)m_v.size();
+    m_v.resize(m_v.size() + (std::size_t)n * 4);
+    const std::size_t ib = m_i.size();
+    m_i.resize(ib + (std::size_t)n * 6);
+    Vertex* vp = m_v.data() + base0;
+    int* ip = m_i.data() + ib;
+    for (int i = 0; i < n; ++i, vp += 4, ip += 6) {
+        const FRect& r = q[i].r;
+        const float x0 = r.x * s, y0 = r.y * s, x1 = (r.x + r.w) * s, y1 = (r.y + r.h) * s;
+        const RGBA c = q[i].c;
+        vp[0] = Vertex{FPoint{x0, y0}, c, FPoint{u, v}};
+        vp[1] = Vertex{FPoint{x1, y0}, c, FPoint{u, v}};
+        vp[2] = Vertex{FPoint{x1, y1}, c, FPoint{u, v}};
+        vp[3] = Vertex{FPoint{x0, y1}, c, FPoint{u, v}};
+        const int b = base0 + i * 4;
+        ip[0] = b; ip[1] = b + 1; ip[2] = b + 2; ip[3] = b; ip[4] = b + 2; ip[5] = b + 3;
+    }
+}
+
 // SDL outlines the border pixels inside the rect, one pixel wide.
 void BatchPainter::DrawRect(const Rect* r) {
     if (!r || r->w <= 0 || r->h <= 0) return;

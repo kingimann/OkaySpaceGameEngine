@@ -46,6 +46,9 @@ inline bool IntersectRect(const Rect* a, const Rect* b, Rect* out) {
     return true;
 }
 
+/// A float rectangle with its own colour, for Painter::FillRectsF.
+struct ColoredRect { FRect r; RGBA c; };
+
 class Painter {
 public:
     virtual ~Painter() = default;
@@ -64,6 +67,12 @@ public:
         const int y1 = (int)(r->y + r->h + 0.999f);
         Rect q{x0, y0, x1 - x0, y1 - y0};
         if (q.w > 0 && q.h > 0) FillRect(&q);
+    }
+    /// Many coloured float rectangles in one call (the replay of a recorded shape). Only used when SupportsBulkRects() is true; the
+    /// default draws them one by one.
+    virtual bool SupportsBulkRects() { return false; }
+    virtual void FillRectsF(const ColoredRect* q, int n) {
+        for (int i = 0; i < n; ++i) { SetDrawColor(q[i].c.r, q[i].c.g, q[i].c.b, q[i].c.a); FillRectF(&q[i].r); }
     }
     virtual void DrawRect(const Rect* r) = 0;
     virtual void DrawLine(int x0, int y0, int x1, int y1) = 0;

@@ -80,18 +80,22 @@ counting backend, so it is the engine's own UI cost with no GPU). This machine i
 compiled with `-O2` (the rest of the engine with `-O0`), so the absolute times are far above the real optimised build
 (target 1 ms, CI limit 3 ms) and are only good for comparing the levels with each other:
 
-| Level | Median UI CPU per frame (this mixed build) | Triangles |
-|---|---|---|
-| Old look | 8.7 ms | 20,554 |
-| Fast | 8.5 ms | 20,554 |
-| Good (default) | 15.2 ms (about 1.75 times the Old look) | 64,214 |
-| Best | 16.0 ms | 65,814 |
+| Level | Median UI CPU per frame, before the speed-up | after | Triangles (before / after) |
+|---|---|---|---|
+| Old look | 4.24 ms | 4.26 ms | 20,554 |
+| Fast | 4.27 ms | 4.33 ms | 20,554 |
+| Good (default) | 6.88 ms (1.62 times the Old look; 3.8 vs 1.6 ms on CI) | 4.04 ms (0.95 times the Old look) | 64,886 / 53,594 |
+| Best | 7.64 ms | 4.20 ms | 66,750 / 53,594 |
 
-Draw calls stay at 2 and steady-state allocations stay at 0 (both asserted by the bench). Good costs more because every
-partly covered edge pixel is its own small rectangle with its own alpha (the Old look rounded them to solid or to nothing),
-so a screen of rounded widgets sends about three times the triangles. If a game with a huge number of rounded widgets
-cannot afford that, pick **Fast** (same cost as the Old look, still snapped text). The absolute numbers for the real
-`-O3` build and for GPU drivers are **not measured**.
+(Mixed build again: UI files `-O2`, the rest `-O0`; only the ratios mean anything.) The speed-up: flat shapes and borders are
+recorded once per geometry (not colour) and replayed from a cache, the replay goes to the batcher in one call
+(`Painter::FillRectsF`), edge alpha is in tenths and pixels under 3 or over 97 percent covered are dropped or merged into the
+solid run. Cost: edge pixels can be 5 percent off (rounded corner error 0.0037 mean / 0.047 worst, was 0.0009 / 0.031). Best now
+costs about the same as Good for shapes (its extras are the quarter-pixel text and the dithered gradients).
+
+Draw calls stay at 2 and steady-state allocations stay at 0 (both asserted by the bench). Good sends about 2.6 times the
+triangles (every partly covered edge pixel is its own small rectangle). The absolute numbers for the real `-O3` build and
+for GPU drivers are **not measured** here.
 
 The reference screen (`ui_quality_shot`, 1280x720, SDL software renderer, including renderer set-up and read-back) took
 105 to 115 ms at every level: the time there is the software rasteriser, not the UI pass.

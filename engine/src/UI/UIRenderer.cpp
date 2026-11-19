@@ -142,12 +142,17 @@ float SpanOverlap(float a, float b, int px) {
     return hi > lo ? hi - lo : 0.0f;
 }
 
+// One rectangle of a recorded shape (relative to the shape's origin, alpha 255 = the shape's own colour).
+struct RecRect { float x, y, w, h; std::uint8_t a; };
+
 struct FloatRun {
     Painter* ren = nullptr;
+    std::vector<RecRect>* rec = nullptr;   // when set, rectangles are recorded instead of drawn
     float x = 0, y = 0, w = 0, h = 0;
     std::uint8_t c[4] = {};
     bool on = false;
     void Flush() {
+        if (rec && on && w > 0.0f && h > 0.0f && c[3]) { rec->push_back(RecRect{x, y, w, h, c[3]}); on = false; return; }
         if (!on || !ren || w <= 0.0f || h <= 0.0f || c[3] == 0) { on = false; return; }
         ren->SetDrawColor(c[0], c[1], c[2], c[3]);
         const bool whole = std::fabs(x - std::round(x)) < 0.01f && std::fabs(y - std::round(y)) < 0.01f &&
@@ -259,30 +264,45 @@ void EmitMulti(FloatRun& run, float gx0, float ly, float lh, float S, const SubS
     const int xe = (int)std::ceil(hi - 1e-4f);
     int x = (int)std::floor(lo);
     const float inv = 1.0f / (float)K;
-    while (x < xe) {
-        float cov = 0.0f, endFull = 1e30f, nextStart = 1e30f;
-        int full = 0;
+    float cov, endFull, nextStart;
+    int full;
+    auto eval = [&](int px) {
+        cov = 0.0f; endFull = 1e30f; nextStart = 1e30f; full = 0;
         for (int k = 0; k < K; ++k) {
             bool fullHere = false;
             for (int i = 0; i < smp[k].n; ++i) {
                 const float a = smp[k].a[i], b = smp[k].b[i];
-                const float ov = SpanOverlap(a, b, x);
+                const float ov = SpanOverlap(a, b, px);
                 cov += ov;
                 if (ov >= 0.999f) { fullHere = true; endFull = std::min(endFull, std::floor(b + 1e-4f)); }
-                if (a > (float)x + 1.0f) nextStart = std::min(nextStart, std::floor(a));
+                if (a > (float)px + 1.0f) nextStart = std::min(nextStart, std::floor(a));
             }
             if (fullHere) ++full;
         }
         cov *= inv;
+    };
+    while (x < xe) {
+        eval(x);
         if (full == K && endFull > (float)x) {   // every sample covers this pixel whole: solid up to the first end
             const int ex = std::min((int)endFull, xe);
             run.Add(gx0 + (float)x / S, ly, (float)(ex - x) / S, lh, solid);
             x = std::max(ex, x + 1);
             continue;
         }
-        if (cov <= 0.004f) { x = (nextStart < 1e29f) ? std::max(x + 1, (int)nextStart) : x + 1; continue; }
+        // Pixels under 3% covered are left out and pixels over 97% covered count as solid (an error of at most 8 of 255 levels on a few
+        // edge pixels); neighbouring solid pixels merge into one rect. That is what keeps a screen of rounded widgets cheap.
+        if (cov < 0.03f) { x = (nextStart < 1e29f) ? std::max(x + 1, (int)nextStart) : x + 1; continue; }
+        if (cov >= 0.97f) {
+            int x2 = x + 1;
+            while (x2 < xe) { eval(x2); if (cov >= 0.97f) ++x2; else break; }
+            run.Add(gx0 + (float)x / S, ly, (float)(x2 - x) / S, lh, solid);
+            x = x2;
+            continue;
+        }
+        // Alpha in tenths (5% off at most): rows of a gentle arc then share a value and merge into one rect when the shape is recorded.
+        cov = std::floor(cov * 10.0f + 0.5f) * 0.1f;
         std::uint8_t col[4];
-        PackCov(tint, op, cov > 1.0f ? 1.0f : cov, col);
+        PackCov(tint, op, cov, col);
         run.Add(gx0 + (float)x / S, ly, 1.0f / S, lh, col);
         ++x;
     }
@@ -291,6 +311,57 @@ void EmitMulti(FloatRun& run, float gx0, float ly, float lh, float S, const SubS
 // Where a logical rect lands on the device pixel grid: its edges rounded to whole device pixels (so at a canvas scale of 1.5 a
 // 15 px wide card is 22 or 23 device pixels, with hard, even borders, instead of starting half way through a pixel). Returns the
 // origin in logical units and the size in device pixels. The Old look keeps the unsnapped origin and the exact size.
+// Recorded rectangles of flat shapes and borders, keyed by their geometry (not their colour): a screen that does not change draws the
+// same shapes every frame, and replaying the list skips the span maths and the merging. Cleared when it grows past 512 shapes.
+struct ShapeKey {
+    int kind, shape, dw, dh, rad, mask, K, S, inset;
+    bool operator==(const ShapeKey& o) const {
+        return kind == o.kind && shape == o.shape && dw == o.dw && dh == o.dh && rad == o.rad && mask == o.mask && K == o.K && S == o.S && inset == o.inset;
+    }
+};
+struct ShapeKeyHash {
+    std::size_t operator()(const ShapeKey& k) const {
+        std::size_t h = 1469598103u;
+        for (int v : {k.kind, k.shape, k.dw, k.dh, k.rad, k.mask, k.K, k.S, k.inset}) h = (h ^ (std::size_t)(unsigned)v) * 1099511628211ull;
+        return h;
+    }
+};
+std::unordered_map<ShapeKey, std::vector<RecRect>, ShapeKeyHash>& ShapeCache() {
+    static thread_local std::unordered_map<ShapeKey, std::vector<RecRect>, ShapeKeyHash> c;
+    return c;
+}
+// Draw one recorded rectangle (the same whole-pixel / fractional split as FloatRun::Flush) in `col`.
+void PutRect(Painter& ren, float x, float y, float w, float h, const std::uint8_t c[4]) {
+    FloatRun r;
+    r.ren = &ren; r.x = x; r.y = y; r.w = w; r.h = h; r.on = true;
+    for (int i = 0; i < 4; ++i) r.c[i] = c[i];
+    r.Flush();
+}
+void Replay(Painter& ren, const std::vector<RecRect>& rects, float ox, float oy, const std::uint8_t solid[4]) {
+    if (solid[3] == 0) return;
+    if (ren.SupportsBulkRects()) {   // the batcher: one call for the whole list (same rectangles, same half-hundredth bias as FloatRun::Flush)
+        static thread_local std::vector<ColoredRect> buf;
+        buf.clear();
+        const float S = g_uiDeviceScale > 0.05f ? g_uiDeviceScale : 1.0f;
+        for (const RecRect& q : rects) {
+            const std::uint8_t a = q.a == 255 ? solid[3] : (std::uint8_t)((float)q.a * (float)solid[3] / 255.0f + 0.5f);
+            if (!a) continue;
+            const float x = ox + q.x, y = oy + q.y;
+            const bool whole = std::fabs(x - std::round(x)) < 0.01f && std::fabs(y - std::round(y)) < 0.01f &&
+                               std::fabs(q.w - std::round(q.w)) < 0.01f && std::fabs(q.h - std::round(q.h)) < 0.01f;
+            FRect r = whole ? FRect{std::round(x), std::round(y), std::round(q.w), std::round(q.h)}
+                            : FRect{x + 0.01f / S, y + 0.01f / S, q.w + 0.01f / S, q.h + 0.01f / S};
+            buf.push_back(ColoredRect{r, RGBA{solid[0], solid[1], solid[2], a}});
+        }
+        if (!buf.empty()) ren.FillRectsF(buf.data(), (int)buf.size());
+        return;
+    }
+    for (const RecRect& q : rects) {
+        std::uint8_t col[4] = {solid[0], solid[1], solid[2], q.a == 255 ? solid[3] : (std::uint8_t)((float)q.a * (float)solid[3] / 255.0f + 0.5f)};
+        if (col[3]) PutRect(ren, ox + q.x, oy + q.y, q.w, q.h, col);
+    }
+}
+
 // Sub-scanlines per device row for shape edges: 1 keeps the coarse one-sample fill (Old look, Fast).
 int SubSamples() {
     switch (g_uiQuality) {
@@ -327,10 +398,28 @@ void FillUIShapeSmooth(Painter& ren, const Rect& r, UIShape shape, float radius,
     const int cap = sideRun ? (int)std::ceil(rad) : rows;
     const bool flat = !gradient;
     const int K = SubSamples();
+    std::uint8_t solidDraw[4];
+    PackCov(top, op, 1.0f, solidDraw);
     std::uint8_t solid[4];
-    PackCov(top, op, 1.0f, solid);
+    for (int i = 0; i < 4; ++i) solid[i] = solidDraw[i];
+    const bool cacheable = K > 1 && flat && !perPixel;
+    ShapeKey key{0, (int)shape, (int)std::lround(dw * 16.0f), (int)std::lround(dh * 16.0f), (int)std::lround(rad * 16.0f), cornerMask, K, (int)std::lround(S * 64.0f), 0};
+    if (cacheable) {
+        auto& cache = ShapeCache();
+        auto it = cache.find(key);
+        if (it != cache.end()) { Replay(ren, it->second, ox0, oy0, solidDraw); return; }
+    }
+    std::vector<RecRect> rec;
     FloatRun run;
     run.ren = &ren;
+    Color topC = top; float opC = op;
+    std::uint8_t solidW[4] = {255, 255, 255, 255};
+    std::uint8_t* solidP = solid;
+    if (cacheable) {   // record in a neutral colour, then draw (and keep) the list
+        run.rec = &rec; topC = Color{1, 1, 1, 1}; opC = 1.0f; solidP = solidW;
+    }
+    {
+    const Color& top = topC; const float op = opC; std::uint8_t* solid = solidP;
     for (int row = 0; row < rows; ++row) {
         const float ly = oy0 + (float)row / S;
         const float lh = 1.0f / S;
@@ -384,6 +473,14 @@ void FillUIShapeSmooth(Painter& ren, const Rect& r, UIShape shape, float radius,
         }
     }
     run.Flush();
+    }
+    if (cacheable) {
+        auto& cache = ShapeCache();
+        if (cache.size() > 512) cache.clear();
+        for (RecRect& q : rec) { q.x -= ox0; q.y -= oy0; }   // keep them relative to the shape's origin
+        const auto& stored = cache.emplace(key, std::move(rec)).first->second;
+        Replay(ren, stored, ox0, oy0, solidDraw);
+    }
 }
 
 void FillUIRingSmooth(Painter& ren, const Rect& r, UIShape shape, float radius,
@@ -399,10 +496,24 @@ void FillUIRingSmooth(Painter& ren, const Rect& r, UIShape shape, float radius,
     const bool sideRun = shape == UIShape::Rounded || shape == UIShape::Pill || shape == UIShape::TabTop;
     const int cap = sideRun ? (int)std::ceil(std::max(rad, inset + 1.0f)) : rows;
     const int K = SubSamples();
+    std::uint8_t solidDraw[4];
+    PackCov(c, op, 1.0f, solidDraw);
+    const bool cacheable = K > 1;
+    ShapeKey key{1, (int)shape, (int)std::lround(dw * 16.0f), (int)std::lround(dh * 16.0f), (int)std::lround(rad * 16.0f), cornerMask, K, (int)std::lround(S * 64.0f), (int)std::lround(inset * 16.0f)};
+    if (cacheable) {
+        auto& cache = ShapeCache();
+        auto it = cache.find(key);
+        if (it != cache.end()) { Replay(ren, it->second, gx0, gy0, solidDraw); return; }
+    }
+    std::vector<RecRect> rec;
     FloatRun run;
     run.ren = &ren;
-    std::uint8_t solid[4];
-    PackCov(c, op, 1.0f, solid);
+    std::uint8_t solidW[4] = {255, 255, 255, 255};
+    const std::uint8_t* solidP = solidDraw;
+    Color cC = c; float opC = op;
+    if (cacheable) { run.rec = &rec; solidP = solidW; cC = Color{1, 1, 1, 1}; opC = 1.0f; }
+    {
+    const Color& c = cC; const float op = opC; const std::uint8_t* solid = solidP;
     for (int row = 0; row < rows; ++row) {
         const float ly = gy0 + (float)row / S;
         const float lh = 1.0f / S;
@@ -448,7 +559,17 @@ void FillUIRingSmooth(Painter& ren, const Rect& r, UIShape shape, float radius,
         EmitSpan(run, gx0, ly, lh, S, ix1 + inset, ox1, solid, c, op, true);
     }
     run.Flush();
+    }
+    if (cacheable) {
+        auto& cache = ShapeCache();
+        if (cache.size() > 512) cache.clear();
+        for (RecRect& q : rec) { q.x -= gx0; q.y -= gy0; }
+        const auto& stored = cache.emplace(key, std::move(rec)).first->second;
+        Replay(ren, stored, gx0, gy0, solidDraw);
+    }
 }
+
+
 
 } // namespace
 
@@ -1388,6 +1509,8 @@ public:
         if (!m_on) { m_in.FillRectF(r); return; }
         Painter::FillRectF(r);
     }
+    bool SupportsBulkRects() override { return !m_on && m_in.SupportsBulkRects(); }
+    void FillRectsF(const ColoredRect* q, int n) override { m_in.FillRectsF(q, n); }
     void FillRect(const Rect* r) override {
         if (!m_on || !r) { m_in.FillRect(r); return; }
         float x = (float)r->x, y = (float)r->y, w = (float)r->w, h = (float)r->h;

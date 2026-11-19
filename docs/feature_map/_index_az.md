@@ -2425,6 +2425,7 @@ Word, then the number(s) to say. Back to the [overview](../FEATURE_MAP.md).
 - Light component (2.3.1)
 - Light components (43.4.1)
 - Lighting and shadows (2.3, 26.4.4)
+- Lighting upgrade (2.3.7)
 - Lighting window (15.14, 15.14.1)
 - lightmap (2.3)
 - Lightmap bake (2.3.4)

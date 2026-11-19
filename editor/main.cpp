@@ -57,6 +57,8 @@
 #include "okay/Components/HoldPrompt.hpp"
 #include "okay/Components/LocalPlayerInput.hpp"
 #include "okay/Components/UIOwnerData.hpp"   // Inspector: which character a UI Text Bind / UI Bar Bind belongs to
+#include "okay/Render/LightingPresets.hpp"
+#include "okay/Render/LightProbeBake.hpp"
 #include "okay/Render/Lightmap.hpp"    // offline lightmap/shadow/AO baking
 #include "okay/Modeling/EditTransform.hpp"   // G / R / S modal transforms in mesh edit mode
 #include "okay/Modeling/MaterialLibrary.hpp"   // ready colours and slot palettes
@@ -7177,6 +7179,24 @@ static void DrawExampleMenuItems(EditorState& ed) {
         }
         if (uilib.empty() && ImGui::IsItemHovered(ImGuiHoveredFlags_AllowWhenDisabled)) ImGui::SetTooltip("The UI library examples (examples/ui_library) were not found next to the editor.");
     }
+    // Lighting: one scene per lighting preset (Sunny day, Sunset, Night with lamps, Indoor, Spooky fog).
+    {
+        namespace fs = std::filesystem;
+        const std::vector<std::string> lit = okay::editor::ExampleScenes("lighting");
+        if (ImGui::BeginMenu("Lighting presets (sun, sunset, night, indoor, fog)", !lit.empty())) {
+            ImGui::TextDisabled("Open one, then look in the Lighting window (View menu) to change it.");
+            for (const std::string& p : lit) {
+                const std::string name = fs::path(p).stem().string();
+                if (ImGui::MenuItem(name.c_str())) {
+                    std::string err;
+                    if (ed.Load(p, &err)) { ConsoleLog("Opened " + p); AddRecent(p); }
+                    else { ConsoleLog("Open failed: " + err, 2); ShowErrorPopup("Couldn't open the example", p + "\n" + err); }
+                }
+            }
+            ImGui::EndMenu();
+        }
+        if (lit.empty() && ImGui::IsItemHovered(ImGuiHoveredFlags_AllowWhenDisabled)) ImGui::SetTooltip("The lighting examples (examples/lighting) were not found next to the editor.");
+    }
 }
 
 static void DrawAutosaveMenuItems() {
@@ -13064,6 +13084,60 @@ void DrawSceneSettings(EditorState& ed) {
         else if (pixel)             ImGui::TextDisabled("Built-in 8x8 bitmap font.");
         else if (okay::GetFont(uf)) ImGui::TextColored(ImVec4(0.5f,0.85f,0.5f,1.0f), "TTF font loaded.");
         else                        ImGui::TextColored(ImVec4(0.9f,0.5f,0.4f,1.0f), "Font not found / failed to load.");
+    }
+
+    // Lighting presets: one click sets the sky, ambient, fog, post look and the lights (sun / moon, lamps, panel, lantern).
+    if (ImGui::CollapsingHeader("Lighting Presets", ImGuiTreeNodeFlags_DefaultOpen)) {
+        ImGui::TextWrapped("One click sets the sky, ambient light, fog and the lights. Lights it adds are named \"Lighting: ...\" "
+                           "(select and edit them like any light); a preset replaces them. Ctrl+Z undoes it.");
+        int np = 0; const okay::LightingPresetInfo* presets = okay::LightingPresetList(np);
+        for (int pi = 0; pi < np; ++pi) {
+            if (pi) ImGui::SameLine(0, 6);
+            if (pi == 3) ImGui::NewLine();
+            if (ImGui::Button(presets[pi].name)) {
+                ed.PushUndo();
+                okay::ApplyLightingPreset(ed.scene(), presets[pi].name);
+                ed.dirty = true;
+            }
+            if (ImGui::IsItemHovered()) ImGui::SetTooltip("%s", presets[pi].blurb);
+        }
+        auto& prs = ed.scene().renderSettings;
+        if (ImGui::Checkbox("Auto brightness", &prs.autoBrightness)) ed.dirty = true;
+        if (ImGui::IsItemHovered())
+            ImGui::SetTooltip("For lights set to Real world units (lux, lumens): scale everything so the scene's brightest light\n"
+                              "shows as fully lit, like an eye adapting. Off = a fixed level (a bright overcast day).");
+        bool classicLook = okay::ClassicLighting();
+        if (ImGui::Checkbox("Classic lighting look", &classicLook)) okay::ClassicLighting() = classicLook;
+        if (ImGui::IsItemHovered())
+            ImGui::SetTooltip("Goes back to the lighting before the 2026-11 upgrade (hard light clamp, straight spot ramp, fixed shadow blur,\n"
+                              "no stable cascades) so you can compare. Software renderer only. Not saved. Env var OKAY_CLASSIC_LIGHTING=1 does the same.");
+        DrawRendererNote(okay::RenderFeature::LightShapes);
+    }
+
+    // Light probes: ambient light that changes from place to place, baked here and saved with the scene.
+    if (ImGui::CollapsingHeader("Light Probes")) {
+        auto& pg = ed.scene().renderSettings.probes;
+        static float probeSpacing = 2.0f;
+        ImGui::TextWrapped("A grid of baked light samples. Surfaces get their ambient light from the probes around them, so a room under a roof "
+                           "is darker than open ground and a red wall tints the floor beside it.");
+        ImGui::SliderFloat("Probe spacing##probes", &probeSpacing, 0.5f, 8.0f, "%.1f m");
+        if (ImGui::IsItemHovered()) ImGui::SetTooltip("Distance between probes. Smaller = more detail, slower bake (the grid is at most 12 x 6 x 12).");
+        if (ImGui::Button("Bake probes")) {
+            ed.PushUndo();
+            const okay::LightProbeBakeResult br = okay::BakeLightProbes(ed.scene(), pg, probeSpacing);
+            ConsoleLog(br.message, br.ok ? 0 : 2);
+            if (br.ok) ed.dirty = true;
+        }
+        if (ImGui::IsItemHovered()) ImGui::SetTooltip("Bakes the scene's lights, sky and walls into the probes. Bake again after you move things or change the lights.");
+        if (pg.Baked()) {
+            ImGui::SameLine();
+            if (ImGui::Button("Clear probes")) { ed.PushUndo(); pg.Clear(); ed.dirty = true; }
+            if (ImGui::Checkbox("Use probes##probes", &pg.enabled)) ed.dirty = true;
+            ImGui::TextDisabled("%d probes (%d x %d x %d), every %.1f m.", pg.Count(), pg.nx, pg.ny, pg.nz, pg.spacing);
+        } else {
+            ImGui::TextDisabled("No probes baked: the flat / hemisphere ambient is used.");
+        }
+        ImGui::TextDisabled("Drawn by the software renderer only for now (OpenGL and Direct3D 11 keep the normal ambient).");
     }
 
     // Environment: the scene's skybox + ambient, saved with the scene so the
@@ -33671,8 +33745,38 @@ void DrawInspector(EditorState& ed) {
                 if (ImGui::ColorEdit4("Color##light", c)) { li->color = {c[0], c[1], c[2], c[3]}; ed.dirty = true; }
                 oked::FieldTip("Color##light");
             }
-            if (ImGui::DragFloat("Intensity##light", &li->intensity, 0.02f, 0.0f, 8.0f)) ed.dirty = true;
-            oked::FieldTip("Intensity##light");
+            {
+                // Units: Simple (1 = normal) or real-world (lux for the sun, lumens for lamps) with Auto brightness.
+                const bool real = li->unit == Light::Unit::RealWorld;
+                const bool sun = li->type == Light::Type::Directional;
+                if (!real) {
+                    if (ImGui::DragFloat("Intensity##light", &li->intensity, 0.02f, 0.0f, 8.0f)) ed.dirty = true;
+                } else {
+                    if (ImGui::DragFloat("Intensity##light", &li->intensity, 1.0f, 0.0f, 1000000.0f, sun ? "%.1f lux" : "%.0f lumens",
+                                         ImGuiSliderFlags_Logarithmic)) ed.dirty = true;
+                }
+                oked::FieldTip("Intensity##light");
+                const char* units[] = {"Simple (1 = normal)", "Real world (lux / lumens)"};
+                int un = (int)li->unit;
+                if (ImGui::Combo("Units##light", &un, units, 2)) {
+                    li->unit = (Light::Unit)un;
+                    li->intensity = un == 1 ? (sun ? 20000.0f : 800.0f) : 1.0f;   // a sensible starting value for the new unit
+                    ed.dirty = true;
+                }
+                if (ImGui::IsItemHovered())
+                    ImGui::SetTooltip("Simple: the number is the brightness, 1 = normal.\nReal world: lux for the sun (noon 100000, overcast 10000, moon 0.3),\nlumens for lamps (candle 12, 60 W bulb 800, street lamp 20000).\nThe scene's Auto brightness (Lighting window) keeps it readable.");
+                if (real) {
+                    static const struct { const char* n; float v; bool sunOnly; } kReal[] = {
+                        {"Noon sun", 100000.0f, true}, {"Overcast", 10000.0f, true}, {"Moon", 0.3f, true},
+                        {"Candle", 12.0f, false}, {"Bulb", 800.0f, false}, {"Street lamp", 20000.0f, false}};
+                    int shown = 0;
+                    for (const auto& r : kReal) {
+                        if (r.sunOnly != sun) continue;
+                        if (shown++) ImGui::SameLine(0, 4);
+                        if (ImGui::SmallButton((std::string(r.n) + "##real").c_str())) { li->intensity = r.v; ed.dirty = true; }
+                    }
+                }
+            }
 
             SectionHeader("Ambient (scene floor)");
             if (ImGui::SliderFloat("Ambient##light", &li->ambient, 0.0f, 1.0f)) ed.dirty = true;
@@ -33691,11 +33795,42 @@ void DrawInspector(EditorState& ed) {
                 if (ImGui::Combo("Falloff##light", &fo, falls, 2)) { li->falloff = (Light::Falloff)fo; ed.dirty = true; }
                 if (ImGui::IsItemHovered()) ImGui::SetTooltip("Linear = predictable (1-d/range)^2 rolloff.\nInverse Square = physically-based 1/d^2, brighter near the source.");
             }
+            if (li->type == Light::Type::Area) {
+                if (ImGui::DragFloat("Panel Width##light", &li->areaWidth, 0.05f, 0.0f, 100.0f, "%.2f m")) ed.dirty = true;
+                if (ImGui::DragFloat("Panel Height##light", &li->areaHeight, 0.05f, 0.0f, 100.0f, "%.2f m")) ed.dirty = true;
+                if (ImGui::IsItemHovered()) ImGui::SetTooltip("A real rectangle that shines along the light's blue (forward) arrow.\nBroad panels give wide soft light. 0 x 0 = the classic soft glow.");
+                DrawRendererNote(okay::RenderFeature::LightShapes);
+            }
             if (li->type == Light::Type::Spot) {
                 if (ImGui::SliderFloat("Spot Angle##light", &li->spotAngle, 5.0f, 170.0f)) ed.dirty = true;
                 oked::FieldTip("Spot Angle##light");
                 if (ImGui::SliderFloat("Softness##light", &li->spotSoftness, 0.0f, 1.0f)) ed.dirty = true;
                 if (ImGui::IsItemHovered()) ImGui::SetTooltip("0 = crisp cone edge, 1 = very feathered");
+            }
+
+            if (li->type == Light::Type::Directional || li->type == Light::Type::Spot) {
+                // Light mask (cookie): a window, blinds, leaves... the light shines through it.
+                SectionHeader("Mask (cookie)");
+                int nb = 0; const char* const* builtin = okay::LightCookies::BuiltinNames(nb);
+                int cur = 0;
+                if (!li->cookie.empty()) { cur = nb + 1; for (int i = 0; i < nb; ++i) if (li->cookie == builtin[i]) cur = i + 1; }
+                std::string preview = cur == 0 ? "None" : (cur <= nb ? std::string(builtin[cur - 1]).substr(8) : std::string("Picture file"));
+                if (ImGui::BeginCombo("Mask##lightck", preview.c_str())) {
+                    if (ImGui::Selectable("None", cur == 0)) { li->cookie.clear(); ed.dirty = true; }
+                    for (int i = 0; i < nb; ++i)
+                        if (ImGui::Selectable(std::string(builtin[i]).substr(8).c_str(), cur == i + 1)) { li->cookie = builtin[i]; ed.dirty = true; }
+                    if (ImGui::Selectable("Picture file...", cur == nb + 1)) { if (cur != nb + 1) li->cookie = "Assets/Textures/mask.png"; ed.dirty = true; }
+                    ImGui::EndCombo();
+                }
+                if (ImGui::IsItemHovered()) ImGui::SetTooltip("The light shines only through the bright parts of the mask.\nSpot: the mask fits the cone. Sun: it repeats across the ground.");
+                if (cur == nb + 1) {
+                    char buf[260]; std::snprintf(buf, sizeof buf, "%s", li->cookie.c_str());
+                    if (ImGui::InputText("File##lightck", buf, sizeof buf)) { li->cookie = buf; ed.dirty = true; }
+                    if (ImGui::IsItemHovered()) ImGui::SetTooltip("A picture: white lets light through, black blocks it.");
+                }
+                if (cur != 0 && li->type == Light::Type::Directional)
+                    if (ImGui::DragFloat("Metres per repeat##lightck", &li->cookieScale, 0.1f, 0.1f, 200.0f, "%.1f m")) ed.dirty = true;
+                if (cur != 0) DrawRendererNote(okay::RenderFeature::LightShapes);
             }
 
             SectionHeader("Shadows");
@@ -33714,6 +33849,9 @@ void DrawInspector(EditorState& ed) {
             if (li->castShadows) {
                 if (ImGui::SliderFloat("Strength##lightsh", &li->shadowStrength, 0.0f, 1.0f)) ed.dirty = true;
                 if (ImGui::IsItemHovered()) ImGui::SetTooltip("0 = invisible, 1 = fully dark (down to the ambient light)");
+                if (ImGui::SliderFloat("Soft Edges##lightsh", &li->shadowSoftness, 0.0f, 1.0f)) ed.dirty = true;
+                if (ImGui::IsItemHovered()) ImGui::SetTooltip("0 = the same soft edge everywhere.\nHigher = a shadow is sharp where the object touches the ground and softer the farther it falls.");
+                DrawRendererNote(okay::RenderFeature::LightShapes);
                 if (ImGui::SliderFloat("Bias##lightsh", &li->shadowBias, 0.0f, 4.0f)) ed.dirty = true;
                 if (ImGui::IsItemHovered()) ImGui::SetTooltip("Raise if surfaces get dark speckles/stripes (shadow acne).\nLower if shadows look detached from the objects casting them.");
             }

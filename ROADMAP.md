@@ -93,6 +93,7 @@ _Last updated: 2026-11-13 17:55 UTC_
 | Session | Plan | Current |
 |---|---|---|
 | Main | Coordination, merges, releases | Merging and releasing as PRs go green |
+| Textures | Our own texture library (`docs/own_texture_library.md`, branch `claude/texture-lib-1`) | Mips, atlas, convert, BC1/3/4/5, DDS, streaming planner and `okay-texture` written and tested; next: load DDS in the renderers |
 | QA | Anti-cheat hardening, PRs 1–4, 6, 8–14 | PRs 8, 9, 10, 12 (#363, #365, #368, #376) merging main back in after #372; PR 6 (#360) waits on Iman's OK; PR 13 next |
 | Humanoid | IK, animation and humanoid rigging, PRs 1–8 | Items 1–5 and 7 done; item 6 (rest-pose normalisation) is next |
 | Release | Anti-cheat hardening, PRs 5 and 7 | PR 7 merged; relay follow-ups (voice calls on v3 hellos, sessions per address); PR 5 (#350) waits on Iman's OK |

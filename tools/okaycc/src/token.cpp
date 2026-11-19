@@ -7,7 +7,7 @@ bool isKeywordSpelling(const std::string& spelling) {
     static const char* const kWords[] = {
         "_Alignas", "_Alignof", "_Atomic", "_Bool", "_Complex", "_Generic",
         "_Imaginary", "_Noreturn", "_Static_assert", "_Thread_local",
-        "auto", "bool", "break", "case", "char", "class", "const", "continue", "default", "delete", "do",
+        "auto", "bool", "catch", "throw", "try", "break", "case", "char", "class", "const", "continue", "default", "delete", "do",
         "double", "else", "enum", "extern", "float", "for", "goto", "if",
         "inline", "int", "long", "namespace", "new", "nullptr", "private", "public", "register", "restrict",
         "return", "short", "signed", "sizeof", "static", "struct", "switch", "this", "typedef", "union",

@@ -230,6 +230,88 @@ int main() {
     }
     {
         const char* src =
+            "int total;\n"
+            "class Foo {\n"
+            "public:\n"
+            "  int v;\n"
+            "  Foo(int a) : v(a) { total = total + a; }\n"
+            "  ~Foo() { total = total * 2; }\n"
+            "};\n"
+            "int main() {\n"
+            "  {\n"
+            "    Foo f(3);\n"
+            "    if (f.v != 3) return 1;\n"
+            "  }\n"
+            "  return total;\n"
+            "}\n";
+        std::string as;
+        int got = runExit(src, &as);
+        if (got != 6 || as.find("_ZN3FooC1Ei") == std::string::npos || as.find("_ZN3FooD1Ev") == std::string::npos) {
+            std::fprintf(stderr, "FAIL class ctor/dtor exit %d\n%s\n", got, as.c_str());
+            ++okaycc_test::gFail;
+        } else {
+            ++gOk;
+        }
+    }
+    {
+        const char* src =
+            "class Animal {\n"
+            "public:\n"
+            "  virtual int legs() { return 0; }\n"
+            "  virtual int ears() { return 2; }\n"
+            "};\n"
+            "class Dog : public Animal {\n"
+            "public:\n"
+            "  int legs() { return 4; }\n"
+            "};\n"
+            "int ask(Animal *a) { return a->legs() * 10 + a->ears(); }\n"
+            "int main() {\n"
+            "  Dog d;\n"
+            "  Animal a;\n"
+            "  if (ask(&a) != 2) return 1;\n"
+            "  return ask(&d);\n"
+            "}\n";
+        std::string as;
+        int got = runExit(src, &as);
+        // The vtable is _ZTV<class>: offset-to-top, type info (we write 0), then the slots in order.
+        bool table = as.find("_ZTV3Dog:") != std::string::npos && as.find("_ZTV6Animal:") != std::string::npos &&
+                     as.find(".quad _ZN3Dog4legsEv") != std::string::npos &&
+                     as.find(".quad _ZN6Animal4earsEv") != std::string::npos;
+        if (got != 42 || !table) {
+            std::fprintf(stderr, "FAIL virtual call exit %d table %d\n%s\n", got, table ? 1 : 0, as.c_str());
+            ++okaycc_test::gFail;
+        } else {
+            ++gOk;
+        }
+    }
+    {
+        const char* src =
+            "template <typename T> T twice(T a) { return a + a; }\n"
+            "template <typename T, int N> struct Box {\n"
+            "  T v;\n"
+            "  Box(T x) : v(x) {}\n"
+            "  T get() { return v + N; }\n"
+            "};\n"
+            "int main() {\n"
+            "  Box<int, 3> b(4);\n"
+            "  Box<long, 5> c(1);\n"
+            "  return twice(b.get()) + twice<int>(1) + (int)c.get();\n"
+            "}\n";
+        std::string as;
+        int got = runExit(src, &as);
+        // Itanium names: Box<int, 3> is 3BoxIiLi3EE, a function template instance is _Z5twiceIiEi.
+        bool names = as.find("_ZN3BoxIiLi3EE3getEv") != std::string::npos &&
+                     as.find("_ZN3BoxIlLi5EEC1El") != std::string::npos &&
+                     as.find("_Z5twiceIiEi") != std::string::npos;
+        if (got != 22 || !names) {
+            std::fprintf(stderr, "FAIL templates exit %d names %d\n%s\n", got, names ? 1 : 0, as.c_str());
+            ++okaycc_test::gFail;
+        } else {
+            ++gOk;
+        }
+    }
+    {
+        const char* src =
             "int main() {\n"
             "  bool b;\n"
             "  int *p;\n"

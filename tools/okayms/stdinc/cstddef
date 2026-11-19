@@ -1,0 +1,6 @@
+// okay-ms own standard header (written from ISO/IEC 14882 [support.types]). Not the Microsoft or GNU one.
+#pragma once
+namespace std {
+typedef unsigned long long size_t;
+typedef long long ptrdiff_t;
+}

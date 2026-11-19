@@ -1,6 +1,6 @@
 # Our own OGRE mesh readers (`.mesh.xml` and binary `.mesh`)
 
-Status: **side by side, off by default**: the XML form behind `OKAY_OWN_OGRE` (slot 23), the binary `.mesh` behind `OKAY_OWN_OGREBIN` (slot 43, added 2026-11-16 in the "Assimp gap" batch, `docs/own_code_roadmap.md`, section "What still needs Assimp"); same rules as `docs/own_3mf_reader.md`. Assimp (when built) is still the only other reader of OGRE meshes. Nothing was flipped. **Skeletons are not read** in either form (`.skeleton`, `.skeleton.xml`; see "Not done").
+Status: **side by side, off by default**: the XML form behind `OKAY_OWN_OGRE` (slot 23), the binary `.mesh` behind `OKAY_OWN_OGREBIN` (slot 43, added 2026-11-16 in the "Assimp gap" batch, `docs/own_code_roadmap.md`, section "What still needs Assimp"); same rules as `docs/own_3mf_reader.md`. Assimp (when built) is still the only other reader of OGRE meshes. Nothing was flipped. **Skeletons**: the XML skeleton (`.skeleton.xml`) is read with the XML mesh (section "The skeleton" below); the binary `.skeleton` and bone assignments of the binary `.mesh` are not read.
 
 ## What it is
 
@@ -33,6 +33,18 @@ Read: the mesh chunk (`0x3000`); shared geometry (`0x5000`) and each submesh's o
 
 Before anything is allocated from a vertex count, the positions must sit in a vertex buffer whose data lies inside the file (12 bytes per vertex), so a small file cannot ask for big arrays; index lists must lie inside the file too. A position, normal or texture coordinate that is not a finite number refuses the file.
 
+## The skeleton (`.skeleton.xml`), added 2026-11-19 (branch `claude/own-third-party-1`)
+
+Written from the public description of the skeleton XML (`<skeleton>` with `<bones>`, `<bonehierarchy>`, `<animations>`), no code from OGRE or any importer.
+
+- **When it is read.** `ReadOgreXmlFile` takes the `<skeletonlink name="x.skeleton"/>` of the mesh and reads `x.skeleton.xml` from the mesh's own folder (`ResolveInsideDir`: no absolute path, no `..`, no link out; at most 64 MB). `ReadOgreXmlBuffer` takes the text as its new last argument (`skeletonXml`). No skeleton text, or one that cannot be read: the mesh is imported rigid as before and the note says why. Nothing else changes for meshes without a link.
+- **Bones.** Each `<bone id name>` with `<position>`, `<rotation angle><axis/></rotation>` (radians) and `<scale>` becomes a node under the root `OGRE` (parents first; a parent loop is cut, an unknown parent name is skipped, repeated names are renamed). Bone ids need not be in file order: the mesh's `boneindex` is an id. Inverse bind matrices are the inverses of the global bind matrices (a flat bind transform gets an identity and a note).
+- **Skin.** `<vertexboneassignment vertexindex boneindex weight>` from the submesh's `<boneassignments>`, or the mesh's for submeshes on the shared vertices. The four strongest bones per vertex stay (a bone named twice adds up), weights are normalised, and they follow each vertex through the welding of the output mesh (`BuildMesh` now reports which source vertex each output vertex came from). A vertex with no usable weight is tied to a root bone with an identity inverse bind, so it does not move; a submesh with no assignments stays rigid.
+- **Clips.** Each `<animation>` is a clip; each `<track bone>` a channel on that bone's node. A keyframe is a delta from the bind pose: position = bind position + translate (parent space), rotation = bind rotation * key rotation, scale = bind scale * key scale. A component that no key of the track names gets no keys. Keys are sorted by time and kept on one side of the quaternion sphere. Linear keys only: the `interpolationmode` / `rotationinterpolationmode` attributes (spline) are not read.
+- **Caps.** 10,000 bones, 2,000 animations, 4,000,000 keyframes, the XML reader's element caps.
+- **Tests.** `ogre_skeleton` (`tests/test_ogre_skeleton.cpp`): hand-computed inverse binds, weights through a vertex reorder, ids out of file order, the clip numbers, the zero weight, five influences, a parent loop, repeated names, missing bones and bad vertex numbers, `nan`, every truncation of the skeleton text, and the file rules (the skeleton is found next to the mesh, `../` is refused, a missing file leaves the mesh rigid). Built and run under ASan and UBSan by hand; 0 failures.
+- **Not checked, honestly.** No real skeleton file was read in this change (Assimp's `fish`, `ninja` and `razor` skeletons are not in this checkout), so there is **no comparison with Assimp yet** and the bind-pose and keyframe conventions above rest on the format description only. The binary `.skeleton`, spline interpolation, bone `manualBone` flags, skeleton blending and the `animationlink` elements are not read. The seam in `ModelImport.cpp` is unchanged, so the skeleton is read through the same switch as the XML mesh (off by default).
+
 ## Not handled (each is a line in `out.notes`)
 
 The skeleton link and `<boneassignments>` (the mesh is imported rigid, at its bind pose), poses and morph animation, levels of detail, vertex colours, tangents, second and later texture coordinate sets, everything in material scripts beyond the first pass colours and first texture (parents, other techniques, shaders, blend modes).
@@ -41,7 +53,7 @@ The skeleton link and `<boneassignments>` (the mesh is imported rigid, at its bi
 
 - **The editor does not recognise `.mesh.xml` by itself.** Its project panel and drag-and-drop look at the last extension (`.xml`), so only the Import Model dialog (whose file filter lists `*.mesh.xml`) and `ImportModelData` / `ImportModel` take the file. Teaching the editor's `IsModelExt` the two-part extension is not done.
 - **Binary `.mesh`: done** (2026-11-16, above). Not read in it: vertex elements that are not 32-bit floats (16-bit texture coordinates, packed normals), big-endian files.
-- **`.skeleton` and `.skeleton.xml`**: bones, bind pose, animations, weights. Not started in either form; it needs the skin path the other skinned readers use. Assimp reads them (fish has 4 bones and a clip, ninja 21 bones and 20 clips), so a skinned OGRE mesh still imports rigid with ours.
+- **`.skeleton.xml`: done 2026-11-19** (section above), not compared with Assimp on the real files. **Binary `.skeleton` and the bone assignments of the binary `.mesh` (chunks `0x4100`, `0x7000`): not started.** Assimp reads fish (4 bones, a clip) and ninja (21 bones, 20 clips).
 
 ## Limits
 

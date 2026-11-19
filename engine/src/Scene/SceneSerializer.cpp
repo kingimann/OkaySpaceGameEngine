@@ -9699,6 +9699,7 @@ bool SceneSerializer::MergeFromFile(Scene& scene, const std::string& path, const
 // ---- Components that use the registry ------------------------------------
 namespace detail {
 void RegisterBuiltinComponentSerializers() {
+    RegisterPhysicsToySerializers();
     ComponentSerializerRegistry::Entry trail;
     trail.name = "trailrenderer";
     trail.write = [](const GameObject& go, std::ostream& out) {

@@ -4,6 +4,7 @@
 
 #include <cstdint>
 #include <string>
+#include <utility>
 #include <vector>
 
 namespace okaycc {
@@ -76,6 +77,7 @@ struct Global {
     bool rodata = false;
     std::vector<unsigned char> bytes;
     std::string reloc;  // if set, the 8-byte value is the address of this symbol
+    std::vector<std::pair<int, std::string>> relocs;  // (byte offset, symbol) 8-byte addresses inside bytes
 };
 
 struct Module {

@@ -1,0 +1,11 @@
+// okay-ms own standard header: declarations only (ISO/IEC 14882 [cstdio.syn]). The functions are the C runtime's
+// (tools/okayms/runtime/printf.c); the conversions a program can use are listed there (d i u x X c s f, flags - + 0
+// space, width, precision, length l ll z j t h).
+#pragma once
+namespace std {
+extern "C" {
+int printf(const char *fmt, ...);
+int snprintf(char *buf, unsigned long long cap, const char *fmt, ...);
+int puts(const char *s);
+}
+}

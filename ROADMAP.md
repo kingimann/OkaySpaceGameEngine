@@ -10,6 +10,7 @@ _Last updated: 2026-11-13 17:55 UTC_
 
 | Version | What's in it |
 |---|---|
+| 2.888.0 | Editor frame-time overlay with frame limiter and Performance mode; experimental Xbox One UWP test export (Developer Mode, never run on a console); downloadable signed game content (okay-content tool, off by default); CI time limits and a round-picture edge fix |
 | 2.887.0 | UI bundle: Visual Script plain-word side panel with Saved values (made by typing a name, Me or All), about 30 new game-logic blocks and a Rule block, Set Value To presets, merged Move/Turn/Resize and Show/Hide blocks, five new recipe cards, Play highlight |
 | 2.886.0 | UI bundle: Modeling without the Advanced menu and with plain page names; Project panel one or two columns; Visual Script panning (Pan button, Space-drag, arrow keys, trackpad option); Visual Script start screen recipe cards, blocks that auto-connect, plain error messages with Fix it for me, what-just-happened notes; right-click Add menu in the Scene view |
 | 2.885.0 | Visual Script made simple: Quick blocks (one block does a whole job), recipe cards on an empty script, a 55-node Add node list, a roomier window and a bigger node search popup; Project panel tabs; easier Modeling with a foldable sidebar |
@@ -92,6 +93,7 @@ _Last updated: 2026-11-13 17:55 UTC_
 | Session | Plan | Current |
 |---|---|---|
 | Main | Coordination, merges, releases | Merging and releasing as PRs go green |
+| Textures | Our own texture library (`docs/own_texture_library.md`, branch `claude/texture-lib-1`) | Mips, atlas, convert, BC1/3/4/5, DDS, streaming planner and `okay-texture` written and tested; next: load DDS in the renderers |
 | QA | Anti-cheat hardening, PRs 1–4, 6, 8–14 | PRs 8, 9, 10, 12 (#363, #365, #368, #376) merging main back in after #372; PR 6 (#360) waits on Iman's OK; PR 13 next |
 | Humanoid | IK, animation and humanoid rigging, PRs 1–8 | Items 1–5 and 7 done; item 6 (rest-pose normalisation) is next |
 | Release | Anti-cheat hardening, PRs 5 and 7 | PR 7 merged; relay follow-ups (voice calls on v3 hellos, sessions per address); PR 5 (#350) waits on Iman's OK |

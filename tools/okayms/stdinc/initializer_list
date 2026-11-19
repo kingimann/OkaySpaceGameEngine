@@ -1,0 +1,22 @@
+// okay-ms own standard header: std::initializer_list, written from ISO/IEC 14882 [support.initlist] (a pointer to the
+// first element and a count). The compiler builds one from a braced list `{a, b, c}` that is passed to a parameter of
+// this type: a hidden array on the stack holds the elements and the list points at it.
+#pragma once
+#include <cstddef>
+namespace std {
+template <typename T>
+class initializer_list {
+    const T* first_;
+    size_t count_;
+
+public:
+    typedef T value_type;
+    typedef const T* iterator;
+    typedef const T* const_iterator;
+    initializer_list() : first_(0), count_(0) {}
+    initializer_list(const T* first, size_t count) : first_(first), count_(count) {}
+    size_t size() const { return count_; }
+    const T* begin() const { return first_; }
+    const T* end() const { return first_ + count_; }
+};
+}

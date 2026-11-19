@@ -9805,6 +9805,52 @@ void RegisterBuiltinComponentSerializers() {
     };
     ComponentSerializerRegistry::Register(std::move(waterwaves));
 
+    // How the water looks (sea state, depth colours, foam, ripples, rings, splashes, underwater). A scene without this record
+    // loads with every look setting off, so old scenes look as they did. docs/water_visuals.md.
+    ComponentSerializerRegistry::Entry watervis;
+    watervis.name = "watervis";
+    watervis.write = [](const GameObject& go, std::ostream& out) {
+        for (auto* w : go.GetComponents<Water>()) {
+            const Water def;
+            auto sameCol = [](const Color& x, const Color& y) { return x.r == y.r && x.g == y.g && x.b == y.b && x.a == y.a; };
+            if (!w->realisticLook && !w->lod && !w->interactive && !w->underwaterEffect && !w->bubbles && w->seaState == 0 &&
+                w->clarity == def.clarity && w->assumedDepth == def.assumedDepth && w->foamAmount == def.foamAmount &&
+                w->shoreFoamWidth == def.shoreFoamWidth && w->scatter == def.scatter && w->ripples == def.ripples &&
+                w->rippleSize == def.rippleSize && w->lodRings == def.lodRings && w->infinite == def.infinite &&
+                sameCol(w->shallowColor, def.shallowColor) && sameCol(w->deepColor, def.deepColor) && sameCol(w->foamColor, def.foamColor)) continue;
+            out << "  watervis";
+            KvOut k{out};
+            k("sea", w->seaState).b("rich", w->realisticLook).col("sh", w->shallowColor).col("dp", w->deepColor)
+             ("clar", w->clarity)("adep", w->assumedDepth).col("fm", w->foamColor)
+             ("foam", w->foamAmount)("shore", w->shoreFoamWidth)
+             ("scat", w->scatter)("rip", w->ripples)("ripsz", w->rippleSize).b("lod", w->lod)("rings", w->lodRings)
+             .b("inf", w->infinite).b("inter", w->interactive).b("under", w->underwaterEffect).b("bub", w->bubbles);
+            out << "\n";
+        }
+    };
+    watervis.read = [](GameObject& go, std::istream& in) {
+        auto ws = go.GetComponents<Water>();
+        Water* w = ws.empty() ? nullptr : ws.back();
+        KvIn k(in);
+        if (!w) return;
+        auto fin = [](float& v, float lo, float hi, float fallback) { if (!std::isfinite(v)) v = fallback; v = std::min(hi, std::max(lo, v)); };
+        k.i("sea", w->seaState); k.b("rich", w->realisticLook);
+        k.col("sh", w->shallowColor); k.col("dp", w->deepColor); k.col("fm", w->foamColor);
+        k.f("clar", w->clarity); k.f("adep", w->assumedDepth); k.f("foam", w->foamAmount); k.f("shore", w->shoreFoamWidth);
+        k.f("scat", w->scatter); k.f("rip", w->ripples); k.f("ripsz", w->rippleSize);
+        k.b("lod", w->lod); k.i("rings", w->lodRings); k.b("inf", w->infinite); k.b("inter", w->interactive);
+        k.b("under", w->underwaterEffect); k.b("bub", w->bubbles);
+        w->seaState = std::min(4, std::max(0, w->seaState));
+        w->lodRings = std::min(8, std::max(1, w->lodRings));
+        fin(w->clarity, 0.05f, 200.0f, 6.0f); fin(w->assumedDepth, 0.0f, 10000.0f, 12.0f); fin(w->foamAmount, 0.0f, 1.0f, 0.5f);
+        fin(w->shoreFoamWidth, 0.0f, 50.0f, 1.2f); fin(w->scatter, 0.0f, 1.0f, 0.4f); fin(w->ripples, 0.0f, 1.0f, 0.0f);
+        fin(w->rippleSize, 0.05f, 20.0f, 1.0f);
+        for (float* c : {&w->shallowColor.r, &w->shallowColor.g, &w->shallowColor.b, &w->shallowColor.a, &w->deepColor.r, &w->deepColor.g,
+                         &w->deepColor.b, &w->deepColor.a, &w->foamColor.r, &w->foamColor.g, &w->foamColor.b, &w->foamColor.a}) fin(*c, 0.0f, 1000.0f, 0.5f);
+        if (w->realisticLook || w->lod) w->Apply();     // the look decides the material colour, normal map and mesh
+    };
+    ComponentSerializerRegistry::Register(std::move(watervis));
+
     ComponentSerializerRegistry::Entry buoy;
     buoy.name = "buoyancy";
     buoy.write = [](const GameObject& go, std::ostream& out) {

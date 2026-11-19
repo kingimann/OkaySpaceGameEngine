@@ -1117,7 +1117,9 @@ void JobSystem::ParallelForImpl(std::size_t begin, std::size_t end, std::size_t 
         return;
     }
 
-    if (I.stealing.load(std::memory_order_relaxed)) {
+    // A loop with only a few chunks per thread (a frame's many little loops) finishes before sleeping workers wake up; the
+    // shared-counter helpers do better there (measured, docs/core_runtime_upgrade.md), so stealing is for larger loops.
+    if (I.stealing.load(std::memory_order_relaxed) && chunks >= ((std::size_t)workers + 1) * 32) {
         // Recursive halving over chunk indices: split off the upper half as a task, keep the lower
         // half, until one chunk is left. Chunk boundaries are the same as in the serial path.
         struct Ctx {

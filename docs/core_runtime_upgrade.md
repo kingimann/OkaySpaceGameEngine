@@ -41,8 +41,51 @@ spin locks, `thread_local`, and the existing `CoreThreads.hpp` wrapper inside `J
 
 ## Measured numbers
 
-See the end of this page (filled in from the runs in the report). All on a shared 4-thread Linux container, so treat small
-differences as noise.
+Run on a shared 4-thread Linux container (Release build, another build was running at the same time, so the machine did
+not scale: even the uneven case B takes the same time at 0 and 4 workers). Read these as "no regression, same ballpark",
+not as proof of a speed-up. `test_jobs_bench` output, best of 3, ms:
+
+```
+job benchmark: 4 hardware threads, scale 1 (best of 3, ms; lower is better)
+case                                workers shared-queue     stealing  speedup
+A: 262144 items, grain 16 x4              0        40.47        22.02    1.84x
+B: uneven work, 4096 items x5             0        42.78        43.24    0.99x
+C: 2000 small loops of 64 items           0         1.17         1.17    1.00x
+D: fork-join fib(30)                      0          n/a         4.13
+   stats: forked 12540, stolen 0, arena 196608 bytes, 27 resets
+A: 262144 items, grain 16 x4              1        21.59        25.36    0.85x
+B: uneven work, 4096 items x5             1        42.33        41.96    1.01x
+C: 2000 small loops of 64 items           1         2.40         2.39    1.01x
+D: fork-join fib(30)                      1          n/a         8.59
+   stats: forked 12945, stolen 1140, arena 458752 bytes, 30 resets
+A: 262144 items, grain 16 x4              2        21.62        28.02    0.77x
+B: uneven work, 4096 items x5             2        41.88        42.08    1.00x
+C: 2000 small loops of 64 items           2         2.74         6.26    0.44x
+D: fork-join fib(30)                      2          n/a         4.82
+   stats: forked 13377, stolen 1837, arena 458752 bytes, 30 resets
+A: 262144 items, grain 16 x4              4        25.96        23.76    1.09x
+B: uneven work, 4096 items x5             4        42.26        42.61    0.99x
+C: 2000 small loops of 64 items           4         4.49         4.18    1.07x
+D: fork-join fib(30)                      4          n/a         8.98
+   stats: forked 14241, stolen 1152, arena 458752 bytes, 30 resets
+4 checks, 0 failures
+```
+
+What the numbers say, honestly: for plain `ParallelFor` loops the new path is about equal to the old one within the noise
+(A: 0.8x to 1.8x, B: 1.0x, C: equal because small loops use the old path now; an earlier run with stealing on small loops was
+2 to 6 times slower, which is why loops under 32 chunks per thread stay on the shared-counter path). The real gain is the new
+capability: nested fork-join (case D, `fib(30)` with tasks forking tasks) works without blocking a pool thread per level, and a
+fork costs no `malloc`. A quiet machine is needed to measure scaling properly (unverified).
+
+Frame arena in `Scene` (`test_frame_arena_bench`, Release, same container):
+
+| What | Before (heap vector) | After (frame arena) |
+|---|---|---|
+| camera list built every frame (3 cameras) | 108.6 ns | 34.1 ns (3.2x) |
+| click snapshot, 2003 components (frames with a mouse press) | 4324 ns | 1365 ns (3.2x) |
+| whole `Scene::Update`, 2003 objects, 3 cameras | not measured before the change | 105 us (the saving is about 0.07 us of it: too small to see in a whole frame) |
+
+The "before" numbers are the old code pattern timed in isolation next to the new one, not a second build of the engine.
 
 ## Not done / unverified
 

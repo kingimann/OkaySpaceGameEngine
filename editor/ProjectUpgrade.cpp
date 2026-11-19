@@ -128,6 +128,15 @@ std::string ProjectRootForScene(const std::string& scene) {
     return IsProjectRoot(dir) ? dir.string() : std::string();
 }
 
+std::string SceneKeyForProject(const std::string& projectDir) {
+    if (projectDir.empty()) return {};
+    const fs::path dir = okayproj::Absolute(fs::path(projectDir));
+    if (!IsProjectRoot(dir)) return {};
+    std::error_code ec;
+    const fs::path key = fs::is_directory(dir / "Assets", ec) ? dir / "Assets" / "project.okayscene" : dir / "project.okayscene";
+    return key.string();
+}
+
 std::string RootKey(const std::string& root) {
     std::error_code ec;
     fs::path p = fs::weakly_canonical(fs::path(root), ec);

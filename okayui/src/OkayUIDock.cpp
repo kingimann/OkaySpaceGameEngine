@@ -24,7 +24,7 @@ std::string Display(const std::string& name) {
     return p == std::string::npos ? name : name.substr(0, p);
 }
 
-struct TabRect { std::string name; int node = 0; int index = 0; Rect r, close; };
+struct TabRect { std::string name; int node = 0; int index = 0; Rect r, close; float ideal = 0.0f; };
 
 struct Ctx {
     DockLayout layout;
@@ -32,6 +32,7 @@ struct Ctx {
     Rect area;
     float tabH = 24.0f;
     std::vector<TabRect> tabs;
+    std::vector<std::pair<int, float>> reserve;   // leaf -> width kept free at the right end of its strip (SetDockTrailingReserve)
     std::vector<Rect> floatPrev, floatCur;
     std::vector<std::string> closed;
 
@@ -55,11 +56,15 @@ void BuildTabs(Ctx& c) {
     c.tabs.clear();
     const float pad = 10.0f, closeW = c.tabH * 0.7f;
     for (const DockLayout::Node& n : c.layout.Nodes()) {
-        if (n.IsSplit() || n.tabs.empty()) continue;
+        if (n.IsSplit() || n.tabs.empty() || n.noTabBar) continue;
+        float keep = 0.0f;
+        for (const auto& rv : c.reserve) if (rv.first == n.id) keep = rv.second;
+        keep = std::max(0.0f, std::min(keep, n.rect.w * 0.5f));
         std::vector<float> w;
         float total = 0.0f;
         for (const std::string& t : n.tabs) { const float tw = CalcTextSize(Display(t).c_str()).x + 2.0f * pad + closeW; w.push_back(tw); total += tw; }
-        const float scale = total > n.rect.w && total > 0.0f ? n.rect.w / total : 1.0f;
+        const float room = n.rect.w - keep;
+        const float scale = total > room && total > 0.0f ? room / total : 1.0f;
         float x = n.rect.x;
         for (size_t i = 0; i < n.tabs.size(); ++i) {
             TabRect t;
@@ -68,6 +73,7 @@ void BuildTabs(Ctx& c) {
             t.r = Rect{x, n.rect.y, tw, std::min(c.tabH, n.rect.h)};
             const float cw = std::min(closeW, tw * 0.4f);
             t.close = Rect{x + tw - cw, t.r.y, cw, t.r.h};
+            t.ideal = w[i];
             c.tabs.push_back(t);
             x += tw;
         }
@@ -103,8 +109,9 @@ DockDropInfo EvalDrop(Ctx& c, Vec2 m) {
     const Rect& r = n->rect;
     d.active = true; d.node = leaf; d.side = DockSide_Center; d.preview = r;
     if (n->tabs.empty()) return d;
-    if (m.y < r.y + c.tabH) return d;               // over the tab strip: join the tabs
-    const float u = (m.x - r.x) / std::max(1.0f, r.w), v = (m.y - (r.y + c.tabH)) / std::max(1.0f, r.h - c.tabH);
+    const float th = n->noTabBar ? 0.0f : c.tabH;
+    if (m.y < r.y + th) return d;                   // over the tab strip: join the tabs
+    const float u = (m.x - r.x) / std::max(1.0f, r.w), v = (m.y - (r.y + th)) / std::max(1.0f, r.h - th);
     const float dl = u, dr = 1.0f - u, dt = v, db = 1.0f - v;
     const float best = std::min(std::min(dl, dr), std::min(dt, db));
     if (best >= 0.25f) return d;
@@ -161,7 +168,9 @@ bool DockLoadLayout(const std::string& blob, int* repairs) {
     return ok;
 }
 
+void ApplyDockNodeEdits();   // OkayUIDockNodes.cpp
 void DockSpace(Rect area) {
+    ApplyDockNodeEdits();   // writes ported code made to dock-node snapshots since the last frame
     Ctx& c = C();
     const long long frame = GetFrameCount();
     if (c.spaceFrame != frame - 1 && c.spaceFrame != frame) { c.kind = Ctx::None; c.drop = DockDropInfo(); }   // the dock was not drawn last frame
@@ -178,6 +187,7 @@ void DockSpace(Rect area) {
     if (in.displayH > 0.0f) { y0 = std::max(0.0f, std::min(y0, in.displayH)); y1 = std::max(0.0f, std::min(y1, in.displayH)); }
     c.area = Rect{x0, y0, std::max(0.0f, x1 - x0), std::max(0.0f, y1 - y0)};
     c.tabH = GetFrameHeight();
+    for (size_t i = c.reserve.size(); i-- > 0;) if (!c.layout.Find(c.reserve[i].first)) c.reserve.erase(c.reserve.begin() + (std::ptrdiff_t)i);
     Rebuild(c);
 
     const Vec2 m = GetMousePos();
@@ -271,7 +281,7 @@ void DockSpace(Rect area) {
         if (n.IsSplit()) continue;
         const Rect& r = n.rect;
         dl.AddRectFilled(V(r.x, r.y), V(r.x + r.w, r.y + r.h), n.tabs.empty() ? emptyBg : panel);
-        dl.AddRectFilled(V(r.x, r.y), V(r.x + r.w, r.y + std::min(c.tabH, r.h)), track);
+        if (!n.noTabBar) dl.AddRectFilled(V(r.x, r.y), V(r.x + r.w, r.y + std::min(c.tabH, r.h)), track);
         dl.AddRect(V(r.x, r.y), V(r.x + r.w, r.y + r.h), border);
         if (n.tabs.empty()) {
             const char* hint = "Drop windows here";
@@ -370,6 +380,35 @@ bool DockBegin(const char* title, bool* p_open, int flags) {
     }
     return vis;
 }
+
+std::vector<DockTabInfo> GetDockTabs() {
+    const Ctx& c = C();
+    std::vector<DockTabInfo> out;
+    for (const TabRect& t : c.tabs) {
+        const DockLayout::Node* n = c.layout.Find(t.node);
+        DockTabInfo i; i.window = t.name; i.node = t.node; i.index = t.index; i.rect = t.r; i.idealWidth = t.ideal;
+        i.selected = n && n->active == t.index;
+        out.push_back(i);
+    }
+    return out;
+}
+Rect GetDockArea() { return C().area; }
+float GetDockTabHeight() { return C().tabH; }
+void SetDockTrailingReserve(int leaf, float width) {
+    Ctx& c = C();
+    if (!(width > 0.0f) || !std::isfinite(width)) width = 0.0f;
+    for (size_t i = 0; i < c.reserve.size(); ++i) if (c.reserve[i].first == leaf) { if (width == 0.0f) c.reserve.erase(c.reserve.begin() + (std::ptrdiff_t)i); else c.reserve[i].second = width; return; }
+    if (width > 0.0f && c.reserve.size() < 64) c.reserve.push_back({leaf, width});
+}
+Rect GetDockStripRect(int leaf) {
+    const Ctx& c = C();
+    const DockLayout::Node* n = c.layout.Find(leaf);
+    if (!n || n->IsSplit() || n->noTabBar || n->tabs.empty()) return Rect{};
+    return Rect{n->rect.x, n->rect.y, n->rect.w, std::min(c.tabH, n->rect.h)};
+}
+
+bool DockClosedPending(const char* title) { if (!title) return false; for (const std::string& n : C().closed) if (n == title) return true; return false; }   // a tab was closed and its DockBegin has not been told yet
+bool DockInsideBegin() { const Ctx& c = C(); return c.inBegin && !c.began; }   // DockBegin is in its own call to Begin: that Begin must not be routed back (SetDockAwareBegin)
 
 void DockEnd() {
     Ctx& c = C();

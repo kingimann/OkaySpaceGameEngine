@@ -56,13 +56,14 @@ Mostly on main and tested. Nothing is open: #574 added the optimization tools (L
   - 2.3.4 Lightmap bake - `Render/Lightmap` - `BakeFaceLighting` writes lighting, shadows and ambient occlusion into a static mesh's per-face colours; editor Bake Lighting button
   - 2.3.5 Day and night - `Components/DayNightCycle` - 24 h clock rotates the sun, tints and dims it, eases ambient, blends the camera sky; publishes `hour`; `SetTime`, `AddHours`
   - 2.3.6 Flashlight - `Components/Flashlight` - toggleable spot light that shines where the camera looks (key F by default) for caves and dark rooms; spawns a child Light and saves with the scene (tested inside `terrain`)
-- **Code:** `Render/Lighting`, `Render/ShadowSetup`, `Render/Lightmap`, `Components/Light`, `Components/DayNightCycle`, `Components/Flashlight`
+  - 2.3.7 Lighting upgrade - `Render/ShadowMath`, `Render/Lighting`, `Render/LightingPresets` - stable cascades (grid tied to the world), slope bias, soft penumbra and distance fade (software), smooth spot cone (all renderers), soft light roll-off, rectangle Area light, light masks (cookies), real-world lux/lumens with Auto brightness, glow lights from emissive meshes, five lighting presets, baked light probes, scene SSAO in the software renderer; `docs/lighting_upgrade.md`
+- **Code:** `Render/Lighting`, `Render/ShadowSetup`, `Render/ShadowMath`, `Render/LightingPresets`, `Render/Lightmap`, `Components/Light`, `Components/DayNightCycle`, `Components/Flashlight`
 - **API:** `Light`, `Light::Type`, `ApplySceneLight`, `SceneLights`, `PlanShadows`, `BakeFaceLighting`, `DayNightCycle::SetTime`, script `set_light`, `set_ambient`
 - **Editor:** View > Lighting panel (Environment, Bake Lighting, Rendering with shadow resolution); GameObject > Light menu; Light and Day/Night inspectors (editor/main.cpp)
-- **Docs:** `docs/lighting.md`, `docs/day_night_cycle.md`
-- **Tests:** `lighting`, `light_shadows`, `shadows`, `daynight`, `terrain`, `lightmap`
+- **Docs:** `docs/lighting.md`, `docs/lighting_upgrade.md`, `docs/day_night_cycle.md`
+- **Tests:** `lighting`, `light_shadows`, `lighting_upgrade`, `shadows`, `daynight`, `terrain`, `lightmap`
 - **Status:** Works - read `Lighting.hpp`, `ShadowSetup.hpp`, `Light.hpp`; tests cover the GPU shadow plan, flicker, save/reload and the software renderer's switches
-- **Open:** one Directional light casts sun shadows (the first one with Cast Shadows on; the Inspector warns when more than one asks); at most 16 lights shaded per frame on the GPU; the software renderer has sun shadows only; the Direct3D 12 backend has one sun map, no cascades or local shadows (all docs/lighting.md); lightmap bake stores per-face colours, not UV lightmap textures (Lightmap.hpp)
+- **Open:** one Directional light casts sun shadows (the first one with Cast Shadows on; the Inspector warns when more than one asks); at most 16 lights shaded per frame on the GPU; Soft Edges, light masks and rectangle panels run in the software renderer and are written but never run in the Direct3D 11 and OpenGL shaders (OpenGL softens by an approximation); light probes (`Render/LightProbes`, `LightProbeBake`, Lighting window > Light Probes) are software only; no reflection probes; the Direct3D 12 backend has one sun map, no cascades or local shadows (all docs/lighting.md); lightmap bake stores per-face colours, not UV lightmap textures (Lightmap.hpp)
 - **Related:** 2.4, 2.5, 38.2, 38.3, 38.5, 15.3
 - **Words:** Light, sun, point light, spot light, area light, shadow, cascade, shadow map, PCF, lightmap, bake, ambient, flicker, DayNightCycle, day night, time of day, lights, shadows, day/night
 - **Seen as:** shadows look wrong, blocky or shimmer; a point light casts no shadow; the scene is too dark; sunrise does not change the sky; a flashlight does not light the ground
@@ -75,20 +76,22 @@ Mostly on main and tested. Nothing is open: #574 added the optimization tools (L
   - 2.4.2 Sky - `Render/Atmosphere`, `Render/SkyStars` - colour gradient, or a procedural sky from the sun's height (day blue, dusk orange, night with stars, sun disc and halo, haze, drifting clouds); deterministic star placement
   - 2.4.3 Fog - `Render/Atmosphere` - Linear, Exponential and Height fog; `FogFactor`; match-sky colour option
   - 2.4.4 Weather - `Environment/Weather` - Rain, Snow, Storm presets built from the particle system on a transient rig that follows the camera; cross-fade, gusts, lightning flash, thunder clip
-  - 2.4.5 Wind - `Environment/Wind` - global `WindVector()` and `LightningFlash()` read by particles and water
+  - 2.4.5 Wind - `Environment/Wind` - global `WindVector()` (the weather's wind) and `LightningFlash()` read by particles and water; the base the wind field starts from
   - 2.4.6 Look presets - `Render/Atmosphere` - Default, Cinematic, Vivid, Noir, Sunset, Night, Foggy morning, Storm; `ApplyLookPreset`, `ResetLook`
   - 2.4.7 Script access - `Render/Atmosphere` - `PostSet`, name lookups behind `post_set`, `fog_set`, `weather_set`, `time_of_day`
-- **Code:** `Render/Atmosphere`, `Render/SkyStars`, `Environment/Weather`, `Environment/Wind`, `Scene/Scene`
-- **API:** `Scene::RenderSettings`, `SkyPaletteFor`, `FogFactor`, `UpdateWeather`, `WindVector`, `ApplyLookPreset`, script `weather_set`, `fog_set`, `Weather.Set`
-- **Editor:** View > Lighting panel: Sky, Fog and Weather sections and the Look Preset combo (`DrawLookSections` in editor/main.cpp)
-- **Docs:** `docs/rendering.md`
-- **Tests:** `post_sky`
+  - 2.4.8 Wind field - `Environment/WindField` - the wind at any world position and time: weather wind plus Wind Zones (everywhere, directional, outward; box, sphere, cylinder), gusts that travel downwind, deterministic value-noise swirl, a strength-over-time curve, priority blending; `WindField::At`
+  - 2.4.9 Wind components - `Components/WindZone` - Wind Zone, Wind Drag (the wind pushes a Rigidbody 3D or a ragdoll's bones), Wind Sway (trees, grass, flags bend on the CPU in every renderer), Wind Sound (our own looping noise); Foliage, Cable and Particle "Affected by wind" read the same field
+- **Code:** `Render/Atmosphere`, `Render/SkyStars`, `Environment/Weather`, `Environment/Wind`, `Environment/WindField`, `Components/WindZone`, `Scene/Scene`
+- **API:** `Scene::RenderSettings`, `SkyPaletteFor`, `FogFactor`, `UpdateWeather`, `WindVector`, `WindField::At`, `WindZone`, `WindDrag`, `WindSway`, `WindAmbience`, `ApplyLookPreset`, script `weather_set`, `fog_set`, `Weather.Set`, `wind_speed`, `wind_set`, `wind_gust`, `Wind.At`, `Wind.SetGust`
+- **Editor:** View > Lighting panel: Sky, Fog, Weather and Wind sections and the Look Preset combo (`DrawLookSections` in editor/main.cpp); GameObject > Effects > Environment and Add Component > Environment (`editor/WindTools.cpp`); wind arrows in the Scene view
+- **Docs:** `docs/rendering.md`, `docs/wind.md`
+- **Tests:** `post_sky`, `wind_field`, `wind`
 - **Status:** Works - read `Atmosphere.hpp` and `Weather.hpp`; the procedural sky and clouds are drawn by the GPU backends (docs), the software renderer shows a plain gradient
-- **Open:** old scenes load with everything off by design; the procedural sky, cloud layer and lightning exposure flash have no software-renderer version; weather depends on the particle system drawn by the host (2.7); no volumetric fog or sky reflections beyond the ambient and reflective-material colours
+- **Open:** old scenes load with everything off by design; the procedural sky, cloud layer and lightning exposure flash have no software-renderer version; weather depends on the particle system drawn by the host (2.7); no volumetric fog or sky reflections beyond the ambient and reflective-material colours; wind: sway is done on the CPU (not in a GPU vertex shader), trails, spline followers and fog are not linked to the wind, Water still reads only the weather's wind, no multiplayer sync of the wind, no Visual Script nodes (script names only), nothing run on Windows or a GPU (`docs/wind.md`)
 - **Related:** 2.3, 2.5, 2.7, 38.8
-- **Words:** sky, skybox, procedural sky, clouds, stars, fog, weather, rain, snow, storm, lightning, wind, look preset, Atmosphere, Weather, WindVector
-- **Seen as:** the sky does not change with the sun; distant objects pop in without fog; rain follows the camera in the editor preview; wind does not move particles
-- **Ask me like:** "Add a foggy morning preset that also lowers the sun"; "Make storms play thunder 2 seconds after the flash"
+- **Words:** sky, skybox, procedural sky, clouds, stars, fog, weather, rain, snow, storm, lightning, wind, gust, breeze, sway, flag, trees blowing, wind zone, fan, look preset, Atmosphere, Weather, WindVector
+- **Seen as:** the sky does not change with the sun; distant objects pop in without fog; rain follows the camera in the editor preview; wind does not move particles; trees and grass stand still in the wind; a flag does not wave; a box is not pushed by the wind
+- **Ask me like:** "Add a foggy morning preset that also lowers the sun"; "Make storms play thunder 2 seconds after the flash"; "Make the trees sway in a gusty wind"; "Add a fan that blows the leaves away"
 
 ### 2.5 Post-processing
 - **What:** Screen effects on the finished frame: exposure, tonemap, bloom, colour grading, vignette, anti-aliasing, ambient occlusion and depth of field, with a software fallback for some.

@@ -1,4 +1,5 @@
 #include "UIPreviewPainter.hpp"
+#include "PainterBridge.hpp"
 #include "okay/Graphics/TtfFont.hpp"
 #include <algorithm>
 #include <cmath>
@@ -86,7 +87,7 @@ SDL_Texture* PreviewFontAtlas(SDL_Renderer* r, okay::TtfFont* f) {
     const int frame = ImGui::GetFrameCount();
     for (std::size_t i = 0; i < retired.size();) {
         if (frame - retired[i].second < 2) { ++i; continue; }
-        SDL_DestroyTexture(retired[i].first);
+        okay::pb::DestroyTexture(r, retired[i].first);
         retired[i] = retired.back();
         retired.pop_back();
     }
@@ -95,21 +96,19 @@ SDL_Texture* PreviewFontAtlas(SDL_Renderer* r, okay::TtfFont* f) {
     const okay::Image& a = f->Atlas();
     if (u.tex && (u.w != a.Width() || u.h != a.Height())) { retired.push_back({u.tex, frame}); u.tex = nullptr; }
     if (!u.tex) {
-        u.tex = SDL_CreateTexture(r, SDL_PIXELFORMAT_ABGR8888, SDL_TEXTUREACCESS_STATIC, a.Width(), a.Height());
+        u.tex = okay::pb::CreateTexture(r, a.Width(), a.Height(), okay::pb::Access::Static, true, true);
         if (!u.tex) return nullptr;
-        SDL_SetTextureBlendMode(u.tex, SDL_BLENDMODE_BLEND);
-        SDL_SetTextureScaleMode(u.tex, SDL_ScaleModeLinear);
         u.w = a.Width();
         u.h = a.Height();
     }
-    SDL_UpdateTexture(u.tex, nullptr, a.Data(), a.Width() * 4);   // glyphs only get added: queued text stays right
+    okay::pb::UpdateTexture(r, u.tex, nullptr, a.Data(), a.Width() * 4);   // glyphs only get added: queued text stays right
     u.gen = f->Generation();
     return u.tex;
 }
 
 void UIPreviewPainter::QueryTexture(Tex t, int* w, int* h) {
     int tw = 0, th = 0;
-    if (t) SDL_QueryTexture((SDL_Texture*)t, nullptr, nullptr, &tw, &th);
+    if (t) okay::pb::QueryTexture(m_renderer, (SDL_Texture*)t, &tw, &th);
     if (w) *w = tw;
     if (h) *h = th;
 }

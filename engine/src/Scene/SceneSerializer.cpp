@@ -65,6 +65,7 @@
 #include "okay/Components/SurvivalSystems.hpp"
 #include "okay/Components/SurvivalZone.hpp"
 #include "okay/Components/Volume.hpp"
+#include "okay/Components/WindZone.hpp"
 #include "okay/Components/Consumables.hpp"
 #include "okay/Components/DayNightCycle.hpp"
 #include "okay/Components/NPCController.hpp"
@@ -1034,6 +1035,7 @@ void WriteComponentRecords(std::ostream& out, GameObject* go) {
                 << mr->groundShadowY << " " << mr->groundShadowStrength << "\n";
         if (!mr->castShadows || !mr->receiveShadows)
             out << "  meshshadows " << (mr->castShadows ? 1 : 0) << " " << (mr->receiveShadows ? 1 : 0) << "\n";
+        if (mr->glowLightRange != 0.0f) out << "  meshglow " << mr->glowLightRange << "\n";
         // A hidden mesh (e.g. a Boolean modifier's cutter) stays hidden after a reload.
         if (!mr->enabled) out << "  meshenabled 0\n";
     }
@@ -1684,6 +1686,12 @@ void WriteComponentRecords(std::ostream& out, GameObject* go) {
             out << " " << (li->castShadows ? 1 : 0) << " " << li->shadowStrength << " " << li->shadowBias
                 << " " << li->flicker << " " << li->flickerSpeed << " " << (li->enabled ? 1 : 0);
         out << "\n";
+        // Newer light settings: an append-only record of its own for the light just written, only when something differs
+        // from the defaults. Older builds keep it as an unknown record.
+        if (li->shadowSoftness != 0.5f || li->areaWidth != 0.0f || li->areaHeight != 0.0f || !li->cookie.empty() ||
+            li->cookieScale != 4.0f || li->unit != Light::Unit::Simple)
+            out << "  lightx " << li->shadowSoftness << " " << li->areaWidth << " " << li->areaHeight << " "
+                << li->cookieScale << " " << (int)li->unit << " " << Quote(li->cookie) << "\n";
     }
     for (auto* rb : go->GetComponents<Rigidbody2D>()) {
         out << "  rigidbody2d " << (int)rb->bodyType << " " << rb->gravityScale << " "
@@ -4003,6 +4011,13 @@ std::string SceneSerializer::Serialize(const Scene& scene) {
             out << "skystars 1 " << rs.skyStarDensity << " " << rs.skyStarBright << "\n";
         if (rs.ambientMode != Scene::RenderSettings::AmbientHemisphere || rs.ambientSkyTint != 0.7f)
             out << "ambientmode " << rs.ambientMode << " " << rs.ambientSkyTint << "\n";
+        if (!rs.autoBrightness) out << "lightunits 0\n";
+        if (rs.probes.Baked() || !rs.probes.enabled) {   // baked light probes (append-only record; older builds keep it as unknown)
+            out << "probegrid " << (rs.probes.enabled ? 1 : 0) << " " << rs.probes.spacing << " " << rs.probes.origin.x << " " << rs.probes.origin.y
+                << " " << rs.probes.origin.z << " " << rs.probes.nx << " " << rs.probes.ny << " " << rs.probes.nz << " " << rs.probes.sh.size();
+            for (float v : rs.probes.sh) out << " " << v;
+            out << "\n";
+        }
         // Fog modes, the procedural sky, post-processing and weather: each an
         // append-only record of its own, written only when it differs from the
         // defaults, so an untouched scene's text stays exactly as it was.
@@ -4423,6 +4438,18 @@ static bool ParseStep(Scene& scene, ParseSession& S, bool clear,
             int m = Scene::RenderSettings::AmbientHemisphere; float tint = 0.7f; in >> m >> tint;
             if (m < 0 || m > 2) m = Scene::RenderSettings::AmbientHemisphere;
             if (clear) { scene.renderSettings.ambientMode = m; scene.renderSettings.ambientSkyTint = tint; }
+        } else if (token == "probegrid") {
+            LightProbeGrid g; int en = 1; std::size_t count = 0;
+            in >> en >> g.spacing >> g.origin.x >> g.origin.y >> g.origin.z >> g.nx >> g.ny >> g.nz >> count;
+            g.enabled = en != 0;
+            const std::size_t want = (std::size_t)(g.nx > 0 ? g.nx : 0) * (g.ny > 0 ? g.ny : 0) * (g.nz > 0 ? g.nz : 0) * 12;
+            if (count == want && count <= 12 * 12 * 6 * 12 * 4) { g.sh.resize(count); for (float& v : g.sh) in >> v; }
+            else { g.Clear(); }
+            if (!g.Baked()) g.Clear();
+            if (clear) scene.renderSettings.probes = g;
+        } else if (token == "lightunits") {
+            int on = 1; in >> on;
+            if (clear) scene.renderSettings.autoBrightness = (on != 0);
         } else if (token == "fogmode") {
             Scene::RenderSettings v;   // defaults for anything the record leaves out
             int ms = 0; in >> v.fogMode >> v.fogDensity >> v.fogHeight >> v.fogFalloff >> ms;
@@ -5341,6 +5368,16 @@ static bool ParseStep(Scene& scene, ParseSession& S, bool clear,
                 } else if (field == "meshshadows") {
                     int cs = 1, rs = 1; in >> cs >> rs;
                     if (auto* mr = LastOf(go->GetComponents<MeshRenderer>())) { mr->castShadows = (cs != 0); mr->receiveShadows = (rs != 0); }
+                } else if (field == "meshglow") {
+                    if (auto* mr = LastOf(go->GetComponents<MeshRenderer>())) in >> mr->glowLightRange;
+                } else if (field == "lightx") {
+                    if (auto* li = LastOf(go->GetComponents<Light>())) {
+                        int unit = 0;
+                        in >> li->shadowSoftness >> li->areaWidth >> li->areaHeight >> li->cookieScale >> unit;
+                        li->unit = unit == 1 ? Light::Unit::RealWorld : Light::Unit::Simple;
+                        in >> std::ws;
+                        if (in.peek() == '"') li->cookie = ReadQuoted(in);
+                    }
                 } else if (field == "groundshadow") {
                     if (auto* mr = LastOf(go->GetComponents<MeshRenderer>())) {
                         int gs = 1; in >> gs >> mr->groundShadowY >> mr->groundShadowStrength;
@@ -9701,6 +9738,7 @@ bool SceneSerializer::MergeFromFile(Scene& scene, const std::string& path, const
 // ---- Components that use the registry ------------------------------------
 namespace detail {
 void RegisterBuiltinComponentSerializers() {
+    RegisterPhysicsToySerializers();
     ComponentSerializerRegistry::Entry trail;
     trail.name = "trailrenderer";
     trail.write = [](const GameObject& go, std::ostream& out) {
@@ -9984,6 +10022,96 @@ void RegisterBuiltinComponentSerializers() {
     };
     ComponentSerializerRegistry::Register(std::move(vol));
 
+    // Wind (docs/wind.md): the zone and the three things that listen to it.
+    ComponentSerializerRegistry::Entry wz;
+    wz.name = "windzone";
+    wz.write = [](const GameObject& go, std::ostream& out) {
+        for (const WindZone* w : go.GetComponents<WindZone>()) {
+            if (!w) continue;
+            out << "  windzone";
+            KvOut k{out};
+            k("mode", (int)w->mode)("shape", w->shape)
+             ("sx", w->size.x)("sy", w->size.y)("sz", w->size.z)("ox", w->offset.x)("oy", w->offset.y)("oz", w->offset.z)
+             ("edge", w->edge)("falloff", w->falloff)
+             ("dx", w->direction.x)("dy", w->direction.y)("dz", w->direction.z)("str", w->strength)
+             ("gust", w->gustAmount)("gfreq", w->gustFrequency)("gspeed", w->gustSpeed)
+             ("turb", w->turbulence)("tscale", w->turbulenceScale)("seed", w->seed)
+             .str("curve", w->curveKeys)("clen", w->curveLength)("prio", w->priority).b("add", w->additive);
+            out << "\n";
+        }
+    };
+    wz.read = [](GameObject& go, std::istream& in) {
+        auto* w = go.AddComponent<WindZone>();
+        KvIn k(in);
+        int mode = (int)w->mode;
+        k.i("mode", mode); k.i("shape", w->shape);
+        w->mode = (WindZone::Mode)std::clamp(mode, 0, 2);
+        w->shape = std::clamp(w->shape, 0, 2);
+        k.f("sx", w->size.x); k.f("sy", w->size.y); k.f("sz", w->size.z);
+        k.f("ox", w->offset.x); k.f("oy", w->offset.y); k.f("oz", w->offset.z);
+        k.f("edge", w->edge); k.f("falloff", w->falloff);
+        k.f("dx", w->direction.x); k.f("dy", w->direction.y); k.f("dz", w->direction.z); k.f("str", w->strength);
+        k.f("gust", w->gustAmount); k.f("gfreq", w->gustFrequency); k.f("gspeed", w->gustSpeed);
+        k.f("turb", w->turbulence); k.f("tscale", w->turbulenceScale); k.i("seed", w->seed);
+        k.str("curve", w->curveKeys); k.f("clen", w->curveLength); k.i("prio", w->priority); k.b("add", w->additive);
+    };
+    ComponentSerializerRegistry::Register(std::move(wz));
+
+    ComponentSerializerRegistry::Entry wd;
+    wd.name = "winddrag";
+    wd.write = [](const GameObject& go, std::ostream& out) {
+        for (const WindDrag* w : go.GetComponents<WindDrag>()) {
+            if (!w) continue;
+            out << "  winddrag";
+            KvOut{out}("area", w->area)("cd", w->dragCoefficient)("str", w->strength).b("kids", w->includeChildren);
+            out << "\n";
+        }
+    };
+    wd.read = [](GameObject& go, std::istream& in) {
+        auto* w = go.AddComponent<WindDrag>();
+        KvIn k(in);
+        k.f("area", w->area); k.f("cd", w->dragCoefficient); k.f("str", w->strength); k.b("kids", w->includeChildren);
+    };
+    ComponentSerializerRegistry::Register(std::move(wd));
+
+    ComponentSerializerRegistry::Entry wsw;
+    wsw.name = "windsway";
+    wsw.write = [](const GameObject& go, std::ostream& out) {
+        for (const WindSway* w : go.GetComponents<WindSway>()) {
+            if (!w || w->weight == WindSway::Weight::Custom) continue;   // Custom weights belong to a Foliage chunk, which is never saved
+            out << "  windsway";
+            KvOut{out}("weight", (int)w->weight)("amount", w->amount)("height", w->height)("stiff", w->stiffness)
+                ("flutter", w->flutter)("fspeed", w->flutterSpeed)("rate", w->updateRate)("dist", w->maxDistance).b("turn", w->turnToWind);
+            out << "\n";
+        }
+    };
+    wsw.read = [](GameObject& go, std::istream& in) {
+        auto* w = go.AddComponent<WindSway>();
+        KvIn k(in);
+        int wt = (int)w->weight;
+        k.i("weight", wt); w->weight = (WindSway::Weight)std::clamp(wt, 0, 1);
+        k.f("amount", w->amount); k.f("height", w->height); k.f("stiff", w->stiffness);
+        k.f("flutter", w->flutter); k.f("fspeed", w->flutterSpeed); k.f("rate", w->updateRate); k.f("dist", w->maxDistance); k.b("turn", w->turnToWind);
+    };
+    ComponentSerializerRegistry::Register(std::move(wsw));
+
+    ComponentSerializerRegistry::Entry wam;
+    wam.name = "windambience";
+    wam.write = [](const GameObject& go, std::ostream& out) {
+        for (const WindAmbience* w : go.GetComponents<WindAmbience>()) {
+            if (!w) continue;
+            out << "  windambience";
+            KvOut{out}("vol", w->volume)("full", w->fullAt)("quiet", w->quietBelow)("smooth", w->smoothing);
+            out << "\n";
+        }
+    };
+    wam.read = [](GameObject& go, std::istream& in) {
+        auto* w = go.AddComponent<WindAmbience>();
+        KvIn k(in);
+        k.f("vol", w->volume); k.f("full", w->fullAt); k.f("quiet", w->quietBelow); k.f("smooth", w->smoothing);
+    };
+    ComponentSerializerRegistry::Register(std::move(wam));
+
     ComponentSerializerRegistry::Entry occ;
     occ.name = "occluder";
     occ.write = [](const GameObject& go, std::ostream& out) {
@@ -10057,7 +10185,7 @@ void RegisterBuiltinComponentSerializers() {
         k.str("mesh", f->mesh).str("path", f->meshPath).str("prefab", f->prefabPath).col("t", f->tint)("var", f->variants)
          ("r", f->radius)("dens", f->density)("smin", f->minScale)("smax", f->maxScale)("slope", f->maxSlope)
          ("hmin", f->minHeight)("hmax", f->maxHeight).b("yaw", f->randomYaw)("align", f->alignToSurface)
-         ("gap", f->spacing)("seed", f->seed)("tris", f->maxTriangles)("chunk", f->chunkSize).b("shadow", f->castShadows);
+         ("gap", f->spacing)("seed", f->seed)("tris", f->maxTriangles)("chunk", f->chunkSize).b("shadow", f->castShadows)("wind", f->windSway);
         std::string s;
         char buf[160];
         for (const auto& i : f->instances) {
@@ -10076,7 +10204,7 @@ void RegisterBuiltinComponentSerializers() {
         k.i("var", f->variants); k.f("r", f->radius); k.f("dens", f->density); k.f("smin", f->minScale); k.f("smax", f->maxScale);
         k.f("slope", f->maxSlope); k.f("hmin", f->minHeight); k.f("hmax", f->maxHeight); k.b("yaw", f->randomYaw);
         k.f("align", f->alignToSurface); k.f("gap", f->spacing); k.u("seed", f->seed); k.i("tris", f->maxTriangles);
-        k.f("chunk", f->chunkSize); k.b("shadow", f->castShadows);
+        k.f("chunk", f->chunkSize); k.b("shadow", f->castShadows); k.f("wind", f->windSway);
         std::string s;
         k.str("inst", s);
         const char* c = s.c_str();
@@ -10104,7 +10232,7 @@ void RegisterBuiltinComponentSerializers() {
         out << "  cable";
         KvOut{out}.str("from", c->startObject).str("to", c->endObject)("sx", c->startOffset.x)("sy", c->startOffset.y)
             ("sz", c->startOffset.z)("ex", c->endOffset.x)("ey", c->endOffset.y)("ez", c->endOffset.z)("sag", c->sag)
-            ("seg", c->segments)("w", c->width).col("c", c->color);
+            ("seg", c->segments)("w", c->width).col("c", c->color)("swing", c->windSwing);
         out << "\n";
         }
     };
@@ -10114,7 +10242,7 @@ void RegisterBuiltinComponentSerializers() {
         k.str("from", c->startObject); k.str("to", c->endObject);
         k.f("sx", c->startOffset.x); k.f("sy", c->startOffset.y); k.f("sz", c->startOffset.z);
         k.f("ex", c->endOffset.x); k.f("ey", c->endOffset.y); k.f("ez", c->endOffset.z);
-        k.f("sag", c->sag); k.i("seg", c->segments); k.f("w", c->width); k.col("c", c->color);
+        k.f("sag", c->sag); k.i("seg", c->segments); k.f("w", c->width); k.col("c", c->color); k.f("swing", c->windSwing);
     };
     ComponentSerializerRegistry::Register(std::move(cab));
 

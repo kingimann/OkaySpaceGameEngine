@@ -24,6 +24,7 @@ struct State {
     std::vector<PNode> nodes;
     DockId nextAuto = 0x0D0C0001u;
     bool pending = false; DockId pendId = 0; Cond pendCond = Cond_Always;
+    DockId spaceId = 0;                  // SetDockSpaceId
 };
 State& S() { static State s; return s; }
 
@@ -146,21 +147,27 @@ void DockBuilderRemoveNode(DockId id) {
     S().nodes.erase(std::remove_if(S().nodes.begin(), S().nodes.end(), [&](const PNode& q) { return std::find(gone.begin(), gone.end(), q.id) != gone.end(); }), S().nodes.end());
 }
 
+bool SetLiveNodeSize(int lid, Vec2 size) {
+    if (lid <= 0 || !Good(size.x) || !Good(size.y) || size.x < 0.0f || size.y < 0.0f) return false;
+    DockLayout& L = GetDockLayout();
+    const DockLayout::Node* ln = L.Find(lid);
+    if (!ln || ln->parent == 0) return false;                 // the root: the area is the host's (DockSpace)
+    const DockLayout::Node* pn = L.Find(ln->parent);
+    if (!pn || !pn->IsSplit() || !(pn->rect.w > 0.0f)) return false;   // not laid out yet
+    const float total = (pn->horizontal ? pn->rect.w : pn->rect.h) - DockLayout::kSplitter;
+    if (!(total > 1.0f)) return false;
+    const float share = (pn->horizontal ? size.x : size.y) / total;
+    return L.SetRatio(pn->id, pn->child[0] == lid ? share : 1.0f - share);
+}
+
 void DockBuilderSetNodeSize(DockId id, Vec2 size) {
     PNode* n = Find(id);
-    if (!n || !Good(size.x) || !Good(size.y) || size.x < 0.0f || size.y < 0.0f) return;
+    if (!n) { SetLiveNodeSize(DockLayoutNodeOf(id), size); return; }   // a node the user made, or the DockSpace root
+    if (!Good(size.x) || !Good(size.y) || size.x < 0.0f || size.y < 0.0f) return;
     n->want = size; n->wantSet = true;
     const int lid = LiveLeaf(*n) ? n->layoutNode : 0;
     if (lid <= 0) return;
-    DockLayout& L = GetDockLayout();
-    const DockLayout::Node* ln = L.Find(lid);
-    if (!ln || ln->parent == 0) return;                       // the root: the area is the host's (DockSpace)
-    const DockLayout::Node* pn = L.Find(ln->parent);
-    if (!pn || !pn->IsSplit() || !(pn->rect.w > 0.0f)) return;   // not laid out yet: the stored size is used at the next Finish
-    const float total = (pn->horizontal ? pn->rect.w : pn->rect.h) - DockLayout::kSplitter;
-    if (!(total > 1.0f)) return;
-    const float share = (pn->horizontal ? size.x : size.y) / total;
-    L.SetRatio(pn->id, pn->child[0] == lid ? share : 1.0f - share);
+    SetLiveNodeSize(lid, size);
 }
 
 DockId DockBuilderSplitNode(DockId id, DockSide dir, float sizeRatio, DockId* outAt, DockId* outOpp) {
@@ -189,7 +196,13 @@ DockId DockBuilderSplitNode(DockId id, DockSide dir, float sizeRatio, DockId* ou
 void DockBuilderDockWindow(const char* window, DockId node) {
     if (!window || !*window) return;
     PNode* n = Find(FirstLeaf(node));
-    if (!n) return;
+    if (!n) {   // a node of the live layout that no plan made (user split, or the DockSpace root)
+        DockLayout& L = GetDockLayout();
+        const DockLayout::Node* ln = L.Find(DockLayoutNodeOf(node));
+        for (int guard = 0; ln && guard < 128 && ln->IsSplit(); ++guard) ln = L.Find(ln->child[0]);
+        if (ln) L.Dock(CutName(window), ln->id, DockSide_Center);
+        return;
+    }
     const std::string w = CutName(window);
     RemoveWindowEverywhere(w);
     n = Find(FirstLeaf(node));
@@ -231,7 +244,7 @@ bool DockBuilderFinish(DockId id) {
     return true;
 }
 
-DockNodeInfo DockBuilderGetNode(DockId id) {
+DockNodeInfo DockBuilderGetNodeInfo(DockId id) {
     DockNodeInfo info;
     const PNode* n = Find(id);
     if (!n) return info;
@@ -258,9 +271,26 @@ DockId GetWindowDockID(const char* window) {
     if (!window || !*window) return 0;
     const int ln = GetDockLayout().NodeOf(CutName(window));
     if (ln == 0) return 0;
-    for (const PNode& n : S().nodes) if (n.finished && n.layoutNode == ln) return n.id;
+    return DockNodeIdOf(ln);
+}
+
+DockId DockNodeIdOf(int ln) {
+    if (ln <= 0) return 0;
+    const State& s = S();
+    if (s.spaceId != 0 && GetDockLayout().Root() == ln) return s.spaceId;   // the id the host gave DockSpace wins over a plan's id for the same node
+    for (const PNode& n : s.nodes) if (n.finished && n.layoutNode == ln) return n.id;
+    return kDockDerivedBase + (DockId)ln;
+}
+int DockLayoutNodeOf(DockId id) {
+    if (id == 0) return 0;
+    const State& s = S();
+    const DockLayout& L = GetDockLayout();
+    for (const PNode& n : s.nodes) if (n.id == id) return n.finished && n.layoutNode > 0 && L.Find(n.layoutNode) ? n.layoutNode : 0;
+    if (s.spaceId == id) return L.Root();
+    if (id > kDockDerivedBase && id <= kDockDerivedBase + (DockId)DockLayout::kMaxNodes * 64u) { const int ln = (int)(id - kDockDerivedBase); return L.Find(ln) ? ln : 0; }
     return 0;
 }
+void SetDockSpaceId(DockId id) { S().spaceId = id; }
 
 void DockBuilderDropNext() { S().pending = false; }
 
@@ -279,9 +309,13 @@ void DockBuilderApplyNext(const std::string& name) {
         }
         return;
     }
-    const PNode* n = Find(s.pendId);
-    if (!n) return;
-    const int leaf = LiveLeaf(*n);
+    int leaf = 0;
+    if (const PNode* n = Find(s.pendId)) leaf = LiveLeaf(*n);
+    else {   // a node of the live layout that no plan made
+        const DockLayout::Node* ln = L.Find(DockLayoutNodeOf(s.pendId));
+        for (int guard = 0; ln && guard < 128 && ln->IsSplit(); ++guard) ln = L.Find(ln->child[0]);
+        if (ln) leaf = ln->id;
+    }
     if (leaf <= 0 || L.NodeOf(name) == leaf) return;
     L.Dock(name, leaf, DockSide_Center);
 }

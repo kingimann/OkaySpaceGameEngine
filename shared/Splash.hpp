@@ -15,6 +15,7 @@
 #include <SDL.h>
 #include "okay/Platform/Platform.hpp"   // okay::platform: timers (and the SDL seam)
 #include "okay/Platform/Painter.hpp"    // the splash is drawn through the platform painter
+#include "PainterBridge.hpp"
 #include <cmath>
 #include <memory>
 
@@ -161,8 +162,8 @@ inline void DrawSplashStyled(okay::platform::Painter* r, int w, int h, const Spl
 // are the SDL calls. `style.logo` is then an SDL_Texture*.
 inline void DrawSplashStyled(SDL_Renderer* r, int w, int h, const SplashStyle& style) {
     if (!r) return;
-    std::unique_ptr<okay::platform::Painter> p = okay::platform::WrapSdl2Renderer(r);
-    if (p) DrawSplashStyled(p.get(), w, h, style);
+    okay::platform::Painter* p = okay::pb::For(r);   // the painter of this renderer (sdl2, or the software painter of an own-backend window)
+    if (p) DrawSplashStyled(p, w, h, style);
 }
 
 // Backward-compatible helper: draw the splash with just an accent colour.

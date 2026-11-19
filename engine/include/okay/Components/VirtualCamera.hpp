@@ -221,32 +221,15 @@ public:
         if (!(dt > 0.0f) || !std::isfinite(dt)) dt = 0.0f;
         m_zoneDt = dt;
 
-        GameObject* f = follow.empty() ? nullptr : s->Find(follow);
-        GameObject* l = lookAt.empty() ? nullptr : s->Find(lookAt);
         Camera* rc = s->mainCamera;
         const float aspect = (rc && rc->viewportAspect > 0.05f) ? rc->viewportAspect : 16.0f / 9.0f;
-        const bool haveF = f && f->transform;
-
-        // The point to follow: the Follow object, or the middle of the group.
-        Vec3 fp = haveF ? f->transform->Position() : Vec3{0.0f, 0.0f, 0.0f};
-        bool haveFp = haveF;
-        float fitDist = 0.0f, fitOrtho = 0.0f;
-        if (!groupTargets.empty()) {
-            m_pts.clear();
-            if (haveF) m_pts.push_back(fp);
-            for (const std::string& n : groupTargets) {
-                GameObject* o = s->Find(n);
-                if (o && o->transform && o->active) m_pts.push_back(o->transform->Position());
-            }
-            const cam::GroupFrame gf = cam::FrameGroup(m_pts.data(), (int)m_pts.size(), groupPadding);
-            if (gf.valid) {
-                fp = gf.center; haveFp = true;
-                if (groupFrame && m_pts.size() > 1) {
-                    fitDist = cam::DistanceToFit(gf.radius, fieldOfView, aspect);
-                    fitOrtho = cam::OrthoSizeToFit(gf.radius, aspect);
-                }
-            }
-        }
+        const Targets tg = GatherTargets(s, aspect);
+        GameObject* f = tg.f;
+        GameObject* l = tg.l;
+        const bool haveF = f != nullptr;
+        Vec3 fp = tg.fp;
+        const bool haveFp = tg.haveFp;
+        const float fitDist = tg.fitDist, fitOrtho = tg.fitOrtho;
         // Look ahead: lean the framing toward where the target is going.
         if (haveFp && lookaheadTime > 0.0f) fp = fp + m_look.Step(fp, lookaheadTime, lookaheadMax, lookaheadSmooth, dt);
         else m_look.Reset();
@@ -357,7 +340,7 @@ public:
             desiredRot = Quat::Identity;
         } else if (freeLookActive) {
             Vec3 dir = flPivot - m_pos;
-            if (dir.SqrMagnitude() > 1e-8f) desiredRot = Quat::LookRotation(dir);
+            if (dir.SqrMagnitude() > 1e-8f) desiredRot = AimRotation(dir);
         } else if (haveAim) {
             Vec3 dir = aimPoint - m_pos;
             if (dir.SqrMagnitude() > 1e-8f) {
@@ -369,11 +352,11 @@ public:
                     // aimDeadZone degrees of screen center; only re-aim past it.
                     bool reaim = true;
                     if (m_init && aimDeadZone > 0.0f) {
-                        Vec3 fwd = m_rot * Vec3::Forward;
+                        Vec3 fwd = ViewForward(m_rot);
                         float c = Vec3::Dot(fwd.Normalized(), dir.Normalized());
                         if (c > std::cos(aimDeadZone * Mathf::Deg2Rad)) reaim = false;
                     }
-                    if (reaim) desiredRot = Quat::LookRotation(dir);
+                    if (reaim) desiredRot = AimRotation(dir);
                 }
             }
         } else if (haveF) {
@@ -433,6 +416,73 @@ public:
         if (!transform->Parent()) transform->localRotation = m_rot;
     }
 
+    /// What the shot is pointed at this frame (shared by Solve and the editor's preview).
+    struct Targets {
+        GameObject* f = nullptr;      ///< the Follow object (null when missing or at a broken position)
+        GameObject* l = nullptr;      ///< the Look At object
+        Vec3 fp{0.0f, 0.0f, 0.0f};    ///< the point followed: the Follow object, or the middle of the group
+        bool haveFp = false;
+        float fitDist = 0.0f;         ///< how far back a perspective group shot must stand to fit everyone
+        float fitOrtho = 0.0f;        ///< the view height a 2D group shot needs
+        float groupRadius = 0.0f;
+        int   members = 0;
+    };
+    Targets GatherTargets(Scene* s, float aspect) {
+        Targets t;
+        t.f = follow.empty() ? nullptr : s->Find(follow);
+        t.l = lookAt.empty() ? nullptr : s->Find(lookAt);
+        // A target at a broken (NaN or infinite) position counts as missing: the camera stays where it is.
+        if (t.f && (!t.f->transform || !cam::AllFinite(t.f->transform->Position()))) t.f = nullptr;
+        if (t.l && (!t.l->transform || !cam::AllFinite(t.l->transform->Position()))) t.l = nullptr;
+        if (t.f) { t.fp = t.f->transform->Position(); t.haveFp = true; }
+        if (!groupTargets.empty()) {
+            m_pts.clear();
+            if (t.f) m_pts.push_back(t.fp);
+            for (const std::string& n : groupTargets) {
+                GameObject* o = s->Find(n);
+                if (o && o->transform && o->active) m_pts.push_back(o->transform->Position());
+            }
+            const cam::GroupFrame gf = cam::FrameGroup(m_pts.data(), (int)m_pts.size(), groupPadding);
+            if (gf.valid) {
+                t.fp = gf.center; t.haveFp = true; t.groupRadius = gf.radius; t.members = (int)m_pts.size();
+                if (groupFrame && m_pts.size() > 1) {
+                    t.fitDist = cam::DistanceToFit(gf.radius, fieldOfView, aspect);
+                    t.fitOrtho = cam::OrthoSizeToFit(gf.radius, aspect);
+                }
+            }
+        }
+        return t;
+    }
+
+    /// Where the shot would stand with no smoothing, no look-ahead, no collision: what the editor
+    /// shows for the selected rig when nothing is playing. False when there is nothing to show.
+    bool IdealPose(Vec3& pos, Quat& rot) {
+        Scene* s = GetScene();
+        if (!s || !transform) return false;
+        const Targets t = GatherTargets(s, 16.0f / 9.0f);
+        pos = transform->Position();
+        rot = transform->Rotation();
+        if (!t.haveFp) return true;
+        Vec3 aim = t.fp;
+        if (freeLook) {
+            const Vec3 pivot = t.fp + Vec3{0.0f, orbitHeight, 0.0f};
+            pos = pivot + Quat::Euler(orbitPitch, orbitYaw, 0.0f) * Vec3{0.0f, 0.0f, -std::max(orbitRadius, t.fitDist)};
+            aim = pivot;
+        } else if (!dolly) {
+            Vec3 off = (bindingMode == BindingMode::LockToTarget && t.f) ? (t.f->transform->Rotation() * followOffset) : followOffset;
+            const float len = off.Magnitude();
+            if (t.fitDist > len && len > 1e-4f) off = off * (t.fitDist / len);
+            if (!follow.empty() || !groupTargets.empty()) pos = t.fp + off;
+        }
+        if (!freeLook && t.l) aim = t.l->transform->Position() + lookAtOffset;
+        else if (!freeLook) aim = t.fp + lookAtOffset;
+        const Vec3 d = aim - pos;
+        if (ortho2D) rot = Quat::Identity;
+        else if (d.SqrMagnitude() > 1e-8f && (freeLook || t.l || aimAtFollow || !groupTargets.empty())) rot = AimRotation(d);
+        if (std::fabs(dutch) > 1e-4f) rot = rot * Quat::Euler(0.0f, 0.0f, dutch);
+        return true;
+    }
+
     /// Put things this camera made see-through back to how they were.
     void RestoreFaded() {
         for (const auto& e : m_fade.Entries()) if (auto* mr = static_cast<MeshRenderer*>(const_cast<void*>(e.id))) mr->color.a = e.original;
@@ -459,13 +509,20 @@ public:
     /// Forget the damping state: the next solve starts exactly on its target (a teleport).
     void Snap() { m_init = false; m_look.Reset(); m_arm.Reset(); m_vel = {0.0f, 0.0f, 0.0f}; m_roomInit = false; }
 
+    /// A camera looks down its own -Z (the Camera component's view matrix says so), so to face
+    /// `dir` the shot's +Z has to point the other way. (Until the camera upgrade this was
+    /// LookRotation(dir) and the shot aimed away from its target.)
+    static Quat AimRotation(const Vec3& dir) { return Quat::LookRotation(dir * -1.0f); }
+    /// Where a shot with this rotation looks.
+    static Vec3 ViewForward(const Quat& q) { return q * Vec3{0.0f, 0.0f, -1.0f}; }
+
 private:
     /// Turn toward `dir` by the zone rule: nothing in the dead zone, an ease back to its edge in the soft zone,
     /// a catch-up beyond the soft zone. Works in the screen-plane (fractions of half the view).
     Quat ZoneAim(const Vec3& dir, float aspect) const {
-        const Vec3 fwd = m_rot * Vec3::Forward, right = m_rot * Vec3::Right, up = m_rot * Vec3::Up;
+        const Vec3 fwd = ViewForward(m_rot), right = m_rot * Vec3::Right, up = m_rot * Vec3::Up;
         const float lz = Vec3::Dot(dir, fwd);
-        if (lz <= 1e-3f) return Quat::LookRotation(dir);           // behind the camera: turn round
+        if (lz <= 1e-3f) return AimRotation(dir);           // behind the camera: turn round
         const float tanV = std::tan(Mathf::Clamp(fieldOfView, 1.0f, 170.0f) * Mathf::Deg2Rad * 0.5f);
         const float tanH = tanV * aspect;
         const float nx = Vec3::Dot(dir, right) / (lz * tanH), ny = Vec3::Dot(dir, up) / (lz * tanV);
@@ -480,7 +537,7 @@ private:
         const Quat turn = Quat::FromToRotation(after, before);
         const Vec3 newFwd = turn * fwd;
         // Keep the horizon level (the arc alone would add a little roll).
-        return Quat::LookRotation(newFwd);
+        return AimRotation(newFwd);
     }
 
     bool RoomBox(Scene* s, const Vec3& p, float dt, Vec3& outMin, Vec3& outMax);

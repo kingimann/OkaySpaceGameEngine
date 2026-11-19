@@ -65,7 +65,7 @@ Run on a Linux machine, software renderer, `-O0` build, 2026-11-19. Pictures wer
 | `examples_work` (loads and plays every shipped example scene, including the five new ones) | 89 scenes, 0 failed |
 | `editor/main.cpp` syntax-only compile (`g++ -fsyntax-only`, with the editor's include folders) | no errors. **The editor was not linked or run**; the new panels were never drawn |
 | `D3D11Renderer.cpp`, `D3D12Renderer.cpp` syntax-only with MinGW (win32 thread model) | no errors. **Never run on Windows or a GPU** |
-| `GLRenderer.cpp` | the two shader-string edits were read; **not compiled as GLSL, not run** |
+| `GLRenderer.cpp` | **not compiled as GLSL, not run** (round 2 adds more GLSL; see the Round 2 section) |
 
 Seen in the pictures: softer, graded shadow edges and no ring in the spot cone (software renderer); the five presets look clearly
 different; the window mask draws panes of sun on the floor. One thing that is not perfect: with 16 filter taps and no per-pixel

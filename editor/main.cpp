@@ -54,6 +54,7 @@
 #include "okay/Components/LocalPlayerInput.hpp"
 #include "okay/Components/UIOwnerData.hpp"   // Inspector: which character a UI Text Bind / UI Bar Bind belongs to
 #include "okay/Render/LightingPresets.hpp"
+#include "okay/Render/LightProbeBake.hpp"
 #include "okay/Render/Lightmap.hpp"    // offline lightmap/shadow/AO baking
 #include "okay/Modeling/EditTransform.hpp"   // G / R / S modal transforms in mesh edit mode
 #include "okay/Modeling/MaterialLibrary.hpp"   // ready colours and slot palettes
@@ -12929,6 +12930,32 @@ void DrawSceneSettings(EditorState& ed) {
             ImGui::SetTooltip("Goes back to the lighting before the 2026-11 upgrade (hard light clamp, straight spot ramp, fixed shadow blur,\n"
                               "no stable cascades) so you can compare. Software renderer only. Not saved. Env var OKAY_CLASSIC_LIGHTING=1 does the same.");
         DrawRendererNote(okay::RenderFeature::LightShapes);
+    }
+
+    // Light probes: ambient light that changes from place to place, baked here and saved with the scene.
+    if (ImGui::CollapsingHeader("Light Probes")) {
+        auto& pg = ed.scene().renderSettings.probes;
+        static float probeSpacing = 2.0f;
+        ImGui::TextWrapped("A grid of baked light samples. Surfaces get their ambient light from the probes around them, so a room under a roof "
+                           "is darker than open ground and a red wall tints the floor beside it.");
+        ImGui::SliderFloat("Probe spacing##probes", &probeSpacing, 0.5f, 8.0f, "%.1f m");
+        if (ImGui::IsItemHovered()) ImGui::SetTooltip("Distance between probes. Smaller = more detail, slower bake (the grid is at most 12 x 6 x 12).");
+        if (ImGui::Button("Bake probes")) {
+            ed.PushUndo();
+            const okay::LightProbeBakeResult br = okay::BakeLightProbes(ed.scene(), pg, probeSpacing);
+            ConsoleLog(br.message, br.ok ? 0 : 2);
+            if (br.ok) ed.dirty = true;
+        }
+        if (ImGui::IsItemHovered()) ImGui::SetTooltip("Bakes the scene's lights, sky and walls into the probes. Bake again after you move things or change the lights.");
+        if (pg.Baked()) {
+            ImGui::SameLine();
+            if (ImGui::Button("Clear probes")) { ed.PushUndo(); pg.Clear(); ed.dirty = true; }
+            if (ImGui::Checkbox("Use probes##probes", &pg.enabled)) ed.dirty = true;
+            ImGui::TextDisabled("%d probes (%d x %d x %d), every %.1f m.", pg.Count(), pg.nx, pg.ny, pg.nz, pg.spacing);
+        } else {
+            ImGui::TextDisabled("No probes baked: the flat / hemisphere ambient is used.");
+        }
+        ImGui::TextDisabled("Drawn by the software renderer only for now (OpenGL and Direct3D 11 keep the normal ambient).");
     }
 
     // Environment: the scene's skybox + ambient, saved with the scene so the

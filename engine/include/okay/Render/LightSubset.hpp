@@ -29,7 +29,7 @@ struct LightSubset {
 /// SceneLights::ShadeNormalized over the lights in `subset` only. Needs SceneLights::List() to be non empty.
 inline Vec3 ShadeNormalizedSubset(const Vec3& p, const Vec3& nn, const float* perLight, const LightSubset& subset) {
     const auto& lights = SceneLights::List();
-    Vec3 acc = SceneLights::AmbientAt(nn);
+    Vec3 acc = SceneLights::AmbientAtPoint(p, nn);
     for (int t = 0; t < subset.n; ++t) {
         const int li = subset.idx[t];                       // the light's index in List(): the shadow factors are indexed by it
         const auto& L = lights[(std::size_t)li];

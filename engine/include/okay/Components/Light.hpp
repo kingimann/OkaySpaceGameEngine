@@ -117,6 +117,7 @@ inline std::string& DirectionalShadowWarning() { static std::string s; return s;
 /// by the player and editor each frame before rendering 3D.
 inline void ApplySceneLight(const Scene& scene) {
     SceneLights::Clear();
+    ActiveLightProbes() = (scene.renderSettings.probes.enabled && scene.renderSettings.probes.Baked()) ? &scene.renderSettings.probes : nullptr;
     DirectionalShadowWarning().clear();
     bool any = false, setAmbient = false, setLegacy = false;
     int firstDir = -1, castingSun = -1, castingCount = 0;

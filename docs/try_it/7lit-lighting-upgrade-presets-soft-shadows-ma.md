@@ -9,9 +9,11 @@ table). Code: `ShadowMath.hpp`, `Lighting.hpp`, `LightingPresets.hpp`, `Software
 
 **Which renderer shows what.** Press **F3** in the editor: the overlay says which renderer is drawing. The Light Inspector prints a
 grey note under Soft Edges, Mask and Panel Width/Height when the renderer ignores them.
-* Software renderer: everything below.
-* OpenGL and Direct3D 11: presets, real-world units, Auto brightness, Glow Light Range, the smooth spot cone and the stable sun
-  shadows (no shimmer). Soft Edges, masks and rectangle panels are **not drawn** there yet (an Area light stays a soft point light).
+* Software renderer: everything below (run headless).
+* Direct3D 11 and OpenGL (round 2, **written without a GPU and never run**): presets, real-world units, Auto brightness, Glow Light
+  Range, the smooth spot cone, stable sun shadows, Soft Edges, light masks, rectangle panels, the shadow fade. If a GPU picture looks
+  wrong (black light, wrong mask), the shader text in `D3D11Hlsl.hpp` / `GLRenderer.cpp` is the place to look. OpenGL softens by an
+  approximation. **Light probes** show in the software renderer only.
 
 **Steps: the five looks.**
 1. Open the editor. **File > Examples > Lighting presets (sun, sunset, night, indoor, fog)** and pick `sunny_day`. (Windows release:
@@ -32,6 +34,8 @@ grey note under Soft Edges, Mask and Panel Width/Height when the renderer ignore
   gets softer the farther it falls.
 * On a Mesh Renderer, **Glow** section: give the object an Emissive colour, set **Glow Light Range** to 5: it now lights its
   surroundings.
+* View > Lighting > **Light Probes**: press **Bake probes**; ambient light now differs between a room under a roof and open ground (software renderer). **Clear probes** removes them.
+* Scene Ambient occlusion (Post-processing) now also darkens corners in the software renderer.
 * View > Lighting: **Classic lighting look** (software renderer only) goes back to the old shadows and light roll-off, to compare.
 
 **What you should see.** Five clearly different moods; soft shadows that are sharp at the foot of an object; a window pattern on the

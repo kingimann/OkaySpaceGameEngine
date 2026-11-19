@@ -2,6 +2,7 @@
 #include <cstdint>
 #include <cstdlib>
 #include <typeindex>
+#include "okay/Render/LightProbes.hpp"
 #include "okay/Scene/GameObject.hpp"
 #include "okay/Scene/SceneSerializer.hpp"
 #include "okay/Core/Scheduler.hpp"
@@ -462,6 +463,8 @@ public:
         // Auto brightness: lights set to real-world units (lux, lumens) are scaled so the scene's brightest light
         // shows as "fully lit", like an eye or camera adapting. Off = a fixed reference (a bright overcast day).
         bool  autoBrightness = true;
+        // Baked light probes (Lighting window > Bake probes): ambient light that changes from place to place.
+        LightProbeGrid probes;
 
         // ---- Fog modes (extend the distance fog above) ----
         // Linear uses fogStart/fogEnd. Exponential thickens with `fogDensity` per

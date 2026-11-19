@@ -1,6 +1,7 @@
 #pragma once
 #include "okay/Math/Vec3.hpp"
 #include "okay/Graphics/Image.hpp"
+#include "okay/Render/LightProbes.hpp"
 #include <string>
 #include <vector>
 #include <cmath>
@@ -336,6 +337,11 @@ struct SceneLights {
     static bool& Hemisphere()    { static bool b = false; return b; }
     static Vec3& SkyAmbient()    { static Vec3 c{0.25f, 0.25f, 0.25f}; return c; }
     static Vec3& GroundAmbient() { static Vec3 c{0.25f, 0.25f, 0.25f}; return c; }
+    /// Ambient colour at world point `p`: the baked light probes when the scene has them, else AmbientAt(n).
+    static Vec3 AmbientAtPoint(const Vec3& p, const Vec3& n) {
+        if (const LightProbeGrid* g = ActiveLightProbes()) return g->Ambient(p, n);
+        return AmbientAt(n);
+    }
     /// Ambient color for a surface with world normal `n` (hemisphere if enabled).
     static Vec3 AmbientAt(const Vec3& n) {
         if (!Hemisphere()) return AmbientColor();
@@ -364,7 +370,7 @@ struct SceneLights {
             float s = LambertShade(nn, SceneLight::Direction(), SceneLight::Ambient());
             return Vec3{s, s, s};
         }
-        Vec3 acc = AmbientAt(nn);
+        Vec3 acc = AmbientAtPoint(p, nn);
         int li = -1;
         for (const auto& L : lights) {
             ++li;

@@ -4009,6 +4009,12 @@ std::string SceneSerializer::Serialize(const Scene& scene) {
         if (rs.ambientMode != Scene::RenderSettings::AmbientHemisphere || rs.ambientSkyTint != 0.7f)
             out << "ambientmode " << rs.ambientMode << " " << rs.ambientSkyTint << "\n";
         if (!rs.autoBrightness) out << "lightunits 0\n";
+        if (rs.probes.Baked() || !rs.probes.enabled) {   // baked light probes (append-only record; older builds keep it as unknown)
+            out << "probegrid " << (rs.probes.enabled ? 1 : 0) << " " << rs.probes.spacing << " " << rs.probes.origin.x << " " << rs.probes.origin.y
+                << " " << rs.probes.origin.z << " " << rs.probes.nx << " " << rs.probes.ny << " " << rs.probes.nz << " " << rs.probes.sh.size();
+            for (float v : rs.probes.sh) out << " " << v;
+            out << "\n";
+        }
         // Fog modes, the procedural sky, post-processing and weather: each an
         // append-only record of its own, written only when it differs from the
         // defaults, so an untouched scene's text stays exactly as it was.
@@ -4429,6 +4435,15 @@ static bool ParseStep(Scene& scene, ParseSession& S, bool clear,
             int m = Scene::RenderSettings::AmbientHemisphere; float tint = 0.7f; in >> m >> tint;
             if (m < 0 || m > 2) m = Scene::RenderSettings::AmbientHemisphere;
             if (clear) { scene.renderSettings.ambientMode = m; scene.renderSettings.ambientSkyTint = tint; }
+        } else if (token == "probegrid") {
+            LightProbeGrid g; int en = 1; std::size_t count = 0;
+            in >> en >> g.spacing >> g.origin.x >> g.origin.y >> g.origin.z >> g.nx >> g.ny >> g.nz >> count;
+            g.enabled = en != 0;
+            const std::size_t want = (std::size_t)(g.nx > 0 ? g.nx : 0) * (g.ny > 0 ? g.ny : 0) * (g.nz > 0 ? g.nz : 0) * 12;
+            if (count == want && count <= 12 * 12 * 6 * 12 * 4) { g.sh.resize(count); for (float& v : g.sh) in >> v; }
+            else { g.Clear(); }
+            if (!g.Baked()) g.Clear();
+            if (clear) scene.renderSettings.probes = g;
         } else if (token == "lightunits") {
             int on = 1; in >> on;
             if (clear) scene.renderSettings.autoBrightness = (on != 0);

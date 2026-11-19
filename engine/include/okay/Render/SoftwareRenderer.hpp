@@ -639,7 +639,7 @@ public:
                 if (shadowsOn && !perLightSh) {
                     sh = ShadowFactor(wpos, n);
                     if (sh < 0.999f) {
-                        Vec3 amb = SceneLights::AmbientAt(n);
+                        Vec3 amb = SceneLights::AmbientAtPoint(wpos, n);
                         lit.x = amb.x + (lit.x - amb.x) * sh; if (lit.x < 0) lit.x = 0;
                         lit.y = amb.y + (lit.y - amb.y) * sh; if (lit.y < 0) lit.y = 0;
                         lit.z = amb.z + (lit.z - amb.z) * sh; if (lit.z < 0) lit.z = 0;
@@ -1980,7 +1980,7 @@ inline void RenderMeshes(Raster& r, const Scene& scene, const Mat4& vp, const Ve
         RenderShadowMap(scene, vp, eye);   // depth-from-light pre-pass for cast shadows
         RenderLocalShadowMaps(scene, vp, eye);   // spot / point / area light shadow maps
     }
-    if (SSAOEnabled()) {      // allocate the SSAO G-buffer for this frame
+    if (SSAOEnabled() || rs.post.ssao) {      // allocate the SSAO G-buffer for this frame (the process-wide switch or the scene's own Ambient occlusion)
         std::size_t n = (std::size_t)r.width * r.height;
         r.gpos.assign(n, Vec3{0, 0, 0}); r.gnrm.assign(n, Vec3{0, 0, 0});
         r.gvalid.assign(n, 0);
@@ -2511,7 +2511,15 @@ inline void RenderMeshes(Raster& r, const Scene& scene, const Mat4& vp, const Ve
     // Split the frame into horizontal bands across hardware threads.
     { OKAY_PROFILE("Render.Raster"); ParallelRows(0, r.height, [&](int ya, int yb) { renderBand(ya, yb - 1); }); }
     OKAY_PROFILE("Render.Post");
-    if (SSAOEnabled() && !r.gvalid.empty()) ApplySSAO(r, vp, eye);   // contact AO post-pass
+    if ((SSAOEnabled() || rs.post.ssao) && !r.gvalid.empty()) {       // contact AO post-pass
+        const float radSaved = SSAORadius(), strSaved = SSAOStrength();
+        if (rs.post.ssao) {   // the scene's own switch carries its radius and intensity (Lighting window > Post-processing)
+            SSAORadius() = rs.post.ssaoRadius;
+            SSAOStrength() = std::fmin(1.0f, std::fmax(0.0f, rs.post.ssaoIntensity * 0.6f));
+        }
+        ApplySSAO(r, vp, eye);
+        SSAORadius() = radSaved; SSAOStrength() = strSaved;
+    }
     if (rs.post.bloom && !BloomEnabled()) {                          // the scene's own Bloom switch
         BloomEnabled() = true;
         const float t0 = BloomThreshold(), i0 = BloomIntensity();

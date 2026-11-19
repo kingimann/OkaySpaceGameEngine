@@ -2,6 +2,7 @@
 #include "lighting_scenes.hpp"
 #include "okay/Render/ShadowSetup.hpp"
 #include "okay/Render/LightingPresets.hpp"
+#include "okay/Render/LightProbeBake.hpp"
 #include <cmath>
 #include <cstdio>
 #include <string>
@@ -293,6 +294,73 @@ int main() {
         ApplySceneLight(back);
         CHECK(SceneLights::List().size() >= 5);                     // moon + four lamps (+ glow of nothing)
         std::remove(path.c_str());
+    }
+
+    // ---- Light probes -------------------------------------------------------------------------------------------------------
+    {
+        // The SH maths: a uniform sky of colour C gives C on every side; light from above lights up-facing normals more.
+        float c[12] = {0}; const int N = 256; const float C[3] = {0.4f, 0.5f, 0.6f};
+        for (int i = 0; i < N; ++i) {
+            const float y = 1.0f - 2.0f * (i + 0.5f) / N, r = std::sqrt(1.0f - y * y), a = i * 2.39996323f;
+            LightProbeGrid::Accumulate(c, Vec3{r * std::cos(a), y, r * std::sin(a)}, C, 4.0f * 3.14159265f / N);
+        }
+        for (const Vec3& n : {Vec3{0, 1, 0}, Vec3{0, -1, 0}, Vec3{1, 0, 0}, Vec3{0, 0, -1}}) {
+            const Vec3 e = LightProbeGrid::Evaluate(c, n);
+            CHECK_NEAR(e.x, 0.4f, 0.01f); CHECK_NEAR(e.y, 0.5f, 0.01f); CHECK_NEAR(e.z, 0.6f, 0.01f);
+        }
+        float top[12] = {0}; const float W[3] = {1, 1, 1};
+        for (int i = 0; i < N; ++i) {
+            const float y = 1.0f - 2.0f * (i + 0.5f) / N, r = std::sqrt(1.0f - y * y), a = i * 2.39996323f;
+            const float lum = y > 0.0f ? 1.0f : 0.0f;
+            const float rgb[3] = {W[0] * lum, W[1] * lum, W[2] * lum};
+            LightProbeGrid::Accumulate(top, Vec3{r * std::cos(a), y, r * std::sin(a)}, rgb, 4.0f * 3.14159265f / N);
+        }
+        CHECK(LightProbeGrid::Evaluate(top, Vec3{0, 1, 0}).x > LightProbeGrid::Evaluate(top, Vec3{0, -1, 0}).x + 0.3f);
+        // Interpolation: halfway between two probes is the average.
+        LightProbeGrid g; g.nx = 2; g.ny = 1; g.nz = 1; g.spacing = 2.0f; g.sh.assign(24, 0.0f);
+        g.sh[0] = 1.0f / LightProbeGrid::kY00; g.sh[12] = 3.0f / LightProbeGrid::kY00;      // uniform 1.0 and 3.0 (red channel)
+        CHECK_NEAR(g.Ambient(Vec3{1, 0, 0}, Vec3{0, 1, 0}).x, 2.0f, 1e-3f);
+        CHECK_NEAR(g.Ambient(Vec3{-5, 0, 0}, Vec3{0, 1, 0}).x, 1.0f, 1e-3f);                // outside: nearest edge probe
+        // Baking a closed room: a probe inside is darker than the open ground beside it, and the scene uses the probes.
+        ShadowsEnabled() = true;
+        Scene w("probes"); BuildRoom(w, false);
+        MakeBox(w, "Ground", {20, -0.5f, 0}, {30, 1, 30}, Color::FromBytes(150, 150, 150));
+        AddLight(w, "Sun", Light::Type::Directional, {0, 8, 0}, 50.0f, 20.0f, Color::White, 1.0f);
+        const LightProbeBakeResult br = BakeLightProbes(w, w.renderSettings.probes, 2.0f);
+        CHECK(br.ok && br.probes > 8 && w.renderSettings.probes.Baked());
+        ApplySceneLight(w);
+        CHECK(ActiveLightProbes() == &w.renderSettings.probes);
+        const Vec3 inside = w.renderSettings.probes.Ambient(Vec3{0, 1.5f, 0}, Vec3{0, 1, 0});
+        const Vec3 outside = w.renderSettings.probes.Ambient(Vec3{14, 1.5f, 0}, Vec3{0, 1, 0});
+        std::printf("probe ambient up: inside the room %.3f, outside %.3f\n", inside.x, outside.x);
+        CHECK(inside.x < outside.x);
+        // the shading uses it: facing away from the sun, only ambient is left, and it differs between the two places
+        const Vec3 a = SceneLights::ShadeNormalized(Vec3{0, 1.5f, 0}, Vec3{0, 1, 0}), b = SceneLights::ShadeNormalized(Vec3{14, 1.5f, 0}, Vec3{0, 1, 0});
+        CHECK(a.x != b.x);
+        w.renderSettings.probes.enabled = false; ApplySceneLight(w);
+        CHECK(ActiveLightProbes() == nullptr);
+        w.renderSettings.probes.enabled = true;
+        // save and load
+        const std::string path = "lighting_upgrade_probes.okayscene";
+        CHECK(SceneSerializer::SaveToFile(w, path));
+        Scene back("back"); CHECK(SceneSerializer::LoadFromFile(back, path));
+        CHECK(back.renderSettings.probes.Baked() && back.renderSettings.probes.sh.size() == w.renderSettings.probes.sh.size());
+        CHECK_NEAR(back.renderSettings.probes.sh[5], w.renderSettings.probes.sh[5], 1e-4f);
+        std::remove(path.c_str());
+        ApplySceneLight(back); ActiveLightProbes() = nullptr;
+    }
+
+    // ---- Software SSAO from the scene's own Ambient occlusion switch ---------------------------------------------------------
+    {
+        ShadowsEnabled() = true;
+        Scene r("ssao"); CamView v = BuildRoom(r, true);
+        r.renderSettings.post.ssao = false;
+        Image off = RenderScene(r, v, 160, 100);
+        r.renderSettings.post.ssao = true; r.renderSettings.post.ssaoIntensity = 1.5f;
+        Image on = RenderScene(r, v, 160, 100);
+        const float mo = MeanLuma(off, 0, 0, 160, 100), mn = MeanLuma(on, 0, 0, 160, 100);
+        std::printf("room mean brightness: SSAO off %.4f, on %.4f\n", mo, mn);
+        CHECK(mn < mo - 0.001f);   // corners and the table's feet are darker
     }
 
     // ---- A closed room keeps the sun out (no light leaks through thin walls) ---------------------------------------------

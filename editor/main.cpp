@@ -18862,7 +18862,10 @@ void DrawFileDialogs(EditorState& ed) {
             ImGui::TextColored(ImVec4(1.0f, 0.75f, 0.3f, 1.0f), "EXPERIMENTAL and UNVERIFIED. Never built on Windows, never run on an Xbox.");
             ImGui::TextWrapped("%s", okay::xbox::kLimitationsText);
             ImGui::Spacing();
-            const okay::xbox::SdkReport& s_xboxSdk = okay::xbox::CachedSdkReport(ImGui::Button("Check again"));
+            // The probe runs on a worker thread (XboxAsyncProbe.hpp): this call never waits. While it runs the report says "Checking ...".
+            const bool s_xboxCheckAgain = ImGui::Button("Check again");
+            const okay::xbox::SdkReport& s_xboxSdk = okay::xbox::CachedSdkReport(s_xboxCheckAgain);
+            if (s_xboxSdk.checking) { ImGui::SameLine(); ImGui::TextDisabled("%c  working in the background, the editor stays usable", "|/-\\"[(int)(ImGui::GetTime() * 8.0) & 3]); }
             ImGui::TextWrapped("%s", s_xboxSdk.message.c_str());
             for (const okay::xbox::SdkItem& it : s_xboxSdk.items) {
                 ImGui::TextColored(it.found ? ImVec4(0.4f, 0.9f, 0.4f, 1) : (it.required ? ImVec4(1.0f, 0.45f, 0.4f, 1) : ImVec4(0.7f, 0.7f, 0.7f, 1)),
@@ -18888,7 +18891,6 @@ void DrawFileDialogs(EditorState& ed) {
             if (g_xboxInstall) ImGui::TextDisabled("Windows will show ONE administrator (UAC) prompt near the end; accept it. Decline it and everything else is kept.");
             if (g_xboxRunner) {   // the log panel: per-step status, streamed output, cancel
                 namespace xb = okay::xbox;
-                g_xboxRunner->Tick();
                 ImGui::Separator();
                 const auto& st = g_xboxRunner->Status(); const auto& sp = g_xboxRunner->Steps();
                 for (std::size_t i = 0; i < sp.size(); ++i) {
@@ -18899,14 +18901,20 @@ void DrawFileDialogs(EditorState& ed) {
                 if (g_xboxRunner->Running() && ImGui::Button("Cancel build")) g_xboxRunner->Cancel();
                 if (g_xboxRunner->Succeeded()) {
                     ImGui::TextColored(ImVec4(0.4f, 0.9f, 0.4f, 1), "Finished. Package: %s", g_xboxAppx.c_str());
-                    const std::string who = g_xboxRunner->Fact("SIGNER"); ImGui::TextDisabled("Signed with: %s", who.empty() ? g_xboxSignerLabel.c_str() : who.c_str());
+                    static const void* s_whoFor = nullptr; static std::string s_who;   // Fact() copies the whole log: once per finished build, not every frame
+                    if (s_whoFor != g_xboxRunner.get()) { s_whoFor = g_xboxRunner.get(); s_who = g_xboxRunner->Fact("SIGNER"); }
+                    ImGui::TextDisabled("Signed with: %s", s_who.empty() ? g_xboxSignerLabel.c_str() : s_who.c_str());
                     ImGui::TextDisabled("UNVERIFIED: nothing here has run on Windows or an Xbox yet. Tell us what you see.");
                 } else if (g_xboxRunner->Finished()) {
                     ImGui::PushTextWrapPos(560.0f); ImGui::TextColored(ImVec4(1, 0.45f, 0.4f, 1), "%s", g_xboxRunner->FailureMessage().c_str()); ImGui::PopTextWrapPos();
                 }
                 if (ImGui::BeginChild("##xboxlog", ImVec2(560, 180), true)) {
-                    for (const xb::LogLine& l : g_xboxRunner->Log())
+                    const std::vector<xb::LogLine>& xlog = g_xboxRunner->Log();   // up to 3000 lines: only the visible ones are drawn
+                    ImGuiListClipper xclip; xclip.Begin((int)xlog.size());
+                    while (xclip.Step()) for (int li = xclip.DisplayStart; li < xclip.DisplayEnd; ++li) {
+                        const xb::LogLine& l = xlog[(std::size_t)li];
                         ImGui::TextColored(l.cls == xb::LineClass::Error ? ImVec4(1, 0.5f, 0.45f, 1) : l.cls == xb::LineClass::Warning ? ImVec4(1, 0.8f, 0.4f, 1) : ImVec4(0.8f, 0.8f, 0.8f, 1), "%s", l.text.c_str());
+                    }
                     if (g_xboxRunner->Running()) ImGui::SetScrollHereY(1.0f);
                 }
                 ImGui::EndChild();
@@ -19259,13 +19267,14 @@ void DrawFileDialogs(EditorState& ed) {
         ImGui::PushStyleColor(ImGuiCol_ButtonHovered, ImVec4(0.24f, 0.70f, 0.32f, 1.0f));
         ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(1, 1, 1, 1));
 #if defined(OKAY_XBOX_UWP)
-        const bool xboxBlocked = g_buildPlatform == 4 && (!okay::xbox::CachedSdkReport().available || (g_xboxRunner && g_xboxRunner->Running()));
+        const bool xboxChecking = g_buildPlatform == 4 && okay::xbox::CachedSdkReport().checking;   // the probe starts here too if the page was not shown yet; never waits
+        const bool xboxBlocked = g_buildPlatform == 4 && (xboxChecking || !okay::xbox::CachedSdkReport().available || (g_xboxRunner && g_xboxRunner->Running()));
         ImGui::BeginDisabled(xboxBlocked);
 #endif
         if (ImGui::Button(buildLabel, ImVec2(bw, 0))) doBuild = true;
 #if defined(OKAY_XBOX_UWP)
         ImGui::EndDisabled();
-        if (xboxBlocked && ImGui::IsItemHovered(ImGuiHoveredFlags_AllowWhenDisabled)) ImGui::SetTooltip("Xbox export is unavailable: a required Windows tool is missing (see the Xbox page).");
+        if (xboxBlocked && ImGui::IsItemHovered(ImGuiHoveredFlags_AllowWhenDisabled)) ImGui::SetTooltip("%s", xboxChecking ? "Checking your PC for the Xbox tools... (a few seconds; the button turns on when it is done)" : (g_xboxRunner && g_xboxRunner->Running()) ? "An Xbox build is already running (see the log on the Xbox page)." : "Xbox export is unavailable: a required Windows tool is missing (see the Xbox page).");
 #endif
         ImGui::PopStyleColor(3);
         if (g_vsBuildRetry) { doBuild = true; doRun = g_vsBuildRetry == 2; g_vsBuildRetry = 0; }

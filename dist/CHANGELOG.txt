@@ -1,5 +1,22 @@
 OkaySpace Game Engine — Changelog
 
+v2.888.0
+  Editor speed tools, Xbox test export, downloadable game content
+  - The editor has a frame-time overlay: View > Rendering > Frame-time overlay
+    shows your FPS, the time each frame takes and where the time goes.
+    View > Rendering also has a Frame rate limit, Slow down when idle, a
+    smaller Viewport resolution and a Performance mode for the Scene view.
+    Everything is off until you turn it on.
+  - Experimental: an Xbox One test export (Developer Mode, UWP). File > Build
+    Settings > Xbox (exp.) checks your tools and makes an app package. It has
+    never been run on a real Xbox yet, so treat it as a test.
+  - Downloadable game content: an exported game can fetch signed updates of
+    its own models, textures, scenes and scripts without a new build. Off
+    unless a game turns it on. The okay-content tool in the Tools folder makes
+    and checks the content.
+  - Behind the scenes: slow checks now have longer time limits, and a rare
+    flicker in picture edges (round pictures) is fixed.
+
 v2.887.0
   Visual Script made simpler again
   - The Visual Script side panel now uses plain words and has a "Saved values"

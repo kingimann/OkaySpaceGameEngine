@@ -66,12 +66,35 @@ dither matrix, and the box and Lanczos filter definitions already in `okay::tex`
 
 ## Tests
 
-`test_ui_quality` (180 checks, no window needed): glyph weight, exact face sizes, sub-pixel phases (ink moves by k/4),
+`test_ui_quality` (180 checks, no window needed; `ui_quality_shot` makes the pictures): glyph weight, exact face sizes, sub-pixel phases (ink moves by k/4),
 kerning pairs, picture size rules and filter against an area average in linear light, shadow profile against the
 Gaussian, border snapping at 1.5x, circle and rounded-corner coverage against a 16x16 supersampled analytic shape,
 glyph quads on the pixel grid, quarter-pixel text positions, gradient dither, the setting (saved, defaulted, environment
 names), the batched path against the direct one, and a draw time per level. `test_ui_renderer_golden` (Old look pinned),
 `test_ui_crisp`, `test_ui_render_bench` (draw calls, no allocation in steady state, time) still pass.
+
+## Performance
+
+Measured with `test_ui_render_bench` (500 widgets in a 10,000-object scene, 1920x1080, drawn through the batcher onto a
+counting backend, so it is the engine's own UI cost with no GPU). This machine is busy, and only the UI files were
+compiled with `-O2` (the rest of the engine with `-O0`), so the absolute times are far above the real optimised build
+(target 1 ms, CI limit 3 ms) and are only good for comparing the levels with each other:
+
+| Level | Median UI CPU per frame (this mixed build) | Triangles |
+|---|---|---|
+| Old look | 8.7 ms | 20,554 |
+| Fast | 8.5 ms | 20,554 |
+| Good (default) | 15.2 ms (about 1.75 times the Old look) | 64,214 |
+| Best | 16.0 ms | 65,814 |
+
+Draw calls stay at 2 and steady-state allocations stay at 0 (both asserted by the bench). Good costs more because every
+partly covered edge pixel is its own small rectangle with its own alpha (the Old look rounded them to solid or to nothing),
+so a screen of rounded widgets sends about three times the triangles. If a game with a huge number of rounded widgets
+cannot afford that, pick **Fast** (same cost as the Old look, still snapped text). The absolute numbers for the real
+`-O3` build and for GPU drivers are **not measured**.
+
+The reference screen (`ui_quality_shot`, 1280x720, SDL software renderer, including renderer set-up and read-back) took
+105 to 115 ms at every level: the time there is the software rasteriser, not the UI pass.
 
 ## Not done / untested
 
@@ -91,4 +114,5 @@ names), the batched path against the direct one, and a draw time per level. `tes
 - The quality setting is per scene. There is no project-wide default in Project Settings or Build Settings (use the
   environment variable, or set the scene).
 - Kerning applies to the TrueType faces (the built-in Roboto and any .ttf/.otf the scene names); the 8x8 pixel font is unchanged.
-- Performance: see the numbers below; they come from an unoptimised (`-O0`) build and are only good for comparing the levels with each other.
+- Performance: see the table above; Good is about 1.75 times the Old look in UI CPU and three times the triangles on the 500-widget screen; absolute optimised numbers are not measured.
+- Kerning is applied when text is measured with the default level; a scene set to Old look but measured outside the draw pass (layout) can be a pixel or two off for kerned pairs.

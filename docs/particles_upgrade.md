@@ -60,12 +60,19 @@ The machine was loaded by other builds, so these move by about 2x between runs. 
 
 Memory: about 101 bytes a slot (1.93 MB for 20 000), measured by the test.
 
+## Round two (branch claude/particles-3)
+
+- **Glow is a real add blend where the host can do it.** `platform::BlendMode::Add` (SDL: `SDL_BLENDMODE_ADD`); the player draws Glow items with it (`ParticleView::trueAdditive`). Dear ImGui has no blend state, so the editor puts a draw callback in the command stream that switches the SDL blend of the textures the shapes use (`editor/ParticleEditor.cpp`). The two software painters (OkayUI soft, Xbox soft) draw Add as normal blend. Checked in a test on an SDL software surface for the round puffs (grey 60 under red 50%: Glow gives 247 60 60, Normal 174 24 24). Not checked: streaks, ribbons and pictures (SDL's software renderer ignores the blend mode of triangles, so only a GPU renderer can show it), the ImGui callback path (never run in a window), Windows.
+- **2D collision.** `worldCollision2D`: the particle's X and Y against the 2D colliders through `Physics2D::Raycast`, same ray budget, bounce, friction, life loss and end-on-hit; Z is left alone.
+- **Start-value curves.** `startSizeCurve`, `startSpeedCurve`, `startLifetimeCurve` multiply what is being born by how far through the emitter's round it is (`duration`, or `startCurvePeriod` seconds when it runs forever). Inspector: Emission extras. Saved in `particlesx`.
+- Fix found by rerunning `property_registry` against a library with the wind types: `startColor2` was only saved with random colours on; it is now saved whenever it is not white.
+
 ## Not done / unverified
 
-- True additive blend: the painters (and ImGui) have normal blend only. Glow is a brighter, slightly more transparent normal blend. A real additive mode needs a painter change (SDL and software painters).
+- Glow on the two software painters (and the Premultiplied mode everywhere) is a normal blend.
 - Cube particles are cubes, not arbitrary meshes. Soft edges and the depth hiding need the software depth picture.
-- Collision with the 2D physics world is not done (3D colliders and the ground plane only). With a small ray budget a particle can sink below a floor for a few frames before its turn (measured: lowest ever -3.45 m with 16 rays for 300 particles, back above -0.25 m at the end).
-- No curve editor for start values; no curl noise; no texture sheet files ship with the engine (the example uses the soft puff).
+- With a small ray budget a particle can sink below a floor for a few frames before its turn (measured: lowest ever -3.45 m with 16 rays for 300 particles, back above -0.25 m at the end).
+- No curl noise; no texture sheet files ship with the engine (the example uses the soft puff).
 - Sub-emitter children are found by name among the direct children.
 - Not run: the editor in a window (menus, Inspector rows, live preview), the player, GPU renderers, Windows. The Inspector preview advances the effect only while its Inspector is showing; other effects in the scene move in Play.
 - Merge note for the wind branch: it edits the old `Update` loop in the header. Put its `WindField::At` call inside `ParticleSystem::WindAt` and keep the `windy` check in `Tick` (a calm scene must not slow particles).

@@ -33,5 +33,6 @@ already burning when the scene opens. The live preview and the Scene view show t
 collision, the sub-effects, the draw list, the 17 presets, the scene save and load, and the shipped example scene are
 covered by the test `particles_upgrade` (and a headless picture of every preset, see `docs/particles_upgrade.md`).
 Unverified: the editor menus, the Inspector rows and the live preview (compiled only, never drawn in a window), the
-player drawing, any GPU renderer, and Windows. Glow (additive) is drawn as a brighter normal blend in the editor and
-the player, because their painters have no additive mode.
+player drawing, any GPU renderer, and Windows. Glow (adds light) uses the renderer's add blend in the editor (a draw callback) and the player; this was only
+checked on an SDL software surface for round puffs, so how fire and magic look in a real window is unverified. 2D collision (Hitting
+things > Hit 2D things) and the start-value curves (Emission extras) were added later and are tested headless only.

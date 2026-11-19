@@ -1998,11 +1998,11 @@ looks and plays exactly as before. Details: `docs/wind.md`.
 4. Look and listen.
 
 **What you should see and hear.**
-- The trees, pines and little bushes lean to the right (+X) and shiver; stronger in the gusts. The one tree in the shaded corner on
+- (The camera looks toward -Z, so +X is to your right.) The trees, pines and little bushes lean to the right and shiver; stronger in the gusts. The one tree in the shaded corner on
   the right (inside the "Calm zone") stands still: that is a wind-free zone.
 - The red flag on the pole waves and points downwind. The rope between the two posts swings sideways.
 - Orange leaves drift across from the left (Particle System, "Affected by wind" at 1).
-- The wooden box on the ground slides a little in each gust (Wind Drag, 3 kg).
+- The wooden box near the camera is pushed along in the strong gusts (Wind Drag, 8 kg; in a 14-second headless run it slid about 4 m and stopped between gusts).
 - A soft "whoosh" that swells with the wind (Wind Sound: made by the engine, no sound file).
 
 **Steps (make your own).**
@@ -2019,9 +2019,12 @@ looks and plays exactly as before. Details: `docs/wind.md`.
 where the camera is). In the new script language: `Wind.SetStrength(12)`, `Wind.SetGust(0.8, 0.3)`, `Wind.At(Vec3(0, 1, 0))`,
 `Wind.Strength`, `Wind.Direction`.
 
+**Pictures.** `docs/images/wind-example-t04.png` and `wind-example-t12.png` are headless software renders of the scene at 4 s and 12 s (still
+images: they show the scene, not the motion, and the software renderer does not draw particles or the rope).
+
 **Status.** Tested on Linux: the wind maths (noise, gust period, zone blending, no NaN) and the components in a scene (zones, particles,
 drag, sway, foliage, cable, sound, save/load). Not run: Windows, a GPU renderer, the editor on a screen. The example scene was made by
-a generator and loaded in the headless example test, not looked at by eye.
+a throw-away generator, loaded and run for 14 simulated seconds headless (22 swaying plant chunks, the box moved, no NaN), and rendered to the two pictures above with the software renderer; nobody has watched it move on a screen.
 
 ## xbox-uwp. Xbox One (experimental, Developer Mode) export
 

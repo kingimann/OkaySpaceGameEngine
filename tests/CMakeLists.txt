@@ -1671,6 +1671,11 @@ target_include_directories(test_vs_node_docs PRIVATE ${CMAKE_SOURCE_DIR}/editor 
 target_link_libraries(test_vs_node_docs PRIVATE okay::engine)
 add_test(NAME vs_node_docs COMMAND test_vs_node_docs)
 
+add_executable(test_vs_guide test_vs_guide.cpp)
+target_include_directories(test_vs_guide PRIVATE ${CMAKE_SOURCE_DIR}/editor ${OKAY_VS_IMGUI_INCLUDE})
+target_link_libraries(test_vs_guide PRIVATE okay::engine)
+add_test(NAME vs_guide COMMAND test_vs_guide)
+
 add_executable(test_vs_clarity test_vs_clarity.cpp)
 target_include_directories(test_vs_clarity PRIVATE ${CMAKE_SOURCE_DIR}/editor ${OKAY_VS_IMGUI_INCLUDE})
 target_link_libraries(test_vs_clarity PRIVATE okay::engine)

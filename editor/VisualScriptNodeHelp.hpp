@@ -58,6 +58,23 @@ inline const char* VsNodeHelpRaw(const char* type) {
         if (std::strcmp(type, "Fn.set_clipboard_text") == 0)
             return "Puts the text wired into First onto the clipboard. Control characters are removed, and text past the limit is cut short.";
         const std::string t = type;
+        // Vehicles (docs/vehicle_controls.md). First is the vehicle (its object name); leave it empty for the object this graph is on.
+        if (t == "Fn.Vehicle.SetSetting") return "Changes one setting of a vehicle while the game runs. First is the vehicle, Second is the setting's name (like maxSpeed or grip), Third is the new number. Gives 1 when it worked, 0 for an unknown name.";
+        if (t == "Fn.Vehicle.GetSetting") return "Reads one setting of a vehicle. First is the vehicle, Second is the setting's name.";
+        if (t == "Fn.Vehicle.ApplyPreset") return "Turns a vehicle into a kind of vehicle: Sedan, Sports Car, Muscle Car, Pickup, Heavy Truck, Bus, Buggy, Rally Car or Drift Car. First is the vehicle, Second is the name.";
+        if (t == "Fn.Vehicle.SetThrottle") return "Presses the gas by First (the vehicle) Second, 0 to 1. Use it to drive a vehicle from a script.";
+        if (t == "Fn.Vehicle.SetBrake") return "Presses the brake, 0 to 1. At a standstill the brake also reverses the vehicle.";
+        if (t == "Fn.Vehicle.SetSteer") return "Turns the wheel. -1 is full left, 1 is full right.";
+        if (t == "Fn.Vehicle.SetHandbrake") return "Pulls the handbrake (1) or lets it go (0). Pull it while turning to drift.";
+        if (t == "Fn.Vehicle.Boost") return "Switches the boost on (1) or off (0). It uses up the boost tank and needs the boost setting on.";
+        if (t == "Fn.Vehicle.Horn") return "Presses the horn (1) or lets it go (0).";
+        if (t == "Fn.Vehicle.Lights") return "Switches the headlights on (1) or off (0). Objects in the vehicle whose name starts with Headlight are shown or hidden.";
+        if (t == "Fn.Vehicle.Recover") return "Puts the vehicle back on its wheels, a little above where it is.";
+        if (t == "Fn.Vehicle.Eject" || t == "Fn.Vehicle.Exit") return "Throws the driver out beside the vehicle. Gives 1 when someone was driving.";
+        if (t == "Fn.Vehicle.Enter") return "Makes a person (Second, an object name) sit in the vehicle's driver seat. Gives 1 when it worked.";
+        if (t == "Fn.Vehicle.Speed") return "How fast the vehicle goes, in metres per second. Negative when it reverses.";
+        if (t == "Fn.Vehicle.Gear") return "The gear: 1 and up going forward, -1 in reverse.";
+        if (t == "Fn.Vehicle.Rpm") return "How fast the engine is turning (revolutions per minute).";
         if (t == "Fn.get_monitor") return "The name of the monitor the game is using. Empty when none was chosen.";
         if (t == "Fn.get_monitors") return "The names of the monitors connected right now.";
         if (t == "Fn.set_monitor") return "Use a connected monitor. First is its name, or its number starting at 0.";

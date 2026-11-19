@@ -40,7 +40,33 @@ scan fallback (list removal), a uniform grid keyed by integer cell coordinates (
 `tests/test_ecs_bench.cpp` (`ctest -R ecs_bench` runs it small; run `test_ecs_bench` directly for 10,000 objects, each with 3
 components; change the size with `OKAY_ECS_BENCH_N`). Memory is the count of bytes asked from `operator new`.
 
-BENCH_TABLE
+| Measurement | Before | After | Unit |
+|---|---|---|---|
+| create 10000 objects | 8.08 | 8.04 | ms |
+| add 3 components to each | 2.53 | 6.3 | ms |
+| memory per object (bare) | 751.5 | 775.5 | bytes |
+| memory per component | 74.2 | 98.2 | bytes |
+| first Start (Awake+Start) | 1.12 | 1.29 | ms |
+| GetComponent<A> (1st of 3) | 4.3 | 4.4 | ns/call |
+| GetComponent<Needle> (last) | 61.7 | 62 | ns/call |
+| FindObjectOfType<Needle> cold | 1.046 | 0.825 | ms |
+| FindObjectOfType<Needle> warm | 0.873 | 0 | ms/call |
+| FindObjectsOfType<A> warm | 0.006 | 0.012 | ms/call |
+| Scene::Update (10000 x3 comps) | 5.574 | 5.73 | ms/frame |
+| RemoveComponent<C> on each | 305.27 | 0.82 | ms |
+| Destroy 10000 + frame | 39.52 | 27.41 | ms |
+| create+destroy churn 10000 | 38.71 | 35.31 | ms |
+
+Best of 3 runs each. "Before" is the unchanged engine (built from the `claude/water-visual-1` tree, whose Scene / GameObject /
+Component code is identical to main for this purpose; compiled the same way, `-O3`), "After" is this branch. The machine was
+shared with other builds, so differences under about 2x on the small numbers (for example "add 3 components", which
+varied from 2 to 7 ms run to run in both columns) are noise. What is real:
+
+- **`RemoveComponent` on every object: 305 ms -> 0.8 ms** (the update list was scanned once per removal; about 400x).
+- **`FindObjectOfType<T>` repeated: 0.87 ms -> about 0** (a lookup in the cached list; the first call still walks, 0.8 ms).
+- Memory per component grew by about 24 bytes (a 64-bit id and two 32-bit list slots added to every component).
+- Everything else (creation, `GetComponent`, update dispatch, destroy) is unchanged within noise.
+
 
 ## Correctness hazards looked for
 
@@ -64,7 +90,13 @@ BENCH_TABLE
 | `ecs_fuzz` | 12 seeded runs of random create / destroy / reparent / add / remove / switch on-off, half of them with scripts doing destroy / add / remove / reparent inside Update. After every frame: parent and child agree, no cycle, ids and guids unique, components point at their object, per-type lists equal a plain walk, handles never resolve to a wrong or gone object. At the end: no leaked component (a live counter returns to zero). Each seed is run twice and the order-of-calls hash must match (deterministic). |
 | `ecs_bench` | the benchmark above; asserts only the counts |
 
-RESULTS_TABLE
+Results on Linux (Release, `-O3`): `ecs_refs` 83 checks 0 failures; `ecs_fuzz` 24 checks 0 failures (12 seeds x 4,000
+steps, each twice); `ecs_bench` 5 checks 0 failures. Existing tests re-run on this branch, all 0 failures: `scene`,
+`scene_lifecycle`, `scene_lifecycle_audit`, `scene_reentrant`, `scene_graph_audit`, `scene_graph_perf`, `scene_graph_wave4`,
+`scene_graph_wave5`, `scene_pointer`, `scene_ids_prefabs`, `scene_load_pool`, `scene_spawn`, `scene_defaults`,
+`core_events_ecs`, `layers_tags_project`. The full test suite was NOT run (the machine was too loaded).
+
+AddressSanitizer / UBSan: not run yet (see below).
 
 ## Not done (honest list)
 

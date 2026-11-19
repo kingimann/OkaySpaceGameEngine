@@ -51,7 +51,7 @@ struct VehicleTuning {
     // ---- Brakes ----
     float brakeForce = 36.0f;       ///< braking power (m/s^2)
     float brakeBias = 0.6f;         ///< share of braking at the front (0.4 .. 0.8 is sane)
-    bool  abs = true;               ///< anti-lock brakes
+    bool  antiLock = true;              ///< anti-lock brakes
     float handbrakeStrength = 1.0f; ///< how hard the handbrake slows the car
     int   reverseMode = 0;          ///< 0 Hold brake to reverse, 1 Separate reverse button
     // ---- Tyres ----
@@ -136,11 +136,11 @@ struct VehicleTuning {
                 v.push_back({n, KKey, nullptr, nullptr, nullptr, m, 0, 255, 1, g, tip, ""}); };
             B("openWorld", &VehicleTuning::openWorld, "Simple", "On: the open-world driving model (brake to reverse, drifts, gears). Off: the older simple model");
             F("handling", &VehicleTuning::handling, 0, 1, 0.01, "Simple", "Realistic (0) to Arcade (1). Arcade is more forgiving and easier to drift");
-            F("maxSpeed", &VehicleTuning::maxSpeed, 1, 200, 0.5, "Simple", "Top speed in metres per second (22 is about 80 km/h)");
-            F("acceleration", &VehicleTuning::acceleration, 1, 100, 0.5, "Simple", "How hard the engine pushes (m/s^2)");
-            F("grip", &VehicleTuning::grip, 0.1, 30, 0.1, "Simple", "How sticky the tyres are. Low = slidey");
+            F("maxSpeed", &VehicleTuning::maxSpeed, 0, 10000, 0.5, "Simple", "Top speed in metres per second (22 is about 80 km/h)");
+            F("acceleration", &VehicleTuning::acceleration, 0, 1000000000.0, 0.5, "Simple", "How hard the engine pushes (m/s^2)");
+            F("grip", &VehicleTuning::grip, 0, 1000, 0.1, "Simple", "How sticky the tyres are. Low = slidey");
             F("driftAmount", &VehicleTuning::driftAmount, 0, 1, 0.01, "Simple", "How easily the back end slides when you pull the handbrake");
-            F("reverseSpeed", &VehicleTuning::reverseSpeed, 0, 100, 0.5, "Engine", "Top speed going backwards (m/s)");
+            F("reverseSpeed", &VehicleTuning::reverseSpeed, 0, 10000, 0.5, "Engine", "Top speed going backwards (m/s)");
             F("idleRpm", &VehicleTuning::idleRpm, 300, 3000, 50, "Engine", "Engine speed when idling");
             F("maxRpm", &VehicleTuning::maxRpm, 2000, 20000, 100, "Engine", "Engine speed where it hits the limiter");
             F("torquePeak", &VehicleTuning::torquePeak, 0.2, 0.9, 0.01, "Engine", "Where in the rev range the engine pulls hardest (low = pulls from low revs)");
@@ -148,7 +148,7 @@ struct VehicleTuning {
             E("gearbox", &VehicleTuning::gearbox, "Automatic|Manual|Sequential", "Engine", "Automatic changes for you. Manual and Sequential use the gear up / gear down buttons");
             F("shiftTime", &VehicleTuning::shiftTime, 0, 2, 0.01, "Engine", "Seconds with no push while the gear changes");
             F("engineBraking", &VehicleTuning::engineBraking, 0, 20, 0.1, "Engine", "How much the engine slows you when you lift off the gas");
-            F("drag", &VehicleTuning::drag, 0, 100, 0.1, "Engine", "Rolling slowdown when coasting");
+            F("drag", &VehicleTuning::drag, 0, 1000000000.0, 0.1, "Engine", "Rolling slowdown when coasting");
             E("drivetrain", &VehicleTuning::drivetrain, "Rear-wheel|Front-wheel|All-wheel", "Drivetrain", "Which wheels the engine drives. All-wheel gets going best on slippery ground");
             F("torqueSplit", &VehicleTuning::torqueSplit, 0, 1, 0.01, "Drivetrain", "All-wheel only: share of the push sent to the front wheels");
             F("diffLock", &VehicleTuning::diffLock, 0, 1, 0.01, "Drivetrain", "0 = open differential, 1 = locked (more bite out of corners)");
@@ -158,16 +158,16 @@ struct VehicleTuning {
             F("autoCentre", &VehicleTuning::autoCentre, 0, 40, 0.1, "Steering", "How quickly the wheel straightens when you let go");
             F("counterSteerAssist", &VehicleTuning::counterSteerAssist, 0, 1, 0.01, "Steering", "Helps you catch a slide by steering into it");
             B("steerAssist", &VehicleTuning::steerAssist, "Steering", "Never turns harder than the tyres can grip");
-            F("turnSpeed", &VehicleTuning::turnSpeed, 0, 360, 1, "Steering", "Older model only: steering rate (degrees per second)");
-            F("brakeForce", &VehicleTuning::brakeForce, 0, 200, 0.5, "Brakes", "Braking power (m/s^2)");
+            F("turnSpeed", &VehicleTuning::turnSpeed, 0, 36000, 1, "Steering", "Older model only: steering rate (degrees per second)");
+            F("brakeForce", &VehicleTuning::brakeForce, 0, 1000000000.0, 0.5, "Brakes", "Braking power (m/s^2)");
             F("brakeBias", &VehicleTuning::brakeBias, 0.2, 0.9, 0.01, "Brakes", "Share of braking at the front. About 0.6 is best");
-            B("abs", &VehicleTuning::abs, "Brakes", "Anti-lock brakes: stops shorter on slippery ground");
+            B("abs", &VehicleTuning::antiLock, "Brakes", "Anti-lock brakes: stops shorter on slippery ground");
             F("handbrakeStrength", &VehicleTuning::handbrakeStrength, 0, 3, 0.05, "Brakes", "How hard the handbrake slows the car");
             E("reverseMode", &VehicleTuning::reverseMode, "Hold brake to reverse|Separate reverse button", "Brakes", "How you go backwards");
             F("frontGrip", &VehicleTuning::frontGrip, 0.2, 3, 0.01, "Tyres", "Front tyre grip");
             F("rearGrip", &VehicleTuning::rearGrip, 0.2, 3, 0.01, "Tyres", "Rear tyre grip");
             F("slipLimit", &VehicleTuning::slipLimit, 5, 60, 0.5, "Tyres", "How sideways (degrees) the car can slide before the tyres let go");
-            F("handbrakeGrip", &VehicleTuning::handbrakeGrip, 0, 30, 0.05, "Tyres", "Sideways grip at the back while the handbrake is held (low = drifty)");
+            F("handbrakeGrip", &VehicleTuning::handbrakeGrip, 0, 1000, 0.05, "Tyres", "Sideways grip at the back while the handbrake is held (low = drifty)");
             F("iceGrip", &VehicleTuning::iceGrip, 0.02, 1.5, 0.01, "Tyres", "Grip on a surface tagged Ice (1 = normal)");
             F("mudGrip", &VehicleTuning::mudGrip, 0.02, 1.5, 0.01, "Tyres", "Grip on a surface tagged Mud");
             F("grassGrip", &VehicleTuning::grassGrip, 0.02, 1.5, 0.01, "Tyres", "Grip on a surface tagged Grass");

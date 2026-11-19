@@ -209,14 +209,16 @@ public:
         float throttle = 0, brake = 0, steer = 0;   ///< 0..1, 0..1, -1..1 (+ = right)
         bool handbrake = false, boost = false, reverse = false;
     };
-    void SetInput(const DriveInput& in) { m_in = in; m_scripted = true; }
-    void ClearInput() { m_scripted = false; m_in = DriveInput{}; }
-    void SetThrottle(float v) { m_scripted = true; m_in.throttle = Mathf::Clamp(v, 0.0f, 1.0f); }
-    void SetBrake(float v)    { m_scripted = true; m_in.brake = Mathf::Clamp(v, 0.0f, 1.0f); }
-    void SetSteer(float v)    { m_scripted = true; m_in.steer = Mathf::Clamp(v, -1.0f, 1.0f); }
-    void SetHandbrake(bool on) { m_scripted = true; m_in.handbrake = on; }
+    /// Whole-input setter for tests and AI: holds until ClearInput(). The one-value setters below (what scripts call) expire
+    /// half a second after the last call, so a script that stops calling hands the keys back.
+    void SetInput(const DriveInput& in) { m_in = in; m_scripted = true; m_holdT = -1.0f; }
+    void ClearInput() { m_scripted = false; m_in = DriveInput{}; m_holdT = -1.0f; }
+    void SetThrottle(float v) { Hold(); m_in.throttle = Mathf::Clamp(v, 0.0f, 1.0f); }
+    void SetBrake(float v)    { Hold(); m_in.brake = Mathf::Clamp(v, 0.0f, 1.0f); }
+    void SetSteer(float v)    { Hold(); m_in.steer = Mathf::Clamp(v, -1.0f, 1.0f); }
+    void SetHandbrake(bool on) { Hold(); m_in.handbrake = on; }
     /// Boost on / off (needs boostEnabled and some boost left).
-    void Boost(bool on) { m_scripted = true; m_in.boost = on; }
+    void Boost(bool on) { Hold(); m_in.boost = on; }
     void Horn(bool on) { m_horn = on; }
     bool HornOn() const { return m_horn; }
     /// Headlights: also turns every child object whose name starts with "Headlight" on or off.
@@ -253,6 +255,7 @@ public:
     /// Put the car upright again right now (the Recover button does this).
     void Recover() {
         if (!transform) return;
+        if (!m_init) { const Vec3 F = transform->Forward(); m_yaw = std::atan2(F.x, F.z) * kDeg; }
         const Vec3 p = transform->Position();
         m_pitch = m_roll = 0.0f;
         transform->localRotation = Quat::Euler(0.0f, m_yaw, 0.0f);
@@ -339,6 +342,7 @@ private:
             Vec3 F = transform->Forward();
             m_yaw = std::atan2(F.x, F.z) * kDeg; m_init = true; m_boostLeft = 1.0f; m_rpm = idleRpm; m_view = camView;
             ResetRuntimeKeepView();
+            m_drv = DrivingSettings::Load();   // read once, not every frame
             if (usePlayerSettings) ApplyPlayerSettings();
         }
         m_surfaceCheckT -= dt;
@@ -347,19 +351,20 @@ private:
         // Ground friction in the physics step nibbles the speed we set last frame. Keep our own speed unless something
         // really changed it (a wall, a hit, a script or a push bigger than that).
         if (m_haveCmd && rb) {
-            const float dx = vel.x - m_cmdX, dz = vel.z - m_cmdZ, thr = 0.4f + 10.0f * dt;
+            const float dx = vel.x - m_cmdX, dz = vel.z - m_cmdZ, thr = 0.05f + 12.0f * dt;
             if (dx * dx + dz * dz < thr * thr) { vel.x = m_cmdX; vel.z = m_cmdZ; }
         }
         m_vx = vel.x; m_vz = vel.z;
 
         m_unmanned = unmanned;
+        if (m_scripted && m_holdT >= 0.0f) { m_holdT -= dt; if (m_holdT <= 0.0f) ClearInput(); }
         DriveInput in = unmanned ? DriveInput{} : ReadInput(dt);
         if (unmanned) in.brake = 1.0f;                        // nobody at the wheel: brakes on
         // Shape the raw inputs (smoothing, sensitivity, dead zone, invert).
         const float sm = inputSmoothing > 0.0f ? 1.0f - std::exp(-inputSmoothing * dt) : 1.0f;
         m_thrS += (in.throttle - m_thrS) * sm;
         m_brkS += (in.brake - m_brkS) * sm;
-        float stRaw = Mathf::Clamp(in.steer * steerSensitivity, -1.0f, 1.0f) * (invertSteer ? -1.0f : 1.0f);
+        float stRaw = Mathf::Clamp(in.steer * steerSensitivity * m_steerMul, -1.0f, 1.0f) * ((invertSteer != m_invert) ? -1.0f : 1.0f);
         m_steerS += (stRaw - m_steerS) * sm;
         in.throttle = m_thrS; in.brake = m_brkS;
 
@@ -378,9 +383,9 @@ private:
 
         // Flipped (something outside tipped the car over): no driving until it is back on its wheels.
         const float upY = transform->Up().y;
-        if (upY < 0.35f) {
+        if (upY < 0.3f || (m_flipped && upY < 0.45f)) {   // hysteresis; our own air tilt is clamped well above this
             m_flipped = true; m_flipT += dt; m_speed = 0.0f;
-            if ((autoFlip && m_flipT > 2.0f) || Input::GetKeyDown(keyRecover)) Recover();
+            if ((autoFlip && m_flipT > 2.0f) || (!unmanned && !m_scripted && Input::GetKeyDown(keyRecover))) Recover();
             return;
         }
         m_flipped = false; m_flipT = 0.0f;
@@ -410,7 +415,7 @@ private:
             pT = Mathf::Clamp(-std::atan2(vy, std::max(vh, 1.0f)) * kDeg * 0.8f, -35.0f, 35.0f);
             m_airPitch = Mathf::Clamp(m_airPitch + (in.brake - in.throttle) * -airControl * 45.0f * dt, -30.0f, 30.0f);
             m_airRoll = Mathf::Clamp(m_airRoll + in.steer * airControl * 60.0f * dt, -35.0f, 35.0f);
-            pT += m_airPitch; rT = m_airRoll;
+            pT = Mathf::Clamp(pT + m_airPitch, -45.0f, 45.0f); rT = Mathf::Clamp(m_airRoll, -30.0f, 30.0f);
         } else { m_airPitch *= std::exp(-4.0f * dt); m_airRoll *= std::exp(-4.0f * dt); }
         m_pitch += (pT - m_pitch) * lerpK;
         m_roll  += (rT - m_roll)  * lerpK;
@@ -435,7 +440,7 @@ private:
     // Speedometer and gear for a HUD text: the UI kit's Text Bind with the format
     // "{vehicle_speed|0} {vehicle_unit|km/h}  Gear {vehicle_gear|N}" shows them (no new component).
     void PublishHud() {
-        const DrivingSettings d = DrivingSettings::Load();
+        const DrivingSettings& d = m_drv;
         ActionList::Vars()["vehicle_speed"] = std::floor(d.DisplaySpeed(m_speed) + 0.5f);
         ActionList::Vars()["vehicle_rpm"] = std::floor(m_rpm);
         ActionList::Vars()["vehicle_boost"] = std::floor(m_boostLeft * 100.0f);
@@ -445,12 +450,13 @@ private:
     }
     // The player's own driving options (Prefs "driving.*", see DrivingSettings.hpp). Only when the player saved something.
     void ApplyPlayerSettings() {
-        const DrivingSettings d = DrivingSettings::Load();
+        const DrivingSettings d = m_drv;
         if (!d.hasUserChoice) return;
-        steerSensitivity *= d.steerSensitivity;
-        if (d.invertSteer) invertSteer = !invertSteer;
+        // Runtime-only copies: the saved settings are never edited, so saving during play changes nothing.
+        m_steerMul = d.steerSensitivity;
+        m_invert = d.invertSteer;
         if (d.cameraView >= 0) m_view = d.cameraView;
-        if (!d.assists) { abs = false; tractionControl = false; stabilityControl = 0.0f; steerAssist = false; counterSteerAssist = 0.0f; }
+        m_assistsOff = !d.assists;
     }
     void ResetRuntimeKeepView() { m_gear = 1; m_shiftT = 0; }
     void UpdateGroundedOpen() {
@@ -524,7 +530,7 @@ private:
         const float aTrac = mu * g * frac * (1.0f + downforce * vAbs * 0.4f);
         bool spinning = false;
         if (aEng > aTrac) {
-            if (tractionControl || a > 0.85f) aEng = aTrac;
+            if ((tractionControl && !m_assistsOff) || a > 0.85f) aEng = aTrac;
             else { aEng = aTrac * 0.85f; spinning = true; }
         }
         // Boost tank.
@@ -537,7 +543,7 @@ private:
         float demand = brakeForce * braking * biasEff + (in.handbrake ? handbrakeStrength * 0.5f * brakeForce : 0.0f);
         if (demand > 0.0f) {
             const float limit = mu * g * (1.0f + downforce * vAbs * 0.4f);
-            aBrake = demand <= limit * 0.97f ? demand : (abs ? limit * 0.97f : limit * 0.72f);
+            aBrake = demand <= limit * 0.97f ? demand : (antiLock && !m_assistsOff ? limit * 0.97f : limit * 0.72f);
         }
         // ---- Longitudinal speed ----
         const float sgn = vf >= 0.0f ? 1.0f : -1.0f;
@@ -558,7 +564,7 @@ private:
         float target = m_steerS * maxSteerAngle * sf;
         const float vl0 = m_vx * rx + m_vz * rz;
         const float beta = vAbs > 3.0f ? std::atan2(vl0, std::fabs(vf)) * kDeg * (vf >= 0 ? 1.0f : -1.0f) : 0.0f;
-        if (vAbs > 3.0f && counterSteerAssist > 0.0f) {
+        if (vAbs > 3.0f && counterSteerAssist > 0.0f && !m_assistsOff) {
             const float assist = counterSteerAssist * (0.3f + 0.7f * a);
             target += Mathf::Clamp(beta * assist * 1.1f, -maxSteerAngle, maxSteerAngle) * (1.0f - 0.5f * std::fabs(m_steerS));
             target = Mathf::Clamp(target, -maxSteerAngle, maxSteerAngle);
@@ -568,7 +574,7 @@ private:
         m_wheelAngle += (target - m_wheelAngle) * (1.0f - std::exp(-rate * h));
         const float wb = std::max(0.5f, wheelBase);
         float omega = vf / wb * std::tan(m_wheelAngle / kDeg);       // rad/s, + = right
-        const float omegaMax = mu * (0.85f + 0.3f * a) * g / std::max(vAbs, 2.0f) * (steerAssist ? 1.0f : 1.25f);
+        const float omegaMax = mu * (0.85f + 0.3f * a) * g / std::max(vAbs, 2.0f) * ((steerAssist && !m_assistsOff) ? 1.0f : 1.25f);
         omega = Mathf::Clamp(omega, -omegaMax, omegaMax);
         if (in.handbrake) omega *= 1.0f + driftAmount * 0.6f;       // the back lets go and swings round
         if (spinning && drivetrain != 1) omega *= 1.15f;
@@ -589,7 +595,7 @@ private:
         }
         if (spinning && !in.handbrake) rateG *= 0.6f;
         if (std::fabs(slip) > slipLimit) rateG *= 0.5f;                             // past the limit the tyres let go
-        else if (!in.handbrake && stabilityControl > 0.0f && std::fabs(slip) > 10.0f) rateG *= 1.0f + 0.6f * stabilityControl;
+        else if (!in.handbrake && !m_assistsOff && stabilityControl > 0.0f && std::fabs(slip) > 10.0f) rateG *= 1.0f + 0.6f * stabilityControl;
         m_drifting = std::fabs(slip) > 12.0f && vAbs > 4.0f;
         const float dl = vl * (1.0f - std::exp(-rateG * h));
         vl -= dl;
@@ -651,14 +657,15 @@ public:
         const Vec3 look = lookAt - np;
         if (look.x * look.x + look.y * look.y + look.z * look.z > 1e-6f) {
             const Quat want = Quat::LookRotation(look * -1.0f);
-            ct->SetRotation(m_view >= 2 ? want : Quat::Slerp(ct->Rotation(), want, std::max(t, 0.05f) * 1.5f > 1.0f ? 1.0f : std::max(t, 0.05f) * 1.5f));
+            ct->SetRotation(m_view >= 2 ? want : Quat::Slerp(ct->Rotation(), want, camLerp > 0.0f ? 1.0f - std::exp(-camLerp * 1.5f * dt) : 1.0f));
         }
         const float fov = camFov + camSpeedFov * sp;
         cam->fieldOfView += (fov - cam->fieldOfView) * (1.0f - std::exp(-5.0f * dt));
     }
 private:
 
-    DriveInput m_in; bool m_scripted = false, m_unmanned = false, m_haveCmd = false; float m_cmdX = 0, m_cmdZ = 0;
+    void Hold() { if (!m_scripted || m_holdT >= 0.0f) m_holdT = 0.5f; m_scripted = true; }
+    DriveInput m_in; float m_holdT = -1.0f; float m_steerMul = 1.0f; bool m_invert = false, m_assistsOff = false; DrivingSettings m_drv; bool m_scripted = false, m_unmanned = false, m_haveCmd = false; float m_cmdX = 0, m_cmdZ = 0;
     bool  m_init = false, m_horn = false, m_lights = false, m_lookBack = false, m_reversing = false, m_drifting = false, m_flipped = false;
     float m_vx = 0, m_vz = 0, m_rpm = 900, m_shiftT = 0, m_boostLeft = 1, m_wheelAngle = 0, m_slip = 0, m_yawRate = 0, m_aLong = 0;
     float m_thrS = 0, m_brkS = 0, m_steerS = 0, m_flipT = 0, m_airPitch = 0, m_airRoll = 0, m_shake = 0, m_shakeT = 0;

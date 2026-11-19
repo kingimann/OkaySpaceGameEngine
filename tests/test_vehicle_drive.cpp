@@ -2,6 +2,7 @@
 #include <Okay.hpp>
 #include <cmath>
 #include <cstdio>
+#include <sstream>
 using namespace okay;
 
 // The open-world driving model: gears, brakes, drifts, presets, frame-rate independence. Deterministic (input is set
@@ -35,7 +36,7 @@ int main() {
         for (const auto& d : VehicleTuning::Table()) { double a = 0, b = 0; t.GetSetting(d.name, a); u.GetSetting(d.name, b); CHECK_NEAR(a, b, 1e-4 * (1 + std::fabs(a))); }
     }
     { VehicleTuning t; CHECK(!t.ApplyPreset("Nope")); CHECK(!t.FromFile("hello 1\n")); CHECK(t.FromFile("okayvehicle 1\nmaxSpeed 99\nfutureThing 5\n")); CHECK_NEAR(t.maxSpeed, 99, 1e-4); }
-    { VehicleTuning t; CHECK(t.SetSetting("maxSpeed", 9999)); CHECK_NEAR(t.maxSpeed, 200, 1e-4); CHECK(!t.SetSetting("bogus", 1)); CHECK(!t.SetSetting("maxSpeed", std::nan(""))); }
+    { VehicleTuning t; CHECK(t.SetSetting("maxSpeed", 99999)); CHECK_NEAR(t.maxSpeed, 10000, 1e-4); CHECK(!t.SetSetting("bogus", 1)); CHECK(!t.SetSetting("maxSpeed", std::nan(""))); }
 
     // --- Scene save / load keeps the tuning; an old scene (no tuning line) stays the older model --------------------
     {
@@ -83,7 +84,7 @@ int main() {
 
     // --- Braking distance (numbers printed) ----------------------------------------------------------------------
     auto stopDist = [](const char* preset, bool abs, float grip, float from) {
-        Rig r(preset); r.v->abs = abs; r.v->SetSurfaceGrip(grip);
+        Rig r(preset); r.v->antiLock = abs; r.v->SetSurfaceGrip(grip);
         r.rb->velocity = Vec3{0, 0, from}; r.v->SetInput(Brake());
         const float z0 = r.Z(); r.Run(0.01f, 60);     // first frame picks the velocity up
         for (int i = 0; i < 60 * 30 && std::fabs(r.v->Speed()) > 0.05f; ++i) r.s.Update(1.0f / 60.0f);
@@ -204,5 +205,61 @@ int main() {
         s.Start(); CHECK(!v->openWorld);   // old scenes keep the older model
     }
 
+
+    // --- Wheel spacing survives save and load for every vehicle type (the model steers by it) ----------------------
+    for (const auto& sh : VehicleBuilder::Shapes()) {
+        Scene a("a"); GameObject* c = VehicleBuilder::Make(a, sh.name, {0, 0, 0}, 0, Color::FromBytes(1, 2, 3), false);
+        auto* v = c->GetComponent<VehicleController>();
+        const float wb = v->wheelBase, tw = v->trackWidth;
+        Scene b("b"); GameObject* c2 = SceneSerializer::InstantiateFromText(b, SceneSerializer::SerializeObject(*c));
+        auto* v2 = c2->GetComponent<VehicleController>();
+        CHECK_NEAR(v2->wheelBase, wb, 1e-3f); CHECK_NEAR(v2->trackWidth, tw, 1e-3f);
+    }
+    // --- Scripted pedals let go by themselves; the keyboard works again --------------------------------------------
+    {
+        Rig r("Sedan"); r.v->SetThrottle(0.0f); r.v->Boost(true); r.Run(1.0f, 60);
+        Input::FeedKeys({'w'}); r.Run(2.0f, 60); Input::FeedKeys({});
+        CHECK(r.v->Speed() > 3.0f);
+        Rig k("Sedan"); k.v->SetInput(VehicleController::DriveInput{}); k.Run(1.0f, 60);   // whole-input setter holds until cleared
+        Input::FeedKeys({'w'}); k.Run(1.0f, 60); Input::FeedKeys({}); CHECK(k.v->Speed() < 0.5f);
+        k.v->ClearInput(); Input::FeedKeys({'w'}); k.Run(1.0f, 60); Input::FeedKeys({}); CHECK(k.v->Speed() > 2.0f);
+    }
+    // --- The player's driving options never change the saved settings -----------------------------------------------
+    {
+        Prefs::SetBool("driving.assists", false); Prefs::SetFloat("driving.steer", 1.5f); Prefs::SetBool("driving.invert", true);
+        Rig r("Sports Car");
+        const std::string before = SceneSerializer::SerializeObject(*r.car);
+        r.v->SetInput(Gas()); r.Run(2.0f, 60);
+        CHECK(SceneSerializer::SerializeObject(*r.car).substr(0, 0).empty());
+        std::string after = SceneSerializer::SerializeObject(*r.car);
+        auto vehLines = [](const std::string& t) { std::string o; std::istringstream in(t); std::string l; while (std::getline(in, l)) if (l.find("  vehicle") == 0) o += l + "\n"; return o; };
+        CHECK(vehLines(before) == vehLines(after));
+        CHECK(r.v->antiLock && r.v->steerAssist && !r.v->invertSteer);
+        Prefs::Delete("driving.assists"); Prefs::Delete("driving.steer"); Prefs::Delete("driving.invert");
+    }
+    // --- Tilting in the air is not a flip; Recover before the first update keeps the heading --------------------------
+    {
+        Rig r("Buggy"); auto in = Gas(); in.steer = 1; r.v->SetInput(in); r.Run(10.0f, 60);
+        CHECK(r.car->transform->Up().y > 0.5f); CHECK(!r.v->IsFlipped());
+        Scene s("rec"); GameObject* c = s.CreateGameObject("C"); c->transform->localRotation = Quat::Euler(0, 90, 0);
+        auto* v = c->AddComponent<VehicleController>(); v->Recover();
+        CHECK_NEAR(c->transform->Forward().x, 1.0f, 1e-3f);
+    }
+    // --- Settings keep their old wide ranges --------------------------------------------------------------------------
+    { VehicleTuning t; CHECK(t.SetSetting("maxSpeed", 250)); CHECK_NEAR(t.maxSpeed, 250, 1e-3); CHECK(t.SetSetting("turnSpeed", 20000)); CHECK_NEAR(t.turnSpeed, 20000, 1e-2); CHECK(t.SetSetting("grip", 500)); CHECK_NEAR(t.grip, 500, 1e-3); }
+    // --- The camera glides the same at 30 and 144 fps ----------------------------------------------------------------
+    {
+        float cx[2]; const float fps[2] = {30, 144};
+        for (int k = 0; k < 2; ++k) {
+            Scene s("cam"); GameObject* co = s.CreateGameObject("Cam"); auto* cam = co->AddComponent<Camera>(); cam->main = true;
+            co->transform->SetPosition({20, 5, 20});
+            GameObject* c = s.CreateGameObject("Car"); c->AddComponent<Rigidbody3D>()->gravityScale = 0;
+            auto* v = c->AddComponent<VehicleController>(); v->ApplyPreset("Sedan"); v->followCamera = true; v->SetSurfaceGrip(1);
+            s.Start(); int n = (int)(1.0f * fps[k]); for (int i = 0; i < n; ++i) s.Update(1.0f / fps[k]);
+            cx[k] = co->transform->Position().x;
+        }
+        std::printf("  camera x after 1 s: %.2f (30 fps) %.2f (144 fps)\n", cx[0], cx[1]);
+        CHECK_NEAR(cx[0], cx[1], 0.5f);
+    }
     TEST_MAIN_RESULT();
 }

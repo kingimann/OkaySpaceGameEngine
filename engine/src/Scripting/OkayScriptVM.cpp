@@ -10819,7 +10819,9 @@ struct OkayScriptVM::Impl {
         // The first argument is the vehicle (an object or its name); leave it as "" to mean the object this script is on.
         auto carOf = [sceneOf, this](std::vector<Value>& a) -> VehicleController* {
             Scene* s = sceneOf(); if (!s) return nullptr;
-            GameObject* g = (!a.empty() && !a[0].AsString().empty()) || (!a.empty() && a[0].IsObject()) ? ResolveObject(s, a[0]) : (rt.host ? rt.host->gameObject : nullptr);
+            // One-argument forms such as Vehicle.Boost(1) act on this script's own object: the vehicle is then left out.
+            if (a.empty() || !(a[0].IsObject() || a[0].IsString())) a.insert(a.begin(), Value{std::string{}});
+            GameObject* g = (a[0].IsObject() || !a[0].AsString().empty()) ? ResolveObject(s, a[0]) : (rt.host ? rt.host->gameObject : nullptr);
             return g ? g->GetComponent<VehicleController>() : nullptr;
         };
         b["Vehicle.SetSetting"] = [carOf](std::vector<Value>& a) -> Value {   // Vehicle.SetSetting(car, "maxSpeed", 30): 1 = done, 0 = unknown name
@@ -10840,6 +10842,7 @@ struct OkayScriptVM::Impl {
         b["Vehicle.Boost"]  = [carOf](std::vector<Value>& a) -> Value { if (auto* v = carOf(a)) v->Boost(a.size() < 2 || a[1].AsFloat() != 0.0f); return Value{}; };
         b["Vehicle.Horn"]   = [carOf](std::vector<Value>& a) -> Value { if (auto* v = carOf(a)) v->Horn(a.size() < 2 || a[1].AsFloat() != 0.0f); return Value{}; };
         b["Vehicle.Lights"] = [carOf](std::vector<Value>& a) -> Value { if (auto* v = carOf(a)) v->SetLights(a.size() < 2 || a[1].AsFloat() != 0.0f); return Value{}; };
+        b["Vehicle.ClearInput"] = [carOf](std::vector<Value>& a) -> Value { if (auto* v = carOf(a)) v->ClearInput(); return Value{}; };   // hand the keys back at once
         b["Vehicle.Recover"] = [carOf](std::vector<Value>& a) -> Value { if (auto* v = carOf(a)) v->Recover(); return Value{}; };
         b["Vehicle.Eject"]  = [carOf](std::vector<Value>& a) -> Value { return Value{VehicleSeat::EjectDriver(carOf(a)) ? 1.0f : 0.0f}; };
         b["Vehicle.Enter"]  = [carOf, sceneOf](std::vector<Value>& a) -> Value {   // Vehicle.Enter(car, person): the person takes the driver seat

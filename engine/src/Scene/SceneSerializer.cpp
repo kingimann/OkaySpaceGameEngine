@@ -2079,7 +2079,12 @@ void WriteComponentRecords(std::ostream& out, GameObject* go) {
             << " " << v->handbrakeGrip << " " << v->groundCheckDistance
             << " " << (v->followCamera ? 1 : 0) << " " << v->camDistance << " " << v->camHeight
             << " " << v->camLerp << " " << (int)(unsigned char)v->handbrakeKey << "\n";
-        { const std::string tl = v->ToLine(); if (!tl.empty()) out << "  vehicletune " << tl << "\n"; }   // the open-world settings that differ from the defaults
+        {   // the open-world settings that differ from the defaults, plus the wheel spacing (the model steers by it; it used to be saved only with suspension)
+            std::ostringstream tl; tl << v->ToLine();
+            if (v->wheelBase != 2.4f) tl << "wheelBase=" << v->wheelBase << " ";
+            if (v->trackWidth != 1.6f) tl << "trackWidth=" << v->trackWidth << " ";
+            if (!tl.str().empty()) out << "  vehicletune " << tl.str() << "\n";
+        }   // the open-world settings that differ from the defaults
         if (v->suspension)
             out << "  vehiclesusp 1 " << v->rideHeight << " " << v->springStrength << " "
                 << v->springDamping << " " << v->suspensionTravel << " " << v->wheelBase << " "
@@ -5987,6 +5992,13 @@ static bool ParseStep(Scene& scene, ParseSession& S, bool clear,
                     auto* v = LastOf(go->GetComponents<VehicleController>());
                     std::string rest; std::getline(in, rest);
                     if (v) v->FromLine(rest);
+                    if (v) {   // wheel spacing travels in the same line
+                        std::istringstream ts(rest); std::string tok;
+                        while (ts >> tok) {
+                            if (tok.rfind("wheelBase=", 0) == 0) v->wheelBase = (float)std::atof(tok.c_str() + 10);
+                            else if (tok.rfind("trackWidth=", 0) == 0) v->trackWidth = (float)std::atof(tok.c_str() + 11);
+                        }
+                    }
                 } else if (field == "vehiclesusp") {
                     auto* v = LastOf(go->GetComponents<VehicleController>());
                     int on = 0; in >> on;

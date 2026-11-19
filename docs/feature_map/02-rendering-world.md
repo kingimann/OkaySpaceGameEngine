@@ -134,19 +134,21 @@ Mostly on main and tested. Nothing is open: #574 added the optimization tools (L
 ### 2.7 Particles and lines
 - **What:** Particle emitters with gradients, curves, motion modules and presets, plus ribbon-style Line and Trail renderers for lasers, ropes, sword swipes and projectile tails.
 - **Parts:**
-  - 2.7.1 Particle emitter - `Components/ParticleSystem` - shapes (Point, Circle, Sphere, Box, Cone, Edge), emission rate, burst, duration and loop, lifetime, start velocity, gravity, damping, wind influence, ground plane with bounce
-  - 2.7.2 Particle looks - `Components/ParticleSystem` - colour gradient, size and speed curves, fade, rotation, billboard or stretch; presets Fire, Smoke, Sparks, Explosion, Rain, Snow, Magic, Dust
-  - 2.7.3 Motion modules - `Components/ParticleSystem` - noise, orbit, vortex, inherited velocity, local space
+  - 2.7.1 Particle emitter - `Components/ParticleSystem` - pooled structure-of-arrays pool with a hard cap (skip new or replace old); shapes Point, Circle, Sphere, Hemisphere, Box, Cone, Edge and Mesh surface; rate, per-distance, bursts (five), duration, loop, prewarm; smooth sub-frame spawning; lifetime, size, colour (two colours or any hue), speed, spin with random ranges; wind influence (the `windInfluence` field, applied in one place, `ParticleSystem::WindAt`)
+  - 2.7.2 Particle looks - `Components/ParticleSystem`, `Render/ParticleDraw` - colour gradient, size, speed, spin, force, gravity and drift curves; billboard, stretched, flat, upright and cube modes; picture sheets with frame blending; Normal, Glow and Premultiplied blend (Glow is a brighter normal blend in the painters); nearest-in-front, age or birth-order sorting; soft edges where depth is known; lit by the scene lights; ribbon trails; 17 presets (Fire, Campfire, Smoke, Steam, Sparks, Explosion, Magic sparkle, Rain, Snow, Leaves, Dust, Confetti, Hit spark, Muzzle flash, Fireflies, Portal, Waterfall mist)
+  - 2.7.3 Motion modules - `Components/ParticleSystem` - noise (up to three layers), orbit, vortex, drift, push, away-from-centre speed, inherited velocity, local space, drag that is exact at any frame rate
+  - 2.7.7 Particle collision and sub-effects - `Components/ParticleSystem` - ground plane, or the scene's colliders through the physics raycast under a per-frame ray budget; bounce, friction, life loss, end on hit; sub-effects on birth, end and hit (child objects with their own Particle System)
+  - 2.7.8 Particle speed - `Components/ParticleSystem`, `Render/ParticleDraw` - live particles packed at the front of the pool, no allocation while running, distance LOD (fewer particles far away), off-screen culling (optionally pausing), the job system for pools of 4096 or more
   - 2.7.4 Line renderer - `Components/LineRenderer` - camera-facing or flat ribbons; points from the Inspector, a script or a Spline; stretch or tile texture
   - 2.7.5 Trail renderer - `Components/LineRenderer` - fading ribbon behind a moving object; saved through the component serializer registry
   - 2.7.6 How they are drawn - built on the CPU each frame and drawn over the 3D image by the player and editor, depth-sorted; hide behind geometry where scene depth is known (software path, or a half-resolution depth pass in the player and the GPU editor view)
-- **Code:** `Components/ParticleSystem`, `Components/LineRenderer`
-- **API:** `ParticleSystem`, `ParticleSystem::ApplyPreset`, `ParticleGradient`, `ParticleCurve`, `LineRenderer`, `TrailRenderer`, `BuildRibbon`, script `emit`
-- **Editor:** Particle System, Line Renderer and Trail Renderer inspector sections (editor/main.cpp); spline-driven lines in 2.11
-- **Docs:** `docs/particles.md`, `docs/splines.md` (lines and trails), `docs/rendering.md` (weather)
-- **Tests:** `particles_fx`, `particles_serialize`, `particles_tilemap`
-- **Status:** Works - read the `ParticleSystem.hpp` fields and `LineRenderer.hpp` header; tests cover gradients, curves, presets and scene round trips
-- **Open:** particles are CPU billboards drawn by the host, not GPU particles; lines and trails are unlit and cast no shadows; one Line and one Trail renderer per object
+- **Code:** `Components/ParticleSystem`, `Components/ParticlePresets`, `Render/ParticleDraw`, `Components/LineRenderer`
+- **API:** `ParticleSystem`, `ParticleSystem::ApplyPreset`, `ParticleGradient`, `ParticleCurve`, `BuildParticleDraw`, `DrawParticleDrawPainter`, `LineRenderer`, `TrailRenderer`, `BuildRibbon`, script `emit`, script type `Particles` (Play, Stop, Restart, Burst, SetRate, SetColor, UsePreset)
+- **Editor:** Particle System inspector sections, the live preview and the upgrade rows (editor/ParticleEditor.cpp); GameObject > Effects > Particle Effects; Add Component > Particle effect presets; Line Renderer and Trail Renderer inspector sections (editor/main.cpp); spline-driven lines in 2.11
+- **Docs:** `docs/particles.md`, `docs/particles_upgrade.md`, `docs/splines.md` (lines and trails), `docs/rendering.md` (weather)
+- **Tests:** `particles_fx`, `particles_serialize`, `particles_tilemap`, `particles_upgrade`, `bench_particles`
+- **Status:** Works - read the `ParticleSystem.hpp` fields and `LineRenderer.hpp` header; tests cover gradients, curves, presets, shapes, frame-rate independence, caps, collision, sub-effects, the draw list and scene round trips; the editor rows and the live preview are compiled but not run in a window
+- **Open:** particles are CPU billboards drawn by the host, not GPU particles; Glow (additive) blend is a brighter normal blend because the painters have no additive mode; cube particles are cubes, not arbitrary meshes; lines and trails are unlit and cast no shadows; one Line and one Trail renderer per object
 - **Related:** 2.4, 2.11, 38.10, 11.7
 - **Words:** particles, ParticleSystem, emitter, burst, gradient, trail, TrailRenderer, LineRenderer, laser, rope, ribbon, fire, smoke, sparks, explosion, rain, lines, trails
 - **Seen as:** particles show through walls in the editor; a trail looks flat or jagged; an explosion preset is too slow; too many particles tank the frame rate

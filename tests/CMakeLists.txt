@@ -4347,5 +4347,7 @@ target_link_libraries(bench_particles PRIVATE okay::engine)
 add_test(NAME bench_particles COMMAND bench_particles)
 
 add_executable(test_particles_upgrade test_particles_upgrade.cpp)
+target_include_directories(test_particles_upgrade PRIVATE ${PROJECT_SOURCE_DIR}/editor)
+target_compile_definitions(test_particles_upgrade PRIVATE OKAY_EXAMPLES_DIR="${PROJECT_SOURCE_DIR}/examples")
 target_link_libraries(test_particles_upgrade PRIVATE okay::engine)
 add_test(NAME particles_upgrade COMMAND test_particles_upgrade)

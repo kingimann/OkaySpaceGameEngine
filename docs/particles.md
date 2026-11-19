@@ -4,9 +4,9 @@ Particle systems, line renderers, and trail renderers are built on the CPU and d
 
 ## Particles
 
-A Particle System emits from a point, circle, sphere, box, cone, or edge. It has a rate, bursts, lifetime, gravity, damping, wind, and an optional ground plane. Colour, size, and speed can change over the particle's life. Presets cover fire, smoke, sparks, explosion, rain, snow, magic, and dust. Motion modules add noise, orbit, vortex, and inherited velocity.
+A Particle System emits from a point, circle, sphere, hemisphere, box, cone, edge, or the skin of the object's mesh. It has a rate, a rate per distance moved, bursts, lifetime, gravity, damping, wind (the field is called Affected by wind, `windInfluence`), and a ground plane or the scene's colliders. Colour, size, speed, spin, push and gravity can change over the particle's life. There are 17 one-click presets: Fire, Campfire, Smoke, Steam, Sparks, Explosion, Magic sparkle, Rain, Snow, Leaves, Dust, Confetti, Hit spark, Muzzle flash, Fireflies, Portal and Waterfall mist (GameObject > Effects > Particle Effects, or Add Component > Particle effect presets). Motion modules add noise, orbit, vortex, drift and inherited velocity.
 
-Billboards face the camera. Stretch mode draws a streak along the velocity.
+Billboards face the camera. Stretch mode draws a streak along the velocity. Flat, Upright and Cubes modes, picture sheets, ribbon trails and soft edges are in Look extras. The whole list of changes, the tests and the numbers are in `docs/particles_upgrade.md`.
 
 ## Lines and trails
 

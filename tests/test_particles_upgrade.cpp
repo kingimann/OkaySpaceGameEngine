@@ -8,7 +8,10 @@
 #include <chrono>
 #include <cstdio>
 #include <cstdlib>
+#include <fstream>
+#include <sstream>
 #include <vector>
+#include "ParticlePresetList.hpp"
 
 using namespace okay;
 
@@ -400,6 +403,115 @@ int main() {
         Scene c("C"); std::string e2; CHECK(SceneSerializer::Deserialize(c, plain, &e2));
         auto* o = c.Find("E") ? c.Find("E")->GetComponent<ParticleSystem>() : nullptr;
         CHECK(o && o->trailLength == 0 && o->blendMode == ParticleSystem::BlendMode::Alpha && o->sheetColumns == 1 && o->simulateOffscreen && o->parallelThreshold == 4096);
+    }
+
+    // ---- the editor's preset list agrees with the engine's ----
+    {
+        std::size_t n = 0; const auto* items = oked::particlepresets::Items(n);
+        CHECK((int)n == (int)ParticleSystem::Preset::Count);
+        for (std::size_t i = 0; i < n && i < (std::size_t)ParticleSystem::Preset::Count; ++i) {
+            CHECK(std::string(items[i].name) == ParticleSystem::PresetName((ParticleSystem::Preset)i));
+            CHECK(std::string(items[i].hint) == ParticleSystem::PresetHint((ParticleSystem::Preset)i));
+        }
+    }
+
+    // ---- the shipped example scene (examples/particles): every preset on a pedestal with a label ----
+    {
+        auto build = [](Scene& sc) {
+            std::size_t n = 0; const auto* items = oked::particlepresets::Items(n);
+            GameObject* sun = sc.CreateGameObject("Directional Light"); sun->AddComponent<Light>();
+            sun->transform->localRotation = Quat::Euler(50, -30, 0);
+            GameObject* ground = sc.CreateGameObject("Ground"); ground->transform->localPosition = {0, -0.5f, 0}; ground->transform->localScale = {60, 1, 30};
+            { auto* mr = ground->AddComponent<MeshRenderer>(); mr->mesh = Mesh::Cube(); mr->color = {0.25f, 0.3f, 0.27f, 1}; }
+            GameObject* cam = sc.CreateGameObject("Camera"); cam->transform->localPosition = {0, 6, 22};
+            cam->transform->localRotation = Quat::Euler(12, 180, 0);
+            { auto* c = cam->AddComponent<Camera>(); c->fieldOfView = 60.0f; c->nearClip = 0.2f; sc.mainCamera = c; }
+            cam->AddComponent<FreeRoamController>();
+            const int perRow = 6;
+            for (std::size_t i = 0; i < n; ++i) {
+                const int row = (int)i / perRow, col = (int)i % perRow;
+                const float x = (col - (perRow - 1) * 0.5f) * 6.0f, z = -row * 8.0f;
+                GameObject* ped = sc.CreateGameObject(std::string("Pedestal ") + items[i].name);
+                ped->transform->localPosition = {x, 0.15f, z}; ped->transform->localScale = {2.2f, 0.3f, 2.2f};
+                { auto* mr = ped->AddComponent<MeshRenderer>(); mr->mesh = Mesh::Cube(); mr->color = {0.55f, 0.55f, 0.6f, 1}; }
+                GameObject* fx = sc.CreateGameObject(items[i].name);
+                auto* ps = fx->AddComponent<ParticleSystem>();
+                ps->ApplyPreset((ParticleSystem::Preset)i);
+                const bool falls = ps->shape == ParticleSystem::Shape::Box && ps->boxSize.x > 5.0f;   // rain, snow, dust, leaves: a small patch above the pedestal
+                if (falls) { ps->boxSize = {3.0f, ps->boxSize.y, 3.0f}; }
+                const auto pr = (ParticleSystem::Preset)i;
+                float y = 0.4f;
+                if (pr == ParticleSystem::Preset::Rain || pr == ParticleSystem::Preset::Snow || pr == ParticleSystem::Preset::Leaves) y = 4.5f;
+                if (pr == ParticleSystem::Preset::WaterfallMist) y = 3.0f;
+                if (pr == ParticleSystem::Preset::Fireflies || pr == ParticleSystem::Preset::Dust) { y = 1.5f; ps->boxSize = {3.0f, 2.0f, 3.0f}; }
+                if (pr == ParticleSystem::Preset::Portal) y = 1.6f;
+                if (pr == ParticleSystem::Preset::Fireflies) ps->emissionRate = 4.0f;
+                if (pr == ParticleSystem::Preset::MuzzleFlash) { fx->transform->localRotation = Quat::Euler(-90, 0, 0); y = 1.0f; }
+                fx->transform->localPosition = {x, y, z};
+                if (falls) ps->collision = (pr == ParticleSystem::Preset::Rain || pr == ParticleSystem::Preset::Snow) ? false : ps->collision;
+                GameObject* lab = sc.CreateGameObject(std::string("Label ") + items[i].name);
+                lab->transform->localPosition = {x, 3.6f, z + 1.2f};
+                auto* tr = lab->AddComponent<TextRenderer>(); tr->text = items[i].name; tr->screenSpace = true; tr->pixelSize = 3.0f; tr->align = 1; tr->anchor = UIAnchor::Center;
+                tr->color = {1, 1, 1, 1}; tr->shadow = true;
+                auto* w = lab->AddComponent<WorldSpaceUI>(); w->pixelsPerUnit = 100.0f; w->billboard = true;
+            }
+        };
+        if (const char* out = std::getenv("OKAY_WRITE_PARTICLE_EXAMPLE")) {
+            Scene sc("Particles"); build(sc);
+            std::ofstream f(out, std::ios::binary); f << SceneSerializer::Serialize(sc);
+            std::printf("  wrote the example scene to %s\n", out);
+        }
+#ifdef OKAY_EXAMPLES_DIR
+        std::ifstream in(std::string(OKAY_EXAMPLES_DIR) + "/particles/particles.okayscene", std::ios::binary);
+        CHECK(in.good());
+        if (in.good()) {
+            std::stringstream ss; ss << in.rdbuf();
+            Scene sc("Loaded"); std::string err;
+            CHECK(SceneSerializer::Deserialize(sc, ss.str(), &err));
+            int systems = 0, labels = 0, withCam = 0;
+            std::vector<ParticleSystem*> all;
+            for (const auto& up : sc.Objects()) {
+                if (auto* p = up->GetComponent<ParticleSystem>()) { ++systems; all.push_back(p); }
+                if (up->GetComponent<TextRenderer>() && up->GetComponent<WorldSpaceUI>()) ++labels;
+                if (up->GetComponent<Camera>()) ++withCam;
+            }
+            CHECK(systems == (int)ParticleSystem::Preset::Count && labels == systems && withCam == 1);
+            for (ParticleSystem* p : all) { p->Awake(); Run(p, 3.0f, 60.0f); CHECK(AllFinite(*p) && p->AliveCount() > 0); }
+            // The scene looks right: draw it from the camera headlessly (and keep the picture when asked).
+            Camera* cam = nullptr; for (const auto& up : sc.Objects()) if (auto* c = up->GetComponent<Camera>()) cam = c;
+            if (cam) {
+                ParticleView view; view.w = 960; view.h = 540;
+                const Vec3 eye = cam->transform->Position(), fwd = cam->transform->Rotation() * Vec3{0, 0, 1};
+                view.camPos = eye; view.vp = Mat4::Perspective(60.0f, 960.0f / 540.0f, 0.2f, 200.0f) * Mat4::LookAt(eye, eye + fwd, Vec3{0, 1, 0});
+                std::vector<ParticleDrawItem> items; ParticleDrawStats st;
+                BuildParticleDraw(sc, view, items, &st);
+                std::vector<std::uint8_t> img(960 * 540 * 4, 0);
+                for (size_t i = 0; i < img.size(); i += 4) { img[i] = 24; img[i + 1] = 30; img[i + 2] = 44; img[i + 3] = 255; }
+                RasterizeParticleDraw(items, 960, 540, img.data());
+                std::printf("  example scene seen from its camera: %d systems drawn, %d shapes\n", st.systems, st.items);
+                CHECK(st.systems >= 12 && st.items > 500);
+                if (const char* dir = std::getenv("OKAY_PARTICLE_RENDER_DIR")) ImageWrite::WritePNG(std::string(dir) + "/example_scene.png", 960, 540, 4, img.data());
+            }
+        }
+#endif
+    }
+
+    // ---- headless renders of every preset (when OKAY_PARTICLE_RENDER_DIR is set): the pictures in the docs ----
+    if (const char* dir = std::getenv("OKAY_PARTICLE_RENDER_DIR")) {
+        for (int pi = 0; pi < (int)ParticleSystem::Preset::Count; ++pi) {
+            Scene s("R"); GameObject* go = s.CreateGameObject("E"); auto* ps = go->AddComponent<ParticleSystem>();
+            ps->ApplyPreset((ParticleSystem::Preset)pi); ps->Awake();
+            Run(ps, 2.2f, 60.0f);
+            ParticleView view; view.w = 320; view.h = 240;
+            const Vec3 eye{0, 2.2f, 7.0f}, tgt{0, 1.6f, 0};
+            view.camPos = eye; view.vp = Mat4::Perspective(55.0f, 320.0f / 240.0f, 0.1f, 100.0f) * Mat4::LookAt(eye, tgt, {0, 1, 0});
+            std::vector<ParticleDrawItem> items; ParticleDrawStats st; BuildParticleDraw(s, view, items, &st);
+            std::vector<std::uint8_t> img(320 * 240 * 4, 0);
+            for (int y = 0; y < 240; ++y) for (int x = 0; x < 320; ++x) { std::uint8_t* q = &img[((size_t)y * 320 + x) * 4]; const int g = 22 + y / 8; q[0] = (std::uint8_t)g; q[1] = (std::uint8_t)(g + 6); q[2] = (std::uint8_t)(g + 22); q[3] = 255; }
+            RasterizeParticleDraw(items, 320, 240, img.data());
+            std::string name = ParticleSystem::PresetName((ParticleSystem::Preset)pi); for (char& c : name) if (c == ' ') c = '_';
+            ImageWrite::WritePNG(std::string(dir) + "/" + name + ".png", 320, 240, 4, img.data());
+        }
     }
 
     // ---- budgets: time and memory, measured and printed ----

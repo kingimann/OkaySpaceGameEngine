@@ -475,6 +475,7 @@ Word, then the number(s) to say. Back to the [overview](../FEATURE_MAP.md).
 - Build Settings dialog (15.7.1)
 - Build Settings option (39.4.7)
 - Build Settings window options (37.1.4)
+- Build Settings window upgrade (18.6.10)
 - build size (58.4)
 - Build size and load-time report (58.4)
 - Build size report (58.4.1)

@@ -117,6 +117,25 @@ struct BuildSettings {
     float srvMaxSpeed = 0.0f;              // anti-cheat: units/second (0 = off)
     int   srvRateLimit = 0;                // messages per second per player (0 = off)
     int   srvKickAfter = 0;                // rejected moves per minute before a kick (0 = never)
+    // ---- Build Settings upgrade (docs/build_settings_upgrade.md): every one is read by the player or the build step ----
+    float timeScale = 1.0f;                // game speed (player: Time::SetTimeScale)
+    int   maxFixedSteps = 0;               // most physics steps in one frame (0 = engine default)
+    float musicVolume = 1.0f;              // starting music volume
+    float sfxVolume = 1.0f;                // starting sound-effects volume
+    char  defaultLanguage[16] = "";        // first-run language code ("" = the computer's language)
+    char  logLevel[16] = "";               // "", trace, info, warn, error
+    bool  logToFile = false;               // write game.log in the save folder
+    char  envVars[512] = "";               // KEY=VALUE;KEY2=VALUE2 set before the game starts
+    char  description[256] = "";           // one line about the game (config + start-up log)
+    bool  allowBuildCommands = false;      // the two commands below only run when this is on
+    char  preBuildCommand[260] = "";       // run before the build; a failure stops it
+    char  postBuildCommand[260] = "";      // run after a successful build
+    // ---- round 2 ----
+    int   renderer = 0;                    // 0 automatic, 1 Direct3D 11, 2 OpenGL, 3 software
+    int   particleCap = 0;                 // 0 = no extra limit
+    float gamepadDeadzone = 0.18f;         // stick dead zone
+    int   sampleRate = 0;                  // 0 = 44100
+    char  excludeList[1024] = "";          // project files left out of the build: "Assets/a.png;Assets/Old/" (a trailing / is a whole folder)
 };
 // ---- Build profiles -------------
 // Persist the full Build Settings under named profiles in the project's
@@ -200,6 +219,16 @@ inline void WriteBuildProfileBlock(std::ostream& o, const BuildProfile& p) {
     o << "srvAuth=" << b.srvAuth << "\n" << "srvAdvertise=" << b.srvAdvertise << "\n" << "srvAddr=" << EscapeProfileValue(b.srvPublicAddr) << "\n";
     o << "srvRegion=" << EscapeProfileValue(b.srvRegion) << "\n" << "srvMaxSpeed=" << FloatText(b.srvMaxSpeed) << "\n" << "srvRate=" << b.srvRateLimit << "\n";
     o << "srvKick=" << b.srvKickAfter << "\n";
+    // Build Settings upgrade fields (kept together so a merge with other edits to the list above stays easy).
+    o << "timeScale=" << FloatText(b.timeScale) << "\n" << "maxFixedSteps=" << b.maxFixedSteps << "\n";
+    o << "musicVolume=" << FloatText(b.musicVolume) << "\n" << "sfxVolume=" << FloatText(b.sfxVolume) << "\n";
+    o << "defaultLanguage=" << EscapeProfileValue(b.defaultLanguage) << "\n" << "logLevel=" << EscapeProfileValue(b.logLevel) << "\n";
+    o << "logToFile=" << b.logToFile << "\n" << "envVars=" << EscapeProfileValue(b.envVars) << "\n";
+    o << "description=" << EscapeProfileValue(b.description) << "\n" << "allowCommands=" << b.allowBuildCommands << "\n";
+    o << "preBuild=" << EscapeProfileValue(b.preBuildCommand) << "\n" << "postBuild=" << EscapeProfileValue(b.postBuildCommand) << "\n";
+    o << "renderer=" << b.renderer << "\n" << "particleCap=" << b.particleCap << "\n";
+    o << "gamepadDeadzone=" << FloatText(b.gamepadDeadzone) << "\n" << "sampleRate=" << b.sampleRate << "\n";
+    o << "exclude=" << EscapeProfileValue(b.excludeList) << "\n";
     for (const BuildScene& sc : b.scenes) o << "scene=" << (sc.on ? 1 : 0) << "|" << EscapeProfileValue(sc.path) << "\n";
 }
 
@@ -283,6 +312,23 @@ inline void ApplyBuildProfileKV(BuildProfile& p, const std::string& k, const std
     else if (k == "srvMaxSpeed") b.srvMaxSpeed = F();
     else if (k == "srvRate")   b.srvRateLimit = I();
     else if (k == "srvKick")   b.srvKickAfter = I();
+    else if (k == "timeScale") b.timeScale = F();
+    else if (k == "maxFixedSteps") b.maxFixedSteps = std::max(0, I());
+    else if (k == "musicVolume") b.musicVolume = F();
+    else if (k == "sfxVolume") b.sfxVolume = F();
+    else if (k == "defaultLanguage") S(b.defaultLanguage, sizeof(b.defaultLanguage));
+    else if (k == "logLevel")  S(b.logLevel, sizeof(b.logLevel));
+    else if (k == "logToFile") b.logToFile = B();
+    else if (k == "envVars")   S(b.envVars, sizeof(b.envVars));
+    else if (k == "description") S(b.description, sizeof(b.description));
+    else if (k == "allowCommands") b.allowBuildCommands = B();
+    else if (k == "preBuild")  S(b.preBuildCommand, sizeof(b.preBuildCommand));
+    else if (k == "postBuild") S(b.postBuildCommand, sizeof(b.postBuildCommand));
+    else if (k == "renderer")  b.renderer = std::max(0, std::min(3, I()));
+    else if (k == "particleCap") b.particleCap = std::max(0, I());
+    else if (k == "gamepadDeadzone") b.gamepadDeadzone = F();
+    else if (k == "sampleRate") b.sampleRate = I();
+    else if (k == "exclude")   S(b.excludeList, sizeof(b.excludeList));
 }
 
 

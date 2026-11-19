@@ -54,6 +54,7 @@ add_executable(okay-editor main.cpp EditorState.cpp FpHandsWindow.cpp
     AnimatorWindow.cpp                                                 # the Animator window (state-machine graph)
     TimelineWindow.cpp                                                 # the Timeline window (cutscene sequences)
     NavigationWindow.cpp                                               # the Navigation window (navmesh bake + overlays)
+    BuildSettingsWindow.cpp                                            # the Build Settings window: page list + search, Game and Advanced pages, summary, checks, history
     DialogueWindow.cpp                                                 # the Dialogue window (dialogue graphs + quests)
     BehaviorTreeWindow.cpp                                             # the Behavior Tree window (NPC AI trees)
     LevelTools.cpp                                                     # foliage brush, terrain layers, decals, cables, measuring tool, orthographic views

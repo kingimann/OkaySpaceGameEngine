@@ -17,6 +17,7 @@
 #include "SdlDisplays.hpp"             // monitor list and display modes (SDL directly; not the platform seam)
 #include "okay/Input/PlatformKeys.hpp"   // F1-F12, nav keys, left / right modifiers (physical keys, via okay::platform)
 #include "okay/Core/BuildPipeline.hpp"   // FindDataDir (<Name>_Data layout) and build.json
+#include "okay/Core/BuildConfigExtra.hpp"   // game speed, start volumes, language, logging, environment variables from Build Settings > Game
 #include "okay/Core/Paths.hpp"
 #include <filesystem>
 #if defined(__linux__)
@@ -1350,6 +1351,7 @@ int main(int argc, char** argv) {
         float physicsHz = 50.0f;     // project setting; 50 matches the old fixed step
         bool smoothPhysics = true;
         bool sawPhysics = false;
+        okay::buildpipe::ExtraConfig extra;   // Build Settings > Game (docs/build_settings_upgrade.md)
     } cfg;
     {
         // Read the whole config and transparently decode it if it was obfuscated at
@@ -1426,7 +1428,16 @@ int main(int argc, char** argv) {
                 cfg.smoothPhysics = std::atoi(v.c_str()) != 0;
                 cfg.sawPhysics = true;
             }
+            else okay::buildpipe::ApplyExtraKey(cfg.extra, k, v);   // time_scale, music_volume, log_level, env ...
         }
+    }
+    // Environment variables from Build Settings > Game, set before anything below reads the environment.
+    for (const auto& kv : cfg.extra.env) {
+#if defined(_WIN32)
+        _putenv_s(kv.first.c_str(), kv.second.c_str());
+#else
+        ::setenv(kv.first.c_str(), kv.second.c_str(), 1);
+#endif
     }
     // Where the game WRITES saves: a per-user, writable
     // app folder when enabled — so saving works even from a read-only install (e.g.
@@ -1439,6 +1450,10 @@ int main(int argc, char** argv) {
         if (!pref.empty()) saveDir = pref;
     }
     okay::Save::SetBaseDir(saveDir);  // relative SaveData files (save.okaysave, ...) land here
+    // Build Settings > Game: how much the game logs, and an optional log file in the save folder.
+    if (!cfg.extra.logLevel.empty()) okay::Log::Configure(cfg.extra.logLevel);
+    if (!cfg.extra.logFile.empty()) okay::Log::OpenFile(saveDir + cfg.extra.logFile);
+    if (!cfg.extra.description.empty()) pb->Log("game: " + cfg.title + " - " + cfg.extra.description);
 
     // Optional downloaded content (docs/content_delivery.md): OFF unless a content URL is set (content.okayconfig beside the game, or the
     // environment variable OKAY_CONTENT_URL). With no URL nothing below does anything and the game is exactly as before. With one, the game
@@ -1496,6 +1511,8 @@ int main(int argc, char** argv) {
     }
     {
         std::vector<std::string> osLocales = pb->PreferredLocales();
+        // Build Settings > Game > Starting language: tried first, but the language the player chose before still wins.
+        if (!cfg.extra.defaultLanguage.empty()) osLocales.insert(osLocales.begin(), cfg.extra.defaultLanguage);
         Localization::LoadSettings(osLocales);
     }
 
@@ -1713,6 +1730,12 @@ int main(int argc, char** argv) {
     ShadowCascades()   = cfg.shadowCascades;
     ShadowMapResolution() = cfg.shadowResolution;
     BloomEnabled()     = cfg.bloom;
+    okay::ParticleSystem::GlobalCap() = cfg.extra.particleCap;   // Build Settings > Graphics > Particle limit
+    if (cfg.extra.gamepadDeadzone != 0.18f)   // Build Settings > Audio & Input > Gamepad dead zone (every player's sticks)
+        for (int gp = 0; gp < okay::Input::kMaxGamepads; ++gp) {
+            okay::Input::GamepadSettings(gp).left.deadZone = cfg.extra.gamepadDeadzone;
+            okay::Input::GamepadSettings(gp).right.deadZone = cfg.extra.gamepadDeadzone;
+        }
     SSAOEnabled()      = cfg.ssao;
     FXAAEnabled()      = cfg.fxaa;
     if (!cfg.sawCursorMode && cfg.lockCursor) cfg.cursorMode = 1;
@@ -1735,24 +1758,30 @@ int main(int argc, char** argv) {
     bool                 glCtx = false;                 // its GL context exists
     bool                 glReady = false, d3dReady = false, d3d12Ready = false;
 #ifndef __EMSCRIPTEN__
+    // Build Settings > Graphics > 3D renderer: 1 = only Direct3D 11, 2 = only OpenGL, 3 = software only. Whatever is
+    // chosen and cannot start falls back to software, as before.
+    const int rendererChoice = cfg.extra.renderer;
+    if (rendererChoice == 3) cfg.gpu = false;
     if (cfg.gpu) {
 #if defined(_WIN32)
         // Opt-in Direct3D 12 backend, preferred when enabled; otherwise D3D11.
-        if (cfg.d3d12) {
+        if (cfg.d3d12 && rendererChoice != 2) {
             d3d12Renderer = new okay::D3D12Renderer();
             if (d3d12Renderer->Init()) d3d12Ready = true;
             else { delete d3d12Renderer; d3d12Renderer = nullptr; }
         }
-        d3dRenderer = new okay::D3D11Renderer();
-        if (d3dRenderer->Init()) d3dReady = true;
-        else { delete d3dRenderer; d3dRenderer = nullptr; }
+        if (rendererChoice != 2) {
+            d3dRenderer = new okay::D3D11Renderer();
+            if (d3dRenderer->Init()) d3dReady = true;
+            else { delete d3dRenderer; d3dRenderer = nullptr; }
+        }
 #endif
         // A 3.2 compatibility context: core FBOs/MSAA + our #version 120 shaders
         // (GLAttributes' defaults: 3.2, compatibility profile, 24-bit depth).
         okay::platform::WindowDesc gd;
         gd.title = "okay-gl"; gd.x = 0; gd.y = 0; gd.width = 16; gd.height = 16;
         gd.resizable = false; gd.opengl = true; gd.hidden = true;
-        glWindow = pb->MakeWindow(gd);
+        if (rendererChoice != 1) glWindow = pb->MakeWindow(gd);   // "Direct3D 11 only" never starts OpenGL
         if (glWindow) {
             glCtx = glWindow->CreateGLContext(okay::platform::GLAttributes());
             if (glCtx) {   // CreateGLContext also made it current
@@ -1770,13 +1799,16 @@ int main(int argc, char** argv) {
     int gpuFails = 0;   // self-heal: after repeated GPU failures, fall back for good
 
     okay::platform::AudioSpec want, have;
-    want.freq = 44100; want.format = okay::platform::SampleFormat::F32; want.channels = 2; want.frames = 1024;
+    want.freq = cfg.extra.sampleRate > 0 ? cfg.extra.sampleRate : 44100;   // Build Settings > Audio & Input > Sound quality
+     want.format = okay::platform::SampleFormat::F32; want.channels = 2; want.frames = 1024;
     want.allowChange = true;
     // Float output at whatever rate and channel count the device gives us.
     std::unique_ptr<okay::platform::AudioDevice> audioDev;
     if (okay::platform::Backend* pb = okay::platform::Default()) audioDev = pb->OpenAudio(want, false, nullptr, &have);
     if (audioDev) { AudioMixer::sampleRate = have.freq; audioDev->Pause(false); }
     AudioMixer::masterVolume = cfg.volume;   // global mix scale from build settings
+    AudioMixer::groupVolume[(int)AudioGroup::Music] = cfg.extra.musicVolume;   // Build Settings > Game: starting group volumes
+    AudioMixer::groupVolume[(int)AudioGroup::SFX] = cfg.extra.sfxVolume;
     AudioMixer::LoadSettings();   // the player's own volume settings win over it
     InputActions::Load();   // the player's own control bindings
 
@@ -1820,11 +1852,13 @@ int main(int argc, char** argv) {
     okay::GameLoop::Options loopOpt;
     loopOpt.maxDelta = 0.1f;
     loopOpt.smoothDelta = cfg.smoothDt;
+    if (cfg.extra.maxFixedSteps > 0) loopOpt.maxFixedSteps = cfg.extra.maxFixedSteps;   // Build Settings > Game > Most physics steps per frame
     okay::GameLoop loop(loopOpt);
     loop.OnUpdate = [&](float dt) { if (loopTick) scene.Update(dt); };
     // A new session: no stale pause or quit from a prior scene, and the time scale back to 1 (Game::Reset
     // kept a scale a script had left, so a scene loaded after one that froze the game started frozen).
     loop.BeginSession();
+    if (cfg.extra.timeScale != 1.0f) okay::Time::SetTimeScale(cfg.extra.timeScale);   // Build Settings > Game > Game speed
     scene.Start();
 
     // Open every connected game controller (up to Input::kMaxGamepads, one per player).

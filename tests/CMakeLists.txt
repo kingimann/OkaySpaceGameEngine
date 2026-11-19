@@ -1012,6 +1012,11 @@ add_executable(test_project_state test_project_state.cpp)
 target_link_libraries(test_project_state PRIVATE okay::engine)
 add_test(NAME project_state COMMAND test_project_state)
 
+# The Build Settings window's logic (pages, search, presets, validation, history, commands) and the player's extra config keys.
+add_executable(test_build_settings test_build_settings.cpp)
+target_link_libraries(test_build_settings PRIVATE okay::engine)
+add_test(NAME build_settings COMMAND test_build_settings)
+
 # Damaged or unusual project, texture-meta and material files load safely (issue #888 findings 74, 75, 78).
 add_executable(test_data_load_checks test_data_load_checks.cpp)
 target_link_libraries(test_data_load_checks PRIVATE okay::engine)

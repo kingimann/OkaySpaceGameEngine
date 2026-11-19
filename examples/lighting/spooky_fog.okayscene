@@ -1,0 +1,226 @@
+okayscene 3
+name "Spooky fog"
+gravity 0 -9.81
+gravity3 0 -9.81 0
+rendersettings 1 0.04 0.06 0.09 0.16 0.22 0.24 0.05 0.06 0.07 0.09
+fog 1 0.17 0.23 0.25 20 90
+vignette 0.55
+tonemap 1
+fogmode 1 0.055 2 0.25 0
+skyproc 0 2.5 0.6 1 0.7 0.5 1 1
+post 1 1 1 0.95 0.3 1.5 1 -0.05 0 0.7 1 0 0 0 0 0 0 0 0 0 0.5 1 0 0.5 0.8 0 10 8
+gameobject 0 "Ground"
+  guid "6f07ca68203eb753168d378a63d03607"
+  active 1
+  parent -1
+  transform 0 -0.5 8 0 0 0 1 70 1 70
+  mesh "Cube" 0.43137255 0.54901963 0.3529412 1 0 "" 0
+  material 0 0 0 0 16 0 "" 1 1
+end
+gameobject 1 "Path"
+  guid "3d32ab39742d99095b9c9975fa5acf66"
+  active 1
+  parent -1
+  transform 0 0.01 8 0 0 0 1 3.2 0.04 40
+  mesh "Cube" 0.6666667 0.5882353 0.47058824 1 0 "" 0
+  material 0 0 0 0 16 0 "" 1 1
+end
+gameobject 2 "House"
+  guid "e276de298cd7166b9ed105790e9b0bcc"
+  active 1
+  parent -1
+  transform -7.5 1.6 6 0 0 0 1 5 3.2 5
+  mesh "Cube" 0.8039216 0.7254902 0.627451 1 0 "" 0
+  material 0 0 0 0 16 0 "" 1 1
+end
+gameobject 3 "Roof"
+  guid "521dcd672ddc2a68f780d8e9a6750c1d"
+  active 1
+  parent -1
+  transform -7.5 3.5 6 0 0.38268346 0 0.9238795 5.6 0.6 5.6
+  mesh "Cube" 0.5882353 0.27450982 0.23529412 1 0 "" 0
+  material 0 0 0 0 16 0 "" 1 1
+end
+gameobject 4 "House"
+  guid "64cf73e07e7965387d12f1dbbbcd35d9"
+  active 1
+  parent -1
+  transform 7.5 1.6 6 0 0 0 1 5 3.2 5
+  mesh "Cube" 0.74509805 0.7254902 0.627451 1 0 "" 0
+  material 0 0 0 0 16 0 "" 1 1
+end
+gameobject 5 "Roof"
+  guid "41fa6a9e06eccfdaf7a4ae638cb6900a"
+  active 1
+  parent -1
+  transform 7.5 3.5 6 0 0.38268346 0 0.9238795 5.6 0.6 5.6
+  mesh "Cube" 0.5882353 0.27450982 0.23529412 1 0 "" 0
+  material 0 0 0 0 16 0 "" 1 1
+end
+gameobject 6 "House"
+  guid "d671b8d34dea7e9c35478e8edd4ae652"
+  active 1
+  parent -1
+  transform -7.5 1.6 15 0 0 0 1 5 3.2 5
+  mesh "Cube" 0.6862745 0.7254902 0.627451 1 0 "" 0
+  material 0 0 0 0 16 0 "" 1 1
+end
+gameobject 7 "Roof"
+  guid "1603a35aaf70245e441980b3ab188d68"
+  active 1
+  parent -1
+  transform -7.5 3.5 15 0 0.38268346 0 0.9238795 5.6 0.6 5.6
+  mesh "Cube" 0.5882353 0.27450982 0.23529412 1 0 "" 0
+  material 0 0 0 0 16 0 "" 1 1
+end
+gameobject 8 "House"
+  guid "739a4d2c2235e85c2204cd4e1d83a777"
+  active 1
+  parent -1
+  transform 7.5 1.6 15 0 0 0 1 5 3.2 5
+  mesh "Cube" 0.627451 0.7254902 0.627451 1 0 "" 0
+  material 0 0 0 0 16 0 "" 1 1
+end
+gameobject 9 "Roof"
+  guid "6866af062f88f62cbd09a26b987e0529"
+  active 1
+  parent -1
+  transform 7.5 3.5 15 0 0.38268346 0 0.9238795 5.6 0.6 5.6
+  mesh "Cube" 0.5882353 0.27450982 0.23529412 1 0 "" 0
+  material 0 0 0 0 16 0 "" 1 1
+end
+gameobject 10 "Trunk"
+  guid "67d865e5cafd58253d97730493bff1d1"
+  active 1
+  parent -1
+  transform -3.8 1 3 0 0 0 1 0.4 2 0.4
+  mesh "Cube" 0.39215687 0.27450982 0.1764706 1 0 "" 0
+  material 0 0 0 0 16 0 "" 1 1
+end
+gameobject 11 "Crown"
+  guid "a055b5fe820b5612e72afc212961fc80"
+  active 1
+  parent -1
+  transform -3.8 2.8 3 0 0 0 1 2 2 2
+  mesh "Cube" 0.23529412 0.47058824 0.23529412 1 0 "" 0
+  material 0 0 0 0 16 0 "" 1 1
+end
+gameobject 12 "Trunk"
+  guid "0e3da27b4d311d3ce5b99cdfe66a188e"
+  active 1
+  parent -1
+  transform 3.8 1 3 0 0 0 1 0.4 2 0.4
+  mesh "Cube" 0.39215687 0.27450982 0.1764706 1 0 "" 0
+  material 0 0 0 0 16 0 "" 1 1
+end
+gameobject 13 "Crown"
+  guid "2c9a9225dccbb1116df11233eab634a2"
+  active 1
+  parent -1
+  transform 3.8 2.8 3 0 0 0 1 2 2 2
+  mesh "Cube" 0.23529412 0.47058824 0.23529412 1 0 "" 0
+  material 0 0 0 0 16 0 "" 1 1
+end
+gameobject 14 "Trunk"
+  guid "7d3ee98a3d70e405741e74fc45748252"
+  active 1
+  parent -1
+  transform -3.8 1 8 0 0 0 1 0.4 2 0.4
+  mesh "Cube" 0.39215687 0.27450982 0.1764706 1 0 "" 0
+  material 0 0 0 0 16 0 "" 1 1
+end
+gameobject 15 "Crown"
+  guid "34c3c6546712f1fc2921b33a723c0b9a"
+  active 1
+  parent -1
+  transform -3.8 2.8 8 0 0 0 1 2 2 2
+  mesh "Cube" 0.23529412 0.47058824 0.23529412 1 0 "" 0
+  material 0 0 0 0 16 0 "" 1 1
+end
+gameobject 16 "Trunk"
+  guid "3980e129c2feb0be19d8d2c48757ce09"
+  active 1
+  parent -1
+  transform 3.8 1 8 0 0 0 1 0.4 2 0.4
+  mesh "Cube" 0.39215687 0.27450982 0.1764706 1 0 "" 0
+  material 0 0 0 0 16 0 "" 1 1
+end
+gameobject 17 "Crown"
+  guid "b99e7e37ffe73e07c70a12a2771dc356"
+  active 1
+  parent -1
+  transform 3.8 2.8 8 0 0 0 1 2 2 2
+  mesh "Cube" 0.23529412 0.47058824 0.23529412 1 0 "" 0
+  material 0 0 0 0 16 0 "" 1 1
+end
+gameobject 18 "Trunk"
+  guid "0fa4a229213db1e73b782b25661f7a98"
+  active 1
+  parent -1
+  transform -3.8 1 13 0 0 0 1 0.4 2 0.4
+  mesh "Cube" 0.39215687 0.27450982 0.1764706 1 0 "" 0
+  material 0 0 0 0 16 0 "" 1 1
+end
+gameobject 19 "Crown"
+  guid "6e0f65f1a385c0cc9b91a0e7001420c7"
+  active 1
+  parent -1
+  transform -3.8 2.8 13 0 0 0 1 2 2 2
+  mesh "Cube" 0.23529412 0.47058824 0.23529412 1 0 "" 0
+  material 0 0 0 0 16 0 "" 1 1
+end
+gameobject 20 "Trunk"
+  guid "10f2049a848571c1da03e43cd0242d6e"
+  active 1
+  parent -1
+  transform 3.8 1 13 0 0 0 1 0.4 2 0.4
+  mesh "Cube" 0.39215687 0.27450982 0.1764706 1 0 "" 0
+  material 0 0 0 0 16 0 "" 1 1
+end
+gameobject 21 "Crown"
+  guid "5b2bc7129a62a2f5bb992786325895a6"
+  active 1
+  parent -1
+  transform 3.8 2.8 13 0 0 0 1 2 2 2
+  mesh "Cube" 0.23529412 0.47058824 0.23529412 1 0 "" 0
+  material 0 0 0 0 16 0 "" 1 1
+end
+gameobject 22 "Well"
+  guid "c594e25e29826ff39eece53f4dd6cf0d"
+  active 1
+  parent -1
+  transform 0 0.6 12 0 0 0 1 1.4 1.2 1.4
+  mesh "Cube" 0.54901963 0.54901963 0.5686275 1 0 "" 0
+  material 0 0 0 0 16 0 "" 1 1
+end
+gameobject 23 "Wall"
+  guid "0a6fb2e1fd07caed72e3482d9097fff2"
+  active 1
+  parent -1
+  transform 0 1 26 0 0 0 1 20 2 0.5
+  mesh "Cube" 0.627451 0.60784316 0.5882353 1 0 "" 0
+  material 0 0 0 0 16 0 "" 1 1
+end
+gameobject 24 "Lighting: Moon"
+  guid "079d7f56063602179c692aa6a4c54701"
+  active 1
+  parent -1
+  transform 0 10 0 0.11950935 0.85678667 -0.44601488 0.22957532 1 1 1
+  light 1 1 1 1 0.09 0.35 0 10 45 0.5 1 8000 0.6 0.9 1 0
+  lightx 0.8 0 0 4 0 ""
+end
+gameobject 25 "Lighting: Lantern"
+  guid "66de6e12b63422c6ee21bcb46b6c9e35"
+  active 1
+  parent -1
+  transform 0 0.79999995 8 0 0 0 1 1 1 1
+  light 1 1 1 1 0 1.8 1 8 45 0.5 1 2200 1 1 1 1 1 1 1 0.3 10 1
+  lightx 0.6 0 0 4 0 ""
+end
+gameobject 26 "Main Camera"
+  guid "91ebce2123c33a9f8f513a9ae00621b7"
+  active 1
+  parent -1
+  transform 0 5 -4 0.109116785 0 0 0.994029 1 1 1
+  camera 1 5 62 0.19215687 0.3019608 0.4745098 1 1 0 0 0.3 4000 0 0 0 1 1 -1 0 50 24 1 0 0 0 0 32 0.3 2 18 1.5
+end

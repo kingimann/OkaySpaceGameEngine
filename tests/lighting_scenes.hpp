@@ -44,12 +44,20 @@ inline CamView BuildSun(Scene& s) {
     return {{-3, 5.5f, -6}, {0, 0.5f, 12}, 55.0f};
 }
 /// 2. Indoor room with one lamp and a window-like opening: walls, ceiling, point light, shadows from furniture.
-inline CamView BuildRoom(Scene& s, bool withLamp = true) {
+inline CamView BuildRoom(Scene& s, bool withLamp = true, bool withWindow = false) {
     Color wall = Color::FromBytes(200, 190, 175);
     MakeBox(s, "Floor", {0, -0.1f, 0}, {8, 0.2f, 8}, Color::FromBytes(140, 100, 70));
     MakeBox(s, "Ceiling", {0, 3.1f, 0}, {8, 0.2f, 8}, wall);
     MakeBox(s, "WallBack", {0, 1.5f, 4.1f}, {8.4f, 3.2f, 0.2f}, wall);
-    MakeBox(s, "WallLeft", {-4.1f, 1.5f, 0}, {0.2f, 3.2f, 8.4f}, Color::FromBytes(170, 120, 110));
+    if (!withWindow) {
+        MakeBox(s, "WallLeft", {-4.1f, 1.5f, 0}, {0.2f, 3.2f, 8.4f}, Color::FromBytes(170, 120, 110));
+    } else {   // the left wall with a window opening (z 0.6 .. 3.0, height 0.9 .. 2.4)
+        const Color c = Color::FromBytes(170, 120, 110);
+        MakeBox(s, "WallLeft low", {-4.1f, 0.45f, 0}, {0.2f, 0.9f, 8.4f}, c);
+        MakeBox(s, "WallLeft high", {-4.1f, 2.8f, 0}, {0.2f, 0.8f, 8.4f}, c);
+        MakeBox(s, "WallLeft front", {-4.1f, 1.65f, -1.8f}, {0.2f, 1.5f, 4.8f}, c);
+        MakeBox(s, "WallLeft back", {-4.1f, 1.65f, 3.6f}, {0.2f, 1.5f, 1.2f}, c);
+    }
     MakeBox(s, "WallRight", {4.1f, 1.5f, 0}, {0.2f, 3.2f, 8.4f}, Color::FromBytes(110, 140, 170));
     MakeBox(s, "Table", {0, 0.5f, 1.0f}, {2.2f, 0.12f, 1.2f}, Color::FromBytes(90, 60, 40));
     for (int i = 0; i < 4; ++i)
@@ -83,7 +91,7 @@ inline CamView BuildVillage(Scene& s) {
     }
     MakeBox(s, "Well", {0, 0.6f, 12}, {1.4f, 1.2f, 1.4f}, Color::FromBytes(140, 140, 145));
     MakeBox(s, "Wall", {0, 1.0f, 26}, {20, 2.0f, 0.5f}, Color::FromBytes(160, 155, 150));
-    return {{0, 3.2f, -3.0f}, {0, 1.2f, 12.0f}, 62.0f};
+    return {{0, 5.0f, -4.0f}, {0, 1.0f, 14.0f}, 62.0f};
 }
 /// 3. A spot light cone on a floor with a pillar in it.
 inline CamView BuildSpot(Scene& s) {
@@ -116,10 +124,10 @@ inline CamView BuildBrightPoints(Scene& s) {
 }
 /// 6. The room with no bulb: an area panel on the ceiling and a window of sun with a mask.
 inline CamView BuildPanelRoom(Scene& s) {
-    CamView v = BuildRoom(s, false);
-    Light* panel = AddLight(s, "Panel", Light::Type::Area, {0, 2.95f, 1.0f}, 90.0f, 0.0f, Color::FromBytes(255, 225, 190), 1.4f);
+    CamView v = BuildRoom(s, false, true);
+    Light* panel = AddLight(s, "Panel", Light::Type::Area, {0, 2.75f, 1.0f}, 90.0f, 0.0f, Color::FromBytes(255, 225, 190), 1.4f);
     panel->areaWidth = 2.4f; panel->areaHeight = 1.4f; panel->range = 10.0f; panel->ambient = 0.10f;
-    Light* sun = AddLight(s, "Window sun", Light::Type::Directional, {0, 6, 0}, 40.0f, 80.0f, Color::FromBytes(255, 240, 210), 0.9f);
+    Light* sun = AddLight(s, "Window sun", Light::Type::Directional, {0, 6, 0}, 38.0f, 100.0f, Color::FromBytes(255, 240, 210), 0.9f);
     sun->cookie = "builtin:window"; sun->cookieScale = 3.5f; sun->ambient = 0.10f;
     return v;
 }

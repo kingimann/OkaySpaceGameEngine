@@ -130,10 +130,10 @@ inline bool ApplyLightingPreset(Scene& scene, const std::string& name) {
         Light* moon = SunLight(scene, "Moon"); SunDefaults(moon); Aim(moon, 42.0f, 200.0f);
         moon->temperature = 9500.0f; moon->intensity = 0.20f; moon->ambient = 0.07f; moon->shadowStrength = 0.6f; moon->shadowSoftness = 0.6f;
         moon->ambientColor = Color{0.6f, 0.7f, 1.0f, 1.0f};
-        const float r = 0.30f * (sx < sz ? sx : sz) + 1.0f;
+        float r = 0.30f * (sx < sz ? sx : sz) + 1.0f; if (r < 4.0f) r = 4.0f; if (r > 8.0f) r = 8.0f;   // lamps near the middle, not at the edge of a big ground
         for (int i = 0; i < 4; ++i) {                          // four street lamps around the middle
             const float a = 0.7854f + 1.5708f * (float)i;
-            const Vec3 pos{ctr.x + r * std::cos(a), ctr.y + 2.6f, ctr.z + r * std::sin(a)};
+            const Vec3 pos{ctr.x + r * std::cos(a), ctr.y + 3.2f, ctr.z + r * std::sin(a)};
             Light* l = NewLight(scene, "Lamp " + std::to_string(i + 1), Light::Type::Point, pos, 0, 0);
             Lamp(l, 2700.0f, 1.6f, 11.0f);
             l->castShadows = i < 2;                            // two lamps get shadows (a point light uses 6 of the 16 shadow tiles)
@@ -166,7 +166,7 @@ inline bool ApplyLightingPreset(Scene& scene, const std::string& name) {
         Light* moon = SunLight(scene, "Moon"); SunDefaults(moon); Aim(moon, 55.0f, 150.0f);
         moon->temperature = 8000.0f; moon->intensity = 0.35f; moon->ambient = 0.09f; moon->shadowSoftness = 0.8f;
         moon->ambientColor = Color{0.6f, 0.9f, 1.0f, 1.0f};
-        Light* lantern = NewLight(scene, "Lantern", Light::Type::Point, {ctr.x, lo.y + 1.4f, ctr.z}, 0, 0);
+        Light* lantern = NewLight(scene, "Lantern", Light::Type::Point, {ctr.x, lo.y + 1.8f, ctr.z}, 0, 0);
         Lamp(lantern, 2200.0f, 1.8f, 8.0f);
         lantern->castShadows = true; lantern->flicker = 0.30f; lantern->flickerSpeed = 10.0f;
     }

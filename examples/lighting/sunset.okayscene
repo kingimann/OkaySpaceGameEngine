@@ -1,0 +1,219 @@
+okayscene 3
+name "Sunset"
+gravity 0 -9.81
+gravity3 0 -9.81 0
+rendersettings 1 0.27450982 0.47058824 0.78431374 0.5882353 0.7254902 0.88235295 0.47058824 0.47058824 0.50980395 0.2
+fog 1 0.5882353 0.7254902 0.88235295 20 90
+vignette 0.2
+tonemap 1
+ambientmode 2 1.1
+fogmode 1 0.01 0 0.15 1
+skyproc 1 2.5 0.6 0.8 0.45 0.55 1 1
+post 1 1 1 0.9 0.45 1.3 1 0.2 0 1.1 1 0 0 0 0 0 0 0 0 0 0.5 1 0 0.5 0.8 0 10 8
+gameobject 0 "Ground"
+  guid "24accf63847a23dd948e60cc225f2855"
+  active 1
+  parent -1
+  transform 0 -0.5 8 0 0 0 1 70 1 70
+  mesh "Cube" 0.43137255 0.54901963 0.3529412 1 0 "" 0
+  material 0 0 0 0 16 0 "" 1 1
+end
+gameobject 1 "Path"
+  guid "3982145885de10cb15e634e0a1648100"
+  active 1
+  parent -1
+  transform 0 0.01 8 0 0 0 1 3.2 0.04 40
+  mesh "Cube" 0.6666667 0.5882353 0.47058824 1 0 "" 0
+  material 0 0 0 0 16 0 "" 1 1
+end
+gameobject 2 "House"
+  guid "5181da0c8de4efd95074e2368da54ab9"
+  active 1
+  parent -1
+  transform -7.5 1.6 6 0 0 0 1 5 3.2 5
+  mesh "Cube" 0.8039216 0.7254902 0.627451 1 0 "" 0
+  material 0 0 0 0 16 0 "" 1 1
+end
+gameobject 3 "Roof"
+  guid "2de5ed9e5720cd8491607aade2dfd1c7"
+  active 1
+  parent -1
+  transform -7.5 3.5 6 0 0.38268346 0 0.9238795 5.6 0.6 5.6
+  mesh "Cube" 0.5882353 0.27450982 0.23529412 1 0 "" 0
+  material 0 0 0 0 16 0 "" 1 1
+end
+gameobject 4 "House"
+  guid "66a852b26e24521ec6eefa7c489b2a11"
+  active 1
+  parent -1
+  transform 7.5 1.6 6 0 0 0 1 5 3.2 5
+  mesh "Cube" 0.74509805 0.7254902 0.627451 1 0 "" 0
+  material 0 0 0 0 16 0 "" 1 1
+end
+gameobject 5 "Roof"
+  guid "87ed3f9b22a144bfb729da44e6e8218a"
+  active 1
+  parent -1
+  transform 7.5 3.5 6 0 0.38268346 0 0.9238795 5.6 0.6 5.6
+  mesh "Cube" 0.5882353 0.27450982 0.23529412 1 0 "" 0
+  material 0 0 0 0 16 0 "" 1 1
+end
+gameobject 6 "House"
+  guid "759aa2232a76a2cd780d8a8e09104f93"
+  active 1
+  parent -1
+  transform -7.5 1.6 15 0 0 0 1 5 3.2 5
+  mesh "Cube" 0.6862745 0.7254902 0.627451 1 0 "" 0
+  material 0 0 0 0 16 0 "" 1 1
+end
+gameobject 7 "Roof"
+  guid "233fac7fd4fb4ea42b1ef5b16a97fa0a"
+  active 1
+  parent -1
+  transform -7.5 3.5 15 0 0.38268346 0 0.9238795 5.6 0.6 5.6
+  mesh "Cube" 0.5882353 0.27450982 0.23529412 1 0 "" 0
+  material 0 0 0 0 16 0 "" 1 1
+end
+gameobject 8 "House"
+  guid "bb08516ef83df698f0b547a815d5428a"
+  active 1
+  parent -1
+  transform 7.5 1.6 15 0 0 0 1 5 3.2 5
+  mesh "Cube" 0.627451 0.7254902 0.627451 1 0 "" 0
+  material 0 0 0 0 16 0 "" 1 1
+end
+gameobject 9 "Roof"
+  guid "185d1814459d887cb97e1751499979ef"
+  active 1
+  parent -1
+  transform 7.5 3.5 15 0 0.38268346 0 0.9238795 5.6 0.6 5.6
+  mesh "Cube" 0.5882353 0.27450982 0.23529412 1 0 "" 0
+  material 0 0 0 0 16 0 "" 1 1
+end
+gameobject 10 "Trunk"
+  guid "993be1e84a142096ceb442ac2a7f919a"
+  active 1
+  parent -1
+  transform -3.8 1 3 0 0 0 1 0.4 2 0.4
+  mesh "Cube" 0.39215687 0.27450982 0.1764706 1 0 "" 0
+  material 0 0 0 0 16 0 "" 1 1
+end
+gameobject 11 "Crown"
+  guid "e38e8bbea1515fa830be52212e0453cd"
+  active 1
+  parent -1
+  transform -3.8 2.8 3 0 0 0 1 2 2 2
+  mesh "Cube" 0.23529412 0.47058824 0.23529412 1 0 "" 0
+  material 0 0 0 0 16 0 "" 1 1
+end
+gameobject 12 "Trunk"
+  guid "af20a0b99120b460b8e7d96d4055ddd3"
+  active 1
+  parent -1
+  transform 3.8 1 3 0 0 0 1 0.4 2 0.4
+  mesh "Cube" 0.39215687 0.27450982 0.1764706 1 0 "" 0
+  material 0 0 0 0 16 0 "" 1 1
+end
+gameobject 13 "Crown"
+  guid "e998687a143891e57f23ec3576d85cf2"
+  active 1
+  parent -1
+  transform 3.8 2.8 3 0 0 0 1 2 2 2
+  mesh "Cube" 0.23529412 0.47058824 0.23529412 1 0 "" 0
+  material 0 0 0 0 16 0 "" 1 1
+end
+gameobject 14 "Trunk"
+  guid "5538b9471435ec0f60d41375b7e0a24b"
+  active 1
+  parent -1
+  transform -3.8 1 8 0 0 0 1 0.4 2 0.4
+  mesh "Cube" 0.39215687 0.27450982 0.1764706 1 0 "" 0
+  material 0 0 0 0 16 0 "" 1 1
+end
+gameobject 15 "Crown"
+  guid "fe38da4c31861925c91bd42defbc4ae7"
+  active 1
+  parent -1
+  transform -3.8 2.8 8 0 0 0 1 2 2 2
+  mesh "Cube" 0.23529412 0.47058824 0.23529412 1 0 "" 0
+  material 0 0 0 0 16 0 "" 1 1
+end
+gameobject 16 "Trunk"
+  guid "aace15a7d8213efe3f96cf73792c45f2"
+  active 1
+  parent -1
+  transform 3.8 1 8 0 0 0 1 0.4 2 0.4
+  mesh "Cube" 0.39215687 0.27450982 0.1764706 1 0 "" 0
+  material 0 0 0 0 16 0 "" 1 1
+end
+gameobject 17 "Crown"
+  guid "711fbcef37ef05f85fba046b7ad9c072"
+  active 1
+  parent -1
+  transform 3.8 2.8 8 0 0 0 1 2 2 2
+  mesh "Cube" 0.23529412 0.47058824 0.23529412 1 0 "" 0
+  material 0 0 0 0 16 0 "" 1 1
+end
+gameobject 18 "Trunk"
+  guid "f8bf10584ee5b5542401ee05c40e091c"
+  active 1
+  parent -1
+  transform -3.8 1 13 0 0 0 1 0.4 2 0.4
+  mesh "Cube" 0.39215687 0.27450982 0.1764706 1 0 "" 0
+  material 0 0 0 0 16 0 "" 1 1
+end
+gameobject 19 "Crown"
+  guid "78d2c720991983b3c79a739cd72eecc8"
+  active 1
+  parent -1
+  transform -3.8 2.8 13 0 0 0 1 2 2 2
+  mesh "Cube" 0.23529412 0.47058824 0.23529412 1 0 "" 0
+  material 0 0 0 0 16 0 "" 1 1
+end
+gameobject 20 "Trunk"
+  guid "8a4f801ffc38448386c4d5f6098f915d"
+  active 1
+  parent -1
+  transform 3.8 1 13 0 0 0 1 0.4 2 0.4
+  mesh "Cube" 0.39215687 0.27450982 0.1764706 1 0 "" 0
+  material 0 0 0 0 16 0 "" 1 1
+end
+gameobject 21 "Crown"
+  guid "6156d560bfbc53f411a43ff5c3645ee1"
+  active 1
+  parent -1
+  transform 3.8 2.8 13 0 0 0 1 2 2 2
+  mesh "Cube" 0.23529412 0.47058824 0.23529412 1 0 "" 0
+  material 0 0 0 0 16 0 "" 1 1
+end
+gameobject 22 "Well"
+  guid "5451e2d51ebabe1b3242ec449549dfbb"
+  active 1
+  parent -1
+  transform 0 0.6 12 0 0 0 1 1.4 1.2 1.4
+  mesh "Cube" 0.54901963 0.54901963 0.5686275 1 0 "" 0
+  material 0 0 0 0 16 0 "" 1 1
+end
+gameobject 23 "Wall"
+  guid "7dbf3c3dfde9ce22d03f5f942c08a45c"
+  active 1
+  parent -1
+  transform 0 1 26 0 0 0 1 20 2 0.5
+  mesh "Cube" 0.627451 0.60784316 0.5882353 1 0 "" 0
+  material 0 0 0 0 16 0 "" 1 1
+end
+gameobject 24 "Lighting: Sun"
+  guid "36c3ca648c7f9efced883815a1081cf0"
+  active 1
+  parent -1
+  transform 0 10 0 -0.023593105 0.95077693 -0.07482777 -0.29977882 1 1 1
+  light 1 1 1 1 0.2 1.2 0 10 45 0.5 1 2700 0.85 0.65 0.75 0
+  lightx 0.75 0 0 4 0 ""
+end
+gameobject 25 "Main Camera"
+  guid "c0795f912cc1c82b115678ebe31c968a"
+  active 1
+  parent -1
+  transform 0 5 -4 0.109116785 0 0 0.994029 1 1 1
+  camera 1 5 62 0.19215687 0.3019608 0.4745098 1 1 0 0 0.3 4000 0 0 0 1 1 -1 0 50 24 1 0 0 0 0 32 0.3 2 18 1.5
+end

@@ -31,7 +31,7 @@ int WritePresetScenes(const std::string& outdir, const std::string& picdir) {
     for (int i = 0; i < n; ++i) {
         Scene s(list[i].name);
         const std::string name = list[i].name;
-        CamView v = name == "Indoor" ? BuildRoom(s, false) : BuildVillage(s);
+        CamView v = name == "Indoor" ? BuildRoom(s, false, true) : BuildVillage(s);
         ApplyLightingPreset(s, name);
         AddCamera(s, v);
         s.Update(0.0f);

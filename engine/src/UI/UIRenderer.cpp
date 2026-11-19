@@ -66,6 +66,7 @@ public:
     bool IsClipEnabled() override { return m_in.IsClipEnabled(); }
     void SetScale(float sx, float sy) override { m_in.SetScale(sx, sy); }
     Tex LoadTexture(const std::string& path) override { return m_in.LoadTexture(path); }
+    Tex LoadTextureSized(const std::string& path, int w, int h) override { return m_in.LoadTextureSized(path, w, h); }
     Tex FontAtlas(TtfFont* font) override { return m_in.FontAtlas(font); }
     void QueryTexture(Tex t, int* w, int* h) override { m_in.QueryTexture(t, w, h); }
     void SetTextureColorMod(Tex t, std::uint8_t r, std::uint8_t g, std::uint8_t b) override {
@@ -242,9 +243,63 @@ void EmitSpan(FloatRun& run, float ox, float ly, float lh, float S, float a, flo
     if (s1 == i1 - 1 && c1 >= 0.2f) put(i1 - 1, c1, 1.0f);
 }
 
+// One horizontal sub-scanline of a shape: up to two spans (a ring has a left and a right piece) at the sample's own height.
+struct SubSpans { float a[2], b[2]; int n = 0; };
+
+// Exact-coverage version of EmitSpan for several sub-scanlines per device row. Each device pixel gets the mean, over the samples, of
+// the part of it that lies inside that sample's spans, so an edge that is nearly horizontal (the top and bottom of a circle, a pill's
+// ends) is anti-aliased vertically as well as sideways, and no pixel is rounded up to solid or down to nothing. Runs of pixels that
+// every sample covers completely are emitted as one rect.
+void EmitMulti(FloatRun& run, float gx0, float ly, float lh, float S, const SubSpans* smp, int K,
+               const std::uint8_t solid[4], const Color& tint, float op) {
+    float lo = 1e30f, hi = -1e30f;
+    for (int k = 0; k < K; ++k)
+        for (int i = 0; i < smp[k].n; ++i) { lo = std::min(lo, smp[k].a[i]); hi = std::max(hi, smp[k].b[i]); }
+    if (!(hi > lo)) return;
+    const int xe = (int)std::ceil(hi - 1e-4f);
+    int x = (int)std::floor(lo);
+    const float inv = 1.0f / (float)K;
+    while (x < xe) {
+        float cov = 0.0f, endFull = 1e30f, nextStart = 1e30f;
+        int full = 0;
+        for (int k = 0; k < K; ++k) {
+            bool fullHere = false;
+            for (int i = 0; i < smp[k].n; ++i) {
+                const float a = smp[k].a[i], b = smp[k].b[i];
+                const float ov = SpanOverlap(a, b, x);
+                cov += ov;
+                if (ov >= 0.999f) { fullHere = true; endFull = std::min(endFull, std::floor(b + 1e-4f)); }
+                if (a > (float)x + 1.0f) nextStart = std::min(nextStart, std::floor(a));
+            }
+            if (fullHere) ++full;
+        }
+        cov *= inv;
+        if (full == K && endFull > (float)x) {   // every sample covers this pixel whole: solid up to the first end
+            const int ex = std::min((int)endFull, xe);
+            run.Add(gx0 + (float)x / S, ly, (float)(ex - x) / S, lh, solid);
+            x = std::max(ex, x + 1);
+            continue;
+        }
+        if (cov <= 0.004f) { x = (nextStart < 1e29f) ? std::max(x + 1, (int)nextStart) : x + 1; continue; }
+        std::uint8_t col[4];
+        PackCov(tint, op, cov > 1.0f ? 1.0f : cov, col);
+        run.Add(gx0 + (float)x / S, ly, 1.0f / S, lh, col);
+        ++x;
+    }
+}
+
 // Where a logical rect lands on the device pixel grid: its edges rounded to whole device pixels (so at a canvas scale of 1.5 a
 // 15 px wide card is 22 or 23 device pixels, with hard, even borders, instead of starting half way through a pixel). Returns the
 // origin in logical units and the size in device pixels. The Old look keeps the unsnapped origin and the exact size.
+// Sub-scanlines per device row for shape edges: 1 keeps the coarse one-sample fill (Old look, Fast).
+int SubSamples() {
+    switch (g_uiQuality) {
+        case UIQuality::Good: return 4;
+        case UIQuality::Best: return 8;
+        default: return 1;
+    }
+}
+
 void SnapToDevice(const Rect& r, float S, float& ox, float& oy, float& dw, float& dh) {
     ox = (float)r.x; oy = (float)r.y;
     dw = std::max(1.0f, (float)r.w * S); dh = std::max(1.0f, (float)r.h * S);
@@ -271,6 +326,7 @@ void FillUIShapeSmooth(Painter& ren, const Rect& r, UIShape shape, float radius,
     const bool sideRun = shape == UIShape::Rounded || shape == UIShape::Pill || shape == UIShape::TabTop;
     const int cap = sideRun ? (int)std::ceil(rad) : rows;
     const bool flat = !gradient;
+    const int K = SubSamples();
     std::uint8_t solid[4];
     PackCov(top, op, 1.0f, solid);
     FloatRun run;
@@ -280,6 +336,25 @@ void FillUIShapeSmooth(Painter& ren, const Rect& r, UIShape shape, float radius,
         const float lh = 1.0f / S;
         if (sideRun && flat && row >= cap && (shape == UIShape::TabTop || row < rows - cap)) {
             run.Add(ox0, ly, dw / S, lh, solid);
+            continue;
+        }
+        if (K > 1 && !perPixel) {   // exact coverage, several sub-scanlines per device row
+            SubSpans smp[8];
+            int present = 0;
+            for (int k = 0; k < K; ++k) {
+                SubSpans& q = smp[k];
+                q.n = 0;
+                if (UIShapeSpanAt(shape, dw, dh, shape == UIShape::Pill ? 0.0f : rad, (float)row + ((float)k + 0.5f) / (float)K, q.a[0], q.b[0], cornerMask)) { q.n = 1; ++present; }
+            }
+            if (!present) continue;
+            Color tint = top;
+            std::uint8_t solidRow[4];
+            if (gradient) {
+                const float fy = dh > 1.0f ? ((float)row + 0.5f) / (dh - 1.0f) : 0.0f;
+                tint = LerpC(top, bottom, fy < 0.0f ? 0.0f : (fy > 1.0f ? 1.0f : fy));
+                PackCov(tint, op, 1.0f, solidRow);
+            } else { for (int i = 0; i < 4; ++i) solidRow[i] = solid[i]; }
+            EmitMulti(run, ox0, ly, lh, S, smp, K, solidRow, tint, op);
             continue;
         }
         float a, b;
@@ -323,6 +398,7 @@ void FillUIRingSmooth(Painter& ren, const Rect& r, UIShape shape, float radius,
     const int rows = std::max(1, (int)std::ceil(dh - 1e-3f));
     const bool sideRun = shape == UIShape::Rounded || shape == UIShape::Pill || shape == UIShape::TabTop;
     const int cap = sideRun ? (int)std::ceil(std::max(rad, inset + 1.0f)) : rows;
+    const int K = SubSamples();
     FloatRun run;
     run.ren = &ren;
     std::uint8_t solid[4];
@@ -335,6 +411,27 @@ void FillUIRingSmooth(Painter& ren, const Rect& r, UIShape shape, float radius,
             const float band = inset / S;
             run.Add(gx0, ly, band, lh, solid);
             run.Add(gx0 + dw / S - band, ly, band, lh, solid);
+            continue;
+        }
+        if (K > 1) {   // exact coverage, several sub-scanlines per device row (the ring is the outer shape minus the inner one)
+            SubSpans smp[8];
+            int present = 0;
+            for (int k = 0; k < K; ++k) {
+                SubSpans& q = smp[k];
+                q.n = 0;
+                const float sy = (float)row + ((float)k + 0.5f) / (float)K;
+                float o0, o1;
+                if (!UIShapeSpanAt(shape, dw, dh, shape == UIShape::Pill ? 0.0f : rad, sy, o0, o1, cornerMask)) continue;
+                float i0 = 0.0f, i1 = -1.0f;
+                const bool in = iw > 0.5f && ih > 0.5f && UIShapeSpanAt(shape, iw, ih, irad, sy - inset, i0, i1, cornerMask);
+                if (!in) { q.a[0] = o0; q.b[0] = o1; q.n = 1; }
+                else {
+                    if (i0 + inset > o0) { q.a[q.n] = o0; q.b[q.n] = i0 + inset; ++q.n; }
+                    if (o1 > i1 + inset) { q.a[q.n] = i1 + inset; q.b[q.n] = o1; ++q.n; }
+                }
+                if (q.n) ++present;
+            }
+            if (present) EmitMulti(run, gx0, ly, lh, S, smp, K, solid, c, op);
             continue;
         }
         float ox0, ox1;
@@ -784,6 +881,12 @@ void DrawTtfText(Painter& r, okay::TtfFont* f, const std::string& text,
                                                      : f->ForDeviceSize(deviceH, quality != UIQuality::Fast);
     if (!sized || !sized->Valid()) sized = f;
     sized->Prepare(text);   // bake new characters before the atlas is uploaded
+    if (quality == UIQuality::Best && !italic) {   // the quarter-pixel variants too: they are baked on first use, and must be in the atlas that is uploaded below
+        for (std::size_t i = 0; i < text.size();) {
+            const std::uint32_t cp = okay::utf8::Next(text, i);
+            if (cp > ' ') for (int ph = 1; ph < okay::TtfFont::kPhases; ++ph) sized->GlyphForPhase(cp, ph);
+        }
+    }
     Tex tex = r.FontAtlas(sized);
     if (!tex) return;
     r.SetTextureColorMod(tex, col.r, col.g, col.b);
@@ -1283,13 +1386,7 @@ public:
     // base class turned it into a whole-pixel rect and every soft edge became a block as wide as the canvas scale.
     void FillRectF(const FRect* r) override {
         if (!m_on) { m_in.FillRectF(r); return; }
-        if (!r) return;
-        if (g_uiQuality == UIQuality::Old) { Painter::FillRectF(r); return; }
-        // Turned or scaled by a UI Frame: keep the fractional edge of the run (the base class widened it to whole pixels, so every
-        // soft edge of a turned shape became a hard block).
-        float x = r->x, y = r->y, w = r->w, h = r->h;
-        if (!ClipRect(x, y, w, h)) return;
-        Quad(nullptr, x, y, w, h, 0, 0, 1, 1, false);
+        Painter::FillRectF(r);
     }
     void FillRect(const Rect* r) override {
         if (!m_on || !r) { m_in.FillRect(r); return; }
@@ -1332,6 +1429,7 @@ public:
     bool IsClipEnabled() override { return m_on ? m_clip : m_in.IsClipEnabled(); }
     void SetScale(float sx, float sy) override { m_in.SetScale(sx, sy); }
     Tex LoadTexture(const std::string& path) override { return m_in.LoadTexture(path); }
+    Tex LoadTextureSized(const std::string& path, int w, int h) override { return m_in.LoadTextureSized(path, w, h); }
     Tex FontAtlas(TtfFont* font) override { return m_in.FontAtlas(font); }
     void QueryTexture(Tex t, int* w, int* h) override { m_in.QueryTexture(t, w, h); }
     void SetTextureColorMod(Tex t, std::uint8_t r, std::uint8_t g, std::uint8_t b) override { m_in.SetTextureColorMod(t, r, g, b); }

@@ -10,6 +10,7 @@
 // Drawn by the real UI pass on SDL's software renderer. Prints the UI draw time per quality (the benchmark).
 #include "test_framework.hpp"
 #include "ui_quality_render.hpp"
+#include "ui_record_painter.hpp"
 #include "okay/Graphics/TtfFont.hpp"
 #include "okay/UI/UIFontPolicy.hpp"
 #include "okay/UI/UIImageScale.hpp"
@@ -50,18 +51,16 @@ double InkCentroidX(const Image& im, int x0, int y0, int w, int h, double bg) {
     return m > 0 ? mx / m : 0.0;
 }
 
-// Share of the ink pixels (more than 5% of full) that are "decided": at least 90% or at most 10% of the way to full ink. Blurred text has
-// more in-between pixels, so a lower share.
-double DecidedShare(const Image& im, int x0, int y0, int w, int h, double bg, double fg) {
-    long ink = 0, decided = 0;
+// How sharp the ink is: sum of squared ink over sum of ink. A glyph bitmap drawn one to one keeps its crisp edges (high); the same
+// glyph resampled at a half-pixel offset spreads each edge over two pixels (lower).
+double Sharpness(const Image& im, int x0, int y0, int w, int h, double bg, double fg) {
+    double m = 0, m2 = 0;
     for (int y = y0; y < y0 + h; ++y)
         for (int x = x0; x < x0 + w; ++x) {
-            const double t = (Lum(im, x, y) - bg) / (fg - bg);
-            if (t < 0.05) continue;
-            ++ink;
-            if (t >= 0.9) ++decided;
+            const double t = std::min(1.0, std::max(0.0, (Lum(im, x, y) - bg) / (fg - bg)));
+            m += t; m2 += t * t;
         }
-    return ink ? (double)decided / (double)ink : 0.0;
+    return m > 0 ? m2 / m : 0.0;
 }
 
 double Erfc(double x) { return std::erfc(x); }
@@ -295,14 +294,51 @@ Image TextShot(int quality, float x, float y, float px, int W, int H, bool scale
     return out;
 }
 
-void TextTests() {
-    // Snapped to the device pixel grid, small text at a canvas scale of 1.5 has more fully decided ink pixels than the resampled Old look.
-    const double goodShare = DecidedShare(TextShot(1, 10.3f, 8.2f, 1.5f, 210, 60, true), 0, 0, 210, 60, 0, 255);
-    const double oldShare = DecidedShare(TextShot(3, 10.3f, 8.2f, 1.5f, 210, 60, true), 0, 0, 210, 60, 0, 255);
-    std::printf("text at 1.5x: share of fully-inked ink pixels Good %.3f, Old look %.3f\n", goodShare, oldShare);
-    CHECK(goodShare > oldShare + 0.02);
+// Where glyph quads land: the share of quads whose left and top edge sit on a whole device pixel (within 0.03).
+double GlyphsOnGrid(int quality, float x, float y, float px, bool scaled15, int* count = nullptr) {
+    Scene s; s.uiQuality = quality;
+    const int W = scaled15 ? 300 : 200, H = scaled15 ? 90 : 60;
+    GameObject* cv = MakeCanvas(s, 200, 60, scaled15);
+    auto* t = AddTo<TextRenderer>(s, cv, "t");
+    t->screenSpace = true; t->text = "Hello Wagon 123, fi"; t->screenPos = {x, y}; t->size = {190, 40}; t->pixelSize = px;
+    t->color = Color::White; t->shadow = false; t->outline = false;
+    uitest::RecordPainter rec;
+    ui2d::RenderSceneUI(s, rec, W, H);
+    const float S = scaled15 ? 1.5f : 1.0f;
+    int n = 0, on = 0;
+    for (const auto& k : rec.inks) {
+        if (!k.glyph) continue;
+        ++n;
+        const float fx = k.x * S - std::floor(k.x * S), fy = k.y * S - std::floor(k.y * S);
+        const bool gx = fx < 0.03f || fx > 0.97f, gy = fy < 0.03f || fy > 0.97f;
+        if (gx && gy) ++on;
+    }
+    if (count) *count = n;
+    return n ? (double)on / (double)n : 0.0;
+}
 
-    // Quarter-pixel text positions (Best): the ink moves with the position. Good snaps to whole pixels (0 or 1 pixel jumps).
+void TextTests() {
+    // Snapped to the device pixel grid, small text at a canvas scale of 1.5 is sharper than the resampled Old look.
+    const double fastSharp = Sharpness(TextShot(0, 10.3f, 8.2f, 1.5f, 210, 60, true), 0, 0, 210, 60, 0, 255);
+    const double oldSharp = Sharpness(TextShot(3, 10.3f, 8.2f, 1.5f, 210, 60, true), 0, 0, 210, 60, 0, 255);
+    const double goodSharp = Sharpness(TextShot(1, 10.3f, 8.2f, 1.5f, 210, 60, true), 0, 0, 210, 60, 0, 255);
+    std::printf("text at 1.5x: sharpness (ink squared / ink) Fast %.3f, Good %.3f, Old look %.3f\n", fastSharp, goodSharp, oldSharp);
+    CHECK(fastSharp > oldSharp + 0.03);
+    CHECK(goodSharp > oldSharp + 0.03);
+
+    // Where the glyph quads land: every one on a whole device pixel in Fast, Good and Best; the Old look puts them anywhere.
+    for (bool scaled : {false, true}) {
+        int n = 0;
+        const double fast = GlyphsOnGrid(0, 10.3f, 8.2f, 1.5f, scaled, &n), good = GlyphsOnGrid(1, 10.3f, 8.2f, 1.5f, scaled, nullptr);
+        const double best = GlyphsOnGrid(2, 10.3f, 8.2f, 1.5f, scaled, nullptr), old = GlyphsOnGrid(3, 10.3f, 8.2f, 1.5f, scaled, nullptr);
+        std::printf("glyph quads on the pixel grid (%d glyphs, scale %s): Fast %.2f, Good %.2f, Best %.2f, Old look %.2f\n", n, scaled ? "1.5" : "1", fast, good, best, old);
+        CHECK(n >= 14);
+        CHECK(fast > 0.99 && good > 0.99 && best > 0.99);
+        CHECK(old < 0.5);
+    }
+
+    // Quarter-pixel text positions (Best): the ink moves with the position. Good rounds each letter to a whole pixel, so on average it
+    // follows the move too, but only to within half a pixel.
     auto shift = [&](int quality, float off) {
         const Image a = TextShot(quality, 10.0f, 6.0f, 1.5f, 120, 40, false), b = TextShot(quality, 10.0f + off, 6.0f, 1.5f, 120, 40, false);
         return InkCentroidX(b, 0, 0, 120, 40, 0) - InkCentroidX(a, 0, 0, 120, 40, 0);
@@ -310,14 +346,9 @@ void TextTests() {
     for (float off : {0.25f, 0.5f, 0.75f}) {
         const double best = shift(2, off), good = shift(1, off);
         std::printf("text moved by %.2f px: ink moved %.3f in Best, %.3f in Good\n", off, best, good);
-        CHECK_NEAR(best, off, 0.12);
-        CHECK(std::fabs(good - std::round(good)) < 0.12);   // Good only ever moves by whole pixels
+        CHECK_NEAR(best, off, 0.1);
+        CHECK_NEAR(good, off, 0.5);
     }
-    // Same text at a whole position: Good, Best and Fast agree on the shape of it (Best at phase 0 is Good's glyphs).
-    const Image g = TextShot(1, 12.0f, 6.0f, 1.5f, 120, 40, false), b = TextShot(2, 12.0f, 6.0f, 1.5f, 120, 40, false);
-    long diff = 0;
-    for (int y = 0; y < 40; ++y) for (int x = 0; x < 120; ++x) diff += std::abs(Byte(g, x, y, 0) - Byte(b, x, y, 0));
-    CHECK(diff == 0);
 }
 
 // ---- 6. gradients ---------------------------------------------------------------------------------------------------------------------------

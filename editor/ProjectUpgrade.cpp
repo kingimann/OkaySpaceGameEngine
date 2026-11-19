@@ -143,7 +143,7 @@ std::string RootKey(const std::string& root) {
 // ---- the stamp in project.okayproj ---------------------------------------------------------------------------------------
 
 bool IsKnownProjectKey(const std::string& key) {
-    if (key == "tag" || key == "strict_tags" || key.compare(0, 11, "layer_name_") == 0) return true;
+    if (key == "tag" || key == "strict_tags" || key.compare(0, 11, "layer_name_") == 0 || key.compare(0, 10, "run_order_") == 0) return true;
     oked::ProjectSettings scratch;
     return oked::ApplyProjectSettingLine(scratch, key, "");
 }

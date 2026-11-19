@@ -49,6 +49,7 @@
 #include "okay/Core/BuildInfo.hpp"
 #include "okay/Core/Clock.hpp"        // ClockSet: the channels the Tween Animation inspector offers
 #include <cstdio>
+#include "UIDesignerWindow.hpp"      // UI designer: rulers, guides, layers panel
 #include "LevelTools.hpp"              // foliage brush, terrain layers, decals, cables, measuring, orthographic views
 #include "SplineTools.hpp"             // splines: Scene-view editing, inspectors, line / trail drawing
 #include "WindTools.hpp"               // wind: zones, arrows, inspector rows, menus, Lighting > Wind
@@ -43759,7 +43760,7 @@ void EditUIWidgets(EditorState& ed, ImVec2 canvasPos, ImVec2 canvasSize,
                 if (!g_uiMarqueeAdd) ed.Select(nullptr);
                 for (const auto& up : ed.scene().Objects()) {
                     GameObject* g = up.get();
-                    if (!g || !g->active || UIHidden(g)) continue;
+                    if (!g || !g->active || UIHidden(g) || oked::UIDesignerLocked(g)) continue;
                     UIRect rr = GetUIRect(g); if (!rr.valid) continue;
                     Vec2 o, sz; if (!GetUIScreenRect(g, canvasSize.x, canvasSize.y, o, sz)) continue;
                     ImVec2 wa(canvasPos.x + o.x, canvasPos.y + o.y), wb(wa.x + sz.x, wa.y + sz.y);
@@ -43873,6 +43874,7 @@ void EditUIWidgets(EditorState& ed, ImVec2 canvasPos, ImVec2 canvasSize,
                             for (int si = 1; si < snx; ++si) cx.push_back(canvasSize.x * ((float)si / snx));
                             for (int sj = 1; sj < sny; ++sj) cy.push_back(canvasSize.y * ((float)sj / sny));
                         }
+                        oked::UIDesignerGuideCandidates(cx, cy, g_uiEditZoom);   // the guides pulled from the rulers
                         for (const auto& up2 : ed.scene().Objects()) {
                             if (up2.get() == g_uiDragTarget) continue;
                             Vec2 oo, ss;
@@ -43963,6 +43965,7 @@ void EditUIWidgets(EditorState& ed, ImVec2 canvasPos, ImVec2 canvasSize,
                             for (int si = 1; si < snx; ++si) cx.push_back(canvasSize.x * ((float)si / snx));
                             for (int sj = 1; sj < sny; ++sj) cy.push_back(canvasSize.y * ((float)sj / sny));
                         }
+                        oked::UIDesignerGuideCandidates(cx, cy, g_uiEditZoom);   // the guides pulled from the rulers
                         for (const auto& up2 : ed.scene().Objects()) {
                             if (up2.get() == g_uiDragTarget) continue;
                             Vec2 oo, ss;
@@ -44129,7 +44132,7 @@ void EditUIWidgets(EditorState& ed, ImVec2 canvasPos, ImVec2 canvasSize,
             GameObject* hit = nullptr; float bestArea = 3.4e38f;
             for (const auto& up : ed.scene().Objects()) {
                 GameObject* g = up.get();
-                if (!g || !g->active || UIHidden(g)) continue;
+                if (!g || !g->active || UIHidden(g) || oked::UIDesignerLocked(g)) continue;
                 UIRect r = GetUIRect(g);
                 if (!r.valid) continue;
                 Vec2 o, sz;
@@ -48600,8 +48603,10 @@ void DrawViewport(EditorState& ed, bool uiPanel = false) {
     // object selection + the Move/Rotate/Scale gizmos. Edit UI in the UI view.
     OKAY_BREADCRUMB(uiPanel ? "UItab:editwidgets" : "Scene:editwidgets");
     // With "Show UI in Scene view" the UI is drawn over the scene, so it's editable there too.
-    if (ownsUIInteraction && (uiOnly || g_showUIOverlay)) EditUIWidgets(ed, uiCanvasPos, uiCanvasSize, hovered, io, uiOnly);
-    else                             g_uiHandled = false;   // scene view (or not the active viewport): leave clicks for object pick / gizmos
+    bool rulerBusy = false;   // a guide is being dragged or a ruler clicked: the widgets leave the mouse alone
+    if (uiOnly) { ImVec2 vp0 = uiCanvasPos, vs0 = uiCanvasSize; ApplyUIEditZoom(vp0, vs0); rulerBusy = oked::UIDesignerRulerInput(canvasPos, canvasEnd, vp0, g_uiEditZoom, hovered, io); }
+    if (!rulerBusy && ownsUIInteraction && (uiOnly || g_showUIOverlay)) EditUIWidgets(ed, uiCanvasPos, uiCanvasSize, hovered, io, uiOnly);
+    else                             g_uiHandled = rulerBusy;   // scene view (or not the active viewport): leave clicks for object pick / gizmos
 
     if (uiOnly) {
         // Clip EVERYTHING in the flat UI view to the canvas rect. A widget with a bad
@@ -48675,6 +48680,12 @@ void DrawViewport(EditorState& ed, bool uiPanel = false) {
                         dl->AddRect(a, b, IM_COL32(120, 160, 220, 90), 0.0f, 0, 1.0f);
                 }
             }
+        }
+        {   // rulers, draggable guides, Fit and the Layers toggle (editor/UIDesignerWindow.cpp)
+            bool fit = false;
+            oked::UIDesignerDrawRulers(dl, canvasPos, canvasEnd, viewPos, g_uiEditZoom, &fit);
+            if (fit) { g_uiEditZoom = 1.0f; g_uiEditPan = ImVec2(0.0f, 0.0f); }
+            oked::UIDesignerLayersWindow(ed);
         }
         // Safe-area inset (5% of the game screen): keep important UI inside this on TVs
         // / notched phones. A true inset of the real (zoomed) screen — exactly the same

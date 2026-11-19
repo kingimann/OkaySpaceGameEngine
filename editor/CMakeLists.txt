@@ -74,6 +74,7 @@ add_executable(okay-editor main.cpp EditorState.cpp FpHandsWindow.cpp
     NetSimPanel.cpp                                                    # net simulator + traffic panel
     AntiCheatSetupUi.cpp                                               # easy anti-cheat setup: presets, Add Anti-Cheat, checklist
     UIInspectorLayout.cpp                                              # flex / mask / list view inspectors
+    UIDesignerWindow.cpp                                               # rulers, guides, layers panel
     UIInspectorOverlay.cpp                                             # modal / context menu / keybind inspectors
     UIInspectorWidgetsMore.cpp                                         # search, date, files, accordion, crumbs, pages, skeleton, sheet
     InspectorPanel.cpp InspectorModel.cpp PrefabEdit.cpp                              # Inspector / Hierarchy: reference fields, generic component card, filter, drag-drop logic

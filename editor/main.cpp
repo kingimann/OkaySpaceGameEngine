@@ -28864,9 +28864,9 @@ void DrawModeling(EditorState& ed) {
     const auto sbToggle = [&] { oked::modeltools::SidebarToggle(s_sb); g_view.modelingSidebar = oked::modeltools::SidebarToPref(s_sb); SaveSettings(); };
     // Ctrl+\ folds / opens the page list while this window is focused (Ctrl+B is taken: Build Game, and Bevel in edit mode).
     if (ImGui::IsWindowFocused(ImGuiFocusedFlags_RootAndChildWindows) && ImGui::GetIO().KeyCtrl && ImGui::IsKeyPressed(ImGuiKey_Backslash, false)) sbToggle();
-    oked::modeltools::SidebarAuto(s_sb, ImGui::GetWindowSize().x);
-    ImGui::BeginChild("##mdlnav", ImVec2(oked::modeltools::SidebarWidth(s_sb, ImGui::GetWindowSize().x), 0), ImGuiChildFlags_Borders);
-    if (ImGui::Button(s_sb.folded ? ">##mdlfold" : "<##mdlfold", ImVec2(32, 32))) sbToggle();
+    oked::modeltools::SidebarAuto(s_sb, ImGui::GetWindowSize().x, g_uiScale);
+    ImGui::BeginChild("##mdlnav", ImVec2(oked::modeltools::SidebarWidth(s_sb, ImGui::GetWindowSize().x, g_uiScale), 0), ImGuiChildFlags_Borders);
+    if (ImGui::Button(s_sb.folded ? ">##mdlfold" : "<##mdlfold", ImVec2(oked::modeltools::kFoldBtn * g_uiScale, oked::modeltools::kFoldBtn * g_uiScale))) sbToggle();
     if (ImGui::IsItemHovered()) ImGui::SetTooltip("%s  (Ctrl+\\)", s_sb.folded ? "Show the page list" : "Hide the page list");
     const char* lastJob = "";
     for (const oked::modeltools::Page& pi : oked::modeltools::Pages()) {   // pages grouped by job (ModelingToolIndex.hpp)
@@ -28875,9 +28875,9 @@ void DrawModeling(EditorState& ed) {
         const bool usable = !pg.needsMesh || haveMesh;
         if (s_sb.folded) {   // the thin strip: two letters per page, the name in the tooltip
             ImGui::PushID(i); ImGui::BeginDisabled(!usable);
-            if (ImGui::Selectable(pi.abbr, s_mdlPage == i, 0, ImVec2(0, 34))) s_mdlPage = i;
+            if (ImGui::Selectable(pi.abbr, s_mdlPage == i, 0, ImVec2(0, oked::modeltools::StripRowHeight(g_uiScale, ImGui::GetTextLineHeight())))) s_mdlPage = i;
             ImGui::EndDisabled();
-            if (ImGui::IsItemHovered(ImGuiHoveredFlags_AllowWhenDisabled)) ImGui::SetTooltip("%s\n%s", pi.name, usable ? pi.desc : "Select a mesh object first.");
+            if (ImGui::IsItemHovered(ImGuiHoveredFlags_AllowWhenDisabled)) ImGui::SetTooltip("%s\n%s", pi.name, usable ? pi.desc : oked::modeltools::PageDisabledReason(pg.needsMesh, haveMesh));
             ImGui::PopID();
             continue;
         }
@@ -28885,17 +28885,20 @@ void DrawModeling(EditorState& ed) {
         ImGui::PushID(i);
         ImGui::BeginDisabled(!usable);
         const ImVec2 r0 = ImGui::GetCursorScreenPos();
-        if (ImGui::Selectable("##pg", s_mdlPage == i, 0, ImVec2(0, 44))) s_mdlPage = i;
+        if (ImGui::Selectable("##pg", s_mdlPage == i, 0, ImVec2(0, oked::modeltools::RowHeight(g_uiScale, ImGui::GetTextLineHeight())))) s_mdlPage = i;
         ImGui::EndDisabled();
-        if (!usable && ImGui::IsItemHovered(ImGuiHoveredFlags_AllowWhenDisabled)) ImGui::SetTooltip("Select a mesh object first.");
+        if (!usable && ImGui::IsItemHovered(ImGuiHoveredFlags_AllowWhenDisabled)) ImGui::SetTooltip("%s", oked::modeltools::PageDisabledReason(pg.needsMesh, haveMesh));
         ImDrawList* ndl = ImGui::GetWindowDrawList();
         const ImU32 tc = usable ? ImGui::GetColorU32(ImGuiCol_Text) : ImGui::GetColorU32(ImGuiCol_TextDisabled);
-        ndl->AddText(ImVec2(r0.x + 8, r0.y + 5), tc, pi.name);
-        ndl->AddText(ImVec2(r0.x + 8, r0.y + 5 + ImGui::GetTextLineHeight()), ImGui::GetColorU32(ImGuiCol_TextDisabled), pi.desc);
+        const float padX = oked::modeltools::kRowPadX * g_uiScale, maxTextW = ImGui::GetItemRectSize().x - padX * 2;   // cut with "..." instead of running out of the row
+        const auto measure = [](const std::string& t) { return ImGui::CalcTextSize(t.c_str()).x; };
+        ndl->AddText(ImVec2(r0.x + padX, r0.y + 5 * g_uiScale), tc, oked::modeltools::FitText(pi.name, maxTextW, measure).c_str());
+        ndl->AddText(ImVec2(r0.x + padX, r0.y + 5 * g_uiScale + ImGui::GetTextLineHeight()), ImGui::GetColorU32(ImGuiCol_TextDisabled), oked::modeltools::FitText(pi.desc, maxTextW, measure).c_str());
+        if (ImGui::IsItemHovered(ImGuiHoveredFlags_AllowWhenDisabled) && usable && maxTextW < ImGui::CalcTextSize(pi.desc).x) ImGui::SetTooltip("%s\n%s", pi.name, pi.desc);   // the full words when the row is narrow
         ImGui::PopID();
     }
     ImGui::EndChild();
-    if (kPages[s_mdlPage].needsMesh && !haveMesh) s_mdlPage = 8;
+    if (kPages[s_mdlPage].needsMesh && !haveMesh) { s_mdlPage = 8; }
     ImGui::SameLine();
     ImGui::BeginChild("##mdlpage", ImVec2(0, 0), ImGuiChildFlags_Borders);
     ImGui::PushStyleVar(ImGuiStyleVar_ItemSpacing, ImVec2(10, 10));
@@ -28903,7 +28906,7 @@ void DrawModeling(EditorState& ed) {
     g_mdlCurPage = s_mdlPage;
     {   // Find a tool: type "bevel" or "round"; matches are listed with their page and outlined on that page.
         static char s_find[40] = "";
-        ImGui::SetNextItemWidth(-90);
+        ImGui::SetNextItemWidth(-90.0f * g_uiScale);
         if (ImGui::InputTextWithHint("##mdlfind", "Find a tool (try: bevel, round, mirror, uv)...", s_find, sizeof(s_find))) g_mdlFind = s_find;
         ImGui::SameLine();
         if (ImGui::Button("Clear##mdlfind")) { s_find[0] = 0; g_mdlFind.clear(); }
@@ -28920,6 +28923,11 @@ void DrawModeling(EditorState& ed) {
                 if (ImGui::IsItemHovered(ImGuiHoveredFlags_AllowWhenDisabled)) ImGui::SetTooltip("%s\n%s", h.tool->hint, usable ? "Click to open that page. The button is outlined." : "Select a mesh object first.");
             }
         }
+    }
+    if (!haveMesh) {   // nothing to edit yet: say so in plain words and offer the way to start
+        ImGui::Separator();
+        ImGui::TextWrapped("Select a model to edit it. No model yet? Start with some shapes.");
+        if (s_mdlPage != 0 && ImGui::Button("Add shapes##mdlstart")) s_mdlPage = 0;
     }
     ImGui::Separator();
     ImGui::TextUnformatted(kPages[s_mdlPage].name);

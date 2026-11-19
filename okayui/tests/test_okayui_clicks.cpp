@@ -8,16 +8,30 @@
 namespace UI = OkayUI;
 
 struct Rig {
+    int widget = 0;   // 0 Button, 1 InvisibleButton, 2 Selectable, 3 SmallButton
     UI::Rect r; int clicks = 0; int frames = 0;
+    int mClicked = 0, mReleased = 0, mDownFrames = 0, itemClicked = 0, activated = 0, deactivated = 0, dbl = 0;
     void Frame() {
         UI::IO& io = UI::GetIO(); io.DisplaySize = UI::Vec2{400, 300}; io.DeltaTime = 1.0f / 60.0f;
         UI::NewFrame();
         UI::SetNextWindowPos(UI::Vec2{0, 0}); UI::SetNextWindowSize(UI::Vec2{400, 300});
         if (UI::Begin("w", nullptr, UI::Window_NoTitleBar | UI::Window_NoResize | UI::Window_NoMove)) {
-            if (UI::Button("Go", UI::Vec2{120, 32})) ++clicks;
+            bool hit = false;
+            if (widget == 0) hit = UI::Button("Go", UI::Vec2{120, 32});
+            else if (widget == 1) hit = UI::InvisibleButton("##go", 120, 32);
+            else if (widget == 2) hit = UI::Selectable("Go", false, 0, UI::Vec2{120, 32});
+            else hit = UI::SmallButton("Go");
+            if (hit) ++clicks;
             r = UI::GetItemRect();
+            if (UI::IsItemClicked(0)) ++itemClicked;
+            if (UI::IsItemActivated()) ++activated;
+            if (UI::IsItemDeactivated()) ++deactivated;
         }
         UI::End();
+        if (UI::IsMouseClicked(0)) ++mClicked;
+        if (UI::IsMouseReleased(0)) ++mReleased;
+        if (UI::IsMouseDown(0)) ++mDownFrames;
+        if (UI::IsMouseDoubleClicked(0)) ++dbl;
         UI::Render();
         ++frames;
     }
@@ -68,6 +82,32 @@ int main() {
         UI::GetIO().AddMouseButtonEvent(0, false);
         for (int i = 0; i < 4; ++i) g.Frame();
         CHECK(g.clicks == 0);
+    }
+    // every widget and every query is true for a one-frame click, exactly once (a real Dear ImGui host sees the press in one frame and the release in the next)
+    for (int w = 0; w < 4; ++w) {
+        okayuitest::Reset(); Rig g; g.widget = w;
+        for (int i = 0; i < 3; ++i) g.Frame();
+        UI::GetIO().AddMousePosEvent(g.r.x + g.r.w / 2, g.r.y + g.r.h / 2);
+        for (int i = 0; i < 3; ++i) g.Frame();
+        UI::GetIO().AddMouseButtonEvent(0, true); UI::GetIO().AddMouseButtonEvent(0, false);
+        for (int i = 0; i < 8; ++i) g.Frame();
+        CHECK(g.clicks == 1);
+        CHECK(g.mClicked == 1 && g.mReleased == 1);
+        CHECK(g.mDownFrames >= 1 && g.mDownFrames <= 2);
+        CHECK(g.itemClicked == 1);
+        CHECK(g.activated == 1 && g.deactivated == 1);
+        CHECK(g.dbl == 0);
+    }
+    {   // two one-frame clicks in a row are a double click on the second
+        okayuitest::Reset(); Rig g;
+        for (int i = 0; i < 3; ++i) g.Frame();
+        UI::GetIO().AddMousePosEvent(g.r.x + 10, g.r.y + 10);
+        for (int i = 0; i < 3; ++i) g.Frame();
+        for (int k = 0; k < 2; ++k) {
+            UI::GetIO().AddMouseButtonEvent(0, true); UI::GetIO().AddMouseButtonEvent(0, false);
+            for (int i = 0; i < 3; ++i) g.Frame();
+        }
+        CHECK(g.clicks == 2 && g.dbl >= 1);
     }
     TEST_MAIN_RESULT();
 }

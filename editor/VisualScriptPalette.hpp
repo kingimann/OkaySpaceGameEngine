@@ -163,11 +163,13 @@ inline void VsNodeTooltip(const char* title, const VsNodeDoc* doc, const VsDef* 
 
 inline void VsPinTooltip(const VsPinDoc* pin, const char* name, const char* typeName,
                          okay::vs::PinType pinType = okay::vs::PinType::Any, bool isOutput = false, bool exec = false,
-                         const char* required = nullptr) {
+                         const char* required = nullptr, const char* plainTip = nullptr) {
     ImGui::BeginTooltip();
     ImGui::PushTextWrapPos(ImGui::GetFontSize() * 26.0f);
     ImGui::Text("%s   %s", (name && *name) ? name : "flow", typeName ? typeName : (pin ? pin->type.c_str() : ""));
-    if (pin) {
+    if (plainTip && *plainTip) {   // the plain-words tip (VisualScriptGuide.hpp): meaning, what to plug in, an example value
+        ImGui::TextWrapped("%s", plainTip);
+    } else if (pin) {
         ImGui::TextWrapped("%s", pin->meaning.c_str());
         if (!pin->fallback.empty()) ImGui::TextDisabled("Default: %s", pin->fallback.c_str());
     }
@@ -386,6 +388,7 @@ inline void DrawNodePalette(VsEditState& st, const VsEditGraph& g,
         std::string title, cat, sub, key, desc, keywords, helpLine, example;
         const VsNodeDoc* doc = nullptr;
         VsLevel level = VsLevel::Intermediate;
+        int intent = 11;                        // the "what do you want to do?" heading (VisualScriptGuide.hpp)
         int catIndex = 0, rank = 0; bool browse = true; ImU32 col = 0;
         bool fits = true;                       // can take the wire being dragged (set each frame, cheap)
         std::string titleLower;                 // lower-cased once, when the list is built
@@ -432,6 +435,7 @@ inline void DrawNodePalette(VsEditState& st, const VsEditGraph& g,
         e.catIndex = VsPaletteCategoryIndex(place.category);
         e.browse = place.browse && !dup;
         e.level = d.level;
+        e.intent = VsIntentFor(d);
         e.doc = VsNodeDocFor(d.type);
         e.rank = api ? 2 : 0;
         if (const char* what = VsNodeHelp(d.type)) e.helpLine = what;
@@ -439,6 +443,7 @@ inline void DrawNodePalette(VsEditState& st, const VsEditGraph& g,
         else if (d.title && d.title[0]) e.helpLine = std::string(d.title) + ".";
         if (const char* ex = VsNodeExample(d.type)) e.example = ex;
         e.keywords = VsNodeSearchText(d.type);
+        e.keywords += std::string(" ") + kVsIntents[e.intent];   // "move things" finds the movement nodes
         if (const std::string syn = VsSynonymWords(std::string(d.title ? d.title : "") + " " + e.keywords); !syn.empty()) e.keywords += " " + syn;
         if (api) { if (!e.keywords.empty()) e.keywords += ' '; e.keywords += "engine api"; }
         // Where this node used to sit (Scene Atmosphere, Objects Survival ...): people who remember the old topic
@@ -488,6 +493,7 @@ inline void DrawNodePalette(VsEditState& st, const VsEditGraph& g,
                 e.catIndex = VsPaletteCategoryIndex(place.category);
                 e.browse = place.browse && !sameAsNode;
                 e.level = VsLevelForStep(si.op.c_str(), si.group.c_str());
+                e.intent = VsIntentForName(si.op + " " + si.group, CAT_ACTION, false);
                 e.helpLine = si.desc;
                 e.rank = 1;
                 e.key = VsPaletteStepKey(cond, si.op.c_str()); e.desc = si.desc;
@@ -715,6 +721,7 @@ inline void DrawNodePalette(VsEditState& st, const VsEditGraph& g,
                               : id == -4 ? "The nodes a first script is built from."
                               : id == -2 ? "The last nodes you added."
                               : id == -1 ? "Nodes you starred."
+                              : id <= -100 && -100 - id < kVsIntentCount ? kVsIntentBlurbs[-100 - id]
                               : nullptr;
             if (blurb && *blurb) ImGui::SetTooltip("%s\n%s", label, blurb);
             else if (shown != label) ImGui::SetTooltip("%s", label);
@@ -726,6 +733,7 @@ inline void DrawNodePalette(VsEditState& st, const VsEditGraph& g,
     static std::vector<int> s_catCount;
     static int s_browseAll = 0, s_starterN = 0, s_quickN = 0, s_beginnerN = 0;
     static int s_groupN[kGroupCount] = {};
+    static int s_intentN[kVsIntentCount] = {};
     {
         using SideKey = std::tuple<std::size_t, bool, bool, bool, int, long long, long long, int, bool, bool>;
         static SideKey s_sideKey{};
@@ -736,10 +744,11 @@ inline void DrawNodePalette(VsEditState& st, const VsEditGraph& g,
             s_sideKey = key; s_sideInit = true;
             for (auto& e : all) e.fits = !st.linkPending || !e.def || fits(*e.def);
             s_catCount.assign((std::size_t)std::max(1, VsPaletteCategoryCount()), 0);
-            s_browseAll = 0; s_starterN = 0; s_quickN = 0; s_beginnerN = 0; for (int& gn : s_groupN) gn = 0;
+            s_browseAll = 0; s_starterN = 0; s_quickN = 0; s_beginnerN = 0; for (int& gn : s_groupN) gn = 0; for (int& in : s_intentN) in = 0;
             for (const auto& e : all) {
                 if (!sn::ShowEntry(st.linkPending, s_showAll, e.fits) || !e.browse || !passesLevel(e.level) || VsHiddenWhileBrowsing(e.def ? e.def->type : "", s_filter, s_allNodes)) continue;
                 ++s_browseAll;
+                if (e.intent >= 0 && e.intent < kVsIntentCount) ++s_intentN[e.intent];
                 if (e.def && VsIsStarter(e.def->type)) ++s_starterN;
                 if (e.def && okay::vs::FindQuickBlock(e.def->type)) ++s_quickN;
                 if (const int bg = e.def ? VsBeginnerGroup(e.def->type) : -1; bg >= 0) { ++s_beginnerN; ++s_groupN[bg]; }
@@ -747,6 +756,15 @@ inline void DrawNodePalette(VsEditState& st, const VsEditGraph& g,
             }
         }
     }
+    // "What do you want to do?": the same nodes, grouped by the job they do (Move things, Show messages ...).
+    auto intentItems = [&]() {
+        ImGui::Spacing();
+        ImGui::TextDisabled("What do you want to do?");
+        for (int i = 0; i < kVsIntentCount; ++i) {
+            if (!s_intentN[i]) continue;
+            if (sideItem(-100 - i, kVsIntents[i], 0, s_intentN[i], s_side == -100 - i)) s_side = -100 - i;
+        }
+    };
     if (!s_allNodes) {
         // Beginner mode: six big groups and nothing else (no topic tree). Each lists about ten blocks.
         if (sideItem(-3, "Everything", 0, s_beginnerN, s_side == -3)) s_side = -3;
@@ -756,12 +774,14 @@ inline void DrawNodePalette(VsEditState& st, const VsEditGraph& g,
         ImGui::Separator();
         if (sideItem(-2, "Recent", 0, (int)s_recent.size(), s_side == -2)) s_side = -2;
         if (sideItem(-1, "Favourites", 0, (int)s_fav.size(), s_side == -1)) s_side = -1;
+        intentItems();
     } else {
     if (sideItem(-4, "Starter", 0, s_starterN, s_side == -4)) s_side = -4;
     if (sideItem(-5, "Quick blocks", 0, s_quickN, s_side == -5)) s_side = -5;
     if (sideItem(-2, "Recent", 0, (int)s_recent.size(), s_side == -2)) s_side = -2;
     if (sideItem(-1, "Favourites", 0, (int)s_fav.size(), s_side == -1)) s_side = -1;
     if (sideItem(-3, "All", 0, s_browseAll, s_side == -3)) s_side = -3;
+    intentItems();
     ImGui::Separator();
     {
         const char* lastSection = nullptr;
@@ -816,7 +836,8 @@ inline void DrawNodePalette(VsEditState& st, const VsEditGraph& g,
                 if (needle.empty()) {
                     if (s_side == -4 && !(e.def && VsIsStarter(e.def->type))) continue;
                     if (s_side == -5 && !(e.def && okay::vs::FindQuickBlock(e.def->type))) continue;
-                    if (s_side <= -10 && !(e.def && VsBeginnerGroup(e.def->type) == -10 - s_side)) continue;
+                    if (s_side <= -10 && s_side > -100 && !(e.def && VsBeginnerGroup(e.def->type) == -10 - s_side)) continue;
+                    if (s_side <= -100 && e.intent != -100 - s_side) continue;
                     if (s_side >= 0 && e.catIndex != s_side) continue;
                     if (s_side == -1 && !isFav(e.key)) continue;
                     if (s_side == -2 && std::find(s_recent.begin(), s_recent.end(), e.key) == s_recent.end()) continue;

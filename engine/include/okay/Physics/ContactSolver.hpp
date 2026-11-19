@@ -47,6 +47,7 @@ struct Manifold {
     int a = 0, b = 0;             // body indices
     Vec3 n{0, 1, 0};              // unit, from A toward B
     float friction = 0.5f;        // combined coefficient
+    float staticFriction = 0.0f;  // grip while the surfaces are nearly still (0 = same as `friction`); used below kStaticSpeed
     float restitution = 0.0f;     // combined bounciness
     float rolling = 0.0f;         // rolling resistance (a length): turning torque <= rolling * total normal push
     int count = 0;
@@ -70,6 +71,9 @@ struct Settings {
                                          // 0 switches the limit off. Applies to contacts that are more up-down than sideways.
     bool alternateOrder = true;          // every other pass visits the pairs in reverse (spreads a push both ways along a stack)
 };
+
+/// Sliding slower than this (m/s) counts as "still": the still grip of the surfaces applies.
+constexpr float kStaticSpeed = 0.12f;
 
 inline Vec3 PointVelocity(const Body& b, const Vec3& r) { return b.v + Vec3::Cross(b.w, r); }
 
@@ -138,7 +142,13 @@ inline void SolveVelocities(std::vector<Body>& bodies, std::vector<Manifold>& ms
             // Friction first, so keeping the bodies apart wins when the two disagree.
             for (int i = 0; i < m.count; ++i) {
                 Point& p = m.pts[i];
-                const float maxF = m.friction * p.jn;
+                float coef = m.friction;
+                if (m.staticFriction > m.friction) {            // still against each other: the still grip holds until the push is bigger
+                    Vec3 v0 = PointVelocity(B, p.rB) - PointVelocity(A, p.rA);
+                    const float s1 = Vec3::Dot(v0, m.t1), s2 = Vec3::Dot(v0, m.t2);
+                    if (s1 * s1 + s2 * s2 < kStaticSpeed * kStaticSpeed) coef = m.staticFriction;
+                }
+                const float maxF = coef * p.jn;
                 {
                     Vec3 vrel = PointVelocity(B, p.rB) - PointVelocity(A, p.rA);
                     float l = -Vec3::Dot(vrel, m.t1) * p.t1Mass;

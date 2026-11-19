@@ -324,6 +324,8 @@ struct Physics3D::Solver {
     std::vector<contactsolver::Manifold> manifolds;
     struct Meta { Collider3D* a; Collider3D* b; Rigidbody3D* ra; Rigidbody3D* rb; };
     std::vector<Meta> meta;
+    struct Damp { Rigidbody3D* rb; float lin, ang; };
+    std::vector<Damp> damp;                        // surface damping to apply to a body after the solve
     std::vector<Collider3D*> staticList;           // colliders that are not dynamic bodies (swept by automatic continuous collision)
     std::vector<Collider3D*> movingList;           // colliders of dynamic bodies (a fast body is also swept against the thin ones)
     bool staticListBuilt = false;
@@ -333,7 +335,7 @@ struct Physics3D::Solver {
 
     void Begin(const std::vector<Rigidbody3D*>& all, float stepDt, int iterations) {
         dt = stepDt; ++stepNo;
-        bodies.clear(); slotRb.clear(); manifolds.clear(); meta.clear();
+        bodies.clear(); slotRb.clear(); manifolds.clear(); meta.clear(); damp.clear();
         staticList.clear(); movingList.clear(); staticListBuilt = false;
         warmCount = 0;
         bodies.emplace_back(); slotRb.push_back(nullptr);          // slot 0: the world
@@ -375,6 +377,19 @@ struct Physics3D::Solver {
         m.restitution = CombineSurface(SurfaceBounce(a, ra), SurfaceBounce(b, rb), a->bounceCombine, b->bounceCombine, false);
         m.rolling = std::max(ra && ra->bodyType == Rigidbody3D::BodyType::Dynamic ? ra->rollingResistance : 0.0f,
                              rb && rb->bodyType == Rigidbody3D::BodyType::Dynamic ? rb->rollingResistance : 0.0f);
+        // A Physics Material on either collider adds what a collider has no field for: grip while still, rolling friction,
+        // damping, slope grip. (No material = nothing changes, so old scenes play as before.)
+        const PhysicsMaterialData* ma = SurfaceOf(a->gameObject);
+        const PhysicsMaterialData* mb = SurfaceOf(b->gameObject);
+        if (ma || mb) {
+            const float sa = ma ? ma->staticFriction * ma->slopeGrip : fa, sb = mb ? mb->staticFriction * mb->slopeGrip : fb;
+            m.staticFriction = CombineSurface(sa, sb, a->frictionCombine, b->frictionCombine, true);
+            if (ma && ma->rollingFriction >= 0.0f) m.rolling = std::max(ma->rollingFriction, mb && mb->rollingFriction >= 0.0f ? mb->rollingFriction : 0.0f);
+            else if (mb && mb->rollingFriction >= 0.0f) m.rolling = std::max(m.rolling, mb->rollingFriction);
+            // Damping: a body touching mud or sand is slowed by the surface it touches.
+            if (ma && (ma->linearDamping > 0.0f || ma->angularDamping > 0.0f) && SlotOf(rb) > 0) damp.push_back({rb, ma->linearDamping, ma->angularDamping});
+            if (mb && (mb->linearDamping > 0.0f || mb->angularDamping > 0.0f) && SlotOf(ra) > 0) damp.push_back({ra, mb->linearDamping, mb->angularDamping});
+        }
         // Warm start from last step's pushes for the same pair: match points by place (a lone point carries over whole).
         auto it = cache.find({a, b});
         Transform* ta = a->transform;
@@ -462,6 +477,12 @@ struct Physics3D::Solver {
             contactsolver::Prepare(bodies, manifolds, dt, set);
             contactsolver::SolveVelocities(bodies, manifolds, set);
             contactsolver::SolvePositions(bodies, manifolds, set);
+        }
+        for (const Damp& d : damp) {                               // mud and sand slow what touches them
+            if (!d.rb || gone.Gone(d.rb) || d.rb->m_solverIndex <= 0) continue;
+            contactsolver::Body& b = bodies[(std::size_t)d.rb->m_solverIndex];
+            if (d.lin > 0.0f) b.v = b.v * (1.0f / (1.0f + d.lin * dt));
+            if (d.ang > 0.0f) b.w = b.w * (1.0f / (1.0f + d.ang * dt));
         }
         for (std::size_t i = 1; i < bodies.size(); ++i) {
             Rigidbody3D* rb = slotRb[i];

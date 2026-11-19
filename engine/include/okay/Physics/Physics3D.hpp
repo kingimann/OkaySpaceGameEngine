@@ -2,6 +2,7 @@
 #include "okay/Math/Vec3.hpp"
 #include "okay/Math/Quat.hpp"
 #include "okay/Physics/PhysicsDebug.hpp"
+#include "okay/Physics/PhysicsMaterialAsset.hpp"
 #include "okay/Physics/PhysicsQuality.hpp"
 #include <cstdint>
 #include <map>
@@ -30,6 +31,11 @@ struct Collision3D {
     /// found (world units / second, >= 0). Near 0 while resting, large on a crash.
     float impactSpeed = 0.0f;
     Vec3  relativeVelocity{0, 0, 0};   // the other's velocity minus ours
+    /// The Physics Material pair of the contact (nullptr = no PhysicsSurface on that side): what the other surface is, and
+    /// what ours is. `surface->impactSound`, `PhysicsMaterials::SurfaceName(*surface)` and so on tell a script or an audio
+    /// hook how to react ("play the wood sound when a metal ball hits wood").
+    const PhysicsMaterialData* surface = nullptr;
+    const PhysicsMaterialData* ownSurface = nullptr;
 };
 
 /// Where a trigger overlap happened, readable from inside OnTrigger*3D callbacks

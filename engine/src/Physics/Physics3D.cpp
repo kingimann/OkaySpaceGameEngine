@@ -4,6 +4,7 @@
 #include "okay/Physics/BoxManifold.hpp"
 #include "okay/Physics/ContactSolver.hpp"
 #include "okay/Physics/PhysicsMaterial.hpp"
+#include "okay/Components/PhysicsSurface.hpp"
 #include "okay/Physics/Rigidbody3D.hpp"
 #include "okay/Physics/Collider3D.hpp"
 #include "okay/Physics/ConvexContact.hpp"
@@ -439,8 +440,10 @@ void DispatchTrigger(Collider3D* self, void (Component::*fn)(Collider3D*), Colli
 // The Collision3D handed to one side of a contact. `n` points from that side
 // toward the other; `relVel` is the other's velocity minus this side's.
 Collision3D MakeCollision(Collider3D* other, const Vec3& n, float pen, const Vec3& point,
-                          const Vec3& relVel) {
+                          const Vec3& relVel, Collider3D* self = nullptr) {
     Collision3D c;
+    c.surface = other ? SurfaceOf(other->gameObject) : nullptr;       // the physics material pair of the contact
+    c.ownSurface = self ? SurfaceOf(self->gameObject) : nullptr;
     c.gameObject = other->gameObject; c.collider = other;
     c.normal = n; c.penetration = pen; c.point = point;
     c.relativeVelocity = relVel;
@@ -937,8 +940,8 @@ void Physics3D::StepSlice(Scene& scene, float dt) {
                         DispatchTrigger(b, &Component::OnTriggerStay3D, a, c.point, -c.normal, gone);
                 }
             } else {
-                Collision3D forA = MakeCollision(b, c.normal, c.penetration, c.point, relVelBA);
-                Collision3D forB = MakeCollision(a, -c.normal, c.penetration, c.point, -relVelBA);
+                Collision3D forA = MakeCollision(b, c.normal, c.penetration, c.point, relVelBA, a);
+                Collision3D forB = MakeCollision(a, -c.normal, c.penetration, c.point, -relVelBA, b);
                 if (!wasContact) {
                     DispatchCollision(a->gameObject, &Component::OnCollisionEnter3D, forA, gone);
                     if (!gone.Gone(a) && !gone.Gone(b))
@@ -1013,8 +1016,8 @@ void Physics3D::StepSlice(Scene& scene, float dt) {
             if (!gone.Gone(a) && !gone.Gone(b))
                 DispatchTrigger(b, &Component::OnTriggerExit3D, a, mid, -n, gone);
         } else {
-            Collision3D forA = MakeCollision(b, Vec3::Zero, 0.0f, Vec3::Zero, Vec3::Zero);
-            Collision3D forB = MakeCollision(a, Vec3::Zero, 0.0f, Vec3::Zero, Vec3::Zero);
+            Collision3D forA = MakeCollision(b, Vec3::Zero, 0.0f, Vec3::Zero, Vec3::Zero, a);
+            Collision3D forB = MakeCollision(a, Vec3::Zero, 0.0f, Vec3::Zero, Vec3::Zero, b);
             DispatchCollision(a->gameObject, &Component::OnCollisionExit3D, forA, gone);
             if (!gone.Gone(a) && !gone.Gone(b))
                 DispatchCollision(b->gameObject, &Component::OnCollisionExit3D, forB, gone);

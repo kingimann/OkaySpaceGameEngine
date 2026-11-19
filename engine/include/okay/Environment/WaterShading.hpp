@@ -73,15 +73,16 @@ inline float RippleHeight(float x, float z, float t, float strength, float scale
     const float fa = 1.9f / s, fb = 3.1f / s;
     const float ax = x - (0.30f + flowX) * t, az = z - (0.12f + flowZ) * t;     // layer A drifts one way
     const float bx = x + (0.11f - flowX * 0.7f) * t, bz = z - (0.27f + flowZ * 0.7f) * t;   // layer B drifts another way
-    const float ha = Fbm(ax * fa, az * fa, 3, 11u) - 0.5f;
-    const float hb = Fbm(bx * fb + 17.0f, bz * fb - 5.0f, 2, 23u) - 0.5f;
+    const float ha = Fbm(ax * fa, az * fa, 2, 11u) - 0.5f;
+    const float hb = Noise(bx * fb + 17.0f, bz * fb - 5.0f, 23u) - 0.5f;
     return (ha * 0.030f + hb * 0.016f) * s * strength;
 }
 /// Slope (dh/dx, dh/dz) of the ripples (central differences of RippleHeight).
 inline void RippleSlope(float x, float z, float t, float strength, float scale, float flowX, float flowZ, float& sx, float& sz) {
     const float e = 0.04f * (scale > 0.05f ? scale : 0.05f);
-    sx = (RippleHeight(x + e, z, t, strength, scale, flowX, flowZ) - RippleHeight(x - e, z, t, strength, scale, flowX, flowZ)) / (2.0f * e);
-    sz = (RippleHeight(x, z + e, t, strength, scale, flowX, flowZ) - RippleHeight(x, z - e, t, strength, scale, flowX, flowZ)) / (2.0f * e);
+    const float h0 = RippleHeight(x, z, t, strength, scale, flowX, flowZ);       // forward differences: 2 more samples, not 4
+    sx = (RippleHeight(x + e, z, t, strength, scale, flowX, flowZ) - h0) / e;
+    sz = (RippleHeight(x, z + e, t, strength, scale, flowX, flowZ) - h0) / e;
 }
 
 // ---- light ------------------------------------------------------------------------------------------------------
@@ -114,8 +115,8 @@ inline float Scatter(float backlight, float crest, float strength) {
 // ---- foam -------------------------------------------------------------------------------------------------------
 /// A ragged foam pattern in [0,1] at a world x/z that slowly changes with time.
 inline float FoamPattern(float x, float z, float t) {
-    const float a = Fbm(x * 1.7f + t * 0.13f, z * 1.7f - t * 0.09f, 3, 41u);
-    const float b = Fbm(x * 4.3f - t * 0.21f, z * 4.3f + t * 0.17f, 2, 57u);
+    const float a = Fbm(x * 1.7f + t * 0.13f, z * 1.7f - t * 0.09f, 2, 41u);
+    const float b = Noise(x * 4.3f - t * 0.21f, z * 4.3f + t * 0.17f, 57u);
     return Smooth(0.38f, 0.78f, a * 0.65f + b * 0.35f);
 }
 /// Foam from the wave itself: white caps on the high crests and where the surface is steep. `crest` is height divided

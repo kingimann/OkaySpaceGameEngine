@@ -664,7 +664,9 @@ private:
             if (GroundWorldY(terrains, wp, groundY)) depthHere = wp.y - groundY;
             const float crest = std::max(-1.0f, std::min(1.0f, waveY / (0.45f * maxAmp)));   // a typical big crest reaches 1
             const float slope = 1.0f - nrm[i].y;
-            const float pat = FoamPattern(px - current.x * m_time * 0.5f, pz - current.y * m_time * 0.5f, m_time);
+            // the foam pattern is the costly part: only look it up where some foam is possible
+            const bool maybeFoam = (foamAmount > 0.0f && (crest > 0.25f || slope > 0.1f)) || (shoreFoamWidth > 0.0f && depthHere < shoreFoamWidth + 0.5f) || haveRings;
+            const float pat = maybeFoam ? FoamPattern(px - current.x * m_time * 0.5f, pz - current.y * m_time * 0.5f, m_time) : 0.0f;
             RGB body = DepthColor(depthHere, clarity, shallow, deep);
             // a little sky in the surface even where the renderer's own reflection is weak: Fresnel against the camera
             const Vec3 toCam{camW.x - wp.x, camW.y - wp.y, camW.z - wp.z};

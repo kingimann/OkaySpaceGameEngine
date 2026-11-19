@@ -37,4 +37,8 @@ void UIDesignerOverlays(okay::editor::EditorState& ed);
 /// True once after the Fit command ran from the action finder (the caller resets zoom and pan).
 bool UIDesignerTakeFitRequest();
 
+/// Rotate handle for a selected widget that has a UI Frame (a round dot above it; Shift snaps to 15 degrees). Input returns true while dragging.
+bool UIDesignerRotateInput(okay::editor::EditorState& ed, ImVec2 viewPos, ImVec2 viewSize, const ImGuiIO& io);
+void UIDesignerDrawRotate(ImDrawList* dl, okay::editor::EditorState& ed, ImVec2 viewPos, ImVec2 viewSize);
+
 }  // namespace oked

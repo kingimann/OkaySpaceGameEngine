@@ -21978,9 +21978,19 @@ static void UIRectFields(const char* idSuffix, okay::UIAnchor anchor,
         float pos[2] = {position.x, position.y};
         std::snprintf(lbl, sizeof(lbl), "Pos (px)##%s", idSuffix);
         if (ImGui::DragFloat2(lbl, pos, 1.0f)) { position = {pos[0], pos[1]}; ed.dirty = true; }
-        float sz[2] = {size.x, size.y};
-        std::snprintf(lbl, sizeof(lbl), "Size (px)##%s", idSuffix);
-        if (ImGui::DragFloat2(lbl, sz, 1.0f, 0.0f, 8000.0f)) { size = {sz[0], sz[1]}; ed.dirty = true; }
+        // Size in pixels, or as a percent of the space it sits in (its parent, else the screen): same numbers, two views.
+        static bool s_sizePercent = false;
+        float refW = okay::UICanvas::Width(), refH = okay::UICanvas::Height();
+        if (ed.selected()) { const okay::Vec2 rs = okay::UILayout::RefSize(ed.selected()); if (rs.x > 0 && rs.y > 0) { refW = rs.x; refH = rs.y; } }
+        const oked::uid::Unit unit = s_sizePercent ? oked::uid::Unit::Percent : oked::uid::Unit::Px;
+        float sz[2] = {oked::uid::FromPx(size.x, unit, refW), oked::uid::FromPx(size.y, unit, refH)};
+        std::snprintf(lbl, sizeof(lbl), s_sizePercent ? "Size (%%)##%s" : "Size (px)##%s", idSuffix);
+        if (ImGui::DragFloat2(lbl, sz, s_sizePercent ? 0.5f : 1.0f, 0.0f, s_sizePercent ? 1000.0f : 8000.0f)) {
+            size = {oked::uid::ToPx(sz[0], unit, refW), oked::uid::ToPx(sz[1], unit, refH)}; ed.dirty = true;
+        }
+        ImGui::SameLine(); std::snprintf(lbl, sizeof(lbl), "%%##%s_pct", idSuffix);
+        ImGui::Checkbox(lbl, &s_sizePercent);
+        if (ImGui::IsItemHovered()) ImGui::SetTooltip("Show the size as a percent of the parent (or the screen)");
     }
 }
 
@@ -42902,6 +42912,7 @@ void DrawInspector(EditorState& ed) {
             if (item(!go->GetComponent<UITextBind>(), "UI Text Bind (show a variable)")) { go->AddComponent<UITextBind>(); ed.dirty = true; }
             if (item(!go->GetComponent<UIBarBind>(), "UI Bar Bind (var -> progress bar)")) { go->AddComponent<UIBarBind>(); ed.dirty = true; }
             if (item(!go->GetComponent<UIStyleVariant>(), "UI Style Variant (theme role)")) { go->AddComponent<UIStyleVariant>(); ed.dirty = true; }
+            if (item(!go->GetComponent<UIConstraints>(), "UI Constraints (size limits, aspect lock, portrait)")) { go->AddComponent<UIConstraints>(); ed.dirty = true; }
             if (item(!go->GetComponent<UIDamageNumbers>(), "UI Damage Numbers (floating text)")) { go->AddComponent<UIDamageNumbers>(); ed.dirty = true; }
             if (item(!go->GetComponent<UIDialogueBox>(), "UI Dialogue Box (typing text + choices)")) { go->AddComponent<UIDialogueBox>(); ed.dirty = true; }
             if (item(!go->GetComponent<UIInventoryBind>() && go->GetComponent<UISlotGrid>(), "UI Inventory Bind (slot grid shows the Inventory)")) { go->AddComponent<UIInventoryBind>(); ed.dirty = true; }
@@ -48823,9 +48834,10 @@ void DrawViewport(EditorState& ed, bool uiPanel = false) {
     OKAY_BREADCRUMB(uiPanel ? "UItab:editwidgets" : "Scene:editwidgets");
     // With "Show UI in Scene view" the UI is drawn over the scene, so it's editable there too.
     if (uiOnly) oked::UIDesignerSyncScene(ed.scene());
-    if (uiOnly) { oked::UIDesignerKeys(ed, hovered || ImGui::IsWindowFocused()); if (oked::UIDesignerTakeFitRequest()) { g_uiEditZoom = 1.0f; g_uiEditPan = ImVec2(0.0f, 0.0f); } }
+    // the UI view's own Ctrl+A etc. work only while it has the keyboard (the Hierarchy and file lists keep theirs)
+    if (uiOnly) { oked::UIDesignerKeys(ed, ImGui::IsWindowFocused()); if (oked::UIDesignerTakeFitRequest()) { g_uiEditZoom = 1.0f; g_uiEditPan = ImVec2(0.0f, 0.0f); } }
     bool rulerBusy = false;   // a guide is being dragged or a ruler clicked: the widgets leave the mouse alone
-    if (uiOnly) { ImVec2 vp0 = uiCanvasPos, vs0 = uiCanvasSize; ApplyUIEditZoom(vp0, vs0); bool rfit = false; rulerBusy = oked::UIDesignerRulerInput(canvasPos, canvasEnd, vp0, g_uiEditZoom, hovered, io, &rfit); if (rfit) { g_uiEditZoom = 1.0f; g_uiEditPan = ImVec2(0.0f, 0.0f); } }
+    if (uiOnly) { ImVec2 vp0 = uiCanvasPos, vs0 = uiCanvasSize; ApplyUIEditZoom(vp0, vs0); bool rfit = false; rulerBusy = oked::UIDesignerRulerInput(canvasPos, canvasEnd, vp0, g_uiEditZoom, hovered, io, &rfit); if (!rulerBusy && hovered) rulerBusy = oked::UIDesignerRotateInput(ed, vp0, vs0, io); if (rfit) { g_uiEditZoom = 1.0f; g_uiEditPan = ImVec2(0.0f, 0.0f); } }
     if (!rulerBusy && ownsUIInteraction && (uiOnly || g_showUIOverlay)) EditUIWidgets(ed, uiCanvasPos, uiCanvasSize, hovered, io, uiOnly);
     else                             g_uiHandled = rulerBusy;   // scene view (or not the active viewport): leave clicks for object pick / gizmos
 
@@ -48904,6 +48916,7 @@ void DrawViewport(EditorState& ed, bool uiPanel = false) {
         }
         {   // rulers, draggable guides, Fit and the Layers toggle (editor/UIDesignerWindow.cpp)
             oked::UIDesignerDrawRulers(dl, canvasPos, canvasEnd, viewPos, g_uiEditZoom);
+            oked::UIDesignerDrawRotate(dl, ed, viewPos, viewSize);
             oked::UIDesignerLayersWindow(ed);
             oked::UIDesignerOverlays(ed);
         }
@@ -51940,6 +51953,7 @@ int main(int argc, char** argv) {
         // Lay out the UI every frame (scroll extents, flex boxes, list rows) so the
         // preview is right while editing and the wheel/drag work in Play.
         UpdateUILayouts(ed.scene());
+        if (ed.isPlaying()) okay::ApplyUIConstraints(ed.scene(), UICanvas::Width(), UICanvas::Height());   // Play only: editing keeps the saved (landscape) values
 
         // Install the world-space UI projector to match the Game view BEFORE the
         // scene ticks, so an in-world button's Contains() hit-tests where the Game

@@ -283,5 +283,15 @@ int main() {
         CHECK(RankCommands(cmds, "re")[0] == 2);   // "Reset zoom" starts with the words
         CHECK(Shortcuts().size() >= 10);
     }
+    {
+        RUN_SUITE("rotate handle: position turns with the widget, drag adds to the start, Shift snaps to 15");
+        float x = 10, y = 0; RotatePoint(x, y, 0, 0, 90); CHECK_NEAR(x, 0, 1e-4); CHECK_NEAR(y, 10, 1e-4);   // clockwise on screen
+        float hx, hy; RotateHandlePos({100, 100, 40, 20}, 120, 110, 0, 24, hx, hy); CHECK_NEAR(hx, 120, 1e-3); CHECK_NEAR(hy, 76, 1e-3);
+        RotateHandlePos({100, 100, 40, 20}, 120, 110, 180, 24, hx, hy); CHECK_NEAR(hx, 120, 1e-3); CHECK_NEAR(hy, 144, 1e-3);
+        CHECK_NEAR(RotateDrag(30, 90, 120, false), 60, 1e-4);
+        CHECK_NEAR(RotateDrag(0, 0, 100, true), 105, 1e-4); CHECK_NEAR(RotateDrag(0, 0, 100, false), 100, 1e-4);
+        CHECK_NEAR(RotateDrag(170, 0, 30, false), -160, 1e-4); CHECK_NEAR(RotateDrag(-170, 0, -30, false), 160, 1e-4);
+        CHECK_NEAR(RotateDrag(0, 0, 180, false), 180, 1e-4);
+    }
     TEST_MAIN_RESULT();
 }

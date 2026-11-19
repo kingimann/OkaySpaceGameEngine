@@ -5178,6 +5178,7 @@ Word, then the number(s) to say. Back to the [overview](../FEATURE_MAP.md).
 - UI Animation (12.13.3)
 - UI batching (27.3.1)
 - UI capture flag (8.5.3)
+- UI Constraints and rotate handle (12.10.14)
 - UI designer model (12.10.9)
 - UI designer window (12.10.10)
 - UI drag and drop (12.4.9)

@@ -71,5 +71,29 @@ int main() {
         CHECK(g2 && g2->vertical.size() == 2 && g2->vertical[0] == 100.5f && g2->horizontal.size() == 1 && g2->horizontal[0] == 360.0f);
         CHECK(SceneSerializer::Serialize(b) == saved);
     }
+    {
+        RUN_SUITE("constraints: limits, aspect lock, portrait look, saved only when used");
+        UIConstraints c; c.minSize = {50, 0}; c.maxSize = {200, 0};
+        CHECK(ConstrainSize({10, 30}, c).x == 50 && ConstrainSize({500, 30}, c).x == 200 && ConstrainSize({80, 30}, c).y == 30);
+        c.lockAspect = true; c.aspect = 2.0f;
+        Vec2 a = ConstrainSize({100, 999}, c); CHECK(a.x == 100 && a.y == 50);
+        c.maxSize = {200, 60}; Vec2 b = ConstrainSize({200, 0}, c); CHECK(b.y == 60 && b.x == 120);   // the height limit keeps the shape
+        Scene s("c");
+        GameObject* g = s.CreateGameObject("W"); auto* p = g->AddComponent<UIPanel>(); p->position = {10, 20}; p->size = {300, 100};
+        auto* uc = g->AddComponent<UIConstraints>(); uc->maxSize = {200, 0}; uc->portraitOverride = true; uc->portraitPosition = {5, 6}; uc->portraitSize = {80, 40};
+        CHECK(ApplyUIConstraints(s, 1280, 720) == 1 && p->size.x == 200 && p->position.x == 10);   // landscape: only the limit
+        CHECK(ApplyUIConstraints(s, 720, 1280) >= 1 && p->position.x == 5 && p->size.x == 80);       // portrait look
+        CHECK(ApplyUIConstraints(s, 720, 1280) == 0);                                                // stable
+        ApplyUIConstraints(s, 1280, 720); CHECK(p->position.x == 10 && p->position.y == 20 && p->size.x == 200);   // back
+        GameObject* free = s.CreateGameObject("F"); auto* fp = free->AddComponent<UIPanel>(); fp->size = {999, 999};
+        ApplyUIConstraints(s, 720, 1280); CHECK(fp->size.x == 999);   // no component: untouched
+        Scene plain("p"); plain.CreateGameObject("X")->AddComponent<UIPanel>();
+        CHECK(SceneSerializer::Serialize(plain).find("uiconstraints") == std::string::npos);
+        const std::string saved = SceneSerializer::Serialize(s);
+        Scene back("b"); std::string err; CHECK(SceneSerializer::Deserialize(back, saved, &err, nullptr));
+        auto* u2 = back.Find("W") ? back.Find("W")->GetComponent<UIConstraints>() : nullptr;
+        CHECK(u2 && u2->maxSize.x == 200 && u2->portraitOverride && u2->portraitSize.x == 80 && !u2->inPortrait);
+        CHECK(SceneSerializer::Serialize(back) == saved);
+    }
     TEST_MAIN_RESULT();
 }

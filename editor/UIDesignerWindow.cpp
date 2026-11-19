@@ -3,6 +3,7 @@
 #include "okay/Components/UIElement.hpp"
 #include "okay/Components/UIUserStyle.hpp"
 #include "okay/Components/UIGuides.hpp"
+#include "okay/Components/UIFrame.hpp"
 #include "PrefabEdit.hpp"
 #include "UIDesignerActions.hpp"
 #include "okay/Scene/UILayoutTools.hpp"
@@ -29,6 +30,8 @@ uid::Rect g_area; int g_areaFrame = -10;   // the free area inside the rulers, f
 bool g_showPalette = false, g_showCheat = false, g_showFind = false, g_fitRequested = false;
 char g_query[96] = "", g_layerFilter[96] = "", g_findText[96] = "", g_replText[96] = "";
 bool g_findCase = false;
+float g_colFrom[4] = {1, 0, 0, 1}, g_colTo[4] = {0, 0, 1, 1}, g_colTol = 0.04f;
+char g_styFrom[64] = "", g_styTo[64] = "";
 GameObject* g_renaming = nullptr;
 char g_nameBuf[128];
 
@@ -387,6 +390,42 @@ const std::vector<Cmd>& Commands() {
 }
 }  // namespace
 
+namespace {
+struct RotState { bool on = false; float startRot = 0, startAngle = 0; GameObject* go = nullptr; } g_rot;
+bool RotRect(EditorState& ed, ImVec2 vp, ImVec2 vs, UIFrame*& fr, uid::Rect& r, float& px, float& py) {
+    GameObject* g = ed.selected(); if (!g) return false;
+    fr = g->GetComponent<UIFrame>(); if (!fr) return false;
+    Vec2 o, sz; if (!GetUIScreenRect(g, vs.x, vs.y, o, sz)) return false;
+    r = {vp.x + o.x, vp.y + o.y, sz.x, sz.y};
+    px = r.x + fr->pivot.x * r.w; py = r.y + fr->pivot.y * r.h; return true;
+}
+}  // namespace
+
+bool UIDesignerRotateInput(EditorState& ed, ImVec2 vp, ImVec2 vs, const ImGuiIO& io) {
+    UIFrame* fr; uid::Rect r; float px, py;
+    if (g_rot.on) {
+        if (!ed.selected() || ed.selected() != g_rot.go || !RotRect(ed, vp, vs, fr, r, px, py) || !ImGui::IsMouseDown(ImGuiMouseButton_Left)) { g_rot.on = false; return false; }
+        fr->rotation = uid::RotateDrag(g_rot.startRot, g_rot.startAngle, uid::AngleFromPivot(px, py, io.MousePos.x, io.MousePos.y, false), io.KeyShift);
+        ed.dirty = true; return true;
+    }
+    if (!ImGui::IsMouseClicked(ImGuiMouseButton_Left) || !RotRect(ed, vp, vs, fr, r, px, py)) return false;
+    float hx, hy; uid::RotateHandlePos(r, px, py, fr->rotation, 26.0f, hx, hy);
+    if (std::fabs(io.MousePos.x - hx) > 8.0f || std::fabs(io.MousePos.y - hy) > 8.0f) return false;
+    ed.PushUndo("Rotate UI");
+    g_rot = {true, fr->rotation, uid::AngleFromPivot(px, py, io.MousePos.x, io.MousePos.y, false), ed.selected()};
+    return true;
+}
+void UIDesignerDrawRotate(ImDrawList* dl, EditorState& ed, ImVec2 vp, ImVec2 vs) {
+    UIFrame* fr; uid::Rect r; float px, py;
+    if (!RotRect(ed, vp, vs, fr, r, px, py)) return;
+    float hx, hy, sx, sy; uid::RotateHandlePos(r, px, py, fr->rotation, 26.0f, hx, hy);
+    sx = r.x + r.w * 0.5f; sy = r.y; uid::RotatePoint(sx, sy, px, py, fr->rotation);
+    dl->AddLine({sx, sy}, {hx, hy}, IM_COL32(255, 210, 40, 200), 1.2f);
+    dl->AddCircleFilled({hx, hy}, 6.0f, g_rot.on ? IM_COL32(255, 255, 255, 255) : IM_COL32(255, 210, 40, 255));
+    dl->AddCircle({hx, hy}, 6.0f, IM_COL32(20, 20, 24, 255), 0, 1.5f);
+    if (g_rot.on) { char b[24]; std::snprintf(b, sizeof(b), "%.0f deg", fr->rotation); dl->AddText({hx + 10, hy - 8}, IM_COL32(255, 230, 140, 255), b); }
+}
+
 bool UIDesignerTakeFitRequest() { const bool f = g_fitRequested; g_fitRequested = false; return f; }
 
 void UIDesignerKeys(EditorState& ed, bool active) {
@@ -447,6 +486,13 @@ void UIDesignerOverlays(EditorState& ed) {
                 ImGui::OpenPopup("done");
             }
             if (ImGui::BeginPopup("done")) { ImGui::TextUnformatted("Done."); ImGui::EndPopup(); }
+            ImGui::Separator();
+            ImGui::ColorEdit4("Find colour", g_colFrom); ImGui::ColorEdit4("Replace with", g_colTo);
+            ImGui::DragFloat("How close", &g_colTol, 0.005f, 0.0f, 0.5f, "%.3f");
+            if (ImGui::Button("Replace colour")) uid::ReplaceColor(ed, Color(g_colFrom[0], g_colFrom[1], g_colFrom[2], g_colFrom[3]), Color(g_colTo[0], g_colTo[1], g_colTo[2], g_colTo[3]), g_colTol);
+            ImGui::Separator();
+            ImGui::InputText("Style name", g_styFrom, sizeof(g_styFrom)); ImGui::InputText("Use this style instead", g_styTo, sizeof(g_styTo));
+            if (ImGui::Button("Replace style")) uid::ReplaceStyle(ed, g_styFrom, g_styTo);
         }
         ImGui::End();
     }

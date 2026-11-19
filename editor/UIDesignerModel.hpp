@@ -460,4 +460,23 @@ inline const std::vector<Shortcut>& Shortcuts() {
     return v;
 }
 
+// ---- rotate handle ----------------------------------------------------------------------------------------------
+/// Turn a point about a pivot by `deg` degrees clockwise on screen (y grows down).
+inline void RotatePoint(float& x, float& y, float px, float py, float deg) {
+    const float r = deg * 0.01745329252f, c = std::cos(r), s = std::sin(r), dx = x - px, dy = y - py;
+    x = px + dx * c - dy * s; y = py + dx * s + dy * c;
+}
+/// Where the round rotate handle sits: `offset` pixels above the middle of the top edge, turned with the widget.
+inline void RotateHandlePos(const Rect& r, float pivotX, float pivotY, float rotation, float offset, float& hx, float& hy) {
+    hx = r.x + r.w * 0.5f; hy = r.y - offset; RotatePoint(hx, hy, pivotX, pivotY, rotation);
+}
+/// The new rotation while dragging: the start rotation plus how far the mouse went round the pivot. Shift snaps to 15.
+inline float RotateDrag(float startRot, float startAngle, float curAngle, bool snap15) {
+    float r = startRot + (curAngle - startAngle);
+    if (snap15) r = std::round(r / 15.0f) * 15.0f;
+    while (r > 180.0f) r -= 360.0f;
+    while (r <= -180.0f) r += 360.0f;
+    return r;
+}
+
 }  // namespace oked::uid

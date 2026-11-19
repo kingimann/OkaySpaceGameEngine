@@ -36,6 +36,7 @@
 #include "okay/Components/UIStyleVariant.hpp"
 #include "okay/Components/UIUserStyle.hpp"
 #include "okay/Components/UIGuides.hpp"
+#include "okay/Components/UIConstraints.hpp"
 #include "okay/Components/UIDamageNumbers.hpp"
 #include "okay/Components/UIDialogueBox.hpp"
 #include "okay/Components/UIInventoryBind.hpp"
@@ -9811,6 +9812,27 @@ void RegisterBuiltinComponentSerializers() {
         split(v, g->vertical); split(h, g->horizontal);
     };
     ComponentSerializerRegistry::Register(std::move(guides));
+
+    // UI Constraints: limits and a portrait look (okay/Components/UIConstraints.hpp). Only objects that carry one write it.
+    ComponentSerializerRegistry::Entry cons;
+    cons.name = "uiconstraints";
+    cons.write = [](const GameObject& go, std::ostream& out) {
+        for (auto* c : go.GetComponents<UIConstraints>()) {
+            out << "  uiconstraints";
+            KvOut k{out};
+            k("minx", c->minSize.x)("miny", c->minSize.y)("maxx", c->maxSize.x)("maxy", c->maxSize.y).b("lock", c->lockAspect)("aspect", c->aspect)
+             .b("port", c->portraitOverride)("px", c->portraitPosition.x)("py", c->portraitPosition.y)("pw", c->portraitSize.x)("ph", c->portraitSize.y);
+            out << "\n";
+        }
+    };
+    cons.read = [](GameObject& go, std::istream& in) {
+        auto* c = go.AddComponent<UIConstraints>();
+        KvIn k(in);
+        k.f("minx", c->minSize.x); k.f("miny", c->minSize.y); k.f("maxx", c->maxSize.x); k.f("maxy", c->maxSize.y);
+        k.b("lock", c->lockAspect); k.f("aspect", c->aspect); k.b("port", c->portraitOverride);
+        k.f("px", c->portraitPosition.x); k.f("py", c->portraitPosition.y); k.f("pw", c->portraitSize.x); k.f("ph", c->portraitSize.y);
+    };
+    ComponentSerializerRegistry::Register(std::move(cons));
 
     // Water waves beyond the old sines (style, direction, steepness, count, seed, current), kept as their own record
     // so older scene files and older readers are untouched.

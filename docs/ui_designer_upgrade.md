@@ -72,3 +72,17 @@ already has Flex layout; `UIFrame` already has rotation, scale, pivot, anchors; 
 | 9 nine-slice handles | not done |
 | 10 command palette | done: Ctrl+P lists 26 actions with words search |
 | 11 shortcut cheat sheet | done: F1 |
+
+## Fifth step (branch claude/ui-designer-5)
+
+| Item | Result |
+| --- | --- |
+| Rotate handle | done for widgets with a UI Frame: a round handle above the selection, drag turns it, Shift snaps to 15 deg, one undo step (`RotatePoint`, `RotateHandlePos`, `RotateDrag`, tested). The frame's own rotation / pivot maths is used as is; not seen on screen |
+| Numeric fields | existing Pos and Size fields (and the UI Frame inspector's Rotation) stay; added a `%` toggle that shows Size as a percent of the parent (else the screen) using `ToPx` / `FromPx`. Scale-about-pivot: model `ScaleAbout` only, not wired |
+| Ctrl+A clash | the designer's shortcuts now run only while the UI view window has the keyboard (`IsWindowFocused`), so the Hierarchy and file lists keep their own Ctrl+A |
+| Constraints | new `UIConstraints` component: min / max size, aspect lock, portrait position and size. Applied by `ApplyUIConstraints` in the player and in editor Play only (never while editing, so the saved scene keeps the landscape values). Saved as `uiconstraints` only when the component exists; in `test_save_coverage`; tested in `ui_user_styles` |
+| Gradient editor | existing: Panel has a two-colour gradient with direction. Multi-stop gradients need renderer support: not done |
+| Eyedropper, project swatches, opacity / blend per widget | not done (no per-widget opacity or blend in the renderer today) |
+| Text tools | already there: Best Fit (auto-size with min / max), letter spacing, line spacing in the Text inspector. Nothing added |
+| Nine-slice handles | not done; the Image inspector already has Nine-slice with a numeric border |
+| Find and replace colour and style | done: `ReplaceColor` (with tolerance, over button / panel / text colours and borders) and `ReplaceStyle`, one undo step each, in the Find and replace window |

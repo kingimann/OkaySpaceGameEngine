@@ -70,5 +70,23 @@ int main() {
         ed.Select(nullptr);
         CHECK(oked::uid::AlignSelection(ed, oked::uid::AlignMode::Left) == 0 && oked::uid::FlipSelection(ed, true) == 0);
     }
+    {
+        RUN_SUITE("find and replace: colours and styles");
+        editor::EditorState ed;
+        GameObject* a = ed.scene().CreateGameObject("A"); auto* ba = a->AddComponent<UIButton>(); ba->color = Color(1, 0, 0, 1);
+        GameObject* b = ed.scene().CreateGameObject("B"); auto* pb = b->AddComponent<UIPanel>(); pb->color = Color(0.98f, 0.01f, 0, 1);
+        GameObject* c = ed.scene().CreateGameObject("C"); auto* pc = c->AddComponent<UIPanel>(); pc->color = Color(0, 1, 0, 1);
+        CHECK(oked::uid::ColorsClose(Color(1, 0, 0, 1), Color(0.97f, 0, 0, 1), 0.05f) && !oked::uid::ColorsClose(Color(1, 0, 0, 1), Color(0, 1, 0, 1), 0.05f));
+        CHECK(oked::uid::ReplaceColor(ed, Color(1, 0, 0, 1), Color(0, 0, 1, 1), 0.05f) == 2);
+        CHECK(ed.scene().Find("A")->GetComponent<UIButton>()->color.b == 1.0f && ed.scene().Find("B")->GetComponent<UIPanel>()->color.b == 1.0f);
+        CHECK(ed.scene().Find("C")->GetComponent<UIPanel>()->color.g == 1.0f);
+        CHECK(ed.Undo()); CHECK(ed.scene().Find("A")->GetComponent<UIButton>()->color.r == 1.0f && ed.scene().Find("B")->GetComponent<UIPanel>()->color.b == 0.0f);
+        CHECK(oked::uid::ReplaceColor(ed, Color(0.5f, 0.5f, 0.5f, 1), Color(0, 0, 0, 1), 0.01f) == 0);   // nothing matched: no undo entry, no change
+        GameObject* s1 = ed.scene().Find("A"); s1->AddComponent<UIStyleVariant>()->userStyle = "Old";
+        GameObject* sty = ed.scene().CreateGameObject("S"); auto* us = sty->AddComponent<UIUserStyle>(); us->styleName = "New"; us->fill = Color(0, 1, 1, 1);
+        CHECK(oked::uid::ReplaceStyle(ed, "Old", "New") == 1);
+        CHECK(ed.scene().Find("A")->GetComponent<UIStyleVariant>()->userStyle == "New" && ed.scene().Find("A")->GetComponent<UIButton>()->color.b == 1.0f);
+        CHECK(oked::uid::ReplaceStyle(ed, "", "New") == 0);
+    }
     TEST_MAIN_RESULT();
 }

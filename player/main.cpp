@@ -2239,6 +2239,7 @@ int main(int argc, char** argv) {
         // Lay out the UI before updating (scroll extents from their children, flex
         // boxes, list rows), so the wheel and scrollbars use the real content extent.
         UpdateUILayouts(scene);
+        ApplyUIConstraints(scene, UICanvas::Width(), UICanvas::Height());   // min / max size, aspect lock, portrait look (only widgets with UI Constraints)
 
 #ifdef OKAY_HAVE_OKAYUI
         // Start the OkayUI frame BEFORE the scene updates, so scripts' ui_* builtins

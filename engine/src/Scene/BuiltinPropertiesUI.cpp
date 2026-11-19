@@ -34,6 +34,7 @@
 #include "okay/Components/UITheme.hpp"
 #include "okay/Components/UIStyleVariant.hpp"
 #include "okay/Components/UIUserStyle.hpp"
+#include "okay/Components/UIConstraints.hpp"
 #include "okay/Components/UIDamageNumbers.hpp"
 #include "okay/Components/UIDialogueBox.hpp"
 #include "okay/Components/UIInventoryBind.hpp"
@@ -551,6 +552,18 @@ void RegisterUIStyleVariant() {
      .AddString("styleSize", &UIStyleVariant::styleSize).Tooltip("xs, s, m, l or xl (empty = m)")
      .AddString("styleDensity", &UIStyleVariant::styleDensity).Tooltip("compact, cosy, comfortable or spacious (empty = cosy)")
      .AddString("userStyle", &UIStyleVariant::userStyle).Tooltip("A shared style by name (see Shared Style). Editing the style restyles every widget that names it. Empty = none");
+    b.Commit();
+}
+
+void RegisterUIConstraints() {
+    PropertyBuilder<UIConstraints> b("UIConstraints", "uiconstraints", "UI");
+    b.AddVec2("minSize", &UIConstraints::minSize).Range(0, kBig, 1).Tooltip("Smallest width and height in pixels (0 = no minimum)")
+     .AddVec2("maxSize", &UIConstraints::maxSize).Range(0, kBig, 1).Tooltip("Largest width and height in pixels (0 = no maximum)")
+     .AddBool("lockAspect", &UIConstraints::lockAspect).Tooltip("Keep the width : height shape when the size changes")
+     .AddFloat("aspect", &UIConstraints::aspect).Range(0, 20, 0.01).Tooltip("Width divided by height to keep (0 = the shape it has now)")
+     .AddBool("portraitOverride", &UIConstraints::portraitOverride).Tooltip("Use a different place and size when the screen is taller than wide")
+     .AddVec2("portraitPosition", &UIConstraints::portraitPosition).Range(-kBig, kBig, 1).Tooltip("Position in portrait")
+     .AddVec2("portraitSize", &UIConstraints::portraitSize).Range(0, kBig, 1).Tooltip("Size in portrait");
     b.Commit();
 }
 
@@ -1091,6 +1104,7 @@ void RegisterUIProperties() {
     RegisterUITheme();
     RegisterUIStyleVariant();
     RegisterUIUserStyle();
+    RegisterUIConstraints();
     RegisterUIDamageNumbers();
     RegisterUIDialogueBox();
     RegisterUIInventoryBind();

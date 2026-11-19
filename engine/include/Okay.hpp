@@ -213,6 +213,7 @@
 #include "okay/Components/UIStyleVariant.hpp"
 #include "okay/Components/UIUserStyle.hpp"
 #include "okay/Components/UIGuides.hpp"
+#include "okay/Components/UIConstraints.hpp"
 #include "okay/Components/UIDamageNumbers.hpp"
 #include "okay/Components/UIDialogueBox.hpp"
 #include "okay/Components/UIInventoryBind.hpp"

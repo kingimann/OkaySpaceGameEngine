@@ -5,6 +5,7 @@
 #include "UIDesignerModel.hpp"
 #include "okay/Components/UIElement.hpp"
 #include "okay/Scene/UILayoutTools.hpp"
+#include "okay/Components/UIUserStyle.hpp"
 
 namespace oked::uid {
 
@@ -95,5 +96,33 @@ inline int DistributeSelection(okay::editor::EditorState& ed, bool horizontal, f
 inline int MatchSelection(okay::editor::EditorState& ed, bool w, bool h) { Sel s = CurrentSel(ed); return s.go.size() < 2 ? 0 : Commit(ed, s, MatchToKey(s.r, s.key, w, h), "Match UI size to key"); }
 inline int TidySelection(okay::editor::EditorState& ed, int cols, float gap) { Sel s = CurrentSel(ed); return s.go.size() < 2 ? 0 : Commit(ed, s, TidyGrid(s.r, cols, gap), "Tidy UI grid"); }
 inline int FlipSelection(okay::editor::EditorState& ed, bool horizontal) { Sel s = CurrentSel(ed); return s.go.size() < 2 ? 0 : Commit(ed, s, Flip(s.r, horizontal), "Flip UI"); }
+
+// ---- find and replace: colours and styles ----------------------------------------------------------------------------
+inline bool ColorsClose(const okay::Color& a, const okay::Color& b, float tol) {
+    return std::fabs(a.r - b.r) <= tol && std::fabs(a.g - b.g) <= tol && std::fabs(a.b - b.b) <= tol && std::fabs(a.a - b.a) <= tol;
+}
+/// Every fill and text colour of every UI widget that is within `tol` of `from` becomes `to`. One undo step. Returns how many.
+inline int ReplaceColor(okay::editor::EditorState& ed, const okay::Color& from, const okay::Color& to, float tol) {
+    int n = 0; bool pushed = false;
+    auto swap = [&](okay::Color& c) { if (ColorsClose(c, from, tol)) { if (!pushed) { ed.PushUndo("Replace UI colour"); pushed = true; } c = to; ++n; } };
+    for (const auto& up : ed.scene().Objects()) {
+        if (!up) continue;
+        if (auto* b = up->GetComponent<okay::UIButton>()) { swap(b->color); swap(b->textColor); swap(b->borderColor); }
+        if (auto* p = up->GetComponent<okay::UIPanel>()) { swap(p->color); swap(p->borderColor); }
+        if (auto* t = up->GetComponent<okay::TextRenderer>()) if (t->screenSpace) swap(t->color);
+    }
+    if (n) ed.dirty = true;
+    return n;
+}
+/// Point every widget that uses shared style `from` at style `to`, and apply it. One undo step. Returns how many.
+inline int ReplaceStyle(okay::editor::EditorState& ed, const std::string& from, const std::string& to) {
+    int n = 0;
+    for (const auto& up : ed.scene().Objects()) {
+        auto* v = up ? up->GetComponent<okay::UIStyleVariant>() : nullptr;
+        if (v && !from.empty() && v->userStyle == from) { if (!n) ed.PushUndo("Replace UI style"); v->userStyle = to; ++n; }
+    }
+    if (n) { okay::ApplyUserStyles(ed.scene()); ed.dirty = true; }
+    return n;
+}
 
 } // namespace oked::uid

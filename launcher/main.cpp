@@ -201,6 +201,11 @@ bool g_chatInOwnWindow = false;          // true while drawing the chat window's
 // Resolve an engine/player exe by name, searching next to the launcher and in the
 // Tools/ subfolder (defined fully below; forward-declared for the updater).
 std::string FindExe(std::initializer_list<const char*> names);
+#ifdef OKAY_ON_OKAYUI   // the launcher on our own UI starts the editor built on our own UI when it is next to it, else the normal one
+#define EDITOR_EXE_NAMES {"OkayEngineOkayUI.exe", "OkayEngineOkayUI", "okay-editor-okayui", "OkayEngine.exe", "OkaySpaceEngine.exe", "okay-editor.exe", "okay-editor", "OkayEngine"}
+#else
+#define EDITOR_EXE_NAMES {"OkayEngine.exe", "OkaySpaceEngine.exe", "okay-editor.exe", "okay-editor", "OkayEngine"}
+#endif
 
 // Where published builds live: the assets of the latest GitHub Release (this is
 // what the release workflow uploads). "releases/latest/download/<name>" always
@@ -1645,7 +1650,7 @@ static bool EditorRunning() {
 }
 // Ask the running editor to save its project and close (it polls this file).
 static bool RequestEditorSaveQuit() {
-    std::string ed = FindExe({"OkayEngine.exe", "OkaySpaceEngine.exe", "okay-editor.exe", "okay-editor", "OkayEngine"});
+    std::string ed = FindExe(EDITOR_EXE_NAMES);
     if (ed.empty()) return false;
     fs::path dir = fs::path(ed).parent_path();
     std::error_code ec; fs::remove(dir / "okay_ipc_ack.txt", ec);
@@ -1655,7 +1660,7 @@ static bool RequestEditorSaveQuit() {
 }
 // What the editor answered ("saved" / "save-failed"), or "" while waiting.
 static std::string EditorAck() {
-    std::string ed = FindExe({"OkayEngine.exe", "OkaySpaceEngine.exe", "okay-editor.exe", "okay-editor", "OkayEngine"});
+    std::string ed = FindExe(EDITOR_EXE_NAMES);
     if (ed.empty()) return {};
     std::ifstream f(fs::path(ed).parent_path() / "okay_ipc_ack.txt");
     std::string a; std::getline(f, a);
@@ -2365,7 +2370,7 @@ static bool g_crashNoticeReq = false;   // the pump asks the main loop to show t
 static const char* const kCrashRepo = "kingimann/OkaySpaceGameEngine";   // where "Report on GitHub" opens a new issue
 static bool CrashUploadOn() { return okaycrash::upload::Enabled(g_crashUpload, std::getenv("OKAY_CRASH_UPLOAD")); }
 static fs::path CrashDir() {
-    std::string ed = FindExe({"OkayEngine.exe", "OkaySpaceEngine.exe", "okay-editor.exe", "okay-editor", "OkayEngine"});
+    std::string ed = FindExe(EDITOR_EXE_NAMES);
     if (const char* dev = std::getenv("OKAY_CRASH_DIR")) return fs::path(dev);   // (dev/test: another folder)
     return ed.empty() ? fs::path() : fs::path(ed).parent_path();
 }
@@ -18264,7 +18269,7 @@ int main(int argc, char** argv) {
     if (!mainWinOwner) return 1;
     SDL_Window* window = (SDL_Window*)mainWinOwner->NativeHandle();
     okay::pb::RegisterWindow(*mainWinOwner);   // the lw:: helpers find the window by its native handle
-#ifdef OKAY_HAVE_OKAYUI
+#if defined(OKAY_HAVE_OKAYUI) || defined(OKAY_ON_OKAYUI)   // the OkayUI build draws every window of the own backend through the software painter
     okay::pb::SetOwnPainterFactory([](okay::platform::Window& w) { return OkayUI::soft::CreateWindowPainter(w); });   // the software painter, for own-backend windows
 #endif
     g_launcherWindow = window;   // games ask us to come forward (Invite friends)
@@ -18345,7 +18350,7 @@ int main(int argc, char** argv) {
     std::fprintf(stderr, "%s\n", okay::imguirender::ActiveLine(g_imguiOwnRender));
     if (g_imguiOwnRender) okay::imguirender::Init(ImGui::GetIO()); else ImGui_ImplSDLRenderer2_Init(renderer);
 
-    std::string editor = FindExe({"OkayEngine.exe", "OkaySpaceEngine.exe", "okay-editor.exe", "okay-editor", "OkayEngine"});
+    std::string editor = FindExe(EDITOR_EXE_NAMES);
     std::string player = FindExe({"OkaySpacePlayer.exe", "okay-player.exe", "okay-player"});
     std::vector<fs::path> scenes = FindScenes();
     bool rescannedAfterUpdate = false;
@@ -18611,7 +18616,7 @@ int main(int argc, char** argv) {
         // Once a background download finishes, re-detect the runtimes so the
         // "not found" notices clear without needing a restart.
         if (GetState() == Up_Updated && !rescannedAfterUpdate) {
-            editor = FindExe({"OkayEngine.exe", "OkaySpaceEngine.exe", "okay-editor.exe", "okay-editor", "OkayEngine"});
+            editor = FindExe(EDITOR_EXE_NAMES);
             player = FindExe({"OkaySpacePlayer.exe", "okay-player.exe", "okay-player"});
             scenes = FindScenes();
             rescannedAfterUpdate = true;
@@ -23292,6 +23297,17 @@ int main(int argc, char** argv) {
                             ImGui::SameLine();
                             ImGui::TextDisabled("%s", osw::StatusText(stt));
                         });
+                    }
+                    {   // the "launch alternative exe" row: the same launcher built on our own UI (OKAY_LAUNCHER_ON_OKAYUI), or the way back from it
+                        const osw::AlternativeExe& alt = osw::Alternative();
+                        std::string altExe;
+                        for (const std::string& n : alt.launcherNames) if (altExe.empty()) altExe = FindExe({n.c_str()});
+                        if (!altExe.empty()) {
+                            rowDivider();
+                            settingRow(alt.label, alt.desc, 150.0f, 30.0f, [&](float) {
+                                if (ImGui::Button("Restart", ImVec2(130, 30)) && !UpdateBlocksLaunch() && SpawnTracked(altExe, std::string(), "alt-launcher", "")) running = false;
+                            });
+                        }
                     }
                     cardEnd();
                 } else if (setCat == 9) {   // ---- Crash reports ----

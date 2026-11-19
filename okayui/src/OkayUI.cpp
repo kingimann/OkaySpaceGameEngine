@@ -2407,8 +2407,17 @@ void MergePendingIo(Input& in) {
         mineCtrl = c; mineShift = sh;
     }
     if (g_pendMouseSet) { in.mouseX = g_pendMX; in.mouseY = g_pendMY; g_pendMouseSet = false; }
-    if (g_pendBtn[0] >= 0 || g_pendClick[0]) { in.mouseDown = g_pendBtn[0] == 1 || (g_pendClick[0] && g_pendBtn[0] != 1); }
-    if (g_pendBtn[1] >= 0 || g_pendClick[1]) { in.rightDown = g_pendBtn[1] == 1 || (g_pendClick[1] && g_pendBtn[1] != 1); }
+    {   // a press and a release inside one frame show as one pressed frame; the NEXT frame must show the release (nothing else would: the input is carried over)
+        static bool releaseNext[2] = {false, false};
+        bool* down[2] = {&in.mouseDown, &in.rightDown};
+        for (int b = 0; b < 2; ++b) {
+            if (g_pendBtn[b] >= 0 || g_pendClick[b]) {
+                const bool oneFrameClick = g_pendClick[b] && g_pendBtn[b] != 1;
+                *down[b] = g_pendBtn[b] == 1 || oneFrameClick;
+                releaseNext[b] = oneFrameClick;
+            } else if (releaseNext[b]) { *down[b] = false; releaseNext[b] = false; }
+        }
+    }
     for (int b = 0; b < 3; ++b) { g_pendBtn[b] = -1; g_pendClick[b] = false; }
     if (g_pendKeyEdge[KeyId_Enter]) in.enter = true;
     if (g_pendKeyEdge[KeyId_Escape]) in.escape = true;

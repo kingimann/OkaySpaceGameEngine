@@ -1071,6 +1071,50 @@ A golden picture is only worth having if every machine draws the same one. What 
 
 Own code, off by default, wired into nothing: the editor and launcher still draw OkayUI (and everything else) through Dear ImGui's SDL backends. This section is the part that lets a later host put OkayUI's pixels on screen without any Dear ImGui backend code. (The numbered sections 5 and 6 of the draw-through-ImGui host live on another branch; this section is numbered 7 so the two cannot collide.)
 
+### 6.26 Running the real launcher and editor on OkayUI (round 13, owner priority: "i want the launcher and editor to be running on our UI")
+
+**What this is.** Instead of rewriting panels one by one, the SAME `launcher/main.cpp` (27,000 lines) and `editor/main.cpp` (52,000 lines) are compiled a second time against OkayUI's Dear ImGui compatibility layer: `okayui/probe/` comes FIRST on the include path, so `#include "imgui.h"`, `imgui_internal.h` and the backend headers are OkayUI's own (`okayui/probe/imgui.h` and friends; the file name says "probe" because it began as the syntax probe of 6.14). The result is a second executable from the same source, with no Dear ImGui in it. It is a dev option, OFF by default, and the normal launcher and editor are untouched.
+
+**Switches.** CMake `-DOKAY_LAUNCHER_ON_OKAYUI=ON` builds `bin/OkaySpaceOkayUI(.exe)` (target `okayspace-launcher-okayui`); `-DOKAY_EDITOR_ON_OKAYUI=ON` builds `bin/OkayEngineOkayUI(.exe)` (target `okay-editor-okayui`, `editor/CMakeLists.txt`, the source list of `okay-editor` reused). The macro `OKAY_ON_OKAYUI` selects the adapter pieces below; `OKAY_HAVE_OKAYUI` (the hosted-in-Dear-ImGui OkayUI screens) is deliberately NOT defined in these programs: a second OkayUI frame per tick would reset the first.
+
+**The adapter (what replaces the Dear ImGui backend calls).**
+- Input: `shared/ImGuiPlatformFeed.hpp` (okay::platform events into `io.Add*Event`; with `OKAY_ON_OKAYUI` its `OwnRequested` is always true, and `ModKeyOfPair` uses OkayUI's own modifier key ids). The compat IO gained what that feed needs: `AddMouseWheelEvent`, `AddInputCharactersUTF8`, `AddFocusEvent`, `BackendPlatformName`, `MouseDrawCursor`, `WantSetMousePos`, the `Platform_*` clipboard and input-method callbacks (OkayUI's clipboard calls them when a feed installed them), `ImGuiMouseCursor` (None, Wait, Progress added), `BackendFlags_HasSetMousePos`, `Mod_Super`, the right-hand modifier keys, the modifier-flag keys, F13 to F24, punctuation and lock keys. A click whose press and release arrive in the same frame now shows its release in the next frame (before, the button stayed down). `ImGui::NewFrame()` takes the display size and the frame time the feed wrote.
+- Drawing: `okayui/probe/ImGuiPainterRenderer.hpp` replaces `shared/ImGuiPainterRenderer.hpp`: `okay::imguirender::Render(painter, drawData)` draws OkayUI's finished frame through the window's `okay::platform::Painter` (the toolkit's frame drawer, `okayui/soft/OkayUI_SoftPainter.hpp`); `Init` switches the launcher look on. `OKAYUI_TRACE=1` prints the vertex counts per frame.
+- Backend entry points that must still link (`ImGui_ImplSDL2_*`, `ImGui_ImplSDLRenderer2_*`): `shared/OkayUIImGuiBackendShim.cpp`, no-ops here (the feed and the painter do the work).
+- `IsRectVisible`, `IsAnyMouseDown` added to the toolkit.
+- `launcher/main.cpp`: 3 tiny edits (the own-backend painter factory also under `OKAY_ON_OKAYUI`; the editor lookup prefers `OkayEngineOkayUI` when this launcher is the OkayUI one; the Settings > Experimental row below). `editor/main.cpp`: none.
+
+**Settings > Experimental row (ship).** `okay::ownswitches::Alternative()` (`shared/OwnSwitches.hpp`) describes the "launch alternative exe" action: in the normal launcher the row "Run on our own UI (restart into OkaySpaceOkayUI.exe)" starts `OkaySpaceOkayUI` and closes the launcher; in the OkayUI launcher the row is "Back to the normal UI (restart into OkaySpace.exe)". The row only shows when that program sits next to the running one. `scripts/build-windows-dist.sh` copies `OkaySpaceOkayUI.exe` (top level) and `OkayEngineOkayUI.exe` (`Tools\`) when they were built.
+
+**What was built and run (this session).** The machine could not build the whole engine library (about 1.3 GB free memory, load average above 15), so the launcher was hand-built: `launcher/main.cpp` and the toolkit sources with g++ -O1 -g0, the launcher's own helper sources, and only the engine files it needs (fonts, images, the platform layer, the checksum code; a few engine pieces it links but never runs, such as the audio and model loaders, were stubbed in a file OUTSIDE the repository for this hand link; the real CMake target links the real library). CMake was configured with both options ON (the targets exist; configure 101 seconds) but not built. The editor: `editor/main.cpp` and every other editor source were checked with `g++ -fsyntax-only` against the compat header: 0 errors (after the additions above); the editor was NOT built or linked (it needs the whole engine), so everything under "Editor" below is `not tried`.
+
+**How it was run.** Headless, with the scripted test hooks of `shared/TestHooks.hpp` (built with `-DOKAY_ENABLE_TEST_HOOKS`, script in `OKAY_TEST_SCRIPT`) on a private Xvfb: `OKAY_PLATFORM_BACKEND=sdl2` (the SDL window, SDL renderer geometry) and `OKAY_PLATFORM_BACKEND=own` (our own X11 window, software painter: no SDL window code runs). Pictures were looked at; none are in the repository.
+
+**Parity list: launcher** (`works` = looked right and the clicks did what they should in the headless run; `differs` = works with a visible difference; `broken`; `not tried`)
+
+| Page / feature | Status | Notes |
+|---|---|---|
+| Start-up, window, own platform backend, SDL backend | works | both ran, exit 0 |
+| Fonts and look (Roboto, rounded frames, icons) | works | the launcher look; the JetBrains Mono face used for chat code is the same Roboto for now (no OKF1 mono font yet): differs |
+| Sidebar, hover, page switching | works | after the one-frame-click fix |
+| Create (new project, open project, recent list, search, sort) | works / dialog not tried | the New Project dialog was not reached in the run |
+| Play | works | "Player runtime not found" is correct in the test folder |
+| Community, Market, Downloads | works | sign-in-required and empty states |
+| Versions | works | the page of 6.17 inside the real launcher |
+| Friends, Servers, Forums, Achievements | works | signed-out states; signed-in content not tried (no account server in the run) |
+| What's New | works | |
+| Notifications popup | works | |
+| Settings (Appearance and the other pages) | works | the UI-scale slider track draws short: differs |
+| Settings > Experimental | not tried | row added, page not reached in the run |
+| Chat window (pop-out second window, second context) | not tried | OkayUI has one context; a second window may need more work |
+| Voice, game servers, downloads in progress, updater | not tried | need a network and an account |
+| Drag and drop of files onto the window | not tried | |
+| Text input, IME | not tried | |
+
+**Parity list: editor** (not built here: every row `not tried`; the source compiles against the layer): gate / project screen, main window and docking, menus, Hierarchy, Inspector, Scene and Game views, Console, Project, Script editor (the code widget is OkayUI's own, `ScriptEditorCodeEdit.cpp`), Visual Script graph (draw lists and channels exist), Build Settings. The first real run needs the CI job or a machine that can build the engine.
+
+**What is NOT done yet.** The editor executable was never linked or started. The launcher's chat pop-out, the Experimental page and the New Project dialog were not exercised. Fonts: the second font face (mono) is not mapped to its own data. No CI job was added (the engine build is expensive and the job must build the whole library).
+
 ### 7.1 What exists
 
 | Piece | File | What it is |

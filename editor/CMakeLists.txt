@@ -160,3 +160,32 @@ endif()
 if(OKAY_ENABLE_TEST_HOOKS)   # scripted input for headless runs (shared/TestHooks.hpp); off in every normal and release build
     target_compile_definitions(okay-editor PRIVATE OKAY_ENABLE_TEST_HOOKS=1)
 endif()
+
+# ---- The editor on OkayUI (OKAY_EDITOR_ON_OKAYUI, off by default) --------------------------------------------------------------------------------
+# The SAME sources as okay-editor, compiled against OkayUI's Dear ImGui compatibility header (okayui/probe first on the include path: <imgui.h> is OkayUI's),
+# so no Dear ImGui is in the program. Input is shared/ImGuiPlatformFeed.hpp (OKAY_ON_OKAYUI makes it the only path), the painter-renderer is
+# okayui/probe/ImGuiPainterRenderer.hpp, the backend entry points shared/OkayUIImGuiBackendShim.cpp. Output: bin/OkayEngineOkayUI(.exe) next to OkayEngine(.exe).
+# Not built in the session that added it (the editor needs the whole engine library): checked by the CI job and by the compat probe. docs/own_ui_toolkit.md
+if(OKAY_EDITOR_ON_OKAYUI AND TARGET okay_ui AND TARGET okay_ui_screens)
+    get_target_property(_ed_srcs okay-editor SOURCES)
+    list(FILTER _ed_srcs EXCLUDE REGEX "TARGET_OBJECTS")   # the window-mode panel copies are Dear ImGui-API sources compiled for the other editor
+    list(FILTER _ed_srcs EXCLUDE REGEX "okayspace\\.rc$")
+    add_executable(okay-editor-okayui ${_ed_srcs} ${CMAKE_SOURCE_DIR}/shared/OkayUIImGuiBackendShim.cpp)
+    target_compile_definitions(okay-editor-okayui PRIVATE ${OKAY_VERSION_DEFINE} OKAY_ON_OKAYUI=1 OKAY_UI_DEFAULT_BACKEND_OKAYUI=1)
+    target_compile_features(okay-editor-okayui PRIVATE cxx_std_17)
+    target_include_directories(okay-editor-okayui BEFORE PRIVATE ${CMAKE_SOURCE_DIR}/okayui/probe ${CMAKE_SOURCE_DIR}/okayui/probe/backends)
+    target_include_directories(okay-editor-okayui PRIVATE ${CMAKE_SOURCE_DIR}/shared ${CMAKE_SOURCE_DIR}/launcher ${CMAKE_CURRENT_SOURCE_DIR}/vendor
+        ${CMAKE_SOURCE_DIR}/okayui/include ${CMAKE_SOURCE_DIR}/okayui/screens ${CMAKE_SOURCE_DIR}/okayui/soft)
+    set_source_files_properties(vendor/TextEditor.cpp PROPERTIES COMPILE_OPTIONS "-w")
+    target_link_libraries(okay-editor-okayui PRIVATE okay::engine okay_ui okay_ui_screens okay_ui_soft ${OKAY_SDL_LIB})
+    if(OKAY_ENABLE_TEST_HOOKS)
+        target_compile_definitions(okay-editor-okayui PRIVATE OKAY_ENABLE_TEST_HOOKS=1)
+    endif()
+    if(WIN32)
+        enable_language(RC)
+        target_sources(okay-editor-okayui PRIVATE okayspace.rc)
+        okay_win_version(okay-editor-okayui "OkaySpace Editor (OkayUI)" "OkayEngineOkayUI.exe")
+        target_link_libraries(okay-editor-okayui PRIVATE comdlg32 ole32 shell32 user32 dbghelp)
+    endif()
+    set_target_properties(okay-editor-okayui PROPERTIES RUNTIME_OUTPUT_DIRECTORY ${CMAKE_BINARY_DIR}/bin OUTPUT_NAME "OkayEngineOkayUI")
+endif()

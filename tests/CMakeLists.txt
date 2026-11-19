@@ -4410,3 +4410,14 @@ foreach(vs_usage_test vs_easy_ops vs_start vs_hints vs_plain_words vs_what_happe
         add_test(NAME ${vs_usage_test} COMMAND test_${vs_usage_test})
     endif()
 endforeach()
+
+# Water visuals: shading maths, ring grid, depth colour, foam, ripples, splashes, underwater, presets, pictures (docs/water_visuals.md).
+add_executable(test_water_visuals test_water_visuals.cpp)
+target_link_libraries(test_water_visuals PRIVATE okay::engine)
+target_include_directories(test_water_visuals PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})
+add_test(NAME water_visuals COMMAND test_water_visuals)
+
+# Water pictures, example scenes (examples/water/) and speed numbers. A tool, not a test.
+add_executable(water_shot water_shot.cpp)
+target_link_libraries(water_shot PRIVATE okay::engine)
+target_include_directories(water_shot PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})

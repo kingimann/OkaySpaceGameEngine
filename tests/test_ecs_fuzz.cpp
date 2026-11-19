@@ -45,7 +45,7 @@ struct Probe : Behaviour {
     void OnDisable() override { Mix(4); }
     void OnDestroy() override { Mix(5); }
     void Update(float) override {
-        Mix(7 + ComponentId());
+        for (char ch : gameObject->name) Mix(static_cast<unsigned char>(ch));   // which object ran, in call order (ids differ between runs; names do not)
         if (!g_inUpdateOps || !g_rng) return;
         const auto& objs = g_scene->Objects();
         if (objs.empty()) return;
@@ -179,16 +179,18 @@ Result Run(std::uint64_t seed, int steps, bool nasty) {
 int main() {
     RUN_SUITE("ecs fuzz: structure from outside Update");
     for (std::uint64_t seed = 1; seed <= 6; ++seed) {
-        const Result a = Run(seed, 1500, false);
+        const Result a = Run(seed, 4000, false);
+        std::printf("  seed %llu: %d frames, %d objects at the end\n", (unsigned long long)seed, a.frames, a.objectsAtEnd);
         CHECK(a.ok);
-        const Result b = Run(seed, 1500, false);
+        const Result b = Run(seed, 4000, false);
         CHECK(b.hash == a.hash && b.frames == a.frames && b.objectsAtEnd == a.objectsAtEnd);   // deterministic
     }
     RUN_SUITE("ecs fuzz: scripts that destroy, add, remove and reparent inside Update");
     for (std::uint64_t seed = 100; seed <= 105; ++seed) {
-        const Result a = Run(seed, 1500, true);
+        const Result a = Run(seed, 4000, true);
+        std::printf("  seed %llu: %d frames, %d objects at the end\n", (unsigned long long)seed, a.frames, a.objectsAtEnd);
         CHECK(a.ok);
-        const Result b = Run(seed, 1500, true);
+        const Result b = Run(seed, 4000, true);
         CHECK(b.hash == a.hash && b.frames == a.frames && b.objectsAtEnd == a.objectsAtEnd);
     }
     TEST_MAIN_RESULT();

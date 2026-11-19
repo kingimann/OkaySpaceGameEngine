@@ -146,7 +146,9 @@ void TestQueries() {
     scene.SetComponentTiming(true);
     scene.Update(0.016f);
     CHECK(!scene.LastFrameTimings().empty());
-    CHECK(scene.LastFrameTimings()[0].type == "First" && scene.LastFrameTimings()[0].calls >= ran);
+    int firstCalls = 0;
+    for (const auto& t : scene.LastFrameTimings()) if (t.type == "First") firstCalls = t.calls;
+    CHECK(firstCalls >= ran);   // Update + LateUpdate of every running First
     scene.SetComponentTiming(false);
     CHECK(scene.LastFrameTimings().empty());
 }

@@ -767,6 +767,7 @@ int main(int argc, char** argv) {
 #include "okay/Components/Seat.hpp"
 #include "okay/Scripting/ScriptUI.hpp"
 #include "okay/Scripting/StarterScripts.hpp"
+#include "okay/CSharp/CSharpCompiler.hpp"
 #include "okay/Scene/EnsureCamera.hpp"       // every scene keeps a camera
 #include "backends/imgui_impl_sdl2.h"
 #include "backends/imgui_impl_sdlrenderer2.h"
@@ -2918,7 +2919,7 @@ static void OpenScriptFileInEditor(const std::string& path) {
     std::string ext;
     if (auto d = path.find_last_of('.'); d != std::string::npos) ext = path.substr(d);
     for (auto& c : ext) c = (char)std::tolower((unsigned char)c);
-    std::string lang = (ext == ".lua") ? "lua" : (ext == ".cs") ? "cs" : "okayscript";
+    std::string lang = (ext == ".lua") ? "lua" : (ext == ".cs") ? "csharp" : "okayscript";
     auto sc = std::make_unique<okay::ScriptComponent>(lang);
     std::string err; sc->LoadFile(path, &err); sc->SetPath(path);
     okay::ScriptComponent* raw = sc.get();
@@ -4137,10 +4138,10 @@ static bool AttachScriptAsset(okay::editor::EditorState& ed, okay::GameObject* g
     std::string ext;
     if (auto d = path.find_last_of('.'); d != std::string::npos) ext = path.substr(d);
     for (auto& c : ext) c = (char)std::tolower((unsigned char)c);
-    if (ext == ".okay" || ext == ".lua") {
+    if (ext == ".okay" || ext == ".lua" || ext == ".cs") {
         ed.PushUndo();
         // Always a new component (objects can hold several, even the same script twice).
-        auto* nsc = go->AddComponent<okay::ScriptComponent>(ext == ".lua" ? "lua" : "okayscript");
+        auto* nsc = go->AddComponent<okay::ScriptComponent>(ext == ".lua" ? "lua" : ext == ".cs" ? "csharp" : "okayscript");
         std::string err; nsc->LoadFile(path, &err); nsc->SetPath(path);
         if (!err.empty()) ConsoleLog("Script error in " + path + ": " + err, 2);
         SetCodeBuffer(nsc, nsc->Source());
@@ -4220,7 +4221,7 @@ void OpenExternal(const std::string& path) {
     if (!r.ok) ConsoleLog("Couldn't open " + path + " in an editor: " + r.error, 1);
 }
 std::string ExtFor(const std::string& lang) {
-    return lang == "lua" ? "lua" : lang == "csharp" ? "cs" : "okay";
+    return lang == "lua" ? "lua" : (lang == "csharp" || lang == "cs") ? "cs" : "okay";
 }
 // The script a new script file starts with (Scripting/StarterScripts.hpp): an
 // empty Start and Update in the selected language's syntax.
@@ -15683,14 +15684,18 @@ static void ScriptEditorNewScriptPopup(EditorState& ed) {
         if (std::isalnum((unsigned char)*c) || *c == '_') stem += *c;
     if (stem.size() > 5 && stem.substr(stem.size() - 4) == "okay") stem.erase(stem.size() - 4);
     if (stem.empty() || std::isdigit((unsigned char)stem[0])) stem = "Script" + stem;
-    const char* scriptExt = langIdx == 1 ? ".lua" : ".okay";
+    const char* scriptExt = langIdx == 1 ? ".lua" : langIdx == 2 ? ".cs" : ".okay";
     fs::path p = dir / (stem + scriptExt);
     ImGui::TextDisabled("A new script file you can attach to any object.");
     ImGui::Spacing();
     {
-        static const char* const kLangNames[] = {"OkayScript (.okay)", "Lua (.lua)"};
+        static const char* const kLangNames[] = {"OkayScript (.okay)", "Lua (.lua)", "C# (.cs)"};
+        // C# is offered only when this build hosts .NET (OKAY_WITH_CSHARP); the dialog says what it needs.
+        const int nLangs = okay::csharp::DotnetRuntime::CompiledIn() ? 3 : 2;
+        if (langIdx >= nLangs) langIdx = 0;
         ImGui::SetNextItemWidth(320);
-        ImGui::Combo("Language", &langIdx, kLangNames, 2);
+        ImGui::Combo("Language", &langIdx, kLangNames, nLangs);
+        if (langIdx == 2) ImGui::TextDisabled("Real C#. Needs the .NET 8 SDK installed (https://dotnet.microsoft.com/download).");
     }
     if (ImGui::IsWindowAppearing()) ImGui::SetKeyboardFocusHere();
     ImGui::SetNextItemWidth(320);
@@ -15709,6 +15714,7 @@ static void ScriptEditorNewScriptPopup(EditorState& ed) {
         fs::create_directories(dir, ec);
         if (!exists) {
             if (langIdx == 1) std::ofstream(p) << okay::StarterScriptSource("lua");
+            else if (langIdx == 2) std::ofstream(p) << extide::StarterScriptNamed("csharp", stem);
             else std::ofstream(p) << extide::StarterScriptNamed("okayscript", stem);
         }
         if (attach && sel) AttachScriptAsset(ed, sel, p.string());   // its tab opens with the selection
@@ -16079,6 +16085,11 @@ void DrawScriptEditor(EditorState& ed) {
                 sc->SetPath(p);
                 sc->SetSource(buf.data());        // persist edits so a scene save keeps them
                 ConsoleLog("Saved " + p);
+                if (sc->Language() == "csharp") {   // compile on save: errors go to the Console, the Problems panel reads the cache
+                    std::vector<std::string> cl;
+                    if (okay::csharp::CompileForEditor(buf.data(), p, &cl)) ConsoleLog("C# compiled OK: " + p);
+                    else for (auto& l : cl) ConsoleLog(l, 2);
+                }
                 g_scriptSaved[sc] = buf.data();    // clears the modified marker
                 std::error_code mec;               // remember our own write so live-sync
                 s_extMtime[sc] = std::filesystem::last_write_time(p, mec);  // won't self-trigger

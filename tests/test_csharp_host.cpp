@@ -7,6 +7,11 @@
 #include "okay/Core/Log.hpp"
 #include "okay/Scene/GameObject.hpp"
 #include "okay/Scene/Scene.hpp"
+#include "okay/Scene/SceneSerializer.hpp"
+#include "okay/Components/ScriptComponent.hpp"
+#include "okay/Scripting/StarterScripts.hpp"
+#include "okay/Scripting/ScriptVM.hpp"
+#include <sstream>
 #include <chrono>
 #include <map>
 #include <algorithm>
@@ -265,6 +270,44 @@ int main() {
         CHECK(vm.ValidateAll("class X : Behaviour { }").empty());
         SetManagedBackendForTests(nullptr);
         okay::Log::sink = nullptr;
+    }
+    {   // starter script, the shipped example, and the editor compile helper
+        std::string starter = okay::StarterScriptSource("csharp");
+        CHECK(DetectScriptClass(starter) == "NewScript");
+        CHECK(okay::StarterScriptSource("cs") == starter);
+        CHECK(starter.find("Update()") != std::string::npos);
+        std::ifstream cs(std::string(OKAY_SOURCE_DIR) + "/examples/csharp/Pickup.cs");
+        CHECK(cs.good());
+        std::stringstream css; css << cs.rdbuf();
+        CHECK(DetectScriptClass(css.str()) == "Pickup");
+        std::ifstream in(std::string(OKAY_SOURCE_DIR) + "/examples/csharp/csharp_pickup.okayscene");
+        CHECK(in.good());
+        std::stringstream ss; ss << in.rdbuf();
+        okay::Scene scene("Example");
+        std::string err;
+        CHECK(okay::SceneSerializer::Deserialize(scene, ss.str(), &err));
+        okay::GameObject* pickup = scene.Find("Pickup");
+        auto* sc = pickup ? pickup->GetComponent<okay::ScriptComponent>() : nullptr;
+        CHECK(sc != nullptr);
+        if (sc) {
+            CHECK(sc->Language() == "csharp");
+            CHECK(DetectScriptClass(sc->Source()) == "Pickup");
+            CHECK(sc->Source() == css.str());          // the scene embeds exactly Pickup.cs
+        }
+        auto vm = okay::CreateScriptVM("csharp");
+        CHECK(vm != nullptr);
+        std::vector<std::string> lines;
+        if (!DotnetRuntime::CompiledIn()) {
+            CHECK(!CompileForEditor(css.str(), "Assets/Pickup.cs", &lines));
+            CHECK(lines.size() == 1 && lines[0].find("not enabled in this build") != std::string::npos);
+            std::string e;
+            CHECK(!vm->Load(css.str(), &e));
+            CHECK(e.find("C# is not enabled in this build") != std::string::npos);
+            auto d = vm->ValidateAll(css.str());
+            CHECK(d.size() == 1 && d[0].severity == 0);
+            auto langs = okay::AvailableScriptLanguages();
+            CHECK(std::find(langs.begin(), langs.end(), "csharp") == langs.end());
+        }
     }
     {   // not compiled in: stub says so
         if (!DotnetRuntime::CompiledIn()) {

@@ -20,6 +20,25 @@ inline const char* StarterScriptSource(const std::string& lang) {
                "-- Runs every frame. dt is the seconds since the last frame.\n"
                "function Update(dt)\n"
                "end\n";
+    // C# (real C# through the hosted .NET runtime, engine/src/CSharp): a class that inherits Behaviour.
+    if (lang == "csharp" || lang == "cs")
+        return "using OkayScripting;\n"
+               "\n"
+               "public class NewScript : Behaviour\n"
+               "{\n"
+               "    public float speed = 1f;   // public fields show in the Inspector\n"
+               "\n"
+               "    // Runs once, before the first frame.\n"
+               "    void Start()\n"
+               "    {\n"
+               "    }\n"
+               "\n"
+               "    // Runs every frame.\n"
+               "    void Update()\n"
+               "    {\n"
+               "        transform.Translate(Vector3.right * speed * Time.deltaTime);\n"
+               "    }\n"
+               "}\n";
     return "// Runs once, before the first frame.\n"
            "void Start()\n"
            "{\n"

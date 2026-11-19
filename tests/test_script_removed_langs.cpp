@@ -76,12 +76,13 @@ int main() {
     loaded.Start();
     for (int i = 0; i < 5; ++i) loaded.Update(1.0f / 60.0f);
 
-    // The scene validator names the problem clearly.
+    // The scene validator names the problem clearly: the C# script does not compile (C# off, or no Behaviour class).
     ValidationReport rep = SceneValidator::Validate(loaded);
-    CHECK(rep.CountCode("script.backend") == 1);   // only the C# one
+    CHECK(rep.CountCode("script.compile") == 1);   // only the C# one
     bool clear = false;
     for (const auto& i : rep.issues)
-        if (i.code == "script.backend" && i.message.find("no longer supported") != std::string::npos) clear = true;
+        if (i.code == "script.compile" && (i.message.find("not enabled in this build") != std::string::npos ||
+                                           i.message.find("Behaviour") != std::string::npos || i.message.find(".NET") != std::string::npos)) clear = true;
     CHECK(clear);
 
     TEST_MAIN_RESULT();

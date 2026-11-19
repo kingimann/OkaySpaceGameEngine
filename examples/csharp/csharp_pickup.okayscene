@@ -1,0 +1,59 @@
+okayscene 3
+name "C# pickup"
+gravity 0 -9.81
+gravity3 0 -9.81 0
+rendersettings 1 0.27450982 0.47058824 0.78431374 0.5882353 0.7254902 0.88235295 0.47058824 0.47058824 0.50980395 0.15
+fog 0 0.5882353 0.7254902 0.88235295 20 90
+tonemap 1
+gameobject 0 "Player"
+  guid "e0fb14e8a76b38ae331a311e1a705544"
+  active 1
+  parent -1
+  transform -4 0 0 0 0 0 1 1 1 1
+end
+gameobject 1 "Pickup"
+  guid "395e3ab81111fb0b84c847a354979f79"
+  active 1
+  parent -1
+  transform 3 1 0 0 0 0 1 1 1 1
+  script "csharp" "// C# example: a pickup that bobs up and down, spins, and is collected when the Player gets close.
+// Public fields show in the Inspector and are kept by a saved scene or save game.
+// Needs the .NET 8 SDK installed and an engine built with OKAY_WITH_CSHARP=ON (Windows).
+using OkayScripting;
+
+public class Pickup : Behaviour
+{
+    public float speed = 90f;          // spin, in degrees per second
+    public float height = 0.5f;        // how far it bobs up and down
+    public float pickDistance = 1.5f;  // how close the Player must be
+    float age;
+    bool collected;
+    Vector3 origin;
+
+    void Start()
+    {
+        origin = transform.position;
+        Debug.Log(\"Pickup ready at \" + origin);
+    }
+
+    void Update()
+    {
+        age += Time.deltaTime;
+        transform.position = origin + new Vector3(0f, Mathf.Sin(age * 2f) * height, 0f);
+        transform.Rotate(new Vector3(0f, speed * Time.deltaTime, 0f));
+
+        GameObject player = Find(\"Player\");
+        if (player != null && !collected)
+        {
+            float d = Vector3.Distance(player.transform.position, origin);
+            if (d < pickDistance)
+            {
+                collected = true;
+                Debug.Log(\"Picked up!\");
+                Destroy(gameObject, 0.1f);
+            }
+        }
+    }
+}
+" "" 0
+end

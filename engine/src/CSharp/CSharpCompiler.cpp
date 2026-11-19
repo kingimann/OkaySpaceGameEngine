@@ -138,7 +138,7 @@ std::string MakeApiCsproj(const std::string& dir) {
            "    <NuGetAudit>false</NuGetAudit>\n"
            "  </PropertyGroup>\n"
            "  <ItemGroup>\n"
-           "    <Compile Include=\"" + XmlEscape(dir) + "/**/*.cs\" />\n"
+           "    <Compile Include=\"" + XmlEscape(dir) + "/**/*.cs\" Exclude=\"" + XmlEscape(dir) + "/obj/**;" + XmlEscape(dir) + "/bin/**\" />\n"
            "  </ItemGroup>\n"
            "</Project>\n";
 }
@@ -242,6 +242,26 @@ std::string EnsureApiAssembly(const std::string& sourceDir, const std::string& c
         return {};
     }
     return dll.string();
+}
+
+bool CompileForEditor(const std::string& source, const std::string& scriptPath, std::vector<std::string>* lines) {
+    auto say = [&](const std::string& m) { if (lines) lines->push_back(m); };
+    if (!DotnetRuntime::CompiledIn()) { say(NotEnabledMessage()); return false; }
+    if (DetectScriptClass(source).empty()) {
+        say(scriptPath + "(1,1): error: no class that inherits from Behaviour was found. Write: public class MyScript : Behaviour { }");
+        return false;
+    }
+    DotnetEnv env = CurrentDotnetEnv();
+    std::string err;
+    std::string api = EnsureApiAssembly("csharp/OkayScripting", DefaultCacheDir(), env, &err);
+    if (api.empty()) { say(err); return false; }
+    CompileResult r = CompileScript(source, DefaultCacheDir(), api, env);
+    if (r.ok) return true;
+    for (auto& d : r.diags)
+        say(scriptPath + "(" + std::to_string(d.line) + "," + std::to_string(d.column) + "): " + (d.error ? "error " : "warning ") +
+            d.code + ": " + d.message);
+    if (r.diags.empty()) say(r.message.empty() ? "The C# script did not compile." : r.message);
+    return false;
 }
 
 } // namespace okay::csharp

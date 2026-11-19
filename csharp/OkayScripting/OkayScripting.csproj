@@ -1,0 +1,15 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <!-- Builds OkayScripting.dll by hand: dotnet build csharp/OkayScripting. The engine also builds it itself
+       (csharp::EnsureApiAssembly) with the developer's installed .NET SDK; nothing here is third-party code. -->
+  <PropertyGroup>
+    <TargetFramework>net8.0</TargetFramework>
+    <OutputType>Library</OutputType>
+    <AssemblyName>OkayScripting</AssemblyName>
+    <RootNamespace>OkayScripting</RootNamespace>
+    <ImplicitUsings>disable</ImplicitUsings>
+    <Nullable>disable</Nullable>
+    <AllowUnsafeBlocks>true</AllowUnsafeBlocks>
+    <DebugType>embedded</DebugType>
+    <NuGetAudit>false</NuGetAudit>
+  </PropertyGroup>
+</Project>

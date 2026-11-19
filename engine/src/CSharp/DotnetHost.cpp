@@ -208,13 +208,13 @@ struct RuntimeImpl {
         std::error_code ec;
         std::string dir = (env.gameDir.empty() ? fs::temp_directory_path(ec).string() : env.gameDir) + "/okay_dotnet";
         fs::create_directories(dir, ec);
-        std::string rt = PickRuntimeVersion([&] {
+        std::string rtVer = PickRuntimeVersion([&] {
             for (auto& root : RuntimeSearchRoots(env)) { auto v = ListInstalledRuntimes(root); if (!v.empty()) return v; }
             return std::vector<std::string>{};
         }(), 8);
-        if (rt.empty()) return fail(RuntimeNotFoundMessage());
+        if (rtVer.empty()) return fail(RuntimeNotFoundMessage());
         std::string cfg = dir + "/OkayScripting.runtimeconfig.json";
-        { std::ofstream f(cfg, std::ios::binary); f << MakeRuntimeConfigJson(rt); }
+        { std::ofstream f(cfg, std::ios::binary); f << MakeRuntimeConfigJson(rtVer); }
         HostfxrHandle ctx = nullptr;
         int rc = init(W(cfg).c_str(), nullptr, &ctx);
         if (rc < 0 || !ctx) return fail("Could not start .NET: " + HostfxrErrorText(rc));

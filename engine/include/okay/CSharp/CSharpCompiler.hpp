@@ -49,6 +49,10 @@ CompileResult CompileScript(const std::string& source, const std::string& cacheD
 std::string CachedAssembly(const std::string& source, const std::string& cacheDir);
 /// Builds OkayScripting.dll from csharp/OkayScripting sources into the cache (or finds it next to the program).
 std::string EnsureApiAssembly(const std::string& sourceDir, const std::string& cacheDir, const DotnetEnv& env, std::string* error);
+/// Editor "compile on save": build `source` (cached by hash) and describe the outcome as Console lines
+/// (`path(line,col): error CSxxxx: message`, or a plain-words reason such as the "Install .NET" message
+/// with its link). Returns true when the script compiled. Blocks until the SDK is done.
+bool CompileForEditor(const std::string& source, const std::string& scriptPath, std::vector<std::string>* lines);
 /// Default cache folder (next to the project / program).
 std::string DefaultCacheDir();
 

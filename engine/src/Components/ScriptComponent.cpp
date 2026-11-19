@@ -80,7 +80,9 @@ bool ScriptComponent::LoadSource(const std::string& source, std::string* error) 
         OKAY_ERROR(e);
         return false;
     }
-    bool ok = m_vm->Load(source, error);
+    std::string loadErr;
+    bool ok = m_vm->Load(source, error ? error : &loadErr);
+    if (!ok && m_language == "csharp") OKAY_ERROR(error ? *error : loadErr);   // C# problems (not enabled, no runtime, compile errors) must reach the Console
     if (ok) ApplyFieldOverrides();   // override the script's defaults with inspector values
     return ok;
 }

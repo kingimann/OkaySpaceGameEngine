@@ -32,7 +32,7 @@ int main() {
     // Hermetic: nothing of the machine may reach the picture. A fixed wall clock (time() above), UTC, the C locale, a private home and working folder, and no
     // network at all: the version lookup is the offline stub below, which every URL reaches and none answers (docs/own_ui_toolkit.md 6.17).
     setenv("TZ", "UTC", 1); tzset(); setenv("LANG", "C", 1); setenv("LC_ALL", "C", 1);
-    const fs::path dir = fs::temp_directory_path() / ("okayui_port_versions_test_" + std::to_string((long long)getpid()))   // one folder per process: parallel runs cannot meet;
+    const fs::path dir = fs::temp_directory_path() / ("okayui_port_versions_test_" + std::to_string((long long)getpid()));   // one folder per process: parallel runs cannot meet
     std::error_code ec; fs::remove_all(dir, ec);
     fs::create_directories(dir / "home", ec); setenv("HOME", (dir / "home").string().c_str(), 1); const fs::path cwd0 = fs::current_path(ec); fs::current_path(dir / "home", ec);   // a private home and working folder
     for (const char* v : {"0.94.0", "0.95.2"}) {

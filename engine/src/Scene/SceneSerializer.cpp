@@ -35,6 +35,7 @@
 #include "okay/Components/UITheme.hpp"          // grok/ui-theme
 #include "okay/Components/UIStyleVariant.hpp"
 #include "okay/Components/UIUserStyle.hpp"
+#include "okay/Components/UIGuides.hpp"
 #include "okay/Components/UIDamageNumbers.hpp"
 #include "okay/Components/UIDialogueBox.hpp"
 #include "okay/Components/UIInventoryBind.hpp"
@@ -9752,6 +9753,27 @@ void RegisterBuiltinComponentSerializers() {
         k.f("bw", us->borderWidth); k.f("radius", us->cornerRadius); k.f("tsize", us->textSize);
     };
     ComponentSerializerRegistry::Register(std::move(ustyle));
+
+    // UI designer guides, kept with the scene only when the designer asked for it (okay/Components/UIGuides.hpp).
+    ComponentSerializerRegistry::Entry guides;
+    guides.name = "uiguides";
+    guides.write = [](const GameObject& go, std::ostream& out) {
+        for (auto* g : go.GetComponents<UIGuides>()) {
+            auto join = [](const std::vector<float>& v) { std::string s; for (size_t i = 0; i < v.size(); ++i) { if (i) s += ","; std::ostringstream o; o << v[i]; s += o.str(); } return s; };
+            out << "  uiguides";
+            KvOut k{out};
+            k.str("v", join(g->vertical)).str("h", join(g->horizontal));
+            out << "\n";
+        }
+    };
+    guides.read = [](GameObject& go, std::istream& in) {
+        auto* g = go.AddComponent<UIGuides>();
+        KvIn k(in);
+        std::string v, h; k.str("v", v); k.str("h", h);
+        auto split = [](const std::string& s, std::vector<float>& out) { std::istringstream is(s); std::string t; while (std::getline(is, t, ',')) if (!t.empty()) out.push_back((float)std::atof(t.c_str())); };
+        split(v, g->vertical); split(h, g->horizontal);
+    };
+    ComponentSerializerRegistry::Register(std::move(guides));
 
     // Water waves beyond the old sines (style, direction, steepness, count, seed, current), kept as their own record
     // so older scene files and older readers are untouched.

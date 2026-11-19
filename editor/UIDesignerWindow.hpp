@@ -9,6 +9,8 @@
 
 namespace oked {
 
+/// Tell the designer which scene is open: guides saved with it (a UI Guides object) are loaded when it changes.
+void UIDesignerSyncScene(okay::Scene& scene);
 /// Handle the pointer on the rulers and guides. Returns true when it is using the mouse this frame (a guide being
 /// dragged, or a click on a ruler), so the widget editing must leave the click alone. Call before widget editing.
 /// panelPos/panelEnd: the whole view; viewPos: top-left of the (zoomed) design screen; zoom: the view zoom.

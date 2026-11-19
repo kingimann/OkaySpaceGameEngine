@@ -2,6 +2,7 @@
 #include "UIDesignerModel.hpp"
 #include "okay/Components/UIElement.hpp"
 #include "okay/Components/UIUserStyle.hpp"
+#include "okay/Components/UIGuides.hpp"
 #include "PrefabEdit.hpp"
 #include <filesystem>
 #include <cstdio>
@@ -20,9 +21,21 @@ std::vector<uid::Guide> g_guides;
 int g_dragGuide = -1;              // index being dragged, -1 none
 bool g_showLayers = false;
 std::unordered_set<const GameObject*> g_locked;
+Scene* g_scene = nullptr;           // the scene the guides belong to (for keeping them)
 GameObject* g_renaming = nullptr;
 char g_nameBuf[128];
 
+UIGuides* FindGuides(Scene& sc) {
+    for (const auto& up : sc.Objects()) if (up) if (auto* g = up->GetComponent<UIGuides>()) return g;
+    return nullptr;
+}
+void WriteBackGuides() {   // the saved copy follows the session guides, when the scene keeps them
+    if (!g_scene) return;
+    if (UIGuides* sg = FindGuides(*g_scene)) {
+        sg->vertical.clear(); sg->horizontal.clear();
+        for (const auto& g : g_guides) (g.vertical ? sg->vertical : sg->horizontal).push_back(g.pos);
+    }
+}
 bool InRect(ImVec2 p, ImVec2 a, ImVec2 b) { return p.x >= a.x && p.y >= a.y && p.x <= b.x && p.y <= b.y; }
 bool IsUI(GameObject* g) { return g && GetUIRect(g).valid; }
 bool HasUI(GameObject* g) {
@@ -31,6 +44,15 @@ bool HasUI(GameObject* g) {
     return false;
 }
 }  // namespace
+
+void UIDesignerSyncScene(Scene& scene) {
+    if (g_scene == &scene) return;
+    g_scene = &scene; g_guides.clear(); g_dragGuide = -1; g_locked.clear();
+    if (UIGuides* sg = FindGuides(scene)) {
+        for (float x : sg->vertical) g_guides.push_back({true, x});
+        for (float y : sg->horizontal) g_guides.push_back({false, y});
+    }
+}
 
 bool UIDesignerLocked(const GameObject* g) { return g && g_locked.count(g) > 0; }
 
@@ -48,7 +70,7 @@ bool UIDesignerRulerInput(ImVec2 pp, ImVec2 pe, ImVec2 vp, float zoom, bool hove
         if (ImGui::IsMouseReleased(ImGuiMouseButton_Left)) {
             const bool onRuler = g.vertical ? m.x < pp.x + kRuler : m.y < pp.y + kRuler;
             if (onRuler || !InRect(m, pp, pe)) g_guides.erase(g_guides.begin() + g_dragGuide);   // dragged back: remove it
-            g_dragGuide = -1;
+            g_dragGuide = -1; WriteBackGuides();
         }
         return true;
     }
@@ -247,7 +269,17 @@ void UIDesignerLayersWindow(EditorState& ed) {
         for (const auto& up : ed.scene().Objects()) if (up && up->transform && !up->transform->Parent()) roots.push_back(up.get());
         for (int i = (int)roots.size() - 1; i >= 0; --i) DrawTree(roots[i], ed, 0);
         ImGui::Separator();
-        if (ImGui::Button("Clear guides")) g_guides.clear();
+        if (ImGui::Button("Clear guides")) { g_guides.clear(); WriteBackGuides(); ed.dirty = true; }
+        {
+            UIGuides* kept = FindGuides(ed.scene());
+            bool keep = kept != nullptr;
+            if (ImGui::Checkbox("Keep guides with the scene", &keep)) {
+                ed.PushUndo(keep ? "Keep guides" : "Forget guides");
+                if (keep) { auto* g = ed.scene().CreateGameObject("UI Guides")->AddComponent<UIGuides>(); (void)g; WriteBackGuides(); }
+                else if (kept) ed.scene().Destroy(kept->gameObject);
+                ed.dirty = true;
+            }
+        }
         if (ImGui::CollapsingHeader("Shared styles")) DrawStyles(ed);
         if (ImGui::CollapsingHeader("Reusable UI")) DrawReusable(ed);
     }

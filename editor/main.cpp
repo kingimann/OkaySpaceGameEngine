@@ -48568,6 +48568,7 @@ void DrawViewport(EditorState& ed, bool uiPanel = false) {
     // object selection + the Move/Rotate/Scale gizmos. Edit UI in the UI view.
     OKAY_BREADCRUMB(uiPanel ? "UItab:editwidgets" : "Scene:editwidgets");
     // With "Show UI in Scene view" the UI is drawn over the scene, so it's editable there too.
+    if (uiOnly) oked::UIDesignerSyncScene(ed.scene());
     bool rulerBusy = false;   // a guide is being dragged or a ruler clicked: the widgets leave the mouse alone
     if (uiOnly) { ImVec2 vp0 = uiCanvasPos, vs0 = uiCanvasSize; ApplyUIEditZoom(vp0, vs0); rulerBusy = oked::UIDesignerRulerInput(canvasPos, canvasEnd, vp0, g_uiEditZoom, hovered, io); }
     if (!rulerBusy && ownsUIInteraction && (uiOnly || g_showUIOverlay)) EditUIWidgets(ed, uiCanvasPos, uiCanvasSize, hovered, io, uiOnly);

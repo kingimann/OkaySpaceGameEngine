@@ -59,5 +59,17 @@ int main() {
         CHECK(v2 && v2->userStyle == "Title");
         CHECK(SceneSerializer::Serialize(b) == saved);
     }
+    {
+        RUN_SUITE("saved guides: only when kept, and they come back");
+        Scene plain("p"); plain.CreateGameObject("X");
+        CHECK(SceneSerializer::Serialize(plain).find("uiguides") == std::string::npos);
+        Scene s("t"); auto* g = s.CreateGameObject("UI Guides")->AddComponent<UIGuides>();
+        g->vertical = {100.5f, 640}; g->horizontal = {360};
+        const std::string saved = SceneSerializer::Serialize(s);
+        Scene b("b"); std::string err; CHECK(SceneSerializer::Deserialize(b, saved, &err, nullptr));
+        auto* g2 = b.Find("UI Guides") ? b.Find("UI Guides")->GetComponent<UIGuides>() : nullptr;
+        CHECK(g2 && g2->vertical.size() == 2 && g2->vertical[0] == 100.5f && g2->horizontal.size() == 1 && g2->horizontal[0] == 360.0f);
+        CHECK(SceneSerializer::Serialize(b) == saved);
+    }
     TEST_MAIN_RESULT();
 }

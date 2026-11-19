@@ -249,5 +249,39 @@ int main() {
         float hx = 5, hy = 5; ClampPoint(L.content, hx, hy); CHECK(hx == L.content.x && hy == L.content.y);
         CHECK(FormatPx(25.0001f) == "25" && FormatPx(13.0f) == "13" && FormatPx(13.46f) == "13.5" && FormatPx(-0.04f) == "0");
     }
+    {
+        RUN_SUITE("advanced tools: selection, key object, gap, match, tidy, flip, rotate, units, search, commands");
+        std::vector<Item> items = {{1, 0, false, false}, {2, 1, false, false}, {3, 0, true, false}, {4, 0, false, true}, {5, 0, false, false}};
+        CHECK((SelectAllIds(items) == std::vector<int>{1, 2, 5}));
+        CHECK((InvertIds(items, {1}) == std::vector<int>{2, 5}));
+        CHECK((SameTypeIds(items, {2}) == std::vector<int>{2}));
+        CHECK((SameTypeIds(items, {1}) == std::vector<int>{1, 5}));
+        std::vector<Rect> v = {{10, 10, 50, 20}, {100, 40, 30, 30}, {300, 5, 60, 10}};
+        auto k = AlignToKey(v, 1, AlignMode::Left); CHECK(k[0].x == 100 && k[2].x == 100 && k[1].x == 100);
+        k = AlignToKey(v, 2, AlignMode::Bottom);   CHECK(k[2].y == 5 && k[0].y + k[0].h == 15);
+        auto g = DistributeGap(v, true, 8); CHECK(g[0].x == 10 && g[1].x == 68 && g[2].x == 106);
+        std::vector<Rect> unsorted = {v[2], v[0]}; auto gu = DistributeGap(unsorted, true, 5); CHECK(gu[1].x == 10 && gu[0].x == 65);
+        auto m = MatchToKey(v, 0, true, false); CHECK(m[1].w == 50 && m[2].w == 50 && m[1].h == 30);
+        std::vector<Rect> four = {{0, 0, 10, 10}, {50, 0, 20, 10}, {5, 40, 10, 30}, {90, 45, 10, 10}};
+        auto t = TidyGrid(four, 2, 4);
+        CHECK(t[0].x == 0 && t[0].y == 0 && t[1].x == 14 && t[1].y == 0);   // column 0 is 10 wide, gap 4
+        CHECK(t[2].x == 0 && t[2].y == 14 && t[3].x == 14 && t[3].y == 14);
+        CHECK(TidyGrid({}, 2, 4).empty() && TidyGrid(four, 0, 4)[1].x == 50);
+        auto fh = Flip(v, true); CHECK(fh[0].R() == 360 && fh[2].x == 10);
+        auto fv = Flip(v, false); CHECK(fv[0].y == 45 && fv[1].y == 5);
+        CHECK_NEAR(AngleFromPivot(0, 0, 0, -10, false), 0, 1e-3); CHECK_NEAR(AngleFromPivot(0, 0, 10, 0, false), 90, 1e-3);
+        CHECK_NEAR(AngleFromPivot(0, 0, 0, 10, false), 180, 1e-3); CHECK_NEAR(AngleFromPivot(0, 0, -10, 0, false), 270, 1e-3);
+        CHECK_NEAR(AngleFromPivot(0, 0, 10, -9, true), 45, 1e-3);
+        CHECK_NEAR(ToPx(50, Unit::Percent, 640), 320, 1e-3); CHECK_NEAR(FromPx(160, Unit::Percent, 640), 25, 1e-3); CHECK(ToPx(7, Unit::Px, 640) == 7);
+        Rect sc = ScaleAbout({10, 10, 20, 20}, 0, 0, 2, 3); CHECK(sc.x == 20 && sc.y == 30 && sc.w == 40 && sc.h == 60);
+        CHECK(NameMatches("Health Bar", "bar heal") && !NameMatches("Health Bar", "score") && NameMatches("x", ""));
+        int n; CHECK(ReplaceText("Play play PLAY", "play", "Go", false, n) == "Go Go Go" && n == 3);
+        CHECK(ReplaceText("Play play", "play", "Go", true, n) == "Play Go" && n == 1); CHECK(ReplaceText("a", "", "b", true, n) == "a" && n == 0);
+        std::vector<Command> cmds = {{"fit", "Fit to window", "", "zoom reset"}, {"align.left", "Align left", "", "edges"}, {"zoom", "Reset zoom", "", ""}};
+        auto r = RankCommands(cmds, "zoom"); CHECK(r.size() == 2);
+        CHECK(RankCommands(cmds, "align").size() == 1 && RankCommands(cmds, "").size() == 3 && RankCommands(cmds, "qqq").empty());
+        CHECK(RankCommands(cmds, "re")[0] == 2);   // "Reset zoom" starts with the words
+        CHECK(Shortcuts().size() >= 10);
+    }
     TEST_MAIN_RESULT();
 }

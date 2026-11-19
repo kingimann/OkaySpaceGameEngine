@@ -15,7 +15,9 @@
 //   responsive    common screen sizes, and where an anchored widget lands on each
 #include <algorithm>
 #include <cmath>
+#include <cctype>
 #include <cstdio>
+#include <utility>
 #include <string>
 #include <vector>
 #include "okay/Components/UIAnchor.hpp"
@@ -343,6 +345,119 @@ inline std::string FormatPx(float v) {
     char b[32];
     if (std::fabs(r - std::round(r)) < 0.05f) std::snprintf(b, sizeof(b), "%d", (int)std::lround(r)); else std::snprintf(b, sizeof(b), "%.1f", r);
     return b;
+}
+
+// ---- advanced tools: selection, key-object alignment, spacing, flip, units, search, commands ----------------------
+struct Item { int id = 0; int type = 0; bool locked = false, hidden = false; };
+inline std::vector<int> SelectAllIds(const std::vector<Item>& v) { std::vector<int> o; for (const Item& i : v) if (!i.locked && !i.hidden) o.push_back(i.id); return o; }
+inline std::vector<int> InvertIds(const std::vector<Item>& v, const std::vector<int>& sel) {
+    std::vector<int> o; for (const Item& i : v) if (!i.locked && !i.hidden && std::find(sel.begin(), sel.end(), i.id) == sel.end()) o.push_back(i.id); return o;
+}
+/// Everything of the same kind as anything already selected.
+inline std::vector<int> SameTypeIds(const std::vector<Item>& v, const std::vector<int>& sel) {
+    std::vector<int> types; for (const Item& i : v) if (std::find(sel.begin(), sel.end(), i.id) != sel.end()) types.push_back(i.type);
+    std::vector<int> o; for (const Item& i : v) if (!i.locked && !i.hidden && std::find(types.begin(), types.end(), i.type) != types.end()) o.push_back(i.id); return o;
+}
+/// Align to one chosen "key" rectangle, which does not move.
+inline std::vector<Rect> AlignToKey(const std::vector<Rect>& v, size_t key, AlignMode m) {
+    if (key >= v.size()) return v;
+    std::vector<Rect> o = AlignTo(v, m, v[key]); o[key] = v[key]; return o;
+}
+/// Equal gaps of exactly `gap` pixels, in order of position; the first one stays where it is. Result in input order.
+inline std::vector<Rect> DistributeGap(std::vector<Rect> v, bool horizontal, float gap) {
+    std::vector<size_t> idx(v.size()); for (size_t i = 0; i < idx.size(); ++i) idx[i] = i;
+    std::sort(idx.begin(), idx.end(), [&](size_t a, size_t b) { return horizontal ? v[a].x < v[b].x : v[a].y < v[b].y; });
+    for (size_t k = 1; k < idx.size(); ++k) {
+        const Rect& p = v[idx[k - 1]]; Rect& q = v[idx[k]];
+        if (horizontal) q.x = p.R() + gap; else q.y = p.B() + gap;
+    }
+    return v;
+}
+/// Give every rectangle the key's width and / or height (the key is unchanged).
+inline std::vector<Rect> MatchToKey(std::vector<Rect> v, size_t key, bool w, bool h) {
+    if (key >= v.size()) return v;
+    const Rect k = v[key];
+    for (Rect& q : v) { if (w) q.w = k.w; if (h) q.h = k.h; }
+    return v;
+}
+/// Tidy up: lay the rectangles out in `cols` columns, in reading order (top row first), starting at the top-left of
+/// their bounds, with `gap` between cells. Column widths and row heights follow the largest member.
+inline std::vector<Rect> TidyGrid(std::vector<Rect> v, int cols, float gap) {
+    if (v.empty() || cols < 1) return v;
+    const Rect b = Bounds(v);
+    std::vector<size_t> idx(v.size()); for (size_t i = 0; i < idx.size(); ++i) idx[i] = i;
+    std::sort(idx.begin(), idx.end(), [&](size_t a, size_t c) { return v[a].y != v[c].y ? v[a].y < v[c].y : v[a].x < v[c].x; });
+    const int rows = ((int)v.size() + cols - 1) / cols;
+    std::vector<float> cw(cols, 0), rh(rows, 0);
+    for (size_t k = 0; k < idx.size(); ++k) { cw[k % cols] = std::max(cw[k % cols], v[idx[k]].w); rh[k / cols] = std::max(rh[k / cols], v[idx[k]].h); }
+    for (size_t k = 0; k < idx.size(); ++k) {
+        float x = b.x, y = b.y; for (int c = 0; c < (int)(k % cols); ++c) x += cw[c] + gap; for (int r = 0; r < (int)(k / cols); ++r) y += rh[r] + gap;
+        v[idx[k]].x = x; v[idx[k]].y = y;
+    }
+    return v;
+}
+/// Mirror the group about the middle of its bounds (flip left-right or up-down).
+inline std::vector<Rect> Flip(std::vector<Rect> v, bool horizontal) {
+    const Rect b = Bounds(v);
+    for (Rect& q : v) { if (horizontal) q.x = b.x + b.R() - q.R(); else q.y = b.y + b.B() - q.B(); }
+    return v;
+}
+/// Rotation from the pivot to the mouse, in degrees clockwise on screen with 0 = straight up; Shift snaps to 15.
+inline float AngleFromPivot(float px, float py, float mx, float my, bool snap15) {
+    float a = std::atan2(mx - px, -(my - py)) * 57.2957795f;
+    if (a < 0) a += 360.0f;
+    if (snap15) a = std::round(a / 15.0f) * 15.0f;
+    return a >= 360.0f ? a - 360.0f : a;
+}
+enum class Unit { Px, Percent };
+/// A typed value in px or % of the parent, as pixels (and back).
+inline float ToPx(float v, Unit u, float parent) { return u == Unit::Percent ? v * 0.01f * parent : v; }
+inline float FromPx(float px, Unit u, float parent) { return u == Unit::Percent ? (parent > 0 ? px * 100.0f / parent : 0.0f) : px; }
+/// Scale a rectangle about a point, as "scale with children" does for each child.
+inline Rect ScaleAbout(const Rect& r, float ox, float oy, float sx, float sy) { return {ox + (r.x - ox) * sx, oy + (r.y - oy) * sy, r.w * sx, r.h * sy}; }
+
+/// Case-insensitive: does the name contain every word of the query?
+inline bool NameMatches(const std::string& name, const std::string& query) {
+    auto low = [](std::string s) { for (char& c : s) c = (char)std::tolower((unsigned char)c); return s; };
+    const std::string n = low(name); std::string q = low(query), w;
+    for (size_t i = 0; i <= q.size(); ++i) {
+        if (i == q.size() || q[i] == ' ') { if (!w.empty() && n.find(w) == std::string::npos) return false; w.clear(); } else w += q[i];
+    }
+    return true;
+}
+/// Replace text; returns the new string and how many were replaced.
+inline std::string ReplaceText(const std::string& s, const std::string& find, const std::string& repl, bool matchCase, int& count) {
+    count = 0; if (find.empty()) return s;
+    auto low = [&](std::string t) { if (!matchCase) for (char& c : t) c = (char)std::tolower((unsigned char)c); return t; };
+    const std::string hs = low(s), nd = low(find); std::string out; size_t i = 0;
+    while (i < s.size()) {
+        if (hs.compare(i, nd.size(), nd) == 0) { out += repl; i += nd.size(); ++count; } else out += s[i++];
+    }
+    return out;
+}
+
+struct Command { std::string id, label, keys, words; };
+/// The commands that match the typed words, best first (a label that starts with the words beats one that only contains them).
+inline std::vector<int> RankCommands(const std::vector<Command>& cmds, const std::string& query) {
+    std::vector<std::pair<int, int>> sc;
+    for (int i = 0; i < (int)cmds.size(); ++i) {
+        if (!NameMatches(cmds[i].label + " " + cmds[i].words, query)) continue;
+        int score = 10; if (query.empty() || NameMatches(cmds[i].label.substr(0, query.size()), query)) score = 0;
+        sc.push_back({score, i});
+    }
+    std::stable_sort(sc.begin(), sc.end(), [](auto& a, auto& b) { return a.first < b.first; });
+    std::vector<int> o; for (auto& p : sc) o.push_back(p.second); return o;
+}
+struct Shortcut { const char* keys; const char* what; };
+inline const std::vector<Shortcut>& Shortcuts() {
+    static const std::vector<Shortcut> v = {
+        {"Ctrl+P", "Find any action"}, {"F1 or ?", "This list"}, {"Arrow keys", "Nudge 1 pixel (Shift: grid step)"},
+        {"Mouse wheel", "Zoom about the cursor"}, {"Middle drag or Space+drag", "Pan"}, {"Drag from a ruler", "New guide (drag it back to remove)"},
+        {"Shift while resizing", "Keep the shape"}, {"Alt while resizing", "Resize from the middle"},
+        {"Ctrl+A", "Select all widgets"}, {"Ctrl+Shift+I", "Invert the selection"}, {"Ctrl+Shift+A", "Select the same kind"},
+        {"Ctrl+G", "Group (put on a card)"}, {"Ctrl+Shift+L", "Lock selected"}, {"Ctrl+Shift+H", "Hide selected"},
+        {"Ctrl+Z / Ctrl+Y", "Undo / redo"}};
+    return v;
 }
 
 }  // namespace oked::uid

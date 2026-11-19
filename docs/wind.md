@@ -124,7 +124,7 @@ All of it is our own code written from general knowledge, with no code taken fro
 | `vs_script_coverage`, `vs_categories`, `vs_palette_categories`, `vs_names`, `vs_palette_levels`, `vs_node_docs`, `vs_clarity`, `vs_registry_effect`, `vs_search_connect` | 0 failures after the wind blocks were placed in Weather & Fog and `docs/visual_script_coverage.md` and the playground `coverage.okayvs` were regenerated |
 
 The example was also loaded and run for 14 simulated seconds by a throw-away program: 22 swaying plant chunks, the box slid about 4 m and
-stopped between gusts, leaves alive, no NaN; two software-renderer pictures are in `docs/images/wind-example-t04.png` and `-t12.png`.
+stopped between gusts, leaves alive, no NaN. It was also rendered headless with the software renderer (trees, pines, flag and box all drawn); no pictures are kept in the repo.
 
 ## Not done / unverified
 

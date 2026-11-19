@@ -2019,12 +2019,9 @@ looks and plays exactly as before. Details: `docs/wind.md`.
 where the camera is). In the new script language: `Wind.SetStrength(12)`, `Wind.SetGust(0.8, 0.3)`, `Wind.At(Vec3(0, 1, 0))`,
 `Wind.Strength`, `Wind.Direction`.
 
-**Pictures.** `docs/images/wind-example-t04.png` and `wind-example-t12.png` are headless software renders of the scene at 4 s and 12 s (still
-images: they show the scene, not the motion, and the software renderer does not draw particles or the rope).
-
 **Status.** Tested on Linux: the wind maths (noise, gust period, zone blending, no NaN) and the components in a scene (zones, particles,
 drag, sway, foliage, cable, sound, save/load). Not run: Windows, a GPU renderer, the editor on a screen. The example scene was made by
-a throw-away generator, loaded and run for 14 simulated seconds headless (22 swaying plant chunks, the box moved, no NaN), and rendered to the two pictures above with the software renderer; nobody has watched it move on a screen.
+a throw-away generator, loaded and run for 14 simulated seconds headless (22 swaying plant chunks, the box moved, no NaN), and rendered headless with the software renderer (no pictures kept in the repo); nobody has watched it move on a screen.
 
 ## xbox-uwp. Xbox One (experimental, Developer Mode) export
 

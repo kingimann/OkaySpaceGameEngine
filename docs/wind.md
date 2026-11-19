@@ -100,7 +100,8 @@ OkayScript builtins (also listed in `docs/scripting.md`):
 
 The newer script language has a `Wind` object: `Wind.Strength` and `Wind.Direction` (where the script's object is),
 `Wind.At(position)` (a vector), `Wind.SetStrength(x)`, `Wind.SetDirection(vec)`, `Wind.SetGust(amount, perSecond)`.
-Visual Script nodes were **not** added (see below).
+Every OkayScript builtin above is also a Visual Script block automatically (`Fn.wind_speed`, `Fn.wind_set`, `Fn.wind_gust`, `Fn.wind_x/y/z`, in the palette under Weather & Fog; the
+builtin-parity test makes that so). Dedicated hand-written blocks with their own plain-words help (like Set Weather) were **not** made.
 
 ## What each file was written from (rule 19a)
 
@@ -113,6 +114,31 @@ All of it is our own code written from general knowledge, with no code taken fro
 - `editor/WindTools.cpp`: Dear ImGui drawing calls, as the rest of the editor.
 - Tests: `tests/test_wind_field.cpp` (the maths), `tests/test_wind.cpp` (in a scene).
 
+## Tests and what was run (2026-11-19, Linux, Release build, one machine)
+
+| Test | Result |
+|---|---|
+| `wind_field` (`tests/test_wind_field.cpp`: noise determinism and range, bad numbers, gust period and travel, seeds, zone shapes and soft edges, radial, priority and add/replace blending, curve, published field, NaN and zero-size edges) | 788 checks, 0 failures (also clean with ASan + UBSan) |
+| `wind` (`tests/test_wind.cpp`: zones in a scene, turn to aim, switch off, particles, Wind Drag, Wind Sway tree and flag, Foliage, Cable, Wind Sound, save and load, broken zones) | 80 checks, 0 failures |
+| `save_coverage`, `property_registry` (all four new components round-trip), `scene_serializer_audit`, `foliage`, `particles_fx`, `particles_serialize`, `volumes`, `scriptapi`, `api_expand`, `example_scenes`, `examples_work` (runs `examples/wind` headless) | 0 failures each (`property_registry` found a real bug in the first run, fixed) |
+| `vs_script_coverage`, `vs_categories`, `vs_names`, `vs_palette_levels`, `vs_node_docs` | 0 failures after the wind blocks were placed in Weather & Fog and `docs/visual_script_coverage.md` and the playground `coverage.okayvs` were regenerated |
+
+The example was also loaded and run for 14 simulated seconds by a throw-away program: 22 swaying plant chunks, the box slid about 4 m and
+stopped between gusts, leaves alive, no NaN; two software-renderer pictures are in `docs/images/wind-example-t04.png` and `-t12.png`.
+
 ## Not done / unverified
 
-See the final section of this file, kept up to date at the end of the work.
+- **Not run on Windows, on a GPU renderer, or by eye on a screen.** The editor files (`editor/WindTools.cpp`, `main.cpp`, `LevelTools.cpp`) were only
+  syntax-checked with `g++ -fsyntax-only`; the editor program was not linked or started here. The menus, the Scene-view arrows, the compass in the
+  Lighting window and the Inspector rows are therefore unseen.
+- **Sway is on the CPU.** It works the same in every renderer, but a very large forest rewrites its chunk meshes up to 20 times a second near the
+  camera. A GPU vertex-shader version (one uniform, no re-upload) is the better long-term answer and was not written.
+- **Not linked to the wind:** trails (`TrailRenderer`), spline followers, `LineRenderer` ropes other than `Cable`, the fog, `Water` (still the
+  weather's vector only), Terrain grass.
+- **No hand-made Visual Script blocks** with plain-words help for wind (the automatic `Fn.wind_*` blocks exist).
+- **No multiplayer sync:** wind is computed from the same scene data and clock on each machine; the clock is not synchronised and there is no
+  hook that carries it, so two players can see gusts at different moments.
+- **No resize handles** on a Wind Zone in the Scene view (the shape is drawn; size is edited in the Inspector).
+- The Wind Sound is one loop with a slow "breathing" tone; it is a simple filtered noise, not a recording, and was not listened to.
+- Particles in a Local-space emitter sample the wind at the emitter, not per particle.
+- The wind clock is in seconds of scene time (`WindField::Clock()`); it is not saved with the scene, so a loaded game starts at 0.

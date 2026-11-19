@@ -853,7 +853,7 @@ inline const VsRule kBuiltinRules[] = {
     {"load_scene*", "Scenes & Levels", ""}, {"load_next_scene", "Scenes & Levels", ""},
     {"reload_scene", "Scenes & Levels", ""}, {"scene_*", "Scenes & Levels", ""},
     {"SceneManager.LoadScene", "Scenes & Levels", ""}, {"quit", "Scenes & Levels", ""},
-    {"Application.Quit", "Scenes & Levels", ""}, {"weather_set", "Weather & Fog", ""}, {"fog_set", "Weather & Fog", ""},
+    {"Application.Quit", "Scenes & Levels", ""}, {"weather_set", "Weather & Fog", ""}, {"fog_set", "Weather & Fog", ""}, {"wind_*", "Weather & Fog", ""}, {"Wind.*", "Weather & Fog", ""},
     {"post_set", "Post Effects", ""}, {"ambient", "Lighting & Sky", ""}, {"set_ambient", "Lighting & Sky", ""},
     {"set_background*", "Lighting & Sky", ""}, {"set_bg", "Lighting & Sky", ""}, {"set_light*", "Lighting & Sky", ""},
     {"time_of_day", "Lighting & Sky", ""}, {"get_display_*", "Window & Display", ""},

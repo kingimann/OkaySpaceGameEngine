@@ -98,7 +98,7 @@ the far rings less often.
 
 Pictures (software renderer, made by `water_shot --shots <dir>`, not committed): `lake`, `ocean_calm`, `ocean_rough`, `ocean_storm`, `ocean_old_look`, `river`,
 `shore`, `underwater`. Seen by the author: the old look is a flat pale sheet; the new ocean has rolling crests with white streaks, the river has flowing ripples
-between banks, the shore goes from turquoise to deep blue with a surf line, and under the surface the view is green-blue fog.
+between banks, the shore goes from clear turquoise towards deeper blue (the foam line is only faintly visible from the example camera: shore foam is checked by numbers, not yet by eye), and under the surface the view is green-blue fog.
 
 ## Not done
 

@@ -14,7 +14,19 @@ namespace {
 constexpr int    kMaxHitStops = 8;
 constexpr double kEps = 1e-7;   // 0.1 microsecond: float frame times never land closer than this to a boundary
 
-struct Hit { double remaining; float scale; };
+// `total` and `ease`: a slow-motion with an ease ramps the multiplier from 1 down to `scale` over its first `ease`
+// seconds and back up over its last `ease` seconds (never more than half of `total` each); ease 0 is the
+// plain constant-scale hit stop.
+struct Hit { double remaining; float scale; double total = 0.0; double ease = 0.0; };
+
+// The multiplier a hit stop has when `remaining` of its `total` seconds are left.
+double HitMul(const Hit& h, double remaining) {
+    if (h.ease <= 0.0) return (double)h.scale;
+    const double elapsed = h.total - remaining;
+    double f = std::min(elapsed, remaining) / h.ease;
+    f = f < 0.0 ? 0.0 : (f > 1.0 ? 1.0 : f);
+    return 1.0 + ((double)h.scale - 1.0) * f;
+}
 Hit    g_hit[kMaxHitStops];
 int    g_hitN = 0;
 
@@ -37,23 +49,24 @@ float CleanScale(float s) {
 
 void Time::RefreshFx() {
     float m = 1.0f;
-    for (int i = 0; i < g_hitN; ++i) m = std::min(m, g_hit[i].scale);
+    for (int i = 0; i < g_hitN; ++i) m = std::min(m, (float)HitMul(g_hit[i], g_hit[i].remaining));
     Time::s_hitMul = m;
     Time::s_hitCount = g_hitN;
     Time::s_fxActive = g_hitN > 0 || g_ramp;
 }
 
-void Time::HitStop(float seconds, float scale) {
+void Time::HitStop(float seconds, float scale, float ease) {
     if (!(seconds > 0.0f) || !std::isfinite(seconds)) return;
     scale = CleanScale(scale);
-    Hit h{(double)seconds, scale};
+    Hit h{(double)seconds, scale, (double)seconds, 0.0};
+    if (ease > 0.0f && std::isfinite(ease)) h.ease = std::min((double)ease, 0.5 * (double)seconds);
     if (g_hitN < kMaxHitStops) {
         g_hit[g_hitN++] = h;
     } else {
         // Full. An effect another one outlasts at the same or a stronger scale changes nothing
         // (the strongest running one decides), so it is the one to give up; the shortest-lived
         // effect is not always that one (a short freeze among long, weak slow-downs).
-        auto dominates = [](const Hit& a, const Hit& b) { return a.remaining >= b.remaining && a.scale <= b.scale; };
+        auto dominates = [](const Hit& a, const Hit& b) { return a.ease <= 0.0 && b.ease <= 0.0 && a.remaining >= b.remaining && a.scale <= b.scale; };
         for (int i = 0; i < g_hitN; ++i) if (dominates(g_hit[i], h)) { RefreshFx(); return; }   // the newcomer adds nothing
         int victim = -1;
         for (int i = 0; i < g_hitN && victim < 0; ++i) if (dominates(h, g_hit[i])) victim = i;
@@ -117,12 +130,22 @@ double Time::StepEffects(double unscaledDt) {
     int guard = 0;
     while (t < dt - kEps && guard++ < 4 * kMaxHitStops + 8) {
         double seg = dt - t;
-        double mult = 1.0;
         for (int i = 0; i < g_hitN; ++i) {
-            if (g_hit[i].remaining > kEps) {
-                seg = std::min(seg, g_hit[i].remaining);
-                mult = std::min(mult, (double)g_hit[i].scale);
+            const Hit& h = g_hit[i];
+            if (h.remaining <= kEps) continue;
+            seg = std::min(seg, h.remaining);
+            if (h.ease > 0.0) {   // the multiplier is a straight line between these corners: end a segment at each
+                const double elapsed = h.total - h.remaining;
+                if (elapsed < h.ease - kEps) seg = std::min(seg, h.ease - elapsed);
+                if (h.remaining > h.ease + kEps) seg = std::min(seg, h.remaining - h.ease);
             }
+        }
+        double mult = 1.0, mult1 = 1.0;   // the multiplier at the start and at the end of the segment
+        for (int i = 0; i < g_hitN; ++i) {
+            const Hit& h = g_hit[i];
+            if (h.remaining <= kEps) continue;
+            mult = std::min(mult, HitMul(h, h.remaining));
+            mult1 = std::min(mult1, HitMul(h, h.remaining - seg));
         }
         double s0, s1;
         if (g_ramp) {
@@ -135,7 +158,7 @@ double Time::StepEffects(double unscaledDt) {
         } else {
             s0 = s1 = (double)s_timeScale;
         }
-        if (!s_frozen) acc += seg * mult * 0.5 * (s0 + s1);
+        if (!s_frozen) acc += mult1 == mult ? seg * mult * 0.5 * (s0 + s1) : seg * 0.5 * (s0 * mult + s1 * mult1);
         for (int i = 0; i < g_hitN; ++i) g_hit[i].remaining -= seg;
         if (g_ramp) {
             g_rampT += seg;

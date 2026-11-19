@@ -200,6 +200,7 @@ player
 security_paths
 spatial_audio
 texture
+time
 touch_controls
 ui_library
 ui_text

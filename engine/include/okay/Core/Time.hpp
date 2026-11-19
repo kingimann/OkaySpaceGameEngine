@@ -99,7 +99,11 @@ public:
     /// `scale` (0 = a full freeze frame) times the current scale, then goes back by
     /// itself. Several at once: the strongest (lowest scale) applies; each ends on its
     /// own clock. Ignored for a duration that is not a positive finite number.
-    static void HitStop(float seconds, float scale = 0.0f);
+    static void HitStop(float seconds, float scale = 0.0f, float ease = 0.0f);
+    /// Bullet time with a smooth start and finish: the speed eases down to `scale` over the first `ease` real
+    /// seconds, holds, and eases back up over the last `ease` (an ease longer than half the time is cut to
+    /// half). The same effect as HitStop with an ease, with the arguments in the order people say it.
+    static void SlowMotion(float scale, float seconds, float ease = 0.0f) { HitStop(seconds, scale, ease); }
     static bool  HitStopActive() { return s_hitCount > 0; }
     /// Real seconds until the last running hit stop ends (0 when none).
     static float HitStopRemaining();
@@ -370,8 +374,9 @@ public:
     /// With Spread: the most time that may be owed, seconds (0 to a day; NaN and negatives mean 0).
     double MaxOwed() const { return m_maxOwed; }
     void SetMaxOwed(double seconds) { m_maxOwed = (seconds > 0.0 && std::isfinite(seconds)) ? (seconds < 86400.0 ? seconds : 86400.0) : 0.0; Clamp(); }
-    /// Time owed beyond what this frame's steps could run (Spread), seconds.
-    double Owed() const { const double cap = m_step * (double)m_maxSteps; return m_acc > cap ? m_acc - cap : 0.0; }
+    /// Time still waiting to be run beyond the part-step that is just the alpha (Spread: what a hitch left),
+    /// seconds.
+    double Owed() const { return m_acc > m_step ? m_acc - m_step : 0.0; }
 
     /// Add `dt` seconds (negative, NaN and infinite times add nothing) and return how
     /// many fixed steps are now due, at most MaxSteps(); they are taken off the

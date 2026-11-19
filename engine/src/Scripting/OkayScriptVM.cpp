@@ -3981,7 +3981,9 @@ struct OkayScriptVM::Impl {
             return Value{};
         };
         b["slow_motion"]   = [](std::vector<Value>& a) {
-            if (a.size() >= 2) Time::HitStop(a[1].AsFloat(), a[0].AsFloat());
+            // slow_motion(scale, seconds, ease): with a third number the speed eases down over the first `ease`
+            // seconds and back up over the last `ease` (Time::SlowMotion), instead of changing at once.
+            if (a.size() >= 2) Time::SlowMotion(a[0].AsFloat(), a[1].AsFloat(), a.size() > 2 ? a[2].AsFloat() : 0.0f);
             return Value{};
         };
         // ramp_timescale(target, seconds): ease the time scale to target over that many real seconds (a straight line).
@@ -6415,6 +6417,17 @@ struct OkayScriptVM::Impl {
             if (!dn) return Value{-1.0f};
             if (!a.empty()) dn->SetTime(a[0].AsFloat());
             return Value{dn->Hour()};
+        };
+        // The day clock (DayNightCycle): the day number, the season (0 Spring .. 3 Winter), the "08:30" text, and a
+        // skip forward that fires the hour, sunrise and day events on the way (sleeping until morning: skip_to_hour(6)).
+        b["day_number"]  = [sceneOf](std::vector<Value>&) { Scene* s = sceneOf(); DayNightCycle* dn = s ? s->FindObjectOfType<DayNightCycle>() : nullptr; return Value{dn ? (float)dn->day : -1.0f}; };
+        b["season"]      = [sceneOf](std::vector<Value>&) { Scene* s = sceneOf(); DayNightCycle* dn = s ? s->FindObjectOfType<DayNightCycle>() : nullptr; return Value{dn ? (float)dn->Season() : -1.0f}; };
+        b["clock_text"]  = [sceneOf](std::vector<Value>&) { Scene* s = sceneOf(); DayNightCycle* dn = s ? s->FindObjectOfType<DayNightCycle>() : nullptr; return Value{dn ? dn->ClockText() : std::string()}; };
+        b["skip_to_hour"] = [sceneOf](std::vector<Value>& a) {
+            Scene* s = sceneOf();
+            DayNightCycle* dn = s ? s->FindObjectOfType<DayNightCycle>() : nullptr;
+            if (dn && !a.empty()) dn->SkipToHour(a[0].AsFloat());
+            return Value{};
         };
         // Keep the current volumes as the player's settings (also saved on quit).
         b["save_audio_settings"] = [](std::vector<Value>&) { AudioMixer::SaveSettings(); return Value{}; };

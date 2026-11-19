@@ -154,5 +154,27 @@ int main() {
         CHECK(s.PhysicsStepsLastFrame() <= 17);
     }
 
+    // ---- 7. Scene physics steps over ten minutes at several frame rates -----------------------------------------
+    {
+        Scene::SetProjectPhysicsRate(50.0f, true);
+        struct C { const char* name; double fps; };
+        const C cs[] = {{"30", 30.0}, {"60", 60.0}, {"144", 144.0}, {"240", 240.0}, {"variable 20-120", 0.0}};
+        for (const C& c : cs) {
+            Scene s("steps");
+            s.UseFixedStepPhysics(true);
+            s.Start();
+            Lcg rng; double real = 0.0; long long steps = 0;
+            while (real < 600.0) {
+                const double dt = c.fps > 0.0 ? 1.0 / c.fps : 1.0 / (20.0 + 100.0 * rng.Next01());
+                real += dt;
+                s.Update((float)dt);
+                steps += s.PhysicsStepsLastFrame();
+            }
+            const double expected = real * 50.0;
+            std::printf("[scene steps] 10 min at %s fps: %lld physics steps, exact would be %.1f (off by %+.1f)\n", c.name, steps, expected, (double)steps - expected);
+            CHECK(std::fabs((double)steps - expected) <= 2.0);
+        }
+    }
+
     TEST_MAIN_RESULT();
 }

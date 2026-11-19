@@ -4420,3 +4420,8 @@ endforeach()
 add_executable(test_time_sim test_time_sim.cpp)
 target_link_libraries(test_time_sim PRIVATE okay::engine)
 add_test(NAME time_sim COMMAND test_time_sim)
+
+# The time upgrade: nanosecond clocks, clock parents, scheduler additions, calendar, settings, limiter.
+add_executable(test_time_upgrade test_time_upgrade.cpp)
+target_link_libraries(test_time_upgrade PRIVATE okay::engine)
+add_test(NAME time_upgrade COMMAND test_time_upgrade)

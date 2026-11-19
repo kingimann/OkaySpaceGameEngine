@@ -1,0 +1,123 @@
+okayscene 3
+name "Time playground"
+gravity 0 -9.81
+gravity3 0 -9.81 0
+gameobject 0 "Floor"
+  active 1
+  parent -1
+  transform 0 -0.5 0 0 0 0 1 1 1 1
+  boxcollider3d 20 1 20 0 0 0 0
+end
+gameobject 1 "Floor Mesh"
+  active 1
+  parent 0
+  transform 0 -0.5 0 0 0 0 1 20 1 20
+  mesh "Cube" 0.35 0.4 0.35 1 0 "" 0
+  material 0 0 0 0 8 1 "" 1 1
+end
+gameobject 2 "Ball"
+  active 1
+  parent -1
+  transform 0 6 0 0 0 0 1 1 1 1
+  boxcollider3d 1 1 1 0 0 0 0
+  rigidbody3d 0 1 1 0 0 0 0 0
+  mesh "Sphere" 0.9 0.3 0.2 1 0 "" 0
+  material 0 0 0 0 8 1 "" 1 1
+  script "okayscript" "// A ball that is dropped again every 3 seconds. every() counts GAME time, so slow motion
+// slows the drops and a pause stops them. Gravity (physics) slows too: it all runs on game time.
+function start() { every(3, \"drop\"); }
+function drop() { set_y(7); set_velocity(0, 0, 0); }
+" "" 0
+end
+gameobject 3 "Game Time Spinner"
+  active 1
+  parent -1
+  transform -3 1 0 0 0 0 1 1 1 1
+  mesh "Cube" 0.2 0.5 0.9 1 0 "" 0
+  material 0 0 0 0 8 1 "" 1 1
+  script "okayscript" "// Turns on GAME time (dt): slows in slow motion, stops in a hit stop and while the game is paused.
+function update(dt) { rotate3(0, 90 * dt, 0); }
+" "" 0
+end
+gameobject 4 "Real Time Spinner"
+  active 1
+  parent -1
+  transform 3 1 0 0 0 0 1 1 1 1
+  mesh "Cube" 0.95 0.6 0.1 1 0 "" 0
+  material 0 0 0 0 8 1 "" 1 1
+  script "okayscript" "// Turns on REAL time (unscaled_dt): keeps its speed through slow motion, hit stops and the pause menu.
+function update(dt) { rotate3(0, 90 * unscaled_dt(), 0); }
+" "" 0
+end
+gameobject 5 "Sun"
+  active 1
+  parent -1
+  transform 0 6 0 0.40821794 -0.23456973 0.10938166 0.8754261 1 1 1
+  light 1 1 1 1 0.3 1 0 10 45 0.5 0 6500 1 1 1 0
+  daynight 60 5 0 1 1 1 1.2 0.15 0.35 0.08 1 0.98 0.92 0.47 0.55 0.78 0.47 0.55 0.92 0.94 0.55 0.27 0.03 0.05 0.12 1 2 1 6 18 ""
+end
+gameobject 6 "Main Camera"
+  active 1
+  parent -1
+  transform 0 4.5 11 -0.13485 0 0 0.99086 1 1 1
+  camera 1 5 60 0.19215687 0.3019608 0.4745098 1 1 0 0 0.3 4000 0 0 0 1 1 -1 0 50 24 1 0 0 0 0 32 0.3 2 18 1.5
+end
+gameobject 7 "Canvas"
+  active 1
+  parent -1
+  transform 0 0 0 0 0 0 1 1 1 1
+  canvas 1 1280 720 0.5 1 0 1 1 0 1280 720 100 1 1
+end
+gameobject 8 "Clock Text"
+  active 1
+  parent 7
+  transform 0 0 0 0 0 0 1 1 1 1
+  text "Day 1  05:00" 0.98 0.96 0.91 1 2.6 1 20 16 0
+end
+gameobject 9 "Timer Text"
+  active 1
+  parent 7
+  transform 0 0 0 0 0 0 1 1 1 1
+  text "every(1): 0" 0.98 0.96 0.91 1 2.0 1 20 52 0
+end
+gameobject 10 "Message Text"
+  active 1
+  parent 7
+  transform 0 0 0 0 0 0 1 1 1 1
+  text "Press a number key" 1.0 0.85 0.3 1 2.0 1 20 82 0
+end
+gameobject 11 "Hint Text"
+  active 1
+  parent 7
+  transform 0 0 0 0 0 0 1 1 1 1
+  text "1 slow motion (3 s, eased)   2 hit stop (0.15 s)   3 pause / resume   4 sleep until 6:00   5 fast forward x3   6 normal speed" 0.98 0.96 0.91 1 1.8 1 0 -14 7
+end
+gameobject 12 "Director"
+  active 1
+  parent -1
+  transform 0 0 0 0 0 0 1 1 1 1
+  script "okayscript" "// The time playground. Every line here is a plain Time feature.
+var ticks = 0;
+function start() {
+  every(1, \"tick\");          // counts game time: stops when paused, slows in slow motion
+  after(5, \"hello\");         // runs once, 5 game-seconds after the start
+}
+function tick() { ticks = ticks + 1; set_text_of(\"Timer Text\", \"every(1) has run \" + ticks + \" times   (game time \" + round(session_time()) + \" s, real time \" + round(session_unscaled_time()) + \" s)\"); }
+function hello() { set_text_of(\"Message Text\", \"after(5) ran once\"); }
+function update(dt) {
+  set_text_of(\"Clock Text\", \"Day \" + day_number() + \"  \" + clock_text() + \"  speed x\" + round(timescale() * 100) / 100 + (is_paused() ? \"   PAUSED\" : \"\"));
+  if (key_down(\"1\")) { slow_motion(0.2, 3, 0.5); set_text_of(\"Message Text\", \"slow motion: 3 s, eases in and out\"); }
+  if (key_down(\"2\")) { hit_stop(0.15); set_text_of(\"Message Text\", \"hit stop: the game froze for 0.15 s\"); }
+  if (key_down(\"3\")) {
+    if (is_paused_by(\"menu\")) { pop_pause(\"menu\"); set_text_of(\"Message Text\", \"resumed\"); }
+    else { push_pause(\"menu\"); set_text_of(\"Message Text\", \"paused: the orange cube is on real time and keeps turning\"); }
+  }
+  if (key_down(\"4\")) { skip_to_hour(6); set_text_of(\"Message Text\", \"slept until 6:00\"); }
+  if (key_down(\"5\")) { ramp_timescale(3, 1); set_text_of(\"Message Text\", \"speeding up to x3\"); }
+  if (key_down(\"6\")) { ramp_timescale(1, 0.5); set_text_of(\"Message Text\", \"back to normal speed\"); }
+}
+function OnEvent_OnSunrise(v) { set_text_of(\"Message Text\", \"Sunrise! (the day clock sent On Sunrise)\"); }
+function OnEvent_OnSunset(v) { set_text_of(\"Message Text\", \"Sunset (the day clock sent On Sunset)\"); }
+function OnEvent_OnDay(day) { set_text_of(\"Message Text\", \"A new day: day \" + day + \"   season \" + season()); }
+" "" 0
+end

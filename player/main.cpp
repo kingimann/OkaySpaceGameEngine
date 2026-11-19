@@ -26,6 +26,7 @@
 #include "okay/Scene/EnsureCamera.hpp"
 #include "okay/Core/SystemCost.hpp"       // F3 second page: ms per system
 #include "okay/Core/FrameOverlay.hpp"     // the F3 overlay text (shared with the editor)
+#include "okay/Core/Clock.hpp"            // ClockSet: the extra clocks of Project Settings > Time
 #include "okay/Core/TimeSettings.hpp"     // Project Settings > Time: hitch clamp, catch-up, clocks, unfocused cap
 #include "okay/Core/FramePacing.hpp"       // FrameLimiter: the frame rate cap (sleep, then spin to the deadline)
 #include "okay/Core/GameLoop.hpp"        // the per-frame driver (clamp, smoothing, Time, update, quit)

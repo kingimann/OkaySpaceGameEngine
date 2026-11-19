@@ -33,6 +33,7 @@
 namespace okay {
 
 class GameLoop;
+class Scheduler;   // Core/Scheduler.hpp
 
 /// Everything the overlay shows besides the frame times.
 struct FrameOverlayState {
@@ -86,7 +87,7 @@ public:
     /// draw with, and which policy lost time), then one line of clocks (`game 1.00x, enemies 0.50x < game,
     /// ui 1.00x paused`), then the scheduler's next timer. Plain text, a dot for the decimal, three or four lines;
     /// `scheduler` may be null (no timer line).
-    static std::vector<std::string> TimeLines(const GameLoop& loop, const class Scheduler* scheduler = nullptr);
+    static std::vector<std::string> TimeLines(const GameLoop& loop, const Scheduler* scheduler = nullptr);
 
     /// The lines joined with '\n', for a multi-line text widget.
     static std::string Text(const std::vector<std::string>& lines);

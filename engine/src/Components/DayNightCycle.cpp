@@ -7,7 +7,10 @@
 #include "okay/Core/Log.hpp"
 #include "okay/Scene/GameObject.hpp"
 #include "okay/Scene/Scene.hpp"
-#include "okay/VisualScript/NodesWave4.hpp"
+#include "okay/Components/ActionList.hpp"
+#include "okay/Components/ScriptComponent.hpp"
+#include "okay/Components/VisualScriptComponent.hpp"
+#include "okay/Scripting/OkayScriptVM.hpp"
 #include <algorithm>
 #include <cmath>
 #include <cstdio>
@@ -18,6 +21,19 @@ namespace okay {
 namespace {
 struct Ev { int kind; int value; };   // 0 hour, 1 day, 2 sunrise, 3 sunset, 4 season
 constexpr int kMaxDaysPerStep = 400;  // a frame that covers more than this many days stops counting events
+
+// A named event to one object: its Visual Script "On Custom Event" nodes, its scripts' OnEvent_<name>(value)
+// functions and its Actions "On Message". The same three receivers as a Broadcast Event node reaches.
+void Deliver(GameObject* o, const std::string& name, float value, GameObject* sender) {
+    const vs::VsValue v(value);
+    for (auto* vc : o->GetComponents<VisualScriptComponent>()) vc->SendEvent(name, v, sender);
+    for (auto* al : o->GetComponents<ActionList>()) {
+        ActionList::Vars()["event_value"] = value;
+        al->ReceiveMessage(name);
+    }
+    for (auto* sc : o->GetComponents<ScriptComponent>())
+        if (sc->VM()) sc->VM()->CallEventWith("OnEvent_" + name, v);
+}
 }
 
 std::string DayNightCycle::ClockText() const {
@@ -114,7 +130,7 @@ void DayNightCycle::MoveForward(double hours) {
         const char* name = e.kind == 0 ? "OnHour" : e.kind == 1 ? "OnDay" : e.kind == 2 ? "OnSunrise" : e.kind == 3 ? "OnSunset" : "OnSeason";
         std::vector<GameObject*> all;   // collect first: a handler may spawn or destroy objects
         for (const auto& up : sc->Objects()) if (up && up->active) all.push_back(up.get());
-        for (GameObject* o : all) vs::VsDeliverEvent(o, name, vs::VsValue((float)e.value), gameObject);
+        for (GameObject* o : all) Deliver(o, name, (float)e.value, gameObject);
     }
 }
 

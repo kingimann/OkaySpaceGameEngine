@@ -5173,6 +5173,7 @@ Word, then the number(s) to say. Back to the [overview](../FEATURE_MAP.md).
 - UI batching (27.3.1)
 - UI capture flag (8.5.3)
 - UI designer model (12.10.9)
+- UI designer window (12.10.10)
 - UI drag and drop (12.4.9)
 - UI editing in the editor (12.10)
 - UI editing mode (12.10)

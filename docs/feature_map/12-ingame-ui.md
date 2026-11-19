@@ -234,7 +234,8 @@ Area 40 (OkayUI) is a different, immediate-mode toolkit; read it first if the qu
   - 12.10.5 Layout inspectors - `editor/UIInspectorLayout.*` - flex fields, scroll axis, UI Frame, Flex Item, Mask, List View, "Use UI Frame" and "Convert all UI"
   - 12.10.6 Overlay-widget inspectors - `editor/UIInspectorOverlay.*` - UI Modal, UI Context Menu, UI Keybind Field and their Create > UI builders
   - 12.10.7 Create > UI menus - `editor/main.cpp` (`DrawUIWidgetItems` ~5389-5550, menu ~6092-6248) - single widgets, kit, prebuilt screens, 3D UI
-  - 12.10.9 UI designer model - `editor/UIDesignerModel.hpp` - zoom and pan, rulers, guides, snapping, resize handles, nudge, align and distribute, z-order, layers (hide, lock, pick), anchor picker, responsive preview sizes; plain logic, tested headless, not yet wired into the editor window
+  - 12.10.9 UI designer model - `editor/UIDesignerModel.hpp` - zoom and pan, rulers, guides, snapping, resize handles, nudge, align and distribute, z-order, layers (hide, lock, pick), anchor picker, responsive preview sizes; plain logic, tested headless, rulers and guides use it; the overlay's own snap and resize code is not moved onto it yet
+  - 12.10.10 UI designer window - `editor/UIDesignerWindow.*` - rulers, draggable guides (session only), Fit button, UI Layers panel (hide, lock, rename, reorder, nest)
   - 12.10.8 Widget inspectors - `editor/main.cpp` (~34698-36498) - Canvas, Event System, UI Button, Panel, Input Field, Dropdown, Slider, Tabs and the rest
 - **Code:** `editor/UIPreviewPainter.*`, `editor/UIInspectorLayout.*`, `editor/UIInspectorOverlay.*`, `editor/main.cpp`, `Scene/UILayoutTools`, `Scene/UIStyles`
 - **API:** menu items GameObject > UI, View > Editors & Tools > UI Editing Mode, UI Editor (separate tab), UI Theme

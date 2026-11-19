@@ -21,5 +21,18 @@ Written from general design-tool ideas and our own `UIAnchor` rules; no code fro
 Nothing new is saved in scenes (the model has no saved fields), so old scenes are unchanged and
 `test_save_coverage` needs no new component.
 
+Second step (branch claude/ui-designer-2), found while wiring: the UI-only view ALREADY has mouse-wheel zoom about the
+cursor, middle / Space drag pan, a resolution and aspect dropdown (`kGameResPresets`), a red outline for widgets that run
+off screen, a safe area, a subdivision grid, and a popup anchor picker (3x3 plus stretches) in the Inspector. These were
+not rebuilt (no second copy). What was added, in `editor/UIDesignerWindow.*` with small hooks in `main.cpp`:
+- rulers (design pixels, tick steps from `uid::RulerTicks`), draggable guides (drag from a ruler, drag back to delete)
+  that the widget drag snaps to, a Fit button and a zoom percentage;
+- a UI Layers panel (corner "L" button): front-first tree, eye (uses the object's saved Active flag, one undo step),
+  lock (blocks canvas click and box select), double-click rename, drag to reorder or drop in the middle to nest.
+Guides and locks are session-only and write nothing to scenes, so `test_save_coverage` is unchanged.
+The old overlay snap / resize code in `DrawUIOverlay` / `EditUIWidgets` was NOT moved onto `UIDesignerModel`: it is
+behaviour-rich and cannot be run headless here, so replacing it blind risked regressions. The model's `SnapMove` and
+`Resize` are the tested reference for a later swap.
+
 Status: the model and its test (`ui_designer`) exist. The editor window does not call it yet (next step: replace the
 matching code in `DrawUIOverlay`, add a rulers strip, a layers panel and a responsive size menu).

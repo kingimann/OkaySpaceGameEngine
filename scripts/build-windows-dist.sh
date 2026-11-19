@@ -204,6 +204,7 @@ ui_text
 vehicle
 visual_script/playground
 voxel
+water
 weapons
 "
 for d in $EXAMPLE_DIRS; do
@@ -238,6 +239,7 @@ cp engine/src/Core/ImageDecode.cpp engine/src/Core/ImageDecodeJpeg.cpp engine/sr
 [ -f "$XBOX_SRC/platform/xbox_uwp/app/CMakeLists.txt" ] || { echo "error: xbox-src did not get the UWP app" >&2; exit 1; }
 [ -s "$OUT_DIR/examples/vehicle/vehicle_test.okayscene" ] || { echo "error: examples/vehicle/vehicle_test.okayscene did not make it into the distribution" >&2; exit 1; }
 [ -s "$OUT_DIR/examples/boat/boat_lake.okayscene" ] || { echo "error: examples/boat/boat_lake.okayscene did not make it into the distribution" >&2; exit 1; }
+[ -s "$OUT_DIR/examples/water/lake.okayscene" ] || { echo "error: examples/water/lake.okayscene did not make it into the distribution" >&2; exit 1; }
 [ -s "$OUT_DIR/examples/ui_text/ui_text.okayscene" ] || { echo "error: examples/ui_text/ui_text.okayscene did not make it into the distribution" >&2; exit 1; }
 
 # When built against the real Steamworks SDK, ship its redistributable DLL next to
@@ -266,6 +268,9 @@ examples/ example scenes to try: in the editor use File > Open and pick
                         (get in the car with E), or
                         examples\boat\boat_lake.okayscene (a lake with waves: drive the
                         boat with W S A D, Space brakes), or
+                        examples\water\lake.okayscene (also ocean, river and shore:
+                        water that is never flat; select the Water and pick a
+                        Preset or a Sea State), or
                         examples\ui_text\ui_text.okayscene (a nameplate over each of
                         two characters and a sign with rich text; keys 1 2 3 H).
                         More in docs/try_it.md.

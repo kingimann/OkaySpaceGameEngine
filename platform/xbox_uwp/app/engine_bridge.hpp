@@ -26,6 +26,8 @@ struct Engine;   // opaque
 /// Folders are UTF-8 with '/' or '\\' separators: the package install folder, ApplicationData.LocalFolder, TemporaryFolder.
 Engine* Create(const ShellCallbacks& cb, const std::string& installDir, const std::string& localDir, const std::string& tempDir);
 void Destroy(Engine* e);
+/// One line into the log file (LocalState\\logs\\okayspace.log) and the in-memory log. The shell uses it for failures it catches.
+void Log(Engine* e, const std::string& line);
 
 // CoreWindow / CoreApplication events, forwarded by the shell.
 void Resized(Engine* e, float dipsW, float dipsH, float dpi);

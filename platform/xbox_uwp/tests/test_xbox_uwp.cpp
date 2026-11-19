@@ -356,6 +356,7 @@ static void AppxTests() {
     { std::string b = r.bytes; size_t at = b.find("Block Hash=\"") + 12; b[at] = b[at] == 'A' ? 'B' : 'A'; VerifyResult x = Verify(b); CHECK(!x.ok); CHECK(HasProblem(x, "hash mismatch")); }
     { std::string b = r.bytes; size_t at = b.find("AppxBlockMap.xml"); b[at] = 'X'; VerifyResult x = Verify(b); CHECK(!x.ok); }
     { std::string b = r.bytes.substr(0, r.bytes.size() - 10); CHECK(!Verify(b).ok); }
+    { std::vector<PackItem> it = Items(); it.push_back(PackItem{"Data/con.txt", "x"}); CHECK(!Pack(it).ok); it.back().name = "Data/NUL"; CHECK(!Pack(it).ok); it.back().name = "Data/console.txt"; CHECK(Pack(it).ok); }   // device names are refused, similar names are fine
     CHECK(!Verify("").ok);
     CHECK(!Verify(std::string(100, 'a')).ok);
     // name rules

@@ -6,6 +6,7 @@
 
 #include "UwpPlatform.hpp"
 #include "XboxGameRuntime.hpp"
+#include "XboxLog.hpp"
 #include "XboxOverlay.hpp"
 #include "XboxRecovery.hpp"
 #include "XboxSoftPainter.hpp"
@@ -74,6 +75,7 @@ struct Engine {
     xb::UiOverlay overlay;            // ... uploaded and blended over the 3D frame
     xb::OverlayState overlayState;
     xb::DeviceRecovery recovery;      // GPU device loss: rebuild with backoff, give up after a few tries
+    xb::FileLog log;                  // LocalState\\logs\\okayspace.log: what the owner reads from the Device Portal
 };
 
 Engine* Create(const ShellCallbacks& cb, const std::string& installDir, const std::string& localDir, const std::string& tempDir) {
@@ -87,10 +89,20 @@ Engine* Create(const ShellCallbacks& cb, const std::string& installDir, const st
     e->env.home = xb::DesktopDirToLocal(e->roots, xb::DesktopDir::Documents);
     okay::Paths::SetEnvOverride(&e->env);
     e->backend.reset(new xb::UwpBackend(&e->host, e->roots));
+    {   // the log file first, so even a failure in the lines below leaves something to read
+        const xb::PathResult lp = xb::Resolve(e->roots, xb::PathArea::Logs, "");
+        if (lp.ok) e->log.Open(lp.path);
+        Engine* raw = e.get();
+        e->backend->logSink = [raw](const std::string& line) { raw->log.Line(line); };
+        e->backend->Log("OkaySpace Xbox app (EXPERIMENTAL, UNVERIFIED) starting. Install folder: " + e->roots.install + "  Local folder: " + e->roots.local);
+        e->backend->Log(e->log.IsOpen() ? "Log file: " + e->log.Path() : "No log file (" + (lp.ok ? e->log.Error() : lp.error) + ")");
+    }
     xb::InstallBackend(e->backend.get());
     e->backend->Init(okay::platform::InitFlags());
     return e.release();
 }
+
+void Log(Engine* e, const std::string& line) { if (e) e->backend->Log(line); }
 
 void Destroy(Engine* e) { if (!e) return; xb::InstallBackend(nullptr); okay::Paths::SetEnvOverride(nullptr); delete e; }
 
@@ -140,6 +152,7 @@ bool Run(Engine* e, std::string& err) {
     };
     if (!buildGpu()) return fail("The Direct3D 11 renderer or the swap chain could not start (see the log). package\\Shaders must hold shaders.manifest and the .cso files.");
     e->runtime.SetSaveDir(e->roots.local + "/saves");
+    e->backend->Log("Xbox app: shaders from " + e->roots.install + "Shaders; saves in " + e->roots.local + "/saves; game data in " + e->roots.install + "Data; pads connected: " + std::to_string(e->host.PadCount()));
     std::string rerr;
     if (!e->runtime.Start(e->roots.install + "Data", rerr)) return fail(rerr);
     e->backend->onSuspend = [e] { e->runtime.OnSuspend(); };
@@ -208,6 +221,7 @@ bool Run(Engine* e, std::string& err) {
         if (scene && e->runtime.View(sz.w, sz.h, vp, eye))
             e->presenter.RenderAndPresent(e->renderer, *scene, vp, eye, 4, 0.10f, 0.10f, 0.12f, 1.0f);
     }
+    e->backend->Log("Xbox app: the game ended normally.");
     e->runtime.OnExit();
     return true;
 }

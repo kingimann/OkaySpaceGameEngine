@@ -6,14 +6,14 @@ rendersettings 1 0.27450982 0.47058824 0.78431374 0.5882353 0.7254902 0.88235295
 fog 0 0.5882353 0.7254902 0.88235295 20 90
 tonemap 1
 gameobject 0 "Directional Light"
-  guid "92ddb90923370379267eb2671dd773e7"
+  guid "79891a35ced53b94bc1acb7e09aa7283"
   active 1
   parent -1
   transform 0 0 0 0.40821794 -0.23456973 0.10938166 0.8754261 1 1 1
   light 1 1 1 1 0.3 1 0 10 45 0.5 0 6500 1 1 1 0
 end
 gameobject 1 "Ground"
-  guid "a2ebc95196e1150b67c0e67ae3904bed"
+  guid "9ca5c8ab8b1b160ff09550629462a48e"
   active 1
   parent -1
   transform 0 -0.5 0 0 0 0 1 300 1 300
@@ -24,7 +24,7 @@ gameobject 1 "Ground"
   comporder "MeshRenderer" "BoxCollider3D" "Rigidbody3D"
 end
 gameobject 2 "Road (across)"
-  guid "a3bc716c00035d572e597ac0c05abecd"
+  guid "a3884863531e9e358ef5e0a4285481f2"
   active 1
   parent -1
   transform 0 0.01 -70 0 0 0 1 300 0.04 12
@@ -32,7 +32,7 @@ gameobject 2 "Road (across)"
   material 0 0 0 0 16 0 "" 1 1
 end
 gameobject 3 "Road (along)"
-  guid "8c99443c22c9a5b95482d2571743f4f3"
+  guid "4b0ccb1ee77fc21ce5558112a0ec2fe2"
   active 1
   parent -1
   transform -70 0.01 0 0 0 0 1 12 0.04 300
@@ -40,7 +40,7 @@ gameobject 3 "Road (along)"
   material 0 0 0 0 16 0 "" 1 1
 end
 gameobject 4 "Road (across)"
-  guid "71b78936f4de76a1e427882c4ac7d21f"
+  guid "c5913e71042b8f52096fcc8c7235beca"
   active 1
   parent -1
   transform 0 0.01 0 0 0 0 1 300 0.04 12
@@ -48,7 +48,7 @@ gameobject 4 "Road (across)"
   material 0 0 0 0 16 0 "" 1 1
 end
 gameobject 5 "Road (along)"
-  guid "c0a3ae0016f0b86006cdeba53dfccb6f"
+  guid "8678cc3a1b165a9454cdb0992c323ee3"
   active 1
   parent -1
   transform 0 0.01 0 0 0 0 1 12 0.04 300
@@ -56,7 +56,7 @@ gameobject 5 "Road (along)"
   material 0 0 0 0 16 0 "" 1 1
 end
 gameobject 6 "Road (across)"
-  guid "057d3573ddf47bd722eaeda4215c407a"
+  guid "7357b9f36588e8f32af93af7a019d50c"
   active 1
   parent -1
   transform 0 0.01 70 0 0 0 1 300 0.04 12
@@ -64,7 +64,7 @@ gameobject 6 "Road (across)"
   material 0 0 0 0 16 0 "" 1 1
 end
 gameobject 7 "Road (along)"
-  guid "b3dbfed833759e96028cb1c8c048ae93"
+  guid "344899c25bc1328b8d37a85cde1f7388"
   active 1
   parent -1
   transform 70 0.01 0 0 0 0 1 12 0.04 300
@@ -72,7 +72,7 @@ gameobject 7 "Road (along)"
   material 0 0 0 0 16 0 "" 1 1
 end
 gameobject 8 "Lane Dash"
-  guid "22fef8241e6e571f70579d71f9d1e188"
+  guid "afe0131a7d8d211eeb268367397102f5"
   active 1
   parent -1
   transform -64 0.04 0 0 0 0 1 5 0.02 0.2
@@ -80,7 +80,7 @@ gameobject 8 "Lane Dash"
   material 0 0 0 0 16 0 "" 1 1
 end
 gameobject 9 "Lane Dash"
-  guid "8fe2f28408efd64a1ec8fc6d97f260ab"
+  guid "4985daec95a7812ef3972a9104d9c1df"
   active 1
   parent -1
   transform -48 0.04 0 0 0 0 1 5 0.02 0.2
@@ -88,7 +88,7 @@ gameobject 9 "Lane Dash"
   material 0 0 0 0 16 0 "" 1 1
 end
 gameobject 10 "Lane Dash"
-  guid "9e247b9142dc34cb41eeba998bf36f99"
+  guid "9b16003d7fd569d32e5d5030f37b5377"
   active 1
   parent -1
   transform -32 0.04 0 0 0 0 1 5 0.02 0.2
@@ -96,7 +96,7 @@ gameobject 10 "Lane Dash"
   material 0 0 0 0 16 0 "" 1 1
 end
 gameobject 11 "Lane Dash"
-  guid "c0f78a1532f6b6286a60a3e535d939f5"
+  guid "02cc5e8ab37a5e4440f8902dac2e6ddf"
   active 1
   parent -1
   transform -16 0.04 0 0 0 0 1 5 0.02 0.2
@@ -104,7 +104,7 @@ gameobject 11 "Lane Dash"
   material 0 0 0 0 16 0 "" 1 1
 end
 gameobject 12 "Lane Dash"
-  guid "b670ddb7a0ca4974b1d5b3ec331cf7b8"
+  guid "85bfbd43a65fe00c4240001457c0c0e1"
   active 1
   parent -1
   transform 0 0.04 0 0 0 0 1 5 0.02 0.2
@@ -112,7 +112,7 @@ gameobject 12 "Lane Dash"
   material 0 0 0 0 16 0 "" 1 1
 end
 gameobject 13 "Lane Dash"
-  guid "71abc90cd8c63a6e24991db476bc9526"
+  guid "7679da2220a9f03e2a10d04d6b111a15"
   active 1
   parent -1
   transform 16 0.04 0 0 0 0 1 5 0.02 0.2
@@ -120,7 +120,7 @@ gameobject 13 "Lane Dash"
   material 0 0 0 0 16 0 "" 1 1
 end
 gameobject 14 "Lane Dash"
-  guid "f0e824f71ad80c3b8bda05ba63ee2ee6"
+  guid "2e9b7b856223acc87b65be138a91a2e7"
   active 1
   parent -1
   transform 32 0.04 0 0 0 0 1 5 0.02 0.2
@@ -128,7 +128,7 @@ gameobject 14 "Lane Dash"
   material 0 0 0 0 16 0 "" 1 1
 end
 gameobject 15 "Lane Dash"
-  guid "5e2b240972ff86bf09fddbd6355e0713"
+  guid "dd8274e2ff383985345a5e9a16e0a46b"
   active 1
   parent -1
   transform 48 0.04 0 0 0 0 1 5 0.02 0.2
@@ -136,7 +136,7 @@ gameobject 15 "Lane Dash"
   material 0 0 0 0 16 0 "" 1 1
 end
 gameobject 16 "Lane Dash"
-  guid "d545af6256e06a22afb1571076c90779"
+  guid "662d0e548158a2f0a48c0bec0998b4f2"
   active 1
   parent -1
   transform 64 0.04 0 0 0 0 1 5 0.02 0.2
@@ -144,7 +144,7 @@ gameobject 16 "Lane Dash"
   material 0 0 0 0 16 0 "" 1 1
 end
 gameobject 17 "Building"
-  guid "f11ea2f7d2bcdfe7a7a7e9f5bf3edc2c"
+  guid "e2df8efb5eecda2d62cee74d7acda580"
   active 1
   parent -1
   transform -35 4 -35 0 0 0 1 40 8 40
@@ -155,7 +155,7 @@ gameobject 17 "Building"
   comporder "MeshRenderer" "BoxCollider3D" "Rigidbody3D"
 end
 gameobject 18 "Building"
-  guid "f4ef9a114601b4c52ec91a36fcfeb471"
+  guid "6ff6cad356ee303296f117e85c9e39a5"
   active 1
   parent -1
   transform 35 6.5 -35 0 0 0 1 40 13 40
@@ -166,7 +166,7 @@ gameobject 18 "Building"
   comporder "MeshRenderer" "BoxCollider3D" "Rigidbody3D"
 end
 gameobject 19 "Building"
-  guid "212875c98bb4342a459b7be8f268074e"
+  guid "3a1777f19e973443b5529357079ce96f"
   active 1
   parent -1
   transform -35 9 35 0 0 0 1 40 18 40
@@ -177,7 +177,7 @@ gameobject 19 "Building"
   comporder "MeshRenderer" "BoxCollider3D" "Rigidbody3D"
 end
 gameobject 20 "Building"
-  guid "3bf7ce0bc80cb8d7c39edfd477a60138"
+  guid "6a8d5cb0d5bff0e2d0589c591569d2cb"
   active 1
   parent -1
   transform 35 11.5 35 0 0 0 1 40 23 40
@@ -188,7 +188,7 @@ gameobject 20 "Building"
   comporder "MeshRenderer" "BoxCollider3D" "Rigidbody3D"
 end
 gameobject 21 "Ramp"
-  guid "50850c0f447c29b85a146f3c47217c4e"
+  guid "879e2039aa8d95aeffdba83a88b772e8"
   active 1
   parent -1
   transform 0 0.9 120 -0.12186935 0 0 0.99254614 8 0.3 10
@@ -199,7 +199,7 @@ gameobject 21 "Ramp"
   comporder "MeshRenderer" "BoxCollider3D" "Rigidbody3D"
 end
 gameobject 22 "Ramp"
-  guid "5540ce7a4dfcb411065b27e360149401"
+  guid "773ebb6ba9bed1bae0a4bc083d564f04"
   active 1
   parent -1
   transform -70 0.9 120 -0.12186935 0 0 0.99254614 8 0.3 10
@@ -210,7 +210,7 @@ gameobject 22 "Ramp"
   comporder "MeshRenderer" "BoxCollider3D" "Rigidbody3D"
 end
 gameobject 23 "Mud Patch"
-  guid "f1fa48315fc34b16dc536985134da0ca"
+  guid "9901e29955328925a978d326b6937d58"
   active 1
   tag "Mud"
   parent -1
@@ -222,7 +222,7 @@ gameobject 23 "Mud Patch"
   comporder "MeshRenderer" "BoxCollider3D" "Rigidbody3D"
 end
 gameobject 24 "Ice Patch"
-  guid "7e174617c3cfafad22c551a17e04e4e0"
+  guid "714e80a5f5453354998d47a9962df8e5"
   active 1
   tag "Ice"
   parent -1
@@ -234,7 +234,7 @@ gameobject 24 "Ice Patch"
   comporder "MeshRenderer" "BoxCollider3D" "Rigidbody3D"
 end
 gameobject 25 "Cone"
-  guid "c6672e139ddff6c1b04081a494ab4d76"
+  guid "9724695c8d879c1c9a398f66c84f8347"
   active 1
   parent -1
   transform -86 0.35 -60 0 0 0 1 0.4 0.7 0.4
@@ -245,7 +245,7 @@ gameobject 25 "Cone"
   comporder "MeshRenderer" "BoxCollider3D" "Rigidbody3D"
 end
 gameobject 26 "Cone"
-  guid "3cfc679ee5c8c4bcb5e9c57561f0b1ad"
+  guid "31d33c4e0250ced2a4d73f3891ab221d"
   active 1
   parent -1
   transform -87.174644 0.35 -52.58359 0 0 0 1 0.4 0.7 0.4
@@ -256,7 +256,7 @@ gameobject 26 "Cone"
   comporder "MeshRenderer" "BoxCollider3D" "Rigidbody3D"
 end
 gameobject 27 "Cone"
-  guid "fc8148c17e2697920f313eecf871272e"
+  guid "52dc4f1b747c74982153bec623cf8b5a"
   active 1
   parent -1
   transform -90.58359 0.35 -45.893154 0 0 0 1 0.4 0.7 0.4
@@ -267,7 +267,7 @@ gameobject 27 "Cone"
   comporder "MeshRenderer" "BoxCollider3D" "Rigidbody3D"
 end
 gameobject 28 "Cone"
-  guid "c09dcb3f866244a54b2382d20a346188"
+  guid "43d9c843fd1eb364a374dd623003e628"
   active 1
   parent -1
   transform -95.89316 0.35 -40.58359 0 0 0 1 0.4 0.7 0.4
@@ -278,7 +278,7 @@ gameobject 28 "Cone"
   comporder "MeshRenderer" "BoxCollider3D" "Rigidbody3D"
 end
 gameobject 29 "Cone"
-  guid "cbe6420ea77f6000892801fb903ec8ba"
+  guid "bd21b476be3c12351c7177c576d25e13"
   active 1
   parent -1
   transform -102.583595 0.35 -37.174644 0 0 0 1 0.4 0.7 0.4
@@ -289,7 +289,7 @@ gameobject 29 "Cone"
   comporder "MeshRenderer" "BoxCollider3D" "Rigidbody3D"
 end
 gameobject 30 "Cone"
-  guid "087467f6cdb37383127f785558e2a9ae"
+  guid "b0ec02ac16effacb791397697376c656"
   active 1
   parent -1
   transform -110 0.35 -36 0 0 0 1 0.4 0.7 0.4
@@ -300,7 +300,7 @@ gameobject 30 "Cone"
   comporder "MeshRenderer" "BoxCollider3D" "Rigidbody3D"
 end
 gameobject 31 "Cone"
-  guid "b431ff4cbea4a2e1bce8caa347d00dd6"
+  guid "4d37ea12ddb93690e29306204404ca6c"
   active 1
   parent -1
   transform -117.41641 0.35 -37.174644 0 0 0 1 0.4 0.7 0.4
@@ -311,7 +311,7 @@ gameobject 31 "Cone"
   comporder "MeshRenderer" "BoxCollider3D" "Rigidbody3D"
 end
 gameobject 32 "Cone"
-  guid "1adfb644d31996e0240a8533ec001fcb"
+  guid "b48b9fc2bba372633e392d09f03c149d"
   active 1
   parent -1
   transform -124.10684 0.35 -40.58359 0 0 0 1 0.4 0.7 0.4
@@ -322,7 +322,7 @@ gameobject 32 "Cone"
   comporder "MeshRenderer" "BoxCollider3D" "Rigidbody3D"
 end
 gameobject 33 "Cone"
-  guid "b5277aef8641a60efcb4a6baf2e1004c"
+  guid "1b5aadddcc4b68a8386689de461e25c5"
   active 1
   parent -1
   transform -129.41641 0.35 -45.893158 0 0 0 1 0.4 0.7 0.4
@@ -333,7 +333,7 @@ gameobject 33 "Cone"
   comporder "MeshRenderer" "BoxCollider3D" "Rigidbody3D"
 end
 gameobject 34 "Cone"
-  guid "9425869c6cef8e26b5f5096eb8632d8f"
+  guid "9c725eb8c92ee793d70f120c649eaae9"
   active 1
   parent -1
   transform -132.82535 0.35 -52.58359 0 0 0 1 0.4 0.7 0.4
@@ -344,7 +344,7 @@ gameobject 34 "Cone"
   comporder "MeshRenderer" "BoxCollider3D" "Rigidbody3D"
 end
 gameobject 35 "Cone"
-  guid "a37df5bc563d78c47f7b6bc84ec04aef"
+  guid "17c3bc5db1c475ac527e4db8afed0ce3"
   active 1
   parent -1
   transform -134 0.35 -60.000004 0 0 0 1 0.4 0.7 0.4
@@ -355,7 +355,7 @@ gameobject 35 "Cone"
   comporder "MeshRenderer" "BoxCollider3D" "Rigidbody3D"
 end
 gameobject 36 "Cone"
-  guid "56fe738ba7776ebd3cf404db6af3e0db"
+  guid "5ff8c685ab462591e06cfc2518d8f693"
   active 1
   parent -1
   transform -132.82535 0.35 -67.41641 0 0 0 1 0.4 0.7 0.4
@@ -366,7 +366,7 @@ gameobject 36 "Cone"
   comporder "MeshRenderer" "BoxCollider3D" "Rigidbody3D"
 end
 gameobject 37 "Cone"
-  guid "0a6cd2220cb4b4fab17305e9994e7bce"
+  guid "8c9df480dee7257ae84a187f02d24a0a"
   active 1
   parent -1
   transform -129.4164 0.35 -74.10686 0 0 0 1 0.4 0.7 0.4
@@ -377,7 +377,7 @@ gameobject 37 "Cone"
   comporder "MeshRenderer" "BoxCollider3D" "Rigidbody3D"
 end
 gameobject 38 "Cone"
-  guid "0d9ff61aa99dedd2f86744eeeb1507e2"
+  guid "955a632094593559011263ef5f24dbf9"
   active 1
   parent -1
   transform -124.10685 0.35 -79.416405 0 0 0 1 0.4 0.7 0.4
@@ -388,7 +388,7 @@ gameobject 38 "Cone"
   comporder "MeshRenderer" "BoxCollider3D" "Rigidbody3D"
 end
 gameobject 39 "Cone"
-  guid "dffcbe5682717296897ac1504601f43b"
+  guid "234f9af4022a33f5c57c4d6b4a71e267"
   active 1
   parent -1
   transform -117.41641 0.35 -82.825356 0 0 0 1 0.4 0.7 0.4
@@ -399,7 +399,7 @@ gameobject 39 "Cone"
   comporder "MeshRenderer" "BoxCollider3D" "Rigidbody3D"
 end
 gameobject 40 "Cone"
-  guid "2a9a5485449a8c3ae96ba7436cb28234"
+  guid "0a861c5d8d8c93fea2fd0e54e43387bd"
   active 1
   parent -1
   transform -110 0.35 -84 0 0 0 1 0.4 0.7 0.4
@@ -410,7 +410,7 @@ gameobject 40 "Cone"
   comporder "MeshRenderer" "BoxCollider3D" "Rigidbody3D"
 end
 gameobject 41 "Cone"
-  guid "4bd6044ae18159d5273920e506fa0516"
+  guid "e437bbb676adb5a0ed98b1c823586f43"
   active 1
   parent -1
   transform -102.58359 0.35 -82.825356 0 0 0 1 0.4 0.7 0.4
@@ -421,7 +421,7 @@ gameobject 41 "Cone"
   comporder "MeshRenderer" "BoxCollider3D" "Rigidbody3D"
 end
 gameobject 42 "Cone"
-  guid "8e69de510c5873f5d03e41fd668dec21"
+  guid "a3ed235bacc0008cdad28efd1f226c24"
   active 1
   parent -1
   transform -95.89315 0.35 -79.416405 0 0 0 1 0.4 0.7 0.4
@@ -432,7 +432,7 @@ gameobject 42 "Cone"
   comporder "MeshRenderer" "BoxCollider3D" "Rigidbody3D"
 end
 gameobject 43 "Cone"
-  guid "3c7dc8965e6bbf123fff7f117e4de86f"
+  guid "74a9996253a74fbfd283d2817b7d037d"
   active 1
   parent -1
   transform -90.583595 0.35 -74.10685 0 0 0 1 0.4 0.7 0.4
@@ -443,7 +443,7 @@ gameobject 43 "Cone"
   comporder "MeshRenderer" "BoxCollider3D" "Rigidbody3D"
 end
 gameobject 44 "Cone"
-  guid "dec4889965baf422638648ba539cd095"
+  guid "6a273060cd356bebb82d26633274ab6c"
   active 1
   parent -1
   transform -87.174644 0.35 -67.416405 0 0 0 1 0.4 0.7 0.4
@@ -454,10 +454,10 @@ gameobject 44 "Cone"
   comporder "MeshRenderer" "BoxCollider3D" "Rigidbody3D"
 end
 gameobject 45 "Sedan"
-  guid "79763b4972c10c784791e9de7041af99"
+  guid "1b1ca597536149c827145d2c263edff2"
   active 1
   parent -1
-  transform -48 0.34 -3.5 0 0.7071068 0 0.7071068 1 1 1
+  transform 40 0.34 -3.5 0 0.7071068 0 0.7071068 1 1 1
   rigidbody3d 0 1 1 0 0 0 0 0 0 0.5 0.05 1 1 0 0.03 0
   boxcollider3d 1.8 0.55 4.4 0 0 0 0 0 0
   vehicle 14 34 8 34 4 110 8 0.6 1.2 0 8 3.5 6 32
@@ -465,7 +465,7 @@ gameobject 45 "Sedan"
   vehicleseat 1 -0.45 0.202 0.124999985 -1.7 -0.3 0.124999985 2.6 101 "Drive"
 end
 gameobject 46 "Car Body"
-  guid "9a0d4d03f3330e68d3d2ff6ee019a8c3"
+  guid "148427813483c2c5c8f8edf01c397212"
   active 1
   parent 45
   transform 0 0.105 0 0 0 0 1 1.8 0.33 4.4
@@ -473,7 +473,7 @@ gameobject 46 "Car Body"
   material 0 0 0 0 16 0 "" 1 1
 end
 gameobject 47 "Bumper Front"
-  guid "281ba112a832a7b945da12eba3701ee7"
+  guid "a143612a006054d0a24e5b9cdfbdfb55"
   active 1
   parent 45
   transform 0 0 2.2 0 0 0 1 1.8399999 0.1925 0.12
@@ -481,7 +481,7 @@ gameobject 47 "Bumper Front"
   material 0 0 0 0 16 0 "" 1 1
 end
 gameobject 48 "Bumper Rear"
-  guid "dfc109ed366885a0662d264d4d6d6e9d"
+  guid "74fd6d4c361ace6ed6030f7952a7c843"
   active 1
   parent 45
   transform 0 0 -2.2 0 0 0 1 1.8399999 0.1925 0.12
@@ -489,7 +489,7 @@ gameobject 48 "Bumper Rear"
   material 0 0 0 0 16 0 "" 1 1
 end
 gameobject 49 "Cabin"
-  guid "59e78d34948461d2126aabc92e46e6b3"
+  guid "4778189419198976c5cb10093132a851"
   active 1
   parent 45
   transform 0 0.545 -0.22000001 0 0 0 1 1.656 0.55 2.3
@@ -497,7 +497,7 @@ gameobject 49 "Cabin"
   material 0 0 0 0 16 0 "" 1 1
 end
 gameobject 50 "Roof"
-  guid "ca3d680fcbf7de08408bb5f1b56cfc47"
+  guid "6f412ae95b98092539fb1830fb8fa6b5"
   active 1
   parent 45
   transform 0 0.82000005 -0.22000001 0 0 0 1 1.6919999 0.06 2.34
@@ -505,7 +505,7 @@ gameobject 50 "Roof"
   material 0 0 0 0 16 0 "" 1 1
 end
 gameobject 51 "Headlight Left"
-  guid "d71c1e8628ff4ba274b8d10e3d1fc38f"
+  guid "48ab1bebdcaaae6e29c2a4851c601954"
   active 1
   parent 45
   transform -0.585 0.17000002 2.21 0 0 0 1 0.34 0.13 0.06
@@ -513,7 +513,7 @@ gameobject 51 "Headlight Left"
   material 0.47058824 0.43137255 0.27450982 0 16 0 "" 1 1
 end
 gameobject 52 "Taillight Left"
-  guid "bfb77c9e920ca9051c5b2bf4eccf1335"
+  guid "6ce6e2ece2cbc31f3d9b68b5e2c3fefb"
   active 1
   parent 45
   transform -0.63 0.17000002 -2.21 0 0 0 1 0.3 0.12 0.06
@@ -521,7 +521,7 @@ gameobject 52 "Taillight Left"
   material 0.43137255 0.039215688 0.039215688 0 16 0 "" 1 1
 end
 gameobject 53 "Headlight Right"
-  guid "f66e698522b61629df0512bdb937d59b"
+  guid "7f27b492895a5231bc549adae6a337ee"
   active 1
   parent 45
   transform 0.585 0.17000002 2.21 0 0 0 1 0.34 0.13 0.06
@@ -529,7 +529,7 @@ gameobject 53 "Headlight Right"
   material 0.47058824 0.43137255 0.27450982 0 16 0 "" 1 1
 end
 gameobject 54 "Taillight Right"
-  guid "e1bc7e01c0f02a42bed1ff0313708192"
+  guid "453781ae98df2264ca6c90468e3491ce"
   active 1
   parent 45
   transform 0.63 0.17000002 -2.21 0 0 0 1 0.3 0.12 0.06
@@ -537,13 +537,13 @@ gameobject 54 "Taillight Right"
   material 0.43137255 0.039215688 0.039215688 0 16 0 "" 1 1
 end
 gameobject 55 "Wheel Front Left"
-  guid "465829abba4ca44655bbe3e1be4c7f95"
+  guid "cd2dcff2fffd466e99c7d4d1e592a26c"
   active 1
   parent 45
   transform -0.79999995 0 1.554 0 0 0 1 1 1 1
 end
 gameobject 56 "Tire"
-  guid "2ead42a21a4c04c546a44f58f66286cb"
+  guid "0ea4a76d26415d463e9c070b01bd13c1"
   active 1
   parent 55
   transform 0 0 0 0 0 0.7071068 0.7071068 0.68 0.31800002 0.68
@@ -551,7 +551,7 @@ gameobject 56 "Tire"
   material 0 0 0 0 16 0 "" 1 1
 end
 gameobject 57 "Rim"
-  guid "8151446be377b74a7dc2ab11693c7706"
+  guid "8e73aeee03e2df849865aaab270a45f9"
   active 1
   parent 56
   transform 0 0 0 0 0 0 1 0.62 1.06 0.62
@@ -559,7 +559,7 @@ gameobject 57 "Rim"
   material 0 0 0 0 16 0 "" 1 1
 end
 gameobject 58 "Rim Bar"
-  guid "6b13bd99b193fbce0845bc8ea332b81a"
+  guid "412c7e71ffcf68dd507bc1d87c2c1670"
   active 1
   parent 56
   transform 0 0 0 0 0 0 1 0.95 1.1 0.14
@@ -567,13 +567,13 @@ gameobject 58 "Rim Bar"
   material 0 0 0 0 16 0 "" 1 1
 end
 gameobject 59 "Wheel Front Right"
-  guid "21d228b53fe5232aaa3a3baed3e76e45"
+  guid "2cca66329be914e075acd1e03e9ee899"
   active 1
   parent 45
   transform 0.79999995 0 1.554 0 0 0 1 1 1 1
 end
 gameobject 60 "Tire"
-  guid "633c66f8664820c069379f32a94a73dc"
+  guid "e177454932b7411b684cf36a406f6c80"
   active 1
   parent 59
   transform 0 0 0 0 0 0.7071068 0.7071068 0.68 0.31800002 0.68
@@ -581,7 +581,7 @@ gameobject 60 "Tire"
   material 0 0 0 0 16 0 "" 1 1
 end
 gameobject 61 "Rim"
-  guid "3fea05a1f466bdc8a44124882fb215cc"
+  guid "0a22970b46d10872901780f7707c64eb"
   active 1
   parent 60
   transform 0 0 0 0 0 0 1 0.62 1.06 0.62
@@ -589,7 +589,7 @@ gameobject 61 "Rim"
   material 0 0 0 0 16 0 "" 1 1
 end
 gameobject 62 "Rim Bar"
-  guid "195ef14baf5294a4d1296bc95a7bc05d"
+  guid "c29fb61a55ecc80f0153d4b81564aa3b"
   active 1
   parent 60
   transform 0 0 0 0 0 0 1 0.95 1.1 0.14
@@ -597,13 +597,13 @@ gameobject 62 "Rim Bar"
   material 0 0 0 0 16 0 "" 1 1
 end
 gameobject 63 "Wheel Rear Left"
-  guid "5bff4509cf534d1384e0ffd537e24a3f"
+  guid "5fd1ca99ad53d3a4c7a8a01272ef2731"
   active 1
   parent 45
   transform -0.79999995 0 -1.554 0 0 0 1 1 1 1
 end
 gameobject 64 "Tire"
-  guid "1c67d26b5ea07653056636153d29f40f"
+  guid "7d7ff90cdedf7573581d0e59e4098d25"
   active 1
   parent 63
   transform 0 0 0 0 0 0.7071068 0.7071068 0.68 0.31800002 0.68
@@ -611,7 +611,7 @@ gameobject 64 "Tire"
   material 0 0 0 0 16 0 "" 1 1
 end
 gameobject 65 "Rim"
-  guid "99be9fa9bd5db3b5ecf73ac1120f3e78"
+  guid "259e08bfd456b45de4c992af5f604437"
   active 1
   parent 64
   transform 0 0 0 0 0 0 1 0.62 1.06 0.62
@@ -619,7 +619,7 @@ gameobject 65 "Rim"
   material 0 0 0 0 16 0 "" 1 1
 end
 gameobject 66 "Rim Bar"
-  guid "8a0050e765090b176345ad0d664e1d5c"
+  guid "ff133016ee8c58edd6c8c7ea6807fce6"
   active 1
   parent 64
   transform 0 0 0 0 0 0 1 0.95 1.1 0.14
@@ -627,13 +627,13 @@ gameobject 66 "Rim Bar"
   material 0 0 0 0 16 0 "" 1 1
 end
 gameobject 67 "Wheel Rear Right"
-  guid "334a664250cbab3f643bd8259f8180e5"
+  guid "2300aef41634ab4fac11962870751d24"
   active 1
   parent 45
   transform 0.79999995 0 -1.554 0 0 0 1 1 1 1
 end
 gameobject 68 "Tire"
-  guid "96bd969463d39b792e95a779f80805b9"
+  guid "a4791ac238d2ff4528540fad072bb743"
   active 1
   parent 67
   transform 0 0 0 0 0 0.7071068 0.7071068 0.68 0.31800002 0.68
@@ -641,7 +641,7 @@ gameobject 68 "Tire"
   material 0 0 0 0 16 0 "" 1 1
 end
 gameobject 69 "Rim"
-  guid "0c03cc613c9cbbf73561bfeaaacfea12"
+  guid "6fe3c86f7d4f1374470f55f25e5f84d7"
   active 1
   parent 68
   transform 0 0 0 0 0 0 1 0.62 1.06 0.62
@@ -649,7 +649,7 @@ gameobject 69 "Rim"
   material 0 0 0 0 16 0 "" 1 1
 end
 gameobject 70 "Rim Bar"
-  guid "b41da0ce303123c6d9c8c3944d24e223"
+  guid "70d0ab768b0fc3aa2fa9c9efa34644b9"
   active 1
   parent 68
   transform 0 0 0 0 0 0 1 0.95 1.1 0.14
@@ -657,17 +657,17 @@ gameobject 70 "Rim Bar"
   material 0 0 0 0 16 0 "" 1 1
 end
 gameobject 71 "Passenger Seat"
-  guid "e758e54966a9a19d8c8fe8675f38270d"
+  guid "c4cde9a4b62ac1cb1859cdb5197047ae"
   active 1
   parent 45
   transform 0 0 0 0 0 0 1 1 1 1
   vehicleseat 0 0.45 0.202 0.124999985 1.7 -0.3 0.124999985 2.6 101 "Ride"
 end
 gameobject 72 "Sports Car"
-  guid "b516be194ad3c92fb44b5ecea7428ad1"
+  guid "05cf025914ab878edee7252546ca7d21"
   active 1
   parent -1
-  transform -37 0.34 -3.5 0 0.7071068 0 0.7071068 1 1 1
+  transform 29 0.34 -3.5 0 0.7071068 0 0.7071068 1 1 1
   rigidbody3d 0 1 1 0 0 0 0 0 0 0.5 0.05 1 1 0 0.03 0
   boxcollider3d 1.9 0.45 4.2 0 0 0 0 0 0
   vehicle 24 48 8 44 4 110 9 0.6 1.2 0 8 3.5 6 32
@@ -675,7 +675,7 @@ gameobject 72 "Sports Car"
   vehicleseat 1 -0.475 0.121999994 -0.095999956 -1.75 -0.3 -0.095999956 2.6 101 "Drive"
 end
 gameobject 73 "Car Body"
-  guid "7fe1d059e8a9328ac327083a57193855"
+  guid "2cc0b2eba951ee86d59ad1e924a14eaa"
   active 1
   parent 72
   transform 0 0.054999985 0 0 0 0 1 1.9 0.27 4.2
@@ -683,7 +683,7 @@ gameobject 73 "Car Body"
   material 0 0 0 0 16 0 "" 1 1
 end
 gameobject 74 "Bumper Front"
-  guid "ee1baf7b3d29869b190db3a3007cfecd"
+  guid "3514f23af2a6270fd402091b0df78742"
   active 1
   parent 72
   transform 0 0 2.1 0 0 0 1 1.9399999 0.1575 0.12
@@ -691,7 +691,7 @@ gameobject 74 "Bumper Front"
   material 0 0 0 0 16 0 "" 1 1
 end
 gameobject 75 "Bumper Rear"
-  guid "bcdf098a0c7aeb23ed5fafadb9240a54"
+  guid "9d7be0b1a0a38dfd6857d2c484fa7f61"
   active 1
   parent 72
   transform 0 0 -2.1 0 0 0 1 1.9399999 0.1575 0.12
@@ -699,7 +699,7 @@ gameobject 75 "Bumper Rear"
   material 0 0 0 0 16 0 "" 1 1
 end
 gameobject 76 "Cabin"
-  guid "5d2e909e77a07241be722a0070d2f02c"
+  guid "de853059dc1eee8dce8f5d08d9213887"
   active 1
   parent 72
   transform 0 0.39999998 -0.33599997 0 0 0 1 1.748 0.42 1.6
@@ -707,7 +707,7 @@ gameobject 76 "Cabin"
   material 0 0 0 0 16 0 "" 1 1
 end
 gameobject 77 "Roof"
-  guid "0a922ce2a82a07b393e09a962e71e6c4"
+  guid "b7bc9b6da86d4ac4cc28a246cc5c6b90"
   active 1
   parent 72
   transform 0 0.61 -0.33599997 0 0 0 1 1.786 0.06 1.64
@@ -715,7 +715,7 @@ gameobject 77 "Roof"
   material 0 0 0 0 16 0 "" 1 1
 end
 gameobject 78 "Headlight Left"
-  guid "6c9e156955011a74f92beb2a4a75763c"
+  guid "c6e3b78c1cacd2426e72ff11a43f7125"
   active 1
   parent 72
   transform -0.61749995 0.089999996 2.11 0 0 0 1 0.34 0.13 0.06
@@ -723,7 +723,7 @@ gameobject 78 "Headlight Left"
   material 0.47058824 0.43137255 0.27450982 0 16 0 "" 1 1
 end
 gameobject 79 "Taillight Left"
-  guid "92897439b875ca310456836d0b7dfcd2"
+  guid "5f3acf9ff741fd57da4035c5cf9e4a97"
   active 1
   parent 72
   transform -0.66499996 0.089999996 -2.11 0 0 0 1 0.3 0.12 0.06
@@ -731,7 +731,7 @@ gameobject 79 "Taillight Left"
   material 0.43137255 0.039215688 0.039215688 0 16 0 "" 1 1
 end
 gameobject 80 "Headlight Right"
-  guid "4b929c736f22c526d2176d32b06b23c4"
+  guid "794c49c8bcbb68fcca4646c23fad8245"
   active 1
   parent 72
   transform 0.61749995 0.089999996 2.11 0 0 0 1 0.34 0.13 0.06
@@ -739,7 +739,7 @@ gameobject 80 "Headlight Right"
   material 0.47058824 0.43137255 0.27450982 0 16 0 "" 1 1
 end
 gameobject 81 "Taillight Right"
-  guid "532b80f62e75a960855a5ba4102cf4fa"
+  guid "9b3167b7a6b6a8ab20a884aefe206873"
   active 1
   parent 72
   transform 0.66499996 0.089999996 -2.11 0 0 0 1 0.3 0.12 0.06
@@ -747,13 +747,13 @@ gameobject 81 "Taillight Right"
   material 0.43137255 0.039215688 0.039215688 0 16 0 "" 1 1
 end
 gameobject 82 "Wheel Front Left"
-  guid "950a76e9a0a1016b8f20b439db0cb579"
+  guid "b13349b972573c75fbb88423e984e653"
   active 1
   parent 72
   transform -0.84999996 0 1.4539999 0 0 0 1 1 1 1
 end
 gameobject 83 "Tire"
-  guid "df16f6e4560d1096c20c86d5e4579f93"
+  guid "f18078413b0a544fb0544e79120506a6"
   active 1
   parent 82
   transform 0 0 0 0 0 0.7071068 0.7071068 0.68 0.31800002 0.68
@@ -761,7 +761,7 @@ gameobject 83 "Tire"
   material 0 0 0 0 16 0 "" 1 1
 end
 gameobject 84 "Rim"
-  guid "1a9ceb48623c44f610a8ce7ee37ef161"
+  guid "37a38ca1acba614efa394a3669643e20"
   active 1
   parent 83
   transform 0 0 0 0 0 0 1 0.62 1.06 0.62
@@ -769,7 +769,7 @@ gameobject 84 "Rim"
   material 0 0 0 0 16 0 "" 1 1
 end
 gameobject 85 "Rim Bar"
-  guid "364ba40d124838f8f4816807a41d5f2e"
+  guid "89e5920d38242a68ba929c204de913d5"
   active 1
   parent 83
   transform 0 0 0 0 0 0 1 0.95 1.1 0.14
@@ -777,13 +777,13 @@ gameobject 85 "Rim Bar"
   material 0 0 0 0 16 0 "" 1 1
 end
 gameobject 86 "Wheel Front Right"
-  guid "e0e6d17befe512f899d3f70018d87e6c"
+  guid "be6141a5907c6ee868284ecd5b888309"
   active 1
   parent 72
   transform 0.84999996 0 1.4539999 0 0 0 1 1 1 1
 end
 gameobject 87 "Tire"
-  guid "afae09e627fbf201ddb9ed73e141bf6a"
+  guid "f6084cbda7ac248632d3cadf146d5653"
   active 1
   parent 86
   transform 0 0 0 0 0 0.7071068 0.7071068 0.68 0.31800002 0.68
@@ -791,7 +791,7 @@ gameobject 87 "Tire"
   material 0 0 0 0 16 0 "" 1 1
 end
 gameobject 88 "Rim"
-  guid "a8564d562e379043c6d63fbd0869ae8d"
+  guid "102a483c274bc756bae16d1dfabb5ff3"
   active 1
   parent 87
   transform 0 0 0 0 0 0 1 0.62 1.06 0.62
@@ -799,7 +799,7 @@ gameobject 88 "Rim"
   material 0 0 0 0 16 0 "" 1 1
 end
 gameobject 89 "Rim Bar"
-  guid "9e314fd10661f99f6c47b6a0392ad521"
+  guid "18473bb666d84c675a759119061b585f"
   active 1
   parent 87
   transform 0 0 0 0 0 0 1 0.95 1.1 0.14
@@ -807,13 +807,13 @@ gameobject 89 "Rim Bar"
   material 0 0 0 0 16 0 "" 1 1
 end
 gameobject 90 "Wheel Rear Left"
-  guid "faec7297334078397ffe2a0803ea1503"
+  guid "7388109ec3716b35746c8e4ea8b57e6a"
   active 1
   parent 72
   transform -0.84999996 0 -1.4539999 0 0 0 1 1 1 1
 end
 gameobject 91 "Tire"
-  guid "87b63a32515380f66f152820d905fdba"
+  guid "69f3cecc618c151883ab418878dc9a53"
   active 1
   parent 90
   transform 0 0 0 0 0 0.7071068 0.7071068 0.68 0.31800002 0.68
@@ -821,7 +821,7 @@ gameobject 91 "Tire"
   material 0 0 0 0 16 0 "" 1 1
 end
 gameobject 92 "Rim"
-  guid "0367fc90108fbb27eae948a559a0883a"
+  guid "2c50f886ac7ff2f1d6c417359b493b4c"
   active 1
   parent 91
   transform 0 0 0 0 0 0 1 0.62 1.06 0.62
@@ -829,7 +829,7 @@ gameobject 92 "Rim"
   material 0 0 0 0 16 0 "" 1 1
 end
 gameobject 93 "Rim Bar"
-  guid "e32c529b6b4dce8a76512a3b6fb77bba"
+  guid "43ada59005c6a112903ca2ae71ccc848"
   active 1
   parent 91
   transform 0 0 0 0 0 0 1 0.95 1.1 0.14
@@ -837,13 +837,13 @@ gameobject 93 "Rim Bar"
   material 0 0 0 0 16 0 "" 1 1
 end
 gameobject 94 "Wheel Rear Right"
-  guid "844a5f21761b7e12a2518e37991f4ef5"
+  guid "fc398f109733908f04b562499d66b18d"
   active 1
   parent 72
   transform 0.84999996 0 -1.4539999 0 0 0 1 1 1 1
 end
 gameobject 95 "Tire"
-  guid "868eef550f14bd73ef6b7f6ef881f63e"
+  guid "ed934b480fe74dd7733f3fd5707fd73b"
   active 1
   parent 94
   transform 0 0 0 0 0 0.7071068 0.7071068 0.68 0.31800002 0.68
@@ -851,7 +851,7 @@ gameobject 95 "Tire"
   material 0 0 0 0 16 0 "" 1 1
 end
 gameobject 96 "Rim"
-  guid "6edbdd600ce06bb0c2e414a6c9945492"
+  guid "74f066508eddbbf46876dd04352d402c"
   active 1
   parent 95
   transform 0 0 0 0 0 0 1 0.62 1.06 0.62
@@ -859,7 +859,7 @@ gameobject 96 "Rim"
   material 0 0 0 0 16 0 "" 1 1
 end
 gameobject 97 "Rim Bar"
-  guid "d2d9cc5c4ce5ef57c66bdc4176c6a791"
+  guid "b8be1871e7c4640830b91afda0166bde"
   active 1
   parent 95
   transform 0 0 0 0 0 0 1 0.95 1.1 0.14
@@ -867,17 +867,17 @@ gameobject 97 "Rim Bar"
   material 0 0 0 0 16 0 "" 1 1
 end
 gameobject 98 "Passenger Seat"
-  guid "8fbd1abf18514856f6ed0d428fcc858a"
+  guid "98a3dc6882bbea837dc942568af6b529"
   active 1
   parent 72
   transform 0 0 0 0 0 0 1 1 1 1
   vehicleseat 0 0.475 0.121999994 -0.095999956 1.75 -0.3 -0.095999956 2.6 101 "Ride"
 end
 gameobject 99 "Muscle Car"
-  guid "d6111245cd0a58c39c9f25f3e1579f17"
+  guid "f33c7ff5e7f94d577ed325dff035644c"
   active 1
   parent -1
-  transform -26 0.36 -3.5 0 0.7071068 0 0.7071068 1 1 1
+  transform 18 0.36 -3.5 0 0.7071068 0 0.7071068 1 1 1
   rigidbody3d 0 1 1 0 0 0 0 0 0 0.5 0.05 1 1 0 0.03 0
   boxcollider3d 1.95 0.55 4.8 0 0 0 0 0 0
   vehicle 26 44 8 36 4 110 6.5 0.6 1.2 0 8 3.5 6 32
@@ -885,7 +885,7 @@ gameobject 99 "Muscle Car"
   vehicleseat 1 -0.4875 0.188 -0.19500002 -1.7750001 -0.3 -0.19500002 2.6 101 "Drive"
 end
 gameobject 100 "Car Body"
-  guid "6ea89bce4d5b00dab68c71ac6ca1ebf0"
+  guid "5319307c41ebfea58efa5d07593b3d25"
   active 1
   parent 99
   transform 0 0.095 0 0 0 0 1 1.95 0.33 4.8
@@ -893,7 +893,7 @@ gameobject 100 "Car Body"
   material 0 0 0 0 16 0 "" 1 1
 end
 gameobject 101 "Bumper Front"
-  guid "3d55b91e5111318866264afc00f0f3f9"
+  guid "17c555006d060b036e7f9336d5c9d932"
   active 1
   parent 99
   transform 0 0 2.4 0 0 0 1 1.99 0.1925 0.12
@@ -901,7 +901,7 @@ gameobject 101 "Bumper Front"
   material 0 0 0 0 16 0 "" 1 1
 end
 gameobject 102 "Bumper Rear"
-  guid "2f38b8b9f27244473980929b8d148365"
+  guid "0110de1191a0db21c4401fa14dbf002a"
   active 1
   parent 99
   transform 0 0 -2.4 0 0 0 1 1.99 0.1925 0.12
@@ -909,7 +909,7 @@ gameobject 102 "Bumper Rear"
   material 0 0 0 0 16 0 "" 1 1
 end
 gameobject 103 "Cabin"
-  guid "408154b749549e2ce27b229c860aeca1"
+  guid "4a068c8d7ac3a809854032c9a5edaf41"
   active 1
   parent 99
   transform 0 0.51 -0.48000002 0 0 0 1 1.794 0.5 1.9
@@ -917,7 +917,7 @@ gameobject 103 "Cabin"
   material 0 0 0 0 16 0 "" 1 1
 end
 gameobject 104 "Roof"
-  guid "8f334d29aaa44a7b7ee1aea194efbb00"
+  guid "e59e045b25b2c1528959993f94490395"
   active 1
   parent 99
   transform 0 0.76 -0.48000002 0 0 0 1 1.8330001 0.06 1.9399999
@@ -925,7 +925,7 @@ gameobject 104 "Roof"
   material 0 0 0 0 16 0 "" 1 1
 end
 gameobject 105 "Headlight Left"
-  guid "72df500ee4feb8a35a660450c124089b"
+  guid "78305b60a34619b0dc91ae809cc50a7d"
   active 1
   parent 99
   transform -0.63375 0.16 2.41 0 0 0 1 0.34 0.13 0.06
@@ -933,7 +933,7 @@ gameobject 105 "Headlight Left"
   material 0.47058824 0.43137255 0.27450982 0 16 0 "" 1 1
 end
 gameobject 106 "Taillight Left"
-  guid "773507ef34b7616dda91acbea5fca6be"
+  guid "4c3d588feca114f8c07d571ff442f2b5"
   active 1
   parent 99
   transform -0.6825 0.16 -2.41 0 0 0 1 0.3 0.12 0.06
@@ -941,7 +941,7 @@ gameobject 106 "Taillight Left"
   material 0.43137255 0.039215688 0.039215688 0 16 0 "" 1 1
 end
 gameobject 107 "Headlight Right"
-  guid "467f89c4f94070c54be21b70b1deecf4"
+  guid "a80d73312c3988beb544179511f5ef83"
   active 1
   parent 99
   transform 0.63375 0.16 2.41 0 0 0 1 0.34 0.13 0.06
@@ -949,7 +949,7 @@ gameobject 107 "Headlight Right"
   material 0.47058824 0.43137255 0.27450982 0 16 0 "" 1 1
 end
 gameobject 108 "Taillight Right"
-  guid "c081d2aae85fc6ebf28873ae3c114bc1"
+  guid "1671e07705277f97a74fd4164f1f1836"
   active 1
   parent 99
   transform 0.6825 0.16 -2.41 0 0 0 1 0.3 0.12 0.06
@@ -957,13 +957,13 @@ gameobject 108 "Taillight Right"
   material 0.43137255 0.039215688 0.039215688 0 16 0 "" 1 1
 end
 gameobject 109 "Wheel Front Left"
-  guid "33bdbd3e86bcf2edc500e7d4603b77f2"
+  guid "db208eb5250217313fd5499d4eaae13c"
   active 1
   parent 99
   transform -0.875 0 1.7160001 0 0 0 1 1 1 1
 end
 gameobject 110 "Tire"
-  guid "5274e606a97c376edb2aebf84515d561"
+  guid "a278611e200085c20ede9acf99bcc137"
   active 1
   parent 109
   transform 0 0 0 0 0 0.7071068 0.7071068 0.72 0.322 0.72
@@ -971,7 +971,7 @@ gameobject 110 "Tire"
   material 0 0 0 0 16 0 "" 1 1
 end
 gameobject 111 "Rim"
-  guid "5783e0076730886bf31d87441c64fca9"
+  guid "bd66c29fa5f3d3fd9521888eab14aaec"
   active 1
   parent 110
   transform 0 0 0 0 0 0 1 0.62 1.06 0.62
@@ -979,7 +979,7 @@ gameobject 111 "Rim"
   material 0 0 0 0 16 0 "" 1 1
 end
 gameobject 112 "Rim Bar"
-  guid "aae31900b2c1b3298a3f5986a1f67a4d"
+  guid "ed9eaac3ac1267b106274ae66e7621e2"
   active 1
   parent 110
   transform 0 0 0 0 0 0 1 0.95 1.1 0.14
@@ -987,13 +987,13 @@ gameobject 112 "Rim Bar"
   material 0 0 0 0 16 0 "" 1 1
 end
 gameobject 113 "Wheel Front Right"
-  guid "cd281152a19a577dfa1e8b18bc7b9f07"
+  guid "df7f0ec4ed2abceffaf2d97ec0eea704"
   active 1
   parent 99
   transform 0.875 0 1.7160001 0 0 0 1 1 1 1
 end
 gameobject 114 "Tire"
-  guid "1af5e0412bf75e2d7cb4ae1bd6a8fa78"
+  guid "e74635b61cd68b70129aa7adb38c3a7b"
   active 1
   parent 113
   transform 0 0 0 0 0 0.7071068 0.7071068 0.72 0.322 0.72
@@ -1001,7 +1001,7 @@ gameobject 114 "Tire"
   material 0 0 0 0 16 0 "" 1 1
 end
 gameobject 115 "Rim"
-  guid "2a4735cb67214fe139ec23a2d870df62"
+  guid "b9be0ba8ff4ae019f60cfa7a2a855f06"
   active 1
   parent 114
   transform 0 0 0 0 0 0 1 0.62 1.06 0.62
@@ -1009,7 +1009,7 @@ gameobject 115 "Rim"
   material 0 0 0 0 16 0 "" 1 1
 end
 gameobject 116 "Rim Bar"
-  guid "2bfb4eb9a43aa8826ac6618d4dae844e"
+  guid "2627e4dc04f5e1efa39272b53dac64d6"
   active 1
   parent 114
   transform 0 0 0 0 0 0 1 0.95 1.1 0.14
@@ -1017,13 +1017,13 @@ gameobject 116 "Rim Bar"
   material 0 0 0 0 16 0 "" 1 1
 end
 gameobject 117 "Wheel Rear Left"
-  guid "182ba4970cb2fbbbfefd788568496f4c"
+  guid "dc9e25dec45265765d8ad56379fb9341"
   active 1
   parent 99
   transform -0.875 0 -1.7160001 0 0 0 1 1 1 1
 end
 gameobject 118 "Tire"
-  guid "60887900c80297564ece76e79e2b136b"
+  guid "fe952cb9ae8253fb83a1ef8b1193c11b"
   active 1
   parent 117
   transform 0 0 0 0 0 0.7071068 0.7071068 0.72 0.322 0.72
@@ -1031,7 +1031,7 @@ gameobject 118 "Tire"
   material 0 0 0 0 16 0 "" 1 1
 end
 gameobject 119 "Rim"
-  guid "1d9138ed9956e295b56c3a5647f89b4b"
+  guid "e198e1c814550c0ed7b2d0e8d0175290"
   active 1
   parent 118
   transform 0 0 0 0 0 0 1 0.62 1.06 0.62
@@ -1039,7 +1039,7 @@ gameobject 119 "Rim"
   material 0 0 0 0 16 0 "" 1 1
 end
 gameobject 120 "Rim Bar"
-  guid "6759924373e20fc2763fc28dc62fb791"
+  guid "1e61267ab6d9e4811efe97c32d9a81f5"
   active 1
   parent 118
   transform 0 0 0 0 0 0 1 0.95 1.1 0.14
@@ -1047,13 +1047,13 @@ gameobject 120 "Rim Bar"
   material 0 0 0 0 16 0 "" 1 1
 end
 gameobject 121 "Wheel Rear Right"
-  guid "6beed994a870baf45c6b171a8bd440a9"
+  guid "78590bfa825a78d2162ac8c16c0c387b"
   active 1
   parent 99
   transform 0.875 0 -1.7160001 0 0 0 1 1 1 1
 end
 gameobject 122 "Tire"
-  guid "67e43630627c8c5b956e9a64bf8e3386"
+  guid "58a91ac5f7a3005b8ce1b16b9f9d276c"
   active 1
   parent 121
   transform 0 0 0 0 0 0.7071068 0.7071068 0.72 0.322 0.72
@@ -1061,7 +1061,7 @@ gameobject 122 "Tire"
   material 0 0 0 0 16 0 "" 1 1
 end
 gameobject 123 "Rim"
-  guid "fddacf5d88082e324dc91fa323400614"
+  guid "384161a446b986b43678eca1ed80a7ac"
   active 1
   parent 122
   transform 0 0 0 0 0 0 1 0.62 1.06 0.62
@@ -1069,7 +1069,7 @@ gameobject 123 "Rim"
   material 0 0 0 0 16 0 "" 1 1
 end
 gameobject 124 "Rim Bar"
-  guid "1347843b6cc2b462776ec8cb2b9d7d9a"
+  guid "ab79721f2cecd94ac0afbceeb82026f7"
   active 1
   parent 122
   transform 0 0 0 0 0 0 1 0.95 1.1 0.14
@@ -1077,17 +1077,17 @@ gameobject 124 "Rim Bar"
   material 0 0 0 0 16 0 "" 1 1
 end
 gameobject 125 "Passenger Seat"
-  guid "0942348259a5ac9623f368b9a024d978"
+  guid "6ea5028bcf77057463cb3839f0e24378"
   active 1
   parent 99
   transform 0 0 0 0 0 0 1 1 1 1
   vehicleseat 0 0.4875 0.188 -0.19500002 1.7750001 -0.3 -0.19500002 2.6 101 "Ride"
 end
 gameobject 126 "Pickup"
-  guid "9d40aa1c7b5ce6703c518487ee1005cf"
+  guid "5e35da33d5019052fd012a68ef114d59"
   active 1
   parent -1
-  transform -15 0.42 -3.5 0 0.7071068 0 0.7071068 1 1 1
+  transform 7 0.42 -3.5 0 0.7071068 0 0.7071068 1 1 1
   rigidbody3d 0 1 1 0 0 0 0 0 0 0.5 0.05 1 1 0 0.03 0
   boxcollider3d 2 0.75 5.2 0 0 0 0 0 0
   vehicle 12 30 8 30 4 110 7.5 0.6 1.2 0 8 3.5 6 32
@@ -1095,7 +1095,7 @@ gameobject 126 "Pickup"
   vehicleseat 1 -0.5 0.30600002 0.968 -1.8 -0.3 0.968 2.6 101 "Drive"
 end
 gameobject 127 "Car Body"
-  guid "9af24e344553b9b9ab973efc17ea7812"
+  guid "fcaf502fb1a668eb234cdb64b039112d"
   active 1
   parent 126
   transform 0 0.165 0 0 0 0 1 2 0.45000002 5.2
@@ -1103,7 +1103,7 @@ gameobject 127 "Car Body"
   material 0 0 0 0 16 0 "" 1 1
 end
 gameobject 128 "Bumper Front"
-  guid "030e39a9e2524bb649be9c7a4206ac67"
+  guid "81c0821f1be74e3ba258397f93a3a0db"
   active 1
   parent 126
   transform 0 0 2.6 0 0 0 1 2.04 0.2625 0.12
@@ -1111,7 +1111,7 @@ gameobject 128 "Bumper Front"
   material 0 0 0 0 16 0 "" 1 1
 end
 gameobject 129 "Bumper Rear"
-  guid "b57a8f7d5e9c0e188afb89733ffa10bf"
+  guid "93cfd7f58092db91eabd63e912747ae2"
   active 1
   parent 126
   transform 0 0 -2.6 0 0 0 1 2.04 0.2625 0.12
@@ -1119,7 +1119,7 @@ gameobject 129 "Bumper Rear"
   material 0 0 0 0 16 0 "" 1 1
 end
 gameobject 130 "Cabin"
-  guid "fe4bdd89ade58b08bb16f9fc0972bf96"
+  guid "c191f0ec9014c80cad4c44959df06501"
   active 1
   parent 126
   transform 0 0.71500003 0.728 0 0 0 1 1.84 0.65 1.6
@@ -1127,7 +1127,7 @@ gameobject 130 "Cabin"
   material 0 0 0 0 16 0 "" 1 1
 end
 gameobject 131 "Roof"
-  guid "5a6784fe4e66dcea1ec0d3ba1fadf9d2"
+  guid "ff6a68f12fba8f0e2a53c7af9a53aee1"
   active 1
   parent 126
   transform 0 1.04 0.728 0 0 0 1 1.88 0.06 1.64
@@ -1135,7 +1135,7 @@ gameobject 131 "Roof"
   material 0 0 0 0 16 0 "" 1 1
 end
 gameobject 132 "Bed"
-  guid "e2a4ca6726c441e90ea0c17e04bb97f7"
+  guid "8a1adb15c7e320b15059c1535ef81504"
   active 1
   parent 126
   transform 0 0.49 -1.43 0 0 0 1 1.9 0.25 1.976
@@ -1143,7 +1143,7 @@ gameobject 132 "Bed"
   material 0 0 0 0 16 0 "" 1 1
 end
 gameobject 133 "Headlight Left"
-  guid "9f332659a3f729679313e7b9880ad02b"
+  guid "e7ab17c134fa9abef2a188a5cfd67f60"
   active 1
   parent 126
   transform -0.65 0.29000002 2.61 0 0 0 1 0.34 0.13 0.06
@@ -1151,7 +1151,7 @@ gameobject 133 "Headlight Left"
   material 0.47058824 0.43137255 0.27450982 0 16 0 "" 1 1
 end
 gameobject 134 "Taillight Left"
-  guid "9a42a505b32dd5c4182faa598842f46d"
+  guid "396f11cd919486250f343baf862b1d4c"
   active 1
   parent 126
   transform -0.7 0.29000002 -2.61 0 0 0 1 0.3 0.12 0.06
@@ -1159,7 +1159,7 @@ gameobject 134 "Taillight Left"
   material 0.43137255 0.039215688 0.039215688 0 16 0 "" 1 1
 end
 gameobject 135 "Headlight Right"
-  guid "6f2d3ad47fd7ecb88ad9c588ed92b6c7"
+  guid "ea5ea44e6ab71d520f889000064b2304"
   active 1
   parent 126
   transform 0.65 0.29000002 2.61 0 0 0 1 0.34 0.13 0.06
@@ -1167,7 +1167,7 @@ gameobject 135 "Headlight Right"
   material 0.47058824 0.43137255 0.27450982 0 16 0 "" 1 1
 end
 gameobject 136 "Taillight Right"
-  guid "e550060116028e341497caf69f6b1a31"
+  guid "153ba0a14ea2f1afa59c4d8a4702c2ea"
   active 1
   parent 126
   transform 0.7 0.29000002 -2.61 0 0 0 1 0.3 0.12 0.06
@@ -1175,13 +1175,13 @@ gameobject 136 "Taillight Right"
   material 0.43137255 0.039215688 0.039215688 0 16 0 "" 1 1
 end
 gameobject 137 "Wheel Front Left"
-  guid "29819f7ffaabe86ead915ed0133c1df9"
+  guid "ea16217cadb06aa8cdcf888e99a458ae"
   active 1
   parent 126
   transform -0.9 0 1.8019999 0 0 0 1 1 1 1
 end
 gameobject 138 "Tire"
-  guid "a9d95b2132b2a5342fef6540053dc6b0"
+  guid "5806038e91d554864d1404d538ea46de"
   active 1
   parent 137
   transform 0 0 0 0 0 0.7071068 0.7071068 0.84 0.334 0.84
@@ -1189,7 +1189,7 @@ gameobject 138 "Tire"
   material 0 0 0 0 16 0 "" 1 1
 end
 gameobject 139 "Rim"
-  guid "a0755e209a7ae0d8a025862a6e56abcf"
+  guid "af5d9f79aa671ef9cd21084b8b9704c8"
   active 1
   parent 138
   transform 0 0 0 0 0 0 1 0.62 1.06 0.62
@@ -1197,7 +1197,7 @@ gameobject 139 "Rim"
   material 0 0 0 0 16 0 "" 1 1
 end
 gameobject 140 "Rim Bar"
-  guid "2c92dd53e58514343240b2a356422fd7"
+  guid "a9163e0067c20b1077860281be1a03e9"
   active 1
   parent 138
   transform 0 0 0 0 0 0 1 0.95 1.1 0.14
@@ -1205,13 +1205,13 @@ gameobject 140 "Rim Bar"
   material 0 0 0 0 16 0 "" 1 1
 end
 gameobject 141 "Wheel Front Right"
-  guid "6d4e37e8bd3dc4f6e49271a8ed4f70a1"
+  guid "b03c5b48634dab610a282b5b48110059"
   active 1
   parent 126
   transform 0.9 0 1.8019999 0 0 0 1 1 1 1
 end
 gameobject 142 "Tire"
-  guid "6f3ae501b29e3c01ed533fad58d84cef"
+  guid "e0f9920d7fd268962ce3388c9b3a1f63"
   active 1
   parent 141
   transform 0 0 0 0 0 0.7071068 0.7071068 0.84 0.334 0.84
@@ -1219,7 +1219,7 @@ gameobject 142 "Tire"
   material 0 0 0 0 16 0 "" 1 1
 end
 gameobject 143 "Rim"
-  guid "356bfc7be8355a9de0b8756925307c78"
+  guid "20b432d8312c04e8f88f07c1e362b8bf"
   active 1
   parent 142
   transform 0 0 0 0 0 0 1 0.62 1.06 0.62
@@ -1227,7 +1227,7 @@ gameobject 143 "Rim"
   material 0 0 0 0 16 0 "" 1 1
 end
 gameobject 144 "Rim Bar"
-  guid "13a9619ca50a9822346b184fc2c20731"
+  guid "9ddc3b156f512462ce34e68bf9378c1e"
   active 1
   parent 142
   transform 0 0 0 0 0 0 1 0.95 1.1 0.14
@@ -1235,13 +1235,13 @@ gameobject 144 "Rim Bar"
   material 0 0 0 0 16 0 "" 1 1
 end
 gameobject 145 "Wheel Rear Left"
-  guid "c14833790a26971510cc90691e7fec18"
+  guid "9b97cac663bfbc0758a6cc48d80179fb"
   active 1
   parent 126
   transform -0.9 0 -1.8019999 0 0 0 1 1 1 1
 end
 gameobject 146 "Tire"
-  guid "11a0c37cb6a1a6a8441f2fd516523911"
+  guid "e3fb51da21f06eb134f54c1ee58e2c6b"
   active 1
   parent 145
   transform 0 0 0 0 0 0.7071068 0.7071068 0.84 0.334 0.84
@@ -1249,7 +1249,7 @@ gameobject 146 "Tire"
   material 0 0 0 0 16 0 "" 1 1
 end
 gameobject 147 "Rim"
-  guid "ef8647c7c2754b63da98426b62be8384"
+  guid "a2f08d595ac9e5c037887a3c427e908f"
   active 1
   parent 146
   transform 0 0 0 0 0 0 1 0.62 1.06 0.62
@@ -1257,7 +1257,7 @@ gameobject 147 "Rim"
   material 0 0 0 0 16 0 "" 1 1
 end
 gameobject 148 "Rim Bar"
-  guid "d4e73b64fbf1dce2eeb52456dd504763"
+  guid "cba871583146c72048fdab15447edf67"
   active 1
   parent 146
   transform 0 0 0 0 0 0 1 0.95 1.1 0.14
@@ -1265,13 +1265,13 @@ gameobject 148 "Rim Bar"
   material 0 0 0 0 16 0 "" 1 1
 end
 gameobject 149 "Wheel Rear Right"
-  guid "43433af37f318d35a1c1ef1e161b74f7"
+  guid "73ddd543c0fa6982508139e875309c44"
   active 1
   parent 126
   transform 0.9 0 -1.8019999 0 0 0 1 1 1 1
 end
 gameobject 150 "Tire"
-  guid "afff79757776e74638115501b9bd1ae3"
+  guid "140d839e3603258307c44db94bff72b9"
   active 1
   parent 149
   transform 0 0 0 0 0 0.7071068 0.7071068 0.84 0.334 0.84
@@ -1279,7 +1279,7 @@ gameobject 150 "Tire"
   material 0 0 0 0 16 0 "" 1 1
 end
 gameobject 151 "Rim"
-  guid "35f009eec5e91bee658014a6b25fe3ae"
+  guid "933f74ebbe745afe3ad0e7bf3bf34ac8"
   active 1
   parent 150
   transform 0 0 0 0 0 0 1 0.62 1.06 0.62
@@ -1287,7 +1287,7 @@ gameobject 151 "Rim"
   material 0 0 0 0 16 0 "" 1 1
 end
 gameobject 152 "Rim Bar"
-  guid "1293b95394a51a5720d4df31d696c442"
+  guid "465abbc685b182f2ab17895eebaf755c"
   active 1
   parent 150
   transform 0 0 0 0 0 0 1 0.95 1.1 0.14
@@ -1295,14 +1295,14 @@ gameobject 152 "Rim Bar"
   material 0 0 0 0 16 0 "" 1 1
 end
 gameobject 153 "Passenger Seat"
-  guid "2d2f573a2d57519c8c03152aa147f023"
+  guid "eda70671f7af47b5ff56b84831588ff7"
   active 1
   parent 126
   transform 0 0 0 0 0 0 1 1 1 1
   vehicleseat 0 0.5 0.30600002 0.968 1.8 -0.3 0.968 2.6 101 "Ride"
 end
 gameobject 154 "Buggy"
-  guid "26c28be9f584a4604fd4c1918156e5ca"
+  guid "95d75ea7e2a803f155a5a51f6ae703b7"
   active 1
   parent -1
   transform -4 0.42 -3.5 0 0.7071068 0 0.7071068 1 1 1
@@ -1313,7 +1313,7 @@ gameobject 154 "Buggy"
   vehicleseat 1 -0.475 -0.013999999 -0.2 -1.75 -0.3 -0.2 2.6 101 "Drive"
 end
 gameobject 155 "Car Body"
-  guid "92e0781779891a6525fe36d538f4a72e"
+  guid "32b4f316222025a59695ab7e7d1b79a2"
   active 1
   parent 154
   transform 0 -0.035000004 0 0 0 0 1 1.9 0.21000001 3.4
@@ -1321,7 +1321,7 @@ gameobject 155 "Car Body"
   material 0 0 0 0 16 0 "" 1 1
 end
 gameobject 156 "Bumper Front"
-  guid "eb246c3bd59c1bcfbd288f37c897616b"
+  guid "ba5cc2040f335cfdfeaba13a121a5cfc"
   active 1
   parent 154
   transform 0 0 1.7 0 0 0 1 1.9399999 0.122499995 0.12
@@ -1329,7 +1329,7 @@ gameobject 156 "Bumper Front"
   material 0 0 0 0 16 0 "" 1 1
 end
 gameobject 157 "Bumper Rear"
-  guid "256970d5e02b61e776845208ef933325"
+  guid "2bef97331dd7b52d6e87d149ca334a46"
   active 1
   parent 154
   transform 0 0 -1.7 0 0 0 1 1.9399999 0.122499995 0.12
@@ -1337,7 +1337,7 @@ gameobject 157 "Bumper Rear"
   material 0 0 0 0 16 0 "" 1 1
 end
 gameobject 158 "Roll Cage"
-  guid "969e8c2eaaa17e3d310a037b0f98faff"
+  guid "0432d705c4acedfbf4df0d181f849b93"
   active 1
   parent 154
   transform 0 0.57 0 0 0 0 1 1.7099999 0.08 0.08
@@ -1345,7 +1345,7 @@ gameobject 158 "Roll Cage"
   material 0 0 0 0 16 0 "" 1 1
 end
 gameobject 159 "Seat Block"
-  guid "efe8dafbc003b7b6fe5b929430c7918d"
+  guid "ba56263982ced03c3274724b913cceeb"
   active 1
   parent 154
   transform 0 0.27 -0.2 0 0 0 1 0.9 0.4 0.5
@@ -1353,7 +1353,7 @@ gameobject 159 "Seat Block"
   material 0 0 0 0 16 0 "" 1 1
 end
 gameobject 160 "Headlight Left"
-  guid "76b566ecb76416b8d95fe6afb4a80cc4"
+  guid "cd979aa595083e45409f22cc68fd380a"
   active 1
   parent 154
   transform -0.61749995 -0.030000001 1.71 0 0 0 1 0.34 0.13 0.06
@@ -1361,7 +1361,7 @@ gameobject 160 "Headlight Left"
   material 0.47058824 0.43137255 0.27450982 0 16 0 "" 1 1
 end
 gameobject 161 "Taillight Left"
-  guid "5d21c60498cdc8907dcd1a26125723a9"
+  guid "f9b7976b989b32555d47add7ed33e04c"
   active 1
   parent 154
   transform -0.66499996 -0.030000001 -1.71 0 0 0 1 0.3 0.12 0.06
@@ -1369,7 +1369,7 @@ gameobject 161 "Taillight Left"
   material 0.43137255 0.039215688 0.039215688 0 16 0 "" 1 1
 end
 gameobject 162 "Headlight Right"
-  guid "11f4e8f32aa5af344e2bcbaf388154e2"
+  guid "dbd2fe92367bdffa70735efce2ccc1d7"
   active 1
   parent 154
   transform 0.61749995 -0.030000001 1.71 0 0 0 1 0.34 0.13 0.06
@@ -1377,7 +1377,7 @@ gameobject 162 "Headlight Right"
   material 0.47058824 0.43137255 0.27450982 0 16 0 "" 1 1
 end
 gameobject 163 "Taillight Right"
-  guid "bc627347d156846c3f25602d0631dcfa"
+  guid "a7f408b632644d044bca5287a38fc341"
   active 1
   parent 154
   transform 0.66499996 -0.030000001 -1.71 0 0 0 1 0.3 0.12 0.06
@@ -1385,13 +1385,13 @@ gameobject 163 "Taillight Right"
   material 0.43137255 0.039215688 0.039215688 0 16 0 "" 1 1
 end
 gameobject 164 "Wheel Front Left"
-  guid "f66cfbf0f5e5dcd60cd5d6fced87448f"
+  guid "1c8cc5f51132488a28e32cccbb99458d"
   active 1
   parent 154
   transform -0.84999996 0 0.90200007 0 0 0 1 1 1 1
 end
 gameobject 165 "Tire"
-  guid "2425873e9766936f4d5770476f30d6ce"
+  guid "c219922723b5851e122af7d84a94b8da"
   active 1
   parent 164
   transform 0 0 0 0 0 0.7071068 0.7071068 0.84 0.334 0.84
@@ -1399,7 +1399,7 @@ gameobject 165 "Tire"
   material 0 0 0 0 16 0 "" 1 1
 end
 gameobject 166 "Rim"
-  guid "dc2ce947d7d04e8530b91ee983a2c3e6"
+  guid "7551796c75a999440f784b06b7b31381"
   active 1
   parent 165
   transform 0 0 0 0 0 0 1 0.62 1.06 0.62
@@ -1407,7 +1407,7 @@ gameobject 166 "Rim"
   material 0 0 0 0 16 0 "" 1 1
 end
 gameobject 167 "Rim Bar"
-  guid "b4605aa91684bd30f0be0f780af2b37a"
+  guid "f2580b2f832270c94ad4a8983a4bb50b"
   active 1
   parent 165
   transform 0 0 0 0 0 0 1 0.95 1.1 0.14
@@ -1415,13 +1415,13 @@ gameobject 167 "Rim Bar"
   material 0 0 0 0 16 0 "" 1 1
 end
 gameobject 168 "Wheel Front Right"
-  guid "8385eb11e1d693e944e4a143f9cd5bbc"
+  guid "bd4253ee2d2da1c791994e7f1816991d"
   active 1
   parent 154
   transform 0.84999996 0 0.90200007 0 0 0 1 1 1 1
 end
 gameobject 169 "Tire"
-  guid "4840495aa380a68d873abb3ce0669a8c"
+  guid "d59e0d3ac21e9889c7f36bbc461b6316"
   active 1
   parent 168
   transform 0 0 0 0 0 0.7071068 0.7071068 0.84 0.334 0.84
@@ -1429,7 +1429,7 @@ gameobject 169 "Tire"
   material 0 0 0 0 16 0 "" 1 1
 end
 gameobject 170 "Rim"
-  guid "2cab10d29e5133b6245c5ebda15459b2"
+  guid "01eedc1c9e232cb7de7856d916f88fa8"
   active 1
   parent 169
   transform 0 0 0 0 0 0 1 0.62 1.06 0.62
@@ -1437,7 +1437,7 @@ gameobject 170 "Rim"
   material 0 0 0 0 16 0 "" 1 1
 end
 gameobject 171 "Rim Bar"
-  guid "2ed5d269bd732ca761e620f9b0a42e0d"
+  guid "fb77323d39d12b0836d4ed51d26c6c29"
   active 1
   parent 169
   transform 0 0 0 0 0 0 1 0.95 1.1 0.14
@@ -1445,13 +1445,13 @@ gameobject 171 "Rim Bar"
   material 0 0 0 0 16 0 "" 1 1
 end
 gameobject 172 "Wheel Rear Left"
-  guid "cb095d0be562cab5f39ad23be5dab8b5"
+  guid "071c7cfe46f1f02894a60e5a9026e2d9"
   active 1
   parent 154
   transform -0.84999996 0 -0.90200007 0 0 0 1 1 1 1
 end
 gameobject 173 "Tire"
-  guid "0132d4cb3befa64475c6bc0fd5054973"
+  guid "473c5369b58b4added316eb147497213"
   active 1
   parent 172
   transform 0 0 0 0 0 0.7071068 0.7071068 0.84 0.334 0.84
@@ -1459,7 +1459,7 @@ gameobject 173 "Tire"
   material 0 0 0 0 16 0 "" 1 1
 end
 gameobject 174 "Rim"
-  guid "38649dbafeb02527ab664eba07915638"
+  guid "e3551a6ff56e2a438a4950a2ae78c857"
   active 1
   parent 173
   transform 0 0 0 0 0 0 1 0.62 1.06 0.62
@@ -1467,7 +1467,7 @@ gameobject 174 "Rim"
   material 0 0 0 0 16 0 "" 1 1
 end
 gameobject 175 "Rim Bar"
-  guid "db6ec4e97d11567fc7ecfc48eb78fc90"
+  guid "fba7a81db27319626747a86072c27d8e"
   active 1
   parent 173
   transform 0 0 0 0 0 0 1 0.95 1.1 0.14
@@ -1475,13 +1475,13 @@ gameobject 175 "Rim Bar"
   material 0 0 0 0 16 0 "" 1 1
 end
 gameobject 176 "Wheel Rear Right"
-  guid "2f217c61e43ccfc59598638a27e50e02"
+  guid "2fcf83119ee40790f0b861e3cb45c591"
   active 1
   parent 154
   transform 0.84999996 0 -0.90200007 0 0 0 1 1 1 1
 end
 gameobject 177 "Tire"
-  guid "5248ee0e9cb7beea559b5ff8715dd978"
+  guid "97b1fc9d29b2d0df772d3e09e544fe0a"
   active 1
   parent 176
   transform 0 0 0 0 0 0.7071068 0.7071068 0.84 0.334 0.84
@@ -1489,7 +1489,7 @@ gameobject 177 "Tire"
   material 0 0 0 0 16 0 "" 1 1
 end
 gameobject 178 "Rim"
-  guid "c056d80b7030a1e5c2f0941cdb4837ca"
+  guid "3b9d650e9aae5536f4f2588bd1d92029"
   active 1
   parent 177
   transform 0 0 0 0 0 0 1 0.62 1.06 0.62
@@ -1497,7 +1497,7 @@ gameobject 178 "Rim"
   material 0 0 0 0 16 0 "" 1 1
 end
 gameobject 179 "Rim Bar"
-  guid "c6b674478c855017856feec20783b9f4"
+  guid "27ec47b12cc42e0c3e13054a609d6ba4"
   active 1
   parent 177
   transform 0 0 0 0 0 0 1 0.95 1.1 0.14
@@ -1505,17 +1505,17 @@ gameobject 179 "Rim Bar"
   material 0 0 0 0 16 0 "" 1 1
 end
 gameobject 180 "Passenger Seat"
-  guid "ab9a1e99206cc54ec17adde096b43826"
+  guid "cead2c38185fdf3b5b244c18008acb36"
   active 1
   parent 154
   transform 0 0 0 0 0 0 1 1 1 1
   vehicleseat 0 0.475 -0.013999999 -0.2 1.75 -0.3 -0.2 2.6 101 "Ride"
 end
 gameobject 181 "Bus"
-  guid "c5394e94ab082d16fcfd429ebf01ccee"
+  guid "351740f72fd3305f02982f78dce6b237"
   active 1
   parent -1
-  transform 7 0.5 -3.5 0 0.7071068 0 0.7071068 1 1 1
+  transform -15 0.5 -3.5 0 0.7071068 0 0.7071068 1 1 1
   rigidbody3d 0 1 1 0 0 0 0 0 0 0.5 0.05 1 1 0 0.03 0
   boxcollider3d 2.5 1.3 9.5 0 0 0 0 0 0
   vehicle 6 20 5 20 4 110 6.5 0.6 1.2 0 8 3.5 6 32
@@ -1523,7 +1523,7 @@ gameobject 181 "Bus"
   vehicleseat 1 -0.625 0.68999994 1.2900001 -2.05 -0.3 1.2900001 2.6 101 "Drive"
 end
 gameobject 182 "Car Body"
-  guid "1c05e8a7ba514712c67717e416c0b98c"
+  guid "55c4cdcfd88c5940cf417e21148e9096"
   active 1
   parent 181
   transform 0 0.39999995 0 0 0 0 1 2.5 0.78000003 9.5
@@ -1531,7 +1531,7 @@ gameobject 182 "Car Body"
   material 0 0 0 0 16 0 "" 1 1
 end
 gameobject 183 "Bumper Front"
-  guid "2181426fcfbec5f0311cf8abdd0a1341"
+  guid "25d96c56ce872c635663e1c2e6f6c0e1"
   active 1
   parent 181
   transform 0 0 4.75 0 0 0 1 2.54 0.45499998 0.12
@@ -1539,7 +1539,7 @@ gameobject 183 "Bumper Front"
   material 0 0 0 0 16 0 "" 1 1
 end
 gameobject 184 "Bumper Rear"
-  guid "48e02688812d85003de0f3c015112e6a"
+  guid "3ad943d7bfc1f7eb0b358355d75b6d31"
   active 1
   parent 181
   transform 0 0 -4.75 0 0 0 1 2.54 0.45499998 0.12
@@ -1547,7 +1547,7 @@ gameobject 184 "Bumper Rear"
   material 0 0 0 0 16 0 "" 1 1
 end
 gameobject 185 "Cabin"
-  guid "4362e6db915db5124f564371d1a012b7"
+  guid "03d32785aecf846daeac964302788f06"
   active 1
   parent 181
   transform 0 1.39 0 0 0 0 1 2.3 1.2 8.6
@@ -1555,7 +1555,7 @@ gameobject 185 "Cabin"
   material 0 0 0 0 16 0 "" 1 1
 end
 gameobject 186 "Roof"
-  guid "8989857304c47f134fe862677fb44de5"
+  guid "ba17344a1f15d0525ba8c0baf2e2b219"
   active 1
   parent 181
   transform 0 1.99 0 0 0 0 1 2.35 0.06 8.64
@@ -1563,7 +1563,7 @@ gameobject 186 "Roof"
   material 0 0 0 0 16 0 "" 1 1
 end
 gameobject 187 "Headlight Left"
-  guid "8f811f385fe5d82d01f1b5df01835763"
+  guid "20cb3228ec7dbf57facfb5678beecfd3"
   active 1
   parent 181
   transform -0.8125 0.68999994 4.76 0 0 0 1 0.34 0.13 0.06
@@ -1571,7 +1571,7 @@ gameobject 187 "Headlight Left"
   material 0.47058824 0.43137255 0.27450982 0 16 0 "" 1 1
 end
 gameobject 188 "Taillight Left"
-  guid "baf6abbae8637a595faf12494137949a"
+  guid "c2f5bbe18d06b8e83fc57404cde073dc"
   active 1
   parent 181
   transform -0.875 0.68999994 -4.76 0 0 0 1 0.3 0.12 0.06
@@ -1579,7 +1579,7 @@ gameobject 188 "Taillight Left"
   material 0.43137255 0.039215688 0.039215688 0 16 0 "" 1 1
 end
 gameobject 189 "Headlight Right"
-  guid "21aa1713361a2142af5ac0ecf63cc288"
+  guid "05fdfc866d5f51bb493c6d5d36f8436f"
   active 1
   parent 181
   transform 0.8125 0.68999994 4.76 0 0 0 1 0.34 0.13 0.06
@@ -1587,7 +1587,7 @@ gameobject 189 "Headlight Right"
   material 0.47058824 0.43137255 0.27450982 0 16 0 "" 1 1
 end
 gameobject 190 "Taillight Right"
-  guid "9bcb36c28205b902e9842ad47d3da1c2"
+  guid "a7378870cbd719c18f0f32111a0c46e3"
   active 1
   parent 181
   transform 0.875 0.68999994 -4.76 0 0 0 1 0.3 0.12 0.06
@@ -1595,13 +1595,13 @@ gameobject 190 "Taillight Right"
   material 0.43137255 0.039215688 0.039215688 0 16 0 "" 1 1
 end
 gameobject 191 "Wheel Front Left"
-  guid "e7f5a6e7b3608daa53275b9ccb3f563e"
+  guid "99ead535cd22b4c94d326ec15b2986aa"
   active 1
   parent 181
   transform -1.15 0 3.8 0 0 0 1 1 1 1
 end
 gameobject 192 "Tire"
-  guid "3b0db4f75d2315a3e3a34867ec56f2b6"
+  guid "d6660a439cadf575a600c644b48619e0"
   active 1
   parent 191
   transform 0 0 0 0 0 0.7071068 0.7071068 1 0.35 1
@@ -1609,7 +1609,7 @@ gameobject 192 "Tire"
   material 0 0 0 0 16 0 "" 1 1
 end
 gameobject 193 "Rim"
-  guid "86723d8f3f46776510b60d2894d75386"
+  guid "b2372e7366cb089c80aeaa5420a8adee"
   active 1
   parent 192
   transform 0 0 0 0 0 0 1 0.62 1.06 0.62
@@ -1617,7 +1617,7 @@ gameobject 193 "Rim"
   material 0 0 0 0 16 0 "" 1 1
 end
 gameobject 194 "Rim Bar"
-  guid "ee50fc95ba0868acb6c949c10d9618c4"
+  guid "44a1b53a6a8e8fe122d5c9a66527df19"
   active 1
   parent 192
   transform 0 0 0 0 0 0 1 0.95 1.1 0.14
@@ -1625,13 +1625,13 @@ gameobject 194 "Rim Bar"
   material 0 0 0 0 16 0 "" 1 1
 end
 gameobject 195 "Wheel Front Right"
-  guid "3d63faf4ce7c92f056ea1bd2b8e63912"
+  guid "68967d81f0ef2cf65c176bc270020c9f"
   active 1
   parent 181
   transform 1.15 0 3.8 0 0 0 1 1 1 1
 end
 gameobject 196 "Tire"
-  guid "cbbf37cad618e000a72759147fbd0928"
+  guid "7ccca58922fb43803a8d6aba2bbb3764"
   active 1
   parent 195
   transform 0 0 0 0 0 0.7071068 0.7071068 1 0.35 1
@@ -1639,7 +1639,7 @@ gameobject 196 "Tire"
   material 0 0 0 0 16 0 "" 1 1
 end
 gameobject 197 "Rim"
-  guid "3f367feb6ccca457c89e32b378909c99"
+  guid "bc96eb6a0b7bde52701d90ab7720f763"
   active 1
   parent 196
   transform 0 0 0 0 0 0 1 0.62 1.06 0.62
@@ -1647,7 +1647,7 @@ gameobject 197 "Rim"
   material 0 0 0 0 16 0 "" 1 1
 end
 gameobject 198 "Rim Bar"
-  guid "d081b8a0f6b35e42099990a0adc06256"
+  guid "eef4023aeec615ded56683ffb2e9c8fc"
   active 1
   parent 196
   transform 0 0 0 0 0 0 1 0.95 1.1 0.14
@@ -1655,13 +1655,13 @@ gameobject 198 "Rim Bar"
   material 0 0 0 0 16 0 "" 1 1
 end
 gameobject 199 "Wheel Rear Left"
-  guid "fbecd300a3c0c35dd9aff2a278b111d9"
+  guid "a67fa5d95172e6c69d320f0f4a1917b1"
   active 1
   parent 181
   transform -1.15 0 -3.8 0 0 0 1 1 1 1
 end
 gameobject 200 "Tire"
-  guid "f8d497e74b9f1e514cdd405dfb10046e"
+  guid "e5ba2c03ef126844aa8e5d7389cb39d1"
   active 1
   parent 199
   transform 0 0 0 0 0 0.7071068 0.7071068 1 0.35 1
@@ -1669,7 +1669,7 @@ gameobject 200 "Tire"
   material 0 0 0 0 16 0 "" 1 1
 end
 gameobject 201 "Rim"
-  guid "8fad2248c0c9e3ef3b580dd4ece6ab3b"
+  guid "9e414dac7a54cdfad4ef2c9e1e55160d"
   active 1
   parent 200
   transform 0 0 0 0 0 0 1 0.62 1.06 0.62
@@ -1677,7 +1677,7 @@ gameobject 201 "Rim"
   material 0 0 0 0 16 0 "" 1 1
 end
 gameobject 202 "Rim Bar"
-  guid "1c970cbcc71021ed1feba90186f6a085"
+  guid "1d52fbf1d594cdc52b349e0428343bc9"
   active 1
   parent 200
   transform 0 0 0 0 0 0 1 0.95 1.1 0.14
@@ -1685,13 +1685,13 @@ gameobject 202 "Rim Bar"
   material 0 0 0 0 16 0 "" 1 1
 end
 gameobject 203 "Wheel Rear Right"
-  guid "561c70a4ae2ce3d36567e0160c2dd1b8"
+  guid "976e5f576000f68de924a3bbe131ebf0"
   active 1
   parent 181
   transform 1.15 0 -3.8 0 0 0 1 1 1 1
 end
 gameobject 204 "Tire"
-  guid "a7bcbe88e58457a494e14567d5b3c31f"
+  guid "04f84cd8164a11c95ae578596ed4b7b3"
   active 1
   parent 203
   transform 0 0 0 0 0 0.7071068 0.7071068 1 0.35 1
@@ -1699,7 +1699,7 @@ gameobject 204 "Tire"
   material 0 0 0 0 16 0 "" 1 1
 end
 gameobject 205 "Rim"
-  guid "7cd882cfb693d2ca1764b826006d611d"
+  guid "f8238fb0f9c1852e8c78164b6cdb3356"
   active 1
   parent 204
   transform 0 0 0 0 0 0 1 0.62 1.06 0.62
@@ -1707,7 +1707,7 @@ gameobject 205 "Rim"
   material 0 0 0 0 16 0 "" 1 1
 end
 gameobject 206 "Rim Bar"
-  guid "2e3f4785185632f33d0c1e0b4da1d6e9"
+  guid "60c2e7ffa61a7ce9d2a94a5016d09b6a"
   active 1
   parent 204
   transform 0 0 0 0 0 0 1 0.95 1.1 0.14
@@ -1715,17 +1715,17 @@ gameobject 206 "Rim Bar"
   material 0 0 0 0 16 0 "" 1 1
 end
 gameobject 207 "Passenger Seat"
-  guid "877991215c1c66d22078e49afaa95775"
+  guid "341f5b1c212da2c30388af4c04ede1eb"
   active 1
   parent 181
   transform 0 0 0 0 0 0 1 1 1 1
   vehicleseat 0 0.625 0.68999994 1.2900001 2.05 -0.3 1.2900001 2.6 101 "Ride"
 end
 gameobject 208 "Heavy Truck"
-  guid "417bf0d65106b4beef43a9153974e38b"
+  guid "fe198ca51fb3ae846842aa56bfd6ca70"
   active 1
   parent -1
-  transform 18 0.55 -3.5 0 0.7071068 0 0.7071068 1 1 1
+  transform -26 0.55 -3.5 0 0.7071068 0 0.7071068 1 1 1
   rigidbody3d 0 1 1 0 0 0 0 0 0 0.5 0.05 1 1 0 0.03 0
   boxcollider3d 2.5 1.1 7.5 0 0 0 0 0 0
   vehicle 7 22 6 22 4 110 6.5 0.6 1.2 0 8 3.5 6 32
@@ -1733,7 +1733,7 @@ gameobject 208 "Heavy Truck"
   vehicleseat 1 -0.625 0.495 2.55 -2.05 -0.3 2.55 2.6 101 "Drive"
 end
 gameobject 209 "Car Body"
-  guid "11da3cd76064487b5ee23a96dfb7c705"
+  guid "b6fa39d2f64af091bd5899f9c0288436"
   active 1
   parent 208
   transform 0 0.27499998 0 0 0 0 1 2.5 0.66 7.5
@@ -1741,7 +1741,7 @@ gameobject 209 "Car Body"
   material 0 0 0 0 16 0 "" 1 1
 end
 gameobject 210 "Bumper Front"
-  guid "44fa0f9b17cd435895d021e81701953e"
+  guid "db0c2be3ed2d97c158f7f26aada390ff"
   active 1
   parent 208
   transform 0 0 3.75 0 0 0 1 2.54 0.385 0.12
@@ -1749,7 +1749,7 @@ gameobject 210 "Bumper Front"
   material 0 0 0 0 16 0 "" 1 1
 end
 gameobject 211 "Bumper Rear"
-  guid "24734a66e487203fa50a39dcdff095b6"
+  guid "cd0ed6d07fa28b22392e156fe258c260"
   active 1
   parent 208
   transform 0 0 -3.75 0 0 0 1 2.54 0.385 0.12
@@ -1757,7 +1757,7 @@ gameobject 211 "Bumper Rear"
   material 0 0 0 0 16 0 "" 1 1
 end
 gameobject 212 "Cabin"
-  guid "0320c4d77cb1bc1e58713493af7ae000"
+  guid "edbac36e113cc84edf8d551813f3ae9f"
   active 1
   parent 208
   transform 0 1.255 2.25 0 0 0 1 2.3 1.3 2
@@ -1765,7 +1765,7 @@ gameobject 212 "Cabin"
   material 0 0 0 0 16 0 "" 1 1
 end
 gameobject 213 "Roof"
-  guid "b4a6f2419022c43657a9ff95c1ab71d8"
+  guid "d7e643e3480cc6f86dad8aeb7b1d5c3f"
   active 1
   parent 208
   transform 0 1.905 2.25 0 0 0 1 2.35 0.06 2.04
@@ -1773,7 +1773,7 @@ gameobject 213 "Roof"
   material 0 0 0 0 16 0 "" 1 1
 end
 gameobject 214 "Headlight Left"
-  guid "ccf4c397b6b6c4daf8f7fefc6133289e"
+  guid "b50d174080ae22661309162cde246fbe"
   active 1
   parent 208
   transform -0.8125 0.505 3.76 0 0 0 1 0.34 0.13 0.06
@@ -1781,7 +1781,7 @@ gameobject 214 "Headlight Left"
   material 0.47058824 0.43137255 0.27450982 0 16 0 "" 1 1
 end
 gameobject 215 "Taillight Left"
-  guid "78c4238776299cb91bc59f8aa700b373"
+  guid "38d14fe37c9f2112acdb649fc265927b"
   active 1
   parent 208
   transform -0.875 0.505 -3.76 0 0 0 1 0.3 0.12 0.06
@@ -1789,7 +1789,7 @@ gameobject 215 "Taillight Left"
   material 0.43137255 0.039215688 0.039215688 0 16 0 "" 1 1
 end
 gameobject 216 "Headlight Right"
-  guid "3c45f8a778abdad7e18416d71246bcc7"
+  guid "5a82a33465038551227f6250cff92a12"
   active 1
   parent 208
   transform 0.8125 0.505 3.76 0 0 0 1 0.34 0.13 0.06
@@ -1797,7 +1797,7 @@ gameobject 216 "Headlight Right"
   material 0.47058824 0.43137255 0.27450982 0 16 0 "" 1 1
 end
 gameobject 217 "Taillight Right"
-  guid "3609d514bc3e1189ed38412e0d1e2099"
+  guid "140783438d12d44507d7f125e4824933"
   active 1
   parent 208
   transform 0.875 0.505 -3.76 0 0 0 1 0.3 0.12 0.06
@@ -1805,13 +1805,13 @@ gameobject 217 "Taillight Right"
   material 0.43137255 0.039215688 0.039215688 0 16 0 "" 1 1
 end
 gameobject 218 "Wheel Front Left"
-  guid "a031047a969ab6c3b0117e61df764c02"
+  guid "714ad823b69e3cb2a99ca8dea4d836c0"
   active 1
   parent 208
   transform -1.15 0 2.705 0 0 0 1 1 1 1
 end
 gameobject 219 "Tire"
-  guid "584cf7d9382efc31d00808af7fda3ff2"
+  guid "655a733e61c4bbbded720c320ffd90fa"
   active 1
   parent 218
   transform 0 0 0 0 0 0.7071068 0.7071068 1.1 0.36 1.1
@@ -1819,7 +1819,7 @@ gameobject 219 "Tire"
   material 0 0 0 0 16 0 "" 1 1
 end
 gameobject 220 "Rim"
-  guid "24d5e9f9b0b7ecbd011c621c04364d44"
+  guid "c520516403ed54159291c9fc58ec5b60"
   active 1
   parent 219
   transform 0 0 0 0 0 0 1 0.62 1.06 0.62
@@ -1827,7 +1827,7 @@ gameobject 220 "Rim"
   material 0 0 0 0 16 0 "" 1 1
 end
 gameobject 221 "Rim Bar"
-  guid "67e1f350209d04cc7a99a17d6e62927a"
+  guid "182c55c17b60152faeda43a7e1a8284c"
   active 1
   parent 219
   transform 0 0 0 0 0 0 1 0.95 1.1 0.14
@@ -1835,13 +1835,13 @@ gameobject 221 "Rim Bar"
   material 0 0 0 0 16 0 "" 1 1
 end
 gameobject 222 "Wheel Front Right"
-  guid "17aee5d89044ea1bb36071da6e5ea174"
+  guid "04928b165f13e1fb1cc2f79a7b3917d3"
   active 1
   parent 208
   transform 1.15 0 2.705 0 0 0 1 1 1 1
 end
 gameobject 223 "Tire"
-  guid "952b7bd1c70c82e75f94c5922966b976"
+  guid "004b576452eb9b764f81cfc2265abeeb"
   active 1
   parent 222
   transform 0 0 0 0 0 0.7071068 0.7071068 1.1 0.36 1.1
@@ -1849,7 +1849,7 @@ gameobject 223 "Tire"
   material 0 0 0 0 16 0 "" 1 1
 end
 gameobject 224 "Rim"
-  guid "662000c54f31b6750c7e83faa269a5d9"
+  guid "7ccf507ec729198768d3cbe034d2cee2"
   active 1
   parent 223
   transform 0 0 0 0 0 0 1 0.62 1.06 0.62
@@ -1857,7 +1857,7 @@ gameobject 224 "Rim"
   material 0 0 0 0 16 0 "" 1 1
 end
 gameobject 225 "Rim Bar"
-  guid "bea8d5abc2db73c42aaefe50ce77e50e"
+  guid "64bfbf3809063d0c380cfb42820f6b31"
   active 1
   parent 223
   transform 0 0 0 0 0 0 1 0.95 1.1 0.14
@@ -1865,13 +1865,13 @@ gameobject 225 "Rim Bar"
   material 0 0 0 0 16 0 "" 1 1
 end
 gameobject 226 "Wheel Rear Left"
-  guid "d678da9d3671c0f1535e3c853441e302"
+  guid "8e201ee333012021cd36f63cb8538e6e"
   active 1
   parent 208
   transform -1.15 0 -2.705 0 0 0 1 1 1 1
 end
 gameobject 227 "Tire"
-  guid "911fe2c348e22f2491bb042d8bcca2fa"
+  guid "10ab10ef883c5451275dbfb3842cd7ba"
   active 1
   parent 226
   transform 0 0 0 0 0 0.7071068 0.7071068 1.1 0.36 1.1
@@ -1879,7 +1879,7 @@ gameobject 227 "Tire"
   material 0 0 0 0 16 0 "" 1 1
 end
 gameobject 228 "Rim"
-  guid "bc94c1e53b9ab6b39f1a1f42a970ace4"
+  guid "98b34bfb8ceb6ecccbfe616f9f16d650"
   active 1
   parent 227
   transform 0 0 0 0 0 0 1 0.62 1.06 0.62
@@ -1887,7 +1887,7 @@ gameobject 228 "Rim"
   material 0 0 0 0 16 0 "" 1 1
 end
 gameobject 229 "Rim Bar"
-  guid "cfad5a719ab9f032450d7e15b620c3c8"
+  guid "039ad48bbf6f4959cd0b03eed3a74ccb"
   active 1
   parent 227
   transform 0 0 0 0 0 0 1 0.95 1.1 0.14
@@ -1895,13 +1895,13 @@ gameobject 229 "Rim Bar"
   material 0 0 0 0 16 0 "" 1 1
 end
 gameobject 230 "Wheel Rear Right"
-  guid "3961745573575ac43798c0fa8078f4df"
+  guid "cdd469d668d2107e3473c6978b774ea1"
   active 1
   parent 208
   transform 1.15 0 -2.705 0 0 0 1 1 1 1
 end
 gameobject 231 "Tire"
-  guid "20b25d38d5fc005cd1dcd195d1d6ae8f"
+  guid "adca0732d3331836d8f8d2c44c8b1e48"
   active 1
   parent 230
   transform 0 0 0 0 0 0.7071068 0.7071068 1.1 0.36 1.1
@@ -1909,7 +1909,7 @@ gameobject 231 "Tire"
   material 0 0 0 0 16 0 "" 1 1
 end
 gameobject 232 "Rim"
-  guid "f5b3fd9ac73cef3fa9ed6f9d937b44d7"
+  guid "e9a0b469ec7aa9df88f8ea565d658d7d"
   active 1
   parent 231
   transform 0 0 0 0 0 0 1 0.62 1.06 0.62
@@ -1917,7 +1917,7 @@ gameobject 232 "Rim"
   material 0 0 0 0 16 0 "" 1 1
 end
 gameobject 233 "Rim Bar"
-  guid "43351eb239e7f7a616edb5b088d7dadf"
+  guid "0f9386786b48dd69ed8460dc2738e037"
   active 1
   parent 231
   transform 0 0 0 0 0 0 1 0.95 1.1 0.14
@@ -1925,17 +1925,17 @@ gameobject 233 "Rim Bar"
   material 0 0 0 0 16 0 "" 1 1
 end
 gameobject 234 "Passenger Seat"
-  guid "c1793338f28c1030473541c4eb84585e"
+  guid "cfaf7c5aa3cf5dd337941d15fcc88760"
   active 1
   parent 208
   transform 0 0 0 0 0 0 1 1 1 1
   vehicleseat 0 0.625 0.495 2.55 2.05 -0.3 2.55 2.6 101 "Ride"
 end
 gameobject 235 "Rally Car"
-  guid "11873e50ae243a9f50e9a67b94d98a32"
+  guid "6921e40c31bd557742190dc2046d682e"
   active 1
   parent -1
-  transform 29 0.34 -3.5 0 0.7071068 0 0.7071068 1 1 1
+  transform -37 0.34 -3.5 0 0.7071068 0 0.7071068 1 1 1
   rigidbody3d 0 1 1 0 0 0 0 0 0 0.5 0.05 1 1 0 0.03 0
   boxcollider3d 1.85 0.55 4 0 0 0 0 0 0
   vehicle 22 40 8 40 4 110 7 0.6 1.2 0 8 3.5 6 32
@@ -1943,7 +1943,7 @@ gameobject 235 "Rally Car"
   vehicleseat 1 -0.4625 0.202 0.10000001 -1.725 -0.3 0.10000001 2.6 101 "Drive"
 end
 gameobject 236 "Car Body"
-  guid "6f1538e0eb1f0c3f4254b2871cdb0c54"
+  guid "a0ac04d7b85186d7b9e718eb2b5446b5"
   active 1
   parent 235
   transform 0 0.105 0 0 0 0 1 1.85 0.33 4
@@ -1951,7 +1951,7 @@ gameobject 236 "Car Body"
   material 0 0 0 0 16 0 "" 1 1
 end
 gameobject 237 "Bumper Front"
-  guid "1d3987c010efa226c8378ee26ff8f9f1"
+  guid "ce6467487c731f105de000523f324730"
   active 1
   parent 235
   transform 0 0 2 0 0 0 1 1.89 0.1925 0.12
@@ -1959,7 +1959,7 @@ gameobject 237 "Bumper Front"
   material 0 0 0 0 16 0 "" 1 1
 end
 gameobject 238 "Bumper Rear"
-  guid "b434b23c4a14fac560bce074d829fba3"
+  guid "5d239a2b9e01491adf1eeddbbef5e7f0"
   active 1
   parent 235
   transform 0 0 -2 0 0 0 1 1.89 0.1925 0.12
@@ -1967,7 +1967,7 @@ gameobject 238 "Bumper Rear"
   material 0 0 0 0 16 0 "" 1 1
 end
 gameobject 239 "Cabin"
-  guid "490fbe6e9df26df29110de499009bbdb"
+  guid "e630aea2c54257919eaee46588cefe35"
   active 1
   parent 235
   transform 0 0.52 -0.2 0 0 0 1 1.702 0.5 2
@@ -1975,7 +1975,7 @@ gameobject 239 "Cabin"
   material 0 0 0 0 16 0 "" 1 1
 end
 gameobject 240 "Roof"
-  guid "b39473a88ea9c62cd0c4d001e429a1ae"
+  guid "bc5f29fc930e54475951f6a7df02574b"
   active 1
   parent 235
   transform 0 0.77 -0.2 0 0 0 1 1.739 0.06 2.04
@@ -1983,7 +1983,7 @@ gameobject 240 "Roof"
   material 0 0 0 0 16 0 "" 1 1
 end
 gameobject 241 "Headlight Left"
-  guid "7d4b47cb2fe805d81a9bf838a1bed17a"
+  guid "93dc998a309ba926b3ec5d34658da6fc"
   active 1
   parent 235
   transform -0.60125 0.17000002 2.01 0 0 0 1 0.34 0.13 0.06
@@ -1991,7 +1991,7 @@ gameobject 241 "Headlight Left"
   material 0.47058824 0.43137255 0.27450982 0 16 0 "" 1 1
 end
 gameobject 242 "Taillight Left"
-  guid "05c30b4de6670137081529c338f16c2e"
+  guid "db38eddcd8a403071ef4d3679a7c1908"
   active 1
   parent 235
   transform -0.6475 0.17000002 -2.01 0 0 0 1 0.3 0.12 0.06
@@ -1999,7 +1999,7 @@ gameobject 242 "Taillight Left"
   material 0.43137255 0.039215688 0.039215688 0 16 0 "" 1 1
 end
 gameobject 243 "Headlight Right"
-  guid "7aa8be75a9862ae078393ddb95530775"
+  guid "c9c166a7444421e4f1138a2ab6fd29bb"
   active 1
   parent 235
   transform 0.60125 0.17000002 2.01 0 0 0 1 0.34 0.13 0.06
@@ -2007,7 +2007,7 @@ gameobject 243 "Headlight Right"
   material 0.47058824 0.43137255 0.27450982 0 16 0 "" 1 1
 end
 gameobject 244 "Taillight Right"
-  guid "dd9bbe09d47b86c78fad80548f2d547e"
+  guid "246cb477d86c8f4769045c6e9af0ef93"
   active 1
   parent 235
   transform 0.6475 0.17000002 -2.01 0 0 0 1 0.3 0.12 0.06
@@ -2015,13 +2015,13 @@ gameobject 244 "Taillight Right"
   material 0.43137255 0.039215688 0.039215688 0 16 0 "" 1 1
 end
 gameobject 245 "Wheel Front Left"
-  guid "5158f9bf8369ad9e43ebbf1d2ee0a5da"
+  guid "3109c569d95857cadab555ed6ed246d8"
   active 1
   parent 235
   transform -0.825 0 1.354 0 0 0 1 1 1 1
 end
 gameobject 246 "Tire"
-  guid "7cf2b6a25f5b7bef7026b5b9594f124d"
+  guid "65bcb94e2ecf0105f84862a03bc39ef7"
   active 1
   parent 245
   transform 0 0 0 0 0 0.7071068 0.7071068 0.68 0.31800002 0.68
@@ -2029,7 +2029,7 @@ gameobject 246 "Tire"
   material 0 0 0 0 16 0 "" 1 1
 end
 gameobject 247 "Rim"
-  guid "47f8830a4eb91736a42ad8ae64bc78c7"
+  guid "8f0d863b43a75876f98b6040ef764686"
   active 1
   parent 246
   transform 0 0 0 0 0 0 1 0.62 1.06 0.62
@@ -2037,7 +2037,7 @@ gameobject 247 "Rim"
   material 0 0 0 0 16 0 "" 1 1
 end
 gameobject 248 "Rim Bar"
-  guid "bff7432661630ec00f91748ff08a4276"
+  guid "4b483a6832d1de293c8a38eed4c0d7aa"
   active 1
   parent 246
   transform 0 0 0 0 0 0 1 0.95 1.1 0.14
@@ -2045,13 +2045,13 @@ gameobject 248 "Rim Bar"
   material 0 0 0 0 16 0 "" 1 1
 end
 gameobject 249 "Wheel Front Right"
-  guid "26135611d60fe383ce52fad7feb211c4"
+  guid "0337f52718c68fbae0e18c50b8bc640f"
   active 1
   parent 235
   transform 0.825 0 1.354 0 0 0 1 1 1 1
 end
 gameobject 250 "Tire"
-  guid "63d3d63bc859a75b825d00041b07828c"
+  guid "fd944f3cb3cd182829bbb74b16364ff6"
   active 1
   parent 249
   transform 0 0 0 0 0 0.7071068 0.7071068 0.68 0.31800002 0.68
@@ -2059,7 +2059,7 @@ gameobject 250 "Tire"
   material 0 0 0 0 16 0 "" 1 1
 end
 gameobject 251 "Rim"
-  guid "b3ad2301242b7db26ec60f9ea653201a"
+  guid "5f63bd82e9237a7770c15469aa3386e6"
   active 1
   parent 250
   transform 0 0 0 0 0 0 1 0.62 1.06 0.62
@@ -2067,7 +2067,7 @@ gameobject 251 "Rim"
   material 0 0 0 0 16 0 "" 1 1
 end
 gameobject 252 "Rim Bar"
-  guid "0eb9b773fc735d5c6cbee55453d56772"
+  guid "fa1d6c3f333313be10a54e2613f761c0"
   active 1
   parent 250
   transform 0 0 0 0 0 0 1 0.95 1.1 0.14
@@ -2075,13 +2075,13 @@ gameobject 252 "Rim Bar"
   material 0 0 0 0 16 0 "" 1 1
 end
 gameobject 253 "Wheel Rear Left"
-  guid "a48a9995d99c7696b881460d27072a83"
+  guid "4a2bf32fe3ae83e81ff55b12d77f0914"
   active 1
   parent 235
   transform -0.825 0 -1.354 0 0 0 1 1 1 1
 end
 gameobject 254 "Tire"
-  guid "2cff8ec7f0eef3116a2cde84c050bec8"
+  guid "0c198385c7a04f815067e661e2ce673e"
   active 1
   parent 253
   transform 0 0 0 0 0 0.7071068 0.7071068 0.68 0.31800002 0.68
@@ -2089,7 +2089,7 @@ gameobject 254 "Tire"
   material 0 0 0 0 16 0 "" 1 1
 end
 gameobject 255 "Rim"
-  guid "21da85b1616029588a10dee12c385274"
+  guid "5cc7a1e5142cc27e5c8e22eaf0d5ae50"
   active 1
   parent 254
   transform 0 0 0 0 0 0 1 0.62 1.06 0.62
@@ -2097,7 +2097,7 @@ gameobject 255 "Rim"
   material 0 0 0 0 16 0 "" 1 1
 end
 gameobject 256 "Rim Bar"
-  guid "e8d192d4a4aa05b18f21ee9bce522c87"
+  guid "aa686b12655070a09894085b523a002f"
   active 1
   parent 254
   transform 0 0 0 0 0 0 1 0.95 1.1 0.14
@@ -2105,13 +2105,13 @@ gameobject 256 "Rim Bar"
   material 0 0 0 0 16 0 "" 1 1
 end
 gameobject 257 "Wheel Rear Right"
-  guid "0a0f0a8f696985d14ad96dc69231cbc7"
+  guid "a83a0f10eb53e2d8d13e4bfc407b7455"
   active 1
   parent 235
   transform 0.825 0 -1.354 0 0 0 1 1 1 1
 end
 gameobject 258 "Tire"
-  guid "c352d2ffe8b52fc753844b3733004da5"
+  guid "a1cd075bb67923691e4324c65b94e2fe"
   active 1
   parent 257
   transform 0 0 0 0 0 0.7071068 0.7071068 0.68 0.31800002 0.68
@@ -2119,7 +2119,7 @@ gameobject 258 "Tire"
   material 0 0 0 0 16 0 "" 1 1
 end
 gameobject 259 "Rim"
-  guid "3911ce4630c7b9696c0d3ab14a535460"
+  guid "524d9ff2fd4ba0feae5e3b21d5d38f9d"
   active 1
   parent 258
   transform 0 0 0 0 0 0 1 0.62 1.06 0.62
@@ -2127,7 +2127,7 @@ gameobject 259 "Rim"
   material 0 0 0 0 16 0 "" 1 1
 end
 gameobject 260 "Rim Bar"
-  guid "227d37f4227c432e945a6ef6b165cda7"
+  guid "f6fef5e2e3d2c421a2ac7bda3b72c5dd"
   active 1
   parent 258
   transform 0 0 0 0 0 0 1 0.95 1.1 0.14
@@ -2135,17 +2135,17 @@ gameobject 260 "Rim Bar"
   material 0 0 0 0 16 0 "" 1 1
 end
 gameobject 261 "Passenger Seat"
-  guid "705426f8d10862a3475a02f1ffa868be"
+  guid "6e970e0f921d6a6f3d23510250c520f5"
   active 1
   parent 235
   transform 0 0 0 0 0 0 1 1 1 1
   vehicleseat 0 0.4625 0.202 0.10000001 1.725 -0.3 0.10000001 2.6 101 "Ride"
 end
 gameobject 262 "Drift Car"
-  guid "45d5967e7830b3faab0f1251c76b56a6"
+  guid "3836e25a00d61dbb9b48c4d615ffad76"
   active 1
   parent -1
-  transform 40 0.33 -3.5 0 0.7071068 0 0.7071068 1 1 1
+  transform -48 0.33 -3.5 0 0.7071068 0 0.7071068 1 1 1
   rigidbody3d 0 1 1 0 0 0 0 0 0 0.5 0.05 1 1 0 0.03 0
   boxcollider3d 1.8 0.5 4.4 0 0 0 0 0 0
   vehicle 22 40 8 36 4 110 7.5 0.25 1.2 0 8 3.5 6 32
@@ -2153,7 +2153,7 @@ gameobject 262 "Drift Car"
   vehicleseat 1 -0.45 0.16899997 0.06499998 -1.7 -0.3 0.06499998 2.6 101 "Drive"
 end
 gameobject 263 "Car Body"
-  guid "19c6c15b515a0b84c8c439d54edc0833"
+  guid "d0b3ae7b4dea5e7870c4a5cd28b3e9d2"
   active 1
   parent 262
   transform 0 0.08499998 0 0 0 0 1 1.8 0.3 4.4
@@ -2161,7 +2161,7 @@ gameobject 263 "Car Body"
   material 0 0 0 0 16 0 "" 1 1
 end
 gameobject 264 "Bumper Front"
-  guid "02884511b3f2e282111e118dfb7d4aef"
+  guid "fd48ae17ca16c21377df9d8016744312"
   active 1
   parent 262
   transform 0 0 2.2 0 0 0 1 1.8399999 0.175 0.12
@@ -2169,7 +2169,7 @@ gameobject 264 "Bumper Front"
   material 0 0 0 0 16 0 "" 1 1
 end
 gameobject 265 "Bumper Rear"
-  guid "ef3d147d9975a9d1dc4b45dc8526db63"
+  guid "9aecbea67e6c77cbdf0eed4eba70483f"
   active 1
   parent 262
   transform 0 0 -2.2 0 0 0 1 1.8399999 0.175 0.12
@@ -2177,7 +2177,7 @@ gameobject 265 "Bumper Rear"
   material 0 0 0 0 16 0 "" 1 1
 end
 gameobject 266 "Cabin"
-  guid "5f9a6ffebc2fee589c17e03ceb7b1277"
+  guid "ac92814d0c8499d98a56c680af2734c1"
   active 1
   parent 262
   transform 0 0.45999998 -0.22000001 0 0 0 1 1.656 0.45 1.9
@@ -2185,7 +2185,7 @@ gameobject 266 "Cabin"
   material 0 0 0 0 16 0 "" 1 1
 end
 gameobject 267 "Roof"
-  guid "cd0348dc654af7c431568a6e003bf27d"
+  guid "be5bd2af27c630ad5e6fe49d4a3a497a"
   active 1
   parent 262
   transform 0 0.68499994 -0.22000001 0 0 0 1 1.6919999 0.06 1.9399999
@@ -2193,7 +2193,7 @@ gameobject 267 "Roof"
   material 0 0 0 0 16 0 "" 1 1
 end
 gameobject 268 "Headlight Left"
-  guid "e87a25ff41b6b0646ce2f6666692c7f7"
+  guid "cfdd3cc570153623ddaafb43e0e02cc5"
   active 1
   parent 262
   transform -0.585 0.13499999 2.21 0 0 0 1 0.34 0.13 0.06
@@ -2201,7 +2201,7 @@ gameobject 268 "Headlight Left"
   material 0.47058824 0.43137255 0.27450982 0 16 0 "" 1 1
 end
 gameobject 269 "Taillight Left"
-  guid "200301b184ac9c57fb29026fc28d5a93"
+  guid "1fb9eaf89cbbb0691179d421592ff4ac"
   active 1
   parent 262
   transform -0.63 0.13499999 -2.21 0 0 0 1 0.3 0.12 0.06
@@ -2209,7 +2209,7 @@ gameobject 269 "Taillight Left"
   material 0.43137255 0.039215688 0.039215688 0 16 0 "" 1 1
 end
 gameobject 270 "Headlight Right"
-  guid "7b0d1a6fb4df3462f052fa767d651c5b"
+  guid "2619140b02263011e6ae72cc916550c9"
   active 1
   parent 262
   transform 0.585 0.13499999 2.21 0 0 0 1 0.34 0.13 0.06
@@ -2217,7 +2217,7 @@ gameobject 270 "Headlight Right"
   material 0.47058824 0.43137255 0.27450982 0 16 0 "" 1 1
 end
 gameobject 271 "Taillight Right"
-  guid "19d22976377a2b01419dcd92224f6f93"
+  guid "ec0c1aae220aa61469136950059a812a"
   active 1
   parent 262
   transform 0.63 0.13499999 -2.21 0 0 0 1 0.3 0.12 0.06
@@ -2225,13 +2225,13 @@ gameobject 271 "Taillight Right"
   material 0.43137255 0.039215688 0.039215688 0 16 0 "" 1 1
 end
 gameobject 272 "Wheel Front Left"
-  guid "f6238c34cc1ac970542e92fbf0035b6e"
+  guid "f08a5cc9c4c3d5321fb35267da8ffb04"
   active 1
   parent 262
   transform -0.79999995 0 1.573 0 0 0 1 1 1 1
 end
 gameobject 273 "Tire"
-  guid "6d16d75a0a4431abace326d7dd5d4b05"
+  guid "58bb0357d5bae0159b13c2420b0bab26"
   active 1
   parent 272
   transform 0 0 0 0 0 0.7071068 0.7071068 0.66 0.316 0.66
@@ -2239,7 +2239,7 @@ gameobject 273 "Tire"
   material 0 0 0 0 16 0 "" 1 1
 end
 gameobject 274 "Rim"
-  guid "4b5609c6fe122f989750c3d39abad302"
+  guid "c8880126a3a483dcb2e3af36d8c5694f"
   active 1
   parent 273
   transform 0 0 0 0 0 0 1 0.62 1.06 0.62
@@ -2247,7 +2247,7 @@ gameobject 274 "Rim"
   material 0 0 0 0 16 0 "" 1 1
 end
 gameobject 275 "Rim Bar"
-  guid "fd5af261e5c7633291c07300e14a2e2f"
+  guid "ce8364d4dbf93b481115bc65cbce591c"
   active 1
   parent 273
   transform 0 0 0 0 0 0 1 0.95 1.1 0.14
@@ -2255,13 +2255,13 @@ gameobject 275 "Rim Bar"
   material 0 0 0 0 16 0 "" 1 1
 end
 gameobject 276 "Wheel Front Right"
-  guid "04e2ed3d8b3ff0a5c8206dce1f093d55"
+  guid "7aad126a5f4d13a91dc39d2ea9062415"
   active 1
   parent 262
   transform 0.79999995 0 1.573 0 0 0 1 1 1 1
 end
 gameobject 277 "Tire"
-  guid "1a8ad907905c02ef1ddfe8cca57113ef"
+  guid "6c8ec4ae6737321acc9abd976e755aa8"
   active 1
   parent 276
   transform 0 0 0 0 0 0.7071068 0.7071068 0.66 0.316 0.66
@@ -2269,7 +2269,7 @@ gameobject 277 "Tire"
   material 0 0 0 0 16 0 "" 1 1
 end
 gameobject 278 "Rim"
-  guid "854f1cb17888b2d83d722c1d5a024e36"
+  guid "da66e409bc75cdba154cf3d39eeb4b4e"
   active 1
   parent 277
   transform 0 0 0 0 0 0 1 0.62 1.06 0.62
@@ -2277,7 +2277,7 @@ gameobject 278 "Rim"
   material 0 0 0 0 16 0 "" 1 1
 end
 gameobject 279 "Rim Bar"
-  guid "e0fe8ccfedd5074e54ec24276dfd1054"
+  guid "6e74d646352a3c730fdd70452cd2f5a2"
   active 1
   parent 277
   transform 0 0 0 0 0 0 1 0.95 1.1 0.14
@@ -2285,13 +2285,13 @@ gameobject 279 "Rim Bar"
   material 0 0 0 0 16 0 "" 1 1
 end
 gameobject 280 "Wheel Rear Left"
-  guid "93d03befbd975a459b7438577e28eb34"
+  guid "0330231526c8a66cd7b58a0bba7032f8"
   active 1
   parent 262
   transform -0.79999995 0 -1.573 0 0 0 1 1 1 1
 end
 gameobject 281 "Tire"
-  guid "0251ac785b56b86f084b072db17c2183"
+  guid "20c4f62a6e2b6504bc35112287f1606b"
   active 1
   parent 280
   transform 0 0 0 0 0 0.7071068 0.7071068 0.66 0.316 0.66
@@ -2299,7 +2299,7 @@ gameobject 281 "Tire"
   material 0 0 0 0 16 0 "" 1 1
 end
 gameobject 282 "Rim"
-  guid "f17e738e2f229efe943050c167b57a18"
+  guid "29b10d0498dde93bb22c103079f84976"
   active 1
   parent 281
   transform 0 0 0 0 0 0 1 0.62 1.06 0.62
@@ -2307,7 +2307,7 @@ gameobject 282 "Rim"
   material 0 0 0 0 16 0 "" 1 1
 end
 gameobject 283 "Rim Bar"
-  guid "cb84785445a54444d4163862189d223d"
+  guid "cf03eb29a0c8994fbbbf40687a813dc8"
   active 1
   parent 281
   transform 0 0 0 0 0 0 1 0.95 1.1 0.14
@@ -2315,13 +2315,13 @@ gameobject 283 "Rim Bar"
   material 0 0 0 0 16 0 "" 1 1
 end
 gameobject 284 "Wheel Rear Right"
-  guid "7a90fe35e0e75e95e8cb9ec3b0c8265b"
+  guid "9238ec318b2f7b8010f5b083720a8fe7"
   active 1
   parent 262
   transform 0.79999995 0 -1.573 0 0 0 1 1 1 1
 end
 gameobject 285 "Tire"
-  guid "7467aa825d017f2ef163af54d33d06f8"
+  guid "38a607bdb93ba375a656311a3c3024c7"
   active 1
   parent 284
   transform 0 0 0 0 0 0.7071068 0.7071068 0.66 0.316 0.66
@@ -2329,7 +2329,7 @@ gameobject 285 "Tire"
   material 0 0 0 0 16 0 "" 1 1
 end
 gameobject 286 "Rim"
-  guid "013951ab649991e4289fd32e7d35ec88"
+  guid "1d8ec191ca5dbbc9ebda43c368e84be8"
   active 1
   parent 285
   transform 0 0 0 0 0 0 1 0.62 1.06 0.62
@@ -2337,7 +2337,7 @@ gameobject 286 "Rim"
   material 0 0 0 0 16 0 "" 1 1
 end
 gameobject 287 "Rim Bar"
-  guid "04fc6e9052191325fc15f1b917493732"
+  guid "f63dbce3df13174db14a59b544e43d76"
   active 1
   parent 285
   transform 0 0 0 0 0 0 1 0.95 1.1 0.14
@@ -2345,17 +2345,17 @@ gameobject 287 "Rim Bar"
   material 0 0 0 0 16 0 "" 1 1
 end
 gameobject 288 "Passenger Seat"
-  guid "9a85785848587ac2bc3a6fed53ab629f"
+  guid "c467831ad4a2bf8f4763efd87af224a5"
   active 1
   parent 262
   transform 0 0 0 0 0 0 1 1 1 1
   vehicleseat 0 0.45 0.16899997 0.06499998 1.7 -0.3 0.06499998 2.6 101 "Ride"
 end
 gameobject 289 "Player"
-  guid "a853449d58a8be021622c9a7ea957204"
+  guid "5883f0a16e357bfb5a4f202b9ec4a130"
   active 1
   parent -1
-  transform -48 1 -0.8 0 0 0 1 1 1 1
+  transform 40 1 -0.8 0 0 0 1 1 1 1
   animsm "Idle" 48 "Idle" "Idle" 1 1 6 "Crawl" 3 "prone" 0 0.75 "Drop" 3 "prone" 0 0.1 "CrouchWalk" 3 "crouch" 0 0.25 "Crouch" 3 "crouch" 0 0.25 "Run" 1 "speed" 0.35 0.22 "Walk" 1 "speed" 0.35 0.28 "Walk" "" 1 1 6 "Crawl" 3 "prone" 0 0.75 "Drop" 3 "prone" 0 0.1 "CrouchWalk" 3 "crouch" 0 0.25 "Crouch" 3 "crouch" 0 0.25 "Idle" 2 "speed" 0.2 0.28 "Run" 3 "run" 0 0.22 "Run" "" 1 1 6 "Crawl" 3 "prone" 0 0.75 "Drop" 3 "prone" 0 0.1 "CrouchWalk" 3 "crouch" 0 0.25 "Crouch" 3 "crouch" 0 0.25 "Idle" 2 "speed" 0.2 0.22 "Walk" 4 "run" 0 0.22 "Crouch" "Crouch" 1 1 6 "Crawl" 3 "prone" 0 0.5 "Prone" 3 "prone" 0 0.5 "CrouchWalk" 1 "speed" 0.35 0.2 "Run" 4 "crouch" 0 0.25 "Walk" 4 "crouch" 0 0.25 "Idle" 4 "crouch" 0 0.25 "CrouchWalk" "" 1 1 6 "Crawl" 3 "prone" 0 0.5 "Prone" 3 "prone" 0 0.5 "Run" 4 "crouch" 0 0.25 "Walk" 4 "crouch" 0 0.25 "Idle" 4 "crouch" 0 0.25 "Crouch" 2 "speed" 0.2 0.2 "Prone" "Prone" 1 1 4 "Crawl" 1 "speed" 0.35 0.2 "CrouchWalk" 4 "prone" 0 0.5 "Crouch" 4 "prone" 0 0.5 "GetUp" 4 "prone" 0 0.1 "Crawl" "" 1 1 6 "Prone" 2 "speed" 0.2 0.2 "CrouchWalk" 4 "prone" 0 0.5 "Crouch" 4 "prone" 0 0.5 "Run" 4 "prone" 0 0.8 "Walk" 4 "prone" 0 0.8 "GetUp" 4 "prone" 0 0.1 "GetUp" "GetUp" 1.25 0 7 "Prone" 3 "prone" 0 0.75 "Crouch" 3 "crouch" 0 0.25 "CrouchWalk" 0 "" 0 0.25 "Crouch" 0 "" 0 0.25 "Run" 0 "" 0 0.15 "Walk" 0 "" 0 0.15 "Idle" 0 "" 0 0.15 "Drop" "Drop" 1.3333334 0 4 "Crouch" 4 "prone" 0 0.25 "Idle" 4 "prone" 0 0.2 "Crawl" 0 "" 0 0.75 "Prone" 0 "" 0 0.75 "Jump" "Jump" 1 0 7 "Crawl" 3 "prone" 0 0.2 "Prone" 3 "prone" 0 0.2 "CrouchWalk" 2 "airTime" 0.12 0.08 "Crouch" 2 "airTime" 0.12 0.08 "Run" 2 "airTime" 0.12 0.24 "Walk" 2 "airTime" 0.12 0.24 "Land" 2 "airTime" 0.12 0.24 "Fall" "Fall" 1 1 7 "Crawl" 3 "prone" 0 0.2 "Prone" 3 "prone" 0 0.2 "CrouchWalk" 2 "airTime" 0.12 0.08 "Crouch" 2 "airTime" 0.12 0.08 "Run" 2 "airTime" 0.12 0.24 "Walk" 2 "airTime" 0.12 0.24 "Land" 2 "airTime" 0.12 0.24 "Land" "Land" 1 0 7 "Crawl" 3 "prone" 0 0.75 "Drop" 3 "prone" 0 0.1 "CrouchWalk" 3 "crouch" 0 0.25 "Crouch" 3 "crouch" 0 0.25 "Run" 1 "speed" 0.35 0.22 "Walk" 1 "speed" 0.35 0.28 "Idle" 0 "" 0 0.28 "Hang" "Hang" 1 1 9 "Death" 5 "die" 0 0.12 "Crawl" 3 "prone" 0 0.75 "Drop" 3 "prone" 0 0.1 "CrouchWalk" 2 "airTime" 0.12 0.25 "Crouch" 2 "airTime" 0.12 0.25 "Run" 2 "airTime" 0.12 0.2 "Walk" 2 "airTime" 0.12 0.2 "Idle" 2 "airTime" 0.12 0.2 "Fall" 4 "hanging" 0 0.12 "Wave" "Wave" 1 1 6 "Crawl" 3 "prone" 0 0.75 "Drop" 3 "prone" 0 0.1 "CrouchWalk" 3 "crouch" 0 0.25 "Crouch" 3 "crouch" 0 0.25 "Run" 1 "speed" 0.35 0.2 "Walk" 1 "speed" 0.35 0.2 "Point" "Point" 1 1 6 "Crawl" 3 "prone" 0 0.75 "Drop" 3 "prone" 0 0.1 "CrouchWalk" 3 "crouch" 0 0.25 "Crouch" 3 "crouch" 0 0.25 "Run" 1 "speed" 0.35 0.2 "Walk" 1 "speed" 0.35 0.2 "Clap" "Clap" 1 1 6 "Crawl" 3 "prone" 0 0.75 "Drop" 3 "prone" 0 0.1 "CrouchWalk" 3 "crouch" 0 0.25 "Crouch" 3 "crouch" 0 0.25 "Run" 1 "speed" 0.35 0.2 "Walk" 1 "speed" 0.35 0.2 "ThumbsUp" "ThumbsUp" 1 1 6 "Crawl" 3 "prone" 0 0.75 "Drop" 3 "prone" 0 0.1 "CrouchWalk" 3 "crouch" 0 0.25 "Crouch" 3 "crouch" 0 0.25 "Run" 1 "speed" 0.35 0.2 "Walk" 1 "speed" 0.35 0.2 "Salute" "Salute" 1 1 6 "Crawl" 3 "prone" 0 0.75 "Drop" 3 "prone" 0 0.1 "CrouchWalk" 3 "crouch" 0 0.25 "Crouch" 3 "crouch" 0 0.25 "Run" 1 "speed" 0.35 0.2 "Walk" 1 "speed" 0.35 0.2 "WaveBoth" "WaveBoth" 1 1 6 "Crawl" 3 "prone" 0 0.75 "Drop" 3 "prone" 0 0.1 "CrouchWalk" 3 "crouch" 0 0.25 "Crouch" 3 "crouch" 0 0.25 "Run" 1 "speed" 0.35 0.2 "Walk" 1 "speed" 0.35 0.2 "Cheer" "Cheer" 1 1 6 "Crawl" 3 "prone" 0 0.75 "Drop" 3 "prone" 0 0.1 "CrouchWalk" 3 "crouch" 0 0.25 "Crouch" 3 "crouch" 0 0.25 "Run" 1 "speed" 0.35 0.2 "Walk" 1 "speed" 0.35 0.2 "Sad" "Sad" 1 1 6 "Crawl" 3 "prone" 0 0.75 "Drop" 3 "prone" 0 0.1 "CrouchWalk" 3 "crouch" 0 0.25 "Crouch" 3 "crouch" 0 0.25 "Run" 1 "speed" 0.35 0.2 "Walk" 1 "speed" 0.35 0.2 "Angry" "Angry" 1 1 6 "Crawl" 3 "prone" 0 0.75 "Drop" 3 "prone" 0 0.1 "CrouchWalk" 3 "crouch" 0 0.25 "Crouch" 3 "crouch" 0 0.25 "Run" 1 "speed" 0.35 0.2 "Walk" 1 "speed" 0.35 0.2 "Think" "Think" 1 1 6 "Crawl" 3 "prone" 0 0.75 "Drop" 3 "prone" 0 0.1 "CrouchWalk" 3 "crouch" 0 0.25 "Crouch" 3 "crouch" 0 0.25 "Run" 1 "speed" 0.35 0.2 "Walk" 1 "speed" 0.35 0.2 "Death" "" 1 0 2 "GetUp" 4 "dead" 0 0.8 "DeadHold" 0 "" 0 0.5 "DeadHold" "" 1 1 1 "GetUp" 4 "dead" 0 0.8 "Dive" "Dive" 1 0 4 "Death" 5 "die" 0 0.2 "DiveLand" 0 "" 0 0.5 "Crawl" 0 "" 0 0.5 "Prone" 0 "" 0 0.5 "DiveLand" "DiveLand" 1 0 3 "Death" 5 "die" 0 0.2 "Crawl" 3 "grounded" 0 0.5 "Prone" 3 "grounded" 0 0.5 "SitDown" "" 1 0 1 "Sit" 0 "" 0 0.15 "Sit" "" 1 1 1 "StandUp" 4 "sitting" 0 0.12 "StandUp" "" 1 0 1 "Idle" 0 "" 0 0.2 "HitHeavy" "" 1 0 1 "Idle" 0 "" 0 0.1 "Hit_Crouch" "Hit_Crouch" 1 0 1 "Crouch" 0 "" 0 0.1 "Hit_Prone" "Hit_Prone" 1 0 1 "Prone" 0 "" 0 0.1 "Roll" "Roll_F" 1 0 1 "Idle" 0 "" 0 0.12 "Dodge" "" 1 0 1 "Idle" 0 "" 0 0.12 "Slide" "Slide" 1 1 1 "SlideEnd" 4 "slide" 0 0.1 "SlideEnd" "SlideEnd" 1 0 2 "Run" 0 "" 0 0.12 "Crouch" 0 "" 0 0.12 "Vault" "Vault" 1 0 2 "Death" 5 "die" 0 0.12 "Idle" 0 "" 0 0.15 "MantleLow" "Mantle_Low" 1 0 2 "Death" 5 "die" 0 0.12 "Idle" 0 "" 0 0.15 "MantleHigh" "Mantle_High" 1 0 2 "Death" 5 "die" 0 0.12 "Idle" 0 "" 0 0.15 "LedgeGrab" "LedgeGrab" 1 0 2 "Death" 5 "die" 0 0.12 "Hang" 0 "" 0 0.15 "ClimbUp" "ClimbUp" 1 0 2 "Death" 5 "die" 0 0.12 "Idle" 0 "" 0 0.15 "LetGo" "LetGo" 1 0 2 "Death" 5 "die" 0 0.12 "Fall" 0 "" 0 0.15 "HangShimmy" "" 1 1 2 "Death" 5 "die" 0 0.12 "Hang" 2 "shimmy" 0.2 0.25 "Swim" "" 1 1 2 "Death" 5 "die" 0 0.2 "Idle" 4 "swimming" 0 0.8 "Emote_Nod" "Emote_Nod" 1 0 3 "Run" 1 "speed" 0.35 0.12 "Walk" 1 "speed" 0.35 0.12 "Idle" 0 "" 0 0.15 "Emote_Shake" "Emote_Shake" 1 0 3 "Run" 1 "speed" 0.35 0.12 "Walk" 1 "speed" 0.35 0.12 "Idle" 0 "" 0 0.15 "Emote_Shrug" "Emote_Shrug" 1 0 3 "Run" 1 "speed" 0.35 0.12 "Walk" 1 "speed" 0.35 0.12 "Idle" 0 "" 0 0.15
   animsmpos 48 40 40 40 130 40 220 260 40 260 130 480 40 480 130 480 220 480 310 700 40 700 130 700 220 700 310 920 40 920 130 920 220 920 310 920 400 920 490 920 580 920 670 920 760 920 850 1140 40 1140 130 1360 40 1360 130 1580 40 1580 130 1580 220 1800 40 1800 130 1800 220 2020 40 2020 130 2020 220 2020 310 2240 40 2240 130 2240 220 2240 310 2240 400 2240 490 2240 580 2460 40 2680 40 2680 130 2680 220
   animsmparams 37 "speed" 0 "airTime" 0 "verticalSpeed" 0 "gaitX" 0 "gaitZ" 0 "gaitSpeed" 0 "run" 1 "crouch" 1 "prone" 1 "dive" 2 "grounded" 1 "sprint" 1 "deathDir" 0 "dead" 1 "die" 2 "sitting" 1 "sitType" 0 "sit" 2 "hit" 2 "hitDir" 0 "hitHeavy" 1 "staggerScale" 0 "dodgeDir" 0 "roll" 2 "dodge" 2 "slide" 1 "vault" 2 "mantle" 2 "ledgeGrab" 2 "climbUp" 2 "letGo" 2 "hanging" 1 "shimmy" 0 "swimSpeed" 0 "swimming" 1 "emoteId" 3 "emote" 2
@@ -2392,14 +2392,14 @@ gameobject 289 "Player"
   comporder "Character" "MeshRenderer" "AnimStateMachine" "AnimStateMachine" "Rigidbody3D" "BoxCollider3D" "PlayerController" "FirstPersonController" "ThirdPersonController" "PlayerView" "FirstPersonHands"
 end
 gameobject 290 "Main Camera"
-  guid "ffdba4b7dcaeb99084b4aa85d822513e"
+  guid "624cffa01e370af5d7d89a1008dbef14"
   active 1
   parent 289
   transform 0.45 3.045085 4.755283 -0.15643448 0 0 0.98768836 1 1 1
   camera 1 5 60 0.19215687 0.3019608 0.4745098 1 1 0 0 0.3 4000 0 0 0 1 1 -1 0 50 24 1 0 0 0 0 32 0.3 2 18 1.5
 end
 gameobject 291 "Speedometer"
-  guid "4664f9f9a4bd5320efd939ad5aff8dd7"
+  guid "b4535992dcf88f62ce6b32cec954a6c2"
   active 1
   parent -1
   transform 0 0 0 0 0 0 1 1 1 1
@@ -2407,7 +2407,7 @@ gameobject 291 "Speedometer"
   uibind "{vehicle_speed|0} {vehicle_unit|km/h}   Gear {vehicle_gear|N}"
 end
 gameobject 292 "Help"
-  guid "4a877c3d4cad1ac948ef082616edf357"
+  guid "fa6836b3691aee57938564a4bd18d6cf"
   active 1
   parent -1
   transform 0 0 0 0 0 0 1 1 1 1

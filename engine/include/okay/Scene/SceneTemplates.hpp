@@ -1107,11 +1107,11 @@ inline void DrivingWorld(Scene& scene) {
         o->AddComponent<BoxCollider3D>()->size = {1, 1, 1};
         o->AddComponent<Rigidbody3D>()->bodyType = Rigidbody3D::BodyType::Static;
     }
-    // Parked vehicles, one of each kind, side by side along the east-west road, facing +X.
+    // Parked vehicles, one of each kind, side by side along the east-west road, facing +X; the Sedan is at the east end with the road clear ahead.
     const char* kinds[] = {"Sedan", "Sports Car", "Muscle Car", "Pickup", "Buggy", "Bus", "Heavy Truck", "Rally Car", "Drift Car"};
     const Color paints[] = {rgb(205, 60, 55), rgb(240, 200, 40), rgb(40, 90, 200), rgb(90, 140, 90), rgb(230, 130, 40), rgb(230, 230, 235), rgb(120, 60, 150), rgb(40, 170, 180), rgb(30, 30, 34)};
-    for (int i = 0; i < 9; ++i) VehicleBuilder::Make(scene, kinds[i], {-48.0f + 11.0f * (float)i, 0.0f, -3.5f}, 90.0f, paints[i], true, false);
-    AddThirdPersonPlayer(scene, {-48.0f, 1.0f, -0.8f});    // standing at the first car's driver door
+    for (int i = 0; i < 9; ++i) VehicleBuilder::Make(scene, kinds[i], {40.0f - 11.0f * (float)i, 0.0f, -3.5f}, 90.0f, paints[i], true, false);
+    AddThirdPersonPlayer(scene, {40.0f, 1.0f, -0.8f});    // standing at the first car's driver door
     // A speedometer in the corner: the UI kit's Text Bind reads the numbers the driven vehicle publishes.
     GameObject* hud = scene.CreateGameObject("Speedometer");
     auto* htr = hud->AddComponent<TextRenderer>();

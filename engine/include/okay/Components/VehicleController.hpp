@@ -568,7 +568,7 @@ private:
         float omega = vf / wb * std::tan(m_wheelAngle / kDeg);       // rad/s, + = right
         const float omegaMax = mu * (0.85f + 0.3f * a) * g / std::max(vAbs, 2.0f) * (steerAssist ? 1.0f : 1.25f);
         omega = Mathf::Clamp(omega, -omegaMax, omegaMax);
-        if (in.handbrake) omega *= 1.0f + driftAmount * 0.9f;       // the back lets go and swings round
+        if (in.handbrake) omega *= 1.0f + driftAmount * 0.6f;       // the back lets go and swings round
         if (spinning && drivetrain != 1) omega *= 1.15f;
         m_yawRate = omega;
         m_yaw -= omega * h * kDeg;

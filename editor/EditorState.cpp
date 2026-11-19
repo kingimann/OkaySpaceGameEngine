@@ -818,7 +818,7 @@ void EditorState::NewDrivingWorld() {
     Templates::DrivingWorld(m_scene);
     m_suppressUndo = false;
     view3D = true;
-    camTarget = {-48, 1, -3.5f};   // the first parked vehicle
+    camTarget = {40, 1, -3.5f};   // the first parked vehicle
     camDist = 24.0f;
     m_selected = m_scene.Find("Sedan");
     StartDocument();

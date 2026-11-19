@@ -60,7 +60,7 @@ int main() {
             CHECK(speed > 5.0f); CHECK(std::isfinite(speed)); CHECK(Vec3::Dot(car->transform->Position() - p0, fwd0) > 5.0f);
             CHECK(v->Gear() >= 2);
             run({'w', 'd'}, 60); CHECK(Vec3::Dot(car->transform->Forward(), fwd0) < 0.99f);   // D turns right: the heading changes
-            CHECK(car->transform->Forward().z < -0.05f);                       // facing +X, right is -Z
+            CHECK(car->transform->Forward().z > 0.05f);                        // facing +X, right is +Z
             run({'s'}, 240);                                                   // brake, then reverse is allowed
             CHECK(v->Speed() < 3.0f);
             run({}, 120);

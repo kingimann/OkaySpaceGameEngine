@@ -303,7 +303,7 @@ struct VehicleTuning {
             {"Sedan",       "maxSpeed=34 acceleration=14 grip=8 driftAmount=0.35 gearCount=5 brakeForce=34 maxSteerAngle=32 handling=0.6"},
             {"Sports Car",  "maxSpeed=48 acceleration=24 grip=9 driftAmount=0.55 gearCount=6 maxRpm=8500 torquePeak=0.7 brakeForce=44 maxSteerAngle=30 frontGrip=1.15 rearGrip=1.15 downforce=0.04 handling=0.7"},
             {"Muscle Car",  "maxSpeed=44 acceleration=26 grip=6.5 driftAmount=0.8 gearCount=4 maxRpm=6500 torquePeak=0.45 brakeForce=36 rearGrip=0.9 engineBraking=5 handling=0.8"},
-            {"Pickup",      "maxSpeed=30 acceleration=12 grip=7.5 driftAmount=0.3 gearCount=5 brakeForce=30 maxSteerAngle=34 leanAmount=1.3 drivetrain=2 handling=0.6"},
+            {"Pickup",      "maxSpeed=30 acceleration=12 grip=7.5 driftAmount=0.3 gearCount=5 brakeForce=30 maxSteerAngle=34 leanAmount=1.3 handling=0.6"},
             {"Heavy Truck", "maxSpeed=22 acceleration=7 reverseSpeed=6 grip=6.5 driftAmount=0.1 gearCount=6 maxRpm=3500 idleRpm=600 brakeForce=22 maxSteerAngle=28 leanAmount=1.6 antiRoll=0.8 handling=0.4 boostEnabled=0"},
             {"Bus",         "maxSpeed=20 acceleration=6 reverseSpeed=5 grip=6.5 driftAmount=0.1 gearCount=5 maxRpm=3000 idleRpm=600 brakeForce=20 maxSteerAngle=30 leanAmount=1.6 antiRoll=0.8 handling=0.4 boostEnabled=0"},
             {"Buggy",       "maxSpeed=30 acceleration=18 grip=6 driftAmount=0.65 gearCount=4 brakeForce=30 maxSteerAngle=38 drivetrain=2 airControl=0.8 mudGrip=0.8 grassGrip=0.9 handling=0.85"},

@@ -59,6 +59,7 @@ add_executable(okay-editor main.cpp EditorState.cpp FpHandsWindow.cpp
     LevelTools.cpp                                                     # foliage brush, terrain layers, decals, cables, measuring tool, orthographic views
     ParticleEditor.cpp                                                 # particle presets menus, live preview, particle Inspector rows, shared particle drawing
     SplineTools.cpp                                                    # splines: Scene-view editing, inspectors, lines / trails
+    WindTools.cpp                                                      # wind: zones and arrows in the Scene view, inspector rows, menus, Lighting > Wind
     VolumeTools.cpp                                                    # volumes: Scene-view shapes, handles, draw tool, inspector, menus
     EditorWidgets.cpp                                                  # shared widgets (accent, icons, search field)
     ConsolePanel.cpp                                                   # ConsoleLog + Console panel

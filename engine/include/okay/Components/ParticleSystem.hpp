@@ -3,6 +3,7 @@
 #include "okay/Scene/Transform.hpp"
 #include "okay/Core/Random.hpp"
 #include "okay/Environment/Wind.hpp"
+#include "okay/Environment/WindField.hpp"
 #include "okay/Render/Color.hpp"
 #include <vector>
 #include <string>

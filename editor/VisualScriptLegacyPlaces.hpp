@@ -378,7 +378,7 @@ inline VsPlace VsLegacyPlaceForApi(const char* apiType, const char* member) {
     if (VsIs(apiType, "SaveGame")) return VsAt("Variables", "Saved");
     if (VsIs(apiType, "Localization")) return VsAt("Text", "Language");
     if (VsIs(apiType, "Sequence")) return VsAt("Animation", "Cutscenes");
-    if (VsIs(apiType, "PostProcess") || VsIs(apiType, "Fog") || VsIs(apiType, "Weather")) return VsAt("Scene", "Atmosphere");
+    if (VsIs(apiType, "PostProcess") || VsIs(apiType, "Fog") || VsIs(apiType, "Weather") || VsIs(apiType, "Wind")) return VsAt("Scene", "Atmosphere");
     if (VsIs(apiType, "NavMeshAgent")) return VsAt("Scene", "Navigation");
     if (VsIs(apiType, "GridPathAgent2D") || VsIs(apiType, "GridCostLayer") || VsIs(apiType, "GridObstacle2D"))
         return VsAt("Scene", "Navigation");

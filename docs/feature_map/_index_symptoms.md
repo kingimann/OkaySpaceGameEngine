@@ -25,6 +25,7 @@ Find the window, page or symptom, then say the number. Back to the [overview](..
 | a bone stretches or turns NaN | [36.5](36-math-geometry.md#365-ik-math) IK math |
 | a boolean cut does not follow a moved cutter | [3.3](03-modeling-import.md#33-modifiers) Modifiers |
 | a box grows from the world origin | [36.4](36-math-geometry.md#364-bounds-rectangles-and-shapes) Bounds, rectangles and shapes |
+| a box is not pushed by the wind | [2.4](02-rendering-world.md#24-sky-fog-and-weather) Sky, fog and weather |
 | a box jitters or never comes to rest | [6.1](06-physics.md#61-2d-bodies-and-colliders) 2D bodies and colliders |
 | a box stands on its corner or never settles | [6.2](06-physics.md#62-3d-bodies-and-colliders-collider-fit) 3D bodies and colliders, collider fit |
 | a branch goes the wrong way | [14.3](14-visual-scripting.md#143-functions-loops-control-flow) Functions, loops, control flow |
@@ -99,6 +100,7 @@ Find the window, page or symptom, then say the number. Back to the [overview](..
 | a fence changed height but one post did not | [3.11](03-modeling-import.md#311-guided-creation-templates-parts-safe-regeneration) Guided creation (templates, parts, safe regeneration) |
 | a field does not show in the Inspector | [13.1](13-scripting.md#131-okayscript-vm) OkayScript VM |
 | a file you did not expect is (or is not) in the build | [18.6](18-build-export-release.md#186-desktop-game-export-build-game-and-the-export-check) Desktop game export (Build Game) and the export check |
+| a flag does not wave | [2.4](02-rendering-world.md#24-sky-fog-and-weather) Sky, fog and weather |
 | a flashlight does not light the ground | [2.3](02-rendering-world.md#23-lighting-and-shadows) Lighting and shadows |
 | a flood fills the relay | [39.8](39-security-anticheat.md#398-relay-hardening) Relay hardening |
 | a frame hitch when many bullets spawn | [1.13](01-core-scene.md#113-object-pooling) Object pooling |
@@ -482,6 +484,7 @@ Find the window, page or symptom, then say the number. Back to the [overview](..
 | Ctrl+Tab picks the wrong panel | [15.9](15-editor.md#159-layout-undo-autosave) Layout, undo, autosave |
 | Ctrl+Z also crouches | [8.7](08-input.md#87-input-upgrade-timing-curves-per-player-actions-recording-the-input-panel) Input upgrade: timing, curves, per-player actions, recording, the Input panel |
 | Ctrl+Z undoes the wrong thing after mesh editing | [22.1](20-35-planned.md#221-undo-history) Undo history |
+| cut-out leaves vanish in the distance | [2.13](02-rendering-world.md#213-texture-library-mipmaps-atlases-compression-streaming) Texture library (mipmaps, atlases, compression, streaming) |
 | D3D12 view lacks bump detail | [26.4](20-35-planned.md#264-pbr) PBR |
 | damage ignores armor | [11.9](11-gameplay-systems.md#119-rpg-stats-and-xp) RPG stats and XP |
 | death snaps to the floor or gets cut short by jump or fall | [5.12](05-animation-ik.md#512-built-in-action-clips) Built-in action clips |
@@ -531,6 +534,7 @@ Find the window, page or symptom, then say the number. Back to the [overview](..
 | faces dark | [3.6](03-modeling-import.md#36-model-import) Model import |
 | faces look dark or inside out after a weld or mirror | [3.1](03-modeling-import.md#31-edit-mode) Edit mode |
 | falls through the floor forever | [4.2](04-characters-cameras.md#42-stances-and-movement) Stances and movement |
+| far away textures shimmer or look dark | [2.13](02-rendering-world.md#213-texture-library-mipmaps-atlases-compression-streaming) Texture library (mipmaps, atlases, compression, streaming) |
 | far chunks pop in or never unload | [2.6](02-rendering-world.md#26-terrain-and-water) Terrain and water |
 | far mountains missing | [45.4](43-proposals.md#454-distant-scenery) Distant scenery |
 | FBX will not import in a default build | [3.6](03-modeling-import.md#36-model-import) Model import |
@@ -602,6 +606,7 @@ Find the window, page or symptom, then say the number. Back to the [overview](..
 | I do not know what to click first | [51.2](43-proposals.md#512-guided-tutorials-in-the-editor) Guided tutorials in the editor |
 | I imported an asset pack and cannot tell which version it is | [25.4](20-35-planned.md#254-dependency-management) Dependency management |
 | I need a quick texture | [42.7](42-examples-samples.md#427-starter-assets) Starter assets |
+| I need one picture from many sprites | [2.13](02-rendering-world.md#213-texture-library-mipmaps-atlases-compression-streaming) Texture library (mipmaps, atlases, compression, streaming) |
 | I need ten similar enemies and copy-pasting prefabs makes them drift apart | [21.3](20-35-planned.md#213-variants) Variants |
 | I tuned a value in Play and it was gone after Stop | [34.1](20-35-planned.md#341-properties-during-play) Properties during Play |
 | I tweaked one instance and it lost the change after the prefab was edited | [21.4](20-35-planned.md#214-overrides) Overrides |
@@ -929,6 +934,7 @@ Find the window, page or symptom, then say the number. Back to the [overview](..
 | texture stretched or mirrored on a modeled part | [3.4](03-modeling-import.md#34-uv-tools) UV tools |
 | texture tiles wrong | [2.2](02-rendering-world.md#22-materials-and-textures) Materials and textures |
 | textures blurry or too large | [20.4](20-35-planned.md#204-import-settings) Import settings |
+| textures use too much memory | [2.13](02-rendering-world.md#213-texture-library-mipmaps-atlases-compression-streaming) Texture library (mipmaps, atlases, compression, streaming) |
 | the 2.5D character runs on the spot against a wall | [4.3](04-characters-cameras.md#43-2d-and-25d-controllers) 2D and 2.5D controllers |
 | the 2D game looks blurry or jitters | [4.10](04-characters-cameras.md#410-camera-component-shake-and-zoom) Camera component, shake and zoom |
 | the 3D view is black or very slow | [38.1](38-render-backends.md#381-renderer-interface-and-backend-selection) Renderer interface and backend selection |
@@ -1170,6 +1176,7 @@ Find the window, page or symptom, then say the number. Back to the [overview](..
 | torches do nothing to sprites | [43.4](43-proposals.md#434-2d-lighting) 2D lighting |
 | touch controls do not work on a phone | [37.5](37-platform-windowing.md#375-web-and-mobile-shims) Web and mobile shims |
 | transition does not fire or fires at once | [5.1](05-animation-ik.md#51-animator-and-state-machines) Animator and state machines |
+| trees and grass stand still in the wind | [2.4](02-rendering-world.md#24-sky-fog-and-weather) Sky, fog and weather |
 | triggers act as buttons too early or late | [8.2](08-input.md#82-gamepad-sdl) Gamepad (SDL) |
 | tumbles through the floor | [5.8](05-animation-ik.md#58-ragdolls-and-hit-reactions) Ragdolls and hit reactions |
 | turns skip a unit | [11.6](11-gameplay-systems.md#116-spawners-turn-manager-minimap) Spawners, turn manager, minimap |

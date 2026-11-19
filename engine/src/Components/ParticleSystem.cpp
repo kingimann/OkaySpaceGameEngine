@@ -79,7 +79,10 @@ Vec3 ParticleSystem::RandUnitVec() {
 }
 
 // The one place the wind is applied to a particle (docs/wind.md). A wind field that varies in space plugs in here.
-Vec3 ParticleSystem::WindAt(const Vec3& /*position*/, const Vec3& /*emitterOrigin*/) const {
+Vec3 ParticleSystem::WindAt(const Vec3& position, const Vec3& emitterOrigin) const {
+    // With Wind Zones in the scene each particle feels the wind where it flies (WindField::At); with none this is the
+    // weather's wind for everyone (docs/wind.md).
+    if (WindField::Active()) return WindField::At(simulationSpace == SimulationSpace::Local ? emitterOrigin : position) * windInfluence;
     return WindVector() * windInfluence;
 }
 
@@ -607,7 +610,7 @@ void ParticleSystem::Tick(float dt, const Vec3* originOverride, const Quat* rotO
     c.hasRadial = radialVelocity != 0.0f;
     c.velCurve = velocityCurve.Active();
     // Only while there is wind to follow (a calm scene must not slow particles down). A wind that varies in space plugs in at WindAt.
-    c.windy = windInfluence != 0.0f && WindVector().SqrMagnitude() > 1e-6f;
+    c.windy = windInfluence != 0.0f && (WindField::Active() || WindVector().SqrMagnitude() > 1e-6f);
     c.trailN = SafeTrail();
 
     // 1. Move what is already alive.

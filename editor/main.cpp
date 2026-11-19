@@ -11,6 +11,7 @@
 #include "EditorPerf.hpp"            // frame-time maths, idle throttle, viewport scale, performance mode (tests/test_editor_perf.cpp)
 #include "SaveBeforePrompt.hpp"         // the Save-before-Play/Stop/Open prompt's order: stop first, then save (#888)
 #include "ObjectRef.hpp"         // GUID-held object references that survive undo / scene rebuilds
+#include "OwnSwitches.hpp"   // the table of own replacements that can be switched on (View > Rendering & Performance)
 #include "OwnStack.hpp"   // OKAY_OWN_STACK=1 dogfood switch + the one-line startup stack report
 #include "CrashHandler.hpp"   // crash handlers + the crash context that fills okay_crash.txt (docs/crash_reports.md)
 #include "ActionExport.hpp"
@@ -50,6 +51,7 @@
 #include "LevelTools.hpp"              // foliage brush, terrain layers, decals, cables, measuring, orthographic views
 #include "ParticleEditor.hpp"          // particle presets menus, live preview, the particle Inspector rows, the shared particle drawing
 #include "SplineTools.hpp"             // splines: Scene-view editing, inspectors, line / trail drawing
+#include "WindTools.hpp"               // wind: zones, arrows, inspector rows, menus, Lighting > Wind
 #include "VolumeTools.hpp"             // volumes: Scene-view shapes, handles, draw tool, inspector, menus
 #include "okay/Components/HoldPrompt.hpp"
 #include "okay/Components/LocalPlayerInput.hpp"
@@ -127,7 +129,8 @@
 #include "OkayUIBackend.hpp"            // UI backend setting: Dear ImGui (default) or OkayUI (preview)
 #include "AntiCheatIntegrity.hpp"       // Build Game's Data/manifest.json (opt-in anti-cheat)
 #include "FileDialog.hpp"                // open / save / folder dialogs: the system's own, or our built-in browser (asset import)
-#include "SdlClipboard.hpp"              // Play mode clipboard (SDL directly, not okay::platform)
+#include "PlatformClipboard.hpp"         // Play mode clipboard (through okay::platform)
+#include "ImGuiPlatformFeed.hpp"          // our own Dear ImGui input feed over okay::platform (OKAY_PLATFORM_EVENTS=own; default stays imgui_impl_sdl2)
 
 #include <numeric>
 #include <algorithm>
@@ -739,6 +742,7 @@ int main(int argc, char** argv) {
 #define SDL_MAIN_HANDLED
 #include <SDL.h>
 #include "okay/Platform/Platform.hpp"   // okay::platform: timers (and the SDL seam)
+#include "okay/Platform/WindowLogic.hpp" // first-run UI scale, focus hand-back decision
 #include "AppIcon.hpp"
 #include "OkayTheme.hpp"   // shared Slate palette (launcher + editor)
 #include "imgui.h"
@@ -1033,7 +1037,8 @@ SDL_Renderer* g_sdlRenderer = nullptr;
 // SDL_Renderer UI is never disturbed. Experimental + off by default.
 bool          g_gpuRender = true;        // GPU 3D view, auto-on (D3D11/OpenGL by OS, software fallback)
 SDL_Window*   g_glWindow  = nullptr;     // hidden window owning the GL context
-SDL_GLContext g_glCtx     = nullptr;
+bool          g_glCtx     = false;       // the hidden window's GL context exists (made and owned by g_glWin)
+std::unique_ptr<okay::platform::Window> g_glWin;   // owns the hidden window g_glWindow (an SDL_Window* view of it) and the GL context
 okay::GLRenderer* g_glRenderer = nullptr;
 bool          g_glReady   = false;       // GL context + entry points loaded OK
 bool          g_d3dReady  = false;       // D3D11 device created OK (Windows)
@@ -1262,12 +1267,12 @@ SDL_Texture* Render3DTexture(const Scene& scene, const Mat4& vp, const Vec3& eye
 #endif
         if (!px && g_glReady && g_glRenderer && g_glWindow && g_glCtx) {
             OKAY_BREADCRUMB("Render3D:gl");
-            SDL_GLContext prevCtx = SDL_GL_GetCurrentContext();
-            SDL_Window*   prevWin = SDL_GL_GetCurrentWindow();
-            if (SDL_GL_MakeCurrent(g_glWindow, g_glCtx) == 0)
+            okay::platform::Backend* glb = okay::platform::Get(okay::platform::BackendKind::Sdl2);
+            const okay::platform::GLCurrent prevGL = glb->CurrentGL();
+            if (g_glWin->MakeCurrent())
                 px = g_glRenderer->RenderToPixels(scene, vp, eye, rw, rh, 4,
                                                   0.0f, 0.0f, 0.0f, 0.0f, ignore);
-            SDL_GL_MakeCurrent(prevWin, prevCtx);
+            glb->RestoreGL(prevGL);
             if (px) okay::FrameOverlay::RendererName() = "OpenGL (GPU)";
         }
         static int s_gpuFails = 0;
@@ -1336,12 +1341,12 @@ const std::uint32_t* Render3DPassPixels(const Scene& scene, const okay::CameraPa
     }
 #endif
     if (tryGpu && !px && g_glReady && g_glRenderer && g_glWindow && g_glCtx) {
-        SDL_GLContext prevCtx = SDL_GL_GetCurrentContext();
-        SDL_Window* prevWin = SDL_GL_GetCurrentWindow();
-        if (SDL_GL_MakeCurrent(g_glWindow, g_glCtx) == 0)
+        okay::platform::Backend* glb = okay::platform::Get(okay::platform::BackendKind::Sdl2);
+        const okay::platform::GLCurrent prevGL = glb->CurrentGL();
+        if (g_glWin->MakeCurrent())
             px = g_glRenderer->RenderToPixels(scene, pass.vp, pass.eye, rw, rh, 4,
                                               pass.clearR, pass.clearG, pass.clearB, pass.clearA, pass.ignore);
-        SDL_GL_MakeCurrent(prevWin, prevCtx);
+        glb->RestoreGL(prevGL);
     }
     okay::SceneOcclusionDepth().valid = false;
     if (!px) {
@@ -7100,6 +7105,7 @@ static void DrawAutosaveMenuItems() {
 static void DrawSceneOverlayMenuItems(EditorState& ed) {
     ImGui::MenuItem("Colliders (gizmos)", nullptr, &g_showColliders);
     oked::DrawVolumeOverlayMenu([] { SaveSettings(); });
+    oked::DrawWindOverlayMenu([] {});
     if (ImGui::BeginMenu("Physics Debug")) {
         if (ImGui::MenuItem("Show physics (Scene + Game)", nullptr, &g_physDebug)) { ApplyPhysicsDebug(); SaveSettings(); }
         if (ImGui::IsItemHovered()) ImGui::SetTooltip("Draw colliders (green), triggers (blue), this frame's contact\npoints + normals (red) and query rays, also in the Game view\nwhile playing. Editor only - never in a build.");
@@ -7226,6 +7232,23 @@ static void DrawRenderingMenuItems(EditorState& ed) {
     if (ImGui::IsItemHovered()) ImGui::SetTooltip("Dear ImGui draws the editor. OkayUI (preview) is our own toolkit: pick it to draw the Console panel with it.\nEverything else stays Dear ImGui. Applies at once; the OKAY_UI_BACKEND environment variable overrides it.");
     }
 #endif
+    if (ImGui::BeginMenu("Experimental: try our own code")) {   // the same table and file as the launcher's Settings > Experimental (shared/OwnSwitches.hpp)
+        namespace osw = okay::ownswitches;
+        osw::State& st = osw::Global();
+        const osw::Context ctx = osw::Context::Here();
+        ImGui::TextDisabled("Off by default. A change works after you restart the editor.");
+        if (ImGui::MenuItem("Back to normal (all off)", nullptr, false, !st.chosen.empty())) { osw::AllOff(st.chosen); osw::SaveChosen(); }
+        ImGui::Separator();
+        for (const osw::Item& it : osw::Items()) {
+            if (!osw::Available(it, ctx)) continue;
+            const bool byUser = osw::SetByUser(it, osw::AppliedNow());
+            const osw::Status stt = osw::StatusOf(it, st.chosen, st.runningWith, byUser);
+            const std::string label = std::string(it.label) + "  (" + osw::StatusText(stt) + ")";
+            if (ImGui::MenuItem(label.c_str(), nullptr, osw::Has(st.chosen, it.id), !byUser)) { osw::Set(st.chosen, it.id, !osw::Has(st.chosen, it.id)); osw::SaveChosen(); }
+            if (ImGui::IsItemHovered()) ImGui::SetTooltip("%s", it.desc);
+        }
+        ImGui::EndMenu();
+    }
     DrawAutoModeMenu("VSync", g_vsyncMode, g_vsync, "Off = uncapped FPS (no 60 Hz limit). On = no tearing. Auto turns it on when the GPU draws the editor and off for the software renderer.");
     if (ImGui::MenuItem("Smooth frame time", nullptr, &g_smoothFrameTime)) SaveSettings();
     if (ImGui::IsItemHovered()) ImGui::SetTooltip("Play steps the game by an evened-out frame time (whole refresh periods with\nVSync), so movement and cameras don't micro-judder at a steady frame rate.");
@@ -7493,6 +7516,7 @@ static void DrawCreateSlot(EditorState& ed, const std::string& id, GameObject* p
         if (ImGui::IsItemHovered()) ImGui::SetTooltip("A curve of three points in front of the camera: roads, rails, fences, paths.");
         LevelCreateMenuItems(ed, created);                // Foliage Layer, Decal Projector, Cable
         oked::DrawVolumeGameObjectMenu(ed, created);      // Volume >
+        oked::DrawWindGameObjectMenu(ed, created);        // Environment > (wind)
     } else if (id == "create.ui") {
         // Widgets go under the scene's Canvas (made, plus an Event System, if
         // missing), or inside the selected panel; see DrawUIWidgetItems.
@@ -12862,6 +12886,7 @@ static void DrawLookSections(EditorState& ed) {
         if (AssetSlot("thundersound", w.thunderSound, "Clip", {".wav", ".ogg", ".mp3"})) ed.dirty = true;
         tip("Played a moment after each lightning strike in a storm (drag a clip from the Project panel).");
     }
+    oked::DrawWindSettingsSection(ed);   // Wind: the scene's wind object, with a live arrow
 }
 
 // Lighting: the scene's look (UI font, sky, fog, lightmaps) plus the global
@@ -19658,7 +19683,7 @@ static std::string DefaultProjectsLocation() {
     const std::vector<std::string> recent = RecentLocations();
     if (!recent.empty()) return recent.front();
     std::string base;
-    if (char* b = SDL_GetBasePath()) { base = b; SDL_free(b); }
+    if (okay::platform::Backend* pb = okay::platform::Default()) base = pb->BasePath();
     return (std::filesystem::path(base.empty() ? "." : base) / "Projects").string();
 }
 // Pick a project folder and open it (its first scene). The chooser and File > Open Project Folder share this.
@@ -31199,6 +31224,8 @@ void DrawInspector(EditorState& ed) {
             oked::FieldTip("Gravity##ps");
             if (ImGui::DragFloat("Gravity Mult##ps", &ps->gravityModifier, 0.02f, -10.0f, 10.0f)) ed.dirty = true;
             oked::FieldTip("Gravity Mult##ps");
+            if (ImGui::SliderFloat("Affected by wind##ps", &ps->windInfluence, 0.0f, 3.0f, "%.2f")) ed.dirty = true;
+            if (ImGui::IsItemHovered()) ImGui::SetTooltip("How much the wind carries these particles. 0 = ignore the wind, 1 = they drift at the wind's speed.\nThe wind comes from the weather and from Wind Zones (Add Component > Environment > Wind Zone).");
             if (ImGui::DragFloat("Damping / sec##ps", &ps->damping, 0.02f, 0.0f, 20.0f)) ed.dirty = true;
             oked::FieldTip("Damping / sec##ps");
 
@@ -42022,6 +42049,7 @@ void DrawInspector(EditorState& ed) {
     DrawBehaviorTreeInspector(ed, go, curComp, toRemove, &CompHeader);   // Behavior Tree Runner
     DrawSplineInspector(ed, go, curComp, toRemove, &CompHeader);       // Spline family, Line / Trail Renderer
     DrawLevelInspector(ed, go, curComp, toRemove, &CompHeader);        // Foliage, Decal Projector, Cable
+    oked::DrawWindInspector(ed, go, curComp, toRemove, &CompHeader);   // Wind Zone, Wind Drag, Wind Sway, Wind Sound
     oked::DrawVolumeInspector(ed, go, curComp, toRemove, &CompHeader);  // Volume (checkpoint, kill, force, atmosphere, ambience)
     oked::DrawFallbackInspector(ed, go, curComp, toRemove, fbCursorY, &CompHeader);   // anything still undrawn: from the property registry
     if (multiEdit.active && oked::PropagateComponentEdit(ed.MultiSelection(), go, *curComp, multiEdit) > 0) ed.dirty = true;
@@ -42276,6 +42304,9 @@ void DrawInspector(EditorState& ed) {
             if (item(!go->GetComponent<MeshCollider3D>(), "Mesh Collider 3D")) { auto* m = go->AddComponent<MeshCollider3D>(); m->autoFit = true; FitColliders(go); ed.dirty = true; }
           } EndCat(o); }
 
+        { bool o = BeginCat("Environment");
+          if (o) { oked::WindAddComponentItems(ed, go, item); }
+          EndCat(o); }
         { bool o = BeginCat("Lighting");
           if (o) {
             if (item(!go->GetComponent<Light>(), "Directional Light")) { go->AddComponent<Light>(); ed.dirty = true; }
@@ -45652,6 +45683,7 @@ void DrawScene3D(EditorState& ed, ImDrawList* dl, ImVec2 canvasPos, ImVec2 canva
         if (oked::DrawVolumeOverlay(ed, dl, vp, eye, center, canvasSize, canvasPos,
                                     hovered && !g_uiHandled && !g_gizmoGrab, io))
             g_uiHandled = true;
+        oked::DrawWindOverlay(ed, dl, vp, center, canvasSize, canvasPos);   // wind zones and arrows
     }
     // Skeleton overlay on top of the meshes (built with the gizmos above).
     if (!gameView) {
@@ -49650,7 +49682,7 @@ static void SavePrefabCmd(EditorState& ed) {
     std::string err, warn;
     if (!ed.SavePrefab(&err, &warn)) { g_lastSaveError = err; ConsoleLog(err, 2); ShowErrorPopup("Couldn't save the prefab", err + "\n\nNothing was lost: your edits are still open."); return; }
     g_lastSaveError.clear();
-    g_lastSavedAt = SDL_GetTicks64();
+    g_lastSavedAt = okay::platform::TicksMs();
     ConsoleLog("Saved prefab " + std::filesystem::path(ed.PrefabPath()).filename().string() + ". Instances in the scene update when you go Back.");
     if (!warn.empty()) ConsoleLog(warn, 1);
 }
@@ -50072,7 +50104,7 @@ static bool PassesLauncherGate(int argc, char** argv) {
     if (launcher.empty())
         msg = "OkaySpace Editor must be opened from the OkaySpace Launcher,\n"
               "but the launcher was not found next to the editor.";
-    SDL_ShowSimpleMessageBox(SDL_MESSAGEBOX_WARNING, "OkaySpace", msg, nullptr);
+    if (okay::platform::Backend* pb = okay::platform::Default()) pb->ShowErrorBox("OkaySpace", msg);
     if (!launcher.empty()) {
 #if defined(_WIN32)
         std::string cmd = "start \"\" \"" + launcher.string() + "\"";
@@ -50225,7 +50257,8 @@ static SDL_Texture* OkayVpTexture(OkayVpData* d, ImTextureData* td) {
 }
 
 static void OkayVp_CreateWindow(ImGuiViewport* vp) {
-    SDL_Window* w = SDL_GetWindowFromID((Uint32)(intptr_t)vp->PlatformHandle);
+    okay::platform::Backend* pb = okay::platform::Get(okay::platform::BackendKind::Sdl2);   // the viewport windows are SDL windows
+    SDL_Window* w = pb ? (SDL_Window*)pb->NativeHandleFromId((uint32_t)(intptr_t)vp->PlatformHandle) : nullptr;
     if (!w) return;
     OkayVpData* d = new OkayVpData();
     d->ren = SDL_CreateRenderer(w, -1, SDL_RENDERER_ACCELERATED);
@@ -50324,6 +50357,15 @@ static void OkayVp_RenderWindow(ImGuiViewport* vp, void*) {
     SDL_RenderPresent(d->ren);
 }
 
+// Dear ImGui input: imgui_impl_sdl2 by default, or our own okay::platform feed with OKAY_PLATFORM_EVENTS=own (shared/ImGuiPlatformFeed.hpp).
+static bool g_imguiOwnFeed = false;
+static okay::imguifeed::Feed g_imguiFeed;
+// One platform event for Dear ImGui through whichever path is on: our own feed takes it directly; imgui_impl_sdl2 (the
+// default) takes the SDL record the sdl2 backend keeps in Event::native (it is only valid inside the current poll loop pass).
+static void FeedImGuiEvent(const okay::platform::Event& e) {
+    if (g_imguiOwnFeed) { g_imguiFeed.ProcessEvent(e, ImGui::GetIO()); return; }
+    if (e.native) ImGui_ImplSDL2_ProcessEvent((const SDL_Event*)e.native);
+}
 // True when both halves of multi-window panels are there: the platform backend can create OS windows (the
 // SDL2 backend says so only on video drivers that report the mouse anywhere on the desktop: Windows, macOS,
 // X11; not Wayland or the headless offscreen driver) and the renderer side (OkayVpInstall) is installed.
@@ -50350,9 +50392,7 @@ static void OkayVpInstall() {
 static std::string LauncherIpcPath(const char* file) {
     static std::string base;
     if (base.empty()) {
-        char* b = SDL_GetBasePath();
-        base = b ? b : "";
-        if (b) SDL_free(b);
+        if (okay::platform::Backend* pb = okay::platform::Default()) base = pb->BasePath();
     }
     return base + file;
 }
@@ -50516,6 +50556,7 @@ int main(int argc, char** argv) {
     if (int code = okay::selfupdate::SelfCheck(argc, argv, OKAY_ENGINE_VERSION); code >= 0) return code;   // `--okay-selfcheck <v>`: the updater asks the new file who it is
     okay::restart::RememberArguments(argc, argv);
     okay::editor::ExamplesExeDir() = OkayExeDir();   // File > Examples finds the shipped "examples" folder beside the program
+    okay::ownswitches::Startup();   // View > Rendering & Performance > Experimental (same file as the launcher's Settings page): set the variables before anything reads them
     okay::ownstack::Startup();   // OKAY_OWN_STACK=1 sets the own-backend switches; logs which parts are ours (docs/own_stack_rollout.md)
     std::fprintf(stderr, "[updater] %s\n", okayupdate::SignatureStatus(okayupdate::BuiltInTrustedKeys()).line.c_str());   // OFF is never silent (docs/security.md "Updater signing")
     okaycrash::handler::Install(OKAY_ENGINE_VERSION, __DATE__ " " __TIME__);   // report crashes: Windows exception filter / Linux and macOS signals / std::terminate
@@ -50579,12 +50620,17 @@ int main(int argc, char** argv) {
     // Windows renders the window at native resolution (crisp) instead of bitmap-
     // stretching a 96-DPI surface (the blurry look on 125%/150% scaled displays).
     // No-op on other platforms. Pair with the UI Scale menu to size the UI to taste.
-    SDL_SetHint(SDL_HINT_WINDOWS_DPI_AWARENESS, "permonitorv2");
-    if (SDL_Init(SDL_INIT_VIDEO | SDL_INIT_TIMER | SDL_INIT_AUDIO |
-                 SDL_INIT_GAMECONTROLLER) != 0) {
-        std::cerr << "SDL_Init failed: " << SDL_GetError() << "\n";
+    // The editor's windows are SDL windows (Dear ImGui's SDL backends and SDL_Renderer need an SDL_Window*), so the
+    // editor always asks the seam for the SDL2 backend, whatever OKAY_PLATFORM_BACKEND says. Init, windows and shutdown
+    // go through okay::platform; behaviour is the same as the direct SDL calls were.
+    okay::platform::Backend* sdlSeam = okay::platform::Get(okay::platform::BackendKind::Sdl2);
+    if (!sdlSeam) { std::cerr << "SDL2 platform backend is not available\n"; return 1; }
+    sdlSeam->SetPerMonitorDpiAware();
+    if (!sdlSeam->Init(okay::platform::InitFlags())) {   // video + audio + game controllers (+ timers, events)
+        std::cerr << "SDL_Init failed: " << sdlSeam->LastError() << "\n";
         return 1;
     }
+    sdlSeam->StartTextInput();   // SDL2 starts with text input on and Dear ImGui's SDL backend relies on it
     {
         // The previous build is kept as <exe>.old until this process is actually
         // up. A relaunch that loses the single-instance check, or fails to
@@ -50610,10 +50656,13 @@ int main(int argc, char** argv) {
     // Create the window HIDDEN so the OS never composites a black, uninitialized
     // rectangle during the window + renderer setup. We paint the first splash
     // frame while hidden and then reveal the window already showing the splash.
-    SDL_Window* window = SDL_CreateWindow(
-        "OkayEngine", SDL_WINDOWPOS_CENTERED, SDL_WINDOWPOS_CENTERED,
-        1280, 800, SDL_WINDOW_RESIZABLE | SDL_WINDOW_ALLOW_HIGHDPI | SDL_WINDOW_HIDDEN);
-    if (!window) { std::cerr << "CreateWindow failed: " << SDL_GetError() << "\n"; return 1; }
+    okay::platform::WindowDesc mainDesc;
+    mainDesc.title = "OkayEngine"; mainDesc.width = 1280; mainDesc.height = 800;
+    mainDesc.resizable = true; mainDesc.highDpi = true; mainDesc.hidden = true;
+    // The seam's window (it owns the window and destroys it); the SDL_Window* inside is what the ImGui backends and SDL_Renderer take.
+    std::unique_ptr<okay::platform::Window> winSeam = sdlSeam->MakeWindow(mainDesc);
+    if (!winSeam) { std::cerr << "CreateWindow failed: " << sdlSeam->LastError() << "\n"; return 1; }
+    SDL_Window* window = (SDL_Window*)winSeam->NativeHandle();
     okay::SetAppIcon(window);   // placeholder OkaySpace logo
 
     // SDL's 2D renderer (Direct3D/Metal/OpenGL, chosen by SDL); fall back to software.
@@ -50682,7 +50731,7 @@ int main(int argc, char** argv) {
         SDL_RaiseWindow(window);
         okay::DrawSplashStyled(renderer, sw, sh, splashStyle());
     }
-    SDL_EventState(SDL_DROPFILE, SDL_ENABLE);  // accept OS file drops (asset import)
+    // (File drops are accepted by the sdl2 backend's Init.)
 
     IMGUI_CHECKVERSION();
     ImGui::CreateContext();
@@ -50733,7 +50782,7 @@ int main(int argc, char** argv) {
     auto splashTick = [&]() {
         int sw = 1280, sh = 800; SDL_GetRendererOutputSize(renderer, &sw, &sh);
         okay::DrawSplashStyled(renderer, sw, sh, splashStyle());
-        SDL_PumpEvents();
+        sdlSeam->PumpEvents();
     };
     splashTick();
     // (Project settings were already loaded above, before the first splash, so
@@ -50861,7 +50910,13 @@ int main(int argc, char** argv) {
     okay::editor::vsed::StepSummary = [](const ActionList::Item& it) { return ActionOpSummary(it); };
     okay::editor::vsed::TemplatePicker = [](const char* id, ActionList& out) { bool d = false; return ScriptRecipePicker(id, &out, d); };
     ApplyTheme();
-    ImGui_ImplSDL2_InitForSDLRenderer(window, renderer);
+    // Which Dear ImGui input path runs: imgui_impl_sdl2 (default) or our own okay::platform feed (OKAY_PLATFORM_EVENTS=own).
+    // Own feed: no pop-out panels (no multi-viewport), no gamepad navigation; keys, text, mouse, wheel, focus, clipboard, cursor shape work.
+    g_imguiOwnFeed = okay::imguifeed::OwnRequested(std::getenv("OKAY_PLATFORM_EVENTS"));
+    std::fprintf(stderr, "%s\n", okay::imguifeed::ActiveLine(g_imguiOwnFeed));
+    sdlSeam->ReportUnmappedEvents(!g_imguiOwnFeed);   // imgui_impl_sdl2 wants every SDL event (pointer enter / leave, display changes ...)
+    if (g_imguiOwnFeed) g_imguiFeed.Init(ImGui::GetIO(), winSeam->Id(), okay::imguifeed::FeedHost::FromPlatform(sdlSeam, winSeam.get()));
+    else ImGui_ImplSDL2_InitForSDLRenderer(window, renderer);
     ImGui_ImplSDLRenderer2_Init(renderer);
     OkayVpInstall();   // renderer-side multi-viewport hooks (dual-monitor panels)
     // Multi-window panels: drag a tab outside the editor and it becomes its own OS window (the Inspector or the
@@ -50896,26 +50951,25 @@ int main(int argc, char** argv) {
         // objects, multisample renderbuffers + blit, and VAOs, while still accepting
         // our legacy #version 120 shaders. If the driver can't provide it,
         // SDL_GL_CreateContext fails and we fall back to software (no crash).
-        SDL_GL_SetAttribute(SDL_GL_CONTEXT_MAJOR_VERSION, 3);
-        SDL_GL_SetAttribute(SDL_GL_CONTEXT_MINOR_VERSION, 2);
-        SDL_GL_SetAttribute(SDL_GL_CONTEXT_PROFILE_MASK, SDL_GL_CONTEXT_PROFILE_COMPATIBILITY);
-        SDL_GL_SetAttribute(SDL_GL_DEPTH_SIZE, 24);
-        SDL_Window* prevWin = SDL_GL_GetCurrentWindow();
-        SDL_GLContext prevCtx = SDL_GL_GetCurrentContext();
-        g_glWindow = SDL_CreateWindow("okay-gl", 0, 0, 16, 16,
-                                      SDL_WINDOW_OPENGL | SDL_WINDOW_HIDDEN);
+        okay::platform::Backend* glb = okay::platform::Get(okay::platform::BackendKind::Sdl2);
+        const okay::platform::GLCurrent prevGL = glb->CurrentGL();
+        okay::platform::WindowDesc glDesc;
+        glDesc.title = "okay-gl"; glDesc.x = 0; glDesc.y = 0; glDesc.width = 16; glDesc.height = 16;
+        glDesc.resizable = false; glDesc.opengl = true; glDesc.hidden = true;
+        g_glWin = glb->MakeWindow(glDesc);   // owns the window; destroyed with g_glWin
+        g_glWindow = g_glWin ? (SDL_Window*)g_glWin->NativeHandle() : nullptr;
         if (g_glWindow) {
-            g_glCtx = SDL_GL_CreateContext(g_glWindow);
+            okay::platform::GLAttributes gla;   // 3.2 compatibility, 24-bit depth: the seam's defaults
+            g_glCtx = g_glWin->CreateGLContext(gla);   // also makes it current
             if (g_glCtx) {
-                SDL_GL_MakeCurrent(g_glWindow, g_glCtx);
-                if (okay::GLRenderer::LoadGL((okay::GLRenderer::GLGetProc)SDL_GL_GetProcAddress)) {
+                if (okay::GLRenderer::LoadGL([](const char* n) -> void* { return okay::platform::Get(okay::platform::BackendKind::Sdl2)->GLProcAddress(n); })) {
                     g_glRenderer = new okay::GLRenderer();
                     g_glReady = true;
                     ConsoleLog("GPU renderer available (View > GPU Renderer).");
                     {   // the GPU, the vendor and the OpenGL version go into every crash report (the UI crash shows on some drivers only)
                         using GetStringFn = const unsigned char* (SDLCALL*)(unsigned int);   // GL_VENDOR 0x1F00, GL_RENDERER 0x1F01, GL_VERSION 0x1F02
                         std::string gpu;
-                        if (auto gs = (GetStringFn)SDL_GL_GetProcAddress("glGetString")) {
+                        if (auto gs = (GetStringFn)glb->GLProcAddress("glGetString")) {
                             auto str = [&](unsigned int what) { const unsigned char* t = gs(what); return t ? std::string((const char*)t) : std::string("?"); };
                             gpu = str(0x1F01) + " | " + str(0x1F00) + " | OpenGL " + str(0x1F02);
                         }
@@ -50928,7 +50982,7 @@ int main(int argc, char** argv) {
         }
         // Restore whatever context SDL_Renderer had current (its own on the GL backend,
         // or none on the D3D backend) so the editor UI keeps drawing normally.
-        SDL_GL_MakeCurrent(prevWin, prevCtx);
+        glb->RestoreGL(prevGL);
         if (!g_glReady) {
             ConsoleLog("GPU renderer unavailable; using the software renderer.", 1);
             SDL_RendererInfo ri; std::memset(&ri, 0, sizeof(ri));
@@ -51001,13 +51055,7 @@ int main(int argc, char** argv) {
     // 125%/150%): size the UI to the display so it isn't tiny. Only on first run —
     // afterwards the user's own UI Scale choice (saved) wins.
     if (g_firstRun) {
-        float ddpi = 96.0f, hdpi = 96.0f, vdpi = 96.0f;
-        int disp = SDL_GetWindowDisplayIndex(window);
-        if (disp >= 0 && SDL_GetDisplayDPI(disp, &ddpi, &hdpi, &vdpi) == 0 && ddpi > 0.0f) {
-            float s = ddpi / 96.0f;
-            s = std::round(s * 4.0f) / 4.0f;              // snap to 1.0 / 1.25 / 1.5 ...
-            g_uiScale = s < 1.0f ? 1.0f : (s > 2.0f ? 2.0f : s);
-        }
+        g_uiScale = okay::platform::UiScaleFromDpi(winSeam->Dpi());   // snapped to 1.0 / 1.25 / 1.5 ... (1.0 when unknown)
     }
     LoadCustomActions();   // reusable custom instruction/condition library
     ApplyTheme();   // re-apply now that the saved theme/accent/UI-scale are loaded
@@ -51109,9 +51157,10 @@ int main(int argc, char** argv) {
             // another program's focus is never taken.
             static int s_prevViewports = 1;
             const int vps = ImGui::GetPlatformIO().Viewports.Size;
-            if (s_prevViewports > 1 && vps <= 1 && (SDL_GetWindowFlags(window) & SDL_WINDOW_INPUT_FOCUS) == 0 &&
-                SDL_GetKeyboardFocus() == nullptr && SDL_GetMouseFocus() == window)
-                SDL_SetWindowInputFocus(window);
+            okay::platform::Backend* pbf = okay::platform::Get(okay::platform::BackendKind::Sdl2);   // the editor window is an SDL window
+            if (pbf && okay::platform::ShouldReclaimInputFocus(s_prevViewports, vps, winSeam->HasInputFocus(),
+                    pbf->KeyboardFocusWindowId(), pbf->MouseFocusWindowId(), winSeam->Id()))
+                winSeam->SetInputFocus();
             s_prevViewports = vps;
         }
         {   // seconds since the last event of any kind (the idle throttle reads this; the first frame counts as just now)
@@ -51120,80 +51169,83 @@ int main(int argc, char** argv) {
             SDL_PumpEvents();
             if (SDL_HasEvents(SDL_FIRSTEVENT, SDL_LASTEVENT)) { s_lastInput = okay::platform::PerfCounter(); g_secSinceInput = 0.0; }
         }
-        SDL_Event e;
-        while (SDL_PollEvent(&e)) {
+        okay::platform::Event e;
+        while (sdlSeam->PollEvent(e)) {
+            using EvT = okay::platform::EventType;
+            using PKey = okay::platform::Key;
 #ifdef OKAY_HAVE_OKAYUI
-            g_okayInput.Feed(e);   // typed text, key edges, wheel for a hosted OkayUI panel (only delivered when its field has focus)
+            g_okayInput.Feed(e, sdlSeam->CharForKey(e.key));   // typed text, key edges, wheel for a hosted OkayUI panel (only delivered when its field has focus)
 #endif
-            if (e.type == SDL_KEYDOWN && !e.key.repeat &&
-                e.key.keysym.scancode == SDL_SCANCODE_ESCAPE)
+            if (e.type == EvT::KeyDown && !e.repeat && e.key == PKey::Escape)
                 g_escapeEdge = true;
             // A key or click shorter than one frame still counts for the playing game (the held-key poll would miss it).
             if (ed.isPlaying() && !ImGui::GetIO().WantTextInput) {
-                if (e.type == SDL_KEYDOWN && !e.key.repeat) {
-                    const SDL_Scancode sc = e.key.keysym.scancode;
-                    const SDL_Keycode kc = SDL_GetKeyFromScancode(sc);
-                    if (kc >= 'a' && kc <= 'z') Input::FeedKeyTap((char)kc);
-                    else if (kc >= '0' && kc <= '9') Input::FeedKeyTap((char)kc);
-                    else if (sc >= SDL_SCANCODE_A && sc <= SDL_SCANCODE_Z) Input::FeedKeyTap((char)('a' + (sc - SDL_SCANCODE_A)));
-                    else if (sc == SDL_SCANCODE_SPACE) Input::FeedKeyTap(' ');
-                    else if (sc == SDL_SCANCODE_UP) { Input::FeedKeyTap('w'); Input::FeedKeyTap(Input::KeyUp); }
-                    else if (sc == SDL_SCANCODE_DOWN) { Input::FeedKeyTap('s'); Input::FeedKeyTap(Input::KeyDown); }
-                    else if (sc == SDL_SCANCODE_LEFT) { Input::FeedKeyTap('a'); Input::FeedKeyTap(Input::KeyLeft); }
-                    else if (sc == SDL_SCANCODE_RIGHT) { Input::FeedKeyTap('d'); Input::FeedKeyTap(Input::KeyRight); }
+                if (e.type == EvT::KeyDown && !e.repeat) {
+                    const PKey sc = e.key;
+                    const char kc = sdlSeam->CharForKey(sc);   // what the key types on this layout
+                    if (kc >= 'a' && kc <= 'z') Input::FeedKeyTap(kc);
+                    else if (kc >= '0' && kc <= '9') Input::FeedKeyTap(kc);
+                    else if (sc >= PKey::A && sc <= PKey::Z) Input::FeedKeyTap((char)('a' + ((int)sc - (int)PKey::A)));
+                    else if (sc == PKey::Space) Input::FeedKeyTap(' ');
+                    else if (sc == PKey::Up) { Input::FeedKeyTap('w'); Input::FeedKeyTap(Input::KeyUp); }
+                    else if (sc == PKey::Down) { Input::FeedKeyTap('s'); Input::FeedKeyTap(Input::KeyDown); }
+                    else if (sc == PKey::Left) { Input::FeedKeyTap('a'); Input::FeedKeyTap(Input::KeyLeft); }
+                    else if (sc == PKey::Right) { Input::FeedKeyTap('d'); Input::FeedKeyTap(Input::KeyRight); }
                 }
             }
             // A pop-out menu or dialog can be its own OS window. When it closes and the window system does not hand the
             // keyboard back (no window manager, or one that does not), Esc, F2 and the other keys would go nowhere and a
             // dialog could only be closed with the mouse. A click in the editor window takes the keyboard focus back.
-            if (e.type == SDL_MOUSEBUTTONDOWN && e.button.windowID == SDL_GetWindowID(window) &&
-                (SDL_GetWindowFlags(window) & SDL_WINDOW_INPUT_FOCUS) == 0)
-                SDL_SetWindowInputFocus(window);
+            if (e.type == EvT::MouseButtonDown && e.windowId == winSeam->Id() &&
+                !winSeam->HasInputFocus())
+                winSeam->SetInputFocus();
             // While the play cursor is grabbed, absolute motion is frozen where
             // the grab began. Feeding those events to ImGui clicks the Play
             // button and stops the game. The game still reads relative motion.
-            const bool mouseEv = e.type == SDL_MOUSEMOTION || e.type == SDL_MOUSEBUTTONDOWN
-                || e.type == SDL_MOUSEBUTTONUP || e.type == SDL_MOUSEWHEEL;
+            const bool mouseEv = e.type == EvT::MouseMove || e.type == EvT::MouseButtonDown
+                || e.type == EvT::MouseButtonUp || e.type == EvT::MouseWheel;
             if (!(g_playPointerGrabbed && mouseEv && !g_escapeEdge))
-                ImGui_ImplSDL2_ProcessEvent(&e);
-            if (e.type == SDL_QUIT) g_quitRequested = true;
-            if (e.type == SDL_CONTROLLERDEVICEADDED) g_pads.Add(e.cdevice.which);
-            if (e.type == SDL_CONTROLLERDEVICEREMOVED) g_pads.Remove(e.cdevice.which);
-            if (e.type == SDL_RENDER_TARGETS_RESET || e.type == SDL_RENDER_DEVICE_RESET)
-                ResetViewTextures(e.type == SDL_RENDER_DEVICE_RESET);
-            if (e.type == SDL_WINDOWEVENT && e.window.event == SDL_WINDOWEVENT_CLOSE &&
-                e.window.windowID == SDL_GetWindowID(window))
+                FeedImGuiEvent(e);
+            if (e.type == EvT::Quit) g_quitRequested = true;
+            if (e.type == EvT::GamepadAdded) g_pads.Add(e.deviceId);
+            if (e.type == EvT::GamepadRemoved) g_pads.Remove(e.deviceId);
+            if (e.type == EvT::RenderTargetsReset || e.type == EvT::RenderDeviceReset)
+                ResetViewTextures(e.type == EvT::RenderDeviceReset);
+            if (e.type == EvT::WindowClose && e.windowId == winSeam->Id())
                 g_quitRequested = true;
-            if (e.type == SDL_WINDOWEVENT && e.window.event == SDL_WINDOWEVENT_FOCUS_LOST) {
+            if (e.type == EvT::WindowFocusLost) {
                 if (ed.isPlaying()) g_gameCursorReleased = true;   // alt-tab: never leave the pointer trapped
                 if (g_autosave) DocRecovery().Autosave();
             }
             // Route typed characters to the playing game's UI input fields (but not
             // while an ImGui field — inspector/markup box — is capturing text).
-            if (e.type == SDL_TEXTINPUT && ed.isPlaying() && !ImGui::GetIO().WantTextInput)
-                Input::FeedText(e.text.text);
-            if (e.type == SDL_MOUSEWHEEL && ed.isPlaying())
-                Input::FeedMouseWheel((float)e.wheel.y);
-            if (((e.type == SDL_FINGERDOWN || e.type == SDL_FINGERMOTION) && ed.isPlaying()) || e.type == SDL_FINGERUP) {
+            if (e.type == EvT::TextInput && ed.isPlaying() && !ImGui::GetIO().WantTextInput)
+                Input::FeedText(e.text.c_str());
+            if (e.type == EvT::MouseWheel && ed.isPlaying())
+                Input::FeedMouseWheel(e.wheelFlipped ? -e.wheelY : e.wheelY);   // the OS's own scrolling direction, as SDL reported it
+            if (((e.type == EvT::FingerDown || e.type == EvT::FingerMotion) && ed.isPlaying()) || e.type == EvT::FingerUp) {
                 // Touches relative to the Game view, like the mouse; a finger must land on it
                 // (a lift always goes through so a touch never sticks after Stop).
                 const ImVec2 ds = ImGui::GetIO().DisplaySize;
-                const Vec2 p{e.tfinger.x * ds.x - g_playCanvasPos.x, e.tfinger.y * ds.y - g_playCanvasPos.y};
+                const Vec2 p{e.fx * ds.x - g_playCanvasPos.x, e.fy * ds.y - g_playCanvasPos.y};
                 const bool onGame = p.x >= 0.0f && p.y >= 0.0f && p.x < g_playCanvasSize.x && p.y < g_playCanvasSize.y;
-                const int state = e.type == SDL_FINGERDOWN ? 0 : e.type == SDL_FINGERMOTION ? 1 : 2;
-                if (state != 0 || onGame) Input::FeedTouch((long long)e.tfinger.fingerId, state, p);
+                const int state = e.type == EvT::FingerDown ? 0 : e.type == EvT::FingerMotion ? 1 : 2;
+                if (state != 0 || onGame) Input::FeedTouch(e.fingerId, state, p);
             }
             // Feed OkayUI text fields (Test UI demo or a playing game's ui_inputtext)
             // when ImGui isn't capturing the keyboard.
             if ((g_showTestUI || ed.isPlaying()) && !ImGui::GetIO().WantTextInput) {
-                if (e.type == SDL_TEXTINPUT)
-                    SDL_strlcat(g_okayUITyped, e.text.text, sizeof(g_okayUITyped));
-                if (e.type == SDL_KEYDOWN && e.key.keysym.scancode == SDL_SCANCODE_BACKSPACE)
+                if (e.type == EvT::TextInput) {
+                    const size_t have = std::strlen(g_okayUITyped);
+                    const size_t room = sizeof(g_okayUITyped) - 1 - have;   // a full buffer drops the rest
+                    std::strncat(g_okayUITyped, e.text.c_str(), room);
+                }
+                if (e.type == EvT::KeyDown && e.key == PKey::Backspace)
                     g_okayUIBack = true;
             }
             // Import by dragging files from the OS file explorer onto the window: copy
             // each dropped file into the Assets folder the Project panel is browsing.
-            if (e.type == SDL_DROPFILE && e.drop.file) {
+            if (e.type == EvT::DropFile && !e.text.empty()) {
                 {   // dropped before the Project panel was ever drawn: still land in the project's Assets
                     std::filesystem::path into(g_assetImportDir);
                     if (into.empty() && !ed.projectDir().empty()) into = std::filesystem::path(ed.projectDir()) / "Assets";
@@ -51202,9 +51254,8 @@ int main(int argc, char** argv) {
                         g_pb = std::make_unique<okaypb::Browser>(assets.generic_string());
                         g_pbRoot = assets.generic_string();
                     }
-                    ImportAssetFile(e.drop.file, into);
+                    ImportAssetFile(e.text.c_str(), into);
                 }
-                SDL_free(e.drop.file);
             }
         }
 
@@ -51316,7 +51367,7 @@ int main(int argc, char** argv) {
         // nothing, so Hierarchy, Pause and Pose Capture could not be clicked.
         const bool escapeEdge = g_escapeEdge;
         g_escapeEdge = false;
-        const bool escapeHeld = SDL_GetKeyboardState(nullptr)[SDL_SCANCODE_ESCAPE] != 0;
+        const bool escapeHeld = okay::platform::Default() && okay::platform::Default()->IsKeyDown(okay::platform::Key::Escape);
         const bool wasReleased = g_gameCursorReleased;
         const bool gameClicked = ed.isPlaying() && g_gameCanvasHovered &&
             ImGui::IsMouseClicked(ImGuiMouseButton_Left) && !escapeEdge && !escapeHeld;
@@ -51333,7 +51384,7 @@ int main(int argc, char** argv) {
         // Play reads and writes the operating-system clipboard. Stopping Play puts
         // the memory clipboard back, so a headless self-test never calls SDL for it.
         {
-            static okay::SdlClipboard s_playClipboard;
+            static okay::PlatformClipboard s_playClipboard;
             static bool s_playClipboardOn = false;
             if (ed.isPlaying()) {
                 if (!s_playClipboardOn) { okay::InstallGameClipboard(&s_playClipboard); s_playClipboardOn = true; }
@@ -51393,12 +51444,12 @@ int main(int argc, char** argv) {
             static bool s_prevGameModal = false;
             if (gameModal != s_prevGameModal && (g_gameMouseCapture || Cursor::IsLocked())) {
                 int ww = 0, wh = 0, ow = 0, oh = 0;
-                SDL_GetWindowSize(window, &ww, &wh);
+                winSeam->GetSize(ww, wh);
                 SDL_GetRendererOutputSize(renderer, &ow, &oh);
                 float sx = ow > 0 ? (float)ww / ow : 1.0f, sy = oh > 0 ? (float)wh / oh : 1.0f;
                 int cx = (int)((g_playCanvasPos.x + g_playCanvasSize.x * 0.5f) * sx);
                 int cy = (int)((g_playCanvasPos.y + g_playCanvasSize.y * 0.5f) * sy);
-                SDL_WarpMouseInWindow(window, cx, cy);
+                { if (okay::platform::Backend* pb = okay::platform::Default()) pb->WarpMouse(nullptr, cx, cy); }   // nullptr: the window the pointer is in
             }
             s_prevGameModal = gameModal;
             // Capture when the user asked OR the game requested a locked cursor, unless a
@@ -51411,9 +51462,10 @@ int main(int argc, char** argv) {
                 // Relative mode only on the transition. Calling it every frame
                 // re-warps, and that warp was added on top of the real delta.
                 if (!s_playLookLocked)
-                    SDL_SetRelativeMouseMode(SDL_TRUE);
+                    { if (okay::platform::Backend* pb = okay::platform::Default()) pb->SetRelativeMouse(true); }
                 int dxp = 0, dyp = 0;
-                Uint32 rmb = SDL_GetRelativeMouseState(&dxp, &dyp);
+                Uint32 rmb = 0;
+                if (okay::platform::Backend* pb = okay::platform::Default()) rmb = pb->RelativeMouseState(&dxp, &dyp);
                 if (!s_playLookLocked) {
                     // First locked frame: throw away the warp and stay on the
                     // canvas sample the controller already took as its baseline.
@@ -51431,7 +51483,7 @@ int main(int argc, char** argv) {
                 Input::FeedMouse(s_gameVMouse, mask);
             } else {
                 if (s_playLookLocked) {
-                    SDL_SetRelativeMouseMode(SDL_FALSE);
+                    { if (okay::platform::Backend* pb = okay::platform::Default()) pb->SetRelativeMouse(false); }
                     // The virtual cursor and the canvas cursor are not the same
                     // point. Without this the orbit treats that jump as a look.
                     NoteMouseSpaceChanged();
@@ -51439,13 +51491,13 @@ int main(int argc, char** argv) {
                     // button. Park it in the game view so that restore is not a
                     // click on Stop. A click there grabs the mouse again.
                     int ww = 0, wh = 0, ow = 0, oh = 0;
-                    SDL_GetWindowSize(window, &ww, &wh);
+                    winSeam->GetSize(ww, wh);
                     SDL_GetRendererOutputSize(renderer, &ow, &oh);
                     float sx = ow > 0 ? (float)ww / (float)ow : 1.0f;
                     float sy = oh > 0 ? (float)wh / (float)oh : 1.0f;
                     int cx = (int)((g_playCanvasPos.x + g_playCanvasSize.x * 0.5f) * sx);
                     int cy = (int)((g_playCanvasPos.y + g_playCanvasSize.y * 0.5f) * sy);
-                    SDL_WarpMouseInWindow(window, cx, cy);
+                    { if (okay::platform::Backend* pb = okay::platform::Default()) pb->WarpMouse(nullptr, cx, cy); }   // nullptr: the window the pointer is in
                 }
                 s_playLookLocked = false;
                 // Mouse, relative to the Game/Scene canvas so UI buttons hit-test
@@ -51484,13 +51536,9 @@ int main(int argc, char** argv) {
             // events already fed above. The own platform backend stays off.
             if (g_playCanvasSize.x > 1.0f && g_playCanvasSize.y > 1.0f)
                 UICanvas::Set(g_playCanvasSize.x, g_playCanvasSize.y);
-            if (SDL_GetNumTouchDevices() > 0) Input::SetTouchScreen(true);
+            if (okay::platform::Backend* sb = okay::platform::Get(okay::platform::BackendKind::Sdl2)) { if (sb->TouchDeviceCount() > 0) Input::SetTouchScreen(true); }   // the finger events are SDL's
             TouchControls::Sample(ed.scene());
-#if SDL_VERSION_ATLEAST(2, 0, 18)
-            Gestures::Tick((double)SDL_GetTicks64() / 1000.0);
-#else
-            Gestures::Tick((double)SDL_GetTicks() / 1000.0);
-#endif
+            Gestures::Tick((double)okay::platform::TicksMs() / 1000.0);
             Input::SetTextFocused(GameInputBlocked(&ed.scene(), (unsigned)GameInputMask::Text));   // a game text field has focus: no walking
             InputActions::Tick();
         } else if (ed.isPlaying()) {
@@ -51500,7 +51548,7 @@ int main(int argc, char** argv) {
             // grabbed it before the field took focus.
             s_playLookLocked = false;
             g_playPointerGrabbed = false;
-            if (SDL_GetRelativeMouseMode()) SDL_SetRelativeMouseMode(SDL_FALSE);
+            if (okay::platform::Default() && okay::platform::Default()->IsRelativeMouse()) { if (okay::platform::Backend* pb = okay::platform::Default()) pb->SetRelativeMouse(false); }
         } else if (!ed.isPlaying()) {
             s_playLookLocked = false;
             g_playPointerGrabbed = false;
@@ -51511,7 +51559,7 @@ int main(int argc, char** argv) {
             Input::FeedKeys({}); // release everything in edit mode
             // Keep the Capture mouse choice for the next Play; just free the pointer and
             // forget the last run's cursor lock.
-            if (SDL_GetRelativeMouseMode()) SDL_SetRelativeMouseMode(SDL_FALSE);
+            if (okay::platform::Default() && okay::platform::Default()->IsRelativeMouse()) { if (okay::platform::Backend* pb = okay::platform::Default()) pb->SetRelativeMouse(false); }
             g_gameCursorReleased = false;
             if (Cursor::IsLocked() || !Cursor::visible) Cursor::Capture(false);
         }
@@ -51541,10 +51589,10 @@ int main(int argc, char** argv) {
         // optional Test UI demo panel) are flushed to the screen at render end via
         // OkayUI::EndFrame(). One BeginFrame/EndFrame brackets the whole editor frame.
         {
-            int mx, my; Uint32 mb = SDL_GetMouseState(&mx, &my);
+            int mx = 0, my = 0; uint32_t mb = okay::platform::Default() ? okay::platform::Default()->MouseState(&mx, &my) : 0;
             OkayUI::Input uin;
             uin.mouseX = (float)mx; uin.mouseY = (float)my;
-            uin.mouseDown = (mb & SDL_BUTTON(SDL_BUTTON_LEFT)) != 0;
+            uin.mouseDown = (mb & okay::platform::MouseMask(okay::platform::MouseLeft)) != 0;
             uin.blocked = io.WantCaptureMouse;
             uin.text = g_okayUITyped[0] ? g_okayUITyped : nullptr;
             uin.backspace = g_okayUIBack;
@@ -51638,8 +51686,7 @@ int main(int argc, char** argv) {
                 static float s_refreshHz = 0.0f;
                 static int s_refreshAge = 0;
                 if (s_refreshAge-- <= 0) {
-                    SDL_DisplayMode dm;
-                    s_refreshHz = (window && SDL_GetWindowDisplayMode(window, &dm) == 0 && dm.refresh_rate > 0) ? (float)dm.refresh_rate : 0.0f;
+                    s_refreshHz = (float)winSeam->RefreshRateHz();   // 0 when unknown
                     s_refreshAge = 120;
                 }
                 if (ed.isPlaying()) {
@@ -51764,7 +51811,8 @@ int main(int argc, char** argv) {
         else
             ImGui::GetIO().ConfigFlags |= ImGuiConfigFlags_NavEnableKeyboard;
 
-        { OKAY_PROFILE("ImGui.NewFrame"); ImGui_ImplSDLRenderer2_NewFrame(); ImGui_ImplSDL2_NewFrame(); }
+        { OKAY_PROFILE("ImGui.NewFrame"); ImGui_ImplSDLRenderer2_NewFrame();
+          if (g_imguiOwnFeed) g_imguiFeed.NewFrame(ImGui::GetIO()); else ImGui_ImplSDL2_NewFrame(); }
         // Skinned meshes deform on the GPU when the Direct3D 11 renderer draws the
         // views (one upload of the bind pose, bone matrices per frame) instead of
         // every vertex on the CPU + a full mesh re-upload each frame.
@@ -51869,9 +51917,8 @@ int main(int argc, char** argv) {
             // OKAY_UI_DROP=<file>: send the editor a file-drop event for that file (what the OS sends when you drop one
             // on the window), so the import can be checked without a file manager.
             if (const char* dp = std::getenv("OKAY_UI_DROP"); dp && s_focusFrames == 60) {
-                SDL_Event de; SDL_zero(de);
-                de.type = SDL_DROPFILE; de.drop.file = SDL_strdup(dp);
-                SDL_PushEvent(&de);
+                okay::platform::Event de; de.type = okay::platform::EventType::DropFile; de.text = dp;
+                sdlSeam->PushEvent(de);
             }
             if (const char* sn = std::getenv("OKAY_UI_SELECT"); sn && (s_focusFrames == 31 || s_focusFrames == 40))
                 for (const auto& up : ed.scene().Objects()) if (up->name == sn) { ed.Select(up.get()); break; }
@@ -52525,7 +52572,7 @@ int main(int argc, char** argv) {
         if (UseOkayUIBackend() && OkayUI::WantsTextInput()) {   // a hosted OkayUI field has the keyboard: ImGui and the shortcuts must stay out
             GImGui->PlatformImeData.WantTextInput = true;
             ImGui::SetNextFrameWantCaptureKeyboard(true);
-            SDL_StartTextInput();
+            if (okay::platform::Backend* pb = okay::platform::Default()) pb->StartTextInput();
         }
 #endif
         { OKAY_PROFILE("ImGui.Render"); ImGui::Render(); }
@@ -52599,7 +52646,7 @@ int main(int argc, char** argv) {
         OkayUI::EndFrame(renderer);
         // Keep SDL text input alive for OkayUI text fields when ImGui isn't using it,
         // so they receive SDL_TEXTINPUT events (Test UI demo or a game's ui_inputtext).
-        if ((g_showTestUI || ed.isPlaying()) && !io.WantTextInput) SDL_StartTextInput();
+        if ((g_showTestUI || ed.isPlaying()) && !io.WantTextInput) { if (okay::platform::Backend* pb = okay::platform::Default()) pb->StartTextInput(); }
 #endif
         if (const char* shot = std::getenv("OKAY_UI_SHOT")) {
             static int shotFrames = 0;
@@ -52690,18 +52737,19 @@ int main(int argc, char** argv) {
     ProjectUpgradeAtExit();       // the editor of the project's own version ("Keep"), or this one again after a restore, starts once this process is gone
 
     ImGui_ImplSDLRenderer2_Shutdown();
-    ImGui_ImplSDL2_Shutdown();
+    if (g_imguiOwnFeed) g_imguiFeed.Shutdown(ImGui::GetIO()); else ImGui_ImplSDL2_Shutdown();
     ImGui::DestroyContext();
     // Tear down the optional GPU renderer: free its GL objects with its own context
     // current, then drop the context + hidden window.
     if (g_glRenderer || g_glCtx) {
-        SDL_Window* prevWin = SDL_GL_GetCurrentWindow();
-        SDL_GLContext prevCtx = SDL_GL_GetCurrentContext();
-        if (g_glWindow && g_glCtx) SDL_GL_MakeCurrent(g_glWindow, g_glCtx);
+        okay::platform::Backend* glb = okay::platform::Get(okay::platform::BackendKind::Sdl2);
+        const okay::platform::GLCurrent prevGL = glb->CurrentGL();
+        if (g_glWin && g_glCtx) g_glWin->MakeCurrent();
         if (g_glRenderer) { g_glRenderer->Destroy(); delete g_glRenderer; g_glRenderer = nullptr; }
-        SDL_GL_MakeCurrent(prevWin, prevCtx);
-        if (g_glCtx) { SDL_GL_DeleteContext(g_glCtx); g_glCtx = nullptr; }
-        if (g_glWindow) { SDL_DestroyWindow(g_glWindow); g_glWindow = nullptr; }
+        glb->RestoreGL(prevGL);
+        if (g_glCtx) { g_glWin->DestroyGLContext(); g_glCtx = false; }
+        g_glWin.reset();   // destroys the hidden window too
+        g_glWindow = nullptr;
         g_glReady = false;
     }
 #if defined(_WIN32)
@@ -52710,8 +52758,8 @@ int main(int argc, char** argv) {
     g_pads.CloseAll();
     audioDev.reset();
     SDL_DestroyRenderer(renderer);
-    SDL_DestroyWindow(window);
-    SDL_Quit();
+    winSeam.reset();   // destroys the main window (after its renderer)
+    sdlSeam->Shutdown();
     return 0;
 }
 #endif // OKAY_EDITOR_HEADLESS

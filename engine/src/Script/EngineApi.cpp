@@ -61,6 +61,7 @@
 #include "okay/Script/AnimIkTools.hpp"
 #include "okay/Components/ThirdPersonController.hpp"
 #include "okay/Components/FirstPersonController.hpp"
+#include "okay/Components/WindZone.hpp"   // Wind (docs/wind.md)
 #include <cmath>
 #include <set>
 
@@ -1808,6 +1809,44 @@ EngineApi Build() {
             [psOf](const Value& s, CallContext& c) { return Value{(float)psOf(s, c)->AliveCount()}; },
             "How many particles are alive right now."));
         api.types.push_back(std::move(pa));
+    }
+    // ---- Wind (docs/wind.md) ----
+    {
+        auto sceneOf = [](CallContext& c) -> Scene* {
+            Scene* s = c.self ? c.self->scene() : nullptr;
+            if (!s) throw RuntimeError("This needs a script running in a scene", c.loc);
+            return s;
+        };
+        auto here = [](CallContext& c) -> Vec3 { return (c.self && c.self->transform) ? c.self->transform->Position() : Vec3{0, 0, 0}; };
+        ApiType wi; wi.name = "Wind"; wi.isStatic = true;
+        wi.doc = "The wind field: how hard and which way the air moves at a point (weather, wind zones and the scene's own wind together).";
+        wi.staticProps.push_back(ro("Strength", tFloat,
+            [here](const Value&, CallContext& c) { return Value{WindField::At(here(c)).Magnitude()}; },
+            "The wind speed (metres per second) where this object is."));
+        wi.staticProps.push_back(ro("Direction", tVec,
+            [here](const Value&, CallContext& c) {
+                const Vec3 w = WindField::At(here(c));
+                return Value{w.SqrMagnitude() > 1e-10f ? w.Normalized() : Vec3{0, 0, 0}}; },
+            "The way the wind blows where this object is, as a unit vector (0, 0, 0 when it is calm)."));
+        ApiMethod at = method("At", {tVec}, {"position"}, tVec,
+            [](const Value&, std::vector<Value>& a, CallContext&) { return Value{WindField::At(V(a[0]))}; },
+            "The wind (speed and direction, metres per second) at a world position, right now.");
+        at.pure = true; wi.staticMethods.push_back(std::move(at));
+        wi.staticMethods.push_back(method("SetStrength", {tFloat}, {"metresPerSecond"}, tVoid,
+            [sceneOf](const Value&, std::vector<Value>& a, CallContext& c) {
+                const float f = F(a[0]); if (std::isfinite(f)) WindZone::EnsureGlobal(*sceneOf(c))->strength = Mathf::Clamp(f, -200.0f, 200.0f); return Value{}; },
+            "Set the scene's own wind speed (about 3 is a breeze, 10 a strong wind). Makes the wind object if the scene has none."));
+        wi.staticMethods.push_back(method("SetDirection", {tVec}, {"direction"}, tVoid,
+            [sceneOf](const Value&, std::vector<Value>& a, CallContext& c) { WindZone::EnsureGlobal(*sceneOf(c))->Aim(V(a[0])); return Value{}; },
+            "Aim the scene's own wind along a direction, for example Wind.SetDirection(Vec3(1, 0, 0)) blows toward +X."));
+        wi.staticMethods.push_back(method("SetGust", {tFloat, tFloat}, {"amount", "perSecond"}, tVoid,
+            [sceneOf](const Value&, std::vector<Value>& a, CallContext& c) {
+                WindZone* z = WindZone::EnsureGlobal(*sceneOf(c));
+                if (std::isfinite(F(a[0]))) z->gustAmount = Mathf::Clamp01(F(a[0]));
+                if (std::isfinite(F(a[1]))) z->gustFrequency = Mathf::Clamp(F(a[1]), 0.01f, 10.0f);
+                return Value{}; },
+            "How much the scene's wind swells and drops (0 steady, 1 calm to double) and how many gusts come each second (0.2 = one every 5 seconds)."));
+        api.types.push_back(std::move(wi));
     }
     // ---- NavMeshAgent ----
     {

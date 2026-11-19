@@ -75,20 +75,22 @@ Mostly on main and tested. Nothing is open: #574 added the optimization tools (L
   - 2.4.2 Sky - `Render/Atmosphere`, `Render/SkyStars` - colour gradient, or a procedural sky from the sun's height (day blue, dusk orange, night with stars, sun disc and halo, haze, drifting clouds); deterministic star placement
   - 2.4.3 Fog - `Render/Atmosphere` - Linear, Exponential and Height fog; `FogFactor`; match-sky colour option
   - 2.4.4 Weather - `Environment/Weather` - Rain, Snow, Storm presets built from the particle system on a transient rig that follows the camera; cross-fade, gusts, lightning flash, thunder clip
-  - 2.4.5 Wind - `Environment/Wind` - global `WindVector()` and `LightningFlash()` read by particles and water
+  - 2.4.5 Wind - `Environment/Wind` - global `WindVector()` (the weather's wind) and `LightningFlash()` read by particles and water; the base the wind field starts from
   - 2.4.6 Look presets - `Render/Atmosphere` - Default, Cinematic, Vivid, Noir, Sunset, Night, Foggy morning, Storm; `ApplyLookPreset`, `ResetLook`
   - 2.4.7 Script access - `Render/Atmosphere` - `PostSet`, name lookups behind `post_set`, `fog_set`, `weather_set`, `time_of_day`
-- **Code:** `Render/Atmosphere`, `Render/SkyStars`, `Environment/Weather`, `Environment/Wind`, `Scene/Scene`
-- **API:** `Scene::RenderSettings`, `SkyPaletteFor`, `FogFactor`, `UpdateWeather`, `WindVector`, `ApplyLookPreset`, script `weather_set`, `fog_set`, `Weather.Set`
-- **Editor:** View > Lighting panel: Sky, Fog and Weather sections and the Look Preset combo (`DrawLookSections` in editor/main.cpp)
-- **Docs:** `docs/rendering.md`
-- **Tests:** `post_sky`
+  - 2.4.8 Wind field - `Environment/WindField` - the wind at any world position and time: weather wind plus Wind Zones (everywhere, directional, outward; box, sphere, cylinder), gusts that travel downwind, deterministic value-noise swirl, a strength-over-time curve, priority blending; `WindField::At`
+  - 2.4.9 Wind components - `Components/WindZone` - Wind Zone, Wind Drag (the wind pushes a Rigidbody 3D or a ragdoll's bones), Wind Sway (trees, grass, flags bend on the CPU in every renderer), Wind Sound (our own looping noise); Foliage, Cable and Particle "Affected by wind" read the same field
+- **Code:** `Render/Atmosphere`, `Render/SkyStars`, `Environment/Weather`, `Environment/Wind`, `Environment/WindField`, `Components/WindZone`, `Scene/Scene`
+- **API:** `Scene::RenderSettings`, `SkyPaletteFor`, `FogFactor`, `UpdateWeather`, `WindVector`, `WindField::At`, `WindZone`, `WindDrag`, `WindSway`, `WindAmbience`, `ApplyLookPreset`, script `weather_set`, `fog_set`, `Weather.Set`, `wind_speed`, `wind_set`, `wind_gust`, `Wind.At`, `Wind.SetGust`
+- **Editor:** View > Lighting panel: Sky, Fog, Weather and Wind sections and the Look Preset combo (`DrawLookSections` in editor/main.cpp); GameObject > Effects > Environment and Add Component > Environment (`editor/WindTools.cpp`); wind arrows in the Scene view
+- **Docs:** `docs/rendering.md`, `docs/wind.md`
+- **Tests:** `post_sky`, `wind_field`, `wind`
 - **Status:** Works - read `Atmosphere.hpp` and `Weather.hpp`; the procedural sky and clouds are drawn by the GPU backends (docs), the software renderer shows a plain gradient
-- **Open:** old scenes load with everything off by design; the procedural sky, cloud layer and lightning exposure flash have no software-renderer version; weather depends on the particle system drawn by the host (2.7); no volumetric fog or sky reflections beyond the ambient and reflective-material colours
+- **Open:** old scenes load with everything off by design; the procedural sky, cloud layer and lightning exposure flash have no software-renderer version; weather depends on the particle system drawn by the host (2.7); no volumetric fog or sky reflections beyond the ambient and reflective-material colours; wind: sway is done on the CPU (not in a GPU vertex shader), trails, spline followers and fog are not linked to the wind, Water still reads only the weather's wind, no multiplayer sync of the wind, no Visual Script nodes (script names only), nothing run on Windows or a GPU (`docs/wind.md`)
 - **Related:** 2.3, 2.5, 2.7, 38.8
-- **Words:** sky, skybox, procedural sky, clouds, stars, fog, weather, rain, snow, storm, lightning, wind, look preset, Atmosphere, Weather, WindVector
-- **Seen as:** the sky does not change with the sun; distant objects pop in without fog; rain follows the camera in the editor preview; wind does not move particles
-- **Ask me like:** "Add a foggy morning preset that also lowers the sun"; "Make storms play thunder 2 seconds after the flash"
+- **Words:** sky, skybox, procedural sky, clouds, stars, fog, weather, rain, snow, storm, lightning, wind, gust, breeze, sway, flag, trees blowing, wind zone, fan, look preset, Atmosphere, Weather, WindVector
+- **Seen as:** the sky does not change with the sun; distant objects pop in without fog; rain follows the camera in the editor preview; wind does not move particles; trees and grass stand still in the wind; a flag does not wave; a box is not pushed by the wind
+- **Ask me like:** "Add a foggy morning preset that also lowers the sun"; "Make storms play thunder 2 seconds after the flash"; "Make the trees sway in a gusty wind"; "Add a fan that blows the leaves away"
 
 ### 2.5 Post-processing
 - **What:** Screen effects on the finished frame: exposure, tonemap, bloom, colour grading, vignette, anti-aliasing, ambient occlusion and depth of field, with a software fallback for some.
@@ -246,8 +248,29 @@ Mostly on main and tested. Nothing is open: #574 added the optimization tools (L
 - **Docs:** -
 - **Tests:** `spriteanim`, `2d_expand`
 - **Status:** Works - read both headers; `2d_expand` also covers 2D physics, so part of it belongs to 6.1
-- **Open:** no dedicated doc page; no sprite atlas importer or slicing tool; sprite masks and 9-slice are UI-only (12.2)
+- **Open:** no dedicated doc page; no sprite atlas importer or slicing tool in the editor (the `okay-texture atlas` command packs sprites, 2.13); sprite masks and 9-slice are UI-only (12.2)
 - **Related:** 2.10, 2.6, 6.1, 12.2
 - **Words:** sprite, SpriteRenderer, SpriteAnimator, sprite sheet, atlas, flip book, sorting layer, order in layer, flipX, pixel art
 - **Seen as:** sprites draw in the wrong order; pixel art looks blurry; a sprite animation plays the wrong row; a character faces the wrong way
 - **Ask me like:** "Put the player in front of the foreground trees"; "Play the 'run' row of this sprite sheet at 12 fps"
+### 2.13 Texture library (mipmaps, atlases, compression, streaming)
+- **What:** Our own CPU texture processing: build mip chains, pack sprite atlases, convert pixel formats, block-compress to BC1/BC3/BC4/BC5, write and read DDS files, and plan which mip of each texture to keep for a memory budget.
+- **Parts:**
+  - 2.13.1 Mip chains - `Texture/Mip` - box, Lanczos3 and Kaiser filters for any size; sRGB-correct (linear light), alpha-weighted, alpha-test coverage kept, normal-map renormalising
+  - 2.13.2 Atlas packer - `Texture/Atlas` - MaxRects with padding, bleed, optional rotation, power-of-two growth, composed sheet and a stable JSON manifest
+  - 2.13.3 Format conversion - `Texture/Convert` - RGBA8, BGRA8, RGB565, RGBA16F, R8; premultiply and un-premultiply; swizzle and channel pack; half-float conversion
+  - 2.13.4 Block compression - `Texture/Bc`, `Texture/Dds` - our own BC1/BC3/BC4/BC5 encoder (axis fit, least squares, endpoint search) and decoder; DDS writer and reader with mips
+  - 2.13.5 Streaming planner - `Texture/Stream` - camera distance and screen size to the mip each texture needs, memory budget through `Optimize/MipBudget`, load and evict amounts, per-frame upload cap
+  - 2.13.6 Tool and editor hook - `tools/okaytexture`, `Texture/Export`, `editor/ProjectPanelUI` - `okay-texture mips|compress|atlas|info|stream`; Project panel Import Settings "Generate mipmaps / compress" writes a .dds beside the picture
+- **Code:** `Texture/Texture`, `Texture/Mip`, `Texture/Atlas`, `Texture/Convert`, `Texture/Bc`, `Texture/Dds`, `Texture/Stream`, `Texture/Export`, `tools/okaytexture/main.cpp`, `examples/texture`, `editor/ProjectPanelUI.cpp`
+- **API:** `okay::tex::GenerateMips`, `GenerateMipsRGBA8`, `MipOptions`, `PackAtlas`, `ComposeAtlasRGBA8`, `AtlasToJson`, `ConvertPixels`, `FloatToHalf`, `EncodeBc`, `DecodeBc`, `WriteDds`, `ReadDds`, `StreamPlanner`, `BuildDdsFile`, `BuildAtlasFiles`; command `okay-texture`
+- **Editor:** Project panel > picture > Import Settings > "Generate mipmaps / compress"
+- **Docs:** `docs/own_texture_library.md`
+- **Tests:** `tex_mip`, `tex_atlas`, `tex_convert`, `tex_bc`, `tex_dds_stream`
+- **Status:** Partial - the library, tool and editor button work and are unit-tested on Linux; no renderer loads the .dds files yet, the import `compress` flag is still not applied, and nothing was run on Windows
+- **Open:** renderers (GL, D3D) do not read DDS or upload BC data; BC6H/BC7/ASTC/ETC are not written; no streaming loop in the renderer (the planner is the planning half); the glyph `ShelfPacker` is separate on purpose; Windows build and editor section unverified
+- **Related:** 2.9, 2.12, 20.4, 27.4
+- **Words:** mipmap, mip chain, atlas, sprite sheet, texture packer, BC1, BC3, BC4, BC5, DXT1, DXT5, DDS, texture compression, Lanczos, Kaiser, premultiplied alpha, alpha coverage, normal map mips, half float, RGB565, texture streaming, okay-texture
+- **Seen as:** far away textures shimmer or look dark; cut-out leaves vanish in the distance; I need one picture from many sprites; textures use too much memory
+- **Ask me like:** "Pack these icons into one atlas"; "Make mipmaps and compress this picture"; "Which mip does this texture need at 100 pixels?"
+

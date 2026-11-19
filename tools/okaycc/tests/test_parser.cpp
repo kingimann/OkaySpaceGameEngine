@@ -256,7 +256,7 @@ int main() {
              ")\n");
 
     checkBounded("cpp bail",
-                 "namespace N {\nclass Foo {\npublic:\n  void bar(int& x);\n};\n}\n",
+                 "namespace N {\nusing namespace std;\n}\n",
                  "expected a declaration");
     {
         std::string deep = "int f(){return ";

@@ -173,6 +173,10 @@ public:
     static inline std::function<void(const std::string& oldDir, const std::string& newDir)> onProjectChanged;
     /// Called after a scene file was opened successfully (the editor clears its "last save failed" note).
     static inline std::function<void()> onSceneLoaded;
+    /// Plain sentences about the file the last Load read: "made by a newer version" and the like. Empty for an ordinary file.
+    const std::vector<std::string>& LoadNotes() const { return m_loadNotes; }
+    /// The format number of the file the open scene came from (0 for a scene that was never loaded from a file).
+    int LoadedFormat() const { return m_loadedFormat; }
     /// Asked before Load touches anything: return false (with the reason in `why`) to refuse the file. The editor puts
     /// the project version gate here, so a scene of a project nobody has answered the version question for can't be
     /// opened by a path that skipped it. Unset (tests, tools): every file may be opened.
@@ -448,6 +452,9 @@ private:
     GameObject* m_selected = nullptr;
     std::vector<GameObject*> m_multi;   // full selection set (includes m_selected)
     std::string m_path;
+    std::vector<std::string> m_loadNotes;   // what the last Load said about the file (format newer than this build, ...)
+    int m_loadedFormat = 0;                // the format number of the file the open scene was read from (0 = not from a file)
+    std::string m_newerBackupFor;          // the file a copy of the newer-format original was already made for
     std::string m_projectDir;   // root folder of the open project (with /Assets)
     bool  m_playing = false;
     std::string m_snapshot;

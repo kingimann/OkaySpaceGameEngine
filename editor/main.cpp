@@ -51111,7 +51111,7 @@ int main(int argc, char** argv) {
         NoteProjectFilesSaved();
         (void)ed;
     };
-    EditorState::onSceneLoaded = [] { g_lastSaveError.clear(); };   // a scene opened from disk starts without a failed-save note
+    EditorState::onSceneLoaded = [&ed] { g_lastSaveError.clear(); for (const std::string& n : ed.LoadNotes()) ConsoleLog(n, 1); };   // a scene opened from disk starts without a failed-save note; a file from a newer version says so
     g_upgradeHooks.openUpdateDialog = [] {   // the version question's "Update OkaySpace": the same window as Engine > Check for Updates
         g_update = updater::CheckLatest();
         g_openUpdatePopup = true;

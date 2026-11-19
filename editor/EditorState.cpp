@@ -35,6 +35,25 @@ void AddFittedBoxCollider(okay::GameObject* go) {
     bc->autoFit = true;
     okay::FitColliders(go);
 }
+// The project folder a scene file belongs to: the folder that holds the nearest Assets folder above it ("" for a loose file).
+std::string ProjectDirOfScenePath(const std::string& path) {
+    namespace fs = std::filesystem;
+    std::error_code ec;
+    for (fs::path p = fs::absolute(fs::path(path), ec).parent_path(); !p.empty(); p = p.parent_path()) {
+        if (p.filename() == "Assets") return p.parent_path().string();
+        if (p == p.parent_path()) break;
+    }
+    return {};
+}
+// The number after "okayscene" on the first line of scene text (0 when there is none).
+int SceneFormatOf(const std::string& text) {
+    std::istringstream in(text.substr(0, 64));
+    std::string tok;
+    int v = 0;
+    if ((in >> tok) && tok == "okayscene" && (in >> v)) return v;
+    return 0;
+}
+
 } // namespace
 
 namespace okay::editor {
@@ -973,25 +992,60 @@ bool EditorState::Save(const std::string& path, std::string* error) {
         if (error) *error = "A prefab is open: use Save Prefab, or leave prefab mode first (the scene is saved from there).";
         return false;
     }
+    // A scene belongs to one project. Saving into another project's folder would leave this editor showing one project's
+    // files and settings next to a scene of the other (Open switches the project, Save cannot do that safely: the other
+    // project may need its upgrade question first), so it is refused with the way out.
+    const std::string target = ProjectDirOfScenePath(path);
+    if (!target.empty() && !m_projectDir.empty()) {
+        std::error_code ec;
+        bool same = std::filesystem::equivalent(target, m_projectDir, ec);
+        if (ec) same = std::filesystem::absolute(target).lexically_normal() == std::filesystem::absolute(m_projectDir).lexically_normal();
+        if (!same) {
+            if (error) *error = "That folder belongs to another project (" + std::filesystem::path(target).filename().string() +
+                                "). Save the scene inside this project (" + std::filesystem::path(m_projectDir).filename().string() +
+                                "), or open the other project first.";
+            return false;
+        }
+    }
     SaveEditedMeshAssets();
+    if (m_loadedFormat > SceneSerializer::kSceneFormatVersion && m_newerBackupFor != path) {
+        // The scene came from a newer version: keep the original as it was before this build rewrites it in its own format.
+        std::error_code ec;
+        const std::string keep = path + ".v" + std::to_string(m_loadedFormat) + ".bak";
+        if (std::filesystem::exists(path, ec) && !std::filesystem::exists(keep, ec)) {
+            std::filesystem::copy_file(path, keep, ec);
+            if (ec) { if (error) *error = "Couldn't keep a copy of the newer scene first (" + ec.message() + "), so it was not overwritten."; return false; }
+        }
+        m_newerBackupFor = path;
+    }
     if (!SceneSerializer::SaveToFile(m_scene, path, error)) return false;
     m_path = path;
+    if (m_projectDir.empty() && !target.empty()) setProjectDir(target);   // a first save into a project's Assets folder: that is the project now, as when it is opened
+    if (m_loadedFormat > SceneSerializer::kSceneFormatVersion) m_loadedFormat = SceneSerializer::kSceneFormatVersion;   // what is on disk now is this build's own format
     MarkClean();
     return true;
 }
 
 bool EditorState::LoadRecoveredText(const std::string& text, const std::string& keepPath, std::string* error) {
-    const std::string tmp = keepPath.empty() ? std::string("okay_scene_recovery.okayscene") : keepPath + ".recovery-tmp";
+    namespace fs = std::filesystem;
+    std::error_code ec;
+    // Beside the scene (so files it names are found the same way), or in the system's temp folder for a scene with no file yet:
+    // never in the working folder, which may be read-only.
+    const fs::path tmpPath = keepPath.empty() ? fs::temp_directory_path(ec) / ("okay_scene_recovery_" + std::to_string(Fingerprint(text)) + ".okayscene")
+                                              : fs::path(keepPath + ".recovery-tmp");
+    const std::string tmp = tmpPath.string();
     {
         std::ofstream f(tmp, std::ios::binary);
         if (!f) { if (error) *error = "couldn't write the recovery file"; return false; }
         f << text;
+        f.flush();
+        if (!f) { f.close(); fs::remove(tmpPath, ec); if (error) *error = "couldn't write the recovery file (is the disk full?)"; return false; }
     }
-    if (!Load(tmp, error)) return false;
+    const bool ok = Load(tmp, error);
+    fs::remove(tmpPath, ec);   // whether it worked or not, nothing is left behind
+    if (!ok) return false;
     m_path = keepPath;
     dirty = true;
-    std::error_code ec;
-    std::filesystem::remove(tmp, ec);
     return true;
 }
 
@@ -1021,22 +1075,30 @@ bool EditorState::Load(const std::string& path, std::string* error) {
     if (m_playing) Stop();
     StopNetwork();
     okay::filedialog::CancelBuiltin();   // a queued dialog may hold a pointer into the replaced scene (#732)
-    if (!SceneSerializer::LoadFromFile(m_scene, path, error)) return false;   // all or nothing: the scene is as it was
+    std::vector<std::string> loadWarnings;
+    if (!SceneSerializer::LoadFromFile(m_scene, path, error, &loadWarnings)) return false;   // all or nothing: the scene is as it was
     m_path = path;
+    m_loadNotes.clear();
+    m_loadedFormat = 0;
+    {
+        std::ifstream head(path, std::ios::binary);
+        std::string first(64, '\0');
+        head.read(first.data(), 64);
+        first.resize((std::size_t)head.gcount());
+        m_loadedFormat = SceneFormatOf(first);
+    }
+    if (m_loadedFormat > SceneSerializer::kSceneFormatVersion)
+        m_loadNotes.push_back("This scene was made by a newer version of OkaySpace (its file format is " + std::to_string(m_loadedFormat) +
+                              ", this editor reads up to " + std::to_string(SceneSerializer::kSceneFormatVersion) + "). It opened with what this version understands. "
+                              "Before the first save a copy of the original is kept next to it as \"" + std::filesystem::path(path).filename().string() + ".v" +
+                              std::to_string(m_loadedFormat) + ".bak\". Update the editor to keep everything.");
     if (const int v = SceneViewFor(m_scene); v >= 0) view3D = (v == 1);   // open the scene in the view it is made for
     // A different scene is a different document: its undo history is its own. (Keeping the old one
     // would let Undo put the previous scene's objects into this file.)
     // Re-home the project to the scene's own project folder (the parent of its
     // Assets/ dir), so opening another project's scene switches the Project panel
     // and asset paths over instead of keeping the previous project's files around.
-    {
-        namespace fs = std::filesystem;
-        std::error_code ec;
-        for (fs::path p = fs::absolute(fs::path(path), ec).parent_path(); !p.empty(); p = p.parent_path()) {
-            if (p.filename() == "Assets") { setProjectDir(p.parent_path().string()); break; }
-            if (p == p.parent_path()) break;   // reached the filesystem root
-        }
-    }
+    if (const std::string root = ProjectDirOfScenePath(path); !root.empty()) setProjectDir(root);
     Select(nullptr);   // load rebuilt the scene; clear m_multi too (no dangling ptrs)
     PoseCapture::SetAssetBaseDir(m_projectDir.empty() ? std::string() : m_projectDir + "/Assets");
     okay::AntiCheatConfig::SetAssetBaseDir(m_projectDir.empty() ? std::string() : m_projectDir + "/Assets");   // Play finds a relative .okayac rules file

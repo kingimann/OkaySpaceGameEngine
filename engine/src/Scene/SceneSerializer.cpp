@@ -3620,6 +3620,55 @@ void WriteComponentRecords(std::ostream& out, GameObject* go) {
         out << "\n";
         // How much the scene's wind carries the particles (own record; 1 = the default).
         if (ps->windInfluence != 1.0f) out << "  particleswind " << ps->windInfluence << "\n";
+        // The upgrade fields (docs/particles_upgrade.md): one key=value record, written only for what is not the
+        // default, so a scene that does not use them is byte-for-byte what older builds wrote. Older builds skip it.
+        {
+            const ParticleSystem def;
+            std::ostringstream x;
+            KvOut k{x};
+            auto fl = [&](const char* key, float v, float d) { if (v != d) k(key, v); };
+            auto in_ = [&](const char* key, int v, int d) { if (v != d) k(key, v); };
+            auto bl = [&](const char* key, bool v, bool d) { if (v != d) k.b(key, v); };
+            auto v3 = [&](const char* key, const Vec3& v, const Vec3& d) {
+                if (v.x != d.x || v.y != d.y || v.z != d.z) { const std::string kk = key; k((kk + "X").c_str(), v.x)((kk + "Y").c_str(), v.y)((kk + "Z").c_str(), v.z); }
+            };
+            fl("epd", ps->emitPerDistance, def.emitPerDistance); bl("prew", ps->prewarm, def.prewarm); in_("cap", (int)ps->capPolicy, (int)def.capPolicy);
+            in_("nxb", ps->extraBurstCount, def.extraBurstCount);
+            for (int b = 0; b < ParticleSystem::kMaxBursts && b < ps->extraBurstCount; ++b) {
+                const std::string kb = "xb" + std::to_string(b);
+                k((kb + "t").c_str(), ps->extraBursts[b].time)((kb + "n").c_str(), ps->extraBursts[b].count);
+            }
+            bl("surf", ps->shapeSurfaceOnly, def.shapeSurfaceOnly);
+            bl("rcol", ps->randomStartColor, def.randomStartColor); bl("rhue", ps->randomHue, def.randomHue);
+            if (ps->randomStartColor && !ps->randomHue) k.col("c2", ps->startColor2);
+            in_("blend", (int)ps->blendMode, (int)def.blendMode); in_("sort", (int)ps->sortMode, (int)def.sortMode);
+            in_("shc", ps->sheetColumns, def.sheetColumns); in_("shr", ps->sheetRows, def.sheetRows);
+            in_("shm", (int)ps->sheetMode, (int)def.sheetMode); fl("shy", ps->sheetCycles, def.sheetCycles); bl("shb", ps->sheetBlendFrames, def.sheetBlendFrames);
+            fl("soft", ps->softDistance, def.softDistance); bl("lit", ps->lit, def.lit);
+            in_("trl", ps->trailLength, def.trailLength); fl("trs", ps->trailInterval, def.trailInterval);
+            fl("trw", ps->trailWidth, def.trailWidth); fl("trf", ps->trailFade, def.trailFade);
+            bl("rotol", ps->rotationOverLife, def.rotationOverLife);
+            v3("lin", ps->linearVelocity, def.linearVelocity); fl("rad", ps->radialVelocity, def.radialVelocity);
+            v3("frc", ps->force, def.force);
+            in_("nox", ps->noiseOctaves, def.noiseOctaves);
+            bl("die", ps->dieOnCollision, def.dieOnCollision); bl("wcol", ps->worldCollision, def.worldCollision);
+            in_("rays", ps->collisionRaysPerFrame, def.collisionRaysPerFrame);
+            if (!ps->subEmitterBirth.empty()) k.str("subb", ps->subEmitterBirth);
+            if (!ps->subEmitterDeath.empty()) k.str("subd", ps->subEmitterDeath);
+            if (!ps->subEmitterCollision.empty()) k.str("subc", ps->subEmitterCollision);
+            in_("sbn", ps->subBirthCount, def.subBirthCount); in_("sdn", ps->subDeathCount, def.subDeathCount); in_("scn", ps->subCollisionCount, def.subCollisionCount);
+            fl("lodn", ps->lodNear, def.lodNear); fl("lodf", ps->lodFar, def.lodFar); fl("lodm", ps->lodMinimum, def.lodMinimum);
+            bl("simoff", ps->simulateOffscreen, def.simulateOffscreen); in_("par", ps->parallelThreshold, def.parallelThreshold);
+            // The four extra curves, each as `<name>=<smooth> n t v t v ...` only when it has keys.
+            auto curve = [&](const char* key, const ParticleCurve& c) {
+                if (!c.Active()) return;
+                x << ' ' << key << "=" << (c.smooth ? 1 : 0) << ',' << c.count;
+                for (int i = 0; i < c.count; ++i) x << ',' << c.keys[i].time << ',' << c.keys[i].value;
+            };
+            curve("crot", ps->rotationCurve); curve("cvel", ps->velocityCurve); curve("cfrc", ps->forceCurve); curve("cgrv", ps->gravityCurve);
+            const std::string body = x.str();
+            if (!body.empty()) out << "  particlesx" << body << "\n";
+        }
     }
     // Sequence player (cutscenes). key=value record; the playback state is not saved.
     for (auto* sp : go->GetComponents<SequencePlayer>()) {   // every instance
@@ -8870,6 +8919,51 @@ static bool ParseStep(Scene& scene, ParseSession& S, bool clear,
                             }
                         }
                     }
+                } else if (field == "particlesx") {
+                    // The upgrade fields (written by the record above). Missing keys keep the defaults.
+                    auto* ps = LastOf(go->GetComponents<ParticleSystem>());
+                    if (!ps) ps = go->AddComponent<ParticleSystem>();
+                    KvIn k(in);
+                    auto enumIn = [&](const char* key, auto& dst, int maxv) { int v = (int)dst; k.i(key, v); dst = (std::remove_reference_t<decltype(dst)>)std::clamp(v, 0, maxv); };
+                    k.f("epd", ps->emitPerDistance); k.b("prew", ps->prewarm); enumIn("cap", ps->capPolicy, 1);
+                    k.i("nxb", ps->extraBurstCount); ps->extraBurstCount = std::clamp(ps->extraBurstCount, 0, ParticleSystem::kMaxBursts);
+                    for (int b = 0; b < ps->extraBurstCount; ++b) {
+                        const std::string kb = "xb" + std::to_string(b);
+                        k.f((kb + "t").c_str(), ps->extraBursts[b].time); k.i((kb + "n").c_str(), ps->extraBursts[b].count);
+                    }
+                    k.b("surf", ps->shapeSurfaceOnly); k.b("rcol", ps->randomStartColor); k.b("rhue", ps->randomHue); k.col("c2", ps->startColor2);
+                    enumIn("blend", ps->blendMode, 2); enumIn("sort", ps->sortMode, 3);
+                    k.i("shc", ps->sheetColumns); k.i("shr", ps->sheetRows);
+                    ps->sheetColumns = std::clamp(ps->sheetColumns, 1, 64); ps->sheetRows = std::clamp(ps->sheetRows, 1, 64);
+                    enumIn("shm", ps->sheetMode, 2); k.f("shy", ps->sheetCycles); k.b("shb", ps->sheetBlendFrames);
+                    k.f("soft", ps->softDistance); k.b("lit", ps->lit);
+                    k.i("trl", ps->trailLength); ps->trailLength = std::clamp(ps->trailLength, 0, ParticleSystem::kMaxTrailPoints);
+                    k.f("trs", ps->trailInterval); k.f("trw", ps->trailWidth); k.f("trf", ps->trailFade);
+                    k.b("rotol", ps->rotationOverLife);
+                    k.f("linX", ps->linearVelocity.x); k.f("linY", ps->linearVelocity.y); k.f("linZ", ps->linearVelocity.z); k.f("rad", ps->radialVelocity);
+                    k.f("frcX", ps->force.x); k.f("frcY", ps->force.y); k.f("frcZ", ps->force.z);
+                    k.i("nox", ps->noiseOctaves); ps->noiseOctaves = std::clamp(ps->noiseOctaves, 1, 3);
+                    k.b("die", ps->dieOnCollision); k.b("wcol", ps->worldCollision); k.i("rays", ps->collisionRaysPerFrame);
+                    k.str("subb", ps->subEmitterBirth); k.str("subd", ps->subEmitterDeath); k.str("subc", ps->subEmitterCollision);
+                    k.i("sbn", ps->subBirthCount); k.i("sdn", ps->subDeathCount); k.i("scn", ps->subCollisionCount);
+                    k.f("lodn", ps->lodNear); k.f("lodf", ps->lodFar); k.f("lodm", ps->lodMinimum);
+                    k.b("simoff", ps->simulateOffscreen); k.i("par", ps->parallelThreshold);
+                    auto curveIn = [&](const char* key, ParticleCurve& c) {
+                        const std::string* sv = k.find(key);
+                        if (!sv) return;
+                        std::vector<float> nums; std::size_t pos = 0;
+                        while (pos <= sv->size()) {
+                            const std::size_t e = sv->find(',', pos);
+                            nums.push_back(std::strtof(sv->substr(pos, e == std::string::npos ? std::string::npos : e - pos).c_str(), nullptr));
+                            if (e == std::string::npos) break;
+                            pos = e + 1;
+                        }
+                        if (nums.size() < 2) return;
+                        c.Clear(); c.smooth = nums[0] != 0.0f;
+                        const int cnt = std::clamp((int)nums[1], 0, ParticleCurve::kMaxKeys);
+                        for (int i = 0; i < cnt && (std::size_t)(3 + i * 2) < nums.size(); ++i) c.Add(nums[2 + i * 2], nums[3 + i * 2]);
+                    };
+                    curveIn("crot", ps->rotationCurve); curveIn("cvel", ps->velocityCurve); curveIn("cfrc", ps->forceCurve); curveIn("cgrv", ps->gravityCurve);
                 } else if (field == "particleswind") {
                     auto* ps = LastOf(go->GetComponents<ParticleSystem>());   // the one the `particles` record above made
                     if (!ps) ps = go->AddComponent<ParticleSystem>();

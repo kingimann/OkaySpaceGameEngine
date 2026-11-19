@@ -4340,3 +4340,8 @@ foreach(vs_usage_test vs_easy_ops vs_start vs_hints vs_plain_words vs_what_happe
         add_test(NAME ${vs_usage_test} COMMAND test_${vs_usage_test})
     endif()
 endforeach()
+
+# Particle benchmark (prints particles per millisecond; never fails on speed).
+add_executable(bench_particles bench_particles.cpp)
+target_link_libraries(bench_particles PRIVATE okay::engine)
+add_test(NAME bench_particles COMMAND bench_particles)

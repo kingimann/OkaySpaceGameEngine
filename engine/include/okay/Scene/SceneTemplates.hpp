@@ -56,6 +56,8 @@
 #include "okay/Components/VoxelTerrain.hpp"
 #include "okay/Components/VoxelDigger.hpp"
 #include "okay/Components/Water.hpp"
+#include "okay/Components/Buoyancy.hpp"
+#include "okay/Components/BoatController.hpp"
 #include "okay/Components/PauseMenu.hpp"
 #include "okay/Components/Flashlight.hpp"
 #include "okay/Components/Light.hpp"
@@ -1815,6 +1817,134 @@ inline void VoxelSandbox(Scene& scene, int gridX, int gridY, int gridZ,
 
     scene.CreateGameObject("Pause Menu")->AddComponent<PauseMenu>();
 }
+/// A boat you can drive, ready to float: a hull with a Rigidbody3D, a box collider, Buoyancy and a Boat Controller
+/// (W/S throttle, A/D steer, Space brake, camera behind it). It has a cabin, a windscreen and an engine as plain
+/// look-only blocks. The nose points along +Z of the object. `pos` is where the waterline of the hull goes (the
+/// hull sits half under it). If the scene has no Water, a lake is made under it so the boat floats at once.
+/// Written from our own design (docs/water_boat.md); not taken from any other engine.
+inline GameObject* AddBoat(Scene& scene, const Vec3& pos = {0, 0, 0}, float yawDegrees = 0.0f) {
+    if (scene.FindObjectsOfType<Water>().empty()) {
+        GameObject* lake = scene.CreateGameObject("Lake");
+        lake->transform->localPosition = {pos.x, pos.y, pos.z};
+        auto* w = lake->AddComponent<Water>();
+        w->size = 120.0f; w->resolution = 64; w->depth = 8.0f;
+        w->style = Water::WaveStyle::Ocean;
+        w->waveHeight = 0.5f; w->waveLength = 14.0f; w->waveSteepness = 0.35f; w->waveSpeed = 1.0f;
+        w->Apply();
+    }
+    auto block = [&](GameObject* parent, const char* name, Vec3 at, Vec3 scale, Color col, Vec3 euler = {0, 0, 0}) {
+        GameObject* o = scene.CreateGameObject(name);
+        o->transform->SetParent(parent->transform, false);
+        o->transform->localPosition = at;
+        o->transform->localScale = scale;
+        if (euler.x != 0.0f || euler.y != 0.0f || euler.z != 0.0f) o->transform->localRotation = Quat::Euler(euler);
+        auto* mr = o->AddComponent<MeshRenderer>();
+        mr->mesh = Mesh::Cube(); mr->color = col;
+        return o;
+    };
+    GameObject* boat = scene.CreateGameObject("Boat");
+    boat->transform->localPosition = pos;
+    boat->transform->localRotation = Quat::Euler({0, yawDegrees, 0});
+    auto* rb = boat->AddComponent<Rigidbody3D>();
+    rb->mass = 2.5f;
+    rb->freezeRotation = false;
+    rb->allowSleep = false;               // it always rocks a little
+    rb->angularDrag = 0.2f;
+    auto* col = boat->AddComponent<BoxCollider3D>();
+    col->size = {2.0f, 0.9f, 4.6f};       // half of it under the water line when it floats
+    auto* bu = boat->AddComponent<Buoyancy>();
+    bu->fullness = 0.55f;                 // a boat is a shell, not a block
+    bu->gridX = 3; bu->gridZ = 5;
+    bu->dragForward = 0.15f; bu->dragForward2 = 0.02f;   // slips forward ...
+    bu->dragSide = 1.5f; bu->dragSide2 = 0.5f;            // ... and grips sideways (the keel)
+    bu->angularDamping = 2.0f;
+    auto* bc = boat->AddComponent<BoatController>();
+    bc->followCamera = true;
+    const Color white = Color::FromBytes(236, 238, 240), red = Color::FromBytes(200, 50, 48);
+    block(boat, "Hull", {0, -0.1f, -0.2f}, {2.0f, 0.7f, 3.9f}, white);
+    block(boat, "Bow", {0, -0.1f, 1.55f}, {1.43f, 0.7f, 1.43f}, white, {0, 45, 0});
+    block(boat, "Stripe", {0, 0.27f, -0.2f}, {2.04f, 0.1f, 3.94f}, red);
+    block(boat, "Cabin", {0, 0.75f, 0.0f}, {1.5f, 0.8f, 1.5f}, Color::FromBytes(225, 228, 232));
+    block(boat, "Windscreen", {0, 0.85f, 0.76f}, {1.4f, 0.45f, 0.06f}, Color::FromBytes(120, 170, 210, 200));
+    block(boat, "Seat", {0, 0.45f, -1.2f}, {1.3f, 0.2f, 0.5f}, Color::FromBytes(60, 70, 90));
+    block(boat, "Engine", {0, 0.15f, -2.35f}, {0.45f, 0.55f, 0.35f}, Color::FromBytes(40, 42, 48));
+    return boat;
+}
+
+/// "Boat Lake": a lake with rolling waves, a wooden dock, floating crates, a stone that sinks and a boat to drive.
+/// Open it, press Play, drive with W / S (go, back) and A / D (steer), Space brakes. examples/boat/boat_lake.okayscene
+/// is this scene saved to a file (tests/test_boat.cpp checks the file still matches; regenerate with OKAY_REGEN_BOAT=1).
+inline void BoatLake(Scene& scene) {
+    scene.Clear();
+    scene.SetName("Boat Lake");
+    GameObject* light = scene.CreateGameObject("Directional Light");
+    light->AddComponent<Light>();
+    light->transform->localRotation = Quat::Euler({50, -30, 0});
+
+    GameObject* lake = scene.CreateGameObject("Lake");
+    auto* w = lake->AddComponent<Water>();
+    w->size = 96.0f; w->resolution = 80; w->depth = 8.0f;
+    w->style = Water::WaveStyle::Ocean;
+    w->waveHeight = 0.6f; w->waveLength = 14.0f; w->waveSteepness = 0.35f; w->waveCount = 4;
+    w->waveSpeed = 1.0f; w->waveDirection = 20.0f; w->waveSeed = 11;
+    w->Apply();
+
+    auto solid = [&](const char* name, Vec3 at, Vec3 size, Color c) {
+        GameObject* o = scene.CreateGameObject(name);
+        o->transform->localPosition = at;
+        o->transform->localScale = size;
+        auto* mr = o->AddComponent<MeshRenderer>();
+        mr->mesh = Mesh::Cube(); mr->color = c;
+        o->AddComponent<BoxCollider3D>()->size = {1, 1, 1};
+        o->AddComponent<Rigidbody3D>()->bodyType = Rigidbody3D::BodyType::Static;
+        return o;
+    };
+    const Color sand = Color::FromBytes(210, 190, 140), wood = Color::FromBytes(140, 100, 60);
+    solid("Lake Floor", {0, -9.5f, 0}, {200, 1, 200}, Color::FromBytes(120, 110, 90));
+    solid("Shore West", {-72, -3.0f, 0}, {48, 6.0f, 200}, sand);     // banks around the 96 m lake (top at y = 0)
+    solid("Shore East", {72, -3.0f, 0}, {48, 6.0f, 200}, sand);
+    solid("Shore North", {0, -3.0f, 72}, {200, 6.0f, 48}, sand);
+    solid("Shore South", {0, -3.0f, -72}, {200, 6.0f, 48}, sand);
+    // A dock reaching out from the west bank: planks on posts.
+    solid("Dock Planks", {-43.0f, 0.35f, -6.0f}, {10.0f, 0.3f, 3.0f}, wood);
+    for (int i = 0; i < 3; ++i) {
+        solid("Dock Post", {-39.5f + i * -3.5f, -0.6f, -4.7f}, {0.4f, 2.0f, 0.4f}, Color::FromBytes(100, 70, 45));
+        solid("Dock Post", {-39.5f + i * -3.5f, -0.6f, -7.3f}, {0.4f, 2.0f, 0.4f}, Color::FromBytes(100, 70, 45));
+    }
+
+    // Crates that float (light for their size) and a stone that sinks.
+    const Vec3 crates[] = {{-30, 1.0f, 0}, {-28, 1.0f, 3.5f}, {-24, 1.0f, -3}, {-20, 1.0f, 6}, {-26, 1.0f, -8}, {-18, 1.0f, -4}};
+    for (const Vec3& c : crates) {
+        GameObject* o = scene.CreateGameObject("Floating Crate");
+        o->transform->localPosition = c;
+        auto* mr = o->AddComponent<MeshRenderer>();
+        mr->mesh = Mesh::Cube(); mr->color = Color::FromBytes(176, 128, 74);
+        o->AddComponent<BoxCollider3D>()->size = {1, 1, 1};
+        auto* rb = o->AddComponent<Rigidbody3D>();
+        rb->mass = 0.5f; rb->freezeRotation = false; rb->allowSleep = false;
+        o->AddComponent<Buoyancy>();
+    }
+    {
+        GameObject* o = scene.CreateGameObject("Heavy Stone (sinks)");
+        o->transform->localPosition = {-16, 2.0f, 4};
+        auto* mr = o->AddComponent<MeshRenderer>();
+        mr->mesh = Mesh::Cube(); mr->color = Color::FromBytes(110, 112, 118);
+        o->AddComponent<BoxCollider3D>()->size = {1, 1, 1};
+        auto* rb = o->AddComponent<Rigidbody3D>();
+        rb->mass = 3.0f; rb->freezeRotation = false;
+        o->AddComponent<Buoyancy>();
+    }
+
+    AddBoat(scene, {-33.0f, 0.0f, -11.0f}, 90.0f);   // beside the dock, nose out over the lake
+
+    GameObject* camObj = scene.CreateGameObject("Main Camera");
+    auto* cam = camObj->AddComponent<Camera>();
+    cam->projection = Camera::Projection::Perspective;
+    cam->main = true;
+    camObj->transform->localPosition = {-45, 4, -11};    // the boat keeps it behind itself
+    camObj->transform->localRotation = Quat::Euler({15, 90, 0});
+}
+
 /// The Sandbox at its default size. A separate overload (not default arguments) so `&Templates::VoxelSandbox` still converts to `void (*)(Scene&)`,
 /// which the template table and several tests rely on.
 inline void VoxelSandbox(Scene& scene) { VoxelSandbox(scene, 72, 44, 72); }

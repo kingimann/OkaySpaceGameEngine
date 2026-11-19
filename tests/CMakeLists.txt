@@ -1154,6 +1154,12 @@ add_test(NAME worldcanvas COMMAND test_worldcanvas)
 add_executable(test_vehicle test_vehicle.cpp)
 target_link_libraries(test_vehicle PRIVATE okay::engine)
 add_test(NAME vehicle COMMAND test_vehicle)
+# Water surface (Gerstner-style waves), buoyancy, the boat and the Boat Lake example (docs/water_boat.md).
+add_executable(test_boat test_boat.cpp)
+target_link_libraries(test_boat PRIVATE okay::engine)
+target_compile_definitions(test_boat PRIVATE OKAY_SOURCE_DIR="${PROJECT_SOURCE_DIR}")
+add_test(NAME boat COMMAND test_boat)
+
 add_executable(test_vehicle_seat test_vehicle_seat.cpp)
 target_link_libraries(test_vehicle_seat PRIVATE okay::engine)
 target_compile_definitions(test_vehicle_seat PRIVATE OKAY_SOURCE_DIR="${PROJECT_SOURCE_DIR}")

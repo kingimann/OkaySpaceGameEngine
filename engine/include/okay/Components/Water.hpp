@@ -9,6 +9,7 @@
 #include "okay/Render/MeshNormals.hpp"
 #include "okay/Render/Color.hpp"
 #include "okay/Environment/Wind.hpp"
+#include "okay/Environment/WaterWaves.hpp"
 #include <algorithm>
 #include <cmath>
 #include <vector>
@@ -44,6 +45,28 @@ public:
     /// How fast a submerged prop's velocity fades (1/s, scaled by how much of it is under).
     float linearDrag = 4.0f;
 
+    /// What the waves look like and how they move.
+    ///   Classic - the original crossing sine waves (kept so old scenes look the same).
+    ///   Ocean   - a few travelling waves with sharp crests and long swells (Environment/WaterWaves.hpp).
+    ///   Calm    - the same waves, low and gentle: a lake.
+    /// Ocean and Calm have an exact height, slope and flow at every point (SurfaceAt) that the boat and the
+    /// floating objects use, and the drawn mesh is built from the very same formula.
+    enum class WaveStyle { Classic, Ocean, Calm };
+    WaveStyle style = WaveStyle::Classic;
+    float waveDirection = 0.0f;   ///< degrees from +X towards +Z: which way the main swell runs (Ocean and Calm)
+    float waveSteepness = 0.5f;   ///< 0 round, smooth .. 1 sharp crests (Ocean; Calm uses a third of it)
+    int   waveCount = 4;          ///< how many waves are added together, 1 to 8 (Ocean; Calm uses at most 2)
+    int   waveSeed = 7;           ///< the same seed always gives the same sea
+    Vec2  current{0.0f, 0.0f};    ///< a steady stream in the water, metres per second along the object's X and Z
+
+    /// Everything about the surface above or below one world point.
+    struct Surface {
+        float height = 0.0f;                 ///< world height of the surface at that x/z
+        float floorY = -1.0e9f;              ///< world height of the bottom of the volume (very low when depth is 0)
+        Vec3  normal{0.0f, 1.0f, 0.0f};      ///< unit surface normal (world)
+        Vec3  velocity{0.0f, 0.0f, 0.0f};    ///< how fast the water itself moves there (world, m/s): waves plus current
+    };
+
     /// Where a swimmer is relative to the water volumes in the scene.
     struct Probe {
         bool  inWater = false;     ///< the body overlaps a volume
@@ -78,6 +101,38 @@ public:
         floorY = surfaceY - depth;
         return true;
     }
+
+    /// The surface at a world point: height, slope and flow. False when the point is outside the square (grown by
+    /// `margin`). Works for depth 0 too (a flat sheet with no bottom), so anything can float on it.
+    bool SurfaceAt(const Vec3& world, Surface& out, float margin = 0.0f) const {
+        if (!transform || size <= 0.0f) return false;
+        const Vec3 local = transform->InverseTransformPoint(world);
+        const float half = size * 0.5f + std::max(0.0f, margin);
+        if (std::fabs(local.x) > half || std::fabs(local.z) > half) return false;
+        const waves::Sample w = SampleLocal(local.x, local.z);
+        const Vec3 p = transform->TransformPoint({local.x, w.height, local.z});
+        out.height = p.y;
+        out.floorY = depth > 0.0f ? p.y - depth : -1.0e9f;
+        Vec3 n = transform->TransformDirection({w.nx, w.ny, w.nz});
+        const float nl = std::sqrt(n.x * n.x + n.y * n.y + n.z * n.z);
+        out.normal = nl > 1e-6f ? Vec3{n.x / nl, n.y / nl, n.z / nl} : Vec3{0.0f, 1.0f, 0.0f};
+        out.velocity = transform->TransformDirection({w.vx + current.x, w.vy, w.vz + current.y});
+        return true;
+    }
+    /// The best water at a world point among `volumes` (the highest surface wins).
+    static bool SampleIn(const std::vector<Water*>& volumes, const Vec3& world, Surface& out, float margin = 0.0f) {
+        bool got = false;
+        for (Water* w : volumes) {
+            if (!w || !w->enabled || !w->gameObject || !w->gameObject->active) continue;
+            Surface s;
+            if (!w->SurfaceAt(world, s, margin)) continue;
+            if (!got || s.height > out.height) { out = s; got = true; }
+        }
+        return got;
+    }
+    /// Water time in seconds (waveSpeed already applied). Set it to put the waves at an exact moment (tests, replays).
+    float WaveTime() const { return m_time; }
+    void  SetWaveTime(float t) { m_time = t; }
 
     /// The deepest water the body at `feet` (height `bodyHeight`) is standing in.
     static Probe ProbeAt(const Scene* scene, const Vec3& feet, float bodyHeight) {
@@ -127,6 +182,8 @@ private:
     std::vector<Vec3> m_base;   ///< flat grid positions (waves are added on top)
     int m_dim = 0;
     float m_time = 0.0f;
+    mutable waves::Field m_field;
+    mutable bool m_fieldOk = false;
     float m_windStrength = 0.0f;   ///< horizontal wind speed last Update
     Vec2  m_windDir{1.0f, 0.0f};
 
@@ -142,7 +199,40 @@ private:
                 m_base.push_back({x * cell - half, 0.0f, z * cell - half});
     }
 
+    // Ocean and Calm use the travelling-wave field; Classic keeps the original sines below.
+    waves::Params FieldParams() const {
+        waves::Params p;
+        const bool calm = style == WaveStyle::Calm;
+        p.count = calm ? std::min(2, std::max(1, waveCount)) : waveCount;
+        p.height = calm ? waveHeight * 0.25f : waveHeight;
+        p.length = calm ? waveLength * 1.6f : waveLength;
+        p.directionDeg = waveDirection;
+        p.steepness = calm ? waveSteepness * 0.3f : waveSteepness;
+        p.seed = (std::uint32_t)waveSeed;
+        return p;
+    }
+    const waves::Field& FieldNow() const {
+        const waves::Params p = FieldParams();
+        if (!m_fieldOk || p != m_field.params()) { m_field.Build(p); m_fieldOk = true; }
+        return m_field;
+    }
+    waves::Sample SampleLocal(float x, float z) const {
+        if (style == WaveStyle::Classic) {
+            waves::Sample s;
+            s.height = WaveAt(x, z);
+            // Slope by differences, so the old waves also give a normal (and no flow).
+            const float e = 0.1f;
+            const float dx = (WaveAt(x + e, z) - WaveAt(x - e, z)) / (2.0f * e);
+            const float dz = (WaveAt(x, z + e) - WaveAt(x, z - e)) / (2.0f * e);
+            const float l = std::sqrt(dx * dx + 1.0f + dz * dz);
+            s.nx = -dx / l; s.ny = 1.0f / l; s.nz = -dz / l;
+            return s;
+        }
+        return FieldNow().At(x, z, m_time);
+    }
+
     float WaveAt(float x, float z) const {
+        if (style != WaveStyle::Classic) return FieldNow().Height(x, z, m_time);
         float k = 6.2831853f / (waveLength > 0.01f ? waveLength : 0.01f);
         // Crossing swells at angles + a finer, faster ripple on top give a natural,
         // non-repeating, lively surface rather than one rolling sine.
@@ -171,7 +261,8 @@ private:
         for (int z = 0; z < dim; ++z)
             for (int x = 0; x < dim; ++x) {
                 const Vec3& b = m_base[(std::size_t)z * dim + x];
-                m.vertices.push_back({b.x, WaveAt(b.x, b.z), b.z});
+                if (style == WaveStyle::Classic) m.vertices.push_back({b.x, WaveAt(b.x, b.z), b.z});
+                else { float px, py, pz; FieldNow().Displace(b.x, b.z, m_time, px, py, pz); m.vertices.push_back({px, py, pz}); }
                 m.uvs.push_back({(float)x / (dim - 1), (float)z / (dim - 1)});
             }
         m.triangles.reserve((std::size_t)resolution * resolution * 6);

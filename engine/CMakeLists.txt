@@ -247,6 +247,7 @@ add_library(okay_engine
     src/UI/UIRenderer.cpp
     src/UI/UIWidgetsMoreDraw.cpp
     src/UI/UIBatcher.cpp
+    src/UI/UIImageScale.cpp
     src/UI/UILayoutUpdate.cpp
     src/UI/UIFrameTransform.cpp
     # Localization tools (docs/localization_tools.md)

@@ -63,7 +63,11 @@ public:
     /// Rasterize the glyph into out[row * stride + col], (w x h) being the size of
     /// its GlyphBox. Every pixel of the w x h area is written (0..255 coverage).
     /// False (the area is zeroed) when the glyph cannot be drawn.
-    bool Render(int glyph, float scale, std::uint8_t* out, int w, int h, int stride) const;
+    ///
+    /// `shiftX` (0 <= shiftX < 1) moves the outline that many pixels to the right before it is
+    /// measured, for a glyph drawn at a fractional pen position: pass w = (GlyphBox width) + 1 so the
+    /// shifted edge still fits. 0 draws exactly as before.
+    bool Render(int glyph, float scale, std::uint8_t* out, int w, int h, int stride, float shiftX = 0.0f) const;
 
 private:
     struct Table { std::uint32_t off = 0, len = 0; };

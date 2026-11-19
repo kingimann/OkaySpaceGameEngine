@@ -45,6 +45,7 @@ public:
     void SetScale(float sx, float sy) override;
 
     Tex  LoadTexture(const std::string& path) override;
+    Tex  LoadTextureSized(const std::string& path, int w, int h) override;
     Tex  FontAtlas(TtfFont* font) override;
     void QueryTexture(Tex t, int* w, int* h) override;
     void SetTextureColorMod(Tex t, std::uint8_t r, std::uint8_t g, std::uint8_t b) override;

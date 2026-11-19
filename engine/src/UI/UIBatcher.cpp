@@ -1,5 +1,6 @@
 #include "okay/UI/UIBatcher.hpp"
 #include "okay/Graphics/TtfFont.hpp"
+#include "okay/UI/UIImageScale.hpp"
 #include <algorithm>
 #include <cmath>
 #include <cstring>
@@ -126,6 +127,27 @@ Tex BatchPainter::LoadTexture(const std::string& path) {
     }
     if (m_passthrough) return m_b.LoadTexture(path);
     m_byPath.emplace(path, e);   // remember misses too, so a bad path isn't re-read every frame
+    return e;
+}
+
+Tex BatchPainter::LoadTextureSized(const std::string& path, int w, int h) {
+    if (path.empty() || w <= 0 || h <= 0) return LoadTexture(path);
+    if (m_passthrough) return m_b.LoadTextureSized(path, w, h);
+    const std::string key = path + "@" + std::to_string(w) + "x" + std::to_string(h);
+    auto it = m_byPath.find(key);
+    if (it != m_byPath.end()) return it->second ? (Tex)it->second : LoadTexture(path);
+    Image img;
+    if (!m_load || !m_load(path, img) || img.Width() <= 0 || img.Height() <= 0) return LoadTexture(path);
+    const Image small = UIDownscaleImage(img, w, h, false);
+    int x = 0, y = 0;
+    if (small.Width() > kMaxAtlasImage || small.Height() > kMaxAtlasImage || !EnsurePage(1) ||
+        !Place(1, small.Width(), small.Height(), x, y))
+        return LoadTexture(path);   // does not fit the page: the full-size picture
+    m_entries.push_back(Entry{});
+    Entry* e = &m_entries.back();
+    e->page = 1; e->x = x; e->y = y; e->w = small.Width(); e->h = small.Height();
+    Blit(m_pages[1], small, x, y);
+    m_byPath.emplace(key, e);
     return e;
 }
 

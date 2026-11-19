@@ -64,8 +64,8 @@ bool Finite(float v) { return v > -1e7f && v < 1e7f; }   // false for NaN too
 // fraction (|sum|, clamped to 1: non-zero winding for same-direction overlaps).
 class Raster : public PathSink {
 public:
-    Raster(int w, int h, float scale, int ox, int oy)
-        : m_w(w), m_h(h), m_stride(w + 2), m_scale(scale), m_ox((float)ox), m_oy((float)oy),
+    Raster(int w, int h, float scale, float ox, int oy)
+        : m_w(w), m_h(h), m_stride(w + 2), m_scale(scale), m_ox(ox), m_oy((float)oy),
           m_acc((std::size_t)(w + 2) * (std::size_t)h, 0.0f) {}
 
     void Move(float x, float y) override {
@@ -665,12 +665,13 @@ bool Face::GlyphBox(int glyph, float scale, int& x0, int& y0, int& x1, int& y1) 
     return true;
 }
 
-bool Face::Render(int glyph, float scale, std::uint8_t* out, int w, int h, int stride) const {
+bool Face::Render(int glyph, float scale, std::uint8_t* out, int w, int h, int stride, float shiftX) const {
     if (!out || w <= 0 || h <= 0 || stride < w) return false;
     for (int y = 0; y < h; ++y) std::memset(out + (std::size_t)y * stride, 0, (std::size_t)w);
     int x0, y0, x1, y1;
     if (!GlyphBox(glyph, scale, x0, y0, x1, y1)) return false;
-    Raster r(w, h, scale, x0, y0);
+    if (!(shiftX >= 0.0f && shiftX < 1.0f)) shiftX = 0.0f;
+    Raster r(w, h, scale, (float)x0 - shiftX, y0);
     if (!Outline(glyph, r)) return false;
     r.Finish(out, stride);
     return true;

@@ -78,6 +78,10 @@ public:
     // Textures. LoadTexture resolves an asset path (cached by the backend; null when
     // it can't be read). FontAtlas returns the glyph atlas texture of a TTF font.
     virtual Tex  LoadTexture(const std::string& path) = 0;
+    /// A copy of the picture filtered down to `w` x `h` pixels (see UIImageScale.hpp), for drawing it that size
+    /// without skipping texels; cached by the backend. The default just returns the full-size LoadTexture, so a
+    /// backend that does not filter keeps drawing as before.
+    virtual Tex  LoadTextureSized(const std::string& path, int w, int h) { (void)w; (void)h; return LoadTexture(path); }
     virtual Tex  FontAtlas(TtfFont* font) = 0;
     virtual void QueryTexture(Tex t, int* w, int* h) = 0;   // SDL_QueryTexture without format/access
     virtual void SetTextureColorMod(Tex t, std::uint8_t r, std::uint8_t g, std::uint8_t b) = 0;

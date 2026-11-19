@@ -3956,6 +3956,7 @@ std::string SceneSerializer::Serialize(const Scene& scene) {
     out << "okayscene 3\n";
     out << "name " << Quote(scene.Name()) << "\n";
     if (!scene.uiFont.empty()) out << "uifont " << Quote(scene.uiFont) << "\n";
+    if (scene.uiQuality != 1) out << "uiquality " << scene.uiQuality << "\n";
     for (const std::string& r : scene.unknownRecords) out << r << "\n";   // what a newer build wrote at the top, as it was
     out << "gravity " << scene.physics().gravity.x << " " << scene.physics().gravity.y << "\n";
     if (scene.HasCustomLayerCollisions()) {   // optional: older scenes have none (everything collides)
@@ -4348,6 +4349,8 @@ static bool ParseStep(Scene& scene, ParseSession& S, bool clear,
             std::string nm = ReadQuoted(in); if (clear) scene.SetName(nm);
         } else if (token == "uifont") {
             std::string uf = ReadQuoted(in); if (clear) scene.uiFont = uf;
+        } else if (token == "uiquality") {
+            int q = 1; in >> q; if (clear) scene.uiQuality = q < 0 ? 0 : (q > 3 ? 3 : q);
         } else if (token == "layermatrix") {
             std::uint32_t rows[32]; bool ok = true;
             for (int i = 0; i < 32; ++i) { unsigned long long v = 0; if (!(in >> v) || v > 0xFFFFFFFFull) { ok = false; break; } rows[i] = (std::uint32_t)v; }

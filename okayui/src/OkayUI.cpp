@@ -6187,6 +6187,14 @@ bool IsItemVisible() {                                                          
     if (g_clipTop > 0) { const SDL_Rect& c = g_clipStack[g_clipTop - 1]; x0 = (float)c.x; y0 = (float)c.y; x1 = (float)(c.x + c.w); y1 = (float)(c.y + c.h); }
     return g_lay.prevX < x1 && g_lay.prevX + g_lay.prevW > x0 && g_lay.prevY < y1 && g_lay.prevY + g_lay.prevH > y0;
 }
+bool IsRectVisible(Vec2 min, Vec2 max) {
+    if (!g_lay.active) return false;
+    float x0 = 0.0f, y0 = 0.0f, x1 = 1e9f, y1 = 1e9f;
+    if (g_clipTop > 0) { const SDL_Rect& c = g_clipStack[g_clipTop - 1]; x0 = (float)c.x; y0 = (float)c.y; x1 = (float)(c.x + c.w); y1 = (float)(c.y + c.h); }
+    return min.x < x1 && max.x > x0 && min.y < y1 && max.y > y0;
+}
+bool IsRectVisible(Vec2 size) { const Vec2 p = GetCursorScreenPos(); return IsRectVisible(p, Vec2{p.x + size.x, p.y + size.y}); }
+bool IsAnyMouseDown() { return g_in.mouseDown || g_in.rightDown; }
 bool IsItemActive()      { return g_lastId != 0 && g_active == g_lastId; }
 bool IsItemActivated()   { return IsItemActive() && g_activeAtFrameStart != g_lastId; }
 bool IsItemDeactivated() { return g_lastId != 0 && g_activeAtFrameStart == g_lastId && g_active != g_lastId; }

@@ -1222,6 +1222,9 @@ unsigned GetItemID();
 bool IsAnyItemActive();
 /// True when the last item overlaps the current clip rectangle (false when it was scrolled out of a child).
 bool IsItemVisible();
+bool IsRectVisible(Vec2 size);                  // a rectangle of this size at the cursor: is any of it inside the current clip rectangle?
+bool IsRectVisible(Vec2 min, Vec2 max);
+bool IsAnyMouseDown();                           // any mouse button is held
 bool IsItemActive();         // pressed and held (or, for a text field, being dragged)
 bool IsItemActivated();      // became active this frame
 bool IsItemDeactivated();    // stopped being active this frame

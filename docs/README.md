@@ -114,6 +114,7 @@ Pictures and screenshots are not stored in the repository (owner rule, 2026-11-1
 - [localization.md](localization.md): string tables, translators and fonts.
 - [localization_tools.md](localization_tools.md): translation grid, CSV and JSON, the table checker, key scanner, language previews and font coverage.
 - [own_ui_toolkit.md](own_ui_toolkit.md): OkayUI, our own immediate-mode UI toolkit (off by default), its widgets and render backends.
+- [ui_designer_upgrade.md](ui_designer_upgrade.md): Existing/Gap record for the in-game UI designer and its tested model (internal).
 - [own_ui_code_editor.md](own_ui_code_editor.md): the OkayUI code-editor widget.
 - [accessibility.md](accessibility.md): subtitles and captions, colour vision, controller navigation, remapping and accessibility settings.
 

@@ -112,13 +112,11 @@ inline Rect Resize(const Rect& b, Handle h, float dx, float dy, bool keepAspect,
     const bool east = h == Handle::NE || h == Handle::E || h == Handle::SE;
     const bool north = h == Handle::NW || h == Handle::N || h == Handle::NE;
     const bool south = h == Handle::SW || h == Handle::S || h == Handle::SE;
-    const float k = fromCenter ? 2.0f : 1.0f;
     float l = b.x, t = b.y, r = b.R(), bt = b.B();
-    if (east) { r += dx * (fromCenter ? 1.0f : 1.0f); if (fromCenter) l -= dx; }
+    if (east) { r += dx; if (fromCenter) l -= dx; }
     if (west) { l += dx; if (fromCenter) r -= dx; }
     if (south) { bt += dy; if (fromCenter) t -= dy; }
     if (north) { t += dy; if (fromCenter) bt -= dy; }
-    (void)k;
     const bool corner = (west || east) && (north || south);
     if (keepAspect && corner && b.h > 0) {
         const float aspect = b.w / b.h;

@@ -234,12 +234,13 @@ Area 40 (OkayUI) is a different, immediate-mode toolkit; read it first if the qu
   - 12.10.5 Layout inspectors - `editor/UIInspectorLayout.*` - flex fields, scroll axis, UI Frame, Flex Item, Mask, List View, "Use UI Frame" and "Convert all UI"
   - 12.10.6 Overlay-widget inspectors - `editor/UIInspectorOverlay.*` - UI Modal, UI Context Menu, UI Keybind Field and their Create > UI builders
   - 12.10.7 Create > UI menus - `editor/main.cpp` (`DrawUIWidgetItems` ~5389-5550, menu ~6092-6248) - single widgets, kit, prebuilt screens, 3D UI
+  - 12.10.9 UI designer model - `editor/UIDesignerModel.hpp` - zoom and pan, rulers, guides, snapping, resize handles, nudge, align and distribute, z-order, layers (hide, lock, pick), anchor picker, responsive preview sizes; plain logic, tested headless, not yet wired into the editor window
   - 12.10.8 Widget inspectors - `editor/main.cpp` (~34698-36498) - Canvas, Event System, UI Button, Panel, Input Field, Dropdown, Slider, Tabs and the rest
 - **Code:** `editor/UIPreviewPainter.*`, `editor/UIInspectorLayout.*`, `editor/UIInspectorOverlay.*`, `editor/main.cpp`, `Scene/UILayoutTools`, `Scene/UIStyles`
 - **API:** menu items GameObject > UI, View > Editors & Tools > UI Editing Mode, UI Editor (separate tab), UI Theme
 - **Editor:** Scene view (UI button, "..." menu toggle for the overlay), UI tab, Inspector
 - **Docs:** `docs/editor.md` (UI editing), `docs/game_ui.md`
-- **Tests:** `ui_frame` (undo through `editor/EditorState.cpp`), `ui_renderer_options`, `editor` (selftest)
+- **Tests:** `ui_designer` (the model), `ui_frame` (undo through `editor/EditorState.cpp`), `ui_renderer_options`, `editor` (selftest)
 - **Status:** Partial - the UI view, handles, tools and inspectors exist; items the UI plan P4 asked for are not all there
 - **Open:** UI plan P4: anchor preset picker and pivot handles, UI prefabs with variants, UIDocument-to-hierarchy round trip, a `--selftest` that creates and saves a UI prefab (none found); the editor's Scene view shows no full world-space canvases
 - **Related:** 15.3, 15.2, 12.1, 12.7, 12.11

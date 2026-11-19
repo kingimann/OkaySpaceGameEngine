@@ -208,6 +208,7 @@ vehicle
 visual_script/playground
 voxel
 weapons
+wind
 "
 for d in $EXAMPLE_DIRS; do
     [ -d "examples/$d" ] || { echo "error: examples/$d is missing (edit EXAMPLE_DIRS in $0)" >&2; exit 1; }
@@ -270,7 +271,9 @@ examples/ example scenes to try: in the editor use File > Open and pick
                         examples\boat\boat_lake.okayscene (a lake with waves: drive the
                         boat with W S A D, Space brakes), or
                         examples\ui_text\ui_text.okayscene (a nameplate over each of
-                        two characters and a sign with rich text; keys 1 2 3 H).
+                        two characters and a sign with rich text; keys 1 2 3 H), or
+                        examples\wind\wind.okayscene (trees, grass, a flag and leaves in the
+                        wind, a box the gusts push, and a wind sound).
                         More in docs/try_it.md.
 
 Each .exe needs SDL2.dll in its own folder — that's why one sits beside the

@@ -194,6 +194,7 @@ add_library(okay_engine
     src/Components/LineRenderer.cpp
     src/Components/BuildMode.cpp
     src/Components/Volume.cpp
+    src/Components/WindZone.cpp
     src/Components/DialogueGraph.cpp
     src/Components/DialogueRunner.cpp
     src/Components/QuestLog.cpp

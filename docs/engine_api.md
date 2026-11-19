@@ -711,6 +711,19 @@ Rain, snow and storms falling around the camera, and the wind particles and wate
 | `Weather.Set(preset, intensity)` | `Weather.Set/2` | step | preset (Text), intensity (Number) | - | "none", "rain", "snow" or "storm" at an intensity from 0 to 1; it cross-fades over the scene's weather fade time. |
 | `Weather.SetWind(x, y, z)` | `Weather.SetWind/3` | step | x (Number), y (Number), z (Number) | - | The wind (world units per second) that particles drift with and water waves follow. |
 
+## Wind
+
+The wind field: how hard and which way the air moves at a point (weather, wind zones and the scene's own wind together).
+
+| In a script | Node | Kind | Inputs | Gives | What it does |
+|---|---|---|---|---|---|
+| `Wind.Strength` | `Wind.Strength` | value | - | Strength (Number) | The wind speed (metres per second) where this object is. |
+| `Wind.Direction` | `Wind.Direction` | value | - | Direction (Vector3) | The way the wind blows where this object is, as a unit vector (0, 0, 0 when it is calm). |
+| `Wind.At(position)` | `Wind.At/1` | value | position (Vector3) | Result (Vector3) | The wind (speed and direction, metres per second) at a world position, right now. |
+| `Wind.SetStrength(metresPerSecond)` | `Wind.SetStrength/1` | step | metresPerSecond (Number) | - | Set the scene's own wind speed (about 3 is a breeze, 10 a strong wind). Makes the wind object if the scene has none. |
+| `Wind.SetDirection(direction)` | `Wind.SetDirection/1` | step | direction (Vector3) | - | Aim the scene's own wind along a direction, for example Wind.SetDirection(Vec3(1, 0, 0)) blows toward +X. |
+| `Wind.SetGust(amount, perSecond)` | `Wind.SetGust/2` | step | amount (Number), perSecond (Number) | - | How much the scene's wind swells and drops (0 steady, 1 calm to double) and how many gusts come each second (0.2 = one every 5 seconds). |
+
 ## NavMeshAgent
 
 Walks the object along the scene's navigation mesh (the grid when none is baked). The object needs a Nav Mesh Agent.

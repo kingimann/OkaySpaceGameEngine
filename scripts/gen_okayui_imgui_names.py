@@ -14,7 +14,7 @@ OUT = os.path.join(usage.ROOT, "okayui", "include", "okay", "UI", "OkayUIImGuiNa
 # Defined by hand in the preamble (or by OkayUI itself), so not generated.
 HAND = {"ImVec2", "ImU32", "ImDrawList"}
 # Typedef'd to int, as Dear ImGui does for the ids that are passed around as plain numbers.
-AS_INT = {"ImGuiCol", "ImGuiCond", "ImGuiStyleVar", "ImGuiMouseButton", "ImGuiDir", "ImGuiSortDirection"}
+AS_INT = {"ImGuiCol", "ImGuiCond", "ImGuiStyleVar", "ImGuiMouseButton", "ImGuiDir", "ImGuiSortDirection", "ImGuiMouseCursor"}
 # Names that already exist in namespace OkayUI under the same spelling.
 SAME_SPELLING_TYPES = {"ImVec4", "ImTextureID", "ImRect", "ImGuiID"}
 

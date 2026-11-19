@@ -65,9 +65,15 @@ enum KeyId : int {
     KeyId_Keypad0, KeyId_Keypad1, KeyId_Keypad2, KeyId_Keypad3, KeyId_Keypad4, KeyId_Keypad5, KeyId_Keypad6, KeyId_Keypad7, KeyId_Keypad8, KeyId_Keypad9,
     KeyId_KeypadAdd, KeyId_KeypadSubtract, KeyId_KeypadMultiply, KeyId_KeypadDivide, KeyId_KeypadDecimal,
     KeyId_MouseWheelY,   // the wheel as an owner-able "key" (SetItemKeyOwner); the host never reports it down
+    // Keys a platform feed (shared/ImGuiPlatformFeed.hpp, okay::platform events) reports: the right-hand modifiers as their own keys, the modifier flags Dear ImGui
+    // sends as keys of their own (KeyId_Mod*), and the rest of a full keyboard. KeyId_F13 .. KeyId_F24 are consecutive.
+    KeyId_RightCtrl, KeyId_RightShift, KeyId_RightAlt, KeyId_LeftSuper, KeyId_RightSuper, KeyId_ModCtrl, KeyId_ModShift, KeyId_ModAlt, KeyId_ModSuper,
+    KeyId_Semicolon, KeyId_Apostrophe, KeyId_GraveAccent, KeyId_CapsLock, KeyId_PrintScreen, KeyId_ScrollLock, KeyId_Pause, KeyId_NumLock,
+    KeyId_KeypadEqual, KeyId_Oem102, KeyId_Menu,
+    KeyId_F13, KeyId_F14, KeyId_F15, KeyId_F16, KeyId_F17, KeyId_F18, KeyId_F19, KeyId_F20, KeyId_F21, KeyId_F22, KeyId_F23, KeyId_F24,
     KeyId_COUNT,
-    // Left and right modifier keys are the one modifier key here.
-    KeyId_LeftCtrl = KeyId_Ctrl, KeyId_RightCtrl = KeyId_Ctrl, KeyId_LeftShift = KeyId_Shift, KeyId_RightShift = KeyId_Shift, KeyId_LeftAlt = KeyId_Alt, KeyId_RightAlt = KeyId_Alt,
+    // The left modifier keys are the modifier keys; the right ones are their own ids (above).
+    KeyId_LeftCtrl = KeyId_Ctrl, KeyId_LeftShift = KeyId_Shift, KeyId_LeftAlt = KeyId_Alt,
     // Dear ImGui's spellings of the same keys (aliases, not new keys; the numeric-keypad Enter arrives as Enter).
     KeyId_UpArrow = KeyId_Up, KeyId_DownArrow = KeyId_Down, KeyId_LeftArrow = KeyId_Left, KeyId_RightArrow = KeyId_Right,
     KeyId_KeypadEnter = KeyId_Enter
@@ -1282,8 +1288,8 @@ void SetWindowFocus(const char* title);
 void SetWindowFontScale(float scale);
 /// The mouse cursor shape the UI wants this frame; the host reads GetMouseCursor() after the frame and shows the matching system
 /// cursor. It starts each frame as the arrow.
-enum MouseCursor : int { MouseCursor_Arrow = 0, MouseCursor_TextInput, MouseCursor_ResizeAll, MouseCursor_ResizeNS, MouseCursor_ResizeEW,
-                         MouseCursor_ResizeNESW, MouseCursor_ResizeNWSE, MouseCursor_Hand, MouseCursor_NotAllowed, MouseCursor_COUNT };
+enum MouseCursor : int { MouseCursor_None = -1, MouseCursor_Arrow = 0, MouseCursor_TextInput, MouseCursor_ResizeAll, MouseCursor_ResizeNS, MouseCursor_ResizeEW,
+                         MouseCursor_ResizeNESW, MouseCursor_ResizeNWSE, MouseCursor_Hand, MouseCursor_NotAllowed, MouseCursor_Wait, MouseCursor_Progress, MouseCursor_COUNT };
 void SetMouseCursor(MouseCursor cursor);
 MouseCursor GetMouseCursor();
 /// Read-only facts about the frame, filled by BeginFrame: pointer, wheel, display size, modifier keys, the frame time, and whether
@@ -1317,6 +1323,12 @@ struct IO {
     /// and a press of Enter / Escape / Backspace / Delete / Tab / the arrows / Home / End also sets that key's one-frame flag).
     void AddKeyEvent(int key, bool down);
     void AddInputCharacter(unsigned codePoint);
+    void AddInputCharactersUTF8(const char* utf8);   // every character of the text, as AddInputCharacter
+    void AddMouseWheelEvent(float wheelX, float wheelY);   // the vertical amount scrolls (OkayUI has no horizontal wheel)
+    void AddFocusEvent(bool focused);                // the window lost or got focus: losing it lets go of every key and button
+    const char* BackendPlatformName = nullptr, *BackendRendererName = nullptr;
+    bool MouseDrawCursor = false;                    // accepted; the host draws the system cursor
+    bool WantSetMousePos = false;                    // accepted; OkayUI never asks the host to move the pointer
     /// Mouse events as a Dear ImGui host feeds them: applied by the next NewFrame() (the last position and the button state win; a press and release
     /// inside one frame still makes one click).
     void AddMousePosEvent(float x, float y);

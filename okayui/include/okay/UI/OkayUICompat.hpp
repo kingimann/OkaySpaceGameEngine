@@ -151,7 +151,7 @@ private:
 /// A key chord for Shortcut: one named key plus the modifiers that must be held with it. `Chord(KeyId_S, Mod_Ctrl | Mod_Shift)`.
 /// (Own encoding: the key id in the low byte, the modifier bits above it; not Dear ImGui's chord values.)
 using KeyChord = int;
-enum KeyMods : int { Mod_None = 0, Mod_Ctrl = 1, Mod_Shift = 2, Mod_Alt = 4 };
+enum KeyMods : int { Mod_None = 0, Mod_Ctrl = 1, Mod_Shift = 2, Mod_Alt = 4, Mod_Super = 8 };
 constexpr KeyChord Chord(KeyId key, int mods = Mod_None) { return (int)key | ((mods & 7) << 8); }
 enum ShortcutFlags : int { Shortcut_None = 0, Shortcut_AllowRepeat = 1, Shortcut_RouteAlways = 2 };
 /// True on the frame the chord's key goes down while exactly the chord's modifiers are held (a chord without Ctrl does not fire while
@@ -415,7 +415,15 @@ struct PlatformIO {
     void (*Renderer_CreateWindow)(Viewport*) = nullptr; void (*Renderer_DestroyWindow)(Viewport*) = nullptr;
     void (*Renderer_RenderWindow)(Viewport*, void*) = nullptr; void (*Renderer_SwapBuffers)(Viewport*, void*) = nullptr;
     void (*Platform_CreateWindow)(Viewport*) = nullptr; void (*Platform_DestroyWindow)(Viewport*) = nullptr;
+    // What a platform feed (shared/ImGuiPlatformFeed.hpp) installs: the clipboard and the input-method position. OkayUI's own clipboard (GetClipboardText /
+    // SetClipboardText) calls them when set.
+    void* Platform_ClipboardUserData = nullptr;
+    const char* (*Platform_GetClipboardTextFn)(Context*) = nullptr; void (*Platform_SetClipboardTextFn)(Context*, const char*) = nullptr;
+    void* Platform_ImeUserData = nullptr;
+    void (*Platform_SetImeDataFn)(Context*, Viewport*, struct PlatformImeData*) = nullptr;
 };
+inline void SetMouseCursor(int c) { SetMouseCursor((MouseCursor)c); }   // a platform feed passes the cursor as a plain number
+struct PlatformImeData { bool WantVisible = false, WantTextInput = false; Vec2 InputPos{0, 0}; float InputLineHeight = 0.0f; };
 struct WindowRef;   // OkayUIInternals.hpp
 PlatformIO& GetPlatformIO();
 /// io.Fonts: Dear ImGui hosts ask the atlas for fonts at start-up. OkayUI loads none here: each Add* call is RECORDED (what, how big, where from) in a
@@ -556,7 +564,7 @@ enum TabItemExtraFlags : int { TabItem_Button = 16 };
 /// Input flags (Shortcut and key queries): Input_Repeat is Shortcut_AllowRepeat.
 enum InputFlags : int { Input_None = 0, Input_Repeat = Shortcut_AllowRepeat };
 /// Backend flags a host reports on the IO: accepted, nothing reads them.
-enum BackendFlags : int { BackendFlags_None = 0, BackendFlags_HasMouseCursors = 1, BackendFlags_PlatformHasViewports = 1 << 10, BackendFlags_RendererHasViewports = 1 << 11 };
+enum BackendFlags : int { BackendFlags_None = 0, BackendFlags_HasMouseCursors = 1, BackendFlags_HasSetMousePos = 4, BackendFlags_PlatformHasViewports = 1 << 10, BackendFlags_RendererHasViewports = 1 << 11 };
 /// Item flag names under Dear ImGui's spelling (the ItemFlag_* values are the same).
 enum ItemFlagNames : int { Item_None = 0, Item_NoTabStop = ItemFlag_NoTabStop, Item_ButtonRepeat = ItemFlag_ButtonRepeat, Item_Disabled = ItemFlag_Disabled,
                            Item_NoNav = ItemFlag_NoNav, Item_NoNavDefaultFocus = ItemFlag_NoNavDefaultFocus, Item_MixedValue = ItemFlag_MixedValue };

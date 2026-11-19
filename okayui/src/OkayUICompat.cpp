@@ -310,10 +310,20 @@ bool BeginTable(const char* id, int columns, int flags) { return BeginTable(id, 
 bool BeginTable(const char* id, int columns, int flags, Vec2 outerSize, float innerWidth) { return BeginTable(id, columns, static_cast<TableFlags>(flags), outerSize, innerWidth); }
 bool IsMouseHoveringRect(Vec2 mn, Vec2 mx, bool) { return IsMouseHoveringRect(mn, mx); }
 void MergePendingIo(Input& in);   // OkayUI.cpp: IO::AddKeyEvent / AddInputCharacter
-void NewFrame() { Input in = GetFrameInput(); MergePendingIo(in); BeginFrame(in); }
+IO& IoRaw();
+void NewFrame() {
+    Input in = GetFrameInput(); MergePendingIo(in);
+    static double clock = 0.0;
+    const IO& r = IoRaw();   // a platform feed (shared/ImGuiPlatformFeed.hpp) writes the display size and the frame time here
+    if (r.DisplaySize.x > 0.0f && r.DisplaySize.y > 0.0f) { in.displayW = r.DisplaySize.x; in.displayH = r.DisplaySize.y; }
+    if (r.DeltaTime > 0.0f && r.DeltaTime < 1.0f) { clock += (double)r.DeltaTime; in.time = clock; }
+    BeginFrame(in);
+}
 void UpdatePlatformWindows() {}
 void RenderPlatformWindowsDefault() {}
 PlatformIO& GetPlatformIO() { static PlatformIO pio; return pio; }
+bool PlatformClipboardSet(const char* text) { PlatformIO& p = GetPlatformIO(); if (!p.Platform_SetClipboardTextFn) return false; p.Platform_SetClipboardTextFn(nullptr, text); return true; }
+const char* PlatformClipboardGet() { PlatformIO& p = GetPlatformIO(); return p.Platform_GetClipboardTextFn ? p.Platform_GetClipboardTextFn(nullptr) : nullptr; }
 bool DockContextQueueUndockWindow(Context*, const WindowRef* window) {
     if (!window || !window->Name[0]) return false;
     DockLayout& l = GetDockLayout();

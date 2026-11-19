@@ -111,3 +111,29 @@ set_target_properties(okayspace-launcher PROPERTIES
 if(WIN32)
     set_target_properties(okayspace-launcher PROPERTIES WIN32_EXECUTABLE TRUE)
 endif()
+
+# ---- The launcher on OkayUI (OKAY_LAUNCHER_ON_OKAYUI, off by default) ----------------------------------------------------------------------------
+# The SAME sources, compiled against OkayUI's Dear ImGui compatibility header (okayui/probe first on the include path: <imgui.h> is OkayUI's) instead of
+# Dear ImGui. The input is shared/ImGuiPlatformFeed.hpp (OKAY_ON_OKAYUI makes it the only path); the backend entry points are shared/OkayUIImGuiBackendShim.cpp.
+# Output: bin/OkaySpaceOkayUI(.exe) next to OkaySpace(.exe). docs/own_ui_toolkit.md "Running the real launcher and editor on OkayUI".
+if(OKAY_LAUNCHER_ON_OKAYUI AND TARGET okay_ui AND TARGET okay_ui_screens)
+    set(_ok_src "")
+    foreach(_f ${OKAY_LAUNCHER_SOURCES})
+        list(APPEND _ok_src ${_f})
+    endforeach()
+    add_executable(okayspace-launcher-okayui ${_ok_src} ${CMAKE_SOURCE_DIR}/shared/OkayUIImGuiBackendShim.cpp)
+    okay_win_version(okayspace-launcher-okayui "OkaySpace Launcher (OkayUI)" "OkaySpaceOkayUI.exe")
+    target_compile_definitions(okayspace-launcher-okayui PRIVATE ${OKAY_VERSION_DEFINE} OKAY_ON_OKAYUI=1 OKAY_HAVE_OKAYUI=1 OKAY_UI_DEFAULT_BACKEND_OKAYUI=1)
+    target_compile_features(okayspace-launcher-okayui PRIVATE cxx_std_17)
+    target_include_directories(okayspace-launcher-okayui BEFORE PRIVATE ${CMAKE_SOURCE_DIR}/okayui/probe ${CMAKE_SOURCE_DIR}/okayui/probe/backends)
+    target_include_directories(okayspace-launcher-okayui PRIVATE ${CMAKE_SOURCE_DIR}/shared ${CMAKE_SOURCE_DIR}/engine/include ${CMAKE_SOURCE_DIR}/okayui/include ${CMAKE_SOURCE_DIR}/okayui/screens)
+    target_link_libraries(okayspace-launcher-okayui PRIVATE okay_ui_screens okay_ui ${OKAY_LAUNCHER_SDL} okay::platform okay_crypto)
+    if(TARGET okay_engine)
+        target_link_libraries(okayspace-launcher-okayui PRIVATE okay_engine)
+    endif()
+    if(WIN32)
+        target_link_libraries(okayspace-launcher-okayui PRIVATE shell32 comdlg32 ole32 user32 ws2_32 winhttp)
+        set_target_properties(okayspace-launcher-okayui PROPERTIES WIN32_EXECUTABLE TRUE)
+    endif()
+    set_target_properties(okayspace-launcher-okayui PROPERTIES RUNTIME_OUTPUT_DIRECTORY ${CMAKE_BINARY_DIR}/bin OUTPUT_NAME "OkaySpaceOkayUI")
+endif()

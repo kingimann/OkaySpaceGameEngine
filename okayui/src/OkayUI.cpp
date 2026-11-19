@@ -2347,6 +2347,7 @@ namespace {
 long long g_ioQueueFrame = -1; int g_ioQueueFilled = 0;
 // Pending input fed through IO::AddKeyEvent / AddInputCharacter, applied by NewFrame (OkayUICompat.cpp).
 bool g_pendMouseSet = false; float g_pendMX = 0, g_pendMY = 0; int g_pendBtn[3] = {-1, -1, -1}; bool g_pendClick[3] = {false, false, false};
+float g_pendWheel = 0.0f; bool g_pendFocusLost = false;
 std::string g_pendText; bool g_pendKeyDown[KeyId_COUNT] = {}; bool g_pendKeyEdge[KeyId_COUNT] = {};
 unsigned decodeOne(const char*& p) {   // one UTF-8 code point (invalid bytes give U+FFFD)
     const unsigned char c = (unsigned char)*p++;
@@ -2363,6 +2364,14 @@ void IO::AddKeyEvent(int key, bool down) {
     g_pendKeyDown[key] = down;
     if (down) g_pendKeyEdge[key] = true;
 }
+void IO::AddMouseWheelEvent(float, float wheelY) { if (std::isfinite(wheelY)) g_pendWheel += wheelY; }
+void IO::AddFocusEvent(bool focused) {
+    if (focused) return;
+    g_pendFocusLost = true;   // the next NewFrame lets go of every key and button the window can no longer see released
+    for (int k = 0; k < KeyId_COUNT; ++k) g_pendKeyDown[k] = false;
+    for (int b = 0; b < 3; ++b) { g_pendBtn[b] = 0; }
+}
+void IO::AddInputCharactersUTF8(const char* utf8) { if (!utf8) return; for (const char* p = utf8; *p;) AddInputCharacter(decodeOne(p)); }
 void IO::AddMousePosEvent(float x, float y) { if (std::isfinite(x) && std::isfinite(y)) { g_pendMouseSet = true; g_pendMX = x; g_pendMY = y; } }
 void IO::AddMouseButtonEvent(int b, bool down) { if (b < 0 || b > 1) return; g_pendBtn[b] = down ? 1 : 0; if (down) g_pendClick[b] = true; }
 void IO::AddInputCharacter(unsigned cp) {
@@ -2382,12 +2391,20 @@ void MergePendingIo(Input& in) {
     in.text = text.empty() ? nullptr : text.c_str();
     // NewFrame reuses the last frame's input, so its one-frame parts (the typed text, the key flags, the wheel) are cleared first.
     in.backspace = in.del = in.left = in.right = in.up = in.down = in.home = in.end = in.enter = in.escape = false;
-    in.wheel = 0.0f; in.selectAll = in.copy = in.cut = in.paste = false; in.commit = nullptr;
+    in.wheel = g_pendWheel; g_pendWheel = 0.0f; in.selectAll = in.copy = in.cut = in.paste = false; in.commit = nullptr;
     static bool mine[KeyId_COUNT] = {};   // keys whose state came from events last time
     for (int k = 1; k < KeyId_COUNT; ++k) {
         const bool now = g_pendKeyDown[k] || g_pendKeyEdge[k];   // pressed and released inside one frame still counts as a press
         if (now) in.keyDown[k] = true; else if (mine[k]) in.keyDown[k] = false;
         mine[k] = now;
+    }
+    {   // the modifier keys: either hand, or the modifier flag key; events decide once any arrived
+        static bool mineCtrl = false, mineShift = false;
+        const bool c = g_pendKeyDown[KeyId_Ctrl] || g_pendKeyDown[KeyId_RightCtrl] || g_pendKeyDown[KeyId_ModCtrl] || g_pendKeyDown[KeyId_LeftSuper] || g_pendKeyDown[KeyId_RightSuper] || g_pendKeyDown[KeyId_ModSuper];
+        const bool sh = g_pendKeyDown[KeyId_Shift] || g_pendKeyDown[KeyId_RightShift] || g_pendKeyDown[KeyId_ModShift];
+        if (c) in.ctrl = true; else if (mineCtrl) in.ctrl = false;
+        if (sh) in.shift = true; else if (mineShift) in.shift = false;
+        mineCtrl = c; mineShift = sh;
     }
     if (g_pendMouseSet) { in.mouseX = g_pendMX; in.mouseY = g_pendMY; g_pendMouseSet = false; }
     if (g_pendBtn[0] >= 0 || g_pendClick[0]) { in.mouseDown = g_pendBtn[0] == 1 || (g_pendClick[0] && g_pendBtn[0] != 1); }
@@ -2405,6 +2422,7 @@ void MergePendingIo(Input& in) {
     if (g_pendKeyEdge[KeyId_End]) in.end = true;
     for (int k = 0; k < KeyId_COUNT; ++k) g_pendKeyEdge[k] = false;
 }
+IO& IoRaw() { return g_io; }   // what a host wrote into the IO (DisplaySize, DeltaTime ...), before GetIO() overwrites those fields with this frame's values
 IO& GetIO() {
     if (g_ioQueueFrame != (long long)g_frameCount) {   // this frame's typed characters
         g_io.InputQueueCharacters.clear();
@@ -5489,14 +5507,18 @@ void SetKeyboardFocusId(int id) { g_focus = id; if (id != 0) g_focusClaimed = tr
 
 // The clipboard: kept here, and mirrored to the system clipboard when a window system is up (so it works headless too).
 static char g_clip[kClipboardMax] = {0};
+bool PlatformClipboardSet(const char* text);    // OkayUICompat.cpp: the clipboard a platform feed installed in PlatformIO (false: none)
+const char* PlatformClipboardGet();              // null: none installed
 void SetClipboardText(const char* text) {
     if (!text) text = "";
     std::size_t n = std::strlen(text); if (n > (std::size_t)kClipboardMax - 1) n = (std::size_t)kClipboardMax - 1;
     std::memcpy(g_clip, text, n); g_clip[n] = 0;
     trimPartialChar(g_clip);
+    if (PlatformClipboardSet(g_clip)) return;          // a platform feed owns the clipboard (no SDL)
     SDL_SetClipboardText(g_clip);                      // fails quietly with no video: the copy above is enough
 }
 const char* GetClipboardText() {
+    if (const char* pc = PlatformClipboardGet()) { std::size_t n = std::strlen(pc); if (n > (std::size_t)kClipboardMax - 1) n = (std::size_t)kClipboardMax - 1; std::memcpy(g_clip, pc, n); g_clip[n] = 0; trimPartialChar(g_clip); return g_clip; }
     if (char* sys = SDL_GetClipboardText()) {          // someone else may have copied something since
         if (sys[0] && std::strcmp(sys, g_clip) != 0) {
             std::size_t n = std::strlen(sys); if (n > (std::size_t)kClipboardMax - 1) n = (std::size_t)kClipboardMax - 1;

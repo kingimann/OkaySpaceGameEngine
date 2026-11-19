@@ -2,7 +2,7 @@
 // page and runs its two background jobs on SDL threads (the launcher does not use std::thread / std::mutex: see main.cpp).
 #include "VersionsUI.hpp"
 
-#include <SDL.h>
+#include "PlainTypes.hpp"   // SDL.h in a normal build; plain types only with OKAY_NO_SDL
 #include "okay/Platform/Platform.hpp"   // okay::platform: timers (and the SDL seam)
 #include "OkayThreads.hpp"   // our own threads, recursive mutexes, atomics (replaces SDL's)
 

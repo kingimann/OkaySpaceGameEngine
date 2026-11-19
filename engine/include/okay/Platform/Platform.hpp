@@ -345,6 +345,8 @@ public:
     /// wait loop). sdl2: SDL_PumpEvents. own: reads what is waiting into the backend's queue, so the next PollEvent
     /// still returns it, in order. Never loses an event.
     virtual void PumpEvents() {}
+    /// True when events are waiting (call PumpEvents first so the system's input has been read). Used by an idle throttle that wants to know "did anything happen".
+    virtual bool HasPendingEvents() { return false; }
     /// Put an event into the queue; PollEvent returns it after the events already waiting. Used to inject input (tests,
     /// the editor's OKAY_UI_DROP hook). False when this backend cannot make that kind of event (sdl2 makes Quit,
     /// WindowClose, WindowFocusGained/Lost, KeyDown/Up, TextInput, MouseMove, MouseButtonDown/Up, MouseWheel and DropFile).
@@ -464,6 +466,10 @@ std::unique_ptr<Window> WrapSdl2Window(void* sdlWindow);
 /// touches nothing in the SDL event (a drop's string is not read). False for any other kind, or when sdl2 is not
 /// compiled in. Temporary: it goes away with SDL2.
 bool TranslateSdl2Event(const void* sdlEvent, Event& out);
+
+/// Logical processors and physical memory (megabytes) of this machine; 0 when unknown. No backend needed.
+int CpuCount();
+int SystemRamMB();
 
 // ---- Free functions on the default backend ------------------------------------
 // Timers work with no backend at all (they fall back to std::chrono), so call

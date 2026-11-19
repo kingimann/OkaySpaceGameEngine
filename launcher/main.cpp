@@ -6,7 +6,7 @@
 // It looks for OkayEngine.exe (editor) and OkaySpacePlayer.exe (runtime)
 // sitting next to it, and launches them. Built with Dear ImGui + SDL2.
 #define SDL_MAIN_HANDLED
-#include <SDL.h>
+#include "PlainTypes.hpp"   // SDL.h in a normal build; plain types only with OKAY_NO_SDL
 #include "okay/Platform/Platform.hpp"   // okay::platform: timers (and the SDL seam)
 #include "okay/Platform/WindowLogic.hpp" // frame-rate / flash / background decisions
 
@@ -4711,8 +4711,8 @@ static void OkayUIFrameBegin() {
     const Uint32 mb = okay::platform::Default() ? okay::platform::Default()->MouseState(&mx, &my) : 0;   // MouseMask bits (button 1 = bit 0, as SDL_BUTTON)
     const bool blocked = io.WantCaptureMouse && !g_okayRegion.Owns((float)mx, (float)my);
     const bool keys = OkayUI::WantsTextInput() && ImGui::GetActiveID() == 0;   // an ImGui field being pressed or typed in keeps the keys
-    OkayUI::BeginFrame(g_okayInput.Build((float)mx, (float)my, (mb & SDL_BUTTON(SDL_BUTTON_LEFT)) != 0,
-                                         (mb & SDL_BUTTON(SDL_BUTTON_RIGHT)) != 0, blocked, keys));
+    OkayUI::BeginFrame(g_okayInput.Build((float)mx, (float)my, (mb & okay::platform::MouseMask(okay::platform::MouseLeft)) != 0,
+                                         (mb & okay::platform::MouseMask(okay::platform::MouseRight)) != 0, blocked, keys));
 }
 // ImGui must not treat typing in a hosted OkayUI field as shortcuts or text for something else.
 static void OkayUIClaimKeyboard() {
@@ -5322,7 +5322,7 @@ static constexpr int kVoiceBars = 30;
 struct VoiceClip {
     bool ok = false;                 // decoded (false = unplayable; don't retry)
     Uint8* pcm = nullptr; Uint32 len = 0;   // points into `owned` (never into an SDL buffer)
-    SDL_AudioSpec spec{};
+    okay::wav::ClipSpec spec;
     float secs = 0, bytesPerSec = 1;
     float bars[kVoiceBars] = {};
     std::vector<Uint8> owned;        // the clip's samples (converted to 16-bit when the file was not native 16-bit / float)
@@ -5350,9 +5350,9 @@ static std::map<std::string, VoiceClip> g_voiceClips;
 // The platform audio layer plays native-endian 16-bit or float samples. A clip in any other
 // PCM layout (8-bit, 32-bit integer, big-endian) is converted to 16-bit once, at load.
 static void VoiceClipToPlayable(VoiceClip& c) {
-    const SDL_AudioFormat f = c.spec.format;
-    if (f == AUDIO_S16SYS || f == AUDIO_F32SYS || !c.pcm || !c.len) return;
-    const int width = SDL_AUDIO_BITSIZE(f) / 8;
+    const okay::wav::ClipSpec& f = c.spec;
+    if (f.IsS16Native() || f.IsF32Native() || !c.pcm || !c.len) return;
+    const int width = f.bits / 8;
     if (width < 1 || width > 4) { c.len = 0; return; }
     // Samples already live in c.owned. VoiceClipFor copies the SDL_LoadWAV buffer
     // and frees it before this runs, so the bytes are read from `owned` and the
@@ -5363,17 +5363,17 @@ static void VoiceClipToPlayable(VoiceClip& c) {
     for (std::size_t i = 0; i < n; ++i) {
         const Uint8* p = c.pcm + i * (std::size_t)width;
         float v = 0.0f;   // -1..1
-        if (SDL_AUDIO_ISFLOAT(f)) {
+        if (f.isFloat) {
             Uint32 u = 0;
-            for (int b = 0; b < 4; ++b) u |= (Uint32)p[SDL_AUDIO_ISBIGENDIAN(f) ? 3 - b : b] << (8 * b);
+            for (int b = 0; b < 4; ++b) u |= (Uint32)p[f.bigEndian ? 3 - b : b] << (8 * b);
             std::memcpy(&v, &u, 4);
         } else if (width == 1) {
-            v = SDL_AUDIO_ISSIGNED(f) ? (float)(Sint8)p[0] / 128.0f : ((float)p[0] - 128.0f) / 128.0f;
+            v = f.isSigned ? (float)(Sint8)p[0] / 128.0f : ((float)p[0] - 128.0f) / 128.0f;
         } else {
             Uint32 u = 0;
-            for (int b = 0; b < width; ++b) u |= (Uint32)p[SDL_AUDIO_ISBIGENDIAN(f) ? width - 1 - b : b] << (8 * b);
+            for (int b = 0; b < width; ++b) u |= (Uint32)p[f.bigEndian ? width - 1 - b : b] << (8 * b);
             const long long top = 1ll << (8 * width - 1);
-            long long sv = SDL_AUDIO_ISSIGNED(f) ? (long long)(Sint32)(u << (32 - 8 * width)) >> (32 - 8 * width) : (long long)u - top;
+            long long sv = f.isSigned ? (long long)(Sint32)(u << (32 - 8 * width)) >> (32 - 8 * width) : (long long)u - top;
             v = (float)sv / (float)top;
         }
         const Sint16 s16 = (Sint16)std::clamp(v * 32767.0f, -32768.0f, 32767.0f);
@@ -5381,7 +5381,7 @@ static void VoiceClipToPlayable(VoiceClip& c) {
     }
     c.owned = std::move(out);
     c.pcm = c.owned.data(); c.len = (Uint32)c.owned.size();
-    c.spec.format = AUDIO_S16SYS;
+    c.spec.SetS16Native();
 }
 static std::unique_ptr<okay::platform::AudioDevice> g_playDev;
 static std::string       g_playUrl;          // clip loaded on g_playDev
@@ -5459,19 +5459,19 @@ static VoiceClip* VoiceClipFor(const std::string& url) {
         // SDL hands back a buffer that only SDL_FreeWAV may release. Copy the samples into the
         // clip's own storage and free SDL's at once, so no path (a converted clip, an
         // unsupported width, a replaced entry) can leave it behind (#718).
-        SDL_AudioSpec wavSpec{};
-        if (!failed && okay::wav::LoadWavForSdl(cache.string(), wavSpec, c.owned)) {
+        okay::wav::ClipSpec wavSpec;
+        if (!failed && okay::wav::LoadWavClipAny(cache.string(), wavSpec, c.owned)) {
             c.spec = wavSpec;
             c.pcm = c.owned.empty() ? nullptr : c.owned.data();
             c.len = (Uint32)c.owned.size();
             VoiceClipToPlayable(c);
-            const int bps = SDL_AUDIO_BITSIZE(c.spec.format) / 8 * std::max<int>(1, c.spec.channels);
+            const int bps = c.spec.bits / 8 * std::max<int>(1, c.spec.channels);
             c.bytesPerSec = (float)c.spec.freq * bps;
             c.secs = c.len / c.bytesPerSec;
             c.ok = c.len > 0;
             // Real waveform: peak per slice (16-bit clips; anything else keeps the stub).
             const Uint32 frames = bps ? c.len / bps : 0;
-            const bool s16 = c.spec.format == AUDIO_S16LSB || c.spec.format == AUDIO_S16MSB;
+            const bool s16 = c.spec.bits == 16 && !c.spec.isFloat && c.spec.isSigned;
             float top = 0.0001f;
             for (int b = 0; b < kVoiceBars; ++b) {
                 float peak = 0;
@@ -5479,7 +5479,7 @@ static VoiceClip* VoiceClipFor(const std::string& url) {
                     Uint32 a = frames * b / kVoiceBars, e = frames * (b + 1) / kVoiceBars;
                     for (Uint32 f = a; f < e; ++f) {
                         Sint16 v; std::memcpy(&v, c.pcm + (std::size_t)f * bps, 2);
-                        if (c.spec.format == AUDIO_S16MSB) v = (Sint16)SDL_Swap16((Uint16)v);
+                        if (c.spec.bigEndian) v = (Sint16)(((Uint16)v << 8) | ((Uint16)v >> 8));
                         peak = std::max(peak, std::abs((float)v) / 32768.0f);
                     }
                 } else peak = VoiceBarStub(url, b);
@@ -5503,7 +5503,7 @@ static void StopVoice() {
 // time-stretched copy (16-bit mono clips, i.e. our own recordings).
 static const Uint8* VoiceBuffer(VoiceClip& c, Uint32& len) {
     const int si = std::clamp(g_voiceSpeed, 0, 2);
-    const bool s16mono = c.spec.format == AUDIO_S16SYS && c.spec.channels == 1;
+    const bool s16mono = c.spec.IsS16Native() && c.spec.channels == 1;
     if (si == 0 || !s16mono || c.len < 4) { len = c.len; return c.pcm; }
     auto it = c.fast.find(si);
     if (it == c.fast.end()) {
@@ -5524,7 +5524,7 @@ static void PlayVoiceAt(const std::string& url, VoiceClip& c, float frac) {
         StopVoice();
         okay::platform::AudioSpec want;
         want.freq = c.spec.freq; want.channels = std::max<int>(1, c.spec.channels); want.frames = std::max<int>(256, c.spec.samples);
-        want.format = c.spec.format == AUDIO_F32SYS ? okay::platform::SampleFormat::F32 : okay::platform::SampleFormat::S16;   // other formats were converted to s16 at load
+        want.format = c.spec.IsF32Native() ? okay::platform::SampleFormat::F32 : okay::platform::SampleFormat::S16;   // other formats were converted to s16 at load
         okay::platform::Backend* pb = okay::platform::Default();
         g_playDev = pb ? pb->OpenAudio(want, false, nullptr, nullptr) : nullptr;
         if (!g_playDev) { Toast("No audio output device", 2); return; }
@@ -5533,7 +5533,7 @@ static void PlayVoiceAt(const std::string& url, VoiceClip& c, float frac) {
     g_playDev->ClearQueued();
     Uint32 len = 0;
     const Uint8* buf = VoiceBuffer(c, len);
-    const Uint32 frame = SDL_AUDIO_BITSIZE(c.spec.format) / 8 * std::max<int>(1, c.spec.channels);
+    const Uint32 frame = c.spec.bits / 8 * std::max<int>(1, c.spec.channels);
     Uint32 off = (Uint32)(std::clamp(frac, 0.0f, 1.0f) * len);
     off -= off % std::max<Uint32>(1, frame);
     if (off >= len) off = 0;
@@ -16759,7 +16759,7 @@ static void ChatHostSaveGeometry() {
 static bool ChatHostCreate() {
     if (g_chatHost.win) return true;
     ImGuiContext* mainCtx = ImGui::GetCurrentContext();
-    const int x = g_chatWinX >= 0 ? g_chatWinX : (int)SDL_WINDOWPOS_CENTERED, y = g_chatWinY >= 0 ? g_chatWinY : (int)SDL_WINDOWPOS_CENTERED;
+    const int x = g_chatWinX >= 0 ? g_chatWinX : okay::platform::kCentered, y = g_chatWinY >= 0 ? g_chatWinY : okay::platform::kCentered;
     okay::platform::Backend* sb = okay::platform::Default();
     okay::platform::WindowDesc cd;
     cd.title = "OkaySpace Chat"; cd.x = x; cd.y = y; cd.width = g_chatWinW; cd.height = g_chatWinH;
@@ -16824,6 +16824,7 @@ static bool ChatHostEvent(const okay::platform::Event& e) {
         case EvT::KeyDown: case EvT::KeyUp: case EvT::TextInput: case EvT::TextEditing:
         case EvT::MouseMove: case EvT::MouseButtonDown: case EvT::MouseButtonUp: case EvT::MouseWheel: case EvT::DropFile:
             wid = e.windowId; break;
+#ifndef OKAY_NO_SDL
         case EvT::Other: {   // what the seam has no type for: other window events (pointer enter / leave, moved ...), IME composition, drop begin / complete
             const SDL_Event* n = (const SDL_Event*)e.native;
             if (!n) return false;
@@ -16835,6 +16836,7 @@ static bool ChatHostEvent(const okay::platform::Event& e) {
             }
             break;
         }
+#endif
         default: return false;
     }
     if (wid != g_chatHost.id) return false;
@@ -18188,7 +18190,9 @@ int main(int argc, char** argv) {
     okay::restart::RememberArguments(argc, argv);
     okay::ownswitches::Startup();   // Settings > Experimental: set the chosen own-code variables BEFORE anything reads them (the editor started from here inherits them)
     okay::ownstack::Startup();   // OKAY_OWN_STACK=1 sets the own-backend switches; logs which parts are ours (docs/own_stack_rollout.md)
-    SDL_SetMainReady();
+#ifndef OKAY_NO_SDL
+    SDL_SetMainReady();   // (SDL_MAIN_HANDLED: this program has its own main())
+#endif
     {
         std::error_code ec;
         fs::path self = okay::restart::CurrentExecutable();

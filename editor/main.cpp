@@ -744,7 +744,7 @@ int main(int argc, char** argv) {
 // Take control of the program entry point ourselves so SDL doesn't #define
 // `main` to SDL_main (which would also rewrite identifiers like `cam->main`).
 #define SDL_MAIN_HANDLED
-#include <SDL.h>
+#include "PlainTypes.hpp"   // SDL.h in a normal build; plain types only with OKAY_NO_SDL
 #include "okay/Platform/Platform.hpp"   // okay::platform: timers (and the SDL seam)
 #include "okay/Platform/WindowLogic.hpp" // first-run UI scale, focus hand-back decision
 #include "AppIcon.hpp"
@@ -885,7 +885,9 @@ static void RunEditorPlayKeyTest(int& failures) {
     auto check = [&](bool cond, const char* what) {
         if (!cond) { ++failures; std::cerr << "  FAIL: " << what << "\n"; }
     };
+#ifndef OKAY_NO_SDL
     if (SDL_WasInit(SDL_INIT_EVENTS) == 0) SDL_Init(SDL_INIT_EVENTS);
+#endif
     EditorState ped;
     auto place = [&](const char* name, const char* which, Vec3 at) {
         GameObject* go = ped.scene().CreateGameObject(name);
@@ -903,23 +905,24 @@ static void RunEditorPlayKeyTest(int& failures) {
     GameObject* sw = place("Switch", "Press E", {4, 0, 2});
     if (auto* mesh = sw->GetComponent<MeshRenderer>()) mesh->color = {0.9f, 0.2f, 0.2f, 1};
     ped.Play();
-    Uint8 ks[SDL_NUM_SCANCODES] = {};
-    ks[SDL_SCANCODE_D] = 1;
+    unsigned char ks[512] = {};   // held keys by platform key number (the HID numbering, which is also SDL's scancode numbering)
+    auto collectKeys = [&](std::vector<char>& d) { CollectEditorPlayKeysPlatform(d, [&](okay::platform::Key k) { return (int)k >= 0 && (int)k < 512 && ks[(int)k] != 0; }); };
+    ks[(int)okay::platform::Key::D] = 1;
     for (int i = 0; i < 70; ++i) {
         std::vector<char> down;
-        CollectEditorPlayKeys(down, ks, SDL_NUM_SCANCODES);
+        collectKeys(down);
         Input::FeedKeys(down);
         ped.Tick(1.0f / 60.0f);
     }
     check(player && player->transform->localPosition.x > -0.2f, "editor play: D moved the WASD cube");
     check(door && door->transform->localPosition.y > 1.2f, "editor play: walking into the door opened it");
-    ks[SDL_SCANCODE_D] = 0;
+    ks[(int)okay::platform::Key::D] = 0;
     Input::FeedKeys({});
     ped.Tick(1.0f / 60.0f);
-    ks[SDL_SCANCODE_E] = 1;
+    ks[(int)okay::platform::Key::E] = 1;
     {
         std::vector<char> down;
-        CollectEditorPlayKeys(down, ks, SDL_NUM_SCANCODES);
+        collectKeys(down);
         Input::FeedKeys(down);
         ped.Tick(1.0f / 60.0f);
     }
@@ -7141,10 +7144,10 @@ static void DrawCameraBookmarkMenuItems(EditorState& ed) {
 static oked::autoperf::Hardware ReadHardware() {
     oked::autoperf::Hardware h;
     if (g_sdlRenderer) h.gpuRenderer = okay::pb::IsAccelerated(g_sdlRenderer);
-    h.cpuCores = SDL_GetCPUCount();
-    h.ramMB = SDL_GetSystemRAM();
-    SDL_DisplayMode dm;
-    if (SDL_GetDesktopDisplayMode(0, &dm) == 0) h.displayHz = dm.refresh_rate;
+    h.cpuCores = okay::platform::CpuCount();
+    h.ramMB = okay::platform::SystemRamMB();
+    okay::platform::DisplayInfo di;
+    if (okay::platform::Backend* db = okay::platform::Default()) if (db->DisplayAt(0, di) && di.refreshHz > 0) h.displayHz = di.refreshHz;
     return h;
 }
 // Turn the saved modes into the values in use (g_ssaa, g_vsync). Called at start-up and when the user changes a mode.
@@ -20070,9 +20073,13 @@ void DrawAboutPopup() {
                            "script them, and export a standalone game with File > Build Game.");
         ImGui::PopTextWrapPos();
         ImGui::Spacing();
+#ifndef OKAY_NO_SDL
         ImGui::TextDisabled("SDL %d.%d.%d  ·  Dear ImGui %s  ·  Assimp %s",
                             SDL_MAJOR_VERSION, SDL_MINOR_VERSION, SDL_PATCHLEVEL, IMGUI_VERSION,
                             okay::AssimpAvailable() ? "on" : "off");
+#else
+        ImGui::TextDisabled("Own platform layer  ·  Dear ImGui %s  ·  Assimp %s", IMGUI_VERSION, okay::AssimpAvailable() ? "on" : "off");
+#endif
         ImGui::PushTextWrapPos(ImGui::GetCursorPosX() + 380.0f); ImGui::TextDisabled("%s", okay::ownstack::Describe(okayuibackend::Name(g_uiBackend)).c_str()); ImGui::PopTextWrapPos();   // which parts are ours (docs/own_stack_rollout.md)
         {   // the update signature check: ON, or OFF with the reason (docs/security.md "Updater signing")
             static const okayupdate::SigStatus sigStatus = okayupdate::SignatureStatus(okayupdate::BuiltInTrustedKeys());
@@ -20088,9 +20095,13 @@ void DrawAboutPopup() {
         ImGui::SameLine();
         if (ImGui::Button("Copy version info", ImVec2(150, 0))) {
             char vb[128];
+#ifndef OKAY_NO_SDL
             std::snprintf(vb, sizeof(vb), "OkaySpace v%s (SDL %d.%d.%d, ImGui %s)",
                           OKAY_ENGINE_VERSION, SDL_MAJOR_VERSION, SDL_MINOR_VERSION,
                           SDL_PATCHLEVEL, IMGUI_VERSION);
+#else
+            std::snprintf(vb, sizeof(vb), "OkaySpace v%s (own platform layer, ImGui %s)", OKAY_ENGINE_VERSION, IMGUI_VERSION);
+#endif
             ImGui::SetClipboardText(vb);
         }
         ImGui::EndPopup();
@@ -50634,7 +50645,9 @@ int main(int argc, char** argv) {
         return 0;
     }
 
+#ifndef OKAY_NO_SDL
     SDL_SetMainReady(); // we manage the entry point (SDL_MAIN_HANDLED)
+#endif
     // Windows 11 / high-DPI: declare the process per-monitor-DPI-aware BEFORE init so
     // Windows renders the window at native resolution (crisp) instead of bitmap-
     // stretching a 96-DPI surface (the blurry look on 125%/150% scaled displays).
@@ -50698,9 +50711,11 @@ int main(int argc, char** argv) {
 #endif
     // An accelerated renderer (the driver the hint chose), else one with the default driver, else any (software). The painter owns it.
     SDL_Renderer* renderer = okay::pb::CreateRenderer(*winSeam, false, nullptr, true);
+#ifndef OKAY_NO_SDL
     if (!renderer) { SDL_SetHint(SDL_HINT_RENDER_DRIVER, ""); renderer = okay::pb::CreateRenderer(*winSeam, false, nullptr, true); }
+#endif
     if (!renderer) renderer = okay::pb::CreateRenderer(*winSeam);
-    if (!renderer) { std::cerr << "CreateRenderer failed: " << SDL_GetError() << "\n"; return 1; }
+    if (!renderer) { std::cerr << "CreateRenderer failed: " << sdlSeam->LastError() << "\n"; return 1; }
     g_sdlRenderer = renderer; // used by the z-buffered 3D view to make textures
     ResolveAutoRendering();   // VSync and 3D anti-aliasing: Auto picks for this PC (re-run after the saved settings load)
     // Load the project's settings early (<project>/project.okayproj) so the loading screen can show
@@ -50948,7 +50963,7 @@ int main(int argc, char** argv) {
     if (g_multiWindow) {
         if (ViewportsSupported()) ImGui::GetIO().ConfigFlags |= ImGuiConfigFlags_ViewportsEnable;
         else {
-            const char* drv = sdlSeam->Kind() == okay::platform::BackendKind::Sdl2 ? SDL_GetCurrentVideoDriver() : "own";
+            const char* drv = sdlSeam->Name();   // "sdl2" or "own"
             const std::string msg = std::string("Multi-window panels are off: the video driver '") + (drv ? drv : "?") +
                                     "' cannot open extra windows here, so panels stay inside the editor window.";
             std::printf("[okay] %s\n", msg.c_str());
@@ -50990,7 +51005,7 @@ int main(int argc, char** argv) {
                     g_glReady = true;
                     ConsoleLog("GPU renderer available (View > GPU Renderer).");
                     {   // the GPU, the vendor and the OpenGL version go into every crash report (the UI crash shows on some drivers only)
-                        using GetStringFn = const unsigned char* (SDLCALL*)(unsigned int);   // GL_VENDOR 0x1F00, GL_RENDERER 0x1F01, GL_VERSION 0x1F02
+                        using GetStringFn = const unsigned char* (*)(unsigned int);   // GL_VENDOR 0x1F00, GL_RENDERER 0x1F01, GL_VERSION 0x1F02
                         std::string gpu;
                         if (auto gs = (GetStringFn)glb->GLProcAddress("glGetString")) {
                             auto str = [&](unsigned int what) { const unsigned char* t = gs(what); return t ? std::string((const char*)t) : std::string("?"); };
@@ -51197,8 +51212,8 @@ int main(int argc, char** argv) {
         {   // seconds since the last event of any kind (the idle throttle reads this; the first frame counts as just now)
             static Uint64 s_lastInput = okay::platform::PerfCounter();
             g_secSinceInput = (double)(okay::platform::PerfCounter() - s_lastInput) / (double)okay::platform::PerfFrequency();
-            SDL_PumpEvents();
-            if (SDL_HasEvents(SDL_FIRSTEVENT, SDL_LASTEVENT)) { s_lastInput = okay::platform::PerfCounter(); g_secSinceInput = 0.0; }
+            sdlSeam->PumpEvents();
+            if (sdlSeam->HasPendingEvents()) { s_lastInput = okay::platform::PerfCounter(); g_secSinceInput = 0.0; }
         }
         okay::platform::Event e;
         while (sdlSeam->PollEvent(e)) {
@@ -51510,9 +51525,9 @@ int main(int argc, char** argv) {
                     s_gameVMouse.y += (float)dyp;
                 }
                 unsigned mask = 0;
-                if (rmb & SDL_BUTTON(SDL_BUTTON_LEFT))   mask |= 1u << 0;
-                if (rmb & SDL_BUTTON(SDL_BUTTON_RIGHT))  mask |= 1u << 1;
-                if (rmb & SDL_BUTTON(SDL_BUTTON_MIDDLE)) mask |= 1u << 2;
+                if (rmb & okay::platform::MouseMask(okay::platform::MouseLeft))   mask |= 1u << 0;
+                if (rmb & okay::platform::MouseMask(okay::platform::MouseRight))  mask |= 1u << 1;
+                if (rmb & okay::platform::MouseMask(okay::platform::MouseMiddle)) mask |= 1u << 2;
                 Input::FeedMouse(s_gameVMouse, mask);
             } else {
                 if (s_playLookLocked) {
@@ -51636,7 +51651,7 @@ int main(int argc, char** argv) {
                 const bool owns = UseOkayUIBackend() && g_okayRegion.Owns(uin.mouseX, uin.mouseY);
                 const bool blocked = io.WantCaptureMouse && !owns;
                 const bool keys = UseOkayUIBackend() && OkayUI::WantsTextInput() && ImGui::GetActiveID() == 0;
-                const OkayUI::Input h = g_okayInput.Build(uin.mouseX, uin.mouseY, left, (mb & SDL_BUTTON(SDL_BUTTON_RIGHT)) != 0, blocked, keys);
+                const OkayUI::Input h = g_okayInput.Build(uin.mouseX, uin.mouseY, left, (mb & okay::platform::MouseMask(okay::platform::MouseRight)) != 0, blocked, keys);
                 if (UseOkayUIBackend()) {
                     uin.blocked = blocked; uin.mouseDown = h.mouseDown; uin.rightDown = h.rightDown; uin.wheel = h.wheel;   // (mouseDown also counts a click that came and went within one frame)
                     if (keys) uin = h;
@@ -52740,7 +52755,7 @@ int main(int argc, char** argv) {
             if (target > 0.0) {
                 const double elapsed = (double)(okay::platform::PerfCounter() - g_frameT0) / (double)okay::platform::PerfFrequency();
                 const double wait = okay::editor::perf::SleepSeconds(target, elapsed);
-                if (wait >= 0.001) { OKAY_PROFILE("Pacing.Sleep"); SDL_Delay((Uint32)(wait * 1000.0)); }
+                if (wait >= 0.001) { OKAY_PROFILE("Pacing.Sleep"); okay::platform::DelayMs((std::uint32_t)(wait * 1000.0)); }
             }
         }
         {   // Close out the profiler frame (total wall time incl. present).

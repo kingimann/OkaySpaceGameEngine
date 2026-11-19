@@ -12,7 +12,7 @@
 #ifndef SDL_MAIN_HANDLED
 #  define SDL_MAIN_HANDLED
 #endif
-#include <SDL.h>
+#include "PlainTypes.hpp"   // SDL.h in a normal build; plain types only with OKAY_NO_SDL
 #include "okay/Platform/Platform.hpp"   // okay::platform: timers (and the SDL seam)
 #include "okay/Platform/Painter.hpp"    // the splash is drawn through the platform painter
 #include "PainterBridge.hpp"

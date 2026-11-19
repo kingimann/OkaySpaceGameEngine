@@ -21,7 +21,7 @@
 #ifndef SDL_MAIN_HANDLED
 #  define SDL_MAIN_HANDLED
 #endif
-#include <SDL.h>
+#include "PlainTypes.hpp"   // SDL.h in a normal build; plain types only with OKAY_NO_SDL
 
 #include <cstring>
 
@@ -30,6 +30,7 @@ namespace okayuihost {
 /// Collects what OkayUI needs from SDL events between two frames.
 class InputCollector {
 public:
+#ifndef OKAY_NO_SDL   // the SDL-event overload (tests drive it with plain SDL_Event structs); a build with no SDL has only the platform-event one
     /// Feed every SDL event (the host may also pass it to ImGui; the collector never consumes events).
     void Feed(const SDL_Event& e) {
         switch (e.type) {
@@ -86,6 +87,7 @@ public:
         }
     }
 
+#endif
     /// The same as Feed(SDL_Event) for an okay::platform event, so an app that polls the seam needs no SDL event here.
     /// Only the kinds OkayUI wants are read (text, left and right button down, wheel, key down and up); any other is ignored.
     /// `layoutChar` is what the key types on the current layout ('a'..'z', '0'..'9', ' '; 0 = none): Backend::CharForKey(e.key).
@@ -173,6 +175,7 @@ public:
         return in;
     }
 
+#ifndef OKAY_NO_SDL
     /// The OkayUI key a SDL keycode stands for (KeyId_None for the keys OkayUI does not name).
     static int KeyIdOf(SDL_Keycode k) {
         using namespace OkayUI;
@@ -193,6 +196,7 @@ public:
         }
     }
 
+#endif
     /// The OkayUI key a platform key stands for. `layoutChar` is the character the key types on the current layout (the letters and
     /// digits follow the layout, as SDL's key symbols do); everything else goes by the physical key.
     static int KeyIdOf(okay::platform::Key k, char layoutChar) {

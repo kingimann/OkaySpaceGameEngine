@@ -8,7 +8,7 @@
 #include "okay/Platform/Painter.hpp"
 #include "PainterBridge.hpp"
 
-#include <SDL.h>
+#include "PlainTypes.hpp"   // SDL.h in a normal build; plain types only with OKAY_NO_SDL
 #include <cstring>
 #include <map>
 #include <memory>

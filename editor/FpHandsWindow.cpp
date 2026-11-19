@@ -3,7 +3,7 @@
 #include "okay/Components/HoldableObject.hpp"
 #include "okay/Components/ProceduralObjectHolding.hpp"
 #include "imgui.h"
-#include <SDL.h>
+#include "PlainTypes.hpp"   // SDL.h in a normal build; plain types only with OKAY_NO_SDL
 #include "PainterBridge.hpp"
 #include <cstdint>
 #include <cstring>

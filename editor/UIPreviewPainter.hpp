@@ -10,7 +10,7 @@
 // colours: the draw list renders later, so the shared SDL textures are never touched.
 #include "okay/UI/UIPainter.hpp"
 #include "imgui.h"
-#include <SDL.h>
+#include "PlainTypes.hpp"   // SDL.h in a normal build; plain types only with OKAY_NO_SDL
 #include <string>
 #include <unordered_map>
 

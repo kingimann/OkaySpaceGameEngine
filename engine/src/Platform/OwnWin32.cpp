@@ -372,6 +372,7 @@ public:
     void Unregister(HWND h) { m_wins.erase(h); }
 
     void PumpEvents() override { PumpMessages(); }
+    bool HasPendingEvents() override { return !m_pending.empty(); }
     bool PushEvent(const Event& e) override {
         if (e.type == EventType::NoEvent || e.type == EventType::Other) return false;
         m_pending.push_back(e);

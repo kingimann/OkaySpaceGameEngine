@@ -58,6 +58,7 @@ public:
         Event e;
         while (m_x11 && m_x11->PollEvent(e)) m_pending.push_back(std::move(e));
     }
+    bool HasPendingEvents() override { return !m_pending.empty(); }   // PumpEvents moved what the system had into m_pending
     bool PushEvent(const Event& e) override {
         if (e.type == EventType::NoEvent || e.type == EventType::Other) return false;
         m_pending.push_back(e);

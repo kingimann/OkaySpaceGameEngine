@@ -1,5 +1,8 @@
 // Backend registry and the timer fallbacks of okay::platform.
 #include "okay/Platform/Platform.hpp"
+#if !defined(_WIN32)
+#include <unistd.h>
+#endif
 #include "Internal.hpp"
 #include <chrono>
 #include <cstring>
@@ -93,6 +96,29 @@ Key Backend::KeyForChar(char c) {
     if (c == '0') return Key::N0;
     if (c == ' ') return Key::Space;
     return Key::Unknown;
+}
+
+int CpuCount() {
+#if defined(_WIN32)
+    SYSTEM_INFO si; GetSystemInfo(&si);
+    return (int)si.dwNumberOfProcessors;
+#elif defined(__unix__) || defined(__APPLE__)
+    const long n = sysconf(_SC_NPROCESSORS_ONLN);
+    return n > 0 ? (int)n : 0;
+#else
+    return 0;
+#endif
+}
+int SystemRamMB() {
+#if defined(_WIN32)
+    MEMORYSTATUSEX ms; ms.dwLength = sizeof(ms);
+    return GlobalMemoryStatusEx(&ms) ? (int)(ms.ullTotalPhys / (1024ull * 1024ull)) : 0;
+#elif defined(__unix__) || defined(__APPLE__)
+    const long pages = sysconf(_SC_PHYS_PAGES), size = sysconf(_SC_PAGE_SIZE);
+    return pages > 0 && size > 0 ? (int)((unsigned long long)pages * (unsigned long long)size / (1024ull * 1024ull)) : 0;
+#else
+    return 0;
+#endif
 }
 
 char Backend::CharForKey(Key k) {

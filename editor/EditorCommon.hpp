@@ -50,7 +50,7 @@
 #ifndef SDL_MAIN_HANDLED
 #define SDL_MAIN_HANDLED
 #endif
-#include <SDL.h>
+#include "PlainTypes.hpp"   // SDL.h in a normal build; plain types only with OKAY_NO_SDL
 #include "imgui.h"
 #include "imgui_internal.h"
 

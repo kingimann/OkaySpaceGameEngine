@@ -290,6 +290,7 @@ public:
         return false;
     }
     void PumpEvents() override { SDL_PumpEvents(); }
+    bool HasPendingEvents() override { return SDL_HasEvents(SDL_FIRSTEVENT, SDL_LASTEVENT) == SDL_TRUE; }
     void ReportUnmappedEvents(bool on) override { m_reportUnmapped = on; }
     bool PushEvent(const Event& r) override {
         SDL_Event e;

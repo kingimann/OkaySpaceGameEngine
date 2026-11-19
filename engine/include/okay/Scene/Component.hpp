@@ -1,4 +1,5 @@
 #pragma once
+#include <cstdint>
 #include <unordered_set>
 #include <string>
 #include <vector>
@@ -120,9 +121,19 @@ public:
 
     Scene* GetScene() const;
 
+    /// A number unique to this component for the whole run (never reused, 0 only for a component that
+    /// was not made through GameObject::AddComponent). Unlike the address, it can not name a newer
+    /// component after this one is freed, so a ComponentRef (Scene/Refs.hpp) uses it.
+    std::uint64_t ComponentId() const { return m_serial; }
+
 private:
     friend class Scene;
     friend class GameObject;
+    std::uint64_t m_serial = 0;
+    // Where the Scene last saw this component in its update list / waiting list. Only a hint that is
+    // checked before use (so Scene::NotifyComponentRemoved does not scan a whole list per removal).
+    std::uint32_t m_activeSlot = 0xFFFFFFFFu;
+    std::uint32_t m_pendingSlot = 0xFFFFFFFFu;
     bool m_started = false;
     bool m_live = false;   // OnEnable delivered and not yet undone by OnDisable
     bool m_removing = false;   // GameObject::RemoveComponent is running its callbacks

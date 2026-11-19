@@ -1,4 +1,5 @@
 #include "okay/Scene/ProjectLists.hpp"
+#include "okay/Scene/ExecutionOrder.hpp"
 #include "okay/Scene/Layers.hpp"
 #include "okay/Scene/Tags.hpp"
 #include <cstdio>
@@ -10,9 +11,11 @@ namespace okay {
 
 namespace {
 const std::string kLayerKey = "layer_name_";
+const std::string kRunKey = "run_order_";
 
 bool IsOurKey(const std::string& key) {
-    return key == "tag" || key == "strict_tags" || key.compare(0, kLayerKey.size(), kLayerKey) == 0;
+    return key == "tag" || key == "strict_tags" || key.compare(0, kLayerKey.size(), kLayerKey) == 0 ||
+           key.compare(0, kRunKey.size(), kRunKey) == 0;
 }
 void StripCr(std::string& s) { while (!s.empty() && (s.back() == '\r' || s.back() == '\n')) s.pop_back(); }
 }
@@ -25,12 +28,20 @@ std::string ProjectLists::Write() {
         const std::string& now = Layers::Names()[static_cast<std::size_t>(i)];
         if (now != Layers::DefaultName(i)) out += kLayerKey + std::to_string(i) + "=" + now + "\n";
     }
+    for (const auto& r : ExecutionOrderSettings::All())
+        out += kRunKey + r.first + (r.second == RunWhen::Early ? "=early\n" : "=late\n");
     return out;
 }
 
 bool ProjectLists::ApplyLine(const std::string& key, const std::string& value) {
     if (key == "tag") return Tags::Add(value);
     if (key == "strict_tags") { Tags::Strict() = (std::atoi(value.c_str()) != 0); return true; }
+    if (key.compare(0, kRunKey.size(), kRunKey) == 0) {   // run_order_<TypeName>=early|late
+        const std::string type = key.substr(kRunKey.size());
+        if (value == "early") return ExecutionOrderSettings::Set(type, RunWhen::Early);
+        if (value == "late") return ExecutionOrderSettings::Set(type, RunWhen::Late);
+        return false;
+    }
     if (key.compare(0, kLayerKey.size(), kLayerKey) != 0) return false;
     const std::string num = key.substr(kLayerKey.size());
     if (num.empty() || num.size() > 2) return false;
@@ -99,6 +110,7 @@ void ProjectLists::Reset() {
     Tags::Custom().clear();
     Tags::Strict() = false;
     Layers::ResetNames();
+    ExecutionOrderSettings::Clear();
 }
 
 } // namespace okay

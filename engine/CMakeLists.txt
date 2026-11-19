@@ -763,7 +763,7 @@ target_sources(okay_engine PRIVATE
 # per-record / per-field apply and revert, prefab queries and the asset validator.
 target_sources(okay_engine PRIVATE src/Scene/PrefabTools.cpp)
 # Project tag list and layer names in the project settings file (docs/layers_tags_cameras.md).
-target_sources(okay_engine PRIVATE src/Scene/ProjectLists.cpp)
+target_sources(okay_engine PRIVATE src/Scene/ProjectLists.cpp src/Scene/ExecutionOrder.cpp)
 # ---- Property reflection (docs/properties.md) ----
 # PropertyValue / PropertyDesc, the registry with path access and change hook,
 # snapshot / diff / copy, and the built-in component registrations.

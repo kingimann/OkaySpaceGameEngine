@@ -26,6 +26,7 @@
 #include "AnimatorWindow.hpp"          // the Animator window (state-machine graph editor)
 #include "TimelineWindow.hpp"          // the Timeline window (cutscene sequences)
 #include "NavigationWindow.hpp"        // the Navigation window (navmesh bake, overlays, agent inspectors)
+#include "SceneStatsWindow.hpp"        // the Scene Stats window and the Project Settings > Run order section
 #include "DialogueWindow.hpp"          // the Dialogue window (graph editor + Quests tab) and the story inspectors
 #include "BehaviorTreeWindow.hpp"      // the Behavior Tree window (NPC AI trees, runner inspector)
 #include "okay/Components/BehaviorTreeRunner.hpp"
@@ -7257,6 +7258,8 @@ static void DrawRenderingMenuItems(EditorState& ed) {
     if (ImGui::MenuItem("Frame-time overlay", nullptr, &g_showPerfOverlay)) SaveSettings();
     if (ImGui::IsItemHovered()) ImGui::SetTooltip("A small window with FPS, frame time, a graph of the last frames and where the frame goes\n(3D view, panels, ImGui, present). Its Copy report button puts the numbers on the clipboard.");
     if (ImGui::MenuItem("Profiler window", nullptr, &g_showProfiler)) SaveSettings();
+    if (ImGui::MenuItem("Scene Stats window", nullptr, &oked::g_showSceneStats)) SaveSettings();
+    if (ImGui::IsItemHovered()) ImGui::SetTooltip("Counts of objects and components, components by type, and (when you tick the box) how long each type takes per frame.");
     if (ImGui::BeginMenu("Viewport resolution")) {
         const int pcts[] = {100, 75, 50, 35};
         for (int p : pcts) {
@@ -20330,6 +20333,7 @@ void DrawProjectSettings(EditorState& ed) {
             }
         }
         if (ImGui::CollapsingHeader("Tags and Layers")) DrawTagsAndLayersSettings(ed);
+        if (ImGui::CollapsingHeader("Run order")) oked::DrawRunOrderSettings(ed, &SaveProjectSettings);
         if (ImGui::CollapsingHeader("Loading screen")) {
             ImGui::TextDisabled("Customize the editor's startup splash for this project.\nChanges apply the next time the editor opens the project.");
             const auto pngFilt = okay::filedialog::Filters("PNG image", {"*.png"});
@@ -52520,6 +52524,7 @@ int main(int argc, char** argv) {
         { OKAY_PROFILE("UI.MaterialEditor"); DrawMaterialEditor(ed); }
         { OKAY_PROFILE("UI.GameView"); if (g_showGame)      DrawGameView(ed); }
         { OKAY_PROFILE("UI.Profiler"); if (g_showProfiler)  DrawProfiler(ed); }
+        { OKAY_PROFILE("UI.SceneStats"); oked::DrawSceneStatsWindow(ed); }
         { OKAY_PROFILE("UI.PerfOverlay"); if (g_showPerfOverlay) DrawPerfOverlay(ed); }
         { OKAY_PROFILE("UI.Inspector"); if (g_showInspector) DrawInspector(ed); }
         DrawFpHandsPreviewWindow(ed);

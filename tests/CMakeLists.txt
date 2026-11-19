@@ -4415,3 +4415,18 @@ foreach(_t IN ITEMS mip atlas convert bc dds_stream)
     add_test(NAME tex_${_t} COMMAND test_tex_${_t} WORKING_DIRECTORY ${CMAKE_CURRENT_BINARY_DIR})
     set_tests_properties(tex_${_t} PROPERTIES TIMEOUT 240)
 endforeach()
+
+# Printed ECS benchmark (docs/ecs_upgrade.md); only counts are asserted, never times.
+add_executable(test_ecs_bench test_ecs_bench.cpp)
+target_link_libraries(test_ecs_bench PRIVATE okay::engine)
+add_test(NAME ecs_bench COMMAND test_ecs_bench)
+set_tests_properties(ecs_bench PROPERTIES ENVIRONMENT "OKAY_ECS_BENCH_N=2000")
+
+# Entity/component upgrade tests (docs/ecs_upgrade.md): handles, run order, queries, radius grid, fuzz.
+add_executable(test_ecs_refs test_ecs_refs.cpp)
+target_link_libraries(test_ecs_refs PRIVATE okay::engine)
+add_test(NAME ecs_refs COMMAND test_ecs_refs)
+add_executable(test_ecs_fuzz test_ecs_fuzz.cpp)
+target_link_libraries(test_ecs_fuzz PRIVATE okay::engine)
+add_test(NAME ecs_fuzz COMMAND test_ecs_fuzz)
+set_tests_properties(ecs_fuzz PROPERTIES TIMEOUT 300)

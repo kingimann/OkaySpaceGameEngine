@@ -9,6 +9,7 @@ namespace okay {
 ///
 ///   tag=Boss                 a custom tag (the built-in tags are not written)
 ///   strict_tags=1            Tags::Strict()
+///   run_order_Lifetime=late  a type that runs early or late each frame (ExecutionOrder.hpp)
 ///   layer_name_8=Enemy       a layer name that differs from the default; "layer_name_4=" is a
 ///                            default name that was cleared on purpose
 ///

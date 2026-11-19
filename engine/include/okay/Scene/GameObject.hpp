@@ -22,6 +22,8 @@ namespace detail {
 inline std::atomic<std::uint64_t> g_activeEpoch{1};
 /// How many objects ActiveInHierarchy() had to look at to compute an answer (cache hits cost nothing).
 inline std::atomic<std::uint64_t> g_activeWalkSteps{0};
+/// The next Component::ComponentId() (starts at 1, never reused).
+inline std::atomic<std::uint64_t> g_nextComponentSerial{1};
 } // namespace detail
 
 /// The type of GameObject::active: a bool that notes every change of its value, so
@@ -371,6 +373,7 @@ T* GameObject::AddComponent(Args&&... args) {
     auto owned = std::make_unique<T>(std::forward<Args>(args)...);
     T* ptr = owned.get();
     ptr->gameObject = this;
+    ptr->m_serial   = detail::g_nextComponentSerial.fetch_add(1, std::memory_order_relaxed);
     ptr->transform  = transform ? transform : dynamic_cast<Transform*>(ptr);
     m_components.push_back(std::move(owned));
     NotifyComponentAdded(ptr); // declared in Scene.hpp, defined in Scene.cpp

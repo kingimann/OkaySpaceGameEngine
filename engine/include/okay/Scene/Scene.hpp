@@ -281,6 +281,17 @@ public:
     /// destroy queue. One pass over the scene (a few component names are looked up once per type, not
     /// per component); a deep hierarchy is walked with a stack.
     SceneGraphStats Stats() const;
+    /// How long each component type spent in Update and LateUpdate during the LAST frame (the Scene Stats window shows it).
+    struct ComponentTiming {
+        std::string type;      ///< component type name, e.g. "Rigidbody2D"
+        int calls = 0;         ///< Update + LateUpdate calls that frame
+        double milliseconds = 0.0;
+    };
+    /// Switch the per-type timing on or off (off by default: it reads the clock around every call). While on, Update
+    /// measures each Update/LateUpdate call and LastFrameTimings() lists the totals per type, slowest first.
+    void SetComponentTiming(bool on) { m_timeTypes = on; if (!on) { m_frameTimes.clear(); m_lastTimings.clear(); } }
+    bool ComponentTimingOn() const { return m_timeTypes; }
+    const std::vector<ComponentTiming>& LastFrameTimings() const { return m_lastTimings; }
     /// Check this scene for broken things (see SceneSerializer::Validate): component
     /// records and fields it cannot read, missing asset files, broken parent links and
     /// duplicate guids. Works on the scene's saved form, so runtime-only objects are not covered.
@@ -346,6 +357,25 @@ public:
     /// The first component of type T found in the scene, or nullptr.
     template <typename T>
     T* FindObjectOfType() const {
+        if (!OldSceneQueries()) {
+            // A list FindObjectsOfType<T> already made, and nothing was added, removed or reparented since, answers at once.
+            auto it = m_typeQueries.find(std::type_index(typeid(T)));
+            if (it != m_typeQueries.end()) {
+                const TypeQueryEntry& e = it->second;
+                if (e.list && e.structure == m_structureVersion && e.component == m_componentVersion && e.objects == m_objects.size()) {
+                    const auto& list = *static_cast<std::vector<T*>*>(e.list.get());
+                    return list.empty() ? nullptr : list.front();
+                }
+            }
+            // Walk like before, but a long walk (a big scene, or no such component) makes the list now, so the
+            // next call in a frame where nothing changed is a lookup instead of the same long walk.
+            std::size_t looked = 0;
+            for (const auto& go : m_objects) {
+                if (T* c = go->GetComponent<T>()) return c;
+                if (++looked == 256) { const auto& list = FindObjectsOfType<T>(); return list.empty() ? nullptr : list.front(); }
+            }
+            return nullptr;
+        }
         for (const auto& go : m_objects)
             if (T* c = go->GetComponent<T>()) return c;
         return nullptr;
@@ -665,7 +695,11 @@ private:
     std::uint64_t m_structureVersion = 1;
     std::uint64_t m_componentVersion = 1;
     std::uint64_t m_uid = 0;
+    bool m_timeTypes = false;
+    std::unordered_map<std::type_index, std::pair<double, int>> m_frameTimes;   // this frame, per type: milliseconds and calls
+    std::vector<ComponentTiming> m_lastTimings;
     bool m_hasOrdered = false;   // some component has a non-zero ExecutionOrder
+    std::uint64_t m_orderVersion = 0;   // ExecutionOrderSettings::Version() the update list was last arranged for
     std::vector<Component*>  m_pending;   // awaiting Awake/Start
     std::vector<Component*>  m_active;    // receive Update each frame
     std::vector<GameObject*> m_destroyQueue;

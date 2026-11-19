@@ -1,4 +1,6 @@
 #include "okay/Scene/Scene.hpp"
+#include <chrono>
+#include "okay/Scene/ExecutionOrder.hpp"
 #include "okay/Scene/ComponentCache.hpp"
 #include "okay/Inventory/InventoryPersistence.hpp"
 #include "okay/VisualScript/VsVariables.hpp"
@@ -239,6 +241,7 @@ void Scene::ApplyPendingClear() {
 
 void Scene::QueuePending(Component* component) {
     ++m_componentVersion;
+    component->m_pendingSlot = static_cast<std::uint32_t>(m_pending.size());
     m_pending.push_back(component);
 }
 
@@ -248,8 +251,20 @@ void Scene::NotifyComponentRemoved(Component* component) {
     // or shift elements. Null slots are skipped by every loop and compacted
     // between frames.
     ++m_componentVersion;
-    for (auto& c : m_active)  if (c == component) c = nullptr;
-    for (auto& c : m_pending) if (c == component) c = nullptr;
+    // The component remembers where it stood in each list; that is checked, and only when it is wrong
+    // (the list was sorted or compacted since) is the list scanned, and every entry gets its place again.
+    // Removing every component of a 30,000-component scene was a scan of the whole list per removal.
+    auto drop = [component](std::vector<Component*>& list, std::uint32_t Component::*slot) {
+        if (list.empty()) return;
+        const std::uint32_t at = component->*slot;
+        if (at < list.size() && list[at] == component) { list[at] = nullptr; return; }
+        for (std::size_t i = 0; i < list.size(); ++i) {
+            if (list[i] == component) list[i] = nullptr;
+            else if (list[i]) list[i]->*slot = static_cast<std::uint32_t>(i);
+        }
+    };
+    drop(m_active, &Component::m_activeSlot);
+    drop(m_pending, &Component::m_pendingSlot);
     for (auto& r : m_loads) for (auto& c : r.held) if (c == component) c = nullptr;
     if (m_flushBatch) for (auto& c : *m_flushBatch) if (c == component) c = nullptr;   // the batch FlushPending is walking
     if (static_cast<Component*>(mainCamera) == component) mainCamera = nullptr;
@@ -282,15 +297,16 @@ void Scene::FlushPending() {
         if (!c) continue;                 // removed before it was flushed
         c->Awake();
         if (!batch[i]) continue;          // ... or by its own Awake
+        c->m_activeSlot = static_cast<std::uint32_t>(m_active.size());
         m_active.push_back(c);
-        if (c->ExecutionOrder() != 0) ordered = true;
+        if (ExecutionOrderSettings::Effective(*c) != 0) ordered = true;
     }
     // Keep components with an execution order where they belong (IK after
     // animation); creation order holds among equals.
     if (ordered || m_hasOrdered) {
         m_hasOrdered = true;
         std::stable_sort(m_active.begin(), m_active.end(), [](const Component* a, const Component* b) {
-            return (a ? a->ExecutionOrder() : 0) < (b ? b->ExecutionOrder() : 0);
+            return (a ? ExecutionOrderSettings::Effective(*a) : 0) < (b ? ExecutionOrderSettings::Effective(*b) : 0);
         });
     }
     for (std::size_t i = 0; i < batch.size(); ++i) {
@@ -392,7 +408,7 @@ void Scene::ReattachKept(KeptState& k, bool undo) {
     }
     if (m_hasOrdered)
         std::stable_sort(m_active.begin(), m_active.end(), [](const Component* a, const Component* b) {
-            return (a ? a->ExecutionOrder() : 0) < (b ? b->ExecutionOrder() : 0);
+            return (a ? ExecutionOrderSettings::Effective(*a) : 0) < (b ? ExecutionOrderSettings::Effective(*b) : 0);
         });
     ++m_structureVersion;
 }
@@ -419,6 +435,19 @@ void Scene::Update(float deltaTime) {
     FlushPending(); // adopt anything created since last frame
     // Drop any components removed last frame (their slots were nulled).
     m_active.erase(std::remove(m_active.begin(), m_active.end(), nullptr), m_active.end());
+    if (m_orderVersion == 0) m_orderVersion = ExecutionOrderSettings::Version();   // the list was arranged by FlushPending under the current settings
+    if (m_orderVersion != ExecutionOrderSettings::Version()) {
+        // The project's "Run early / Run late" settings changed: arrange the list again, by order value and then by the
+        // order the components were added (so a setting that is switched back leaves the list as it was).
+        m_orderVersion = ExecutionOrderSettings::Version();
+        if (ExecutionOrderSettings::Any()) m_hasOrdered = true;
+        if (m_hasOrdered) {
+            std::stable_sort(m_active.begin(), m_active.end(), [](const Component* a, const Component* b) {
+                const int oa = ExecutionOrderSettings::Effective(*a), ob = ExecutionOrderSettings::Effective(*b);
+                return oa != ob ? oa < ob : a->ComponentId() < b->ComponentId();
+            });
+        }
+    }
     DispatchActivation();
     ++m_updateCount;   // everything switched off before this point has now heard about it (see UpdateCount)
     LocalizeScene(*this);   // localized text follows the language (a no-op when nothing changed)
@@ -458,7 +487,16 @@ void Scene::Update(float deltaTime) {
                     if (!StartComponent(c)) continue;   // its OnEnable removed/destroyed it: it is gone
                     if (!CanRun(c)) continue;
                 }
-                c->Update(deltaTime);
+                if (m_timeTypes) {
+                    const std::type_index kind(typeid(*c));   // read before the call: it may remove the component
+                    const auto t0 = std::chrono::steady_clock::now();
+                    c->Update(deltaTime);
+                    auto& slot = m_frameTimes[kind];
+                    slot.first += std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - t0).count();
+                    ++slot.second;
+                } else {
+                    c->Update(deltaTime);
+                }
             }
         }
     }
@@ -476,10 +514,40 @@ void Scene::Update(float deltaTime) {
         OKAY_PROFILE("Scripts.LateUpdate");
         for (Component* c : m_active) {
             if (c && c->m_started && c->enabled && c->gameObject && c->gameObject->ActiveInHierarchy())
-                c->LateUpdate(deltaTime);
+            {
+                if (m_timeTypes) {
+                    const std::type_index kind(typeid(*c));   // read before the call: it may remove the component
+                    const auto t0 = std::chrono::steady_clock::now();
+                    c->LateUpdate(deltaTime);
+                    auto& slot = m_frameTimes[kind];
+                    slot.first += std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - t0).count();
+                    ++slot.second;
+                } else {
+                    c->LateUpdate(deltaTime);
+                }
+            }
         }
     }
     }   // end of BusyScope
+    if (m_timeTypes) {   // this frame's totals become what the Scene Stats window shows
+        m_lastTimings.clear();
+        for (const auto& kv : m_frameTimes) {
+            ComponentTiming t;
+            t.calls = kv.second.second;
+            t.milliseconds = kv.second.first;
+            for (const auto& go : m_objects) {   // the first component of this exact type names it
+                for (const auto& comp : go->Components())
+                    if (std::type_index(typeid(*comp)) == kv.first) { t.type = ComponentSerializerRegistry::TypeKey(*comp); break; }
+                if (!t.type.empty()) break;
+            }
+            if (t.type.empty()) t.type = kv.first.name();
+            m_lastTimings.push_back(std::move(t));
+        }
+        m_frameTimes.clear();
+        std::sort(m_lastTimings.begin(), m_lastTimings.end(), [](const ComponentTiming& a, const ComponentTiming& b) {
+            return a.milliseconds != b.milliseconds ? a.milliseconds > b.milliseconds : a.type < b.type;
+        });
+    }
 
     FlushDestroyed();
     ResolveMainCamera();   // follow cameras being switched on/off this frame

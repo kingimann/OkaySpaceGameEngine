@@ -623,7 +623,7 @@ public:
             want = carPos + Vec3{0, up, 0} + dirv * ahead;
             lookAt = want + dirv * 20.0f + right * (m_wheelAngle / std::max(1.0f, maxSteerAngle)) * -3.0f * camLookAhead;
         } else {
-            const float far = m_view == 1 ? 1.8f : 1.0f;
+            const float zoomK = m_view == 1 ? 1.8f : 1.0f;
             // swing out in a drift: blend the heading towards the way the car is really moving
             Vec3 dirv = fwd;
             if (std::fabs(m_slip) > 3.0f) {
@@ -632,8 +632,8 @@ public:
                 if (m > 1.0f) { vv = vv * (1.0f / m); dirv = fwd * (1.0f - sw) + vv * sw; const float dm = std::sqrt(dirv.x*dirv.x + dirv.z*dirv.z); if (dm > 1e-4f) dirv = dirv * (1.0f / dm); }
             }
             if (m_lookBack) dirv = dirv * -1.0f;
-            const float dist = (camDistance + camSpeedDistance * sp) * far;
-            want = carPos - dirv * dist + Vec3{0, camHeight * far, 0};
+            const float dist = (camDistance + camSpeedDistance * sp) * zoomK;
+            want = carPos - dirv * dist + Vec3{0, camHeight * zoomK, 0};
             lookAt = carPos + Vec3{0, camHeight * 0.45f, 0} + dirv * (camDistance * 0.35f)
                    + right * (m_wheelAngle / std::max(1.0f, maxSteerAngle)) * -camLookAhead * 4.0f * (m_lookBack ? -1.0f : 1.0f);
             // collision: pull the camera in if something is between the car and it

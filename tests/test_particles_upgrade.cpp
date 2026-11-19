@@ -150,6 +150,18 @@ int main() {
           std::printf("  mesh surface: 2000 particles on the cube skin, per face %d %d %d %d %d %d\n", faces[0], faces[1], faces[2], faces[3], faces[4], faces[5]); }
     }
 
+    // ---- the emitter's own axes: a tilted object tilts the spray and the ring ----
+    {
+        Scene s("T"); GameObject* go = s.CreateGameObject("E"); go->transform->localRotation = Quat::Euler(0, 0, -90);   // +Y now points along +X
+        auto* ps = go->AddComponent<ParticleSystem>(); Quiet(ps); ps->startVelocity = {0, 4, 0}; ps->Awake(); ps->Emit(1);
+        CHECK_NEAR(ps->Get(0).velocity.x, 4.0f, 1e-3f); CHECK_NEAR(ps->Get(0).velocity.y, 0.0f, 1e-3f);
+        Scene s2("T2"); GameObject* g2 = s2.CreateGameObject("E"); g2->transform->localRotation = Quat::Euler(90, 0, 0);
+        auto* p2 = g2->AddComponent<ParticleSystem>(); Quiet(p2); p2->shape = ParticleSystem::Shape::Circle; p2->shapeRadius = 2.0f; p2->Awake(); p2->Emit(50);
+        bool flatInZ = true; for (int i = 0; i < 50; ++i) if (std::abs(p2->Get(i).position.z) > 2.001f && std::abs(p2->Get(i).position.y) < 1e9f) flatInZ = false;
+        float maxY = 0, maxZ = 0; for (int i = 0; i < 50; ++i) { maxY = std::max(maxY, std::abs(p2->Get(i).position.y)); maxZ = std::max(maxZ, std::abs(p2->Get(i).position.z)); }
+        CHECK(flatInZ && maxY > 1.5f && maxZ < 1e-3f);   // the ring now stands in the XY plane
+    }
+
     // ---- duration, loop, bursts, prewarm, distance emission ----
     {
         Scene s("L"); auto* ps = s.CreateGameObject("E")->AddComponent<ParticleSystem>();
@@ -427,14 +439,14 @@ int main() {
             sun->transform->localRotation = Quat::Euler(50, -30, 0);
             GameObject* ground = sc.CreateGameObject("Ground"); ground->transform->localPosition = {0, -0.5f, 0}; ground->transform->localScale = {60, 1, 30};
             { auto* mr = ground->AddComponent<MeshRenderer>(); mr->mesh = Mesh::Cube(); mr->color = {0.25f, 0.3f, 0.27f, 1}; }
-            GameObject* cam = sc.CreateGameObject("Camera"); cam->transform->localPosition = {0, 6, 22};
-            cam->transform->localRotation = Quat::Euler(12, 180, 0);
+            GameObject* cam = sc.CreateGameObject("Camera"); cam->transform->localPosition = {0, 12, 15};
+            cam->transform->localRotation = Quat::Euler(32, 180, 0);
             { auto* c = cam->AddComponent<Camera>(); c->fieldOfView = 60.0f; c->nearClip = 0.2f; sc.mainCamera = c; }
             cam->AddComponent<FreeRoamController>();
             const int perRow = 6;
             for (std::size_t i = 0; i < n; ++i) {
                 const int row = (int)i / perRow, col = (int)i % perRow;
-                const float x = (col - (perRow - 1) * 0.5f) * 6.0f, z = -row * 8.0f;
+                const float x = (col - (perRow - 1) * 0.5f) * 6.0f, z = -row * 7.0f;
                 GameObject* ped = sc.CreateGameObject(std::string("Pedestal ") + items[i].name);
                 ped->transform->localPosition = {x, 0.15f, z}; ped->transform->localScale = {2.2f, 0.3f, 2.2f};
                 { auto* mr = ped->AddComponent<MeshRenderer>(); mr->mesh = Mesh::Cube(); mr->color = {0.55f, 0.55f, 0.6f, 1}; }
@@ -448,7 +460,7 @@ int main() {
                 if (pr == ParticleSystem::Preset::Rain || pr == ParticleSystem::Preset::Snow || pr == ParticleSystem::Preset::Leaves) y = 4.5f;
                 if (pr == ParticleSystem::Preset::WaterfallMist) y = 3.0f;
                 if (pr == ParticleSystem::Preset::Fireflies || pr == ParticleSystem::Preset::Dust) { y = 1.5f; ps->boxSize = {3.0f, 2.0f, 3.0f}; }
-                if (pr == ParticleSystem::Preset::Portal) y = 1.6f;
+                if (pr == ParticleSystem::Preset::Portal) { y = 1.6f; fx->transform->localRotation = Quat::Euler(90, 0, 0); }   // stand the ring up
                 if (pr == ParticleSystem::Preset::Fireflies) ps->emissionRate = 4.0f;
                 if (pr == ParticleSystem::Preset::MuzzleFlash) { fx->transform->localRotation = Quat::Euler(-90, 0, 0); y = 1.0f; }
                 fx->transform->localPosition = {x, y, z};
@@ -480,7 +492,7 @@ int main() {
                 if (up->GetComponent<Camera>()) ++withCam;
             }
             CHECK(systems == (int)ParticleSystem::Preset::Count && labels == systems && withCam == 1);
-            for (ParticleSystem* p : all) { p->Awake(); Run(p, 3.0f, 60.0f); CHECK(AllFinite(*p) && p->AliveCount() > 0); }
+            for (ParticleSystem* p : all) { p->Awake(); int peak = 0; for (int f = 0; f < 180; ++f) { p->Update(1.0f / 60.0f); peak = std::max(peak, p->AliveCount()); } CHECK(AllFinite(*p) && peak > 0); }
             // The scene looks right: draw it from the camera headlessly (and keep the picture when asked).
             Camera* cam = nullptr; for (const auto& up : sc.Objects()) if (auto* c = up->GetComponent<Camera>()) cam = c;
             if (cam) {

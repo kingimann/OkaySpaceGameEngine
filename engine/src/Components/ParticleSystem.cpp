@@ -321,6 +321,12 @@ void ParticleSystem::SpawnOne(const Vec3& origin, const Vec3& extraVel, float ag
             vel = n * (spd > 1e-5f ? spd : 1.0f);
         } break;
     }
+    // The shape and the start velocity are in the emitter's own axes: turn them with the object (a ring on a tilted
+    // object is tilted, a muzzle flash points where the object points). Mesh surface points are already in the world.
+    if (transform && shape != Shape::MeshSurface) {
+        const Quat q = transform->Rotation();
+        off = q * off; vel = q * vel;
+    }
     if (speedRandom > 0.0f) vel *= (1.0f + m_rng.Range(-speedRandom, speedRandom));
     if (velocityRandom > 0.0f)
         vel += Vec3{m_rng.Range(-velocityRandom, velocityRandom), m_rng.Range(-velocityRandom, velocityRandom), m_rng.Range(-velocityRandom, velocityRandom)};
@@ -590,7 +596,7 @@ void ParticleSystem::Tick(float dt, const Vec3* originOverride, const Quat* rotO
     if (c.swirl) {
         const float al = VLen(orbitAxis);
         if (al > 1e-5f) c.axis = orbitAxis * (1.0f / al);
-        if (c.local) c.axis = rot * c.axis;
+        c.axis = rot * c.axis;   // the axis is in the object's own space, in World and in Local simulation
     }
     c.speedCurve = speedOverLife && speedCurve.Active();
     c.gravCurve = gravityCurve.Active();

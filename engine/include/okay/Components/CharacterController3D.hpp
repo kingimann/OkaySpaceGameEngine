@@ -4,6 +4,7 @@
 #include "okay/Scene/GameObject.hpp"
 #include "okay/Scene/Transform.hpp"
 #include "okay/Physics/Rigidbody3D.hpp"
+#include "okay/Physics/GroundGrip.hpp"
 #include "okay/Input/Input.hpp"
 #include "okay/Net/NetOwnership.hpp"
 #include "okay/Net/PlayerInput.hpp"
@@ -111,7 +112,7 @@ public:
             // Contact or terrain, not merely a quiet vertical speed: the apex of
             // a jump is also |vy| < 0.5, and that used to count as a second jump.
             grounded = ResolveGrounded(m_ground, rb->groundedOnTerrain, rb->velocity.y);
-            float rate = (moving ? acceleration : deceleration) * (grounded ? 1.0f : airControl);
+            float rate = (moving ? acceleration : deceleration) * (grounded ? GroundGripScale(gameObject) : airControl);   // (ice: the grip of the material underfoot)
             rb->velocity.x = Mathf::MoveTowards(rb->velocity.x, tx, rate * dt);
             rb->velocity.z = Mathf::MoveTowards(rb->velocity.z, tz, rate * dt);
             if (canJump && standing && in.Pressed(PlayerInput::Jump) && grounded) {

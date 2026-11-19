@@ -73,6 +73,7 @@ struct State {
     std::string undoLabel;          ///< "Rename Hero.png"
     bool hierarchySelection = false;///< an object is selected in the Hierarchy (Prefab from Selection, Place as Child)
     bool isStartScene = false;      ///< the clicked scene already starts the game (first in Scenes In Build)
+    bool excludedFromBuild = false; ///< the clicked file is on Build Settings' "left out of the build" list
     bool runsCode = false;          ///< the file's type runs code when the system opens it (a program, installer, shortcut or script: see LaunchRefusal)
     bool gone = false;              ///< the item (or the folder being shown) is not on the disk any more
     bool hasSubfolders = false;     ///< the clicked folder has folders in it
@@ -265,6 +266,9 @@ inline std::vector<Item> ItemMenu(const State& s) {
         if (one && file)
             v.push_back(Cmd("open:default", "Open with Default App", "", !s.runsCode && !s.gone, s.runsCode ? kRunsCodeReason : goneWhy,
                             "Opens it in the program your system uses for this file type."));
+        if (one && file && s.kind != Kind::Scene)
+            v.push_back(Cmd("build:exclude", s.excludedFromBuild ? "Include in Build" : "Exclude from Build", "", !ro && !s.gone, ro ? noProject : goneWhy,
+                            "Leave this file out of the built game even if a scene uses it (Build Settings > Output lists these). Use it again to put it back."));
     }
     // ---- Create (inside this folder) ----
     if (one && isDir) {

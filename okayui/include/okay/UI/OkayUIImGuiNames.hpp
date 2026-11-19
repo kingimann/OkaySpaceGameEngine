@@ -9,6 +9,9 @@
 #include "okay/UI/OkayUIDock.hpp"
 #include "okay/UI/OkayUIDockBuilder.hpp"
 #include <cstdint>
+#include <cassert>
+#include <cfloat>
+#include <cmath>
 
 // ImVec2 is OkayUI::Vec2 (two floats with a two-float constructor).
 typedef OkayUI::Vec2 ImVec2;
@@ -33,11 +36,39 @@ typedef int ImS32;
 typedef long long ImS64;
 typedef OkayUI::DrawList ImDrawList;
 #define IM_PI 3.14159265358979323846f
+#define IM_ARRAYSIZE(_ARR) ((int)(sizeof(_ARR) / sizeof(*(_ARR))))
+#define IMGUI_VERSION "okayui"
+#define IMGUI_VERSION_NUM 0
+#define IMGUI_CHECKVERSION() ((void)0)
+#define IM_COL32_R_SHIFT 0
+#define IM_COL32_G_SHIFT 8
+#define IM_COL32_B_SHIFT 16
+#define IM_COL32_A_SHIFT 24
+#define IM_COL32_A_MASK 0xFF000000
+#define IM_COL32_WHITE (OkayUI::RGBA(255, 255, 255, 255))
+#define IM_COL32_BLACK (OkayUI::RGBA(0, 0, 0, 255))
+#define IM_COL32_BLACK_TRANS (OkayUI::RGBA(0, 0, 0, 0))
 #define GImGui (::OkayUI::RefreshContext())
 #define IM_COL32(R, G, B, A) (OkayUI::RGBA((R), (G), (B), (A)))
 using OkayUI::ImVec4;
 using OkayUI::ImTextureID;
 using OkayUI::ImRect;
+using OkayUI::ImVector;
+using OkayUI::ImHashStr;
+using OkayUI::ImDrawVert;
+using OkayUI::ImDrawIdx;
+using OkayUI::ImDrawCmd;
+using OkayUI::ImDrawData;
+using OkayUI::ImDrawCallback;
+using OkayUI::ImTextureData;
+using OkayUI::ImTextureRect;
+using OkayUI::ImTextureRef;
+using OkayUI::ImTextureStatus;
+using OkayUI::ImTextureStatus_OK;
+using OkayUI::ImTextureStatus_Destroyed;
+using OkayUI::ImTextureStatus_WantCreate;
+using OkayUI::ImTextureStatus_WantUpdates;
+using OkayUI::ImTextureStatus_WantDestroy;
 using OkayUI::ImGuiID;
 using OkayUI::ImGuiStyle;
 // Plain-int typedefs Dear ImGui code uses for flag arguments.
@@ -56,6 +87,8 @@ using OkayUI::ImFont;
 using OkayUI::ImFontConfig;
 constexpr auto ImGuiAxis_Y = OkayUI::Axis_Y;
 typedef int ImGuiBackendFlags;
+constexpr auto ImGuiBackendFlags_HasMouseCursors = OkayUI::BackendFlags_HasMouseCursors;
+constexpr auto ImGuiBackendFlags_HasSetMousePos = OkayUI::BackendFlags_HasSetMousePos;
 constexpr auto ImGuiBackendFlags_PlatformHasViewports = OkayUI::BackendFlags_PlatformHasViewports;
 constexpr auto ImGuiBackendFlags_RendererHasViewports = OkayUI::BackendFlags_RendererHasViewports;
 constexpr auto ImGuiButtonFlags_MouseButtonLeft = OkayUI::Button_MouseButtonLeft;
@@ -143,6 +176,7 @@ constexpr auto ImGuiCond_FirstUseEver = OkayUI::Cond_FirstUseEver;
 constexpr auto ImGuiCond_Once = OkayUI::Cond_Once;
 constexpr auto ImGuiConfigFlags_DockingEnable = OkayUI::ConfigFlags_DockingEnable;
 constexpr auto ImGuiConfigFlags_NavEnableKeyboard = OkayUI::ConfigFlags_NavEnableKeyboard;
+constexpr auto ImGuiConfigFlags_NoMouseCursorChange = OkayUI::ConfigFlags_NoMouseCursorChange;
 constexpr auto ImGuiConfigFlags_ViewportsEnable = OkayUI::ConfigFlags_ViewportsEnable;
 typedef OkayUI::Context ImGuiContext;
 typedef int ImGuiDir;
@@ -151,6 +185,7 @@ constexpr auto ImGuiDir_Left = OkayUI::Dir_Left;
 constexpr auto ImGuiDir_None = OkayUI::Dir_None;
 constexpr auto ImGuiDir_Right = OkayUI::Dir_Right;
 constexpr auto ImGuiDir_Up = OkayUI::Dir_Up;
+using OkayUI::ImGuiDockNode;
 constexpr auto ImGuiDockNodeFlags_DockSpace = OkayUI::DockNode_DockSpace;
 constexpr auto ImGuiDockNodeFlags_NoTabBar = OkayUI::DockNode_NoTabBar;
 constexpr auto ImGuiDockNodeFlags_None = OkayUI::DockNode_None;
@@ -168,6 +203,7 @@ constexpr auto ImGuiHoveredFlags_DelayShort = OkayUI::Hovered_DelayShort;
 constexpr auto ImGuiHoveredFlags_ForTooltip = OkayUI::Hovered_ForTooltip;
 typedef OkayUI::IO ImGuiIO;
 constexpr auto ImGuiInputFlags_Repeat = OkayUI::Input_Repeat;
+typedef OkayUI::InputTextCallbackData ImGuiInputTextCallbackData;
 typedef int ImGuiInputTextFlags;
 constexpr auto ImGuiInputTextFlags_AllowTabInput = OkayUI::InputText_AllowTabInput;
 constexpr auto ImGuiInputTextFlags_AutoSelectAll = OkayUI::InputText_AutoSelectAll;
@@ -186,10 +222,13 @@ constexpr auto ImGuiKey_1 = OkayUI::KeyId_1;
 constexpr auto ImGuiKey_2 = OkayUI::KeyId_2;
 constexpr auto ImGuiKey_3 = OkayUI::KeyId_3;
 constexpr auto ImGuiKey_A = OkayUI::KeyId_A;
+constexpr auto ImGuiKey_Apostrophe = OkayUI::KeyId_Apostrophe;
 constexpr auto ImGuiKey_B = OkayUI::KeyId_B;
 constexpr auto ImGuiKey_Backslash = OkayUI::KeyId_Backslash;
 constexpr auto ImGuiKey_Backspace = OkayUI::KeyId_Backspace;
 constexpr auto ImGuiKey_C = OkayUI::KeyId_C;
+constexpr auto ImGuiKey_CapsLock = OkayUI::KeyId_CapsLock;
+constexpr auto ImGuiKey_Comma = OkayUI::KeyId_Comma;
 constexpr auto ImGuiKey_D = OkayUI::KeyId_D;
 constexpr auto ImGuiKey_Delete = OkayUI::KeyId_Delete;
 constexpr auto ImGuiKey_DownArrow = OkayUI::KeyId_DownArrow;
@@ -199,17 +238,21 @@ constexpr auto ImGuiKey_Enter = OkayUI::KeyId_Enter;
 constexpr auto ImGuiKey_Equal = OkayUI::KeyId_Equal;
 constexpr auto ImGuiKey_Escape = OkayUI::KeyId_Escape;
 constexpr auto ImGuiKey_F = OkayUI::KeyId_F;
+constexpr auto ImGuiKey_F1 = OkayUI::KeyId_F1;
 constexpr auto ImGuiKey_F10 = OkayUI::KeyId_F10;
 constexpr auto ImGuiKey_F11 = OkayUI::KeyId_F11;
 constexpr auto ImGuiKey_F12 = OkayUI::KeyId_F12;
+constexpr auto ImGuiKey_F13 = OkayUI::KeyId_F13;
 constexpr auto ImGuiKey_F2 = OkayUI::KeyId_F2;
 constexpr auto ImGuiKey_F3 = OkayUI::KeyId_F3;
 constexpr auto ImGuiKey_F5 = OkayUI::KeyId_F5;
 constexpr auto ImGuiKey_F9 = OkayUI::KeyId_F9;
 constexpr auto ImGuiKey_G = OkayUI::KeyId_G;
+constexpr auto ImGuiKey_GraveAccent = OkayUI::KeyId_GraveAccent;
 constexpr auto ImGuiKey_H = OkayUI::KeyId_H;
 constexpr auto ImGuiKey_Home = OkayUI::KeyId_Home;
 constexpr auto ImGuiKey_I = OkayUI::KeyId_I;
+constexpr auto ImGuiKey_Insert = OkayUI::KeyId_Insert;
 constexpr auto ImGuiKey_J = OkayUI::KeyId_J;
 constexpr auto ImGuiKey_K = OkayUI::KeyId_K;
 constexpr auto ImGuiKey_Keypad0 = OkayUI::KeyId_Keypad0;
@@ -219,27 +262,43 @@ constexpr auto ImGuiKey_Keypad5 = OkayUI::KeyId_Keypad5;
 constexpr auto ImGuiKey_Keypad7 = OkayUI::KeyId_Keypad7;
 constexpr auto ImGuiKey_KeypadAdd = OkayUI::KeyId_KeypadAdd;
 constexpr auto ImGuiKey_KeypadDecimal = OkayUI::KeyId_KeypadDecimal;
+constexpr auto ImGuiKey_KeypadDivide = OkayUI::KeyId_KeypadDivide;
 constexpr auto ImGuiKey_KeypadEnter = OkayUI::KeyId_KeypadEnter;
+constexpr auto ImGuiKey_KeypadEqual = OkayUI::KeyId_KeypadEqual;
+constexpr auto ImGuiKey_KeypadMultiply = OkayUI::KeyId_KeypadMultiply;
 constexpr auto ImGuiKey_KeypadSubtract = OkayUI::KeyId_KeypadSubtract;
 constexpr auto ImGuiKey_L = OkayUI::KeyId_L;
+constexpr auto ImGuiKey_LeftAlt = OkayUI::KeyId_LeftAlt;
 constexpr auto ImGuiKey_LeftArrow = OkayUI::KeyId_LeftArrow;
 constexpr auto ImGuiKey_LeftBracket = OkayUI::KeyId_LeftBracket;
 constexpr auto ImGuiKey_LeftCtrl = OkayUI::KeyId_LeftCtrl;
 constexpr auto ImGuiKey_LeftShift = OkayUI::KeyId_LeftShift;
+constexpr auto ImGuiKey_LeftSuper = OkayUI::KeyId_LeftSuper;
 constexpr auto ImGuiKey_M = OkayUI::KeyId_M;
+constexpr auto ImGuiKey_Menu = OkayUI::KeyId_Menu;
 constexpr auto ImGuiKey_Minus = OkayUI::KeyId_Minus;
+constexpr auto ImGuiKey_MouseWheelY = OkayUI::KeyId_MouseWheelY;
+constexpr auto ImGuiKey_None = OkayUI::KeyId_None;
+constexpr auto ImGuiKey_NumLock = OkayUI::KeyId_NumLock;
 constexpr auto ImGuiKey_O = OkayUI::KeyId_O;
+constexpr auto ImGuiKey_Oem102 = OkayUI::KeyId_Oem102;
 constexpr auto ImGuiKey_P = OkayUI::KeyId_P;
 constexpr auto ImGuiKey_PageDown = OkayUI::KeyId_PageDown;
 constexpr auto ImGuiKey_PageUp = OkayUI::KeyId_PageUp;
+constexpr auto ImGuiKey_Pause = OkayUI::KeyId_Pause;
 constexpr auto ImGuiKey_Period = OkayUI::KeyId_Period;
+constexpr auto ImGuiKey_PrintScreen = OkayUI::KeyId_PrintScreen;
 constexpr auto ImGuiKey_Q = OkayUI::KeyId_Q;
 constexpr auto ImGuiKey_R = OkayUI::KeyId_R;
+constexpr auto ImGuiKey_RightAlt = OkayUI::KeyId_RightAlt;
 constexpr auto ImGuiKey_RightArrow = OkayUI::KeyId_RightArrow;
 constexpr auto ImGuiKey_RightBracket = OkayUI::KeyId_RightBracket;
 constexpr auto ImGuiKey_RightCtrl = OkayUI::KeyId_RightCtrl;
 constexpr auto ImGuiKey_RightShift = OkayUI::KeyId_RightShift;
+constexpr auto ImGuiKey_RightSuper = OkayUI::KeyId_RightSuper;
 constexpr auto ImGuiKey_S = OkayUI::KeyId_S;
+constexpr auto ImGuiKey_ScrollLock = OkayUI::KeyId_ScrollLock;
+constexpr auto ImGuiKey_Semicolon = OkayUI::KeyId_Semicolon;
 constexpr auto ImGuiKey_Slash = OkayUI::KeyId_Slash;
 constexpr auto ImGuiKey_Space = OkayUI::KeyId_Space;
 constexpr auto ImGuiKey_T = OkayUI::KeyId_T;
@@ -251,16 +310,30 @@ constexpr auto ImGuiKey_X = OkayUI::KeyId_X;
 constexpr auto ImGuiKey_Y = OkayUI::KeyId_Y;
 constexpr auto ImGuiKey_Z = OkayUI::KeyId_Z;
 typedef OkayUI::ListClipper ImGuiListClipper;
+constexpr auto ImGuiMod_Alt = OkayUI::Mod_Alt;
+constexpr auto ImGuiMod_Ctrl = OkayUI::Mod_Ctrl;
 constexpr auto ImGuiMod_Shift = OkayUI::Mod_Shift;
+constexpr auto ImGuiMod_Super = OkayUI::Mod_Super;
 typedef int ImGuiMouseButton;
 constexpr auto ImGuiMouseButton_Left = OkayUI::MouseButton_Left;
 constexpr auto ImGuiMouseButton_Middle = OkayUI::MouseButton_Middle;
 constexpr auto ImGuiMouseButton_Right = OkayUI::MouseButton_Right;
+typedef int ImGuiMouseCursor;
+constexpr auto ImGuiMouseCursor_Arrow = OkayUI::MouseCursor_Arrow;
 constexpr auto ImGuiMouseCursor_Hand = OkayUI::MouseCursor_Hand;
+constexpr auto ImGuiMouseCursor_None = OkayUI::MouseCursor_None;
+constexpr auto ImGuiMouseCursor_NotAllowed = OkayUI::MouseCursor_NotAllowed;
+constexpr auto ImGuiMouseCursor_Progress = OkayUI::MouseCursor_Progress;
+constexpr auto ImGuiMouseCursor_ResizeAll = OkayUI::MouseCursor_ResizeAll;
 constexpr auto ImGuiMouseCursor_ResizeEW = OkayUI::MouseCursor_ResizeEW;
+constexpr auto ImGuiMouseCursor_ResizeNESW = OkayUI::MouseCursor_ResizeNESW;
+constexpr auto ImGuiMouseCursor_ResizeNS = OkayUI::MouseCursor_ResizeNS;
 constexpr auto ImGuiMouseCursor_ResizeNWSE = OkayUI::MouseCursor_ResizeNWSE;
+constexpr auto ImGuiMouseCursor_TextInput = OkayUI::MouseCursor_TextInput;
+constexpr auto ImGuiMouseCursor_Wait = OkayUI::MouseCursor_Wait;
 using OkayUI::ImGuiPayload;
 using OkayUI::ImGuiPlatformIO;
+typedef OkayUI::PlatformImeData ImGuiPlatformImeData;
 typedef int ImGuiPopupFlags;
 constexpr auto ImGuiPopupFlags_AnyPopupId = OkayUI::Popup_AnyPopupId;
 constexpr auto ImGuiPopupFlags_AnyPopupLevel = OkayUI::Popup_AnyPopupLevel;
@@ -284,6 +357,7 @@ constexpr auto ImGuiStyleVar_ChildRounding = OkayUI::StyleVar_ChildRounding;
 constexpr auto ImGuiStyleVar_FrameBorderSize = OkayUI::StyleVar_FrameBorderSize;
 constexpr auto ImGuiStyleVar_FramePadding = OkayUI::StyleVar_FramePadding;
 constexpr auto ImGuiStyleVar_FrameRounding = OkayUI::StyleVar_FrameRounding;
+constexpr auto ImGuiStyleVar_GrabMinSize = OkayUI::StyleVar_GrabMinSize;
 constexpr auto ImGuiStyleVar_ItemInnerSpacing = OkayUI::StyleVar_ItemInnerSpacing;
 constexpr auto ImGuiStyleVar_ItemSpacing = OkayUI::StyleVar_ItemSpacing;
 constexpr auto ImGuiStyleVar_ScrollbarSize = OkayUI::StyleVar_ScrollbarSize;
@@ -291,10 +365,12 @@ constexpr auto ImGuiStyleVar_SelectableTextAlign = OkayUI::StyleVar_SelectableTe
 constexpr auto ImGuiStyleVar_WindowBorderSize = OkayUI::StyleVar_WindowBorderSize;
 constexpr auto ImGuiStyleVar_WindowPadding = OkayUI::StyleVar_WindowPadding;
 constexpr auto ImGuiStyleVar_WindowRounding = OkayUI::StyleVar_WindowRounding;
+using OkayUI::ImGuiTabBar;
 constexpr auto ImGuiTabBarFlags_FittingPolicyResizeDown = OkayUI::TabBar_FittingPolicyResizeDown;
 constexpr auto ImGuiTabBarFlags_FittingPolicyScroll = OkayUI::TabBar_FittingPolicyScroll;
 constexpr auto ImGuiTabBarFlags_IsFocused = OkayUI::TabBar_IsFocused;
 constexpr auto ImGuiTabBarFlags_Reorderable = OkayUI::TabBar_Reorderable;
+using OkayUI::ImGuiTabItem;
 typedef int ImGuiTabItemFlags;
 constexpr auto ImGuiTabItemFlags_Button = OkayUI::TabItem_Button;
 constexpr auto ImGuiTabItemFlags_NoTooltip = OkayUI::TabItem_NoTooltip;
@@ -362,6 +438,24 @@ constexpr auto ImGuiWindowFlags_NoTitleBar = OkayUI::Window_NoTitleBar;
 constexpr auto ImGuiWindowFlags_None = OkayUI::Window_None;
 using OkayUI::ImWchar;
 
+// Small math helpers Dear ImGui code calls.
+template <class T> inline T ImMin(T a, T b) { return a < b ? a : b; }
+template <class T> inline T ImMax(T a, T b) { return a < b ? b : a; }
+template <class T> inline T ImClamp(T v, T mn, T mx) { return v < mn ? mn : (v > mx ? mx : v); }
+inline ImVec2 ImMin(const ImVec2& a, const ImVec2& b) { return ImVec2(a.x < b.x ? a.x : b.x, a.y < b.y ? a.y : b.y); }
+inline ImVec2 ImMax(const ImVec2& a, const ImVec2& b) { return ImVec2(a.x < b.x ? b.x : a.x, a.y < b.y ? b.y : a.y); }
+inline ImVec2 ImClamp(const ImVec2& v, const ImVec2& mn, const ImVec2& mx) { return ImVec2(v.x < mn.x ? mn.x : (v.x > mx.x ? mx.x : v.x), v.y < mn.y ? mn.y : (v.y > mx.y ? mx.y : v.y)); }
+inline float ImLerp(float a, float b, float t) { return a + (b - a) * t; }
+inline ImVec2 ImLerp(const ImVec2& a, const ImVec2& b, float t) { return ImVec2(a.x + (b.x - a.x) * t, a.y + (b.y - a.y) * t); }
+inline float ImLengthSqr(const ImVec2& v) { return v.x * v.x + v.y * v.y; }
+inline float ImLengthSqr(const ImVec4& v) { return v.x * v.x + v.y * v.y + v.z * v.z + v.w * v.w; }
+inline ImVec2 ImBezierCubicCalc(const ImVec2& p1, const ImVec2& p2, const ImVec2& p3, const ImVec2& p4, float t) {
+    const float u = 1.0f - t, w1 = u * u * u, w2 = 3 * u * u * t, w3 = 3 * u * t * t, w4 = t * t * t;
+    return ImVec2(w1 * p1.x + w2 * p2.x + w3 * p3.x + w4 * p4.x, w1 * p1.y + w2 * p2.y + w3 * p3.y + w4 * p4.y);
+}
+inline ImVec4 operator*(const OkayUI::Vec4& a, const ImVec4& b) { return ImVec4(a.x * b.x, a.y * b.y, a.z * b.z, a.w * b.w); }
+inline float ImSaturate(float f) { return f < 0.0f ? 0.0f : (f > 1.0f ? 1.0f : f); }
+
 // The namespace host code writes.
-namespace ImGui = OkayUI;
+namespace ImGui { using namespace ::OkayUI; }   // a real namespace (not an alias) so code can add to it, as a few editor headers do
 #endif // IMGUI_VERSION

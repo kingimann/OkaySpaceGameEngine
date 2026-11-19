@@ -20,6 +20,7 @@
 #include "SceneAddMenu.hpp"
 #include "MenuEntriesUI.hpp"          // draws those lists with Dear ImGui
 #include "ProjectState.hpp"           // project settings + build settings: the files inside the project folder
+#include "BuildSettingsWindow.hpp"     // the Build Settings window: pages, search, summary, checks, history (own files)
 #include "okay/Input/PlatformGamepad.hpp"   // controller -> Input (sticks, triggers, rumble), via okay::platform
 #include "okay/Input/PlatformKeys.hpp"      // F-keys, Tab, navigation block, left / right modifiers
 #include "FpHandsWindow.hpp"
@@ -28,6 +29,7 @@
 #include "NavigationWindow.hpp"        // the Navigation window (navmesh bake, overlays, agent inspectors)
 #include "DialogueWindow.hpp"          // the Dialogue window (graph editor + Quests tab) and the story inspectors
 #include "BehaviorTreeWindow.hpp"      // the Behavior Tree window (NPC AI trees, runner inspector)
+#include "okay/Components/PhysicsToyPresets.hpp"   // GameObject > 3D Object > Physics Toys
 #include "okay/Components/BehaviorTreeRunner.hpp"
 #include "okay/Net/DetectInspector.hpp"   // Anti-Cheat Config > Detection engine (fields, observe mode, text)
 #include "okay/Core/Game.hpp"
@@ -50,10 +52,13 @@
 #include <cstdio>
 #include "LevelTools.hpp"              // foliage brush, terrain layers, decals, cables, measuring, orthographic views
 #include "SplineTools.hpp"             // splines: Scene-view editing, inspectors, line / trail drawing
+#include "WindTools.hpp"               // wind: zones, arrows, inspector rows, menus, Lighting > Wind
 #include "VolumeTools.hpp"             // volumes: Scene-view shapes, handles, draw tool, inspector, menus
 #include "okay/Components/HoldPrompt.hpp"
 #include "okay/Components/LocalPlayerInput.hpp"
 #include "okay/Components/UIOwnerData.hpp"   // Inspector: which character a UI Text Bind / UI Bar Bind belongs to
+#include "okay/Render/LightingPresets.hpp"
+#include "okay/Render/LightProbeBake.hpp"
 #include "okay/Render/Lightmap.hpp"    // offline lightmap/shadow/AO baking
 #include "okay/Modeling/EditTransform.hpp"   // G / R / S modal transforms in mesh edit mode
 #include "okay/Modeling/MaterialLibrary.hpp"   // ready colours and slot palettes
@@ -106,8 +111,12 @@
 #include "okay/Scene/UILayoutTools.hpp"  // wrap in panel, fit to children, match size, stack
 #include "okay/Platform/PlayFab/PlayFab.hpp" // PlayFab cloud services (Services panel)
 #include "okay/Platform/NativeFetch.hpp"      // own HTTP client in front of curl for the update download (only with OKAY_OWN_HTTP)
+#include "DialogService.hpp"                  // the error / save-question / open-script calls behind one interface (window mode has its own)
+#include "EditorFrameTick.hpp"                // the game-step part of the frame (oked::StepSimulation), shared with window mode
 #ifdef OKAY_HAVE_OKAYUI
 #include "okay/UI/OkayUI.hpp"           // demo overlay: OkayUI drawn on top of ImGui
+#include "OkayUIHostMode.hpp"           // window mode (OKAY_UI_HOST=okayui): OkayUI owns the window, no Dear ImGui
+#include "OkayUIFrame.hpp"              // OkayUI end-of-frame on an SDL renderer or an own-backend painter
 #include "OkayUIHost.hpp"               // the opt-in OkayUI backend: SDL input for OkayUI, the hosted region (docs/own_ui_toolkit.md, section 5)
 #endif
 #include "Splash.hpp"                   // branded loading frame (no black screen at startup)
@@ -128,6 +137,11 @@
 #include "AntiCheatIntegrity.hpp"       // Build Game's Data/manifest.json (opt-in anti-cheat)
 #include "FileDialog.hpp"                // open / save / folder dialogs: the system's own, or our built-in browser (asset import)
 #include "PlatformClipboard.hpp"         // Play mode clipboard (through okay::platform)
+#ifdef OKAY_ENABLE_TEST_HOOKS
+#include "TestHooks.hpp"   // scripted input and screenshots for headless test runs (OKAY_TEST_SCRIPT); not in normal builds
+#endif
+#include "ImGuiPainterRenderer.hpp"   // our own Dear ImGui renderer over okay::platform::Painter (OKAY_IMGUI_RENDER=own; default stays imgui_impl_sdlrenderer2)
+#include "PainterBridge.hpp"   // the 2D renderer calls, through okay::platform::Painter
 #include "ImGuiPlatformFeed.hpp"          // our own Dear ImGui input feed over okay::platform (OKAY_PLATFORM_EVENTS=own; default stays imgui_impl_sdl2)
 
 #include <numeric>
@@ -1117,32 +1131,30 @@ static void DestroyViewTexture(int slot) {
     auto it = g_viewD3DTex.find(t);
     if (it != g_viewD3DTex.end()) { okay::D3D11Renderer::ReleaseCom(it->second); g_viewD3DTex.erase(it); }
 #endif
-    SDL_DestroyTexture(t);
+    okay::pb::DestroyTexture(g_sdlRenderer, t);
     g_view3DTex[slot] = nullptr; g_view3DW[slot] = g_view3DH[slot] = 0; g_view3DIsTarget[slot] = false;
 }
 #if defined(_WIN32)
 static SDL_Texture* EnsureViewTarget(int slot, int w, int h) {
     if (g_view3DTex[slot] && g_view3DIsTarget[slot] && g_view3DW[slot] == w && g_view3DH[slot] == h) return g_view3DTex[slot];
     DestroyViewTexture(slot);
-    SDL_Texture* t = SDL_CreateTexture(g_sdlRenderer, SDL_PIXELFORMAT_ABGR8888, SDL_TEXTUREACCESS_TARGET, w, h);
+    SDL_Texture* t = okay::pb::CreateTexture(g_sdlRenderer, w, h, okay::pb::Access::Target, true, true);
     if (!t) return nullptr;
-    SDL_SetTextureBlendMode(t, SDL_BLENDMODE_BLEND);
-    SDL_SetTextureScaleMode(t, SDL_ScaleModeLinear);
     g_view3DTex[slot] = t; g_view3DW[slot] = w; g_view3DH[slot] = h; g_view3DIsTarget[slot] = true;
     return t;
 }
 static void* ViewTargetD3D(SDL_Texture* t) {
     auto it = g_viewD3DTex.find(t);
     if (it != g_viewD3DTex.end()) return it->second;
-    SDL_Texture* prev = SDL_GetRenderTarget(g_sdlRenderer);
-    if (SDL_SetRenderTarget(g_sdlRenderer, t) != 0) return nullptr;
-    Uint8 r, g, b, a; SDL_GetRenderDrawColor(g_sdlRenderer, &r, &g, &b, &a);
-    SDL_SetRenderDrawColor(g_sdlRenderer, 0, 0, 0, 0);
-    SDL_RenderDrawPoint(g_sdlRenderer, -64, -64);   // off-target: binds the RTV, draws nothing
-    SDL_RenderFlush(g_sdlRenderer);
+    SDL_Texture* prev = okay::pb::GetRenderTarget(g_sdlRenderer);
+    if (!okay::pb::SetRenderTarget(g_sdlRenderer, t)) return nullptr;
+    Uint8 r, g, b, a; okay::pb::GetDrawColor(g_sdlRenderer, &r, &g, &b, &a);
+    okay::pb::SetDrawColor(g_sdlRenderer, 0, 0, 0, 0);
+    okay::pb::DrawPoint(g_sdlRenderer, -64, -64);   // off-target: binds the RTV, draws nothing
+    okay::pb::Flush(g_sdlRenderer);
     void* tex = g_d3dRenderer ? g_d3dRenderer->BoundRenderTargetTexture() : nullptr;
-    SDL_SetRenderDrawColor(g_sdlRenderer, r, g, b, a);
-    SDL_SetRenderTarget(g_sdlRenderer, prev);
+    okay::pb::SetDrawColor(g_sdlRenderer, r, g, b, a);
+    okay::pb::SetRenderTarget(g_sdlRenderer, prev);
     if (tex) g_viewD3DTex[t] = tex;
     return tex;
 }
@@ -1235,7 +1247,7 @@ SDL_Texture* Render3DTexture(const Scene& scene, const Mat4& vp, const Vec3& eye
             OKAY_BREADCRUMB("Render3D:d3d11-direct");
             if (SDL_Texture* t = EnsureViewTarget(slot, rw, rh)) {
                 if (void* dst = ViewTargetD3D(t)) {
-                    SDL_RenderFlush(g_sdlRenderer);   // SDL's queued draws go first
+                    okay::pb::Flush(g_sdlRenderer);   // SDL's queued draws go first
                     if (g_d3dRenderer->RenderToTexture(scene, vp, eye, rw, rh, 4, 0.0f, 0.0f, 0.0f, 0.0f, dst, ignore)) {
                         okay::SceneOcclusionDepth().valid = false;
                         okay::FrameOverlay::RendererName() = "Direct3D 11 (GPU, direct to the view)";
@@ -1265,7 +1277,7 @@ SDL_Texture* Render3DTexture(const Scene& scene, const Mat4& vp, const Vec3& eye
 #endif
         if (!px && g_glReady && g_glRenderer && g_glWindow && g_glCtx) {
             OKAY_BREADCRUMB("Render3D:gl");
-            okay::platform::Backend* glb = okay::platform::Get(okay::platform::BackendKind::Sdl2);
+            okay::platform::Backend* glb = okay::platform::Default();
             const okay::platform::GLCurrent prevGL = glb->CurrentGL();
             if (g_glWin->MakeCurrent())
                 px = g_glRenderer->RenderToPixels(scene, vp, eye, rw, rh, 4,
@@ -1309,13 +1321,10 @@ SDL_Texture* Render3DTexture(const Scene& scene, const Mat4& vp, const Vec3& eye
     }
     if (!g_view3DTex[slot] || g_view3DW[slot] != rw || g_view3DH[slot] != rh || g_view3DIsTarget[slot]) {
         if (g_view3DTex[slot]) DestroyViewTexture(slot);
-        g_view3DTex[slot] = SDL_CreateTexture(g_sdlRenderer, SDL_PIXELFORMAT_ABGR8888,
-                                              SDL_TEXTUREACCESS_STREAMING, rw, rh);
-        SDL_SetTextureBlendMode(g_view3DTex[slot], SDL_BLENDMODE_BLEND);
-        SDL_SetTextureScaleMode(g_view3DTex[slot], SDL_ScaleModeLinear);  // smooth upscale
+        g_view3DTex[slot] = okay::pb::CreateTexture(g_sdlRenderer, rw, rh, okay::pb::Access::Streaming, true, true);   // linear: smooth upscale
         g_view3DW[slot] = rw; g_view3DH[slot] = rh; g_view3DIsTarget[slot] = false;
     }
-    { OKAY_PROFILE("Render3D.Upload"); SDL_UpdateTexture(g_view3DTex[slot], nullptr, px, rw * 4); }
+    { OKAY_PROFILE("Render3D.Upload"); okay::pb::UpdateTexture(g_sdlRenderer, g_view3DTex[slot], nullptr, px, rw * 4); }
     return g_view3DTex[slot];
 }
 
@@ -1339,7 +1348,7 @@ const std::uint32_t* Render3DPassPixels(const Scene& scene, const okay::CameraPa
     }
 #endif
     if (tryGpu && !px && g_glReady && g_glRenderer && g_glWindow && g_glCtx) {
-        okay::platform::Backend* glb = okay::platform::Get(okay::platform::BackendKind::Sdl2);
+        okay::platform::Backend* glb = okay::platform::Default();
         const okay::platform::GLCurrent prevGL = glb->CurrentGL();
         if (g_glWin->MakeCurrent())
             px = g_glRenderer->RenderToPixels(scene, pass.vp, pass.eye, rw, rh, 4,
@@ -1374,13 +1383,10 @@ SDL_Texture* RenderCameraStackView(const Scene& scene, int w, int h, int slot, c
         return nullptr;
     if (!g_view3DTex[slot] || g_view3DW[slot] != w || g_view3DH[slot] != h || g_view3DIsTarget[slot]) {
         if (g_view3DTex[slot]) DestroyViewTexture(slot);
-        g_view3DTex[slot] = SDL_CreateTexture(g_sdlRenderer, SDL_PIXELFORMAT_ABGR8888,
-                                              SDL_TEXTUREACCESS_STREAMING, w, h);
-        SDL_SetTextureBlendMode(g_view3DTex[slot], SDL_BLENDMODE_BLEND);
-        SDL_SetTextureScaleMode(g_view3DTex[slot], SDL_ScaleModeLinear);
+        g_view3DTex[slot] = okay::pb::CreateTexture(g_sdlRenderer, w, h, okay::pb::Access::Streaming, true, true);
         g_view3DW[slot] = w; g_view3DH[slot] = h; g_view3DIsTarget[slot] = false;
     }
-    SDL_UpdateTexture(g_view3DTex[slot], nullptr, composited.data(), w * 4);
+    okay::pb::UpdateTexture(g_sdlRenderer, g_view3DTex[slot], nullptr, composited.data(), w * 4);
     return g_view3DTex[slot];
 }
 
@@ -1398,12 +1404,8 @@ SDL_Texture* GetThumb(const std::string& path) {
     if (path.rfind("proc:", 0) == 0) img = okay::GenerateProcTexture(path);   // built-in procedural
     else img.Load(path);
     if (g_sdlRenderer && img.Width() > 0) {
-        tex = SDL_CreateTexture(g_sdlRenderer, SDL_PIXELFORMAT_ABGR8888,
-                                SDL_TEXTUREACCESS_STATIC, img.Width(), img.Height());
-        if (tex) {
-            SDL_SetTextureBlendMode(tex, SDL_BLENDMODE_BLEND);
-            SDL_UpdateTexture(tex, nullptr, img.Pixels().data(), img.Width() * 4);
-        }
+        tex = okay::pb::CreateTexture(g_sdlRenderer, img.Width(), img.Height(), okay::pb::Access::Static, true, false,
+                                      (const std::uint8_t*)img.Pixels().data());
     }
     cache[path] = tex;   // cache failures (nullptr) too, so we don't retry
     return tex;
@@ -1573,12 +1575,7 @@ static SDL_Texture* RenderFramedThumb(okay::Scene& sc, const Vec3& center, float
     if (!g_sdlRenderer) return nullptr;
     const okay::Image img = RenderFramedImage(sc, center, radius);
     if (!img.Valid()) return nullptr;
-    SDL_Texture* tex = SDL_CreateTexture(g_sdlRenderer, SDL_PIXELFORMAT_ABGR8888, SDL_TEXTUREACCESS_STATIC, img.Width(), img.Height());
-    if (tex) {
-        SDL_SetTextureBlendMode(tex, SDL_BLENDMODE_BLEND);
-        SDL_SetTextureScaleMode(tex, SDL_ScaleModeLinear);
-        SDL_UpdateTexture(tex, nullptr, img.Data(), img.Width() * 4);
-    }
+    SDL_Texture* tex = okay::pb::CreateTexture(g_sdlRenderer, img.Width(), img.Height(), okay::pb::Access::Static, true, true, (const std::uint8_t*)img.Data());
     return tex;
 }
 
@@ -2249,6 +2246,8 @@ static void TickGame(EditorState& ed, float dt) {
     if (ed.isPlaying() && okay::vs::VsDebugger::Get().Active()) g_gameFiber.Run([&ed, dt] { ed.Tick(dt); });
     else ed.Tick(dt);
 }
+// What oked::StepSimulation (EditorFrameTick.hpp) needs from this file: the debugger-aware scene tick, the Pause button and the behaviour-tree breakpoint.
+static oked::SimHooks<EditorState> EditorSimHooks();
 /// Finish a frame frozen at a breakpoint, stopping at nothing (before Stop, undo,
 /// deleting objects or loading a scene: never rebuild a scene mid-frame).
 static void FinishFrozenTick() {
@@ -2259,6 +2258,13 @@ static void FinishFrozenTick() {
     d.RequestStep(okay::vs::VsDebugger::Step::None);
     g_gameFiber.Resume();
     d.enabled = was;
+}
+static oked::SimHooks<EditorState> EditorSimHooks() {
+    oked::SimHooks<EditorState> h;
+    h.tickGame = [](EditorState& e, float d) { TickGame(e, d); };
+    h.onRunFramesDone = [] { g_paused = true; };   // "Run N frames" ended: the Pause button follows the loop's pause
+    h.resumeBreakPause = [] { okay::Game::ClearPause(okay::BehaviorTreeRunner::kBreakPause); };   // resume also lets a node breakpoint go
+    return h;
 }
 bool g_clearConsoleOnPlay = true; // wipe the console each time Play starts
 bool g_consoleCollapse = false;   // the Console's Collapse toggle (okay_settings.txt "consolecollapse")
@@ -2333,6 +2339,61 @@ static bool PhysicsMaterialFields(Col* c, const char* id) {
     bool changed = false;
     const std::string sid = id;
     if (!ImGui::TreeNode(("Physics Material##pm" + sid).c_str())) return false;
+    // The named material (a preset or a project .okayphysmat): a dropdown, a "+ New material" button and live sliders.
+    // It lives in a Physics Surface component on this object (made on the first pick, removed by "(none)").
+    if (c->gameObject) {
+        okay::GameObject* go = c->gameObject;
+        auto* surf = go->template GetComponent<okay::PhysicsSurface>();
+        const std::string cur = surf ? surf->material : std::string();
+        if (ImGui::BeginCombo(("Material##pmn" + sid).c_str(), cur.empty() ? "(none: use the numbers below)" : cur.c_str())) {
+            if (ImGui::Selectable("(none: use the numbers below)", cur.empty()) && surf) { go->RemoveComponent(surf); surf = nullptr; changed = true; }
+            for (const std::string& n : okay::PhysicsMaterials::AllNames())
+                if (ImGui::Selectable(n.c_str(), n == cur)) { okay::AssignPhysicsMaterial(*go, n); surf = go->template GetComponent<okay::PhysicsSurface>(); changed = true; }
+            ImGui::EndCombo();
+        }
+        if (ImGui::IsItemHovered()) ImGui::SetTooltip("How this surface feels: a ready-made material (Ice, Rubber, Wood...) or one of your own .okayphysmat files.");
+        ImGui::SameLine();
+        if (ImGui::SmallButton(("+ New material##pmnew" + sid).c_str())) {
+            okay::PhysicsMaterialData d = surf && surf->Data() ? *surf->Data() : okay::PhysicsMaterialData{};
+            const std::string dir = okay::Paths::Join(okay::Paths::AssetBaseDir(), "Materials");
+            okay::Paths::EnsureDir(dir);
+            for (int i = 1; i < 1000; ++i) { d.name = "My Material " + std::to_string(i); if (!okay::PhysicsMaterials::Find(d.name)) break; }
+            if (okay::PhysicsMaterials::SaveFile(d, okay::Paths::Join(dir, d.name + ".okayphysmat"))) {
+                okay::PhysicsMaterials::Register(d); okay::AssignPhysicsMaterial(*go, d.name);
+                surf = go->template GetComponent<okay::PhysicsSurface>(); changed = true;
+                ConsoleLog("Created " + d.name + ".okayphysmat in Assets/Materials");
+            }
+        }
+        if (ImGui::IsItemHovered()) ImGui::SetTooltip("Makes a copy of this material as a file in your project that you can change. Built-in materials cannot be edited.");
+        const okay::PhysicsMaterialData* md = surf ? surf->Data() : nullptr;
+        bool builtIn = false;
+        if (md) for (const auto& pm : okay::PhysicsMaterials::Presets()) if (&pm == md) builtIn = true;
+        if (md && !builtIn) {   // live sliders on the project material (saved back to its file)
+            okay::PhysicsMaterialData e = *md; bool ed2 = false;
+            ed2 |= ImGui::SliderFloat(("Grip when still##pm" + sid).c_str(), &e.staticFriction, 0.0f, 3.0f);
+            if (ImGui::IsItemHovered()) ImGui::SetTooltip("How hard it is to start something sliding. 0 = like ice, 1 = like rubber.");
+            ed2 |= ImGui::SliderFloat(("Grip when sliding##pm" + sid).c_str(), &e.dynamicFriction, 0.0f, 3.0f);
+            if (ImGui::IsItemHovered()) ImGui::SetTooltip("How slippery? 0 = like ice, 1 = like rubber.");
+            ed2 |= ImGui::SliderFloat(("Bounciness##pmb" + sid).c_str(), &e.bounciness, 0.0f, 1.0f);
+            if (ImGui::IsItemHovered()) ImGui::SetTooltip("0 = a dead thud, 1 = bounces back to where it fell from.");
+            ed2 |= ImGui::SliderFloat(("Density##pm" + sid).c_str(), &e.density, 10.0f, 20000.0f, "%.0f kg/m3");
+            if (ImGui::IsItemHovered()) ImGui::SetTooltip("Heavy or light for its size. Water 1000, wood 600, steel 7800. Used when the body takes its mass from density.");
+            ed2 |= ImGui::SliderFloat(("Rolling friction##pm" + sid).c_str(), &e.rollingFriction, -1.0f, 1.0f);
+            if (ImGui::IsItemHovered()) ImGui::SetTooltip("How hard it is to roll over. -1 = use the body's own setting.");
+            ed2 |= ImGui::SliderFloat(("Slows things down##pm" + sid).c_str(), &e.linearDamping, 0.0f, 10.0f);
+            if (ImGui::IsItemHovered()) ImGui::SetTooltip("Mud and sand slow what touches them. 0 = not at all.");
+            ed2 |= ImGui::SliderFloat(("Slope grip##pm" + sid).c_str(), &e.slopeGrip, 0.0f, 5.0f);
+            if (ImGui::IsItemHovered()) ImGui::SetTooltip("Multiplies the still grip so things stay put on steeper slopes. 1 = normal.");
+            if (ed2) {
+                okay::PhysicsMaterials::Register(e); surf->Apply();
+                okay::PhysicsMaterials::SaveFile(e, okay::Paths::Join(okay::Paths::Join(okay::Paths::AssetBaseDir(), "Materials"), e.name + ".okayphysmat"));
+                changed = true;
+            }
+        } else if (md) {
+            ImGui::TextDisabled("Built-in material. Press + New material to make an editable copy.");
+        }
+        ImGui::Separator();
+    }
     const char* modes[] = {"Default", "Average", "Minimum", "Multiply", "Maximum"};
     bool ownF = c->friction >= 0.0f;
     if (ImGui::Checkbox(("Own Friction##pm" + sid).c_str(), &ownF)) { c->friction = ownF ? 0.5f : -1.0f; changed = true; }
@@ -2909,6 +2970,7 @@ int   g_buildPlatform = 0;   // 0 = Desktop (Windows), 1 = Web (WASM/WebGL), 2 =
 
 // BuildScene, BuildSettings, BuildProfile and ProjectSettings live in ProjectState.hpp (with their file text).
 BuildSettings g_build;
+std::uintmax_t g_buildDryBytes = 0;   // the size the last Dry Run reported (shown in the Build Settings summary)
 
 // ---- Build profiles -------------
 // The full Build Settings are kept under named profiles in the project's .okay/build_profiles.cfg, so
@@ -4296,6 +4358,10 @@ struct Options {
     int  buildNumber = 1;
     std::string archiveName = "{name}-{version}-{platform}";
     std::vector<std::string> sceneList;     // Scenes In Build, in order (empty = the open scene)
+    okay::buildpipe::ExtraConfig extra;     // Build Settings > Game: speed, start volumes, language, logging, environment (game.okayconfig)
+    std::string excludeList;                // Build Settings > Output > Files left out of the build ("Assets/a.png;Assets/Old/")
+    bool allowCommands = false;             // Build Settings > Advanced: run the two commands below (off = never)
+    std::string preCommand, postCommand;    // run before the build (a failure stops it) / after a good build
     // ---- Player presentation ----
     std::string iconPath;      // window icon PNG (copied into the build)
     std::string bundleId = "com.okayspace.game";
@@ -4396,6 +4462,18 @@ std::string Build(EditorState& ed, const std::string& outDir,
             return "Refusing to build into your home folder. Pick a dedicated build folder.";
         if (!proj.empty() && (dir == proj || dir == proj / "Assets"))
             return "Refusing to build into the project/Assets folder. Pick a separate build folder so game files stay clean.";
+    }
+
+    // Build Settings > Advanced: the command to run BEFORE the build. Only when "Allow build commands" is on, never in a
+    // dry run. A command that fails (a non-zero exit code) stops the build before anything is written.
+    oked::bsm::CommandVars cmdVars;
+    cmdVars.output = dir.string(); cmdVars.name = gameName; cmdVars.version = opt.version; cmdVars.build = std::to_string(opt.buildNumber); cmdVars.project = ed.projectDir();
+    {
+        const std::string pre = oked::bsm::CommandToRun(opt.preCommand, opt.allowCommands, opt.dryRun, cmdVars);
+        if (!pre.empty()) {
+            const int rc = oked::bsm::RunCommandLine(pre, ed.projectDir());
+            if (rc != 0) return "The command before the build failed (exit code " + std::to_string(rc) + "): " + pre + ". Nothing was built.";
+        }
     }
 
     // The layout: <Name>.exe + <Name>_Data/ (Folder), exe + Data/ (Compact), or the Folder layout in one zip.
@@ -4548,6 +4626,14 @@ std::string Build(EditorState& ed, const std::string& outDir,
             unusedShipped += pa.bytes; ++unusedShippedCount;
         }
     }
+    if (!opt.excludeList.empty()) {   // Build Settings > Output: files the owner left out. A file a scene uses is warned about, not silently dropped.
+        std::vector<bp::ShippedAsset> keep;
+        for (const bp::ShippedAsset& a : walk.assets) {
+            if (!oked::bsm::IsExcluded(a.dest, opt.excludeList) && !oked::bsm::IsExcluded(a.ref, opt.excludeList)) { keep.push_back(a); continue; }
+            if (a.reason.rfind("asset stripping is off", 0) != 0) R.r.Warn("'" + a.dest + "' is left out of the build but a scene uses it: the game will not find it.");
+        }
+        walk.assets.swap(keep);
+    }
     int copied = 0;
     std::uintmax_t assetBytes = 0;
     for (const bp::ShippedAsset& a : walk.assets) {
@@ -4640,6 +4726,7 @@ std::string Build(EditorState& ed, const std::string& outDir,
             cf << "boot_accent=" << opt.bootAccent[0] << " " << opt.bootAccent[1] << " " << opt.bootAccent[2] << "\n";
         cf << "boot_bar=" << (opt.bootBar ? 1 : 0) << "\n";
         cf << "startup=game.okayscene\n";
+        cf << okay::buildpipe::WriteExtraConfig(opt.extra);   // nothing at the defaults, so old projects build the same config
         for (const std::string& s : sceneFiles) cf << "scene=" << s << "\n";
         if (opt.antiCheat) cf << "anticheat=" << okayac::ModeName((okayac::Mode)opt.antiCheat) << "\n";
         settingsText = cf.str();
@@ -4857,6 +4944,13 @@ std::string Build(EditorState& ed, const std::string& outDir,
     if (!rp.excluded.empty()) msg += "  " + std::to_string(rp.excluded.size()) + " unused project file(s) left out (" + human(rp.excludedBytes) + ").";
     if (R.missing) msg += "  WARNING: " + std::to_string(R.missing) + " referenced asset(s) not found and not copied.";
     if (!integrity.message.empty()) msg += "  (" + integrity.message + ")";
+    {   // Build Settings > Advanced: the command to run AFTER a good build (it cannot undo the build, so a failure is only reported)
+        const std::string post = oked::bsm::CommandToRun(opt.postCommand, opt.allowCommands, opt.dryRun, cmdVars);
+        if (!post.empty()) {
+            const int rc = oked::bsm::RunCommandLine(post, ed.projectDir());
+            msg += rc == 0 ? "  (ran your command after the build)" : "  WARNING: your command after the build failed (exit code " + std::to_string(rc) + ").";
+        }
+    }
     return msg;
 }
 
@@ -4896,6 +4990,8 @@ Options OptionsFromSettings(const BuildSettings& g, const ProjectSettings& pr) {
     o.bootAccentOverride = pr.splashAccentOverride; o.bootBar = pr.splashShowBar;
     o.layout = g.layout; o.stripAssets = g.stripAssets; o.compress = g.compress; o.zipAlso = g.zipAfter && g.layout != 2;
     o.buildNumber = g.buildNumber; o.archiveName = g.archiveName;
+    o.extra = oked::bsm::ExtraFrom(g); o.excludeList = g.excludeList;
+    o.allowCommands = g.allowBuildCommands; o.preCommand = g.preBuildCommand; o.postCommand = g.postBuildCommand;
     return o;
 }
 
@@ -7083,6 +7179,24 @@ static void DrawExampleMenuItems(EditorState& ed) {
         }
         if (uilib.empty() && ImGui::IsItemHovered(ImGuiHoveredFlags_AllowWhenDisabled)) ImGui::SetTooltip("The UI library examples (examples/ui_library) were not found next to the editor.");
     }
+    // Lighting: one scene per lighting preset (Sunny day, Sunset, Night with lamps, Indoor, Spooky fog).
+    {
+        namespace fs = std::filesystem;
+        const std::vector<std::string> lit = okay::editor::ExampleScenes("lighting");
+        if (ImGui::BeginMenu("Lighting presets (sun, sunset, night, indoor, fog)", !lit.empty())) {
+            ImGui::TextDisabled("Open one, then look in the Lighting window (View menu) to change it.");
+            for (const std::string& p : lit) {
+                const std::string name = fs::path(p).stem().string();
+                if (ImGui::MenuItem(name.c_str())) {
+                    std::string err;
+                    if (ed.Load(p, &err)) { ConsoleLog("Opened " + p); AddRecent(p); }
+                    else { ConsoleLog("Open failed: " + err, 2); ShowErrorPopup("Couldn't open the example", p + "\n" + err); }
+                }
+            }
+            ImGui::EndMenu();
+        }
+        if (lit.empty() && ImGui::IsItemHovered(ImGuiHoveredFlags_AllowWhenDisabled)) ImGui::SetTooltip("The lighting examples (examples/lighting) were not found next to the editor.");
+    }
 }
 
 static void DrawAutosaveMenuItems() {
@@ -7103,6 +7217,7 @@ static void DrawAutosaveMenuItems() {
 static void DrawSceneOverlayMenuItems(EditorState& ed) {
     ImGui::MenuItem("Colliders (gizmos)", nullptr, &g_showColliders);
     oked::DrawVolumeOverlayMenu([] { SaveSettings(); });
+    oked::DrawWindOverlayMenu([] {});
     if (ImGui::BeginMenu("Physics Debug")) {
         if (ImGui::MenuItem("Show physics (Scene + Game)", nullptr, &g_physDebug)) { ApplyPhysicsDebug(); SaveSettings(); }
         if (ImGui::IsItemHovered()) ImGui::SetTooltip("Draw colliders (green), triggers (blue), this frame's contact\npoints + normals (red) and query rays, also in the Game view\nwhile playing. Editor only - never in a build.");
@@ -7151,7 +7266,7 @@ static void DrawCameraBookmarkMenuItems(EditorState& ed) {
 // What this PC offers, for the Auto choices (AutoPerf.hpp). Read from SDL and the renderer that was created.
 static oked::autoperf::Hardware ReadHardware() {
     oked::autoperf::Hardware h;
-    if (g_sdlRenderer) { SDL_RendererInfo ri; if (SDL_GetRendererInfo(g_sdlRenderer, &ri) == 0) h.gpuRenderer = (ri.flags & SDL_RENDERER_ACCELERATED) != 0; }
+    if (g_sdlRenderer) h.gpuRenderer = okay::pb::IsAccelerated(g_sdlRenderer);
     h.cpuCores = SDL_GetCPUCount();
     h.ramMB = SDL_GetSystemRAM();
     SDL_DisplayMode dm;
@@ -7163,7 +7278,7 @@ static void ResolveAutoRendering() {
     const oked::autoperf::Hardware h = ReadHardware();
     g_ssaa = oked::autoperf::Resolve(g_aaMode, oked::autoperf::AutoAntiAliasing(h)) ? 2 : 1;
     g_vsync = oked::autoperf::Resolve(g_vsyncMode, oked::autoperf::AutoVSync(h));
-    if (g_sdlRenderer) SDL_RenderSetVSync(g_sdlRenderer, g_vsync ? 1 : 0);
+    if (g_sdlRenderer) okay::pb::SetVSync(g_sdlRenderer, g_vsync);
 }
 // One Auto / Off / On submenu; the title shows what is in effect ("3D Anti-aliasing: Auto (On)").
 static void DrawAutoModeMenu(const char* name, int& mode, bool effective, const char* tip) {
@@ -7433,6 +7548,44 @@ static void DrawCreateSlot(EditorState& ed, const std::string& id, GameObject* p
         }
         if (ImGui::MenuItem("Water")) { AddWaterObject(ed); created = true; }
         if (ImGui::MenuItem("Character")) { AddCharacterObject(ed); created = true; }
+        ImGui::Separator();
+        if (ImGui::BeginMenu("Physics Toys")) {     // ready-made physics objects (Components/PhysicsToyPresets.hpp); each is placed at the view target
+            using namespace okay::toypresets;
+            struct Toy { const char* label; const char* tip; std::function<GameObject*(Scene&, const Vec3&)> make; };
+            static const Toy toys[] = {
+                {"Conveyor Belt", "A belt that carries crates and balls standing on it. Change Speed in the Inspector.", [](Scene& s, const Vec3& p) { return ConveyorBeltPreset(s, p); }},
+                {"Jump Pad", "Launches whatever lands on it.", [](Scene& s, const Vec3& p) { return JumpPadPreset(s, p); }},
+                {"Attractor", "Pulls nearby bodies toward it.", [](Scene& s, const Vec3& p) { return ForceFieldPreset(s, p + Vec3{0, 2, 0}, 0); }},
+                {"Repeller", "Pushes nearby bodies away.", [](Scene& s, const Vec3& p) { return ForceFieldPreset(s, p + Vec3{0, 2, 0}, 1); }},
+                {"Gravity Well", "A little planet: pulls harder the closer you get.", [](Scene& s, const Vec3& p) { return ForceFieldPreset(s, p + Vec3{0, 2, 0}, 2); }},
+                {"Whirlpool", "Spins bodies around it.", [](Scene& s, const Vec3& p) { return ForceFieldPreset(s, p + Vec3{0, 2, 0}, 3); }},
+                {"Zero-G Zone", "A box of space with no gravity.", [](Scene& s, const Vec3& p) { return GravityZonePreset(s, p + Vec3{0, 4, 0}, Vec3{0, 0, 0}); }},
+                {"Moon Gravity Zone", "A box of space with weak gravity.", [](Scene& s, const Vec3& p) { return GravityZonePreset(s, p + Vec3{0, 4, 0}, Vec3{0, -1.6f, 0}); }},
+                {"Turntable", "A round plate that turns and carries things.", [](Scene& s, const Vec3& p) { return TurntablePreset(s, p); }},
+                {"Moving Platform", "A platform that glides to and fro and carries riders.", [](Scene& s, const Vec3& p) { return MovingPlatformPreset(s, p); }},
+                {"Bomb (3 s)", "Goes off three seconds after Play and shoves everything near it.", [](Scene& s, const Vec3& p) { return BombPreset(s, p + Vec3{0, 1, 0}); }},
+                {"Breakable Crate", "Breaks into pieces when hit hard.", [](Scene& s, const Vec3& p) { return BreakableCratePreset(s, p + Vec3{0, 1, 0}); }},
+                {"Pendulum", "A weight swinging on a rod.", [](Scene& s, const Vec3& p) { return PendulumPreset(s, p + Vec3{0, 6, 0}); }},
+                {"Rope", "A chain of linked balls hanging from a point.", [](Scene& s, const Vec3& p) { return RopePreset(s, p + Vec3{0, 6, 0}); }},
+                {"Wrecking Ball", "A 50 kg ball on a chain.", [](Scene& s, const Vec3& p) { return WreckingBallPreset(s, p + Vec3{0, 8, 0}); }},
+                {"Door (hinge)", "A door that swings on a hinge with stops.", [](Scene& s, const Vec3& p) { return DoorPreset(s, p); }},
+                {"Dominoes", "A row of 14 dominoes. Push the first one.", [](Scene& s, const Vec3& p) { auto d = DominoPackPreset(s, p); return d.empty() ? nullptr : d[0]; }},
+                {"Ice Patch", "A slab of slippery ice.", [](Scene& s, const Vec3& p) { return SurfacePatchPreset(s, p, "Ice"); }},
+                {"Sticky Patch", "A slab that grips hard.", [](Scene& s, const Vec3& p) { return SurfacePatchPreset(s, p, "Sticky"); }},
+                {"Trampoline Patch", "A slab that throws things back up.", [](Scene& s, const Vec3& p) { return SurfacePatchPreset(s, p, "Trampoline"); }},
+                {"Mud Patch", "A slab that slows what moves on it.", [](Scene& s, const Vec3& p) { return SurfacePatchPreset(s, p, "Mud"); }},
+            };
+            for (const Toy& t : toys) {
+                if (ImGui::MenuItem(t.label)) {
+                    ed.PushUndo();
+                    GameObject* made = t.make(ed.scene(), ed.camTarget);
+                    if (made) ed.Select(ed.SettleSpawn(made));
+                    ConsoleLog(std::string("Created ") + t.label); ed.dirty = true; created = true;
+                }
+                if (ImGui::IsItemHovered()) ImGui::SetTooltip("%s", t.tip);
+            }
+            ImGui::EndMenu();
+        }
     } else if (id == "create.vehicles") {
         if (ImGui::MenuItem("Boat")) { AddBoatObject(ed); created = true; }
         if (ImGui::IsItemHovered()) ImGui::SetTooltip("A boat that floats on Water and drives with W / S / A / D. Adds a lake if the scene has no water.");
@@ -7524,6 +7677,7 @@ static void DrawCreateSlot(EditorState& ed, const std::string& id, GameObject* p
         if (ImGui::IsItemHovered()) ImGui::SetTooltip("A curve of three points in front of the camera: roads, rails, fences, paths.");
         LevelCreateMenuItems(ed, created);                // Foliage Layer, Decal Projector, Cable
         oked::DrawVolumeGameObjectMenu(ed, created);      // Volume >
+        oked::DrawWindGameObjectMenu(ed, created);        // Environment > (wind)
     } else if (id == "create.ui") {
         // Widgets go under the scene's Canvas (made, plus an Event System, if
         // missing), or inside the selected panel; see DrawUIWidgetItems.
@@ -10320,12 +10474,8 @@ static SDL_Texture* ProjectThumb(const std::string& abs) {
     auto it = g_thumbTex.find(r.key);
     if (it != g_thumbTex.end()) { it->second.lastUse = g_thumbFrame; return it->second.tex; }
     if (!r.ready) return nullptr;   // not made yet (or no picture for it): the icon shows
-    SDL_Texture* tex = SDL_CreateTexture(g_sdlRenderer, SDL_PIXELFORMAT_ABGR8888, SDL_TEXTUREACCESS_STATIC, r.image->Width(), r.image->Height());
-    if (tex) {
-        SDL_SetTextureBlendMode(tex, SDL_BLENDMODE_BLEND);
-        SDL_SetTextureScaleMode(tex, SDL_ScaleModeLinear);
-        SDL_UpdateTexture(tex, nullptr, r.image->Pixels().data(), r.image->Width() * 4);
-    }
+    SDL_Texture* tex = okay::pb::CreateTexture(g_sdlRenderer, r.image->Width(), r.image->Height(), okay::pb::Access::Static, true, true,
+                                               (const std::uint8_t*)r.image->Pixels().data());
     g_thumbTex[r.key] = {tex, g_thumbFrame};
     return tex;
 }
@@ -10336,7 +10486,7 @@ static void ProjectThumbFrame() {
     if (g_pb) g_pb->ThumbFrame(10.0);
     if (g_thumbTex.size() < 64 || (g_thumbFrame & 31) != 0) return;
     for (auto it = g_thumbTex.begin(); it != g_thumbTex.end();) {
-        if (g_thumbFrame - it->second.lastUse > 120) { if (it->second.tex) SDL_DestroyTexture(it->second.tex); it = g_thumbTex.erase(it); }
+        if (g_thumbFrame - it->second.lastUse > 120) { if (it->second.tex) okay::pb::DestroyTexture(g_sdlRenderer, it->second.tex); it = g_thumbTex.erase(it); }
         else ++it;
     }
 }
@@ -10348,7 +10498,7 @@ static void ProjectForgetThumb(const std::string& abs) {
     g_pb->ForgetThumb(NativePath(abs));
     const std::string pre = g.ToString() + ":";
     for (auto it = g_thumbTex.begin(); it != g_thumbTex.end();) {
-        if (it->first.rfind(pre, 0) == 0) { if (it->second.tex) SDL_DestroyTexture(it->second.tex); it = g_thumbTex.erase(it); } else ++it;
+        if (it->first.rfind(pre, 0) == 0) { if (it->second.tex) okay::pb::DestroyTexture(g_sdlRenderer, it->second.tex); it = g_thumbTex.erase(it); } else ++it;
     }
 }
 
@@ -10455,6 +10605,10 @@ static void ProjectCtxFill(okaypb::ctx::State& st, const std::string& full, bool
     if (!isDir && g_pb) {
         st.tags = g_pb->LabelsOf(full);   // (just the tags: Info also walks the dependency graph)
         if (st.kind == okaypb::ctx::Kind::Scene) st.isStartScene = IsStartSceneFile(full);
+        else {   // "Exclude from Build" shows as "Include in Build" for a file already left out
+            std::error_code re; const std::string rel = std::filesystem::relative(std::filesystem::path(okaypb::Slash(full)), std::filesystem::path(g_pb->Root()).parent_path(), re).generic_string();
+            st.excludedFromBuild = !re && oked::bsm::IsExcluded(rel, g_build.excludeList);
+        }
     }
     if (isDir && g_pb) st.hasSubfolders = !g_pb->SubFolders(okaypb::Slash(full)).empty();
 }
@@ -11307,6 +11461,20 @@ void DrawProject(EditorState& ed) {
             return;
         }
         if (act == "scene:add") { MergeSceneIntoCurrent(ed, full); return; }
+        if (act == "build:exclude") {   // Build Settings > Output > Files left out of the build
+            std::error_code re; const std::string rel = fs::relative(fs::path(okaypb::Slash(full)), fs::path(ed.projectDir()), re).generic_string();
+            bool fits = true;
+            const std::string now = oked::bsm::ToggleExcluded(g_build.excludeList, rel, sizeof(g_build.excludeList), &fits);
+            if (re || rel.empty()) ConsoleLog("Could not work out this file's place in the project.", 1);
+            else if (!fits) ConsoleLog("The list of files left out of the build is full. Open Build Settings > Output and clear some.", 1);
+            else {
+                const bool added = oked::bsm::IsExcluded(rel, now);
+                std::snprintf(g_build.excludeList, sizeof(g_build.excludeList), "%s", now.c_str());
+                ConsoleLog(rel + (added ? " is left out of the build." : " is back in the build."));
+                SaveBuildLive(ed);
+            }
+            return;
+        }
         if (act == "scene:start") {   // first in Scenes In Build, ticked: the Scene Manager saves the list and a build starts here
             std::vector<oked::SceneBuildEntry> list = oked::SceneBuildSnapshot();
             std::error_code ce;
@@ -12893,6 +13061,7 @@ static void DrawLookSections(EditorState& ed) {
         if (AssetSlot("thundersound", w.thunderSound, "Clip", {".wav", ".ogg", ".mp3"})) ed.dirty = true;
         tip("Played a moment after each lightning strike in a storm (drag a clip from the Project panel).");
     }
+    oked::DrawWindSettingsSection(ed);   // Wind: the scene's wind object, with a live arrow
 }
 
 // Lighting: the scene's look (UI font, sky, fog, lightmaps) plus the global
@@ -12919,6 +13088,60 @@ void DrawSceneSettings(EditorState& ed) {
         ImGui::AlignTextToFramePadding(); ImGui::TextUnformatted("UI Quality"); ImGui::SameLine();
         if (ImGui::Combo("##uiquality", &ed.scene().uiQuality, kQ, 4)) ed.dirty = true;
         if (ImGui::IsItemHovered()) ImGui::SetTooltip("How carefully the in-game UI is drawn: sharper text, smooth shadows and filtered pictures. Saved with the scene; the built game matches.");
+    }
+
+    // Lighting presets: one click sets the sky, ambient, fog, post look and the lights (sun / moon, lamps, panel, lantern).
+    if (ImGui::CollapsingHeader("Lighting Presets", ImGuiTreeNodeFlags_DefaultOpen)) {
+        ImGui::TextWrapped("One click sets the sky, ambient light, fog and the lights. Lights it adds are named \"Lighting: ...\" "
+                           "(select and edit them like any light); a preset replaces them. Ctrl+Z undoes it.");
+        int np = 0; const okay::LightingPresetInfo* presets = okay::LightingPresetList(np);
+        for (int pi = 0; pi < np; ++pi) {
+            if (pi) ImGui::SameLine(0, 6);
+            if (pi == 3) ImGui::NewLine();
+            if (ImGui::Button(presets[pi].name)) {
+                ed.PushUndo();
+                okay::ApplyLightingPreset(ed.scene(), presets[pi].name);
+                ed.dirty = true;
+            }
+            if (ImGui::IsItemHovered()) ImGui::SetTooltip("%s", presets[pi].blurb);
+        }
+        auto& prs = ed.scene().renderSettings;
+        if (ImGui::Checkbox("Auto brightness", &prs.autoBrightness)) ed.dirty = true;
+        if (ImGui::IsItemHovered())
+            ImGui::SetTooltip("For lights set to Real world units (lux, lumens): scale everything so the scene's brightest light\n"
+                              "shows as fully lit, like an eye adapting. Off = a fixed level (a bright overcast day).");
+        bool classicLook = okay::ClassicLighting();
+        if (ImGui::Checkbox("Classic lighting look", &classicLook)) okay::ClassicLighting() = classicLook;
+        if (ImGui::IsItemHovered())
+            ImGui::SetTooltip("Goes back to the lighting before the 2026-11 upgrade (hard light clamp, straight spot ramp, fixed shadow blur,\n"
+                              "no stable cascades) so you can compare. Software renderer only. Not saved. Env var OKAY_CLASSIC_LIGHTING=1 does the same.");
+        DrawRendererNote(okay::RenderFeature::LightShapes);
+    }
+
+    // Light probes: ambient light that changes from place to place, baked here and saved with the scene.
+    if (ImGui::CollapsingHeader("Light Probes")) {
+        auto& pg = ed.scene().renderSettings.probes;
+        static float probeSpacing = 2.0f;
+        ImGui::TextWrapped("A grid of baked light samples. Surfaces get their ambient light from the probes around them, so a room under a roof "
+                           "is darker than open ground and a red wall tints the floor beside it.");
+        ImGui::SliderFloat("Probe spacing##probes", &probeSpacing, 0.5f, 8.0f, "%.1f m");
+        if (ImGui::IsItemHovered()) ImGui::SetTooltip("Distance between probes. Smaller = more detail, slower bake (the grid is at most 12 x 6 x 12).");
+        if (ImGui::Button("Bake probes")) {
+            ed.PushUndo();
+            const okay::LightProbeBakeResult br = okay::BakeLightProbes(ed.scene(), pg, probeSpacing);
+            ConsoleLog(br.message, br.ok ? 0 : 2);
+            if (br.ok) ed.dirty = true;
+        }
+        if (ImGui::IsItemHovered()) ImGui::SetTooltip("Bakes the scene's lights, sky and walls into the probes. Bake again after you move things or change the lights.");
+        if (pg.Baked()) {
+            ImGui::SameLine();
+            if (ImGui::Button("Clear probes")) { ed.PushUndo(); pg.Clear(); ed.dirty = true; }
+            if (ImGui::Checkbox("Use probes##probes", &pg.enabled)) ed.dirty = true;
+            ImGui::TextDisabled("%d probes (%d x %d x %d), every %.1f m.", pg.Count(), pg.nx, pg.ny, pg.nz, pg.spacing);
+        } else {
+            ImGui::TextDisabled("No probes baked: the flat / hemisphere ambient is used.");
+        }
+        ImGui::TextDisabled("Drawn by the software renderer only for now (OpenGL and Direct3D 11 keep the normal ambient).");
     }
 
     // Environment: the scene's skybox + ambient, saved with the scene so the
@@ -18642,9 +18865,15 @@ void DrawFileDialogs(EditorState& ed) {
         if (!g_buildProfilesLoaded) { LoadBuildProfiles(ed); g_buildProfilesLoaded = true; }
     }
     ImGui::SetNextWindowPos(c, ImGuiCond_Appearing, ImVec2(0.5f, 0.5f));
-    ImGui::SetNextWindowSize(ImVec2(900, 640), ImGuiCond_Appearing);
-    ImGui::SetNextWindowSizeConstraints(ImVec2(720, 520), ImVec2(1600, 1200));
+    ImGui::SetNextWindowSize(ImVec2(980, 760), ImGuiCond_Appearing);
+    ImGui::SetNextWindowSizeConstraints(ImVec2(760, 600), ImVec2(1600, 1200));
     if (ImGui::BeginPopupModal("Build Settings")) {
+        oked::BuildWindowCtx bctx;   // what the new window code (BuildSettingsWindow.cpp) needs from this editor
+        bctx.settings = &g_build; bctx.name = g_buildNameBuf; bctx.nameCap = sizeof(g_buildNameBuf); bctx.dir = g_buildDirBuf; bctx.dirCap = sizeof(g_buildDirBuf);
+        bctx.platform = g_buildPlatform; bctx.projectDir = ed.projectDir(); bctx.openSceneSaved = !ed.path().empty();
+        for (const BuildScene& bs : g_build.scenes) if (bs.on) ++bctx.enabledScenes;
+        bctx.estimateBytes = g_buildDryBytes;
+        bctx.openFolder = [](const std::string& p) { extide::RevealInFiles(p); };
         if (g_buildPlatform == 3) ImGui::TextDisabled("Export a dedicated server:  the game with no window, plus server.cfg and deploy scripts");
         else ImGui::TextDisabled("Export a standalone game:  <Name>.exe + <Name>_Data/ (scenes, only the assets they use, StreamingAssets, build.json)");
         ImGui::Spacing();
@@ -18713,6 +18942,7 @@ void DrawFileDialogs(EditorState& ed) {
             }
             if (ed.projectDir().empty())
                 ImGui::TextDisabled("Open a project to save build profiles.");
+            oked::DrawBuildProfileExtras(bctx, g_buildProfiles, g_buildProfileSel, [&] { SaveBuildProfiles(ed); });   // Debug/Release start, duplicate, .okaybuild files
         }
         ImGui::Separator();
         if (g_build.width  < 320) g_build.width  = 320;
@@ -18763,44 +18993,18 @@ void DrawFileDialogs(EditorState& ed) {
         // ---- Sections: a sidebar on the left, the chosen page on the right ----
         static int s_buildSec = 0;
         if (const char* e = std::getenv("OKAY_UI_BUILDSEC")) { static bool once = false; if (!once) { once = true; s_buildSec = std::atoi(e); } }
-        static const char* kBuildSecs[] = {"Scenes", "Player", "Display", "Graphics", "Audio & Input", "Output"};
-        static const char* kBuildSecTips[] = {
-            "Which scenes ship, in what order (the first one starts the game).",
-            "Name, company, version, identifier, icon and splash.",
-            "Resolution, window mode, frame rate, focus behaviour.",
-            "Renderer and quality: shadows, bloom, ambient occlusion, anti-aliasing.",
-            "Volume, cursor and keyboard behaviour.",
-            "Output folder layout, encryption and what happens after the build."};
-        float buildFooterH = ImGui::GetFrameHeightWithSpacing() * 2.0f + ImGui::GetTextLineHeightWithSpacing() + 10.0f;
+        if (!oked::bsm::PageShown(s_buildSec, g_buildPlatform)) s_buildSec = g_buildPlatform == 3 ? 6 : g_buildPlatform == 4 ? 7 : 0;
+        float buildFooterH = ImGui::GetFrameHeightWithSpacing() * 2.0f + ImGui::GetTextLineHeightWithSpacing() + 10.0f + 150.0f;   // 150 = the summary panel
         if (!g_vsBuildErrors.empty() || !g_buildWarnings.empty())   // room for the Problems block above the buttons
             buildFooterH += kVsErrListH + ImGui::GetFrameHeightWithSpacing() + ImGui::GetTextLineHeightWithSpacing() * 3.0f + 16.0f;
-        ImGui::BeginChild("##bnav", ImVec2(170, -buildFooterH), ImGuiChildFlags_Borders);
-        if (g_buildPlatform == 3) {   // a server has no window/graphics/audio: Scenes, Server, Output
-            if (s_buildSec != 0 && s_buildSec != 5 && s_buildSec != 6) s_buildSec = 6;
-            const int ids[] = {0, 6, 5};
-            const char* labels[] = {"Scenes", "Server", "Output"};
-            const char* tips[] = {kBuildSecTips[0], "Name, port, players, password, public listing and anti-cheat (written to server.cfg).", kBuildSecTips[5]};
-            for (int k = 0; k < 3; ++k) {
-                if (ImGui::Selectable(labels[k], s_buildSec == ids[k], 0, ImVec2(0, ImGui::GetTextLineHeight() + 12))) s_buildSec = ids[k];
-                if (ImGui::IsItemHovered()) ImGui::SetTooltip("%s", tips[k]);
-            }
-        } else if (g_buildPlatform == 4) {   // Xbox (experimental): Scenes, Player (name, version, icon), Xbox
-            if (s_buildSec != 0 && s_buildSec != 1 && s_buildSec != 7) s_buildSec = 7;
-            const int ids[] = {0, 1, 7};
-            const char* labels[] = {"Scenes", "Player", "Xbox"};
-            for (int k = 0; k < 3; ++k) {
-                if (ImGui::Selectable(labels[k], s_buildSec == ids[k], 0, ImVec2(0, ImGui::GetTextLineHeight() + 12))) s_buildSec = ids[k];
-            }
-        } else {
-            if (s_buildSec == 6 || s_buildSec == 7) s_buildSec = 0;
-            for (int si = 0; si < IM_ARRAYSIZE(kBuildSecs); ++si) {
-                if (ImGui::Selectable(kBuildSecs[si], s_buildSec == si, 0, ImVec2(0, ImGui::GetTextLineHeight() + 12))) s_buildSec = si;
-                if (ImGui::IsItemHovered()) ImGui::SetTooltip("%s", kBuildSecTips[si]);
-            }
-        }
+        ImGui::BeginChild("##bnav", ImVec2(200, -buildFooterH), ImGuiChildFlags_Borders);
+        oked::DrawBuildNav(bctx, s_buildSec);   // search box, pages with a dot when changed
         ImGui::EndChild();
         ImGui::SameLine();
         ImGui::BeginChild("##bpane", ImVec2(0, -buildFooterH), ImGuiChildFlags_Borders | ImGuiChildFlags_AlwaysUseWindowPadding);
+        oked::DrawBuildPageHeader(bctx, s_buildSec);   // the page tip and "Reset page to defaults"
+        ImGui::Separator();
+        oked::DrawBuildPageExtra(bctx, s_buildSec);    // the Game and Advanced pages
         if (s_buildSec == 0) {   // ---- Scenes In Build ----
             namespace fs = std::filesystem;
             auto& L = g_build.scenes;
@@ -18812,7 +19016,7 @@ void DrawFileDialogs(EditorState& ed) {
             ImGui::TextDisabled("Ticked scenes ship in this order. #0 is where the game starts; the others load with\n"
                                 "load_scene(\"Name\") or load_scene_index(n). The open scene ships with unsaved edits.");
             ImGui::Spacing();
-            int shown = 0, move = -1, moveDir = 0, del = -1;
+            int shown = 0, move = -1, moveDir = 0, del = -1, dragFrom = -1, dragTo = -1;
             for (int i = 0; i < (int)L.size(); ++i) {
                 ImGui::PushID(i);
                 ImGui::Checkbox("##on", &L[i].on);
@@ -18824,7 +19028,16 @@ void DrawFileDialogs(EditorState& ed) {
                 const bool exists = fs::exists(sp, e);
                 if (exists) ImGui::TextUnformatted(sp.stem().string().c_str());
                 else ImGui::TextColored(ImVec4(0.95f, 0.45f, 0.45f, 1), "%s (missing)", sp.stem().string().c_str());
-                if (ImGui::IsItemHovered()) ImGui::SetTooltip("%s", L[i].path.c_str());
+                if (ImGui::BeginDragDropSource(ImGuiDragDropFlags_SourceAllowNullID)) {   // drag a scene's name up or down the list
+                    ImGui::SetDragDropPayload("OKAY_BUILD_SCENE", &i, sizeof(int));
+                    ImGui::TextUnformatted(sp.stem().string().c_str());
+                    ImGui::EndDragDropSource();
+                }
+                if (ImGui::BeginDragDropTarget()) {
+                    if (const ImGuiPayload* pl = ImGui::AcceptDragDropPayload("OKAY_BUILD_SCENE")) { dragFrom = *(const int*)pl->Data; dragTo = i; }
+                    ImGui::EndDragDropTarget();
+                }
+                if (ImGui::IsItemHovered() && !ImGui::IsMouseDown(0)) ImGui::SetTooltip("%s\n(drag to reorder)", L[i].path.c_str());
                 if (!ed.path().empty() && samePath(L[i].path, ed.path())) { ImGui::SameLine(); ImGui::TextColored(ImVec4(0.55f, 0.80f, 1.0f, 1), "(open)"); }
                 ImGui::SameLine(ImGui::GetContentRegionAvail().x + ImGui::GetCursorPosX() - 92);
                 ImGui::BeginDisabled(i == 0);
@@ -18840,6 +19053,7 @@ void DrawFileDialogs(EditorState& ed) {
                 ImGui::PopID();
             }
             if (move >= 0) std::swap(L[move], L[move + moveDir]);
+            if (dragFrom >= 0) oked::bsm::MoveItem(L, dragFrom, dragTo);
             if (del >= 0) L.erase(L.begin() + del);
             if (L.empty()) ImGui::TextDisabled("No list yet: the open scene is built on its own.");
             ImGui::Spacing();
@@ -19187,33 +19401,14 @@ void DrawFileDialogs(EditorState& ed) {
                 if (ImGui::IsItemHovered()) ImGui::SetTooltip("Package the build folder into a .zip (named by Archive name) beside it, ready to share or upload. The Zip layout does this and keeps only the zip.");
             }
         }
+        oked::DrawBuildPageMore(bctx, s_buildSec);   // settings added after the older pages were written
         ImGui::EndChild();
 
         ImGui::Spacing();
-        // One-line summary of what's about to be produced, so a wrong setting
-        // is caught before the build instead of after it.
-        if (g_buildPlatform == 3) {
-            ImGui::TextDisabled("%s server  \xC2\xB7  %s  \xC2\xB7  UDP %d  \xC2\xB7  %d players%s%s  \xC2\xB7  %s",
-                g_build.srvTarget == 0 ? "Linux" : "Windows",
-                g_build.srvName[0] ? g_build.srvName : (std::string(g_buildNameBuf) + " Server").c_str(),
-                g_build.srvPort, g_build.srvMaxPlayers,
-                g_build.srvPassword[0] ? "  \xC2\xB7  password" : "",
-                g_build.srvAdvertise ? "  \xC2\xB7  listed" : "",
-                g_buildDirBuf[0] ? g_buildDirBuf : "(no output folder)");
-        } else
-        {
-            const char* wm2 = g_build.fullscreen ? "fullscreen" : (g_build.borderless ? "borderless" : "windowed");
-            const char* layoutNames[] = {"folder", "compact", "zip"};
-            ImGui::TextDisabled("%s v%s (build %d)  \xC2\xB7  %s layout  \xC2\xB7  %dx%d %s  \xC2\xB7  %s%s%s  \xC2\xB7  %s",
-                g_buildNameBuf[0] ? g_buildNameBuf : "(unnamed)",
-                g_build.version[0] ? g_build.version : "1.0", g_build.buildNumber,
-                layoutNames[std::max(0, std::min(2, g_build.layout))],
-                g_build.width, g_build.height, wm2,
-                g_build.gpuRenderer ? "GPU" : "software",
-                g_build.encryptData ? "  \xC2\xB7  encrypted" : "",
-                g_build.developmentBuild ? "  \xC2\xB7  DEV" : "",
-                g_buildDirBuf[0] ? g_buildDirBuf : "(no output folder)");
-        }
+        // What will happen, in plain words, and the checks with Fix buttons (BuildSettingsWindow.cpp).
+        ImGui::BeginChild("##bsummary", ImVec2(0, 140), ImGuiChildFlags_Borders);
+        oked::DrawBuildSummary(bctx);
+        ImGui::EndChild();
         ImGui::Spacing();
         // Errors stop the build. Warnings are listed and the build still runs.
         if (!g_vsBuildErrors.empty() || !g_buildWarnings.empty()) {
@@ -19394,7 +19589,10 @@ void DrawFileDialogs(EditorState& ed) {
             ConsoleLog(std::string(g_buildDryRun ? "Build Game (dry run): " : "Build Game: ") + g_buildStatus);
             const bool wasDry = g_buildDryRun;
             g_buildDryRun = false;
+            if (wasDry && g_buildReport.ok) g_buildDryBytes = g_buildReport.r.total;
+            { std::vector<std::string> lw; for (const std::string& w : g_buildReport.r.warnings) lw.push_back(w); oked::SetBuildLog(g_buildStatus, lw); }   // Build Settings > Advanced > Last build log
             // A finished real build counts the build number up, so the next one is told apart from this one.
+            if (!wasDry) oked::RecordBuildInHistory(bctx, g_build.buildNumber, g_buildReport.r.total, g_buildReport.ok);   // the build history list
             if (g_buildReport.ok && !wasDry && g_build.autoBuildNumber) ++g_build.buildNumber;
             // Remember the settings used for next time (so they survive restarts).
             if (g_buildProfileSel >= 0 && g_buildProfileSel < (int)g_buildProfiles.size()) {
@@ -19637,7 +19835,17 @@ void RunAfterSavePrompt(EditorState& ed, const std::string& doing, std::function
     g_savePromptWhat = doing; g_savePromptAction = std::move(action); g_savePromptCancel = std::move(onCancel);
     g_savePromptError.clear(); g_savePromptOpen = true;
 }
+// The Dear ImGui implementation of oked::DialogService (editor/DialogService.hpp): the popups above. Window mode has its own (editor/OkayUIHostDialogs.cpp).
+namespace {
+struct ImGuiDialogs : DialogService {
+    EditorState* ed = nullptr;   // set by DrawSavePrompt each frame
+    void ShowError(const std::string& title, const std::string& text) override { ShowErrorPopup(title, text); }
+    void RunAfterSavePrompt(const std::string& doing, std::function<void()> action, std::function<void()> onCancel) override { if (ed) ::oked::RunAfterSavePrompt(*ed, doing, std::move(action), std::move(onCancel)); else if (action) action(); }
+    void OpenScriptAt(const std::string& path, int line) override { OpenScriptFileInEditorAt(path, line); }
+} g_imguiDialogs;
+}
 static void DrawSavePrompt(EditorState& ed) {
+    g_imguiDialogs.ed = &ed; if (!CurrentDialogs()) SetDialogs(&g_imguiDialogs);
     if (g_savePromptOpen && !ImGui::IsPopupOpen("Save changes?")) ImGui::OpenPopup("Save changes?");
     ImGui::SetNextWindowPos(ImGui::GetMainViewport()->GetCenter(), ImGuiCond_Appearing, ImVec2(0.5f, 0.5f));
     ImGui::SetNextWindowSize(ImVec2(480, 0), ImGuiCond_Always);
@@ -31243,6 +31451,8 @@ void DrawInspector(EditorState& ed) {
             oked::FieldTip("Gravity##ps");
             if (ImGui::DragFloat("Gravity Mult##ps", &ps->gravityModifier, 0.02f, -10.0f, 10.0f)) ed.dirty = true;
             oked::FieldTip("Gravity Mult##ps");
+            if (ImGui::SliderFloat("Affected by wind##ps", &ps->windInfluence, 0.0f, 3.0f, "%.2f")) ed.dirty = true;
+            if (ImGui::IsItemHovered()) ImGui::SetTooltip("How much the wind carries these particles. 0 = ignore the wind, 1 = they drift at the wind's speed.\nThe wind comes from the weather and from Wind Zones (Add Component > Environment > Wind Zone).");
             if (ImGui::DragFloat("Damping / sec##ps", &ps->damping, 0.02f, 0.0f, 20.0f)) ed.dirty = true;
             oked::FieldTip("Damping / sec##ps");
 
@@ -33539,8 +33749,38 @@ void DrawInspector(EditorState& ed) {
                 if (ImGui::ColorEdit4("Color##light", c)) { li->color = {c[0], c[1], c[2], c[3]}; ed.dirty = true; }
                 oked::FieldTip("Color##light");
             }
-            if (ImGui::DragFloat("Intensity##light", &li->intensity, 0.02f, 0.0f, 8.0f)) ed.dirty = true;
-            oked::FieldTip("Intensity##light");
+            {
+                // Units: Simple (1 = normal) or real-world (lux for the sun, lumens for lamps) with Auto brightness.
+                const bool real = li->unit == Light::Unit::RealWorld;
+                const bool sun = li->type == Light::Type::Directional;
+                if (!real) {
+                    if (ImGui::DragFloat("Intensity##light", &li->intensity, 0.02f, 0.0f, 8.0f)) ed.dirty = true;
+                } else {
+                    if (ImGui::DragFloat("Intensity##light", &li->intensity, 1.0f, 0.0f, 1000000.0f, sun ? "%.1f lux" : "%.0f lumens",
+                                         ImGuiSliderFlags_Logarithmic)) ed.dirty = true;
+                }
+                oked::FieldTip("Intensity##light");
+                const char* units[] = {"Simple (1 = normal)", "Real world (lux / lumens)"};
+                int un = (int)li->unit;
+                if (ImGui::Combo("Units##light", &un, units, 2)) {
+                    li->unit = (Light::Unit)un;
+                    li->intensity = un == 1 ? (sun ? 20000.0f : 800.0f) : 1.0f;   // a sensible starting value for the new unit
+                    ed.dirty = true;
+                }
+                if (ImGui::IsItemHovered())
+                    ImGui::SetTooltip("Simple: the number is the brightness, 1 = normal.\nReal world: lux for the sun (noon 100000, overcast 10000, moon 0.3),\nlumens for lamps (candle 12, 60 W bulb 800, street lamp 20000).\nThe scene's Auto brightness (Lighting window) keeps it readable.");
+                if (real) {
+                    static const struct { const char* n; float v; bool sunOnly; } kReal[] = {
+                        {"Noon sun", 100000.0f, true}, {"Overcast", 10000.0f, true}, {"Moon", 0.3f, true},
+                        {"Candle", 12.0f, false}, {"Bulb", 800.0f, false}, {"Street lamp", 20000.0f, false}};
+                    int shown = 0;
+                    for (const auto& r : kReal) {
+                        if (r.sunOnly != sun) continue;
+                        if (shown++) ImGui::SameLine(0, 4);
+                        if (ImGui::SmallButton((std::string(r.n) + "##real").c_str())) { li->intensity = r.v; ed.dirty = true; }
+                    }
+                }
+            }
 
             SectionHeader("Ambient (scene floor)");
             if (ImGui::SliderFloat("Ambient##light", &li->ambient, 0.0f, 1.0f)) ed.dirty = true;
@@ -33559,11 +33799,42 @@ void DrawInspector(EditorState& ed) {
                 if (ImGui::Combo("Falloff##light", &fo, falls, 2)) { li->falloff = (Light::Falloff)fo; ed.dirty = true; }
                 if (ImGui::IsItemHovered()) ImGui::SetTooltip("Linear = predictable (1-d/range)^2 rolloff.\nInverse Square = physically-based 1/d^2, brighter near the source.");
             }
+            if (li->type == Light::Type::Area) {
+                if (ImGui::DragFloat("Panel Width##light", &li->areaWidth, 0.05f, 0.0f, 100.0f, "%.2f m")) ed.dirty = true;
+                if (ImGui::DragFloat("Panel Height##light", &li->areaHeight, 0.05f, 0.0f, 100.0f, "%.2f m")) ed.dirty = true;
+                if (ImGui::IsItemHovered()) ImGui::SetTooltip("A real rectangle that shines along the light's blue (forward) arrow.\nBroad panels give wide soft light. 0 x 0 = the classic soft glow.");
+                DrawRendererNote(okay::RenderFeature::LightShapes);
+            }
             if (li->type == Light::Type::Spot) {
                 if (ImGui::SliderFloat("Spot Angle##light", &li->spotAngle, 5.0f, 170.0f)) ed.dirty = true;
                 oked::FieldTip("Spot Angle##light");
                 if (ImGui::SliderFloat("Softness##light", &li->spotSoftness, 0.0f, 1.0f)) ed.dirty = true;
                 if (ImGui::IsItemHovered()) ImGui::SetTooltip("0 = crisp cone edge, 1 = very feathered");
+            }
+
+            if (li->type == Light::Type::Directional || li->type == Light::Type::Spot) {
+                // Light mask (cookie): a window, blinds, leaves... the light shines through it.
+                SectionHeader("Mask (cookie)");
+                int nb = 0; const char* const* builtin = okay::LightCookies::BuiltinNames(nb);
+                int cur = 0;
+                if (!li->cookie.empty()) { cur = nb + 1; for (int i = 0; i < nb; ++i) if (li->cookie == builtin[i]) cur = i + 1; }
+                std::string preview = cur == 0 ? "None" : (cur <= nb ? std::string(builtin[cur - 1]).substr(8) : std::string("Picture file"));
+                if (ImGui::BeginCombo("Mask##lightck", preview.c_str())) {
+                    if (ImGui::Selectable("None", cur == 0)) { li->cookie.clear(); ed.dirty = true; }
+                    for (int i = 0; i < nb; ++i)
+                        if (ImGui::Selectable(std::string(builtin[i]).substr(8).c_str(), cur == i + 1)) { li->cookie = builtin[i]; ed.dirty = true; }
+                    if (ImGui::Selectable("Picture file...", cur == nb + 1)) { if (cur != nb + 1) li->cookie = "Assets/Textures/mask.png"; ed.dirty = true; }
+                    ImGui::EndCombo();
+                }
+                if (ImGui::IsItemHovered()) ImGui::SetTooltip("The light shines only through the bright parts of the mask.\nSpot: the mask fits the cone. Sun: it repeats across the ground.");
+                if (cur == nb + 1) {
+                    char buf[260]; std::snprintf(buf, sizeof buf, "%s", li->cookie.c_str());
+                    if (ImGui::InputText("File##lightck", buf, sizeof buf)) { li->cookie = buf; ed.dirty = true; }
+                    if (ImGui::IsItemHovered()) ImGui::SetTooltip("A picture: white lets light through, black blocks it.");
+                }
+                if (cur != 0 && li->type == Light::Type::Directional)
+                    if (ImGui::DragFloat("Metres per repeat##lightck", &li->cookieScale, 0.1f, 0.1f, 200.0f, "%.1f m")) ed.dirty = true;
+                if (cur != 0) DrawRendererNote(okay::RenderFeature::LightShapes);
             }
 
             SectionHeader("Shadows");
@@ -33582,6 +33853,9 @@ void DrawInspector(EditorState& ed) {
             if (li->castShadows) {
                 if (ImGui::SliderFloat("Strength##lightsh", &li->shadowStrength, 0.0f, 1.0f)) ed.dirty = true;
                 if (ImGui::IsItemHovered()) ImGui::SetTooltip("0 = invisible, 1 = fully dark (down to the ambient light)");
+                if (ImGui::SliderFloat("Soft Edges##lightsh", &li->shadowSoftness, 0.0f, 1.0f)) ed.dirty = true;
+                if (ImGui::IsItemHovered()) ImGui::SetTooltip("0 = the same soft edge everywhere.\nHigher = a shadow is sharp where the object touches the ground and softer the farther it falls.");
+                DrawRendererNote(okay::RenderFeature::LightShapes);
                 if (ImGui::SliderFloat("Bias##lightsh", &li->shadowBias, 0.0f, 4.0f)) ed.dirty = true;
                 if (ImGui::IsItemHovered()) ImGui::SetTooltip("Raise if surfaces get dark speckles/stripes (shadow acne).\nLower if shadows look detached from the objects casting them.");
             }
@@ -41358,7 +41632,7 @@ void DrawInspector(EditorState& ed) {
             if (AssetSlot("uritex", ri->texture, "Image", {".png", ".jpg", ".jpeg", ".bmp", ".tga"})) ed.dirty = true;
             TexFieldThumb(ri->texture);
             int tw = 0, th = 0;
-            if (SDL_Texture* t = ri->texture.empty() ? nullptr : GetThumb(ri->texture)) SDL_QueryTexture(t, nullptr, nullptr, &tw, &th);
+            if (SDL_Texture* t = ri->texture.empty() ? nullptr : GetThumb(ri->texture)) okay::pb::QueryTexture(g_sdlRenderer, t, &tw, &th);
             if (tw > 0) {
                 if (ImGui::SmallButton("Set Native Size##uri")) {
                     ed.PushUndo();
@@ -41401,7 +41675,7 @@ void DrawInspector(EditorState& ed) {
             TexFieldThumb(im->texture);
             if (!im->texture.empty()) {
                 if (SDL_Texture* t = GetThumb(im->texture)) {
-                    int tw = 0, th = 0; SDL_QueryTexture(t, nullptr, nullptr, &tw, &th);
+                    int tw = 0, th = 0; okay::pb::QueryTexture(g_sdlRenderer, t, &tw, &th);
                     if (ImGui::SmallButton("Set Native Size##uim")) { ed.PushUndo(); im->size = {(float)tw, (float)th}; ed.dirty = true; }
                     if (ImGui::IsItemHovered()) ImGui::SetTooltip("Make the widget the picture's own size (%d x %d)", tw, th);
                     ImGui::SameLine(); ImGui::TextDisabled("%d x %d px", tw, th);
@@ -42081,6 +42355,7 @@ void DrawInspector(EditorState& ed) {
     DrawBehaviorTreeInspector(ed, go, curComp, toRemove, &CompHeader);   // Behavior Tree Runner
     DrawSplineInspector(ed, go, curComp, toRemove, &CompHeader);       // Spline family, Line / Trail Renderer
     DrawLevelInspector(ed, go, curComp, toRemove, &CompHeader);        // Foliage, Decal Projector, Cable
+    oked::DrawWindInspector(ed, go, curComp, toRemove, &CompHeader);   // Wind Zone, Wind Drag, Wind Sway, Wind Sound
     oked::DrawVolumeInspector(ed, go, curComp, toRemove, &CompHeader);  // Volume (checkpoint, kill, force, atmosphere, ambience)
     oked::DrawFallbackInspector(ed, go, curComp, toRemove, fbCursorY, &CompHeader);   // anything still undrawn: from the property registry
     if (multiEdit.active && oked::PropagateComponentEdit(ed.MultiSelection(), go, *curComp, multiEdit) > 0) ed.dirty = true;
@@ -42335,6 +42610,9 @@ void DrawInspector(EditorState& ed) {
             if (item(!go->GetComponent<MeshCollider3D>(), "Mesh Collider 3D")) { auto* m = go->AddComponent<MeshCollider3D>(); m->autoFit = true; FitColliders(go); ed.dirty = true; }
           } EndCat(o); }
 
+        { bool o = BeginCat("Environment");
+          if (o) { oked::WindAddComponentItems(ed, go, item); }
+          EndCat(o); }
         { bool o = BeginCat("Lighting");
           if (o) {
             if (item(!go->GetComponent<Light>(), "Directional Light")) { go->AddComponent<Light>(); ed.dirty = true; }
@@ -44496,8 +44774,7 @@ void DrawScene2D(EditorState& ed, ImDrawList* dl, ImVec2 canvasPos, ImVec2 canva
             if (sr->flipX) std::swap(u0, u1);
             if (sr->flipY) std::swap(v0, v1);
             SDL_Texture* stex = sr->texture.empty() ? nullptr : GetThumb(sr->texture);
-            if (stex) SDL_SetTextureScaleMode(stex,
-                sr->texFilter == SpriteRenderer::TexFilter::Pixel ? SDL_ScaleModeNearest : SDL_ScaleModeLinear);
+            if (stex) okay::pb::SetTextureLinear(g_sdlRenderer, stex, sr->texFilter != SpriteRenderer::TexFilter::Pixel);
             ImU32 col = ToColor(sr->color);
             if (stex) dl->AddImageQuad((ImTextureID)stex, pTL, pTR, pBR, pBL,
                                        ImVec2(u0, v0), ImVec2(u1, v0), ImVec2(u1, v1), ImVec2(u0, v1), col);
@@ -45666,7 +45943,7 @@ void DrawScene3D(EditorState& ed, ImDrawList* dl, ImVec2 canvasPos, ImVec2 canva
             if (!ri.visible || ri.path.empty() || !(ri.width > 0.0f)) continue;
             SDL_Texture* rt = GetThumb(ri.path);
             if (!rt) continue;
-            int iw = 0, ih = 0; SDL_QueryTexture(rt, nullptr, nullptr, &iw, &ih);
+            int iw = 0, ih = 0; okay::pb::QueryTexture(g_sdlRenderer, rt, &iw, &ih);
             if (iw <= 0 || ih <= 0) continue;
             const std::array<Vec3, 4> c4 = okay::modeling::RefPlaneCorners((okay::modeling::RefPlane)std::clamp(ri.plane, 0, 2), ri.centre, ri.width, (float)ih / (float)iw, ri.flipX);
             ImVec2 sp[4]; bool ok = true;
@@ -45711,6 +45988,7 @@ void DrawScene3D(EditorState& ed, ImDrawList* dl, ImVec2 canvasPos, ImVec2 canva
         if (oked::DrawVolumeOverlay(ed, dl, vp, eye, center, canvasSize, canvasPos,
                                     hovered && !g_uiHandled && !g_gizmoGrab, io))
             g_uiHandled = true;
+        oked::DrawWindOverlay(ed, dl, vp, center, canvasSize, canvasPos);   // wind zones and arrows
     }
     // Skeleton overlay on top of the meshes (built with the gizmos above).
     if (!gameView) {
@@ -46116,6 +46394,25 @@ void DrawScene3D(EditorState& ed, ImDrawList* dl, ImVec2 canvasPos, ImVec2 canva
                     line(a + v * r, b + v * r, cc); line(a - v * r, b - v * r, cc);
                 }
             }
+        }
+        for (const auto& up : objs) {   // velocity arrows (cyan): how fast and which way each awake body moves
+            if (!up->active) continue;
+            auto* vrb = up->GetComponent<Rigidbody3D>();
+            if (!vrb || vrb->bodyType == Rigidbody3D::BodyType::Static || vrb->sleeping || !up->transform) continue;
+            const float sp2 = vrb->velocity.SqrMagnitude();
+            if (!(sp2 > 0.04f)) continue;
+            const Vec3 from = up->transform->Position(), to = from + vrb->velocity * 0.3f;
+            const ImU32 vc = IM_COL32(60, 220, 240, 255);
+            line(from, to, vc, 2.0f);
+            const Vec3 dirn = vrb->velocity.Normalized(); Vec3 hu, hv; basis(dirn, hu, hv);
+            line(to, to - dirn * 0.25f + hu * 0.1f, vc, 2.0f); line(to, to - dirn * 0.25f - hu * 0.1f, vc, 2.0f);
+        }
+        {   // the stats readout: what the last physics step did
+            const PhysicsStepStats& ps = ed.scene().physics3D().Stats();
+            char buf[160];
+            std::snprintf(buf, sizeof buf, "Physics: %d bodies (%d awake, %d asleep), %d contacts, %d groups, %d fast bodies swept",
+                          ps.bodies, ps.awake, ps.asleep, ps.contacts, ps.islands, ps.sweeps);
+            dl->AddText(ImVec2(view3dMin.x + 8.0f, view3dMin.y + 8.0f), IM_COL32(255, 255, 255, 230), buf);
         }
         for (const PhysicsDebugContact3D& ct : ed.scene().physics3D().DebugContacts()) {
             ImU32 kc = ct.trigger ? IM_COL32(90, 170, 255, 255) : IM_COL32(255, 80, 70, 255);
@@ -48720,13 +49017,12 @@ static void SpriteFloodFill(okay::Image& img, int sx, int sy, const okay::Color&
 // crisp 1:1 pixel preview in the Sprite Editor.
 static SDL_Texture* SpriteEdTexture(okay::Image& img, SDL_Texture*& tex, int& tw, int& th, bool& dirty) {
     if (!g_sdlRenderer || img.Width() <= 0) return nullptr;
-    if (tex && (tw != img.Width() || th != img.Height())) { SDL_DestroyTexture(tex); tex = nullptr; }
+    if (tex && (tw != img.Width() || th != img.Height())) { okay::pb::DestroyTexture(g_sdlRenderer, tex); tex = nullptr; }
     if (!tex) {
-        tex = SDL_CreateTexture(g_sdlRenderer, SDL_PIXELFORMAT_ABGR8888, SDL_TEXTUREACCESS_STATIC, img.Width(), img.Height());
-        if (tex) { SDL_SetTextureBlendMode(tex, SDL_BLENDMODE_BLEND); SDL_SetTextureScaleMode(tex, SDL_ScaleModeNearest); }
+        tex = okay::pb::CreateTexture(g_sdlRenderer, img.Width(), img.Height(), okay::pb::Access::Static, true, false);
         tw = img.Width(); th = img.Height(); dirty = true;
     }
-    if (tex && dirty) { SDL_UpdateTexture(tex, nullptr, img.Pixels().data(), img.Width() * 4); dirty = false; }
+    if (tex && dirty) { okay::pb::UpdateTexture(g_sdlRenderer, tex, nullptr, img.Pixels().data(), img.Width() * 4); dirty = false; }
     return tex;
 }
 
@@ -49677,7 +49973,10 @@ static bool SaveSceneTo(EditorState& ed, std::string p) {
     g_lastSaveError.clear();
     g_lastSavedAt = okay::platform::TicksMs();
     ConsoleLog("Saved scene: " + p);
-    StampProjectAfterSave(ed.projectDir());   // project.okayproj says which version last saved the project
+    // project.okayproj says which version last saved the project. Only the open project is stamped, and only when the scene went
+    // into it: a Save As into another project must not mark that one "up to date" (its other scenes were not upgraded), and a
+    // loose file belongs to no project.
+    if (const std::string saved = okayup::ProjectRootForScene(p); !saved.empty() && okayup::RootKey(saved) == okayup::RootKey(ed.projectDir())) StampProjectAfterSave(ed.projectDir());
     AddRecent(p); ed.Achievement("FIRST_SAVE");
     fs::remove(p + ".autosave", ec);
     return true;
@@ -50317,40 +50616,36 @@ static SDL_Texture* OkayVpTexture(OkayVpData* d, ImTextureData* td) {
     SDL_Texture* t = (it != d->texes.end()) ? it->second : nullptr;
     bool fresh = false;
     if (!t) {
-        t = SDL_CreateTexture(d->ren, SDL_PIXELFORMAT_RGBA32, SDL_TEXTUREACCESS_STATIC,
-                              td->Width, td->Height);
+        t = okay::pb::CreateTexture(d->ren, td->Width, td->Height, okay::pb::Access::Static, true, true);
         if (!t) return nullptr;
-        SDL_SetTextureBlendMode(t, SDL_BLENDMODE_BLEND);
-        SDL_SetTextureScaleMode(t, SDL_ScaleModeLinear);
         d->texes[td] = t;
         fresh = true;
     }
     // The main backend consumes Status, but this frame's dirty rects stay in
     // Updates[] until the next NewFrame — apply them to our copy too.
     if (fresh)
-        SDL_UpdateTexture(t, nullptr, td->GetPixels(), td->GetPitch());
+        okay::pb::UpdateTexture(d->ren, t, nullptr, td->GetPixels(), td->GetPitch());
     else
         for (ImTextureRect& r : td->Updates) {
-            SDL_Rect sr = {r.x, r.y, r.w, r.h};
-            SDL_UpdateTexture(t, &sr, td->GetPixelsAt(r.x, r.y), td->GetPitch());
+            const int sr[4] = {r.x, r.y, r.w, r.h};
+            okay::pb::UpdateTexture(d->ren, t, sr, td->GetPixelsAt(r.x, r.y), td->GetPitch());
         }
     return t;
 }
 
 static void OkayVp_CreateWindow(ImGuiViewport* vp) {
-    okay::platform::Backend* pb = okay::platform::Get(okay::platform::BackendKind::Sdl2);   // the viewport windows are SDL windows
+    okay::platform::Backend* pb = okay::platform::Default();   // the viewport windows are SDL windows
     SDL_Window* w = pb ? (SDL_Window*)pb->NativeHandleFromId((uint32_t)(intptr_t)vp->PlatformHandle) : nullptr;
     if (!w) return;
     OkayVpData* d = new OkayVpData();
-    d->ren = SDL_CreateRenderer(w, -1, SDL_RENDERER_ACCELERATED);
-    if (!d->ren) d->ren = SDL_CreateRenderer(w, -1, 0);
+    if (std::unique_ptr<okay::platform::Window> vw = okay::platform::WrapSdl2Window(w)) d->ren = okay::pb::CreateRenderer(*vw);   // (the wrapper is only borrowed for the call)
     vp->RendererUserData = d;
 }
 
 static void OkayVp_DestroyWindow(ImGuiViewport* vp) {
     if (OkayVpData* d = (OkayVpData*)vp->RendererUserData) {
-        for (auto& kv : d->texes) SDL_DestroyTexture(kv.second);
-        if (d->ren) SDL_DestroyRenderer(d->ren);
+        for (auto& kv : d->texes) okay::pb::DestroyTexture(d->ren, kv.second);
+        if (d->ren) okay::pb::DestroyRenderer(d->ren);
         delete d;
     }
     vp->RendererUserData = nullptr;
@@ -50370,7 +50665,8 @@ static void OkayRenderDrawData(ImDrawData* dd, SDL_Renderer* ren, OkayVpData* d)
     ImVec2 scale = dd->FramebufferScale;
     int fbW = (int)(dd->DisplaySize.x * scale.x), fbH = (int)(dd->DisplaySize.y * scale.y);
     if (fbW <= 0 || fbH <= 0) return;
-    SDL_RenderSetScale(ren, scale.x, scale.y);
+    okay::platform::Painter* P = okay::pb::For(ren);
+    P->SetScale(scale.x, scale.y);
 
     static std::vector<ImDrawVert> s_rebase;   // reused scratch for offset vertices
     for (const ImDrawList* dl : dd->CmdLists) {
@@ -50395,8 +50691,8 @@ static void OkayRenderDrawData(ImDrawData* dd, SDL_Renderer* ren, OkayVpData* d)
             if (cmax.x > (float)fbW) cmax.x = (float)fbW;
             if (cmax.y > (float)fbH) cmax.y = (float)fbH;
             if (cmax.x <= cmin.x || cmax.y <= cmin.y) continue;
-            SDL_Rect clip = {(int)cmin.x, (int)cmin.y, (int)(cmax.x - cmin.x), (int)(cmax.y - cmin.y)};
-            SDL_RenderSetClipRect(ren, &clip);
+            okay::ui2d::Rect clip = {(int)cmin.x, (int)cmin.y, (int)(cmax.x - cmin.x), (int)(cmax.y - cmin.y)};
+            P->SetClipRect(&clip);
 
             SDL_Texture* tex = nullptr;
             if (d) {   // secondary renderer: per-window copies; foreign textures skipped
@@ -50409,15 +50705,15 @@ static void OkayRenderDrawData(ImDrawData* dd, SDL_Renderer* ren, OkayVpData* d)
             }
 
             const char* vbase = (const char*)(vtx + cmd->VtxOffset);
-            SDL_RenderGeometryRaw(ren, tex,
+            P->GeometryRaw((okay::ui2d::Tex)tex,
                 (const float*)(const void*)(vbase + offsetof(ImDrawVert, pos)), (int)sizeof(ImDrawVert),
-                (const SDL_Color*)(const void*)(vbase + offsetof(ImDrawVert, col)), (int)sizeof(ImDrawVert),
+                (const std::uint8_t*)(const void*)(vbase + offsetof(ImDrawVert, col)), (int)sizeof(ImDrawVert),
                 (const float*)(const void*)(vbase + offsetof(ImDrawVert, uv)), (int)sizeof(ImDrawVert),
                 dl->VtxBuffer.Size - (int)cmd->VtxOffset,
                 idx + cmd->IdxOffset, (int)cmd->ElemCount, (int)sizeof(ImDrawIdx));
         }
     }
-    SDL_RenderSetClipRect(ren, nullptr);
+    P->SetClipRect(nullptr);
 }
 
 static void OkayVp_RenderWindow(ImGuiViewport* vp, void*) {
@@ -50427,19 +50723,20 @@ static void OkayVp_RenderWindow(ImGuiViewport* vp, void*) {
     // Drop cached copies of textures ImGui destroyed this frame.
     for (auto it = d->texes.begin(); it != d->texes.end();) {
         if (it->first->Status == ImTextureStatus_Destroyed) {
-            SDL_DestroyTexture(it->second);
+            okay::pb::DestroyTexture(d->ren, it->second);
             it = d->texes.erase(it);
         } else ++it;
     }
 
-    SDL_SetRenderDrawColor(d->ren, 15, 16, 20, 255);
-    SDL_RenderClear(d->ren);
+    okay::pb::SetDrawColor(d->ren, 15, 16, 20, 255);
+    okay::pb::Clear(d->ren);
     OkayRenderDrawData(vp->DrawData, d->ren, d);
-    SDL_RenderPresent(d->ren);
+    okay::pb::Present(d->ren);
 }
 
 // Dear ImGui input: imgui_impl_sdl2 by default, or our own okay::platform feed with OKAY_PLATFORM_EVENTS=own (shared/ImGuiPlatformFeed.hpp).
 static bool g_imguiOwnFeed = false;
+static bool g_imguiOwnRender = false;   // OKAY_IMGUI_RENDER=own: our Painter-based renderer instead of imgui_impl_sdlrenderer2
 static okay::imguifeed::Feed g_imguiFeed;
 // One platform event for Dear ImGui through whichever path is on: our own feed takes it directly; imgui_impl_sdl2 (the
 // default) takes the SDL record the sdl2 backend keeps in Event::native (it is only valid inside the current poll loop pass).
@@ -50652,6 +50949,11 @@ int main(int argc, char** argv) {
         if (std::string(argv[i]) == "--build-game") return RunBuildGameCli(argc, argv);
         if (std::string(argv[i]) == "--vs-shot") return RunVsGraphShot(argc, argv);
     }
+#ifdef OKAY_HAVE_OKAYUI
+    // Window mode (dev switch, off by default): OKAY_DEV=1 OKAY_UI_BACKEND=okayui OKAY_UI_HOST=okayui. OkayUI owns the window and the frame and Dear ImGui is never
+    // started; only the Audio Mixer is ported to it so far (docs/own_ui_toolkit.md 6.23). Without all three switches this line does nothing.
+    if (oked::HostModeRequested(std::getenv("OKAY_DEV"), std::getenv("OKAY_UI_BACKEND"), std::getenv("OKAY_UI_HOST"))) return oked::RunOkayUIHostMode(argc, argv);
+#endif
     // Dev/test: crash on purpose after a breadcrumb, to check the crash reports end to end (docs/try_it.md, docs/crash_reports.md).
     //   OKAY_TEST_CRASH=<step>       crash right now, before the window opens (the report has the OS, CPU and RAM but no scene or GPU yet)
     //   OKAY_TEST_CRASH_LATE=<step>  crash on the 120th frame of the running editor (the report has the GPU, the scene, the Console and the steps)
@@ -50704,7 +51006,7 @@ int main(int argc, char** argv) {
     // The editor's windows are SDL windows (Dear ImGui's SDL backends and SDL_Renderer need an SDL_Window*), so the
     // editor always asks the seam for the SDL2 backend, whatever OKAY_PLATFORM_BACKEND says. Init, windows and shutdown
     // go through okay::platform; behaviour is the same as the direct SDL calls were.
-    okay::platform::Backend* sdlSeam = okay::platform::Get(okay::platform::BackendKind::Sdl2);
+    okay::platform::Backend* sdlSeam = okay::platform::Default();
     if (!sdlSeam) { std::cerr << "SDL2 platform backend is not available\n"; return 1; }
     sdlSeam->SetPerMonitorDpiAware();
     if (!sdlSeam->Init(okay::platform::InitFlags())) {   // video + audio + game controllers (+ timers, events)
@@ -50744,7 +51046,7 @@ int main(int argc, char** argv) {
     std::unique_ptr<okay::platform::Window> winSeam = sdlSeam->MakeWindow(mainDesc);
     if (!winSeam) { std::cerr << "CreateWindow failed: " << sdlSeam->LastError() << "\n"; return 1; }
     SDL_Window* window = (SDL_Window*)winSeam->NativeHandle();
-    okay::SetAppIcon(window);   // placeholder OkaySpace logo
+    okay::SetAppIcon(*winSeam);   // placeholder OkaySpace logo
 
     // SDL's 2D renderer (Direct3D/Metal/OpenGL, chosen by SDL); fall back to software.
 #if defined(_WIN32)
@@ -50755,9 +51057,13 @@ int main(int argc, char** argv) {
     if (const char* rd = std::getenv("OKAY_RENDER_DRIVER")) SDL_SetHint(SDL_HINT_RENDER_DRIVER, rd);
     else SDL_SetHint(SDL_HINT_RENDER_DRIVER, "direct3d11");
 #endif
-    SDL_Renderer* renderer = SDL_CreateRenderer(window, -1, SDL_RENDERER_ACCELERATED);
-    if (!renderer) { SDL_SetHint(SDL_HINT_RENDER_DRIVER, ""); renderer = SDL_CreateRenderer(window, -1, SDL_RENDERER_ACCELERATED); }
-    if (!renderer) renderer = SDL_CreateRenderer(window, -1, 0);
+#ifdef OKAY_HAVE_OKAYUI
+    okay::pb::SetOwnPainterFactory([](okay::platform::Window& w) { return OkayUI::soft::CreateWindowPainter(w); });   // the software painter, for own-backend windows
+#endif
+    // An accelerated renderer (the driver the hint chose), else one with the default driver, else any (software). The painter owns it.
+    SDL_Renderer* renderer = okay::pb::CreateRenderer(*winSeam, false, nullptr, true);
+    if (!renderer) { SDL_SetHint(SDL_HINT_RENDER_DRIVER, ""); renderer = okay::pb::CreateRenderer(*winSeam, false, nullptr, true); }
+    if (!renderer) renderer = okay::pb::CreateRenderer(*winSeam);
     if (!renderer) { std::cerr << "CreateRenderer failed: " << SDL_GetError() << "\n"; return 1; }
     g_sdlRenderer = renderer; // used by the z-buffered 3D view to make textures
     ResolveAutoRendering();   // VSync and 3D anti-aliasing: Auto picks for this PC (re-run after the saved settings load)
@@ -50781,11 +51087,7 @@ int main(int argc, char** argv) {
     if (g_project.splashLogo[0]) {
         okay::Image img;
         if (img.Load(g_project.splashLogo) && img.Valid()) {
-            if (SDL_Surface* s = SDL_CreateRGBSurfaceWithFormatFrom(
-                    (void*)img.Data(), img.Width(), img.Height(), 32, img.Width() * 4, SDL_PIXELFORMAT_ABGR8888)) {
-                g_editorSplashLogo = SDL_CreateTextureFromSurface(renderer, s);
-                SDL_FreeSurface(s);
-            }
+            g_editorSplashLogo = okay::pb::CreateTexture(renderer, img.Width(), img.Height(), okay::pb::Access::Static, true, false, (const std::uint8_t*)img.Data());
         }
     }
     // Build the splash style from the project's loading-screen settings.
@@ -50806,10 +51108,10 @@ int main(int argc, char** argv) {
     // hidden, reveal the window, then draw once more so the shown frame is the
     // splash (not a black frame), whatever the platform's show/present ordering.
     {
-        int sw = 1280, sh = 800; SDL_GetRendererOutputSize(renderer, &sw, &sh);
+        int sw = 1280, sh = 800; okay::pb::OutputSize(renderer, &sw, &sh);
         okay::DrawSplashStyled(renderer, sw, sh, splashStyle());
-        SDL_ShowWindow(window);
-        SDL_RaiseWindow(window);
+        winSeam->Show();
+        winSeam->Raise();
         okay::DrawSplashStyled(renderer, sw, sh, splashStyle());
     }
     // (File drops are accepted by the sdl2 backend's Init.)
@@ -50861,7 +51163,7 @@ int main(int argc, char** argv) {
     // Re-present the (animated) splash between heavy init steps so the loading
     // frame keeps moving instead of sitting frozen until the first real frame.
     auto splashTick = [&]() {
-        int sw = 1280, sh = 800; SDL_GetRendererOutputSize(renderer, &sw, &sh);
+        int sw = 1280, sh = 800; okay::pb::OutputSize(renderer, &sw, &sh);
         okay::DrawSplashStyled(renderer, sw, sh, splashStyle());
         sdlSeam->PumpEvents();
     };
@@ -50993,12 +51295,16 @@ int main(int argc, char** argv) {
     ApplyTheme();
     // Which Dear ImGui input path runs: imgui_impl_sdl2 (default) or our own okay::platform feed (OKAY_PLATFORM_EVENTS=own).
     // Own feed: no pop-out panels (no multi-viewport), no gamepad navigation; keys, text, mouse, wheel, focus, clipboard, cursor shape work.
-    g_imguiOwnFeed = okay::imguifeed::OwnRequested(std::getenv("OKAY_PLATFORM_EVENTS"));
+    const bool ownBackend = sdlSeam->Kind() == okay::platform::BackendKind::Own;   // OKAY_PLATFORM_BACKEND=own: SDL's ImGui backends cannot see an own window
+    g_imguiOwnFeed = ownBackend || okay::imguifeed::OwnRequested(std::getenv("OKAY_PLATFORM_EVENTS"));
+    std::fprintf(stderr, "platform backend: %s\n", sdlSeam->Name());
     std::fprintf(stderr, "%s\n", okay::imguifeed::ActiveLine(g_imguiOwnFeed));
     sdlSeam->ReportUnmappedEvents(!g_imguiOwnFeed);   // imgui_impl_sdl2 wants every SDL event (pointer enter / leave, display changes ...)
     if (g_imguiOwnFeed) g_imguiFeed.Init(ImGui::GetIO(), winSeam->Id(), okay::imguifeed::FeedHost::FromPlatform(sdlSeam, winSeam.get()));
     else ImGui_ImplSDL2_InitForSDLRenderer(window, renderer);
-    ImGui_ImplSDLRenderer2_Init(renderer);
+    g_imguiOwnRender = ownBackend || okay::imguirender::OwnRequested(std::getenv("OKAY_IMGUI_RENDER"));
+    std::fprintf(stderr, "%s\n", okay::imguirender::ActiveLine(g_imguiOwnRender));
+    if (g_imguiOwnRender) okay::imguirender::Init(ImGui::GetIO()); else ImGui_ImplSDLRenderer2_Init(renderer);
     OkayVpInstall();   // renderer-side multi-viewport hooks (dual-monitor panels)
     // Multi-window panels: drag a tab outside the editor and it becomes its own OS window (the Inspector or the
     // Console on a second monitor). Set before the first NewFrame(), and only when both backends can do it: Dear
@@ -51006,7 +51312,7 @@ int main(int argc, char** argv) {
     if (g_multiWindow) {
         if (ViewportsSupported()) ImGui::GetIO().ConfigFlags |= ImGuiConfigFlags_ViewportsEnable;
         else {
-            const char* drv = SDL_GetCurrentVideoDriver();
+            const char* drv = sdlSeam->Kind() == okay::platform::BackendKind::Sdl2 ? SDL_GetCurrentVideoDriver() : "own";
             const std::string msg = std::string("Multi-window panels are off: the video driver '") + (drv ? drv : "?") +
                                     "' cannot open extra windows here, so panels stay inside the editor window.";
             std::printf("[okay] %s\n", msg.c_str());
@@ -51032,7 +51338,7 @@ int main(int argc, char** argv) {
         // objects, multisample renderbuffers + blit, and VAOs, while still accepting
         // our legacy #version 120 shaders. If the driver can't provide it,
         // SDL_GL_CreateContext fails and we fall back to software (no crash).
-        okay::platform::Backend* glb = okay::platform::Get(okay::platform::BackendKind::Sdl2);
+        okay::platform::Backend* glb = okay::platform::Default();
         const okay::platform::GLCurrent prevGL = glb->CurrentGL();
         okay::platform::WindowDesc glDesc;
         glDesc.title = "okay-gl"; glDesc.x = 0; glDesc.y = 0; glDesc.width = 16; glDesc.height = 16;
@@ -51043,7 +51349,7 @@ int main(int argc, char** argv) {
             okay::platform::GLAttributes gla;   // 3.2 compatibility, 24-bit depth: the seam's defaults
             g_glCtx = g_glWin->CreateGLContext(gla);   // also makes it current
             if (g_glCtx) {
-                if (okay::GLRenderer::LoadGL([](const char* n) -> void* { return okay::platform::Get(okay::platform::BackendKind::Sdl2)->GLProcAddress(n); })) {
+                if (okay::GLRenderer::LoadGL([](const char* n) -> void* { return okay::platform::Default()->GLProcAddress(n); })) {
                     g_glRenderer = new okay::GLRenderer();
                     g_glReady = true;
                     ConsoleLog("GPU renderer available (View > GPU Renderer).");
@@ -51054,8 +51360,8 @@ int main(int argc, char** argv) {
                             auto str = [&](unsigned int what) { const unsigned char* t = gs(what); return t ? std::string((const char*)t) : std::string("?"); };
                             gpu = str(0x1F01) + " | " + str(0x1F00) + " | OpenGL " + str(0x1F02);
                         }
-                        SDL_RendererInfo ri; std::memset(&ri, 0, sizeof(ri));
-                        if (SDL_GetRendererInfo(renderer, &ri) == 0 && ri.name) gpu += std::string(gpu.empty() ? "" : " | ") + "SDL renderer " + ri.name;
+                        const std::string drv = okay::pb::DriverName(renderer);
+                        if (!drv.empty()) gpu += std::string(gpu.empty() ? "" : " | ") + "SDL renderer " + drv;
                         okaycrash::ctx::SetGpu(gpu.c_str());
                     }
                 }
@@ -51066,9 +51372,8 @@ int main(int argc, char** argv) {
         glb->RestoreGL(prevGL);
         if (!g_glReady) {
             ConsoleLog("GPU renderer unavailable; using the software renderer.", 1);
-            SDL_RendererInfo ri; std::memset(&ri, 0, sizeof(ri));
             std::string gpu = "OpenGL renderer unavailable";
-            if (SDL_GetRendererInfo(renderer, &ri) == 0 && ri.name) gpu += std::string(" | SDL renderer ") + ri.name;
+            if (const std::string drv = okay::pb::DriverName(renderer); !drv.empty()) gpu += std::string(" | SDL renderer ") + drv;
             okaycrash::ctx::SetGpu(gpu.c_str());
         }
     }
@@ -51080,7 +51385,7 @@ int main(int argc, char** argv) {
         g_d3dRenderer = new okay::D3D11Renderer();
         // Prefer SDL's own device (zero-copy viewports); else an isolated device.
         bool ok = false;
-        if (ID3D11Device* sdlDev = SDL_RenderGetD3D11Device(renderer)) {
+        if (ID3D11Device* sdlDev = okay::pb::For(renderer)->Kind() == okay::platform::PainterKind::Sdl2 ? SDL_RenderGetD3D11Device(renderer) : nullptr) {
             ok = g_d3dRenderer->InitShared(sdlDev);
             okay::D3D11Renderer::ReleaseCom(sdlDev);   // (SDL_RenderGetD3D11Device adds a reference)
             g_d3dDirect = ok && !std::getenv("OKAY_NO_DIRECT_VIEW");
@@ -51192,9 +51497,18 @@ int main(int argc, char** argv) {
         return true;
     });
     if (DocRecovery().StartSession()) g_docRecover = DocRecovery().FindRecoverable();
+#ifdef OKAY_ENABLE_TEST_HOOKS
+    okay::testhooks::Runner testHooks;
+    testHooks.Start(sdlSeam, winSeam->Id());
+    int testExitCode = 0;
+#endif
     while (running) {
         Uint64 g_frameT0 = okay::platform::PerfCounter();
         okaycrash::ctx::NextFrame();
+#ifdef OKAY_ENABLE_TEST_HOOKS
+        testHooks.Frame();   // due scripted events are pushed into the queue polled below
+        if (testHooks.QuitNow()) { testExitCode = testHooks.ExitCode(); running = false; }
+#endif
         {   // the crash report's picture of the editor: cheap every 8th frame, the file lookups every 300th
             static unsigned s_crashCtxTick = 0;
             if ((s_crashCtxTick & 7) == 0) UpdateCrashContext(ed, (s_crashCtxTick % 300) == 0);
@@ -51238,7 +51552,7 @@ int main(int argc, char** argv) {
             // another program's focus is never taken.
             static int s_prevViewports = 1;
             const int vps = ImGui::GetPlatformIO().Viewports.Size;
-            okay::platform::Backend* pbf = okay::platform::Get(okay::platform::BackendKind::Sdl2);   // the editor window is an SDL window
+            okay::platform::Backend* pbf = okay::platform::Default();   // the editor window is an SDL window
             if (pbf && okay::platform::ShouldReclaimInputFocus(s_prevViewports, vps, winSeam->HasInputFocus(),
                     pbf->KeyboardFocusWindowId(), pbf->MouseFocusWindowId(), winSeam->Id()))
                 winSeam->SetInputFocus();
@@ -51475,31 +51789,33 @@ int main(int argc, char** argv) {
             }
         }
         if (ed.isPlaying() && pointer.feedGame) {
-            const Uint8* ks = SDL_GetKeyboardState(nullptr);
+            using PKey = okay::platform::Key;
+            okay::platform::Backend* kb = okay::platform::Default();   // held keys through the platform layer
+            auto keyHeld = [&](PKey k) { return kb && kb->IsKeyDown(k); };
             std::vector<char> down;
             // By the layout's letter (AZERTY W is the key labelled W); a layout with no Latin letters
             // (Russian, Greek...) falls back to the US place so W A S D stay alive.
             auto letterDown = [&](char c) {
-                SDL_Scancode sc = SDL_GetScancodeFromKey((SDL_Keycode)c);
-                if (sc == SDL_SCANCODE_UNKNOWN) sc = (SDL_Scancode)(c >= 'a' ? SDL_SCANCODE_A + (c - 'a')
-                                                  : c == '0' ? SDL_SCANCODE_0 : SDL_SCANCODE_1 + (c - '1'));
-                return ks[sc] != 0;
+                PKey sc = kb ? kb->KeyForChar(c) : PKey::Unknown;
+                if (sc == PKey::Unknown) sc = (PKey)(c >= 'a' ? (int)PKey::A + (c - 'a')
+                                                  : c == '0' ? (int)PKey::N0 : (int)PKey::N1 + (c - '1'));
+                return keyHeld(sc);
             };
             for (char c = 'a'; c <= 'z'; ++c)
                 if (letterDown(c)) down.push_back(c);
             for (char c = '0'; c <= '9'; ++c)
                 if (letterDown(c)) down.push_back(c);
-            if (ks[SDL_SCANCODE_SPACE]) down.push_back(' ');
-            if (ks[SDL_SCANCODE_LSHIFT] || ks[SDL_SCANCODE_RSHIFT]) down.push_back(Input::KeyShift); // sprint
-            if (ks[SDL_SCANCODE_LCTRL]  || ks[SDL_SCANCODE_RCTRL])  down.push_back(Input::KeyCtrl);  // crouch
-            if (ks[SDL_SCANCODE_LGUI]   || ks[SDL_SCANCODE_RGUI])   down.push_back(Input::KeyCmd);   // Command, for copy / paste
-            if (ks[SDL_SCANCODE_BACKSPACE]) down.push_back((char)8); // text editing
-            if (ks[SDL_SCANCODE_RETURN] || ks[SDL_SCANCODE_KP_ENTER]) down.push_back('\r');
+            if (keyHeld(PKey::Space)) down.push_back(' ');
+            if (keyHeld(PKey::LShift) || keyHeld(PKey::RShift)) down.push_back(Input::KeyShift); // sprint
+            if (keyHeld(PKey::LCtrl)  || keyHeld(PKey::RCtrl))  down.push_back(Input::KeyCtrl);  // crouch
+            if (keyHeld(PKey::LGui)   || keyHeld(PKey::RGui))   down.push_back(Input::KeyCmd);   // Command, for copy / paste
+            if (keyHeld(PKey::Backspace)) down.push_back((char)8); // text editing
+            if (keyHeld(PKey::Return) || keyHeld(PKey::KpEnter)) down.push_back('\r');
             if (pointer.feedEscapeToGame) down.push_back((char)27);
-            if (ks[SDL_SCANCODE_UP])    { down.push_back('w'); down.push_back(Input::KeyUp); }
-            if (ks[SDL_SCANCODE_LEFT])  { down.push_back('a'); down.push_back(Input::KeyLeft); }
-            if (ks[SDL_SCANCODE_DOWN])  { down.push_back('s'); down.push_back(Input::KeyDown); }
-            if (ks[SDL_SCANCODE_RIGHT]) { down.push_back('d'); down.push_back(Input::KeyRight); }
+            if (keyHeld(PKey::Up))    { down.push_back('w'); down.push_back(Input::KeyUp); }
+            if (keyHeld(PKey::Left))  { down.push_back('a'); down.push_back(Input::KeyLeft); }
+            if (keyHeld(PKey::Down))  { down.push_back('s'); down.push_back(Input::KeyDown); }
+            if (keyHeld(PKey::Right)) { down.push_back('d'); down.push_back(Input::KeyRight); }
 
             // F-keys, Tab, the navigation block and left / right modifiers, as the player feeds them.
             if (okay::platform::Backend* pb = okay::platform::Default()) okay::AppendExtendedKeys(*pb, down);
@@ -51526,7 +51842,7 @@ int main(int argc, char** argv) {
             if (gameModal != s_prevGameModal && (g_gameMouseCapture || Cursor::IsLocked())) {
                 int ww = 0, wh = 0, ow = 0, oh = 0;
                 winSeam->GetSize(ww, wh);
-                SDL_GetRendererOutputSize(renderer, &ow, &oh);
+                okay::pb::OutputSize(renderer, &ow, &oh);
                 float sx = ow > 0 ? (float)ww / ow : 1.0f, sy = oh > 0 ? (float)wh / oh : 1.0f;
                 int cx = (int)((g_playCanvasPos.x + g_playCanvasSize.x * 0.5f) * sx);
                 int cy = (int)((g_playCanvasPos.y + g_playCanvasSize.y * 0.5f) * sy);
@@ -51538,7 +51854,7 @@ int main(int argc, char** argv) {
             const bool confined = Cursor::IsConfined() && !gameModal && !g_gameCursorReleased;
             bool capture = (g_gameMouseCapture || Cursor::IsLocked()) && !gameModal && !g_gameCursorReleased && !confined;
             static Vec2 s_gameVMouse{0, 0};
-            SDL_ShowCursor(capture ? SDL_DISABLE : SDL_ENABLE);
+            if (okay::platform::Backend* cb = okay::platform::Default()) cb->ShowCursor(!capture);
             if (capture) {
                 // Relative mode only on the transition. Calling it every frame
                 // re-warps, and that warp was added on top of the real delta.
@@ -51573,7 +51889,7 @@ int main(int argc, char** argv) {
                     // click on Stop. A click there grabs the mouse again.
                     int ww = 0, wh = 0, ow = 0, oh = 0;
                     winSeam->GetSize(ww, wh);
-                    SDL_GetRendererOutputSize(renderer, &ow, &oh);
+                    okay::pb::OutputSize(renderer, &ow, &oh);
                     float sx = ow > 0 ? (float)ww / (float)ow : 1.0f;
                     float sy = oh > 0 ? (float)wh / (float)oh : 1.0f;
                     int cx = (int)((g_playCanvasPos.x + g_playCanvasSize.x * 0.5f) * sx);
@@ -51617,7 +51933,7 @@ int main(int argc, char** argv) {
             // events already fed above. The own platform backend stays off.
             if (g_playCanvasSize.x > 1.0f && g_playCanvasSize.y > 1.0f)
                 UICanvas::Set(g_playCanvasSize.x, g_playCanvasSize.y);
-            if (okay::platform::Backend* sb = okay::platform::Get(okay::platform::BackendKind::Sdl2)) { if (sb->TouchDeviceCount() > 0) Input::SetTouchScreen(true); }   // the finger events are SDL's
+            if (okay::platform::Backend* sb = okay::platform::Default()) { if (sb->TouchDeviceCount() > 0) Input::SetTouchScreen(true); }   // the finger events are SDL's
             TouchControls::Sample(ed.scene());
             Gestures::Tick((double)okay::platform::TicksMs() / 1000.0);
             Input::SetTextFocused(GameInputBlocked(&ed.scene(), (unsigned)GameInputMask::Text));   // a game text field has focus: no walking
@@ -51728,7 +52044,7 @@ int main(int argc, char** argv) {
                     s_dispGen = gen;
                     if (window) okay::sdldisplay::Apply(window, okay::DisplaySettings::CurrentApply());
                     g_vsync = okay::DisplaySettings::VSync();
-                    if (renderer) SDL_RenderSetVSync(renderer, g_vsync ? 1 : 0);
+                    if (renderer) okay::pb::SetVSync(renderer, g_vsync);
                     okay::DisplaySettings::ApplyQuality();
                 }
             }
@@ -51770,15 +52086,10 @@ int main(int argc, char** argv) {
                     s_refreshHz = (float)winSeam->RefreshRateHz();   // 0 when unknown
                     s_refreshAge = 120;
                 }
-                if (ed.isPlaying()) {
-                    if (!ed.playTick) ed.playTick = [&ed](float gdt) { TickGame(ed, gdt); };   // the Play loop's update (debugger fiber aware)
-                    if (!ed.onRunFramesDone) ed.onRunFramesDone = [] { g_paused = true; };   // "Run N frames" ended: the Pause button follows the loop's pause
-                    if (!g_paused) okay::Game::ClearPause(okay::BehaviorTreeRunner::kBreakPause);   // resume also lets a node breakpoint go
-                    ed.SetPaused(g_paused);   // the Pause button = Game::PushPause("editor")
-                    // Steps Time (DeltaTime, ElapsedTime, time scale, hit stops, Clock channels), then ticks the
-                    // scene by the scaled delta: 0 while the game or the editor is paused, as before.
-                    ed.PlayFrame((double)dt, g_smoothFrameTime, g_vsync ? s_refreshHz : 0.0f);
-                } else TickGame(ed, dt > 0.1f ? 0.1f : dt);   // editing never steps Time
+                // The step itself (Play loop or one editing tick) lives in EditorFrameTick.hpp, shared with window mode (docs/own_ui_toolkit.md 6.24 step 4).
+                // Play: the loop's update is TickGame (debugger fiber aware); "Run N frames" ending sets the Pause button; resume lets a node breakpoint go.
+                // The loop steps Time (DeltaTime, ElapsedTime, time scale, hit stops, Clock channels), then ticks the scene by the scaled delta: 0 while paused.
+                oked::StepSimulation(ed, oked::SimStep{dt, g_paused, g_smoothFrameTime, g_vsync ? s_refreshHz : 0.0f}, EditorSimHooks());
             }
         }
         // A PauseMenu / script Quit during Play stops play (mirrors the built game).
@@ -51879,7 +52190,7 @@ int main(int argc, char** argv) {
         title += ed.path().empty() ? ed.scene().Name() : std::filesystem::path(ed.path()).stem().string();
         if (ed.InPrefabMode()) { for (const auto& c : ed.PrefabCrumbs()) if (!c.path.empty()) title += "  >  " + c.label; }
         title += std::string(ed.dirty && !ed.isPlaying() ? " *" : "") + "   [v" OKAY_ENGINE_VERSION + okay::testbuild::Suffix(OKAY_ENGINE_VERSION) + "]";
-        if (title != lastTitle) { SDL_SetWindowTitle(window, title.c_str()); lastTitle = title; }
+        if (title != lastTitle) { winSeam->SetTitle(title); lastTitle = title; }
 
         // While the game is actually running, turn OFF ImGui keyboard navigation:
         // otherwise a toolbar button keeps nav-focus and pressing Space (jump)
@@ -51892,7 +52203,7 @@ int main(int argc, char** argv) {
         else
             ImGui::GetIO().ConfigFlags |= ImGuiConfigFlags_NavEnableKeyboard;
 
-        { OKAY_PROFILE("ImGui.NewFrame"); ImGui_ImplSDLRenderer2_NewFrame();
+        { OKAY_PROFILE("ImGui.NewFrame"); if (!g_imguiOwnRender) ImGui_ImplSDLRenderer2_NewFrame();
           if (g_imguiOwnFeed) g_imguiFeed.NewFrame(ImGui::GetIO()); else ImGui_ImplSDL2_NewFrame(); }
         // Skinned meshes deform on the GPU when the Direct3D 11 renderer draws the
         // views (one upload of the bind pose, bone matrices per frame) instead of
@@ -51983,7 +52294,7 @@ int main(int argc, char** argv) {
                                    // Cancel: the empty folder the launcher made for a new project must not be left behind.
                                    [hoRoot] { if (!hoRoot.empty()) okayproj::RemoveEmptyShell(hoRoot); });
             }
-            if (raise && window) { SDL_RestoreWindow(window); SDL_RaiseWindow(window); SDL_ShowWindow(window); }
+            if (raise && window) { winSeam->Restore(); winSeam->Raise(); winSeam->Show(); }
         }
 
         ProjectThumbFrame();   // thumbnails made this frame: a few milliseconds at most (the Project panel and the Scene Manager share them)
@@ -52657,9 +52968,9 @@ int main(int argc, char** argv) {
         }
 #endif
         { OKAY_PROFILE("ImGui.Render"); ImGui::Render(); }
-        SDL_RenderSetScale(renderer, io.DisplayFramebufferScale.x, io.DisplayFramebufferScale.y);
-        SDL_SetRenderDrawColor(renderer, 30, 30, 34, 255);
-        SDL_RenderClear(renderer);
+        okay::pb::SetScale(renderer, io.DisplayFramebufferScale.x, io.DisplayFramebufferScale.y);
+        okay::pb::SetDrawColor(renderer, 30, 30, 34, 255);
+        okay::pb::Clear(renderer);
         if (io.ConfigFlags & ImGuiConfigFlags_ViewportsEnable) {
             // Multi-window mode: draw data is in absolute desktop coordinates,
             // which the stock SDL_Renderer backend can't offset — process the
@@ -52668,10 +52979,15 @@ int main(int argc, char** argv) {
             if (mdd && mdd->Textures)
                 for (ImTextureData* tx : *mdd->Textures)
                     if (tx->Status != ImTextureStatus_OK)
-                        ImGui_ImplSDLRenderer2_UpdateTexture(tx);
+                    {
+                        if (g_imguiOwnRender) okay::imguirender::UpdateTexture(*okay::pb::For(renderer), tx);
+                        else ImGui_ImplSDLRenderer2_UpdateTexture(tx);
+                    }
             { OKAY_PROFILE("ImGui.Draw"); OkayRenderDrawData(mdd, renderer, nullptr); }   // (this multi-window branch is the default one: it was not timed, so its cost showed as "not timed")
         } else {
-            { OKAY_PROFILE("ImGui.Draw"); ImGui_ImplSDLRenderer2_RenderDrawData(ImGui::GetDrawData(), renderer); }
+            { OKAY_PROFILE("ImGui.Draw");
+              if (g_imguiOwnRender) okay::imguirender::Render(*okay::pb::For(renderer), ImGui::GetDrawData());
+              else ImGui_ImplSDLRenderer2_RenderDrawData(ImGui::GetDrawData(), renderer); }
         }
 #ifdef OKAY_HAVE_OKAYUI
         // Flush OkayUI here, AFTER ImGui, through the SAME SDL_Renderer — so it
@@ -52724,7 +53040,7 @@ int main(int argc, char** argv) {
             OkayUI::SetFont(OkayUI::FontDefault());
         }
         // Flush the whole OkayUI frame (game-script widgets + demo) every frame.
-        OkayUI::EndFrame(renderer);
+        okay::pb::OkayUIEndFrame(renderer);
         // Keep SDL text input alive for OkayUI text fields when ImGui isn't using it,
         // so they receive SDL_TEXTINPUT events (Test UI demo or a game's ui_inputtext).
         if ((g_showTestUI || ed.isPlaying()) && !io.WantTextInput) { if (okay::platform::Backend* pb = okay::platform::Default()) pb->StartTextInput(); }
@@ -52733,10 +53049,9 @@ int main(int argc, char** argv) {
             static int shotFrames = 0;
             if (++shotFrames == 160 && shot[0]) {
                 int sw = 0, sh = 0;
-                SDL_GetRendererOutputSize(renderer, &sw, &sh);
-                if (sw > 0 && sh > 0) {
-                    std::vector<std::uint8_t> px((std::size_t)sw * sh * 4);
-                    if (SDL_RenderReadPixels(renderer, nullptr, SDL_PIXELFORMAT_ABGR8888, px.data(), sw * 4) == 0) {
+                {
+                    std::vector<std::uint8_t> px;
+                    if (okay::pb::ReadPixels(renderer, px, sw, sh) && sw > 0 && sh > 0) {
                         okay::Image img;
                         img.Set(sw, sh, std::move(px));
                         img.SavePNG(shot);
@@ -52749,22 +53064,20 @@ int main(int argc, char** argv) {
         }
         if (const std::string shot = TakePendingEditorShot(); !shot.empty()) {
             int sw = 0, sh = 0;
-            SDL_GetRendererOutputSize(renderer, &sw, &sh);
-            SDL_Surface* surface = (sw > 0 && sh > 0)
-                ? SDL_CreateRGBSurfaceWithFormat(0, sw, sh, 32, SDL_PIXELFORMAT_RGBA32) : nullptr;
-            if (surface && SDL_RenderReadPixels(renderer, nullptr, SDL_PIXELFORMAT_RGBA32, surface->pixels, surface->pitch) == 0) {
+            std::vector<std::uint8_t> px;
+            if (okay::pb::ReadPixels(renderer, px, sw, sh) && sw > 0 && sh > 0) {
                 okay::Image img(sw, sh);
-                for (int y = 0; y < sh; ++y)
-                    std::memcpy(img.Data() + (std::size_t)y * sw * 4,
-                                static_cast<unsigned char*>(surface->pixels) + y * surface->pitch,
-                                (std::size_t)sw * 4);
+                std::memcpy(img.Data(), px.data(), (std::size_t)sw * sh * 4);
                 img.SavePNG(shot);
                 std::printf("[diag-shot] %s (%dx%d)\n", shot.c_str(), sw, sh);
                 std::fflush(stdout);
             }
-            if (surface) SDL_FreeSurface(surface);
         }
-        { OKAY_PROFILE("Present"); SDL_RenderPresent(renderer); }
+#ifdef OKAY_ENABLE_TEST_HOOKS
+        for (const std::string& shot : testHooks.TakeShots())
+            if (!okay::testhooks::SavePicture(*okay::pb::For(renderer), shot)) std::fprintf(stderr, "[test-hook] could not save %s\n", shot.c_str());
+#endif
+        { OKAY_PROFILE("Present"); okay::pb::Present(renderer); }
 
         // Multi-window panels: create/size/paint the extra OS windows (tabs
         // dragged out of the editor).
@@ -52817,13 +53130,13 @@ int main(int argc, char** argv) {
     SyncProjectFiles(ed, true);   // the project's settings and build settings are never lost with the window
     ProjectUpgradeAtExit();       // the editor of the project's own version ("Keep"), or this one again after a restore, starts once this process is gone
 
-    ImGui_ImplSDLRenderer2_Shutdown();
+    if (g_imguiOwnRender) okay::imguirender::Shutdown(*okay::pb::For(renderer), ImGui::GetIO()); else ImGui_ImplSDLRenderer2_Shutdown();
     if (g_imguiOwnFeed) g_imguiFeed.Shutdown(ImGui::GetIO()); else ImGui_ImplSDL2_Shutdown();
     ImGui::DestroyContext();
     // Tear down the optional GPU renderer: free its GL objects with its own context
     // current, then drop the context + hidden window.
     if (g_glRenderer || g_glCtx) {
-        okay::platform::Backend* glb = okay::platform::Get(okay::platform::BackendKind::Sdl2);
+        okay::platform::Backend* glb = okay::platform::Default();
         const okay::platform::GLCurrent prevGL = glb->CurrentGL();
         if (g_glWin && g_glCtx) g_glWin->MakeCurrent();
         if (g_glRenderer) { g_glRenderer->Destroy(); delete g_glRenderer; g_glRenderer = nullptr; }
@@ -52838,9 +53151,12 @@ int main(int argc, char** argv) {
 #endif
     g_pads.CloseAll();
     audioDev.reset();
-    SDL_DestroyRenderer(renderer);
+    okay::pb::DestroyRenderer(renderer);   // its painter owns it
     winSeam.reset();   // destroys the main window (after its renderer)
     sdlSeam->Shutdown();
+#ifdef OKAY_ENABLE_TEST_HOOKS
+    return testExitCode;   // 0 unless the test script said `exit N`
+#endif
     return 0;
 }
 #endif // OKAY_EDITOR_HEADLESS

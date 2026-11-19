@@ -76,9 +76,9 @@ int main() {
         const DockId space = 0xD0C5u;
         const DefaultIds ids = BuildEditorDefault(space, UI::Vec2{1280, 720});
         CHECK(ids.left != 0 && ids.right != 0 && ids.down != 0 && ids.center != 0 && ids.left != ids.right && ids.center != space);
-        const UI::DockNodeInfo before = UI::DockBuilderGetNode(ids.down);
+        const UI::DockNodeInfo before = UI::DockBuilderGetNodeInfo(ids.down);
         CHECK(before.found && before.isLeaf && !before.live && before.windows.size() == 7);
-        CHECK(UI::DockBuilderGetNode(space).isRoot && UI::DockBuilderGetNode(space).isSplit);
+        CHECK(UI::DockBuilderGetNodeInfo(space).isRoot && UI::DockBuilderGetNodeInfo(space).isSplit);
         CHECK(UI::DockBuilderFinish(space));
         const DockLayout& L = UI::GetDockLayout();
         CHECK(Valid(L));
@@ -95,7 +95,7 @@ int main() {
         // the five groups are five different leaves
         CHECK(L.NodeOf("Hierarchy") != rn && L.NodeOf("Hierarchy") != dn && L.NodeOf("Scene") != dn && L.NodeOf("Scene") != rn && rn != dn);
         // builder ids now read from the live layout
-        const UI::DockNodeInfo live = UI::DockBuilderGetNode(ids.down);
+        const UI::DockNodeInfo live = UI::DockBuilderGetNodeInfo(ids.down);
         CHECK(live.live && live.windows.size() == 7 - 0 && live.windows[1] == "Problems###Problems");
         CHECK(UI::GetWindowDockID("Hierarchy") == ids.left && UI::GetWindowDockID("Scene") == ids.center && UI::GetWindowDockID("Stats") == ids.right && UI::GetWindowDockID("nope") == 0);
 
@@ -167,7 +167,7 @@ int main() {
         const DockLayout& L = UI::GetDockLayout();
         CHECK(L.Find(L.Root())->IsSplit() && L.Find(L.Root())->horizontal);
         CHECK_NEAR(L.Find(L.Root())->ratio, 1.0f - 300.0f / (1000.0f - DockLayout::kSplitter), 0.001f);
-        const UI::DockNodeInfo r = UI::DockBuilderGetNode(nw);
+        const UI::DockNodeInfo r = UI::DockBuilderGetNodeInfo(nw);
         CHECK_NEAR(r.size.x, 300.0f, 0.01f); CHECK_NEAR(r.size.y, 600.0f, 0.01f);
         // on the live layout: moves the divider now
         Sim s(1000, 600);
@@ -201,7 +201,7 @@ int main() {
         CHECK(UI::DockBuilderFinish(1));
         const DockLayout& L = UI::GetDockLayout();
         CHECK(!L.Find(L.Root())->IsSplit() && L.WindowCount() == 1 && Valid(L));
-        CHECK(!UI::DockBuilderGetNode(side).live && UI::DockBuilderGetNode(side).found);
+        CHECK(!UI::DockBuilderGetNodeInfo(side).live && UI::DockBuilderGetNodeInfo(side).found);
         // docking into an empty (dropped) node while finished waits for the next Finish, then shows
         UI::DockBuilderDockWindow("Late", side);
         CHECK(!UI::GetDockLayout().Contains("Late"));
@@ -209,11 +209,11 @@ int main() {
         CHECK(UI::GetDockLayout().Contains("Late") && UI::GetDockLayout().Find(UI::GetDockLayout().Root())->IsSplit());
         // a window is in one node only
         UI::DockBuilderDockWindow("Late", opp);
-        CHECK(UI::DockBuilderGetNode(side).windows.empty() && UI::DockBuilderGetNode(opp).windows.size() == 2);
+        CHECK(UI::DockBuilderGetNodeInfo(side).windows.empty() && UI::DockBuilderGetNodeInfo(opp).windows.size() == 2);
         CHECK(UI::GetDockLayout().NodeOf("Late") == UI::GetDockLayout().NodeOf("Only"));      // docked at once into the live node
         // a split's id docks into its first leaf
         UI::DockBuilderDockWindow("InSplit", 1);
-        CHECK(UI::DockBuilderGetNode(side).windows.size() == 1);                  // in the plan's first leaf (the left one)
+        CHECK(UI::DockBuilderGetNodeInfo(side).windows.size() == 1);                  // in the plan's first leaf (the left one)
         CHECK(UI::DockBuilderFinish(1) && UI::GetDockLayout().Contains("InSplit") && Valid(UI::GetDockLayout()));
         // windows the plan does not mention stay, floating
         Reset();
@@ -232,10 +232,10 @@ int main() {
         DockId opp = 0; const DockId nw = UI::DockBuilderSplitNode(1, UI::DockSide_Bottom, 0.3f, nullptr, &opp);
         UI::DockBuilderDockWindow("A", opp); UI::DockBuilderDockWindow("B", nw);
         UI::DockBuilderRemoveNode(nw);                                       // the sibling takes the parent's place
-        CHECK(!UI::DockBuilderGetNode(nw).found && !UI::DockBuilderGetNode(1).found && UI::DockBuilderGetNode(opp).found && UI::DockBuilderGetNode(opp).isRoot);
+        CHECK(!UI::DockBuilderGetNodeInfo(nw).found && !UI::DockBuilderGetNodeInfo(1).found && UI::DockBuilderGetNodeInfo(opp).found && UI::DockBuilderGetNodeInfo(opp).isRoot);
         CHECK(UI::DockBuilderFinish(opp) && UI::GetDockLayout().WindowCount() == 1 && UI::GetDockLayout().Contains("A"));
         UI::DockBuilderRemoveNode(opp);                                      // a finished root: the live layout empties
-        CHECK(UI::GetDockLayout().WindowCount() == 0 && !UI::DockBuilderGetNode(opp).found && Valid(UI::GetDockLayout()));
+        CHECK(UI::GetDockLayout().WindowCount() == 0 && !UI::DockBuilderGetNodeInfo(opp).found && Valid(UI::GetDockLayout()));
         UI::DockBuilderRemoveNode(12345); UI::DockBuilderRemoveNode(0);      // unknown: nothing
         // the editor's pattern: remove, add with the same id, rebuild
         const DefaultIds ids = BuildEditorDefault(0xD0C5u, UI::Vec2{800, 600}); (void)ids;
@@ -256,17 +256,17 @@ int main() {
         CHECK(UI::DockBuilderSplitNode(999, UI::DockSide_Left, 0.5f, nullptr, nullptr) == 0);
         CHECK(UI::DockBuilderSplitNode(0, UI::DockSide_Left, 0.5f, nullptr, nullptr) == 0);
         const DockId n1 = UI::DockBuilderSplitNode(3, UI::DockSide_Left, 5.0f, nullptr, nullptr);   // clamped, not refused
-        CHECK(n1 != 0 && UI::DockBuilderGetNode(3).ratio == 0.98f);
+        CHECK(n1 != 0 && UI::DockBuilderGetNodeInfo(3).ratio == 0.98f);
         CHECK(UI::DockBuilderSplitNode(3, UI::DockSide_Left, 0.5f, nullptr, nullptr) == 0);          // already split
         UI::DockBuilderDockWindow(nullptr, 3); UI::DockBuilderDockWindow("", 3); UI::DockBuilderDockWindow("W", 777);
-        CHECK(UI::DockBuilderGetNode(3).windows.empty());
+        CHECK(UI::DockBuilderGetNodeInfo(3).windows.empty());
         UI::DockBuilderSetNodeSize(3, UI::Vec2{std::nanf(""), 5}); UI::DockBuilderSetNodeSize(3, UI::Vec2{-1, 5}); UI::DockBuilderSetNodeSize(555, UI::Vec2{5, 5});
         CHECK(!UI::DockBuilderFinish(999) && !UI::DockBuilderFinish(0));
         CHECK(!UI::DockBuilderFinish(3));                                                           // a plan with no window at all
-        CHECK(!UI::DockBuilderGetNode(0).found && !UI::DockBuilderGetNode(424242).found);
+        CHECK(!UI::DockBuilderGetNodeInfo(0).found && !UI::DockBuilderGetNodeInfo(424242).found);
         UI::SetNextWindowDockID(5); UI::DockBuilderReset(); Sim s(100, 100); RunFrame(s, UI::Rect{0, 0, 100, 100}, {"Z"}); CHECK(UI::GetDockLayout().IsFloating("Z"));
         CHECK(UI::GetWindowDockID(nullptr) == 0 && UI::GetWindowDockID("") == 0);
-        UI::ResetState(); CHECK(!UI::DockBuilderGetNode(3).found);                                   // ResetState forgets the plans too
+        UI::ResetState(); CHECK(!UI::DockBuilderGetNodeInfo(3).found);                                   // ResetState forgets the plans too
     }
 
     // ---------------- a long window name is cut like the layout cuts it ----------------

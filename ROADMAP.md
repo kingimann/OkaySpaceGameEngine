@@ -10,6 +10,8 @@ _Last updated: 2026-11-13 17:55 UTC_
 
 | Version | What's in it |
 |---|---|
+| 2.891.0 | Wind (WindZone, drag, sway, ambience, particles feel it); Build Settings window rebuilt (search, profiles, summary with fixes, many settings the game honours); OkayUI launcher code (not shipped yet); project upgrade fixes (launcher cards refresh after an upgrade, Project Upgrade window picks the right project, safer save) |
+| 2.890.0 | Water waves (Ocean, Calm lake) and buoyancy that settles with no bouncing; drivable Boat (GameObject > Vehicles > Boat, examples/boat); Visual Script nodes explain themselves (plain sentence, What is this card, Needs input badge, Next steps, Try this node); Xbox page no longer freezes the editor (async tool check); more OkayUI compat layer (off by default) |
 | 2.889.0 | Settings > Experimental switches for our own replacements (own WAV reader, OkayUI); own texture library (mipmaps, atlas, BC compression, DDS, okay-texture tool, editor Import Settings button); Xbox test export fixes (next-step messages, reused certificate, device log file); own platform layer event loops for launcher and editor (off by default); own build tools (okay-build, okay-cc, okay-ms) |
 | 2.888.0 | Editor frame-time overlay with frame limiter and Performance mode; experimental Xbox One UWP test export (Developer Mode, never run on a console); downloadable signed game content (okay-content tool, off by default); CI time limits and a round-picture edge fix |
 | 2.887.0 | UI bundle: Visual Script plain-word side panel with Saved values (made by typing a name, Me or All), about 30 new game-logic blocks and a Rule block, Set Value To presets, merged Move/Turn/Resize and Show/Hide blocks, five new recipe cards, Play highlight |

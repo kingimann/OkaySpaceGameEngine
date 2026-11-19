@@ -1,4 +1,8 @@
 #pragma once
+#include <cstddef>
+#include <cstdlib>
+#include <cstring>
+#include <type_traits>
 #include <cstring>
 // ---------------------------------------------------------------------------
 // OkayUI — a tiny immediate-mode UI toolkit that draws THROUGH SDL_Renderer, the
@@ -31,7 +35,18 @@ struct Vec2 {
     float& operator[](int i) { return i ? y : x; }
     float operator[](int i) const { return i ? y : x; }
 };
-struct Vec4;
+
+struct Vec4 { float x = 0.0f, y = 0.0f, z = 0.0f, w = 0.0f; };
+/// Dear ImGui's colour-vector type under its own name, for ported code that writes `ImVec4(r, g, b, a)` and reads `.x .y .z .w`. It
+/// converts both ways with Vec4 (so it can be passed to PushStyleColor and assigned from GetStyleColorVec4).
+struct ImVec4 {
+    float x = 0.0f, y = 0.0f, z = 0.0f, w = 0.0f;
+    ImVec4() {}
+    ImVec4(float x_, float y_, float z_, float w_) : x(x_), y(y_), z(z_), w(w_) {}
+    ImVec4(const Vec4& v) : x(v.x), y(v.y), z(v.z), w(v.w) {}
+    operator Vec4() const { return Vec4{x, y, z, w}; }
+};
+
 typedef unsigned Color32;   // a packed colour, 0xAABBGGRR
 
 /// This frame's input, supplied by the host (OkayUI polls nothing itself).
@@ -49,9 +64,16 @@ enum KeyId : int {
     KeyId_Minus, KeyId_Equal, KeyId_Slash, KeyId_Backslash, KeyId_Period, KeyId_Comma, KeyId_LeftBracket, KeyId_RightBracket,
     KeyId_Keypad0, KeyId_Keypad1, KeyId_Keypad2, KeyId_Keypad3, KeyId_Keypad4, KeyId_Keypad5, KeyId_Keypad6, KeyId_Keypad7, KeyId_Keypad8, KeyId_Keypad9,
     KeyId_KeypadAdd, KeyId_KeypadSubtract, KeyId_KeypadMultiply, KeyId_KeypadDivide, KeyId_KeypadDecimal,
+    KeyId_MouseWheelY,   // the wheel as an owner-able "key" (SetItemKeyOwner); the host never reports it down
+    // Keys a platform feed (shared/ImGuiPlatformFeed.hpp, okay::platform events) reports: the right-hand modifiers as their own keys, the modifier flags Dear ImGui
+    // sends as keys of their own (KeyId_Mod*), and the rest of a full keyboard. KeyId_F13 .. KeyId_F24 are consecutive.
+    KeyId_RightCtrl, KeyId_RightShift, KeyId_RightAlt, KeyId_LeftSuper, KeyId_RightSuper, KeyId_ModCtrl, KeyId_ModShift, KeyId_ModAlt, KeyId_ModSuper,
+    KeyId_Semicolon, KeyId_Apostrophe, KeyId_GraveAccent, KeyId_CapsLock, KeyId_PrintScreen, KeyId_ScrollLock, KeyId_Pause, KeyId_NumLock,
+    KeyId_KeypadEqual, KeyId_Oem102, KeyId_Menu,
+    KeyId_F13, KeyId_F14, KeyId_F15, KeyId_F16, KeyId_F17, KeyId_F18, KeyId_F19, KeyId_F20, KeyId_F21, KeyId_F22, KeyId_F23, KeyId_F24,
     KeyId_COUNT,
-    // Left and right modifier keys are the one modifier key here.
-    KeyId_LeftCtrl = KeyId_Ctrl, KeyId_RightCtrl = KeyId_Ctrl, KeyId_LeftShift = KeyId_Shift, KeyId_RightShift = KeyId_Shift, KeyId_LeftAlt = KeyId_Alt, KeyId_RightAlt = KeyId_Alt,
+    // The left modifier keys are the modifier keys; the right ones are their own ids (above).
+    KeyId_LeftCtrl = KeyId_Ctrl, KeyId_LeftShift = KeyId_Shift, KeyId_LeftAlt = KeyId_Alt,
     // Dear ImGui's spellings of the same keys (aliases, not new keys; the numeric-keypad Enter arrives as Enter).
     KeyId_UpArrow = KeyId_Up, KeyId_DownArrow = KeyId_Down, KeyId_LeftArrow = KeyId_Left, KeyId_RightArrow = KeyId_Right,
     KeyId_KeypadEnter = KeyId_Enter
@@ -232,6 +254,7 @@ struct DrawCmd {
     /// SDL_Renderer backend can resolve.
     const void* texture   = nullptr;
 };
+struct ImDrawData;
 struct DrawData {
     const void*     vertices     = nullptr;   // DrawVertex[vertexCount]
     int             vertexCount  = 0;
@@ -249,6 +272,9 @@ struct DrawData {
     /// The batch holds 262,144 vertices and 393,216 indices, each for the main and the overlay layer. Zero in
     /// any normal UI. When it is not zero OkayUI also writes a message to stderr (the first few frames).
     int                  dropped = 0;
+    /// `ImDrawData* dd = GetDrawData();` (a Dear ImGui renderer's input): builds the ImDrawData view of this draw data (see the shapes above). The
+    /// pointer is to one static object that the next conversion rebuilds; it is valid until then.
+    operator ImDrawData*() const;
 };
 DrawData GetDrawData();
 /// The TrueType font whose glyph atlas a DrawCmd::texture stands for (a fallback font for characters the launcher
@@ -581,7 +607,7 @@ enum TreeNodeFlags {
     TreeNode_Framed      = 256,      // drawn with a header-style background (the Col_Header colours)
 };
 /// TreeNode with flags (TreeNodeFlags).
-bool TreeNodeEx(const char* label, unsigned flags);
+bool TreeNodeEx(const char* label, unsigned flags = 0);
 /// The next TreeNode, TreeNodeEx or CollapsingHeader is forced open or closed (once).
 void SetNextItemOpen(bool open);
 /// True when the last TreeNode or CollapsingHeader was opened or closed by a click this frame.
@@ -596,7 +622,8 @@ void TreePop();
 //     OkayUI::BeginMenuBar();
 //       if (OkayUI::BeginMenu("File")) { if (OkayUI::MenuItem("Open")) ...; OkayUI::EndMenu(); }
 //     OkayUI::EndMenuBar();
-void BeginMenuBar();
+/// Returns true when a menu bar began (inside a window), so `if (!BeginMenuBar()) return;` ports unchanged; EndMenuBar is still always safe to call.
+bool BeginMenuBar();
 void EndMenuBar();
 /// A menu on the bar; returns true while its dropdown is open (then add MenuItems).
 bool BeginMenu(const char* label);
@@ -667,6 +694,8 @@ bool ListBox(const char* label, int* current, const char* const* items, int coun
 // NextColumn() moves to the next (wrapping to a new row after the last). EndColumns()
 // restores single-column flow below the widest column.
 void Columns(int count);
+/// Dear ImGui's form: an id string (accepted) and the border flag (accepted; OkayUI columns have no borders).
+void Columns(int count, const char* id, bool border = true);
 void NextColumn();
 void EndColumns();
 
@@ -739,8 +768,15 @@ void TableSetupScrollFreeze(int cols, int rows);
 /// The header bar with the labels given to TableSetupColumn.
 void TableHeadersRow();
 /// One sort key: the column, its position among the keys (0 = main) and the direction.
-struct TableColumnSortSpecs { unsigned columnUserId = 0; int columnIndex = 0; int sortOrder = 0; bool descending = false; };
-struct TableSortSpecs { const TableColumnSortSpecs* specs = nullptr; int specsCount = 0; bool specsDirty = false; };
+struct TableColumnSortSpecs {
+    unsigned columnUserId = 0; int columnIndex = 0; int sortOrder = 0; bool descending = false;
+    // Dear ImGui's field names for the same values (SortDirection: 1 ascending, 2 descending), filled together with the ones above.
+    unsigned ColumnUserID = 0; int ColumnIndex = 0; int SortOrder = 0; int SortDirection = 0;
+};
+struct TableSortSpecs {
+    const TableColumnSortSpecs* specs = nullptr; int specsCount = 0; bool specsDirty = false;
+    const TableColumnSortSpecs* Specs = nullptr; int SpecsCount = 0; bool SpecsDirty = false;   // the same, under Dear ImGui's names (SpecsDirty is read back like specsDirty)
+};
 /// The sort keys of the current Sortable table (null when it is not sortable). Valid until EndTable; clear `specsDirty` once you have sorted.
 TableSortSpecs* TableGetSortSpecs();
 enum TableBgTarget : int { TableBg_RowBg0 = 1, TableBg_RowBg1 = 2, TableBg_CellBg = 3,
@@ -763,6 +799,8 @@ bool TableRowIsVisible();     // false while the current row is wholly outside t
 float CalcTextWidth(const char* text);
 /// Start a new row (call before the row's TableNextColumn cells).
 void TableNextRow();
+/// With Dear ImGui's flags (accepted) and a minimum height for the row in pixels (the row is at least that tall; 0 = as tall as its cells).
+void TableNextRow(int flags, float minRowHeight);
 /// Advance to the next cell; returns true (visible). Widgets after it land in-cell.
 bool TableNextColumn();
 void EndTable();
@@ -854,6 +892,9 @@ struct Font {
     int width  = 8;
     int height = 8;
     bool (*pixel)(char c, int x, int y) = nullptr;   // is pixel (x,y) of glyph `c` lit?
+    /// A TrueType font (a user font made by AddFontTtf, see OkayUICompat.hpp): when set, text is drawn and measured with it at `px` pixels (SetFont
+    /// scales the text so the line is `px` tall until the next SetFont) and `pixel` is not used. Null for the bitmap fonts.
+    const void* ttf = nullptr; float px = 0.0f;
     /// The size of `text` drawn at a glyph height of `size` pixels (Dear ImGui's CalcTextSizeA): the widest line by the lines' height. `maxWidth`
     /// and `wrapWidth` are not used (no wrapping here). `remaining` (optional) is set to the end of the text.
     Vec2 CalcTextSizeA(float size, float maxWidth, float wrapWidth, const char* text, const char** remaining = nullptr) const;
@@ -863,7 +904,7 @@ typedef Font ImFont;
 struct ImFontConfig { float SizePixels = 0.0f; int OversampleH = 1, OversampleV = 1; bool PixelSnapH = false, MergeMode = false; Vec2 GlyphOffset; const unsigned short* GlyphRanges = nullptr; char Name[40] = {0}; };
 /// Set the active font (null restores the built-in 8x8).
 void SetFont(const Font* font);
-const Font* GetFont();
+Font* GetFont();   // not const so `ImFont* f = GetFont();` compiles; the font is not changed through it
 /// Built-in fonts: the default 8x8, and a synthesized bold variant.
 const Font* FontDefault();
 const Font* FontBold();
@@ -925,6 +966,102 @@ enum DrawFlags : int {
     DrawFlags_Closed = 32      // AddPolyline: join the last point to the first
 };
 
+/// A growable array of plain values with the field names and calls ported code uses (`Size`, `Data`, `begin()`, `push_front`, `find_index`,
+/// `erase(pointer)`). Own design: a small malloc'd buffer; only for types that can be copied with memcpy (pointers, numbers, plain structs).
+template <typename T> struct ImVector {
+    static_assert(std::is_trivially_copyable<T>::value, "ImVector holds plain values only");
+    int Size = 0, Capacity = 0;
+    T* Data = nullptr;
+    typedef T* iterator; typedef const T* const_iterator;
+    ImVector() {}
+    ImVector(const ImVector& o) { *this = o; }
+    ImVector& operator=(const ImVector& o) {
+        if (this == &o) return *this;
+        Size = 0; reserve(o.Size);
+        if (o.Size) std::memcpy(static_cast<void*>(Data), static_cast<const void*>(o.Data), sizeof(T) * (size_t)o.Size);
+        Size = o.Size;
+        return *this;
+    }
+    ~ImVector() { std::free(Data); }
+    bool empty() const { return Size == 0; }
+    int size() const { return Size; }
+    T& operator[](int i) { return Data[i]; }
+    const T& operator[](int i) const { return Data[i]; }
+    T* begin() { return Data; }
+    const T* begin() const { return Data; }
+    T* end() { return Data + Size; }
+    const T* end() const { return Data + Size; }
+    T& front() { return Data[0]; }
+    T& back() { return Data[Size - 1]; }
+    void clear() { Size = 0; }
+    void reserve(int n) {
+        if (n <= Capacity) return;
+        T* d = static_cast<T*>(std::malloc(sizeof(T) * (size_t)n));
+        if (!d) return;
+        if (Size) std::memcpy(static_cast<void*>(d), static_cast<const void*>(Data), sizeof(T) * (size_t)Size);
+        std::free(Data); Data = d; Capacity = n;
+    }
+    void resize(int n) { reserve(n); if (n > Size) std::memset(static_cast<void*>(Data + Size), 0, sizeof(T) * (size_t)(n - Size)); Size = Capacity >= n ? n : Size; }
+    void push_back(const T& v) { if (Size == Capacity) reserve(Capacity ? Capacity * 2 : 8); if (Size < Capacity) Data[Size++] = v; }
+    void push_front(const T& v) {
+        if (Size == 0) { push_back(v); return; }
+        const T keep = v;
+        push_back(keep);
+        if (Size < 2) return;
+        std::memmove(static_cast<void*>(Data + 1), static_cast<const void*>(Data), sizeof(T) * (size_t)(Size - 1));
+        Data[0] = keep;
+    }
+    T* erase(const T* it) {
+        const int off = (int)(it - Data);
+        if (off < 0 || off >= Size) return Data + Size;
+        std::memmove(static_cast<void*>(Data + off), static_cast<const void*>(Data + off + 1), sizeof(T) * (size_t)(Size - off - 1));
+        --Size;
+        return Data + off;
+    }
+    int find_index(const T& v) const { for (int i = 0; i < Size; ++i) if (Data[i] == v) return i; return -1; }
+    bool contains(const T& v) const { return find_index(v) >= 0; }
+};
+
+
+// ---- Dear ImGui's draw-data shapes (what a custom renderer written for Dear ImGui reads) ---------------------------------------------------------
+// OkayUI's own draw data is DrawData / DrawCmd above. These are the same facts in the field names and layout a Dear ImGui renderer expects, built
+// from DrawData on request (`ImDrawData* dd = GetDrawData();` converts, see DrawData::operator ImDrawData*) so such a renderer can run unchanged
+// while the host is moved over to OkayUI's own FrameDrawer. Docs: docs/own_ui_toolkit.md 6.22.
+typedef SDL_Texture* ImTextureID;                    // what AddImage and Image take
+typedef unsigned int ImDrawIdx;                       // 32-bit: OkayUI batches hold more than 65,535 vertices
+struct ImDrawVert { Vec2 pos; Vec2 uv; unsigned col = 0; };   // col is 0xAABBGGRR
+struct ImTextureRect { unsigned short x = 0, y = 0, w = 0, h = 0; };
+enum ImTextureStatus : int { ImTextureStatus_OK = 0, ImTextureStatus_Destroyed = 1, ImTextureStatus_WantCreate = 2, ImTextureStatus_WantUpdates = 3, ImTextureStatus_WantDestroy = 4 };
+struct ImTextureData {
+    ImTextureStatus Status = ImTextureStatus_OK;
+    int Width = 0, Height = 0, BytesPerPixel = 4;
+    unsigned char* Pixels = nullptr;                   // RGBA8, top row first; owned by whoever made the data (OkayUI: the launcher look's atlas)
+    ImVector<ImTextureRect> Updates;                   // always empty here
+    unsigned char* GetPixels() const { return Pixels; }
+    int GetPitch() const { return Width * BytesPerPixel; }
+    unsigned char* GetPixelsAt(int x, int y) const { return Pixels + (size_t)y * (size_t)GetPitch() + (size_t)x * (size_t)BytesPerPixel; }
+};
+struct ImDrawCmd;
+struct DrawList;
+typedef void (*ImDrawCallback)(const DrawList* list, const ImDrawCmd* cmd);
+#ifndef ImDrawCallback_ResetRenderState   // a program that also includes Dear ImGui's imgui.h first keeps ITS macro (its own callback type)
+#define ImDrawCallback_ResetRenderState ((::OkayUI::ImDrawCallback)(intptr_t)-8)
+#endif
+#ifndef ImTextureID_Invalid
+#define ImTextureID_Invalid ((::OkayUI::ImTextureID)nullptr)
+#endif
+struct ImTextureRef {
+    ImTextureData* _TexData = nullptr; ImTextureID _TexID = nullptr;
+    ImTextureRef() {}
+    ImTextureRef(ImTextureID id) : _TexID(id) {}
+};
+struct ImDrawCmd {
+    ImVec4 ClipRect;                                   // x y z w = left top right bottom, pixels
+    ImTextureRef TexRef;
+    unsigned VtxOffset = 0, IdxOffset = 0, ElemCount = 0;
+    ImDrawCallback UserCallback = nullptr; void* UserCallbackData = nullptr;
+    ImTextureID GetTexID() const { return TexRef._TexID; }
+};
 struct DrawList {
     bool overlay;
     void AddLine(Vec2 a, Vec2 b, Color32 col, float thickness = 1.0f) const;
@@ -950,9 +1087,11 @@ struct DrawList {
     void AddBezierCubic(Vec2 p1, Vec2 p2, Vec2 p3, Vec2 p4, Color32 col, float thickness = 1.0f, int segments = 0) const;
     /// Text with its top-left at `pos`; `scale` 0 uses the theme text scale (a negative or non-finite scale draws nothing). One line (no newline handling).
     void AddText(Vec2 pos, Color32 col, const char* text, float scale = 0.0f) const;
+    /// Dear ImGui's (pos, col, text, textEnd): the text between the two pointers (`textEnd` null = to the zero).
+    void AddText(Vec2 pos, Color32 col, const char* text, const char* textEnd) const;
     /// The Dear ImGui form with a font and a pixel size: draws with OkayUI's active font scaled so glyphs are `fontSize` pixels tall (the `font` argument is not
     /// used to pick a typeface). `textEnd` null means up to the zero. `wrapWidth` and `clipRect` are ignored.
-    void AddText(const Font* font, float fontSize, Vec2 pos, Color32 col, const char* text, const char* textEnd = nullptr, float wrapWidth = 0.0f, const Vec4* clipRect = nullptr) const;
+    void AddText(const Font* font, float fontSize, Vec2 pos, Color32 col, const char* text, const char* textEnd = nullptr, float wrapWidth = 0.0f, const ImVec4* clipRect = nullptr) const;
     /// With corner flags (DrawFlags, 0 = all corners, DrawFlags_None = square). Rounded outlines are centred on their path.
     void AddRect(Vec2 min, Vec2 max, Color32 col, float rounding, int flags, float thickness) const;
     void AddRectFilled(Vec2 min, Vec2 max, Color32 col, float rounding, int flags) const;
@@ -970,10 +1109,30 @@ struct DrawList {
     /// A regular polygon with `n` corners (3 to 128), the first corner pointing right of the centre, corners going clockwise on screen.
     void AddNgon(Vec2 center, float radius, Color32 col, int n, float thickness = 1.0f) const;
     void AddNgonFilled(Vec2 center, float radius, Color32 col, int n) const;
+    /// A filled polygon that may be concave (ear clipping; 3 to 256 points, a self-crossing outline draws something unspecified; winding either way).
+    void AddConcavePolyFilled(const Vec2* points, int count, Color32 col) const;
     /// An ellipse outline (radii per axis, rotated by `rot` radians, `segments` 0 = 32).
     void AddEllipse(Vec2 center, Vec2 radius, Color32 col, float rot = 0.0f, int segments = 0, float thickness = 1.0f) const;
     void AddEllipseFilled(Vec2 center, Vec2 radius, Color32 col, float rot = 0.0f, int segments = 0) const;
     void PushClipRect(Vec2 min, Vec2 max) const;
+    /// Channels: after ChannelsSplit(n) the geometry drawn goes into one of n lists (ChannelsSetCurrent(i); channel 0 is current at first), and
+    /// ChannelsMerge() puts the lists back in channel order, so what was drawn on channel 1 shows above everything on channel 0 whatever
+    /// order the calls came in. Only the window list has channels: on the foreground list the calls are accepted and do nothing (it is already
+    /// in call order). A split left open is merged when its window ends or the frame ends. n is 2 to 8 (a split of fewer or more than that does
+    /// nothing); a split while one is open, a bad index and a merge without a split do nothing. Written from the behaviour of the calls.
+    void ChannelsSplit(int count) const;
+    void ChannelsSetCurrent(int index) const;
+    void ChannelsMerge() const;
+    /// Dear ImGui's field names for the same facts (`_Splitter._Count` is 1 with no split open, `_Current` the channel being drawn on).
+    struct SplitterView { int _Current = 0; int _Count = 1; };
+    mutable SplitterView _Splitter;
+    /// The three buffers a Dear ImGui renderer reads. Empty on the handles GetWindowDrawList / GetForegroundDrawList return; filled on the one list of
+    /// an ImDrawData (see the shapes above).
+    ImVector<ImDrawVert> VtxBuffer;
+    ImVector<ImDrawIdx> IdxBuffer;
+    ImVector<ImDrawCmd> CmdBuffer;
+    /// Dear ImGui's three-argument form: `intersectWithCurrent` false would replace the clip rectangle; here it always intersects.
+    void PushClipRect(Vec2 min, Vec2 max, bool intersectWithCurrent) const;
     void PopClipRect() const;
     /// A path of up to 256 points shared by both lists (cleared by PathStroke and PathFillConvex).
     void PathClear() const;
@@ -982,14 +1141,44 @@ struct DrawList {
     void PathArcTo(Vec2 center, float radius, float a0, float a1, int segments = 0) const;
     void PathStroke(Color32 col, bool closed = false, float thickness = 1.0f) const;
     void PathFillConvex(Color32 col) const;
+    /// The path of a rectangle with rounded corners (`rounding` in pixels, DrawFlags for which corners: 0 = all), added to the path.
+    void PathRect(Vec2 min, Vec2 max, float rounding = 0.0f, int flags = 0) const;
+    /// The points of the path as Dear ImGui's field shows them (a copy refreshed by every Path call on this list, not read back).
+    mutable ImVector<Vec2> _Path;
+    /// Raw geometry, the way Dear ImGui hosts write their own triangles: PrimReserve(indexCount, vertexCount) says how much follows, PrimWriteVtx adds
+    /// a vertex (`pos`, `uv`, `col` as 0xAABBGGRR), PrimWriteIdx an index in the batch's own numbering (`_VtxCurrentIdx` is the number of the first
+    /// vertex reserved; read it after PrimReserve), PrimVtx adds a vertex AND the next index (for a plain triangle list). More than was reserved, or
+    /// a batch that is full, is dropped (counted by DroppedGeometry). With the default texture a vertex wants GetFontTexUvWhitePixel() as its uv for a flat colour.
+    void PrimReserve(int idxCount, int vtxCount) const;
+    void PrimWriteVtx(Vec2 pos, Vec2 uv, Color32 col) const;
+    void PrimWriteIdx(ImDrawIdx idx) const;
+    void PrimVtx(Vec2 pos, Vec2 uv, Color32 col) const;
+    /// The texture the following geometry samples (a stack of 8; PopTexture goes back). The texture is an SDL_Texture the host owns.
+    void PushTexture(const ImTextureRef& tex) const;
+    void PopTexture() const;
+    mutable unsigned _VtxCurrentIdx = 0;
 };
+/// The uv a flat-coloured vertex should carry (a white texel of the glyph atlas in the launcher look; (0, 0) in the classic look, which ignores uv).
+Vec2 GetFontTexUvWhitePixel();
 /// What GetWindowDrawList / GetForegroundDrawList return: a DrawList (so `GetWindowDrawList().AddLine(...)` and `const DrawList& dl = ...` work
 /// as before) that also behaves like the pointer Dear ImGui returns: `dl->AddLine(...)` and `DrawList* dl = GetWindowDrawList();` compile.
 /// There is one handle per list, living for the whole program.
 struct DrawListHandle : DrawList {
+    bool isNull = false;
     DrawListHandle(bool isOverlay) { overlay = isOverlay; }
+    /// So `cond ? GetWindowDrawList() : nullptr` compiles: a handle that converts to a null pointer.
+    DrawListHandle(std::nullptr_t) { overlay = false; isNull = true; }
     const DrawListHandle* operator->() const { return this; }
-    operator DrawList*() const { return const_cast<DrawListHandle*>(this); }
+    operator DrawList*() const;   // the one window / foreground handle (not a copy), or null for the nullptr form
+};
+/// What a Dear ImGui renderer reads per frame: one list (OkayUI has one batch), the display, and the textures. `Textures` points at a list holding
+/// the launcher look's atlas as an ImTextureData (Status OK, never Destroyed) when the frame uses it, else an empty list.
+struct ImDrawData {
+    bool Valid = false;
+    int CmdListsCount = 0, TotalIdxCount = 0, TotalVtxCount = 0;
+    ImVector<DrawList*> CmdLists;
+    Vec2 DisplayPos{0, 0}, DisplaySize{0, 0}, FramebufferScale{1, 1};
+    ImVector<ImTextureData*>* Textures = nullptr;
 };
 const DrawListHandle& GetWindowDrawList();
 const DrawListHandle& GetForegroundDrawList();
@@ -1033,6 +1222,9 @@ unsigned GetItemID();
 bool IsAnyItemActive();
 /// True when the last item overlaps the current clip rectangle (false when it was scrolled out of a child).
 bool IsItemVisible();
+bool IsRectVisible(Vec2 size);                  // a rectangle of this size at the cursor: is any of it inside the current clip rectangle?
+bool IsRectVisible(Vec2 min, Vec2 max);
+bool IsAnyMouseDown();                           // any mouse button is held
 bool IsItemActive();         // pressed and held (or, for a text field, being dragged)
 bool IsItemActivated();      // became active this frame
 bool IsItemDeactivated();    // stopped being active this frame
@@ -1076,7 +1268,7 @@ bool IsKeyReleased(KeyId key);
 enum StyleVar : int {
     StyleVar_Alpha = 0, StyleVar_WindowPadding, StyleVar_WindowRounding, StyleVar_FramePadding, StyleVar_FrameRounding,
     StyleVar_ItemSpacing, StyleVar_ItemInnerSpacing, StyleVar_ChildRounding, StyleVar_BorderSize, StyleVar_ButtonTextAlign,
-    StyleVar_SelectableTextAlign, StyleVar_ScrollbarSize, StyleVar_COUNT,
+    StyleVar_SelectableTextAlign, StyleVar_ScrollbarSize, StyleVar_GrabMinSize, StyleVar_COUNT,
     // Names ported code uses for the border sizes (BorderSize sets all three, as before).
     StyleVar_WindowBorderSize = StyleVar_BorderSize, StyleVar_FrameBorderSize = StyleVar_BorderSize, StyleVar_ChildBorderSize = StyleVar_BorderSize
 };
@@ -1099,8 +1291,8 @@ void SetWindowFocus(const char* title);
 void SetWindowFontScale(float scale);
 /// The mouse cursor shape the UI wants this frame; the host reads GetMouseCursor() after the frame and shows the matching system
 /// cursor. It starts each frame as the arrow.
-enum MouseCursor : int { MouseCursor_Arrow = 0, MouseCursor_TextInput, MouseCursor_ResizeAll, MouseCursor_ResizeNS, MouseCursor_ResizeEW,
-                         MouseCursor_ResizeNESW, MouseCursor_ResizeNWSE, MouseCursor_Hand, MouseCursor_NotAllowed, MouseCursor_COUNT };
+enum MouseCursor : int { MouseCursor_None = -1, MouseCursor_Arrow = 0, MouseCursor_TextInput, MouseCursor_ResizeAll, MouseCursor_ResizeNS, MouseCursor_ResizeEW,
+                         MouseCursor_ResizeNESW, MouseCursor_ResizeNWSE, MouseCursor_Hand, MouseCursor_NotAllowed, MouseCursor_Wait, MouseCursor_Progress, MouseCursor_COUNT };
 void SetMouseCursor(MouseCursor cursor);
 MouseCursor GetMouseCursor();
 /// Read-only facts about the frame, filled by BeginFrame: pointer, wheel, display size, modifier keys, the frame time, and whether
@@ -1116,8 +1308,34 @@ struct IO {
     bool KeyCtrl = false, KeyShift = false, KeyAlt = false;
     bool WantCaptureMouse = false, WantCaptureKeyboard = false, WantTextInput = false;
     float DeltaTime = 1.0f / 60.0f, Framerate = 60.0f;
+    float MouseWheelH = 0.0f;                 // horizontal wheel: OkayUI has none (always 0)
+    float MouseDragThreshold = 6.0f, MouseDragMaxDistanceSqr[3] = {0, 0, 0};   // accepted; the drag threshold OkayUI uses is the argument of IsMouseDragging
+    Vec2 DisplayFramebufferScale{1.0f, 1.0f};
     int ConfigFlags = 0, BackendFlags = 0;
     const char* IniFilename = nullptr; const char* LogFilename = nullptr;
+    // Host-side fields of Dear ImGui's IO, see docs/own_ui_toolkit.md 6.22.
+    int MouseClickedCount[3] = {0, 0, 0};        // clicks in a row at this frame's press (1, 2 = double click), 0 when the button did not go down this frame (left button only)
+    bool KeySuper = false;                       // the Windows / Command key: OkayUI has no such key; always false unless the host sets it
+    float FontGlobalScale = 1.0f;                // accepted; the text scale is Style().textScale
+    bool ConfigViewportsNoTaskBarIcon = false, ConfigDebugHighlightIdConflicts = true;   // accepted, unused
+    struct FontAtlasRef* Fonts = nullptr;        // GetIO() points it at the one atlas (below): font requests are recorded, nothing is loaded
+    /// The characters typed this frame (UTF-16 code units, characters above U+FFFF are left out), filled by GetIO() from Input::text. Removing any of
+    /// them (`resize(0)`) means "I took the typing": the OkayUI text fields skip this frame's typed text (the code editor's field does not).
+    ImVector<unsigned short> InputQueueCharacters;
+    /// Feed input the way a Dear ImGui host does: applied by the next NewFrame() (Input::text gets the characters; a key event sets Input::keyDown[key],
+    /// and a press of Enter / Escape / Backspace / Delete / Tab / the arrows / Home / End also sets that key's one-frame flag).
+    void AddKeyEvent(int key, bool down);
+    void AddInputCharacter(unsigned codePoint);
+    void AddInputCharactersUTF8(const char* utf8);   // every character of the text, as AddInputCharacter
+    void AddMouseWheelEvent(float wheelX, float wheelY);   // the vertical amount scrolls (OkayUI has no horizontal wheel)
+    void AddFocusEvent(bool focused);                // the window lost or got focus: losing it lets go of every key and button
+    const char* BackendPlatformName = nullptr, *BackendRendererName = nullptr;
+    bool MouseDrawCursor = false;                    // accepted; the host draws the system cursor
+    bool WantSetMousePos = false;                    // accepted; OkayUI never asks the host to move the pointer
+    /// Mouse events as a Dear ImGui host feeds them: applied by the next NewFrame() (the last position and the button state win; a press and release
+    /// inside one frame still makes one click).
+    void AddMousePosEvent(float x, float y);
+    void AddMouseButtonEvent(int button, bool down);
 };
 /// Not const so ported code can write the host fields (ConfigFlags, IniFilename); OkayUI never reads those.
 IO& GetIO();
@@ -1182,17 +1400,6 @@ enum Col : int {
 void PushStyleColor(Col which, unsigned char r, unsigned char g, unsigned char b, unsigned char a = 255);
 /// The same with a packed colour (see RGBA) or four floats 0..1 (non-finite values count as 0; out of range ones are clamped).
 void PushStyleColor(Col which, Color32 color);
-struct Vec4 { float x = 0.0f, y = 0.0f, z = 0.0f, w = 0.0f; };
-/// Dear ImGui's colour-vector type under its own name, for ported code that writes `ImVec4(r, g, b, a)` and reads `.x .y .z .w`. It
-/// converts both ways with Vec4 (so it can be passed to PushStyleColor and assigned from GetStyleColorVec4).
-struct ImVec4 {
-    float x = 0.0f, y = 0.0f, z = 0.0f, w = 0.0f;
-    ImVec4() {}
-    ImVec4(float x_, float y_, float z_, float w_) : x(x_), y(y_), z(z_), w(w_) {}
-    ImVec4(const Vec4& v) : x(v.x), y(v.y), z(v.z), w(v.w) {}
-    operator Vec4() const { return Vec4{x, y, z, w}; }
-};
-
 void PushStyleColor(Col which, Vec4 rgba);
 void PopStyleColor(int count = 1);
 /// Set a colour until ResetStyleColor (or the next UseLauncherLook), outside the push / pop stack.
@@ -1207,5 +1414,7 @@ Vec4 ColorConvertU32ToFloat4(Color32 c);
 Color32 ColorConvertFloat4ToU32(Vec4 c);
 void ColorConvertRGBtoHSV(float r, float g, float b, float* h, float* s, float* v);
 void ColorConvertHSVtoRGB(float h, float s, float v, float* r, float* g, float* b);
+/// Dear ImGui's form with references.
+void ColorConvertHSVtoRGB(float h, float s, float v, float& r, float& g, float& b);
 
 } // namespace OkayUI

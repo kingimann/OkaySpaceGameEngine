@@ -1534,7 +1534,13 @@ node 1608 Fn.weapon_reload
 node 1609 Fn.weapon_set
 node 1610 Fn.weapon_swing
 node 1611 Fn.weather_set
-node 1612 Fn.wrap
-node 1613 Fn.wrap_in_box
-node 1614 Fn.write_save
-node 1615 Fn.zoom_camera
+node 1612 Fn.wind_gust
+node 1613 Fn.wind_set
+node 1614 Fn.wind_speed
+node 1615 Fn.wind_x
+node 1616 Fn.wind_y
+node 1617 Fn.wind_z
+node 1618 Fn.wrap
+node 1619 Fn.wrap_in_box
+node 1620 Fn.write_save
+node 1621 Fn.zoom_camera

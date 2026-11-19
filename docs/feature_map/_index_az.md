@@ -5178,6 +5178,7 @@ Word, then the number(s) to say. Back to the [overview](../FEATURE_MAP.md).
 - UI overlay (12.10)
 - UI overlay and handles (12.10.2)
 - UI performance (12.11)
+- UI quality (Fast / Good / Best / Old look) (12.11.8)
 - UI render benchmark (58.2.1)
 - UI renderer (12.11)
 - UI renderer, painters and batching (12.11)

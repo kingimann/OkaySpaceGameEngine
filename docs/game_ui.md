@@ -302,6 +302,11 @@ Nothing is drawn small and then stretched.
 - **Not changed:** the 8x8 bitmap font that overlays draw outside the UI pass (inventory, crafting, F1 panel) and widgets
   turned or scaled by a UI Frame (their rectangles are drawn as geometry without a soft edge).
 
+- **UI Quality (Fast / Good / Best / Old look):** exact edge coverage, snapped borders, text on the pixel grid with
+  kerning, smooth soft shadows and filtered pictures. Lighting window > UI Font > UI Quality, or the environment variables
+  `OKAY_UI_QUALITY=fast|good|best|old` and `OKAY_CLASSIC_UI=1`. Full write-up, before/after numbers and what is not done:
+  `docs/in_game_ui_quality.md`; example scene `examples/ui_quality/ui_quality.okayscene`.
+
 Try it: `docs/try_it.md` crisp1. Tests: `test_ui_crisp` (needs no window; measures text, ring and picture sharpness).
 
 ## Theming

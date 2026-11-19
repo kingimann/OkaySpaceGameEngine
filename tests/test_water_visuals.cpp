@@ -376,7 +376,7 @@ int main() {
         for (int rich = 0; rich < 2; ++rich) {
             Scene sc("boatwake"); sc.fixedTimeStep = 1.0f / 50.0f;
             Water* w = watersc::MakeWater(sc, 1, 200.0f, 16, 20.0f);
-            w->waveHeight = 0.0f; w->realisticLook = rich == 1; w->Apply();
+            w->waveHeight = 0.0f; w->realisticLook = rich == 1; w->interactive = false; w->Apply();
             GameObject* boat = Templates::AddBoat(sc, {0, 0.0f, -40.0f});
             auto* bc = boat->GetComponent<BoatController>();
             bc->isPlayer = false; bc->followCamera = false; bc->throttleInput = 1.0f;

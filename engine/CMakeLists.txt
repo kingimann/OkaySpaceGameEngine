@@ -133,6 +133,10 @@ add_library(okay_engine
     src/Lua/LuaLib.cpp
     src/Lua/LuaInterp.cpp
     src/Lua/LuaScriptVM.cpp
+    src/CSharp/DotnetHost.cpp
+    src/CSharp/CSharpCompiler.cpp
+    src/CSharp/CSharpScriptVM.cpp
+    src/CSharp/HostfxrBridge.cpp
     src/Script/Lexer.cpp
     src/Script/Parser.cpp
     src/Script/Checker.cpp
@@ -445,6 +449,13 @@ if(WIN32)
     # The Direct3D 12 scene renderer (D3D12Renderer.cpp, guarded by _WIN32) needs the
     # D3D12 runtime, DXGI and the COM IIDs (dxguid). Off Windows the file is empty.
     target_link_libraries(okay_engine PUBLIC d3d12 dxgi dxguid)
+endif()
+
+# ---- Optional C# scripting (hosted .NET runtime, rule 24c) ----------------
+# OFF: src/CSharp compiles into stubs that say "C# is not enabled in this build".
+if(OKAY_WITH_CSHARP)
+    target_compile_definitions(okay_engine PUBLIC OKAY_WITH_CSHARP=1)
+    target_link_libraries(okay_engine PRIVATE ${CMAKE_DL_LIBS})
 endif()
 
 # ---- Optional Photon Realtime transport (closed-source SDK) ----------

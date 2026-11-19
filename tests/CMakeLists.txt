@@ -592,6 +592,12 @@ add_executable(test_script_removed_langs test_script_removed_langs.cpp)
 target_link_libraries(test_script_removed_langs PRIVATE okay::engine)
 add_test(NAME script_removed_langs COMMAND test_script_removed_langs)
 
+# C# hosting (rule 24c): pure logic, the VM with a fake managed side, the compiler helpers. No .NET needed.
+add_executable(test_csharp_host test_csharp_host.cpp)
+target_link_libraries(test_csharp_host PRIVATE okay::engine)
+target_compile_definitions(test_csharp_host PRIVATE OKAY_SOURCE_DIR="${PROJECT_SOURCE_DIR}")
+add_test(NAME csharp_host COMMAND test_csharp_host)
+
 # Our own Lua 5.4: language conformance, sandbox and limits, fuzz, and the engine binding.
 add_executable(test_lua_lang test_lua_lang.cpp)
 target_link_libraries(test_lua_lang PRIVATE okay::engine)

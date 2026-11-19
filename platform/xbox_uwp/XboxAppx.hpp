@@ -161,6 +161,12 @@ inline bool BadName(const std::string& n, std::string* why) {
         if (part.empty()) return no("empty folder name");
         if (part == "." || part == "..") return no("'.' and '..' are not allowed");
         if (part.back() == '.' || part.back() == ' ') return no("a name must not end in '.' or a space");
+        {   // Windows device names (CON.txt is as bad as CON): the package folder could not even be unpacked on a PC
+            std::string base = Lower(part.substr(0, part.find('.')));
+            while (!base.empty() && base.back() == ' ') base.pop_back();
+            static const char* dev[] = {"con", "prn", "aux", "nul", "com1", "com2", "com3", "com4", "com5", "com6", "com7", "com8", "com9", "lpt1", "lpt2", "lpt3", "lpt4", "lpt5", "lpt6", "lpt7", "lpt8", "lpt9"};
+            for (const char* d : dev) if (base == d) return no("a Windows device name (CON, PRN, AUX, NUL, COM1-9, LPT1-9) cannot be a file name");
+        }
         start = e + 1;
     }
     for (unsigned char c : n) if (c < 0x20 || c == '\\' || c == ':' || c == '*' || c == '?' || c == '"' || c == '<' || c == '>' || c == '|') return no("a character Windows does not allow in a file name");

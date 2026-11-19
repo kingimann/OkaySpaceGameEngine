@@ -21,6 +21,9 @@ constexpr uint16_t kRelAmd64Addr64 = 1;
 constexpr uint16_t kRelAmd64Addr32 = 2;
 constexpr uint16_t kRelAmd64Addr32Nb = 3;
 constexpr uint16_t kRelAmd64Rel32 = 4;
+// Used by the CodeView line tables in .debug$S (PE Format, AMD64 relocations).
+constexpr uint16_t kRelAmd64Section = 10;
+constexpr uint16_t kRelAmd64Secrel = 11;
 
 // IMAGE_SYM_CLASS_* storage classes we accept.
 constexpr uint8_t kClassExternal = 2;

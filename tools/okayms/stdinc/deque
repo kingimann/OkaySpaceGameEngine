@@ -1,0 +1,182 @@
+// okay-ms own standard header: std::deque, written from ISO/IEC 14882 [deque]. Own minimal version: the elements
+// are kept in one contiguous block with free room at both ends (a gap buffer), so iterators are plain pointers and
+// push_front and push_back are amortised constant time. Difference from the standard: growing the block moves the
+// elements, so a reference or iterator is invalidated by a push at either end (the standard keeps references valid for
+// push_front/push_back). No allocator, no exceptions, no initializer_list constructor. Storage from the global malloc.
+#pragma once
+#include <cstddef>
+#include <cstdlib>
+#include <initializer_list>
+#include <new>
+#include <utility>
+namespace std {
+template <typename T>
+class deque {
+    T* block_;
+    size_t head_;  // index of the first element in the block
+    size_t size_;
+    size_t cap_;   // size of the block
+
+    // A new block of `cap` slots with the elements starting at `head`.
+    void rebuild(size_t cap, size_t head) {
+        T* fresh = (T*)malloc(cap * sizeof(T));
+        for (size_t i = 0; i < size_; ++i) {
+            new (fresh + head + i) T(std::move(block_[head_ + i]));
+            block_[head_ + i].~T();
+        }
+        if (block_) free(block_);
+        block_ = fresh;
+        head_ = head;
+        cap_ = cap;
+    }
+    void room_back() {
+        if (block_ != 0 && head_ + size_ < cap_) return;
+        const size_t cap = cap_ == 0 ? 8 : (size_ * 2 < cap_ ? cap_ : cap_ * 2);
+        rebuild(cap, head_ < cap / 4 ? head_ : cap / 4);
+    }
+    void room_front() {
+        if (block_ != 0 && head_ > 0) return;
+        const size_t cap = cap_ == 0 ? 8 : cap_ * 2;
+        rebuild(cap, cap - size_ - (cap - size_) / 4);
+    }
+
+public:
+    typedef T value_type;
+    typedef size_t size_type;
+    typedef T* iterator;
+    typedef const T* const_iterator;
+
+    deque() : block_(0), head_(0), size_(0), cap_(0) {}
+    explicit deque(size_t n) : block_(0), head_(0), size_(0), cap_(0) { resize(n); }
+    deque(const deque& other) : block_(0), head_(0), size_(0), cap_(0) {
+        for (size_t i = 0; i < other.size_; ++i) push_back(other.block_[other.head_ + i]);
+    }
+    deque(deque&& other) : block_(other.block_), head_(other.head_), size_(other.size_), cap_(other.cap_) {
+        other.block_ = 0;
+        other.head_ = 0;
+        other.size_ = 0;
+        other.cap_ = 0;
+    }
+    deque(initializer_list<T> list) : block_(0), head_(0), size_(0), cap_(0) {
+        for (size_t i = 0; i < list.size(); ++i) push_back(list.begin()[i]);
+    }
+    ~deque() {
+        clear();
+        if (block_) free(block_);
+    }
+    deque& operator=(const deque& other) {
+        if (this == &other) return *this;
+        clear();
+        for (size_t i = 0; i < other.size_; ++i) push_back(other.block_[other.head_ + i]);
+        return *this;
+    }
+    deque& operator=(deque&& other) {
+        if (this == &other) return *this;
+        clear();
+        if (block_) free(block_);
+        block_ = other.block_;
+        head_ = other.head_;
+        size_ = other.size_;
+        cap_ = other.cap_;
+        other.block_ = 0;
+        other.head_ = 0;
+        other.size_ = 0;
+        other.cap_ = 0;
+        return *this;
+    }
+
+    size_t size() const { return size_; }
+    bool empty() const { return size_ == 0; }
+    T& operator[](size_t i) { return block_[head_ + i]; }
+    const T& operator[](size_t i) const { return block_[head_ + i]; }
+    T& at(size_t i) { return block_[head_ + i]; }
+    const T& at(size_t i) const { return block_[head_ + i]; }
+    T& front() { return block_[head_]; }
+    const T& front() const { return block_[head_]; }
+    T& back() { return block_[head_ + size_ - 1]; }
+    const T& back() const { return block_[head_ + size_ - 1]; }
+    T* begin() { return block_ + head_; }
+    T* end() { return block_ + head_ + size_; }
+    const T* begin() const { return block_ + head_; }
+    const T* end() const { return block_ + head_ + size_; }
+
+    void push_back(const T& value) {
+        if (block_ != 0 && head_ + size_ == cap_) {
+            T copy(value);  // value may live in the block that is about to move
+            room_back();
+            new (block_ + head_ + size_) T(std::move(copy));
+        } else {
+            room_back();
+            new (block_ + head_ + size_) T(value);
+        }
+        ++size_;
+    }
+    void push_back(T&& value) {
+        T moved(std::move(value));
+        room_back();
+        new (block_ + head_ + size_) T(std::move(moved));
+        ++size_;
+    }
+    void push_front(const T& value) {
+        if (block_ != 0 && head_ == 0) {
+            T copy(value);
+            room_front();
+            new (block_ + head_ - 1) T(std::move(copy));
+        } else {
+            room_front();
+            new (block_ + head_ - 1) T(value);
+        }
+        --head_;
+        ++size_;
+    }
+    void push_front(T&& value) {
+        T moved(std::move(value));
+        room_front();
+        new (block_ + head_ - 1) T(std::move(moved));
+        --head_;
+        ++size_;
+    }
+    void pop_back() {
+        block_[head_ + size_ - 1].~T();
+        --size_;
+    }
+    void pop_front() {
+        block_[head_].~T();
+        ++head_;
+        --size_;
+    }
+    void clear() {
+        for (size_t i = size_; i > 0; --i) block_[head_ + i - 1].~T();
+        size_ = 0;
+        head_ = 0;
+    }
+    void resize(size_t n) {
+        while (size_ > n) pop_back();
+        while (size_ < n) {
+            room_back();
+            new (block_ + head_ + size_) T();
+            ++size_;
+        }
+    }
+    T* erase(T* pos) {
+        const size_t at = (size_t)(pos - (block_ + head_));
+        for (size_t i = at; i + 1 < size_; ++i) block_[head_ + i] = std::move(block_[head_ + i + 1]);
+        pop_back();
+        return block_ + head_ + at;
+    }
+    T* insert(T* pos, const T& value) {
+        const size_t at = (size_t)(pos - (block_ + head_));
+        T copy(value);
+        push_back(copy);
+        for (size_t i = size_ - 1; i > at; --i) block_[head_ + i] = std::move(block_[head_ + i - 1]);
+        block_[head_ + at] = std::move(copy);
+        return block_ + head_ + at;
+    }
+    void swap(deque& other) {
+        T* b = block_; block_ = other.block_; other.block_ = b;
+        size_t h = head_; head_ = other.head_; other.head_ = h;
+        size_t s = size_; size_ = other.size_; other.size_ = s;
+        size_t c = cap_; cap_ = other.cap_; other.cap_ = c;
+    }
+};
+}

@@ -25,13 +25,19 @@ public:
     virtual void StartTextInput() = 0;
     virtual void StopTextInput() = 0;
     virtual bool IsKeyDown(Key k) = 0;
+    virtual uint32_t KeyboardFocusWindowId() = 0;
+    virtual uint32_t MouseFocusWindowId() = 0;
+    virtual void* NativeHandleFromId(uint32_t id) = 0;
     virtual uint32_t MouseState(int* x, int* y) = 0;
+    virtual bool GlobalMouseState(int* x, int* y, uint32_t* buttons) = 0;
     virtual bool SetRelativeMouse(bool on) = 0;
+    virtual bool IsRelativeMouse() const = 0;
     virtual void ShowCursor(bool show) = 0;
     virtual void WarpMouse(Window* w, int x, int y) = 0;
     virtual uint32_t RelativeMouseState(int* dx, int* dy) = 0;
     virtual Key KeyForChar(char c) = 0;
     virtual bool IsCursorShown() = 0;
+    virtual bool SetCursorShape(CursorShape shape) = 0;
     virtual bool SetClipboardText(const std::string& t) = 0;
     virtual std::string GetClipboardText() = 0;
     /// Test hook: the window's current pixels as RGBA8 (XGetImage), top row first.

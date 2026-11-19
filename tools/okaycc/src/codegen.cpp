@@ -666,6 +666,18 @@ std::string emitData(const Module& m) {
             s += "\n";
             return s;
         }
+        if (!g.relocs.empty()) {
+            int total = g.size > 0 ? g.size : static_cast<int>(g.bytes.size());
+            for (int off = 0; off < total; off += 8) {
+                std::string sym;
+                for (const auto& r : g.relocs)
+                    if (r.first == off) sym = r.second;
+                s += "  .quad ";
+                s += sym.empty() ? "0" : sym;
+                s += "\n";
+            }
+            return s;
+        }
         int n = g.size > 0 ? g.size : static_cast<int>(g.bytes.size());
         if (zero) {
             s += "  .zero ";

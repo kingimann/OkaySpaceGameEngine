@@ -43,6 +43,7 @@
 #include <vector>
 
 #include "package_dir.hpp"
+#include "XboxLog.hpp"   // the log file in LocalState\logs (pure C++, platform/xbox_uwp)
 #include "engine_shell.hpp"   // empty unless OKAY_XBOX_APP_ENGINE; plain-C++ boundary to the engine (engine_bridge.hpp), no global using-directive
 
 namespace wf = winrt::Windows::Foundation;
@@ -80,8 +81,10 @@ struct App : winrt::implements<App, wac::IFrameworkViewSource, wac::IFrameworkVi
     }
 
     void Run() {
+        OpenLog();
         m_window.Activate();
-        if (!CreateDevice()) { wac::CoreApplication::Exit(); return; }
+        if (!CreateDevice()) { Log("The test app could not start Direct3D 11 / the swap chain / its two shader files (tri_vs.cso, tri_ps.cso in the package). Exiting."); wac::CoreApplication::Exit(); return; }
+        Log("Started: the triangle test. Left stick moves it, A centres it, B exits.");
         while (!m_exit) {
             if (m_visible) {
                 m_window.Dispatcher().ProcessEvents(wui::CoreProcessEventsOption::ProcessAllIfPresent);
@@ -96,14 +99,25 @@ struct App : winrt::implements<App, wac::IFrameworkViewSource, wac::IFrameworkVi
     }
 
 private:
+    // LocalFolder\logs\okayspace.log: readable from the Device Portal (Apps > this app > file explorer) or on a PC under %LOCALAPPDATA%\Packages\<family>\LocalState\logs.
+    void OpenLog() {
+        try {
+            const std::string dir = winrt::to_string(winrt::Windows::Storage::ApplicationData::Current().LocalFolder().Path()) + "/logs";
+            m_log.Open(dir);
+        } catch (...) {}
+        Log("OkaySpace Xbox triangle test (EXPERIMENTAL, UNVERIFIED) starting. Package folder: " + winrt::to_string(winrt::hstring(okay_xbox_app::PackageDirWide())));
+    }
+    void Log(const std::string& line) { m_log.Line(line); }
+
     void OnActivated(wac::CoreApplicationView const&, wam::Activation::IActivatedEventArgs const&) { m_window.Activate(); }
 
     void OnSuspending(wf::IInspectable const&, wam::SuspendingEventArgs const&) {
         // Required by the UWP rules: release driver memory the app does not need while suspended.
+        Log("Suspending.");
         if (m_device) { auto dxgi = m_device.try_as<IDXGIDevice3>(); if (dxgi) dxgi->Trim(); }
         m_visible = false;
     }
-    void OnResuming(wf::IInspectable const&, wf::IInspectable const&) { m_visible = true; }
+    void OnResuming(wf::IInspectable const&, wf::IInspectable const&) { m_visible = true; Log("Resumed."); }
 
     bool CreateDevice() {
         const D3D_FEATURE_LEVEL levels[] = {D3D_FEATURE_LEVEL_11_1, D3D_FEATURE_LEVEL_11_0, D3D_FEATURE_LEVEL_10_1, D3D_FEATURE_LEVEL_10_0};
@@ -144,7 +158,8 @@ private:
 
     void ReadGamepad() {
         auto pads = wgi::Gamepad::Gamepads();
-        if (pads.Size() == 0) { m_havePad = false; return; }
+        if (pads.Size() == 0) { if (m_havePad) Log("The gamepad was disconnected."); m_havePad = false; return; }
+        if (!m_havePad) Log("A gamepad is connected (" + std::to_string(pads.Size()) + ").");
         m_havePad = true;
         const wgi::GamepadReading r = pads.GetAt(0).GetCurrentReading();   // the first connected pad
         m_x = static_cast<float>(r.LeftThumbstickX) * 0.5f; m_y = static_cast<float>(r.LeftThumbstickY) * 0.5f;
@@ -170,13 +185,14 @@ private:
         m_context->PSSetShader(m_ps.get(), nullptr, 0);
         m_context->Draw(3, 0);
         const HRESULT hr = m_swap->Present(1, 0);   // vsync
-        if (hr == DXGI_ERROR_DEVICE_REMOVED || hr == DXGI_ERROR_DEVICE_RESET) m_exit = true;   // no device-loss recovery in this shell
+        if (hr == DXGI_ERROR_DEVICE_REMOVED || hr == DXGI_ERROR_DEVICE_RESET) { Log("The graphics device was lost (the test app does not recover). Exiting."); m_exit = true; }   // no device-loss recovery in this shell
     }
 
     wui::CoreWindow m_window{nullptr};
     winrt::event_token m_suspendToken{}, m_resumeToken{};
     winrt::com_ptr<ID3D11Device> m_device; winrt::com_ptr<ID3D11DeviceContext> m_context; winrt::com_ptr<IDXGISwapChain1> m_swap;
     winrt::com_ptr<ID3D11RenderTargetView> m_rtv; winrt::com_ptr<ID3D11VertexShader> m_vs; winrt::com_ptr<ID3D11PixelShader> m_ps; winrt::com_ptr<ID3D11Buffer> m_cb;
+    okay::xbox::FileLog m_log;
     UINT m_w = 0, m_h = 0;
     float m_x = 0, m_y = 0;
     bool m_exit = false, m_visible = true, m_resize = false, m_havePad = false;

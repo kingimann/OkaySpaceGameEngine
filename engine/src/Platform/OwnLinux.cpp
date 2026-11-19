@@ -47,13 +47,21 @@ public:
         if (!w) m_err = err;
         return w;
     }
+    // m_pending holds, in order: events PumpEvents already read, pushed events, and pad hot-plug events.
     bool PollEvent(Event& out) override {
-        if (m_x11 && m_x11->PollEvent(out)) return true;
-        if (m_flags.gamepad) {
-            if (m_pending.empty()) own::EvdevPollHotplug(m_pendingVec), Drain();
-            if (!m_pending.empty()) { out = std::move(m_pending.front()); m_pending.pop_front(); return true; }
-        }
+        if (m_pending.empty() && m_x11 && m_x11->PollEvent(out)) return true;
+        if (m_pending.empty() && m_flags.gamepad) own::EvdevPollHotplug(m_pendingVec), Drain();
+        if (!m_pending.empty()) { out = std::move(m_pending.front()); m_pending.pop_front(); return true; }
         return false;
+    }
+    void PumpEvents() override {
+        Event e;
+        while (m_x11 && m_x11->PollEvent(e)) m_pending.push_back(std::move(e));
+    }
+    bool PushEvent(const Event& e) override {
+        if (e.type == EventType::NoEvent || e.type == EventType::Other) return false;
+        m_pending.push_back(e);
+        return true;
     }
     void* GLProcAddress(const char* n) override { return m_x11 ? m_x11->GLProcAddress(n) : nullptr; }
     void ReleaseCurrent() override { if (m_x11) m_x11->ReleaseCurrent(); }
@@ -61,14 +69,23 @@ public:
     void StartTextInput() override { if (m_x11) m_x11->StartTextInput(); }
     void StopTextInput() override { if (m_x11) m_x11->StopTextInput(); }
     bool IsKeyDown(Key k) override { return m_x11 && m_x11->IsKeyDown(k); }
+    uint32_t KeyboardFocusWindowId() override { return m_x11 ? m_x11->KeyboardFocusWindowId() : 0; }
+    uint32_t MouseFocusWindowId() override { return m_x11 ? m_x11->MouseFocusWindowId() : 0; }
+    void* NativeHandleFromId(uint32_t id) override { return m_x11 ? m_x11->NativeHandleFromId(id) : nullptr; }
     uint32_t MouseState(int* x, int* y) override {
         if (!m_x11) { if (x) *x = 0; if (y) *y = 0; return 0; }
         return m_x11->MouseState(x, y);
     }
+    bool GlobalMouseState(int* x, int* y, uint32_t* buttons) override {
+        if (!m_x11) return Backend::GlobalMouseState(x, y, buttons);
+        return m_x11->GlobalMouseState(x, y, buttons);
+    }
+    bool IsRelativeMouse() override { return m_x11 && m_x11->IsRelativeMouse(); }
     bool SetRelativeMouse(bool on) override { return m_x11 && m_x11->SetRelativeMouse(on); }
     void ShowCursor(bool s) override { if (m_x11) m_x11->ShowCursor(s); }
     void WarpMouse(Window* w, int x, int y) override { if (m_x11) m_x11->WarpMouse(w, x, y); }
     bool IsCursorShown() override { return !m_x11 || m_x11->IsCursorShown(); }
+    bool SetCursorShape(CursorShape shape) override { return m_x11 && m_x11->SetCursorShape(shape); }
     uint32_t RelativeMouseState(int* dx, int* dy) override {
         if (!m_x11) { if (dx) *dx = 0; if (dy) *dy = 0; return 0; }
         return m_x11->RelativeMouseState(dx, dy);

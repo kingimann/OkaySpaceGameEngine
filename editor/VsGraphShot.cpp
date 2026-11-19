@@ -6,6 +6,7 @@
 #include "backends/imgui_impl_sdlrenderer2.h"
 
 #include <SDL.h>
+#include "okay/Platform/Platform.hpp"
 
 #include <filesystem>
 #include <iostream>
@@ -47,6 +48,9 @@ int RunVsGraphShot(int argc, char** argv) {
         std::cerr << "SDL_Init: " << SDL_GetError() << "\n";
         return 1;
     }
+    okay::platform::Backend* pbe = okay::platform::Get(okay::platform::BackendKind::Sdl2);   // SDL was started above; this reads its events
+    if (!pbe) { std::cerr << "SDL2 platform backend is not available\n"; return 1; }
+    pbe->ReportUnmappedEvents(true);   // imgui_impl_sdl2 wants every event
     SDL_SetHint(SDL_HINT_RENDER_DRIVER, "software");
     SDL_Window* window = SDL_CreateWindow("OkayVS", SDL_WINDOWPOS_CENTERED, SDL_WINDOWPOS_CENTERED,
                                           1680, 1000, SDL_WINDOW_SHOWN);
@@ -68,8 +72,10 @@ int RunVsGraphShot(int argc, char** argv) {
         okay::editor::vsed::State().frameAll = true;
         ed.Select(it.go);
 
-        SDL_Event ev;
-        while (SDL_PollEvent(&ev)) ImGui_ImplSDL2_ProcessEvent(&ev);
+        {   // drain the window's events through the platform layer (Dear ImGui's SDL backend takes the SDL record it keeps)
+            okay::platform::Event pe;
+            while (pbe->PollEvent(pe)) if (pe.native) ImGui_ImplSDL2_ProcessEvent((const SDL_Event*)pe.native);
+        }
         ImGui_ImplSDLRenderer2_NewFrame();
         ImGui_ImplSDL2_NewFrame();
         ImGui::NewFrame();

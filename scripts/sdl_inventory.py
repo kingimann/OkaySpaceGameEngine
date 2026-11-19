@@ -84,10 +84,10 @@ CAPS = [
     # ---- window ----
     ("win.create", "window", "HAVE", "create and destroy a window, creation flags, centred position",
      f"{P}: Backend::MakeWindow(WindowDesc), kCentered (owning unique_ptr<Window>). The apps hold raw SDL_Window*, so the Window methods "
-     "below cannot be called on their windows until a window is made by MakeWindow or adopted (see GAP win.adopt)",
+     "below are called on their windows through WrapSdl2Window (see win.adopt) until a window is made by MakeWindow",
      r"SDL_CreateWindow|SDL_DestroyWindow|SDL_Window|SDL_WINDOW_(RESIZABLE|ALLOW_HIGHDPI|SHOWN|BORDERLESS|MAXIMIZED|FULLSCREEN|FULLSCREEN_DESKTOP|OPENGL|HIDDEN)|SDL_WINDOWPOS_[A-Z]+"),
-    ("win.adopt", "window", "GAP", "(no SDL word) use the Window methods on a window the app made with SDL_CreateWindow",
-     "GAP: the apps hold raw SDL_Window*; only Backend::MakeWindow makes a Window. Needs a non-owning wrapper (WrapSdl2Window) until the apps create their windows through the seam",
+    ("win.adopt", "window", "HAVE", "(no SDL word) use the Window methods on a window the app made with SDL_CreateWindow",
+     f"{P}: okay::platform::WrapSdl2Window(void*): a non-owning Window over the SDL_Window* an app made itself (null without sdl2). Used by the launcher (helpers in namespace lw) and the editor; goes away in step 6 with SDL2",
      r"(?!x)x"),
     ("win.geometry", "window", "HAVE", "window size, position, minimum size, title, id",
      f"{P}: Window::GetSize / GetPosition / SetSize / SetPosition / SetMinimumSize / SetTitle / Id",
@@ -111,8 +111,8 @@ CAPS = [
     ("win.focus", "window", "GAP", "which window has keyboard or mouse focus; give a window input focus; window from an id",
      "GAP: no Backend::KeyboardFocusWindowId / MouseFocusWindowId / WindowFromId, no Window::SetInputFocus (Window::Raise gives X11 focus only)",
      r"SDL_SetWindowInputFocus|SDL_GetKeyboardFocus|SDL_GetMouseFocus|SDL_GetWindowFromID"),
-    ("win.flash", "window", "GAP", "flash the taskbar button (attention request)",
-     "GAP: no Window::RequestAttention (a version exists on branch claude/platform-gaps2, not merged)", r"SDL_FlashWindow|SDL_FLASH_[A-Z_]+"),
+    ("win.flash", "window", "HAVE", "flash the taskbar button (attention request)",
+     f"{P}: Window::Flash(FlashMode::Stop / Briefly / UntilFocused). sdl2: SDL_FlashWindow; own Windows: FlashWindowEx (plan tested in test_platform_win32_pure); own Linux: nothing yet (urgency hint is on claude/platform-gaps2)", r"SDL_FlashWindow|SDL_FLASH_[A-Z_]+"),
     ("win.border", "window", "GAP", "switch the window border on or off after creation",
      "GAP: only WindowDesc::borderless at creation", r"SDL_SetWindowBordered"),
     ("win.displays", "window", "GAP", "monitor list, bounds, usable area, DPI, display modes",
@@ -120,22 +120,22 @@ CAPS = [
      r"SDL_GetNumVideoDisplays|SDL_GetDisplayUsableBounds|SDL_GetDisplayBounds|SDL_GetDisplayName|SDL_GetDisplayDPI|SDL_GetWindowDisplayIndex|SDL_GetNumDisplayModes|SDL_GetDisplayMode|SDL_GetCurrentDisplayMode|SDL_DisplayMode"),
     ("win.excl", "window", "GAP", "exclusive fullscreen video mode (change the monitor's resolution)",
      "GAP: only desktop fullscreen", r"SDL_SetWindowDisplayMode|SDL_GetClosestDisplayMode"),
-    ("win.syswm", "window", "GAP", "native window handle and a Windows message hook (launcher tray icon)",
-     "GAP: Window::NativeHandle() gives the HWND; no message-hook API", r"SDL_GetWindowWMInfo|SDL_SetWindowsMessageHook|SDL_SysWMinfo|SDL_syswm|SDL_SYSWM_[A-Z]+|#include<SDL_syswm\.h>"),
+    ("win.syswm", "window", "HAVE", "native window handle and a Windows message hook (launcher tray icon)",
+     f"{P}: Window::NativeHandle() gives the HWND; Backend::SetNativeMessageHook (every window message of our windows, Windows only; sdl2 and own Win32, never run on Windows)", r"SDL_GetWindowWMInfo|SDL_SetWindowsMessageHook|SDL_SysWMinfo|SDL_syswm|SDL_SYSWM_[A-Z]+|#include<SDL_syswm\.h>"),
     # ---- events ----
     ("ev.loop", "events", "HAVE", "the event loop (get the next event)",
      f"{P}: Backend::PollEvent(Event&), Event, EventType", r"SDL_Event|SDL_PollEvent"),
-    ("ev.pump", "events", "GAP", "pump events without taking them",
-     "GAP: no Backend::PumpEvents (the apps use it to keep the window alive in a wait loop)", r"SDL_PumpEvents"),
-    ("ev.push", "events", "GAP", "put an event into the queue",
-     "GAP: no Backend::PushEvent (the editor injects a drop; tests inject input)", r"SDL_PushEvent"),
+    ("ev.pump", "events", "HAVE", "pump events without taking them",
+     f"{P}: Backend::PumpEvents() (the apps use it to keep the window alive in a wait loop)", r"SDL_PumpEvents"),
+    ("ev.push", "events", "HAVE", "put an event into the queue",
+     f"{P}: Backend::PushEvent(Event) (the editor injects a drop; tests inject input)", r"SDL_PushEvent"),
     ("ev.filter", "events", "GAP", "turn an event type on or off",
      "GAP: no Backend::EventState (the own backends always deliver)", r"SDL_EventState"),
     ("ev.window", "events", "HAVE", "quit, window close, resize, focus, exposed events",
      f"{P}: EventType::Quit / WindowClose / WindowResized / WindowFocusGained / WindowFocusLost / WindowExposed",
      r"SDL_QUIT|SDL_WINDOWEVENT[A-Z_]*"),
-    ("ev.drop", "events", "PARTIAL", "file drag and drop",
-     f"{P}: EventType::DropFile (sdl2 and Win32; the own Linux backend never fires it). GAP: DropBegin / DropComplete (launcher)",
+    ("ev.drop", "events", "HAVE", "file drag and drop",
+     f"{P}: EventType::DropFile (sdl2; own Win32 WM_DROPFILES; own X11 XDND v5 text/uri-list, tested with a fake drag source under Xvfb). Not in the seam: DropBegin / DropComplete (nothing needs them)",
      r"SDL_DROPFILE|SDL_DROPBEGIN|SDL_DROPCOMPLETE"),
     # ---- keyboard ----
     ("kb.state", "keyboard", "HAVE", "held keys and modifiers",
@@ -161,10 +161,10 @@ CAPS = [
      "GAP: no Backend::IsRelativeMouse getter", r"SDL_GetRelativeMouseMode"),
     ("m.cursor", "mouse", "HAVE", "show or hide the cursor, warp it",
      f"{P}: Backend::ShowCursor / IsCursorShown / WarpMouse", r"SDL_ShowCursor|SDL_WarpMouseInWindow|SDL_ENABLE|SDL_DISABLE|SDL_QUERY"),
-    ("m.global", "mouse", "GAP", "mouse position on the whole desktop",
-     "GAP: no Backend::GlobalMouseState", r"SDL_GetGlobalMouseState"),
+    ("m.global", "mouse", "HAVE", "mouse position on the whole desktop",
+     f"{P}: Backend::GlobalMouseState(x, y, buttons) (sdl2, own X11 and Win32)", r"SDL_GetGlobalMouseState"),
     ("m.touch", "mouse", "PARTIAL", "touch events",
-     f"{P}: EventType::FingerDown / FingerMotion / FingerUp (sdl2 only; own never fires). GAP: touch-device count",
+     f"{P}: EventType::FingerDown / FingerMotion / FingerUp (sdl2 only; own never fires), Backend::TouchDeviceCount() (sdl2 only; own says 0)",
      r"SDL_FINGER[A-Z]+|SDL_GetNumTouchDevices"),
     # ---- gamepad ----
     ("pad", "gamepad", "HAVE", "game controllers",
@@ -185,8 +185,8 @@ CAPS = [
     ("gl.ctx", "gl", "HAVE", "create a GL context, make current, swap, vsync, proc address",
      f"{P}: Window::CreateGLContext / DestroyGLContext / MakeCurrent / SwapBuffers / SetSwapInterval / GetDrawableSize, Backend::GLProcAddress / ReleaseCurrent, GLAttributes",
      r"SDL_GL_(MakeCurrent|SetAttribute|CreateContext|DeleteContext|GetProcAddress|SwapWindow|SetSwapInterval|GetDrawableSize|CONTEXT_[A-Z_]+|DEPTH_SIZE)|SDL_GLContext"),
-    ("gl.cur", "gl", "GAP", "which window and context are current (save and restore around other GL work)",
-     "GAP: no Backend::CurrentGLWindow / CurrentGLContext, and MakeCurrent only takes the window's own context", r"SDL_GL_GetCurrentContext|SDL_GL_GetCurrentWindow"),
+    ("gl.cur", "gl", "HAVE", "which window and context are current (save and restore around other GL work)",
+     f"{P}: Backend::CurrentGL() returns an opaque GLCurrent, Backend::RestoreGL(GLCurrent) puts it back (sdl2 only; own backends return an empty state)", r"SDL_GL_GetCurrentContext|SDL_GL_GetCurrentWindow"),
     # ---- renderer ----
     ("r.create", "renderer", "HAVE", "make or wrap an SDL_Renderer",
      f"{PP}: CreateSdl2Painter(Window&), WrapSdl2Renderer(void*), CreateSdl2SurfacePainter(w, h); own: OkayUI::soft::CreateWindowPainter",
@@ -739,9 +739,9 @@ def render(ref, sha, infos, build_files, comment_only, commit_date):
         w("Every SDL word found is classified (the script lists any it cannot place here).")
     w("")
     w("**The window caveat.** The launcher and the editor create their windows with `SDL_CreateWindow` and keep a raw `SDL_Window*`. Every `Window::`")
-    w("method in `okay::platform` needs an `okay::platform::Window` object, which only `Backend::MakeWindow` makes (and the player is the only app")
-    w("that uses it). So the HAVE rows for window geometry, visibility and the like are *reachable* only after the apps create or adopt their windows")
-    w("through the seam. That is GAP `win.adopt` below.")
+    w("method in `okay::platform` needs an `okay::platform::Window` object. `okay::platform::WrapSdl2Window(void*)` gives a non-owning one over the app's")
+    w("own SDL window, so call sites move one by one (the launcher through its `lw::` helpers, the editor through `winSeam`) while SDL still creates the window.")
+    w("Window calls that still show SDL words in the table are the ones with no `Window` method yet (see the GAP rows).")
     w("")
 
     # ---------------- ranking
@@ -808,8 +808,7 @@ def render(ref, sha, infos, build_files, comment_only, commit_date):
     w("### 4a. GAPs in `okay::platform` itself, by call sites they block")
     w("")
     w("L / E / P = the programs that still have the call (shared and engine files count for every program that includes them). \"Call sites\" is the")
-    w("ranking number; \"refs\" breaks ties. `win.adopt` is not an SDL word: it is the structural blocker described under section 3, counted as the call")
-    w("sites of the window rows it holds back.")
+    w("ranking number; \"refs\" breaks ties.")
     w("")
     gap_rows = []
     for cid, fam, status, desc, cover, rx in CAPS:
@@ -828,11 +827,11 @@ def render(ref, sha, infos, build_files, comment_only, commit_date):
     w("")
     w("### 4b. HAVE in `okay::platform`, but the apps still call SDL (mechanical moves)")
     w("")
-    w("These need no new platform code, only moving call sites (the window rows after `win.adopt` exists).")
+    w("These need no new platform code, only moving call sites (the window rows can be moved now through `WrapSdl2Window`).")
     w("")
     have_rows = []
     for cid, fam, status, desc, cover, rx in CAPS:
-        if status != "HAVE":
+        if status != "HAVE" or cid == "win.adopt":
             continue
         calls, refs, who, per = cap_stats(cid)
         if refs == 0:

@@ -120,4 +120,55 @@ inline void Build(Scene& scene, const std::string& texturePath, int quality = 1)
     text("LightMid", "Medium: The Quick Brown Fox", 26, 274, 1.5f * 0.8f, ink);
 }
 
+/// The example scene (examples/ui_quality): the same small card drawn by three canvases at a scale of 1x, 1.5x and 2x, side by
+/// side on a 1280x720 window, so the sharpness at each scale can be compared at a glance.
+inline void BuildExample(Scene& scene, const std::string& texturePath, int quality = 1) {
+    scene.physicsEnabled = false;
+    scene.uiFont = "";
+    scene.uiQuality = quality;
+    const float scales[3] = {1.0f, 1.5f, 2.0f};
+    float screenX = 24.0f;   // where each copy starts on the screen
+    for (int k = 0; k < 3; ++k) {
+        const float S = scales[k];
+        GameObject* cvo = scene.CreateGameObject(k == 0 ? "Canvas 1x" : (k == 1 ? "Canvas 1.5x" : "Canvas 2x"));
+        Canvas* cv = cvo->AddComponent<Canvas>();
+        cv->scaleMode = Canvas::ScaleMode::ConstantPixelSize;
+        cv->scaleFactor = S;
+        const float ox = screenX / S, oy = 24.0f / S;
+        auto add = [&](const char* name) {
+            GameObject* g = scene.CreateGameObject(name);
+            g->transform->SetParent(cvo->transform, false);
+            return g;
+        };
+        auto* card = add("Card")->AddComponent<UIPanel>();
+        card->position = {ox, oy}; card->size = {200, 168}; card->shape = UIShape::Rounded; card->cornerRadius = 10.0f;
+        card->color = Color::FromBytes(34, 39, 54, 255); card->borderWidth = 1.0f; card->borderColor = Color::FromBytes(84, 98, 134, 255);
+        card->shadow = true; card->shadowOffset = {0, 5}; card->shadowSoftness = 14.0f; card->shadowColor = Color::FromBytes(0, 0, 0, 170);
+        auto text = [&](const char* name, const char* str, float x, float y, float px, Color col) {
+            auto* t = add(name)->AddComponent<TextRenderer>();
+            t->screenSpace = true; t->text = str; t->screenPos = {ox + x, oy + y}; t->size = {180, 20};
+            t->pixelSize = px; t->color = col; t->shadow = false; t->outline = false;
+        };
+        const Color ink = Color::FromBytes(235, 240, 250, 255);
+        text("Title", "Crisp UI", 12, 10, 2.0f * 0.8f, Color::FromBytes(255, 214, 102, 255));
+        text("Body", "The quick brown fox jumps", 12, 32, 1.0f, ink);
+        text("Small", "small 9 px text, 0123456789", 12, 46, 0.8f, ink);
+        auto* b = add("Button")->AddComponent<UIButton>();
+        b->position = {ox + 12, oy + 64}; b->size = {120, 26}; b->label = "Play"; b->shape = UIShape::Rounded; b->cornerRadius = 8.0f; b->fontScale = 1.3f;
+        b->color = Color::FromBytes(66, 140, 250, 255); b->textColor = Color::White; b->borderWidth = 1.0f; b->borderColor = Color::FromBytes(150, 190, 255, 255);
+        auto* sl = add("Slider")->AddComponent<UISlider>();
+        sl->position = {ox + 12, oy + 102}; sl->size = {150, 8}; sl->value = 0.6f; sl->trackShape = UIShape::Pill; sl->roundKnob = true; sl->knobSize = 1.6f;
+        sl->background = Color::FromBytes(46, 52, 72, 255); sl->fill = Color::FromBytes(66, 140, 250, 255);
+        auto* pb = add("Bar")->AddComponent<UIProgressBar>();
+        pb->position = {ox + 12, oy + 122}; pb->size = {150, 8}; pb->value = 0.7f; pb->cornerRadius = 4.0f;
+        auto* pic = add("Picture")->AddComponent<UIImage>();     // 128 px picture shown at 28
+        pic->position = {ox + 12, oy + 138}; pic->size = {24, 24}; pic->texture = texturePath;
+        auto* rnd = add("Round")->AddComponent<UIImage>();
+        rnd->position = {ox + 44, oy + 138}; rnd->size = {24, 24}; rnd->texture = texturePath; rnd->shape = UIShape::Circle;
+        auto* line = add("Line")->AddComponent<UIPanel>();
+        line->position = {ox + 80, oy + 150}; line->size = {100, 1}; line->color = Color::FromBytes(230, 230, 240, 255);
+        screenX += 200.0f * S + 24.0f;
+    }
+}
+
 } // namespace ui_quality

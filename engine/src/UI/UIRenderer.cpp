@@ -516,21 +516,23 @@ static void FillUIShadowSoft(Painter& ren, const Rect& r, UIShape shape, float r
         }
     };
     (void)ellipse;
-    std::vector<std::vector<FPoint>> rings(kRings);
-    for (int i = 0; i < kRings; ++i) ring(ds[i], rings[i]);
+    // The buffers are kept between calls (a screen full of shadows would otherwise allocate every frame).
+    static thread_local std::vector<std::vector<FPoint>> rings;
+    rings.resize(kRings);
+    for (int i = 0; i < kRings; ++i) { rings[i].clear(); ring(ds[i], rings[i]); }
     const int m = (int)rings[0].size();
     const std::uint8_t cr8 = (std::uint8_t)(color.r * 255.0f + 0.5f), cg8 = (std::uint8_t)(color.g * 255.0f + 0.5f), cb8 = (std::uint8_t)(color.b * 255.0f + 0.5f);
     const float baseA = std::clamp(color.a * op, 0.0f, 1.0f);
     auto col = [&](float a) { return RGBA{cr8, cg8, cb8, (std::uint8_t)(std::clamp(a * baseA, 0.0f, 1.0f) * 255.0f + 0.5f)}; };
-    std::vector<Vertex> vx;
-    vx.reserve((std::size_t)(m * kRings + 1));
+    static thread_local std::vector<Vertex> vx;
+    static thread_local std::vector<int> ix;
+    vx.clear(); ix.clear();
     float cx = 0.0f, cy = 0.0f;
     for (const FPoint& q : rings[0]) { cx += q.x; cy += q.y; }
     cx /= (float)m; cy /= (float)m;
     vx.push_back({{cx, cy}, col(al[0]), {0, 0}});
     for (int i = 0; i < kRings; ++i)
         for (const FPoint& q : rings[i]) vx.push_back({q, col(al[i]), {0, 0}});
-    std::vector<int> ix;
     for (int k = 0; k < m; ++k) {   // the fan inside the innermost ring
         const int k1 = (k + 1) % m;
         ix.push_back(0); ix.push_back(1 + k); ix.push_back(1 + k1);
@@ -798,10 +800,14 @@ void DrawTtfText(Painter& r, okay::TtfFont* f, const std::string& text,
     // keeps the quarter-pixel fraction of the pen by picking a glyph rendered for that phase.
     const bool snap = quality != UIQuality::Old && std::fabs(s * S - 1.0f) < 0.02f;
     const bool phased = snap && quality == UIQuality::Best && !italic;
+    const bool kerning = quality != UIQuality::Old;
+    std::uint32_t prevCh = 0;
     float penX = ox, penY = oy;
     for (std::size_t i = 0; i < text.size();) {
         const std::uint32_t ch = okay::utf8::Next(text, i);
-        if (ch == '\n') { penY += sized->LineHeight(sized->BakeHeight()) * s + lineSp * px; penX = ox; continue; }
+        if (ch == '\n') { penY += sized->LineHeight(sized->BakeHeight()) * s + lineSp * px; penX = ox; prevCh = 0; continue; }
+        if (kerning && prevCh) penX += sized->Kerning(prevCh, ch, sized->BakeHeight()) * s;
+        prevCh = ch;
         const okay::TtfFont::Glyph* g = sized->GlyphFor(ch);
         if (!g) { if (ch >= ' ') penX += px * 4.0f; continue; }
         int gw = g->x1 - g->x0, gh = g->y1 - g->y0;
@@ -867,7 +873,7 @@ float UIMeasureText(TtfFont* font, const std::string& text, float px) {
     const float deviceH = logicalH * (g_uiDeviceScale > 0.05f ? g_uiDeviceScale : 1.0f);
     TtfFont* sized = f->ForPixelHeight(deviceH);
     if (!sized || !sized->Valid()) sized = f;
-    return sized->Measure(text.c_str(), sized->BakeHeight()) * (logicalH / sized->BakeHeight());
+    return sized->Measure(text.c_str(), sized->BakeHeight(), g_uiQuality != UIQuality::Old) * (logicalH / sized->BakeHeight());
 }
 float UITextW(const std::string& text, float px) {
     return UIMeasureText(g_uiDefaultFont, text, px);

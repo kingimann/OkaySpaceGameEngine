@@ -240,14 +240,32 @@ void TtfFont::Prepare(const std::string& text) const {
     for (std::size_t i = 0; i < text.size();) GlyphFor(utf8::Next(text, i));
 }
 
-float TtfFont::Measure(const char* text, float pixelHeight) const {
+float TtfFont::Kerning(std::uint32_t left, std::uint32_t right, float pixelHeight) const {
+    if (!m_valid || !m_info || left < (std::uint32_t)kFirst || right < (std::uint32_t)kFirst) return 0.0f;
+    const std::uint64_t key = ((std::uint64_t)left << 32) | right;
+    auto it = m_kern.find(key);
+    int units;
+    if (it != m_kern.end()) units = it->second;
+    else {
+        units = m_info->face.Kerning(m_info->face.FindGlyph(left), m_info->face.FindGlyph(right));
+        m_kern[key] = units;
+    }
+    if (units == 0) return 0.0f;
+    // font units -> pixels at the baked scale, then to the requested height
+    return (float)units * m_info->scale * ScaleFor(pixelHeight);
+}
+
+float TtfFont::Measure(const char* text, float pixelHeight, bool kerning) const {
     if (!text || !m_valid) return 0.0f;
     float scale = ScaleFor(pixelHeight);
     float maxW = 0.0f, lineW = 0.0f;
+    std::uint32_t prev = 0;
     const char* end = text + std::strlen(text);
     for (const char* p = text; p < end;) {
         const std::uint32_t cp = utf8::Next(p, end);
-        if (cp == '\n') { if (lineW > maxW) maxW = lineW; lineW = 0.0f; continue; }
+        if (cp == '\n') { if (lineW > maxW) maxW = lineW; lineW = 0.0f; prev = 0; continue; }
+        if (kerning && prev) lineW += Kerning(prev, cp, pixelHeight);
+        prev = cp;
         if (const Glyph* g = GlyphFor(cp)) lineW += g->xadvance * scale;
         else if (cp >= (std::uint32_t)kFirst) lineW += pixelHeight * 0.5f;   // the gap a missing glyph leaves
     }

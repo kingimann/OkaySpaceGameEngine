@@ -78,7 +78,11 @@ public:
         return (m_bakeHeight > 0.0f) ? (pixelHeight / m_bakeHeight) : 1.0f;
     }
     /// Width of the longest line of UTF-8 `text` at the given pixel height.
-    float Measure(const char* text, float pixelHeight) const;
+    /// With `kerning` on, the pair adjustments of the font (Kerning) are added between glyphs.
+    float Measure(const char* text, float pixelHeight, bool kerning = false) const;
+    /// The pair adjustment between two code points at the given pixel height, in pixels (negative = closer together).
+    /// 0 when the font has no kerning for the pair (the built-in font's pairs come from its GPOS table).
+    float Kerning(std::uint32_t left, std::uint32_t right, float pixelHeight) const;
     /// Distance between successive baselines at the given pixel height.
     float LineHeight(float pixelHeight) const { return m_lineHeight * ScaleFor(pixelHeight); }
     /// Distance from the pen line (glyph top) down to the baseline at this height.
@@ -117,6 +121,7 @@ private:
     mutable Image m_atlas;
     mutable std::unordered_map<std::uint32_t, Glyph> m_extra;
     mutable std::unordered_map<std::uint32_t, bool> m_has;   // cached "does the font have it"
+    mutable std::unordered_map<std::uint64_t, int> m_kern;   // (left << 32 | right) -> font units, cached
     mutable int m_shelfX = 0, m_shelfY = 0, m_shelfH = 0;
     mutable std::uint32_t m_generation = 0;
     mutable bool m_fullReported = false;

@@ -16,6 +16,20 @@
 using namespace okay;
 
 int main(int argc, char** argv) {
+    // ui_quality_shot --save-scene <dir>: write examples/ui_quality (three scenes: Good, Best, Old look, and the picture they share).
+    if (argc > 2 && std::string(argv[1]) == "--save-scene") {
+        const std::string dir = argv[2];
+        if (!ui_quality::WriteTexture(dir + "/ui_quality_icon.png")) { std::cerr << "cannot write the picture\n"; return 1; }
+        const struct { const char* file; int q; } outs[] = {{"ui_quality.okayscene", 1}, {"ui_quality_best.okayscene", 2}, {"ui_quality_old_look.okayscene", 3}};
+        for (const auto& o : outs) {
+            Scene scene("ui_quality");
+            ui_quality::BuildExample(scene, "ui_quality_icon.png", o.q);
+            std::string err;
+            if (!SceneSerializer::SaveToFile(scene, dir + "/" + o.file, &err)) { std::cerr << err << "\n"; return 1; }
+            std::cout << "wrote " << dir << "/" << o.file << "\n";
+        }
+        return 0;
+    }
     if (argc < 4) { std::cerr << "usage: ui_quality_shot <out.png> <w> <h> [old|fast|good|best] [x y w h zoom]\n"; return 2; }
     const std::string out = argv[1];
     const int W = std::atoi(argv[2]), H = std::atoi(argv[3]);
@@ -34,7 +48,7 @@ int main(int argc, char** argv) {
     double ms = 0.0;
     {
         Scene scene("quality");
-        ui_quality::Build(scene, tex, quality);
+        if (std::getenv("UI_QUALITY_EXAMPLE")) ui_quality::BuildExample(scene, tex, quality); else ui_quality::Build(scene, tex, quality);
         ui2d::SDLPainter painter(ren, &cache, "");
         const auto t0 = std::chrono::steady_clock::now();
         if (batched) {

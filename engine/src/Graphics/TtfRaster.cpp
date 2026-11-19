@@ -373,6 +373,8 @@ bool Face::Load(const std::uint8_t* data, std::size_t size, int index) {
     m_numHM = std::min<int>(m_numHM, (int)(m_hmtx.len / 4));
     if (m_numHM < 1) return fail();
 
+    FindTable(dir, "kern", m_kern);   // optional: a font without them just has no pair kerning
+    FindTable(dir, "GPOS", m_gpos);
     PickCmap();   // a font without a usable cmap still loads: every character is "missing"
     if (m_cff && !LoadCff()) return fail();
     m_valid = true;
@@ -675,6 +677,186 @@ bool Face::Render(int glyph, float scale, std::uint8_t* out, int w, int h, int s
     if (!Outline(glyph, r)) return false;
     r.Finish(out, stride);
     return true;
+}
+
+// ---- Kerning ----------------------------------------------------------------------------------
+// Written from the OpenType specification (kern table format 0; GPOS header, FeatureList, LookupList, Coverage, ClassDef and the
+// PairPos subtable formats 1 and 2).
+int Face::CoverageIndex(std::size_t cov, int glyph) const {
+    if (!Has(cov, 4)) return -1;
+    const std::uint32_t fmt = U16(cov), n = U16(cov + 2);
+    if (fmt == 1) {
+        if (!Has(cov + 4, (std::size_t)n * 2)) return -1;
+        std::uint32_t lo = 0, hi = n;
+        while (lo < hi) {   // binary search: the glyph array is sorted
+            const std::uint32_t mid = (lo + hi) / 2, g = U16(cov + 4 + (std::size_t)mid * 2);
+            if (g == (std::uint32_t)glyph) return (int)mid;
+            if (g < (std::uint32_t)glyph) lo = mid + 1; else hi = mid;
+        }
+        return -1;
+    }
+    if (fmt == 2) {
+        if (!Has(cov + 4, (std::size_t)n * 6)) return -1;
+        std::uint32_t lo = 0, hi = n;
+        while (lo < hi) {
+            const std::uint32_t mid = (lo + hi) / 2;
+            const std::size_t r = cov + 4 + (std::size_t)mid * 6;
+            const std::uint32_t s = U16(r), e = U16(r + 2), idx = U16(r + 4);
+            if ((std::uint32_t)glyph < s) hi = mid;
+            else if ((std::uint32_t)glyph > e) lo = mid + 1;
+            else return (int)(idx + (std::uint32_t)glyph - s);
+        }
+    }
+    return -1;
+}
+
+int Face::ClassOf(std::size_t cd, int glyph) const {
+    if (cd == 0 || !Has(cd, 4)) return 0;
+    const std::uint32_t fmt = U16(cd);
+    if (fmt == 1) {
+        const std::uint32_t first = U16(cd + 2), n = U16(cd + 4);
+        if ((std::uint32_t)glyph >= first && (std::uint32_t)glyph < first + n && Has(cd + 6, (std::size_t)(glyph - first + 1) * 2))
+            return (int)U16(cd + 6 + (std::size_t)(glyph - first) * 2);
+        return 0;
+    }
+    if (fmt == 2) {
+        const std::uint32_t n = U16(cd + 2);
+        if (!Has(cd + 4, (std::size_t)n * 6)) return 0;
+        std::uint32_t lo = 0, hi = n;
+        while (lo < hi) {
+            const std::uint32_t mid = (lo + hi) / 2;
+            const std::size_t r = cd + 4 + (std::size_t)mid * 6;
+            const std::uint32_t s = U16(r), e = U16(r + 2);
+            if ((std::uint32_t)glyph < s) hi = mid;
+            else if ((std::uint32_t)glyph > e) lo = mid + 1;
+            else return (int)U16(r + 4);
+        }
+    }
+    return 0;
+}
+
+// One PairPos subtable. `found` is set when it has an entry for the pair (even a zero one: the first match wins).
+int Face::GposPair(std::size_t sub, int l, int r, bool& found) const {
+    found = false;
+    if (!Has(sub, 10)) return 0;
+    const std::uint32_t fmt = U16(sub), covOff = U16(sub + 2), vf1 = U16(sub + 4), vf2 = U16(sub + 6);
+    auto bits = [](std::uint32_t v) { int n = 0; for (; v; v >>= 1) n += (int)(v & 1u); return n; };
+    const std::size_t size1 = (std::size_t)bits(vf1) * 2, size2 = (std::size_t)bits(vf2) * 2;
+    if (!(vf1 & 0x0004)) return 0;   // no horizontal advance in the first glyph's value: nothing to kern with
+    const std::size_t xadv = (std::size_t)bits(vf1 & 0x0003) * 2;   // XPlacement, YPlacement come first
+    const int ci = CoverageIndex(sub + covOff, l);
+    if (ci < 0) return 0;
+    if (fmt == 1) {
+        const std::uint32_t nSets = U16(sub + 8);
+        if ((std::uint32_t)ci >= nSets || !Has(sub + 10, (std::size_t)nSets * 2)) return 0;
+        const std::size_t set = sub + U16(sub + 10 + (std::size_t)ci * 2);
+        if (!Has(set, 2)) return 0;
+        const std::uint32_t n = U16(set);
+        const std::size_t rec = 2 + size1 + size2;
+        if (!Has(set + 2, (std::size_t)n * rec)) return 0;
+        std::uint32_t lo = 0, hi = n;
+        while (lo < hi) {
+            const std::uint32_t mid = (lo + hi) / 2;
+            const std::size_t p = set + 2 + (std::size_t)mid * rec;
+            const std::uint32_t g = U16(p);
+            if (g == (std::uint32_t)r) { found = true; return I16(p + 2 + xadv); }
+            if (g < (std::uint32_t)r) lo = mid + 1; else hi = mid;
+        }
+        return 0;
+    }
+    if (fmt == 2) {
+        if (!Has(sub, 16)) return 0;
+        const std::size_t cd1 = sub + U16(sub + 8), cd2 = sub + U16(sub + 10);
+        const std::uint32_t n1 = U16(sub + 12), n2 = U16(sub + 14);
+        const int c1 = ClassOf(cd1, l), c2 = ClassOf(cd2, r);
+        if ((std::uint32_t)c1 >= n1 || (std::uint32_t)c2 >= n2) return 0;
+        const std::size_t rec = size1 + size2;
+        const std::size_t p = sub + 16 + ((std::size_t)c1 * n2 + (std::size_t)c2) * rec;
+        if (!Has(p, rec)) return 0;
+        found = true;
+        return I16(p + xadv);
+    }
+    return 0;
+}
+
+int Face::KernGpos(int l, int r) const {
+    const std::size_t g = m_gpos.off;
+    if (m_gpos.len < 10 || U16(g) != 1) return 0;
+    const std::size_t featList = g + U16(g + 6), lookList = g + U16(g + 8);
+    if (!Has(featList, 2) || !Has(lookList, 2)) return 0;
+    const std::uint32_t nFeat = U16(featList), nLook = U16(lookList);
+    // Every lookup a 'kern' feature names (any script and language: the Latin and default ones are what UI text uses).
+    std::uint32_t seen[16]; int ns = 0;
+    int total = 0;
+    for (std::uint32_t f = 0; f < nFeat && Has(featList + 2 + (std::size_t)f * 6, 6); ++f) {
+        const std::size_t rec = featList + 2 + (std::size_t)f * 6;
+        if (U32(rec) != Tag("kern")) continue;
+        const std::size_t ft = featList + U16(rec + 4);
+        if (!Has(ft, 4)) continue;
+        const std::uint32_t nl = U16(ft + 2);
+        for (std::uint32_t k = 0; k < nl && Has(ft + 4 + (std::size_t)k * 2, 2); ++k) {
+            const std::uint32_t li = U16(ft + 4 + (std::size_t)k * 2);
+            bool dup = false;
+            for (int q = 0; q < ns; ++q) if (seen[q] == li) dup = true;
+            if (dup || ns >= 16 || li >= nLook || !Has(lookList + 2 + (std::size_t)li * 2, 2)) continue;
+            seen[ns++] = li;
+            const std::size_t lk = lookList + U16(lookList + 2 + (std::size_t)li * 2);
+            if (!Has(lk, 6)) continue;
+            const std::uint32_t type = U16(lk), nSub = U16(lk + 4);
+            for (std::uint32_t s = 0; s < nSub && Has(lk + 6 + (std::size_t)s * 2, 2); ++s) {
+                std::size_t sub = lk + U16(lk + 6 + (std::size_t)s * 2);
+                std::uint32_t t = type;
+                if (t == 9) {   // extension lookup: the real subtable is a 32-bit offset away
+                    if (!Has(sub, 8) || U16(sub) != 1) continue;
+                    t = U16(sub + 2);
+                    sub += U32(sub + 4);
+                }
+                if (t != 2) continue;
+                bool found = false;
+                const int v = GposPair(sub, l, r, found);
+                if (found) { total += v; break; }   // the first subtable with the pair decides this lookup
+            }
+        }
+    }
+    return total;
+}
+
+int Face::KernTable(int l, int r) const {
+    const std::size_t k = m_kern.off;
+    if (m_kern.len < 4 || U16(k) != 0) return 0;   // version 0 (the Microsoft layout)
+    const std::uint32_t nTables = U16(k + 2);
+    std::size_t p = k + 4;
+    int total = 0;
+    for (std::uint32_t t = 0; t < nTables && Has(p, 6); ++t) {
+        const std::uint32_t len = U16(p + 2), cov = U16(p + 4);
+        if ((cov & 1u) && ((cov >> 8) == 0) && !(cov & 4u) && Has(p + 6, 8)) {   // horizontal, not cross-stream, format 0
+            const std::uint32_t n = U16(p + 6);
+            const std::size_t first = p + 14;
+            if (Has(first, (std::size_t)n * 6)) {
+                const std::uint32_t key = ((std::uint32_t)l << 16) | (std::uint32_t)r;
+                std::uint32_t lo = 0, hi = n;
+                while (lo < hi) {
+                    const std::uint32_t mid = (lo + hi) / 2;
+                    const std::size_t q = first + (std::size_t)mid * 6;
+                    const std::uint32_t kk = (U16(q) << 16) | U16(q + 2);
+                    if (kk == key) { total += I16(q + 4); break; }
+                    if (kk < key) lo = mid + 1; else hi = mid;
+                }
+            }
+        }
+        if (len < 6) break;
+        p += len;
+    }
+    return total;
+}
+
+int Face::Kerning(int l, int r) const {
+    if (!m_valid || l <= 0 || r <= 0) return 0;
+    if (m_gpos.len >= 10) {
+        const int g = KernGpos(l, r);
+        if (g != 0 || m_kern.len < 4) return g;
+    }
+    return m_kern.len >= 4 ? KernTable(l, r) : 0;
 }
 
 // ---- CFF -------------------------------------------------------------------------------

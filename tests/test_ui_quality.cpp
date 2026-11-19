@@ -98,6 +98,15 @@ void FontTests() {
         std::printf("glyph '%c' at 10px: coverage %.0f -> %.0f (+%.0f%%)\n", c, a, b, (b / a - 1.0) * 100.0);
         CHECK(b > a * 1.08);
     }
+    // Kerning: pairs like AV and To pull together; ordinary pairs stay put; Measure with kerning is shorter by the pair adjustments.
+    TtfFont* big = f->ForDeviceSize(100.0f, false);
+    const float av = big->Kerning('A', 'V', 100.0f), to = big->Kerning('T', 'o', 100.0f), ab = big->Kerning('a', 'b', 100.0f);
+    std::printf("kerning at 100px: AV %.2f, To %.2f, ab %.2f px\n", av, to, ab);
+    CHECK(av < -2.0f);
+    CHECK(to < -2.0f);
+    CHECK(std::fabs(ab) < 3.0f);
+    CHECK(big->Measure("AVA", 100.0f, true) < big->Measure("AVA", 100.0f, false) - 3.0f);
+    CHECK_NEAR(big->Measure("ab", 100.0f, true), big->Measure("ab", 100.0f, false), 3.0);
     // Subpixel phases: the ink of the phase-k glyph is the phase-0 ink moved by k/4 pixel, and the weight is the same.
     TtfFont* face = f->ForDeviceSize(18.0f, false);
     for (char c : {'o', 'l', 'e', 'W'}) {

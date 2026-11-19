@@ -31,7 +31,9 @@ inline std::unique_ptr<okay::platform::Painter> OwnWindowPainter(okay::platform:
 inline void OkayUIEndFrame(SDL_Renderer* r) {
     okay::platform::Painter* p = For(r);
     if (!p) return;
+#ifndef OKAY_NO_SDL   // no SDL_Renderer in the no-SDL build: every painter is drawn through the FrameDrawer below
     if (p->Kind() == okay::platform::PainterKind::Sdl2) { OkayUI::EndFrame(r); return; }
+#endif
     int w = 0, h = 0;
     p->OutputSize(&w, &h);
     OkayUI::EndFrameData(w, h);

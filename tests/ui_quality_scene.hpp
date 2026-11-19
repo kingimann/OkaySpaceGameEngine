@@ -115,7 +115,7 @@ inline void Build(Scene& scene, const std::string& texturePath, int quality = 1)
     text("DarkText", "Dark on light", 490, 240, 1.2f, Color::FromBytes(30, 36, 52, 255));
     text("DarkSmall", "small dark text 12px", 490, 262, 1.0f, Color::FromBytes(30, 36, 52, 255));
     text("DarkTiny", "tiny 9px ghijk", 490, 280, 0.8f, Color::FromBytes(30, 36, 52, 255));
-    // A turned and scaled widget (UI Frame): a rounded panel with a border and a label inside, turned 8 degrees.
+    // A turned and scaled widget (UI Frame): a rounded panel with a border, turned 8 degrees and made 10% bigger.
     {
         GameObject* tg = add("Turned");
         auto* tp = tg->AddComponent<UIPanel>();
@@ -123,11 +123,6 @@ inline void Build(Scene& scene, const std::string& texturePath, int quality = 1)
         tp->color = Color::FromBytes(70, 130, 220, 255); tp->borderWidth = 2.0f; tp->borderColor = Color::FromBytes(235, 240, 250, 255);
         UIFrame* fr = ConvertToUIFrame(tg);   // the panel's own position and size become the frame's anchors
         fr->pivot = {0.5f, 0.5f}; fr->rotation = 8.0f; fr->scale = {1.1f, 1.1f};
-        GameObject* lg = scene.CreateGameObject("TurnedText");
-        lg->transform->SetParent(tg->transform, false);
-        auto* lt = lg->AddComponent<TextRenderer>();
-        lt->screenSpace = true; lt->text = "Turned 8"; lt->screenPos = {236, 312}; lt->size = {80, 20}; lt->pixelSize = 1.5f * 0.8f;
-        lt->color = Color::White; lt->shadow = false; lt->outline = false;
     }
     text("LightTiny", "Light tiny text on dark ground", 26, 240, 0.9f, ink);
     text("LightSmall", "Light small text, quick brown fox jumps over", 26, 256, 1.0f, ink);

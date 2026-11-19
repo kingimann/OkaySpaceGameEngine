@@ -264,26 +264,71 @@ void ScaledShapeTests() {
         Image out; RenderScene(s, 150, 90, out, false, 0, 0, 0);
         return out;
     };
-    const Image cg = circle(1);
-    // Fit the circle: centroid of the white mass, radius from the area.
-    double m = 0, mx = 0, my = 0;
-    for (int y = 0; y < 90; ++y) for (int x = 0; x < 150; ++x) { const double v = Byte(cg, x, y, 0) / 255.0; m += v; mx += v * (x + 0.5); my += v * (y + 0.5); }
-    const double cx = mx / m, cy = my / m, R = std::sqrt(m / 3.14159265);
-    double err = 0, worst = 0; long n = 0;
-    for (int y = 0; y < 90; ++y)
-        for (int x = 0; x < 150; ++x) {
-            const double dc = std::hypot(x + 0.5 - cx, y + 0.5 - cy);
-            if (dc < R - 3 || dc > R + 3) continue;
-            double ref = 0;
-            for (int sy = 0; sy < 16; ++sy) for (int sx = 0; sx < 16; ++sx)
-                if (std::hypot(x + (sx + 0.5) / 16.0 - cx, y + (sy + 0.5) / 16.0 - cy) <= R) ref += 1.0 / 256.0;
-            const double e = std::fabs(Byte(cg, x, y, 0) / 255.0 - ref);
-            err += e; worst = std::max(worst, e); ++n;
-        }
-    std::printf("circle at 1.5x: radius %.2f device px (ideal 18), edge coverage error mean %.4f, worst %.3f\n", R, err / n, worst);
+    // Fit the circle: centroid of the white mass, radius from the area; then compare every edge pixel with the analytic coverage.
+    struct CircleFit { double R, mean, worst; };
+    auto fit = [](const Image& cg) {
+        double m = 0, mx = 0, my = 0;
+        for (int y = 0; y < 90; ++y) for (int x = 0; x < 150; ++x) { const double v = Byte(cg, x, y, 0) / 255.0; m += v; mx += v * (x + 0.5); my += v * (y + 0.5); }
+        const double cx = mx / m, cy = my / m, R = std::sqrt(m / 3.14159265);
+        double err = 0, worst = 0; long n = 0;
+        for (int y = 0; y < 90; ++y)
+            for (int x = 0; x < 150; ++x) {
+                const double dc = std::hypot(x + 0.5 - cx, y + 0.5 - cy);
+                if (dc < R - 3 || dc > R + 3) continue;
+                double ref = 0;
+                for (int sy = 0; sy < 16; ++sy) for (int sx = 0; sx < 16; ++sx)
+                    if (std::hypot(x + (sx + 0.5) / 16.0 - cx, y + (sy + 0.5) / 16.0 - cy) <= R) ref += 1.0 / 256.0;
+                const double e = std::fabs(Byte(cg, x, y, 0) / 255.0 - ref);
+                err += e; worst = std::max(worst, e); ++n;
+            }
+        return CircleFit{R, err / (double)n, worst};
+    };
+    const CircleFit g = fit(circle(1)), o = fit(circle(3)), f = fit(circle(0)), bst = fit(circle(2));
+    std::printf("circle at 1.5x, edge coverage error against the analytic circle (mean / worst): Good %.4f / %.3f, Best %.4f / %.3f, Fast %.4f / %.3f, Old look %.4f / %.3f\n",
+                g.mean, g.worst, bst.mean, bst.worst, f.mean, f.worst, o.mean, o.worst);
+    const double R = g.R, err = g.mean, worst = g.worst;
+    const long n = 1;
     CHECK_NEAR(R, 18.0, 0.35);
-    CHECK(err / n < 0.03);
-    CHECK(worst < 0.3);
+    CHECK(err / n < 0.01);
+    CHECK(worst < 0.15);
+    CHECK(o.worst > 0.25);   // the Old look had flat caps and half-pixel jumps: the measure sees them
+    CHECK(bst.worst < 0.1);
+}
+
+// A rounded rectangle (60 x 40, corner radius 12) at scale 1: every pixel of its four corners against the analytic coverage.
+void RoundedCornerTests() {
+    struct Fit { double mean, worst; int soft; };
+    auto run = [](int quality) {
+        Scene s; s.uiQuality = quality;
+        GameObject* cv = MakeCanvas(s, 100, 60, false);
+        auto* p = AddTo<UIPanel>(s, cv, "r");
+        p->position = {10, 10}; p->size = {60, 40}; p->shape = UIShape::Rounded; p->cornerRadius = 12.0f; p->color = Color::White;
+        Image out; RenderScene(s, 100, 60, out, false, 0, 0, 0);
+        double err = 0, worst = 0; long n = 0; int soft = 0;
+        const double hw = 30, hh = 20, r = 12;
+        for (int y = 10; y < 50; ++y)
+            for (int x = 10; x < 70; ++x) {
+                const int ix = std::min(x - 10, 69 - x), iy = std::min(y - 10, 49 - y);
+                if (ix >= 12 || iy >= 12) continue;   // the four corner boxes only
+                double ref = 0;
+                for (int sy = 0; sy < 16; ++sy) for (int sx = 0; sx < 16; ++sx) {
+                    const double px = x + (sx + 0.5) / 16.0 - 40.0, py = y + (sy + 0.5) / 16.0 - 30.0;   // from the centre
+                    const double dx = std::max(std::fabs(px) - (hw - r), 0.0), dy = std::max(std::fabs(py) - (hh - r), 0.0);
+                    if (dx * dx + dy * dy <= r * r) ref += 1.0 / 256.0;
+                }
+                const double v = Byte(out, x, y, 0) / 255.0, e = std::fabs(v - ref);
+                err += e; worst = std::max(worst, e); ++n;
+                if (v > 0.03 && v < 0.97) ++soft;
+            }
+        return Fit{err / (double)n, worst, soft};
+    };
+    const Fit g = run(1), b = run(2), f = run(0), o = run(3);
+    std::printf("rounded corners (radius 12), error against the analytic shape mean / worst / edge pixels with soft coverage: Good %.4f / %.3f / %d, Best %.4f / %.3f / %d, Fast %.4f / %.3f / %d, Old look %.4f / %.3f / %d\n",
+                g.mean, g.worst, g.soft, b.mean, b.worst, b.soft, f.mean, f.worst, f.soft, o.mean, o.worst, o.soft);
+    CHECK(g.mean < 0.006 && g.worst < 0.12);
+    CHECK(b.mean < 0.006 && b.worst < 0.1);
+    CHECK(o.worst > 0.25);   // the Old look rounds edge pixels to solid or to nothing
+    CHECK(g.mean < o.mean * 0.5);
 }
 
 // ---- 5. text on the pixel grid -----------------------------------------------------------------------------------------------------------
@@ -458,6 +503,7 @@ int main() {
     }
     ShadowTests();
     ScaledShapeTests();
+    RoundedCornerTests();
     TextTests();
     GradientTests();
     SettingTests();

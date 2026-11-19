@@ -3,13 +3,17 @@
 # -DOKAY_BUILD_LAUNCHER=ON.
 include(FetchContent)
 
-find_package(SDL2 QUIET)
-if(NOT SDL2_FOUND)
-    message(WARNING "okayspace-launcher needs SDL2 dev libraries; skipping.")
-    return()
+if(NOT OKAY_NO_SDL)
+    find_package(SDL2 QUIET)
+    if(NOT SDL2_FOUND)
+        message(WARNING "okayspace-launcher needs SDL2 dev libraries; skipping.")
+        return()
+    endif()
 endif()
 
-if(OKAY_EDITOR_STATIC_SDL AND TARGET SDL2::SDL2-static)
+if(OKAY_NO_SDL)
+    set(OKAY_LAUNCHER_SDL "")
+elseif(OKAY_EDITOR_STATIC_SDL AND TARGET SDL2::SDL2-static)
     set(OKAY_LAUNCHER_SDL SDL2::SDL2-static)
 elseif(TARGET SDL2::SDL2)
     set(OKAY_LAUNCHER_SDL SDL2::SDL2)
@@ -33,9 +37,11 @@ if(NOT TARGET launcher_imgui)
         ${imgui_SOURCE_DIR}/imgui.cpp
         ${imgui_SOURCE_DIR}/imgui_draw.cpp
         ${imgui_SOURCE_DIR}/imgui_tables.cpp
-        ${imgui_SOURCE_DIR}/imgui_widgets.cpp
-        ${imgui_SOURCE_DIR}/backends/imgui_impl_sdl2.cpp
-        ${imgui_SOURCE_DIR}/backends/imgui_impl_sdlrenderer2.cpp)
+        ${imgui_SOURCE_DIR}/imgui_widgets.cpp)
+    if(NOT OKAY_NO_SDL)   # the SDL backends are third-party window/render code: not built in the no-SDL mode
+        target_sources(launcher_imgui PRIVATE ${imgui_SOURCE_DIR}/backends/imgui_impl_sdl2.cpp
+            ${imgui_SOURCE_DIR}/backends/imgui_impl_sdlrenderer2.cpp)
+    endif()
     target_include_directories(launcher_imgui SYSTEM PUBLIC
         ${imgui_SOURCE_DIR} ${imgui_SOURCE_DIR}/backends)
     target_link_libraries(launcher_imgui PUBLIC ${OKAY_LAUNCHER_SDL})

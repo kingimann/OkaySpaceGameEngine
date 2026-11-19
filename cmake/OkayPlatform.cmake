@@ -21,7 +21,9 @@ function(okay_add_platform_library)
     set(_incs "")
 
     # --- sdl2 backend -------------------------------------------------------------
-    if(EMSCRIPTEN)
+    if(OKAY_NO_SDL)
+        set(_sdl_opts "")   # no SDL: SdlBackend.cpp and SdlPainter.cpp compile to nothing
+    elseif(EMSCRIPTEN)
         list(APPEND _defs OKAY_PLATFORM_HAVE_SDL2)
         set(_sdl_opts "-sUSE_SDL=2")
     else()

@@ -4,12 +4,16 @@
 #
 # Built only when SDL2 dev libraries are present; otherwise quietly skipped so a
 # headless engine-only build is unaffected.
-find_package(SDL2 QUIET)
-if(NOT SDL2_FOUND)
-    return()
+if(NOT OKAY_NO_SDL)
+    find_package(SDL2 QUIET)
+    if(NOT SDL2_FOUND)
+        return()
+    endif()
 endif()
 
-if(TARGET SDL2::SDL2)
+if(OKAY_NO_SDL)
+    set(_okayui_sdl "")
+elseif(TARGET SDL2::SDL2)
     set(_okayui_sdl SDL2::SDL2)
 else()
     set(_okayui_sdl ${SDL2_LIBRARIES})
@@ -22,7 +26,7 @@ target_include_directories(okay_ui PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/include)
 # The launcher look's font: Roboto (shared/RobotoFont.h) baked with the engine's own
 # TrueType rasterizer (Graphics/TtfRaster).
 target_include_directories(okay_ui PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/../shared)
-if(NOT TARGET SDL2::SDL2)
+if(NOT OKAY_NO_SDL AND NOT TARGET SDL2::SDL2)
     target_include_directories(okay_ui PUBLIC ${SDL2_INCLUDE_DIRS})
 endif()
 # okay::engine provides the 8x8 bitmap font used for button labels.

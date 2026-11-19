@@ -50582,7 +50582,9 @@ static void UpdateCrashContext(EditorState& ed, bool slow) {
     okaycrash::ctx::SetAutosave(recovered ? 1 : 0);
 }
 
+#ifndef OKAY_NO_SDL
 int RunVsGraphShot(int argc, char** argv);
+#endif
 
 int main(int argc, char** argv) {
     if (int code = okay::restart::DispatchHelper(argc, argv); code >= 0) return code;
@@ -50602,7 +50604,9 @@ int main(int argc, char** argv) {
     for (int i = 1; i < argc; ++i) {
         if (std::string(argv[i]) == "--selftest") return RunSelfTest();
         if (std::string(argv[i]) == "--build-game") return RunBuildGameCli(argc, argv);
+#ifndef OKAY_NO_SDL
         if (std::string(argv[i]) == "--vs-shot") return RunVsGraphShot(argc, argv);
+#endif
     }
     // Dev/test: crash on purpose after a breadcrumb, to check the crash reports end to end (docs/try_it.md, docs/crash_reports.md).
     //   OKAY_TEST_CRASH=<step>       crash right now, before the window opens (the report has the OS, CPU and RAM but no scene or GPU yet)

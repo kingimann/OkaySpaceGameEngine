@@ -4,8 +4,10 @@
 # Dear ImGui. Enable from the top level with -DOKAY_BUILD_EDITOR=ON.
 include(FetchContent)
 
-find_package(SDL2 QUIET)
-if(NOT SDL2_FOUND)
+if(NOT OKAY_NO_SDL)
+    find_package(SDL2 QUIET)
+endif()
+if(NOT OKAY_NO_SDL AND NOT SDL2_FOUND)
     message(WARNING "okay-editor needs SDL2 dev libraries; skipping.")
     return()
 endif()
@@ -16,7 +18,9 @@ endif()
 # SDL2 link target. With -DOKAY_EDITOR_STATIC_SDL=ON, link SDL2 statically so
 # the editor ships as a single self-contained .exe (no SDL2.dll alongside).
 option(OKAY_EDITOR_STATIC_SDL "Statically link SDL2 into the editor" OFF)
-if(OKAY_EDITOR_STATIC_SDL AND TARGET SDL2::SDL2-static)
+if(OKAY_NO_SDL)
+    set(OKAY_SDL_LIB "")
+elseif(OKAY_EDITOR_STATIC_SDL AND TARGET SDL2::SDL2-static)
     set(OKAY_SDL_LIB SDL2::SDL2-static)
 elseif(TARGET SDL2::SDL2)
     set(OKAY_SDL_LIB SDL2::SDL2)
@@ -41,14 +45,24 @@ add_library(okay_imgui STATIC
     ${imgui_SOURCE_DIR}/imgui.cpp
     ${imgui_SOURCE_DIR}/imgui_draw.cpp
     ${imgui_SOURCE_DIR}/imgui_tables.cpp
-    ${imgui_SOURCE_DIR}/imgui_widgets.cpp
-    ${imgui_SOURCE_DIR}/backends/imgui_impl_sdl2.cpp
-    ${imgui_SOURCE_DIR}/backends/imgui_impl_sdlrenderer2.cpp)
+    ${imgui_SOURCE_DIR}/imgui_widgets.cpp)
+if(NOT OKAY_NO_SDL)   # the SDL backends are third-party window/render code: not built in the no-SDL mode
+    target_sources(okay_imgui PRIVATE ${imgui_SOURCE_DIR}/backends/imgui_impl_sdl2.cpp
+        ${imgui_SOURCE_DIR}/backends/imgui_impl_sdlrenderer2.cpp)
+endif()
 target_include_directories(okay_imgui SYSTEM PUBLIC
     ${imgui_SOURCE_DIR} ${imgui_SOURCE_DIR}/backends)
 target_link_libraries(okay_imgui PUBLIC ${OKAY_SDL_LIB})
 target_compile_options(okay_imgui PRIVATE -w) # silence third-party warnings
 
+if(OKAY_NO_SDL)
+    # monitor list and display-mode changes through okay::platform; --vs-shot (VsGraphShot.cpp) is SDL_Renderer code and is left out
+    set(OKAY_EDITOR_SDL_ONLY_SOURCES ${CMAKE_SOURCE_DIR}/shared/PlatformDisplays.cpp)
+    set(OKAY_EDITOR_NO_VSSHOT ON)
+else()
+    set(OKAY_EDITOR_SDL_ONLY_SOURCES VsGraphShot.cpp   # --vs-shot: screenshots of example graphs
+        ${CMAKE_SOURCE_DIR}/shared/SdlDisplays.cpp)    # monitor list and display-mode changes (SDL, shared with the player)
+endif()
 add_executable(okay-editor main.cpp EditorState.cpp FpHandsWindow.cpp
     UIGalleryWindow.cpp                                                # the UI Gallery window (search every UI part, preview it, add it)
     AnimatorWindow.cpp                                                 # the Animator window (state-machine graph)
@@ -86,8 +100,7 @@ add_executable(okay-editor main.cpp EditorState.cpp FpHandsWindow.cpp
     ${CMAKE_SOURCE_DIR}/launcher/VersionsManager.cpp                  # the version list reader + download plan (checksums required), shared with the launcher updater
     ProjectUpgrade.cpp ProjectUpgradeUI.cpp                            # the project version question, backup + upgrade, File > Project Upgrade...
     vendor/TextEditor.cpp                                              # ImGuiColorTextEdit code widget
-    VsGraphShot.cpp                                                    # --vs-shot: screenshots of example graphs
-    ${CMAKE_SOURCE_DIR}/shared/SdlDisplays.cpp                         # monitor list and display-mode changes (SDL, shared with the player)
+    ${OKAY_EDITOR_SDL_ONLY_SOURCES}
     ${CMAKE_SOURCE_DIR}/shared/FileDialog.cpp                          # open / save / folder dialogs: system dialogs or the built-in browser (model)
     ${CMAKE_SOURCE_DIR}/shared/FileDialogUI.cpp)                       # the built-in browser's ImGui window
 target_compile_definitions(okay-editor PRIVATE ${OKAY_VERSION_DEFINE})

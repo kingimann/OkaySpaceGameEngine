@@ -23,6 +23,13 @@ set(CMAKE_CXX_EXTENSIONS OFF)
 option(OKAY_BUILD_SANDBOX  "Build the sandbox demo game"       ON)
 option(OKAY_BUILD_TESTS    "Build the unit tests"              ON)
 option(OKAY_BUILD_LAUNCHER "Build the self-updating launcher"  ON)
+# OKAY_NO_SDL: build the launcher, editor and OkayUI with no SDL header, library or symbol (own platform layer only; docs/platform_layer.md).
+# Default OFF: the SDL2 backend stays the shipped default until the owner approves the switch.
+option(OKAY_NO_SDL "Build the launcher/editor/OkayUI with no SDL2 at all (own okay::platform backend only; experimental)" OFF)
+if(OKAY_NO_SDL)
+    add_compile_definitions(OKAY_NO_SDL)
+    set(OKAY_PLATFORM_BACKEND "own" CACHE STRING "" FORCE)
+endif()
 option(OKAY_BUILD_EDITOR   "Build the desktop GUI editor (needs SDL2+OpenGL)" OFF)
 option(OKAY_ENABLE_TEST_HOOKS "Compile scripted input and screenshots (OKAY_TEST_SCRIPT, shared/TestHooks.hpp) into the launcher and editor for headless test runs. Never for a release." OFF)
 option(OKAY_BUILD_PLAYER   "Build the standalone game player runtime (needs SDL2)" OFF)
@@ -287,9 +294,22 @@ if(OKAY_BUILD_EDITOR)
     endif()
 endif()
 
+# ---- No-SDL proof (OKAY_NO_SDL=ON): the programs must not reference SDL at all ----
+# ctest -R no_sdl_symbols runs scripts/check_no_sdl_symbols.sh (nm / objdump) on the built launcher and editor.
+if(OKAY_NO_SDL)
+    enable_testing()
+    foreach(_t okayspace-launcher okay-editor)
+        if(TARGET ${_t})
+            add_test(NAME no_sdl_symbols_${_t}
+                COMMAND ${CMAKE_COMMAND} -E env NM=${CMAKE_NM} OBJDUMP=${CMAKE_OBJDUMP}
+                        ${CMAKE_SOURCE_DIR}/scripts/check_no_sdl_symbols.sh $<TARGET_FILE:${_t}>)
+        endif()
+    endforeach()
+endif()
+
 # ---- Standalone game player ------------------------------------------
 # The editor's "Build Game" ships this runtime, so build it alongside the editor.
-if(OKAY_BUILD_PLAYER OR OKAY_BUILD_EDITOR)
+if((OKAY_BUILD_PLAYER OR OKAY_BUILD_EDITOR) AND NOT OKAY_NO_SDL)   # the player still draws through SDL: not part of the no-SDL mode yet
     add_subdirectory(player)
     if(OKAY_AC_PLAYER_TRUSTED_KEYS AND TARGET okay-player)
         target_compile_definitions(okay-player PRIVATE OKAY_AC_TRUSTED_KEYS="${OKAY_AC_PLAYER_TRUSTED_KEYS}")

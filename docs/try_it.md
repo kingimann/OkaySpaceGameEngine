@@ -90,6 +90,7 @@ release job or the installer build for this change.
 | 14 | One SHA-256 (file checksums, account passwords, anti-cheat tag, voice key) | Nothing new to click: sign in with an existing local account (Account tab), use the launcher's update check, join an anti-cheat checked server, join a voice room; all must work exactly as before. For the checks themselves see `docs/sha256_comparison.md` section "How to try it" | Tests only (Linux); launcher, Windows and real accounts unverified |
 | 16 | Main menu bar clean-up: one Examples, Edit clipboard commands, GameObject categories, View, Help | The bar at the top of `Tools\OkayEngine.exe` | New in this change; see section 16 for what was and was not seen |
 | 17 | Hierarchy right-click menus: Create Child with every category, Add Component, Select Same Type, "Delete 3 Objects" | Right-click in the Hierarchy panel of `Tools\OkayEngine.exe` | New in this change; see section 17 |
+| 87 | Project upgrade and saving fixes | Launcher project cards; File > Project Upgrade...; example `examples\old_project` | Tested headless (project_version, project_upgrade, project_state); the launcher and editor windows not run, Windows not run |
 | ac-cheat-sim | Anti-cheat: watch the server catch a cheater (cheat simulator), ban list, audit log | `OkaySpacePlayer.exe --server --cheat-sim --log cheat_sim.txt` (Tools folder), then open the log | New in this change; tested headless on Linux over loopback; Windows and a real network unverified |
 | content-delivery | Downloadable game content: signed models, textures, scripts and data that an exported game fetches (off by default) | `okay-content.exe` in `Tools/`, or `content.okayconfig` / `OKAY_CONTENT_URL` for the player | Built; Linux-tested only |
 | editor-fps | Editor frame-time overlay and speed switches | Editor menu **View > Rendering**: Frame-time overlay, Frame rate limit, Slow down when idle, Viewport resolution, Performance mode. Heavy test scenes: `examples\perf\` | New in this change. Real Direct3D 11 numbers on a Windows machine are unverified; sent back by the owner |
@@ -1434,6 +1435,22 @@ items listed as "not clicked" in editor_menus.md section 3b (among them the Orde
 project always has its scene in the list); Help > Documentation and Report a Bug open a browser, which this machine does not
 have, so the page and the clipboard line were not seen. The software renderer was used, so nothing about the GPU path was seen.
 
+## 87. Project upgrade and saving fixes
+
+**What it is.** The launcher's project cards used to keep saying "older" after you upgraded the project (they were read once and never again), and a plain Open then even picked the old editor from that stale card. They now follow the file. Also fixed: File > Project Upgrade... upgraded the wrong project (or none) when the open scene was a loose file from somewhere else; saving a scene into another project no longer marks that project "up to date"; a zip name with a `\`, `|` or `=` in the build settings came back changed.
+
+**Steps.**
+1. Copy the folder `examples\old_project` somewhere you can write (for example your Desktop). It is a small project made by an old version (`engine_version=2.1.0`).
+2. In the launcher, open the Projects page and use "Open a project folder" on the copy. The card shows an "older" badge.
+3. The editor opens and asks to upgrade. Press **Upgrade**, wait for "Done", press **Continue**.
+4. Go back to the launcher window (leave it open the whole time). Within about a second the card's version changes to this editor's version and the "older" badge goes away.
+5. In the editor open **File > Project Upgrade...**. It says "Up to date." Close the editor and press Open on the card again: no question is asked.
+6. Optional: open a scene from another folder (File > Open), then File > Project Upgrade... Before the fix this did nothing or touched the wrong project. It now works on the project shown in the Project panel.
+
+**What you should see.** The card, the "Last saved by" line in the upgrade window and the next Open all agree, with no restart of the launcher. A backup folder "old_project (backup v2.1.0)" appears next to the project.
+
+**Status.** The version logic is covered by tests that run on the build machine (`test_project_version`, `test_project_upgrade`, `test_project_state`). The launcher and editor windows were not run here and Windows was not run: unverified.
+
 ## ac-cheat-sim. Anti-cheat: watch the server catch a cheater (cheat simulator)
 
 What this is: a self-test of the server's anti-cheat. It starts a server on your own machine (nothing goes on the
@@ -2145,7 +2162,7 @@ Unverified: Windows (not built or run here), a real Wayland session.
 What to do (needs a Windows PC and a release built with `-DOKAY_BUILD_XBOX_UWP=ON`, which `build-windows-dist.sh` sets; it also ships `xbox-src` next to the editor):
 
 1. **Once:** install Visual Studio 2022 (free Community edition) with the workload "Universal Windows Platform development", its C++ UWP tools and a Windows 10/11 SDK.
-2. Open the editor, **File > Build Settings**, click **Xbox (exp.)** at the top. You should see an orange "EXPERIMENTAL and UNVERIFIED" line, the limits text, the tools list (found / MISSING with the install step), and the package name, version and publisher. A missing required tool greys the button with a tooltip; **Check again** re-checks.
+2. Open the editor, **File > Build Settings**, click **Xbox (exp.)** at the top. **The editor must not freeze** (it did before: the tool check ran on the editor thread and called Visual Studio's `vswhere` four times). Now you first see "Checking your PC for the Xbox tools..." with a small spinner, the **Build Xbox package** button is greyed (hover it: "Checking your PC ..."), you can keep clicking and typing in the editor, and after a short moment (a few seconds the first time, instant on the next editor start because the answer is cached in `%LOCALAPPDATA%\OkaySpace\xbox_vswhere_cache.txt`) the text changes to the list. If `vswhere` does not answer within 5 seconds it is stopped and the page says so. **Check again** asks again (and ignores the cache). If the editor still lags when you switch to Xbox, tell us (UNVERIFIED on Windows: nobody has run this fix). You should see an orange "EXPERIMENTAL and UNVERIFIED" line, the limits text, the tools list (found / MISSING with the install step), and the package name, version and publisher. A missing required tool greys the button with a tooltip; **Check again** re-checks.
 3. Leave **Engine mode** unticked the first time (a triangle test, the safest). Tick **Also install on this PC afterwards** if you want it on this PC. Press **Build Xbox package**.
 4. Watch the page: a step list (Check the Windows tools, Export, Set up the UWP app build, Compile the UWP app, Put the program into the package, Compile the shaders, Pack and check the .appx, Sign, Install) with a status per step and a live log. **Cancel build** stops it. If a step fails you get a plain message and the first error lines: send us those.
 5. If you ticked install, Windows shows **one** administrator (UAC) prompt: accept it. Then start the app from the Start menu: you should see a dark window with a coloured triangle (the background turns green once a pad is connected; left stick moves it, A centres it, B exits).

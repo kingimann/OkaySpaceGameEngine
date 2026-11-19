@@ -121,7 +121,7 @@ All of it is our own code written from general knowledge, with no code taken fro
 | `wind_field` (`tests/test_wind_field.cpp`: noise determinism and range, bad numbers, gust period and travel, seeds, zone shapes and soft edges, radial, priority and add/replace blending, curve, published field, NaN and zero-size edges) | 788 checks, 0 failures (also clean with ASan + UBSan) |
 | `wind` (`tests/test_wind.cpp`: zones in a scene, turn to aim, switch off, particles, Wind Drag, Wind Sway tree and flag, Foliage, Cable, Wind Sound, save and load, broken zones) | 80 checks, 0 failures |
 | `save_coverage`, `property_registry` (all four new components round-trip), `scene_serializer_audit`, `foliage`, `particles_fx`, `particles_serialize`, `volumes`, `scriptapi`, `api_expand`, `example_scenes`, `examples_work` (runs `examples/wind` headless) | 0 failures each (`property_registry` found a real bug in the first run, fixed) |
-| `vs_script_coverage`, `vs_categories`, `vs_names`, `vs_palette_levels`, `vs_node_docs` | 0 failures after the wind blocks were placed in Weather & Fog and `docs/visual_script_coverage.md` and the playground `coverage.okayvs` were regenerated |
+| `vs_script_coverage`, `vs_categories`, `vs_palette_categories`, `vs_names`, `vs_palette_levels`, `vs_node_docs`, `vs_clarity`, `vs_registry_effect`, `vs_search_connect` | 0 failures after the wind blocks were placed in Weather & Fog and `docs/visual_script_coverage.md` and the playground `coverage.okayvs` were regenerated |
 
 The example was also loaded and run for 14 simulated seconds by a throw-away program: 22 swaying plant chunks, the box slid about 4 m and
 stopped between gusts, leaves alive, no NaN; two software-renderer pictures are in `docs/images/wind-example-t04.png` and `-t12.png`.

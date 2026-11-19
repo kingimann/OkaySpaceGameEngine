@@ -82,6 +82,12 @@ public:
     static std::vector<std::string> Format(const FrameStatsSnapshot& stats, const FrameOverlayState& state);
     static std::vector<std::string> Lines(const GameLoop& loop);
 
+    /// The time lines of the "Time" debug view: the fixed step (rate, steps this frame, total, the alpha to
+    /// draw with, and which policy lost time), then one line of clocks (`game 1.00x, enemies 0.50x < game,
+    /// ui 1.00x paused`), then the scheduler's next timer. Plain text, a dot for the decimal, three or four lines;
+    /// `scheduler` may be null (no timer line).
+    static std::vector<std::string> TimeLines(const GameLoop& loop, const class Scheduler* scheduler = nullptr);
+
     /// The lines joined with '\n', for a multi-line text widget.
     static std::string Text(const std::vector<std::string>& lines);
     static std::string Text(const GameLoop& loop) { return Text(Lines(loop)); }

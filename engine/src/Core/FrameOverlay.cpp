@@ -1,7 +1,10 @@
 #include "okay/Render/Culling.hpp"
 #include <chrono>
 #include "okay/Core/FrameOverlay.hpp"
+#include "okay/Core/Clock.hpp"
 #include "okay/Core/Game.hpp"
+#include "okay/Core/Scheduler.hpp"
+#include "okay/Core/TimerDebug.hpp"
 #include "okay/Core/GameLoop.hpp"
 #include "okay/Core/Time.hpp"
 
@@ -84,6 +87,39 @@ std::string& FrameOverlay::RendererName() { static std::string n; return n; }
 
 double FrameOverlay::NowSeconds() {
     return std::chrono::duration<double>(std::chrono::steady_clock::now().time_since_epoch()).count();
+}
+
+std::vector<std::string> FrameOverlay::TimeLines(const GameLoop& loop, const Scheduler* scheduler) {
+    std::vector<std::string> out;
+    const float step = loop.FixedStep();
+    std::string fixed = "fixed " + Num("%.0f", step > 0.0f ? 1.0 / (double)step : 0.0) + " Hz: " + std::to_string(loop.FixedStepsThisFrame()) +
+                        " this frame, " + std::to_string((unsigned long long)loop.TotalFixedSteps()) + " total, alpha " + Num("%.2f", (double)loop.Alpha());
+    if (loop.DroppedFixedTime() > 0.0) fixed += ", " + Num("%.2f", loop.DroppedFixedTime()) + " s lost";
+    out.push_back(fixed);
+    {
+        const ClockSet& set = ClockSet::Global();
+        std::string line = "clocks: ";
+        const std::vector<std::string> names = set.Names();
+        int shown = 0;
+        for (const std::string& n : names) {
+            const Clock* c = set.Find(n);
+            if (!c) continue;
+            if (shown == 6) { line += ", +" + std::to_string(names.size() - 6) + " more"; break; }
+            if (shown++) line += ", ";
+            line += n + " " + Num("%.2f", (double)c->Scale()) + "x";
+            if (!c->Parent().empty()) line += " < " + c->Parent();
+            if (c->Paused()) line += " paused";
+        }
+        out.push_back(line);
+    }
+    if (scheduler) {
+        const TimerDebug::SchedulerStats st = TimerDebug::Capture(*scheduler);
+        std::string line = "timers: " + std::to_string(st.total);
+        if (st.total > 0 && st.nextDue >= 0.0f) line += ", next in " + TimerDebug::FormatSeconds((double)st.nextDue);
+        if (st.overdue > 0) line += ", " + std::to_string(st.overdue) + " overdue";
+        out.push_back(line);
+    }
+    return out;
 }
 
 std::vector<std::string> FrameOverlay::Lines(const GameLoop& loop) {

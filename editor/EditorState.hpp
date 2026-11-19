@@ -5,6 +5,7 @@
 #include <Okay.hpp>
 #include "okay/Core/Game.hpp"
 #include "okay/Core/GameLoop.hpp"
+#include "okay/Core/TimeSettings.hpp"
 #include "okay/Core/Undo.hpp"
 #include "SceneUndo.hpp"
 #include "ObjectRef.hpp"
@@ -391,6 +392,15 @@ public:
     const GameLoop& playLoop() const { return m_loop; }
     static constexpr const char* kPauseReason = "editor";
 
+    /// Project Settings > Time: the hitch clamp, the physics catch-up, the starting speed and the extra clocks
+    /// the next Play uses (and the loop uses right away). The editor calls it when a project opens and when
+    /// the page changes.
+    void SetTimeSettings(const TimeSettings& t);
+    const TimeSettings& timeSettings() const { return m_timeSettings; }
+    /// Where the project's time settings live (the editor points it at its project settings). Play and
+    /// every Play frame take the latest from it, so editing the page or opening another project applies at once.
+    const TimeSettings* timeSettingsSource = nullptr;
+
     // ---- Debug controls on the Play loop (the toolbar's slow-motion and "run N frames" buttons) --------
     /// The slow-motion / fast-forward factor of the Play loop (1 = normal). It is a debugging aid, not a
     /// game setting: only the editor's frame time is scaled, the game's own Time.timeScale is untouched.
@@ -456,6 +466,7 @@ private:
     NetworkManager* m_net = nullptr; // component on a scene GameObject
 
     GameLoop m_loop;   // the Play loop (set up in the constructor)
+    TimeSettings m_timeSettings;
 
     // Undo: the history, the scene text at the last boundary, and the step that is open (see PushUndo).
     std::unique_ptr<UndoStack> m_stack = std::make_unique<UndoStack>();

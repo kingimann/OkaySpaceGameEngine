@@ -19,6 +19,7 @@
 #include "HierarchyContextModel.hpp"
 #include "SceneAddMenu.hpp"
 #include "MenuEntriesUI.hpp"          // draws those lists with Dear ImGui
+#include "TimeSettingsUi.hpp"          // Edit > Project Settings > Time (tests/test_time_upgrade.cpp checks the data side)
 #include "ProjectState.hpp"           // project settings + build settings: the files inside the project folder
 #include "okay/Input/PlatformGamepad.hpp"   // controller -> Input (sticks, triggers, rumble), via okay::platform
 #include "okay/Input/PlatformKeys.hpp"      // F-keys, Tab, navigation block, left / right modifiers
@@ -4600,6 +4601,7 @@ std::string Build(EditorState& ed, const std::string& outDir,
         cf << "development=" << (opt.developmentBuild ? 1 : 0) << "\n";
         cf << "physics_hz=" << g_project.physicsHz << "\n";
         cf << "physics_smooth=" << (g_project.smoothPhysics ? 1 : 0) << "\n";
+        g_project.time.WriteLines(cf);   // Project Settings > Time (only what differs from the defaults)
         cf << "lock_cursor=" << (opt.lockCursor ? 1 : 0) << "\n";
         cf << "cursor_lock=" << (opt.cursorLockMode == 2 ? "confined" : opt.cursorLockMode == 1 ? "locked" : "none") << "\n";
         cf << "perpixel=" << (opt.perPixelLighting ? 1 : 0) << "\n";
@@ -20319,6 +20321,9 @@ void DrawProjectSettings(EditorState& ed) {
                 ed.scene().SetSmoothPhysics(g_project.smoothPhysics);
                 ed.dirty = true; ConsoleLog("Applied project physics to the scene");
             }
+        }
+        if (ImGui::CollapsingHeader("Time", ImGuiTreeNodeFlags_DefaultOpen)) {
+            if (oked::DrawTimeSettings(g_project.time)) { ed.SetTimeSettings(g_project.time); SaveProjectSettings(); }
         }
         if (ImGui::CollapsingHeader("Rendering", ImGuiTreeNodeFlags_DefaultOpen)) {
             ImGui::SliderFloat("Ambient##ps", &g_project.ambient, 0.0f, 1.0f);
@@ -49526,6 +49531,7 @@ void DrawGameView(EditorState& ed) {
         if ((ov.stamp < 0.0 || nowT - ov.stamp > 0.25 || nowT < ov.stamp) && !g_gameFiber.Suspended()) {
             ov.stamp = nowT;
             ov.perf = ed.PerfLines();
+            if (playingNow) for (const std::string& tl : okay::FrameOverlay::TimeLines(ed.playLoop(), &ed.scene().scheduler())) ov.perf.push_back(tl);   // fixed step, clocks, next timer
             if (playingNow && okay::Prof().enabled)   // which system eats the frame (physics, scripts, animation, ...)
                 for (const std::string& sl : okay::SystemCost::Lines(okay::Prof())) ov.perf.push_back(sl);
             if (!playingNow) {
@@ -51736,6 +51742,7 @@ int main(int argc, char** argv) {
                     s_refreshHz = (float)winSeam->RefreshRateHz();   // 0 when unknown
                     s_refreshAge = 120;
                 }
+                ed.timeSettingsSource = &g_project.time;   // Project Settings > Time: Play and the Play loop read it
                 if (ed.isPlaying()) {
                     if (!ed.playTick) ed.playTick = [&ed](float gdt) { TickGame(ed, gdt); };   // the Play loop's update (debugger fiber aware)
                     if (!ed.onRunFramesDone) ed.onRunFramesDone = [] { g_paused = true; };   // "Run N frames" ended: the Pause button follows the loop's pause

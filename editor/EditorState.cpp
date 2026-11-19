@@ -1,3 +1,4 @@
+#include "okay/Core/Clock.hpp"
 #include "okay/Net/Matchmaker.hpp"
 #include "okay/Input/InputRuntime.hpp"
 #include "okay/Net/NetworkManager.hpp"
@@ -54,6 +55,7 @@ EditorState::EditorState() : m_scene("Untitled") {
     // The Play loop: the player's frame clamp (0.1 s), and the scene tick as its update.
     GameLoop::Options lo;
     lo.maxDelta = 0.1f;
+    m_timeSettings.ApplyToLoop(lo, Time::FixedDeltaTime());   // the defaults: the same 0.1 s clamp and 1/3 s catch-up as always
     m_loop.SetOptions(lo);
     m_loop.OnUpdate = [this](float dt) {
         const bool editorPaused = paused();
@@ -1108,13 +1110,17 @@ EditorState::NewProjectResult EditorState::CreateProject(const std::string& root
 }
 
 void EditorState::Play() {
-    if (m_playing || !m_levels.empty()) return;   // a prefab is open: there is no game to run (PlayBlockedReason says why)
+    if (m_playing || !m_levels.empty()) return;
+    if (timeSettingsSource && !(*timeSettingsSource == m_timeSettings)) SetTimeSettings(*timeSettingsSource);   // a prefab is open: there is no game to run (PlayBlockedReason says why)
     SyncHistory();   // close the open undo step: what Play changes is thrown away and never recorded
     // SyncHistory() above left m_known equal to the scene's text right now (it serializes the scene to find out what
     // changed), so the snapshot is that text: serializing a second time cost as much again on a big scene.
     m_snapshot = m_known;                              // remember edit state
     m_playPrint = Fingerprint(m_snapshot);            // what "unsaved changes" means while the game runs
     m_dirtyAtPlay = dirty;
+    TimeSettings usedTime = m_timeSettings;
+    usedTime.Clamp();
+    Scene::SetProjectPhysicsCatchUp(usedTime.maxCatchUpSeconds, usedTime.spreadCatchUp);   // Project Settings > Time
     m_scene.UseFixedStepPhysics(true);   // physics as the game runs it: fixed steps, drawn smoothly
     InputRuntime::UseProjectAsset(m_projectDir);   // a fresh set of local players on the project's input asset (or the default)
     Character::SetAssetBaseDir(m_projectDir);   // a Character's project-relative clips file
@@ -1132,6 +1138,8 @@ void EditorState::Play() {
     // at zero and SmoothDelta's history forgotten.
     m_loop.BeginSession();
     m_loop.SetDebugTimeScale(1.0f);   // slow motion is a per-session debugging aid (BeginSession keeps it by design)
+    usedTime.ApplyClocks(ClockSet::Global());   // Project Settings > Time: the extra clocks and the speed the game starts at
+    Time::SetTimeScale(usedTime.timeScale);
     // Audio files named on AudioSources play in Play mode without pressing Load.
     {
         std::vector<std::string> missing;
@@ -1183,6 +1191,15 @@ void EditorState::Stop() {
     InputRuntime::Reset();   // the local players belonged to the session that ended
 }
 
+void EditorState::SetTimeSettings(const TimeSettings& t) {
+    if (&t != &m_timeSettings) m_timeSettings = t;   // kept as given, so it compares equal to its source; used clamped
+    TimeSettings used = m_timeSettings;
+    used.Clamp();
+    GameLoop::Options o = m_loop.options();
+    used.ApplyToLoop(o, Time::FixedDeltaTime());
+    m_loop.SetOptions(o);
+}
+
 void EditorState::Tick(float dt) {
     m_scene.runScripts = m_playing;   // edit-mode flushes (UI tools, previews) never run game code
     if (m_playing) {
@@ -1193,6 +1210,7 @@ void EditorState::Tick(float dt) {
 
 bool EditorState::PlayFrame(double realSeconds, bool smooth, float refreshHz) {
     if (!m_playing) return false;   // editing never steps Time
+    if (timeSettingsSource && !(*timeSettingsSource == m_timeSettings)) SetTimeSettings(*timeSettingsSource);   // the page was edited while playing
     GameLoop::Options o = m_loop.options();
     if (o.smoothDelta != smooth || o.refreshHz != refreshHz) { o.smoothDelta = smooth; o.refreshHz = refreshHz; m_loop.SetOptions(o); }
     // The first frame of a session measures the click frame: Play()'s own work (snapshot, audio loading, validation)

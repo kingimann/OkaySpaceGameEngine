@@ -392,6 +392,13 @@ public:
     /// The most frame time physics catches up on in one frame, so a long hitch
     /// can't snowball into ever more steps.
     float maxPhysicsCatchUp = 1.0f / 3.0f;
+    /// What happens to the time a hitch leaves over (more than maxPhysicsCatchUp). false: it is dropped (the
+    /// game falls behind real time and never owes it). true: up to one second of it is kept and paid back
+    /// at the most steps one frame may run, so the game catches up a little fast after a hitch.
+    bool spreadPhysicsCatchUp = false;
+    /// What Play and a built game start from for the two above (Project Settings > Time). Applied to every
+    /// scene that turns fixed-step physics on after this call; a scene that sets its own keeps it.
+    static void SetProjectPhysicsCatchUp(float seconds, bool spread);
     /// Draw rigidbodies part way between their last two physics poses, so motion
     /// stays smooth when the frame rate and the physics rate differ. The player
     /// and the editor's Play mode turn it on; a body moved by game code jumps

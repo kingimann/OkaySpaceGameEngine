@@ -26,6 +26,8 @@
 #include "okay/Scene/EnsureCamera.hpp"
 #include "okay/Core/SystemCost.hpp"       // F3 second page: ms per system
 #include "okay/Core/FrameOverlay.hpp"     // the F3 overlay text (shared with the editor)
+#include "okay/Core/TimeSettings.hpp"     // Project Settings > Time: hitch clamp, catch-up, clocks, unfocused cap
+#include "okay/Core/FramePacing.hpp"       // FrameLimiter: the frame rate cap (sleep, then spin to the deadline)
 #include "okay/Core/GameLoop.hpp"        // the per-frame driver (clamp, smoothing, Time, update, quit)
 #include "okay/Net/DedicatedServer.hpp"
 #if !defined(_WIN32)
@@ -1326,6 +1328,7 @@ int main(int argc, char** argv) {
         std::vector<std::string> scenes;
         // Presentation.
         std::string icon;          // window icon PNG (in the Data folder)
+        okay::TimeSettings time;   // the time_ lines of game.okayconfig (Project Settings > Time)
         bool runInBackground = true;
         bool fullscreenToggle = true;    // Alt+Enter / F11 switches fullscreen
         bool muteOnFocusLoss = false;
@@ -1399,6 +1402,7 @@ int main(int argc, char** argv) {
             else if (k == "startup")    cfg.startup = v;
             else if (k == "scene")      cfg.scenes.push_back(v);
             else if (k == "icon")           cfg.icon = v;
+            else if (cfg.time.ParseLine(k, v)) {}
             else if (k == "run_background") cfg.runInBackground = std::atoi(v.c_str()) != 0;
             else if (k == "fullscreen_toggle") cfg.fullscreenToggle = std::atoi(v.c_str()) != 0;
             else if (k == "mute_unfocused") cfg.muteOnFocusLoss = std::atoi(v.c_str()) != 0;
@@ -1551,6 +1555,7 @@ int main(int argc, char** argv) {
 
     Scene scene("Game");
     if (cfg.sawPhysics) okay::Scene::SetProjectPhysicsRate(cfg.physicsHz, cfg.smoothPhysics);
+    okay::Scene::SetProjectPhysicsCatchUp(cfg.time.maxCatchUpSeconds, cfg.time.spreadCatchUp);   // Project Settings > Time
     scene.UseFixedStepPhysics(true);   // same physics at any frame rate, drawn smoothly
     std::string err;
     // Development build: write <game>.log (see shared/DevLog.hpp). Release builds write nothing.
@@ -1820,11 +1825,14 @@ int main(int argc, char** argv) {
     okay::GameLoop::Options loopOpt;
     loopOpt.maxDelta = 0.1f;
     loopOpt.smoothDelta = cfg.smoothDt;
+    cfg.time.ApplyToLoop(loopOpt, okay::Time::FixedDeltaTime());   // hitch clamp and catch-up from Project Settings > Time
     okay::GameLoop loop(loopOpt);
     loop.OnUpdate = [&](float dt) { if (loopTick) scene.Update(dt); };
     // A new session: no stale pause or quit from a prior scene, and the time scale back to 1 (Game::Reset
     // kept a scale a script had left, so a scene loaded after one that froze the game started frozen).
     loop.BeginSession();
+    cfg.time.ApplyClocks(okay::ClockSet::Global());   // the extra clocks of Project Settings > Time
+    okay::Time::SetTimeScale(cfg.time.timeScale);     // the speed the game starts at (1 unless the project says otherwise)
     scene.Start();
 
     // Open every connected game controller (up to Input::kMaxGamepads, one per player).
@@ -2822,6 +2830,7 @@ int main(int argc, char** argv) {
         // editor's Game view shows the same lines.
         if (g_statsUI) {
             std::vector<std::string> overlayLines = okay::FrameOverlay::Lines(loop);
+            for (const std::string& tl : okay::FrameOverlay::TimeLines(loop, &scene.scheduler())) overlayLines.push_back(tl);   // fixed step, clocks, next timer
             for (const std::string& pl : okay::PlayerDebug::Lines(scene)) overlayLines.push_back(pl);   // the local player's ground, slope and speed
             std::vector<float> plot = okay::FrameOverlay::RecentFps(loop.Stats(), 90);   // chronological
             if (g_statsPage == 1) {   // page 2: which system eats the frame (ms each) + the last 120 frame times
@@ -2903,13 +2912,16 @@ int main(int argc, char** argv) {
         renderer->Present();
         okay::Prof().EndFrame((okay::platform::PerfCounter() - fStart) * 1000.0 / (double)okay::platform::PerfFrequency());
 
-        // Optional frame-rate cap: sleep the remainder of the frame budget.
-        if (cfg.fpsCap > 0) {
-            double budget = 1.0 / cfg.fpsCap;
-            double freq = (double)okay::platform::PerfFrequency();
-            double elapsed = (okay::platform::PerfCounter() - fStart) / freq;
-            double remain = budget - elapsed;
-            if (remain > 0.0015) okay::platform::DelayMs((Uint32)((remain - 0.0005) * 1000.0));
+        // Frame rate cap: sleep most of the rest of the frame, then wait out the last 1.5 ms, and carry the
+        // deadline so the average rate is the cap exactly (the old whole-millisecond sleep ran a 60 fps cap
+        // at 62.5). With vsync on a cap at or above the refresh rate is left to vsync, and an inactive
+        // window may be held to a lower rate (Project Settings > Time > "When the window is not active").
+        {
+            static okay::FrameLimiter s_limiter;
+            const double want = okay::FrameLimiter::EffectiveTargetFps((double)cfg.fpsCap, cfg.vsync, (double)s_refreshHz,
+                                                                      windowFocused, (double)cfg.time.unfocusedFps);
+            if (want != s_limiter.TargetFps()) { s_limiter.SetTargetFps(want); s_limiter.Reset(); }
+            s_limiter.EndFrame();
         }
     };
 

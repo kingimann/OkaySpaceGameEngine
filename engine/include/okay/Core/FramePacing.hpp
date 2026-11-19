@@ -109,6 +109,21 @@ public:
     /// Start over (after a pause).
     void Reset() { m_started = false; }
 
+    /// The frame rate to hold, from the cap, vsync and focus. 0 = do not limit.
+    ///   - `capFps` <= 0 means no cap of its own.
+    ///   - With vsync on and the display's refresh rate known, a cap at or above the refresh rate is dropped:
+    ///     vsync already paces the frames, and a second limiter fighting it only adds jitter.
+    ///   - When the window is not active and `unfocusedFps` > 0, the rate is held to that (or the cap if
+    ///     that is lower): the game keeps running but stops burning the machine (a power-saving mode).
+    /// Not a number or negative values count as 0.
+    static double EffectiveTargetFps(double capFps, bool vsync, double refreshHz, bool focused, double unfocusedFps) {
+        auto ok = [](double v) { return std::isfinite(v) && v > 0.0; };
+        double target = ok(capFps) ? capFps : 0.0;
+        if (target > 0.0 && vsync && ok(refreshHz) && target >= refreshHz - 0.5) target = 0.0;
+        if (!focused && ok(unfocusedFps)) target = target > 0.0 ? std::min(target, unfocusedFps) : unfocusedFps;
+        return target;
+    }
+
 private:
     double m_target = 0.0;   // seconds per frame; 0 = off
     bool m_started = false;

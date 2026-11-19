@@ -21,6 +21,7 @@
 #include <string>
 #include <vector>
 #include "okay/Core/Log.hpp"
+#include "okay/Core/TimeSettings.hpp"
 #include "okay/Scene/ProjectLists.hpp"
 #include "../shared/ProjectCreate.hpp"
 
@@ -370,6 +371,8 @@ struct ProjectSettings {
     bool  splashAccentOverride = false;
     float splashAccent[3] = {0.235f, 0.475f, 0.800f};
     bool  splashShowBar   = true;
+    // ---- Time (Edit > Project Settings > Time): hitch clamp, catch-up, start speed, clocks (okay::TimeSettings) ----
+    okay::TimeSettings time;
 };
 
 /// The text of project.okayproj for `s`, then `lists`: the tag list and layer names lines (ProjectLists::Write()).
@@ -393,6 +396,7 @@ inline std::string WriteProjectSettings(const ProjectSettings& s, const std::str
     f << "splash_bg_top=" << v3(s.splashBgTop) << "\n";
     f << "splash_bg_bot=" << v3(s.splashBgBot) << "\n";
     f << "splash_accent=" << v3(s.splashAccent) << "\n";
+    s.time.WriteLines(f);   // only the lines that differ from the defaults
     f << lists;
     return f.str();
 }
@@ -475,6 +479,7 @@ inline bool ApplyProjectSettingLine(ProjectSettings& s, const std::string& k, co
     else if (k == "splash_bg_top") floats(s.splashBgTop, 3, 0.0f, 1.0f);
     else if (k == "splash_bg_bot") floats(s.splashBgBot, 3, 0.0f, 1.0f);
     else if (k == "splash_accent") floats(s.splashAccent, 3, 0.0f, 1.0f);
+    else if (s.time.ParseLine(k, v)) {}   // time_scale, time_max_frame, time_catch_up, time_policy, time_unfocused_fps, time_clock
     else return false;
     return true;
 }

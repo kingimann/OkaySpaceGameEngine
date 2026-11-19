@@ -649,10 +649,21 @@ bool g_projectPhysicsSmooth = true;
 bool g_projectPhysicsSet = false;
 }
 
+namespace { float g_projectCatchUp = 0.0f; bool g_projectCatchUpSpread = false; bool g_projectCatchUpSet = false; }
+
+void Scene::SetProjectPhysicsCatchUp(float seconds, bool spread) {
+    g_projectCatchUpSet = true;
+    g_projectCatchUp = (std::isfinite(seconds) && seconds > 0.0f) ? std::min(seconds, 5.0f) : 1.0f / 3.0f;
+    g_projectCatchUpSpread = spread;
+}
+
 void Scene::SetProjectPhysicsRate(float stepsPerSecond, bool smooth) {
     g_projectPhysicsSet = true;
     g_projectPhysicsHz = stepsPerSecond;
     g_projectPhysicsSmooth = smooth;
+    // One fixed step for everyone: Time::FixedDeltaTime() (what GameLoop's fixed clock, FixedTimestep and
+    // scripts read) is the physics step, not a separate 50 Hz that only matched by luck.
+    if (std::isfinite(stepsPerSecond) && stepsPerSecond > 0.0f) Time::SetFixedDeltaTime(1.0f / std::min(std::max(stepsPerSecond, 1.0f), 500.0f));
 }
 
 void Scene::SetPhysicsStepsPerSecond(float stepsPerSecond) {
@@ -675,6 +686,7 @@ void Scene::UseFixedStepPhysics(bool on) {
         interpolatePhysics = false;
         return;
     }
+    if (g_projectCatchUpSet) { maxPhysicsCatchUp = g_projectCatchUp; spreadPhysicsCatchUp = g_projectCatchUpSpread; }
     if (g_projectPhysicsSet) {
         SetPhysicsStepsPerSecond(g_projectPhysicsHz);
         interpolatePhysics = g_projectPhysicsSmooth && fixedTimeStep > 0.0f;
@@ -709,20 +721,29 @@ void Scene::StepPhysics(float deltaTime) {
         for (Rigidbody3D* rb : bodies3) if (rb->transform) RestorePose(rb->transform, rb->poseHistory);
         for (Rigidbody2D* rb : bodies2) if (rb->transform) RestorePose(rb->transform, rb->poseHistory);
     }
-    m_physicsAcc = std::min(m_physicsAcc + std::max(0.0f, deltaTime), std::max(step, maxPhysicsCatchUp));
+    // Drop (the default): what is owed beyond maxPhysicsCatchUp is lost. Spread: up to a second more is kept and
+    // paid back, but a frame still runs at most as many steps as maxPhysicsCatchUp holds, so a hitch is paid
+    // over several frames instead of one long one.
+    const float catchUp = std::max(step, maxPhysicsCatchUp);
+    const int maxSteps = std::max(1, (int)std::ceil(catchUp / step - 1e-4f));
+    const float accLimit = spreadPhysicsCatchUp ? step * (float)maxSteps + 1.0f : catchUp;
+    m_physicsAcc = std::min(m_physicsAcc + std::max(0.0f, deltaTime), accLimit);
     m_physicsSteps = 0;
-    while (m_physicsAcc >= step) {
+    while (m_physicsAcc >= step && (!spreadPhysicsCatchUp || m_physicsSteps < maxSteps)) {
         if (interpolatePhysics) {
             for (Rigidbody3D* rb : bodies3) if (rb->transform) BeginStep(rb->transform, rb->poseHistory);
             for (Rigidbody2D* rb : bodies2) if (rb->transform) BeginStep(rb->transform, rb->poseHistory);
         }
+        Time::BeginFixedStep();   // Time::InFixedStep() is true while the scene runs a fixed step
         RunFixedUpdate(step);
         { OKAY_PROFILE("Physics.2D"); m_physics.Step(*this, step); }
         { OKAY_PROFILE("Physics.3D"); m_physics3d.Step(*this, step); }
+        Time::EndFixedStep(0.0f);   // 0: only clear the flag; Time::FixedTime() is the loop's clock (GameLoop) and must not count twice
         m_physicsAcc -= step;
         ++m_physicsSteps;
     }
-    m_physicsAlpha = m_physicsAcc / step;
+    m_physicsAlpha = std::min(m_physicsAcc / step, std::nextafter(1.0f, 0.0f));
+    Time::SetFixedAlpha(m_physicsAlpha);   // the alpha of the steps the scene really ran, not a loop's own
     if (interpolatePhysics) {
         const bool stepped = m_physicsSteps > 0;
         for (Rigidbody3D* rb : bodies3) if (rb->transform) ShowPose(rb->transform, rb->poseHistory, stepped, m_physicsAlpha);

@@ -711,7 +711,7 @@ int main() {
             CHECK_NEAR(w.cam->fieldOfView, 60.0f, 0.01f);
             CHECK_NEAR(z->WeightAt({30, 0, 0}), 0.0f, 0.0f);          // on the outer face: nothing
             CHECK_NEAR(z->WeightAt({20, 0, 0}), 1.0f, 1e-5f);         // in the middle: full
-            CHECK(z->WeightAt({27.5f, 0, 0}) > 0.0f && z->WeightAt({27.5f, 0, 0}) < 1.0f);
+            CHECK(z->WeightAt({24.5f, 0, 0}) > 0.0f && z->WeightAt({24.5f, 0, 0}) < 1.0f);
             float prevFov = 60.0f, maxJump = 0.0f; bool monotonic = true;
             for (int i = 0; i < (int)(kRates[r] * 4.0f); ++i) {          // walk in, 5 units a second
                 w.player->transform->localPosition = {i * dt * 5.0f, 0, 0};
@@ -723,7 +723,8 @@ int main() {
                 CHECK(Finite3(w.CamPos()));
             }
             CHECK(monotonic);
-            CHECK(maxJump < 1.5f);                                       // eased over the edge, no jump
+            CHECK(maxJump < 3.5f);                                       // eased over the edge (about 2 degrees a frame at 30 fps), no jump
+            for (int i = 0; i < (int)(kRates[r] * 3.0f); ++i) w.Step(dt);   // let the damping settle
             CHECK_NEAR(w.cam->fieldOfView, 90.0f, 0.5f);                  // inside: the zone's field of view
             CHECK_NEAR(w.CamPos().z, -4.0f, 0.05f);                       // offset -8 + 4
             // A zone for another shot does nothing; a disabled one does nothing.

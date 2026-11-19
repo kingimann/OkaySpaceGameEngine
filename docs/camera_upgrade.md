@@ -101,6 +101,18 @@ Run on Linux, headless, a Release build with `-O0`, on the branch head. All pass
 The editor (`editor/main.cpp`) was syntax-checked with the compiler (`-fsyntax-only`, no errors) but not linked or run.
 
 
+## Behaviour changes to put in the release notes
+
+* **Cameras now face what they look at.** A virtual camera with a Look At target (or an Orbit / FreeLook rig) used to aim the opposite way, because
+  the shot turned its +Z toward the target but a camera looks down -Z. Saved scenes with such a camera now look at the target. Checked
+  `examples/`: only the two new `examples/camera/` scenes use a Look At or Orbit virtual camera, so no older example changes. No opt-out.
+  Changelog sentence: "Camera shots (virtual cameras) that look at something now really face it; before they pointed the other way."
+* **The brain lets a playing cutscene have the camera** ("Let cutscenes take over", on by default) and blends back when it ends. Switch it off on the
+  Cinemachine Brain to keep the old behaviour.
+* The hit flash is added when drawing (`RenderSettings::vignettePulse`, never saved); collision and see-through measure from the real target, not the
+  look-ahead point; things made see-through are restored whenever the setting, the shot or the component goes away, and a scene saved meanwhile stores
+  the original alpha (`MeshRenderer::fadeBaseAlpha`, runtime only).
+
 ## Unverified
 
 * Windows: nothing was run. The editor was not built or opened (Linux, no screen), so the menu entries, Inspector panels, gizmo and the

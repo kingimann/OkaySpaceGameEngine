@@ -10,6 +10,7 @@
 // its collider's own friction and bounciness exactly as before, so old scenes load and play unchanged.
 //
 // Written from this engine's PhysicsMaterialAsset.hpp and the collider classes; mass = density x volume is the textbook rule.
+#include "okay/Core/Paths.hpp"
 #include "okay/Physics/Collider2D.hpp"
 #include "okay/Physics/Collider3D.hpp"
 #include "okay/Physics/PhysicsMaterialAsset.hpp"
@@ -30,7 +31,11 @@ public:
 
     /// The material now in use (nullptr when the name is unknown: the colliders keep what they had).
     const PhysicsMaterialData* Data() const {
-        if (m_name != material || (!m_data && !material.empty())) { m_name = material; m_data = PhysicsMaterials::Find(material); }
+        if (m_name != material || (!m_data && !material.empty())) {
+            m_name = material; m_data = PhysicsMaterials::Find(material);
+            // An unknown name may be a project file: look through the project's asset folder once (editor and player alike).
+            if (!m_data && !material.empty() && !ScannedOnce()) { ScannedOnce() = true; PhysicsMaterials::ScanFolder(Paths::AssetBaseDir()); m_data = PhysicsMaterials::Find(material); }
+        }
         return m_data;
     }
     std::string GetMaterial() const { return material; }
@@ -84,7 +89,10 @@ public:
     void Start() override { Apply(); }
     void Update(float) override { if (m_applied != material) Apply(); }   // the Inspector (or a script) changed the name
 
+    /// Forget that the project folder was scanned (after the asset folder changes, and in tests).
+    static void RescanNextTime() { ScannedOnce() = false; }
 private:
+    static bool& ScannedOnce() { static bool b = false; return b; }
     std::vector<Collider3D*> Colliders3D() const { return includeChildren ? gameObject->GetComponentsInChildren<Collider3D>() : gameObject->GetComponents<Collider3D>(); }
     std::vector<Collider2D*> Colliders2D() const { return includeChildren ? gameObject->GetComponentsInChildren<Collider2D>() : gameObject->GetComponents<Collider2D>(); }
     mutable std::string m_name;

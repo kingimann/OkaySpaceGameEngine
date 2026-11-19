@@ -216,5 +216,20 @@ int main() {
         World w; w.Floor(nullptr); GameObject* b = w.Box({0, 0.5f, 0}); R(b)->velocity = {3, 0, 0}; R(b)->friction = 0.5f; w.Run(4.0f);
         CHECK(P(b).x > 0.5f && P(b).x < 1.3f && std::isfinite(P(b).x));
     }
+    // ---- A project material is found by name from the asset folder without any startup call (editor and player).
+    {
+        namespace fs = std::filesystem;
+        const fs::path dir = fs::temp_directory_path() / "okay_physmat_scan";
+        std::error_code ec; fs::remove_all(dir, ec); fs::create_directories(dir / "Materials", ec);
+        PhysicsMaterialData d; d.name = "ScanGel"; d.bounciness = 0.42f;
+        CHECK(PhysicsMaterials::SaveFile(d, (dir / "Materials" / "gel.okayphysmat").string()));
+        Paths::SetAssetBaseDir(dir.string());
+        PhysicsSurface::RescanNextTime();
+        World w; GameObject* o = w.Box({0, 1, 0});
+        auto* ps = o->AddComponent<PhysicsSurface>(); ps->material = "ScanGel";
+        CHECK(ps->Data() != nullptr);
+        CHECK(ps->SetMaterial("ScanGel") && o->GetComponent<BoxCollider3D>()->bounciness > 0.4f);
+        PhysicsMaterials::ClearProject(); Paths::SetAssetBaseDir(""); fs::remove_all(dir, ec);
+    }
     TEST_MAIN_RESULT();
 }

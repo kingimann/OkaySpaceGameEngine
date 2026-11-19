@@ -96,7 +96,11 @@ steps, each twice); `ecs_bench` 5 checks 0 failures. Existing tests re-run on th
 `scene_graph_wave5`, `scene_pointer`, `scene_ids_prefabs`, `scene_load_pool`, `scene_spawn`, `scene_defaults`,
 `core_events_ecs`, `layers_tags_project`. The full test suite was NOT run (the machine was too loaded).
 
-AddressSanitizer / UBSan: not run yet (see below).
+**AddressSanitizer + UBSan + LeakSanitizer** (whole engine built with `-fsanitize=address,undefined -O1`; the two biggest files,
+`SceneSerializer.cpp` and `OkayScriptVM.cpp`, at `-O0` to fit in memory): `ecs_refs` and `ecs_fuzz` both ran clean (0 failures, no
+sanitizer report, no leak report). To repeat: configure a second build tree with
+`-DCMAKE_CXX_FLAGS="-fsanitize=address,undefined -fno-omit-frame-pointer -O1" -DCMAKE_EXE_LINKER_FLAGS="-fsanitize=address,undefined"`
+and build `test_ecs_fuzz test_ecs_refs`.
 
 ## Not done (honest list)
 

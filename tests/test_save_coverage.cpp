@@ -64,7 +64,7 @@ using namespace okay;
     X(UISlotGrid) X(UIStepper) X(UITabs) X(UITextBind) X(UITheme) X(UIToast) X(UIToastItem) X(UIToggle) \
     X(TouchButton) X(TouchDPad) X(VirtualJoystick) \
     X(UITooltip) X(VehicleController) X(VehicleController2D) X(VehicleSeat) X(VirtualCamera) X(VisualScriptComponent) \
-    X(VoxelDigger) X(VoxelTerrain) X(Volume) X(Water) X(WeatherRig) X(WetnessStat) X(WorldSpaceUI) X(WorldStreamer) \
+    X(VoxelDigger) X(VoxelTerrain) X(Volume) X(Water) X(WeatherRig) X(WindZone) X(WindDrag) X(WindSway) X(WindAmbience) X(WetnessStat) X(WorldSpaceUI) X(WorldStreamer) \
     X(WorldUI)
 
 namespace {

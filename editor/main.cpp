@@ -20,6 +20,7 @@
 #include "SceneAddMenu.hpp"
 #include "MenuEntriesUI.hpp"          // draws those lists with Dear ImGui
 #include "ProjectState.hpp"           // project settings + build settings: the files inside the project folder
+#include "BuildSettingsWindow.hpp"     // the Build Settings window: pages, search, summary, checks, history (own files)
 #include "okay/Input/PlatformGamepad.hpp"   // controller -> Input (sticks, triggers, rumble), via okay::platform
 #include "okay/Input/PlatformKeys.hpp"      // F-keys, Tab, navigation block, left / right modifiers
 #include "FpHandsWindow.hpp"
@@ -50,6 +51,7 @@
 #include <cstdio>
 #include "LevelTools.hpp"              // foliage brush, terrain layers, decals, cables, measuring, orthographic views
 #include "SplineTools.hpp"             // splines: Scene-view editing, inspectors, line / trail drawing
+#include "WindTools.hpp"               // wind: zones, arrows, inspector rows, menus, Lighting > Wind
 #include "VolumeTools.hpp"             // volumes: Scene-view shapes, handles, draw tool, inspector, menus
 #include "okay/Components/HoldPrompt.hpp"
 #include "okay/Components/LocalPlayerInput.hpp"
@@ -2909,6 +2911,7 @@ int   g_buildPlatform = 0;   // 0 = Desktop (Windows), 1 = Web (WASM/WebGL), 2 =
 
 // BuildScene, BuildSettings, BuildProfile and ProjectSettings live in ProjectState.hpp (with their file text).
 BuildSettings g_build;
+std::uintmax_t g_buildDryBytes = 0;   // the size the last Dry Run reported (shown in the Build Settings summary)
 
 // ---- Build profiles -------------
 // The full Build Settings are kept under named profiles in the project's .okay/build_profiles.cfg, so
@@ -4296,6 +4299,10 @@ struct Options {
     int  buildNumber = 1;
     std::string archiveName = "{name}-{version}-{platform}";
     std::vector<std::string> sceneList;     // Scenes In Build, in order (empty = the open scene)
+    okay::buildpipe::ExtraConfig extra;     // Build Settings > Game: speed, start volumes, language, logging, environment (game.okayconfig)
+    std::string excludeList;                // Build Settings > Output > Files left out of the build ("Assets/a.png;Assets/Old/")
+    bool allowCommands = false;             // Build Settings > Advanced: run the two commands below (off = never)
+    std::string preCommand, postCommand;    // run before the build (a failure stops it) / after a good build
     // ---- Player presentation ----
     std::string iconPath;      // window icon PNG (copied into the build)
     std::string bundleId = "com.okayspace.game";
@@ -4396,6 +4403,18 @@ std::string Build(EditorState& ed, const std::string& outDir,
             return "Refusing to build into your home folder. Pick a dedicated build folder.";
         if (!proj.empty() && (dir == proj || dir == proj / "Assets"))
             return "Refusing to build into the project/Assets folder. Pick a separate build folder so game files stay clean.";
+    }
+
+    // Build Settings > Advanced: the command to run BEFORE the build. Only when "Allow build commands" is on, never in a
+    // dry run. A command that fails (a non-zero exit code) stops the build before anything is written.
+    oked::bsm::CommandVars cmdVars;
+    cmdVars.output = dir.string(); cmdVars.name = gameName; cmdVars.version = opt.version; cmdVars.build = std::to_string(opt.buildNumber); cmdVars.project = ed.projectDir();
+    {
+        const std::string pre = oked::bsm::CommandToRun(opt.preCommand, opt.allowCommands, opt.dryRun, cmdVars);
+        if (!pre.empty()) {
+            const int rc = oked::bsm::RunCommandLine(pre, ed.projectDir());
+            if (rc != 0) return "The command before the build failed (exit code " + std::to_string(rc) + "): " + pre + ". Nothing was built.";
+        }
     }
 
     // The layout: <Name>.exe + <Name>_Data/ (Folder), exe + Data/ (Compact), or the Folder layout in one zip.
@@ -4548,6 +4567,14 @@ std::string Build(EditorState& ed, const std::string& outDir,
             unusedShipped += pa.bytes; ++unusedShippedCount;
         }
     }
+    if (!opt.excludeList.empty()) {   // Build Settings > Output: files the owner left out. A file a scene uses is warned about, not silently dropped.
+        std::vector<bp::ShippedAsset> keep;
+        for (const bp::ShippedAsset& a : walk.assets) {
+            if (!oked::bsm::IsExcluded(a.dest, opt.excludeList) && !oked::bsm::IsExcluded(a.ref, opt.excludeList)) { keep.push_back(a); continue; }
+            if (a.reason.rfind("asset stripping is off", 0) != 0) R.r.Warn("'" + a.dest + "' is left out of the build but a scene uses it: the game will not find it.");
+        }
+        walk.assets.swap(keep);
+    }
     int copied = 0;
     std::uintmax_t assetBytes = 0;
     for (const bp::ShippedAsset& a : walk.assets) {
@@ -4640,6 +4667,7 @@ std::string Build(EditorState& ed, const std::string& outDir,
             cf << "boot_accent=" << opt.bootAccent[0] << " " << opt.bootAccent[1] << " " << opt.bootAccent[2] << "\n";
         cf << "boot_bar=" << (opt.bootBar ? 1 : 0) << "\n";
         cf << "startup=game.okayscene\n";
+        cf << okay::buildpipe::WriteExtraConfig(opt.extra);   // nothing at the defaults, so old projects build the same config
         for (const std::string& s : sceneFiles) cf << "scene=" << s << "\n";
         if (opt.antiCheat) cf << "anticheat=" << okayac::ModeName((okayac::Mode)opt.antiCheat) << "\n";
         settingsText = cf.str();
@@ -4857,6 +4885,13 @@ std::string Build(EditorState& ed, const std::string& outDir,
     if (!rp.excluded.empty()) msg += "  " + std::to_string(rp.excluded.size()) + " unused project file(s) left out (" + human(rp.excludedBytes) + ").";
     if (R.missing) msg += "  WARNING: " + std::to_string(R.missing) + " referenced asset(s) not found and not copied.";
     if (!integrity.message.empty()) msg += "  (" + integrity.message + ")";
+    {   // Build Settings > Advanced: the command to run AFTER a good build (it cannot undo the build, so a failure is only reported)
+        const std::string post = oked::bsm::CommandToRun(opt.postCommand, opt.allowCommands, opt.dryRun, cmdVars);
+        if (!post.empty()) {
+            const int rc = oked::bsm::RunCommandLine(post, ed.projectDir());
+            msg += rc == 0 ? "  (ran your command after the build)" : "  WARNING: your command after the build failed (exit code " + std::to_string(rc) + ").";
+        }
+    }
     return msg;
 }
 
@@ -4896,6 +4931,8 @@ Options OptionsFromSettings(const BuildSettings& g, const ProjectSettings& pr) {
     o.bootAccentOverride = pr.splashAccentOverride; o.bootBar = pr.splashShowBar;
     o.layout = g.layout; o.stripAssets = g.stripAssets; o.compress = g.compress; o.zipAlso = g.zipAfter && g.layout != 2;
     o.buildNumber = g.buildNumber; o.archiveName = g.archiveName;
+    o.extra = oked::bsm::ExtraFrom(g); o.excludeList = g.excludeList;
+    o.allowCommands = g.allowBuildCommands; o.preCommand = g.preBuildCommand; o.postCommand = g.postBuildCommand;
     return o;
 }
 
@@ -7103,6 +7140,7 @@ static void DrawAutosaveMenuItems() {
 static void DrawSceneOverlayMenuItems(EditorState& ed) {
     ImGui::MenuItem("Colliders (gizmos)", nullptr, &g_showColliders);
     oked::DrawVolumeOverlayMenu([] { SaveSettings(); });
+    oked::DrawWindOverlayMenu([] {});
     if (ImGui::BeginMenu("Physics Debug")) {
         if (ImGui::MenuItem("Show physics (Scene + Game)", nullptr, &g_physDebug)) { ApplyPhysicsDebug(); SaveSettings(); }
         if (ImGui::IsItemHovered()) ImGui::SetTooltip("Draw colliders (green), triggers (blue), this frame's contact\npoints + normals (red) and query rays, also in the Game view\nwhile playing. Editor only - never in a build.");
@@ -7524,6 +7562,7 @@ static void DrawCreateSlot(EditorState& ed, const std::string& id, GameObject* p
         if (ImGui::IsItemHovered()) ImGui::SetTooltip("A curve of three points in front of the camera: roads, rails, fences, paths.");
         LevelCreateMenuItems(ed, created);                // Foliage Layer, Decal Projector, Cable
         oked::DrawVolumeGameObjectMenu(ed, created);      // Volume >
+        oked::DrawWindGameObjectMenu(ed, created);        // Environment > (wind)
     } else if (id == "create.ui") {
         // Widgets go under the scene's Canvas (made, plus an Event System, if
         // missing), or inside the selected panel; see DrawUIWidgetItems.
@@ -10455,6 +10494,10 @@ static void ProjectCtxFill(okaypb::ctx::State& st, const std::string& full, bool
     if (!isDir && g_pb) {
         st.tags = g_pb->LabelsOf(full);   // (just the tags: Info also walks the dependency graph)
         if (st.kind == okaypb::ctx::Kind::Scene) st.isStartScene = IsStartSceneFile(full);
+        else {   // "Exclude from Build" shows as "Include in Build" for a file already left out
+            std::error_code re; const std::string rel = std::filesystem::relative(std::filesystem::path(okaypb::Slash(full)), std::filesystem::path(g_pb->Root()).parent_path(), re).generic_string();
+            st.excludedFromBuild = !re && oked::bsm::IsExcluded(rel, g_build.excludeList);
+        }
     }
     if (isDir && g_pb) st.hasSubfolders = !g_pb->SubFolders(okaypb::Slash(full)).empty();
 }
@@ -11307,6 +11350,20 @@ void DrawProject(EditorState& ed) {
             return;
         }
         if (act == "scene:add") { MergeSceneIntoCurrent(ed, full); return; }
+        if (act == "build:exclude") {   // Build Settings > Output > Files left out of the build
+            std::error_code re; const std::string rel = fs::relative(fs::path(okaypb::Slash(full)), fs::path(ed.projectDir()), re).generic_string();
+            bool fits = true;
+            const std::string now = oked::bsm::ToggleExcluded(g_build.excludeList, rel, sizeof(g_build.excludeList), &fits);
+            if (re || rel.empty()) ConsoleLog("Could not work out this file's place in the project.", 1);
+            else if (!fits) ConsoleLog("The list of files left out of the build is full. Open Build Settings > Output and clear some.", 1);
+            else {
+                const bool added = oked::bsm::IsExcluded(rel, now);
+                std::snprintf(g_build.excludeList, sizeof(g_build.excludeList), "%s", now.c_str());
+                ConsoleLog(rel + (added ? " is left out of the build." : " is back in the build."));
+                SaveBuildLive(ed);
+            }
+            return;
+        }
         if (act == "scene:start") {   // first in Scenes In Build, ticked: the Scene Manager saves the list and a build starts here
             std::vector<oked::SceneBuildEntry> list = oked::SceneBuildSnapshot();
             std::error_code ce;
@@ -12893,6 +12950,7 @@ static void DrawLookSections(EditorState& ed) {
         if (AssetSlot("thundersound", w.thunderSound, "Clip", {".wav", ".ogg", ".mp3"})) ed.dirty = true;
         tip("Played a moment after each lightning strike in a storm (drag a clip from the Project panel).");
     }
+    oked::DrawWindSettingsSection(ed);   // Wind: the scene's wind object, with a live arrow
 }
 
 // Lighting: the scene's look (UI font, sky, fog, lightmaps) plus the global
@@ -18638,9 +18696,15 @@ void DrawFileDialogs(EditorState& ed) {
         if (!g_buildProfilesLoaded) { LoadBuildProfiles(ed); g_buildProfilesLoaded = true; }
     }
     ImGui::SetNextWindowPos(c, ImGuiCond_Appearing, ImVec2(0.5f, 0.5f));
-    ImGui::SetNextWindowSize(ImVec2(900, 640), ImGuiCond_Appearing);
-    ImGui::SetNextWindowSizeConstraints(ImVec2(720, 520), ImVec2(1600, 1200));
+    ImGui::SetNextWindowSize(ImVec2(980, 760), ImGuiCond_Appearing);
+    ImGui::SetNextWindowSizeConstraints(ImVec2(760, 600), ImVec2(1600, 1200));
     if (ImGui::BeginPopupModal("Build Settings")) {
+        oked::BuildWindowCtx bctx;   // what the new window code (BuildSettingsWindow.cpp) needs from this editor
+        bctx.settings = &g_build; bctx.name = g_buildNameBuf; bctx.nameCap = sizeof(g_buildNameBuf); bctx.dir = g_buildDirBuf; bctx.dirCap = sizeof(g_buildDirBuf);
+        bctx.platform = g_buildPlatform; bctx.projectDir = ed.projectDir(); bctx.openSceneSaved = !ed.path().empty();
+        for (const BuildScene& bs : g_build.scenes) if (bs.on) ++bctx.enabledScenes;
+        bctx.estimateBytes = g_buildDryBytes;
+        bctx.openFolder = [](const std::string& p) { extide::RevealInFiles(p); };
         if (g_buildPlatform == 3) ImGui::TextDisabled("Export a dedicated server:  the game with no window, plus server.cfg and deploy scripts");
         else ImGui::TextDisabled("Export a standalone game:  <Name>.exe + <Name>_Data/ (scenes, only the assets they use, StreamingAssets, build.json)");
         ImGui::Spacing();
@@ -18709,6 +18773,7 @@ void DrawFileDialogs(EditorState& ed) {
             }
             if (ed.projectDir().empty())
                 ImGui::TextDisabled("Open a project to save build profiles.");
+            oked::DrawBuildProfileExtras(bctx, g_buildProfiles, g_buildProfileSel, [&] { SaveBuildProfiles(ed); });   // Debug/Release start, duplicate, .okaybuild files
         }
         ImGui::Separator();
         if (g_build.width  < 320) g_build.width  = 320;
@@ -18759,44 +18824,18 @@ void DrawFileDialogs(EditorState& ed) {
         // ---- Sections: a sidebar on the left, the chosen page on the right ----
         static int s_buildSec = 0;
         if (const char* e = std::getenv("OKAY_UI_BUILDSEC")) { static bool once = false; if (!once) { once = true; s_buildSec = std::atoi(e); } }
-        static const char* kBuildSecs[] = {"Scenes", "Player", "Display", "Graphics", "Audio & Input", "Output"};
-        static const char* kBuildSecTips[] = {
-            "Which scenes ship, in what order (the first one starts the game).",
-            "Name, company, version, identifier, icon and splash.",
-            "Resolution, window mode, frame rate, focus behaviour.",
-            "Renderer and quality: shadows, bloom, ambient occlusion, anti-aliasing.",
-            "Volume, cursor and keyboard behaviour.",
-            "Output folder layout, encryption and what happens after the build."};
-        float buildFooterH = ImGui::GetFrameHeightWithSpacing() * 2.0f + ImGui::GetTextLineHeightWithSpacing() + 10.0f;
+        if (!oked::bsm::PageShown(s_buildSec, g_buildPlatform)) s_buildSec = g_buildPlatform == 3 ? 6 : g_buildPlatform == 4 ? 7 : 0;
+        float buildFooterH = ImGui::GetFrameHeightWithSpacing() * 2.0f + ImGui::GetTextLineHeightWithSpacing() + 10.0f + 150.0f;   // 150 = the summary panel
         if (!g_vsBuildErrors.empty() || !g_buildWarnings.empty())   // room for the Problems block above the buttons
             buildFooterH += kVsErrListH + ImGui::GetFrameHeightWithSpacing() + ImGui::GetTextLineHeightWithSpacing() * 3.0f + 16.0f;
-        ImGui::BeginChild("##bnav", ImVec2(170, -buildFooterH), ImGuiChildFlags_Borders);
-        if (g_buildPlatform == 3) {   // a server has no window/graphics/audio: Scenes, Server, Output
-            if (s_buildSec != 0 && s_buildSec != 5 && s_buildSec != 6) s_buildSec = 6;
-            const int ids[] = {0, 6, 5};
-            const char* labels[] = {"Scenes", "Server", "Output"};
-            const char* tips[] = {kBuildSecTips[0], "Name, port, players, password, public listing and anti-cheat (written to server.cfg).", kBuildSecTips[5]};
-            for (int k = 0; k < 3; ++k) {
-                if (ImGui::Selectable(labels[k], s_buildSec == ids[k], 0, ImVec2(0, ImGui::GetTextLineHeight() + 12))) s_buildSec = ids[k];
-                if (ImGui::IsItemHovered()) ImGui::SetTooltip("%s", tips[k]);
-            }
-        } else if (g_buildPlatform == 4) {   // Xbox (experimental): Scenes, Player (name, version, icon), Xbox
-            if (s_buildSec != 0 && s_buildSec != 1 && s_buildSec != 7) s_buildSec = 7;
-            const int ids[] = {0, 1, 7};
-            const char* labels[] = {"Scenes", "Player", "Xbox"};
-            for (int k = 0; k < 3; ++k) {
-                if (ImGui::Selectable(labels[k], s_buildSec == ids[k], 0, ImVec2(0, ImGui::GetTextLineHeight() + 12))) s_buildSec = ids[k];
-            }
-        } else {
-            if (s_buildSec == 6 || s_buildSec == 7) s_buildSec = 0;
-            for (int si = 0; si < IM_ARRAYSIZE(kBuildSecs); ++si) {
-                if (ImGui::Selectable(kBuildSecs[si], s_buildSec == si, 0, ImVec2(0, ImGui::GetTextLineHeight() + 12))) s_buildSec = si;
-                if (ImGui::IsItemHovered()) ImGui::SetTooltip("%s", kBuildSecTips[si]);
-            }
-        }
+        ImGui::BeginChild("##bnav", ImVec2(200, -buildFooterH), ImGuiChildFlags_Borders);
+        oked::DrawBuildNav(bctx, s_buildSec);   // search box, pages with a dot when changed
         ImGui::EndChild();
         ImGui::SameLine();
         ImGui::BeginChild("##bpane", ImVec2(0, -buildFooterH), ImGuiChildFlags_Borders | ImGuiChildFlags_AlwaysUseWindowPadding);
+        oked::DrawBuildPageHeader(bctx, s_buildSec);   // the page tip and "Reset page to defaults"
+        ImGui::Separator();
+        oked::DrawBuildPageExtra(bctx, s_buildSec);    // the Game and Advanced pages
         if (s_buildSec == 0) {   // ---- Scenes In Build ----
             namespace fs = std::filesystem;
             auto& L = g_build.scenes;
@@ -18808,7 +18847,7 @@ void DrawFileDialogs(EditorState& ed) {
             ImGui::TextDisabled("Ticked scenes ship in this order. #0 is where the game starts; the others load with\n"
                                 "load_scene(\"Name\") or load_scene_index(n). The open scene ships with unsaved edits.");
             ImGui::Spacing();
-            int shown = 0, move = -1, moveDir = 0, del = -1;
+            int shown = 0, move = -1, moveDir = 0, del = -1, dragFrom = -1, dragTo = -1;
             for (int i = 0; i < (int)L.size(); ++i) {
                 ImGui::PushID(i);
                 ImGui::Checkbox("##on", &L[i].on);
@@ -18820,7 +18859,16 @@ void DrawFileDialogs(EditorState& ed) {
                 const bool exists = fs::exists(sp, e);
                 if (exists) ImGui::TextUnformatted(sp.stem().string().c_str());
                 else ImGui::TextColored(ImVec4(0.95f, 0.45f, 0.45f, 1), "%s (missing)", sp.stem().string().c_str());
-                if (ImGui::IsItemHovered()) ImGui::SetTooltip("%s", L[i].path.c_str());
+                if (ImGui::BeginDragDropSource(ImGuiDragDropFlags_SourceAllowNullID)) {   // drag a scene's name up or down the list
+                    ImGui::SetDragDropPayload("OKAY_BUILD_SCENE", &i, sizeof(int));
+                    ImGui::TextUnformatted(sp.stem().string().c_str());
+                    ImGui::EndDragDropSource();
+                }
+                if (ImGui::BeginDragDropTarget()) {
+                    if (const ImGuiPayload* pl = ImGui::AcceptDragDropPayload("OKAY_BUILD_SCENE")) { dragFrom = *(const int*)pl->Data; dragTo = i; }
+                    ImGui::EndDragDropTarget();
+                }
+                if (ImGui::IsItemHovered() && !ImGui::IsMouseDown(0)) ImGui::SetTooltip("%s\n(drag to reorder)", L[i].path.c_str());
                 if (!ed.path().empty() && samePath(L[i].path, ed.path())) { ImGui::SameLine(); ImGui::TextColored(ImVec4(0.55f, 0.80f, 1.0f, 1), "(open)"); }
                 ImGui::SameLine(ImGui::GetContentRegionAvail().x + ImGui::GetCursorPosX() - 92);
                 ImGui::BeginDisabled(i == 0);
@@ -18836,6 +18884,7 @@ void DrawFileDialogs(EditorState& ed) {
                 ImGui::PopID();
             }
             if (move >= 0) std::swap(L[move], L[move + moveDir]);
+            if (dragFrom >= 0) oked::bsm::MoveItem(L, dragFrom, dragTo);
             if (del >= 0) L.erase(L.begin() + del);
             if (L.empty()) ImGui::TextDisabled("No list yet: the open scene is built on its own.");
             ImGui::Spacing();
@@ -19183,33 +19232,14 @@ void DrawFileDialogs(EditorState& ed) {
                 if (ImGui::IsItemHovered()) ImGui::SetTooltip("Package the build folder into a .zip (named by Archive name) beside it, ready to share or upload. The Zip layout does this and keeps only the zip.");
             }
         }
+        oked::DrawBuildPageMore(bctx, s_buildSec);   // settings added after the older pages were written
         ImGui::EndChild();
 
         ImGui::Spacing();
-        // One-line summary of what's about to be produced, so a wrong setting
-        // is caught before the build instead of after it.
-        if (g_buildPlatform == 3) {
-            ImGui::TextDisabled("%s server  \xC2\xB7  %s  \xC2\xB7  UDP %d  \xC2\xB7  %d players%s%s  \xC2\xB7  %s",
-                g_build.srvTarget == 0 ? "Linux" : "Windows",
-                g_build.srvName[0] ? g_build.srvName : (std::string(g_buildNameBuf) + " Server").c_str(),
-                g_build.srvPort, g_build.srvMaxPlayers,
-                g_build.srvPassword[0] ? "  \xC2\xB7  password" : "",
-                g_build.srvAdvertise ? "  \xC2\xB7  listed" : "",
-                g_buildDirBuf[0] ? g_buildDirBuf : "(no output folder)");
-        } else
-        {
-            const char* wm2 = g_build.fullscreen ? "fullscreen" : (g_build.borderless ? "borderless" : "windowed");
-            const char* layoutNames[] = {"folder", "compact", "zip"};
-            ImGui::TextDisabled("%s v%s (build %d)  \xC2\xB7  %s layout  \xC2\xB7  %dx%d %s  \xC2\xB7  %s%s%s  \xC2\xB7  %s",
-                g_buildNameBuf[0] ? g_buildNameBuf : "(unnamed)",
-                g_build.version[0] ? g_build.version : "1.0", g_build.buildNumber,
-                layoutNames[std::max(0, std::min(2, g_build.layout))],
-                g_build.width, g_build.height, wm2,
-                g_build.gpuRenderer ? "GPU" : "software",
-                g_build.encryptData ? "  \xC2\xB7  encrypted" : "",
-                g_build.developmentBuild ? "  \xC2\xB7  DEV" : "",
-                g_buildDirBuf[0] ? g_buildDirBuf : "(no output folder)");
-        }
+        // What will happen, in plain words, and the checks with Fix buttons (BuildSettingsWindow.cpp).
+        ImGui::BeginChild("##bsummary", ImVec2(0, 140), ImGuiChildFlags_Borders);
+        oked::DrawBuildSummary(bctx);
+        ImGui::EndChild();
         ImGui::Spacing();
         // Errors stop the build. Warnings are listed and the build still runs.
         if (!g_vsBuildErrors.empty() || !g_buildWarnings.empty()) {
@@ -19390,7 +19420,10 @@ void DrawFileDialogs(EditorState& ed) {
             ConsoleLog(std::string(g_buildDryRun ? "Build Game (dry run): " : "Build Game: ") + g_buildStatus);
             const bool wasDry = g_buildDryRun;
             g_buildDryRun = false;
+            if (wasDry && g_buildReport.ok) g_buildDryBytes = g_buildReport.r.total;
+            { std::vector<std::string> lw; for (const std::string& w : g_buildReport.r.warnings) lw.push_back(w); oked::SetBuildLog(g_buildStatus, lw); }   // Build Settings > Advanced > Last build log
             // A finished real build counts the build number up, so the next one is told apart from this one.
+            if (!wasDry) oked::RecordBuildInHistory(bctx, g_build.buildNumber, g_buildReport.r.total, g_buildReport.ok);   // the build history list
             if (g_buildReport.ok && !wasDry && g_build.autoBuildNumber) ++g_build.buildNumber;
             // Remember the settings used for next time (so they survive restarts).
             if (g_buildProfileSel >= 0 && g_buildProfileSel < (int)g_buildProfiles.size()) {
@@ -31239,6 +31272,8 @@ void DrawInspector(EditorState& ed) {
             oked::FieldTip("Gravity##ps");
             if (ImGui::DragFloat("Gravity Mult##ps", &ps->gravityModifier, 0.02f, -10.0f, 10.0f)) ed.dirty = true;
             oked::FieldTip("Gravity Mult##ps");
+            if (ImGui::SliderFloat("Affected by wind##ps", &ps->windInfluence, 0.0f, 3.0f, "%.2f")) ed.dirty = true;
+            if (ImGui::IsItemHovered()) ImGui::SetTooltip("How much the wind carries these particles. 0 = ignore the wind, 1 = they drift at the wind's speed.\nThe wind comes from the weather and from Wind Zones (Add Component > Environment > Wind Zone).");
             if (ImGui::DragFloat("Damping / sec##ps", &ps->damping, 0.02f, 0.0f, 20.0f)) ed.dirty = true;
             oked::FieldTip("Damping / sec##ps");
 
@@ -42077,6 +42112,7 @@ void DrawInspector(EditorState& ed) {
     DrawBehaviorTreeInspector(ed, go, curComp, toRemove, &CompHeader);   // Behavior Tree Runner
     DrawSplineInspector(ed, go, curComp, toRemove, &CompHeader);       // Spline family, Line / Trail Renderer
     DrawLevelInspector(ed, go, curComp, toRemove, &CompHeader);        // Foliage, Decal Projector, Cable
+    oked::DrawWindInspector(ed, go, curComp, toRemove, &CompHeader);   // Wind Zone, Wind Drag, Wind Sway, Wind Sound
     oked::DrawVolumeInspector(ed, go, curComp, toRemove, &CompHeader);  // Volume (checkpoint, kill, force, atmosphere, ambience)
     oked::DrawFallbackInspector(ed, go, curComp, toRemove, fbCursorY, &CompHeader);   // anything still undrawn: from the property registry
     if (multiEdit.active && oked::PropagateComponentEdit(ed.MultiSelection(), go, *curComp, multiEdit) > 0) ed.dirty = true;
@@ -42331,6 +42367,9 @@ void DrawInspector(EditorState& ed) {
             if (item(!go->GetComponent<MeshCollider3D>(), "Mesh Collider 3D")) { auto* m = go->AddComponent<MeshCollider3D>(); m->autoFit = true; FitColliders(go); ed.dirty = true; }
           } EndCat(o); }
 
+        { bool o = BeginCat("Environment");
+          if (o) { oked::WindAddComponentItems(ed, go, item); }
+          EndCat(o); }
         { bool o = BeginCat("Lighting");
           if (o) {
             if (item(!go->GetComponent<Light>(), "Directional Light")) { go->AddComponent<Light>(); ed.dirty = true; }
@@ -45707,6 +45746,7 @@ void DrawScene3D(EditorState& ed, ImDrawList* dl, ImVec2 canvasPos, ImVec2 canva
         if (oked::DrawVolumeOverlay(ed, dl, vp, eye, center, canvasSize, canvasPos,
                                     hovered && !g_uiHandled && !g_gizmoGrab, io))
             g_uiHandled = true;
+        oked::DrawWindOverlay(ed, dl, vp, center, canvasSize, canvasPos);   // wind zones and arrows
     }
     // Skeleton overlay on top of the meshes (built with the gizmos above).
     if (!gameView) {

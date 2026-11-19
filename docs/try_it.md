@@ -92,6 +92,7 @@ release job or the installer build for this change.
 | 17 | Hierarchy right-click menus: Create Child with every category, Add Component, Select Same Type, "Delete 3 Objects" | Right-click in the Hierarchy panel of `Tools\OkayEngine.exe` | New in this change; see section 17 |
 | ac-cheat-sim | Anti-cheat: watch the server catch a cheater (cheat simulator), ban list, audit log | `OkaySpacePlayer.exe --server --cheat-sim --log cheat_sim.txt` (Tools folder), then open the log | New in this change; tested headless on Linux over loopback; Windows and a real network unverified |
 | boat1 | Water waves, floating things and a boat to drive | `examples\boat\boat_lake.okayscene` (File > Open, Play), **GameObject > Vehicles > Boat**, Add Component > Physics 3D > Buoyancy and Gameplay > Boat Controller, Water Inspector > Style | New in this change; headless tests only, Windows and GPU not run |
+| bs2 | Build Settings: search, Game and Advanced pages, checks, history | Editor: File > Build Settings (Ctrl+B) | New in this change; the editor and player were compile-checked on Linux but not run on Windows |
 | content-delivery | Downloadable game content: signed models, textures, scripts and data that an exported game fetches (off by default) | `okay-content.exe` in `Tools/`, or `content.okayconfig` / `OKAY_CONTENT_URL` for the player | Built; Linux-tested only |
 | editor-fps | Editor frame-time overlay and speed switches | Editor menu **View > Rendering**: Frame-time overlay, Frame rate limit, Slow down when idle, Viewport resolution, Performance mode. Heavy test scenes: `examples\perf\` | New in this change. Real Direct3D 11 numbers on a Windows machine are unverified; sent back by the owner |
 | fast1 | Fast release: one workflow dispatch, no version-bump PR | GitHub: Actions > "Fast release" > Run workflow (tick dry_run first); a change adds `dist/changelog.d/<id>.txt` | Built and tested offline with fake data; never run on GitHub; off until `FAST_RELEASE_ENABLED=1` |
@@ -103,6 +104,7 @@ release job or the installer build for this change.
 | tex1 | Texture tools (our own): mipmaps, atlas, BC compression, DDS | Windows release: `examples\texture\try_texture.bat` (needs `Tools\okay-texture.exe`); editor: Project panel > pick a picture > Import Settings > "Generate mipmaps / compress" | Unverified on Windows; Linux tests and CLI run |
 | vpa | Multi-window panels start cleanly on every video driver | `Tools\OkayEngine.exe`: drag a panel tab outside the editor | Linux only (Xvfb, a build with assertions on); Windows unverified |
 | vsclarity | Visual Script nodes explain themselves (plain line, What is this? card, Needs input, Next steps, Try this node, What do you want to do? list) | `Tools\OkayEngine.exe`: View > Editors & Tools > Visual Script, drop any node | Compiled and unit-tested (`vs_guide`); never drawn in a real window, Windows unverified |
+| wind-field | Wind: trees, grass, flags, leaves, a pushed box and the sound of wind | Editor: File > Open `examples\wind\wind.okayscene`, press Play; GameObject > Effects > Environment; Add Component > Environment; Lighting window > Wind | Tests pass on Linux (`wind_field`, `wind`); the editor and the example were not run on Windows or on a screen |
 | xbox-next | Xbox UWP next: one-page guide (PC test, Dev Mode, IP, Device Portal, deploy, logs) and the new log file | Windows release: `xbox-src\scripts\build-xbox-uwp.ps1`; editor File > Build Settings > Xbox (exp.) | Linux-tested only; nothing here has run on a console |
 | xbox-uwp | Xbox One export (EXPERIMENTAL, UNVERIFIED): one-click build (check, export, compile, shaders, pack, sign, install), own .appx packer, engine mode | File > Build Settings > platform "Xbox (exp.)" > Build Xbox package | Linux-tested only |
 | 7n | Every own replacement in one table: the switch, the sample, how to tell it is on, and what is missing | section 7n below and `docs/own_flip_proposal.md` | Table is new. Read from the code and from CI logs, not run on Windows |
@@ -1505,6 +1507,26 @@ reverse, saving and loading, the example file). **Unverified:** the Windows rele
 Component entries and Water fields are syntax-checked only), a GPU, what the wake and spray look like on screen, and how the
 boat feels with a real keyboard. Boarding a boat with E is not done.
 
+## bs2. Build Settings: search, Game and Advanced pages, checks, history
+
+**What it is.** The Build Settings window has a search box over every setting, a dot beside each page that has changed settings, a "Reset page to defaults" button, two new pages (Game and Advanced), a "What will happen" summary with checks and Fix buttons, Debug and Release starting points, duplicate profile, `.okaybuild` files and a build history. Every new setting is read by the built game or by the build step (see `docs/build_settings_upgrade.md`).
+
+**Steps.**
+1. Open the editor, open a project, press Ctrl+B (File > Build Settings). The platform must be Desktop.
+2. Type `fps` in the search box at the top left. Click "Frame rate cap (Display)". You land on the Display page.
+3. Change the window width. A blue dot appears beside Display. Click "Reset page to defaults" and confirm; the width goes back and the dot goes away.
+4. Open the Game page. Set Game speed to 0.5, Log detail to "Warnings", tick "Write a log file", type `de` as Starting language, and under Description type a sentence. Choose an output folder and press Build & Run.
+5. In the running game everything moves at half speed. Close it. Open the save folder of the game (the per-user app folder, named after the company and the game): `game.log` is there. In the build's `<Name>_Data/game.okayconfig` you see `time_scale=0.5`, `log_level=warn`, `log_file=game.log`, `default_language=de`.
+6. Open the Advanced page. Turn on "Allow build commands", type `echo built {name} {version}` after the build, build again. The Console says "ran your command after the build". With the switch off, nothing runs.
+7. Still on Advanced: press "Create or update .gitignore" (a `.gitignore` appears in the project) and look at the Build history list (time, version, size, "Open output folder").
+8. At the bottom, "What will happen" lists the build in plain words. Make the name `Bad:Name`, tick Full screen and Borderless together: Check lines appear with Fix buttons. Press Fix and they go away.
+9. Under the profile bar press Debug or Release (changes the developer panel, FPS counter, stripping, compression, logging). Save a profile, press Duplicate profile, then "Save as file": `BuildProfiles/<name>.okaybuild` appears in the project; "Load file..." brings it back.
+10. Round 2: on Graphics pick "3D renderer" = Software only and a Particle limit of 50; on Audio & Input set Gamepad dead zone and Sound quality; on Output type a file in "Files left out" or right-click a file in the Project panel and choose "Exclude from Build", then Dry Run: the file is not in the report. Drag a scene by its name in the Scenes list to reorder. After a build, the Advanced page shows the coloured last build log.
+
+**What you should see.** As in each step. Defaults write nothing new: a project that never touched the Game or Advanced pages builds exactly the `game.okayconfig` it built before.
+
+**Status.** Tested on Linux: the model (pages, search, reset, presets, summary, checks and fixes, history, commands, ignore file, profile files) and the player's config reader (`tests/test_build_settings.cpp`), and every new setting through the profile file (`tests/test_project_state.cpp`). `editor/main.cpp` and `player/main.cpp` were compile-checked (syntax only) on Linux. NOT run: the window on screen, a Windows build, and the player reading the config in a real game.
+
 ## Console: Collapse button (branch `claude/console-collapse`, not merged or released yet)
 
 Owner request 2026-11-15: "for console allow user to collapse the same log."
@@ -2157,6 +2179,44 @@ Try it on Windows (this is all in the normal editor, nothing to switch on):
 What was and was not verified: the rules behind every item were unit-tested over all nodes in the list on Linux (`vs_guide`,
 and the existing `vs_clarity`, `vs_node_docs`, `vs_names`, `vs_start` suites). The drawing was compile-checked only: it was never
 shown in a real window, on Linux or on Windows, so card size on a small window and the second line on a narrow node are unchecked.
+
+## wind-field. Wind: trees, grass, flags, leaves, a pushed box and the sound
+
+**What it is.** One wind that blows trees, grass, a flag, a rope, leaves (particles) and a light box, with a wind sound that gets
+louder in strong wind. You set the wind in one place: a **Wind** object (or the Wind Zone component). A scene with no wind object
+looks and plays exactly as before. Details: `docs/wind.md`.
+
+**Steps (the example).**
+1. Start `Tools\OkayEngine.exe` and open a project.
+2. File > Open, pick `examples\wind\wind.okayscene` (it is in the folder you installed to).
+3. Press **Play**. Wait about 10 seconds: the wind rises and falls on a 24-second cycle (calm, storm, calm).
+4. Look and listen.
+
+**What you should see and hear.**
+- (The camera looks toward -Z, so +X is to your right.) The trees, pines and little bushes lean to the right and shiver; stronger in the gusts. The one tree in the shaded corner on
+  the right (inside the "Calm zone") stands still: that is a wind-free zone.
+- The red flag on the pole waves and points downwind. The rope between the two posts swings sideways.
+- Orange leaves drift across from the left (Particle System, "Affected by wind" at 1).
+- The wooden box near the camera is pushed along in the strong gusts (Wind Drag, 8 kg; in a 14-second headless run it slid about 4 m and stopped between gusts).
+- A soft "whoosh" that swells with the wind (Wind Sound: made by the engine, no sound file).
+
+**Steps (make your own).**
+1. Open any scene. GameObject > Effects > Environment > **Wind (whole scene)**. Select it: arrows appear in the Scene view.
+   Set **Strength** to 8, **Gusts** to 0.5.
+2. Select a tree or bush mesh: Add Component > Environment > **Wind Sway**. Press Play: it leans downwind.
+3. Select a Foliage layer: set **Sway in the wind** (Inspector) to 0.8. Select a Cable: set **Sway in the wind**.
+4. A physics box: Add Component > Environment > **Wind Drag** (it adds a Rigidbody 3D if missing).
+5. A Particle System: the **Affected by wind** slider (1 = drifts with the wind, 0 = ignores it).
+6. View > Lighting (Lighting window) > **Wind**: compass direction, strength, gusts, and a live arrow.
+7. Fan: GameObject > Effects > Environment > **Fan (blows outward)**: leaves and light boxes near it blow away from the middle.
+
+**Scripts.** In an OkayScript: `wind_set(12, 90)` (strength 12, blowing toward +X), `wind_gust(0.8, 0.3)`, `wind_speed()` (speed
+where the camera is). In the new script language: `Wind.SetStrength(12)`, `Wind.SetGust(0.8, 0.3)`, `Wind.At(Vec3(0, 1, 0))`,
+`Wind.Strength`, `Wind.Direction`.
+
+**Status.** Tested on Linux: the wind maths (noise, gust period, zone blending, no NaN) and the components in a scene (zones, particles,
+drag, sway, foliage, cable, sound, save/load). Not run: Windows, a GPU renderer, the editor on a screen. The example scene was made by
+a throw-away generator, loaded and run for 14 simulated seconds headless (22 swaying plant chunks, the box moved, no NaN), and rendered headless with the software renderer (no pictures kept in the repo); nobody has watched it move on a screen.
 
 ## xbox-next. Xbox UWP next: PC test, Dev Mode, Device Portal, logs
 

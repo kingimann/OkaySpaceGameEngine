@@ -92,7 +92,7 @@ public:
     /// The result is cached on this font. Drawing at that size is one atlas pixel
     /// per screen pixel; linear filtering only has to cover sub-pixel placement.
     TtfFont* ForPixelHeight(float pixelHeight) const;
-    /// Like ForPixelHeight, but sized to the exact device height (quarter-pixel steps up to 32 px, so one atlas
+    /// Like ForPixelHeight, but sized to the device height (quarter-pixel steps up to 16 px, half-pixel steps up to 32, so one atlas
     /// pixel is one screen pixel and a glyph drawn at its baked size is not resampled) and, when `darken` is
     /// on, with the weight of small text corrected: glyph coverage is raised to a power below 1 that fades to 1 at
     /// 24 px (see TtfCoverageGamma), so thin stems at 9 to 14 px are not washed out.

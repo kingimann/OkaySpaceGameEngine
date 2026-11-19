@@ -76,7 +76,7 @@ bool TtfFont::Bake(const unsigned char* bytes, std::size_t size, float bakeHeigh
     // Bake the printable ASCII range into a single-channel coverage atlas. Grow the
     // atlas (up to 4096) if the glyphs don't fit at this bake height.
     ttf::BakedGlyph cdata[kCount];
-    int aw = 512, ah = 512;
+    int aw = bakeHeightPx <= 24.0f ? 256 : 512, ah = aw;   // small faces need little room (95 glyphs of 12 px fit in 256 x 256); it doubles if they do not fit
     std::vector<unsigned char> gray;
     int rows = -1;
     for (int attempt = 0; attempt < 4 && rows < 0; ++attempt) {   // 512, 1024, 2048, 4096: a 256 px bake of 95 glyphs needs about 2600 x 2600
@@ -296,7 +296,10 @@ float TtfCoverageGamma(float deviceHeight) {
 TtfFont* TtfFont::ForDeviceSize(float deviceHeight, bool darken) const {
     if (!m_valid || m_bytes.empty()) return const_cast<TtfFont*>(this);
     float h;
-    if (deviceHeight <= 32.0f) h = std::max(4.0f, std::round(deviceHeight * 4.0f) / 4.0f);
+    // Quarter-pixel steps up to 16 px, half-pixel steps up to 32 (the size error stays under 1.6%, so a glyph is drawn one to one),
+    // then the 6% steps of UIGlyphBakePixels. That keeps the number of baked faces near 130 however the zoom is dragged.
+    if (deviceHeight <= 16.0f) h = std::max(4.0f, std::round(deviceHeight * 4.0f) / 4.0f);
+    else if (deviceHeight <= 32.0f) h = std::round(deviceHeight * 2.0f) / 2.0f;
     else h = (float)UIGlyphBakePixels(deviceHeight);
     const float gamma = darken ? TtfCoverageGamma(h) : 1.0f;
     if (gamma == 1.0f && std::fabs(m_bakeHeight - h) < 0.01f && m_coverageGamma == 1.0f) return const_cast<TtfFont*>(this);

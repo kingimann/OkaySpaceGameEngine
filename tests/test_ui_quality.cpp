@@ -71,10 +71,10 @@ void FontTests() {
     CHECK(f && f->Valid());
     if (!f) return;
     // Exact sizes: quarter-pixel steps up to 32 px.
-    CHECK_NEAR(f->ForDeviceSize(16.2f, false)->BakeHeight(), 16.25, 0.01);
+    CHECK_NEAR(f->ForDeviceSize(15.2f, false)->BakeHeight(), 15.25, 0.01);
     CHECK_NEAR(f->ForDeviceSize(12.0f, false)->BakeHeight(), 12.0, 0.01);
     CHECK_NEAR(f->ForDeviceSize(18.6f, false)->BakeHeight(), 18.5, 0.01);
-    CHECK(f->ForDeviceSize(16.2f, false) == f->ForDeviceSize(16.3f, false));   // the same quarter step is one face
+    CHECK(f->ForDeviceSize(15.2f, false) == f->ForDeviceSize(15.3f, false));   // the same quarter step is one face
     // The weight curve: stronger for small text, none from 24 px.
     CHECK_NEAR(TtfCoverageGamma(6.0f), 0.78, 1e-4);
     CHECK_NEAR(TtfCoverageGamma(24.0f), 1.0, 1e-4);

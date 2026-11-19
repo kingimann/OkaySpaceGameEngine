@@ -1017,6 +1017,11 @@ add_executable(test_build_settings test_build_settings.cpp)
 target_link_libraries(test_build_settings PRIVATE okay::engine)
 add_test(NAME build_settings COMMAND test_build_settings)
 
+# The UI designer's logic (zoom, rulers, snapping, handles, align, z-order, layers, anchor picker, responsive preview).
+add_executable(test_ui_designer test_ui_designer.cpp)
+target_link_libraries(test_ui_designer PRIVATE okay::engine)
+add_test(NAME ui_designer COMMAND test_ui_designer)
+
 # Damaged or unusual project, texture-meta and material files load safely (issue #888 findings 74, 75, 78).
 add_executable(test_data_load_checks test_data_load_checks.cpp)
 target_link_libraries(test_data_load_checks PRIVATE okay::engine)

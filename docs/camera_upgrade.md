@@ -101,6 +101,27 @@ Run on Linux, headless, a Release build with `-O0`, on the branch head. All pass
 The editor (`editor/main.cpp`) was syntax-checked with the compiler (`-fsyntax-only`, no errors) but not linked or run.
 
 
+## Round 2 (branch `claude/camera-3`)
+
+Existing / Gap for the next candidates (everything in the first round above stays):
+
+| Candidate | Existing | Gap | Done in round 2 |
+|---|---|---|---|
+| Camera zones that blend settings | `Volume` (checkpoint, kill, force, atmosphere, ambience, reverb) with the `VolumeGeometry` region and edge fade; Atmosphere does this for fog and vignette only | nothing changed a camera rig's field of view, offset or snappiness by place | `CameraZone` (reuses `VolumeGeometry`), read by `VirtualCamera::Solve`; priority, per-shot filter, edge blend; brain blends the zone-adjusted field of view |
+| Camera presets | `ApplyStyle` (Follow, Orbit, Look At) | no preset per kind of game | `VirtualCamera::ApplyPreset`: Platformer, Top-down, Third person, First person, Racing, Cinematic; buttons in the Inspector |
+| Shake presets with trauma | done in round 1 (`CameraShaker`, trauma kept) | per-axis falloff not separate | not done |
+| Spline dolly with look-at | `DollyPath`, `Spline`, vcam Tracked Dolly with look-at and auto dolly | an ease along the rail | not done |
+| Group camera | done in round 1 | | |
+| Occlusion (pull in, fade) | done in round 1 | cut-through option | not done |
+| Split screen, picture in picture | camera stack with viewport rect and render targets; the player and editor draw only the main camera | render path | not done |
+| Depth of field following a target, lens options | physical camera fields; scene post-process depth of field | focus following a target | not done |
+| Whip / screen transitions | blend styles Cut, Linear, Ease, Custom | a whip (blur) transition | not done |
+| Editor | rig panels, gizmo, preview | zone panel and gizmo | Camera Zone panel, cyan box gizmo, Add Component and Create entries |
+
+Zone rule: for each enabled zone (lowest priority first) whose shot filter matches, weight = 0 outside, eased 0..1 across `blend` from the edge
+inward. Field of view, damping move toward the zone's value by the weight; the offset is added times the weight. The point tested is the
+followed point (the Follow object or the group middle). No new fields are written for scenes that do not use zones; `camzone` is a new record.
+
 ## Unverified
 
 * Windows: nothing was run. The editor was not built or opened (Linux, no screen), so the menu entries, Inspector panels, gizmo and the

@@ -74,9 +74,7 @@ position noise, so it was left out.
 
 Round 2 results (same machine): `lighting_upgrade` 194 checks, 0 failures (adds probes, scene SSAO, save/load of probes); `d3d11_layout` 80 checks,
 0 failures (compiled standalone, header-only); `light_shadows`, `renderer_features`, `lighting`, `serialize`, `scene_serializer_audit`,
-`software_scene_post`, `software_perf_paths` pass. Measured: a probe inside the closed room gives about 20 percent less ambient light
-than one over open ground (room 0.216 red vs 0.165 outside in the red channel only because the sky is blue; summed over channels the
-room is darker); scene SSAO lowers the room's mean brightness from 0.3258 to 0.3228 (a small, real effect on corners and feet).
+`software_scene_post`, `software_perf_paths` pass. Measured: a probe inside the closed room gives a darker ambient (summed over the three colour channels) than one over open ground; the test only checks that order, not a size (the red channel alone reads 0.216 inside and 0.165 outside because the sky is blue); scene SSAO lowers the room's mean brightness from 0.3258 to 0.3228 (a small, real effect on corners and feet).
 
 ### Try it
 

@@ -638,7 +638,22 @@ Direct3D (never run on Windows, not even under Wine).
 **Step 5, proof.** `cmake -S . -B build-nosdl -DOKAY_NO_SDL=ON -DOKAY_BUILD_LAUNCHER=ON -DOKAY_BUILD_EDITOR=ON` then `ctest -R no_sdl_symbols` runs
 `scripts/check_no_sdl_symbols.sh` (`nm` plus `objdump -p`) on the launcher and the editor and fails on any `SDL_*` or `ImGui_ImplSDL*` symbol or an SDL library dependency.
 For MinGW: `NM=x86_64-w64-mingw32-nm OBJDUMP=x86_64-w64-mingw32-objdump scripts/check_no_sdl_symbols.sh OkaySpace.exe OkayEngine.exe`.
-RESULTS_PLACEHOLDER
+**Results (Linux, 2026-11-19, `-DOKAY_NO_SDL=ON`, own X11 backend, software painter).**
+* Launcher (`OkaySpace`) and editor (`OkayEngine`) built and linked: `scripts/check_no_sdl_symbols.sh` says 0 SDL symbols and no SDL library in `readelf -d` NEEDED (only libstdc++, libm, libgcc_s, libc). The script was
+  checked against a control object that references `SDL_Init` (it fails there). The text "SDL_Window*" that `nm -C` still shows is only the name of our own opaque handle type in C++ names, not a symbol.
+* Both programs started on Xvfb (`Xvfb :97`): the startup lines say `platform backend: own`, `painter: software`, `ImGui input: own okay::platform feed`, `ImGui drawing: own okay::platform::Painter renderer`; a screenshot of
+  each window was not blank (standard deviation of the pixels above 0.1). The launcher stayed up for the 20 seconds allowed; the editor (`--dev`) for 25.
+* Found by the link: `okay::pb::OkayUIEndFrame` still called `OkayUI::EndFrame(SDL_Renderer*)`; fixed (guard).
+* Machine limits: the editor's `main.cpp` (50,000 lines) was killed by the out-of-memory killer at `-O3` four times on this shared machine and was compiled at `-O0` by hand for this check, then linked with the build's own link line
+  (so the editor binary checked here is not an `-O3` build; its symbols are the same). The ctest entries `no_sdl_symbols_*` are registered but were not run through ctest here (the checks above ran the script directly).
+* MinGW (Windows target): `launcher/main.cpp` compiles with `-fsyntax-only -DOKAY_NO_SDL` with no errors; `D3D11Painter.cpp` and the Win32 backend compile (syntax only). **Not done:** a full MinGW link of both programs
+  (the engine library is about 400 files; not feasible on this machine today) and the `nm` check on the `.exe`; the CI job that does it is the next thing to add (`cmake -DOKAY_NO_SDL=ON` with the MinGW toolchain, then
+  `NM=x86_64-w64-mingw32-nm scripts/check_no_sdl_symbols.sh`). **Not run on Windows at all**: the window, Direct3D 11, IME, drag-and-drop and gamepads there are unverified.
+* Source counts (`scripts/sdl_inventory.py --no-sdl`, SDL words left in the code of the programs and their shared code, tests and sdl2 backend not counted): before (normal view) 122 call sites and 1044 words; as a no-SDL build
+  sees the source: 88 call sites and 869 words. These are mostly the no-op macros and plain type aliases of `PlainTypes.hpp` and the call sites that now compile to nothing; the link-level number is the one that matters:
+  **undefined or defined SDL symbols in the launcher and the editor: SDL2 build had hundreds (every `SDL_*` call above); no-SDL build: 0 and 0.**
+* Still open: IME composition into OkayUI and ImGui text fields (host side), a display mode list in the seam, the player (still SDL), `--vs-shot`, a real Windows run, the OkayUI-only executables (the okayui agent's work) using this same mode.
+
 
 ## Not behind the seam yet (stage 1 list; see stage 2 above for what changed)
 

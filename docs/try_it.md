@@ -2652,3 +2652,12 @@ pictures at the times you write. Example `launcher.txt`:
 3. What you should see: `[sdl2] exited with code 0 (as wanted)`, the same for `[own]`, and `[compare] typed.png: 0 pixels differ`. Pictures stay in `out/<backend>/`.
 4. Command list and the parser tests: `shared/TestHooks.hpp`, `ctest -R test_hooks`.
 
+
+## Launcher and editor with no SDL at all (`OKAY_NO_SDL`, experimental, off by default)
+
+1. Build (Linux, own X11 backend): `cmake -S . -B build-nosdl -G Ninja -DCMAKE_BUILD_TYPE=Release -DOKAY_NO_SDL=ON -DOKAY_BUILD_LAUNCHER=ON -DOKAY_BUILD_EDITOR=ON`, then `ninja -C build-nosdl okayspace-launcher okay-editor`
+   (the editor's `main.cpp` needs about 6 GB of memory to compile at `-O3`).
+2. Prove it: `ctest --test-dir build-nosdl -R no_sdl_symbols` or `scripts/check_no_sdl_symbols.sh build-nosdl/bin/OkaySpace build-nosdl/bin/OkayEngine`. You should see `OK ...: 0 SDL symbols, no SDL library dependency`.
+3. Run: `OKAY_UPDATE_ON_LAUNCH=0 build-nosdl/bin/OkaySpace`. The first lines say `platform backend: own`, `painter: software`, `ImGui drawing: own okay::platform::Painter renderer`.
+4. Windows: the same option with the MinGW toolchain builds `OkaySpace.exe` and `OkayEngine.exe` that pick the Direct3D 11 painter (log line `painter: Direct3D 11`); `OKAY_PAINTER=software` forces the
+   software painter with `StretchDIBits`. Not run on Windows yet: tell us what you see.

@@ -77,6 +77,7 @@ Word, then the number(s) to say. Back to the [overview](../FEATURE_MAP.md).
 - Admin views: linked accounts, ban with devices, evidence (39.12.10)
 - admin_log (17.9, 39.6)
 - ADPCM (16.7)
+- Advanced tools (12.10.13)
 - advertise (16.5)
 - Afflictions (11.4.3)
 - agent (9.2)

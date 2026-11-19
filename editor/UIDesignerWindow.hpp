@@ -30,4 +30,11 @@ bool UIDesignerLocked(const okay::GameObject* g);
 /// The UI Layers window (only drawn while it is switched on from the ruler corner).
 void UIDesignerLayersWindow(okay::editor::EditorState& ed);
 
+/// Keyboard shortcuts (Ctrl+A, Ctrl+Shift+I / A / L / H, Ctrl+G, Ctrl+P, F1). Call each frame; `active` = the UI view has the keyboard.
+void UIDesignerKeys(okay::editor::EditorState& ed, bool active);
+/// The Ctrl+P action finder, the shortcut list and Find and replace windows (when open).
+void UIDesignerOverlays(okay::editor::EditorState& ed);
+/// True once after the Fit command ran from the action finder (the caller resets zoom and pan).
+bool UIDesignerTakeFitRequest();
+
 }  // namespace oked

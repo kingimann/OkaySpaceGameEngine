@@ -4,6 +4,8 @@
 #include "okay/Components/UIUserStyle.hpp"
 #include "okay/Components/UIGuides.hpp"
 #include "PrefabEdit.hpp"
+#include "UIDesignerActions.hpp"
+#include "okay/Scene/UILayoutTools.hpp"
 #include <filesystem>
 #include <cstdio>
 #include <cstring>
@@ -24,6 +26,9 @@ std::unordered_set<const GameObject*> g_locked;
 Scene* g_scene = nullptr;           // the scene the guides belong to (for keeping them)
 ImVec2 g_panelPos{0, 0}, g_panelEnd{0, 0};
 uid::Rect g_area; int g_areaFrame = -10;   // the free area inside the rulers, from the last frame they were drawn
+bool g_showPalette = false, g_showCheat = false, g_showFind = false, g_fitRequested = false;
+char g_query[96] = "", g_layerFilter[96] = "", g_findText[96] = "", g_replText[96] = "";
+bool g_findCase = false;
 GameObject* g_renaming = nullptr;
 char g_nameBuf[128];
 
@@ -202,8 +207,15 @@ void DrawRow(GameObject* g, EditorState& ed, int depth) {
     ImGui::PopID();
 }
 
+bool TreeMatches(GameObject* g) {
+    if (!g) return false;
+    if (uid::NameMatches(g->name, g_layerFilter)) return true;
+    if (g->transform) for (Transform* c : g->transform->Children()) if (c && TreeMatches(c->gameObject)) return true;
+    return false;
+}
 void DrawTree(GameObject* g, EditorState& ed, int depth) {
     if (!g || !HasUI(g)) return;
+    if (g_layerFilter[0] && !TreeMatches(g)) return;
     DrawRow(g, ed, depth);
     if (!g->transform) return;
     const auto kids = g->transform->Children();
@@ -294,6 +306,8 @@ void UIDesignerLayersWindow(EditorState& ed) {
         ImGui::PushTextWrapPos(0.0f);
         ImGui::TextDisabled("Front first. Drag a row to reorder; drop on the middle to put it inside.");
         ImGui::PopTextWrapPos();
+        ImGui::SetNextItemWidth(-1.0f);
+        ImGui::InputTextWithHint("##lfilter", "Search layers by name", g_layerFilter, sizeof(g_layerFilter));
         std::vector<GameObject*> roots;
         for (const auto& up : ed.scene().Objects()) if (up && up->transform && !up->transform->Parent()) roots.push_back(up.get());
         for (int i = (int)roots.size() - 1; i >= 0; --i) DrawTree(roots[i], ed, 0);
@@ -309,10 +323,133 @@ void UIDesignerLayersWindow(EditorState& ed) {
                 ed.dirty = true;
             }
         }
+        if (g_layerFilter[0] && ImGui::SmallButton("Select all matches")) {
+            ed.Select(nullptr);
+            for (const auto& up : ed.scene().Objects())
+                if (up && IsUI(up.get()) && uid::NameMatches(up->name, g_layerFilter) && !UIDesignerLocked(up.get())) { if (!ed.selected()) ed.Select(up.get()); else ed.ToggleSelect(up.get()); }
+        }
+        if (ImGui::SmallButton("Find and replace...")) g_showFind = true;
         if (ImGui::CollapsingHeader("Shared styles")) DrawStyles(ed);
         if (ImGui::CollapsingHeader("Reusable UI")) DrawReusable(ed);
     }
     ImGui::End();
+}
+
+
+namespace {
+using CmdFn = std::function<void(EditorState&)>;
+struct Cmd { uid::Command c; CmdFn run; };
+
+void LockOrHide(EditorState& ed, bool hide) {
+    if (ed.MultiSelection().empty()) return;
+    if (hide) ed.PushUndo("Hide UI widgets");
+    for (GameObject* g : ed.MultiSelection()) if (g) { if (hide) g->active = false; else g_locked.insert(g); }
+    if (hide) ed.dirty = true;
+}
+void Group(EditorState& ed) {
+    std::vector<GameObject*> sel(ed.MultiSelection().begin(), ed.MultiSelection().end());
+    if (sel.size() < 2) return;
+    ed.PushUndo("Group UI");
+    if (GameObject* p = UILayout::WrapInPanel(ed.scene(), sel)) { p->name = "Group"; ed.Select(p); ed.dirty = true; }
+}
+const std::vector<Cmd>& Commands() {
+    using uid::AlignMode;
+    static const std::vector<Cmd> v = {
+        {{"fit", "Fit: show the whole screen", "", "zoom reset view"}, [](EditorState&) { g_fitRequested = true; }},
+        {{"layers", "Show or hide the Layers panel", "", "panel list tree"}, [](EditorState&) { g_showLayers = !g_showLayers; }},
+        {{"guides.clear", "Clear all guides", "", "rulers lines"}, [](EditorState& ed) { g_guides.clear(); WriteBackGuides(); ed.dirty = true; }},
+        {{"sel.all", "Select all widgets", "Ctrl+A", "everything"}, [](EditorState& ed) { uid::SelectTool(ed, uid::SelOp::All, UIDesignerLocked); }},
+        {{"sel.invert", "Invert the selection", "Ctrl+Shift+I", "opposite"}, [](EditorState& ed) { uid::SelectTool(ed, uid::SelOp::Invert, UIDesignerLocked); }},
+        {{"sel.same", "Select the same kind", "Ctrl+Shift+A", "type similar"}, [](EditorState& ed) { uid::SelectTool(ed, uid::SelOp::SameKind, UIDesignerLocked); }},
+        {{"group", "Group (put on a card)", "Ctrl+G", "wrap panel"}, Group},
+        {{"lock", "Lock selected", "Ctrl+Shift+L", "freeze"}, [](EditorState& ed) { LockOrHide(ed, false); }},
+        {{"hide", "Hide selected", "Ctrl+Shift+H", "invisible"}, [](EditorState& ed) { LockOrHide(ed, true); }},
+        {{"align.left", "Align left (to the key widget)", "", "edge"}, [](EditorState& ed) { uid::AlignSelection(ed, AlignMode::Left); }},
+        {{"align.centerh", "Align centre, left to right", "", "middle horizontal"}, [](EditorState& ed) { uid::AlignSelection(ed, AlignMode::CenterH); }},
+        {{"align.right", "Align right", "", "edge"}, [](EditorState& ed) { uid::AlignSelection(ed, AlignMode::Right); }},
+        {{"align.top", "Align top", "", "edge"}, [](EditorState& ed) { uid::AlignSelection(ed, AlignMode::Top); }},
+        {{"align.centerv", "Align centre, top to bottom", "", "middle vertical"}, [](EditorState& ed) { uid::AlignSelection(ed, AlignMode::CenterV); }},
+        {{"align.bottom", "Align bottom", "", "edge"}, [](EditorState& ed) { uid::AlignSelection(ed, AlignMode::Bottom); }},
+        {{"dist.h", "Space evenly, across", "", "distribute horizontal"}, [](EditorState& ed) { uid::DistributeSelection(ed, true, -1.0f); }},
+        {{"dist.v", "Space evenly, down", "", "distribute vertical"}, [](EditorState& ed) { uid::DistributeSelection(ed, false, -1.0f); }},
+        {{"gap.h8", "Gap of 8 pixels, across", "", "distribute spacing"}, [](EditorState& ed) { uid::DistributeSelection(ed, true, 8.0f); }},
+        {{"gap.v8", "Gap of 8 pixels, down", "", "distribute spacing"}, [](EditorState& ed) { uid::DistributeSelection(ed, false, 8.0f); }},
+        {{"match.w", "Same width as the key widget", "", "size"}, [](EditorState& ed) { uid::MatchSelection(ed, true, false); }},
+        {{"match.h", "Same height as the key widget", "", "size"}, [](EditorState& ed) { uid::MatchSelection(ed, false, true); }},
+        {{"tidy2", "Tidy into 2 columns", "", "grid arrange"}, [](EditorState& ed) { uid::TidySelection(ed, 2, 8.0f); }},
+        {{"tidy3", "Tidy into 3 columns", "", "grid arrange"}, [](EditorState& ed) { uid::TidySelection(ed, 3, 8.0f); }},
+        {{"flip.h", "Flip left to right", "", "mirror"}, [](EditorState& ed) { uid::FlipSelection(ed, true); }},
+        {{"flip.v", "Flip top to bottom", "", "mirror"}, [](EditorState& ed) { uid::FlipSelection(ed, false); }},
+        {{"find", "Find and replace text", "", "search"}, [](EditorState&) { g_showFind = true; }},
+        {{"cheat", "Keyboard shortcuts", "F1", "help keys"}, [](EditorState&) { g_showCheat = true; }},
+    };
+    return v;
+}
+}  // namespace
+
+bool UIDesignerTakeFitRequest() { const bool f = g_fitRequested; g_fitRequested = false; return f; }
+
+void UIDesignerKeys(EditorState& ed, bool active) {
+    if (!active || ImGui::GetIO().WantTextInput) return;
+    const ImGuiIO& io = ImGui::GetIO();
+    auto run = [&](const char* id) { for (const Cmd& c : Commands()) if (c.c.id == id) { c.run(ed); return; } };
+    if (io.KeyCtrl && ImGui::IsKeyPressed(ImGuiKey_P, false)) { g_showPalette = true; g_query[0] = 0; }
+    if (ImGui::IsKeyPressed(ImGuiKey_F1, false)) g_showCheat = !g_showCheat;
+    if (io.KeyCtrl && !io.KeyShift && ImGui::IsKeyPressed(ImGuiKey_A, false)) run("sel.all");
+    if (io.KeyCtrl && io.KeyShift && ImGui::IsKeyPressed(ImGuiKey_I, false)) run("sel.invert");
+    if (io.KeyCtrl && io.KeyShift && ImGui::IsKeyPressed(ImGuiKey_A, false)) run("sel.same");
+    if (io.KeyCtrl && !io.KeyShift && ImGui::IsKeyPressed(ImGuiKey_G, false)) run("group");
+    if (io.KeyCtrl && io.KeyShift && ImGui::IsKeyPressed(ImGuiKey_L, false)) run("lock");
+    if (io.KeyCtrl && io.KeyShift && ImGui::IsKeyPressed(ImGuiKey_H, false)) run("hide");
+}
+
+void UIDesignerOverlays(EditorState& ed) {
+    if (g_showPalette) {   // Ctrl+P: type a few words, press Enter (or click) to run the first / chosen action
+        std::vector<uid::Command> list; for (const Cmd& c : Commands()) list.push_back(c.c);
+        ImGui::SetNextWindowPos({ImGui::GetIO().DisplaySize.x * 0.5f - 220.0f, 90.0f}, ImGuiCond_Appearing);
+        ImGui::SetNextWindowSize({440, 360}, ImGuiCond_Appearing);
+        if (ImGui::Begin("Find an action", &g_showPalette, ImGuiWindowFlags_NoCollapse)) {
+            if (ImGui::IsWindowAppearing()) ImGui::SetKeyboardFocusHere();
+            ImGui::SetNextItemWidth(-1.0f);
+            const bool enter = ImGui::InputTextWithHint("##q", "Type what you want to do", g_query, sizeof(g_query), ImGuiInputTextFlags_EnterReturnsTrue);
+            const auto order = uid::RankCommands(list, g_query);
+            int ran = -1;
+            for (size_t k = 0; k < order.size(); ++k) {
+                const Cmd& c = Commands()[order[k]];
+                std::string row = c.c.label; if (!c.c.keys.empty()) row += "    " + c.c.keys;
+                if (ImGui::Selectable(row.c_str(), k == 0)) ran = (int)order[k];
+            }
+            if (enter && !order.empty()) ran = (int)order[0];
+            if (ran >= 0) { Commands()[ran].run(ed); g_showPalette = false; }
+            if (ImGui::IsKeyPressed(ImGuiKey_Escape)) g_showPalette = false;
+        }
+        ImGui::End();
+    }
+    if (g_showCheat) {
+        ImGui::SetNextWindowSize({420, 380}, ImGuiCond_FirstUseEver);
+        if (ImGui::Begin("Keyboard shortcuts", &g_showCheat)) {
+            for (const auto& sc : uid::Shortcuts()) { ImGui::TextColored(ImVec4(0.55f, 0.75f, 1.0f, 1.0f), "%s", sc.keys); ImGui::SameLine(190); ImGui::TextUnformatted(sc.what); }
+        }
+        ImGui::End();
+    }
+    if (g_showFind) {
+        if (ImGui::Begin("Find and replace", &g_showFind, ImGuiWindowFlags_AlwaysAutoResize)) {
+            ImGui::InputText("Find", g_findText, sizeof(g_findText)); ImGui::InputText("Replace with", g_replText, sizeof(g_replText));
+            ImGui::Checkbox("Match case", &g_findCase);
+            if (ImGui::Button("Replace in all UI text")) {
+                ed.PushUndo("Replace UI text"); int total = 0;
+                for (const auto& up : ed.scene().Objects()) {
+                    if (!up) continue; int n = 0;
+                    if (auto* t = up->GetComponent<TextRenderer>()) if (t->screenSpace) { t->text = uid::ReplaceText(t->text, g_findText, g_replText, g_findCase, n); total += n; }
+                    if (auto* b = up->GetComponent<UIButton>()) { b->label = uid::ReplaceText(b->label, g_findText, g_replText, g_findCase, n); total += n; }
+                }
+                if (total) ed.dirty = true;
+                ImGui::OpenPopup("done");
+            }
+            if (ImGui::BeginPopup("done")) { ImGui::TextUnformatted("Done."); ImGui::EndPopup(); }
+        }
+        ImGui::End();
+    }
 }
 
 }  // namespace oked

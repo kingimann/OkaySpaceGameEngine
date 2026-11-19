@@ -30,5 +30,45 @@ int main() {
         ed.Select(nullptr);
         CHECK(oked::uid::NudgeSelection(ed, 1, 0, false, 8, none) == 0);
     }
+    {
+        RUN_SUITE("selection and layout tools on a scene: right result, one undo step");
+        editor::EditorState ed;
+        auto mk = [&](const char* n, float x, float y, float w, float h, bool button) {
+            GameObject* g = ed.scene().CreateGameObject(n);
+            if (button) { auto* b = g->AddComponent<UIButton>(); b->anchor = UIAnchor::TopLeft; b->position = {x, y}; b->size = {w, h}; }
+            else { auto* p = g->AddComponent<UIPanel>(); p->anchor = UIAnchor::TopLeft; p->position = {x, y}; p->size = {w, h}; }
+            return g; };
+        mk("A", 10, 10, 50, 20, true); mk("B", 100, 40, 30, 30, true); mk("C", 300, 5, 60, 10, false);
+        auto none = [](GameObject*) { return false; };
+        auto P = [&](const char* n) { auto* g = ed.scene().Find(n); return GetUIRect(g); };
+        CHECK(oked::uid::SelectTool(ed, oked::uid::SelOp::All, none) == 3 && ed.MultiSelection().size() == 3);
+        CHECK(oked::uid::SelectTool(ed, oked::uid::SelOp::Invert, none) == 0);
+        ed.Select(ed.scene().Find("A"));
+        CHECK(oked::uid::SelectTool(ed, oked::uid::SelOp::SameKind, none) == 2);   // A and B are buttons
+        CHECK(oked::uid::SelectTool(ed, oked::uid::SelOp::SameKind, [](GameObject* g) { return g->name == "B"; }) == 1);
+        auto sel3 = [&]() { ed.Select(ed.scene().Find("A")); ed.ToggleSelect(ed.scene().Find("B")); ed.ToggleSelect(ed.scene().Find("C")); };   // primary = C (undo rebuilds objects)
+        sel3();
+        CHECK(oked::uid::AlignSelection(ed, oked::uid::AlignMode::Top) == 2);   // to C's top; C stays
+        CHECK(P("A").position->y == 5 && P("B").position->y == 5 && P("C").position->y == 5);
+        CHECK(ed.Undo()); CHECK(P("A").position->y == 10 && P("B").position->y == 40);
+        sel3();
+        CHECK(oked::uid::MatchSelection(ed, true, false) == 2);   // width of C (60)
+        CHECK(P("A").sizePtr->x == 60 && P("B").sizePtr->x == 60 && P("B").sizePtr->y == 30);
+        CHECK(ed.Undo()); CHECK(P("A").sizePtr->x == 50);
+        sel3();
+        CHECK(oked::uid::DistributeSelection(ed, true, 8) == 2);
+        CHECK(P("A").position->x == 10 && P("B").position->x == 68 && P("C").position->x == 106);
+        sel3();
+        CHECK(oked::uid::FlipSelection(ed, true) == 3);
+        CHECK(P("B").position->x == 78);
+        CHECK(ed.Undo()); CHECK(P("B").position->x == 68);   // only the flip went back
+        sel3();
+        CHECK(oked::uid::TidySelection(ed, 2, 4) > 0);
+        ed.Select(ed.scene().Find("A"));
+        CHECK(oked::uid::AlignSelection(ed, oked::uid::AlignMode::CenterH) == 1);   // one widget: centred on the screen
+        CHECK(std::fabs(P("A").position->x + P("A").sizePtr->x * 0.5f - UICanvas::Width() * 0.5f) < 0.01f);
+        ed.Select(nullptr);
+        CHECK(oked::uid::AlignSelection(ed, oked::uid::AlignMode::Left) == 0 && oked::uid::FlipSelection(ed, true) == 0);
+    }
     TEST_MAIN_RESULT();
 }

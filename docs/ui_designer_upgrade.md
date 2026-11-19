@@ -47,3 +47,28 @@ matching code in `DrawUIOverlay`, add a rulers strip, a layers panel and a respo
 | Image asset picker with thumbnails | Already there: UI Image uses `AssetSlot` with a thumbnail and Set Native Size. Not rebuilt. |
 | Guides saved per scene | New `UIGuides` component, created only by "Keep guides with the scene"; scenes without it write nothing. Test: `ui_user_styles` (saved guides). |
 | Undo audit | Audited `EditUIWidgets` and the new panel: move, resize, anchor pip, rename, hide, reorder, styles, guides toggle all call `PushUndo` first. Found one gap: arrow-key nudge had no undo (and moved only one widget). Fixed in `editor/UIDesignerActions.hpp` (`NudgeSelection`, one undo step, all selected, skips locked); test `ui_designer_actions`. Dragging a guide is session-only and has no undo by design. |
+
+## Fourth step (branch claude/ui-designer-4): screenshot bugs and advanced tools
+
+Bugs seen in real screenshots, now fixed: the ruler corner (L, Fit, zoom %) overprinted the first ruler labels, and a click on
+Fit started a guide instead (the top-ruler press was handled before the Fit button, so the button never saw it). Now there is a
+bar above the rulers with one slot per control (`MakeRulerLayout`, `RulerPress`: buttons win), the stats line keeps out of
+the bar, the selection readout is rounded (`FormatPx`) and clamped inside the view, handles are clamped off the rulers, and
+the Layers panel opens docked on the right, tall, with wrapped hint text. Tested in `test_ui_designer`.
+
+Advanced tools (existing first: `UILayoutTools` already had Wrap in Panel, Match size, Stack, Fit to Children; `UILayoutGroup`
+already has Flex layout; `UIFrame` already has rotation, scale, pivot, anchors; Align and Distribute were in the editor menu):
+
+| Item | Result |
+| --- | --- |
+| 1 select all / invert / same kind, Ctrl+G group, lock, hide | done: `SelectTool`, Ctrl+A, Ctrl+Shift+I / A / L / H, Ctrl+G (over `UILayout::WrapInPanel`) |
+| 2 transform | model only: `Flip` (also applied: flip H/V), `AngleFromPivot` (rotate handle maths), `ToPx` / `FromPx` (px and %), `ScaleAbout`. Not wired: rotate handle, numeric X/Y/W/H fields |
+| 3 alignment | done: align to the key (primary) widget, gap in pixels, equal spacing, match width / height of the key, tidy grid |
+| 4 auto layout | not done; `UILayoutGroup` (row, column, grid, flex) and `UILayout::Stack` already exist |
+| 5 constraints, per-aspect overrides | not done |
+| 6 paint tools | not done (shared styles from step three cover shared colours) |
+| 7 text tools | not done |
+| 8 search and find / replace | done: Layers search box, Select all matches, Find and replace text (text and button labels), one undo step; colour and style replace not done |
+| 9 nine-slice handles | not done |
+| 10 command palette | done: Ctrl+P lists 26 actions with words search |
+| 11 shortcut cheat sheet | done: F1 |

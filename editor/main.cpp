@@ -48823,6 +48823,7 @@ void DrawViewport(EditorState& ed, bool uiPanel = false) {
     OKAY_BREADCRUMB(uiPanel ? "UItab:editwidgets" : "Scene:editwidgets");
     // With "Show UI in Scene view" the UI is drawn over the scene, so it's editable there too.
     if (uiOnly) oked::UIDesignerSyncScene(ed.scene());
+    if (uiOnly) { oked::UIDesignerKeys(ed, hovered || ImGui::IsWindowFocused()); if (oked::UIDesignerTakeFitRequest()) { g_uiEditZoom = 1.0f; g_uiEditPan = ImVec2(0.0f, 0.0f); } }
     bool rulerBusy = false;   // a guide is being dragged or a ruler clicked: the widgets leave the mouse alone
     if (uiOnly) { ImVec2 vp0 = uiCanvasPos, vs0 = uiCanvasSize; ApplyUIEditZoom(vp0, vs0); bool rfit = false; rulerBusy = oked::UIDesignerRulerInput(canvasPos, canvasEnd, vp0, g_uiEditZoom, hovered, io, &rfit); if (rfit) { g_uiEditZoom = 1.0f; g_uiEditPan = ImVec2(0.0f, 0.0f); } }
     if (!rulerBusy && ownsUIInteraction && (uiOnly || g_showUIOverlay)) EditUIWidgets(ed, uiCanvasPos, uiCanvasSize, hovered, io, uiOnly);
@@ -48904,6 +48905,7 @@ void DrawViewport(EditorState& ed, bool uiPanel = false) {
         {   // rulers, draggable guides, Fit and the Layers toggle (editor/UIDesignerWindow.cpp)
             oked::UIDesignerDrawRulers(dl, canvasPos, canvasEnd, viewPos, g_uiEditZoom);
             oked::UIDesignerLayersWindow(ed);
+            oked::UIDesignerOverlays(ed);
         }
         // Safe-area inset (5% of the game screen): keep important UI inside this on TVs
         // / notched phones. A true inset of the real (zoomed) screen — exactly the same

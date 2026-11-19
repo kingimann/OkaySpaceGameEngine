@@ -91,6 +91,7 @@ release job or the installer build for this change.
 | 16 | Main menu bar clean-up: one Examples, Edit clipboard commands, GameObject categories, View, Help | The bar at the top of `Tools\OkayEngine.exe` | New in this change; see section 16 for what was and was not seen |
 | 17 | Hierarchy right-click menus: Create Child with every category, Add Component, Select Same Type, "Delete 3 Objects" | Right-click in the Hierarchy panel of `Tools\OkayEngine.exe` | New in this change; see section 17 |
 | ac-cheat-sim | Anti-cheat: watch the server catch a cheater (cheat simulator), ban list, audit log | `OkaySpacePlayer.exe --server --cheat-sim --log cheat_sim.txt` (Tools folder), then open the log | New in this change; tested headless on Linux over loopback; Windows and a real network unverified |
+| boat1 | Water waves, floating things and a boat to drive | `examples\boat\boat_lake.okayscene` (File > Open, Play), **GameObject > Vehicles > Boat**, Add Component > Physics 3D > Buoyancy and Gameplay > Boat Controller, Water Inspector > Style | New in this change; headless tests only, Windows and GPU not run |
 | content-delivery | Downloadable game content: signed models, textures, scripts and data that an exported game fetches (off by default) | `okay-content.exe` in `Tools/`, or `content.okayconfig` / `OKAY_CONTENT_URL` for the player | Built; Linux-tested only |
 | editor-fps | Editor frame-time overlay and speed switches | Editor menu **View > Rendering**: Frame-time overlay, Frame rate limit, Slow down when idle, Viewport resolution, Performance mode. Heavy test scenes: `examples\perf\` | New in this change. Real Direct3D 11 numbers on a Windows machine are unverified; sent back by the owner |
 | fast1 | Fast release: one workflow dispatch, no version-bump PR | GitHub: Actions > "Fast release" > Run workflow (tick dry_run first); a change adds `dist/changelog.d/<id>.txt` | Built and tested offline with fake data; never run on GitHub; off until `FAST_RELEASE_ENABLED=1` |
@@ -101,6 +102,8 @@ release job or the installer build for this change.
 | security-sec1 | Security plan SEC1: script file paths, update signature status, relay caps, reactions SQL | examples\security_paths\script_paths.okayscene (Play, read Console); Settings > About and Help > About line; SQL and relay are owner steps | Tests on Linux only; editor/launcher lines not run; nothing on Windows or real Supabase |
 | tex1 | Texture tools (our own): mipmaps, atlas, BC compression, DDS | Windows release: `examples\texture\try_texture.bat` (needs `Tools\okay-texture.exe`); editor: Project panel > pick a picture > Import Settings > "Generate mipmaps / compress" | Unverified on Windows; Linux tests and CLI run |
 | vpa | Multi-window panels start cleanly on every video driver | `Tools\OkayEngine.exe`: drag a panel tab outside the editor | Linux only (Xvfb, a build with assertions on); Windows unverified |
+| vsclarity | Visual Script nodes explain themselves (plain line, What is this? card, Needs input, Next steps, Try this node, What do you want to do? list) | `Tools\OkayEngine.exe`: View > Editors & Tools > Visual Script, drop any node | Compiled and unit-tested (`vs_guide`); never drawn in a real window, Windows unverified |
+| wind-field | Wind: trees, grass, flags, leaves, a pushed box and the sound of wind | Editor: File > Open `examples\wind\wind.okayscene`, press Play; GameObject > Effects > Environment; Add Component > Environment; Lighting window > Wind | Tests pass on Linux (`wind_field`, `wind`); the editor and the example were not run on Windows or on a screen |
 | xbox-next | Xbox UWP next: one-page guide (PC test, Dev Mode, IP, Device Portal, deploy, logs) and the new log file | Windows release: `xbox-src\scripts\build-xbox-uwp.ps1`; editor File > Build Settings > Xbox (exp.) | Linux-tested only; nothing here has run on a console |
 | xbox-uwp | Xbox One export (EXPERIMENTAL, UNVERIFIED): one-click build (check, export, compile, shaders, pack, sign, install), own .appx packer, engine mode | File > Build Settings > platform "Xbox (exp.)" > Build Xbox package | Linux-tested only |
 | 7n | Every own replacement in one table: the switch, the sample, how to tell it is on, and what is missing | section 7n below and `docs/own_flip_proposal.md` | Table is new. Read from the code and from CI logs, not run on Windows |
@@ -1464,6 +1467,45 @@ the server did. Details: `docs/anticheat.md` ("The cheat simulator"), the status
 on Linux over loopback. **Unverified:** nothing was run on Windows or on a real network; the `macro` step hands the button presses to the
 detector instead of sending real input packets; the simulator's packets are not encrypted.
 
+## boat1. Water waves, floating things and a boat to drive
+
+**What it is.** The sea now has real waves that things can float on, crates bob and settle at the right depth, heavy things
+sink, and there is a boat you drive with the keyboard. Details and the list of what is not done: `docs/water_boat.md`.
+
+**Steps (the example lake).**
+1. Open the editor (`Tools\OkayEngine.exe`). **File > Open...** and pick `<install folder>\examples\boat\boat_lake.okayscene`.
+2. Press **Play**.
+3. **W** goes forward, **S** goes back, **A** turns left, **D** turns right, **Space** brakes. The camera follows the boat.
+
+**What you should see.** A lake with rolling waves, a wooden dock on the west shore, a white boat with a red stripe beside
+the dock pointing out over the water, six wooden crates floating near it that bob and drift, and a grey stone that
+sinks to the bottom. Hold W: the boat speeds up to about 12 metres per second, rises and falls with the waves, leaves two
+white foam trails behind and throws spray at the bow. Tap A or D while moving: it turns. Let go of W: it coasts and slows.
+Drive into a crate: it is pushed away and bobs. Pushing the boat onto the shore stops it. The Console says nothing about errors.
+
+**Steps (make your own boat).**
+1. New 3D scene. **GameObject > Vehicles > Boat**. If the scene has no Water, a lake is made with it. Press Play, W / S / A / D.
+2. Or by hand: make a Cube, scale it 2 x 0.8 x 4.6, add **Rigidbody3D** (mass 2.5), **Box Collider 3D**, **Buoyancy** (Fullness 0.55) and
+   **Boat Controller** (Add Component). Put a **Water** under it (GameObject > 3D Object > Water).
+
+**Steps (waves).** Select the Water. In the Inspector set **Style** to **Ocean** (sharp crests) or **Calm lake**. Change
+**Direction**, **Steepness**, **Wave count** and **Seed** (the same seed always makes the same sea), and **Current** (a stream:
+floating crates drift with it). Wave Height, Length and Speed work as before. Classic keeps the old look.
+
+**Steps (floating).** Make a Cube with Rigidbody3D (mass 0.5), Box Collider 3D and **Buoyancy** above the water, press Play: it falls,
+splashes, bobs and settles half under. Change the mass: 0.25 floats higher, 2 sinks. Select it and look at the Inspector:
+Grid X/Z, Fullness, Drag numbers, Splash Effect.
+
+**Steps (no more bouncing).** Open any old scene with Water (Depth above 0) and a Rigidbody crate, or make one: Cube + Rigidbody3D + Box Collider 3D (mass 0.5) 3 m above a Water with Depth 5. Press Play: it splashes in, dips once, and settles within a couple of seconds at the same height whatever the frame rate. Before this change it kept hopping at the surface.
+
+**How you know it worked.** The crate at mass 0.5 ends with its middle at the water line; the boat does not flip over in the
+waves; with the boat in the air (drag it up in the scene before Play) the engine does nothing until it lands.
+
+**Status.** Tested headless on Linux (`boat` test: wave formula, draft, sinking, frame rate 30/60/144, no NaN, energy, steering,
+reverse, saving and loading, the example file). **Unverified:** the Windows release, the editor window (the menu entry, Add
+Component entries and Water fields are syntax-checked only), a GPU, what the wake and spray look like on screen, and how the
+boat feels with a real keyboard. Boarding a boat with E is not done.
+
 ## Console: Collapse button (branch `claude/console-collapse`, not merged or released yet)
 
 Owner request 2026-11-15: "for console allow user to collapse the same log."
@@ -2088,6 +2130,73 @@ ran in both backends without stopping, and with the change a Project tab dragged
 intermittent stop seen before under Xvfb was SDL falling back to the `offscreen` driver when the X server was not ready yet.
 Unverified: Windows (not built or run here), a real Wayland session.
 
+## vsclarity. Visual Script nodes explain themselves
+
+What changed: when you drop a node you now see what it does, what to plug in, and what to do next. Nothing about saved
+graphs or how scripts run changed. Notes and the full gap table: `docs/visual_script_clarity.md`.
+
+Try it on Windows (this is all in the normal editor, nothing to switch on):
+1. Start `Tools\OkayEngine.exe`, open a project, select an object and open View > Editors & Tools > Visual Script.
+2. Press "Or add a block" (or right-click the canvas, or tap Space) and drop **If Then Else**.
+   * Under its title you should see one plain sentence, not a blank line.
+   * The node shows an amber **Needs input** badge and the line "Plug the condition in here." The Condition box says "needed".
+   * Hover the Condition circle: the tip says what goes in and gives "Example: true".
+3. Look at the bottom-right corner of the canvas: the **What is this?** card for the selected node. It lists what it does,
+   what to plug in, a tiny example chain, common mistakes and what to do next. Press **Hide** to fold it; close and reopen
+   the editor and it stays folded (`helpcard 0` in `okay_vs_usage.txt`). Press **Show** to open it again.
+4. In the card, under "Next steps", click a chip (for example **Say Text**). The node is added next to the selected one and
+   wired in. Chips only suggest nodes that fit.
+5. Drop **Add Numbers** (a value node). Its chips add a node that takes a number, with the wire already drawn from the result.
+6. Press **Try this node** at the bottom of the card. A small ready-made graph (On Start, the node with sensible values, a
+   Say Text step) appears. Press Play: the Console shows the message, and for a value node it shows the result (Add Numbers: 10).
+7. Open the Add Node list (right-click the canvas). In the left list find **What do you want to do?** and click **Move things**,
+   **Show messages** and so on. Each row has its plain sentence under the name. Type `move things` in the search: the movement
+   nodes come up.
+8. Renamed nodes: search `Wait Seconds`, `Flip Flop` or `Every Seconds`. The nodes now called **Wait Then Continue**, **Switch
+   Between Two Paths** and **Repeat Every Few Seconds** are found. An old saved graph that used them loads unchanged.
+
+What was and was not verified: the rules behind every item were unit-tested over all nodes in the list on Linux (`vs_guide`,
+and the existing `vs_clarity`, `vs_node_docs`, `vs_names`, `vs_start` suites). The drawing was compile-checked only: it was never
+shown in a real window, on Linux or on Windows, so card size on a small window and the second line on a narrow node are unchecked.
+
+## wind-field. Wind: trees, grass, flags, leaves, a pushed box and the sound
+
+**What it is.** One wind that blows trees, grass, a flag, a rope, leaves (particles) and a light box, with a wind sound that gets
+louder in strong wind. You set the wind in one place: a **Wind** object (or the Wind Zone component). A scene with no wind object
+looks and plays exactly as before. Details: `docs/wind.md`.
+
+**Steps (the example).**
+1. Start `Tools\OkayEngine.exe` and open a project.
+2. File > Open, pick `examples\wind\wind.okayscene` (it is in the folder you installed to).
+3. Press **Play**. Wait about 10 seconds: the wind rises and falls on a 24-second cycle (calm, storm, calm).
+4. Look and listen.
+
+**What you should see and hear.**
+- (The camera looks toward -Z, so +X is to your right.) The trees, pines and little bushes lean to the right and shiver; stronger in the gusts. The one tree in the shaded corner on
+  the right (inside the "Calm zone") stands still: that is a wind-free zone.
+- The red flag on the pole waves and points downwind. The rope between the two posts swings sideways.
+- Orange leaves drift across from the left (Particle System, "Affected by wind" at 1).
+- The wooden box near the camera is pushed along in the strong gusts (Wind Drag, 8 kg; in a 14-second headless run it slid about 4 m and stopped between gusts).
+- A soft "whoosh" that swells with the wind (Wind Sound: made by the engine, no sound file).
+
+**Steps (make your own).**
+1. Open any scene. GameObject > Effects > Environment > **Wind (whole scene)**. Select it: arrows appear in the Scene view.
+   Set **Strength** to 8, **Gusts** to 0.5.
+2. Select a tree or bush mesh: Add Component > Environment > **Wind Sway**. Press Play: it leans downwind.
+3. Select a Foliage layer: set **Sway in the wind** (Inspector) to 0.8. Select a Cable: set **Sway in the wind**.
+4. A physics box: Add Component > Environment > **Wind Drag** (it adds a Rigidbody 3D if missing).
+5. A Particle System: the **Affected by wind** slider (1 = drifts with the wind, 0 = ignores it).
+6. View > Lighting (Lighting window) > **Wind**: compass direction, strength, gusts, and a live arrow.
+7. Fan: GameObject > Effects > Environment > **Fan (blows outward)**: leaves and light boxes near it blow away from the middle.
+
+**Scripts.** In an OkayScript: `wind_set(12, 90)` (strength 12, blowing toward +X), `wind_gust(0.8, 0.3)`, `wind_speed()` (speed
+where the camera is). In the new script language: `Wind.SetStrength(12)`, `Wind.SetGust(0.8, 0.3)`, `Wind.At(Vec3(0, 1, 0))`,
+`Wind.Strength`, `Wind.Direction`.
+
+**Status.** Tested on Linux: the wind maths (noise, gust period, zone blending, no NaN) and the components in a scene (zones, particles,
+drag, sway, foliage, cable, sound, save/load). Not run: Windows, a GPU renderer, the editor on a screen. The example scene was made by
+a throw-away generator, loaded and run for 14 simulated seconds headless (22 swaying plant chunks, the box moved, no NaN), and rendered headless with the software renderer (no pictures kept in the repo); nobody has watched it move on a screen.
+
 ## xbox-next. Xbox UWP next: PC test, Dev Mode, Device Portal, logs
 
 **Read this first: EXPERIMENTAL and UNVERIFIED.** The triangle package ran on a Windows 11 PC (owner, 2026-11-18). Nothing has run on an Xbox. This makes a UWP app for an Xbox One in **Developer Mode**. It is not a native console game, and we make no claim that any console hardware is supported. Steps that talk to the Xbox are from Microsoft's public pages and may look different on your console: if a screen differs, write down what it says and send it. Background: `docs/xbox_uwp.md`.
@@ -2145,7 +2254,7 @@ Unverified: Windows (not built or run here), a real Wayland session.
 What to do (needs a Windows PC and a release built with `-DOKAY_BUILD_XBOX_UWP=ON`, which `build-windows-dist.sh` sets; it also ships `xbox-src` next to the editor):
 
 1. **Once:** install Visual Studio 2022 (free Community edition) with the workload "Universal Windows Platform development", its C++ UWP tools and a Windows 10/11 SDK.
-2. Open the editor, **File > Build Settings**, click **Xbox (exp.)** at the top. You should see an orange "EXPERIMENTAL and UNVERIFIED" line, the limits text, the tools list (found / MISSING with the install step), and the package name, version and publisher. A missing required tool greys the button with a tooltip; **Check again** re-checks.
+2. Open the editor, **File > Build Settings**, click **Xbox (exp.)** at the top. **The editor must not freeze** (it did before: the tool check ran on the editor thread and called Visual Studio's `vswhere` four times). Now you first see "Checking your PC for the Xbox tools..." with a small spinner, the **Build Xbox package** button is greyed (hover it: "Checking your PC ..."), you can keep clicking and typing in the editor, and after a short moment (a few seconds the first time, instant on the next editor start because the answer is cached in `%LOCALAPPDATA%\OkaySpace\xbox_vswhere_cache.txt`) the text changes to the list. If `vswhere` does not answer within 5 seconds it is stopped and the page says so. **Check again** asks again (and ignores the cache). If the editor still lags when you switch to Xbox, tell us (UNVERIFIED on Windows: nobody has run this fix). You should see an orange "EXPERIMENTAL and UNVERIFIED" line, the limits text, the tools list (found / MISSING with the install step), and the package name, version and publisher. A missing required tool greys the button with a tooltip; **Check again** re-checks.
 3. Leave **Engine mode** unticked the first time (a triangle test, the safest). Tick **Also install on this PC afterwards** if you want it on this PC. Press **Build Xbox package**.
 4. Watch the page: a step list (Check the Windows tools, Export, Set up the UWP app build, Compile the UWP app, Put the program into the package, Compile the shaders, Pack and check the .appx, Sign, Install) with a status per step and a live log. **Cancel build** stops it. If a step fails you get a plain message and the first error lines: send us those.
 5. If you ticked install, Windows shows **one** administrator (UAC) prompt: accept it. Then start the app from the Start menu: you should see a dark window with a coloured triangle (the background turns green once a pad is connected; left stick moves it, A centres it, B exits).

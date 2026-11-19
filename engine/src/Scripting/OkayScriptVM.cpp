@@ -139,6 +139,7 @@
 #include "okay/Components/QuestLog.hpp"
 #include "okay/Components/StoryState.hpp"
 #include "okay/Render/Atmosphere.hpp"          // post_set / fog_set / weather_set
+#include "okay/Components/WindZone.hpp"        // wind_speed / wind_set / wind_gust (docs/wind.md)
 #include "okay/Components/DayNightCycle.hpp"   // time_of_day
 #include "okay/Components/Spline.hpp"
 #include "okay/Components/LineRenderer.hpp"
@@ -6500,6 +6501,37 @@ struct OkayScriptVM::Impl {
             auto& w = s->renderSettings.weather;
             w.preset = a[0].IsString() ? WeatherPresetFromName(a[0].AsString()) : SafeInt(Mathf::Clamp(a[0].AsFloat(), 0.0f, 3.0f));
             if (a.size() > 1) w.intensity = Mathf::Clamp01(a[1].AsFloat());
+            return Value{};
+        };
+        // Wind (docs/wind.md): wind_speed([x, y, z]) in metres per second where it is asked (default: where the camera is),
+        // wind_x / wind_y / wind_z(x, y, z) the direction parts there, wind_set(strength [, yawDegrees]) and
+        // wind_gust(amount [, gustsPerSecond]) change the scene's own wind (made when the scene has none).
+        auto windAt = [sceneOf](std::vector<Value>& a) -> Vec3 {
+            Vec3 p{0, 0, 0};
+            if (a.size() >= 3) p = {a[0].AsFloat(), a[1].AsFloat(), a[2].AsFloat()};
+            else if (Scene* s = sceneOf()) { if (s->mainCamera && s->mainCamera->transform) p = s->mainCamera->transform->Position(); }
+            return WindField::At(p);
+        };
+        b["wind_speed"] = [windAt](std::vector<Value>& a) { return Value{windAt(a).Magnitude()}; };
+        b["wind_x"] = [windAt](std::vector<Value>& a) { return Value{windAt(a).x}; };
+        b["wind_y"] = [windAt](std::vector<Value>& a) { return Value{windAt(a).y}; };
+        b["wind_z"] = [windAt](std::vector<Value>& a) { return Value{windAt(a).z}; };
+        b["wind_set"] = [sceneOf](std::vector<Value>& a) {
+            Scene* s = sceneOf();
+            if (!s || a.empty()) return Value{};
+            WindZone* z = WindZone::EnsureGlobal(*s);
+            const float st = a[0].AsFloat();
+            if (std::isfinite(st)) z->strength = Mathf::Clamp(st, -200.0f, 200.0f);
+            if (a.size() > 1 && std::isfinite(a[1].AsFloat()))   // yaw: 0 = toward +Z, 90 = toward +X
+                z->Aim({std::sin(a[1].AsFloat() * 0.0174532925f), 0.0f, std::cos(a[1].AsFloat() * 0.0174532925f)});
+            return Value{};
+        };
+        b["wind_gust"] = [sceneOf](std::vector<Value>& a) {
+            Scene* s = sceneOf();
+            if (!s || a.empty()) return Value{};
+            WindZone* z = WindZone::EnsureGlobal(*s);
+            if (std::isfinite(a[0].AsFloat())) z->gustAmount = Mathf::Clamp01(a[0].AsFloat());
+            if (a.size() > 1 && std::isfinite(a[1].AsFloat())) z->gustFrequency = Mathf::Clamp(a[1].AsFloat(), 0.01f, 10.0f);
             return Value{};
         };
         b["time_of_day"] = [sceneOf](std::vector<Value>& a) {

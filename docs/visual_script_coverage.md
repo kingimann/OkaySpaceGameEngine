@@ -34,22 +34,13 @@ Escape hatches: **Get Property**, **Set Property**, **Call Method** (`Type.Metho
 
 ## Builtin parity
 
-Every text-script builtin whose name is a single token (letters, digits, `_`, `.`) is the node `Fn.<name>`. It runs that builtin on this object. Wire only the arguments it takes. 1526 builtins are nodes.
+Every text-script builtin whose name is a single token (letters, digits, `_`, `.`) is the node `Fn.<name>`. It runs that builtin on this object. Wire only the arguments it takes. 1523 builtins are nodes.
 
 | Builtin | Node |
 | --- | --- |
 | `AddComponent` | `Fn.AddComponent` |
 | `Application.Quit` | `Fn.Application.Quit` |
 | `ApplyUITheme` | `Fn.ApplyUITheme` |
-| `Camera.AddToGroup` | `Fn.Camera.AddToGroup` |
-| `Camera.BlendTo` | `Fn.Camera.BlendTo` |
-| `Camera.FovKick` | `Fn.Camera.FovKick` |
-| `Camera.HitPulse` | `Fn.Camera.HitPulse` |
-| `Camera.RemoveFromGroup` | `Fn.Camera.RemoveFromGroup` |
-| `Camera.SetFovOffset` | `Fn.Camera.SetFovOffset` |
-| `Camera.SetHandheld` | `Fn.Camera.SetHandheld` |
-| `Camera.SetTarget` | `Fn.Camera.SetTarget` |
-| `Camera.Shake` | `Fn.Camera.Shake` |
 | `CancelInvoke` | `Fn.CancelInvoke` |
 | `Color` | `Fn.Color` |
 | `Color.Lerp` | `Fn.Color.Lerp` |
@@ -1560,6 +1551,12 @@ Every text-script builtin whose name is a single token (letters, digits, `_`, `.
 | `weapon_set` | `Fn.weapon_set` |
 | `weapon_swing` | `Fn.weapon_swing` |
 | `weather_set` | `Fn.weather_set` |
+| `wind_gust` | `Fn.wind_gust` |
+| `wind_set` | `Fn.wind_set` |
+| `wind_speed` | `Fn.wind_speed` |
+| `wind_x` | `Fn.wind_x` |
+| `wind_y` | `Fn.wind_y` |
+| `wind_z` | `Fn.wind_z` |
 | `wrap` | `Fn.wrap` |
 | `wrap_in_box` | `Fn.wrap_in_box` |
 | `write_save` | `Fn.write_save` |

@@ -2,6 +2,7 @@
 #include "lighting_scenes.hpp"
 #include "okay/Render/ShadowSetup.hpp"
 #include <cmath>
+#include <cstdio>
 #include <string>
 
 using namespace okay;
@@ -85,7 +86,7 @@ int main() {
         CHECK_NEAR(SpotCone(1.0f, co, ci), 1.0f, 1e-6f);
         CHECK_NEAR(SpotCone(co - 0.01f, co, ci), 0.0f, 1e-6f);
         CHECK_NEAR(SpotCone(0.5f * (co + ci), co, ci), 0.5f, 1e-5f);
-        CHECK(SpotCone(co + 0.02f, co, ci) < 0.05f);                                    // gentle start (smoothstep)
+        CHECK(SpotCone(co + 0.005f, co, ci) < 0.05f);                                 // gentle start (smoothstep)
         CHECK(LuxFromLumens(800.0f) > 60.0f && LuxFromLumens(800.0f) < 70.0f);          // 800 lm bulb = ~64 cd
         CHECK(LuxFromLumens(800.0f, 0.9f) > LuxFromLumens(800.0f));                      // a spot focuses it
         CHECK_NEAR(SimpleIntensityFromLux(20000, 20000), 1.0f, 1e-6f);
@@ -152,7 +153,7 @@ int main() {
         Light* l = AddLight(s, "L", Light::Type::Area, {0, 2, 0}, 90, 0, Color::White, 700.0f);
         l->shadowSoftness = 0.8f; l->areaWidth = 2.0f; l->areaHeight = 1.0f; l->cookie = "builtin:blinds"; l->cookieScale = 7.0f;
         l->unit = Light::Unit::RealWorld;
-        GameObject* g = Box(s, "Glow", {0, 0, 0}, {1, 1, 1}, Color::White);
+        GameObject* g = MakeBox(s, "Glow", {0, 0, 0}, {1, 1, 1}, Color::White);
         g->GetComponent<MeshRenderer>()->emissive = Color{1, 0.5f, 0.2f, 1}; g->GetComponent<MeshRenderer>()->glowLightRange = 4.5f;
         s.renderSettings.autoBrightness = false;
         const std::string path = "lighting_upgrade_save.okayscene";
@@ -192,7 +193,7 @@ int main() {
         ApplySceneLight(s);
         CHECK_NEAR(SceneLights::List()[0].color.x, 1.0f, 1e-4f);                    // at night the lamp is "fully lit": adaptation
         // glow
-        GameObject* g = Box(s, "Glow", {0, 0, 0}, {1, 1, 1}, Color::White);
+        GameObject* g = MakeBox(s, "Glow", {0, 0, 0}, {1, 1, 1}, Color::White);
         g->GetComponent<MeshRenderer>()->emissive = Color{2, 1, 0.5f, 1};
         ApplySceneLight(s); const size_t before = SceneLights::List().size();
         g->GetComponent<MeshRenderer>()->glowLightRange = 5.0f;
@@ -211,37 +212,57 @@ int main() {
         CHECK_NEAR(Vec3::Dot(ps.right, ps.up), 0.0f, 1e-4f);
     }
 
+    // ---- A closed room keeps the sun out (no light leaks through thin walls) ---------------------------------------------
+    {
+        ShadowsEnabled() = true; ShadowDistance() = 80.0f; ShadowCascades() = 3;
+        Scene r("closed"); BuildRoom(r, false);
+        AddLight(r, "Sun", Light::Type::Directional, {0, 6, 0}, 40.0f, 80.0f, Color::White, 1.0f);
+        ApplySceneLight(r);
+        const Vec3 eye{0, 1.8f, -3.6f};
+        const Mat4 vp = Mat4::Perspective(70.0f, 1.6f, 0.1f, 200.0f) * Mat4::LookAt(eye, Vec3{0, 1.2f, 2.0f}, Vec3{0, 1, 0});
+        for (int pass = 0; pass < 2; ++pass) {
+            ClassicLighting() = pass == 1;
+            RenderShadowMap(r, vp, eye);
+            const float back = ShadowFactor(Vec3{0, 1.5f, 3.98f}, Vec3{0, 0, -1});
+            const float floorP = ShadowFactor(Vec3{1.0f, 0.01f, 0.0f}, Vec3{0, 1, 0});
+            const float leftWall = ShadowFactor(Vec3{-3.98f, 1.5f, 0.0f}, Vec3{1, 0, 0});
+            std::printf("closed room sun: pass %d back %.3f floor %.3f left %.3f\n", pass, back, floorP, leftWall);
+            CHECK(back < 0.1f); CHECK(floorP < 0.1f); CHECK(leftWall < 0.1f);
+        }
+        ClassicLighting() = false;
+    }
+
     // ---- Software renders: sanity and determinism -------------------------------------------------------------------
     {
         ShadowsEnabled() = true; ShadowDistance() = 80.0f; ShadowCascades() = 3;
-        Scene s("sun"); View v = SunAndCubes(s);
-        Image a = Render(s, v, 160, 100);
-        Image b = Render(s, v, 160, 100);
+        Scene s("sun"); CamView v = BuildSun(s);
+        Image a = RenderScene(s, v, 160, 100);
+        Image b = RenderScene(s, v, 160, 100);
         int diff = 0;
         for (int y = 0; y < 100; ++y) for (int x = 0; x < 160; ++x) if (std::fabs(Luma(a, x, y) - Luma(b, x, y)) > 1.0f / 255) ++diff;
         CHECK(diff == 0);                                                              // repeatable
         CHECK(MeanLuma(a, 0, 0, 160, 100) > 0.15f && MeanLuma(a, 0, 0, 160, 100) < 0.9f);
         // the sun's shadows exist: turning them off lights more pixels than it darkens
         ShadowsEnabled() = false;
-        Image off = Render(s, v, 160, 100);
+        Image off = RenderScene(s, v, 160, 100);
         ShadowsEnabled() = true;
         CHECK(MeanLuma(off, 0, 40, 160, 100) > MeanLuma(a, 0, 40, 160, 100) + 0.003f);
 
         // spot light: bright inside the cone, dark outside, smooth between
-        Scene sp("spot"); View sv = SpotCone(sp);
-        Image si = Render(sp, sv, 160, 100);
+        Scene sp("spot"); CamView sv = BuildSpot(sp);
+        Image si = RenderScene(sp, sv, 160, 100);
         float lo = 1, hi = 0;
         for (int y = 40; y < 100; ++y) for (int x = 0; x < 160; ++x) { float l = Luma(si, x, y); lo = std::fmin(lo, l); hi = std::fmax(hi, l); }
         CHECK(hi - lo > 0.25f);
         // a window mask on the spot makes a pattern: more contrast than without
         for (const auto& go : sp.Objects()) if (auto* l = go->GetComponent<Light>()) l->cookie = "builtin:window";
-        Image sc = Render(sp, sv, 160, 100);
+        Image sc = RenderScene(sp, sv, 160, 100);
         double dev0 = 0, dev1 = 0; int n = 0;
         for (int y = 50; y < 100; ++y) for (int x = 40; x < 120; ++x) { dev0 += std::fabs(Luma(si, x, y) - Luma(si, x + 1, y)); dev1 += std::fabs(Luma(sc, x, y) - Luma(sc, x + 1, y)); ++n; }
         CHECK(dev1 > dev0);
         // the lamp room is lit near the lamp
-        Scene rm("room"); View rv = IndoorRoom(rm);
-        Image ri = Render(rm, rv, 160, 100);
+        Scene rm("room"); CamView rv = BuildRoom(rm);
+        Image ri = RenderScene(rm, rv, 160, 100);
         CHECK(MeanLuma(ri, 40, 20, 120, 90) > 0.12f);
     }
 

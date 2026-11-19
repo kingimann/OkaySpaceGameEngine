@@ -49,9 +49,12 @@ inline float NormalOffset(float ndl, float texelWorld, float mul) {
 
 /// Depth bias in WORLD units (along the light direction). A filter that reads `filterTexels` away from the centre
 /// sees a sloped surface that much nearer or farther, so the slope term is multiplied by the filter's reach: this is
-/// what stops stripes ("acne") on sloped ground without detaching shadows on flat ground.
+/// what stops stripes ("acne") on sloped ground without detaching shadows on flat ground. Capped, because an unlimited bias
+/// lets the sun through a thin wall (tests/test_lighting_upgrade.cpp "closed room").
 inline float DepthBias(float ndl, float texelWorld, float filterTexels, float mul) {
-    return texelWorld * (0.7f + (filterTexels + 0.5f) * SlopeTan(ndl)) * mul;
+    float slope = (filterTexels + 0.5f) * SlopeTan(ndl);
+    if (slope > 6.0f) slope = 6.0f;      // never more than ~7 texels, so thin walls and floors do not let light through
+    return texelWorld * (0.7f + slope) * mul;
 }
 
 /// 1 close to the camera, falling smoothly to 0 at `distance`; the last `fadeFraction` of the range is the fade.

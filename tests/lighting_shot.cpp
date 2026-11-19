@@ -5,10 +5,11 @@
 #include "okay/Scene/SceneSerializer.hpp"
 #include <filesystem>
 #include <cstdio>
+#include <cstdlib>
 using namespace lightscene;
 namespace {
 // A camera that looks along `v` (so the scene opens, and plays, with a good view).
-void AddCamera(Scene& s, const View& v) {
+void AddCamera(Scene& s, const CamView& v) {
     GameObject* cam = s.CreateGameObject("Main Camera");
     cam->transform->localPosition = v.eye;
     cam->transform->localRotation = Quat::LookRotation((v.target - v.eye).Normalized(), Vec3{0, 1, 0});
@@ -30,7 +31,7 @@ int WritePresetScenes(const std::string& outdir, const std::string& picdir) {
     for (int i = 0; i < n; ++i) {
         Scene s(list[i].name);
         const std::string name = list[i].name;
-        View v = name == "Indoor" ? IndoorRoom(s, false) : Village(s);
+        CamView v = name == "Indoor" ? BuildRoom(s, false) : BuildVillage(s);
         ApplyLightingPreset(s, name);
         AddCamera(s, v);
         s.Update(0.0f);
@@ -43,7 +44,7 @@ int WritePresetScenes(const std::string& outdir, const std::string& picdir) {
             Vec3 top, hor, bot; EffectiveSkyColors(s.renderSettings, top, hor, bot);
             const std::uint32_t sky = 0xFF000000u | ((std::uint32_t)(Mathf::Clamp01(hor.z) * 255) << 16) |
                                       ((std::uint32_t)(Mathf::Clamp01(hor.y) * 255) << 8) | (std::uint32_t)(Mathf::Clamp01(hor.x) * 255);
-            Image im = Render(s, v, 480, 300, sky);
+            Image im = RenderScene(s, v, 480, 300, sky);
             im.SavePNG(picdir + "/preset_" + Slug(name) + ".png");
         }
     }
@@ -55,12 +56,14 @@ int main(int argc, char** argv) {
     if (argc >= 3 && std::string(argv[1]) == "--examples") return WritePresetScenes(argv[2], argc > 3 ? argv[3] : "");
     if (argc < 2) { std::fprintf(stderr, "usage: lighting_shot <outdir> [tag]   |   lighting_shot --examples <scene dir> [picture dir]\n"); return 2; }
     const std::string dir = argv[1], tag = argc > 2 ? argv[2] : "now";
-    struct Item { const char* name; View (*build)(Scene&); };
-    const Item items[] = {{"sun", SunAndCubes}, {"room", IndoorRoom}, {"spot", SpotCone}, {"points", ManyPoints}};
+    struct Item { const char* name; CamView (*build)(Scene&); };
+    const Item items[] = {{"sun", BuildSun}, {"room", [](Scene& s) { return BuildRoom(s); }}, {"spot", BuildSpot}, {"points", BuildPoints}, {"bright", BuildBrightPoints}, {"panel", BuildPanelRoom}};
     for (const Item& it : items) {
         Scene s(it.name);
-        View v = it.build(s);
-        Image im = Render(s, v, 480, 300);
+        CamView v = it.build(s);
+        if (std::getenv("OKAY_SHOT_NOSHADOW"))   // debugging: switch every light's shadows off
+            for (const auto& go : s.Objects()) if (auto* l = go->GetComponent<Light>()) l->castShadows = false;
+        Image im = RenderScene(s, v, 480, 300);
         const std::string p = dir + "/" + tag + "_" + it.name + ".png";
         std::printf("%s %s\n", im.SavePNG(p) ? "wrote" : "FAILED", p.c_str());
     }

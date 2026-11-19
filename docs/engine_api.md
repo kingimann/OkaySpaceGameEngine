@@ -711,6 +711,27 @@ Rain, snow and storms falling around the camera, and the wind particles and wate
 | `Weather.Set(preset, intensity)` | `Weather.Set/2` | step | preset (Text), intensity (Number) | - | "none", "rain", "snow" or "storm" at an intensity from 0 to 1; it cross-fades over the scene's weather fade time. |
 | `Weather.SetWind(x, y, z)` | `Weather.SetWind/3` | step | x (Number), y (Number), z (Number) | - | The wind (world units per second) that particles drift with and water waves follow. |
 
+## Particles
+
+A Particle System: fire, smoke, sparks, rain and the rest. The object needs a Particle System (Add Component > Particle System, or GameObject > Effects).
+
+| In a script | Node | Kind | Inputs | Gives | What it does |
+|---|---|---|---|---|---|
+| `GetComponent<Particles>().rate` | `Particles.rate` | value | Target (Object) | rate (Number) | Particles made per second. |
+| `GetComponent<Particles>().rate = rate` | `Particles.rate=` | step | rate (Number), Target (Object) | - | Particles made per second. |
+| `GetComponent<Particles>().isPlaying` | `Particles.isPlaying` | value | Target (Object) | isPlaying (Bool) | True while it makes new particles. |
+| `GetComponent<Particles>().isPlaying = isPlaying` | `Particles.isPlaying=` | step | isPlaying (Bool), Target (Object) | - | True while it makes new particles. |
+| `GetComponent<Particles>().windFactor` | `Particles.windFactor` | value | Target (Object) | windFactor (Number) | Affected by wind: 0 ignores the wind, 1 drifts at the wind's speed. |
+| `GetComponent<Particles>().windFactor = windFactor` | `Particles.windFactor=` | step | windFactor (Number), Target (Object) | - | Affected by wind: 0 ignores the wind, 1 drifts at the wind's speed. |
+| `GetComponent<Particles>().aliveCount` | `Particles.aliveCount` | value | Target (Object) | aliveCount (Number) | How many particles are alive right now. |
+| `GetComponent<Particles>().Play()` | `Particles.Play/0` | step | Target (Object) | - | Start making particles (the ones already alive keep going). |
+| `GetComponent<Particles>().Stop()` | `Particles.Stop/0` | step | Target (Object) | - | Stop making new particles. The ones already alive finish their life. |
+| `GetComponent<Particles>().Restart()` | `Particles.Restart/0` | step | Target (Object) | - | Clear every particle and start the effect again from the beginning. |
+| `GetComponent<Particles>().Burst(count)` | `Particles.Burst/1` | step | count (Number), Target (Object) | - | Make this many particles right now (an explosion, a pickup, a hit). |
+| `GetComponent<Particles>().SetRate(perSecond)` | `Particles.SetRate/1` | step | perSecond (Number), Target (Object) | - | How many particles are made every second (0 = none). |
+| `GetComponent<Particles>().SetColor(red, green, blue, alpha)` | `Particles.SetColor/4` | step | red (Number), green (Number), blue (Number), alpha (Number), Target (Object) | - | Give new particles one colour (each number from 0 to 1). Their own colour changes over life are switched off. |
+| `GetComponent<Particles>().UsePreset(name)` | `Particles.UsePreset/1` | step | name (Text), Target (Object) | Result (Bool) | Change the look to a ready-made one: "Fire", "Smoke", "Rain", "Confetti" ... True when the name was found. |
+
 ## NavMeshAgent
 
 Walks the object along the scene's navigation mesh (the grid when none is baked). The object needs a Nav Mesh Agent.

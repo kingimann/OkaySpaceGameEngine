@@ -440,7 +440,7 @@ int main() {
             GameObject* ground = sc.CreateGameObject("Ground"); ground->transform->localPosition = {0, -0.5f, 0}; ground->transform->localScale = {60, 1, 30};
             { auto* mr = ground->AddComponent<MeshRenderer>(); mr->mesh = Mesh::Cube(); mr->color = {0.25f, 0.3f, 0.27f, 1}; }
             GameObject* cam = sc.CreateGameObject("Camera"); cam->transform->localPosition = {0, 12, 15};
-            cam->transform->localRotation = Quat::Euler(32, 180, 0);
+            cam->transform->localRotation = Quat::Euler(-32, 0, 0);   // the engine camera looks down -Z; a negative turn about X looks down
             { auto* c = cam->AddComponent<Camera>(); c->fieldOfView = 60.0f; c->nearClip = 0.2f; sc.mainCamera = c; }
             cam->AddComponent<FreeRoamController>();
             const int perRow = 6;
@@ -497,7 +497,7 @@ int main() {
             Camera* cam = nullptr; for (const auto& up : sc.Objects()) if (auto* c = up->GetComponent<Camera>()) cam = c;
             if (cam) {
                 ParticleView view; view.w = 960; view.h = 540;
-                const Vec3 eye = cam->transform->Position(), fwd = cam->transform->Rotation() * Vec3{0, 0, 1};
+                const Vec3 eye = cam->transform->Position(), fwd = cam->transform->Rotation() * Vec3{0, 0, -1};
                 view.camPos = eye; view.vp = Mat4::Perspective(60.0f, 960.0f / 540.0f, 0.2f, 200.0f) * Mat4::LookAt(eye, eye + fwd, Vec3{0, 1, 0});
                 std::vector<ParticleDrawItem> items; ParticleDrawStats st;
                 BuildParticleDraw(sc, view, items, &st);

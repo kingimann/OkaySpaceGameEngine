@@ -6,14 +6,14 @@ rendersettings 1 0.27450982 0.47058824 0.78431374 0.5882353 0.7254902 0.88235295
 fog 0 0.5882353 0.7254902 0.88235295 20 90
 tonemap 1
 gameobject 0 "Directional Light"
-  guid "ee8c22586b1dac8867fed12691632838"
+  guid "1a979211c9260fd90de964bcc8f4f314"
   active 1
   parent -1
   transform 0 0 0 0.40821794 -0.23456973 0.10938166 0.8754261 1 1 1
   light 1 1 1 1 0.3 1 0 10 45 0.5 0 6500 1 1 1 0
 end
 gameobject 1 "Ground"
-  guid "dc46ede05aad1b4f77d61a320954765f"
+  guid "1a00e445316ad8fca931f52bae56ca30"
   active 1
   parent -1
   transform 0 -0.5 0 0 0 0 1 60 1 30
@@ -21,15 +21,15 @@ gameobject 1 "Ground"
   material 0 0 0 0 16 0 "" 1 1
 end
 gameobject 2 "Camera"
-  guid "dcbb13c6b794dee59751a4127e102dc0"
+  guid "f193cce32deb0dc2f4da09d1f1577053"
   active 1
   parent -1
-  transform 0 12 15 -1.2048492e-08 0.9612617 -0.27563736 -4.2018083e-08 1 1 1
+  transform 0 12 15 -0.27563736 0 0 0.9612617 1 1 1
   camera 1 5 60 0.19215687 0.3019608 0.4745098 1 1 0 0 0.2 4000 0 0 0 1 1 -1 0 50 24 1 0 0 0 0 32 0.3 2 18 1.5
   frctrl 8 3 16 32 99 0.15 0 0 1 -89 89 12 0 0
 end
 gameobject 3 "Pedestal Fire"
-  guid "da5b35825f50dea83e7e37c8b4800ec7"
+  guid "fec523b261b9d5d579c94493a73fb451"
   active 1
   parent -1
   transform -15 0.15 0 0 0 0 1 2.2 0.3 2.2
@@ -37,7 +37,7 @@ gameobject 3 "Pedestal Fire"
   material 0 0 0 0 16 0 "" 1 1
 end
 gameobject 4 "Fire"
-  guid "9541270069849c088940ea605bab7a3a"
+  guid "b1a9d3181c8dbc10c7a8349523f75f0d"
   active 1
   parent -1
   transform -15 0.4 0 0 0 0 1 1 1 1
@@ -46,7 +46,7 @@ gameobject 4 "Fire"
   particlesx prew=1 blend=1
 end
 gameobject 5 "Label Fire"
-  guid "ac6034db2ef0261a27e6aace64de2a91"
+  guid "5c07f83ee4844a68985f0986a00f4e8a"
   active 1
   parent -1
   transform -15 3.6 1.2 0 0 0 1 1 1 1
@@ -54,7 +54,7 @@ gameobject 5 "Label Fire"
   worldui3d 100 1 0 1
 end
 gameobject 6 "Pedestal Smoke"
-  guid "a9f0ac357b145497183e71b558737218"
+  guid "7549b10f7573c4d48ea80346a814d3a6"
   active 1
   parent -1
   transform -9 0.15 0 0 0 0 1 2.2 0.3 2.2
@@ -62,7 +62,7 @@ gameobject 6 "Pedestal Smoke"
   material 0 0 0 0 16 0 "" 1 1
 end
 gameobject 7 "Smoke"
-  guid "1d5ffea08bce1361b91f1927df21d0e4"
+  guid "141c22eb24521565376c0fe99c6dbf34"
   active 1
   parent -1
   transform -9 0.4 0 0 0 0 1 1 1 1
@@ -71,7 +71,7 @@ gameobject 7 "Smoke"
   particlesx prew=1 soft=0.4 lit=1
 end
 gameobject 8 "Label Smoke"
-  guid "d6c08d20cace5de1212785f9b96f7255"
+  guid "d6ad455e47e247e5e91699bd15a9f459"
   active 1
   parent -1
   transform -9 3.6 1.2 0 0 0 1 1 1 1
@@ -79,7 +79,7 @@ gameobject 8 "Label Smoke"
   worldui3d 100 1 0 1
 end
 gameobject 9 "Pedestal Sparks"
-  guid "be668a098ec8ad44357ec0ad7c6152d5"
+  guid "4e86e4333b4ab187799ed4daf1244772"
   active 1
   parent -1
   transform -3 0.15 0 0 0 0 1 2.2 0.3 2.2
@@ -87,7 +87,7 @@ gameobject 9 "Pedestal Sparks"
   material 0 0 0 0 16 0 "" 1 1
 end
 gameobject 10 "Sparks"
-  guid "23ba26b44828f6c1243444651a3a0bd7"
+  guid "e89a3a692a5196016db1ce8b876cbe1a"
   active 1
   parent -1
   transform -3 0.4 0 0 0 0 1 1 1 1
@@ -96,7 +96,7 @@ gameobject 10 "Sparks"
   particlesx blend=1
 end
 gameobject 11 "Label Sparks"
-  guid "d042924af94bf81e41f0f2f435861eac"
+  guid "2031911ac38762c67d8baa3c22a7841b"
   active 1
   parent -1
   transform -3 3.6 1.2 0 0 0 1 1 1 1
@@ -104,7 +104,7 @@ gameobject 11 "Label Sparks"
   worldui3d 100 1 0 1
 end
 gameobject 12 "Pedestal Explosion"
-  guid "001bff0c521c588baf56dfaeddcc1f06"
+  guid "ad26cedb76e2c823cf1a0d332a548085"
   active 1
   parent -1
   transform 3 0.15 0 0 0 0 1 2.2 0.3 2.2
@@ -112,7 +112,7 @@ gameobject 12 "Pedestal Explosion"
   material 0 0 0 0 16 0 "" 1 1
 end
 gameobject 13 "Explosion"
-  guid "e00af9efeeee799f84b28257592167b2"
+  guid "c0ad4b5c5be60e63d5f2cf332575a96b"
   active 1
   parent -1
   transform 3 0.4 0 0 0 0 1 1 1 1
@@ -121,7 +121,7 @@ gameobject 13 "Explosion"
   particlesx nxb=1 xb0t=0.08 xb0n=50 blend=1
 end
 gameobject 14 "Label Explosion"
-  guid "87060e856da585984b2ca485bd15b238"
+  guid "8af0ebb393ba43f19fb88d2dec6f2ef1"
   active 1
   parent -1
   transform 3 3.6 1.2 0 0 0 1 1 1 1
@@ -129,7 +129,7 @@ gameobject 14 "Label Explosion"
   worldui3d 100 1 0 1
 end
 gameobject 15 "Pedestal Rain"
-  guid "e9ec2a3fd11c387044bf41fd31b9e4b7"
+  guid "1943e6412281041fadb7e4bc11dcfe51"
   active 1
   parent -1
   transform 9 0.15 0 0 0 0 1 2.2 0.3 2.2
@@ -137,7 +137,7 @@ gameobject 15 "Pedestal Rain"
   material 0 0 0 0 16 0 "" 1 1
 end
 gameobject 16 "Rain"
-  guid "bcec3e1c827763e0f1b569267dfb7ceb"
+  guid "28301aa0803a912da8442f2b643169e0"
   active 1
   parent -1
   transform 9 4.5 0 0 0 0 1 1 1 1
@@ -146,7 +146,7 @@ gameobject 16 "Rain"
   particlesx lodn=20 lodf=80 lodm=0.4
 end
 gameobject 17 "Label Rain"
-  guid "b2877168f76aadff5f8108517b5f9032"
+  guid "14d2af76d35269ad6634fb3bd66d071b"
   active 1
   parent -1
   transform 9 3.6 1.2 0 0 0 1 1 1 1
@@ -154,7 +154,7 @@ gameobject 17 "Label Rain"
   worldui3d 100 1 0 1
 end
 gameobject 18 "Pedestal Snow"
-  guid "5495b1cecc5fc413f46a67008dd0bab7"
+  guid "4866326045cbb269346f57a2c847be90"
   active 1
   parent -1
   transform 15 0.15 0 0 0 0 1 2.2 0.3 2.2
@@ -162,7 +162,7 @@ gameobject 18 "Pedestal Snow"
   material 0 0 0 0 16 0 "" 1 1
 end
 gameobject 19 "Snow"
-  guid "fd4b4326e72c1360246f8e92bbc96b8d"
+  guid "03d065cd5e6562f4814f9b7bc3900641"
   active 1
   parent -1
   transform 15 4.5 0 0 0 0 1 1 1 1
@@ -171,7 +171,7 @@ gameobject 19 "Snow"
   particlesx lodn=20 lodf=80 lodm=0.4
 end
 gameobject 20 "Label Snow"
-  guid "b71ec7befcc2944a5db7016cdf9f3de6"
+  guid "b040fb95207b2b0d21f0b3e8fee4b5af"
   active 1
   parent -1
   transform 15 3.6 1.2 0 0 0 1 1 1 1
@@ -179,7 +179,7 @@ gameobject 20 "Label Snow"
   worldui3d 100 1 0 1
 end
 gameobject 21 "Pedestal Magic sparkle"
-  guid "66a109fbd43935166215896bb75449df"
+  guid "d26c15e8587d5c3b4a53d796c5b62c24"
   active 1
   parent -1
   transform -15 0.15 -7 0 0 0 1 2.2 0.3 2.2
@@ -187,7 +187,7 @@ gameobject 21 "Pedestal Magic sparkle"
   material 0 0 0 0 16 0 "" 1 1
 end
 gameobject 22 "Magic sparkle"
-  guid "34119c5f20a12aff2179d847db2a0324"
+  guid "116f5f695cae5c45cfc208544c09fc65"
   active 1
   parent -1
   transform -15 0.4 -7 0 0 0 1 1 1 1
@@ -196,7 +196,7 @@ gameobject 22 "Magic sparkle"
   particlesx blend=1
 end
 gameobject 23 "Label Magic sparkle"
-  guid "eb8132467698a0ec6ed7b50ca1ddebd9"
+  guid "25989ec896d3a31d9d6963af3f95b634"
   active 1
   parent -1
   transform -15 3.6 -5.8 0 0 0 1 1 1 1
@@ -204,7 +204,7 @@ gameobject 23 "Label Magic sparkle"
   worldui3d 100 1 0 1
 end
 gameobject 24 "Pedestal Dust"
-  guid "d81409a3664d693e994e893d2a44b417"
+  guid "1b554efd1a6852e06781b920409026e4"
   active 1
   parent -1
   transform -9 0.15 -7 0 0 0 1 2.2 0.3 2.2
@@ -212,7 +212,7 @@ gameobject 24 "Pedestal Dust"
   material 0 0 0 0 16 0 "" 1 1
 end
 gameobject 25 "Dust"
-  guid "f66cebd6b74b71a46d4b3a8376a4b60d"
+  guid "d9d9103c3d0225ef66298d55c10dc455"
   active 1
   parent -1
   transform -9 1.5 -7 0 0 0 1 1 1 1
@@ -221,7 +221,7 @@ gameobject 25 "Dust"
   particlesx prew=1
 end
 gameobject 26 "Label Dust"
-  guid "40fe6d48f596a1081a7b52d0b68cea50"
+  guid "634d501c9832ad9b233e1d7af6d320ed"
   active 1
   parent -1
   transform -9 3.6 -5.8 0 0 0 1 1 1 1
@@ -229,7 +229,7 @@ gameobject 26 "Label Dust"
   worldui3d 100 1 0 1
 end
 gameobject 27 "Pedestal Campfire"
-  guid "c25d98eb7444cb713f50173a75c6fa8e"
+  guid "94ea54cb460e952fb6fcb53fd3d70b06"
   active 1
   parent -1
   transform -3 0.15 -7 0 0 0 1 2.2 0.3 2.2
@@ -237,7 +237,7 @@ gameobject 27 "Pedestal Campfire"
   material 0 0 0 0 16 0 "" 1 1
 end
 gameobject 28 "Campfire"
-  guid "2ea72ff3fed9a2f3ccd06c0443676800"
+  guid "16ab3fb25a94f41ed63c8e05937a5662"
   active 1
   parent -1
   transform -3 0.4 -7 0 0 0 1 1 1 1
@@ -246,7 +246,7 @@ gameobject 28 "Campfire"
   particlesx prew=1 blend=1 nox=2 lodn=15 lodf=60 lodm=0.3
 end
 gameobject 29 "Label Campfire"
-  guid "54f8dce0ac6ca9943ca7ca49363c46fd"
+  guid "b45efd14843ab6639bbd104e2953e535"
   active 1
   parent -1
   transform -3 3.6 -5.8 0 0 0 1 1 1 1
@@ -254,7 +254,7 @@ gameobject 29 "Label Campfire"
   worldui3d 100 1 0 1
 end
 gameobject 30 "Pedestal Steam"
-  guid "1d3159eef6153891bc70a000088fd915"
+  guid "376440287361f4153eb4455e957605ed"
   active 1
   parent -1
   transform 3 0.15 -7 0 0 0 1 2.2 0.3 2.2
@@ -262,7 +262,7 @@ gameobject 30 "Pedestal Steam"
   material 0 0 0 0 16 0 "" 1 1
 end
 gameobject 31 "Steam"
-  guid "9ccf3f14f63c1124f3ec845110f7b170"
+  guid "935570d152ba4b36abe385b878672a6c"
   active 1
   parent -1
   transform 3 0.4 -7 0 0 0 1 1 1 1
@@ -271,7 +271,7 @@ gameobject 31 "Steam"
   particlesx prew=1 soft=0.3 nox=2
 end
 gameobject 32 "Label Steam"
-  guid "afd58efa54b5d5707a34858058dc1aee"
+  guid "09f6b8cc831880b091d943e57edba6ee"
   active 1
   parent -1
   transform 3 3.6 -5.8 0 0 0 1 1 1 1
@@ -279,7 +279,7 @@ gameobject 32 "Label Steam"
   worldui3d 100 1 0 1
 end
 gameobject 33 "Pedestal Leaves"
-  guid "47502d3aadbe3801165dac19e80072ea"
+  guid "ed68f0cfc863e9d5e7ef6bf50632d2af"
   active 1
   parent -1
   transform 9 0.15 -7 0 0 0 1 2.2 0.3 2.2
@@ -287,7 +287,7 @@ gameobject 33 "Pedestal Leaves"
   material 0 0 0 0 16 0 "" 1 1
 end
 gameobject 34 "Leaves"
-  guid "9b96b5029a3651df5227e3e1db1583c8"
+  guid "b463f39ece7c0ee3dfe60b4685c5712c"
   active 1
   parent -1
   transform 9 4.5 -7 0 0 0 1 1 1 1
@@ -296,7 +296,7 @@ gameobject 34 "Leaves"
   particlesx prew=1 rcol=1 c2R=0.85 c2G=0.5 c2B=0.1 c2A=1 frcX=0.3 frcY=0 frcZ=0
 end
 gameobject 35 "Label Leaves"
-  guid "63b51e73808b7a0479e3fc33e6ae1a82"
+  guid "08839b4a4a77526f71e8836ef7477107"
   active 1
   parent -1
   transform 9 3.6 -5.8 0 0 0 1 1 1 1
@@ -304,7 +304,7 @@ gameobject 35 "Label Leaves"
   worldui3d 100 1 0 1
 end
 gameobject 36 "Pedestal Confetti"
-  guid "3056bafda72228806b412df10823f8f0"
+  guid "ff31e020fabaeece5f2e1853cc4b93c6"
   active 1
   parent -1
   transform 15 0.15 -7 0 0 0 1 2.2 0.3 2.2
@@ -312,7 +312,7 @@ gameobject 36 "Pedestal Confetti"
   material 0 0 0 0 16 0 "" 1 1
 end
 gameobject 37 "Confetti"
-  guid "f2348d8da67275866bce468e8987f397"
+  guid "7d08332f1c57bedd522d2128d98279a5"
   active 1
   parent -1
   transform 15 0.4 -7 0 0 0 1 1 1 1
@@ -321,7 +321,7 @@ gameobject 37 "Confetti"
   particlesx rcol=1 rhue=1
 end
 gameobject 38 "Label Confetti"
-  guid "359e136b68253fbe8f7e4d076284cccf"
+  guid "7f9c13f85ffdd9e986c76cb0a4bd47bf"
   active 1
   parent -1
   transform 15 3.6 -5.8 0 0 0 1 1 1 1
@@ -329,7 +329,7 @@ gameobject 38 "Label Confetti"
   worldui3d 100 1 0 1
 end
 gameobject 39 "Pedestal Hit spark"
-  guid "46df6a53bb515160a40b455ce05a43bf"
+  guid "d85259b06b22c1602bdf3e62937a6e07"
   active 1
   parent -1
   transform -15 0.15 -14 0 0 0 1 2.2 0.3 2.2
@@ -337,7 +337,7 @@ gameobject 39 "Pedestal Hit spark"
   material 0 0 0 0 16 0 "" 1 1
 end
 gameobject 40 "Hit spark"
-  guid "ee19f03465d7efd9ffc3d7c07eca93ab"
+  guid "1829ecf929d67b999166bbf6d78d82da"
   active 1
   parent -1
   transform -15 0.4 -14 0 0 0 1 1 1 1
@@ -346,7 +346,7 @@ gameobject 40 "Hit spark"
   particlesx blend=1
 end
 gameobject 41 "Label Hit spark"
-  guid "26cb7e96b6802b3f5737bf2143f37615"
+  guid "f9884186a79e1e1f016bdc90871c1394"
   active 1
   parent -1
   transform -15 3.6 -12.8 0 0 0 1 1 1 1
@@ -354,7 +354,7 @@ gameobject 41 "Label Hit spark"
   worldui3d 100 1 0 1
 end
 gameobject 42 "Pedestal Muzzle flash"
-  guid "7e5e1671fb3b012eac3ac55dcbcc9652"
+  guid "f6e5bd68c68105143fa616d494a85860"
   active 1
   parent -1
   transform -9 0.15 -14 0 0 0 1 2.2 0.3 2.2
@@ -362,7 +362,7 @@ gameobject 42 "Pedestal Muzzle flash"
   material 0 0 0 0 16 0 "" 1 1
 end
 gameobject 43 "Muzzle flash"
-  guid "7c201dc208d6541175a6b306ae8f4671"
+  guid "3e35d96c16de56c98a77357f765fd10a"
   active 1
   parent -1
   transform -9 1 -14 -0.7071068 0 0 0.7071068 1 1 1
@@ -371,7 +371,7 @@ gameobject 43 "Muzzle flash"
   particlesx blend=1
 end
 gameobject 44 "Label Muzzle flash"
-  guid "997a884b16a3577828b31a42d9fdff4a"
+  guid "3931dd1bfd29e9966eabc2a7d851ab73"
   active 1
   parent -1
   transform -9 3.6 -12.8 0 0 0 1 1 1 1
@@ -379,7 +379,7 @@ gameobject 44 "Label Muzzle flash"
   worldui3d 100 1 0 1
 end
 gameobject 45 "Pedestal Fireflies"
-  guid "d78f313f59850008bc77a230e880b30e"
+  guid "d00ba7e3acd69c07046be967029b3729"
   active 1
   parent -1
   transform -3 0.15 -14 0 0 0 1 2.2 0.3 2.2
@@ -387,7 +387,7 @@ gameobject 45 "Pedestal Fireflies"
   material 0 0 0 0 16 0 "" 1 1
 end
 gameobject 46 "Fireflies"
-  guid "6ab35c7dc6ecc6c6ced87cec0a042344"
+  guid "48bdb4ea7f460e01e9820d662914784c"
   active 1
   parent -1
   transform -3 1.5 -14 0 0 0 1 1 1 1
@@ -396,7 +396,7 @@ gameobject 46 "Fireflies"
   particlesx prew=1 blend=1 nox=2 lodn=15 lodf=50 lodm=0.3
 end
 gameobject 47 "Label Fireflies"
-  guid "4ae5982d6e1aefcf6c8735671a382211"
+  guid "58e65bebb4a1b7a4e5b0976b656adc63"
   active 1
   parent -1
   transform -3 3.6 -12.8 0 0 0 1 1 1 1
@@ -404,7 +404,7 @@ gameobject 47 "Label Fireflies"
   worldui3d 100 1 0 1
 end
 gameobject 48 "Pedestal Portal"
-  guid "000976022de692c0823e2ef30f89170a"
+  guid "631a7fc83eb71feb07a449886ff21c1a"
   active 1
   parent -1
   transform 3 0.15 -14 0 0 0 1 2.2 0.3 2.2
@@ -412,7 +412,7 @@ gameobject 48 "Pedestal Portal"
   material 0 0 0 0 16 0 "" 1 1
 end
 gameobject 49 "Portal"
-  guid "381451ccd7cc576600cc450d98ff70b0"
+  guid "e563f2e6928f997add65f1c58cd15bfc"
   active 1
   parent -1
   transform 3 1.6 -14 0.7071068 0 0 0.7071068 1 1 1
@@ -421,7 +421,7 @@ gameobject 49 "Portal"
   particlesx prew=1 blend=1 trl=8 trs=0.04 trw=0.5 rad=-0.6
 end
 gameobject 50 "Label Portal"
-  guid "bd16aa0bd127f5764d9580f468cbd60a"
+  guid "1f4d0bf3682f44462367f7c20f3935df"
   active 1
   parent -1
   transform 3 3.6 -12.8 0 0 0 1 1 1 1
@@ -429,7 +429,7 @@ gameobject 50 "Label Portal"
   worldui3d 100 1 0 1
 end
 gameobject 51 "Pedestal Waterfall mist"
-  guid "7197242ee51c0a5b8ed9398ca400f13d"
+  guid "d019929b0101bf6ad7a6d7cd33eaee8c"
   active 1
   parent -1
   transform 9 0.15 -14 0 0 0 1 2.2 0.3 2.2
@@ -437,7 +437,7 @@ gameobject 51 "Pedestal Waterfall mist"
   material 0 0 0 0 16 0 "" 1 1
 end
 gameobject 52 "Waterfall mist"
-  guid "7fb9e620f38cf8d406f0d2b13abdf53c"
+  guid "593bbf9807ce713f65bd0e90af00fb50"
   active 1
   parent -1
   transform 9 3 -14 0 0 0 1 1 1 1
@@ -446,7 +446,7 @@ gameobject 52 "Waterfall mist"
   particlesx prew=1 soft=0.4 nox=2
 end
 gameobject 53 "Label Waterfall mist"
-  guid "1b6a0b71fcfbaafcf26b96ad4a3d6f8c"
+  guid "f3c6c8f128561a9e2d366b520b75a8a0"
   active 1
   parent -1
   transform 9 3.6 -12.8 0 0 0 1 1 1 1

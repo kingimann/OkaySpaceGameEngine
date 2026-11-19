@@ -39,5 +39,4 @@ floor; a bright panel over a table. Sun shadows stay still when you fly the came
 
 **Status.** Verified here: the maths and the software renderer, headless (`test_lighting_upgrade`, 135 checks; `light_shadows`,
 `renderer_features`; before and after pictures were looked at, not committed). **Not verified:** OpenGL, Direct3D 11 and Direct3D 12 (the
-cascade fix, the slope bias and the smooth cone were edited in their code but never run on a GPU); Windows; the editor panels (the
-new Inspector and Lighting-window code was written but, see `docs/lighting_upgrade.md`, only compile-checked as far as stated there).
+cascade fix, the slope bias and the smooth cone were edited in their code but never run on a GPU); Windows; the editor panels (the new Inspector fields, the Lighting window buttons and the File > Examples entry were only compile-checked with `g++ -fsyntax-only`; the editor was not linked or run, so nothing was drawn or clicked).

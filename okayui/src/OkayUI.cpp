@@ -2648,16 +2648,22 @@ void textLine(const char* s, const unsigned char* col, float rowHeight = -1.0f) 
     if (s && *s) drawText(x, y + (h - textH()) * 0.5f, s, g_theme.textScale, col);
 }
 
-// The lines of one paragraph: every line but the last sits close to the next (a framed widget's row height would double-space them); the last
-// takes the normal row height, so a one-line text is exactly what it always was.
+// The lines of one paragraph. The first line is exactly what a one-line text is (a row of the normal height, so a bullet or an icon the caller
+// aligned to it stays aligned); each further line sits one text pitch (text height + 4) below the previous line's text, not a framed
+// widget's row below it, which would double-space the paragraph.
 struct ParaLines {
-    const unsigned char* col; char prev[512]; bool has = false;
+    const unsigned char* col; char prev[512]; bool has = false; int idx = 0; float t1 = 0.0f;
     explicit ParaLines(const unsigned char* c) : col(c) { prev[0] = 0; }
+    void Emit(const char* line) {
+        if (idx == 0) { textLine(line, col); t1 = g_lay.prevY + (rowH() - textH()) * 0.5f; }
+        else { const float pitch = textH() + 4.0f; g_lay.cy = t1 + (float)idx * pitch - 2.0f; textLine(line, col, pitch); }
+        ++idx;
+    }
     void Add(const char* line) {
-        if (has) textLine(prev, col, textH() + 6.0f);
+        if (has) Emit(prev);
         std::strncpy(prev, line, sizeof prev - 1); prev[sizeof prev - 1] = 0; has = true;
     }
-    void Done() { if (has) textLine(prev, col); has = false; }
+    void Done() { if (has) Emit(prev); has = false; }
 };
 
 // Word-wrapped text: lines are filled word by word up to maxW, '\n' always breaks.

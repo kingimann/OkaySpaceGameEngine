@@ -10,6 +10,8 @@
 #include <algorithm>
 #include <fstream>
 #include "okay/Core/Utf8.hpp"
+#include "okay/Core/TraceCapture.hpp"
+#include "okay/Core/MemoryTrack.hpp"
 
 namespace okay {
 
@@ -111,6 +113,8 @@ public:
 
     // ---- collection --------------------------------------------------------
     void BeginFrame() {
+        TraceCapture::InitFromEnvironment();   // OKAY_TRACE=<file> starts a capture here, once
+        TraceCapture::FrameBegin();            // frame capture works even while the window (enabled) is off
         if (!enabled) return;
         m_owner.store(ThreadTag(), std::memory_order_relaxed);   // from now on only this thread is profiled
         m_build.clear();
@@ -119,12 +123,14 @@ public:
         if (!m_haveEpoch) { m_epoch = m_frameStart; m_haveEpoch = true; }
     }
     void Begin(const char* name) {
+        TraceCapture::Begin(name);   // while a capture runs: every thread, nested (one relaxed read otherwise)
         if (!enabled || !OnOwnerThread()) return;
         if (!name) name = "(null)";
         Open o; o.name = name; o.start = Now(); o.childMs = 0.0; o.depth = (int)m_stack.size();
         m_stack.push_back(o);
     }
     void End() {
+        TraceCapture::End();
         if (!enabled || !OnOwnerThread() || m_stack.empty()) return;
         Open o = m_stack.back(); m_stack.pop_back();
         double inclusive = Ms(Now() - o.start);
@@ -136,7 +142,24 @@ public:
         else if (startMs < b->startMs) b->startMs = startMs;
         b->self += self; b->inclusive += inclusive; b->calls++;
     }
+    /// A named number for the frame capture's counter tracks (entities, draw calls, bytes ...). Free when no
+    /// capture runs. Call it once per frame from the thread that owns the frame.
+    void Counter(const char* name, double value) { TraceCapture::Counter(name, value); }
+
     void EndFrame(double frameMs) {
+        if (TraceCapture::Active()) {   // the built-in counters, then the frame boundary (may stop and write the capture)
+            TraceCapture::Counter("frame.ms", frameMs);
+            TraceCapture::Counter("draw.objects", drawObjects);
+            TraceCapture::Counter("draw.triangles", drawTriangles);
+            TraceCapture::Counter("particles", particles);
+            if (MemTrack::Enabled()) {
+                double used = 0, reserved = 0;
+                for (const auto& t : MemTrack::Snapshot()) { used += (double)t.usedBytes; reserved += (double)t.reservedBytes; }
+                TraceCapture::Counter("memory.tracked.used", used);
+                TraceCapture::Counter("memory.tracked.reserved", reserved);
+            }
+            TraceCapture::FrameEnd();
+        }
         if (!enabled || !OnOwnerThread()) return;
         if (!std::isfinite(frameMs) || frameMs < 0.0) frameMs = 0.0;   // one bad number must not poison the averages
         lastFrameMs = frameMs;

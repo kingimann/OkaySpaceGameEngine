@@ -9,24 +9,15 @@
 #include <cstring>
 #include <memory>
 #include <new>
+#include <string>
 #include <string_view>
 #include <type_traits>
 #include <utility>
 #include <vector>
 
-namespace okay {
+#include "okay/Core/MemoryTrack.hpp"
 
-/// Counters shared by FrameArena and PoolAllocator.
-struct AllocStats {
-    std::size_t used = 0;            // arena: bytes handed out since the last Reset; pool: bytes of live objects
-    std::size_t reserved = 0;        // bytes held from the system
-    std::size_t limit = 0;           // 0 = unlimited
-    std::size_t highWater = 0;       // the largest `used` ever seen
-    std::size_t live = 0;            // arena: allocations since the last Reset; pool: live objects
-    std::uint64_t allocations = 0;   // successful allocations, ever
-    std::uint64_t failures = 0;      // refused: over the limit, a bad alignment, or out of memory
-    std::uint64_t resets = 0;        // arena Reset() calls
-};
+namespace okay {
 
 #ifdef NDEBUG
 inline constexpr bool kPoisonByDefault = false;
@@ -60,13 +51,20 @@ public:
 
     explicit FrameArena(std::size_t initialCapacity = 64 * 1024, std::size_t limit = 0)
         : m_initial(initialCapacity), m_limit(limit) {}
-    ~FrameArena() { FreeAll(); }
+    ~FrameArena() { m_track.Finish(); FreeAll(); }
     FrameArena(const FrameArena&) = delete;
     FrameArena& operator=(const FrameArena&) = delete;
     FrameArena(FrameArena&& o) noexcept { Steal(o); }
     FrameArena& operator=(FrameArena&& o) noexcept {
         if (this != &o) { FreeAll(); Steal(o); }
         return *this;
+    }
+
+    /// Name this arena in the memory report (see MemoryTrack.hpp). Does nothing unless tracking is on.
+    /// Call it again after a move: the registration stays with the moved-from object's old address.
+    void SetTag(const char* tag) {
+        m_tag = tag ? tag : "";
+        m_track = MemTrack::Track(tag, MemTrack::Kind::Arena, [this] { return Stats(); });
     }
 
     /// Fill reset memory with kPoisonByte so a pointer used after Reset shows up as
@@ -258,6 +256,9 @@ private:
         m_allocs = o.m_allocs; m_failures = o.m_failures; m_resets = o.m_resets; m_frameAllocs = o.m_frameAllocs;
         o.m_head = o.m_tail = o.m_cur = nullptr;
         o.m_used = o.m_reserved = 0;
+        m_tag = o.m_tag;
+        o.m_track.Finish();
+        try { if (!m_tag.empty()) SetTag(m_tag.c_str()); } catch (...) {}   // keep reporting under the same tag, from the new address
     }
 
     std::size_t m_initial = 0, m_limit = 0;
@@ -267,6 +268,8 @@ private:
     std::size_t m_used = 0, m_high = 0, m_reserved = 0, m_frameAllocs = 0;
     std::uint64_t m_allocs = 0, m_failures = 0, m_resets = 0;
     bool m_limitHit = false;
+    std::string m_tag;
+    MemTrack::Registration m_track;   // last member: ended first
 };
 
 /// Rewinds an arena to where it was when the scope began.
@@ -312,7 +315,11 @@ class PoolAllocator {
 public:
     explicit PoolAllocator(std::size_t blockSize = 64, std::size_t maxObjects = 0)
         : m_blockSize(blockSize ? blockSize : 1), m_limit(maxObjects) {}
-    ~PoolAllocator() { Release(); }
+    ~PoolAllocator() { m_track.Finish(); Release(); }
+
+    /// Name this pool in the memory report (see MemoryTrack.hpp). Objects still alive when the pool is destroyed
+    /// are listed in the leak report. Does nothing unless tracking is on.
+    void SetTag(const char* tag) { m_track = MemTrack::Track(tag, MemTrack::Kind::Pool, [this] { return Stats(); }); }
     PoolAllocator(const PoolAllocator&) = delete;
     PoolAllocator& operator=(const PoolAllocator&) = delete;
 
@@ -468,6 +475,69 @@ private:
     Slot* m_free = nullptr;
     std::size_t m_capacity = 0, m_live = 0, m_high = 0;
     std::uint64_t m_allocs = 0, m_failures = 0;
+    MemTrack::Registration m_track;
+};
+
+/// A stack allocator over one fixed buffer: Allocate pushes, Free pops, and only the newest allocation may be freed
+/// (Free of anything else returns false and changes nothing). Good for scoped scratch memory with a known ceiling
+/// where each piece is given back in reverse order. Constant time, no per-allocation header (sizes are kept in a
+/// small side array). Not thread safe. nullptr when the buffer is full.
+class StackAllocator {
+public:
+    explicit StackAllocator(std::size_t capacityBytes)
+        : m_cap(capacityBytes), m_buf(capacityBytes ? static_cast<unsigned char*>(std::malloc(capacityBytes)) : nullptr) {
+        if (!m_buf) m_cap = 0;
+    }
+    ~StackAllocator() { m_track.Finish(); std::free(m_buf); }
+    StackAllocator(const StackAllocator&) = delete;
+    StackAllocator& operator=(const StackAllocator&) = delete;
+
+    void SetTag(const char* tag) { m_track = MemTrack::Track(tag, MemTrack::Kind::Stack, [this] { return Stats(); }); }
+
+    void* Allocate(std::size_t bytes, std::size_t alignment = alignof(std::max_align_t)) noexcept {
+        if (bytes == 0) bytes = 1;
+        if (alignment == 0 || (alignment & (alignment - 1)) != 0) { ++m_failures; return nullptr; }
+        const std::uintptr_t base = reinterpret_cast<std::uintptr_t>(m_buf);
+        const std::uintptr_t at = (base + m_top + alignment - 1) & ~(static_cast<std::uintptr_t>(alignment) - 1);
+        const std::size_t start = static_cast<std::size_t>(at - base);
+        if (!m_buf || start > m_cap || bytes > m_cap - start) { ++m_failures; return nullptr; }
+        try { m_frames.push_back({m_top, start}); } catch (...) { ++m_failures; return nullptr; }
+        m_top = start + bytes;
+        if (m_top > m_high) m_high = m_top;
+        ++m_allocs;
+        return m_buf + start;
+    }
+    /// Give back the newest allocation. False when `p` is not it.
+    bool Free(void* p) noexcept {
+        if (m_frames.empty() || p != m_buf + m_frames.back().start) return false;
+        const Frame f = m_frames.back();
+        std::memset(m_buf + f.start, kPoisonByte, poisonOnFree ? m_top - f.start : 0);
+        m_top = f.prevTop;
+        m_frames.pop_back();
+        return true;
+    }
+    /// Free everything.
+    void Clear() noexcept { m_frames.clear(); m_top = 0; }
+    bool poisonOnFree = kPoisonByDefault;
+
+    std::size_t Used() const { return m_top; }
+    std::size_t Capacity() const { return m_cap; }
+    std::size_t Count() const { return m_frames.size(); }
+    AllocStats Stats() const {
+        AllocStats s;
+        s.used = m_top; s.reserved = m_cap; s.limit = m_cap; s.highWater = m_high;
+        s.live = m_frames.size(); s.allocations = m_allocs; s.failures = m_failures;
+        return s;
+    }
+
+private:
+    struct Frame { std::size_t prevTop, start; };
+    std::size_t m_cap;
+    unsigned char* m_buf;
+    std::size_t m_top = 0, m_high = 0;
+    std::vector<Frame> m_frames;
+    std::uint64_t m_allocs = 0, m_failures = 0;
+    MemTrack::Registration m_track;
 };
 
 } // namespace okay

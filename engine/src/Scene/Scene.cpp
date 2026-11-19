@@ -46,6 +46,7 @@ namespace okay {
 Scene::Scene(std::string name) : m_name(std::move(name)) {
     static std::atomic<std::uint64_t> s_nextUid{1};
     m_uid = s_nextUid.fetch_add(1);
+    m_frameArena.SetTag("scene.frame");   // shows up in the memory report when OKAY_MEMTRACK=1
 }
 Scene::~Scene() {   // its scene variables and script statics go with it
     DestroyAllLive();   // OnDisable / OnDestroy for what is still alive
@@ -446,7 +447,8 @@ void Scene::Update(float deltaTime) {
         // A click that shows a screen must not also click the button that appears under the pointer (a "Give up" button over a Game Over
         // screen's "Try again"): on a frame where the mouse goes down, a component that was switched off when the frame began is left
         // for the next frame. Only those frames pay for the snapshot.
-        std::vector<char> wasOn;
+        ArenaScope wasOnScope(m_frameArena);
+        std::vector<char, ArenaAllocator<char>> wasOn{ArenaAllocator<char>(&m_frameArena)};
         if (Input::GetMouseButtonDown(0)) {
             wasOn.reserve(m_active.size());
             for (Component* c : m_active) wasOn.push_back(c && c->gameObject && c->gameObject->ActiveInHierarchy() ? 1 : 0);
@@ -932,7 +934,10 @@ bool Scene::CancelDontDestroyOnLoad(const GameObject* go) {
 }
 
 void Scene::ResolveMainCamera() {
-    std::vector<Camera*> cams;
+    // The list lives in the scene's frame arena (this runs every frame): no heap allocation, and it is gone again
+    // when the scope ends.
+    ArenaScope scope(m_frameArena);
+    std::vector<Camera*, ArenaAllocator<Camera*>> cams{ArenaAllocator<Camera*>(&m_frameArena)};
     for (Component* c : m_active)
         if (auto* cam = dynamic_cast<Camera*>(c)) cams.push_back(cam);
     mainCamera = PickRenderCamera(mainCamera, cams);

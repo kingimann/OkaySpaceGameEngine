@@ -6,6 +6,7 @@
 #include "okay/Scene/GameObject.hpp"
 #include "okay/Scene/SceneSerializer.hpp"
 #include "okay/Core/Scheduler.hpp"
+#include "okay/Core/Memory.hpp"
 #include "okay/Core/Tween.hpp"
 #include "okay/Physics/Physics2D.hpp"
 #include "okay/Physics/Physics3D.hpp"
@@ -676,6 +677,7 @@ private:
     std::vector<Component*>  m_active;    // receive Update each frame
     std::vector<GameObject*> m_destroyQueue;
     std::unordered_set<const GameObject*> m_destroyQueued;   // members of m_destroyQueue, for O(1) "already queued"
+    FrameArena m_frameArena{4096};   // scratch for per-frame lists (ResolveMainCamera, the click snapshot); every user rewinds it with an ArenaScope
     std::vector<Component*>* m_flushBatch = nullptr;         // the batch FlushPending is walking (removals null its entries)
     std::string m_lastLoadError;
     std::string m_pendingLoad;

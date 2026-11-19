@@ -402,6 +402,10 @@ add_test(NAME profiler COMMAND test_profiler)
 add_executable(test_profiler_export test_profiler_export.cpp)
 target_link_libraries(test_profiler_export PRIVATE okay::engine)
 add_test(NAME profiler_export COMMAND test_profiler_export)
+# Frame capture to a Chrome trace file: nested scopes on all threads, ring buffers, counters, frame count, JSON.
+add_executable(test_trace_capture test_trace_capture.cpp)
+target_link_libraries(test_trace_capture PRIVATE okay::engine)
+add_test(NAME trace_capture COMMAND test_trace_capture)
 
 add_executable(test_log test_log.cpp)
 target_link_libraries(test_log PRIVATE okay::engine)
@@ -3179,11 +3183,27 @@ add_test(NAME property_registry COMMAND test_property_registry)
 add_executable(test_jobs test_jobs.cpp)
 target_link_libraries(test_jobs PRIVATE okay::engine)
 add_test(NAME jobs COMMAND test_jobs 3)
+# Work-stealing fork-join (JobCounter / Fork / Join, task arena, stealing ParallelFor) and its benchmark (prints a table).
+add_executable(test_jobs_steal test_jobs_steal.cpp)
+target_link_libraries(test_jobs_steal PRIVATE okay::engine)
+add_test(NAME jobs_steal COMMAND test_jobs_steal 3)
+add_executable(test_jobs_bench test_jobs_bench.cpp)
+target_link_libraries(test_jobs_bench PRIVATE okay::engine)
+add_test(NAME jobs_bench COMMAND test_jobs_bench)
 
 # FrameArena, PoolAllocator, SlotMap / Handle, StringId.
 add_executable(test_arena_handles test_arena_handles.cpp)
 target_link_libraries(test_arena_handles PRIVATE okay::engine)
 add_test(NAME arena_handles COMMAND test_arena_handles)
+
+# StackAllocator and the opt-in memory tracking layer (tags, peak, fragmentation, leak report).
+add_executable(test_memory_track test_memory_track.cpp)
+target_link_libraries(test_memory_track PRIVATE okay::engine)
+add_test(NAME memory_track COMMAND test_memory_track)
+# Frame arena in the Scene's per-frame lists: prints the per-frame cost (heap vector vs arena).
+add_executable(test_frame_arena_bench test_frame_arena_bench.cpp)
+target_link_libraries(test_frame_arena_bench PRIVATE okay::engine)
+add_test(NAME frame_arena_bench COMMAND test_frame_arena_bench)
 
 
 # Frame delta clamp, frame timer and frame limiter.

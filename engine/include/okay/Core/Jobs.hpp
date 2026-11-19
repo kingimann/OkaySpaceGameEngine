@@ -8,10 +8,12 @@
 // be included from a header.
 #include <cstddef>
 #include <cstdint>
+#include <atomic>
 #include <exception>
 #include <functional>
 #include <initializer_list>
 #include <memory>
+#include <new>
 #include <string>
 #include <type_traits>
 #include <vector>
@@ -32,6 +34,40 @@ enum class JobStatus : int {
 };
 
 namespace jobs_detail { struct JobState; }
+
+/// Fork-join counter. Fork() tasks into it, then Join() it: the joining thread runs tasks
+/// while it waits and rethrows the first exception a task threw. A counter must outlive its
+/// tasks (Join guarantees that) and may be reused after a Join. Not copyable.
+class JobCounter {
+public:
+    JobCounter() = default;
+    JobCounter(const JobCounter&) = delete;
+    JobCounter& operator=(const JobCounter&) = delete;
+    /// Tasks forked into it that have not finished.
+    int Pending() const { return m_pending.load(std::memory_order_acquire); }
+    bool Done() const { return Pending() == 0; }
+    /// True once a task threw (tasks that have not started are skipped from then on).
+    bool Failed() const { return m_failed.load(std::memory_order_acquire); }
+    // Used by the job system only.
+    std::atomic<int> m_pending{0};
+    std::atomic<bool> m_failed{false};
+    std::exception_ptr m_error;   // written once by the task that wins m_failed
+};
+
+namespace jobs_detail {
+/// A light fork-join task. Lives in the job system's frame arena, so Fork does not call malloc.
+struct TaskNode {
+    void (*run)(TaskNode*) = nullptr;
+    void (*destroy)(TaskNode*) = nullptr;
+    JobCounter* counter = nullptr;
+    int priority = 1;
+};
+template <class F>
+struct TaskNodeT : TaskNode {
+    F fn;
+    explicit TaskNodeT(F&& f) : fn(std::move(f)) {}
+};
+} // namespace jobs_detail
 
 /// A reference to a submitted job. Cheap to copy. An empty handle counts as
 /// already completed, so it is a harmless dependency.
@@ -87,6 +123,11 @@ struct JobStats {
     std::uint32_t blocked = 0;           // waiting for a dependency
     std::uint32_t running = 0;           // job bodies executing right now
     std::uint32_t mainQueueDepth = 0;    // main-thread jobs not yet pumped
+    std::uint64_t forked = 0;            // light fork-join tasks ever forked (Fork / stealing ParallelFor)
+    std::uint64_t stolen = 0;            // of those, run by a thread that took them from another thread's deque
+    std::uint64_t taskArenaBytes = 0;    // bytes the task arena holds from the system
+    std::uint64_t taskArenaPeak = 0;     // most bytes one frame of tasks has used
+    std::uint64_t taskArenaResets = 0;   // times the arena was recycled
     double busyMs = 0.0;                 // time spent inside job bodies, summed over all threads
     std::string lastError;               // the last failure's job name and message
 };
@@ -184,6 +225,31 @@ public:
     /// Safe to call twice. Do not call it from inside a job.
     void Shutdown(bool cancelPending = false);
 
+    // ---- fork-join (work stealing) ----------------------------------------
+
+    /// Run `fn` as a light task that counts into `counter`. Each worker has its own deque
+    /// (it runs its newest task first, other threads steal its oldest), tasks are allocated
+    /// from a frame arena, and no lock is taken on the way in. High priority tasks are looked
+    /// for first everywhere. With 0 workers (or after Shutdown) `fn` runs right here, at once;
+    /// an exception is then kept in the counter and thrown by Join, like on a worker.
+    /// A task may Fork more tasks into the same or another counter.
+    template <class F>
+    void Fork(JobCounter& counter, F&& fn, JobPriority priority = JobPriority::Normal);
+
+    /// Wait until `counter` is zero, running tasks meanwhile. Rethrows the first exception a
+    /// task of this counter threw (tasks not started by then were skipped), once, and the
+    /// counter can be reused afterwards. Safe to call from inside a task.
+    void Join(JobCounter& counter);
+
+    /// Recycle the task arena. Done automatically whenever no task is outstanding, so this is
+    /// only a hint for the game loop (call at the start of a frame); false while tasks are outstanding.
+    bool BeginFrame();
+
+    /// Work stealing on (default) or off. Off makes ParallelFor use the older shared-queue helper
+    /// jobs, kept so the benchmark can compare the two and as a fallback. Not for use while loops run.
+    void SetWorkStealing(bool on);
+    bool WorkStealing() const;
+
     // ---- parallel loops ---------------------------------------------------
 
     /// Run `fn` over [begin, end) in chunks of `grain` indices across the pool; the
@@ -222,6 +288,9 @@ private:
         void* obj;
         void (*call)(void*, std::size_t, std::size_t);
     };
+    void* AllocTask(std::size_t bytes, std::size_t align);
+    void AbortTask();
+    void SubmitTask(jobs_detail::TaskNode* node, JobCounter& counter, JobPriority priority);
     void ParallelForImpl(std::size_t begin, std::size_t end, std::size_t grain, RangeFn fn);
     JobHandle SubmitImpl(std::function<void()> fn, const JobHandle* deps, std::size_t depCount,
                          const JobOptions& options, bool mainThread);
@@ -231,6 +300,19 @@ private:
 };
 
 // ---- templates ----------------------------------------------------------
+
+template <class F>
+void JobSystem::Fork(JobCounter& counter, F&& fn, JobPriority priority) {
+    using D = std::decay_t<F>;
+    using N = jobs_detail::TaskNodeT<D>;
+    void* mem = AllocTask(sizeof(N), alignof(N));
+    N* n;
+    try { n = ::new (mem) N(D(std::forward<F>(fn))); }
+    catch (...) { AbortTask(); throw; }   // the callable's copy/move threw: give the arena slot back
+    n->run = [](jobs_detail::TaskNode* t) { static_cast<N*>(t)->fn(); };
+    n->destroy = [](jobs_detail::TaskNode* t) { static_cast<N*>(t)->~N(); };
+    SubmitTask(n, counter, priority);
+}
 
 template <class F>
 void JobSystem::ParallelFor(std::size_t begin, std::size_t end, std::size_t grain, F&& fn) {

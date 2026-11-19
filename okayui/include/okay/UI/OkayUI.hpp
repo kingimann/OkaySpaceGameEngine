@@ -1038,8 +1038,12 @@ struct ImTextureData {
 struct ImDrawCmd;
 struct DrawList;
 typedef void (*ImDrawCallback)(const DrawList* list, const ImDrawCmd* cmd);
+#ifndef ImDrawCallback_ResetRenderState   // a program that also includes Dear ImGui's imgui.h first keeps ITS macro (its own callback type)
 #define ImDrawCallback_ResetRenderState ((::OkayUI::ImDrawCallback)(intptr_t)-8)
+#endif
+#ifndef ImTextureID_Invalid
 #define ImTextureID_Invalid ((::OkayUI::ImTextureID)nullptr)
+#endif
 struct ImTextureRef {
     ImTextureData* _TexData = nullptr; ImTextureID _TexID = nullptr;
     ImTextureRef() {}

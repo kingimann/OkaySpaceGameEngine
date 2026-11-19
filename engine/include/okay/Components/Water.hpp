@@ -198,23 +198,23 @@ public:
         case 1: // Calm Lake
             waveHeight = 0.10f; waveLength = 12.0f; waveSteepness = 0.2f; waveCount = 2; waveSpeed = 0.8f;
             shallowColor = C(70, 170, 175); deepColor = C(14, 66, 108); clarity = 7.0f; foamAmount = 0.1f;
-            ripples = 0.6f; reflectivity = 0.72f; break;
+            ripples = 0.6f; reflectivity = 0.42f; break;
         case 2: // Pond
             waveHeight = 0.04f; waveLength = 4.0f; waveSteepness = 0.1f; waveCount = 2; waveSpeed = 0.7f;
             shallowColor = C(85, 135, 105); deepColor = C(30, 70, 62); clarity = 2.5f; foamAmount = 0.05f;
-            ripples = 0.8f; rippleSize = 0.6f; reflectivity = 0.55f; shoreFoamWidth = 0.5f; break;
+            ripples = 0.8f; rippleSize = 0.6f; reflectivity = 0.4f; shoreFoamWidth = 0.5f; break;
         case 3: // Ocean
             SetSeaState(2); style = WaveStyle::Ocean; waveSteepness = 0.5f;
             shallowColor = C(40, 170, 190); deepColor = C(5, 38, 96); clarity = 10.0f; ripples = 0.5f;
-            reflectivity = 0.6f; lod = true; infinite = true; break;
+            reflectivity = 0.35f; lod = true; infinite = true; break;
         case 4: // Stormy Sea
             SetSeaState(4);
             shallowColor = C(70, 105, 112); deepColor = C(14, 38, 48); clarity = 5.0f; ripples = 0.7f;
-            reflectivity = 0.45f; specular = 0.5f; scatter = 0.2f; lod = true; infinite = true; break;
+            reflectivity = 0.3f; specular = 0.5f; scatter = 0.2f; lod = true; infinite = true; break;
         case 5: // River
             waveHeight = 0.12f; waveLength = 5.0f; waveSteepness = 0.25f; waveCount = 3; waveSpeed = 1.4f;
             shallowColor = C(95, 150, 140); deepColor = C(30, 78, 88); clarity = 3.0f; foamAmount = 0.2f;
-            ripples = 0.9f; reflectivity = 0.5f; current = {2.5f, 0.0f}; flow = {0.06f, 0.0f}; waveDirection = 0.0f; break;
+            ripples = 0.9f; reflectivity = 0.35f; current = {2.5f, 0.0f}; flow = {0.06f, 0.0f}; waveDirection = 0.0f; break;
         case 6: // Swamp
             waveHeight = 0.03f; waveLength = 3.0f; waveSteepness = 0.05f; waveCount = 2; waveSpeed = 0.5f;
             shallowColor = C(88, 105, 52); deepColor = C(26, 40, 22); clarity = 1.2f; foamAmount = 0.05f;
@@ -222,11 +222,11 @@ public:
         case 7: // Tropical
             SetSeaState(2); waveHeight = 0.3f; waveSteepness = 0.3f;
             shallowColor = C(60, 225, 205); deepColor = C(8, 92, 150); clarity = 9.0f; scatter = 0.7f; ripples = 0.5f;
-            reflectivity = 0.55f; opacity = 0.65f; lod = true; infinite = true; break;
+            reflectivity = 0.35f; opacity = 0.65f; lod = true; infinite = true; break;
         case 8: // Ice-cold
             waveHeight = 0.05f; waveLength = 10.0f; waveSteepness = 0.15f; waveCount = 2; waveSpeed = 0.6f;
             shallowColor = C(160, 215, 228); deepColor = C(36, 96, 140); clarity = 12.0f; foamAmount = 0.25f;
-            ripples = 0.4f; reflectivity = 0.8f; specular = 1.0f; break;
+            ripples = 0.4f; reflectivity = 0.55f; specular = 1.0f; break;
         }
         color = Color{shallowColor.r, shallowColor.g, shallowColor.b, opacity};
         m_fieldOk = false;

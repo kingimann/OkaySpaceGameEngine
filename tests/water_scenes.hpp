@@ -140,7 +140,7 @@ inline void BuildShore(Scene& s) {
     w->SetSeaState(2); w->waveHeight = 0.5f; w->shoreFoamWidth = 2.0f; w->foamAmount = 0.6f;
     Rock(s, "Shore Rock", {-24.0f, 0.0f, 8.0f}, 2.0f);
     Rock(s, "Shore Rock", {-30.0f, 0.5f, -10.0f}, 1.6f);
-    SunAndCamera(s, {18.0f, 5.0f, -26.0f}, {-20.0f, 0.0f, 6.0f});
+    SunAndCamera(s, {-72.0f, 4.0f, -16.0f}, {-32.0f, 0.0f, 4.0f});
     Note(s, "SHORE. The water is clear and turquoise near the sand and goes deep blue further out. A white foam line surges "
             "along the waterline and around the rocks.");
 }

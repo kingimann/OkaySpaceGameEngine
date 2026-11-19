@@ -117,8 +117,8 @@ int main(int argc, char** argv) {
             }
         });
         Run(d, "underwater", watersc::BuildLake, 2.0f, [](Scene& s) {
-            s.mainCamera->transform->localPosition = {-30.0f, -1.2f, -10.0f};
-            s.mainCamera->transform->LookAt({-10.0f, -1.5f, 2.0f}, {0, 1, 0});
+            s.mainCamera->transform->localPosition = {-10.0f, -2.0f, -8.0f};
+            s.mainCamera->transform->LookAt({10.0f, -2.5f, 6.0f}, {0, 1, 0});
         });
         return 0;
     }

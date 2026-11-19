@@ -9800,6 +9800,7 @@ void RegisterBuiltinComponentSerializers() {
         fin(w->rippleSize, 0.05f, 20.0f, 1.0f);
         for (float* c : {&w->shallowColor.r, &w->shallowColor.g, &w->shallowColor.b, &w->deepColor.r, &w->deepColor.g, &w->deepColor.b,
                          &w->foamColor.r, &w->foamColor.g, &w->foamColor.b}) fin(*c, 0.0f, 1.0f, 0.5f);
+        if (w->realisticLook || w->lod) w->Apply();     // the look decides the material colour, normal map and mesh
     };
     ComponentSerializerRegistry::Register(std::move(watervis));
 

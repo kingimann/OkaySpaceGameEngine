@@ -122,9 +122,9 @@ inline float FoamPattern(float x, float z, float t) {
 /// by the largest possible height (-1..1), `slope` = 1 - normal.y (0 flat).
 inline float CrestFoam(float crest, float slope, float amount, float pattern) {
     if (amount <= 0.0f) return 0.0f;
-    const float cap = Smooth(0.45f, 0.95f, crest) * (0.45f + 0.55f * Smooth(0.02f, 0.30f, slope));
-    const float steep = Smooth(0.18f, 0.50f, slope) * 0.6f;
-    return Clamp01((cap + steep) * amount * (0.35f + 0.65f * pattern));
+    const float cap = Smooth(0.30f, 0.85f, crest) * (0.55f + 0.45f * Smooth(0.02f, 0.25f, slope));
+    const float steep = Smooth(0.12f, 0.40f, slope) * 0.8f;
+    return Clamp01((cap + steep) * amount * 1.6f * (0.35f + 0.65f * pattern));
 }
 /// Foam where the water meets the ground or an object: a band `width` metres wide that surges in and out with time.
 inline float ShoreFoam(float depth, float width, float t, float pattern, float amount) {

@@ -1,5 +1,20 @@
 OkaySpace Game Engine — Changelog
 
+v2.892.0
+  Physics materials and toys, better lighting, water that looks like water
+  - New Physics Materials: give a 3D model a feel (Ice, Rubber, Wood, Metal
+    and more) and it slides, grips and bounces that way.
+  - New physics toys: Conveyor Belt, Force Field, Gravity Zone, Turntable,
+    Moving Platform, Explosion and Breakable. Stacks of crates now settle
+    and stay still.
+  - Lighting: steadier shadows and softer shadow edges, lighting presets you
+    can pick in one click, panel lights, real-world light units and light
+    probes. (New GPU lighting paths have not been run on a real graphics
+    card yet.)
+  - Water is no longer a flat plane. Turn on the realistic look for waves,
+    colour that gets darker with depth, foam at the edges, and a wake behind
+    a moving boat. Plain Water keeps its old look.
+
 v2.891.0
   Wind, a bigger Build Settings window, upgrade fixes
   - New Wind: add a Wind Zone and objects with Wind Sway or Wind Drag

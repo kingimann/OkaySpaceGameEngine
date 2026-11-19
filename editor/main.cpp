@@ -29,6 +29,7 @@
 #include "NavigationWindow.hpp"        // the Navigation window (navmesh bake, overlays, agent inspectors)
 #include "DialogueWindow.hpp"          // the Dialogue window (graph editor + Quests tab) and the story inspectors
 #include "BehaviorTreeWindow.hpp"      // the Behavior Tree window (NPC AI trees, runner inspector)
+#include "okay/Components/PhysicsToyPresets.hpp"   // GameObject > 3D Object > Physics Toys
 #include "okay/Components/BehaviorTreeRunner.hpp"
 #include "okay/Net/DetectInspector.hpp"   // Anti-Cheat Config > Detection engine (fields, observe mode, text)
 #include "okay/Core/Game.hpp"
@@ -2336,6 +2337,61 @@ static bool PhysicsMaterialFields(Col* c, const char* id) {
     bool changed = false;
     const std::string sid = id;
     if (!ImGui::TreeNode(("Physics Material##pm" + sid).c_str())) return false;
+    // The named material (a preset or a project .okayphysmat): a dropdown, a "+ New material" button and live sliders.
+    // It lives in a Physics Surface component on this object (made on the first pick, removed by "(none)").
+    if (c->gameObject) {
+        okay::GameObject* go = c->gameObject;
+        auto* surf = go->template GetComponent<okay::PhysicsSurface>();
+        const std::string cur = surf ? surf->material : std::string();
+        if (ImGui::BeginCombo(("Material##pmn" + sid).c_str(), cur.empty() ? "(none: use the numbers below)" : cur.c_str())) {
+            if (ImGui::Selectable("(none: use the numbers below)", cur.empty()) && surf) { go->RemoveComponent(surf); surf = nullptr; changed = true; }
+            for (const std::string& n : okay::PhysicsMaterials::AllNames())
+                if (ImGui::Selectable(n.c_str(), n == cur)) { okay::AssignPhysicsMaterial(*go, n); surf = go->template GetComponent<okay::PhysicsSurface>(); changed = true; }
+            ImGui::EndCombo();
+        }
+        if (ImGui::IsItemHovered()) ImGui::SetTooltip("How this surface feels: a ready-made material (Ice, Rubber, Wood...) or one of your own .okayphysmat files.");
+        ImGui::SameLine();
+        if (ImGui::SmallButton(("+ New material##pmnew" + sid).c_str())) {
+            okay::PhysicsMaterialData d = surf && surf->Data() ? *surf->Data() : okay::PhysicsMaterialData{};
+            const std::string dir = okay::Paths::Join(okay::Paths::AssetBaseDir(), "Materials");
+            okay::Paths::EnsureDir(dir);
+            for (int i = 1; i < 1000; ++i) { d.name = "My Material " + std::to_string(i); if (!okay::PhysicsMaterials::Find(d.name)) break; }
+            if (okay::PhysicsMaterials::SaveFile(d, okay::Paths::Join(dir, d.name + ".okayphysmat"))) {
+                okay::PhysicsMaterials::Register(d); okay::AssignPhysicsMaterial(*go, d.name);
+                surf = go->template GetComponent<okay::PhysicsSurface>(); changed = true;
+                ConsoleLog("Created " + d.name + ".okayphysmat in Assets/Materials");
+            }
+        }
+        if (ImGui::IsItemHovered()) ImGui::SetTooltip("Makes a copy of this material as a file in your project that you can change. Built-in materials cannot be edited.");
+        const okay::PhysicsMaterialData* md = surf ? surf->Data() : nullptr;
+        bool builtIn = false;
+        if (md) for (const auto& pm : okay::PhysicsMaterials::Presets()) if (&pm == md) builtIn = true;
+        if (md && !builtIn) {   // live sliders on the project material (saved back to its file)
+            okay::PhysicsMaterialData e = *md; bool ed2 = false;
+            ed2 |= ImGui::SliderFloat(("Grip when still##pm" + sid).c_str(), &e.staticFriction, 0.0f, 3.0f);
+            if (ImGui::IsItemHovered()) ImGui::SetTooltip("How hard it is to start something sliding. 0 = like ice, 1 = like rubber.");
+            ed2 |= ImGui::SliderFloat(("Grip when sliding##pm" + sid).c_str(), &e.dynamicFriction, 0.0f, 3.0f);
+            if (ImGui::IsItemHovered()) ImGui::SetTooltip("How slippery? 0 = like ice, 1 = like rubber.");
+            ed2 |= ImGui::SliderFloat(("Bounciness##pmb" + sid).c_str(), &e.bounciness, 0.0f, 1.0f);
+            if (ImGui::IsItemHovered()) ImGui::SetTooltip("0 = a dead thud, 1 = bounces back to where it fell from.");
+            ed2 |= ImGui::SliderFloat(("Density##pm" + sid).c_str(), &e.density, 10.0f, 20000.0f, "%.0f kg/m3");
+            if (ImGui::IsItemHovered()) ImGui::SetTooltip("Heavy or light for its size. Water 1000, wood 600, steel 7800. Used when the body takes its mass from density.");
+            ed2 |= ImGui::SliderFloat(("Rolling friction##pm" + sid).c_str(), &e.rollingFriction, -1.0f, 1.0f);
+            if (ImGui::IsItemHovered()) ImGui::SetTooltip("How hard it is to roll over. -1 = use the body's own setting.");
+            ed2 |= ImGui::SliderFloat(("Slows things down##pm" + sid).c_str(), &e.linearDamping, 0.0f, 10.0f);
+            if (ImGui::IsItemHovered()) ImGui::SetTooltip("Mud and sand slow what touches them. 0 = not at all.");
+            ed2 |= ImGui::SliderFloat(("Slope grip##pm" + sid).c_str(), &e.slopeGrip, 0.0f, 5.0f);
+            if (ImGui::IsItemHovered()) ImGui::SetTooltip("Multiplies the still grip so things stay put on steeper slopes. 1 = normal.");
+            if (ed2) {
+                okay::PhysicsMaterials::Register(e); surf->Apply();
+                okay::PhysicsMaterials::SaveFile(e, okay::Paths::Join(okay::Paths::Join(okay::Paths::AssetBaseDir(), "Materials"), e.name + ".okayphysmat"));
+                changed = true;
+            }
+        } else if (md) {
+            ImGui::TextDisabled("Built-in material. Press + New material to make an editable copy.");
+        }
+        ImGui::Separator();
+    }
     const char* modes[] = {"Default", "Average", "Minimum", "Multiply", "Maximum"};
     bool ownF = c->friction >= 0.0f;
     if (ImGui::Checkbox(("Own Friction##pm" + sid).c_str(), &ownF)) { c->friction = ownF ? 0.5f : -1.0f; changed = true; }
@@ -7472,6 +7528,44 @@ static void DrawCreateSlot(EditorState& ed, const std::string& id, GameObject* p
         }
         if (ImGui::MenuItem("Water")) { AddWaterObject(ed); created = true; }
         if (ImGui::MenuItem("Character")) { AddCharacterObject(ed); created = true; }
+        ImGui::Separator();
+        if (ImGui::BeginMenu("Physics Toys")) {     // ready-made physics objects (Components/PhysicsToyPresets.hpp); each is placed at the view target
+            using namespace okay::toypresets;
+            struct Toy { const char* label; const char* tip; std::function<GameObject*(Scene&, const Vec3&)> make; };
+            static const Toy toys[] = {
+                {"Conveyor Belt", "A belt that carries crates and balls standing on it. Change Speed in the Inspector.", [](Scene& s, const Vec3& p) { return ConveyorBeltPreset(s, p); }},
+                {"Jump Pad", "Launches whatever lands on it.", [](Scene& s, const Vec3& p) { return JumpPadPreset(s, p); }},
+                {"Attractor", "Pulls nearby bodies toward it.", [](Scene& s, const Vec3& p) { return ForceFieldPreset(s, p + Vec3{0, 2, 0}, 0); }},
+                {"Repeller", "Pushes nearby bodies away.", [](Scene& s, const Vec3& p) { return ForceFieldPreset(s, p + Vec3{0, 2, 0}, 1); }},
+                {"Gravity Well", "A little planet: pulls harder the closer you get.", [](Scene& s, const Vec3& p) { return ForceFieldPreset(s, p + Vec3{0, 2, 0}, 2); }},
+                {"Whirlpool", "Spins bodies around it.", [](Scene& s, const Vec3& p) { return ForceFieldPreset(s, p + Vec3{0, 2, 0}, 3); }},
+                {"Zero-G Zone", "A box of space with no gravity.", [](Scene& s, const Vec3& p) { return GravityZonePreset(s, p + Vec3{0, 4, 0}, Vec3{0, 0, 0}); }},
+                {"Moon Gravity Zone", "A box of space with weak gravity.", [](Scene& s, const Vec3& p) { return GravityZonePreset(s, p + Vec3{0, 4, 0}, Vec3{0, -1.6f, 0}); }},
+                {"Turntable", "A round plate that turns and carries things.", [](Scene& s, const Vec3& p) { return TurntablePreset(s, p); }},
+                {"Moving Platform", "A platform that glides to and fro and carries riders.", [](Scene& s, const Vec3& p) { return MovingPlatformPreset(s, p); }},
+                {"Bomb (3 s)", "Goes off three seconds after Play and shoves everything near it.", [](Scene& s, const Vec3& p) { return BombPreset(s, p + Vec3{0, 1, 0}); }},
+                {"Breakable Crate", "Breaks into pieces when hit hard.", [](Scene& s, const Vec3& p) { return BreakableCratePreset(s, p + Vec3{0, 1, 0}); }},
+                {"Pendulum", "A weight swinging on a rod.", [](Scene& s, const Vec3& p) { return PendulumPreset(s, p + Vec3{0, 6, 0}); }},
+                {"Rope", "A chain of linked balls hanging from a point.", [](Scene& s, const Vec3& p) { return RopePreset(s, p + Vec3{0, 6, 0}); }},
+                {"Wrecking Ball", "A 50 kg ball on a chain.", [](Scene& s, const Vec3& p) { return WreckingBallPreset(s, p + Vec3{0, 8, 0}); }},
+                {"Door (hinge)", "A door that swings on a hinge with stops.", [](Scene& s, const Vec3& p) { return DoorPreset(s, p); }},
+                {"Dominoes", "A row of 14 dominoes. Push the first one.", [](Scene& s, const Vec3& p) { auto d = DominoPackPreset(s, p); return d.empty() ? nullptr : d[0]; }},
+                {"Ice Patch", "A slab of slippery ice.", [](Scene& s, const Vec3& p) { return SurfacePatchPreset(s, p, "Ice"); }},
+                {"Sticky Patch", "A slab that grips hard.", [](Scene& s, const Vec3& p) { return SurfacePatchPreset(s, p, "Sticky"); }},
+                {"Trampoline Patch", "A slab that throws things back up.", [](Scene& s, const Vec3& p) { return SurfacePatchPreset(s, p, "Trampoline"); }},
+                {"Mud Patch", "A slab that slows what moves on it.", [](Scene& s, const Vec3& p) { return SurfacePatchPreset(s, p, "Mud"); }},
+            };
+            for (const Toy& t : toys) {
+                if (ImGui::MenuItem(t.label)) {
+                    ed.PushUndo();
+                    GameObject* made = t.make(ed.scene(), ed.camTarget);
+                    if (made) ed.Select(ed.SettleSpawn(made));
+                    ConsoleLog(std::string("Created ") + t.label); ed.dirty = true; created = true;
+                }
+                if (ImGui::IsItemHovered()) ImGui::SetTooltip("%s", t.tip);
+            }
+            ImGui::EndMenu();
+        }
     } else if (id == "create.vehicles") {
         if (ImGui::MenuItem("Boat")) { AddBoatObject(ed); created = true; }
         if (ImGui::IsItemHovered()) ImGui::SetTooltip("A boat that floats on Water and drives with W / S / A / D. Adds a lake if the scene has no water.");
@@ -46158,6 +46252,25 @@ void DrawScene3D(EditorState& ed, ImDrawList* dl, ImVec2 canvasPos, ImVec2 canva
                     line(a + v * r, b + v * r, cc); line(a - v * r, b - v * r, cc);
                 }
             }
+        }
+        for (const auto& up : objs) {   // velocity arrows (cyan): how fast and which way each awake body moves
+            if (!up->active) continue;
+            auto* vrb = up->GetComponent<Rigidbody3D>();
+            if (!vrb || vrb->bodyType == Rigidbody3D::BodyType::Static || vrb->sleeping || !up->transform) continue;
+            const float sp2 = vrb->velocity.SqrMagnitude();
+            if (!(sp2 > 0.04f)) continue;
+            const Vec3 from = up->transform->Position(), to = from + vrb->velocity * 0.3f;
+            const ImU32 vc = IM_COL32(60, 220, 240, 255);
+            line(from, to, vc, 2.0f);
+            const Vec3 dirn = vrb->velocity.Normalized(); Vec3 hu, hv; basis(dirn, hu, hv);
+            line(to, to - dirn * 0.25f + hu * 0.1f, vc, 2.0f); line(to, to - dirn * 0.25f - hu * 0.1f, vc, 2.0f);
+        }
+        {   // the stats readout: what the last physics step did
+            const PhysicsStepStats& ps = ed.scene().physics3D().Stats();
+            char buf[160];
+            std::snprintf(buf, sizeof buf, "Physics: %d bodies (%d awake, %d asleep), %d contacts, %d groups, %d fast bodies swept",
+                          ps.bodies, ps.awake, ps.asleep, ps.contacts, ps.islands, ps.sweeps);
+            dl->AddText(ImVec2(view3dMin.x + 8.0f, view3dMin.y + 8.0f), IM_COL32(255, 255, 255, 230), buf);
         }
         for (const PhysicsDebugContact3D& ct : ed.scene().physics3D().DebugContacts()) {
             ImU32 kc = ct.trigger ? IM_COL32(90, 170, 255, 255) : IM_COL32(255, 80, 70, 255);

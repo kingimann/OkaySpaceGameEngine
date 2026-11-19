@@ -14,6 +14,7 @@
 #include "okay/Components/ClickToMoveController.hpp"
 #include "okay/Components/DayNightCycle.hpp"
 #include "okay/Components/DebrisEmitter.hpp"
+namespace okay { void RegisterPhysicsToyProperties(); }
 #include "okay/Components/Destructible.hpp"
 #include "okay/Components/Draggable.hpp"
 #include "okay/Components/FirstPersonController.hpp"
@@ -1393,6 +1394,7 @@ void RegisterGameplayProperties() {
     RegisterRangedWeapon();
     RegisterSpawner();
     RegisterDebrisEmitter();
+    RegisterPhysicsToyProperties();   // Physics Surface and the physics toys
     RegisterVolume();
     RegisterWind();
     RegisterMusicPlayer();

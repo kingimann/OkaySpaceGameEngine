@@ -1,5 +1,6 @@
 #include "okay/Components/Cable.hpp"
 #include "okay/Components/LineRenderer.hpp"
+#include "okay/Environment/WindField.hpp"
 #include "okay/Scene/GameObject.hpp"
 #include "okay/Scene/Scene.hpp"
 #include "okay/Scene/Transform.hpp"
@@ -47,6 +48,20 @@ bool Cable::Rebuild() {
     lr->width = width;
     lr->color = color;
     lr->positions = Curve(a, b, sag, segments);
+    if (windSwing > 0.0f && lr->positions.size() > 2) {   // the wind pushes the middle sideways, most at the middle, none at the ends
+        const Vec3 w = WindField::At((a + b) * 0.5f);
+        const Vec3 hor{w.x, 0.0f, w.z};
+        const float len = hor.Magnitude(), lean = WindField::Lean(len);
+        if (len > 1e-4f && lean > 0.0f) {
+            const Vec3 dir = hor / len;
+            const std::size_t n = lr->positions.size() - 1;
+            for (std::size_t i = 1; i < n; ++i) {
+                const float s = (float)i / (float)n;
+                const float wave = 1.0f + 0.15f * std::sin(6.2831853f * (WindField::Clock() * 0.7f + s));
+                lr->positions[i] += dir * (windSwing * lean * 4.0f * s * (1.0f - s) * wave);
+            }
+        }
+    }
     return true;
 }
 

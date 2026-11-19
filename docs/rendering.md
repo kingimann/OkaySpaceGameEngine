@@ -138,6 +138,7 @@ fog_set(true, "#c8d8e6", 20, 90);  // on, optional "#rrggbb" colour, start, end
 fog_set(true, 10, 60, "height", 0.05);   // ... then a mode and its density
 weather_set("storm", 0.8);         // none / rain / snow / storm, intensity
 float hour = time_of_day();        // the scene's Day/Night Cycle; time_of_day(18.5) sets it
+wind_set(8, 90);                   // the scene's wind: 8 m/s toward +X (docs/wind.md); wind_gust(0.5, 0.2)
 ```
 
 C#-style statics: `PostProcess.Set(name, value)` and `PostProcess.exposure`,

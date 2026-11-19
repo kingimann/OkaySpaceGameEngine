@@ -92,6 +92,7 @@ release job or the installer build for this change.
 | 17 | Hierarchy right-click menus: Create Child with every category, Add Component, Select Same Type, "Delete 3 Objects" | Right-click in the Hierarchy panel of `Tools\OkayEngine.exe` | New in this change; see section 17 |
 | ac-cheat-sim | Anti-cheat: watch the server catch a cheater (cheat simulator), ban list, audit log | `OkaySpacePlayer.exe --server --cheat-sim --log cheat_sim.txt` (Tools folder), then open the log | New in this change; tested headless on Linux over loopback; Windows and a real network unverified |
 | boat1 | Water waves, floating things and a boat to drive | `examples\boat\boat_lake.okayscene` (File > Open, Play), **GameObject > Vehicles > Boat**, Add Component > Physics 3D > Buoyancy and Gameplay > Boat Controller, Water Inspector > Style | New in this change; headless tests only, Windows and GPU not run |
+| bs2 | Build Settings: search, Game and Advanced pages, checks, history | Editor: File > Build Settings (Ctrl+B) | New in this change; the editor and player were compile-checked on Linux but not run on Windows |
 | content-delivery | Downloadable game content: signed models, textures, scripts and data that an exported game fetches (off by default) | `okay-content.exe` in `Tools/`, or `content.okayconfig` / `OKAY_CONTENT_URL` for the player | Built; Linux-tested only |
 | editor-fps | Editor frame-time overlay and speed switches | Editor menu **View > Rendering**: Frame-time overlay, Frame rate limit, Slow down when idle, Viewport resolution, Performance mode. Heavy test scenes: `examples\perf\` | New in this change. Real Direct3D 11 numbers on a Windows machine are unverified; sent back by the owner |
 | fast1 | Fast release: one workflow dispatch, no version-bump PR | GitHub: Actions > "Fast release" > Run workflow (tick dry_run first); a change adds `dist/changelog.d/<id>.txt` | Built and tested offline with fake data; never run on GitHub; off until `FAST_RELEASE_ENABLED=1` |
@@ -99,6 +100,9 @@ release job or the installer build for this change.
 | input | Input upgrade: input playground, rumble patterns, vibration setting, key positions (AZERTY) | Editor: File > Open, `examples\input\input_playground.okayscene`, then Play | Tested headless on Linux; nothing run on Windows or with a real controller or AZERTY keyboard |
 | one-controller | One Player Controller for first and third person; no Humanoid or separate First and Third Person entries | Editor: GameObject > Player, Add Component > Gameplay, File > New Project (First and Third Person) | Tests run on Linux only; not run in a real editor or on Windows |
 | own-switch | One place to switch our own code on and off (launcher Settings > Experimental, editor View menu) | Launcher: Settings > Experimental. Editor: View > Rendering & Performance > Experimental | Linux build only; Windows unverified |
+| pm1 | Physics Material: how a surface feels (14 presets, .okayphysmat files, Physics Surface component) | Open `examples\physics_materials\physics_materials.okayscene` and press Play; or select an object, Add Component > Physics 3D > Physics Surface | Tested headless on Linux; the Inspector rows were compiled, not opened |
+| pt1 | Physics toys: Conveyor Belt, Force Field, Gravity Zone, Turntable, Moving Platform, Explosion, Breakable | Open `examples\physics_toys\physics_toys.okayscene` and press Play; Add Component > Physics 3D | Tested headless on Linux; menu entry under GameObject not built |
+| pu1 | Physics upgrade: steady towers at any step rate, fast bodies, heavy ropes, callbacks that set speed | Open `examples\physics\physics_upgrade.okayscene` in `Tools\OkayEngine.exe` and press Play | Tested headless on Linux; nothing run on Windows or on a screen |
 | security-sec1 | Security plan SEC1: script file paths, update signature status, relay caps, reactions SQL | examples\security_paths\script_paths.okayscene (Play, read Console); Settings > About and Help > About line; SQL and relay are owner steps | Tests on Linux only; editor/launcher lines not run; nothing on Windows or real Supabase |
 | tex1 | Texture tools (our own): mipmaps, atlas, BC compression, DDS | Windows release: `examples\texture\try_texture.bat` (needs `Tools\okay-texture.exe`); editor: Project panel > pick a picture > Import Settings > "Generate mipmaps / compress" | Unverified on Windows; Linux tests and CLI run |
 | vpa | Multi-window panels start cleanly on every video driver | `Tools\OkayEngine.exe`: drag a panel tab outside the editor | Linux only (Xvfb, a build with assertions on); Windows unverified |
@@ -1506,6 +1510,26 @@ reverse, saving and loading, the example file). **Unverified:** the Windows rele
 Component entries and Water fields are syntax-checked only), a GPU, what the wake and spray look like on screen, and how the
 boat feels with a real keyboard. Boarding a boat with E is not done.
 
+## bs2. Build Settings: search, Game and Advanced pages, checks, history
+
+**What it is.** The Build Settings window has a search box over every setting, a dot beside each page that has changed settings, a "Reset page to defaults" button, two new pages (Game and Advanced), a "What will happen" summary with checks and Fix buttons, Debug and Release starting points, duplicate profile, `.okaybuild` files and a build history. Every new setting is read by the built game or by the build step (see `docs/build_settings_upgrade.md`).
+
+**Steps.**
+1. Open the editor, open a project, press Ctrl+B (File > Build Settings). The platform must be Desktop.
+2. Type `fps` in the search box at the top left. Click "Frame rate cap (Display)". You land on the Display page.
+3. Change the window width. A blue dot appears beside Display. Click "Reset page to defaults" and confirm; the width goes back and the dot goes away.
+4. Open the Game page. Set Game speed to 0.5, Log detail to "Warnings", tick "Write a log file", type `de` as Starting language, and under Description type a sentence. Choose an output folder and press Build & Run.
+5. In the running game everything moves at half speed. Close it. Open the save folder of the game (the per-user app folder, named after the company and the game): `game.log` is there. In the build's `<Name>_Data/game.okayconfig` you see `time_scale=0.5`, `log_level=warn`, `log_file=game.log`, `default_language=de`.
+6. Open the Advanced page. Turn on "Allow build commands", type `echo built {name} {version}` after the build, build again. The Console says "ran your command after the build". With the switch off, nothing runs.
+7. Still on Advanced: press "Create or update .gitignore" (a `.gitignore` appears in the project) and look at the Build history list (time, version, size, "Open output folder").
+8. At the bottom, "What will happen" lists the build in plain words. Make the name `Bad:Name`, tick Full screen and Borderless together: Check lines appear with Fix buttons. Press Fix and they go away.
+9. Under the profile bar press Debug or Release (changes the developer panel, FPS counter, stripping, compression, logging). Save a profile, press Duplicate profile, then "Save as file": `BuildProfiles/<name>.okaybuild` appears in the project; "Load file..." brings it back.
+10. Round 2: on Graphics pick "3D renderer" = Software only and a Particle limit of 50; on Audio & Input set Gamepad dead zone and Sound quality; on Output type a file in "Files left out" or right-click a file in the Project panel and choose "Exclude from Build", then Dry Run: the file is not in the report. Drag a scene by its name in the Scenes list to reorder. After a build, the Advanced page shows the coloured last build log.
+
+**What you should see.** As in each step. Defaults write nothing new: a project that never touched the Game or Advanced pages builds exactly the `game.okayconfig` it built before.
+
+**Status.** Tested on Linux: the model (pages, search, reset, presets, summary, checks and fixes, history, commands, ignore file, profile files) and the player's config reader (`tests/test_build_settings.cpp`), and every new setting through the profile file (`tests/test_project_state.cpp`). `editor/main.cpp` and `player/main.cpp` were compile-checked (syntax only) on Linux. NOT run: the window on screen, a Windows build, and the player reading the config in a real game.
+
 ## Console: Collapse button (branch `claude/console-collapse`, not merged or released yet)
 
 Owner request 2026-11-15: "for console allow user to collapse the same log."
@@ -1887,6 +1911,63 @@ Good to know:
 Tested on Linux: the `own_switches` test (reading and writing the file, master off, an environment variable you set winning,
 the status words, items hidden where they cannot work) and the `own_stack` test (the `switches=` part of the line).
 Unverified: the Settings page and the editor menu were compiled but not looked at on a desktop; Windows not run.
+
+## pm1. Physics Material: how a surface feels
+
+**What it is.** A named material says how a surface feels: grip when still, grip when sliding, bounciness, how two surfaces mix, density, rolling friction, damping
+(mud, sand), grip on slopes, and the sound, effect and surface names a hit should use. Fourteen are always there (Default, Ice, Rubber, Bouncy Ball, Metal, Wood, Stone,
+Glass, Mud, Sand, Sticky, Slippery, Trampoline, Cloth). Plain words and the file format: [physics_materials.md](../physics_materials.md).
+
+**Steps.**
+1. **File > Open Scene**, pick `examples\physics_materials\physics_materials.okayscene`, press **Play**.
+2. Or on your own object: select it, **Add Component > Physics 3D > Physics Surface**, type a preset name in **Material** (for example `Ice`), press Play.
+3. Make your own: write a text file `MyGel.okayphysmat` (see physics_materials.md for the lines), put it anywhere in the project folder; its name then works in **Material**.
+4. Tick **Mass From Density** to let the body's mass come from the material's density times the size of its colliders.
+
+**What you should see.** One row per preset. Left: a plain crate sits on a 20 degree ramp of that material: it slides away on Ice and Slippery, stays on Rubber and Sticky. Right: a ball is dropped
+on a pad of that material: it bounces high on Trampoline and Bouncy Ball, hardly at all on Stone, Mud and Sand. Each row has a text label.
+
+**Status.** Tested headless on Linux (`tests/test_physics_materials.cpp`: file round trip, presets, ice slides / rubber holds, still grip, bounce height, density to mass, change at run time,
+contact reports the material pair, mud slows). Unverified: the editor (the Physics Surface Inspector row comes from the generic property list; the dropdown of presets and the "+ New material" button are
+NOT built yet: type the name), Windows, the character controller and vehicles do not yet read the ground material.
+
+## pt1. Physics toys: ready-made physics for no-code games
+
+**What it is.** Small components you add, tune with plain Inspector numbers and press Play: **Conveyor Belt** (carries what stands on it), **Force Field** (attract, repel, gravity well, whirlpool;
+turn on and off), **Gravity Zone** (a box with its own gravity: floating, moon), **Turntable** (a physical round plate that carries things), **Moving Platform** (glides through up to four points, riders go along),
+**Explosion** (a shove, by timer or from script) and **Breakable** (breaks into pieces when hit hard). The jump pad already existed (Add Component > Gameplay > Jump Pad). Details: [physics_toys.md](../physics_toys.md).
+
+**Steps.**
+1. **File > Open Scene**, pick `examples\physics_toys\physics_toys.okayscene`, press **Play**. Walk along the row of ten stations (WASD, mouse); each has a text label.
+2. Or add one yourself: make a cube, give it a **Box Collider 3D** and a static **Rigidbody 3D**, then **Add Component > Physics 3D > Conveyor Belt**; drop a crate on it.
+3. Change numbers while it plays only in the Inspector fields (Speed, Strength, Radius, Gravity...): each has a plain tooltip.
+
+**What you should see.** 1 crates ride the belt; 2 a ball bounces on the green pad; 3 balls fall to the blue attractor and run from the orange repeller; 4 balls fall into the purple well and swirl round the teal whirlpool;
+5 a ball floats in the zero-g zone, drifts down slowly in the moon zone and falls normally outside; 6 crates are carried round the turntable; 7 a crate rides the platform; 8 after 3 seconds the bomb goes off and the breakable crates burst into pieces
+that vanish after a few seconds; 9 a pendulum and a rope swing; 10 a ball bounces high on the trampoline patch, a crate slides far on ice and stops quickly on the sticky patch.
+
+**Status.** Tested headless on Linux (`tests/test_physics_toys.cpp`: every toy measured, saved and loaded back; `tests/test_physics_examples.cpp`). Not built: the GameObject > Physics Toys menu (presets exist as code in
+`Components/PhysicsToyPresets.hpp` and are used by the example scene), Visual Script nodes for the toys (a script can switch a Force Field by property: `ForceField.active`), One-Way Platform, Rope/Chain component, Vehicle wheel.
+Unverified: Windows and the editor on a screen.
+
+## pu1. Physics upgrade: steady towers, fast bodies, heavy ropes
+
+**What it is.** The Improved physics now keeps a tower of ten crates standing at 30, 50, 60 and 144 steps a second (it fell over at 30 and
+leaned at 50), a fast ball can no longer jump over a thin plate that can move, a 50 kg ball on a chain of light links hangs close to the chain's real
+length, a breakable joint snaps without first stopping the body, and a speed set inside `OnCollisionEnter3D` (a jump pad, a blast) is kept. The
+numbers before and after are in [physics_upgrade.md](../physics_upgrade.md).
+
+**Steps.**
+1. Open `Tools\OkayEngine.exe` (or the launcher), **File > Open Scene**, pick `examples\physics\physics_upgrade.okayscene` (it ships in the zip and the installer).
+2. Press **Play**. Use the character (WASD, mouse) or just watch from the start position.
+3. To compare step rates: **Project Settings > Physics > Steps per second**, set 30, press Play again, set 144, press Play again. The tower looks the same.
+
+**What you should see.** Station 1: ten crates stand still and go to sleep after about two seconds. Station 2: a red ball rolls down a short ramp and topples
+sixteen dominoes in a line. Station 3: a 50 kg wrecking ball swings on a chain into a wall of crates and scatters them. Station 4: the same crate on ramps of
+Ice, Wood and Rubber: it slides on ice, holds on rubber. Station 5: a blue platform glides to and fro; walk onto it and ride.
+
+**Status.** Tested headless on Linux (`tests/test_physics_upgrade.cpp`, `tests/test_physics_examples.cpp`): tower, tunnelling, ropes, joints, dominoes, wall, ramps.
+Unverified: Windows, the editor on a screen, how it feels with the real character.
 
 ## Importing a `.raw` file with several groups no longer crashes (bug fix, branch `claude2/own-readers-speed-3`, not released yet)
 

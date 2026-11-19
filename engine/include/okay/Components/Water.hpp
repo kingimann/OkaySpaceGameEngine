@@ -8,7 +8,7 @@
 #include "okay/Render/Mesh.hpp"
 #include "okay/Render/MeshNormals.hpp"
 #include "okay/Render/Color.hpp"
-#include "okay/Environment/Wind.hpp"
+#include "okay/Environment/WindField.hpp"
 #include <algorithm>
 #include <cmath>
 #include <vector>
@@ -56,7 +56,7 @@ public:
     void Update(float dt) override {
         // The scene's wind (weather) quickens the swell and adds a wave running
         // downwind; no wind leaves the surface exactly as authored.
-        const Vec3 wind = WindVector();
+        const Vec3 wind = WindField::At(transform ? transform->Position() : Vec3{0, 0, 0});   // the wind field (zones too) at the surface; = WindVector() when no Wind Zone exists
         const float ws = std::sqrt(wind.x * wind.x + wind.z * wind.z);
         m_windStrength = ws;
         if (ws > 1e-4f) { m_windDir = {wind.x / ws, wind.z / ws}; }

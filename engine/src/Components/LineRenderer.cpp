@@ -1,5 +1,6 @@
 #include "okay/Components/LineRenderer.hpp"
 #include "okay/Components/Spline.hpp"
+#include "okay/Environment/WindField.hpp"
 #include "okay/Scene/GameObject.hpp"
 #include "okay/Scene/Scene.hpp"
 #include "okay/Scene/Transform.hpp"
@@ -283,6 +284,8 @@ void TrailRenderer::Update(float dt) {
     m_hasLast = true;
     const float life = time > 1e-3f ? time : 1e-3f;
     while (!m_points.empty() && m_now - m_points.front().born > life) m_points.pop_front();
+    if (windDrift > 0.0f && dt > 0.0f)
+        for (Point& pt : m_points) pt.position += WindField::At(pt.position) * (windDrift * dt);   // old points blow downwind
     if (emitting && (m_points.empty() || (p - m_points.back().position).Magnitude() >= std::max(minVertexDistance, 1e-4f))) {
         m_points.push_back({p, m_now});
         while (m_points.size() > 4096) m_points.pop_front();

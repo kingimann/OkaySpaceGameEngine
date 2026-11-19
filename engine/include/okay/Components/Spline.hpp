@@ -174,6 +174,7 @@ public:
     bool  playOnStart = true;
     bool  orient = true;         ///< turn +Z (forward) the way it travels, up from the spline's frame
     Vec3  offset{0, 0, 0};       ///< from the curve, in its frame: x along `right`, y up, z forward
+    float windSway = 0.0f;       ///< metres it is pushed downwind in a strong wind (12 m/s); 0 = ignores the wind (docs/wind.md)
     /// Called at an end of the curve (true = the far end, false = back at the start).
     std::function<void(bool atEnd)> onEnd;
 

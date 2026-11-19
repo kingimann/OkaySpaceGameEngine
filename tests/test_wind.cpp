@@ -228,6 +228,45 @@ int main() {
         CHECK_NEAR(moved.back().x, still.back().x, 1e-5f);
     }
 
+    // ---- Trails drift, Spline Followers lean, Water reads the field ----
+    {
+        Scene s("more");
+        MakeZone(s, "Z", WindZone::Mode::Everywhere, {0, 0, 0}, 10.0f, {1, 0, 0});
+        GameObject* t = s.CreateGameObject("T");
+        t->transform->SetPosition({0, 5, 0});
+        auto* tr = t->AddComponent<TrailRenderer>();
+        tr->time = 5.0f; tr->windDrift = 1.0f;
+        GameObject* t0 = s.CreateGameObject("T0");
+        t0->transform->SetPosition({0, 9, 0});
+        auto* tr0 = t0->AddComponent<TrailRenderer>();
+        tr0->time = 5.0f;   // no drift: stays put
+        Run(s, 60);
+        CHECK(tr->PointCount() > 0 && tr->Points().front().x > 5.0f);
+        CHECK(tr0->PointCount() > 0 && std::fabs(tr0->Points().front().x) < 1e-5f);
+
+        GameObject* sp = s.CreateGameObject("Rail");
+        auto* spl = sp->AddComponent<Spline>();
+        spl->AddPoint({0, 3, 0}); spl->AddPoint({0, 3, 10});
+        GameObject* f = s.CreateGameObject("Lantern");
+        auto* sf = f->AddComponent<SplineFollower>();
+        sf->spline = "Rail"; sf->speed = 0.0f; sf->orient = false;
+        Run(s, 3);
+        const float x0 = f->transform->Position().x;
+        sf->windSway = 1.0f;
+        Run(s, 3);
+        CHECK(f->transform->Position().x - x0 > 0.5f);
+
+        Scene w("water");
+        GameObject* wg = w.CreateGameObject("Sea");
+        auto* wa = wg->AddComponent<Water>(); wa->Apply();
+        Run(w, 5);
+        float calm = 0, fl = 0, sy = 0;
+        CHECK(wa->Column({3, 0, 2}, calm, fl));
+        MakeZone(w, "Gale", WindZone::Mode::Everywhere, {0, 0, 0}, 20.0f);
+        Run(w, 5);
+        CHECK(wa->Column({3, 0, 2}, sy, fl) && std::fabs(sy - calm) > 1e-4f);   // the water now follows a Wind Zone, not only the weather
+    }
+
     // ---- Sound: seamless, deterministic, follows the wind ----
     {
         const AudioClip a = WindAmbience::MakeClip(3.0f, 7, 8000), b = WindAmbience::MakeClip(3.0f, 7, 8000), c2 = WindAmbience::MakeClip(3.0f, 8, 8000);

@@ -1,4 +1,5 @@
 #include "okay/Components/Spline.hpp"
+#include "okay/Environment/WindField.hpp"
 #include "okay/Components/ActionList.hpp"
 #include "okay/Components/ScriptComponent.hpp"
 #include "okay/Scene/GameObject.hpp"
@@ -590,7 +591,14 @@ void SplineFollower::Place() {
     Spline* sp = Target();
     if (!sp || !transform || sp->Count() == 0) return;
     const SplineSample s = sp->SampleAtDistance(m_distance);
-    transform->SetPosition(s.position + s.right * offset.x + s.up * offset.y + s.tangent * offset.z);
+    Vec3 at = s.position + s.right * offset.x + s.up * offset.y + s.tangent * offset.z;
+    if (windSway > 0.0f) {   // a hanging lantern or a leaf on a rail leans downwind
+        const Vec3 w = WindField::At(at);
+        const Vec3 h{w.x, 0.0f, w.z};
+        const float hl = h.Magnitude();
+        if (hl > 1e-4f) at += h * (windSway * WindField::Lean(hl) / hl);
+    }
+    transform->SetPosition(at);
     if (orient) {
         // Face the way it moves (a ping-pong turns round on the way back).
         const float sign = (drive == Drive::Speed && speed < 0.0f ? -1.0f : 1.0f) * (float)m_dir;

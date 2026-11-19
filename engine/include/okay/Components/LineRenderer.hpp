@@ -108,6 +108,8 @@ public:
     /// A jump longer than this in one frame (a teleport, a respawn) starts a new
     /// trail instead of drawing a streak across the scene. 0 = never.
     float teleportDistance = 5.0f;
+    /// How much the wind (docs/wind.md) carries the points already laid: 0 = they stay where they were left, 1 = they drift at the wind's speed.
+    float windDrift = 0.0f;
 
     TrailRenderer() {
         colorGradient.SetTwo(Color{1, 1, 1, 1}, Color{1, 1, 1, 0});

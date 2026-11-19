@@ -3878,7 +3878,7 @@ void WriteComponentRecords(std::ostream& out, GameObject* go) {
         out << "  splinefollower";
         KvOut{out}.str("spline", sf->spline)("drive", (int)sf->drive)("wrap", (int)sf->wrap)("speed", sf->speed)
             ("dur", sf->duration)("start", sf->startAt).b("auto", sf->playOnStart).b("orient", sf->orient)
-            ("offx", sf->offset.x)("offy", sf->offset.y)("offz", sf->offset.z);
+            ("offx", sf->offset.x)("offy", sf->offset.y)("offz", sf->offset.z)("wind", sf->windSway);
         out << "\n";
     }
     for (auto* sm : go->GetComponents<SplineMesh>()) {
@@ -9111,7 +9111,7 @@ static bool ParseStep(Scene& scene, ParseSession& S, bool clear,
                     sf->wrap = (SplineFollower::Wrap)std::clamp(wrap, 0, 2);
                     k.f("speed", sf->speed); k.f("dur", sf->duration); k.f("start", sf->startAt);
                     k.b("auto", sf->playOnStart); k.b("orient", sf->orient);
-                    k.f("offx", sf->offset.x); k.f("offy", sf->offset.y); k.f("offz", sf->offset.z);
+                    k.f("offx", sf->offset.x); k.f("offy", sf->offset.y); k.f("offz", sf->offset.z); k.f("wind", sf->windSway);
                 } else if (field == "splinemesh") {
                     auto* sm = go->AddComponent<SplineMesh>();
                     KvIn k(in);
@@ -9708,7 +9708,7 @@ void RegisterBuiltinComponentSerializers() {
         KvOut k{out};
         k("time", tr->time)("mindist", tr->minVertexDistance)("width", tr->width).col("c", tr->color)
          .b("emit", tr->emitting)("align", (int)tr->alignment)("texmode", (int)tr->textureMode)
-         ("tile", tr->tileLength).str("tex", tr->texture)("teleport", tr->teleportDistance);
+         ("tile", tr->tileLength).str("tex", tr->texture)("teleport", tr->teleportDistance)("drift", tr->windDrift);
         WriteCurveKv(k, "w", tr->widthCurve);
         WriteGradientKv(k, "g", tr->colorGradient);
         out << "\n";
@@ -9722,7 +9722,7 @@ void RegisterBuiltinComponentSerializers() {
         k.col("c", tr->color); k.b("emit", tr->emitting); k.i("align", align); k.i("texmode", texmode);
         tr->alignment = align == 1 ? LineAlignment::Flat : LineAlignment::View;
         tr->textureMode = texmode == 1 ? LineTextureMode::Tile : LineTextureMode::Stretch;
-        k.f("tile", tr->tileLength); k.str("tex", tr->texture); k.f("teleport", tr->teleportDistance);
+        k.f("tile", tr->tileLength); k.str("tex", tr->texture); k.f("teleport", tr->teleportDistance); k.f("drift", tr->windDrift);
         ReadCurveKv(k, "w", tr->widthCurve);
         ReadGradientKv(k, "g", tr->colorGradient);
     };

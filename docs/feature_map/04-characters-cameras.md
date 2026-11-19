@@ -98,14 +98,15 @@ Pull request #554 ("Integrate owned animation and IK work", landed 2026-11-10) b
   - 4.5.2 Raycast suspension - `Components/VehicleController` - four down-rays at wheelBase x trackWidth, spring to rideHeight, chassis roll and pitch, maxTilt
   - 4.5.3 2D vehicle - `Components/VehicleController2D` - top-down (local +Y) or side view
   - 4.5.4 Driver seat - `Components/VehicleSeat` - driver, sitPoint, exitPoint, useRadius, enterKey, prompt, Enter, Exit, Occupant, sit pose (BeginVehicleSit), ride camera (CameraTarget)
+  - 4.5.6 Boat - `Components/BoatController`, `Components/Buoyancy` - W/S throttle (the throttle sets the target speed), A/D steer through a rudder that needs flowing water, Space brake, less control out of the water, wake, bow splash, engine-revs hook, chase camera; GameObject > Vehicles > Boat; `examples/boat/`
   - 4.5.5 Wheel visuals - `Components/VehicleController` - objects named Wheel... with a Tire child roll with the speed, Front wheels steer; WheelSpin(), SteerAngle()
-- **Code:** `Components/VehicleController`, `Components/VehicleController2D`, `Components/VehicleSeat`
+- **Code:** `Components/VehicleController`, `Components/VehicleController2D`, `Components/VehicleSeat`, `Components/BoatController`, `Components/Buoyancy`
 - **API:** `VehicleController`, `VehicleController2D`, `VehicleSeat`, `Speed()`, `IsGrounded()`, `Driver()`, `Enter()`, `Exit()`
-- **Editor:** Add Component > Gameplay > Vehicle Controller (Car) / Vehicle Controller 2D / Vehicle Seat; File > Open examples/vehicle/vehicle_test.okayscene
-- **Docs:** `docs/vehicle_controller.md`
-- **Tests:** `vehicle`, `vehicle_seat`
+- **Editor:** Add Component > Gameplay > Vehicle Controller (Car) / Vehicle Controller 2D / Vehicle Seat / Boat Controller; GameObject > Vehicles > Boat; File > Open examples/vehicle/vehicle_test.okayscene or examples/boat/boat_lake.okayscene
+- **Docs:** `docs/vehicle_controller.md`, `docs/water_boat.md`
+- **Tests:** `vehicle`, `vehicle_seat`, `boat`
 - **Status:** Works - vehicle test covers throttle, steering, grip and serialization; suspension is opt-in; the seat test covers get in and out, sitting pose set and cleared, ride camera, rolling and steering wheels, one driver, exit fallback, destroy and save
-- **Open:** no script or visual-script access to seats; seat state is not replicated over the network; no sit animation; torque-based body dynamics are a roadmap item in the doc
+- **Open:** a person cannot press E to board a boat yet (the seat only knows VehicleController); no script or visual-script access to seats; seat state is not replicated over the network; no sit animation; torque-based body dynamics are a roadmap item in the doc
 - **Related:** 4.4, 6.2
 - **Words:** vehicle, car, drift, handbrake, grip, suspension, ride height, VehicleController
 - **Seen as:** the car skates sideways; it does not stay on slopes; it flips; the camera sits inside the roof

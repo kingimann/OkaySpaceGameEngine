@@ -13,12 +13,13 @@ namespace okay::editor::vsed {
 struct VsUsagePrefs {
     bool hideStart = false;      ///< "Do not show this again" on the start card
     unsigned hintsDone = 0;      ///< bit per first-step hint (VisualScriptHints.hpp)
-    bool operator==(const VsUsagePrefs& o) const { return hideStart == o.hideStart && hintsDone == o.hintsDone; }
+    bool helpCardOpen = true;    ///< the "What is this?" card beside the selected node is open (it remembers a collapse)
+    bool operator==(const VsUsagePrefs& o) const { return hideStart == o.hideStart && hintsDone == o.hintsDone && helpCardOpen == o.helpCardOpen; }
 };
 
 inline std::string VsUsagePrefsToText(const VsUsagePrefs& p) {
     std::ostringstream o;
-    o << "hidestart " << (p.hideStart ? 1 : 0) << "\n" << "hintsdone " << p.hintsDone << "\n";
+    o << "hidestart " << (p.hideStart ? 1 : 0) << "\n" << "hintsdone " << p.hintsDone << "\n" << "helpcard " << (p.helpCardOpen ? 1 : 0) << "\n";
     return o.str();
 }
 
@@ -35,6 +36,7 @@ inline VsUsagePrefs VsUsagePrefsFromText(const std::string& text) {
         const unsigned long v = std::strtoul(val.c_str(), &end, 10);
         if (end == val.c_str()) continue;
         if (key == "hidestart") p.hideStart = v != 0;
+        else if (key == "helpcard") p.helpCardOpen = v != 0;
         else if (key == "hintsdone") p.hintsDone = (unsigned)(v & 0xFFFFu);
     }
     return p;

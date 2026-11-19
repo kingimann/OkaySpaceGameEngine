@@ -45,7 +45,11 @@ ed25519::Seed ThrowawaySeed() {
 }
 
 fs::path TempDir(const char* name) {
-    const fs::path d = fs::temp_directory_path() / (std::string("okay_ac_") + name);
+    // Three test programs are built from this file and CTest runs them side by side, so every process gets its own
+    // folder (a shared one let one program delete the files another was still using).
+    static const std::string unique = std::to_string(static_cast<unsigned long long>(
+        std::chrono::steady_clock::now().time_since_epoch().count()));
+    const fs::path d = fs::temp_directory_path() / (std::string("okay_ac_") + unique + "_" + name);
     std::error_code ec;
     fs::remove_all(d, ec);
     fs::create_directories(d);

@@ -21,6 +21,7 @@ which is about a window).
 | Water waves follow it | `Components/Water.hpp` | Unchanged (still uses the weather's vector). |
 | Volume > Force "wind, draught, updraft" | `Components/Volume.hpp` | Pushes physics bodies only, with a steady acceleration; nothing else sees it. Kept as it is (it is a push, not a wind). |
 | Trees / grass / foliage | `Components/Foliage.hpp` | Stand still. Now: "Sway in the wind". |
+| Trails (`TrailRenderer`), Spline Follower | `Components/LineRenderer.hpp`, `Components/Spline.hpp` | Ignored the wind. Now: Trail "Wind drift" (old points blow downwind) and Spline Follower "Wind sway". |
 | Cable (rope with sag) | `Components/Cable.hpp` | Hangs still. Now: "Sway in the wind". |
 | Rigidbody 3D, Ragdoll | `Physics/Rigidbody3D.hpp`, `Components/Ragdoll.hpp` | Ignore the wind. Now: the Wind Drag component. |
 | Audio mixer, procedural clips (`AudioClip::Noise`, `Sine`) | `Audio/` | No wind sound. Now: Wind Sound makes its own loop. |
@@ -133,9 +134,9 @@ stopped between gusts, leaves alive, no NaN. It was also rendered headless with 
   Lighting window and the Inspector rows are therefore unseen.
 - **Sway is on the CPU.** It works the same in every renderer, but a very large forest rewrites its chunk meshes up to 20 times a second near the
   camera. A GPU vertex-shader version (one uniform, no re-upload) is the better long-term answer and was not written.
-- **Not linked to the wind:** trails (`TrailRenderer`), spline followers, `LineRenderer` ropes other than `Cable`, the fog, `Water` (still the
-  weather's vector only), Terrain grass.
-- **No hand-made Visual Script blocks** with plain-words help for wind (the automatic `Fn.wind_*` blocks exist).
+- **Follow-up branch `claude/wind-2`:** Trail Renderer `windDrift` (record key `drift`), Spline Follower `windSway` (`wind`), Water now reads `WindField::At` at its surface (one include line and one code line in `Water.hpp`, same result as before when there is no Wind Zone), and two hand-written Visual Script blocks, **Set Wind** and **Wind Speed** (Weather & Fog). Tests for these are in `tests/test_wind.cpp`.
+- **Not linked to the wind:** `LineRenderer` ropes other than `Cable`, the fog, and Terrain grass (Terrain has no grass geometry, only a grass colour; grass is painted with Foliage, which sways).
+- **GPU vertex sway not done:** the GL and D3D11 shaders have a skinning hook, but wiring a sway uniform needs new Mesh Renderer fields and uniform plumbing in three renderers that cannot be run here; the CPU path stays.
 - **No multiplayer sync:** wind is computed from the same scene data and clock on each machine; the clock is not synchronised and there is no
   hook that carries it, so two players can see gusts at different moments.
 - **No resize handles** on a Wind Zone in the Scene view (the shape is drawn; size is edited in the Inspector).

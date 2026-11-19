@@ -1078,6 +1078,10 @@ inline const VsRule kStepRules[] = {
     // scene, camera, time
     {"set_cam", "Camera", "Follow & Switch"}, {"cam_center_on", "Camera", "Follow & Switch"},
     {"camera_shake", "Camera", "Zoom & Shake"}, {"camera_zoom_to", "Camera", "Zoom & Shake"},
+    {"Camera.Shake", "Camera", "Zoom & Shake"}, {"Camera.FovKick", "Camera", "Zoom & Shake"}, {"Camera.SetFovOffset", "Camera", "Zoom & Shake"},
+    {"Camera.HitPulse", "Camera", "Zoom & Shake"}, {"Camera.SetHandheld", "Camera", "Zoom & Shake"},
+    {"Camera.BlendTo", "Camera", "Follow & Switch"}, {"Camera.SetTarget", "Camera", "Follow & Switch"},
+    {"Camera.AddToGroup", "Camera", "Follow & Switch"}, {"Camera.RemoveFromGroup", "Camera", "Follow & Switch"},
     {"set_bg", "Lighting & Sky", ""}, {"set_light", "Lighting & Sky", ""}, {"set_ambient", "Lighting & Sky", ""},
     {"set_timescale", "Time & Game Speed", "Game Speed"}, {"pause", "Time & Game Speed", "Pausing"},
     {"resume", "Time & Game Speed", "Pausing"}, {"toggle_pause", "Time & Game Speed", "Pausing"},

@@ -605,5 +605,51 @@ int main() {
         CHECK(w.cam->IsPointVisible(w.player->transform->Position(), 1280, 720));
     }
 
+    // ---- 14. Script builtins: Camera.Shake / BlendTo / SetTarget / groups / FOV / hit pulse ----
+    {
+        Scene s("script"); s.physicsEnabled = false;
+        GameObject* camGO = s.CreateGameObject("MainCamera");
+        Camera* cam = camGO->AddComponent<Camera>();
+        auto* brain = camGO->AddComponent<CinemachineBrain>(); brain->blendTime = 0.0f;
+        GameObject* a = s.CreateGameObject("ShotA"); auto* va = a->AddComponent<VirtualCamera>(); va->priority = 10; va->positionDamping = 0.0f;
+        GameObject* b = s.CreateGameObject("ShotB"); auto* vb = b->AddComponent<VirtualCamera>(); vb->priority = 1; vb->positionDamping = 0.0f;
+        b->transform->localPosition = {7, 0, 0};
+        s.CreateGameObject("Boss"); s.CreateGameObject("Minion");
+        GameObject* d = s.CreateGameObject("Director");
+        auto* sc = d->AddComponent<ScriptComponent>("okayscript");
+        CHECK(sc->LoadSource(
+            "function start() {\n"
+            "  Camera.Shake(\"explosion\", 1)\n"
+            "  Camera.BlendTo(\"ShotB\", 0)\n"
+            "  Camera.SetTarget(\"Boss\")\n"
+            "  Camera.AddToGroup(\"Minion\")\n"
+            "  Camera.AddToGroup(\"Minion\")\n"
+            "  Camera.FovKick(8, 0.5)\n"
+            "  Camera.SetFovOffset(5, 0.2)\n"
+            "  Camera.HitPulse(1)\n"
+            "  Camera.SetHandheld(1)\n"
+            "  Camera.Shake(\"nonsense\", 1)\n"
+            "}\n"
+            "var n = 0\n"
+            "function update(dt) {\n"
+            "  n = n + 1\n"
+            "  if (n == 6) { Camera.BlendTo(\"\") }\n"
+            "}\n"));
+        s.Start();
+        for (int i = 0; i < 4; ++i) s.Update(1.0f / 60.0f);
+        CHECK(cam->IsShaking());
+        CHECK(brain->Forced() == vb);
+        CHECK(brain->LiveCamera() == vb);
+        CHECK_NEAR(camGO->transform->Position().z, -8.0f, 0.01f);   // ShotB now follows the Boss at its default offset
+        CHECK(vb->follow == "Boss" && vb->lookAt == "Boss");
+        CHECK(vb->groupTargets.size() == 1 && vb->groupTargets[0] == "Minion");
+        CHECK(cam->FovOffset() != 0.0f);
+        CHECK(cam->VignettePulse() > 0.5f);
+        // Releasing: an empty name goes back to priority.
+        for (int i = 0; i < 4; ++i) s.Update(1.0f / 60.0f);
+        CHECK(brain->Forced() == nullptr);
+        CHECK(brain->LiveCamera() == va);
+    }
+
     TEST_MAIN_RESULT();
 }

@@ -42,6 +42,7 @@ struct ShadowCascadeGpu {
     Vec3  center{0, 0, 0};    // world sphere this cascade covers
     float radius = 0.0f;
     float texelWorld = 0.0f;  // world size of one shadow texel
+    float depthRange = 0.0f;  // world length of the light-space depth range (turns a depth gap into metres)
 };
 
 struct LocalShadowGpu {
@@ -107,6 +108,7 @@ inline void FitCascade(ShadowCascadeGpu& c, const Vec3& center, float R, const V
     c.center = center;
     c.radius = R;
     c.texelWorld = texel;
+    c.depthRange = back + R * 2.0f + depthPad - 0.05f;
 }
 } // namespace detail
 

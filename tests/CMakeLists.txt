@@ -4348,3 +4348,7 @@ target_link_libraries(lighting_shot PRIVATE okay::engine)
 add_executable(test_lighting_upgrade test_lighting_upgrade.cpp)
 target_link_libraries(test_lighting_upgrade PRIVATE okay::engine)
 add_test(NAME lighting_upgrade COMMAND test_lighting_upgrade)
+
+add_executable(test_d3d11_layout test_d3d11_layout.cpp)
+target_link_libraries(test_d3d11_layout PRIVATE okay::engine)
+add_test(NAME d3d11_layout COMMAND test_d3d11_layout)

@@ -65,7 +65,7 @@ using namespace okay;
     X(TouchButton) X(TouchDPad) X(VirtualJoystick) \
     X(UITooltip) X(VehicleController) X(VehicleController2D) X(VehicleSeat) X(VirtualCamera) X(VisualScriptComponent) \
     X(VoxelDigger) X(VoxelTerrain) X(Volume) X(Water) X(WeatherRig) X(WetnessStat) X(WorldSpaceUI) X(WorldStreamer) \
-    X(WorldUI)
+    X(WorldUI) X(PhysicsSurface) X(ConveyorBelt) X(ForceField) X(GravityZone) X(Turntable) X(MovingPlatform) X(Explosion) X(Breakable)
 
 namespace {
 

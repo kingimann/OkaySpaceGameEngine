@@ -8,6 +8,7 @@
 #define SDL_MAIN_HANDLED
 #include <SDL.h>
 #include "OwnStack.hpp"            // the OKAY_OWN_STACK=1 dogfood switch and the one-line startup stack report
+#include "okay/Render/ParticleDraw.hpp"
 #include "okay/Platform/Platform.hpp"   // okay::platform: window, GL context, events, input, timers, audio, controllers
 
 #include <Okay.hpp>
@@ -2574,69 +2575,14 @@ int main(int argc, char** argv) {
                         FillOcclusionDepth(occWork, occDown, scene, vp, camPos, hw, hh, ignore);
                     }
                 }
-                // Particles in 3D: camera-facing billboards projected with the camera
-                // (the 2D quad path below only runs for orthographic scenes, so 3D games
-                // showed no particles at all). Collected, depth-sorted back-to-front, and
-                // drawn as soft volumetric puffs so the 3D particle motion reads as depth.
+                // Particles in 3D: one shared list (okay::BuildParticleDraw: camera facing, streaks, flat and upright
+                // quads, picture sheets, ribbons, cubes, sorting, soft edges, culling), drawn with the painter.
                 {
-                    // len/wid = half-extents along/across the billboard; ang = long-axis angle (deg).
-                    struct PP { float depth, sx, sy, len, wid, ang; SDL_Color col; ui2d::Tex tex; bool stretch; };
-                    std::vector<PP> pp;
-                    for (const auto& up : scene.Objects()) {
-                        auto* ps = up->GetComponent<ParticleSystem>();
-                        if (!ps || !up->active || UIHidden(up.get())) continue;
-                        ui2d::Tex ptex = ps->texture.empty() ? nullptr
-                                            : GetTexture(renderer, ps->texture);
-                        const bool stretchMode = ps->renderMode == ParticleSystem::RenderMode::Stretch;
-                        for (const auto& p : ps->Particles()) {
-                            if (!p.alive) continue;
-                            Vec4 c = vp * Vec4{p.position, 1.0f};
-                            if (c.w <= 0.05f) continue;
-                            float sx = w * 0.5f + (c.x / c.w) * w * 0.5f;
-                            float sy = h * 0.5f - (c.y / c.w) * h * 0.5f;
-                            if (ParticleOccluded(sx / w, sy / h, c.w)) continue;  // hidden behind geometry
-                            float rad = p.size * 0.5f / c.w * w * 0.5f;
-                            if (rad < 1.0f) rad = 1.0f; if (rad > 400.0f) rad = 400.0f;
-                            SDL_Color col{(Uint8)(p.color.r*255), (Uint8)(p.color.g*255),
-                                          (Uint8)(p.color.b*255), (Uint8)(p.color.a*255)};
-                            float len = rad, ang = p.rotation; bool stretched = false;
-                            float speed = std::sqrt(p.velocity.x*p.velocity.x + p.velocity.y*p.velocity.y + p.velocity.z*p.velocity.z);
-                            if (stretchMode && speed > 1e-3f) {
-                                Vec3 vn = p.velocity * (1.0f / speed);
-                                Vec4 c2 = vp * Vec4{p.position + vn, 1.0f};
-                                if (c2.w > 0.05f) {
-                                    float s2x = w * 0.5f + (c2.x / c2.w) * w * 0.5f;
-                                    float s2y = h * 0.5f - (c2.y / c2.w) * h * 0.5f;
-                                    float dx = s2x - sx, dy = s2y - sy, dl2 = std::sqrt(dx*dx + dy*dy);
-                                    if (dl2 > 1e-3f) {
-                                        ang = std::atan2(dy, dx) * 57.29578f;
-                                        len = rad * (1.0f + ps->stretchScale * speed);
-                                        stretched = true;
-                                    }
-                                }
-                            }
-                            pp.push_back({c.w, sx, sy, len, rad, ang, col, ptex, stretched});
-                        }
-                    }
-                    std::sort(pp.begin(), pp.end(), [](const PP& a, const PP& b){ return a.depth > b.depth; });
-                    for (const PP& q : pp) {
-                        if (q.tex) {
-                            // Rotated, tinted sprite — elongated along velocity in stretch mode.
-                            renderer->SetTextureColorMod(q.tex, q.col.r, q.col.g, q.col.b);
-                            renderer->SetTextureAlphaMod(q.tex, q.col.a);
-                            renderer->SetTextureBlendMode(q.tex, okay::platform::BlendMode::Blend);
-                            SDL_FRect dst{q.sx - q.len, q.sy - q.wid, q.len * 2.0f, q.wid * 2.0f};
-                            renderer->CopyExF(q.tex, nullptr, (const ui2d::FRect*)&dst, q.ang, nullptr, ui2d::FlipNone);
-                        } else if (q.stretch) {
-                            // Untextured streak: a thick line along the velocity.
-                            float a = q.ang * 0.01745329f, cx = std::cos(a) * q.len, cy = std::sin(a) * q.len;
-                            MMThickLine(renderer, q.sx - cx, q.sy - cy, q.sx + cx, q.sy + cy, q.wid * 2.0f, q.col);
-                        } else {
-                            SDL_Color halo = q.col; halo.a = (Uint8)(q.col.a / 3);   // soft outer glow
-                            MMFillCircle(renderer, (int)q.sx, (int)q.sy, (int)(q.wid * 1.6f), halo);
-                            MMFillCircle(renderer, (int)q.sx, (int)q.sy, (int)q.wid, q.col);  // bright core
-                        }
-                    }
+                    static std::vector<okay::ParticleDrawItem> pitems;
+                    okay::ParticleView pview;
+                    pview.vp = vp; pview.camPos = camPos; pview.w = (float)w; pview.h = (float)h; pview.maxRadius = 400.0f;
+                    okay::BuildParticleDraw(scene, pview, pitems, nullptr, [](const GameObject* g) { return !UIHidden(const_cast<GameObject*>(g)); });
+                    okay::DrawParticleDrawPainter(*renderer, pitems, [&](const std::string& path) -> void* { return (void*)GetTexture(renderer, path); });
                 }
                 // Line and Trail Renderers: ribbons built on the CPU, blended over the image like the particles.
                 DrawLineDraws(renderer, scene, vp, camPos, (float)vx, (float)vy, (float)vw, (float)vh, ignore,

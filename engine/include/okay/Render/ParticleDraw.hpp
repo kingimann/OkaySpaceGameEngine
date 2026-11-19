@@ -60,9 +60,22 @@ void BuildParticleDraw(Scene& scene, const ParticleView& view, std::vector<Parti
                        ParticleDrawStats* stats = nullptr,
                        const std::function<bool(const GameObject*)>& visible = {});
 
+/// The same for one system alone (the Inspector preview): `origin` is where it sits.
+void BuildParticleDrawFor(ParticleSystem& ps, const Vec3& origin, const ParticleView& view, std::vector<ParticleDrawItem>& out,
+                          ParticleDrawStats* stats = nullptr);
+
 /// A small CPU rasteriser for the list (headless renders, tests, thumbnails). `rgba` is w*h*4 bytes, cleared by the
 /// caller; textured items are drawn as the soft puff (no image files are read). Additive and Premultiplied blend
 /// add the colour; Alpha blends over.
 void RasterizeParticleDraw(const std::vector<ParticleDrawItem>& items, int w, int h, std::uint8_t* rgba);
+
+namespace ui2d { class Painter; }
+
+/// Draw the list with the engine's 2D painter (the player and the game windows). `loadTex` turns a texture path
+/// into a painter texture (null = draw the soft puff instead). Quads with a picture go through Painter::Geometry
+/// (exact corners and sheet UVs); the plain puff is three soft discs; ribbons and cube faces are flat triangles.
+/// Additive blend is drawn as a brighter normal blend: the painter has no additive mode (docs/particles_upgrade.md).
+void DrawParticleDrawPainter(ui2d::Painter& painter, const std::vector<ParticleDrawItem>& items,
+                             const std::function<void*(const std::string&)>& loadTex);
 
 } // namespace okay

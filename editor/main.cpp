@@ -48,6 +48,7 @@
 #include "okay/Core/Clock.hpp"        // ClockSet: the channels the Tween Animation inspector offers
 #include <cstdio>
 #include "LevelTools.hpp"              // foliage brush, terrain layers, decals, cables, measuring, orthographic views
+#include "ParticleEditor.hpp"          // particle presets menus, live preview, the particle Inspector rows, the shared particle drawing
 #include "SplineTools.hpp"             // splines: Scene-view editing, inspectors, line / trail drawing
 #include "VolumeTools.hpp"             // volumes: Scene-view shapes, handles, draw tool, inspector, menus
 #include "okay/Components/HoldPrompt.hpp"
@@ -7487,6 +7488,7 @@ static void DrawCreateSlot(EditorState& ed, const std::string& id, GameObject* p
         if (ImGui::IsItemHovered()) ImGui::SetTooltip("Plays a playlist of music tracks.");
     } else if (id == "create.effects") {
         if (ImGui::MenuItem("Particle System")) { AddParticleObject(ed); created = true; }
+        oked::DrawParticlePresetMenu(ed, created);        // Particle Effects >: Fire, Smoke, Rain, ... one click each
         if (ImGui::MenuItem("Spline")) { CreateSplineFromMenu(ed); created = true; }
         if (ImGui::IsItemHovered()) ImGui::SetTooltip("A curve of three points in front of the camera: roads, rails, fences, paths.");
         LevelCreateMenuItems(ed, created);                // Foliage Layer, Decal Projector, Cable
@@ -31071,9 +31073,9 @@ void DrawInspector(EditorState& ed) {
 
             // ---- Shape ----
             SectionHeader("Shape");
-            const char* shapes[] = {"Point", "Circle", "Sphere", "Box", "Cone", "Edge"};
+            const char* shapes[] = {"Point", "Circle", "Sphere", "Box", "Cone", "Edge", "Hemisphere", "Mesh surface"};
             int shp = (int)ps->shape;
-            if (ImGui::Combo("Shape##ps", &shp, shapes, 6)) { ps->shape = (ParticleSystem::Shape)shp; ed.dirty = true; }
+            if (ImGui::Combo("Shape##ps", &shp, shapes, 8)) { ps->shape = (ParticleSystem::Shape)shp; ed.dirty = true; }
             oked::FieldTip("Shape##ps");
             if (ps->shape == ParticleSystem::Shape::Circle || ps->shape == ParticleSystem::Shape::Sphere ||
                 ps->shape == ParticleSystem::Shape::Edge)
@@ -31112,9 +31114,9 @@ void DrawInspector(EditorState& ed) {
 
             // ---- Appearance (sprite + spin) ----
             SectionHeader("Appearance");
-            const char* rmodes[] = {"Billboard", "Stretch"};
+            const char* rmodes[] = {"Billboard", "Stretch", "Flat on the ground", "Upright", "Cubes"};
             int rmi = (int)ps->renderMode;
-            if (ImGui::Combo("Render##ps", &rmi, rmodes, 2)) { ps->renderMode = (ParticleSystem::RenderMode)rmi; ed.dirty = true; }
+            if (ImGui::Combo("Render##ps", &rmi, rmodes, 5)) { ps->renderMode = (ParticleSystem::RenderMode)rmi; ed.dirty = true; }
             if (ImGui::IsItemHovered()) ImGui::SetTooltip("Billboard = upright camera-facing quad. Stretch = elongated along velocity (rain/sparks/tracers).");
             if (ps->renderMode == ParticleSystem::RenderMode::Stretch) {
                 if (ImGui::DragFloat("Stretch##ps", &ps->stretchScale, 0.01f, 0.0f, 10.0f)) ed.dirty = true;
@@ -31260,6 +31262,7 @@ void DrawInspector(EditorState& ed) {
             if (ImGui::SmallButton("Restart##ps")) ps->Restart();
             ImGui::SameLine();
             if (ImGui::SmallButton("Burst##ps")) ps->Emit(ps->burstCount > 0 ? ps->burstCount : 16);
+            oked::DrawParticleInspectorExtras(ed, *ps, [&](const char* id, okay::ParticleCurve& c) { return ParticleCurveEditor(ed, id, c); });   // live preview + the upgrade rows (ParticleEditor.cpp)
 
             int seedI = (int)ps->seed;
             if (ImGui::DragInt("Seed##ps", &seedI, 1.0f, 0, 2000000000)) { ps->seed = (std::uint64_t)seedI; ed.dirty = true; }
@@ -42189,6 +42192,7 @@ void DrawInspector(EditorState& ed) {
             if (item(!go->GetComponent<TextRenderer>(), "Text")) { go->AddComponent<TextRenderer>(); ed.dirty = true; }
             if (item(!go->GetComponent<SpriteAnimator>(), "Sprite Animator")) { go->AddComponent<SpriteAnimator>(); ed.dirty = true; }
             if (item(!go->GetComponent<ParticleSystem>(), "Particle System")) { go->AddComponent<ParticleSystem>(); ed.dirty = true; }
+            oked::DrawParticlePresetAddComponent(ed, go);   // Particle effect presets >
             if (item(!go->GetComponent<TerrainDigger>(), "Terrain Digger")) { go->AddComponent<TerrainDigger>(); ed.dirty = true; }
             if (item(!go->GetComponent<VoxelTerrain>(), "Voxel Terrain (diggable)")) { auto* v = go->AddComponent<VoxelTerrain>(); v->Generate(0.5f, 6.0f, 0.0f, 1u); v->Apply(); ed.view3D = true; ed.dirty = true; }
             if (item(!go->GetComponent<VoxelDigger>(), "Voxel Digger")) { go->AddComponent<VoxelDigger>(); ed.dirty = true; }
@@ -44204,6 +44208,7 @@ static void SceneAddRun(EditorState& ed, const std::string& id, const std::strin
     else if (id == "audio:source") made = AddAudioSourceObject(ed);
     else if (id == "audio:music") made = AddMusicPlayerObject(ed);
     else if (id == "particles") made = AddParticleObject(ed);
+    else if (id.rfind("particles:", 0) == 0) made = oked::CreateParticlePresetObject(ed, std::atoi(id.c_str() + 10));
     else if (id == "terrain") made = AddTerrainObject(ed);
     else if (id == "water") made = AddWaterObject(ed);
     else if (id == "character") made = AddCharacterObject(ed);
@@ -46089,71 +46094,17 @@ void DrawScene3D(EditorState& ed, ImDrawList* dl, ImVec2 canvasPos, ImVec2 canva
             FillOcclusionDepth(occWork, occDown, ed.scene(), vp, eye, hw, hh, viewIgnore);
         }
     }
-    // Particles: camera-facing billboards projected with the 3D camera. Collected,
-    // depth-sorted back-to-front, and drawn as soft volumetric puffs (a faint outer
-    // halo + bright core) so the now-3D particle motion reads as real depth. This
-    // runs BEFORE the gameView early-return below, so particles show in the Game
-    // view + during Play (they're a visual, not an interactive, element).
+    // Particles: one shared list (okay::BuildParticleDraw: camera facing, streaks, flat and upright quads, picture sheets,
+    // ribbons, cubes, sorting, soft edges, culling) drawn with ImGui. This runs BEFORE the gameView early-return below, so
+    // particles show in the Game view and during Play (a visual, not an interactive, element).
     {
-        // ax/ay are the half-extent screen axes of the billboard (length, width).
-        struct PP { float depth; ImVec2 sp, ax, ay; float rad; ImU32 col; ImTextureID tex; bool stretch; };
-        static std::vector<PP> pp; pp.clear();
-        for (const auto& up : objs) {
-            auto* ps = up->GetComponent<ParticleSystem>();
-            if (!ps || !up->active) continue;
-            ImTextureID ptex = ps->texture.empty() ? (ImTextureID)0
-                               : (ImTextureID)GetThumb(ps->texture);   // sprite handle (0 = soft puff)
-            const bool stretchMode = ps->renderMode == ParticleSystem::RenderMode::Stretch;
-            for (const auto& p : ps->Particles()) {
-                if (!p.alive) continue;
-                Vec4 c = vp * Vec4{p.position, 1.0f};
-                if (c.w <= 0.05f) continue;
-                ImVec2 sp(center.x + (c.x / c.w) * canvasSize.x * 0.5f,
-                          center.y - (c.y / c.w) * canvasSize.y * 0.5f);
-                if (okay::SceneOcclusionDepth().valid) {
-                    const float vw = std::max(1.0f, view3dMax.x - view3dMin.x);
-                    const float vh = std::max(1.0f, view3dMax.y - view3dMin.y);
-                    if (okay::ParticleOccluded((sp.x - view3dMin.x) / vw, (sp.y - view3dMin.y) / vh, c.w)) continue;
-                }
-                float rad = p.size * 0.5f / c.w * canvasSize.x * 0.5f;   // perspective size
-                if (rad < 1.0f) rad = 1.0f; if (rad > 200.0f) rad = 200.0f;
-                // Long axis: spin angle for billboards, screen-projected velocity for stretch.
-                float ux, uy; bool stretched = false;
-                float speed = std::sqrt(p.velocity.x*p.velocity.x + p.velocity.y*p.velocity.y + p.velocity.z*p.velocity.z);
-                if (stretchMode && speed > 1e-3f) {
-                    Vec3 vn = p.velocity * (1.0f / speed);
-                    Vec4 c2 = vp * Vec4{p.position + vn, 1.0f};
-                    if (c2.w > 0.05f) {
-                        ImVec2 sp2(center.x + (c2.x / c2.w) * canvasSize.x * 0.5f,
-                                   center.y - (c2.y / c2.w) * canvasSize.y * 0.5f);
-                        float dx = sp2.x - sp.x, dy = sp2.y - sp.y, dl2 = std::sqrt(dx*dx + dy*dy);
-                        if (dl2 > 1e-3f) { ux = dx / dl2; uy = dy / dl2; stretched = true; }
-                    }
-                }
-                float len = rad, wid = rad;
-                if (stretched) len = rad * (1.0f + ps->stretchScale * speed);
-                else { float a = p.rotation * 0.01745329f; ux = std::cos(a); uy = std::sin(a); }
-                ImVec2 ax(ux * len, uy * len), ay(-uy * wid, ux * wid);
-                pp.push_back({c.w, sp, ax, ay, rad, ToColor(p.color), ptex, stretched});
-            }
-        }
-        std::sort(pp.begin(), pp.end(), [](const PP& a, const PP& b) { return a.depth > b.depth; });
-        for (const PP& q : pp) {
-            ImVec2 p1(q.sp.x - q.ax.x - q.ay.x, q.sp.y - q.ax.y - q.ay.y);
-            ImVec2 p2(q.sp.x + q.ax.x - q.ay.x, q.sp.y + q.ax.y - q.ay.y);
-            ImVec2 p3(q.sp.x + q.ax.x + q.ay.x, q.sp.y + q.ax.y + q.ay.y);
-            ImVec2 p4(q.sp.x - q.ax.x + q.ay.x, q.sp.y - q.ax.y + q.ay.y);
-            if (q.tex) {
-                dl->AddImageQuad(q.tex, p1, p2, p3, p4,
-                                 ImVec2(0, 0), ImVec2(1, 0), ImVec2(1, 1), ImVec2(0, 1), q.col);
-            } else if (q.stretch) {
-                dl->AddQuadFilled(p1, p2, p3, p4, q.col);   // untextured streak
-            } else {
-                ImU32 halo = (q.col & 0x00FFFFFFu) | ((((q.col >> 24) & 0xFF) / 3) << 24);  // 1/3 alpha
-                dl->AddCircleFilled(q.sp, q.rad * 1.6f, halo, 12);   // soft outer glow
-                dl->AddCircleFilled(q.sp, q.rad, q.col, 12);          // bright core
-            }
-        }
+        static std::vector<okay::ParticleDrawItem> pitems;
+        okay::ParticleView pview;
+        pview.vp = vp; pview.camPos = eye;
+        pview.x0 = center.x - canvasSize.x * 0.5f; pview.y0 = center.y - canvasSize.y * 0.5f; pview.w = canvasSize.x; pview.h = canvasSize.y;
+        pview.maxRadius = 200.0f;
+        okay::BuildParticleDraw(ed.scene(), pview, pitems);
+        oked::DrawParticleItemsImGui(dl, pitems, [](const std::string& path) { return (ImTextureID)GetThumb(path); });
     }
     // Line and Trail Renderers: ribbons built on the CPU, blended over the image like the particles.
     DrawLinesAndTrails(ed, dl, vp, eye, view3dMin, view3dMax, viewIgnore, RenderCullingMask(),

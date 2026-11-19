@@ -9,6 +9,7 @@
 // Written from the owner's request (2026-11-18) and the existing Hierarchy menu code; ray-against-a-plane is the plain
 // t = (planeY - originY) / dirY formula. No code from another project.
 #include "MenuBarModel.hpp"
+#include "ParticlePresetList.hpp"
 
 #include <algorithm>
 #include <cctype>
@@ -257,6 +258,10 @@ inline std::vector<SearchItem> Catalog(bool is2D) {
     add("audio:source", "Audio Source", "Audio", "sound noise effect");
     add("audio:music", "Music Player", "Audio", "song playlist tracks");
     add("particles", "Particle System", "Effects", "fire smoke sparks explosion magic");
+    {   // the one-click presets: fire, smoke, rain, ...
+        std::size_t np = 0; const particlepresets::Item* pi = particlepresets::Items(np);
+        for (std::size_t i = 0; i < np; ++i) add("particles:" + std::to_string(i), std::string(pi[i].name) + " (effect)", "Effects", std::string("particles effect preset ") + pi[i].name);
+    }
     return c;
 }
 

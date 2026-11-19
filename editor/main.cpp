@@ -49,6 +49,7 @@
 #include <cstdio>
 #include "LevelTools.hpp"              // foliage brush, terrain layers, decals, cables, measuring, orthographic views
 #include "SplineTools.hpp"             // splines: Scene-view editing, inspectors, line / trail drawing
+#include "AddComponentMenu.hpp"         // the Add Component browser window (logic: AddComponentModel.hpp)
 #include "VolumeTools.hpp"             // volumes: Scene-view shapes, handles, draw tool, inspector, menus
 #include "okay/Components/HoldPrompt.hpp"
 #include "okay/Components/LocalPlayerInput.hpp"

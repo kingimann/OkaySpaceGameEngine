@@ -1110,6 +1110,7 @@ Own code, off by default, wired into nothing: the editor and launcher still draw
 | Voice, game servers, downloads in progress, updater | not tried | need a network and an account |
 | Drag and drop of files onto the window | not tried | |
 | Text input, IME | not tried | |
+| A click whose press and release arrive in the SAME frame (the test hook `click`) | broken | the widget does not react (the button is no longer stuck down, but nothing happens); a real click lasts several frames, and `down` then `up` 150 ms apart works on every page tried. The headless run was also slow (load average above 15), which makes one-frame clicks likelier; the cause is not found yet |
 
 **Parity list: editor** (not built here: every row `not tried`; the source compiles against the layer): gate / project screen, main window and docking, menus, Hierarchy, Inspector, Scene and Game views, Console, Project, Script editor (the code widget is OkayUI's own, `ScriptEditorCodeEdit.cpp`), Visual Script graph (draw lists and channels exist), Build Settings. The first real run needs the CI job or a machine that can build the engine.
 

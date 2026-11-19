@@ -2408,14 +2408,14 @@ void MergePendingIo(Input& in) {
     }
     if (g_pendMouseSet) { in.mouseX = g_pendMX; in.mouseY = g_pendMY; g_pendMouseSet = false; }
     {   // a press and a release inside one frame show as one pressed frame; the NEXT frame must show the release (nothing else would: the input is carried over)
-        static bool releaseNext[2] = {false, false};
+        static int releaseNext[2] = {0, 0};   // frames the press is still shown after a one-frame click (a click must last two frames: the first presses, the second is when a widget sees the pointer held)
         bool* down[2] = {&in.mouseDown, &in.rightDown};
         for (int b = 0; b < 2; ++b) {
             if (g_pendBtn[b] >= 0 || g_pendClick[b]) {
                 const bool oneFrameClick = g_pendClick[b] && g_pendBtn[b] != 1;
                 *down[b] = g_pendBtn[b] == 1 || oneFrameClick;
-                releaseNext[b] = oneFrameClick;
-            } else if (releaseNext[b]) { *down[b] = false; releaseNext[b] = false; }
+                releaseNext[b] = oneFrameClick ? 2 : 0;
+            } else if (releaseNext[b] > 0) { *down[b] = releaseNext[b] > 1; --releaseNext[b]; }
         }
     }
     for (int b = 0; b < 3; ++b) { g_pendBtn[b] = -1; g_pendClick[b] = false; }

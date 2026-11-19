@@ -1,0 +1,5 @@
+# Smoke script for the editor on OkayUI: start, wait, a picture of the first screen, leave.
+5000 shot first.png
+7000 move 400 300
+8000 shot second.png
+9000 exit 0

@@ -507,6 +507,83 @@ jobs:
           path: .ccache
           key: ccache-ubuntu-ownstack-${{ github.sha }}
 
+  # The launcher and the editor built from the SAME sources against OkayUI's Dear ImGui compatibility layer (no Dear ImGui in them; off by default in
+  # CMake: OKAY_LAUNCHER_ON_OKAYUI / OKAY_EDITOR_ON_OKAYUI, docs/own_ui_toolkit.md 6.26). NOT required: it is the first real build of the editor on
+  # OkayUI. It builds both programs with the test hooks, runs each headless under Xvfb with a script (scripts/run_app_script.sh) and uploads the
+  # pictures as workflow artifacts (never into the repository).
+  okayui-apps:
+    name: Launcher and editor on OkayUI (not required)
+    runs-on: ubuntu-latest
+    timeout-minutes: 90
+    env:
+      CCACHE_DIR: ${{ github.workspace }}/.ccache
+      CCACHE_COMPRESS: "1"
+      CCACHE_MAXSIZE: 2G
+    steps:
+      - uses: actions/checkout@v6
+
+      - name: Install toolchain
+        run: |
+          bash scripts/ci-apt-mirror.sh
+          sudo apt-get update && sudo apt-get install -y cmake g++ ninja-build libsdl2-dev ccache xvfb imagemagick
+
+      - name: Restore compiler cache
+        uses: actions/cache/restore@v5
+        with:
+          path: .ccache
+          key: ccache-ubuntu-okayuiapps-${{ github.sha }}
+          restore-keys: |
+            ccache-ubuntu-okayuiapps-
+            ccache-ubuntu-editor-
+
+      - name: Configure
+        run: |
+          cmake -S . -B build-okayui -G Ninja -DCMAKE_BUILD_TYPE=Release \
+            -DOKAY_LAUNCHER_ON_OKAYUI=ON -DOKAY_EDITOR_ON_OKAYUI=ON -DOKAY_ENABLE_TEST_HOOKS=ON \
+            -DOKAY_BUILD_EDITOR=ON -DOKAY_BUILD_LAUNCHER=ON -DOKAY_BUILD_TESTS=OFF -DOKAY_BUILD_SANDBOX=OFF \
+            -DCMAKE_C_COMPILER_LAUNCHER=ccache -DCMAKE_CXX_COMPILER_LAUNCHER=ccache | tee configure.log
+          # the two programs must really exist in the build, or this job would test nothing
+          ninja -C build-okayui -t targets all | grep -q 'okayspace-launcher-okayui'
+          ninja -C build-okayui -t targets all | grep -q 'okay-editor-okayui'
+
+      - name: Build both OkayUI programs
+        run: cmake --build build-okayui -j 2 --target okayspace-launcher-okayui okay-editor-okayui
+
+      - name: The programs do not contain Dear ImGui
+        run: |
+          ls -la build-okayui/bin
+          ! strings build-okayui/bin/OkaySpaceOkayUI | grep -q 'Dear ImGui Debug'
+          ! strings build-okayui/bin/OkayEngineOkayUI | grep -q 'Dear ImGui Debug'
+
+      - name: Launcher smoke (own platform backend)
+        continue-on-error: true
+        run: scripts/run_app_script.sh build-okayui/bin/OkaySpaceOkayUI tests/okayui_apps/launcher_smoke.txt shots-launcher 150 own
+
+      - name: Launcher smoke (SDL backend)
+        continue-on-error: true
+        run: scripts/run_app_script.sh build-okayui/bin/OkaySpaceOkayUI tests/okayui_apps/launcher_smoke.txt shots-launcher-sdl 150 sdl2
+
+      - name: Editor smoke (SDL backend)
+        continue-on-error: true
+        run: APP_ARGS=--dev scripts/run_app_script.sh build-okayui/bin/OkayEngineOkayUI tests/okayui_apps/editor_smoke.txt shots-editor 150 sdl2
+
+      - name: Editor smoke (own platform backend)
+        continue-on-error: true
+        run: APP_ARGS=--dev scripts/run_app_script.sh build-okayui/bin/OkayEngineOkayUI tests/okayui_apps/editor_smoke.txt shots-editor-own 150 own
+
+      - name: Upload the pictures and logs
+        if: ${{ always() }}
+        uses: actions/upload-artifact@v6
+        with:
+          name: okayui-apps-shots
+          path: |
+            shots-launcher
+            shots-launcher-sdl
+            shots-editor
+            shots-editor-own
+          if-no-files-found: warn
+          retention-days: 14
+
   # The no-libsodium path of the anti-cheat and launcher crypto: shared/AntiCheatCrypto.hpp is a thin wrapper over okay::crypto
   # (our own Ed25519 and SHA-512; the TweetNaCl-derived port is deleted). These targets do not link the engine, so this is quick.
   # okay::crypto has not had its outside review yet (CLAUDE.md rule 18); libsodium stays the preferred path where it is built.

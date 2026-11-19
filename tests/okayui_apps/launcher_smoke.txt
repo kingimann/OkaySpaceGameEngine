@@ -1,0 +1,51 @@
+# Smoke script for the launcher on OkayUI (shared/TestHooks.hpp): every page of the sidebar, a picture of each. Clicks are move, then down and up apart (a press and a release in one frame is a known gap).
+
+3000 move 100 119
+3200 down 100 119
+3350 up 100 119
+4000 shot create.png
+4600 move 100 157
+4800 down 100 157
+4950 up 100 157
+5600 shot play.png
+6200 move 100 195
+6400 down 100 195
+6550 up 100 195
+7200 shot community.png
+7800 move 100 233
+8000 down 100 233
+8150 up 100 233
+8800 shot market.png
+9400 move 100 271
+9600 down 100 271
+9750 up 100 271
+10400 shot downloads.png
+11000 move 100 309
+11200 down 100 309
+11350 up 100 309
+12000 shot versions.png
+12600 move 100 397
+12800 down 100 397
+12950 up 100 397
+13600 shot friends.png
+14200 move 100 435
+14400 down 100 435
+14550 up 100 435
+15200 shot servers.png
+15800 move 100 473
+16000 down 100 473
+16150 up 100 473
+16800 shot forums.png
+17400 move 100 511
+17600 down 100 511
+17750 up 100 511
+18400 shot achievements.png
+19000 move 100 598
+19200 down 100 598
+19350 up 100 598
+20000 shot whatsnew.png
+20600 move 100 661
+20800 down 100 661
+20950 up 100 661
+21600 shot settings.png
+22200 exit 0

@@ -66,6 +66,17 @@ licence, then adds that licence text next to it (for example `assets/fonts/Robot
 installer and the release archives carry that file, as the OFL requires the notice to travel with the font;
 (3) the same check for whatever licence file Roboto gets. Until (1) is done the licence status of Roboto is unconfirmed.
 
+## .NET runtime in exported C# games (rule 24c)
+
+Only a project that has C# scripts, built with `OKAY_WITH_CSHARP=ON`, ships these. Nothing is in the repository.
+
+| Item | Used for | Licence | How we get it |
+|---|---|---|---|
+| .NET runtime (Microsoft.NETCore.App, hostfxr) | Runs C# scripts in an exported game | MIT, "Copyright (c) .NET Foundation and Contributors" and Microsoft | Copied at Build Game time from the .NET install on the developer's PC into the game's `runtime/` folder, together with that install's `LICENSE.txt` and `ThirdPartyNotices.txt` (the runtime's own notices travel with it) |
+| .NET SDK / Roslyn compiler | Compiles C# scripts on the developer's PC | MIT | Installed by the developer; run as a build tool (`dotnet build`), never copied, linked or shipped |
+
+Our own parts (`engine/src/CSharp`, `csharp/OkayScripting`) are written by us from Microsoft's public description of the hosting API and from the C# language; nothing is taken from the runtime's or compiler's source.
+
 ## Services we keep (optional integrations, not bundled)
 
 - **Steamworks SDK** (`OKAY_WITH_STEAM`): Valve's SDK is proprietary and is not in this repository. Without it, a no-op Steam service is used.

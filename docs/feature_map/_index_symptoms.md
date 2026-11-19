@@ -45,7 +45,7 @@ Find the window, page or symptom, then say the number. Back to the [overview](..
 | a button does nothing on click | [12.2](12-ingame-ui.md#122-widgets-button-image-raw-image-text-panel-progress-rating) Widgets: button, image, raw image, text, panel, progress, rating |
 | a button drifts when the window resizes | [12.1](12-ingame-ui.md#121-canvas-anchors-flex-layout-safe-area) Canvas, anchors, flex layout, safe area |
 | a button in a world panel cannot be clicked | [12.6](12-ingame-ui.md#126-world-space-ui) World-space UI |
-| a C# script does nothing and the Console says the language is no longer supported | [13.3](13-scripting.md#133-lua-our-own-and-the-removed-c-mono-backend) Lua (our own) and the removed C# (Mono) backend |
+| a C# script says "C# is not enabled in this build | [13.3](13-scripting.md#133-lua-our-own-and-the-removed-c-mono-backend) Lua (our own) and the removed C# (Mono) backend |
 | a camera follow lags or oscillates | [36.3](36-math-geometry.md#363-scalars-interpolation-and-easing) Scalars, interpolation and easing |
 | a camera follow overshoots or lags | [1.2](01-core-scene.md#12-timers-and-tweens) Timers and tweens |
 | a camera glides forever toward a target | [36.1](36-math-geometry.md#361-vectors-and-colours) Vectors and colours |
@@ -414,6 +414,7 @@ Find the window, page or symptom, then say the number. Back to the [overview](..
 | bullets hit the player who fired them | [6.7](06-physics.md#67-collision-layers-and-trigger-filters) Collision layers and trigger filters |
 | bullets pass through thin walls or do no damage | [6.6](06-physics.md#66-destructibles-and-projectiles) Destructibles and projectiles |
 | buttons sit under the notch | [12.9](12-ingame-ui.md#129-mobile-scaling) Mobile scaling |
+| C# is not enabled in this build | [13.8](13-scripting.md#138-real-c-hosted-net-runtime) Real C# (hosted .NET runtime) |
 | call button does nothing | [17.4](17-launcher-platform.md#174-chat-dms-groups-voice-notes-calls-polls-gifs-emoji) Chat: DMs, groups, voice notes, calls, polls, GIFs, emoji |
 | calls work for me but not for a friend behind a strict router | [16.7](16-networking.md#167-voice-chat-server) Voice chat server |
 | camera cuts instead of blending | [4.8](04-characters-cameras.md#48-virtual-cameras-and-dollies) Virtual cameras and dollies |
@@ -942,6 +943,8 @@ Find the window, page or symptom, then say the number. Back to the [overview](..
 | texture tiles wrong | [2.2](02-rendering-world.md#22-materials-and-textures) Materials and textures |
 | textures blurry or too large | [20.4](20-35-planned.md#204-import-settings) Import settings |
 | textures use too much memory | [2.13](02-rendering-world.md#213-texture-library-mipmaps-atlases-compression-streaming) Texture library (mipmaps, atlases, compression, streaming) |
+| The .NET runtime was not found. Install .NET 8 | [13.8](13-scripting.md#138-real-c-hosted-net-runtime) Real C# (hosted .NET runtime) |
+| The .NET SDK was not found | [13.8](13-scripting.md#138-real-c-hosted-net-runtime) Real C# (hosted .NET runtime) |
 | the 2.5D character runs on the spot against a wall | [4.3](04-characters-cameras.md#43-2d-and-25d-controllers) 2D and 2.5D controllers |
 | the 2D game looks blurry or jitters | [4.10](04-characters-cameras.md#410-camera-component-shake-and-zoom) Camera component, shake and zoom |
 | the 3D view is black or very slow | [38.1](38-render-backends.md#381-renderer-interface-and-backend-selection) Renderer interface and backend selection |

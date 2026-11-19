@@ -3,6 +3,7 @@
 // and integers only). Compiled only with OKAY_WITH_CSHARP; otherwise CreateHostfxrBackend says so.
 #include "okay/CSharp/CSharpCompiler.hpp"
 #include "okay/CSharp/ManagedBridge.hpp"
+#include <filesystem>
 
 namespace okay::csharp {
 
@@ -56,7 +57,7 @@ private:
 class Backend : public IManagedBackend {
 public:
     bool Init(std::string* error) {
-        DotnetEnv env = CurrentDotnetEnv();
+        DotnetEnv env = CurrentDotnetEnv(ExecutableDir());   // a game ships its runtime/ and Scripts/ next to the program
         m_env = env;
         std::string srcDir = "csharp/OkayScripting";
         m_api = EnsureApiAssembly(srcDir, DefaultCacheDir(), env, error);
@@ -73,6 +74,11 @@ public:
         return true;
     }
     bool Compile(const std::string& source, std::string* path, std::vector<std::string>* errors) override {
+        {   // an exported game: the compiled script is shipped as Scripts/<hash>.dll, no SDK needed
+            std::error_code ec;
+            std::string shipped = m_env.gameDir + "/Scripts/" + ContentHash(source) + ".dll";
+            if (!m_env.gameDir.empty() && std::filesystem::exists(shipped, ec)) { *path = shipped; return true; }
+        }
         CompileResult r = CompileScript(source, DefaultCacheDir(), m_api, m_env);
         if (r.ok) { *path = r.assemblyPath; return true; }
         for (auto& d : r.diags) if (d.error) errors->push_back(DiagText(d));

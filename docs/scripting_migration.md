@@ -207,7 +207,7 @@ Lexer, parser, checker, bytecode and VM written by us (the front end already exi
 
 | Question | Answer |
 |---|---|
-| Real C#? | **No.** A subset: classes, structs, enums, interfaces, generics for List/Dictionary, lambdas, a small `System` subset. No NuGet, no reflection, no async, no unsafe code. Unity tutorials will not paste in unless we also write a Unity-shaped API. |
+| Real C#? | **No.** A subset: classes, structs, enums, interfaces, generics for List/Dictionary, lambdas, a small `System` subset. No NuGet, no reflection, no async, no unsafe code. Tutorials for other engines will not paste in unless we also write a matching API layer. |
 | Size | Everything is ours and is part of the engine: no runtime to ship. Effort: large. Rough estimate from the existing 7,600 lines: another 15,000 to 25,000 lines (bytecode VM, generics, properties, interfaces, a larger library, LINQ) and many weeks. |
 | Windows build / export | None: it is plain C++ in the engine. |
 | Hot reload / sandbox / budgets | All the same as Lua: instruction cap, wall clock cap, memory cap, no file access unless we add it. |
@@ -235,7 +235,7 @@ script, the developer needs the .NET SDK, and everything unverified until built 
 
 ## 7. Compatibility: OkayScript to Lua and C#
 
-"Lua" means our Lua after this branch. "C# (a)" is the recommended real C# with a Unity-like API wrapper (not built).
+"Lua" means our Lua after this branch. "C# (a)" is the recommended real C# with our own managed API assembly (stages 1 to 7 written, see section 8; unverified).
 **Nothing was ported or deleted.** Where OkayScript has a one-line behaviour builtin, the Lua version is a few lines.
 
 | OkayScript | Lua (now) | C# (a), planned |
@@ -276,3 +276,23 @@ script, the developer needs the .NET SDK, and everything unverified until built 
 3. The samples and tests above are ported or retired.
 4. Real C# decided (section 6), or OkayScript's typed language kept as the C# subset.
 5. Delete one release later (rule 17).
+
+## 8. C# (a): what was built (owner approved, rule 24c; written 2026-11-19, branch `claude/csharp-host-1`)
+
+Recommendation (a) of section 6, in stages. Everything is OFF unless the engine is configured with `-DOKAY_WITH_CSHARP=ON`
+(Windows only; the code compiles into stubs otherwise: `Load` says "C# is not enabled in this build").
+
+| Stage | Where | State |
+|---|---|---|
+| 1 Native host | `engine/src/CSharp/DotnetHost.cpp`, `okay/CSharp/DotnetHost.hpp` | Search order (game `runtime/`, `DOTNET_ROOT`, Program Files, `/usr/share/dotnet`, `/usr/lib/dotnet`, `~/.dotnet`), version choice, `runtimeconfig.json` text, plain-words errors: **tested without .NET**. The four hostfxr signatures are declared by us and loaded with LoadLibrary or dlopen: **never run against a real runtime** |
+| 2 Managed API | `csharp/OkayScripting/*.cs` | `Behaviour` (methods found by name, any visibility), `GameObject`, `Transform`, `Component` (engine components by property name through the property registry), `Vector2/3`, `Quaternion`, `Mathf`, `Time`, `Input`, `Debug`, `Physics.Raycast`, `Find`, `Destroy`, `Instantiate`, `[SerializeField]`, `[HideInInspector]`, public fields as Inspector fields. Native calls go through one blittable function table (`OkayNativeApi`) that the host fills. **Never compiled: no .NET SDK was available** |
+| 3 VM | `engine/src/CSharp/CSharpScriptVM.cpp` | Language `csharp` in the existing seam (no second component). Events, fields, hot reload (collectible load context on the managed side, fields copied), errors as `Class.Method: line N: Type: message` (once, not every frame), frame-time watchdog that only WARNS (it cannot stop a running call). **Tested with a fake managed side** (`csharp_host`) |
+| 4 Build-time compile | `engine/src/CSharp/CSharpCompiler.cpp` | `dotnet build` of one script into `<cache>/<hash>/<hash>.dll`, cached by content hash, failures remembered; output parsed into diagnostics; editor compile on save writes `path(line,col): error CSxxxx: message` to the Console and the Problems panel reads the cache. Parsing, hashing, project text, SDK lookup, cache: **tested**; the real build: **never run** |
+| 5 Editor | `editor/main.cpp`, `StarterScripts.hpp`, `examples/csharp/` | New Script offers C# (only when compiled in), starter script, `.cs` attaches as `csharp`; example scene `examples/csharp/csharp_pickup.okayscene`. Starter and example **tested** (loaded, class found); the editor edit **not compiled here** |
+| 6 Export | `ExportCSharp` | Only for projects with C# scripts: copies `OkayScripting.dll`, `Scripts/<hash>.dll` and the runtime files (`runtime/host/fxr`, `runtime/shared/Microsoft.NETCore.App`) plus the runtime's LICENSE and ThirdPartyNotices. **Tested on a fake install folder**; only the first scene's scripts are scanned |
+| 7 CMake | root `CMakeLists.txt`, `engine/CMakeLists.txt` | `OKAY_WITH_CSHARP` default OFF |
+
+Not done or known gaps: events other than the lifecycle and `OnTrigger/OnCollision(GameObject other)` (the host passes the other
+object's NAME and the managed side finds it), 2D physics queries, `StartCoroutine`, tags and layers, `GetComponent<T>` for engine
+components (use `GetComponent("Rigidbody")` and property names), non-ASCII paths on Windows, running a script from a path with spaces
+in the `dotnet build` command line (quoted, not tried), and a real Windows build and run of any of it.

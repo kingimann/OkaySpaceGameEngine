@@ -309,6 +309,43 @@ int main() {
             CHECK(std::find(langs.begin(), langs.end(), "csharp") == langs.end());
         }
     }
+    {   // export: nothing for a project without C#; runtime + scripts for one with
+        fs::path tmp = fs::temp_directory_path() / "okay_csharp_export_test";
+        fs::remove_all(tmp);
+        fs::path dn = tmp / "dotnet", game = tmp / "game", cache = tmp / "cache";
+        Touch(dn / "host/fxr/8.0.10/libhostfxr.so");
+        Touch(dn / "shared/Microsoft.NETCore.App/8.0.10/System.Private.CoreLib.dll");
+        Touch(dn / "shared/Microsoft.NETCore.App/8.0.10/libcoreclr.so");
+        Touch(dn / "LICENSE.txt"); Touch(dn / "ThirdPartyNotices.txt");
+        Touch(tmp / "OkayScripting.dll");
+        DotnetEnv env; env.dotnetRoot = dn.string();
+        auto none = ExportCSharp({}, game.string(), env, cache.string(), (tmp / "OkayScripting.dll").string());
+        CHECK(!none.needed && none.files.empty() && !fs::exists(game));
+        std::string src = "class P : Behaviour { }";
+        auto missing = ExportCSharp({src}, game.string(), env, cache.string(), (tmp / "OkayScripting.dll").string());
+        CHECK(missing.needed && !missing.ok);
+        bool saidSave = false; for (auto& m : missing.problems) if (m.find("save it") != std::string::npos) saidSave = true;
+        CHECK(saidSave);
+        Touch(cache / ContentHash(src) / (ContentHash(src) + ".dll"));
+        auto good = ExportCSharp({src}, game.string(), env, cache.string(), (tmp / "OkayScripting.dll").string());
+        CHECK(good.needed && good.ok && good.problems.empty());
+        CHECK(fs::exists(game / "OkayScripting.dll"));
+        CHECK(fs::exists(game / "Scripts" / (ContentHash(src) + ".dll")));
+        CHECK(fs::exists(game / "runtime/host/fxr/8.0.10/libhostfxr.so"));
+        CHECK(fs::exists(game / "runtime/shared/Microsoft.NETCore.App/8.0.10/libcoreclr.so"));
+        CHECK(fs::exists(game / "runtime/LICENSE.txt") && fs::exists(game / "runtime/ThirdPartyNotices.txt"));
+        CHECK(good.files.size() == 7);
+        // a game folder with that runtime is found by the host search (gameDir/runtime wins)
+        DotnetEnv ge; ge.gameDir = game.string();
+        std::string ver2; CHECK(!FindHostfxr(ge, &ver2).empty() && ver2 == "8.0.10");
+        // no runtime installed: plain-words problem, not a crash
+        DotnetEnv empty; empty.dotnetRoot = (tmp / "nowhere").string(); empty.home = "/nonexistent-okay";
+        fs::remove_all(game / "runtime");
+        auto norun = ExportCSharp({src}, (tmp / "game2").string(), empty, cache.string(), (tmp / "OkayScripting.dll").string());
+        CHECK(norun.needed);
+        if (FindHostfxr(empty).empty()) { CHECK(!norun.ok); bool said = false; for (auto& m : norun.problems) if (m.find("Install .NET 8") != std::string::npos) said = true; CHECK(said); }
+        fs::remove_all(tmp);
+    }
     {   // not compiled in: stub says so
         if (!DotnetRuntime::CompiledIn()) {
             std::string err;

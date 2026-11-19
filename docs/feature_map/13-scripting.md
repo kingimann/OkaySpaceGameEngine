@@ -50,22 +50,23 @@ Two OkayScript languages exist side by side: id `okayscript` (old VM, the defaul
 - **Ask me like:** "work on 13.2.2, add try/catch to the typed language"; "which branch has coroutines for the new OkayScript"
 
 ### 13.3 Lua (our own) and the removed C# (Mono) backend
+(C# is back as real C# through the hosted .NET runtime: see 13.8.)
 - **What:** Language `lua` (`.lua` files) is our own Lua 5.4, written from the public manual (decision record: `docs/scripting_migration.md`). It runs through the same `IScriptVM` seam and `ScriptComponent` as OkayScript: global functions are the entry points (Start, Update, events), global variables are the public fields, with instruction, time and memory limits and hot reload. The third-party Mono C# backend stays removed; an old scene naming `csharp` or `cs` still loads and says "no longer supported". Real C# is an open decision (options analysis in the migration record).
 - **Parts:**
   - 13.3.1 Lua language core - `Lua/LuaCompile`, `Lua/LuaVM`, `Lua/LuaLib` - lexer, parser, stack bytecode compiler, VM with tables, metatables, closures, coroutines, garbage collector, string patterns, math, table, limited os and io
   - 13.3.2 Lua engine binding - `Lua/LuaScriptVM` - gameObject, transform, components by property name, Find, Destroy, Time, Input, Log, Physics.Raycast, Vector3, Mathf, events with `other`, public fields, hot reload
   - 13.3.3 Limits and sandbox - `Lua/LuaVM` - per-call instruction and wall-clock budget, memory cap, no file, process or module access
-  - 13.3.4 Removed-language message - `Scripting/ScriptVM` - `RemovedScriptLanguageMessage(lang)` gives the clear text for `csharp`, `cs`; used by `ScriptComponent::LoadSource` and the scene validator
+  - 13.3.4 Removed-language message - `Scripting/ScriptVM` - `RemovedScriptLanguageMessage(lang)` now returns empty for every name (the Mono backend stays gone; `csharp` is the hosted .NET language of 13.8)
 - **Code:** `Lua/LuaCore`, `Lua/LuaCompile`, `Lua/LuaVM`, `Lua/LuaLib`, `Lua/LuaInterp`, `Lua/LuaScriptVM`, `Scripting/ScriptVM`, `Components/ScriptComponent`
 - **API:** `okay::LuaScriptVM`, `okay::lua::Interpreter`, `CreateScriptVM("lua")`, `IScriptVM::HotReload/SupportsHotReload`, `RemovedScriptLanguageMessage()`, `AvailableScriptLanguages()`
 - **Editor:** Script Editor "New Script" has a Language picker (OkayScript or Lua); `.lua` files attach as `lua` script components (unbuilt here: see the migration record)
 - **Docs:** `docs/scripting_migration.md` (internal record)
 - **Tests:** `lua_lang`, `lua_fuzz`, `lua_binding`, `script_removed_langs`, `starter_script`
 - **Status:** Partly works - the language and the basic binding are tested (language and fuzz tests also under ASan and UBSan); not yet bound: instantiate, 2D physics queries, wait or coroutine scheduler, UI, audio, tweening, saves; no `goto`, `<close>`, `utf8`; the editor change and the full build are unverified
-- **Open:** the OkayScript builtin table is not shared with Lua (the same engine feature must be bound twice); Visual Script nodes still run on the OkayScript VM; real C# (options a/b/c in the migration record) needs an owner decision and a CLAUDE.md exception
+- **Open:** the OkayScript builtin table is not shared with Lua (the same engine feature must be bound twice); Visual Script nodes still run on the OkayScript VM; real C# is 13.8
 - **Related:** 13.1, 13.4, 13.5, 14
 - **Words:** Lua, lua script, .lua, C#, Mono, csharp, removed language, language not supported, old project, script language dropdown, hot reload, sandbox, instruction limit
-- **Seen as:** a Lua script errors with `script.lua:LINE:`; a Lua script says "too many instructions"; a C# script does nothing and the Console says the language is no longer supported
+- **Seen as:** a Lua script errors with `script.lua:LINE:`; a Lua script says "too many instructions"; a C# script says "C# is not enabled in this build"
 - **Ask me like:** "work on 13.3.2, bind Instantiate for Lua"; "why does my C# script not run"
 
 ### 13.4 Script components and script UI
@@ -154,3 +155,23 @@ Two OkayScript languages exist side by side: id `okayscript` (old VM, the defaul
 - **Words:** builtin, built-in function, scripting reference, walk, spin, follow, tween_move, prefs_get, save_game, raycast, net_send, steam_unlock, nav_path, music_play, ui_set_text
 - **Seen as:** "unknown function"; a function behaves differently than the reference says; a function exists in OkayScript but not in a graph node or the typed API
 - **Ask me like:** "work on 13.7.6, add a capsule cast"; "list the built-ins for camera shake"
+
+### 13.8 Real C# (hosted .NET runtime)
+- **What:** Language `csharp` (`.cs` files): real C# 12 compiled by the developer's installed .NET SDK, run in the .NET runtime that the engine starts through its documented hosting API (hostfxr, loaded at run time, nothing linked or copied into the repo). A script is `public class X : Behaviour` using our own managed API assembly `OkayScripting.dll` (`csharp/OkayScripting`). Opt-in per project; CMake option `OKAY_WITH_CSHARP` is OFF by default and the code then compiles into stubs that say "C# is not enabled in this build". Windows only for now. Owner approved 2026-11-19 (rule 24c).
+- **Parts:**
+  - 13.8.1 Runtime host - `CSharp/DotnetHost` - finds .NET (game `runtime/`, DOTNET_ROOT, standard folders), picks a version, writes `runtimeconfig.json`, starts hostfxr, plain-words errors
+  - 13.8.2 Managed API - `csharp/OkayScripting` - Behaviour, GameObject, Transform, Component, Vector2/3, Quaternion, Mathf, Time, Input, Debug, Physics.Raycast, Find, Destroy, Instantiate, public fields in the Inspector
+  - 13.8.3 Script VM - `CSharp/CSharpScriptVM` - `IScriptVM` for `csharp`: lifecycle and collision/trigger events, fields, hot reload (collectible load context), one plain error line per fault, over-budget warning (cannot abort a call)
+  - 13.8.4 Compile - `CSharp/CSharpCompiler` - `dotnet build` of each script cached by content hash, diagnostics with line and column, editor compile on save
+  - 13.8.5 Export - `CSharp/CSharpCompiler` (`ExportCSharp`) - Build Game ships the runtime, `OkayScripting.dll` and compiled scripts only for projects with C# scripts
+- **Code:** `CSharp/DotnetHost`, `CSharp/CSharpCompiler`, `CSharp/CSharpScriptVM`, `CSharp/HostfxrBridge`, `csharp/OkayScripting/*.cs`, `Scripting/ScriptVM`, `Components/ScriptComponent`
+- **API:** `okay::CSharpScriptVM`, `CreateScriptVM("csharp")`, `okay::csharp::DotnetRuntime`, `csharp::CompileScript`, `csharp::CompileForEditor`, `csharp::ExportCSharp`, `OkayNativeApi`
+- **Editor:** New Script offers "C# (.cs)" when compiled in; saving a C# script compiles it and lists errors in the Console and Problems
+- **Docs:** `docs/scripting_migration.md` section 8 (internal record)
+- **Tests:** `csharp_host`, `script_removed_langs`
+- **Status:** Partial - the pure logic, the VM (against a fake managed side), the compiler helpers and the export copy are tested on Linux; **unverified: everything that needs a real .NET on Windows** (starting the runtime, compiling `OkayScripting.dll` and scripts, running a script, hot reload, the editor change, export of the runtime)
+- **Open:** build and run on Windows; 2D physics, coroutines, tags and layers, engine-component `GetComponent<T>`; the hosted runtime cannot abort a runaway script
+- **Related:** 13.1, 13.3, 13.4
+- **Words:** C#, csharp, .cs, .NET, dotnet, hostfxr, Behaviour, OkayScripting, Roslyn, compile on save, Scripts.dll, C# not enabled
+- **Seen as:** "C# is not enabled in this build"; "The .NET runtime was not found. Install .NET 8"; "The .NET SDK was not found"
+- **Ask me like:** "why does my C# script not run"; "work on 13.8, add 2D raycasts to OkayScripting"

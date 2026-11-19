@@ -6,6 +6,12 @@
 #include <filesystem>
 #include <fstream>
 #include <sstream>
+#ifdef _WIN32
+#ifndef WIN32_LEAN_AND_MEAN
+#define WIN32_LEAN_AND_MEAN
+#endif
+#include <windows.h>
+#endif
 
 namespace okay::csharp {
 namespace fs = std::filesystem;
@@ -242,6 +248,70 @@ std::string EnsureApiAssembly(const std::string& sourceDir, const std::string& c
         return {};
     }
     return dll.string();
+}
+
+static void CopyTree(const fs::path& from, const fs::path& to, const fs::path& base, ExportReport& r) {
+    std::error_code ec;
+    for (fs::recursive_directory_iterator it(from, ec), end; !ec && it != end; it.increment(ec)) {
+        if (!it->is_regular_file(ec)) continue;
+        fs::path rel = fs::relative(it->path(), from, ec);
+        fs::path dst = to / rel;
+        fs::create_directories(dst.parent_path(), ec);
+        fs::copy_file(it->path(), dst, fs::copy_options::overwrite_existing, ec);
+        if (ec) { r.ok = false; r.problems.push_back("Could not copy " + it->path().string() + ": " + ec.message()); ec.clear(); continue; }
+        r.files.push_back(fs::relative(dst, base, ec).generic_string());
+    }
+}
+
+ExportReport ExportCSharp(const std::vector<std::string>& sources, const std::string& gameDir, const DotnetEnv& env,
+                          const std::string& cacheDir, const std::string& apiDll) {
+    ExportReport r;
+    if (sources.empty()) return r;
+    r.needed = true;
+    std::error_code ec;
+    fs::path game(gameDir);
+    auto put = [&](const fs::path& src, const fs::path& rel) {
+        fs::path dst = game / rel;
+        fs::create_directories(dst.parent_path(), ec);
+        fs::copy_file(src, dst, fs::copy_options::overwrite_existing, ec);
+        if (ec) { r.ok = false; r.problems.push_back("Could not copy " + src.string() + ": " + ec.message()); ec.clear(); return; }
+        r.files.push_back(rel.generic_string());
+    };
+    if (apiDll.empty() || !Exists(apiDll)) { r.ok = false; r.problems.push_back("OkayScripting.dll was not found, so the C# scripts cannot ship. Save a C# script in the editor first (it builds the file)."); }
+    else put(apiDll, "OkayScripting.dll");
+    int n = 0;
+    for (auto& src : sources) {
+        ++n;
+        std::string dll = CachedAssembly(src, cacheDir);
+        if (dll.empty()) { r.ok = false; r.problems.push_back("C# script " + std::to_string(n) + " has not been compiled. Open it in the editor and save it (compile on save), then build again."); continue; }
+        put(dll, fs::path("Scripts") / (ContentHash(src) + ".dll"));
+    }
+    // The runtime: the install that holds the newest hostfxr.
+    DotnetEnv plain = env; plain.gameDir.clear();
+    std::string ver;
+    std::string fxr = FindHostfxr(plain, &ver);
+    if (fxr.empty()) { r.ok = false; r.problems.push_back(RuntimeNotFoundMessage() + " It is needed to ship a C# game."); return r; }
+    fs::path root = fs::path(fxr).parent_path().parent_path().parent_path().parent_path();   // <root>/host/fxr/<ver>/hostfxr -> <root>
+    CopyTree(root / "host" / "fxr" / ver, game / "runtime" / "host" / "fxr" / ver, game, r);
+    std::string rtVer = PickRuntimeVersion(ListInstalledRuntimes(root.string()), 8);
+    if (rtVer.empty()) { r.ok = false; r.problems.push_back("The .NET runtime itself (Microsoft.NETCore.App 8 or newer) was not found next to hostfxr. Install .NET 8."); return r; }
+    CopyTree(root / "shared" / "Microsoft.NETCore.App" / rtVer, game / "runtime" / "shared" / "Microsoft.NETCore.App" / rtVer, game, r);
+    for (const char* notice : {"LICENSE.txt", "ThirdPartyNotices.txt"})
+        if (Exists(root / notice)) put(root / notice, fs::path("runtime") / notice);
+    return r;
+}
+
+std::string ExecutableDir() {
+#if defined(_WIN32)
+    char buf[1024];
+    DWORD n = GetModuleFileNameA(nullptr, buf, (DWORD)sizeof buf);
+    if (n == 0 || n >= sizeof buf) return {};
+    return fs::path(std::string(buf, n)).parent_path().string();   // unverified on Windows
+#else
+    std::error_code ec;
+    fs::path p = fs::read_symlink("/proc/self/exe", ec);
+    return ec ? std::string() : p.parent_path().string();
+#endif
 }
 
 bool CompileForEditor(const std::string& source, const std::string& scriptPath, std::vector<std::string>* lines) {

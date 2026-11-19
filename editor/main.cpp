@@ -4802,6 +4802,24 @@ std::string Build(EditorState& ed, const std::string& outDir,
         }
     }
 
+    // C# scripts: only a project that has some ships the .NET runtime files, OkayScripting.dll and the compiled
+    // scripts (csharp::ExportCSharp). Others get nothing added. Unverified on Windows.
+    {
+        std::vector<std::string> csSources;
+        for (auto& up : ed.scene().Objects()) {
+            if (!up) continue;
+            for (auto* sc : up->GetComponents<okay::ScriptComponent>())
+                if (sc->Language() == "csharp") csSources.push_back(sc->Source());
+        }
+        if (!csSources.empty() && !opt.dryRun) {
+            okay::csharp::DotnetEnv cenv = okay::csharp::CurrentDotnetEnv();
+            std::string capi = okay::csharp::EnsureApiAssembly("csharp/OkayScripting", okay::csharp::DefaultCacheDir(), cenv, nullptr);
+            okay::csharp::ExportReport cr = okay::csharp::ExportCSharp(csSources, root.u8string(), cenv, okay::csharp::DefaultCacheDir(), capi);
+            for (auto& f : cr.files) why[f] = "C# scripting (the .NET runtime, OkayScripting.dll or a compiled script)";
+            for (auto& pr : cr.problems) R.r.Warn("C# scripts: " + pr);
+        }
+    }
+
     // Window icon, startup splash and boot logo: beside the config in the data folder.
     auto putPresentation = [&](const std::string& path, const char* what) {
         if (path.empty()) return;

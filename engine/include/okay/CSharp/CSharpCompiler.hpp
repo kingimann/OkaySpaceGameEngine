@@ -53,6 +53,20 @@ std::string EnsureApiAssembly(const std::string& sourceDir, const std::string& c
 /// (`path(line,col): error CSxxxx: message`, or a plain-words reason such as the "Install .NET" message
 /// with its link). Returns true when the script compiled. Blocks until the SDK is done.
 bool CompileForEditor(const std::string& source, const std::string& scriptPath, std::vector<std::string>* lines);
+/// Export for "Build Game". Only for projects with C# scripts: `sources` is every C# script's text (empty list = nothing is
+/// copied and `needed` is false). Copies, under `gameDir`: OkayScripting.dll, `Scripts/<hash>.dll` for each script (the
+/// build must have compiled them: save in the editor), and the .NET runtime files (`runtime/host/fxr/<v>`,
+/// `runtime/shared/Microsoft.NETCore.App/<v>`) plus the runtime's licence and notice files, from the developer's install.
+struct ExportReport {
+    bool needed = false;
+    bool ok = true;
+    std::vector<std::string> files;      ///< relative to gameDir
+    std::vector<std::string> problems;   ///< plain words
+};
+ExportReport ExportCSharp(const std::vector<std::string>& sources, const std::string& gameDir, const DotnetEnv& env,
+                          const std::string& cacheDir, const std::string& apiDll);
+/// Folder of the running program ("" if unknown).
+std::string ExecutableDir();
 /// Default cache folder (next to the project / program).
 std::string DefaultCacheDir();
 

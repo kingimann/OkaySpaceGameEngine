@@ -22,7 +22,7 @@ inline std::string& PresetPath() { static std::string p = "MyVehicle.okayvehicle
 inline std::string& Message() { static std::string m; return m; }
 
 /// One entry per vehicle type in the Create menu. Returns true if one was made.
-inline bool DrawCreateItems(EditorState& ed) {
+inline bool DrawCreateItems(okay::editor::EditorState& ed) {
     bool made = false;
     for (const okay::VehicleBuilder::Shape& sh : okay::VehicleBuilder::Shapes()) {
         if (!ImGui::MenuItem(sh.name)) continue;

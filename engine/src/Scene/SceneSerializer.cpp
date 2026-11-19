@@ -849,10 +849,12 @@ void WriteComponentRecords(std::ostream& out, GameObject* go) {
         out << "\n";
     }
     for (auto* cam : go->GetComponents<Camera>()) {   // keyed extension (docs/camera_upgrade.md); older readers skip the line
-        out << "  camerax";
-        KvOut k{out};
-        k("hitPulse", cam->hitPulseVignette);
-        out << "\n";
+        if (cam->hitPulseVignette != 0.5f) {   // only when changed, so scenes that never touch it save exactly as before
+            out << "  camerax";
+            KvOut k{out};
+            k("hitPulse", cam->hitPulseVignette);
+            out << "\n";
+        }
     }
     // A Terrain owns its (generated) mesh, so don't serialize the big MeshRenderer
     // geometry for it — the component below rebuilds it on load.
@@ -2940,6 +2942,7 @@ void WriteComponentRecords(std::ostream& out, GameObject* go) {
             << cf->offset.x << " " << cf->offset.y << " " << cf->offset.z << " "
             << cf->smoothing << "\n";
     }
+    const VirtualCamera defaultVcam;
     for (auto* vc : go->GetComponents<VirtualCamera>()) {
         out << "  vcam " << vc->priority << " " << Quote(vc->follow) << " " << Quote(vc->lookAt)
             << " " << vc->followOffset.x << " " << vc->followOffset.y << " " << vc->followOffset.z
@@ -2962,28 +2965,38 @@ void WriteComponentRecords(std::ostream& out, GameObject* go) {
             << " " << vc->confineMin.x << " " << vc->confineMin.y << " " << vc->confineMin.z
             << " " << vc->confineMax.x << " " << vc->confineMax.y << " " << vc->confineMax.z << "\n";
         // The camera rig layer, as keys (written right after its vcam line; read back onto that vcam).
-        out << "  vcamx";
-        KvOut k{out};
-        k("damp", (int)vc->dampingMode)("gpad", vc->groupPadding).b("gfit", vc->groupFrame)
-         ("look", vc->lookaheadTime)("lookMax", vc->lookaheadMax)("lookSm", vc->lookaheadSmooth)
-         .b("zones", vc->useZones)("dzw", vc->deadZoneW)("dzh", vc->deadZoneH)("szw", vc->softZoneW)("szh", vc->softZoneH)
-         ("zdamp", vc->zoneDamping).b("o2d", vc->ortho2D)("osize", vc->orthoSize).b("cview", vc->confineToView)
-         .b("rooms", vc->useRooms)("roomT", vc->roomBlendTime)
-         .b("col", vc->collision)("colR", vc->collisionRadius)("colSkin", vc->collisionSkin)("colRec", vc->collisionRecover)
-         ("colIn", vc->collisionPullIn).b("colSnap", vc->collisionSnapIn)("colMask", vc->collisionMask)
-         .b("fade", vc->fadeOccluders)("fadeA", vc->occlusionAlpha)("fadeSpd", vc->occlusionFadeSpeed)
-         ("blendIn", vc->blendIn)("blendInStyle", vc->blendInStyle).b("aimFollow", vc->aimAtFollow)
-         ("ng", (int)vc->groupTargets.size());
-        for (std::size_t gi = 0; gi < vc->groupTargets.size(); ++gi) k.str(("g" + std::to_string(gi)).c_str(), vc->groupTargets[gi]);
-        out << "\n";
+        // Written only when something differs from a new Virtual Camera, so scenes that never use it save as before.
+        auto rigKeys = [](const VirtualCamera* v) {
+            std::ostringstream o;
+            KvOut k{o};
+            k("damp", (int)v->dampingMode)("gpad", v->groupPadding).b("gfit", v->groupFrame)
+             ("look", v->lookaheadTime)("lookMax", v->lookaheadMax)("lookSm", v->lookaheadSmooth)
+             .b("zones", v->useZones)("dzw", v->deadZoneW)("dzh", v->deadZoneH)("szw", v->softZoneW)("szh", v->softZoneH)
+             ("zdamp", v->zoneDamping).b("o2d", v->ortho2D)("osize", v->orthoSize).b("cview", v->confineToView)
+             .b("rooms", v->useRooms)("roomT", v->roomBlendTime)
+             .b("col", v->collision)("colR", v->collisionRadius)("colSkin", v->collisionSkin)("colRec", v->collisionRecover)
+             ("colIn", v->collisionPullIn).b("colSnap", v->collisionSnapIn)("colMask", v->collisionMask)
+             .b("fade", v->fadeOccluders)("fadeA", v->occlusionAlpha)("fadeSpd", v->occlusionFadeSpeed)
+             ("blendIn", v->blendIn)("blendInStyle", v->blendInStyle).b("aimFollow", v->aimAtFollow)
+             ("ng", (int)v->groupTargets.size());
+            for (std::size_t gi = 0; gi < v->groupTargets.size(); ++gi) k.str(("g" + std::to_string(gi)).c_str(), v->groupTargets[gi]);
+            return o.str();
+        };
+        const std::string rig = rigKeys(vc), rigDefault = rigKeys(&defaultVcam);
+        if (rig != rigDefault) out << "  vcamx" << rig << "\n";
     }
     for (auto* cb : go->GetComponents<CinemachineBrain>()) {
         out << "  cmbrain " << cb->blendTime << " " << (cb->blendStyle == cam::BlendStyle::Linear ? 0 : 1) << "\n";
-        out << "  cmbrainx";
-        KvOut k{out};
-        k("style", (int)cb->blendStyle)("c0", cb->customCurve[0])("c1", cb->customCurve[1])("c2", cb->customCurve[2])("c3", cb->customCurve[3])
-         .b("cutscene", cb->yieldToCutscene);
-        out << "\n";
+        const CinemachineBrain defaultBrain;
+        if (cb->blendStyle != defaultBrain.blendStyle || cb->yieldToCutscene != defaultBrain.yieldToCutscene ||
+            cb->customCurve[0] != defaultBrain.customCurve[0] || cb->customCurve[1] != defaultBrain.customCurve[1] ||
+            cb->customCurve[2] != defaultBrain.customCurve[2] || cb->customCurve[3] != defaultBrain.customCurve[3]) {
+            out << "  cmbrainx";
+            KvOut k{out};
+            k("style", (int)cb->blendStyle)("c0", cb->customCurve[0])("c1", cb->customCurve[1])("c2", cb->customCurve[2])("c3", cb->customCurve[3])
+             .b("cutscene", cb->yieldToCutscene);
+            out << "\n";
+        }
     }
     for (auto* rm : go->GetComponents<CameraRoom>()) {
         out << "  camroom";

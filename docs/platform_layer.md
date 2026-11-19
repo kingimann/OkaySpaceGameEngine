@@ -594,6 +594,52 @@ The scripts and pictures are kept out of the repository.
    out (`down`, `move`, `up` with coordinates outside the window) under Xvfb; then a real-desktop try by the owner.
 Estimated size: medium to large; the unknown is (4).
 
+## Round 14 (branch `claude/own-platform-6`): the launcher and editor with no SDL at all (`-DOKAY_NO_SDL=ON`)
+
+Goal (owner, 2026-11-19: "i want the launcher and editor to be running on our UI"): a build of the launcher, the editor and OkayUI that has no SDL header, no SDL library
+and no SDL symbol, and takes its window, events, painter, audio, clipboard and timers only from `okay::platform` (own Win32 or X11 backend). Off by default; the shipped
+default stays SDL2 (CLAUDE.md rules 17 and 19). Nothing here was run on Windows.
+
+**Step 1, what the two programs needed from SDL, and how each was removed.** Method: `scripts/sdl_inventory.py` (new flag `--no-sdl`: counts the source as a `-DOKAY_NO_SDL` build
+sees it), then compiling every translation unit with the SDL headers replaced by empty files (`/tmp` stubs, so any leftover SDL word is an error), then linking.
+
+| What the programs used | Replacement in `OKAY_NO_SDL` mode |
+|---|---|
+| `SDL.h` types and integer typedefs, `SDL_Rect`, `SDL_Color`, `SDL_Vertex`, opaque `SDL_Window/Renderer/Texture` | `shared/PlainTypes.hpp` (plain typedefs, the engine's identical-layout `ui2d` types, opaque structs) |
+| Dear ImGui's `imgui_impl_sdl2` and `imgui_impl_sdlrenderer2` | not built; the call sites compile to nothing (macros in `PlainTypes.hpp`); our own feed (`ImGuiPlatformFeed.hpp`) and renderer (`ImGuiPainterRenderer.hpp`) are the only ones (on the own backend the own renderer is already the one used; the no-SDL build has only the own backend) |
+| `SDL_Init`, `SDL_SetMainReady`, `SDL_SetHint`, `SDL_GetVersion` text | guarded out; the seam's `Backend` starts itself |
+| `SDL_BUTTON`, `SDL_Delay`, `SDL_GetCPUCount`, `SDL_GetSystemRAM`, display refresh | `MouseMask`, `okay::platform::DelayMs`, new `CpuCount()` and `SystemRamMB()`, `DisplayAt` |
+| `SDL_HasEvents` in the idle throttle | new `Backend::HasPendingEvents()` (SDL, X11, Win32) |
+| scancode polling for the editor play mode | `CollectEditorPlayKeysPlatform` over `Window::KeyDown` |
+| `SDL_LoadWAV` in the launcher and `WavPlayback.hpp` | `okay::wav::LoadWavClip` (our own decoder) and `ClipSpec` (no `SDL_AudioSpec`) |
+| monitor list and mode change (`shared/SdlDisplays.cpp`) | `shared/PlatformDisplays.cpp`: `okay::platform` monitors, `SetFullscreen`, `SetPosition`, `SetSize` (one mode per monitor: the seam has no mode list yet) |
+| `SDL_sqrtf` ... and `SDL_Set/GetClipboardText` in `okayui/src/OkayUI.cpp`, `EndFrame(SDL_Renderer*)`, SDL atlas textures, `SDLFontAtlas` | `<cmath>`, `Backend::Set/GetClipboardText`; the SDL_Renderer end of the frame is compiled out (a host draws `EndFrameData` through a `Painter`) |
+| `--vs-shot` (`editor/VsGraphShot.cpp`, its own SDL_Renderer) | left out of the no-SDL editor (a developer screenshot tool) |
+| the player | not part of the mode yet (CMake skips it with `OKAY_NO_SDL`) |
+
+**Step 2, Direct3D 11 painter (`engine/src/Platform/D3D11Painter.cpp`, `PainterKind::D3D11`).** Behind `okay::platform::Painter` on Windows: textures, clip, scale, rotation and
+flip, raw geometry, render targets, `ReadPixels`, vsync present, device-lost flag. Draw calls become a triangle list (`D3D11Batch.hpp`, pure code, 29 checks in `tests/test_d3d11_batch.cpp`
+that also compare its rectangles with the software painter's) and one `DrawIndexed`-free draw per state change (texture, blend, scissor, sampler). `d3d11.dll` and `d3dcompiler_47.dll`
+are loaded at run time (no import library); the shaders are our own two small HLSL programs (`vs_4_0`, `ps_4_0`). Hardware device first, then WARP. `OwnWindowPainter` in
+`shared/OkayUIFrame.hpp` picks it on a Win32 own window and falls back to the software painter (`StretchDIBits` present) when it cannot start; `OKAY_PAINTER=software` forces the fallback.
+The startup log says `painter: Direct3D 11` or `painter: software`. **Verified:** the pure geometry (Linux test) and the MinGW `-fsyntax-only` compile. **Unverified:** everything that calls
+Direct3D (never run on Windows, not even under Wine).
+
+**Step 3, own Win32 window surface against what the launcher and editor use** (code read, MinGW compiled, never run on Windows):
+
+| Need | State in `OwnWin32.cpp` |
+|---|---|
+| DPI and high-DPI scale | `GetDpiForWindow` (loaded at run time), `WM_DPICHANGED`, `Window::GetDpiScale` |
+| IME composition | `WM_IME_COMPOSITION` events reach the seam; **gap:** OkayUI and our ImGui feed do not yet forward composition to the text fields (the host side) |
+| Clipboard, drag and drop, cursor shapes, icon, minimise/maximise/restore, multi-monitor, text input, `WM_TRAY` hook | present (rounds 9 and 10) |
+| Gamepads | XInput plus the HID pad parser; the HID pad is not wired as a default |
+| Message boxes, file dialogs | `shared/FileDialog.cpp` uses the Win32 common dialogs; no SDL |
+
+**Step 5, proof.** `cmake -S . -B build-nosdl -DOKAY_NO_SDL=ON -DOKAY_BUILD_LAUNCHER=ON -DOKAY_BUILD_EDITOR=ON` then `ctest -R no_sdl_symbols` runs
+`scripts/check_no_sdl_symbols.sh` (`nm` plus `objdump -p`) on the launcher and the editor and fails on any `SDL_*` or `ImGui_ImplSDL*` symbol or an SDL library dependency.
+For MinGW: `NM=x86_64-w64-mingw32-nm OBJDUMP=x86_64-w64-mingw32-objdump scripts/check_no_sdl_symbols.sh OkaySpace.exe OkayEngine.exe`.
+RESULTS_PLACEHOLDER
+
 ## Not behind the seam yet (stage 1 list; see stage 2 above for what changed)
 
 The window, event loop and GL context of the editor, launcher and player still call SDL directly. Moving them needs more than

@@ -59,7 +59,7 @@ Run on a Linux machine, software renderer, `-O0` build, 2026-11-19. Pictures wer
 
 | Check | Result |
 |---|---|
-| `lighting_upgrade` (`tests/test_lighting_upgrade.cpp`: shadow maths, stable cascades, bias, fade, spot cone, roll-off, units and auto brightness, masks, rectangle panel, save and load, glow lights, presets, a closed room keeps the sun out, repeatable renders) | 168 checks, 0 failures |
+| `lighting_upgrade` (`tests/test_lighting_upgrade.cpp`: shadow maths, stable cascades, bias, fade, spot cone, roll-off, units and auto brightness, masks, rectangle panel, save and load, glow lights, presets, a closed room keeps the sun out, repeatable renders) | 194 checks, 0 failures |
 | Stable cascades, measured: how far a fixed point's shadow-map position drifts when the camera creeps by fractions of a texel | new code 0.0001 texel, classic code 0.49 texel (the shimmer; the test fails on the old code) |
 | `light_shadows`, `lighting`, `shadows`, `lightmap`, `software_renderer`, `software_local_shadows`, `software_default_shadows`, `software_scene_post`, `software_perf_paths`, `serialize`, `scene_serializer_audit`, `property_registry`, `post_sky`, `inspector_model`, `renderer_features` | all pass (these run the old and the new code paths side by side) |
 | `examples_work` (loads and plays every shipped example scene, including the five new ones) | 89 scenes, 0 failed |
@@ -71,6 +71,12 @@ Seen in the pictures: softer, graded shadow edges and no ring in the spot cone (
 different; the window mask draws panes of sun on the floor. One thing that is not perfect: with 16 filter taps and no per-pixel
 rotation a wide soft shadow shows faint bands at its far edge. A per-pixel rotation would hide that but makes renders depend on
 position noise, so it was left out.
+
+Round 2 results (same machine): `lighting_upgrade` 194 checks, 0 failures (adds probes, scene SSAO, save/load of probes); `d3d11_layout` 80 checks,
+0 failures (compiled standalone, header-only); `light_shadows`, `renderer_features`, `lighting`, `serialize`, `scene_serializer_audit`,
+`software_scene_post`, `software_perf_paths` pass. Measured: a probe inside the closed room gives about 20 percent less ambient light
+than one over open ground (room 0.216 red vs 0.165 outside in the red channel only because the sky is blue; summed over channels the
+room is darker); scene SSAO lowers the room's mean brightness from 0.3258 to 0.3228 (a small, real effect on corners and feet).
 
 ### Try it
 

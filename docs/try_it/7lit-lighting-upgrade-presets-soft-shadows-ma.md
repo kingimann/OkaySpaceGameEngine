@@ -41,6 +41,6 @@ grey note under Soft Edges, Mask and Panel Width/Height when the renderer ignore
 **What you should see.** Five clearly different moods; soft shadows that are sharp at the foot of an object; a window pattern on the
 floor; a bright panel over a table. Sun shadows stay still when you fly the camera slowly.
 
-**Status.** Verified here: the maths and the software renderer, headless (`test_lighting_upgrade`, 168 checks; `light_shadows`,
+**Status.** Verified here: the maths and the software renderer, headless (`test_lighting_upgrade`, 194 checks; `light_shadows`,
 `renderer_features`; before and after pictures were looked at, not committed). **Not verified:** OpenGL, Direct3D 11 and Direct3D 12 (the
 cascade fix, the slope bias and the smooth cone were edited in their code but never run on a GPU); Windows; the editor panels (the new Inspector fields, the Lighting window buttons and the File > Examples entry were only compile-checked with `g++ -fsyntax-only`; the editor was not linked or run, so nothing was drawn or clicked).

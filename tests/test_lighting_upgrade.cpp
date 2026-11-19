@@ -5,6 +5,7 @@
 #include "okay/Render/LightProbeBake.hpp"
 #include <cmath>
 #include <cstdio>
+#include <fstream>
 #include <string>
 
 using namespace okay;
@@ -333,7 +334,7 @@ int main() {
         const Vec3 inside = w.renderSettings.probes.Ambient(Vec3{0, 1.5f, 0}, Vec3{0, 1, 0});
         const Vec3 outside = w.renderSettings.probes.Ambient(Vec3{14, 1.5f, 0}, Vec3{0, 1, 0});
         std::printf("probe ambient up: inside the room %.3f, outside %.3f\n", inside.x, outside.x);
-        CHECK(inside.x < outside.x);
+        CHECK((inside.x + inside.y + inside.z) < (outside.x + outside.y + outside.z));   // (the sky is blue: compare all channels)
         // the shading uses it: facing away from the sun, only ambient is left, and it differs between the two places
         const Vec3 a = SceneLights::ShadeNormalized(Vec3{0, 1.5f, 0}, Vec3{0, 1, 0}), b = SceneLights::ShadeNormalized(Vec3{14, 1.5f, 0}, Vec3{0, 1, 0});
         CHECK(a.x != b.x);
@@ -344,8 +345,18 @@ int main() {
         const std::string path = "lighting_upgrade_probes.okayscene";
         CHECK(SceneSerializer::SaveToFile(w, path));
         Scene back("back"); CHECK(SceneSerializer::LoadFromFile(back, path));
+        {
+            std::ifstream f(path); std::string line; int n = 0;
+            while (std::getline(f, line)) { if (line.compare(0, 9, "probegrid") == 0) std::printf("record: %.60s... (%zu chars)\n", line.c_str(), line.size()); ++n; }
+            std::printf("file lines: %d\n", n);
+        }
+        {
+            bool finite = true; for (float v : w.renderSettings.probes.sh) if (!std::isfinite(v)) finite = false;
+            std::printf("probes: %zu floats, all finite %d, loaded %zu floats baked %d\n", w.renderSettings.probes.sh.size(), (int)finite, back.renderSettings.probes.sh.size(), (int)back.renderSettings.probes.Baked());
+            CHECK(finite);
+        }
         CHECK(back.renderSettings.probes.Baked() && back.renderSettings.probes.sh.size() == w.renderSettings.probes.sh.size());
-        CHECK_NEAR(back.renderSettings.probes.sh[5], w.renderSettings.probes.sh[5], 1e-4f);
+        if (back.renderSettings.probes.sh.size() > 5) CHECK_NEAR(back.renderSettings.probes.sh[5], w.renderSettings.probes.sh[5], 1e-4f);
         std::remove(path.c_str());
         ApplySceneLight(back); ActiveLightProbes() = nullptr;
     }

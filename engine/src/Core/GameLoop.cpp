@@ -41,6 +41,8 @@ constexpr float kFallbackStep = 1.0f / 60.0f;
 
 void GameLoop::Apply() {
     if (m_opt.maxFixedSteps < 1) m_opt.maxFixedSteps = 1;
+    m_fixed.SetOverflow(m_opt.spreadFixedOverflow ? FixedTimestep::Overflow::Spread : FixedTimestep::Overflow::Drop);
+    m_fixed.SetMaxOwed((double)m_opt.maxOwedSeconds);
     m_fixed.SetMaxSteps(EffectiveMaxSteps());
     m_stepSeconds = m_opt.fixedStep > 0.0f && std::isfinite(m_opt.fixedStep) ? m_opt.fixedStep : Time::FixedDeltaTime();
     m_fixed.SetStep(m_stepSeconds);
@@ -277,12 +279,13 @@ bool GameLoop::BeginFrame(double realDeltaSeconds) {
         }
     }
     m_clamped = (float)clamped;
-    m_stepped = (m_opt.smoothDelta && !exact) ? Time::SmoothDelta(m_clamped, m_opt.refreshHz) : m_clamped;
+    // The step is kept as a double too (steppedD) and Time is stepped by it: 1/60 s as a float is 9e-10 s too
+    // long, which a long run adds up to 0.2 ms an hour. The float m_stepped is the view the API returns.
+    double steppedD = (m_opt.smoothDelta && !exact) ? (double)Time::SmoothDelta(m_clamped, m_opt.refreshHz) : clamped;
     // 4. The debug scale: slow motion or fast forward for the whole game (not for a debug step).
-    if (!stepFrame && m_debugScale != 1.0f) {
-        const double scaled = (double)m_stepped * (double)m_debugScale;   // held in float range (a huge frame at 32x)
-        m_stepped = scaled < (double)std::numeric_limits<float>::max() ? (float)scaled : std::numeric_limits<float>::max();
-    }
+    if (!stepFrame && m_debugScale != 1.0f) steppedD *= (double)m_debugScale;   // held in float range below (a huge frame at 32x)
+    if (!(steppedD < (double)std::numeric_limits<float>::max())) steppedD = (double)std::numeric_limits<float>::max();
+    m_stepped = (float)steppedD;
     if (OnHitch && hitch) OnHitch(m_real, m_stepped);
 
     // 5. Pause transitions (Game already froze Time when the flag flipped).
@@ -299,9 +302,9 @@ bool GameLoop::BeginFrame(double realDeltaSeconds) {
     // 6. Time, then the clocks that follow it. A debug step lifts the freeze for this frame, and
     //    the "cinematic" clock (which holds while the game is paused) runs on it too.
     StepFreeze freeze(stepFrame);
-    Time::Step(m_stepped);
+    Time::StepD(steppedD);
     if (m_opt.tickClocks)
-        ClockSet::Global().Tick(Time::DeltaTime(), Time::UnscaledDeltaTime(), stepFrame ? false : Game::Paused());
+        ClockSet::Global().Tick(Time::DeltaTimeD(), Time::UnscaledDeltaTimeD(), stepFrame ? false : Game::Paused());
     ++m_frames;
 
     // 7. Fixed steps on the scaled time (frozen while paused, slower in slow motion).
@@ -310,7 +313,7 @@ bool GameLoop::BeginFrame(double realDeltaSeconds) {
     const int cap = EffectiveMaxSteps();
     if (m_fixed.MaxSteps() != cap) m_fixed.SetMaxSteps(cap);
     const double droppedBefore = m_fixed.DroppedTime();
-    m_steps = m_fixed.Advance(Time::DeltaTime());
+    m_steps = m_fixed.AdvanceD(Time::DeltaTimeD());
     m_dropped += m_fixed.DroppedTime() - droppedBefore;
     {
         const float a = m_fixed.Alpha();

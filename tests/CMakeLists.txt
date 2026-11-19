@@ -4415,3 +4415,8 @@ foreach(_t IN ITEMS mip atlas convert bc dds_stream)
     add_test(NAME tex_${_t} COMMAND test_tex_${_t} WORKING_DIRECTORY ${CMAKE_CURRENT_BINARY_DIR})
     set_tests_properties(tex_${_t} PROPERTIES TIMEOUT 240)
 endforeach()
+
+# Time simulations (docs/time_upgrade.md): hitches, 1 and 100 hour runs, frame rates, bad numbers.
+add_executable(test_time_sim test_time_sim.cpp)
+target_link_libraries(test_time_sim PRIVATE okay::engine)
+add_test(NAME time_sim COMMAND test_time_sim)

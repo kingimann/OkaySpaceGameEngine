@@ -2457,6 +2457,11 @@ void WriteComponentRecords(std::ostream& out, GameObject* go) {
             << " " << (c->controlSun ? 1 : 0) << " " << (c->rotateSun ? 1 : 0) << " " << (c->controlSky ? 1 : 0)
             << " " << c->dayIntensity << " " << c->nightIntensity << " " << c->dayAmbient << " " << c->nightAmbient;
         col(c->dayLight); col(c->nightLight); col(c->skyDay); col(c->skyHorizon); col(c->skyNight);
+        // The calendar fields follow only when one is not at its default, so a scene that never used them
+        // is written exactly as before and older builds still read it.
+        if (c->day != 1 || c->daysPerSeason != 30 || c->speed != 1.0f || c->sunriseHour != 6.0f || c->sunsetHour != 18.0f || !c->clockName.empty())
+            out << " " << c->day << " " << c->daysPerSeason << " " << c->speed << " " << c->sunriseHour << " " << c->sunsetHour
+                << " " << Quote(c->clockName);
         out << "\n";
     }
     for (auto* c : go->GetComponents<NPCController>()) {
@@ -6512,6 +6517,11 @@ static bool ParseStep(Scene& scene, ParseSession& S, bool clear,
                     c->paused = (ps != 0); c->controlSun = (cs != 0); c->rotateSun = (rs != 0); c->controlSky = (ck != 0);
                     auto col = [&](Color& k) { in >> k.r >> k.g >> k.b; k.a = 1.0f; };
                     col(c->dayLight); col(c->nightLight); col(c->skyDay); col(c->skyHorizon); col(c->skyNight);
+                    in >> std::ws;   // calendar fields (added later; older files stop after the colours)
+                    if (std::isdigit(in.peek()) || in.peek() == '-') {
+                        in >> c->day >> c->daysPerSeason >> c->speed >> c->sunriseHour >> c->sunsetHour;
+                        c->clockName = ReadQuoted(in);
+                    }
                 } else if (field == "npc") {
                     auto* c = go->AddComponent<NPCController>();
                     int fm = 1;

@@ -10,6 +10,7 @@
 #include "okay/Scene/PropertyRegistry.hpp"
 #include "okay/Components/ScriptComponent.hpp"
 #include "okay/Core/Game.hpp"
+#include "okay/Core/Scheduler.hpp"
 #include "okay/Core/Clipboard.hpp"
 #include "okay/Core/DisplaySettings.hpp"
 #include "okay/Core/GameLoop.hpp"
@@ -839,9 +840,24 @@ struct Runtime {
     LastHit lastHit3D;
     std::vector<LastHit> lastHitAll;    // raycast_all / raycast_all3, nearest first
 
-    // Scheduled callbacks (after / every). interval == 0 means fire once.
-    struct Timer { float remaining; float interval; std::string fn; bool dead; };
-    std::vector<Timer> timers;
+    // Scheduled callbacks (after / every / Invoke / InvokeRepeating): the engine's one timer service, a
+    // Scheduler of this script's own (the timers die with the script). Each task is tagged with the
+    // function it calls, so CancelInvoke("fn") is CancelByTag. See docs/time_upgrade.md.
+    Scheduler timers;
+    /// after(): run `fn` once after `wait` seconds. every() / InvokeRepeating: first run after `first`,
+    /// then every `interval` seconds. A callback that throws is logged and the timer keeps going.
+    void ScheduleTimer(const std::string& fn, float first, float interval) {
+        auto call = [this, fn] {
+            if (!functions.count(fn)) return;
+            std::vector<Value> none;
+            try { Call(fn, none); }
+            catch (const std::exception& e) { Log::Error("OkayScript timer ", fn, "(): ", e.what()); }
+        };
+        Scheduler::Options o;
+        o.tag = fn;
+        if (interval > 0.0f) { o.firstDelay = first > 0.0f ? first : 0.0f; timers.InvokeRepeating(interval, call, -1, o); }
+        else timers.Invoke(first, call, o);
+    }
 
     // Destroy(obj, seconds): {seconds left, object reference or name ("" = this object)}.
     std::vector<std::pair<float, Value>> pendingDestroy;
@@ -958,25 +974,12 @@ struct Runtime {
         ReapCoroutines();
     }
 
-    /// Advance scheduled timers by dt and invoke any that come due. Once-timers
-    /// are removed after firing; repeating ones re-arm by their interval.
+    /// Advance scheduled timers by dt and invoke any that come due. Once-timers are removed after
+    /// firing; repeating ones keep their rhythm (a long frame runs them several times, up to
+    /// Scheduler::kMaxCatchUp, then drops the backlog). A timer cancelled by an earlier callback of the
+    /// same frame does not run, and one a callback schedules waits for the next frame.
     void TickTimers(float dt) {
-        if (!(dt > 0.0f) || !std::isfinite(dt)) dt = 0.0f;   // a NaN or negative frame time would stop every timer for good
-        std::vector<std::string> due;
-        const float kEps = 1e-4f;                // absorb fp dust at the boundary
-        for (auto& t : timers) {
-            t.remaining -= dt;
-            int guard = 0;                       // cap multi-fires on a big dt
-            while (t.remaining <= kEps && guard++ < 64) {
-                due.push_back(t.fn);
-                if (t.interval > 0.0f) t.remaining += t.interval;
-                else { t.dead = true; break; }
-            }
-        }
-        timers.erase(std::remove_if(timers.begin(), timers.end(),
-                                    [](const Timer& t) { return t.dead; }), timers.end());
-        std::vector<Value> none;
-        for (const auto& fn : due) if (functions.count(fn)) Call(fn, none);
+        timers.Update(dt, dt);   // a NaN or negative frame time counts as 0 inside
     }
 
     Environment& Global() { return scopes.front(); }
@@ -3994,18 +3997,18 @@ struct OkayScriptVM::Impl {
         b["after"] = [this](std::vector<Value>& a) {
             if (a.size() >= 2) {
                 float wait = a[0].AsFloat(); if (!(wait > 0.0f)) wait = 0.0f;   // negative and NaN fire on the next tick
-                rt.timers.push_back({wait, 0.0f, a[1].AsString(), false});
+                rt.ScheduleTimer(a[1].AsString(), wait, 0.0f);
             }
             return Value{};
         };
         b["every"] = [this](std::vector<Value>& a) {
             if (a.size() >= 2) {
                 float iv = a[0].AsFloat(); if (!(iv > 0.0001f)) iv = 0.0001f;   // zero, negative and NaN: the shortest interval
-                rt.timers.push_back({iv, iv, a[1].AsString(), false});
+                rt.ScheduleTimer(a[1].AsString(), iv, iv);
             }
             return Value{};
         };
-        b["cancel_timers"] = [this](std::vector<Value>&) { rt.timers.clear(); return Value{}; };
+        b["cancel_timers"] = [this](std::vector<Value>&) { rt.timers.Clear(); return Value{}; };
         // timer("name", seconds): returns true about once every `seconds` — kills the
         // manual `t = t + dt; if (t >= N)` boilerplate. e.g.
         //   if (timer("spawn", 2)) { spawn("enemy.okayprefab", 0, 5) }
@@ -11035,19 +11038,19 @@ struct OkayScriptVM::Impl {
         };
         // Invoke("Fire", 2f) / InvokeRepeating("Spawn", 1f, 0.5f) / CancelInvoke().
         b["Invoke"] = [this](std::vector<Value>& a) {
-            if (!a.empty()) rt.timers.push_back({a.size() > 1 ? a[1].AsFloat() : 0.0f, 0.0f, a[0].AsString(), false});
+            if (!a.empty()) rt.ScheduleTimer(a[0].AsString(), a.size() > 1 ? a[1].AsFloat() : 0.0f, 0.0f);
             return Value{};
         };
         b["InvokeRepeating"] = [this](std::vector<Value>& a) {
             if (a.empty()) return Value{};
             float first = a.size() > 1 ? a[1].AsFloat() : 0.0f, rate = a.size() > 2 ? a[2].AsFloat() : 1.0f;
             if (rate <= 0.0f) rate = 0.0001f;
-            rt.timers.push_back({first, rate, a[0].AsString(), false});
+            rt.ScheduleTimer(a[0].AsString(), first, rate);
             return Value{};
         };
         b["CancelInvoke"] = [this](std::vector<Value>& a) {
-            if (a.empty()) rt.timers.clear();
-            else { std::string fn = a[0].AsString(); for (auto& t : rt.timers) if (t.fn == fn) t.dead = true; }
+            if (a.empty()) rt.timers.Clear();
+            else rt.timers.CancelByTag(a[0].AsString());
             return Value{};
         };
         // transform.Translate(Vector3 / x, y, z) moves in the object's own space
@@ -11820,7 +11823,7 @@ void OkayScriptVM::CallUpdate(float deltaTime) {
     CallFirst(m_impl->rt, {"Update", "update"}, args, "Update");
     CallFirst(m_impl->rt, {"LateUpdate", "late_update"}, args, "LateUpdate");
     // Scheduled after()/every() callbacks tick even without an update().
-    if (!m_impl->rt.timers.empty()) {
+    if (m_impl->rt.timers.ActiveCount() > 0) {
         try { m_impl->rt.TickTimers(deltaTime); }
         catch (const std::exception& e) { Log::Error("OkayScript timer: ", e.what()); }
     }

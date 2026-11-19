@@ -65,6 +65,12 @@ public:
         float fixedStep = 0.0f;
         /// Fixed steps one frame may run (>= 1, at most kMaxFixedStepsPerFrame). Time past that is dropped.
         int maxFixedSteps = 5;
+        /// What a frame that owes more than maxFixedSteps does with the rest. false (the default): the surplus
+        /// is dropped, the game falls behind real time and never has to catch up. true: the surplus is
+        /// kept, up to maxOwedSeconds, and paid back at maxFixedSteps a frame (FixedTimestep::Overflow).
+        bool spreadFixedOverflow = false;
+        /// With spreadFixedOverflow: the most time the game may owe, seconds.
+        float maxOwedSeconds = 1.0f;
         /// Step by an evened-out time (Time::SmoothDelta) instead of the clamped one.
         bool smoothDelta = false;
         /// With smoothDelta: the display's refresh rate for vsync snapping (0 = unknown).

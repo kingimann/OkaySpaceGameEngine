@@ -9,6 +9,9 @@
 #include "okay/Math/Quat.hpp"
 #include "okay/Math/Mathf.hpp"
 #include <cmath>
+#include <functional>
+#include <cstdint>
+#include <string>
 
 namespace okay {
 
@@ -18,6 +21,10 @@ namespace okay {
 /// noon and dims to a moonlit floor at night (warm at sunrise/sunset), and the main
 /// camera's background blends day-blue → horizon-orange → night.
 ///
+/// It is also the game's calendar and clock: a day counter, four seasons, a "08:30" text for a UI,
+/// a speed multiplier, and events a script can listen for (see "Events" below). The hours are kept in a
+/// double inside, so a day stays exact however long the game runs and at any frame rate.
+///
 /// Drop it anywhere. It drives the sibling Light if there is one, otherwise the first
 /// Light in the scene (your "Sun"), plus the scene's main camera for the sky. Publishes
 /// the current hour to a saved value `hour` (bind a UI text with `{hour}`).
@@ -26,6 +33,24 @@ public:
     float dayLengthSeconds = 120.0f;   // real seconds for a full 24h day
     float time = 8.0f;                 // current time of day, hours [0,24)
     bool  paused = false;
+
+    // ---- Calendar, speed, events ----------------------------------------------------------------
+    int   day = 1;                     // the day counter: 1 on the first day, +1 every midnight
+    int   daysPerSeason = 30;          // a season lasts this many days (Spring, Summer, Autumn, Winter)
+    float speed = 1.0f;                // 1 = normal, 2 = twice as fast, 0 = the day stands still
+    float sunriseHour = 6.0f;          // OnSunrise fires when the clock passes this hour
+    float sunsetHour  = 18.0f;         // OnSunset fires when the clock passes this hour
+    /// "" = follow the scene's game time (it stops when the game is paused or slowed). A name = follow that
+    /// Clock channel instead: "ui" keeps the days moving while the game is paused.
+    std::string clockName;
+    /// Events. Each is delivered to every object in the scene as a named event ("OnHour", "OnDay",
+    /// "OnSunrise", "OnSunset", "OnSeason": a Visual Script On Custom Event node, a script's
+    /// OnEvent_OnHour(value), an Actions "On Message") and also called here for C++ code. The value is the
+    /// hour (0-23), the day number, 0 and the season (0 Spring, 1 Summer, 2 Autumn, 3 Winter).
+    /// A jump (SetTime) fires nothing; time that passes, AddHours forward and SkipToHour fire everything
+    /// they cross, in order, even when one frame crosses several.
+    std::function<void(int)> onHour, onDay, onSeason;
+    std::function<void()> onSunrise, onSunset;
 
     bool  controlSun = true;           // drive the sun Light (intensity/color/ambient)
     bool  rotateSun  = true;           // rotate the sun Light's transform across the sky
@@ -44,19 +69,46 @@ public:
     /// -1 (midnight) .. +1 (noon): the sun's height above the horizon.
     float Elevation() const { return std::sin(2.0f * 3.14159265f * (time - 6.0f) / 24.0f); }
 
-    void SetTime(float hour) { time = Wrap(hour); }
-    void AddHours(float h)   { time = Wrap(time + h); }
+    /// Jump to an hour of the day (no events fire, the day counter stays).
+    void SetTime(float hour) { time = Wrap(hour); SyncHours(); }
+    /// Move the clock on by `h` hours: forward fires every event it passes; backward just jumps.
+    void AddHours(float h);
+    /// Run the clock forward to the next time it is `hour` (a full day if it already is), firing the
+    /// events on the way: "sleep until morning" is SkipToHour(6).
+    void SkipToHour(float hour);
     void Pause(bool on)      { paused = on; }
 
-    void Start() override { time = Wrap(time); Apply(); }
+    int   Minute() const { return (int)std::floor((m_hours - std::floor(m_hours)) * 60.0 + 1e-9) % 60; }
+    int   HourOfDay() const { return (int)std::floor(m_hours + 1e-9) % 24; }
+    /// 0 Spring, 1 Summer, 2 Autumn, 3 Winter.
+    int   Season() const { return SeasonOfDay(day, daysPerSeason); }
+    static int SeasonOfDay(int day, int daysPerSeason) {
+        const int per = daysPerSeason < 1 ? 1 : daysPerSeason;
+        const int d = day < 1 ? 0 : day - 1;
+        return (d / per) % 4;
+    }
+    const char* SeasonName() const { static const char* n[4] = {"Spring", "Summer", "Autumn", "Winter"}; return n[Season()]; }
+    /// "08:30" (24 hour). The same text is stored for a UI as the saved value `clock`.
+    std::string ClockText() const;
+
+    void Start() override { time = Wrap(time); SyncHours(); Apply(); }
     void Update(float dt) override {
-        if (!paused && dt > 0.0f && dayLengthSeconds > 0.0f)
-            time = Wrap(time + dt * (24.0f / dayLengthSeconds));
+        SyncHours();
+        Advance(dt);
         Apply();
     }
 
 private:
+    /// Out of line (DayNightCycle.cpp): the exact clock step and the events.
+    void Advance(float dt);
+    void MoveForward(double hours);
+    void SyncHours() { if (!m_synced || (float)m_hours != time) { m_hours = (double)Wrap(time); m_synced = true; } }
+    double m_hours = 8.0;              // the exact time of day (time is its float view)
+    bool   m_synced = false;
+    std::uint64_t m_ticks = 0; double m_elapsed = 0.0; bool m_primed = false;   // follows clockName (a ClockCursor, kept as plain numbers)
+    int    m_lastMinute = -1;
     static float Wrap(float h) { h = std::fmod(h, 24.0f); return h < 0.0f ? h + 24.0f : h; }
+    void PublishCalendar();   // DayNightCycle.cpp
     Light* FindSun() const {
         if (gameObject) if (auto* l = gameObject->GetComponent<Light>()) return l;
         Scene* s = gameObject ? gameObject->scene() : nullptr;
@@ -69,6 +121,7 @@ private:
         float e = Elevation();                          // -1..1
         float day = Mathf::Clamp01(e / 0.25f);          // 0 below horizon .. 1 well up
         Prefs::SetFloat("hour", time);
+        PublishCalendar();
 
         if (controlSun) {
             if (Light* sun = FindSun()) {

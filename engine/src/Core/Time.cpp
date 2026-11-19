@@ -111,8 +111,8 @@ void Time::ClearEffects() {
 // Integrate (frozen ? 0 : scale * hitMultiplier) over `dt` real seconds, in segments
 // that end where a hit stop expires or the ramp finishes. Inside a segment the hit
 // multiplier is constant and the scale is a straight line, so the integral is exact.
-double Time::StepEffects(float unscaledDt) {
-    const double dt = (double)unscaledDt;
+double Time::StepEffects(double unscaledDt) {
+    const double dt = unscaledDt;
     double t = 0.0, acc = 0.0;
     int guard = 0;
     while (t < dt - kEps && guard++ < 4 * kMaxHitStops + 8) {

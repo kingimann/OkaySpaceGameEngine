@@ -45,6 +45,7 @@ class SaveReader;
 struct ClockSnapshot {
     std::string name;
     Clock::Source source = Clock::Source::Unscaled;
+    std::string parent;          ///< the clock it follows ("" = none; the source is then Parent)
     bool holdsWhileGamePaused = false;
     bool paused = false;
     float scale = 1.0f;

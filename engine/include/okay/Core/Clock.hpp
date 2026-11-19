@@ -17,6 +17,17 @@
 //   "cinematic"  follows the real frame time, but holds while the game is paused.
 // Any other name creates a channel on first use, on real time (see Clock::Get).
 //
+// A clock can also follow ANOTHER clock (SetParent): it then advances by what its parent advanced, so the
+// parent's scale, pause and ramp apply first and the child adds its own. "Slow motion" on a parent slows
+// every child, a child can be slower still, and a clock that is not under that parent (the "ui" one)
+// runs on. A chain may be any depth; a loop in the chain is cut (the clock then reads real time).
+//
+//     Clock::Get("game").SetScale(0.5f);                          // everything under "game" is half speed
+//     Clock::Get("enemies").SetParent("game"); Clock::Get("enemies").SetScale(0.5f);   // quarter speed
+//
+// Time to nanoseconds: every clock also counts whole nanoseconds (ElapsedTicks) with the leftover
+// carried, like Time::ElapsedTicks, so a day of 60 fps frames is exact to the nanosecond.
+//
 // A host calls ClockSet::Global().Tick(...) once a frame, after Time::Step; GameLoop
 // does it for you. Plain C++17, no threads, no allocation after a channel exists.
 #include "okay/Core/Game.hpp"
@@ -37,6 +48,7 @@ public:
     enum class Source {
         Scaled,     ///< Time::DeltaTime(): the game clock (time scale, game pause, hit stop)
         Unscaled,   ///< Time::UnscaledDeltaTime(): real frame time
+        Parent,     ///< what the parent clock (SetParent) advanced this frame; real time while it has none
     };
 
     Clock(std::string name, Source source, bool holdsWhileGamePaused = false)
@@ -49,13 +61,28 @@ public:
     bool   HoldsWhileGamePaused() const { return m_holds; }
     void   SetHoldsWhileGamePaused(bool h) { m_holds = h; }
 
+    /// The clock this one follows ("" = none). Setting a parent makes the source Parent; clearing it puts
+    /// the source back to what it was (Scaled or Unscaled). A name that is this clock's own is ignored.
+    const std::string& Parent() const { return m_parent; }
+    void SetParent(const std::string& parentName) {
+        if (parentName == m_name) return;
+        if (!parentName.empty() && m_source != Source::Parent) m_sourceBeforeParent = m_source;
+        if (parentName.empty() && m_source == Source::Parent) m_source = m_sourceBeforeParent;
+        m_parent = parentName;
+        if (!parentName.empty()) m_source = Source::Parent;
+    }
+
     /// Seconds this clock advanced in the last Tick (0 while paused or held).
-    float  Delta() const { return m_delta; }
+    float  Delta() const { return (float)m_deltaD; }
+    /// The same as an exact double (what children and the nanosecond count read).
+    double DeltaD() const { return m_deltaD; }
     /// Seconds this clock has run since it was created or Reset.
     double Elapsed() const { return m_elapsed; }
+    /// The same as whole nanoseconds, within 1 ns of the exact sum however long the clock has run.
+    std::int64_t ElapsedTicks() const { return m_ticks64; }
     /// The frame time the clock read before its scale and pause (what a ui clock
     /// that is "paused" would have advanced by).
-    float  SourceDelta() const { return m_sourceDelta; }
+    float  SourceDelta() const { return (float)m_sourceDelta; }
     std::uint64_t Ticks() const { return m_ticks; }
 
     /// 1 = normal. Negative and NaN become 0, and it is capped at Time::kMaxTimeScale. A ramp in
@@ -86,22 +113,30 @@ public:
     void   Pause() { m_paused = true; }
     void   Resume() { m_paused = false; }
 
-    /// Advance by one frame. `gamePaused`: Game::Paused() this frame.
-    void Tick(float scaledDt, float unscaledDt, bool gamePaused) {
-        float src = m_source == Source::Scaled ? scaledDt : unscaledDt;
-        if (!(src > 0.0f) || !std::isfinite(src)) src = 0.0f;
+    /// Advance by one frame. `gamePaused`: Game::Paused() this frame. `parentDelta`: what the parent clock
+    /// advanced (ClockSet::Tick passes it; only a clock whose source is Parent reads it).
+    void Tick(double scaledDt, double unscaledDt, bool gamePaused, double parentDelta = 0.0) {
+        double src = m_source == Source::Scaled ? scaledDt : (m_source == Source::Parent ? parentDelta : unscaledDt);
+        if (!(src > 0.0) || !std::isfinite(src)) src = 0.0;
         m_sourceDelta = src;
         const bool held = m_paused || (m_holds && gamePaused);
-        // Formed in double and held in float range: a huge step (a clamp turned off) times a scale of 100
-        // overflowed to infinity and made Elapsed() infinite for good.
-        const double d = held ? 0.0 : (m_ramp ? StepRamp(src) : (double)src * (double)m_scale);
-        m_delta = d < (double)std::numeric_limits<float>::max() ? (float)d : std::numeric_limits<float>::max();
-        m_elapsed += (double)m_delta;
+        // Held in float range: a huge step (a clamp turned off) times a scale of 100 overflowed to infinity
+        // and made Elapsed() infinite for good.
+        double d = held ? 0.0 : (m_ramp ? StepRamp(src) : src * (double)m_scale);
+        if (!(d < (double)std::numeric_limits<float>::max())) d = (double)std::numeric_limits<float>::max();
+        m_deltaD = d;
+        m_elapsed += d;
+        // Whole nanoseconds with the fraction carried (see Time::ElapsedTicks).
+        double dd = d > 1.0e9 ? 1.0e9 : d;
+        const double t = dd * 1.0e9 + m_tickCarry, w = std::floor(t);
+        constexpr std::int64_t kCap = 9000000000000000000LL;
+        if (m_ticks64 >= kCap - (std::int64_t)w) { m_ticks64 = kCap; m_tickCarry = 0.0; }
+        else { m_ticks64 += (std::int64_t)w; m_tickCarry = t - w; }
         ++m_ticks;
     }
 
     /// Back to the start: no time elapsed, scale 1, not paused, no ramp. The source stays.
-    void Reset() { m_delta = m_sourceDelta = 0.0f; m_elapsed = 0.0; m_ticks = 0; m_scale = 1.0f; m_paused = false; m_ramp = false; }
+    void Reset() { m_deltaD = m_sourceDelta = 0.0; m_elapsed = 0.0; m_ticks = 0; m_ticks64 = 0; m_tickCarry = 0.0; m_scale = 1.0f; m_paused = false; m_ramp = false; }
 
     /// Put the elapsed time and tick count back to what a save game stored (a world clock that
     /// drives a day and night cycle). Negative and non-finite times count as 0. The last frame's
@@ -109,7 +144,8 @@ public:
     void Restore(double elapsed, std::uint64_t ticks) {
         m_elapsed = (elapsed > 0.0 && std::isfinite(elapsed)) ? elapsed : 0.0;
         m_ticks = ticks;
-        m_delta = m_sourceDelta = 0.0f;
+        m_ticks64 = (std::int64_t)(m_elapsed < 9.0e9 ? m_elapsed * 1.0e9 : 9.0e18); m_tickCarry = 0.0;
+        m_deltaD = m_sourceDelta = 0.0;
     }
 
     /// The channel called `name` in the process-wide set (ClockSet::Global()); an
@@ -120,8 +156,8 @@ public:
 private:
     static float CleanScale(float s) { return s > 0.0f ? (s < Time::kMaxTimeScale ? s : Time::kMaxTimeScale) : 0.0f; }
     // Integrate the ramping scale over `src` seconds of source time and advance the ramp.
-    double StepRamp(float src) {
-        const double dt = (double)src;
+    double StepRamp(double src) {
+        const double dt = src;
         const double seg = dt < m_rampDur - m_rampT ? dt : m_rampDur - m_rampT;   // the part of the frame still inside the ramp
         const double k0 = m_rampT / m_rampDur, k1 = (m_rampT + seg) / m_rampDur;
         const double s0 = (double)m_rampFrom + ((double)m_rampTo - (double)m_rampFrom) * k0;
@@ -144,8 +180,12 @@ private:
     float  m_rampFrom = 1.0f, m_rampTo = 1.0f;
     double m_rampDur = 0.0, m_rampT = 0.0;
     float  m_scale = 1.0f;
-    float  m_delta = 0.0f, m_sourceDelta = 0.0f;
+    std::string m_parent;
+    Source m_sourceBeforeParent = Source::Unscaled;
+    double m_deltaD = 0.0, m_sourceDelta = 0.0;
     double m_elapsed = 0.0;
+    std::int64_t m_ticks64 = 0;
+    double m_tickCarry = 0.0;
     std::uint64_t m_ticks = 0;
 };
 
@@ -194,12 +234,15 @@ public:
 
     /// Advance every clock by this frame's times.
     /// Remembers Time::FrameCount() so TickOncePerFrame() will not tick the same frame again.
-    void Tick(float scaledDt, float unscaledDt, bool gamePaused) {
-        for (auto& c : m_clocks) c->Tick(scaledDt, unscaledDt, gamePaused);
+    /// A clock under a parent is ticked after it, so it reads what the parent advanced this very frame.
+    void Tick(double scaledDt, double unscaledDt, bool gamePaused) {
+        const std::size_t n = m_clocks.size();
+        m_state.assign(n, 0);
+        for (std::size_t i = 0; i < n; ++i) TickOne(i, scaledDt, unscaledDt, gamePaused);
         m_lastFrame = Time::FrameCount();
     }
-    /// Tick(Time::DeltaTime(), Time::UnscaledDeltaTime(), Game::Paused()).
-    void TickFromTime() { Tick(Time::DeltaTime(), Time::UnscaledDeltaTime(), Game::Paused()); }
+    /// Tick(Time::DeltaTimeD(), Time::UnscaledDeltaTimeD(), Game::Paused()).
+    void TickFromTime() { Tick(Time::DeltaTimeD(), Time::UnscaledDeltaTimeD(), Game::Paused()); }
     /// TickFromTime, but only once for each Time::FrameCount(): a frame that GameLoop or an
     /// earlier Tick / TickFromTime already ticked is skipped (a host that cannot tell
     /// whether the loop already ticked the set calls this). Where Time is never stepped
@@ -216,7 +259,26 @@ public:
     static ClockSet& Global() { static ClockSet s; return s; }
 
 private:
+    // Tick clock `i` after its parent. A parent that does not exist, or a loop in the chain (a clock
+    // met again while it is still being ticked), is cut: that clock reads real time.
+    void TickOne(std::size_t i, double scaledDt, double unscaledDt, bool gamePaused) {
+        if (m_state[i] == 2) return;
+        m_state[i] = 1;
+        Clock& c = *m_clocks[i];
+        double parentDelta = unscaledDt;
+        if (c.GetSource() == Clock::Source::Parent) {
+            for (std::size_t j = 0; j < m_clocks.size(); ++j) {
+                if (m_clocks[j]->Name() != c.Parent()) continue;
+                if (m_state[j] == 0) TickOne(j, scaledDt, unscaledDt, gamePaused);
+                if (m_state[j] == 2) parentDelta = m_clocks[j]->DeltaD();
+                break;
+            }
+        }
+        c.Tick(scaledDt, unscaledDt, gamePaused, parentDelta);
+        m_state[i] = 2;
+    }
     std::vector<std::unique_ptr<Clock>> m_clocks;
+    std::vector<char> m_state;
     std::uint64_t m_lastFrame = ~std::uint64_t(0);
 };
 

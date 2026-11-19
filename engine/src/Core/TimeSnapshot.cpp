@@ -44,6 +44,7 @@ TimeSnapshot TimeSnapshot::Capture(const ClockSet& set, bool sharedRandom) {
         ClockSnapshot s;
         s.name = c->Name();
         s.source = c->GetSource();
+        s.parent = c->Parent();
         s.holdsWhileGamePaused = c->HoldsWhileGamePaused();
         s.paused = c->Paused();
         s.scale = c->Scale();
@@ -73,7 +74,9 @@ void TimeSnapshot::Apply(ClockSet& set, const ApplyOptions& options) const {
     if (options.clocks) {
         for (const ClockSnapshot& s : clocks) {
             if (s.name.empty()) continue;
-            Clock& c = set.Add(s.name, s.source, s.holdsWhileGamePaused);   // an existing clock keeps its code-defined settings
+            // A Parent source is added as Unscaled first; SetParent below makes it follow the parent.
+            Clock& c = set.Add(s.name, s.source == Clock::Source::Parent ? Clock::Source::Unscaled : s.source, s.holdsWhileGamePaused);   // an existing clock keeps its code-defined settings
+            if (!s.parent.empty() && c.Parent().empty()) c.SetParent(s.parent);
             c.SetScale(s.scale);
             c.SetPaused(s.paused);
             c.Restore(s.elapsed, s.ticks);
@@ -98,7 +101,8 @@ void TimeSnapshot::Write(SaveWriter w) const {
         const ClockSnapshot& c = clocks[i];
         SaveWriter cw = w.Scope("clocks").Scope(std::to_string(i));
         cw.String("name", c.name);
-        cw.Int("source", c.source == Clock::Source::Scaled ? 0 : 1);
+        cw.Int("source", c.source == Clock::Source::Scaled ? 0 : (c.source == Clock::Source::Parent ? 2 : 1));
+        if (!c.parent.empty()) cw.String("parent", c.parent);
         cw.Bool("holds", c.holdsWhileGamePaused);
         cw.Bool("paused", c.paused);
         cw.Float("scale", c.scale);
@@ -138,7 +142,12 @@ bool TimeSnapshot::Read(const SaveReader& r, TimeSnapshot& out) {
         ClockSnapshot c;
         c.name = cr.String("name", "");
         if (c.name.empty()) continue;
-        c.source = cr.Int("source", 1) == 0 ? Clock::Source::Scaled : Clock::Source::Unscaled;
+        {
+            const int src = cr.Int("source", 1);
+            c.parent = cr.String("parent", "");
+            c.source = src == 0 ? Clock::Source::Scaled : Clock::Source::Unscaled;
+            if (src == 2 && !c.parent.empty()) c.source = Clock::Source::Parent;
+        }
         c.holdsWhileGamePaused = cr.Bool("holds", false);
         c.paused = cr.Bool("paused", false);
         c.scale = CleanScale(cr.Float("scale", 1.0f));
@@ -174,7 +183,7 @@ bool TimeSnapshot::operator==(const TimeSnapshot& o) const {
     for (std::size_t i = 0; i < clocks.size(); ++i) {
         const ClockSnapshot& a = clocks[i];
         const ClockSnapshot& b = o.clocks[i];
-        if (a.name != b.name || a.source != b.source || a.holdsWhileGamePaused != b.holdsWhileGamePaused || a.paused != b.paused ||
+        if (a.name != b.name || a.source != b.source || a.parent != b.parent || a.holdsWhileGamePaused != b.holdsWhileGamePaused || a.paused != b.paused ||
             a.scale != b.scale || a.elapsed != b.elapsed || a.ticks != b.ticks || a.ramping != b.ramping ||
             (a.ramping && (a.rampTarget != b.rampTarget || a.rampSecondsLeft != b.rampSecondsLeft)))
             return false;

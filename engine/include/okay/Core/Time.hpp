@@ -24,6 +24,22 @@ public:
     /// Number of frames rendered since startup.
     static std::uint64_t FrameCount() { return s_frameCount; }
 
+    // ---- Whole nanoseconds: the exact clock ---------------------------------------------------
+    // A frame time reaches the game as a float (1/60 s is 0.016666667 as a float, 9e-10 s too long), and
+    // a float second counter cannot tell 144 fps frames apart after a day (its step is 8 ms at 24 h). So the
+    // game keeps its time as a whole number of nanoseconds (int64: 292 years) and adds each frame's time
+    // to it with the leftover fraction carried to the next frame, so after any number of frames the clock
+    // is within one nanosecond of the exact sum. ElapsedTimeD() and UnscaledTime() are that count seen as
+    // seconds; ElapsedTime() is the float view. Feed it exact doubles with StepD (GameLoop does).
+    /// Scaled game time since startup, whole nanoseconds.
+    static std::int64_t ElapsedTicks() { return s_ticks; }
+    /// Real (unscaled) time since startup, whole nanoseconds.
+    static std::int64_t UnscaledTicks() { return s_unscaledTicks; }
+    static constexpr double kTicksPerSecond = 1.0e9;
+    /// The last frame's scaled / unscaled time as an exact double (DeltaTime() is the float view).
+    static double DeltaTimeD() { return s_deltaD; }
+    static double UnscaledDeltaTimeD() { return s_unscaledDeltaD; }
+
     // ---- This session (since the last Game::BeginSession) -----------------------------------
     // ElapsedTime(), UnscaledTime() and FrameCount() are the PROCESS's clocks: they only move
     // forward and a new Play session (the editor's Stop and Play, a scene load) does not rewind
@@ -191,7 +207,10 @@ public:
     /// `ElapsedTime()`, `DeltaTime()`, and `timeScale` work there too. A time that is
     /// not a finite number >= 0 (NaN, infinity, negative) counts as a 0 s frame: it
     /// used to turn ElapsedTime into NaN for good, or run it backwards.
-    static void Step(float unscaledDt) { Advance(unscaledDt); }
+    static void Step(float unscaledDt) { Advance((double)unscaledDt); }
+    /// Step() with the frame time as a double: no float rounding of 1/60 s, so a long run stays exact
+    /// (see "Whole nanoseconds" above). A time that is not a finite number >= 0 counts as 0, as in Step.
+    static void StepD(double unscaledDt) { Advance(unscaledDt); }
 
     /// Put every clock back to its start-up state: zero elapsed time and frame
     /// count, time scale 1, not frozen, no smoothing history. The automated test
@@ -199,7 +218,9 @@ public:
     /// same clock; a game has no reason to.
     static void ResetForTesting() {
         s_deltaTime = s_unscaledDeltaTime = 0.0f;
+        s_deltaD = s_unscaledDeltaD = 0.0;
         s_time = s_unscaledTime = 0.0;
+        s_ticks = s_unscaledTicks = 0; s_tickCarry = s_unscaledTickCarry = 0.0;
         s_timeScale = 1.0f; s_frozen = false;
         s_fps = 0.0f; s_fpsSamples = 0; s_frameCount = 0;
         s_rawDeltaTime = 0.0f; s_rawPending = -1.0f;
@@ -223,19 +244,38 @@ public:
 
 private:
     friend class Application;
-    static void Advance(float unscaledDt) {
-        if (!(unscaledDt > 0.0f) || !std::isfinite(unscaledDt)) unscaledDt = 0.0f;
-        s_unscaledDeltaTime = unscaledDt;
+    static void AddTicks(std::int64_t& ticks, double& carry, double seconds) {
+        // Whole nanoseconds, the fraction carried: the sum stays within 1 ns of exact however many frames pass.
+        // One frame counts at most 1e9 s (31 years) and the count stops at 9e18 ns (285 years): a broken
+        // frame time can never overflow the integer.
+        if (seconds > 1.0e9) seconds = 1.0e9;
+        const double t = seconds * kTicksPerSecond + carry;
+        const double w = std::floor(t);
+        constexpr std::int64_t kCap = 9000000000000000000LL;
+        if (ticks >= kCap - (std::int64_t)w) { ticks = kCap; carry = 0.0; return; }
+        ticks += (std::int64_t)w;
+        carry = t - w;
+    }
+    static void Advance(double unscaledDt) {
+        if (!(unscaledDt > 0.0) || !std::isfinite(unscaledDt)) unscaledDt = 0.0;
+        // A frame longer than a float can hold is the largest float: the clocks stay finite.
+        if (unscaledDt > (double)std::numeric_limits<float>::max()) unscaledDt = (double)std::numeric_limits<float>::max();
+        s_unscaledDeltaTime = (float)unscaledDt;
+        s_unscaledDeltaD = unscaledDt;
         // With a hit stop or ramp running the scale changes inside the frame: integrate it. The product
         // is formed in double and held in float range: a huge frame at a scale above 1 (the clamp turned
         // off, a broken timer) used to overflow to infinity and poison ElapsedTime for good.
-        const double scaled = s_fxActive ? StepEffects(unscaledDt) : (double)unscaledDt * (double)TimeScale();
-        s_deltaTime = scaled < (double)std::numeric_limits<float>::max() ? (float)scaled : std::numeric_limits<float>::max();
-        s_time += (double)s_deltaTime;
-        s_unscaledTime += (double)unscaledDt;
+        double scaled = s_fxActive ? StepEffects(unscaledDt) : unscaledDt * (double)TimeScale();
+        if (!(scaled < (double)std::numeric_limits<float>::max())) scaled = (double)std::numeric_limits<float>::max();
+        s_deltaTime = (float)scaled;
+        s_deltaD = scaled;
+        AddTicks(s_ticks, s_tickCarry, scaled);
+        AddTicks(s_unscaledTicks, s_unscaledTickCarry, unscaledDt);
+        s_time = (double)s_ticks / kTicksPerSecond;
+        s_unscaledTime = (double)s_unscaledTicks / kTicksPerSecond;
         ++s_frameCount;
         // The FPS readout follows the measured time (SmoothDelta's input), when there is one.
-        s_rawDeltaTime = s_rawPending >= 0.0f ? s_rawPending : unscaledDt;
+        s_rawDeltaTime = s_rawPending >= 0.0f ? s_rawPending : (float)unscaledDt;
         s_rawPending = -1.0f;
         if (s_rawDeltaTime > 0.0f) {
             // The very first measured frame is not a frame time worth showing (it holds the
@@ -252,11 +292,14 @@ private:
     }
     /// Time.cpp: integrate the scale over `unscaledDt` seconds while hit stops / a ramp
     /// run, and advance them. Returns the scaled delta.
-    static double StepEffects(float unscaledDt);
+    static double StepEffects(double unscaledDt);
     static void RefreshFx();
 
     static inline float        s_deltaTime         = 0.0f;
     static inline float        s_unscaledDeltaTime = 0.0f;
+    static inline double       s_deltaD = 0.0, s_unscaledDeltaD = 0.0;
+    static inline std::int64_t s_ticks = 0, s_unscaledTicks = 0;
+    static inline double       s_tickCarry = 0.0, s_unscaledTickCarry = 0.0;
     static inline double       s_time              = 0.0;
     static inline double       s_unscaledTime      = 0.0;
     static inline float        s_timeScale         = 1.0f;
@@ -315,12 +358,30 @@ public:
     void  SetMaxSteps(int n) { m_maxSteps = n < 1 ? 1 : (n > kMaxStepsCap ? kMaxStepsCap : n); Clamp(); }
     static constexpr int kMaxStepsCap = 100000;
 
+    /// What a frame that owes more than MaxSteps() steps does with the surplus.
+    ///   Drop   the surplus is thrown away (DroppedTime()): the game falls behind real time for good, and
+    ///          a hitch can never cost more than MaxSteps() steps. The default, and what it always did.
+    ///   Spread the surplus is kept (up to SetMaxOwed() seconds, one second unless set) and paid back at
+    ///          MaxSteps() steps a frame in the frames after: the game catches up, a little fast, and
+    ///          only what is owed beyond that is dropped. Still never more than MaxSteps() in one frame.
+    enum class Overflow { Drop, Spread };
+    Overflow GetOverflow() const { return m_overflow; }
+    void SetOverflow(Overflow o) { m_overflow = o; Clamp(); }
+    /// With Spread: the most time that may be owed, seconds (0 to a day; NaN and negatives mean 0).
+    double MaxOwed() const { return m_maxOwed; }
+    void SetMaxOwed(double seconds) { m_maxOwed = (seconds > 0.0 && std::isfinite(seconds)) ? (seconds < 86400.0 ? seconds : 86400.0) : 0.0; Clamp(); }
+    /// Time owed beyond what this frame's steps could run (Spread), seconds.
+    double Owed() const { const double cap = m_step * (double)m_maxSteps; return m_acc > cap ? m_acc - cap : 0.0; }
+
     /// Add `dt` seconds (negative, NaN and infinite times add nothing) and return how
     /// many fixed steps are now due, at most MaxSteps(); they are taken off the
-    /// accumulator. A frame that would owe more has the surplus dropped (Dropped()).
-    int Advance(float dt) {
-        if (dt > 0.0f && std::isfinite(dt)) m_acc += (double)dt;
-        const double cap = m_step * (double)m_maxSteps;
+    /// accumulator. A frame that would owe more has the surplus dropped (Dropped()),
+    /// or, with Overflow::Spread, kept up to MaxOwed().
+    int Advance(float dt) { return AdvanceD((double)dt); }
+    /// Advance with an exact double (Time::DeltaTimeD()): no float rounding in a long run.
+    int AdvanceD(double dt) {
+        if (dt > 0.0 && std::isfinite(dt)) m_acc += dt;
+        const double cap = Cap();
         if (m_acc > cap + kEps * m_step) { m_dropped += m_acc - cap; m_acc = cap; }
         int n = 0;
         while (m_acc >= m_step * (1.0 - kEps) && n < m_maxSteps) { m_acc -= m_step; ++n; }
@@ -355,7 +416,8 @@ public:
     void Reset() { m_acc = 0.0; m_steps = 0; m_total = 0; m_dropped = 0.0; }
 
 private:
-    void Clamp() { const double cap = m_step * (double)m_maxSteps; if (m_acc > cap) m_acc = cap; }
+    double Cap() const { return m_step * (double)m_maxSteps + (m_overflow == Overflow::Spread ? m_maxOwed : 0.0); }
+    void Clamp() { const double cap = Cap(); if (m_acc > cap) m_acc = cap; }
     static constexpr double kEps = 1e-6;   // a step short by float rounding still counts
     double m_step = 0.02;
     double m_acc = 0.0;
@@ -363,6 +425,8 @@ private:
     std::uint64_t m_total = 0;
     int m_maxSteps = 5;
     int m_steps = 0;
+    Overflow m_overflow = Overflow::Drop;
+    double m_maxOwed = 1.0;
 };
 
 } // namespace okay

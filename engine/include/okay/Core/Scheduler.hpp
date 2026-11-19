@@ -10,6 +10,8 @@ namespace okay {
 
 class ClockSet;
 class GameObject;
+class SaveWriter;   // Core/SaveFramework.hpp
+class SaveReader;
 
 /// Time-based callbacks: one-shot delays, repeating timers, and value tweens.
 /// A Scene owns one and ticks it every frame, so gameplay code can schedule
@@ -59,6 +61,13 @@ public:
         /// running. For owners that are not GameObjects (hold a std::weak_ptr and return
         /// !expired()). Keep it cheap. A predicate that throws counts as false.
         std::function<bool()> alive{};
+        /// 0..0.99: each run of a repeating timer (and the first one) waits its period times a random
+        /// factor in [1 - jitter, 1 + jitter], so a hundred torches do not all flicker in step. The
+        /// numbers come from the scheduler's own seeded stream (SetJitterSeed), so a run is repeatable.
+        float jitter = 0.0f;
+        /// A repeating timer only: wait this long before the FIRST run (>= 0), then the interval between
+        /// the runs after it (InvokeRepeating("Spawn", 2, 0.5)). < 0: the first wait is the interval.
+        float firstDelay = -1.0f;
     };
 
     /// Run `fn` once after `delay` seconds.
@@ -75,6 +84,42 @@ public:
                  std::function<void()> onComplete = {});
     Handle Tween(float duration, std::function<void(float)> onUpdate,
                  std::function<void()> onComplete, const Options& options);
+
+    /// Run `fn` on the next Update, as soon as the task is stepped (a delay of 0 that is also safe to
+    /// call from inside a callback: it runs in the NEXT update, never in the one that scheduled it).
+    Handle NextFrame(std::function<void()> fn);
+    Handle NextFrame(std::function<void()> fn, const Options& options);
+    /// Run `fn` at `seconds` on the clock the task follows: the game clock (Time::ElapsedTimeD()) by
+    /// default, real time with Options::unscaled (Time::UnscaledTime()), or the named Options::clock's
+    /// Elapsed(). A moment already past runs on the next Update. The timer then counts as a delay from
+    /// now, so pausing it or a time scale applies as for any other task.
+    Handle At(double seconds, std::function<void()> fn);
+    Handle At(double seconds, std::function<void()> fn, const Options& options);
+    /// Run `fn` once, at the end of the update that is running (after every timer of that update has
+    /// run, so it sees their results): the place for "now that everything has moved, tidy up". Called
+    /// outside an update it runs at the end of the next one. Not cancellable.
+    void EndOfFrame(std::function<void()> fn);
+    /// Seed of the stream Options::jitter draws from (default fixed: two runs of the same game agree).
+    void SetJitterSeed(std::uint64_t seed) { m_jitterState = seed ? seed : 0x9E3779B97F4A7C15ULL; }
+
+    // ---- Timers that can be saved ---------------------------------------------------------------
+    // A std::function cannot be written to a file, a NAME can. Register the actions your game needs once
+    // at start-up ("spawn_wave", "end_stun"); schedule them by name; SaveState writes every named timer
+    // (time left, period, repeats, tag, clock, pause) and LoadState puts them back after a load.
+    // Plain Invoke / InvokeRepeating timers are not saved (they hold code).
+    void RegisterAction(const std::string& name, std::function<void()> fn);
+    bool HasAction(const std::string& name) const { return m_actions.count(name) != 0; }
+    Handle InvokeAction(float delay, const std::string& name);
+    Handle InvokeAction(float delay, const std::string& name, const Options& options);
+    /// `repeatCount` < 0 repeats for ever.
+    Handle InvokeActionRepeating(float interval, const std::string& name, int repeatCount = -1);
+    Handle InvokeActionRepeating(float interval, const std::string& name, int repeatCount, const Options& options);
+    /// Write every named timer under `w`. Returns how many.
+    int SaveState(SaveWriter w) const;
+    /// Cancel every named timer, then recreate the saved ones whose action is registered. Returns how
+    /// many were restored; a timer whose action is not registered is skipped (see `LastLoadSkipped()`).
+    int LoadState(const SaveReader& r);
+    int LastLoadSkipped() const { return m_loadSkipped; }
 
     /// Cancel a scheduled task. Returns true if it existed.
     bool Cancel(Handle handle);
@@ -137,6 +182,7 @@ public:
         bool ownerAlive = true;     ///< false: its object or `alive` says it is gone
         std::string objectName;     ///< that object's name while it is alive, else empty
         double age = 0.0;           ///< seconds the task has been running (paused time and a hold on its clock do not count)
+        std::string action;         ///< the registered action's name, for a timer that can be saved (else empty)
         double overdue = 0.0;       ///< seconds past its due time without having run (paused, or its clock is not ticking); 0 = on time
     };
     /// Every active task, in the order it was scheduled.
@@ -169,6 +215,10 @@ private:
         const void* owner = nullptr;
         std::string tag;
         std::string clock;            // channel name; empty = scene / unscaled time
+        std::string actionName;       // RegisterAction name (saved by SaveState); empty = plain code
+        float  baseline = 0.0f;       // the period before jitter
+        bool   firstPending = false;  // period is Options::firstDelay until the first run
+        float  jitter = 0.0f;
         ClockCursor cursor;           // what this task has already taken from its channel
         std::uint64_t objectId = 0;   // GameObject::InstanceId() of Options::object
         const void* objectPtr = nullptr;   // identity only, never dereferenced
@@ -217,6 +267,11 @@ private:
     std::size_t m_dead = 0;                                        // tombstones in m_tasks
     std::vector<std::size_t> m_retired;                            // slots retired during the running Update
     Handle m_nextHandle = 1;
+    std::vector<std::function<void()>> m_endOfFrame;
+    std::unordered_map<std::string, std::function<void()>> m_actions;
+    std::uint64_t m_jitterState = 0x9E3779B97F4A7C15ULL;
+    int m_loadSkipped = 0;
+    float RollJitter(float base, float jitter);
     ClockSet* m_clocks = nullptr;
     // >0 while Update runs: Cancel/Clear only retire tasks (handle = 0) and nothing is
     // compacted, so the list never shifts under a running callback.

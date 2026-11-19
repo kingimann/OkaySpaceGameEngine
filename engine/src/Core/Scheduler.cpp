@@ -1,5 +1,6 @@
 #include "okay/Core/Scheduler.hpp"
 #include "okay/Core/Clock.hpp"
+#include "okay/Core/SaveFramework.hpp"
 #include "okay/Core/Time.hpp"
 #include "okay/Math/Mathf.hpp"
 #include "okay/Scene/GameObject.hpp"
@@ -7,6 +8,7 @@
 #include <cmath>
 #include <cstdio>
 #include <exception>
+#include <limits>
 #include <utility>
 
 namespace okay {
@@ -63,6 +65,14 @@ Scheduler::Handle Scheduler::Add(Task&& t, const Options& options) {
     t.tag = options.tag;
     t.clock = options.clock;
     t.alive = options.alive;
+    t.baseline = t.period;
+    t.jitter = (options.jitter > 0.0f && std::isfinite(options.jitter)) ? (options.jitter < 0.99f ? options.jitter : 0.99f) : 0.0f;
+    if (options.firstDelay >= 0.0f && std::isfinite(options.firstDelay) && !t.isTween && t.repeatsLeft != 0) {
+        t.period = options.firstDelay;
+        t.firstPending = true;
+    } else if (t.jitter > 0.0f && std::isfinite(t.period)) {
+        t.period = RollJitter(t.baseline, t.jitter);
+    }
     if (options.object) {
         t.objectId = options.object->InstanceId();
         t.objectPtr = options.object;
@@ -155,6 +165,127 @@ Scheduler::Handle Scheduler::InvokeRepeating(float interval, std::function<void(
     t.isTween = false;
     t.action = std::move(fn);
     return Add(std::move(t), options);
+}
+
+float Scheduler::RollJitter(float base, float jitter) {
+    // splitmix64: a small, well-mixed stream that is the same on every platform.
+    m_jitterState += 0x9E3779B97F4A7C15ULL;
+    std::uint64_t z = m_jitterState;
+    z = (z ^ (z >> 30)) * 0xBF58476D1CE4E5B9ULL;
+    z = (z ^ (z >> 27)) * 0x94D049BB133111EBULL;
+    z ^= z >> 31;
+    const double r = (double)(z >> 11) / 9007199254740992.0;   // [0, 1)
+    const double v = (double)base * (1.0 + (double)jitter * (2.0 * r - 1.0));
+    return SaneInterval((float)v);
+}
+
+Scheduler::Handle Scheduler::NextFrame(std::function<void()> fn) { return NextFrame(std::move(fn), Options{}); }
+Scheduler::Handle Scheduler::NextFrame(std::function<void()> fn, const Options& options) {
+    return Invoke(0.0f, std::move(fn), options);
+}
+
+Scheduler::Handle Scheduler::At(double seconds, std::function<void()> fn) { return At(seconds, std::move(fn), Options{}); }
+Scheduler::Handle Scheduler::At(double seconds, std::function<void()> fn, const Options& options) {
+    double now;
+    if (!options.clock.empty()) {
+        const Clock* c = (m_clocks ? *m_clocks : ClockSet::Global()).Find(options.clock);
+        now = c ? c->Elapsed() : Time::UnscaledTime();
+    } else {
+        now = options.unscaled ? Time::UnscaledTime() : Time::ElapsedTimeD();
+    }
+    const double wait = std::isfinite(seconds) ? seconds - now : 0.0;
+    const float delay = wait > 0.0 ? (wait < (double)std::numeric_limits<float>::max() ? (float)wait : std::numeric_limits<float>::max()) : 0.0f;
+    return Invoke(delay, std::move(fn), options);
+}
+
+void Scheduler::EndOfFrame(std::function<void()> fn) { if (fn) m_endOfFrame.push_back(std::move(fn)); }
+
+void Scheduler::RegisterAction(const std::string& name, std::function<void()> fn) {
+    if (name.empty()) return;
+    if (fn) m_actions[name] = std::move(fn); else m_actions.erase(name);
+}
+
+Scheduler::Handle Scheduler::InvokeAction(float delay, const std::string& name) { return InvokeAction(delay, name, Options{}); }
+Scheduler::Handle Scheduler::InvokeActionRepeating(float interval, const std::string& name, int repeatCount) {
+    return InvokeActionRepeating(interval, name, repeatCount, Options{});
+}
+
+Scheduler::Handle Scheduler::InvokeAction(float delay, const std::string& name, const Options& options) {
+    if (name.empty()) return InvalidHandle;
+    Task t{};
+    t.period = SaneDelay(delay);
+    t.repeatsLeft = 0;
+    t.isTween = false;
+    t.actionName = name;
+    t.action = [this, name] { auto it = m_actions.find(name); if (it != m_actions.end() && it->second) { auto fn = it->second; fn(); } };
+    return Add(std::move(t), options);
+}
+
+Scheduler::Handle Scheduler::InvokeActionRepeating(float interval, const std::string& name, int repeatCount, const Options& options) {
+    if (name.empty()) return InvalidHandle;
+    Task t{};
+    t.period = SaneInterval(interval);
+    t.repeatsLeft = repeatCount;
+    t.isTween = false;
+    t.actionName = name;
+    t.action = [this, name] { auto it = m_actions.find(name); if (it != m_actions.end() && it->second) { auto fn = it->second; fn(); } };
+    return Add(std::move(t), options);
+}
+
+int Scheduler::SaveState(SaveWriter w) const {
+    int n = 0;
+    for (const Task& t : m_tasks) {
+        if (t.handle == InvalidHandle || t.actionName.empty() || t.isTween) continue;
+        SaveWriter tw = w.Scope("timers").Scope(std::to_string(n));
+        tw.String("action", t.actionName);
+        tw.Float("period", t.baseline);
+        tw.Float("elapsed", (float)t.elapsed);
+        tw.Float("current", t.period);
+        tw.Int("repeats", t.repeatsLeft);
+        tw.Float("jitter", t.jitter);
+        tw.Bool("paused", t.paused);
+        tw.Bool("unscaled", t.unscaled);
+        if (!t.tag.empty()) tw.String("tag", t.tag);
+        if (!t.clock.empty()) tw.String("clock", t.clock);
+        ++n;
+    }
+    w.Int("timers.n", n);
+    return n;
+}
+
+int Scheduler::LoadState(const SaveReader& r) {
+    m_loadSkipped = 0;
+    // Every named timer goes first: the saved set replaces them (plain code timers are not touched).
+    std::vector<Handle> named;
+    for (const Task& t : m_tasks) if (t.handle != InvalidHandle && !t.actionName.empty()) named.push_back(t.handle);
+    for (Handle h : named) Cancel(h);
+    int n = r.Int("timers.n", 0);
+    if (n < 0) n = 0;
+    if (n > 100000) n = 100000;
+    int restored = 0;
+    for (int i = 0; i < n; ++i) {
+        const SaveReader tr = r.Scope("timers").Scope(std::to_string(i));
+        const std::string name = tr.String("action", "");
+        if (name.empty() || !HasAction(name)) { ++m_loadSkipped; continue; }
+        Options o;
+        o.tag = tr.String("tag", "");
+        o.clock = tr.String("clock", "");
+        o.unscaled = tr.Bool("unscaled", false);
+        o.jitter = tr.Float("jitter", 0.0f);
+        const int repeats = tr.Int("repeats", 0);
+        const float period = tr.Float("period", 0.0f);
+        const Handle h = repeats != 0 ? InvokeActionRepeating(period, name, repeats, o) : InvokeAction(period, name, o);
+        if (h == InvalidHandle) { ++m_loadSkipped; continue; }
+        if (Task* t = FindMut(h)) {
+            const float cur = tr.Float("current", period);
+            if (std::isfinite(cur) && cur > 0.0f) t->period = cur;
+            const float el = tr.Float("elapsed", 0.0f);
+            t->elapsed = (std::isfinite(el) && el > 0.0f) ? (double)el : 0.0;
+            t->paused = tr.Bool("paused", false);
+        }
+        ++restored;
+    }
+    return restored;
 }
 
 Scheduler::Handle Scheduler::Tween(float duration, std::function<void(float)> onUpdate,
@@ -277,6 +408,8 @@ bool Scheduler::SetInterval(Handle handle, float seconds) {
     Task* t = FindMut(handle);
     if (!t) return false;
     t->period = t->isTween || t->repeatsLeft != 0 ? SaneInterval(seconds) : SaneDelay(seconds);
+    t->baseline = t->period;
+    t->firstPending = false;
     return true;
 }
 
@@ -327,6 +460,7 @@ std::vector<Scheduler::TaskInfo> Scheduler::Tasks() const {
         if (t.objectId != 0)
             if (const GameObject* go = GameObject::FromInstanceId(t.objectId)) i.objectName = go->name;
         i.age = t.age;
+        i.action = t.actionName;
         i.overdue = std::max(0.0, t.elapsed - (double)t.period);
         out.push_back(std::move(i));
     }
@@ -467,6 +601,8 @@ void Scheduler::RunTask(std::size_t i, float dt, float unscaledDt) {
         t.action = std::move(action);
         if (t.repeatsLeft == 0) { Retire(i); break; }     // one-shot done
         if (t.repeatsLeft > 0 && --t.repeatsLeft == 0) { Retire(i); break; }
+        if (t.firstPending) { t.firstPending = false; t.period = t.baseline; }   // the wait before the first run is over
+        if (t.jitter > 0.0f) t.period = RollJitter(t.baseline, t.jitter);   // the next wait is its own random length
     }
 }
 
@@ -489,7 +625,11 @@ void Scheduler::Update(float dt, float unscaledDt) {
     // of its task while it runs, so it stays alive whatever the list does.
     std::exception_ptr failure;
     ++m_updateDepth;
-    for (std::size_t i = 0; i < m_tasks.size(); ++i) {
+    // Only the tasks that existed when this update began are stepped: a timer a callback schedules waits
+    // for the next update (it used to be stepped at once, so it fired up to a frame early, and a callback
+    // that re-armed itself with a delay of 0 kept this loop running for ever).
+    const std::size_t count = m_tasks.size();
+    for (std::size_t i = 0; i < count && i < m_tasks.size(); ++i) {
         if (m_tasks[i].handle == InvalidHandle) continue;
         try {
             RunTask(i, dt, unscaledDt);
@@ -502,7 +642,16 @@ void Scheduler::Update(float dt, float unscaledDt) {
     }
     // Free what the tasks that finished or were cancelled captured, still inside the update so
     // a destructor that calls back in sees the same rules as a callback does.
-    if (m_updateDepth == 1) ReleaseRetired();
+    if (m_updateDepth == 1) {
+        // End of this update: what EndOfFrame() queued, in the order it was queued (one that queues another
+        // runs it in the next update, so a loop of them cannot hold this one up).
+        std::vector<std::function<void()>> eof;
+        eof.swap(m_endOfFrame);
+        for (auto& fn : eof) {
+            try { if (fn) fn(); } catch (...) { if (!failure) failure = std::current_exception(); }
+        }
+        ReleaseRetired();
+    }
     --m_updateDepth;
     if (m_updateDepth == 0 && m_dead > 32 && m_dead * 4 > m_tasks.size()) Compact();   // a nested Update leaves it to the outer one
     if (failure) std::rethrow_exception(failure);

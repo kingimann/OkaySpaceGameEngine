@@ -396,6 +396,8 @@ struct LuaScriptVM::Impl {
             std::string k = me->KeyOf(S, a, 1);
             GameObject* g = me->GoOf(a[0]);
             Transform* t = g->transform;
+            if (k != "position" && k != "localPosition" && k != "localScale" && k != "localEulerAngles" && k != "eulerAngles")
+                S.Error("cannot set '" + k + "' on a Transform (position, localPosition, localScale, localEulerAngles)");
             Vec3 v = me->NeedVec(a.size() > 2 ? a[2] : Value(), ("transform." + k).c_str());
             if (k == "position") t->SetPosition(v);
             else if (k == "localPosition") t->localPosition = v;

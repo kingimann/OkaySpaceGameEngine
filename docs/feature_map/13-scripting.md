@@ -49,21 +49,24 @@ Two OkayScript languages exist side by side: id `okayscript` (old VM, the defaul
 - **Seen as:** a script is rejected with "isn't supported yet"; a new feature works in one language and not the other; "A script needs a class"; errors point at the wrong column
 - **Ask me like:** "work on 13.2.2, add try/catch to the typed language"; "which branch has coroutines for the new OkayScript"
 
-### 13.3 Removed Lua and C# (Mono) backends
-- **What:** The optional third-party Lua and Mono C# backends were removed (our own scripting languages replace them). An old scene or project whose script names language `lua`, `csharp` or `cs` still loads; the script just does not run, and loading it reports "script language 'lua' is no longer supported" (Console, scene validator, project diagnostics).
+### 13.3 Lua (our own) and the removed C# (Mono) backend
+- **What:** Language `lua` (`.lua` files) is our own Lua 5.4, written from the public manual (decision record: `docs/scripting_migration.md`). It runs through the same `IScriptVM` seam and `ScriptComponent` as OkayScript: global functions are the entry points (Start, Update, events), global variables are the public fields, with instruction, time and memory limits and hot reload. The third-party Mono C# backend stays removed; an old scene naming `csharp` or `cs` still loads and says "no longer supported". Real C# is an open decision (options analysis in the migration record).
 - **Parts:**
-  - 13.3.1 Removed-language message - `Scripting/ScriptVM` - `RemovedScriptLanguageMessage(lang)` gives the clear text for `lua`, `csharp`, `cs`; used by `ScriptComponent::LoadSource` and the scene validator
-- **Code:** `Scripting/ScriptVM`, `Components/ScriptComponent`
-- **API:** `CreateScriptVM(lang)` (returns null for the removed names), `RemovedScriptLanguageMessage()`, `AvailableScriptLanguages()`
-- **Editor:** `.lua` and `.cs` files still show as scripts in the Project Browser; opening one loads it with the "no longer supported" message
-- **Docs:** `docs/scripting.md`
-- **Tests:** `script_removed_langs`
-- **Status:** Works
-- **Open:** a future Lua-style, JS-style and Python-style text language on our own VM (see UNFINISHED.md) is planned; nothing converts old Lua or C# scripts
-- **Related:** 13.4, 13.5
-- **Words:** Lua, C#, Mono, mcs, csharp, lua backend, removed language, language not supported, old project, script language dropdown
-- **Seen as:** a Lua or C# script does nothing; the Console says the script language is no longer supported; an old scene loads but its script is silent
-- **Ask me like:** "why does my old Lua script not run"
+  - 13.3.1 Lua language core - `Lua/LuaCompile`, `Lua/LuaVM`, `Lua/LuaLib` - lexer, parser, stack bytecode compiler, VM with tables, metatables, closures, coroutines, garbage collector, string patterns, math, table, limited os and io
+  - 13.3.2 Lua engine binding - `Lua/LuaScriptVM` - gameObject, transform, components by property name, Find, Destroy, Time, Input, Log, Physics.Raycast, Vector3, Mathf, events with `other`, public fields, hot reload
+  - 13.3.3 Limits and sandbox - `Lua/LuaVM` - per-call instruction and wall-clock budget, memory cap, no file, process or module access
+  - 13.3.4 Removed-language message - `Scripting/ScriptVM` - `RemovedScriptLanguageMessage(lang)` gives the clear text for `csharp`, `cs`; used by `ScriptComponent::LoadSource` and the scene validator
+- **Code:** `Lua/LuaCore`, `Lua/LuaCompile`, `Lua/LuaVM`, `Lua/LuaLib`, `Lua/LuaInterp`, `Lua/LuaScriptVM`, `Scripting/ScriptVM`, `Components/ScriptComponent`
+- **API:** `okay::LuaScriptVM`, `okay::lua::Interpreter`, `CreateScriptVM("lua")`, `IScriptVM::HotReload/SupportsHotReload`, `RemovedScriptLanguageMessage()`, `AvailableScriptLanguages()`
+- **Editor:** Script Editor "New Script" has a Language picker (OkayScript or Lua); `.lua` files attach as `lua` script components (unbuilt here: see the migration record)
+- **Docs:** `docs/scripting_migration.md` (internal record)
+- **Tests:** `lua_lang`, `lua_fuzz`, `lua_binding`, `script_removed_langs`, `starter_script`
+- **Status:** Partly works - the language and the basic binding are tested (language and fuzz tests also under ASan and UBSan); not yet bound: instantiate, 2D physics queries, wait or coroutine scheduler, UI, audio, tweening, saves; no `goto`, `<close>`, `utf8`; the editor change and the full build are unverified
+- **Open:** the OkayScript builtin table is not shared with Lua (the same engine feature must be bound twice); Visual Script nodes still run on the OkayScript VM; real C# (options a/b/c in the migration record) needs an owner decision and a CLAUDE.md exception
+- **Related:** 13.1, 13.4, 13.5, 14
+- **Words:** Lua, lua script, .lua, C#, Mono, csharp, removed language, language not supported, old project, script language dropdown, hot reload, sandbox, instruction limit
+- **Seen as:** a Lua script errors with `script.lua:LINE:`; a Lua script says "too many instructions"; a C# script does nothing and the Console says the language is no longer supported
+- **Ask me like:** "work on 13.3.2, bind Instantiate for Lua"; "why does my C# script not run"
 
 ### 13.4 Script components and script UI
 - **What:** The glue that puts a script on an object: the language-neutral VM interface, the Script component with its source and public fields, starter scripts, and the bridge that lets scripts draw immediate-mode UI.

@@ -136,12 +136,25 @@ No performance tuning has been done; it is a plain stack bytecode loop.
 
 ## 5. Status, tests, and what is unverified
 
-See the final report of the branch for the exact numbers of the last run. Test targets (all registered in
-`tests/CMakeLists.txt`): `lua_lang` (conformance from the manual, error messages, syntax errors, coroutines, metatables, limits,
-sandbox, garbage collection under load), `lua_fuzz` (token soup, mutated programs, random bytes, pathological nesting; run
-under AddressSanitizer and UBSan on the development machine), `lua_binding` (the engine binding through `ScriptComponent`,
-the example scene, hot reload), plus the changed `script_removed_langs` and the existing `starter_script`, which now also
-runs the Lua starter.
+Test targets (registered in `tests/CMakeLists.txt`): `lua_lang` (488 checks: conformance written from the manual, error
+messages, syntax errors, coroutines, metatables, limits, sandbox, garbage collection under load), `lua_fuzz` (17,000 checks:
+token soup, mutated programs, random bytes, pathological nesting), `lua_binding` (148 checks: the engine binding through
+`ScriptComponent`, the example scene, hot reload), the changed `script_removed_langs`, and the existing `starter_script`
+(now also runs the Lua starter) and `scripting`.
+
+Results on the development machine (2026-11-19, Linux, g++): all of the above pass. `lua_lang` and `lua_fuzz` also ran clean
+under AddressSanitizer and UBSan, and the fuzz test found one real bug (a 20,000 term `a + b + ...` chain overflowed the C++
+stack in the compiler; the compiler now walks such chains in a loop and the parser refuses chains over 600 operators or
+calls with a plain message). The three tests that need the engine were run against the engine sources of
+commit `641f54cb` (the only prebuilt engine library on the machine) with the new and changed files patched in, **not** a
+full build of current main: a full Debug build of this branch was started and abandoned because the machine was too
+loaded (4 hours estimated). Not run: the full CMake build and `ctest` of this branch, the editor (`editor/main.cpp`
+changes are unbuilt), the Windows (MinGW) build (`branch_lint.py mingw` compiled the new files with the win32-thread
+mingw compiler and passed), and the one `lua_binding` line that calls `HotReload` on an OkayScript VM (it needs the new
+interface compiled into the OkayScript backend).
+
+Speed (one run, -O2, unloaded core, plain loop and calls): `fib(27)` 0.055 s, a 5,000,000 iteration arithmetic loop 0.25 s,
+300,000 `tostring` and `#` operations 0.11 s. No tuning done.
 
 ## 6. C# (stage 3): options analysis, nothing written yet
 

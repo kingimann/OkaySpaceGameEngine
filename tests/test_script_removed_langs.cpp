@@ -52,9 +52,8 @@ int main() {
         CHECK(la->Language() == "lua");
         CHECK(la->Source() == "function update(dt) end");
         std::string e;
-        CHECK(!la->LoadSource(la->Source(), &e));
-        CHECK(e.find("no longer supported") != std::string::npos);
-        CHECK(e.find("lua") != std::string::npos);
+        CHECK(la->LoadSource(la->Source(), &e));     // our own Lua runs it now
+        CHECK(e.empty());
     }
     if (lb) {
         CHECK(lb->Language() == "csharp");

@@ -764,7 +764,7 @@ std::vector<Value> State::Call(const Value& f, std::vector<Value> args, int nret
     std::size_t depth = co->frames.size();
     ++co->nativeNest; ++cDepth;
     struct G { Coro* c; State* s; bool dn; ~G() { --c->nativeNest; --s->cDepth; s->directNative = dn; } } g{co, this, directNative};
-    directNative = (f.t == T::Native);
+    directNative = nextCallDirect; nextCallDirect = false;
     if (PreCall(co, fidx, (int)args.size(), nret, 0, Value())) Run(co, depth);
     std::vector<Value> out(co->st.begin() + fidx, co->st.end());
     co->st.resize(fidx);

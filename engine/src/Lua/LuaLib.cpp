@@ -519,7 +519,7 @@ void OpenBase(State& L) {
                 Value f = a[0], h = x ? a[1] : Value();
                 std::vector<Value> rest(a.begin() + (x ? 2 : 1), a.end());
                 Coro* co = L.cur; std::size_t fsz = co->frames.size(), ssz = co->st.size();
-                try { auto res = L.Call(f, rest, -1); r.push_back(Value::Bool(true)); for (auto& v : res) r.push_back(v); }
+                try { L.nextCallDirect = f.t == T::Native; auto res = L.Call(f, rest, -1); r.push_back(Value::Bool(true)); for (auto& v : res) r.push_back(v); }
                 catch (LuaError& e) {
                     if (e.fatal) throw;
                     co->frames.resize(fsz); co->st.resize(ssz);

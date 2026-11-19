@@ -45,6 +45,7 @@ Find the window, page or symptom, then say the number. Back to the [overview](..
 | a button does nothing on click | [12.2](12-ingame-ui.md#122-widgets-button-image-raw-image-text-panel-progress-rating) Widgets: button, image, raw image, text, panel, progress, rating |
 | a button drifts when the window resizes | [12.1](12-ingame-ui.md#121-canvas-anchors-flex-layout-safe-area) Canvas, anchors, flex layout, safe area |
 | a button in a world panel cannot be clicked | [12.6](12-ingame-ui.md#126-world-space-ui) World-space UI |
+| a C# script does nothing and the Console says the language is no longer supported | [13.3](13-scripting.md#133-lua-our-own-and-the-removed-c-mono-backend) Lua (our own) and the removed C# (Mono) backend |
 | a camera follow lags or oscillates | [36.3](36-math-geometry.md#363-scalars-interpolation-and-easing) Scalars, interpolation and easing |
 | a camera follow overshoots or lags | [1.2](01-core-scene.md#12-timers-and-tweens) Timers and tweens |
 | a camera glides forever toward a target | [36.1](36-math-geometry.md#361-vectors-and-colours) Vectors and colours |
@@ -154,7 +155,8 @@ Find the window, page or symptom, then say the number. Back to the [overview](..
 | a loop cut previews but does not apply | [3.2](03-modeling-import.md#32-edge-and-loop-tools) Edge and loop tools |
 | a loop never ends or runs once | [14.3](14-visual-scripting.md#143-functions-loops-control-flow) Functions, loops, control flow |
 | a loop over thousands of items is slow on one thread | [1.18](01-core-scene.md#118-core-runtime-utilities) Core runtime utilities |
-| a Lua or C# script does nothing | [13.3](13-scripting.md#133-removed-lua-and-c-mono-backends) Removed Lua and C# (Mono) backends |
+| a Lua script errors with `script.lua:LINE: | [13.3](13-scripting.md#133-lua-our-own-and-the-removed-c-mono-backend) Lua (our own) and the removed C# (Mono) backend |
+| a Lua script says "too many instructions | [13.3](13-scripting.md#133-lua-our-own-and-the-removed-c-mono-backend) Lua (our own) and the removed C# (Mono) backend |
 | a marquee picks nodes it only touches | [36.4](36-math-geometry.md#364-bounds-rectangles-and-shapes) Bounds, rectangles and shapes |
 | a material change does not show | [2.2](02-rendering-world.md#22-materials-and-textures) Materials and textures |
 | a material does not apply to the selection | [15.13](15-editor.md#1513-content-editors-and-tool-windows) Content editors and tool windows |
@@ -383,7 +385,6 @@ Find the window, page or symptom, then say the number. Back to the [overview](..
 | an object survives (or does not survive) a scene change | [1.4](01-core-scene.md#14-scene-lifecycle) Scene lifecycle |
 | an old client can't join a server with replay protection | [39.2](39-security-anticheat.md#392-transport-security-encryption-replay-protection-sealed-join-host-keys) Transport security: encryption, replay protection, sealed join, host keys |
 | an old object with Actions behaves differently in the graph | [14.6](14-visual-scripting.md#146-action-framework) Action framework |
-| an old scene loads but its script is silent | [13.3](13-scripting.md#133-removed-lua-and-c-mono-backends) Removed Lua and C# (Mono) backends |
 | an option has no effect | [41.1](41-build-tools-infra.md#411-cmake-project-layout-and-options) CMake project layout and options |
 | an overlay is reported as an unknown module | [39.5](39-security-anticheat.md#395-runtime-checks-and-the-clock-heartbeat) Runtime checks and the clock heartbeat |
 | an RPC is ignored (rate limited) | [16.11](16-networking.md#1611-rpc-syncvars-spawning-and-chat) RPC, SyncVars, spawning and chat |
@@ -986,7 +987,6 @@ Find the window, page or symptom, then say the number. Back to the [overview](..
 | the collider ignores the modified mesh | [3.3](03-modeling-import.md#33-modifiers) Modifiers |
 | the Console is flooded by one repeated line | [15.11](15-editor.md#1511-console-and-diagnostics-panels) Console and diagnostics panels |
 | the Console lists Visual Script errors when Play starts | [14.2](14-visual-scripting.md#142-typed-pins-variables-and-scopes-object-references) Typed pins, variables and scopes, object references |
-| the Console says the script language is no longer supported | [13.3](13-scripting.md#133-removed-lua-and-c-mono-backends) Removed Lua and C# (Mono) backends |
 | the Console shows the same line many times | [1.10](01-core-scene.md#110-logging-and-profiling) Logging and profiling |
 | the context menu lacks an entry | [15.1](15-editor.md#151-hierarchy) Hierarchy |
 | the controller does not shake on a hit or explosion | [8.6](08-input.md#86-rumble-and-haptics) Rumble and haptics |

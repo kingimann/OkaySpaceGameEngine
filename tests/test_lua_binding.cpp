@@ -209,19 +209,28 @@ int main() {
         CHECK(g_errors.size() >= 2);
         CHECK(Has(g_errors, "script.lua:5: attempt to index a nil value (local 'x')"));
         CHECK_NEAR(sc->VM()->GetGlobal("n").AsFloat(), 2.0f, 1e-6f);   // ran twice: an error does not stop the game
-        // unknown names say what is wrong
-        g_errors.clear();
-        CHECK(sc->LoadSource("function Update(dt) transform.nonsense = 1 end\n"));
-        scene.Update(0.016f);
-        CHECK(Has(g_errors, "cannot set 'nonsense' on a Transform"));
-        g_errors.clear();
-        CHECK(sc->LoadSource("function Update(dt) local k = Input.GetKey('nokey') end\n"));
-        scene.Update(0.016f);
+        // unknown names say what is wrong (each case in its own scene: a new script is bound when its scene starts)
+        auto runOnce = [&](const char* src, int frames = 1) {
+            Scene s2("S2");
+            GameObject* g2 = s2.CreateGameObject("Me");
+            auto* c2 = g2->AddComponent<ScriptComponent>("lua");
+            g_errors.clear();
+            CHECK(c2->LoadSource(src));
+            s2.Start();
+            for (int i = 0; i < frames; ++i) s2.Update(0.016f);
+        };
+        runOnce("function Update(dt) transform.nonsense = Vector3.new(1, 2, 3) end\n");
+        CHECK(Has(g_errors, "script.lua:1: cannot set 'nonsense' on a Transform"));
+        runOnce("function Update(dt) transform.position = 5 end\n");
+        CHECK(Has(g_errors, "transform.position needs a vector"));
+        runOnce("function Update(dt) local k = Input.GetKey('nokey') end\n");
         CHECK(Has(g_errors, "unknown key name 'nokey'"));
-        g_errors.clear();
-        CHECK(sc->LoadSource("function Update(dt) gameObject:GetComponent('Rigidbody3D').nothing = 1 end\nfunction Start() end\n"));
-        scene.Update(0.016f);
-        CHECK(g_errors.empty() || Has(g_errors, "attempt to index a nil value"));   // no such component on this object: a script error, not a crash
+        runOnce("function Update(dt) gameObject:GetComponent('Rigidbody3D').nothing = 1 end\n");
+        CHECK(Has(g_errors, "attempt to index a nil value"));   // this object has no such component: a script error, not a crash
+        runOnce("function Update(dt) gameObject:GetComponent('Transform').nothing = 1 end\n");
+        CHECK(Has(g_errors, "cannot set 'nothing' on a Transform"));
+        runOnce("function Update(dt) local x = gameObject.name .. nil_var end\n");
+        CHECK(Has(g_errors, "attempt to concatenate a nil value (global 'nil_var')"));
     }
 
     // ---- limits: an endless loop and a memory hog do not freeze or crash the game

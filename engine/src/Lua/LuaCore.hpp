@@ -161,6 +161,7 @@ struct State {
     std::int64_t budget = 0;
     double deadline = 0;
     int cDepth = 0;
+    bool nextCallDirect = false; // set by pcall before it calls a native: that call has no script caller
     bool directNative = false;   // a native called straight by pcall: errors carry no script position
     Special lastSpecial = Special::None;
 

@@ -791,7 +791,7 @@ void RegisterWind() {
     }
     {
         PropertyBuilder<WindSway> b("WindSway", "windsway", "Environment");
-        b.AddEnum("weight", &WindSway::weight, {"Height", "Flag", "Custom"}).Tooltip("Height: the top moves most (trees, grass). Flag: the far edge waves, the pole side stays")
+        b.AddEnum("weight", &WindSway::weight, {"Height", "Flag"}).Tooltip("Height: the top moves most (trees, grass). Flag: the far edge waves, the pole side stays")
          .AddFloat("amount", &WindSway::amount).Range(0, 20, 0.01).Tooltip("Metres the top moves in a strong wind (12 m/s)")
          .AddFloat("height", &WindSway::height).Range(0, 1000, 0.1).Tooltip("Metres of the mesh that bend. 0 = measure the mesh")
          .AddFloat("stiffness", &WindSway::stiffness).Range(0.5, 6, 0.05).Tooltip("1 = bends evenly, 3 = only the top bends")

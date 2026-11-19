@@ -135,6 +135,30 @@ struct BuildSettings {
     int   particleCap = 0;                 // 0 = no extra limit
     float gamepadDeadzone = 0.18f;         // stick dead zone
     int   sampleRate = 0;                  // 0 = 44100
+    // ---- round 3 ----
+    float renderScale = 1.0f;                        // 3D picture size, share of the window (0.25..1)
+    int   maxLights = 0;                             // most lights at once (0 = no limit)
+    bool  fogOff = false;                            // switch scene fog off
+    float mouseSensitivity = 1.0f;                   // look sensitivity multiplier
+    int   maxVoices = 0;                             // most sounds mixed at once (0 = no limit)
+    bool  crashReports = false;                      // install the crash handler
+    char  crashFolder[64] = "";                      // crash report folder name inside the save folder
+    char  launchArgs[256] = "";                      // command-line arguments baked into the game
+    char  defines[512] = "";                         // NAME=VALUE;NAME=VALUE engine variables set at start
+    int   webMemoryMB = 0;                           // Web: starting memory in MB (0 = Emscripten default)
+    bool  webCompress = false;                       // Web: also write .gz copies of the built files
+    int   androidMinSdk = 24;                        // Android: lowest Android version (API level)
+    int   androidTargetSdk = 34;                     // Android: target API level
+    int   androidOrientation = 0;                    // Android: 0 sensor, 1 landscape, 2 portrait
+    char  androidPermissions[256] = "INTERNET";      // Android: permissions, separated by ;
+    bool  createInstaller = false;                   // write an installer script (.nsi) next to the build
+    char  installFolder[64] = "";                    // installer: install folder name (empty = the game name)
+    char  licenseFile[260] = "";                     // installer: a text file shown as the licence
+    bool  startMenuEntry = true;                     // installer: Start menu entry
+    bool  desktopShortcut = false;                   // installer: desktop shortcut
+    char  overridesWeb[512] = "";                    // settings that differ for Web (key=value;key=value)
+    char  overridesAndroid[512] = "";                // settings that differ for Android
+    char  overridesServer[512] = "";                 // settings that differ for the Server
     char  excludeList[1024] = "";          // project files left out of the build: "Assets/a.png;Assets/Old/" (a trailing / is a whole folder)
 };
 // ---- Build profiles -------------
@@ -229,6 +253,29 @@ inline void WriteBuildProfileBlock(std::ostream& o, const BuildProfile& p) {
     o << "renderer=" << b.renderer << "\n" << "particleCap=" << b.particleCap << "\n";
     o << "gamepadDeadzone=" << FloatText(b.gamepadDeadzone) << "\n" << "sampleRate=" << b.sampleRate << "\n";
     o << "exclude=" << EscapeProfileValue(b.excludeList) << "\n";
+    o << "renderScale=" << FloatText(b.renderScale) << "\n";
+    o << "maxLights=" << b.maxLights << "\n";
+    o << "fogOff=" << b.fogOff << "\n";
+    o << "mouseSens=" << FloatText(b.mouseSensitivity) << "\n";
+    o << "maxVoices=" << b.maxVoices << "\n";
+    o << "crashReports=" << b.crashReports << "\n";
+    o << "crashFolder=" << EscapeProfileValue(b.crashFolder) << "\n";
+    o << "launchArgs=" << EscapeProfileValue(b.launchArgs) << "\n";
+    o << "defines=" << EscapeProfileValue(b.defines) << "\n";
+    o << "webMemoryMB=" << b.webMemoryMB << "\n";
+    o << "webCompress=" << b.webCompress << "\n";
+    o << "androidMinSdk=" << b.androidMinSdk << "\n";
+    o << "androidTargetSdk=" << b.androidTargetSdk << "\n";
+    o << "androidOrientation=" << b.androidOrientation << "\n";
+    o << "androidPerms=" << EscapeProfileValue(b.androidPermissions) << "\n";
+    o << "createInstaller=" << b.createInstaller << "\n";
+    o << "installFolder=" << EscapeProfileValue(b.installFolder) << "\n";
+    o << "licenseFile=" << EscapeProfileValue(b.licenseFile) << "\n";
+    o << "startMenu=" << b.startMenuEntry << "\n";
+    o << "desktopShortcut=" << b.desktopShortcut << "\n";
+    o << "ovWeb=" << EscapeProfileValue(b.overridesWeb) << "\n";
+    o << "ovAndroid=" << EscapeProfileValue(b.overridesAndroid) << "\n";
+    o << "ovServer=" << EscapeProfileValue(b.overridesServer) << "\n";
     for (const BuildScene& sc : b.scenes) o << "scene=" << (sc.on ? 1 : 0) << "|" << EscapeProfileValue(sc.path) << "\n";
 }
 
@@ -329,6 +376,29 @@ inline void ApplyBuildProfileKV(BuildProfile& p, const std::string& k, const std
     else if (k == "gamepadDeadzone") b.gamepadDeadzone = F();
     else if (k == "sampleRate") b.sampleRate = I();
     else if (k == "exclude")   S(b.excludeList, sizeof(b.excludeList));
+    else if (k == "renderScale") b.renderScale = F();
+    else if (k == "maxLights") b.maxLights = I();
+    else if (k == "fogOff") b.fogOff = B();
+    else if (k == "mouseSens") b.mouseSensitivity = F();
+    else if (k == "maxVoices") b.maxVoices = I();
+    else if (k == "crashReports") b.crashReports = B();
+    else if (k == "crashFolder") S(b.crashFolder, sizeof(b.crashFolder));
+    else if (k == "launchArgs") S(b.launchArgs, sizeof(b.launchArgs));
+    else if (k == "defines") S(b.defines, sizeof(b.defines));
+    else if (k == "webMemoryMB") b.webMemoryMB = I();
+    else if (k == "webCompress") b.webCompress = B();
+    else if (k == "androidMinSdk") b.androidMinSdk = I();
+    else if (k == "androidTargetSdk") b.androidTargetSdk = I();
+    else if (k == "androidOrientation") b.androidOrientation = I();
+    else if (k == "androidPerms") S(b.androidPermissions, sizeof(b.androidPermissions));
+    else if (k == "createInstaller") b.createInstaller = B();
+    else if (k == "installFolder") S(b.installFolder, sizeof(b.installFolder));
+    else if (k == "licenseFile") S(b.licenseFile, sizeof(b.licenseFile));
+    else if (k == "startMenu") b.startMenuEntry = B();
+    else if (k == "desktopShortcut") b.desktopShortcut = B();
+    else if (k == "ovWeb") S(b.overridesWeb, sizeof(b.overridesWeb));
+    else if (k == "ovAndroid") S(b.overridesAndroid, sizeof(b.overridesAndroid));
+    else if (k == "ovServer") S(b.overridesServer, sizeof(b.overridesServer));
 }
 
 

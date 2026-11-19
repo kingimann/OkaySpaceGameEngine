@@ -144,8 +144,8 @@ public:
         if (m_haveMouse && !uiBlocked && !spaceChanged) {
             float pdx = mp.x - m_lastMouse.x, pdy = mp.y - m_lastMouse.y;
             LookPixels(pdx, pdy);
-            yaw   -= pdx * mouseSensitivity;
-            pitch += (invertY ? -1.0f : 1.0f) * pdy * mouseSensitivity;
+            yaw   -= pdx * mouseSensitivity * Input::LookScale();
+            pitch += (invertY ? -1.0f : 1.0f) * pdy * mouseSensitivity * Input::LookScale();
             pitch  = Mathf::Clamp(pitch, minPitch, maxPitch);
         }
         // Drop the baseline while a bag is open (locked/free mouse space switch) so the

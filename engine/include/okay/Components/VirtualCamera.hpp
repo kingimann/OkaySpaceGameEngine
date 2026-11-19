@@ -120,8 +120,8 @@ public:
                 m_lastMouse = m;
                 bool active = (orbitButton < 0) || Input::GetMouseButton(orbitButton);
                 if (active) {
-                    orbitYaw   += d.x * mouseSensitivity;
-                    orbitPitch -= d.y * mouseSensitivity;
+                    orbitYaw   += d.x * mouseSensitivity * Input::LookScale();
+                    orbitPitch -= d.y * mouseSensitivity * Input::LookScale();
                 }
             }
             orbitPitch = Mathf::Clamp(orbitPitch, orbitMinPitch, orbitMaxPitch);

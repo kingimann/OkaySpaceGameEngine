@@ -337,7 +337,7 @@ public:
             : DropLookHandoff(spaceChanged, m_dropLook, pdx, pdy);
         if (!m_haveMouse && spaceChanged) m_dropLook = true;
         if (m_haveMouse && !uiBlocked && !handoff) {
-            float sens = (captured ? capturedSensitivity : mouseSensitivity)
+            float sens = (captured ? capturedSensitivity : mouseSensitivity) * Input::LookScale()
                 * (zoomWithRightMouse && zoom ? zoomSensitivity : 1.0f);
             // Pixels, then degrees. Frame time is not part of this: a long frame
             // must not turn a small move into a flip.

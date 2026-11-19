@@ -1,5 +1,6 @@
 #pragma once
 #include "okay/Math/Vec3.hpp"
+#include <utility>
 #include <vector>
 #include <cmath>
 
@@ -85,6 +86,15 @@ struct SceneLights {
         return (i >= 0 && i < (int)List().size()) ? &List()[i] : nullptr;
     }
     static void Add(const LightSample& s) { List().push_back(s); }
+    /// Keep at most `n` lights (n <= 0: no limit). The main directional light always stays, so shadows keep working.
+    /// (Build Settings > Graphics > Most lights at once; the player calls it after the scene's lights are gathered.)
+    static void LimitTo(int n) {
+        auto& v = List();
+        if (n <= 0 || (int)v.size() <= n) return;
+        int& sun = SunIndex();
+        if (sun >= n) { std::swap(v[sun], v[0]); sun = 0; }
+        v.resize((std::size_t)n);
+    }
     static void SetAmbient(float a) {
         a = a < 0.0f ? 0.0f : (a > 1.0f ? 1.0f : a);
         Ambient() = a; AmbientColor() = Vec3{a, a, a};

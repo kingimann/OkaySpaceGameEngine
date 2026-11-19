@@ -1,4 +1,5 @@
 #pragma once
+#include <vector>
 #include "okay/Math/Vec3.hpp"
 #include "okay/Components/AudioSource.hpp"
 
@@ -27,6 +28,12 @@ struct AudioMixer {
     /// Silences output while the window is in the background (the host sets it);
     /// unlike `muted` it is not a player setting and is never saved.
     static inline bool  focusMuted = false;
+    /// Most sources mixed at once (0 = no limit). When more are sounding, the loudest ones keep playing and the rest wait
+    /// (Build Settings > Audio & Input > Most sounds at once). Quietness is volume x group level, lowered by distance.
+    static inline int   maxVoices = 0;
+    /// Which of `scores` (one per sounding source) may play under a limit of `cap`: the `cap` highest, ties by lower index.
+    /// cap <= 0 or cap >= the count: all of them.
+    static std::vector<bool> PickLoudest(const std::vector<float>& scores, int cap);
 
     /// Per-group level [0..1] and mute, under the master (AudioGroup order).
     static inline float groupVolume[(int)AudioGroup::Count] = {1.0f, 1.0f, 1.0f, 1.0f};

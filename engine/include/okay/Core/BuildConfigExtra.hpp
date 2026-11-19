@@ -29,7 +29,54 @@ struct ExtraConfig {
     int   particleCap = 0;           // most particles any one particle system keeps alive; 0 = no extra limit
     float gamepadDeadzone = 0.18f;   // the part of a stick's throw that reads 0 (0..0.95); 0.18 is the engine's own default
     int   sampleRate = 0;            // sound output rate in Hz (22050, 44100, 48000); 0 = 44100
+    // ---- round 3 ----
+    float renderScale = 1.0f;        // 3D picture size as a share of the window (0.25..1); 1 = full
+    int   maxLights = 0;             // most lights drawn at once; 0 = no limit
+    bool  fogOff = false;            // switch the scenes' fog off
+    float mouseSensitivity = 1.0f;   // multiplies every look controller's own sensitivity (0.1..5)
+    int   maxVoices = 0;             // most sounds mixed at once; 0 = no limit
+    bool  crashReports = false;      // install the crash handler and write crash reports
+    std::string crashFolder;         // folder name inside the save folder for the reports ("" = beside the game files)
+    std::vector<std::string> args;   // command-line arguments baked into the game, as if typed before the real ones
+    std::vector<std::pair<std::string, std::string>> defines;   // custom defines: engine variables (Cvars) set at start
 };
+
+/// Split "--flag value \"two words\"" into arguments: spaces separate, double quotes group. At most 32 arguments of at most 200 characters.
+inline std::vector<std::string> SplitArgs(const std::string& text) {
+    std::vector<std::string> out;
+    std::string cur; bool inQ = false, any = false;
+    auto push = [&]() { if (any && !cur.empty() && out.size() < 32 && cur.size() <= 200) out.push_back(cur); cur.clear(); any = false; };
+    for (char c : text) {
+        if (c == '"') { inQ = !inQ; any = true; }
+        else if (!inQ && (c == ' ' || c == '\t')) push();
+        else { cur.push_back(c); any = true; }
+    }
+    push();
+    return out;
+}
+/// A Cvar name: letters, digits, '_', '.', '-' (1..64 characters).
+inline bool IsValidDefineName(const std::string& n) {
+    if (n.empty() || n.size() > 64) return false;
+    for (char c : n) if (!(std::isalnum((unsigned char)c) || c == '_' || c == '.' || c == '-')) return false;
+    return true;
+}
+/// "NAME=VALUE;NAME2=VALUE2" -> pairs; bad names are skipped (and listed in `bad`).
+inline std::vector<std::pair<std::string, std::string>> ParseDefines(const std::string& text, std::vector<std::string>* bad = nullptr) {
+    std::vector<std::pair<std::string, std::string>> out;
+    std::size_t pos = 0;
+    while (pos <= text.size()) {
+        std::size_t e = text.find(';', pos); if (e == std::string::npos) e = text.size();
+        std::string it = text.substr(pos, e - pos); pos = e + 1;
+        const std::size_t a = it.find_first_not_of(" \t"); if (a == std::string::npos) continue;
+        it = it.substr(a);
+        const std::size_t eq = it.find('=');
+        std::string name = it.substr(0, eq == std::string::npos ? it.size() : eq);
+        while (!name.empty() && (name.back() == ' ' || name.back() == '\t')) name.pop_back();
+        if (eq == std::string::npos || !IsValidDefineName(name)) { if (bad) bad->push_back(name); continue; }
+        out.emplace_back(name, it.substr(eq + 1));
+    }
+    return out;
+}
 
 inline bool IsValidEnvName(const std::string& n) {
     if (n.empty() || n.size() > 64) return false;
@@ -100,6 +147,15 @@ inline bool ApplyExtraKey(ExtraConfig& c, const std::string& k, const std::strin
     else if (k == "particle_cap")      { const int n = std::atoi(v.c_str()); c.particleCap = n < 0 ? 0 : (n > 100000 ? 100000 : n); }
     else if (k == "gamepad_deadzone")  c.gamepadDeadzone = F(0.0f, 0.95f);
     else if (k == "sample_rate")       { const int n = std::atoi(v.c_str()); c.sampleRate = (n == 22050 || n == 44100 || n == 48000) ? n : 0; }
+    else if (k == "render_scale")      c.renderScale = F(0.25f, 1.0f);
+    else if (k == "max_lights")        { const int n = std::atoi(v.c_str()); c.maxLights = n < 0 ? 0 : (n > 256 ? 256 : n); }
+    else if (k == "fog_off")           c.fogOff = std::atoi(v.c_str()) != 0;
+    else if (k == "mouse_sensitivity") c.mouseSensitivity = F(0.1f, 5.0f);
+    else if (k == "max_voices")        { const int n = std::atoi(v.c_str()); c.maxVoices = n < 0 ? 0 : (n > 256 ? 256 : n); }
+    else if (k == "crash_reports")     c.crashReports = std::atoi(v.c_str()) != 0;
+    else if (k == "crash_folder")      c.crashFolder = CleanLogFileName(v);
+    else if (k == "arg")               { if (c.args.size() < 32 && !v.empty() && v.size() <= 200) c.args.push_back(v); }
+    else if (k == "define")            { for (const auto& kv : ParseDefines(v)) c.defines.push_back(kv); }
     else if (k == "env") {
         const auto items = ParseEnvList(v);
         for (const auto& kv : items) c.env.push_back(kv);
@@ -124,6 +180,15 @@ inline std::string WriteExtraConfig(const ExtraConfig& c) {
     if (c.particleCap != d.particleCap)     o << "particle_cap=" << c.particleCap << "\n";
     if (c.gamepadDeadzone != d.gamepadDeadzone) o << "gamepad_deadzone=" << c.gamepadDeadzone << "\n";
     if (c.sampleRate != d.sampleRate)       o << "sample_rate=" << c.sampleRate << "\n";
+    if (c.renderScale != d.renderScale)     o << "render_scale=" << c.renderScale << "\n";
+    if (c.maxLights != d.maxLights)         o << "max_lights=" << c.maxLights << "\n";
+    if (c.fogOff)                           o << "fog_off=1\n";
+    if (c.mouseSensitivity != d.mouseSensitivity) o << "mouse_sensitivity=" << c.mouseSensitivity << "\n";
+    if (c.maxVoices != d.maxVoices)         o << "max_voices=" << c.maxVoices << "\n";
+    if (c.crashReports)                     o << "crash_reports=1\n";
+    if (!c.crashFolder.empty())             o << "crash_folder=" << c.crashFolder << "\n";
+    for (const auto& a : c.args)            o << "arg=" << a << "\n";
+    for (const auto& kv : c.defines)        o << "define=" << kv.first << "=" << kv.second << "\n";
     for (const auto& kv : c.env)            o << "env=" << kv.first << "=" << kv.second << "\n";
     return o.str();
 }

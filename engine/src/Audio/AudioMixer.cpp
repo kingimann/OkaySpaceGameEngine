@@ -248,6 +248,16 @@ void AudioMixer::ResetSpatial() {
     Motion() = MotionMemory{};
 }
 
+std::vector<bool> AudioMixer::PickLoudest(const std::vector<float>& scores, int cap) {
+    std::vector<bool> keep(scores.size(), true);
+    if (cap <= 0 || cap >= (int)scores.size()) return keep;
+    std::vector<int> order(scores.size());
+    for (std::size_t i = 0; i < order.size(); ++i) order[i] = (int)i;
+    std::stable_sort(order.begin(), order.end(), [&](int a, int b) { return scores[(std::size_t)a] > scores[(std::size_t)b]; });
+    for (std::size_t i = (std::size_t)cap; i < order.size(); ++i) keep[(std::size_t)order[i]] = false;
+    return keep;
+}
+
 int AudioMixer::RenderStereo(Scene& scene, float* out, int frames) {
     for (int i = 0; i < 2 * frames; ++i) out[i] = 0.0f;
     const int outRate = sampleRate > 0 ? sampleRate : 44100;
@@ -289,8 +299,21 @@ int AudioMixer::RenderStereo(Scene& scene, float* out, int frames) {
 
     std::vector<float> bufL(static_cast<std::size_t>(frames)), bufR(static_cast<std::size_t>(frames));
     int mixed = 0;
+    std::vector<const AudioSource*> silenced;   // sources over the voice limit this buffer
+    if (maxVoices > 0) {
+        std::vector<const AudioSource*> live; std::vector<float> score;
+        for (AudioSource* src : sources) {
+            if (!Sounding(*src, src->m_playing, !src->m_shots.empty())) continue;
+            float s = src->volume * GroupGain(src->group);
+            if (src->spatial && src->transform) s *= Attenuation(*src, (src->transform->Position() - listener).Magnitude());
+            live.push_back(src); score.push_back(s);
+        }
+        const std::vector<bool> keep = PickLoudest(score, maxVoices);
+        for (std::size_t i = 0; i < live.size(); ++i) if (!keep[i]) silenced.push_back(live[i]);
+    }
     for (AudioSource* src : sources) {
         if (!Sounding(*src, src->m_playing, !src->m_shots.empty())) continue;
+        if (!silenced.empty() && std::find(silenced.begin(), silenced.end(), src) != silenced.end()) continue;
 
         float vol = src->volume * GroupGain(src->group);
         float pan = src->pan;

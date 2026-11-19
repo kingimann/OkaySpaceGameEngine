@@ -246,6 +246,30 @@ int main() {
         Put(a.description, "A = tricky | description"); a.allowBuildCommands = true;
         Put(a.preBuildCommand, "echo pre = 1"); Put(a.postBuildCommand, "echo post | cat");
         a.renderer = 2; a.particleCap = 150; a.gamepadDeadzone = 0.3f; a.sampleRate = 48000; Put(a.excludeList, "Assets/a b.png;Assets/Old/");
+        a.renderScale = 0.5f;
+        a.maxLights = 4;
+        a.fogOff = true;
+        a.mouseSensitivity = 1.5f;
+        a.maxVoices = 12;
+        a.crashReports = true;
+        a.webMemoryMB = 512;
+        a.webCompress = true;
+        a.androidMinSdk = 28;
+        a.androidTargetSdk = 35;
+        a.androidOrientation = 2;
+        a.createInstaller = true;
+        a.startMenuEntry = false;
+        a.desktopShortcut = true;
+        Put(a.crashFolder, "Crash Reports");
+        Put(a.launchArgs, "--windowed \"a b\"");
+        Put(a.defines, "net.tick=30;x=1");
+        Put(a.androidPermissions, "INTERNET;VIBRATE");
+        Put(a.installFolder, "My Game");
+        Put(a.licenseFile, "Assets/license.txt");
+        Put(a.overridesWeb, "width=800;vsync=0");
+        Put(a.overridesAndroid, "fullscreen=1");
+        Put(a.overridesServer, "srvPort=46000");
+
 
         const std::string text = WriteBuildProfiles({pa});
         const std::vector<BuildProfile> back = ParseBuildProfiles(text);
@@ -276,12 +300,13 @@ int main() {
             COVER(a, b, d, defaultLanguage); COVER(a, b, d, logLevel); COVER(a, b, d, logToFile); COVER(a, b, d, envVars);
             COVER(a, b, d, description); COVER(a, b, d, allowBuildCommands); COVER(a, b, d, preBuildCommand); COVER(a, b, d, postBuildCommand);
             COVER(a, b, d, renderer); COVER(a, b, d, particleCap); COVER(a, b, d, gamepadDeadzone); COVER(a, b, d, sampleRate); COVER(a, b, d, excludeList);
-            g_values += 85 - 1 + 3 + 4;   // scenes count as three entries, plus the profile's own four fields
+            COVER(a, b, d, renderScale); COVER(a, b, d, maxLights); COVER(a, b, d, fogOff); COVER(a, b, d, mouseSensitivity); COVER(a, b, d, maxVoices); COVER(a, b, d, crashReports); COVER(a, b, d, webMemoryMB); COVER(a, b, d, webCompress); COVER(a, b, d, androidMinSdk); COVER(a, b, d, androidTargetSdk); COVER(a, b, d, androidOrientation); COVER(a, b, d, createInstaller); COVER(a, b, d, startMenuEntry); COVER(a, b, d, desktopShortcut); COVER(a, b, d, crashFolder); COVER(a, b, d, launchArgs); COVER(a, b, d, defines); COVER(a, b, d, androidPermissions); COVER(a, b, d, installFolder); COVER(a, b, d, licenseFile); COVER(a, b, d, overridesWeb); COVER(a, b, d, overridesAndroid); COVER(a, b, d, overridesServer); 
+            g_values += 108 - 1 + 3 + 4;   // scenes count as three entries, plus the profile's own four fields
             const std::set<std::string> declared = DeclaredFields(header, "BuildSettings");
             CHECK(g_covered == declared);
             for (const auto& f : declared) if (!g_covered.count(f)) std::cerr << "    BuildSettings." << f << " has no line in this test\n";
             for (const auto& f : g_covered) if (!declared.count(f)) std::cerr << "    " << f << " is not a BuildSettings member\n";
-            CHECK(declared.size() == 85);
+            CHECK(declared.size() == 108);
             CHECK(WriteBuildProfiles(back) == text);                      // stable
         }
         {   // the profile's own members

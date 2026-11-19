@@ -124,6 +124,9 @@ public:
     /// How far the cursor moved since the last frame, in pixels — for mouse-look /
     /// drag without tracking the previous position yourself.
     static Vec2 MouseDelta();
+    /// The player's mouse-look multiplier (1 = each controller's own sensitivity). Set once by the game (Build Settings >
+    /// Audio & Input > Mouse sensitivity); the look controllers multiply their sensitivity by it.
+    static float& LookScale() { static float s = 1.0f; return s; }
     /// True while a mouse button is held (0 = left, 1 = right, 2 = middle).
     static bool GetMouseButton(int button);
     /// True only on the frame the button was first pressed.

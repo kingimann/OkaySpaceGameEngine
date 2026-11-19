@@ -23,7 +23,7 @@ struct Slot {
 std::unordered_map<std::string, Slot> g_cache;
 
 void Register(const std::string& path, Slot& s) {
-    s.handle = AssetManager::Instance().Adopt<DataAsset>("data:" + path, s.obj, path);
+    s.handle = AssetManager::Instance().Adopt<DataAsset>(path, s.obj);
 }
 
 std::string Trim(const std::string& s) {

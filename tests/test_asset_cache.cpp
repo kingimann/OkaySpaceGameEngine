@@ -180,7 +180,7 @@ int main() {
         CHECK(a.GetNumber("hp") == 10.0);
         DataAsset& again = DataAsset::Cached(p);
         CHECK(&again == &a);                              // same object as before
-        auto h = AssetManager::Instance().Find<DataAsset>("data:" + p);
+        auto h = AssetManager::Instance().Find<DataAsset>(p);
         CHECK(h.Ready() && h.Get() == &a);
         CHECK(AssetManager::Instance().Report().ToString().find("cfg.okaydata") != std::string::npos);
         AssetManager::Instance().SetHotReload(true, 0.0);

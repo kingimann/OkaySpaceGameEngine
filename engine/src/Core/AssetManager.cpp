@@ -271,14 +271,14 @@ void AssetManager::WorkerMain() {
                 if (m_stop) return;
                 if (data) {
                     e.data = data;
-                    e.bytes = rec.size(data.get());
+                    SetBytes(e, rec.size(data.get()));
                     e.stamp = st;
                     e.fileSize = sz;
                     e.hash = hh;
                     e.lastUse = ++m_tick;
                     ++m_counters.loads;
                     e.state.store(S(State::Ready), std::memory_order_release);
-                    if (m_budget) PinLocked(job.entry);
+                    // pinned by Pump(), outside this lock (see the lock order in the header)
                 } else {
                     e.error = err;
                     ++m_counters.failures;
@@ -331,19 +331,19 @@ AssetManager::EntryPtr AssetManager::AcquireSync(std::type_index t, const std::s
     StatFile(open, stamp, size);
     const std::uint64_t hh = hashIt ? HashFile(open) : 0;
     std::string err;
-    std::shared_ptr<void> data = RunLoader(rec.load, open, err);
+    std::shared_ptr<void> data = TakeAdopted(t, key);   // an object handed over by Adopt() is used instead of decoding
+    if (!data) data = RunLoader(rec.load, open, err);
 
     lk.lock();
     if (data) {
         e->data = data;
-        e->bytes = rec.size(data.get());
+        SetBytes(*e, rec.size(data.get()));
         e->stamp = stamp;
         e->fileSize = size;
         e->hash = hh;
         e->lastUse = ++m_tick;
         ++m_counters.loads;
         e->state.store(S(State::Ready), std::memory_order_release);
-        if (m_budget) PinLocked(e);
     } else {
         e->error = err;
         ++m_counters.failures;
@@ -352,6 +352,7 @@ AssetManager::EntryPtr AssetManager::AcquireSync(std::type_index t, const std::s
     lk.unlock();
     m_entryCv.notify_all();
     if (!data) { if (error) *error = err; return nullptr; }
+    if (m_budget.load()) Pin(e);
     return e;
 }
 
@@ -413,6 +414,7 @@ int AssetManager::Pump() {
     struct Fire { EntryPtr e; std::vector<std::function<void(const EntryPtr&, const std::string&)>> cbs; std::string err; };
     std::vector<Fire> fires;
     std::vector<std::pair<std::string, std::string>> reloaded;
+    std::vector<EntryPtr> toPin;   // finished background loads: pinned below, after m_mutex is released
     std::function<void(const std::string&, const std::string&)> onReload;
     {
         std::unique_lock<std::mutex> lk(m_mutex);
@@ -452,7 +454,7 @@ int AssetManager::Pump() {
                     ++m_counters.reloadsSkippedSameHash;
                 } else if (d.data && li != m_loaders.end() && e.state.load() == S(State::Ready)) {
                     li->second.assign(e.data.get(), d.data.get());
-                    e.bytes = li->second.size(e.data.get());
+                    SetBytes(e, li->second.size(e.data.get()));
                     e.stamp = d.stamp;
                     e.fileSize = d.size;
                     e.hash = d.hash;
@@ -469,6 +471,7 @@ int AssetManager::Pump() {
             int s = e.state.load();
             if (s == S(State::Loading) || s == S(State::Pending)) { deferred.push_back(std::move(d)); continue; }   // a sync load is finishing
             if (d.counted) ++m_batchFinished;
+            if (s == S(State::Ready)) toPin.push_back(d.entry);
             Fire f;
             f.e = d.entry;
             f.cbs = std::move(e.waiters);
@@ -478,13 +481,15 @@ int AssetManager::Pump() {
             ++handled;
         }
         for (Done& d : deferred) m_done.push_back(std::move(d));
-        if (m_budget) {
-            EvictLocked(m_frameMark);
-            m_frameMark = m_tick;
-        }
         if (m_jobs.empty() && m_done.empty() && m_batchFinished >= m_batchSubmitted) m_batchSubmitted = m_batchFinished = 0;
     }
     m_entryCv.notify_all();
+    if (m_budget.load()) {
+        for (const EntryPtr& e : toPin) Pin(e);
+        toPin.clear();
+        Evict(m_frameMark.load());
+        m_frameMark = m_tick.load();
+    }
     for (Fire& f : fires)
         for (auto& cb : f.cbs) cb(f.e, f.err);
     if (onReload)
@@ -517,48 +522,58 @@ void AssetManager::SetReloadCallback(std::function<void(const std::string&, cons
 
 // --- Budget, pins, external caches, stats ---------------------------------------------
 
-void AssetManager::PinLocked(const EntryPtr& e) {
-    if (e->pinned) return;
+void AssetManager::Pin(const EntryPtr& e) {
+    debugutil::SpinGuard g(m_stateLock);
+    if (e->pinned.load()) return;
     e->pinned = true;
     m_pins.push_back(e);
 }
 
-void AssetManager::UnpinAllLocked() {
-    for (auto& p : m_pins) p->pinned = false;
-    m_pins.clear();
-}
-
-std::size_t AssetManager::OwnBytesLocked() const {
-    std::size_t n = 0;
-    for (const auto& kv : m_cache) {
-        EntryPtr e = kv.second.lock();
-        if (e && e->state.load() == S(State::Ready)) n += e->bytes.load();
+void AssetManager::UnpinAll() {
+    std::vector<EntryPtr> dropped;
+    {
+        debugutil::SpinGuard g(m_stateLock);
+        dropped.swap(m_pins);
+        for (auto& p : dropped) p->pinned = false;
     }
-    return n;
+    // `dropped` is destroyed here, outside the lock (an asset's destructor never runs under it).
 }
 
 // Drops pins nobody else holds (use_count 1 = the pin only), least recently used first, while the total is over budget.
 // Assets used after `maxLastUse` are skipped. Externals are trimmed last, to what is left of the budget.
-std::size_t AssetManager::EvictLocked(std::uint64_t maxLastUse) {
-    if (!m_budget) return 0;
-    std::size_t extBytes = 0;
-    for (const auto& x : m_externals) extBytes += x.bytes ? x.bytes() : 0;
-    std::size_t own = OwnBytesLocked(), dropped = 0;
-    while (own + extBytes > m_budget) {
-        std::size_t best = m_pins.size();
-        for (std::size_t i = 0; i < m_pins.size(); ++i) {
-            if (m_pins[i].use_count() != 1 || m_pins[i]->lastUse > maxLastUse) continue;
-            if (best == m_pins.size() || m_pins[i]->lastUse < m_pins[best]->lastUse) best = i;
-        }
-        if (best == m_pins.size()) break;
-        own -= std::min(own, m_pins[best]->bytes.load());
-        m_pins.erase(m_pins.begin() + static_cast<std::ptrdiff_t>(best));   // last reference: the asset is freed
-        ++dropped;
-        ++m_counters.evictions;
+std::size_t AssetManager::Evict(std::uint64_t maxLastUse) {
+    const std::size_t budget = m_budget.load();
+    if (!budget) return 0;
+    std::vector<AssetExternalCache> externals;
+    {
+        debugutil::SpinGuard g(m_stateLock);
+        externals = m_externals;
     }
-    if (own + extBytes > m_budget && extBytes > 0) {
-        const std::size_t room = m_budget > own ? m_budget - own : 0;
-        for (const auto& x : m_externals) {
+    std::size_t extBytes = 0;
+    for (const auto& x : externals) extBytes += x.bytes ? x.bytes() : 0;   // callbacks run with no lock held
+    std::size_t own = OwnBytes(), dropped = 0;
+    std::vector<EntryPtr> freed;
+    {
+        debugutil::SpinGuard g(m_stateLock);
+        while (own + extBytes > budget) {
+            std::size_t best = m_pins.size();
+            for (std::size_t i = 0; i < m_pins.size(); ++i) {
+                if (m_pins[i].use_count() != 1 || m_pins[i]->lastUse.load() > maxLastUse) continue;
+                if (best == m_pins.size() || m_pins[i]->lastUse.load() < m_pins[best]->lastUse.load()) best = i;
+            }
+            if (best == m_pins.size()) break;
+            own -= std::min(own, m_pins[best]->bytes.load());
+            m_pins[best]->pinned = false;
+            freed.push_back(std::move(m_pins[best]));
+            m_pins.erase(m_pins.begin() + static_cast<std::ptrdiff_t>(best));
+            ++dropped;
+            ++m_counters.evictions;
+        }
+    }
+    freed.clear();   // the assets are freed here, outside the lock
+    if (own + extBytes > budget && extBytes > 0) {
+        const std::size_t room = budget > own ? budget - own : 0;
+        for (const auto& x : externals) {
             const std::size_t b = x.bytes ? x.bytes() : 0;
             if (b && x.trim) x.trim(static_cast<std::size_t>(static_cast<double>(room) * static_cast<double>(b) / static_cast<double>(extBytes)));
         }
@@ -567,80 +582,81 @@ std::size_t AssetManager::EvictLocked(std::uint64_t maxLastUse) {
 }
 
 void AssetManager::SetBudget(std::size_t bytes) {
-    std::lock_guard<std::mutex> lk(m_mutex);
     m_budget = bytes;
-    if (!bytes) { UnpinAllLocked(); return; }
-    for (auto& kv : m_cache) {
-        EntryPtr e = kv.second.lock();
-        if (e && e->state.load() == S(State::Ready)) PinLocked(e);
-    }
-    m_frameMark = m_tick;   // what was loaded before the budget is not evicted until a later Pump
+    if (!bytes) { UnpinAll(); return; }
+    std::vector<EntryPtr> live;
+    PurgeAndCollect(&live);
+    for (const EntryPtr& e : live) Pin(e);
+    m_frameMark = m_tick.load();   // what was loaded before the budget is not evicted until a later Pump
 }
 
-std::size_t AssetManager::Budget() const {
-    std::lock_guard<std::mutex> lk(m_mutex);
-    return m_budget;
-}
+std::size_t AssetManager::Budget() const { return m_budget.load(); }
 
-std::size_t AssetManager::Trim() {
-    std::lock_guard<std::mutex> lk(m_mutex);
-    return EvictLocked(m_tick);
-}
+std::size_t AssetManager::Trim() { return Evict(m_tick.load()); }
 
 std::size_t AssetManager::EvictUnused() {
-    std::lock_guard<std::mutex> lk(m_mutex);
-    std::size_t n = 0;
-    for (std::size_t i = 0; i < m_pins.size();) {
-        if (m_pins[i].use_count() == 1) { m_pins[i]->pinned = false; m_pins.erase(m_pins.begin() + static_cast<std::ptrdiff_t>(i)); ++n; ++m_counters.evictions; }
-        else ++i;
+    std::vector<EntryPtr> freed;
+    {
+        debugutil::SpinGuard g(m_stateLock);
+        for (std::size_t i = 0; i < m_pins.size();) {
+            if (m_pins[i].use_count() == 1) {
+                m_pins[i]->pinned = false;
+                freed.push_back(std::move(m_pins[i]));
+                m_pins.erase(m_pins.begin() + static_cast<std::ptrdiff_t>(i));
+                ++m_counters.evictions;
+            } else ++i;
+        }
     }
-    return n;
+    return freed.size();
 }
 
 void AssetManager::RegisterExternalCache(AssetExternalCache cache) {
-    std::lock_guard<std::mutex> lk(m_mutex);
+    debugutil::SpinGuard g(m_stateLock);
     for (auto& x : m_externals) if (x.name == cache.name) { x = std::move(cache); return; }
     m_externals.push_back(std::move(cache));
 }
 
-AssetManager::EntryPtr AssetManager::AdoptEntry(std::type_index t, const std::string& key, std::shared_ptr<void> obj,
-                                                const std::string& watchPath) {
+void AssetManager::SetBytes(assets_detail::Entry& e, std::size_t n) {
+    if (!e.res) { e.res = m_resident; e.res->count.fetch_add(1); }
+    const std::size_t old = e.bytes.exchange(n);
+    e.res->bytes.fetch_add(n);
+    e.res->bytes.fetch_sub(old);
+}
+
+std::shared_ptr<void> AssetManager::TakeAdopted(std::type_index t, const std::string& key) {
+    debugutil::SpinGuard g(m_stateLock);
+    auto it = m_adopted.find(Key(t, key));
+    if (it == m_adopted.end()) return nullptr;
+    std::shared_ptr<void> d = std::move(it->second);
+    m_adopted.erase(it);
+    return d;
+}
+
+AssetManager::EntryPtr AssetManager::AdoptEntry(std::type_index t, const std::string& path, std::shared_ptr<void> obj) {
     if (!obj) return nullptr;
-    std::lock_guard<std::mutex> lk(m_mutex);
-    const std::string k = Normalize(key);
-    auto& slot = m_cache[Key(t, k)];
-    EntryPtr e = slot.lock();
-    std::size_t bytes = 0;
-    auto li = m_loaders.find(t);
-    if (li != m_loaders.end()) bytes = li->second.size(obj.get());
-    if (!e || e->data != obj || e->state.load() != S(State::Ready)) {
-        e = std::make_shared<Entry>(t, k, watchPath.empty() ? std::string() : Normalize(watchPath, false));
-        e->data = obj;
-        slot = e;
-        ++m_counters.loads;
-    }
-    e->bytes = bytes;
-    if (!e->path.empty()) {
-        StatFile(e->path, e->stamp, e->fileSize);
-        e->hash = m_hot ? HashFile(e->path) : 0;
-    }
-    e->lastUse = ++m_tick;
-    e->state.store(S(State::Ready), std::memory_order_release);
-    if (m_budget) PinLocked(e);
+    const std::string key = Normalize(path);
+    { debugutil::SpinGuard g(m_stateLock); m_adopted[Key(t, key)] = std::move(obj); }
+    EntryPtr e = AcquireSync(t, path, nullptr);   // takes the object instead of decoding (a hit keeps the cached one)
+    TakeAdopted(t, key);                          // drop it if the entry already existed and did not use it
+    if (e && m_budget.load()) Pin(e);
     return e;
 }
 
 AssetStats AssetManager::Stats() const {
-    std::lock_guard<std::mutex> lk(m_mutex);
-    AssetStats s = m_counters;
-    s.budget = m_budget;
-    for (const auto& kv : m_cache) {
-        EntryPtr e = kv.second.lock();
-        if (e && e->state.load() == S(State::Ready)) { ++s.entries; s.residentBytes += e->bytes.load(); }
+    AssetStats s;
+    s.hits = m_counters.hits; s.misses = m_counters.misses; s.loads = m_counters.loads; s.failures = m_counters.failures;
+    s.evictions = m_counters.evictions; s.reloads = m_counters.reloads; s.reloadsSkippedSameHash = m_counters.reloadsSkippedSameHash;
+    s.budget = m_budget.load();
+    s.entries = m_resident->count.load();
+    s.residentBytes = m_resident->bytes.load();
+    std::vector<AssetExternalCache> externals;
+    {
+        debugutil::SpinGuard g(m_stateLock);
+        s.pinnedCount = m_pins.size();
+        for (const auto& p : m_pins) s.pinnedBytes += p->bytes.load();
+        externals = m_externals;
     }
-    s.pinnedCount = m_pins.size();
-    for (const auto& p : m_pins) s.pinnedBytes += p->bytes.load();
-    for (const auto& x : m_externals) {
+    for (const auto& x : externals) {   // callbacks run with no lock held
         AssetStats::External ex;
         ex.name = x.name;
         ex.bytes = x.bytes ? x.bytes() : 0;
@@ -672,10 +688,17 @@ void RegisterAssetCache(const std::string& name, std::function<std::size_t()> by
 
 // --- Housekeeping --------------------------------------------------------------------
 
-void AssetManager::Purge() {
+void AssetManager::Purge() { PurgeAndCollect(nullptr); }
+
+std::size_t AssetManager::PurgeAndCollect(std::vector<EntryPtr>* live) {
     std::lock_guard<std::mutex> lk(m_mutex);
-    for (auto it = m_cache.begin(); it != m_cache.end();)
-        it = it->second.expired() ? m_cache.erase(it) : std::next(it);
+    std::size_t n = 0;
+    for (auto it = m_cache.begin(); it != m_cache.end();) {
+        if (it->second.expired()) { it = m_cache.erase(it); continue; }
+        if (live) { EntryPtr e = it->second.lock(); if (e && e->state.load() == S(State::Ready)) { live->push_back(std::move(e)); ++n; } }
+        ++it;
+    }
+    return n;
 }
 
 std::size_t AssetManager::CachedCount() const {
@@ -697,9 +720,9 @@ AssetReport AssetManager::Report() const {
         it.key = e->key;
         it.type = li != m_loaders.end() ? li->second.name : e->type.name();
         it.bytes = e->bytes.load();
-        it.refs = std::max<long>(0, e.use_count() - 1 - (e->pinned ? 1 : 0));
+        it.refs = std::max<long>(0, e.use_count() - 1 - (e->pinned.load() ? 1 : 0));
         it.version = e->version.load();
-        it.pinned = e->pinned;
+        it.pinned = e->pinned.load();
         int s = e->state.load();
         it.loading = s == S(State::Pending) || s == S(State::Loading);
         if (it.loading) ++r.loadingCount; else ++r.loadedCount;

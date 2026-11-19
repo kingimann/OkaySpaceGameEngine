@@ -2,6 +2,7 @@
 // Central, opt-in asset registry: typed handles, one cache entry per canonical file
 // path, reference counting, per-type loaders, background loading finished on the
 // main thread, hot reload and a usage report. See docs/asset_manager.md.
+#include "okay/Debug/DebugUtil.hpp"
 #include <atomic>
 #include <condition_variable>
 #include <cstddef>
@@ -20,6 +21,9 @@
 namespace okay {
 
 namespace assets_detail {
+/// Count and bytes of the manager's live ready assets, shared with every Entry so an Entry that dies with its last handle
+/// subtracts itself (atomics: no lock needed to read the totals).
+struct Resident { std::atomic<std::size_t> bytes{0}, count{0}; };
 enum class State : int { Pending = 0, Loading = 1, Ready = 2, Failed = 3 };
 
 /// One cached file of one type. Shared by every handle to it; the asset is freed
@@ -27,6 +31,8 @@ enum class State : int { Pending = 0, Loading = 1, Ready = 2, Failed = 3 };
 /// never replaced (a hot reload assigns into the same object).
 struct Entry {
     Entry(std::type_index t, std::string k, std::string p) : type(t), key(std::move(k)), path(std::move(p)) {}
+    ~Entry() { if (res) { res->bytes.fetch_sub(bytes.load()); res->count.fetch_sub(1); } }
+    std::shared_ptr<Resident> res;           // set once, when the entry becomes Ready
     const std::type_index type;
     const std::string key;     // canonical cache key
     const std::string path;    // path used to open the file
@@ -39,8 +45,8 @@ struct Entry {
     std::int64_t stamp = 0;                  // file mtime (ticks) at last (re)load attempt
     std::int64_t fileSize = -1;
     std::uint64_t hash = 0;                  // FNV-1a of the file when it was read (0 = not hashed)
-    std::uint64_t lastUse = 0;               // manager tick of the last Get/Find (LRU order)
-    bool pinned = false;                     // the manager itself holds a reference (budget cache)
+    std::atomic<std::uint64_t> lastUse{0};   // manager tick of the last Get/Find (LRU order)
+    std::atomic<bool> pinned{false};         // the manager itself holds a reference (budget cache); changed only under the state lock
     bool reloading = false;
     std::vector<std::function<void(const std::shared_ptr<Entry>&, const std::string&)>> waiters;
 };
@@ -211,12 +217,13 @@ public:
     std::size_t EvictUnused();
     /// Registers a cache that reports into the manager and is trimmed with it. Same name replaces.
     void RegisterExternalCache(AssetExternalCache cache);
-    /// Registers an already-decoded object under `key` (a "cache hit" for later Get). The object stays valid and shared; `watchPath`
-    /// (optional) is the file the hot reload watches, and reload re-decodes it through the registered loader and moves the result
-    /// into `obj`.
+    /// Hands the manager an object that was already decoded from `path` (for a cache that must keep a stable address, such as
+    /// DataAsset::Cached). It becomes the cache entry for (T, path), counted in the stats and hot-reloaded in place from the
+    /// registered loader of T. If T has no loader, or an entry for the same file is already cached, that entry is returned and
+    /// `obj` is not used.
     template <class T>
-    AssetHandle<T> Adopt(const std::string& key, std::shared_ptr<T> obj, const std::string& watchPath = {}) {
-        return AssetHandle<T>(AdoptEntry(std::type_index(typeid(T)), key, std::static_pointer_cast<void>(obj), watchPath));
+    AssetHandle<T> Adopt(const std::string& path, std::shared_ptr<T> obj) {
+        return AssetHandle<T>(AdoptEntry(std::type_index(typeid(T)), path, std::static_pointer_cast<void>(obj)));
     }
     AssetStats Stats() const;
 
@@ -251,11 +258,18 @@ private:
     void WorkerMain();
     bool LoaderFor(std::type_index t, LoaderRec& out) const;   // locks
     void CompleteLocked(const EntryPtr& e, const LoaderRec& rec, std::shared_ptr<void> data);
-    EntryPtr AdoptEntry(std::type_index t, const std::string& key, std::shared_ptr<void> obj, const std::string& watchPath);
-    void PinLocked(const EntryPtr& e);
-    void UnpinAllLocked();
-    std::size_t EvictLocked(std::uint64_t maxLastUse);   // pins nobody else holds, least recently used first, until under budget
-    std::size_t OwnBytesLocked() const;
+    EntryPtr AdoptEntry(std::type_index t, const std::string& path, std::shared_ptr<void> obj);
+    std::shared_ptr<void> TakeAdopted(std::type_index t, const std::string& key);   // state lock only
+    void SetBytes(assets_detail::Entry& e, std::size_t n);                          // m_mutex held by the caller or the entry is private
+    std::size_t PurgeAndCollect(std::vector<EntryPtr>* live);                       // Purge(), also returning the live ready entries
+    // Budget cache. LOCK ORDER (strict): the new state below (pins, external caches) is guarded by its own spin lock
+    // `m_stateLock`. m_mutex and m_stateLock are NEVER held at the same time (take neither while holding the other), and
+    // neither is held while a loader, an external-cache callback, a Pump callback or an asset destructor runs. Counters, the
+    // budget, the tick and the frame mark are atomics and need no lock.
+    void Pin(const EntryPtr& e);                          // state lock only
+    void UnpinAll();                                      // state lock only
+    std::size_t Evict(std::uint64_t maxLastUse);          // pins nobody else holds, least recently used first, until under budget
+    std::size_t OwnBytes() const { return m_resident->bytes.load(); }   // atomic, no lock
 
     mutable std::mutex m_mutex;
     std::condition_variable m_entryCv;    // an entry left Loading
@@ -266,11 +280,16 @@ private:
     std::deque<Done> m_done;
     std::thread m_worker;
     bool m_stop = false;
-    std::size_t m_budget = 0;
-    std::uint64_t m_tick = 0, m_frameMark = 0;
+    std::atomic<std::size_t> m_budget{0};
+    std::atomic<std::uint64_t> m_tick{0}, m_frameMark{0};
+    struct Counters {
+        std::atomic<std::uint64_t> hits{0}, misses{0}, loads{0}, failures{0}, evictions{0}, reloads{0}, reloadsSkippedSameHash{0};
+    } m_counters;
+    mutable debugutil::SpinLock m_stateLock;              // guards m_pins and m_externals only
     std::vector<EntryPtr> m_pins;
+    std::map<Key, std::shared_ptr<void>> m_adopted;       // handed over by Adopt, taken by the load that follows at once
+    std::shared_ptr<assets_detail::Resident> m_resident = std::make_shared<assets_detail::Resident>();
     std::vector<AssetExternalCache> m_externals;
-    AssetStats m_counters;
     int m_batchSubmitted = 0, m_batchFinished = 0;
     bool m_hot = false;
     double m_hotInterval = 0.5;

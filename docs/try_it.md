@@ -100,6 +100,7 @@ release job or the installer build for this change.
 | one-controller | One Player Controller for first and third person; no Humanoid or separate First and Third Person entries | Editor: GameObject > Player, Add Component > Gameplay, File > New Project (First and Third Person) | Tests run on Linux only; not run in a real editor or on Windows |
 | security-sec1 | Security plan SEC1: script file paths, update signature status, relay caps, reactions SQL | examples\security_paths\script_paths.okayscene (Play, read Console); Settings > About and Help > About line; SQL and relay are owner steps | Tests on Linux only; editor/launcher lines not run; nothing on Windows or real Supabase |
 | vpa | Multi-window panels start cleanly on every video driver | `Tools\OkayEngine.exe`: drag a panel tab outside the editor | Linux only (Xvfb, a build with assertions on); Windows unverified |
+| water1 | Water that is never flat: presets, sea states, foam, splashes | `examples\water\lake.okayscene`, `ocean`, `river`, `shore` (File > Open, Play), **GameObject > 3D Object > Water** (pick a kind), Water Inspector > **Look** | New in this change; software-renderer pictures and headless tests only, Windows, GPU and the editor window not run |
 | xbox-next | Xbox UWP next: one-page guide (PC test, Dev Mode, IP, Device Portal, deploy, logs) and the new log file | Windows release: `xbox-src\scripts\build-xbox-uwp.ps1`; editor File > Build Settings > Xbox (exp.) | Linux-tested only; nothing here has run on a console |
 | xbox-uwp | Xbox One export (EXPERIMENTAL, UNVERIFIED): one-click build (check, export, compile, shaders, pack, sign, install), own .appx packer, engine mode | File > Build Settings > platform "Xbox (exp.)" > Build Xbox package | Linux-tested only |
 | 7n | Every own replacement in one table: the switch, the sample, how to tell it is on, and what is missing | section 7n below and `docs/own_flip_proposal.md` | Table is new. Read from the code and from CI logs, not run on Windows |
@@ -2022,6 +2023,37 @@ it, it ran for the whole 25-second check in both and printed the "Multi-window p
 ran in both backends without stopping, and with the change a Project tab dragged outside the editor still became its own window. The
 intermittent stop seen before under Xvfb was SDL falling back to the `offscreen` driver when the X server was not ready yet.
 Unverified: Windows (not built or run here), a real Wayland session.
+
+## water1. Water that is never flat: presets, sea states, foam, splashes
+
+**What it is.** The water now has real wave shapes (sharp crests), small ripples that never stop, turquoise shallows and deep blue
+depths, white foam on the waves and along the shore, a glow in the crests, rings and spray when something falls in, and a blue-green
+murk when the camera goes under. There are eight ready kinds of water and four sea states. Details: `docs/water_visuals.md`.
+
+**Steps (the example scenes).**
+1. Open the editor (`Tools\OkayEngine.exe`). **File > Open...** and pick `<install folder>\examples\water\lake.okayscene`. Press **Play**.
+2. Look at the lake: the surface is never one flat colour. Small ripples drift in two directions, the water is turquoise near the shore and
+   dark blue in the middle, the sky is mirrored in it. A dock, a rock, a red rowing target and three crates float or stand in it.
+3. Press **Stop**. In the Hierarchy select **Crate 1**, drag it up in the Scene view, press **Play**: it falls in, rings spread across the
+   water and a little spray jumps up.
+4. Open `ocean.okayscene` and press Play: big rolling waves with white caps. Select **Water**. In the Inspector, **Look > Sea State**:
+   Calm, Light, Rough, Storm. The waves, their sharpness and the foam change at once. The crates ride the same waves.
+5. Open `river.okayscene`: ripples and foam flow to the right and the crates drift downstream. Open `shore.okayscene`: a white foam line
+   surges along the waterline and round the rocks; the water goes from clear turquoise to deep blue.
+
+**Steps (make your own).**
+1. **GameObject > 3D Object > Water** and pick **Calm Lake**, **Pond**, **Ocean**, **Stormy Sea**, **River**, **Swamp**, **Tropical** or **Ice-cold**.
+2. Select it and open **Look** in the Inspector: **Preset** switches kind, **Realistic look** turns the whole new look on or off (off = the old
+   plain blue plane), **Clarity**, **Foam**, **Shore foam**, **Ripples**, **Rings of detail**, **Splashes and ripples**, **Underwater look**, **Bubbles**.
+3. Put a Terrain under it: the colour and shore foam follow the real depth. Move the Scene camera under the surface (or Play with a camera
+   below it): blue-green fog, and bubbles with **Bubbles** on.
+
+**How you know it worked.** With **Realistic look** off the water looks like it did before this change (a scene saved before it loads with
+the look off). With it on, the Ocean preset shows white caps and a sea that has no edge near you.
+
+**Status.** Pictures made with the software renderer on Linux and a headless test (`water_visuals`). **Unverified:** the Windows release, the
+editor window (menu, Inspector fields: syntax-checked only), the GL and D3D11 renderers (they draw the same vertex colours and normal map but
+nothing was run), per-vertex clear water over the bottom (see the Not done list in `docs/water_visuals.md`).
 
 ## xbox-next. Xbox UWP next: PC test, Dev Mode, Device Portal, logs
 

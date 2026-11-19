@@ -135,6 +135,7 @@ struct BuildSettings {
     int   particleCap = 0;                 // 0 = no extra limit
     float gamepadDeadzone = 0.18f;         // stick dead zone
     int   sampleRate = 0;                  // 0 = 44100
+    char  excludeList[1024] = "";          // project files left out of the build: "Assets/a.png;Assets/Old/" (a trailing / is a whole folder)
 };
 // ---- Build profiles -------------
 // Persist the full Build Settings under named profiles in the project's
@@ -227,6 +228,7 @@ inline void WriteBuildProfileBlock(std::ostream& o, const BuildProfile& p) {
     o << "preBuild=" << EscapeProfileValue(b.preBuildCommand) << "\n" << "postBuild=" << EscapeProfileValue(b.postBuildCommand) << "\n";
     o << "renderer=" << b.renderer << "\n" << "particleCap=" << b.particleCap << "\n";
     o << "gamepadDeadzone=" << FloatText(b.gamepadDeadzone) << "\n" << "sampleRate=" << b.sampleRate << "\n";
+    o << "exclude=" << EscapeProfileValue(b.excludeList) << "\n";
     for (const BuildScene& sc : b.scenes) o << "scene=" << (sc.on ? 1 : 0) << "|" << EscapeProfileValue(sc.path) << "\n";
 }
 
@@ -326,6 +328,7 @@ inline void ApplyBuildProfileKV(BuildProfile& p, const std::string& k, const std
     else if (k == "particleCap") b.particleCap = std::max(0, I());
     else if (k == "gamepadDeadzone") b.gamepadDeadzone = F();
     else if (k == "sampleRate") b.sampleRate = I();
+    else if (k == "exclude")   S(b.excludeList, sizeof(b.excludeList));
 }
 
 

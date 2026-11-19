@@ -19,6 +19,7 @@ const std::vector<HistoryEntry>& History(const std::string& projectDir) {
     return s_hist;
 }
 
+std::vector<std::string> s_log;   // the last build's log lines
 const ImVec4 kWarn(0.95f, 0.80f, 0.35f, 1), kErr(1.0f, 0.5f, 0.45f, 1), kInfo(0.6f, 0.75f, 0.95f, 1), kDot(0.35f, 0.75f, 1.0f, 1);
 
 void Tip(const char* t) { if (ImGui::IsItemHovered()) ImGui::SetTooltip("%s", t); }
@@ -160,6 +161,22 @@ bool DrawBuildPageExtra(BuildWindowCtx& c, int page) {
         }
         ImGui::EndDisabled();
         Tip("Writes <project>/.gitignore. Nothing is removed from an existing one.");
+        Header("Last build log");
+        if (s_log.empty()) ImGui::TextDisabled("Nothing built yet in this session. The log of each build appears here.");
+        else {
+            ImGui::BeginChild("##blog", ImVec2(0, std::min(180.0f, 12.0f + 20.0f * (float)s_log.size())), ImGuiChildFlags_Borders);
+            for (const std::string& l : s_log) {
+                const LogKind k = ClassifyLogLine(l);
+                const ImVec4 col = k == LogKind::Error ? kErr : k == LogKind::Warning ? kWarn : k == LogKind::Good ? ImVec4(0.5f, 0.9f, 0.55f, 1) : ImGui::GetStyleColorVec4(ImGuiCol_Text);
+                ImGui::PushStyleColor(ImGuiCol_Text, col);
+                ImGui::TextWrapped("%s", l.c_str());
+                ImGui::PopStyleColor();
+            }
+            ImGui::EndChild();
+            ImGui::BeginDisabled(!c.openFolder || !c.dir || !c.dir[0]);
+            if (ImGui::Button("Open output folder##log")) c.openFolder(c.dir);
+            ImGui::EndDisabled();
+        }
         Header("Build history");
         const std::vector<HistoryEntry>& h = History(c.projectDir);
         if (h.empty()) ImGui::TextDisabled("No builds yet. Each finished build is listed here with its time and size.");
@@ -193,6 +210,16 @@ void DrawBuildPageMore(BuildWindowCtx& c, int page) {
         b.particleCap = std::max(0, std::min(100000, b.particleCap));
         Tip("The most particles any one effect may keep alive. 0 means no extra limit. Lower it for weaker computers.");
     }
+    if (page == kOutput) {
+        Header("Files left out of the build");
+        ImGui::TextWrapped("Right-click a file in the Project panel and choose \"Exclude from Build\", or type paths here separated by semicolons. A path ending in / leaves out a whole folder. Files here are never copied into the game.");
+        Text("##exclude", b.excludeList, "Assets/Old/;Assets/Textures/big.png", 520);
+        Tip("Paths are relative to the project folder. Not case sensitive.");
+        ImGui::SameLine();
+        if (ImGui::Button("Clear##excl")) b.excludeList[0] = '\0';
+        const auto entries = ExcludeEntries(b.excludeList);
+        if (!entries.empty()) ImGui::TextDisabled("%d entr%s. Use Dry Run to see the size of the build without them.", (int)entries.size(), entries.size() == 1 ? "y" : "ies");
+    }
     if (page == kAudioInput) {
         Header("Controller and sound quality");
         ImGui::SetNextItemWidth(220);
@@ -211,7 +238,7 @@ void DrawBuildPageMore(BuildWindowCtx& c, int page) {
 bool DrawBuildSummary(BuildWindowCtx& c) {
     BuildSettings& b = *c.settings;
     SummaryInput si; si.s = b; si.productName = c.name ? c.name : ""; si.outputDir = c.dir ? c.dir : ""; si.platform = c.platform; si.enabledScenes = c.enabledScenes;
-    si.lastBytes = LastGoodSize(History(c.projectDir));
+    si.lastBytes = LastGoodSize(History(c.projectDir)); si.estimateBytes = c.estimateBytes;
     ValidateInput vi; vi.s = b; vi.productName = si.productName; vi.outputDir = si.outputDir; vi.platform = c.platform; vi.enabledScenes = c.enabledScenes; vi.openSceneSaved = c.openSceneSaved;
     {
         std::error_code ec;
@@ -300,6 +327,8 @@ void DrawBuildProfileExtras(BuildWindowCtx& c, std::vector<BuildProfile>& profil
         ImGui::EndPopup();
     }
 }
+
+void SetBuildLog(const std::string& status, const std::vector<std::string>& warnings) { s_log = BuildLogLines(status, warnings); }
 
 void RecordBuildInHistory(const BuildWindowCtx& c, int buildNumber, std::uintmax_t bytes, bool ok) {
     HistoryEntry e;

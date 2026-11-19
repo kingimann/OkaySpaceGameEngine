@@ -133,6 +133,7 @@ inline const std::vector<SettingInfo>& Registry() {
         OKAY_BS_FIELD("Particle limit", kGraphics, "particles cap effects fewer", particleCap),
         OKAY_BS_FIELD("Gamepad dead zone", kAudioInput, "controller stick drift", gamepadDeadzone),
         OKAY_BS_FIELD("Sound quality (sample rate)", kAudioInput, "audio hz khz output", sampleRate),
+        OKAY_BS_FIELD("Files left out of the build", kOutput, "exclude skip ignore assets", excludeList),
         OKAY_BS_FIELD("Master volume", kAudioInput, "sound loudness", masterVolume),
         OKAY_BS_FIELD("Quit on Escape", kAudioInput, "key exit", quitOnEscape),
         OKAY_BS_FIELD("Hide cursor", kAudioInput, "mouse pointer", hideCursor),
@@ -264,6 +265,52 @@ inline void ApplyQuality(BuildSettings& b, int level) {
     b.particleCap = level == 0 ? 100 : level == 1 ? 300 : 0;   // High and Ultra: no extra limit
 }
 
+/// Move the item at `from` so it sits at index `to` (the others shift). False if either index is outside the list.
+template <class T> bool MoveItem(std::vector<T>& v, int from, int to) {
+    if (from < 0 || to < 0 || from >= (int)v.size() || to >= (int)v.size()) return false;
+    if (from == to) return true;
+    T x = std::move(v[from]);
+    v.erase(v.begin() + from);
+    v.insert(v.begin() + to, std::move(x));
+    return true;
+}
+
+// ---- files left out of the build ---------------------------------------------------------------------------------
+inline std::vector<std::string> ExcludeEntries(const std::string& list) {
+    std::vector<std::string> v; std::size_t pos = 0;
+    while (pos <= list.size()) {
+        std::size_t e = list.find(';', pos); if (e == std::string::npos) e = list.size();
+        std::string it = list.substr(pos, e - pos); pos = e + 1;
+        for (char& c : it) if (c == '\\') c = '/';
+        const std::size_t a = it.find_first_not_of(' '), z = it.find_last_not_of(' ');
+        if (a == std::string::npos) continue;
+        v.push_back(it.substr(a, z - a + 1));
+    }
+    return v;
+}
+/// Is the project-relative path `rel` ("Assets/Textures/a.png") on the list? An entry ending in / covers a whole folder. Not case sensitive.
+inline bool IsExcluded(const std::string& rel, const std::string& list) {
+    std::string r = Lower(rel); for (char& c : r) if (c == '\\') c = '/';
+    for (const std::string& e0 : ExcludeEntries(list)) {
+        const std::string e = Lower(e0);
+        if (e.back() == '/') { if (r.compare(0, e.size(), e) == 0) return true; }
+        else if (r == e) return true;
+    }
+    return false;
+}
+/// Add `rel` to the list, or take it off when it is already there. Returns the new list text (cut at `cap` - 1 characters; "" - and `ok` false - if it would not fit).
+inline std::string ToggleExcluded(const std::string& list, const std::string& rel, std::size_t cap, bool* ok = nullptr) {
+    std::vector<std::string> es = ExcludeEntries(list);
+    std::string r = rel; for (char& c : r) if (c == '\\') c = '/';
+    const auto it = std::find_if(es.begin(), es.end(), [&](const std::string& e) { return Lower(e) == Lower(r); });
+    if (it != es.end()) es.erase(it); else es.push_back(r);
+    std::string out;
+    for (const std::string& e : es) out += (out.empty() ? "" : ";") + e;
+    const bool fits = out.size() < cap;
+    if (ok) *ok = fits;
+    return fits ? out : list;
+}
+
 // ---- summary: what will happen, in plain words -------------------------------------------------------------
 struct SummaryInput {
     BuildSettings s;
@@ -271,6 +318,7 @@ struct SummaryInput {
     int platform = 0;
     int enabledScenes = 0;        // scenes ticked in the list (0 = only the open scene)
     std::uintmax_t lastBytes = 0; // size of the last build (0 = never built), from the history
+    std::uintmax_t estimateBytes = 0; // size a Dry Run of these settings reported (0 = no dry run yet)
 };
 inline std::string HumanSize(std::uintmax_t b) {
     char t[40]; double v = (double)b;
@@ -313,6 +361,8 @@ inline std::vector<std::string> BuildSummary(const SummaryInput& in) {
         }
     }
     L.push_back(in.outputDir.empty() ? "No output folder is chosen yet." : "It is written to " + in.outputDir + ".");
+    if (in.estimateBytes) L.push_back("The last Dry Run said this build would be " + HumanSize(in.estimateBytes) + ".");
+    if (!ExcludeEntries(s.excludeList).empty()) L.push_back(std::to_string(ExcludeEntries(s.excludeList).size()) + " file or folder entries are left out of the build (Output page).");
     if (in.lastBytes) L.push_back("The last build was " + HumanSize(in.lastBytes) + ". Use Dry Run to see the size of this one without writing it.");
     return L;
 }
@@ -460,6 +510,32 @@ inline std::vector<HistoryEntry> AddToHistory(std::vector<HistoryEntry> h, const
 inline std::uintmax_t LastGoodSize(const std::vector<HistoryEntry>& h) {
     for (auto it = h.rbegin(); it != h.rend(); ++it) if (it->ok && it->bytes) return it->bytes;
     return 0;
+}
+
+// ---- the build log: which lines are errors --------------------------------------------------------------------
+enum class LogKind { Normal, Good, Warning, Error };
+inline LogKind ClassifyLogLine(const std::string& line) {
+    const std::string l = Lower(line);
+    auto has = [&](const char* w) { return l.find(w) != std::string::npos; };
+    if (has("failed") || has("error") || has("refusing") || has("couldn't") || has("could not") || has("cannot") || has("nothing was built") || has("stopped")) return LogKind::Error;
+    if (has("warning") || has("not found") || has("left out of the build but") || has("missing")) return LogKind::Warning;
+    if (has("built '") || has("ran your command") || has("dry run for")) return LogKind::Good;
+    return LogKind::Normal;
+}
+/// The lines of the last build's log: the one-paragraph result split at its two-space separators, then each warning.
+inline std::vector<std::string> BuildLogLines(const std::string& status, const std::vector<std::string>& warnings) {
+    std::vector<std::string> out;
+    std::size_t pos = 0;
+    while (pos < status.size()) {
+        std::size_t e = status.find("  ", pos);
+        if (e == std::string::npos) e = status.size();
+        std::string part = status.substr(pos, e - pos);
+        pos = e + 2;
+        const std::size_t a = part.find_first_not_of(' ');
+        if (a != std::string::npos) out.push_back(part.substr(a));
+    }
+    for (const std::string& w : warnings) out.push_back("Warning: " + w);
+    return out;
 }
 
 // ---- build commands ----------------------------------------------------------------------------------------

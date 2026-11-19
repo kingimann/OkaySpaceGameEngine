@@ -147,6 +147,40 @@ int main() {
         CHECK(!NameHasBadChars("Fine Name 2") && NameHasBadChars("a/b") && CleanName("a/b ") == "a_b");
     }
     {
+        RUN_SUITE("files left out of the build");
+        CHECK(IsExcluded("Assets/a.png", "Assets/a.png") && IsExcluded("assets\\A.PNG", "Assets/a.png"));
+        CHECK(!IsExcluded("Assets/a.png2", "Assets/a.png") && !IsExcluded("Assets/b/a.png", "Assets/a.png") && !IsExcluded("Assets/a.png", ""));
+        CHECK(IsExcluded("Assets/Old/x/y.png", "Assets/Old/") && !IsExcluded("Assets/Older/y.png", "Assets/Old/") && !IsExcluded("Assets/Old", "Assets/Old/"));
+        CHECK(ExcludeEntries(" ; Assets\\a.png ;; b/ ").size() == 2 && ExcludeEntries(" ; Assets\\a.png ;; b/ ")[0] == "Assets/a.png");
+        bool ok = false;
+        std::string l = ToggleExcluded("", "Assets/a.png", 64, &ok); CHECK(ok && l == "Assets/a.png");
+        l = ToggleExcluded(l, "Assets\\B.png", 64, &ok); CHECK(l == "Assets/a.png;Assets/B.png");
+        l = ToggleExcluded(l, "assets/a.PNG", 64, &ok); CHECK(l == "Assets/B.png");           // again = put back
+        CHECK(ToggleExcluded(l, "Assets/a-very-long-name.png", 12, &ok) == l && !ok);       // does not fit: unchanged
+        SummaryInput si; std::snprintf(si.s.excludeList, 1024, "a;b/"); si.estimateBytes = 2048;
+        std::string all; for (const auto& x : BuildSummary(si)) all += x + "\n";
+        CHECK(all.find("2 file or folder entries") != std::string::npos && all.find("Dry Run said") != std::string::npos);
+    }
+    {
+        RUN_SUITE("drag reorder of the scene list");
+        std::vector<BuildScene> v = {{"a", true}, {"b", false}, {"c", true}, {"d", true}};
+        auto names = [&]() { std::string s; for (auto& x : v) s += x.path; return s; };
+        CHECK(MoveItem(v, 0, 2) && names() == "bcad" && !v[0].on);          // the tick travels with the scene
+        CHECK(MoveItem(v, 3, 0) && names() == "dbca");
+        CHECK(MoveItem(v, 1, 1) && names() == "dbca");
+        CHECK(!MoveItem(v, -1, 0) && !MoveItem(v, 0, 4) && !MoveItem(v, 9, 1) && names() == "dbca");
+    }
+    {
+        RUN_SUITE("build log colours");
+        CHECK(ClassifyLogLine("The command before the build failed (exit code 2). Nothing was built.") == LogKind::Error);
+        CHECK(ClassifyLogLine("Couldn't copy x") == LogKind::Error && ClassifyLogLine("Refusing to build into your home folder.") == LogKind::Error);
+        CHECK(ClassifyLogLine("Warning: 'a' is an absolute path") == LogKind::Warning && ClassifyLogLine("WARNING: 2 referenced asset(s) not found") == LogKind::Warning);
+        CHECK(ClassifyLogLine("Built 'Moon' to C:/out") == LogKind::Good && ClassifyLogLine("12 files, 3 MB") == LogKind::Normal);
+        const auto lines = BuildLogLines("Built 'G' to out  [3 MB total]  (2 scenes)  WARNING: 1 referenced asset(s) not found and not copied.", {"w1"});
+        CHECK(lines.size() == 5 && lines[0] == "Built 'G' to out" && lines[3].rfind("WARNING", 0) == 0 && lines[4] == "Warning: w1");
+        CHECK(BuildLogLines("", {}).empty());
+    }
+    {
         RUN_SUITE("history");
         std::vector<HistoryEntry> h;
         for (int i = 0; i < 35; ++i) { HistoryEntry e; e.time = "2026-11-19 10:" + std::to_string(10 + i % 50); e.version = "1.0." + std::to_string(i); e.buildNumber = i + 1; e.platform = "Desktop"; e.bytes = (std::uintmax_t)(i + 1) * 1000; e.output = "C:/a|b/out\nx"; e.ok = i != 34; h = AddToHistory(h, e); }

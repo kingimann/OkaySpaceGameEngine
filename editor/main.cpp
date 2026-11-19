@@ -2910,6 +2910,7 @@ int   g_buildPlatform = 0;   // 0 = Desktop (Windows), 1 = Web (WASM/WebGL), 2 =
 
 // BuildScene, BuildSettings, BuildProfile and ProjectSettings live in ProjectState.hpp (with their file text).
 BuildSettings g_build;
+std::uintmax_t g_buildDryBytes = 0;   // the size the last Dry Run reported (shown in the Build Settings summary)
 
 // ---- Build profiles -------------
 // The full Build Settings are kept under named profiles in the project's .okay/build_profiles.cfg, so
@@ -4298,6 +4299,7 @@ struct Options {
     std::string archiveName = "{name}-{version}-{platform}";
     std::vector<std::string> sceneList;     // Scenes In Build, in order (empty = the open scene)
     okay::buildpipe::ExtraConfig extra;     // Build Settings > Game: speed, start volumes, language, logging, environment (game.okayconfig)
+    std::string excludeList;                // Build Settings > Output > Files left out of the build ("Assets/a.png;Assets/Old/")
     bool allowCommands = false;             // Build Settings > Advanced: run the two commands below (off = never)
     std::string preCommand, postCommand;    // run before the build (a failure stops it) / after a good build
     // ---- Player presentation ----
@@ -4563,6 +4565,14 @@ std::string Build(EditorState& ed, const std::string& outDir,
             walk.assets.push_back(a);
             unusedShipped += pa.bytes; ++unusedShippedCount;
         }
+    }
+    if (!opt.excludeList.empty()) {   // Build Settings > Output: files the owner left out. A file a scene uses is warned about, not silently dropped.
+        std::vector<bp::ShippedAsset> keep;
+        for (const bp::ShippedAsset& a : walk.assets) {
+            if (!oked::bsm::IsExcluded(a.dest, opt.excludeList) && !oked::bsm::IsExcluded(a.ref, opt.excludeList)) { keep.push_back(a); continue; }
+            if (a.reason.rfind("asset stripping is off", 0) != 0) R.r.Warn("'" + a.dest + "' is left out of the build but a scene uses it: the game will not find it.");
+        }
+        walk.assets.swap(keep);
     }
     int copied = 0;
     std::uintmax_t assetBytes = 0;
@@ -4920,7 +4930,7 @@ Options OptionsFromSettings(const BuildSettings& g, const ProjectSettings& pr) {
     o.bootAccentOverride = pr.splashAccentOverride; o.bootBar = pr.splashShowBar;
     o.layout = g.layout; o.stripAssets = g.stripAssets; o.compress = g.compress; o.zipAlso = g.zipAfter && g.layout != 2;
     o.buildNumber = g.buildNumber; o.archiveName = g.archiveName;
-    o.extra = oked::bsm::ExtraFrom(g);
+    o.extra = oked::bsm::ExtraFrom(g); o.excludeList = g.excludeList;
     o.allowCommands = g.allowBuildCommands; o.preCommand = g.preBuildCommand; o.postCommand = g.postBuildCommand;
     return o;
 }
@@ -10469,6 +10479,10 @@ static void ProjectCtxFill(okaypb::ctx::State& st, const std::string& full, bool
     if (!isDir && g_pb) {
         st.tags = g_pb->LabelsOf(full);   // (just the tags: Info also walks the dependency graph)
         if (st.kind == okaypb::ctx::Kind::Scene) st.isStartScene = IsStartSceneFile(full);
+        else {   // "Exclude from Build" shows as "Include in Build" for a file already left out
+            std::error_code re; const std::string rel = std::filesystem::relative(std::filesystem::path(okaypb::Slash(full)), std::filesystem::path(g_pb->Root()).parent_path(), re).generic_string();
+            st.excludedFromBuild = !re && oked::bsm::IsExcluded(rel, g_build.excludeList);
+        }
     }
     if (isDir && g_pb) st.hasSubfolders = !g_pb->SubFolders(okaypb::Slash(full)).empty();
 }
@@ -11321,6 +11335,20 @@ void DrawProject(EditorState& ed) {
             return;
         }
         if (act == "scene:add") { MergeSceneIntoCurrent(ed, full); return; }
+        if (act == "build:exclude") {   // Build Settings > Output > Files left out of the build
+            std::error_code re; const std::string rel = fs::relative(fs::path(okaypb::Slash(full)), fs::path(ed.projectDir()), re).generic_string();
+            bool fits = true;
+            const std::string now = oked::bsm::ToggleExcluded(g_build.excludeList, rel, sizeof(g_build.excludeList), &fits);
+            if (re || rel.empty()) ConsoleLog("Could not work out this file's place in the project.", 1);
+            else if (!fits) ConsoleLog("The list of files left out of the build is full. Open Build Settings > Output and clear some.", 1);
+            else {
+                const bool added = oked::bsm::IsExcluded(rel, now);
+                std::snprintf(g_build.excludeList, sizeof(g_build.excludeList), "%s", now.c_str());
+                ConsoleLog(rel + (added ? " is left out of the build." : " is back in the build."));
+                SaveBuildLive(ed);
+            }
+            return;
+        }
         if (act == "scene:start") {   // first in Scenes In Build, ticked: the Scene Manager saves the list and a build starts here
             std::vector<oked::SceneBuildEntry> list = oked::SceneBuildSnapshot();
             std::error_code ce;
@@ -18659,6 +18687,7 @@ void DrawFileDialogs(EditorState& ed) {
         bctx.settings = &g_build; bctx.name = g_buildNameBuf; bctx.nameCap = sizeof(g_buildNameBuf); bctx.dir = g_buildDirBuf; bctx.dirCap = sizeof(g_buildDirBuf);
         bctx.platform = g_buildPlatform; bctx.projectDir = ed.projectDir(); bctx.openSceneSaved = !ed.path().empty();
         for (const BuildScene& bs : g_build.scenes) if (bs.on) ++bctx.enabledScenes;
+        bctx.estimateBytes = g_buildDryBytes;
         bctx.openFolder = [](const std::string& p) { extide::RevealInFiles(p); };
         if (g_buildPlatform == 3) ImGui::TextDisabled("Export a dedicated server:  the game with no window, plus server.cfg and deploy scripts");
         else ImGui::TextDisabled("Export a standalone game:  <Name>.exe + <Name>_Data/ (scenes, only the assets they use, StreamingAssets, build.json)");
@@ -18802,7 +18831,7 @@ void DrawFileDialogs(EditorState& ed) {
             ImGui::TextDisabled("Ticked scenes ship in this order. #0 is where the game starts; the others load with\n"
                                 "load_scene(\"Name\") or load_scene_index(n). The open scene ships with unsaved edits.");
             ImGui::Spacing();
-            int shown = 0, move = -1, moveDir = 0, del = -1;
+            int shown = 0, move = -1, moveDir = 0, del = -1, dragFrom = -1, dragTo = -1;
             for (int i = 0; i < (int)L.size(); ++i) {
                 ImGui::PushID(i);
                 ImGui::Checkbox("##on", &L[i].on);
@@ -18814,7 +18843,16 @@ void DrawFileDialogs(EditorState& ed) {
                 const bool exists = fs::exists(sp, e);
                 if (exists) ImGui::TextUnformatted(sp.stem().string().c_str());
                 else ImGui::TextColored(ImVec4(0.95f, 0.45f, 0.45f, 1), "%s (missing)", sp.stem().string().c_str());
-                if (ImGui::IsItemHovered()) ImGui::SetTooltip("%s", L[i].path.c_str());
+                if (ImGui::BeginDragDropSource(ImGuiDragDropFlags_SourceAllowNullID)) {   // drag a scene's name up or down the list
+                    ImGui::SetDragDropPayload("OKAY_BUILD_SCENE", &i, sizeof(int));
+                    ImGui::TextUnformatted(sp.stem().string().c_str());
+                    ImGui::EndDragDropSource();
+                }
+                if (ImGui::BeginDragDropTarget()) {
+                    if (const ImGuiPayload* pl = ImGui::AcceptDragDropPayload("OKAY_BUILD_SCENE")) { dragFrom = *(const int*)pl->Data; dragTo = i; }
+                    ImGui::EndDragDropTarget();
+                }
+                if (ImGui::IsItemHovered() && !ImGui::IsMouseDown(0)) ImGui::SetTooltip("%s\n(drag to reorder)", L[i].path.c_str());
                 if (!ed.path().empty() && samePath(L[i].path, ed.path())) { ImGui::SameLine(); ImGui::TextColored(ImVec4(0.55f, 0.80f, 1.0f, 1), "(open)"); }
                 ImGui::SameLine(ImGui::GetContentRegionAvail().x + ImGui::GetCursorPosX() - 92);
                 ImGui::BeginDisabled(i == 0);
@@ -18830,6 +18868,7 @@ void DrawFileDialogs(EditorState& ed) {
                 ImGui::PopID();
             }
             if (move >= 0) std::swap(L[move], L[move + moveDir]);
+            if (dragFrom >= 0) oked::bsm::MoveItem(L, dragFrom, dragTo);
             if (del >= 0) L.erase(L.begin() + del);
             if (L.empty()) ImGui::TextDisabled("No list yet: the open scene is built on its own.");
             ImGui::Spacing();
@@ -19365,6 +19404,8 @@ void DrawFileDialogs(EditorState& ed) {
             ConsoleLog(std::string(g_buildDryRun ? "Build Game (dry run): " : "Build Game: ") + g_buildStatus);
             const bool wasDry = g_buildDryRun;
             g_buildDryRun = false;
+            if (wasDry && g_buildReport.ok) g_buildDryBytes = g_buildReport.r.total;
+            { std::vector<std::string> lw; for (const std::string& w : g_buildReport.r.warnings) lw.push_back(w); oked::SetBuildLog(g_buildStatus, lw); }   // Build Settings > Advanced > Last build log
             // A finished real build counts the build number up, so the next one is told apart from this one.
             if (!wasDry) oked::RecordBuildInHistory(bctx, g_build.buildNumber, g_buildReport.r.total, g_buildReport.ok);   // the build history list
             if (g_buildReport.ok && !wasDry && g_build.autoBuildNumber) ++g_build.buildNumber;

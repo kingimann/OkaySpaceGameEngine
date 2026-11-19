@@ -2133,6 +2133,21 @@ target_include_directories(test_update_signature PRIVATE ${PROJECT_SOURCE_DIR}/l
 target_compile_definitions(test_update_signature PRIVATE OKAY_SOURCE_DIR="${PROJECT_SOURCE_DIR}")
 add_test(NAME update_signature COMMAND test_update_signature)
 
+# Content delivery (docs/content_delivery.md): manifest format and limits, signature, the download state machine (resume, retry, corrupt files,
+# budget, replay floor, rollback), the overlay lookup and the start-up wiring. A fake server behind the Transport interface; throwaway keys; no network.
+add_executable(test_content_delivery test_content_delivery.cpp)
+target_compile_features(test_content_delivery PRIVATE cxx_std_17)
+target_link_libraries(test_content_delivery PRIVATE okay::crypto)
+target_include_directories(test_content_delivery PRIVATE ${PROJECT_SOURCE_DIR}/shared ${PROJECT_SOURCE_DIR}/engine/include)
+add_test(NAME content_delivery COMMAND test_content_delivery)
+
+# The script / graph checks that downloaded content passes before it is visible (shared/GameContentValidators.hpp), with the real engine parsers.
+add_executable(test_content_validators test_content_validators.cpp)
+target_compile_features(test_content_validators PRIVATE cxx_std_17)
+target_link_libraries(test_content_validators PRIVATE okay::engine)
+target_include_directories(test_content_validators PRIVATE ${PROJECT_SOURCE_DIR}/shared)
+add_test(NAME content_validators COMMAND test_content_validators)
+
 # SEC1 item 3: the update path against a hostile release server (tampered / truncated / mixed-up files, damaged and replayed signed lists, the
 # signature ON/OFF status line). A map of address -> bytes plays the server; throwaway keys; no network.
 add_executable(test_update_security test_update_security.cpp ${PROJECT_SOURCE_DIR}/launcher/VersionsManager.cpp)
@@ -2158,6 +2173,14 @@ if(OKAY_PYTHON3 AND NOT WIN32)
 endif()
 if(OKAY_BASH AND OKAY_PYTHON3 AND NOT WIN32)
     add_test(NAME sign_index_script COMMAND ${OKAY_BASH} ${CMAKE_CURRENT_SOURCE_DIR}/scripts/test_sign_index.sh)
+    if(TARGET okay-content)
+        # okay-content end to end: signed manifest, refusals, file:// sync, and (when built with the own HTTP client) a resumed HTTP download from a loopback server.
+        add_test(NAME content_cli COMMAND ${OKAY_BASH} ${CMAKE_CURRENT_SOURCE_DIR}/scripts/test_content_cli.sh $<TARGET_FILE:okay-content>)
+        set_tests_properties(content_cli PROPERTIES TIMEOUT 120)
+        # scripts/publish-content.sh against the fake storage server: upload order (manifest last), no secret printed, refusals upload nothing.
+        add_test(NAME publish_content_script COMMAND ${OKAY_BASH} ${CMAKE_CURRENT_SOURCE_DIR}/scripts/test_publish_content.sh $<TARGET_FILE:okay-content>)
+        set_tests_properties(publish_content_script PROPERTIES TIMEOUT 120)
+    endif()
     add_test(NAME sign_release_script COMMAND ${OKAY_BASH} ${CMAKE_CURRENT_SOURCE_DIR}/scripts/test_sign_release.sh)
     # The test builds' publisher (scripts/publish-supabase-dev.sh) against a fake storage server on loopback, and the real publisher's refusals.
     add_test(NAME dev_publish_script COMMAND ${OKAY_BASH} ${CMAKE_CURRENT_SOURCE_DIR}/scripts/test_dev_publish.sh)

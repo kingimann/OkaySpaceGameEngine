@@ -61,6 +61,9 @@
 #include "OkayTestPanel.hpp"
 #endif
 #include "DevLog.hpp"             // development-build log file (used with or without OkayUI)
+#include "okay/Core/BuildInfo.hpp"
+#include "GameContent.hpp"         // optional downloaded game content (off unless a content URL is configured; docs/content_delivery.md)
+#include "GameContentValidators.hpp"  // graph / script checks for downloaded scripts
 
 #ifdef __EMSCRIPTEN__
 #include <emscripten.h>
@@ -1425,20 +1428,6 @@ int main(int argc, char** argv) {
             }
         }
     }
-    // Register the build's scenes so scripts can load_scene_index / load_next.
-    SceneManager::ClearScenes();
-    for (const std::string& s : cfg.scenes) SceneManager::AddScene(baseDir + s);
-
-    // Resolve the scene path: CLI arg > config startup > game.okayscene.
-    std::string scenePath;
-    if (dedicatedServer && !serverOpts.scenePath.empty()) {   // --scene: as given, else beside the game
-        scenePath = serverOpts.scenePath;
-        if (!std::ifstream(scenePath).good()) scenePath = baseDir + serverOpts.scenePath;
-    }
-    else if (!dedicatedServer && !launchScene.empty()) scenePath = launchScene;
-    else if (!cfg.startup.empty()) scenePath = baseDir + cfg.startup;
-    else scenePath = baseDir + "game.okayscene";
-
     // Where the game WRITES saves: a per-user, writable
     // app folder when enabled — so saving works even from a read-only install (e.g.
     // Program Files) and two games never clash. Falls back to beside-the-exe.
@@ -1451,6 +1440,42 @@ int main(int argc, char** argv) {
     }
     okay::Save::SetBaseDir(saveDir);  // relative SaveData files (save.okaysave, ...) land here
 
+    // Optional downloaded content (docs/content_delivery.md): OFF unless a content URL is set (content.okayconfig beside the game, or the
+    // environment variable OKAY_CONTENT_URL). With no URL nothing below does anything and the game is exactly as before. With one, the game
+    // brings its content folder up to date from the signed manifest (data and scripts only, never code), then looks for each file there first
+    // and in the installed game files second. A failed or offline update keeps serving the last good content.
+    {
+        std::string cfgWhy;
+        const okaycontent::GameContentConfig gcc = okaycontent::ResolveConfig(okaycontent::SlurpFile(baseDir + "content.okayconfig"), okaycontent::RealEnv(), &cfgWhy);
+        if (!cfgWhy.empty()) pb->Log("content: " + cfgWhy);
+        if (gcc.Enabled()) {
+            const okaycontent::StartOutcome oc = okaycontent::StartGameContent(
+                gcc, saveDir + "content/", okay::BuildInfo::Version(), okaycontent::ValidateContentFile,
+                [pb](int ms) { pb->DelayMs(static_cast<uint32_t>(ms)); }, [pb](const std::string& l) { pb->Log(l); });
+            (void)oc;   // the one status line was logged by StartGameContent
+        }
+    }
+    // A file of the game: the downloaded content first (when there is any), else beside the game.
+    auto contentPath = [&baseDir](const std::string& rel) {
+        const std::string d = okaycontent::Overlay::Global().Find(rel);
+        return d.empty() ? baseDir + rel : d;
+    };
+
+    // Register the build's scenes so scripts can load_scene_index / load_next.
+    SceneManager::ClearScenes();
+    for (const std::string& s : cfg.scenes) SceneManager::AddScene(contentPath(s));
+
+    // Resolve the scene path: CLI arg > config startup > game.okayscene.
+    std::string scenePath;
+    if (dedicatedServer && !serverOpts.scenePath.empty()) {   // --scene: as given, else beside the game
+        scenePath = serverOpts.scenePath;
+        if (!std::ifstream(scenePath).good()) scenePath = baseDir + serverOpts.scenePath;
+    }
+    else if (!dedicatedServer && !launchScene.empty()) scenePath = launchScene;
+    else if (!cfg.startup.empty()) scenePath = contentPath(cfg.startup);
+    else scenePath = contentPath("game.okayscene");
+
+
     // Persistent prefs (high scores, settings) live in the save folder.
     std::string prefsPath = saveDir + "game.okayprefs";
     Prefs::Load(prefsPath);
@@ -1460,14 +1485,14 @@ int main(int argc, char** argv) {
     Character::SetAssetBaseDir(baseDir);   // a Character's relative clips file, too
     AntiCheatConfig::SetAssetBaseDir(baseDir);   // a relative anti-cheat rules file (.okayac) is looked for in the data folder
     BehaviorTreeRunner::SetAssetBaseDir(baseDir);   // a Behavior Tree Runner's relative .okaybt
-    ItemDatabase::Get().Load(baseDir + "items.okayitems");   // the project's item definitions (shipped by Build Game)
-    WeaponBook::Get().Load(baseDir + "weapons.okayweapon"); // the project's weapons (shipped by Build Game)
+    ItemDatabase::Get().Load(contentPath("items.okayitems"));   // the project's item definitions (shipped by Build Game)
+    WeaponBook::Get().Load(contentPath("weapons.okayweapon")); // the project's weapons (shipped by Build Game)
     // The project's strings in every language (shipped by Build Game), and the
     // language to show: the one the player chose before, else the OS language
     // when the game has it, else the table's default.
-    if (std::ifstream(baseDir + "strings.okayloc").good()) {
+    if (std::ifstream(contentPath("strings.okayloc")).good()) {
         std::string locErr;
-        if (!Localization::LoadTable(baseDir + "strings.okayloc", &locErr)) pb->Log("strings.okayloc: " + locErr);
+        if (!Localization::LoadTable(contentPath("strings.okayloc"), &locErr)) pb->Log("strings.okayloc: " + locErr);
     }
     {
         std::vector<std::string> osLocales = pb->PreferredLocales();
@@ -1759,6 +1784,7 @@ int main(int argc, char** argv) {
     // The UI pass draws through one batcher for the whole run: it keeps the UI atlas
     // (fonts + images) and its vertex buffers between frames.
     ui2d::BatchPainter uiBatch(*renderer, [&baseDir](const std::string& path, Image& out) {
+        { const std::string c = okaycontent::Overlay::Global().Find(path); if (!c.empty() && out.Load(c)) return true; }   // downloaded content first
         return out.Load(path) || out.Load(baseDir + path);
     });
     // Z-buffered 3D: meshes are rasterized into this texture each frame so
@@ -1775,7 +1801,9 @@ int main(int argc, char** argv) {
         auto* mr = up->GetComponent<MeshRenderer>();
         if (!mr || mr->meshPath.empty()) continue;
         bool ok = false;
-        Mesh m = Mesh::LoadOBJ(mr->meshPath, &ok);
+        Mesh m;
+        { const std::string c = okaycontent::Overlay::Global().Find(mr->meshPath); if (!c.empty()) m = Mesh::LoadOBJ(c, &ok); }   // downloaded content first
+        if (!ok || m.vertices.empty()) m = Mesh::LoadOBJ(mr->meshPath, &ok);
         if (!ok || m.vertices.empty()) m = Mesh::LoadOBJ(baseDir + mr->meshPath, &ok);
         if (ok && !m.vertices.empty()) mr->mesh = m;
     }

@@ -106,6 +106,7 @@ Find the window, page or symptom, then say the number. Back to the [overview](..
 | a function behaves differently than the reference says | [13.7](13-scripting.md#137-built-in-function-library) Built-in function library |
 | a function exists in OkayScript but not in a graph node or the typed API | [13.7](13-scripting.md#137-built-in-function-library) Built-in function library |
 | a function returns nothing | [14.3](14-visual-scripting.md#143-functions-loops-control-flow) Functions, loops, control flow |
+| a game shows old content after a publish | [18.11](18-build-export-release.md#1811-downloadable-game-content-content-delivery) Downloadable game content (content delivery) |
 | a game starts the wrong player | [17.13](17-launcher-platform.md#1713-play-page-library-web-games-collections-playtime) Play page: library, web games, collections, playtime |
 | a generated node's pins differ from the table | [14.7](14-visual-scripting.md#147-engine-api-nodes) Engine API nodes |
 | a golden image test fails | [12.11](12-ingame-ui.md#1211-ui-renderer-painters-and-batching) UI renderer, painters and batching |
@@ -468,6 +469,7 @@ Find the window, page or symptom, then say the number. Back to the [overview](..
 | configure fails offline | [41.10](41-build-tools-infra.md#4110-dependencies-and-pinned-versions) Dependencies and pinned versions |
 | Console warns about missing bones or unweighted vertices | [3.6](03-modeling-import.md#36-model-import) Model import |
 | contact points and rays are hard to see while debugging | [6.5](06-physics.md#65-queries-and-debug-draw) Queries and debug draw |
+| content refused: not signed | [18.11](18-build-export-release.md#1811-downloadable-game-content-content-delivery) Downloadable game content (content delivery) |
 | copies all face the same way | [44.2](43-proposals.md#442-prefab-brush-and-placement) Prefab brush and placement |
 | copy and paste invents wires | [14.1](14-visual-scripting.md#141-graph-editor) Graph editor |
 | corners are square when they should be round | [12.2](12-ingame-ui.md#122-widgets-button-image-raw-image-text-panel-progress-rating) Widgets: button, image, raw image, text, panel, progress, rating |
@@ -1069,6 +1071,7 @@ Find the window, page or symptom, then say the number. Back to the [overview](..
 | the okayui test targets are missing from a build | [40.6](40-okayui-library.md#406-headless-software-backend-and-test-harness) Headless software backend and test harness |
 | the Open button does nothing | [37.3](37-platform-windowing.md#373-file-dialogs) File dialogs |
 | the own backend cannot open a display | [17.17](17-launcher-platform.md#1717-platform-layer-okayplatform-and-the-own-backend) Platform layer (`okay::platform`) and the own backend |
+| the owner wants new models, maps or scripts in a shipped game without a new build | [18.11](18-build-export-release.md#1811-downloadable-game-content-content-delivery) Downloadable game content (content delivery) |
 | the owner wants to try the game on an Xbox One | [18.10](18-build-export-release.md#1810-xbox-one-export-experimental-developer-mode-uwp) Xbox One export (experimental, Developer Mode, UWP) |
 | the owner wants to try unmerged work without waiting for a release | [18.9](18-build-export-release.md#189-test-builds-the-dev-channel) Test builds (the dev channel) |
 | the pad does nothing in the editor Play view | [8.2](08-input.md#82-gamepad-sdl) Gamepad (SDL) |

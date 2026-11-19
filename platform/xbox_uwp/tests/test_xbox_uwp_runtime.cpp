@@ -535,6 +535,8 @@ static void BackendTests() {
     std::filesystem::remove_all(roots.local);
     UwpBackend b(&host, roots);
     CHECK(b.Kind() == BackendKind::Own && b.Init(InitFlags()) && std::string(b.Name()) == "own");
+    { std::vector<std::string> sunk; b.logSink = [&](const std::string& l) { sunk.push_back(l); }; b.Log("one"); b.ShowErrorBox("T", "boom", nullptr);   // every log line also goes to the sink (the log file)
+      CHECK(sunk.size() == 2 && sunk[0] == "one" && sunk[1] == "T: boom"); b.logSink = nullptr; b.Log("two"); CHECK(sunk.size() == 2); }
     CHECK(b.BasePath() == "C:/WindowsApps/Okay/");
     { std::string p = b.PrefPath("Org", "My Game"); CHECK(p == "/tmp/okay_xbox_backend_local/saves/My Game/" && std::filesystem::is_directory(p)); CHECK(b.PrefPath("O", "../evil").empty()); }
     // window: size comes from the lifecycle, GL and moving are refused, the handle is the CoreWindow

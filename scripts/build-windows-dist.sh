@@ -202,6 +202,7 @@ spatial_audio
 texture
 touch_controls
 ui_library
+ui_quality
 ui_text
 vehicle
 visual_script/playground
@@ -266,7 +267,9 @@ examples/ example scenes to try: in the editor use File > Open and pick
                         examples\vehicle\vehicle_test.okayscene, then press Play
                         (get in the car with E), or
                         examples\ui_text\ui_text.okayscene (a nameplate over each of
-                        two characters and a sign with rich text; keys 1 2 3 H).
+                        two characters and a sign with rich text; keys 1 2 3 H), or
+                        examples\ui_quality\ui_quality.okayscene (the same UI card at 1x, 1.5x
+                        and 2x; Lighting > UI Font > UI Quality switches the old look back on).
                         More in docs/try_it.md.
 
 Each .exe needs SDL2.dll in its own folder — that's why one sits beside the

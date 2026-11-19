@@ -1283,7 +1283,13 @@ public:
     // base class turned it into a whole-pixel rect and every soft edge became a block as wide as the canvas scale.
     void FillRectF(const FRect* r) override {
         if (!m_on) { m_in.FillRectF(r); return; }
-        Painter::FillRectF(r);
+        if (!r) return;
+        if (g_uiQuality == UIQuality::Old) { Painter::FillRectF(r); return; }
+        // Turned or scaled by a UI Frame: keep the fractional edge of the run (the base class widened it to whole pixels, so every
+        // soft edge of a turned shape became a hard block).
+        float x = r->x, y = r->y, w = r->w, h = r->h;
+        if (!ClipRect(x, y, w, h)) return;
+        Quad(nullptr, x, y, w, h, 0, 0, 1, 1, false);
     }
     void FillRect(const Rect* r) override {
         if (!m_on || !r) { m_in.FillRect(r); return; }

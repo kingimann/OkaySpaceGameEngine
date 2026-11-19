@@ -496,7 +496,7 @@ void RegisterParticleSystem() {
      .AddVec3("gravity", &PS::gravity).Range(-kBig, kBig, 0.1)
      .AddFloat("gravityModifier", &PS::gravityModifier).Range(-1000, 1000, 0.05)
      .AddFloat("damping", &PS::damping).Range(0, 1000, 0.01)
-     .AddFloat("windInfluence", &PS::windInfluence).Range(0, 100, 0.05)
+     .AddFloat("windInfluence", &PS::windInfluence).Range(0, 100, 0.05).Tooltip("Affected by wind: 0 ignores the wind, 1 drifts at the wind's speed (weather and Wind Zones)")
      .Section("Motion")
      .AddEnum("simulationSpace", &PS::simulationSpace, {"World", "Local"})
      .AddFloat("inheritVelocity", &PS::inheritVelocity).Range(0, 100, 0.05)

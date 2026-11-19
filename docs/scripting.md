@@ -632,6 +632,10 @@ sections, see [rendering.md](rendering.md)) at runtime:
 | `fog_set(on[, "#rrggbb"][, start, end][, mode[, density]])` | fog on/off, its colour, the linear start / end, and a mode (`"linear"`, `"exponential"`, `"height"`) with its density |
 | `weather_set(preset[, intensity])` | `"none"`, `"rain"`, `"snow"` or `"storm"` at an intensity 0..1; cross-fades over the scene's fade time |
 | `time_of_day([hours])` | the Day/Night Cycle's clock (0..24); with an argument sets it. -1 when the scene has none |
+| `wind_speed([x, y, z])` | the wind speed (metres per second) at a point, default where the camera is. The wind is the weather's plus every Wind Zone (`docs/wind.md`) |
+| `wind_x(x, y, z)`, `wind_y(...)`, `wind_z(...)` | the wind's parts along each axis at a point |
+| `wind_set(strength[, yawDegrees])` | the scene's own wind: its speed and (0 = toward +Z, 90 = toward +X) its direction. Makes a "Wind" object if the scene has none |
+| `wind_gust(amount[, perSecond])` | how much the scene's wind swells and drops (0 steady, 1 calm to double) and how many gusts come each second |
 
 ```cs
 post_set("bloom", 1);

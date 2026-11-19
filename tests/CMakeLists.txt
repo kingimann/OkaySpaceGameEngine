@@ -1012,6 +1012,11 @@ add_executable(test_project_state test_project_state.cpp)
 target_link_libraries(test_project_state PRIVATE okay::engine)
 add_test(NAME project_state COMMAND test_project_state)
 
+# The Build Settings window's logic (pages, search, presets, validation, history, commands) and the player's extra config keys.
+add_executable(test_build_settings test_build_settings.cpp)
+target_link_libraries(test_build_settings PRIVATE okay::engine)
+add_test(NAME build_settings COMMAND test_build_settings)
+
 # Damaged or unusual project, texture-meta and material files load safely (issue #888 findings 74, 75, 78).
 add_executable(test_data_load_checks test_data_load_checks.cpp)
 target_link_libraries(test_data_load_checks PRIVATE okay::engine)
@@ -4430,6 +4435,15 @@ add_test(NAME lighting_upgrade COMMAND test_lighting_upgrade)
 add_executable(test_d3d11_layout test_d3d11_layout.cpp)
 target_link_libraries(test_d3d11_layout PRIVATE okay::engine)
 add_test(NAME d3d11_layout COMMAND test_d3d11_layout)
+# Wind field maths: noise, gusts, zones, blending, curve (docs/wind.md)
+add_executable(test_wind_field test_wind_field.cpp)
+target_link_libraries(test_wind_field PRIVATE okay::engine)
+add_test(NAME wind_field COMMAND test_wind_field)
+
+# Wind components in a scene: zones, particles, drag, sway, foliage, cable, sound, save/load (docs/wind.md)
+add_executable(test_wind test_wind.cpp)
+target_link_libraries(test_wind PRIVATE okay::engine)
+add_test(NAME wind COMMAND test_wind)
 # okay::tex, our own texture library (docs/own_texture_library.md). Pure CPU, deterministic.
 foreach(_t IN ITEMS mip atlas convert bc dds_stream)
     add_executable(test_tex_${_t} test_tex_${_t}.cpp)

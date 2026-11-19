@@ -75,11 +75,15 @@ int main() {
     {
         State s = File(Kind::Script);
         const std::vector<Item> m = ItemMenu(s);
-        const std::vector<std::string> want = {"open", "script:edit", "open:external", "open:default", "rename", "duplicate", "cut", "copy", "paste", "moveto", "delete",
+        const std::vector<std::string> want = {"open", "script:edit", "open:external", "open:default", "build:exclude", "rename", "duplicate", "cut", "copy", "paste", "moveto", "delete",
                                                "refs", "deps", "refs:scene", "reimport", "favourite", "tag:add", "label:0", "label:1", "label:2",
                                                "copy:name", "copy:rel", "copy:full", "reveal", "properties"};
         CHECK(Ids(m) == want);
         CHECK(Label(m, "open") == "Open");
+        CHECK(Label(m, "build:exclude") == "Exclude from Build");
+        { State x = File(Kind::Script); x.excludedFromBuild = true; CHECK(Label(ItemMenu(x), "build:exclude") == "Include in Build"); }
+        { State x = File(Kind::Scene); CHECK(Find(ItemMenu(x), "build:exclude") == nullptr); }            // scenes are chosen in Scenes In Build
+        { State x = File(Kind::Script); x.readOnly = true; const Item* e = Find(ItemMenu(x), "build:exclude"); CHECK(e && !e->enabled); }
         CHECK(Label(m, "delete") == "Delete" && Label(m, "duplicate") == "Duplicate" && Label(m, "cut") == "Cut" && Label(m, "copy") == "Copy");
         CHECK(Find(m, "rename")->shortcut == "F2" && Find(m, "delete")->shortcut == "Del" && Find(m, "duplicate")->shortcut == "Ctrl+D");
         CHECK(Find(m, "cut")->shortcut == "Ctrl+X" && Find(m, "copy")->shortcut == "Ctrl+C" && Find(m, "paste")->shortcut == "Ctrl+V");

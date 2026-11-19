@@ -10,6 +10,7 @@ _Last updated: 2026-11-13 17:55 UTC_
 
 | Version | What's in it |
 |---|---|
+| 2.889.0 | Settings > Experimental switches for our own replacements (own WAV reader, OkayUI); own texture library (mipmaps, atlas, BC compression, DDS, okay-texture tool, editor Import Settings button); Xbox test export fixes (next-step messages, reused certificate, device log file); own platform layer event loops for launcher and editor (off by default); own build tools (okay-build, okay-cc, okay-ms) |
 | 2.888.0 | Editor frame-time overlay with frame limiter and Performance mode; experimental Xbox One UWP test export (Developer Mode, never run on a console); downloadable signed game content (okay-content tool, off by default); CI time limits and a round-picture edge fix |
 | 2.887.0 | UI bundle: Visual Script plain-word side panel with Saved values (made by typing a name, Me or All), about 30 new game-logic blocks and a Rule block, Set Value To presets, merged Move/Turn/Resize and Show/Hide blocks, five new recipe cards, Play highlight |
 | 2.886.0 | UI bundle: Modeling without the Advanced menu and with plain page names; Project panel one or two columns; Visual Script panning (Pan button, Space-drag, arrow keys, trackpad option); Visual Script start screen recipe cards, blocks that auto-connect, plain error messages with Fix it for me, what-just-happened notes; right-click Add menu in the Scene view |

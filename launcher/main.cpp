@@ -8,9 +8,36 @@
 #define SDL_MAIN_HANDLED
 #include <SDL.h>
 #include "okay/Platform/Platform.hpp"   // okay::platform: timers (and the SDL seam)
+#include "okay/Platform/WindowLogic.hpp" // frame-rate / flash / background decisions
+
+// Window calls on the launcher's raw SDL windows, through the okay::platform seam (a non-owning wrapper per call; the
+// windows are still made and destroyed by SDL). A null window does nothing, like SDL's own calls with an error.
+namespace lw {
+inline void Restore(SDL_Window* w)  { if (auto s = okay::platform::WrapSdl2Window(w)) s->Restore(); }
+inline void Raise(SDL_Window* w)    { if (auto s = okay::platform::WrapSdl2Window(w)) s->Raise(); }
+inline void Show(SDL_Window* w)     { if (auto s = okay::platform::WrapSdl2Window(w)) s->Show(); }
+inline void Hide(SDL_Window* w)     { if (auto s = okay::platform::WrapSdl2Window(w)) s->Hide(); }
+inline void Minimize(SDL_Window* w) { if (auto s = okay::platform::WrapSdl2Window(w)) s->Minimize(); }
+inline void GetPos(SDL_Window* w, int* x, int* y) { int a = 0, b = 0; if (auto s = okay::platform::WrapSdl2Window(w)) s->GetPosition(a, b); if (x) *x = a; if (y) *y = b; }
+inline bool IsMinimized(SDL_Window* w) { auto s = okay::platform::WrapSdl2Window(w); return s && s->IsMinimized(); }
+inline bool IsVisible(SDL_Window* w)   { auto s = okay::platform::WrapSdl2Window(w); return s && s->IsVisible(); }
+inline bool HasInputFocus(SDL_Window* w) { auto s = okay::platform::WrapSdl2Window(w); return s && s->HasInputFocus(); }
+inline bool HasMouseFocus(SDL_Window* w) { auto s = okay::platform::WrapSdl2Window(w); return s && s->HasMouseFocus(); }
+inline bool AnyKeyboardFocus() { auto* b = okay::platform::Get(okay::platform::BackendKind::Sdl2); return b && b->KeyboardFocusWindowId() != 0; }
+inline void* Win32Handle(SDL_Window* w) { auto s = okay::platform::WrapSdl2Window(w); return s ? s->Win32Handle() : nullptr; }
+inline void GetSize(SDL_Window* w, int* x, int* y) { int a = 0, b = 0; if (auto s = okay::platform::WrapSdl2Window(w)) s->GetSize(a, b); if (x) *x = a; if (y) *y = b; }
+inline void SetSize(SDL_Window* w, int x, int y) { if (auto s = okay::platform::WrapSdl2Window(w)) s->SetSize(x, y); }
+inline void SetPos(SDL_Window* w, int x, int y)  { if (auto s = okay::platform::WrapSdl2Window(w)) s->SetPosition(x, y); }
+inline void SetMinSize(SDL_Window* w, int x, int y) { if (auto s = okay::platform::WrapSdl2Window(w)) s->SetMinimumSize(x, y); }
+inline uint32_t Id(SDL_Window* w)   { auto s = okay::platform::WrapSdl2Window(w); return s ? s->Id() : 0; }
+inline bool IsFocused(SDL_Window* w) { auto s = okay::platform::WrapSdl2Window(w); return s && s->IsFocused(); }
+inline void Flash(SDL_Window* w, okay::platform::FlashMode m) { if (auto s = okay::platform::WrapSdl2Window(w)) s->Flash(m); }
+} // namespace lw
 #include "WavPlayback.hpp"   // the one WAV loading seam (SDL_LoadWAV, or our own decoder with OKAY_OWN_WAV)
 #include "VoiceChat.hpp"   // voice calls (first: winsock2.h must precede windows.h)
 #include "AppIcon.hpp"
+#include "OwnSwitches.hpp"   // Settings > Experimental: the table of own replacements that can be switched on
+#include "ImGuiPlatformFeed.hpp"   // our own Dear ImGui input feed over okay::platform (OKAY_PLATFORM_EVENTS=own; default stays imgui_impl_sdl2)
 #include "OwnStack.hpp"   // OKAY_OWN_STACK=1 dogfood switch + the one-line startup stack report
 #include "OkayTheme.hpp"  // shared Slate palette (launcher + editor)
 #include "LauncherDemo.hpp"   // okay::IsLauncherDemoMode(): the one list of demo / screenshot env variables
@@ -99,7 +126,6 @@ namespace okayuihost { inline bool PopupCoversRect(float, float, float, float) {
 #  include <windows.h>
 #  include <shellapi.h>   // Shell_NotifyIcon (system-tray icon)
 #  include <tlhelp32.h>   // process snapshot: is the editor still open?
-#  include <SDL_syswm.h>  // HWND of the SDL window, for the tray
 #else
 #  include <unistd.h>
 #  include <sys/wait.h>   // waitpid: playtime tracking of launched games
@@ -115,6 +141,18 @@ namespace okayuihost { inline bool PopupCoversRect(float, float, float, float) {
 #include "VersionsNet.hpp"
 #include "VersionsUI.hpp"
 #include "MemberModeration.hpp"   // kick / ban / unban / admin role for servers and group chats
+#include "okay/Platform/Painter.hpp"   // okay::platform::Painter: textures from RGBA pixels (the first SDL_Renderer calls moved behind the seam)
+
+// An RGBA8 picture (w * h * 4 bytes, top row first) as a texture of `renderer`; null when it cannot be made. The same texture
+// SDL_CreateTextureFromSurface gave (static, alpha blended, nearest sampling); the caller still draws it with SDL_RenderCopy and
+// frees it with SDL_DestroyTexture. Goes through okay::platform::Painter, which wraps the renderer and does not own it.
+static SDL_Texture* TextureFromRgba(SDL_Renderer* renderer, const unsigned char* rgba, int w, int h) {
+    if (!renderer || !rgba || w <= 0 || h <= 0) return nullptr;
+    std::unique_ptr<okay::platform::Painter> painter = okay::platform::WrapSdl2Renderer(renderer);
+    if (!painter) return nullptr;
+    okay::platform::TextureDesc d; d.width = w; d.height = h;
+    return (SDL_Texture*)painter->CreateTexture(d, rgba);
+}
 
 #if defined(_WIN32)
 // Prefer the dedicated GPU on hybrid-graphics laptops (NVIDIA Optimus / AMD
@@ -3553,9 +3591,7 @@ SDL_Texture* GameCover(const std::string& gamePath) {
             int w = 0, h = 0;
             unsigned char* px = LoadRgbaFile(c.string(), &w, &h);
             if (!px) continue;
-            SDL_Surface* surf = SDL_CreateRGBSurfaceWithFormatFrom(
-                px, w, h, 32, w * 4, SDL_PIXELFORMAT_ABGR8888);
-            if (surf) { tex = SDL_CreateTextureFromSurface(g_renderer, surf); SDL_FreeSurface(surf); }
+            tex = TextureFromRgba(g_renderer, px, w, h);
             std::free(px);
             break;
         }
@@ -3619,8 +3655,7 @@ SDL_Texture* AvatarTexture(const std::string& url) {
         int w = 0, h = 0;
         unsigned char* px = LoadRgbaFile(cache.string(), &w, &h);
         if (px) {
-            SDL_Surface* s = SDL_CreateRGBSurfaceWithFormatFrom(px, w, h, 32, w * 4, SDL_PIXELFORMAT_ABGR8888);
-            if (s) { tex = SDL_CreateTextureFromSurface(g_renderer, s); SDL_FreeSurface(s); }
+            tex = TextureFromRgba(g_renderer, px, w, h);
             std::free(px);
         }
         if (tex) { g_avatarCache[url] = tex; return tex; }
@@ -3840,8 +3875,7 @@ static void EmojiCatalogPump() {
     SDL_UnlockMutex(g_emojiMutex);
     if (!done) return;
     if (g_emojiPixels && g_renderer && !g_emojiParsedCells.empty()) {
-        SDL_Surface* sf = SDL_CreateRGBSurfaceWithFormatFrom(g_emojiPixels, g_emojiPxW, g_emojiPxH, 32, g_emojiPxW * 4, SDL_PIXELFORMAT_ABGR8888);
-        if (sf) { g_emojiSheet = SDL_CreateTextureFromSurface(g_renderer, sf); SDL_FreeSurface(sf); }
+        g_emojiSheet = TextureFromRgba(g_renderer, (const unsigned char*)g_emojiPixels, g_emojiPxW, g_emojiPxH);
         g_emojiSheetW = g_emojiPxW; g_emojiSheetH = g_emojiPxH;
     }
     // (g_emojiPixels stay loaded: the chat window's renderer makes its own copy.)
@@ -3856,8 +3890,7 @@ static void EmojiCatalogPump() {
 // Draw sheet cell (sx,sy) into the square [c-s/2, c+s/2].
 static void DrawEmojiCell(ImDrawList* dl, ImVec2 c, float s, int sx, int sy) {
     if (!g_emojiSheet && g_emojiPixels && g_renderer) {   // first use on this renderer
-        SDL_Surface* sf = SDL_CreateRGBSurfaceWithFormatFrom(g_emojiPixels, g_emojiPxW, g_emojiPxH, 32, g_emojiPxW * 4, SDL_PIXELFORMAT_ABGR8888);
-        if (sf) { g_emojiSheet = SDL_CreateTextureFromSurface(g_renderer, sf); SDL_FreeSurface(sf); }
+        g_emojiSheet = TextureFromRgba(g_renderer, (const unsigned char*)g_emojiPixels, g_emojiPxW, g_emojiPxH);
     }
     if (!g_emojiSheet) return;
     const float u0 = (float)(sx * kEmojiStride + 1) / g_emojiSheetW, v0 = (float)(sy * kEmojiStride + 1) / g_emojiSheetH;
@@ -3931,10 +3964,7 @@ static SDL_Texture* ChatImageTexture(const std::string& url, int* w = nullptr, i
                     if (d < 20) d = 100;   // browsers treat 0-10ms frames as 100ms
                     acc += d;
                     if (i % step != 0 && i != frames - 1) continue;
-                    SDL_Surface* sf = SDL_CreateRGBSurfaceWithFormatFrom(const_cast<unsigned char*>(px) + (std::size_t)i * fw * fh * 4, fw, fh, 32, fw * 4, SDL_PIXELFORMAT_ABGR8888);
-                    if (!sf) continue;
-                    SDL_Texture* tx = SDL_CreateTextureFromSurface(g_renderer, sf);
-                    SDL_FreeSurface(sf);
+                    SDL_Texture* tx = TextureFromRgba(g_renderer, px + (std::size_t)i * fw * fh * 4, fw, fh);
                     if (!tx) continue;
                     a.frames.push_back(tx);
                     a.total += acc; a.ends.push_back(a.total); acc = 0;
@@ -5206,7 +5236,11 @@ static std::string VoiceMessageBody(int secs, const std::string& url) { return "
 
 static bool EnsureAudio() {
     static int state = 0;   // 0 untried, 1 ok, -1 unavailable
-    if (state == 0) state = SDL_InitSubSystem(SDL_INIT_AUDIO) == 0 ? 1 : -1;
+    if (state == 0) {
+        okay::platform::InitFlags af; af.video = false; af.audio = true; af.gamepad = false;
+        okay::platform::Backend* ab = okay::platform::Get(okay::platform::BackendKind::Sdl2);
+        state = (ab && ab->Init(af)) ? 1 : -1;   // starts the audio subsystem on top of what main() already started (shut down with it)
+    }
     return state == 1;
 }
 
@@ -9935,7 +9969,7 @@ void DrawChatWindow(okay::account::AccountService& account) {
             peerTyping = g_chatPeerTyping;
             // We're looking at this conversation (window focused, not minimised):
             // lets the poller mark it read and tell the peer we're in the chat.
-            if (!selUid.empty() && SDL_GetKeyboardFocus() != nullptr) g_chatViewMs = okay::platform::TicksMs32();
+            if (!selUid.empty() && lw::AnyKeyboardFocus()) g_chatViewMs = okay::platform::TicksMs32();
             // Mark everything seen locally (clears the unread dot for this chat).
             long firstUnread = 0;
             for (const auto& m : log) {
@@ -10813,10 +10847,7 @@ static const UINT    OKAY_TRAY_UID = 1;
 static UINT          g_showMsg = 0;
 
 static HWND OkayWindowHWND(SDL_Window* w) {
-    SDL_SysWMinfo wm; SDL_VERSION(&wm.version);
-    if (w && SDL_GetWindowWMInfo(w, &wm) && wm.subsystem == SDL_SYSWM_WINDOWS)
-        return wm.info.win.window;
-    return nullptr;
+    return (HWND)lw::Win32Handle(w);
 }
 // Returns true only if the tray icon was actually registered. Retained for
 // possible future use; the launcher no longer hides itself to the tray.
@@ -10866,7 +10897,7 @@ static void OkayTrayShowMenu() {
 // SDL pumps Win32 messages on the main thread, so this hook runs there too; it
 // just flags work the main loop performs (any left-click opens the app; a
 // right-click raises the menu; a broadcast from a 2nd launch also surfaces us).
-static void SDLCALL OkayMsgHook(void* userdata, void* hWnd, unsigned int msg, Uint64 wParam, Sint64 lParam) {
+static void OkayMsgHook(void* userdata, void* hWnd, unsigned int msg, uint64_t wParam, int64_t lParam) {   // okay::platform::NativeMessageHook
     (void)userdata; (void)hWnd; (void)wParam;
     if (msg == WM_OKAYTRAY) {
         UINT ev = (UINT)(lParam & 0xFFFF);
@@ -11441,7 +11472,7 @@ static void PumpMultiplayer() {
     // Shift+Tab in a game (or net_invite_friends()): bring up Invite friends.
     if (!okay::GameIpc::TakeInviteRequests().empty()) {
         g_inviteOpenReq = true; g_inviteMode = 0;
-        if (g_launcherWindow) { SDL_RestoreWindow(g_launcherWindow); SDL_RaiseWindow(g_launcherWindow); }
+        if (g_launcherWindow) { lw::Restore(g_launcherWindow); lw::Raise(g_launcherWindow); }
     }
 }
 
@@ -16671,47 +16702,74 @@ struct ChatWindowHost {
     ImFont* mono = nullptr; Uint32 id = 0; bool shown = false;
 };
 static ChatWindowHost g_chatHost;
+// Dear ImGui input: imgui_impl_sdl2 by default, or our own okay::platform feed with OKAY_PLATFORM_EVENTS=own
+// (shared/ImGuiPlatformFeed.hpp). One feed per ImGui context: the launcher window and the chat pop-out window.
+static bool g_imguiOwnFeed = false;
+static okay::imguifeed::Feed g_imguiFeed, g_imguiChatFeed;
+static std::unique_ptr<okay::platform::Window> g_imguiMainWrap;   // non-owning wrapper over the launcher's SDL window for the feed
+static std::unique_ptr<okay::platform::Window> g_imguiChatWrap;
+// One platform event for Dear ImGui: our own feed takes it directly; imgui_impl_sdl2 (the default) takes the SDL record the sdl2
+// backend keeps in Event::native (valid only inside the poll loop pass that returned the event).
+static void FeedImGuiEvent(okay::imguifeed::Feed& feed, const okay::platform::Event& e) {
+    if (g_imguiOwnFeed) { feed.ProcessEvent(e, ImGui::GetIO()); return; }
+    if (e.native) ImGui_ImplSDL2_ProcessEvent((const SDL_Event*)e.native);
+}
+static okay::platform::Window* g_chatHostOwner = nullptr;   // owns g_chatHost.win
 // Keep a window reachable: when too little of it (or its title bar) is on any
 // display (a monitor was unplugged, a minimized position got saved...), put it
 // back in the middle of the first display, shrunk to fit.
 static void KeepWindowOnScreen(SDL_Window* w) {
     if (!w) return;
-    if (SDL_GetWindowFlags(w) & SDL_WINDOW_MINIMIZED) SDL_RestoreWindow(w);
+    if (lw::IsMinimized(w)) lw::Restore(w);
     int x = 0, y = 0, ww = 0, wh = 0;
-    SDL_GetWindowPosition(w, &x, &y); SDL_GetWindowSize(w, &ww, &wh);
-    for (int d = 0; d < SDL_GetNumVideoDisplays(); ++d) {
+    lw::GetPos(w, &x, &y); lw::GetSize(w, &ww, &wh);
+    okay::platform::Backend* pb = okay::platform::Default();
+    const int nDisp = pb ? pb->DisplayCount() : 0;
+    // Usable area (without the task bar) of display d, from okay::platform.
+    auto usable = [&](int d, SDL_Rect& r) {
+        okay::platform::DisplayInfo di;
+        if (!pb || !pb->DisplayAt(d, di)) return false;
+        const bool has = di.uw > 0 && di.uh > 0;
+        r.x = has ? di.ux : di.x; r.y = has ? di.uy : di.y; r.w = has ? di.uw : di.w; r.h = has ? di.uh : di.h;
+        return true;
+    };
+    for (int d = 0; d < nDisp; ++d) {
         SDL_Rect b;
-        if (SDL_GetDisplayUsableBounds(d, &b) != 0) continue;
+        if (!usable(d, b)) continue;
         const int ix = std::min(x + ww, b.x + b.w) - std::max(x, b.x);
         const int iy = std::min(y + wh, b.y + b.h) - std::max(y, b.y);
         if (ix >= 160 && iy >= 80 && y >= b.y - 8 && y < b.y + b.h - 40) return;   // title bar visible
     }
     SDL_Rect b;
-    if (SDL_GetDisplayUsableBounds(0, &b) != 0) return;
+    if (!usable(0, b)) return;
     ww = std::min(ww, b.w - 40); wh = std::min(wh, b.h - 40);
-    SDL_SetWindowSize(w, ww, wh);
-    SDL_SetWindowPosition(w, b.x + (b.w - ww) / 2, b.y + (b.h - wh) / 2);
+    lw::SetSize(w, ww, wh);
+    lw::SetPos(w, b.x + (b.w - ww) / 2, b.y + (b.h - wh) / 2);
 }
 static void ChatHostSaveGeometry() {
     if (!g_chatHost.win || !g_chatHost.shown) return;
-    if (SDL_GetWindowFlags(g_chatHost.win) & SDL_WINDOW_MINIMIZED) return;   // (its position is meaningless then)
-    SDL_GetWindowPosition(g_chatHost.win, &g_chatWinX, &g_chatWinY);
-    SDL_GetWindowSize(g_chatHost.win, &g_chatWinW, &g_chatWinH);
+    if (lw::IsMinimized(g_chatHost.win)) return;   // (its position is meaningless then)
+    lw::GetPos(g_chatHost.win, &g_chatWinX, &g_chatWinY);
+    lw::GetSize(g_chatHost.win, &g_chatWinW, &g_chatWinH);
 }
 static bool ChatHostCreate() {
     if (g_chatHost.win) return true;
     ImGuiContext* mainCtx = ImGui::GetCurrentContext();
     const int x = g_chatWinX >= 0 ? g_chatWinX : (int)SDL_WINDOWPOS_CENTERED, y = g_chatWinY >= 0 ? g_chatWinY : (int)SDL_WINDOWPOS_CENTERED;
-    g_chatHost.win = SDL_CreateWindow("OkaySpace Chat", x, y, g_chatWinW, g_chatWinH,
-                                      SDL_WINDOW_ALLOW_HIGHDPI | SDL_WINDOW_RESIZABLE | SDL_WINDOW_HIDDEN);
+    okay::platform::Backend* sb = okay::platform::Get(okay::platform::BackendKind::Sdl2);
+    okay::platform::WindowDesc cd;
+    cd.title = "OkaySpace Chat"; cd.x = x; cd.y = y; cd.width = g_chatWinW; cd.height = g_chatWinH;
+    cd.resizable = true; cd.highDpi = true; cd.hidden = true;
+    g_chatHostOwner = sb ? sb->MakeWindow(cd).release() : nullptr;   // owning; like before, the chat window lives until the process ends (never freed on purpose: it must not outlive SDL's shutdown in a static destructor)
+    g_chatHost.win = g_chatHostOwner ? (SDL_Window*)g_chatHostOwner->NativeHandle() : nullptr;
     if (!g_chatHost.win) return false;
-    SDL_SetWindowMinimumSize(g_chatHost.win, 520, 380);
+    lw::SetMinSize(g_chatHost.win, 520, 380);
     okay::SetAppIcon(g_chatHost.win);
     // No VSync here: the launcher's present already paces the loop.
     g_chatHost.ren = SDL_CreateRenderer(g_chatHost.win, -1, SDL_RENDERER_ACCELERATED);
     if (!g_chatHost.ren) g_chatHost.ren = SDL_CreateRenderer(g_chatHost.win, -1, 0);
-    if (!g_chatHost.ren) { SDL_DestroyWindow(g_chatHost.win); g_chatHost.win = nullptr; return false; }
-    g_chatHost.id = SDL_GetWindowID(g_chatHost.win);
+    if (!g_chatHost.ren) { delete g_chatHostOwner; g_chatHostOwner = nullptr; g_chatHost.win = nullptr; return false; }
+    g_chatHost.id = lw::Id(g_chatHost.win);
     g_chatHost.ctx = ImGui::CreateContext();
     ImGui::SetCurrentContext(g_chatHost.ctx);
     ImGui::GetIO().IniFilename = nullptr;
@@ -16724,7 +16782,10 @@ static bool ChatHostCreate() {
         MergeEmojiFallback(17.0f);
         g_chatHost.mono = ImGui::GetIO().Fonts->AddFontFromMemoryCompressedBase85TTF(JetBrainsMono_compressed_data_base85, 16.0f, &fc);
     }
-    ImGui_ImplSDL2_InitForSDLRenderer(g_chatHost.win, g_chatHost.ren);
+    if (g_imguiOwnFeed) {
+        g_imguiChatWrap = okay::platform::WrapSdl2Window(g_chatHost.win);
+        g_imguiChatFeed.Init(ImGui::GetIO(), g_imguiChatWrap->Id(), okay::imguifeed::FeedHost::FromPlatform(okay::platform::Get(okay::platform::BackendKind::Sdl2), g_imguiChatWrap.get()));
+    } else ImGui_ImplSDL2_InitForSDLRenderer(g_chatHost.win, g_chatHost.ren);
     ImGui_ImplSDLRenderer2_Init(g_chatHost.ren);
     ImGui::SetCurrentContext(mainCtx);
     return true;
@@ -16734,40 +16795,48 @@ static void ChatHostSync() {
     const bool want = g_chatSeparate && g_chatWinOpen;
     if (want && !g_chatHost.shown) {
         if (!ChatHostCreate()) { g_chatSeparate = false; return; }   // fall back to the in-launcher window
-        SDL_ShowWindow(g_chatHost.win);
+        lw::Show(g_chatHost.win);
         KeepWindowOnScreen(g_chatHost.win);
-        SDL_RaiseWindow(g_chatHost.win);
+        lw::Raise(g_chatHost.win);
         g_chatHost.shown = true;
     } else if (!want && g_chatHost.shown) {
         ChatHostSaveGeometry(); SavePrefs();
-        SDL_HideWindow(g_chatHost.win);
+        lw::Hide(g_chatHost.win);
         g_chatHost.shown = false;
     }
 }
 static bool ChatHostFocused() {
-    return g_chatHost.shown && (SDL_GetWindowFlags(g_chatHost.win) & SDL_WINDOW_INPUT_FOCUS) != 0;
+    return g_chatHost.shown && lw::IsFocused(g_chatHost.win);
 }
-static void ChatHostRaise() { if (g_chatHost.shown) { SDL_RestoreWindow(g_chatHost.win); KeepWindowOnScreen(g_chatHost.win); SDL_RaiseWindow(g_chatHost.win); } }
-// Route an SDL event to the chat window; true when it belonged to it.
-static bool ChatHostEvent(const SDL_Event& e) {
+static void ChatHostRaise() { if (g_chatHost.shown) { lw::Restore(g_chatHost.win); KeepWindowOnScreen(g_chatHost.win); lw::Raise(g_chatHost.win); } }
+// Route a platform event to the chat window; true when it belonged to it.
+static bool ChatHostEvent(const okay::platform::Event& e) {
     if (!g_chatHost.win) return false;
+    using EvT = okay::platform::EventType;
     Uint32 wid = 0;
     switch (e.type) {
-        case SDL_WINDOWEVENT: wid = e.window.windowID; break;
-        case SDL_KEYDOWN: case SDL_KEYUP: wid = e.key.windowID; break;
-        case SDL_TEXTINPUT: wid = e.text.windowID; break;
-        case SDL_TEXTEDITING: wid = e.edit.windowID; break;
-        case SDL_MOUSEMOTION: wid = e.motion.windowID; break;
-        case SDL_MOUSEBUTTONDOWN: case SDL_MOUSEBUTTONUP: wid = e.button.windowID; break;
-        case SDL_MOUSEWHEEL: wid = e.wheel.windowID; break;
-        case SDL_DROPFILE: case SDL_DROPBEGIN: case SDL_DROPCOMPLETE: wid = e.drop.windowID; break;
+        case EvT::WindowClose: case EvT::WindowResized: case EvT::WindowFocusGained: case EvT::WindowFocusLost: case EvT::WindowExposed:
+        case EvT::KeyDown: case EvT::KeyUp: case EvT::TextInput: case EvT::TextEditing:
+        case EvT::MouseMove: case EvT::MouseButtonDown: case EvT::MouseButtonUp: case EvT::MouseWheel: case EvT::DropFile:
+            wid = e.windowId; break;
+        case EvT::Other: {   // what the seam has no type for: other window events (pointer enter / leave, moved ...), IME composition, drop begin / complete
+            const SDL_Event* n = (const SDL_Event*)e.native;
+            if (!n) return false;
+            switch (n->type) {
+                case SDL_WINDOWEVENT: wid = n->window.windowID; break;
+                case SDL_TEXTEDITING: wid = n->edit.windowID; break;
+                case SDL_DROPBEGIN: case SDL_DROPCOMPLETE: wid = n->drop.windowID; break;
+                default: return false;
+            }
+            break;
+        }
         default: return false;
     }
     if (wid != g_chatHost.id) return false;
-    if (e.type == SDL_WINDOWEVENT && e.window.event == SDL_WINDOWEVENT_CLOSE) { g_chatWinOpen = false; return true; }
-    if (e.type == SDL_DROPFILE) {   // dropped onto the chat: send it to the open conversation
-        if (!e.drop.file) return true;
-        std::string dropped = e.drop.file; SDL_free(e.drop.file);
+    if (e.type == EvT::WindowClose) { g_chatWinOpen = false; return true; }
+    if (e.type == EvT::DropFile) {   // dropped onto the chat: send it to the open conversation
+        if (e.text.empty()) return true;
+        std::string dropped = e.text;
         if (!g_chatDropOk || (g_chatDropUid.empty() && g_chatDropGroup <= 0)) { Toast("Open a conversation to send a file", 2); return true; }
         std::error_code fec; auto fsz = fs::file_size(fs::path(dropped), fec);
         if (fec || fs::is_directory(dropped, fec)) Toast("Only files can be sent", 2);
@@ -16778,7 +16847,7 @@ static bool ChatHostEvent(const SDL_Event& e) {
     }
     ImGuiContext* mainCtx = ImGui::GetCurrentContext();
     ImGui::SetCurrentContext(g_chatHost.ctx);
-    ImGui_ImplSDL2_ProcessEvent(&e);
+    FeedImGuiEvent(g_imguiChatFeed, e);
     ImGui::SetCurrentContext(mainCtx);
     return true;
 }
@@ -16808,7 +16877,7 @@ static void PlaytimeTick(bool loggedIn) {
 // Draw + present one chat-window frame (call with the launcher's context current).
 static void ChatHostFrame(okay::account::AccountService& account) {
     if (!g_chatHost.shown) return;
-    if (SDL_GetWindowFlags(g_chatHost.win) & SDL_WINDOW_MINIMIZED) return;
+    if (lw::IsMinimized(g_chatHost.win)) return;
     ImGuiContext* mainCtx = ImGui::GetCurrentContext();
     const ImGuiStyle style = ImGui::GetStyle();            // follow the launcher's theme/accent/scale
     const float fontScale = ImGui::GetIO().FontGlobalScale;
@@ -16817,7 +16886,7 @@ static void ChatHostFrame(okay::account::AccountService& account) {
     ImGui::GetStyle() = style; ImGui::GetIO().FontGlobalScale = fontScale;
     g_renderer = g_chatHost.ren; g_rslot = 1; g_fontMono = g_chatHost.mono; g_chatInOwnWindow = true;
     ImGui_ImplSDLRenderer2_NewFrame();
-    ImGui_ImplSDL2_NewFrame();
+    if (g_imguiOwnFeed) g_imguiChatFeed.NewFrame(ImGui::GetIO()); else ImGui_ImplSDL2_NewFrame();
     ImGui::NewFrame();
     DrawChatWindow(account);
     DrawIncomingCall();
@@ -18111,6 +18180,7 @@ int main(int argc, char** argv) {
     if (int code = okay::restart::DispatchHelper(argc, argv); code >= 0) return code;
     if (int code = okay::selfupdate::SelfCheck(argc, argv, OKAY_ENGINE_VERSION); code >= 0) return code;   // `--okay-selfcheck <v>`: the updater asks the new file who it is
     okay::restart::RememberArguments(argc, argv);
+    okay::ownswitches::Startup();   // Settings > Experimental: set the chosen own-code variables BEFORE anything reads them (the editor started from here inherits them)
     okay::ownstack::Startup();   // OKAY_OWN_STACK=1 sets the own-backend switches; logs which parts are ours (docs/own_stack_rollout.md)
     SDL_SetMainReady();
     {
@@ -18127,9 +18197,17 @@ int main(int argc, char** argv) {
 
     // Windows 11 / high-DPI: declare per-monitor-DPI-aware BEFORE SDL video init so
     // the launcher renders crisp at 125%/150% scaling instead of bitmap-stretched.
-    SDL_SetHint(SDL_HINT_WINDOWS_DPI_AWARENESS, "permonitorv2");
+    // The launcher's windows are SDL windows (Dear ImGui's SDL backends and SDL_Renderer need an SDL_Window*), so it always
+    // asks the seam for the SDL2 backend, whatever OKAY_PLATFORM_BACKEND says. Same behaviour as the direct SDL calls.
+    okay::platform::Backend* sdlSeam = okay::platform::Get(okay::platform::BackendKind::Sdl2);
+    if (!sdlSeam) return 1;
+    sdlSeam->SetPerMonitorDpiAware();
     okay::filedialog::SetContextGetter([]() -> void* { return ImGui::GetCurrentContext(); });   // the built-in file browser shows in the window (context) that asked
-    if (SDL_Init(SDL_INIT_VIDEO) != 0) return 1;
+    {
+        okay::platform::InitFlags vf; vf.audio = false; vf.gamepad = false;   // video (+ timers, events); audio is started later on demand
+        if (!sdlSeam->Init(vf)) return 1;
+        sdlSeam->StartTextInput();   // SDL2 starts with text input on and Dear ImGui's SDL backend relies on it
+    }
 
     // `--versions [<version>]` opens the Versions page (the editor's "Open launcher" button starts the launcher this way).
     okayversions::LauncherArgs launchArgs;
@@ -18143,7 +18221,7 @@ int main(int argc, char** argv) {
     // With --versions it also leaves a note for the running one to open that page.
     if (!AcquireSingleInstance()) {
         if (launchArgs.versions) okayversions::WriteHandoff(okayversions::HandoffFile(), launchArgs, (long long)std::time(nullptr));
-        SDL_Quit();
+        sdlSeam->Shutdown();
         return 0;
     }
     // Only the instance that stays up removes the previous exe. A second launch
@@ -18173,15 +18251,17 @@ int main(int argc, char** argv) {
     // rectangle during the window + renderer setup gap. We draw the first splash
     // frame while hidden, then reveal the window already showing the splash, so
     // the very first thing the user sees is the branded loading screen.
-    SDL_Window* window = SDL_CreateWindow("OkaySpace Launcher  v" OKAY_ENGINE_VERSION,
-        SDL_WINDOWPOS_CENTERED, SDL_WINDOWPOS_CENTERED, g_winW, g_winH,
-        SDL_WINDOW_ALLOW_HIGHDPI | SDL_WINDOW_RESIZABLE | SDL_WINDOW_HIDDEN);
-    if (!window) return 1;
+    okay::platform::WindowDesc mainDesc;
+    mainDesc.title = "OkaySpace Launcher  v" OKAY_ENGINE_VERSION; mainDesc.width = g_winW; mainDesc.height = g_winH;
+    mainDesc.resizable = true; mainDesc.highDpi = true; mainDesc.hidden = true;
+    std::unique_ptr<okay::platform::Window> mainWinOwner = sdlSeam->MakeWindow(mainDesc);   // owns the window
+    if (!mainWinOwner) return 1;
+    SDL_Window* window = (SDL_Window*)mainWinOwner->NativeHandle();
     g_launcherWindow = window;   // games ask us to come forward (Invite friends)
-    SDL_SetWindowMinimumSize(window, 720, 480);   // the fixed layout needs this much
+    lw::SetMinSize(window, 720, 480);   // the fixed layout needs this much
     okay::SetAppIcon(window);   // placeholder OkaySpace logo
 #if defined(_WIN32)
-    SDL_SetWindowsMessageHook(OkayMsgHook, nullptr);   // receive tray-icon clicks
+    sdlSeam->SetNativeMessageHook(OkayMsgHook, nullptr);   // receive tray-icon clicks
 #endif
     SDL_Renderer* renderer = SDL_CreateRenderer(window, -1,
         SDL_RENDERER_ACCELERATED | SDL_RENDERER_PRESENTVSYNC);
@@ -18195,10 +18275,7 @@ int main(int argc, char** argv) {
     if (!g_splashLogo.empty()) {
         int lw = 0, lh = 0;
         if (unsigned char* px = LoadRgbaFile(g_splashLogo, &lw, &lh)) {
-            if (SDL_Surface* s = SDL_CreateRGBSurfaceWithFormatFrom(px, lw, lh, 32, lw * 4, SDL_PIXELFORMAT_ABGR8888)) {
-                g_splashLogoTex = SDL_CreateTextureFromSurface(renderer, s);
-                SDL_FreeSurface(s);
-            }
+            g_splashLogoTex = TextureFromRgba(renderer, px, lw, lh);
             std::free(px);
         }
     }
@@ -18222,8 +18299,8 @@ int main(int argc, char** argv) {
         okay::DrawSplashStyled(renderer, sw, sh, splashStyle());
     };
     firstSplash();                 // draw + present while still hidden
-    SDL_ShowWindow(window);        // reveal with the splash already composited
-    SDL_RaiseWindow(window);
+    lw::Show(window);        // reveal with the splash already composited
+    lw::Raise(window);
     firstSplash();                 // present once more so the shown frame is the splash
 
     IMGUI_CHECKVERSION();
@@ -18244,7 +18321,15 @@ int main(int argc, char** argv) {
             JetBrainsMono_compressed_data_base85, 16.0f, &fc);
     }
     ApplyAccent(g_accentIndex);  // applies the saved accent/theme (calls DarkTheme)
-    ImGui_ImplSDL2_InitForSDLRenderer(window, renderer);
+    // Which Dear ImGui input path runs: imgui_impl_sdl2 (default) or our own okay::platform feed (OKAY_PLATFORM_EVENTS=own).
+    // The own feed has no gamepad navigation; keys, text, mouse, wheel, focus, clipboard and the cursor shape work.
+    g_imguiOwnFeed = okay::imguifeed::OwnRequested(std::getenv("OKAY_PLATFORM_EVENTS"));
+    std::fprintf(stderr, "%s\n", okay::imguifeed::ActiveLine(g_imguiOwnFeed));
+    sdlSeam->ReportUnmappedEvents(!g_imguiOwnFeed);   // imgui_impl_sdl2 wants every SDL event (pointer enter / leave, display changes ...)
+    if (g_imguiOwnFeed) {
+        g_imguiMainWrap = okay::platform::WrapSdl2Window(window);
+        g_imguiFeed.Init(ImGui::GetIO(), g_imguiMainWrap->Id(), okay::imguifeed::FeedHost::FromPlatform(okay::platform::Get(okay::platform::BackendKind::Sdl2), g_imguiMainWrap.get()));
+    } else ImGui_ImplSDL2_InitForSDLRenderer(window, renderer);
     ImGui_ImplSDLRenderer2_Init(renderer);
 
     std::string editor = FindExe({"OkayEngine.exe", "OkaySpaceEngine.exe", "okay-editor.exe", "okay-editor", "OkayEngine"});
@@ -18319,7 +18404,7 @@ int main(int argc, char** argv) {
         VerifyJob vj{ accountPtr.get(), false };
         SDL_Thread* vt = SDL_CreateThread(VerifySessionWorker, "okay-verify", &vj);
         while (!vj.done) {
-            SDL_PumpEvents();   // keep the window responsive (and mapped) while we wait
+            sdlSeam->PumpEvents();   // keep the window responsive (and mapped) while we wait
             int sw = g_winW, sh = g_winH; SDL_GetRendererOutputSize(renderer, &sw, &sh);
             okay::DrawSplashStyled(renderer, sw, sh, splashStyle());
             okay::platform::DelayMs(16);
@@ -18400,21 +18485,22 @@ int main(int argc, char** argv) {
         // code reads naturally; the Settings tab may rebuild accountPtr (which
         // is why the Settings tab uses accountPtr-> directly, not this alias).
         acct::AccountService& account = *accountPtr;
-        SDL_Event e;
-        while (SDL_PollEvent(&e)) {
+        okay::platform::Event e;
+        while (sdlSeam->PollEvent(e)) {
+            using EvT = okay::platform::EventType;
             if (ChatHostEvent(e)) continue;   // belonged to the chat's own window
-            ImGui_ImplSDL2_ProcessEvent(&e);
+            FeedImGuiEvent(g_imguiFeed, e);
 #ifdef OKAY_HAVE_OKAYUI
-            g_okayInput.Feed(e);   // typed text, key edges and the wheel for hosted OkayUI screens (a no-op for the Dear ImGui backend)
+            g_okayInput.Feed(e, sdlSeam->CharForKey(e.key));   // typed text, key edges and the wheel for hosted OkayUI screens (a no-op for the Dear ImGui backend)
 #endif
             // Clicking the window's [X] (or Alt+F4) asks whether to exit or just
             // minimize, rather than quitting outright. (With the chat window
             // around, SDL reports the launcher's [X] as a window close, not a quit.)
-            if (e.type == SDL_QUIT) closeConfirm = true;
-            else if (e.type == SDL_WINDOWEVENT && e.window.event == SDL_WINDOWEVENT_FOCUS_GAINED &&
-                     e.window.windowID == SDL_GetWindowID(window)) g_launcherRefocused = true;   // check for updates
-            else if (e.type == SDL_WINDOWEVENT && e.window.event == SDL_WINDOWEVENT_CLOSE &&
-                     e.window.windowID == SDL_GetWindowID(window)) closeConfirm = true;
+            if (e.type == EvT::Quit) closeConfirm = true;
+            else if (e.type == EvT::WindowFocusGained &&
+                     e.windowId == lw::Id(window)) g_launcherRefocused = true;   // check for updates
+            else if (e.type == EvT::WindowClose &&
+                     e.windowId == lw::Id(window)) closeConfirm = true;
             // NOTE: minimizing does a plain Windows minimize (to the taskbar) and
             // is always restored by clicking the taskbar button. The launcher does
             // NOT hide itself to the system tray — that could trap the window with
@@ -18422,15 +18508,14 @@ int main(int argc, char** argv) {
             // Drag & drop onto the launcher: a .okayscene plays instantly (no
             // download); a shared game FOLDER (or loose script/model) installs into
             // your community library.
-            else if (e.type == SDL_DROPFILE && e.drop.file) {
-                std::string dropped = e.drop.file;
-                SDL_free(e.drop.file);
+            else if (e.type == EvT::DropFile && !e.text.empty()) {
+                std::string dropped = e.text;
                 // Dropped onto the open chat window: send it to that conversation.
                 bool toChat = false;
                 if (g_chatWinOpen && g_chatDropOk && (!g_chatDropUid.empty() || g_chatDropGroup > 0)) {
                     int gx = 0, gy = 0, wx = 0, wy = 0;
-                    SDL_GetGlobalMouseState(&gx, &gy);
-                    SDL_GetWindowPosition(window, &wx, &wy);
+                    sdlSeam->GlobalMouseState(&gx, &gy, nullptr);
+                    lw::GetPos(window, &wx, &wy);
                     float mx = (float)(gx - wx), my = (float)(gy - wy);
                     toChat = mx >= g_chatDropMin.x && mx <= g_chatDropMax.x && my >= g_chatDropMin.y && my <= g_chatDropMax.y;
                 }
@@ -18486,9 +18571,9 @@ int main(int argc, char** argv) {
         if (g_trayRestoreReq) {
             g_trayRestoreReq = false;
             OkayTrayRemove();
-            SDL_ShowWindow(window);
-            SDL_RestoreWindow(window);
-            SDL_RaiseWindow(window);
+            lw::Show(window);
+            lw::Restore(window);
+            lw::Raise(window);
         }
 #endif
         // A finished git job (clone/pull/push) reports its result as a toast.
@@ -18574,8 +18659,8 @@ int main(int argc, char** argv) {
                 okayversions::LauncherArgs ha;
                 if (okayversions::TakeHandoff(okayversions::HandoffFile(), (long long)std::time(nullptr), &ha)) {
                     okayversionsui::RequestPage(ha.version);
-                    SDL_RestoreWindow(window);
-                    SDL_RaiseWindow(window);
+                    lw::Restore(window);
+                    lw::Raise(window);
                 }
             }
             if (okayversionsui::TakePageRequest()) { tab = 15; ClosePublicProfile(); }
@@ -18626,10 +18711,8 @@ int main(int argc, char** argv) {
                     UpsertNotif("update:" + latest, "Test build available",
                                 g_upAvailableTitle + " (v" + latest + ") is ready. It can be broken. Install it from the sidebar.", 3, -1);
                 }
-#if SDL_VERSION_ATLEAST(2, 0, 16)
-                if ((SDL_GetWindowFlags(window) & (SDL_WINDOW_MINIMIZED | SDL_WINDOW_INPUT_FOCUS)) != SDL_WINDOW_INPUT_FOCUS)
-                    SDL_FlashWindow(window, SDL_FLASH_UNTIL_FOCUSED);   // taskbar attention while minimized/unfocused
-#endif
+                if (okay::platform::NeedsAttentionFlash(lw::IsMinimized(window), lw::HasInputFocus(window)))
+                    lw::Flash(window, okay::platform::FlashMode::UntilFocused);   // taskbar attention while minimized/unfocused
             }
             if (us == Up_Updated || us == Up_UpToDate) {   // a real check/install supersedes the hint
                 if (!g_upAvailable.empty() && (us == Up_Updated || CompareVersions(LocalVersion(), g_upAvailable) >= 0)) { g_upAvailable.clear(); g_upAvailableTitle.clear(); }
@@ -18653,15 +18736,13 @@ int main(int argc, char** argv) {
             static Uint32 nextRing = 0;
             if (okay::platform::TicksMs32() >= nextRing) {
                 PlayChatChime(); nextRing = okay::platform::TicksMs32() + 2200;
-#if SDL_VERSION_ATLEAST(2, 0, 16)
-                SDL_FlashWindow(g_chatHost.shown ? g_chatHost.win : window, SDL_FLASH_BRIEFLY);
-#endif
+                lw::Flash(g_chatHost.shown ? g_chatHost.win : window, okay::platform::FlashMode::Briefly);
             }
         }
         ChatHostSync();
-        if (g_raiseMainReq) { g_raiseMainReq = false; SDL_RestoreWindow(window); SDL_RaiseWindow(window); }
-        if ((SDL_GetWindowFlags(window) & (SDL_WINDOW_HIDDEN | SDL_WINDOW_MINIMIZED)) != 0) {
-            if (g_chatHost.shown && !(SDL_GetWindowFlags(g_chatHost.win) & SDL_WINDOW_MINIMIZED)) {
+        if (g_raiseMainReq) { g_raiseMainReq = false; lw::Restore(window); lw::Raise(window); }
+        if (okay::platform::IsBackgroundWindow(lw::IsVisible(window), lw::IsMinimized(window))) {
+            if (g_chatHost.shown && !lw::IsMinimized(g_chatHost.win)) {
                 ChatHostFrame(account);   // the chat window keeps going on its own
                 okay::platform::DelayMs(ChatHostFocused() ? 15 : 45);
             } else okay::platform::DelayMs(120);
@@ -18669,7 +18750,7 @@ int main(int argc, char** argv) {
         }
 
         ImGui_ImplSDLRenderer2_NewFrame();
-        ImGui_ImplSDL2_NewFrame();
+        if (g_imguiOwnFeed) g_imguiFeed.NewFrame(ImGui::GetIO()); else ImGui_ImplSDL2_NewFrame();
         ImGui::NewFrame();
         okayFrame = false;
 #ifdef OKAY_HAVE_OKAYUI
@@ -18695,7 +18776,7 @@ int main(int argc, char** argv) {
                 }
                 ImGui::SameLine();
                 if (ImGui::Button("Minimize", ImVec2(120, 0))) {
-                    SDL_MinimizeWindow(window); closeConfirm = false; ImGui::CloseCurrentPopup();
+                    lw::Minimize(window); closeConfirm = false; ImGui::CloseCurrentPopup();
                 }
                 ImGui::SameLine();
                 if (ImGui::Button("Cancel", ImVec2(120, 0)) ||
@@ -22538,8 +22619,9 @@ int main(int argc, char** argv) {
                 {"Privacy & Safety",     3,           "Who can reach you, what others see, and who you've blocked."},
                 {"Voice & Audio",        kIcoChat,    "Microphone, speakers and voice calls."},
                 {"Crash reports",        kIcoAlert,   "What went wrong when the editor closed unexpectedly."},
+                {"Experimental",         kIcoRefresh, "Try our own code instead of the third-party parts. All off by default."},
             };
-            static const int kSetOrder[] = {0, 1, 7, 8, 2, 3, 4, 5, 9, 6};   // rail order (new pages sit with Chat)
+            static const int kSetOrder[] = {0, 1, 7, 8, 2, 3, 4, 10, 5, 9, 6};   // rail order (new pages sit with Chat)
             const int nCats = (int)(sizeof(kSetCats) / sizeof(kSetCats[0]));
             setCat = std::clamp(setCat, 0, nCats - 1);
             const float availW = ImGui::GetContentRegionAvail().x;
@@ -23159,6 +23241,35 @@ int main(int argc, char** argv) {
                             Toast("Library folder added", 1);
                             libBuf[0] = '\0';
                         }
+                    }
+                    cardEnd();
+                } else if (setCat == 10) {   // ---- Experimental: try our own code (shared/OwnSwitches.hpp) ----
+                    namespace osw = okay::ownswitches;
+                    osw::State& st = osw::Global();
+                    const osw::Context ctx = osw::Context::Here();
+                    cardBegin("##sc_own", "TRY OUR OWN CODE");
+                    ImGui::PushTextWrapPos(0.0f);
+                    ImGui::TextDisabled("Each switch swaps one third-party part for our own. All are off until you turn them on. A change starts working after you restart the launcher and editor.");
+                    ImGui::PopTextWrapPos();
+                    ImGui::Dummy(ImVec2(0, 6));
+                    bool anyOn = !st.chosen.empty();
+                    ImGui::BeginDisabled(!anyOn);
+                    if (ImGui::Button("Back to normal (all off)", ImVec2(220, 30))) { osw::AllOff(st.chosen); osw::SaveChosen(); }
+                    ImGui::EndDisabled();
+                    ImGui::Dummy(ImVec2(0, 4));
+                    for (const osw::Item& it : osw::Items()) {
+                        if (!osw::Available(it, ctx)) continue;
+                        rowDivider();
+                        const bool byUser = osw::SetByUser(it, osw::AppliedNow());
+                        const osw::Status stt = osw::StatusOf(it, st.chosen, st.runningWith, byUser);
+                        settingRow(it.label, it.desc, 300.0f, 22.0f, [&](float) {
+                            bool v = osw::Has(st.chosen, it.id);
+                            ImGui::BeginDisabled(byUser);
+                            if (ToggleSwitch((std::string("##own_") + it.id).c_str(), &v)) { osw::Set(st.chosen, it.id, v); osw::SaveChosen(); }
+                            ImGui::EndDisabled();
+                            ImGui::SameLine();
+                            ImGui::TextDisabled("%s", osw::StatusText(stt));
+                        });
                     }
                     cardEnd();
                 } else if (setCat == 9) {   // ---- Crash reports ----
@@ -27100,8 +27211,7 @@ int main(int argc, char** argv) {
         // window is in the background. With real VSync the present already took a
         // frame, so the extra delay is ~0 when focused.
         {
-            Uint32 flags = SDL_GetWindowFlags(window);
-            bool focused = (flags & (SDL_WINDOW_INPUT_FOCUS | SDL_WINDOW_MOUSE_FOCUS)) != 0 || ChatHostFocused();
+            bool focused = okay::platform::IsActiveForFrameRate(lw::HasInputFocus(window), lw::HasMouseFocus(window), ChatHostFocused());
             double targetMs = focused ? (1000.0 / 60.0) : (1000.0 / 20.0);
             double elapsed = (double)(okay::platform::PerfCounter() - frameStart) * 1000.0
                            / (double)okay::platform::PerfFrequency();
@@ -27111,7 +27221,7 @@ int main(int argc, char** argv) {
 
     // Remember the window size for next launch.
     ChatHostSaveGeometry();
-    { int w = 0, h = 0; SDL_GetWindowSize(window, &w, &h);
+    { int w = 0, h = 0; lw::GetSize(window, &w, &h);
       if (w > 0 && h > 0) { g_winW = w; g_winH = h; SavePrefs(); } }
 
     // Stop the background friends/DM poll + chat poll threads.
@@ -27141,10 +27251,10 @@ int main(int argc, char** argv) {
     OkayTrayRemove();   // make sure no stray tray icon lingers after exit
 #endif
     ImGui_ImplSDLRenderer2_Shutdown();
-    ImGui_ImplSDL2_Shutdown();
+    if (g_imguiOwnFeed) { g_imguiFeed.Shutdown(ImGui::GetIO()); g_imguiMainWrap.reset(); } else ImGui_ImplSDL2_Shutdown();
     ImGui::DestroyContext();
     SDL_DestroyRenderer(renderer);
-    SDL_DestroyWindow(window);
-    SDL_Quit();
+    mainWinOwner.reset();   // destroys the main window (after its renderer)
+    sdlSeam->Shutdown();
     return 0;
 }

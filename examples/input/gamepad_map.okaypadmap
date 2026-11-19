@@ -1,0 +1,30 @@
+# OkaySpace pad map file (own format, see docs/platform_layer.md "Standard layout for raw pads").
+# Only for game controllers that are NOT Xbox-type (those use XInput) and only with the own Windows backend
+# (OKAY_PLATFORM=own). Copy this file next to the program as gamepad_map.okaypadmap (or point the environment variable
+# OKAY_GAMEPAD_MAP at it), put YOUR pad's ids in vid and pid (the startup line "[platform] raw pad VVVV:PPPP ..." on stderr
+# shows them) and change the inputs until the buttons match. aN = axis N, bN = button N, hN.dir = hat N.
+# This example entry is for a made-up pad (vid 0000, pid 0000) and matches no real device.
+[pad]
+vid  = 0000
+pid  = 0000
+name = Example pad
+a = b0
+b = b1
+x = b2
+y = b3
+leftshoulder = b4
+rightshoulder = b5
+back = b6
+start = b7
+leftstick = b8
+rightstick = b9
+leftx = a0
+lefty = a1
+rightx = a2
+righty = a3
+lefttrigger = a4
+righttrigger = a5
+dpup = h0.up
+dpright = h0.right
+dpdown = h0.down
+dpleft = h0.left

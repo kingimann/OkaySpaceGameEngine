@@ -5,8 +5,8 @@
 // from the HID specification. Written from "Device Class Definition for HID 1.11" (short item format, global,
 // local and main items) and the HID Usage Tables (Generic Desktop 0x01, Button 0x09).
 //
-// STATUS: the parser and the mapping are tested; the Windows side that would feed them (Raw Input,
-// HidP_* calls) is not written and nothing claims that a real pad works.
+// STATUS: the parser and the mapping are tested. The Windows side (OwnWin32Hid.cpp, Win32Hid.hpp) reuses NormalizeAxis and
+// HatBits but not Parse: Windows gives no descriptor, only HidP_* answers. Compiles with MinGW, never run on a real pad.
 #include <algorithm>
 #include <cstddef>
 #include <cstdint>

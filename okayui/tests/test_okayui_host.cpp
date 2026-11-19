@@ -201,5 +201,51 @@ int main() {
         frame(c.Build(cx, cy, false, false, false, true));
         CHECK(!UI::WantsTextInput());
     }
+    {   // the okay::platform::Event path gives the same Input as the SDL one for the same sequence of events
+        using okay::platform::Event; using okay::platform::EventType; using PK = okay::platform::Key;
+        auto pText = [](const char* t) { Event e; e.type = EventType::TextInput; e.text = t; return e; };
+        auto pKey = [](PK k, uint32_t mods = 0, bool down = true) { Event e; e.type = down ? EventType::KeyDown : EventType::KeyUp; e.key = k; e.mods = mods; return e; };
+        struct Pair { SDL_Keycode sym; PK key; };
+        const Pair keys[] = {{SDLK_BACKSPACE, PK::Backspace}, {SDLK_DELETE, PK::Delete}, {SDLK_LEFT, PK::Left}, {SDLK_RIGHT, PK::Right},
+            {SDLK_HOME, PK::Home}, {SDLK_END, PK::End}, {SDLK_RETURN, PK::Return}, {SDLK_ESCAPE, PK::Escape}, {SDLK_UP, PK::Up},
+            {SDLK_DOWN, PK::Down}, {SDLK_TAB, PK::Tab}, {SDLK_F5, PK::F5}, {SDLK_SPACE, PK::Space}, {SDLK_PAGEUP, PK::PageUp}};
+        InputCollector s, p;
+        s.Feed(Text("ab")); p.Feed(pText("ab"));
+        s.Feed(Text("\xC3\xA9")); p.Feed(pText("\xC3\xA9"));
+        for (const Pair& k : keys) { s.Feed(Key(k.sym)); p.Feed(pKey(k.key)); }
+        s.Feed(Key(SDLK_w)); p.Feed(pKey(PK::W));
+        s.Feed(Key(SDLK_3)); p.Feed(pKey(PK::N3));
+        s.Feed(Key(SDLK_a, KMOD_CTRL)); p.Feed(pKey(PK::A, okay::platform::ModCtrl));
+        s.Feed(Key(SDLK_c, KMOD_GUI)); p.Feed(pKey(PK::C, okay::platform::ModGui));
+        s.Feed(Key(SDLK_x, KMOD_CTRL)); p.Feed(pKey(PK::X, okay::platform::ModCtrl));
+        s.Feed(Key(SDLK_v, KMOD_CTRL)); p.Feed(pKey(PK::V, okay::platform::ModCtrl));
+        s.Feed(Key(SDLK_LSHIFT, KMOD_LSHIFT)); p.Feed(pKey(PK::LShift, okay::platform::ModShift));
+        s.Feed(Wheel(2)); { Event w; w.type = EventType::MouseWheel; w.wheelY = 2; p.Feed(w); }
+        s.Feed(Wheel(3, SDL_MOUSEWHEEL_FLIPPED)); { Event w; w.type = EventType::MouseWheel; w.wheelY = -3; w.wheelFlipped = true; p.Feed(w); }
+        { SDL_Event d; std::memset(&d, 0, sizeof(d)); d.type = SDL_MOUSEBUTTONDOWN; d.button.button = SDL_BUTTON_RIGHT; s.Feed(d);
+          Event e; e.type = EventType::MouseButtonDown; e.button = okay::platform::MouseRight; p.Feed(e); }
+        const UI::Input a = s.Build(1, 2, false, false, false, true), b = p.Build(1, 2, false, false, false, true);
+        CHECK(a.text && b.text && !std::strcmp(a.text, b.text));
+        CHECK(a.backspace == b.backspace && a.del == b.del && a.left == b.left && a.right == b.right && a.home == b.home && a.end == b.end);
+        CHECK(a.enter == b.enter && a.escape == b.escape && a.up == b.up && a.down == b.down);
+        CHECK(a.selectAll == b.selectAll && a.copy == b.copy && a.cut == b.cut && a.paste == b.paste);
+        CHECK(a.shift == b.shift && a.ctrl == b.ctrl && a.wheel == b.wheel && a.rightDown == b.rightDown);
+        bool sameKeys = true;
+        for (int k = 0; k < UI::KeyId_COUNT; ++k) sameKeys = sameKeys && a.keyDown[k] == b.keyDown[k];
+        CHECK(sameKeys);
+        CHECK(b.backspace && b.selectAll && b.copy && b.cut && b.paste && b.wheel == -1.0f && a.wheel == -1.0f);
+        CHECK(b.keyDown[UI::KeyId_W] && b.keyDown[UI::KeyId_3] && b.keyDown[UI::KeyId_F1 + 4] && b.keyDown[UI::KeyId_Tab]);
+        // a layout where the "a" key types "q" (AZERTY): Ctrl on that key is the shortcut of the letter it types
+        InputCollector az;
+        az.Feed(pKey(PK::A, okay::platform::ModCtrl), 'q');
+        CHECK(!az.Build(0, 0, false, false, false, true).selectAll);
+        az.Feed(pKey(PK::Q, okay::platform::ModCtrl), 'a');
+        CHECK(az.Build(0, 0, false, false, false, true).selectAll);
+        // text past the buffer is dropped, not cut through a character or overrun
+        InputCollector big;
+        for (int i = 0; i < 40; ++i) big.Feed(pText("xyz"));
+        const UI::Input bi = big.Build(0, 0, false, false, false, true);
+        CHECK(bi.text && std::strlen(bi.text) < 64);
+    }
     TEST_MAIN_RESULT();
 }

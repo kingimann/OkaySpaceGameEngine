@@ -90,6 +90,9 @@ enum class EventType {
     FingerDown, FingerMotion, FingerUp,   // touch: fingerId, fx, fy (0..1 of the window). sdl2 only; own never fires them
     WindowDpiChanged,  // x = the window's new DPI (96 = 100 percent); the window has already been resized to the OS's suggestion. own Windows only
     TextEditing,       // input method composition: text = UTF-8 being composed ("" = cleared), x = caret in code points. own Windows only
+    RenderTargetsReset,   // the graphics device lost its render-target contents: draw them again. sdl2 only (own never fires it)
+    RenderDeviceReset,    // the graphics device was lost and made again: every texture must be re-created. sdl2 only
+    Other,             // an event the seam has no type for. Only the sdl2 backend, and only after ReportUnmappedEvents(true); `native` has it
 };
 
 struct Event {
@@ -108,6 +111,11 @@ struct Event {
     int width = 0, height = 0;
     int deviceId = 0;
     std::string text;
+    /// The backend's own record of this event (sdl2: a `const SDL_Event*`), for the one consumer that still needs it (Dear
+    /// ImGui's imgui_impl_sdl2 while it is the default). Null on the own backends. Valid only until the next PollEvent
+    /// or PumpEvents call on the same backend; copy nothing out of it later. A DropFile's string has already been taken
+    /// (and freed) in `text`, so do not read it from `native`. Temporary: it goes away with SDL2.
+    const void* native = nullptr;
 };
 
 // ---- Windows and the OpenGL context -----------------------------------------
@@ -119,6 +127,15 @@ constexpr int kMaxWindowExtent = 16384;
 /// kMaxWindowExtent is not a size, so it becomes `fallback`. Backends refuse such sizes, which
 /// leaves the caller with no window at all.
 inline int ValidWindowExtent(int v, int fallback) { return v >= 1 && v <= kMaxWindowExtent ? v : fallback; }
+
+/// A Windows message hook: `user` as given to SetNativeMessageHook, the window's HWND, and the message (UINT, WPARAM, LPARAM).
+using NativeMessageHook = void (*)(void* user, void* hwnd, unsigned msg, uint64_t wParam, int64_t lParam);
+
+/// How a window asks for attention (task bar button flash). Stop ends a flash that is running.
+enum class FlashMode { Stop, Briefly, UntilFocused };
+
+/// The pointer shapes a UI toolkit asks for (the names follow the common set of system cursors).
+enum class CursorShape { Arrow, TextInput, ResizeAll, ResizeNS, ResizeEW, ResizeNESW, ResizeNWSE, Hand, Wait, Progress, NotAllowed };
 
 struct WindowDesc {
     std::string title = "OkaySpace";
@@ -137,6 +154,12 @@ struct GLAttributes {
     int major = 3, minor = 2;
     bool compatibility = true;   // compatibility profile (the engine's GL 1.x paths need it)
     int depthBits = 24;
+};
+
+/// What is current for GL on this thread (see Backend::CurrentGL). Opaque to callers.
+struct GLCurrent {
+    void* window = nullptr;
+    void* context = nullptr;
 };
 
 class Window {
@@ -160,6 +183,19 @@ public:
     virtual void Restore() = 0;
     virtual void SetFullscreen(bool on) = 0;
     virtual bool IsFocused() const = 0;
+    /// Keyboard (input) focus: the same as IsFocused().
+    bool HasInputFocus() const { return IsFocused(); }
+    /// True while the mouse pointer is over the window (SDL_WINDOW_MOUSE_FOCUS). False when a backend cannot tell.
+    virtual bool HasMouseFocus() const { return false; }
+    /// True while the window is minimized (iconic). False when a backend cannot tell.
+    virtual bool IsMinimized() const { return false; }
+    /// False once Hide() was called (or the window system hides it); a minimized window still counts as visible.
+    virtual bool IsVisible() const { return true; }
+    /// Ask for the keyboard focus for this window without raising it (SDL_SetWindowInputFocus). False = not supported.
+    virtual bool SetInputFocus() { return false; }
+    /// The Win32 HWND of this window (for the system-tray icon and other Win32 calls), or null off Windows. The
+    /// sdl2 backend asks SDL for it, the own Windows backend returns its own handle; Linux windows return null.
+    virtual void* Win32Handle() const { return nullptr; }
     /// True while in desktop fullscreen (set by WindowDesc::fullscreen or SetFullscreen).
     virtual bool IsFullscreen() const { return false; }
     /// Window / task-bar icon from tightly packed RGBA8 pixels. False = not supported here.
@@ -168,6 +204,9 @@ public:
     virtual int Dpi() const { return 96; }
     /// Refresh rate (Hz) of the display the window is on; 0 = unknown.
     virtual int RefreshRateHz() const { return 0; }
+    /// Ask the user's attention: flash the task bar button (FlashMode::Briefly a few times, UntilFocused until the
+    /// window gets focus, Stop to end it). False = not supported here (nothing happens).
+    virtual bool Flash(FlashMode mode) { (void)mode; return false; }
     /// Show a finished software frame: tightly packed RGBA8 (alpha ignored), `w` x `h`, top row first, drawn at the
     /// window's top-left corner (X11 XPutImage, Win32 StretchDIBits). A frame that is not the window's size is cut
     /// or leaves the rest as it was. False when the window cannot take pixels (sdl2 windows draw through SDL_Renderer
@@ -302,19 +341,56 @@ public:
     // Windows and events.
     virtual std::unique_ptr<Window> MakeWindow(const WindowDesc& desc) = 0;
     virtual bool PollEvent(Event& out) = 0;  // false when the queue is empty
+    /// Let the system deliver pending input without taking any event out (keeps a window alive and mapped during a
+    /// wait loop). sdl2: SDL_PumpEvents. own: reads what is waiting into the backend's queue, so the next PollEvent
+    /// still returns it, in order. Never loses an event.
+    virtual void PumpEvents() {}
+    /// Put an event into the queue; PollEvent returns it after the events already waiting. Used to inject input (tests,
+    /// the editor's OKAY_UI_DROP hook). False when this backend cannot make that kind of event (sdl2 makes Quit,
+    /// WindowClose, WindowFocusGained/Lost, KeyDown/Up, TextInput, MouseMove, MouseButtonDown/Up, MouseWheel and DropFile).
+    virtual bool PushEvent(const Event& e) { (void)e; return false; }
+    /// With true, PollEvent also returns the events the seam has no type for, as EventType::Other with `native` set
+    /// (sdl2 only; default off). Lets an app that still feeds Dear ImGui's SDL backend see every event it needs.
+    virtual void ReportUnmappedEvents(bool on) { (void)on; }
     virtual void* GLProcAddress(const char* name) = 0;   // needs a current context
     virtual void ReleaseCurrent() = 0;       // no GL context current on this thread
+    /// The GL window and context current on this thread, to put back after other GL work. Both null = none current.
+    /// The two pointers are the backend's own handles (SDL_Window* / SDL_GLContext on sdl2); give them back only to RestoreGL.
+    virtual GLCurrent CurrentGL() { return GLCurrent(); }
+    /// Make `state` current again (a null state releases the current context). False when the backend cannot.
+    virtual bool RestoreGL(const GLCurrent& state) { (void)state; return false; }
+    /// How many touch screens or touch pads the system has (0 = none, or this backend cannot tell).
+    virtual int TouchDeviceCount() { return 0; }
+
+    /// Which window has the keyboard focus / is under the mouse (Window::Id()); 0 = none of ours, or unknown.
+    virtual uint32_t KeyboardFocusWindowId() { return 0; }
+    virtual uint32_t MouseFocusWindowId() { return 0; }
+    /// The backend's own handle (same kind as Window::NativeHandle()) of the window with this Id(); null when there is
+    /// none. Lets code that still holds a bare id (an ImGui viewport handle) reach the window.
+    virtual void* NativeHandleFromId(uint32_t id) { (void)id; return nullptr; }
 
     // Keyboard, mouse.
     virtual void StartTextInput() = 0;
     virtual void StopTextInput() = 0;
     virtual bool IsKeyDown(Key k) = 0;
     virtual uint32_t MouseState(int* x, int* y) = 0;   // MouseMask bits; position in the focused window
+    /// The pointer's position on the whole desktop (screen pixels) and the button mask (MouseMask bits), even when it is
+    /// outside every window of ours. False (outputs 0) when this backend cannot tell. (Used to see whether a file was dropped on
+    /// a part of a window: compare with Window::GetPosition.)
+    virtual bool GlobalMouseState(int* x, int* y, uint32_t* buttons) { if (x) *x = 0; if (y) *y = 0; if (buttons) *buttons = 0; return false; }
+    /// Windows only: a function that sees every window message of our windows before they are handled (the launcher's tray icon
+    /// sends its clicks that way). `hwnd` is the window's HWND. It cannot change what happens to the message. Pass null to remove
+    /// it. False when this backend has no such messages (every platform but Windows).
+    virtual bool SetNativeMessageHook(NativeMessageHook hook, void* user) { (void)hook; (void)user; return false; }
     virtual bool SetRelativeMouse(bool on) = 0;
+    /// Whether relative (locked, endless) mouse mode is on right now.
+    virtual bool IsRelativeMouse() { return false; }
     virtual void ShowCursor(bool show) = 0;
     virtual void WarpMouse(Window* w, int x, int y) = 0;
     /// Whether the cursor is visible (what ShowCursor last asked for; starts true).
     virtual bool IsCursorShown() { return true; }
+    /// Change the pointer's shape (the system cursor of that kind). False = this backend cannot (the shape stays as it was).
+    virtual bool SetCursorShape(CursorShape shape) { (void)shape; return false; }
     /// Mouse motion since the last call, and the button mask (MouseMask bits). Not
     /// supported by a backend that returns false from SupportsRelativeMouseState().
     virtual uint32_t RelativeMouseState(int* dx, int* dy) { if (dx) *dx = 0; if (dy) *dy = 0; return 0; }
@@ -332,6 +408,9 @@ public:
     /// layout, so a game's WASD follows an AZERTY layout. Key::Unknown when none.
     /// The base version assumes a US layout.
     virtual Key KeyForChar(char c);
+    /// The character `k` types on the CURRENT layout, as KeyForChar's inverse: 'a'..'z', '0'..'9' or ' '; 0 when `k` types
+    /// none of those. (Found by asking KeyForChar for each of them, so it follows whatever layout that follows.)
+    virtual char CharForKey(Key k);
 
     /// Displays, primary first and then left to right. DisplayAt fills `out` and returns false for an index out of range.
     /// The base versions know none (0 displays); the own Windows backend and the sdl2 backend list them.
@@ -372,6 +451,19 @@ public:
     virtual bool IsGamepad(int deviceIndex) = 0;
     virtual std::unique_ptr<Gamepad> OpenGamepad(int deviceIndex) = 0;
 };
+
+/// A non-owning Window over an SDL_Window* the app made itself (the bridge that lets window calls move behind the
+/// seam before windows are created by Backend::MakeWindow). Null when sdl2 is not compiled in or `sdlWindow` is
+/// null. The caller still owns and destroys the SDL window, and must destroy it only after this object. A GL
+/// context made through the wrapper (CreateGLContext) belongs to the wrapper and goes with it. Temporary: it goes
+/// away with SDL2.
+std::unique_ptr<Window> WrapSdl2Window(void* sdlWindow);
+
+/// Turn one SDL_Event (passed as `const SDL_Event*`) into a platform Event, for code that still polls SDL itself but
+/// feeds a seam consumer (the ImGui platform feed). Handles quit, window, key, text, mouse and wheel events only and
+/// touches nothing in the SDL event (a drop's string is not read). False for any other kind, or when sdl2 is not
+/// compiled in. Temporary: it goes away with SDL2.
+bool TranslateSdl2Event(const void* sdlEvent, Event& out);
 
 // ---- Free functions on the default backend ------------------------------------
 // Timers work with no backend at all (they fall back to std::chrono), so call

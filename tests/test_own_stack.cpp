@@ -46,6 +46,9 @@ static void TestText() {
     CHECK(FormatLine(old) == "[okay] stack: platform=sdl2 http=curl readers=ufbx+assimp crypto=libsodium ui=imgui");
     old.assimp = false;
     CHECK(FormatLine(old) == "[okay] stack: platform=sdl2 http=curl readers=ufbx crypto=libsodium ui=imgui");
+    old.switches = "wav,http";   // ids turned on from Settings > Experimental (shared/OwnSwitches.hpp) are appended; none adds nothing
+    CHECK(FormatLine(old) == "[okay] stack: platform=sdl2 http=curl readers=ufbx crypto=libsodium ui=imgui switches=wav,http");
+    old.switches.clear();
 
     Info mix;
     mix.platform = "own"; mix.http = "curl"; mix.ownReaders = {"fbx", "dae", "3ds", "bvh"}; mix.assimp = true;

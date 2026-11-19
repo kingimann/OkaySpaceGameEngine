@@ -24,3 +24,8 @@ its pure parts: `ctest -R platform_audio_pump`.
 4. The console shows PASS, FAIL or NOT TESTED per item and saves it to `okay-platform-selftest.txt` next to the program. Send that file.
 `--sdl2` runs the same checks on SDL2 to compare. `OKAY_OWN_PLATFORM=1` is a short way to write `OKAY_PLATFORM_BACKEND=own` for the player.
 It has only run on Linux (Xvfb) so far; the Windows run is the point.
+
+**Try a non-XInput pad (Windows, own backend, never run yet).** Use a DirectInput-only pad (an old generic USB pad, not an Xbox pad).
+In step 2 of the self-test above, move its sticks and press its buttons. You should see lines like `pad raw axis 0 value 32767`,
+`pad raw button 3 down`, `pad raw hat 0 bits 2` in the console, and "gamepads found" should name it "HID game controller VVVV:PPPP".
+Unplug and replug it: a "gamepad removed / added" event is counted. Xbox pads still go through XInput. If nothing appears, send the file.

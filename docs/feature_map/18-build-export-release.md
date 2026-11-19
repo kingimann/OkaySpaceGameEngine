@@ -189,3 +189,45 @@ Release 2.851.0 is live (tag `v2.851.0`, 2026-11-09); the 2.852.0 release PR (#5
 - **Words:** test build, dev channel, dev folder, Get test builds, dev-build, publish-supabase-dev, DEV.txt, NOTES-DEV.txt, four-number version, try a branch, go back to the stable version
 - **Seen as:** the owner wants to try unmerged work without waiting for a release; a "Test build of ..." message in the launcher; a version with four numbers; "(test build)" after a version
 - **Ask me like:** "start a test build of walk-vs-run for the owner", "how do I turn test builds off?"
+
+### 18.10 Xbox One export (experimental, Developer Mode, UWP)
+- **What:** An EXPERIMENTAL, OFF-by-default export that lays down a Universal Windows Platform package for an Xbox One in Developer Mode, using only the public Windows SDK. Foundation written, unverified on Windows: nothing was built, signed or run on Windows or a console. It is not a native console game (no GDK) and the app shell does not run the game yet (a test triangle and a gamepad reader).
+- **Parts:**
+  - 18.10.1 SDK check - `platform/xbox_uwp/XboxSdkCheck.hpp`, `XboxSdkProbe.hpp`, `scripts/xbox-check-sdk.ps1` - finds Visual Studio 2022 (vswhere), the UWP C++ toolset, a Windows SDK 17763 or newer with UWP headers and libraries, SignTool (MakeAppx optional); pure decision logic tested with fake folders; the editor disables Export with the reason
+  - 18.10.2 Manifest and images - `XboxManifest.hpp`, `XboxAssets.hpp`, `XboxExport.hpp` - AppxManifest.xml (x64, Windows.Universal), name, version and publisher validation, 7 required tile sizes at 100% and 200% made from the project icon with our own area-average resize, or labelled placeholders
+  - 18.10.3 Own APPX packer - `XboxAppx.hpp`, `tool/okay_appx.cpp` - unsigned `.appx` (stored ZIP, content types, block map with SHA-256 per 64 KiB block) and a reader that re-checks every hash; no MakeAppx
+  - 18.10.4 Build and sign script - `scripts/build-xbox-uwp.ps1` - builds the app and packer, packs, test certificate, SignTool; never run
+  - 18.10.5 UWP app shell - `platform/xbox_uwp/app/` - CoreApplication, suspend and resume, D3D11 swap chain triangle, Windows.Gaming.Input; never compiled
+  - 18.10.6 Editor entry - `editor/main.cpp` (`OKAY_XBOX_UWP`) - File > Build Settings > Xbox (exp.): SDK list, limits text, identity preview, Export through the existing `ExportForPlatform`
+- **Code:** `platform/xbox_uwp/`, `scripts/xbox-check-sdk.ps1`, `scripts/build-xbox-uwp.ps1`, `editor/main.cpp`, `CMakeLists.txt` (`OKAY_BUILD_XBOX_UWP`, OFF)
+- **API:** `okay::xbox::EvaluateSdk`, `okay::xbox::GenerateManifest`, `okay::xbox::WritePackage`, `okay::xbox::appx::Pack`, `okay::xbox::appx::Verify`, `okay-appx pack|verify`
+- **Editor:** File > Build Settings > Xbox (exp.)
+- **Docs:** `docs/xbox_uwp.md`, `docs/xbox_uwp_audit.md`, `docs/try_it.md` (xbox-uwp)
+- **Tests:** `xbox_uwp`
+- **Status:** Basic - pure parts tested on Linux (and the package cross-checked with `unzip` and Python); everything needing Windows, UWP, signing or hardware is unverified
+- **Open:** never built or run on Windows; the packer's Windows rules (entry order, stored files and block Size, name encoding, LfhSize) unchecked; no signing code of ours by design (rule 18; SignTool signs); the app shell does not load the engine (no offline shaders in the engine, no swap-chain present path, no UWP audio, saves or window backend); okay-ms cannot compile it yet
+- **Related:** 18.6, 37, 38
+- **Words:** Xbox, Xbox One, UWP, Developer Mode, appx, msix, package, AppxManifest, MakeAppx, SignTool, Device Portal, console
+- **Seen as:** the owner wants to try the game on an Xbox One; "Xbox (exp.)" in Build Settings; a missing-tools message
+- **Ask me like:** "make an Xbox One Developer Mode package", "why is Xbox export greyed out?"
+
+### 18.11 Downloadable game content (content delivery)
+- **What:** An exported game can download signed updates of its own data and scripts (models, textures, animations, scenes, audio, dialogue, Visual Script and OkayScript files) from a folder or a server, resume partial downloads, keep the previous version for rollback and look each file up in the downloaded content first, then in the installed files. Never code or programs. Off unless a content URL is configured.
+- **Parts:**
+  - 18.11.1 Manifest and signature - `shared/ContentManifest.hpp` - strict text list `{path, size, sha256, kind, group, min-app}` with path, case, size and count limits; ed25519 signature with its own domain, checked through `shared/UpdateSignature.hpp` key and signature parsing; no key means refused
+  - 18.11.2 Sync engine - `shared/ContentSync.hpp`, `shared/ContentTransport.hpp` - state machine over an abstract `Transport` (GET with Range): diff by SHA-256, resume, retry with backoff, size and hash check before the file is visible, budget, replay floor, commit record last, previous version kept, `Rollback`
+  - 18.11.3 Overlay lookup - `shared/ContentOverlay.hpp` - `Overlay::Resolve(name, installRoot)`: downloaded first, then installed; path-safe, case-insensitive, verified-manifest names only
+  - 18.11.4 Transports - `shared/ContentHttpTransport.hpp` - `file://` folder, HTTP(S) over `NativeHttp` (WinHTTP; own client on Linux), and a clearly named Xbox/UWP stub that only fails
+  - 18.11.5 Game wiring - `shared/GameContent.hpp`, `shared/GameContentValidators.hpp`, `player/main.cpp` - `content.okayconfig` or `OKAY_CONTENT_URL`; one sync at start-up; graph and script checks before a file is visible; overlay used for scenes, items, weapons, strings, UI images and `.obj` meshes
+  - 18.11.6 Tools - `tools/okay-content/main.cpp`, `scripts/publish-content.sh` - make-manifest, verify, sync, status, rollback, pubkey; signed upload to Supabase Storage, manifest last
+- **Code:** `shared/ContentManifest.hpp`, `shared/ContentSync.hpp`, `shared/ContentTransport.hpp`, `shared/ContentOverlay.hpp`, `shared/ContentHttpTransport.hpp`, `shared/GameContent.hpp`, `shared/GameContentValidators.hpp`, `tools/okay-content/main.cpp`, `scripts/publish-content.sh`, `player/main.cpp`
+- **API:** `okaycontent::Sync`, `okaycontent::Overlay::Resolve`, `okaycontent::StartGameContent`, `okaycontent::CheckSignature`, `content.okayconfig`, `OKAY_CONTENT_URL`, `OKAY_CONTENT_GAME`, `OKAY_CONTENT_KEYS`, `OKAY_CONTENT_GROUPS`, `OKAY_CONTENT_BUDGET_MB`, `OKAY_CONTENT_ALLOW_UNSIGNED`, `OKAY_CONTENT_SIGNING_SEED`, `okay-content make-manifest|verify|sync|status|rollback|pubkey`
+- **Editor:** none yet (Build Game does not write `content.okayconfig`)
+- **Docs:** `docs/content_delivery.md`, `docs/try_it/content-delivery.md`
+- **Tests:** `content_delivery`, `content_validators`, `content_cli`, `publish_content_script`
+- **Status:** Basic - tested on Linux against a fake server, a local folder and a loopback HTTP server; nothing run on Windows or a real bucket
+- **Open:** Windows, `https`, a real Supabase bucket and the player on screen are unverified; the Xbox transport is a stub; no Visual Script block, no progress screen (start-up waits); audio, `DataAsset`, character clips, glTF and FBX models, prefabs and fonts do not look in the downloaded content yet; no PowerShell publisher
+- **Related:** 18.5, 17.14, 39.4
+- **Words:** content delivery, downloadable content, DLC, content update, asset bundle, patch, manifest, content.manifest, okay-content, overlay, content.okayconfig, OKAY_CONTENT_URL, publish-content, game content, models textures scripts download
+- **Seen as:** the owner wants new models, maps or scripts in a shipped game without a new build; a game shows old content after a publish; "content refused: not signed"
+- **Ask me like:** "how do I ship a new map without rebuilding the game?", "can the Xbox app download scripts?", "why was my content update refused?"

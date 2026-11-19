@@ -3,6 +3,7 @@
 #include "test_framework.hpp"
 #include "VisualScriptEditor.hpp"
 #include "VisualScriptGlossary.hpp"
+#include "VisualScriptPanelWords.hpp"
 #include "okay/VisualScript/VsApi.hpp"
 #include <cstring>
 #include <map>
@@ -39,6 +40,31 @@ int main() {
     std::printf("  palette nodes %d: bad names %d, no description %d, jargon descriptions %d, no example %d, duplicate names %d\n",
                 shown, badName, noDesc, badDesc, noEx, dup);
     CHECK(badName == 0); CHECK(noDesc == 0); CHECK(badDesc == 0); CHECK(noEx == 0); CHECK(dup == 0);
+
+    // The left panel: every label and sentence is plain, short, and free of the old jargon.
+    {
+        int bad = 0, n = 0;
+        for (const char* w : kPanelAllWords) {
+            ++n;
+            const std::string text = w;
+            std::string lower;
+            for (char c : text) lower += (char)std::tolower((unsigned char)c);
+            const std::string v = VsGlossaryViolation(text);
+            bool old = false;
+            for (const char* j : {"declar", "struct", "variable", "parameter", "function", "get var", "set var"})
+                if (lower.find(j) != std::string::npos) old = true;
+            // One short sentence: no more than one full stop, and not long.
+            int stops = 0;
+            for (std::size_t i = 0; i + 1 < text.size(); ++i) if (text[i] == '.' && text[i + 1] == ' ') ++stops;
+            const bool tooLong = text.size() > 80;
+            if (!v.empty() || old || stops > 0 || tooLong) { ++bad; std::printf("  panel word '%s' (banned '%s', old %d, stops %d, long %d)\n", w, v.c_str(), (int)old, stops, (int)tooLong); }
+        }
+        CHECK(n >= 30 && bad == 0);
+        for (VsVarScope sc : {VsVarScope::Object, VsVarScope::Scene, VsVarScope::Global,
+                                        VsVarScope::Local, VsVarScope::Story, VsVarScope::OtherObject})
+            CHECK(VsGlossaryViolation(VsVarScopeName(sc)).empty());
+        std::printf("  left panel: %d labels and sentences checked\n", n);
+    }
     okay::Log::sink = sink;
     TEST_MAIN_RESULT();
 }

@@ -203,6 +203,7 @@ void GameObject::MoveComponent(Component* component, int delta) {
     m_components.erase(m_components.begin() + index);
     m_components.insert(m_components.begin() + target, std::move(owned));
     m_customOrder = true;   // arranged on purpose: the scene file keeps it
+    if (m_scene) m_scene->MarkStructureChanged();   // lists of components kept by order (CachedComponents) are rebuilt
 }
 
 bool GameObject::ReorderComponents(const std::vector<Component*>& first) {
@@ -232,6 +233,7 @@ bool GameObject::ReorderComponents(const std::vector<Component*>& first) {
         for (auto& c : m_components)
             if (c.get() == o) { next.push_back(std::move(c)); break; }
     m_components.swap(next);
+    if (m_scene) m_scene->MarkStructureChanged();   // lists of components kept by order (CachedComponents) are rebuilt
     return true;
 }
 

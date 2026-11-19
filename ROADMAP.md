@@ -10,6 +10,8 @@ _Last updated: 2026-11-13 17:55 UTC_
 
 | Version | What's in it |
 |---|---|
+| 2.888.0 | Editor frame-time overlay with frame limiter and Performance mode; experimental Xbox One UWP test export (Developer Mode, never run on a console); downloadable signed game content (okay-content tool, off by default); CI time limits and a round-picture edge fix |
+| 2.887.0 | UI bundle: Visual Script plain-word side panel with Saved values (made by typing a name, Me or All), about 30 new game-logic blocks and a Rule block, Set Value To presets, merged Move/Turn/Resize and Show/Hide blocks, five new recipe cards, Play highlight |
 | 2.886.0 | UI bundle: Modeling without the Advanced menu and with plain page names; Project panel one or two columns; Visual Script panning (Pan button, Space-drag, arrow keys, trackpad option); Visual Script start screen recipe cards, blocks that auto-connect, plain error messages with Fix it for me, what-just-happened notes; right-click Add menu in the Scene view |
 | 2.885.0 | Visual Script made simple: Quick blocks (one block does a whole job), recipe cards on an empty script, a 55-node Add node list, a roomier window and a bigger node search popup; Project panel tabs; easier Modeling with a foldable sidebar |
 | 2.884.0 | Save before stopping, Timeline key drags and LOD distances fixed (#977); prefab variants refuse a cut-short file and long Windows paths (#995); release gate waits longer for the checksum list (#994) |

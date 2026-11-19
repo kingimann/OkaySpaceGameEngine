@@ -134,3 +134,10 @@ endif()
 if(OKAY_BUILD_TESTS)
     add_test(NAME editor COMMAND okay-editor --selftest)
 endif()
+
+# EXPERIMENTAL Xbox One Developer Mode (UWP) export entry in File > Build Settings. OFF unless -DOKAY_BUILD_XBOX_UWP=ON
+# (docs/xbox_uwp.md). Header-only: nothing to link.
+if(OKAY_BUILD_XBOX_UWP)
+    target_compile_definitions(okay-editor PRIVATE OKAY_XBOX_UWP=1)
+    target_include_directories(okay-editor PRIVATE ${CMAKE_SOURCE_DIR}/platform/xbox_uwp)
+endif()

@@ -50,7 +50,7 @@ int main() {
     auto sink = okay::Log::sink;
     okay::Log::sink = [](okay::Log::Level, const std::string&) {};
 
-    CHECK(VsRecipeCount() >= 6 && VsRecipeCount() <= 10);
+    CHECK(VsRecipeCount() >= 6 && VsRecipeCount() <= 16);
     int totalNodes = 0, totalWires = 0, oldNodes = 0, oldWires = 0;
     for (const VsRecipe& r : VsRecipes()) {
         const int n = VsGraphNodeCount(r.graph), w = VsGraphWireCount(r.graph);
@@ -196,6 +196,32 @@ int main() {
         CHECK(!scene.HasPendingLoad());
         vs->OnTriggerEnter3D(nullptr);
         CHECK(scene.HasPendingLoad());
+    }
+    {   // Lava that hurts / Heart that heals: the OTHER object's health changes.
+        for (int heal = 0; heal < 2; ++heal) {
+            Scene scene("Touch");
+            scene.physicsEnabled = false;
+            auto* vs = Attach(scene, R(heal ? "Heart that heals" : "Lava that hurts"));
+            auto* other = scene.CreateGameObject("Hero");
+            auto* box = other->AddComponent<BoxCollider3D>();
+            auto* hp = other->AddComponent<HealthStat>(); hp->playDeathAnim = false; hp->maxHealth = 100;
+            scene.Start(); scene.Update(0.016f);
+            if (heal) hp->health = 50;
+            vs->OnTriggerEnter3D(box);
+            CHECK(heal ? std::fabs(hp->health - 75.0f) < 0.5f : std::fabs(hp->health - 90.0f) < 0.5f);
+        }
+    }
+    {   // Guard walks back and forth, Enemy runs away, Bobbing coin.
+        Scene a("Guard"); a.physicsEnabled = false;
+        auto* g = Attach(a, R("Guard walks back and forth")); a.Start(); a.Update(0.4f);
+        CHECK(std::fabs(g->gameObject->transform->localPosition.x) > 0.05f);
+        Scene b("Run"); b.physicsEnabled = false;
+        auto* r2 = Attach(b, R("Enemy runs away")); auto* pl = b.CreateGameObject("Player"); pl->transform->localPosition = {2, 0, 0};
+        b.Start(); b.Update(0.3f); b.Update(0.3f);
+        CHECK(r2->gameObject->transform->localPosition.x < -0.3f);
+        Scene c("Float"); c.physicsEnabled = false;
+        auto* f = Attach(c, R("Bobbing coin")); c.Start(); c.Update(0.4f);
+        CHECK(std::fabs(f->gameObject->transform->localPosition.y) > 0.02f);
     }
     {   // The small complete game: counts, then play it.
         int nodes = 0, wires = 0;

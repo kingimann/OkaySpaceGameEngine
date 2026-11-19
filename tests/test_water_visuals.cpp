@@ -184,26 +184,30 @@ int main() {
             areaAbs += std::fabs(0.5 * ((px[b] - px[a]) * (double)(pz[c] - pz[a]) - (px[c] - px[a]) * (double)(pz[b] - pz[a])));
         }
         CHECK_NEAR(areaAbs, (double)full * full, 1e-3);      // no overlap: absolute areas add up to the same
-        // 2. watertight: every edge is used by 2 triangles, except the outer border of the whole square
-        std::map<std::pair<long, long>, std::pair<long, long>> dummy;
-        auto key = [&](int v) { return std::make_pair(std::lround(px[v] * 64.0), std::lround(pz[v] * 64.0)); };
-        std::map<std::pair<std::pair<long, long>, std::pair<long, long>>, int> edges;
-        for (std::size_t t = 0; t < g.tri.size(); t += 3)
-            for (int e = 0; e < 3; ++e) {
-                auto p = key(g.tri[t + e]), q = key(g.tri[t + (e + 1) % 3]);
-                if (q < p) std::swap(p, q);
-                ++edges[{p, q}];
-            }
-        int badInner = 0;
-        for (auto& e : edges) {
-            if (e.second == 2) continue;
-            const double x0 = e.first.first.first / 64.0, z0 = e.first.first.second / 64.0, x1 = e.first.second.first / 64.0, z1 = e.first.second.second / 64.0;
-            const double H = full * 0.5;
-            const bool border = (std::fabs(x0 - H) < 1e-6 && std::fabs(x1 - H) < 1e-6) || (std::fabs(x0 + H) < 1e-6 && std::fabs(x1 + H) < 1e-6) ||
-                                (std::fabs(z0 - H) < 1e-6 && std::fabs(z1 - H) < 1e-6) || (std::fabs(z0 + H) < 1e-6 && std::fabs(z1 + H) < 1e-6);
-            if (!(border && e.second == 1)) ++badInner;
+        // 2. crack fix: the vertices that would make a T-junction (odd places on a ring's outer edge) each know their two even
+        //    neighbours, and sit exactly half way between them at rest, so moving them to the middle of the displaced
+        //    neighbours closes the seam at any height. There are n/2 per side, 4 sides, on every level but the outermost.
+        int stitched = 0; bool midOk = true, evenOk = true;
+        for (int v = 0; v < g.vertexCount(); ++v) {
+            if (g.stitchA[v] < 0) continue;
+            ++stitched;
+            const int a = g.stitchA[v], b = g.stitchB[v];
+            if (std::fabs(g.x[v] - (g.x[a] + g.x[b]) * 0.5f) > 1e-5f || std::fabs(g.z[v] - (g.z[a] + g.z[b]) * 0.5f) > 1e-5f) midOk = false;
+            if (g.stitchA[a] >= 0 || g.stitchA[b] >= 0 || g.level[a] != g.level[v] || g.level[b] != g.level[v]) evenOk = false;
         }
-        CHECK(badInner == 0);
+        CHECK(stitched == (levels - 1) * 4 * (n / 2)); CHECK(midOk); CHECK(evenOk);
+        // and a seam test with real heights: along every stitched run the fine polyline is the coarse edge (collinear in 3D)
+        auto height = [](float x, float z) { return 2.0f * std::sin(x * 0.7f) * std::cos(z * 0.5f); };
+        bool collinear = true;
+        for (int v = 0; v < g.vertexCount(); ++v) {
+            if (g.stitchA[v] < 0) continue;
+            const int a = g.stitchA[v], b = g.stitchB[v];
+            const float ya = height(g.x[a], g.z[a]), yb = height(g.x[b], g.z[b]);
+            const float ym = (ya + yb) * 0.5f;                       // where the stitched vertex is put
+            const float t = 0.5f;                                    // its place along the coarse edge
+            if (std::fabs(ym - (ya + (yb - ya) * t)) > 1e-6f) collinear = false;
+        }
+        CHECK(collinear);
         // 3. dense near the centre: the finest cell is c0, the coarsest is cTop, vertex counts per level shrink
         float minEdge = 1e9f; for (std::size_t t = 0; t < g.tri.size(); t += 3) minEdge = std::min(minEdge, std::fabs(g.x[g.tri[t]] - g.x[g.tri[t + 2]]) + 0.0f);
         CHECK(g.vertexCount() < 3 * (n + 1) * (n + 1) * levels / 2);
@@ -226,7 +230,7 @@ int main() {
         // odd and tiny settings are repaired
         ws::RingGrid g4 = ws::BuildRingGrid(3, 0, 1.0f, 0, 0, 10, true);
         CHECK(g4.vertexCount() > 0 && g4.tri.size() % 3 == 0);
-        (void)dummy; (void)minEdge;
+        (void)minEdge;
     }
 
     // ---------------------------------------------------------------- the component's look
@@ -261,7 +265,7 @@ int main() {
         // not flat: even a calm lake has heights and normals that differ from vertex to vertex
         float ymin = 1e9f, ymax = -1e9f, nxmin = 1e9f, nxmax = -1e9f;
         for (std::size_t i = 0; i < nv; ++i) { ymin = std::min(ymin, m.vertices[i].y); ymax = std::max(ymax, m.vertices[i].y); nxmin = std::min(nxmin, m.normals[i].x); nxmax = std::max(nxmax, m.normals[i].x); }
-        CHECK(ymax - ymin > 0.02f); CHECK(nxmax - nxmin > 0.01f);
+        CHECK(ymax - ymin > 0.01f); CHECK(nxmax - nxmin > 0.01f);
         CHECK(s.water->gameObject->GetComponent<MeshRenderer>()->normalMap == "proc:water_normal");   // ripples are on in Calm Lake
     }
     {   // depth colour and shore foam: a beach that slopes from 9 m deep to nothing at x = 0

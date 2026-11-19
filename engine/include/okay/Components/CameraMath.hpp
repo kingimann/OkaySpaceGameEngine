@@ -33,8 +33,8 @@ inline float EaseFactor(float k, float dt) { return k > 0.0f ? 1.0f - std::exp(-
 
 namespace cam {
 
-inline bool Finite(float v) { return std::isfinite(v); }
-inline bool Finite(const Vec3& v) { return std::isfinite(v.x) && std::isfinite(v.y) && std::isfinite(v.z); }
+inline bool AllFinite(float v) { return std::isfinite(v); }
+inline bool AllFinite(const Vec3& v) { return std::isfinite(v.x) && std::isfinite(v.y) && std::isfinite(v.z); }
 
 // ---- Critically damped spring --------------------------------------------------
 /// Move `x` (with speed `v`) toward `target`. `omega` is the stiffness in 1/s:
@@ -43,9 +43,9 @@ inline bool Finite(const Vec3& v) { return std::isfinite(v.x) && std::isfinite(v
 /// or 144 frames a second. omega <= 0 jumps straight there. A non-finite target
 /// or step is ignored; a non-finite state is repaired.
 inline void SpringStep(float& x, float& v, float target, float omega, float dt) {
-    if (!Finite(target)) return;
-    if (!Finite(x) || !Finite(v)) { x = target; v = 0.0f; return; }
-    if (!(dt > 0.0f) || !Finite(dt)) return;
+    if (!AllFinite(target)) return;
+    if (!AllFinite(x) || !AllFinite(v)) { x = target; v = 0.0f; return; }
+    if (!(dt > 0.0f) || !AllFinite(dt)) return;
     if (!(omega > 0.0f)) { x = target; v = 0.0f; return; }
     const float d = x - target;
     const float e = std::exp(-omega * dt);
@@ -134,7 +134,7 @@ public:
 
     /// Start a shake. `strength` is 0..1 (more is allowed and clamps at 1).
     void Add(const ShakeParams& p, float strength) {
-        if (!Finite(strength) || strength <= 0.0f) return;
+        if (!AllFinite(strength) || strength <= 0.0f) return;
         Inst in; in.p = p; in.strength = std::min(1.0f, strength); in.age = 0.0f;
         in.seed = m_counter++ * 2654435761u + 12345u;
         if (p.duration <= 0.0f) {       // a sustained one replaces the previous sustained one
@@ -147,13 +147,13 @@ public:
 
     /// A steady handheld wobble that eases in and out. 0 = off.
     void SetHandheld(float amount, float fadeRate = 3.0f) {
-        m_handheldTarget = Finite(amount) ? std::max(0.0f, std::min(1.0f, amount)) : 0.0f;
+        m_handheldTarget = AllFinite(amount) ? std::max(0.0f, std::min(1.0f, amount)) : 0.0f;
         m_handheldRate = fadeRate;
     }
     float Handheld() const { return m_handheld; }
 
     void Step(float dt) {
-        if (!(dt > 0.0f) || !Finite(dt)) return;
+        if (!(dt > 0.0f) || !AllFinite(dt)) return;
         m_pos = {0, 0, 0}; m_rot = {0, 0, 0};
         for (std::size_t i = 0; i < m_inst.size();) {
             Inst& in = m_inst[i];
@@ -271,7 +271,7 @@ inline CamPose MixPoses(const CamPose& a, const CamPose& b, float t) {
 ///   rate  how fast the camera eases the target back to the dead-zone edge (per second)
 /// Returns a signed amount to shift the view by (same sign as `off`).
 inline float ZoneCorrection(float off, float dead, float soft, float rate, float dt) {
-    if (!Finite(off) || !Finite(dt)) return 0.0f;
+    if (!AllFinite(off) || !AllFinite(dt)) return 0.0f;
     dead = std::max(0.0f, dead);
     soft = std::max(soft, dead);
     const float a = std::fabs(off);
@@ -288,7 +288,7 @@ inline float ZoneCorrection(float off, float dead, float soft, float rate, float
 struct LookaheadFilter {
     Vec3 offset{0, 0, 0};
     Vec3 Step(const Vec3& pos, float seconds, float maxDist, float omega, float dt, float teleportDist = 8.0f) {
-        if (!Finite(pos) || !(dt > 0.0f) || !Finite(dt)) return offset;
+        if (!AllFinite(pos) || !(dt > 0.0f) || !AllFinite(dt)) return offset;
         if (!m_have) { m_last = pos; m_have = true; return offset; }
         const Vec3 moved = pos - m_last;
         m_last = pos;
@@ -321,7 +321,7 @@ inline GroupFrame FrameGroup(const Vec3* pts, int n, float padding = 0.0f) {
     int count = 0;
     Vec3 lo{0, 0, 0}, hi{0, 0, 0};
     for (int i = 0; i < n; ++i) {
-        if (!Finite(pts[i])) continue;
+        if (!AllFinite(pts[i])) continue;
         if (count == 0) { lo = hi = pts[i]; }
         else {
             lo = {std::min(lo.x, pts[i].x), std::min(lo.y, pts[i].y), std::min(lo.z, pts[i].z)};
@@ -333,7 +333,7 @@ inline GroupFrame FrameGroup(const Vec3* pts, int n, float padding = 0.0f) {
     g.valid = true;
     g.center = (lo + hi) * 0.5f;
     float r = 0.0f;
-    for (int i = 0; i < n; ++i) if (Finite(pts[i])) r = std::max(r, (pts[i] - g.center).Magnitude());
+    for (int i = 0; i < n; ++i) if (AllFinite(pts[i])) r = std::max(r, (pts[i] - g.center).Magnitude());
     g.radius = r + std::max(0.0f, padding);
     return g;
 }

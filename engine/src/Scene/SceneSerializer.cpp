@@ -108,6 +108,7 @@
 #include "okay/Components/LineRenderer.hpp"
 #include "okay/Components/VirtualCamera.hpp"
 #include "okay/Components/CinemachineBrain.hpp"
+#include "okay/Components/CameraRoom.hpp"
 #include "okay/Components/TextRenderer.hpp"
 #include "okay/Components/SpriteAnimator.hpp"
 #include "okay/Components/Animator.hpp"
@@ -842,6 +843,12 @@ void WriteComponentRecords(std::ostream& out, GameObject* go) {
             << " " << (cam->pixelPerfect ? 1 : 0) << " " << cam->pixelsPerUnit
             << " " << cam->shakeAmount << " " << cam->shakeAngle << " " << cam->shakeFrequency << " " << cam->shakeRecovery;
         if (!cam->renderTarget.empty()) out << " " << Quote(cam->renderTarget);
+        out << "\n";
+    }
+    for (auto* cam : go->GetComponents<Camera>()) {   // keyed extension (docs/camera_upgrade.md); older readers skip the line
+        out << "  camerax";
+        KvOut k{out};
+        k("hitPulse", cam->hitPulseVignette);
         out << "\n";
     }
     // A Terrain owns its (generated) mesh, so don't serialize the big MeshRenderer
@@ -2951,9 +2958,35 @@ void WriteComponentRecords(std::ostream& out, GameObject* go) {
             << " " << vc->dutch << " " << (vc->confine ? 1 : 0)
             << " " << vc->confineMin.x << " " << vc->confineMin.y << " " << vc->confineMin.z
             << " " << vc->confineMax.x << " " << vc->confineMax.y << " " << vc->confineMax.z << "\n";
+        // The camera rig layer, as keys (written right after its vcam line; read back onto that vcam).
+        out << "  vcamx";
+        KvOut k{out};
+        k("damp", (int)vc->dampingMode)("gpad", vc->groupPadding).b("gfit", vc->groupFrame)
+         ("look", vc->lookaheadTime)("lookMax", vc->lookaheadMax)("lookSm", vc->lookaheadSmooth)
+         .b("zones", vc->useZones)("dzw", vc->deadZoneW)("dzh", vc->deadZoneH)("szw", vc->softZoneW)("szh", vc->softZoneH)
+         ("zdamp", vc->zoneDamping).b("o2d", vc->ortho2D)("osize", vc->orthoSize).b("cview", vc->confineToView)
+         .b("rooms", vc->useRooms)("roomT", vc->roomBlendTime)
+         .b("col", vc->collision)("colR", vc->collisionRadius)("colSkin", vc->collisionSkin)("colRec", vc->collisionRecover)
+         ("colIn", vc->collisionPullIn).b("colSnap", vc->collisionSnapIn)("colMask", vc->collisionMask)
+         .b("fade", vc->fadeOccluders)("fadeA", vc->occlusionAlpha)("fadeSpd", vc->occlusionFadeSpeed)
+         ("blendIn", vc->blendIn)("blendInStyle", vc->blendInStyle).b("aimFollow", vc->aimAtFollow)
+         ("ng", (int)vc->groupTargets.size());
+        for (std::size_t gi = 0; gi < vc->groupTargets.size(); ++gi) k.str(("g" + std::to_string(gi)).c_str(), vc->groupTargets[gi]);
+        out << "\n";
     }
     for (auto* cb : go->GetComponents<CinemachineBrain>()) {
-        out << "  cmbrain " << cb->blendTime << " " << (cb->easeInOut ? 1 : 0) << "\n";
+        out << "  cmbrain " << cb->blendTime << " " << (cb->blendStyle == cam::BlendStyle::Linear ? 0 : 1) << "\n";
+        out << "  cmbrainx";
+        KvOut k{out};
+        k("style", (int)cb->blendStyle)("c0", cb->customCurve[0])("c1", cb->customCurve[1])("c2", cb->customCurve[2])("c3", cb->customCurve[3])
+         .b("cutscene", cb->yieldToCutscene);
+        out << "\n";
+    }
+    for (auto* rm : go->GetComponents<CameraRoom>()) {
+        out << "  camroom";
+        KvOut k{out};
+        k("w", rm->size.x)("h", rm->size.y);
+        out << "\n";
     }
     for (auto* dp : go->GetComponents<DollyPath>()) {
         out << "  dollypath " << (dp->looped ? 1 : 0) << " " << dp->waypoints.size();
@@ -7278,7 +7311,45 @@ static bool ParseStep(Scene& scene, ParseSession& S, bool clear,
                     auto* cb = go->AddComponent<CinemachineBrain>();
                     in >> cb->blendTime;
                     in >> std::ws;
-                    if (std::isdigit(in.peek())) { int e = 1; in >> e; cb->easeInOut = (e != 0); }
+                    if (std::isdigit(in.peek())) { int e = 1; in >> e; cb->blendStyle = e != 0 ? cam::BlendStyle::EaseInOut : cam::BlendStyle::Linear; }
+                } else if (field == "cmbrainx") {
+                    KvIn k(in);
+                    if (auto* cb = LastOf(go->GetComponents<CinemachineBrain>())) {
+                        int st = (int)cb->blendStyle; k.i("style", st);
+                        cb->blendStyle = (cam::BlendStyle)std::clamp(st, 0, (int)cam::BlendStyle::Custom);
+                        k.f("c0", cb->customCurve[0]); k.f("c1", cb->customCurve[1]); k.f("c2", cb->customCurve[2]); k.f("c3", cb->customCurve[3]);
+                        k.b("cutscene", cb->yieldToCutscene);
+                    }
+                } else if (field == "camroom") {
+                    KvIn k(in);
+                    auto* rm = go->AddComponent<CameraRoom>();
+                    k.f("w", rm->size.x); k.f("h", rm->size.y);
+                } else if (field == "camerax") {
+                    KvIn k(in);
+                    if (auto* cam = LastOf(go->GetComponents<Camera>())) k.f("hitPulse", cam->hitPulseVignette);
+                } else if (field == "vcamx") {
+                    KvIn k(in);
+                    if (auto* vc = LastOf(go->GetComponents<VirtualCamera>())) {
+                        int dm = (int)vc->dampingMode; k.i("damp", dm);
+                        vc->dampingMode = dm == 1 ? VirtualCamera::DampingMode::Spring : VirtualCamera::DampingMode::Smooth;
+                        k.f("gpad", vc->groupPadding); k.b("gfit", vc->groupFrame);
+                        k.f("look", vc->lookaheadTime); k.f("lookMax", vc->lookaheadMax); k.f("lookSm", vc->lookaheadSmooth);
+                        k.b("zones", vc->useZones); k.f("dzw", vc->deadZoneW); k.f("dzh", vc->deadZoneH);
+                        k.f("szw", vc->softZoneW); k.f("szh", vc->softZoneH); k.f("zdamp", vc->zoneDamping);
+                        k.b("o2d", vc->ortho2D); k.f("osize", vc->orthoSize); k.b("cview", vc->confineToView);
+                        k.b("rooms", vc->useRooms); k.f("roomT", vc->roomBlendTime);
+                        k.b("col", vc->collision); k.f("colR", vc->collisionRadius); k.f("colSkin", vc->collisionSkin);
+                        k.f("colRec", vc->collisionRecover); k.f("colIn", vc->collisionPullIn); k.b("colSnap", vc->collisionSnapIn);
+                        k.u("colMask", vc->collisionMask);
+                        k.b("fade", vc->fadeOccluders); k.f("fadeA", vc->occlusionAlpha); k.f("fadeSpd", vc->occlusionFadeSpeed);
+                        k.f("blendIn", vc->blendIn); k.i("blendInStyle", vc->blendInStyle); k.b("aimFollow", vc->aimAtFollow);
+                        int ng = 0; k.i("ng", ng);
+                        vc->groupTargets.clear();
+                        for (int gi = 0; gi < std::min(ng, 256); ++gi) {
+                            std::string n; k.str(("g" + std::to_string(gi)).c_str(), n);
+                            if (!n.empty()) vc->groupTargets.push_back(n);
+                        }
+                    }
                 } else if (field == "text") {
                     std::string str = ReadQuoted(in);
                     Color c; float px = 0.1f; int ss = 0; Vec2 sp;

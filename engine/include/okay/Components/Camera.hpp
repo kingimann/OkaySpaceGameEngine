@@ -1,5 +1,6 @@
 #pragma once
 #include "okay/Scene/Component.hpp"
+#include "okay/Components/CameraMath.hpp"
 #include "okay/Render/Color.hpp"
 #include "okay/Math/Mat4.hpp"
 #include "okay/Math/Vec2.hpp"
@@ -105,6 +106,34 @@ public:
     void SetCutsceneShake(const Vec3& pos, const Vec3& rotDeg);
     void ClearCutsceneShake();
     float ShakeTrauma() const { return m_trauma; }
+    /// Shake presets from deterministic noise (docs/camera_upgrade.md): Impact,
+    /// Explosion, Footstep or Handheld. They stack with each other and with Shake().
+    /// `strength` is 0..1. Switched off for players who turned screen shake off.
+    void ShakePreset(cam::ShakePreset preset, float strength = 1.0f);
+    /// A shake you describe yourself (size, speed, how long, which directions).
+    void AddShake(const cam::ShakeParams& params, float strength = 1.0f);
+    /// A steady handheld wobble that eases in and out (0 = off).
+    void SetHandheld(float amount);
+    /// True while any shake is moving the camera.
+    bool IsShaking() const { return m_trauma > 0.0f || m_shaker.Active(); }
+
+    /// Field-of-view kick: a quick punch of `degrees` (positive = wider, as in a
+    /// hit or a dash) that rises smoothly and settles back over `seconds`.
+    /// Perspective cameras. Switched off by "reduce motion".
+    void KickFov(float degrees, float seconds = 0.4f);
+    /// A held field-of-view change (sprint, aiming) of `degrees` that eases in over
+    /// `seconds`. Set 0 to ease back out.
+    void SetFovOffset(float degrees, float seconds = 0.25f);
+    float FovOffset() const { return m_fovKick + m_fovHold; }
+
+    /// A hit flash: a quick vignette pulse (0..1) on the screen edges that fades by
+    /// itself. Added to the scene's vignette while this is the main camera, and
+    /// readable through VignettePulse() for your own UI.
+    void HitPulse(float strength = 0.6f);
+    float VignettePulse() const { return m_pulse; }
+    /// How strong the screen-edge darkening gets at a full pulse.
+    float hitPulseVignette = 0.5f;
+
     /// Smoothly change `zoom` to `target` over `seconds` (0 = instantly).
     void ZoomTo(float target, float seconds);
 
@@ -215,6 +244,10 @@ private:
     Vec3  m_shakePos{0, 0, 0}, m_shakeRot{0, 0, 0};   // camera-local offset / euler degrees
     Vec3  m_cutPos{0, 0, 0}, m_cutRot{0, 0, 0};       // the sequence's keyed shake, same space
     float m_zoomFrom = 1.0f, m_zoomTarget = 1.0f, m_zoomTime = 0.0f, m_zoomDur = 0.0f;
+    cam::CameraShaker m_shaker;
+    float m_fovKick = 0.0f, m_fovKickV = 0.0f, m_fovKickOmega = 15.0f;
+    float m_fovHold = 0.0f, m_fovHoldV = 0.0f, m_fovHoldTarget = 0.0f, m_fovHoldOmega = 20.0f;
+    float m_pulse = 0.0f, m_pulseApplied = 0.0f, m_pulseLast = -1e9f;
 };
 
 } // namespace okay

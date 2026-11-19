@@ -91,7 +91,7 @@ int main() {
             float peak = 0;
             for (int i = 0; i < 200; ++i) {
                 s.Step(1.0f / 60.0f);
-                CHECK(Finite(s.Pos()) && Finite(s.RotDeg()));
+                CHECK(AllFinite(s.Pos()) && AllFinite(s.RotDeg()));
                 peak = std::max(peak, s.Pos().Magnitude());
             }
             CHECK(peak <= sp.posAmount * 1.8f);      // never bigger than its own size
@@ -193,7 +193,7 @@ int main() {
             LookaheadFilter f;
             const float dt = 1.0f / kRates[r];
             Vec3 p{0, 0, 0}; Vec3 off{0, 0, 0};
-            for (int i = 0; i < (int)kRates[r] * 3; ++i) { p.x += 4.0f * dt; off = f.Step(p, 0.5f, 3.0f, 4.0f, dt); CHECK(Finite(off)); }
+            for (int i = 0; i < (int)kRates[r] * 3; ++i) { p.x += 4.0f * dt; off = f.Step(p, 0.5f, 3.0f, 4.0f, dt); CHECK(AllFinite(off)); }
             CHECK_NEAR(off.x, 2.0f, 0.15f);          // 4 m/s * 0.5 s ahead
             CHECK(off.y == 0.0f);
         }

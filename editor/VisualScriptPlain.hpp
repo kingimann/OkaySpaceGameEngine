@@ -80,13 +80,13 @@ inline std::string VsPlainText(const std::string& in, bool titleCase = false) {
 struct VsPlainRename { const char* type; const char* title; const char* oldTitle; };
 inline const VsPlainRename kVsPlainRenames[] = {
     {"Timer",    "Repeat Every Few Seconds", "Every Seconds"},
-    {"Wait",     "Wait The First Time Only", "Wait Once"},
-    {"Delay",    "Wait, Then Go On",         "Wait Seconds"},
+    {"Wait",     "Wait the First Time Only", "Wait Once"},
+    {"Delay",    "Wait Then Continue",         "Wait Seconds"},
     {"Cooldown", "Limit How Often",         "Cooldown"},
     {"FlipFlop", "Switch Between Two Paths", "Flip Flop"},
-    {"Gate",     "Open Or Close The Way",    "Gate"},
-    {"Sequence", "Do These In Order",        "Do in Order"},
-    {"Const",    "Type In A Value",          "Fixed Value"},
+    {"Gate",     "Open or Close the Way",    "Gate"},
+    {"Sequence", "Do These in Order",        "Do in Order"},
+    {"Const",    "Type in a Value",          "Fixed Value"},
 };
 
 inline const VsPlainRename* VsPlainRenameFor(const char* type) {

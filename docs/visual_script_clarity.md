@@ -37,7 +37,7 @@ and what comes out? Order is by how likely a beginner is to meet it.
 | # | Node (title on screen) | What a new user would not understand | What helps now |
 |---|---|---|---|
 | 1 | If Then Else (`Branch`) | Its Condition input needs a yes-or-no value from another node; left empty it just does nothing. | Needs-input badge, plain hint "plug the condition in here", mistake line, next steps lead into Say Text / Play Sound. |
-| 2 | Wait, Then Go On (`Delay`) vs Wait The First Time Only (`Wait`) | Two nodes both called "Wait ..." with nearly the same name; one waits every time, one only the first time. | Renamed so the difference is in the name. Old names "Wait Seconds" and "Wait Once" still found by search. |
+| 2 | Wait Then Continue (`Delay`) vs Wait The First Time Only (`Wait`) | Two nodes both called "Wait ..." with nearly the same name; one waits every time, one only the first time. | Renamed so the difference is in the name. Old names "Wait Seconds" and "Wait Once" still found by search. |
 | 3 | Repeat Every Few Seconds (`Timer`) vs On Every Few Seconds (`OnTimer`) | Same words, one is a start-event and one is a step in the middle of a chain. | Timer renamed to "Repeat Every Few Seconds"; the card says whether it starts a flow or sits inside one. |
 | 4 | Switch Between Two Paths (`FlipFlop`) | "Flip Flop" is a nickname from electronics. It sends the first signal one way, the next the other way. | Renamed; plain sentence; example chain. |
 | 5 | Open Or Close The Way (`Gate`) | Does it block everything? When does it open? | Renamed; the sentence says what it does; mistakes line. |
@@ -60,7 +60,7 @@ The graph file stores the type, not the title, so every saved graph loads unchan
 |---|---|---|
 | `Timer` | Every Seconds | Repeat Every Few Seconds |
 | `Wait` | Wait Once | Wait The First Time Only |
-| `Delay` | Wait Seconds | Wait, Then Go On |
+| `Delay` | Wait Seconds | Wait Then Continue |
 | `Cooldown` | Cooldown | Limit How Often |
 | `FlipFlop` | Flip Flop | Switch Between Two Paths |
 | `Gate` | Gate | Open Or Close The Way |

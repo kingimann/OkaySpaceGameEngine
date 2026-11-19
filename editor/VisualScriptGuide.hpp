@@ -266,8 +266,8 @@ inline std::string VsNextStepLine(const VsDef& d) {
         s = "Next: plug the step before it into its first triangle";
         if (!d.dataIn.empty()) s += ", and fill in its inputs";
         s += flowOut ? ", then wire its Then triangle onward." : ".";
-    } else if (!d.dataOut.empty()) s = "Next: drag its output into an input of another node that wants the same kind of value.";
-    else s = "Next: plug it into the nodes around it.";
+    } else if (!d.dataOut.empty()) s = "Next: drag its output into an input of another block that wants the same kind of value.";
+    else s = "Next: plug it into the blocks around it.";
     return s;
 }
 
@@ -276,16 +276,16 @@ inline std::vector<std::string> VsCommonMistakes(const VsDef& d) {
     std::vector<std::string> m;
     const bool event = !d.execIn && !d.execOut.empty();
     if (event) m.push_back("Nothing happens until you wire its Then triangle to a step.");
-    else if (d.execIn) m.push_back("Nothing runs this node until a wire reaches its first triangle from an event such as On Start.");
+    else if (d.execIn) m.push_back("Nothing runs this block until a wire reaches its first triangle from an event such as On Start.");
     if (!d.execIn && !d.execOut.empty() && false) m.clear();
     if (!event && !d.execIn && !d.dataOut.empty())
-        m.push_back("This only gives a value. It does nothing until you plug its output into another node.");
+        m.push_back("This only gives a value. It does nothing until you plug its output into another block.");
     for (int i = 0; i < (int)d.dataIn.size(); ++i) {
         const char* nm = d.dataIn[(std::size_t)i];
         if (nm && std::strcmp(nm, "Target") == 0) { m.push_back("Target empty means this object. Plug an object in to act on a different one."); break; }
     }
     for (int i = 0; i < (int)d.dataIn.size(); ++i)
-        if (VsPinNeedsInput(d, i)) { m.push_back(std::string("Leaving ") + d.dataIn[(std::size_t)i] + " empty. This node needs it, so it does nothing without it."); break; }
+        if (VsPinNeedsInput(d, i)) { m.push_back(std::string("Leaving ") + d.dataIn[(std::size_t)i] + " empty. This block needs it, so it does nothing without it."); break; }
     if (!d.dataIn.empty()) m.push_back("Plugging the wrong colour of pin. A number cannot go into an object input. The editor tells you why.");
     if (const VsNodeDoc* doc = VsNodeDocFor(d.type))
         if (!doc->component.empty()) {
@@ -294,7 +294,8 @@ inline std::vector<std::string> VsCommonMistakes(const VsDef& d) {
             m.push_back("Forgetting the " + c + " part on the object. The node says Needs it and offers a button to add it.");
         }
     if (d.param && d.paramHint && d.paramHint[0]) m.push_back(std::string("Leaving the text box empty or mistyped (") + d.paramHint + ").");
-    if (m.empty()) m.push_back("Dropping it and not wiring it. Connect it to the nodes before and after it.");
+    if (m.empty()) m.push_back("Dropping it and not wiring it. Connect it to the blocks before and after it.");
+    for (std::string& one : m) one = VsPlainText(one);
     return m;
 }
 
@@ -338,8 +339,9 @@ inline VsHelpCard VsHelpCardFor(const VsDef& d, const std::vector<VsDef>* all = 
         if (const VsNodeDoc* doc = VsNodeDocFor(d.type)) c.example = VsPlainText(doc->example);
     }
     if (c.example.empty()) c.example = "Press Try this node to see it work.";
+    while (c.chain.size() < 2) c.chain.push_back("Say Text");
     c.mistakes = VsCommonMistakes(d);
-    c.next = VsNextStepLine(d);
+    c.next = VsPlainText(VsNextStepLine(d));
     return c;
 }
 

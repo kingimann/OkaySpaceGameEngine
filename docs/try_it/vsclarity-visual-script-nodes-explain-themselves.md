@@ -24,7 +24,7 @@ Try it on Windows (this is all in the normal editor, nothing to switch on):
 7. Open the Add Node list (right-click the canvas). In the left list find **What do you want to do?** and click **Move things**,
    **Show messages** and so on. Each row has its plain sentence under the name. Type `move things` in the search: the movement
    nodes come up.
-8. Renamed nodes: search `Wait Seconds`, `Flip Flop` or `Every Seconds`. The nodes now called **Wait, Then Go On**, **Switch
+8. Renamed nodes: search `Wait Seconds`, `Flip Flop` or `Every Seconds`. The nodes now called **Wait Then Continue**, **Switch
    Between Two Paths** and **Repeat Every Few Seconds** are found. An old saved graph that used them loads unchanged.
 
 What was and was not verified: the rules behind every item were unit-tested over all nodes in the list on Linux (`vs_guide`,

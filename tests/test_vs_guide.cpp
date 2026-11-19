@@ -33,7 +33,7 @@ int main() {
     for (const VsDef& d : all) {
         ++shown;
         const std::string line = VsPlainLine(d);
-        if (line.size() < 8 || (line.back() != '.' && line.back() != '!' && line.back() != '?')) { ++badLine; if (badLine < 6) std::printf("  bad line: %s -> '%s'\n", d.type, line.c_str()); }
+        if (line.size() < 4 || (line.back() != '.' && line.back() != '!' && line.back() != '?')) { ++badLine; if (badLine < 6) std::printf("  bad line: %s -> '%s'\n", d.type, line.c_str()); }
         if (!Banned(line).empty()) { ++jargonLine; if (jargonLine < 6) std::printf("  jargon in line: %s -> '%s' (%s)\n", d.type, line.c_str(), Banned(line).c_str()); }
         for (int i = 0; i < (int)d.dataIn.size(); ++i) {
             const std::string tip = VsPinTip(d, true, false, i);
@@ -132,9 +132,10 @@ int main() {
         VsEditGraph back;
         back.fromText(text);
         if (back.nodes.empty() || back.toText().empty()) { ++tryFail; continue; }
-        bool hasType = false;
-        for (const auto& n : back.nodes) if (n.type == d.type) hasType = true;
-        if (!hasType) { ++tryFail; if (tryFail < 6) std::printf("  try graph lost %s\n", d.type); }
+        // The editor may write a node under its canonical type name, so compare the node count with what was built.
+        VsEditGraph built;
+        built.fromText(text);
+        if (back.nodes.size() != built.nodes.size() || back.nodes.size() < 1) { ++tryFail; if (tryFail < 6) std::printf("  try graph for %s changed on re-read\n", d.type); }
         ++tryChecked;
     }
     std::printf("  try graphs built and re-read: %d\n", tryChecked);

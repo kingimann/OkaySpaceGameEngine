@@ -45,7 +45,8 @@ std::string HostStatePath(const char* envValue, const std::string& prefDir) {
 void DrawHostModeUi(HostModeState& st) {
     using namespace OkayUI;
     const Input& in = GetFrameInput();
-    const Rect area{0.0f, 0.0f, in.displayW, in.displayH};
+    const float barH = st.panels.menu ? 24.0f : 0.0f;   // the menu bar (OkayUIHostMenu.cpp) takes the top strip
+    const Rect area{0.0f, barH, in.displayW, in.displayH - barH};
     if (!st.docked && area.w > 8.0f && area.h > 8.0f) {
         bool restored = false;
         if (!st.restoredLayout.empty()) restored = DockLoadLayout(st.restoredLayout);   // damaged text is repaired by the loader; a text that is no layout is refused
@@ -80,6 +81,7 @@ void DrawHostModeUi(HostModeState& st) {
         st.docked = true;
     }
     DockSpace(area);
+    if (st.panels.menu) st.panels.menu();
     if (st.panels.before) st.panels.before();
     if (st.panels.scene && st.IsOpen(kPanelScene)) st.panels.scene();
     if (st.panels.game && st.IsOpen(kPanelGame)) st.panels.game();

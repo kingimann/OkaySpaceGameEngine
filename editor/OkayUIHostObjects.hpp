@@ -7,6 +7,9 @@
 // per-component drawers of the Dear ImGui Inspector (curve editors, bone pickers, previews and so on) are not part of this.
 #include "OkayUIHostMode.hpp"
 #include "okay/UI/OkayUI.hpp"
+#include <vector>
+#include <string>
+namespace okay { class GameObject; }
 
 namespace okay { namespace editor { class EditorState; } }
 
@@ -22,7 +25,12 @@ struct ObjectsProbe {
     OkayUI::Rect firstRow, createButton, filterField, activeField, createEmpty;   // window pixels (activeField: the object's "active" check box in the Inspector)
     std::string selectedName;                 // what the Inspector showed ("" = nothing selected)
     int inspectorCards = 0;                   // component cards drawn (Transform and the object block count)
-    int fieldsDrawn = 0;                      // property fields drawn in the Inspector
+    int fieldsDrawn = 0;
+    std::vector<OkayUI::Rect> rowRects; std::vector<okay::GameObject*> rowObjects;   // the Hierarchy rows as drawn last frame (window pixels)
+    bool dragging = false;                    // a Hierarchy row is being dragged
+    int reparented = 0;                       // objects moved by the last drop
+    OkayUI::Rect addComponentButton, firstRemoveButton; int addMenuItems = 0; OkayUI::Rect firstCategory, firstAddItem;   // the Inspector's Add Component button, the first component's remove (x) button
+    int fieldsDrawnDummy = 0;                      // property fields drawn in the Inspector
 };
 const ObjectsProbe& GetObjectsProbe();
 

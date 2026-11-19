@@ -34,8 +34,9 @@ struct HostModeState {
     /// The real panels, wired in by the host (editor/OkayUIHostPanels.hpp): each draws its own window with Begin / End (dock-aware, see
     /// OkayUI::SetDockAwareBegin). A null function means the panel is not offered (not in the default layout, not drawn). `before` / `after` run around the
     /// panels each frame (they set the dock-aware switch and sync the panels' own open flags with `open`).
-    struct Panels { std::function<void()> console, sceneManager, project, scene, game, hierarchy, inspector, dialogs, before, after; } panels;
+    struct Panels { std::function<void()> console, sceneManager, project, scene, game, hierarchy, inspector, dialogs, menu, before, after; } panels;
     int frame = 0;                           // frames drawn
+    bool quit = false;                       // File > Exit asked to close the window
     bool docked = false;                     // the layout was built or restored
     std::map<std::string, bool> open;        // panel name -> open; a panel not listed is open
     std::string restoredLayout;              // a saved layout to load on the first frame (empty = build the default)

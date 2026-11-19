@@ -11,6 +11,7 @@
 #include "EditorState.hpp"
 #include "okay/UI/OkayUIDock.hpp"
 
+#include <cstdio>
 #include <cstdlib>
 #include <string>
 #include <vector>
@@ -81,6 +82,43 @@ int main() {
     // nothing selected: the Inspector says so
     ed.Select(nullptr); for (int i = 0; i < 3; ++i) frame();
     CHECK(oked::wm::GetObjectsProbe().selectedName.empty() && oked::wm::GetObjectsProbe().inspectorCards == 0);
+
+    // ---- round 12: drag to reparent, add and remove a component ----
+    {
+        ed.Select(nullptr); for (int i = 0; i < 3; ++i) frame();
+        const oked::wm::ObjectsProbe& q = oked::wm::GetObjectsProbe();
+        auto rowOf = [&](okay::GameObject* g) { for (size_t i = 0; i < q.rowObjects.size(); ++i) if (q.rowObjects[i] == g) return q.rowRects[i]; return UI::Rect{}; };
+        const UI::Rect from = rowOf(cube), to = rowOf(empty);
+        CHECK(from.w > 10.0f && to.w > 10.0f);
+        const int fx = (int)(from.x + from.w / 2), fy = (int)(from.y + from.h / 2), tx = (int)(to.x + to.w / 2), ty = (int)(to.y + to.h / 2);
+        const okay::Vec3 worldBefore = cube->transform->Position();
+        be.queue.push_back(Move(fx, fy)); frame(); be.queue.push_back(Btn(true, fx, fy)); frame();
+        be.queue.push_back(Move((fx + tx) / 2, (fy + ty) / 2)); frame();
+        CHECK(q.dragging);
+        be.queue.push_back(Move(tx, ty)); frame(); be.queue.push_back(Btn(false, tx, ty)); frame(); frame();
+        CHECK(!q.dragging && cube->transform->Parent() == empty->transform && q.reparented == 1);
+        CHECK(std::fabs(cube->transform->Position().x - worldBefore.x) < 1e-3f && std::fabs(cube->transform->Position().y - worldBefore.y) < 1e-3f);   // the world pose is kept
+        auto find = [&](const char* name) -> okay::GameObject* { for (const auto& up : ed.scene().Objects()) if (up->name == name) return up.get(); return nullptr; };
+        CHECK(ed.Undo());                                            // one undo step (undo rebuilds the objects: find them again by name)
+        cube = find("Crate"); empty = find("Holder");
+        CHECK(cube && empty && cube->transform->Parent() == nullptr);
+        for (int i = 0; i < 2; ++i) frame();
+        // a drop onto the object itself or its own child moves nothing (PlanDrop refuses)
+        // add a component: the button opens the by-category list; the first item is added
+        ed.Select(empty); for (int i = 0; i < 3; ++i) frame();
+        const std::size_t comps0 = empty->Components().size();
+        click(q.addComponentButton); frame();
+        CHECK(q.firstCategory.w > 10.0f);
+        click(q.firstCategory); frame();
+        CHECK(q.firstAddItem.w > 10.0f && q.addMenuItems >= 1);
+        click(q.firstAddItem); for (int i = 0; i < 3; ++i) frame();
+        CHECK(empty->Components().size() == comps0 + 1 && ed.dirty);
+        // remove it again with its (x)
+        CHECK(q.firstRemoveButton.w > 5.0f);
+        click(q.firstRemoveButton); for (int i = 0; i < 3; ++i) frame();
+        CHECK(empty->Components().size() == comps0);
+        CHECK(ed.Undo()); empty = find("Holder"); CHECK(empty && empty->Components().size() == comps0 + 1);
+    }
     (void)empty;
     TEST_MAIN_RESULT();
 }

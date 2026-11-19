@@ -122,6 +122,10 @@ if(OKAY_BUILD_OKAYUI_TESTS AND OKAY_BUILD_TESTS)
     okayui_port_test(okayui_hostobjects ../editor/OkayUIHostObjects.cpp ../editor/OkayUIHostMode.cpp ../editor/EditorState.cpp ../editor/InspectorModel.cpp ../editor/PrefabEdit.cpp ../shared/FileDialog.cpp)
     target_include_directories(test_okayui_hostobjects PRIVATE ${CMAKE_SOURCE_DIR}/engine/include)
     target_link_libraries(test_okayui_hostobjects PRIVATE okay_engine)
+    # The menu bar and shortcuts (real MenuBarModel, real EditorState), 6.24 round 12.
+    okayui_port_test(okayui_hostmenu ../editor/OkayUIHostMenu.cpp ../editor/OkayUIHostMode.cpp ../editor/EditorState.cpp ../editor/InspectorModel.cpp ../editor/PrefabEdit.cpp ../shared/FileDialog.cpp)
+    target_include_directories(test_okayui_hostmenu PRIVATE ${CMAKE_SOURCE_DIR}/engine/include)
+    target_link_libraries(test_okayui_hostmenu PRIVATE okay_engine)
     okayui_port_test(okayui_hostdialogs ../editor/OkayUIHostDialogs.cpp)   # the error modal and the save question as OkayUI popups (DialogService, 6.24 step 7)
     okayui_port_test(okayui_frametick)   # the editor's game step (editor/EditorFrameTick.hpp) with a fake editor state
     okayui_port_test(okayui_port_scenemanager ../editor/SceneManagerPanel.cpp ../editor/ConsolePanel.cpp ../editor/EditorWidgets.cpp)

@@ -43,6 +43,7 @@
 #define AccentCol AccentCol_WO
 #define TipButton TipButton_WO
 
+#include "DialogService.hpp"
 #include "EditorState.hpp"
 #include "okay/Platform/Platform.hpp"
 #include "InspectorPanel.hpp"
@@ -111,6 +112,7 @@ namespace wm {
 
 namespace {
 ObjectsProbe g_probe;
+std::string PrettyName_WO_(const std::string& n) { return PrettyName(n); }   // InspectorModel.cpp: "MeshRenderer" -> "Mesh Renderer"
 using okay::GameObject;
 using okay::Component;
 
@@ -119,6 +121,7 @@ struct HierState {
     std::unordered_set<const GameObject*> expanded;
     char filter[128] = {0};
     bool sort = false;
+    GameObject* pressed = nullptr; float downX = 0, downY = 0; bool dragActive = false;
 };
 
 std::string DisplayName(const GameObject* go) { return go->name.empty() ? std::string("(unnamed)") : go->name; }
@@ -139,6 +142,8 @@ struct HierDraw {
         const bool sel = ed.IsSelected(go);
         if (Selectable(label.c_str(), sel)) { if (GetFrameInput().ctrl) ed.ToggleSelect(go); else ed.Select(go); }
         if (first) { g_probe.firstRow = GetItemRect(); first = false; }
+        g_probe.rowRects.push_back(GetItemRect()); g_probe.rowObjects.push_back(go);
+        if (IsItemHovered() && IsMouseClicked(0)) { hs.pressed = go; hs.downX = GetFrameInput().mouseX; hs.downY = GetFrameInput().mouseY; hs.dragActive = false; }
         if (IsItemHovered() && IsMouseDoubleClicked(0) && go->transform) { const okay::Vec3 p = go->transform->Position(); ed.camTarget = p; }   // frame it in the Scene view
         if (BeginPopupContextItem("rowctx")) {
             if (!ed.IsSelected(go)) ed.Select(go);
@@ -183,6 +188,7 @@ void DrawHierarchyWindow(okay::editor::EditorState& ed, HierState& hs, HostModeS
         TextDisabled(head.c_str());
     }
     Separator();
+    g_probe.rowRects.clear(); g_probe.rowObjects.clear();
     HierDraw hd{ed, hs};
     if (hs.filter[0]) {   // a flat list of every match (the search model is the Dear ImGui Hierarchy's: InspectorModel.cpp)
         const HierFilter filter = HierFilter::Parse(hs.filter);
@@ -202,6 +208,51 @@ void DrawHierarchyWindow(okay::editor::EditorState& ed, HierState& hs, HostModeS
         for (GameObject* r : roots) hd.Row(r, 0);
     }
     g_probe.hierarchyRows = hd.rows;
+    {   // drag a row onto another: Before / Inside / After by where in the row the pointer is; below the last row = the top level. One undo step.
+        const OkayUI::Input& in = GetFrameInput();
+        if (hs.pressed && in.mouseDown) {
+            const float dx = in.mouseX - hs.downX, dy = in.mouseY - hs.downY;
+            if (dx * dx + dy * dy > 25.0f) hs.dragActive = true;
+        }
+        g_probe.dragging = hs.dragActive && in.mouseDown;
+        if (g_probe.dragging) {
+            const DrawListHandle& fg = GetForegroundDrawList();
+            const std::string tip = "Move " + DisplayName(hs.pressed);
+            fg->AddText(OkayUI::Vec2{in.mouseX + 12.0f, in.mouseY + 6.0f}, RGBA(255, 255, 255, 230), tip.c_str());
+            for (size_t i = 0; i < g_probe.rowRects.size(); ++i) {   // the drop mark
+                const OkayUI::Rect& r = g_probe.rowRects[i];
+                if (in.mouseX < r.x || in.mouseX > r.x + r.w || in.mouseY < r.y || in.mouseY > r.y + r.h) continue;
+                const float f = (in.mouseY - r.y) / (r.h > 0 ? r.h : 1.0f);
+                if (f < 0.25f) fg->AddLine(OkayUI::Vec2{r.x, r.y}, OkayUI::Vec2{r.x + r.w, r.y}, RGBA(255, 190, 60, 255), 2.0f);
+                else if (f > 0.75f) fg->AddLine(OkayUI::Vec2{r.x, r.y + r.h}, OkayUI::Vec2{r.x + r.w, r.y + r.h}, RGBA(255, 190, 60, 255), 2.0f);
+                else fg->AddRect(OkayUI::Vec2{r.x, r.y}, OkayUI::Vec2{r.x + r.w, r.y + r.h}, RGBA(255, 190, 60, 255));
+            }
+        }
+        if (hs.pressed && !in.mouseDown) {
+            if (hs.dragActive) {
+                GameObject* target = nullptr; DropWhere where = DropWhere::Inside; bool over = false;
+                for (size_t i = 0; i < g_probe.rowRects.size(); ++i) {
+                    const OkayUI::Rect& r = g_probe.rowRects[i];
+                    if (in.mouseX < r.x || in.mouseX > r.x + r.w || in.mouseY < r.y || in.mouseY > r.y + r.h) continue;
+                    const float f = (in.mouseY - r.y) / (r.h > 0 ? r.h : 1.0f);
+                    target = g_probe.rowObjects[i]; over = true; where = f < 0.25f ? DropWhere::Before : f > 0.75f ? DropWhere::After : DropWhere::Inside;
+                }
+                if (!over && !g_probe.rowRects.empty()) { const OkayUI::Rect& last = g_probe.rowRects.back(); over = in.mouseY > last.y + last.h && in.mouseX >= last.x && in.mouseX <= last.x + last.w; }   // below the list: top level
+                if (over) {
+                    std::vector<GameObject*> dragged;
+                    if (ed.IsSelected(hs.pressed)) for (GameObject* g : ed.MultiSelection()) dragged.push_back(g);
+                    if (dragged.empty()) dragged.push_back(hs.pressed);
+                    if (!PlanDrop(ed.scene(), dragged, target, where).empty()) {
+                        ed.PushUndo("Reparent");
+                        g_probe.reparented = ApplyDrop(ed.scene(), dragged, target, where);
+                        ed.dirty = true;
+                        if (where == DropWhere::Inside && target) hs.expanded.insert(target);
+                    }
+                }
+            }
+            hs.pressed = nullptr; hs.dragActive = false;
+        }
+    }
     // edits that change the list wait until it has been walked
     if (hd.duplicateAfter) ed.DuplicateSelected();
     if (hd.deleteAfter) ed.DeleteSelected();
@@ -210,11 +261,14 @@ void DrawHierarchyWindow(okay::editor::EditorState& ed, HierState& hs, HostModeS
 
 // ---- the Inspector ----
 // A component's header: its enabled check box and a collapsing header (open at first). The editor's own is main.cpp's; this is the window-mode one.
-bool InspectorHeader(const char* label, Component* comp, Component**, bool) {
+bool InspectorHeader(const char* label, Component* comp, Component** toRemove, bool) {
     using namespace OkayUI;
     PushID(comp);
     bool en = comp->enabled;
     if (Checkbox("##en", &en)) comp->enabled = en;
+    SameLine();
+    if (SmallButton("x") && toRemove) *toRemove = comp;   // remove this component (before the header, which takes the rest of the row)
+    if (!g_probe.firstRemoveButton.w) g_probe.firstRemoveButton = GetItemRect();
     SameLine();
     const bool open = CollapsingHeader(label, true);
     PopID();
@@ -243,7 +297,7 @@ void DrawInspectorWindow(okay::editor::EditorState& ed, HostModeState* st) {
     BeginInspectorFrame_WO();
     GameObject* go = ed.selected();
     if (!go) { TextDisabled("Select an object in the Hierarchy."); DockEnd(); return; }
-    g_probe.selectedName = go->name;
+    g_probe.selectedName = go->name; g_probe.firstRemoveButton = OkayUI::Rect{};
     DrawPlayModeNote_WO(ed);
     std::vector<GameObject*> targets;
     for (GameObject* g : ed.MultiSelection()) if (g) targets.push_back(g);
@@ -262,6 +316,37 @@ void DrawInspectorWindow(okay::editor::EditorState& ed, HostModeState* st) {
         if (GetCursorPosY() != y0) ++g_probe.inspectorCards;
     }
     ApplyComponentValueRequests_WO(ed, go);
+    if (toRemove) {   // the (x) of a component header: refused when another component needs this one
+        if (Component* needs = go->RequiredBy(toRemove)) {
+            const std::string why = "Another component on this object needs it (" + (okay::PropertyRegistry::FindFor(*needs) ? okay::PropertyRegistry::FindFor(*needs)->name : std::string("another component")) + "). Remove that one first.";
+            if (DialogService* d = CurrentDialogs()) d->ShowError("Can't remove this component", why);
+        } else { ed.PushUndo("Remove Component"); go->RemoveComponent(toRemove); ed.dirty = true; }
+    }
+    Separator();
+    if (Button("Add Component")) OpenPopup("##addcomp");
+    g_probe.addComponentButton = GetItemRect();
+    if (BeginPopup("##addcomp")) {   // by category; every registered component type with an `add` (the registry's, as the Dear ImGui Add Component list)
+        g_probe.addMenuItems = 0; g_probe.firstCategory = OkayUI::Rect{}; g_probe.firstAddItem = OkayUI::Rect{};
+        std::vector<std::string> cats;
+        const auto all = okay::PropertyRegistry::All();
+        for (const auto& info : all) if (info->add && !info->objectLevel && info->name != "Transform") { const std::string c = info->category.empty() ? std::string("Other") : info->category; if (std::find(cats.begin(), cats.end(), c) == cats.end()) cats.push_back(c); }
+        std::sort(cats.begin(), cats.end());
+        for (const std::string& c : cats) {
+            const bool catOpen = BeginMenu(c.c_str());
+            if (!g_probe.firstCategory.w) g_probe.firstCategory = GetItemRect();
+            if (!catOpen) continue;
+            for (const auto& info : all) {
+                if (!info->add || info->objectLevel || info->name == "Transform") continue;
+                if ((info->category.empty() ? std::string("Other") : info->category) != c) continue;
+                ++g_probe.addMenuItems;
+                const bool pick = MenuItem(PrettyName_WO_(info->name).c_str());
+                if (!g_probe.firstAddItem.w) g_probe.firstAddItem = GetItemRect();
+                if (pick) { ed.PushUndo("Add Component"); info->add(*go); ed.dirty = true; CloseCurrentPopup(); }
+            }
+            EndMenu();
+        }
+        EndPopup();
+    }
     DockEnd();
 }
 }   // namespace

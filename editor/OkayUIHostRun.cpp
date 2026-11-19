@@ -10,6 +10,7 @@
 #include "OkayUIHostPanels.hpp"
 #include "OkayUIHostViews.hpp"
 #include "OkayUIHostObjects.hpp"
+#include "OkayUIHostMenu.hpp"
 #include "OkayUIHostDialogs.hpp"
 #include "EditorFrameTick.hpp"
 #include "EditorState.hpp"
@@ -62,6 +63,7 @@ int RunOkayUIHostMode(int, char**) {
         vs.yaw = &editor.camYaw; vs.pitch = &editor.camPitch; vs.dist = &editor.camDist; vs.target = &editor.camTarget;
         wm::AddSceneViews(state.panels, &state, painter.get(), vs);
         wm::AddObjectPanels(state.panels, &state, &editor);   // the Hierarchy and the Inspector
+        wm::AddMenuBar(state.panels, &state, &editor);        // File / Edit / GameObject / View / Help and the shortcuts
     }
     oked::wm::OkayUIDialogs dialogs;   // the error modal and the "Save changes?" question as OkayUI popups; the panels reach them through oked::CurrentDialogs()
     {
@@ -104,7 +106,7 @@ int RunOkayUIHostMode(int, char**) {
         okayuihost::WindowState w; win->GetSize(w.w, w.h); win->GetPosition(w.x, w.y);
         return ToPersisted(state, w);
     };
-    while (loop.Frame([&] {
+    while (!state.quit && loop.Frame([&] {
         const unsigned long long now = be->TicksMs();
         float dt = (float)(now - lastMs) / 1000.0f; lastMs = now;
         if (!(dt >= 0.0f) || dt > 1.0f) dt = 1.0f / 60.0f;   // a stall or a clock step is one normal frame, not one huge step

@@ -4345,3 +4345,7 @@ endforeach()
 add_executable(bench_particles bench_particles.cpp)
 target_link_libraries(bench_particles PRIVATE okay::engine)
 add_test(NAME bench_particles COMMAND bench_particles)
+
+add_executable(test_particles_upgrade test_particles_upgrade.cpp)
+target_link_libraries(test_particles_upgrade PRIVATE okay::engine)
+add_test(NAME particles_upgrade COMMAND test_particles_upgrade)

@@ -143,8 +143,7 @@ int main() {
         po->emissionRate = 0.0f; po->startLifetime = 10.0f; po->velocityRandom = 0.0f;
         po->startVelocity = {0, 0, 0}; po->gravity = {0, 0, 0}; po->orbitSpeed = 90.0f;
         po->Awake(); po->Emit(1);
-        for (auto& pp : const_cast<std::vector<ParticleSystem::Particle>&>(po->Particles()))
-            if (pp.alive) pp.position = {2, 0, 0};
+        for (int pi = 0; pi < po->AliveCount(); ++pi) { auto pp = po->Get(pi); pp.position = {2, 0, 0}; po->Set(pi, pp); }
         for (int i = 0; i < 10; ++i) po->Update(0.1f);   // 90 degrees total
         for (const auto& p : po->Particles()) if (p.alive) {
             CHECK_NEAR(std::sqrt(p.position.x * p.position.x + p.position.z * p.position.z), 2.0f, 1e-3f);
@@ -158,8 +157,7 @@ int main() {
         pv->emissionRate = 0.0f; pv->startLifetime = 10.0f; pv->velocityRandom = 0.0f;
         pv->startVelocity = {0, 0, 0}; pv->gravity = {0, 0, 0}; pv->vortexPull = 4.0f; pv->vortexStrength = 1.0f;
         pv->Awake(); pv->Emit(1);
-        for (auto& pp : const_cast<std::vector<ParticleSystem::Particle>&>(pv->Particles()))
-            if (pp.alive) pp.position = {3, 0, 0};
+        for (int pi = 0; pi < pv->AliveCount(); ++pi) { auto pp = pv->Get(pi); pp.position = {3, 0, 0}; pv->Set(pi, pp); }
         pv->Update(0.1f);
         for (const auto& p : pv->Particles()) if (p.alive) {
             CHECK(p.velocity.x < 0.0f);                 // pulled inward
@@ -194,8 +192,7 @@ int main() {
             for (const auto& p : pl->Particles()) if (p.alive) CHECK_NEAR(p.position.x, local ? 5.0f : 0.0f, 1e-4f);
             // Rotation is carried too (Local only): a particle at +X swings to -Z.
             if (local) {
-                for (auto& pp : const_cast<std::vector<ParticleSystem::Particle>&>(pl->Particles()))
-                    if (pp.alive) pp.position = {6, 0, 0};
+                for (int qi = 0; qi < pl->AliveCount(); ++qi) { auto pp = pl->Get(qi); pp.position = {6, 0, 0}; pl->Set(qi, pp); }
                 gl->transform->localRotation = Quat::Euler(0, 90, 0);
                 pl->Update(0.01f);
                 Vec3 expect = Vec3{5, 0, 0} + Quat::Euler(0, 90, 0) * Vec3{1, 0, 0};

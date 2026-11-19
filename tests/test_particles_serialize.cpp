@@ -126,8 +126,7 @@ int main() {
     ps6->Awake();
     ps6->Emit(1);
     // Drive the single particle straight down through the plane.
-    for (auto& pp : const_cast<std::vector<ParticleSystem::Particle>&>(ps6->Particles()))
-        if (pp.alive) { pp.position = {0, 0.05f, 0}; pp.velocity = {0, -2.0f, 0}; }
+    for (int qi = 0; qi < ps6->AliveCount(); ++qi) { auto pp = ps6->Get(qi); pp.position = {0, 0.05f, 0}; pp.velocity = {0, -2.0f, 0}; ps6->Set(qi, pp); }
     ps6->Update(0.1f);                   // moves to y<0 -> reflects
     for (const auto& pp : ps6->Particles())
         if (pp.alive) {

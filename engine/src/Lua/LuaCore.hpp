@@ -249,5 +249,6 @@ void OpenTable(State& L);
 void OpenMath(State& L);
 void OpenOs(State& L);
 void OpenCoroutine(State& L);
+void OpenUtf8(State& L);
 
 } // namespace okay::lua

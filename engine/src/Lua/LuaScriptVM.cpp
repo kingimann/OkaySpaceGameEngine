@@ -2,6 +2,14 @@
 // registry), Input, Time, Log, Physics queries, vectors. Written for this engine (no code from other projects).
 #include "okay/Lua/LuaScriptVM.hpp"
 #include "okay/Physics/Collider3D.hpp"
+#include "okay/Physics/Physics2D.hpp"
+#include "okay/Physics/Collider2D.hpp"
+#include "okay/Components/AudioSource.hpp"
+#include "okay/Components/TextRenderer.hpp"
+#include "okay/Components/UIButton.hpp"
+#include "okay/Core/Prefs.hpp"
+#include "okay/Core/ScriptPaths.hpp"
+#include "okay/Scene/SceneSerializer.hpp"
 #include "okay/Core/Log.hpp"
 #include "okay/Core/Time.hpp"
 #include "okay/Input/Input.hpp"
@@ -65,6 +73,73 @@ function Mathf.MoveTowards(cur, target, step)
   return cur + Mathf.Sign(target - cur) * step
 end
 function Mathf.Approximately(a, b) return math.abs(a - b) < 1e-6 end
+
+-- Coroutine scheduler: StartCoroutine(fn, ...) runs fn as a coroutine; inside it, wait(seconds),
+-- waitFrames(n) and waitUntil(fn) pause it. The engine ticks it before every Update.
+local routines = {}
+local tweenDt = 0
+function StartCoroutine(fn, ...)
+  local co = coroutine.create(fn)
+  local r = {co = co, wake = 0, args = table.pack(...), first = true}
+  routines[#routines + 1] = r
+  return r
+end
+function StopCoroutine(r) if r then r.dead = true end end
+function wait(seconds) coroutine.yield({seconds = seconds or 0}) end
+function waitFrames(n) coroutine.yield({frames = n or 1}) end
+function waitUntil(fn) coroutine.yield({untilFn = fn}) end
+function __tick(dt)
+  tweenDt = dt
+  local i = 1
+  while i <= #routines do
+    local r = routines[i]
+    local run = not r.dead
+    if run then
+      local w = r.waitFor
+      if w then
+        if w.seconds then w.seconds = w.seconds - dt; run = w.seconds <= 0
+        elseif w.frames then w.frames = w.frames - 1; run = w.frames <= 0
+        elseif w.untilFn then run = w.untilFn() and true or false end
+      end
+    end
+    if run then
+      local ok, res
+      if r.first then r.first = false; ok, res = coroutine.resume(r.co, table.unpack(r.args, 1, r.args.n))
+      else ok, res = coroutine.resume(r.co) end
+      if not ok then r.dead = true; Log.error(tostring(res))
+      elseif coroutine.status(r.co) == "dead" then r.dead = true
+      else r.waitFor = type(res) == "table" and res or nil end
+    end
+    if r.dead then table.remove(routines, i) else i = i + 1 end
+  end
+end
+
+-- Tweening: Tween.Value(from, to, seconds, onUpdate [, onDone [, ease]]), Tween.Move(transform, to, seconds [, ease]).
+Tween = {}
+Tween.Ease = {
+  linear = function(t) return t end,
+  inQuad = function(t) return t * t end,
+  outQuad = function(t) return t * (2 - t) end,
+  inOutQuad = function(t) if t < 0.5 then return 2 * t * t end return -1 + (4 - 2 * t) * t end,
+  smooth = function(t) return t * t * (3 - 2 * t) end,
+}
+function Tween.Value(from, to, seconds, onUpdate, onDone, ease)
+  local f = type(ease) == "function" and ease or Tween.Ease[ease or "linear"] or Tween.Ease.linear
+  return StartCoroutine(function()
+    local t = 0
+    while t < seconds do
+      onUpdate(from + (to - from) * f(t / seconds))
+      wait(0)
+      t = t + tweenDt
+    end
+    onUpdate(to)
+    if onDone then onDone() end
+  end)
+end
+function Tween.Move(tr, to, seconds, ease)
+  local from = tr.position
+  return Tween.Value(0, 1, seconds, function(k) tr.position = from + (to - from) * k end, nil, ease)
+end
 )LUA";
 
 enum Kind { kGameObject = 1, kTransform = 2, kComponent = 3 };
@@ -524,6 +599,75 @@ struct LuaScriptVM::Impl {
             S.pins.pop_back();
             r.push_back(tv);
         });
+
+        // ---- spawning, 2D physics, UI text, audio, saved values
+        auto num = [](const Value& v, float d) { Value n; return ToNumber(v, n) ? (float)(n.t == T::Int ? (double)n.i : n.n) : d; };
+        Def(G, "Instantiate", [me, num](State& S, std::vector<Value>& a, std::vector<Value>& r) {
+            Scene* sc = me->SceneOf(); if (!sc) S.Error("Instantiate: there is no scene");
+            std::string path = me->KeyOf(S, a, 0);
+            if (!ScriptAssetPathOk(path, "Instantiate")) { r.push_back(Value()); return; }
+            GameObject* g = SceneSerializer::InstantiateFromFile(*sc, path, nullptr);
+            if (!g) { r.push_back(Value()); return; }
+            Vec3 p;
+            if (a.size() > 1 && me->GetVec(a[1], p)) g->transform->localPosition = p;
+            else if (a.size() > 1) g->transform->localPosition = {num(a[1], 0), a.size() > 2 ? num(a[2], 0) : 0.0f, a.size() > 3 ? num(a[3], 0) : 0.0f};
+            r.push_back(me->ObjOrNil(g));
+        });
+        Table* P2 = S.NewTable();
+        G->Set(S, S.NewStr("Physics2D"), Value::Of(P2));
+        Def(P2, "Raycast", [me, num](State& S, std::vector<Value>& a, std::vector<Value>& r) {
+            Scene* sc = me->SceneOf(); if (!sc) S.Error("Physics2D.Raycast: there is no scene");
+            Vec3 o = me->NeedVec(a.size() > 0 ? a[0] : Value(), "Physics2D.Raycast origin");
+            Vec3 d = me->NeedVec(a.size() > 1 ? a[1] : Value(), "Physics2D.Raycast direction");
+            RaycastHit2D h = sc->physics().Raycast(*sc, Vec2{o.x, o.y}, Vec2{d.x, d.y}, a.size() > 2 ? num(a[2], 1e9f) : 1e9f);
+            if (!h.hit) { r.push_back(Value()); return; }
+            Table* t = S.NewTable(); Value tv = Value::Of(t);
+            std::vector<Value> pin{tv}; S.pins.push_back(&pin);
+            t->Set(S, S.NewStr("point"), me->MakeVec(h.point.x, h.point.y, 0));
+            t->Set(S, S.NewStr("normal"), me->MakeVec(h.normal.x, h.normal.y, 0));
+            t->Set(S, S.NewStr("distance"), Value::Num(h.distance));
+            t->Set(S, S.NewStr("gameObject"), me->ObjOrNil(h.gameObject));
+            S.pins.pop_back();
+            r.push_back(tv);
+        });
+        Def(P2, "OverlapCircle", [me, num](State& S, std::vector<Value>& a, std::vector<Value>& r) {
+            Scene* sc = me->SceneOf(); if (!sc) S.Error("Physics2D.OverlapCircle: there is no scene");
+            Vec3 c = me->NeedVec(a.size() > 0 ? a[0] : Value(), "Physics2D.OverlapCircle center");
+            auto hits = sc->physics().OverlapCircle(*sc, Vec2{c.x, c.y}, a.size() > 1 ? num(a[1], 0) : 0.0f);
+            Table* t = S.NewTable(); Value tv = Value::Of(t);
+            std::vector<Value> pin{tv}; S.pins.push_back(&pin);
+            std::int64_t i = 1;
+            for (Collider2D* col : hits) if (col && col->gameObject) t->Set(S, Value::Int(i++), me->ObjOrNil(col->gameObject));
+            S.pins.pop_back();
+            r.push_back(tv);
+        });
+        Table* UI_ = S.NewTable();
+        G->Set(S, S.NewStr("UI"), Value::Of(UI_));
+        Def(UI_, "SetText", [me](State& S, std::vector<Value>& a, std::vector<Value>&) {
+            GameObject* g = nullptr;
+            if (!a.empty() && a[0].t == T::Str) { Scene* sc = me->SceneOf(); g = sc ? sc->Find(static_cast<Str*>(a[0].o)->s) : nullptr; }
+            else if (!a.empty()) g = me->GoOf(a[0]);
+            if (!g) S.Error("UI.SetText: no such object (pass a GameObject or its name)");
+            std::string text = a.size() > 1 ? S.ToStringValue(a[1]) : std::string();
+            if (auto* tr = g->GetComponent<TextRenderer>()) tr->text = text;
+            else if (auto* bt = g->GetComponent<UIButton>()) bt->label = text;
+            else S.Error("UI.SetText: '" + g->name + "' has no text to set");
+        });
+        Table* Au = S.NewTable();
+        G->Set(S, S.NewStr("Audio"), Value::Of(Au));
+        Def(Au, "Play", [me, num](State& S, std::vector<Value>& a, std::vector<Value>&) {
+            GameObject* g = !a.empty() && a[0].t == T::User ? me->GoOf(a[0]) : (me->host ? me->host->gameObject : nullptr);
+            auto* src = g ? g->GetComponent<AudioSource>() : nullptr;
+            if (!src) S.Error("Audio.Play: the object has no AudioSource");
+            size_t vi = !a.empty() && a[0].t == T::User ? 1 : 0;
+            if (a.size() > vi) src->PlayOneShot(num(a[vi], 1.0f)); else src->Play();
+        });
+        Table* Pr = S.NewTable();
+        G->Set(S, S.NewStr("Prefs"), Value::Of(Pr));
+        Def(Pr, "SetNumber", [me, num](State& S, std::vector<Value>& a, std::vector<Value>&) { Prefs::SetFloat(me->KeyOf(S, a, 0), num(a.size() > 1 ? a[1] : Value(), 0)); });
+        Def(Pr, "GetNumber", [me, num](State& S, std::vector<Value>& a, std::vector<Value>& r) { r.push_back(Value::Num(Prefs::GetFloat(me->KeyOf(S, a, 0), num(a.size() > 1 ? a[1] : Value(), 0)))); });
+        Def(Pr, "SetString", [me](State& S, std::vector<Value>& a, std::vector<Value>&) { Prefs::SetString(me->KeyOf(S, a, 0), a.size() > 1 ? S.ToStringValue(a[1]) : std::string()); });
+        Def(Pr, "GetString", [me](State& S, std::vector<Value>& a, std::vector<Value>& r) { r.push_back(S.NewStr(Prefs::GetString(me->KeyOf(S, a, 0), a.size() > 1 && a[1].t == T::Str ? static_cast<Str*>(a[1].o)->s : std::string()))); });
     }
 
     // ------------------------------------------------ running
@@ -595,7 +739,7 @@ std::size_t LuaScriptVM::MemoryUsed() const { return m_impl->L->allocated; }
 std::vector<std::string> LuaScriptVM::BuiltinNames() const {
     return {"Find", "CreateGameObject", "Destroy", "Time.deltaTime", "Time.time", "Time.timeScale", "Log.info", "Log.warn", "Log.error",
             "Input.GetKey", "Input.GetKeyDown", "Input.GetKeyUp", "Input.GetMouseButton", "Input.GetAxis", "Input.MousePosition",
-            "Physics.Raycast", "Physics.OverlapSphere", "Vector3.new", "Vector3.Dot", "Vector3.Cross", "Vector3.Distance", "Vector3.Lerp",
+            "Physics.Raycast", "Physics.OverlapSphere", "Physics2D.Raycast", "Physics2D.OverlapCircle", "Instantiate", "StartCoroutine", "wait", "waitFrames", "waitUntil", "Tween.Value", "Tween.Move", "UI.SetText", "Audio.Play", "Prefs.GetNumber", "Prefs.SetNumber", "Prefs.GetString", "Prefs.SetString", "Vector3.new", "Vector3.Dot", "Vector3.Cross", "Vector3.Distance", "Vector3.Lerp",
             "Mathf.Clamp", "Mathf.Lerp", "Mathf.Sign", "Mathf.MoveTowards", "gameObject", "transform"};
 }
 
@@ -678,6 +822,8 @@ void LuaScriptVM::CallStart() {
     }
 }
 void LuaScriptVM::CallUpdate(float dt) {
+    Value tick = m_impl->FindFn("__tick");   // runs StartCoroutine/wait/Tween before Update
+    if (!tick.IsNil()) m_impl->Invoke(tick, {Value::Num(dt)}, nullptr, nullptr);
     Value f = m_impl->ResolveEvent("update");
     if (!f.IsNil()) m_impl->Invoke(f, {Value::Num(dt)}, nullptr, nullptr);
 }

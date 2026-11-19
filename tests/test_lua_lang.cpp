@@ -307,6 +307,13 @@ int main() {
     Fn("local co=coroutine.create(function() local t=setmetatable({}, {__index=function() coroutine.yield() end}) return t.x end) return coroutine.resume(co)", "false, (eval):1: attempt to yield across a native call boundary");
     Fn("local sum=0 local cos={} for i=1,50 do cos[i]=coroutine.wrap(function() for j=1,3 do coroutine.yield(i*j) end end) end for r=1,3 do for i=1,50 do sum=sum+cos[i]() end end return sum", "7650");
 
+    // ---- utf8 (manual 6.5)
+    Ex("utf8.char(72, 228, 8364, 128512)", "H\xC3\xA4\xE2\x82\xAC\xF0\x9F\x98\x80"); Ex("utf8.len('h\\u{E9}llo')", "5"); Ex("utf8.len('\\xff')", "nil, 1");
+    Ex("utf8.codepoint('\\u{20AC}')", "8364"); Ex("utf8.codepoint('abc', 1, -1)", "97, 98, 99"); Ex("utf8.offset('a\\u{E9}b', 3)", "4");
+    Ex("utf8.offset('a\\u{E9}b', -1)", "4"); Ex("#utf8.charpattern", "14"); Err("utf8.codepoint('\\xff')", "invalid UTF-8 code");
+    Fn("local n=0 for p,c in utf8.codes('a\\u{E9}\\u{20AC}') do n=n+c end return n", "8694");
+    Fn("local t={} for c in ('h\\u{E9}y'):gmatch(utf8.charpattern) do t[#t+1]=#c end return table.concat(t,',')", "1,2,1");
+
     // ---- load, environment, sandbox surface
     Ex("load('return 1+1')()", "2"); Ex("select('#',load('x ='))", "2"); Ex("(load('x ='))", "nil");
     Fn("local f,e=load('x = = 1','mychunk') return e", "[string \"mychunk\"]:1: unexpected symbol near '='");

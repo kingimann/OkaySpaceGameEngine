@@ -113,6 +113,8 @@ Script dialog has a language picker (`.okay` or `.lua`) and attaching a `.lua` f
 | `Time.deltaTime/time/timeScale/fixedDeltaTime/frameCount` | read-only, `timeScale` can be set |
 | `Input.GetKey/GetKeyDown/GetKeyUp(name)`, `GetMouseButton*`, `MousePosition()`, `GetAxis("Horizontal")` | same key names as OkayScript |
 | `Physics.Raycast(origin, dir[, max])`, `Physics.OverlapSphere(c, r)` | 3D queries; hit table has `point normal distance gameObject` |
+| `Instantiate(prefabPath[, pos])`, `Physics2D.Raycast/OverlapCircle`, `UI.SetText`, `Audio.Play`, `Prefs.Get/SetNumber/String` | added after the first version, same engine calls as the OkayScript builtins `spawn`, `ui_set_text`, `play_sound`, `prefs_*` |
+| `StartCoroutine(fn)`, `wait(s)`, `waitFrames(n)`, `waitUntil(fn)`, `Tween.Value`, `Tween.Move` | scheduler and tweens written in Lua (in the VM prelude), ticked before every `Update` |
 | `Log.info/warn/error/trace`, `print` | the Console (`[script]` prefix) |
 | `Vector3.new(x,y,z)`, `+ - * /`, `.magnitude .normalized`, `Dot Cross Distance Lerp`; `Mathf.*` | vectors are plain Lua tables with a metatable (written in Lua, embedded in the VM) |
 | public fields | top-level global variables that are numbers, strings, booleans, vectors, arrays or maps. Inspector overrides (`ScriptComponent::fields`), `GlobalNames()` (save games) and hot reload use them; functions and engine globals are not fields |
@@ -127,7 +129,7 @@ instructions), 64 MB. `pcall` cannot catch these two kinds of error. Sandbox: no
 
 ### Known gaps (honest)
 
-`goto` and labels, `<close>` variables, `_ENV`, `utf8` library, `string.pack/unpack`, weak tables (`__mode`), `__gc`,
+`goto` and labels, `<close>` variables, `_ENV`, `string.pack/unpack` (the `utf8` library is done), weak tables (`__mode`), `__gc`,
 `__close`, tail-call elimination (deep recursion ends at 20,000 frames with "stack overflow"), `load` with an environment
 argument, `string.format('%a')` is the C library's. The length of a table with holes can differ from reference Lua (any border
 is allowed by the manual). Integer/float comparison and equality are exact; the number to text format is `%.14g`.
@@ -254,7 +256,7 @@ script, the developer needs the .NET SDK, and everything unverified until built 
 | `raycast`, `overlap_*` | `Physics.Raycast`, `Physics.OverlapSphere` (3D). **2D queries, layers, shape casts not bound yet** | planned |
 | `Log`, `print`, `watch` | `Log.info/warn/error`, `print`; `watch` not bound | planned |
 | movement one-liners `walk`, `spin`, `patrol`, `follow`, `bob` | not provided: write the few lines, or call them from Visual Script | not provided |
-| coroutines `StartCoroutine`, `yield return` | `coroutine.wrap` / `coroutine.yield` (our own scheduler for `wait(seconds)` is **not** provided) | `IEnumerator` |
+| coroutines `StartCoroutine`, `yield return` | `coroutine.wrap` / `coroutine.yield` `StartCoroutine` / `wait(seconds)` provided | `IEnumerator` |
 | tweening (DOTween-style), drag and drop, save system, prefs, rendering/post-processing, UI, audio, network, inventory, spline, weapons builtins (about 1,000 builtins) | **not bound** (these are the OkayScript builtin table in `OkayScriptVM.cpp`) | planned |
 | Visual Script `Fn.*` nodes and the snippet node | still run on the old VM (unchanged) | unchanged |
 | `.okay` files, `okayscript` language name | `.lua` files, `lua` | `.cs` |
@@ -276,3 +278,6 @@ script, the developer needs the .NET SDK, and everything unverified until built 
 3. The samples and tests above are ported or retired.
 4. Real C# decided (section 6), or OkayScript's typed language kept as the C# subset.
 5. Delete one release later (rule 17).
+
+
+Still not done in Lua: `goto`, `<close>`, weak tables (`__mode`), `string.pack`, more builtins (save games, audio mixer, tilemap, network, Steam). Lua test counts after this step: lua_lang 499, lua_binding 169 (overlay build), lua_fuzz 17,021.

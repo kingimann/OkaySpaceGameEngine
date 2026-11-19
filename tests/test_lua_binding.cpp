@@ -324,6 +324,77 @@ int main() {
         if (sc) { CHECK(sc->Language() == "lua"); loaded.Start(); CHECK_NEAR(sc->VM()->GetGlobal("x").AsFloat(), 42.0f, 1e-6f); }
     }
 
+
+    // ---- scheduler (wait), tweening, Instantiate, 2D raycast, UI text, audio, saved values
+    {
+        Scene scene("S");
+        GameObject* go = scene.CreateGameObject("Me");
+        GameObject* wall = scene.CreateGameObject("Wall2D");
+        wall->transform->localPosition = {5, 0, 0};
+        wall->AddComponent<BoxCollider2D>();
+        GameObject* label = scene.CreateGameObject("Label");
+        label->AddComponent<TextRenderer>();
+        const std::string prefab = (std::filesystem::temp_directory_path() / "okay_lua_bullet.okayprefab").string();
+        {
+            Scene ps("P");
+            GameObject* b = ps.CreateGameObject("Bullet");
+            CHECK(SceneSerializer::SaveObjectToFile(*b, prefab));
+        }
+        auto* sc = go->AddComponent<ScriptComponent>("lua");
+        std::string src =
+            "trace = ''\n"
+            "function Start()\n"
+            "  StartCoroutine(function() trace = 'a' wait(1) trace = trace .. 'b' wait(0.5) trace = trace .. 'c' end)\n"
+            "  Tween.Value(0, 10, 1, function(v) tv = v end)\n"
+            "  Tween.Move(transform, Vector3.new(4, 0, 0), 1)\n"
+            "  local b = Instantiate([[" + prefab + "]], Vector3.new(1, 2, 3))\n"
+            "  spawned = b and b.name or 'none'\n"
+            "  local h = Physics2D.Raycast(Vector3.new(0, 0, 0), Vector3.new(1, 0, 0), 100)\n"
+            "  hit2d = h and h.gameObject.name or 'none'\n"
+            "  near2d = #Physics2D.OverlapCircle(Vector3.new(5, 0, 0), 0.2)\n"
+            "  UI.SetText('Label', 'Score ' .. 42)\n"
+            "  Prefs.SetNumber('lua_test_n', 12.5) Prefs.SetString('lua_test_s', 'hi')\n"
+            "  pn = Prefs.GetNumber('lua_test_n', 0) ps = Prefs.GetString('lua_test_s', '')\n"
+            "  u = utf8.len('h\\u{E9}llo') .. utf8.char(72, 228)\n"
+            "end\n";
+        std::string err;
+        CHECK(sc->LoadSource(src, &err));
+        g_errors.clear();
+        scene.Start();
+        auto* vm = sc->VM();
+        CHECK(g_errors.empty()); for (auto& e : g_errors) std::printf("    %s\n", e.c_str());
+        CHECK(vm->GetGlobal("spawned").AsString() == "Bullet");
+        GameObject* bullet = scene.Find("Bullet");
+        CHECK(bullet != nullptr);
+        if (bullet) CHECK_NEAR(bullet->transform->localPosition.y, 2.0f, 1e-5f);
+        CHECK(vm->GetGlobal("hit2d").AsString() == "Wall2D");
+        CHECK(vm->GetGlobal("near2d").AsFloat() >= 1.0f);
+        CHECK(label->GetComponent<TextRenderer>()->text == "Score 42");
+        CHECK_NEAR(vm->GetGlobal("pn").AsFloat(), 12.5f, 1e-5f); CHECK(vm->GetGlobal("ps").AsString() == "hi");
+        CHECK(vm->GetGlobal("u").AsString() == "5H\xC3\xA4");
+        // frames of 0.25 s: the coroutine ran 'a' at frame 1 (inside Update's tick)
+        scene.Update(0.25f);
+        CHECK(vm->GetGlobal("trace").AsString() == "a");
+        for (int i = 0; i < 3; ++i) scene.Update(0.25f);   // 1.0 s of waiting spent after frame 4
+        CHECK(vm->GetGlobal("trace").AsString() == "a");
+        scene.Update(0.25f);
+        CHECK(vm->GetGlobal("trace").AsString() == "ab");
+        scene.Update(0.25f); scene.Update(0.25f);
+        CHECK(vm->GetGlobal("trace").AsString() == "abc");
+        for (int i = 0; i < 4; ++i) scene.Update(0.25f);
+        CHECK_NEAR(vm->GetGlobal("tv").AsFloat(), 10.0f, 1e-4f);
+        CHECK_NEAR(go->transform->localPosition.x, 4.0f, 1e-3f);
+        CHECK(g_errors.empty()); for (auto& e : g_errors) std::printf("    %s\n", e.c_str());
+        // a coroutine's error is logged, not fatal
+        Scene s3("S3");
+        auto* sc3 = s3.CreateGameObject("Err")->AddComponent<ScriptComponent>("lua");
+        CHECK(sc3->LoadSource("function Start() StartCoroutine(function() wait(0) error('boom') end) end\n"));
+        s3.Start(); g_errors.clear();
+        s3.Update(0.1f); s3.Update(0.1f);
+        CHECK(Has(g_errors, "boom"));
+        std::remove(prefab.c_str());
+    }
+
     // ---- file-backed script: Reload() hot reloads (fields kept; a broken file leaves the old script running)
     {
         const std::string path = (std::filesystem::temp_directory_path() / "okay_lua_reload_test.lua").string();

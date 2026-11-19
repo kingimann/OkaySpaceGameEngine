@@ -61,7 +61,7 @@ Two OkayScript languages exist side by side: id `okayscript` (old VM, the defaul
 - **Editor:** Script Editor "New Script" has a Language picker (OkayScript or Lua); `.lua` files attach as `lua` script components (unbuilt here: see the migration record)
 - **Docs:** `docs/scripting_migration.md` (internal record)
 - **Tests:** `lua_lang`, `lua_fuzz`, `lua_binding`, `script_removed_langs`, `starter_script`
-- **Status:** Partly works - the language and the basic binding are tested (language and fuzz tests also under ASan and UBSan); not yet bound: instantiate, 2D physics queries, wait or coroutine scheduler, UI, audio, tweening, saves; no `goto`, `<close>`, `utf8`; the editor change and the full build are unverified
+- **Status:** Partly works - the language and the basic binding are tested (language and fuzz tests also under ASan and UBSan); bound since: Instantiate, 2D raycast and overlap, StartCoroutine/wait, Tween, UI.SetText, Audio.Play, Prefs; not bound: most other builtins (tilemap, network, Steam, mixer, save games); no `goto`, `<close>`, weak tables; the editor change and the full build are unverified
 - **Open:** the OkayScript builtin table is not shared with Lua (the same engine feature must be bound twice); Visual Script nodes still run on the OkayScript VM; real C# (options a/b/c in the migration record) needs an owner decision and a CLAUDE.md exception
 - **Related:** 13.1, 13.4, 13.5, 14
 - **Words:** Lua, lua script, .lua, C#, Mono, csharp, removed language, language not supported, old project, script language dropdown, hot reload, sandbox, instruction limit

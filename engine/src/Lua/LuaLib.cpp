@@ -959,8 +959,93 @@ void OpenCoroutine(State& L) {
     });
 }
 
+// ============================================================ utf8
+namespace {
+// Decode one UTF-8 sequence at s[i]; returns its length (0 = invalid) and the code point.
+int Utf8Decode(const std::string& s, std::size_t i, unsigned long& cp) {
+    unsigned char c = (unsigned char)s[i];
+    int n; unsigned long v;
+    if (c < 0x80) { cp = c; return 1; }
+    if (c >= 0xC2 && c < 0xE0) { n = 2; v = c & 0x1F; }
+    else if (c >= 0xE0 && c < 0xF0) { n = 3; v = c & 0x0F; }
+    else if (c >= 0xF0 && c < 0xF5) { n = 4; v = c & 0x07; }
+    else return 0;
+    if (i + (std::size_t)n > s.size()) return 0;
+    for (int k = 1; k < n; ++k) { unsigned char d = (unsigned char)s[i + k]; if ((d & 0xC0) != 0x80) return 0; v = (v << 6) | (d & 0x3F); }
+    if ((n == 3 && v < 0x800) || (n == 4 && (v < 0x10000 || v > 0x10FFFF)) || (v >= 0xD800 && v <= 0xDFFF)) return 0;
+    cp = v; return n;
+}
+void Utf8Put(std::string& o, unsigned long c) {
+    if (c < 0x80) o += (char)c;
+    else if (c < 0x800) { o += (char)(0xC0 | (c >> 6)); o += (char)(0x80 | (c & 0x3F)); }
+    else if (c < 0x10000) { o += (char)(0xE0 | (c >> 12)); o += (char)(0x80 | ((c >> 6) & 0x3F)); o += (char)(0x80 | (c & 0x3F)); }
+    else { o += (char)(0xF0 | (c >> 18)); o += (char)(0x80 | ((c >> 12) & 0x3F)); o += (char)(0x80 | ((c >> 6) & 0x3F)); o += (char)(0x80 | (c & 0x3F)); }
+}
+}  // namespace
+
+void OpenUtf8(State& L) {
+    Table* U = L.NewTable();
+    L.globals->Set(L, L.NewStr("utf8"), Value::Of(U));
+    U->Set(L, L.NewStr("charpattern"), L.NewStr(std::string("[\0-\x7F\xC2-\xFD][\x80-\xBF]*", 14)));
+    DEF(L, U, "char", {
+        std::string s;
+        for (std::size_t i = 0; i < a.n(); ++i) { std::int64_t c = a.Int(i); if (c < 0 || c > 0x10FFFF) a.Bad(i, "value out of range"); Utf8Put(s, (unsigned long)c); }
+        r.push_back(L.NewStr(s));
+    });
+    DEF(L, U, "len", {
+        const std::string s = a.Str(0);
+        std::int64_t i = PosRel(a.OptInt(1, 1), s.size()), j = PosRel(a.OptInt(2, -1), s.size());
+        if (i < 1 || i > (std::int64_t)s.size() + 1) a.Bad(1, "initial position out of bounds");
+        if (j > (std::int64_t)s.size()) a.Bad(2, "final position out of bounds");
+        std::int64_t n = 0; std::size_t p = (std::size_t)i - 1;
+        while ((std::int64_t)p < j) {
+            unsigned long cp; int len = Utf8Decode(s, p, cp);
+            if (!len) { r.push_back(Value()); r.push_back(Value::Int((std::int64_t)p + 1)); return; }
+            p += (std::size_t)len; ++n;
+        }
+        r.push_back(Value::Int(n));
+    });
+    DEF(L, U, "codepoint", {
+        const std::string s = a.Str(0);
+        std::int64_t i = PosRel(a.OptInt(1, 1), s.size()), j = PosRel(a.OptInt(2, i), s.size());
+        if (i < 1) a.Bad(1, "out of bounds");
+        if (j > (std::int64_t)s.size()) a.Bad(2, "out of bounds");
+        std::size_t p = (std::size_t)i - 1;
+        while ((std::int64_t)p < j) {
+            unsigned long cp; int len = Utf8Decode(s, p, cp);
+            if (!len) L.Error("invalid UTF-8 code");
+            r.push_back(Value::Int((std::int64_t)cp)); p += (std::size_t)len;
+        }
+    });
+    DEF(L, U, "offset", {
+        const std::string s = a.Str(0);
+        std::int64_t n = a.Int(1);
+        std::int64_t i = PosRel(a.OptInt(2, n > 0 ? 1 : (std::int64_t)s.size() + 1), s.size());
+        if (i < 1 || i > (std::int64_t)s.size() + 1) a.Bad(2, "position out of bounds");
+        auto cont = [&](std::int64_t pos) { return pos >= 1 && pos <= (std::int64_t)s.size() && ((unsigned char)s[(std::size_t)pos - 1] & 0xC0) == 0x80; };
+        if (n == 0) { while (i > 1 && cont(i)) --i; r.push_back(Value::Int(i)); return; }
+        if (cont(i)) L.Error("initial position is a continuation byte");
+        if (n < 0) { while (n < 0 && i > 1) { do { --i; } while (i > 1 && cont(i)); ++n; } }
+        else { --n; while (n > 0 && i <= (std::int64_t)s.size()) { do { ++i; } while (cont(i)); --n; } }
+        if (n == 0) r.push_back(Value::Int(i)); else r.push_back(Value());
+    });
+    DEF(L, U, "codes", {
+        const std::string s = a.Str(0);
+        r.push_back(L.Fn("codes_iter", [s](State& L, std::vector<Value>& args, std::vector<Value>& out) {
+            std::int64_t i = args.size() > 1 && args[1].t == T::Int ? args[1].i : 0;
+            std::size_t p = (std::size_t)i;
+            if (p > 0) { unsigned long cp; int len = Utf8Decode(s, p - 1, cp); p = p - 1 + (std::size_t)(len ? len : 1); }
+            if (p >= s.size()) { out.push_back(Value()); return; }
+            unsigned long cp; int len = Utf8Decode(s, p, cp);
+            if (!len) L.Error("invalid UTF-8 code");
+            out.push_back(Value::Int((std::int64_t)p + 1)); out.push_back(Value::Int((std::int64_t)cp));
+        }));
+        r.push_back(a.at(0)); r.push_back(Value::Int(0));
+    });
+}
+
 void State::OpenLibs() {
-    OpenBase(*this); OpenString(*this); OpenTable(*this); OpenMath(*this); OpenOs(*this); OpenCoroutine(*this);
+    OpenBase(*this); OpenString(*this); OpenTable(*this); OpenMath(*this); OpenOs(*this); OpenCoroutine(*this); OpenUtf8(*this);
 }
 
 }  // namespace okay::lua

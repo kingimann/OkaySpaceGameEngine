@@ -282,15 +282,16 @@ private:
         auto trySide = [&](float s) {
             if (s < 0.0f || s > maxT || s >= bestT) return;
             float al = oa + da * s;
-            if (al < -hh || al > hh) return;
+            const float slack = 1e-5f * (1.0f + hh);
+            if (al < -hh - slack || al > hh + slack) return;
             Vec3 q = op + dp * s;
             Vec3 nn = q + u * (k * k * (hh - al));
             float m = nn.Magnitude();
-            if (m < 1e-12f) return;
-            hit = true; bestT = s; bestN = nn * (1.0f / m);
+            hit = true; bestT = s; bestN = m < 1e-9f ? u : nn * (1.0f / m);      // exactly on the tip: the point faces along the axis
         };
         if (Mathf::Abs(A) > 1e-12f) {
             float disc = B * B - A * C;
+            if (disc < 0.0f && disc > -1e-5f * (B * B + Mathf::Abs(A * C))) disc = 0.0f;   // a ray straight down the axis grazes the tip: rounding must not lose it
             if (disc >= 0.0f) {
                 float sq = Mathf::Sqrt(disc);
                 float s1 = (-B - sq) / A, s2 = (-B + sq) / A;

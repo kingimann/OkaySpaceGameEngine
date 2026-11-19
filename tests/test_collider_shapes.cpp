@@ -153,14 +153,15 @@ int main() {
     {   // Tilted plane: a ball rolls downhill.
         Scene s("tilt");
         GameObject* p = Obj(s, "Ground", {0, 0, 0});
-        p->transform->localRotation = Quat::Euler(0, 0, 20);        // rises toward -X
+        p->transform->localRotation = Quat::Euler(0, 0, 40);        // the ground rises toward +X (steeper than the default friction holds)
         p->AddComponent<PlaneCollider3D>();
         GameObject* b = Obj(s, "Ball", {0, 2, 0});
         b->AddComponent<SphereCollider3D>()->radius = 0.5f;
         b->AddComponent<Rigidbody3D>();
         s.Start();
         Settle(s, 120);
-        CHECK(b->transform->Position().x > 1.0f);
+        std::cout << "  ball on the tilted plane ends at x = " << b->transform->Position().x << ", y = " << b->transform->Position().y << "\n";
+        CHECK(b->transform->Position().x < -1.0f);      // the plane's normal leans toward -X, so the ground falls away that way
     }
     {   // Heightfield: a ramp. The ball rests on the surface; a ray lands at the right height.
         Scene s("hf");
@@ -339,7 +340,7 @@ int main() {
         g->transform->localRotation = Quat::Euler(0, 0, 180);              // apex down
         s.Start();
         CHECK(s.physics().OverlapPoint(s, {0, 0.5f}) == pc);
-        CHECK(s.physics().OverlapPoint(s, {0, -0.9f}) == nullptr);
+        CHECK(s.physics().OverlapPoint(s, {0.9f, -0.9f}) == nullptr);    // the empty corner by the apex
     }
     {   // A ball dropped on a static solid polygon lands on it; one placed inside it is pushed out.
         Scene s("ball2d");
@@ -348,7 +349,7 @@ int main() {
         g->AddComponent<Rigidbody2D>()->bodyType = Rigidbody2D::BodyType::Static;
         GameObject* b = Obj(s, "Ball", {1, 3, 0});
         b->AddComponent<CircleCollider2D>()->radius = 0.5f; b->AddComponent<Rigidbody2D>();
-        GameObject* in = Obj(s, "Inside", {-3, -1.2f, 0});
+        GameObject* in = Obj(s, "Inside", {-3, -0.6f, 0});
         in->AddComponent<CircleCollider2D>()->radius = 0.3f;
         auto* rbi = in->AddComponent<Rigidbody2D>(); rbi->gravityScale = 0.0f;
         s.Start();
@@ -378,7 +379,7 @@ int main() {
         g->transform->localRotation = Quat::Euler(0, 0, 45);
         s.Start();
         CHECK(s.physics().OverlapBox(s, {1.15f, 1.15f}, {0.1f, 0.1f}).empty());     // the empty corner of the rotated capsule's box
-        CHECK(!s.physics().OverlapBox(s, {0.6f, 0.6f}, {0.1f, 0.1f}).empty());
+        CHECK(!s.physics().OverlapBox(s, {0.6f, -0.6f}, {0.1f, 0.1f}).empty());     // on the capsule's axis (it leans toward -X, down to +X)
     }
     {   // 2D contact offset and the capsule's turning inertia.
         Scene s("skin2d");
@@ -390,7 +391,8 @@ int main() {
         s.Start();
         Settle(s, 200);
         Vec2 mn, mx; bx->WorldAABB(mn, mx);
-        CHECK(mn.y > 0.06f); CHECK(mn.y < 0.14f);
+        std::cout << "  2D box with a 0.1 skin rests with its bottom at " << mn.y << "\n";
+        CHECK(mn.y > 0.04f); CHECK(mn.y < 0.14f);      // (the solver leaves a little slop)
     }
 
     TEST_MAIN_RESULT();

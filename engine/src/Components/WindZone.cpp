@@ -102,6 +102,27 @@ Vec3 WindZone::WindAt(const Vec3& world) const {
     return s.Raw(world, WindField::Clock()) * c;
 }
 
+WindZone* WindZone::FindGlobal(Scene& scene) {
+    for (const auto& up : scene.Objects()) {
+        GameObject* go = up.get();
+        if (!go || go->IsDestroyed()) continue;
+        for (WindZone* z : go->GetComponents<WindZone>()) if (z && z->mode == Mode::Everywhere) return z;
+    }
+    return nullptr;
+}
+WindZone* WindZone::EnsureGlobal(Scene& scene) {
+    if (WindZone* z = FindGlobal(scene)) return z;
+    GameObject* go = scene.CreateGameObject("Wind");
+    auto* z = go->AddComponent<WindZone>();
+    z->mode = Mode::Everywhere; z->strength = 0.0f; z->additive = true;
+    return z;
+}
+void WindZone::Aim(const Vec3& d) {
+    if (!transform || !Finite3(d) || d.SqrMagnitude() < 1e-10f) return;
+    direction = {0, 0, 1};
+    transform->SetRotation(Quat::LookRotation(d.Normalized()));
+}
+
 void WindZone::OnEnable() {
     auto& r = Registry();
     if (std::find(r.begin(), r.end(), this) == r.end()) r.push_back(this);
@@ -247,7 +268,10 @@ void WindSway::Step(float dt) {
         if (rh.SqrMagnitude() > 1e-6f) {
             const Quat delta = Quat::FromToRotation(rh.Normalized(), dirH);
             const Quat target = delta * transform->Rotation();
+            const Vec3 poleLocal{m_minX, m_center.y, m_center.z};          // the edge on the pole stays where it is
+            const Vec3 poleBefore = transform->TransformPoint(poleLocal);
             transform->SetRotation(Quat::Slerp(transform->Rotation(), target, std::min(1.0f, std::max(dt, 0.0f) * 2.0f)));
+            transform->SetPosition(transform->Position() + (poleBefore - transform->TransformPoint(poleLocal)));
         }
     }
 

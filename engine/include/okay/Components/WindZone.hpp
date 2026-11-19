@@ -61,6 +61,13 @@ public:
     static std::vector<std::pair<float, float>> ParseCurve(const std::string& text);
     static std::string FormatCurve(const std::vector<std::pair<float, float>>& keys);
 
+    /// The scene's own wind: the first live "Everywhere" zone (nullptr when there is none).
+    static WindZone* FindGlobal(Scene& scene);
+    /// The scene's own wind, made (an object called "Wind" with an Everywhere zone) when the scene has none.
+    static WindZone* EnsureGlobal(Scene& scene);
+    /// Aim an Everywhere / Direction zone along a world direction (turns the object). A zero or bad direction changes nothing.
+    void Aim(const Vec3& worldDirection);
+
     static const char* ModeName(Mode m);
     static const char* ModeHint(Mode m);
 

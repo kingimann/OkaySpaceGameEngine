@@ -49,6 +49,7 @@
 #include <cstdio>
 #include "LevelTools.hpp"              // foliage brush, terrain layers, decals, cables, measuring, orthographic views
 #include "SplineTools.hpp"             // splines: Scene-view editing, inspectors, line / trail drawing
+#include "WindTools.hpp"               // wind: zones, arrows, inspector rows, menus, Lighting > Wind
 #include "VolumeTools.hpp"             // volumes: Scene-view shapes, handles, draw tool, inspector, menus
 #include "okay/Components/HoldPrompt.hpp"
 #include "okay/Components/LocalPlayerInput.hpp"
@@ -7099,6 +7100,7 @@ static void DrawAutosaveMenuItems() {
 static void DrawSceneOverlayMenuItems(EditorState& ed) {
     ImGui::MenuItem("Colliders (gizmos)", nullptr, &g_showColliders);
     oked::DrawVolumeOverlayMenu([] { SaveSettings(); });
+    oked::DrawWindOverlayMenu([] {});
     if (ImGui::BeginMenu("Physics Debug")) {
         if (ImGui::MenuItem("Show physics (Scene + Game)", nullptr, &g_physDebug)) { ApplyPhysicsDebug(); SaveSettings(); }
         if (ImGui::IsItemHovered()) ImGui::SetTooltip("Draw colliders (green), triggers (blue), this frame's contact\npoints + normals (red) and query rays, also in the Game view\nwhile playing. Editor only - never in a build.");
@@ -7491,6 +7493,7 @@ static void DrawCreateSlot(EditorState& ed, const std::string& id, GameObject* p
         if (ImGui::IsItemHovered()) ImGui::SetTooltip("A curve of three points in front of the camera: roads, rails, fences, paths.");
         LevelCreateMenuItems(ed, created);                // Foliage Layer, Decal Projector, Cable
         oked::DrawVolumeGameObjectMenu(ed, created);      // Volume >
+        oked::DrawWindGameObjectMenu(ed, created);        // Environment > (wind)
     } else if (id == "create.ui") {
         // Widgets go under the scene's Canvas (made, plus an Event System, if
         // missing), or inside the selected panel; see DrawUIWidgetItems.
@@ -12860,6 +12863,7 @@ static void DrawLookSections(EditorState& ed) {
         if (AssetSlot("thundersound", w.thunderSound, "Clip", {".wav", ".ogg", ".mp3"})) ed.dirty = true;
         tip("Played a moment after each lightning strike in a storm (drag a clip from the Project panel).");
     }
+    oked::DrawWindSettingsSection(ed);   // Wind: the scene's wind object, with a live arrow
 }
 
 // Lighting: the scene's look (UI font, sky, fog, lightmaps) plus the global
@@ -42021,6 +42025,7 @@ void DrawInspector(EditorState& ed) {
     DrawBehaviorTreeInspector(ed, go, curComp, toRemove, &CompHeader);   // Behavior Tree Runner
     DrawSplineInspector(ed, go, curComp, toRemove, &CompHeader);       // Spline family, Line / Trail Renderer
     DrawLevelInspector(ed, go, curComp, toRemove, &CompHeader);        // Foliage, Decal Projector, Cable
+    oked::DrawWindInspector(ed, go, curComp, toRemove, &CompHeader);   // Wind Zone, Wind Drag, Wind Sway, Wind Sound
     oked::DrawVolumeInspector(ed, go, curComp, toRemove, &CompHeader);  // Volume (checkpoint, kill, force, atmosphere, ambience)
     oked::DrawFallbackInspector(ed, go, curComp, toRemove, fbCursorY, &CompHeader);   // anything still undrawn: from the property registry
     if (multiEdit.active && oked::PropagateComponentEdit(ed.MultiSelection(), go, *curComp, multiEdit) > 0) ed.dirty = true;
@@ -42274,6 +42279,9 @@ void DrawInspector(EditorState& ed) {
             if (item(!go->GetComponent<MeshCollider3D>(), "Mesh Collider 3D")) { auto* m = go->AddComponent<MeshCollider3D>(); m->autoFit = true; FitColliders(go); ed.dirty = true; }
           } EndCat(o); }
 
+        { bool o = BeginCat("Environment");
+          if (o) { oked::WindAddComponentItems(ed, go, item); }
+          EndCat(o); }
         { bool o = BeginCat("Lighting");
           if (o) {
             if (item(!go->GetComponent<Light>(), "Directional Light")) { go->AddComponent<Light>(); ed.dirty = true; }
@@ -45649,6 +45657,7 @@ void DrawScene3D(EditorState& ed, ImDrawList* dl, ImVec2 canvasPos, ImVec2 canva
         if (oked::DrawVolumeOverlay(ed, dl, vp, eye, center, canvasSize, canvasPos,
                                     hovered && !g_uiHandled && !g_gizmoGrab, io))
             g_uiHandled = true;
+        oked::DrawWindOverlay(ed, dl, vp, center, canvasSize, canvasPos);   // wind zones and arrows
     }
     // Skeleton overlay on top of the meshes (built with the gizmos above).
     if (!gameView) {

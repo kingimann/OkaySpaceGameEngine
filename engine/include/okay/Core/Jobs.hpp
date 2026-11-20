@@ -1,6 +1,6 @@
 #pragma once
 // A small job system: a worker pool, a task graph, ParallelFor / ParallelReduce, a
-// main-thread queue, cancellation and counters. See docs/core_runtime.md.
+// main-thread queue, cancellation and counters. See docs/engine/core_runtime.md.
 //
 // This header exposes plain C++ types only (atomics, std::function, shared_ptr).
 // The locks and threads live in Jobs.cpp behind a platform shim, because the

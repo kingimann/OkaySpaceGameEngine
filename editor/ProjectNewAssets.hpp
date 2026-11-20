@@ -6,7 +6,7 @@
 // (atomic, never over an existing file), so these functions only make the text.
 //
 // Written from the starting documents the Dialogue and Behavior Tree windows already make for their own "New" button
-// (docs/dialogue.md, docs/behavior_trees.md); tests/test_project_menu_ops.cpp reads each text back and validates it.
+// (docs/dialogue.md, docs/gameplay/behavior_trees.md); tests/test_project_menu_ops.cpp reads each text back and validates it.
 #include "okay/AI/BehaviorTree.hpp"
 #include "okay/Components/DialogueGraph.hpp"
 #include "okay/Components/QuestLog.hpp"

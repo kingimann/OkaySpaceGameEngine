@@ -146,7 +146,7 @@ struct AntiCheatSettings {
 
     // ---- Detection engine (okay/Net/CheatDetect.hpp): behavioural detectors, a
     // risk score and graduated responses. Off unless detect.enabled; the
-    // .okayac keys are "detect.<key> <value>" (see docs/anticheat.md).
+    // .okayac keys are "detect.<key> <value>" (see docs/online/anticheat.md).
     DetectSettings detect;
 
     /// .okayac text: one "key value" per line, '#' comments:

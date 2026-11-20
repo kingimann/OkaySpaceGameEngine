@@ -1,4 +1,4 @@
-// Walking must look like walking and running like running (docs/walk_vs_run.md).
+// Walking must look like walking and running like running (docs/gameplay/walk_vs_run.md).
 //
 // The owner's words: "the character walking is basically running". Measured on the code before the change (the same
 // numbers this test prints with OKAY_OLD_GAIT=1): plain W moved the built-in character at 4.5 m/s, which is a jog,
@@ -16,7 +16,7 @@
 //   test_walk_vs_run          the natural gait (the default)
 //   test_walk_vs_run --old    run with OKAY_OLD_GAIT=1 in the environment (CTest does): the old gait is back, and the
 //                             walk is shown NOT to be clearly different from the run: the "before".
-//   --table                   also print the whole speed table (what docs/walk_vs_run.md quotes; slower)
+//   --table                   also print the whole speed table (what docs/gameplay/walk_vs_run.md quotes; slower)
 #include "test_framework.hpp"
 #include "walk_vs_run_measure.hpp"
 #include <cstdlib>
@@ -93,7 +93,7 @@ void PrintTable(bool animator, float walkSpeed, float runSpeed) {
 }
 
 // How the old gait looked: at the old default speeds plain W was not a walk. These are the numbers measured on the code
-// before the change (the baseline in docs/walk_vs_run.md), with room for the difference between runs.
+// before the change (the baseline in docs/gameplay/walk_vs_run.md), with room for the difference between runs.
 void CheckOld(bool animator, float walkSpeed, float runSpeed) {
     std::printf("\n-- OLD gait: %s, walk %.2f m/s, run %.2f m/s --\n", animator ? "Animator (a new project)" : "procedural stride", walkSpeed, runSpeed);
     const GaitStats w = Measure(animator, walkSpeed, false, walkSpeed, runSpeed);
@@ -115,7 +115,7 @@ int main(int argc, char** argv) {
     bool oldMode = false, table = false;
     for (int i = 1; i < argc; ++i) {
         if (std::strcmp(argv[i], "--old") == 0) oldMode = true;
-        if (std::strcmp(argv[i], "--table") == 0) table = true;   // the full speed table docs/walk_vs_run.md quotes (slower)
+        if (std::strcmp(argv[i], "--table") == 0) table = true;   // the full speed table docs/gameplay/walk_vs_run.md quotes (slower)
     }
     RUN_SUITE((oldMode ? "walk_vs_run (OKAY_OLD_GAIT=1: the old gait)" : "walk_vs_run"));
     if (oldMode) {
@@ -152,7 +152,7 @@ int main(int argc, char** argv) {
     CheckPair("Third Person defaults", true, tp.walkSpeed, tp.runSpeed);
     CheckPair("Third Person Shooter defaults", true, tps.walkSpeed, tps.runSpeed);
 
-    // ---- The full table (it is what docs/walk_vs_run.md quotes) ------------------------------------------------------
+    // ---- The full table (it is what docs/gameplay/walk_vs_run.md quotes) ------------------------------------------------------
     if (table) { PrintTable(true, fp.walkSpeed, fp.runSpeed); PrintTable(false, fp.walkSpeed, fp.runSpeed); }
 
     // ---- The style follows the real speed, not the controller's settings ---------------------------------------------

@@ -1,6 +1,6 @@
 // OkayUI::InputTextMultiline: a multi-line text box over the caller's char buffer, built on OkayUI::CodeEdit with the gutter, the
 // highlighting and the auto-indent turned off. The editor object (text, caret, undo, scroll) is kept per label in a small table; the
-// caller's buffer is the truth: if it changes behind the box's back the editor takes the new text. See docs/own_ui_toolkit.md section 4.34.
+// caller's buffer is the truth: if it changes behind the box's back the editor takes the new text. See docs/ui/own_ui_toolkit.md section 4.34.
 #include "okay/UI/OkayUICodeEdit.hpp"
 
 #include <algorithm>

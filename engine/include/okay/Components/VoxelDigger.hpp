@@ -54,7 +54,7 @@ public:
     float strength = 8.0f;     ///< density change per second while held
     float range    = 80.0f;    ///< how far the aim ray reaches
     bool  showBrush  = true;
-    // ---- Aim and controls (first AND third person; docs/voxel_sandbox_dig.md) ----
+    // ---- Aim and controls (first AND third person; docs/gameplay/voxel_sandbox_dig.md) ----
     /// How far from the CHARACTER (not the camera) ground can be dug or built on. Used when the scene has a player.
     float reach = 12.0f;
     /// With a player in the scene the aim ray starts where the view line passes the character (third person) and refuses
@@ -73,7 +73,7 @@ public:
     int   removeFloaters = 8;
 
 
-    // ---- Real-life digging (docs/terrain_water.md). All off by default: a digger from an older scene acts as before. ----
+    // ---- Real-life digging (docs/rendering/terrain_water.md). All off by default: a digger from an older scene acts as before. ----
     /// What happens to the ground a brush takes away. Vanish = today's behaviour.
     enum class Collect { Vanish, Store, Debris, Both };
     enum class Preset { Custom, Realistic, Arcade, Creative };

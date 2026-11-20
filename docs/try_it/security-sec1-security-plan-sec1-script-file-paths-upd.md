@@ -4,7 +4,7 @@ row: | security-sec1 | Security plan SEC1: script file paths, update signature s
 ---
 ## Security plan SEC1: script file paths, update signature status, relay caps, reactions SQL
 
-Details and the reasons: [security.md](security.md). Four protections; two you can see in the Windows release, two are owner steps.
+Details and the reasons: [security.md](online/security.md). Four protections; two you can see in the Windows release, two are owner steps.
 
 **Script file paths (try it in the editor).**
 

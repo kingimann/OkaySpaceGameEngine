@@ -1,7 +1,7 @@
 // Property registrations of the UI widgets: button, text, image, slider, toggle,
 // progress bar, input field, stepper, dropdown, the loading screen and more. (Canvas and UIPanel are in
 // BuiltinProperties.cpp.) Each type registers every field its scene record keeps; lists
-// (the dropdown's options) and the localisation key are left out. See docs/properties.md.
+// (the dropdown's options) and the localisation key are left out. See docs/engine/properties.md.
 #include "BuiltinPropertiesShared.hpp"
 
 #include "okay/Components/Crosshair.hpp"

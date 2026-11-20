@@ -1,5 +1,5 @@
 #pragma once
-// The Scene and Game views in window mode (docs/own_ui_toolkit.md 6.24 step 6). The scene is rendered by the engine's software renderer (editor/SceneViewCore.hpp,
+// The Scene and Game views in window mode (docs/ui/own_ui_toolkit.md 6.24 step 6). The scene is rendered by the engine's software renderer (editor/SceneViewCore.hpp,
 // no Dear ImGui), uploaded to a texture of the window's painter and shown in a docked OkayUI window. The Scene view orbits with the mouse (left or right drag)
 // and zooms with the wheel over the same camera values the Dear ImGui editor uses; the Game view looks through the scene's main camera. Not done yet:
 // the grid, gizmos, selection, labels, 2D scenes, ortho/axis views and the GPU renderers (the Dear ImGui editor still has all of those).

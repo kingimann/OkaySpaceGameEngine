@@ -114,7 +114,7 @@ int main() {
         WriteFile((dir / "long.raw").string(), longLine + "\n");
         CHECK(RawFileUnsafeForAssimp((dir / "long.raw").string()));
         CHECK(!RawFileUnsafeForAssimp((dir / "no_such_file.raw").string()));
-        // the corpus files (docs/model_corpus.md): Assimp crashed on WithColor and WithTexture; Wuson has one group and stays with Assimp
+        // the corpus files (docs/content/model_corpus.md): Assimp crashed on WithColor and WithTexture; Wuson has one group and stays with Assimp
         if (const char* corpus = std::getenv("OKAY_MODEL_CORPUS")) {
             const fs::path r = fs::path(corpus) / "models" / "RAW";
             if (fs::exists(r / "Wuson.raw")) {

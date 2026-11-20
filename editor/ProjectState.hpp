@@ -63,7 +63,7 @@ struct BuildSettings {
     bool  cleanOutput = true;              // wipe stale build files first
     bool  dataFolder = true;               // clean Data/ layout (exe at root)
     bool  encryptData = false;             // obfuscate scenes + config
-    int   antiCheat = 0;                   // 0 off, 1 report, 2 enforce (docs/anticheat.md)
+    int   antiCheat = 0;                   // 0 off, 1 report, 2 enforce (docs/online/anticheat.md)
     // ---- Player presentation ----
     char  icon[260] = "";                  // window/taskbar icon PNG
     char  bundleId[160] = "com.okayspace.game";  // application identifier
@@ -93,7 +93,7 @@ struct BuildSettings {
     // ---- Post-build actions (handled by the editor, not the builder) ----
     bool  openFolderAfter = true;          // reveal the output folder when done
     bool  zipAfter = false;                // also produce <Name>.zip of the build
-    // ---- Output layout, stripping, versioning (docs/build_pipeline.md) ----
+    // ---- Output layout, stripping, versioning (docs/release/build_pipeline.md) ----
     int   layout = 0;                      // 0 Folder (<Name>.exe + <Name>_Data/), 1 Compact (exe + Data/), 2 Zip archive
     bool  stripAssets = true;              // ship only the assets the built scenes use (off: every project asset)
     bool  compress = true;                 // zip: deflate files that shrink (off: store)
@@ -117,7 +117,7 @@ struct BuildSettings {
     float srvMaxSpeed = 0.0f;              // anti-cheat: units/second (0 = off)
     int   srvRateLimit = 0;                // messages per second per player (0 = off)
     int   srvKickAfter = 0;                // rejected moves per minute before a kick (0 = never)
-    // ---- Build Settings upgrade (docs/build_settings_upgrade.md): every one is read by the player or the build step ----
+    // ---- Build Settings upgrade (docs/editor/build_settings_upgrade.md): every one is read by the player or the build step ----
     float timeScale = 1.0f;                // game speed (player: Time::SetTimeScale)
     int   maxFixedSteps = 0;               // most physics steps in one frame (0 = engine default)
     float musicVolume = 1.0f;              // starting music volume

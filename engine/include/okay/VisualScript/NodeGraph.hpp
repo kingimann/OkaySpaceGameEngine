@@ -400,7 +400,7 @@ public:
         return -1;
     }
 
-    /// Parse a graph from the simple OkayVS text format (see docs/visual_scripting.md).
+    /// Parse a graph from the simple OkayVS text format (see docs/scripting/visual_scripting.md).
     static std::unique_ptr<NodeGraph> Parse(const std::string& text, std::string* error = nullptr);
 private:
     std::vector<std::pair<int, int>> m_blockRanges;   // {first expanded id, block id} per Quick block

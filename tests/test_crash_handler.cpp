@@ -13,7 +13,7 @@
 
 // The crash handler for real (shared/CrashHandler.hpp, the POSIX half): a child process installs the handler, fills the crash context
 // like the editor does, then really faults. The parent checks how the child died and reads back the files the handler left, with the
-// same parser the launcher uses. Windows has its own handler (compiled, not run, on this machine: see docs/crash_reports.md), so this
+// same parser the launcher uses. Windows has its own handler (compiled, not run, on this machine: see docs/online/crash_reports.md), so this
 // test only runs where there are signals.
 #if defined(__unix__) || defined(__APPLE__)
 #include <sys/stat.h>

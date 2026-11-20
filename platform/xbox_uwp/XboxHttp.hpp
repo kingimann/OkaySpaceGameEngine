@@ -19,11 +19,11 @@ namespace okay::xbox::http {
 // ---- shapes shared with the content downloader ----
 struct GetHead { int status = 0; std::uint64_t bodyStart = 0; std::uint64_t totalSize = 0; };
 struct GetHandlers { std::function<bool(const GetHead&)> onHead; std::function<bool(const std::uint8_t*, std::size_t)> onData; };
-struct GetResult { bool reached = false; bool aborted = false; std::string error; };
+struct GetResult { bool reached = false; bool aborted = false; bool cancelled = false; bool timedOut = false; std::string error; };   // cancelled / timedOut also set aborted / error
 
 // ---- the network client the driver talks to (implemented by the WinRT glue, faked in tests) ----
 struct Header { std::string name, value; };
-struct Request { std::string url; std::vector<Header> headers; };
+struct Request { std::string url; std::vector<Header> headers; std::uint64_t timeoutMs = 0; };   // timeoutMs: what is left of the whole-download budget for this attempt (0 = none); the client should give up when it runs out
 struct Head { int status = 0; std::vector<Header> headers; };
 struct Sink { std::function<bool(const Head&)> onHead; std::function<bool(const std::uint8_t*, std::size_t)> onData; };   // return false to stop reading
 struct ClientResult { bool reached = false; bool aborted = false; std::string error; };
@@ -111,6 +111,12 @@ struct Options {
     std::uint64_t retryFallbackMs = 1000, retryCapMs = 15000;
     std::function<void(std::uint64_t)> sleepMs;   // the caller's way to wait (the driver never sleeps itself); null = retry at once
     std::string userAgent = "OkaySpace-Xbox/1";
+    // Budget for the whole download (all redirects and retries). Needs `nowMs` (a monotonic clock the caller supplies: the driver never reads a clock itself). 0 = none.
+    std::uint64_t timeoutMs = 0;
+    std::function<std::uint64_t()> nowMs;
+    std::function<bool()> cancel;   // polled before every attempt and for every piece of body; true = stop (result: aborted + cancelled)
+    // Called after every piece of body with the bytes of the FILE present so far (resume offset + received) and the total size when known (0 = unknown).
+    std::function<void(std::uint64_t done, std::uint64_t total)> onProgress;
 };
 
 /// GET `name` below `baseUrl`, from byte `rangeFrom` (0 = whole file), at most `maxBytes` of body (0 = no cap). Follows up to maxRedirects redirects (never from
@@ -122,8 +128,14 @@ inline GetResult Get(Client& client, const std::string& baseUrl, const std::stri
     if (!ParseUrl(JoinUrl(baseUrl, name), cur, &why)) { res.error = why; return res; }
     if (cur.scheme == "http" && !opt.allowHttp) { res.error = "plain http is not allowed here: use an https content URL"; return res; }
     int redirects = 0, retries = 0;
+    const std::uint64_t startMs = opt.nowMs ? opt.nowMs() : 0;
+    auto expired = [&]() { return opt.timeoutMs && opt.nowMs && opt.nowMs() - startMs >= opt.timeoutMs; };
+    auto left = [&]() -> std::uint64_t { if (!opt.timeoutMs || !opt.nowMs) return 0; const std::uint64_t used = opt.nowMs() - startMs; return used >= opt.timeoutMs ? 1 : opt.timeoutMs - used; };
+    bool cancelHit = false, timeHit = false;
     for (int guard = 0; guard < 64; ++guard) {
-        Request rq; rq.url = UrlToString(cur);
+        if (opt.cancel && opt.cancel()) { res.aborted = res.cancelled = true; return res; }
+        if (expired()) { res.timedOut = true; res.error = "the download timed out"; return res; }
+        Request rq; rq.url = UrlToString(cur); rq.timeoutMs = left();
         rq.headers.push_back({"Accept-Encoding", "identity"});   // a compressed body would make Content-Length and Range offsets mean something else
         rq.headers.push_back({"User-Agent", opt.userAgent});
         if (rangeFrom > 0) rq.headers.push_back({"Range", RangeHeaderValue(rangeFrom)});
@@ -157,18 +169,24 @@ inline GetResult Get(Client& client, const std::string& baseUrl, const std::stri
         };
         sink.onData = [&](const std::uint8_t* d, std::size_t n) {
             got += n;
+            if (opt.cancel && opt.cancel()) { cancelHit = true; return false; }
+            if (expired()) { timeHit = true; return false; }
             if (maxBytes && got > maxBytes) { tooBig = true; return false; }
             if (haveExpected && got > expected) { headErr = "the body is longer than its Content-Length"; return false; }
             if (h.onData && !h.onData(d, n)) { dataAborted = true; return false; }
+            if (opt.onProgress) opt.onProgress(gh.bodyStart + got, gh.totalSize);
             return true;
         };
         const ClientResult cr = client.Send(rq, sink);
         if (!headErr.empty()) { res.error = headErr; return res; }
+        if (cancelHit) { res.aborted = res.cancelled = true; return res; }
+        if (timeHit) { res.timedOut = true; res.error = "the download timed out"; return res; }
         if (headAborted || dataAborted) { res.aborted = true; return res; }
         if (tooBig) { res.error = "the body is larger than allowed"; return res; }
         if (next == Next::Redirect) { cur = target; ++redirects; continue; }
-        if (next == Next::Retry) { ++retries; if (opt.sleepMs) opt.sleepMs(waitMs); continue; }
+        if (next == Next::Retry) { ++retries; if (opt.sleepMs) opt.sleepMs(waitMs); continue; }   // a sleep that uses up the budget is caught at the top of the loop
         if (haveHead && !bodyWanted) { res.reached = true; return res; }   // 404, 416 ...: the head was all we wanted
+        if (!cr.reached && expired()) { res.timedOut = true; res.error = "the download timed out"; return res; }
         if (!cr.reached) { res.error = cr.error.empty() ? "no reply from the server" : cr.error; return res; }
         if (!haveHead) { res.error = "no reply from the server"; return res; }
         if (bodyWanted && haveExpected && got < expected) { res.error = "the download was cut short"; return res; }

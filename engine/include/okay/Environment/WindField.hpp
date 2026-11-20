@@ -1,5 +1,5 @@
 #pragma once
-// The wind field (docs/wind.md): how hard and which way the air moves at any world position and time.
+// The wind field (docs/gameplay/wind.md): how hard and which way the air moves at any world position and time.
 //
 // Written from general ideas only (no code from another project):
 //  - value noise on an integer lattice (a hash of the corner, smooth blend between corners): any textbook on

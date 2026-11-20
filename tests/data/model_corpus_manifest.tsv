@@ -1,5 +1,5 @@
 # Real-file corpus for the own FBX / COLLADA / 3DS / BVH / OBJ / STL / PLY / glTF / Blender / 3MF / AMF / X3D / DXF / LWO / MD2 / MD3 / IRRMESH / B3D / X / AC3D / OGRE / XGL / IRR / NFF / Terragen / Q3D / LWS / OGRE binary / ZAE / .xml / LXO readers: what each reader gave on each file when this
-# manifest was written. The files are not in this repository (see docs/model_corpus.md): they come from the
+# manifest was written. The files are not in this repository (see docs/content/model_corpus.md): they come from the
 # test/models and test/models-nonbsd directories of an Assimp 5.4.3 source checkout; paths below are relative to
 # that checkout's "test" directory (OKAY_MODEL_CORPUS points at it). Tab separated:
 #   reader  path  ok|FAIL  then the counts (meshes, tris, bones, skinned, clips, mat = materials) the test compares, or the error.

@@ -10,7 +10,7 @@
 namespace okaycc {
 
 // Preprocess one translation unit.
-// Written from ISO/IEC 9899:2018 clause 6.10. See docs/own_compiler_plan.md.
+// Written from ISO/IEC 9899:2018 clause 6.10. See docs/platform/own_compiler_plan.md.
 std::vector<Token> preprocessTokens(FileStore& files, const std::string& path,
                                     const std::vector<std::string>& includePaths, Diagnostics& diags);
 

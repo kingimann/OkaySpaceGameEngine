@@ -1,8 +1,8 @@
 # ---- okay::crypto as its own static library --------------------------
-# Our own crypto primitives (docs/crypto.md). A separate target so that code which must not
+# Our own crypto primitives (docs/platform/crypto.md). A separate target so that code which must not
 # link the whole engine (the launcher, shared/AntiCheatCrypto.hpp with -DOKAY_OWN_CRYPTO=ON,
 # the crypto tests, the fuzz targets and the benchmark) can use it alone. okay_engine links it
-# PUBLIC, so everything that links the engine gets it as before. UNREVIEWED; see docs/crypto.md.
+# PUBLIC, so everything that links the engine gets it as before. UNREVIEWED; see docs/platform/crypto.md.
 add_library(okay_crypto STATIC
     src/Crypto/Util.cpp
     src/Crypto/Random.cpp
@@ -252,12 +252,12 @@ add_library(okay_engine
     src/UI/UIImageScale.cpp
     src/UI/UILayoutUpdate.cpp
     src/UI/UIFrameTransform.cpp
-    # Localization tools (docs/localization_tools.md)
+    # Localization tools (docs/engine/localization.md)
     src/Core/LocCheck.cpp
     src/Core/LocTable.cpp
     src/Core/LocScan.cpp
     src/Core/LocPreview.cpp
-    # Accessibility (docs/accessibility.md)
+    # Accessibility (docs/engine/accessibility.md)
     src/Graphics/ColorVision.cpp
     src/Core/Subtitles.cpp
     src/Core/AccessibilitySettings.cpp
@@ -449,7 +449,7 @@ endif()
 # an empty TU unless this is turned on with the SDK unpacked somewhere local:
 #   cmake -DOKAY_WITH_PHOTON=ON -DOKAY_PHOTON_SDK_DIR=/path/to/photon-sdk ...
 # The SDK dir is the one containing LoadBalancing-cpp/, Photon-cpp/ and
-# Common-cpp/. See docs/photon.md for the full walkthrough.
+# Common-cpp/. See docs/online/photon.md for the full walkthrough.
 option(OKAY_WITH_PHOTON "Photon Realtime transport adapter (requires the Photon C++ SDK)" OFF)
 set(OKAY_PHOTON_SDK_DIR "" CACHE PATH "Root of the unpacked Photon Realtime C++ SDK")
 if(OKAY_WITH_PHOTON)
@@ -484,7 +484,7 @@ endif()
 # The primitives in src/Crypto are ALWAYS compiled (and tested); OKAY_OWN_CRYPTO only
 # decides whether the network layer uses them instead of libsodium. UNREVIEWED by an
 # outside cryptographer: it must not become the default, and libsodium must not be
-# removed, before that review (docs/own_code_roadmap.md, docs/crypto.md).
+# removed, before that review (docs/status/own_code_roadmap.md, docs/platform/crypto.md).
 target_link_libraries(okay_engine PUBLIC okay_crypto)   # (also brings bcrypt on Windows and OKAY_OWN_CRYPTO)
 set(OKAY_SODIUM_IN_BUILD OFF CACHE INTERNAL "libsodium was found and linked into okay_engine")   # reset on every configure; set ON below
 if(OKAY_REQUIRE_SODIUM)
@@ -656,7 +656,7 @@ endif()
 # The model reader defaults below (OKAY_PREFER_OWN_READERS_DEFAULT, OKAY_OWN_<FMT>_DEFAULT) are read by ModelImport.cpp only, so they
 # are put on that one file: switching a reader's default rebuilds one file, not the whole engine.
 # Our own STL / PLY readers are always built. With Assimp also on, this picks which one
-# a format uses by default (docs/model_import.md); SetImportBackend() changes it at run time.
+# a format uses by default (docs/content/model_import.md); SetImportBackend() changes it at run time.
 if(OKAY_PREFER_OWN_READERS)
     set_property(SOURCE src/Render/ModelImport.cpp APPEND PROPERTY COMPILE_DEFINITIONS OKAY_PREFER_OWN_READERS_DEFAULT)
     message(STATUS "OkaySpace: model import prefers the built-in STL/PLY readers over Assimp")
@@ -710,7 +710,7 @@ if(OKAY_OWN_ASE)
     set_property(SOURCE src/Render/ModelImport.cpp APPEND PROPERTY COMPILE_DEFINITIONS OKAY_OWN_ASE_DEFAULT)
     message(STATUS "OkaySpace: model import reads .ase with the built-in ASE reader")
 endif()
-# Our own Blender (.blend) reader (docs/own_blend_reader.md): same opt-in rules, default OFF.
+# Our own Blender (.blend) reader (docs/content/model_readers.md): same opt-in rules, default OFF.
 if(OKAY_OWN_BLEND)
     set_property(SOURCE src/Render/ModelImport.cpp APPEND PROPERTY COMPILE_DEFINITIONS OKAY_OWN_BLEND_DEFAULT)
     message(STATUS "OkaySpace: model import reads .blend with the built-in Blender reader first")
@@ -753,7 +753,7 @@ endforeach()
 # Friendly alias so subprojects can link okay::engine.
 add_library(okay::engine ALIAS okay_engine)
 
-# 1.1 Loop and time (docs/loop_and_time.md): Time effects + clocks, Game pause reasons /
+# 1.1 Loop and time (docs/engine/loop_and_time.md): Time effects + clocks, Game pause reasons /
 # quit guard, the shared GameLoop driver, dice parser. Clock.hpp and RandomExtras'
 # templates are header-only.
 target_sources(okay_engine PRIVATE
@@ -762,12 +762,12 @@ target_sources(okay_engine PRIVATE
     src/Core/GameLoop.cpp
     src/Core/RandomExtras.cpp
 )
-# ---- Prefab system wave 2 (docs/prefab_system.md): nested prefabs, variants, unpack,
+# ---- Prefab system wave 2 (docs/engine/prefabs.md): nested prefabs, variants, unpack,
 # per-record / per-field apply and revert, prefab queries and the asset validator.
 target_sources(okay_engine PRIVATE src/Scene/PrefabTools.cpp)
-# Project tag list and layer names in the project settings file (docs/layers_tags_cameras.md).
+# Project tag list and layer names in the project settings file (docs/gameplay/cameras.md).
 target_sources(okay_engine PRIVATE src/Scene/ProjectLists.cpp)
-# ---- Property reflection (docs/properties.md) ----
+# ---- Property reflection (docs/engine/properties.md) ----
 # PropertyValue / PropertyDesc, the registry with path access and change hook,
 # snapshot / diff / copy, and the built-in component registrations.
 target_sources(okay_engine PRIVATE
@@ -779,14 +779,14 @@ target_sources(okay_engine PRIVATE
 )
 
 # ---- Core runtime foundations: job system, memory arenas, handles and ids, frame pacing ----
-# (docs/core_runtime.md). Appended as a block; Jobs.cpp and StringId.cpp keep their
+# (docs/engine/core_runtime.md). Appended as a block; Jobs.cpp and StringId.cpp keep their
 # threading behind engine/src/Core/CoreThreads.hpp (native Win32 primitives on Windows).
 target_sources(okay_engine PRIVATE
     src/Core/Jobs.cpp
     src/Core/StringId.cpp
     src/Core/FramePacing.cpp
 )
-# Scene text tools for version control (docs/scene_diff_merge.md): canonical form, diff,
+# Scene text tools for version control (docs/engine/scene_diff_merge.md): canonical form, diff,
 # three-way merge and format migration. Text level only: none of these builds a Scene.
 target_sources(okay_engine PRIVATE
     src/Scene/SceneText.cpp
@@ -795,7 +795,7 @@ target_sources(okay_engine PRIVATE
     src/Scene/SceneMerge.cpp
     src/Scene/SceneMigration.cpp)
 
-# 1.1 Loop and time, second pass (docs/loop_and_time.md): frame recorder / player and the rolling
+# 1.1 Loop and time, second pass (docs/engine/loop_and_time.md): frame recorder / player and the rolling
 # frame-time statistics GameLoop feeds. TickPacer.hpp is header-only.
 target_sources(okay_engine PRIVATE
     src/Core/FrameRecord.cpp

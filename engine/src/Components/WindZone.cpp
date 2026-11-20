@@ -1,4 +1,4 @@
-// Wind Zone, Wind Drag, Wind Sway, Wind Ambience. See docs/wind.md.
+// Wind Zone, Wind Drag, Wind Sway, Wind Ambience. See docs/gameplay/wind.md.
 #include "okay/Components/WindZone.hpp"
 #include "okay/Components/MeshRenderer.hpp"
 #include "okay/Components/AudioSource.hpp"

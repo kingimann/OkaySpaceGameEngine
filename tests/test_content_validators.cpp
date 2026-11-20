@@ -1,6 +1,6 @@
 // The script / graph safety checks content goes through before it is visible (shared/GameContentValidators.hpp), end to end with the real
 // engine parsers: a good graph and script are accepted, a broken graph and a script with a syntax error are refused and never become visible,
-// and files of other kinds (and programs) are handled by the manifest rules. Docs: docs/content_delivery.md "Scripts and graphs".
+// and files of other kinds (and programs) are handled by the manifest rules. Docs: docs/release/content_delivery.md "Scripts and graphs".
 #include "test_framework.hpp"
 
 #include "GameContentValidators.hpp"

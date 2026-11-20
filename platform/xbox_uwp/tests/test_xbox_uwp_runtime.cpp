@@ -611,7 +611,7 @@ static void AuditTests() {
     CHECK(ScanSource("int a;\nvoid f(){ D3DCompile(x); }\n")[0].line == 2);
     CHECK(n("// D3DCompile in a comment\n/* LoadLibraryA\n in a block */ int x;\n") == 0);
     CHECK(n("#include <d3dcompiler.h>\n") == 1 && n("#include <d3d11.h>\n") == 0);
-    // third-party libraries the build must not reach (docs/xbox_uwp_thirdparty.md): reported when active, not when fenced out
+    // third-party libraries the build must not reach (docs/platform/xbox_uwp.md): reported when active, not when fenced out
     CHECK(n("#include <sodium.h>\n") == 1 && n("#include \"ufbx.h\"\n") == 1 && n("#include <imgui.h>\n") == 1 && n("#include <assimp/scene.h>\n") == 1 && n("#include <curl/curl.h>\n") == 1);
     CHECK(n("#if !defined(OKAY_XBOX_UWP)\n#include \"ufbx.h\"\n#endif\n") == 0 && n("#ifdef OKAY_HAVE_SODIUM\n#include <sodium.h>\n#endif\n") == 0 && n("#ifdef OKAY_NET_CRYPTO\n#ifdef OKAY_OWN_CRYPTO\n#include <okay/Crypto/Crypto.hpp>\n#else\n#include <sodium.h>\n#endif\n#endif\n") == 0);
     CHECK(n("MyD3DCompileHelper(1);\n") == 0 && n("D3DCompileFromFile(1);\n") == 0);                  // whole words only

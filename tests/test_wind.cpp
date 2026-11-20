@@ -7,7 +7,7 @@
 
 using namespace okay;
 
-// Wind components in a scene (docs/wind.md): zones feed the field, particles / bodies / meshes / cables / sound follow,
+// Wind components in a scene (docs/gameplay/wind.md): zones feed the field, particles / bodies / meshes / cables / sound follow,
 // saving and loading, and "no Wind component = nothing changes".
 
 namespace {

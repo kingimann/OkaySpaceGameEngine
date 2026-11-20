@@ -1,5 +1,5 @@
 // Player audit probe. Not a test: it steps small headless scenes with the real player
-// controllers and prints what the body did (numbers), one line per case, so docs/player_audit.md
+// controllers and prints what the body did (numbers), one line per case, so docs/status/player_audit.md
 // can say "ok / bug / limitation" with evidence. Run:  probe_player_audit [id-prefix ...]
 // Every case builds its own Scene; nothing is shared between cases.
 #include <Okay.hpp>

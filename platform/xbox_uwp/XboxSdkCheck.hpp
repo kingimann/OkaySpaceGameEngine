@@ -14,7 +14,7 @@
 // UNVERIFIED: the folder names below are from documentation and memory. Nothing here has run
 // on a Windows PC with Visual Studio installed. If a name is wrong the export reports a tool
 // as missing when it is there; the PowerShell twin (scripts/xbox-check-sdk.ps1) uses the same
-// names, so run it on Windows and compare (docs/xbox_uwp.md).
+// names, so run it on Windows and compare (docs/platform/xbox_uwp.md).
 // ---------------------------------------------------------------------------
 #include <algorithm>
 #include <cstdlib>
@@ -165,7 +165,7 @@ inline std::string PlatformToolsetFor(const std::string& msvcFolderVersion) {
 }
 
 // The oldest SDK this export asks for. 10.0.17763 is Windows 10 version 1809, the first with a UWP
-// minimum this feature uses. A choice, not a proven requirement (see docs/xbox_uwp.md).
+// minimum this feature uses. A choice, not a proven requirement (see docs/platform/xbox_uwp.md).
 inline std::vector<long> MinSdkVersion() { return {10, 0, 17763, 0}; }
 
 /// How to install the UWP C++ tools. 2022 (and older) has the workload "Universal Windows Platform development"; newer installs have no such

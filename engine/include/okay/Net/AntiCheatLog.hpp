@@ -13,7 +13,7 @@
 //             address or an account id) and it stays on the server's disk:
 //             nothing here is sent to any outside service.
 //
-// Written from the plain description in docs/anticheat.md ("Bans and the audit
+// Written from the plain description in docs/online/anticheat.md ("Bans and the audit
 // log"); no outside code. No <mutex> / <thread> (Windows rule 21a): the server
 // calls both from its one update thread.
 // ---------------------------------------------------------------------------

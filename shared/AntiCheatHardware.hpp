@@ -1,5 +1,5 @@
 #pragma once
-// Anti-cheat: a salted hardware hash (docs/anticheat.md, "Hardware hash").
+// Anti-cheat: a salted hardware hash (docs/online/anticheat.md, "Hardware hash").
 //
 // A ban can name a machine as well as an account, so a banned cheater can't just
 // make a new account. What's sent is only

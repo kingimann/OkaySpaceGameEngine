@@ -1,6 +1,6 @@
 #include "ProjectPanelUI.hpp"
 #include "okay/Render/SoftwareRenderer.hpp"   // InvalidateAllTextureCaches
-#include "okay/Texture/Export.hpp"             // okay::tex: Make mipmaps / compress (docs/own_texture_library.md)
+#include "okay/Texture/Export.hpp"             // okay::tex: Make mipmaps / compress (docs/rendering/own_texture_library.md)
 
 #include <imgui.h>
 

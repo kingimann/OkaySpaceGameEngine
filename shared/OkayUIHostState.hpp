@@ -1,5 +1,5 @@
 #pragma once
-// What window mode (OKAY_UI_HOST=okayui, docs/own_ui_toolkit.md 6.24 step 3) remembers between runs, without Dear ImGui's ini: where the window was and how
+// What window mode (OKAY_UI_HOST=okayui, docs/ui/own_ui_toolkit.md 6.24 step 3) remembers between runs, without Dear ImGui's ini: where the window was and how
 // big, which panels are open, and the dock layout (OkayUI's own DockLayout text). One small text file; own format, written from what has to be kept.
 // Everything read from it is untrusted: a damaged, huge or hand-edited file can never give a window off screen or a panel name that is not a name.
 //

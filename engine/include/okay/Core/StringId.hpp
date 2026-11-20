@@ -1,7 +1,7 @@
 #pragma once
 // Hashed string ids: compare and hash names as one 64-bit integer, with an optional
 // table that remembers the text for logs and detects hash collisions.
-// See docs/core_runtime.md.
+// See docs/engine/core_runtime.md.
 #include <cstddef>
 #include <cstdint>
 #include <functional>

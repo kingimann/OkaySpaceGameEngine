@@ -3,7 +3,7 @@
 // header, the object chunk with its 48 byte centre-and-axes block and 3x4 matrix, the face record, Mat1, the ShBx parameter type codes 3 / 6 / 7 / 10
 // and the "file name" parameter) was settled by a hex dump and a text view of 8 real sample files. No importer source was read. Bounds-checked,
 // every count is checked against the data that is really there and a per-file budget before anything is allocated, no recursion.
-// See okay/Render/ModelData.hpp and docs/own_cob_reader.md.
+// See okay/Render/ModelData.hpp and docs/content/model_readers.md.
 #include "BinReader.hpp"
 #include "PolygonTriangulate.hpp"
 #include "ReaderCommon.hpp"

@@ -199,6 +199,7 @@ inline const std::vector<Tool>& Tools() {
     {"p2:Fit 1u##model", "Fit 1u", 2, "Pivot & export", "size scale unit", "Scale so the biggest side is 1."},
     {"p5:Save as Mesh Asset##meshasset", "Save as Mesh Asset", 5, "Pick parts", "save asset file okaymesh", "Save the model as a reusable file."},
     {"p6:Save as Mesh Asset##meshasset2", "Save as Mesh Asset", 6, "Mesh file", "save asset file okaymesh", "Save the model as a reusable file."},
+    {"p0:Add shapes##mdlstart", "Add shapes", 0, "Start", "start begin no model empty", "Open the shapes page to make your first model."},
     {"p0:add_Cube", "Cube", 0, "Primitives", "add create new shape cube", "Add a cube to the scene."},
     {"p0:add_Sphere", "Sphere", 0, "Primitives", "add create new shape sphere", "Add a sphere to the scene."},
     {"p0:add_Cylinder", "Cylinder", 0, "Primitives", "add create new shape cylinder", "Add a cylinder to the scene."},

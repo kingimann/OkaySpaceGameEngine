@@ -3,7 +3,7 @@
 // The editor's inspector section for the Anti-Cheat Config's `detect.*` settings
 // (editor/main.cpp "Detection engine"): what it shows, kept apart from the UI so it
 // can be unit tested (tests/test_anticheat_wiring.cpp):
-//   * a field table (key, label, tooltip from docs/anticheat.md, range) that the
+//   * a field table (key, label, tooltip from docs/online/anticheat.md, range) that the
 //     inspector draws, grouped, over DetectSettings members;
 //   * the observe-mode toggle (no kick / ban request / shadow / rate limit: the
 //     detectors still score and the evidence is kept, nothing is done to a player);
@@ -26,7 +26,7 @@ struct Field {
     const char* group;       ///< section heading
     const char* key;         ///< the ".okayac" key after "detect."
     const char* label;
-    const char* tip;         ///< tooltip (docs/anticheat.md, "Detection engine")
+    const char* tip;         ///< tooltip (docs/online/anticheat.md, "Detection engine")
     float DetectSettings::* f = nullptr;
     int   DetectSettings::* i = nullptr;
     float lo = 0.0f, hi = 1000.0f, speed = 0.1f;

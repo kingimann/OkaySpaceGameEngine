@@ -36,7 +36,7 @@ struct GameSession {
 ///
 /// All calls go through the signed-in player's authenticated REST session, so a
 /// player must be logged in (okay::Account) and the project must have the
-/// game_sessions table + RLS (see docs/supabase-backend.md). Everything no-ops
+/// game_sessions table + RLS (see docs/online/supabase-backend.md). Everything no-ops
 /// gracefully (returns "" / false / empty) offline or signed out.
 class Matchmaking {
 public:
@@ -130,7 +130,7 @@ public:
 
     /// List open sessions, newest first. Optionally filter by room. (Stale sessions
     /// from crashed hosts are best purged by a scheduled job on the project; see
-    /// docs/supabase-backend.md.)
+    /// docs/online/supabase-backend.md.)
     static std::vector<GameSession> List(const std::string& room = {}) {
         namespace d = okay::account::detail;
         std::string path = "/rest/v1/game_sessions"

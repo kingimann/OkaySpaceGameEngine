@@ -49,7 +49,7 @@
 </main>
 
 <script>
-// ---- Owner setting: filled in when the page is published (the Pages workflow reads the repository variable OKAY_DEFAULT_ACCOUNT_URL and secret OKAY_DEFAULT_ACCOUNT_KEY), or edit by hand when you host it yourself (docs/password-reset.md). ----
+// ---- Owner setting: filled in when the page is published (the Pages workflow reads the repository variable OKAY_DEFAULT_ACCOUNT_URL and secret OKAY_DEFAULT_ACCOUNT_KEY), or edit by hand when you host it yourself (docs/online/password-reset.md). ----
 // The project URL and the PUBLISHABLE (anon) key are public values; never put a service-role key here.
 var OKAY_RESET_CONFIG = { supabaseUrl: "", anonKey: "" };
 
@@ -89,7 +89,7 @@ function validatePassword(pw, confirm) {
 
 // Only an https Supabase URL (or http on localhost, for development) is accepted.
 function configProblem(cfg) {
-  if (!cfg || !cfg.supabaseUrl || !cfg.anonKey) return "This page is not set up yet: the site owner must fill in the project URL and key (see docs/password-reset.md).";
+  if (!cfg || !cfg.supabaseUrl || !cfg.anonKey) return "This page is not set up yet: the site owner must fill in the project URL and key (see docs/online/password-reset.md).";
   if (!/^https:\/\/[^\/\s]+$/i.test(cfg.supabaseUrl.replace(/\/+$/, "")) &&
       !/^http:\/\/(127\.0\.0\.1|localhost)(:\d+)?$/i.test(cfg.supabaseUrl.replace(/\/+$/, "")))
     return "This page is set up with an invalid project URL.";

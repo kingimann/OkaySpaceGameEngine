@@ -43535,10 +43535,12 @@ static void DrawLoadingScreenCmds(ImDrawList* dl, const okay::LoadingScreen& ls,
 // `canvas` (its position before the authoring zoom) on frame `frame`.
 struct SceneUIRects { ImVec2 canvas{-1e9f, -1e9f}; int frame = -10; std::vector<okay::edlayout::Rc> rects; };
 SceneUIRects g_sceneUIRects;
+SceneUIRects g_gameUIRects;   // the same for the Game view, so its top-left labels keep off the game's own UI text too
 void DrawUIOverlay(EditorState& ed, ImDrawList* dl, ImVec2 canvasPos,
                    ImVec2 canvasSize, bool gameView) {
     const auto& objs = ed.scene().Objects();
-    if (!gameView) { g_sceneUIRects.canvas = canvasPos; g_sceneUIRects.frame = ImGui::GetFrameCount(); g_sceneUIRects.rects.clear(); }
+    SceneUIRects& uiRects = gameView ? g_gameUIRects : g_sceneUIRects;
+    uiRects.canvas = canvasPos; uiRects.frame = ImGui::GetFrameCount(); uiRects.rects.clear();
     // Clip ALL UI geometry to the visible panel rect (captured before the authoring
     // zoom rescales the working copies below). A widget with a bad anchor / stretch /
     // scale can resolve to an enormous off-screen rect; feeding those extreme vertex
@@ -43577,13 +43579,11 @@ void DrawUIOverlay(EditorState& ed, ImDrawList* dl, ImVec2 canvasPos,
         opt.worldLabelsViaUIWorld = true;
         okay::ui2d::RenderSceneUI(ed.scene(), painter, (int)canvasSize.x, (int)canvasSize.y, opt);
     }
-    if (!gameView) {
-        for (const auto& up : objs) {
-            if (!up || !up->ActiveInHierarchy()) continue;
-            Vec2 o, sz;
-            if (!GetUIScreenRect(up.get(), canvasSize.x, canvasSize.y, o, sz) || sz.x <= 0.0f || sz.y <= 0.0f) continue;
-            g_sceneUIRects.rects.push_back(okay::edlayout::MakeRc(canvasPos.x + o.x, canvasPos.y + o.y, sz.x, sz.y));
-        }
+    for (const auto& up : objs) {
+        if (!up || !up->ActiveInHierarchy()) continue;
+        Vec2 o, sz;
+        if (!GetUIScreenRect(up.get(), canvasSize.x, canvasSize.y, o, sz) || sz.x <= 0.0f || sz.y <= 0.0f) continue;
+        uiRects.rects.push_back(okay::edlayout::MakeRc(canvasPos.x + o.x, canvasPos.y + o.y, sz.x, sz.y));
     }
 
     // Multi-selection: outline every selected widget (the primary gets the full
@@ -50192,6 +50192,23 @@ void DrawGameView(EditorState& ed) {
     // the idle hint) is remembered here, so the Stats and Timers boxes at the top-right move below it instead of
     // drawing over it when the view is narrow.
     std::vector<std::pair<ImVec2, ImVec2>> topLeftRects;
+    // The resolution readout and the line under it (the idle hint, or the PLAYING pill and the FPS label) move as one
+    // block: at the top left, or at the bottom left when the game's own UI text is drawn at the top left (the
+    // readout used to be drawn straight over an example's instructions). Same rule as the Scene view's stats line
+    // (okay::edlayout::PlaceStatsLine), fed with where this frame's DrawUIOverlay drew the game's UI.
+    float labelShift = 0.0f;
+    {
+        const float lh = ImGui::GetTextLineHeight();
+        float w = ImGui::CalcTextSize("Edit mode - press Play to run").x + 6.0f;
+        w = std::max(w, ImGui::CalcTextSize(kFixedRes ? "0000 x 0000  (100%)" : "0000 x 0000 px").x + 6.0f);
+        if (ed.isPlaying()) w = std::max(w, ImGui::CalcTextSize("PLAYING").x + lh + ImGui::CalcTextSize(ed.FpsLabel().c_str()).x + 30.0f);
+        const float h = ed.isPlaying() ? 2.0f * lh + 15.0f : 2.0f * lh + 8.0f;
+        const okay::edlayout::Rc canvasRc{canvasPos.x, canvasPos.y, canvasEnd.x, canvasEnd.y};
+        const bool fresh = g_gameUIRects.canvas.x == canvasPos.x && g_gameUIRects.canvas.y == canvasPos.y &&
+                           ImGui::GetFrameCount() - g_gameUIRects.frame <= 1;
+        if (fresh) labelShift = okay::edlayout::GameViewLabelShift(canvasRc, okay::edlayout::Pt{w, h}, labelIn, labelDrop, lh,
+                                                                   g_gameUIRects.rects);
+    }
     // Resolution readout (top-left of the canvas, over the scene): the target pixel
     // size for a fixed preset with the on-screen scale, or the live canvas pixels.
     {
@@ -50202,7 +50219,7 @@ void DrawGameView(EditorState& ed) {
         } else {
             std::snprintf(resLbl, sizeof(resLbl), "%d x %d px", (int)canvasSize.x, (int)canvasSize.y);
         }
-        ImVec2 tp(canvasPos.x + 6 + labelIn, canvasPos.y + 4 + labelDrop);
+        ImVec2 tp(canvasPos.x + 6 + labelIn, canvasPos.y + 4 + labelDrop + labelShift);
         dl->AddRectFilled(ImVec2(tp.x - 3, tp.y - 2),
                           ImVec2(tp.x + ImGui::CalcTextSize(resLbl).x + 3, tp.y + ImGui::GetTextLineHeight() + 2),
                           IM_COL32(0, 0, 0, 120), 3.0f);
@@ -50221,7 +50238,7 @@ void DrawGameView(EditorState& ed) {
         float pr = ImGui::GetTextLineHeight() * 0.26f;   // drawn dot (● is tofu here)
         float dotW = pr * 2.0f + 6.0f;
         // Below the resolution readout (it used to be drawn on top of it: the readout's trailing "x" showed through).
-        ImVec2 p0(canvasPos.x + 8 + labelIn, canvasPos.y + 8 + ImGui::GetTextLineHeight() + 4 + labelDrop);
+        ImVec2 p0(canvasPos.x + 8 + labelIn, canvasPos.y + 8 + ImGui::GetTextLineHeight() + 4 + labelDrop + labelShift);
         dl->AddRectFilled(ImVec2(p0.x - 4, p0.y - 3), ImVec2(p0.x + dotW + ts.x + 6, p0.y + ts.y + 3),
                           IM_COL32(0, 0, 0, 150), 4.0f);
         dl->AddCircleFilled(ImVec2(p0.x + pr, p0.y + ts.y * 0.55f), pr, pc);
@@ -50258,7 +50275,7 @@ void DrawGameView(EditorState& ed) {
     } else {
         // Below the resolution label (they used to print on top of each other).
         const char* idle = "Edit mode - press Play to run";
-        ImVec2 ip(canvasPos.x + 6 + labelIn, canvasPos.y + 8 + ImGui::GetTextLineHeight() + labelDrop);
+        ImVec2 ip(canvasPos.x + 6 + labelIn, canvasPos.y + 8 + ImGui::GetTextLineHeight() + labelDrop + labelShift);
         dl->AddRectFilled(ImVec2(ip.x - 3, ip.y - 2), ImVec2(ip.x + ImGui::CalcTextSize(idle).x + 3, ip.y + ImGui::GetTextLineHeight() + 2),
                           IM_COL32(0, 0, 0, 120), 3.0f);
         dl->AddText(ip, IM_COL32(200, 202, 212, 230), idle);

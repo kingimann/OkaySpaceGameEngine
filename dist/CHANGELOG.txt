@@ -1,5 +1,15 @@
 OkaySpace Game Engine — Changelog
 
+v2.895.0
+  Launcher and editor fixes
+  - Fixed: opening the Community tab in the launcher could make it use more
+    and more memory until Windows closed it.
+  - The Game view's size and FPS text no longer covers your game's own text
+    in the top-left corner; it moves to the bottom left when needed.
+  - The launcher's side menu fits short windows: it switches to a compact
+    layout, and scrolls if even that does not fit, so "What's New" is never
+    cut off.
+
 v2.894.0
   Better driving, easier panning, Ctrl+S that always saves
   - Vehicles drive like an open-world game now: gears, drifting with the

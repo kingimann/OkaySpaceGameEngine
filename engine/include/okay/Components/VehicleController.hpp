@@ -3,6 +3,7 @@
 #include "okay/Scene/GameObject.hpp"
 #include "okay/Scene/Transform.hpp"
 #include "okay/Physics/Rigidbody3D.hpp"
+#include "okay/Physics/GroundGrip.hpp"
 #include "okay/Physics/Physics3D.hpp"
 #include "okay/Components/Camera.hpp"
 #include "okay/Scene/Scene.hpp"
@@ -164,11 +165,12 @@ public:
                    : (throttle == 0.0f) ? drag
                    : (throttle < 0.0f && speedF > 0.1f) ? brakeForce      // pressing back while rolling fwd = brake
                    : acceleration;
-        speedF = MoveToward(speedF, target, rate * dt);
+        const float groundGrip = GroundGripScale(gameObject);   // ice: the wheels barely bite; rubber: they bite more
+        speedF = MoveToward(speedF, target, rate * groundGrip * dt);
 
         // ---- Lateral grip: shed sideways slide (less while handbraking = drift) ----
         float g = handbrake ? handbrakeGrip : grip;
-        lat *= Mathf::Clamp(1.0f - g * dt, 0.0f, 1.0f);
+        lat *= Mathf::Clamp(1.0f - g * groundGrip * dt, 0.0f, 1.0f);
 
         // ---- Reassemble velocity (keep vertical for gravity) ----
         Vec3 planar = fp * speedF + rp * lat;

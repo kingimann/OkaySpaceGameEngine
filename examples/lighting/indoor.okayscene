@@ -1,0 +1,152 @@
+okayscene 3
+name "Indoor"
+gravity 0 -9.81
+gravity3 0 -9.81 0
+rendersettings 0 0.27450982 0.47058824 0.78431374 0.5882353 0.7254902 0.88235295 0.47058824 0.47058824 0.50980395 0.16
+fog 0 0.5882353 0.7254902 0.88235295 20 90
+tonemap 1
+post 1 1 0 1 0.6 1 1 0.06 0 1 1 0 0 0 0 0 0 0 0 0 0.5 1 0 0.5 0.8 0 10 8
+gameobject 0 "Floor"
+  guid "a8410e3353e82651567b62d6823ffce2"
+  active 1
+  parent -1
+  transform 0 -0.1 0 0 0 0 1 8 0.2 8
+  mesh "Cube" 0.54901963 0.39215687 0.27450982 1 0 "" 0
+  material 0 0 0 0 16 0 "" 1 1
+end
+gameobject 1 "Ceiling"
+  guid "64982002f89f811ad0cb757da0da71a0"
+  active 1
+  parent -1
+  transform 0 3.1 0 0 0 0 1 8 0.2 8
+  mesh "Cube" 0.78431374 0.74509805 0.6862745 1 0 "" 0
+  material 0 0 0 0 16 0 "" 1 1
+end
+gameobject 2 "WallBack"
+  guid "ca8ae69e8de2f4fe3529ba177773c28b"
+  active 1
+  parent -1
+  transform 0 1.5 4.1 0 0 0 1 8.4 3.2 0.2
+  mesh "Cube" 0.78431374 0.74509805 0.6862745 1 0 "" 0
+  material 0 0 0 0 16 0 "" 1 1
+end
+gameobject 3 "WallLeft low"
+  guid "20fabad38f5b9a3de5804d04bcce6e4a"
+  active 1
+  parent -1
+  transform -4.1 0.45 0 0 0 0 1 0.2 0.9 8.4
+  mesh "Cube" 0.6666667 0.47058824 0.43137255 1 0 "" 0
+  material 0 0 0 0 16 0 "" 1 1
+end
+gameobject 4 "WallLeft high"
+  guid "bd6d75afe6669f6c7ba70afbea6b8f2d"
+  active 1
+  parent -1
+  transform -4.1 2.8 0 0 0 0 1 0.2 0.8 8.4
+  mesh "Cube" 0.6666667 0.47058824 0.43137255 1 0 "" 0
+  material 0 0 0 0 16 0 "" 1 1
+end
+gameobject 5 "WallLeft front"
+  guid "3066bfbc4ef6815ac6e6142e3f0e2db9"
+  active 1
+  parent -1
+  transform -4.1 1.65 -1.8 0 0 0 1 0.2 1.5 4.8
+  mesh "Cube" 0.6666667 0.47058824 0.43137255 1 0 "" 0
+  material 0 0 0 0 16 0 "" 1 1
+end
+gameobject 6 "WallLeft back"
+  guid "9a6d5dec851eb21cfc23c269d9326080"
+  active 1
+  parent -1
+  transform -4.1 1.65 3.6 0 0 0 1 0.2 1.5 1.2
+  mesh "Cube" 0.6666667 0.47058824 0.43137255 1 0 "" 0
+  material 0 0 0 0 16 0 "" 1 1
+end
+gameobject 7 "WallRight"
+  guid "2b6ea75d9c2209107576c05db4bb5687"
+  active 1
+  parent -1
+  transform 4.1 1.5 0 0 0 0 1 0.2 3.2 8.4
+  mesh "Cube" 0.43137255 0.54901963 0.6666667 1 0 "" 0
+  material 0 0 0 0 16 0 "" 1 1
+end
+gameobject 8 "Table"
+  guid "82a12f71a53be3549002792b0652fae6"
+  active 1
+  parent -1
+  transform 0 0.5 1 0 0 0 1 2.2 0.12 1.2
+  mesh "Cube" 0.3529412 0.23529412 0.15686275 1 0 "" 0
+  material 0 0 0 0 16 0 "" 1 1
+end
+gameobject 9 "Leg"
+  guid "daf76874d896b2544e2599b4ccfaaf7c"
+  active 1
+  parent -1
+  transform -0.95 0.22 0.55 0 0 0 1 0.12 0.45 0.12
+  mesh "Cube" 0.3529412 0.23529412 0.15686275 1 0 "" 0
+  material 0 0 0 0 16 0 "" 1 1
+end
+gameobject 10 "Leg"
+  guid "257a2042b23c6eb8b0347466cfb5e94e"
+  active 1
+  parent -1
+  transform 0.95 0.22 0.55 0 0 0 1 0.12 0.45 0.12
+  mesh "Cube" 0.3529412 0.23529412 0.15686275 1 0 "" 0
+  material 0 0 0 0 16 0 "" 1 1
+end
+gameobject 11 "Leg"
+  guid "127d1128026d85ca5ff37704bc4d5acd"
+  active 1
+  parent -1
+  transform -0.95 0.22 1.45 0 0 0 1 0.12 0.45 0.12
+  mesh "Cube" 0.3529412 0.23529412 0.15686275 1 0 "" 0
+  material 0 0 0 0 16 0 "" 1 1
+end
+gameobject 12 "Leg"
+  guid "c4c80d8d78a9efdd13eb3838d6becfd2"
+  active 1
+  parent -1
+  transform 0.95 0.22 1.45 0 0 0 1 0.12 0.45 0.12
+  mesh "Cube" 0.3529412 0.23529412 0.15686275 1 0 "" 0
+  material 0 0 0 0 16 0 "" 1 1
+end
+gameobject 13 "Crate"
+  guid "bf15ba78c889b5e081934f5dc382215d"
+  active 1
+  parent -1
+  transform -2.6 0.6 2.8 0 0 0 1 1.2 1.2 1.2
+  mesh "Cube" 0.6666667 0.50980395 0.27450982 1 0 "" 0
+  material 0 0 0 0 16 0 "" 1 1
+end
+gameobject 14 "Lamp"
+  guid "75c0090bf8b23bac07b4ec8713892b6a"
+  active 1
+  parent -1
+  transform 0 2.5 1 0 0 0 1 0.2 0.2 0.2
+  mesh "Cube" 1 0.9411765 0.78431374 1 0 "" 0
+  material 1 0.9019608 0.627451 0 16 0 "" 1 1
+  meshshadows 0 1
+end
+gameobject 15 "Lighting: Window sun"
+  guid "acacf7df693959f92459117940abb562"
+  active 1
+  parent -1
+  transform 0 10 0 0.2092712 0.7243092 -0.24939969 0.60776764 1 1 1
+  light 1 1 1 1 0.16 0.65 0 10 45 0.5 1 5200 1 1 1 0
+  lightx 0.3 0 0 4.5 0 "builtin:window"
+end
+gameobject 16 "Lighting: Ceiling panel"
+  guid "19b278ed4ffae4927e427c585f293be9"
+  active 1
+  parent -1
+  transform 0 2.95 0 0.7071068 0 0 0.7071068 1 1 1
+  light 1 1 1 1 0 1.3 3 12 45 0.5 1 3600 1 1 1 0
+  lightx 0.8 2.4 1.6 4 0 ""
+end
+gameobject 17 "Main Camera"
+  guid "0de3a634760b125277410950edd70f6c"
+  active 1
+  parent -1
+  transform 0 1.8 -3.6 0 0.9985763 0.0533425 0 1 1 1
+  camera 1 5 70 0.19215687 0.3019608 0.4745098 1 1 0 0 0.3 4000 0 0 0 1 1 -1 0 50 24 1 0 0 0 0 32 0.3 2 18 1.5
+end

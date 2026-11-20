@@ -1012,6 +1012,11 @@ add_executable(test_project_state test_project_state.cpp)
 target_link_libraries(test_project_state PRIVATE okay::engine)
 add_test(NAME project_state COMMAND test_project_state)
 
+# The Build Settings window's logic (pages, search, presets, validation, history, commands) and the player's extra config keys.
+add_executable(test_build_settings test_build_settings.cpp)
+target_link_libraries(test_build_settings PRIVATE okay::engine)
+add_test(NAME build_settings COMMAND test_build_settings)
+
 # Damaged or unusual project, texture-meta and material files load safely (issue #888 findings 74, 75, 78).
 add_executable(test_data_load_checks test_data_load_checks.cpp)
 target_link_libraries(test_data_load_checks PRIVATE okay::engine)
@@ -1154,6 +1159,12 @@ add_test(NAME worldcanvas COMMAND test_worldcanvas)
 add_executable(test_vehicle test_vehicle.cpp)
 target_link_libraries(test_vehicle PRIVATE okay::engine)
 add_test(NAME vehicle COMMAND test_vehicle)
+# Water surface (Gerstner-style waves), buoyancy, the boat and the Boat Lake example (docs/water_boat.md).
+add_executable(test_boat test_boat.cpp)
+target_link_libraries(test_boat PRIVATE okay::engine)
+target_compile_definitions(test_boat PRIVATE OKAY_SOURCE_DIR="${PROJECT_SOURCE_DIR}")
+add_test(NAME boat COMMAND test_boat)
+
 add_executable(test_vehicle_seat test_vehicle_seat.cpp)
 target_link_libraries(test_vehicle_seat PRIVATE okay::engine)
 target_compile_definitions(test_vehicle_seat PRIVATE OKAY_SOURCE_DIR="${PROJECT_SOURCE_DIR}")
@@ -1207,6 +1218,9 @@ add_test(NAME ui_backend COMMAND test_ui_backend)
 add_executable(test_own_stack test_own_stack.cpp)
 target_include_directories(test_own_stack PRIVATE ${CMAKE_SOURCE_DIR}/shared)
 target_link_libraries(test_own_stack PRIVATE okay::engine)
+add_executable(test_own_switches test_own_switches.cpp)
+target_include_directories(test_own_switches PRIVATE ${CMAKE_SOURCE_DIR}/shared)
+add_test(NAME own_switches COMMAND test_own_switches)
 add_test(NAME own_stack COMMAND test_own_stack)
 add_test(NAME own_stack_env COMMAND test_own_stack env)
 add_test(NAME own_stack_third_party COMMAND test_own_stack thirdparty)
@@ -1441,6 +1455,21 @@ add_test(NAME physics_deep_bugs COMMAND test_physics_deep_bugs)
 add_executable(test_physics_deep_improved test_physics_deep_improved.cpp)
 target_link_libraries(test_physics_deep_improved PRIVATE okay::engine)
 add_test(NAME physics_deep_improved COMMAND test_physics_deep_improved)
+add_executable(test_physics_upgrade test_physics_upgrade.cpp)
+target_link_libraries(test_physics_upgrade PRIVATE okay::engine)
+add_test(NAME physics_upgrade COMMAND test_physics_upgrade)
+add_executable(test_physics_materials test_physics_materials.cpp)
+target_link_libraries(test_physics_materials PRIVATE okay::engine)
+add_test(NAME physics_materials COMMAND test_physics_materials)
+add_executable(test_physics_toys test_physics_toys.cpp)
+target_link_libraries(test_physics_toys PRIVATE okay::engine)
+add_test(NAME physics_toys COMMAND test_physics_toys)
+add_executable(test_physics_ground_grip test_physics_ground_grip.cpp)
+target_link_libraries(test_physics_ground_grip PRIVATE okay::engine)
+add_test(NAME physics_ground_grip COMMAND test_physics_ground_grip)
+add_executable(test_physics_examples test_physics_examples.cpp)
+target_link_libraries(test_physics_examples PRIVATE okay::engine)
+add_test(NAME physics_examples COMMAND test_physics_examples WORKING_DIRECTORY ${CMAKE_SOURCE_DIR})
 add_executable(test_physics_deep_save test_physics_deep_save.cpp)
 target_link_libraries(test_physics_deep_save PRIVATE okay::engine)
 add_test(NAME physics_deep_save COMMAND test_physics_deep_save)
@@ -1608,6 +1637,61 @@ target_link_libraries(test_vs_editor_model PRIVATE okay::engine)
 target_compile_definitions(test_vs_editor_model PRIVATE OKAY_SOURCE_DIR="${PROJECT_SOURCE_DIR}")
 add_test(NAME vs_editor_model COMMAND test_vs_editor_model)
 
+# Our own Dear ImGui platform feed (shared/ImGuiPlatformFeed.hpp): key table, event translation, and a real ImGui context
+# fed through a fake host (no window, no SDL). Links the editor's okay_imgui when it is in the build, else compiles the
+# ImGui core files from the same source tree.
+add_executable(test_imgui_platform_feed test_imgui_platform_feed.cpp)
+target_include_directories(test_imgui_platform_feed PRIVATE ${CMAKE_SOURCE_DIR}/shared ${CMAKE_SOURCE_DIR}/engine/include ${OKAY_VS_IMGUI_INCLUDE})
+if(TARGET okay_imgui)
+    target_link_libraries(test_imgui_platform_feed PRIVATE okay_imgui okay::engine)
+else()
+    target_sources(test_imgui_platform_feed PRIVATE ${imgui_SOURCE_DIR}/imgui.cpp ${imgui_SOURCE_DIR}/imgui_draw.cpp
+        ${imgui_SOURCE_DIR}/imgui_tables.cpp ${imgui_SOURCE_DIR}/imgui_widgets.cpp)
+    target_link_libraries(test_imgui_platform_feed PRIVATE okay::engine)
+endif()
+target_compile_features(test_imgui_platform_feed PRIVATE cxx_std_17)
+add_test(NAME imgui_platform_feed COMMAND test_imgui_platform_feed)
+
+# Our own Dear ImGui renderer over okay::platform::Painter (shared/ImGuiPainterRenderer.hpp), headless on both painters.
+if(TARGET okay_ui_soft)
+    add_executable(test_imgui_painter_render test_imgui_painter_render.cpp)
+    target_include_directories(test_imgui_painter_render PRIVATE ${CMAKE_SOURCE_DIR}/shared ${CMAKE_SOURCE_DIR}/engine/include ${OKAY_VS_IMGUI_INCLUDE})
+    if(TARGET okay_imgui)
+        target_link_libraries(test_imgui_painter_render PRIVATE okay_imgui okay_ui_soft okay::engine)
+    else()
+        target_sources(test_imgui_painter_render PRIVATE ${imgui_SOURCE_DIR}/imgui.cpp ${imgui_SOURCE_DIR}/imgui_draw.cpp
+            ${imgui_SOURCE_DIR}/imgui_tables.cpp ${imgui_SOURCE_DIR}/imgui_widgets.cpp)
+        target_link_libraries(test_imgui_painter_render PRIVATE okay_ui_soft okay::engine)
+    endif()
+    target_compile_features(test_imgui_painter_render PRIVATE cxx_std_17)
+    add_test(NAME imgui_painter_render COMMAND test_imgui_painter_render)
+endif()
+
+# Scripted input for headless app runs (shared/TestHooks.hpp): parser, events, runner on a real backend queue.
+if(NOT WIN32 AND NOT EMSCRIPTEN)
+    add_executable(test_test_hooks test_test_hooks.cpp)
+    target_include_directories(test_test_hooks PRIVATE ${CMAKE_SOURCE_DIR}/shared ${CMAKE_SOURCE_DIR}/engine/include)
+    target_link_libraries(test_test_hooks PRIVATE okay::platform)
+    target_compile_features(test_test_hooks PRIVATE cxx_std_17)
+    add_test(NAME test_hooks COMMAND test_test_hooks)
+endif()
+
+# Our own threads, recursive mutexes and atomics (shared/OkayThreads.hpp): the launcher's replacement for SDL's thread calls.
+if(NOT EMSCRIPTEN AND NOT WIN32)   # (the test sleeps with nanosleep; the header itself is for Windows too)
+    add_executable(test_okay_threads test_okay_threads.cpp)
+    target_include_directories(test_okay_threads PRIVATE ${CMAKE_SOURCE_DIR}/shared)
+    target_compile_features(test_okay_threads PRIVATE cxx_std_17)
+    find_package(Threads)
+    if(TARGET Threads::Threads)
+        target_link_libraries(test_okay_threads PRIVATE Threads::Threads)
+    endif()
+    add_test(NAME okay_threads COMMAND test_okay_threads)
+    find_package(Python3 COMPONENTS Interpreter QUIET)
+    if(Python3_Interpreter_FOUND)   # every launcher thread / mutex / atomic use is a 1:1 translation of the SDL call it replaced (counts against a recorded baseline)
+        add_test(NAME thread_conversion_review COMMAND ${Python3_EXECUTABLE} ${CMAKE_SOURCE_DIR}/scripts/review_thread_conversion.py)
+    endif()
+endif()
+
 add_executable(test_vs_names test_vs_names.cpp)
 target_include_directories(test_vs_names PRIVATE ${CMAKE_SOURCE_DIR}/editor ${OKAY_VS_IMGUI_INCLUDE})
 target_link_libraries(test_vs_names PRIVATE okay::engine)
@@ -1647,6 +1731,11 @@ add_executable(test_vs_node_docs test_vs_node_docs.cpp)
 target_include_directories(test_vs_node_docs PRIVATE ${CMAKE_SOURCE_DIR}/editor ${OKAY_VS_IMGUI_INCLUDE})
 target_link_libraries(test_vs_node_docs PRIVATE okay::engine)
 add_test(NAME vs_node_docs COMMAND test_vs_node_docs)
+
+add_executable(test_vs_guide test_vs_guide.cpp)
+target_include_directories(test_vs_guide PRIVATE ${CMAKE_SOURCE_DIR}/editor ${OKAY_VS_IMGUI_INCLUDE})
+target_link_libraries(test_vs_guide PRIVATE okay::engine)
+add_test(NAME vs_guide COMMAND test_vs_guide)
 
 add_executable(test_vs_clarity test_vs_clarity.cpp)
 target_include_directories(test_vs_clarity PRIVATE ${CMAKE_SOURCE_DIR}/editor ${OKAY_VS_IMGUI_INCLUDE})
@@ -3242,6 +3331,27 @@ if(NOT WIN32 AND NOT EMSCRIPTEN)
             ENVIRONMENT "OKAY_PLATFORM_BACKEND=${_okay_pb}" PASS_REGULAR_EXPRESSION "default=${_okay_pb}")
     endforeach()
 
+    # File drops on the own X11 backend (XDND) with a fake drag source on a second X connection, and the URI list parser.
+    add_executable(test_platform_xdnd test_platform_xdnd.cpp)
+    target_link_libraries(test_platform_xdnd PRIVATE okay::platform)
+    target_include_directories(test_platform_xdnd PRIVATE ${CMAKE_SOURCE_DIR}/engine/src)
+    find_library(OKAY_TEST_X11_LIB X11)
+    if(OKAY_TEST_X11_LIB AND EXISTS /usr/include/X11/Xlib.h)
+        target_compile_definitions(test_platform_xdnd PRIVATE OKAY_TEST_HAVE_X11)
+        target_link_libraries(test_platform_xdnd PRIVATE ${OKAY_TEST_X11_LIB})
+    endif()
+    add_test(NAME platform_xdnd COMMAND sh ${CMAKE_CURRENT_SOURCE_DIR}/run_under_xvfb.sh $<TARGET_FILE:test_platform_xdnd>)
+    set_tests_properties(platform_xdnd PROPERTIES SKIP_RETURN_CODE 77 TIMEOUT 120)
+
+    # The event queue (push, poll, pump, native pointer, unmapped events, render resets, CharForKey): no display needed.
+    add_executable(test_platform_events test_platform_events.cpp)
+    target_link_libraries(test_platform_events PRIVATE okay::platform)
+    if(TARGET SDL2::SDL2)
+        target_link_libraries(test_platform_events PRIVATE SDL2::SDL2)
+    endif()
+    add_test(NAME platform_events COMMAND test_platform_events)
+    set_tests_properties(platform_events PROPERTIES TIMEOUT 60)
+
     add_executable(test_platform_window test_platform_window.cpp)
     target_link_libraries(test_platform_window PRIVATE okay::platform)
     if(TARGET SDL2::SDL2)
@@ -3253,6 +3363,21 @@ if(NOT WIN32 AND NOT EMSCRIPTEN)
                  COMMAND sh ${CMAKE_CURRENT_SOURCE_DIR}/run_under_xvfb.sh $<TARGET_FILE:test_platform_window> ${_okay_pb})
         set_tests_properties(platform_window_${_okay_pb} PROPERTIES SKIP_RETURN_CODE 77 TIMEOUT 120)
     endforeach()
+endif()
+
+# The apps' renderer bridge (shared/PainterBridge.hpp) against the raw SDL calls it replaced, on two identical SDL software renderers.
+if(NOT WIN32 AND NOT EMSCRIPTEN AND SDL2_FOUND)
+    if(TARGET SDL2::SDL2)
+        set(_okay_bridge_sdl SDL2::SDL2)
+    else()
+        set(_okay_bridge_sdl ${SDL2_LIBRARIES})
+    endif()
+    add_executable(test_painter_bridge_vs_sdl test_painter_bridge_vs_sdl.cpp)
+    target_include_directories(test_painter_bridge_vs_sdl PRIVATE ${CMAKE_SOURCE_DIR}/shared ${CMAKE_SOURCE_DIR}/engine/include)
+    target_link_libraries(test_painter_bridge_vs_sdl PRIVATE okay::engine ${_okay_bridge_sdl})
+    target_include_directories(test_painter_bridge_vs_sdl PRIVATE ${SDL2_INCLUDE_DIRS})
+    target_compile_features(test_painter_bridge_vs_sdl PRIVATE cxx_std_17)
+    add_test(NAME painter_bridge_vs_sdl COMMAND test_painter_bridge_vs_sdl)
 endif()
 
 # The software okay::platform::Painter (okayui/soft) on a real own-backend window under Xvfb: what it draws is what
@@ -3270,6 +3395,34 @@ endif()
 add_executable(test_platform_gamepad test_platform_gamepad.cpp)
 target_link_libraries(test_platform_gamepad PRIVATE okay::engine)
 add_test(NAME platform_gamepad COMMAND test_platform_gamepad)
+
+# Pure tests for the Windows audio helpers (WASAPI formats, buffer maths, byte queue, pump decisions) and the
+# Win32 scan code table. They need no Windows, so they run everywhere the Windows code is checked from.
+if(NOT WIN32 AND NOT EMSCRIPTEN)
+    add_executable(test_platform_audio_pump test_platform_audio_pump.cpp)
+    target_include_directories(test_platform_audio_pump PRIVATE ${CMAKE_SOURCE_DIR}/engine/include ${CMAKE_SOURCE_DIR}/engine/src/Platform)
+    target_compile_features(test_platform_audio_pump PRIVATE cxx_std_17)
+    add_test(NAME platform_audio_pump COMMAND test_platform_audio_pump)
+    add_executable(test_platform_win32_pure test_platform_win32_pure.cpp)
+    target_include_directories(test_platform_win32_pure PRIVATE ${CMAKE_SOURCE_DIR}/engine/include ${CMAKE_SOURCE_DIR}/engine/src/Platform)
+    target_compile_features(test_platform_win32_pure PRIVATE cxx_std_17)
+    add_test(NAME platform_win32_pure COMMAND test_platform_win32_pure)
+    add_executable(test_platform_selftest_logic test_platform_selftest_logic.cpp)
+    target_include_directories(test_platform_selftest_logic PRIVATE ${CMAKE_SOURCE_DIR}/engine/include ${CMAKE_SOURCE_DIR}/tools/platform_selftest)
+    target_compile_features(test_platform_selftest_logic PRIVATE cxx_std_17)
+    add_test(NAME platform_selftest_logic COMMAND test_platform_selftest_logic)
+    # OKAY_OWN_PLATFORM=1 is a short way to say OKAY_PLATFORM_BACKEND=own.
+    add_test(NAME platform_default_env_own_short COMMAND test_platform --print-default)
+    set_tests_properties(platform_default_env_own_short PROPERTIES
+        ENVIRONMENT "OKAY_OWN_PLATFORM=1" PASS_REGULAR_EXPRESSION "default=own")
+    # The selftest program itself, headless under Xvfb (only when it is built: -DOKAY_BUILD_PLATFORM_SELFTEST=ON).
+    if(TARGET okay-platform-selftest)
+        add_test(NAME platform_selftest_auto
+                 COMMAND sh ${CMAKE_CURRENT_SOURCE_DIR}/run_under_xvfb.sh $<TARGET_FILE:okay-platform-selftest> --auto)
+        set_tests_properties(platform_selftest_auto PROPERTIES SKIP_RETURN_CODE 77 TIMEOUT 120
+                             ENVIRONMENT "OKAY_ALSA_DEVICE=null")   # a machine without a sound card still has ALSA's null device
+    endif()
+endif()
 
 # Safety nets for library code that previously had no test naming it.
 add_executable(test_lightmap test_lightmap.cpp)
@@ -4343,4 +4496,43 @@ foreach(vs_usage_test vs_easy_ops vs_start vs_hints vs_plain_words vs_what_happe
         target_link_libraries(test_${vs_usage_test} PRIVATE okay::engine)
         add_test(NAME ${vs_usage_test} COMMAND test_${vs_usage_test})
     endif()
+endforeach()
+
+# Water visuals: shading maths, ring grid, depth colour, foam, ripples, splashes, underwater, presets, pictures (docs/water_visuals.md).
+add_executable(test_water_visuals test_water_visuals.cpp)
+target_link_libraries(test_water_visuals PRIVATE okay::engine)
+target_include_directories(test_water_visuals PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})
+add_test(NAME water_visuals COMMAND test_water_visuals)
+
+# Water pictures, example scenes (examples/water/) and speed numbers. A tool, not a test.
+add_executable(water_shot water_shot.cpp)
+target_link_libraries(water_shot PRIVATE okay::engine)
+target_include_directories(water_shot PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})
+
+# Headless pictures of the lighting test scenes (a tool, not a test). docs/lighting_upgrade.md
+add_executable(lighting_shot lighting_shot.cpp)
+target_link_libraries(lighting_shot PRIVATE okay::engine)
+
+add_executable(test_lighting_upgrade test_lighting_upgrade.cpp)
+target_link_libraries(test_lighting_upgrade PRIVATE okay::engine)
+add_test(NAME lighting_upgrade COMMAND test_lighting_upgrade)
+
+add_executable(test_d3d11_layout test_d3d11_layout.cpp)
+target_link_libraries(test_d3d11_layout PRIVATE okay::engine)
+add_test(NAME d3d11_layout COMMAND test_d3d11_layout)
+# Wind field maths: noise, gusts, zones, blending, curve (docs/wind.md)
+add_executable(test_wind_field test_wind_field.cpp)
+target_link_libraries(test_wind_field PRIVATE okay::engine)
+add_test(NAME wind_field COMMAND test_wind_field)
+
+# Wind components in a scene: zones, particles, drag, sway, foliage, cable, sound, save/load (docs/wind.md)
+add_executable(test_wind test_wind.cpp)
+target_link_libraries(test_wind PRIVATE okay::engine)
+add_test(NAME wind COMMAND test_wind)
+# okay::tex, our own texture library (docs/own_texture_library.md). Pure CPU, deterministic.
+foreach(_t IN ITEMS mip atlas convert bc dds_stream)
+    add_executable(test_tex_${_t} test_tex_${_t}.cpp)
+    target_link_libraries(test_tex_${_t} PRIVATE okay::engine)
+    add_test(NAME tex_${_t} COMMAND test_tex_${_t} WORKING_DIRECTORY ${CMAKE_CURRENT_BINARY_DIR})
+    set_tests_properties(tex_${_t} PROPERTIES TIMEOUT 240)
 endforeach()

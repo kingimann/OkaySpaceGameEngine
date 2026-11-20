@@ -142,11 +142,19 @@ cp "$BUILD_DIR/bin/OkayEngine.exe" \
    "$BUILD_DIR/bin/OkaySpacePlayer.exe" \
    "$SDL2_MINGW_PREFIX/bin/SDL2.dll" \
    "$OUT_DIR/Tools/"
+# The same launcher and editor built on our own UI (CMake OKAY_LAUNCHER_ON_OKAYUI / OKAY_EDITOR_ON_OKAYUI, off by default): copied only when they were built.
+# The launcher sits at the top beside OkaySpace.exe (Settings > Experimental > "Run on our own UI" restarts into it), the editor beside OkayEngine.exe.
+[ -f "$BUILD_DIR/bin/OkaySpaceOkayUI.exe" ] && cp "$BUILD_DIR/bin/OkaySpaceOkayUI.exe" "$OUT_DIR/"
+[ -f "$BUILD_DIR/bin/OkayEngineOkayUI.exe" ] && cp "$BUILD_DIR/bin/OkayEngineOkayUI.exe" "$OUT_DIR/Tools/"
 [ -f "$BUILD_DIR/bin/okayspace-relay.exe" ] && cp "$BUILD_DIR/bin/okayspace-relay.exe" "$OUT_DIR/Tools/"
 # okay-content: builds, signs, checks and fetches downloadable game content (docs/content_delivery.md); a small command-line tool.
 [ -f "$BUILD_DIR/bin/okay-content.exe" ] && cp "$BUILD_DIR/bin/okay-content.exe" "$OUT_DIR/Tools/"
+# okay-texture.exe: our texture tool (mips, atlas, compress to DDS); examples\texture shows how to use it.
+[ -f "$BUILD_DIR/bin/okay-texture.exe" ] && cp "$BUILD_DIR/bin/okay-texture.exe" "$OUT_DIR/Tools/"
 # OkayUI's standalone Direct3D 11 demo (no SDL): a raw DX11 app rendering OkayUI.
 [ -f "$BUILD_DIR/bin/okayui_d3d11_demo.exe" ] && cp "$BUILD_DIR/bin/okayui_d3d11_demo.exe" "$OUT_DIR/Tools/"
+# Own platform layer check (built only with -DOKAY_BUILD_PLATFORM_SELFTEST=ON; docs/try_it/11-*.md).
+[ -f "$BUILD_DIR/bin/okay-platform-selftest.exe" ] && cp "$BUILD_DIR/bin/okay-platform-selftest.exe" "$OUT_DIR/Tools/"
 # VERSION.txt is the single source of truth for the self-updater: the launcher
 # compares its baked version against releases/latest/download/VERSION.txt and only
 # updates when the published one is strictly newer. Derive it from CMakeLists so it
@@ -180,28 +188,36 @@ fi
 # One folder per line, sorted, so two branches that add a folder do not fight over one long line.
 EXAMPLE_DIRS="
 behavior_trees
+boat
 cutscene
 fp_hand
 input
+lighting
 modeling
 modeling_tools
 node_playground
 obj_texture_paths
+old_project
 own_readers
 own_wav
 perf
 physics
+physics_toys
+physics_materials
 physics2d
 player
 security_paths
 spatial_audio
+texture
 touch_controls
 ui_library
 ui_text
 vehicle
 visual_script/playground
 voxel
+water
 weapons
+wind
 "
 for d in $EXAMPLE_DIRS; do
     [ -d "examples/$d" ] || { echo "error: examples/$d is missing (edit EXAMPLE_DIRS in $0)" >&2; exit 1; }
@@ -234,6 +250,8 @@ cp engine/src/Core/ImageDecode.cpp engine/src/Core/ImageDecodeJpeg.cpp engine/sr
 [ ! -e "$XBOX_SRC/engine/third_party" ] || { echo "error: xbox-src must not carry engine/third_party (no third-party code in the Xbox build)" >&2; exit 1; }
 [ -f "$XBOX_SRC/platform/xbox_uwp/app/CMakeLists.txt" ] || { echo "error: xbox-src did not get the UWP app" >&2; exit 1; }
 [ -s "$OUT_DIR/examples/vehicle/vehicle_test.okayscene" ] || { echo "error: examples/vehicle/vehicle_test.okayscene did not make it into the distribution" >&2; exit 1; }
+[ -s "$OUT_DIR/examples/boat/boat_lake.okayscene" ] || { echo "error: examples/boat/boat_lake.okayscene did not make it into the distribution" >&2; exit 1; }
+[ -s "$OUT_DIR/examples/water/lake.okayscene" ] || { echo "error: examples/water/lake.okayscene did not make it into the distribution" >&2; exit 1; }
 [ -s "$OUT_DIR/examples/ui_text/ui_text.okayscene" ] || { echo "error: examples/ui_text/ui_text.okayscene did not make it into the distribution" >&2; exit 1; }
 
 # When built against the real Steamworks SDK, ship its redistributable DLL next to
@@ -260,8 +278,15 @@ Everything else lives in  Tools/:
 examples/ example scenes to try: in the editor use File > Open and pick
                         examples\vehicle\vehicle_test.okayscene, then press Play
                         (get in the car with E), or
+                        examples\boat\boat_lake.okayscene (a lake with waves: drive the
+                        boat with W S A D, Space brakes), or
+                        examples\water\lake.okayscene (also ocean, river and shore:
+                        water that is never flat; select the Water and pick a
+                        Preset or a Sea State), or
                         examples\ui_text\ui_text.okayscene (a nameplate over each of
-                        two characters and a sign with rich text; keys 1 2 3 H).
+                        two characters and a sign with rich text; keys 1 2 3 H), or
+                        examples\wind\wind.okayscene (trees, grass, a flag and leaves in the
+                        wind, a box the gusts push, and a wind sound).
                         More in docs/try_it.md.
 
 Each .exe needs SDL2.dll in its own folder — that's why one sits beside the

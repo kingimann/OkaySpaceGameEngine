@@ -2,6 +2,7 @@
 #include "okay/Components/VoxelTerrain.hpp"
 #include "okay/Components/MeshRenderer.hpp"
 #include "okay/Components/Terrain.hpp"
+#include "okay/Components/WindZone.hpp"
 #include "okay/Components/Character.hpp"
 #include "okay/Core/Random.hpp"
 #include "okay/Modeling/MeshAsset.hpp"
@@ -168,12 +169,22 @@ void Foliage::BuildChunk(long long key) {
     const bool uv = shapes_[0].HasUVs(), nrm = shapes_[0].HasNormals(), fc = shapes_[0].HasFaceColors();
     if (uv) out.uvs.reserve(nv);
     if (nrm) out.normals.reserve(nv);
+    const bool swayOn = windSway > 0.0f;
+    std::vector<float> swayWeights;
+    if (swayOn) swayWeights.reserve(nv);
     for (int i : it->second) {
         const FoliageInstance& in = instances[i];
         const Mesh& s = shapes_[(std::size_t)in.variant % shapes_.size()];
         const Quat q = RotationOf(in);
         const int base = (int)out.vertices.size();
         for (const Vec3& v : s.vertices) out.vertices.push_back(in.position + q * (v * in.scale));
+        if (swayOn) {   // how far up its plant each vertex is, times how big the plant is: tall plants bend more, grass barely
+            float lo = 1e30f, hi = -1e30f;
+            for (const Vec3& v : s.vertices) { lo = std::min(lo, v.y); hi = std::max(hi, v.y); }
+            const float span = std::max(0.01f, hi - lo);
+            const float size = std::clamp(span * in.scale / 4.0f, 0.05f, 1.0f);
+            for (const Vec3& v : s.vertices) swayWeights.push_back(std::clamp((v.y - lo) / span, 0.0f, 1.0f) * size);
+        }
         for (int t : s.triangles) out.triangles.push_back(base + t);
         if (uv) { if (s.HasUVs()) out.uvs.insert(out.uvs.end(), s.uvs.begin(), s.uvs.end()); else out.uvs.insert(out.uvs.end(), s.vertices.size(), Vec2{0, 0}); }
         if (nrm) { if (s.HasNormals()) for (const Vec3& n : s.normals) out.normals.push_back(q * n); else out.normals.insert(out.normals.end(), s.vertices.size(), Vec3{0, 1, 0}); }
@@ -191,6 +202,16 @@ void Foliage::BuildChunk(long long key) {
     mr->color = tint;
     mr->texture = shapeTexture_;
     mr->castShadows = castShadows;
+    if (swayOn) {   // the chunk leans and shivers with the wind (WindSway redoes its copy of the mesh a few times a second)
+        auto* sw = g->GetComponent<WindSway>();
+        if (!sw) sw = g->AddComponent<WindSway>();
+        sw->weight = WindSway::Weight::Custom;
+        sw->amount = windSway; sw->stiffness = 1.5f; sw->flutter = 0.5f; sw->maxDistance = 90.0f;
+        sw->SetWeights(std::move(swayWeights));
+    } else if (auto* sw = g->GetComponent<WindSway>()) {
+        sw->Restore();
+        g->RemoveComponent(sw);
+    }
     g->name = "Foliage Chunk " + std::to_string((int)(key >> 32)) + "," + std::to_string((int)(key & 0xffffffff));
 }
 

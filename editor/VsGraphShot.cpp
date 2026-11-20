@@ -6,11 +6,33 @@
 #include "backends/imgui_impl_sdlrenderer2.h"
 
 #include <SDL.h>
+#include "okay/Platform/Platform.hpp"
+#include "PainterBridge.hpp"
+#include <cstdio>
 
 #include <filesystem>
 #include <iostream>
 #include <string>
 #include <vector>
+
+// A 32-bit BMP (BGRA, bottom-up) from RGBA bytes, top row first: what SDL_SaveBMP wrote for these pictures, without SDL.
+static bool WriteBmp(const std::string& path, const std::vector<std::uint8_t>& rgba, int w, int h) {
+    std::FILE* f = std::fopen(path.c_str(), "wb");
+    if (!f) return false;
+    const std::uint32_t imageSize = (std::uint32_t)w * (std::uint32_t)h * 4u, fileSize = 54u + imageSize;
+    unsigned char hdr[54] = {'B', 'M'};
+    auto put32 = [&](int at, std::uint32_t v) { for (int i = 0; i < 4; ++i) hdr[at + i] = (unsigned char)(v >> (8 * i)); };
+    put32(2, fileSize); put32(10, 54); put32(14, 40); put32(18, (std::uint32_t)w); put32(22, (std::uint32_t)h);
+    hdr[26] = 1; hdr[28] = 32; put32(34, imageSize);
+    bool ok = std::fwrite(hdr, 1, 54, f) == 54;
+    std::vector<unsigned char> row((size_t)w * 4);
+    for (int y = h - 1; y >= 0 && ok; --y) {
+        const std::uint8_t* src = &rgba[(size_t)y * (size_t)w * 4];
+        for (int x = 0; x < w; ++x) { row[(size_t)x * 4] = src[x * 4 + 2]; row[(size_t)x * 4 + 1] = src[x * 4 + 1]; row[(size_t)x * 4 + 2] = src[x * 4]; row[(size_t)x * 4 + 3] = src[x * 4 + 3]; }
+        ok = std::fwrite(row.data(), 1, row.size(), f) == row.size();
+    }
+    return std::fclose(f) == 0 && ok;
+}
 
 namespace fs = std::filesystem;
 
@@ -43,15 +65,17 @@ int RunVsGraphShot(int argc, char** argv) {
     ed.Play();
     for (int i = 0; i < 45; ++i) ed.Tick(1.0f / 60.0f);
 
-    if (SDL_Init(SDL_INIT_VIDEO | SDL_INIT_TIMER) != 0) {
-        std::cerr << "SDL_Init: " << SDL_GetError() << "\n";
-        return 1;
-    }
+    okay::platform::Backend* pbe = okay::platform::Get(okay::platform::BackendKind::Sdl2);   // SDL's ImGui backends below need an SDL window
+    if (!pbe) { std::cerr << "SDL2 platform backend is not available\n"; return 1; }
+    { okay::platform::InitFlags f; f.audio = false; f.gamepad = false;
+      if (!pbe->Init(f)) { std::cerr << "platform init: " << pbe->LastError() << "\n"; return 1; } }
+    pbe->ReportUnmappedEvents(true);   // imgui_impl_sdl2 wants every event
     SDL_SetHint(SDL_HINT_RENDER_DRIVER, "software");
-    SDL_Window* window = SDL_CreateWindow("OkayVS", SDL_WINDOWPOS_CENTERED, SDL_WINDOWPOS_CENTERED,
-                                          1680, 1000, SDL_WINDOW_SHOWN);
-    SDL_Renderer* renderer = SDL_CreateRenderer(window, -1, SDL_RENDERER_SOFTWARE);
-    if (!window || !renderer) { std::cerr << "window: " << SDL_GetError() << "\n"; return 1; }
+    okay::platform::WindowDesc wd; wd.title = "OkayVS"; wd.width = 1680; wd.height = 1000;
+    std::unique_ptr<okay::platform::Window> winSeam = pbe->MakeWindow(wd);
+    SDL_Window* window = winSeam ? (SDL_Window*)winSeam->NativeHandle() : nullptr;
+    SDL_Renderer* renderer = winSeam ? okay::pb::CreateRenderer(*winSeam) : nullptr;   // software (the hint); its painter owns it
+    if (!window || !renderer) { std::cerr << "window: " << pbe->LastError() << "\n"; return 1; }
 
     IMGUI_CHECKVERSION();
     ImGui::CreateContext();
@@ -68,35 +92,34 @@ int RunVsGraphShot(int argc, char** argv) {
         okay::editor::vsed::State().frameAll = true;
         ed.Select(it.go);
 
-        SDL_Event ev;
-        while (SDL_PollEvent(&ev)) ImGui_ImplSDL2_ProcessEvent(&ev);
+        {   // drain the window's events through the platform layer (Dear ImGui's SDL backend takes the SDL record it keeps)
+            okay::platform::Event pe;
+            while (pbe->PollEvent(pe)) if (pe.native) ImGui_ImplSDL2_ProcessEvent((const SDL_Event*)pe.native);
+        }
         ImGui_ImplSDLRenderer2_NewFrame();
         ImGui_ImplSDL2_NewFrame();
         ImGui::NewFrame();
         bool open = true;
         okay::editor::vsed::Draw(ed, &open);
         ImGui::Render();
-        SDL_SetRenderDrawColor(renderer, 24, 26, 32, 255);
-        SDL_RenderClear(renderer);
+        okay::pb::SetDrawColor(renderer, 24, 26, 32, 255);
+        okay::pb::Clear(renderer);
         ImGui_ImplSDLRenderer2_RenderDrawData(ImGui::GetDrawData(), renderer);
-        SDL_RenderPresent(renderer);
+        okay::pb::Present(renderer);
 
-        int w = 0, h = 0;
-        SDL_GetRendererOutputSize(renderer, &w, &h);
-        SDL_Surface* surf = SDL_CreateRGBSurfaceWithFormat(0, w, h, 32, SDL_PIXELFORMAT_ARGB8888);
-        if (surf && SDL_RenderReadPixels(renderer, nullptr, SDL_PIXELFORMAT_ARGB8888, surf->pixels, surf->pitch) == 0) {
+        std::vector<std::uint8_t> px; int w = 0, h = 0;
+        if (okay::pb::ReadPixels(renderer, px, w, h) && w > 0 && h > 0) {
             const std::string bmp = (fs::path(outDir) / (it.stem + ".bmp")).string();
-            if (SDL_SaveBMP(surf, bmp.c_str()) == 0) std::cout << "wrote " << bmp << "\n";
-            else std::cerr << "save " << bmp << ": " << SDL_GetError() << "\n";
+            if (WriteBmp(bmp, px, w, h)) std::cout << "wrote " << bmp << "\n";
+            else std::cerr << "save " << bmp << ": cannot write the file\n";
         }
-        if (surf) SDL_FreeSurface(surf);
     }
 
     ImGui_ImplSDLRenderer2_Shutdown();
     ImGui_ImplSDL2_Shutdown();
     ImGui::DestroyContext();
-    SDL_DestroyRenderer(renderer);
-    SDL_DestroyWindow(window);
-    SDL_Quit();
+    okay::pb::DestroyRenderer(renderer);   // its painter owns it
+    winSeam.reset();
+    pbe->Shutdown();
     return 0;
 }

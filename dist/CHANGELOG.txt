@@ -1,5 +1,74 @@
 OkaySpace Game Engine — Changelog
 
+v2.892.0
+  Physics materials and toys, better lighting, water that looks like water
+  - New Physics Materials: give a 3D model a feel (Ice, Rubber, Wood, Metal
+    and more) and it slides, grips and bounces that way.
+  - New physics toys: Conveyor Belt, Force Field, Gravity Zone, Turntable,
+    Moving Platform, Explosion and Breakable. Stacks of crates now settle
+    and stay still.
+  - Lighting: steadier shadows and softer shadow edges, lighting presets you
+    can pick in one click, panel lights, real-world light units and light
+    probes. (New GPU lighting paths have not been run on a real graphics
+    card yet.)
+  - Water is no longer a flat plane. Turn on the realistic look for waves,
+    colour that gets darker with depth, foam at the edges, and a wake behind
+    a moving boat. Plain Water keeps its old look.
+
+v2.891.0
+  Wind, a bigger Build Settings window, upgrade fixes
+  - New Wind: add a Wind Zone and objects with Wind Sway or Wind Drag
+    move with it. Particles can be pushed by wind too.
+  - Build Settings has been rebuilt. Search for any setting, see a blue dot
+    on pages you changed, reset a page, save and load build profiles, and
+    read a "What will happen" summary with Fix buttons. Many new settings
+    (game speed, volume, language, log detail, files left out of the build,
+    and more) are really used by the game.
+  - Fixed: after you upgraded a project, the launcher kept saying it was
+    older. It now updates within a second, and Open picks the right editor.
+  - Fixed: File > Project Upgrade could upgrade the wrong project, and a
+    build profile name with a slash or equals sign came back changed.
+
+v2.890.0
+  Boats and water, clearer Visual Script blocks, Xbox editor lag fix
+  - New Boat: GameObject > Vehicles > Boat makes a boat you can drive on
+    water. W and S for speed, A and D to steer, Space to brake. Open
+    examples\boat\boat_lake.okayscene and press Play to try it.
+  - Water now has real wave shapes (Water > Style: Ocean or Calm lake) and
+    things float properly. Crates and balls no longer bounce on the water:
+    they settle at the right height at any frame rate. Plain Water settings
+    keep their old look.
+  - Visual Script blocks explain themselves: every block has a plain
+    sentence under its name, a "What is this?" card for the selected block
+    shows what to plug in, a block that is missing an input says "Needs
+    input", "Next steps" buttons add the blocks that usually come next, and
+    "Try this node" adds a small working example. Some block names are
+    plainer now; the old names still work in search.
+  - Fixed: the editor no longer freezes for several seconds when you switch
+    Build Settings to the Xbox platform. It checks your PC in the
+    background and remembers the answer.
+  - Behind the scenes: more of our own UI toolkit (OkayUI) is in, off by
+    default.
+
+v2.889.0
+  Try our own code, texture tools, Xbox fixes
+  - New Settings > Experimental page in the launcher (and View > Rendering >
+    Experimental in the editor). Switch our own replacements on to try them:
+    our own sound-file reader and our own UI toolkit (OkayUI). Everything is
+    off until you turn it on. "Back to normal" turns everything off again.
+    Changes apply after you restart.
+  - New texture tools: make mipmaps, pack pictures into an atlas and compress
+    pictures to DDS. In the editor, click a picture in the Project panel and
+    use "Generate mipmaps / compress" in Import Settings. The okay-texture
+    tool and a try-it example are in the Tools and examples folders.
+  - Xbox test export: clearer messages when a step fails (each one says what
+    to do next), the test certificate is reused between runs, and the app
+    writes a log file you can read from the Device Portal. Still experimental
+    and never run on a real Xbox.
+  - Behind the scenes: our own window and input layer is used for the event
+    loops of the launcher and editor (still off by default; SDL2 is used
+    unless you turn it on), plus our own build tools for developers.
+
 v2.888.0
   Editor speed tools, Xbox test export, downloadable game content
   - The editor has a frame-time overlay: View > Rendering > Frame-time overlay

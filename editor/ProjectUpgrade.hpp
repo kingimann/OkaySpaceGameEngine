@@ -32,6 +32,10 @@ bool IsProjectRoot(const fs::path& dir);
 /// Assets folder above the scene); a scene that is not under an Assets folder belongs to the folder it is in when that
 /// is a project (the old flat layout). "" when the scene is not part of any project (a loose file).
 std::string ProjectRootForScene(const std::string& scene);
+/// A path that ProjectRootForScene maps back to `projectDir`, for asking about a project by its folder (the Project
+/// Upgrade window knows the folder of the open project, and the scene that is open may be a loose file somewhere else,
+/// which belongs to no project). "" when `projectDir` is not a project folder.
+std::string SceneKeyForProject(const std::string& projectDir);
 /// A folder as a map key: absolute, normalized, no trailing separator, lower case on Windows.
 std::string RootKey(const std::string& root);
 

@@ -4,6 +4,7 @@
 #include "okay/Physics/BoxManifold.hpp"
 #include "okay/Physics/ContactSolver.hpp"
 #include "okay/Physics/PhysicsMaterial.hpp"
+#include "okay/Components/PhysicsSurface.hpp"
 #include "okay/Physics/Rigidbody3D.hpp"
 #include "okay/Physics/Collider3D.hpp"
 #include "okay/Physics/ConvexContact.hpp"
@@ -439,8 +440,10 @@ void DispatchTrigger(Collider3D* self, void (Component::*fn)(Collider3D*), Colli
 // The Collision3D handed to one side of a contact. `n` points from that side
 // toward the other; `relVel` is the other's velocity minus this side's.
 Collision3D MakeCollision(Collider3D* other, const Vec3& n, float pen, const Vec3& point,
-                          const Vec3& relVel) {
+                          const Vec3& relVel, Collider3D* self = nullptr) {
     Collision3D c;
+    c.surface = other ? SurfaceOf(other->gameObject) : nullptr;       // the physics material pair of the contact
+    c.ownSurface = self ? SurfaceOf(self->gameObject) : nullptr;
     c.gameObject = other->gameObject; c.collider = other;
     c.normal = n; c.penetration = pen; c.point = point;
     c.relativeVelocity = relVel;
@@ -642,6 +645,15 @@ void Physics3D::BeginDebugFrame() {
 
 void Physics3D::Step(Scene& scene, float dt) {
     if (dt <= 0.0f) return;
+    if (quality == PhysicsQuality::Improved && dt > kMaxSolveSlice * 1.001f) {
+        const int n = (int)std::ceil(dt / kMaxSolveSlice - 0.001f);
+        for (int i = 0; i < n; ++i) StepSlice(scene, dt / (float)n);
+        return;
+    }
+    StepSlice(scene, dt);
+}
+
+void Physics3D::StepSlice(Scene& scene, float dt) {
     MeshCollider3D::AdvanceEpoch();
 
     // Sleeping thresholds: under these speeds for kSleepTime seconds, a dynamic body
@@ -928,8 +940,8 @@ void Physics3D::Step(Scene& scene, float dt) {
                         DispatchTrigger(b, &Component::OnTriggerStay3D, a, c.point, -c.normal, gone);
                 }
             } else {
-                Collision3D forA = MakeCollision(b, c.normal, c.penetration, c.point, relVelBA);
-                Collision3D forB = MakeCollision(a, -c.normal, c.penetration, c.point, -relVelBA);
+                Collision3D forA = MakeCollision(b, c.normal, c.penetration, c.point, relVelBA, a);
+                Collision3D forB = MakeCollision(a, -c.normal, c.penetration, c.point, -relVelBA, b);
                 if (!wasContact) {
                     DispatchCollision(a->gameObject, &Component::OnCollisionEnter3D, forA, gone);
                     if (!gone.Gone(a) && !gone.Gone(b))
@@ -956,7 +968,7 @@ void Physics3D::Step(Scene& scene, float dt) {
         }
     }
     if (improved) {   // solve every queued pair, then move the bodies by their solved speeds
-        m_solver->Solve(gone);
+        m_solver->Solve(gone, gravity);
         int sweeps = 0;
         m_solver->Move(*this, scene, bodies, dt, gone, sweeps);
         m_stats.manifolds = (int)m_solver->manifolds.size();
@@ -1004,8 +1016,8 @@ void Physics3D::Step(Scene& scene, float dt) {
             if (!gone.Gone(a) && !gone.Gone(b))
                 DispatchTrigger(b, &Component::OnTriggerExit3D, a, mid, -n, gone);
         } else {
-            Collision3D forA = MakeCollision(b, Vec3::Zero, 0.0f, Vec3::Zero, Vec3::Zero);
-            Collision3D forB = MakeCollision(a, Vec3::Zero, 0.0f, Vec3::Zero, Vec3::Zero);
+            Collision3D forA = MakeCollision(b, Vec3::Zero, 0.0f, Vec3::Zero, Vec3::Zero, a);
+            Collision3D forB = MakeCollision(a, Vec3::Zero, 0.0f, Vec3::Zero, Vec3::Zero, b);
             DispatchCollision(a->gameObject, &Component::OnCollisionExit3D, forA, gone);
             if (!gone.Gone(a) && !gone.Gone(b))
                 DispatchCollision(b->gameObject, &Component::OnCollisionExit3D, forB, gone);
@@ -1343,9 +1355,16 @@ void Physics3D::Step(Scene& scene, float dt) {
     // ---- Joints: positional constraints (after collisions) ----
     // (Improved: the constraint joints are solved several times, so a rope of balls or a heavy weight on a light chain stays
     // near its length. A spring is a force and is applied once; a motor's limit is shared out over the passes.)
-    const int jointPasses = (improved && allJoints.size() > 0) ? std::max(4, solverIterations) : 1;
+    // A long chain needs about two passes per link for a push to cross it both ways; every other pass runs the joints in
+    // reverse order so the weight at one end reaches the hook at the other end (a 50 kg ball on 1 kg links held 13 m long
+    // for a rope of 8 m with a fixed order; see docs/physics_upgrade.md).
+    // (The extra passes are capped so that passes x joints stays under 6000: a scene with hundreds of joints does not pay for them.)
+    const int basePasses = std::max(4, solverIterations);
+    const int jointPasses = (improved && allJoints.size() > 0)
+        ? std::max(basePasses, std::min(std::min(60, 4 * (int)allJoints.size() + 4), 6000 / (int)allJoints.size())) : 1;
     for (int jointPass = 0; jointPass < jointPasses; ++jointPass)
-    for (Joint3D* j : allJoints) {
+    for (std::size_t jointIndex = 0; jointIndex < allJoints.size(); ++jointIndex) {
+        Joint3D* j = allJoints[(improved && (jointPass & 1)) ? allJoints.size() - 1 - jointIndex : jointIndex];
         if (gone.Gone(j)) continue;
         if (j->broken || !j->gameObject || !j->transform) continue;
         if (jointPass > 0 && (Joint3D::Mode)j->mode == Joint3D::Mode::Spring) continue;
@@ -1373,6 +1392,7 @@ void Physics3D::Step(Scene& scene, float dt) {
         if (m == Joint3D::Mode::Pin) {
             Vec3 target = pb + j->pinOffset;
             Vec3 err = target - pa;
+            if (j->breakable && std::sqrt(Vec3::Dot(err, err)) > j->breakForce) { j->broken = true; continue; }
             MoveBodyWorld(ta, err * (imA / imSum));
             if (tb && rbB && imB > 0.0f) MoveBodyWorld(tb, err * (-imB / imSum));
             ra->velocity = rbB ? rbB->velocity : Vec3::Zero;   // weld: follow B (anchor -> freeze)
@@ -1473,6 +1493,7 @@ void Physics3D::Step(Scene& scene, float dt) {
             Vec3 d = pb - pa; float len = std::sqrt(Vec3::Dot(d, d));
             Vec3 n = len > 1e-5f ? d * (1.0f / len) : Vec3{0, 1, 0};
             float C = len - j->restLen;                 // +stretched / -compressed
+            if (j->breakable && std::fabs(C) > j->breakForce) { j->broken = true; continue; }   // snapped: do not hold it back this step
             Vec3 va = ra->velocity, vb = rbB ? rbB->velocity : Vec3::Zero;
             float vrelN = Vec3::Dot(vb - va, n);
             if (m == Joint3D::Mode::Spring) {
@@ -2158,16 +2179,28 @@ void Physics3D::SweepBodyBy(Scene& scene, Rigidbody3D* rb, const Vec3& motion, b
     Vec3 dir = motion * (1.0f / len);
     // The colliders the sweep looks at: all of them, or (automatic continuous collision) the ones that are not dynamic bodies.
     const std::vector<Collider3D*>* list = &QueryLists(scene).colliders;
+    std::vector<Collider3D*> extraList;
     if (onlyStatics && m_solver) {
         if (!m_solver->staticListBuilt) {
-            m_solver->staticList.clear();
+            m_solver->staticList.clear(); m_solver->movingList.clear();
             for (Collider3D* c : *list) {
                 Rigidbody3D* body = BodyOfCollider(c);
                 if (!body || body->bodyType != Rigidbody3D::BodyType::Dynamic) m_solver->staticList.push_back(c);
+                else m_solver->movingList.push_back(c);
             }
             m_solver->staticListBuilt = true;
         }
         list = &m_solver->staticList;
+        // Other moving bodies too, but only the ones thin enough to be jumped over in one step (a ball at 100 m/s against a
+        // light plate): a thick body is caught by the normal overlap test, and sweeping against all of them would cost too much.
+        extraList = m_solver->staticList;
+        for (Collider3D* c : m_solver->movingList) {
+            if (!Alive(c) || c->gameObject == rb->gameObject || c->isTrigger) continue;
+            Vec3 cmn, cmx; c->WorldAABB(cmn, cmx);
+            const float thin = Mathf::Min(cmx.x - cmn.x, Mathf::Min(cmx.y - cmn.y, cmx.z - cmn.z));
+            if (thin < len + 2.0f * r) extraList.push_back(c);
+        }
+        list = &extraList;
     }
     // (A compound body's own child colliders never block it.)
     const IgnoreHierarchy own(quality == PhysicsQuality::Improved && rb->compoundChildren ? rb->gameObject : nullptr);

@@ -21,6 +21,7 @@ public:
     int   segments = 24;            ///< pieces the curve is cut into (2..200)
     float width = 0.08f;
     Color color{0.15f, 0.15f, 0.17f, 1.0f};
+    float windSwing = 0.0f;         ///< metres the middle swings downwind in a strong wind (12 m/s); 0 = the cable ignores the wind (docs/wind.md)
 
     /// The points of the curve from `a` to `b`: a parabola that hangs `sag` below the middle.
     static std::vector<Vec3> Curve(const Vec3& a, const Vec3& b, float sag, int segments);

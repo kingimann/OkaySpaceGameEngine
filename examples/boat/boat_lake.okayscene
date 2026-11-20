@@ -1,0 +1,317 @@
+okayscene 3
+name "Boat Lake"
+gravity 0 -9.81
+gravity3 0 -9.81 0
+rendersettings 1 0.27450982 0.47058824 0.78431374 0.5882353 0.7254902 0.88235295 0.47058824 0.47058824 0.50980395 0.15
+fog 0 0.5882353 0.7254902 0.88235295 20 90
+tonemap 1
+gameobject 0 "Directional Light"
+  guid "f2b12acfb0ff5b805c4c4ae9df746bf6"
+  active 1
+  parent -1
+  transform 0 0 0 0.40821794 -0.23456973 0.10938166 0.8754261 1 1 1
+  light 1 1 1 1 0.3 1 0 10 45 0.5 0 6500 1 1 1 0
+end
+gameobject 1 "Lake"
+  guid "91787ecf9725ba4d0be809d40c7af149"
+  active 1
+  parent -1
+  transform 0 0 0 0 0 0 1 1 1 1
+  mesh "Water" 0.15686275 0.43137255 0.64705884 0.72 0 "" 1
+  material 0 0 0 0.85 80 0 "" 1 1
+  reflect 0.55 0
+  uvanim 0.025 0.018 0
+  groundshadow 0 0 0.5
+  water 96 80 0.6 14 1 0.15686275 0.43137255 0.64705884 0.72 0.55 0.85 80 0.025 0.018 8 1 4 ""
+  waterwaves style=1 dir=20 steep=0.35 count=4 seed=11 curx=0 cury=0
+  comporder "Water" "MeshRenderer"
+end
+gameobject 2 "Lake Floor"
+  guid "87e20e025d474f4a02c0305938ba5fa3"
+  active 1
+  parent -1
+  transform 0 -9.5 0 0 0 0 1 200 1 200
+  mesh "Cube" 0.47058824 0.43137255 0.3529412 1 0 "" 0
+  material 0 0 0 0 16 0 "" 1 1
+  rigidbody3d 2 1 1 0 0 0 0 0 0 0.5 0.05 1 1 0 0.03 0
+  boxcollider3d 1 1 1 0 0 0 0 0 0
+  comporder "MeshRenderer" "BoxCollider3D" "Rigidbody3D"
+end
+gameobject 3 "Shore West"
+  guid "917311b42e2b4bf38f52d030fe6ee378"
+  active 1
+  parent -1
+  transform -72 -3 0 0 0 0 1 48 6 200
+  mesh "Cube" 0.8235294 0.74509805 0.54901963 1 0 "" 0
+  material 0 0 0 0 16 0 "" 1 1
+  rigidbody3d 2 1 1 0 0 0 0 0 0 0.5 0.05 1 1 0 0.03 0
+  boxcollider3d 1 1 1 0 0 0 0 0 0
+  comporder "MeshRenderer" "BoxCollider3D" "Rigidbody3D"
+end
+gameobject 4 "Shore East"
+  guid "fc2ba7724c06d91c5eac1c8972fff19a"
+  active 1
+  parent -1
+  transform 72 -3 0 0 0 0 1 48 6 200
+  mesh "Cube" 0.8235294 0.74509805 0.54901963 1 0 "" 0
+  material 0 0 0 0 16 0 "" 1 1
+  rigidbody3d 2 1 1 0 0 0 0 0 0 0.5 0.05 1 1 0 0.03 0
+  boxcollider3d 1 1 1 0 0 0 0 0 0
+  comporder "MeshRenderer" "BoxCollider3D" "Rigidbody3D"
+end
+gameobject 5 "Shore North"
+  guid "14989c4ab6c056c0a7ea6cb98eafa474"
+  active 1
+  parent -1
+  transform 0 -3 72 0 0 0 1 200 6 48
+  mesh "Cube" 0.8235294 0.74509805 0.54901963 1 0 "" 0
+  material 0 0 0 0 16 0 "" 1 1
+  rigidbody3d 2 1 1 0 0 0 0 0 0 0.5 0.05 1 1 0 0.03 0
+  boxcollider3d 1 1 1 0 0 0 0 0 0
+  comporder "MeshRenderer" "BoxCollider3D" "Rigidbody3D"
+end
+gameobject 6 "Shore South"
+  guid "e5823ed7f13d3cabdf3a2c6ed1fd6a91"
+  active 1
+  parent -1
+  transform 0 -3 -72 0 0 0 1 200 6 48
+  mesh "Cube" 0.8235294 0.74509805 0.54901963 1 0 "" 0
+  material 0 0 0 0 16 0 "" 1 1
+  rigidbody3d 2 1 1 0 0 0 0 0 0 0.5 0.05 1 1 0 0.03 0
+  boxcollider3d 1 1 1 0 0 0 0 0 0
+  comporder "MeshRenderer" "BoxCollider3D" "Rigidbody3D"
+end
+gameobject 7 "Dock Planks"
+  guid "0cddae4f372ca7081fa0f0cede86f229"
+  active 1
+  parent -1
+  transform -43 0.35 -6 0 0 0 1 10 0.3 3
+  mesh "Cube" 0.54901963 0.39215687 0.23529412 1 0 "" 0
+  material 0 0 0 0 16 0 "" 1 1
+  rigidbody3d 2 1 1 0 0 0 0 0 0 0.5 0.05 1 1 0 0.03 0
+  boxcollider3d 1 1 1 0 0 0 0 0 0
+  comporder "MeshRenderer" "BoxCollider3D" "Rigidbody3D"
+end
+gameobject 8 "Dock Post"
+  guid "6966682902584c8927c4142e20a49500"
+  active 1
+  parent -1
+  transform -39.5 -0.6 -4.7 0 0 0 1 0.4 2 0.4
+  mesh "Cube" 0.39215687 0.27450982 0.1764706 1 0 "" 0
+  material 0 0 0 0 16 0 "" 1 1
+  rigidbody3d 2 1 1 0 0 0 0 0 0 0.5 0.05 1 1 0 0.03 0
+  boxcollider3d 1 1 1 0 0 0 0 0 0
+  comporder "MeshRenderer" "BoxCollider3D" "Rigidbody3D"
+end
+gameobject 9 "Dock Post"
+  guid "1d463f3d324863391f1f505d9de1358d"
+  active 1
+  parent -1
+  transform -39.5 -0.6 -7.3 0 0 0 1 0.4 2 0.4
+  mesh "Cube" 0.39215687 0.27450982 0.1764706 1 0 "" 0
+  material 0 0 0 0 16 0 "" 1 1
+  rigidbody3d 2 1 1 0 0 0 0 0 0 0.5 0.05 1 1 0 0.03 0
+  boxcollider3d 1 1 1 0 0 0 0 0 0
+  comporder "MeshRenderer" "BoxCollider3D" "Rigidbody3D"
+end
+gameobject 10 "Dock Post"
+  guid "cf9d4adefbc6e58ddd5b89ab3f602214"
+  active 1
+  parent -1
+  transform -43 -0.6 -4.7 0 0 0 1 0.4 2 0.4
+  mesh "Cube" 0.39215687 0.27450982 0.1764706 1 0 "" 0
+  material 0 0 0 0 16 0 "" 1 1
+  rigidbody3d 2 1 1 0 0 0 0 0 0 0.5 0.05 1 1 0 0.03 0
+  boxcollider3d 1 1 1 0 0 0 0 0 0
+  comporder "MeshRenderer" "BoxCollider3D" "Rigidbody3D"
+end
+gameobject 11 "Dock Post"
+  guid "02f6a2bd4b3c3b6a9dbe527fa55a4f54"
+  active 1
+  parent -1
+  transform -43 -0.6 -7.3 0 0 0 1 0.4 2 0.4
+  mesh "Cube" 0.39215687 0.27450982 0.1764706 1 0 "" 0
+  material 0 0 0 0 16 0 "" 1 1
+  rigidbody3d 2 1 1 0 0 0 0 0 0 0.5 0.05 1 1 0 0.03 0
+  boxcollider3d 1 1 1 0 0 0 0 0 0
+  comporder "MeshRenderer" "BoxCollider3D" "Rigidbody3D"
+end
+gameobject 12 "Dock Post"
+  guid "c4a1848d3d8143f620889fc9825c7d03"
+  active 1
+  parent -1
+  transform -46.5 -0.6 -4.7 0 0 0 1 0.4 2 0.4
+  mesh "Cube" 0.39215687 0.27450982 0.1764706 1 0 "" 0
+  material 0 0 0 0 16 0 "" 1 1
+  rigidbody3d 2 1 1 0 0 0 0 0 0 0.5 0.05 1 1 0 0.03 0
+  boxcollider3d 1 1 1 0 0 0 0 0 0
+  comporder "MeshRenderer" "BoxCollider3D" "Rigidbody3D"
+end
+gameobject 13 "Dock Post"
+  guid "41cf1061e0a73ee6d61e96b3c073738a"
+  active 1
+  parent -1
+  transform -46.5 -0.6 -7.3 0 0 0 1 0.4 2 0.4
+  mesh "Cube" 0.39215687 0.27450982 0.1764706 1 0 "" 0
+  material 0 0 0 0 16 0 "" 1 1
+  rigidbody3d 2 1 1 0 0 0 0 0 0 0.5 0.05 1 1 0 0.03 0
+  boxcollider3d 1 1 1 0 0 0 0 0 0
+  comporder "MeshRenderer" "BoxCollider3D" "Rigidbody3D"
+end
+gameobject 14 "Floating Crate"
+  guid "c8e55370651aaa5081323e673d16650c"
+  active 1
+  parent -1
+  transform -30 1 0 0 0 0 1 1 1 1
+  mesh "Cube" 0.6901961 0.5019608 0.2901961 1 0 "" 0
+  material 0 0 0 0 16 0 "" 1 1
+  rigidbody3d 0 1 0.5 0 0 0 0 0 0 0.5 0.05 0 0 0 0.03 0
+  boxcollider3d 1 1 1 0 0 0 0 0 0
+  buoyancy gridX=3 gridZ=3 volume=0 fullness=1 hullH=0 density=1 dfw=0.3 dfw2=0.05 dsd=1 dsd2=0.3 dup=6 dup2=0.5 angd=1.5 maxpush=120 tilt=1 splash=1 splashmin=1.2 points=""
+  comporder "MeshRenderer" "BoxCollider3D" "Rigidbody3D" "Buoyancy"
+end
+gameobject 15 "Floating Crate"
+  guid "ec57592dbf6c2c88bf92cb5be698be8b"
+  active 1
+  parent -1
+  transform -28 1 3.5 0 0 0 1 1 1 1
+  mesh "Cube" 0.6901961 0.5019608 0.2901961 1 0 "" 0
+  material 0 0 0 0 16 0 "" 1 1
+  rigidbody3d 0 1 0.5 0 0 0 0 0 0 0.5 0.05 0 0 0 0.03 0
+  boxcollider3d 1 1 1 0 0 0 0 0 0
+  buoyancy gridX=3 gridZ=3 volume=0 fullness=1 hullH=0 density=1 dfw=0.3 dfw2=0.05 dsd=1 dsd2=0.3 dup=6 dup2=0.5 angd=1.5 maxpush=120 tilt=1 splash=1 splashmin=1.2 points=""
+  comporder "MeshRenderer" "BoxCollider3D" "Rigidbody3D" "Buoyancy"
+end
+gameobject 16 "Floating Crate"
+  guid "4eb82e42ba0836a0306ebe401945760b"
+  active 1
+  parent -1
+  transform -24 1 -3 0 0 0 1 1 1 1
+  mesh "Cube" 0.6901961 0.5019608 0.2901961 1 0 "" 0
+  material 0 0 0 0 16 0 "" 1 1
+  rigidbody3d 0 1 0.5 0 0 0 0 0 0 0.5 0.05 0 0 0 0.03 0
+  boxcollider3d 1 1 1 0 0 0 0 0 0
+  buoyancy gridX=3 gridZ=3 volume=0 fullness=1 hullH=0 density=1 dfw=0.3 dfw2=0.05 dsd=1 dsd2=0.3 dup=6 dup2=0.5 angd=1.5 maxpush=120 tilt=1 splash=1 splashmin=1.2 points=""
+  comporder "MeshRenderer" "BoxCollider3D" "Rigidbody3D" "Buoyancy"
+end
+gameobject 17 "Floating Crate"
+  guid "1d33051cfbbf1275d94a4c952760ee17"
+  active 1
+  parent -1
+  transform -20 1 6 0 0 0 1 1 1 1
+  mesh "Cube" 0.6901961 0.5019608 0.2901961 1 0 "" 0
+  material 0 0 0 0 16 0 "" 1 1
+  rigidbody3d 0 1 0.5 0 0 0 0 0 0 0.5 0.05 0 0 0 0.03 0
+  boxcollider3d 1 1 1 0 0 0 0 0 0
+  buoyancy gridX=3 gridZ=3 volume=0 fullness=1 hullH=0 density=1 dfw=0.3 dfw2=0.05 dsd=1 dsd2=0.3 dup=6 dup2=0.5 angd=1.5 maxpush=120 tilt=1 splash=1 splashmin=1.2 points=""
+  comporder "MeshRenderer" "BoxCollider3D" "Rigidbody3D" "Buoyancy"
+end
+gameobject 18 "Floating Crate"
+  guid "00cd1b0efc1c21446d8c144736075efa"
+  active 1
+  parent -1
+  transform -26 1 -8 0 0 0 1 1 1 1
+  mesh "Cube" 0.6901961 0.5019608 0.2901961 1 0 "" 0
+  material 0 0 0 0 16 0 "" 1 1
+  rigidbody3d 0 1 0.5 0 0 0 0 0 0 0.5 0.05 0 0 0 0.03 0
+  boxcollider3d 1 1 1 0 0 0 0 0 0
+  buoyancy gridX=3 gridZ=3 volume=0 fullness=1 hullH=0 density=1 dfw=0.3 dfw2=0.05 dsd=1 dsd2=0.3 dup=6 dup2=0.5 angd=1.5 maxpush=120 tilt=1 splash=1 splashmin=1.2 points=""
+  comporder "MeshRenderer" "BoxCollider3D" "Rigidbody3D" "Buoyancy"
+end
+gameobject 19 "Floating Crate"
+  guid "2f920de2bb4dad12ebbafe001efe7bb3"
+  active 1
+  parent -1
+  transform -18 1 -4 0 0 0 1 1 1 1
+  mesh "Cube" 0.6901961 0.5019608 0.2901961 1 0 "" 0
+  material 0 0 0 0 16 0 "" 1 1
+  rigidbody3d 0 1 0.5 0 0 0 0 0 0 0.5 0.05 0 0 0 0.03 0
+  boxcollider3d 1 1 1 0 0 0 0 0 0
+  buoyancy gridX=3 gridZ=3 volume=0 fullness=1 hullH=0 density=1 dfw=0.3 dfw2=0.05 dsd=1 dsd2=0.3 dup=6 dup2=0.5 angd=1.5 maxpush=120 tilt=1 splash=1 splashmin=1.2 points=""
+  comporder "MeshRenderer" "BoxCollider3D" "Rigidbody3D" "Buoyancy"
+end
+gameobject 20 "Heavy Stone (sinks)"
+  guid "44f17f14eb9744a8c8c7352a36eddcc3"
+  active 1
+  parent -1
+  transform -16 2 4 0 0 0 1 1 1 1
+  mesh "Cube" 0.43137255 0.4392157 0.4627451 1 0 "" 0
+  material 0 0 0 0 16 0 "" 1 1
+  rigidbody3d 0 1 3 0 0 0 0 0 0 0.5 0.05 0 1 0 0.03 0
+  boxcollider3d 1 1 1 0 0 0 0 0 0
+  buoyancy gridX=3 gridZ=3 volume=0 fullness=1 hullH=0 density=1 dfw=0.3 dfw2=0.05 dsd=1 dsd2=0.3 dup=6 dup2=0.5 angd=1.5 maxpush=120 tilt=1 splash=1 splashmin=1.2 points=""
+  comporder "MeshRenderer" "BoxCollider3D" "Rigidbody3D" "Buoyancy"
+end
+gameobject 21 "Boat"
+  guid "c5cd6fa56e385b7e3a4a0918b0c63eb1"
+  active 1
+  parent -1
+  transform -33 0 -11 0 0.7071068 0 0.7071068 1 1 1
+  rigidbody3d 0 1 2.5 0 0 0 0 0 0 0.5 0.2 0 0 0 0.03 0
+  boxcollider3d 2 0.9 4.6 0 0 0 0 0 0
+  buoyancy gridX=3 gridZ=5 volume=0 fullness=0.55 hullH=0 density=1 dfw=0.15 dfw2=0.02 dsd=1.5 dsd2=0.5 dup=6 dup2=0.5 angd=2 maxpush=120 tilt=1 splash=1 splashmin=1.2 points=""
+  boat player=1 maxSpeed=12 revSpeed=4 power=6 brake=5 turn=55 steerResp=3.5 wake=1 bow=1 sound=1 cam=1 camDist=10 camH=4 camLerp=4
+end
+gameobject 22 "Hull"
+  guid "6136c60d419454a55511bed663930f8e"
+  active 1
+  parent 21
+  transform 0 -0.1 -0.2 0 0 0 1 2 0.7 3.9
+  mesh "Cube" 0.9254902 0.93333334 0.9411765 1 0 "" 0
+  material 0 0 0 0 16 0 "" 1 1
+end
+gameobject 23 "Bow"
+  guid "a53a3d8b64e13758646be020e1921abb"
+  active 1
+  parent 21
+  transform 0 -0.1 1.55 0 0.38268346 0 0.9238795 1.43 0.7 1.43
+  mesh "Cube" 0.9254902 0.93333334 0.9411765 1 0 "" 0
+  material 0 0 0 0 16 0 "" 1 1
+end
+gameobject 24 "Stripe"
+  guid "60ba70c8e81ef523e467d20537844ff8"
+  active 1
+  parent 21
+  transform 0 0.27 -0.2 0 0 0 1 2.04 0.1 3.94
+  mesh "Cube" 0.78431374 0.19607843 0.1882353 1 0 "" 0
+  material 0 0 0 0 16 0 "" 1 1
+end
+gameobject 25 "Cabin"
+  guid "2383893332dca5357302f9866bdd03ae"
+  active 1
+  parent 21
+  transform 0 0.75 0 0 0 0 1 1.5 0.8 1.5
+  mesh "Cube" 0.88235295 0.89411765 0.9098039 1 0 "" 0
+  material 0 0 0 0 16 0 "" 1 1
+end
+gameobject 26 "Windscreen"
+  guid "272390187227aff53c9b8a9c11586754"
+  active 1
+  parent 21
+  transform 0 0.85 0.76 0 0 0 1 1.4 0.45 0.06
+  mesh "Cube" 0.47058824 0.6666667 0.8235294 0.78431374 0 "" 0
+  material 0 0 0 0 16 0 "" 1 1
+end
+gameobject 27 "Seat"
+  guid "1dd4b6897f4b6ccf52fbc71ae5db557c"
+  active 1
+  parent 21
+  transform 0 0.45 -1.2 0 0 0 1 1.3 0.2 0.5
+  mesh "Cube" 0.23529412 0.27450982 0.3529412 1 0 "" 0
+  material 0 0 0 0 16 0 "" 1 1
+end
+gameobject 28 "Engine"
+  guid "04072c574574246151ca651e0e86fa10"
+  active 1
+  parent 21
+  transform 0 0.15 -2.35 0 0 0 1 0.45 0.55 0.35
+  mesh "Cube" 0.15686275 0.16470589 0.1882353 1 0 "" 0
+  material 0 0 0 0 16 0 "" 1 1
+end
+gameobject 29 "Main Camera"
+  guid "8e39a8b12a086964ea62688e2f1818a3"
+  active 1
+  parent -1
+  transform -45 4 -11 0.09229596 0.7010574 -0.09229596 0.7010574 1 1 1
+  camera 1 5 60 0.19215687 0.3019608 0.4745098 1 1 0 0 0.3 4000 0 0 0 1 1 -1 0 50 24 1 0 0 0 0 32 0.3 2 18 1.5
+end

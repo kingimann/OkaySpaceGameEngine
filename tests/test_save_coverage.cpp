@@ -30,7 +30,7 @@ using namespace okay;
 
 #define OKAY_SAVE_COMPONENTS(X) \
     X(ActionList) X(AimIK) X(AimOffset) X(AnimStateMachine) X(Animator) X(AntiCheatConfig) X(AudioSource) \
-    X(AutoSave) X(BehaviorTreeRunner) X(BleedingStat) X(BlendShapes) X(BlockBuilder) X(BoxCollider2D) \
+    X(AutoSave) X(BehaviorTreeRunner) X(BleedingStat) X(BlendShapes) X(BlockBuilder) X(BoatController) X(Buoyancy) X(BoxCollider2D) \
     X(BoxCollider3D) X(BuildMode) X(BuildPiece) X(Buildable) X(BuilderMode) X(Cable) X(Camera) X(CameraFollow) X(Canvas) \
     X(CapsuleCollider2D) X(CapsuleCollider3D) X(CarryWeightStat) X(ChainIK) X(Character) X(CharacterController2D) \
     X(CharacterController3D) X(CheckpointTrigger) X(ChestInventory) X(CinemachineBrain) X(CircleCollider2D) \
@@ -64,8 +64,8 @@ using namespace okay;
     X(UISlotGrid) X(UIStepper) X(UITabs) X(UITextBind) X(UITheme) X(UIToast) X(UIToastItem) X(UIToggle) \
     X(TouchButton) X(TouchDPad) X(VirtualJoystick) \
     X(UITooltip) X(VehicleController) X(VehicleController2D) X(VehicleSeat) X(VirtualCamera) X(VisualScriptComponent) \
-    X(VoxelDigger) X(VoxelTerrain) X(Volume) X(Water) X(WeatherRig) X(WetnessStat) X(WorldSpaceUI) X(WorldStreamer) \
-    X(WorldUI)
+    X(VoxelDigger) X(VoxelTerrain) X(Volume) X(Water) X(WeatherRig) X(WindZone) X(WindDrag) X(WindSway) X(WindAmbience) X(WetnessStat) X(WorldSpaceUI) X(WorldStreamer) \
+    X(WorldUI) X(PhysicsSurface) X(ConveyorBelt) X(ForceField) X(GravityZone) X(Turntable) X(MovingPlatform) X(Explosion) X(Breakable)
 
 namespace {
 

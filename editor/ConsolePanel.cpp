@@ -113,6 +113,9 @@ void ConsolePreferCategory(const std::string& category) {
     g_preferPending = true;
 }
 
+static void (*g_consoleMirror)(const std::string&, int) = nullptr;
+void ConsoleSetMirror(void (*fn)(const std::string&, int)) { g_consoleMirror = fn; }
+
 void ConsoleLog(const std::string& msg, int level) {
     if (level < 0) level = 0;
     if (level > 2) level = 2;
@@ -127,6 +130,7 @@ void ConsoleLog(const std::string& msg, int level) {
     g_model.Add(ToLevel(level), text, category, src);
     if (g_model.ConsumePauseRequest()) g_paused = true;
     RefreshCounts();
+    if (g_consoleMirror) g_consoleMirror(msg, level);
 }
 
 void ConsoleClear() {
@@ -187,12 +191,16 @@ void DrawConsole() {
     static int catSel = 0;
 
     char conTitle[64];
+#ifdef OKAYUI_STABLE_PANEL_TITLES   // window mode (editor/OkayUIHostPanels.cpp): the dock layout names a window by its title, so the title must not carry the counts
+    std::snprintf(conTitle, sizeof(conTitle), "Console###Console");
+#else
     if (g_consoleCounts[2] > 0)
         std::snprintf(conTitle, sizeof(conTitle), "Console  [x %d]###Console", g_consoleCounts[2]);
     else if (g_consoleCounts[1] > 0)
         std::snprintf(conTitle, sizeof(conTitle), "Console  [! %d]###Console", g_consoleCounts[1]);
     else
         std::snprintf(conTitle, sizeof(conTitle), "Console###Console");
+#endif
     g_model.SetPauseOnError(g_errorPause);
     if (g_model.ConsumePauseRequest()) g_paused = true;
 

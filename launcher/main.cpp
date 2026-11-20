@@ -8,9 +8,37 @@
 #define SDL_MAIN_HANDLED
 #include <SDL.h>
 #include "okay/Platform/Platform.hpp"   // okay::platform: timers (and the SDL seam)
+#include "okay/Platform/WindowLogic.hpp" // frame-rate / flash / background decisions
+
+// Window calls on the launcher's raw SDL windows, through the okay::platform seam (a non-owning wrapper per call; the
+// windows are still made and destroyed by SDL). A null window does nothing, like SDL's own calls with an error.
+#include "WindowHandles.hpp"   // native handle -> okay::platform::Window (sdl2 and own-backend windows)
+namespace lw {
+inline void Restore(SDL_Window* w)  { if (auto s = okay::pb::Win(w)) s->Restore(); }
+inline void Raise(SDL_Window* w)    { if (auto s = okay::pb::Win(w)) s->Raise(); }
+inline void Show(SDL_Window* w)     { if (auto s = okay::pb::Win(w)) s->Show(); }
+inline void Hide(SDL_Window* w)     { if (auto s = okay::pb::Win(w)) s->Hide(); }
+inline void Minimize(SDL_Window* w) { if (auto s = okay::pb::Win(w)) s->Minimize(); }
+inline void GetPos(SDL_Window* w, int* x, int* y) { int a = 0, b = 0; if (auto s = okay::pb::Win(w)) s->GetPosition(a, b); if (x) *x = a; if (y) *y = b; }
+inline bool IsMinimized(SDL_Window* w) { auto s = okay::pb::Win(w); return s && s->IsMinimized(); }
+inline bool IsVisible(SDL_Window* w)   { auto s = okay::pb::Win(w); return s && s->IsVisible(); }
+inline bool HasInputFocus(SDL_Window* w) { auto s = okay::pb::Win(w); return s && s->HasInputFocus(); }
+inline bool HasMouseFocus(SDL_Window* w) { auto s = okay::pb::Win(w); return s && s->HasMouseFocus(); }
+inline bool AnyKeyboardFocus() { auto* b = okay::platform::Default(); return b && b->KeyboardFocusWindowId() != 0; }
+inline void* Win32Handle(SDL_Window* w) { auto s = okay::pb::Win(w); return s ? s->Win32Handle() : nullptr; }
+inline void GetSize(SDL_Window* w, int* x, int* y) { int a = 0, b = 0; if (auto s = okay::pb::Win(w)) s->GetSize(a, b); if (x) *x = a; if (y) *y = b; }
+inline void SetSize(SDL_Window* w, int x, int y) { if (auto s = okay::pb::Win(w)) s->SetSize(x, y); }
+inline void SetPos(SDL_Window* w, int x, int y)  { if (auto s = okay::pb::Win(w)) s->SetPosition(x, y); }
+inline void SetMinSize(SDL_Window* w, int x, int y) { if (auto s = okay::pb::Win(w)) s->SetMinimumSize(x, y); }
+inline uint32_t Id(SDL_Window* w)   { auto s = okay::pb::Win(w); return s ? s->Id() : 0; }
+inline bool IsFocused(SDL_Window* w) { auto s = okay::pb::Win(w); return s && s->IsFocused(); }
+inline void Flash(SDL_Window* w, okay::platform::FlashMode m) { if (auto s = okay::pb::Win(w)) s->Flash(m); }
+} // namespace lw
 #include "WavPlayback.hpp"   // the one WAV loading seam (SDL_LoadWAV, or our own decoder with OKAY_OWN_WAV)
 #include "VoiceChat.hpp"   // voice calls (first: winsock2.h must precede windows.h)
 #include "AppIcon.hpp"
+#include "OwnSwitches.hpp"   // Settings > Experimental: the table of own replacements that can be switched on
+#include "ImGuiPlatformFeed.hpp"   // our own Dear ImGui input feed over okay::platform (OKAY_PLATFORM_EVENTS=own; default stays imgui_impl_sdl2)
 #include "OwnStack.hpp"   // OKAY_OWN_STACK=1 dogfood switch + the one-line startup stack report
 #include "OkayTheme.hpp"  // shared Slate palette (launcher + editor)
 #include "LauncherDemo.hpp"   // okay::IsLauncherDemoMode(): the one list of demo / screenshot env variables
@@ -64,6 +92,7 @@
 #include "OkayUIBackend.hpp"
 #include "LauncherTips.hpp"
 #ifdef OKAY_HAVE_OKAYUI
+#include "OkayUIFrame.hpp"   // OkayUI end-of-frame on an SDL renderer or an own-backend painter
 #include "OkayUIHost.hpp"
 #include "OkayUIHostImGui.hpp"   // is an ImGui popup in the way of the hosted rectangle?
 #include "okay/UI/OkayUI.hpp"
@@ -99,7 +128,6 @@ namespace okayuihost { inline bool PopupCoversRect(float, float, float, float) {
 #  include <windows.h>
 #  include <shellapi.h>   // Shell_NotifyIcon (system-tray icon)
 #  include <tlhelp32.h>   // process snapshot: is the editor still open?
-#  include <SDL_syswm.h>  // HWND of the SDL window, for the tray
 #else
 #  include <unistd.h>
 #  include <sys/wait.h>   // waitpid: playtime tracking of launched games
@@ -115,6 +143,19 @@ namespace okayuihost { inline bool PopupCoversRect(float, float, float, float) {
 #include "VersionsNet.hpp"
 #include "VersionsUI.hpp"
 #include "MemberModeration.hpp"   // kick / ban / unban / admin role for servers and group chats
+#ifdef OKAY_ENABLE_TEST_HOOKS
+#include "TestHooks.hpp"   // scripted input and screenshots for headless test runs (OKAY_TEST_SCRIPT); not in normal builds
+#endif
+#include "ImGuiPainterRenderer.hpp"   // our own Dear ImGui renderer over okay::platform::Painter (OKAY_IMGUI_RENDER=own; default stays imgui_impl_sdlrenderer2)
+#include "PainterBridge.hpp"   // the 2D renderer calls (textures, clear, present, size) through okay::platform::Painter
+#include "OkayThreads.hpp"   // our own threads, recursive mutexes, atomics (replaces SDL's)
+
+// An RGBA8 picture (w * h * 4 bytes, top row first) as a texture of `renderer`; null when it cannot be made. The same texture
+// SDL_CreateTextureFromSurface gave (static, alpha blended, nearest sampling); the caller still draws it with SDL_RenderCopy and
+// frees it with SDL_DestroyTexture. Goes through okay::platform::Painter, which wraps the renderer and does not own it.
+static SDL_Texture* TextureFromRgba(SDL_Renderer* renderer, const unsigned char* rgba, int w, int h) {
+    return okay::pb::CreateTexture(renderer, w, h, okay::pb::Access::Static, true, false, rgba);
+}
 
 #if defined(_WIN32)
 // Prefer the dedicated GPU on hybrid-graphics laptops (NVIDIA Optimus / AMD
@@ -160,6 +201,11 @@ bool g_chatInOwnWindow = false;          // true while drawing the chat window's
 // Resolve an engine/player exe by name, searching next to the launcher and in the
 // Tools/ subfolder (defined fully below; forward-declared for the updater).
 std::string FindExe(std::initializer_list<const char*> names);
+#ifdef OKAY_ON_OKAYUI   // the launcher on our own UI starts the editor built on our own UI when it is next to it, else the normal one
+#define EDITOR_EXE_NAMES {"OkayEngineOkayUI.exe", "OkayEngineOkayUI", "okay-editor-okayui", "OkayEngine.exe", "OkaySpaceEngine.exe", "okay-editor.exe", "okay-editor", "OkayEngine"}
+#else
+#define EDITOR_EXE_NAMES {"OkayEngine.exe", "OkaySpaceEngine.exe", "okay-editor.exe", "okay-editor", "OkayEngine"}
+#endif
 
 // Where published builds live: the assets of the latest GitHub Release (this is
 // what the release workflow uploads). "releases/latest/download/<name>" always
@@ -175,13 +221,13 @@ const char* kRawBase =
 // thread and read by the UI. SDL's threading primitives are used because the
 // MinGW win32 threads model doesn't provide std::thread / std::mutex.
 enum UpState { Up_Idle, Up_Checking, Up_Downloading, Up_UpToDate, Up_Updated, Up_Failed };
-SDL_atomic_t g_upState;          // holds a UpState value
-SDL_mutex* g_upMutex = nullptr;
+okay::thr::AtomicInt g_upState;          // holds a UpState value
+okay::thr::Mutex* g_upMutex = nullptr;
 std::string g_upMessage = "Checking for updates...";
 std::string g_upLatest;
 bool g_upRelaunchNeeded = false;
 bool g_upVerdictShown = false;    // the start-up verdict of the last launcher update is on screen: the launch check leaves it alone
-SDL_Thread* g_upThread = nullptr;
+okay::thr::Thread* g_upThread = nullptr;
 // The editor has to close (with its project saved) before the launcher exits or
 // installs an update. A pending action waits for it: 1 = exit, 2 = update.
 static bool EditorRunning();
@@ -189,14 +235,14 @@ static bool AnyProgramRunning();   // the editor or a game started from the laun
 static int  g_afterEditor = 0;
 static long long g_suLastCheckEpoch = 0;   // when the last start-up check began (unix seconds, persisted: stops a restart loop)
 static bool g_suLocked = false;   // the start-up screen is installing an update: no editor or game may start (set each frame by StartupUpdateFrame)
-static SDL_atomic_t g_upCommitting;       // the worker is swapping the program files in right now: nothing may start
-static SDL_atomic_t g_programsRunning;    // the editor or a game is running (main thread writes each frame, the update worker reads before it swaps files)
-static SDL_atomic_t g_upReachedInstall;   // the worker got as far as downloading (set by the worker, so a fast Downloading -> Failed is never missed)
+static okay::thr::AtomicInt g_upCommitting;       // the worker is swapping the program files in right now: nothing may start
+static okay::thr::AtomicInt g_programsRunning;    // the editor or a game is running (main thread writes each frame, the update worker reads before it swaps files)
+static okay::thr::AtomicInt g_upReachedInstall;   // the worker got as far as downloading (set by the worker, so a fast Downloading -> Failed is never missed)
 static bool g_suRestartFailed = false;    // the restart helper could not start after the update
 void Toast(const std::string& m, int kind);
 // True while an update is being installed: starting the editor or a game now would put a program in the way of the file swap.
 static bool UpdateBlocksLaunch() {
-    if (!g_suLocked && !SDL_AtomicGet(&g_upCommitting)) return false;
+    if (!g_suLocked && !okay::thr::AtomicGet(&g_upCommitting)) return false;
     Toast("An update is installing. Please wait a moment.", 1);
     return true;
 }
@@ -205,11 +251,11 @@ static bool g_afterEditorShowDialog = true;   // the update's showDialog, kept f
 // Rich update progress, so the updater can show a real dialog (from/to version,
 // stepped progress, a live download bar in MB, elapsed time, and the changelog)
 // instead of a one-line message. Written by the worker, read by the UI.
-SDL_atomic_t g_upStepIdx;        // current step index (0-based)
-SDL_atomic_t g_upStepTotal;      // total steps for this run
-SDL_atomic_t g_upBytesNow;       // bytes downloaded for the current file
-SDL_atomic_t g_upBytesTotal;     // total bytes for the current file (0 = unknown)
-SDL_atomic_t g_upStartMs;        // okay::platform::TicksMs32() when the run started
+okay::thr::AtomicInt g_upStepIdx;        // current step index (0-based)
+okay::thr::AtomicInt g_upStepTotal;      // total steps for this run
+okay::thr::AtomicInt g_upBytesNow;       // bytes downloaded for the current file
+okay::thr::AtomicInt g_upBytesTotal;     // total bytes for the current file (0 = unknown)
+okay::thr::AtomicInt g_upStartMs;        // okay::platform::TicksMs32() when the run started
 std::string  g_upFromVer;        // installed version at run start   (g_upMutex)
 std::string  g_upToVer;          // target/published version         (g_upMutex)
 std::string  g_upStepName;       // human label for the current step (g_upMutex)
@@ -217,62 +263,62 @@ std::string  g_upChangelog;      // release notes for g_upToVer       (g_upMutex
 std::string  g_upTag;            // one line under the version arrow: "Test build of walk-vs-run (abc1234)" or "Going back ..." ("" = none)  (g_upMutex)
 bool         g_upModalOpen = false;   // UI: show the update dialog (main thread only)
 
-void SetState(UpState s) { SDL_AtomicSet(&g_upState, (int)s); }
-UpState GetState() { return (UpState)SDL_AtomicGet(&g_upState); }
+void SetState(UpState s) { okay::thr::AtomicSet(&g_upState, (int)s); }
+UpState GetState() { return (UpState)okay::thr::AtomicGet(&g_upState); }
 
 // Publish the current update step (label + which step of how many).
 void SetUpStep(const std::string& name, int idx, int total) {
-    if (g_upMutex) SDL_LockMutex(g_upMutex);
+    if (g_upMutex) okay::thr::LockMutex(g_upMutex);
     g_upStepName = name;
-    if (g_upMutex) SDL_UnlockMutex(g_upMutex);
-    SDL_AtomicSet(&g_upStepIdx, idx);
-    SDL_AtomicSet(&g_upStepTotal, total);
-    SDL_AtomicSet(&g_upBytesNow, 0);
-    SDL_AtomicSet(&g_upBytesTotal, 0);
+    if (g_upMutex) okay::thr::UnlockMutex(g_upMutex);
+    okay::thr::AtomicSet(&g_upStepIdx, idx);
+    okay::thr::AtomicSet(&g_upStepTotal, total);
+    okay::thr::AtomicSet(&g_upBytesNow, 0);
+    okay::thr::AtomicSet(&g_upBytesTotal, 0);
 }
 std::string GetUpStep() {
-    std::string s; if (g_upMutex) SDL_LockMutex(g_upMutex);
-    s = g_upStepName; if (g_upMutex) SDL_UnlockMutex(g_upMutex); return s;
+    std::string s; if (g_upMutex) okay::thr::LockMutex(g_upMutex);
+    s = g_upStepName; if (g_upMutex) okay::thr::UnlockMutex(g_upMutex); return s;
 }
 void SetUpVers(const std::string& from, const std::string& to) {
-    if (g_upMutex) SDL_LockMutex(g_upMutex);
+    if (g_upMutex) okay::thr::LockMutex(g_upMutex);
     g_upFromVer = from; g_upToVer = to;
-    if (g_upMutex) SDL_UnlockMutex(g_upMutex);
+    if (g_upMutex) okay::thr::UnlockMutex(g_upMutex);
 }
 void GetUpVers(std::string& from, std::string& to) {
-    if (g_upMutex) SDL_LockMutex(g_upMutex);
+    if (g_upMutex) okay::thr::LockMutex(g_upMutex);
     from = g_upFromVer; to = g_upToVer;
-    if (g_upMutex) SDL_UnlockMutex(g_upMutex);
+    if (g_upMutex) okay::thr::UnlockMutex(g_upMutex);
 }
 void SetUpChangelog(const std::string& c) {
-    if (g_upMutex) SDL_LockMutex(g_upMutex);
+    if (g_upMutex) okay::thr::LockMutex(g_upMutex);
     g_upChangelog = c;
-    if (g_upMutex) SDL_UnlockMutex(g_upMutex);
+    if (g_upMutex) okay::thr::UnlockMutex(g_upMutex);
 }
 std::string GetUpChangelog() {
-    std::string c; if (g_upMutex) SDL_LockMutex(g_upMutex);
-    c = g_upChangelog; if (g_upMutex) SDL_UnlockMutex(g_upMutex); return c;
+    std::string c; if (g_upMutex) okay::thr::LockMutex(g_upMutex);
+    c = g_upChangelog; if (g_upMutex) okay::thr::UnlockMutex(g_upMutex); return c;
 }
 void SetUpTag(const std::string& t) {
-    if (g_upMutex) SDL_LockMutex(g_upMutex);
+    if (g_upMutex) okay::thr::LockMutex(g_upMutex);
     g_upTag = t;
-    if (g_upMutex) SDL_UnlockMutex(g_upMutex);
+    if (g_upMutex) okay::thr::UnlockMutex(g_upMutex);
 }
 std::string GetUpTag() {
-    std::string t; if (g_upMutex) SDL_LockMutex(g_upMutex);
-    t = g_upTag; if (g_upMutex) SDL_UnlockMutex(g_upMutex); return t;
+    std::string t; if (g_upMutex) okay::thr::LockMutex(g_upMutex);
+    t = g_upTag; if (g_upMutex) okay::thr::UnlockMutex(g_upMutex); return t;
 }
 
 void SetUpMsg(const std::string& m) {
-    if (g_upMutex) SDL_LockMutex(g_upMutex);
+    if (g_upMutex) okay::thr::LockMutex(g_upMutex);
     g_upMessage = m;
-    if (g_upMutex) SDL_UnlockMutex(g_upMutex);
+    if (g_upMutex) okay::thr::UnlockMutex(g_upMutex);
 }
 std::string GetUpMsg() {
     std::string m;
-    if (g_upMutex) SDL_LockMutex(g_upMutex);
+    if (g_upMutex) okay::thr::LockMutex(g_upMutex);
     m = g_upMessage;
-    if (g_upMutex) SDL_UnlockMutex(g_upMutex);
+    if (g_upMutex) okay::thr::UnlockMutex(g_upMutex);
     return m;
 }
 
@@ -281,14 +327,14 @@ std::string GetUpMsg() {
 std::string g_newsLines;
 std::string g_newsVersion;
 void SetNews(const std::string& ver, const std::string& lines) {
-    if (g_upMutex) SDL_LockMutex(g_upMutex);
+    if (g_upMutex) okay::thr::LockMutex(g_upMutex);
     g_newsVersion = ver; g_newsLines = lines;
-    if (g_upMutex) SDL_UnlockMutex(g_upMutex);
+    if (g_upMutex) okay::thr::UnlockMutex(g_upMutex);
 }
 void GetNews(std::string& ver, std::string& lines) {
-    if (g_upMutex) SDL_LockMutex(g_upMutex);
+    if (g_upMutex) okay::thr::LockMutex(g_upMutex);
     ver = g_newsVersion; lines = g_newsLines;
-    if (g_upMutex) SDL_UnlockMutex(g_upMutex);
+    if (g_upMutex) okay::thr::UnlockMutex(g_upMutex);
 }
 
 // URLs reach curl / wget / powershell / the browser through a shell command
@@ -513,11 +559,11 @@ struct DlItem {
     int         status = 0;            // 0 queued, 1 downloading, 2 done, 3 failed, 4 canceled
     bool        cancelReq = false;
     Proc        proc;
-    SDL_Thread* th = nullptr;
+    okay::thr::Thread* th = nullptr;
 };
 
 std::vector<std::shared_ptr<DlItem>> g_dls;
-SDL_mutex* g_dlMutex = nullptr;
+okay::thr::Mutex* g_dlMutex = nullptr;
 int g_dlNextId = 1;
 
 long long FileSizeSafe(const std::string& p) {
@@ -531,7 +577,7 @@ static constexpr long long kMaxDownloadBytes = 2ll << 30;
 
 int DlWorker(void* data) {
     DlItem* d = static_cast<DlItem*>(data);
-    auto set = [&](std::function<void()> fn){ SDL_LockMutex(g_dlMutex); fn(); SDL_UnlockMutex(g_dlMutex); };
+    auto set = [&](std::function<void()> fn){ okay::thr::LockMutex(g_dlMutex); fn(); okay::thr::UnlockMutex(g_dlMutex); };
     set([&]{ d->status = 1; });
     long long total = HeadSize(d->url);
     set([&]{ d->total = total; });
@@ -546,7 +592,7 @@ int DlWorker(void* data) {
         okay::http::OwnDownloadSpec sp;
         sp.userAgent = "OkaySpace-Launcher"; sp.maxBytes = (uint64_t)kMaxDownloadBytes; sp.retries = 2;   // a drop resumes with Range
         sp.onBytes = [&](uint64_t n) { set([&]{ d->received = (long long)n; }); };
-        sp.cancelled = [&] { bool c; SDL_LockMutex(g_dlMutex); c = d->cancelReq; SDL_UnlockMutex(g_dlMutex); return c; };
+        sp.cancelled = [&] { bool c; okay::thr::LockMutex(g_dlMutex); c = d->cancelReq; okay::thr::UnlockMutex(g_dlMutex); return c; };
         const okay::http::OwnDownloadResult r = okay::http::OwnDownload(d->url, d->part, sp);
         if (r.outcome != okay::http::OwnOutcome::NotHandled) {
             if (r.outcome == okay::http::OwnOutcome::Cancelled) { fs::remove(d->part, ec); set([&]{ d->status = 4; }); return 0; }
@@ -567,7 +613,7 @@ int DlWorker(void* data) {
     int code = 0;
     while (ProcRunning(&p, &code)) {
         bool cancel = false;
-        SDL_LockMutex(g_dlMutex); cancel = d->cancelReq; SDL_UnlockMutex(g_dlMutex);
+        okay::thr::LockMutex(g_dlMutex); cancel = d->cancelReq; okay::thr::UnlockMutex(g_dlMutex);
         if (cancel) {
             ProcKill(&p);
             fs::remove(d->part, ec);
@@ -621,7 +667,7 @@ int StartDownload(const std::string& url, const std::string& title,
         dest = dir / (std::to_string(n) + "_" + base);
 
     auto d = std::make_shared<DlItem>();
-    SDL_LockMutex(g_dlMutex);
+    okay::thr::LockMutex(g_dlMutex);
     d->id = g_dlNextId++;
     d->url = url; d->title = title.empty() ? base : title;
     d->dest = dest.string(); d->part = dest.string() + ".part";
@@ -633,15 +679,15 @@ int StartDownload(const std::string& url, const std::string& title,
              << "url=" << clean(url) << "\n" << "time=" << (long long)std::time(nullptr) << "\n";
     }
     g_dls.push_back(d);
-    SDL_UnlockMutex(g_dlMutex);
-    d->th = SDL_CreateThread(DlWorker, "okay-dl", d.get());
+    okay::thr::UnlockMutex(g_dlMutex);
+    d->th = okay::thr::CreateThread(DlWorker, "okay-dl", d.get());
     return d->id;
 }
 
 // ---- Git for projects (clone / pull / commit+push / publish) ---------------
 // Git can be slow (clone/push), so it runs on a background thread and reports a
 // result the main loop turns into a toast. Requires `git` on the user's PATH.
-SDL_mutex*  g_gitMutex = nullptr;
+okay::thr::Mutex*  g_gitMutex = nullptr;
 bool        g_gitBusy = false;
 bool        g_gitResultReady = false;
 std::string g_gitResultMsg;
@@ -670,13 +716,13 @@ static int GitWorker(void* data) {
         int c = RunCmd(job->cmds[i], true);
         if (i + 1 == job->cmds.size()) rc = c;   // the last command decides success
     }
-    SDL_LockMutex(g_gitMutex);
+    okay::thr::LockMutex(g_gitMutex);
     g_gitBusy = false;
     g_gitResultReady = true;
     g_gitResultMsg = (rc == 0) ? job->okMsg : job->failMsg;
     g_gitResultKind = (rc == 0) ? 1 : 2;
     if (rc == 0 && job->rescan) g_gitWantRescan = true;
-    SDL_UnlockMutex(g_gitMutex);
+    okay::thr::UnlockMutex(g_gitMutex);
     delete job;
     return rc;
 }
@@ -684,12 +730,12 @@ static int GitWorker(void* data) {
 // Start a git job in the background (ignored if one is already running).
 static bool StartGit(GitJob* job) {
     if (!g_gitMutex) { delete job; return false; }
-    SDL_LockMutex(g_gitMutex);
-    if (g_gitBusy) { SDL_UnlockMutex(g_gitMutex); delete job; return false; }
+    okay::thr::LockMutex(g_gitMutex);
+    if (g_gitBusy) { okay::thr::UnlockMutex(g_gitMutex); delete job; return false; }
     g_gitBusy = true;
-    SDL_UnlockMutex(g_gitMutex);
-    SDL_Thread* t = SDL_CreateThread(GitWorker, "okay-git", job);
-    if (t) SDL_DetachThread(t); else { SDL_LockMutex(g_gitMutex); g_gitBusy = false; SDL_UnlockMutex(g_gitMutex); delete job; return false; }
+    okay::thr::UnlockMutex(g_gitMutex);
+    okay::thr::Thread* t = okay::thr::CreateThread(GitWorker, "okay-git", job);
+    if (t) okay::thr::DetachThread(t); else { okay::thr::LockMutex(g_gitMutex); g_gitBusy = false; okay::thr::UnlockMutex(g_gitMutex); delete job; return false; }
     return true;
 }
 static std::string GitQ(const std::string& s) { return "\"" + s + "\""; }
@@ -717,9 +763,9 @@ bool ExtractZip(const std::string& zip, const std::string& destDir) {
 int ActiveDownloads() {
     if (!g_dlMutex) return 0;
     int n = 0;
-    SDL_LockMutex(g_dlMutex);
+    okay::thr::LockMutex(g_dlMutex);
     for (auto& d : g_dls) if (d->status == 0 || d->status == 1) ++n;
-    SDL_UnlockMutex(g_dlMutex);
+    okay::thr::UnlockMutex(g_dlMutex);
     return n;
 }
 
@@ -785,45 +831,45 @@ long long RemoteSize(const std::string& url) {
 // Download helper that runs curl on a short-lived thread while the caller polls
 // the growing output file, publishing byte progress into the update globals so
 // the dialog can show a live MB / percentage bar.
-struct DlMonitor { std::string url; fs::path out; SDL_atomic_t done; SDL_atomic_t ok; };
-static SDL_atomic_t g_dlStalled;   // the last DownloadProgress gave up because no data came (worker thread writes, StageFile reads)
+struct DlMonitor { std::string url; fs::path out; okay::thr::AtomicInt done; okay::thr::AtomicInt ok; };
+static okay::thr::AtomicInt g_dlStalled;   // the last DownloadProgress gave up because no data came (worker thread writes, StageFile reads)
 int DlMonitorThread(void* p) {
     std::shared_ptr<DlMonitor>* keep = (std::shared_ptr<DlMonitor>*)p;   // (the thread owns a share: it may outlive a download that was given up on)
     DlMonitor* d = keep->get();
     bool r = Download(d->url, d->out);
-    SDL_AtomicSet(&d->ok, r ? 1 : 0);
-    SDL_AtomicSet(&d->done, 1);
+    okay::thr::AtomicSet(&d->ok, r ? 1 : 0);
+    okay::thr::AtomicSet(&d->done, 1);
     delete keep;
     return 0;
 }
 bool DownloadProgress(const std::string& url, const fs::path& out) {
-    SDL_AtomicSet(&g_dlStalled, 0);
-    SDL_AtomicSet(&g_upBytesNow, 0);
+    okay::thr::AtomicSet(&g_dlStalled, 0);
+    okay::thr::AtomicSet(&g_upBytesNow, 0);
     const long long total = std::min<long long>(RemoteSize(url), 0x7fffffffll);
-    SDL_AtomicSet(&g_upBytesTotal, (int)total);   // 0 if unknown; clamp for the progress bar
+    okay::thr::AtomicSet(&g_upBytesTotal, (int)total);   // 0 if unknown; clamp for the progress bar
     auto d = std::make_shared<DlMonitor>(); d->url = url; d->out = out;
-    SDL_AtomicSet(&d->done, 0); SDL_AtomicSet(&d->ok, 0);
-    SDL_Thread* th = SDL_CreateThread(DlMonitorThread, "okay-dlp", new std::shared_ptr<DlMonitor>(d));
+    okay::thr::AtomicSet(&d->done, 0); okay::thr::AtomicSet(&d->ok, 0);
+    okay::thr::Thread* th = okay::thr::CreateThread(DlMonitorThread, "okay-dlp", new std::shared_ptr<DlMonitor>(d));
     const Uint32 t0 = okay::platform::TicksMs32();
     Uint32 lastGrow = t0; long long lastSize = -1;
-    while (SDL_AtomicGet(&d->done) == 0) {
+    while (okay::thr::AtomicGet(&d->done) == 0) {
         std::error_code ec; auto sz = fs::file_size(out, ec);
         const long long cur = ec ? 0 : (long long)sz;
-        SDL_AtomicSet(&g_upBytesNow, (int)cur);
+        okay::thr::AtomicSet(&g_upBytesNow, (int)cur);
         const Uint32 now = okay::platform::TicksMs32();
         if (cur != lastSize) { lastSize = cur; lastGrow = now; }
         if (okay::startupupdate::DownloadShouldAbort((long long)(Uint32)(now - lastGrow), (long long)(Uint32)(now - t0), total)) {
-            SDL_AtomicSet(&g_dlStalled, 1);
+            okay::thr::AtomicSet(&g_dlStalled, 1);
             okay::restart::AppendLog(fs::path(g_exeDir) / "okay_update.log", "download stalled, giving up: " + url);
-            SDL_DetachThread(th);   // the blocked transfer cannot be stopped from here; it ends on its own (curl has a speed limit) and frees itself
+            okay::thr::DetachThread(th);   // the blocked transfer cannot be stopped from here; it ends on its own (curl has a speed limit) and frees itself
             return false;
         }
         okay::platform::DelayMs(90);
     }
-    SDL_WaitThread(th, nullptr);
+    okay::thr::WaitThread(th, nullptr);
     std::error_code ec; auto sz = fs::file_size(out, ec);
-    SDL_AtomicSet(&g_upBytesNow, ec ? 0 : (int)(long long)sz);
-    return SDL_AtomicGet(&d->ok) == 1;
+    okay::thr::AtomicSet(&g_upBytesNow, ec ? 0 : (int)(long long)sz);
+    return okay::thr::AtomicGet(&d->ok) == 1;
 }
 
 std::string g_upFailReason;   // why the last update did not install, in plain words (worker thread only; "" = no failure)
@@ -838,7 +884,7 @@ bool StageFile(const std::string& name, const std::string& url, const fs::path& 
     const okayupdater::Outcome o = okayupdater::Stage(name, url, dest, check,
         [&](const std::string& u, const fs::path& to, std::string& err) {
             const bool got = progress ? DownloadProgress(u, to) : Download(u, to);
-            if (!got) err = SDL_AtomicGet(&g_dlStalled) ? std::string(okay::startupupdate::kDownloadStalledReason)
+            if (!got) err = okay::thr::AtomicGet(&g_dlStalled) ? std::string(okay::startupupdate::kDownloadStalledReason)
                                                        : std::string("the server could not be reached or the file was not found");
             return got;
         });
@@ -1106,7 +1152,7 @@ bool g_upRepairMissing = false;   // "Get the editor": same-version re-download 
 // Worker: check the published version and, if newer, install it. Runs on a
 // background thread so the launcher stays responsive while ~35 MB downloads.
 int RunUpdateCheck(void*) {
-    SDL_AtomicSet(&g_upStartMs, (int)okay::platform::TicksMs32());
+    okay::thr::AtomicSet(&g_upStartMs, (int)okay::platform::TicksMs32());
     std::string local = LocalVersion();
     SetUpVers(local, "");
     SetUpTag("");   // (the last check's test build tag must not show while this one is still looking)
@@ -1141,9 +1187,9 @@ int RunUpdateCheck(void*) {
     // older than the Supabase one, and its notes would be shown under the wrong
     // version.
     { std::string nv, nl;
-      if (g_upMutex) SDL_LockMutex(g_upMutex);
+      if (g_upMutex) okay::thr::LockMutex(g_upMutex);
       nv = g_newsVersion; nl = g_newsLines;
-      if (g_upMutex) SDL_UnlockMutex(g_upMutex);
+      if (g_upMutex) okay::thr::UnlockMutex(g_upMutex);
       SetUpChangelog(nv == latest || nv == "v" + latest ? nl : std::string()); }
 
     fs::path dir(g_exeDir);
@@ -1177,7 +1223,7 @@ int RunUpdateCheck(void*) {
             return 0;
         }
     }
-    SDL_AtomicSet(&g_upReachedInstall, 1);
+    okay::thr::AtomicSet(&g_upReachedInstall, 1);
     SetState(Up_Downloading);
     bool ok = true;
     bool launcherOk = false;
@@ -1253,14 +1299,14 @@ int RunUpdateCheck(void*) {
     // are running would fail half way. Stop with a plain reason; nothing has been replaced yet.
     // g_upCommitting goes up BEFORE the check, and launches look at it: a program started after this point is refused, one started before is seen.
     bool recordFailure = true;   // (a refusal because programs are open, or a stalled connection, is not the release's fault: it must not count toward "failed 2 times")
-    if (ok) SDL_AtomicSet(&g_upCommitting, 1);
-    if (ok && SDL_AtomicGet(&g_programsRunning)) {
+    if (ok) okay::thr::AtomicSet(&g_upCommitting, 1);
+    if (ok && okay::thr::AtomicGet(&g_programsRunning)) {
         UpFail("The editor or a game is running, and an update replaces those programs. Close them, then use Retry. Nothing was installed and your current version is unchanged.");
         recordFailure = okay::startupupdate::CountsTowardAutoRetry(okay::startupupdate::FailKind::ProgramsRunning);
-        SDL_AtomicSet(&g_upCommitting, 0);
+        okay::thr::AtomicSet(&g_upCommitting, 0);
         ok = false;
     }
-    if (!ok && SDL_AtomicGet(&g_dlStalled)) recordFailure = okay::startupupdate::CountsTowardAutoRetry(okay::startupupdate::FailKind::Network);
+    if (!ok && okay::thr::AtomicGet(&g_dlStalled)) recordFailure = okay::startupupdate::CountsTowardAutoRetry(okay::startupupdate::FailKind::Network);
     if (!ok) {
         for (const Item& it : items) okayupdater::Discard(it.dest);   // nothing was replaced: the install is as it was
     } else {
@@ -1271,7 +1317,7 @@ int RunUpdateCheck(void*) {
         for (const Item& it : items) if (it.inUse) order.push_back({it.name, it.dest, true});
         for (const Item& it : items) if (!it.inUse) order.push_back({it.name, it.dest, false});
         const okayupdater::Outcome co = okayupdater::CommitAll(order, 100000);
-        SDL_AtomicSet(&g_upCommitting, 0);
+        okay::thr::AtomicSet(&g_upCommitting, 0);
         if (!co.ok) {
             UpFail(co.reason + " The launcher's own file could not be replaced while it is running (security software often locks it); your current version is unchanged.");
             ok = false;
@@ -1325,12 +1371,12 @@ void StartUpdateCheck(bool showDialog = true) {
     // Updating replaces OkayEngine.exe: the editor must be closed (and saved) first.
     if (EditorRunning()) { g_afterEditor = 2; g_afterEditorShowDialog = showDialog; return; }
     g_upAutomatic = !showDialog;
-    SDL_AtomicSet(&g_upReachedInstall, 0);
+    okay::thr::AtomicSet(&g_upReachedInstall, 0);
     if (showDialog) g_upModalOpen = true;   // UI opens the rich update dialog
-    if (g_upThread) { SDL_WaitThread(g_upThread, nullptr); g_upThread = nullptr; }
+    if (g_upThread) { okay::thr::WaitThread(g_upThread, nullptr); g_upThread = nullptr; }
     g_upSettings = okayversions::GlobalSettings();   // (a snapshot: the worker never reads what the Settings page can change)
     g_upGoBackNow = g_upGoBack;
-    g_upThread = SDL_CreateThread(RunUpdateCheck, "okay-update", nullptr);
+    g_upThread = okay::thr::CreateThread(RunUpdateCheck, "okay-update", nullptr);
 }
 
 // "Go back to the stable version" (Settings > Behavior, while a test build is installed): the same updater installs the newest normal release over the
@@ -1341,7 +1387,7 @@ void StartGoBackToStable() {
     if (EditorRunning()) { Toast("Close the editor first: going back replaces its files.", 2); return; }
     g_upGoBack = true;
     StartUpdateCheck(true);
-    for (const UpState stale : {Up_Idle, Up_UpToDate, Up_Failed, Up_Updated}) SDL_AtomicCAS(&g_upState, (int)stale, (int)Up_Checking);   // (so no frame sees the last check's answer and drops the request)
+    for (const UpState stale : {Up_Idle, Up_UpToDate, Up_Failed, Up_Updated}) okay::thr::AtomicCAS(&g_upState, (int)stale, (int)Up_Checking);   // (so no frame sees the last check's answer and drops the request)
 }
 
 // ---- Start-up update screen (Steam-like) -------------------------------------
@@ -1376,7 +1422,7 @@ static void StartupUpdateBegin() {
     in.msSinceLastStartupCheck = (g_suLastCheckEpoch > 0 && now >= g_suLastCheckEpoch) ? (now - g_suLastCheckEpoch) * 1000 : -1;
     if (!okay::startupupdate::ShouldRunStartupCheck(in)) return;
     StartUpdateCheck(false);
-    SDL_AtomicCAS(&g_upState, (int)Up_UpToDate, (int)Up_Checking);   // so the first frame already shows "Checking" (the worker sets it too)
+    okay::thr::AtomicCAS(&g_upState, (int)Up_UpToDate, (int)Up_Checking);   // so the first frame already shows "Checking" (the worker sets it too)
     g_suActive = true; g_suStartTicks = okay::platform::TicksMs32();
     g_suLastCheckEpoch = now; SaveLastStartupCheck();   // (only that one line of launcher.cfg: SavePrefs this early could write back a default)
 }
@@ -1394,7 +1440,7 @@ static void StartupUpdateFrame() {
     si.skipped = g_suSkipped; si.timedOutShown = g_suTimedOutShown; si.relaunchNeeded = g_upRelaunchNeeded; si.restartFailed = g_suRestartFailed || (us == Up_Updated && EditorRunning());
     if (us == Up_Updated && g_suUpdatedTicks == 0) g_suUpdatedTicks = okay::platform::TicksMs32();
     si.sinceUpdatedMs = (us == Up_Updated && g_suUpdatedTicks) ? (long long)(Uint32)(okay::platform::TicksMs32() - g_suUpdatedTicks) : 0;
-    si.step = SDL_AtomicGet(&g_upStepIdx); si.steps = SDL_AtomicGet(&g_upStepTotal);
+    si.step = okay::thr::AtomicGet(&g_upStepIdx); si.steps = okay::thr::AtomicGet(&g_upStepTotal);
     si.installing = GetUpMsg().rfind("Installing", 0) == 0;
     const ScreenView v = EvaluateScreen(si);
     if (v.restartGaveUp && !g_suGaveUpRestart) {   // never a locked screen with no way out: say what to do, open the dialog that has "Restart now"
@@ -1405,7 +1451,7 @@ static void StartupUpdateFrame() {
     if (v.giveUpNow) { g_suTimedOutShown = true; g_suToastedFail = true; Toast("Could not check for updates (offline)", 2); }   // (a slow check: still running in the background)
     if (us == Up_Failed && !g_suFailHandled) {   // plain reason, then on into the launcher: the update dialog has Retry
         g_suFailHandled = true;
-        if (SDL_AtomicGet(&g_upReachedInstall)) g_upModalOpen = true;   // an install that went wrong: the existing dialog says why and offers Retry
+        if (okay::thr::AtomicGet(&g_upReachedInstall)) g_upModalOpen = true;   // an install that went wrong: the existing dialog says why and offers Retry
         else if (!g_suTimedOutShown) { g_suToastedFail = true; Toast(okay::startupupdate::FailureToast(GetUpMsg()), 2); }   // the updater's own words (paused after failures, LTS ...)
     }
     if (us == Up_UpToDate || us == Up_Failed || (us == Up_Updated && !g_upRelaunchNeeded)) g_suActive = false;   // nothing more to show
@@ -1442,7 +1488,7 @@ static void StartupUpdateFrame() {
 std::string g_upAvailable;                 // newer published version ("" = none known)
 std::string g_upAvailableTitle;            // "Test build of walk-vs-run (abc1234)" when g_upAvailable is a test build ("" = a normal release)
 static bool g_launcherRefocused = false;   // window came back into focus: look for updates
-static SDL_mutex* g_upPollMutex = nullptr;
+static okay::thr::Mutex* g_upPollMutex = nullptr;
 static std::string g_upPollResult;         // (guarded)
 static std::string g_upPollTitle;          // (guarded) the test build's title, when the poll found one
 static bool g_upPollDone = false;          // (guarded)
@@ -1452,18 +1498,18 @@ static int UpdatePollWorker(void*) {
     std::string base; bool fromSupabase = false;
     const UpdateTarget target = ResolveTarget(g_pollSettings, base, fromSupabase);   // by channel; "" = nothing to offer in place
     const std::string& latest = target.version;
-    SDL_LockMutex(g_upPollMutex);
+    okay::thr::LockMutex(g_upPollMutex);
     g_upPollResult = latest; g_upPollTitle = target.test ? target.title : std::string(); g_upPollDone = true;
-    SDL_UnlockMutex(g_upPollMutex);
+    okay::thr::UnlockMutex(g_upPollMutex);
     g_upPollBusy = false;
     return 0;
 }
 static void StartUpdatePoll() {
     if (g_upPollBusy) return;
-    if (!g_upPollMutex) g_upPollMutex = SDL_CreateMutex();
+    if (!g_upPollMutex) g_upPollMutex = okay::thr::CreateMutex();
     g_pollSettings = okayversions::GlobalSettings();
     g_upPollBusy = true;
-    if (SDL_Thread* t = SDL_CreateThread(UpdatePollWorker, "okay-uppoll", nullptr)) SDL_DetachThread(t);
+    if (okay::thr::Thread* t = okay::thr::CreateThread(UpdatePollWorker, "okay-uppoll", nullptr)) okay::thr::DetachThread(t);
     else g_upPollBusy = false;
 }
 
@@ -1552,7 +1598,7 @@ static bool SpawnTracked(const std::string& exe, const std::string& args, const 
     pp.pid = pid;
 #endif
     g_playProcs.push_back(pp);
-    SDL_AtomicSet(&g_programsRunning, 1);   // seen at once by an update worker that is about to swap files
+    okay::thr::AtomicSet(&g_programsRunning, 1);   // seen at once by an update worker that is about to swap files
     return true;
 }
 // Once a second or so: credit running games, close out the ones that ended.
@@ -1604,7 +1650,7 @@ static bool EditorRunning() {
 }
 // Ask the running editor to save its project and close (it polls this file).
 static bool RequestEditorSaveQuit() {
-    std::string ed = FindExe({"OkayEngine.exe", "OkaySpaceEngine.exe", "okay-editor.exe", "okay-editor", "OkayEngine"});
+    std::string ed = FindExe(EDITOR_EXE_NAMES);
     if (ed.empty()) return false;
     fs::path dir = fs::path(ed).parent_path();
     std::error_code ec; fs::remove(dir / "okay_ipc_ack.txt", ec);
@@ -1614,7 +1660,7 @@ static bool RequestEditorSaveQuit() {
 }
 // What the editor answered ("saved" / "save-failed"), or "" while waiting.
 static std::string EditorAck() {
-    std::string ed = FindExe({"OkayEngine.exe", "OkaySpaceEngine.exe", "okay-editor.exe", "okay-editor", "OkayEngine"});
+    std::string ed = FindExe(EDITOR_EXE_NAMES);
     if (ed.empty()) return {};
     std::ifstream f(fs::path(ed).parent_path() / "okay_ipc_ack.txt");
     std::string a; std::getline(f, a);
@@ -2324,7 +2370,7 @@ static bool g_crashNoticeReq = false;   // the pump asks the main loop to show t
 static const char* const kCrashRepo = "kingimann/OkaySpaceGameEngine";   // where "Report on GitHub" opens a new issue
 static bool CrashUploadOn() { return okaycrash::upload::Enabled(g_crashUpload, std::getenv("OKAY_CRASH_UPLOAD")); }
 static fs::path CrashDir() {
-    std::string ed = FindExe({"OkayEngine.exe", "OkaySpaceEngine.exe", "okay-editor.exe", "okay-editor", "OkayEngine"});
+    std::string ed = FindExe(EDITOR_EXE_NAMES);
     if (const char* dev = std::getenv("OKAY_CRASH_DIR")) return fs::path(dev);   // (dev/test: another folder)
     return ed.empty() ? fs::path() : fs::path(ed).parent_path();
 }
@@ -2394,9 +2440,9 @@ void RefreshNotifs() {
     }
     // Release news ("what's new") once a check has fetched it.
     std::string nv, nl;
-    if (g_upMutex) SDL_LockMutex(g_upMutex);
+    if (g_upMutex) okay::thr::LockMutex(g_upMutex);
     nv = g_newsVersion; nl = g_newsLines;
-    if (g_upMutex) SDL_UnlockMutex(g_upMutex);
+    if (g_upMutex) okay::thr::UnlockMutex(g_upMutex);
     if (!nv.empty() && !nl.empty()) {
         std::string first = nl.substr(0, nl.find('\n'));
         UpsertNotif("news:" + nv, "What's new in v" + nv, first, 0, 0);
@@ -3118,7 +3164,7 @@ static float ChatCodeBlock(const std::string& code, float avail, bool draw) {
 // thumbnail) like Messenger/Telegram. Pages are fetched once in the background
 // (curl, 8 s cap, first 256 KB) and their Open Graph / <title> tags parsed.
 struct LinkPreview { int state = 0; std::string site, title, desc, image; };   // 0 loading, 1 ready, 2 nothing to show
-static SDL_mutex* g_lpMutex = nullptr;
+static okay::thr::Mutex* g_lpMutex = nullptr;
 static std::map<std::string, LinkPreview> g_linkPrev;   // (guarded) by URL
 static std::vector<std::string> g_lpQueue;              // (guarded)
 static bool g_lpWorkerRunning = false;                  // (guarded)
@@ -3223,10 +3269,10 @@ static LinkPreview ParseLinkPreview(const std::string& url, const std::string& h
 static int LinkPreviewWorker(void*) {
     while (true) {
         std::string url;
-        SDL_LockMutex(g_lpMutex);
-        if (g_lpQueue.empty()) { g_lpWorkerRunning = false; SDL_UnlockMutex(g_lpMutex); break; }
+        okay::thr::LockMutex(g_lpMutex);
+        if (g_lpQueue.empty()) { g_lpWorkerRunning = false; okay::thr::UnlockMutex(g_lpMutex); break; }
         url = g_lpQueue.front(); g_lpQueue.erase(g_lpQueue.begin());
-        SDL_UnlockMutex(g_lpMutex);
+        okay::thr::UnlockMutex(g_lpMutex);
         LinkPreview lp; lp.state = 2;
         // SSRF guard: never fetch a link whose host resolves to a private,
         // loopback or link-local address (chat links come from other people).
@@ -3262,32 +3308,32 @@ static int LinkPreviewWorker(void*) {
             }
 #endif
         }
-        SDL_LockMutex(g_lpMutex); g_linkPrev[url] = lp; SDL_UnlockMutex(g_lpMutex);
+        okay::thr::LockMutex(g_lpMutex); g_linkPrev[url] = lp; okay::thr::UnlockMutex(g_lpMutex);
     }
     return 0;
 }
 // The preview for `url` once it's ready (nullptr while loading / when there's none).
 static const LinkPreview* LinkPreviewFor(const std::string& url) {
     if (!g_linkPreviews || url.empty()) return nullptr;
-    if (!g_lpMutex) g_lpMutex = SDL_CreateMutex();
+    if (!g_lpMutex) g_lpMutex = okay::thr::CreateMutex();
     static std::map<std::string, LinkPreview> ready;   // UI-thread copy (stable pointers while drawing)
     if (auto it = ready.find(url); it != ready.end()) return it->second.state == 1 ? &it->second : nullptr;
-    SDL_LockMutex(g_lpMutex);
+    okay::thr::LockMutex(g_lpMutex);
     auto it = g_linkPrev.find(url);
     if (it == g_linkPrev.end()) {
         g_linkPrev[url] = LinkPreview{};
         g_lpQueue.push_back(url);
         const bool start = !g_lpWorkerRunning;
         if (start) g_lpWorkerRunning = true;
-        SDL_UnlockMutex(g_lpMutex);
+        okay::thr::UnlockMutex(g_lpMutex);
         if (start) {
-            if (SDL_Thread* t = SDL_CreateThread(LinkPreviewWorker, "okay-linkprev", nullptr)) SDL_DetachThread(t);
-            else { SDL_LockMutex(g_lpMutex); g_lpWorkerRunning = false; SDL_UnlockMutex(g_lpMutex); }
+            if (okay::thr::Thread* t = okay::thr::CreateThread(LinkPreviewWorker, "okay-linkprev", nullptr)) okay::thr::DetachThread(t);
+            else { okay::thr::LockMutex(g_lpMutex); g_lpWorkerRunning = false; okay::thr::UnlockMutex(g_lpMutex); }
         }
         return nullptr;
     }
     const LinkPreview lp = it->second;
-    SDL_UnlockMutex(g_lpMutex);
+    okay::thr::UnlockMutex(g_lpMutex);
     if (lp.state == 0) return nullptr;
     auto& r = ready[url] = lp;
     return r.state == 1 ? &r : nullptr;
@@ -3553,9 +3599,7 @@ SDL_Texture* GameCover(const std::string& gamePath) {
             int w = 0, h = 0;
             unsigned char* px = LoadRgbaFile(c.string(), &w, &h);
             if (!px) continue;
-            SDL_Surface* surf = SDL_CreateRGBSurfaceWithFormatFrom(
-                px, w, h, 32, w * 4, SDL_PIXELFORMAT_ABGR8888);
-            if (surf) { tex = SDL_CreateTextureFromSurface(g_renderer, surf); SDL_FreeSurface(surf); }
+            tex = TextureFromRgba(g_renderer, px, w, h);
             std::free(px);
             break;
         }
@@ -3585,7 +3629,7 @@ std::string* g_myAvatarSlot = nullptr;   // points at the Account card's cached 
 // Avatar downloads used to block the render thread (a freeze the first time a
 // friends/chat list showed uncached avatars). The network fetch now runs on a
 // detached worker; decode + GPU upload stay on the main thread (local, fast).
-static SDL_mutex*          g_avatarMutex = nullptr;   // guards the two sets below
+static okay::thr::Mutex*          g_avatarMutex = nullptr;   // guards the two sets below
 static std::set<std::string> g_avatarPending;         // URLs currently downloading
 static std::set<std::string> g_avatarFailed;          // URLs that failed (don't retry)
 struct AvatarDl { std::string url, path; };
@@ -3595,10 +3639,10 @@ static int AvatarDlWorker(void* p) {
     try { ok = Download(d->url, d->path); } catch (...) {}
     std::error_code ec;
     if (g_avatarMutex) {
-        SDL_LockMutex(g_avatarMutex);
+        okay::thr::LockMutex(g_avatarMutex);
         g_avatarPending.erase(d->url);
         if (!ok && !fs::exists(d->path, ec)) g_avatarFailed.insert(d->url);
-        SDL_UnlockMutex(g_avatarMutex);
+        okay::thr::UnlockMutex(g_avatarMutex);
     }
     delete d;
     return 0;
@@ -3619,24 +3663,23 @@ SDL_Texture* AvatarTexture(const std::string& url) {
         int w = 0, h = 0;
         unsigned char* px = LoadRgbaFile(cache.string(), &w, &h);
         if (px) {
-            SDL_Surface* s = SDL_CreateRGBSurfaceWithFormatFrom(px, w, h, 32, w * 4, SDL_PIXELFORMAT_ABGR8888);
-            if (s) { tex = SDL_CreateTextureFromSurface(g_renderer, s); SDL_FreeSurface(s); }
+            tex = TextureFromRgba(g_renderer, px, w, h);
             std::free(px);
         }
         if (tex) { g_avatarCache[url] = tex; return tex; }
     }
     // Not on disk yet (or a bad decode): fetch in the background once, and show
     // the coloured-initial fallback until it lands. Never block the UI.
-    if (!g_avatarMutex) g_avatarMutex = SDL_CreateMutex();
+    if (!g_avatarMutex) g_avatarMutex = okay::thr::CreateMutex();
     bool kick = false;
-    SDL_LockMutex(g_avatarMutex);
-    if (g_avatarFailed.count(url)) { SDL_UnlockMutex(g_avatarMutex); return nullptr; }
+    okay::thr::LockMutex(g_avatarMutex);
+    if (g_avatarFailed.count(url)) { okay::thr::UnlockMutex(g_avatarMutex); return nullptr; }
     if (!g_avatarPending.count(url)) { g_avatarPending.insert(url); kick = true; }
-    SDL_UnlockMutex(g_avatarMutex);
+    okay::thr::UnlockMutex(g_avatarMutex);
     if (kick) {
         AvatarDl* d = new AvatarDl{url, cache.string()};
-        if (SDL_Thread* t = SDL_CreateThread(AvatarDlWorker, "okay-avdl", d)) SDL_DetachThread(t);
-        else { SDL_LockMutex(g_avatarMutex); g_avatarPending.erase(url); SDL_UnlockMutex(g_avatarMutex); delete d; }
+        if (okay::thr::Thread* t = okay::thr::CreateThread(AvatarDlWorker, "okay-avdl", d)) okay::thr::DetachThread(t);
+        else { okay::thr::LockMutex(g_avatarMutex); g_avatarPending.erase(url); okay::thr::UnlockMutex(g_avatarMutex); delete d; }
     }
     return nullptr;
 }
@@ -3730,18 +3773,18 @@ static fs::path MediaCachePath(const std::string& url, const char* ext) {
 // Background download into `path` (shares the avatar downloader's bookkeeping).
 // 1 = on disk, 0 = downloading, -1 = failed.
 static int CachedFetch(const std::string& url, const fs::path& path) {
-    if (!g_avatarMutex) g_avatarMutex = SDL_CreateMutex();
-    SDL_LockMutex(g_avatarMutex);
+    if (!g_avatarMutex) g_avatarMutex = okay::thr::CreateMutex();
+    okay::thr::LockMutex(g_avatarMutex);
     const bool pending = g_avatarPending.count(url) != 0, failed = g_avatarFailed.count(url) != 0;
-    SDL_UnlockMutex(g_avatarMutex);
+    okay::thr::UnlockMutex(g_avatarMutex);
     if (pending) return 0;
     std::error_code ec;
     if (fs::exists(path, ec) && fs::file_size(path, ec) > 0) return 1;
     if (failed) return -1;
-    SDL_LockMutex(g_avatarMutex); g_avatarPending.insert(url); SDL_UnlockMutex(g_avatarMutex);
+    okay::thr::LockMutex(g_avatarMutex); g_avatarPending.insert(url); okay::thr::UnlockMutex(g_avatarMutex);
     AvatarDl* d = new AvatarDl{url, path.string()};
-    if (SDL_Thread* t = SDL_CreateThread(AvatarDlWorker, "okay-mediadl", d)) SDL_DetachThread(t);
-    else { SDL_LockMutex(g_avatarMutex); g_avatarPending.erase(url); SDL_UnlockMutex(g_avatarMutex); delete d; return -1; }
+    if (okay::thr::Thread* t = okay::thr::CreateThread(AvatarDlWorker, "okay-mediadl", d)) okay::thr::DetachThread(t);
+    else { okay::thr::LockMutex(g_avatarMutex); g_avatarPending.erase(url); okay::thr::UnlockMutex(g_avatarMutex); delete d; return -1; }
     return 0;
 }
 
@@ -3756,7 +3799,7 @@ static SDL_Texture* g_emojiSheets[2] = {nullptr, nullptr};
 #define g_emojiSheet g_emojiSheets[g_rslot]
 static int g_emojiSheetW = 0, g_emojiSheetH = 0;
 static int g_emojiState = 0;   // 0 idle, 1 downloading/parsing, 2 ready, -1 unavailable
-static SDL_mutex* g_emojiMutex = nullptr;
+static okay::thr::Mutex* g_emojiMutex = nullptr;
 static bool g_emojiParsed = false;   // (guarded) worker finished
 static unsigned char* g_emojiPixels = nullptr; static int g_emojiPxW = 0, g_emojiPxH = 0;   // (guarded)
 static std::vector<EmojiInfo> g_emojiParsedList;                  // (guarded)
@@ -3815,33 +3858,32 @@ static int EmojiParseWorker(void*) {
         });
         px = LoadRgbaFile(MediaCachePath(kEmojiSheetUrl, ".png").string(), &w, &h);
     } catch (...) {}
-    SDL_LockMutex(g_emojiMutex);
+    okay::thr::LockMutex(g_emojiMutex);
     g_emojiParsedList.swap(list); g_emojiParsedCells.swap(cells);
     g_emojiPixels = px; g_emojiPxW = w; g_emojiPxH = h; g_emojiParsed = true;
-    SDL_UnlockMutex(g_emojiMutex);
+    okay::thr::UnlockMutex(g_emojiMutex);
     return 0;
 }
 // Advance loading (call wherever emoji are drawn; cheap once ready).
 static void EmojiCatalogPump() {
     if (g_emojiState == 2 || g_emojiState == -1) return;
-    if (!g_emojiMutex) g_emojiMutex = SDL_CreateMutex();
+    if (!g_emojiMutex) g_emojiMutex = okay::thr::CreateMutex();
     if (g_emojiState == 0) {
         int a = CachedFetch(kEmojiJsonUrl, MediaCachePath(kEmojiJsonUrl, ".json"));
         int b = CachedFetch(kEmojiSheetUrl, MediaCachePath(kEmojiSheetUrl, ".png"));
         if (a < 0 || b < 0) { g_emojiState = -1; return; }
         if (a == 0 || b == 0) return;   // still downloading
         g_emojiState = 1;
-        if (SDL_Thread* t = SDL_CreateThread(EmojiParseWorker, "okay-emoji", nullptr)) SDL_DetachThread(t);
+        if (okay::thr::Thread* t = okay::thr::CreateThread(EmojiParseWorker, "okay-emoji", nullptr)) okay::thr::DetachThread(t);
         else g_emojiState = -1;
         return;
     }
-    SDL_LockMutex(g_emojiMutex);
+    okay::thr::LockMutex(g_emojiMutex);
     const bool done = g_emojiParsed;
-    SDL_UnlockMutex(g_emojiMutex);
+    okay::thr::UnlockMutex(g_emojiMutex);
     if (!done) return;
     if (g_emojiPixels && g_renderer && !g_emojiParsedCells.empty()) {
-        SDL_Surface* sf = SDL_CreateRGBSurfaceWithFormatFrom(g_emojiPixels, g_emojiPxW, g_emojiPxH, 32, g_emojiPxW * 4, SDL_PIXELFORMAT_ABGR8888);
-        if (sf) { g_emojiSheet = SDL_CreateTextureFromSurface(g_renderer, sf); SDL_FreeSurface(sf); }
+        g_emojiSheet = TextureFromRgba(g_renderer, (const unsigned char*)g_emojiPixels, g_emojiPxW, g_emojiPxH);
         g_emojiSheetW = g_emojiPxW; g_emojiSheetH = g_emojiPxH;
     }
     // (g_emojiPixels stay loaded: the chat window's renderer makes its own copy.)
@@ -3856,8 +3898,7 @@ static void EmojiCatalogPump() {
 // Draw sheet cell (sx,sy) into the square [c-s/2, c+s/2].
 static void DrawEmojiCell(ImDrawList* dl, ImVec2 c, float s, int sx, int sy) {
     if (!g_emojiSheet && g_emojiPixels && g_renderer) {   // first use on this renderer
-        SDL_Surface* sf = SDL_CreateRGBSurfaceWithFormatFrom(g_emojiPixels, g_emojiPxW, g_emojiPxH, 32, g_emojiPxW * 4, SDL_PIXELFORMAT_ABGR8888);
-        if (sf) { g_emojiSheet = SDL_CreateTextureFromSurface(g_renderer, sf); SDL_FreeSurface(sf); }
+        g_emojiSheet = TextureFromRgba(g_renderer, (const unsigned char*)g_emojiPixels, g_emojiPxW, g_emojiPxH);
     }
     if (!g_emojiSheet) return;
     const float u0 = (float)(sx * kEmojiStride + 1) / g_emojiSheetW, v0 = (float)(sy * kEmojiStride + 1) / g_emojiSheetH;
@@ -3903,7 +3944,7 @@ static SDL_Texture* ChatImageTexture(const std::string& url, int* w = nullptr, i
     if (url.empty() || !g_renderer) return nullptr;
     if (!IsGifUrl(url)) {
         SDL_Texture* t = AvatarTexture(url);
-        if (t && (w || h)) { int tw = 0, th = 0; SDL_QueryTexture(t, nullptr, nullptr, &tw, &th); if (w) *w = tw; if (h) *h = th; }
+        if (t && (w || h)) { int tw = 0, th = 0; okay::pb::QueryTexture(g_renderer, t, &tw, &th); if (w) *w = tw; if (h) *h = th; }
         return t;
     }
     auto it = g_animImages.find(url);
@@ -3931,10 +3972,7 @@ static SDL_Texture* ChatImageTexture(const std::string& url, int* w = nullptr, i
                     if (d < 20) d = 100;   // browsers treat 0-10ms frames as 100ms
                     acc += d;
                     if (i % step != 0 && i != frames - 1) continue;
-                    SDL_Surface* sf = SDL_CreateRGBSurfaceWithFormatFrom(const_cast<unsigned char*>(px) + (std::size_t)i * fw * fh * 4, fw, fh, 32, fw * 4, SDL_PIXELFORMAT_ABGR8888);
-                    if (!sf) continue;
-                    SDL_Texture* tx = SDL_CreateTextureFromSurface(g_renderer, sf);
-                    SDL_FreeSurface(sf);
+                    SDL_Texture* tx = TextureFromRgba(g_renderer, px + (std::size_t)i * fw * fh * 4, fw, fh);
                     if (!tx) continue;
                     a.frames.push_back(tx);
                     a.total += acc; a.ends.push_back(a.total); acc = 0;
@@ -3987,7 +4025,7 @@ static void DrawEmojiToken(ImDrawList* dl, ImVec2 c, float s, const std::string&
 }
 
 // ---- Custom emoji / sticker library (filled by workers defined later) ----------
-static SDL_mutex* g_libMutex = nullptr;
+static okay::thr::Mutex* g_libMutex = nullptr;
 static std::vector<okay::Messages::LibraryItem> g_libEmoji, g_libStickers;   // (guarded)
 static bool g_libLoaded = false, g_libBusy = false;                         // (guarded / UI)
 static std::string g_libStatus;                                              // (guarded) last upload result
@@ -3998,7 +4036,7 @@ static void LibraryDelete(const std::string& folder, const std::string& file);
 static std::string ExpandCustomEmoji(const std::string& text) {
     if (text.find(':') == std::string::npos) return text;
     std::vector<okay::Messages::LibraryItem> lib;
-    if (g_libMutex) { SDL_LockMutex(g_libMutex); lib = g_libEmoji; SDL_UnlockMutex(g_libMutex); }
+    if (g_libMutex) { okay::thr::LockMutex(g_libMutex); lib = g_libEmoji; okay::thr::UnlockMutex(g_libMutex); }
     if (lib.empty()) return text;
     std::string out;
     std::size_t i = 0;
@@ -4020,7 +4058,7 @@ static std::string ExpandCustomEmoji(const std::string& text) {
 // ---- GIF search (Tenor) -----------------------------------------------------------
 std::string g_tenorKey;            // persisted (tenor_key=); empty = search off
 struct GifResult { std::string preview, full, desc; int w = 0, h = 0; };
-static SDL_mutex* g_gifMutex = nullptr;
+static okay::thr::Mutex* g_gifMutex = nullptr;
 static std::vector<GifResult> g_gifResults;   // (guarded)
 static bool g_gifBusy = false, g_gifReady = false;
 static std::string g_gifError;                // (guarded)
@@ -4136,9 +4174,9 @@ static std::string ChatMediaPicker(const char* id, char* buf, std::size_t cap,
         };
         std::vector<okay::Messages::LibraryItem> libEmoji, libStickers; bool libLoaded = false; std::string libStatus;
         if (g_libMutex) {
-            SDL_LockMutex(g_libMutex);
+            okay::thr::LockMutex(g_libMutex);
             libEmoji = g_libEmoji; libStickers = g_libStickers; libLoaded = g_libLoaded; libStatus = g_libStatus;
-            SDL_UnlockMutex(g_libMutex);
+            okay::thr::UnlockMutex(g_libMutex);
         }
 
         if (tab == 0) {   // ---------------- Emoji ----------------
@@ -4278,7 +4316,7 @@ static std::string ChatMediaPicker(const char* id, char* buf, std::size_t cap,
             ImGui::TextDisabled("%s", hoverName.empty() ? (libStatus.empty() ? "Pick an emoji" : libStatus.c_str()) : hoverName.c_str());
         } else if (tab == 1) {   // ---------------- GIFs ----------------
             std::vector<GifResult> res; bool busy = g_gifBusy; std::string gerr;
-            if (g_gifMutex) { SDL_LockMutex(g_gifMutex); res = g_gifResults; gerr = g_gifError; SDL_UnlockMutex(g_gifMutex); }
+            if (g_gifMutex) { okay::thr::LockMutex(g_gifMutex); res = g_gifResults; gerr = g_gifError; okay::thr::UnlockMutex(g_gifMutex); }
             if (!g_tenorKey.empty()) {
                 if (searchPill("##gsearch", "Search GIFs (Enter)", gifQuery, sizeof(gifQuery))) GifSearch(gifQuery);
             }
@@ -4675,7 +4713,7 @@ static void OkayUIFrameBegin() {
     ImGuiIO& io = ImGui::GetIO();
     g_okayRegion.NextFrame();
     int mx = 0, my = 0;
-    const Uint32 mb = SDL_GetMouseState(&mx, &my);
+    const Uint32 mb = okay::platform::Default() ? okay::platform::Default()->MouseState(&mx, &my) : 0;   // MouseMask bits (button 1 = bit 0, as SDL_BUTTON)
     const bool blocked = io.WantCaptureMouse && !g_okayRegion.Owns((float)mx, (float)my);
     const bool keys = OkayUI::WantsTextInput() && ImGui::GetActiveID() == 0;   // an ImGui field being pressed or typed in keeps the keys
     OkayUI::BeginFrame(g_okayInput.Build((float)mx, (float)my, (mb & SDL_BUTTON(SDL_BUTTON_LEFT)) != 0,
@@ -4686,7 +4724,7 @@ static void OkayUIClaimKeyboard() {
     if (!OkayUI::WantsTextInput()) return;
     GImGui->PlatformImeData.WantTextInput = true;
     ImGui::SetNextFrameWantCaptureKeyboard(true);
-    SDL_StartTextInput();
+    if (okay::platform::Default()) okay::platform::Default()->StartTextInput();
 }
 #endif
 
@@ -5175,7 +5213,7 @@ static std::string ChatPreviewSmart(const std::string& body, std::size_t n) {
 // uploads to Storage and then sends the message; the composer shows progress.
 static volatile bool g_attBusy = false;   // an upload is in flight
 static std::string   g_attName;           // file being uploaded (composer status)
-static SDL_mutex*    g_attMutex = nullptr;
+static okay::thr::Mutex*    g_attMutex = nullptr;
 static bool          g_attDone = false;   // (guarded) finished -> toast result
 static std::string   g_attError;          // (guarded) "" on success
 static void StartChatUpload(const std::string& path, const std::string& toUid, long toGroup,
@@ -5206,7 +5244,11 @@ static std::string VoiceMessageBody(int secs, const std::string& url) { return "
 
 static bool EnsureAudio() {
     static int state = 0;   // 0 untried, 1 ok, -1 unavailable
-    if (state == 0) state = SDL_InitSubSystem(SDL_INIT_AUDIO) == 0 ? 1 : -1;
+    if (state == 0) {
+        okay::platform::InitFlags af; af.video = false; af.audio = true; af.gamepad = false;
+        okay::platform::Backend* ab = okay::platform::Default();
+        state = (ab && ab->Init(af)) ? 1 : -1;   // starts the audio subsystem on top of what main() already started (shut down with it)
+    }
     return state == 1;
 }
 
@@ -5410,10 +5452,10 @@ static fs::path VoiceCachePath(const std::string& url) {
 static VoiceClip* VoiceClipFor(const std::string& url) {
     auto it = g_voiceClips.find(url);
     if (it != g_voiceClips.end()) return &it->second;
-    if (!g_avatarMutex) g_avatarMutex = SDL_CreateMutex();
-    SDL_LockMutex(g_avatarMutex);
+    if (!g_avatarMutex) g_avatarMutex = okay::thr::CreateMutex();
+    okay::thr::LockMutex(g_avatarMutex);
     const bool pending = g_avatarPending.count(url) != 0, failed = g_avatarFailed.count(url) != 0;
-    SDL_UnlockMutex(g_avatarMutex);
+    okay::thr::UnlockMutex(g_avatarMutex);
     if (pending) return nullptr;
     fs::path cache = VoiceCachePath(url);
     std::error_code ec;
@@ -5452,10 +5494,10 @@ static VoiceClip* VoiceClipFor(const std::string& url) {
         }
         return &c;
     }
-    SDL_LockMutex(g_avatarMutex); g_avatarPending.insert(url); SDL_UnlockMutex(g_avatarMutex);
+    okay::thr::LockMutex(g_avatarMutex); g_avatarPending.insert(url); okay::thr::UnlockMutex(g_avatarMutex);
     AvatarDl* d = new AvatarDl{url, cache.string()};
-    if (SDL_Thread* t = SDL_CreateThread(AvatarDlWorker, "okay-voicedl", d)) SDL_DetachThread(t);
-    else { SDL_LockMutex(g_avatarMutex); g_avatarPending.erase(url); SDL_UnlockMutex(g_avatarMutex); delete d; }
+    if (okay::thr::Thread* t = okay::thr::CreateThread(AvatarDlWorker, "okay-voicedl", d)) okay::thr::DetachThread(t);
+    else { okay::thr::LockMutex(g_avatarMutex); g_avatarPending.erase(url); okay::thr::UnlockMutex(g_avatarMutex); delete d; }
     return nullptr;
 }
 static void StopVoice() {
@@ -5753,7 +5795,7 @@ static std::string g_pollCfgDir, g_pollUrl, g_pollKey;   // account config for w
 static int  g_blocksSupport = 0;          // 0 unknown, 1 the server has the table, 2 SQL not run
 static std::string g_blocksNote;          // last problem, shown under the Blocked list
 static volatile bool g_blkWant = false, g_blkBusy = false, g_blkUserAction = false;
-static SDL_mutex* g_blkMutex = nullptr;
+static okay::thr::Mutex* g_blkMutex = nullptr;
 struct BlkJob { std::string user; std::vector<okay::privacy::PendingOp> ops; bool userAction = false; };
 struct BlkResult {
     bool ready = false, fetched = false, userAction = false, offline = false;
@@ -5786,7 +5828,7 @@ static int BlocksWorker(void* p) {
             else { res.message = r.message; if (r.missing) res.support = 2; else if (r.offline) res.offline = true; }
         }
     } catch (...) { res.message = "Could not reach the server."; res.offline = true; }
-    SDL_LockMutex(g_blkMutex); g_blkRes = std::move(res); g_blkRes.ready = true; SDL_UnlockMutex(g_blkMutex);
+    okay::thr::LockMutex(g_blkMutex); g_blkRes = std::move(res); g_blkRes.ready = true; okay::thr::UnlockMutex(g_blkMutex);
     g_blkBusy = false;
     return 0;
 }
@@ -5802,11 +5844,11 @@ static void SetBlocked(const std::string& uid, const std::string& name, bool blo
 // Call every frame. Drains the worker result and starts a sync when one is due:
 // at sign-in, after a change, every minute while changes are unsent, else every 10.
 static void PumpBlocks(okay::account::AccountService& account) {
-    if (!g_blkMutex) g_blkMutex = SDL_CreateMutex();
+    if (!g_blkMutex) g_blkMutex = okay::thr::CreateMutex();
     BlkResult res; bool have = false;
-    SDL_LockMutex(g_blkMutex);
+    okay::thr::LockMutex(g_blkMutex);
     if (g_blkRes.ready) { res = std::move(g_blkRes); g_blkRes = BlkResult(); have = true; }
-    SDL_UnlockMutex(g_blkMutex);
+    okay::thr::UnlockMutex(g_blkMutex);
     const std::string user = account.IsLoggedIn() ? account.CurrentSession().username : std::string();
     if (have && res.user == user) {
         for (const auto& d : res.done)
@@ -5855,7 +5897,7 @@ static void PumpBlocks(okay::account::AccountService& account) {
             if (!queued) { auto it = g_blockedNames.find(uid); job->ops.push_back({uid, it != g_blockedNames.end() ? it->second : std::string(), true}); }
         }
     g_blkBusy = true;
-    if (SDL_Thread* t = SDL_CreateThread(BlocksWorker, "okay-blocks", job)) SDL_DetachThread(t);
+    if (okay::thr::Thread* t = okay::thr::CreateThread(BlocksWorker, "okay-blocks", job)) okay::thr::DetachThread(t);
     else { g_blkBusy = false; delete job; }
 }
 
@@ -5866,7 +5908,7 @@ static int  g_privSupport = 0;            // 0 unknown, 1 saved on the server, 2
 static std::string g_privNote;            // last problem, shown under the settings
 static volatile bool g_privDirty = false, g_privBusy = false;
 struct PrivResult { bool ready = false, fetched = false, saved = false, offline = false; int support = 0; std::string user, message; okay::privacy::Settings s; };
-static PrivResult g_privRes; static SDL_mutex* g_privMutex = nullptr;
+static PrivResult g_privRes; static okay::thr::Mutex* g_privMutex = nullptr;
 struct PrivJob { std::string user; okay::privacy::Settings local; bool save = false; };
 static okay::privacy::Settings CurrentPrivacy() { return {g_dmFrom, g_profileVis, g_onlineVis, g_friendReqs, g_callsFrom}; }
 static void MarkPrivacyChanged() { g_privDirty = true; SavePrefs(); }
@@ -5886,16 +5928,16 @@ static int PrivacyWorker(void* p) {
         res.support = r.ok ? 1 : r.missing ? 2 : 0; res.offline = r.offline;
         if (!r.ok) res.message = r.message;
     } catch (...) { res.offline = true; res.message = "Could not reach the server."; }
-    SDL_LockMutex(g_privMutex); g_privRes = std::move(res); g_privRes.ready = true; SDL_UnlockMutex(g_privMutex);
+    okay::thr::LockMutex(g_privMutex); g_privRes = std::move(res); g_privRes.ready = true; okay::thr::UnlockMutex(g_privMutex);
     g_privBusy = false;
     return 0;
 }
 static void PumpPrivacy(okay::account::AccountService& account) {
-    if (!g_privMutex) g_privMutex = SDL_CreateMutex();
+    if (!g_privMutex) g_privMutex = okay::thr::CreateMutex();
     PrivResult res; bool have = false;
-    SDL_LockMutex(g_privMutex);
+    okay::thr::LockMutex(g_privMutex);
     if (g_privRes.ready) { res = std::move(g_privRes); g_privRes = PrivResult(); have = true; }
-    SDL_UnlockMutex(g_privMutex);
+    okay::thr::UnlockMutex(g_privMutex);
     const std::string user = account.IsLoggedIn() ? account.CurrentSession().username : std::string();
     static std::string syncedUser; static Uint32 retryAt = 0;
     if (have && res.user == user) {
@@ -5915,7 +5957,7 @@ static void PumpPrivacy(okay::account::AccountService& account) {
     if (!initial && !g_privDirty) return;
     auto* job = new PrivJob; job->user = user; job->local = CurrentPrivacy(); job->save = !initial || g_privDirty;   // a change made before the first sync wins over the server row
     g_privDirty = false; retryAt = 0; g_privBusy = true;
-    if (SDL_Thread* t = SDL_CreateThread(PrivacyWorker, "okay-privacy", job)) SDL_DetachThread(t);
+    if (okay::thr::Thread* t = okay::thr::CreateThread(PrivacyWorker, "okay-privacy", job)) okay::thr::DetachThread(t);
     else { g_privBusy = false; g_privDirty = true; delete job; }
 }
 // ---- Sending crash reports (docs/crash_reports.md, shared/CrashUpload.hpp) ----
@@ -5925,7 +5967,7 @@ static void PumpPrivacy(okay::account::AccountService& account) {
 // the reports. State is touched on the UI thread only; the worker hands its answer over under g_crashUpMutex.
 static std::string g_crashUpNote;                        // the last result, one plain sentence, shown on the Crash reports page
 static volatile bool g_crashUpBusy = false;
-static SDL_mutex* g_crashUpMutex = nullptr;
+static okay::thr::Mutex* g_crashUpMutex = nullptr;
 struct CrashUpJob { std::vector<okaycrash::Report> reports; std::string ledgerPath; okaycrash::ScrubContext ctx; std::string nowLocal; };
 struct CrashUpResult { bool ready = false; std::string note; int sent = 0; };
 static CrashUpResult g_crashUpRes;
@@ -5962,19 +6004,19 @@ static int CrashUploadWorker(void* p) {
             res.sent = out.sent + out.duplicates;
         }
     } catch (...) { res.note = "Could not send crash reports."; }
-    SDL_LockMutex(g_crashUpMutex); g_crashUpRes = std::move(res); g_crashUpRes.ready = true; SDL_UnlockMutex(g_crashUpMutex);
+    okay::thr::LockMutex(g_crashUpMutex); g_crashUpRes = std::move(res); g_crashUpRes.ready = true; okay::thr::UnlockMutex(g_crashUpMutex);
     g_crashUpBusy = false;
     return 0;
 }
 static void PumpCrashUpload() {
-    if (!g_crashUpMutex) g_crashUpMutex = SDL_CreateMutex();
-    SDL_LockMutex(g_crashUpMutex);
+    if (!g_crashUpMutex) g_crashUpMutex = okay::thr::CreateMutex();
+    okay::thr::LockMutex(g_crashUpMutex);
     if (g_crashUpRes.ready) {
         g_crashUpNote = g_crashUpRes.note;
         if (g_crashUpRes.sent > 0) Toast("Crash report sent. Thank you.", 1);
         g_crashUpRes = CrashUpResult();
     }
-    SDL_UnlockMutex(g_crashUpMutex);
+    okay::thr::UnlockMutex(g_crashUpMutex);
     static Uint32 next = 0;
     const Uint32 now = okay::platform::TicksMs32();
     if (g_crashUpBusy || (now < next && !g_crashUpResetSince)) return;
@@ -6015,11 +6057,11 @@ static void PumpCrashUpload() {
     job->ctx = okaycrash::LocalContext();
     job->nowLocal = LocalNowText();
     g_crashUpBusy = true;
-    if (SDL_Thread* t = SDL_CreateThread(CrashUploadWorker, "okay-crashup", job)) SDL_DetachThread(t);
+    if (okay::thr::Thread* t = okay::thr::CreateThread(CrashUploadWorker, "okay-crashup", job)) okay::thr::DetachThread(t);
     else { g_crashUpBusy = false; delete job; }
 }
-static SDL_mutex*  g_chatMutex = nullptr;
-static SDL_Thread* g_chatThread = nullptr;
+static okay::thr::Mutex*  g_chatMutex = nullptr;
+static okay::thr::Thread* g_chatThread = nullptr;
 static volatile bool g_chatPollRun = true;
 static volatile bool g_chatPeerTyping = false;
 static volatile bool g_chatForceLog = false;   // a send/edit/react asks for an immediate re-poll
@@ -6034,7 +6076,7 @@ struct OutMsg {
     std::string err;          // why it failed, when the server said (e.g. a privacy rule: "This person does not accept messages from you.")
     long when = 0; Uint32 sentAt = 0;
 };
-static SDL_mutex* g_outMutex = nullptr;
+static okay::thr::Mutex* g_outMutex = nullptr;
 static std::vector<OutMsg> g_outbox;   // (guarded)
 static bool g_outWorkerRunning = false; // (guarded)
 static long g_outNextId = 1;
@@ -6042,11 +6084,11 @@ static volatile bool g_srvForce = false; // Servers poller: refresh now (set aft
 static void OutboxKick();               // starts the sender thread (defined with the chat workers)
 static void OutboxSend(const std::string& toUid, long toGroup, const std::string& body, long replyTo = 0, long toChannel = 0) {
     if (body.empty()) return;
-    if (!g_outMutex) g_outMutex = SDL_CreateMutex();
+    if (!g_outMutex) g_outMutex = okay::thr::CreateMutex();
     OutMsg o; o.localId = g_outNextId++; o.toUid = toUid; o.toGroup = toGroup; o.toChannel = toChannel;
     o.body = body; o.replyTo = replyTo;
     o.when = (long)std::time(nullptr);
-    SDL_LockMutex(g_outMutex); g_outbox.push_back(o); SDL_UnlockMutex(g_outMutex);
+    okay::thr::LockMutex(g_outMutex); g_outbox.push_back(o); okay::thr::UnlockMutex(g_outMutex);
     OutboxKick();
 }
 // Server channel replies and threads ride in the message text (the table has
@@ -6090,7 +6132,7 @@ static int ChatPinWorker(void* p) {
 }
 static void ChatPinAsync(bool group, long id, bool on) {
     auto* j = new ChatPinJob{group, id, on};
-    if (SDL_Thread* t = SDL_CreateThread(ChatPinWorker, "okay-pin", j)) SDL_DetachThread(t);
+    if (okay::thr::Thread* t = okay::thr::CreateThread(ChatPinWorker, "okay-pin", j)) okay::thr::DetachThread(t);
     else delete j;
 }
 static bool ChatIsPinned(bool group, long id) { return (group ? g_pinsGroup : g_pinsDm).count(id) != 0; }
@@ -6497,7 +6539,7 @@ static void SetMyStatus(const std::string& text, long until) {
     if (ChatDemo()) return;
     g_statusBusy = true;
     auto* s = new std::string(text);
-    if (SDL_Thread* t = SDL_CreateThread(StatusSaveWorker, "okay-status", s)) SDL_DetachThread(t);
+    if (okay::thr::Thread* t = okay::thr::CreateThread(StatusSaveWorker, "okay-status", s)) okay::thr::DetachThread(t);
     else { delete s; g_statusBusy = false; }
 }
 // Once a frame (main loop): learn my status once after sign-in, clear it when due.
@@ -6508,7 +6550,7 @@ static void PumpStatus(bool signedIn) {
         if (okay::platform::TicksMs32() >= nextTry) {
             nextTry = okay::platform::TicksMs32() + 30000;
             g_statusBusy = true;
-            if (SDL_Thread* t = SDL_CreateThread(StatusFetchWorker, "okay-statusget", nullptr)) SDL_DetachThread(t);
+            if (okay::thr::Thread* t = okay::thr::CreateThread(StatusFetchWorker, "okay-statusget", nullptr)) okay::thr::DetachThread(t);
             else g_statusBusy = false;
         }
     }
@@ -6595,7 +6637,7 @@ static void DrawStatusDialog(bool& req) {
 }
 
 // ---- Search across every chat --------------------------------------------------
-static SDL_mutex* g_srchMutex = nullptr;
+static okay::thr::Mutex* g_srchMutex = nullptr;
 static volatile bool g_srchBusy = false;
 static std::string g_srchQuery;                                    // (guarded) what the results are for
 static std::vector<okay::Messages::SearchHit> g_srchHits;          // (guarded)
@@ -6607,18 +6649,18 @@ static int ChatSearchWorker(void* p) {
         okay::account::AccountService a(fs::path(g_pollCfgDir), g_pollUrl, g_pollKey);
         hits = okay::Messages(a).Search(*q, 40);
     } catch (...) {}
-    SDL_LockMutex(g_srchMutex);
+    okay::thr::LockMutex(g_srchMutex);
     g_srchQuery = *q; g_srchHits = std::move(hits); g_srchReady = true;
-    SDL_UnlockMutex(g_srchMutex);
+    okay::thr::UnlockMutex(g_srchMutex);
     g_srchBusy = false;
     return 0;
 }
 static void ChatSearchStart(const std::string& q) {
-    if (!g_srchMutex) g_srchMutex = SDL_CreateMutex();
+    if (!g_srchMutex) g_srchMutex = okay::thr::CreateMutex();
     if (g_srchBusy) return;
     g_srchBusy = true;
     auto* s = new std::string(q);
-    if (SDL_Thread* t = SDL_CreateThread(ChatSearchWorker, "okay-chatsearch", s)) SDL_DetachThread(t);
+    if (okay::thr::Thread* t = okay::thr::CreateThread(ChatSearchWorker, "okay-chatsearch", s)) okay::thr::DetachThread(t);
     else { delete s; g_srchBusy = false; }
 }
 
@@ -6730,27 +6772,27 @@ static void OutboxSendChannel(long channelId, const std::string& body) { OutboxS
 static std::vector<OutMsg> OutboxForChannel(long channelId, const std::function<bool(const std::string&, long)>& inLog) {
     std::vector<OutMsg> pend;
     if (!g_outMutex || channelId <= 0) return pend;
-    SDL_LockMutex(g_outMutex);
+    okay::thr::LockMutex(g_outMutex);
     const Uint32 now = okay::platform::TicksMs32();
     g_outbox.erase(std::remove_if(g_outbox.begin(), g_outbox.end(), [&](const OutMsg& o) {
         return o.toChannel == channelId && o.state == 1 && (inLog(o.body, o.when) || now - o.sentAt > 15000);
     }), g_outbox.end());
     for (const auto& o : g_outbox) if (o.toChannel == channelId) pend.push_back(o);
-    SDL_UnlockMutex(g_outMutex);
+    okay::thr::UnlockMutex(g_outMutex);
     return pend;
 }
 static void OutboxRetry(long localId) {
     if (!g_outMutex) return;
-    SDL_LockMutex(g_outMutex);
+    okay::thr::LockMutex(g_outMutex);
     for (auto& x : g_outbox) if (x.localId == localId) x.state = 0;
-    SDL_UnlockMutex(g_outMutex);
+    okay::thr::UnlockMutex(g_outMutex);
     OutboxKick();
 }
 static void OutboxDiscard(long localId) {
     if (!g_outMutex) return;
-    SDL_LockMutex(g_outMutex);
+    okay::thr::LockMutex(g_outMutex);
     g_outbox.erase(std::remove_if(g_outbox.begin(), g_outbox.end(), [&](const OutMsg& x) { return x.localId == localId; }), g_outbox.end());
-    SDL_UnlockMutex(g_outMutex);
+    okay::thr::UnlockMutex(g_outMutex);
 }
 // Draw my pending messages for one conversation (right-aligned, after the log)
 // and drop the ones the log now contains. inLog(body, when) says whether the
@@ -6759,13 +6801,13 @@ static int DrawOutbox(const std::string& uid, long gid, float avW, float baseX, 
                       const std::function<bool(const std::string&, long)>& inLog) {
     if (!g_outMutex) return 0;
     std::vector<OutMsg> pend;
-    SDL_LockMutex(g_outMutex);
+    okay::thr::LockMutex(g_outMutex);
     const Uint32 now = okay::platform::TicksMs32();
     g_outbox.erase(std::remove_if(g_outbox.begin(), g_outbox.end(), [&](const OutMsg& o) {
         return o.toChannel == 0 && o.state == 1 && (inLog(o.body, o.when) || now - o.sentAt > 15000);
     }), g_outbox.end());
     for (const auto& o : g_outbox) if (o.toChannel == 0 && o.toGroup == gid && (gid > 0 || o.toUid == uid)) pend.push_back(o);
-    SDL_UnlockMutex(g_outMutex);
+    okay::thr::UnlockMutex(g_outMutex);
     const float padX = 14.0f, padY = 8.0f;
     for (const auto& o : pend) {
         const float bubbleMax = std::min(avW * 0.72f, 460.0f);
@@ -6792,16 +6834,16 @@ static int DrawOutbox(const std::string& uid, long gid, float avW, float baseX, 
             ImGui::TextColored(ImVec4(1.0f, 0.70f, 0.70f, 1.0f), "%s", status);
             ImGui::SameLine(0, 8);
             if (ImGui::SmallButton("Retry")) {
-                SDL_LockMutex(g_outMutex);
+                okay::thr::LockMutex(g_outMutex);
                 for (auto& x : g_outbox) if (x.localId == o.localId) x.state = 0;
-                SDL_UnlockMutex(g_outMutex);
+                okay::thr::UnlockMutex(g_outMutex);
                 OutboxKick();
             }
             ImGui::SameLine(0, 4);
             if (ImGui::SmallButton("Discard")) {
-                SDL_LockMutex(g_outMutex);
+                okay::thr::LockMutex(g_outMutex);
                 g_outbox.erase(std::remove_if(g_outbox.begin(), g_outbox.end(), [&](const OutMsg& x) { return x.localId == o.localId; }), g_outbox.end());
-                SDL_UnlockMutex(g_outMutex);
+                okay::thr::UnlockMutex(g_outMutex);
             }
             if (!o.err.empty()) {   // the server said why (e.g. "This person does not accept messages from you.")
                 ImGui::PushTextWrapPos(0.0f);
@@ -7230,7 +7272,7 @@ struct ModBanList {
     long cid = 0; bool loaded = false, inflight = false; Uint32 nextAt = 0;
     std::vector<mm::BanEntry> list; std::string problem;   // problem: why the list could not load ("" = fine)
 };
-static SDL_mutex* g_modMu = nullptr;
+static okay::thr::Mutex* g_modMu = nullptr;
 static std::vector<ModResult> g_modDone;          // (guarded)
 static ModBanList g_modBans[2];                   // by scope; main thread only
 static int ModIdx(mm::Scope s) { return s == mm::Scope::Server ? 0 : 1; }
@@ -7260,12 +7302,12 @@ static int ModWorker(void* p) {
             }
         }
     } catch (...) { r.out.status = mm::Status::Offline; r.out.message = "Couldn't reach the server. Nothing was changed."; }
-    if (g_modMu) { SDL_LockMutex(g_modMu); g_modDone.push_back(std::move(r)); SDL_UnlockMutex(g_modMu); }
+    if (g_modMu) { okay::thr::LockMutex(g_modMu); g_modDone.push_back(std::move(r)); okay::thr::UnlockMutex(g_modMu); }
     return 0;
 }
 static void ModStart(ModJob* j) {
-    if (!g_modMu) g_modMu = SDL_CreateMutex();
-    if (SDL_Thread* t = SDL_CreateThread(ModWorker, "okay-modmember", j)) SDL_DetachThread(t);
+    if (!g_modMu) g_modMu = okay::thr::CreateMutex();
+    if (okay::thr::Thread* t = okay::thr::CreateThread(ModWorker, "okay-modmember", j)) okay::thr::DetachThread(t);
     else delete j;
 }
 static void ModAction(mm::Scope sc, long cid, const mm::Request& req, const std::string& what) {
@@ -7285,11 +7327,11 @@ static void ModFetchBans(mm::Scope sc, long cid) {
 static bool ModDrain(mm::Scope sc) {
     std::vector<ModResult> mine;
     if (g_modMu) {
-        SDL_LockMutex(g_modMu);
+        okay::thr::LockMutex(g_modMu);
         for (auto it = g_modDone.begin(); it != g_modDone.end();) {
             if (it->scope == sc) { mine.push_back(std::move(*it)); it = g_modDone.erase(it); } else ++it;
         }
-        SDL_UnlockMutex(g_modMu);
+        okay::thr::UnlockMutex(g_modMu);
     }
     bool changed = false;
     for (auto& r : mine) {
@@ -7939,7 +7981,7 @@ static void DrawGroupConversation(
         else RenderChatBody(mb, ImGui::GetContentRegionAvail().x);
         if (!imgUrl.empty()) {   // inline preview of an image link (click: full size)
             if (SDL_Texture* it = ChatImageTexture(imgUrl)) {
-                int iw = 0, ih = 0; SDL_QueryTexture(it, nullptr, nullptr, &iw, &ih);
+                int iw = 0, ih = 0; okay::pb::QueryTexture(g_renderer, it, &iw, &ih);
                 const float availW = ImGui::GetContentRegionAvail().x;
                 float w = (iw > 0 && iw > availW) ? availW : (float)iw; if (w < 1) w = availW;
                 float h = (iw > 0) ? w * (float)ih / (float)iw : w * 0.6f;
@@ -8353,7 +8395,7 @@ static void VoicePump() {
 
 // Background ringer: recent call messages sent to me (every 3 s while signed in).
 struct CallSig { okay::Messages::CallSignal s; std::string name, avatar; };
-static SDL_mutex* g_callSigMutex = nullptr;
+static okay::thr::Mutex* g_callSigMutex = nullptr;
 static std::vector<CallSig> g_callSigs;     // (guarded)
 static bool g_callSigReady = false;         // (guarded)
 static volatile bool g_callPollRun = true;
@@ -8385,7 +8427,7 @@ static int CallPollWorker(void*) {
                     c.name = it->second.first; c.avatar = it->second.second;
                     out.push_back(c);
                 }
-                SDL_LockMutex(g_callSigMutex); g_callSigs = std::move(out); g_callSigReady = true; SDL_UnlockMutex(g_callSigMutex);
+                okay::thr::LockMutex(g_callSigMutex); g_callSigs = std::move(out); g_callSigReady = true; okay::thr::UnlockMutex(g_callSigMutex);
             }
         } catch (...) {}
         for (int i = 0; i < 15 && g_callPollRun; ++i) okay::platform::DelayMs(200);
@@ -8396,9 +8438,9 @@ static int CallPollWorker(void*) {
 static void VoiceHandleSignals() {
     if (!g_callSigMutex) return;
     std::vector<CallSig> sigs;
-    SDL_LockMutex(g_callSigMutex);
+    okay::thr::LockMutex(g_callSigMutex);
     if (g_callSigReady) { sigs = g_callSigs; g_callSigReady = false; }
-    SDL_UnlockMutex(g_callSigMutex);
+    okay::thr::UnlockMutex(g_callSigMutex);
     if (sigs.empty()) return;
     std::set<std::string> ended;
     for (const auto& c : sigs) { CallBody b = ParseCallBody(c.s.body); if (b.kind == 2) ended.insert(b.code); }
@@ -8617,9 +8659,9 @@ void DrawChatWindow(okay::account::AccountService& account) {
     // Report a finished background attachment upload (success or why it failed).
     if (g_attMutex) {
         std::string upErr; bool upFinished = false;
-        SDL_LockMutex(g_attMutex);
+        okay::thr::LockMutex(g_attMutex);
         if (g_attDone) { upFinished = true; upErr = g_attError; g_attDone = false; }
-        SDL_UnlockMutex(g_attMutex);
+        okay::thr::UnlockMutex(g_attMutex);
         if (upFinished) Toast(upErr.empty() ? "Sent " + g_attName : upErr, upErr.empty() ? 1 : 2);
     }
     PumpVoiceRecord();
@@ -8807,7 +8849,7 @@ void DrawChatWindow(okay::account::AccountService& account) {
                 add(14, "[Sticker] https://cdn.jsdelivr.net/gh/jdecked/twemoji@15.1.0/assets/72x72/1f996.png", 20, true);
                 std::string ce = "launch day <:rocketship:" + rocket + "> let's go";
                 add(15, ce.c_str(), 10, false);
-                if (!g_libMutex) g_libMutex = SDL_CreateMutex();
+                if (!g_libMutex) g_libMutex = okay::thr::CreateMutex();
                 okay::Messages::LibraryItem li; li.name = "rocketship"; li.file = "rocketship.png"; li.url = rocket;
                 g_libEmoji.push_back(li);
                 okay::Messages::LibraryItem ls; ls.name = "dino"; ls.file = "dino.png";
@@ -8955,7 +8997,7 @@ void DrawChatWindow(okay::account::AccountService& account) {
         (void)friendsNext; (void)convsNext;
         bool chatNewsCheck = false;
         if (g_chatMutex && !kChatDemo) {
-            SDL_LockMutex(g_chatMutex);
+            okay::thr::LockMutex(g_chatMutex);
             if (g_chatFriReady)  {
                 friends = g_chatFriends; g_chatFriReady = false;
                 g_friendUids.clear();
@@ -8966,12 +9008,12 @@ void DrawChatWindow(okay::account::AccountService& account) {
             if (g_chatGLogReady) { glog = g_chatGLog; greacts = g_chatGReacts; gmyreacts = g_chatGMyReacts; g_chatGLogReady = false; }
             std::map<long, long> pinsD, pinsG; bool pinsSup = true, pinsIn = false;
             if (g_chatPinsReady) { pinsD = g_chatPinsDmIn; pinsG = g_chatPinsGroupIn; pinsSup = g_chatPinsSupported; pinsIn = true; g_chatPinsReady = false; }
-            SDL_UnlockMutex(g_chatMutex);
+            okay::thr::UnlockMutex(g_chatMutex);
             if (pinsIn) ChatApplyPolledPins(pinsD, pinsG, pinsSup);
             if (g_chatGMembersReady) {   // (already unlocked: re-lock briefly)
-                SDL_LockMutex(g_chatMutex);
+                okay::thr::LockMutex(g_chatMutex);
                 if (g_chatGMembersReady) { g_groupMembers = g_chatGMembersIn; g_groupMembersFor = g_chatGMembersInFor; g_chatGMembersReady = false; }
-                SDL_UnlockMutex(g_chatMutex);
+                okay::thr::UnlockMutex(g_chatMutex);
             }
         }
 
@@ -9449,9 +9491,9 @@ void DrawChatWindow(okay::account::AccountService& account) {
             } else {
                 if (requested != q && !g_srchBusy && now - typedAt > 350) { requested = q; ChatSearchStart(q); }
                 if (g_srchMutex) {
-                    SDL_LockMutex(g_srchMutex);
+                    okay::thr::LockMutex(g_srchMutex);
                     if (g_srchReady) { hits = g_srchHits; resultsFor = g_srchQuery; g_srchReady = false; }
-                    SDL_UnlockMutex(g_srchMutex);
+                    okay::thr::UnlockMutex(g_srchMutex);
                 }
             }
             ImGui::Dummy(ImVec2(0, 6));
@@ -9921,7 +9963,7 @@ void DrawChatWindow(okay::account::AccountService& account) {
             // worker which conversation is open and read what it has published.
             (void)logNext; (void)typingPollNext;
             if (g_chatMutex && !kChatDemo) {
-                SDL_LockMutex(g_chatMutex);
+                okay::thr::LockMutex(g_chatMutex);
                 g_chatSelUid = selUid;
                 if (g_chatLogReady) {
                     log = g_chatLog; reacts = g_chatReacts; myReacts = g_chatMyReacts;
@@ -9930,12 +9972,12 @@ void DrawChatWindow(okay::account::AccountService& account) {
                 if (g_chatPeerStateUid == selUid) {
                     peerRead = g_chatPeerRead; peerHere = g_chatPeerHere; peerLastSeen = g_chatPeerLastSeen;
                 } else { peerRead = 0; peerHere = false; peerLastSeen = 0; }
-                SDL_UnlockMutex(g_chatMutex);
+                okay::thr::UnlockMutex(g_chatMutex);
             }
             peerTyping = g_chatPeerTyping;
             // We're looking at this conversation (window focused, not minimised):
             // lets the poller mark it read and tell the peer we're in the chat.
-            if (!selUid.empty() && SDL_GetKeyboardFocus() != nullptr) g_chatViewMs = okay::platform::TicksMs32();
+            if (!selUid.empty() && lw::AnyKeyboardFocus()) g_chatViewMs = okay::platform::TicksMs32();
             // Mark everything seen locally (clears the unread dot for this chat).
             long firstUnread = 0;
             for (const auto& m : log) {
@@ -10197,7 +10239,7 @@ void DrawChatWindow(okay::account::AccountService& account) {
                 // Inline image preview for an image link in the message.
                 if (!imgUrl.empty()) {
                     if (SDL_Texture* it = ChatImageTexture(imgUrl)) {
-                        int iw = 0, ih = 0; SDL_QueryTexture(it, nullptr, nullptr, &iw, &ih);
+                        int iw = 0, ih = 0; okay::pb::QueryTexture(g_renderer, it, &iw, &ih);
                         float availW = ImGui::GetContentRegionAvail().x;
                         float w = (iw > 0 && iw > availW) ? availW : (float)iw;
                         if (w < 1) w = availW;
@@ -10764,7 +10806,7 @@ void DrawChatWindow(okay::account::AccountService& account) {
             ImVec2 sz = ImGui::GetContentRegionAvail();
             SDL_Texture* it = ChatImageTexture(lightboxUrl);
             if (it) {
-                int iw = 0, ih = 0; SDL_QueryTexture(it, nullptr, nullptr, &iw, &ih);
+                int iw = 0, ih = 0; okay::pb::QueryTexture(g_renderer, it, &iw, &ih);
                 float w = (float)iw, h = (float)ih;
                 if (iw > 0 && ih > 0) {
                     float scale = std::min((sz.x - 48) / w, (sz.y - 72) / h);
@@ -10813,10 +10855,7 @@ static const UINT    OKAY_TRAY_UID = 1;
 static UINT          g_showMsg = 0;
 
 static HWND OkayWindowHWND(SDL_Window* w) {
-    SDL_SysWMinfo wm; SDL_VERSION(&wm.version);
-    if (w && SDL_GetWindowWMInfo(w, &wm) && wm.subsystem == SDL_SYSWM_WINDOWS)
-        return wm.info.win.window;
-    return nullptr;
+    return (HWND)lw::Win32Handle(w);
 }
 // Returns true only if the tray icon was actually registered. Retained for
 // possible future use; the launcher no longer hides itself to the tray.
@@ -10866,7 +10905,7 @@ static void OkayTrayShowMenu() {
 // SDL pumps Win32 messages on the main thread, so this hook runs there too; it
 // just flags work the main loop performs (any left-click opens the app; a
 // right-click raises the menu; a broadcast from a 2nd launch also surfaces us).
-static void SDLCALL OkayMsgHook(void* userdata, void* hWnd, unsigned int msg, Uint64 wParam, Sint64 lParam) {
+static void OkayMsgHook(void* userdata, void* hWnd, unsigned int msg, uint64_t wParam, int64_t lParam) {   // okay::platform::NativeMessageHook
     (void)userdata; (void)hWnd; (void)wParam;
     if (msg == WM_OKAYTRAY) {
         UINT ev = (UINT)(lParam & 0xFFFF);
@@ -10915,8 +10954,8 @@ static bool AcquireSingleInstance() {
 // OWN AccountService (re-read from disk each cycle, so it tracks login/logout
 // without racing the main thread's service). Results are published under a
 // mutex; the main loop just reads them.
-static SDL_mutex*  g_pollMutex = nullptr;
-static SDL_Thread* g_pollThread = nullptr;
+static okay::thr::Mutex*  g_pollMutex = nullptr;
+static okay::thr::Thread* g_pollThread = nullptr;
 static volatile bool g_pollRun = true;
 static bool g_pollReady = false;        // a fresh result is waiting (guarded)
 static int  g_pollFriendReqs = 0;       // (guarded)
@@ -10951,13 +10990,13 @@ static int PollWorker(void*) {
                 const bool counts = cycle % 3 == 0;
                 int fr = 0, unread = 0; long newest = since;
                 if (counts) { fr = okay::Friends(poller).PendingRequests(); unread = msgs.UnreadSince(since, newest); }
-                if (g_pollMutex) SDL_LockMutex(g_pollMutex);
+                if (g_pollMutex) okay::thr::LockMutex(g_pollMutex);
                 if (counts) { g_pollFriendReqs = fr; g_pollUnread = unread; g_pollNewestDm = newest; g_pollReady = true; }
                 for (auto& f : fresh) {
                     bool dup = false; for (const auto& q : g_pollInvites) if (q.id == f.id) dup = true;
                     if (!dup) g_pollInvites.push_back(std::move(f));
                 }
-                if (g_pollMutex) SDL_UnlockMutex(g_pollMutex);
+                if (g_pollMutex) okay::thr::UnlockMutex(g_pollMutex);
             }
         } catch (...) { /* transient network error — try again next cycle */ }
         ++cycle;
@@ -10982,7 +11021,7 @@ static int VerifySessionWorker(void* p) {
 // thread, freezing the tab switch. This worker does them on its own account
 // service (same proven pattern as the friends poll) and publishes the results
 // under a mutex; the tab renders whatever is cached and never blocks.
-static SDL_mutex* g_foMutex = nullptr;
+static okay::thr::Mutex* g_foMutex = nullptr;
 static volatile bool g_foFetching = false;
 static bool g_foReady = false;                       // (guarded) fresh results waiting
 static std::vector<okay::ForumThread> g_foThreads;   // (guarded)
@@ -11001,12 +11040,12 @@ static int ForumFetchWorker(void*) {
         bool sup = false;
         auto secs = fo.Sections(&sup);
         const bool staff = sup && fo.AmStaff();
-        if (g_foMutex) SDL_LockMutex(g_foMutex);
+        if (g_foMutex) okay::thr::LockMutex(g_foMutex);
         g_foThreads = std::move(th); g_foScores = std::move(sc);
         g_foMy = std::move(mv); g_foComments = std::move(cc);
         g_foSections = std::move(secs); g_foSecSupported = sup; g_foStaff = staff;
         g_foReady = true;
-        if (g_foMutex) SDL_UnlockMutex(g_foMutex);
+        if (g_foMutex) okay::thr::UnlockMutex(g_foMutex);
     } catch (...) {}
     g_foFetching = false;
     return 0;
@@ -11032,11 +11071,11 @@ static int ForumPostWorker(void* arg) {
         auto pmy = fo.MyVotes("post");
         auto tsc = fo.Scores("thread");
         auto tmy = fo.MyVotes("thread");
-        if (g_foMutex) SDL_LockMutex(g_foMutex);
+        if (g_foMutex) okay::thr::LockMutex(g_foMutex);
         g_foPosts = std::move(ps); g_foPostScores = std::move(psc); g_foPostMy = std::move(pmy);
         g_foPostThScores = std::move(tsc); g_foPostThMy = std::move(tmy);
         g_foPostHave = tid; g_foPostReady = true;
-        if (g_foMutex) SDL_UnlockMutex(g_foMutex);
+        if (g_foMutex) okay::thr::UnlockMutex(g_foMutex);
     } catch (...) {}
     g_foPostFetching = false;
     return 0;
@@ -11048,7 +11087,7 @@ static int ForumPostWorker(void* arg) {
 // kick a background refresh so the authoritative counts replace the optimistic
 // ones shortly after.
 struct FoAction { int type; std::string kind; long id; int value; std::string a, b, c; };
-static SDL_atomic_t g_foActionBusy;     // number of in-flight actions (for a subtle hint)
+static okay::thr::AtomicInt g_foActionBusy;     // number of in-flight actions (for a subtle hint)
 static volatile bool g_foActionDone = false;
 // Section admin tools data + action feedback (guarded by g_foMutex).
 static std::vector<okay::ForumMember> g_foAdmMembers;
@@ -11095,25 +11134,25 @@ static int ForumActionWorker(void* arg) {
                                   else say(fo.AwardBadge(u, j->b, j->value != 0), j->value ? "Badge awarded" : "Badge removed", "Staff only"); }
         if (j->type == 20 || (j->type >= 12 && j->type <= 16)) {   // refresh the admin lists
             auto m = fo.Members(j->id); auto b = fo.Bans(j->id);
-            if (g_foMutex) { SDL_LockMutex(g_foMutex); g_foAdmMembers = std::move(m); g_foAdmBans = std::move(b); g_foAdmReady = true; SDL_UnlockMutex(g_foMutex); }
+            if (g_foMutex) { okay::thr::LockMutex(g_foMutex); g_foAdmMembers = std::move(m); g_foAdmBans = std::move(b); g_foAdmReady = true; okay::thr::UnlockMutex(g_foMutex); }
         }
     } catch (...) {}
-    if (kind && g_foMutex) { SDL_LockMutex(g_foMutex); g_foActMsg = msg; g_foActKind = kind; SDL_UnlockMutex(g_foMutex); }
+    if (kind && g_foMutex) { okay::thr::LockMutex(g_foMutex); g_foActMsg = msg; g_foActKind = kind; okay::thr::UnlockMutex(g_foMutex); }
     g_foActionDone = true;
-    SDL_AtomicAdd(&g_foActionBusy, -1);
+    okay::thr::AtomicAdd(&g_foActionBusy, -1);
     delete j;
     return 0;
 }
 static void FireForumAction(FoAction* j) {
-    SDL_AtomicAdd(&g_foActionBusy, 1);
-    if (SDL_Thread* t = SDL_CreateThread(ForumActionWorker, "okay-foact", j)) SDL_DetachThread(t);
-    else { SDL_AtomicAdd(&g_foActionBusy, -1); delete j; }
+    okay::thr::AtomicAdd(&g_foActionBusy, 1);
+    if (okay::thr::Thread* t = okay::thr::CreateThread(ForumActionWorker, "okay-foact", j)) okay::thr::DetachThread(t);
+    else { okay::thr::AtomicAdd(&g_foActionBusy, -1); delete j; }
 }
 
 // Background Servers list fetch (same idea — opening the Servers tab shouldn't
 // block on the network). Only the server LIST is prefetched; channel/message
 // loads happen after the user picks a server.
-static SDL_mutex* g_svMutex = nullptr;
+static okay::thr::Mutex* g_svMutex = nullptr;
 static volatile bool g_svFetching = false;
 static bool g_svReady = false;                       // (guarded)
 static std::vector<okay::Server> g_svList;           // (guarded)
@@ -11122,9 +11161,9 @@ static int ServerListWorker(void*) {
         okay::account::AccountService a(fs::path(g_pollCfgDir), g_pollUrl, g_pollKey);
         okay::Servers sv(a);
         auto l = sv.MyServers();
-        if (g_svMutex) SDL_LockMutex(g_svMutex);
+        if (g_svMutex) okay::thr::LockMutex(g_svMutex);
         g_svList = std::move(l); g_svReady = true;
-        if (g_svMutex) SDL_UnlockMutex(g_svMutex);
+        if (g_svMutex) okay::thr::UnlockMutex(g_svMutex);
     } catch (...) {}
     g_svFetching = false;
     return 0;
@@ -11133,22 +11172,22 @@ static int ServerListWorker(void*) {
 // What friends see about me. While a game runs, the launcher publishes its rich
 // presence ("Playing Arena · Hosting · 2/8") and join link; otherwise my status.
 // Workers publish these, so they're guarded.
-static SDL_mutex* g_presMutex = nullptr;
+static okay::thr::Mutex* g_presMutex = nullptr;
 static std::string g_presText, g_presJoin;   // (guarded) "" = no game running
 static std::string PresenceText() {
     std::string t;
-    if (g_presMutex) { SDL_LockMutex(g_presMutex); t = g_presText; SDL_UnlockMutex(g_presMutex); }
+    if (g_presMutex) { okay::thr::LockMutex(g_presMutex); t = g_presText; okay::thr::UnlockMutex(g_presMutex); }
     return !t.empty() ? t : g_onlineStatus == 1 ? "Away" : "In OkaySpace";
 }
 static std::string PresenceJoin() {
     std::string j;
-    if (g_presMutex) { SDL_LockMutex(g_presMutex); j = g_presJoin; SDL_UnlockMutex(g_presMutex); }
+    if (g_presMutex) { okay::thr::LockMutex(g_presMutex); j = g_presJoin; okay::thr::UnlockMutex(g_presMutex); }
     return j;
 }
 
 // Background Friends list/feed fetch (the periodic refresh used to hitch the
 // Friends tab every 10s on the UI thread).
-static SDL_mutex* g_frMutex = nullptr;
+static okay::thr::Mutex* g_frMutex = nullptr;
 static volatile bool g_frFetching = false;
 static bool g_frReady = false;                       // (guarded)
 static std::vector<okay::Friend> g_frList;           // (guarded)
@@ -11167,10 +11206,10 @@ static int FriendsListWorker(void*) {
         auto code = fr.MyCode();
         auto l = fr.List();
         auto fd = fr.Feed(14);
-        if (g_frMutex) SDL_LockMutex(g_frMutex);
+        if (g_frMutex) okay::thr::LockMutex(g_frMutex);
         g_frList = std::move(l); g_frFeed = std::move(fd); g_frCode = std::move(code);
         g_frReady = true;
-        if (g_frMutex) SDL_UnlockMutex(g_frMutex);
+        if (g_frMutex) okay::thr::UnlockMutex(g_frMutex);
     } catch (...) {}
     g_frFetching = false;
     return 0;
@@ -11394,7 +11433,7 @@ static void PumpMultiplayer() {
     const Uint32 now = okay::platform::TicksMs32();
     if (now < next) return;
     next = now + 1000;
-    if (!g_presMutex) g_presMutex = SDL_CreateMutex();
+    if (!g_presMutex) g_presMutex = okay::thr::CreateMutex();
 
     MyGame g;
     for (auto it = g_playProcs.rbegin(); it != g_playProcs.rend(); ++it) {   // newest game first
@@ -11429,19 +11468,19 @@ static void PumpMultiplayer() {
         if (g.players > 0 && g.maxPlayers > 0) text += " (" + std::to_string(g.players) + "/" + std::to_string(g.maxPlayers) + ")";
         join = g.join;
     }
-    SDL_LockMutex(g_presMutex); g_presText = text; g_presJoin = join; SDL_UnlockMutex(g_presMutex);
+    okay::thr::LockMutex(g_presMutex); g_presText = text; g_presJoin = join; okay::thr::UnlockMutex(g_presMutex);
     const bool changed = text != pubText || join != pubJoin;
     const bool beat = g.running && now - lastPub > 60000;   // keep "online" fresh while playing
     if ((changed || beat) && now - lastPub > 3000 && g_onlineStatus != 2 && g_presenceAccount && g_presenceAccount->IsLoggedIn()) {
         pubText = text; pubJoin = join; lastPub = now;
         auto* job = new std::pair<std::string, std::string>(PresenceText(), join);
-        if (SDL_Thread* t = SDL_CreateThread(MpPublishWorker, "okay-presence", job)) SDL_DetachThread(t);
+        if (okay::thr::Thread* t = okay::thr::CreateThread(MpPublishWorker, "okay-presence", job)) okay::thr::DetachThread(t);
         else delete job;
     }
     // Shift+Tab in a game (or net_invite_friends()): bring up Invite friends.
     if (!okay::GameIpc::TakeInviteRequests().empty()) {
         g_inviteOpenReq = true; g_inviteMode = 0;
-        if (g_launcherWindow) { SDL_RestoreWindow(g_launcherWindow); SDL_RaiseWindow(g_launcherWindow); }
+        if (g_launcherWindow) { lw::Restore(g_launcherWindow); lw::Raise(g_launcherWindow); }
     }
 }
 
@@ -11452,7 +11491,7 @@ struct MpRow {
     std::string friendName, link;   // Friends tab: who, and their join link
     bool relayed = false;
 };
-static SDL_mutex* g_mpMutex = nullptr;
+static okay::thr::Mutex* g_mpMutex = nullptr;
 static std::vector<MpRow> g_mpRows;     // (guarded) last results
 static int g_mpRowsTab = -1;            // (guarded) which tab they're for
 static volatile bool g_mpBusy = false;
@@ -11489,14 +11528,14 @@ static int MpQueryWorker(void* p) {
         }
         for (std::size_t k = idx.size(); k < res.size(); ++k) { MpRow r; r.info = res[k]; r.game = res[k].game; rows.push_back(r); }
     } catch (...) {}
-    if (!g_mpMutex) g_mpMutex = SDL_CreateMutex();
-    SDL_LockMutex(g_mpMutex); g_mpRows = std::move(rows); g_mpRowsTab = job->tab; SDL_UnlockMutex(g_mpMutex);
+    if (!g_mpMutex) g_mpMutex = okay::thr::CreateMutex();
+    okay::thr::LockMutex(g_mpMutex); g_mpRows = std::move(rows); g_mpRowsTab = job->tab; okay::thr::UnlockMutex(g_mpMutex);
     g_mpBusy = false;
     return 0;
 }
 static void MpRefresh(int tab) {
     if (g_mpBusy) return;
-    if (!g_mpMutex) g_mpMutex = SDL_CreateMutex();
+    if (!g_mpMutex) g_mpMutex = okay::thr::CreateMutex();
     auto* job = new MpQueryJob; job->tab = tab;
     MpLoadSaved();
     auto seedSaved = [&](const std::vector<MpSaved>& v) {
@@ -11509,7 +11548,7 @@ static void MpRefresh(int tab) {
     };
     if (tab == 1) {   // Friends: the joinable games in their presence
         std::vector<okay::Friend> fl;
-        if (g_frMutex) { SDL_LockMutex(g_frMutex); fl = g_frList; SDL_UnlockMutex(g_frMutex); }
+        if (g_frMutex) { okay::thr::LockMutex(g_frMutex); fl = g_frList; okay::thr::UnlockMutex(g_frMutex); }
         for (const auto& f : fl) {
             okay::JoinLink l;
             if (f.status != "accepted" || !f.online || !okay::JoinLink::Parse(f.sessionCode, l)) continue;
@@ -11525,7 +11564,7 @@ static void MpRefresh(int tab) {
     } else if (tab == 3) seedSaved(g_mpFavs);
     else if (tab == 4) seedSaved(g_mpHist);
     g_mpBusy = true;
-    if (SDL_Thread* t = SDL_CreateThread(MpQueryWorker, "okay-servers", job)) SDL_DetachThread(t);
+    if (okay::thr::Thread* t = okay::thr::CreateThread(MpQueryWorker, "okay-servers", job)) okay::thr::DetachThread(t);
     else { delete job; g_mpBusy = false; }
 }
 // Kick a background Friends refresh (the invite window / Friends tab need the list).
@@ -11534,9 +11573,9 @@ static void MpFetchFriends() {
     if (g_frFetching || !g_presenceAccount || !g_presenceAccount->IsLoggedIn()) return;
     if (last && okay::platform::TicksMs32() - last < 30000) return;
     last = okay::platform::TicksMs32();
-    if (!g_frMutex) g_frMutex = SDL_CreateMutex();
+    if (!g_frMutex) g_frMutex = okay::thr::CreateMutex();
     g_frFetching = true;
-    if (SDL_Thread* t = SDL_CreateThread(FriendsListWorker, "okay-frlist", nullptr)) SDL_DetachThread(t);
+    if (okay::thr::Thread* t = okay::thr::CreateThread(FriendsListWorker, "okay-frlist", nullptr)) okay::thr::DetachThread(t);
     else g_frFetching = false;
 }
 
@@ -11546,7 +11585,7 @@ static void OpenPublicProfile(const std::string& uid, const std::string& usernam
 // The leader's launcher stores its game session on the party; members' launchers
 // follow it into the same match. A background thread keeps the party fresh
 // (every 3s while in one, 15s otherwise); actions run on short-lived threads.
-static SDL_mutex* g_partyMutex = nullptr;
+static okay::thr::Mutex* g_partyMutex = nullptr;
 static okay::Party g_partyNew;                 // (guarded) latest fetch
 static bool g_partyNewReady = false;           // (guarded)
 static std::string g_partyMe;                  // (guarded) my uid
@@ -11574,9 +11613,9 @@ static int PartyPollWorker(void*) {
                     if (ps.Mine(p)) {
                         inParty = p.Valid();
                         const std::string me = ps.MyId();
-                        SDL_LockMutex(g_partyMutex);
+                        okay::thr::LockMutex(g_partyMutex);
                         g_partyNew = std::move(p); g_partyMe = me; g_partyNewReady = true;
-                        SDL_UnlockMutex(g_partyMutex);
+                        okay::thr::UnlockMutex(g_partyMutex);
                     }
                 }
             } catch (...) {}
@@ -11608,9 +11647,9 @@ static int PartyJobWorker(void* p) {
         if (!done && err.empty() && j->op < kPartyReady) err = "Couldn't update the party.";
     } catch (...) { err = "Couldn't reach the server."; }
     if (!err.empty() || !ok.empty()) {
-        SDL_LockMutex(g_partyMutex);
+        okay::thr::LockMutex(g_partyMutex);
         g_partyToast = err.empty() ? ok : err; g_partyToastKind = err.empty() ? 1 : 2;
-        SDL_UnlockMutex(g_partyMutex);
+        okay::thr::UnlockMutex(g_partyMutex);
     }
     g_partyForce = true;
     return 0;
@@ -11621,9 +11660,9 @@ static void PartyRun(int op, const std::string& a = {}, const std::string& b = {
         if (op == kPartyReady) for (auto& m : g_party.members) if (m.uid == g_partyMyUid) m.ready = flag;
         return;
     }
-    if (!g_partyMutex) g_partyMutex = SDL_CreateMutex();
+    if (!g_partyMutex) g_partyMutex = okay::thr::CreateMutex();
     auto* j = new PartyJob; j->op = op; j->a = a; j->b = b; j->flag = flag; j->partyId = g_party.id;
-    if (SDL_Thread* t = SDL_CreateThread(PartyJobWorker, "okay-party", j)) SDL_DetachThread(t);
+    if (okay::thr::Thread* t = okay::thr::CreateThread(PartyJobWorker, "okay-party", j)) okay::thr::DetachThread(t);
     else delete j;
 }
 static bool PartyIsLeader() { return g_party.Valid() && g_party.leader == g_partyMyUid; }
@@ -11669,18 +11708,18 @@ static void PumpParty() {
         if (g_party.Valid()) g_party = okay::Party{};
         return;
     }
-    if (!g_partyMutex) g_partyMutex = SDL_CreateMutex();
+    if (!g_partyMutex) g_partyMutex = okay::thr::CreateMutex();
     if (!g_partyPollRun) {
         g_partyPollRun = true;
-        if (SDL_Thread* t = SDL_CreateThread(PartyPollWorker, "okay-partypoll", nullptr)) SDL_DetachThread(t);
+        if (okay::thr::Thread* t = okay::thr::CreateThread(PartyPollWorker, "okay-partypoll", nullptr)) okay::thr::DetachThread(t);
         else g_partyPollRun = false;
     }
     std::string toast; int toastKind = 1;
     bool fresh = false; okay::Party np;
-    SDL_LockMutex(g_partyMutex);
+    okay::thr::LockMutex(g_partyMutex);
     if (g_partyNewReady) { np = g_partyNew; g_partyMyUid = g_partyMe; g_partyNewReady = false; fresh = true; }
     toast.swap(g_partyToast); toastKind = g_partyToastKind;
-    SDL_UnlockMutex(g_partyMutex);
+    okay::thr::UnlockMutex(g_partyMutex);
     if (!toast.empty()) Toast(toast, toastKind);
     if (fresh) {
         // Who came and went (not on the first load / when switching parties).
@@ -11739,7 +11778,7 @@ static std::vector<okay::Friend> MpFriends() {
         }
         return fl;
     }
-    if (g_frMutex) { SDL_LockMutex(g_frMutex); fl = g_frList; SDL_UnlockMutex(g_frMutex); }
+    if (g_frMutex) { okay::thr::LockMutex(g_frMutex); fl = g_frList; okay::thr::UnlockMutex(g_frMutex); }
     if (fl.empty()) MpFetchFriends();
     return fl;
 }
@@ -11750,7 +11789,7 @@ static void DrawInvitePopups() {
     struct Pop { PendingInvite inv; Uint32 shownAt = 0; };
     static std::vector<Pop> pops;
     std::vector<PendingInvite> fresh;
-    if (g_pollMutex) { SDL_LockMutex(g_pollMutex); fresh.swap(g_pollInvites); SDL_UnlockMutex(g_pollMutex); }
+    if (g_pollMutex) { okay::thr::LockMutex(g_pollMutex); fresh.swap(g_pollInvites); okay::thr::UnlockMutex(g_pollMutex); }
     static bool demoDone = false;
     if (MpDemo() && !demoDone) {
         demoDone = true;
@@ -12097,32 +12136,32 @@ static void DrawPartyCard() {
 // ---- The Multiplayer page: now playing + server browser ------------------------------
 // ---- Server info (who's playing) + Quick Play ----------------------------------------
 struct MpInfoJob { std::string host; std::uint16_t port = 0; };
-static SDL_mutex* g_mpInfoMutex = nullptr;
+static okay::thr::Mutex* g_mpInfoMutex = nullptr;
 static std::vector<okay::ServerPlayer> g_mpInfoPlayers;   // (guarded)
 static int g_mpInfoState = 0;                            // (guarded) 0 idle, 1 asking, 2 answered, 3 no answer
 static int MpInfoWorker(void* p) {
     std::unique_ptr<MpInfoJob> j(static_cast<MpInfoJob*>(p));
     std::vector<okay::ServerPlayer> pl;
     const bool ok = okay::QueryPlayers(j->host, j->port, pl, 2000);
-    SDL_LockMutex(g_mpInfoMutex); g_mpInfoPlayers = std::move(pl); g_mpInfoState = ok ? 2 : 3; SDL_UnlockMutex(g_mpInfoMutex);
+    okay::thr::LockMutex(g_mpInfoMutex); g_mpInfoPlayers = std::move(pl); g_mpInfoState = ok ? 2 : 3; okay::thr::UnlockMutex(g_mpInfoMutex);
     return 0;
 }
 static MpRow g_mpInfoRow;
 static bool g_mpInfoReq = false;
 static void MpOpenInfo(const MpRow& r) {
     g_mpInfoRow = r; g_mpInfoReq = true;
-    if (!g_mpInfoMutex) g_mpInfoMutex = SDL_CreateMutex();
-    SDL_LockMutex(g_mpInfoMutex); g_mpInfoPlayers.clear(); g_mpInfoState = 1; SDL_UnlockMutex(g_mpInfoMutex);
+    if (!g_mpInfoMutex) g_mpInfoMutex = okay::thr::CreateMutex();
+    okay::thr::LockMutex(g_mpInfoMutex); g_mpInfoPlayers.clear(); g_mpInfoState = 1; okay::thr::UnlockMutex(g_mpInfoMutex);
     if (MpDemo()) {
-        SDL_LockMutex(g_mpInfoMutex);
+        okay::thr::LockMutex(g_mpInfoMutex);
         g_mpInfoPlayers = {{"Maya Chen", "", 24, 1520}, {"theo", "", 17, 610}, {"rin", "", 9, 95}, {"kartking", "", 3, 2410}};
         g_mpInfoState = 2;
-        SDL_UnlockMutex(g_mpInfoMutex);
+        okay::thr::UnlockMutex(g_mpInfoMutex);
         return;
     }
-    if (r.relayed || r.info.host.empty()) { SDL_LockMutex(g_mpInfoMutex); g_mpInfoState = 3; SDL_UnlockMutex(g_mpInfoMutex); return; }
+    if (r.relayed || r.info.host.empty()) { okay::thr::LockMutex(g_mpInfoMutex); g_mpInfoState = 3; okay::thr::UnlockMutex(g_mpInfoMutex); return; }
     auto* j = new MpInfoJob{r.info.host, r.info.port};
-    if (SDL_Thread* t = SDL_CreateThread(MpInfoWorker, "okay-srvinfo", j)) SDL_DetachThread(t);
+    if (okay::thr::Thread* t = okay::thr::CreateThread(MpInfoWorker, "okay-srvinfo", j)) okay::thr::DetachThread(t);
     else delete j;
 }
 static void DrawMpInfoPopup(const std::function<void(const MpRow&)>& join) {
@@ -12146,7 +12185,7 @@ static void DrawMpInfoPopup(const std::function<void(const MpRow&)>& join) {
     ImGui::TextDisabled("%s", flags.c_str());
     ImGui::Separator();
     std::vector<okay::ServerPlayer> pl; int st = 0;
-    SDL_LockMutex(g_mpInfoMutex); pl = g_mpInfoPlayers; st = g_mpInfoState; SDL_UnlockMutex(g_mpInfoMutex);
+    okay::thr::LockMutex(g_mpInfoMutex); pl = g_mpInfoPlayers; st = g_mpInfoState; okay::thr::UnlockMutex(g_mpInfoMutex);
     if (st == 1) ImGui::TextDisabled("Asking the server who's playing\xE2\x80\xA6");
     else if (st == 3) ImGui::TextDisabled(r.relayed ? "Player lists aren't available through a relay." : "The server didn't answer.");
     else if (pl.empty()) ImGui::TextDisabled("Nobody's playing right now \xE2\x80\x94 be the first.");
@@ -12176,7 +12215,7 @@ static void DrawMpInfoPopup(const std::function<void(const MpRow&)>& join) {
 // Quick Play: the best open server for a game — not full, no password, low ping,
 // preferring ones with people in them — across the public list and the LAN.
 struct MpQuickJob { std::string game; std::vector<std::string> library; };
-static SDL_mutex* g_mpQuickMutex = nullptr;
+static okay::thr::Mutex* g_mpQuickMutex = nullptr;
 static volatile bool g_mpQuickBusy = false;
 static std::string g_mpQuickLink, g_mpQuickMsg;   // (guarded) result
 static int MpQuickWorker(void* p) {
@@ -12208,30 +12247,30 @@ static int MpQuickWorker(void* p) {
         okay::JoinLink l; l.game = bestGame; l.addr = best->Address(); l.name = best->name;
         link = l.Format();
     } else msg = "No open servers for " + (j->game.empty() ? std::string("your games") : j->game) + " right now \xE2\x80\x94 host a match and invite friends.";
-    SDL_LockMutex(g_mpQuickMutex); g_mpQuickLink = link; g_mpQuickMsg = msg; SDL_UnlockMutex(g_mpQuickMutex);
+    okay::thr::LockMutex(g_mpQuickMutex); g_mpQuickLink = link; g_mpQuickMsg = msg; okay::thr::UnlockMutex(g_mpQuickMutex);
     g_mpQuickBusy = false;
     return 0;
 }
 static void MpQuickPlay(const std::string& game) {
     if (g_mpQuickBusy) return;
-    if (!g_mpQuickMutex) g_mpQuickMutex = SDL_CreateMutex();
+    if (!g_mpQuickMutex) g_mpQuickMutex = okay::thr::CreateMutex();
     auto* j = new MpQuickJob; j->game = game;
     for (const auto& g : MpLibrary()) j->library.push_back(g.title);
     g_mpQuickBusy = true;
-    if (SDL_Thread* t = SDL_CreateThread(MpQuickWorker, "okay-quickplay", j)) SDL_DetachThread(t);
+    if (okay::thr::Thread* t = okay::thr::CreateThread(MpQuickWorker, "okay-quickplay", j)) okay::thr::DetachThread(t);
     else { delete j; g_mpQuickBusy = false; }
 }
 static void PumpQuickPlay() {
     if (!g_mpQuickMutex) return;
     std::string link, msg;
-    SDL_LockMutex(g_mpQuickMutex); link.swap(g_mpQuickLink); msg.swap(g_mpQuickMsg); SDL_UnlockMutex(g_mpQuickMutex);
+    okay::thr::LockMutex(g_mpQuickMutex); link.swap(g_mpQuickLink); msg.swap(g_mpQuickMsg); okay::thr::UnlockMutex(g_mpQuickMutex);
     if (!msg.empty()) Toast(msg, 2);
     if (!link.empty()) MpJoin(link, std::string());
 }
 
 // ---- Multiplayer: Recent players + Leaderboards (match results, docs/sql/matches.sql) ----
 // Fetched on short-lived worker threads; the UI copies results under g_mrMutex.
-static SDL_mutex* g_mrMutex = nullptr;
+static okay::thr::Mutex* g_mrMutex = nullptr;
 static volatile bool g_mrBusy = false;
 static std::vector<okay::RecentPlayer> g_mrRecent;          // (guarded) from match reports
 static bool g_mrRecentLoaded = false, g_mrRecentSupported = true;   // (guarded)
@@ -12248,28 +12287,28 @@ static int MatchResultsWorker(void* p) {
         if (j->kind == 0) {
             bool sup = true;
             auto rows = mr.RecentPlayers(60, &sup);
-            SDL_LockMutex(g_mrMutex);
+            okay::thr::LockMutex(g_mrMutex);
             g_mrRecent = std::move(rows); g_mrRecentSupported = sup; g_mrRecentLoaded = true;
-            SDL_UnlockMutex(g_mrMutex);
+            okay::thr::UnlockMutex(g_mrMutex);
         } else {
             bool sup = true;
             auto rows = mr.Leaderboard(j->game, j->stat, 100, &sup);
             okay::PlayerStats mine; const bool have = sup && mr.MyStats(j->game, mine);
-            SDL_LockMutex(g_mrMutex);
+            okay::thr::LockMutex(g_mrMutex);
             g_mrBoard = std::move(rows); g_mrMine = mine; g_mrHaveMine = have;
             g_mrBoardSupported = sup; g_mrBoardKey = j->game + "|" + j->stat;
-            SDL_UnlockMutex(g_mrMutex);
+            okay::thr::UnlockMutex(g_mrMutex);
         }
     } catch (...) {}
     g_mrBusy = false;
     return 0;
 }
 static void MrQueue(int kind, const std::string& game = std::string(), const std::string& stat = std::string()) {
-    if (!g_mrMutex) g_mrMutex = SDL_CreateMutex();
+    if (!g_mrMutex) g_mrMutex = okay::thr::CreateMutex();
     if (g_mrBusy || g_pollCfgDir.empty()) return;
     g_mrBusy = true;
-    MrJob* j = new MrJob{kind, game, stat};   // (built outside: SDL_CreateThread is a macro on Windows)
-    if (SDL_Thread* t = SDL_CreateThread(MatchResultsWorker, "okay-matches", j)) SDL_DetachThread(t);
+    MrJob* j = new MrJob{kind, game, stat};   // (built outside: okay::thr::CreateThread is a macro on Windows)
+    if (okay::thr::Thread* t = okay::thr::CreateThread(MatchResultsWorker, "okay-matches", j)) okay::thr::DetachThread(t);
     else { g_mrBusy = false; delete j; }
 }
 static std::string MrDuration(long secs) {
@@ -12303,10 +12342,10 @@ static void DrawRecentPlayers(bool signedIn, bool reload) {
         Row loc; loc.name = "guest_4417"; loc.game = "Kart Rush"; loc.when = t0 - 86400 * 3; rows.push_back(loc);
     } else {
         if (g_mrMutex) {
-            SDL_LockMutex(g_mrMutex);
+            okay::thr::LockMutex(g_mrMutex);
             supported = g_mrRecentSupported;
             for (const auto& p : g_mrRecent) { Row r; r.uid = p.userId; r.username = p.username; r.name = p.Name(); r.avatar = p.avatar; r.game = p.game; r.when = p.when; r.matches = p.matches; r.fromServer = true; rows.push_back(r); }
-            SDL_UnlockMutex(g_mrMutex);
+            okay::thr::UnlockMutex(g_mrMutex);
         }
         const std::string me = MyUsername();
         for (const auto& p : local) {
@@ -12423,10 +12462,10 @@ static void DrawGameLeaderboards(bool signedIn, bool reload) {
         mine = board[2]; haveMine = true; current = true;
     } else if (signedIn && !game.empty()) {
         if (g_mrMutex) {
-            SDL_LockMutex(g_mrMutex);
+            okay::thr::LockMutex(g_mrMutex);
             current = g_mrBoardKey == key;
             if (current) { board = g_mrBoard; mine = g_mrMine; haveMine = g_mrHaveMine; supported = g_mrBoardSupported; }
-            SDL_UnlockMutex(g_mrMutex);
+            okay::thr::UnlockMutex(g_mrMutex);
         }
         if ((reload || !current) && !g_mrBusy) MrQueue(1, game, stat);
     }
@@ -12681,7 +12720,7 @@ static void DrawMultiplayerPage(bool signedIn) {
         else if (mpTab == 1) rows = {mk("Maya's lobby", "Star Arena", "Docks", 2, 8, 4, false, false, "192.168.1.20:45000", "Maya Chen")};
         else if (mpTab == 2) rows = {mk("Living room", "Kart Rush", "Neon Loop", 1, 4, 1, false, false, "192.168.1.31:45000")};
     } else {
-        if (g_mpMutex) { SDL_LockMutex(g_mpMutex); if (g_mpRowsTab == mpTab) rows = g_mpRows; SDL_UnlockMutex(g_mpMutex); }
+        if (g_mpMutex) { okay::thr::LockMutex(g_mpMutex); if (g_mpRowsTab == mpTab) rows = g_mpRows; okay::thr::UnlockMutex(g_mpMutex); }
     }
     std::string q = search; for (auto& c : q) c = (char)std::tolower((unsigned char)c);
     std::vector<int> view;
@@ -12843,7 +12882,7 @@ static void DrawMultiplayerPage(bool signedIn) {
 }
 
 // Background Marketplace list/ratings fetch.
-static SDL_mutex* g_wsMutex = nullptr;
+static okay::thr::Mutex* g_wsMutex = nullptr;
 static volatile bool g_wsFetching = false;
 static bool g_wsReady = false;                       // (guarded)
 static std::vector<okay::WorkshopItem> g_wsList;     // (guarded)
@@ -12854,9 +12893,9 @@ static int MarketListWorker(void*) {
         okay::Workshop ws(a);
         auto l = ws.List();
         auto r = ws.Ratings();
-        if (g_wsMutex) SDL_LockMutex(g_wsMutex);
+        if (g_wsMutex) okay::thr::LockMutex(g_wsMutex);
         g_wsList = std::move(l); g_wsRatings = std::move(r); g_wsReady = true;
-        if (g_wsMutex) SDL_UnlockMutex(g_wsMutex);
+        if (g_wsMutex) okay::thr::UnlockMutex(g_wsMutex);
     } catch (...) {}
     g_wsFetching = false;
     return 0;
@@ -12866,7 +12905,7 @@ static int MarketListWorker(void*) {
 // Account tab used to block on three HTTPS calls; this fetches them once on a
 // worker and the tab applies the results when they arrive. g_acReady stays set
 // so each of the three consumers can pick up its piece on a later frame.
-static SDL_mutex* g_acMutex = nullptr;
+static okay::thr::Mutex* g_acMutex = nullptr;
 // ---- Account > Your data: "Download my data" and "Delete my account" ----------
 // Both run on a worker thread (several network calls). The worker builds its own
 // AccountService from the saved session, like the chat pollers. Export reads only
@@ -12880,27 +12919,27 @@ struct AcctDataJob {
     std::string step, message, savedPath, username, password;
 };
 static AcctDataJob g_acctDataJob;
-static SDL_mutex*  g_acctDataMutex = nullptr;
+static okay::thr::Mutex*  g_acctDataMutex = nullptr;
 
 static AcctDataJob AcctJobSnapshot() {
     if (!g_acctDataMutex) return {};
-    SDL_LockMutex(g_acctDataMutex); AcctDataJob c = g_acctDataJob; c.password.clear(); SDL_UnlockMutex(g_acctDataMutex);
+    okay::thr::LockMutex(g_acctDataMutex); AcctDataJob c = g_acctDataJob; c.password.clear(); okay::thr::UnlockMutex(g_acctDataMutex);
     return c;
 }
 static void AcctJobFinish(bool ok, const std::string& msg, const std::string& path = {}, bool signOut = false, bool notDeployed = false) {
-    SDL_LockMutex(g_acctDataMutex);
+    okay::thr::LockMutex(g_acctDataMutex);
     g_acctDataJob.running = false; g_acctDataJob.ready = true; g_acctDataJob.ok = ok; g_acctDataJob.message = msg;
     g_acctDataJob.savedPath = path; g_acctDataJob.signOut = signOut; g_acctDataJob.notDeployed = notDeployed; g_acctDataJob.password.clear();
-    SDL_UnlockMutex(g_acctDataMutex);
+    okay::thr::UnlockMutex(g_acctDataMutex);
 }
 static int AcctExportWorker(void*) {
     okay::account::AccountService a(fs::path(g_pollCfgDir), g_pollUrl, g_pollKey);
-    SDL_LockMutex(g_acctDataMutex); const std::string user = g_acctDataJob.username; SDL_UnlockMutex(g_acctDataMutex);
+    okay::thr::LockMutex(g_acctDataMutex); const std::string user = g_acctDataJob.username; okay::thr::UnlockMutex(g_acctDataMutex);
     namespace ad = okay::account::data;
     ad::ExportResult r = ad::BuildExport(a.UserId(), user, std::time(nullptr),
         [&](const std::string& path) { return a.Api(path); },
         [&](std::size_t d, std::size_t t, const std::string& key) {
-            SDL_LockMutex(g_acctDataMutex); g_acctDataJob.done = d; g_acctDataJob.total = t; g_acctDataJob.step = key; SDL_UnlockMutex(g_acctDataMutex);
+            okay::thr::LockMutex(g_acctDataMutex); g_acctDataJob.done = d; g_acctDataJob.total = t; g_acctDataJob.step = key; okay::thr::UnlockMutex(g_acctDataMutex);
         });
     if (!r.ok) { AcctJobFinish(false, r.error.empty() ? "Export failed." : r.error); return 0; }
     std::error_code ec;
@@ -12923,7 +12962,7 @@ static int AcctExportWorker(void*) {
 }
 static int AcctDeleteWorker(void*) {
     okay::account::AccountService a(fs::path(g_pollCfgDir), g_pollUrl, g_pollKey);
-    SDL_LockMutex(g_acctDataMutex); const std::string user = g_acctDataJob.username, pw = g_acctDataJob.password; g_acctDataJob.password.clear(); SDL_UnlockMutex(g_acctDataMutex);
+    okay::thr::LockMutex(g_acctDataMutex); const std::string user = g_acctDataJob.username, pw = g_acctDataJob.password; g_acctDataJob.password.clear(); okay::thr::UnlockMutex(g_acctDataMutex);
     namespace ad = okay::account::data;
     ad::DeleteRequest q = ad::BuildDeleteRequest(user, pw);
     okay::account::ApiResponse r = a.Api(q.path, q.method, q.body);
@@ -12934,15 +12973,15 @@ static int AcctDeleteWorker(void*) {
 }
 // Start a job unless one is running. kind 1 = export, 2 = delete.
 static bool AcctStartJob(int kind, const std::string& username, const std::string& password = {}) {
-    if (!g_acctDataMutex) g_acctDataMutex = SDL_CreateMutex();
-    SDL_LockMutex(g_acctDataMutex);
-    if (g_acctDataJob.running) { SDL_UnlockMutex(g_acctDataMutex); return false; }
+    if (!g_acctDataMutex) g_acctDataMutex = okay::thr::CreateMutex();
+    okay::thr::LockMutex(g_acctDataMutex);
+    if (g_acctDataJob.running) { okay::thr::UnlockMutex(g_acctDataMutex); return false; }
     g_acctDataJob = AcctDataJob{};
     g_acctDataJob.kind = kind; g_acctDataJob.running = true; g_acctDataJob.username = username; g_acctDataJob.password = password;
     g_acctDataJob.step = kind == 1 ? "starting" : "contacting the server";
-    SDL_UnlockMutex(g_acctDataMutex);
-    SDL_Thread* t = SDL_CreateThread(kind == 1 ? AcctExportWorker : AcctDeleteWorker, "okay-acctdata", nullptr);
-    if (t) { SDL_DetachThread(t); return true; }
+    okay::thr::UnlockMutex(g_acctDataMutex);
+    okay::thr::Thread* t = okay::thr::CreateThread(kind == 1 ? AcctExportWorker : AcctDeleteWorker, "okay-acctdata", nullptr);
+    if (t) { okay::thr::DetachThread(t); return true; }
     AcctJobFinish(false, "Couldn't start a background task.");
     return false;
 }
@@ -12958,10 +12997,10 @@ static int AccountInfoWorker(void*) {
         auto prof = fr.MyProfile();
         auto av   = fr.MyAvatar();
         auto code = fr.MyCode();
-        if (g_acMutex) SDL_LockMutex(g_acMutex);
+        if (g_acMutex) okay::thr::LockMutex(g_acMutex);
         g_acProfile = std::move(prof); g_acAvatar = std::move(av); g_acCode = std::move(code);
         g_acReady = true;
-        if (g_acMutex) SDL_UnlockMutex(g_acMutex);
+        if (g_acMutex) okay::thr::UnlockMutex(g_acMutex);
     } catch (...) {}
     return 0;
 }
@@ -12969,7 +13008,7 @@ static int AccountInfoWorker(void*) {
 // Friends > Following / Followers. kind: 0 load, 1 follow id, 2 unfollow id,
 // 3 remove follower id, 4 follow by username. Every job reloads both lists.
 struct FollowJob { int kind = 0; std::string arg; };
-static SDL_mutex* g_flMutex = nullptr;
+static okay::thr::Mutex* g_flMutex = nullptr;
 static volatile bool g_flBusy = false;
 static bool g_flReady = false, g_flSupported = true;                  // (guarded)
 static std::vector<okay::FollowEntry> g_flFollowing, g_flFollowers;    // (guarded)
@@ -12987,10 +13026,10 @@ static int FollowWorker(void* p) {
         ing = pr.FollowList("", false, &sup);
         if (sup) ers = pr.FollowList("", true);
     } catch (...) {}
-    SDL_LockMutex(g_flMutex);
+    okay::thr::LockMutex(g_flMutex);
     g_flFollowing = std::move(ing); g_flFollowers = std::move(ers); g_flSupported = sup;
     g_flMsg = msg; g_flMsgErr = err; g_flReady = true;
-    SDL_UnlockMutex(g_flMutex);
+    okay::thr::UnlockMutex(g_flMutex);
     g_flBusy = false;
     return 0;
 }
@@ -13004,14 +13043,14 @@ static int FollowersActivityWorker(void* p) {
 }
 static void PushFollowersSeeActivity() {
     if (g_pollCfgDir.empty()) return;
-    if (SDL_Thread* t = SDL_CreateThread(FollowersActivityWorker, "okay-flact", g_followersSeeActivity ? (void*)1 : nullptr)) SDL_DetachThread(t);
+    if (okay::thr::Thread* t = okay::thr::CreateThread(FollowersActivityWorker, "okay-flact", g_followersSeeActivity ? (void*)1 : nullptr)) okay::thr::DetachThread(t);
 }
 static void QueueFollowJob(int kind, const std::string& arg = std::string()) {
-    if (!g_flMutex) g_flMutex = SDL_CreateMutex();
+    if (!g_flMutex) g_flMutex = okay::thr::CreateMutex();
     if (g_flBusy) return;
     g_flBusy = true;
-    FollowJob* j = new FollowJob{kind, arg};   // (built outside: SDL_CreateThread is a macro on Windows)
-    if (SDL_Thread* t = SDL_CreateThread(FollowWorker, "okay-follow", j)) SDL_DetachThread(t);
+    FollowJob* j = new FollowJob{kind, arg};   // (built outside: okay::thr::CreateThread is a macro on Windows)
+    if (okay::thr::Thread* t = okay::thr::CreateThread(FollowWorker, "okay-follow", j)) okay::thr::DetachThread(t);
     else { g_flBusy = false; delete j; }
 }
 
@@ -13038,9 +13077,9 @@ static int AcctSaveWorker(void* p) {
         if (f.loc     != w.loc)     ok &= fr.SetLocation(f.loc);
         if (f.accent  != w.accent)  ok &= fr.SetAccent(f.accent);
     } catch (...) { ok = false; }
-    if (g_acMutex) SDL_LockMutex(g_acMutex);
+    if (g_acMutex) okay::thr::LockMutex(g_acMutex);
     g_acSaveOk = ok; g_acSaveForm = j->form; g_acSaveDone = true;
-    if (g_acMutex) SDL_UnlockMutex(g_acMutex);
+    if (g_acMutex) okay::thr::UnlockMutex(g_acMutex);
     g_acSaving = false;
     return 0;
 }
@@ -13058,7 +13097,7 @@ struct PfOpenReq { std::string uid, username, name, avatar; int accent = 0; };
 static bool g_pfOpen = false;                  // the profile page is showing
 static PfOpenReq g_pfReq;                      // who: uid preferred, else username
 static unsigned g_pfSerial = 0;                // bumps per open (drops stale results)
-static SDL_mutex* g_pfMutex = nullptr;
+static okay::thr::Mutex* g_pfMutex = nullptr;
 static volatile bool g_pfBusy = false;         // a profile job is in flight
 static bool g_pfReady = false;                 // (guarded) a fresh bundle is waiting
 static unsigned g_pfReadySerial = 0;           // (guarded) which open it belongs to
@@ -13069,7 +13108,7 @@ static void OpenPublicProfile(const std::string& uid, const std::string& usernam
                               const std::string& name = std::string(), const std::string& avatar = std::string(),
                               int accent = 0) {
     if (uid.empty() && username.empty()) return;
-    if (!g_pfMutex) g_pfMutex = SDL_CreateMutex();
+    if (!g_pfMutex) g_pfMutex = okay::thr::CreateMutex();
     g_pfReq.uid = uid; g_pfReq.username = username; g_pfReq.name = name;
     g_pfReq.avatar = avatar; g_pfReq.accent = accent;
     g_pfOpen = true; ++g_pfSerial;
@@ -13105,10 +13144,10 @@ static int ProfileWorker(void* arg) {
         okay::ProfileBundle b = pr.Load(j->target, j->byName);
         if (j->type == 0 && !j->syncLocal && b.isMe && pr.SyncAchievements(okay::Achievements::All()))
             b = pr.Load(j->target, j->byName);
-        if (g_pfMutex) SDL_LockMutex(g_pfMutex);
+        if (g_pfMutex) okay::thr::LockMutex(g_pfMutex);
         g_pfResult = std::move(b); g_pfReadySerial = j->serial; g_pfReady = true;
         if (j->type) { g_pfActType = j->type; g_pfActResult = act; }
-        if (g_pfMutex) SDL_UnlockMutex(g_pfMutex);
+        if (g_pfMutex) okay::thr::UnlockMutex(g_pfMutex);
     } catch (...) {}
     g_pfBusy = false;
     delete j;
@@ -13238,7 +13277,7 @@ static std::string HoursText(long secs) {
 
 // Account > Customize profile: social links (loaded + saved on a worker).
 struct SocialEditJob { int kind = 0; std::vector<std::pair<std::string, std::string>> links; };   // 0 load, 1 save
-static SDL_mutex* g_socMutex = nullptr;
+static okay::thr::Mutex* g_socMutex = nullptr;
 static volatile bool g_socBusy = false;
 static bool g_socLoaded = false, g_socSupported = true, g_socSaved = false, g_socFailed = false;   // (guarded)
 static std::vector<std::pair<std::string, std::string>> g_socLinks;                              // (guarded)
@@ -13251,23 +13290,23 @@ static int SocialLinksWorker(void* p) {
         if (j->kind == 0) { got = pr.MySocialLinks(&sup); ok = sup; }
         else ok = pr.SaveSocialLinks(j->links);
     } catch (...) {}
-    SDL_LockMutex(g_socMutex);
+    okay::thr::LockMutex(g_socMutex);
     if (j->kind == 0) { g_socLinks = got; g_socSupported = sup; g_socLoaded = true; }
     else { g_socSaved = ok; g_socFailed = !ok; }
-    SDL_UnlockMutex(g_socMutex);
+    okay::thr::UnlockMutex(g_socMutex);
     g_socBusy = false;
     return 0;
 }
 static void DrawSocialLinksEditor(float fieldW, float btnW) {
     static char bufs[sizeof(kSocials) / sizeof(kSocials[0])][128];
     static bool requested = false, filled = false;
-    if (!g_socMutex) g_socMutex = SDL_CreateMutex();
+    if (!g_socMutex) g_socMutex = okay::thr::CreateMutex();
     if (!requested && !g_socBusy && !g_pollCfgDir.empty()) {
         requested = true; g_socBusy = true;
-        if (SDL_Thread* t = SDL_CreateThread(SocialLinksWorker, "okay-social", new SocialEditJob{})) SDL_DetachThread(t);
+        if (okay::thr::Thread* t = okay::thr::CreateThread(SocialLinksWorker, "okay-social", new SocialEditJob{})) okay::thr::DetachThread(t);
         else g_socBusy = false;
     }
-    SDL_LockMutex(g_socMutex);
+    okay::thr::LockMutex(g_socMutex);
     if (g_socLoaded && !filled) {
         filled = true;
         for (std::size_t i = 0; i < sizeof(kSocials) / sizeof(kSocials[0]); ++i)
@@ -13276,7 +13315,7 @@ static void DrawSocialLinksEditor(float fieldW, float btnW) {
     const bool supported = g_socSupported;
     if (g_socSaved) { g_socSaved = false; Toast("Social links saved", 1); }
     if (g_socFailed) { g_socFailed = false; Toast("Couldn't save your links", 2); }
-    SDL_UnlockMutex(g_socMutex);
+    okay::thr::UnlockMutex(g_socMutex);
     if (!supported) { ImGui::TextDisabled("Social links need the profile_extras.sql update on the server."); return; }
     ImGui::TextDisabled("Shown on your public profile. A handle or a link both work.");
     for (std::size_t i = 0; i < sizeof(kSocials) / sizeof(kSocials[0]); ++i) {
@@ -13306,7 +13345,7 @@ static void DrawSocialLinksEditor(float fieldW, float btnW) {
         }
         if (bad) Toast("Some links weren't valid and were skipped", 2);
         g_socBusy = true;
-        if (SDL_Thread* t = SDL_CreateThread(SocialLinksWorker, "okay-social", j)) SDL_DetachThread(t);
+        if (okay::thr::Thread* t = okay::thr::CreateThread(SocialLinksWorker, "okay-social", j)) okay::thr::DetachThread(t);
         else { g_socBusy = false; delete j; }
     }
     ImGui::EndDisabled();
@@ -13334,7 +13373,7 @@ static int MktKindIndex(const std::string& k) {
 // then create the listing.
 struct MktPublishJob { std::string title, desc, kind, url, file; long editId = 0; };   // editId: update that listing
 static volatile bool g_mktPublishing = false;
-static SDL_mutex* g_mktMutex = nullptr;
+static okay::thr::Mutex* g_mktMutex = nullptr;
 static std::string g_mktResult; static int g_mktResultKind = 0;   // (guarded) 1 ok, 2 error
 static int MarketPublishWorker(void* p) {
     std::unique_ptr<MktPublishJob> j(static_cast<MktPublishJob*>(p));
@@ -13355,13 +13394,13 @@ static int MarketPublishWorker(void* p) {
             }
         }
     } catch (...) { err = "Publishing failed."; }
-    SDL_LockMutex(g_mktMutex);
+    okay::thr::LockMutex(g_mktMutex);
     if (!ok && err.find("outside links") != std::string::npos) err = "Upload the file to OkaySpace \xE2\x80\x94 outside links aren't allowed on the marketplace.";
     g_mktResult = ok ? (j->editId > 0 ? (reviewed ? "Saved \xE2\x80\x94 changed files go back to review" : "Listing updated")
                                       : (reviewed ? "Submitted \xE2\x80\x94 it goes live once a moderator approves it" : "Published to the marketplace"))
                      : (err.empty() ? "Publishing failed." : err);
     g_mktResultKind = ok ? 1 : 2;
-    SDL_UnlockMutex(g_mktMutex);
+    okay::thr::UnlockMutex(g_mktMutex);
     g_mktPublishing = false;
     return 0;
 }
@@ -13382,7 +13421,7 @@ static int g_myRank = -1;                       // 3 admin, 2 staff, 1 moderator
 static okay::MyBanInfo g_myBan;                 // my own site ban, if any
 static volatile bool g_roleCheckBusy = false;
 static bool g_roleLastFailed = false;           // last check failed while I had a rank: keep the rank, retry sooner
-static SDL_mutex* g_roleMutex = nullptr;
+static okay::thr::Mutex* g_roleMutex = nullptr;
 static int g_roleRankNew = -1; static okay::MyBanInfo g_roleBanNew; static bool g_roleReady = false;   // (guarded)
 static std::string g_roleSiteRelayNew;   // (guarded) app_config voice_relay
 static int g_siteRelaySaveResult = 0;    // (guarded) 1 saved, 2 failed
@@ -13396,9 +13435,9 @@ static int RoleCheckWorker(void*) {
         if (rank >= 0) ban = ad.MyBan();
         siteRelay = ad.GetConfig("voice_relay");
     } catch (...) {}
-    SDL_LockMutex(g_roleMutex);
+    okay::thr::LockMutex(g_roleMutex);
     g_roleRankNew = rank; g_roleBanNew = ban; g_roleSiteRelayNew = siteRelay; g_roleReady = true;
-    SDL_UnlockMutex(g_roleMutex);
+    okay::thr::UnlockMutex(g_roleMutex);
     g_roleCheckBusy = false;
     return 0;
 }
@@ -13424,24 +13463,24 @@ static void PumpTokenRefresh(okay::account::AccountService& account) {
     const long exp = account.TokenExpiresAt();
     if (exp <= 0 || exp - (long)std::time(nullptr) > 600) return;
     g_tokRefreshBusy = true;
-    if (SDL_Thread* t = SDL_CreateThread(TokenRefreshWorker, "okay-token", nullptr)) SDL_DetachThread(t);
+    if (okay::thr::Thread* t = okay::thr::CreateThread(TokenRefreshWorker, "okay-token", nullptr)) okay::thr::DetachThread(t);
     else g_tokRefreshBusy = false;
 }
 
 static void PumpRoleCheck(bool signedIn) {
     static Uint32 next = 0; static bool wasIn = false;
     if (std::getenv("OKAY_UI_DEMO_USER")) { g_myRank = 3; return; }
-    if (!g_roleMutex) g_roleMutex = SDL_CreateMutex();
+    if (!g_roleMutex) g_roleMutex = okay::thr::CreateMutex();
     if (!signedIn) { g_myRank = -1; g_myBan = okay::MyBanInfo(); wasIn = false; return; }
     const Uint32 now = okay::platform::TicksMs32();
     if (!wasIn) { wasIn = true; next = 0; }
     if (now >= next && !g_roleCheckBusy && !g_pollCfgDir.empty()) {
         next = now + (g_roleLastFailed ? 60000u : 300000u);   // a failed check is retried after a minute
         g_roleCheckBusy = true;
-        if (SDL_Thread* t = SDL_CreateThread(RoleCheckWorker, "okay-role", nullptr)) SDL_DetachThread(t);
+        if (okay::thr::Thread* t = okay::thr::CreateThread(RoleCheckWorker, "okay-role", nullptr)) okay::thr::DetachThread(t);
         else g_roleCheckBusy = false;
     }
-    SDL_LockMutex(g_roleMutex);
+    okay::thr::LockMutex(g_roleMutex);
     if (g_roleReady) {
         g_roleReady = false;
         // A failed check (token expired after hours open, network blip) comes back as -1. It must not take the
@@ -13455,7 +13494,7 @@ static void PumpRoleCheck(bool signedIn) {
         else Toast("Couldn't save the voice server (is docs/sql/app_config.sql set up?)", 2);
         g_siteRelaySaveResult = 0;
     }
-    SDL_UnlockMutex(g_roleMutex);
+    okay::thr::UnlockMutex(g_roleMutex);
 }
 
 // Admin: store the site-wide voice server (app_config "voice_relay") off the UI thread.
@@ -13466,15 +13505,15 @@ static int SiteRelayWorker(void* p) {
         okay::account::AccountService a(fs::path(g_pollCfgDir), g_pollUrl, g_pollKey);
         ok = okay::Admin(a).SetConfig("voice_relay", *v);
     } catch (...) {}
-    SDL_LockMutex(g_roleMutex);
+    okay::thr::LockMutex(g_roleMutex);
     if (ok) g_roleSiteRelayNew = *v;
     g_siteRelaySaveResult = ok ? 1 : 2;
-    SDL_UnlockMutex(g_roleMutex);
+    okay::thr::UnlockMutex(g_roleMutex);
     return 0;
 }
 static void SaveSiteVoiceRelay(const std::string& value) {
-    if (!g_roleMutex) g_roleMutex = SDL_CreateMutex();
-    if (SDL_Thread* t = SDL_CreateThread(SiteRelayWorker, "okay-cfg", new std::string(value))) SDL_DetachThread(t);
+    if (!g_roleMutex) g_roleMutex = okay::thr::CreateMutex();
+    if (okay::thr::Thread* t = okay::thr::CreateThread(SiteRelayWorker, "okay-cfg", new std::string(value))) okay::thr::DetachThread(t);
 }
 struct AdminJob { int kind = 0; std::string s1, s2, s3; long n1 = 0, n2 = 0; };
 // kind: 1 overview, 2 find players(s1), 3 role(uid s1, badge s2, on n1; reload s3),
@@ -13492,7 +13531,7 @@ struct AdminData {
     std::vector<okay::ForumThread> threads;
     std::vector<okay::AdminBan> bans;
 };
-static SDL_mutex* g_adMutex = nullptr;
+static okay::thr::Mutex* g_adMutex = nullptr;
 static volatile bool g_adBusy = false;
 static AdminData g_adNew; static unsigned g_adNewMask = 0;   // (guarded) which parts arrived
 static std::string g_adMsg; static bool g_adMsgErr = false;  // (guarded)
@@ -13551,7 +13590,7 @@ static int AdminWorker(void* p) {
         if (j->kind == 13 || j->kind == 14 || j->kind == 12) { d.threads = fo.Threads(); mask |= kAdThreads; }
         if (j->kind == 16) { d.log = ad.Log(200); mask |= kAdLog; }
     } catch (...) { msg = "Something went wrong"; err = true; }
-    SDL_LockMutex(g_adMutex);
+    okay::thr::LockMutex(g_adMutex);
     if (mask & kAdStats) g_adNew.stats = d.stats;
     if (mask & kAdLog) g_adNew.log = std::move(d.log);
     if (mask & kAdUsers) g_adNew.users = std::move(d.users);
@@ -13562,7 +13601,7 @@ static int AdminWorker(void* p) {
     if (mask & kAdBans) g_adNew.bans = std::move(d.bans);
     g_adNewMask |= mask;
     if (!msg.empty()) { g_adMsg = msg; g_adMsgErr = err; }
-    SDL_UnlockMutex(g_adMutex);
+    okay::thr::UnlockMutex(g_adMutex);
     g_adBusy = false;
     return 0;
 }
@@ -13640,7 +13679,7 @@ struct AcAdminJob {
     std::string banUser;        // "Ban a player": look this username up, then ban it with:
     std::string banReason; long banUntil = 0;
 };
-static SDL_mutex* g_acAdMutex = nullptr;
+static okay::thr::Mutex* g_acAdMutex = nullptr;
 static volatile bool g_acAdBusy = false;
 static AcAdminData g_acAdNew; static bool g_acAdReady = false;   // (guarded)
 static std::string g_acAdMsg; static bool g_acAdMsgErr = false;   // (guarded)
@@ -13704,10 +13743,10 @@ static int AcAdminWorker(void* p) {
             if (r.ok) acb::ParseUsernames(r.body, d.names);
         }
     } catch (...) { msg = "Something went wrong"; err = true; }
-    SDL_LockMutex(g_acAdMutex);
+    okay::thr::LockMutex(g_acAdMutex);
     g_acAdNew = std::move(d); g_acAdReady = true;
     if (!msg.empty()) { g_acAdMsg = msg; g_acAdMsgErr = err; }
-    SDL_UnlockMutex(g_acAdMutex);
+    okay::thr::UnlockMutex(g_acAdMutex);
     g_acAdBusy = false;
     return 0;
 }
@@ -13769,7 +13808,7 @@ static void DrawAntiCheatAdmin() {
     static long decideId = 0; static bool decideAccept = true; static char decideNote[300] = "";
     static const char* kRepStatus[] = {"open", "reviewing", "actioned", "dismissed", ""};
     const ImU32 cText = ImGui::GetColorU32(ImGuiCol_Text), cDim = ImGui::GetColorU32(ImGuiCol_TextDisabled);
-    if (!g_acAdMutex) g_acAdMutex = SDL_CreateMutex();
+    if (!g_acAdMutex) g_acAdMutex = okay::thr::CreateMutex();
     if (kDemo && !loaded) { loaded = true; D = DemoAcAdminData(); }
 
     auto queue = [&](AcAdminJob* j) {
@@ -13779,16 +13818,16 @@ static void DrawAntiCheatAdmin() {
         if (j->linkedFor.empty()) j->linkedFor = linkedUid;
         if (!j->evidenceFor && evidenceId) j->evidenceFor = evidenceId;
         g_acAdBusy = true;
-        if (SDL_Thread* t = SDL_CreateThread(AcAdminWorker, "okay-acadmin", j)) SDL_DetachThread(t);
+        if (okay::thr::Thread* t = okay::thr::CreateThread(AcAdminWorker, "okay-acadmin", j)) okay::thr::DetachThread(t);
         else { g_acAdBusy = false; delete j; }
     };
     auto act = [&](const acb::Request& r, const char* okMsg) { AcAdminJob* j = new AcAdminJob; j->hasAction = true; j->action = r; j->okMsg = okMsg; queue(j); };
     if (!kDemo) {
         if (firstFrame) { firstFrame = false; queue(new AcAdminJob); }
-        SDL_LockMutex(g_acAdMutex);
+        okay::thr::LockMutex(g_acAdMutex);
         if (g_acAdReady) { g_acAdReady = false; D = g_acAdNew; loaded = true; }   // (linkedUid / evidenceId are re-fetched by the next job)
         if (!g_acAdMsg.empty()) { Toast(g_acAdMsg, g_acAdMsgErr ? 2 : 1); g_acAdMsg.clear(); }
-        SDL_UnlockMutex(g_acAdMutex);
+        okay::thr::UnlockMutex(g_acAdMutex);
     }
     auto name = [&](const std::string& uid) -> std::string {
         if (uid.empty()) return std::string();
@@ -14058,7 +14097,7 @@ static void DrawAntiCheatAdmin() {
 }
 
 // ---- The player's side: my anti-cheat bans + appeal, and reporting a cheater ----
-static SDL_mutex* g_acMeMutex = nullptr;
+static okay::thr::Mutex* g_acMeMutex = nullptr;
 static volatile bool g_acMeBusy = false;
 static std::vector<acb::MyBan> g_acMyBans, g_acMyBansNew; static bool g_acMyBansReady = false;   // (New: guarded)
 static std::string g_acMeMsg; static bool g_acMeMsgErr = false;                                  // (guarded)
@@ -14076,18 +14115,18 @@ static int AcMeWorker(void* p) {
         const auto r = acb::Send(a, acb::MyBans(okayac::MachineHash()));
         got = r.ok && acb::ParseMyBans(r.body, bans);   // (not set up on the server: no banner, quietly)
     } catch (...) {}
-    SDL_LockMutex(g_acMeMutex);
+    okay::thr::LockMutex(g_acMeMutex);
     if (got) { g_acMyBansNew = std::move(bans); g_acMyBansReady = true; }
     if (!msg.empty()) { g_acMeMsg = msg; g_acMeMsgErr = err; }
-    SDL_UnlockMutex(g_acMeMutex);
+    okay::thr::UnlockMutex(g_acMeMutex);
     g_acMeBusy = false;
     return 0;
 }
 static void AcMeQueue(AcMeJob* j) {
-    if (!g_acMeMutex) g_acMeMutex = SDL_CreateMutex();
+    if (!g_acMeMutex) g_acMeMutex = okay::thr::CreateMutex();
     if (g_acMeBusy) { delete j; Toast("One moment\xE2\x80\xA6", 0); return; }
     g_acMeBusy = true;
-    if (SDL_Thread* t = SDL_CreateThread(AcMeWorker, "okay-acme", j)) SDL_DetachThread(t);
+    if (okay::thr::Thread* t = okay::thr::CreateThread(AcMeWorker, "okay-acme", j)) okay::thr::DetachThread(t);
     else { g_acMeBusy = false; delete j; }
 }
 // Every frame: my anti-cheat bans at sign-in and every 5 minutes.
@@ -14104,15 +14143,15 @@ static void PumpAcMyBans(bool signedIn) {
         }
         return;
     }
-    if (!g_acMeMutex) g_acMeMutex = SDL_CreateMutex();
+    if (!g_acMeMutex) g_acMeMutex = okay::thr::CreateMutex();
     if (!signedIn) { g_acMyBans.clear(); wasIn = false; return; }
     const Uint32 now = okay::platform::TicksMs32();
     if (!wasIn) { wasIn = true; next = 0; }
     if (now >= next && !g_acMeBusy && !g_pollCfgDir.empty()) { next = now + 300000; AcMeQueue(new AcMeJob); }
-    SDL_LockMutex(g_acMeMutex);
+    okay::thr::LockMutex(g_acMeMutex);
     if (g_acMyBansReady) { g_acMyBansReady = false; g_acMyBans = g_acMyBansNew; }
     if (!g_acMeMsg.empty()) { Toast(g_acMeMsg, g_acMeMsgErr ? 2 : 1); g_acMeMsg.clear(); }
-    SDL_UnlockMutex(g_acMeMutex);
+    okay::thr::UnlockMutex(g_acMeMutex);
 }
 
 
@@ -14121,7 +14160,7 @@ static void PumpAcMyBans(bool signedIn) {
 // service on a worker thread before it starts a game to join a server: a banned answer refreshes my bans (the banner shows why) and the game
 // is not started; with `mode required` any failure stops the start too (the game would refuse to join anyway, this just says why now).
 // The game does the real, connection-bound request itself (player/main.cpp); this one is only the early answer, and its ticket is dropped.
-static SDL_mutex* g_tkMutex = nullptr;
+static okay::thr::Mutex* g_tkMutex = nullptr;
 static volatile bool g_tkBusy = false;
 static std::string g_tkLink;                               // the link being checked (guarded)
 static std::string g_tkOkLink;                             // a link whose check passed: the next MpLaunch of it goes through (UI thread)
@@ -14156,15 +14195,15 @@ static int TicketPreflightWorker(void* p) {
         const okayac::ticket::Decision d = okayac::ticket::Decide(j->cfg, client, hk, t, "");
         allow = d.allow; banned = d.outcome == okayac::ticket::Outcome::Banned; msg = d.message;
     } catch (...) { allow = j->cfg.mode != okayac::ticket::Mode::Required; if (!allow) msg = "Couldn't check the session ticket."; }
-    SDL_LockMutex(g_tkMutex);
+    okay::thr::LockMutex(g_tkMutex);
     g_tkAllow = allow; g_tkBanned = banned; g_tkMsg = msg; g_tkDone = true;
-    SDL_UnlockMutex(g_tkMutex);
+    okay::thr::UnlockMutex(g_tkMutex);
     g_tkBusy = false;
     return 0;
 }
 // True when the start must wait for (or stop at) the ticket check. Called by MpLaunch; false = go ahead.
 static bool TicketPreflightHolds(const okay::JoinLink& l, const std::string& scene) {
-    if (!g_tkMutex) g_tkMutex = SDL_CreateMutex();
+    if (!g_tkMutex) g_tkMutex = okay::thr::CreateMutex();
     const std::string link = l.Format();
     if (g_tkOkLink == link) { g_tkOkLink.clear(); return false; }            // checked a moment ago
     okayac::ticket::Config cfg = TicketConfigFor(scene);
@@ -14177,10 +14216,10 @@ static bool TicketPreflightHolds(const okay::JoinLink& l, const std::string& sce
         }
     if (g_tkBusy) { Toast("One moment\xE2\x80\xA6", 0); return true; }
     g_tkBusy = true;
-    SDL_LockMutex(g_tkMutex); g_tkLink = link; g_tkDone = false; SDL_UnlockMutex(g_tkMutex);
+    okay::thr::LockMutex(g_tkMutex); g_tkLink = link; g_tkDone = false; okay::thr::UnlockMutex(g_tkMutex);
     TkJob* job = new TkJob{cfg, l};
     Toast("Checking your session\xE2\x80\xA6", 0);
-    if (SDL_Thread* t = SDL_CreateThread(TicketPreflightWorker, "okay-ticket", job)) SDL_DetachThread(t);
+    if (okay::thr::Thread* t = okay::thr::CreateThread(TicketPreflightWorker, "okay-ticket", job)) okay::thr::DetachThread(t);
     else { g_tkBusy = false; delete job; return cfg.mode == okayac::ticket::Mode::Required; }
     return true;
 }
@@ -14188,9 +14227,9 @@ static bool TicketPreflightHolds(const okay::JoinLink& l, const std::string& sce
 static void PumpTicketPreflight() {
     if (!g_tkMutex) return;
     bool done = false, allow = false, banned = false; std::string msg, link;
-    SDL_LockMutex(g_tkMutex);
+    okay::thr::LockMutex(g_tkMutex);
     if (g_tkDone) { done = true; allow = g_tkAllow; banned = g_tkBanned; msg = g_tkMsg; link = g_tkLink; g_tkDone = false; }
-    SDL_UnlockMutex(g_tkMutex);
+    okay::thr::UnlockMutex(g_tkMutex);
     if (!done) return;
     if (banned) {
         AcMeQueue(new AcMeJob);   // refresh ac_my_bans: the banner at the top of every page shows the reason and the appeal
@@ -14261,7 +14300,7 @@ static void DrawAcBanBanner() {
 // each get their own sentence (shared/UserReports.hpp). Moderators review under
 // Admin > Reports (DrawReportsAdmin, below).
 namespace rep = okayrep;
-static SDL_mutex* g_repMutex = nullptr;
+static okay::thr::Mutex* g_repMutex = nullptr;
 static rep::Target g_repTarget = rep::Target::User;
 static std::string g_repId, g_repLabel;
 static bool g_repOpenReq = false;
@@ -14276,10 +14315,10 @@ static int ReportSendWorker(void* p) {
         if (!a.IsLoggedIn()) o = rep::Outcome::SignedOut;
         else { const auto r = acb::Send(a, j->req); o = r.ok ? rep::Outcome::Sent : rep::Classify(r.status, r.body); }
     } catch (...) { o = rep::Outcome::NoNetwork; }
-    if (!g_repMutex) g_repMutex = SDL_CreateMutex();
-    SDL_LockMutex(g_repMutex);
+    if (!g_repMutex) g_repMutex = okay::thr::CreateMutex();
+    okay::thr::LockMutex(g_repMutex);
     g_repResult = o; g_repResultReady = true;
-    SDL_UnlockMutex(g_repMutex);
+    okay::thr::UnlockMutex(g_repMutex);
     g_repBusy = false;
     return 0;
 }
@@ -14292,16 +14331,16 @@ static void DrawReportPopup() {
     static char note[rep::kNoteMax + 8] = "";
     static std::string inlineMsg;     // why the last send did not go through ("" = none)
     static bool closeNow = false;
-    if (!g_repMutex) g_repMutex = SDL_CreateMutex();
+    if (!g_repMutex) g_repMutex = okay::thr::CreateMutex();
     if (g_repOpenReq) {
         g_repOpenReq = false; reason = -1; note[0] = '\0'; inlineMsg.clear(); closeNow = false;
         ImGui::OpenPopup("Report##userreport");
     }
     // The server's answer (also when the dialog was closed while it was out).
     bool ready = false; rep::Outcome res = rep::Outcome::Other;
-    SDL_LockMutex(g_repMutex);
+    okay::thr::LockMutex(g_repMutex);
     if (g_repResultReady) { g_repResultReady = false; ready = true; res = g_repResult; }
-    SDL_UnlockMutex(g_repMutex);
+    okay::thr::UnlockMutex(g_repMutex);
     if (ready) {
         if (rep::Accepted(res)) { Toast(rep::Message(res), 1); closeNow = true; }
         else { inlineMsg = rep::Message(res); Toast(inlineMsg, 2); }
@@ -14340,7 +14379,7 @@ static void DrawReportPopup() {
             else {
                 g_repBusy = true;
                 RepSendJob* j = new RepSendJob; j->req = q;
-                if (SDL_Thread* t = SDL_CreateThread(ReportSendWorker, "okay-report", j)) SDL_DetachThread(t);
+                if (okay::thr::Thread* t = okay::thr::CreateThread(ReportSendWorker, "okay-report", j)) okay::thr::DetachThread(t);
                 else { g_repBusy = false; delete j; inlineMsg = rep::Message(rep::Outcome::NoNetwork); }
             }
         }
@@ -14359,7 +14398,7 @@ struct RepAdminData {
     std::string loadError;
 };
 struct RepAdminJob { bool hasAction = false; rep::Request action; std::string okMsg, status; };
-static SDL_mutex* g_repAdMutex = nullptr;
+static okay::thr::Mutex* g_repAdMutex = nullptr;
 static volatile bool g_repAdBusy = false;
 static RepAdminData g_repAdNew; static bool g_repAdReady = false;   // (guarded)
 static std::string g_repAdMsg; static bool g_repAdMsgErr = false;   // (guarded)
@@ -14384,10 +14423,10 @@ static int RepAdminWorker(void* p) {
             if (nr.ok) acb::ParseUsernames(nr.body, d.names);
         }
     } catch (...) { msg = "Something went wrong"; err = true; }
-    SDL_LockMutex(g_repAdMutex);
+    okay::thr::LockMutex(g_repAdMutex);
     g_repAdNew = std::move(d); g_repAdReady = true;
     if (!msg.empty()) { g_repAdMsg = msg; g_repAdMsgErr = err; }
-    SDL_UnlockMutex(g_repAdMutex);
+    okay::thr::UnlockMutex(g_repAdMutex);
     g_repAdBusy = false;
     return 0;
 }
@@ -14413,22 +14452,22 @@ static void DrawReportsAdmin() {
     static char note[300] = "";
     static const char* kStatus[] = {"open", "resolved", "dismissed", ""};
     const ImU32 cText = ImGui::GetColorU32(ImGuiCol_Text), cDim = ImGui::GetColorU32(ImGuiCol_TextDisabled);
-    if (!g_repAdMutex) g_repAdMutex = SDL_CreateMutex();
+    if (!g_repAdMutex) g_repAdMutex = okay::thr::CreateMutex();
     if (kDemo && !loaded) { loaded = true; D = DemoRepAdminData(); }
     auto queue = [&](RepAdminJob* j) {
         if (kDemo) { delete j; Toast("Demo: nothing is sent", 0); return; }
         if (g_repAdBusy) { delete j; Toast("Still working on the last action\xE2\x80\xA6", 0); return; }
         j->status = kStatus[filter];
         g_repAdBusy = true;
-        if (SDL_Thread* t = SDL_CreateThread(RepAdminWorker, "okay-repadmin", j)) SDL_DetachThread(t);
+        if (okay::thr::Thread* t = okay::thr::CreateThread(RepAdminWorker, "okay-repadmin", j)) okay::thr::DetachThread(t);
         else { g_repAdBusy = false; delete j; }
     };
     if (!kDemo) {
         if (firstFrame) { firstFrame = false; queue(new RepAdminJob); }
-        SDL_LockMutex(g_repAdMutex);
+        okay::thr::LockMutex(g_repAdMutex);
         if (g_repAdReady) { g_repAdReady = false; D = g_repAdNew; loaded = true; }
         if (!g_repAdMsg.empty()) { Toast(g_repAdMsg, g_repAdMsgErr ? 2 : 1); g_repAdMsg.clear(); }
-        SDL_UnlockMutex(g_repAdMutex);
+        okay::thr::UnlockMutex(g_repAdMutex);
     }
     auto name = [&](const std::string& uid) -> std::string {
         if (uid.empty()) return std::string("(gone)");
@@ -14550,20 +14589,20 @@ static void DrawAdminPage(okay::account::AccountService& account) {
     static long selSection = 0;             // 0 = all posts
     const int myRank = g_myRank;
     const ImU32 cText = ImGui::GetColorU32(ImGuiCol_Text), cDim = ImGui::GetColorU32(ImGuiCol_TextDisabled);
-    if (!g_adMutex) g_adMutex = SDL_CreateMutex();
+    if (!g_adMutex) g_adMutex = okay::thr::CreateMutex();
     if (kDemo && !seeded) { seeded = true; D = DemoAdminData(); loadedMask = ~0u; }
 
     auto queue = [&](AdminJob* j) {
         if (kDemo) { delete j; return; }
         if (g_adBusy) { delete j; Toast("Still working on the last action\xE2\x80\xA6", 0); return; }
         g_adBusy = true;
-        if (SDL_Thread* t = SDL_CreateThread(AdminWorker, "okay-admin", j)) SDL_DetachThread(t);
+        if (okay::thr::Thread* t = okay::thr::CreateThread(AdminWorker, "okay-admin", j)) okay::thr::DetachThread(t);
         else { g_adBusy = false; delete j; }
     };
     auto job = [&](int kind) { AdminJob* j = new AdminJob; j->kind = kind; return j; };
     // Pick up results.
     if (!kDemo) {
-        SDL_LockMutex(g_adMutex);
+        okay::thr::LockMutex(g_adMutex);
         const unsigned m = g_adNewMask; g_adNewMask = 0;
         if (m & kAdStats) D.stats = g_adNew.stats;
         if (m & kAdLog) D.log = g_adNew.log;
@@ -14575,7 +14614,7 @@ static void DrawAdminPage(okay::account::AccountService& account) {
         if (m & kAdBans) D.bans = g_adNew.bans;
         loadedMask |= m;
         if (!g_adMsg.empty()) { Toast(g_adMsg, g_adMsgErr ? 2 : 1); g_adMsg.clear(); }
-        SDL_UnlockMutex(g_adMutex);
+        okay::thr::UnlockMutex(g_adMutex);
     }
 
     // ---- Header ----
@@ -15315,11 +15354,11 @@ static PfPageOut DrawPublicProfilePage(okay::account::AccountService& account, i
         if (!g_pfBusy && !s_queue.empty()) {
             PfJob* j = s_queue.front(); s_queue.erase(s_queue.begin());
             g_pfBusy = true;
-            if (SDL_Thread* t = SDL_CreateThread(ProfileWorker, "okay-profile", j)) SDL_DetachThread(t);
+            if (okay::thr::Thread* t = okay::thr::CreateThread(ProfileWorker, "okay-profile", j)) okay::thr::DetachThread(t);
             else { g_pfBusy = false; delete j; }
         }
         if (g_pfMutex) {
-            SDL_LockMutex(g_pfMutex);
+            okay::thr::LockMutex(g_pfMutex);
             if (g_pfReady) {
                 if (g_pfReadySerial == shown && (g_pfResult.found || !s_loaded)) {
                     bool wasMe = s_b.isMe;
@@ -15329,7 +15368,7 @@ static PfPageOut DrawPublicProfilePage(okay::account::AccountService& account, i
                 g_pfReady = false;
             }
             int at = g_pfActType, ar = g_pfActResult; g_pfActType = 0; g_pfActResult = 0;
-            SDL_UnlockMutex(g_pfMutex);
+            okay::thr::UnlockMutex(g_pfMutex);
             if (at == 1) Toast(ar > 0 ? "Showcase saved" : "Showcase saved on this device (server showcases aren't enabled yet)", ar > 0 ? 1 : 2);
             else if (at == 2) Toast(ar > 0 ? "Friend request sent" : "Couldn't send the friend request", ar > 0 ? 1 : 2);
             else if (at == 3) Toast(ar > 0 ? "Friend request accepted" : "Couldn't accept the request", ar > 0 ? 1 : 2);
@@ -16235,18 +16274,18 @@ static int ChatUploadWorker(void*) {
         } else if (err.empty()) err = "Upload failed.";
     } catch (...) { err = "Upload failed."; }
     if (job.voiceSecs >= 0) { std::error_code ec; fs::remove(fs::path(job.path), ec); }   // temp recording
-    if (g_attMutex) { SDL_LockMutex(g_attMutex); g_attError = err; g_attDone = true; SDL_UnlockMutex(g_attMutex); }
+    if (g_attMutex) { okay::thr::LockMutex(g_attMutex); g_attError = err; g_attDone = true; okay::thr::UnlockMutex(g_attMutex); }
     g_chatForceLog = true;
     g_attBusy = false;
     return 0;
 }
 static void StartChatUpload(const std::string& path, const std::string& toUid, long toGroup, int voiceSecs, long toChannel) {
     if (g_attBusy || path.empty()) return;
-    if (!g_attMutex) g_attMutex = SDL_CreateMutex();
+    if (!g_attMutex) g_attMutex = okay::thr::CreateMutex();
     g_attJob = ChatUploadJob{path, toUid, toGroup, voiceSecs, toChannel};
     g_attName = voiceSecs >= 0 ? std::string("voice message") : fs::path(path).filename().string();
     g_attBusy = true;
-    if (SDL_Thread* t = SDL_CreateThread(ChatUploadWorker, "okay-upload", nullptr)) SDL_DetachThread(t);
+    if (okay::thr::Thread* t = okay::thr::CreateThread(ChatUploadWorker, "okay-upload", nullptr)) okay::thr::DetachThread(t);
     else g_attBusy = false;
 }
 // ---- Custom emoji / sticker library + GIF search workers -------------------------
@@ -16259,7 +16298,7 @@ static int LibraryWorker(void* p) {
     try {
         okay::account::AccountService a(fs::path(g_pollCfgDir), g_pollUrl, g_pollKey);
         if (!a.IsLoggedIn()) {   // signed out: nothing to list (keep whatever is shown)
-            SDL_LockMutex(g_libMutex); g_libLoaded = true; SDL_UnlockMutex(g_libMutex);
+            okay::thr::LockMutex(g_libMutex); g_libLoaded = true; okay::thr::UnlockMutex(g_libMutex);
             g_libBusy = false; delete job; return 0;
         }
         okay::Messages dm(a);
@@ -16272,25 +16311,25 @@ static int LibraryWorker(void* p) {
         }
         auto em = dm.ListLibrary("emoji");
         auto st = dm.ListLibrary("stickers");
-        SDL_LockMutex(g_libMutex);
+        okay::thr::LockMutex(g_libMutex);
         g_libEmoji = em; g_libStickers = st; g_libLoaded = true;
         if (!status.empty()) g_libStatus = status;
-        SDL_UnlockMutex(g_libMutex);
+        okay::thr::UnlockMutex(g_libMutex);
     } catch (...) {}
     g_libBusy = false;
     delete job;
     return 0;
 }
 static void LibraryStart(LibJob* job) {
-    if (!g_libMutex) g_libMutex = SDL_CreateMutex();
+    if (!g_libMutex) g_libMutex = okay::thr::CreateMutex();
     if (g_libBusy) { delete job; return; }
     g_libBusy = true;
-    if (SDL_Thread* t = SDL_CreateThread(LibraryWorker, "okay-library", job)) SDL_DetachThread(t);
+    if (okay::thr::Thread* t = okay::thr::CreateThread(LibraryWorker, "okay-library", job)) okay::thr::DetachThread(t);
     else { g_libBusy = false; delete job; }
 }
 static void LibraryRefresh() { LibraryStart(new LibJob{0, "", "", "", ""}); }
 static void LibraryUpload(const std::string& path, const std::string& folder, const std::string& name) {
-    if (g_libMutex) { SDL_LockMutex(g_libMutex); g_libStatus = "Uploading\xE2\x80\xA6"; SDL_UnlockMutex(g_libMutex); }
+    if (g_libMutex) { okay::thr::LockMutex(g_libMutex); g_libStatus = "Uploading\xE2\x80\xA6"; okay::thr::UnlockMutex(g_libMutex); }
     LibraryStart(new LibJob{1, path, folder, name, ""});
 }
 static void LibraryDelete(const std::string& folder, const std::string& file) { LibraryStart(new LibJob{2, "", folder, "", file}); }
@@ -16343,17 +16382,17 @@ static int GifSearchWorker(void*) {
             }
         }
     }
-    SDL_LockMutex(g_gifMutex);
+    okay::thr::LockMutex(g_gifMutex);
     g_gifResults = out; g_gifError = err;
-    SDL_UnlockMutex(g_gifMutex);
+    okay::thr::UnlockMutex(g_gifMutex);
     g_gifReady = true; g_gifBusy = false;
     return 0;
 }
 static void GifSearch(const std::string& query) {
     if (g_tenorKey.empty() || g_gifBusy) return;
-    if (!g_gifMutex) g_gifMutex = SDL_CreateMutex();
+    if (!g_gifMutex) g_gifMutex = okay::thr::CreateMutex();
     g_gifJobQuery = query; g_gifBusy = true;
-    if (SDL_Thread* t = SDL_CreateThread(GifSearchWorker, "okay-gifs", nullptr)) SDL_DetachThread(t);
+    if (okay::thr::Thread* t = okay::thr::CreateThread(GifSearchWorker, "okay-gifs", nullptr)) okay::thr::DetachThread(t);
     else g_gifBusy = false;
 }
 
@@ -16362,10 +16401,10 @@ static int OutboxWorker(void*) {
     std::unique_ptr<okay::account::AccountService> acct;
     while (true) {
         OutMsg job; bool have = false;
-        SDL_LockMutex(g_outMutex);
+        okay::thr::LockMutex(g_outMutex);
         for (auto& o : g_outbox) if (o.state == 0) { job = o; have = true; break; }
-        if (!have) { g_outWorkerRunning = false; SDL_UnlockMutex(g_outMutex); break; }
-        SDL_UnlockMutex(g_outMutex);
+        if (!have) { g_outWorkerRunning = false; okay::thr::UnlockMutex(g_outMutex); break; }
+        okay::thr::UnlockMutex(g_outMutex);
         bool ok = false; std::string why;
         try {
             if (!acct) acct = std::make_unique<okay::account::AccountService>(fs::path(g_pollCfgDir), g_pollUrl, g_pollKey);
@@ -16376,9 +16415,9 @@ static int OutboxWorker(void*) {
                 if (!ok && job.toGroup <= 0) why = dm.LastSendError();
             }
         } catch (...) {}
-        SDL_LockMutex(g_outMutex);
+        okay::thr::LockMutex(g_outMutex);
         for (auto& o : g_outbox) if (o.localId == job.localId) { o.state = ok ? 1 : -1; o.err = ok ? std::string() : why; o.sentAt = okay::platform::TicksMs32(); }
-        SDL_UnlockMutex(g_outMutex);
+        okay::thr::UnlockMutex(g_outMutex);
         if (ok) { if (job.toChannel > 0) g_srvForce = true; else g_chatForceLog = true; }   // pull the real message in right away
     }
     return 0;
@@ -16400,18 +16439,18 @@ static int ChatReactWorker(void* p) {
 static void ChatReactAsync(bool group, long id, const std::string& removeKey, const std::string& addKey) {
     if (std::getenv("OKAY_CHAT_DEMO")) return;   // demo: the local vote is enough
     auto* j = new ChatReactJob{group, id, removeKey, addKey};
-    if (SDL_Thread* t = SDL_CreateThread(ChatReactWorker, "okay-react", j)) SDL_DetachThread(t);
+    if (okay::thr::Thread* t = okay::thr::CreateThread(ChatReactWorker, "okay-react", j)) okay::thr::DetachThread(t);
     else delete j;
 }
 static void OutboxKick() {
-    if (!g_outMutex) g_outMutex = SDL_CreateMutex();
-    SDL_LockMutex(g_outMutex);
+    if (!g_outMutex) g_outMutex = okay::thr::CreateMutex();
+    okay::thr::LockMutex(g_outMutex);
     const bool start = !g_outWorkerRunning;
     if (start) g_outWorkerRunning = true;
-    SDL_UnlockMutex(g_outMutex);
+    okay::thr::UnlockMutex(g_outMutex);
     if (!start) return;
-    if (SDL_Thread* t = SDL_CreateThread(OutboxWorker, "okay-outbox", nullptr)) SDL_DetachThread(t);
-    else { SDL_LockMutex(g_outMutex); g_outWorkerRunning = false; SDL_UnlockMutex(g_outMutex); }
+    if (okay::thr::Thread* t = okay::thr::CreateThread(OutboxWorker, "okay-outbox", nullptr)) okay::thr::DetachThread(t);
+    else { okay::thr::LockMutex(g_outMutex); g_outWorkerRunning = false; okay::thr::UnlockMutex(g_outMutex); }
 }
 
 // Pick a file with the native dialog and start uploading it to a chat.
@@ -16436,7 +16475,7 @@ static int ChatPollWorker(void*) {
         if (!g_chatWinOpen) { okay::platform::DelayMs(200); continue; }
         Uint32 now = okay::platform::TicksMs32();
         std::string uid; long gid = 0;
-        if (g_chatMutex) { SDL_LockMutex(g_chatMutex); uid = g_chatSelUid; gid = g_chatSelGroup; SDL_UnlockMutex(g_chatMutex); }
+        if (g_chatMutex) { okay::thr::LockMutex(g_chatMutex); uid = g_chatSelUid; gid = g_chatSelGroup; okay::thr::UnlockMutex(g_chatMutex); }
         if (uid != lastUid) { lastUid = uid; nextLog = 0; nextTyping = 0; nextHere = 0; nextSeen = 0; lastMark = 0; peerLastSeen = 0; }   // conversation changed → poll now
         // Only an open, focused conversation counts as read / "in the chat".
         const bool viewing = okay::platform::TicksMs32() - g_chatViewMs < 1500;
@@ -16445,20 +16484,20 @@ static int ChatPollWorker(void*) {
         try {
             if (now >= nextConv) {
                 auto c = dm.Conversations();
-                if (g_chatMutex) { SDL_LockMutex(g_chatMutex); g_chatConvs = std::move(c); g_chatConvReady = true; SDL_UnlockMutex(g_chatMutex); }
+                if (g_chatMutex) { okay::thr::LockMutex(g_chatMutex); g_chatConvs = std::move(c); g_chatConvReady = true; okay::thr::UnlockMutex(g_chatMutex); }
                 nextConv = now + 6000;
             }
             if (now >= nextGroups) {
                 auto gs = dm.MyGroups();
-                if (g_chatMutex) { SDL_LockMutex(g_chatMutex); g_chatGroups = std::move(gs); g_chatGroupsReady = true; SDL_UnlockMutex(g_chatMutex); }
+                if (g_chatMutex) { okay::thr::LockMutex(g_chatMutex); g_chatGroups = std::move(gs); g_chatGroupsReady = true; okay::thr::UnlockMutex(g_chatMutex); }
                 nextGroups = now + 6000;
             }
             if (gid > 0 && now >= nextGMem) {   // members: names, avatars, read position
                 auto mem = dm.GroupMembersInfo(gid);
                 if (g_chatMutex) {
-                    SDL_LockMutex(g_chatMutex);
+                    okay::thr::LockMutex(g_chatMutex);
                     g_chatGMembersIn = std::move(mem); g_chatGMembersInFor = gid; g_chatGMembersReady = true;
-                    SDL_UnlockMutex(g_chatMutex);
+                    okay::thr::UnlockMutex(g_chatMutex);
                 }
                 nextGMem = now + 8000;
             }
@@ -16468,10 +16507,10 @@ static int ChatPollWorker(void*) {
                 long markId = gl.empty() ? 0 : gl.back().id;
                 if (markId) dm.MarkGroupRead(gid, markId);
                 if (g_chatMutex) {
-                    SDL_LockMutex(g_chatMutex);
+                    okay::thr::LockMutex(g_chatMutex);
                     g_chatGLog = std::move(gl); g_chatGReacts = std::move(grc); g_chatGMyReacts = std::move(gmr);
                     g_chatGLogReady = true;
-                    SDL_UnlockMutex(g_chatMutex);
+                    okay::thr::UnlockMutex(g_chatMutex);
                 }
                 nextGLog = now + 4000;
             }
@@ -16482,16 +16521,16 @@ static int ChatPollWorker(void*) {
                 for (const auto& p : pd) md[p.id] = p.when;
                 for (const auto& p : pg) mg[p.id] = p.when;
                 if (g_chatMutex) {
-                    SDL_LockMutex(g_chatMutex);
+                    okay::thr::LockMutex(g_chatMutex);
                     g_chatPinsDmIn = std::move(md); g_chatPinsGroupIn = std::move(mg);
                     g_chatPinsSupported = supD && supG; g_chatPinsReady = true;
-                    SDL_UnlockMutex(g_chatMutex);
+                    okay::thr::UnlockMutex(g_chatMutex);
                 }
                 nextPins = now + ((supD && supG) ? 10000 : 120000);
             }
             if (now >= nextFri) {
                 auto f = fr.List();
-                if (g_chatMutex) { SDL_LockMutex(g_chatMutex); g_chatFriends = std::move(f); g_chatFriReady = true; SDL_UnlockMutex(g_chatMutex); }
+                if (g_chatMutex) { okay::thr::LockMutex(g_chatMutex); g_chatFriends = std::move(f); g_chatFriReady = true; okay::thr::UnlockMutex(g_chatMutex); }
                 nextFri = now + 15000;
             }
             if (!uid.empty()) {
@@ -16503,10 +16542,10 @@ static int ChatPollWorker(void*) {
                     if (markId && viewing && g_readReceipts) { dm.MarkRead(uid, markId); nextHere = now + 3000; }
                     if (markId) lastMark = markId;
                     if (g_chatMutex) {
-                        SDL_LockMutex(g_chatMutex);
+                        okay::thr::LockMutex(g_chatMutex);
                         g_chatLog = std::move(l); g_chatReacts = std::move(rc); g_chatMyReacts = std::move(mr);
                         g_chatLogReady = true;
-                        SDL_UnlockMutex(g_chatMutex);
+                        okay::thr::UnlockMutex(g_chatMutex);
                     }
                     nextLog = now + 4000;
                 }
@@ -16521,12 +16560,12 @@ static int ChatPollWorker(void*) {
                     if (wantSeen && ps.ok) { peerLastSeen = ps.lastSeen; nextSeen = now + 15000; }
                     if (ps.ok && g_chatMutex) {
                         const long t = (long)std::time(nullptr);
-                        SDL_LockMutex(g_chatMutex);
+                        okay::thr::LockMutex(g_chatMutex);
                         g_chatPeerRead = ps.readId;
                         g_chatPeerHere = ps.viewingAt > 0 && t - ps.viewingAt >= -3 && t - ps.viewingAt < 9;
                         g_chatPeerLastSeen = peerLastSeen;
                         g_chatPeerStateUid = uid;
-                        SDL_UnlockMutex(g_chatMutex);
+                        okay::thr::UnlockMutex(g_chatMutex);
                     }
                     nextTyping = now + 2500;
                 }
@@ -16545,8 +16584,8 @@ static int ChatPollWorker(void*) {
 // the selected server/channel and publishes under a mutex. It only runs while
 // the tab is actually on screen (g_srvActiveMs is bumped each frame). User
 // actions (send/create/like) stay on the main thread and set g_srvForce.
-static SDL_mutex*  g_srvMutex = nullptr;
-static SDL_Thread* g_srvThread = nullptr;
+static okay::thr::Mutex*  g_srvMutex = nullptr;
+static okay::thr::Thread* g_srvThread = nullptr;
 static volatile bool g_srvPollRun = true;
 static volatile long g_srvSel = 0, g_srvChan = 0;    // inputs set by the main thread
 static volatile Uint32 g_srvActiveMs = 0;            // last frame the Servers tab rendered
@@ -16572,22 +16611,22 @@ static int ServerPollWorker(void*) {
             if (sel != 0) {
                 if (now >= nextChan) {
                     auto c = sv.Channels(sel);
-                    if (g_srvMutex) { SDL_LockMutex(g_srvMutex); g_srvChannels = std::move(c); g_srvChanReady = true; SDL_UnlockMutex(g_srvMutex); }
+                    if (g_srvMutex) { okay::thr::LockMutex(g_srvMutex); g_srvChannels = std::move(c); g_srvChanReady = true; okay::thr::UnlockMutex(g_srvMutex); }
                     nextChan = now + 15000;
                 }
                 if (now >= nextMem) {
                     auto m = sv.Members(sel);
-                    if (g_srvMutex) { SDL_LockMutex(g_srvMutex); g_srvMembers = std::move(m); g_srvMemReady = true; SDL_UnlockMutex(g_srvMutex); }
+                    if (g_srvMutex) { okay::thr::LockMutex(g_srvMutex); g_srvMembers = std::move(m); g_srvMemReady = true; okay::thr::UnlockMutex(g_srvMutex); }
                     nextMem = now + 20000;
                 }
             }
             if (chan != 0 && now >= nextMsg) {
                 auto ms = sv.Messages(chan); auto lk = sv.Likes(); auto ml = sv.MyLikes();
                 if (g_srvMutex) {
-                    SDL_LockMutex(g_srvMutex);
+                    okay::thr::LockMutex(g_srvMutex);
                     g_srvMsgs = std::move(ms); g_srvLikes = std::move(lk); g_srvMyLikes = std::move(ml);
                     g_srvMsgReady = true;
-                    SDL_UnlockMutex(g_srvMutex);
+                    okay::thr::UnlockMutex(g_srvMutex);
                 }
                 nextMsg = now + 4000;
             }
@@ -16601,7 +16640,7 @@ static int ServerPollWorker(void*) {
 // sent off-thread. While one is in flight, poll snapshots (which may predate
 // it) are ignored so the change doesn't flicker back; a fresh poll follows.
 struct SrvActJob { int kind = 0; long id = 0; std::string body; };   // 0 like, 1 unlike, 2 edit
-static SDL_atomic_t g_srvActPending;
+static okay::thr::AtomicInt g_srvActPending;
 static volatile bool g_srvActFailed = false;
 static int SrvActWorker(void* p) {
     std::unique_ptr<SrvActJob> j(static_cast<SrvActJob*>(p));
@@ -16612,15 +16651,15 @@ static int SrvActWorker(void* p) {
         ok = j->kind == 2 ? sv.EditMessage(j->id, j->body) : sv.Like(j->id, j->kind == 0);
     } catch (...) {}
     if (!ok && j->kind == 2) g_srvActFailed = true;
-    SDL_AtomicDecRef(&g_srvActPending);
+    okay::thr::AtomicAdd(&g_srvActPending, -1);
     g_srvForce = true;
     return 0;
 }
 static void ServerActionAsync(int kind, long id, const std::string& body = std::string()) {
     auto* j = new SrvActJob; j->kind = kind; j->id = id; j->body = body;
-    SDL_AtomicIncRef(&g_srvActPending);
-    if (SDL_Thread* t = SDL_CreateThread(SrvActWorker, "okay-srvact", j)) SDL_DetachThread(t);
-    else { SDL_AtomicDecRef(&g_srvActPending); delete j; }
+    okay::thr::AtomicAdd(&g_srvActPending, 1);
+    if (okay::thr::Thread* t = okay::thr::CreateThread(SrvActWorker, "okay-srvact", j)) okay::thr::DetachThread(t);
+    else { okay::thr::AtomicAdd(&g_srvActPending, -1); delete j; }
 }
 
 // Toast notification (bottom-right, auto-fading), drawn in whichever window is
@@ -16671,47 +16710,75 @@ struct ChatWindowHost {
     ImFont* mono = nullptr; Uint32 id = 0; bool shown = false;
 };
 static ChatWindowHost g_chatHost;
+// Dear ImGui input: imgui_impl_sdl2 by default, or our own okay::platform feed with OKAY_PLATFORM_EVENTS=own
+// (shared/ImGuiPlatformFeed.hpp). One feed per ImGui context: the launcher window and the chat pop-out window.
+static bool g_imguiOwnFeed = false;
+static bool g_imguiOwnRender = false;   // OKAY_IMGUI_RENDER=own: our Painter-based renderer instead of imgui_impl_sdlrenderer2
+static okay::imguifeed::Feed g_imguiFeed, g_imguiChatFeed;
+static std::unique_ptr<okay::platform::Window> g_imguiMainWrap;   // non-owning wrapper over the launcher's SDL window for the feed
+static std::unique_ptr<okay::platform::Window> g_imguiChatWrap;
+// One platform event for Dear ImGui: our own feed takes it directly; imgui_impl_sdl2 (the default) takes the SDL record the sdl2
+// backend keeps in Event::native (valid only inside the poll loop pass that returned the event).
+static void FeedImGuiEvent(okay::imguifeed::Feed& feed, const okay::platform::Event& e) {
+    if (g_imguiOwnFeed) { feed.ProcessEvent(e, ImGui::GetIO()); return; }
+    if (e.native) ImGui_ImplSDL2_ProcessEvent((const SDL_Event*)e.native);
+}
+static okay::platform::Window* g_chatHostOwner = nullptr;   // owns g_chatHost.win
 // Keep a window reachable: when too little of it (or its title bar) is on any
 // display (a monitor was unplugged, a minimized position got saved...), put it
 // back in the middle of the first display, shrunk to fit.
 static void KeepWindowOnScreen(SDL_Window* w) {
     if (!w) return;
-    if (SDL_GetWindowFlags(w) & SDL_WINDOW_MINIMIZED) SDL_RestoreWindow(w);
+    if (lw::IsMinimized(w)) lw::Restore(w);
     int x = 0, y = 0, ww = 0, wh = 0;
-    SDL_GetWindowPosition(w, &x, &y); SDL_GetWindowSize(w, &ww, &wh);
-    for (int d = 0; d < SDL_GetNumVideoDisplays(); ++d) {
+    lw::GetPos(w, &x, &y); lw::GetSize(w, &ww, &wh);
+    okay::platform::Backend* pb = okay::platform::Default();
+    const int nDisp = pb ? pb->DisplayCount() : 0;
+    // Usable area (without the task bar) of display d, from okay::platform.
+    auto usable = [&](int d, SDL_Rect& r) {
+        okay::platform::DisplayInfo di;
+        if (!pb || !pb->DisplayAt(d, di)) return false;
+        const bool has = di.uw > 0 && di.uh > 0;
+        r.x = has ? di.ux : di.x; r.y = has ? di.uy : di.y; r.w = has ? di.uw : di.w; r.h = has ? di.uh : di.h;
+        return true;
+    };
+    for (int d = 0; d < nDisp; ++d) {
         SDL_Rect b;
-        if (SDL_GetDisplayUsableBounds(d, &b) != 0) continue;
+        if (!usable(d, b)) continue;
         const int ix = std::min(x + ww, b.x + b.w) - std::max(x, b.x);
         const int iy = std::min(y + wh, b.y + b.h) - std::max(y, b.y);
         if (ix >= 160 && iy >= 80 && y >= b.y - 8 && y < b.y + b.h - 40) return;   // title bar visible
     }
     SDL_Rect b;
-    if (SDL_GetDisplayUsableBounds(0, &b) != 0) return;
+    if (!usable(0, b)) return;
     ww = std::min(ww, b.w - 40); wh = std::min(wh, b.h - 40);
-    SDL_SetWindowSize(w, ww, wh);
-    SDL_SetWindowPosition(w, b.x + (b.w - ww) / 2, b.y + (b.h - wh) / 2);
+    lw::SetSize(w, ww, wh);
+    lw::SetPos(w, b.x + (b.w - ww) / 2, b.y + (b.h - wh) / 2);
 }
 static void ChatHostSaveGeometry() {
     if (!g_chatHost.win || !g_chatHost.shown) return;
-    if (SDL_GetWindowFlags(g_chatHost.win) & SDL_WINDOW_MINIMIZED) return;   // (its position is meaningless then)
-    SDL_GetWindowPosition(g_chatHost.win, &g_chatWinX, &g_chatWinY);
-    SDL_GetWindowSize(g_chatHost.win, &g_chatWinW, &g_chatWinH);
+    if (lw::IsMinimized(g_chatHost.win)) return;   // (its position is meaningless then)
+    lw::GetPos(g_chatHost.win, &g_chatWinX, &g_chatWinY);
+    lw::GetSize(g_chatHost.win, &g_chatWinW, &g_chatWinH);
 }
 static bool ChatHostCreate() {
     if (g_chatHost.win) return true;
     ImGuiContext* mainCtx = ImGui::GetCurrentContext();
     const int x = g_chatWinX >= 0 ? g_chatWinX : (int)SDL_WINDOWPOS_CENTERED, y = g_chatWinY >= 0 ? g_chatWinY : (int)SDL_WINDOWPOS_CENTERED;
-    g_chatHost.win = SDL_CreateWindow("OkaySpace Chat", x, y, g_chatWinW, g_chatWinH,
-                                      SDL_WINDOW_ALLOW_HIGHDPI | SDL_WINDOW_RESIZABLE | SDL_WINDOW_HIDDEN);
+    okay::platform::Backend* sb = okay::platform::Default();
+    okay::platform::WindowDesc cd;
+    cd.title = "OkaySpace Chat"; cd.x = x; cd.y = y; cd.width = g_chatWinW; cd.height = g_chatWinH;
+    cd.resizable = true; cd.highDpi = true; cd.hidden = true;
+    g_chatHostOwner = sb ? sb->MakeWindow(cd).release() : nullptr;   // owning; like before, the chat window lives until the process ends (never freed on purpose: it must not outlive SDL's shutdown in a static destructor)
+    g_chatHost.win = g_chatHostOwner ? (SDL_Window*)g_chatHostOwner->NativeHandle() : nullptr;
     if (!g_chatHost.win) return false;
-    SDL_SetWindowMinimumSize(g_chatHost.win, 520, 380);
-    okay::SetAppIcon(g_chatHost.win);
+    okay::pb::RegisterWindow(*g_chatHostOwner);   // the lw:: helpers find the window by its native handle
+    lw::SetMinSize(g_chatHost.win, 520, 380);
+    okay::SetAppIcon(*g_chatHostOwner);
     // No VSync here: the launcher's present already paces the loop.
-    g_chatHost.ren = SDL_CreateRenderer(g_chatHost.win, -1, SDL_RENDERER_ACCELERATED);
-    if (!g_chatHost.ren) g_chatHost.ren = SDL_CreateRenderer(g_chatHost.win, -1, 0);
-    if (!g_chatHost.ren) { SDL_DestroyWindow(g_chatHost.win); g_chatHost.win = nullptr; return false; }
-    g_chatHost.id = SDL_GetWindowID(g_chatHost.win);
+    g_chatHost.ren = okay::pb::CreateRenderer(*g_chatHostOwner);   // accelerated, else any; its painter owns it
+    if (!g_chatHost.ren) { delete g_chatHostOwner; g_chatHostOwner = nullptr; g_chatHost.win = nullptr; return false; }
+    g_chatHost.id = lw::Id(g_chatHost.win);
     g_chatHost.ctx = ImGui::CreateContext();
     ImGui::SetCurrentContext(g_chatHost.ctx);
     ImGui::GetIO().IniFilename = nullptr;
@@ -16724,8 +16791,12 @@ static bool ChatHostCreate() {
         MergeEmojiFallback(17.0f);
         g_chatHost.mono = ImGui::GetIO().Fonts->AddFontFromMemoryCompressedBase85TTF(JetBrainsMono_compressed_data_base85, 16.0f, &fc);
     }
-    ImGui_ImplSDL2_InitForSDLRenderer(g_chatHost.win, g_chatHost.ren);
-    ImGui_ImplSDLRenderer2_Init(g_chatHost.ren);
+    if (g_imguiOwnFeed) {
+        okay::platform::Window* feedWin = g_chatHostOwner;
+        if (g_chatHostOwner->Kind() == okay::platform::BackendKind::Sdl2) { g_imguiChatWrap = okay::platform::WrapSdl2Window(g_chatHost.win); feedWin = g_imguiChatWrap.get(); }
+        g_imguiChatFeed.Init(ImGui::GetIO(), feedWin->Id(), okay::imguifeed::FeedHost::FromPlatform(okay::platform::Default(), feedWin));
+    } else ImGui_ImplSDL2_InitForSDLRenderer(g_chatHost.win, g_chatHost.ren);
+    if (g_imguiOwnRender) okay::imguirender::Init(ImGui::GetIO()); else ImGui_ImplSDLRenderer2_Init(g_chatHost.ren);
     ImGui::SetCurrentContext(mainCtx);
     return true;
 }
@@ -16734,40 +16805,48 @@ static void ChatHostSync() {
     const bool want = g_chatSeparate && g_chatWinOpen;
     if (want && !g_chatHost.shown) {
         if (!ChatHostCreate()) { g_chatSeparate = false; return; }   // fall back to the in-launcher window
-        SDL_ShowWindow(g_chatHost.win);
+        lw::Show(g_chatHost.win);
         KeepWindowOnScreen(g_chatHost.win);
-        SDL_RaiseWindow(g_chatHost.win);
+        lw::Raise(g_chatHost.win);
         g_chatHost.shown = true;
     } else if (!want && g_chatHost.shown) {
         ChatHostSaveGeometry(); SavePrefs();
-        SDL_HideWindow(g_chatHost.win);
+        lw::Hide(g_chatHost.win);
         g_chatHost.shown = false;
     }
 }
 static bool ChatHostFocused() {
-    return g_chatHost.shown && (SDL_GetWindowFlags(g_chatHost.win) & SDL_WINDOW_INPUT_FOCUS) != 0;
+    return g_chatHost.shown && lw::IsFocused(g_chatHost.win);
 }
-static void ChatHostRaise() { if (g_chatHost.shown) { SDL_RestoreWindow(g_chatHost.win); KeepWindowOnScreen(g_chatHost.win); SDL_RaiseWindow(g_chatHost.win); } }
-// Route an SDL event to the chat window; true when it belonged to it.
-static bool ChatHostEvent(const SDL_Event& e) {
+static void ChatHostRaise() { if (g_chatHost.shown) { lw::Restore(g_chatHost.win); KeepWindowOnScreen(g_chatHost.win); lw::Raise(g_chatHost.win); } }
+// Route a platform event to the chat window; true when it belonged to it.
+static bool ChatHostEvent(const okay::platform::Event& e) {
     if (!g_chatHost.win) return false;
+    using EvT = okay::platform::EventType;
     Uint32 wid = 0;
     switch (e.type) {
-        case SDL_WINDOWEVENT: wid = e.window.windowID; break;
-        case SDL_KEYDOWN: case SDL_KEYUP: wid = e.key.windowID; break;
-        case SDL_TEXTINPUT: wid = e.text.windowID; break;
-        case SDL_TEXTEDITING: wid = e.edit.windowID; break;
-        case SDL_MOUSEMOTION: wid = e.motion.windowID; break;
-        case SDL_MOUSEBUTTONDOWN: case SDL_MOUSEBUTTONUP: wid = e.button.windowID; break;
-        case SDL_MOUSEWHEEL: wid = e.wheel.windowID; break;
-        case SDL_DROPFILE: case SDL_DROPBEGIN: case SDL_DROPCOMPLETE: wid = e.drop.windowID; break;
+        case EvT::WindowClose: case EvT::WindowResized: case EvT::WindowFocusGained: case EvT::WindowFocusLost: case EvT::WindowExposed:
+        case EvT::KeyDown: case EvT::KeyUp: case EvT::TextInput: case EvT::TextEditing:
+        case EvT::MouseMove: case EvT::MouseButtonDown: case EvT::MouseButtonUp: case EvT::MouseWheel: case EvT::DropFile:
+            wid = e.windowId; break;
+        case EvT::Other: {   // what the seam has no type for: other window events (pointer enter / leave, moved ...), IME composition, drop begin / complete
+            const SDL_Event* n = (const SDL_Event*)e.native;
+            if (!n) return false;
+            switch (n->type) {
+                case SDL_WINDOWEVENT: wid = n->window.windowID; break;
+                case SDL_TEXTEDITING: wid = n->edit.windowID; break;
+                case SDL_DROPBEGIN: case SDL_DROPCOMPLETE: wid = n->drop.windowID; break;
+                default: return false;
+            }
+            break;
+        }
         default: return false;
     }
     if (wid != g_chatHost.id) return false;
-    if (e.type == SDL_WINDOWEVENT && e.window.event == SDL_WINDOWEVENT_CLOSE) { g_chatWinOpen = false; return true; }
-    if (e.type == SDL_DROPFILE) {   // dropped onto the chat: send it to the open conversation
-        if (!e.drop.file) return true;
-        std::string dropped = e.drop.file; SDL_free(e.drop.file);
+    if (e.type == EvT::WindowClose) { g_chatWinOpen = false; return true; }
+    if (e.type == EvT::DropFile) {   // dropped onto the chat: send it to the open conversation
+        if (e.text.empty()) return true;
+        std::string dropped = e.text;
         if (!g_chatDropOk || (g_chatDropUid.empty() && g_chatDropGroup <= 0)) { Toast("Open a conversation to send a file", 2); return true; }
         std::error_code fec; auto fsz = fs::file_size(fs::path(dropped), fec);
         if (fec || fs::is_directory(dropped, fec)) Toast("Only files can be sent", 2);
@@ -16778,7 +16857,7 @@ static bool ChatHostEvent(const SDL_Event& e) {
     }
     ImGuiContext* mainCtx = ImGui::GetCurrentContext();
     ImGui::SetCurrentContext(g_chatHost.ctx);
-    ImGui_ImplSDL2_ProcessEvent(&e);
+    FeedImGuiEvent(g_imguiChatFeed, e);
     ImGui::SetCurrentContext(mainCtx);
     return true;
 }
@@ -16800,7 +16879,7 @@ static void PlaytimeTick(bool loggedIn) {
     if (g_playtimeDirty && g_sharePlaytime && loggedIn && !g_playtimeSyncing && now >= nextSync && !g_pollCfgDir.empty()) {
         g_playtimeDirty = false; nextSync = now + 120000;   // at most every 2 minutes
         g_playtimeJob = g_playtime; g_playtimeSyncing = true;
-        if (SDL_Thread* t = SDL_CreateThread(PlaytimeSyncWorker, "okay-playtime", nullptr)) SDL_DetachThread(t);
+        if (okay::thr::Thread* t = okay::thr::CreateThread(PlaytimeSyncWorker, "okay-playtime", nullptr)) okay::thr::DetachThread(t);
         else g_playtimeSyncing = false;
     }
 }
@@ -16808,7 +16887,7 @@ static void PlaytimeTick(bool loggedIn) {
 // Draw + present one chat-window frame (call with the launcher's context current).
 static void ChatHostFrame(okay::account::AccountService& account) {
     if (!g_chatHost.shown) return;
-    if (SDL_GetWindowFlags(g_chatHost.win) & SDL_WINDOW_MINIMIZED) return;
+    if (lw::IsMinimized(g_chatHost.win)) return;
     ImGuiContext* mainCtx = ImGui::GetCurrentContext();
     const ImGuiStyle style = ImGui::GetStyle();            // follow the launcher's theme/accent/scale
     const float fontScale = ImGui::GetIO().FontGlobalScale;
@@ -16816,18 +16895,19 @@ static void ChatHostFrame(okay::account::AccountService& account) {
     ImGui::SetCurrentContext(g_chatHost.ctx);
     ImGui::GetStyle() = style; ImGui::GetIO().FontGlobalScale = fontScale;
     g_renderer = g_chatHost.ren; g_rslot = 1; g_fontMono = g_chatHost.mono; g_chatInOwnWindow = true;
-    ImGui_ImplSDLRenderer2_NewFrame();
-    ImGui_ImplSDL2_NewFrame();
+    if (!g_imguiOwnRender) ImGui_ImplSDLRenderer2_NewFrame();
+    if (g_imguiOwnFeed) g_imguiChatFeed.NewFrame(ImGui::GetIO()); else ImGui_ImplSDL2_NewFrame();
     ImGui::NewFrame();
     DrawChatWindow(account);
     DrawIncomingCall();
     okay::filedialog::DrawBuiltin();   // a file picked from the chat (attach, emoji) opens here, in the chat's own window
     DrawToastOverlay();
     ImGui::Render();
-    SDL_SetRenderDrawColor(g_chatHost.ren, 21, 23, 29, 255);
-    SDL_RenderClear(g_chatHost.ren);
-    ImGui_ImplSDLRenderer2_RenderDrawData(ImGui::GetDrawData(), g_chatHost.ren);
-    SDL_RenderPresent(g_chatHost.ren);
+    okay::pb::SetDrawColor(g_chatHost.ren, 21, 23, 29, 255);
+    okay::pb::Clear(g_chatHost.ren);
+    if (g_imguiOwnRender) okay::imguirender::Render(*okay::pb::For(g_chatHost.ren), ImGui::GetDrawData());
+    else ImGui_ImplSDLRenderer2_RenderDrawData(ImGui::GetDrawData(), g_chatHost.ren);
+    okay::pb::Present(g_chatHost.ren);
     g_renderer = prevRen; g_rslot = 0; g_fontMono = prevMono; g_chatInOwnWindow = false;
     ImGui::SetCurrentContext(mainCtx);
 }
@@ -16863,15 +16943,15 @@ struct OfficialState {
     std::string lastError;         // the last failed install / update, shown small on the card
 };
 static OfficialState g_off;
-static SDL_mutex* g_offMutex = nullptr;
-static SDL_Thread* g_offThread = nullptr;
+static okay::thr::Mutex* g_offMutex = nullptr;
+static okay::thr::Thread* g_offThread = nullptr;
 // Main thread only.
 static og::Manifest g_offInstalled;
 static bool g_offIsInstalled = false;
 static Uint32 g_offLastCheck = 0;
 static bool g_offConfirmUninstall = false;
 
-template <class F> static void OffLocked(F fn) { SDL_LockMutex(g_offMutex); fn(); SDL_UnlockMutex(g_offMutex); }
+template <class F> static void OffLocked(F fn) { okay::thr::LockMutex(g_offMutex); fn(); okay::thr::UnlockMutex(g_offMutex); }
 static bool OfficialCancelled() { bool c = false; OffLocked([&] { c = g_off.cancelReq; }); return c; }
 
 static std::string OffBytes(long long b) {
@@ -17074,12 +17154,12 @@ static void StartOfficialJob(bool install, bool manual) {
         }
     });
     if (busy) return;
-    if (g_offThread) { SDL_WaitThread(g_offThread, nullptr); g_offThread = nullptr; }   // (the last job has ended)
+    if (g_offThread) { okay::thr::WaitThread(g_offThread, nullptr); g_offThread = nullptr; }   // (the last job has ended)
     auto* a = new OfficialJobArgs;
     a->install = install; a->manual = manual; a->autoInstall = g_officialAutoUpdate;
     a->hasInstalled = g_offIsInstalled; a->installed = g_offInstalled;
     g_offLastCheck = okay::platform::TicksMs32();
-    g_offThread = SDL_CreateThread(OfficialWorker, "okay-official", a);
+    g_offThread = okay::thr::CreateThread(OfficialWorker, "okay-official", a);
     if (!g_offThread) { delete a; OffLocked([&] { g_off.job = Off_Idle; g_off.install = false; }); }
 }
 
@@ -17103,7 +17183,7 @@ static void OfficialDropCover(const std::string& path) {
     for (auto& cache : g_coverCaches) {
         auto it = cache.find(path);
         if (it == cache.end()) continue;
-        if (it->second) SDL_DestroyTexture(it->second);
+        if (it->second) okay::pb::DestroyTexture(g_renderer, it->second);
         cache.erase(it);
     }
 }
@@ -17171,7 +17251,7 @@ static void OfficialTick(bool onPlayPage) {
     const Uint32 now = okay::platform::TicksMs32();
     if (!started) {
         started = true;
-        g_offMutex = SDL_CreateMutex();
+        g_offMutex = okay::thr::CreateMutex();
         og::Recover(OfficialDir());   // finish (or undo) a swap a crash or power cut interrupted
         OfficialReloadInstalled();
         startCheckAt = now + 4000;
@@ -17246,7 +17326,7 @@ static void DrawOfficialCard() {
     SDL_Texture* tex = coverPath.empty() ? nullptr : GameCover(coverPath);
     if (tex) {
         int tw = 0, th = 0;
-        SDL_QueryTexture(tex, nullptr, nullptr, &tw, &th);
+        okay::pb::QueryTexture(g_renderer, tex, &tw, &th);
         const float ta = th > 0 ? (float)tw / (float)th : 1.0f, ba = coverW / coverH;
         ImVec2 uv0(0, 0), uv1(1, 1);
         if (ta > ba) { uv0.x = (1.0f - ba / ta) * 0.5f; uv1.x = 1.0f - uv0.x; }
@@ -17403,9 +17483,9 @@ struct OaState {
     bool refreshNow = false;       // ...and refresh the bucket view
 };
 static OaState g_oa;
-static SDL_mutex* g_oaMutex = nullptr;
-static SDL_Thread* g_oaThread = nullptr;
-template <class F> static void OaLocked(F fn) { SDL_LockMutex(g_oaMutex); fn(); SDL_UnlockMutex(g_oaMutex); }
+static okay::thr::Mutex* g_oaMutex = nullptr;
+static okay::thr::Thread* g_oaThread = nullptr;
+template <class F> static void OaLocked(F fn) { okay::thr::LockMutex(g_oaMutex); fn(); okay::thr::UnlockMutex(g_oaMutex); }
 static bool OaCancelled() { bool c = false; OaLocked([&] { c = g_oa.cancelReq; }); return c; }
 
 struct OaJobArgs {
@@ -17675,7 +17755,7 @@ static int OfficialAdminWorker(void* data) {
 
 // Start a job; false while another one runs.
 static bool StartOfficialAdminJob(OaJobArgs* a) {
-    if (!g_oaMutex) g_oaMutex = SDL_CreateMutex();
+    if (!g_oaMutex) g_oaMutex = okay::thr::CreateMutex();
     bool busy = false;
     OaLocked([&] {
         busy = g_oa.job != Oa_Idle;
@@ -17683,15 +17763,15 @@ static bool StartOfficialAdminJob(OaJobArgs* a) {
                      g_oa.bytesDone = g_oa.bytesTotal = 0; g_oa.current.clear(); }
     });
     if (busy) { delete a; return false; }
-    if (g_oaThread) { SDL_WaitThread(g_oaThread, nullptr); g_oaThread = nullptr; }   // (the last job has ended)
-    g_oaThread = SDL_CreateThread(OfficialAdminWorker, "okay-offadmin", a);
+    if (g_oaThread) { okay::thr::WaitThread(g_oaThread, nullptr); g_oaThread = nullptr; }   // (the last job has ended)
+    g_oaThread = okay::thr::CreateThread(OfficialAdminWorker, "okay-offadmin", a);
     if (!g_oaThread) { delete a; OaLocked([&] { g_oa.job = Oa_Idle; }); return false; }
     return true;
 }
 
 static void DrawOfficialAdmin(okay::account::AccountService& account) {
     (void)account;
-    if (!g_oaMutex) g_oaMutex = SDL_CreateMutex();
+    if (!g_oaMutex) g_oaMutex = okay::thr::CreateMutex();
     // The form (main thread only).
     static char folder[1024] = "";
     static bool rescanPending = false;   // the folder picker answered (maybe on a later frame): rescan it
@@ -17833,7 +17913,7 @@ static void DrawOfficialAdmin(okay::account::AccountService& account) {
         SDL_Texture* tex = pf.image.empty() ? nullptr : GameCover((fs::u8path(scannedDir) / fs::u8path(pf.image)).string());
         if (tex) {
             int tw = 0, th = 0;
-            SDL_QueryTexture(tex, nullptr, nullptr, &tw, &th);
+            okay::pb::QueryTexture(g_renderer, tex, &tw, &th);
             const float ta = th > 0 ? (float)tw / (float)th : 1.0f, ba = coverW / coverH;
             ImVec2 uv0(0, 0), uv1(1, 1);
             if (ta > ba) { uv0.x = (1.0f - ba / ta) * 0.5f; uv1.x = 1.0f - uv0.x; }
@@ -18111,6 +18191,7 @@ int main(int argc, char** argv) {
     if (int code = okay::restart::DispatchHelper(argc, argv); code >= 0) return code;
     if (int code = okay::selfupdate::SelfCheck(argc, argv, OKAY_ENGINE_VERSION); code >= 0) return code;   // `--okay-selfcheck <v>`: the updater asks the new file who it is
     okay::restart::RememberArguments(argc, argv);
+    okay::ownswitches::Startup();   // Settings > Experimental: set the chosen own-code variables BEFORE anything reads them (the editor started from here inherits them)
     okay::ownstack::Startup();   // OKAY_OWN_STACK=1 sets the own-backend switches; logs which parts are ours (docs/own_stack_rollout.md)
     SDL_SetMainReady();
     {
@@ -18127,9 +18208,17 @@ int main(int argc, char** argv) {
 
     // Windows 11 / high-DPI: declare per-monitor-DPI-aware BEFORE SDL video init so
     // the launcher renders crisp at 125%/150% scaling instead of bitmap-stretched.
-    SDL_SetHint(SDL_HINT_WINDOWS_DPI_AWARENESS, "permonitorv2");
+    // The backend is the build's default (SDL2) unless OKAY_PLATFORM_BACKEND=own asks for our own one. On the own backend the launcher
+    // needs our own Dear ImGui input feed and renderer (the SDL ones cannot see an own window); those are then switched on below.
+    okay::platform::Backend* sdlSeam = okay::platform::Default();
+    if (!sdlSeam) return 1;
+    sdlSeam->SetPerMonitorDpiAware();
     okay::filedialog::SetContextGetter([]() -> void* { return ImGui::GetCurrentContext(); });   // the built-in file browser shows in the window (context) that asked
-    if (SDL_Init(SDL_INIT_VIDEO) != 0) return 1;
+    {
+        okay::platform::InitFlags vf; vf.audio = false; vf.gamepad = false;   // video (+ timers, events); audio is started later on demand
+        if (!sdlSeam->Init(vf)) return 1;
+        sdlSeam->StartTextInput();   // SDL2 starts with text input on and Dear ImGui's SDL backend relies on it
+    }
 
     // `--versions [<version>]` opens the Versions page (the editor's "Open launcher" button starts the launcher this way).
     okayversions::LauncherArgs launchArgs;
@@ -18143,7 +18232,7 @@ int main(int argc, char** argv) {
     // With --versions it also leaves a note for the running one to open that page.
     if (!AcquireSingleInstance()) {
         if (launchArgs.versions) okayversions::WriteHandoff(okayversions::HandoffFile(), launchArgs, (long long)std::time(nullptr));
-        SDL_Quit();
+        sdlSeam->Shutdown();
         return 0;
     }
     // Only the instance that stays up removes the previous exe. A second launch
@@ -18157,10 +18246,10 @@ int main(int argc, char** argv) {
     // Show the bundled version and DON'T phone home on startup: the published build
     // on GitHub can lag this one, so an auto-check used to download an OLDER engine
     // and mislead with "up to date". Updates are now opt-in via the button below.
-    SDL_AtomicSet(&g_upState, (int)Up_UpToDate);
-    g_upMutex = SDL_CreateMutex();
-    g_dlMutex = SDL_CreateMutex();
-    g_gitMutex = SDL_CreateMutex();
+    okay::thr::AtomicSet(&g_upState, (int)Up_UpToDate);
+    g_upMutex = okay::thr::CreateMutex();
+    g_dlMutex = okay::thr::CreateMutex();
+    g_gitMutex = okay::thr::CreateMutex();
     SetUpMsg("OkaySpace v" + LocalVersion());
     ApplyStartupUpdateVerdict();   // was the last launcher update confirmed, not applied, or rolled back? Say so before anything else.
 
@@ -18173,19 +18262,23 @@ int main(int argc, char** argv) {
     // rectangle during the window + renderer setup gap. We draw the first splash
     // frame while hidden, then reveal the window already showing the splash, so
     // the very first thing the user sees is the branded loading screen.
-    SDL_Window* window = SDL_CreateWindow("OkaySpace Launcher  v" OKAY_ENGINE_VERSION,
-        SDL_WINDOWPOS_CENTERED, SDL_WINDOWPOS_CENTERED, g_winW, g_winH,
-        SDL_WINDOW_ALLOW_HIGHDPI | SDL_WINDOW_RESIZABLE | SDL_WINDOW_HIDDEN);
-    if (!window) return 1;
-    g_launcherWindow = window;   // games ask us to come forward (Invite friends)
-    SDL_SetWindowMinimumSize(window, 720, 480);   // the fixed layout needs this much
-    okay::SetAppIcon(window);   // placeholder OkaySpace logo
-#if defined(_WIN32)
-    SDL_SetWindowsMessageHook(OkayMsgHook, nullptr);   // receive tray-icon clicks
+    okay::platform::WindowDesc mainDesc;
+    mainDesc.title = "OkaySpace Launcher  v" OKAY_ENGINE_VERSION; mainDesc.width = g_winW; mainDesc.height = g_winH;
+    mainDesc.resizable = true; mainDesc.highDpi = true; mainDesc.hidden = true;
+    std::unique_ptr<okay::platform::Window> mainWinOwner = sdlSeam->MakeWindow(mainDesc);   // owns the window
+    if (!mainWinOwner) return 1;
+    SDL_Window* window = (SDL_Window*)mainWinOwner->NativeHandle();
+    okay::pb::RegisterWindow(*mainWinOwner);   // the lw:: helpers find the window by its native handle
+#if defined(OKAY_HAVE_OKAYUI) || defined(OKAY_ON_OKAYUI)   // the OkayUI build draws every window of the own backend through the software painter
+    okay::pb::SetOwnPainterFactory([](okay::platform::Window& w) { return OkayUI::soft::CreateWindowPainter(w); });   // the software painter, for own-backend windows
 #endif
-    SDL_Renderer* renderer = SDL_CreateRenderer(window, -1,
-        SDL_RENDERER_ACCELERATED | SDL_RENDERER_PRESENTVSYNC);
-    if (!renderer) renderer = SDL_CreateRenderer(window, -1, 0);
+    g_launcherWindow = window;   // games ask us to come forward (Invite friends)
+    lw::SetMinSize(window, 720, 480);   // the fixed layout needs this much
+    okay::SetAppIcon(*mainWinOwner);   // placeholder OkaySpace logo
+#if defined(_WIN32)
+    sdlSeam->SetNativeMessageHook(OkayMsgHook, nullptr);   // receive tray-icon clicks
+#endif
+    SDL_Renderer* renderer = okay::pb::CreateRenderer(*mainWinOwner, true);   // accelerated with vsync, else any; its painter owns it
     if (!renderer) return 1;
     g_renderer = renderer;   // lets GameCover() upload cover-art textures
     // Paint a loading frame into the back buffer, reveal the window, then present
@@ -18195,10 +18288,7 @@ int main(int argc, char** argv) {
     if (!g_splashLogo.empty()) {
         int lw = 0, lh = 0;
         if (unsigned char* px = LoadRgbaFile(g_splashLogo, &lw, &lh)) {
-            if (SDL_Surface* s = SDL_CreateRGBSurfaceWithFormatFrom(px, lw, lh, 32, lw * 4, SDL_PIXELFORMAT_ABGR8888)) {
-                g_splashLogoTex = SDL_CreateTextureFromSurface(renderer, s);
-                SDL_FreeSurface(s);
-            }
+            g_splashLogoTex = TextureFromRgba(renderer, px, lw, lh);
             std::free(px);
         }
     }
@@ -18218,12 +18308,12 @@ int main(int argc, char** argv) {
         return st;
     };
     auto firstSplash = [&]() {
-        int sw = g_winW, sh = g_winH; SDL_GetRendererOutputSize(renderer, &sw, &sh);
+        int sw = g_winW, sh = g_winH; okay::pb::OutputSize(renderer, &sw, &sh);
         okay::DrawSplashStyled(renderer, sw, sh, splashStyle());
     };
     firstSplash();                 // draw + present while still hidden
-    SDL_ShowWindow(window);        // reveal with the splash already composited
-    SDL_RaiseWindow(window);
+    lw::Show(window);        // reveal with the splash already composited
+    lw::Raise(window);
     firstSplash();                 // present once more so the shown frame is the splash
 
     IMGUI_CHECKVERSION();
@@ -18244,10 +18334,23 @@ int main(int argc, char** argv) {
             JetBrainsMono_compressed_data_base85, 16.0f, &fc);
     }
     ApplyAccent(g_accentIndex);  // applies the saved accent/theme (calls DarkTheme)
-    ImGui_ImplSDL2_InitForSDLRenderer(window, renderer);
-    ImGui_ImplSDLRenderer2_Init(renderer);
+    // Which Dear ImGui input path runs: imgui_impl_sdl2 (default) or our own okay::platform feed (OKAY_PLATFORM_EVENTS=own).
+    // The own feed has no gamepad navigation; keys, text, mouse, wheel, focus, clipboard and the cursor shape work.
+    const bool ownBackend = sdlSeam->Kind() == okay::platform::BackendKind::Own;
+    g_imguiOwnFeed = ownBackend || okay::imguifeed::OwnRequested(std::getenv("OKAY_PLATFORM_EVENTS"));
+    std::fprintf(stderr, "platform backend: %s\n", sdlSeam->Name());
+    std::fprintf(stderr, "%s\n", okay::imguifeed::ActiveLine(g_imguiOwnFeed));
+    sdlSeam->ReportUnmappedEvents(!g_imguiOwnFeed);   // imgui_impl_sdl2 wants every SDL event (pointer enter / leave, display changes ...)
+    if (g_imguiOwnFeed) {
+        okay::platform::Window* feedWin = mainWinOwner.get();   // an own-backend window is used as it is; an SDL window through a non-owning wrapper
+        if (!ownBackend) { g_imguiMainWrap = okay::platform::WrapSdl2Window(window); feedWin = g_imguiMainWrap.get(); }
+        g_imguiFeed.Init(ImGui::GetIO(), feedWin->Id(), okay::imguifeed::FeedHost::FromPlatform(okay::platform::Default(), feedWin));
+    } else ImGui_ImplSDL2_InitForSDLRenderer(window, renderer);
+    g_imguiOwnRender = ownBackend || okay::imguirender::OwnRequested(std::getenv("OKAY_IMGUI_RENDER"));
+    std::fprintf(stderr, "%s\n", okay::imguirender::ActiveLine(g_imguiOwnRender));
+    if (g_imguiOwnRender) okay::imguirender::Init(ImGui::GetIO()); else ImGui_ImplSDLRenderer2_Init(renderer);
 
-    std::string editor = FindExe({"OkayEngine.exe", "OkaySpaceEngine.exe", "okay-editor.exe", "okay-editor", "OkayEngine"});
+    std::string editor = FindExe(EDITOR_EXE_NAMES);
     std::string player = FindExe({"OkaySpacePlayer.exe", "okay-player.exe", "okay-player"});
     std::vector<fs::path> scenes = FindScenes();
     bool rescannedAfterUpdate = false;
@@ -18317,32 +18420,32 @@ int main(int argc, char** argv) {
                             (tokExp <= 0 || tokExp - (long)std::time(nullptr) < 120);
     if (needVerify) {
         VerifyJob vj{ accountPtr.get(), false };
-        SDL_Thread* vt = SDL_CreateThread(VerifySessionWorker, "okay-verify", &vj);
+        okay::thr::Thread* vt = okay::thr::CreateThread(VerifySessionWorker, "okay-verify", &vj);
         while (!vj.done) {
-            SDL_PumpEvents();   // keep the window responsive (and mapped) while we wait
-            int sw = g_winW, sh = g_winH; SDL_GetRendererOutputSize(renderer, &sw, &sh);
+            sdlSeam->PumpEvents();   // keep the window responsive (and mapped) while we wait
+            int sw = g_winW, sh = g_winH; okay::pb::OutputSize(renderer, &sw, &sh);
             okay::DrawSplashStyled(renderer, sw, sh, splashStyle());
             okay::platform::DelayMs(16);
         }
-        if (vt) SDL_WaitThread(vt, nullptr);
+        if (vt) okay::thr::WaitThread(vt, nullptr);
     }
 
     // Start the background friends/DM poll (its own service, read from disk each
     // cycle) so the nav badges never block the UI on the network.
     g_pollCfgDir = acctCfgDir.string(); g_pollUrl = serverUrl; g_pollKey = apiKey;
     g_callPollCfg = g_pollCfgDir; g_callPollUrl = serverUrl; g_callPollKey = apiKey;
-    if (!g_callSigMutex) g_callSigMutex = SDL_CreateMutex();
-    static SDL_Thread* callPollThread = nullptr;
-    if (!callPollThread && !serverUrl.empty()) callPollThread = SDL_CreateThread(CallPollWorker, "okay-callpoll", nullptr);
-    g_pollMutex = SDL_CreateMutex();
-    g_pollThread = SDL_CreateThread(PollWorker, "okay-poll", nullptr);
+    if (!g_callSigMutex) g_callSigMutex = okay::thr::CreateMutex();
+    static okay::thr::Thread* callPollThread = nullptr;
+    if (!callPollThread && !serverUrl.empty()) callPollThread = okay::thr::CreateThread(CallPollWorker, "okay-callpoll", nullptr);
+    g_pollMutex = okay::thr::CreateMutex();
+    g_pollThread = okay::thr::CreateThread(PollWorker, "okay-poll", nullptr);
     // Background chat poller (messages/typing/conversations) so the Chat window
     // never blocks the UI on the network.
-    g_chatMutex = SDL_CreateMutex();
-    g_chatThread = SDL_CreateThread(ChatPollWorker, "okay-chat", nullptr);
+    g_chatMutex = okay::thr::CreateMutex();
+    g_chatThread = okay::thr::CreateThread(ChatPollWorker, "okay-chat", nullptr);
     // Background Servers poller (channels/members/messages for the open server).
-    g_srvMutex = SDL_CreateMutex();
-    g_srvThread = SDL_CreateThread(ServerPollWorker, "okay-srv", nullptr);
+    g_srvMutex = okay::thr::CreateMutex();
+    g_srvThread = okay::thr::CreateThread(ServerPollWorker, "okay-srv", nullptr);
 
     // The account server is baked into this build (OKAY_DEFAULT_ACCOUNT_URL /
     // account_server.txt), so the launcher no longer exposes a server-URL field
@@ -18391,30 +18494,40 @@ int main(int argc, char** argv) {
     if (std::getenv("OKAY_VOICE_DEMO_RING"))
         g_incoming = IncomingCall{"u-maya", "Maya Chen", "", "ring", "k", 1, okay::platform::TicksMs32()};
     bool running = true;
+#ifdef OKAY_ENABLE_TEST_HOOKS
+    okay::testhooks::Runner testHooks;
+    testHooks.Start(sdlSeam, mainWinOwner->Id());
+    int testExitCode = 0;
+#endif
     bool closeConfirm = false;    // the [X] raises an Exit / Minimize confirm dialog
     while (running) {
-        SDL_AtomicSet(&g_programsRunning, AnyProgramRunning() ? 1 : 0);   // every frame, minimized or not (the update worker reads it before swapping files)
+        okay::thr::AtomicSet(&g_programsRunning, AnyProgramRunning() ? 1 : 0);   // every frame, minimized or not (the update worker reads it before swapping files)
         bool okayFrame = false;   // this frame has an OkayUI frame open (the OkayUI backend is on): closed after ImGui's draw data
         Uint64 frameStart = okay::platform::PerfCounter();   // for the frame-rate cap below
         // Current account service for this frame. Held by reference so existing
         // code reads naturally; the Settings tab may rebuild accountPtr (which
         // is why the Settings tab uses accountPtr-> directly, not this alias).
         acct::AccountService& account = *accountPtr;
-        SDL_Event e;
-        while (SDL_PollEvent(&e)) {
+#ifdef OKAY_ENABLE_TEST_HOOKS
+        testHooks.Frame();   // due scripted events are pushed into the queue the loop below polls
+        if (testHooks.QuitNow()) { testExitCode = testHooks.ExitCode(); running = false; }
+#endif
+        okay::platform::Event e;
+        while (sdlSeam->PollEvent(e)) {
+            using EvT = okay::platform::EventType;
             if (ChatHostEvent(e)) continue;   // belonged to the chat's own window
-            ImGui_ImplSDL2_ProcessEvent(&e);
+            FeedImGuiEvent(g_imguiFeed, e);
 #ifdef OKAY_HAVE_OKAYUI
-            g_okayInput.Feed(e);   // typed text, key edges and the wheel for hosted OkayUI screens (a no-op for the Dear ImGui backend)
+            g_okayInput.Feed(e, sdlSeam->CharForKey(e.key));   // typed text, key edges and the wheel for hosted OkayUI screens (a no-op for the Dear ImGui backend)
 #endif
             // Clicking the window's [X] (or Alt+F4) asks whether to exit or just
             // minimize, rather than quitting outright. (With the chat window
             // around, SDL reports the launcher's [X] as a window close, not a quit.)
-            if (e.type == SDL_QUIT) closeConfirm = true;
-            else if (e.type == SDL_WINDOWEVENT && e.window.event == SDL_WINDOWEVENT_FOCUS_GAINED &&
-                     e.window.windowID == SDL_GetWindowID(window)) g_launcherRefocused = true;   // check for updates
-            else if (e.type == SDL_WINDOWEVENT && e.window.event == SDL_WINDOWEVENT_CLOSE &&
-                     e.window.windowID == SDL_GetWindowID(window)) closeConfirm = true;
+            if (e.type == EvT::Quit) closeConfirm = true;
+            else if (e.type == EvT::WindowFocusGained &&
+                     e.windowId == lw::Id(window)) g_launcherRefocused = true;   // check for updates
+            else if (e.type == EvT::WindowClose &&
+                     e.windowId == lw::Id(window)) closeConfirm = true;
             // NOTE: minimizing does a plain Windows minimize (to the taskbar) and
             // is always restored by clicking the taskbar button. The launcher does
             // NOT hide itself to the system tray — that could trap the window with
@@ -18422,15 +18535,14 @@ int main(int argc, char** argv) {
             // Drag & drop onto the launcher: a .okayscene plays instantly (no
             // download); a shared game FOLDER (or loose script/model) installs into
             // your community library.
-            else if (e.type == SDL_DROPFILE && e.drop.file) {
-                std::string dropped = e.drop.file;
-                SDL_free(e.drop.file);
+            else if (e.type == EvT::DropFile && !e.text.empty()) {
+                std::string dropped = e.text;
                 // Dropped onto the open chat window: send it to that conversation.
                 bool toChat = false;
                 if (g_chatWinOpen && g_chatDropOk && (!g_chatDropUid.empty() || g_chatDropGroup > 0)) {
                     int gx = 0, gy = 0, wx = 0, wy = 0;
-                    SDL_GetGlobalMouseState(&gx, &gy);
-                    SDL_GetWindowPosition(window, &wx, &wy);
+                    sdlSeam->GlobalMouseState(&gx, &gy, nullptr);
+                    lw::GetPos(window, &wx, &wy);
                     float mx = (float)(gx - wx), my = (float)(gy - wy);
                     toChat = mx >= g_chatDropMin.x && mx <= g_chatDropMax.x && my >= g_chatDropMin.y && my <= g_chatDropMax.y;
                 }
@@ -18486,25 +18598,25 @@ int main(int argc, char** argv) {
         if (g_trayRestoreReq) {
             g_trayRestoreReq = false;
             OkayTrayRemove();
-            SDL_ShowWindow(window);
-            SDL_RestoreWindow(window);
-            SDL_RaiseWindow(window);
+            lw::Show(window);
+            lw::Restore(window);
+            lw::Raise(window);
         }
 #endif
         // A finished git job (clone/pull/push) reports its result as a toast.
         if (g_gitMutex) {
-            SDL_LockMutex(g_gitMutex);
+            okay::thr::LockMutex(g_gitMutex);
             if (g_gitResultReady) {
                 g_gitResultReady = false;
                 Toast(g_gitResultMsg, g_gitResultKind);
                 if (g_gitWantRescan) { g_gitWantRescan = false; g_projectsNeedRescan = true; }
             }
-            SDL_UnlockMutex(g_gitMutex);
+            okay::thr::UnlockMutex(g_gitMutex);
         }
         // Once a background download finishes, re-detect the runtimes so the
         // "not found" notices clear without needing a restart.
         if (GetState() == Up_Updated && !rescannedAfterUpdate) {
-            editor = FindExe({"OkayEngine.exe", "OkaySpaceEngine.exe", "okay-editor.exe", "okay-editor", "OkayEngine"});
+            editor = FindExe(EDITOR_EXE_NAMES);
             player = FindExe({"OkaySpacePlayer.exe", "okay-player.exe", "okay-player"});
             scenes = FindScenes();
             rescannedAfterUpdate = true;
@@ -18516,9 +18628,9 @@ int main(int argc, char** argv) {
             if (account.IsLoggedIn()) {
                 bool apply = false; int fr = 0, unread = 0; long newest = 0;
                 if (g_pollMutex) {
-                    SDL_LockMutex(g_pollMutex);
+                    okay::thr::LockMutex(g_pollMutex);
                     if (g_pollReady) { apply = true; fr = g_pollFriendReqs; unread = g_pollUnread; newest = g_pollNewestDm; g_pollReady = false; }
-                    SDL_UnlockMutex(g_pollMutex);
+                    okay::thr::UnlockMutex(g_pollMutex);
                 }
                 if (apply) {
                     if (lastReqSeen >= 0 && fr > lastReqSeen && tab != 6)
@@ -18574,8 +18686,8 @@ int main(int argc, char** argv) {
                 okayversions::LauncherArgs ha;
                 if (okayversions::TakeHandoff(okayversions::HandoffFile(), (long long)std::time(nullptr), &ha)) {
                     okayversionsui::RequestPage(ha.version);
-                    SDL_RestoreWindow(window);
-                    SDL_RaiseWindow(window);
+                    lw::Restore(window);
+                    lw::Raise(window);
                 }
             }
             if (okayversionsui::TakePageRequest()) { tab = 15; ClosePublicProfile(); }
@@ -18592,9 +18704,9 @@ int main(int argc, char** argv) {
             if (static bool demoUp = false; !demoUp) {   // dev screenshot hook: pretend a newer version was found
                 demoUp = true;
                 if (const char* v = std::getenv("OKAY_UI_DEMO_UPDATE")) {
-                    SDL_LockMutex(g_upPollMutex ? g_upPollMutex : (g_upPollMutex = SDL_CreateMutex()));
+                    okay::thr::LockMutex(g_upPollMutex ? g_upPollMutex : (g_upPollMutex = okay::thr::CreateMutex()));
                     g_upPollResult = v; g_upPollDone = true;
-                    SDL_UnlockMutex(g_upPollMutex);
+                    okay::thr::UnlockMutex(g_upPollMutex);
                 }
             }
             const UpState us = GetState();
@@ -18610,9 +18722,9 @@ int main(int argc, char** argv) {
             }
             std::string latest, latestTitle; bool done = false;
             if (g_upPollMutex) {
-                SDL_LockMutex(g_upPollMutex);
+                okay::thr::LockMutex(g_upPollMutex);
                 if (g_upPollDone) { done = true; latest = g_upPollResult; latestTitle = g_upPollTitle; g_upPollDone = false; }
-                SDL_UnlockMutex(g_upPollMutex);
+                okay::thr::UnlockMutex(g_upPollMutex);
             }
             if (done && !latest.empty() && CompareVersions(LocalVersion(), latest) < 0 && latest != g_upAvailable) {
                 g_upAvailable = latest;
@@ -18626,10 +18738,8 @@ int main(int argc, char** argv) {
                     UpsertNotif("update:" + latest, "Test build available",
                                 g_upAvailableTitle + " (v" + latest + ") is ready. It can be broken. Install it from the sidebar.", 3, -1);
                 }
-#if SDL_VERSION_ATLEAST(2, 0, 16)
-                if ((SDL_GetWindowFlags(window) & (SDL_WINDOW_MINIMIZED | SDL_WINDOW_INPUT_FOCUS)) != SDL_WINDOW_INPUT_FOCUS)
-                    SDL_FlashWindow(window, SDL_FLASH_UNTIL_FOCUSED);   // taskbar attention while minimized/unfocused
-#endif
+                if (okay::platform::NeedsAttentionFlash(lw::IsMinimized(window), lw::HasInputFocus(window)))
+                    lw::Flash(window, okay::platform::FlashMode::UntilFocused);   // taskbar attention while minimized/unfocused
             }
             if (us == Up_Updated || us == Up_UpToDate) {   // a real check/install supersedes the hint
                 if (!g_upAvailable.empty() && (us == Up_Updated || CompareVersions(LocalVersion(), g_upAvailable) >= 0)) { g_upAvailable.clear(); g_upAvailableTitle.clear(); }
@@ -18653,23 +18763,21 @@ int main(int argc, char** argv) {
             static Uint32 nextRing = 0;
             if (okay::platform::TicksMs32() >= nextRing) {
                 PlayChatChime(); nextRing = okay::platform::TicksMs32() + 2200;
-#if SDL_VERSION_ATLEAST(2, 0, 16)
-                SDL_FlashWindow(g_chatHost.shown ? g_chatHost.win : window, SDL_FLASH_BRIEFLY);
-#endif
+                lw::Flash(g_chatHost.shown ? g_chatHost.win : window, okay::platform::FlashMode::Briefly);
             }
         }
         ChatHostSync();
-        if (g_raiseMainReq) { g_raiseMainReq = false; SDL_RestoreWindow(window); SDL_RaiseWindow(window); }
-        if ((SDL_GetWindowFlags(window) & (SDL_WINDOW_HIDDEN | SDL_WINDOW_MINIMIZED)) != 0) {
-            if (g_chatHost.shown && !(SDL_GetWindowFlags(g_chatHost.win) & SDL_WINDOW_MINIMIZED)) {
+        if (g_raiseMainReq) { g_raiseMainReq = false; lw::Restore(window); lw::Raise(window); }
+        if (okay::platform::IsBackgroundWindow(lw::IsVisible(window), lw::IsMinimized(window))) {
+            if (g_chatHost.shown && !lw::IsMinimized(g_chatHost.win)) {
                 ChatHostFrame(account);   // the chat window keeps going on its own
                 okay::platform::DelayMs(ChatHostFocused() ? 15 : 45);
             } else okay::platform::DelayMs(120);
             continue;
         }
 
-        ImGui_ImplSDLRenderer2_NewFrame();
-        ImGui_ImplSDL2_NewFrame();
+        if (!g_imguiOwnRender) ImGui_ImplSDLRenderer2_NewFrame();
+        if (g_imguiOwnFeed) g_imguiFeed.NewFrame(ImGui::GetIO()); else ImGui_ImplSDL2_NewFrame();
         ImGui::NewFrame();
         okayFrame = false;
 #ifdef OKAY_HAVE_OKAYUI
@@ -18695,7 +18803,7 @@ int main(int argc, char** argv) {
                 }
                 ImGui::SameLine();
                 if (ImGui::Button("Minimize", ImVec2(120, 0))) {
-                    SDL_MinimizeWindow(window); closeConfirm = false; ImGui::CloseCurrentPopup();
+                    lw::Minimize(window); closeConfirm = false; ImGui::CloseCurrentPopup();
                 }
                 ImGui::SameLine();
                 if (ImGui::Button("Cancel", ImVec2(120, 0)) ||
@@ -18857,15 +18965,15 @@ int main(int argc, char** argv) {
                 }
 
                 // Overall step progress (engine / player / launcher).
-                int si = SDL_AtomicGet(&g_upStepIdx), stt = SDL_AtomicGet(&g_upStepTotal);
+                int si = okay::thr::AtomicGet(&g_upStepIdx), stt = okay::thr::AtomicGet(&g_upStepTotal);
                 if (stt > 0 && us == Up_Downloading) {
                     float sf = (float)si / (float)stt;
                     ImGui::ProgressBar(sf, ImVec2(-FLT_MIN, 6.0f), "");
                 }
 
                 // Live download bar for the current file (MB + %).
-                long long bn = (long long)(unsigned)SDL_AtomicGet(&g_upBytesNow);
-                long long bt = (long long)(unsigned)SDL_AtomicGet(&g_upBytesTotal);
+                long long bn = (long long)(unsigned)okay::thr::AtomicGet(&g_upBytesNow);
+                long long bt = (long long)(unsigned)okay::thr::AtomicGet(&g_upBytesTotal);
                 if (us == Up_Downloading) {
                     char ov[64];
                     double mbN = (double)bn / (1024.0 * 1024.0);
@@ -18884,7 +18992,7 @@ int main(int argc, char** argv) {
                 }
 
                 // Elapsed time.
-                int startMs = SDL_AtomicGet(&g_upStartMs);
+                int startMs = okay::thr::AtomicGet(&g_upStartMs);
                 if (startMs && us != Up_Idle) {
                     int el = ((int)okay::platform::TicksMs32() - startMs) / 1000; if (el < 0) el = 0;
                     ImGui::TextDisabled("Elapsed: %d:%02d", el / 60, el % 60);
@@ -19762,7 +19870,7 @@ int main(int argc, char** argv) {
                               ? (fs::path(g_exeDir) / "Projects").string().c_str() : g_projectsDir.c_str());
 
             // ---- Projects: every <Location>/<Name>/Assets folder, plus ones opened from elsewhere ----
-            struct CrProj { std::string name, scene; long long mtime = 0; bool extra = false; bool ready = false; bool missing = false; std::string ver; };   // ver: engine_version in project.okayproj ("" = none)
+            struct CrProj { std::string name, scene, root; long long mtime = 0; bool extra = false; bool ready = false; bool missing = false; std::string ver; };   // ver: engine_version in project.okayproj ("" = none)
             static std::vector<CrProj> s_projects;
             static std::string s_projScanned = "\x01";   // never equals a real path -> first scan
             auto sceneIn = [](const fs::path& root) -> std::string { return okayproj::SceneIn(root); };
@@ -19777,7 +19885,7 @@ int main(int argc, char** argv) {
                     pr.ready = fs::exists(fs::path(scene), e);
                     pr.missing = extra && !pr.ready;   // moved or deleted outside the launcher
                     if (pr.ready) pr.mtime = (long long)fs::last_write_time(fs::path(scene), e).time_since_epoch().count();
-                    if (pr.ready) pr.ver = okayver::ReadProjectVersion(okayproj::RootOfScene(fs::path(scene)).string());   // read only: the launcher never writes into a project
+                    if (pr.ready) { pr.root = okayproj::RootOfScene(fs::path(scene)).string(); pr.ver = okayver::ReadProjectVersion(pr.root); }   // read only: the launcher never writes into a project
                     s_projects.push_back(pr);
                 };
                 for (const auto& lp : okayproj::ScanProjects(fs::path(npLoc), g_hiddenProjects, g_extraProjects))
@@ -19810,7 +19918,9 @@ int main(int argc, char** argv) {
             // version recorded goes to the default editor when one is set (Versions page).
             auto openProject = [&](const CrProj& pr) {
                 if (editor.empty() || !pr.ready) return;
-                const okayversions::OpenTarget t = okayversions::ChooseEditorForOpen(pr.ver, LocalVersion(),
+                std::string freshVer = pr.ver;   // the editor may have upgraded the project since the list was made: ask the disk, not the card
+                okayver::RefreshStamp(pr.root, freshVer);
+                const okayversions::OpenTarget t = okayversions::ChooseEditorForOpen(freshVer, LocalVersion(),
                     okayversionsui::InstalledVersionsCached(LauncherDirPath()), okayversions::GlobalSettings().defaultEditor);
                 openProjectWith(pr, t.version);
             };
@@ -20004,6 +20114,13 @@ int main(int argc, char** argv) {
             ImGui::Dummy(ImVec2(0, 4));
             std::vector<const CrProj*> projList;
             {
+                // A project is upgraded by the editor, a different program: keep the version on each card in step with the file.
+                static Uint32 s_stampAt = 0;
+                const Uint32 nowMs = okay::platform::TicksMs32();
+                if (nowMs - s_stampAt > 1000) {
+                    s_stampAt = nowMs;
+                    for (auto& pr : s_projects) if (pr.ready && !pr.root.empty()) okayver::RefreshStamp(pr.root, pr.ver);
+                }
                 std::string q; for (const char* c = projQ; *c; ++c) q += (char)std::tolower((unsigned char)*c);
                 for (const auto& pr : s_projects) {
                     std::string n = pr.name; for (auto& ch : n) ch = (char)std::tolower((unsigned char)ch);
@@ -21667,11 +21784,11 @@ int main(int argc, char** argv) {
                 const bool online = account.IsOnline() || acDemo;
                 // Fetch profile + avatar + code once, on a worker thread, so opening
                 // the Account tab doesn't freeze on three network calls.
-                if (!g_acMutex) g_acMutex = SDL_CreateMutex();
+                if (!g_acMutex) g_acMutex = okay::thr::CreateMutex();
                 if (!acDemo && !g_acStarted && account.IsOnline()) {
                     g_acStarted = true;
-                    if (SDL_Thread* t = SDL_CreateThread(AccountInfoWorker, "okay-acct", nullptr))
-                        SDL_DetachThread(t);
+                    if (okay::thr::Thread* t = okay::thr::CreateThread(AccountInfoWorker, "okay-acct", nullptr))
+                        okay::thr::DetachThread(t);
                 }
                 // The editable copy of my public profile, and what the server has
                 // (so the page knows what changed and Discard can put it back).
@@ -21693,7 +21810,7 @@ int main(int argc, char** argv) {
                         myCode = "OKAY-7Q4K"; codeFetched = true;
                         fillForm(); acctProfileLoaded = true;
                     } else if (g_acMutex) {
-                        SDL_LockMutex(g_acMutex);
+                        okay::thr::LockMutex(g_acMutex);
                         if (g_acReady) {
                             const okay::Friend& me = g_acProfile;
                             g_acOrig = {me.display == me.username ? std::string() : me.display, g_acAvatar, me.bio,
@@ -21703,7 +21820,7 @@ int main(int argc, char** argv) {
                             myCode = g_acCode; codeFetched = true;
                             fillForm(); acctProfileLoaded = true;
                         }
-                        SDL_UnlockMutex(g_acMutex);
+                        okay::thr::UnlockMutex(g_acMutex);
                     }
                 }
                 g_myAvatarSlot = &s_myAvatar;
@@ -21715,10 +21832,10 @@ int main(int argc, char** argv) {
                 }
                 // A profile save finished on the worker.
                 if (g_acMutex && g_acSaveDone) {
-                    SDL_LockMutex(g_acMutex);
+                    okay::thr::LockMutex(g_acMutex);
                     const bool ok = g_acSaveOk; const AcctProfileForm saved = g_acSaveForm;
                     g_acSaveDone = false;
-                    SDL_UnlockMutex(g_acMutex);
+                    okay::thr::UnlockMutex(g_acMutex);
                     if (ok) {
                         if (saved.avatar != g_acOrig.avatar) { g_avatarCache.erase(saved.avatar); s_myAvatar = saved.avatar; }
                         g_acOrig = saved;
@@ -21883,9 +22000,9 @@ int main(int argc, char** argv) {
                         std::snprintf(b3, sizeof(b3), "%d", games);
                         chip(b3, games == 1 ? "game in library" : "games in library", 0);
                         if (!codeFetched && g_acMutex && !acDemo) {
-                            SDL_LockMutex(g_acMutex);
+                            okay::thr::LockMutex(g_acMutex);
                             if (g_acReady) { myCode = g_acCode; codeFetched = true; }
-                            SDL_UnlockMutex(g_acMutex);
+                            okay::thr::UnlockMutex(g_acMutex);
                         }
                         if (!myCode.empty()) {
                             const ImVec2 fc = chip(myCode.c_str(), "friend code \xC2\xB7 click to copy", 0);
@@ -22001,7 +22118,7 @@ int main(int argc, char** argv) {
                                 j->form = {acctChgDisplay, acctAvatar, acctBio, acctStatus, acctFavGame, acctLocation, acctAccent};
                                 j->was = g_acOrig;
                                 g_acSaving = true;
-                                if (SDL_Thread* t = SDL_CreateThread(AcctSaveWorker, "okay-acsave", j)) SDL_DetachThread(t);
+                                if (okay::thr::Thread* t = okay::thr::CreateThread(AcctSaveWorker, "okay-acsave", j)) okay::thr::DetachThread(t);
                                 else { g_acSaving = false; delete j; Toast("Couldn't start saving", 2); }
                             }
                         }
@@ -22215,7 +22332,7 @@ int main(int argc, char** argv) {
                         }
                         // The account is gone: sign out here once, like the Sign out button.
                         if (adj.kind == 2 && adj.ready && adj.signOut && !adj.signOutDone) {
-                            SDL_LockMutex(g_acctDataMutex); g_acctDataJob.signOutDone = true; SDL_UnlockMutex(g_acctDataMutex);
+                            okay::thr::LockMutex(g_acctDataMutex); g_acctDataJob.signOutDone = true; okay::thr::UnlockMutex(g_acctDataMutex);
                             account.Logout();
                             acctUser[0] = acctPass[0] = '\0';
                             acctProfileLoaded = false; g_acStarted = false; g_acReady = false; codeFetched = false;
@@ -22538,8 +22655,9 @@ int main(int argc, char** argv) {
                 {"Privacy & Safety",     3,           "Who can reach you, what others see, and who you've blocked."},
                 {"Voice & Audio",        kIcoChat,    "Microphone, speakers and voice calls."},
                 {"Crash reports",        kIcoAlert,   "What went wrong when the editor closed unexpectedly."},
+                {"Experimental",         kIcoRefresh, "Try our own code instead of the third-party parts. All off by default."},
             };
-            static const int kSetOrder[] = {0, 1, 7, 8, 2, 3, 4, 5, 9, 6};   // rail order (new pages sit with Chat)
+            static const int kSetOrder[] = {0, 1, 7, 8, 2, 3, 4, 10, 5, 9, 6};   // rail order (new pages sit with Chat)
             const int nCats = (int)(sizeof(kSetCats) / sizeof(kSetCats[0]));
             setCat = std::clamp(setCat, 0, nCats - 1);
             const float availW = ImGui::GetContentRegionAvail().x;
@@ -23158,6 +23276,46 @@ int main(int argc, char** argv) {
                             SavePrefs(); scenes = FindScenes();
                             Toast("Library folder added", 1);
                             libBuf[0] = '\0';
+                        }
+                    }
+                    cardEnd();
+                } else if (setCat == 10) {   // ---- Experimental: try our own code (shared/OwnSwitches.hpp) ----
+                    namespace osw = okay::ownswitches;
+                    osw::State& st = osw::Global();
+                    const osw::Context ctx = osw::Context::Here();
+                    cardBegin("##sc_own", "TRY OUR OWN CODE");
+                    ImGui::PushTextWrapPos(0.0f);
+                    ImGui::TextDisabled("Each switch swaps one third-party part for our own. All are off until you turn them on. A change starts working after you restart the launcher and editor.");
+                    ImGui::PopTextWrapPos();
+                    ImGui::Dummy(ImVec2(0, 6));
+                    bool anyOn = !st.chosen.empty();
+                    ImGui::BeginDisabled(!anyOn);
+                    if (ImGui::Button("Back to normal (all off)", ImVec2(220, 30))) { osw::AllOff(st.chosen); osw::SaveChosen(); }
+                    ImGui::EndDisabled();
+                    ImGui::Dummy(ImVec2(0, 4));
+                    for (const osw::Item& it : osw::Items()) {
+                        if (!osw::Available(it, ctx)) continue;
+                        rowDivider();
+                        const bool byUser = osw::SetByUser(it, osw::AppliedNow());
+                        const osw::Status stt = osw::StatusOf(it, st.chosen, st.runningWith, byUser);
+                        settingRow(it.label, it.desc, 300.0f, 22.0f, [&](float) {
+                            bool v = osw::Has(st.chosen, it.id);
+                            ImGui::BeginDisabled(byUser);
+                            if (ToggleSwitch((std::string("##own_") + it.id).c_str(), &v)) { osw::Set(st.chosen, it.id, v); osw::SaveChosen(); }
+                            ImGui::EndDisabled();
+                            ImGui::SameLine();
+                            ImGui::TextDisabled("%s", osw::StatusText(stt));
+                        });
+                    }
+                    {   // the "launch alternative exe" row: the same launcher built on our own UI (OKAY_LAUNCHER_ON_OKAYUI), or the way back from it
+                        const osw::AlternativeExe& alt = osw::Alternative();
+                        std::string altExe;
+                        for (const std::string& n : alt.launcherNames) if (altExe.empty()) altExe = FindExe({n.c_str()});
+                        if (!altExe.empty()) {
+                            rowDivider();
+                            settingRow(alt.label, alt.desc, 150.0f, 30.0f, [&](float) {
+                                if (ImGui::Button("Restart", ImVec2(130, 30)) && !UpdateBlocksLaunch() && SpawnTracked(altExe, std::string(), "alt-launcher", "")) running = false;
+                            });
                         }
                     }
                     cardEnd();
@@ -23782,16 +23940,16 @@ int main(int argc, char** argv) {
                             fe(flFollowers, "u-dev", "nightowl", "nightowl", false, 6 * 86400);
                         }
                     } else if (account.IsLoggedIn() && account.IsOnline()) {
-                        if (!g_flMutex) g_flMutex = SDL_CreateMutex();
+                        if (!g_flMutex) g_flMutex = okay::thr::CreateMutex();
                         if (tnow >= flNext && !g_flBusy) { QueueFollowJob(0); flNext = tnow + 60000; }
-                        SDL_LockMutex(g_flMutex);
+                        okay::thr::LockMutex(g_flMutex);
                         if (g_flReady) {
                             g_flReady = false;
                             flFollowing = g_flFollowing; flFollowers = g_flFollowers; flSupported = g_flSupported;
                             if (!g_flMsg.empty()) Toast(g_flMsg, g_flMsgErr ? 2 : 1);
                             g_flMsg.clear();
                         }
-                        SDL_UnlockMutex(g_flMutex);
+                        okay::thr::UnlockMutex(g_flMutex);
                     }
                 }
                 // Direct messages live in the floating Chat window (DrawChatWindow);
@@ -23827,17 +23985,17 @@ int main(int argc, char** argv) {
                     // EVERYTHING network for this tab (ensure-profile, presence, my code,
                     // list, feed) runs on the Friends worker thread — the tab never
                     // blocks on the network, so switching to Friends can't freeze.
-                    if (!g_frMutex) g_frMutex = SDL_CreateMutex();
+                    if (!g_frMutex) g_frMutex = okay::thr::CreateMutex();
                     if (now >= fNextRefresh && !g_frFetching) {
                         g_frFetching = true; fNextRefresh = now + 10000;
-                        if (SDL_Thread* t = SDL_CreateThread(FriendsListWorker, "okay-frlist", nullptr))
-                            SDL_DetachThread(t);
+                        if (okay::thr::Thread* t = okay::thr::CreateThread(FriendsListWorker, "okay-frlist", nullptr))
+                            okay::thr::DetachThread(t);
                         else g_frFetching = false;
                     }
                     if (g_frMutex) {
-                        SDL_LockMutex(g_frMutex);
+                        okay::thr::LockMutex(g_frMutex);
                         if (g_frReady) { fCache = g_frList; fFeed = g_frFeed; fCode = g_frCode; g_frReady = false; }
-                        SDL_UnlockMutex(g_frMutex);
+                        okay::thr::UnlockMutex(g_frMutex);
                     }
                 }
 
@@ -24394,15 +24552,15 @@ int main(int argc, char** argv) {
             static int  wKind = 0;
             static std::string wErr, wFile;   // wFile: local file to upload (instead of a link)
             static int  wSource = 0;          // 0 upload a file, 1 link
-            if (!g_mktMutex) g_mktMutex = SDL_CreateMutex();
-            SDL_LockMutex(g_mktMutex);
+            if (!g_mktMutex) g_mktMutex = okay::thr::CreateMutex();
+            okay::thr::LockMutex(g_mktMutex);
             if (g_mktResultKind) {
                 Toast(g_mktResult, g_mktResultKind);
                 if (g_mktResultKind == 1) { wTitle[0] = wDesc[0] = wUrl[0] = '\0'; wFile.clear(); wErr.clear(); wShowPublish = false; wNextRefresh = 0; }
                 else wErr = g_mktResult;
                 g_mktResultKind = 0;
             }
-            SDL_UnlockMutex(g_mktMutex);
+            okay::thr::UnlockMutex(g_mktMutex);
             // A "Publish to Marketplace" action from the Play tab prefills + opens the form.
             if (!g_pendingPublishTitle.empty()) {
                 std::snprintf(wTitle, sizeof(wTitle), "%s", g_pendingPublishTitle.c_str());
@@ -24414,15 +24572,15 @@ int main(int argc, char** argv) {
                 std::snprintf(wTitle, sizeof(wTitle), "Low-poly space props pack"); } }
             Uint32 now = okay::platform::TicksMs32();
             // Refresh the marketplace list/ratings in the background (no hitch).
-            if (!g_wsMutex) g_wsMutex = SDL_CreateMutex();
+            if (!g_wsMutex) g_wsMutex = okay::thr::CreateMutex();
             if (now >= wNextRefresh && !g_wsFetching) {
                 g_wsFetching = true; wNextRefresh = now + 15000;
-                if (SDL_Thread* t = SDL_CreateThread(MarketListWorker, "okay-wslist", nullptr))
-                    SDL_DetachThread(t);
+                if (okay::thr::Thread* t = okay::thr::CreateThread(MarketListWorker, "okay-wslist", nullptr))
+                    okay::thr::DetachThread(t);
                 else g_wsFetching = false;
             }
             if (g_wsMutex) {
-                SDL_LockMutex(g_wsMutex);
+                okay::thr::LockMutex(g_wsMutex);
                 if (g_wsReady) { wCache = g_wsList; wRatings = g_wsRatings; g_wsReady = false; }
                 if (kUiDemoUser && wCache.empty()) {   // dev screenshot hook: sample listings of every type
                     auto it = [&](long id, const char* t, const char* a, const char* k, const char* d, long dl, long rs, long rc) {
@@ -24437,7 +24595,7 @@ int main(int argc, char** argv) {
                     it(7, "Platformer Starter", "kingimann", "template", "Tight jump physics + checkpoints.", 3120, 47, 10);
                     it(8, "Level Lint", "maya", "tool", "Editor tool that flags unreachable tiles.", 210, 9, 2);
                 }
-                SDL_UnlockMutex(g_wsMutex);
+                okay::thr::UnlockMutex(g_wsMutex);
             }
 
             ImGui::TextDisabled("Games, 3D models, textures, art, audio, scripts and templates from the community.");
@@ -24526,7 +24684,7 @@ int main(int argc, char** argv) {
                         auto* j = new MktPublishJob{wTitle, wDesc, kMktKinds[std::clamp(wKind, 0, kMktKindN - 1)].key,
                                                     std::string(), wFile};
                         g_mktPublishing = true; wErr.clear();
-                        if (SDL_Thread* t = SDL_CreateThread(MarketPublishWorker, "okay-wspub", j)) SDL_DetachThread(t);
+                        if (okay::thr::Thread* t = okay::thr::CreateThread(MarketPublishWorker, "okay-wspub", j)) okay::thr::DetachThread(t);
                         else { g_mktPublishing = false; delete j; wErr = "Couldn't start publishing."; }
                     }
                     ImGui::EndDisabled();
@@ -24796,7 +24954,7 @@ int main(int argc, char** argv) {
                                                 edFile.empty() ? std::string(edUrl) : std::string(), edFile};
                     j->editId = edId;
                     g_mktPublishing = true; edErr.clear();
-                    if (SDL_Thread* t = SDL_CreateThread(MarketPublishWorker, "okay-wsedit", j)) { SDL_DetachThread(t); edFile.clear(); ImGui::CloseCurrentPopup(); }
+                    if (okay::thr::Thread* t = okay::thr::CreateThread(MarketPublishWorker, "okay-wsedit", j)) { okay::thr::DetachThread(t); edFile.clear(); ImGui::CloseCurrentPopup(); }
                     else { g_mktPublishing = false; delete j; edErr = "Couldn't start saving."; }
                 }
                 ImGui::EndDisabled();
@@ -24979,17 +25137,17 @@ int main(int argc, char** argv) {
                 } else {
                     // Prefetch the server list in the background so switching to this
                     // tab never blocks on the network.
-                    if (!g_svMutex) g_svMutex = SDL_CreateMutex();
+                    if (!g_svMutex) g_svMutex = okay::thr::CreateMutex();
                     if (now >= svNextList && !g_svFetching) {
                         g_svFetching = true; svNextList = now + 20000;
-                        if (SDL_Thread* t = SDL_CreateThread(ServerListWorker, "okay-svlist", nullptr))
-                            SDL_DetachThread(t);
+                        if (okay::thr::Thread* t = okay::thr::CreateThread(ServerListWorker, "okay-svlist", nullptr))
+                            okay::thr::DetachThread(t);
                         else g_svFetching = false;
                     }
                     if (g_svMutex) {
-                        SDL_LockMutex(g_svMutex);
+                        okay::thr::LockMutex(g_svMutex);
                         if (g_svReady) { svList = g_svList; g_svReady = false; }
-                        SDL_UnlockMutex(g_svMutex);
+                        okay::thr::UnlockMutex(g_svMutex);
                     }
                     // Open the first server automatically (no empty "pick a server" pane).
                     if (svSel == 0 && !svList.empty()) { svSel = svList[0].id; svSelName = svList[0].name; svChan = 0; svNextChan = 0; }
@@ -24999,15 +25157,15 @@ int main(int argc, char** argv) {
                         g_srvActiveMs = now; g_srvSel = svSel; g_srvChan = svChan;
                         (void)svNextChan; (void)svNextMem; (void)svNextMsg;
                         if (g_srvMutex) {
-                            SDL_LockMutex(g_srvMutex);
+                            okay::thr::LockMutex(g_srvMutex);
                             if (g_srvChanReady) { svChannels = g_srvChannels; g_srvChanReady = false; }
                             if (g_srvMemReady)  { svMembers  = g_srvMembers;  g_srvMemReady  = false; }
                             if (g_srvMsgReady)  {
-                                if (SDL_AtomicGet(&g_srvActPending) == 0) { svMsgs = g_srvMsgs; svLikes = g_srvLikes; svMyLikes = g_srvMyLikes; }
+                                if (okay::thr::AtomicGet(&g_srvActPending) == 0) { svMsgs = g_srvMsgs; svLikes = g_srvLikes; svMyLikes = g_srvMyLikes; }
                                 g_srvMsgReady = false;
                             }
                             if (g_srvActFailed) { g_srvActFailed = false; Toast("Couldn't save the edit \xE2\x80\x94 check your connection", 2); }
-                            SDL_UnlockMutex(g_srvMutex);
+                            okay::thr::UnlockMutex(g_srvMutex);
                         }
                         if (svChan == 0 && !svChannels.empty()) svChan = svChannels[0].id;
                     }
@@ -26068,15 +26226,15 @@ int main(int argc, char** argv) {
             } else {
                 // Kick a background refresh (never blocks the tab switch); apply the
                 // results on a later frame once the worker publishes them.
-                if (!g_foMutex) g_foMutex = SDL_CreateMutex();
+                if (!g_foMutex) g_foMutex = okay::thr::CreateMutex();
                 if (tnow >= foNext && !g_foFetching && fo.Available()) {
                     g_foFetching = true; foNext = tnow + 20000;
-                    if (SDL_Thread* ft = SDL_CreateThread(ForumFetchWorker, "okay-forum", nullptr))
-                        SDL_DetachThread(ft);
+                    if (okay::thr::Thread* ft = okay::thr::CreateThread(ForumFetchWorker, "okay-forum", nullptr))
+                        okay::thr::DetachThread(ft);
                     else g_foFetching = false;
                 }
                 if (g_foMutex) {
-                    SDL_LockMutex(g_foMutex);
+                    okay::thr::LockMutex(g_foMutex);
                     if (g_foReady) {
                         ftCache = g_foThreads; thScores = g_foScores; thMy = g_foMy; thComments = g_foComments;
                         foSections = g_foSections; foSecSup = g_foSecSupported; foStaff = g_foStaff;
@@ -26084,7 +26242,7 @@ int main(int argc, char** argv) {
                     }
                     if (g_foAdmReady) { foAdmMembers = g_foAdmMembers; foAdmBans = g_foAdmBans; g_foAdmReady = false; }
                     if (g_foActKind) { Toast(g_foActMsg, g_foActKind); g_foActKind = 0; foNext = 0; }
-                    SDL_UnlockMutex(g_foMutex);
+                    okay::thr::UnlockMutex(g_foMutex);
                 }
             }
 
@@ -26757,18 +26915,18 @@ int main(int argc, char** argv) {
                 if (!kFoDemo) {
                     if (tnow >= fpNext && !g_foPostFetching) {
                         g_foPostFetching = true; fpNext = tnow + 6000;
-                        if (SDL_Thread* pt = SDL_CreateThread(ForumPostWorker, "okay-fopost", (void*)(intptr_t)openThread))
-                            SDL_DetachThread(pt);
+                        if (okay::thr::Thread* pt = okay::thr::CreateThread(ForumPostWorker, "okay-fopost", (void*)(intptr_t)openThread))
+                            okay::thr::DetachThread(pt);
                         else g_foPostFetching = false;
                     }
                     if (g_foMutex) {
-                        SDL_LockMutex(g_foMutex);
+                        okay::thr::LockMutex(g_foMutex);
                         if (g_foPostReady && g_foPostHave == openThread) {
                             fpCache = g_foPosts; poScores = g_foPostScores; poMy = g_foPostMy;
                             thScores = g_foPostThScores; thMy = g_foPostThMy;
                             g_foPostReady = false;
                         }
-                        SDL_UnlockMutex(g_foMutex);
+                        okay::thr::UnlockMutex(g_foMutex);
                     }
                 }
                 const bool detailLoading = !kFoDemo && g_foPostHave != openThread;   // first open, not cached yet
@@ -26939,26 +27097,26 @@ int main(int argc, char** argv) {
             }
             ImGui::SameLine();
             bool anyDone = false;
-            SDL_LockMutex(g_dlMutex);
+            okay::thr::LockMutex(g_dlMutex);
             for (auto& d : g_dls) if (d->status >= 2) { anyDone = true; break; }
-            SDL_UnlockMutex(g_dlMutex);
+            okay::thr::UnlockMutex(g_dlMutex);
             ImGui::BeginDisabled(!anyDone);
             if (ImGui::Button("Clear finished", ImVec2(130, 0))) {
-                SDL_LockMutex(g_dlMutex);
+                okay::thr::LockMutex(g_dlMutex);
                 for (auto it = g_dls.begin(); it != g_dls.end(); ) {
-                    if ((*it)->status >= 2) { if ((*it)->th) SDL_WaitThread((*it)->th, nullptr); it = g_dls.erase(it); }
+                    if ((*it)->status >= 2) { if ((*it)->th) okay::thr::WaitThread((*it)->th, nullptr); it = g_dls.erase(it); }
                     else ++it;
                 }
-                SDL_UnlockMutex(g_dlMutex);
+                okay::thr::UnlockMutex(g_dlMutex);
             }
             ImGui::EndDisabled();
             ImGui::Dummy(ImVec2(0, 6));
 
             // Snapshot the list under the lock so the UI iterates safely.
             std::vector<std::shared_ptr<DlItem>> snap;
-            SDL_LockMutex(g_dlMutex);
+            okay::thr::LockMutex(g_dlMutex);
             snap = g_dls;
-            SDL_UnlockMutex(g_dlMutex);
+            okay::thr::UnlockMutex(g_dlMutex);
 
             ImGui::BeginChild("##dllist", ImVec2(0, ImGui::GetContentRegionAvail().y - 46.0f), false);
             if (snap.empty()) {
@@ -26997,9 +27155,9 @@ int main(int argc, char** argv) {
             };
             for (auto& d : snap) {
                 long long rec, tot; int stt; std::string title, dest;
-                SDL_LockMutex(g_dlMutex);
+                okay::thr::LockMutex(g_dlMutex);
                 rec = d->received; tot = d->total; stt = d->status; title = d->title; dest = d->dest;
-                SDL_UnlockMutex(g_dlMutex);
+                okay::thr::UnlockMutex(g_dlMutex);
                 ImGui::PushID(d->id);
                 ImGui::BeginChild("##dlrow", ImVec2(0, 80), true);
                 HoverRing();
@@ -27019,7 +27177,7 @@ int main(int argc, char** argv) {
                 ImGui::TextColored(stCol, "%s", stTxt);
                 // Actions.
                 if (stt == 0 || stt == 1) {
-                    if (ImGui::SmallButton("Cancel")) { SDL_LockMutex(g_dlMutex); d->cancelReq = true; SDL_UnlockMutex(g_dlMutex); }
+                    if (ImGui::SmallButton("Cancel")) { okay::thr::LockMutex(g_dlMutex); d->cancelReq = true; okay::thr::UnlockMutex(g_dlMutex); }
                 } else {
                     if (stt == 2) {
                         if (ImGui::SmallButton("Open folder")) OpenExternal(ddir.string());
@@ -27037,10 +27195,10 @@ int main(int argc, char** argv) {
                         ImGui::SameLine();
                     }
                     if (ImGui::SmallButton("Remove")) {
-                        SDL_LockMutex(g_dlMutex);
+                        okay::thr::LockMutex(g_dlMutex);
                         for (auto it = g_dls.begin(); it != g_dls.end(); ++it)
-                            if ((*it)->id == d->id) { if ((*it)->th) SDL_WaitThread((*it)->th, nullptr); g_dls.erase(it); break; }
-                        SDL_UnlockMutex(g_dlMutex);
+                            if ((*it)->id == d->id) { if ((*it)->th) okay::thr::WaitThread((*it)->th, nullptr); g_dls.erase(it); break; }
+                        okay::thr::UnlockMutex(g_dlMutex);
                     }
                 }
                 ImGui::EndChild();
@@ -27085,13 +27243,18 @@ int main(int argc, char** argv) {
         if (okayFrame) OkayUIClaimKeyboard();   // before Render: ImGui learns that a hosted OkayUI field has the keyboard
 #endif
         ImGui::Render();
-        SDL_SetRenderDrawColor(renderer, 30, 30, 32, 255);
-        SDL_RenderClear(renderer);
-        ImGui_ImplSDLRenderer2_RenderDrawData(ImGui::GetDrawData(), renderer);
+        okay::pb::SetDrawColor(renderer, 30, 30, 32, 255);
+        okay::pb::Clear(renderer);
+        if (g_imguiOwnRender) okay::imguirender::Render(*okay::pb::For(renderer), ImGui::GetDrawData());
+        else ImGui_ImplSDLRenderer2_RenderDrawData(ImGui::GetDrawData(), renderer);
 #ifdef OKAY_HAVE_OKAYUI
-        if (okayFrame) OkayUI::EndFrame(renderer);   // on top of everything ImGui drew, through the same renderer
+        if (okayFrame) okay::pb::OkayUIEndFrame(renderer);   // on top of everything ImGui drew, through the same renderer
 #endif
-        SDL_RenderPresent(renderer);
+#ifdef OKAY_ENABLE_TEST_HOOKS
+        for (const std::string& shot : testHooks.TakeShots())
+            if (!okay::testhooks::SavePicture(*okay::pb::For(renderer), shot)) std::fprintf(stderr, "[test-hook] could not save %s\n", shot.c_str());
+#endif
+        okay::pb::Present(renderer);
         ChatHostFrame(account);
 
         // Cap the frame rate so the launcher never spins the GPU/CPU at full tilt
@@ -27100,8 +27263,7 @@ int main(int argc, char** argv) {
         // window is in the background. With real VSync the present already took a
         // frame, so the extra delay is ~0 when focused.
         {
-            Uint32 flags = SDL_GetWindowFlags(window);
-            bool focused = (flags & (SDL_WINDOW_INPUT_FOCUS | SDL_WINDOW_MOUSE_FOCUS)) != 0 || ChatHostFocused();
+            bool focused = okay::platform::IsActiveForFrameRate(lw::HasInputFocus(window), lw::HasMouseFocus(window), ChatHostFocused());
             double targetMs = focused ? (1000.0 / 60.0) : (1000.0 / 20.0);
             double elapsed = (double)(okay::platform::PerfCounter() - frameStart) * 1000.0
                            / (double)okay::platform::PerfFrequency();
@@ -27111,40 +27273,43 @@ int main(int argc, char** argv) {
 
     // Remember the window size for next launch.
     ChatHostSaveGeometry();
-    { int w = 0, h = 0; SDL_GetWindowSize(window, &w, &h);
+    { int w = 0, h = 0; lw::GetSize(window, &w, &h);
       if (w > 0 && h > 0) { g_winW = w; g_winH = h; SavePrefs(); } }
 
     // Stop the background friends/DM poll + chat poll threads.
     g_pollRun = false; g_chatPollRun = false; g_srvPollRun = false; g_callPollRun = false;
     g_voice.Stop();
-    if (g_pollThread) { SDL_WaitThread(g_pollThread, nullptr); g_pollThread = nullptr; }
-    if (g_chatThread) { SDL_WaitThread(g_chatThread, nullptr); g_chatThread = nullptr; }
-    if (g_srvThread) { SDL_WaitThread(g_srvThread, nullptr); g_srvThread = nullptr; }
-    if (g_pollMutex) { SDL_DestroyMutex(g_pollMutex); g_pollMutex = nullptr; }
-    if (g_chatMutex) { SDL_DestroyMutex(g_chatMutex); g_chatMutex = nullptr; }
-    if (g_srvMutex) { SDL_DestroyMutex(g_srvMutex); g_srvMutex = nullptr; }
-    if (g_upThread) { SDL_WaitThread(g_upThread, nullptr); g_upThread = nullptr; }
-    if (g_upMutex) { SDL_DestroyMutex(g_upMutex); g_upMutex = nullptr; }
+    if (g_pollThread) { okay::thr::WaitThread(g_pollThread, nullptr); g_pollThread = nullptr; }
+    if (g_chatThread) { okay::thr::WaitThread(g_chatThread, nullptr); g_chatThread = nullptr; }
+    if (g_srvThread) { okay::thr::WaitThread(g_srvThread, nullptr); g_srvThread = nullptr; }
+    if (g_pollMutex) { okay::thr::DestroyMutex(g_pollMutex); g_pollMutex = nullptr; }
+    if (g_chatMutex) { okay::thr::DestroyMutex(g_chatMutex); g_chatMutex = nullptr; }
+    if (g_srvMutex) { okay::thr::DestroyMutex(g_srvMutex); g_srvMutex = nullptr; }
+    if (g_upThread) { okay::thr::WaitThread(g_upThread, nullptr); g_upThread = nullptr; }
+    if (g_upMutex) { okay::thr::DestroyMutex(g_upMutex); g_upMutex = nullptr; }
     okayversionsui::Shutdown();   // cancels a running version download and joins its thread
     // Stop any in-flight downloads and join their worker threads before teardown.
     if (g_dlMutex) {
-        SDL_LockMutex(g_dlMutex);
+        okay::thr::LockMutex(g_dlMutex);
         for (auto& d : g_dls) d->cancelReq = true;
-        std::vector<SDL_Thread*> threads;
+        std::vector<okay::thr::Thread*> threads;
         for (auto& d : g_dls) if (d->th) threads.push_back(d->th);
-        SDL_UnlockMutex(g_dlMutex);
-        for (SDL_Thread* t : threads) SDL_WaitThread(t, nullptr);
+        okay::thr::UnlockMutex(g_dlMutex);
+        for (okay::thr::Thread* t : threads) okay::thr::WaitThread(t, nullptr);
         g_dls.clear();
-        SDL_DestroyMutex(g_dlMutex); g_dlMutex = nullptr;
+        okay::thr::DestroyMutex(g_dlMutex); g_dlMutex = nullptr;
     }
 #if defined(_WIN32)
     OkayTrayRemove();   // make sure no stray tray icon lingers after exit
 #endif
-    ImGui_ImplSDLRenderer2_Shutdown();
-    ImGui_ImplSDL2_Shutdown();
+    if (g_imguiOwnRender) okay::imguirender::Shutdown(*okay::pb::For(renderer), ImGui::GetIO()); else ImGui_ImplSDLRenderer2_Shutdown();
+    if (g_imguiOwnFeed) { g_imguiFeed.Shutdown(ImGui::GetIO()); g_imguiMainWrap.reset(); } else ImGui_ImplSDL2_Shutdown();
     ImGui::DestroyContext();
-    SDL_DestroyRenderer(renderer);
-    SDL_DestroyWindow(window);
-    SDL_Quit();
+    okay::pb::DestroyRenderer(renderer);   // its painter owns it
+    mainWinOwner.reset();   // destroys the main window (after its renderer)
+    sdlSeam->Shutdown();
+#ifdef OKAY_ENABLE_TEST_HOOKS
+    return testExitCode;   // 0 unless the test script said `exit N`
+#endif
     return 0;
 }

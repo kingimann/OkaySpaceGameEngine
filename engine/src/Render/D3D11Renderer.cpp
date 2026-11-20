@@ -11,6 +11,7 @@
 #include "okay/Render/Lighting.hpp"
 #include "okay/Render/SoftwareRenderer.hpp"   // GetCachedTexture: shared texture cache
 #include "okay/Render/ShadowSetup.hpp"
+#include "okay/Render/D3D11Layout.hpp"
 #include "okay/Render/PostQualityMath.hpp"   // shared bloom soft knee + AO power (UNVERIFIED on a GPU)
 #include "okay/Render/DofMath.hpp"    // shared depth of field constants + HLSL (UNVERIFIED on a GPU)
 #include "okay/Render/D3D11Hlsl.hpp"   // the HLSL text (moved out of this file, same bytes)
@@ -101,68 +102,36 @@ bool CompileShader(const char* entry, const char* profile, ShaderCode& out) {
 #endif
 }
 
-// Constant-buffer layout mirrored on the C++ side (must match the cbuffer, 16-byte
-// rules: each float3 is followed by a float to fill its 16-byte row).
-struct CB {
-    float mvp[16];
-    float model[16];
-    float color[3];     float specular;
-    float emissive[3];  float shininess;
-    float lightDir[3];  float unlit;
-    float lightColor[3]; float useTex;
-    float ambient[3];   float hasNormal;
-    float eye[3];       float normalStrength;
-    float tiling[2];    float shadowAlpha; float alpha;
-    float rimColor[3];  float shaderMode;
-    float gradTop[3];   float toonBands;
-    float gradBot[3];   float rimStr;
-    float pbr[4];              // metallic, reflectivity, hasSpecMap, hasAo
-    float pbr2[4];             // aoStrength, envOn, texOffset.x, texOffset.y
-    float sky[12];             // 3 float4: top, horizon, bottom (xyz)
-    float lightCount[4];       // .x = number of scene lights
-    float lights[256];         // 64 float4: 16 lights x 4 rows
-    float fog[4];              // x=on y=start z=end w=receive shadows
-    float fogCol[4];           // xyz = fog colour, w = filmic pipeline flag (linear + ACES + gamma)
-    float fog2[4];             // mode, density, height, falloff
-    float post[4];             // x = leave the colour linear for the post chain
-};
-// Sky + post-chain constants (cbuffer PC, b3); see the HLSL for each slot.
-struct PostCB {
-    float invVP[16];
-    float eye[3], sunSize;
-    float sunDir[3], sunHalo;
-    float zenith[3], sunDisc;
-    float horizon[3], haze;
-    float ground[3], night;
-    float sunColor[3], starDensity;
-    float cloud[4];
-    float cloudOff[2], time, lin;
-    float p0[4];
-    float p1[4];
-    float p2[4];
-    float lift[3], aspect;
-    float gamma[3], thresh;
-    float gain[3], radius;
-    float texel[2], dir[2];
-    float p7[4];
-    float top[3], mode;
-    float hor[3], horizonPos;
-    float bot[3], starsOn;
-    float sunPos[2], sunRad, sunOn;
-    float viewSize[4];
-};
-// Per-frame shadow + ambient constants (cbuffer SH, b2).
-struct ShadowCB {
-    float casVP[16 * 4];
-    float casSphere[4 * 4];    // xyz centre, w radius
-    float casInfo[4 * 4];      // x texel world size
-    float shadow[4];           // on, cascade count, cascade size, softness
-    float shadow2[4];          // sun index, sun strength, sun bias, local tile size
-    float ambSky[4];
-    float ambGround[4];
-    float localVP[16 * 16];
-    float lshadow[4 * 16];     // first tile (-1 none), strength, bias, texel at 1m
-};
+using okay::d3d11layout::CB;
+using okay::d3d11layout::PostCB;
+using okay::d3d11layout::ShadowCB;
+using okay::d3d11layout::kCookieRows;
+
+// The light-mask atlas (t8): LightCookies' masks, each resampled to 64 x 64, stacked one per row (R8). UNVERIFIED on a GPU.
+static bool BuildCookieAtlas(ID3D11Device* dev, ID3D11Texture2D*& tex, ID3D11ShaderResourceView*& srv) {
+    if (srv) { srv->Release(); srv = nullptr; }
+    if (tex) { tex->Release(); tex = nullptr; }
+    std::vector<unsigned char> px((size_t)64 * 64 * kCookieRows, 255);
+    const auto& st = LightCookies::Store();
+    for (int r = 0; r < kCookieRows && r < (int)st.size(); ++r) {
+        const LightCookie& ck = st[(size_t)r];
+        if (ck.w <= 0 || ck.h <= 0) continue;
+        for (int y = 0; y < 64; ++y)
+            for (int x = 0; x < 64; ++x) {
+                float v = ck.At(x * ck.w / 64, y * ck.h / 64);
+                v = v < 0.0f ? 0.0f : (v > 1.0f ? 1.0f : v);
+                px[((size_t)r * 64 + y) * 64 + x] = (unsigned char)(v * 255.0f + 0.5f);
+            }
+    }
+    D3D11_TEXTURE2D_DESC td; std::memset(&td, 0, sizeof(td));
+    td.Width = 64; td.Height = 64 * kCookieRows; td.MipLevels = 1; td.ArraySize = 1;
+    td.Format = DXGI_FORMAT_R8_UNORM; td.SampleDesc.Count = 1; td.Usage = D3D11_USAGE_DEFAULT;
+    td.BindFlags = D3D11_BIND_SHADER_RESOURCE;
+    D3D11_SUBRESOURCE_DATA sd; std::memset(&sd, 0, sizeof(sd)); sd.pSysMem = px.data(); sd.SysMemPitch = 64;
+    if (FAILED(dev->CreateTexture2D(&td, &sd, &tex)) || !tex) { tex = nullptr; return false; }
+    if (FAILED(dev->CreateShaderResourceView(tex, nullptr, &srv))) { srv = nullptr; tex->Release(); tex = nullptr; return false; }
+    return true;
+}
 
 } // namespace
 
@@ -209,6 +178,7 @@ struct D3D11Renderer::Impl {
         }
     };
     DepthTarget sunAtlas, localAtlas;
+    ID3D11Texture2D* cookieTex = nullptr; ID3D11ShaderResourceView* cookieSrv = nullptr; size_t cookieCount = 0;   // light masks (t8)
     ID3D11Buffer*           vbDepth = nullptr; int vbDepthCap = 0;
     bool EnsureDepthTarget(DepthTarget& t, int w, int h);
     // Size-dependent targets:
@@ -1366,17 +1336,21 @@ const std::uint32_t* D3D11Renderer::RenderToPixels(const Scene& scene, const Mat
     Vec3 toLight = (SceneLight::Direction() * -1.0f).Normalized();
     // Gather all scene lights once per frame (directional + point + spot) into the
     // packed cbuffer array so every light shades on the GPU, not just the sun.
-    float frameLights[256]; std::memset(frameLights, 0, sizeof(frameLights));
+    float frameLights[384]; std::memset(frameLights, 0, sizeof(frameLights));
     int frameLightCount = 0;
     {
         const auto& LS = SceneLights::List();
         int n = (int)LS.size(); if (n > 16) n = 16; frameLightCount = n;
         for (int i = 0; i < n; ++i) {
-            const LightSample& s = LS[i]; Vec3 d = s.dir.Normalized(); int b = i * 16;
+            const LightSample& s = LS[i]; Vec3 d = s.dir.Normalized(); int b = i * 24;
             frameLights[b+0] = d.x; frameLights[b+1] = d.y; frameLights[b+2] = d.z; frameLights[b+3] = (float)s.type;
             frameLights[b+4] = s.pos.x; frameLights[b+5] = s.pos.y; frameLights[b+6] = s.pos.z; frameLights[b+7] = s.range;
             frameLights[b+8] = s.color.x; frameLights[b+9] = s.color.y; frameLights[b+10] = s.color.z; frameLights[b+11] = s.cosOuter;
             frameLights[b+12] = s.cosInner; frameLights[b+13] = (float)s.falloff;
+            frameLights[b+14] = s.halfW; frameLights[b+15] = s.halfH;                                    // Area light panel (0 = soft glow)
+            frameLights[b+16] = s.right.x; frameLights[b+17] = s.right.y; frameLights[b+18] = s.right.z;
+            frameLights[b+19] = (s.cookie >= 0 && s.cookie < kCookieRows) ? (float)s.cookie : -1.0f;      // mask row, -1 = none
+            frameLights[b+20] = s.up.x; frameLights[b+21] = s.up.y; frameLights[b+22] = s.up.z; frameLights[b+23] = s.cookieScale;
         }
     }
     Vec3 d3amb = SceneLights::AmbientColor();
@@ -1389,6 +1363,7 @@ const std::uint32_t* D3D11Renderer::RenderToPixels(const Scene& scene, const Mat
             sh.casSphere[ci * 4 + 0] = plan.cascade[ci].center.x; sh.casSphere[ci * 4 + 1] = plan.cascade[ci].center.y;
             sh.casSphere[ci * 4 + 2] = plan.cascade[ci].center.z; sh.casSphere[ci * 4 + 3] = plan.cascade[ci].radius;
             sh.casInfo[ci * 4] = plan.cascade[ci].texelWorld;
+            sh.casInfo[ci * 4 + 1] = plan.cascade[ci].depthRange;
         }
         const LightSample* sun = SceneLights::Sun();
         sh.shadow[0] = shadowOn ? 1.0f : 0.0f; sh.shadow[1] = (float)plan.cascades;
@@ -1398,6 +1373,9 @@ const std::uint32_t* D3D11Renderer::RenderToPixels(const Scene& scene, const Mat
         sh.shadow2[1] = sun ? sun->shadowStrength : 1.0f;
         sh.shadow2[2] = sun ? sun->shadowBias : 1.0f;
         sh.shadow2[3] = (float)(plan.tileSize > 0 ? plan.tileSize : 1);
+        sh.sunExtra[0] = sun ? sun->shadowSoftness : 0.5f;
+        sh.sunExtra[1] = ShadowDistance() > 0.0f ? ShadowDistance() : 0.0f;
+        sh.sunExtra[2] = (float)kCookieRows;
         Vec3 aSky, aGround;
         SceneAmbientColors(scene.renderSettings, d3amb, aSky, aGround);   // the scene's Ambient Mode
         sh.ambSky[0] = aSky.x; sh.ambSky[1] = aSky.y; sh.ambSky[2] = aSky.z;
@@ -1423,6 +1401,16 @@ const std::uint32_t* D3D11Renderer::RenderToPixels(const Scene& scene, const Mat
         ID3D11ShaderResourceView* atl[2] = {shadowOn ? p->sunAtlas.srv : nullptr, localOn ? p->localAtlas.srv : nullptr};
         c->PSSetShaderResources(4, 2, atl);   // sun cascades on t4, local tiles on t5
         c->PSSetSamplers(1, 1, &p->sampShadow);
+        {   // light masks on t8 (only when a light uses one)
+            bool any = false;
+            for (const LightSample& ls : SceneLights::List()) if (ls.cookie >= 0 && ls.cookie < kCookieRows) any = true;
+            if (any && (!p->cookieSrv || p->cookieCount != LightCookies::Store().size())) {
+                BuildCookieAtlas(p->dev, p->cookieTex, p->cookieSrv);
+                p->cookieCount = LightCookies::Store().size();
+            }
+            ID3D11ShaderResourceView* cs = any ? p->cookieSrv : nullptr;
+            c->PSSetShaderResources(8, 1, &cs);
+        }
     }
     // Flat ground contact shadows stand in for real shadows only when the sun's
     // shadow map isn't drawn (Shadows off / unsupported) but the sun does cast.
@@ -1928,6 +1916,8 @@ void D3D11Renderer::Destroy() {
     if (p->shCB) p->shCB->Release();
     if (p->postCB) p->postCB->Release();
     if (p->sampClamp) p->sampClamp->Release();
+    if (p->cookieSrv) p->cookieSrv->Release();
+    if (p->cookieTex) p->cookieTex->Release();
     if (p->depthOff) p->depthOff->Release();
     if (p->vsQuad) p->vsQuad->Release();
     for (ID3D11PixelShader* s : {p->psSky, p->psDown, p->psBlur, p->psUber, p->psFxaa, p->psAoDepth, p->psAo, p->psAoMul, p->psDof}) if (s) s->Release();

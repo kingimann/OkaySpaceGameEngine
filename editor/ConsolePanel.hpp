@@ -14,6 +14,8 @@ extern int g_consoleCounts[3];   // info, warning, error currently stored in the
 // from an active ConsoleSourceScope.
 void ConsoleLog(const std::string& msg, int level = 0);
 void ConsoleClear();
+// A second reader of every line (window mode: the OkayUI Console copy). Null (the default) = none. Called after the line is stored.
+void ConsoleSetMirror(void (*fn)(const std::string&, int));
 // The Console window: severity filters with counts, category, search, collapse, details.
 void DrawConsole();
 #ifdef OKAY_HAVE_OKAYUI

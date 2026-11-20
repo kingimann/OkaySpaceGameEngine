@@ -178,6 +178,17 @@ then this file gets updated. Keep this file short and true.
     or other restricted Xbox code. Code lives in its own isolated folder behind a CMake option that is OFF by default,
     and existing Windows export must keep working. Say "unverified" for anything not built and packaged on Windows, and
     never claim console hardware support without a test on a real console. Rule 19a still holds for everything else.
+24c. **Exception: C# scripting through the Microsoft .NET runtime (owner 2026-11-19: "Yes go ahead with c#"; the owner also
+    decided to replace our own OkayScript languages with C# and Lua, and Visual Script stays the main way to script).**
+    The .NET runtime (CoreCLR, MIT licence) may be loaded at run time through its documented hosting API (hostfxr) to run C#
+    scripts, and the Roslyn compiler of a .NET SDK the developer installs may be run as a build tool, like MSVC (rule 24b).
+    Nothing from the runtime, the SDK or NuGet is copied or linked into the repository; our hosting code and our managed API
+    assembly (`OkayScripting.dll`) are written by us. It is opt-in per project behind a CMake option that is OFF by default;
+    a game with no C# scripts ships no runtime. Exported C# games ship the runtime files with their MIT notice in
+    `docs/THIRD_PARTY.md`. Windows only (rule 14). Say "unverified" for anything not built and run on Windows. This allows no
+    other SDK or library, and rule 19a still holds for everything else. Lua is written by us from the Lua manual (no Lua
+    code). Our own OkayScript is deleted only after the replacements work and the owner confirms (plan:
+    `docs/scripting_migration.md`).
 25. **Claude 2 reports its usage.** With each result Claude 2 posts `Usage: about N% left` on issue #422, and
     `HANDOFF SOON` at about 20% and `HANDOFF NOW` at about 5%, naming its branches and what is unfinished, so the
     coordinator can take its branches over. Claude 2 pushes only `claude2/*` branches, opens no PRs, and starts a

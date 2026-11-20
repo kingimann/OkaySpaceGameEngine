@@ -1,5 +1,5 @@
 #pragma once
-// Anti-cheat, integrity (opt-in; docs/anticheat.md).
+// Anti-cheat, integrity (opt-in; docs/online/anticheat.md).
 //
 // File > Build Game writes Data/manifest.json: every shipped file's path, size
 // and SHA-256, signed with ed25519 when the owner has set up a signing key.
@@ -223,7 +223,7 @@ struct SigningKey {
     void Clear() { Wipe(seed.data(), seed.size()); present = false; }
 };
 
-// A private key: 64 hex digits (the 32-byte seed, as docs/anticheat.md makes it
+// A private key: 64 hex digits (the 32-byte seed, as docs/online/anticheat.md makes it
 // with openssl), or 128 (libsodium's secret key: seed || public key; the public
 // half has to match).
 inline bool ParseSeed(const std::string& text, ed25519::Seed& out, std::string* err = nullptr) {
@@ -344,7 +344,7 @@ constexpr const char* kBuildSettingsTooltip =
     "Report logs what it finds; Enforce also refuses to run.\n"
     "Start with Report: the DLL allowlist also flags harmless tools that load into games\n"
     "(antivirus, OBS, RTSS / MSI Afterburner, IME and input-method DLLs, overlays).\n"
-    "Client-side checks can be bypassed (docs/anticheat.md).";
+    "Client-side checks can be bypassed (docs/online/anticheat.md).";
 
 // ---- Writing (File > Build Game) ---------------------------------------------
 struct BuildManifestResult {
@@ -538,7 +538,7 @@ inline LaunchDecision CheckLaunch(const fs::path& root, Mode mode, const Trusted
 // What the player does at start.
 //  * No trusted keys built in: the mode is the stricter of game.okayconfig's
 //    anticheat= and OKAY_ANTICHEAT; off checks nothing (anyone who can edit the
-//    config can turn it off: that's the unsigned case, see docs/anticheat.md).
+//    config can turn it off: that's the unsigned case, see docs/online/anticheat.md).
 //  * Trusted keys built in (a player built for your own signed games): the game
 //    must have a valid manifest signed by a trusted key, or it doesn't start, and
 //    the mode comes from that signed manifest; the config and the environment can

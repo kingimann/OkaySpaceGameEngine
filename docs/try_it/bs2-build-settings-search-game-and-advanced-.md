@@ -4,7 +4,7 @@ row: | bs2 | Build Settings: search, Game and Advanced pages, checks, history | 
 ---
 ## bs2. Build Settings: search, Game and Advanced pages, checks, history
 
-**What it is.** The Build Settings window has a search box over every setting, a dot beside each page that has changed settings, a "Reset page to defaults" button, two new pages (Game and Advanced), a "What will happen" summary with checks and Fix buttons, Debug and Release starting points, duplicate profile, `.okaybuild` files and a build history. Every new setting is read by the built game or by the build step (see `docs/build_settings_upgrade.md`).
+**What it is.** The Build Settings window has a search box over every setting, a dot beside each page that has changed settings, a "Reset page to defaults" button, two new pages (Game and Advanced), a "What will happen" summary with checks and Fix buttons, Debug and Release starting points, duplicate profile, `.okaybuild` files and a build history. Every new setting is read by the built game or by the build step (see `docs/editor/build_settings_upgrade.md`).
 
 **Steps.**
 1. Open the editor, open a project, press Ctrl+B (File > Build Settings). The platform must be Desktop.

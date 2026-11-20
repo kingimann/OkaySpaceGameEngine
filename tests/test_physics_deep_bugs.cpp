@@ -1,4 +1,4 @@
-// Physics bugs found by the audit in docs/physics_plan.md. Each case ran against the unchanged step first and failed there
+// Physics bugs found by the audit in docs/physics/physics.md. Each case ran against the unchanged step first and failed there
 // (the numbers are in the plan); the fixes hold in BOTH physics qualities, so every case runs twice.
 #include "test_framework.hpp"
 #include <Okay.hpp>

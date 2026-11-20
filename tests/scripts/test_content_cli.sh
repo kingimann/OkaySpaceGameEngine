@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# okay-content end to end (docs/content_delivery.md): make a signed manifest from a folder, verify it, refuse a program file and a tampered file,
+# okay-content end to end (docs/release/content_delivery.md): make a signed manifest from a folder, verify it, refuse a program file and a tampered file,
 # sync from a file:// folder, sync again (up to date), wrong key refused, and (when the tool has the own HTTP client and python3 is there) sync over
 # HTTP from a loopback server that cuts the first download so the client must resume with a Range request. Throwaway keys, no internet.
 # usage: test_content_cli.sh <path to okay-content>

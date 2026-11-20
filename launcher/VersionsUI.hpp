@@ -2,7 +2,7 @@
 // The launcher's Versions page (nav: "Versions"): the running version, the Latest / LTS channel, the versions installed next to it
 // (size, Remove, default editor), the versions available to install (progress, Cancel), "Keep previous versions: N" and "Open
 // install folder". All the rules live in VersionsManager.cpp; this file only draws them and runs the two background jobs (reading
-// the version list, and one install). See docs/launcher_versions.md.
+// the version list, and one install). See docs/release/launcher_versions.md.
 //
 // main.cpp calls Tick() once per frame, DrawPage() while the page is showing, and Shutdown() before it closes; it hands over what the
 // page needs through Host (the launcher's own toast, folder opener, HTTP helpers and colours), so nothing here reaches into main.cpp.

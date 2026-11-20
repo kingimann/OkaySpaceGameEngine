@@ -55,7 +55,7 @@ namespace okay::account {
 namespace fs = std::filesystem;
 
 // ===========================================================================
-// SHA-256 / PBKDF2. These are thin wrappers over the engine's one implementation, okay/Crypto/Sha256.hpp (docs/sha256_comparison.md).
+// SHA-256 / PBKDF2. These are thin wrappers over the engine's one implementation, okay/Crypto/Sha256.hpp (docs/platform/sha256_comparison.md).
 // The wrapper keeps the interface the account service, the updater and the anti-cheat code already use.
 // ===========================================================================
 namespace detail {
@@ -484,7 +484,7 @@ public:
     }
 
     /// Where the emailed reset link should land (the hosted page from
-    /// supabase/auth-pages/reset-password, see docs/password-reset.md). Must be an
+    /// supabase/auth-pages/reset-password, see docs/online/password-reset.md). Must be an
     /// http(s) URL that is also on the Supabase Auth redirect allow-list. Empty =
     /// not configured: Supabase then uses the project's Site URL instead.
     void SetResetRedirect(std::string url) { resetRedirect_ = std::move(url); }

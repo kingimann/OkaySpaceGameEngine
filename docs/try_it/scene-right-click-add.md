@@ -20,4 +20,4 @@ Branch `claude/scene-right-click-add-1`. Not in a release yet.
 
 Status: the click rule, the placement maths, the menu list and the search have a headless test (`scene_add_menu`). The drawing and the
 mouse handling in `editor/main.cpp` were only checked with a syntax-only compile on Linux; nothing was run in a real editor or on
-Windows, and there are no screenshots. Details: `docs/scene_right_click_add.md`.
+Windows, and there are no screenshots. Details: `docs/editor/scene_right_click_add.md`.

@@ -1,5 +1,5 @@
 #pragma once
-// Real transports for the content downloader. Docs: docs/content_delivery.md "Transports".
+// Real transports for the content downloader. Docs: docs/release/content_delivery.md "Transports".
 //   * HttpTransport: GET over the engine's own HTTP layer (okay/Platform/NativeHttp.hpp): WinHTTP on Windows, our own HTTP/1.1 client on
 //     Linux when built with OKAY_OWN_HTTP and run with OKAY_OWN_HTTP=1. No curl, no third-party SDK. Each GET is written to a scratch file
 //     (so a big file never sits in memory) and handed to the sync engine in pieces. The Range header is sent as an ordinary header.

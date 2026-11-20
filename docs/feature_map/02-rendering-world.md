@@ -17,7 +17,7 @@ Mostly on main and tested. Nothing is open: #574 added the optimization tools (L
 - **Code:** `Render/Renderer`, `Render/Color`, `Render/ConsoleRenderer`
 - **API:** `IRenderer`, `Viewport`, `Color`, `ConsoleRenderer`, `Scene::Render`, `Application::SetRenderer`
 - **Editor:** Scene and Game views (15.3); Stats panel; View > Lighting panel "Rendering" section
-- **Docs:** `docs/rendering.md`
+- **Docs:** `docs/rendering/rendering.md`
 - **Tests:** `software_renderer`
 - **Status:** Works - read `Renderer.hpp`, `Color.hpp`, `Scene::Render`; the interface is tiny (five calls) because the 3D path bypasses it
 - **Open:** editor Play frame rate when only the software rasterizer is available (old note); the 3D backends do not implement `IRenderer` at all, so a new backend is a copy of the `RenderToPixels` contract, not of this interface
@@ -38,7 +38,7 @@ Mostly on main and tested. Nothing is open: #574 added the optimization tools (L
 - **Code:** `Render/Material`, `Render/ProcTexture`, `Render/Mesh`, `Render/Gltf`, `Render/ModelImport`, `Components/MeshRenderer`
 - **API:** `Material`, `Material::ApplyTo`, `MeshRenderer`, `Mesh::Cube`, `Mesh::FromName`, `GenerateProcTexture`, `ImportModel`, `proc:wood`
 - **Editor:** Mesh Renderer inspector section and material ball preview (editor/main.cpp); Project panel materials; Modeling window (3.1)
-- **Docs:** `docs/rendering.md`, `docs/modeling.md`
+- **Docs:** `docs/rendering/rendering.md`, `docs/editor/modeling.md`
 - **Tests:** `material`, `shaders`, `mesh3d`, `mesh_variant_hash`, `3d`, `gltf_pbr_maps`
 - **Status:** Works - read `Material.hpp`, `ProcTexture.hpp`, headers of `Mesh`, `Gltf`, `ModelImport`; tests cover round trips and primitive geometry
 - **Open:** material editor window with live preview, visual shader graph, custom shader files and a full energy-conserving PBR model are area 26; `Mesh.hpp` is one 4k-line header mixing primitives, props, OBJ and editing ops
@@ -56,14 +56,14 @@ Mostly on main and tested. Nothing is open: #574 added the optimization tools (L
   - 2.3.4 Lightmap bake - `Render/Lightmap` - `BakeFaceLighting` writes lighting, shadows and ambient occlusion into a static mesh's per-face colours; editor Bake Lighting button
   - 2.3.5 Day and night - `Components/DayNightCycle` - 24 h clock rotates the sun, tints and dims it, eases ambient, blends the camera sky; publishes `hour`; `SetTime`, `AddHours`
   - 2.3.6 Flashlight - `Components/Flashlight` - toggleable spot light that shines where the camera looks (key F by default) for caves and dark rooms; spawns a child Light and saves with the scene (tested inside `terrain`)
-  - 2.3.7 Lighting upgrade - `Render/ShadowMath`, `Render/Lighting`, `Render/LightingPresets` - stable cascades (grid tied to the world), slope bias, soft penumbra and distance fade (software), smooth spot cone (all renderers), soft light roll-off, rectangle Area light, light masks (cookies), real-world lux/lumens with Auto brightness, glow lights from emissive meshes, five lighting presets, baked light probes, scene SSAO in the software renderer; `docs/lighting_upgrade.md`
+  - 2.3.7 Lighting upgrade - `Render/ShadowMath`, `Render/Lighting`, `Render/LightingPresets` - stable cascades (grid tied to the world), slope bias, soft penumbra and distance fade (software), smooth spot cone (all renderers), soft light roll-off, rectangle Area light, light masks (cookies), real-world lux/lumens with Auto brightness, glow lights from emissive meshes, five lighting presets, baked light probes, scene SSAO in the software renderer; `docs/rendering/lighting.md`
 - **Code:** `Render/Lighting`, `Render/ShadowSetup`, `Render/ShadowMath`, `Render/LightingPresets`, `Render/Lightmap`, `Components/Light`, `Components/DayNightCycle`, `Components/Flashlight`
 - **API:** `Light`, `Light::Type`, `ApplySceneLight`, `SceneLights`, `PlanShadows`, `BakeFaceLighting`, `DayNightCycle::SetTime`, script `set_light`, `set_ambient`
 - **Editor:** View > Lighting panel (Environment, Bake Lighting, Rendering with shadow resolution); GameObject > Light menu; Light and Day/Night inspectors (editor/main.cpp)
-- **Docs:** `docs/lighting.md`, `docs/lighting_upgrade.md`, `docs/day_night_cycle.md`
+- **Docs:** `docs/rendering/lighting.md`, `docs/rendering/lighting.md`, `docs/rendering/lighting.md`
 - **Tests:** `lighting`, `light_shadows`, `lighting_upgrade`, `shadows`, `daynight`, `terrain`, `lightmap`
 - **Status:** Works - read `Lighting.hpp`, `ShadowSetup.hpp`, `Light.hpp`; tests cover the GPU shadow plan, flicker, save/reload and the software renderer's switches
-- **Open:** one Directional light casts sun shadows (the first one with Cast Shadows on; the Inspector warns when more than one asks); at most 16 lights shaded per frame on the GPU; Soft Edges, light masks and rectangle panels run in the software renderer and are written but never run in the Direct3D 11 and OpenGL shaders (OpenGL softens by an approximation); light probes (`Render/LightProbes`, `LightProbeBake`, Lighting window > Light Probes) are software only; no reflection probes; the Direct3D 12 backend has one sun map, no cascades or local shadows (all docs/lighting.md); lightmap bake stores per-face colours, not UV lightmap textures (Lightmap.hpp)
+- **Open:** one Directional light casts sun shadows (the first one with Cast Shadows on; the Inspector warns when more than one asks); at most 16 lights shaded per frame on the GPU; Soft Edges, light masks and rectangle panels run in the software renderer and are written but never run in the Direct3D 11 and OpenGL shaders (OpenGL softens by an approximation); light probes (`Render/LightProbes`, `LightProbeBake`, Lighting window > Light Probes) are software only; no reflection probes; the Direct3D 12 backend has one sun map, no cascades or local shadows (all docs/rendering/lighting.md); lightmap bake stores per-face colours, not UV lightmap textures (Lightmap.hpp)
 - **Related:** 2.4, 2.5, 38.2, 38.3, 38.5, 15.3
 - **Words:** Light, sun, point light, spot light, area light, shadow, cascade, shadow map, PCF, lightmap, bake, ambient, flicker, DayNightCycle, day night, time of day, lights, shadows, day/night
 - **Seen as:** shadows look wrong, blocky or shimmer; a point light casts no shadow; the scene is too dark; sunrise does not change the sky; a flashlight does not light the ground
@@ -84,10 +84,10 @@ Mostly on main and tested. Nothing is open: #574 added the optimization tools (L
 - **Code:** `Render/Atmosphere`, `Render/SkyStars`, `Environment/Weather`, `Environment/Wind`, `Environment/WindField`, `Components/WindZone`, `Scene/Scene`
 - **API:** `Scene::RenderSettings`, `SkyPaletteFor`, `FogFactor`, `UpdateWeather`, `WindVector`, `WindField::At`, `WindZone`, `WindDrag`, `WindSway`, `WindAmbience`, `ApplyLookPreset`, script `weather_set`, `fog_set`, `Weather.Set`, `wind_speed`, `wind_set`, `wind_gust`, `Wind.At`, `Wind.SetGust`
 - **Editor:** View > Lighting panel: Sky, Fog, Weather and Wind sections and the Look Preset combo (`DrawLookSections` in editor/main.cpp); GameObject > Effects > Environment and Add Component > Environment (`editor/WindTools.cpp`); wind arrows in the Scene view
-- **Docs:** `docs/rendering.md`, `docs/wind.md`
+- **Docs:** `docs/rendering/rendering.md`, `docs/gameplay/wind.md`
 - **Tests:** `post_sky`, `wind_field`, `wind`
 - **Status:** Works - read `Atmosphere.hpp` and `Weather.hpp`; the procedural sky and clouds are drawn by the GPU backends (docs), the software renderer shows a plain gradient
-- **Open:** old scenes load with everything off by design; the procedural sky, cloud layer and lightning exposure flash have no software-renderer version; weather depends on the particle system drawn by the host (2.7); no volumetric fog or sky reflections beyond the ambient and reflective-material colours; wind: sway is done on the CPU (not in a GPU vertex shader), trails, spline followers and fog are not linked to the wind, Water still reads only the weather's wind, no multiplayer sync of the wind, no Visual Script nodes (script names only), nothing run on Windows or a GPU (`docs/wind.md`)
+- **Open:** old scenes load with everything off by design; the procedural sky, cloud layer and lightning exposure flash have no software-renderer version; weather depends on the particle system drawn by the host (2.7); no volumetric fog or sky reflections beyond the ambient and reflective-material colours; wind: sway is done on the CPU (not in a GPU vertex shader), trails, spline followers and fog are not linked to the wind, Water still reads only the weather's wind, no multiplayer sync of the wind, no Visual Script nodes (script names only), nothing run on Windows or a GPU (`docs/gameplay/wind.md`)
 - **Related:** 2.3, 2.5, 2.7, 38.8
 - **Words:** sky, skybox, procedural sky, clouds, stars, fog, weather, rain, snow, storm, lightning, wind, gust, breeze, sway, flag, trees blowing, wind zone, fan, look preset, Atmosphere, Weather, WindVector
 - **Seen as:** the sky does not change with the sun; distant objects pop in without fog; rain follows the camera in the editor preview; wind does not move particles; trees and grass stand still in the wind; a flag does not wave; a box is not pushed by the wind
@@ -103,10 +103,10 @@ Mostly on main and tested. Nothing is open: #574 added the optimization tools (L
 - **Code:** `Render/Atmosphere`, `Render/SoftwareRenderer`, `Scene/Scene`, `Core/DisplaySettings`
 - **API:** `Scene::RenderSettings::PostSettings`, `PostActive`, `TonemapACES`, `ExposureScale`, `BloomEnabled()`, `SSAOEnabled()`, script `post_set`
 - **Editor:** View > Lighting panel: Post-processing section and Look Preset; "Rendering (Lighting & Post FX)" holds the editor's own process-wide switches
-- **Docs:** `docs/rendering.md`
+- **Docs:** `docs/rendering/rendering.md`
 - **Tests:** `post_sky`, `dof_math`, `post_quality_math`, `ssao_math`
 - **Status:** Works - read `Atmosphere.hpp`, the post fields of `Scene.hpp` and the effect counts in the backends; settings round-trip per `post_sky`
-- **Open:** SSAO and depth of field on Direct3D 11 have never run on a GPU; Direct3D 12 and software differ in what they apply; the Lighting window, Build Settings and the Light Inspector name the switches a renderer ignores (`docs/rendering.md`); FXAA and per-pixel lighting switches only affect software; no motion blur, lens flare or colour LUT
+- **Open:** SSAO and depth of field on Direct3D 11 have never run on a GPU; Direct3D 12 and software differ in what they apply; the Lighting window, Build Settings and the Light Inspector name the switches a renderer ignores (`docs/rendering/rendering.md`); FXAA and per-pixel lighting switches only affect software; no motion blur, lens flare or colour LUT
 - **Related:** 2.4, 1.15, 38.2, 38.3, 38.5, 26
 - **Words:** post-processing, post FX, bloom, tonemap, ACES, exposure, colour grading, vignette, FXAA, SSAO, ambient occlusion, depth of field, DoF, HDR, look preset
 - **Seen as:** bloom or occlusion missing on one renderer; the frame looks washed out or too contrasty; vignette drawn twice; effects change between editor and player
@@ -132,7 +132,7 @@ Mostly on main and tested. Nothing is open: #574 added the optimization tools (L
 - **Code:** `Components/Terrain`, `Components/TerrainDigger`, `Components/VoxelTerrain`, `Components/VoxelDigger`, `Components/Water`, `Environment/WaterWaves`, `Components/Buoyancy`, `Components/WorldStreamer`, `Components/Tilemap`, `Components/TilemapCollider2D`
 - **API:** `Terrain::RaiseAt`, `Terrain::Erode`, `VoxelTerrain::Dig`, `TerrainDigger`, `Water`, `WorldStreamer`, `Tilemap`, `TilemapCollider2D`
 - **Editor:** GameObject > 3D Object > Terrain, Voxel Terrain (caves), Water and GameObject > 2D Object > Tilemap; their Inspector sections and the Terrain sculpt tools (editor/main.cpp)
-- **Docs:** `docs/terrain_water.md`, `docs/water_boat.md`
+- **Docs:** `docs/rendering/terrain_water.md`, `docs/rendering/terrain_water.md`
 - **Tests:** `boat`, `terrain`, `terrain_ops`, `voxel`, `voxel_dig`, `worldstreamer`, `tilemap_collision`, `particles_tilemap`
 - **Status:** Works - read the headers of every component above; `terrain` also covers water, flashlight and the sandbox template
 - **Open:** vegetation and detail painting, procedural scatter and a proper sculpting UI are area 29; streaming is by prefab cell files baked by hand, not by the `Optimize/StreamingGrid` planner of #574 (area 27)
@@ -153,7 +153,7 @@ Mostly on main and tested. Nothing is open: #574 added the optimization tools (L
 - **Code:** `Components/ParticleSystem`, `Components/LineRenderer`
 - **API:** `ParticleSystem`, `ParticleSystem::ApplyPreset`, `ParticleGradient`, `ParticleCurve`, `LineRenderer`, `TrailRenderer`, `BuildRibbon`, script `emit`
 - **Editor:** Particle System, Line Renderer and Trail Renderer inspector sections (editor/main.cpp); spline-driven lines in 2.11
-- **Docs:** `docs/particles.md`, `docs/splines.md` (lines and trails), `docs/rendering.md` (weather)
+- **Docs:** `docs/rendering/particles.md`, `docs/engine/splines.md` (lines and trails), `docs/rendering/rendering.md` (weather)
 - **Tests:** `particles_fx`, `particles_serialize`, `particles_tilemap`
 - **Status:** Works - read the `ParticleSystem.hpp` fields and `LineRenderer.hpp` header; tests cover gradients, curves, presets and scene round trips
 - **Open:** particles are CPU billboards drawn by the host, not GPU particles; lines and trails are unlit and cast no shadows; one Line and one Trail renderer per object
@@ -172,7 +172,7 @@ Mostly on main and tested. Nothing is open: #574 added the optimization tools (L
 - **Code:** `Render/Culling`, `Optimize/LodGroup`, `Optimize/OcclusionBuffer`, `Optimize/BatchPlanner`, `Optimize/MeshSimplify`
 - **API:** `Frustum`, `CulledByFrustum`, `FrustumCullingEnabled`, `LastCullCounters`, `GLRenderer::SupportsGpuSkinning`
 - **Editor:** Stats panel (drawn, frustum-culled, occluded, LOD level, batches, draws saved); LOD Group and Occluder inspectors; Scene view distance rings on a selected LOD Group
-- **Docs:** `docs/optimization_tools.md`
+- **Docs:** `docs/engine/optimization_tools.md`
 - **Tests:** `frustum_culling`, `visibility_lod`, `optimize_simplify`, `optimize_occlusion`, `optimize_batching`
 - **Status:** Works - frustum culling, GPU skinning (OpenGL and Direct3D 11), and the LOD / occlusion / batching pass are in the renderers. A scene with no LOD Group and no Occluder still draws every visible mesh; batching only merges opaque, unskinned, non-scrolling meshes that share a material
 - **Open:** streaming is still area 27.4 (World Streamer does not use StreamingGrid); software and Direct3D 12 skinning stays on the CPU; occlusion is a CPU buffer and can cost more than it saves when few triangles are hidden
@@ -193,10 +193,10 @@ Mostly on main and tested. Nothing is open: #574 added the optimization tools (L
 - **Code:** `Graphics/Font`, `Graphics/TtfFont`, `Graphics/TtfRaster`, `Graphics/EmbeddedFont`, `Graphics/Image`, `Core/ImageDecode`, `Components/TextRenderer`
 - **API:** `Font8x8`, `TtfFont`, `ttf::Face`, `ttf::BakeGlyph`, `Image::Load`, `Image::Save`, `DecodeImage`, `DecodeGifFrames`, `GetImageInfo`, `Inflate`, `TextRenderer`, `TextRenderer::text`, `TextRenderer::screenSpace`
 - **Editor:** Text Renderer inspector section; Lighting panel "UI Font" (editor/main.cpp); thumbnails in the Project panel
-- **Docs:** `docs/localization.md` (Fonts section)
+- **Docs:** `docs/engine/localization.md` (Fonts section)
 - **Tests:** `text`, `ttf`, `ttf_rasterizer`, `image`, `image_decoder`, `loaders_robust`
 - **Status:** Works - read the headers; the `ttf` test skips its assertions when no system font exists, so CI proves less than a dev box; `ttf_rasterizer` needs no system font (synthetic fonts, DejaVu from assets/fonts, fuzzed files)
-- **Open:** fonts are not hinted, and kerning, GPOS/GSUB, variable fonts and colour or bitmap glyph tables (emoji fonts like Noto Color Emoji) are not read; where two contours of one glyph overlap, the overlap's anti-aliased edge pixels can be a little too dark; right-to-left scripts draw unshaped and left to right (docs/localization.md); the pixel font is ASCII only; no signed-distance-field text; `loaders_robust` also guards an image header claiming gigapixels; the decoder refuses CMYK/YCCK, arithmetic-coded and 12-bit JPEGs, RLE BMPs and PNM/PIC files, and fails on truncated data instead of showing the part it got; JPEG pixels match libjpeg to within 3 levels, not bit for bit
+- **Open:** fonts are not hinted, and kerning, GPOS/GSUB, variable fonts and colour or bitmap glyph tables (emoji fonts like Noto Color Emoji) are not read; where two contours of one glyph overlap, the overlap's anti-aliased edge pixels can be a little too dark; right-to-left scripts draw unshaped and left to right (docs/engine/localization.md); the pixel font is ASCII only; no signed-distance-field text; `loaders_robust` also guards an image header claiming gigapixels; the decoder refuses CMYK/YCCK, arithmetic-coded and 12-bit JPEGs, RLE BMPs and PNM/PIC files, and fails on truncated data instead of showing the part it got; JPEG pixels match libjpeg to within 3 levels, not bit for bit
 - **Related:** 1.8, 12.2, 2.2, 1.12
 - **Words:** font, TTF, OTF, TTC, TrueType, OpenType, CFF, glyf, cmap, rasterizer, TtfFont, TtfRaster, Font8x8, bitmap font, Image, PNG, JPEG, progressive JPEG, GIF decode, image decoder, inflate, texture load, TextRenderer, text, glyph atlas, Roboto, fonts
 - **Seen as:** letters show as boxes; text is blurry at some sizes; a huge image crashes the load; text sits in the wrong corner
@@ -213,7 +213,7 @@ Mostly on main and tested. Nothing is open: #574 added the optimization tools (L
 - **Code:** `Components/Camera`, `Scene/EnsureCamera`
 - **API:** `Camera`, `Camera::ScreenPointToRay`, `Camera::Shake`, `Scene::CameraStack`, `Scene::ResolveMainCamera`, `PickRenderCamera`, `EnsureSceneCamera`
 - **Editor:** Camera inspector, Camera Preview window and the Game view (editor/main.cpp, 15.3)
-- **Docs:** `docs/layers_tags_cameras.md`
+- **Docs:** `docs/gameplay/cameras.md`
 - **Tests:** `camera_cine`, `worldtoscreen`, `scene_cameras`, `layers_tags_cameras`, `camera_stack`, `core_audit`
 - **Status:** Works - one camera still renders exactly as before; two or more are drawn lowest depth first into their rectangles in the Game view, Play mode and the player. Depth Only and Don't Clear overlay the cameras underneath. The Inspector lists all four clear flags and can add an overlay camera
 - **Open:** a 2D orthographic scene still draws sprites from the main camera only; overlay cameras do not depth-test against the cameras under them (they draw on top inside their rectangle)
@@ -233,10 +233,10 @@ Mostly on main and tested. Nothing is open: #574 added the optimization tools (L
 - **Code:** `Components/Spline`, `Components/SplineMesh`, `editor/SplineTools.*`
 - **API:** `Spline`, `SplineFollower`, `SplineMesh`, `SplineInstancer`, `DrawSplineOverlay`
 - **Editor:** GameObject > Effects > Spline; Scene-view spline overlay and the Spline, Follower, Spline Mesh and Instancer inspectors (`editor/SplineTools.*`)
-- **Docs:** `docs/splines.md`
+- **Docs:** `docs/engine/splines.md`
 - **Tests:** `splines`
 - **Status:** Works - read the headers and `SplineTools.hpp`; the 928-line `splines` test covers evaluation, arc length, frames, editing, meshes, instancers and scene records
-- **Open:** clicking a Catmull-Rom curve inserts a point that changes the shape slightly (only Bezier splits are exact); a road has no underside (the end caps close the ends; turn Cap Ends off to keep them open); one Spline per object (docs/splines.md); dolly cameras use `DollyPath` (4.8), not this
+- **Open:** clicking a Catmull-Rom curve inserts a point that changes the shape slightly (only Bezier splits are exact); a road has no underside (the end caps close the ends; turn Cap Ends off to keep them open); one Spline per object (docs/engine/splines.md); dolly cameras use `DollyPath` (4.8), not this
 - **Related:** 2.7, 4.8, 15.3, 29
 - **Words:** spline, Bezier, Catmull-Rom, SplineFollower, SplineMesh, SplineInstancer, road, fence, rail, path, curve, handle, dolly, splines
 - **Seen as:** the curve flips or twists; a road has gaps; instanced trees float above terrain; points cannot be picked in the Scene view
@@ -271,7 +271,7 @@ Mostly on main and tested. Nothing is open: #574 added the optimization tools (L
 - **Code:** `Texture/Texture`, `Texture/Mip`, `Texture/Atlas`, `Texture/Convert`, `Texture/Bc`, `Texture/Dds`, `Texture/Stream`, `Texture/Export`, `tools/okaytexture/main.cpp`, `examples/texture`, `editor/ProjectPanelUI.cpp`
 - **API:** `okay::tex::GenerateMips`, `GenerateMipsRGBA8`, `MipOptions`, `PackAtlas`, `ComposeAtlasRGBA8`, `AtlasToJson`, `ConvertPixels`, `FloatToHalf`, `EncodeBc`, `DecodeBc`, `WriteDds`, `ReadDds`, `StreamPlanner`, `BuildDdsFile`, `BuildAtlasFiles`; command `okay-texture`
 - **Editor:** Project panel > picture > Import Settings > "Generate mipmaps / compress"
-- **Docs:** `docs/own_texture_library.md`
+- **Docs:** `docs/rendering/own_texture_library.md`
 - **Tests:** `tex_mip`, `tex_atlas`, `tex_convert`, `tex_bc`, `tex_dds_stream`
 - **Status:** Partial - the library, tool and editor button work and are unit-tested on Linux; no renderer loads the .dds files yet, the import `compress` flag is still not applied, and nothing was run on Windows
 - **Open:** renderers (GL, D3D) do not read DDS or upload BC data; BC6H/BC7/ASTC/ETC are not written; no streaming loop in the renderer (the planner is the planning half); the glyph `ShelfPacker` is separate on purpose; Windows build and editor section unverified

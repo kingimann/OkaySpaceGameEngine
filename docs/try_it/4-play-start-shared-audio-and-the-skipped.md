@@ -4,7 +4,7 @@ row: | 4 | Play start: shared audio, skipped navmesh bake | `examples\spatial_au
 ---
 ## 4. Play start: shared audio and the skipped navmesh bake
 
-Two speed-ups to Play start (`docs/audio.md`, `docs/navigation.md`).
+Two speed-ups to Play start (`docs/audio/audio.md`, `docs/gameplay/navigation.md`).
 
 **Audio sharing.** Sources that use the same sound file now hold one decoded copy. **There is no log line or other
 sign of this in the editor**: it only saves memory and time. Open `examples\spatial_audio\spatial_audio.okayscene`

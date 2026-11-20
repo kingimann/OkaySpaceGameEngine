@@ -1,5 +1,5 @@
 #pragma once
-// Our own 3MF (.3mf) reader: a zip package with one XML model part. See docs/own_3mf_reader.md.
+// Our own 3MF (.3mf) reader: a zip package with one XML model part. See docs/content/model_readers.md.
 //
 // Reads the core specification: meshes (vertices, triangles), component trees and build items with their 3x4 transforms
 // (mirrored transforms flip the winding), base materials and colour groups (one part per material, diffuse colour and

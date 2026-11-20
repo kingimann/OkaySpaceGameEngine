@@ -21,7 +21,7 @@
 // MakeNotOffered() with a reason (CheckNotOffered fails otherwise); those scenes run through the same seven columns.
 //
 // The table of checks prints at the end (run the binary directly to see it, with the numbers it measured). A template
-// with no row in MakeSpecs() fails: that is how a new template is forced to bring its own test (docs/templates_check.md).
+// with no row in MakeSpecs() fails: that is how a new template is forced to bring its own test (docs/process/templates_check.md).
 //
 // What is NOT covered here: a real window, the launcher's UI, Windows, the editor's frame loop (these tests call
 // EditorState::Tick the way the editor's Play does), the project settings the editor shell applies (gravity, physics
@@ -822,7 +822,7 @@ void RunDriven(Row& row, EditorState& ed, const Spec& spec, const char* world, L
 // `spec` is the title's row in MakeSpecs() (null when it has none, which fails).
 void RunTemplate(const std::string& title, oked::TemplateBuilder build, const Spec* spec, const fs::path& location, Row& row) {
     row.title = title;
-    Expect(row, kInteract, spec != nullptr, "no row in MakeSpecs() for this template: add one (docs/templates_check.md)");
+    Expect(row, kInteract, spec != nullptr, "no row in MakeSpecs() for this template: add one (docs/process/templates_check.md)");
     LogCatch logs;
     GateHook hook(kRunning);
 

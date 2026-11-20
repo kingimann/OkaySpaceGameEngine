@@ -1,6 +1,6 @@
 cmake_minimum_required(VERSION 3.16)
 project(OkaySpaceGameEngine
-    VERSION 2.894.0
+    VERSION 2.895.0
     DESCRIPTION "A modern C++ game engine"
     LANGUAGES C CXX)   # C enabled for vendored single-file C libs (ufbx)
 
@@ -56,7 +56,7 @@ option(OKAY_OWN_MD5       "Read .md5mesh / .md5anim (id Tech 4 / Doom 3) with ou
 option(OKAY_OWN_MS3D       "Read .ms3d (MilkShape 3D) with our own MS3D reader by default (run-time env OKAY_OWN_MS3D=0/1 and SetImportBackend override)" ON)
 option(OKAY_OWN_ASE       "Read .ase (3ds Max ASCII Scene Export) with our own ASE reader by default (run-time env OKAY_OWN_ASE=0/1 and SetImportBackend override)" ON)
 option(OKAY_OWN_BLEND     "Read .blend with our own Blender reader by default (Assimp, when built, stays the fallback; without Assimp this is what lets .blend load at all; run-time env OKAY_OWN_BLEND=0/1 and SetImportBackend override)" ON)
-option(OKAY_OWN_HTTP      "Allow our own HTTP/1.1 client (system OpenSSL loaded at run time) on Linux for NativeHttp instead of spawning curl; still needs OKAY_OWN_HTTP=1 in the environment at run time, curl stays the fallback (docs/own_http_client.md)" OFF)
+option(OKAY_OWN_HTTP      "Allow our own HTTP/1.1 client (system OpenSSL loaded at run time) on Linux for NativeHttp instead of spawning curl; still needs OKAY_OWN_HTTP=1 in the environment at run time, curl stays the fallback (docs/platform/own_http.md)" OFF)
 option(OKAY_OWN_3MF       "Read .3mf with our own 3MF reader by default (Assimp, when built, stays the fallback; run-time env OKAY_OWN_3MF=0/1 and SetImportBackend override)" ON)
 option(OKAY_OWN_AMF       "Read .amf with our own AMF reader by default (Assimp, when built, stays the fallback; run-time env OKAY_OWN_AMF=0/1 and SetImportBackend override)" ON)
 option(OKAY_OWN_X3D       "Read .x3d with our own X3D reader by default (Assimp, when built, stays the fallback; run-time env OKAY_OWN_X3D=0/1 and SetImportBackend override)" ON)
@@ -90,9 +90,9 @@ option(OKAY_OWN_LWS      "Read .lws / .mot (LightWave scenes and motions) with o
 option(OKAY_OWN_FBX       "Use our own FBX reader (okay::fbx) instead of ufbx by default (ufbx stays compiled in; run-time env OKAY_OWN_FBX=0/1 overrides)" ON)
 option(OKAY_BUILD_PLATFORM_SELFTEST "Build okay-platform-selftest: tries the own okay::platform backend (window, input, audio, pad, clipboard) and prints what worked. OFF by default" OFF)
 option(OKAY_BUILD_TOOLS    "Build developer tools (texture generator, ...)"    OFF)
-option(OKAY_BUILD_XBOX_UWP "EXPERIMENTAL, UNVERIFIED Xbox One Developer Mode (UWP) export: its tests, the editor entry and (on a UWP toolchain) the app. platform/xbox_uwp, docs/xbox_uwp.md" OFF)
+option(OKAY_BUILD_XBOX_UWP "EXPERIMENTAL, UNVERIFIED Xbox One Developer Mode (UWP) export: its tests, the editor entry and (on a UWP toolchain) the app. platform/xbox_uwp, docs/platform/xbox_uwp.md" OFF)
 
-# ---- One switch to dogfood the whole own stack (docs/own_stack_rollout.md) -------------------------------------
+# ---- One switch to dogfood the whole own stack (docs/status/own_stack_rollout.md) -------------------------------------
 # -DOKAY_OWN_STACK=ON turns on every own backend that is safe to try in a developer or CI build: our own model readers
 # (FBX and every format that has one), our own HTTP client (Linux), our own okay::platform backend as the default (Linux),
 # and OkayUI as the launcher / editor UI default. Each is still an ordinary option or run-time switch underneath and each
@@ -101,10 +101,10 @@ option(OKAY_BUILD_XBOX_UWP "EXPERIMENTAL, UNVERIFIED Xbox One Developer Mode (UW
 # (owner rule: needs an outside review first). OKAY_OWN_STACK_CRYPTO_TEST=ON (or that variable set to 1 in the environment at
 # configure time) additionally turns on OKAY_OWN_CRYPTO, for TEST builds and the CI own-stack job only. Releases refuse both
 # (scripts/check_release_own_stack.sh, called by scripts/build-windows-dist.sh and release.yml).
-option(OKAY_OWN_STACK "Developer/CI dogfood build: own readers, own HTTP, own platform backend and OkayUI by default (never crypto; see docs/own_stack_rollout.md). NEVER for releases" OFF)
+option(OKAY_OWN_STACK "Developer/CI dogfood build: own readers, own HTTP, own platform backend and OkayUI by default (never crypto; see docs/status/own_stack_rollout.md). NEVER for releases" OFF)
 option(OKAY_OWN_STACK_CRYPTO_TEST "With OKAY_OWN_STACK: ALSO use our own UNREVIEWED crypto (OKAY_OWN_CRYPTO). Test builds and CI only; releases refuse it" OFF)
-option(OKAY_LAUNCHER_ON_OKAYUI "Also build OkaySpaceOkayUI(.exe): the SAME launcher sources compiled against OkayUI's Dear ImGui compatibility layer (no Dear ImGui). Off by default; docs/own_ui_toolkit.md" OFF)
-option(OKAY_EDITOR_ON_OKAYUI   "Also build OkayEngineOkayUI(.exe): the SAME editor sources compiled against OkayUI's Dear ImGui compatibility layer (no Dear ImGui). Off by default; docs/own_ui_toolkit.md" OFF)
+option(OKAY_LAUNCHER_ON_OKAYUI "Also build OkaySpaceOkayUI(.exe): the SAME launcher sources compiled against OkayUI's Dear ImGui compatibility layer (no Dear ImGui). Off by default; docs/ui/own_ui_toolkit.md" OFF)
+option(OKAY_EDITOR_ON_OKAYUI   "Also build OkayEngineOkayUI(.exe): the SAME editor sources compiled against OkayUI's Dear ImGui compatibility layer (no Dear ImGui). Off by default; docs/ui/own_ui_toolkit.md" OFF)
 if(NOT OKAY_OWN_STACK_CRYPTO_TEST AND "$ENV{OKAY_OWN_STACK_CRYPTO_TEST}" STREQUAL "1")
     set(OKAY_OWN_STACK_CRYPTO_TEST ON)
 endif()
@@ -206,19 +206,19 @@ if(OKAY_REQUIRE_SODIUM AND NOT OKAY_DEFAULT_ACCOUNT_URL MATCHES "^https://[a-z0-
     message(FATAL_ERROR "No update server for this release build: OKAY_DEFAULT_ACCOUNT_URL must be the https://<project>.supabase.co address "
                         "(config/public-account.json or the OKAY_DEFAULT_ACCOUNT_URL variable). Without it the programs could never update.")
 endif()
-# Hosted password-reset page (supabase/auth-pages/reset-password, docs/password-reset.md).
+# Hosted password-reset page (supabase/auth-pages/reset-password, docs/online/password-reset.md).
 # Empty = not configured; the launcher then says so when it sends a reset email.
 set(OKAY_DEFAULT_PASSWORD_RESET_URL "" CACHE STRING "URL of the hosted password-reset page, sent to Supabase as redirect_to")
 if(OKAY_DEFAULT_PASSWORD_RESET_URL)
     add_compile_definitions(OKAY_DEFAULT_PASSWORD_RESET_URL="${OKAY_DEFAULT_PASSWORD_RESET_URL}")
 endif()
 # Default voice server for launcher calls ("host" or "host:port" of a running
-# okayspace-relay; see docs/relay.md). Empty = players set one in Settings > Chat.
+# okayspace-relay; see docs/online/relay.md). Empty = players set one in Settings > Chat.
 set(OKAY_DEFAULT_VOICE_RELAY "" CACHE STRING "Default voice relay (host[:port]) compiled into the launcher")
 if(OKAY_DEFAULT_VOICE_RELAY)
     add_compile_definitions(OKAY_DEFAULT_VOICE_RELAY="${OKAY_DEFAULT_VOICE_RELAY}")
 endif()
-# Anti-cheat (opt-in, docs/anticheat.md): the ed25519 PUBLIC keys accepted on a
+# Anti-cheat (opt-in, docs/online/anticheat.md): the ed25519 PUBLIC keys accepted on a
 # build's Data/manifest.json, as hex, comma-separated (e.g. the release key, then
 # the dev key). Public keys only; the private keys never go near CMake. Empty =
 # none built in (a signature is checked but not its signer).
@@ -231,7 +231,7 @@ set(OKAY_AC_PLAYER_TRUSTED_KEYS "" CACHE STRING "Anti-cheat: the player's truste
 include(${CMAKE_SOURCE_DIR}/cmake/OkayAntiCheatKeys.cmake)
 okay_ac_check_trusted_keys("${OKAY_AC_TRUSTED_KEYS}")          # exactly 64 hex digits per key, or configure fails
 okay_ac_check_trusted_keys("${OKAY_AC_PLAYER_TRUSTED_KEYS}")
-# Signed releases (docs/updater.md): the ed25519 PUBLIC keys that must have signed
+# Signed releases (docs/release/updater.md): the ed25519 PUBLIC keys that must have signed
 # the release index (versions.json.sig) before the launcher or editor will install
 # anything from it: the current key, and during a rotation the next one too.
 # Empty = none built in: an unsigned index is accepted (the transition for feeds
@@ -305,7 +305,7 @@ if(OKAY_BUILD_PLAYER OR OKAY_BUILD_EDITOR)
     endif()
 endif()
 
-# ---- Content delivery tool (docs/content_delivery.md) ----------------
+# ---- Content delivery tool (docs/release/content_delivery.md) ----------------
 # okay-content: make-manifest / verify / sync / status / rollback for the signed game content that an exported game can download.
 # Tiny (crypto + our own HTTP layer only); it is what scripts/publish-content.sh calls and what the owner uses to test a content folder.
 option(OKAY_BUILD_CONTENT_TOOL "Build the okay-content command-line tool" ON)

@@ -3,7 +3,7 @@
 // text: objects are paired by their persistent id (guid), or by name path in files
 // that have none, and the report says what was added, removed, renamed, reparented
 // or reordered and which record and field of each object changed
-// ("Light.intensity 1 -> 2"). Output is deterministic. See docs/scene_diff_merge.md.
+// ("Light.intensity 1 -> 2"). Output is deterministic. See docs/engine/scene_diff_merge.md.
 //
 // Header note: keep this header free of <mutex>, <thread> and <condition_variable>.
 #include <map>

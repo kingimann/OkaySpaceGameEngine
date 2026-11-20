@@ -141,7 +141,7 @@
 #include "okay/Components/QuestLog.hpp"
 #include "okay/Components/StoryState.hpp"
 #include "okay/Render/Atmosphere.hpp"          // post_set / fog_set / weather_set
-#include "okay/Components/WindZone.hpp"        // wind_speed / wind_set / wind_gust (docs/wind.md)
+#include "okay/Components/WindZone.hpp"        // wind_speed / wind_set / wind_gust (docs/gameplay/wind.md)
 #include "okay/Components/DayNightCycle.hpp"   // time_of_day
 #include "okay/Components/Spline.hpp"
 #include "okay/Components/LineRenderer.hpp"
@@ -4642,7 +4642,7 @@ struct OkayScriptVM::Impl {
             Spawner* s = spawnerOf(a.empty() ? std::string{} : a[0].AsString());
             return Value{(float)(s ? s->AliveCount() : 0)};
         };
-        // ---- In-game build mode + logic links (docs/build_mode.md) -----------
+        // ---- In-game build mode + logic links (docs/gameplay/build_mode.md) -----------
         // They drive the scene's Build Mode component (the player's).
         auto buildOf = [sceneOf]() -> BuildMode* {
             Scene* s = sceneOf();
@@ -5075,7 +5075,7 @@ struct OkayScriptVM::Impl {
             }
             return Value{};
         };
-        // ---- Camera rigs and effects (docs/camera_upgrade.md): Camera.* ----
+        // ---- Camera rigs and effects (docs/gameplay/cameras.md): Camera.* ----
         // The live shot: the virtual camera the brain is showing, else the first enabled one.
         auto liveVcam = [sceneOf]() -> VirtualCamera* {
             Scene* s = sceneOf();
@@ -6249,7 +6249,7 @@ struct OkayScriptVM::Impl {
             const SaveSlotInfo i = SaveGame::Info(slotArg(a));
             return Value{i.exists && i.savedAt > 0 ? SaveMenuModel::FormatAgo((long long)Time::UnixSeconds() - i.savedAt) : std::string()};
         };
-        // Save slots with no code to write (docs/save_framework.md): objects marked with a Saveable
+        // Save slots with no code to write (docs/engine/save_games.md): objects marked with a Saveable
         // component are stored; game_save("slot_1" [, "label"]), game_load("slot_1") (at the start
         // of the next frame), game_delete_slot, game_slot_exists, game_slot_age (seconds since it was saved, -1 = none),
         // game_slot_text ("2026-11-08 14:03"), game_slot_label, game_continue, game_can_continue,
@@ -6349,7 +6349,7 @@ struct OkayScriptVM::Impl {
             return Value{on ? 1.0f : 0.0f};
         };
         b["get_display_confirm_seconds"] = [](std::vector<Value>&) { return Value{DisplaySettings::TrialSecondsLeft()}; };
-        // Localization (docs/localization.md): loc("key", args...) is the key's text in
+        // Localization (docs/engine/localization.md): loc("key", args...) is the key's text in
         // the player's language with {0}, {1}... filled from the arguments, or {name}
         // from a map (loc("greet", map_set(map(), "player", name))); set_language("fr") switches and
         // remembers the choice for the next run; get_language(), languages() (codes),
@@ -6465,7 +6465,7 @@ struct OkayScriptVM::Impl {
             return Value{q && q->IsCompleted(a[0].AsString())};
         };
         b["toggle_journal"] = [sceneOf](std::vector<Value>&) { if (QuestLog* q = QuestLog::Get(sceneOf(), false)) q->ToggleJournal(); return Value{}; };
-        // The scene's look (docs/rendering.md): post_set("bloom", 1) / post_set("tonemap", "filmic"),
+        // The scene's look (docs/rendering/rendering.md): post_set("bloom", 1) / post_set("tonemap", "filmic"),
         // fog_set(on [, "#rrggbb"] [, start, end] [, mode [, density]]), weather_set("rain" [, intensity]),
         // time_of_day([hours]) on the scene's DayNightCycle.
         b["post_set"] = [sceneOf](std::vector<Value>& a) {
@@ -6505,7 +6505,7 @@ struct OkayScriptVM::Impl {
             if (a.size() > 1) w.intensity = Mathf::Clamp01(a[1].AsFloat());
             return Value{};
         };
-        // Wind (docs/wind.md): wind_speed([x, y, z]) in metres per second where it is asked (default: where the camera is),
+        // Wind (docs/gameplay/wind.md): wind_speed([x, y, z]) in metres per second where it is asked (default: where the camera is),
         // wind_x / wind_y / wind_z(x, y, z) the direction parts there, wind_set(strength [, yawDegrees]) and
         // wind_gust(amount [, gustsPerSecond]) change the scene's own wind (made when the scene has none).
         auto windAt = [sceneOf](std::vector<Value>& a) -> Vec3 {
@@ -10911,7 +10911,7 @@ struct OkayScriptVM::Impl {
         alias("String.Format", "format");
         // Quaternion.Euler(x, y, z) -> a Vec3 of euler angles (assignable to
         // transform.rotation, which uses the Z component for 2D).
-        // ---- Vehicles (docs/vehicle_controls.md): Vehicle.* ----
+        // ---- Vehicles (docs/gameplay/vehicles.md): Vehicle.* ----
         // The first argument is the vehicle (an object or its name); leave it as "" to mean the object this script is on.
         auto carOf = [sceneOf, this](std::vector<Value>& a) -> VehicleController* {
             Scene* s = sceneOf(); if (!s) return nullptr;

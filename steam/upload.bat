@@ -4,7 +4,7 @@ REM via SteamPipe, so installed copies auto-update.
 REM
 REM It uploads the distribution from build-win-dist\ (OkaySpace.exe + SDL2.dll +
 REM Tools\). Build that first (on Windows, run cmake to produce the exes and copy
-REM them + SDL2.dll into ..\build-win-dist\ in the docs/packaging.md layout), then:
+REM them + SDL2.dll into ..\build-win-dist\ in the docs/release/packaging.md layout), then:
 REM
 REM   set STEAM_USER=your-builder-account
 REM   upload.bat

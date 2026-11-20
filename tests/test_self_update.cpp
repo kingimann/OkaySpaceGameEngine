@@ -96,7 +96,7 @@ int main() {
         // A dev build ("dev" is older than every release) never crashes the rule.
         CHECK(su::EvaluateStartup(sw, "dev").kind == su::StartupKind::NotApplied);
 
-        // Going back from a test build to the release it was made on (docs/release_channels.md "Test builds") is the one deliberate downgrade. Its target is
+        // Going back from a test build to the release it was made on (docs/release/release_channels.md "Test builds") is the one deliberate downgrade. Its target is
         // OLDER than what was running, so "the running version is the target or newer" would call a launcher that did not change "confirmed".
         su::State back; back.phase = su::Phase::Swapped; back.from = "2.876.0.17"; back.to = "2.876.0"; back.attempts = 1;
         v = su::EvaluateStartup(back, "2.876.0");                                  // the release is running: done

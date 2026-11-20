@@ -36,7 +36,7 @@ int main(int argc, char** argv) {
         std::cerr << "usage: test_plan <repo-root>\n";
         return 2;
     }
-    const std::string path = std::string(argv[1]) + "/docs/own_msvc_plan.md";
+    const std::string path = std::string(argv[1]) + "/docs/platform/own_msvc_plan.md";
     std::string error;
     const std::string text = read_file(path, &error);
     check(error.empty(), error.empty() ? "plan file opens" : error.c_str());

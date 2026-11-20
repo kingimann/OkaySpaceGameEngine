@@ -1,6 +1,6 @@
 // Our own MD5 (id Tech 4 / Doom 3: md5mesh + md5anim, text) reader: a joint hierarchy, a skinned mesh and one animation.
 // Written from the public description of the format. Bounds-checked, capped, no recursion. See
-// okay/Render/ModelData.hpp and docs/own_md5_reader.md.
+// okay/Render/ModelData.hpp and docs/content/model_readers.md.
 #include "TextReaderUtil.hpp"
 #include "okay/Render/ModelData.hpp"
 #include <algorithm>

@@ -20,7 +20,7 @@ jobs:
     # The compiler cache makes a warm run recompile only what changed. The player and
     # editor builds are their own jobs below so they run in parallel with this one.
     # This job builds and runs the unit tests (about 800). The sandbox and example programs are built by the
-    # "player" job and the launcher by the "editor" job, so nothing is left unbuilt (docs/automated_testing.md "CI speed").
+    # "player" job and the launcher by the "editor" job, so nothing is left unbuilt (docs/process/automated_testing.md "CI speed").
     # 150, not 90: on a busy runner with a cold or partial compiler cache this job takes 90 minutes or more (PR #1000
     # finished in 89m42s, and #960 and #969 were cancelled by the old 90 minute limit while still running tests).
     timeout-minutes: 150
@@ -61,13 +61,13 @@ jobs:
       - name: Test
         run: ctest --test-dir build --output-on-failure -j4 --timeout 300
 
-      # How warm the compiler cache was: look for the hit rate here (docs/automated_testing.md "CI speed").
+      # How warm the compiler cache was: look for the hit rate here (docs/process/automated_testing.md "CI speed").
       - name: Compiler cache statistics
         if: always()
         run: ccache -s || true
 
       # Saved only by pushes to main: PR runs restore main's cache and never write one, so the ten per-job
-      # caches stay under GitHub's 10 GB repository limit and are not evicted (docs/automated_testing.md "CI speed").
+      # caches stay under GitHub's 10 GB repository limit and are not evicted (docs/process/automated_testing.md "CI speed").
       - name: Save compiler cache (main only)
         if: ${{ always() && github.event_name == 'push' && github.ref == 'refs/heads/main' }}
         uses: actions/cache/save@v5
@@ -124,7 +124,7 @@ jobs:
           retention-days: 1
 
       # Saved only by pushes to main: PR runs restore main's cache and never write one, so the ten per-job
-      # caches stay under GitHub's 10 GB repository limit and are not evicted (docs/automated_testing.md "CI speed").
+      # caches stay under GitHub's 10 GB repository limit and are not evicted (docs/process/automated_testing.md "CI speed").
       - name: Save compiler cache (main only)
         if: ${{ always() && github.event_name == 'push' && github.ref == 'refs/heads/main' }}
         uses: actions/cache/save@v5
@@ -176,7 +176,7 @@ jobs:
           retention-days: 1
 
       # Saved only by pushes to main: PR runs restore main's cache and never write one, so the ten per-job
-      # caches stay under GitHub's 10 GB repository limit and are not evicted (docs/automated_testing.md "CI speed").
+      # caches stay under GitHub's 10 GB repository limit and are not evicted (docs/process/automated_testing.md "CI speed").
       - name: Save compiler cache (main only)
         if: ${{ always() && github.event_name == 'push' && github.ref == 'refs/heads/main' }}
         uses: actions/cache/save@v5
@@ -385,7 +385,7 @@ jobs:
         run: ctest --test-dir build-assimp --output-on-failure -R '^(model_readers|model_readers_fuzz|collada_reader|model_import_rig|gltf_import|fbx_reader|glb_container)$'
 
       # Saved only by pushes to main: PR runs restore main's cache and never write one, so the ten per-job
-      # caches stay under GitHub's 10 GB repository limit and are not evicted (docs/automated_testing.md "CI speed").
+      # caches stay under GitHub's 10 GB repository limit and are not evicted (docs/process/automated_testing.md "CI speed").
       - name: Save compiler cache (main only)
         if: ${{ always() && github.event_name == 'push' && github.ref == 'refs/heads/main' }}
         uses: actions/cache/save@v5
@@ -393,7 +393,7 @@ jobs:
           path: .ccache
           key: ccache-assimp-${{ github.sha }}
 
-  # Our own HTTP client (docs/own_http_client.md) with the CMake option on. NOT required for merging and the
+  # Our own HTTP client (docs/platform/own_http.md) with the CMake option on. NOT required for merging and the
   # option stays OFF by default everywhere else. Only the two header-only test targets are built (the client
   # does not link the engine). OKAY_REQUIRE_TLS_TESTS=1 makes a skipped TLS case (no libssl, no openssl program)
   # a failure, so the certificate checks cannot silently go missing. The sanitizer script then runs both tests
@@ -432,7 +432,7 @@ jobs:
           OKAY_REQUIRE_DIFFERENTIAL: "1"
         run: scripts/own_http_sanitized.sh 100000
 
-  # The whole own stack at once (docs/own_stack_rollout.md): a build with -DOKAY_OWN_STACK=ON, so our own model readers,
+  # The whole own stack at once (docs/status/own_stack_rollout.md): a build with -DOKAY_OWN_STACK=ON, so our own model readers,
   # HTTP client, okay::platform backend and OkayUI are the defaults, and no libsodium. -DOKAY_OWN_STACK_CRYPTO_TEST=ON also
   # lets our own (unreviewed) crypto run in THESE tests; it is for test builds only and releases refuse it
   # (scripts/check_release_own_stack.sh). Not a required check: it tells us how ready the own stack is, it does not gate
@@ -499,7 +499,7 @@ jobs:
         run: ctest --test-dir build-own --output-on-failure -j 2 -R "$OWN_STACK_TESTS" -E 'net_crypto_sodium|anticheat_sql' 
 
       # Saved only by pushes to main: PR runs restore main's cache and never write one, so the ten per-job
-      # caches stay under GitHub's 10 GB repository limit and are not evicted (docs/automated_testing.md "CI speed").
+      # caches stay under GitHub's 10 GB repository limit and are not evicted (docs/process/automated_testing.md "CI speed").
       - name: Save compiler cache (main only)
         if: ${{ always() && github.event_name == 'push' && github.ref == 'refs/heads/main' }}
         uses: actions/cache/save@v5
@@ -646,7 +646,7 @@ jobs:
           retention-days: 3
 
       # Saved only by pushes to main: PR runs restore main's cache and never write one, so the ten per-job
-      # caches stay under GitHub's 10 GB repository limit and are not evicted (docs/automated_testing.md "CI speed").
+      # caches stay under GitHub's 10 GB repository limit and are not evicted (docs/process/automated_testing.md "CI speed").
       - name: Save compiler cache (main only)
         if: ${{ always() && github.event_name == 'push' && github.ref == 'refs/heads/main' }}
         uses: actions/cache/save@v5
@@ -769,7 +769,7 @@ jobs:
           path: build-web/web/
 
       # Saved only by pushes to main: PR runs restore main's cache and never write one, so the ten per-job
-      # caches stay under GitHub's 10 GB repository limit and are not evicted (docs/automated_testing.md "CI speed").
+      # caches stay under GitHub's 10 GB repository limit and are not evicted (docs/process/automated_testing.md "CI speed").
       - name: Save compiler cache (main only)
         if: ${{ always() && github.event_name == 'push' && github.ref == 'refs/heads/main' }}
         uses: actions/cache/save@v5
@@ -923,7 +923,7 @@ jobs:
           fi
 
       # Saved only by pushes to main: PR runs restore main's cache and never write one, so the ten per-job
-      # caches stay under GitHub's 10 GB repository limit and are not evicted (docs/automated_testing.md "CI speed").
+      # caches stay under GitHub's 10 GB repository limit and are not evicted (docs/process/automated_testing.md "CI speed").
       - name: Save compiler cache (main only)
         if: ${{ always() && github.event_name == 'push' && github.ref == 'refs/heads/main' }}
         uses: actions/cache/save@v5

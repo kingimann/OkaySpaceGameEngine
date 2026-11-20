@@ -1,5 +1,5 @@
 #pragma once
-// Sending crash reports (docs/crash_reports.md): the part of the launcher that, on its next look after a crash, turns each new report
+// Sending crash reports (docs/online/crash_reports.md): the part of the launcher that, on its next look after a crash, turns each new report
 // into one scrubbed row for the Supabase table `crash_reports` (docs/sql/crash_reports.sql), and the fallback that builds a prefilled
 // "new issue" web address for a person to submit themselves.
 //
@@ -267,7 +267,7 @@ public:
     long LastSent() const { long t = 0; for (const auto& kv : sent_) t = std::max(t, kv.second); return t; }
 
     std::string Serialize() const {
-        std::string s = "# crash reports this computer has sent or been told to keep (docs/crash_reports.md). Deleting it is safe: sending starts again from that moment on.\n";
+        std::string s = "# crash reports this computer has sent or been told to keep (docs/online/crash_reports.md). Deleting it is safe: sending starts again from that moment on.\n";
         if (!since_.empty()) s += "since " + since_ + "\n";
         if (paused_) s += "paused 1\n";
         for (const auto& kv : sent_) s += "sent " + kv.first + " " + std::to_string(kv.second) + "\n";

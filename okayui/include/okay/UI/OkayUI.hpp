@@ -317,7 +317,7 @@ enum Cond : int { Cond_Always = 1, Cond_Once = 2, Cond_FirstUseEver = 4, Cond_Ap
 ///  NoFocusOnAppearing: a window that appears (is drawn after a frame without it) does not take focus or come to the front.
 ///  NoBringToFront: clicking never raises the window and it sits below every other window (docked content uses it).
 /// Windows overlap in z-order: a click on a window raises it (and focuses it) and is not seen by widgets of windows behind
-/// it, nor by docked content under it. See docs/own_ui_toolkit.md section 4.32.
+/// it, nor by docked content under it. See docs/ui/own_ui_toolkit.md section 4.32.
 enum WindowFlags : int {
     Window_None = 0, Window_NoResize = 1, Window_NoMove = 2, Window_NoTitleBar = 4,
     Window_NoScrollbar = 8, Window_NoBackground = 16, Window_NoCollapse = 32, Window_AlwaysAutoResize = 64,
@@ -1032,7 +1032,7 @@ template <typename T> struct ImVector {
 // ---- Dear ImGui's draw-data shapes (what a custom renderer written for Dear ImGui reads) ---------------------------------------------------------
 // OkayUI's own draw data is DrawData / DrawCmd above. These are the same facts in the field names and layout a Dear ImGui renderer expects, built
 // from DrawData on request (`ImDrawData* dd = GetDrawData();` converts, see DrawData::operator ImDrawData*) so such a renderer can run unchanged
-// while the host is moved over to OkayUI's own FrameDrawer. Docs: docs/own_ui_toolkit.md 6.22.
+// while the host is moved over to OkayUI's own FrameDrawer. Docs: docs/ui/own_ui_toolkit.md 6.22.
 typedef SDL_Texture* ImTextureID;                    // what AddImage and Image take
 typedef unsigned int ImDrawIdx;                       // 32-bit: OkayUI batches hold more than 65,535 vertices
 struct ImDrawVert { Vec2 pos; Vec2 uv; unsigned col = 0; };   // col is 0xAABBGGRR
@@ -1319,7 +1319,7 @@ struct IO {
     Vec2 DisplayFramebufferScale{1.0f, 1.0f};
     int ConfigFlags = 0, BackendFlags = 0;
     const char* IniFilename = nullptr; const char* LogFilename = nullptr;
-    // Host-side fields of Dear ImGui's IO, see docs/own_ui_toolkit.md 6.22.
+    // Host-side fields of Dear ImGui's IO, see docs/ui/own_ui_toolkit.md 6.22.
     int MouseClickedCount[3] = {0, 0, 0};        // clicks in a row at this frame's press (1, 2 = double click), 0 when the button did not go down this frame (left button only)
     bool KeySuper = false;                       // the Windows / Command key: OkayUI has no such key; always false unless the host sets it
     float FontGlobalScale = 1.0f;                // accepted; the text scale is Style().textScale
@@ -1377,7 +1377,7 @@ Theme& Style();
 // ---- Scoped style overrides (ImGui-style) --------------------------------------
 // The theme colours a PushStyleColor / SetStyleColor / GetStyleColorVec4 call names. The first eight are the original theme
 // fields; the rest are the full Dear ImGui colour set. A colour that was never set follows the base theme (Style().bg, ...);
-// a set one overrides it. Which widget draws with which colour is listed in docs/own_ui_toolkit.md section 4.33; a few
+// a set one overrides it. Which widget draws with which colour is listed in docs/ui/own_ui_toolkit.md section 4.33; a few
 // (the navigation highlights, BorderShadow, the unfocused tab colours, the hovered / active separator)
 // are accepted and stored but nothing draws with them yet.
 enum Col : int {

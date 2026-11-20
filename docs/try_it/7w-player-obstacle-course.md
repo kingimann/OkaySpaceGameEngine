@@ -32,7 +32,7 @@ Walk -Z (straight ahead) past the signs. Each sign says what to try; what you sh
 **Compare with the old player**: close the game, set the environment variable `OKAY_OLD_PLAYER=1` (for example in a command
 prompt: `set OKAY_OLD_PLAYER=1` then start `OkaySpacePlayer.exe` from that prompt, or start the editor from it), and walk the same
 stations. F3 then adds "[old player path]" to the first player line. With it set: standing on ramps 25 to 49 degrees creeps, the
-stairs down hop, a jump from the platform loses its speed, and every frame costs more (see `docs/player_audit.md`).
+stairs down hop, a jump from the platform loses its speed, and every frame costs more (see `docs/status/player_audit.md`).
 
 Settings you can now change and that are saved: select the player, the **Player Controller** panel, **Step Offset** and **Slope
 Limit** (first and third person).
@@ -41,5 +41,5 @@ Limit** (first and third person).
 
 **Checks run here (Linux, headless)**: `tests/test_player_deep.cpp` (860 checks, each fails with `OKAY_OLD_PLAYER=1`),
 `tests/test_player_course.cpp` (the shipped file is what the code writes, and a player walks stations 1, 3, 7), and the older player,
-controller, stance, character and multiplayer prediction tests: all pass. Frame numbers: `docs/player_audit.md`.
+controller, stance, character and multiplayer prediction tests: all pass. Frame numbers: `docs/status/player_audit.md`.
 **Not seen:** Windows, a window, a picture of the course (none was made), the F3 text on screen, the Inspector fields, real feel.

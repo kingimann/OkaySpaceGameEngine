@@ -305,7 +305,7 @@ checks the result (the object moved, the door opened, the score went up).
 
 ## Docs
 
-The palette index in `docs/visual_scripting.md` uses the title people see, with
+The palette index in `docs/scripting/visual_scripting.md` uses the title people see, with
 the file token in backticks. Update that group when you rename it.
 
 `docs/visual_scripting_nodes.md` (generated on the node-docs branch) must use

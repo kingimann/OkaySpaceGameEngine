@@ -3,7 +3,7 @@
 # multiplayer relay — from Linux with MinGW-w64, bundling SDL2.dll. Output goes to
 # build-win-dist/ laid out as: OkaySpace.exe + SDL2.dll at the top (double-click
 # the launcher), with the rest in a Tools/ subfolder. See the "Distribution
-# layout" section below and docs/packaging.md.
+# layout" section below and docs/release/packaging.md.
 #
 # This is what CI (.github/workflows/release.yml) runs to publish Windows builds,
 # and you can run it locally too.
@@ -55,15 +55,15 @@ _ACCT_KEY="${OKAY_DEFAULT_ACCOUNT_KEY:-$(okay_public_account key)}"
 [ -n "${GITHUB_ACTIONS:-}" ] && [ -n "$_ACCT_KEY" ] && echo "::add-mask::$_ACCT_KEY"
 # CI release/test builds set OKAY_REQUIRE_ACCOUNT=1: stop if neither the override nor the file gives both values, so nothing ships offline.
 if [ "${OKAY_REQUIRE_ACCOUNT:-}" = "1" ] && { [ -z "$_ACCT_URL" ] || [ -z "$_ACCT_KEY" ]; }; then
-    echo "::error title=No account server for this build::config/public-account.json has no url/key and OKAY_DEFAULT_ACCOUNT_URL / _KEY are not set. See docs/accounts.md." >&2
+    echo "::error title=No account server for this build::config/public-account.json has no url/key and OKAY_DEFAULT_ACCOUNT_URL / _KEY are not set. See docs/online/accounts.md." >&2
     exit 1
 fi
 [ -n "${OKAY_DEFAULT_ACCOUNT_URL:-}" ] && EXTRA+=("-DOKAY_DEFAULT_ACCOUNT_URL=$OKAY_DEFAULT_ACCOUNT_URL")
 [ -n "${OKAY_DEFAULT_ACCOUNT_KEY:-}" ] && EXTRA+=("-DOKAY_DEFAULT_ACCOUNT_KEY=$OKAY_DEFAULT_ACCOUNT_KEY")
 # The launcher's trusted anti-cheat keys (public ed25519 keys, hex, comma-separated;
-# docs/anticheat.md). It applies them to the official game only; the player gets none.
+# docs/online/anticheat.md). It applies them to the official game only; the player gets none.
 [ -n "${OKAY_AC_TRUSTED_KEYS:-}" ] && EXTRA+=("-DOKAY_AC_TRUSTED_KEYS=$OKAY_AC_TRUSTED_KEYS")
-# The public keys that must have signed versions.json (docs/updater.md "Signed releases"). Empty = unsigned feeds still accepted.
+# The public keys that must have signed versions.json (docs/release/updater.md "Signed releases"). Empty = unsigned feeds still accepted.
 [ -n "${OKAY_UPDATE_TRUSTED_KEYS:-}" ] && EXTRA+=("-DOKAY_UPDATE_TRUSTED_KEYS=$OKAY_UPDATE_TRUSTED_KEYS")
 # Authenticated packet encryption (libsodium). Point OKAY_SODIUM_MINGW_PREFIX at the
 # extracted libsodium-win64 prebuilt (contains include/sodium.h and lib/libsodium.a).
@@ -86,7 +86,7 @@ if [ -n "${STEAMWORKS_SDK_PATH:-}" ]; then
     EXTRA+=("-DOKAY_WITH_STEAM=ON" "-DSTEAMWORKS_SDK_PATH=$STEAMWORKS_SDK_PATH")
 fi
 
-# A release never carries our own unreviewed crypto or the own-stack dogfood switch (CLAUDE.md rule 18, docs/own_stack_rollout.md).
+# A release never carries our own unreviewed crypto or the own-stack dogfood switch (CLAUDE.md rule 18, docs/status/own_stack_rollout.md).
 scripts/check_release_own_stack.sh -- "${EXTRA[@]}"
 
 cmake -S . -B "$BUILD_DIR" \
@@ -147,7 +147,7 @@ cp "$BUILD_DIR/bin/OkayEngine.exe" \
 [ -f "$BUILD_DIR/bin/OkaySpaceOkayUI.exe" ] && cp "$BUILD_DIR/bin/OkaySpaceOkayUI.exe" "$OUT_DIR/"
 [ -f "$BUILD_DIR/bin/OkayEngineOkayUI.exe" ] && cp "$BUILD_DIR/bin/OkayEngineOkayUI.exe" "$OUT_DIR/Tools/"
 [ -f "$BUILD_DIR/bin/okayspace-relay.exe" ] && cp "$BUILD_DIR/bin/okayspace-relay.exe" "$OUT_DIR/Tools/"
-# okay-content: builds, signs, checks and fetches downloadable game content (docs/content_delivery.md); a small command-line tool.
+# okay-content: builds, signs, checks and fetches downloadable game content (docs/release/content_delivery.md); a small command-line tool.
 [ -f "$BUILD_DIR/bin/okay-content.exe" ] && cp "$BUILD_DIR/bin/okay-content.exe" "$OUT_DIR/Tools/"
 # okay-texture.exe: our texture tool (mips, atlas, compress to DDS); examples\texture shows how to use it.
 [ -f "$BUILD_DIR/bin/okay-texture.exe" ] && cp "$BUILD_DIR/bin/okay-texture.exe" "$OUT_DIR/Tools/"
@@ -165,7 +165,7 @@ OKAY_VER="$(grep -m1 -oE 'VERSION[[:space:]]+[0-9]+\.[0-9]+\.[0-9]+' CMakeLists.
 : "${OKAY_VER:=0.0.0}"
 printf '%s\n' "$OKAY_VER" > "$OUT_DIR/VERSION.txt"
 printf '%s\n' "$OKAY_VER" > "$OUT_DIR/Tools/VERSION.txt"
-# (docs/accounts.md is no longer copied in: docs are internal, and it names the GitHub repository settings.)
+# (docs/online/accounts.md is no longer copied in: docs are internal, and it names the GitHub repository settings.)
 
 # Starter texture pack (grass/dirt/stone/grid). Drop these into a project's Assets/
 # folder, or point a MeshRenderer's Texture at them directly.
@@ -234,7 +234,7 @@ done
 cp assets/textures/grid.png "$OUT_DIR/examples/obj_texture_paths/"
 
 # EXPERIMENTAL Xbox (UWP) one-click build: the editor's "Xbox (exp.)" button needs these sources next to it (xbox-src): the UWP app,
-# the helper tools, the PowerShell steps and the headers they include. docs/xbox_uwp.md. Never built or run on Windows (unverified).
+# the helper tools, the PowerShell steps and the headers they include. docs/platform/xbox_uwp.md. Never built or run on Windows (unverified).
 XBOX_SRC="$OUT_DIR/xbox-src"
 mkdir -p "$XBOX_SRC/platform" "$XBOX_SRC/scripts" "$XBOX_SRC/engine"
 cp -r platform/xbox_uwp "$XBOX_SRC/platform/"
@@ -276,7 +276,7 @@ Everything else lives in  Tools/:
   OkayEngine.exe        the editor (make games)
   OkaySpacePlayer.exe   the standalone runtime that plays an exported game
   okayspace-relay.exe   optional multiplayer relay for NAT traversal
-                        (run on a reachable host; see docs/relay.md)
+                        (run on a reachable host; see docs/online/relay.md)
 
 examples/ example scenes to try: in the editor use File > Open and pick
                         examples\vehicle\vehicle_test.okayscene, then press Play

@@ -1,5 +1,11 @@
 OkaySpace Game Engine — Changelog
 
+v2.896.0
+  Behind-the-scenes Xbox work
+  - Experimental Xbox export (still off by default): game content downloads
+    can now time out, be cancelled and show progress. Nothing changes for
+    Windows games.
+
 v2.895.0
   Launcher and editor fixes
   - Fixed: opening the Community tab in the launcher could make it use more

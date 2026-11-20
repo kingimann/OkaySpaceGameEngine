@@ -320,11 +320,10 @@ inline std::vector<Entry> ViewMenu(const State& s) {
 inline std::vector<Entry> HelpMenu(const State&) {
     std::vector<Entry> m;
     m.push_back(Item("help.scripting", "Scripting Reference"));
-    m.push_back(Item("help.docs", "Documentation (online)", "", "Open the engine's documentation folder in your browser."));
     m.push_back(Item("help.shortcuts", "Keyboard Shortcuts"));
     m.push_back(Sep());
     m.push_back(Item("help.updates", "Check for Updates..."));
-    m.push_back(Item("help.bug", "Report a Bug...", "", "Open the issue page in your browser. The version line is copied first, so you can paste it into the report."));
+    m.push_back(Item("help.bug", "Report a Bug...", "", "Open the Crash Log, where saved reports can be copied. The version line is copied first, so you can paste it into the report."));
     m.push_back(Sep());
     m.push_back(Item("help.about", "About OkaySpace"));
     return m;

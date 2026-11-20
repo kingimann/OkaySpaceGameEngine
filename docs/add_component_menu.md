@@ -51,9 +51,28 @@ I read the old code and counted its rows; I did not run the old editor headless 
 
 Written from the owner's request and from general ideas (prefix and substring matching, edit distance). No code from another project.
 
+## 3b. Round 2 (2026-11-20): organisation, and new components without edits
+
+Owner again: "can you organize the add component menu better". Re-audited as a new user on the first design:
+
+| Wish | Existing (round 1) | Gap found | Now |
+|---|---|---|---|
+| Categories the way people think | 13 groups, Gameplay and UI still had 60 to 80 rows each; physics toys, new colliders and the wind and camera parts had no row at all | Flat, uneven, parts missing | 10 categories (Physics, Rendering, Audio, UI, Gameplay, Scripting, Animation, Networking, World, Misc) with sub-groups, none over 12 cards: Physics (Bodies, Colliders 3D, Colliders 2D, Joints, Forces & Toys, Vehicles, Water), Rendering (Meshes & Shapes, Lights, Camera, Particles, Sky & Weather, Post & Volumes), UI (Setup, Basics, Controls, Text Input, Layout, Menus & Dialogs, Navigation & Data, Binding, HUD, Game Screens, Touch, More), Gameplay (Player Controllers, Characters & Input, Health & Combat, Survival Stats, Survival Rules, Inventory & Items, Crafting & Holding, AI & Navigation, Mechanics, Story & Turns, Saving & Menus), Animation (Animators, IK), Networking, World (Terrain, Building, Zones & Volumes, Paths & Splines) |
+| Every component has exactly one place | The menu code chose the group per row | A new component needed a per-type edit | `editor/AddComponentTaxonomy.cpp`: rules on the component key (exact, starts with, ends with: any `...Collider3D` is a 3D collider). Unknown types go to a visible "Uncategorised" group, and `add_component_model` fails and names them |
+| Registered components appear without an edit | Only hand-written rows | Registry types such as Conveyor Belt, Force Field, Breakable, Explosion had no row | `AddComponentRegistry.*`: after the hand-written rows every `PropertyRegistry` type with no row yet is added automatically (the same list feeds the OkayUI popup) |
+| Recently used, Favourites, Suggested at the top | Recent and Favorites, For this object | Names only | "Suggested for this object", "Recently used", "Favourites" come first in the left column; kept by stable component key in `okay_addcomponent.txt` |
+| Search by plain words | Aliases ranked under descriptions | "hit points", "bounce", "jump" found nothing useful | Plain words rank above description sentences; added words for health (hit points, hp, lives), bounce (physics material, Physics Surface, Rigidbody), jump (controllers, Jump Pad) and about 40 more |
+| Suggestions | Short table by label | Not keyed on the component | By key: a Mesh Renderer suggests a Collider and a Rigidbody; a Collider suggests a Rigidbody; a Camera suggests a rig; a Light suggests nothing |
+| Greyed with a reason | Already on this object, Needs a Tilemap | No "needs a Rigidbody" | "Needs a Rigidbody3D first." for Buoyancy, Wind Drag and the Joints (table `kPrereqs`); "Already on this object" for the rest |
+| Hover preview | None | | Hover a card for about half a second: what it is, what else it adds (the engine's `RequireComponent` rules and the row's own helpers) and the first settings you can change |
+| Fit | Scaled with the font | Fixed 140 px left column | Left column and window are font-scaled and clamp to 94% x 92% of the screen, so 1024x640 is not clipped (computed, not seen) |
+| OkayUI popup | A plain category menu from the registry | Different list, no search | `OkayUIHostObjects.cpp` now draws the same model: search, groups, cards with a line of text, keys, greyed reasons, Recently used |
+
+Plain categories are only a table: to add a component, add its key to a rule in `kRules` (or nothing if a pattern already covers it).
+
 ## 4. Not done
 
-- OkayUI version: there is no OkayUI Inspector to put it in. The model has no ImGui in it, so it can be reused when one exists.
+- OkayUI popup is plainer than the Dear ImGui one (no badges, stars or hover preview); it was only compiled, not run.
 - Descriptions are written by hand for about 90 common components; the rest use the bracket text of their row, or a generic line.
 - The suggestion and "needs" tables are short lists in `AddComponentModel.cpp`, not read from the engine (the engine has
   `RequireComponent`, but nothing in the editor registers any rule, so there was no data to read).

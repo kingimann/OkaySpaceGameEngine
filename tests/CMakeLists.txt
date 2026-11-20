@@ -3367,6 +3367,12 @@ if(NOT WIN32 AND NOT EMSCRIPTEN)
     add_test(NAME platform_events COMMAND test_platform_events)
     set_tests_properties(platform_events PROPERTIES TIMEOUT 60)
 
+    # Own BMP writer (replaces SDL_SaveBMP in the screenshot tools): header only, no display needed.
+    add_executable(test_bmp_writer test_bmp_writer.cpp)
+    target_include_directories(test_bmp_writer PRIVATE ${CMAKE_SOURCE_DIR}/engine/include)
+    add_test(NAME bmp_writer COMMAND test_bmp_writer)
+    set_tests_properties(bmp_writer PROPERTIES TIMEOUT 60)
+
     add_executable(test_platform_window test_platform_window.cpp)
     target_link_libraries(test_platform_window PRIVATE okay::platform)
     if(TARGET SDL2::SDL2)

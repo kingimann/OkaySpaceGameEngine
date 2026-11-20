@@ -22,7 +22,13 @@
 #define WIN32_LEAN_AND_MEAN
 #endif
 #include <windows.h>
-#include <ntdef.h>
+#ifdef _MSC_VER
+// MSVC's Windows SDK redefines windows.h types if <ntdef.h> follows it (C2011). hidpi.h only needs NTSTATUS, which is
+// a plain LONG; a repeated identical typedef is legal C++, so this is safe even if another header already has it.
+typedef LONG NTSTATUS;
+#else
+#include <ntdef.h>   // MinGW path, unchanged
+#endif
 #include <hidusage.h>
 #include <hidpi.h>
 #include <hidsdi.h>

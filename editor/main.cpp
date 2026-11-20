@@ -18,6 +18,7 @@
 #include "MenuBarModel.hpp"          // the main menu bar and the Hierarchy menus as data (docs/editor_menus.md)
 #include "HierarchyContextModel.hpp"
 #include "SceneAddMenu.hpp"
+#include "VehicleEditorUi.hpp"      // GameObject > Vehicles and the Vehicle Controller Inspector tabs
 #include "MenuEntriesUI.hpp"          // draws those lists with Dear ImGui
 #include "ProjectState.hpp"           // project settings + build settings: the files inside the project folder
 #include "BuildSettingsWindow.hpp"     // the Build Settings window: pages, search, summary, checks, history (own files)
@@ -7626,6 +7627,7 @@ static void DrawCreateSlot(EditorState& ed, const std::string& id, GameObject* p
             ImGui::EndMenu();
         }
     } else if (id == "create.vehicles") {
+        if (oked::vehicleui::DrawCreateItems(ed)) created = true;
         if (ImGui::MenuItem("Boat")) { AddBoatObject(ed); created = true; }
         if (ImGui::IsItemHovered()) ImGui::SetTooltip("A boat that floats on Water and drives with W / S / A / D. Adds a lake if the scene has no water.");
     } else if (id == "create.player") {
@@ -35616,6 +35618,9 @@ void DrawInspector(EditorState& ed) {
     }
     if (auto* v = dynamic_cast<VehicleController*>(curComp)) {
         if (CompHeader("Vehicle Controller (Car)", v, &toRemove)) {
+            if (oked::vehicleui::DrawInspector(v)) ed.dirty = true;
+            ImGui::Separator();
+            ImGui::TextDisabled("Older model and suspension settings:");
             if (ImGui::DragFloat("Max Speed##veh", &v->maxSpeed, 0.5f, 0.0f, 300.0f)) ed.dirty = true;
             oked::FieldTip("Max Speed##veh");
             if (ImGui::DragFloat("Reverse Speed##veh", &v->reverseSpeed, 0.5f, 0.0f, 100.0f)) ed.dirty = true;
@@ -42979,7 +42984,7 @@ void DrawInspector(EditorState& ed) {
             if (item(!go->GetComponent<TopDownController2D>(), "Top Down Controller 2D")) { go->AddComponent<TopDownController2D>(); ed.dirty = true; }
             if (item(!go->GetComponent<ThirdPersonShooterController>(), "Third Person Shooter Controller")) { ed.PushUndo(); go->AddComponent<ThirdPersonShooterController>(); SetupControllerBody(ed, go); ed.dirty = true; }
             if (item(!go->GetComponent<FreeRoamController>(), "Free Roam (Fly) Controller")) { go->AddComponent<FreeRoamController>(); ed.dirty = true; }
-            if (item(!go->GetComponent<VehicleController>(), "Vehicle Controller (Car)")) { go->AddComponent<VehicleController>(); if (!go->GetComponent<Rigidbody3D>()) go->AddComponent<Rigidbody3D>(); ed.dirty = true; }
+            if (item(!go->GetComponent<VehicleController>(), "Vehicle Controller (Car)")) { go->AddComponent<VehicleController>()->ApplyPreset("Sedan"); if (!go->GetComponent<Rigidbody3D>()) go->AddComponent<Rigidbody3D>(); ed.dirty = true; }
             if (item(!go->GetComponent<BoatController>(), "Boat Controller (floats and drives on water)")) { ed.PushUndo(); go->AddComponent<BoatController>(); if (!go->GetComponent<Rigidbody3D>()) go->AddComponent<Rigidbody3D>(); if (!go->GetComponent<Collider3D>()) { go->AddComponent<BoxCollider3D>(); FitColliders(go); } ed.dirty = true; }
             if (item(!go->GetComponent<VehicleController2D>(), "Vehicle Controller 2D")) { go->AddComponent<VehicleController2D>(); if (!go->GetComponent<Rigidbody2D>()) go->AddComponent<Rigidbody2D>(); ed.dirty = true; }
             if (item(!go->GetComponent<BlockBuilder>(), "Block Builder (voxel)")) { go->AddComponent<BlockBuilder>(); ed.dirty = true; }

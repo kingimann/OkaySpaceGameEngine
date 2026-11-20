@@ -70,7 +70,7 @@ inline const VsPaletteCategory kPaletteCategories[] = {
     // ---- Movement & physics
     {"Position",        "Where an object is, putting it somewhere else, and keeping it in bounds.", "Movement & Physics"},
     {"Rotation & Scale", "Turn an object, face or look at something, and change its size.", "Movement & Physics"},
-    {"Move & Follow",   "Walk toward something, follow, chase, patrol, orbit, bob, spin, motion patterns and script functions.", "Movement & Physics"},
+    {"Move & Follow",   "Walk toward something, follow, chase, patrol, orbit, bob, spin, motion patterns, vehicles and script functions.", "Movement & Physics"},
     {"Tweens",          "Smoothly change a position, size, color or number over time.", "Movement & Physics"},
     {"Paths & Splines", "Curves and paths an object can follow.", "Movement & Physics"},
     {"Forces & Velocity", "Push things, set their speed, jump, and set up their physics body.", "Movement & Physics"},
@@ -203,6 +203,7 @@ inline const VsPaletteSub kPaletteSubs[] = {
     {"Rotation & Scale", "Facing & Looking", "Face a direction or an object, and look at a point."},
     {"Rotation & Scale", "Scale", "Read and change the size of an object."},
     {"Move & Follow", "Motion Patterns", "Back and forth, in a circle, a hop, a shake, bob and spin."},
+    {"Move & Follow", "Vehicles", "Drive a vehicle from a script: settings, presets, pedals, boost, lights, get in and out."},
     {"Move & Follow", "Script Movement Functions", "The same jobs written as text-script function calls, like move to, chase or wasd move."},
     {"Tweens", "Start a Tween", "Begin moving, turning, scaling or fading something over time."},
     {"Tweens", "Control Tweens", "Pause, play, restart, rewind or kill tweens."},

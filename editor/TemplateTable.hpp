@@ -44,6 +44,7 @@ inline const std::vector<TemplateEntry>& TemplateTable() {
         {"Point & Click",              &E::NewPointAndClick},
         {"Vehicle (3D)",               &E::NewVehicle3D},
         {"Vehicle (get in and drive)", &E::NewVehicleSeats3D},
+        {"Driving World (open-world cars)", &E::NewDrivingWorld},
         {"Vehicle (2D)",               &E::NewVehicle2D},
         {"Sandbox",                    &E::NewVoxelSandbox},
         {"Multiplayer",                &E::NewMultiplayer},

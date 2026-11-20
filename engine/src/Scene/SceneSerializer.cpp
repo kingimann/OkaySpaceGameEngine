@@ -2088,6 +2088,12 @@ void WriteComponentRecords(std::ostream& out, GameObject* go) {
             << " " << v->handbrakeGrip << " " << v->groundCheckDistance
             << " " << (v->followCamera ? 1 : 0) << " " << v->camDistance << " " << v->camHeight
             << " " << v->camLerp << " " << (int)(unsigned char)v->handbrakeKey << "\n";
+        {   // the open-world settings that differ from the defaults, plus the wheel spacing (the model steers by it; it used to be saved only with suspension)
+            std::ostringstream tl; tl << v->ToLine();
+            if (std::fabs(v->wheelBase - 2.4f) > 1e-4f) tl << "wheelBase=" << v->wheelBase << " ";
+            if (std::fabs(v->trackWidth - 1.6f) > 1e-4f) tl << "trackWidth=" << v->trackWidth << " ";
+            if (!tl.str().empty()) out << "  vehicletune " << tl.str() << "\n";
+        }   // the open-world settings that differ from the defaults
         if (v->suspension)
             out << "  vehiclesusp 1 " << v->rideHeight << " " << v->springStrength << " "
                 << v->springDamping << " " << v->suspensionTravel << " " << v->wheelBase << " "
@@ -6031,6 +6037,17 @@ static bool ParseStep(Scene& scene, ParseSession& S, bool clear,
                     int fc = 0; in >> fc; v->followCamera = (fc != 0);
                     in >> v->camDistance >> v->camHeight >> v->camLerp;
                     int hk = 32; in >> hk; v->handbrakeKey = (char)hk;
+                } else if (field == "vehicletune") {
+                    auto* v = LastOf(go->GetComponents<VehicleController>());
+                    std::string rest; std::getline(in, rest);
+                    if (v) v->FromLine(rest);
+                    if (v) {   // wheel spacing travels in the same line
+                        std::istringstream ts(rest); std::string tok;
+                        while (ts >> tok) {
+                            if (tok.rfind("wheelBase=", 0) == 0) v->wheelBase = (float)std::atof(tok.c_str() + 10);
+                            else if (tok.rfind("trackWidth=", 0) == 0) v->trackWidth = (float)std::atof(tok.c_str() + 11);
+                        }
+                    }
                 } else if (field == "vehiclesusp") {
                     auto* v = LastOf(go->GetComponents<VehicleController>());
                     int on = 0; in >> on;

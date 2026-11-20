@@ -530,6 +530,7 @@ inline const VsRule kBuiltinRules[] = {
     {"hypot", "Numbers", "Script Math Functions"}, {"sum", "Numbers", "Script Math Functions"},
     {"avg", "Numbers", "Averages & Percentages"}, {"len", "Vectors", "Script Vector Functions"},
     {"math_repeat", "Numbers", "Limits & Wrapping"}, {"pi", "Numbers", "Script Math Functions"},
+    {"Vehicle.*", "Move & Follow", "Vehicles"},   // Vehicle.SetSetting, ApplyPreset, SetThrottle, Boost ... (docs/vehicle_controls.md)
     {"Mathf.Abs", "Numbers", "Script Math Functions"}, {"Mathf.Sqrt", "Numbers", "Script Math Functions"},
     {"Mathf.Pow", "Numbers", "Script Math Functions"}, {"Mathf.Exp", "Numbers", "Script Math Functions"},
     {"Mathf.Min", "Numbers", "Script Math Functions"}, {"Mathf.Max", "Numbers", "Script Math Functions"},

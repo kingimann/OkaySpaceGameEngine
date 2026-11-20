@@ -1,5 +1,22 @@
 OkaySpace Game Engine — Changelog
 
+v2.894.0
+  Better driving, easier panning, Ctrl+S that always saves
+  - Vehicles drive like an open-world game now: gears, drifting with the
+    handbrake, ABS and traction control, rear, front or all wheel drive, and
+    grip that changes on ice, mud and grass. Pick a preset (Sedan, Sports Car,
+    Muscle Car, Pickup, Heavy Truck, Bus, Buggy, Rally Car, Drift Car) and
+    tune about 85 settings. Keyboard and gamepad both work. Try the new
+    "Driving World" template. Old scenes keep the old driving.
+  - Visual Script: drag the empty background to move around the graph.
+    Shift or Ctrl and drag still selects an area.
+  - Ctrl+S now always does something: it saves what you are working on, or
+    everything that changed, even while you are typing in a box. The bottom
+    bar says what was saved, or "Nothing to save".
+  - The Modeling page list grows with the editor's text size, long names
+    no longer run out of their row, and with no model selected it tells you
+    how to start.
+
 v2.893.0
   Better cameras and a sharper in-game UI
   - New camera system: Virtual Cameras that follow, orbit or look at things

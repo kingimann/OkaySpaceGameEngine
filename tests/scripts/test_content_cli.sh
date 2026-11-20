@@ -39,8 +39,13 @@ printf 'x' > "$T/pub/notes.xyz"
 OKAY_CONTENT_SIGNING_SEED="$seed" "$TOOL" make-manifest "$T/pub" --game cli --version 2 >/dev/null 2>&1 && bad "make-manifest accepted an unknown file type"
 rm "$T/pub/notes.xyz"
 
-# tampered file after signing
-cp -r "$T/pub" "$T/tam"; printf 'Z' | dd of="$T/tam/models/ship.glb" bs=1 seek=10 conv=notrunc 2>/dev/null
+# tampered file after signing. Flip one bit of a byte rather than writing a fixed byte: the file is random, so a fixed
+# byte (the old printf 'Z' | dd) already matched what was there about 1 run in 256, the "tampered" copy stayed identical,
+# and all three tamper checks below failed together (seen once on CI). A flip always changes the byte. The cmp after it
+# still guards against the copy silently not changing for any other reason.
+cp -r "$T/pub" "$T/tam"
+python3 -I -c 'import sys; p = sys.argv[1]; b = bytearray(open(p, "rb").read()); b[10] ^= 0x20; open(p, "wb").write(b)' "$T/tam/models/ship.glb"
+cmp -s "$T/pub/models/ship.glb" "$T/tam/models/ship.glb" && bad "tamper step did not modify the file; the tamper checks below would be meaningless"
 "$TOOL" verify "$T/tam" --keys "$pub" >/dev/null 2>&1 && bad "verify accepted a tampered file"
 
 # sync from a folder (file://)

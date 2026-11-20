@@ -1002,7 +1002,13 @@ template <typename T> struct ImVector {
         std::free(Data); Data = d; Capacity = n;
     }
     void resize(int n) { reserve(n); if (n > Size) std::memset(static_cast<void*>(Data + Size), 0, sizeof(T) * (size_t)(n - Size)); Size = Capacity >= n ? n : Size; }
-    void push_back(const T& v) { if (Size == Capacity) reserve(Capacity ? Capacity * 2 : 8); if (Size < Capacity) Data[Size++] = v; }
+    // `v` may point into Data (v.push_back(v[0])): growing frees the old block, so copy it out first.
+    void push_back(const T& v) {
+        if (Size < Capacity) { Data[Size++] = v; return; }
+        const T keep = v;
+        reserve(Capacity ? Capacity * 2 : 8);
+        if (Size < Capacity) Data[Size++] = keep;
+    }
     void push_front(const T& v) {
         if (Size == 0) { push_back(v); return; }
         const T keep = v;

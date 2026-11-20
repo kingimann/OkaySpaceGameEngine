@@ -28953,9 +28953,9 @@ void DrawModeling(EditorState& ed) {
     const auto sbToggle = [&] { oked::modeltools::SidebarToggle(s_sb); g_view.modelingSidebar = oked::modeltools::SidebarToPref(s_sb); SaveSettings(); };
     // Ctrl+\ folds / opens the page list while this window is focused (Ctrl+B is taken: Build Game, and Bevel in edit mode).
     if (ImGui::IsWindowFocused(ImGuiFocusedFlags_RootAndChildWindows) && ImGui::GetIO().KeyCtrl && ImGui::IsKeyPressed(ImGuiKey_Backslash, false)) sbToggle();
-    oked::modeltools::SidebarAuto(s_sb, ImGui::GetWindowSize().x);
-    ImGui::BeginChild("##mdlnav", ImVec2(oked::modeltools::SidebarWidth(s_sb, ImGui::GetWindowSize().x), 0), ImGuiChildFlags_Borders);
-    if (ImGui::Button(s_sb.folded ? ">##mdlfold" : "<##mdlfold", ImVec2(32, 32))) sbToggle();
+    oked::modeltools::SidebarAuto(s_sb, ImGui::GetWindowSize().x, g_uiScale);
+    ImGui::BeginChild("##mdlnav", ImVec2(oked::modeltools::SidebarWidth(s_sb, ImGui::GetWindowSize().x, g_uiScale), 0), ImGuiChildFlags_Borders);
+    if (ImGui::Button(s_sb.folded ? ">##mdlfold" : "<##mdlfold", ImVec2(oked::modeltools::kFoldBtn * g_uiScale, oked::modeltools::kFoldBtn * g_uiScale))) sbToggle();
     if (ImGui::IsItemHovered()) ImGui::SetTooltip("%s  (Ctrl+\\)", s_sb.folded ? "Show the page list" : "Hide the page list");
     const char* lastJob = "";
     for (const oked::modeltools::Page& pi : oked::modeltools::Pages()) {   // pages grouped by job (ModelingToolIndex.hpp)
@@ -28964,9 +28964,9 @@ void DrawModeling(EditorState& ed) {
         const bool usable = !pg.needsMesh || haveMesh;
         if (s_sb.folded) {   // the thin strip: two letters per page, the name in the tooltip
             ImGui::PushID(i); ImGui::BeginDisabled(!usable);
-            if (ImGui::Selectable(pi.abbr, s_mdlPage == i, 0, ImVec2(0, 34))) s_mdlPage = i;
+            if (ImGui::Selectable(pi.abbr, s_mdlPage == i, 0, ImVec2(0, oked::modeltools::StripRowHeight(g_uiScale, ImGui::GetTextLineHeight())))) s_mdlPage = i;
             ImGui::EndDisabled();
-            if (ImGui::IsItemHovered(ImGuiHoveredFlags_AllowWhenDisabled)) ImGui::SetTooltip("%s\n%s", pi.name, usable ? pi.desc : "Select a mesh object first.");
+            if (ImGui::IsItemHovered(ImGuiHoveredFlags_AllowWhenDisabled)) ImGui::SetTooltip("%s\n%s", pi.name, usable ? pi.desc : oked::modeltools::PageDisabledReason(pg.needsMesh, haveMesh));
             ImGui::PopID();
             continue;
         }
@@ -28974,17 +28974,20 @@ void DrawModeling(EditorState& ed) {
         ImGui::PushID(i);
         ImGui::BeginDisabled(!usable);
         const ImVec2 r0 = ImGui::GetCursorScreenPos();
-        if (ImGui::Selectable("##pg", s_mdlPage == i, 0, ImVec2(0, 44))) s_mdlPage = i;
+        if (ImGui::Selectable("##pg", s_mdlPage == i, 0, ImVec2(0, oked::modeltools::RowHeight(g_uiScale, ImGui::GetTextLineHeight())))) s_mdlPage = i;
         ImGui::EndDisabled();
-        if (!usable && ImGui::IsItemHovered(ImGuiHoveredFlags_AllowWhenDisabled)) ImGui::SetTooltip("Select a mesh object first.");
+        if (!usable && ImGui::IsItemHovered(ImGuiHoveredFlags_AllowWhenDisabled)) ImGui::SetTooltip("%s", oked::modeltools::PageDisabledReason(pg.needsMesh, haveMesh));
         ImDrawList* ndl = ImGui::GetWindowDrawList();
         const ImU32 tc = usable ? ImGui::GetColorU32(ImGuiCol_Text) : ImGui::GetColorU32(ImGuiCol_TextDisabled);
-        ndl->AddText(ImVec2(r0.x + 8, r0.y + 5), tc, pi.name);
-        ndl->AddText(ImVec2(r0.x + 8, r0.y + 5 + ImGui::GetTextLineHeight()), ImGui::GetColorU32(ImGuiCol_TextDisabled), pi.desc);
+        const float padX = oked::modeltools::kRowPadX * g_uiScale, maxTextW = ImGui::GetItemRectSize().x - padX * 2;   // cut with "..." instead of running out of the row
+        const auto measure = [](const std::string& t) { return ImGui::CalcTextSize(t.c_str()).x; };
+        ndl->AddText(ImVec2(r0.x + padX, r0.y + 5 * g_uiScale), tc, oked::modeltools::FitText(pi.name, maxTextW, measure).c_str());
+        ndl->AddText(ImVec2(r0.x + padX, r0.y + 5 * g_uiScale + ImGui::GetTextLineHeight()), ImGui::GetColorU32(ImGuiCol_TextDisabled), oked::modeltools::FitText(pi.desc, maxTextW, measure).c_str());
+        if (ImGui::IsItemHovered(ImGuiHoveredFlags_AllowWhenDisabled) && usable && maxTextW < ImGui::CalcTextSize(pi.desc).x) ImGui::SetTooltip("%s\n%s", pi.name, pi.desc);   // the full words when the row is narrow
         ImGui::PopID();
     }
     ImGui::EndChild();
-    if (kPages[s_mdlPage].needsMesh && !haveMesh) s_mdlPage = 8;
+    if (kPages[s_mdlPage].needsMesh && !haveMesh) { s_mdlPage = 8; }
     ImGui::SameLine();
     ImGui::BeginChild("##mdlpage", ImVec2(0, 0), ImGuiChildFlags_Borders);
     ImGui::PushStyleVar(ImGuiStyleVar_ItemSpacing, ImVec2(10, 10));
@@ -28992,7 +28995,7 @@ void DrawModeling(EditorState& ed) {
     g_mdlCurPage = s_mdlPage;
     {   // Find a tool: type "bevel" or "round"; matches are listed with their page and outlined on that page.
         static char s_find[40] = "";
-        ImGui::SetNextItemWidth(-90);
+        ImGui::SetNextItemWidth(-90.0f * g_uiScale);
         if (ImGui::InputTextWithHint("##mdlfind", "Find a tool (try: bevel, round, mirror, uv)...", s_find, sizeof(s_find))) g_mdlFind = s_find;
         ImGui::SameLine();
         if (ImGui::Button("Clear##mdlfind")) { s_find[0] = 0; g_mdlFind.clear(); }
@@ -29009,6 +29012,11 @@ void DrawModeling(EditorState& ed) {
                 if (ImGui::IsItemHovered(ImGuiHoveredFlags_AllowWhenDisabled)) ImGui::SetTooltip("%s\n%s", h.tool->hint, usable ? "Click to open that page. The button is outlined." : "Select a mesh object first.");
             }
         }
+    }
+    if (!haveMesh) {   // nothing to edit yet: say so in plain words and offer the way to start
+        ImGui::Separator();
+        ImGui::TextWrapped("Select a model to edit it. No model yet? Start with some shapes.");
+        if (s_mdlPage != 0 && ImGui::Button("Add shapes##mdlstart")) s_mdlPage = 0;
     }
     ImGui::Separator();
     ImGui::TextUnformatted(kPages[s_mdlPage].name);
@@ -43527,10 +43535,12 @@ static void DrawLoadingScreenCmds(ImDrawList* dl, const okay::LoadingScreen& ls,
 // `canvas` (its position before the authoring zoom) on frame `frame`.
 struct SceneUIRects { ImVec2 canvas{-1e9f, -1e9f}; int frame = -10; std::vector<okay::edlayout::Rc> rects; };
 SceneUIRects g_sceneUIRects;
+SceneUIRects g_gameUIRects;   // the same for the Game view, so its top-left labels keep off the game's own UI text too
 void DrawUIOverlay(EditorState& ed, ImDrawList* dl, ImVec2 canvasPos,
                    ImVec2 canvasSize, bool gameView) {
     const auto& objs = ed.scene().Objects();
-    if (!gameView) { g_sceneUIRects.canvas = canvasPos; g_sceneUIRects.frame = ImGui::GetFrameCount(); g_sceneUIRects.rects.clear(); }
+    SceneUIRects& uiRects = gameView ? g_gameUIRects : g_sceneUIRects;
+    uiRects.canvas = canvasPos; uiRects.frame = ImGui::GetFrameCount(); uiRects.rects.clear();
     // Clip ALL UI geometry to the visible panel rect (captured before the authoring
     // zoom rescales the working copies below). A widget with a bad anchor / stretch /
     // scale can resolve to an enormous off-screen rect; feeding those extreme vertex
@@ -43569,13 +43579,11 @@ void DrawUIOverlay(EditorState& ed, ImDrawList* dl, ImVec2 canvasPos,
         opt.worldLabelsViaUIWorld = true;
         okay::ui2d::RenderSceneUI(ed.scene(), painter, (int)canvasSize.x, (int)canvasSize.y, opt);
     }
-    if (!gameView) {
-        for (const auto& up : objs) {
-            if (!up || !up->ActiveInHierarchy()) continue;
-            Vec2 o, sz;
-            if (!GetUIScreenRect(up.get(), canvasSize.x, canvasSize.y, o, sz) || sz.x <= 0.0f || sz.y <= 0.0f) continue;
-            g_sceneUIRects.rects.push_back(okay::edlayout::MakeRc(canvasPos.x + o.x, canvasPos.y + o.y, sz.x, sz.y));
-        }
+    for (const auto& up : objs) {
+        if (!up || !up->ActiveInHierarchy()) continue;
+        Vec2 o, sz;
+        if (!GetUIScreenRect(up.get(), canvasSize.x, canvasSize.y, o, sz) || sz.x <= 0.0f || sz.y <= 0.0f) continue;
+        uiRects.rects.push_back(okay::edlayout::MakeRc(canvasPos.x + o.x, canvasPos.y + o.y, sz.x, sz.y));
     }
 
     // Multi-selection: outline every selected widget (the primary gets the full
@@ -50184,6 +50192,23 @@ void DrawGameView(EditorState& ed) {
     // the idle hint) is remembered here, so the Stats and Timers boxes at the top-right move below it instead of
     // drawing over it when the view is narrow.
     std::vector<std::pair<ImVec2, ImVec2>> topLeftRects;
+    // The resolution readout and the line under it (the idle hint, or the PLAYING pill and the FPS label) move as one
+    // block: at the top left, or at the bottom left when the game's own UI text is drawn at the top left (the
+    // readout used to be drawn straight over an example's instructions). Same rule as the Scene view's stats line
+    // (okay::edlayout::PlaceStatsLine), fed with where this frame's DrawUIOverlay drew the game's UI.
+    float labelShift = 0.0f;
+    {
+        const float lh = ImGui::GetTextLineHeight();
+        float w = ImGui::CalcTextSize("Edit mode - press Play to run").x + 6.0f;
+        w = std::max(w, ImGui::CalcTextSize(kFixedRes ? "0000 x 0000  (100%)" : "0000 x 0000 px").x + 6.0f);
+        if (ed.isPlaying()) w = std::max(w, ImGui::CalcTextSize("PLAYING").x + lh + ImGui::CalcTextSize(ed.FpsLabel().c_str()).x + 30.0f);
+        const float h = ed.isPlaying() ? 2.0f * lh + 15.0f : 2.0f * lh + 8.0f;
+        const okay::edlayout::Rc canvasRc{canvasPos.x, canvasPos.y, canvasEnd.x, canvasEnd.y};
+        const bool fresh = g_gameUIRects.canvas.x == canvasPos.x && g_gameUIRects.canvas.y == canvasPos.y &&
+                           ImGui::GetFrameCount() - g_gameUIRects.frame <= 1;
+        if (fresh) labelShift = okay::edlayout::GameViewLabelShift(canvasRc, okay::edlayout::Pt{w, h}, labelIn, labelDrop, lh,
+                                                                   g_gameUIRects.rects);
+    }
     // Resolution readout (top-left of the canvas, over the scene): the target pixel
     // size for a fixed preset with the on-screen scale, or the live canvas pixels.
     {
@@ -50194,7 +50219,7 @@ void DrawGameView(EditorState& ed) {
         } else {
             std::snprintf(resLbl, sizeof(resLbl), "%d x %d px", (int)canvasSize.x, (int)canvasSize.y);
         }
-        ImVec2 tp(canvasPos.x + 6 + labelIn, canvasPos.y + 4 + labelDrop);
+        ImVec2 tp(canvasPos.x + 6 + labelIn, canvasPos.y + 4 + labelDrop + labelShift);
         dl->AddRectFilled(ImVec2(tp.x - 3, tp.y - 2),
                           ImVec2(tp.x + ImGui::CalcTextSize(resLbl).x + 3, tp.y + ImGui::GetTextLineHeight() + 2),
                           IM_COL32(0, 0, 0, 120), 3.0f);
@@ -50213,7 +50238,7 @@ void DrawGameView(EditorState& ed) {
         float pr = ImGui::GetTextLineHeight() * 0.26f;   // drawn dot (● is tofu here)
         float dotW = pr * 2.0f + 6.0f;
         // Below the resolution readout (it used to be drawn on top of it: the readout's trailing "x" showed through).
-        ImVec2 p0(canvasPos.x + 8 + labelIn, canvasPos.y + 8 + ImGui::GetTextLineHeight() + 4 + labelDrop);
+        ImVec2 p0(canvasPos.x + 8 + labelIn, canvasPos.y + 8 + ImGui::GetTextLineHeight() + 4 + labelDrop + labelShift);
         dl->AddRectFilled(ImVec2(p0.x - 4, p0.y - 3), ImVec2(p0.x + dotW + ts.x + 6, p0.y + ts.y + 3),
                           IM_COL32(0, 0, 0, 150), 4.0f);
         dl->AddCircleFilled(ImVec2(p0.x + pr, p0.y + ts.y * 0.55f), pr, pc);
@@ -50250,7 +50275,7 @@ void DrawGameView(EditorState& ed) {
     } else {
         // Below the resolution label (they used to print on top of each other).
         const char* idle = "Edit mode - press Play to run";
-        ImVec2 ip(canvasPos.x + 6 + labelIn, canvasPos.y + 8 + ImGui::GetTextLineHeight() + labelDrop);
+        ImVec2 ip(canvasPos.x + 6 + labelIn, canvasPos.y + 8 + ImGui::GetTextLineHeight() + labelDrop + labelShift);
         dl->AddRectFilled(ImVec2(ip.x - 3, ip.y - 2), ImVec2(ip.x + ImGui::CalcTextSize(idle).x + 3, ip.y + ImGui::GetTextLineHeight() + 2),
                           IM_COL32(0, 0, 0, 120), 3.0f);
         dl->AddText(ip, IM_COL32(200, 202, 212, 230), idle);

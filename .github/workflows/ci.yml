@@ -717,6 +717,34 @@ jobs:
         # --timeout: a hang in a real-process case fails in 150 s with its output instead of using the whole 30 minutes; -V prints each case as it runs.
         run: ctest --test-dir build -C Release -R "^(app_restart|self_update|anticheat_golden|anticheat_integrity_fallback)$" --output-on-failure --timeout 150 -V
 
+  # MSVC build-and-test (rule 24d, step 1). NOT required. Builds the core engine library and pure-logic tests with
+  # the real MSVC compiler (the release stays the MinGW cross-compile). Nothing from the SDK is shipped.
+  msvc-build:
+    name: MSVC build and test (not required)
+    runs-on: windows-latest
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v6
+
+      - name: Configure (MSVC, Ninja, Release)
+        shell: pwsh
+        run: |
+          Import-Module "$env:VCINSTALLDIR\..\..\..\Common7\Tools\Microsoft.VisualStudio.DevShell.dll" -ErrorAction SilentlyContinue
+          $vs = & "${env:ProgramFiles(x86)}\Microsoft Visual Studio\Installer\vswhere.exe" -latest -property installationPath
+          cmd /c "`"$vs\VC\Auxiliary\Build\vcvars64.bat`" && cmake -S . -B build-msvc -G Ninja -DCMAKE_BUILD_TYPE=Release -DCMAKE_C_COMPILER=cl -DCMAKE_CXX_COMPILER=cl -DOKAY_BUILD_TESTS=ON -DOKAY_BUILD_SANDBOX=OFF -DOKAY_BUILD_LAUNCHER=OFF -DOKAY_BUILD_EDITOR=OFF -DOKAY_BUILD_PLAYER=OFF -DOKAY_USE_SODIUM=OFF -DOKAY_BUILD_OKAYUI_TESTS=OFF"
+          if ($LASTEXITCODE -ne 0) { throw "configure failed" }
+
+      - name: Build the engine and pure-logic tests
+        shell: pwsh
+        run: |
+          $vs = & "${env:ProgramFiles(x86)}\Microsoft Visual Studio\Installer\vswhere.exe" -latest -property installationPath
+          cmd /c "`"$vs\VC\Auxiliary\Build\vcvars64.bat`" && cmake --build build-msvc --target test_math test_scene test_serialize test_material test_actionlist test_prefs test_physics3d test_core_features test_charctrl test_transform_input"
+          if ($LASTEXITCODE -ne 0) { throw "build failed" }
+
+      - name: Run the tests
+        shell: pwsh
+        run: ctest --test-dir build-msvc -R "^(math|scene|serialize|material|actionlist|prefs|physics3d|core_features|charctrl|transform_input)$" --output-on-failure --timeout 150
+
   web-build:
     name: WebGL build (Emscripten)
     runs-on: ubuntu-latest

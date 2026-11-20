@@ -8,6 +8,9 @@
 #include "okay/Components/AudioSource.hpp"
 #include "okay/Components/Camera.hpp"
 #include "okay/Components/CameraFollow.hpp"
+#include "okay/Components/CameraRoom.hpp"
+#include "okay/Components/CinemachineBrain.hpp"
+#include "okay/Components/VirtualCamera.hpp"
 #include "okay/Components/Canvas.hpp"
 #include "okay/Components/Lifetime.hpp"
 #include "okay/Components/Light.hpp"
@@ -140,8 +143,73 @@ void RegisterCamera() {
      .AddFloat("shakeAmount", &Camera::shakeAmount).Range(0, 1000, 0.05)
      .AddFloat("shakeAngle", &Camera::shakeAngle).Range(0, 180, 0.1)
      .AddFloat("shakeFrequency", &Camera::shakeFrequency).Range(0, 1000, 0.5)
-     .AddFloat("shakeRecovery", &Camera::shakeRecovery).Range(0, 1000, 0.1);
+     .AddFloat("shakeRecovery", &Camera::shakeRecovery).Range(0, 1000, 0.1)
+     .AddFloat("hitPulseVignette", &Camera::hitPulseVignette).Range(0, 1, 0.01).Tooltip("How dark the screen edges get at a full hit pulse");
     b.Commit();
+}
+
+// ---- Camera rigs (docs/camera_upgrade.md) ---------------------------------------------------------
+
+void RegisterCameraRigs() {
+    {
+        PropertyBuilder<VirtualCamera> b("VirtualCamera", "vcam", "Rendering");
+        b.Section("Shot")
+         .AddInt("priority", &VirtualCamera::priority).Range(-1000, 1000).Tooltip("The shot with the highest priority is the one on screen")
+         .AddString("follow", &VirtualCamera::follow).Tooltip("Name of the object the camera follows")
+         .AddString("lookAt", &VirtualCamera::lookAt).Tooltip("Name of the object the camera looks at")
+         .AddVec3("followOffset", &VirtualCamera::followOffset).Tooltip("Where the camera stands, relative to what it follows")
+         .AddVec3("lookAtOffset", &VirtualCamera::lookAtOffset).Tooltip("Aim above or beside the target, for example at the head")
+         .AddFloat("fieldOfView", &VirtualCamera::fieldOfView).Range(1, 179, 0.5).Tooltip("How wide the shot is, in degrees")
+         .AddFloat("dutch", &VirtualCamera::dutch).Range(-180, 180, 0.5).Tooltip("Tilt the horizon, degrees")
+         .AddBool("aimAtFollow", &VirtualCamera::aimAtFollow).Tooltip("With no Look At object, aim at the followed object")
+         .Section("Smoothing")
+         .AddEnum("dampingMode", &VirtualCamera::dampingMode, {"Smooth", "Spring"}).Tooltip("Spring never overshoots and keeps its speed when the target turns")
+         .AddFloat("positionDamping", &VirtualCamera::positionDamping).Range(0, 100, 0.1).Tooltip("Higher is snappier. 0 = jump straight there")
+         .AddFloat("rotationDamping", &VirtualCamera::rotationDamping).Range(0, 100, 0.1)
+         .Section("Framing")
+         .AddBool("useZones", &VirtualCamera::useZones).Tooltip("Let the target move around in the middle of the screen without the camera moving")
+         .AddFloat("deadZoneW", &VirtualCamera::deadZoneW).Range(0, 1, 0.01).Tooltip("Width of the middle area where nothing moves (fraction of the screen)")
+         .AddFloat("deadZoneH", &VirtualCamera::deadZoneH).Range(0, 1, 0.01)
+         .AddFloat("softZoneW", &VirtualCamera::softZoneW).Range(0, 1, 0.01).Tooltip("Past this the camera catches up at once")
+         .AddFloat("softZoneH", &VirtualCamera::softZoneH).Range(0, 1, 0.01)
+         .AddFloat("zoneDamping", &VirtualCamera::zoneDamping).Range(0, 100, 0.1)
+         .AddFloat("lookaheadTime", &VirtualCamera::lookaheadTime).Range(0, 5, 0.05).Tooltip("Look this many seconds ahead of a moving target")
+         .AddFloat("lookaheadMax", &VirtualCamera::lookaheadMax).Range(0, 100, 0.1)
+         .Section("Group")
+         .AddFloat("groupPadding", &VirtualCamera::groupPadding).Range(0, 100, 0.1).Tooltip("Extra room round a group of targets")
+         .AddBool("groupFrame", &VirtualCamera::groupFrame).Tooltip("Step back (or zoom out in 2D) to keep the whole group in view")
+         .Section("2D")
+         .AddBool("ortho2D", &VirtualCamera::ortho2D).Tooltip("A flat camera that slides with the target and never turns")
+         .AddFloat("orthoSize", &VirtualCamera::orthoSize).Range(0, 1000, 0.1).Tooltip("How many units up the picture shows (0 = leave it alone)")
+         .AddBool("confineToView", &VirtualCamera::confineToView).Tooltip("Keep the edges of the picture inside the confine box")
+         .AddBool("useRooms", &VirtualCamera::useRooms).Tooltip("Stay inside the Camera Room the target is in")
+         .AddFloat("roomBlendTime", &VirtualCamera::roomBlendTime).Range(0, 10, 0.05)
+         .Section("Collision")
+         .AddBool("collision", &VirtualCamera::collision).Tooltip("Move in when a wall is between the camera and the target")
+         .AddFloat("collisionRadius", &VirtualCamera::collisionRadius).Range(0, 5, 0.01)
+         .AddFloat("collisionSkin", &VirtualCamera::collisionSkin).Range(0, 2, 0.01)
+         .AddFloat("collisionRecover", &VirtualCamera::collisionRecover).Range(0, 100, 0.1)
+         .AddBool("collisionSnapIn", &VirtualCamera::collisionSnapIn).Tooltip("Jump in at once so the camera is never inside a wall")
+         .AddBool("fadeOccluders", &VirtualCamera::fadeOccluders).Tooltip("Make things between the camera and the target see-through")
+         .AddFloat("occlusionAlpha", &VirtualCamera::occlusionAlpha).Range(0, 1, 0.01)
+         .AddFloat("occlusionFadeSpeed", &VirtualCamera::occlusionFadeSpeed).Range(0, 100, 0.1)
+         .Section("Blend")
+         .AddFloat("blendIn", &VirtualCamera::blendIn).Range(-1, 60, 0.05).Tooltip("Seconds to blend into this shot (-1 = the brain's time)")
+         .AddInt("blendInStyle", &VirtualCamera::blendInStyle).Range(-1, 5).Tooltip("-1 brain's, 0 Cut, 1 Linear, 2 Ease In and Out, 3 Ease In, 4 Ease Out, 5 Custom");
+        b.Commit();
+    }
+    {
+        PropertyBuilder<CinemachineBrain> b("CinemachineBrain", "cmbrain", "Rendering");
+        b.AddFloat("blendTime", &CinemachineBrain::blendTime).Range(0, 60, 0.05).Tooltip("Seconds to blend when the live shot changes (0 = cut)")
+         .AddEnum("blendStyle", &CinemachineBrain::blendStyle, {"Cut", "Linear", "EaseInOut", "EaseIn", "EaseOut", "Custom"})
+         .AddBool("yieldToCutscene", &CinemachineBrain::yieldToCutscene).Tooltip("Let a playing cutscene have the camera, then blend back");
+        b.Commit();
+    }
+    {
+        PropertyBuilder<CameraRoom> b("CameraRoom", "camroom", "Rendering");
+        b.AddVec2("size", &CameraRoom::size).Tooltip("Width and height of the room, in world units");
+        b.Commit();
+    }
 }
 
 // ---- Light -----------------------------------------------------------------------------------
@@ -605,6 +673,7 @@ void RegisterBuiltinPropertyTable() {
     RegisterGameObject();
     RegisterTransform();
     RegisterCamera();
+    RegisterCameraRigs();
     RegisterLight();
     RegisterSpriteRenderer();
     RegisterMeshRenderer();

@@ -427,6 +427,7 @@ public:
         // finished frame, so it looks identical on every renderer backend. Great for
         // focus/mood without touching the 3D shading path.
         float vignette   = 0.0f;
+        float vignettePulse = 0.0f;   ///< runtime only, never saved: a camera's hit flash, added to `vignette` when drawn
         // Filmic rendering: a gamma-correct pipeline (albedo decoded to linear,
         // lighting in linear space, sRGB-encoded output) plus ACES tonemapping,
         // which rolls bright over-1.0 lighting off toward white instead of

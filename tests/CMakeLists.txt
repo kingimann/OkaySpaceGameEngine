@@ -4494,6 +4494,17 @@ foreach(vs_usage_test vs_easy_ops vs_start vs_hints vs_plain_words vs_what_happe
     endif()
 endforeach()
 
+# Camera upgrade (docs/camera_upgrade.md): the pure camera maths over simulated frames at 30, 60 and 144 fps.
+add_executable(test_camera_math test_camera_math.cpp)
+target_link_libraries(test_camera_math PRIVATE okay::engine)
+add_test(NAME camera_math COMMAND test_camera_math)
+
+# Camera rigs over simulated frames (docs/camera_upgrade.md): follow, zones, look ahead, groups, collision, blends, effects, 2D, saves.
+add_executable(test_camera_rig test_camera_rig.cpp)
+target_link_libraries(test_camera_rig PRIVATE okay::engine)
+target_compile_definitions(test_camera_rig PRIVATE OKAY_SOURCE_DIR="${PROJECT_SOURCE_DIR}")
+add_test(NAME camera_rig COMMAND test_camera_rig)
+
 # Water visuals: shading maths, ring grid, depth colour, foam, ripples, splashes, underwater, presets, pictures (docs/water_visuals.md).
 add_executable(test_water_visuals test_water_visuals.cpp)
 target_link_libraries(test_water_visuals PRIVATE okay::engine)

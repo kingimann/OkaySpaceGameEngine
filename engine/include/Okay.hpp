@@ -236,6 +236,9 @@
 #include "okay/Components/LineRenderer.hpp"
 #include "okay/Components/VirtualCamera.hpp"
 #include "okay/Components/CinemachineBrain.hpp"
+#include "okay/Components/CameraMath.hpp"
+#include "okay/Components/CameraRoom.hpp"
+#include "okay/Components/CameraCollision.hpp"
 
 // AI
 #include "okay/AI/Pathfinding.hpp"

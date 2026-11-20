@@ -189,6 +189,7 @@ fi
 EXAMPLE_DIRS="
 behavior_trees
 boat
+camera
 cutscene
 fp_hand
 input

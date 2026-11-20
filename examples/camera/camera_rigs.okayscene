@@ -1,0 +1,204 @@
+okayscene 3
+name "Camera Rigs"
+gravity 0 -9.81
+gravity3 0 -9.81 0
+rendersettings 1 0.27450982 0.47058824 0.78431374 0.5882353 0.7254902 0.88235295 0.47058824 0.47058824 0.50980395 0.15
+fog 0 0.5882353 0.7254902 0.88235295 20 90
+tonemap 1
+gameobject 0 "Main Camera"
+  guid "fc38614486160b37cb5ddc04de8096c7"
+  active 1
+  parent -1
+  transform 0 4 -10 0 1 0 -4.371139e-08 1 1 1
+  camera 1 5 60 0.45 0.62 0.85 1 1 0 0 0.3 4000 0 0 0 1 1 -1 0 50 24 1 0 0 0 0 32 0.3 2 18 1.5
+  camerax hitPulse=0.5
+  cmbrain 0.8 1
+  cmbrainx style=2 c0=0.25 c1=0.1 c2=0.25 c3=1 cutscene=1
+end
+gameobject 1 "Sun"
+  guid "dc52ee635cd1501f716b64d44d09451f"
+  active 1
+  parent -1
+  transform 0 0 0 0.40821794 -0.23456973 0.10938166 0.8754261 1 1 1
+  light 1 1 1 1 0.3 1 0 10 45 0.5 0 6500 1 1 1 0
+end
+gameobject 2 "Ground"
+  guid "1e60de3b9299d8bd7db455cbe6f0af2e"
+  active 1
+  parent -1
+  transform 0 -0.5 0 0 0 0 1 70 1 70
+  mesh "Cube" 0.35 0.55 0.35 1 0 "" 0
+  material 0 0 0 0 16 0 "" 1 1
+  boxcollider3d 1 1 1 0 0 0 0 0 0
+end
+gameobject 3 "Wall"
+  guid "67b69674f1c4d5c6c253567eb9417e5a"
+  active 1
+  parent -1
+  transform 0 3 -6 0 0 0 1 10 6 1
+  mesh "Cube" 0.75 0.45 0.35 1 0 "" 0
+  material 0 0 0 0 16 0 "" 1 1
+  boxcollider3d 1 1 1 0 0 0 0 0 0
+end
+gameobject 4 "Pillar A"
+  guid "b6a2ef115841dd2c73064fb454cf2c06"
+  active 1
+  parent -1
+  transform 10 2 6 0 0 0 1 2 4 2
+  mesh "Cube" 0.8 0.8 0.85 1 0 "" 0
+  material 0 0 0 0 16 0 "" 1 1
+  boxcollider3d 1 1 1 0 0 0 0 0 0
+end
+gameobject 5 "Pillar B"
+  guid "b51c34c1d74387355024402c71fb0245"
+  active 1
+  parent -1
+  transform -10 2 8 0 0 0 1 2 4 2
+  mesh "Cube" 0.8 0.8 0.85 1 0 "" 0
+  material 0 0 0 0 16 0 "" 1 1
+  boxcollider3d 1 1 1 0 0 0 0 0 0
+end
+gameobject 6 "Pillar C"
+  guid "76b4596b24761d25c7194bb02ab30183"
+  active 1
+  parent -1
+  transform 16 2 -10 0 0 0 1 2 4 2
+  mesh "Cube" 0.8 0.8 0.85 1 0 "" 0
+  material 0 0 0 0 16 0 "" 1 1
+  boxcollider3d 1 1 1 0 0 0 0 0 0
+end
+gameobject 7 "Pillar D"
+  guid "e2df57c9c0f2411b4acf0574072d4991"
+  active 1
+  parent -1
+  transform -16 2 -12 0 0 0 1 2 4 2
+  mesh "Cube" 0.8 0.8 0.85 1 0 "" 0
+  material 0 0 0 0 16 0 "" 1 1
+  boxcollider3d 1 1 1 0 0 0 0 0 0
+end
+gameobject 8 "Ramp Box"
+  guid "d15d2b17fd5b2c2f0a52544ab858e872"
+  active 1
+  parent -1
+  transform 4 0.5 12 0 0 0 1 6 1 3
+  mesh "Cube" 0.9 0.8 0.3 1 0 "" 0
+  material 0 0 0 0 16 0 "" 1 1
+  boxcollider3d 1 1 1 0 0 0 0 0 0
+end
+gameobject 9 "Hero"
+  guid "593aa90bab4dc7553a7a42a0e6cc0da8"
+  active 1
+  parent -1
+  transform 0 1 0 0 0 0 1 1 1 1
+  mesh "Capsule" 0.2 0.5 0.95 1 0 "" 0
+  material 0 0 0 0 16 0 "" 1 1
+  script "okayscript" "// Walk with W A S D (or the arrow keys).
+function update(dt) {
+  var s = 6 * dt
+  if (key(\"w\")) { set_z(pos_z() + s) }
+  if (key(\"s\")) { set_z(pos_z() - s) }
+  if (key(\"a\")) { set_x(pos_x() - s) }
+  if (key(\"d\")) { set_x(pos_x() + s) }
+}
+" "" 0
+end
+gameobject 10 "Buddy"
+  guid "380bb45a713582b8021cc1b5ad0bccc2"
+  active 1
+  parent -1
+  transform 8 0.7 4 0 0 0 1 1.4 1.4 1.4
+  mesh "Sphere" 0.95 0.55 0.2 1 0 "" 0
+  material 0 0 0 0 16 0 "" 1 1
+  script "okayscript" "// Buddy walks in a big circle so the Group shot has something to frame.
+function update(dt) {
+  var t = time() * 0.35
+  set_x(9 * cos(t))
+  set_z(9 * sin(t))
+}
+" "" 0
+end
+gameobject 11 "Shot Follow"
+  guid "e8e184326e653d00f6be6517c9233c47"
+  active 1
+  parent -1
+  transform 0 4 -10 0 0 0 1 1 1 1
+  vcam 10 "Hero" "Hero" 0 3 -8 5 8 60 0 1 0 0 0 0 0 3 0 0 15 8 1 -20 70 1 1 0.2 0 "" 0 0 0 0 -1e+09 -1e+09 -1e+09 1e+09 1e+09 1e+09
+  vcamx damp=1 gpad=1 gfit=1 look=0.25 lookMax=2 lookSm=3 zones=1 dzw=0.1 dzh=0.1 szw=0.6 szh=0.6 zdamp=4 o2d=0 osize=0 cview=0 rooms=0 roomT=0.6 col=1 colR=0.25 colSkin=0.1 colRec=3 colIn=12 colSnap=1 colMask=4294967295 fade=0 fadeA=0.25 fadeSpd=8 blendIn=-1 blendInStyle=-1 aimFollow=1 ng=0
+end
+gameobject 12 "Shot Orbit"
+  guid "dfb9ce00b5e0e00ed11926668445250d"
+  active 1
+  parent -1
+  transform 0 4 -10 0 0 0 1 1 1 1
+  vcam 5 "Hero" "Hero" 0 3 -8 5 8 60 0 1 0 0 0 0 0 3 1 0 15 6 1.5 -20 70 1 1 0.2 0 "" 0 0 0 0 -1e+09 -1e+09 -1e+09 1e+09 1e+09 1e+09
+  vcamx damp=1 gpad=1 gfit=1 look=0 lookMax=3 lookSm=3 zones=0 dzw=0.15 dzh=0.15 szw=0.7 szh=0.7 zdamp=4 o2d=0 osize=0 cview=0 rooms=0 roomT=0.6 col=1 colR=0.25 colSkin=0.1 colRec=3 colIn=12 colSnap=1 colMask=4294967295 fade=0 fadeA=0.25 fadeSpd=8 blendIn=-1 blendInStyle=-1 aimFollow=1 ng=0
+end
+gameobject 13 "Shot Look At"
+  guid "319dec164de61635a89eeebaed9e279c"
+  active 1
+  parent -1
+  transform -14 7 14 0 0 0 1 1 1 1
+  vcam 5 "" "Hero" 0 2 -8 5 8 60 0 1 0 0 1 0 0 3 0 0 15 8 1 -20 70 1 1 0.2 0 "" 0 0 0 0 -1e+09 -1e+09 -1e+09 1e+09 1e+09 1e+09
+  vcamx damp=1 gpad=1 gfit=1 look=0 lookMax=3 lookSm=3 zones=1 dzw=0.12 dzh=0.12 szw=0.6 szh=0.6 zdamp=4 o2d=0 osize=0 cview=0 rooms=0 roomT=0.6 col=0 colR=0.25 colSkin=0.1 colRec=3 colIn=12 colSnap=1 colMask=4294967295 fade=0 fadeA=0.25 fadeSpd=8 blendIn=-1 blendInStyle=-1 aimFollow=1 ng=0
+end
+gameobject 14 "Shot Group"
+  guid "2d128d1096acb264d32ae1e36d374adb"
+  active 1
+  parent -1
+  transform 0 4 -10 0 0 0 1 1 1 1
+  vcam 5 "Hero" "Hero" 0 7 -11 5 8 60 0 1 0 0 0 0 0 3 0 0 15 8 1 -20 70 1 1 0.2 0 "" 0 0 0 0 -1e+09 -1e+09 -1e+09 1e+09 1e+09 1e+09
+  vcamx damp=1 gpad=2.5 gfit=1 look=0 lookMax=2 lookSm=3 zones=1 dzw=0.1 dzh=0.1 szw=0.6 szh=0.6 zdamp=4 o2d=0 osize=0 cview=0 rooms=0 roomT=0.6 col=0 colR=0.25 colSkin=0.1 colRec=3 colIn=12 colSnap=1 colMask=4294967295 fade=0 fadeA=0.25 fadeSpd=8 blendIn=-1 blendInStyle=-1 aimFollow=1 ng=2 g0="Hero" g1="Buddy"
+end
+gameobject 15 "Shot See-Through"
+  guid "4f959c47bc370e9affe6f5517bbdc104"
+  active 1
+  parent -1
+  transform 0 4 -10 0 0 0 1 1 1 1
+  vcam 5 "Hero" "Hero" 0 2.5 -9 5 8 60 0 1 0 0 0 0 0 3 0 0 15 8 1 -20 70 1 1 0.2 0 "" 0 0 0 0 -1e+09 -1e+09 -1e+09 1e+09 1e+09 1e+09
+  vcamx damp=1 gpad=1 gfit=1 look=0 lookMax=2 lookSm=3 zones=1 dzw=0.1 dzh=0.1 szw=0.6 szh=0.6 zdamp=4 o2d=0 osize=0 cview=0 rooms=0 roomT=0.6 col=0 colR=0.25 colSkin=0.1 colRec=3 colIn=12 colSnap=1 colMask=4294967295 fade=1 fadeA=0.25 fadeSpd=8 blendIn=-1 blendInStyle=-1 aimFollow=1 ng=0
+end
+gameobject 16 "Camera Director"
+  guid "e783aec435fabd6c7c1ff83c0c190c7f"
+  active 1
+  parent -1
+  transform 0 0 0 0 0 0 1 1 1 1
+  script "okayscript" "// Keys: 1 Follow, 2 Orbit (hold the right mouse button and drag), 3 Look At, 4 Group, 5 See-Through, 0 back to automatic.
+// Effects: Z impact, X explosion, C footstep, V field of view kick, B hit flash, H handheld on or off.
+var handheld = 0
+function update(dt) {
+  if (key_down(\"1\")) { Camera.BlendTo(\"Shot Follow\", 0.8) }
+  if (key_down(\"2\")) { Camera.BlendTo(\"Shot Orbit\", 0.8) }
+  if (key_down(\"3\")) { Camera.BlendTo(\"Shot Look At\", 0.8) }
+  if (key_down(\"4\")) { Camera.BlendTo(\"Shot Group\", 0.8) }
+  if (key_down(\"5\")) { Camera.BlendTo(\"Shot See-Through\", 0.8) }
+  if (key_down(\"0\")) { Camera.BlendTo(\"\") }
+  if (key_down(\"z\")) { Camera.Shake(\"impact\", 1) }
+  if (key_down(\"x\")) { Camera.Shake(\"explosion\", 1) }
+  if (key_down(\"c\")) { Camera.Shake(\"footstep\", 1) }
+  if (key_down(\"v\")) { Camera.FovKick(10, 0.5) }
+  if (key_down(\"b\")) { Camera.HitPulse(0.9) }
+  if (key_down(\"h\")) { handheld = 1 - handheld  Camera.SetHandheld(handheld) }
+}
+" "" 0
+end
+gameobject 17 "Help 1"
+  guid "89bef125e6b9fb47ea76c0ee241925fa"
+  active 1
+  parent -1
+  transform 0 0 0 0 0 0 1 1 1 1
+  text "Camera rigs   1 Follow   2 Orbit (right mouse drag)   3 Look At   4 Group   5 See-Through   0 automatic" 1 1 1 1 1.6 1 14 14 0 1 0 0 0 0.78431374 1 1 0 0 0 0 0 0.9019608 0 220 48 1 0 0 0 0 0.54901963 0 0 0 0 0 0 0.47058824 0.627451 1 1 -1 0 0 "" 0 0.02 4
+end
+gameobject 18 "Help 2"
+  guid "417b58115eba9ddb52d1a3c5d08af07b"
+  active 1
+  parent -1
+  transform 0 0 0 0 0 0 1 1 1 1
+  text "Move: W A S D      Effects: Z impact   X explosion   C footstep   V field of view kick   B hit flash   H handheld" 1 1 1 1 1.6 1 14 36 0 1 0 0 0 0.78431374 1 1 0 0 0 0 0 0.9019608 0 220 48 1 0 0 0 0 0.54901963 0 0 0 0 0 0 0.47058824 0.627451 1 1 -1 0 0 "" 0 0.02 4
+end
+gameobject 19 "Help 3"
+  guid "ed8c0d76a978c2e64e57388928ffb713"
+  active 1
+  parent -1
+  transform 0 0 0 0 0 0 1 1 1 1
+  text "Walk behind the orange wall with the Follow shot: the camera moves in. With 5 the wall turns see-through instead." 1 1 1 1 1.6 1 14 58 0 1 0 0 0 0.78431374 1 1 0 0 0 0 0 0.9019608 0 220 48 1 0 0 0 0 0.54901963 0 0 0 0 0 0 0.47058824 0.627451 1 1 -1 0 0 "" 0 0.02 4
+end

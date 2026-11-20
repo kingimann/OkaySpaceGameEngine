@@ -1,0 +1,223 @@
+okayscene 3
+name "Camera 2D rooms"
+gravity 0 -9.81
+gravity3 0 -9.81 0
+rendersettings 1 0.27450982 0.47058824 0.78431374 0.5882353 0.7254902 0.88235295 0.47058824 0.47058824 0.50980395 0.15
+fog 0 0.5882353 0.7254902 0.88235295 20 90
+tonemap 1
+gameobject 0 "Main Camera"
+  guid "9e2c0f451bec5531baac1354ee496e0d"
+  active 1
+  parent -1
+  transform 0 0 -10 0 0 0 1 1 1 1
+  camera 0 5 60 0.08 0.09 0.12 1 1 0 0 0.3 4000 0 0 0 1 1 -1 0 50 24 1 0 0 0 1 16 0.3 2 18 1.5
+  camerax hitPulse=0.5
+  cmbrain 0 1
+  cmbrainx style=2 c0=0.25 c1=0.1 c2=0.25 c3=1 cutscene=1
+end
+gameobject 1 "Room A"
+  guid "9a3b4920d6a87e5c8edd6b56db83f272"
+  active 1
+  parent -1
+  transform 0 0 0 0 0 0 1 1 1 1
+  camroom w=28 h=14
+end
+gameobject 2 "Room A Floor"
+  guid "80f6367b59d0fc522d3e61478312e878"
+  active 1
+  parent -1
+  transform 0 0 1 0 0 0 1 1 1 1
+  sprite 35 0.25 0.45 0.35 1 28 14 "" 0 0 1 1 -10 0 0 0 0
+end
+gameobject 3 "Room A Block 0"
+  guid "89e100be0f329957b7f9905bc2a7dda1"
+  active 1
+  parent -1
+  transform -10 -3 0 0 0 0 1 1 1 1
+  sprite 35 0.375 0.67499995 0.525 1 1.5 1.5 "" 0 0 1 1 -5 0 0 0 0
+end
+gameobject 4 "Room A Block 1"
+  guid "aa1df80922bd0de1563712f526eaf91a"
+  active 1
+  parent -1
+  transform -6 3 0 0 0 0 1 1 1 1
+  sprite 35 0.375 0.67499995 0.525 1 1.5 1.5 "" 0 0 1 1 -5 0 0 0 0
+end
+gameobject 5 "Room A Block 2"
+  guid "2efd599f8e4e2de8553d6cd13660c2a5"
+  active 1
+  parent -1
+  transform -2 -3 0 0 0 0 1 1 1 1
+  sprite 35 0.375 0.67499995 0.525 1 1.5 1.5 "" 0 0 1 1 -5 0 0 0 0
+end
+gameobject 6 "Room A Block 3"
+  guid "69fe871e95a0196a661587b04a820fcc"
+  active 1
+  parent -1
+  transform 2 3 0 0 0 0 1 1 1 1
+  sprite 35 0.375 0.67499995 0.525 1 1.5 1.5 "" 0 0 1 1 -5 0 0 0 0
+end
+gameobject 7 "Room A Block 4"
+  guid "01c7fd9f73eaac2c3310ffddb1d58325"
+  active 1
+  parent -1
+  transform 6 -3 0 0 0 0 1 1 1 1
+  sprite 35 0.375 0.67499995 0.525 1 1.5 1.5 "" 0 0 1 1 -5 0 0 0 0
+end
+gameobject 8 "Room A Block 5"
+  guid "12c1d84d74905986d5cc87c655c2f6fc"
+  active 1
+  parent -1
+  transform 10 3 0 0 0 0 1 1 1 1
+  sprite 35 0.375 0.67499995 0.525 1 1.5 1.5 "" 0 0 1 1 -5 0 0 0 0
+end
+gameobject 9 "Room B"
+  guid "f31443b91c1762d05d6c87cb9342da6d"
+  active 1
+  parent -1
+  transform 30 0 0 0 0 0 1 1 1 1
+  camroom w=28 h=14
+end
+gameobject 10 "Room B Floor"
+  guid "ff7c90b72da528081f27a703dc2f42a6"
+  active 1
+  parent -1
+  transform 30 0 1 0 0 0 1 1 1 1
+  sprite 35 0.45 0.35 0.55 1 28 14 "" 0 0 1 1 -10 0 0 0 0
+end
+gameobject 11 "Room B Block 0"
+  guid "b7db3344a0e3ec50972ef49bacd662ce"
+  active 1
+  parent -1
+  transform 20 -3 0 0 0 0 1 1 1 1
+  sprite 35 0.67499995 0.525 0.82500005 1 1.5 1.5 "" 0 0 1 1 -5 0 0 0 0
+end
+gameobject 12 "Room B Block 1"
+  guid "607753dfbf4f1044c8f3b4148c54d963"
+  active 1
+  parent -1
+  transform 24 3 0 0 0 0 1 1 1 1
+  sprite 35 0.67499995 0.525 0.82500005 1 1.5 1.5 "" 0 0 1 1 -5 0 0 0 0
+end
+gameobject 13 "Room B Block 2"
+  guid "59a39f08bc4efb625b99e0c440dd1a71"
+  active 1
+  parent -1
+  transform 28 -3 0 0 0 0 1 1 1 1
+  sprite 35 0.67499995 0.525 0.82500005 1 1.5 1.5 "" 0 0 1 1 -5 0 0 0 0
+end
+gameobject 14 "Room B Block 3"
+  guid "078ddb82fa34f369c5ce5b97cebcdee4"
+  active 1
+  parent -1
+  transform 32 3 0 0 0 0 1 1 1 1
+  sprite 35 0.67499995 0.525 0.82500005 1 1.5 1.5 "" 0 0 1 1 -5 0 0 0 0
+end
+gameobject 15 "Room B Block 4"
+  guid "3fc04bbbdee84c5ccd8127a29a2a9cb6"
+  active 1
+  parent -1
+  transform 36 -3 0 0 0 0 1 1 1 1
+  sprite 35 0.67499995 0.525 0.82500005 1 1.5 1.5 "" 0 0 1 1 -5 0 0 0 0
+end
+gameobject 16 "Room B Block 5"
+  guid "1ca5d1f8a08166c5ab873223a4dd1b4e"
+  active 1
+  parent -1
+  transform 40 3 0 0 0 0 1 1 1 1
+  sprite 35 0.67499995 0.525 0.82500005 1 1.5 1.5 "" 0 0 1 1 -5 0 0 0 0
+end
+gameobject 17 "Room C"
+  guid "20e9340da25a4363de3416386b204c5f"
+  active 1
+  parent -1
+  transform 30 16 0 0 0 0 1 1 1 1
+  camroom w=28 h=14
+end
+gameobject 18 "Room C Floor"
+  guid "2e339b6b945a8a2144a71e347f4f7a42"
+  active 1
+  parent -1
+  transform 30 16 1 0 0 0 1 1 1 1
+  sprite 35 0.55 0.45 0.3 1 28 14 "" 0 0 1 1 -10 0 0 0 0
+end
+gameobject 19 "Room C Block 0"
+  guid "de76cca232486e0f649d78115b193629"
+  active 1
+  parent -1
+  transform 20 13 0 0 0 0 1 1 1 1
+  sprite 35 0.82500005 0.67499995 0.45000002 1 1.5 1.5 "" 0 0 1 1 -5 0 0 0 0
+end
+gameobject 20 "Room C Block 1"
+  guid "bab20d439eaafe693f890a4b06e2a820"
+  active 1
+  parent -1
+  transform 24 19 0 0 0 0 1 1 1 1
+  sprite 35 0.82500005 0.67499995 0.45000002 1 1.5 1.5 "" 0 0 1 1 -5 0 0 0 0
+end
+gameobject 21 "Room C Block 2"
+  guid "d68e458e7236bf806b3d770e9c5b05ea"
+  active 1
+  parent -1
+  transform 28 13 0 0 0 0 1 1 1 1
+  sprite 35 0.82500005 0.67499995 0.45000002 1 1.5 1.5 "" 0 0 1 1 -5 0 0 0 0
+end
+gameobject 22 "Room C Block 3"
+  guid "737a210e638ea9f30dea8770039624fd"
+  active 1
+  parent -1
+  transform 32 19 0 0 0 0 1 1 1 1
+  sprite 35 0.82500005 0.67499995 0.45000002 1 1.5 1.5 "" 0 0 1 1 -5 0 0 0 0
+end
+gameobject 23 "Room C Block 4"
+  guid "790b1a1ef47b973dea8a303e1a4ee8f7"
+  active 1
+  parent -1
+  transform 36 13 0 0 0 0 1 1 1 1
+  sprite 35 0.82500005 0.67499995 0.45000002 1 1.5 1.5 "" 0 0 1 1 -5 0 0 0 0
+end
+gameobject 24 "Room C Block 5"
+  guid "43cdf1dd5f9f20c9746cab1b9b78598f"
+  active 1
+  parent -1
+  transform 40 19 0 0 0 0 1 1 1 1
+  sprite 35 0.82500005 0.67499995 0.45000002 1 1.5 1.5 "" 0 0 1 1 -5 0 0 0 0
+end
+gameobject 25 "Hero"
+  guid "c0f1fc58ec5d6a3ce33078f17faed009"
+  active 1
+  parent -1
+  transform -8 0 0 0 0 0 1 1 1 1
+  sprite 35 0.2 0.6 1 1 1 1 "" 0 0 1 1 5 0 0 0 0
+  script "okayscript" "// Walk with W A S D. The camera holds each room and slides to the next when you cross over.
+function update(dt) {
+  var s = 9 * dt
+  if (key(\"w\")) { set_y(pos_y() + s) }
+  if (key(\"s\")) { set_y(pos_y() - s) }
+  if (key(\"a\")) { set_x(pos_x() - s) }
+  if (key(\"d\")) { set_x(pos_x() + s) }
+}
+" "" 0
+end
+gameobject 26 "Shot 2D"
+  guid "25812c81aac387df35455211a531a677"
+  active 1
+  parent -1
+  transform 0 0 0 0 0 0 1 1 1 1
+  vcam 10 "Hero" "" 0 0 -10 6 6 60 0 1 0 0 0 0 0 3 0 0 15 8 1 -20 70 1 1 0.2 0 "" 0 0 0 0 -1e+09 -1e+09 -1e+09 1e+09 1e+09 1e+09
+  vcamx damp=1 gpad=1 gfit=1 look=0.2 lookMax=1.5 lookSm=3 zones=1 dzw=0.2 dzh=0.25 szw=0.7 szh=0.7 zdamp=4 o2d=1 osize=5 cview=0 rooms=1 roomT=0.6 col=0 colR=0.25 colSkin=0.1 colRec=3 colIn=12 colSnap=1 colMask=4294967295 fade=0 fadeA=0.25 fadeSpd=8 blendIn=-1 blendInStyle=-1 aimFollow=0 ng=0
+end
+gameobject 27 "Help 1"
+  guid "9b2cba52a20f26a7846bfeed3ebd36a1"
+  active 1
+  parent -1
+  transform 0 0 0 0 0 0 1 1 1 1
+  text "2D camera rooms: walk with W A S D. Walk right out of Room A, then up out of Room B." 1 1 1 1 1.6 1 14 14 0 1 0 0 0 0.78431374 1 1 0 0 0 0 0 0.9019608 0 220 48 1 0 0 0 0 0.54901963 0 0 0 0 0 0 0.47058824 0.627451 1 1 -1 0 0 "" 0 0.02 4
+end
+gameobject 28 "Help 2"
+  guid "383ec4a58ee310e771c9a8b95af3d8b3"
+  active 1
+  parent -1
+  transform 0 0 0 0 0 0 1 1 1 1
+  text "The picture is held inside the room; the camera slides to the next room when you cross over. Pixel perfect is on." 1 1 1 1 1.6 1 14 36 0 1 0 0 0 0.78431374 1 1 0 0 0 0 0 0.9019608 0 220 48 1 0 0 0 0 0.54901963 0 0 0 0 0 0 0.47058824 0.627451 1 1 -1 0 0 "" 0 0.02 4
+end

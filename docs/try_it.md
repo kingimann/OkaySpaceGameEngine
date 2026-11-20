@@ -95,6 +95,7 @@ release job or the installer build for this change.
 | ac-cheat-sim | Anti-cheat: watch the server catch a cheater (cheat simulator), ban list, audit log | `OkaySpacePlayer.exe --server --cheat-sim --log cheat_sim.txt` (Tools folder), then open the log | New in this change; tested headless on Linux over loopback; Windows and a real network unverified |
 | boat1 | Water waves, floating things and a boat to drive | `examples\boat\boat_lake.okayscene` (File > Open, Play), **GameObject > Vehicles > Boat**, Add Component > Physics 3D > Buoyancy and Gameplay > Boat Controller, Water Inspector > Style | New in this change; headless tests only, Windows and GPU not run |
 | bs2 | Build Settings: search, Game and Advanced pages, checks, history | Editor: File > Build Settings (Ctrl+B) | New in this change; the editor and player were compile-checked on Linux but not run on Windows |
+| cam-up | Camera rigs and effects (Follow, Orbit, Look At, Group, walls, blends, shake presets, 2D rooms) | File > Open `examples\camera\camera_rigs.okayscene` and `examples\camera\camera_2d_rooms.okayscene`, then Play; GameObject > Camera > Camera Rig | Built and tested headless on Linux only; editor and Windows not run |
 | content-delivery | Downloadable game content: signed models, textures, scripts and data that an exported game fetches (off by default) | `okay-content.exe` in `Tools/`, or `content.okayconfig` / `OKAY_CONTENT_URL` for the player | Built; Linux-tested only |
 | editor-fps | Editor frame-time overlay and speed switches | Editor menu **View > Rendering**: Frame-time overlay, Frame rate limit, Slow down when idle, Viewport resolution, Performance mode. Heavy test scenes: `examples\perf\` | New in this change. Real Direct3D 11 numbers on a Windows machine are unverified; sent back by the owner |
 | fast1 | Fast release: one workflow dispatch, no version-bump PR | GitHub: Actions > "Fast release" > Run workflow (tick dry_run first); a change adds `dist/changelog.d/<id>.txt` | Built and tested offline with fake data; never run on GitHub; off until `FAST_RELEASE_ENABLED=1` |
@@ -1593,6 +1594,42 @@ boat feels with a real keyboard. Boarding a boat with E is not done.
 **What you should see.** As in each step. Defaults write nothing new: a project that never touched the Game or Advanced pages builds exactly the `game.okayconfig` it built before.
 
 **Status.** Tested on Linux: the model (pages, search, reset, presets, summary, checks and fixes, history, commands, ignore file, profile files) and the player's config reader (`tests/test_build_settings.cpp`), and every new setting through the profile file (`tests/test_project_state.cpp`). `editor/main.cpp` and `player/main.cpp` were compile-checked (syntax only) on Linux. NOT run: the window on screen, a Windows build, and the player reading the config in a real game.
+
+## cam-up. Camera rigs and effects
+
+**What it is.** A camera rig is a shot that follows, circles or watches something for you, smoothly. It can look a little ahead of a
+moving target, frame several things at once, stay out of walls, fade things in the way, blend to other shots and shake on hits. A 2D
+camera can be held inside rooms and slide from room to room. Details: `docs/camera_upgrade.md`.
+
+**Steps (3D example).**
+1. Open the editor. File > Open, pick `examples\camera\camera_rigs.okayscene`, press Play.
+2. Walk the blue capsule with W A S D. The camera follows smoothly and leans a little ahead of you.
+3. Walk behind the orange wall (toward the camera). The camera moves in instead of going through the wall, and glides back out.
+4. Press `2`: the Orbit shot. Hold the right mouse button and drag to circle the player.
+5. Press `3` (Look At: the camera stands still and turns to watch you), `4` (Group: it frames you and the orange ball and steps back
+   to fit both), `5` (See-Through: the camera stays behind the wall and the wall turns see-through), `0` (back to automatic).
+6. Effects: `Z` impact, `X` explosion, `C` footstep, `V` field of view kick, `B` hit flash (the screen edges darken), `H` handheld wobble on or off.
+7. Make your own: select an object, then GameObject > Camera > Camera Rig: Follow (or Orbit, Look At). Select the new rig: the Inspector
+   has sections Camera Rig, Framing, Group, Walls and Blend, and the Scene view shows its frustum, dead zone (green), soft zone (orange) and
+   the wall probe. The Camera Preview inset (bottom right of the Scene view) shows what the rig sees.
+8. Blend styles: select the Main Camera, look at Cinemachine Brain > Blend style (Cut, Linear, Ease In and Out, Ease In, Ease Out, Custom
+   curve). Then press `1` and `2` in Play to see the difference.
+
+**Steps (2D example).**
+1. File > Open `examples\camera\camera_2d_rooms.okayscene`, Play.
+2. Walk with W A S D. The view stays inside Room A. Walk right out of the room: the camera slides to Room B. Walk up: Room C.
+3. Select "Shot 2D": Camera Rig, Framing and 2D camera sections hold these settings. Select a Camera Room (yellow box in the Scene view)
+   and change its Size.
+
+**From a script.** `Camera.Shake("impact", 1)`, `Camera.BlendTo("Shot Group", 0.8)`, `Camera.SetTarget("Boss")`, `Camera.AddToGroup("Boss")`,
+`Camera.FovKick(10, 0.5)`, `Camera.SetFovOffset(8, 0.3)` (sprint), `Camera.HitPulse(0.9)`, `Camera.SetHandheld(1)`. In a visual script search the
+palette for `Camera.` (each one is a node).
+
+**What you should see.** No jitter at any frame rate, no pop when a wall moves in or out or when you switch shots part way through a
+blend, and the example's two help lines of keys in the top left.
+
+**Status.** Numbers were tested headless on Linux at 30, 60 and 144 frames a second (`camera_math`, `camera_rig`). The editor was
+not run (menus, Inspector, gizmo and preview inset are compiled but unseen) and nothing ran on Windows or a GPU.
 
 ## Console: Collapse button (branch `claude/console-collapse`, not merged or released yet)
 

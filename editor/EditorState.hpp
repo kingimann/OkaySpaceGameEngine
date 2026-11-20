@@ -106,6 +106,7 @@ public:
     void NewPlatformer25D();
     void NewVehicle3D();
     void NewVehicleSeats3D();
+    void NewDrivingWorld();
     void NewVehicle2D();
     void NewCoinCollector();
     void NewMainMenu();

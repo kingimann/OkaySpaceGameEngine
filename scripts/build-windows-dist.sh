@@ -189,6 +189,7 @@ fi
 EXAMPLE_DIRS="
 behavior_trees
 boat
+camera
 cutscene
 fp_hand
 input
@@ -210,7 +211,9 @@ security_paths
 spatial_audio
 texture
 touch_controls
+driving
 ui_library
+ui_quality
 ui_text
 vehicle
 visual_script/playground
@@ -285,6 +288,8 @@ examples/ example scenes to try: in the editor use File > Open and pick
                         Preset or a Sea State), or
                         examples\ui_text\ui_text.okayscene (a nameplate over each of
                         two characters and a sign with rich text; keys 1 2 3 H), or
+                        examples\ui_quality\ui_quality.okayscene (the same UI card at 1x, 1.5x
+                        and 2x; Lighting > UI Font > UI Quality switches the old look back on).
                         examples\wind\wind.okayscene (trees, grass, a flag and leaves in the
                         wind, a box the gusts push, and a wind sound).
                         More in docs/try_it.md.

@@ -30,7 +30,11 @@
 #include "okay/Physics/Physics3D.hpp"
 #include "okay/Math/Vec2.hpp"
 #include "okay/Components/Camera.hpp"
+#include "okay/Components/VehicleController.hpp"
+#include "okay/Components/VehicleSeat.hpp"
 #include "okay/Components/CameraFollow.hpp"
+#include "okay/Components/CinemachineBrain.hpp"
+#include "okay/Components/VirtualCamera.hpp"
 #include "okay/Components/Stats.hpp"
 #include "okay/Components/SurvivalStats.hpp"
 #include "okay/Components/Light.hpp"
@@ -5069,6 +5073,100 @@ struct OkayScriptVM::Impl {
                 f->targetName = a.empty() ? std::string{} : a[0].AsString();
                 if (a.size() > 1) f->smoothing = a[1].AsFloat();
             }
+            return Value{};
+        };
+        // ---- Camera rigs and effects (docs/camera_upgrade.md): Camera.* ----
+        // The live shot: the virtual camera the brain is showing, else the first enabled one.
+        auto liveVcam = [sceneOf]() -> VirtualCamera* {
+            Scene* s = sceneOf();
+            if (!s) return nullptr;
+            for (CinemachineBrain* br : s->FindObjectsOfType<CinemachineBrain>()) {
+                if (br->enabled && br->Forced()) return br->Forced();
+                if (br->enabled && br->LiveCamera()) return br->LiveCamera();
+            }
+            for (VirtualCamera* v : s->FindObjectsOfType<VirtualCamera>())
+                if (v->enabled && v->gameObject && v->gameObject->active) return v;
+            return nullptr;
+        };
+        // Camera.Shake(strength)            the classic trauma shake (hits ~0.3, explosions ~0.6)
+        // Camera.Shake("impact", strength)  a preset: "impact", "explosion", "footstep" or "handheld"
+        b["Camera.Shake"] = [sceneOf](std::vector<Value>& a) {
+            Scene* s = sceneOf();
+            if (!s || !s->mainCamera) return Value{};
+            if (!a.empty() && a[0].IsString()) {
+                std::string n = a[0].AsString();
+                for (char& ch : n) ch = (char)std::tolower((unsigned char)ch);
+                cam::ShakePreset p = cam::ShakePreset::Impact;
+                if (n == "explosion") p = cam::ShakePreset::Explosion;
+                else if (n == "footstep" || n == "footsteps") p = cam::ShakePreset::Footstep;
+                else if (n == "handheld") p = cam::ShakePreset::Handheld;
+                else if (n != "impact") return Value{};   // an unknown name does nothing
+                s->mainCamera->ShakePreset(p, a.size() > 1 ? a[1].AsFloat() : 1.0f);
+            } else {
+                s->mainCamera->Shake(a.empty() ? 0.5f : a[0].AsFloat());
+            }
+            return Value{};
+        };
+        // Camera.BlendTo("Shot", seconds): cut or blend to that virtual camera and keep it live.
+        // seconds < 0 (or left out) = the shot's own blend time. An empty name goes back to choosing by priority.
+        b["Camera.BlendTo"] = [sceneOf](std::vector<Value>& a) {
+            Scene* s = sceneOf();
+            if (!s || !s->mainCamera || !s->mainCamera->gameObject) return Value{};
+            const std::string name = a.empty() ? std::string{} : a[0].AsString();
+            GameObject* cg = s->mainCamera->gameObject;
+            auto* br = cg->GetComponent<CinemachineBrain>();
+            if (name.empty()) { if (br) br->ReleaseForced(); return Value{}; }
+            GameObject* g = s->Find(name);
+            VirtualCamera* v = g ? g->GetComponent<VirtualCamera>() : nullptr;
+            if (!v) return Value{};
+            if (!br) br = cg->AddComponent<CinemachineBrain>();
+            br->ForceLive(v, a.size() > 1 ? a[1].AsFloat() : -1.0f);
+            return Value{};
+        };
+        // Camera.SetTarget("Name"): the live shot follows and looks at that object.
+        b["Camera.SetTarget"] = [sceneOf, liveVcam](std::vector<Value>& a) {
+            const std::string name = a.empty() ? std::string{} : a[0].AsString();
+            if (VirtualCamera* v = liveVcam()) {
+                if (v->lookAt.empty() || v->lookAt == v->follow) v->lookAt = name;
+                v->follow = name;
+                return Value{};
+            }
+            if (Scene* s = sceneOf()) if (s->mainCamera && s->mainCamera->gameObject) {   // no rig: the plain chase camera
+                GameObject* cg = s->mainCamera->gameObject;
+                auto* f = cg->GetComponent<CameraFollow>();
+                if (!f) f = cg->AddComponent<CameraFollow>();
+                f->targetName = name;
+            }
+            return Value{};
+        };
+        b["Camera.AddToGroup"] = [liveVcam](std::vector<Value>& a) {
+            if (VirtualCamera* v = liveVcam()) if (!a.empty()) v->AddGroupTarget(a[0].AsString());
+            return Value{};
+        };
+        b["Camera.RemoveFromGroup"] = [liveVcam](std::vector<Value>& a) {
+            if (VirtualCamera* v = liveVcam()) { if (a.empty()) v->ClearGroup(); else v->RemoveGroupTarget(a[0].AsString()); }
+            return Value{};
+        };
+        // Camera.FovKick(degrees, seconds): a quick punch of the field of view that settles back.
+        b["Camera.FovKick"] = [sceneOf](std::vector<Value>& a) {
+            if (Scene* s = sceneOf()) if (s->mainCamera)
+                s->mainCamera->KickFov(a.empty() ? 6.0f : a[0].AsFloat(), a.size() > 1 ? a[1].AsFloat() : 0.4f);
+            return Value{};
+        };
+        // Camera.SetFovOffset(degrees, seconds): a held change, for sprinting or aiming. 0 eases back.
+        b["Camera.SetFovOffset"] = [sceneOf](std::vector<Value>& a) {
+            if (Scene* s = sceneOf()) if (s->mainCamera)
+                s->mainCamera->SetFovOffset(a.empty() ? 0.0f : a[0].AsFloat(), a.size() > 1 ? a[1].AsFloat() : 0.25f);
+            return Value{};
+        };
+        // Camera.HitPulse(strength): flash the screen edges dark for a moment (a hit).
+        b["Camera.HitPulse"] = [sceneOf](std::vector<Value>& a) {
+            if (Scene* s = sceneOf()) if (s->mainCamera) s->mainCamera->HitPulse(a.empty() ? 0.6f : a[0].AsFloat());
+            return Value{};
+        };
+        // Camera.SetHandheld(amount): a steady slight wobble, 0 to 1 (0 = off).
+        b["Camera.SetHandheld"] = [sceneOf](std::vector<Value>& a) {
+            if (Scene* s = sceneOf()) if (s->mainCamera) s->mainCamera->SetHandheld(a.empty() ? 0.0f : a[0].AsFloat());
             return Value{};
         };
         // Set the main camera's clear/background color (flash, day-night, fades).
@@ -10813,6 +10911,46 @@ struct OkayScriptVM::Impl {
         alias("String.Format", "format");
         // Quaternion.Euler(x, y, z) -> a Vec3 of euler angles (assignable to
         // transform.rotation, which uses the Z component for 2D).
+        // ---- Vehicles (docs/vehicle_controls.md): Vehicle.* ----
+        // The first argument is the vehicle (an object or its name); leave it as "" to mean the object this script is on.
+        auto carOf = [sceneOf, this](std::vector<Value>& a) -> VehicleController* {
+            Scene* s = sceneOf(); if (!s) return nullptr;
+            // One-argument forms such as Vehicle.Boost(1) act on this script's own object: the vehicle is then left out.
+            if (a.empty() || !(a[0].IsObject() || a[0].IsString())) a.insert(a.begin(), Value{std::string{}});
+            GameObject* g = (a[0].IsObject() || !a[0].AsString().empty()) ? ResolveObject(s, a[0]) : (rt.host ? rt.host->gameObject : nullptr);
+            return g ? g->GetComponent<VehicleController>() : nullptr;
+        };
+        b["Vehicle.SetSetting"] = [carOf](std::vector<Value>& a) -> Value {   // Vehicle.SetSetting(car, "maxSpeed", 30): 1 = done, 0 = unknown name
+            VehicleController* v = carOf(a); if (!v || a.size() < 3) return Value{0.0f};
+            return Value{v->SetSetting(a[1].AsString(), a[2].AsFloat()) ? 1.0f : 0.0f};
+        };
+        b["Vehicle.GetSetting"] = [carOf](std::vector<Value>& a) -> Value {
+            VehicleController* v = carOf(a); double d = 0; if (!v || a.size() < 2 || !v->GetSetting(a[1].AsString(), d)) return Value{0.0f};
+            return Value{(float)d};
+        };
+        b["Vehicle.ApplyPreset"] = [carOf](std::vector<Value>& a) -> Value {   // "Sports Car", "Pickup", ...
+            VehicleController* v = carOf(a); return Value{(v && a.size() > 1 && v->ApplyPreset(a[1].AsString())) ? 1.0f : 0.0f};
+        };
+        b["Vehicle.SetThrottle"] = [carOf](std::vector<Value>& a) -> Value { if (auto* v = carOf(a)) if (a.size() > 1) v->SetThrottle(a[1].AsFloat()); return Value{}; };
+        b["Vehicle.SetBrake"]    = [carOf](std::vector<Value>& a) -> Value { if (auto* v = carOf(a)) if (a.size() > 1) v->SetBrake(a[1].AsFloat()); return Value{}; };
+        b["Vehicle.SetSteer"]    = [carOf](std::vector<Value>& a) -> Value { if (auto* v = carOf(a)) if (a.size() > 1) v->SetSteer(a[1].AsFloat()); return Value{}; };
+        b["Vehicle.SetHandbrake"] = [carOf](std::vector<Value>& a) -> Value { if (auto* v = carOf(a)) if (a.size() > 1) v->SetHandbrake(a[1].AsFloat() != 0.0f); return Value{}; };
+        b["Vehicle.Boost"]  = [carOf](std::vector<Value>& a) -> Value { if (auto* v = carOf(a)) v->Boost(a.size() < 2 || a[1].AsFloat() != 0.0f); return Value{}; };
+        b["Vehicle.Horn"]   = [carOf](std::vector<Value>& a) -> Value { if (auto* v = carOf(a)) v->Horn(a.size() < 2 || a[1].AsFloat() != 0.0f); return Value{}; };
+        b["Vehicle.Lights"] = [carOf](std::vector<Value>& a) -> Value { if (auto* v = carOf(a)) v->SetLights(a.size() < 2 || a[1].AsFloat() != 0.0f); return Value{}; };
+        b["Vehicle.ClearInput"] = [carOf](std::vector<Value>& a) -> Value { if (auto* v = carOf(a)) v->ClearInput(); return Value{}; };   // hand the keys back at once
+        b["Vehicle.Recover"] = [carOf](std::vector<Value>& a) -> Value { if (auto* v = carOf(a)) v->Recover(); return Value{}; };
+        b["Vehicle.Eject"]  = [carOf](std::vector<Value>& a) -> Value { return Value{VehicleSeat::EjectDriver(carOf(a)) ? 1.0f : 0.0f}; };
+        b["Vehicle.Enter"]  = [carOf, sceneOf](std::vector<Value>& a) -> Value {   // Vehicle.Enter(car, person): the person takes the driver seat
+            VehicleController* v = carOf(a); Scene* s = sceneOf();
+            GameObject* who = (s && a.size() > 1) ? ResolveObject(s, a[1]) : nullptr;
+            if (!v || !who || !v->gameObject) return Value{0.0f};
+            for (VehicleSeat* seat : v->gameObject->GetComponentsInChildren<VehicleSeat>(true)) if (seat->driver) return Value{seat->Enter(who) ? 1.0f : 0.0f};
+            return Value{0.0f};
+        };
+        b["Vehicle.Speed"] = [carOf](std::vector<Value>& a) -> Value { auto* v = carOf(a); return Value{v ? v->Speed() : 0.0f}; };
+        b["Vehicle.Gear"]  = [carOf](std::vector<Value>& a) -> Value { auto* v = carOf(a); return Value{v ? (float)v->Gear() : 0.0f}; };
+        b["Vehicle.Rpm"]   = [carOf](std::vector<Value>& a) -> Value { auto* v = carOf(a); return Value{v ? v->Rpm() : 0.0f}; };
         b["Quaternion.Euler"] = [](std::vector<Value>& a) -> Value {
             return Value{Vec3{a.size() > 0 ? a[0].AsFloat() : 0.0f,
                               a.size() > 1 ? a[1].AsFloat() : 0.0f,

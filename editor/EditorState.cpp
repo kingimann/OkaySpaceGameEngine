@@ -812,6 +812,18 @@ void EditorState::NewVehicleSeats3D() {
     StartDocument();
 }
 
+void EditorState::NewDrivingWorld() {
+    NewScene();
+    m_suppressUndo = true;
+    Templates::DrivingWorld(m_scene);
+    m_suppressUndo = false;
+    view3D = true;
+    camTarget = {40, 1, -3.5f};   // the first parked vehicle
+    camDist = 24.0f;
+    m_selected = m_scene.Find("Sedan");
+    StartDocument();
+}
+
 void EditorState::NewVehicle2D() {
     NewScene();
     m_suppressUndo = true;

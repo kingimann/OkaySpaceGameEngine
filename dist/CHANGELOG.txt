@@ -1,5 +1,25 @@
 OkaySpace Game Engine — Changelog
 
+v2.893.0
+  Better cameras and a sharper in-game UI
+  - New camera system: Virtual Cameras that follow, orbit or look at things
+    (or a whole group), with smooth damping, collision so walls do not get
+    in the way, see-through fading, blends between cameras, shake, field of
+    view effects, a hit flash, and 2D camera rooms. Example scenes are in
+    the examples\camera folder.
+  - Changed: a camera shot that looks at something now really faces it.
+    Before, it pointed the other way, so old scenes that use Look At or
+    Orbit shots will look different (and correct).
+  - Changed: while a cutscene is playing, the camera brain now lets the
+    cutscene take over and blends back when it ends. Turn off "Let
+    cutscenes take over" on the Cinemachine Brain to keep the old way.
+  - The in-game UI is sharper. Rounded corners and circles are smooth,
+    small text is evenly spaced, shadows have no rings, and pictures no
+    longer flicker when shrunk. Pick the level in the Lighting window under
+    UI Font > UI Quality: Fast, Good (the default), Best, or Old look.
+    Open examples\ui_quality to compare. The new look was only checked on
+    the software renderer, not yet on a real graphics card.
+
 v2.892.0
   Physics materials and toys, better lighting, water that looks like water
   - New Physics Materials: give a 3D model a feel (Ice, Rubber, Wood, Metal

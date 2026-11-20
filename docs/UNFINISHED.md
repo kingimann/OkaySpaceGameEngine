@@ -18,6 +18,9 @@ The feature map currently has **125** rows that are Partial or Planned.
 
 | What | State | What is missing |
 |---|---|---|
+| Open-world vehicle controls (branch `claude/vehicle-1`, `docs/vehicle_controls.md`, try it: `docs/try_it.md` row vehicle-1) | Core built and tested headless on Linux; editor pieces written but not built; never run on Windows or driven by a person | Done: driving model, 9 presets, tuning table, .okayvehicle files, chase camera, Driving World, Vehicles menu, Inspector tabs. Missing: bike, engine and tyre sound, skid marks, tyre smoke, damage, fuel, indicator and brake-light visuals, AI driver, Settings window page for driving options, Input Actions map and rebinding window, scripting and Visual Script nodes for the new vehicle API, camera-rig layer from `claude/camera-2`, physics-material surfaces from `claude/physics-3` (tags Ice, Mud, Grass are used instead) |
+| Camera upgrade: rig layer, walls, blends, effects, 2D rooms (branch `claude/camera-2`, `docs/camera_upgrade.md`, try it: `docs/try_it.md` cam-up) | Written and tested headless on Linux (`camera_math`, `camera_rig`) | Not run on Windows or a GPU, the editor part (menus, Inspector, Scene gizmo, rig preview) was compiled but never opened, the see-through fade was checked on the number only. Not done: a camera field on dialogue lines, the camera stack in the player and editor render path, a Camera switch for whole-number pixel-perfect zoom (`cam::PixelPerfectOrthoSize` exists) |
+| Xbox One export, experimental (branches `claude/xbox-uwp-1`, `claude/xbox-uwp-2`, `docs/xbox_uwp.md`, `docs/xbox_uwp_audit.md`, try it: `docs/try_it.md` xbox-uwp) | Triangle test package verified on a Windows 11 PC (2026-11-18); engine-in-UWP code unverified | Off by default (`OKAY_BUILD_XBOX_UWP`). **Verified on Windows by the owner (2026-11-18, VS 2026, MSVC 14.52 / v145, SDK 10.0.26100.0):** `build-xbox-uwp.ps1 -MinimalTest` end to end, MakeAppx accepts our package, SignTool, install, the triangle runs on a PC. Not verified: gamepad, suspend/resume, engine mode, the editor button, anything on a console. Written and Linux-tested (pure logic): SDK check, manifest, tile images, own `.appx` packer, offline shader bundle and manifest, swap-chain sizing and Present handling, UWP lifecycle state machine, UWP platform backend over a fake host, pad mapping and rumble, path mapping, audio ring and conversion, game config, API audit of the engine sources, and the one-click build plan and runner (editor button, log panel, cancel, optional install with one UAC prompt). Written, never compiled: `okay_engine_uwp`, the engine-mode app shell, WASAPI, the swap-chain presenter (syntax-checked with MinGW headers), the Windows process glue, the PowerShell scripts (never run). Round 3 (all unverified): software-painted 2D / UI layer blended over the 3D view, GPU device-loss recovery with a bounded retry policy, suspend save and restore through the save framework, a pure HTTP Range driver with a WinRT client and a content-transport adapter (the content-delivery branch is not merged). Engine mode is split into a C++20 WinRT shell and a C++17 engine bridge, every engine source passes a MinGW `WINAPI_FAMILY_APP` syntax check and an API-name audit, and `build-xbox-uwp.ps1 -MinimalTest -EngineMode` writes a tiny scene (all unverified on Windows). Not done: compiling the engine with Microsoft's UWP compiler, the 2D / UI layer on the console, device-loss recovery, HTTP (WinHTTP is out; `Windows.Web.Http` not written), libsodium for UWP, text/IME, touch, microphone, signing code of ours (SignTool signs; own signing is the other branch), anything on a console. Not a native console game and not for publishing **Own code instead of third-party (2026-11-18, `docs/xbox_uwp_thirdparty.md`):** no SDL, ImGui, Assimp, ufbx or libsodium in the UWP target (audit 0 findings); all own model readers on (Linux test `xbox_uwp_models`), own WAV/OGG/MP3/FLAC; crypto is our own unreviewed code (packet encryption OFF; `OKAY_XBOX_OWN_CRYPTO` experiment switch, refused in releases); HTTP choice `windows-web-http` or `own` (plain http only: no TLS of our own). All UNVERIFIED on Windows. |
 | Lighting upgrade (branch `claude/lighting-2`, `docs/lighting_upgrade.md`, try it: `docs/try_it/7lit-*.md`) | Software renderer and the shared maths built and tested headless (`lighting_upgrade`, 194 checks); presets, units, glow lights and stable cascades reach every renderer | **Not run on a GPU, Direct3D 12 or Windows.** Round 2 ported Soft Edges, light masks, rectangle panels, the fade and the roll-off to the Direct3D 11 and OpenGL shader text with offline text/layout tests only (`d3d11_layout`); no shader was ever compiled. Light probes: software renderer only. Not built: reflection probes, GPU light probes, Direct3D 12 features. The editor code (Lighting presets, Inspector fields, File > Examples > Lighting) was written without a successful full editor build on this machine |
 | Xbox One export, experimental (branches `claude/xbox-uwp-1`, `claude/xbox-uwp-2`, `docs/xbox_uwp.md`, `docs/xbox_uwp_audit.md`, try it: `docs/try_it.md` xbox-uwp) | Triangle test package verified on a Windows 11 PC (2026-11-18); engine-in-UWP code unverified | Off by default (`OKAY_BUILD_XBOX_UWP`). **Verified on Windows by the owner (2026-11-18, VS 2026, MSVC 14.52 / v145, SDK 10.0.26100.0):** `build-xbox-uwp.ps1 -MinimalTest` end to end, MakeAppx accepts our package, SignTool, install, the triangle runs on a PC. Not verified: gamepad, suspend/resume, engine mode, the editor button, anything on a console. Written and Linux-tested (pure logic): SDK check, manifest, tile images, own `.appx` packer, offline shader bundle and manifest, swap-chain sizing and Present handling, UWP lifecycle state machine, UWP platform backend over a fake host, pad mapping and rumble, path mapping, audio ring and conversion, game config, API audit of the engine sources, and the one-click build plan and runner (editor button, log panel, cancel, optional install with one UAC prompt). Written, never compiled: `okay_engine_uwp`, the engine-mode app shell, WASAPI, the swap-chain presenter (syntax-checked with MinGW headers), the Windows process glue, the PowerShell scripts (never run). Round 3 (all unverified): software-painted 2D / UI layer blended over the 3D view, GPU device-loss recovery with a bounded retry policy, suspend save and restore through the save framework, a pure HTTP Range driver with a WinRT client and a content-transport adapter (the content-delivery branch is not merged). Engine mode is split into a C++20 WinRT shell and a C++17 engine bridge, every engine source passes a MinGW `WINAPI_FAMILY_APP` syntax check and an API-name audit, and `build-xbox-uwp.ps1 -MinimalTest -EngineMode` writes a tiny scene (all unverified on Windows). Not done: compiling the engine with Microsoft's UWP compiler, the 2D / UI layer on the console, device-loss recovery, HTTP (WinHTTP is out; `Windows.Web.Http` not written), libsodium for UWP, text/IME, touch, microphone, signing code of ours (SignTool signs; own signing is the other branch), anything on a console. Not a native console game and not for publishing **Own code instead of third-party (2026-11-18, `docs/xbox_uwp_thirdparty.md`):** no SDL, ImGui, Assimp, ufbx or libsodium in the UWP target (audit 0 findings); all own model readers on (Linux test `xbox_uwp_models`), own WAV/OGG/MP3/FLAC; crypto is our own unreviewed code (packet encryption OFF; `OKAY_XBOX_OWN_CRYPTO` experiment switch, refused in releases); HTTP choice `windows-web-http` or `own` (plain http only: no TLS of our own). All UNVERIFIED on Windows. |
 | Wind (branch `claude/wind-1`, `docs/wind.md`, try it: `docs/try_it.md` row wind-field) | Written; see the test results in `docs/wind.md` | Done: wind field (zones, gusts, swirl, curve, priority), Wind Zone / Drag / Sway / Sound components, particles, Foliage, Cable, editor menus, Scene-view arrows, Lighting > Wind, script names, example scene `examples/wind`. Not done: Visual Script nodes, GPU vertex-shader sway (CPU sway only, so a very large forest costs frame time), trails and spline followers do not follow the wind, fog not linked to wind, Water reads only the weather's wind, no multiplayer sync (no clear hook), no resize handles on zones in the Scene view. Unverified: anything on Windows or a GPU, the editor on a real desktop |
@@ -26,6 +29,7 @@ The feature map currently has **125** rows that are Partial or Planned.
 | Visual Script: easier to use (branch `claude/easy-graph-usage-1`; internal note) | Written and unit-tested; the editor window was drawn headless only | Done: start screen with 8 recipe cards, Start empty, do-not-show-again (`okay_vs_usage.txt` next to `okay_settings.txt`), a Pick a recipe toolbar button; new blocks join the selected or last block and sit beside it; double-click a wire to add a block on it; a loose block dropped on a wire splits it; Delete rejoins neighbours (Shift cuts); a one-line next-step bar (remembered per step); plain-word messages in `VisualScriptPlainWords.hpp` with a banned-word test; green and red plug rings while dragging; Fix it for me for "not connected" and wrong-kind wires; a "what happened" line under a running block (uses the existing debug trace, no runner hook); F fits all. Not done: not run on a real desktop with a mouse (drag-drop on a wire, double-click and the rings are untested by clicking, only drawn in headless frames); the do-not-show setting lives in its own small file, not inside `okay_settings.txt`; the wire-drop popup already filtered by what fits and was left as it was; the double-click-wire popup is not filtered (a block that does not fit is removed with a message); the "what happened" sentences cover about 25 block types, the rest say "Ran"; the checker's long-tail messages are not rewritten; the node-size estimate used to avoid overlap is a guess (`kVsEstWidth`) and was not re-checked against the roomier layout branch |
 | Visual Script: nodes explain themselves (branch `claude/vs-clarity-1`, `docs/visual_script_clarity.md`, try it: `docs/try_it/vsclarity-visual-script-nodes-explain-themselves.md`) | Built; rules unit-tested over every node (`vs_guide`); drawing compile-checked only | Never drawn or clicked in a real window (Linux or Windows). Not done: `Fn.*` script-function nodes still have unnamed pins; vector-maths and Switch Number titles not renamed; the card does not move off a node it covers; next-step chips are hand-picked for about 18 nodes then a general rule; a number input left empty is not flagged (it reads as 0) |
 | CI speed (branch `claude/ci-speed-1`, `docs/automated_testing.md` "CI speed", try it: `docs/try_it.md` row ci1) | Written, never run on GitHub | `ctest -j4`, main-only ccache saves, launcher/sandbox moved out of the Ubuntu test job, release guards. All unverified until a real CI run (first run is cold; expect the "Build & test (Ubuntu)" time to be compared with the 62-minute baseline). lld was tried and removed (14 tests aborted with an uncaught stof; cause unproven, no local rebuild was possible). Not done: sharding the Ubuntu job (needs a test-to-program map per shard and a gate job), -O2 test builds, folding the 6 Windows tests into the dist tree, unity builds, ccache for the sanitizer and own-http jobs. Cache sizes are guesses: eight jobs with a 1 to 2 GB cap may still exceed GitHub's 10 GB cache limit; read `ccache -s` and the Caches page, then lower `CCACHE_MAXSIZE` |
+| In-game UI quality: exact edge coverage, text on the pixel grid, kerning, soft shadows, filtered pictures, Fast / Good / Best / Old look setting (branch `claude/ingame-ui-crisp-1`, `docs/in_game_ui_quality.md`, try it: `docs/try_it.md` ui-quality-1) | Done in code and tests; headless software renders only | Checked only with headless SDL software renders and numbers on Linux (`ui_quality`); never in a real window, on Windows, on SDL's GL or Direct3D 11 drivers or a high-DPI screen. Not done: widgets turned or scaled by a UI Frame still have a hard outer edge, blending is in sRGB (not linear light), no hinting or LCD text, no blur-behind, no project-wide quality default in Project Settings / Build Settings (scene setting and `OKAY_UI_QUALITY` / `OKAY_CLASSIC_UI` only) |
 | In-game UI crispness when magnified (branch `claude/ui-crisp-1`, try it: `docs/try_it.md` crisp1) | Done in code for the software UI pass; headless renders only | Checked only by headless software renders and numbers on Linux (`ui_crisp`); never in a real editor or player window, on Windows, on a GPU renderer or on a HiDPI screen. Not done: glyphs are placed at fractional positions and resampled (no per-subpixel re-rasterisation), no kerning table, widgets inside a turned or scaled UI Frame still draw hard-edged rectangles, the 8x8 bitmap font of the player overlays (inventory, crafting, F1) is unchanged, no per-image "pixel-art" flag (the setting is per scene) |
 | Natural walk and run (`docs/walk_vs_run.md`, `docs/try_it.md` row 7r) | Done in code and tests; Linux only | Not run on Windows or a GPU renderer, no real Mixamo model used (test rigs only), and whether 2 m/s walk and 5.5 m/s run feel right in a real game is the owner's call (one number in `NaturalGait.hpp`). Older projects keep their saved speeds until the Inspector's **Use natural walk and run speeds** is pressed: an automatic upgrade would need an `okayscene` format bump and an opt-in in the upgrade window (written down in the doc, not built). The 2.5D, top-down, click-to-move, NPC and `CharacterController3D` defaults were not changed (their W now shows the jog it really is). The walk's hips bob about 8 cm (a person's 3 to 5): that needs stance-knee flex and pelvic tilt. |
 | One inflate (`engine/include/okay/Core/Inflate.hpp`) for PNG, .blend, .x, ZGL, 3MF/AMF, FBX arrays and the own HTTP client | Done in code (the three older copies are deleted from the tree; ImageDecode and FbxReader keep thin wrappers, see `docs/try_it.md` row 15) | Checked on Linux only: `tests/test_inflate_differential.cpp` against a slow reference written from the RFCs (about 67,000 inputs and 15,500 gzip inputs per run, ASan and UBSan clean) and, before the old copies were removed, against those copies (257,014 inputs, no disagreement; commit `0ea3b26a`); `png_hint`; not run on Windows or macOS, not run on real PNG, `.blend`, `.x`, FBX or gzip-download files from outside our own tests; `model_readers` and `own_http_net` not run for this change. Two behaviour notes: PNG decoding stops as soon as all expected pixel bytes are decoded (a damaged tail after them is no longer examined), and the first output allocation is now limited to what the input could produce (1032 times its size), so a PNG header claiming a huge size with a few bytes of data no longer zero-fills that much first. The shared `FixedCodes` table is a function-local static built on first use: C++11-safe, but not proven under the MinGW win32 thread model (no `<mutex>` is used) |
@@ -95,7 +99,6 @@ The feature map currently has **125** rows that are Partial or Planned.
 `okay::crypto` (off by default, `OKAY_OWN_CRYPTO`) cannot become the default on our word (`CLAUDE.md` rule 18). The package, the request text and the reviewer archive script are ready (`docs/crypto_review_package.md`, `docs/crypto_review_request.md`, `scripts/make_crypto_review_bundle.sh`). What remains, in order:
 
 | Step | State | Who |
-|---|---|---|
 | Consolidate the extra SHA-256 copies and the hand-written HMAC onto `okay::crypto`: **done on branch `claude/one-sha256` (owner approved 2026-11-15, not merged yet)**. One header-only `engine/include/okay/Crypto/Sha256.hpp` now holds SHA-256, HMAC-SHA256 (RFC 4231 tests) and PBKDF2-HMAC-SHA256 (RFC 7914 tests); `AccountService.hpp`, `AntiCheatChecks.hpp` and `launcher/VoiceChat.hpp` are thin wrappers; every output is byte-identical to the old copies (differential test, stored password records made by the old code, Python hashlib), and it is as fast or faster (`docs/sha256_comparison.md`). Still open from this step: `SecureChannel` key wiping (recommended, not done) | Done (SHA-256 / HMAC); key wiping open | Team |
 | Say in the outside review request that the non-libsodium path of the anti-cheat and launcher Ed25519 now relies on `okay::crypto` (done in `docs/crypto_review_request.md`); a real signed manifest and `versions.json` from the release pipeline still have to be checked with a no-libsodium build | Open | Team |
 | Choose a reviewer, a budget and a date; send the request and the bundle | Decided: **no hired reviewer** (owner, 2026-11-14). libsodium stays the default; the package and request stay in the repo in case that changes | Owner |
@@ -181,8 +184,6 @@ These are "-style" subsets, not the real languages: code written for the real Lu
 
 ### 3. 3D modeling & import
 
-| ID | Feature | Status | Open |
-|---|---|---|---|
 | [3.5](feature_map/03-modeling-import.md#35-mesh-assets-and-primitives) | Mesh assets and primitives | Partial | M5b per-face materials: PolyFace has a material slot but Mesh has no per-triangle slot; old map says Sphere, Cylinder, Cone... |
 | [3.6](feature_map/03-modeling-import.md#36-model-import) | Model import | Partial | possible doc bug: docs/animation.md Tips says FBX animations import via Assimp, but FBX is read by the built-in ufbx path; packed... |
 | [3.11](feature_map/03-modeling-import.md#311-guided-creation-templates-parts-safe-regeneration) | Guided creation | Partial | fence and the architecture templates only; no landing railings; editor page not opened in a real window |
@@ -190,59 +191,41 @@ These are "-style" subsets, not the real languages: code written for the real Lu
 
 ### 5. Animation & IK
 
-| ID | Feature | Status | Open |
-|---|---|---|---|
 | [5.9](feature_map/05-animation-ik.md#59-object-holding) | Object holding | Partial | old map: holding PRs 3-4: body adjust is done (#389), multiplayer sync (PR 4, branch `claude/holding-net`) and grip editor (PR 5... |
 
 ### 12. In-game UI
 
-| ID | Feature | Status | Open |
-|---|---|---|---|
 | [12.7](feature_map/12-ingame-ui.md#127-themes-and-the-launcher-matching-ui-kit) | Themes and the launcher-matching UI kit | Partial | "full component library" (see the missing list in 12.3 and 12.4); stylesheet assets with selectors... |
 | [12.10](feature_map/12-ingame-ui.md#1210-ui-editing-in-the-editor) | UI editing in the editor | Partial | UI plan P4: anchor preset picker and pivot handles, UI prefabs with variants, UIDocument-to-hierarchy round trip, a `--selftest`... |
 | [12.13](feature_map/12-ingame-ui.md#1213-data-binding-ui-animation-and-script-control) | Data binding, UI animation and script control | Partial | UI plan P3 not found: `ui_create`, `ui_destroy`, `ui_find`, generic `ui_get/ui_set(prop)`, events `on_hover_enter`... |
 
 ### 13. Scripting
 
-| ID | Feature | Status | Open |
-|---|---|---|---|
 | [13.2](feature_map/13-scripting.md#132-c-style-language-core) | C#-style language core | Partial | in flight (branches, no PR, 2026-10-26): claude/csharp-p1-events, -inheritance, -try, -coroutines, -getcomponent... |
 
 ### 15. Editor
 
-| ID | Feature | Status | Open |
-|---|---|---|---|
 | [15.10](feature_map/15-editor.md#1510-splitting-editormaincpp-into-panel-files-45k-lines) | Splitting `editor/main.cpp` into panel files (~45k lines) | Partial | no PR for the next split found (#577 changed about 280 lines of `main.cpp` for the layouts, the Script Editor find and replace... |
 
 ### 16. Networking & multiplayer
 
-| ID | Feature | Status | Open |
-|---|---|---|---|
 | [16.7](feature_map/16-networking.md#167-voice-chat-server) | Voice chat server | Partial | no tests for ADPCM, jitter buffer or room-key handling; launcher voice calls now send version-3 hellos with the relay cookie and... |
 
 ### 17. Launcher & platform
 
-| ID | Feature | Status | Open |
-|---|---|---|---|
 | [17.11](feature_map/17-launcher-platform.md#1711-security-plan-sec1) | Security plan SEC1 | Partial | owner steps (update signing key, two GitHub entries, run reactions_privacy.sql); a signed timestamp against update freezes; per-packet authentication on relay data frames; move the app to reaction_counts and then limit the raw reactions SELECT |
 
 ### 18. Build, export & release
 
-| ID | Feature | Status | Open |
-|---|---|---|---|
 | [18.2](feature_map/18-build-export-release.md#182-web-and-mobile-export) | Web and mobile export | Partial | the Build Settings tooltip says "Export an Android Studio project" but the code writes assets and a README only (possible... |
 
 ### 19. Docs, tests & code health
 
-| ID | Feature | Status | Open |
-|---|---|---|---|
 | [19.4](feature_map/19-docs-tests-health.md#194-splitting-the-largest-files-editor-launcher-okayscript-vm-serializer) | Splitting the largest files (editor, launcher, OkayScript VM, serializer) | Planned | splitting `launcher/main.cpp` needs a plan per page (17.1 to 17.16 are the natural seams); `player/main.cpp` is 2,658 lines and... |
 | [19.5](feature_map/19-docs-tests-health.md#195-roadmap-and-pr-template) | Roadmap and PR template | Partial | the "Now" table is dated 2026-10-26; the hardening list is now ticked from the code (`docs/anticheat_hardening_status.md`)... |
 
 ### 20. Asset management (Critical)
 
-| ID | Feature | Status | Open |
-|---|---|---|---|
 | [20.1](feature_map/20-35-planned.md#201-asset-browser) | Asset browser | Partial | Two sources of truth for labels (colour labels in `.okaylabels` vs tags in `.okaymeta`); no file watcher, outside changes show on the next poll (2 s or more); no automated UI test of the window... |
 | [20.2](feature_map/20-35-planned.md#202-dependencies-and-references) | Dependencies and references | Partial | Build Game and the database each have their own dependency walk (Build Game uses `Core/BuildPipeline`, not `BuildClosurePaths`); references are found by reading text, so a path built at run time is never seen... |
 | [20.3](feature_map/20-35-planned.md#203-guids) | GUIDs | Partial | meta files are matched by content hash (FNV-1a, not cryptographic); files over 512 MB hash only head and tail; a project already... |
@@ -251,15 +234,11 @@ These are "-style" subsets, not the real languages: code written for the real Lu
 
 ### 21. Prefab system (Critical)
 
-| ID | Feature | Status | Open |
-|---|---|---|---|
 | [21.2](feature_map/20-35-planned.md#212-nested-prefabs) | Nested prefabs | Partial | objects are matched by depth-first position and name, so reordering many objects can pair the wrong ones; nesting errors are not listed in the Console on load; a second instance of the applied file inside the same outer instance is not updated by Apply... |
 | [21.3](feature_map/20-35-planned.md#213-variants) | Variants | Partial | no variant badge on the Project panel tile; scene files never contain variant records (only prefab files do); objects added to or lost from a variant instance cannot be applied into the variant... |
 
 ### 22. Undo/redo & recovery (Critical)
 
-| ID | Feature | Status | Open |
-|---|---|---|---|
 | [22.1](feature_map/20-35-planned.md#221-undo-history) | Undo history | Partial | each snapshot is a full scene text (memory grows with scene size); three separate stacks can confuse Ctrl+Z; behaviour of the... |
 | [22.2](feature_map/20-35-planned.md#222-autosave) | Autosave | Partial | a leftover `.autosave` from an older editor can still sit beside the scene until it is recovered or discarded; a project under... |
 | [22.3](feature_map/20-35-planned.md#223-crash-recovery) | Crash recovery | Partial | the player has no handler; the Windows handler has never run on real Windows (MinGW compile only); a stripped release gives offsets and mangled names, not file and line. |
@@ -267,32 +246,24 @@ These are "-style" subsets, not the real languages: code written for the real Lu
 
 ### 23. Profiling & debugging (Critical)
 
-| ID | Feature | Status | Open |
-|---|---|---|---|
 | [23.1](feature_map/20-35-planned.md#231-cpugpu-profiler) | CPU/GPU profiler | Partial | the "GPU" number is CPU wall time around the render call; the ring is only 4 seconds at 60 fps; `FrameHistory` keeps 600 frames... |
 | [23.2](feature_map/20-35-planned.md#232-memory-tracking) | Memory tracking | Partial | no platform memory numbers (process working set); heap hooks off by default. |
 | [23.3](feature_map/20-35-planned.md#233-frame-debugger) | Frame debugger | Partial | each renderer (software, GL, D3D11, D3D12) draws differently, so four hooks are needed. |
 
 ### 24. Plugin & extension system (Critical)
 
-| ID | Feature | Status | Open |
-|---|---|---|---|
 | [24.1](feature_map/20-35-planned.md#241-c-plugins) | C++ plugins | Planned | native plugins can crash the editor; ABI and ownership of memory need an explicit rule; use the property registry (on main, #578... |
 | [24.3](feature_map/20-35-planned.md#243-custom-nodes) | Custom nodes | Planned | node text format must keep loading old graphs when a custom node type is missing (placeholder node). |
 | [24.4](feature_map/20-35-planned.md#244-plugin-sdk) | Plugin SDK | Partial | versioning rule for the engine ABI is undecided (see 25.3). |
 
 ### 25. Project management (High)
 
-| ID | Feature | Status | Open |
-|---|---|---|---|
 | [25.2](feature_map/20-35-planned.md#252-project-settings) | Project settings | Partial | `project.okayproj` is loaded from the current directory, so opening a project from elsewhere depends on the working directory... |
 | [25.3](feature_map/20-35-planned.md#253-migration) | Migration | Partial | no policy yet on how long old formats stay readable; `MigrateThroughEngine` drops records this build does not know and gives... |
 | [25.4](feature_map/20-35-planned.md#254-dependency-management) | Dependency management | Planned | where packages are hosted (Workshop, GitHub) is undecided. |
 
 ### 26. Shader & material editor (High)
 
-| ID | Feature | Status | Open |
-|---|---|---|---|
 | [26.1](feature_map/20-35-planned.md#261-visual-shader-graphs) | Visual shader graphs | Planned | four renderers (software, GL, D3D11, D3D12) must stay consistent; D3D12 has no normal, gloss or AO maps today. |
 | [26.2](feature_map/20-35-planned.md#262-material-editor) | Material editor | Partial | preview is not what the renderer draws; materials are copied into the renderer (`ApplyTo`), not referenced, so editing the file... |
 | [26.3](feature_map/20-35-planned.md#263-custom-shaders) | Custom shaders | Planned | D3D12 is "v1" and opt-in; shader hot reload would need 34.3. |
@@ -300,8 +271,6 @@ These are "-style" subsets, not the real languages: code written for the real Lu
 
 ### 27. Optimization tools (High)
 
-| ID | Feature | Status | Open |
-|---|---|---|---|
 | [27.1](feature_map/20-35-planned.md#271-lod-generation) | LOD generation | Partial | simplifier ignores colour and material changes in its error; a mesh with `cornerUVs` is split into per-vertex UVs first; skinned... |
 | [27.2](feature_map/20-35-planned.md#272-occlusion-culling) | Occlusion culling | Partial | CPU rasteriser only (no GPU queries); conservative, so it may draw more than needed; no components yet. |
 | [27.3](feature_map/20-35-planned.md#273-batching) | Batching | Partial | `isStatic` is only "a hint for tools"; merged meshes need a draw path in each renderer; skinned and transparent objects are never... |
@@ -309,8 +278,6 @@ These are "-style" subsets, not the real languages: code written for the real Lu
 
 ### 28. Version control integration (High)
 
-| ID | Feature | Status | Open |
-|---|---|---|---|
 | [28.1](feature_map/20-35-planned.md#281-git-integration) | Git integration | Partial | no automated test; no conflict handling after a pull (see 28.4); shelling out to git means errors come back as text only. |
 | [28.2](feature_map/20-35-planned.md#282-diffs) | Diffs | Partial | no UI and no tool call these yet; a file without ids pairs objects by name path, so a rename there looks like a removal plus an... |
 | [28.3](feature_map/20-35-planned.md#283-project-history) | Project history | Planned | depends on git being installed; projects without git only get local backups. |
@@ -318,15 +285,11 @@ These are "-style" subsets, not the real languages: code written for the real Lu
 
 ### 29. Terrain & world building tools (High)
 
-| ID | Feature | Status | Open |
-|---|---|---|---|
 | [29.2](feature_map/20-35-planned.md#292-vegetation-painting) | Vegetation painting | Partial | object-per-instance scatter will not scale; no undo grouping for a scatter pass beyond the scene snapshot. |
 | [29.3](feature_map/20-35-planned.md#293-procedural-generation) | Procedural generation | Partial | possible duplicate: `Components/Terrain.cpp` has its own noise code next to `Math/Noise`. |
 
 ### 30. Character creator (Medium)
 
-| ID | Feature | Status | Open |
-|---|---|---|---|
 | [30.1](feature_map/20-35-planned.md#301-customization) | Customization | Partial | the part rig and the single-mesh rig are two build paths for one component (see 4.9). |
 | [30.2](feature_map/20-35-planned.md#302-rig-generation) | Rig generation | Partial | rigid weights tear at joints; animation and IK code belong to Grok's sessions. |
 | [30.3](feature_map/20-35-planned.md#303-clothing) | Clothing | Partial | no layered clothing, cloth physics (see 52). |
@@ -334,16 +297,12 @@ These are "-style" subsets, not the real languages: code written for the real Lu
 
 ### 31. Localization tools (Medium)
 
-| ID | Feature | Status | Open |
-|---|---|---|---|
 | [31.1](feature_map/20-35-planned.md#311-translation-tables) | Translation tables | Partial | JSON import and export in the window, a confirm step before CSV import, and translation memory. The window uses `LocTable`, `LocCheck` and `LocScan`... |
 | [31.2](feature_map/20-35-planned.md#312-font-fallback) | Font fallback | Partial | system fonts differ between machines, so a CJK game should ship its own font; RTL is drawn left to right. |
 | [31.3](feature_map/20-35-planned.md#313-language-previews) | Language previews | Partial | the Scene view layout does not mirror for right-to-left languages. The Localization window shows a mirrored `LocPreview` of the selected key. |
 
 ### 32. Accessibility (High)
 
-| ID | Feature | Status | Open |
-|---|---|---|---|
 | [32.1](feature_map/20-35-planned.md#321-controller-navigation) | Controller navigation | Partial | one shared ring is drawn from the theme and the accessibility settings; there is no focus sound; the graph is built from screen rectangles each time it is asked |
 | [32.2](feature_map/20-35-planned.md#322-subtitles) | Subtitles | Partial | speaker colours need a colour-vision-safe palette (32.3); subtitle size, background and speaker-name rows, and SRT import. An Audio Source caption is shown when sound captions are on. |
 | [32.3](feature_map/20-35-planned.md#323-colorblind-options) | Colorblind options | Partial | the GPU renderers do not read the settings; the speaker-colour palette in `CaptionManager` is the only consumer in the engine. |
@@ -351,49 +310,35 @@ These are "-style" subsets, not the real languages: code written for the real Lu
 
 ### 33. Automated testing (Critical)
 
-| ID | Feature | Status | Open |
-|---|---|---|---|
 | [33.1](feature_map/20-35-planned.md#331-play-mode-tests) | Play-mode tests | Partial | a script that reads the wall clock or uses threads makes a play-test non-deterministic (stated in `docs/automated_testing.md`)... |
 | [33.3](feature_map/20-35-planned.md#333-regression-testing) | Regression testing | Partial | compilers round shading slightly differently, so goldens need a tolerance; the software renderer draws mesh renderers only (no... |
 
 ### 34. Live editing (High)
 
-| ID | Feature | Status | Open |
-|---|---|---|---|
 | [34.1](feature_map/20-35-planned.md#341-properties-during-play) | Properties during Play | Partial | objects created or destroyed in Play have no edit-scene counterpart to keep changes on; the registry does not cover controllers... |
 | [34.2](feature_map/20-35-planned.md#342-live-object-inspector) | Live object inspector | Partial | no per-object runtime counters; the live view relies on the same redraw as the edit view. |
 | [34.3](feature_map/20-35-planned.md#343-hot-reload) | Hot reload | Partial | in-place replacement happens inside `Pump()`, so readers must be on that thread; a failed half-written file keeps the old data... |
 
 ### 35. Save game framework (High)
 
-| ID | Feature | Status | Open |
-|---|---|---|---|
 | [35.2](feature_map/20-35-planned.md#352-checkpoints) | Checkpoints | Partial | AutoSave writes one slot, so a corrupt moment is overwritten; wait for the framework decision (35.1). |
 
 ### 36. Math & geometry
 
-| ID | Feature | Status | Open |
-|---|---|---|---|
 | [36.6](feature_map/36-math-geometry.md#366-geometry-helpers-elsewhere) | Geometry helpers elsewhere | Partial | duplicated ray-box and ray-sphere code in `Physics2D`/`Physics3D`, `EditTransform::Ray`, `Lightmap::RayTriangle` and `Frustum`... |
 | [36.7](feature_map/36-math-geometry.md#367-noise-curves-colour-spaces-and-random-streams) | Noise, curves, colour spaces and random streams | Partial | move terrain, textures, particles and meshes onto the shared noise so a seed means the same thing everywhere; `Mesh::PropRand`... |
 
 ### 37. Platform & windowing
 
-| ID | Feature | Status | Open |
-|---|---|---|---|
 | [37.5](feature_map/37-platform-windowing.md#375-web-and-mobile-shims) | Web and mobile shims | Partial | Android and iOS projects are not in the repo; web has no networking; `docs/web_mobile.md` still says to read `SDL_FINGER*`... |
 
 ### 38. Render backends & GPU
 
-| ID | Feature | Status | Open |
-|---|---|---|---|
 | [38.4](feature_map/38-render-backends.md#384-direct3d-12-backend) | Direct3D 12 backend | Partial | possible doc mismatch: the header says `samples` is accepted but MSAA is not applied, while the `.cpp` header comment and code... |
 | [38.11](feature_map/38-render-backends.md#3811-gpu-timing-and-frame-debugging) | GPU timing and frame debugging | Partial | wiring real GPU timers into each backend; a frame debugger window (area 23) |
 
 ### 39. Security & anti-cheat
 
-| ID | Feature | Status | Open |
-|---|---|---|---|
 | [39.3](feature_map/39-security-anticheat.md#393-session-tickets-and-the-ticket-service) | Session tickets and the ticket service | Partial | deploy the function and create the key pair (the owner's step, ROADMAP "Waiting on Iman"); wire the launcher or game to fetch a... |
 | [39.4](feature_map/39-security-anticheat.md#394-client-integrity-signed-manifest-and-launch-check) | Client integrity: signed manifest and launch check | Partial | set `OKAY_AC_TRUSTED_KEYS` so the check becomes a failure (planned in `release.yml`); hashing every file costs time on big games... |
 | [39.5](feature_map/39-security-anticheat.md#395-runtime-checks-and-the-clock-heartbeat) | Runtime checks and the clock heartbeat | Partial | no kernel driver, memory scanning or obfuscation (by design); older clients never answer the heartbeat, so turn `maxClockDrift`... |
@@ -402,28 +347,20 @@ These are "-style" subsets, not the real languages: code written for the real Lu
 
 ### 40. OkayUI standalone library
 
-| ID | Feature | Status | Open |
-|---|---|---|---|
 | [40.3](feature_map/40-okayui-library.md#403-backends-and-frame-loop) | Backends and frame loop | Partial | no test of the D3D11 path found; skipped in the web build (per `CMakeLists.txt` and `scripts/build-web.sh` comments) |
 
 ### 43. 2D tools
 
-| ID | Feature | Status | Open |
-|---|---|---|---|
 | [43.3](feature_map/43-proposals.md#433-sprite-animation-tools) | Sprite animation tools | Partial | first step: a Sprite Animation window with a frame strip, per-frame duration and animation events (call a script function on... |
 | [43.4](feature_map/43-proposals.md#434-2d-lighting) | 2D lighting | Planned | first step: an unlit-versus-lit flag and a simple 2D point light with falloff that tints sprites in the software renderer first... |
 
 ### 44. Level design and blockout tools
 
-| ID | Feature | Status | Open |
-|---|---|---|---|
 | [44.3](feature_map/43-proposals.md#443-measuring-and-level-metrics) | Measuring and level metrics | Planned | first step: a Measure tool (click two points, show distance and slope) and a reference-figure toggle showing a 1.8 m person and... |
 | [44.4](feature_map/43-proposals.md#444-volumes-and-zones) | Volumes and zones | Partial | first step: a GameObject > Effects > Volume menu (trigger, kill, music, spawn) drawn as a tinted box with its name in the Scene view; one... |
 
 ### 45. Open-world streaming and world partition
 
-| ID | Feature | Status | Open |
-|---|---|---|---|
 | [45.1](feature_map/43-proposals.md#451-cell-authoring-and-baking) | Cell authoring and baking | Partial | first step: "Split scene into cells" (grid size, object assignment by position, writes cell prefabs and a manifest) and a Scene... |
 | [45.2](feature_map/43-proposals.md#452-large-world-coordinates) | Large world coordinates | Planned | first step: measure where jitter starts in a test scene; then a floating-origin option that shifts the whole scene back when the... |
 | [45.3](feature_map/43-proposals.md#453-streaming-aware-systems) | Streaming-aware systems | Planned | first step: per-cell navmesh bake stored with the cell and stitched at load; cell-level state records for saves. |
@@ -431,24 +368,18 @@ These are "-style" subsets, not the real languages: code written for the real Lu
 
 ### 46. Replay system
 
-| ID | Feature | Status | Open |
-|---|---|---|---|
 | [46.1](feature_map/43-proposals.md#461-input-recording-and-playback) | Input recording and playback | Planned | first step: record `PlayerInput` per fixed tick plus the random seed and scene file, tie each tick to a `FrameRecorder` marker... |
 | [46.2](feature_map/43-proposals.md#462-state-replay-and-killcam) | State replay and killcam | Planned | first step: write snapshots to a ring buffer and a free camera that reads them back. |
 | [46.3](feature_map/43-proposals.md#463-replay-files-and-viewer) | Replay files and viewer | Planned | first step: define the file (header with version, scene, seed; per-tick records) with the same versioning rules as saves (35.4). |
 
 ### 47. Mod support
 
-| ID | Feature | Status | Open |
-|---|---|---|---|
 | [47.1](feature_map/43-proposals.md#471-mod-loader-and-content-overrides) | Mod loader and content overrides | Planned | first step: asset lookup through an ordered list of folders (mods first), a `mod.txt` manifest (name, version, load order), and a... |
 | [47.2](feature_map/43-proposals.md#472-mod-scripting-sandbox) | Mod scripting sandbox | Planned | first step: a capability flag per script host (files, network, process) defaulting to off for mod scripts. |
 | [47.3](feature_map/43-proposals.md#473-mod-packaging-and-sharing) | Mod packaging and sharing | Planned | first step: add a `mod` kind, an installer that unpacks into the game's Mods folder, and an enable and disable list. |
 
 ### 48. Crash reporting and telemetry
 
-| ID | Feature | Status | Open |
-|---|---|---|---|
 | [48.1](feature_map/43-proposals.md#481-crash-reports) | Crash reports | Partial | the editor writes detailed reports and the launcher sends them (scrubbed, default on, after a one-time notice) and makes GitHub issues once the owner runs the table SQL and sets the repository variable `CRASH_ISSUES_ENABLED`; next: reuse the handler in the player; file and line for a stripped release... |
 | [48.2](feature_map/43-proposals.md#482-opt-in-analytics-events) | Opt-in analytics events | Planned | first step: an `Analytics::Event(name, fields)` API that does nothing unless consent is on, writes to a local file first, and a... |
 | [48.3](feature_map/43-proposals.md#483-consent-and-privacy) | Consent and privacy | Partial | crash reports have a switch (on by default) with a disclosure, a one-time notice before the first send and a preview; no general consent dialog component, no switch for analytics events. |
@@ -456,8 +387,6 @@ These are "-style" subsets, not the real languages: code written for the real Lu
 
 ### 49. Cloud services
 
-| ID | Feature | Status | Open |
-|---|---|---|---|
 | [49.1](feature_map/43-proposals.md#491-cloud-saves) | Cloud saves | Partial | first step: `ISaveSync` backends for Steam Cloud and PlayFab user data, with "newest wins" and a conflict prompt; size limits per... |
 | [49.2](feature_map/43-proposals.md#492-leaderboards) | Leaderboards | Partial | first step: a small `Leaderboards` interface with the three as backends and a UI list component. |
 | [49.3](feature_map/43-proposals.md#493-achievements-sync) | Achievements sync | Partial | first step: one `Unlock(id)` that writes local, calls Steam when present and queues an upload when signed in. |
@@ -465,65 +394,47 @@ These are "-style" subsets, not the real languages: code written for the real Lu
 
 ### 50. Capture and media
 
-| ID | Feature | Status | Open |
-|---|---|---|---|
 | [50.2](feature_map/43-proposals.md#502-photo-mode) | Photo mode | Planned | first step: a `PhotoMode` component: key toggles pause, hides the UI, switches to a free camera with sliders for field of view... |
 | [50.3](feature_map/43-proposals.md#503-video-recording) | Video recording | Planned | first step: an image-sequence recorder at a fixed time step (so slow frames do not drop video frames), using... |
 | [50.4](feature_map/43-proposals.md#504-video-playback) | Video playback | Planned | first step: choose a codec and a small decoder library (for example a simple open format) and a `VideoPlayer` component drawing... |
 
 ### 51. Onboarding, tutorials and samples
 
-| ID | Feature | Status | Open |
-|---|---|---|---|
 | [51.1](feature_map/43-proposals.md#511-sample-gallery) | Sample gallery | Partial | first step: each template gets a short "What to look at" note shown when it opens (which objects, scripts and settings matter); a... |
 
 ### 52. Simulation extras (cloth, soft bodies, fluids, destruction, crowds)
 
-| ID | Feature | Status | Open |
-|---|---|---|---|
 | [52.1](feature_map/43-proposals.md#521-cloth-and-hair) | Cloth and hair | Planned | first step: a rope and flag component on a particle grid with pin points and wind from `Environment/Wind`. |
 | [52.2](feature_map/43-proposals.md#522-soft-bodies) | Soft bodies | Planned | first step: a spring-mass lattice on a mesh (same solver as 52.1). |
 | [52.4](feature_map/43-proposals.md#524-destruction) | Destruction | Partial | first step: pre-fractured meshes (a mesh authored as pieces) with a break threshold and impulse. |
 
 ### 53. Day-night and weather hooks
 
-| ID | Feature | Status | Open |
-|---|---|---|---|
 | [53.1](feature_map/43-proposals.md#531-time-of-day-events-and-gameplay) | Time-of-day events and gameplay | Partial | first step: publish events on the `EventBus` (HourChanged, Sunrise, Sunset) and a "run actions at hour X" component; possible... |
 | [53.2](feature_map/43-proposals.md#532-weather-gameplay-effects) | Weather gameplay effects | Partial | first step: a `WeatherEffects` component mapping a preset to survival modifiers (wetness, temperature drop, friction scale... |
 
 ### 54. Debug draw, gizmos, dev console and cheats
 
-| ID | Feature | Status | Open |
-|---|---|---|---|
 | [54.3](feature_map/43-proposals.md#543-in-game-dev-console) | In-game dev console | Partial | first step: a backtick-toggled console component using `Console::History/Lines/Complete`, and engine cvars (`r.shadows`... |
 | [54.4](feature_map/43-proposals.md#544-cheats-and-debug-commands) | Cheats and debug commands | Planned | first step: register `god`, `give <item> [n]`, `tp <x> <y> <z>`, `time <hour>` against the survival, inventory and day-night... |
 
 ### 55. Script debugging and profiling
 
-| ID | Feature | Status | Open |
-|---|---|---|---|
 | [55.1](feature_map/43-proposals.md#551-breakpoints-and-stepping-for-text-scripts) | Breakpoints and stepping for text scripts | Partial | first step: a line hook in the OkayScript VM and the typed-script interpreter (`engine/src/Script/Interpreter.cpp`) that calls a... |
 | [55.2](feature_map/43-proposals.md#552-watch-and-call-stack) | Watch and call stack | Partial | first step: expose the interpreter's frame and locals read-only to the editor while paused. |
 
 ### 56. Platform targets and store packaging
 
-| ID | Feature | Status | Open |
-|---|---|---|---|
 | [56.1](feature_map/43-proposals.md#561-desktop-packaging) | Desktop packaging | Partial | first step: Linux AppImage or tarball for exported games from the same Build dialog; macOS app bundle later (needs a macOS build... |
 | [56.3](feature_map/43-proposals.md#563-web-export) | Web export | Partial | first step: package the web build as a zip ready for itch.io from the editor when emscripten is installed. |
 | [56.4](feature_map/43-proposals.md#564-console-platforms) | Console platforms | Planned | first step: none until the owner decides; keeping platform code behind the `Platform/*` interfaces helps. |
 
 ### 57. Documentation website
 
-| ID | Feature | Status | Open |
-|---|---|---|---|
 | [57.2](feature_map/43-proposals.md#572-generated-api-reference) | Generated API reference | Partial | first step: generate `scripting_reference.md` from the same builtin table the editor window uses so they cannot drift. |
 
 ### 58. Performance budgets and CI perf tests
 
-| ID | Feature | Status | Open |
-|---|---|---|---|
 | [58.1](feature_map/43-proposals.md#581-performance-budgets) | Performance budgets | Planned | first step: a `budgets.okaybudget` text file (frame ms, draw calls, triangles, texture MB per scene) and a command that reports... |
 | [58.3](feature_map/43-proposals.md#583-performance-regression-guard-in-ci) | Performance regression guard in CI | Planned | first step: store the benchmark output as a CI artifact and print a table in the job summary before gating anything. |
 | [58.4](feature_map/43-proposals.md#584-build-size-and-load-time-report) | Build size and load-time report | Partial | first step: log scene load time and asset decode time (the async loader in #570 reports progress) in the Profiler. |

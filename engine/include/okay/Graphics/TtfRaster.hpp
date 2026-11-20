@@ -63,7 +63,16 @@ public:
     /// Rasterize the glyph into out[row * stride + col], (w x h) being the size of
     /// its GlyphBox. Every pixel of the w x h area is written (0..255 coverage).
     /// False (the area is zeroed) when the glyph cannot be drawn.
-    bool Render(int glyph, float scale, std::uint8_t* out, int w, int h, int stride) const;
+    ///
+    /// `shiftX` (0 <= shiftX < 1) moves the outline that many pixels to the right before it is
+    /// measured, for a glyph drawn at a fractional pen position: pass w = (GlyphBox width) + 1 so the
+    /// shifted edge still fits. 0 draws exactly as before.
+    bool Render(int glyph, float scale, std::uint8_t* out, int w, int h, int stride, float shiftX = 0.0f) const;
+
+    /// Horizontal pair adjustment between two glyphs in font units (negative = closer together), from the
+    /// legacy `kern` table (format 0) and the OpenType `GPOS` "kern" feature (pair adjustment lookups, formats 1 and 2,
+    /// also through extension lookups). 0 when the font has none for the pair.
+    int Kerning(int leftGlyph, int rightGlyph) const;
 
 private:
     struct Table { std::uint32_t off = 0, len = 0; };
@@ -98,7 +107,12 @@ private:
     bool m_valid = false, m_cff = false;
     int m_upem = 0, m_numGlyphs = 0, m_numHM = 0, m_locaLong = 0;
     int m_asc = 0, m_desc = 0, m_gap = 0;
-    Table m_head, m_hhea, m_maxp, m_hmtx, m_cmap, m_loca, m_glyf, m_cffT;
+    Table m_head, m_hhea, m_maxp, m_hmtx, m_cmap, m_loca, m_glyf, m_cffT, m_kern, m_gpos;
+    int KernTable(int l, int r) const;
+    int KernGpos(int l, int r) const;
+    int GposPair(std::size_t sub, int l, int r, bool& found) const;
+    int CoverageIndex(std::size_t cov, int glyph) const;
+    int ClassOf(std::size_t classDef, int glyph) const;
     std::size_t m_cmapSub = 0;   // absolute offset of the chosen cmap subtable
     int m_cmapFmt = -1;   // -1: no usable cmap subtable
     bool m_cmapSymbol = false;

@@ -530,6 +530,7 @@ inline const VsRule kBuiltinRules[] = {
     {"hypot", "Numbers", "Script Math Functions"}, {"sum", "Numbers", "Script Math Functions"},
     {"avg", "Numbers", "Averages & Percentages"}, {"len", "Vectors", "Script Vector Functions"},
     {"math_repeat", "Numbers", "Limits & Wrapping"}, {"pi", "Numbers", "Script Math Functions"},
+    {"Vehicle.*", "Move & Follow", "Vehicles"},   // Vehicle.SetSetting, ApplyPreset, SetThrottle, Boost ... (docs/vehicle_controls.md)
     {"Mathf.Abs", "Numbers", "Script Math Functions"}, {"Mathf.Sqrt", "Numbers", "Script Math Functions"},
     {"Mathf.Pow", "Numbers", "Script Math Functions"}, {"Mathf.Exp", "Numbers", "Script Math Functions"},
     {"Mathf.Min", "Numbers", "Script Math Functions"}, {"Mathf.Max", "Numbers", "Script Math Functions"},
@@ -795,6 +796,10 @@ inline const VsRule kBuiltinRules[] = {
     {"set_group_volume", "Music & Volume", ""}, {"set_master_volume", "Music & Volume", ""},
     {"mute_group", "Music & Volume", ""}, {"set_ducking", "Music & Volume", ""}, {"camera_*", "Camera", "Zoom & Shake"},
     {"cam_zoom", "Camera", "Zoom & Shake"}, {"cam_*", "Camera", "Follow & Switch"},
+    {"Camera.Shake", "Camera", "Zoom & Shake"}, {"Camera.FovKick", "Camera", "Zoom & Shake"}, {"Camera.SetFovOffset", "Camera", "Zoom & Shake"},
+    {"Camera.HitPulse", "Camera", "Zoom & Shake"}, {"Camera.SetHandheld", "Camera", "Zoom & Shake"},
+    {"Camera.BlendTo", "Camera", "Follow & Switch"}, {"Camera.SetTarget", "Camera", "Follow & Switch"},
+    {"Camera.AddToGroup", "Camera", "Follow & Switch"}, {"Camera.RemoveFromGroup", "Camera", "Follow & Switch"},
     {"set_cam*", "Camera", "Follow & Switch"}, {"shake", "Camera", "Zoom & Shake"},
     {"shake_camera", "Camera", "Zoom & Shake"}, {"zoom_camera", "Camera", "Zoom & Shake"},
     {"set_zoom", "Camera", "Zoom & Shake"}, {"get_view", "Camera", "Follow & Switch"},

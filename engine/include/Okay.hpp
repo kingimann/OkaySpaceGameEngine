@@ -236,6 +236,9 @@
 #include "okay/Components/LineRenderer.hpp"
 #include "okay/Components/VirtualCamera.hpp"
 #include "okay/Components/CinemachineBrain.hpp"
+#include "okay/Components/CameraMath.hpp"
+#include "okay/Components/CameraRoom.hpp"
+#include "okay/Components/CameraCollision.hpp"
 
 // AI
 #include "okay/AI/Pathfinding.hpp"
@@ -263,6 +266,9 @@
 #include "okay/Components/VehicleController.hpp"
 #include "okay/Components/VehicleController2D.hpp"
 #include "okay/Components/VehicleSeat.hpp"
+#include "okay/Components/VehicleTuning.hpp"
+#include "okay/Core/DrivingSettings.hpp"
+#include "okay/Scene/VehicleBuilder.hpp"
 #include "okay/Components/BlockBuilder.hpp"
 #include "okay/Components/BuildPiece.hpp"
 #include "okay/Components/StructureBuilder.hpp"

@@ -1,5 +1,7 @@
 # Vehicle Controller (arcade)
 
+> New: an open-world driving model (gears, brake to reverse, drifts, presets, camera) lives in the same component. See `docs/vehicle_controls.md`. This page describes the older arcade model, which old scenes keep.
+
 An arcade car controller in the same family as the First/Third-Person controllers.
 Add it to a car body and drive — throttle pushes it along its facing, steering yaws
 it (more as it speeds up, reversed when backing up), braking and a handbrake slow

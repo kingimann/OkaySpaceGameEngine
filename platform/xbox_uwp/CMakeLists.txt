@@ -52,6 +52,10 @@ if(OKAY_BUILD_TESTS)
     add_executable(test_xbox_uwp_next tests/test_xbox_uwp_next.cpp)
     target_include_directories(test_xbox_uwp_next PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})
     add_test(NAME xbox_uwp_next COMMAND test_xbox_uwp_next ${CMAKE_CURRENT_BINARY_DIR})
+    # Gamepad hot-plug and player slots (XboxPadHub.hpp). Header-only, no engine.
+    add_executable(test_xbox_uwp_padhub tests/test_xbox_uwp_padhub.cpp)
+    target_include_directories(test_xbox_uwp_padhub PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})
+    add_test(NAME xbox_uwp_padhub COMMAND test_xbox_uwp_padhub)
     # The non-blocking SDK check (XboxAsyncProbe.hpp): state machine, "UI call returns in under 5 ms while a 300 ms probe runs", vswhere JSON, cache file.
     add_executable(test_xbox_uwp_async tests/test_xbox_uwp_async.cpp)
     target_include_directories(test_xbox_uwp_async PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})

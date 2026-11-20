@@ -4,6 +4,8 @@ on:
   push:
     branches: [ main ]
   pull_request:
+  # Manual run on a branch: lets the MSVC job (skipped on pull requests) be run on demand to read real MSVC errors.
+  workflow_dispatch:
 
 # A new push to a pull request cancels that PR's older run, so stale runs don't
 # hold the runners. Each push to main keeps its own run.

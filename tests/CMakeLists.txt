@@ -3940,6 +3940,8 @@ function(okay_batchd_reader_test fmt src)
 endfunction()
 okay_batchd_reader_test(ac3d Ac3dReader.cpp)
 okay_batchd_reader_test(ogre OgreXmlReader.cpp)
+# OGRE skeletons (.skeleton.xml) and skinned .mesh.xml: hand-computed fixtures, reader source only
+okay_batchd_reader_test(ogre_skeleton OgreXmlReader.cpp)
 # the XGL reader unpacks ZGL with the engine's own inflate
 okay_batchd_reader_test(xgl XglReader.cpp ${PROJECT_SOURCE_DIR}/engine/src/Core/ImageDecode.cpp ${PROJECT_SOURCE_DIR}/engine/src/Core/ImageDecodeJpeg.cpp)
 okay_batchd_reader_test(irr IrrSceneReader.cpp)

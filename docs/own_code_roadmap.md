@@ -168,7 +168,7 @@ extension list above, not from Assimp's code; for the ones without a corpus file
 | `.scn` | 0 | trueSpace scene, claimed by the COB importer | no file to check |
 | `.x3db` | 0 | binary X3D | needs the X3D binary encoding; no file to check |
 | `.vrm` | 0 | VRM avatars (glTF 2.0 binary with extensions) | our glTF reader could read the geometry; not routed, no file to check |
-| `.skeleton`, `.skeleton.xml` | 2, 2 (not model files on their own) | OGRE skeletons, read by Assimp together with the mesh | a skinned OGRE mesh imports rigid with ours |
+| `.skeleton`, `.skeleton.xml` | 2, 2 (not model files on their own) | OGRE skeletons, read by Assimp together with the mesh | `.skeleton.xml` is read by our reader since 2026-11-20 (bones, bind pose, clips, skin weights; hand-computed fixtures only, not yet compared with Assimp on fish and ninja); the binary `.skeleton` is not, so a skinned binary OGRE mesh still imports rigid |
 
 The gap batch of 2026-11-16 took the three gap formats with the most corpus files (`.xml` 9, `.mesh` 3, `.zae` 3) and that users
 are most likely to have: OGRE game assets ship as binary `.mesh` far more often than as XML, ZAE is COLLADA's packaged form (one

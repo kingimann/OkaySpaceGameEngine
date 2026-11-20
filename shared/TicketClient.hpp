@@ -1,5 +1,5 @@
 #pragma once
-// The client side of the session-ticket flow (docs/anticheat.md "Joining a server that needs a ticket"): before a client joins a server
+// The client side of the session-ticket flow (docs/online/anticheat.md "Joining a server that needs a ticket"): before a client joins a server
 // it asks the ticket service (supabase/functions/session-ticket) for a short-lived signed pass, and joins with that pass instead of
 // the account's own token. No window, no engine link and no real network here: the HTTP call is an injected Transport, the clock and
 // the sleeps are injected too, so tests/test_ticket_client.cpp runs every case (banned, 401, 5xx, timeouts, clock skew, expiry)

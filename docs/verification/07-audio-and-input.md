@@ -23,7 +23,7 @@ Areas: 7, 8. Rows ids start `V-AU-`. `V-AU-S<area>` rows are smoke tests built f
     3. Try **Duck music under voice**.
   - **You should see (expected, not yet seen on Windows):** the looping sound gets quieter or silent as you move the sliders; with ducking, music dips when voice plays.
   - **Known partial:** none known.
-  - **More:** [audio.md](../../audio.md)
+  - **More:** [audio.md](../../audio/audio.md)
 
 - [ ] **V-AU-003** Spatial sound example
   - **Map:** 7. **Where:** editor, File > Open...
@@ -62,14 +62,15 @@ Areas: 7, 8. Rows ids start `V-AU-`. `V-AU-S<area>` rows are smoke tests built f
   - **Ask me like:** "make the music quieter while someone is talking"; "why is the game silent in the build?"
 
 - [ ] **V-AU-S8** Area 8: Input (smoke test, steps unverified)
-  - **Map:** [8](../feature_map/08-input.md), 6 sub-areas, 6 built.
+  - **Map:** [8](../feature_map/08-input.md), 7 sub-areas, 7 built.
   - **Steps:** (steps unverified: taken from the map, not clicked) open the program or window named for each sub-area below and try its main action.
     - 8.1 Keyboard and mouse [Works].
     - 8.2 Gamepad (SDL) [Works].
     - 8.3 Input actions and rebinding UI [Works]. Where: Add Component > UI > UI Keybind Field (Input Action, Gamepad and Direction Key fields)
     - 8.4 Cursor and touch [Works].
     - 8.5 Gameplay input blocking [Works].
-    - 8.6 Rumble and haptics [Basic].
+    - 8.6 Rumble and haptics [Works].
+    - 8.7 Input upgrade: timing, curves, per-player actions... [Works]. Where: Window > Input (live keys, mouse, controllers, actions, last events, record and replay, response curves)...
   - **You should see:** each listed thing opens and does what its name says (expected, not yet seen on Windows).
-  - **Known gaps:** see [docs/feature_map/08-input.md](../feature_map/08-input.md) (area 8, sections 8.1, 8.2, 8.3, 8.4, 8.5, 8.6): the Open line of each section. Not copied here so it cannot go stale.
+  - **Known gaps:** see [docs/feature_map/08-input.md](../feature_map/08-input.md) (area 8, sections 8.1, 8.2, 8.3, 8.4, 8.5, 8.6, 8.7): the Open line of each section. Not copied here so it cannot go stale.
   - **Ask me like:** "let me bind F5 to quick-save"; "the camera jumps when the game starts"

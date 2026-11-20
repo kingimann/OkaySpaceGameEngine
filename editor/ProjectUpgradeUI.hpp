@@ -1,7 +1,7 @@
 #pragma once
 // The editor's side of "upgrade project": the windows (the version question, the progress, the result, File > Project
 // Upgrade...), and the few calls main.cpp makes into them. The decisions and the work are in ProjectUpgrade.hpp (no
-// ImGui there); docs/project_upgrade.md describes what the person sees.
+// ImGui there); docs/editor/project_upgrade.md describes what the person sees.
 #include <functional>
 #include <string>
 

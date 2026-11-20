@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Constant-time audit, method 1 (docs/crypto_review_package.md section 4): build the valgrind harness
+# Constant-time audit, method 1 (docs/platform/crypto_review_package.md section 4): build the valgrind harness
 # tests/crypto_ct_valgrind.cpp with every compiler and optimisation level that is installed, for both
 # field implementations (51-bit and the portable 16-bit one), and run it under valgrind. A level fails
 # when valgrind reports a branch or address that depends on a secret, or when a positive control

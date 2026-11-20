@@ -8,7 +8,7 @@
 namespace okaycc {
 
 // C lexer. Written from ISO/IEC 9899:2018 clauses 5.1.1.2 and 6.4.
-// Choices the standard leaves open are listed in docs/own_compiler_plan.md.
+// Choices the standard leaves open are listed in docs/platform/own_compiler_plan.md.
 class Lexer {
 public:
     Lexer(std::string file, std::string source, Diagnostics& diags);

@@ -1,6 +1,6 @@
 #pragma once
 // The gate every script-facing file API goes through (OkayScript builtins, visual-script nodes, action lists, plugins).
-// Docs: docs/security.md "Script file paths". The rules live in PathSafety.hpp; this adds the symlink check against the
+// Docs: docs/online/security.md "Script file paths". The rules live in PathSafety.hpp; this adds the symlink check against the
 // two folders a script may touch (the game folder and the save folder) and the log line that tells the author why.
 #include "okay/Core/Log.hpp"
 #include "okay/Core/PathSafety.hpp"

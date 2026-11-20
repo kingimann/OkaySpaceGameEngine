@@ -2,7 +2,7 @@
 // ScriptEditorWidget: the script editor's code widget. It owns BOTH an ImGuiColorTextEdit (the default, the one people use)
 // and an OkayUI::CodeEdit behind the adapter (editor/ScriptEditorCodeEdit.hpp), and forwards every call the script editor
 // makes to the one that is active. The active one follows the UI backend: OkayUI only when the developer-only switch picked it
-// (oked::UseOkayUIBackend(), see docs/own_ui_toolkit.md section 5); otherwise this is the ImGui editor, exactly as before.
+// (oked::UseOkayUIBackend(), see docs/ui/own_ui_toolkit.md section 5); otherwise this is the ImGui editor, exactly as before.
 // When the backend changes while a script is open, the text, caret and selection move to the newly active editor.
 //
 // It speaks TextEditor's vocabulary (TextEditor::Coordinates, 1-based error markers and breakpoints, GetText ending in a

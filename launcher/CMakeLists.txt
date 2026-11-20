@@ -122,7 +122,7 @@ endif()
 # ---- The launcher on OkayUI (OKAY_LAUNCHER_ON_OKAYUI, off by default) ----------------------------------------------------------------------------
 # The SAME sources, compiled against OkayUI's Dear ImGui compatibility header (okayui/probe first on the include path: <imgui.h> is OkayUI's) instead of
 # Dear ImGui. The input is shared/ImGuiPlatformFeed.hpp (OKAY_ON_OKAYUI makes it the only path); the backend entry points are shared/OkayUIImGuiBackendShim.cpp.
-# Output: bin/OkaySpaceOkayUI(.exe) next to OkaySpace(.exe). docs/own_ui_toolkit.md "Running the real launcher and editor on OkayUI".
+# Output: bin/OkaySpaceOkayUI(.exe) next to OkaySpace(.exe). docs/ui/own_ui_toolkit.md "Running the real launcher and editor on OkayUI".
 if(OKAY_LAUNCHER_ON_OKAYUI AND TARGET okay_ui AND TARGET okay_ui_screens)
     set(_ok_src "")
     foreach(_f ${OKAY_LAUNCHER_SOURCES})

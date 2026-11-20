@@ -4,7 +4,7 @@
 // The ring is drawn only after keyboard, gamepad or script focus. A mouse click hides it
 // until the next one of those. The look comes from the widget's UI theme (colour, thickness,
 // padding, optional pulse). Accessibility can turn on a high-visibility ring and scale the
-// thickness. See docs/accessibility.md.
+// thickness. See docs/engine/accessibility.md.
 #include "okay/Render/Color.hpp"
 
 namespace okay {

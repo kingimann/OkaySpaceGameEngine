@@ -13,7 +13,7 @@ merges is cold on purpose: the cache is only saved by pushes to `main`, so a PR 
 **Steps.**
 1. Open the PR's Actions run and look at the job "Build & test (Ubuntu)". Compare its total time with the baseline of
    about 62 minutes (run 43950229920: 10 min waiting for a runner, 53.9 min build, 6.6 min test).
-2. (There is no linker step to check: lld was tried and removed, see `docs/automated_testing.md`.)
+2. (There is no linker step to check: lld was tried and removed, see `docs/process/automated_testing.md`.)
 3. Open "Restore compiler cache". `Cache restored from key: ccache-ubuntu-ci-...` means a cache was found. "Cache not found"
    means the build was cold.
 4. Open "Compiler cache statistics" (at the end of the job). Look at the hit rate (`Hits` against `Misses`). Warm is above
@@ -34,5 +34,5 @@ measured) and the same tests passing. All other jobs still run on every PR and o
 
 **Status.** Unverified: no GitHub Actions run was possible where this was written. The YAML was parsed with PyYAML, the
 CMake test set was compared (805 tests with and without the launcher and sandbox), and `tests/scripts/test_dev_workflow.py`
-passes. Nothing was run on GitHub or Windows. See `docs/automated_testing.md` "CI speed" for the details and what was left
+passes. Nothing was run on GitHub or Windows. See `docs/process/automated_testing.md` "CI speed" for the details and what was left
 out.

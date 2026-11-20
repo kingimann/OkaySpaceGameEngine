@@ -4,11 +4,11 @@
 // frames and, for the other frames, small per-vertex offsets from a base frame.
 // Written from my own memory of the layout of the format (a 112 byte file header, a 124 byte surface header, a 56 byte frame
 // record, 8 byte base vertices, 4 byte compressed vertices, 12 byte tags; the MD3 notes of this repository) and from the
-// field-by-field analysis of one real file (docs/own_mdc_reader.md says what was checked and what was not). The
+// field-by-field analysis of one real file (docs/content/model_readers.md says what was checked and what was not). The
 // compressed-offset constants (0.05 scale, bias 127, 1/64 position scale) were typed from memory and are NOT verified on any
 // real file (frame 0 of the only sample is not compressed). No other project's source was read.
 // Bounds-checked, per-file budgets, no recursion, no allocation from an unchecked count.
-// See okay/Render/ModelData.hpp and docs/own_mdc_reader.md.
+// See okay/Render/ModelData.hpp and docs/content/model_readers.md.
 #include "BinReader.hpp"
 #include "ReaderCommon.hpp"
 #include "TextReaderUtil.hpp"

@@ -3,7 +3,7 @@
 // Written from Planetside's published "Terragen Terrain file specification" (the wiki page "Terragen .TER Format") only:
 // the 16-byte identifier, the 4-byte-aligned chunks without a length field (SIZE, XPTS, YPTS, SCAL, CRAD, CRVM, ALTW,
 // "EOF "), the elevation formula BaseHeight + Elevation * HeightScale / 65536, and the curve mode 1 sphere. No importer
-// source (Assimp, GDAL, the reference library the page links, or any other) was read. See docs/own_terragen_reader.md.
+// source (Assimp, GDAL, the reference library the page links, or any other) was read. See docs/content/model_readers.md.
 //
 // The output is one mesh: a regular grid in metres (SCAL is metres per terrain unit), turned from Terragen's Z-up to the
 // engine's Y-up as (x, y, z) -> (x, z, -y), with normals from the height grid and u, v running 0..1 across it.

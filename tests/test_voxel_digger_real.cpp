@@ -6,7 +6,7 @@
 using namespace okay;
 
 // The Voxel Digger's real-life options driven the way a player does it: hold the mouse over the ground, release, press Ctrl+Z.
-// Every volume the brush takes away must turn up as store, debris or terrain again (docs/terrain_water.md, "Real-life digging").
+// Every volume the brush takes away must turn up as store, debris or terrain again (docs/rendering/terrain_water.md, "Real-life digging").
 namespace {
 
 bool AllFiniteField(const VoxelTerrain& v) { for (float f : v.density) if (!std::isfinite(f)) return false; return true; }

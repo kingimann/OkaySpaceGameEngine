@@ -17,7 +17,7 @@ class GameObject;
 /// load or Clear drops them); `Scheduler::Global()` is the one that survives.
 ///
 /// Not thread safe: schedule, cancel and update from the thread that runs the
-/// scene. Callbacks may schedule and cancel freely (see docs/timers_and_tweens.md).
+/// scene. Callbacks may schedule and cancel freely (see docs/engine/timers_and_tweens.md).
 /// A callback may even call Update on this scheduler: the nested update advances every other
 /// task, but the task whose callback is running is not run (or stepped) again by it.
 ///

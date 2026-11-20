@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Provenance scan: a text scan for signs that code was copied or ported (docs/provenance_audit.md).
+"""Provenance scan: a text scan for signs that code was copied or ported (docs/status/provenance_audit.md).
 
 Two modes, both read only:
   python3 scripts/provenance_scan.py markers

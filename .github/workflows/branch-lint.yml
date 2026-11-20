@@ -1,5 +1,5 @@
 # Branch lint: cheap checks on every push to claude/** and claude2/** (not the full CI; about 1 to 5 minutes).
-# Plain rules: docs/collaboration.md. Scripts: scripts/branch_lint.py, bug_patterns.py, collision_check.py.
+# Plain rules: docs/process/collaboration.md. Scripts: scripts/branch_lint.py, bug_patterns.py, collision_check.py.
 #   fatal:      forbidden thread includes in Windows code (rule 21a), secrets, a push into the other lane's open claim
 #   warnings:   no docs changed, feature map not regenerated, MinGW syntax check, bug-class patterns
 # Each warning shows as an annotation on the commit and in the job summary; nothing is commented on any issue or PR.

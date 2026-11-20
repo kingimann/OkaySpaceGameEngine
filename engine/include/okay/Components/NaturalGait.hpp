@@ -1,6 +1,6 @@
 #pragma once
 // The natural walk and run: the default speeds, the way back to the old ones, and the one function behind the
-// Inspector's "Use natural walk and run speeds" button (docs/walk_vs_run.md).
+// Inspector's "Use natural walk and run speeds" button (docs/gameplay/walk_vs_run.md).
 //
 // Why these numbers. A person walks at about 1.4 m/s and tops out near 2 m/s: past about 2.1 m/s (for a leg as
 // long as the built-in character's) the stride no longer fits a walk and the body breaks into a jog. A jog is

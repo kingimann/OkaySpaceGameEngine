@@ -1,5 +1,5 @@
 #pragma once
-// The crash handlers (docs/crash_reports.md): what runs INSIDE the program when it is going down, and writes
+// The crash handlers (docs/online/crash_reports.md): what runs INSIDE the program when it is going down, and writes
 // okay_crash.txt (the latest report) and okay_crashlog.txt (every report, each after a
 // "========== crash @ <when> (v<version>) ==========" line) beside the program, or in $OKAY_CRASH_DIR.
 //

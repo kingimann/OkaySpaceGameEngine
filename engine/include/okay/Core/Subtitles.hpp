@@ -1,5 +1,5 @@
 #pragma once
-// Subtitles and captions (docs/accessibility.md).
+// Subtitles and captions (docs/engine/accessibility.md).
 //
 // A game says what is spoken ("Say") and what is heard ("Sound": [door slams]); the
 // CaptionManager decides what is on screen now and hands a UI draw-ready lines: wrapped

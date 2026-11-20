@@ -1,6 +1,6 @@
 // Our own Blender (.blend) reader: the synthetic fixtures from scripts/gen_blend_fixtures.py (tests/data/models/*.blend),
 // checked against values computed by hand, plus the import seam (opt-in switch, merged mesh, scene import).
-// The fixtures are NOT Blender output (see the script); the real-file evidence is in docs/own_blend_reader.md and
+// The fixtures are NOT Blender output (see the script); the real-file evidence is in docs/content/model_readers.md and
 // tests/test_model_corpus.cpp (OKAY_MODEL_CORPUS).
 #include "test_framework.hpp"
 #include <Okay.hpp>

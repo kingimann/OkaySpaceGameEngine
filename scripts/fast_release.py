@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""The logic behind the one-dispatch "Fast release" workflow (.github/workflows/fast-release.yml, docs/fast_release.md).
+"""The logic behind the one-dispatch "Fast release" workflow (.github/workflows/fast-release.yml, docs/release/releasing.md).
 
 Everything that decides something lives here, as plain functions over plain data (JSON files, text files), so it can be tested
 offline with fake data (tests/scripts/test_fast_release.py). The workflow only fetches data (git, `gh`, curl) and calls this.
@@ -24,7 +24,7 @@ Entry files (dist/changelog.d/<id>.txt), one per change, written in the change's
     - What changed, in plain words players can read. A second line of the same
       bullet is indented by two spaces.
 
-Written from our own design (docs/fast_release.md); Python standard library only.
+Written from our own design (docs/release/releasing.md); Python standard library only.
 """
 import argparse
 import json
@@ -90,7 +90,7 @@ def next_version(existing, cmake=None, bump="minor", override=None, lts=None):
     Releases are numbered 2.<build>.<patch>. "minor" counts the build (2.880.0 -> 2.881.0, what every release did so far), "patch"
     counts the patch (2.880.0 -> 2.880.1). The counter starts from the newest published version; a CMakeLists.txt VERSION that is
     newer than anything published (somebody pre-bumped it) is used as it is. Never a version that already exists (rule 12), never one
-    in the LTS line (those are cut on their own branch, docs/release_channels.md)."""
+    in the LTS line (those are cut on their own branch, docs/release/release_channels.md)."""
     if bump not in ("minor", "patch"):
         raise Refused("bump must be minor or patch (got %r)" % bump)
     latest = max(existing) if existing else None
@@ -352,7 +352,7 @@ def build_notes(entries_dir, released_names, base_text, version, allow_empty=Fal
     new = new_entries(entries, released_names)
     if not new and not allow_empty:
         raise Refused("No new changelog entries since the last release: players would see nothing under v%s. Every change adds a file "
-                      "dist/changelog.d/<id>.txt (docs/fast_release.md); or dispatch with allow_empty to release anyway." % version)
+                      "dist/changelog.d/<id>.txt (docs/release/releasing.md); or dispatch with allow_empty to release anyway." % version)
     block = render_block(version, new) if new else "v%s\n  %s\n  - Small fixes and improvements.\n" % (version, DEFAULT_SECTION)
     changelog = merge_changelog(base_text, version, block)
     body = ["## What's new in v%s" % version, ""]

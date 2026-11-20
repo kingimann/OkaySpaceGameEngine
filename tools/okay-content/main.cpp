@@ -1,4 +1,4 @@
-// okay-content: build, sign, check and fetch game content (docs/content_delivery.md). Own code; uses shared/Content*.hpp.
+// okay-content: build, sign, check and fetch game content (docs/release/content_delivery.md). Own code; uses shared/Content*.hpp.
 //
 //   okay-content make-manifest <folder> --game <id> --version <n> [--min-app <x.y.z>] [--group <path-prefix>=<name>]...
 //       Scans <folder>, writes <folder>/content.manifest and, when OKAY_CONTENT_SIGNING_SEED is set, <folder>/content.manifest.sig.

@@ -1,4 +1,4 @@
-// okay-build: prototype of our own build tool (docs/own_build_plan.md). OFF by default, dev tool only.
+// okay-build: prototype of our own build tool (docs/platform/own_build_plan.md). OFF by default, dev tool only.
 // Written from general knowledge of how build systems work (action graph, compiler-made depfiles,
 // content hashes, a ready queue). No code from any other build tool was used.
 // POSIX uses fork/exec and worker threads. Windows (_WIN32) uses CreateProcessW and waits on
@@ -3730,7 +3730,7 @@ int main(int argc, char** argv) {
             else if (a == "build" || a == "clean" || a == "compdb" || a == "import" || a == "graph" || a == "targets" || a == "modules" || a == "toolchains" || a == "report" || a == "test" || a == "cache" || a == "lock" || a == "package" || a == "native" || a == "cmake" || a == "ctest" || a == "fetch") cmd = a;
             else if (a == "-h" || a == "--help") {
                 puts("usage: okay-build [build|clean|compdb|import|graph|targets|modules|toolchains|report|test|ctest|cmake|fetch|native] [-f build.okay] [-j N] [-k] [--config NAME] [--toolchain auto|gcc|clang|mingw|msvc] [--opt name=value] [--build-dir DIR] [--no-stat] [--no-cache] [--cache-dir DIR] [--cache-compress] [--remote-cache DIR] [--remote-cache-readonly] [--timeout SECONDS] [--msvc-version PREFIX] [--memory N] [--memory-mb MB] [--junit FILE] [--shard I/N] [--dry-run] [--explain] [-v] [--profile] [target...]");
-                puts("audit: docs/own_build_plan.md (12 subsystems; this tool is off by default)");
+                puts("audit: docs/platform/own_build_plan.md (12 subsystems; this tool is off by default)");
                 return 0;
             }
             else if (!a.empty() && a[0] == '-') throw Fail("unknown option " + a);

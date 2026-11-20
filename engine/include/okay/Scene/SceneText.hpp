@@ -6,7 +6,7 @@
 // Everything here works on the TEXT of a scene. It does not build a Scene, so it
 // is cheap (a 5000 object scene parses in a few milliseconds) and safe on files
 // this build only half understands: a record it does not know is carried along
-// untouched, never dropped. See docs/scene_diff_merge.md.
+// untouched, never dropped. See docs/engine/scene_diff_merge.md.
 //
 // Header note: keep this header free of <mutex>, <thread> and <condition_variable>
 // (MinGW builds include it from places that must not pull those in).

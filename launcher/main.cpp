@@ -21366,7 +21366,10 @@ int main(int argc, char** argv) {
                 ImVector<ImVec2> pts = dl->_Path;
                 dl->PathClear();
                 if (pts.Size < 2) return;
-                pts.push_back(pts[0]);
+                // Copy the first point out before push_back: ImVector grows by freeing its old storage first, so
+                // push_back(pts[0]) read freed memory (pts is always exactly full right after the copy above).
+                const ImVec2 first = pts[0];
+                pts.push_back(first);
                 bool on = true; float left = dash;
                 for (int i = 0; i + 1 < pts.Size; ++i) {
                     ImVec2 p = pts[i], q = pts[i + 1];

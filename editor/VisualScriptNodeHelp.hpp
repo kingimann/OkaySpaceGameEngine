@@ -76,6 +76,16 @@ inline const char* VsNodeHelpRaw(const char* type) {
         if (t == "Fn.Vehicle.Speed") return "How fast the vehicle goes, in metres per second. Negative when it reverses.";
         if (t == "Fn.Vehicle.Gear") return "The gear: 1 and up going forward, -1 in reverse.";
         if (t == "Fn.Vehicle.Rpm") return "How fast the engine is turning (revolutions per minute).";
+        // Camera rigs and effects (docs/camera_upgrade.md).
+        if (t == "Fn.Camera.Shake") return "Shakes the main camera. First is a word (impact, explosion, footstep or handheld), Second is how strong, 0 to 1. A number alone is the old shake.";
+        if (t == "Fn.Camera.BlendTo") return "Cuts or blends to a camera shot and keeps it. First is the shot's object name, Second is the seconds to blend. An empty name goes back to the shot with the highest priority.";
+        if (t == "Fn.Camera.SetTarget") return "Makes the camera shot that is showing follow and look at the object named in First.";
+        if (t == "Fn.Camera.AddToGroup") return "Adds the object named in First to the group the shot frames. The camera steps back to keep everyone in view.";
+        if (t == "Fn.Camera.RemoveFromGroup") return "Takes the object named in First out of the group. With no name it empties the group.";
+        if (t == "Fn.Camera.FovKick") return "A quick punch of the view: it widens by First degrees and settles back over Second seconds.";
+        if (t == "Fn.Camera.SetFovOffset") return "Holds the view wider or narrower by First degrees (a sprint, aiming). Second is the seconds to ease there. 0 eases back.";
+        if (t == "Fn.Camera.HitPulse") return "Darkens the edges of the screen for a moment, like being hit. First is how strong, 0 to 1.";
+        if (t == "Fn.Camera.SetHandheld") return "A steady slight wobble, like a held camera. First is how much, 0 to 1. 0 switches it off.";
         if (t == "Fn.get_monitor") return "The name of the monitor the game is using. Empty when none was chosen.";
         if (t == "Fn.get_monitors") return "The names of the monitors connected right now.";
         if (t == "Fn.set_monitor") return "Use a connected monitor. First is its name, or its number starting at 0.";

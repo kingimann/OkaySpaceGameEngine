@@ -3,6 +3,7 @@
 #include <cmath>
 #include <cstdio>
 #include <cstdlib>
+#include <sstream>
 using namespace okay;
 
 // examples/driving/driving_world.okayscene is Templates::DrivingWorld saved to a file. Run with the environment variable
@@ -28,6 +29,16 @@ int main() {
     }
     CHECK(VehicleBuilder::Make(*std::make_unique<Scene>("x"), "Bicycle", {0, 0, 0}, 0, Color::FromBytes(1, 1, 1)) == nullptr);
 
+    {   // the template scene: save, load, save is the same text, and Play leaves the text unchanged
+        Scene a("t"); Templates::DrivingWorld(a);
+        const std::string t1 = SceneSerializer::Serialize(a);
+        Scene b("t2"); CHECK(SceneSerializer::Deserialize(b, t1));
+        CHECK(SceneSerializer::Serialize(b) == t1);
+        b.Start(); for (int i = 0; i < 120; ++i) b.Update(1.0f / 60.0f);
+        // vehicles may have moved; compare the vehicle component lines only
+        auto veh = [](const std::string& t) { std::string o, l; std::istringstream in(t); while (std::getline(in, l)) if (l.find("  vehicle") == 0) o += l + "\n"; return o; };
+        CHECK(veh(SceneSerializer::Serialize(b)) == veh(t1));
+    }
     Scene s("world");
     std::string err;
     const bool loaded = SceneSerializer::LoadFromFile(s, path, &err, nullptr);

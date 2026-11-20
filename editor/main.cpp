@@ -7495,6 +7495,35 @@ static GameObject* AddTilemapObject(EditorState& ed) {
     ConsoleLog("Created Tilemap");
     return go;
 }
+// Camera Rig (docs/camera_upgrade.md): one shot with a ready-made style (0 Follow, 1 Orbit, 2 Look At) and the brain on the
+// main camera so the shot shows. The selected object (if it is not a camera) becomes what the rig follows or looks at.
+static GameObject* AddCameraRigObject(EditorState& ed, int style) {
+    static const char* kNames[3] = {"Camera Rig (Follow)", "Camera Rig (Orbit)", "Camera Rig (Look At)"};
+    style = style < 0 ? 0 : (style > 2 ? 2 : style);
+    ed.PushUndo();
+    GameObject* target = ed.selected();
+    if (target && (target->GetComponent<Camera>() || target->GetComponent<VirtualCamera>())) target = nullptr;
+    GameObject* camGO = nullptr;
+    for (const auto& up : ed.scene().Objects())
+        if (up->GetComponent<Camera>()) { camGO = up.get(); break; }
+    if (!camGO) { ed.CreateCamera(); camGO = ed.selected(); }
+    if (camGO && !camGO->GetComponent<CinemachineBrain>()) camGO->AddComponent<CinemachineBrain>();
+    int top = 0;
+    for (VirtualCamera* v : ed.scene().FindObjectsOfType<VirtualCamera>()) top = std::max(top, v->priority);
+    GameObject* g = ed.CreateEmpty(kNames[style]);
+    auto* vc = g->AddComponent<VirtualCamera>();
+    vc->ApplyStyle(style);
+    vc->priority = top + 1;                        // the new rig is the one on screen
+    if (target) {
+        if (style != 2) vc->follow = target->name;
+        vc->lookAt = target->name;
+        if (style == 2 && camGO && camGO->transform) g->transform->SetPosition(camGO->transform->Position());
+    }
+    ed.Select(g);
+    ConsoleLog(std::string("Created ") + kNames[style] + (target ? (" for '" + target->name + "'") : std::string(": type the name of an object in Follow / Look At")));
+    ed.dirty = true;
+    return g;
+}
 static GameObject* AddPlayerControllerObject(EditorState& ed) {
     ed.PushUndo();
     GameObject* g = ed.SettleSpawn(okay::Templates::AddThirdPersonPlayer(ed.scene()));
@@ -7650,6 +7679,20 @@ static void DrawCreateSlot(EditorState& ed, const std::string& id, GameObject* p
             ed.Select(g); ConsoleLog("Created Virtual Camera"); created = true;
         }
         if (ImGui::IsItemHovered()) ImGui::SetTooltip("A Cinemachine shot: where to stand, what to aim at, the lens and damping.");
+        ImGui::Separator();
+        ImGui::TextDisabled("Camera Rig");
+        if (ImGui::MenuItem("Camera Rig: Follow")) { AddCameraRigObject(ed, 0); created = true; }
+        if (ImGui::IsItemHovered()) ImGui::SetTooltip("A smooth chase camera. Select the object to follow first, then click this.\nIt looks a little ahead, keeps the target in the middle of the screen and stays out of walls.");
+        if (ImGui::MenuItem("Camera Rig: Orbit")) { AddCameraRigObject(ed, 1); created = true; }
+        if (ImGui::IsItemHovered()) ImGui::SetTooltip("A camera that circles its target. Hold the right mouse button and drag to turn it.");
+        if (ImGui::MenuItem("Camera Rig: Look At")) { AddCameraRigObject(ed, 2); created = true; }
+        if (ImGui::IsItemHovered()) ImGui::SetTooltip("A camera that stands still and turns to watch its target (a security camera, a boss arena).");
+        if (ImGui::MenuItem("Camera Room (2D)")) {
+            GameObject* g = ed.CreateEmpty("Camera Room");
+            g->AddComponent<CameraRoom>();
+            ed.Select(g); ConsoleLog("Created Camera Room: set Use Rooms on a 2D Camera Rig"); created = true;
+        }
+        if (ImGui::IsItemHovered()) ImGui::SetTooltip("A box that holds a 2D camera while the player is inside it. The view slides to the next room.");
         if (ImGui::MenuItem("Cinemachine Brain")) {
             // The brain drives the real camera from virtual cameras, so put it on
             // the existing main camera if there is one; otherwise make a Camera for it.
@@ -13096,6 +13139,10 @@ void DrawSceneSettings(EditorState& ed) {
         else if (pixel)             ImGui::TextDisabled("Built-in 8x8 bitmap font.");
         else if (okay::GetFont(uf)) ImGui::TextColored(ImVec4(0.5f,0.85f,0.5f,1.0f), "TTF font loaded.");
         else                        ImGui::TextColored(ImVec4(0.9f,0.5f,0.4f,1.0f), "Font not found / failed to load.");
+        static const char* kQ[] = {"Fast", "Good (default)", "Best", "Old look (for comparison)"};
+        ImGui::AlignTextToFramePadding(); ImGui::TextUnformatted("UI Quality"); ImGui::SameLine();
+        if (ImGui::Combo("##uiquality", &ed.scene().uiQuality, kQ, 4)) ed.dirty = true;
+        if (ImGui::IsItemHovered()) ImGui::SetTooltip("How carefully the in-game UI is drawn: sharper text, smooth shadows and filtered pictures. Saved with the scene; the built game matches.");
     }
 
     // Lighting presets: one click sets the sky, ambient, fog, post look and the lights (sun / moon, lamps, panel, lantern).
@@ -14443,6 +14490,11 @@ static const std::unordered_map<std::string, std::string>& ScriptSignatureMap() 
         {"set_cam","set_cam(x, y)"}, {"move_cam","move_cam(dx, dy)"}, {"set_cam_zoom","set_cam_zoom(z)"},
         {"camera_shake","camera_shake(strength)"}, {"camera_zoom_to","camera_zoom_to(zoom, seconds)"},
         {"camera_dutch","camera_dutch(degrees)"}, {"camera_fov","camera_fov(degrees)"}, {"camera_follow","camera_follow(\"name\", smoothing)"},
+        {"Camera.Shake","Camera.Shake(\"impact\", strength)"}, {"Camera.BlendTo","Camera.BlendTo(\"shot\", seconds)"},
+        {"Camera.SetTarget","Camera.SetTarget(\"name\")"}, {"Camera.AddToGroup","Camera.AddToGroup(\"name\")"},
+        {"Camera.RemoveFromGroup","Camera.RemoveFromGroup(\"name\")"}, {"Camera.FovKick","Camera.FovKick(degrees, seconds)"},
+        {"Camera.SetFovOffset","Camera.SetFovOffset(degrees, seconds)"}, {"Camera.HitPulse","Camera.HitPulse(strength)"},
+        {"Camera.SetHandheld","Camera.SetHandheld(amount)"},
         {"set_bg","set_bg(r, g, b)"}, {"set_light","set_light(x, y, z)"}, {"set_ambient","set_ambient(v)"},
         // variables / prefs
         {"set_var","set_var(\"name\", value)"}, {"get_var","get_var(\"name\")"}, {"add_var","add_var(\"name\", amount)"},
@@ -34050,6 +34102,21 @@ void DrawInspector(EditorState& ed) {
             ImGui::EndDisabled();
             if (ImGui::IsItemHovered(ImGuiHoveredFlags_AllowWhenDisabled))
                 ImGui::SetTooltip(ed.isPlaying() ? "Shake it now (strength 0.6)." : "Press Play, then try it here.\nIn scripts: camera_shake(0.5); in Actions: Shake Camera.");
+            SectionHeader("Camera Effects (try them in Play)");
+            ImGui::BeginDisabled(!ed.isPlaying());
+            if (ImGui::Button("Impact##fx")) cam->ShakePreset(okay::cam::ShakePreset::Impact, 1.0f);
+            ImGui::SameLine(); if (ImGui::Button("Explosion##fx")) cam->ShakePreset(okay::cam::ShakePreset::Explosion, 1.0f);
+            ImGui::SameLine(); if (ImGui::Button("Footstep##fx")) cam->ShakePreset(okay::cam::ShakePreset::Footstep, 1.0f);
+            static bool s_handheld = false;
+            if (ImGui::Checkbox("Handheld wobble##fx", &s_handheld)) cam->SetHandheld(s_handheld ? 1.0f : 0.0f);
+            if (ImGui::Button("Field of view kick##fx")) cam->KickFov(8.0f, 0.5f);
+            ImGui::SameLine(); if (ImGui::Button("Hit flash##fx")) cam->HitPulse(0.8f);
+            ImGui::EndDisabled();
+            if (ImGui::IsItemHovered(ImGuiHoveredFlags_AllowWhenDisabled))
+                ImGui::SetTooltip(ed.isPlaying() ? "Impact: a short sharp knock. Explosion: big and slow. Footstep: a small bump.\nHandheld: a steady slight wobble. Kick: the view widens for a moment. Hit flash: the screen edges darken.\nIn scripts: Camera.Shake(\"impact\", 1)."
+                                                 : "Press Play, then try them here.\nIn scripts: Camera.Shake(\"impact\", 1), Camera.FovKick(8, 0.5), Camera.HitPulse(0.8).");
+            if (ImGui::SliderFloat("Hit flash darkness##fx", &cam->hitPulseVignette, 0.0f, 1.0f, "%.2f")) ed.dirty = true;
+            if (ImGui::IsItemHovered()) ImGui::SetTooltip("How dark the edges of the screen get at the strongest hit flash.");
 
             SectionHeader("Viewport Rect");
             float r[4] = {cam->rectX, cam->rectY, cam->rectW, cam->rectH};
@@ -39800,7 +39867,118 @@ void DrawInspector(EditorState& ed) {
             oked::FieldTip("Impulse Decay##vcn");
             ImGui::SameLine();
             if (ImGui::SmallButton("Test Impulse##vc")) vc->AddImpulse(1.0f);
-            ImGui::TextDisabled("Needs a Cinemachine Brain on the main camera.");
+            ImGui::TextDisabled("Needs a Brain on the main camera.");
+            SectionHeader("Camera Rig");
+            {
+                ImGui::TextDisabled("Start from a ready-made style:");
+                if (ImGui::SmallButton("Follow##vcrig")) { vc->ApplyStyle(0); ed.dirty = true; }
+                if (ImGui::IsItemHovered()) ImGui::SetTooltip("A smooth chase camera that looks a little ahead of a moving target.");
+                ImGui::SameLine();
+                if (ImGui::SmallButton("Orbit##vcrig")) { vc->ApplyStyle(1); ed.dirty = true; }
+                if (ImGui::IsItemHovered()) ImGui::SetTooltip("Circles the target. Hold the right mouse button and drag to turn it.");
+                ImGui::SameLine();
+                if (ImGui::SmallButton("Look At##vcrig")) { vc->ApplyStyle(2); ed.dirty = true; }
+                if (ImGui::IsItemHovered()) ImGui::SetTooltip("Stands still and turns to watch the target.");
+                if (ImGui::Checkbox("Aim at what it follows##vcrig", &vc->aimAtFollow)) ed.dirty = true;
+                if (ImGui::IsItemHovered()) ImGui::SetTooltip("With no Look At object, point the camera at the Follow object.\nTurn this off to copy the Follow object's own facing instead.");
+                int dm = (int)vc->dampingMode;
+                const char* dms[] = {"Smooth (classic)", "Spring (no overshoot)"};
+                if (ImGui::Combo("Smoothing style##vcrig", &dm, dms, 2)) { vc->dampingMode = dm == 1 ? VirtualCamera::DampingMode::Spring : VirtualCamera::DampingMode::Smooth; ed.dirty = true; }
+                if (ImGui::IsItemHovered()) ImGui::SetTooltip("Smooth eases toward the target.\nSpring does the same but keeps its speed when the target turns, so it never stops dead or jerks.\nThe Position number in Damping sets how snappy it is.");
+            }
+            SectionHeader("Framing (dead zone and soft zone)");
+            if (ImGui::Checkbox("Use screen zones##vcz", &vc->useZones)) ed.dirty = true;
+            if (ImGui::IsItemHovered()) ImGui::SetTooltip("The target can move around the middle of the screen without the camera moving.\nPast that area the camera eases it back. Far out, it catches up at once.");
+            if (vc->useZones) {
+                if (ImGui::SliderFloat("Dead zone width##vcz", &vc->deadZoneW, 0.0f, 1.0f, "%.2f")) ed.dirty = true;
+                if (ImGui::IsItemHovered()) ImGui::SetTooltip("The middle part of the screen where nothing moves (1 = the whole screen).");
+                if (ImGui::SliderFloat("Dead zone height##vcz", &vc->deadZoneH, 0.0f, 1.0f, "%.2f")) ed.dirty = true;
+                if (ImGui::SliderFloat("Soft zone width##vcz", &vc->softZoneW, 0.0f, 1.0f, "%.2f")) ed.dirty = true;
+                if (ImGui::IsItemHovered()) ImGui::SetTooltip("Past this the camera catches up at once so the target never leaves the screen.\nKeep it larger than the dead zone.");
+                if (ImGui::SliderFloat("Soft zone height##vcz", &vc->softZoneH, 0.0f, 1.0f, "%.2f")) ed.dirty = true;
+                if (ImGui::DragFloat("Catch-up speed##vcz", &vc->zoneDamping, 0.1f, 0.0f, 50.0f)) ed.dirty = true;
+                if (ImGui::IsItemHovered()) ImGui::SetTooltip("How quickly the camera brings the target back from the soft zone (higher = quicker).");
+            }
+            if (ImGui::DragFloat("Look ahead (seconds)##vcz", &vc->lookaheadTime, 0.01f, 0.0f, 3.0f)) ed.dirty = true;
+            if (ImGui::IsItemHovered()) ImGui::SetTooltip("Frame a little in front of a moving target: this many seconds of its travel. 0 = off.");
+            if (vc->lookaheadTime > 0.0f) {
+                if (ImGui::DragFloat("Look ahead most##vcz", &vc->lookaheadMax, 0.05f, 0.0f, 50.0f)) ed.dirty = true;
+                if (ImGui::IsItemHovered()) ImGui::SetTooltip("The furthest the view may lean ahead, in world units.");
+                if (ImGui::DragFloat("Look ahead smoothness##vcz", &vc->lookaheadSmooth, 0.05f, 0.1f, 30.0f)) ed.dirty = true;
+            }
+            SectionHeader("Group (frame several things)");
+            if (vc->groupTargets.empty()) ImGui::TextDisabled("Add object names and the camera frames all of them.");
+            for (std::size_t gi = 0; gi < vc->groupTargets.size(); ++gi) {
+                char gb[128];
+                std::strncpy(gb, vc->groupTargets[gi].c_str(), sizeof(gb) - 1); gb[sizeof(gb) - 1] = '\0';
+                ImGui::SetNextItemWidth(180.0f);
+                if (ImGui::InputText(("##vcg" + std::to_string(gi)).c_str(), gb, sizeof(gb))) { vc->groupTargets[gi] = gb; ed.dirty = true; }
+                ImGui::SameLine();
+                if (ImGui::SmallButton(("Remove##vcg" + std::to_string(gi)).c_str())) { vc->groupTargets.erase(vc->groupTargets.begin() + (long)gi); ed.dirty = true; break; }
+            }
+            if (ImGui::SmallButton("Add member##vcg")) { vc->groupTargets.push_back(""); ed.dirty = true; }
+            if (!vc->groupTargets.empty()) {
+                if (ImGui::Checkbox("Step back to fit them all##vcg", &vc->groupFrame)) ed.dirty = true;
+                if (ImGui::IsItemHovered()) ImGui::SetTooltip("Move the camera back (or zoom a 2D camera out) so every member stays in view.");
+                if (ImGui::DragFloat("Extra room##vcg", &vc->groupPadding, 0.05f, 0.0f, 50.0f)) ed.dirty = true;
+                if (ImGui::IsItemHovered()) ImGui::SetTooltip("Space left round the group, in world units.");
+            }
+            SectionHeader("2D camera");
+            if (ImGui::Checkbox("Flat 2D camera##vc2d", &vc->ortho2D)) ed.dirty = true;
+            if (ImGui::IsItemHovered()) ImGui::SetTooltip("Slides up, down and sideways with the target and never turns.\nUse it with an Orthographic camera.");
+            if (vc->ortho2D) {
+                if (ImGui::DragFloat("View height##vc2d", &vc->orthoSize, 0.05f, 0.0f, 500.0f)) ed.dirty = true;
+                if (ImGui::IsItemHovered()) ImGui::SetTooltip("How many units the picture shows from the middle to the top. 0 = leave the camera's own size.");
+                if (ImGui::Checkbox("Keep the picture edges inside the box##vc2d", &vc->confineToView)) ed.dirty = true;
+                if (ImGui::IsItemHovered()) ImGui::SetTooltip("With 'Confine to box' on: the edges of the picture stay inside it, not just the camera's middle.");
+            }
+            if (ImGui::Checkbox("Use rooms##vc2d", &vc->useRooms)) ed.dirty = true;
+            if (ImGui::IsItemHovered()) ImGui::SetTooltip("Hold the camera inside the Camera Room the target is in; slide to the next room when it crosses over.");
+            if (vc->useRooms) {
+                if (ImGui::DragFloat("Room slide time##vc2d", &vc->roomBlendTime, 0.02f, 0.0f, 10.0f, "%.2f s")) ed.dirty = true;
+            }
+            SectionHeader("Walls (collision)");
+            if (ImGui::Checkbox("Stay out of walls##vcc", &vc->collision)) ed.dirty = true;
+            if (ImGui::IsItemHovered()) ImGui::SetTooltip("When something solid is between the camera and its target, the camera moves in so you can still see.\nTriggers never count.");
+            if (vc->collision) {
+                if (ImGui::DragFloat("Probe size##vcc", &vc->collisionRadius, 0.01f, 0.0f, 3.0f)) ed.dirty = true;
+                if (ImGui::IsItemHovered()) ImGui::SetTooltip("How fat the feeler is. A bigger one stays further from edges.");
+                if (ImGui::DragFloat("Gap from the wall##vcc", &vc->collisionSkin, 0.01f, 0.0f, 1.0f)) ed.dirty = true;
+                if (ImGui::DragFloat("Move back out speed##vcc", &vc->collisionRecover, 0.1f, 0.0f, 50.0f)) ed.dirty = true;
+                if (ImGui::IsItemHovered()) ImGui::SetTooltip("How quickly the camera glides back out once the wall is gone.");
+                if (ImGui::Checkbox("Jump in at once##vcc", &vc->collisionSnapIn)) ed.dirty = true;
+                if (ImGui::IsItemHovered()) ImGui::SetTooltip("On: the camera is never inside a wall.\nOff: it eases in, which is softer but can show the wall for a moment.");
+                if (!vc->collisionSnapIn && ImGui::DragFloat("Move in speed##vcc", &vc->collisionPullIn, 0.1f, 0.0f, 100.0f)) ed.dirty = true;
+                if (ImGui::BeginCombo("Layers that block##vcc", vc->collisionMask == 0xFFFFFFFFu ? "Everything" : "Some layers")) {
+                    if (ImGui::Selectable("Everything", vc->collisionMask == 0xFFFFFFFFu)) { vc->collisionMask = 0xFFFFFFFFu; ed.dirty = true; }
+                    ImGui::Separator();
+                    for (int li = 0; li < 32; ++li) {
+                        bool on = (vc->collisionMask & (1u << li)) != 0;
+                        if (ImGui::Checkbox((okay::Layers::Name(li) + "##vccl" + std::to_string(li)).c_str(), &on)) {
+                            if (on) vc->collisionMask |= (1u << li); else vc->collisionMask &= ~(1u << li);
+                            ed.dirty = true;
+                        }
+                    }
+                    ImGui::EndCombo();
+                }
+            }
+            if (ImGui::Checkbox("Fade things in the way##vcc", &vc->fadeOccluders)) ed.dirty = true;
+            if (ImGui::IsItemHovered()) ImGui::SetTooltip("Objects between the camera and the target turn see-through, then come back.");
+            if (vc->fadeOccluders) {
+                if (ImGui::SliderFloat("See-through amount##vcc", &vc->occlusionAlpha, 0.0f, 1.0f, "%.2f")) ed.dirty = true;
+                if (ImGui::IsItemHovered()) ImGui::SetTooltip("How solid they stay while in the way (0 = invisible, 1 = untouched).");
+                if (ImGui::DragFloat("Fade speed##vcc", &vc->occlusionFadeSpeed, 0.1f, 0.0f, 100.0f)) ed.dirty = true;
+            }
+            SectionHeader("Blend into this shot");
+            if (ImGui::DragFloat("Blend time##vcb", &vc->blendIn, 0.05f, -1.0f, 30.0f, vc->blendIn < 0.0f ? "use the Brain's" : "%.2f s")) ed.dirty = true;
+            if (ImGui::IsItemHovered()) ImGui::SetTooltip("Seconds to blend when this shot becomes the live one. -1 = the Brain's time. 0 = a cut.");
+            {
+                int bs = vc->blendInStyle + 1;
+                const char* bss[] = {"Use the Brain's", "Cut", "Linear", "Ease In and Out", "Ease In", "Ease Out", "Custom curve"};
+                if (ImGui::Combo("Blend style##vcb", &bs, bss, 7)) { vc->blendInStyle = bs - 1; ed.dirty = true; }
+            }
+            if (vc->follow.empty() && vc->lookAt.empty() && vc->groupTargets.empty())
+                ImGui::TextColored(ImVec4(1.0f, 0.8f, 0.3f, 1.0f), "Nothing to follow yet: type an object's name in Follow or Look At.");
             if (ImGui::SmallButton("Remove##vc")) toRemove = vc;
         }
     }
@@ -39808,13 +39986,49 @@ void DrawInspector(EditorState& ed) {
         if (CompHeader("Cinemachine Brain", cb, &toRemove)) {
             if (ImGui::DragFloat("Blend Time##cb", &cb->blendTime, 0.05f, 0.0f, 10.0f, "%.2f s")) ed.dirty = true;
             if (ImGui::IsItemHovered()) ImGui::SetTooltip("Seconds to ease between virtual cameras (0 = cut).");
-            if (ImGui::Checkbox("Ease In/Out##cb", &cb->easeInOut)) ed.dirty = true;
-            if (ImGui::IsItemHovered()) ImGui::SetTooltip("Smooth the blend curve instead of a linear ramp.");
+            {
+                int bs = (int)cb->blendStyle;
+                const char* bss[] = {"Cut", "Linear", "Ease In and Out", "Ease In", "Ease Out", "Custom curve"};
+                if (ImGui::Combo("Blend style##cb", &bs, bss, 6)) { cb->blendStyle = (okay::cam::BlendStyle)bs; ed.dirty = true; }
+                if (ImGui::IsItemHovered()) ImGui::SetTooltip("How the picture moves from one shot to the next.\nCut jumps. Linear moves at a steady speed. Ease In and Out starts and ends softly.");
+                if (cb->blendStyle == okay::cam::BlendStyle::Custom) {
+                    if (ImGui::DragFloat4("Curve (x1 y1 x2 y2)##cb", cb->customCurve, 0.01f, 0.0f, 1.0f)) {
+                        for (int ci = 0; ci < 4; ++ci) cb->customCurve[ci] = std::max(0.0f, std::min(1.0f, cb->customCurve[ci]));
+                        ed.dirty = true;
+                    }
+                    if (ImGui::IsItemHovered()) ImGui::SetTooltip("Two points that bend the blend, like an easing curve on a web page.\n0.25 0.1 0.25 1 starts gently and ends softly.");
+                    // a small drawing of the curve
+                    const ImVec2 origin = ImGui::GetCursorScreenPos();
+                    const float cw = 120.0f, ch = 60.0f;
+                    ImDrawList* cdl = ImGui::GetWindowDrawList();
+                    cdl->AddRectFilled(origin, ImVec2(origin.x + cw, origin.y + ch), IM_COL32(25, 25, 32, 255));
+                    ImVec2 pv(origin.x, origin.y + ch);
+                    for (int ci = 1; ci <= 32; ++ci) {
+                        const float tx = (float)ci / 32.0f;
+                        const float ty = okay::cam::BlendCurve(okay::cam::BlendStyle::Custom, tx, cb->customCurve);
+                        const ImVec2 pt(origin.x + tx * cw, origin.y + ch - ty * ch);
+                        cdl->AddLine(pv, pt, IM_COL32(255, 210, 90, 255), 1.5f); pv = pt;
+                    }
+                    ImGui::Dummy(ImVec2(cw, ch + 4.0f));
+                }
+            }
+            if (ImGui::Checkbox("Let cutscenes take over##cb", &cb->yieldToCutscene)) ed.dirty = true;
+            if (ImGui::IsItemHovered()) ImGui::SetTooltip("While a cutscene plays it moves the camera. When it ends this Brain blends back instead of jumping.");
+            if (cb->IsBlending()) ImGui::TextDisabled("Blending: %d%%", (int)(cb->BlendProgress() * 100.0f));
             if (VirtualCamera* live = cb->LiveCamera())
                 ImGui::TextDisabled("Live: %s", live->gameObject ? live->gameObject->name.c_str() : "?");
             else
                 ImGui::TextDisabled("Drives this Camera from virtual cameras.");
             if (ImGui::SmallButton("Remove##cb")) toRemove = cb;
+        }
+    }
+    if (auto* rm = dynamic_cast<CameraRoom*>(curComp)) {
+        if (CompHeader("Camera Room", rm, &toRemove)) {
+            float sz[2] = {rm->size.x, rm->size.y};
+            if (ImGui::DragFloat2("Size##cr", sz, 0.1f, 0.1f, 5000.0f)) { rm->size = {sz[0], sz[1]}; ed.dirty = true; }
+            if (ImGui::IsItemHovered()) ImGui::SetTooltip("Width and height of the room in world units. The room is centred on this object.\nA 2D Camera Rig with 'Use rooms' on stays inside the room the player is in.");
+            ImGui::TextDisabled("Shown as a yellow box in the Scene view.");
+            if (ImGui::SmallButton("Remove##cr")) toRemove = rm;
         }
     }
     if (auto* dp = dynamic_cast<DollyPath*>(curComp)) {
@@ -42684,6 +42898,17 @@ void DrawInspector(EditorState& ed) {
             }
             if (item(!go->GetComponent<CameraFollow>(), "Camera Follow")) { go->AddComponent<CameraFollow>(); ed.dirty = true; }
             if (item(!go->GetComponent<VirtualCamera>(), "Virtual Camera")) { go->AddComponent<VirtualCamera>(); ed.dirty = true; }
+            if (item(!go->GetComponent<VirtualCamera>(), "Camera Rig")) {   // a Follow rig, ready to use; change the style in the Inspector
+                auto* vc = go->AddComponent<VirtualCamera>();
+                vc->ApplyStyle(0);
+                int top = 0;
+                for (VirtualCamera* v : ed.scene().FindObjectsOfType<VirtualCamera>()) if (v != vc) top = std::max(top, v->priority);
+                vc->priority = top + 1;
+                for (const auto& up : ed.scene().Objects())
+                    if (up->GetComponent<Camera>() && !up->GetComponent<CinemachineBrain>()) { up->AddComponent<CinemachineBrain>(); break; }
+                ed.dirty = true;
+            }
+            if (item(!go->GetComponent<CameraRoom>(), "Camera Room")) { go->AddComponent<CameraRoom>(); ed.dirty = true; }
             if (item(!go->GetComponent<CinemachineBrain>(), "Cinemachine Brain")) { go->AddComponent<CinemachineBrain>(); ed.dirty = true; }
             if (item(!go->GetComponent<DollyPath>(), "Dolly Path")) { go->AddComponent<DollyPath>(); ed.dirty = true; }
             if (item(!go->GetComponent<DollyCart>(), "Dolly Cart")) { go->AddComponent<DollyCart>(); ed.dirty = true; }
@@ -45753,6 +45978,77 @@ void DrawScene3D(EditorState& ed, ImDrawList* dl, ImVec2 canvasPos, ImVec2 canva
                 if (project(p, sp)) { cameraIcon(sp, col, up.get() == ed.selected()); if (up.get() != ed.selected()) iconLabel(sp, up->name.c_str(), col); }   // the selected one has its name chip
             }
 
+            // Camera Rig gizmo (docs/camera_upgrade.md): the shot's frustum, and for the selected rig its dead zone (green) and
+            // soft zone (orange) on the picture, the wall probe from the target to the camera (green line, red where a wall
+            // pulls it in), the circle round a group of targets, and the confine box. A Camera Room is a yellow box.
+            if (auto* vcg = up->GetComponent<VirtualCamera>()) {
+                const bool selv = (up.get() == ed.selected());
+                const ImU32 col = selv ? IM_COL32(255, 220, 90, 255) : IM_COL32(140, 230, 150, 200);
+                Vec3 ip = p; Quat irot = t->Rotation();
+                if (selv && !ed.isPlaying()) vcg->IdealPose(ip, irot);   // not playing: where the shot would stand
+                const Vec3 vf = (irot * Vec3{0.0f, 0.0f, -1.0f}), vr = irot * Vec3::Right, vu = irot * Vec3::Up;
+                const float hv = Mathf::Clamp(vcg->fieldOfView, 5.0f, 170.0f) * Mathf::Deg2Rad * 0.5f;
+                const float dd = 1.6f, hh = dd * Mathf::Tan(hv), ww = hh * 16.0f / 9.0f;
+                auto rect = [&](float fw, float fh, ImU32 c2) {
+                    Vec3 q[4] = { ip + vf * dd + vr * (ww * fw) + vu * (hh * fh), ip + vf * dd - vr * (ww * fw) + vu * (hh * fh),
+                                  ip + vf * dd - vr * (ww * fw) - vu * (hh * fh), ip + vf * dd + vr * (ww * fw) - vu * (hh * fh) };
+                    for (int i = 0; i < 4; ++i) line(q[i], q[(i + 1) % 4], c2);
+                    return 0;
+                };
+                rect(1.0f, 1.0f, col);
+                { Vec3 q[4] = { ip + vf * dd + vr * ww + vu * hh, ip + vf * dd - vr * ww + vu * hh, ip + vf * dd - vr * ww - vu * hh, ip + vf * dd + vr * ww - vu * hh };
+                  for (int i = 0; i < 4; ++i) line(ip, q[i], col); }
+                if (selv) {
+                    if (vcg->useZones) {
+                        rect(Mathf::Clamp(vcg->deadZoneW, 0.0f, 1.0f), Mathf::Clamp(vcg->deadZoneH, 0.0f, 1.0f), IM_COL32(110, 230, 120, 255));
+                        rect(Mathf::Clamp(std::max(vcg->softZoneW, vcg->deadZoneW), 0.0f, 1.0f), Mathf::Clamp(std::max(vcg->softZoneH, vcg->deadZoneH), 0.0f, 1.0f), IM_COL32(255, 170, 60, 255));
+                    }
+                    GameObject* tgo = ed.scene().Find(vcg->lookAt.empty() ? vcg->follow : vcg->lookAt);
+                    if (vcg->collision && tgo && tgo->transform) {
+                        const Vec3 pv = tgo->transform->Position() + (vcg->lookAt.empty() ? Vec3{0, 0, 0} : vcg->lookAtOffset);
+                        const Vec3 dv = ip - pv; const float dist = dv.Magnitude();
+                        if (dist > 0.01f) {
+                            const Vec3 dn = dv * (1.0f / dist);
+                            GameObject* ig = vcg->follow.empty() ? tgo : ed.scene().Find(vcg->follow);
+                            RaycastHit3D hit;
+                            { Physics3D::IgnoreHierarchy own(ig);
+                              hit = ed.scene().physics3D().SphereCast(ed.scene(), pv, dn, vcg->collisionRadius, dist + vcg->collisionSkin, ig, vcg->collisionMask, false); }
+                            const Vec3 endp = hit.hit ? pv + dn * std::max(0.0f, hit.distance - vcg->collisionSkin) : ip;
+                            line(pv, endp, IM_COL32(110, 230, 120, 255), 2.0f);
+                            if (hit.hit) line(endp, ip, IM_COL32(235, 90, 90, 200), 1.0f);
+                            ring(endp, vr, vu, std::max(0.05f, vcg->collisionRadius), hit.hit ? IM_COL32(255, 170, 60, 255) : IM_COL32(110, 230, 120, 255));
+                        }
+                    }
+                    if (!vcg->groupTargets.empty()) {
+                        std::vector<Vec3> gp;
+                        if (GameObject* fo = vcg->follow.empty() ? nullptr : ed.scene().Find(vcg->follow)) if (fo->transform) gp.push_back(fo->transform->Position());
+                        for (const std::string& gn : vcg->groupTargets)
+                            if (GameObject* go2 = ed.scene().Find(gn)) if (go2->transform) gp.push_back(go2->transform->Position());
+                        const okay::cam::GroupFrame gf = okay::cam::FrameGroup(gp.data(), (int)gp.size(), vcg->groupPadding);
+                        if (gf.valid) {
+                            ring(gf.center, Vec3{1, 0, 0}, Vec3{0, 1, 0}, gf.radius, IM_COL32(120, 200, 255, 220));
+                            ring(gf.center, Vec3{1, 0, 0}, Vec3{0, 0, 1}, gf.radius, IM_COL32(120, 200, 255, 220));
+                            for (const Vec3& m : gp) line(gf.center, m, IM_COL32(120, 200, 255, 160), 1.0f);
+                        }
+                    }
+                    if (vcg->confine) {
+                        const float z0 = p.z;
+                        Vec3 q[4] = {{vcg->confineMin.x, vcg->confineMin.y, z0}, {vcg->confineMax.x, vcg->confineMin.y, z0},
+                                     {vcg->confineMax.x, vcg->confineMax.y, z0}, {vcg->confineMin.x, vcg->confineMax.y, z0}};
+                        if (std::fabs(vcg->confineMin.x) < 1e6f && std::fabs(vcg->confineMax.x) < 1e6f)
+                            for (int i = 0; i < 4; ++i) line(q[i], q[(i + 1) % 4], IM_COL32(120, 200, 255, 220), 1.5f);
+                    }
+                }
+                ImVec2 spv;
+                if (project(ip, spv)) { cameraIcon(spv, col, selv); if (!selv) iconLabel(spv, up->name.c_str(), col); }
+            }
+            if (auto* room = up->GetComponent<CameraRoom>()) {
+                const okay::cam::Box2 b = room->Bounds();
+                const ImU32 rc2 = (up.get() == ed.selected()) ? IM_COL32(255, 230, 90, 255) : IM_COL32(220, 190, 70, 150);
+                const Vec3 q[4] = {{b.minX, b.minY, p.z}, {b.maxX, b.minY, p.z}, {b.maxX, b.maxY, p.z}, {b.minX, b.maxY, p.z}};
+                for (int i = 0; i < 4; ++i) line(q[i], q[(i + 1) % 4], rc2, 2.0f);
+            }
+
             if (auto* lod = up->GetComponent<LODGroup>(); lod && up.get() == ed.selected() && !lod->useScreenSize) {
                 const ImU32 cols[4] = {IM_COL32(255, 90, 90, 180), IM_COL32(90, 220, 110, 160),
                                        IM_COL32(90, 150, 255, 140), IM_COL32(255, 210, 70, 120)};
@@ -46329,6 +46625,33 @@ void DrawScene3D(EditorState& ed, ImDrawList* dl, ImVec2 canvasPos, ImVec2 canva
             dl->AddRect(pmin, pmax, IM_COL32(255, 255, 255, 180));
             dl->AddText(ImVec2(pmin.x + 4, pmin.y - 16), IM_COL32(220, 220, 230, 255),
                         "Camera Preview");
+        }
+    }
+
+    // Camera Preview for a selected camera rig: what the shot sees, from where it would stand (while playing, from where it is).
+    if (!gameView && ed.selected() && !ed.selected()->GetComponent<Camera>()) {
+        if (auto* pv = ed.selected()->GetComponent<VirtualCamera>(); pv && ed.selected()->transform) {
+            float pw = Mathf::Clamp(canvasSize.x * 0.28f, 140.0f, 320.0f);
+            float ph = pw * 9.0f / 16.0f;
+            ImVec2 pmin(canvasEnd.x - pw - 10, canvasEnd.y - ph - 10);
+            ImVec2 pmax(canvasEnd.x - 10, canvasEnd.y - 10);
+            Vec3 ppos = ed.selected()->transform->Position(); Quat prot = ed.selected()->transform->Rotation();
+            if (!ed.isPlaying()) pv->IdealPose(ppos, prot);
+            dl->AddRectFilled(pmin, pmax, IM_COL32(49, 77, 121, 255));
+            const Mat4 view = (Mat4::Translate(ppos) * Mat4::Rotate(prot)).Inverse();
+            const Mat4 cvp = Mat4::Perspective(Mathf::Clamp(pv->fieldOfView, 5.0f, 170.0f), pw / ph, 0.3f, 4000.0f) * view;
+            if (SDL_Texture* ptex = Render3DTexture(ed.scene(), cvp, ppos, (int)pw, (int)ph, 2, nullptr))
+                dl->AddImage((ImTextureID)ptex, pmin, pmax);
+            dl->AddRect(pmin, pmax, IM_COL32(255, 255, 255, 180));
+            dl->AddText(ImVec2(pmin.x + 4, pmin.y - 16), IM_COL32(220, 220, 230, 255), "Camera Preview (this rig)");
+            if (pv->useZones) {   // the dead zone (green) and soft zone (orange) drawn on the picture itself
+                const float cx = 0.5f * (pmin.x + pmax.x), cy = 0.5f * (pmin.y + pmax.y);
+                auto zr = [&](float zw, float zh, ImU32 c3) {
+                    dl->AddRect(ImVec2(cx - zw * pw * 0.5f, cy - zh * ph * 0.5f), ImVec2(cx + zw * pw * 0.5f, cy + zh * ph * 0.5f), c3);
+                };
+                zr(Mathf::Clamp(pv->deadZoneW, 0.0f, 1.0f), Mathf::Clamp(pv->deadZoneH, 0.0f, 1.0f), IM_COL32(110, 230, 120, 255));
+                zr(Mathf::Clamp(std::max(pv->softZoneW, pv->deadZoneW), 0.0f, 1.0f), Mathf::Clamp(std::max(pv->softZoneH, pv->deadZoneH), 0.0f, 1.0f), IM_COL32(255, 170, 60, 255));
+            }
         }
     }
 

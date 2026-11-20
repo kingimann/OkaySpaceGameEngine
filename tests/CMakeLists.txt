@@ -2655,6 +2655,14 @@ if(SDL2_FOUND)
     target_link_libraries(crisp_ui_shot PRIVATE okay::engine ${OKAY_TEST_SDL_LIB})
     target_include_directories(crisp_ui_shot PRIVATE ${SDL2_INCLUDE_DIRS})
     # Crisp-UI picture tool (headless renders at 1x..6x) and its numeric test.
+    add_executable(test_ui_quality test_ui_quality.cpp)
+    target_link_libraries(test_ui_quality PRIVATE okay::engine ${OKAY_TEST_SDL_LIB})
+    target_include_directories(test_ui_quality PRIVATE ${SDL2_INCLUDE_DIRS})
+    target_compile_definitions(test_ui_quality PRIVATE OKAY_TEST_OUTPUT_DIR="${CMAKE_CURRENT_BINARY_DIR}")
+    add_test(NAME ui_quality COMMAND test_ui_quality)
+    add_executable(ui_quality_shot ui_quality_shot.cpp)
+    target_link_libraries(ui_quality_shot PRIVATE okay::engine ${OKAY_TEST_SDL_LIB})
+    target_include_directories(ui_quality_shot PRIVATE ${SDL2_INCLUDE_DIRS})
     add_executable(ui_crisp_shot ui_crisp_shot.cpp)
     target_link_libraries(ui_crisp_shot PRIVATE okay::engine ${OKAY_TEST_SDL_LIB})
     target_include_directories(ui_crisp_shot PRIVATE ${SDL2_INCLUDE_DIRS})
@@ -4500,6 +4508,17 @@ foreach(vs_usage_test vs_easy_ops vs_start vs_hints vs_plain_words vs_what_happe
         add_test(NAME ${vs_usage_test} COMMAND test_${vs_usage_test})
     endif()
 endforeach()
+
+# Camera upgrade (docs/camera_upgrade.md): the pure camera maths over simulated frames at 30, 60 and 144 fps.
+add_executable(test_camera_math test_camera_math.cpp)
+target_link_libraries(test_camera_math PRIVATE okay::engine)
+add_test(NAME camera_math COMMAND test_camera_math)
+
+# Camera rigs over simulated frames (docs/camera_upgrade.md): follow, zones, look ahead, groups, collision, blends, effects, 2D, saves.
+add_executable(test_camera_rig test_camera_rig.cpp)
+target_link_libraries(test_camera_rig PRIVATE okay::engine)
+target_compile_definitions(test_camera_rig PRIVATE OKAY_SOURCE_DIR="${PROJECT_SOURCE_DIR}")
+add_test(NAME camera_rig COMMAND test_camera_rig)
 
 # Water visuals: shading maths, ring grid, depth colour, foam, ripples, splashes, underwater, presets, pictures (docs/water_visuals.md).
 add_executable(test_water_visuals test_water_visuals.cpp)

@@ -57,6 +57,7 @@ bool TtfFont::Bake(const unsigned char* bytes, std::size_t size, float bakeHeigh
     m_info.reset();   // the old Info points into bytes that may be gone
     m_name = path;
     m_extra.clear(); m_has.clear();
+    for (auto& m : m_phased) m.clear();
     if (bakeHeightPx < 8.0f) bakeHeightPx = 8.0f;
     m_bakeHeight = bakeHeightPx;
 
@@ -75,7 +76,7 @@ bool TtfFont::Bake(const unsigned char* bytes, std::size_t size, float bakeHeigh
     // Bake the printable ASCII range into a single-channel coverage atlas. Grow the
     // atlas (up to 4096) if the glyphs don't fit at this bake height.
     ttf::BakedGlyph cdata[kCount];
-    int aw = 512, ah = 512;
+    int aw = bakeHeightPx <= 24.0f ? 256 : 512, ah = aw;   // small faces need little room (95 glyphs of 12 px fit in 256 x 256); it doubles if they do not fit
     std::vector<unsigned char> gray;
     int rows = -1;
     for (int attempt = 0; attempt < 4 && rows < 0; ++attempt) {   // 512, 1024, 2048, 4096: a 256 px bake of 95 glyphs needs about 2600 x 2600
@@ -95,6 +96,11 @@ bool TtfFont::Bake(const unsigned char* bytes, std::size_t size, float bakeHeigh
     for (std::size_t i = 0; i < (std::size_t)aw * ah; ++i) {
         rgba[i * 4 + 0] = 255; rgba[i * 4 + 1] = 255; rgba[i * 4 + 2] = 255;
         rgba[i * 4 + 3] = gray[i];
+    }
+    if (m_coverageGamma != 1.0f) {   // stem darkening: raise the coverage to a power below 1 (the rgb stays white)
+        std::uint8_t lut[256];
+        for (int i = 0; i < 256; ++i) lut[i] = (std::uint8_t)std::lround(std::pow(i / 255.0f, m_coverageGamma) * 255.0f);
+        for (std::size_t i = 0; i < (std::size_t)aw * ah; ++i) rgba[i * 4 + 3] = lut[rgba[i * 4 + 3]];
     }
     m_atlas.Set(aw, ah, std::move(rgba));
 
@@ -165,6 +171,8 @@ const TtfFont::Glyph* TtfFont::GlyphFor(std::uint32_t cp) const {
         }
         std::vector<unsigned char> cov((std::size_t)w * h, 0);
         face.Render(gi, scale, cov.data(), w, h, w);
+        if (m_coverageGamma != 1.0f)
+            for (auto& v : cov) v = (std::uint8_t)std::lround(std::pow(v / 255.0f, m_coverageGamma) * 255.0f);
         const int W = m_atlas.Width();
         std::uint8_t* dst = m_atlas.Data();
         for (int row = 0; row < h; ++row)
@@ -174,6 +182,41 @@ const TtfFont::Glyph* TtfFont::GlyphFor(std::uint32_t cp) const {
         ++m_generation;
     }
     return &(m_extra[cp] = g);
+}
+
+const TtfFont::Glyph* TtfFont::GlyphForPhase(std::uint32_t cp, int phase) const {
+    if (phase <= 0 || phase >= kPhases) return GlyphFor(cp);
+    if (!m_valid || !m_info) return GlyphFor(cp);
+    auto& cache = m_phased[phase - 1];
+    auto it = cache.find(cp);
+    if (it != cache.end()) return &it->second;
+    const Glyph* base = GlyphFor(cp);
+    if (!base) return nullptr;
+    const ttf::Face& face = m_info->face;
+    const int gi = face.FindGlyph(cp);
+    const float scale = m_info->scale;
+    int x0 = 0, y0 = 0, x1 = 0, y1 = 0;
+    Glyph g = *base;   // same pen advance and offsets; only the bitmap moves
+    if (face.GlyphBox(gi, scale, x0, y0, x1, y1)) {
+        const int w = x1 - x0 + 1, h = y1 - y0;
+        int px = 0, py = 0;
+        if (w > 0 && h > 0 && Place(w, h, px, py)) {
+            std::vector<unsigned char> cov((std::size_t)w * h, 0);
+            face.Render(gi, scale, cov.data(), w, h, w, (float)phase / (float)kPhases);
+            if (m_coverageGamma != 1.0f)
+                for (auto& v : cov) v = (std::uint8_t)std::lround(std::pow(v / 255.0f, m_coverageGamma) * 255.0f);
+            const int W = m_atlas.Width();
+            std::uint8_t* dst = m_atlas.Data();
+            for (int row = 0; row < h; ++row)
+                for (int col = 0; col < w; ++col)
+                    dst[(((std::size_t)(py + row) * W) + px + col) * 4 + 3] = cov[(std::size_t)row * w + col];
+            g.x0 = px; g.y0 = py; g.x1 = px + w; g.y1 = py + h;
+            ++m_generation;
+        } else if (w > 0 && h > 0) {
+            return base;   // the atlas is full: the whole-pixel glyph still draws
+        }
+    }
+    return &(cache[cp] = g);
 }
 
 bool TtfFont::Has(std::uint32_t cp) const {
@@ -197,14 +240,32 @@ void TtfFont::Prepare(const std::string& text) const {
     for (std::size_t i = 0; i < text.size();) GlyphFor(utf8::Next(text, i));
 }
 
-float TtfFont::Measure(const char* text, float pixelHeight) const {
+float TtfFont::Kerning(std::uint32_t left, std::uint32_t right, float pixelHeight) const {
+    if (!m_valid || !m_info || left < (std::uint32_t)kFirst || right < (std::uint32_t)kFirst) return 0.0f;
+    const std::uint64_t key = ((std::uint64_t)left << 32) | right;
+    auto it = m_kern.find(key);
+    int units;
+    if (it != m_kern.end()) units = it->second;
+    else {
+        units = m_info->face.Kerning(m_info->face.FindGlyph(left), m_info->face.FindGlyph(right));
+        m_kern[key] = units;
+    }
+    if (units == 0) return 0.0f;
+    // font units -> pixels at the baked scale, then to the requested height
+    return (float)units * m_info->scale * ScaleFor(pixelHeight);
+}
+
+float TtfFont::Measure(const char* text, float pixelHeight, bool kerning) const {
     if (!text || !m_valid) return 0.0f;
     float scale = ScaleFor(pixelHeight);
     float maxW = 0.0f, lineW = 0.0f;
+    std::uint32_t prev = 0;
     const char* end = text + std::strlen(text);
     for (const char* p = text; p < end;) {
         const std::uint32_t cp = utf8::Next(p, end);
-        if (cp == '\n') { if (lineW > maxW) maxW = lineW; lineW = 0.0f; continue; }
+        if (cp == '\n') { if (lineW > maxW) maxW = lineW; lineW = 0.0f; prev = 0; continue; }
+        if (kerning && prev) lineW += Kerning(prev, cp, pixelHeight);
+        prev = cp;
         if (const Glyph* g = GlyphFor(cp)) lineW += g->xadvance * scale;
         else if (cp >= (std::uint32_t)kFirst) lineW += pixelHeight * 0.5f;   // the gap a missing glyph leaves
     }
@@ -221,6 +282,33 @@ TtfFont* TtfFont::ForPixelHeight(float pixelHeight) const {
         auto baked = std::make_unique<TtfFont>();
         if (!baked->LoadFromMemory(m_bytes.data(), m_bytes.size(), (float)h, m_name))
             return const_cast<TtfFont*>(this);
+        slot = std::move(baked);
+    }
+    return slot.get();
+}
+
+float TtfCoverageGamma(float deviceHeight) {
+    float t = (deviceHeight - 9.0f) / 15.0f;
+    t = t < 0.0f ? 0.0f : (t > 1.0f ? 1.0f : t);
+    return 0.78f + (1.0f - 0.78f) * t;
+}
+
+TtfFont* TtfFont::ForDeviceSize(float deviceHeight, bool darken) const {
+    if (!m_valid || m_bytes.empty()) return const_cast<TtfFont*>(this);
+    float h;
+    // Quarter-pixel steps up to 16 px, half-pixel steps up to 32 (the size error stays under 1.6%, so a glyph is drawn one to one),
+    // then the 6% steps of UIGlyphBakePixels. That keeps the number of baked faces near 130 however the zoom is dragged.
+    if (deviceHeight <= 16.0f) h = std::max(4.0f, std::round(deviceHeight * 4.0f) / 4.0f);
+    else if (deviceHeight <= 32.0f) h = std::round(deviceHeight * 2.0f) / 2.0f;
+    else h = (float)UIGlyphBakePixels(deviceHeight);
+    const float gamma = darken ? TtfCoverageGamma(h) : 1.0f;
+    if (gamma == 1.0f && std::fabs(m_bakeHeight - h) < 0.01f && m_coverageGamma == 1.0f) return const_cast<TtfFont*>(this);
+    const int key = (int)std::lround(h * 4.0f) * 2 + (gamma != 1.0f ? 1 : 0) + 1000000;   // apart from ForPixelHeight's whole-pixel keys
+    auto& slot = m_sized[key];
+    if (!slot) {
+        auto baked = std::make_unique<TtfFont>();
+        baked->m_coverageGamma = gamma;
+        if (!baked->LoadFromMemory(m_bytes.data(), m_bytes.size(), h, m_name)) return const_cast<TtfFont*>(this);
         slot = std::move(baked);
     }
     return slot.get();

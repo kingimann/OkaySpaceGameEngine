@@ -283,7 +283,7 @@ struct VehicleTuning {
         std::ostringstream o; VehicleTuning def;
         for (const Desc& d : Table()) {
             double a = 0, b = 0; GetSetting(d.name, a); def.GetSetting(d.name, b);
-            if (a != b) o << d.name << "=" << a << " ";
+            if (std::fabs(a - b) > 1e-4 * (1.0 + std::fabs(b))) o << d.name << "=" << a << " ";
         }
         return o.str();
     }

@@ -214,6 +214,12 @@ int main() {
         Scene b("b"); GameObject* c2 = SceneSerializer::InstantiateFromText(b, SceneSerializer::SerializeObject(*c));
         auto* v2 = c2->GetComponent<VehicleController>();
         CHECK_NEAR(v2->wheelBase, wb, 1e-3f); CHECK_NEAR(v2->trackWidth, tw, 1e-3f);
+        const std::string t1 = SceneSerializer::SerializeObject(*c);
+        const std::string t2 = SceneSerializer::SerializeObject(*c2);
+        CHECK(t1 == t2);   // save, load, save gives the same text
+        if (t1 != t2) std::printf("  text differs for %s\n", sh.name);
+        Scene c3s("c3"); GameObject* c3 = SceneSerializer::InstantiateFromText(c3s, t2);
+        CHECK(SceneSerializer::SerializeObject(*c3) == t2);
     }
     // --- Scripted pedals let go by themselves; the keyboard works again --------------------------------------------
     {

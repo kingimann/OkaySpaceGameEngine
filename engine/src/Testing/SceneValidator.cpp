@@ -6,6 +6,7 @@
 #include "okay/Components/Camera.hpp"
 #include "okay/Components/CameraFollow.hpp"
 #include "okay/Components/CinemachineBrain.hpp"
+#include "okay/Components/VirtualCamera.hpp"
 #include "okay/Components/DayNightCycle.hpp"
 #include "okay/Components/EventSystem.hpp"
 #include "okay/Components/FollowTarget2D.hpp"
@@ -353,6 +354,11 @@ struct Checker {
 
     void References(const GameObject& go, const std::string& path) {
         for (auto* c : go.GetComponents<CameraFollow>()) Reference(path, "CameraFollow", "targetName", c->targetName);
+        for (auto* c : go.GetComponents<VirtualCamera>()) {
+            Reference(path, "VirtualCamera", "follow", c->follow);
+            Reference(path, "VirtualCamera", "lookAt", c->lookAt);
+            for (const std::string& g : c->groupTargets) Reference(path, "VirtualCamera", "groupTargets", g);
+        }
         for (auto* c : go.GetComponents<FollowTarget2D>()) Reference(path, "FollowTarget2D", "target", c->target);
         for (auto* c : go.GetComponents<Minimap>()) Reference(path, "Minimap", "target", c->target);
         for (auto* c : go.GetComponents<Teleporter>()) Reference(path, "Teleporter", "targetName", c->targetName);

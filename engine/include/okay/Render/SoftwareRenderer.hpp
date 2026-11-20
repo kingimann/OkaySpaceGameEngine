@@ -1849,7 +1849,7 @@ inline ScenePostPlan PlanScenePost(const Scene::RenderSettings& rs) {
     p.grade = ps.grading;
     p.temperature = ps.temperature; p.tint = ps.tint; p.saturation = ps.saturation; p.contrast = ps.contrast;
     p.lift = ps.lift; p.gamma = ps.gamma; p.gain = ps.gain;
-    p.vignette = rs.vignette > 1.0f ? 1.0f : (rs.vignette > 0.0f ? rs.vignette : 0.0f);
+    { const float vg = rs.vignette + rs.vignettePulse; p.vignette = vg > 1.0f ? 1.0f : (vg > 0.0f ? vg : 0.0f); }
     p.vignetteSmooth = ps.vignetteSmooth;
     return p;
 }

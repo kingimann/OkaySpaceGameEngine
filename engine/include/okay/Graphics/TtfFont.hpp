@@ -78,7 +78,11 @@ public:
         return (m_bakeHeight > 0.0f) ? (pixelHeight / m_bakeHeight) : 1.0f;
     }
     /// Width of the longest line of UTF-8 `text` at the given pixel height.
-    float Measure(const char* text, float pixelHeight) const;
+    /// With `kerning` on, the pair adjustments of the font (Kerning) are added between glyphs.
+    float Measure(const char* text, float pixelHeight, bool kerning = false) const;
+    /// The pair adjustment between two code points at the given pixel height, in pixels (negative = closer together).
+    /// 0 when the font has no kerning for the pair (the built-in font's pairs come from its GPOS table).
+    float Kerning(std::uint32_t left, std::uint32_t right, float pixelHeight) const;
     /// Distance between successive baselines at the given pixel height.
     float LineHeight(float pixelHeight) const { return m_lineHeight * ScaleFor(pixelHeight); }
     /// Distance from the pen line (glyph top) down to the baseline at this height.
@@ -88,11 +92,23 @@ public:
     /// The result is cached on this font. Drawing at that size is one atlas pixel
     /// per screen pixel; linear filtering only has to cover sub-pixel placement.
     TtfFont* ForPixelHeight(float pixelHeight) const;
+    /// Like ForPixelHeight, but sized to the device height (quarter-pixel steps up to 16 px, half-pixel steps up to 32, so one atlas
+    /// pixel is one screen pixel and a glyph drawn at its baked size is not resampled) and, when `darken` is
+    /// on, with the weight of small text corrected: glyph coverage is raised to a power below 1 that fades to 1 at
+    /// 24 px (see TtfCoverageGamma), so thin stems at 9 to 14 px are not washed out.
+    TtfFont* ForDeviceSize(float deviceHeight, bool darken) const;
+    /// The glyph for `cp` rendered for a pen that sits `phase`/4 of a pixel to the right of a whole pixel
+    /// (phase 0..3; 0 is GlyphFor). The bitmap is one pixel wider than GlyphFor's; xoff is the same.
+    const Glyph* GlyphForPhase(std::uint32_t cp, int phase) const;
+    /// How many subpixel phases GlyphForPhase takes.
+    static constexpr int kPhases = 4;
 
 private:
     struct Info;   // the parsed font (ttf::Face) over m_bytes
     bool  Bake(const unsigned char* bytes, std::size_t size, float bakeHeightPx, const std::string& name);
     bool  Place(int w, int h, int& x, int& y) const;
+    float m_coverageGamma = 1.0f;          // coverage ^ this at bake time (1 = as rasterised)
+    mutable std::unordered_map<std::uint32_t, Glyph> m_phased[3];   // subpixel variants, phases 1..3
     bool  m_valid = false;
     float m_bakeHeight = 48.0f;
     float m_lineHeight = 0.0f;   // at bake height
@@ -105,11 +121,17 @@ private:
     mutable Image m_atlas;
     mutable std::unordered_map<std::uint32_t, Glyph> m_extra;
     mutable std::unordered_map<std::uint32_t, bool> m_has;   // cached "does the font have it"
+    mutable std::unordered_map<std::uint64_t, int> m_kern;   // (left << 32 | right) -> font units, cached
     mutable int m_shelfX = 0, m_shelfY = 0, m_shelfH = 0;
     mutable std::uint32_t m_generation = 0;
     mutable bool m_fullReported = false;
     mutable std::unordered_map<int, std::unique_ptr<TtfFont>> m_sized;  // bake height -> face
 };
+
+/// The power small-text coverage is raised to for a face baked at `deviceHeight` pixels: 0.78 up to 9 px, fading
+/// to 1 (no change) at 24 px. Below 1 it makes thin stems heavier (stem darkening), which the screen's blending
+/// would otherwise thin out.
+float TtfCoverageGamma(float deviceHeight);
 
 /// Process-wide font cache: returns a loaded font for `path` (baked once and reused),
 /// or nullptr if it can't be loaded. Empty path returns nullptr. Failures are cached

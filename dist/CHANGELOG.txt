@@ -382,7 +382,7 @@ v2.876.0
     3D Object, Player, Light, Camera, Audio, Effects and UI. Help has
     Documentation, Keyboard Shortcuts, Check for Updates and Report a Bug.
     The old Engine and Window menus are gone; their items moved (the list is
-    in docs/editor_menus.md). A menu item that is greyed out now says why
+    in docs/editor/editor_menus.md). A menu item that is greyed out now says why
     when you hover it.
   - Hierarchy right-click menus: Create Child offers every category, there is
     an Add Component... item, Select > Same Type, plural labels, and a
@@ -469,7 +469,7 @@ v2.875.0
 
   Team tooling
   - New checks that stop two people building the same thing and catch common
-    mistakes early (docs/collaboration.md).
+    mistakes early (docs/process/collaboration.md).
 
 v2.874.0
   Gameplay
@@ -497,7 +497,7 @@ v2.874.0
   - Navigation: a Mesh Collider now builds the navigation mesh from its real
     triangles instead of its bounding box, with limits so a huge model cannot
     freeze the editor. A mesh with a crack in it counts as two-sided (see
-    docs/navigation.md).
+    docs/gameplay/navigation.md).
 
   Safety
   - OBJ model textures: network paths, Windows device names and paths that
@@ -920,7 +920,7 @@ v2.861.0
   Launcher
   - "Download my data" and "Delete my account" in Account > Sign-in & security;
     deleting needs your password and removes or anonymises your rows (#651;
-    needs the delete-account function deployed, see docs/account_data.md; until
+    needs the delete-account function deployed, see docs/online/account_data.md; until
     then the launcher says deletion is not set up).
   - Report a message, post, item or profile; reports are reviewed by staff
     (#652, needs docs/sql/reports.sql, applied to the live project).
@@ -1543,7 +1543,7 @@ v2.847.0
     lost out to the run clip and the character ran when it should walk. When
     such a model is attached, a Walk Speed or Run Speed that is still at its
     default is set to a pace the clips can show (about 2.0 and 5.0 m/s). A
-    speed you changed yourself is kept (#541; see docs/animation.md).
+    speed you changed yourself is kept (#541; see docs/gameplay/animation.md).
   Scripts and tools
   - A new script in the Script Editor starts as an empty Start and Update,
     with a line saying when each runs. The longer example is still in the
@@ -1557,7 +1557,7 @@ v2.847.0
   - New docs/README.md indexes every guide by what you want to do. The README
     is shorter and its claims were checked against the code (a few wrong
     ones were fixed), and the scripting function reference is now
-    docs/scripting_reference.md (#544).
+    docs/scripting/scripting.md (#544).
   - New docs/FEATURE_MAP.md splits the engine into 19 areas, with the code,
     docs and editor window for each and what is still open (#546).
 
@@ -1626,7 +1626,7 @@ v2.842.0
     controllers no longer show up in Add Component. Scenes saved with the
     old controllers load as one Player Controller, and scripts get
     set_view, get_view and a PlayerController type (#523; see
-    docs/making_a_game.md).
+    docs/gameplay/making_a_game.md).
   - Downloaded Mixamo-style characters now move naturally. Walk and run
     clips play at the pace the body really moves, so a walk no longer looks
     like a jog and a run is a real run clip rather than a faster walk.
@@ -1635,7 +1635,7 @@ v2.842.0
     skeleton, and the body leans a little into starts, stops and turns.
     A new Character Model panel at the top of the Inspector shows which
     animation comes from the file and which is built in, and says which
-    components to edit (#524; see docs/animation.md).
+    components to edit (#524; see docs/gameplay/animation.md).
   - Characters standing on a rotating platform now turn with it instead of
     keeping their old facing (#526).
 
@@ -1673,7 +1673,7 @@ v2.840.0
     spawned and destroyed objects, velocities, script variables and play
     time. Load it from a script or a menu; an AutoSave component saves
     every N seconds or on scene start. Scripts get SaveGame.Save / Load /
-    Exists / Delete / Label and playTime (#498; see docs/save_games.md).
+    Exists / Delete / Label and playTime (#498; see docs/engine/save_games.md).
   Animation
   - Built-in action clips for the Character: a dolphin dive from a sprint
     into prone, chair and ground sitting with a Seat component, hit
@@ -1683,7 +1683,7 @@ v2.840.0
   - Ragdolls: a character goes limp when it dies, pushed away from the hit,
     and hits shove the struck part and spring back. Works on the blocky
     Character and on imported humanoid rigs; revive restores the pose.
-    Scripts: ragdoll, ragdoll_push, is_ragdoll (#501; see docs/ragdolls.md).
+    Scripts: ragdoll, ragdoll_push, is_ragdoll (#501; see docs/physics/physics.md).
   - Animation window: a Character clip's keys are a lane of diamonds you
     click, box-select, drag and nudge, with per-key easing, retime,
     amplify and offset, copy / paste / mirror of a pose or the clip, and
@@ -1743,7 +1743,7 @@ v2.838.0
     levels are saved and come back the next time they play.
   - New Audio Mixer window (Window > Panels): group volumes, mutes, output
     meters and ducking. Scripts and visual scripts get Audio commands
-    (#492; see docs/audio.md).
+    (#492; see docs/audio/audio.md).
   Controls
   - Named actions (Move, Look, Jump, Sprint, Crouch, Fire, Aim, Interact,
     Reload, Inventory, Pause) work on keyboard, mouse and controller at
@@ -1754,7 +1754,7 @@ v2.838.0
     Play mode reads the whole controller too.
   - Scripts and visual scripts: Input.GetButton / GetButtonDown,
     GetActionVector, Rumble, RebindAction and DefineAction (#494; see
-    docs/input.md).
+    docs/engine/input.md).
   Animation and characters
   - Built-in action framework and death clips (#435).
   - One shared bone mapper finds the humanoid bones on imported models,
@@ -5000,7 +5000,7 @@ v2.15.3
   - Script editor autocomplete: as you type an identifier, a suggestion list of
     keywords / API / builtins pops up at the caret — click one to insert it.
   - Scripting reference updated with the save()/load() system (in-editor Help >
-    Scripting Reference and docs/scripting.md).
+    Scripting Reference and docs/scripting/scripting.md).
 
 v2.15.2
   - Script editor tabs: edit several scripts at once. Selecting an object with a
@@ -5288,7 +5288,7 @@ v2.1.0
     cast_ray, set_camera / set_zoom, save_value / load_number / load_text,
     random_float / random_chance, log, and more. Each maps onto an existing
     builtin, so old scripts and the new names all keep working. New
-    "Plain-English names" table in docs/scripting.md.
+    "Plain-English names" table in docs/scripting/scripting.md.
 
 v2.0.0
   - C#-style scripting, completed. Building on v1.99, OkayScript now also

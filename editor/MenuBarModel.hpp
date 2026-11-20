@@ -2,7 +2,7 @@
 // The editor's main menu bar as plain data (no ImGui, no editor state): what each top-level menu holds, in what order,
 // with which shortcut, and when an item is greyed out and why. The editor (main.cpp) draws these lists with
 // MenuEntriesUI.hpp and runs the item ids; the rules live here so tests/test_menu_bar_model.cpp can check them
-// without a window. docs/editor_menus.md is the audit and the final map.
+// without a window. docs/editor/editor_menus.md is the audit and the final map.
 //
 // Written from the owner's request (2026-11-15, "clean the menu bar better") and the menu code that was in main.cpp; no
 // code from another project.

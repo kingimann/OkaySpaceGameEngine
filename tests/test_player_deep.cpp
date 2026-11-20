@@ -1,4 +1,4 @@
-// Player deep audit: one check per bug the audit proved (docs/player_audit.md). Every `player_deep_*` check passes
+// Player deep audit: one check per bug the audit proved (docs/status/player_audit.md). Every `player_deep_*` check passes
 // with the fix and FAILS with the old behaviour: run this program with OKAY_OLD_PLAYER=1 in the environment to see
 // the old path fail them (the same switch brings the old per-frame work and body behaviour back in the Windows
 // player and the editor). The step/slope/anything-else tests of the player stay in their own files.

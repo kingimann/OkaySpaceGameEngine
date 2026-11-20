@@ -1,4 +1,4 @@
-// The shapes a Dear ImGui host reads and writes (docs/own_ui_toolkit.md 6.22), headless: the ImDrawData view of OkayUI's draw data (what a renderer
+// The shapes a Dear ImGui host reads and writes (docs/ui/own_ui_toolkit.md 6.22), headless: the ImDrawData view of OkayUI's draw data (what a renderer
 // written for Dear ImGui consumes), io.InputQueueCharacters and AddKeyEvent / AddInputCharacter, io.Fonts requests, the viewport pointer with its host
 // fields, the typed platform callbacks, and the small pointer-like forms (StateStorage, the modal popup entry, BeginMenuBar as bool).
 #include "test_framework.hpp"

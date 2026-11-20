@@ -1,5 +1,5 @@
 // okay::tex mip chains. Written from the filter definitions (box area coverage, Lanczos a=3, Kaiser-windowed sinc
-// with a Bessel I0 series) and the idea of preserving alpha-test coverage; see docs/own_texture_library.md.
+// with a Bessel I0 series) and the idea of preserving alpha-test coverage; see docs/rendering/own_texture_library.md.
 #include "okay/Texture/Mip.hpp"
 #include <algorithm>
 #include <cmath>

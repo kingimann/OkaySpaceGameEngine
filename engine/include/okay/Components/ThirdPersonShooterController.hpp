@@ -43,7 +43,7 @@ public:
     /// state changes, not last frame's.
     int ExecutionOrder() const override { return -10; }
     // ---- Movement ----
-    // A real walk and a real run (docs/walk_vs_run.md): 2.0 and 5.0 m/s. OKAY_OLD_GAIT=1 brings back 4.5 and 7.5.
+    // A real walk and a real run (docs/gameplay/walk_vs_run.md): 2.0 and 5.0 m/s. OKAY_OLD_GAIT=1 brings back 4.5 and 7.5.
     float walkSpeed = NaturalGait::WalkSpeed();
     float runSpeed  = NaturalGait::ShooterRunSpeed();
     float jumpForce = 6.0f;

@@ -100,7 +100,7 @@ _Last updated: 2026-11-13 17:55 UTC_
 | Session | Plan | Current |
 |---|---|---|
 | Main | Coordination, merges, releases | Merging and releasing as PRs go green |
-| Textures | Our own texture library (`docs/own_texture_library.md`, branch `claude/texture-lib-1`) | Mips, atlas, convert, BC1/3/4/5, DDS, streaming planner and `okay-texture` written and tested; next: load DDS in the renderers |
+| Textures | Our own texture library (`docs/rendering/own_texture_library.md`, branch `claude/texture-lib-1`) | Mips, atlas, convert, BC1/3/4/5, DDS, streaming planner and `okay-texture` written and tested; next: load DDS in the renderers |
 | QA | Anti-cheat hardening, PRs 1–4, 6, 8–14 | PRs 8, 9, 10, 12 (#363, #365, #368, #376) merging main back in after #372; PR 6 (#360) waits on Iman's OK; PR 13 next |
 | Humanoid | IK, animation and humanoid rigging, PRs 1–8 | Items 1–5 and 7 done; item 6 (rest-pose normalisation) is next |
 | Release | Anti-cheat hardening, PRs 5 and 7 | PR 7 merged; relay follow-ups (voice calls on v3 hellos, sessions per address); PR 5 (#350) waits on Iman's OK |
@@ -154,7 +154,7 @@ _Last updated: 2026-11-13 17:55 UTC_
 13. [x] Safer defaults and a config that fails closed.
 14. [x] Small fixes (self-unban, trusted server reports, pings, press intervals, CI key check).
 
-Follow-up on `claude/anticheat-1` (status table: `docs/anticheat_hardening_status.md`): a ban list file, a local audit log, a packet ceiling for every message type, a bot / macro (input regularity) detector, a cheat simulator (`--server --cheat-sim`) and a typed hostile-field fuzz test.
+Follow-up on `claude/anticheat-1` (status table: `docs/online/anticheat.md`): a ban list file, a local audit log, a packet ceiling for every message type, a bot / macro (input regularity) detector, a cheat simulator (`--server --cheat-sim`) and a typed hostile-field fuzz test.
 
 ## Waiting on Iman
 
@@ -168,4 +168,4 @@ Follow-up on `claude/anticheat-1` (status table: `docs/anticheat_hardening_statu
 ## Later
 
 - Split the largest source files (editor, launcher, OkayScript VM).
-- Own-stack rollout (`docs/own_stack_rollout.md`): the `OKAY_OWN_STACK` dogfood switch and startup stack line shipped in 2.871.0. The release numbers that were proposed here (own readers FBX, COLLADA, 3DS and BVH to default on in 2.872.0, own HTTP opt-in in 2.874.0, the player on the own platform backend in 2.877.0) did not happen: those releases shipped other work. The current proposal, one group of flips per release with a checklist for each and what blocks deleting each library, is `docs/own_flip_proposal.md` (2026-11-15). Every flip needs the owner's written approval; crypto stays on libsodium (CLAUDE.md rule 18).
+- Own-stack rollout (`docs/status/own_stack_rollout.md`): the `OKAY_OWN_STACK` dogfood switch and startup stack line shipped in 2.871.0. The release numbers that were proposed here (own readers FBX, COLLADA, 3DS and BVH to default on in 2.872.0, own HTTP opt-in in 2.874.0, the player on the own platform backend in 2.877.0) did not happen: those releases shipped other work. The current proposal, one group of flips per release with a checklist for each and what blocks deleting each library, is `docs/status/own_flip_proposal.md` (2026-11-15). Every flip needs the owner's written approval; crypto stays on libsodium (CLAUDE.md rule 18).

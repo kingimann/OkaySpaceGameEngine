@@ -26,7 +26,7 @@ namespace okay {
 
 namespace {
 // What players read: the string table's text for a line's, choice's or speaker's
-// key (docs/localization.md), else the text in the graph.
+// key (docs/engine/localization.md), else the text in the graph.
 std::string LineText(const std::string& graph, const DialogueNode& n) {
     return Localization::GetOr(DialogueLineKey(graph, n.id), n.text);
 }

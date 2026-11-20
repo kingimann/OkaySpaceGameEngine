@@ -10,7 +10,7 @@
 
 using namespace okay;
 
-// Automatic reconnect and state resume after ConnectionLost() (docs/multiplayer_audit.md):
+// Automatic reconnect and state resume after ConnectionLost() (docs/online/multiplayer.md):
 //   * off by default; opt-in autoReconnect rejoins with bounded, backing-off tries
 //   * the host hands back the peer id, score, ready flag and position
 //     (from a live connection it had not noticed was dead, or from parked state)

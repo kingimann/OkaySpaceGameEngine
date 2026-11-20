@@ -2,7 +2,7 @@
 // Test builds ("the dev channel"): builds of one branch that the coordinator publishes to the dev/ folder of the release bucket, so the owner
 // can try unmerged work in about 30 minutes without waiting for the pull-request checks and a release. Header-only and free of SDL, ImGui,
 // network and engine code (like shared/ProjectVersion.hpp, which it builds on), so the launcher, the editor and the tests share exactly
-// the same rules. Docs: docs/release_channels.md ("Test builds"), docs/updater.md.
+// the same rules. Docs: docs/release/release_channels.md ("Test builds"), docs/release/updater.md.
 //
 // THE NUMBER. A normal release is 2.<build>.<patch> (three numbers). A test build has a FOURTH number, the workflow run number:
 //     2.876.0.17  =  the 17th test build, made on top of release 2.876.0

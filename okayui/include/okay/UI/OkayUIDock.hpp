@@ -2,7 +2,7 @@
 // OkayUI docking: a dock space inside the display, windows docked into the left / right / top / bottom / centre of a node,
 // splitters, tabs when several windows share a node, drag a tab or a title bar to float it or to dock it somewhere else (with
 // a drop-target preview), close a tab, and the layout saved to a text blob and back. Own code, off by default, not wired
-// into any program. See docs/own_ui_toolkit.md section 4.30.
+// into any program. See docs/ui/own_ui_toolkit.md section 4.30.
 //
 // Two layers:
 //  * DockLayout is the data model: a binary tree of nodes (a split of two children, or a leaf holding tabs) plus the floating

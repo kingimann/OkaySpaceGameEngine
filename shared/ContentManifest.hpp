@@ -1,6 +1,6 @@
 #pragma once
 // Content manifest: the signed list of files a game downloads after it is installed (models, textures, animations, scenes, audio,
-// dialogue, scripts and data). Docs: docs/content_delivery.md. Header only, no threads, no engine code (so the launcher, the player,
+// dialogue, scripts and data). Docs: docs/release/content_delivery.md. Header only, no threads, no engine code (so the launcher, the player,
 // the okay-content tool and tests can all include it). Written for this project from the plain description in the docs; the only
 // outside format knowledge is the SHA-256 and ed25519 standards, which come from the existing code (okay::crypto Sha256,
 // shared/UpdateSignature.hpp key and signature parsing). NO new cryptography is written here.

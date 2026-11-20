@@ -1,7 +1,7 @@
 // Real-file validation of our own FBX, COLLADA, 3DS, BVH and Blender readers.
 //
 // The files are NOT in this repository: they come from a directory named by the environment variable
-// OKAY_MODEL_CORPUS (for example the test/models tree of an Assimp source checkout; see docs/model_corpus.md).
+// OKAY_MODEL_CORPUS (for example the test/models tree of an Assimp source checkout; see docs/content/model_corpus.md).
 // Without that variable this test prints "skipped" and passes. With it, every row of
 // tests/data/model_corpus_manifest.tsv is read again and must give the recorded result: a file that read must
 // still read with the same counts, a file recorded as failing must still fail (so a fix shows up as a manifest change).

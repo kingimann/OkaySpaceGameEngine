@@ -1,5 +1,5 @@
 #pragma once
-// Wind (docs/wind.md): the Wind Zone component and the things that listen to the wind.
+// Wind (docs/gameplay/wind.md): the Wind Zone component and the things that listen to the wind.
 //
 //  - WindZone:  blows. "Everywhere" is the scene's own wind; "Direction" and "Pushes outward" are regions
 //               (box, sphere, cylinder) that blow inside them. The maths lives in Environment/WindField.hpp.

@@ -1,6 +1,6 @@
 // The window table and the dock-node view (OkayUIInternals.hpp): what ported editor code reads as `ImGuiWindow*`, `ImGuiDockNode*`, `ImGuiTabBar*`
 // and `g.Windows`, as plain values rebuilt from OkayUI's window slots and the dock layout. Own design; written from what the names mean.
-// Rules (also in docs/own_ui_toolkit.md 6.20):
+// Rules (also in docs/ui/own_ui_toolkit.md 6.20):
 //  * One table of up to 256 window entries and up to 256 node entries, allocated once, so a pointer keeps its address for the same window name
 //    (nodes: for the same slot of the layout's node list) and a rebuild refreshes the fields in place.
 //  * A rebuild happens when the frame number, the dock layout version or the dock geometry serial changed since the last one.

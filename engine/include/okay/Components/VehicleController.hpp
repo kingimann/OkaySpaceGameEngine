@@ -202,7 +202,7 @@ public:
 
     // ================= Open-world driving model (openWorld = true) =================
     // Written from general vehicle ideas: a bicycle model for turning, a friction limit for grip, a torque curve and gear
-    // ratios for the engine. See docs/vehicle_controls.md.
+    // ratios for the engine. See docs/gameplay/vehicles.md.
 
     /// One frame of driver input. A script, a test or an AI sets it with SetInput; otherwise the keyboard / pad is read.
     struct DriveInput {

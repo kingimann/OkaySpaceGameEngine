@@ -1,7 +1,7 @@
 #pragma once
 // The playback side of the WAV seam: a WAV file (or its bytes) turned into samples a sound device
 // plays, with no SDL in the header. Written by us from the okay::wav decoder's own output
-// (docs/own_wav_decoder.md); no other project's code was read or followed.
+// (docs/audio/own_wav_decoder.md); no other project's code was read or followed.
 //
 // Device formats: 32-bit float files give native-endian float; every other encoding (PCM 8/16/24/32,
 // A-law, mu-law, MS and IMA ADPCM) gives native-endian signed 16-bit. Channel count and rate are kept.

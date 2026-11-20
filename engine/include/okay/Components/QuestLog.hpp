@@ -50,7 +50,7 @@ struct QuestDef {
 };
 
 /// The string-table keys a quest's text is looked up under; the typed text shows
-/// while the table has none (docs/localization.md): quest.<id>.title,
+/// while the table has none (docs/engine/localization.md): quest.<id>.title,
 /// quest.<id>.desc and quest.<id>.obj<n> for objective n (from 1).
 std::string QuestTitleKey(const std::string& id);
 std::string QuestDescriptionKey(const std::string& id);

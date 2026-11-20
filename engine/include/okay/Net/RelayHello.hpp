@@ -14,7 +14,7 @@ namespace okay::net {
 /// NetworkManager), so every relay client speaks the current protocol version:
 /// the address cookie (version 3) and the welcome nonce (version 4). A client
 /// built on these never sends a legacy (version 1/2) hello, which is what lets
-/// a relay turn `--legacy-hello` off (docs/relay.md). Plain bytes, no Packet:
+/// a relay turn `--legacy-hello` off (docs/online/relay.md). Plain bytes, no Packet:
 /// the layout is the little-endian one `Packet` writes.
 struct RelayHelloParams {
     RelayRole role = RelayClient;

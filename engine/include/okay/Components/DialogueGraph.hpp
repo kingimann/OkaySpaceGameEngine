@@ -103,7 +103,7 @@ public:
 };
 
 /// The string-table keys a conversation's text is looked up under; the text typed
-/// in the graph shows while the table has none (docs/localization.md):
+/// in the graph shows while the table has none (docs/engine/localization.md):
 /// dlg.<graph>.<node> for a line, dlg.<graph>.<node>.<n> for its choice n (from 1),
 /// speaker.<name> for a speaker.
 std::string DialogueLineKey(const std::string& graph, int node);

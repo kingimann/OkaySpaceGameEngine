@@ -1,5 +1,5 @@
 #pragma once
-// Controller aim assist (docs/accessibility.md). The right stick already looks
+// Controller aim assist (docs/engine/accessibility.md). The right stick already looks
 // around; when Accessibility aim assist is above Off, a stick that is already
 // moving is pulled a short way toward the nearest living target in a small cone.
 // A still stick does nothing (no tracking on its own). Mouse look is not passed

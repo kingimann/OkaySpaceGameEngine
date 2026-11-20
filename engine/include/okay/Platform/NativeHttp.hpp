@@ -11,7 +11,7 @@
 // Request returns reached=false and callers fall back to the curl path.
 //
 // Linux and other POSIX systems can OPT IN to our own HTTP/1.1 client
-// (OwnHttp.hpp / OwnHttpNet.hpp, docs/own_http_client.md): build with
+// (OwnHttp.hpp / OwnHttpNet.hpp, docs/platform/own_http.md): build with
 // -DOKAY_OWN_HTTP=ON and set the environment variable OKAY_OWN_HTTP=1. TLS then
 // comes from the system OpenSSL, loaded at run time. If libssl cannot be loaded,
 // the certificate does not verify, or anything else goes wrong before a response
@@ -28,7 +28,7 @@
 #include <vector>
 
 #if defined(OKAY_HTTP_WINHTTP) && !defined(OKAY_XBOX_UWP)
-#  define OKAY_HTTP_WINHTTP 1   // WinHTTP is the native client on the desktop; the UWP build has none yet (docs/xbox_uwp.md)
+#  define OKAY_HTTP_WINHTTP 1   // WinHTTP is the native client on the desktop; the UWP build has none yet (docs/platform/xbox_uwp.md)
 #endif
 
 #if defined(OKAY_HTTP_WINHTTP)

@@ -138,9 +138,9 @@ int main() {
     //   NetworkAvatarMotion    the motion driver NetworkPlayerSpawner puts on each avatar it spawns
     //   testing::EventProbe    a test helper (okay/Testing/PlayTest.hpp)
     //   SettingsScreen         rebuilt on its own: SettingsScreen::Ensure binds the "Settings" panel when Play starts
-    //   SteamManager           added by game code at startup (docs/steam_release.md), not a scene object
-    //   CheckpointTrigger      the Save Framework's: added by game code, saved by the framework (docs/save_framework.md)
-    //   (Saveable and SaveConfig are saved in the scene file: the no-code save route, docs/save_framework.md)
+    //   SteamManager           added by game code at startup (docs/release/steam_release.md), not a scene object
+    //   CheckpointTrigger      the Save Framework's: added by game code, saved by the framework (docs/engine/save_games.md)
+    //   (Saveable and SaveConfig are saved in the scene file: the no-code save route, docs/engine/save_games.md)
     const std::set<std::string> kRuntimeOnly = {"StatComponent", "TimedDestroy", "UIToastItem", "WeatherRig", "NetworkAvatarMotion",
                                                 "testing::EventProbe", "SettingsScreen", "SteamManager", "CheckpointTrigger"};
     for (const auto& n : dropped) CHECK(kRuntimeOnly.count(n) != 0);

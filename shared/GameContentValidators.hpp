@@ -1,6 +1,6 @@
 #pragma once
 // The safety checks scripts and graphs that arrive as content go through BEFORE they become visible (ContentSync's `validate` hook).
-// Docs: docs/content_delivery.md "Scripts and graphs". Uses the engine's existing parsers; adds no new interpreter and no new
+// Docs: docs/release/content_delivery.md "Scripts and graphs". Uses the engine's existing parsers; adds no new interpreter and no new
 // capability: a downloaded graph or script runs with exactly the powers any shipped one has (ScriptPathOk sandbox for files, the same
 // node and builtin set), and nothing downloaded is ever loaded as native code.
 //   .okayvs      okay::vs::ValidateGraphText (the graph checker the editor and Project diagnostics use): any ERROR (severity 0) refuses it,

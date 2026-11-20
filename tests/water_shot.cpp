@@ -4,7 +4,7 @@
 //   water_shot --shots  <dir>   render pictures with the SOFTWARE renderer (PNG, 640x360): the four scenes, the four sea
 //                               states, the old look next to the new look, and the camera under the surface
 //   water_shot --bench          print milliseconds per frame of the water for a 100 x 100 m surface at 48 / 96 / 192
-// The pictures are made on the CPU with no window and no GPU. docs/water_visuals.md.
+// The pictures are made on the CPU with no window and no GPU. docs/rendering/terrain_water.md.
 #include "water_scenes.hpp"
 #include "okay/Render/SoftwareRenderer.hpp"
 #include "okay/Render/Atmosphere.hpp"

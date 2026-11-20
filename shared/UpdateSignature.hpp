@@ -1,5 +1,5 @@
 #pragma once
-// Signature check for the release index (versions.json). Docs: docs/updater.md ("Signed releases").
+// Signature check for the release index (versions.json). Docs: docs/release/updater.md ("Signed releases").
 //
 // The publisher signs the EXACT bytes of versions.json with an ed25519 key that never leaves their machine and publishes the
 // signature next to it as versions.json.sig. A launcher or editor built with -DOKAY_UPDATE_TRUSTED_KEYS=<hex>[,<hex>] (public keys:

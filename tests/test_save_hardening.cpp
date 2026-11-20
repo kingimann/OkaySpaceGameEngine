@@ -1,6 +1,6 @@
 // Saves and prefs, hardening pass: the shared crash-safe file write, SaveFile's end marker,
 // checksum and backup, the Save facade's errors and locking, Prefs' recovery and locking, and
-// SaveGame's slot listing (docs/save_games.md, "What changed (hardening pass)").
+// SaveGame's slot listing (docs/engine/save_games.md, "What changed (hardening pass)").
 #include "test_framework.hpp"
 #include <Okay.hpp>
 #include "okay/Core/SaveData.hpp"

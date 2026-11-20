@@ -1,7 +1,7 @@
 #pragma once
 // Small helpers around the frame loop: a max-delta clamp, a frame timer, and a frame
 // limiter. They sit beside Application and Time and change nothing there; call them
-// from your own loop (see docs/core_runtime.md). Header-light: only <chrono>.
+// from your own loop (see docs/engine/core_runtime.md). Header-light: only <chrono>.
 #include <algorithm>
 #include <chrono>
 #include <cmath>

@@ -4558,6 +4558,12 @@ foreach(_t IN ITEMS mip atlas convert bc dds_stream)
     add_test(NAME tex_${_t} COMMAND test_tex_${_t} WORKING_DIRECTORY ${CMAKE_CURRENT_BINARY_DIR})
     set_tests_properties(tex_${_t} PROPERTIES TIMEOUT 240)
 endforeach()
+
+# Ctrl+S / Ctrl+Shift+S / Ctrl+Alt+S decisions (editor/SaveShortcutModel.hpp, no ImGui, header-only).
+add_executable(test_save_shortcut_model test_save_shortcut_model.cpp)
+target_include_directories(test_save_shortcut_model PRIVATE ${CMAKE_SOURCE_DIR}/editor)
+add_test(NAME save_shortcut_model COMMAND test_save_shortcut_model)
+
 add_executable(test_vs_pan_model test_vs_pan_model.cpp)
 target_include_directories(test_vs_pan_model PRIVATE ${CMAKE_SOURCE_DIR}/editor)
 add_test(NAME vs_pan_model COMMAND test_vs_pan_model)

@@ -72,6 +72,14 @@ add_executable(test_remove test_remove.cpp)
 target_link_libraries(test_remove PRIVATE okay::engine)
 add_test(NAME remove_component COMMAND test_remove)
 
+add_executable(test_script_protect test_script_protect.cpp)
+target_link_libraries(test_script_protect PRIVATE okay::engine)
+add_test(NAME script_protect COMMAND test_script_protect)
+
+add_executable(test_script_pack test_script_pack.cpp)
+target_link_libraries(test_script_pack PRIVATE okay::engine)
+add_test(NAME script_pack COMMAND test_script_pack)
+
 add_executable(test_audio test_audio.cpp)
 target_link_libraries(test_audio PRIVATE okay::engine)
 add_test(NAME audio COMMAND test_audio)

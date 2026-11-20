@@ -19,19 +19,40 @@ struct Entry {
     std::string label;          // as passed by the menu code
     std::string name;           // shown big ("Joint 3D")
     std::string description;    // one plain line
-    std::string category;       // plain-word category ("Physics")
+    std::string category;       // plain-word category ("Physics"); "Uncategorised" when no rule knows it
+    std::string group;          // sub-group inside the category ("Colliders 3D"), "" when the category has none
+    std::string nkey;           // KeyOf + Canon: the one stable id of a component (rows and registry types agree on it)
     std::string reason;         // why it cannot be added (empty = can be added)
     std::vector<std::string> aliases;   // other words people use for it
     bool available = true;
     bool present = false;       // true when the reason is "already on this object"
 };
 
-/// What the menu code reports for each component: it can be added (`absent`) or not.
+/// What the menu code reports for each component: it can be added (`absent`) or not. The raw category the host passes is only
+/// part of the unique `key`; the real place comes from Classify() (so a new component needs no per-type edit when a rule covers it).
 Entry MakeEntry(const std::string& rawCategory, const std::string& label, bool absent);
 
+// ---- the taxonomy ---------------------------------------------------------------------------------------------------------
+/// "Box Collider 3D (a box)" / "BoxCollider3D" / "Stat: Health" -> "boxcollider3d" / "stathealth": lower case letters and digits,
+/// without the bracket text. Menu labels and registry type names agree on it.
+std::string KeyOf(const std::string& nameOrLabel);
+/// The one key of a component when the menu row and the registry spell it differently ("light" -> "directionallight").
+std::string Canon(const std::string& key);
+struct Place { std::string category, group; };
+extern const char* const kUncategorised;
+/// Where a component (a Canon key) lives. {kUncategorised, ""} when no rule knows it: a test fails then, so it gets a rule.
+Place Classify(const std::string& key);
+const std::vector<std::string>& CategoryOrder();               // the real categories, in the order the left column shows them
+std::vector<std::string> GroupOrder(const std::string& category);   // its sub-groups, in order
+std::vector<std::string> RuleExactKeys();                      // every exact key the rules name (a test checks none is listed twice)
+std::string PlainCategory(const std::string& rawCategory, const std::string& name);   // = Classify(Canon(KeyOf(name))).category
+/// The component a row needs on the object first ("" = none): "buoyancy" -> "rigidbody3d". Used to grey it with a reason.
+std::string PrereqOf(const std::string& key);
+/// Greys the rows whose prerequisite is not on the object ("Needs a Rigidbody3D first.").
+void ApplyPrereqs(std::vector<Entry>& entries);
+std::string Pretty(const std::string& key);   // "rigidbody3d" -> "Rigidbody3D" for the reason text (the row's own name when it is listed)
+
 // ---- the word lists -----------------------------------------------------------------------------------------------------
-std::string PlainCategory(const std::string& rawCategory, const std::string& name);
-const std::vector<std::string>& CategoryOrder();   // the order the left column lists real categories in
 /// "Joint 3D (distance/spring/pin)" -> name "Joint 3D", hint "distance/spring/pin". Short brackets like "(3D)" stay in the name.
 void SplitLabel(const std::string& label, std::string& name, std::string& hint);
 std::string Describe(const std::string& name, const std::string& hint, const std::string& category);
@@ -59,8 +80,8 @@ int EditDistance(const std::string& a, const std::string& b);
 
 // ---- Recent and Favorites (kept between runs) -------------------------------------------------------------------------
 struct Prefs {
-    std::vector<std::string> recent;       // labels, newest first (at most 8)
-    std::vector<std::string> favorites;    // labels
+    std::vector<std::string> recent;       // nkeys, newest first (at most 8)
+    std::vector<std::string> favorites;    // nkeys
     void NoteUsed(const std::string& name);
     bool IsFavorite(const std::string& name) const;
     bool IsRecent(const std::string& name) const;
@@ -78,15 +99,17 @@ struct Suggestion { std::string name;   // a menu label
 std::vector<Suggestion> Suggest(const std::vector<std::string>& presentLabels);
 
 // ---- the view -----------------------------------------------------------------------------------------------------------
-inline const char* kCatForObject = "For this object";
-inline const char* kCatRecent    = "Recent";
-inline const char* kCatFavorites = "Favorites";
+inline const char* kCatForObject = "Suggested for this object";
+inline const char* kCatRecent    = "Recently used";
+inline const char* kCatFavorites = "Favourites";
 
 struct Row {
     int entry = -1;             // index in the entry list
     int score = 0;
     std::vector<int> hits;
     std::string note;           // e.g. the suggestion's "why"
+    std::string group;          // the sub-group heading above this card ("" = none)
+    bool groupStart = false;    // first card of its group: draw the heading
 };
 struct CatCount { std::string name; int count = 0; bool special = false; };
 

@@ -5,6 +5,7 @@
 #include <cctype>
 #include <cstdlib>
 #include <fstream>
+#include <map>
 #include <sstream>
 #include <utility>
 
@@ -124,6 +125,51 @@ const Pair kDescriptions[] = {
     {"Network Manager", "Starts and joins online games."},
     {"Network Sync", "Shares where this object is with every player."},
     {"Spline", "A curve you shape with handles."},
+    {"Breakable", "Breaks into pieces when it is hit hard enough."},
+    {"Conveyor Belt", "A belt that carries things standing on it."},
+    {"Debris Emitter", "Throws little broken bits when something breaks."},
+    {"Explosion", "A blast that pushes nearby bodies away."},
+    {"Force Field", "Pulls or pushes bodies that come near it."},
+    {"Gravity Zone", "An area where gravity points a different way."},
+    {"Moving Platform", "A platform that carries what stands on it along a path."},
+    {"Physics Surface", "Sets how bouncy and slippery a surface is."},
+    {"Turntable", "A flat disc that spins and turns what stands on it."},
+    {"Wind Drag", "Lets the wind push this body."},
+    {"Wind Zone", "An area where the wind blows."},
+    {"Wind Sway", "Makes trees, grass and flags sway in the wind."},
+    {"Wind Sound", "Plays wind noise that follows the wind."},
+    {"Network Object", "Marks this object as shared between players."},
+    {"Network Transform", "Shares where this object is, smoothly, with every player."},
+    {"Sync Var", "Shares one value with every player."},
+    {"Player View", "Chooses what each local player sees."},
+    {"UI Dropdown", "A list you open and pick one thing from."},
+    {"UI Input Field", "A box the player types into."},
+    {"UI Color Square", "A colour swatch you can click."},
+    {"UI Layout Group", "Lines up its children in a row, a column or a grid."},
+    {"UI Scroll View", "A window onto content that scrolls."},
+    {"UI Constraints", "Limits how small or large a part of the screen may get."},
+    {"UI User Style", "Lets the player change how the interface looks."},
+    {"UI Guides", "Guide lines that help you line parts up."},
+    {"Cone Collider 3D", "A cone-shaped solid, like a party hat."},
+    {"Convex Hull Collider 3D", "Shrink-wraps a model into one solid shape."},
+    {"Compound Collider 3D", "Several solid shapes working as one."},
+    {"Plane Collider 3D", "Endless flat ground that is solid below."},
+    {"Heightfield Collider 3D", "Hilly ground made from a grid of heights."},
+    {"Composite Collider 2D", "Several 2D shapes working as one."},
+    {"Camera Rig", "A ready camera that follows the player; change its style later."},
+    {"Camera Room", "Keeps the camera inside one room of your level."},
+    {"Camera Zone", "Switches the camera when the player walks in."},
+    {"Stat: Health", "How much life this object has. At zero it is out."},
+    {"Stats", "Strength, speed and other numbers for a character."},
+    {"Survival Stats", "Hunger, thirst and other needs, ready made."},
+    {"Behavior Tree Runner", "Gives a character a brain made from a tree of choices."},
+    {"Nav Mesh Modifier", "Marks ground as water, road or blocked for walkers."},
+    {"Nav Mesh Obstacle", "Walkers go around it."},
+    {"Nav Mesh Link", "Lets walkers jump, drop or climb between two places."},
+    {"Seat", "A place a character can sit."},
+    {"Vehicle Seat", "A seat that lets a character get in and drive."},
+    {"Vehicle Controller", "Drives a car with the keys."},
+    {"Boat Controller", "Drives a boat that floats on water."},
 };
 
 // Other words people use for a component (also its older names).
@@ -171,9 +217,39 @@ const Pair kAliases[] = {
     {"Spinner", "rotate, turn"},
     {"Joint 2D", "hinge, spring, rope, hold together"},
     {"Joint 3D", "hinge, spring, rope, hold together"},
+    {"Stat: Health", "hit points, hp, life, lives, hearts, damage"},
+    {"Stats", "numbers, strength, level, rpg"},
+    {"Physics Surface", "bounce, bouncy, slippery, friction, ice, physics material"},
+    {"Rigidbody2D", "bounce, bouncy, physics material"},
+    {"Rigidbody3D", "bounce, bouncy, physics material"},
+    {"Character Controller 3D", "jump, run, walk, move"},
+    {"Character Controller 2D", "jump, run, walk, move"},
+    {"Jump Pad", "jump, spring, trampoline, launch"},
+    {"Breakable", "smash, shatter, destroy, glass"},
+    {"Explosion", "bomb, boom, blast, grenade"},
+    {"Force Field", "magnet, attract, repel, push, pull, gravity"},
+    {"Gravity Zone", "gravity, space, float, low gravity"},
+    {"Conveyor Belt", "treadmill, moving floor, carry"},
+    {"Moving Platform", "lift, elevator, carry"},
+    {"Ranged Weapon", "gun, shoot, bullet, fire"},
+    {"Melee Attacker", "sword, punch, hit, attack"},
+    {"Camera Rig", "follow camera, third person camera"},
+    {"Wind Zone", "breeze, gust, weather"},
+    {"Day / Night Cycle", "sun, sky, time of day, weather"},
+    {"Network Manager", "online, multiplayer, host, join"},
+    {"Nav Mesh Agent", "walk, path, ai, chase"},
+    {"Particle System", "fire, smoke, sparkle, rain, snow"},
+    {"Light", "lamp, sun"},
+    {"Point Light", "lamp, bulb"},
+    {"Inventory", "items, backpack, bag"},
+    {"Chest / Container", "box, loot, storage"},
+    {"Spawner", "create, make, respawn, enemies"},
+    {"UI Slider", "volume, bar, value"},
+    {"UI Progress Bar", "health bar, loading bar"},
+    {"Sprite Animator", "frames, flipbook, walk cycle"},
 };
 
-struct Need { const char* name; const char* reason; };
+struct Need { const char* name; const char* reason; };   // rows whose menu code decides when they can be added
 // Components that only make sense next to another one (shown greyed with this reason when not on offer).
 const Need kNeeds[] = {
     {"Tilemap Collider 2D", "Needs a Tilemap on this object (or it is already added)."},
@@ -187,75 +263,55 @@ const AlsoRow kAlso[] = {
     {"Modifiers", "Mesh Renderer"},
 };
 
+// `have` and `suggest` are component keys (KeyOf). A `have` starting with '$' matches any key ending that way.
 struct Goes { const char* have; const char* suggest; const char* why; };
-// `have` and `suggest` are menu labels.
 const Goes kGoes[] = {
-    {"Rigidbody3D", "Box Collider 3D", "A Rigidbody needs a Collider to hit things"},
-    {"Rigidbody3D", "Capsule Collider 3D", "A Rigidbody needs a Collider to hit things"},
-    {"Rigidbody3D", "Sphere Collider 3D", "A Rigidbody needs a Collider to hit things"},
-    {"Rigidbody2D", "Box Collider 2D", "A Rigidbody needs a Collider to hit things"},
-    {"Rigidbody2D", "Circle Collider 2D", "A Rigidbody needs a Collider to hit things"},
-    {"Box Collider 3D", "Rigidbody3D", "Makes the Collider fall and bounce"},
-    {"Sphere Collider 3D", "Rigidbody3D", "Makes the Collider fall and bounce"},
-    {"Capsule Collider 3D", "Rigidbody3D", "Makes the Collider fall and bounce"},
-    {"Box Collider 2D", "Rigidbody2D", "Makes the Collider fall and bounce"},
-    {"Circle Collider 2D", "Rigidbody2D", "Makes the Collider fall and bounce"},
-    {"Mesh Renderer (3D)", "Box Collider 3D", "So things can hit your shape"},
-    {"Mesh Renderer (3D)", "LOD Group", "Faster when far away"},
-    {"Sprite Renderer", "Box Collider 2D", "So things can hit your picture"},
-    {"Sprite Renderer", "Sprite Animator", "Flip through pictures"},
-    {"Camera", "Camera Follow", "Makes the camera follow an object"},
-    {"Camera", "Virtual Camera", "A camera rig: switch angles and blend"},
-    {"Camera", "Cinemachine Brain", "A camera rig: blends the angles"},
-    {"Virtual Camera", "Cinemachine Brain", "Blends between camera angles"},
-    {"Canvas", "Event System", "Lets buttons hear clicks"},
-    {"UI Button", "Event System", "Lets buttons hear clicks"},
-    {"Audio Source", "Music Player", "For background music"},
-    {"Character", "Animator (states + transitions)", "Gives the character moves"},
-    {"Character", "Foot IK", "Keeps feet on the ground"},
-    {"Particle System", "Audio Source", "Add a sound to go with it"},
-    {"Character Controller 3D", "Camera Follow", "So the camera follows the player"},
-    {"Nav Mesh Agent", "Behavior Tree Runner", "Gives the walker a brain"},
+    {"meshrenderer", "boxcollider3d", "So things can hit your shape"},
+    {"meshrenderer", "rigidbody3d", "So it can fall and bounce"},
+    {"meshrenderer", "lodgroup", "Runs faster when it is far away"},
+    {"spriterenderer", "boxcollider2d", "So things can hit your picture"},
+    {"spriterenderer", "rigidbody2d", "So it can fall and bounce"},
+    {"spriterenderer", "spriteanimator", "Flip through pictures"},
+    {"rigidbody3d", "boxcollider3d", "A Rigidbody needs a Collider to hit things"},
+    {"rigidbody3d", "capsulecollider3d", "A Rigidbody needs a Collider to hit things"},
+    {"rigidbody3d", "spherecollider3d", "A Rigidbody needs a Collider to hit things"},
+    {"rigidbody2d", "boxcollider2d", "A Rigidbody needs a Collider to hit things"},
+    {"rigidbody2d", "circlecollider2d", "A Rigidbody needs a Collider to hit things"},
+    {"$collider3d", "rigidbody3d", "Makes the Collider fall and bounce"},
+    {"$collider2d", "rigidbody2d", "Makes the Collider fall and bounce"},
+    {"camera", "camerafollow", "Makes the camera follow an object"},
+    {"camera", "virtualcamera", "A camera rig: switch angles and blend"},
+    {"camera", "cinemachinebrain", "A camera rig: blends the angles"},
+    {"virtualcamera", "cinemachinebrain", "Blends between camera angles"},
+    {"canvas", "eventsystem", "Lets buttons hear clicks"},
+    {"uibutton", "eventsystem", "Lets buttons hear clicks"},
+    {"audiosource", "musicplayer", "For background music"},
+    {"character", "animatorstates", "Gives the character moves"},
+    {"character", "footik", "Keeps feet on the ground"},
+    {"particlesystem", "audiosource", "Add a sound to go with it"},
+    {"charactercontroller3d", "camerafollow", "So the camera follows the player"},
+    {"navmeshagent", "behaviortreerunner", "Gives the walker a brain"},
+    {"stathealth", "damageontouch", "Something to hurt it"},
+    {"water", "buoyancy", "Makes things float on the water"},
 };
 
-const char* const kOrder[] = {"Rendering", "Effects", "Physics", "Cameras", "Animation", "Audio", "Scripts", "Controllers",
-                              "Gameplay", "Survival", "Multiplayer", "No-Code", "UI"};
-
-const char* const kEffects[] = {"Particle System", "Trail Renderer", "Line Renderer", "Decal Projector", "Cable", "Foliage",
-                                "Water", "Flashlight"};
-
 const Pair* FindPair(const Pair* arr, std::size_t n, const std::string& name) {
-    for (std::size_t i = 0; i < n; ++i) if (name == arr[i].name) return &arr[i];
-    return nullptr;
+    // built once per table: key -> row (the first row wins)
+    static std::map<const Pair*, std::map<std::string, const Pair*>> index;
+    auto it = index.find(arr);
+    if (it == index.end()) {
+        std::map<std::string, const Pair*> m;
+        for (std::size_t i = 0; i < n; ++i) m.insert({Canon(KeyOf(arr[i].name)), &arr[i]});
+        it = index.insert({arr, std::move(m)}).first;
+    }
+    auto f = it->second.find(Canon(KeyOf(name)));
+    return f == it->second.end() ? nullptr : f->second;
 }
 #define COUNT(a) (sizeof(a) / sizeof((a)[0]))
 
 }  // namespace
 
 // ---- words ----------------------------------------------------------------------------------------------------------------
-
-const std::vector<std::string>& CategoryOrder() {
-    static const std::vector<std::string> v(kOrder, kOrder + COUNT(kOrder));
-    return v;
-}
-
-std::string PlainCategory(const std::string& raw, const std::string& name) {
-    for (const char* e : kEffects) if (name == e) return "Effects";
-    if (raw == "Gameplay") {
-        if (StartsWith(name, "Stat: ") || StartsWith(name, "Survival") || StartsWith(name, "Status Effects") ||
-            StartsWith(name, "Consumables") || StartsWith(name, "Day / Night"))
-            return "Survival";
-        if (Contains(name, "Controller") && !StartsWith(name, "Network")) return "Controllers";
-        if (StartsWith(name, "Network") || StartsWith(name, "Net ") || StartsWith(name, "Anti-Cheat")) return "Multiplayer";
-        return "Gameplay";
-    }
-    if (raw == "Physics 2D" || raw == "Physics 3D") return "Physics";
-    if (raw == "Lighting") return "Rendering";
-    if (raw == "Camera") return "Cameras";
-    if (raw == "RPG / Turn-Based") return "Gameplay";
-    if (raw == "No-Code Mechanics") return "No-Code";
-    return raw;
-}
 
 void SplitLabel(const std::string& label, std::string& name, std::string& hint) {
     name = label; hint.clear();
@@ -354,7 +410,10 @@ Entry MakeEntry(const std::string& rawCategory, const std::string& label, bool a
     e.label = label;
     std::string hint;
     SplitLabel(label, e.name, hint);
-    e.category = PlainCategory(rawCategory, e.name);
+    e.nkey = Canon(KeyOf(label));
+    const Place pl = Classify(e.nkey);
+    e.category = pl.category;
+    e.group = pl.group;
     e.key = rawCategory + "|" + label;
     e.description = Describe(e.name, hint, e.category);
     e.aliases = AliasesOf(e.name);
@@ -362,9 +421,7 @@ Entry MakeEntry(const std::string& rawCategory, const std::string& label, bool a
     if (!absent) {
         e.reason = "Already on this object (only one allowed).";
         e.present = true;
-        for (const Need& n : kNeeds) if (e.name == n.name) {
-            e.reason = n.reason; e.present = false; break;
-        }
+        for (const Need& n : kNeeds) if (e.nkey == Canon(KeyOf(n.name))) { e.reason = n.reason; e.present = false; break; }
     }
     return e;
 }
@@ -433,16 +490,16 @@ Match MatchEntry(const Entry& e, const std::string& query) {
     for (const std::string& tok : toks) {
         std::vector<int> hits;
         int s = ScoreName(lname, tok, hits);
+        if (s == 0) {   // plain words people use for it come before the sentence about it
+            for (const std::string& a : e.aliases) {
+                std::string la = Lower(a);
+                if (WordHas(la, tok, true)) { s = std::max(s, 350); }
+                else if (tok.size() >= 3 && la.find(tok) != std::string::npos) s = std::max(s, 320);
+            }
+        }
         if (s == 0) {
             if (WordHas(ldesc, tok, true)) s = 300;
             else if (tok.size() >= 3 && WordHas(ldesc, tok, false)) s = 260;
-        }
-        if (s == 0) {
-            for (const std::string& a : e.aliases) {
-                std::string la = Lower(a);
-                if (WordHas(la, tok, true)) { s = 220; break; }
-                if (tok.size() >= 3 && la.find(tok) != std::string::npos) s = 200;
-            }
         }
         if (s == 0) return Match{};   // every word must match somewhere
         total += s;
@@ -524,12 +581,19 @@ bool SavePrefs(const std::string& path, const Prefs& p) {
 
 std::vector<Suggestion> Suggest(const std::vector<std::string>& present) {
     std::vector<Suggestion> out;
+    auto has = [&](const std::string& k) { return std::find(present.begin(), present.end(), k) != present.end(); };
+    auto endsWith = [](const std::string& k, const std::string& t) { return k.size() >= t.size() && k.compare(k.size() - t.size(), t.size(), t) == 0; };
+    auto hasEnding = [&](const std::string& t) { for (const auto& k : present) if (endsWith(k, t)) return true; return false; };
     for (const Goes& g : kGoes) {
-        if (std::find(present.begin(), present.end(), std::string(g.have)) == present.end()) continue;
-        if (std::find(present.begin(), present.end(), std::string(g.suggest)) != present.end()) continue;
+        const std::string have = g.have, sug = g.suggest;
+        if (have[0] == '$' ? !hasEnding(have.substr(1)) : !has(have)) continue;
+        if (has(sug)) continue;
+        // one collider is enough: do not suggest a second kind
+        if (endsWith(sug, "collider3d") && hasEnding("collider3d")) continue;
+        if (endsWith(sug, "collider2d") && hasEnding("collider2d")) continue;
         bool dup = false;
-        for (const auto& s : out) if (s.name == g.suggest) dup = true;
-        if (!dup) out.push_back({g.suggest, std::string(g.why)});
+        for (const auto& x : out) if (x.name == sug) dup = true;
+        if (!dup) out.push_back({sug, std::string(g.why)});
     }
     return out;
 }
@@ -540,7 +604,7 @@ namespace {
 
 std::vector<std::string> PresentNames(const std::vector<Entry>& entries) {
     std::vector<std::string> v;
-    for (const Entry& e : entries) if (e.present) v.push_back(e.label);
+    for (const Entry& e : entries) if (e.present) v.push_back(e.nkey);
     return v;
 }
 
@@ -548,7 +612,7 @@ std::vector<std::string> PresentNames(const std::vector<Entry>& entries) {
 int FirstByName(const std::vector<Entry>& entries, const std::string& label) {
     int found = -1;
     for (int i = 0; i < (int)entries.size(); ++i)
-        if (entries[i].label == label) { if (entries[i].available) return i; if (found < 0) found = i; }
+        if (entries[i].nkey == label) { if (entries[i].available) return i; if (found < 0) found = i; }
     return found;
 }
 
@@ -573,9 +637,12 @@ View Build(const std::vector<Entry>& entries, const State& s, const Prefs& prefs
     if (!favs.empty()) v.cats.push_back({kCatFavorites, avail(favs), true});
     std::vector<std::string> order = CategoryOrder();
     for (const Entry& e : entries) if (std::find(order.begin(), order.end(), e.category) == order.end()) order.push_back(e.category);
+    // One card per component, even when the menu code lists it in two places.
+    std::vector<int> uniq;
+    for (int i = 0; i < (int)entries.size(); ++i) if (FirstByName(entries, entries[i].nkey) == i) uniq.push_back(i);
     for (const std::string& c : order) {
         int total = 0, free = 0;
-        for (const Entry& e : entries) if (e.category == c) { ++total; if (e.available) ++free; }
+        for (int i : uniq) if (entries[i].category == c) { ++total; if (entries[i].available) ++free; }
         if (total) v.cats.push_back({c, free, false});
     }
 
@@ -586,13 +653,13 @@ View Build(const std::vector<Entry>& entries, const State& s, const Prefs& prefs
         std::vector<std::string> seen;
         for (int i = 0; i < (int)entries.size(); ++i) {
             const Entry& e = entries[i];
-            if (std::find(seen.begin(), seen.end(), e.label) != seen.end()) continue;
-            int pick = FirstByName(entries, e.label);   // the copy that can be added, when there is one
+            if (std::find(seen.begin(), seen.end(), e.nkey) != seen.end()) continue;
+            int pick = FirstByName(entries, e.nkey);   // the copy that can be added, when there is one
             const Entry& ee = entries[pick];
             Match m = MatchEntry(ee, s.query);
-            seen.push_back(e.label);
+            seen.push_back(e.nkey);
             if (!m.score) continue;
-            Row r; r.entry = pick; r.score = m.score + (ee.available ? 50 : 0) + (prefs.IsFavorite(ee.label) ? 15 : 0) + (prefs.IsRecent(ee.label) ? 8 : 0);
+            Row r; r.entry = pick; r.score = m.score + (ee.available ? 50 : 0) + (prefs.IsFavorite(ee.nkey) ? 15 : 0) + (prefs.IsRecent(ee.nkey) ? 8 : 0);
             r.hits = m.hits;
             rows.push_back(r);
         }
@@ -613,10 +680,22 @@ View Build(const std::vector<Entry>& entries, const State& s, const Prefs& prefs
     } else if (s.category == kCatFavorites) {
         for (int i : favs) add(i);
     } else {
-        // real category: available first, greyed ones after
-        for (int pass = 0; pass < 2; ++pass)
-            for (int i = 0; i < (int)entries.size(); ++i)
-                if (entries[i].category == s.category && entries[i].available == (pass == 0)) add(i);
+        // a real category: its sub-groups in order, each with the components that can be added first and the greyed ones after
+        std::vector<std::string> groups = GroupOrder(s.category);
+        groups.push_back(std::string());
+        for (const std::string& g : groups) {
+            bool first = true;
+            for (int pass = 0; pass < 2; ++pass)
+                for (int i : uniq) {
+                    const Entry& e = entries[i];
+                    if (e.category != s.category || e.available != (pass == 0)) continue;
+                    if (e.group != g && !(g.empty() && std::find(groups.begin(), groups.end(), e.group) == groups.end())) continue;
+                    add(i);
+                    v.rows.back().group = e.group.empty() ? g : e.group;
+                    v.rows.back().groupStart = first && !v.rows.back().group.empty();
+                    first = false;
+                }
+        }
     }
     return v;
 }

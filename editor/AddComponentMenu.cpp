@@ -4,6 +4,7 @@
 #include "EditorWidgets.hpp"
 #include "imgui.h"
 #include "okay/Scene/GameObject.hpp"
+#include "okay/Scene/PropertyRegistry.hpp"
 
 #include <algorithm>
 #include <cmath>
@@ -30,6 +31,9 @@ ImVec4 CatTint(const std::string& c) {
     if (c == "Survival")    return ImVec4(0.74f, 0.34f, 0.34f, 1);
     if (c == "Multiplayer") return ImVec4(0.24f, 0.58f, 0.74f, 1);
     if (c == "No-Code")     return ImVec4(0.36f, 0.64f, 0.30f, 1);
+    if (c == "World")       return ImVec4(0.50f, 0.58f, 0.28f, 1);
+    if (c == "Scripting")   return ImVec4(0.66f, 0.56f, 0.16f, 1);
+    if (c == kUncategorised) return ImVec4(0.75f, 0.30f, 0.30f, 1);
     if (c == kCatForObject) return ImVec4(0.90f, 0.62f, 0.18f, 1);
     if (c == kCatFavorites) return ImVec4(0.90f, 0.72f, 0.18f, 1);
     if (c == kCatRecent)    return ImVec4(0.46f, 0.52f, 0.60f, 1);
@@ -127,6 +131,19 @@ bool Session::Item(bool absent, const char* label) {
     return false;
 }
 
+void Session::FeedRegistry(okay::GameObject& go, const std::function<void(const okay::ComponentTypeInfo&)>& add) {
+    std::vector<std::string> seen;
+    for (const Entry& e : entries_) seen.push_back(e.nkey);
+    const std::string savedCat = cat_;
+    for (const RegItem& r : RegistryItems(go)) {
+        if (std::find(seen.begin(), seen.end(), r.nkey) != seen.end()) continue;
+        seen.push_back(r.nkey);
+        cat_ = r.info->category;
+        if (Item(!r.present, r.label.c_str())) add(*r.info);
+    }
+    cat_ = savedCat;
+}
+
 void Session::End(okay::GameObject* go) {
     pendingKey_.clear();   // chosen last frame and used by Item() (or stale)
     if (activated_) {
@@ -145,6 +162,7 @@ void Session::End(okay::GameObject* go) {
         return;
     }
     const float fs = ImGui::GetFontSize(), sc = fs / 16.0f;
+    ApplyPrereqs(entries_);   // "Needs a Rigidbody3D first."
     if (state_.category.empty()) state_.category = DefaultCategory(entries_, prefs_);
 
     // Title: what this is and who it is for.
@@ -203,7 +221,7 @@ void Session::End(okay::GameObject* go) {
 void Session::DrawBody(float bodyH, float sc) {
     const float fs = ImGui::GetFontSize();
     ImDrawList* dl = nullptr;
-    const float leftW = 140.0f * sc;
+    const float leftW = std::max(110.0f * sc, std::min(160.0f * sc, ImGui::GetWindowWidth() * 0.30f));
 
     // ---- left: categories --------------------------------------------------------------------------------------------
     ImGui::BeginChild("##accats", ImVec2(leftW, bodyH), ImGuiChildFlags_None);
@@ -251,11 +269,24 @@ void Session::DrawBody(float bodyH, float sc) {
         const Entry& e = entries_[r.entry];
         const float cardH = fs * 3.3f;
         const float cw = ImGui::GetContentRegionAvail().x;
+        if (r.groupStart) {   // a sub-group heading (Colliders 3D, Joints ...) above its first card
+            ImGui::Dummy(ImVec2(0, fs * 0.25f));
+            ImGui::PushStyleColor(ImGuiCol_Text, ImGui::GetStyleColorVec4(ImGuiCol_TextDisabled));
+            ImGui::TextUnformatted(r.group.c_str());
+            ImGui::PopStyleColor();
+        }
         const ImVec2 p = ImGui::GetCursorScreenPos();
         ImGui::PushID(i);
         const bool clicked = ImGui::InvisibleButton("##card", ImVec2(cw, cardH));
         const bool hov = ImGui::IsItemHovered();
         if (hov && (io.MouseDelta.x != 0.0f || io.MouseDelta.y != 0.0f) && state_.cursor != i) { state_.cursor = i; state_.notice.clear(); }
+        if (ImGui::IsItemHovered(ImGuiHoveredFlags_ForTooltip | ImGuiHoveredFlags_DelayNormal)) {   // hover preview: what it adds
+            ImGui::BeginTooltip();
+            ImGui::PushTextWrapPos(fs * 22.0f);
+            ImGui::TextUnformatted(PreviewText(e).c_str());
+            ImGui::PopTextWrapPos();
+            ImGui::EndTooltip();
+        }
         const bool cur = i == state_.cursor;
         const ImVec2 q(p.x + cw, p.y + cardH);
         const float rad = 8.0f * sc;

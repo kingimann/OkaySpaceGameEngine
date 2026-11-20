@@ -10,12 +10,13 @@
 //   }
 // Written from the owner's request (2026-11-19); no code from another project.
 #include "AddComponentModel.hpp"
+#include "AddComponentRegistry.hpp"
 
 #include <functional>
 #include <string>
 #include <vector>
 
-namespace okay { class GameObject; }
+namespace okay { class GameObject; struct ComponentTypeInfo; }
 
 namespace oked {
 namespace addcomp {
@@ -29,6 +30,9 @@ public:
     void BeginCat(const char* rawCategory) { cat_ = rawCategory; }
     /// Records one component. `absent` = it can be added. True once: the frame after the user chose it.
     bool Item(bool absent, const char* label);
+    /// After the hand-written rows: one row for every registered component type they did not list (no per-type edit needed).
+    /// `add` runs the frame after the pick, like a row's own code; AddRegistered does the plain registry add.
+    void FeedRegistry(okay::GameObject& go, const std::function<void(const okay::ComponentTypeInfo&)>& add);
     /// Draws the browser and handles the keys. Closes the popup when something was chosen (the host's add has run by then).
     void End(okay::GameObject* go);
     /// The one-line "Added ..." text after an add; empty when there is none. Read once.

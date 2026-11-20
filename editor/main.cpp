@@ -42873,6 +42873,8 @@ void DrawInspector(EditorState& ed) {
             if (item(!go->GetComponent<UIInventoryBind>() && go->GetComponent<UISlotGrid>(), "UI Inventory Bind (slot grid shows the Inventory)")) { go->AddComponent<UIInventoryBind>(); ed.dirty = true; }
           } EndCat(o); }
 
+        // every registered component type the rows above did not list (new components appear here without an edit)
+        s_acSession.FeedRegistry(*go, [&](const okay::ComponentTypeInfo& info) { ed.PushUndo(); oked::addcomp::AddRegistered(*go, info); ed.dirty = true; });
         s_acSession.End(go);
         { std::string acNote = s_acSession.TakeNotice(); if (!acNote.empty()) ConsoleLog(acNote); }
     }

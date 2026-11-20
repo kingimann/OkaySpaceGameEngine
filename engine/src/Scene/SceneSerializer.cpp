@@ -4574,6 +4574,7 @@ static bool ParseStep(Scene& scene, ParseSession& S, bool clear,
             int nIkAim = 0, nIkLook = 0, nIkLimb = 0, nIkChain = 0;
             while (in >> field) {
                 if (field == "end") { sawEnd = true; break; }
+                bool fieldDone = true;   // the chain is split in chunks: MSVC allows ~128 nested blocks (C1061)
                 if (field == "active") { int a = 1; in >> a; go->active = (a != 0); }
                 else if (field == "tag") { go->tag = ReadQuoted(in); }
                 else if (field == "static") { int s = 0; in >> s; go->isStatic = (s != 0); }
@@ -5159,7 +5160,9 @@ static bool ParseStep(Scene& scene, ParseSession& S, bool clear,
                     }
                     long na = 0; in >> na;
                     for (long k = 0; k < na && in; ++k) { int m = 0; in >> m; if (k < (long)sm2->anyState.size()) sm2->anyState[k].syncPhase = m != 0; }
-                } else if (field == "animsmstance") {
+                } else { fieldDone = false; }
+                if (!fieldDone) { fieldDone = true;
+                if (field == "animsmstance") {
                     StanceTimes& t = smFor()->stanceTimes;
                     in >> t.standCrouch >> t.crouchProne >> t.proneStand;
                 } else if (field == "animsmxfade") {
@@ -5491,7 +5494,10 @@ static bool ParseStep(Scene& scene, ParseSession& S, bool clear,
                         for (int i = 0; i < (int)all.size(); ++i)
                             if (index < 0 || i == index) { all[(std::size_t)i]->friction = fr; all[(std::size_t)i]->bounciness = bn; all[(std::size_t)i]->frictionCombine = clampMode(fm); all[(std::size_t)i]->bounceCombine = clampMode(bm); }
                     }
-                } else if (field == "trigfilter2d" || field == "trigfilter3d") {
+                } else { fieldDone = false; }
+                }
+                if (!fieldDone) { fieldDone = true;
+                if (field == "trigfilter2d" || field == "trigfilter3d") {
                     std::string tag = ReadQuoted(in);
                     std::uint32_t layers = 0xFFFFFFFFu;
                     in >> std::ws; if (std::isdigit(static_cast<unsigned char>(in.peek()))) in >> layers;
@@ -6029,7 +6035,10 @@ static bool ParseStep(Scene& scene, ParseSession& S, bool clear,
                            >> cc->airControl >> da >> fik;
                         cc->sprintKey = (char)sk; cc->driveAnimation = (da != 0); cc->footIK = (fik != 0);
                     }
-                } else if (field == "vehicle") {
+                } else { fieldDone = false; }
+                }
+                if (!fieldDone) { fieldDone = true;
+                if (field == "vehicle") {
                     auto* v = go->AddComponent<VehicleController>();
                     in >> v->acceleration >> v->maxSpeed >> v->reverseSpeed >> v->brakeForce
                        >> v->drag >> v->turnSpeed >> v->grip >> v->handbrakeGrip
@@ -6617,7 +6626,10 @@ static bool ParseStep(Scene& scene, ParseSession& S, bool clear,
                     c->paused = (ps != 0); c->controlSun = (cs != 0); c->rotateSun = (rs != 0); c->controlSky = (ck != 0);
                     auto col = [&](Color& k) { in >> k.r >> k.g >> k.b; k.a = 1.0f; };
                     col(c->dayLight); col(c->nightLight); col(c->skyDay); col(c->skyHorizon); col(c->skyNight);
-                } else if (field == "npc") {
+                } else { fieldDone = false; }
+                }
+                if (!fieldDone) { fieldDone = true;
+                if (field == "npc") {
                     auto* c = go->AddComponent<NPCController>();
                     int fm = 1;
                     in >> c->behavior >> c->moveSpeed >> c->sightRange >> c->wanderRadius
@@ -7226,7 +7238,10 @@ static bool ParseStep(Scene& scene, ParseSession& S, bool clear,
                     in >> jp->force >> uo >> jp->forwardBoost >> jp->cooldown;
                     jp->useObjectUp = (uo != 0);
                     jp->triggerTag = ReadQuoted(in);
-                } else if (field == "triggerzone") {
+                } else { fieldDone = false; }
+                }
+                if (!fieldDone) { fieldDone = true;
+                if (field == "triggerzone") {
                     auto* tz = go->AddComponent<TriggerZone>();
                     int once = 1; in >> tz->action;
                     tz->varName = ReadQuoted(in);
@@ -7880,7 +7895,10 @@ static bool ParseStep(Scene& scene, ParseSession& S, bool clear,
                     as->saveOnStart = sos != 0;
                     as->slot = ReadQuoted(in);
                     as->label = ReadQuoted(in);
-                } else if (field == "flashlight") {
+                } else { fieldDone = false; }
+                }
+                if (!fieldDone) { fieldDone = true;
+                if (field == "flashlight") {
                     auto* fl = go->AddComponent<Flashlight>();
                     int tk = 'f', onv = 1;
                     in >> tk >> onv >> fl->range >> fl->angle >> fl->intensity
@@ -8439,7 +8457,10 @@ static bool ParseStep(Scene& scene, ParseSession& S, bool clear,
                         int rich = 0; in >> rich >> tt->offset.x >> tt->offset.y;
                         tt->richText = (rich != 0);
                     }
-                } else if (field == "uilayout") {
+                } else { fieldDone = false; }
+                }
+                if (!fieldDone) { fieldDone = true;
+                if (field == "uilayout") {
                     auto* lg = go->AddComponent<UILayoutGroup>();
                     std::string rest; std::getline(in, rest);   // whole line: newer files carry extra fields
                     std::istringstream rs(rest);
@@ -9172,7 +9193,10 @@ static bool ParseStep(Scene& scene, ParseSession& S, bool clear,
                         }
                         ql->records.push_back(r);
                     }
-                } else if (field == "questlogdef") {
+                } else { fieldDone = false; }
+                }
+                if (!fieldDone) { fieldDone = true;
+                if (field == "questlogdef") {
                     // One inline quest of the Quest Log read just before it.
                     KvIn k(in);
                     auto* ql = LastOf(go->GetComponents<QuestLog>());
@@ -9331,6 +9355,7 @@ static bool ParseStep(Scene& scene, ParseSession& S, bool clear,
                     const std::string rest = ReadRecordLine(in);
                     if (go->unknownRecords.size() < kMaxUnknownRecords && field.size() + rest.size() <= kMaxUnknownRecordSize)
                         go->unknownRecords.push_back(field + rest);
+                }
                 }
             }
             // A read that ran off the end (or choked) leaves the stream failed, so

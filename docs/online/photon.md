@@ -1,5 +1,11 @@
 # Photon Realtime transport (opt-in)
 
+> **What this is:** Extension point only. It works only in a C++ build you make yourself with Photon's SDK, and nothing in the editor or the scripts selects it.
+>
+> **Status:** Reference page for this feature. Kept as written; not extended (rule 5).
+>
+> **Last checked:** 2026-11-20 (moved into `online/`, paths and links checked; the text itself was not re-checked against the code).
+
 > Extension point only. It works only in a C++ build you make yourself with
 > Photon's SDK, and nothing in the editor or the scripts selects it. See
 > [net_providers.md](net_providers.md).

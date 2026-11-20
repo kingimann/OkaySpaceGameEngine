@@ -1,5 +1,11 @@
 # Our own crypto (okay::crypto): stage 1, side by side, off by default
 
+> **What this is:** **UNREVIEWED. NOT THE DEFAULT.** This code was written from the RFCs by the engine team.
+>
+> **Status:** Reference page for this feature. Kept as written; not extended (rule 5).
+>
+> **Last checked:** 2026-11-20 (moved into `platform/`, paths and links checked; the text itself was not re-checked against the code).
+
 > **UNREVIEWED. NOT THE DEFAULT.** This code was written from the RFCs by the engine team. No outside
 > cryptographer has reviewed it. It must **not** become the default, and libsodium must **not** be removed,
 > until an outside expert has reviewed it (see `docs/status/own_code_roadmap.md`, libsodium row). Do not ship a build

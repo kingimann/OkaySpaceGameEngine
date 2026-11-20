@@ -1,5 +1,11 @@
 # Inventory: what exists, what is missing
 
+> **What this is:** A short, honest status of survival-game inventory in the engine.
+>
+> **Status:** Internal record (audit, plan or status): read it as a dated record, newest facts in the code.
+>
+> **Last checked:** 2026-11-20 (moved into `gameplay/`, paths and links checked; the text itself was not re-checked against the code).
+
 A short, honest status of survival-game inventory in the engine. The to-do item
 "Improve inventory systems (survival-game style)" is **partly done**: the move,
 stack, weight and equipment logic is solid and tested; the gaps are listed under

@@ -1,5 +1,11 @@
 # Our own WAV decoder (`okay::wav`)
 
+> **What this is:** Status: **side by side, off by default.** Part of `docs/status/own_code_roadmap.md` (the SDL2 row: `SDL_LoadWAV` in the launcher is the last WAV use of a library; the engine already had its own, narrower, WAV reader).
+>
+> **Status:** Reference page for this feature. Kept as written; not extended (rule 5).
+>
+> **Last checked:** 2026-11-20 (moved into `audio/`, paths and links checked; the text itself was not re-checked against the code).
+
 Status: **side by side, off by default.** Part of `docs/status/own_code_roadmap.md` (the SDL2 row: `SDL_LoadWAV` in the launcher is the last WAV use of a library; the engine already had its own, narrower, WAV reader).
 
 ## Why this one

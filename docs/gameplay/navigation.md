@@ -1,5 +1,11 @@
 # Navigation meshes
 
+> **What this is:** NPCs, click-to-move players and `NavMeshAgent`s path over a **navigation mesh**: convex polygons baked from the scene's static colliders, joined by portals.
+>
+> **Status:** Reference page for this feature. Kept as written; not extended (rule 5).
+>
+> **Last checked:** 2026-11-20 (moved into `gameplay/`, paths and links checked; the text itself was not re-checked against the code).
+
 NPCs, click-to-move players and `NavMeshAgent`s path over a **navigation mesh**:
 convex polygons baked from the scene's static colliders, joined by portals. A
 scene that never baked one keeps working: the same calls fall back to the

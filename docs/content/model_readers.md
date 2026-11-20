@@ -1,7 +1,9 @@
 # Our own model readers
 
 > **What this is:** One section per model file format we read with our own code (written to replace Assimp). Speed, real-file tests and the formats still missing are in model_import.md, model_corpus.md, own_readers_speed.md and own_readers_remaining.md next to this page.
+>
 > **Status:** combined on 2026-11-20 from 38 older pages, one section each (listed below). Every fact was kept; text marked **Outdated** is kept for history.
+>
 > **Last checked:** 2026-11-20, paths and links against main.
 
 ## Contents

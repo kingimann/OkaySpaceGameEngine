@@ -1,5 +1,11 @@
 # okay::crypto: package for an outside security review
 
+> **What this is:** **Status: UNREVIEWED, off by default.** This is what a reviewer needs to work from.
+>
+> **Status:** Internal record (audit, plan or status): read it as a dated record, newest facts in the code.
+>
+> **Last checked:** 2026-11-20 (moved into `platform/`, paths and links checked; the text itself was not re-checked against the code).
+
 > **Status: UNREVIEWED, off by default.** This is what a reviewer needs to work from. Nothing here is a claim that the code is secure; it says what exists, what was checked and how, what was not checked, and what we want answered. The decision to replace libsodium depends on this review (`docs/status/own_code_roadmap.md`, libsodium row). Background and test list: `docs/platform/crypto.md`.
 
 Every number below is quoted from the code, the tests or the docs in this repository, or from a measurement run on 2026-11-13 whose method and machine are given in section 4. Where something was not measured, it says so. **No outside review has happened.** The measurements in section 4 were made by the engine team on one machine; they are evidence for the reviewer to check, not a result of a review.

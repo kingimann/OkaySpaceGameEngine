@@ -1,5 +1,11 @@
 # Own build tool (okay-build): internal plan
 
+> **What this is:** Internal note, not a guide. Owner, 2026-11-17: start, do not replace CMake tomorrow.
+>
+> **Status:** Internal record (audit, plan or status): read it as a dated record, newest facts in the code.
+>
+> **Last checked:** 2026-11-20 (moved into `platform/`, paths and links checked; the text itself was not re-checked against the code).
+
 Internal note, not a guide. Owner, 2026-11-17: start, do not replace CMake tomorrow. OFF: not in CMake, CI or releases.
 Written from general knowledge of build systems (action graph, compiler depfiles, content hashes, worker pool).
 No code from CMake, Ninja, Make, Meson, Bazel, MSBuild, ccache or sccache was read or used (rule 19a).

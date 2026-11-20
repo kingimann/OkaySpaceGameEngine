@@ -1,5 +1,11 @@
 # Kick, ban and admins in community servers and group chats
 
+> **What this is:** The Members list of a community server (right side of the Servers page) and of a group chat (group menu, Members) now has moderation.
+>
+> **Status:** Reference page for this feature. Kept as written; not extended (rule 5).
+>
+> **Last checked:** 2026-11-20 (moved into `online/`, paths and links checked; the text itself was not re-checked against the code).
+
 The Members list of a community server (right side of the Servers page) and of a group chat
 (group menu, Members) now has moderation. It works only after the owner applies one SQL file.
 Until then the buttons answer "Moderation isn't set up on this project yet" instead of failing silently.

@@ -1,5 +1,11 @@
 # Relay & NAT traversal
 
+> **What this is:** Most players are behind a home router (NAT): they can connect *out* to the internet, but nothing on the internet can connect *in* to them without port-forwarding.
+>
+> **Status:** Reference page for this feature. Kept as written; not extended (rule 5).
+>
+> **Last checked:** 2026-11-20 (moved into `online/`, paths and links checked; the text itself was not re-checked against the code).
+
 Most players are behind a home router (NAT): they can connect *out* to the
 internet, but nothing on the internet can connect *in* to them without
 port-forwarding. Direct `net_host` / `StartServer` works great on a LAN or with a

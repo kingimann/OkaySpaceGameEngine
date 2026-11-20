@@ -1,5 +1,11 @@
 # Accessibility
 
+> **What this is:** The engine side of accessibility. What a player can change today, and what really happens (each row is on the Settings screen, tested, and saved to Prefs when Done is pressed):
+>
+> **Status:** Reference page for this feature. Kept as written; not extended (rule 5).
+>
+> **Last checked:** 2026-11-20 (moved into `engine/`, paths and links checked; the text itself was not re-checked against the code).
+
 The engine side of accessibility. What a player can change today, and what really happens
 (each row is on the Settings screen, tested, and saved to Prefs when Done is pressed):
 

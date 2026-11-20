@@ -1,5 +1,11 @@
 # Splines, lines and trails
 
+> **What this is:** A **Spline** is a curve you draw in the Scene view: points with handles, open or closed.
+>
+> **Status:** Reference page for this feature. Kept as written; not extended (rule 5).
+>
+> **Last checked:** 2026-11-20 (moved into `engine/`, paths and links checked; the text itself was not re-checked against the code).
+
 A **Spline** is a curve you draw in the Scene view: points with handles, open
 or closed. Other components build on it. A **Spline Follower** moves an object
 along it (moving platforms, carts, patrols, flybys), a **Spline Mesh** turns it

@@ -1,5 +1,11 @@
 # Project versions and upgrading a project
 
+> **What this is:** A project remembers which version of OkaySpace last saved it.
+>
+> **Status:** Reference page for this feature. Kept as written; not extended (rule 5).
+>
+> **Last checked:** 2026-11-20 (moved into `editor/`, paths and links checked; the text itself was not re-checked against the code).
+
 A project remembers which version of OkaySpace last saved it. When you open it with an editor of another version, the editor
 asks before it touches anything: upgrade the project (after a full backup), keep its version, or leave it alone. The rules live in
 `shared/ProjectVersion.hpp` (no editor, ImGui or engine code, so the launcher uses the same ones) and `editor/ProjectUpgrade.hpp`

@@ -1,5 +1,11 @@
 # The launcher's Versions page
 
+> **What this is:** The launcher keeps other versions of the editor next to the one you are running, so every project can be opened with the version it was made with.
+>
+> **Status:** Reference page for this feature. Kept as written; not extended (rule 5).
+>
+> **Last checked:** 2026-11-20 (moved into `release/`, paths and links checked; the text itself was not re-checked against the code).
+
 The launcher keeps other versions of the editor next to the one you are running, so every project can be opened with the version it
 was made with. This page is the other half of [project_upgrade.md](../editor/project_upgrade.md) (the editor's question when it opens a project of
 another version) and uses the release feed described in [release_channels.md](release_channels.md).

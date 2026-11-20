@@ -1,7 +1,9 @@
 # Multiplayer
 
 > **What this is:** Multiplayer in the launcher (Steam-style) and the multiplayer audit.
+>
 > **Status:** combined on 2026-11-20 from 2 older pages, one section each (listed below). Every fact was kept; text marked **Outdated** is kept for history.
+>
 > **Last checked:** 2026-11-20, paths and links against main.
 
 ## Contents

@@ -1,5 +1,11 @@
 # Release note draft: model formats that stop importing when Assimp is removed
 
+> **What this is:** Status: DRAFT. Nothing in this note has happened yet: Assimp is still in the build (off by default, on in the Windows distribution) and no default has been changed.
+>
+> **Status:** Internal record (audit, plan or status): read it as a dated record, newest facts in the code.
+>
+> **Last checked:** 2026-11-20 (moved into `content/`, paths and links checked; the text itself was not re-checked against the code).
+
 Status: DRAFT. Nothing in this note has happened yet: Assimp is still in the build (off by default, on in the Windows
 distribution) and no default has been changed. The roadmap (`docs/status/own_code_roadmap.md`, Assimp row and order step 3)
 requires this announcement to be published **one release before** Assimp is removed. The owner decides the release

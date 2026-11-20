@@ -1,5 +1,11 @@
 # The updater: integrity, self-update, rollback
 
+> **What this is:** How the launcher (and the editor) replace their own files, what is checked before anything is replaced, what the person sees when it does not work, and what is still open.
+>
+> **Status:** Reference page for this feature. Kept as written; not extended (rule 5).
+>
+> **Last checked:** 2026-11-20 (moved into `release/`, paths and links checked; the text itself was not re-checked against the code).
+
 How the launcher (and the editor) replace their own files, what is checked before anything is replaced, what the person sees when it
 does not work, and what is still open. The Versions page (installing other editors next to the running one) is described in
 [launcher_versions.md](launcher_versions.md); this page is about the **in-place update** of `OkaySpace.exe`, `OkayEngine.exe` and

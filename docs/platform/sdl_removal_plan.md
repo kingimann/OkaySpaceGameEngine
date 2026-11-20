@@ -1,5 +1,11 @@
 # Getting the editor and launcher off SDL2: the plan
 
+> **What this is:** Goal (CLAUDE.md rules 17 and 19): write the replacement ourselves, keep it off by default, and flip a default only with the owner's written approval.
+>
+> **Status:** Internal record (audit, plan or status): read it as a dated record, newest facts in the code.
+>
+> **Last checked:** 2026-11-20 (moved into `platform/`, paths and links checked; the text itself was not re-checked against the code).
+
 Goal (CLAUDE.md rules 17 and 19): write the replacement ourselves, keep it off by default, and flip a default only with the
 owner's written approval. Never delete SDL2 before our own version is finished and has run on real Windows.
 This page is the ordered list of work, with a plain-words size for each step and what to test on real Windows.

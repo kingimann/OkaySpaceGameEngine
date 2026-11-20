@@ -1,5 +1,11 @@
 # Scene management
 
+> **What this is:** What the engine gives you for loading scenes, spawning objects and declaring what a component needs.
+>
+> **Status:** Reference page for this feature. Kept as written; not extended (rule 5).
+>
+> **Last checked:** 2026-11-20 (moved into `engine/`, paths and links checked; the text itself was not re-checked against the code).
+
 What the engine gives you for loading scenes, spawning objects and declaring what a
 component needs. Headers: `okay/Scene/Scene.hpp`, `SceneManager.hpp`, `ObjectPool.hpp`,
 `GameObject.hpp`.

@@ -1,5 +1,11 @@
 # Logging and profiling
 
+> **What this is:** Two small core systems, both header-only: `okay/Core/Log.hpp` and `okay/Core/Profiler.hpp`.
+>
+> **Status:** Internal record (audit, plan or status): read it as a dated record, newest facts in the code.
+>
+> **Last checked:** 2026-11-20 (moved into `engine/`, paths and links checked; the text itself was not re-checked against the code).
+
 Two small core systems, both header-only: `okay/Core/Log.hpp` and
 `okay/Core/Profiler.hpp`.
 

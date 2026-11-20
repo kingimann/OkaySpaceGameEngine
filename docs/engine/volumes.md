@@ -1,5 +1,11 @@
 # Volumes and zones
 
+> **What this is:** A **Volume** is a region of the level (a box, a sphere or a cylinder) that does one thing to what is inside it.
+>
+> **Status:** Reference page for this feature. Kept as written; not extended (rule 5).
+>
+> **Last checked:** 2026-11-20 (moved into `engine/`, paths and links checked; the text itself was not re-checked against the code).
+
 A **Volume** is a region of the level (a box, a sphere or a cylinder) that does one thing to what is inside it.
 One component, one shape, six kinds. The editor draws every volume as a translucent shape in the Scene view,
 in a colour per kind, and you draw and resize them there.

@@ -1,5 +1,11 @@
 # Dialogue and quests
 
+> **What this is:** Conversations are **dialogue graphs** (`.okaydialog` files in the project's Assets folder), edited in the **Dialogue** window and played by a **Dialogue Runner** on an NPC or object.
+>
+> **Status:** Internal record (audit, plan or status): read it as a dated record, newest facts in the code.
+>
+> **Last checked:** 2026-11-20 (moved into `gameplay/`, paths and links checked; the text itself was not re-checked against the code).
+
 Conversations are **dialogue graphs** (`.okaydialog` files in the project's
 Assets folder), edited in the **Dialogue** window and played by a **Dialogue
 Runner** on an NPC or object. What the story remembers lives in the scene's

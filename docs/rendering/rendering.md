@@ -1,7 +1,9 @@
 # Rendering
 
 > **What this is:** How a frame is drawn: post-processing, sky, fog, weather, and the honest status of each renderer (software, OpenGL, Direct3D 11, Direct3D 12).
+>
 > **Status:** combined on 2026-11-20 from 2 older pages, one section each (listed below). Every fact was kept; text marked **Outdated** is kept for history.
+>
 > **Last checked:** 2026-11-20, paths and links against main.
 
 ## Contents

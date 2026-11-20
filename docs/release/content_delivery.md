@@ -1,5 +1,11 @@
 # Downloadable game content (content delivery)
 
+> **What this is:** An exported game can fetch new **data and scripts** from a server after it is installed: 3D models (characters, vehicles, buildings), textures and materials, animations, maps (a scene plus its assets), audio, dialogue, and Visual Script / O...
+>
+> **Status:** Reference page for this feature. Kept as written; not extended (rule 5).
+>
+> **Last checked:** 2026-11-20 (moved into `release/`, paths and links checked; the text itself was not re-checked against the code).
+
 An exported game can fetch new **data and scripts** from a server after it is installed: 3D models (characters, vehicles,
 buildings), textures and materials, animations, maps (a scene plus its assets), audio, dialogue, and Visual Script / OkayScript
 files that use the systems already in the engine. It is **off by default**: with no content URL configured the player does

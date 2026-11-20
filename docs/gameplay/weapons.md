@@ -1,5 +1,11 @@
 # Weapons
 
+> **What this is:** A weapon is a row in a `.okayweapon` file, not a set of numbers typed onto every fighter.
+>
+> **Status:** Reference page for this feature. Kept as written; not extended (rule 5).
+>
+> **Last checked:** 2026-11-20 (moved into `gameplay/`, paths and links checked; the text itself was not re-checked against the code).
+
 A weapon is a row in a `.okayweapon` file, not a set of numbers typed onto every fighter. The project keeps one list at `weapons.okayweapon` (next to `items.okayitems`). **View > Editors & Tools > Weapons** edits it: add a melee weapon or a gun, change it, duplicate it, delete it. Dropping a `.okayweapon` file on the Project panel opens it here. Ctrl+Z undoes an edit while the window is focused.
 
 A weapon can name an **item**. Equipping that item in the main hand selects the weapon on a Melee Attacker or a Ranged Weapon that has not picked one itself. An item can also name a weapon with a custom field `weapon`.

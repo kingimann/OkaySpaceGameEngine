@@ -1,5 +1,11 @@
 # Our own UI toolkit: OkayUI replaces Dear ImGui
 
+> **What this is:** Part of the plan in `docs/status/own_code_roadmap.md` (Dear ImGui row).
+>
+> **Status:** Reference page for this feature. Kept as written; not extended (rule 5).
+>
+> **Last checked:** 2026-11-20 (moved into `ui/`, paths and links checked; the text itself was not re-checked against the code).
+
 Part of the plan in `docs/status/own_code_roadmap.md` (Dear ImGui row). Section 4 holds the current HAVE and GAP table by feature family and what each gap-closing step built (sections 4.2 to 4.36); sections 1 and 3 are the earlier per-function audit (rows closed since are marked "Done in step 1").
 
 **Decision (owner, approved): OkayUI (`okayui/`) is THE toolkit.** It slowly replaces Dear ImGui. The headless pieces that were first written as a separate library (`okay::imui`, branch `claude/own-imui-core`: a software rasteriser, a golden-image and synthetic-input test harness, behaviour tests, a fuzz test) are folded into OkayUI instead of living beside it as a second toolkit. There is exactly one own toolkit. The editor and launcher still use Dear ImGui and no ImGui call is changed by this work.

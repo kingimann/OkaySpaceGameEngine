@@ -1,5 +1,11 @@
 # Scene serializer notes
 
+> **What this is:** Format and loading rules are in `engine/include/okay/Scene/SceneSerializer.hpp`.
+>
+> **Status:** Internal record (audit, plan or status): read it as a dated record, newest facts in the code.
+>
+> **Last checked:** 2026-11-20 (moved into `engine/`, paths and links checked; the text itself was not re-checked against the code).
+
 Format and loading rules are in `engine/include/okay/Scene/SceneSerializer.hpp`. This
 page covers what an object round trip keeps.
 

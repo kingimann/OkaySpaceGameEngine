@@ -1,5 +1,11 @@
 # Roadmap: replacing the third-party libraries with our own code
 
+> **What this is:** **Goal: removal.** Every third-party library in the build is to be replaced by our own code and then deleted from the repository, slowly.
+>
+> **Status:** Internal record (audit, plan or status): read it as a dated record, newest facts in the code.
+>
+> **Last checked:** 2026-11-20 (moved into `status/`, paths and links checked; the text itself was not re-checked against the code).
+
 **Goal: removal.** Every third-party library in the build is to be replaced by our own code and then deleted from the repository, slowly. Our own replacement is not a permanent second option: it is the future default, and the library is a temporary fallback that goes away. The only things we keep on purpose are services our users publish on and connect through: **Steamworks** and **Photon** (see the last section).
 
 The stages between "it exists" and "the library is deleted" (off, dogfood, opt-in, default on, removed), the gates for each, the proposed order and the `OKAY_OWN_STACK` dogfood switch are in `docs/status/own_stack_rollout.md`. **Which replacement could flip next, in what order, with a checklist per flip, and what blocks deleting each library: `docs/status/own_flip_proposal.md` (2026-11-15).**

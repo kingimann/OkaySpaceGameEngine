@@ -1,5 +1,11 @@
 # Player audit: bugs, frame cost and what was done (branch `claude/player-deep`)
 
+> **What this is:** The owner asked: "look into it deeper: the physics, the player, how the terrain works, and fix bugs, fps problem and improve".
+>
+> **Status:** Internal record (audit, plan or status): read it as a dated record, newest facts in the code.
+>
+> **Last checked:** 2026-11-20 (moved into `status/`, paths and links checked; the text itself was not re-checked against the code).
+
 The owner asked: "look into it deeper: the physics, the player, how the terrain works, and fix bugs, fps problem and
 improve". This page is the player part: the First Person and Third Person controllers (the Player Controller), the
 Character Controller 3D, the camera, and how the body behaves on the physics, the platforms, the water and the

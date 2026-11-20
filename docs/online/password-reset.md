@@ -1,5 +1,11 @@
 # Password reset page (Supabase)
 
+> **What this is:** "Forgot password?" in the launcher asks Supabase to email a reset link.
+>
+> **Status:** Reference page for this feature. Kept as written; not extended (rule 5).
+>
+> **Last checked:** 2026-11-20 (moved into `online/`, paths and links checked; the text itself was not re-checked against the code).
+
 "Forgot password?" in the launcher asks Supabase to email a reset link. That link opens a web page where the player
 types a new password. This repo provides that page; **nothing is hosted or changed for you.**
 

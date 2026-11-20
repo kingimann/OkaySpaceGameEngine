@@ -1,5 +1,11 @@
 # Launcher: what is unfinished (plain-English to-do list)
 
+> **What this is:** Read from origin/main 13a892ec (clean read-only tree).
+>
+> **Status:** Internal record (audit, plan or status): read it as a dated record, newest facts in the code.
+>
+> **Last checked:** 2026-11-20 (moved into `status/`, paths and links checked; the text itself was not re-checked against the code).
+
 Read from origin/main 13a892ec (clean read-only tree). Nothing was built or run. Line numbers are in that tree
 (`launcher/main.cpp` is 25,206 lines). Existing notes in UNFINISHED.md and unfinished-audit.md were read first; the demo
 env flags (OKAY_CHAT_DEMO*, OKAY_UI_DEMO_*, OKAY_MP_DEMO*, OKAY_VOICE_DEMO*) are only dev screenshot hooks and are not listed as problems

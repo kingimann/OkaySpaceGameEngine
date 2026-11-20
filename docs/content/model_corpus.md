@@ -1,5 +1,11 @@
 # Real-file validation of the own model readers
 
+> **What this is:** Until this page the own readers had only been run on files we wrote ourselves.
+>
+> **Status:** Internal record (audit, plan or status): read it as a dated record, newest facts in the code.
+>
+> **Last checked:** 2026-11-20 (moved into `content/`, paths and links checked; the text itself was not re-checked against the code).
+
 Until this page the own readers had only been run on files we wrote ourselves. This page records what happened when they were run on files that real exporters wrote: first FBX, COLLADA, 3DS and BVH, then (pre-flip verification) glTF/GLB, OBJ+MTL, STL and PLY against Assimp, the engine-linked reader tests under sanitizers and valgrind, a Windows (MinGW under wine) run, and FBX materials against ufbx. The last section says which of the roadmap's replacement criteria that does and does not meet.
 
 ## The corpus

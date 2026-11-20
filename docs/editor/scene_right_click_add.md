@@ -1,5 +1,11 @@
 # Scene view: right-click to add
 
+> **What this is:** Owner request (2026-11-18): "I want to be able to right click inside of the scene and add stuff."
+>
+> **Status:** Reference page for this feature. Kept as written; not extended (rule 5).
+>
+> **Last checked:** 2026-11-20 (moved into `editor/`, paths and links checked; the text itself was not re-checked against the code).
+
 Owner request (2026-11-18): "I want to be able to right click inside of the scene and add stuff."
 
 ## What it does

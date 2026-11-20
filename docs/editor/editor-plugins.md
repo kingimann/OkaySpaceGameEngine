@@ -1,5 +1,11 @@
 # Editor plugins
 
+> **What this is:** You can extend the OkaySpace editor itself with **plugins** written in OkayScript (the same language as game scripts).
+>
+> **Status:** Reference page for this feature. Kept as written; not extended (rule 5).
+>
+> **Last checked:** 2026-11-20 (moved into `editor/`, paths and links checked; the text itself was not re-checked against the code).
+
 You can extend the OkaySpace editor itself with **plugins** written in
 OkayScript (the same language as game scripts). A plugin can add a panel with
 buttons and sliders, a one-click command in the **Plugins** menu, or react to

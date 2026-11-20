@@ -1,5 +1,11 @@
 # Engine-wide unfinished audit (new findings)
 
+> **What this is:** Base: origin/main 13a892ec. Scope: engine/, editor/, player/, shared/ (launcher excluded).
+>
+> **Status:** Internal record (audit, plan or status): read it as a dated record, newest facts in the code.
+>
+> **Last checked:** 2026-11-20 (moved into `status/`, paths and links checked; the text itself was not re-checked against the code).
+
 Base: origin/main 13a892ec. Scope: engine/, editor/, player/, shared/ (launcher excluded). Read-only audit; nothing built or edited.
 
 How this was done: I read `UNFINISHED.md` and `unfinished-audit.md` first and kept only items that are not in them, or that sharpen an item with a concrete file and line. The source code is very clean of TODO or FIXME markers (about 250 hits for TODO, stub, placeholder, "not yet", nearly all benign: UI placeholder text, "speed hack", progress words). The real gaps showed up in four other ways: (1) renderer-by-renderer comparison, (2) library code that no editor or player code ever calls, (3) the `Open:` notes on rows the feature map marks "Works", which the existing lists skipped, and (4) code that accepts a setting and ignores it. Several `Open:` notes in the feature map are now out of date (checked: editor Play already runs on `GameLoop`, ease-curve and Clock fields are in the Inspector, the Problems panel calls `CollectProjectDiagnostics`, Spawner pooling exists, radio toggles exist, camera stacks render in the player, glTF packed metallic-roughness is imported). Those are not listed here as gaps.

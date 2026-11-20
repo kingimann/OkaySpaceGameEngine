@@ -1,5 +1,11 @@
 # NPCs & Crafting
 
+> **What this is:** Two native components that round out the gameplay kit.
+>
+> **Status:** Reference page for this feature. Kept as written; not extended (rule 5).
+>
+> **Last checked:** 2026-11-20 (moved into `gameplay/`, paths and links checked; the text itself was not re-checked against the code).
+
 Two native components that round out the gameplay kit.
 
 ## NPC Controller

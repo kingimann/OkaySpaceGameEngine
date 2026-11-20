@@ -1,5 +1,11 @@
 # Work board
 
+> **What this is:** a hand-written snapshot of what the main session and its agents are doing, the open PRs, the releases and what waits on the owner.
+>
+> **Status:** Internal record (audit, plan or status): read it as a dated record, newest facts in the code.
+>
+> **Last checked:** 2026-11-20 (moved into `status/`, paths and links checked; the text itself was not re-checked against the code).
+
 **Live version (rewritten every 10 minutes from GitHub, open PRs and CI state, branches, the #422 thread):** [WORK_BOARD.md on the work-board branch](https://github.com/kingimann/OkaySpaceGameEngine/blob/work-board/WORK_BOARD.md) (written by `scripts/work_board.py` and the workflow `.github/workflows/work-board.yml`). This page is the hand-written part: agents, owner decisions.
 
 A snapshot of what the main session and its agents are doing. It does not update by itself: the main session rewrites

@@ -1,5 +1,11 @@
 # Properties (reflection)
 
+> **What this is:** The property registry lets code read, write and watch a component's fields **by name**, without knowing the component's C++ type.
+>
+> **Status:** Reference page for this feature. Kept as written; not extended (rule 5).
+>
+> **Last checked:** 2026-11-20 (moved into `engine/`, paths and links checked; the text itself was not re-checked against the code).
+
 The property registry lets code read, write and watch a component's fields **by
 name**, without knowing the component's C++ type. It is the foundation that
 per-property undo, changing values during Play, prefab per-field overrides,

@@ -1,5 +1,11 @@
 # Security (plan SEC1)
 
+> **What this is:** Four protections, one section each: what was wrong, what changed, how you see it working, what is not done.
+>
+> **Status:** Internal record (audit, plan or status): read it as a dated record, newest facts in the code.
+>
+> **Last checked:** 2026-11-20 (moved into `online/`, paths and links checked; the text itself was not re-checked against the code).
+
 Four protections, one section each: what was wrong, what changed, how you see it working, what is not done. Every claim
 about a result says what was run. Nothing here ran on Windows, and nothing ran against the real Supabase project: those
 two are unverified and are listed under "Your steps" and at the end.

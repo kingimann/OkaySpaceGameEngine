@@ -1,5 +1,11 @@
 # Profiling and debugging tools (data layer)
 
+> **What this is:** The profiling and debugging tools data layer (headers in `engine/include/okay/Debug/`, sources in `engine/src/Debug/`).
+>
+> **Status:** Reference page for this feature. Kept as written; not extended (rule 5).
+>
+> **Last checked:** 2026-11-20 (moved into `engine/`, paths and links checked; the text itself was not re-checked against the code).
+
 Headers in `engine/include/okay/Debug/`, sources in `engine/src/Debug/`, all in
 `namespace okay`. These are the models behind the profiler timeline, memory
 view, frame debugger and error console (feature map area 23). They hold and

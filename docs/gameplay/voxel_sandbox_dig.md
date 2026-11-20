@@ -1,5 +1,11 @@
 # Sandbox digging in first and third person
 
+> **What this is:** Written for the voxel Sandbox (`Components/VoxelDigger`, `Components/VoxelAim`, `Scene/SceneTemplates.hpp` `VoxelSandbox`).
+>
+> **Status:** Reference page for this feature. Kept as written; not extended (rule 5).
+>
+> **Last checked:** 2026-11-20 (moved into `gameplay/`, paths and links checked; the text itself was not re-checked against the code).
+
 Written for the voxel Sandbox (`Components/VoxelDigger`, `Components/VoxelAim`, `Scene/SceneTemplates.hpp` `VoxelSandbox`).
 The ray march is our own: a fixed-step walk along the view line against the density field (no outside code).
 

@@ -1,5 +1,11 @@
 # okay-cc
 
+> **What this is:** Internal note. Not a user guide. It stays off by default: not in the engine CMake, not in CI, and not in releases.
+>
+> **Status:** Internal record (audit, plan or status): read it as a dated record, newest facts in the code.
+>
+> **Last checked:** 2026-11-20 (moved into `platform/`, paths and links checked; the text itself was not re-checked against the code).
+
 Internal note. Not a user guide. It stays off by default: not in the engine CMake, not in CI, and not in releases. The engine does not include it. Built only by `tools/okaycc/build.sh`. This is our own compiler, not a replacement for MSVC or Clang.
 
 Every line is written here from the documents named below. No copied compiler source, no third-party libraries, no cryptography.

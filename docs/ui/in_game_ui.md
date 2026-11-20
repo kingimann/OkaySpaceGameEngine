@@ -1,7 +1,9 @@
 # In-game UI
 
 > **What this is:** Everything about UI inside a game: the launcher look, the runtime API, world-space and HTML UI, the component library, its audit and the quality record.
+>
 > **Status:** combined on 2026-11-20 from 7 older pages, one section each (listed below). Every fact was kept; text marked **Outdated** is kept for history.
+>
 > **Last checked:** 2026-11-20, paths and links against main.
 
 ## Contents

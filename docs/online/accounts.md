@@ -1,5 +1,11 @@
 # Player accounts
 
+> **What this is:** OkaySpace has a small account system for signing players in and out.
+>
+> **Status:** Reference page for this feature. Kept as written; not extended (rule 5).
+>
+> **Last checked:** 2026-11-20 (moved into `online/`, paths and links checked; the text itself was not re-checked against the code).
+
 OkaySpace has a small account system for signing players in and out. It is used
 in two places that share the same code:
 

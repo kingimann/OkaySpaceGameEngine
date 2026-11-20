@@ -1,5 +1,11 @@
 # Dedicated servers
 
+> **What this is:** Any OkaySpace game can run as its own **headless, authoritative game server**: the same player executable, with no window, GPU or audio.
+>
+> **Status:** Reference page for this feature. Kept as written; not extended (rule 5).
+>
+> **Last checked:** 2026-11-20 (moved into `online/`, paths and links checked; the text itself was not re-checked against the code).
+
 Any OkaySpace game can run as its own **headless, authoritative game server**:
 the same player executable, with no window, GPU or audio. Players connect to it
 directly over UDP. Supabase stays the backend for everything that isn't

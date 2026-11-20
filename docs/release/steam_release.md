@@ -1,5 +1,11 @@
 # Releasing on Steam
 
+> **What this is:** OkaySpace has Steam built in via `ISteamService` (achievements, stats, rich presence, identity).
+>
+> **Status:** Reference page for this feature. Kept as written; not extended (rule 5).
+>
+> **Last checked:** 2026-11-20 (moved into `release/`, paths and links checked; the text itself was not re-checked against the code).
+
 OkaySpace has Steam built in via `ISteamService` (achievements, stats, rich
 presence, identity). By default it uses an in-memory **simulation** backend so
 everything runs without the SDK; to ship on Steam you compile against the real

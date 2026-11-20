@@ -1,5 +1,11 @@
 # Build mode and logic links: let players build in your game
 
+> **What this is:** Build mode lets players build while they play.
+>
+> **Status:** Internal record (audit, plan or status): read it as a dated record, newest facts in the code.
+>
+> **Last checked:** 2026-11-20 (moved into `gameplay/`, paths and links checked; the text itself was not re-checked against the code).
+
 Build mode lets players build while they play. They place pieces you give them,
 move, rotate, copy and delete what they built, and wire pieces together with
 **logic links** (a button opens a door, a pressure plate turns on a light) with no

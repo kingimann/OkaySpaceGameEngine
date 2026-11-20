@@ -1,5 +1,11 @@
 # OkayVS — the visual scripting text format
 
+> **What this is:** A visual script is a graph of **nodes** wired by **execution** links (control flow) and **data** links (values).
+>
+> **Status:** Reference page for this feature. Kept as written; not extended (rule 5).
+>
+> **Last checked:** 2026-11-20 (moved into `scripting/`, paths and links checked; the text itself was not re-checked against the code).
+
 A visual script is a graph of **nodes** wired by **execution** links (control
 flow) and **data** links (values). You can build a graph in C++ with
 `vs::NodeGraph::Add` / `ConnectExec` / `ConnectData`, or load it from this text

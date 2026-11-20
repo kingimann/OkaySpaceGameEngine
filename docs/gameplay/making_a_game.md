@@ -1,5 +1,11 @@
 # Make your first game
 
+> **What this is:** This walks you from an empty editor to a shipped, double-clickable game in a few minutes.
+>
+> **Status:** Reference page for this feature. Kept as written; not extended (rule 5).
+>
+> **Last checked:** 2026-11-20 (moved into `gameplay/`, paths and links checked; the text itself was not re-checked against the code).
+
 This walks you from an empty editor to a shipped, double-clickable game in a few
 minutes. It uses only what ships in the box — no plugins, no external tools.
 

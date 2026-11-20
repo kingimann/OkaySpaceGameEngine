@@ -1,5 +1,11 @@
 # Editor menus: audit and map
 
+> **What this is:** The editor's main menu bar and the Hierarchy panel's right-click menus, cleaned up on 2026-11-15 at the owner's request ("clean the menu bar better, and improve the context menus, add more").
+>
+> **Status:** Internal record (audit, plan or status): read it as a dated record, newest facts in the code.
+>
+> **Last checked:** 2026-11-20 (moved into `editor/`, paths and links checked; the text itself was not re-checked against the code).
+
 The editor's main menu bar and the Hierarchy panel's right-click menus, cleaned up on 2026-11-15 at the owner's request
 ("clean the menu bar better, and improve the context menus, add more"). This page has three parts: the **map** of the menus as
 they are now, the **audit** of the old menus (what every item was, where it lived, what was done with it), and **how it is built

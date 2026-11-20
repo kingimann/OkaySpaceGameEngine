@@ -1,5 +1,11 @@
 # Performance log
 
+> **What this is:** Owner request (2026-11-15): "work on optimization for the engine, improve FPS." This page is the record: what was measured, what was changed, and the numbers before and after.
+>
+> **Status:** Internal record (audit, plan or status): read it as a dated record, newest facts in the code.
+>
+> **Last checked:** 2026-11-20 (moved into `engine/`, paths and links checked; the text itself was not re-checked against the code).
+
 Owner request (2026-11-15): "work on optimization for the engine, improve FPS." This page is the record: what was
 measured, what was changed, and the numbers before and after.
 

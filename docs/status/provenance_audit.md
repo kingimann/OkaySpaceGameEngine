@@ -1,5 +1,11 @@
 # Provenance audit: code that may have been copied or ported
 
+> **What this is:** Date: 2026-11-14. Branch `claude/provenance-audit`, cut from main at `ff89d98a`.
+>
+> **Status:** Internal record (audit, plan or status): read it as a dated record, newest facts in the code.
+>
+> **Last checked:** 2026-11-20 (moved into `status/`, paths and links checked; the text itself was not re-checked against the code).
+
 Date: 2026-11-14. Branch `claude/provenance-audit`, cut from main at `ff89d98a`. Read-only on source code: nothing
 in `engine/`, `shared/`, `editor/` and so on was changed. Only this page and `scripts/provenance_scan.py` were added.
 

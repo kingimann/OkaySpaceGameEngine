@@ -1,5 +1,11 @@
 # What is custom and what we build on
 
+> **What this is:** OkaySpace is mostly our own code. This page lists what we wrote, and the outside libraries and services we build on, with their licences.
+>
+> **Status:** Reference page for this feature. Kept as written; not extended (rule 5).
+>
+> **Last checked:** 2026-11-20 (moved into `status/`, paths and links checked; the text itself was not re-checked against the code).
+
 OkaySpace is mostly our own code. This page lists what we wrote, and the outside libraries and
 services we build on, with their licences. The engine itself is proprietary (see `LICENSE`); third-party components keep their own licences.
 

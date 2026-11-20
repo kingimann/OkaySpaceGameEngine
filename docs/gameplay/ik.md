@@ -1,5 +1,11 @@
 # Inverse kinematics (IK)
 
+> **What this is:** IK bends bones so a hand, foot, head or tail tip reaches a goal, on top of whatever the animation did this frame.
+>
+> **Status:** Reference page for this feature. Kept as written; not extended (rule 5).
+>
+> **Last checked:** 2026-11-20 (moved into `gameplay/`, paths and links checked; the text itself was not re-checked against the code).
+
 IK bends bones so a hand, foot, head or tail tip reaches a goal, on top of
 whatever the animation did this frame. Every IK component works on the built-in
 Character and on imported skeletons, and runs after the animation each frame.

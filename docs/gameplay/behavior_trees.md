@@ -1,5 +1,11 @@
 # Behavior trees
 
+> **What this is:** NPC AI you author visually: a **behavior tree** decides what an NPC does every tick, a **blackboard** holds what it knows (its target, where it last saw it, its health), and the **Behavior Tree Runner** component plays the tree on an object...
+>
+> **Status:** Reference page for this feature. Kept as written; not extended (rule 5).
+>
+> **Last checked:** 2026-11-20 (moved into `gameplay/`, paths and links checked; the text itself was not re-checked against the code).
+
 NPC AI you author visually: a **behavior tree** decides what an NPC does every
 tick, a **blackboard** holds what it knows (its target, where it last saw it, its
 health), and the **Behavior Tree Runner** component plays the tree on an object

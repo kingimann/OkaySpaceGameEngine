@@ -1,5 +1,11 @@
 # Developer + QA sessions working together
 
+> **What this is:** Two Claude Code sessions work on this repository at the same time:
+>
+> **Status:** Reference page for this feature. Kept as written; not extended (rule 5).
+>
+> **Last checked:** 2026-11-20 (moved into `process/`, paths and links checked; the text itself was not re-checked against the code).
+
 Two Claude Code sessions work on this repository at the same time:
 
 - the **developer** session builds features and fixes on its own branch and

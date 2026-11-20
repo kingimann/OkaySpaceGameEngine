@@ -1,5 +1,11 @@
 # OkaySpace Editor
 
+> **What this is:** A desktop editor built with **Dear ImGui (docking) + SDL2**.
+>
+> **Status:** Reference page for this feature. Kept as written; not extended (rule 5).
+>
+> **Last checked:** 2026-11-20 (moved into `editor/`, paths and links checked; the text itself was not re-checked against the code).
+
 A desktop editor built with **Dear ImGui (docking) + SDL2**. It opens
 a real window with **docked** panels (Hierarchy / Scene / **Game** / Inspector /
 Console / Project), a Play·Stop·Step toolbar, and a dark theme, and edits live

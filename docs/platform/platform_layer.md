@@ -1,5 +1,11 @@
 # The platform layer (`okay::platform`) and our own backend
 
+> **What this is:** Stage 1 of replacing SDL2 with our own code (see the roadmap: seam first, own backend side by side and non-default, SDL2 stays).
+>
+> **Status:** Reference page for this feature. Kept as written; not extended (rule 5).
+>
+> **Last checked:** 2026-11-20 (moved into `platform/`, paths and links checked; the text itself was not re-checked against the code).
+
 Stage 1 of replacing SDL2 with our own code (see the roadmap: seam first, own backend side by side and
 non-default, SDL2 stays). This page is the audit of what the engine takes from SDL2, what is behind the
 seam now, what is not, and what was and was not tested.

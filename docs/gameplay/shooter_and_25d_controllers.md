@@ -1,5 +1,11 @@
 # Top-Down Shooter and 2.5D Platformer controllers
 
+> **What this is:** There are two ready-made player controllers for two popular kinds of game:
+>
+> **Status:** Reference page for this feature. Kept as written; not extended (rule 5).
+>
+> **Last checked:** 2026-11-20 (moved into `gameplay/`, paths and links checked; the text itself was not re-checked against the code).
+
 There are two ready-made player controllers for two popular kinds of game:
 
 - **Top Down Shooter Controller (3D)**: a twin-stick shooter like Enter the

@@ -1,5 +1,11 @@
 # Display settings
 
+> **What this is:** `okay::DisplaySettings` (`okay/Core/DisplaySettings.hpp`) holds what the Settings screen changes about the window and the picture: the **window mode**, the **resolution**, **vsync** and the **quality preset**.
+>
+> **Status:** Reference page for this feature. Kept as written; not extended (rule 5).
+>
+> **Last checked:** 2026-11-20 (moved into `engine/`, paths and links checked; the text itself was not re-checked against the code).
+
 `okay::DisplaySettings` (`okay/Core/DisplaySettings.hpp`) holds what the Settings screen
 changes about the window and the picture: the **window mode**, the **resolution**, **vsync**
 and the **quality preset**. It is plain data: nothing in it needs a window, so a settings

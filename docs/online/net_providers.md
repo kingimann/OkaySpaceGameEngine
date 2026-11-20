@@ -1,5 +1,11 @@
 # Net providers: extension points only
 
+> **What this is:** The engine has two provider seams, `INetTransport` (realtime transport) and `INetBackend` (online services).
+>
+> **Status:** Reference page for this feature. Kept as written; not extended (rule 5).
+>
+> **Last checked:** 2026-11-20 (moved into `online/`, paths and links checked; the text itself was not re-checked against the code).
+
 The engine has two provider seams, `INetTransport` (realtime transport) and
 `INetBackend` (online services). Each has a built-in **Native** provider that
 the editor, the player, the launcher and every script call use. The other

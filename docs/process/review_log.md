@@ -1,5 +1,11 @@
 # Review log
 
+> **What this is:** What has been reviewed, by whom, what was found and where each fix stands.
+>
+> **Status:** Internal record (audit, plan or status): read it as a dated record, newest facts in the code.
+>
+> **Last checked:** 2026-11-20 (moved into `process/`, paths and links checked; the text itself was not re-checked against the code).
+
 What has been reviewed, by whom, what was found and where each fix stands. Kept short and honest: a review
 that found nothing is not proof of safety, and a review by an AI is not an independent human review.
 

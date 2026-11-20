@@ -1,5 +1,11 @@
 # Asset manager
 
+> **What this is:** `okay::AssetManager` (`okay/Core/AssetManager.hpp`) is an opt-in central registry for files loaded from disk.
+>
+> **Status:** Reference page for this feature. Kept as written; not extended (rule 5).
+>
+> **Last checked:** 2026-11-20 (moved into `engine/`, paths and links checked; the text itself was not re-checked against the code).
+
 `okay::AssetManager` (`okay/Core/AssetManager.hpp`) is an opt-in central registry for
 files loaded from disk. Nothing in the engine uses it yet; existing loading paths
 (`DataAsset::Cached`, `AudioClip::LoadCached`, the renderers' own loads) are unchanged.

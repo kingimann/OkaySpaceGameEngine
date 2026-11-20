@@ -1,5 +1,11 @@
 # Optimization tools
 
+> **What this is:** Engine-side algorithms for feature map area 27: LOD generation, occlusion culling, batching, streaming and a scene analysis report.
+>
+> **Status:** Reference page for this feature. Kept as written; not extended (rule 5).
+>
+> **Last checked:** 2026-11-20 (moved into `engine/`, paths and links checked; the text itself was not re-checked against the code).
+
 Engine-side algorithms for feature map area 27: LOD generation, occlusion
 culling, batching, streaming and a scene analysis report. They live in
 `engine/include/okay/Optimize/` (sources in `engine/src/Optimize/`) and are pure

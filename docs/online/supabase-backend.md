@@ -1,5 +1,11 @@
 # Supabase backend for OkaySpace
 
+> **What this is:** OkaySpace's online features — accounts, **cloud saves**, and **leaderboards** — run on a [Supabase](https://supabase.com) project.
+>
+> **Status:** Reference page for this feature. Kept as written; not extended (rule 5).
+>
+> **Last checked:** 2026-11-20 (moved into `online/`, paths and links checked; the text itself was not re-checked against the code).
+
 OkaySpace's online features — accounts, **cloud saves**, and **leaderboards** — run
 on a [Supabase](https://supabase.com) project. Auth works out of the box once the
 project URL + anon key are configured (see [accounts.md](accounts.md)). Cloud saves

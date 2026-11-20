@@ -1,5 +1,11 @@
 # Build Settings upgrade
 
+> **What this is:** Owner request: "Building settings needs improvements.
+>
+> **Status:** Reference page for this feature. Kept as written; not extended (rule 5).
+>
+> **Last checked:** 2026-11-20 (moved into `editor/`, paths and links checked; the text itself was not re-checked against the code).
+
 Owner request: "Building settings needs improvements. Much more settings."
 
 This page lists what the Build Settings window (File > Build Settings, Ctrl+B) had, what the built game really

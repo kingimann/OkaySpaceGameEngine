@@ -1,7 +1,9 @@
 # Prefabs
 
 > **What this is:** Prefabs, overrides, nested prefabs and variants, and Prefab mode in the editor.
+>
 > **Status:** combined on 2026-11-20 from 3 older pages, one section each (listed below). Every fact was kept; text marked **Outdated** is kept for history.
+>
 > **Last checked:** 2026-11-20, paths and links against main.
 
 ## Contents

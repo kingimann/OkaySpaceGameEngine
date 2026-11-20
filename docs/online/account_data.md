@@ -1,5 +1,11 @@
 # Download my data and Delete my account
 
+> **What this is:** Launcher: **Account > Sign-in & security > Your data** (online Supabase accounts only).
+>
+> **Status:** Reference page for this feature. Kept as written; not extended (rule 5).
+>
+> **Last checked:** 2026-11-20 (moved into `online/`, paths and links checked; the text itself was not re-checked against the code).
+
 Launcher: **Account > Sign-in & security > Your data** (online Supabase accounts only).
 
 ## Download my data

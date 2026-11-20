@@ -1,5 +1,11 @@
 # Editor speed: seeing it, measuring it, tuning it
 
+> **What this is:** The editor shows how long each frame takes and where the time goes, and has a few switches to make it cheaper.
+>
+> **Status:** Internal record (audit, plan or status): read it as a dated record, newest facts in the code.
+>
+> **Last checked:** 2026-11-20 (moved into `editor/`, paths and links checked; the text itself was not re-checked against the code).
+
 The editor shows how long each frame takes and where the time goes, and has a few switches to make it cheaper.
 Everything here is **off by default** except the numbers you turn on yourself. Settings are remembered in
 `okay_settings.txt` next to the editor.

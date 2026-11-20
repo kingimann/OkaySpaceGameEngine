@@ -1,5 +1,11 @@
 # Automated testing
 
+> **What this is:** Feature map area 33. Three pieces, all in `okay::testing` (headers under `okay/Testing/`, sources in `engine/src/Testing/`, part of `okay_engine`):
+>
+> **Status:** Reference page for this feature. Kept as written; not extended (rule 5).
+>
+> **Last checked:** 2026-11-20 (moved into `process/`, paths and links checked; the text itself was not re-checked against the code).
+
 Feature map area 33. Three pieces, all in `okay::testing` (headers under
 `okay/Testing/`, sources in `engine/src/Testing/`, part of `okay_engine`):
 

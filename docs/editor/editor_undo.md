@@ -1,5 +1,11 @@
 # Editor undo and redo
 
+> **What this is:** How the editor's Ctrl+Z works, which edits it covers, and which edits have an undo of their own or none.
+>
+> **Status:** Reference page for this feature. Kept as written; not extended (rule 5).
+>
+> **Last checked:** 2026-11-20 (moved into `editor/`, paths and links checked; the text itself was not re-checked against the code).
+
 How the editor's Ctrl+Z works, which edits it covers, and which edits have an undo of their own or none.
 The engine side (`UndoStack`, groups, merging, dirty tracking) is in [undo_recovery.md](undo_recovery.md).
 

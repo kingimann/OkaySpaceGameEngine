@@ -1,5 +1,11 @@
 # Loop and time
 
+> **What this is:** How a frame runs and how the engine keeps time.
+>
+> **Status:** Reference page for this feature. Kept as written; not extended (rule 5).
+>
+> **Last checked:** 2026-11-20 (moved into `engine/`, paths and links checked; the text itself was not re-checked against the code).
+
 How a frame runs and how the engine keeps time. Headers: `okay/Core/Time.hpp`, `Game.hpp`, `GameLoop.hpp`, `Clock.hpp`, `FrameRecord.hpp`, `FrameStats.hpp`, `TickPacer.hpp`, `Random.hpp`, `RandomExtras.hpp`, `Application.hpp`, from the third pass `Countdown.hpp`, `TimeSnapshot.hpp`, `LoopConsole.hpp`, and from the fourth `FrameOverlay.hpp` (with `Utf8.hpp` and `FramePacing.hpp`, which this page also covers). Tests: `test_game_loop`, `test_clock`, `test_time_extras`, `test_game_state`, `test_random_extras`, `test_application_loop`, from the second pass `test_loop_audit2`, `test_frame_step`, `test_capture_mode`, `test_frame_record`, `test_frame_stats`, `test_tick_pacer`, `test_loop_player_style`, from the third pass `test_loop_audit3`, `test_countdown`, `test_time_snapshot`, from the fourth `test_loop_audit4`, `test_frame_overlay`, `test_random_wave4`, from the fifth `test_loop_audit5`, `test_random_threads`, `test_script_time`, plus the older `test_time_pause`, `test_random`, `test_utf8`, `test_frame_pacing`, `test_timescale`. The third pass is summarised in "Third pass", the fourth in "Fourth pass" and the fifth in "Fifth pass" at the end.
 
 ## Which one do I use?

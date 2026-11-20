@@ -1,5 +1,11 @@
 # Minimap and turn order
 
+> **What this is:** Two ready-made pieces that need no script to put on screen: a map in the corner, and a list that says whose turn it is.
+>
+> **Status:** Reference page for this feature. Kept as written; not extended (rule 5).
+>
+> **Last checked:** 2026-11-20 (moved into `gameplay/`, paths and links checked; the text itself was not re-checked against the code).
+
 Two ready-made pieces that need no script to put on screen: a map in the
 corner, and a list that says whose turn it is.
 

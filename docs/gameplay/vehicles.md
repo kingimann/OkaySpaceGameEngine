@@ -1,7 +1,9 @@
 # Vehicles
 
 > **What this is:** The Vehicle Controller: the open-world driving model and the older arcade model.
+>
 > **Status:** combined on 2026-11-20 from 2 older pages, one section each (listed below). Every fact was kept; text marked **Outdated** is kept for history.
+>
 > **Last checked:** 2026-11-20, paths and links against main.
 
 ## Contents

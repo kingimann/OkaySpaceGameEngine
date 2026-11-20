@@ -1,5 +1,11 @@
 # The build pipeline
 
+> **What this is:** How **File > Build Settings** (and the headless `OkayEngine --build-game`) turns a project into a game you can ship: what a build contains, every option and what it does, the build report, and what is not built yet.
+>
+> **Status:** Reference page for this feature. Kept as written; not extended (rule 5).
+>
+> **Last checked:** 2026-11-20 (moved into `release/`, paths and links checked; the text itself was not re-checked against the code).
+
 How **File > Build Settings** (and the headless `OkayEngine --build-game`) turns a project into a game you can ship:
 what a build contains, every option and what it does, the build report, and what is not built yet.
 

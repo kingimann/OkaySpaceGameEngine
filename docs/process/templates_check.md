@@ -1,5 +1,11 @@
 # Every template and example is tested
 
+> **What this is:** Owner rule (2026-11-15): "make sure all templates you make for anything works." Two tests now run every project template and every example scene we ship, the way a person would, and fail when one is broken.
+>
+> **Status:** Internal record (audit, plan or status): read it as a dated record, newest facts in the code.
+>
+> **Last checked:** 2026-11-20 (moved into `process/`, paths and links checked; the text itself was not re-checked against the code).
+
 Owner rule (2026-11-15): "make sure all templates you make for anything works." Two tests now run every project template
 and every example scene we ship, the way a person would, and fail when one is broken. Nothing is skipped silently.
 

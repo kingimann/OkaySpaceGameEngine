@@ -1,5 +1,11 @@
 # Scene diff, merge, canonical form and migration
 
+> **What this is:** Engine-side libraries that let version control work with scene (`.okayscene`) and prefab (`.okayprefab`) files.
+>
+> **Status:** Reference page for this feature. Kept as written; not extended (rule 5).
+>
+> **Last checked:** 2026-11-20 (moved into `engine/`, paths and links checked; the text itself was not re-checked against the code).
+
 Engine-side libraries that let version control work with scene (`.okayscene`) and
 prefab (`.okayprefab`) files. There is no editor window and no command-line tool yet;
 these are the pieces a Git panel, a merge helper or a `git` merge driver would call

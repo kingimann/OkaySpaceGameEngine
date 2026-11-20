@@ -1,5 +1,11 @@
 # Math, geometry, noise and RNG
 
+> **What this is:** Header-only additions to the core math library.
+>
+> **Status:** Reference page for this feature. Kept as written; not extended (rule 5).
+>
+> **Last checked:** 2026-11-20 (moved into `engine/`, paths and links checked; the text itself was not re-checked against the code).
+
 Header-only additions to the core math library. Everything is in `namespace okay`, is pulled in by
 `#include <Okay.hpp>` (or `okay/Math/Math.hpp`, plus `okay/Core/Rng.hpp`), uses no OS headers and
 no threads, and is covered by `tests/test_math_geometry.cpp` (ctest name `math_geometry`).

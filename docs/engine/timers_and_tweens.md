@@ -1,5 +1,11 @@
 # Timers and tweens
 
+> **What this is:** Two systems schedule work over time. The `Scheduler` runs callbacks after a delay or on an interval.
+>
+> **Status:** Reference page for this feature. Kept as written; not extended (rule 5).
+>
+> **Last checked:** 2026-11-20 (moved into `engine/`, paths and links checked; the text itself was not re-checked against the code).
+
 Two systems schedule work over time. The `Scheduler` runs callbacks after a delay
 or on an interval. The `TweenManager` animates values with easing, loops and
 sequences. Each scene owns one of each (`scene.scheduler()`, `scene.tweens()`),

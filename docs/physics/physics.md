@@ -1,7 +1,9 @@
 # Physics
 
 > **What this is:** Everything about physics in one place: quality modes, materials, joints, the physics toys, ragdolls, the audit and plan, and the upgrade record.
+>
 > **Status:** combined on 2026-11-20 from 6 older pages, one section each (listed below). Every fact was kept; text marked **Outdated** is kept for history.
+>
 > **Last checked:** 2026-11-20, paths and links against main.
 
 ## Contents

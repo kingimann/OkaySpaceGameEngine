@@ -1,5 +1,11 @@
 # Particles, lines, and trails
 
+> **What this is:** Particle systems, line renderers, and trail renderers are built on the CPU and drawn by the editor and the player on top of the 3D image.
+>
+> **Status:** Reference page for this feature. Kept as written; not extended (rule 5).
+>
+> **Last checked:** 2026-11-20 (moved into `rendering/`, paths and links checked; the text itself was not re-checked against the code).
+
 Particle systems, line renderers, and trail renderers are built on the CPU and drawn by the editor and the player on top of the 3D image. They are not inside the GPU mesh shaders.
 
 ## Particles

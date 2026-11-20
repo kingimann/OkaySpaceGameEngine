@@ -1,5 +1,11 @@
 # Release channels: latest and LTS
 
+> **What this is:** OkaySpace ships on two channels.
+>
+> **Status:** Reference page for this feature. Kept as written; not extended (rule 5).
+>
+> **Last checked:** 2026-11-20 (moved into `release/`, paths and links checked; the text itself was not re-checked against the code).
+
 OkaySpace ships on two channels.
 
 | Channel | What it is | Who it is for |

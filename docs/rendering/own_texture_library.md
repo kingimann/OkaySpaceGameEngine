@@ -1,5 +1,11 @@
 # Our own texture library (`okay::tex`)
 
+> **What this is:** Mipmaps, atlases, format conversion, block compression and a streaming planner, written by us.
+>
+> **Status:** Reference page for this feature. Kept as written; not extended (rule 5).
+>
+> **Last checked:** 2026-11-20 (moved into `rendering/`, paths and links checked; the text itself was not re-checked against the code).
+
 Mipmaps, atlases, format conversion, block compression and a streaming planner, written by us. It adds
 capability that was missing, so it is on wherever it only adds (nothing is replaced, nothing is switched off by
 default). Branch `claude/texture-lib-1`.

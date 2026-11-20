@@ -1,5 +1,11 @@
 # Asset database
 
+> **What this is:** `okay::AssetDatabase` (`okay/Core/AssetDatabase.hpp`) is the data layer an asset browser sits on: persistent GUIDs in a sidecar meta file per asset, move and rename tracking, a dependency graph, typed import settings, a thumbnail cache and...
+>
+> **Status:** Reference page for this feature. Kept as written; not extended (rule 5).
+>
+> **Last checked:** 2026-11-20 (moved into `engine/`, paths and links checked; the text itself was not re-checked against the code).
+
 `okay::AssetDatabase` (`okay/Core/AssetDatabase.hpp`) is the data layer an asset browser sits on: persistent GUIDs
 in a sidecar meta file per asset, move and rename tracking, a dependency graph, typed import settings, a
 thumbnail cache and a search / filter / sort / page query. There is no UI here; an editor window is a thin layer

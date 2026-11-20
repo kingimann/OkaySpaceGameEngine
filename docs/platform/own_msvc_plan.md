@@ -1,5 +1,11 @@
 # okay-ms
 
+> **What this is:** Internal note for issue #992. Not a user guide.
+>
+> **Status:** Internal record (audit, plan or status): read it as a dated record, newest facts in the code.
+>
+> **Last checked:** 2026-11-20 (moved into `platform/`, paths and links checked; the text itself was not re-checked against the code).
+
 Internal note for issue #992. Not a user guide. This tree stays off by default: not in CMake, CI, the engine, or a release. It is not a replacement for MSVC. This is years of work. The host tool is POSIX; a Windows run was not run on Windows. Wine is used when it is installed, and a Wine run is written down with the command. Where MinGW gcc is installed, sixteen small programs are compiled with okay-cl and with `x86_64-w64-mingw32-gcc`, run under Wine, and compared. If MinGW is absent that comparison is skipped.
 
 `tools/okayms/` is our own Windows toolchain. Issue #987 (`tools/okaycc/`) is the other compiler. The two trees share no source files.

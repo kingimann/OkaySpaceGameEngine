@@ -1,5 +1,11 @@
 # Crash reports: what is saved, what is sent, how an issue is made
 
+> **What this is:** If the editor crashes, it writes a detailed report.
+>
+> **Status:** Internal record (audit, plan or status): read it as a dated record, newest facts in the code.
+>
+> **Last checked:** 2026-11-20 (moved into `online/`, paths and links checked; the text itself was not re-checked against the code).
+
 If the editor crashes, it writes a detailed report. The launcher then (unless you turn it off) sends a cleaned copy to our server, and a
 scheduled GitHub job turns it into an issue that says what happened, with the backtrace in a code block. This page explains each step in
 plain words, how to turn it off, and what the owner has to set up once.

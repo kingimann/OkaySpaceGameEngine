@@ -1,7 +1,9 @@
 # Guided modeling
 
 > **What this is:** Guided procedural modeling: the design, detail levels, the speed work and the generator quality audit.
+>
 > **Status:** combined on 2026-11-20 from 4 older pages, one section each (listed below). Every fact was kept; text marked **Outdated** is kept for history.
+>
 > **Last checked:** 2026-11-20, paths and links against main.
 
 ## Contents

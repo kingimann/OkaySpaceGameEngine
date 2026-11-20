@@ -1,5 +1,11 @@
 # Unfinished features
 
+> **What this is:** What is not finished yet, so we can pick it off.
+>
+> **Status:** Internal record (audit, plan or status): read it as a dated record, newest facts in the code.
+>
+> **Last checked:** 2026-11-20 (moved into `status/`, paths and links checked; the text itself was not re-checked against the code).
+
 What is not finished yet, so we can pick it off. Anything unfinished is hidden or labelled in the product (see "Hidden or limited today"); this page is the to-do list behind that.
 
 Sources: the feature map (`docs/FEATURE_MAP.md`, rows marked Partial or Planned, with their Open notes) and the hand-written lists below.

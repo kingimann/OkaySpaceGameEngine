@@ -1,5 +1,11 @@
 # Data assets and data packs
 
+> **What this is:** Data assets and data packs: typed data files a game reads (headers `okay/Core/DataAsset.hpp`, `okay/Core/DataPack.hpp`).
+>
+> **Status:** Reference page for this feature. Kept as written; not extended (rule 5).
+>
+> **Last checked:** 2026-11-20 (moved into `engine/`, paths and links checked; the text itself was not re-checked against the code).
+
 Headers: `okay/Core/DataAsset.hpp`, `okay/Core/DataPack.hpp`.
 
 ## DataAsset

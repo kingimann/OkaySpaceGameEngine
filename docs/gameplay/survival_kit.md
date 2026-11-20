@@ -1,5 +1,11 @@
 # Survival Kit — native gameplay components
 
+> **What this is:** The Survival Kit is a set of built-in native components for common survival-game mechanics.
+>
+> **Status:** Reference page for this feature. Kept as written; not extended (rule 5).
+>
+> **Last checked:** 2026-11-20 (moved into `gameplay/`, paths and links checked; the text itself was not re-checked against the code).
+
 The Survival Kit is a set of built-in native components for common survival-game
 mechanics. Drop them onto your Player (or any object) and tune the numbers in the
 Inspector — no coding required, and no script VM in the loop. Two ways to use them:

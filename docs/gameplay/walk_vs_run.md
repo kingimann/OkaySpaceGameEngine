@@ -1,5 +1,11 @@
 # Walk versus run (the natural walk and run)
 
+> **What this is:** The owner's words: "the character walking is basically running.
+>
+> **Status:** Reference page for this feature. Kept as written; not extended (rule 5).
+>
+> **Last checked:** 2026-11-20 (moved into `gameplay/`, paths and links checked; the text itself was not re-checked against the code).
+
 The owner's words: "the character walking is basically running. could you fix it so its different." This page says what was
 wrong, what the numbers were before and are now, what changed, how to try it, how to get the old look back to compare, and
 what is not done. Try it in the Windows release: [try_it.md](../try_it.md), row **7r**.

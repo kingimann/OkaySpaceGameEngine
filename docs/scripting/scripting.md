@@ -1,7 +1,9 @@
 # OkayScript
 
 > **What this is:** The OkayScript language guide and its function reference, in one page.
+>
 > **Status:** combined on 2026-11-20 from 2 older pages, one section each (listed below). Every fact was kept; text marked **Outdated** is kept for history.
+>
 > **Last checked:** 2026-11-20, paths and links against main.
 
 ## Contents

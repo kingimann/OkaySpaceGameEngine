@@ -1,5 +1,11 @@
 # Undo, autosave, crash recovery and backups
 
+> **What this is:** Three small, headless building blocks in `okay/Core`, none of which knows about scenes or UI, so the editor, other tools and tests can all use them:
+>
+> **Status:** Reference page for this feature. Kept as written; not extended (rule 5).
+>
+> **Last checked:** 2026-11-20 (moved into `editor/`, paths and links checked; the text itself was not re-checked against the code).
+
 Three small, headless building blocks in `okay/Core`, none of which knows about
 scenes or UI, so the editor, other tools and tests can all use them:
 

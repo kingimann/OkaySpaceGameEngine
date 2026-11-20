@@ -1,5 +1,11 @@
 # SHA-256: three copies compared, one kept
 
+> **What this is:** Owner decision 2026-11-15: "Yes merge duplicates, but make sure to compare and see which one is better" (found by Grok, issue #888).
+>
+> **Status:** Internal record (audit, plan or status): read it as a dated record, newest facts in the code.
+>
+> **Last checked:** 2026-11-20 (moved into `platform/`, paths and links checked; the text itself was not re-checked against the code).
+
 Owner decision 2026-11-15: "Yes merge duplicates, but make sure to compare and see which one is better" (found by Grok, issue #888).
 This page is the comparison, the choice and how the result was checked. Branch `claude/one-sha256`.
 

@@ -1,5 +1,11 @@
 # Voice server
 
+> **What this is:** Voice calls (friend calls, group calls and server voice rooms) go through the OkaySpace **relay**: every caller connects *out* to it over UDP and it forwards audio between the people in the same call.
+>
+> **Status:** Reference page for this feature. Kept as written; not extended (rule 5).
+>
+> **Last checked:** 2026-11-20 (moved into `audio/`, paths and links checked; the text itself was not re-checked against the code).
+
 Voice calls (friend calls, group calls and server voice rooms) go through the
 OkaySpace **relay**: every caller connects *out* to it over UDP and it forwards
 audio between the people in the same call. Nobody has to open ports at home.

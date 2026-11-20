@@ -1,6 +1,12 @@
 <!-- (world-space UI is documented in docs/ui/in_game_ui.md) -->
 # Custom character animations (keyframe clips)
 
+> **What this is:** Custom character animations: keyframe clips, how they are made, played and blended.
+>
+> **Status:** Reference page for this feature. Kept as written; not extended (rule 5).
+>
+> **Last checked:** 2026-11-20 (moved into `gameplay/`, paths and links checked; the text itself was not re-checked against the code).
+
 Besides the built-in animations (idle / walk / run / wave / jump / crouch /
 gestures / emotions), you can make **your own** animations for a `Character`
 without writing C++ — just describe a few poses over time in a small text file

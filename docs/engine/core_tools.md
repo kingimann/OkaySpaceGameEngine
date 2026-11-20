@@ -1,5 +1,11 @@
 # Core tools
 
+> **What this is:** Small, dependency-free helpers in `okay/Core/`.
+>
+> **Status:** Reference page for this feature. Kept as written; not extended (rule 5).
+>
+> **Last checked:** 2026-11-20 (moved into `engine/`, paths and links checked; the text itself was not re-checked against the code).
+
 Small, dependency-free helpers in `okay/Core/`. All of them come with `#include <Okay.hpp>`.
 None are thread safe; use them from the main thread.
 

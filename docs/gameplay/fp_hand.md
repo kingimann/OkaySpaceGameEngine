@@ -1,5 +1,11 @@
 # The first-person arm (hand, forearm, presets)
 
+> **What this is:** What you see of your own body in first person, and what other players see.
+>
+> **Status:** Reference page for this feature. Kept as written; not extended (rule 5).
+>
+> **Last checked:** 2026-11-20 (moved into `gameplay/`, paths and links checked; the text itself was not re-checked against the code).
+
 What you see of your own body in first person, and what other players see. Code: `engine/include/okay/Components/FirstPersonHands.hpp`
 (the settings and presets), `engine/src/Components/Character.cpp` (`PoseOwnerArm`, `PaintFpForearm`, the click swing),
 `editor/FpHandsWindow.cpp` (Inspector section and the Fp Hands window with the live preview). Written from the existing

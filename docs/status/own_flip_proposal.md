@@ -1,5 +1,11 @@
 # Own replacements: what can become the default, in what order, and what blocks deleting each library
 
+> **What this is:** **2026-11-17: the model readers are flipped.** The owner approved ("start switching them so i can test them out").
+>
+> **Status:** Internal record (audit, plan or status): read it as a dated record, newest facts in the code.
+>
+> **Last checked:** 2026-11-20 (moved into `status/`, paths and links checked; the text itself was not re-checked against the code).
+
 > **2026-11-17: the model readers are flipped.** The owner approved ("start switching them so i can test them out"). Every
 > `OKAY_OWN_<FMT>` model reader option, `OKAY_OWN_FBX` and `OKAY_PREFER_OWN_READERS` (STL, PLY) are ON by default (NDO stays
 > OFF: a seam). Assimp and ufbx stay compiled in as the fallback. Ways back at run time: `OKAY_OWN_<FMT>=0` for one format,

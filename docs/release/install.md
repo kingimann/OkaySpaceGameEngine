@@ -1,7 +1,9 @@
 # Install, update and uninstall
 
 > **What this is:** The install / uninstall / editor versions audit and plan, and how we compare with Steam and the Unity Hub.
+>
 > **Status:** combined on 2026-11-20 from 2 older pages, one section each (listed below). Every fact was kept; text marked **Outdated** is kept for history.
+>
 > **Last checked:** 2026-11-20, paths and links against main.
 
 ## Contents

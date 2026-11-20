@@ -1,5 +1,11 @@
 # Web & mobile builds
 
+> **What this is:** The OkaySpace **player** (`player/`) is plain C++17 + SDL2 with a frame-callback loop, so it ports to the web and mobile the same way any SDL2 app does.
+>
+> **Status:** Reference page for this feature. Kept as written; not extended (rule 5).
+>
+> **Last checked:** 2026-11-20 (moved into `platform/`, paths and links checked; the text itself was not re-checked against the code).
+
 The OkaySpace **player** (`player/`) is plain C++17 + SDL2 with a frame-callback
 loop, so it ports to the web and mobile the same way any SDL2 app does. The game
 itself — your `.okayscene` and assets — is identical on every platform; only the

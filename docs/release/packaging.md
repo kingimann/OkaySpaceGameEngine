@@ -1,5 +1,11 @@
 # Packaging & distribution layout
 
+> **What this is:** The Windows distribution is laid out so a user double-clicks one thing at the top and everything else is tucked away.
+>
+> **Status:** Reference page for this feature. Kept as written; not extended (rule 5).
+>
+> **Last checked:** 2026-11-20 (moved into `release/`, paths and links checked; the text itself was not re-checked against the code).
+
 The Windows distribution is laid out so a user double-clicks one thing at the top
 and everything else is tucked away. This is the **canonical layout** — builds
 (and the `scripts/build-windows-dist.sh` script) follow it.

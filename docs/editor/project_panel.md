@@ -1,5 +1,11 @@
 # Project panel
 
+> **What this is:** The Project panel is the editor's asset browser: a folder tree on the left, the folder's contents on the right (tiles or a list), a path bar with Back and Forward, search, and a strip at the bottom for the selected asset.
+>
+> **Status:** Reference page for this feature. Kept as written; not extended (rule 5).
+>
+> **Last checked:** 2026-11-20 (moved into `editor/`, paths and links checked; the text itself was not re-checked against the code).
+
 The Project panel is the editor's asset browser: a folder tree on the left, the folder's contents on the right
 (tiles or a list), a path bar with Back and Forward, search, and a strip at the bottom for the selected asset.
 

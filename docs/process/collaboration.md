@@ -1,5 +1,11 @@
 # How the two Claudes work together
 
+> **What this is:** Two Claudes work on this repo at the same time: **Claude 2** (branches `claude2/*`, coordination issue #422; bug fixes and third-party replacement) and the **coordinator** with its agents (branches `claude/*`; unfinished features, reviews, releases).
+>
+> **Status:** Reference page for this feature. Kept as written; not extended (rule 5).
+>
+> **Last checked:** 2026-11-20 (moved into `process/`, paths and links checked; the text itself was not re-checked against the code).
+
 Two Claudes work on this repo at the same time: **Claude 2** (branches `claude2/*`, coordination issue #422; bug fixes and third-party replacement) and the
 **coordinator** with its agents (branches `claude/*`; unfinished features, reviews, releases). One day went wrong in ways that cost real work. This page is the
 agreement that stops it, and every rule here has a script that checks it, so nobody has to remember.

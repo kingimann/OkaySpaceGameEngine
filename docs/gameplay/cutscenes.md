@@ -1,5 +1,11 @@
 # Cutscenes: sequences and the Timeline window
 
+> **What this is:** A **sequence** is a timeline of tracks that drives a cutscene without scripting: camera shots, object moves, animation and audio cues, events and subtitles, letterbox bars, camera shake, a coloured screen fade, and nested sequences.
+>
+> **Status:** Reference page for this feature. Kept as written; not extended (rule 5).
+>
+> **Last checked:** 2026-11-20 (moved into `gameplay/`, paths and links checked; the text itself was not re-checked against the code).
+
 A **sequence** is a timeline of tracks that drives a cutscene without scripting:
 camera shots, object moves, animation and audio cues, events and subtitles,
 letterbox bars, camera shake, a coloured screen fade, and nested sequences. It is

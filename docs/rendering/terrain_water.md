@@ -1,7 +1,9 @@
 # Terrain and water
 
 > **What this is:** Heightmap and voxel terrain, water surfaces, floating things and the boat, the terrain audit and the voxel digging speed work.
+>
 > **Status:** combined on 2026-11-20 from 5 older pages, one section each (listed below). Every fact was kept; text marked **Outdated** is kept for history.
+>
 > **Last checked:** 2026-11-20, paths and links against main.
 
 ## Contents

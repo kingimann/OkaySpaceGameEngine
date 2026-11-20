@@ -1,7 +1,9 @@
 # Anti-cheat
 
 > **What this is:** Server-side, opt-in anti-cheat: the quick start, the full reference, and what hardening is done and not done.
+>
 > **Status:** combined on 2026-11-20 from 3 older pages, one section each (listed below). Every fact was kept; text marked **Outdated** is kept for history.
+>
 > **Last checked:** 2026-11-20, paths and links against main.
 
 ## Contents

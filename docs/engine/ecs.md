@@ -1,5 +1,11 @@
 # ECS: iteration, command buffer and delta snapshots
 
+> **What this is:** The ECS (entity component system): iteration, the command buffer and delta snapshots (headers `okay/ECS/World.hpp`, `Systems.hpp`, `NetWorld.hpp`, `SceneBridge.hpp`).
+>
+> **Status:** Reference page for this feature. Kept as written; not extended (rule 5).
+>
+> **Last checked:** 2026-11-20 (moved into `engine/`, paths and links checked; the text itself was not re-checked against the code).
+
 Headers: `okay/ECS/World.hpp`, `Systems.hpp`, `NetWorld.hpp`, `SceneBridge.hpp`.
 
 ## Iterating safely

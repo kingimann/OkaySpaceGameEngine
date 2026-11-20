@@ -1,5 +1,11 @@
 # Scene hierarchy, search and validation
 
+> **What this is:** Feature map 1.3 - 1.5. Everything here is additive: old scene files load unchanged.
+>
+> **Status:** Reference page for this feature. Kept as written; not extended (rule 5).
+>
+> **Last checked:** 2026-11-20 (moved into `engine/`, paths and links checked; the text itself was not re-checked against the code).
+
 Feature map 1.3 - 1.5. Everything here is additive: old scene files load unchanged.
 
 ## Active state follows the hierarchy

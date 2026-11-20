@@ -1,5 +1,11 @@
 # Level tools: foliage, terrain layers, decals, cables, measuring and orthographic views
 
+> **What this is:** Small tools for dressing a 3D level. Everything here is saved in the scene and has an undo step.
+>
+> **Status:** Reference page for this feature. Kept as written; not extended (rule 5).
+>
+> **Last checked:** 2026-11-20 (moved into `editor/`, paths and links checked; the text itself was not re-checked against the code).
+
 Small tools for dressing a 3D level. Everything here is saved in the scene and has an undo step.
 Feature map: 29.1.6, 29.2.4 to 29.2.7, 29.4, 15.3.12, 44.3.3.
 

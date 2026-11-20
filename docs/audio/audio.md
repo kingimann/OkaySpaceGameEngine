@@ -1,5 +1,11 @@
 # Audio
 
+> **What this is:** Sound in OkaySpace comes from **AudioSource** components, mixed by the engine into stereo output at the device's rate.
+>
+> **Status:** Reference page for this feature. Kept as written; not extended (rule 5).
+>
+> **Last checked:** 2026-11-20 (moved into `audio/`, paths and links checked; the text itself was not re-checked against the code).
+
 Sound in OkaySpace comes from **AudioSource** components, mixed by the engine into
 stereo output at the device's rate. This page covers the source settings, the mixer
 and its groups, music, the player's volume settings, and scripting.

@@ -143,6 +143,13 @@ then this file gets updated. Keep this file short and true.
     - Third-party code that is already here (listed in `docs/THIRD_PARTY.md` and `docs/provenance_audit.md`) stays only
       until our own replacement is ready; nothing new may be added.
 
+19b. **GitHub is only for the owner and Claude.** (Owner rule, 2026-11-20: "I don't want any one to depend on GitHub. GitHub
+    should be only for me and you.") Nothing public may need GitHub: not the launcher, editor, player or server, not their
+    updates, downloads, version lists, news, help or report links, not the installer or server downloads, and not web pages
+    such as the password-reset page. Those come from our own Supabase project. GitHub stays our workspace: code, CI, pull
+    requests, issues and the internal record of releases. The repository may become private at any time, so never add a
+    public-facing link to github.com, and a repo check fails if one appears in shipped code or shipped files.
+
 ## Machine and agents
 
 20. **Disk is tight.** Run `df -h /` before big builds, stop at under 5 GB free, build with `ninja -j2` and only

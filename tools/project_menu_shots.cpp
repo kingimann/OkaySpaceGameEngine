@@ -74,7 +74,7 @@ static void Capture(const std::string& file, const std::string& caption, const s
         if (f >= 6 && found && ++hold > 4) break;
     }
     const std::string bmp = g_outDir + "/" + file + ".bmp";
-    okay::platform::WriteBmp32(bmp.c_str(), g_surface->pixels, g_surface->w, g_surface->h, g_surface->pitch);
+    okay::platform::WriteBmp32Bgra(bmp.c_str(), g_surface->pixels, g_surface->w, g_surface->h, g_surface->pitch);
     std::printf("wrote %s\n", bmp.c_str());
 }
 

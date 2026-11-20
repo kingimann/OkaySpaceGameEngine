@@ -15,7 +15,7 @@
 static void Save(SDL_Renderer* r, int w, int h, const std::string& path) {
     SDL_Surface* s = SDL_CreateRGBSurfaceWithFormat(0, w, h, 32, SDL_PIXELFORMAT_ARGB8888);
     SDL_RenderReadPixels(r, nullptr, SDL_PIXELFORMAT_ARGB8888, s->pixels, s->pitch);
-    okay::platform::WriteBmp32(path.c_str(), s->pixels, w, h, s->pitch); SDL_FreeSurface(s);
+    okay::platform::WriteBmp32Bgra(path.c_str(), s->pixels, w, h, s->pitch); SDL_FreeSurface(s);
 }
 
 int main(int argc, char** argv) {

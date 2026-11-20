@@ -97,3 +97,10 @@ All are off by default. These are estimates, not measurements, except where a co
 About 20 GB free disk (stop at 5 GB). The machine is shared by many agents: the load average has been about 17 on
 4 CPUs, and full engine builds are often killed for memory or take hours. Agents compile only what they touch and link
 against a prebuilt library; CI is the first full build, and many branches above have never been built.
+
+## Windows tests
+
+`.github/workflows/windows-tests.yml` builds the whole unit-test suite with the release compiler (MinGW, cross-compiled on
+Ubuntu) and runs it on a real Windows runner (`scripts/run_windows_tests.py`). It runs on pushes to main, nightly at 03:17 UTC
+and by hand (input `ref`). It never runs on pull requests, so it blocks no merge or release; the owner decides later whether
+to make it required. Results: the run's summary page and the `windows-tests-log` artifact.

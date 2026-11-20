@@ -211,6 +211,7 @@ security_paths
 spatial_audio
 texture
 touch_controls
+driving
 ui_library
 ui_quality
 ui_text

@@ -16,8 +16,10 @@
 #include "CrashHandler.hpp"   // crash handlers + the crash context that fills okay_crash.txt (docs/crash_reports.md)
 #include "ActionExport.hpp"
 #include "MenuBarModel.hpp"          // the main menu bar and the Hierarchy menus as data (docs/editor_menus.md)
+#include "SaveShortcutModel.hpp"  // what Ctrl+S / Ctrl+Shift+S / Ctrl+Alt+S do
 #include "HierarchyContextModel.hpp"
 #include "SceneAddMenu.hpp"
+#include "VehicleEditorUi.hpp"      // GameObject > Vehicles and the Vehicle Controller Inspector tabs
 #include "MenuEntriesUI.hpp"          // draws those lists with Dear ImGui
 #include "ProjectState.hpp"           // project settings + build settings: the files inside the project folder
 #include "BuildSettingsWindow.hpp"     // the Build Settings window: pages, search, summary, checks, history (own files)
@@ -2822,6 +2824,7 @@ static void SaveAsCustomButton(const char* id, bool cond, const std::vector<okay
 // Save the open scene so an auto-update relaunch never loses work. Uses the
 // current path when known, otherwise a recovery file (added to Recent).
 // Saving (defined near the end of this namespace):
+static std::string g_saveNote; static unsigned long long g_saveNoteAt = 0;   // last save-shortcut message, shown in the status bar for a few seconds
 static void SaveSceneCmd(EditorState& ed);       // File > Save Scene (Ctrl+S)
 static void SaveSceneAsCmd(EditorState& ed);     // File > Save Scene As (Ctrl+Shift+S)
 static bool SaveProject(EditorState& ed, bool interactive);   // File > Save Project (Ctrl+Alt+S): everything
@@ -7626,6 +7629,7 @@ static void DrawCreateSlot(EditorState& ed, const std::string& id, GameObject* p
             ImGui::EndMenu();
         }
     } else if (id == "create.vehicles") {
+        if (oked::vehicleui::DrawCreateItems(ed)) created = true;
         if (ImGui::MenuItem("Boat")) { AddBoatObject(ed); created = true; }
         if (ImGui::IsItemHovered()) ImGui::SetTooltip("A boat that floats on Water and drives with W / S / A / D. Adds a lake if the scene has no water.");
     } else if (id == "create.player") {
@@ -8152,6 +8156,7 @@ void DrawStatusBar(EditorState& ed) {
         ImGui::SameLine(0, 4);
         ImGui::TextColored(ok, "Saved");
     }
+    if (!g_saveNote.empty() && okay::platform::TicksMs() - g_saveNoteAt < 4000) { ImGui::SameLine(0, 12); ImGui::TextUnformatted(g_saveNote.c_str()); }
     {   // A failure belongs to the scene that was open when it happened: a different scene is a fresh start.
         static std::string s_errSeen, s_errScene;
         if (g_lastSaveError != s_errSeen) { s_errSeen = g_lastSaveError; s_errScene = ed.path(); }
@@ -18510,6 +18515,43 @@ static bool OwnShortcutsWindowFocused() {
 static void RequestPlay(EditorState& ed);
 static void RequestStop(EditorState& ed);
 
+
+// Ctrl+S / Ctrl+Shift+S / Ctrl+Alt+S (editor/SaveShortcutModel.hpp decides). Before this ran after the "typing in a field"
+// return, so one open input box or a focused Script/Visual Script window made Ctrl+S do nothing, and nothing said so.
+static void SaveShortcuts(EditorState& ed, ImGuiIO& io) {
+    using namespace oked::savekeys;
+    if (!io.KeyCtrl || !ImGui::IsKeyPressed(ImGuiKey_S, false)) return;
+    State st;
+    st.textInputActive = io.WantTextInput;
+    st.playing = ed.isPlaying();
+    st.sceneDirty = ed.HasUnsavedChanges(); st.sceneUntitled = ed.path().empty(); st.prefabDirty = ed.InPrefabMode() && ed.PrefabOuterUnsaved();
+    for (okay::ScriptComponent* t : g_scriptTabs) if (t && ScriptTabDirty(t)) st.scriptsDirty = true;
+    st.graphsDirty = okay::editor::vsed::VsAnyUnsaved();
+    st.focus = ed.InPrefabMode() ? Context::Prefab : Context::Scene;
+    if (GImGui->NavWindow) {
+        for (ImGuiWindow* c = GImGui->NavWindow; c; c = c->ParentWindow) {
+            if (std::strncmp(c->Name, "Script Editor", 13) == 0) { st.focus = Context::ScriptText; st.focusHasDoc = !g_scriptTabs.empty(); break; }
+            if (std::strncmp(c->Name, "Visual Script", 13) == 0) { st.focus = Context::VisualScript; st.focusHasDoc = !okay::editor::vsed::Session().tabs.empty(); break; }
+        }
+        if (st.focus == Context::Scene && OwnShortcutsWindowFocused()) st.focus = Context::Other;
+    }
+    Keys k; k.ctrl = true; k.shift = io.KeyShift; k.alt = io.KeyAlt; k.s = true;
+    const Result r = Decide(st, k);
+    switch (r.act) {
+        case Act::None: case Act::SaveOwnWindow: return;   // the window saves its own document (it draws after this)
+        case Act::StopPlayFirst: case Act::NothingToSave: ConsoleLog(r.message, r.act == Act::StopPlayFirst ? 1 : 0); g_saveNote = r.message; g_saveNoteAt = okay::platform::TicksMs(); return;
+        default: break;
+    }
+    if (io.WantTextInput) ImGui::ClearActiveID();   // commit the field being edited first
+    if (r.act == Act::SaveAs) { SaveSceneAsCmd(ed); return; }
+    const bool all = r.act == Act::SaveAll;
+    if (all) SaveProject(ed, true); else SaveSceneCmd(ed);
+    if (!ed.path().empty() || all) {
+        g_saveNote = g_lastSaveError.empty() ? Saved(all ? std::string("everything") : FileName(ed.path())) : Failed(g_lastSaveError);
+        g_saveNoteAt = okay::platform::TicksMs();
+    }
+}
+
 // Global keyboard shortcuts (ignored while typing in a field).
 void HandleShortcuts(EditorState& ed) {
     // A built-in file dialog is modal by convention only: its callback runs on a later
@@ -18524,6 +18566,7 @@ void HandleShortcuts(EditorState& ed) {
         if (ed.isPlaying()) RequestStop(ed);
         else RequestPlay(ed);
     }
+    SaveShortcuts(ed, io);   // before the text-field return: saving is not a text-editing key
     if (io.WantTextInput || OwnShortcutsWindowFocused()) return;
     bool ctrl = io.KeyCtrl;
     // The Project panel owns Delete, Ctrl+C/X/V/D and its own Ctrl+Z while it has focus: they act on files, never on the scene's selected object.
@@ -18551,13 +18594,7 @@ void HandleShortcuts(EditorState& ed) {
         else { const std::string rn = ed.RedoName(); if (ed.Redo()) ConsoleLog("Redo " + rn); }
     }
     if (ctrl && ImGui::IsKeyPressed(ImGuiKey_O, false)) g_showOpen = true;
-    if (ctrl && io.KeyAlt && ImGui::IsKeyPressed(ImGuiKey_S, false)) {
-        SaveProject(ed, true);                       // Ctrl+Alt+S = Save Project (everything)
-    } else if (ctrl && io.KeyShift && ImGui::IsKeyPressed(ImGuiKey_S, false)) {
-        SaveSceneAsCmd(ed);                          // Ctrl+Shift+S = Save Scene As
-    } else if (ctrl && ImGui::IsKeyPressed(ImGuiKey_S, false)) {
-        SaveSceneCmd(ed);                            // Ctrl+S = Save Scene
-    }
+    // Ctrl+S / Ctrl+Shift+S / Ctrl+Alt+S are handled above, before the text-field return (SaveShortcuts).
     if (!animKeys && ctrl && !io.KeyShift && ImGui::IsKeyPressed(ImGuiKey_D, false) && ed.selected()) {
         ed.DuplicateSelected(); ConsoleLog("Duplicated selection");
     }
@@ -35624,6 +35661,9 @@ void DrawInspector(EditorState& ed) {
     }
     if (auto* v = dynamic_cast<VehicleController*>(curComp)) {
         if (CompHeader("Vehicle Controller (Car)", v, &toRemove)) {
+            if (oked::vehicleui::DrawInspector(v)) ed.dirty = true;
+            ImGui::Separator();
+            ImGui::TextDisabled("Older model and suspension settings:");
             if (ImGui::DragFloat("Max Speed##veh", &v->maxSpeed, 0.5f, 0.0f, 300.0f)) ed.dirty = true;
             oked::FieldTip("Max Speed##veh");
             if (ImGui::DragFloat("Reverse Speed##veh", &v->reverseSpeed, 0.5f, 0.0f, 100.0f)) ed.dirty = true;
@@ -42987,7 +43027,7 @@ void DrawInspector(EditorState& ed) {
             if (item(!go->GetComponent<TopDownController2D>(), "Top Down Controller 2D")) { go->AddComponent<TopDownController2D>(); ed.dirty = true; }
             if (item(!go->GetComponent<ThirdPersonShooterController>(), "Third Person Shooter Controller")) { ed.PushUndo(); go->AddComponent<ThirdPersonShooterController>(); SetupControllerBody(ed, go); ed.dirty = true; }
             if (item(!go->GetComponent<FreeRoamController>(), "Free Roam (Fly) Controller")) { go->AddComponent<FreeRoamController>(); ed.dirty = true; }
-            if (item(!go->GetComponent<VehicleController>(), "Vehicle Controller (Car)")) { go->AddComponent<VehicleController>(); if (!go->GetComponent<Rigidbody3D>()) go->AddComponent<Rigidbody3D>(); ed.dirty = true; }
+            if (item(!go->GetComponent<VehicleController>(), "Vehicle Controller (Car)")) { go->AddComponent<VehicleController>()->ApplyPreset("Sedan"); if (!go->GetComponent<Rigidbody3D>()) go->AddComponent<Rigidbody3D>(); ed.dirty = true; }
             if (item(!go->GetComponent<BoatController>(), "Boat Controller (floats and drives on water)")) { ed.PushUndo(); go->AddComponent<BoatController>(); if (!go->GetComponent<Rigidbody3D>()) go->AddComponent<Rigidbody3D>(); if (!go->GetComponent<Collider3D>()) { go->AddComponent<BoxCollider3D>(); FitColliders(go); } ed.dirty = true; }
             if (item(!go->GetComponent<VehicleController2D>(), "Vehicle Controller 2D")) { go->AddComponent<VehicleController2D>(); if (!go->GetComponent<Rigidbody2D>()) go->AddComponent<Rigidbody2D>(); ed.dirty = true; }
             if (item(!go->GetComponent<BlockBuilder>(), "Block Builder (voxel)")) { go->AddComponent<BlockBuilder>(); ed.dirty = true; }

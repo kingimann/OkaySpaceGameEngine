@@ -566,6 +566,34 @@ void DriveCarSeats(Ctx& c) {
     c.Expect(Dist2D(s.Pos("Player"), s.Pos("Car"), true) < 4.0f && s.Pos("Player").y > -1.0f, "the Player did not step out beside the car");
 }
 
+void DriveDrivingWorld(Ctx& c) {
+    Session& s = c.s;
+    SettleBody(s, "Player");
+    GameObject* car = s.Obj("Sedan");
+    auto* seat = car ? car->GetComponent<VehicleSeat>() : nullptr;
+    auto* veh = car ? car->GetComponent<VehicleController>() : nullptr;
+    c.Expect(seat && veh && veh->openWorld, "the Sedan has no seat or is not an open-world vehicle");
+    if (!seat || !veh) return;
+    GameObject* player = s.Obj("Player");
+    c.Expect(player != nullptr, "there is no Player");
+    if (!player) return;
+    const Vec3 parked = s.Pos("Sedan");
+    s.Hold({'w'}, 20);
+    c.Expect(Dist2D(s.Pos("Sedan"), parked, true) < 0.1f, "the Sedan moved with nobody driving it");
+    SettleBody(s, "Player");
+    s.Press('e');   // the player starts at the driver's door
+    c.Expect(seat->occupied && veh->Driver() == player, "pressing E next to the Sedan did not seat the Player");
+    if (!(seat->occupied && veh->Driver() == player)) return;
+    const Vec3 before = s.Pos("Sedan");
+    s.Hold({'w'}, 120);
+    const Vec3 after = s.Pos("Sedan");
+    c.Fact("driven " + Num(Dist2D(after, before, true)) + " m in 2 s");
+    c.Expect(Dist2D(after, before, true) > 6.0f, "holding W did not drive the Sedan (moved " + Num(Dist2D(after, before, true)) + " m)");
+    s.Frames(60);
+    s.Press('e');
+    c.Expect(!seat->occupied && veh->Driver() == nullptr, "pressing E did not get the Player out");
+}
+
 // Top-down 2D: the two walls must stop the player.
 void CheckWalls(Ctx& c) {
     Session& s = c.s;
@@ -699,6 +727,7 @@ std::vector<Spec> MakeSpecs() {
         {"Point & Click",              true,  false, "Player", "ClickToMoveController", fixed(&DriveClickToMove)},
         {"Vehicle (3D)",               true,  false, "Car",    "VehicleController", mover({"Car", {'w'}, true, false, 1.0f})},
         {"Vehicle (get in and drive)", true,  false, "Car",    "VehicleController", fixed(&DriveCarSeats)},
+        {"Driving World (open-world cars)", true, false, "Sedan", "VehicleController", fixed(&DriveDrivingWorld)},
         {"Vehicle (2D)",               false, true,  "Car",    "VehicleController2D", mover({"Car", {'w'}, false, false, 1.0f})},
         {"Sandbox",                    true,  false, "Player", "PlayerController", mover({"Player", {'w'}, true, true, 1.0f}, {look("Player"), fixed(&CheckVoxelDig)})},
         {"Multiplayer",                false, true,  "Player", "ScriptComponent", fixed(&DriveMultiplayer)},

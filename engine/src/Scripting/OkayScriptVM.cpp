@@ -30,6 +30,8 @@
 #include "okay/Physics/Physics3D.hpp"
 #include "okay/Math/Vec2.hpp"
 #include "okay/Components/Camera.hpp"
+#include "okay/Components/VehicleController.hpp"
+#include "okay/Components/VehicleSeat.hpp"
 #include "okay/Components/CameraFollow.hpp"
 #include "okay/Components/CinemachineBrain.hpp"
 #include "okay/Components/VirtualCamera.hpp"
@@ -10909,6 +10911,46 @@ struct OkayScriptVM::Impl {
         alias("String.Format", "format");
         // Quaternion.Euler(x, y, z) -> a Vec3 of euler angles (assignable to
         // transform.rotation, which uses the Z component for 2D).
+        // ---- Vehicles (docs/vehicle_controls.md): Vehicle.* ----
+        // The first argument is the vehicle (an object or its name); leave it as "" to mean the object this script is on.
+        auto carOf = [sceneOf, this](std::vector<Value>& a) -> VehicleController* {
+            Scene* s = sceneOf(); if (!s) return nullptr;
+            // One-argument forms such as Vehicle.Boost(1) act on this script's own object: the vehicle is then left out.
+            if (a.empty() || !(a[0].IsObject() || a[0].IsString())) a.insert(a.begin(), Value{std::string{}});
+            GameObject* g = (a[0].IsObject() || !a[0].AsString().empty()) ? ResolveObject(s, a[0]) : (rt.host ? rt.host->gameObject : nullptr);
+            return g ? g->GetComponent<VehicleController>() : nullptr;
+        };
+        b["Vehicle.SetSetting"] = [carOf](std::vector<Value>& a) -> Value {   // Vehicle.SetSetting(car, "maxSpeed", 30): 1 = done, 0 = unknown name
+            VehicleController* v = carOf(a); if (!v || a.size() < 3) return Value{0.0f};
+            return Value{v->SetSetting(a[1].AsString(), a[2].AsFloat()) ? 1.0f : 0.0f};
+        };
+        b["Vehicle.GetSetting"] = [carOf](std::vector<Value>& a) -> Value {
+            VehicleController* v = carOf(a); double d = 0; if (!v || a.size() < 2 || !v->GetSetting(a[1].AsString(), d)) return Value{0.0f};
+            return Value{(float)d};
+        };
+        b["Vehicle.ApplyPreset"] = [carOf](std::vector<Value>& a) -> Value {   // "Sports Car", "Pickup", ...
+            VehicleController* v = carOf(a); return Value{(v && a.size() > 1 && v->ApplyPreset(a[1].AsString())) ? 1.0f : 0.0f};
+        };
+        b["Vehicle.SetThrottle"] = [carOf](std::vector<Value>& a) -> Value { if (auto* v = carOf(a)) if (a.size() > 1) v->SetThrottle(a[1].AsFloat()); return Value{}; };
+        b["Vehicle.SetBrake"]    = [carOf](std::vector<Value>& a) -> Value { if (auto* v = carOf(a)) if (a.size() > 1) v->SetBrake(a[1].AsFloat()); return Value{}; };
+        b["Vehicle.SetSteer"]    = [carOf](std::vector<Value>& a) -> Value { if (auto* v = carOf(a)) if (a.size() > 1) v->SetSteer(a[1].AsFloat()); return Value{}; };
+        b["Vehicle.SetHandbrake"] = [carOf](std::vector<Value>& a) -> Value { if (auto* v = carOf(a)) if (a.size() > 1) v->SetHandbrake(a[1].AsFloat() != 0.0f); return Value{}; };
+        b["Vehicle.Boost"]  = [carOf](std::vector<Value>& a) -> Value { if (auto* v = carOf(a)) v->Boost(a.size() < 2 || a[1].AsFloat() != 0.0f); return Value{}; };
+        b["Vehicle.Horn"]   = [carOf](std::vector<Value>& a) -> Value { if (auto* v = carOf(a)) v->Horn(a.size() < 2 || a[1].AsFloat() != 0.0f); return Value{}; };
+        b["Vehicle.Lights"] = [carOf](std::vector<Value>& a) -> Value { if (auto* v = carOf(a)) v->SetLights(a.size() < 2 || a[1].AsFloat() != 0.0f); return Value{}; };
+        b["Vehicle.ClearInput"] = [carOf](std::vector<Value>& a) -> Value { if (auto* v = carOf(a)) v->ClearInput(); return Value{}; };   // hand the keys back at once
+        b["Vehicle.Recover"] = [carOf](std::vector<Value>& a) -> Value { if (auto* v = carOf(a)) v->Recover(); return Value{}; };
+        b["Vehicle.Eject"]  = [carOf](std::vector<Value>& a) -> Value { return Value{VehicleSeat::EjectDriver(carOf(a)) ? 1.0f : 0.0f}; };
+        b["Vehicle.Enter"]  = [carOf, sceneOf](std::vector<Value>& a) -> Value {   // Vehicle.Enter(car, person): the person takes the driver seat
+            VehicleController* v = carOf(a); Scene* s = sceneOf();
+            GameObject* who = (s && a.size() > 1) ? ResolveObject(s, a[1]) : nullptr;
+            if (!v || !who || !v->gameObject) return Value{0.0f};
+            for (VehicleSeat* seat : v->gameObject->GetComponentsInChildren<VehicleSeat>(true)) if (seat->driver) return Value{seat->Enter(who) ? 1.0f : 0.0f};
+            return Value{0.0f};
+        };
+        b["Vehicle.Speed"] = [carOf](std::vector<Value>& a) -> Value { auto* v = carOf(a); return Value{v ? v->Speed() : 0.0f}; };
+        b["Vehicle.Gear"]  = [carOf](std::vector<Value>& a) -> Value { auto* v = carOf(a); return Value{v ? (float)v->Gear() : 0.0f}; };
+        b["Vehicle.Rpm"]   = [carOf](std::vector<Value>& a) -> Value { auto* v = carOf(a); return Value{v ? v->Rpm() : 0.0f}; };
         b["Quaternion.Euler"] = [](std::vector<Value>& a) -> Value {
             return Value{Vec3{a.size() > 0 ? a[0].AsFloat() : 0.0f,
                               a.size() > 1 ? a[1].AsFloat() : 0.0f,

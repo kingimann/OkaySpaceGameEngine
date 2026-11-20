@@ -34,7 +34,7 @@ Escape hatches: **Get Property**, **Set Property**, **Call Method** (`Type.Metho
 
 ## Builtin parity
 
-Every text-script builtin whose name is a single token (letters, digits, `_`, `.`) is the node `Fn.<name>`. It runs that builtin on this object. Wire only the arguments it takes. 1532 builtins are nodes.
+Every text-script builtin whose name is a single token (letters, digits, `_`, `.`) is the node `Fn.<name>`. It runs that builtin on this object. Wire only the arguments it takes. 1549 builtins are nodes.
 
 | Builtin | Node |
 | --- | --- |
@@ -159,6 +159,23 @@ Every text-script builtin whose name is a single token (letters, digits, `_`, `.
 | `Vector3.MoveTowards` | `Fn.Vector3.MoveTowards` |
 | `Vector3.Normalize` | `Fn.Vector3.Normalize` |
 | `Vector3.Reflect` | `Fn.Vector3.Reflect` |
+| `Vehicle.ApplyPreset` | `Fn.Vehicle.ApplyPreset` |
+| `Vehicle.Boost` | `Fn.Vehicle.Boost` |
+| `Vehicle.ClearInput` | `Fn.Vehicle.ClearInput` |
+| `Vehicle.Eject` | `Fn.Vehicle.Eject` |
+| `Vehicle.Enter` | `Fn.Vehicle.Enter` |
+| `Vehicle.Gear` | `Fn.Vehicle.Gear` |
+| `Vehicle.GetSetting` | `Fn.Vehicle.GetSetting` |
+| `Vehicle.Horn` | `Fn.Vehicle.Horn` |
+| `Vehicle.Lights` | `Fn.Vehicle.Lights` |
+| `Vehicle.Recover` | `Fn.Vehicle.Recover` |
+| `Vehicle.Rpm` | `Fn.Vehicle.Rpm` |
+| `Vehicle.SetBrake` | `Fn.Vehicle.SetBrake` |
+| `Vehicle.SetHandbrake` | `Fn.Vehicle.SetHandbrake` |
+| `Vehicle.SetSetting` | `Fn.Vehicle.SetSetting` |
+| `Vehicle.SetSteer` | `Fn.Vehicle.SetSteer` |
+| `Vehicle.SetThrottle` | `Fn.Vehicle.SetThrottle` |
+| `Vehicle.Speed` | `Fn.Vehicle.Speed` |
 | `WaitForEndOfFrame` | `Fn.WaitForEndOfFrame` |
 | `WaitForFixedUpdate` | `Fn.WaitForFixedUpdate` |
 | `WaitForSeconds` | `Fn.WaitForSeconds` |

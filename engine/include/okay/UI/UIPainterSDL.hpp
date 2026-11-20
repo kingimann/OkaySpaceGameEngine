@@ -3,6 +3,7 @@
 // pass was written against. Header-only so the engine library stays SDL-free; include
 // it only from code that links SDL2 (the player, SDL-based tests).
 #include "okay/UI/UIPainter.hpp"
+#include "okay/UI/UIImageScale.hpp"
 #include "okay/Graphics/Image.hpp"
 #include "okay/Graphics/TtfFont.hpp"
 #include <SDL.h>
@@ -97,6 +98,22 @@ public:
         SDL_Texture* t = m_cache ? LoadSDLTexture(m_r, path, m_baseDir, *m_cache) : nullptr;
         if (t && m_filterSet) SDL_SetTextureScaleMode(t, m_linear ? SDL_ScaleModeLinear : SDL_ScaleModeNearest);
         return t;
+    }
+    Tex LoadTextureSized(const std::string& path, int w, int h) override {
+        if (!m_cache || path.empty() || w <= 0 || h <= 0) return LoadTexture(path);
+        const std::string key = path + "@" + std::to_string(w) + "x" + std::to_string(h);
+        auto it = m_cache->find(key);
+        if (it != m_cache->end()) return it->second ? (Tex)it->second : LoadTexture(path);
+        Image img;
+        if (!img.Load(path) && !img.Load(m_baseDir + path)) return LoadTexture(path);
+        const Image small = UIDownscaleImage(img, w, h, false);
+        SDL_Texture* tex = SDL_CreateTexture(m_r, SDL_PIXELFORMAT_ABGR8888, SDL_TEXTUREACCESS_STATIC, small.Width(), small.Height());
+        if (!tex) return LoadTexture(path);
+        SDL_UpdateTexture(tex, nullptr, small.Data(), small.Width() * 4);
+        SDL_SetTextureBlendMode(tex, SDL_BLENDMODE_BLEND);
+        SDL_SetTextureScaleMode(tex, SDL_ScaleModeLinear);
+        (*m_cache)[key] = tex;
+        return tex;
     }
     void SetImageFilter(bool linear) override { m_linear = linear; m_filterSet = true; }
     void SetTextureFilter(Tex t, bool linear) override {

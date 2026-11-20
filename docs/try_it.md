@@ -95,6 +95,7 @@ release job or the installer build for this change.
 | ac-cheat-sim | Anti-cheat: watch the server catch a cheater (cheat simulator), ban list, audit log | `OkaySpacePlayer.exe --server --cheat-sim --log cheat_sim.txt` (Tools folder), then open the log | New in this change; tested headless on Linux over loopback; Windows and a real network unverified |
 | boat1 | Water waves, floating things and a boat to drive | `examples\boat\boat_lake.okayscene` (File > Open, Play), **GameObject > Vehicles > Boat**, Add Component > Physics 3D > Buoyancy and Gameplay > Boat Controller, Water Inspector > Style | New in this change; headless tests only, Windows and GPU not run |
 | bs2 | Build Settings: search, Game and Advanced pages, checks, history | Editor: File > Build Settings (Ctrl+B) | New in this change; the editor and player were compile-checked on Linux but not run on Windows |
+| cam-up | Camera rigs and effects (Follow, Orbit, Look At, Group, walls, blends, shake presets, 2D rooms) | File > Open `examples\camera\camera_rigs.okayscene` and `examples\camera\camera_2d_rooms.okayscene`, then Play; GameObject > Camera > Camera Rig | Built and tested headless on Linux only; editor and Windows not run |
 | content-delivery | Downloadable game content: signed models, textures, scripts and data that an exported game fetches (off by default) | `okay-content.exe` in `Tools/`, or `content.okayconfig` / `OKAY_CONTENT_URL` for the player | Built; Linux-tested only |
 | editor-fps | Editor frame-time overlay and speed switches | Editor menu **View > Rendering**: Frame-time overlay, Frame rate limit, Slow down when idle, Viewport resolution, Performance mode. Heavy test scenes: `examples\perf\` | New in this change. Real Direct3D 11 numbers on a Windows machine are unverified; sent back by the owner |
 | fast1 | Fast release: one workflow dispatch, no version-bump PR | GitHub: Actions > "Fast release" > Run workflow (tick dry_run first); a change adds `dist/changelog.d/<id>.txt` | Built and tested offline with fake data; never run on GitHub; off until `FAST_RELEASE_ENABLED=1` |
@@ -109,6 +110,7 @@ release job or the installer build for this change.
 | pu1 | Physics upgrade: steady towers at any step rate, fast bodies, heavy ropes, callbacks that set speed | Open `examples\physics\physics_upgrade.okayscene` in `Tools\OkayEngine.exe` and press Play | Tested headless on Linux; nothing run on Windows or on a screen |
 | security-sec1 | Security plan SEC1: script file paths, update signature status, relay caps, reactions SQL | examples\security_paths\script_paths.okayscene (Play, read Console); Settings > About and Help > About line; SQL and relay are owner steps | Tests on Linux only; editor/launcher lines not run; nothing on Windows or real Supabase |
 | tex1 | Texture tools (our own): mipmaps, atlas, BC compression, DDS | Windows release: `examples\texture\try_texture.bat` (needs `Tools\okay-texture.exe`); editor: Project panel > pick a picture > Import Settings > "Generate mipmaps / compress" | Unverified on Windows; Linux tests and CLI run |
+| ui-quality-1 | In-game UI looks sharper: crisp text at any scale, smooth soft shadows, filtered pictures, even borders, kerning; a "UI Quality" setting (Fast / Good / Best / Old look) | Open `examples/ui_quality/ui_quality.okayscene` (File > Open), Lighting window > UI Font > **UI Quality**; or start with `OKAY_CLASSIC_UI=1` to see the old look | Written and unit-tested; pictures and numbers come from the headless software renderer on Linux only. Never run in a real editor or player window, on Windows, on an OpenGL or Direct3D 11 renderer, or on a high-DPI screen (unverified) |
 | vpa | Multi-window panels start cleanly on every video driver | `Tools\OkayEngine.exe`: drag a panel tab outside the editor | Linux only (Xvfb, a build with assertions on); Windows unverified |
 | vsclarity | Visual Script nodes explain themselves (plain line, What is this? card, Needs input, Next steps, Try this node, What do you want to do? list) | `Tools\OkayEngine.exe`: View > Editors & Tools > Visual Script, drop any node | Compiled and unit-tested (`vs_guide`); never drawn in a real window, Windows unverified |
 | water1 | Water that is never flat: presets, sea states, foam, splashes | `examples\water\lake.okayscene`, `ocean`, `river`, `shore` (File > Open, Play), **GameObject > 3D Object > Water** (pick a kind), Water Inspector > **Look** | New in this change; software-renderer pictures and headless tests only, Windows, GPU and the editor window not run |
@@ -1594,6 +1596,42 @@ boat feels with a real keyboard. Boarding a boat with E is not done.
 
 **Status.** Tested on Linux: the model (pages, search, reset, presets, summary, checks and fixes, history, commands, ignore file, profile files) and the player's config reader (`tests/test_build_settings.cpp`), and every new setting through the profile file (`tests/test_project_state.cpp`). `editor/main.cpp` and `player/main.cpp` were compile-checked (syntax only) on Linux. NOT run: the window on screen, a Windows build, and the player reading the config in a real game.
 
+## cam-up. Camera rigs and effects
+
+**What it is.** A camera rig is a shot that follows, circles or watches something for you, smoothly. It can look a little ahead of a
+moving target, frame several things at once, stay out of walls, fade things in the way, blend to other shots and shake on hits. A 2D
+camera can be held inside rooms and slide from room to room. Details: `docs/camera_upgrade.md`.
+
+**Steps (3D example).**
+1. Open the editor. File > Open, pick `examples\camera\camera_rigs.okayscene`, press Play.
+2. Walk the blue capsule with W A S D. The camera follows smoothly and leans a little ahead of you.
+3. Walk behind the orange wall (toward the camera). The camera moves in instead of going through the wall, and glides back out.
+4. Press `2`: the Orbit shot. Hold the right mouse button and drag to circle the player.
+5. Press `3` (Look At: the camera stands still and turns to watch you), `4` (Group: it frames you and the orange ball and steps back
+   to fit both), `5` (See-Through: the camera stays behind the wall and the wall turns see-through), `0` (back to automatic).
+6. Effects: `Z` impact, `X` explosion, `C` footstep, `V` field of view kick, `B` hit flash (the screen edges darken), `H` handheld wobble on or off.
+7. Make your own: select an object, then GameObject > Camera > Camera Rig: Follow (or Orbit, Look At). Select the new rig: the Inspector
+   has sections Camera Rig, Framing, Group, Walls and Blend, and the Scene view shows its frustum, dead zone (green), soft zone (orange) and
+   the wall probe. The Camera Preview inset (bottom right of the Scene view) shows what the rig sees.
+8. Blend styles: select the Main Camera, look at Cinemachine Brain > Blend style (Cut, Linear, Ease In and Out, Ease In, Ease Out, Custom
+   curve). Then press `1` and `2` in Play to see the difference.
+
+**Steps (2D example).**
+1. File > Open `examples\camera\camera_2d_rooms.okayscene`, Play.
+2. Walk with W A S D. The view stays inside Room A. Walk right out of the room: the camera slides to Room B. Walk up: Room C.
+3. Select "Shot 2D": Camera Rig, Framing and 2D camera sections hold these settings. Select a Camera Room (yellow box in the Scene view)
+   and change its Size.
+
+**From a script.** `Camera.Shake("impact", 1)`, `Camera.BlendTo("Shot Group", 0.8)`, `Camera.SetTarget("Boss")`, `Camera.AddToGroup("Boss")`,
+`Camera.FovKick(10, 0.5)`, `Camera.SetFovOffset(8, 0.3)` (sprint), `Camera.HitPulse(0.9)`, `Camera.SetHandheld(1)`. In a visual script search the
+palette for `Camera.` (each one is a node).
+
+**What you should see.** No jitter at any frame rate, no pop when a wall moves in or out or when you switch shots part way through a
+blend, and the example's two help lines of keys in the top left.
+
+**Status.** Numbers were tested headless on Linux at 30, 60 and 144 frames a second (`camera_math`, `camera_rig`). The editor was
+not run (menus, Inspector, gizmo and preview inset are compiled but unseen) and nothing ran on Windows or a GPU.
+
 ## Console: Collapse button (branch `claude/console-collapse`, not merged or released yet)
 
 Owner request 2026-11-15: "for console allow user to collapse the same log."
@@ -2242,6 +2280,40 @@ pushed out now stops counting at once.
 3. You should see at most four toast cards stacked in the top-right corner. The oldest card disappears when a new one arrives,
    and each card goes away by itself after about six seconds. The editor keeps responding.
 4. Test: `ctest -R ui_toast` (it also pushes 10 toasts in one frame and runs the template's click sequence).
+
+## ui-quality-1. In-game UI: sharper text, smooth shadows, filtered pictures
+
+**What it is.** The UI that games draw (buttons, panels, text, pictures, sliders) looked a little rough. Text was
+resampled at half-pixel positions (soft), soft shadows were a stack of hard steps, big pictures shown small were
+sampled with skipped pixels, and borders at a 1.5x scale were a pixel and a half wide. They are now drawn on the
+real pixel grid. A new **UI Quality** setting chooses how careful the drawing is:
+
+- **Fast**: text sits on whole pixels (crisp), the rest as before.
+- **Good** (the default): plus slightly heavier small text, smooth soft shadows, pictures filtered when shrunk, borders and shapes snapped to whole pixels at 1.5x, kerning (AV, To pull together).
+- **Best**: plus quarter-pixel text positions (even letter spacing) and dithered gradients (no bands).
+- **Old look**: the drawing from before this change, so you can compare.
+
+**Steps.**
+1. Start the editor. File > Open, go to the `examples` folder, `ui_quality`, open `ui_quality.okayscene`. You see the same
+   card three times, drawn at 1x, 1.5x and 2x scale (a title, small text, a button with a border, a slider, a progress bar,
+   two small pictures and a thin line, on a card with a soft shadow).
+2. Open **Lighting** (Window menu) and the **UI Font** header. Pick **UI Quality** = **Old look**. Look at the three cards:
+   text edges are soft, the shadow shows steps, the small picture shimmers. Switch to **Good**, then **Best**. Text becomes
+   sharp, the shadow smooth, the picture clean. Press Play to see the same in the Game view.
+3. The other two files show each look without touching the setting: `ui_quality_best.okayscene` (Best) and
+   `ui_quality_old_look.okayscene` (Old look).
+4. To see the old look in any game without editing it, start the editor, player or your exported game with the
+   environment variable `OKAY_CLASSIC_UI=1` (for the quality levels: `OKAY_UI_QUALITY=fast`, `good`, `best` or `old`).
+   The startup log is unchanged; the setting is read when a scene is drawn.
+5. Old scenes load unchanged: a scene without the setting is **Good**. Scenes you save keep the setting (`uiquality` line).
+
+**What you should see.** Good and Best: text edges are crisp, small text is a little bolder, letters in a title are evenly
+spaced (Best), the card shadow fades smoothly with no visible rings, a 1 px border is the same width all round at every
+scale, a 128 px picture shown at 24 px is clean not noisy. Old look: the opposite.
+
+**Checked.** `test_ui_quality` (no window needed) measures every claim above with numbers; `ui_quality_shot` writes
+headless pictures (`ui_quality_shot out.png 1280 720 good`). Not checked: a real window, Windows, GPU renderers, high-DPI.
+Details and the before/after table: `docs/in_game_ui_quality.md`.
 
 ## Visible UI fixes: launcher library, update card, Scene view, Project Settings, Console (bug fixes)
 

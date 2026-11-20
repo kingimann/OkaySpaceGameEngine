@@ -129,7 +129,7 @@ def static_checks(root):
         declared = set(re.findall(r'\$(\w+)\s*(?:=|,|$)', pb, re.M)) | set(re.findall(r'\$(\w+)', pb))
         for must in ('SourceRoot', 'ExportDir', 'MinimalTest', 'EngineMode', 'SkipInstall', 'SkipSign', 'Http', 'OwnCrypto'):
             check(must in declared, "build script lacks parameter -" + must)
-        docs = [os.path.join(root, 'docs', 'xbox_uwp.md')]
+        docs = [os.path.join(root, 'docs', 'platform', 'xbox_uwp.md')]
         td = os.path.join(root, 'docs', 'try_it')
         if os.path.isdir(td): docs += [os.path.join(td, f) for f in os.listdir(td) if 'xbox' in f.lower()]
         docs += [os.path.join(root, 'docs', 'try_it.md')]

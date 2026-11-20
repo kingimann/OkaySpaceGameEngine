@@ -56,7 +56,7 @@ def main():
     rules = rules_text(root, a.base, a.with_branch)
     if a.rules_only:
         print(rules); return 0
-    tpl = open(os.path.join(root, "docs", "agent_brief_template.md"), encoding="utf-8").read()
+    tpl = open(os.path.join(root, "docs", "process", "agent_brief_template.md"), encoding="utf-8").read()
     tpl = tpl.split("<!-- BRIEF START: everything from here down is sent to the agent -->", 1)[-1].lstrip("\n")
     other = "coordinator" if a.lane == "claude2" else "claude2"
     who = "Claude 2 (branches `claude2/*`, issue #422)" if a.lane == "claude2" else "an agent of the coordinator (branches `claude/*`)"

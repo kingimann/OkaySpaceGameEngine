@@ -8,8 +8,8 @@
   cube.lxo         a Modo object (FORM LXOB): the same cube as 8 points and 6 quads, material tag "Blue" whose material
                    item is blue (0.2, 0.4, 0.9) with a 40 degree smoothing angle; read by OKAY_OWN_LXO=1
 
-Every byte is written here from the format descriptions (docs/own_ogre_reader.md, docs/own_zae_reader.md,
-docs/own_xml_reader.md, docs/own_lwo_reader.md); nothing is copied from any other project. Run from the repository root:
+Every byte is written here from the format descriptions (docs/content/model_readers/own_ogre_reader.md, docs/content/model_readers/own_zae_reader.md,
+docs/content/model_readers/own_xml_reader.md, docs/content/model_readers/own_lwo_reader.md); nothing is copied from any other project. Run from the repository root:
     python3 scripts/gen_gap_fixtures.py
 The output is deterministic (fixed zip timestamps), so running it again gives the same bytes.
 """

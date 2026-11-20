@@ -1,5 +1,5 @@
 // Upgrading a project: the backup, the check, the rewrite, the stamp, the restore, and the gate that asks first.
-// See ProjectUpgrade.hpp and docs/project_upgrade.md. No ImGui here.
+// See ProjectUpgrade.hpp and docs/editor/project_upgrade.md. No ImGui here.
 #include "ProjectUpgrade.hpp"
 
 #include <algorithm>

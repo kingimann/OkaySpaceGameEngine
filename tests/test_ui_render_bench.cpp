@@ -158,7 +158,7 @@ int main() {
 #endif
 
     // ---- UI quality levels (okay/UI/UIFontPolicy.hpp): the same screen drawn at each; printed for the before/after comparison in
-    // docs/in_game_ui_quality.md. The Old look is the drawing from before the UI quality work. Only the default (Good) is asserted above. ----
+    // docs/ui/in_game_ui_quality.md. The Old look is the drawing from before the UI quality work. Only the default (Good) is asserted above. ----
     {
         static const char* const names[] = {"Fast", "Good (default)", "Best", "Old look"};
         for (int q : {3, 0, 1, 2}) {

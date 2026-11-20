@@ -21,7 +21,7 @@ online clients, which area 17 also describes. Nothing here is in an open PR.
 - **Code:** `player/main.cpp`, `editor/main.cpp`, `launcher/main.cpp`, `Core/DisplaySettings`, `Core/DisplayModes`, `shared/SdlDisplays.hpp`, `shared/SdlDisplays.cpp`, `Core/Application`
 - **API:** `DisplaySettings::SetMode`, `SetMonitorName`, `SetResolution`, `SetRefreshHz`, `BeginTrial`, `ResolveSaved`, `sdldisplay::ListMonitors`, `sdldisplay::Apply`, script `set_display_mode`, `set_monitor`, `begin_display_confirm`
 - **Editor:** Build Settings (window and presentation options); the Settings screen in play uses the same SDL helper on the editor window
-- **Docs:** `docs/display_settings.md`, `docs/packaging.md`, `docs/web_mobile.md`
+- **Docs:** `docs/engine/display_settings.md`, `docs/release/packaging.md`, `docs/platform/web_mobile.md`
 - **Tests:** `display_settings`, `display_screen`
 - **Status:** Works for the choice itself (filtering, fallback, the 10-second revert, the Settings screen and the script nodes are tested). The player and the editor apply it through SDL. Each host still creates its own window. The own-code platform backend is not used.
 - **Open:** no single window class shared by the player, editor and launcher (each still creates its SDL window); no Linux or macOS DPI hint (the hint is Windows only)
@@ -40,7 +40,7 @@ online clients, which area 17 also describes. Nothing here is in an open PR.
 - **Code:** `Core/Clipboard`, `shared/SdlClipboard.hpp`, `player/main.cpp`, `editor/main.cpp`, `Components/UIInputField`, `Input/Cursor`
 - **API:** `GetClipboardText`, `SetClipboardText`, `get_clipboard_text`, `set_clipboard_text`, `Cursor::Capture`, `AudioMixer::focusMuted`, `Input::TypedText`, Build Settings "run in background" and "mute when unfocused"
 - **Editor:** Build Settings; Play mode uses the same clipboard as a built game; Console panel Copy buttons
-- **Docs:** `docs/game_ui.md` (text fields), `docs/scripting_reference.md`, `docs/audio.md` (mute when unfocused), `docs/input.md`
+- **Docs:** `docs/ui/game_ui.md` (text fields), `docs/scripting/scripting_reference.md`, `docs/audio/audio.md` (mute when unfocused), `docs/engine/input.md`
 - **Tests:** `tests/test_clipboard.cpp` (sanitize, field copy/cut/paste, script and visual-script functions)
 - **Status:** Works - a focused game text field and scripts can copy and paste text; the player and editor Play mode use SDL; tests never write the operating-system clipboard
 - **Open:** the input field has no caret selection, so there is no select-all shortcut; node editor copy and paste stays inside each window; no IME composition handling beyond SDL text events
@@ -59,7 +59,7 @@ online clients, which area 17 also describes. Nothing here is in an open PR.
 - **Code:** `shared/FileDialog.hpp`, `shared/FileDialog.cpp`, `shared/FileDialogUI.cpp`
 - **API:** `okay::filedialog::Open`, `OpenOne`, `Save`, `SaveOne`, `Folder`, `FolderOne`, `DrawBuiltin` (editor and launcher only; no engine wrapper)
 - **Editor:** each window's New, Open, Save As and Pick buttons; File > Open Project Folder, Save Scene As, Import
-- **Docs:** `docs/editor.md`
+- **Docs:** `docs/editor/editor.md`
 - **Tests:** `tests/test_file_dialog.cpp` (helpers, argument lists, browser model, queue, fake helper programs)
 - **Status:** Works in the editor and launcher (built-in browser and zenity/kdialog argument handling tested on Linux); not available to games. NOT YET TESTED ON WINDOWS OR MACOS: the Windows IFileOpenDialog / IFileSaveDialog path is compile-checked only (MinGW cross-compile), and the macOS osascript path was never run. Test both on real machines
 - **Open:** no remembered last folder; no dialog from scripts or the player (a game cannot ask the user for a file)
@@ -77,7 +77,7 @@ online clients, which area 17 also describes. Nothing here is in an open PR.
 - **Code:** `Graphics/TtfFont`, `editor/LocalizationWindow.*`
 - **API:** `SystemFallbackFonts`, `FontForText`, `Localization::LanguageFont`
 - **Editor:** Localization window font picker
-- **Docs:** `docs/localization.md`
+- **Docs:** `docs/engine/localization.md`
 - **Tests:** `localization`, `ttf`
 - **Status:** Works - the candidate list and `FontForText` fallback chain read in TtfFont.cpp; `FontForText` is exercised in `localization`; the path list itself is not tested
 - **Open:** fixed path lists only, no OS font enumeration API, so a font in a non-standard folder is not found; the fonts are not bundled, so a Linux machine without them shows missing glyphs; owned by 2.9 and 1.8 (listed here for the OS side)
@@ -90,15 +90,15 @@ online clients, which area 17 also describes. Nothing here is in an open PR.
 - **What:** The same player compiles for the browser through Emscripten (frame callback loop, SDL2 port) and is documented for Android and iOS with the standard SDL2 templates; platform differences are `#ifdef` blocks in the player.
 - **Parts:**
   - 37.5.1 Web build - `scripts/build-web.sh`, `player/main.cpp` - `emscripten_set_main_loop`, no hidden window, no UDP networking in the browser, scene preloaded into the virtual file system
-  - 37.5.2 Mobile setup - `docs/web_mobile.md` - SDL2 Android and iOS project steps; no project files in the repo
+  - 37.5.2 Mobile setup - `docs/platform/web_mobile.md` - SDL2 Android and iOS project steps; no project files in the repo
   - 37.5.3 Touch feed - `player/main.cpp`, `editor/main.cpp` - SDL finger events into `Input::FeedTouch` (see 8.4)
-- **Code:** `scripts/build-web.sh`, `player/main.cpp`, `docs/web_mobile.md`
+- **Code:** `scripts/build-web.sh`, `player/main.cpp`, `docs/platform/web_mobile.md`
 - **API:** `scripts/build-web.sh <scene>`; `__EMSCRIPTEN__` blocks in the player
 - **Editor:** Build Settings export targets
-- **Docs:** `docs/web_mobile.md`
+- **Docs:** `docs/platform/web_mobile.md`
 - **Tests:** -
 - **Status:** Partial - web build script and the `__EMSCRIPTEN__` main loop exist (read); Android and iOS are instructions only; the WebGL CI job is covered in area 18.3
-- **Open:** Android and iOS projects are not in the repo; web has no networking. The player feeds SDL finger events on desktop and web, and gestures and on-screen controls are described in `docs/input.md`
+- **Open:** Android and iOS projects are not in the repo; web has no networking. The player feeds SDL finger events on desktop and web, and gestures and on-screen controls are described in `docs/engine/input.md`
 - **Related:** 18.2, 18.3, 8.4, 12.9
 - **Words:** WebGL, Emscripten, WebAssembly, wasm, browser build, Android, iOS, mobile build, APK, SDL2 port, touch, build-web.sh
 - **Seen as:** the web build shows a blank page or freezes the tab; multiplayer does not connect in the browser; touch controls do not work on a phone; the mobile build has no project to open
@@ -107,12 +107,12 @@ online clients, which area 17 also describes. Nothing here is in an open PR.
 ### 37.6 Native HTTP and the game-to-launcher link
 - **What:** Two OS helpers: an in-process HTTPS client on Windows (WinHTTP with kept-alive connections; on Linux an opt-in own HTTP/1.1 client with the system OpenSSL loaded at run time; curl is the fallback and the default elsewhere), and a file-based link between a running game and the launcher (presence, invites, join requests, recently played with).
 - **Parts:**
-  - 37.6.1 Native HTTP - `Platform/NativeHttp` - `okay::http::Request` returns `reached` false off Windows (unless the opt-in own client is built with `-DOKAY_OWN_HTTP=ON` and enabled with `OKAY_OWN_HTTP=1`, `docs/own_http_client.md`) so callers use the curl path; `RequestEx` (own client only) adds progress, cancel, resume and a size cap and `Request` takes a `timeoutMs`; the own client also has keep-alive (per thread), HEAD, conditional requests and an opt-in per-call cookie jar, and `Platform/NativeFetch` holds the download, HEAD and prefix helpers the launcher, editor and PlayFab call first (readiness: `docs/own_http_readiness.md`); thread safe
+  - 37.6.1 Native HTTP - `Platform/NativeHttp` - `okay::http::Request` returns `reached` false off Windows (unless the opt-in own client is built with `-DOKAY_OWN_HTTP=ON` and enabled with `OKAY_OWN_HTTP=1`, `docs/platform/own_http_client.md`) so callers use the curl path; `RequestEx` (own client only) adds progress, cancel, resume and a size cap and `Request` takes a `timeoutMs`; the own client also has keep-alive (per thread), HEAD, conditional requests and an opt-in per-call cookie jar, and `Platform/NativeFetch` holds the download, HEAD and prefix helpers the launcher, editor and PlayFab call first (readiness: `docs/platform/own_http_readiness.md`); thread safe
   - 37.6.2 Game and launcher link - `Platform/GameIpc` - small files in the per-user config folder keyed by process id: presence, invite request, join link, `played-with.tsv`
 - **Code:** `Platform/NativeHttp`, `Platform/GameIpc`
 - **API:** `okay::http::Request`, `okay::http::NativeAvailable`, `GameIpc::WritePresence`, `GameIpc::TakeJoin`, `GameIpc::RequestInvite`, `GameIpc::RecordPlayedWith`
 - **Editor:** none
-- **Docs:** `docs/launcher-multiplayer.md`, `docs/accounts.md`, `docs/own_http_client.md`, `docs/own_http_readiness.md`
+- **Docs:** `docs/online/launcher-multiplayer.md`, `docs/online/accounts.md`, `docs/platform/own_http_client.md`, `docs/platform/own_http_readiness.md`
 - **Tests:** `launcher_join`, `match_results`, `own_http`, `own_http_net`, `launcher_download_own`, `native_fetch`, `playfab_own`
 - **Status:** Works - both headers read; the player calls GameIpc (presence, join, invite) and the launcher and AccountService use NativeHttp (call sites read); `launcher_join` covers the link
 - **Open:** NativeHttp is Windows only by default (other systems use the curl process; the Linux own client is opt-in and macOS has none); file-based IPC polls with a 30 s presence age rather than a socket; the WinHTTP path has no tests (the own client has)
@@ -132,7 +132,7 @@ online clients, which area 17 also describes. Nothing here is in an open PR.
 - **Code:** `Platform/Steam/Steam`, `Platform/Steam/SteamService`, `engine/src/Platform/Steam/NullSteamService.cpp`, `engine/src/Platform/Steam/SteamworksService.cpp`, `engine/src/Platform/Steam/Steam.cpp`, `Components/SteamManager`
 - **API:** `ISteamService`, `Steam::Get`, `SteamConfig`, `UnlockAchievement`, `SetStat`, `UploadLeaderboardScore`, `CloudWrite`, `WorkshopPublish`, `CreateLobby`, script `steam_*` builtins
 - **Editor:** the Services window, Steam section (`DrawServices` in editor/main.cpp)
-- **Docs:** `docs/steam_release.md`
+- **Docs:** `docs/release/steam_release.md`
 - **Tests:** `steam`, `steam_script`
 - **Status:** Works for the simulation backend (headers and Steam.cpp read; covered by `steam` and `steam_script`); the real Steamworks backend is compiled only with the SDK and is untested in CI
 - **Open:** the real backend cannot be tested without the SDK and a running Steam client; no Steam Input or rich presence beyond the interface; same ground as area 17.10 (this page covers the OS side)
@@ -150,7 +150,7 @@ online clients, which area 17 also describes. Nothing here is in an open PR.
 - **Code:** `player/main.cpp`, `Platform/Account/AccountService`, `Platform/Achievements`
 - **API:** Build Settings "save to user folder", `company`; `okay::account::DefaultConfigDir`
 - **Editor:** Build Settings
-- **Docs:** `docs/save_games.md`, `docs/packaging.md`
+- **Docs:** `docs/engine/save_games.md`, `docs/release/packaging.md`
 - **Tests:** -
 - **Status:** Basic - the three folder rules read in code; three separate implementations, no shared path helper
 - **Open:** achievements and launcher data use different base folders (LOCALAPPDATA versus APPDATA); a shared `Core/Paths` helper (per-platform data, config, cache and log folders, 1.18.2) is on main since #571 but nothing outside `engine/src/Core/Paths.cpp` calls it yet (grep), so those folders were not unified; the helper does compute the macOS Application Support folder
@@ -173,7 +173,7 @@ online clients, which area 17 also describes. Nothing here is in an open PR.
 - **Code:** `Platform/Account/Account`, `Platform/Account/AccountService`, `engine/src/Platform/Account/Account.cpp`, `Platform/Achievements`, `Platform/Friends`, `Platform/Parties`, `Platform/Messages`, `Platform/Servers`, `Platform/Forums`, `Platform/Workshop`, `Platform/Profiles`, `Platform/Admin`, `Platform/PlayFab/PlayFab`
 - **API:** `Account::Get`, `okay::account::AccountService`, `Friends`, `Parties`, `Messages`, `Servers`, `Forums`, `Workshop`, `Profiles`, `Admin`, `PlayFab::Get`, script `account_*`
 - **Editor:** none in the engine; the launcher shows these pages (area 17)
-- **Docs:** `docs/accounts.md`, `docs/supabase-backend.md`, `docs/launcher-multiplayer.md`, `docs/photon.md`
+- **Docs:** `docs/online/accounts.md`, `docs/online/supabase-backend.md`, `docs/online/launcher-multiplayer.md`, `docs/online/photon.md`
 - **Tests:** `account`, `account_script`, `friends_json`, `chat_json`
 - **Status:** Works for accounts, friends and chat JSON handling (headers read in outline; covered by `account`, `account_script`, `friends_json` and `chat_json`); the remote paths need a live Supabase and are not covered by tests
 - **Open:** no tests for forums, Workshop, profiles, admin, parties or PlayFab; PlayFab and the non-Windows account path need a system `curl` binary; ownership of these files should be settled with area 17, which lists them as 17.2-17.10

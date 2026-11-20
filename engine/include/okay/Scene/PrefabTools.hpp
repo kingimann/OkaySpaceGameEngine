@@ -1,5 +1,5 @@
 #pragma once
-// Prefab tools, wave 2 (see docs/prefab_system.md): nested prefabs, prefab variants,
+// Prefab tools, wave 2 (see docs/engine/prefab_system.md): nested prefabs, prefab variants,
 // unpack, per-record and per-field apply / revert, prefab queries and an asset
 // validator. Built on the wave 1 data in GameObject (prefabSource, prefabOverrides)
 // and the text format of SceneSerializer. No threads or locks, so it is safe to

@@ -3,7 +3,7 @@
 // 't' textures / 's' scene chunks and the field lists of each record). No importer source of any other project was read. The
 // description does not say which byte order the numbers use, so the reader tries little endian first and, if that does not
 // parse, big endian. Where the description leaves the layout open, the choices were checked against the bytes of the four Quick3D
-// files of the model corpus (docs/own_q3d_reader.md, "Checked against real files").
+// files of the model corpus (docs/content/model_readers/own_q3d_reader.md, "Checked against real files").
 // Bounds-checked, every count is checked against the bytes that are really there before anything is allocated, capped, no recursion.
 #include "PolygonTriangulate.hpp"
 #include "ReaderCommon.hpp"

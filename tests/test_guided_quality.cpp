@@ -19,7 +19,7 @@ using namespace okay;
 using namespace okay::modeling;
 using namespace okay::modeling::guided;
 
-// Guided modeling, generator quality: body silhouettes, connected parts, validator, randomise, round trip, timing (docs/guided_modeling_design.md).
+// Guided modeling, generator quality: body silhouettes, connected parts, validator, randomise, round trip, timing (docs/editor/guided_modeling_design.md).
 namespace {
 
 double SignedVolume(const PolyMesh& m) {

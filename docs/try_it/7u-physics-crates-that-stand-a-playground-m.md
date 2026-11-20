@@ -7,8 +7,8 @@ row: | 7u | Physics: Improved quality, physics playground, materials, slider joi
 **What it is.** The physics got a second way to solve contacts, called **Improved** (the old one is **Classic**; old scenes keep it, new scenes
 get Improved). Crates stack and stay put, a ball bounces and rolls to a stop, fast bullets stop at thin walls, resting things go to sleep
 (cheap) and wake when what holds them up goes away. Also new: a physics material on every collider (icy or bouncy floors), a **Slider** joint, ropes that
-stay near their length, joints in the physics debug view and a debris emitter. Plain explanation and the numbers: [physics.md](physics.md) and
-[physics_plan.md](physics_plan.md). Code: `Physics/Physics3DImproved.inl`, `Physics/ContactSolver.hpp`, `Physics/BoxManifold.hpp`,
+stay near their length, joints in the physics debug view and a debris emitter. Plain explanation and the numbers: [physics.md](physics/physics.md) and
+[physics_plan.md](physics/physics_plan.md). Code: `Physics/Physics3DImproved.inl`, `Physics/ContactSolver.hpp`, `Physics/BoxManifold.hpp`,
 `Physics/DebrisPool.hpp`.
 
 **How to reach it.**

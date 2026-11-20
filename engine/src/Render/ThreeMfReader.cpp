@@ -1,5 +1,5 @@
 // Our own 3MF reader. 3MF is a zip (OPC) package whose 3D/3dmodel.model part is XML. Written from the public
-// 3MF Core Specification 1.3, no code from any other importer. See docs/own_3mf_reader.md.
+// 3MF Core Specification 1.3, no code from any other importer. See docs/content/model_readers/own_3mf_reader.md.
 #include "FileOpen.hpp"
 #include "ReaderCommon.hpp"
 #include "XmlLite.hpp"

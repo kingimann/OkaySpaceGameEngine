@@ -1,6 +1,6 @@
 #pragma once
 // LocTable: the data model a translation-table window or a command-line tool works with
-// (docs/localization_tools.md).
+// (docs/engine/localization_tools.md).
 //
 // It wraps a StringTable and adds what the runtime doesn't need:
 //  * loading every language file of a folder (.okayloc, .csv, .json) into one table,

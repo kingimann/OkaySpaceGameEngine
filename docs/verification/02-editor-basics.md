@@ -50,7 +50,7 @@ Areas: 15, 22, 23, 24, 34, 54, 55. Rows ids start `V-ED-`. `V-ED-S<area>` rows a
     3. Press Ctrl+Y.
   - **You should see (expected, not yet seen on Windows):** the cube returns on the first undo and disappears on the second; redo brings it back. Undo and Redo are greyed when nothing can be undone.
   - **Known partial:** map area 22 (undo/redo and recovery) is listed as planned in parts; check which sub-areas say Works.
-  - **More:** [editor_undo.md](../../editor_undo.md)
+  - **More:** [editor_undo.md](../../editor/editor_undo.md)
 
 - [ ] **V-ED-006** Unsaved changes prompt
   - **Map:** 15. **Where:** editor
@@ -137,7 +137,7 @@ Areas: 15, 22, 23, 24, 34, 54, 55. Rows ids start `V-ED-`. `V-ED-S<area>` rows a
     3. Choose **Reload All**.
   - **You should see (expected, not yet seen on Windows):** the plugin manager lists plugins; a new plugin gets a template script you can open with **Edit Script**.
   - **Known partial:** area 24 is mostly planned in the map; only the basic plugin loader exists.
-  - **More:** [editor-plugins.md](../../editor-plugins.md)
+  - **More:** [editor-plugins.md](../../editor/editor-plugins.md)
 
 - [ ] **V-ED-016** History, Stats and Profiler panels
   - **Map:** 22, 23. **Where:** editor, View menu

@@ -11,7 +11,7 @@
 using namespace okay;
 using namespace okay::net;
 
-// Rejoin and replay edge cases around the resume token (docs/multiplayer_audit.md):
+// Rejoin and replay edge cases around the resume token (docs/online/multiplayer_audit.md):
 //   * a token is single-use, bound to its account, and dead after a kick
 //   * a full host still lets a dropped client take its own slot back
 //   * the parked states are bounded

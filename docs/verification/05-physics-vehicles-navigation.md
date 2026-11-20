@@ -15,8 +15,8 @@ Areas: 6, 9, 52. Rows ids start `V-PH-`. `V-PH-S<area>` rows are smoke tests bui
     3. Drive with W and S (gas and brake), A and D (steer), Space (handbrake). Press E again to get out.
     4. Walk to the right door (prompt says Ride) and press E.
   - **You should see (expected, not yet seen on Windows):** the car ignores keys until you press E at the driver door; you get out at the driver side; at the passenger door you are carried but cannot drive.
-  - **Known partial:** wheels are for looks only and do not spin; no sitting animation; seats are not replicated in multiplayer; no script node to enter or exit yet (docs/vehicle_controller.md).
-  - **More:** [vehicle_controller.md](../../vehicle_controller.md)
+  - **Known partial:** wheels are for looks only and do not spin; no sitting animation; seats are not replicated in multiplayer; no script node to enter or exit yet (docs/gameplay/vehicle_controller.md).
+  - **More:** [vehicle_controller.md](../../gameplay/vehicle_controller.md)
 
 - [ ] **V-PH-002** Vehicle seats example scene
   - **Map:** 6, 11. **Where:** editor, File > Open...
@@ -33,8 +33,8 @@ Areas: 6, 9, 52. Rows ids start `V-PH-`. `V-PH-S<area>` rows are smoke tests bui
     1. Choose **File > New Project...** and the **Vehicle (3D)** template.
     2. Press Play and drive with W A S D.
   - **You should see (expected, not yet seen on Windows):** a car with suspension that drives on the road.
-  - **Known partial:** see docs/vehicle_controller.md for known rough edges.
-  - **More:** [vehicle_controller.md](../../vehicle_controller.md)
+  - **Known partial:** see docs/gameplay/vehicle_controller.md for known rough edges.
+  - **More:** [vehicle_controller.md](../../gameplay/vehicle_controller.md)
 
 - [ ] **V-PH-004** Navmesh bake
   - **Map:** 9. **Where:** editor, View menu
@@ -43,8 +43,8 @@ Areas: 6, 9, 52. Rows ids start `V-PH-`. `V-PH-S<area>` rows are smoke tests bui
     2. Press **Add Nav Mesh Surface**, then **Bake**.
     3. Read the Console: "Navigation: baked N polygons ...".
   - **You should see (expected, not yet seen on Windows):** translucent blue polygons cover the floor in the Scene view; a `.okaynav` file appears next to the scene.
-  - **Known partial:** one nav surface per scene is the normal case; carving only works while the scene runs (docs/navigation.md).
-  - **More:** [navigation.md](../../navigation.md)
+  - **Known partial:** one nav surface per scene is the normal case; carving only works while the scene runs (docs/gameplay/navigation.md).
+  - **More:** [navigation.md](../../gameplay/navigation.md)
 
 - [ ] **V-PH-005** Navmesh from a Mesh Collider
   - **Map:** 9, 6. **Where:** editor
@@ -53,7 +53,7 @@ Areas: 6, 9, 52. Rows ids start `V-PH-`. `V-PH-S<area>` rows are smoke tests bui
     2. Open **View > Editors & Tools > Navigation**, press **Add Nav Mesh Surface** and **Bake**.
     3. Use a ramp or an L-shaped mesh to see the difference.
   - **You should see (expected, not yet seen on Windows):** the baked area follows the real triangles, not a box; the Console prints the polygon and link counts.
-  - **Known partial:** over 2,000,000 triangles are cut off with a warning; one crack makes the collider two-sided (docs/navigation.md).
+  - **Known partial:** over 2,000,000 triangles are cut off with a warning; one crack makes the collider two-sided (docs/gameplay/navigation.md).
   - **More:** [../../try_it.md](../../try_it.md)
 
 - [ ] **V-PH-006** Skipped bake before Play
@@ -87,8 +87,8 @@ Areas: 6, 9, 52. Rows ids start `V-PH-`. `V-PH-S<area>` rows are smoke tests bui
   - **Map:** [6](../feature_map/06-physics.md), 8 sub-areas, 8 built.
   - **Steps:** (steps unverified: taken from the map, not clicked) open the program or window named for each sub-area below and try its main action.
     - 6.1 2D bodies and colliders [Works]. Where: Add Component > Physics 2D rows; Inspector sections for each component; Scene view collider gizmos (View >...
-    - 6.2 3D bodies and colliders, collider fit [Works]. Where: Add Component > Physics 3D rows, collider inspectors with a Fit to Object button, Mesh Collider inspector...
-    - 6.3 Joints [Works]. Where: Add Component > "Joint 2D (distance/spring/pin)" and "Joint 3D (distance/spring/pin/hinge)"; inspectors for...
+    - 6.2 3D bodies and colliders, collider fit [Works]. Where: Add Component > Physics 3D rows (and DebrisEmitter), Project Settings > Physics > Physics quality (Classic /...
+    - 6.3 Joints [Works]. Where: Add Component > "Joint 2D (distance/spring/pin)" and "Joint 3D (distance/spring/pin/hinge/slider)"...
     - 6.4 Fixed step with render interpolation, pose history [Works]. Where: Project Settings > Physics: Steps per second, Smooth the motion. The Rigidbody 3D inspector says when a body...
     - 6.5 Queries and debug draw [Works]. Where: View > Scene Overlays > Physics Debug > Show physics, Rays cast from scripts
     - 6.6 Destructibles and projectiles [Works]. Where: Add Component > "Destructible (Chaos)" and "Projectile 3D"

@@ -9,7 +9,7 @@ code paths (the 3.x / 4.x attribute mesh storage, face offsets, node-tree materi
 armatures with vertex-group weights, F-Curves with bezier handles, big endian + 32 bit pointers, gzip)
 agree with this script's reading of the format. They do NOT prove agreement with a real Blender 3.x /
 4.x file: no such file was available when they were written. The real-file evidence for the reader is
-in docs/own_blend_reader.md (Assimp's test directory: Blender 2.41 to 2.93 files).
+in docs/content/model_readers/own_blend_reader.md (Assimp's test directory: Blender 2.41 to 2.93 files).
 
 Deterministic: running it twice gives the same bytes, on any Python 3 (see mmul and gzip_fixed for the two things
 that once made it drift). Run from the repository root:

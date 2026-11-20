@@ -11,7 +11,7 @@
 
 using namespace okay;
 
-// Build mode over the network (docs/multiplayer_audit.md round 4, docs/build_mode.md "Multiplayer"):
+// Build mode over the network (docs/online/multiplayer_audit.md round 4, docs/gameplay/build_mode.md "Multiplayer"):
 // a client's place / remove / move / link / unlink / undo are requests the server checks; what is built
 // reaches every client and late joiners; hostile requests change nothing.
 

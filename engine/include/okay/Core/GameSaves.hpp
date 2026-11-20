@@ -1,5 +1,5 @@
 #pragma once
-// The no-code route to the save framework (docs/save_framework.md).
+// The no-code route to the save framework (docs/engine/save_framework.md).
 //
 //   Saveable (SaveFramework.hpp)  marks an object and lists what of it is saved
 //   SaveConfig                  one per scene: autosave interval and autosave on scene start

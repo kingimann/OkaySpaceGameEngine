@@ -1,6 +1,6 @@
 // The Improved physics quality (Physics3D::quality): stacks stand, resting bodies sleep together, fast bodies stop at thin
 // walls, balls roll to a stop, shapes turn the way their size says, compound bodies and per-collider materials work.
-// Every case here failed (or could not be set up) on the Classic step; the numbers are in docs/physics_plan.md.
+// Every case here failed (or could not be set up) on the Classic step; the numbers are in docs/physics/physics_plan.md.
 #include "test_framework.hpp"
 #include <Okay.hpp>
 #include <chrono>

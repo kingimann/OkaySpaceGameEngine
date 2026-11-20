@@ -12,7 +12,7 @@
 //
 // Slots written here are files named <slot>.okayslot in the save folder
 // (Save::BaseDir()/saves by default), next to SaveGame's <slot>.okaygame files; the
-// two systems never touch each other's files. See docs/save_framework.md.
+// two systems never touch each other's files. See docs/engine/save_framework.md.
 //
 // Not thread safe: use it from the game's main thread.
 

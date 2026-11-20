@@ -15,7 +15,7 @@
 //
 // Pure standard C++ (no engine headers, no <mutex>/<thread>), so it also
 // builds standalone for the hostile-input fuzz tests. What is NOT handled yet
-// is listed in docs/own_fbx_reader.md.
+// is listed in docs/content/model_readers/own_fbx_reader.md.
 // ---------------------------------------------------------------------------
 #include <cstddef>
 #include <cstdint>

@@ -34,4 +34,4 @@ scale, a 128 px picture shown at 24 px is clean not noisy. Old look: the opposit
 
 **Checked.** `test_ui_quality` (no window needed) measures every claim above with numbers; `ui_quality_shot` writes
 headless pictures (`ui_quality_shot out.png 1280 720 good`). Not checked: a real window, Windows, GPU renderers, high-DPI.
-Details and the before/after table: `docs/in_game_ui_quality.md`.
+Details and the before/after table: `docs/ui/in_game_ui_quality.md`.

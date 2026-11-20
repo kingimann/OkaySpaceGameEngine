@@ -1,5 +1,5 @@
 #pragma once
-// Our own AMF (.amf, Additive Manufacturing File Format) reader: XML, optionally zip-compressed. See docs/own_amf_reader.md.
+// Our own AMF (.amf, Additive Manufacturing File Format) reader: XML, optionally zip-compressed. See docs/content/model_readers/own_amf_reader.md.
 //
 // Reads objects with their meshes (vertices, volumes of triangles), materials and colours (one part per resolved
 // colour: triangle colour, else the volume's material or colour, else the object's colour), constellations

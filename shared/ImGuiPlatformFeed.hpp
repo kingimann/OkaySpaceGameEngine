@@ -1,7 +1,7 @@
 #pragma once
 // Our own Dear ImGui platform feed: turns okay::platform events into Dear ImGui input, and does the per-frame work
 // (display size, delta time, mouse cursor, clipboard, IME position) that imgui_impl_sdl2 does today. It replaces
-// that backend when OKAY_PLATFORM_EVENTS=own (docs/platform_layer.md, "ImGui platform feed").
+// that backend when OKAY_PLATFORM_EVENTS=own (docs/platform/platform_layer.md, "ImGui platform feed").
 //
 // Written from Dear ImGui's public header (the io.Add*Event functions, ImGuiKey, ImGuiPlatformIO) and from the
 // okay::platform seam, in our own words. It does not use or follow imgui_impl_sdl2 or any SDL code.

@@ -6,7 +6,7 @@
 // it does not turn any switch on. Backends, in RenderBackend order:
 //
 //   Software   engine/include/okay/Render/SoftwareRenderer.hpp
-//              (2026-11 lighting upgrade, docs/lighting_upgrade.md: stable cascades, slope bias, soft penumbra, distance fade,
+//              (2026-11 lighting upgrade, docs/rendering/lighting_upgrade.md: stable cascades, slope bias, soft penumbra, distance fade,
 //              light masks, rectangle Area lights; software only for now.)
 //              FogFactor for every fog mode (RenderMeshes). Sun cascades via
 //              ShadowDistance / ShadowCascades (RenderShadowMap). No local
@@ -157,7 +157,7 @@ inline const RenderFeatureRow& RenderFeatureRowAt(RenderFeature feature) {
          "OpenGL and Direct3D 11 use Colour grading in Post-processing instead.",
          nullptr, {S::Yes, S::No, S::No, S::No}},
         {"Light masks, Area light panel sizes and soft shadow edges", true,
-         "Direct3D 11 and OpenGL got them in round 2 of docs/lighting_upgrade.md, written without a GPU and never run.",
+         "Direct3D 11 and OpenGL got them in round 2 of docs/rendering/lighting_upgrade.md, written without a GPU and never run.",
          nullptr, {S::Yes, S::Yes, S::Yes, S::No}},
     };
     static_assert(sizeof(kRows) / sizeof(kRows[0]) == static_cast<int>(RenderFeature::Count),

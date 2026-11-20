@@ -2,7 +2,7 @@
 
 Polled keyboard, mouse, gamepad and touch state, named input actions with rebinding, cursor lock, rumble and gameplay input
 blocking. Code is `engine/include/okay/Input/*` (5 headers) and `engine/src/Input/*` (about 700 lines); `player/main.cpp` and
-`editor/main.cpp` feed SDL events in. Doc: `docs/input.md`. Merged: #571 (F-keys, left/right modifiers, input contexts,
+`editor/main.cpp` feed SDL events in. Doc: `docs/engine/input.md`. Merged: #571 (F-keys, left/right modifiers, input contexts,
 dead zones, up to four controllers; in 2.849.0) and #574 (remap model for a Controls screen; in 2.850.0). Nothing is open here; the editor's Play mode still feeds only the old key set and one controller.
 
 ## 8. Input
@@ -18,7 +18,7 @@ dead zones, up to four controllers; in 2.849.0) and #574 (remap model for a Cont
 - **Code:** `Input/Input`, `engine/src/Input/Input.cpp`, `player/main.cpp` (SDL event feed), `editor/main.cpp` (Play-mode feed)
 - **API:** `Input::GetKey`, `Input::GetKeyDown`, `Input::GetKeyUp`, `Input::AxisWASD`, `Input::MousePosition`, `Input::MouseDelta`, `Input::GetMouseButton`, `Input::MouseWheel`, `Input::TypedText`, `Input::FeedKeys`, `Input::FeedMouse`, script `Input.GetKey`, `key("space")`
 - **Editor:** none (Play mode in the Game view feeds keys and mouse)
-- **Docs:** `docs/input.md`
+- **Docs:** `docs/engine/input.md`
 - **Tests:** `transform_input`, `core_audit_input`, `input_actions`, `input_keys_gamepad`
 - **Status:** Works - letters, digits, space, enter, escape, backspace, tab, shift, ctrl, arrows and (since #571) F1-F12, the navigation block and left/right modifiers (Input.hpp read; the player feeds all of them through `PlatformKeys`)
 - **Open:** keys by position for AZERTY exist (`Input::SetKeysByPosition`, off by default, no Settings toggle yet); the editor's Play mode does not include `PlatformKeys`, so function keys, Alt and left/right modifiers do not reach a game running in the editor (per grep: only `player/main.cpp` includes it); `KeyFromName` understands exact names such as "F1" and "Alt" now, an unknown name still falls back to its first letter
@@ -37,7 +37,7 @@ dead zones, up to four controllers; in 2.849.0) and #574 (remap model for a Cont
 - **Code:** `Input/Input`, `Input/PlatformGamepad`, `engine/src/Platform/SdlBackend.cpp`, `engine/src/Platform/OwnLinuxEvdev.cpp`, `engine/src/Input/Input.cpp`, `player/main.cpp`, `editor/main.cpp`
 - **API:** `Input::GamepadAxis`, `Input::GetGamepadButton`, `Input::PadA`, `Input::GamepadTrigger`, `Input::GamepadConnected`, `FeedPad`, `PadSet`, `platform::Gamepad`, script `Input.gamepadConnected`
 - **Editor:** none (controller works in Play mode)
-- **Docs:** `docs/input.md`
+- **Docs:** `docs/engine/input.md`
 - **Tests:** `transform_input`, `input_actions`, `input_keys_gamepad`, `platform_gamepad`
 - **Status:** Works - up to four controllers with per-player settings (Input.hpp read; `player/main.cpp` uses `PadSet`; tests `input_keys_gamepad` and, for the own evdev mapping, `platform`); the editor Play view still feeds one pad
 - **Open:** the editor reads only one controller through `FeedPad`; the controller hot-plug events still come from each app's SDL event loop; no couch co-op example or settings screen for the dead zone and curve; no controller hint icons per brand (text names per family exist now, see 8.2.4; no artwork); DualSense adaptive triggers and HD haptics are not exposed (SDL has no plain call); the family tables, generic layout and Controller Setup were only run with fake devices, never with a real PS5, Xbox or other pad or on Windows
@@ -59,7 +59,7 @@ dead zones, up to four controllers; in 2.849.0) and #574 (remap model for a Cont
 - **Code:** `Input/InputActions`, `engine/src/Input/InputActions.cpp`, `Components/UIKeybindField`, `Input/RemapModel`
 - **API:** `InputActions::Define`, `InputActions::Down`, `InputActions::Vector`, `InputActions::Rebind`, `InputBinding::Parse`, script `Input.GetButtonDown("Jump")`, `Input.GetActionVector("Move")`, `Input.RebindAction`, `action_down`, `rebind`; "UI Keybind Field" component
 - **Editor:** Add Component > UI > UI Keybind Field (Input Action, Gamepad and Direction Key fields)
-- **Docs:** `docs/input.md`
+- **Docs:** `docs/engine/input.md`
 - **Tests:** `input_actions`, `ui_input_guard`, `input_keys_gamepad`, `focus_remap`
 - **Status:** Works - InputActions.hpp and the defaults and rebind code in InputActions.cpp read; covered by `input_actions`; contexts (#571, `input_keys_gamepad`) and the remap model (#574, `focus_remap`) are on main
 - **Open:** the pause menu pushes the Pause context in Block mode while it is open (other menus still use only `Input::SetUICaptured`, 8.5); no Controls screen template yet (`RemapModel` is the data side, 32.4); action names are case-insensitive strings, with no editor to author actions; chords (`chord:ctrl+z`) and wheel bindings exist since the input upgrade (8.7)
@@ -77,10 +77,10 @@ dead zones, up to four controllers; in 2.849.0) and #574 (remap model for a Cont
 - **Code:** `Input/Cursor`, `Input/Input`, `Components/UITouchScroll`, `player/main.cpp` (cursor and finger handling), `editor/main.cpp`
 - **API:** `Cursor::Capture`, `Cursor::SetLock`, `Cursor::SetVisible`, `Cursor::IsLocked`, `Input::TouchCount`, `Input::GetTouch`, `Input::PointerIsTouch`
 - **Editor:** none
-- **Docs:** `docs/input.md`, `docs/web_mobile.md`
+- **Docs:** `docs/engine/input.md`, `docs/platform/web_mobile.md`
 - **Tests:** `ui_nav_touch`, `uicapture_look`, `ui_touch_scroll`
 - **Status:** Works for the cursor and single or multi touch lists (headers and the player's finger and cursor code read; touch list and drag-scroll covered by `ui_nav_touch`)
-- **Open:** none of the gesture or on-screen control gaps. Tap, double tap, long press, swipe, pinch and two-finger rotate are recognised (`Input/GestureRecognizer`, `Gestures`). A virtual joystick, D-pad and touch button drive the action map and can hide until a touch screen is present (`Components/TouchControls`). `docs/input.md` and `docs/web_mobile.md` describe them.
+- **Open:** none of the gesture or on-screen control gaps. Tap, double tap, long press, swipe, pinch and two-finger rotate are recognised (`Input/GestureRecognizer`, `Gestures`). A virtual joystick, D-pad and touch button drive the action map and can hide until a touch screen is present (`Components/TouchControls`). `docs/engine/input.md` and `docs/platform/web_mobile.md` describe them.
 - **Related:** 8.5, 12.9, 18.2, 37.1
 - **Words:** cursor, lock cursor, hide cursor, mouse capture, relative mouse, touch, touchscreen, finger, tap, drag, fling, mobile, phone, multi-touch, gestures, pinch
 - **Seen as:** the cursor stays visible during mouse-look or escapes the window; a tap does nothing on a phone; scrolling a list with a finger also presses buttons; the cursor does not come back after Esc
@@ -112,7 +112,7 @@ dead zones, up to four controllers; in 2.849.0) and #574 (remap model for a Cont
 - **Code:** `Input/Input`, `Input/SdlGamepad`
 - **API:** `Input::Rumble`, `Input::TakeRumble`, script `Input.Rumble(low, high, seconds)`, `rumble(low, high, seconds)`
 - **Editor:** none
-- **Docs:** `docs/input.md`
+- **Docs:** `docs/engine/input.md`
 - **Tests:** `input_deep`, `input_playground`
 - **Status:** Works in headless tests - request, patterns (`InputHaptics`) and the vibration setting (scales every `Input::Rumble`, 0 = off) are covered; real controller playback unverified
 - **Open:** no rumble on touch devices; `Input::Rumble` takes a player index since #571 (the editor feeds only one pad); no vibration slider in a Settings screen yet (the setting is `haptic_strength`, kept in Prefs)
@@ -137,7 +137,7 @@ dead zones, up to four controllers; in 2.849.0) and #574 (remap model for a Cont
 - **Code:** `Input/Input`, `Input/InputActions`, `Input/InputRecorder`, `Input/InputDebug`, `Input/Haptics`, `Input/PlatformKeys`, `engine/src/Input/*.cpp`, `editor/InputDebugger.hpp`, `player/main.cpp`, `editor/main.cpp`, `examples/input/input_playground.okayscene`
 - **API:** `Input::FeedKeyTap`, `Input::SetTextFocused`, `InputActions::SetResponse`, `InputActions::Buffered`, `InputActions::Consume`, `InputActions::SetPerPlayer`, `InputRecorder::StartRecording`, `InputDebug::Enable`, `InputHaptics::Play`, script `action_buffered`, `action_consume`, `action_double_tap`, `action_hold`, `set_response`, `action_label`, `input_device`, `input_record`
 - **Editor:** Window > Input (live keys, mouse, controllers, actions, last events, record and replay, response curves); `examples/input/input_playground.okayscene`
-- **Docs:** `docs/input.md`, `docs/input_audit.md`, `docs/try_it.md` row 7x
+- **Docs:** `docs/engine/input.md`, `docs/engine/input_audit.md`, `docs/try_it.md` row 7x
 - **Tests:** `input_deep`, `input_playground`, `input_bench`, `input_actions`, `input_keys_gamepad`
 - **Status:** Works headless - 207 checks in `input_deep`, the shipped scene run by `input_playground`; not run in a real window, with a real controller or on a real keyboard layout
 - **Open:** AZERTY physical positions (ZQSD) are not an option; the vibration strength is not on a Settings screen; no gyro; recording does not yet tie frames to the scene file and the game's random seed (46.1); the Input panel was syntax-checked but not run; the old "pressed between polls" loss is fixed only where the host forwards key events (player and editor Play)

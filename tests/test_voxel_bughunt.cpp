@@ -7,7 +7,7 @@
 using namespace okay;
 using namespace voxeltest;
 
-// A hunt for bugs in the voxel terrain and everything the real-life digging added (docs/terrain_audit.md, "Bug hunt").
+// A hunt for bugs in the voxel terrain and everything the real-life digging added (docs/rendering/terrain_audit.md, "Bug hunt").
 // Each block is a way to break it that a player, a scene file or a script can reach.
 namespace {
 const float kNaN = std::numeric_limits<float>::quiet_NaN(), kInf = std::numeric_limits<float>::infinity();

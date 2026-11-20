@@ -1,7 +1,7 @@
 // Our own MD2 (Quake II model, binary) reader: the first frame of the vertex animation as one static mesh, with the
 // texture coordinates and the first skin name. Written from the public description of the format (id Software's
 // Quake II source, qfiles.h, and the many format notes built on it). Bounds-checked, capped, no recursion.
-// See okay/Render/ModelData.hpp and docs/own_md2_reader.md.
+// See okay/Render/ModelData.hpp and docs/content/model_readers/own_md2_reader.md.
 #include "BinReader.hpp"
 #include "ReaderCommon.hpp"
 #include "TextReaderUtil.hpp"

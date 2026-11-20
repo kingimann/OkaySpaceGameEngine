@@ -3,7 +3,7 @@
 // delete_account_test.ts, `node --experimental-strip-types`). index.ts wires it to
 // real fetch calls; the tests wire it to a fake. Erasable TypeScript only.
 //
-// Contract (docs/account_data.md):
+// Contract (docs/online/account_data.md):
 //   POST /functions/v1/delete-account
 //   Authorization: Bearer <the caller's Supabase access token>
 //   body: {"confirm_username": "<their username>", "password": "<their password>"}
@@ -37,7 +37,7 @@ export interface Step { id: string; kind: Kind; table: string; filter: (uid: str
 
 const eq = (col: string) => (uid: string) => `${col}=eq.${uid}`;
 
-// Every table in docs/sql/*.sql and docs/supabase-backend.md that holds a user's
+// Every table in docs/sql/*.sql and docs/online/supabase-backend.md that holds a user's
 // data. Order: anonymise records that must outlive the account, then content
 // that depends on other content (children before parents), then the profile.
 // Tables a project never created are reported "skipped", not failed.

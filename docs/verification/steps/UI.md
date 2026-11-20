@@ -58,7 +58,7 @@
   3. Try Ctrl+F (**Find / Replace**), Ctrl+/ (**Toggle Comment**) and Ctrl+Alt+L (**Format Document**).
 - **See:** syntax colours, find and replace work, and the file is saved.
 - **Partial:** this is the Dear ImGui text editor; our own OkayUI editor widget is built but not used (see V-OC-010).
-- **Link:** [../../scripting.md](../../scripting.md)
+- **Link:** [../../scripting.md](../../scripting/scripting.md)
 
 ### V-UI-007 Run a script in Play
 - **Map:** 13
@@ -90,7 +90,7 @@
   2. Press Play and follow the text on the screen.
 - **See:** each demo explains and runs one group of nodes.
 - **Partial:** the other **Node Playground (flow and variables)** list needs the `node_playground` examples to be found next to the editor.
-- **Link:** [../../visual_scripting.md](../../visual_scripting.md)
+- **Link:** [../../visual_scripting.md](../../scripting/visual_scripting.md)
 
 ### V-UI-010 Localization window
 - **Map:** 31

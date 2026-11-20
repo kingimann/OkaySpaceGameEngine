@@ -6,7 +6,7 @@
 // the mesh matrix), materials (diffuse / specular / bump texture, colours,
 // shininess, self illumination), the keyframe section (node hierarchy, pivots,
 // position / rotation / scale tracks) and the master scale. Everything it did not
-// read is listed in ImportedModel::notes. See docs/own_3ds_reader.md.
+// read is listed in ImportedModel::notes. See docs/content/model_readers/own_3ds_reader.md.
 #include "FileOpen.hpp"
 #include "okay/Render/ModelData.hpp"
 #include <algorithm>

@@ -11,7 +11,7 @@ using namespace okay;
 using namespace okay::modeling;
 using namespace okay::modeling::guided;
 
-// Guided modeling, detail levels (Low to Ultra) for every template (docs/guided_modeling_design.md).
+// Guided modeling, detail levels (Low to Ultra) for every template (docs/editor/guided_modeling_design.md).
 namespace {
 
 double SignedVolume(const PolyMesh& m) {

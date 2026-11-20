@@ -1,4 +1,4 @@
-// The Xbox UWP build reads every model through OUR OWN readers only (docs/xbox_uwp_thirdparty.md).
+// The Xbox UWP build reads every model through OUR OWN readers only (docs/platform/xbox_uwp_thirdparty.md).
 // This test compiles ModelImport.cpp and FbxScene.cpp the way okay_engine_uwp does (OKAY_XBOX_UWP, every OKAY_OWN_<FMT>_DEFAULT that is ON in the root
 // CMakeLists.txt, no ufbx.h, no Assimp) and loads sample files from tests/data/models and tests/assets through them. It runs on Linux. UNVERIFIED on Windows.
 // Written by us; the fixtures are this repository's own (scripts/gen_*_fixtures.py).

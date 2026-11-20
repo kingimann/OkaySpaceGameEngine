@@ -4,7 +4,7 @@ row: | 7g | Install, uninstall and Versions: see today's behaviour (audit, nothi
 ---
 ## 7g. Install, uninstall and Versions: look at today's behaviour yourself (audit)
 
-Why: the install audit (`docs/install_audit.md`) found things it could only read in code or run on a Linux test machine. Nothing
+Why: the install audit (`docs/release/install_audit.md`) found things it could only read in code or run on a Linux test machine. Nothing
 in the program changed in that branch. These steps let you see on Windows whether it is right. They use a **copy** of a project, never
 a real one, because two of the checks touch projects.
 
@@ -24,4 +24,4 @@ a real one, because two of the checks touch projects.
 
 **Status.** Windows steps unverified. What was run: the installer under wine on Linux (install, update, uninstall, running programs,
 full disk, odd folders) and two small test programs against the real Versions and project-gate code. Details, results and the plan to
-fix each item are in `docs/install_audit.md`; the comparison with other launchers is `docs/install_comparison.md`.
+fix each item are in `docs/release/install_audit.md`; the comparison with other launchers is `docs/release/install_comparison.md`.

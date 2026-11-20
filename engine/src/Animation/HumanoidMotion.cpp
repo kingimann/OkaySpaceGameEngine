@@ -81,7 +81,7 @@ struct Gait {
 // the knee by several degrees: a walk keeps the stance leg nearly straight, a run
 // gives at the knee (the leg's spring), more the faster it goes.
 //
-// The stride before the natural walk and run (docs/walk_vs_run.md). Its walk is tuned for a person hurrying
+// The stride before the natural walk and run (docs/gameplay/walk_vs_run.md). Its walk is tuned for a person hurrying
 // at up to about 1.8 m/s and turns frantic above that (the cadence follows the speed up to 350 steps a
 // minute at 5.5 m/s); its run steps like a sprinter at every speed (227 steps a minute at 5.5 m/s). Kept
 // verbatim behind OKAY_OLD_GAIT=1.
@@ -125,7 +125,7 @@ Gait GaitForOld(int state, float v) {
     return g;
 }
 
-// The natural walk and run (docs/walk_vs_run.md): the stride laid out the way a person's is, from general facts
+// The natural walk and run (docs/gameplay/walk_vs_run.md): the stride laid out the way a person's is, from general facts
 // of human gait. The numbers are this rig's own (leg 0.80 from hip to ankle), found by measuring its feet:
 //  * Walk: cadence 80 steps a minute at a stroll, 90 at 1 m/s, 105 at 1.4, about 130 at 2 m/s (the top of what
 //    a person walks; past roughly 2.1 m/s the walk turns into a jog). One foot is always on the ground, the
@@ -335,7 +335,7 @@ bool OldGait() {
         const char* e = std::getenv("OKAY_OLD_GAIT");
         const bool on = e && e[0] && !(e[0] == '0' && e[1] == '\0');
         // One line when it is on, so a person who left it set by accident can tell (stderr, like the stack line).
-        if (on) std::fprintf(stderr, "[okay] gait: OLD walk and run (OKAY_OLD_GAIT is set); unset it for the natural gait (docs/walk_vs_run.md)\n");
+        if (on) std::fprintf(stderr, "[okay] gait: OLD walk and run (OKAY_OLD_GAIT is set); unset it for the natural gait (docs/gameplay/walk_vs_run.md)\n");
         return on;
     }();
     return fromEnv;

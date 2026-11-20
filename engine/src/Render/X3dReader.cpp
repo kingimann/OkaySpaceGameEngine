@@ -1,5 +1,5 @@
 // Our own X3D reader (XML encoding). Written from the public X3D abstract and XML encoding specifications
-// (ISO/IEC 19775 / 19776), no code from any other importer. See docs/own_x3d_reader.md.
+// (ISO/IEC 19775 / 19776), no code from any other importer. See docs/content/model_readers/own_x3d_reader.md.
 #include "FileOpen.hpp"
 #include "PolygonTriangulate.hpp"
 #include "ReaderCommon.hpp"

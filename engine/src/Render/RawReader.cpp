@@ -4,7 +4,7 @@
 // and non-numeric identifiers that separate groups of triangles). No importer source of any other project was read. The
 // binary "raw" files that some tools write are not read (no description of one was found). Triangles with equal corner
 // positions are welded, smooth normals are made, one part per group. Capped, no recursion.
-// See docs/own_raw_reader.md.
+// See docs/content/model_readers/own_raw_reader.md.
 #include "ReaderCommon.hpp"
 #include "TextReaderUtil.hpp"
 #include "okay/Render/ModelData.hpp"

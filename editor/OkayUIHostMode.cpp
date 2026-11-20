@@ -1,6 +1,6 @@
 // Window mode (shared/OkayUIHostMode.hpp): OkayUI owns the window and the frame. Step 1: the frame loop (shared/OkayUIFrameLoop.hpp). Step 2: this entry, run
 // from main() before any Dear ImGui or SDL setup of the editor when the three switches are set. What it shows today is the Audio Mixer and a status panel;
-// everything else of the editor still needs its port (the numbered list in docs/own_ui_toolkit.md 6.23). Own code, written for this purpose.
+// everything else of the editor still needs its port (the numbered list in docs/ui/own_ui_toolkit.md 6.23). Own code, written for this purpose.
 #include "OkayUIHostMode.hpp"
 
 #ifdef OKAY_HAVE_OKAYUI

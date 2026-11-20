@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
-# Sign, verify and check the release index (versions.json) for the updater. Docs: docs/security.md "Updater signing",
-# docs/updater.md "Signed releases". A thin wrapper over scripts/sign_index.py (ed25519, RFC 8032, pure Python 3: no
+# Sign, verify and check the release index (versions.json) for the updater. Docs: docs/online/security.md "Updater signing",
+# docs/release/updater.md "Signed releases". A thin wrapper over scripts/sign_index.py (ed25519, RFC 8032, pure Python 3: no
 # package to install); the verifier in the launcher and the editor is shared/UpdateSignature.hpp.
 #
 #   scripts/sign-release.sh sign   <versions.json> [out.sig]     write the signature (default <file>.sig)

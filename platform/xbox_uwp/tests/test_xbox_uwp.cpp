@@ -295,7 +295,7 @@ static void ExportTests() {
     std::ifstream rd((tmp / "README_XBOX.txt").string()); std::stringstream rs; rs << rd.rdbuf();
     CHECK(rs.str().find("UNVERIFIED") != std::string::npos);
     CHECK(rs.str().find("does not load Data/") != std::string::npos);
-    CHECK(rs.str().find("own crypto, not independently reviewed; for experiments only; do not ship") != std::string::npos);   // the crypto statement (docs/xbox_uwp_thirdparty.md)
+    CHECK(rs.str().find("own crypto, not independently reviewed; for experiments only; do not ship") != std::string::npos);   // the crypto statement (docs/platform/xbox_uwp_thirdparty.md)
     CHECK(rs.str().find("OKAY_XBOX_OWN_CRYPTO") != std::string::npos && rs.str().find("libsodium") != std::string::npos && rs.str().find("no TLS of our own") != std::string::npos);
     CHECK(rs.str().find("Engine mode") != std::string::npos && rs.str().find("software-painted") != std::string::npos);   // says honestly what runs
     CHECK(rs.str().find("one administrator prompt") != std::string::npos);

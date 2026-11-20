@@ -9,7 +9,7 @@ Example (what a change is worth: the old path against the new path, same program
     python3 scripts/bench_ab.py "shadow depth" 5 "$B --scene cubes2000 --frames 8 --warmup 3 --no-span" \
                                                  "$B --scene cubes2000 --frames 8 --warmup 3"
 
-Why it exists (docs/perf_log.md): on a shared machine one run is not a measurement. The two commands are run in turns
+Why it exists (docs/engine/perf_log.md): on a shared machine one run is not a measurement. The two commands are run in turns
 (A, B, A, B, ...), so a slow minute hits both. For every phase row of the bench table the script takes the median
 column of each run, then the median of those over the runs, and prints A, B and A/B (above 1 means B is faster). The
 two hash lines at the end must be equal when B is only meant to be faster.

@@ -1,5 +1,5 @@
 // Physics upgrade, step 1 (solver quality): steady towers at every step rate, fast bodies that cannot jump over thin moving
-// plates, momentum and energy kept, nothing turns into NaN. Numbers before and after are in docs/physics_upgrade.md.
+// plates, momentum and energy kept, nothing turns into NaN. Numbers before and after are in docs/physics/physics_upgrade.md.
 #include "test_framework.hpp"
 #include <Okay.hpp>
 #include "okay/Components/Joint3D.hpp"

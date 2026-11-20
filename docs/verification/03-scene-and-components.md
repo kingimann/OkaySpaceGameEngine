@@ -32,7 +32,7 @@ Areas: 1, 20, 21, 36, 44, 45. Rows ids start `V-SC-`. `V-SC-S<area>` rows are sm
     3. Right-click it again and choose **Create Variant**, then **Validate Prefab**.
   - **You should see (expected, not yet seen on Windows):** a second copy appears in the scene; a variant file is created; Validate reports no problems or lists them.
   - **Known partial:** map area 21 is marked planned in parts: expect gaps (nested prefab overrides, for example).
-  - **More:** [prefabs.md](../../prefabs.md)
+  - **More:** [prefabs.md](../../engine/prefabs.md)
 
 - [ ] **V-SC-004** Merge another scene into this one
   - **Map:** 1, 20. **Where:** editor, File menu and Project panel
@@ -57,8 +57,8 @@ Areas: 1, 20, 21, 36, 44, 45. Rows ids start `V-SC-`. `V-SC-S<area>` rows are sm
     2. Make a player (**GameObject > Player > Player Controller (first / third person)**) and a floor, and put the volume where the player will walk.
     3. Press Play and walk into the volume.
   - **You should see (expected, not yet seen on Windows):** a Kill volume sends the body back to its last checkpoint; a Checkpoint volume sets the respawn point. Volumes are drawn as coloured translucent shapes in the Scene view (toggle with **View > Scene Overlays > Volumes**).
-  - **Known partial:** see docs/volumes.md for kinds that need other components (Ambience needs an Audio Source with a clip and Loop).
-  - **More:** [volumes.md](../../volumes.md)
+  - **Known partial:** see docs/engine/volumes.md for kinds that need other components (Ambience needs an Audio Source with a clip and Loop).
+  - **More:** [volumes.md](../../engine/volumes.md)
 
 - [ ] **V-SC-007** Place nature, props and structures
   - **Map:** 44, 2. **Where:** editor, GameObject menu

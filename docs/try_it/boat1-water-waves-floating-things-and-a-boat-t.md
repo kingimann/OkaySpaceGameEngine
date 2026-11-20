@@ -5,7 +5,7 @@ row: | boat1 | Water waves, floating things and a boat to drive | `examples\boat
 ## boat1. Water waves, floating things and a boat to drive
 
 **What it is.** The sea now has real waves that things can float on, crates bob and settle at the right depth, heavy things
-sink, and there is a boat you drive with the keyboard. Details and the list of what is not done: `docs/water_boat.md`.
+sink, and there is a boat you drive with the keyboard. Details and the list of what is not done: `docs/rendering/water_boat.md`.
 
 **Steps (the example lake).**
 1. Open the editor (`Tools\OkayEngine.exe`). **File > Open...** and pick `<install folder>\examples\boat\boat_lake.okayscene`.

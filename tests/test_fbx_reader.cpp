@@ -455,7 +455,7 @@ static void CompareWithUfbx() {
     std::vector<std::string> paths;
     for (auto& e : fs::directory_iterator(fs::path(OKAY_SOURCE_DIR) / "tests" / "assets" / "fbx")) if (e.path().extension() == ".fbx") paths.push_back(e.path().string());
     std::sort(paths.begin(), paths.end());
-    // Real exporter files, when OKAY_MODEL_CORPUS names a directory of them (docs/model_corpus.md): the same checks.
+    // Real exporter files, when OKAY_MODEL_CORPUS names a directory of them (docs/content/model_corpus.md): the same checks.
     // transparentTest.fbx is a damaged file (NUL bytes replaced by spaces); neither reader can open it.
     std::vector<std::string> real;
     if (const char* root = std::getenv("OKAY_MODEL_CORPUS"); root && *root) {
@@ -530,7 +530,7 @@ static void CompareWithUfbx() {
                 CHECK(x.tex == y.tex && x.nrm == y.nrm);
             }
         }
-        if (!clipsMayDiffer) CompareClips(su, ru, so, ro, what, isReal ? 1.5e-2 : 2e-3);   // real files: custom tangent weights are ignored (docs/own_fbx_reader.md)
+        if (!clipsMayDiffer) CompareClips(su, ru, so, ro, what, isReal ? 1.5e-2 : 2e-3);   // real files: custom tangent weights are ignored (docs/content/model_readers/own_fbx_reader.md)
 
         // skinned vertex data: weights and inverse binds
         for (const auto& up : su.Objects()) {

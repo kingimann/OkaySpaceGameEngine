@@ -1,6 +1,6 @@
 name: Fast release
 
-# ONE dispatch makes a release, with no version-bump pull request and no second hour of CI (docs/fast_release.md).
+# ONE dispatch makes a release, with no version-bump pull request and no second hour of CI (docs/release/fast_release.md).
 #
 #   gh workflow run fast-release.yml --ref main -f dry_run=true     # first: prints what it would do, builds nothing
 #   gh workflow run fast-release.yml --ref main                      # the real thing (needs the repository variable FAST_RELEASE_ENABLED=1)
@@ -220,7 +220,7 @@ jobs:
             echo "1. release.yml on this commit with the version stamped to $VER (build, sign, zip, installer, GitHub release, Supabase publish, Linux server, make latest)."
             echo "2. an after-check of the release, the tag, VERSION.txt, versions.json and its three SHA-256."
             echo
-            echo "### ROADMAP.md row (for the catch-up PR, see docs/fast_release.md)"
+            echo "### ROADMAP.md row (for the catch-up PR, see docs/release/fast_release.md)"
             echo '```'; cat release-notes/ROADMAP_ROW.txt; echo '```'
             echo "### Update card (NOTES.txt)"
             echo '```'; cat release-notes/NOTES.txt; echo '```'
@@ -270,7 +270,7 @@ jobs:
       - name: The release workflow must have finished green
         run: |
           if [ "$RELEASE_RESULT" != "success" ]; then
-            msg="The release job ended as '$RELEASE_RESULT' for v$VER. The release is hidden from launchers unless the last job (Make the release visible) ran: look at that job, then at https://github.com/$REPO/releases (a hidden release shows there as 'Pre-release'/not latest). Fix the cause on main and run a NEW fast release: never re-run a version that exists (rule 12). docs/fast_release.md, \"When it goes wrong\"."
+            msg="The release job ended as '$RELEASE_RESULT' for v$VER. The release is hidden from launchers unless the last job (Make the release visible) ran: look at that job, then at https://github.com/$REPO/releases (a hidden release shows there as 'Pre-release'/not latest). Fix the cause on main and run a NEW fast release: never re-run a version that exists (rule 12). docs/release/fast_release.md, \"When it goes wrong\"."
             echo "::error title=Release did not finish::$msg"; echo "**$msg**" >> "$GITHUB_STEP_SUMMARY"; exit 1
           fi
 
@@ -305,10 +305,10 @@ jobs:
           { echo "## Release check for v$VER"; echo '```'; cat verify.txt verify-err.txt; echo '```'; } >> "$GITHUB_STEP_SUMMARY"
           cat verify.txt verify-err.txt
           if [ "$ok" != 1 ]; then
-            fail "At least one check failed for v$VER (see the summary). Do NOT re-run. To take it back from launchers: gh release edit v$VER --prerelease and set the previous release latest (docs/fast_release.md, \"Roll back or hide a release\")."
+            fail "At least one check failed for v$VER (see the summary). Do NOT re-run. To take it back from launchers: gh release edit v$VER --prerelease and set the previous release latest (docs/release/fast_release.md, \"Roll back or hide a release\")."
           fi
           echo "v$VER passed every after-check." >> "$GITHUB_STEP_SUMMARY"
 
       - name: Catch-up reminder
         run: |
-          echo "Optional, whenever convenient: a docs-only catch-up PR puts v$VER's ROADMAP row, changelog section and CMakeLists.txt version into the repository (artifact release-notes of this run; python3 scripts/fast_release.py sync-docs --version $VER --notes-dir <the artifact>). docs/fast_release.md." >> "$GITHUB_STEP_SUMMARY"
+          echo "Optional, whenever convenient: a docs-only catch-up PR puts v$VER's ROADMAP row, changelog section and CMakeLists.txt version into the repository (artifact release-notes of this run; python3 scripts/fast_release.py sync-docs --version $VER --notes-dir <the artifact>). docs/release/fast_release.md." >> "$GITHUB_STEP_SUMMARY"

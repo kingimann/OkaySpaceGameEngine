@@ -22,7 +22,7 @@ Areas: 16, 39. Rows ids start `V-NW-`. `V-NW-S<area>` rows are smoke tests built
     2. Press **Connect to server...** and type the address, or use the **LAN** tab.
   - **You should see (expected, not yet seen on Windows):** the game starts and joins; the **LAN** tab lists games on your network by itself.
   - **Known partial:** the Internet list needs the live Supabase server (map 17.15).
-  - **More:** [launcher-multiplayer.md](../../launcher-multiplayer.md)
+  - **More:** [launcher-multiplayer.md](../../online/launcher-multiplayer.md)
 
 - [ ] **V-NW-003** Quick Play and invites
   - **Map:** 17.15, 16. **Where:** `OkaySpace.exe`, signed in
@@ -31,7 +31,7 @@ Areas: 16, 39. Rows ids start `V-NW-`. `V-NW-S<area>` rows are smoke tests built
     2. Press **Quick Play** to join the best open server.
   - **You should see (expected, not yet seen on Windows):** an invite card with a Join game button goes to a friend; Quick Play skips full and password servers.
   - **Known partial:** needs two accounts that are friends; it is only a smoke test without them.
-  - **More:** [launcher-multiplayer.md](../../launcher-multiplayer.md)
+  - **More:** [launcher-multiplayer.md](../../online/launcher-multiplayer.md)
 
 - [ ] **V-NW-004** Anti-cheat in one click
   - **Map:** 39. **Where:** editor, multiplayer scene
@@ -42,7 +42,7 @@ Areas: 16, 39. Rows ids start `V-NW-`. `V-NW-S<area>` rows are smoke tests built
     4. Set **Anti-cheat** to **Report**.
   - **You should see (expected, not yet seen on Windows):** an anti-cheat config is added with the preset numbers; the checklist shows what is on and what is `[missing]`, with fix buttons.
   - **Known partial:** a detection engine starts in observe mode and never kicks; the libsodium-dependent parts run in a separate CI job; not independently reviewed (CLAUDE.md rule 18).
-  - **More:** [anticheat_quickstart.md](../../anticheat_quickstart.md)
+  - **More:** [anticheat_quickstart.md](../../online/anticheat_quickstart.md)
 
 - [ ] **V-NW-005** Dedicated server export
   - **Map:** 16, 18. **Where:** editor, Build Settings
@@ -51,8 +51,8 @@ Areas: 16, 39. Rows ids start `V-NW-`. `V-NW-S<area>` rows are smoke tests built
     2. Set the platform to Server, fill the **Server** page and press **Export**.
     3. Look in the output folder for `server.cfg` and `start-server.bat`.
   - **You should see (expected, not yet seen on Windows):** an output folder with the server runtime, `server.cfg` and start scripts.
-  - **Known partial:** the Windows server was not run by us; Linux server export fetches a runtime from GitHub with only a size check (docs/updater.md known gaps).
-  - **More:** [dedicated-server.md](../../dedicated-server.md)
+  - **Known partial:** the Windows server was not run by us; Linux server export fetches a runtime from GitHub with only a size check (docs/release/updater.md known gaps).
+  - **More:** [dedicated-server.md](../../online/dedicated-server.md)
 
 - [ ] **V-NW-006** Network simulation panel (steps unverified)
   - **Map:** 16. **Where:** editor
@@ -84,7 +84,7 @@ Areas: 16, 39. Rows ids start `V-NW-`. `V-NW-S<area>` rows are smoke tests built
   - **Ask me like:** "make this event reliable and ordered but let position updates drop", "why does the join say encryption required?"
 
 - [ ] **V-NW-S39** Area 39: Security & anti-cheat (smoke test, steps unverified)
-  - **Map:** [39](../feature_map/39-security-anticheat.md), 12 sub-areas, 12 built.
+  - **Map:** [39](../feature_map/39-security-anticheat.md), 13 sub-areas, 13 built.
   - **Steps:** (steps unverified: taken from the map, not clicked) open the program or window named for each sub-area below and try its main action.
     - 39.1 Server authority checks and gameplay validation [Works]. Where: Inspector: Anti-Cheat Config (preset picker, checklist) and Net Validator; Add Component > Anti-Cheat (one...
     - 39.2 Transport security: encryption, replay protection, sealed... [Works]. Where: Inspector: Anti-Cheat Config (Require encryption); the Network Manager inspector has no encryption field
@@ -98,6 +98,7 @@ Areas: 16, 39. Rows ids start `V-NW-`. `V-NW-S<area>` rows are smoke tests built
     - 39.10 Data packs and obfuscation [Basic]. Where: File > Build Settings (obfuscate data option)
     - 39.11 Account, backend and updater hardening [Partial].
     - 39.12 Detection engine: behavioural detectors, risk score... [Works]. Where: Anti-Cheat Config > Detection engine (switch, Observe mode, grouped numbers with tooltips, a text box of the...
+    - 39.13 Cheat simulator and hardening audit [Partial].
   - **You should see:** each listed thing opens and does what its name says (expected, not yet seen on Windows).
-  - **Known gaps:** see [docs/feature_map/39-security-anticheat.md](../feature_map/39-security-anticheat.md) (area 39, sections 39.1, 39.2, 39.3, 39.4, 39.5, 39.6, 39.7, 39.8, 39.9, 39.10, 39.11, 39.12): the Open line of each section. Not copied here so it cannot go stale.
+  - **Known gaps:** see [docs/feature_map/39-security-anticheat.md](../feature_map/39-security-anticheat.md) (area 39, sections 39.1, 39.2, 39.3, 39.4, 39.5, 39.6, 39.7, 39.8, 39.9, 39.10, 39.11, 39.12, 39.13): the Open line of each section. Not copied here so it cannot go stale.
   - **Ask me like:** "which messages does the anti-cheat refuse?", "allow clients to spawn only crates"

@@ -1,7 +1,7 @@
 #pragma once
 // ---------------------------------------------------------------------------
 // SessionTicket — a short-lived, signed "this account may join this server"
-// pass (anti-cheat P2). A ticket service (see docs/anticheat.md: a Supabase
+// pass (anti-cheat P2). A ticket service (see docs/online/anticheat.md: a Supabase
 // Edge function, deployed by the game's owner) checks the player's login and
 // signs one with an ed25519 key only it holds; the game server checks the
 // signature with the matching PUBLIC key, so it needs no secret and no network

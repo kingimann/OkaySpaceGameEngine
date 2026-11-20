@@ -7,7 +7,7 @@ row: | 7zo | Guided: no more lag when you change a slider, style or Detail; a li
 
 **What it is.** The Guided page used to freeze for a moment (a second or more on a car or a person at Ultra) when you moved a slider, picked a design or
 changed Detail, and it cost a little on every frame just by being open. It is fixed: sliders show a cheap live preview while you drag, the real model is built
-once when you let go (one undo step), and a time line under the Undo buttons tells you what the last change cost. Numbers and causes: `docs/guided_perf.md`.
+once when you let go (one undo step), and a time line under the Undo buttons tells you what the last change cost. Numbers and causes: `docs/editor/guided_perf.md`.
 
 **Status.** The engine side is tested on Linux (`ctest -R guided_perf`, about 1,240 checks, plus the existing guided tests). The panel changes
 (`editor/GuidedPanel.cpp`) compile but nobody has opened them in a real window yet (unverified). Nothing here ran on Windows.

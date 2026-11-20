@@ -3,7 +3,7 @@
 // and dispatch calls (what was drawn, with which material, mesh and state), lets a
 // window filter it and step through it, and exports it as JSON or text. The
 // renderers are not modified: they would report through the small IFrameDebugHook
-// interface below, documented in docs/debug_tools.md.
+// interface below, documented in docs/engine/debug_tools.md.
 //
 //   Editor / UI side                           Renderer side (additive, a few lines)
 //   ----------------                           -------------------------------------

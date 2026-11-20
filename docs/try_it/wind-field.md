@@ -6,7 +6,7 @@ row: | wind-field | Wind: trees, grass, flags, leaves, a pushed box and the soun
 
 **What it is.** One wind that blows trees, grass, a flag, a rope, leaves (particles) and a light box, with a wind sound that gets
 louder in strong wind. You set the wind in one place: a **Wind** object (or the Wind Zone component). A scene with no wind object
-looks and plays exactly as before. Details: `docs/wind.md`.
+looks and plays exactly as before. Details: `docs/gameplay/wind.md`.
 
 **Steps (the example).**
 1. Start `Tools\OkayEngine.exe` and open a project.

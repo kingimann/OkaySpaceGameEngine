@@ -42,10 +42,10 @@ inline void Flash(SDL_Window* w, okay::platform::FlashMode m) { if (auto s = oka
 #include "OwnStack.hpp"   // OKAY_OWN_STACK=1 dogfood switch + the one-line startup stack report
 #include "OkayTheme.hpp"  // shared Slate palette (launcher + editor)
 #include "LauncherDemo.hpp"   // okay::IsLauncherDemoMode(): the one list of demo / screenshot env variables
-#include "StartupUpdate.hpp"  // the start-up "Checking for updates" screen: when it runs, what it says (docs/updater.md)
+#include "StartupUpdate.hpp"  // the start-up "Checking for updates" screen: when it runs, what it says (docs/release/updater.md)
 #include "Splash.hpp"   // branded loading frame so startup isn't a black screen
 #include "CrashReports.hpp"   // editor crash reports (Settings > Crash reports)
-#include "CrashUpload.hpp"    // scrub + send crash reports, and the prefilled GitHub issue address (docs/crash_reports.md)
+#include "CrashUpload.hpp"    // scrub + send crash reports, and the prefilled GitHub issue address (docs/online/crash_reports.md)
 #include "OfficialGame.hpp"   // the official game: manifest, diff and the safe update swap (Play page)
 #include "AntiCheatIntegrity.hpp"   // opt-in anti-cheat: check a game against its Data/manifest.json before it starts
 #include "AntiCheatBackend.hpp"     // anti-cheat reports / bans / appeals (Admin > Anti-cheat, the ban banner)
@@ -88,7 +88,7 @@ inline void Flash(SDL_Window* w, okay::platform::FlashMode m) { if (auto s = oka
 // launcher: it doesn't link the engine) for cover art, avatars, chat images and emoji.
 #include "okay/Core/ImageDecode.hpp"
 
-// The opt-in OkayUI backend (docs/own_ui_toolkit.md, section 5): the setting and, when OkayUI is compiled in, the host.
+// The opt-in OkayUI backend (docs/ui/own_ui_toolkit.md, section 5): the setting and, when OkayUI is compiled in, the host.
 #include "OkayUIBackend.hpp"
 #include "LauncherTips.hpp"
 #ifdef OKAY_HAVE_OKAYUI
@@ -138,8 +138,8 @@ namespace okayuihost { inline bool PopupCoversRect(float, float, float, float) {
 #endif
 #include "AppRestart.hpp"   // detached self-update: wait until this process exits, then relaunch once
 #include "UpdaterCore.hpp"   // updater rules: checksum required, stage then swap, reasons (tests/test_launcher_versions.cpp)
-#include "VersionsManager.hpp"   // the Versions page: installed editors, Latest / LTS, keeping the previous editor (docs/launcher_versions.md)
-#include "TestBuild.hpp"   // test builds: four-number versions, the "Get test builds" setting, the way back (docs/release_channels.md "Test builds")
+#include "VersionsManager.hpp"   // the Versions page: installed editors, Latest / LTS, keeping the previous editor (docs/release/launcher_versions.md)
+#include "TestBuild.hpp"   // test builds: four-number versions, the "Get test builds" setting, the way back (docs/release/release_channels.md "Test builds")
 #include "VersionsNet.hpp"
 #include "VersionsUI.hpp"
 #include "MemberModeration.hpp"   // kick / ban / unban / admin role for servers and group chats
@@ -1074,7 +1074,7 @@ struct UpdateTarget {
     okayversions::Index devIndex;    // when `test`: the checksum list of the test builds (the normal list does not have them)
     std::string title;               // when `test`: "Test build of walk-vs-run (abc1234)"
 };
-// Test builds (docs/release_channels.md "Test builds"): reached only when the person switched "Get test builds" on or asked to go back. With both off
+// Test builds (docs/release/release_channels.md "Test builds"): reached only when the person switched "Get test builds" on or asked to go back. With both off
 // ResolveTarget never calls this, so nothing under dev/ is fetched and the answer is exactly what it always was. The newer of "the newest normal
 // release" and "the newest test build" wins (okay::testbuild::ChooseTarget); a test build is downloaded from <bucket>/dev/v<version>/ and its checksums
 // come from the signed dev/versions.json, with the same rules as any update.
@@ -1517,7 +1517,7 @@ static void StartUpdatePoll() {
 std::string FindExe(std::initializer_list<const char*> names) {
     std::error_code ec;
     // Look next to the launcher and in the "Tools" subfolder (the canonical
-    // organized layout — see docs/packaging.md); "Engine"/"runtime"/"bin" are
+    // organized layout — see docs/release/packaging.md); "Engine"/"runtime"/"bin" are
     // also accepted for older / alternative layouts.
     const char* dirs[] = {"", "Tools", "Engine", "runtime", "bin"};
     for (const char* d : dirs)
@@ -1680,7 +1680,7 @@ static std::string GameTitleFromPath(const std::string& path) {
     return stem.empty() ? std::string("Game") : stem;
 }
 
-// ---- Anti-cheat (opt-in; docs/anticheat.md) -----------------------------------
+// ---- Anti-cheat (opt-in; docs/online/anticheat.md) -----------------------------------
 // Settings > Behavior > Anti-cheat. Off (the default) checks nothing. Otherwise a
 // built game's files are checked against its Data/manifest.json before it
 // starts: report flags a mismatch and starts it anyway, enforce refuses.
@@ -1821,7 +1821,7 @@ void LaunchEditor(const std::string& exe, const std::string& tmpl = "",
     RunCmd(cmd, false);
 }
 
-// Open `scene` with an installed editor of another version, the way the editor expects (docs/project_upgrade.md):
+// Open `scene` with an installed editor of another version, the way the editor expects (docs/editor/project_upgrade.md):
 // --launcher <pid> --open <scene> --keep-version. False when that version's editor is not there.
 bool LaunchEditorVersion(const std::string& version, const std::string& scene) {
     const fs::path exe = okayver::InstalledEditorPath(LauncherDirPath(), version);
@@ -4696,7 +4696,7 @@ static void SyncNewsHistory() {
 }
 
 #ifdef OKAY_HAVE_OKAYUI
-// ---- The OkayUI backend host (docs/own_ui_toolkit.md, section 5) ----
+// ---- The OkayUI backend host (docs/ui/own_ui_toolkit.md, section 5) ----
 // With Settings > Appearance > UI backend on "OkayUI (preview)" (or OKAY_UI_BACKEND=okayui), the pages that have an OkayUI
 // port (What's New) are drawn by OkayUI into a rectangle the ImGui page reserves; everything else stays Dear ImGui. OkayUI
 // shares ImGui's SDL_Renderer and is flushed after ImGui's draw data, so it needs no window or renderer of its own.
@@ -5960,7 +5960,7 @@ static void PumpPrivacy(okay::account::AccountService& account) {
     if (okay::thr::Thread* t = okay::thr::CreateThread(PrivacyWorker, "okay-privacy", job)) okay::thr::DetachThread(t);
     else { g_privBusy = false; g_privDirty = true; delete job; }
 }
-// ---- Sending crash reports (docs/crash_reports.md, shared/CrashUpload.hpp) ----
+// ---- Sending crash reports (docs/online/crash_reports.md, shared/CrashUpload.hpp) ----
 // A new report in okay_crashlog.txt is scrubbed and sent as one row of the Supabase table crash_reports by a worker thread. The rules (the
 // Settings switch and OKAY_CRASH_UPLOAD=0, at most 5 a day, never twice, retry after a pause, 64 KB, the notice before the first send, the anon key may only insert) are
 // shared/CrashUpload.hpp's and are tested there; this part only runs them. The sent / refused ids are kept in okay_crash_sent.txt next to
@@ -12911,7 +12911,7 @@ static okay::thr::Mutex* g_acMutex = nullptr;
 // AccountService from the saved session, like the chat pollers. Export reads only
 // rows the signed-in user may read; delete calls the delete-account Edge Function,
 // which identifies the user from the bearer token. Logic + messages live in
-// okay/Platform/Account/AccountData.hpp (unit-tested); docs/account_data.md.
+// okay/Platform/Account/AccountData.hpp (unit-tested); docs/online/account_data.md.
 struct AcctDataJob {
     int  kind = 0;                 // 1 export, 2 delete
     bool running = false, ready = false, ok = false, signOut = false, signOutDone = false, notDeployed = false;
@@ -13649,7 +13649,7 @@ static AdminData DemoAdminData() {
     return d;
 }
 
-// ---- Anti-cheat backend (docs/sql/anticheat.sql, docs/anticheat.md) ----------
+// ---- Anti-cheat backend (docs/sql/anticheat.sql, docs/online/anticheat.md) ----------
 // Admin > Anti-cheat (admins): review reports, ban / unban accounts and
 // machines, decide appeals. Players: a banner for their own anti-cheat ban with
 // an "Appeal" flow, and "Report cheating" in a chat's menu. Requests are built
@@ -18192,7 +18192,7 @@ int main(int argc, char** argv) {
     if (int code = okay::selfupdate::SelfCheck(argc, argv, OKAY_ENGINE_VERSION); code >= 0) return code;   // `--okay-selfcheck <v>`: the updater asks the new file who it is
     okay::restart::RememberArguments(argc, argv);
     okay::ownswitches::Startup();   // Settings > Experimental: set the chosen own-code variables BEFORE anything reads them (the editor started from here inherits them)
-    okay::ownstack::Startup();   // OKAY_OWN_STACK=1 sets the own-backend switches; logs which parts are ours (docs/own_stack_rollout.md)
+    okay::ownstack::Startup();   // OKAY_OWN_STACK=1 sets the own-backend switches; logs which parts are ours (docs/status/own_stack_rollout.md)
     SDL_SetMainReady();
     {
         std::error_code ec;
@@ -18200,7 +18200,7 @@ int main(int argc, char** argv) {
         if (self.empty() && argc > 0) self = fs::absolute(argv[0], ec);
         if (!self.empty()) { g_exeDir = self.parent_path().string(); g_selfPath = self.string(); }
     }
-    {   // Is the update signature check on? Said at every start (docs/security.md "Updater signing"): OFF is never silent.
+    {   // Is the update signature check on? Said at every start (docs/online/security.md "Updater signing"): OFF is never silent.
         const okayupdate::SigStatus sig = okayupdate::SignatureStatus(okayupdate::BuiltInTrustedKeys());
         std::fprintf(stderr, "[updater] %s\n", sig.line.c_str());
         okay::restart::AppendLog(fs::path(g_exeDir) / "okay_update.log", sig.line);
@@ -18395,7 +18395,7 @@ int main(int argc, char** argv) {
     if (serverUrl.empty())
         std::fprintf(stderr, "[account] No account server is set in this build, so online features (sign-in, friends, marketplace, updates) are off. "
                              "Put the server address in account_server.txt next to the launcher or set OKAY_ACCOUNT_SERVER (and OKAY_ACCOUNT_API_KEY).\n");
-    // Where the emailed reset link should land (docs/password-reset.md). Empty = none set up.
+    // Where the emailed reset link should land (docs/online/password-reset.md). Empty = none set up.
     std::string resetUrl = fromEnvOrFile("OKAY_PASSWORD_RESET_URL", "password_reset_url.txt");
 #ifdef OKAY_DEFAULT_PASSWORD_RESET_URL
     if (resetUrl.rfind("http", 0) != 0) resetUrl = OKAY_DEFAULT_PASSWORD_RESET_URL;
@@ -19902,7 +19902,7 @@ int main(int argc, char** argv) {
             } else { s_watchUntil = 0; s_highlight.clear(); }
 
             // Open `pr` with the editor of `version` ("" = this launcher's). One editor runs at a time, so when the open one is another
-            // version it is asked to save and close first (docs/project_upgrade.md, "One editor at a time").
+            // version it is asked to save and close first (docs/editor/project_upgrade.md, "One editor at a time").
             auto openProjectWith = [&](const CrProj& pr, const std::string& version) {
                 if (!pr.ready || (version.empty() && editor.empty())) return;
                 if (okayversions::MustCloseEditorFirst(EditorRunning(), g_editorStartedVersion, LocalVersion(), version)) {
@@ -20636,7 +20636,7 @@ int main(int argc, char** argv) {
 #ifdef OKAY_HAVE_OKAYUI
             // Same data and same actions as the Dear ImGui page below: your version, the update status with its button,
             // the newest notes, the earlier releases, the link to all releases. Differences are listed in
-            // docs/own_ui_toolkit.md section 5.
+            // docs/ui/own_ui_toolkit.md section 5.
             if (!g_newsHistory.empty() && g_newsSeen != g_newsHistory[0].ver) { g_newsSeen = g_newsHistory[0].ver; SavePrefs(); }
             const UpState us = GetState();
             const bool busy = us == Up_Checking || us == Up_Downloading;
@@ -20766,7 +20766,7 @@ int main(int argc, char** argv) {
                                                                           ImGui::GetContentRegionAvail().x, ImGui::GetContentRegionAvail().y)) {   // ---- Tips, drawn by OkayUI (preview backend) ----
 #ifdef OKAY_HAVE_OKAYUI
             // Same tips (shared/LauncherTips.hpp), tip of the day, category pills and search as the Dear ImGui page below; the
-            // differences are listed in docs/own_ui_toolkit.md section 6.
+            // differences are listed in docs/ui/own_ui_toolkit.md section 6.
             static okayuiscreens::TipsModel tm;
             static okayuiscreens::TipsState ts;
             if (tm.tips.empty()) {
@@ -22541,7 +22541,7 @@ int main(int argc, char** argv) {
                             acctMessage = "Reset email sent, but no reset page is set up for this build, so its link "
                                           "opens the server's default web address instead of a password form. "
                                           "The owner must host the page and set OKAY_PASSWORD_RESET_URL "
-                                          "(docs/password-reset.md).";
+                                          "(docs/online/password-reset.md).";
                             acctMessageError = true;
                         }
                     }
@@ -23037,7 +23037,7 @@ int main(int argc, char** argv) {
 
                     cardBegin("##sc_voice", "VOICE SERVER");
                     settingRow("Custom voice server", g_siteVoiceRelay.empty()
-                                   ? "The relay calls go through (host or host:port). Run okayspace-relay on any server \xE2\x80\x94 see docs/voice-server.md."
+                                   ? "The relay calls go through (host or host:port). Run okayspace-relay on any server \xE2\x80\x94 see docs/audio/voice-server.md."
                                    : "Leave empty to use the OkaySpace voice server. Only set this to use your own relay.",
                                260.0f, ImGui::GetFrameHeight(), [&](float w) {
                         static char vbuf[128] = ""; static bool vinit = false;
@@ -23161,7 +23161,7 @@ int main(int argc, char** argv) {
                         okayversionsui::DrawChannelCombo(VersionsHost(), std::min(w, 260.0f));
                     });
                     rowDivider();
-                    // Test builds (docs/release_channels.md "Test builds"): off by default. While it is off the launcher never looks at the test builds' folder.
+                    // Test builds (docs/release/release_channels.md "Test builds"): off by default. While it is off the launcher never looks at the test builds' folder.
                     settingRow("Get test builds", "Also get builds made for testing, before they are released. They can be broken. Switch this off to stop getting them; "
                                                   "the Latest channel only (the long-term-support channel never gets test builds).", 40.0f, 22.0f, [&](float) {
                         okayversions::Settings& vs = okayversions::GlobalSettings();
@@ -23579,7 +23579,7 @@ int main(int argc, char** argv) {
                         }
                         ImGui::SetCursorScreenPos(ImVec2(p.x, narrow ? bp.y + 34 : p.y + S + 4));
                         ImGui::Dummy(ImVec2(0, 0));
-                        {   // the update signature check: ON, or OFF with the reason (never silent; docs/security.md "Updater signing")
+                        {   // the update signature check: ON, or OFF with the reason (never silent; docs/online/security.md "Updater signing")
                             static const okayupdate::SigStatus sigStatus = okayupdate::SignatureStatus(okayupdate::BuiltInTrustedKeys());
                             const ImU32 sigCol = sigStatus.state == okayupdate::SigState::On ? IM_COL32(110, 205, 140, 255) : IM_COL32(236, 190, 90, 255);
                             ImGui::PushStyleColor(ImGuiCol_Text, sigCol);
@@ -27222,7 +27222,7 @@ int main(int argc, char** argv) {
             ImGui::SameLine();
             ImGui::TextDisabled("  -  ");
             ImGui::SameLine();
-            if (ImGui::SmallButton("Docs")) OpenExternal(std::string(kRepo) + "/blob/main/docs/accounts.md");
+            if (ImGui::SmallButton("Docs")) OpenExternal(std::string(kRepo) + "/blob/main/docs/online/accounts.md");
             ImGui::SameLine();
             if (ImGui::SmallButton("GitHub")) OpenExternal(kRepo);
         }

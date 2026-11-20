@@ -471,7 +471,7 @@ bool TerrainPasses(Terrain* terr, GameObject* ignore, std::uint32_t mask);
 
 /// Downward rays for CatchTunneledFloor. That catch casts one vertical ray for every falling body, and Physics3D::Raycast
 /// measures every collider's world box for every ray: 500 falling bodies meant 250,000 box measurements in one step (38 percent
-/// of the frame in tests/bench_frame.cpp's bodies500 scene, docs/perf_log.md). The boxes do not move while the catch loop runs
+/// of the frame in tests/bench_frame.cpp's bodies500 scene, docs/engine/perf_log.md). The boxes do not move while the catch loop runs
 /// (except when it lifts a body, which drops the index), so they are measured once and put in a grid over the ground plane; a vertical
 /// ray then only looks at the colliders whose box covers its column. Cast() returns exactly what Raycast returns for the same downward
 /// ray: the same filters, the same box test arithmetic, the same shape tests, colliders tried in the same order (a tie goes to the later
@@ -1357,7 +1357,7 @@ void Physics3D::StepSlice(Scene& scene, float dt) {
     // near its length. A spring is a force and is applied once; a motor's limit is shared out over the passes.)
     // A long chain needs about two passes per link for a push to cross it both ways; every other pass runs the joints in
     // reverse order so the weight at one end reaches the hook at the other end (a 50 kg ball on 1 kg links held 13 m long
-    // for a rope of 8 m with a fixed order; see docs/physics_upgrade.md).
+    // for a rope of 8 m with a fixed order; see docs/physics/physics_upgrade.md).
     // (The extra passes are capped so that passes x joints stays under 6000: a scene with hundreds of joints does not pay for them.)
     const int basePasses = std::max(4, solverIterations);
     const int jointPasses = (improved && allJoints.size() > 0)

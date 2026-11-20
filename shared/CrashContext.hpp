@@ -1,6 +1,6 @@
 #pragma once
 // What the editor knows about itself, kept where a crash handler can read it without
-// allocating or locking (docs/crash_reports.md). Written from the plain facts the editor
+// allocating or locking (docs/online/crash_reports.md). Written from the plain facts the editor
 // already has (version, OS, GPU, scene, Console lines, the trail of steps it took) and
 // turned into the text of okay_crash.txt by Compose*() below.
 //

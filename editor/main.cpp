@@ -13,9 +13,9 @@
 #include "ObjectRef.hpp"         // GUID-held object references that survive undo / scene rebuilds
 #include "OwnSwitches.hpp"   // the table of own replacements that can be switched on (View > Rendering & Performance)
 #include "OwnStack.hpp"   // OKAY_OWN_STACK=1 dogfood switch + the one-line startup stack report
-#include "CrashHandler.hpp"   // crash handlers + the crash context that fills okay_crash.txt (docs/crash_reports.md)
+#include "CrashHandler.hpp"   // crash handlers + the crash context that fills okay_crash.txt (docs/online/crash_reports.md)
 #include "ActionExport.hpp"
-#include "MenuBarModel.hpp"          // the main menu bar and the Hierarchy menus as data (docs/editor_menus.md)
+#include "MenuBarModel.hpp"          // the main menu bar and the Hierarchy menus as data (docs/editor/editor_menus.md)
 #include "SaveShortcutModel.hpp"  // what Ctrl+S / Ctrl+Shift+S / Ctrl+Alt+S do
 #include "HierarchyContextModel.hpp"
 #include "SceneAddMenu.hpp"
@@ -41,7 +41,7 @@
 #include "WeaponEditor.hpp"            // the Weapons window (weapon definitions)
 #include "okay/Core/Utf8.hpp"
 #include "okay/Core/BuildPipeline.hpp"   // the build pipeline: layout, dependency walk, manifest, report, zip
-#if defined(OKAY_XBOX_UWP)               // EXPERIMENTAL Xbox One Developer Mode (UWP) export: platform/xbox_uwp, docs/xbox_uwp.md
+#if defined(OKAY_XBOX_UWP)               // EXPERIMENTAL Xbox One Developer Mode (UWP) export: platform/xbox_uwp, docs/platform/xbox_uwp.md
 #include "XboxExport.hpp"
 #include "XboxSdkProbe.hpp"
 #include "XboxBuildHost.hpp"   // one-click build: plan, runner, host (pure)
@@ -119,7 +119,7 @@
 #include "okay/UI/OkayUI.hpp"           // demo overlay: OkayUI drawn on top of ImGui
 #include "OkayUIHostMode.hpp"           // window mode (OKAY_UI_HOST=okayui): OkayUI owns the window, no Dear ImGui
 #include "OkayUIFrame.hpp"              // OkayUI end-of-frame on an SDL renderer or an own-backend painter
-#include "OkayUIHost.hpp"               // the opt-in OkayUI backend: SDL input for OkayUI, the hosted region (docs/own_ui_toolkit.md, section 5)
+#include "OkayUIHost.hpp"               // the opt-in OkayUI backend: SDL input for OkayUI, the hosted region (docs/ui/own_ui_toolkit.md, section 5)
 #endif
 #include "Splash.hpp"                   // branded loading frame (no black screen at startup)
 #include "OkayScriptUIBridge.hpp"       // game scripts' ui_* builtins -> OkayUI widgets
@@ -973,8 +973,8 @@ static void RunEditorPlayKeyTest(int& failures) {
 #  include <sys/file.h>   // flock() for the single-instance lock
 #endif
 #include "AppRestart.hpp"   // detached self-update: wait, swap, relaunch once
-#include "UpdaterCore.hpp"   // the updater rules shared with the launcher: the checksum list is REQUIRED (docs/updater.md)
-#include "TestBuild.hpp"   // a test build says so in its version label (docs/release_channels.md "Test builds")
+#include "UpdaterCore.hpp"   // the updater rules shared with the launcher: the checksum list is REQUIRED (docs/release/updater.md)
+#include "TestBuild.hpp"   // a test build says so in its version label (docs/release/release_channels.md "Test builds")
 #include "ProjectUpgradeUI.hpp"   // the project version question and File > Project Upgrade...
 #include "ProjectUpgrade.hpp"      // okayup::ProjectRootForScene (and okayver:: through it)
 #include "okay/Core/ThumbnailCache.hpp"   // Project panel thumbnails
@@ -1039,7 +1039,7 @@ ImU32 ToColor(const Color& c) {
 // report shows the trail, not only the last step. It is near-free (a bounded copy). The crash handlers (Windows exception filter,
 // std::terminate and abort hooks, Linux/macOS signal handlers) are shared/CrashHandler.hpp: they write okay_crash.txt and
 // okay_crashlog.txt beside the editor with the OS, CPU, RAM, GPU, scene, Console lines and a backtrace, and the launcher sends it
-// (docs/crash_reports.md). The UI-editing crash that only shows on some real Windows GPUs (Direct3D) is why the breadcrumbs exist.
+// (docs/online/crash_reports.md). The UI-editing crash that only shows on some real Windows GPUs (Direct3D) is why the breadcrumbs exist.
 // In a release build ImGui's IM_ASSERT is a no-op, so a UI bug surfaces as a real access violation, which the filter catches.
 inline void OkayTrace(const char* s) { okaycrash::ctx::Breadcrumb(s); }
 #define OKAY_BREADCRUMB(s) OkayTrace(s)
@@ -2839,7 +2839,7 @@ static bool SaveSceneTo(EditorState& ed, std::string p);              // save un
 // Run `action` now, or once the person has answered "Save changes to <scene> before <doing>?" (Save / Don't Save /
 // Cancel) when the open scene has unsaved changes. Every way of replacing the open scene goes through this.
 void RunAfterSavePrompt(EditorState& ed, const std::string& doing, std::function<void()> action, std::function<void()> onCancel = {});
-// Prefab mode (docs/prefab_mode.md): open a prefab on its own, the bar above the Scene view, Save / Revert / Back.
+// Prefab mode (docs/engine/prefab_mode.md): open a prefab on its own, the bar above the Scene view, Save / Revert / Back.
 static void OpenPrefabMode(EditorState& ed, const std::string& path);
 static void OpenPrefabModeOf(EditorState& ed, GameObject* go);
 static void RequestLeavePrefab(EditorState& ed, int depth);
@@ -4434,7 +4434,7 @@ inline std::string HumanBytes(std::uintmax_t b) {
     std::snprintf(s, sizeof(s), "%.1f %s", v, u); return std::string(s);
 }
 
-// Build the game into outDir (docs/build_pipeline.md). Returns a human-readable status string; if `report`
+// Build the game into outDir (docs/release/build_pipeline.md). Returns a human-readable status string; if `report`
 // is non-null it is filled with the full build report (files by size and type, what was left out and why,
 // warnings, time). With opt.dryRun nothing is written to outDir: the build runs in a scratch folder that is
 // deleted again, so the report is exact without leaving files behind.
@@ -5358,7 +5358,7 @@ std::string BuildServer(EditorState& ed, const std::string& outDir, const std::s
         r += "     \"Find a server\" window within a minute.\n\n";
         r += "PLAYERS CAN ALSO JOIN BY ADDRESS\n";
         r += "  Connect to server... (launcher) or Address (in game):  your-server:" + portS + "\n\n";
-        r += "More: https://github.com/kingimann/OkaySpaceGameEngine/blob/main/docs/dedicated-server.md\n";
+        r += "More: https://github.com/kingimann/OkaySpaceGameEngine/blob/main/docs/online/dedicated-server.md\n";
         WriteFileExact(dir / "README.txt", r);
     }
 
@@ -7037,7 +7037,7 @@ static void DrawPlaybackSpeedControls(EditorState& ed, float tb) {
 
 // ============================================================================================================================
 // The main menu bar. Its structure (which menus, in what order, with which shortcuts, when an item is greyed out and why) is data in
-// MenuBarModel.hpp, tested by tests/test_menu_bar_model.cpp and mapped item by item in docs/editor_menus.md. The code below draws the parts
+// MenuBarModel.hpp, tested by tests/test_menu_bar_model.cpp and mapped item by item in docs/editor/editor_menus.md. The code below draws the parts
 // the model leaves to the editor (lists that depend on live data, and the object creators) and runs the item ids.
 // ============================================================================================================================
 static void HierSelectMany(EditorState& ed, const std::vector<GameObject*>& objs);   // (the Hierarchy section, below)
@@ -7370,7 +7370,7 @@ static void DrawRenderingMenuItems(EditorState& ed) {
     // Multi-window panels are always on now (drag a tab to a second monitor) — no toggle.
     if (ImGui::MenuItem("Auto performance", nullptr, &g_autoPerf)) SaveSettings();
     if (ImGui::IsItemHovered()) ImGui::SetTooltip("Automatically drop anti-aliasing when the scene\nhas many models, to keep the editor smooth.");
-    // Editor frame rate: see the numbers, then pick what helps (docs/editor_performance.md; okay::editor::perf).
+    // Editor frame rate: see the numbers, then pick what helps (docs/editor/editor_performance.md; okay::editor::perf).
     ImGui::Separator();
     if (ImGui::MenuItem("Frame-time overlay", nullptr, &g_showPerfOverlay)) SaveSettings();
     if (ImGui::IsItemHovered()) ImGui::SetTooltip("A small window with FPS, frame time, a graph of the last frames and where the frame goes\n(3D view, panels, ImGui, present). Its Copy report button puts the numbers on the clipboard.");
@@ -7497,7 +7497,7 @@ static GameObject* AddTilemapObject(EditorState& ed) {
     ConsoleLog("Created Tilemap");
     return go;
 }
-// Camera Rig (docs/camera_upgrade.md): one shot with a ready-made style (0 Follow, 1 Orbit, 2 Look At) and the brain on the
+// Camera Rig (docs/gameplay/camera_upgrade.md): one shot with a ready-made style (0 Follow, 1 Orbit, 2 Look At) and the brain on the
 // main camera so the shot shows. The selected object (if it is not a camera) becomes what the rig follows or looks at.
 static GameObject* AddCameraRigObject(EditorState& ed, int style) {
     static const char* kNames[3] = {"Camera Rig (Follow)", "Camera Rig (Orbit)", "Camera Rig (Look At)"};
@@ -8402,7 +8402,7 @@ void DrawCrashLog() {
     static bool loaded = false;
     static std::uint64_t revision = 0;   // raised whenever `text` changes (the OkayUI port re-reads it then)
     fs::path dir      = OkayExeDir();
-    if (const char* dev = std::getenv("OKAY_CRASH_DIR"); dev && *dev) { std::error_code de; if (fs::is_directory(dev, de)) dir = dev; }   // (dev/test: where the handler writes, see docs/crash_reports.md)
+    if (const char* dev = std::getenv("OKAY_CRASH_DIR"); dev && *dev) { std::error_code de; if (fs::is_directory(dev, de)) dir = dev; }   // (dev/test: where the handler writes, see docs/online/crash_reports.md)
     fs::path histPath = dir / "okay_crashlog.txt";   // rolling history (all reports)
     fs::path lastPath = dir / "okay_crash.txt";       // most recent report
     auto readAll = [](const fs::path& p, std::string& out) -> bool {
@@ -8765,7 +8765,7 @@ static EditorState* g_projEd = nullptr;
 static std::vector<std::string> g_dragMulti;   // all dragged items when a multi-selection is dragged (the payload carries one)
 static void ProjectApplyMoves(const okaypb::Result& r);
 // ---- Project panel right-click menus. The item lists come from editor/ProjectContextModel.hpp (pure, tested in
-// project_context_model); DrawProject draws them (oked::projectpanel::DrawContextMenu) and runs the chosen id (docs/project_panel.md).
+// project_context_model); DrawProject draws them (oked::projectpanel::DrawContextMenu) and runs the chosen id (docs/editor/project_panel.md).
 static std::vector<std::string> g_projClip;   // the copy / cut clipboard (paths); DrawProject's s_assetClip is this
 static bool g_projClipCut = false;
 // A menu drawn before DrawProject's own state exists (a folder in the tree, a starred item) asks for its action here;
@@ -10424,7 +10424,7 @@ static void DrawPluginManager(EditorState& ed) {
     }
     ImGui::PushStyleColor(ImGuiCol_Text, ImGui::GetStyleColorVec4(ImGuiCol_TextDisabled));
     ImGui::TextWrapped("Plugins are OkayScript files in EditorPlugins/ (this project) or the editor's plugins/ folder "
-                       "(all projects). Saving a plugin reloads it. See docs/editor-plugins.md.");
+                       "(all projects). Saving a plugin reloads it. See docs/editor/editor-plugins.md.");
     ImGui::PopStyleColor();
     ImGui::Separator();
     if (g_plugins.empty()) ImGui::TextDisabled("No plugins found. Click + New Plugin to start one.");
@@ -13834,7 +13834,7 @@ void DrawScriptDocs() {
             "kind, and function parameter and return types convert too. const and readonly can't "
             "change; static is shared by every object running the script; public fields show in "
             "the Inspector. Pasted C# with `using`, a class wrapper or a base type still runs; the "
-            "editor marks those lines because they do nothing. See docs/scripting.md.");
+            "editor marks those lines because they do nothing. See docs/scripting/scripting.md.");
     }
 
     if (sec("Movement & Transform (2D)")) {
@@ -14048,7 +14048,7 @@ void DrawScriptDocs() {
         fapi("seq_interval(s, t) / seq_callback(s, \"fn\") / seq_insert(s, t, id)", "pauses, calls, timing");
         fapi("seq_prepend(s, id) / seq_join_callback(s, \"fn\")", "play before everything / call when the last tween starts");
         fapi("save_game([slot], [label]) / load_game([slot])", "save / load the whole game");
-        fapi("game_save(slot[, label]) / game_load(slot) / game_continue()", "save slots for Saveable objects (docs/save_framework.md); load happens next frame");
+        fapi("game_save(slot[, label]) / game_load(slot) / game_continue()", "save slots for Saveable objects (docs/engine/save_framework.md); load happens next frame");
         fapi("game_delete_slot(slot) / game_slot_exists(slot) / game_can_continue()", "manage and ask about save slots");
         fapi("game_slot_text(slot) / game_slot_age(slot) / game_slot_label(slot) / game_autosave()", "when a slot was saved (UTC text, seconds ago), its label, autosave ring");
         fapi("save_exists([slot]) / delete_save([slot])", "manage save slots");
@@ -14295,7 +14295,7 @@ void DrawScriptDocs() {
     }
 
     ImGui::Spacing();
-    ImGui::TextDisabled("Complete reference — mirrors docs/scripting_reference.md. Hover a name in the Script Editor for its doc.");
+    ImGui::TextDisabled("Complete reference — mirrors docs/scripting/scripting_reference.md. Hover a name in the Script Editor for its doc.");
     if (ImGui::Button("Close")) g_showScriptDocs = false;
     ImGui::End();
 }
@@ -14324,7 +14324,7 @@ static bool g_acDismiss = false;
 
 
 // Words the editor offers for autocomplete: keywords, types, and common builtins
-// (a curated subset of the OkayScript API — see docs/scripting.md).
+// (a curated subset of the OkayScript API — see docs/scripting/scripting.md).
 static const std::vector<std::string>& ScriptCompletions() {
     static const std::vector<std::string> w = {
         // keywords
@@ -20416,8 +20416,8 @@ void DrawAboutPopup() {
         ImGui::TextDisabled("SDL %d.%d.%d  ·  Dear ImGui %s  ·  Assimp %s",
                             SDL_MAJOR_VERSION, SDL_MINOR_VERSION, SDL_PATCHLEVEL, IMGUI_VERSION,
                             okay::AssimpAvailable() ? "on" : "off");
-        ImGui::PushTextWrapPos(ImGui::GetCursorPosX() + 380.0f); ImGui::TextDisabled("%s", okay::ownstack::Describe(okayuibackend::Name(g_uiBackend)).c_str()); ImGui::PopTextWrapPos();   // which parts are ours (docs/own_stack_rollout.md)
-        {   // the update signature check: ON, or OFF with the reason (docs/security.md "Updater signing")
+        ImGui::PushTextWrapPos(ImGui::GetCursorPosX() + 380.0f); ImGui::TextDisabled("%s", okay::ownstack::Describe(okayuibackend::Name(g_uiBackend)).c_str()); ImGui::PopTextWrapPos();   // which parts are ours (docs/status/own_stack_rollout.md)
+        {   // the update signature check: ON, or OFF with the reason (docs/online/security.md "Updater signing")
             static const okayupdate::SigStatus sigStatus = okayupdate::SignatureStatus(okayupdate::BuiltInTrustedKeys());
             ImGui::PushTextWrapPos(ImGui::GetCursorPosX() + 380.0f);
             ImGui::TextColored(sigStatus.state == okayupdate::SigState::On ? ImVec4(0.45f, 0.80f, 0.55f, 1.0f) : ImVec4(0.93f, 0.74f, 0.35f, 1.0f), "%s", sigStatus.line.c_str());
@@ -21024,7 +21024,7 @@ static std::string EllipsizeToWidth(const std::string& text, float maxW) {
 
 // ---- The Hierarchy menus. The lists (what is in them, in what order, when an item is greyed out and why) are data in
 // HierarchyContextModel.hpp, tested by tests/test_hierarchy_context_model.cpp; this runs the ids. Creators are shared with
-// GameObject > <category> (DrawCreateSlot). docs/editor_menus.md has the map. ----
+// GameObject > <category> (DrawCreateSlot). docs/editor/editor_menus.md has the map. ----
 
 // A short name for what kind of object a row is, in the order the row icon decides (HierKindIcon): what "Select Same Type" compares.
 static const char* HierKindName(GameObject* go) {
@@ -28242,7 +28242,7 @@ static bool PlayerPartHeader(GameObject* go, const char* label, okay::Component*
 }
 
 // The hint under Walk Speed (shown when the walk is really a jog) and the "Use natural walk and run speeds" button
-// (docs/walk_vs_run.md). Older projects keep the speeds they saved; this is how a person opts in, with Ctrl+Z to undo.
+// (docs/gameplay/walk_vs_run.md). Older projects keep the speeds they saved; this is how a person opts in, with Ctrl+Z to undo.
 static void WalkSpeedHintLine(float walkSpeed) {
     const std::string hint = okay::NaturalGait::WalkSpeedHint(walkSpeed);
     if (hint.empty()) return;
@@ -33203,7 +33203,7 @@ void DrawInspector(EditorState& ed) {
                 if (ImGui::IsItemHovered()) ImGui::SetTooltip("The most round trip a shot is allowed for: lag compensation looks back at most 0.2 s plus this, and the target's slack is its speed x this. A player whose pings are slower still gets this much.");
                 ImGui::TreePop();
             }
-            if (ImGui::TreeNode("Detection engine##acd")) {   // detect.* (docs/anticheat.md "Detection engine"); logic: okay/Net/DetectInspector.hpp
+            if (ImGui::TreeNode("Detection engine##acd")) {   // detect.* (docs/online/anticheat.md "Detection engine"); logic: okay/Net/DetectInspector.hpp
                 using namespace okay::detectui;
                 DetectSettings& d = s.detect;
                 static std::map<const void*, ObserveMemory> observeMem;   // what observe mode replaced, per component
@@ -33238,7 +33238,7 @@ void DrawInspector(EditorState& ed) {
                     std::snprintf(text, sizeof(text), "%s", ToText(d).c_str());
                 }
                 ImGui::InputTextMultiline("##acdtext", text, sizeof(text), ImVec2(-1, 110));
-                if (ImGui::IsItemHovered()) ImGui::SetTooltip("One \"detect.<key> <value>\" per line (docs/anticheat.md, Config keys), including detect.weapon, detect.ability, detect.economy and detect.weight.<detector>. Keys left out go back to their defaults.");
+                if (ImGui::IsItemHovered()) ImGui::SetTooltip("One \"detect.<key> <value>\" per line (docs/online/anticheat.md, Config keys), including detect.weapon, detect.ability, detect.economy and detect.weight.<detector>. Keys left out go back to their defaults.");
                 if (ImGui::SmallButton("Apply text##acd")) {
                     std::string err;
                     if (FromText(d, text, &err)) { textErr.clear(); ed.dirty = true; textOwner = nullptr; }
@@ -44774,7 +44774,7 @@ static void SceneObjectDragChip(okay::GameObject* go, ImVec2 screen) {
 // A right-click (a click, not a drag: dragging still orbits / looks / pans, and fly mode with the button held is untouched) on the Scene
 // view opens a menu at the cursor. Its create entries are the Hierarchy create slots (DrawCreateSlot) and the shared Add*Object
 // creators above, so there is one copy of the creation code. The clicked spot comes from oked::sceneadd (tested headless in
-// tests/test_scene_add_menu.cpp); this glue only gathers the ray / world position and runs the ids. docs/scene_right_click_add.md.
+// tests/test_scene_add_menu.cpp); this glue only gathers the ray / world position and runs the ids. docs/editor/scene_right_click_add.md.
 struct SceneAddView {
     bool is3D = true;
     ImVec2 canvasPos{0, 0}, canvasSize{0, 0};
@@ -46013,7 +46013,7 @@ void DrawScene3D(EditorState& ed, ImDrawList* dl, ImVec2 canvasPos, ImVec2 canva
                 if (project(p, sp)) { cameraIcon(sp, col, up.get() == ed.selected()); if (up.get() != ed.selected()) iconLabel(sp, up->name.c_str(), col); }   // the selected one has its name chip
             }
 
-            // Camera Rig gizmo (docs/camera_upgrade.md): the shot's frustum, and for the selected rig its dead zone (green) and
+            // Camera Rig gizmo (docs/gameplay/camera_upgrade.md): the shot's frustum, and for the selected rig its dead zone (green) and
             // soft zone (orange) on the picture, the wall probe from the target to the camera (green line, red where a wall
             // pulls it in), the circle round a group of targets, and the confine box. A Camera Room is a yellow box.
             if (auto* vcg = up->GetComponent<VirtualCamera>()) {
@@ -51350,8 +51350,8 @@ int main(int argc, char** argv) {
     okay::restart::RememberArguments(argc, argv);
     okay::editor::ExamplesExeDir() = OkayExeDir();   // File > Examples finds the shipped "examples" folder beside the program
     okay::ownswitches::Startup();   // View > Rendering & Performance > Experimental (same file as the launcher's Settings page): set the variables before anything reads them
-    okay::ownstack::Startup();   // OKAY_OWN_STACK=1 sets the own-backend switches; logs which parts are ours (docs/own_stack_rollout.md)
-    std::fprintf(stderr, "[updater] %s\n", okayupdate::SignatureStatus(okayupdate::BuiltInTrustedKeys()).line.c_str());   // OFF is never silent (docs/security.md "Updater signing")
+    okay::ownstack::Startup();   // OKAY_OWN_STACK=1 sets the own-backend switches; logs which parts are ours (docs/status/own_stack_rollout.md)
+    std::fprintf(stderr, "[updater] %s\n", okayupdate::SignatureStatus(okayupdate::BuiltInTrustedKeys()).line.c_str());   // OFF is never silent (docs/online/security.md "Updater signing")
     okaycrash::handler::Install(OKAY_ENGINE_VERSION, __DATE__ " " __TIME__);   // report crashes: Windows exception filter / Linux and macOS signals / std::terminate
     {   // the own-code line goes into every crash report (what is ours and what is third party in THIS run), with the OKAY_* switches that are on
         std::string line = okay::ownstack::Describe();
@@ -51366,10 +51366,10 @@ int main(int argc, char** argv) {
     }
 #ifdef OKAY_HAVE_OKAYUI
     // Window mode (dev switch, off by default): OKAY_DEV=1 OKAY_UI_BACKEND=okayui OKAY_UI_HOST=okayui. OkayUI owns the window and the frame and Dear ImGui is never
-    // started; only the Audio Mixer is ported to it so far (docs/own_ui_toolkit.md 6.23). Without all three switches this line does nothing.
+    // started; only the Audio Mixer is ported to it so far (docs/ui/own_ui_toolkit.md 6.23). Without all three switches this line does nothing.
     if (oked::HostModeRequested(std::getenv("OKAY_DEV"), std::getenv("OKAY_UI_BACKEND"), std::getenv("OKAY_UI_HOST"))) return oked::RunOkayUIHostMode(argc, argv);
 #endif
-    // Dev/test: crash on purpose after a breadcrumb, to check the crash reports end to end (docs/try_it.md, docs/crash_reports.md).
+    // Dev/test: crash on purpose after a breadcrumb, to check the crash reports end to end (docs/try_it.md, docs/online/crash_reports.md).
     //   OKAY_TEST_CRASH=<step>       crash right now, before the window opens (the report has the OS, CPU and RAM but no scene or GPU yet)
     //   OKAY_TEST_CRASH_LATE=<step>  crash on the 120th frame of the running editor (the report has the GPU, the scene, the Console and the steps)
     if (const char* c = std::getenv("OKAY_TEST_CRASH"); c && *c) {
@@ -52501,7 +52501,7 @@ int main(int argc, char** argv) {
                     s_refreshHz = (float)winSeam->RefreshRateHz();   // 0 when unknown
                     s_refreshAge = 120;
                 }
-                // The step itself (Play loop or one editing tick) lives in EditorFrameTick.hpp, shared with window mode (docs/own_ui_toolkit.md 6.24 step 4).
+                // The step itself (Play loop or one editing tick) lives in EditorFrameTick.hpp, shared with window mode (docs/ui/own_ui_toolkit.md 6.24 step 4).
                 // Play: the loop's update is TickGame (debugger fiber aware); "Run N frames" ending sets the Pause button; resume lets a node breakpoint go.
                 // The loop steps Time (DeltaTime, ElapsedTime, time scale, hit stops, Clock channels), then ticks the scene by the scaled delta: 0 while paused.
                 oked::StepSimulation(ed, oked::SimStep{dt, g_paused, g_smoothFrameTime, g_vsync ? s_refreshHz : 0.0f}, EditorSimHooks());

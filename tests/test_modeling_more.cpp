@@ -1,5 +1,5 @@
 // Modeling "more": per-face material slots (the M5b gap) and the audit fixes.
-// Written from the spec in docs/modeling.md and docs/modeling_audit.md.
+// Written from the spec in docs/editor/modeling.md and docs/editor/modeling_audit.md.
 #include "test_framework.hpp"
 #include "okay/Modeling/MeshAsset.hpp"
 #include "okay/Modeling/MeshUndo.hpp"

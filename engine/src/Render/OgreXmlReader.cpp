@@ -2,7 +2,7 @@
 // OgreXMLConverter tool and the exporters write: <mesh> with <sharedgeometry>, <submeshes>, <vertexbuffer> blocks of
 // <vertex> elements, <faces>) and of the OGRE material script language (the .material files that name the colours and the
 // texture of a submesh's material); no code from any other importer. One part per submesh. Uses the strict XML reader of the
-// batch-B readers. Bounds-checked, capped, no recursion. See okay/Render/ModelData.hpp and docs/own_ogre_reader.md.
+// batch-B readers. Bounds-checked, capped, no recursion. See okay/Render/ModelData.hpp and docs/content/model_readers/own_ogre_reader.md.
 #include "BinReader.hpp"
 #include "ReaderCommon.hpp"
 #include "TextReaderUtil.hpp"

@@ -2,7 +2,7 @@
 
 Timeline cutscenes, branching dialogue graphs, quests, global story variables and the built-in boxes that show them. Code is
 five components in `Components/` with their `.cpp` files in `engine/src/Components/` (about 2.8k lines) and two editor windows
-(Timeline, Dialogue and Quests). Docs: `docs/cutscenes.md`, `docs/dialogue_quests.md`. Merged in #574: a caption manager
+(Timeline, Dialogue and Quests). Docs: `docs/gameplay/cutscenes.md`, `docs/gameplay/dialogue_quests.md`. Merged in #574: a caption manager
 (`Core/Subtitles`, area 32.2) that the cutscene and dialogue code do not use yet. Camera rigs and dolly paths are area 4.8.
 
 ## 10. Story & cinematics
@@ -19,7 +19,7 @@ five components in `Components/` with their `.cpp` files in `engine/src/Componen
 - **Code:** `Components/Sequence`, `Components/SequencePlayer`, `editor/TimelineWindow.*`
 - **API:** `Sequence`, `SequencePlayer`, `SeqShot`, `SeqKey`, `SeqEvent`, `SeqOverlay`, script `play_sequence`, `stop_sequence`, `sequence_playing`, `sequence_time`, `on_sequence_event`, `on_sequence_started`, `on_sequence_finished`, visual-script On Sequence Event
 - **Editor:** View > Editors & Tools > Timeline; Add Component > Gameplay > Sequence Player (cutscene); double-click a `.okayseq` in the Project panel
-- **Docs:** `docs/cutscenes.md`
+- **Docs:** `docs/gameplay/cutscenes.md`
 - **Tests:** `sequence`
 - **Status:** Works - shots, keys, events, fades, letterbox bars, camera shake, coloured screen fade and nested sequences. The `sequence` test asserts each new track's effect in a scene. `examples/cutscene` is a cutscene you can play.
 - **Open:** per docs, playback state is not saved and in multiplayer every client plays its own copy (start from an RPC); subtitles are drawn by the sequence itself, not by the caption manager that #574 added (`Core/Subtitles`)
@@ -38,7 +38,7 @@ five components in `Components/` with their `.cpp` files in `engine/src/Componen
 - **Code:** `Components/DialogueGraph`, `Components/DialogueRunner`, `engine/src/Components/StoryKv.hpp`, `editor/DialogueWindow.*`
 - **API:** `DialogueGraph`, `DialogueSession`, `DialogueHost`, `DialogueRunner`, `DialogueNode::Kind`, script `start_dialogue`, `dialogue_active`, `stop_dialogue`, `on_dialogue_event`, `on_dialogue_end`, C# `Dialogue.Start`, visual-script On Dialogue Event
 - **Editor:** View > Editors & Tools > Dialogue & Quests; Add Component > Gameplay > Dialogue Runner; behavior tree task Start Dialogue starts one
-- **Docs:** `docs/dialogue_quests.md`
+- **Docs:** `docs/gameplay/dialogue_quests.md`
 - **Tests:** `dialogue`
 - **Status:** Works - DialogueGraph.hpp and DialogueRunner.hpp read in full and the function layout of DialogueGraph.cpp (parse, write, validate, session run); node walking, conditions and runner behaviour covered by the 372-line `dialogue` test
 - **Open:** per docs, dialogues are local to each client in multiplayer and a conversation in progress is not saved; the speaker dropdown list is kept per graph; the interact key is shared with pickups through the Hold Prompt line (see 8.5)
@@ -58,7 +58,7 @@ five components in `Components/` with their `.cpp` files in `engine/src/Componen
 - **Code:** `Components/QuestLog`, `Components/StoryState`, `engine/src/Components/StoryKv.hpp`, `editor/DialogueWindow.*`
 - **API:** `QuestLog`, `QuestTrigger`, `QuestDef`, `QuestObjective`, `QuestStatus`, `StoryState`, script `start_quest`, `complete_objective`, `add_quest_progress`, `quest_state`, `set_story`, `get_story`, `set_story_flag`, `story_flag`, C# `Quest.Start`, `Story.Set`, visual-script Set Story Var, Get Story Var
 - **Editor:** Quests tab of the Dialogue window; Add Component > Gameplay > Quest Log and Quest Trigger; Story State inspector
-- **Docs:** `docs/dialogue_quests.md`
+- **Docs:** `docs/gameplay/dialogue_quests.md`
 - **Tests:** `quests`, `dialogue`
 - **Status:** Works - QuestLog.hpp and StoryState.hpp read in full and the function layout of QuestLog.cpp; objectives, prerequisites, rewards and state covered by the 323-line `quests` test
 - **Open:** in multiplayer the server's quest log and story are the truth and clients hold copies (16.8.9; per-player quests advance only through the server API); a networked game is not saved as one; per docs a Kill objective counts deaths through the victim's Health Stat (see 11.4)
@@ -77,7 +77,7 @@ five components in `Components/` with their `.cpp` files in `engine/src/Componen
 - **Code:** `Components/DialogueRunner`, `Components/QuestLog`
 - **API:** `DialogueRunner::drawUI`, `DialogueRunner::CurrentLine`, `QuestLog::showTracker`, `QuestLog::allowJournal`, `QuestLog::journalKey`, `QuestLog::onNotify`, `StoryUIModal`, script `toggle_journal`
 - **Editor:** Dialogue Runner and Quest Log inspectors (draw UI, tracker, journal key, notifications)
-- **Docs:** `docs/dialogue_quests.md`
+- **Docs:** `docs/gameplay/dialogue_quests.md`
 - **Tests:** `dialogue`, `quests`
 - **Status:** Works for the boxes as drawn through the host UI bridge (DialogueRunner.hpp and QuestLog.hpp read; behaviour tested through the runner and log states, not pixel output)
 - **Open:** per docs the boxes are drawn in one fixed launcher look through the OkayUI bridge; restyling means turning `drawUI` off and drawing your own from the events and records

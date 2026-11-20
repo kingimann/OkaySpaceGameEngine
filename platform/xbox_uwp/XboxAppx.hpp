@@ -10,14 +10,14 @@
 // local file header, central directory, end of central directory). SHA-256 is our own okay::crypto
 // code; the ZIP CRC-32 table is generated here; base64 is RFC 4648. No other project's code.
 //
-// Choices that are ours, and UNVERIFIED against a real Windows install (docs/xbox_uwp.md, "Packer rules"):
+// Choices that are ours, and UNVERIFIED against a real Windows install (docs/platform/xbox_uwp.md, "Packer rules"):
 //   * every file is STORED (no compression), so a block entry has no Size attribute;
 //   * entry order: AppxManifest.xml, the other files in byte order of their names, AppxBlockMap.xml,
 //     [Content_Types].xml;
 //   * names inside the ZIP are percent-encoded; names in the block map use '\' and no encoding;
 //   * fixed time stamp 1980-01-01, so the same input always gives the same bytes.
 // The package is NOT signed: Windows refuses to install an unsigned package. Signing is done on the PC with
-// SignTool (see docs/xbox_uwp.md "Signing"); we write no signature code on purpose.
+// SignTool (see docs/platform/xbox_uwp.md "Signing"); we write no signature code on purpose.
 // ---------------------------------------------------------------------------
 #include "okay/Crypto/Sha256.hpp"
 #include <algorithm>

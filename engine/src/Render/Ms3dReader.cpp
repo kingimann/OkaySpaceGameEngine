@@ -1,7 +1,7 @@
 // Our own MS3D (MilkShape 3D, binary) reader: groups of triangles with per-corner normals and texture coordinates,
 // materials, a joint hierarchy with vertex weights and keyframe animation. Written from the public description of the
 // format (Mete Ciragan's MS3D file format notes). Bounds-checked, capped, no recursion. See okay/Render/ModelData.hpp
-// and docs/own_ms3d_reader.md.
+// and docs/content/model_readers/own_ms3d_reader.md.
 #include "TextReaderUtil.hpp"
 #include "okay/Render/ModelData.hpp"
 #include <algorithm>

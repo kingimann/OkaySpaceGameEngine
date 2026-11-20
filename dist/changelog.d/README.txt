@@ -1,4 +1,4 @@
-Changelog entries (one file per change). Read docs/fast_release.md.
+Changelog entries (one file per change). Read docs/release/fast_release.md.
 
 Add dist/changelog.d/<id>.txt in your own PR. <id> is the PR number or a short
 name nobody else uses, for example 953.txt or ci-speed.txt. Format:

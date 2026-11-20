@@ -1,6 +1,6 @@
 #pragma once
 // Keeps a scene's localized text in the current language (see Localization.hpp
-// and docs/localization.md).
+// and docs/engine/localization.md).
 #include <string>
 #include <vector>
 

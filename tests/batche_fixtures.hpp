@@ -1,7 +1,7 @@
 #pragma once
 // Synthetic fixtures for the batch-E own readers (MDC, HMP, CSM), built in memory so nothing binary is committed. Every number is
 // chosen so the expected result can be worked out by hand; the comment above each builder says what the numbers are. The layouts
-// are written from the format descriptions the readers cite (docs/own_mdc_reader.md, own_hmp_reader.md, own_csm_reader.md).
+// are written from the format descriptions the readers cite (docs/content/model_readers/own_mdc_reader.md, own_hmp_reader.md, own_csm_reader.md).
 #include "model_fixture_util.hpp"
 #include <array>
 #include <cstdint>

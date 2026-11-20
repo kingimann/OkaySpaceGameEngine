@@ -1,5 +1,5 @@
 #pragma once
-// Quest log and story variables over the network (docs/multiplayer_audit.md, docs/quests.md).
+// Quest log and story variables over the network (docs/online/multiplayer_audit.md, docs/quests.md).
 //
 // The server is the only one that changes quest state and story variables. Its QuestLog and StoryState
 // are the truth; every change is sent to the clients (ordered, "__qst"), and a client that joins later is

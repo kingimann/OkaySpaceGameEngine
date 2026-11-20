@@ -1,7 +1,7 @@
 // Our own LightWave object reader (LWO2 and LWO1 / LWOB) and Modo object reader (LXOB, .lxo). Written from the public
 // LWO2 / LWOB format description and the public description of Modo's LXO format (an IFF FORM of type LXOB whose
 // geometry chunks, TAGS / LAYR / PNTS / POLS / PTAG / VMAP / VMAD, are LWO2's), no code from any other importer.
-// See docs/own_lwo_reader.md.
+// See docs/content/model_readers/own_lwo_reader.md.
 #include "FileOpen.hpp"
 #include "PolygonTriangulate.hpp"
 #include "ReaderCommon.hpp"
@@ -113,9 +113,9 @@ struct Layer {
 // main axis X, Y or Z: one UV per triangle corner (`ci` holds each corner's position index), stored as (u, 1 - v) like
 // every other UV this reader makes.
 //
-// Reimplemented (rule 19a): the three projections are standard maths, but the turn start and pole rules were fitted to the old output, not derived from geometry alone (see docs/provenance_audit.md). The projection is placed on the
+// Reimplemented (rule 19a): the three projections are standard maths, but the turn start and pole rules were fitted to the old output, not derived from geometry alone (see docs/status/provenance_audit.md). The projection is placed on the
 // surface's own bounding box, which is how this reader has always placed it (the map's own TMAP centre, size and
-// rotation are not read yet; see docs/own_lwo_reader.md):
+// rotation are not read yet; see docs/content/model_readers/own_lwo_reader.md):
 //   - each main axis A has a fixed pair of other axes (P, Q): X -> (Z, Y), Y -> (X, Z), Z -> (X, Y);
 //   - planar: u and v are where the point sits across the box along P and along Q (0 at the low side, 1 at the high side);
 //   - cylindrical: u is the angle around A, seen from the box centre, as a fraction of a turn (where the turn starts is
@@ -163,7 +163,7 @@ constexpr double kTurn = 6.283185307179586476925;   // 2 pi
 // The angle around the main axis as a fraction of a turn, 0 .. 1. A point on the axis itself (a sphere's pole) has angle
 // 0, so it gets the turn's starting value (0.5 for X and Z, 0 for Y), as this reader always did. Where the turn
 // starts and which way it runs is fixed per axis so that images land where this reader has always put them (measured on
-// the real cylindrical and spherical files in docs/model_corpus.md, every corner the same):
+// the real cylindrical and spherical files in docs/content/model_corpus.md, every corner the same):
 // (positions here are the engine's, the file's Z already mirrored):
 //   X: from +Y towards +Z, starting half a turn round;  Y: from -Z towards -X;  Z: from +X towards +Y, half a turn round.
 struct TurnRule { int across, up; double acrossSign, upSign, start; };   // angle = atan2(upSign * up, acrossSign * across) + start

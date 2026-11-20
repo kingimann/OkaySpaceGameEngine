@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # Build the self-contained archive that is handed to an outside cryptographic reviewer
-# (docs/crypto_review_request.md). It holds exactly the files named in the scope tables of
-# docs/crypto_review_package.md, the tests and scripts that carry the evidence, the docs, a MANIFEST with
+# (docs/platform/crypto_review_request.md). It holds exactly the files named in the scope tables of
+# docs/platform/crypto_review_package.md, the tests and scripts that carry the evidence, the docs, a MANIFEST with
 # the SHA-256 of every file and the git commit it came from, and a README with a 15 minute path.
 #
 #   scripts/make_crypto_review_bundle.sh <output.tar.gz>
@@ -31,7 +31,7 @@ commit_time="$(git show -s --format=%cI HEAD)"
 commit_date="$(git show -s --format=%cs HEAD)"
 
 # ---------------------------------------------------------------------------------------------
-# The file list. Keep it in step with section 1 of docs/crypto_review_package.md.
+# The file list. Keep it in step with section 1 of docs/platform/crypto_review_package.md.
 # ---------------------------------------------------------------------------------------------
 files=(
     # okay::crypto: the files under review (section 1, first table)
@@ -93,11 +93,11 @@ files=(
     scripts/test_crypto_backends.sh
     scripts/make_crypto_review_bundle.sh
     # docs
-    docs/crypto_review_package.md
-    docs/crypto_review_request.md
-    docs/crypto.md
-    docs/own_code_roadmap.md
-    docs/anticheat.md
+    docs/platform/crypto_review_package.md
+    docs/platform/crypto_review_request.md
+    docs/platform/crypto.md
+    docs/status/own_code_roadmap.md
+    docs/online/anticheat.md
 )
 # The third-party Wycheproof vector files (Apache-2.0, unmodified; data, not code under review).
 while IFS= read -r f; do files+=("$f"); done < <(git ls-tree -r --name-only HEAD tests/wycheproof | LC_ALL=C sort)
@@ -244,7 +244,7 @@ cat > "$stage/README.md" <<README
 
 Source commit: \`$commit\` ($commit_date). Every file's SHA-256 is in \`MANIFEST.sha256\`; the commit and the file list are in \`MANIFEST.txt\`.
 
-**Status: UNREVIEWED. Nothing in this bundle says the code is secure.** It is what the team that wrote it checked and how, so that you can check it. Start with \`docs/crypto_review_request.md\` (what we ask, what we do not), then \`docs/crypto_review_package.md\` (scope, threat model, evidence, known issues, questions).
+**Status: UNREVIEWED. Nothing in this bundle says the code is secure.** It is what the team that wrote it checked and how, so that you can check it. Start with \`docs/platform/crypto_review_request.md\` (what we ask, what we do not), then \`docs/platform/crypto_review_package.md\` (scope, threat model, evidence, known issues, questions).
 
 ## Verify the bundle (1 minute)
 
@@ -272,7 +272,7 @@ The script prints PASS, FAIL or SKIPPED for each check and keeps full logs in \`
 
 | Directory | Contents |
 |---|---|
-| \`engine/include/okay/Crypto/\`, \`engine/src/Crypto/\` | The library under review (\`docs/crypto_review_package.md\` section 1, first table) |
+| \`engine/include/okay/Crypto/\`, \`engine/src/Crypto/\` | The library under review (\`docs/platform/crypto_review_package.md\` section 1, first table) |
 | \`engine/include/okay/Net/\`, \`engine/src/Net/\` | The seam (\`NetCrypto.hpp\`), \`SecureChannel\`, \`SessionTicket\` (these build standalone), and \`NetworkManager\` and \`RelayServer\` as read-only context for the protocol questions |
 | \`shared/\`, \`engine/include/okay/Platform/Account/\` | The other crypto code in scope: the thin anti-cheat wrapper \`AntiCheatCrypto.hpp\` (the TweetNaCl-derived port is deleted), the hand-written HMAC, the extra SHA-256 copies. Read-only here; they need the rest of the engine to build |
 | \`tests/\` | Known-answer, field, Wycheproof, differential, cross-check, constant-time and fuzz harnesses, and \`tests/wycheproof/\` (third-party vectors, Apache-2.0, unmodified, data not code under review). \`test_anticheat_integrity.cpp\` is included to read; it needs the engine to build. \`test_anticheat_golden.cpp\` builds standalone and checks the anti-cheat wrapper against a recorded transcript |
@@ -284,7 +284,7 @@ The full repository also has a CMake build and ctest names (\`ctest -R '^crypto'
 
 ## A one-hour reading order
 
-Section 0 of \`docs/crypto_review_package.md\` gives it minute by minute. In short: threat model, then \`Fe25519_64.hpp\` and \`Scalar25519.hpp\`, then \`Ed25519.cpp\` (\`BaseMult\`, \`SelectBase\`, \`Ed25519Verify\`, \`DoubleScalarMultPublic\`), then \`X25519.cpp\`, \`Aead.cpp\`, \`ChaCha20.cpp\`.
+Section 0 of \`docs/platform/crypto_review_package.md\` gives it minute by minute. In short: threat model, then \`Fe25519_64.hpp\` and \`Scalar25519.hpp\`, then \`Ed25519.cpp\` (\`BaseMult\`, \`SelectBase\`, \`Ed25519Verify\`, \`DoubleScalarMultPublic\`), then \`X25519.cpp\`, \`Aead.cpp\`, \`ChaCha20.cpp\`.
 
 ## Please do not publish findings before we have had a chance to fix them
 

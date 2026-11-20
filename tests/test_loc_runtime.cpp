@@ -2,7 +2,7 @@
 // keeps Traditional and Simplified Chinese apart, parent fallbacks, the plural rules of
 // more languages, {n, number} / {x, select} / {n, currency, CODE} placeholders, CSV in
 // UTF-16 and with differently written language headers, and atomic table files
-// (docs/localization.md, "What changed in the second pass").
+// (docs/engine/localization.md, "What changed in the second pass").
 #include "test_framework.hpp"
 #include <Okay.hpp>
 #include "okay/Core/LocTable.hpp"

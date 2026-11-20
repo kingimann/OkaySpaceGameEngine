@@ -419,7 +419,7 @@ int main() {
         FrameRecording older;
         CHECK(FrameRecording::FromText(plain, older, &why) && !older.HasRandom() && older.ToText() == plain);   // files from before load as they did
         CHECK(older != back);                                      // the seed is part of what a recording is
-        // the documented example from docs/loop_and_time.md is still a recording
+        // the documented example from docs/engine/loop_and_time.md is still a recording
         FrameRecording sample;
         CHECK(FrameRecording::FromText("okayframes 1\nframes 126\nmicros 2353373\n16667*120 16666 250000/h 16667/p@7*2 20000/ps 33333/c@-42\nchecksum 34c4491ed3039bc2\n", sample, &why) && !sample.HasRandom());
         // strictness

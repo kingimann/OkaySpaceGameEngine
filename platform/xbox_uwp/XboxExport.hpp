@@ -33,7 +33,7 @@ inline constexpr const char* kLimitationsText =
     "3D scene, scripts, physics and gamepad; the 2D / UI layer is software-painted over the 3D view (EXPERIMENTAL, never run), and the engine has never been compiled with Microsoft's UWP compiler. The triangle test package was built and run on a Windows 11 PC (2026-11-18) but nothing has run on a console, so compatibility with "
     "any console is unknown. The package is made unsigned by our own packer and signed on your PC with a test certificate.";
 
-// Which of OUR OWN code stands in for third-party libraries in the Xbox UWP build, and the crypto statement (docs/xbox_uwp_thirdparty.md). Written into README_XBOX.txt.
+// Which of OUR OWN code stands in for third-party libraries in the Xbox UWP build, and the crypto statement (docs/platform/xbox_uwp_thirdparty.md). Written into README_XBOX.txt.
 inline constexpr const char* kThirdPartyText =
     "Third-party code in this build: none is linked. SDL, Dear ImGui, Assimp, ufbx and libsodium are NOT part of the Xbox build; the engine's own code does "
     "their job (our own window/input/audio backend, software 2D painter, model readers, WAV/OGG/MP3/FLAC decoders, image and font code). "
@@ -98,7 +98,7 @@ inline std::string ReadmeText(const ExportInputs& in, const ManifestOptions& m, 
          "Tick 'Engine mode' before building to try the EXPERIMENTAL game run: it links the engine and plays package/Data (3D scene,\n"
          "scripts, physics, gamepad and keyboard). The 2D / UI layer is software-painted and blended over the 3D view (never run on a screen, so NOT drawn yet as far as anyone has seen). Nobody has compiled it with Microsoft's compiler,\n"
          "so it may fail to build; untick it to get the triangle back.\n\n";
-    t += "Next steps, on a Windows PC (see docs/xbox_uwp.md in the OkaySpace source):\n"
+    t += "Next steps, on a Windows PC (see docs/platform/xbox_uwp.md in the OkaySpace source):\n"
          "  1. Install Visual Studio once: 2022 with the 'Universal Windows Platform development' workload, or a newer Visual Studio with the\n"
          "     individual component 'C++ Universal Windows Platform support for ... build tools', plus a Windows 10/11 SDK. The editor checks this for you.\n"
          "  2. In the editor press the big button on File > Build Settings > Xbox (exp.). It checks the tools, exports, compiles\n"
@@ -106,7 +106,7 @@ inline std::string ReadmeText(const ExportInputs& in, const ManifestOptions& m, 
          "     SignTool) and, if you ticked it, installs on this PC. Accept the one administrator prompt (UAC) when it appears.\n"
          "     The log panel shows each step. (Advanced: scripts\\build-xbox-uwp.ps1 does the same from a command line.)\n"
          "  3. Put the console in Developer Mode and install the .appx from the Windows Device Portal\n"
-         "     (steps in docs/xbox_uwp.md, written from Microsoft's documentation and unverified).\n";
+         "     (steps in docs/platform/xbox_uwp.md, written from Microsoft's documentation and unverified).\n";
     return t;
 }
 

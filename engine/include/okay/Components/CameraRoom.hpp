@@ -3,7 +3,7 @@
 // it. Put one on an empty object per room (position = the middle, Size = how big),
 // turn "Use Rooms" on in the Virtual Camera, and the view slides from room to room
 // as the player crosses over. Written from the box-containment rule in
-// CameraMath.hpp (PickRoom); see docs/camera_upgrade.md.
+// CameraMath.hpp (PickRoom); see docs/gameplay/camera_upgrade.md.
 #include "okay/Components/CameraMath.hpp"
 #include "okay/Scene/Component.hpp"
 #include "okay/Scene/GameObject.hpp"

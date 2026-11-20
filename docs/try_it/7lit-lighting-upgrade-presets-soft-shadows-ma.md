@@ -4,7 +4,7 @@ row: | 7lit | Lighting upgrade: presets, soft shadows, masks, panels, real-world
 ---
 ## 7lit. Lighting upgrade: presets, soft shadows, masks, panels, real-world units
 
-**What it is.** The lights and shadows got better. What changed and why: `docs/lighting_upgrade.md` (it has the Existing / Gap
+**What it is.** The lights and shadows got better. What changed and why: `docs/rendering/lighting_upgrade.md` (it has the Existing / Gap
 table). Code: `ShadowMath.hpp`, `Lighting.hpp`, `LightingPresets.hpp`, `SoftwareRenderer.hpp`.
 
 **Which renderer shows what.** Press **F3** in the editor: the overlay says which renderer is drawing. The Light Inspector prints a

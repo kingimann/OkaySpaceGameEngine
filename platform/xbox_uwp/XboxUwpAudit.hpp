@@ -43,8 +43,8 @@ inline const std::vector<ForbiddenApi>& ForbiddenApis() {
         {"getenv(\"USERPROFILE\")", "environment folders", "ApplicationData"},
         {"xinput1_4.dll", "XInput by LoadLibrary", "Windows.Gaming.Input (XboxInput.hpp)"},
         {"X11/Xlib.h", "X11", "not Windows code"},
-        // Third-party libraries the owner wants replaced by our own code (docs/xbox_uwp_thirdparty.md): none may be reachable in the UWP build.
-        {"sodium.h", "libsodium", "okay::crypto (own, unreviewed: docs/xbox_uwp_thirdparty.md)"},
+        // Third-party libraries the owner wants replaced by our own code (docs/platform/xbox_uwp_thirdparty.md): none may be reachable in the UWP build.
+        {"sodium.h", "libsodium", "okay::crypto (own, unreviewed: docs/platform/xbox_uwp_thirdparty.md)"},
         {"imgui.h", "Dear ImGui", "the software painter (XboxSoftPainter)"},
         {"assimp/", "Assimp", "our own model readers (OKAY_OWN_*)"},
         {"ufbx.h", "ufbx", "our own FBX reader (okay::fbx)"},

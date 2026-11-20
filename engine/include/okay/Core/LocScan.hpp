@@ -1,5 +1,5 @@
 #pragma once
-// Which string-table keys a project actually uses (docs/localization_tools.md).
+// Which string-table keys a project actually uses (docs/engine/localization_tools.md).
 //
 // LocScanProject reads a project's text assets and script sources and collects the keys
 // they mention:

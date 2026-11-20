@@ -20,7 +20,7 @@ namespace okay {
 /// real camera's pose and field of view toward it over `blendTime` whenever the
 /// live vcam changes — giving smooth, designer-controlled shot transitions.
 ///
-/// Blends (docs/camera_upgrade.md): the shot being left keeps moving while the
+/// Blends (docs/gameplay/camera_upgrade.md): the shot being left keeps moving while the
 /// blend runs (it does not freeze), a blend that is interrupted starts again from
 /// exactly where the picture is (no pop), and a shot can carry its own blend time
 /// and style. A cutscene (SequencePlayer) takes the camera over while it plays;

@@ -5,7 +5,7 @@
 // $FirstFrame, $LastFrame, $Rate, $Order with the marker names, $Points with one line per frame: the frame number and
 // x y z for every marker, in $Order). No other project's importer source was read.
 // Bounds-checked, per-file budgets (markers, keys, file size), no recursion, numbers parsed locale independently.
-// See okay/Render/ModelData.hpp and docs/own_csm_reader.md.
+// See okay/Render/ModelData.hpp and docs/content/model_readers/own_csm_reader.md.
 #include "ReaderCommon.hpp"
 #include "TextReaderUtil.hpp"
 #include "okay/Render/ModelData.hpp"

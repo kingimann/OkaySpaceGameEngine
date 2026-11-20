@@ -6,7 +6,7 @@ row: | water1 | Water that is never flat: presets, sea states, foam, splashes | 
 
 **What it is.** The water now has real wave shapes (sharp crests), small ripples that never stop, turquoise shallows and deep blue
 depths, white foam on the waves and along the shore, a glow in the crests, rings and spray when something falls in, and a blue-green
-murk when the camera goes under. There are eight ready kinds of water and four sea states. Details: `docs/water_visuals.md`.
+murk when the camera goes under. There are eight ready kinds of water and four sea states. Details: `docs/rendering/water_visuals.md`.
 
 **Steps (the example scenes).**
 1. Open the editor (`Tools\OkayEngine.exe`). **File > Open...** and pick `<install folder>\examples\water\lake.okayscene`. Press **Play**.
@@ -31,4 +31,4 @@ the look off). With it on, the Ocean preset shows white caps and a sea that has 
 
 **Status.** Pictures made with the software renderer on Linux and a headless test (`water_visuals`). **Unverified:** the Windows release, the
 editor window (menu, Inspector fields: syntax-checked only), the GL and D3D11 renderers (they draw the same vertex colours and normal map but
-nothing was run), per-vertex clear water over the bottom (see the Not done list in `docs/water_visuals.md`).
+nothing was run), per-vertex clear water over the bottom (see the Not done list in `docs/rendering/water_visuals.md`).

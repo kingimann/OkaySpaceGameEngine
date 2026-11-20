@@ -4,7 +4,7 @@ row: | xbox-uwp | Xbox One export (EXPERIMENTAL, UNVERIFIED): one-click build (c
 ---
 ## xbox-uwp. Xbox One (experimental, Developer Mode) export
 
-**Read this first: the triangle-test package was built, installed and run on a Windows 11 PC on 2026-11-18 (Visual Studio 2026, MSVC 14.52, toolset v145, Windows SDK 10.0.26100.0); nothing has run on an Xbox, and the editor button, the gamepad, suspend/resume and engine mode are not verified.** It makes a UWP package for an Xbox One in Developer Mode, not a native console game. Full text: `docs/xbox_uwp.md`; audit: `docs/xbox_uwp_audit.md`.
+**Read this first: the triangle-test package was built, installed and run on a Windows 11 PC on 2026-11-18 (Visual Studio 2026, MSVC 14.52, toolset v145, Windows SDK 10.0.26100.0); nothing has run on an Xbox, and the editor button, the gamepad, suspend/resume and engine mode are not verified.** It makes a UWP package for an Xbox One in Developer Mode, not a native console game. Full text: `docs/platform/xbox_uwp.md`; audit: `docs/platform/xbox_uwp_audit.md`.
 
 What to do (needs a Windows PC and a release built with `-DOKAY_BUILD_XBOX_UWP=ON`, which `build-windows-dist.sh` sets; it also ships `xbox-src` next to the editor):
 
@@ -21,13 +21,13 @@ What to do (needs a Windows PC and a release built with `-DOKAY_BUILD_XBOX_UWP=O
 9. **Engine mode round 2 (EXPERIMENTAL, nobody has compiled it with Microsoft's compiler):**
    `powershell -ExecutionPolicy Bypass -File scripts\build-xbox-uwp.ps1 -SourceRoot . -ExportDir .\xbox-engine -MinimalTest -EngineMode -SkipInstall`
    builds the real engine into the app and a tiny scene (a cube, a camera and a UI panel with a text label) into the package. The compile is long. If it works the installed app shows an orange cube in a blue sky and a dark UI panel with "Hello Xbox (UI layer)"; B closes it. Suspend/resume (Xbox button and back) writes `saves\xbox_suspend.okayslot` in the app's LocalState. If it fails, send `xbox-engine\build.log` (the failing step and its last lines are printed).
-10. For the console: `docs/xbox_uwp.md`, "Deploy to an Xbox in Developer Mode" (Device Portal upload).
+10. For the console: `docs/platform/xbox_uwp.md`, "Deploy to an Xbox in Developer Mode" (Device Portal upload).
 
 Checks you can run without Windows: `ctest -R xbox_uwp` (needs `-DOKAY_BUILD_XBOX_UWP=ON -DOKAY_BUILD_TESTS=ON`) runs the Linux tests: the old package/packer tests, `xbox_uwp_runtime` (shader bundle, display, lifecycle, pad mapping, paths, audio conversion, the backend over a fake host, the build plan and runner, the API audit, game config), `xbox_uwp_audit` (no forbidden UWP API in the engine sources the UWP target compiles) and `xbox_uwp_sources_cmake`.
 
 Verified on Windows (owner, 2026-11-18, the `-MinimalTest` command): the whole script, MakeAppx accepting our package, signing, install and the triangle on a PC. Verified on Linux: everything in the tests. Not verified: the editor page drawing and one-click button, the gamepad, suspend/resume, engine mode, the console. The `Microsoft.VCLibs` install line printed at the end is optional and may fail harmlessly with 0x80073D02 when the framework is in use.
 
-**Own code instead of third-party libraries (2026-11-18, UNVERIFIED on Windows):** the Xbox build links no SDL, Dear ImGui, Assimp, ufbx or libsodium; `docs/xbox_uwp_thirdparty.md` has the table. What you can try:
+**Own code instead of third-party libraries (2026-11-18, UNVERIFIED on Windows):** the Xbox build links no SDL, Dear ImGui, Assimp, ufbx or libsodium; `docs/platform/xbox_uwp_thirdparty.md` has the table. What you can try:
 
 * Open any export's `README_XBOX.txt` (made by Build Xbox package or `-MinimalTest`): it has a "Third-party code in this build" paragraph, including "own crypto, not independently reviewed; for experiments only; do not ship".
 * In a source checkout or `xbox-src` (needs the Windows PC set-up above): `powershell -ExecutionPolicy Bypass -File scripts\build-xbox-uwp.ps1 -SourceRoot . -ExportDir .\xbox-engine -MinimalTest -EngineMode -SkipInstall -Http own` builds engine mode with our own HTTP client (plain `http://` only). Add `-OwnCrypto` to switch on our own packet encryption (the script prints a yellow warning; never for a release). Without these two options you get Windows.Web.Http and no packet encryption.

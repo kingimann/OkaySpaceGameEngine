@@ -1,4 +1,4 @@
-// Water visuals (docs/water_visuals.md): the shading maths, the ring grid, the Water component's look, splash rings,
+// Water visuals (docs/rendering/water_visuals.md): the shading maths, the ring grid, the Water component's look, splash rings,
 // underwater fog, presets, saving, and pictures made by the software renderer (checked with tolerances, not exact pixels).
 #include "test_framework.hpp"
 #include "water_scenes.hpp"

@@ -1,0 +1,219 @@
+# Provenance audit: code that may have been copied or ported
+
+Date: 2026-11-14. Branch `claude/provenance-audit`, cut from main at `ff89d98a`. Read-only on source code: nothing
+in `engine/`, `shared/`, `editor/` and so on was changed. Only this page and `scripts/provenance_scan.py` were added.
+
+The rule being checked is CLAUDE.md rule 19a: no copyrighted code, write everything ourselves; ideas, algorithms and
+file formats are fine, code is not; public-domain code needs the owner's approval first.
+
+**Short answer.** One clear case of a port was found (the LWO projected-UV code, from Assimp, BSD-3). One close port of
+public-domain code was found that was already listed (the TweetNaCl port in `shared/AntiCheatCrypto.hpp`; **closed since: deleted, see F2**), and one
+possible port of public-domain constants that is **not** listed (the reverb tuning numbers, which match Freeverb). Two
+notice problems exist (Roboto has no licence file, and nothing ships the notice files). Everything else the scan
+found is a standard table, standard test data, "behaves like Assimp" wording, or a false alarm. A text scan cannot prove
+that nothing else was copied; see "Method and limits".
+
+## Summary, most serious first
+
+| # | Severity | Where | Possible source and licence | Action |
+|---|---|---|---|---|
+| 1 | Clear copy / close port: **reimplemented** (owner decision 2026-11-14) | `engine/src/Render/LwoReader.cpp` `ProjectUvs` | Assimp `ComputeUVMappingProcess.cpp`, BSD 3-clause | Reimplemented as new code; the placement convention is deliberately kept identical to the old output and the seam rule is new (F1) |
+| 2 | ~~Close port of public-domain code (listed)~~ **CLOSED: deleted** | was `shared/AntiCheatCrypto.hpp` lines 1 to about 400 (SHA-512, Ed25519) | TweetNaCl, public domain | Done: the owner approved the replacement; the header is now a thin wrapper over `okay::crypto` and libsodium (F2). The replacement is `okay::crypto`, which has not had its outside review yet, and row 4 below still stands |
+| 3 | ~~Probable copy of public-domain constants (not listed)~~ **CLOSED: replaced** | was `engine/src/Audio/SpatialFx.cpp` lines 12 to 15 | Freeverb by Jezar, public domain | Done: the owner said nothing may be copied; the whole reverb was rewritten as our own feedback delay network from the papers (F3) |
+| 4 | Possible close re-derivation, unverified | `engine/src/Crypto/Fe25519_16.hpp` (16 limbs of 16 bits, fold by 38) | TweetNaCl's field code, public domain | Unverified; part of the outside crypto review (F4) |
+| 5 | Vendored third-party code (allowed, listed) | `editor/vendor/TextEditor.*`, `engine/third_party/ufbx/` | ImGuiColorTextEdit (MIT), ufbx (MIT or public domain) | Keep until replaced; ufbx public-domain option needs the owner's approval (F5) |
+| 6 | Notice or licence gap | Roboto Medium (no licence file); no packaging step copies any notice file | Roboto: Apache 2.0 (per the font's own name table) | Owner must supply the licence; add notices to release archives (F6) |
+| 7 | Behaviour copied, code not (judgement call) | Own model readers, comments such as "as Assimp does", "imports like Assimp" | Assimp, BSD 3-clause | Rule 19a does not forbid matching behaviour; ask the owner to confirm (F7) |
+| 8 | Standard table / standard algorithm | MP3 Huffman tables and window, SHA-2 constants, CRC-32, inflate tables, JPEG tables, Ed25519 constants | ISO, FIPS, RFC, ITU specs | Keep; say so in the file headers (F8) |
+| 9 | Test data from elsewhere (licensed, notice present) | `tests/wycheproof/*.json` | Project Wycheproof, Apache 2.0, `LICENSE` and `README.md` present | Keep; owner to confirm that test data counts as allowed (F9) |
+| 11 | **Rewritten 2026-11-14** (was: close following of a public reference decoder) | `engine/include/okay/Platform/OwnHttpInflate.hpp` | The earlier version (#850) was flagged by an outside review as closely following Mark Adler's puff.c (same count/symbol table builder, same bit-by-bit decode loop, near-identical extra-bit table names, same incomplete-code rule and an identical error text). Replaced by a different design written from RFC 1950, 1951 and 1952 only (table-driven canonical decoder, derived base and extra-bit tables, 64-bit bit buffer); no decoder source consulted | Done; the rewrite is covered by `tests/test_own_http_inflate.cpp` (differential against Python zlib) and still wants an outside look. **Since the one-inflate change the decoder lives in `engine/include/okay/Core/Inflate.hpp`** (the code moved there as it was, with options; `OwnHttpInflate.hpp` is a thin wrapper) and the two other copies (`ImageDecode.cpp`, `FbxReader.cpp`) were deleted, so this row now covers the only inflate in our own code. **What is left of the old copies:** nothing in the tree. They survive only in git history (they were in `main` before this change; one commit of this branch, `0ea3b26a`, also had them verbatim as `tests/inflate_reference_old.hpp`, used once to show that old and new agree on 257,014 inputs, then removed). The `ImageDecode.cpp` and `FbxReader.cpp` copies used the count / first-code / offset table shape (`left`, `offs`, `code - count < first`) that the earlier outside review compared to puff.c; where they came from was never recorded in this audit, so treat their origin as unknown, not as cleared. Deleting them from the tree closes that for the code we ship. `tests/test_inflate_differential.cpp` now compares the engine inflate with `tests/inflate_reference_slow.hpp`, a bit-at-a-time reference written fresh from RFC 1950, 1951 and 1952 for the test (no other decoder consulted) |
+| 12 | Written with no importer source read (checked by the author, not by a scan) | `engine/src/Render/MdcReader.cpp`, `HmpReader.cpp`, `CsmReader.cpp` (batch E) | The formats: my own memory of the MDC layout (no struct names or code used), and the sample files `spider.mdc`, `terrain.hmp`, `terrain_withtexture.hmp`, `ThomasFechten.csm` read as data | None needed; see F12 |
+| 12b | Clean entry (no finding) | `engine/src/Render/PmxReader.cpp`, `engine/src/Render/LwsReader.cpp` | Written from the PMX and LightWave scene format descriptions; no importer source read | None; see F12b |
+| 10 | False alarm | "mirrors Box2D / PhysX", ImGui start-up calls, `0x9E3779B97F4A7C15`, `copy of`, "Blender-style" | none | None |
+| 12 | **New code, 2026-11-15 (what was and was not read)** | `engine/src/Audio/WavDecoder.cpp`, `engine/include/okay/Audio/WavDecoder.hpp` | Own WAV decoder. Written from the public format descriptions only (Microsoft RIFF / WAVE format registration notes, ITU-T G.711, the Microsoft ADPCM and IMA ADPCM block descriptions). **Not read:** SDL, libsndfile, dr_wav, ffmpeg or any other decoder source; nothing copied or ported. The IMA step table (89 entries), the IMA index adjust table, the Microsoft adaptation table (16 entries) and the seven standard Microsoft coefficient pairs are standard published constants typed from memory; the IMA ones were checked at test time against Python's `audioop` output (not its source), the Microsoft ones by hand | Done; needs the same "constants are standard" note as row 8 |
+
+Counts: **1 clear copy or close port (not approved)**, **1 close port of public-domain code (listed, approval pending)**,
+**1 probable public-domain constants (not listed)**, **1 unverified**, **2 vendored libraries (listed)**, **2 notice
+gaps**, **1 judgement call**, **3 standard-data or test-data groups**, **1 group of false alarms**.
+
+## Known third-party pieces (step 1)
+
+All of these are in `docs/status/THIRD_PARTY.md`. Notice files were checked by looking in the repository.
+
+| Piece | Where | Licence status | Notice file present? |
+|---|---|---|---|
+| SDL2 | system package, `SDL2.dll` bundled in Windows builds | zlib | No file in the repository (not vendored). The Windows distribution ships the DLL; whether it ships `COPYING.txt` is **unverified** |
+| Dear ImGui | downloaded at configure time (`editor/CMakeLists.txt`, `launcher/CMakeLists.txt`, `tests/CMakeLists.txt`) | MIT | Not vendored. A binary that contains ImGui needs its MIT notice; none is shipped by any script (F6) |
+| ImGuiColorTextEdit | `editor/vendor/TextEditor.*` | MIT, "Copyright (c) 2017 BalazsJako" | Yes: `editor/vendor/TextEditor.LICENSE` |
+| ufbx | `engine/third_party/ufbx/` | MIT or public domain, both offered | Yes: `engine/third_party/ufbx/LICENSE`. Which ufbx version this is was not checked |
+| Assimp 5.4.3 | downloaded at configure time (`engine/CMakeLists.txt`, optional) | BSD 3-clause | Not vendored. A binary that links it needs its notice (F6) |
+| libsodium | system package, optional | ISC | Not vendored |
+| TweetNaCl port | was `shared/AntiCheatCrypto.hpp` | Public domain | Deleted (F2, closed) |
+| stb `stb_decompress` | removed from the engine; the old base85 arrays remain in `shared/RobotoFont.h` and `shared/JetBrainsMonoFont.h` | Public domain | n/a. The arrays are font data compressed with that format; the decoder is no longer used by the engine |
+| DejaVu Sans | `assets/fonts/DejaVuSans.ttf` | Free font licence | Yes: `assets/fonts/DejaVuSans-LICENSE.txt` (a Debian copyright file) |
+| JetBrains Mono | embedded in `shared/JetBrainsMonoFont.h`, `shared/JetBrainsMonoFontOwn.h` | SIL OFL 1.1 | Yes: `assets/fonts/JetBrainsMono-OFL.txt` |
+| Roboto Medium | embedded in `shared/RobotoFont.h`, `shared/RobotoFontOwn.h` | Apache 2.0 according to the font's own name table; **not confirmed** | **No** |
+| Starter textures | `assets/textures/*.png` | Ours: made by `tools/gen_textures.cpp` (procedural, fixed seeds) | n/a |
+
+Earlier third-party code that git history shows was already removed: stb_vorbis (#644), stb_image_write (#639),
+tinyfiledialogs (#640), stb_decompress (engine side).
+
+## Findings in detail
+
+### F1. LWO planar, cylindrical and spherical UV projection (clear copy / close port)
+
+**Reimplemented (2026-11-14, branch `claude2/lwo-uv-rewrite`); owner decision: keeping the old placement convention with the new seam rule is acceptable.** This is described honestly as a reimplementation, not as code derived only from geometry.
+- **What is new code.** `ProjectUvs` was deleted and written again in a new structure. Neither the old function body nor Assimp's code was read for the rewrite; only the old function's first 14 lines were seen once by accident (the bounding-box idea).
+- **What is deliberately the same.** The placement convention: the projection on the surface's bounding box, the pair of axes per main axis, and where the turn starts and which way it runs on each axis. These were fitted to the old reader's output so that textures stay where they were. A point on the axis (a sphere's pole) gets the turn's starting value and a flat box gives 0, both as before.
+- **What is new behaviour.** The seam rule. A triangle crosses the seam only when the gap between its U values that runs through the seam is not the largest. Then the corners on one side of the largest gap move onto the seam, whichever side moves less. There are no thresholds or flags.
+- **Measured against the old reader** on the corpus's projected-map files (the 15 `earth_*` cylindrical, spherical and planar files, `UglyVertexColors.lwo` and `bluewithcylindrictexz.lwo`): planar files are identical. On the cylindrical and spherical files all positions keep a UV they had before, and between 2 and 8 seam positions per file get a different set of UVs.
+- **Tests.** `lwo_reader` has hand-computed UVs for a cylinder band (exact U at the four compass points and a seam split), a sphere with poles and a flat planar quad. A mutation check confirmed that changing the turn start, switching off the seam repair, forcing poles to 0 or flat boxes to 0.5 each makes the test fail.
+- **Open owner question:** whether matching the old convention is acceptable under rule 19a. Answered for now: yes.
+
+What follows is the original finding.
+
+
+- **File and lines:** `engine/src/Render/LwoReader.cpp`, `ProjectUvs`, about lines 70 to 134; the call site near 495 to 505.
+- **Evidence from our own text:** line 71, "This is Assimp's ComputeUVMappingProcess"; line 83, "the two axes after `ax` in Assimp's formulas"; line 498, "the same mapping as Assimp's GenUVCoords step"; `docs/content/model_readers/own_lwo_reader.md` line 23 says the same. The file's first lines say "no code from any other importer", which is therefore wrong for this function.
+- **Evidence from comparing with the source:** a copy of Assimp 5.4.3 was already on this machine (a scratch build from an earlier session) and was read, not copied. The structure matches in ways that a re-derivation from the idea would not give:
+  the seam repair has the same flags (zero, one, round-to-zero, a "small" and a "large" corner), the same 0.1 / 0.9 thresholds and the same 0.01 / 0.99 epsilons, and the same three-way branch when both a zero and a one corner exist; the angle uses the same `atan2` argument pairs per axis; the spherical case uses the same `asin` form. The plain cylinder and sphere maths is a standard formula, but the seam-repair block and the flag logic are Assimp's, restructured and renamed.
+- **Possible source licence:** BSD 3-clause (Assimp). It requires the notice to be kept when the code is redistributed.
+- **Severity:** close port (verified by comparison, not just by the comment).
+- **Action:** rewrite from scratch, from the idea only (project the vertex onto the map's axis, compute an angle around the axis, handle the wrap at U = 0 and U = 1 in our own way, for example by deciding per triangle from the shortest way round the circle instead of threshold flags). Then re-run the LWO corpus comparison. Correct the header comment and `docs/content/model_readers/own_lwo_reader.md`. Note that the old threshold behaviour may differ from the new in rare files; that is acceptable and should be recorded.
+
+### F2. TweetNaCl port in `shared/AntiCheatCrypto.hpp` (close port, public domain, listed) - CLOSED
+
+- **Status (closed):** the owner told us to replace it and it is gone. The `gf[16]` field code, the TweetNaCl-named helpers and constants, the group-order array and the second SHA-512 are deleted from `shared/AntiCheatCrypto.hpp`, which is now a thin wrapper (libsodium for Ed25519 where built, otherwise `okay::crypto`; SHA-512 always `okay::crypto`). Before deleting it, a differential run (24,000 random comparisons) and a recorded transcript test (`tests/test_anticheat_golden.cpp`) showed `okay::crypto` answers byte for byte like the old port. Caveats that remain: `okay::crypto` is unreviewed (rule 18), and F4 (`Fe25519_16.hpp`, the portable 16-bit field inside `okay::crypto`) is still unverified. The text below is the original finding, kept as the record.
+
+- **Evidence:** the header comment (lines 6 to 8) says "a C++ port of TweetNaCl's public-domain ed25519 (Bernstein et al.)". The code uses TweetNaCl's field representation (`typedef std::int64_t gf[16]` at line 189), TweetNaCl's helper names (`Carry`, `Sel`, `Pack`, `Unpack`, `Inv`, `Pow2523`, `ScalarMult`, `ScalarBase`, `UnpackNeg`), its curve constants named `D`, `D2`, `X`, `Y`, `I` and its group-order array `l`. It also holds the SHA-512 round-constant table (`K[80]`), which is standard FIPS 180-4 data.
+- **Licence:** public domain. Rule 19a says public-domain code needs the owner's approval; `docs/status/THIRD_PARTY.md` lists it as allowed only until `okay::crypto` is reviewed. I did not find a recorded approval; I could not verify that one was given elsewhere.
+- **Severity:** close port.
+- **Action:** ask the owner (question 2). The planned path already exists: `okay::crypto` (`engine/src/Crypto/`) is written from RFC 8032, RFC 7748, FIPS 180-4 and RFC 8439 and its headers say so. Rule 18 says crypto needs an outside review before it replaces anything. Until then, keep the port and keep it listed.
+
+### F3. Reverb delay lengths (probable copy of public-domain constants, not listed)
+
+**Closed (2026-11-14, branch `claude2/reverb-own-tuning`).** The owner answered question 3: nothing copied, public domain included. Looking at the whole class, not only the numbers, more than the constants followed Freeverb (the room-to-feedback mapping `room * 0.28 + 0.7`, the stereo `wet1` / `wet2` width formula, the damped comb and the `-input + buffered` all-pass). So the reverb was not re-tuned but replaced: `RoomReverb` is a feedback delay network written from Stautner and Puckette (1982), Jot and Chaigne (1991) and Schroeder (1962), with every length, gain and mapping our own and checked by tests (`spatial_audio`). See `docs/audio/audio.md`, "Reverb zones". What follows is the original finding.
+
+
+- **File and lines:** `engine/src/Audio/SpatialFx.cpp` lines 12 to 15: `kCombTuning`, `kAllpassTuning`, `kSpread` (23), `kInputGain` (0.015), `kAllpassFeedback` (0.5).
+- **Evidence:** the eight comb lengths (1116 to 1617), four all-pass lengths (556 to 225), the stereo spread of 23, the input gain 0.015 and the all-pass feedback 0.5 are, from memory, the published constants of Freeverb by Jezar at Dreampoint (public domain). I could not check them against the original here (no copy on this machine, none fetched), so the match is **unverified**. The class is called `SchroederReverb`, which is the name of the general technique, and its `Comb` and `Allpass` functions are the textbook structure. No file says where the numbers came from. `docs/audio/audio.md` also mentions the reverb.
+- **Severity:** probable copy of data; the code around it is the standard comb and all-pass network and was not compared.
+- **Action:** ask the owner (question 3). If the answer is "not allowed", choose our own delay lengths (mutually prime, scaled to 44.1 kHz) and our own gains, and listen-test them.
+
+### F4. `Fe25519_16.hpp` (possible close re-derivation, unverified)
+
+- **File:** `engine/src/Crypto/Fe25519_16.hpp`, 149 lines.
+- **Evidence:** sixteen 16-bit limbs in `int64_t`, carry that folds the top limb back times 38, and a 31-entry product array folded with `38 * t[i + 16]`. This is the same representation and the same shape as TweetNaCl's field code. The comment does not claim a source. The representation is a well-known technique, and the code is written with its own types and names (`Fe`, `Carry`, `Mul`, `MulSmall`, `Freeze`).
+- **Severity:** unverified; could be an independent write-up of a standard technique, could be a close port. Not enough to say.
+- **Action:** include in the outside crypto review package (`docs/platform/crypto_review_package.md`) with the question "was this written from the field arithmetic, or from TweetNaCl". If the owner wants certainty, rewrite on a different representation (the 51-bit version `Fe25519_64.hpp` already exists, so the portable fallback could use, for example, ten 25.5-bit limbs).
+
+### F5. Vendored libraries (allowed, listed)
+
+- `editor/vendor/TextEditor.cpp` and `.h` (ImGuiColorTextEdit, MIT, notice present). Not scanned for modifications.
+- `engine/third_party/ufbx/ufbx.c` and `.h` (MIT or public domain; the file offers a choice of two licences). To stay clear of rule 19a's "public-domain needs approval", the MIT option is the one to choose; the owner should record that (question 5).
+- Both are on the removal plan in `docs/status/own_code_roadmap.md`. The own FBX reader (`FbxReader.cpp`, `FbxScene.cpp`) says "no third-party code". An overlap run of our sources against `ufbx` found no matching runs of 3 or more lines.
+
+### F6. Notice gaps
+
+- **Roboto Medium** has no licence file in the repository. `docs/status/THIRD_PARTY.md` already says so and lists the leads.
+- **No script or workflow copies any notice file** into release archives or the installer. A search of `scripts/`, `.github/workflows/`, `dist/` and the CMake files for `OFL`, `LICENSE` and the notice file names found only documentation. The OFL (JetBrains Mono), Apache 2.0 (Roboto), the DejaVu licence, MIT (Dear ImGui, TextEditor, ufbx) and BSD (Assimp) all need their notice to travel with a binary or a font that contains them. I did not inspect a built release archive, so "not shipped" is **unverified**; "no step in the repository adds it" is what was found.
+- **Action:** add one `THIRD_PARTY_NOTICES.txt` to every release archive (the text of each licence above), and add `assets/fonts/Roboto-LICENSE.txt` once the owner confirms the source. This is a docs and packaging task, not a source rewrite.
+
+### F7. Behaviour matched to Assimp (judgement call)
+
+The own readers were checked against Assimp on a real-file corpus (`docs/content/model_corpus.md`). Comments and tests say things like "imports like Assimp", "as Assimp reads it", "what Assimp's GenSmoothNormals does", "as Assimp's pre-transform step does". Counts of comments that name Assimp: `ModelImport.cpp` 35, `ModelImportAssimp.cpp` 16 (the backend itself, expected), `LwoReader.cpp` 5, `ModelReaders.cpp` 4, `ColladaReader.cpp` 1, `Gltf.hpp` 2, `DxfReader.hpp` 1.
+
+- **Corpus:** the Assimp test files are not copied into the repository. `tests/data/model_corpus_manifest.tsv` lists paths and the counts our readers gave. No Assimp expected-result file is copied.
+- **Code overlap:** a line-by-line comparison of all our own sources with Assimp's `code/` and `contrib/` found only one hit, three generic struct-member lines in `FbxReader.hpp` (a false alarm). See "Method and limits" for what that does and does not show.
+- **Reading of rule 19a:** matching what another program outputs is behaviour, not code. It is allowed by the rule as written. The risk is that behaviour matched by reading the other source (as F1) turns into code. Recommend: keep behaviour matching, but compare against Assimp only by running it, never by reading its source (question 4).
+
+### F8. Standard tables and algorithms (keep, say so)
+
+These are numeric data or algorithms fixed by a specification. Typing the same numbers is unavoidable; copying them from a library's source file is not necessary. Where a file already says where its data comes from, that is noted.
+
+| Data | Where | Source of truth | Note |
+|---|---|---|---|
+| MP3 Huffman tables 1 to 3, 5 to 13, 15, 16, 24, count1 table, 512-entry synthesis window | `engine/src/Audio/Mp3Tables.hpp` | ISO/IEC 11172-3 Table B.7 and the synthesis window | The header cites the standard. The layout (separate length and code arrays per table) and the window "first 257 of 512 in units of 1/65536" is our own choice, as far as I can see. I could not compare with minimp3, stb or other decoders (none on this machine), so a match with a library's table file is **unverified**. The numbers themselves are standard |
+| MP3, Vorbis, FLAC decoders | `Mp3Decoder.cpp`, `VorbisDecoder.cpp`, `FlacDecoder.cpp` | ISO 11172-3 and 13818-3; Vorbis I spec; FLAC format spec | Headers say "written from the spec". Not compared line by line with any library |
+| SHA-256, SHA-512 constants | `engine/include/okay/Crypto/Sha256.hpp`, `engine/src/Crypto/Sha512.cpp`, `AntiCheatCrypto.hpp` | FIPS 180-4 | Standard; own comments explain how they are defined |
+| Ed25519 constants | `engine/src/Crypto/Ed25519.cpp` | RFC 8032 | The file says d, sqrt(-1) and the base point "are derived from their definitions on first use"; nothing is pasted in. Good practice |
+| CRC-32 | `ZipLite.hpp`, `ImageWrite.cpp`, `OkfDecode.hpp` | zlib and PNG specs | One-line generator loop, not a pasted table |
+| Inflate length and distance tables | `engine/include/okay/Core/Inflate.hpp` (the one inflate; the copies in `FbxReader.cpp` and `ImageDecode.cpp` were removed) | RFC 1951 | Standard |
+| JPEG quantisation and Huffman tables | `ImageDecodeJpeg.cpp` | ITU T.81 Annex K | Standard (tables not compared with any library). The header says "libjpeg-style fancy upsampling", which is a named algorithm (triangle filter), not code |
+| Mix constant `0x9E3779B97F4A7C15`, PCG and splitmix constants | many files | public algorithms | Standard constants |
+| Perlin or SH constants | searched, none found as pasted tables | n/a | n/a |
+
+### F9. Test data from other projects
+
+- `tests/wycheproof/*.json`: copied unmodified from Project Wycheproof (Apache 2.0, commit `65ca4947...` per `tests/wycheproof/README.md`), with the repository's `LICENSE` beside them. Test data only; not linked or included in any program. This is the one place where third-party material is stored in the repository besides the vendored libraries. Whether that fits "no test files from other projects" in rule 19a is a question for the owner (question 6). The rule text lists test files, so by a strict reading it does not fit; the alternative is to download them at test time, as the model corpus is.
+- `tests/data/` (images, audio, models): the fixture generators (`tests/data/images/gen_fixtures.py`, `scripts/gen_fbx_fixtures.py`) suggest these are generated by us. Not checked file by file; **unverified**.
+
+### F12b. PMX and LWS / MOT readers (batch E5): clean entry, written from format descriptions
+
+`engine/src/Render/PmxReader.cpp` and `engine/src/Render/LwsReader.cpp` (and their tests and `tests/pmxlws_fixtures.hpp`) were written under rule 19a: from the public descriptions of the PMX 2.0 / 2.1 file format and of the LightWave scene file format (the `LWSC` / `LWMO` text with items, `ParentItem` and `Key` envelopes), as the author knows those descriptions, plus reasoning about the structure. **No importer source (Assimp or any other project) was read, copied or ported, no snippet from the web was used, no sample file was read (none is in the tree) and Assimp was not run.** The test files were written by hand from the same structure. Nothing here is a finding; this entry records how the files were made so a later overlap run or review has something to check against. What this cannot show: the descriptions were used as remembered, not re-read, so a wrong detail is possible (and listed as unverified in `docs/content/model_readers/own_pmx_reader.md` and `docs/content/model_readers/own_lws_reader.md`); a text scan cannot prove that nothing was copied (see "Method and limits").
+
+### F10. False alarms
+
+- "Mirrors Box2D's rest optimisation" and "Mirrors the PhysX rest optimisation" (`Physics2D.cpp` line 318, `Physics3D.cpp` line 507): names a well-known idea (sleep when at rest), not code.
+- "Blender-style", "Blender's Auto Smooth" and similar in `Mesh.hpp`: names of editing tools whose behaviour is described; no code.
+- ImGui start-up and shutdown calls in `editor/VsGraphShot.cpp` and `launcher/main.cpp`: the documented API sequence for using the library, not copied library code.
+- `okayui/` is a Dear ImGui style API ("ImGui-style" auto layout). API shape is an idea. An overlap run against a Dear ImGui source tree found no matching runs in `okayui/`.
+- "taken from", "copy of", "derived from" in comments, almost all about program data ("a copy of the prefab"), not about code origin.
+
+### F12. Batch E readers (MDC, HMP, CSM): written from the format description, no importer source read
+
+`MdcReader.cpp`, `HmpReader.cpp` and `CsmReader.cpp` were written to the rule that the formats are fine to implement and another project's code is not. **What was used:** (MDC) the layout of the format from my own memory, then checked and corrected field by field against the one real file `spider.mdc` (the offsets of every table add up to the byte). **The compressed-offset constants (0.05 scale, bias 127, 1/64) were typed from memory of the game's headers, are NOT verified on any real file (frame 0 of `spider.mdc` is not compressed), and the mutation test only shows the code agrees with itself. This is flagged for the owner (`docs/content/model_readers/own_mdc_reader.md`).** The four sample files' licence is unchecked: see `docs/status/THIRD_PARTY.md`; (HMP) only the two sample files `terrain.hmp` and `terrain_withtexture.hmp` and what they share with the Quake / GameStudio MDL header: no written specification was found, so the layout is the author's reading of the data; (CSM) the one sample file `ThomasFechten.csm` and the Character Studio keyword names from memory. The four sample files come from the `test/` directory of an Assimp checkout and were opened **as data files only**; **no Assimp source file, header or comment was opened for these readers, no other project's code was looked at (not on the web either), and Assimp was not run on the samples** (the earlier batches used it as a black box; these did not). The headers of the three files say the same. The pre-existing shared helpers (`BinReader.hpp`, `ReaderCommon.hpp`, `TextReaderUtil.hpp`) are our own. A text scan cannot prove this; it is the author's statement, and a reviewer can check it by reading the three files (166 to 234 lines each) against the sample files.
+
+## Method and limits
+
+1. **Known pieces.** Read `CLAUDE.md` and `docs/status/THIRD_PARTY.md`; looked for each piece and its notice file in the repository.
+2. **Marker scan.** `python3 scripts/provenance_scan.py markers` lists comment lines in `engine/ shared/ editor/ launcher/ player/ okayui/ relay/ tools/ scripts/ tests/` (skipping `editor/vendor`, `engine/third_party`, `tests/wycheproof`, `tests/data`) that contain porting words ("ported from", "based on", "adapted from", "taken from", "translated from", "copied from", "à la", "the way X does") or names of other projects and libraries. It printed 527 lines. I read the ones not about Assimp, Dear ImGui, SDL or Blender by eye; the rest are counted above.
+3. **Line overlap.** `python3 scripts/provenance_scan.py overlap <reference folders>` compares our own C and C++ files with a local source tree of another project. It ignores whitespace, comments and preprocessor lines and reports runs of consecutive matching lines. It was run against: the Assimp 5.4.3 source (`code/` and `contrib/`), a Dear ImGui source tree, and the vendored ufbx. Results: one false-alarm hit in `FbxReader.hpp`; start-up boilerplate hits in `editor/VsGraphShot.cpp` and `launcher/main.cpp`; nothing for ufbx. It prints file names and line numbers only, never the other code.
+4. **History.** `git log -S` and message searches for "port", "ported from", "copied from", "stb", "Assimp", "vendored". They show the removed libraries listed above and the Assimp-comparison work; no message says that code was ported from a named library except the LWO change (#835, "the way Assimp's GenUVCoords step does").
+5. **Reading.** The LWO function was compared with the Assimp source by eye (F1). Headers of every own model reader, every decoder, `okay::crypto`, the TTF rasteriser and image decoders were read for stated sources.
+
+**Limits. A text scan cannot prove that nothing was copied.**
+
+- The overlap check only finds code that was copied nearly line for line. A port that renames identifiers, reorders statements or changes the loop shape will pass. F1 would **not** have been found by the overlap run (it did not report `LwoReader.cpp`); it was found by the comment and confirmed by reading. So the overlap result is weak evidence.
+- It can only compare with source trees that exist on this machine: Assimp, Dear ImGui, ufbx. **Not compared (no copy available, nothing fetched):** minimp3, stb_vorbis, stb_image, dr_libs, miniaudio, libsodium, TweetNaCl, meshoptimizer, Box2D, Bullet, PhysX, Recast and Detour, Godot, Unreal, Unity, Freeverb, FreeType, libjpeg, zlib or miniz, lodepng. Findings that depend on those (F3, F4, the MP3 tables) are from memory and marked unverified.
+- Own style differences (long files by one author versus short ones) were looked at only by sampling headers; I did not read the 2,858 tracked files. Large hand-written files not read in full include `launcher/main.cpp`, `editor/main.cpp`, `OkayScriptVM.cpp`, `Mesh.hpp`, the renderers, the physics code, `TtfRaster.cpp`, `ImageDecode.cpp`, `VorbisDecoder.cpp`, `FlacDecoder.cpp`, `Mp3Decoder.cpp`.
+- Comments and documents written by the author may be missing, wrong or untrue ("no code from any other importer" is false for one function).
+- Shaders (GLSL and HLSL strings in the renderers) were not compared with any known shader source.
+- Data tables inside the Dear ImGui-format font headers are font files, not code.
+- Licence statements here are from the repository and from memory; they are not legal advice.
+
+## Questions for the owner
+
+1. **LWO UV projection (F1).** Approve a rewrite from scratch of `ProjectUvs` now? It is the only clear port found and the fix is small (about 70 lines plus doc wording).
+2. **TweetNaCl port (F2). Answered and done: the owner approved replacing it.** (Original question: do you approve keeping it, as public-domain code, until `okay::crypto` has passed the outside review? If not, what should the launcher use in the meantime?)
+3. **Freeverb numbers (F3).** Are public-domain reverb constants acceptable, or should the delay lengths and gains be re-chosen by us?
+4. **Behaviour matching with Assimp (F7).** Confirm that matching Assimp's output (by running it) is acceptable, and that reading Assimp's source to do so is not.
+5. **ufbx licence choice (F5).** Record that we take ufbx under the MIT option, not the public-domain option?
+6. **Wycheproof test vectors (F9).** Apache-2.0 test data stored in the repository: keep, or download at test time only?
+7. **Roboto (F6).** Where did the font come from, and can you add its licence text?
+8. **Notices in releases (F6).** Should I add a `THIRD_PARTY_NOTICES.txt` to the release archives and installer (docs and packaging only)?
+9. **Order of work.** Should the audit be repeated with other reference trees (minimp3, stb, libsodium, Freeverb, meshoptimizer) fetched into a scratch folder? This needs network access and would make F3, F4 and the MP3 table check verified.
+
+## Recommended order for rewriting
+
+1. `ProjectUvs` in `LwoReader.cpp` (F1): clear port, small, testable against the existing LWO corpus.
+2. The reverb constants in `SpatialFx.cpp` (F3), if the owner says not to keep them: a few numbers and a listening test.
+3. `Fe25519_16.hpp` (F4): only after the owner's answer and the reviewer's view.
+4. The TweetNaCl port (F2): done (deleted on the owner's say-so, replaced by `okay::crypto`; the outside review of `okay::crypto` is still open).
+5. Packaging notices (F6): not a rewrite, but it is a licence obligation that exists today.
+
+## Addendum: batch E readers (Q3D, RAW), branch `claude/readers-e2`
+
+`engine/src/Render/Q3dReader.cpp` and `engine/src/Render/RawReader.cpp` were written from the format descriptions only: Paul Bourke's "Quick3D Object File" page (header, chunk types, field lists) and his "POV-Ray RAW triangle format" page (nine numbers per triangle, the colour and texture-name variants, group identifiers). **No importer source was read**: not Assimp's, not any other project's, and no code snippet from the web. Where a description was silent (the Q3D byte order, a few Q3D fields, RAW comments) the choice made is written down in `docs/content/model_readers/own_q3d_reader.md` and `docs/content/model_readers/own_raw_reader.md`. No sample file was available for either, so no output was compared with another reader. The SIB reader (`docs/content/model_readers/own_sib_reader.md`) was **not written** because no public description or sample could be found; a reader written from memory of another importer would have broken rule 19a.
+
+## Addendum (batch E3 readers: IQM, COB, NDO)
+
+Date: 2026-11-15, branch `claude/readers-e3`. Checked by hand when written; **not** run through `scripts/provenance_scan.py`.
+
+| Reader | Where each fact came from | Not used |
+|---|---|---|
+| `IqmReader.cpp` | **My memory** of the IQM specification text (`iqm.txt`): header, record layouts, vertex-array types and formats, the frame-channel rule. The spec was not fetched or re-read during the work. Every layout detail was then checked against a hex dump of the one real file `mrfixit.iqm` (record sizes, offsets, quaternion lengths) | Any importer or engine source |
+| `CobReader.cpp` | **From memory**: the chunk names and the ASCII keywords. **Settled by a hex dump / text view of the 8 sample files**: all byte layouts (chunk header, object chunk, face record, `Mat1`, `ShBx` type codes 3, 6, 7, 10, the `file name` parameter, the 48-byte centre-and-axes block before the matrix, that matrices are world matrices). Guesses, not seen in any file: shader type code 4 as an integer, hole meaning of face flags. No citable document exists | Any importer source |
+| `NdoReader.cpp` | Nothing but the header text `nendo `. It reads no geometry. A web search for a specification returned an importer-based summary whose passing facts (the `nendo 1.x` header, big endian, a count-width change at 1.2) were **seen** and are disclosed in `docs/content/model_readers/own_ndo_reader.md`; only the header text is used | The importer source itself (never opened) |
+
+**The Assimp test tree was open in the scratchpad while this work was done.** Only its data files (`test/models/COB/*.cob`, `test/models/IQM/mrfixit.iqm`) were copied to a private folder and read; none of its source folders was opened, listed for content or searched. The shared helpers the readers use (`BinReader.hpp`, `ReaderCommon.hpp`, `PolygonTriangulate.hpp`, `TextReaderUtil.hpp`, `SceneRefPath.hpp`) are the project's own earlier files. The test files are hand-built from the structure; no real file is committed.

@@ -1,4 +1,4 @@
-// okay-texture: command line front end of our texture library (okay::tex, docs/own_texture_library.md).
+// okay-texture: command line front end of our texture library (okay::tex, docs/rendering/own_texture_library.md).
 //   okay-texture mips     <in.png> <prefix> [--filter box|lanczos|kaiser] [--srgb] [--normal] [--cutout] [--repeat]
 //   okay-texture compress <in.png> [out.dds] [--format auto|bc1|bc3|bc4|bc5] [--quality 0|1|2] [--no-mips] [--raw]
 //                         [--filter ...] [--srgb] [--normal] [--cutout]

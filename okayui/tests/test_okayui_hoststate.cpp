@@ -1,6 +1,6 @@
 // Window-mode persistence (shared/OkayUIHostState.hpp and the state calls of editor/OkayUIHostMode.cpp), headless: round trip, hostile and damaged files, the
 // window sanitiser, atomic saving and the throttled saver, and two simulated runs through the real frame loop (the second restores the first's layout, panel
-// flags and window). Step 3 of the window-mode plan, docs/own_ui_toolkit.md 6.24.
+// flags and window). Step 3 of the window-mode plan, docs/ui/own_ui_toolkit.md 6.24.
 #define OKAY_HAVE_OKAYUI 1
 #define OKAYUI_HOST_PLATFORM 1
 #include "test_framework.hpp"

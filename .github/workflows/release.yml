@@ -14,11 +14,11 @@ on:
           latest = a normal release (becomes the GitHub "latest" release and the
           update feed's VERSION.txt). lts = a patch of the long-term-support line,
           run on its lts/<line> branch: published as LTS.txt, never "latest"
-          (see docs/release_channels.md).
+          (see docs/release/release_channels.md).
         type: choice
         options: [latest, lts]
         default: latest
-  # Called by fast-release.yml (docs/fast_release.md). stamp_version is the version to build; it is empty on every other kind of run,
+  # Called by fast-release.yml (docs/release/fast_release.md). stamp_version is the version to build; it is empty on every other kind of run,
   # and every step marked "fast release" below is skipped then, so the old path is exactly what it was.
   workflow_call:
     inputs:
@@ -60,14 +60,14 @@ jobs:
       # "true" when the repo has the secret that the Supabase publish step needs.
       SUPABASE_PUBLISH: ${{ secrets.SUPABASE_SERVICE_KEY != '' }}
       # "true" when the repo has the repository secret OKAY_UPDATE_SIGNING_SEED (the PRIVATE update-signing key; the owner adds it in
-      # Settings > Secrets and variables > Actions > Secrets; docs/security.md "Updater signing"). Without it the steps that use it are skipped.
+      # Settings > Secrets and variables > Actions > Secrets; docs/online/security.md "Updater signing"). Without it the steps that use it are skipped.
       UPDATE_SIGNING: ${{ secrets.OKAY_UPDATE_SIGNING_SEED != '' }}
       # The launcher's trusted anti-cheat keys: public keys, so a repository
       # variable (Settings > Secrets and variables > Actions > Variables).
       OKAY_AC_TRUSTED_KEYS: ${{ vars.OKAY_AC_TRUSTED_KEYS }}
-      # The updater's trusted signing keys (public; docs/updater.md "Signed releases"). Empty = unsigned feeds still accepted.
+      # The updater's trusted signing keys (public; docs/release/updater.md "Signed releases"). Empty = unsigned feeds still accepted.
       OKAY_UPDATE_TRUSTED_KEYS: ${{ vars.OKAY_UPDATE_TRUSTED_KEYS }}
-      # The account/update server baked into the programs comes from config/public-account.json (docs/accounts.md); these
+      # The account/update server baked into the programs comes from config/public-account.json (docs/online/accounts.md); these
       # optional repository variables override it (empty = use the file).
       # OKAY_REQUIRE_ACCOUNT=1 makes build-windows-dist.sh stop if neither the file nor the variables give both values, so a release never ships offline.
       OKAY_DEFAULT_ACCOUNT_URL: ${{ vars.OKAY_DEFAULT_ACCOUNT_URL }}
@@ -226,7 +226,7 @@ jobs:
       # Sign our own programs (not the third-party SDL2.dll) BEFORE anything records their checksum: the zip, the installer,
       # the GitHub assets and versions.json must all carry the same signed bytes. Without the two secrets this is skipped
       # with a warning (the release stays unsigned, as before); with them, any failure fails the release instead of
-      # shipping unsigned. See docs/packaging.md "Code signing".
+      # shipping unsigned. See docs/release/packaging.md "Code signing".
       - name: Sign the Windows programs
         env:
           WINDOWS_SIGN_PFX_BASE64: ${{ secrets.WINDOWS_SIGN_PFX_BASE64 }}

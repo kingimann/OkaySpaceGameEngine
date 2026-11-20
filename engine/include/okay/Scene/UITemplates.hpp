@@ -446,7 +446,7 @@ inline GameObject* AddSettings(Scene& scene) {
 }
 
 // Save slots: three slots, each with its saved time and Save / Load / Delete, plus Continue and Close.
-// Works with the save framework (docs/save_framework.md): mark the objects to keep with a Saveable
+// Works with the save framework (docs/engine/save_framework.md): mark the objects to keep with a Saveable
 // component. The buttons run the script builtins game_save, game_load, game_delete_slot and
 // game_continue; the text shows game_slot_label / game_slot_text. Every error goes to the Console.
 inline GameObject* AddSaveSlots(Scene& scene) {

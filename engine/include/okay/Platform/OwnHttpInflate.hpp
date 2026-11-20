@@ -3,7 +3,7 @@
 // okay::ownhttp inflate: gzip and zlib bodies for the HTTP client.
 //
 // This file used to hold its own DEFLATE decoder. There is now ONE decoder for the whole engine, in
-// okay/Core/Inflate.hpp (written from RFC 1950, 1951 and 1952 only; see docs/provenance_audit.md). This header
+// okay/Core/Inflate.hpp (written from RFC 1950, 1951 and 1952 only; see docs/status/provenance_audit.md). This header
 // is the thin string-based wrapper the HTTP client calls, with the strict options: Adler-32 / CRC-32 and size
 // checked, extra bytes refused, incomplete codes refused, output capped at `maxOut`.
 // Memory: the working buffer never grows past `maxOut`, but a successful decode copies it into the caller's

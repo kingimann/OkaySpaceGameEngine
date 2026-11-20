@@ -3,7 +3,7 @@
 The numbers underneath everything: vectors, quaternions, matrices, scalar helpers, easing, bounds and rectangles, the IK solvers' maths, and the geometry helpers (frustum, rays, closest points) that are scattered through rendering, physics and modeling.
 Covers `engine/include/okay/Math` (23 headers, all header-only, about 3.0k lines) plus geometry code in `Render/Culling`, `Render/Lightmap`, `Components/Camera` and `Render/Mesh`.
 Core wave 4 (#571, in 2.849.0) added Mat3, rays, planes, shapes, intersection tests, integer vectors, noise, curves, colour spaces and the `Core/Rng` streams; nothing in this area is open now.
-This area was split out of area 1 so maths can be targeted on its own; it is big enough to stand alone because of #571 and the IK solvers. Docs: `docs/math_geometry.md`, test `math_geometry`.
+This area was split out of area 1 so maths can be targeted on its own; it is big enough to stand alone because of #571 and the IK solvers. Docs: `docs/engine/math_geometry.md`, test `math_geometry`.
 
 ## 36. Math & geometry
 
@@ -19,7 +19,7 @@ This area was split out of area 1 so maths can be targeted on its own; it is big
 - **Code:** `Math/Vec2`, `Math/Vec3`, `Math/Vec4`, `Render/Color`, `Math/VecInt`
 - **API:** `Vec2`, `Vec3`, `Vec4`, `Vec3::Cross`, `Vec3::Slerp`, `Vec3::SmoothDamp`, `Vec3::ClampMagnitude`, `Color::FromBytes`, `Color::Lerp`
 - **Editor:** vector and colour fields in the Inspector (15.2)
-- **Docs:** `docs/core_audit_notes.md` (math fixes), `docs/math_geometry.md`
+- **Docs:** `docs/engine/core_audit_notes.md` (math fixes), `docs/engine/math_geometry.md`
 - **Tests:** `math`, `math_extra`, `phys_math`, `2d_expand`, `core_audit`, `math_geometry`, `core_math_extra`
 - **Status:** Works - read the headers; opposite-vector `Vec3::Slerp` and `SmoothDamp` with zero dt fixed in #565, integer vectors and `Color::Parse` added in #571, all with tests
 - **Open:** Color lives in `Render/` although it is pure maths; `Quat::Normalized` of a NaN quaternion now gives identity (`core_math_extra`)
@@ -38,7 +38,7 @@ This area was split out of area 1 so maths can be targeted on its own; it is big
 - **Code:** `Math/Quat`, `Math/Mat4`, `Math/Mat3`
 - **API:** `Quat::Euler`, `Quat::LookRotation`, `Quat::Slerp`, `Mat4::TRS`, `Mat4::LookAt`, `Mat4::Perspective`, `Mat4::Inverse`
 - **Editor:** Transform rotation fields and gizmos (15.2, 15.3)
-- **Docs:** `docs/core_audit_notes.md`
+- **Docs:** `docs/engine/core_audit_notes.md`
 - **Tests:** `math`, `3d`, `math_extra`, `phys_math`, `prefs_misc`, `core_audit`, `math_geometry`, `core_fixes`
 - **Status:** Works - read the headers; `LookRotation` zero forward, tiny-matrix `Inverse` and Euler gimbal cases fixed with tests (#565); `Mat3`, `Decompose` and `ToAngleAxis` exist (read `Mat4.hpp`, `Quat.hpp`)
 - **Open:** `Quat::ToEuler` treats only about 0.08 degrees around straight up or down as gimbal lock, so roll survives at 89 degrees (`core_fixes`); no double-precision variants for large worlds (core_audit_notes)
@@ -59,7 +59,7 @@ This area was split out of area 1 so maths can be targeted on its own; it is big
 - **Code:** `Math/Mathf`, `Math/Easing`, `Math/Math`, `Math/Curves`, `Math/Spring`
 - **API:** `Mathf::Lerp`, `Mathf::SmoothDamp`, `Mathf::Clamp01`, `Ease`, `Easing::QuadOut`, `Easing::BounceOut`
 - **Editor:** ease picker and curve preview in the Animator, Timeline and Tween Animation inspectors (editor/main.cpp)
-- **Docs:** `docs/timers_and_tweens.md`
+- **Docs:** `docs/engine/timers_and_tweens.md`
 - **Tests:** `easing`, `spring`, `math`, `math_extra`, `core_features`, `core_audit`
 - **Status:** Works - every easing endpoint was checked in the core audit (#565); `Spring.hpp` and `Easing.hpp` read on main (#587, tests `spring`, `easing`); new easings are appended to the enum so saved numbers keep their meaning
 - **Open:** `Mathf::Infinity` is now a real IEEE infinity (#571; `Mathf::MaxFloat` is the old value; script-side `Mathf.Infinity` stays `1e30`); `Mathf::SmoothStep` accepts its edges in either order (#571)
@@ -77,7 +77,7 @@ This area was split out of area 1 so maths can be targeted on its own; it is big
 - **Code:** `Math/Bounds`, `Math/Rect`, `Math/Ray`, `Math/Geometry`
 - **API:** `Bounds`, `Bounds::Encapsulate`, `Rect`, `Rect::Overlaps`
 - **Editor:** none (used by selection boxes and marquee selection in the editor windows)
-- **Docs:** `docs/math_geometry.md`
+- **Docs:** `docs/engine/math_geometry.md`
 - **Tests:** `core_features`, `core_audit`, `math_geometry`, `core_fixes`
 - **Status:** Works - Bounds, Rect and the new shape types exist (read `Bounds.hpp` and the shape structs in `Geometry.hpp`; the intersection functions were not read in depth; test `math_geometry` per docs)
 - **Open:** a default `Bounds` is now empty (it used to be a point at the origin: code that wants that must write `Bounds(Vec3{}, Vec3{})`, per docs); `Rect::Overlaps` is strict since #571 (touching edges do not overlap, `core_fixes`); `ViewFrustum` is a second frustum type next to the renderer's `Frustum` (see 36.6)
@@ -98,7 +98,7 @@ This area was split out of area 1 so maths can be targeted on its own; it is big
 - **Code:** `Math/TwoBoneIK`, `Math/Fabrik`, `Math/CCD`, `Math/IKMath`, `Math/JointLimit`, `Math/IKFade`
 - **API:** `SolveTwoBoneIK`, `SolveFabrik`, `SolveCCD`, `IKJointLimit`, `IKFade::Step`, `AimBone`
 - **Editor:** IK gizmos and the Animator window (5.6, 5.7, editor/AnimatorWindow.*)
-- **Docs:** `docs/ik.md`
+- **Docs:** `docs/gameplay/ik.md`
 - **Tests:** `ik_core`, `anim_ik`
 - **Status:** Works - read the headers (each guards non-finite input); belongs to the animation and IK work: IK pull requests (#535-#539, #548-#551, #554, #484) are Grok's sessions, do not edit these files without asking
 - **Open:** IK rewrite plan (5.7); in-flight IK PRs may change these headers
@@ -138,7 +138,7 @@ This area was split out of area 1 so maths can be targeted on its own; it is big
 - **Code:** `Render/ProcTexture`, `Math/Noise`, `Math/Curves`, `Math/ColorSpace`, `Core/Rng`
 - **API:** `GenerateProcTexture`, `proctex_detail::Fbm`, `NoiseField`, `Rng::Fork`, `Hsv`, `Curves::CubicBezier`
 - **Editor:** none
-- **Docs:** `docs/math_geometry.md`
+- **Docs:** `docs/engine/math_geometry.md`
 - **Tests:** `mesh_variant_hash`, `math_geometry`
 - **Status:** Partial - the shared noise, curves, colour spaces and `Rng` are on main (#571, test `math_geometry`) but terrain, textures, particles and meshes still use their private copies (grep finds no `NoiseField` use outside `Math/`)
 - **Open:** move terrain, textures, particles and meshes onto the shared noise so a seed means the same thing everywhere; `Mesh::PropRand` overflowed for variants 6 and up (fixed, test `mesh_variant_hash`)

@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Linux checks for the experimental Xbox UWP export (docs/xbox_uwp.md). No Windows, no PowerShell needed.
+"""Linux checks for the experimental Xbox UWP export (docs/platform/xbox_uwp.md). No Windows, no PowerShell needed.
 
   check_xbox_uwp.py scripts <repo root>
       Static checks of scripts/build-xbox-uwp.ps1, xbox-check-sdk.ps1, xbox-compile-shaders.ps1, xbox-install-local.ps1, xbox-sign.ps1:

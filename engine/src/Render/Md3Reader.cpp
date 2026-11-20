@@ -2,7 +2,7 @@
 // surface, with texture coordinates, the stored normals, the first shader name of each surface as its texture, and the
 // tags (attachment points) as empty child nodes. Written from the public description of the format (id Software's
 // Quake III Arena source, qfiles.h, and the format notes built on it). Bounds-checked, capped, no recursion.
-// See okay/Render/ModelData.hpp and docs/own_md3_reader.md.
+// See okay/Render/ModelData.hpp and docs/content/model_readers/own_md3_reader.md.
 #include "BinReader.hpp"
 #include "ReaderCommon.hpp"
 #include "TextReaderUtil.hpp"

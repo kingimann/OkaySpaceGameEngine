@@ -11,7 +11,7 @@ using namespace okay;
 using namespace okay::modeling;
 using namespace okay::modeling::guided;
 
-// Guided modeling, environment: tree, rock, road, bridge, hedge, plant and street lamp (docs/guided_modeling_design.md).
+// Guided modeling, environment: tree, rock, road, bridge, hedge, plant and street lamp (docs/editor/guided_modeling_design.md).
 namespace {
 
 double SignedVolume(const PolyMesh& m) {

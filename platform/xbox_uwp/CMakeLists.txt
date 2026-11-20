@@ -1,6 +1,6 @@
 # EXPERIMENTAL Xbox One Developer Mode export (UWP). OFF by default: -DOKAY_BUILD_XBOX_UWP=ON.
 # Everything Xbox lives in this folder. Removing it needs only the option, its add_subdirectory line in the top
-# CMakeLists.txt and the few `#if OKAY_XBOX_UWP` lines in editor/main.cpp. docs/xbox_uwp.md, docs/xbox_uwp_audit.md.
+# CMakeLists.txt and the few `#if OKAY_XBOX_UWP` lines in editor/main.cpp. docs/platform/xbox_uwp.md, docs/platform/xbox_uwp_audit.md.
 #
 # What is built here on any host: the headers are header-only (the editor includes them) and their test.
 # The UWP app in app/ is NOT part of this build: it is its own small CMake project (it must not see the engine), which

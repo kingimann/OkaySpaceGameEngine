@@ -20,10 +20,10 @@ Grok's sessions own the open animation work: PR #554 (animation integration, in 
 - **Code:** `Components/AnimStateMachine`, `Components/AnimBackend`, `Components/CharacterAnimBackend`, `Animation/HumanoidLibrary`, `editor/AnimatorWindow.*`, `editor/AnimatorPreview.hpp`
 - **API:** `AnimStateMachine` (`State`, `Transition`, `Cond`, `Param`, `SetFloat/SetBool/SetTrigger`); scripts `anim_set_float`, `anim_set_bool`, `anim_set_int`, `anim_trigger`, `anim_state()`, `anim_goto`, `anim_set_layer_weight`
 - **Editor:** View > Editors & Tools > Animator (state graph); "Open Animator Graph" on the Animator component; per-state Preview in the Inspector
-- **Docs:** `docs/animation.md` (Animation state machine, State machines, The Animator window)
+- **Docs:** `docs/gameplay/animation.md` (Animation state machine, State machines, The Animator window)
 - **Tests:** `anim_state_machine`, `anim_sm_layers`, `anim_sm_realloc`, `anim_layers`, `char_state_anim`, `clip_graph`, `ik_state_weight`
 - **Status:** Works - seven test suites cover transitions, layers, reallocation safety and graphs; I read the AnimStateMachine and AnimBackend headers, not the 2,900-line window
-- **Open:** possible doc bug: docs/animation.md gives crossfades of 0.2, 0.1 and 0.08 s but GaitCrossfades defaults (Stance.hpp) are 0.28, 0.22, 0.12 and 0.24 s; in flight in #554 (Grok): a slot change rewrites only the Locomotion state and keeps the other states' speed, IK weights and events (InsertLocomotion); two inspectors are titled "Animator" (see 5.3)
+- **Open:** possible doc bug: docs/gameplay/animation.md gives crossfades of 0.2, 0.1 and 0.08 s but GaitCrossfades defaults (Stance.hpp) are 0.28, 0.22, 0.12 and 0.24 s; in flight in #554 (Grok): a slot change rewrites only the Locomotion state and keeps the other states' speed, IK weights and events (InsertLocomotion); two inspectors are titled "Animator" (see 5.3)
 - **Related:** 5.2, 5.3, 5.7, 5.11, 15.5
 - **Words:** Animator, AnimStateMachine, Animation State Machine, state, transition, blend tree, 2D blend, layer, mask, additive, Any State, exit time, interruption, parameter, trigger, Animator window, state graph
 - **Seen as:** the wrong clip plays or two clips fight; transition does not fire or fires at once; blend tree feet slide; a state shows a warning glyph; the graph loses its layout; the character snaps instead of blending
@@ -43,10 +43,10 @@ Grok's sessions own the open animation work: PR #554 (animation integration, in 
 - **Code:** `Components/AnimClip`, `Animation/AnimationClip`, `Animation/AnimationCurve`, `Animation/ClipPresets`, `Components/Animator`, `Components/PoseCapture`, `editor/MainShared.hpp`, `editor/main.cpp`
 - **API:** `AnimClip`, `AnimKey`, `AnimEvent`, `AnimationClip`, `AnimationCurve`, `ClipPreset`, `Character::LoadClipsFromFile/PlayClip/StopClip`, `Animator::onEvent`, `PoseCapture`
 - **Editor:** View > Animation (clip list, dope sheet, curves, onion skin, presets, Record); Clip tools on imported models; Pose Capture panel
-- **Docs:** `docs/animation.md` (first sections, Animating any object, Animation events), `docs/ik.md` (Pose Capture)
+- **Docs:** `docs/gameplay/animation.md` (first sections, Animating any object, Animation events), `docs/gameplay/ik.md` (Pose Capture)
 - **Tests:** `animclip`, `anim_edit`, `anim_clip_tools`, `animation`, `animator`, `animator_edit`, `char_anim`, `char_anim_events`, `char_blend`, `modelanim_save`, `anim_playback`, `anim_ik_components`
 - **Status:** Works - clip parsing, editing, events, save round-trips and blending all have tests; the Animation tab is not covered by a UI test I know of
-- **Open:** possible doc gap: `docs/animation.md` is the only description of the `.okayanim` format; an imported clip once changed shape after save and reopen (fixed, modelanim_save); in flight in #554: Pose Capture and IK Target get small edits (19 and 4 lines)
+- **Open:** possible doc gap: `docs/gameplay/animation.md` is the only description of the `.okayanim` format; an imported clip once changed shape after save and reopen (fixed, modelanim_save); in flight in #554: Pose Capture and IK Target get small edits (19 and 4 lines)
 - **Related:** 5.1, 5.3, 3.6, 15.5, 10.1
 - **Words:** clip, keyframe, okayanim, dope sheet, curve editor, onion skin, Record, events, preset, AnimClip, AnimationClip, Pose Capture, Bake, loop, once
 - **Seen as:** the clip plays too fast or does not loop; a pose pops at a key; events fire twice or never; the edited clip is not saved; preview leaves the model in a strange pose
@@ -64,7 +64,7 @@ Grok's sessions own the open animation work: PR #554 (animation integration, in 
 - **Code:** `Components/ModelAnimator`, `Components/ModelAnimatorPose`, `Animation/ClipGraph`, `Render/ModelImport`
 - **API:** `ModelAnimator` (`Slot`, `onRootMotion`, `Play`), `ClipGraph::Build`, `AutoMapLocomotion`, `FixCharacterAnimations`; scripts `play_clip`, `stop_clip`, `play_clip_once`, `playing_clip`, `clip_finished`, `clip_duration`
 - **Editor:** Character Model panel (slots, Stride Match, clip speeds, Body lean, Fix animations, Add animation files); Model Animator inspector (Blend, Locomotion, strafe and back clips)
-- **Docs:** `docs/animation.md` (Imported model animations, Mixed animation, Air states, Crouch and prone, Which components do I edit)
+- **Docs:** `docs/gameplay/animation.md` (Imported model animations, Mixed animation, Air states, Crouch and prone, Which components do I edit)
 - **Tests:** `mixamo_locomotion`, `strafe_blend`, `clip_graph`, `anim_playback`, `imported_glitches`, `rig_sweep`, `footik_drift`
 - **Status:** Works - mixamo_locomotion (580 lines), strafe_blend and clip_graph cover slots, stride matching and strafe blends; strafe clips landed in #537
 - **Open:** in flight in #554 (Grok): the slot editor under Model Animator > Locomotion (Fill empty slots from names, Use, Preview) and its docs; "two components named Animator": confirmed in main.cpp, the Animator state machine and the keyframe Animator inspectors both use the header "Animator"
@@ -82,11 +82,11 @@ Grok's sessions own the open animation work: PR #554 (animation integration, in 
   - 5.4.4 Default clip library - `Animation/HumanoidLibrary` - baked once per run: gaits in eight directions at several speeds, crouch, prone, crawl, drop, get-up, jump, fall, land, hang, gestures; seamless loops
   - 5.4.5 Enable built-in animation on a model - `Render/ModelImport` - EnableBuiltinAnimations (needs 8 or more of the 15 bones), CountHumanoidBones, AddAnimationsFromFile (bones matched by name, rotations plus height-scaled hips)
   - 5.4.6 Map Humanoid Bones window - `editor/main.cpp` - DrawBoneMap for rigs the auto-detect misses
-  - 5.4.7 Natural walk and run - `Animation/HumanoidMotion`, `Components/NaturalGait`, `Components/Character` - a walk of 80 to about 130 steps a minute (always a foot down, the ankle rolls over the planted foot) and a run of 160 to 190 with flight, so W and Shift look different; the legs follow the real ground speed (a jog from 2.4 to 3.4 m/s), not the controller's settings; the First Person, Third Person and Third Person Shooter controllers start at walk 2.0 and run 5.5 m/s (shooter 5.0); `OKAY_OLD_GAIT=1` brings back the old gait, blend and speeds in the same build (`docs/walk_vs_run.md`)
+  - 5.4.7 Natural walk and run - `Animation/HumanoidMotion`, `Components/NaturalGait`, `Components/Character` - a walk of 80 to about 130 steps a minute (always a foot down, the ankle rolls over the planted foot) and a run of 160 to 190 with flight, so W and Shift look different; the legs follow the real ground speed (a jog from 2.4 to 3.4 m/s), not the controller's settings; the First Person, Third Person and Third Person Shooter controllers start at walk 2.0 and run 5.5 m/s (shooter 5.0); `OKAY_OLD_GAIT=1` brings back the old gait, blend and speeds in the same build (`docs/gameplay/walk_vs_run.md`)
 - **Code:** `Animation/HumanoidBones`, `Components/HumanoidRetarget`, `Animation/HumanoidMotion`, `Animation/HumanoidLibrary`, `Components/Character`, `Components/NaturalGait`, `Render/ModelImport`, `editor/main.cpp`
 - **API:** `humanoid::MapHumanoidBones`, `HumanoidRetarget`, `HumanoidMotion::PoseFor`, `HumanoidMotion::OldGait`, `NaturalGait::UseNaturalSpeeds`, `HumanoidLibrary::Get`, `Character::driveExternal`, `Character::RunStyle`
 - **Editor:** Humanoid Retarget inspector (Weight, Body lean, Re-Detect Bones); Hierarchy right-click > Map Humanoid Bones... / Use Built-in Animations; Player Controller > Use natural walk and run speeds (also on a bare First or Third Person controller and the Third Person Shooter) and the hint under Walk Speed
-- **Docs:** `docs/animation.md` (Built-in locomotion, Built-in animations on imported rigs), `docs/walk_vs_run.md`
+- **Docs:** `docs/gameplay/animation.md` (Built-in locomotion, Built-in animations on imported rigs), `docs/gameplay/walk_vs_run.md`
 - **Tests:** `humanoid_bones`, `humanoid_retarget`, `humanoid_template`, `locomotion`, `gait_continuity`, `character_feel`, `rig_sweep`, `char_blend`, `walk_vs_run`, `walk_vs_run_old`, `walk_vs_run_strips`
 - **Status:** Works - humanoid_bones (347 lines), locomotion and rig_sweep (11 rigs) cover mapping, gait and many rig conventions
 - **Open:** old map "retargeting by avatar slot": hand mapping of a rig's bones landed (#522, git log); clips from a differently proportioned rig transfer rotations only; the natural walk and run is measured on Linux only (not run on Windows, no GPU renderer, no real Mixamo model), older projects keep their saved speeds until the Inspector button is pressed (an automatic upgrade would need an `okayscene` format bump), the walk's hips bob about 8 cm (a person's 3 to 5)
@@ -105,7 +105,7 @@ Grok's sessions own the open animation work: PR #554 (animation integration, in 
 - **Code:** `Components/RootMotion`, `Components/SkinnedMesh`, `Components/ModelAnimator`, `editor/main.cpp`
 - **API:** `RootMotion`, `SkinnedMesh` (`SkinningMode`), `ModelAnimator::onRootMotion`; script `set_root_motion(on)`
 - **Editor:** Model Animator inspector (Root Motion), Skinned Mesh inspector (bone tree, statistics), Scene overlay
-- **Docs:** `docs/animation.md` (Root motion, Imported characters: skeleton, skinning, GPU skinning)
+- **Docs:** `docs/gameplay/animation.md` (Root motion, Imported characters: skeleton, skinning, GPU skinning)
 - **Tests:** `anim_core`, `anim_ik`, `skinning`
 - **Status:** Works - anim_core checks root motion on centimetre and rotated armatures and joints inside one model; skinning test covers vertex-to-joint binding
 - **Open:** bones beyond about 256 per mesh fall back to CPU skinning (per docs); GPU skinning and culling code live in the renderers (2.8)
@@ -127,10 +127,10 @@ Grok's sessions own the open animation work: PR #554 (animation integration, in 
 - **Code:** `Components/FootIK`, `Components/LimbIK`, `Components/ChainIK`, `Components/IKBones`, `Components/IKRestore`, `Components/IKPose`, `Components/CharacterIK`, `Math/TwoBoneIK`, `Math/Fabrik`, `Math/CCD`, `Math/IKMath`, `Math/JointLimit`, `Math/IKFade`
 - **API:** `FootIK`, `LimbIK`, `ChainIK`, `IKJointLimit`, `TwoBoneIK`, `Fabrik`; scripts `ik_enable`, `ik_set_weight`, `ik_set_target`, `ik_set_pole`
 - **Editor:** Add Component > Animation; Auto-Detect Bones buttons; Foot IK probe gizmos when selected; Model Animator > Set up humanoid IK
-- **Docs:** `docs/ik.md`, `docs/animation.md` (IK on imported rigs, Foot IK, IK sections)
+- **Docs:** `docs/gameplay/ik.md`, `docs/gameplay/animation.md` (IK on imported rigs, Foot IK, IK sections)
 - **Tests:** `anim_ik`, `foot_planting`, `footik_drift`, `ik_probes`, `ik_core`, `controllers_ik`
 - **Status:** Works - IK plan PRs 1-7 and the docs (#424) are on main; Foot IK, ground probes, drift and chain solvers have their own tests
-- **Open:** old map "IK rewrite plan" appears done (git log shows plan PRs 1-7); possible doc gap: the solve-order table in docs/ik.md omits IK Target (70) and Aim Offset (102), which the code orders at 70 (before the solvers) and 102 (after Full Body IK); hands-on-ledge Limb IK is not wired (Traversal.hpp comment)
+- **Open:** old map "IK rewrite plan" appears done (git log shows plan PRs 1-7); possible doc gap: the solve-order table in docs/gameplay/ik.md omits IK Target (70) and Aim Offset (102), which the code orders at 70 (before the solvers) and 102 (after Full Body IK); hands-on-ledge Limb IK is not wired (Traversal.hpp comment)
 - **Related:** 5.7, 5.1, 5.9, 4.2
 - **Words:** IK, foot IK, limb IK, chain IK, FABRIK, CCD, two-bone, pole, knee, elbow, joint limit, pelvis, plant, slope, foot lock, IKRestore
 - **Seen as:** feet don't touch the ground or sink; feet slide on slopes; a knee or elbow bends the wrong way; a limb flips; a hand snaps to a new target; corrections pile up
@@ -149,7 +149,7 @@ Grok's sessions own the open animation work: PR #554 (animation integration, in 
 - **Code:** `Components/LookAtIK`, `Components/AimIK`, `Components/FullBodyIK`, `Components/IKTarget`, `Components/AimOffset`, `Script/AnimIkTools`
 - **API:** `LookAtIK`, `AimIK`, `FullBodyIK`, `IKTarget`, `AimOffset`, `IkKind`; scripts `ik_look_at`, `ik_look`, `ik_hand`, `ik_foot`, `ik_release`, `ik_reached`, `ik_set_weight(kind, w)`, `ik_clear_target`, `recoil`
 - **Editor:** Add Component > Animation; right-click a character > Add IK Target; Look-At cone and weight label when selected; visual-script IK Look At and IK Hand Reach nodes
-- **Docs:** `docs/ik.md`, `docs/animation.md` (IK, IK: smoothing and limits)
+- **Docs:** `docs/gameplay/ik.md`, `docs/gameplay/animation.md` (IK, IK: smoothing and limits)
 - **Tests:** `ik_core`, `ik_look_stretch`, `ik_rigs`, `ik_state_weight`, `anim_ik_components`, `anim_ik_tools`
 - **Status:** Works - IK Target, Aim Offset and Pose Capture landed in #539, per-kind script tools in #563, state weights in #535; head and walk jitter reported as not fixed in #554
 - **Open:** in flight in #554 (Grok): small edits to IK Target (4 lines) and Pose Capture (19 lines); head and animation jitter stated there as not fixed
@@ -168,7 +168,7 @@ Grok's sessions own the open animation work: PR #554 (animation integration, in 
 - **Code:** `Components/Ragdoll`
 - **API:** `Ragdoll`; scripts `ragdoll()`, `ragdoll_push(...)`, `is_ragdoll()`
 - **Editor:** Add Component > Ragdoll (death + hit reactions); Ragdoll inspector
-- **Docs:** `docs/ragdolls.md`
+- **Docs:** `docs/physics/ragdolls.md`
 - **Tests:** `ragdoll`
 - **Status:** Works - ragdoll test covers limp, landing in one piece, standing up, falling away from a hit and flinching
 - **Open:** no cloth, spring-bone or secondary motion exists (searched for cloth, jiggle, spring bone); animated hit and death clips are separate, see 5.12
@@ -190,7 +190,7 @@ Grok's sessions own the open animation work: PR #554 (animation integration, in 
 - **Code:** `Components/ProceduralObjectHolding`, `Components/HoldableObject`, `Components/Sockets`, `Components/MoveSpeed`, `Components/HoldPrompt`
 - **API:** `ProceduralObjectHolding`, `HoldableObject`, `SpeedMultiplier()`, `MoveSpeedScale`; scripts `hold_nearest(range)`, `hold_pickup("Crate")`, `hold_drop()`, `hold_object()`
 - **Editor:** Add Component > Animation (Procedural Object Holding, Holdable Object); First Person Hands panel
-- **Docs:** `docs/animation.md` (Holding objects)
+- **Docs:** `docs/gameplay/animation.md` (Holding objects)
 - **Tests:** `object_holding`, `inventory_holding`
 - **Status:** Partial - holding styles and body adjustment are on main (PRs 1-3: #362, #377, #389); multiplayer sync and the grip editor exist only on unmerged branches
 - **Open:** old map: holding PRs 3-4: body adjust is done (#389), multiplayer sync (PR 4, branch `claude/holding-net`) and grip editor (PR 5, branch `claude/holding-editor`) are not merged; finger joints are never posed (hand is one block)
@@ -207,7 +207,7 @@ Grok's sessions own the open animation work: PR #554 (animation integration, in 
 - **Code:** `Components/SpriteAnimator`
 - **API:** `SpriteAnimator`, `SpriteClip`, `Play(name)`
 - **Editor:** Sprite Animator inspector; View > Editors & Tools > Sprite Editor
-- **Docs:** `docs/making_a_game.md`
+- **Docs:** `docs/gameplay/making_a_game.md`
 - **Tests:** `spriteanim`
 - **Status:** Works - spriteanim covers frames, atlas mode, named clips, non-looping and serialization
 - **Open:** none recorded
@@ -225,7 +225,7 @@ Grok's sessions own the open animation work: PR #554 (animation integration, in 
 - **Code:** `Components/AnimControl`, `Script/AnimIkTools`
 - **API:** `play_clip`, `stop_clip`, `play_clip_once`, `anim_event()`, `anim_set_float`, `anim_trigger`, `ik_set_weight`, `set_character_model`, `capture_pose`; typed `Animator` and `IK` components; visual-script Play Clip, Play Action, On Anim Event
 - **Editor:** Visual script nodes (Play Clip, Hit React, Roll, Dodge, Sit...); Script Editor completions
-- **Docs:** `docs/animation.md` (From a script), `docs/ik.md` (Scripting, Animator and IK calls)
+- **Docs:** `docs/gameplay/animation.md` (From a script), `docs/gameplay/ik.md` (Scripting, Animator and IK calls)
 - **Tests:** `anim_script_control`, `script_anim`, `anim_ik_tools`, `anim_clip_tools`
 - **Status:** Works - four test suites; per-kind script tools landed in #563
 - **Open:** a played clip holds until stop_clip, movement-driven animation waits
@@ -247,7 +247,7 @@ Grok's sessions own the open animation work: PR #554 (animation integration, in 
 - **Code:** `Animation/HumanoidActions`, `Animation/HumanoidLibrary`, `Components/AnimStateMachine`
 - **API:** `HumanoidActions`, `play_action`, `die`, `revive`, `hit_react`, `roll`, `dodge`, `dive`, `sit`, `stand_up`, `vault`, `mantle`, `climb_up`, `let_go`; visual-script Die, Revive, Hit React, Roll, Dodge, Dive, Sit
 - **Editor:** Animator inspector "Add built-in actions"; Preview on each state
-- **Docs:** `docs/animation.md` (Actions)
+- **Docs:** `docs/gameplay/animation.md` (Actions)
 - **Tests:** `ik_state_weight`, `net_anim_actions`, `net_proxy_gait`
 - **Status:** Works - all eight action sets are on main (#435, #506); remote sync covers death, roll, sit, swim and look only
 - **Open:** in flight in #554 (Grok): a `netActionParam` after the look fields (dodge direction or swim speed) and a roll-left check; dive, hit, vault and emotes are not replicated; hands-on-ledge Limb IK is not wired; swim has no water volume in the clip set (the controllers read a Water probe)
@@ -265,7 +265,7 @@ Grok's sessions own the open animation work: PR #554 (animation integration, in 
 - **Code:** -
 - **API:** `InspectPlayerAnimation`, `WirePlayerAnimation`, `PlayerAnimStatus` (in flight)
 - **Editor:** controller panel "setup status" (in flight)
-- **Docs:** `docs/animation.md` additions on the branch only
+- **Docs:** `docs/gameplay/animation.md` additions on the branch only
 - **Tests:** -
 - **Status:** In flight - PR #554 "Integrate owned animation and IK work", head on `grok/anim-integrate` (Grok's sessions); not on main
 - **Open:** per the PR body: head and walk jitter are not fixed; Play-cursor retest on the box; its body lists the `localization` test (missing font) as the one failing ctest in its run; do not edit, ask first

@@ -164,6 +164,7 @@
 #include "okay/Components/AimOffset.hpp"
 #include "okay/Components/PoseCapture.hpp"
 #include "okay/Components/LimbIK.hpp"
+#include "okay/Components/LedgeHandsIK.hpp"
 #include "okay/Components/HoldableObject.hpp"
 #include "okay/Components/FirstPersonHands.hpp"
 #include "okay/Components/ProceduralObjectHolding.hpp"

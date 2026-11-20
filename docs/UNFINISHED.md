@@ -84,7 +84,7 @@ The feature map currently has **125** rows that are Partial or Planned.
 | UI Dropdown | Scrolls with wheel, keys and by dragging the open list (mouse or finger; a tap still picks, a drag never does) | Scrolls whole rows only, no momentum; touch is tested through the pointer the finger drives, not on a real touch screen |
 | Inventory screen | Shows the bag, drags and splits stacks, moves between chest, hotbar, backpack and grid bags | Networked and scripted slot-to-grid moves, durability wear and repair; own-code arbiter for wheel and use key (only lean and bag-key clashes are handled), item names cut by measured width and icon file re-check are not ported; see [inventory.md](inventory.md) |
 | Mixamo Soldier and Xbot samples | Removed | |
-| LedgeGrab hands-on-ledge IK | Honest tooltip: not wired | Animation and IK team |
+| LedgeGrab hands-on-ledge IK | Component `LedgeHandsIK` (`Components/LedgeHandsIK.hpp`, maths `Math/LedgeHands.hpp`, test `ledge_hands_ik`) drives two arm LimbIKs onto the ledge edge while a lip is held. Headless test only: not attached by default to player prefabs, no editor Add Component entry (the tooltip says so) or scene save/load, never seen on a screen or on Windows | Animation and IK team |
 | App icon | Placeholder OkaySpace logo | Branding decision |
 | D3D11 / D3D12 renderers | Not buildable or runnable in our Linux environment | Only compile-checked with MinGW in CI |
 | Software renderer: scene Ambient Occlusion and Depth of field | Not read / not drawn | The scene's Post-processing SSAO switch and depth of field do nothing in software (bloom, FXAA, exposure, tonemap, grading, vignette are read now). See [render_status.md](render_status.md) |

@@ -14109,7 +14109,7 @@ inline void VsAddHandDocs(std::unordered_map<std::string, VsNodeDoc>& m) {
         VsNodeDoc d;
         d.type = "LedgeGrab";
         d.title = "Ledge Grab";
-        d.description = "In the air, catch a high ledge and hang. Hands-on-ledge IK is not wired.";
+        d.description = "In the air, catch a high ledge and hang. Hands go onto the ledge (two arm LimbIKs) through the LedgeHandsIK component, which a game adds in code; no editor entry yet.";
         d.requirements = "No single component is required beyond this object's Visual Script, unless the description names one. It runs in Play mode.";
         d.component = "";
         d.example = "Put Ledge Grab on the flow after an event such as On Start. The chain runs when that event fires.";

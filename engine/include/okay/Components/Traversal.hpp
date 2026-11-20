@@ -2,7 +2,7 @@
 // Vault, mantle and ledge-grab motion. The clips live in HumanoidActions.
 // canVault / canMantle / canLedgeGrab on the controllers default off, so
 // walking into a wall does nothing until a game opts in. vault() still probes.
-// Limb IK for hands-on-ledge is not wired (that component is owned elsewhere).
+// Hands on the ledge: LedgeHandsIK (reads the lip kept in TraverseJobs / HangPoints).
 #include "okay/Physics/Collider3D.hpp"
 #include "okay/Physics/Physics3D.hpp"
 #include "okay/Physics/Rigidbody3D.hpp"

@@ -5,7 +5,7 @@ claude/* and claude2/* branches with their last commit, and the latest comments 
 Standard library only. Uses GITHUB_TOKEN from the environment when present (a higher rate limit), otherwise works
 unauthenticated for a few calls. Usage: python3 scripts/work_board.py [--repo owner/name] [--out file]
 
-The agent list and the owner's open decisions are not on GitHub: they live in docs/work_board.md (rewritten by hand)
+The agent list and the owner's open decisions are not on GitHub: they live in docs/status/work_board.md (rewritten by hand)
 and are only linked from here. Everything below the header is generated, never edit it by hand.
 """
 import argparse, datetime, json, os, sys, urllib.request
@@ -55,7 +55,7 @@ def main():
     out = [f"# Live work board", "",
            f"Generated {now} by `scripts/work_board.py` (a scheduled workflow rewrites this about every 10 minutes). "
            "Rule 6 (`CLAUDE.md`): a PR merges only when every CI job is finished and green.", "",
-           "Hand-written parts (agents, owner decisions): [docs/work_board.md](https://github.com/%s/blob/main/docs/work_board.md)." % repo, ""]
+           "Hand-written parts (agents, owner decisions): [docs/status/work_board.md](https://github.com/%s/blob/main/docs/status/work_board.md)." % repo, ""]
     prs = api("/pulls?state=open&per_page=50&sort=created&direction=asc", repo)
     out += [f"## Open pull requests ({len(prs)})", "", "| PR | Title | State | CI | Updated |", "|---|---|---|---|---|"]
     for p in prs:
@@ -100,7 +100,7 @@ def main():
         out.append("")
     except Exception:
         pass
-    # Claims table and collision report (scripts/collision_check.py, docs/collaboration.md). Needs a full git history with the
+    # Claims table and collision report (scripts/collision_check.py, docs/process/collaboration.md). Needs a full git history with the
     # remote branches; when that is missing the board still gets written, with a one-line note instead.
     try:
         import collab_lib as L, collision_check as CC

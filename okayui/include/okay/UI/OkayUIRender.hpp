@@ -2,7 +2,7 @@
 // OkayUI render interface: OkayUI's draw data on screen WITHOUT any Dear ImGui backend code.
 //
 // OWN CODE, OFF BY DEFAULT, wired nowhere (the editor and launcher still draw through Dear ImGui). See
-// docs/own_ui_toolkit.md, "OkayUI render interface".
+// docs/ui/own_ui_toolkit.md, "OkayUI render interface".
 //
 // Three layers:
 //

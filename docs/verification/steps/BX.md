@@ -9,7 +9,7 @@
   3. Open the output folder and start the `.exe`.
 - **See:** a standalone game folder with an exe; the exe opens your scene and plays it.
 - **Partial:** the player (`Tools\OkaySpacePlayer.exe`) must be next to the editor; the build never downloads one.
-- **Link:** [build_mode.md](../../build_mode.md)
+- **Link:** [build_mode.md](../../gameplay/build_mode.md)
 
 ### V-BX-002 Build & Run and zip
 - **Map:** 18
@@ -37,7 +37,7 @@
   2. Check the exit code (`echo %errorlevel%`).
 - **See:** exit code 0 and a built game in `OutDir`.
 - **Partial:** the exit code is 0 only when the game was built; nothing is downloaded. A GUI exe may not print to the console.
-- **Link:** [../../editor.md](../../editor.md)
+- **Link:** [../../editor.md](../../editor/editor.md)
 - **Grounded:** no
 
 ### V-BX-005 Editor update check
@@ -47,8 +47,8 @@
   1. Choose **Engine > Check for Updates...**.
   2. Read the popup and the Console line ("Up to date" or "Update available").
 - **See:** a message with the current and the latest version.
-- **Partial:** the editor's own installer uses the same checksum rules as the launcher (docs/updater.md); not run on Windows by us.
-- **Link:** [updater.md](../../updater.md)
+- **Partial:** the editor's own installer uses the same checksum rules as the launcher (docs/release/updater.md); not run on Windows by us.
+- **Link:** [updater.md](../../release/updater.md)
 
 ### V-BX-006 Installer and zip layout
 - **Map:** 18.1
@@ -59,7 +59,7 @@
   3. Start `OkaySpace.exe`.
 - **See:** the launcher starts; the Tools folder holds the editor and player.
 - **Partial:** the installer path is `%LOCALAPPDATA%\OkaySpace`; code signing is not done yet (the owner's step, CLAUDE.md rule 14), so Windows SmartScreen may warn.
-- **Link:** [packaging.md](../../packaging.md)
+- **Link:** [packaging.md](../../release/packaging.md)
 - **Grounded:** no
 
 ### V-BX-007 Release files have checksums (owner check)

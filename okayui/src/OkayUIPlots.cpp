@@ -1,6 +1,6 @@
 // OkayUI plots with the Dear ImGui options: PlotLines and PlotHistogram over an array or a getter, a ring-buffer start, an overlay text, a
 // size, a hover that highlights the point or bar under the pointer and names it in a tooltip. Built on the public OkayUI calls only.
-// The plain PlotLines / PlotHistogram (scale and height only) stay in OkayUI.cpp. See docs/own_ui_toolkit.md section 4.34.
+// The plain PlotLines / PlotHistogram (scale and height only) stay in OkayUI.cpp. See docs/ui/own_ui_toolkit.md section 4.34.
 #include "okay/UI/OkayUI.hpp"
 
 #include <algorithm>

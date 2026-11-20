@@ -3,7 +3,7 @@
 //   g++ -std=c++17 -O1 -g -fsanitize=address,undefined,float-cast-overflow -fno-sanitize-recover=all -DOKAY_STANDALONE_TEST
 //       -Iengine/include -Iengine/src/Core -Itests tests/test_batche_hostile.cpp engine/src/Render/{Mdc,Hmp,Csm}Reader.cpp -o hostile
 // OKAY_BATCHE_FUZZ_ITERS=200000 for a long run (per reader). The fixtures are SYNTHETIC. With OKAY_MODEL_CORPUS set to the "test"
-// directory of an Assimp 5.4.3 checkout (docs/model_corpus.md) the four real files of these formats are read and compared with
+// directory of an Assimp 5.4.3 checkout (docs/content/model_corpus.md) the four real files of these formats are read and compared with
 // numbers worked out independently (a small script over the raw bytes), and fuzzed.
 //  Worst allowed file for each reader: a counting operator new measures the live peak and the time must stay small.
 #include "test_framework.hpp"

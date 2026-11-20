@@ -13,7 +13,7 @@
 // index are run the same way and MUST be reported, otherwise the harness is not looking.
 // What this does NOT show: valgrind tracks definedness bit-precisely only for some operations, and says
 // nothing about variable-time instructions (a division, a multiply that is slow on some CPUs) or about
-// microarchitectural effects; see the timing test and docs/crypto_review_package.md.
+// microarchitectural effects; see the timing test and docs/platform/crypto_review_package.md.
 // UNREVIEWED code under test (see okay/Crypto/Crypto.hpp).
 #include <okay/Crypto/Crypto.hpp>
 #include <cstdio>

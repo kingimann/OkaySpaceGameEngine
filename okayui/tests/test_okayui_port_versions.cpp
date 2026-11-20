@@ -1,6 +1,6 @@
 // Run, not just compile: the launcher's Versions page (launcher/VersionsUI.cpp over launcher/VersionsManager.cpp and VersionsNet.cpp), a Dear ImGui page
 // compiled against OkayUI through the probe stand-in imgui.h and drawn headless. Fake state: a temporary launcher folder with two installed versions, an
-// offline host (the text fetch always fails; nothing is downloaded), no-op callbacks. See docs/own_ui_toolkit.md 6.14.
+// offline host (the text fetch always fails; nothing is downloaded), no-op callbacks. See docs/ui/own_ui_toolkit.md 6.14.
 #include <SDL.h>
 #include <ctime>
 #include <unistd.h>
@@ -30,7 +30,7 @@ static void Golden(const char* name, const Bitmap& b) {
 int main() {
     RUN_SUITE("port probe: launcher Versions page run headless");
     // Hermetic: nothing of the machine may reach the picture. A fixed wall clock (time() above), UTC, the C locale, a private home and working folder, and no
-    // network at all: the version lookup is the offline stub below, which every URL reaches and none answers (docs/own_ui_toolkit.md 6.17).
+    // network at all: the version lookup is the offline stub below, which every URL reaches and none answers (docs/ui/own_ui_toolkit.md 6.17).
     setenv("TZ", "UTC", 1); tzset(); setenv("LANG", "C", 1); setenv("LC_ALL", "C", 1);
     const fs::path dir = fs::temp_directory_path() / ("okayui_port_versions_test_" + std::to_string((long long)getpid()));   // one folder per process: parallel runs cannot meet
     std::error_code ec; fs::remove_all(dir, ec);

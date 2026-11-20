@@ -1,7 +1,7 @@
 // Our own SMD (Valve "Studiomdl Data", text) reader: a skeleton, a skinned triangle mesh and a skeletal animation.
 // Written from the public description of the format (the Valve Developer Community's SMD page) and of Valve's published
 // math library for the Euler angle convention. Bounds-checked, capped, no recursion. See okay/Render/ModelData.hpp and
-// docs/own_smd_reader.md.
+// docs/content/model_readers.md.
 #include "TextReaderUtil.hpp"
 #include "okay/Render/ModelData.hpp"
 #include <algorithm>

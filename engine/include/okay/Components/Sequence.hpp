@@ -6,7 +6,7 @@
 // window edits one and previews it at the playhead. Everything here is plain data
 // plus pure evaluation at a time, so the preview and the game agree.
 //
-// Text format (see docs/cutscenes.md):
+// Text format (see docs/gameplay/cutscenes.md):
 //   okayseq 1
 //   sequence "Intro" length 8 loop 0 0 0
 //   camera

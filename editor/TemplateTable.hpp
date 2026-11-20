@@ -7,7 +7,7 @@
 // for it. Header-only and free of ImGui and SDL, so the editor and the tests (tests/test_templates_work.cpp)
 // use exactly the same table.
 //
-// Adding a template: see docs/templates_check.md. The short version: one row in okayproj::Templates(), one row
+// Adding a template: see docs/process/templates_check.md. The short version: one row in okayproj::Templates(), one row
 // here, one builder in EditorState, one row in tests/test_templates_work.cpp. The test fails until all four agree.
 //
 //   FindBuilder(title)       the builder for exactly this title, or null when there is none

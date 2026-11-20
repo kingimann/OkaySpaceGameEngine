@@ -3,7 +3,7 @@
 //   g++ -std=c++17 -O1 -g -fsanitize=address,undefined,float-cast-overflow -fno-sanitize-recover=all
 //       -Iengine/include -Iengine/src/Render -Itests -DOKAY_SOURCE_DIR='"."' tests/test_terragen_hostile.cpp
 //       engine/src/Render/TerragenReader.cpp -o terragen_hostile
-// OKAY_READER_FUZZ_ITERS=200000 for a long run. With OKAY_MODEL_CORPUS set (docs/model_corpus.md), the real files under
+// OKAY_READER_FUZZ_ITERS=200000 for a long run. With OKAY_MODEL_CORPUS set (docs/content/model_corpus.md), the real files under
 // TER/ are fuzzed too.
 #include "test_framework.hpp"
 #include "reader_hostile_common.hpp"

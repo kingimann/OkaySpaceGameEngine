@@ -1,4 +1,4 @@
-// Pictures of the built-in character's stride (docs/walk_vs_run.md): a side view of one full stride in 8 poses, drawn by
+// Pictures of the built-in character's stride (docs/gameplay/walk_vs_run.md): a side view of one full stride in 8 poses, drawn by
 // the engine's own software renderer, headless. These are software renders made on Linux, not screenshots of the
 // Windows player: the poses are what the engine produces, the lighting and the camera are this tool's.
 //

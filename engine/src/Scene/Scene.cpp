@@ -27,7 +27,7 @@
 #include "okay/Core/Profiler.hpp"
 #include "okay/Net/NetTransport.hpp"   // per-frame pump for non-native transports
 #include "okay/Environment/Weather.hpp"   // rain / snow / storm rig following the camera
-#include "okay/Components/WindZone.hpp"   // the wind field (docs/wind.md)
+#include "okay/Components/WindZone.hpp"   // the wind field (docs/gameplay/wind.md)
 #include "okay/Physics/BodyPose.hpp"
 #include "okay/Physics/Rigidbody2D.hpp"
 #include "okay/Physics/Rigidbody3D.hpp"

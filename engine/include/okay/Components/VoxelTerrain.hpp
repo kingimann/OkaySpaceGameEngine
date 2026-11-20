@@ -134,7 +134,7 @@ public:
     /// it doesn't see cave floors beneath an overhang.)
     bool  SurfaceY(float lx, float lz, float& outY) const;
 
-    // ---- Materials and real-life digging (docs/terrain_water.md, "Materials") --------------------------------
+    // ---- Materials and real-life digging (docs/rendering/terrain_water.md, "Materials") --------------------------------
     /// What a kind of ground is made of. A terrain with materials keeps one byte per voxel naming its entry here.
     struct VoxelMaterial {
         std::string name = "Dirt";

@@ -4,7 +4,7 @@
 // check the same contract on the same inputs: for every token, ScanDecimal either gives FastDecimal's value bit for bit and stops
 // at the token's end, or declines exactly when FastDecimal declines or the token is longer than the limit. So both builds give
 // identical values. Inputs: hand-picked tokens, every four-digit run, a fixed pseudo-random set and, when OKAY_MODEL_CORPUS is
-// set, every number-like token of the corpus text files (docs/model_corpus.md). Standalone: no engine library.
+// set, every number-like token of the corpus text files (docs/content/model_corpus.md). Standalone: no engine library.
 #include "test_framework.hpp"
 #include "../engine/src/Render/NumParse.hpp"
 #include <cstdio>

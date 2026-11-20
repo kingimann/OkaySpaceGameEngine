@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Sign and check the release index (versions.json) with ed25519. Docs: docs/updater.md "Signed releases".
+"""Sign and check the release index (versions.json) with ed25519. Docs: docs/release/updater.md "Signed releases".
 
     sign_index.py genkey                          make a key pair: prints the seed (PRIVATE) and the public key, nothing is written
     sign_index.py pubkey                          print the public key of the seed in $OKAY_UPDATE_SIGNING_SEED

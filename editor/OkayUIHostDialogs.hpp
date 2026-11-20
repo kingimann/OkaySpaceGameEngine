@@ -1,5 +1,5 @@
 #pragma once
-// The OkayUI implementation of oked::DialogService for window mode (docs/own_ui_toolkit.md 6.24 step 7): the error modal and the Save / Don't Save / Cancel
+// The OkayUI implementation of oked::DialogService for window mode (docs/ui/own_ui_toolkit.md 6.24 step 7): the error modal and the Save / Don't Save / Cancel
 // question as OkayUI popups, no Dear ImGui. Same words and the same rules as the Dear ImGui editor's popups in main.cpp (one question at a time, a prefab open
 // means the scene is put aside and replacing it is refused, a failed save keeps the question open and shows why). The editor state it needs comes in as
 // callbacks, so it is tested without the engine. Written from the behaviour of main.cpp's ShowErrorPopup / RunAfterSavePrompt / DrawSavePrompt.

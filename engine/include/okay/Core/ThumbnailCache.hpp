@@ -3,7 +3,7 @@
 // in-memory layer and an optional folder of PNGs on disk, fed by pluggable generators
 // (`render(path) -> Image`). PNG/JPG and the other image types get a real thumbnail
 // (box-filter downscale); everything else gets a placeholder tile. No UI here.
-// Not thread-safe. See docs/asset_database.md.
+// Not thread-safe. See docs/engine/asset_database.md.
 #include "okay/Core/AssetDatabase.hpp"
 #include "okay/Graphics/Image.hpp"
 #include <cstddef>

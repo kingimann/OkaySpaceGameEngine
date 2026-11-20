@@ -20,7 +20,7 @@ Copyright (c) 2026 OkaySpaceGameEngine. All rights reserved.
    the copyright holder.
 
 4. Third-party components. The Software includes third-party components
-   under their own licenses, listed in docs/THIRD_PARTY.md. This license does
+   under their own licenses, listed in docs/status/THIRD_PARTY.md. This license does
    not change those licenses, and they apply to those components.
 
 5. Earlier versions. Copies of the Software that were published under the MIT

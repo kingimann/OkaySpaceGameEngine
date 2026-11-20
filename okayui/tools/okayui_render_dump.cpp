@@ -1,6 +1,6 @@
 // Writes every render-test scene as draw data (.okd) and the software reference picture (.ref.rgba, RGBA8, cleared to
 // 12, 14, 20) into a directory: okayui_render_dump <dir> [dpi]. Used to check a backend on a machine that cannot run OkayUI,
-// see okayui_render_d3d11_check.cpp and docs/own_ui_toolkit.md.
+// see okayui_render_d3d11_check.cpp and docs/ui/own_ui_toolkit.md.
 #include "RenderDump.hpp"
 #include "../tests/RenderScenes.hpp"
 #include "okay/UI/OkayUIRenderBackends.hpp"

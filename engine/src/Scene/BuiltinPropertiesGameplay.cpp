@@ -5,7 +5,7 @@
 // stores, so a value set through the registry survives Save and Load (the
 // cross-check in tests/test_property_registry.cpp proves it for every property).
 // Fields the scene file does not keep (runtime pointers, caches) are left out. See
-// docs/properties.md.
+// docs/engine/properties.md.
 #include "BuiltinPropertiesShared.hpp"
 #include "okay/Components/LocalPlayerInput.hpp"
 
@@ -775,7 +775,7 @@ void RegisterVolume() {
     b.Commit();
 }
 
-// Wind (docs/wind.md)
+// Wind (docs/gameplay/wind.md)
 void RegisterWind() {
     {
         PropertyBuilder<WindZone> b("WindZone", "windzone", "Environment");

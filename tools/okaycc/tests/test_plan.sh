@@ -3,7 +3,7 @@
 # it is written from. This is a text check, not a compile test.
 set -euo pipefail
 ROOT="$(cd "$(dirname "$0")/../../.." && pwd)"
-PLAN="$ROOT/docs/own_compiler_plan.md"
+PLAN="$ROOT/docs/platform/own_compiler_plan.md"
 fail=0
 if [[ ! -f "$PLAN" ]]; then
   echo "missing $PLAN"

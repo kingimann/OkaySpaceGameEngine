@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Linux checks for the experimental Xbox UWP export (docs/xbox_uwp.md). No Windows, no PowerShell needed.
+"""Linux checks for the experimental Xbox UWP export (docs/platform/xbox_uwp.md). No Windows, no PowerShell needed.
 
   check_xbox_uwp.py scripts <repo root>
       Static checks of scripts/build-xbox-uwp.ps1, xbox-check-sdk.ps1, xbox-compile-shaders.ps1, xbox-install-local.ps1, xbox-sign.ps1:
@@ -129,7 +129,7 @@ def static_checks(root):
         declared = set(re.findall(r'\$(\w+)\s*(?:=|,|$)', pb, re.M)) | set(re.findall(r'\$(\w+)', pb))
         for must in ('SourceRoot', 'ExportDir', 'MinimalTest', 'EngineMode', 'SkipInstall', 'SkipSign', 'Http', 'OwnCrypto'):
             check(must in declared, "build script lacks parameter -" + must)
-        docs = [os.path.join(root, 'docs', 'xbox_uwp.md')]
+        docs = [os.path.join(root, 'docs', 'platform', 'xbox_uwp.md')]
         td = os.path.join(root, 'docs', 'try_it')
         if os.path.isdir(td): docs += [os.path.join(td, f) for f in os.listdir(td) if 'xbox' in f.lower()]
         docs += [os.path.join(root, 'docs', 'try_it.md')]

@@ -2,7 +2,7 @@
 // The part of the editor's per-frame work that steps the game and has nothing to do with Dear ImGui, moved out of editor/main.cpp so window mode
 // (editor/OkayUIHostMode.cpp) can run the same step. Header-only and templated on the editor-state type, so the logic is tested headless with a small fake
 // (okayui/tests/test_okayui_frametick.cpp) while the editor uses the real okay::editor::EditorState. The code is the block that was in main.cpp, moved as is:
-// docs/own_ui_toolkit.md 6.24 step 4. No <mutex>/<thread> (Windows build rule).
+// docs/ui/own_ui_toolkit.md 6.24 step 4. No <mutex>/<thread> (Windows build rule).
 #include <functional>
 
 namespace oked {

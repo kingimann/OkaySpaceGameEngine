@@ -1,4 +1,4 @@
-// Test builds (the "dev channel"): shared/TestBuild.hpp, and what launcher/VersionsManager.cpp does with them. Docs: docs/release_channels.md "Test builds".
+// Test builds (the "dev channel"): shared/TestBuild.hpp, and what launcher/VersionsManager.cpp does with them. Docs: docs/release/release_channels.md "Test builds".
 //
 // What this proves, with no window, no network and no clock:
 //   * the number: a test version (2.876.0.17) sorts just above the release it was made on and below every later release, never equals a release,

@@ -1,6 +1,6 @@
 // The window-mode run function (shared/OkayUIHostMode.hpp): the platform backend, window, painter and the frame loop around DrawHostModeUi and the editor's
 // game step (EditorFrameTick.hpp). Kept apart from OkayUIHostMode.cpp because it uses the real okay::editor::EditorState (the editor target links it; the
-// headless tests of the screen and of the state file do not). Steps 2 to 4 of docs/own_ui_toolkit.md 6.24. Not run on a real window in the session that
+// headless tests of the screen and of the state file do not). Steps 2 to 4 of docs/ui/own_ui_toolkit.md 6.24. Not run on a real window in the session that
 // wrote it: only compile-checked and exercised through its parts.
 #include "OkayUIHostMode.hpp"
 

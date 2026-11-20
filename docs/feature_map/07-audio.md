@@ -2,7 +2,7 @@
 
 Software stereo mixer, WAV/OGG/MP3 clips (mono or stereo) and streamed long sounds, audio sources with 3D falloff, doppler, occlusion and distance muffling, reverb zones, a music player and saved volume settings. Code is
 `engine/include/okay/Audio/*` (7 headers), `engine/src/Audio/*` and two components; the host programs
-(`player/main.cpp`, `editor/main.cpp`) open the sound device. Doc: `docs/audio.md`. Nothing is in flight; #574 added a captions
+(`player/main.cpp`, `editor/main.cpp`) open the sound device. Doc: `docs/audio/audio.md`. Nothing is in flight; #574 added a captions
 model (`Core/Subtitles`, see 10.1 and 32.2) that audio does not feed yet.
 
 ## 7. Audio
@@ -20,7 +20,7 @@ model (`Core/Subtitles`, see 10.1 and 32.2) that audio does not feed yet.
 - **Code:** `Audio/AudioMixer`, `editor/main.cpp` (Audio Mixer panel), `player/main.cpp` (audio device loop)
 - **API:** `AudioMixer::masterVolume`, `AudioMixer::groupVolume`, `AudioMixer::groupMuted`, `AudioMixer::duckMusicUnderVoice`, `AudioMixer::SetListener`, `AudioMixer::peak`, script `Audio.SetGroupVolume`, `set_group_volume`, `set_ducking`
 - **Editor:** View > Panels > Audio Mixer
-- **Docs:** `docs/audio.md`
+- **Docs:** `docs/audio/audio.md`
 - **Tests:** `audio_mixer`, `master_volume`, `audio`, `spatial_audio`, `volumes`
 - **Status:** Works - AudioMixer.hpp and the mixing code in AudioMixer.cpp read (ducking ramp, low-pass, spatial pan, doppler, occlusion, distance low-pass, reverb send); player and editor feed it; covered by `audio_mixer`, `master_volume` and `spatial_audio`
 - **Open:** only four fixed groups (no user-made buses, effect chain or snapshots); levels set in the editor panel are for the editor session only (players save their own, 7.4); one reverb bus for the listener (not a send per source, and the tail is not added once the listener has left the zone)
@@ -43,7 +43,7 @@ model (`Core/Subtitles`, see 10.1 and 32.2) that audio does not feed yet.
 - **Code:** `Audio/AudioClip`, `engine/src/Audio/AudioDecode.cpp`, `Audio/AudioLoad`, `Audio/Mp3Decoder` (`engine/src/Audio/Mp3Decoder.cpp`, tables in `Mp3Tables.hpp`), `Audio/AudioStream` (`engine/src/Audio/AudioStream.cpp`), `Audio/AudioByteSource`, `Audio/VorbisDecoder` (`engine/src/Audio/VorbisDecoder.cpp`)
 - **API:** `AudioClip`, `AudioClip::Load`, `LoadWAV`, `LoadOGG`, `LoadMP3`, `LoadFLAC`, `LoadCached`, `Resampled`, `SaveWAV`, `LoadAudioFile`, `LoadSceneAudio`, `AudioBaseDir`, `DecodeMp3`, `Mp3Audio`, `Mp3Options`, `AudioClip::Downmixed`, `AudioClip::FromChannels`, `AudioStream`, `AudioByteSource`, `Mp3Stream`, `OpenAudioStream`, `DecodeVorbis`, `VorbisAudio`, `VorbisOptions`, `VorbisStream`, `DecodeFlac`, `FlacAudio`, `FlacStream`, `ReadAudioImportOptions`
 - **Editor:** Project panel Audio category and Audio Clip asset icon; AudioSource inspector file picker
-- **Docs:** `docs/audio.md`
+- **Docs:** `docs/audio/audio.md`
 - **Tests:** `audio_formats`, `wav`, `mp3_decoder`, `vorbis_decoder`, `audio_stereo`, `audio_stream`, `flac_import`, `own_wav`, `wav_ffmpeg_diff`
 - **Status:** Works - AudioClip.hpp, the WAV loader and the AudioDecode.cpp head read; covered by `audio_formats` and `wav`; the MP3 decoder is checked against ffmpeg reference decodes (about 86 dB SNR on LAME files, 75-83 dB on synthetic intensity/mixed-block streams, limited by the 16-bit references) and the Vorbis decoder against libvorbis reference decodes (129-140 dB against the float output, 65-94 dB against the 16-bit fixtures); both are fuzzed under ASan/UBSan by `mp3_decoder` and `vorbis_decoder`; `audio_stream` checks streamed output equals whole-file decode sample for sample on every WAV, MP3 and OGG fixture (all 30 Ogg decoder fixtures included), exact seeks, seamless loops, a ten-minute file under 2 MB, underruns and damaged files
 - **Open:** the Vorbis decoder rejects more than 32 channels and codebooks that claim more than 2M entries, and floor type 0 (written by no current encoder) is only checked against libvorbis on generated streams; streaming has no sample cap (whole-file `DecodeVorbis` stops at `maxSamples`); streams are not resampled to the device rate in advance (the mixer interpolates); files over 2 GB are refused; more than two channels are averaged to mono; the audio import setting `quality` is stored and not applied (audio is not re-encoded); FLAC inside an Ogg container is not read and the FLAC MD5 is not checked; the MP3 decoder is Layer III only (no Layer I/II, no free-format bitrates)
@@ -61,7 +61,7 @@ model (`Core/Subtitles`, see 10.1 and 32.2) that audio does not feed yet.
 - **Code:** `Components/AudioSource`, `Components/MusicPlayer`, `editor/main.cpp` (AudioSource and Music Player inspectors)
 - **API:** `AudioSource`, `AudioGroup`, `AudioRolloff`, `PlayOneShot`, `FadeIn`, `FadeOut`, `MusicPlayer`, script `play_sound`, `music_play`, `music_next`, `music_stop`
 - **Editor:** Add Component > Audio > Audio Source and Music Player; Inspector with file picker
-- **Docs:** `docs/audio.md`
+- **Docs:** `docs/audio/audio.md`
 - **Tests:** `audio`, `audio_music`, `audio_stereo`, `audio_stream`, `wav`, `vs_media`, `spatial_audio`
 - **Status:** Works - AudioSource.hpp and MusicPlayer.hpp read (crossfade start and fades are in the headers); covered by `audio_music`, `audio`, `audio_stereo` (placement), `audio_stream` (the Stream option, Music Player streaming, save and load of the flag), `spatial_audio` (doppler ratio, occlusion, distance curve, stereo and stream still correct) and `vs_media` (visual-script music nodes)
 - **Open:** one listener (the main camera); Seek is C++ only (no script or visual-script call); the editor Add Component menu labels and script bindings for audio live in areas 15 and 13
@@ -79,7 +79,7 @@ model (`Core/Subtitles`, see 10.1 and 32.2) that audio does not feed yet.
 - **Code:** `Audio/AudioMixer`, `Components/SettingsScreen`, `Components/PauseMenu`, `player/main.cpp`
 - **API:** `AudioMixer::LoadSettings`, `AudioMixer::SaveSettings`, `Audio.SaveSettings`, `save_audio_settings`, Build Settings "Mute audio when unfocused"
 - **Editor:** Build Settings (mute when unfocused); Settings Screen and Pause Menu inspectors
-- **Docs:** `docs/audio.md`
+- **Docs:** `docs/audio/audio.md`
 - **Tests:** `master_volume`, `audio_mixer`
 - **Status:** Works - LoadSettings and SaveSettings call sites and the focus-mute line in player/main.cpp read; the save and load round trip is exercised in `audio_mixer`
 - **Open:** the volume sliders belong to the pause and settings screens (area 12.8). An Audio Source `caption` is shown by the caption widget when sound captions are on (32.2)

@@ -1,6 +1,6 @@
 #pragma once
 // One place that decides whether a file name that came from a script, a visual-script graph, an action list, a
-// plugin or a network peer may be opened. Docs: docs/security.md "Script file paths". Written from the Windows file
+// plugin or a network peer may be opened. Docs: docs/online/security.md "Script file paths". Written from the Windows file
 // naming rules (Microsoft's "Naming Files, Paths, and Namespaces" page) and POSIX path rules; no other project's code.
 //
 // A name passes only if it is a RELATIVE path that stays inside the folder it is resolved against:

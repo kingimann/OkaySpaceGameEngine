@@ -56,7 +56,7 @@ option(OKAY_OWN_MD5       "Read .md5mesh / .md5anim (id Tech 4 / Doom 3) with ou
 option(OKAY_OWN_MS3D       "Read .ms3d (MilkShape 3D) with our own MS3D reader by default (run-time env OKAY_OWN_MS3D=0/1 and SetImportBackend override)" ON)
 option(OKAY_OWN_ASE       "Read .ase (3ds Max ASCII Scene Export) with our own ASE reader by default (run-time env OKAY_OWN_ASE=0/1 and SetImportBackend override)" ON)
 option(OKAY_OWN_BLEND     "Read .blend with our own Blender reader by default (Assimp, when built, stays the fallback; without Assimp this is what lets .blend load at all; run-time env OKAY_OWN_BLEND=0/1 and SetImportBackend override)" ON)
-option(OKAY_OWN_HTTP      "Allow our own HTTP/1.1 client (system OpenSSL loaded at run time) on Linux for NativeHttp instead of spawning curl; still needs OKAY_OWN_HTTP=1 in the environment at run time, curl stays the fallback (docs/platform/own_http_client.md)" OFF)
+option(OKAY_OWN_HTTP      "Allow our own HTTP/1.1 client (system OpenSSL loaded at run time) on Linux for NativeHttp instead of spawning curl; still needs OKAY_OWN_HTTP=1 in the environment at run time, curl stays the fallback (docs/platform/own_http.md)" OFF)
 option(OKAY_OWN_3MF       "Read .3mf with our own 3MF reader by default (Assimp, when built, stays the fallback; run-time env OKAY_OWN_3MF=0/1 and SetImportBackend override)" ON)
 option(OKAY_OWN_AMF       "Read .amf with our own AMF reader by default (Assimp, when built, stays the fallback; run-time env OKAY_OWN_AMF=0/1 and SetImportBackend override)" ON)
 option(OKAY_OWN_X3D       "Read .x3d with our own X3D reader by default (Assimp, when built, stays the fallback; run-time env OKAY_OWN_X3D=0/1 and SetImportBackend override)" ON)

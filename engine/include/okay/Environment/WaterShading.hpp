@@ -15,7 +15,7 @@
 //   * a clipmap-style grid: square rings of cells that double in size outward, centred on the camera and snapped so
 //     the sample points sit on a fixed lattice (the surface does not swim), with the odd vertices on each ring's outer
 //     edge pulled onto the neighbouring coarse edge so there are no cracks.
-// See docs/rendering/water_visuals.md.
+// See docs/rendering/terrain_water.md.
 #include <algorithm>
 #include <cmath>
 #include <cstdint>

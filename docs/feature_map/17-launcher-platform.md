@@ -24,7 +24,7 @@ Line numbers below are for `launcher/main.cpp` at version 2.848.0 and drift. Nob
 - **Code:** `launcher/main.cpp`, `launcher/UpdaterCore.hpp`, `launcher/CMakeLists.txt`, `launcher/okayspace.rc`, `launcher/okayspace.ico`, `shared/OkayTheme.hpp`, `shared/Splash.hpp`, `shared/AppIcon.hpp`, `shared/RobotoFont.h`, `shared/JetBrainsMonoFont.h`, `shared/OkayScriptUIBridge.hpp`, `shared/OkayTestPanel.hpp`
 - **API:** `OkaySpace.exe`, `launcher.cfg`, env `OKAY_UPDATE_SERVER`, `OKAY_ACCOUNT_SERVER`, dev hooks `OKAY_UI_DEMO_TAB`, `OKAY_CHAT_DEMO`
 - **Editor:** none (the launcher starts `OkayEngine.exe` and `OkaySpacePlayer.exe` from `Tools/`)
-- **Docs:** `docs/release/packaging.md`, `docs/release/releasing.md`, `docs/online/launcher-multiplayer.md`
+- **Docs:** `docs/release/packaging.md`, `docs/release/releasing.md`, `docs/online/multiplayer.md`
 - **Tests:** none for the shell itself; `startup_update` (the start-up screen rules); the updater rules and helpers have tests (`self_update`, `app_restart` verified-restart cases, `launcher_versions` updater suite, `versions_index`, `crash_reports`, `project_delete`, `official_game`, `chat_json`, `friends_json`)
 - **Status:** Works - the shipping app, structure read from `main.cpp`; no automated UI test
 - **Open:** split `launcher/main.cpp` (1.5 MB, see 19.4 and ROADMAP "Later"); the update index (`versions.json`) is not signed (17.11); the updater itself requires and verifies checksums
@@ -39,7 +39,7 @@ Line numbers below are for `launcher/main.cpp` at version 2.848.0 and drift. Nob
   - 17.2.1 Account service - `Platform/Account/AccountService` - providers Local (salted PBKDF2-HMAC-SHA256 file, on `Crypto/Sha256.hpp`), Remote (your server, see 42.4) and Supabase (email sign-up, password reset (emails a link to the hosted page `supabase/auth-pages/reset-password`, see `docs/online/password-reset.md`), change email or username, token refresh); `Api()` adds the key and bearer token
   - 17.2.2 Account facade - `Platform/Account/Account` - process-wide `okay::Account` used by editor, player and the `account_*` script builtins; `OKAY_ACCOUNT_SERVER`
   - 17.2.3 Cloud saves and leaderboards - `Platform/Account/AccountService` - `CloudSave`, `CloudLoad`, `CloudList`, `LeaderboardSubmit`, `LeaderboardTop` on two Supabase tables
-  - 17.2.4 Native HTTPS - `Platform/NativeHttp` - pooled WinHTTP connections on Windows (no curl process per request); elsewhere, or if WinHTTP can't reach, the code falls back to curl with secrets passed in files (Linux can opt in to our own HTTP client with the system OpenSSL, `docs/platform/own_http_client.md`)
+  - 17.2.4 Native HTTPS - `Platform/NativeHttp` - pooled WinHTTP connections on Windows (no curl process per request); elsewhere, or if WinHTTP can't reach, the code falls back to curl with secrets passed in files (Linux can opt in to our own HTTP client with the system OpenSSL, `docs/platform/own_http.md`)
   - 17.2.5 Account page - `launcher/main.cpp` (tab 3, L19634) - sign in or create, profile, sign-in and security, privacy, more
   - 17.2.7 Download my data - `Platform/Account/AccountData` and launcher Account > Sign-in & security > Your data - reads only rows the signed-in user may read (RLS) and saves one JSON in `exports/` next to the launcher, with honest progress, "not set up" sections and a failed-sections list
   - 17.2.8 Delete my account - `supabase/functions/delete-account` and the same card - type the username and the password, then the Edge Function (user id from the JWT only) deletes or anonymises the user's rows in every table in `docs/sql/`, removes uploaded files and the auth user; the launcher shows server step errors, "function not deployed", and signs out on success; see `docs/online/account_data.md`
@@ -66,7 +66,7 @@ Line numbers below are for `launcher/main.cpp` at version 2.848.0 and drift. Nob
 - **Code:** `Platform/Friends`, `Platform/Parties`, `docs/sql/follows.sql`, `docs/sql/parties.sql`
 - **API:** `okay::Friends`, `okay::Parties`, `net_invite_friends`, `/invite`, `/party`
 - **Editor:** none
-- **Docs:** `docs/online/launcher-multiplayer.md`
+- **Docs:** `docs/online/multiplayer.md`
 - **Tests:** `friends_json`, `launcher_join`
 - **Status:** Works - shipping pages; tests cover the profile JSON and party parsing, not the live tables
 - **Open:** no test for follows or the SQL; `parties.sql` and `follows.sql` must be run once or the features hide
@@ -90,7 +90,7 @@ Line numbers below are for `launcher/main.cpp` at version 2.848.0 and drift. Nob
 - **Code:** `Platform/Messages`, `Platform/Privacy`, `Platform/BlockList`, `docs/sql/group_chats.sql`, `docs/sql/chat_extras.sql`, `docs/sql/chat_media.sql`, `docs/sql/blocks.sql`
 - **API:** `okay::Messages`, `okay::BlockList`, `okay::privacy`, chat slash commands `/invite`, `/party`, launcher Chat window
 - **Editor:** none
-- **Docs:** `docs/online/supabase-backend.md`, `docs/online/launcher-multiplayer.md`
+- **Docs:** `docs/online/supabase-backend.md`, `docs/online/multiplayer.md`
 - **Tests:** `chat_json`, `chat_receipts` (missing-table detection), `chat_receipts_sql` (local Postgres, skipped unless `OKAY_SQL_TEST_PGHOST`), `blocks_privacy` (rule parsing, missing-table detection, settings, pending block changes), `blocks_sql` (local Postgres, 99 checks), `member_moderation`
 - **Status:** Works - shipping; typing and read marks work once the owner has run `chat_receipts.sql` (not applied to any live project by us); the JSON splitter, the missing-table check and the block/privacy logic are tested. Server-side blocks need `docs/sql/blocks.sql` run by the owner (until then blocking is PC-only and Settings says so)
 - **Open:** most of the 24.8k lines of `main.cpp` are chat code and untested (split, see 19.4); `chat_extras.sql` and `group_chats.sql` are optional and degrade silently; the live typing / read-mark round trip against a real Supabase project is untested
@@ -304,7 +304,7 @@ Line numbers below are for `launcher/main.cpp` at version 2.848.0 and drift. Nob
 - **Code:** `Platform/GameIpc`, `launcher/main.cpp`
 - **API:** `GameIpc::WritePresence`, `RequestInvite`, `PostJoin`, `TakeJoin`, `GamePresence`, flags `--join LINK`, `--connect HOST:PORT`
 - **Editor:** none (in a game: Shift+Tab opens the invite window)
-- **Docs:** `docs/online/launcher-multiplayer.md`
+- **Docs:** `docs/online/multiplayer.md`
 - **Tests:** `launcher_join`
 - **Status:** Works - `launcher_join` covers links, queries, presence, the IPC files and a game launched to join
 - **Open:** none recorded; invites need the friends and chat tables (17.3, 17.4)

@@ -3,7 +3,7 @@
 // AddLight / AddBone items, ParentItem, the NumChannels / Channel / { Envelope / Key / Behaviors blocks with channels 0 to 8 as
 // position, heading, pitch, bank and scale) and from reasoning about that structure; no code, table or snippet of any other
 // importer was read. Each item is a node; the objects it names are read through a loader the caller supplies, and only from
-// inside the scene's own folder (LightWave objects also from the folder just above it: ResolveInContentDir). No real LWS file was available to check it against (docs/content/model_readers/own_lws_reader.md). Bounds-checked,
+// inside the scene's own folder (LightWave objects also from the folder just above it: ResolveInContentDir). No real LWS file was available to check it against (docs/content/model_readers.md). Bounds-checked,
 // capped, no recursion. See okay/Render/ModelData.hpp.
 #include "ReaderCommon.hpp"
 #include "SceneRefPath.hpp"

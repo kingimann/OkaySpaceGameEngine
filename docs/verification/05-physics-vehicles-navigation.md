@@ -15,8 +15,8 @@ Areas: 6, 9, 52. Rows ids start `V-PH-`. `V-PH-S<area>` rows are smoke tests bui
     3. Drive with W and S (gas and brake), A and D (steer), Space (handbrake). Press E again to get out.
     4. Walk to the right door (prompt says Ride) and press E.
   - **You should see (expected, not yet seen on Windows):** the car ignores keys until you press E at the driver door; you get out at the driver side; at the passenger door you are carried but cannot drive.
-  - **Known partial:** wheels are for looks only and do not spin; no sitting animation; seats are not replicated in multiplayer; no script node to enter or exit yet (docs/gameplay/vehicle_controller.md).
-  - **More:** [vehicle_controller.md](../../gameplay/vehicle_controller.md)
+  - **Known partial:** wheels are for looks only and do not spin; no sitting animation; seats are not replicated in multiplayer; no script node to enter or exit yet (docs/gameplay/vehicles.md).
+  - **More:** [vehicle_controller.md](../../gameplay/vehicles.md#vehicle-controller-arcade)
 
 - [ ] **V-PH-002** Vehicle seats example scene
   - **Map:** 6, 11. **Where:** editor, File > Open...
@@ -33,8 +33,8 @@ Areas: 6, 9, 52. Rows ids start `V-PH-`. `V-PH-S<area>` rows are smoke tests bui
     1. Choose **File > New Project...** and the **Vehicle (3D)** template.
     2. Press Play and drive with W A S D.
   - **You should see (expected, not yet seen on Windows):** a car with suspension that drives on the road.
-  - **Known partial:** see docs/gameplay/vehicle_controller.md for known rough edges.
-  - **More:** [vehicle_controller.md](../../gameplay/vehicle_controller.md)
+  - **Known partial:** see docs/gameplay/vehicles.md for known rough edges.
+  - **More:** [vehicle_controller.md](../../gameplay/vehicles.md#vehicle-controller-arcade)
 
 - [ ] **V-PH-004** Navmesh bake
   - **Map:** 9. **Where:** editor, View menu

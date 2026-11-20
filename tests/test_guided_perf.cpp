@@ -15,7 +15,7 @@ using namespace okay::modeling;
 namespace gd = okay::modeling::guided;
 
 // Guided modeling: why the panel lagged, and the checks that keep it fixed. Each check below failed before the fix
-// (docs/editor/guided_perf.md has the numbers). Set OKAY_GUIDED_PERF=1 to print the timing table for every template at
+// (docs/editor/guided_modeling.md has the numbers). Set OKAY_GUIDED_PERF=1 to print the timing table for every template at
 // Low, High and Ultra: time per build, per commit (what a released slider costs), and per frame.
 namespace {
 double Ms(std::chrono::steady_clock::time_point t0) { return std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - t0).count(); }

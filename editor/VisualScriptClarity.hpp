@@ -3,7 +3,7 @@
 // this pin connect to?" in plain words, for tooltips in the Visual Script editor.
 // Everything here is computed from the node table and PinCompatible, so a new node
 // or a changed wire rule shows up in the text without a second copy to edit.
-// docs/scripting/visual_script_clarity_audit.md is the audit this comes from.
+// docs/scripting/visual_script_clarity.md is the audit this comes from.
 // Included by VisualScriptEditor.hpp, after the node table (Registry, VsDef) it reads.
 #include "okay/VisualScript/VsTypes.hpp"
 

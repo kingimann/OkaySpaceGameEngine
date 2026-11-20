@@ -106,7 +106,7 @@ DownloadResult DownloadFile(const std::string& url, const fs::path& dest, std::u
     fs::create_directories(dest.parent_path(), ec);
     fs::remove(dest, ec);
 #if defined(OKAY_OWN_HTTP_ACTIVE)
-    // Our own client first (opt-in, docs/platform/own_http_client.md). Anything that is not a clear answer (libssl missing,
+    // Our own client first (opt-in, docs/platform/own_http.md). Anything that is not a clear answer (libssl missing,
     // certificate refused, proxy trouble, a malformed reply) falls through to curl below, as before.
     // The file goes to a temporary "<dest>.<key>.<pid>-<random>.part" first and is renamed when complete; a dropped connection is resumed with Range
     // (two more tries, with backoff); SHA-256 is computed on the way (the caller still checks it against versions.json).

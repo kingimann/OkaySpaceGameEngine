@@ -217,7 +217,7 @@ full screen; a GPU filter would use `ColorblindMatrix`).
 
 `NavigateUI(scene)` (Up/Down/Left/Right, WASD or the D-pad, Enter or A to activate)
 already moves focus between a scene's buttons, toggles, sliders, dropdowns, tabs and
-keybind fields; see [game_ui.md](../ui/game_ui.md). `FocusGraph` is the same idea without the
+keybind fields; see [game_ui.md](../ui/in_game_ui.md#game-ui-that-looks-like-the-launcher). `FocusGraph` is the same idea without the
 scene: rectangles in, "what gets focus next" out. Use it for custom UI, or to get tab
 order, explicit links and focus traps.
 
@@ -279,7 +279,7 @@ rows gains them the next time it opens.
 ## Remapping
 
 `RemapModel.hpp` is what a Controls screen needs, on top of `InputActions` (see
-[input.md](input.md)); rebinding still goes through `InputActions::Rebind` and is
+[input.md](input.md#input-internal-record)); rebinding still goes through `InputActions::Rebind` and is
 saved in Prefs.
 
 ```cpp

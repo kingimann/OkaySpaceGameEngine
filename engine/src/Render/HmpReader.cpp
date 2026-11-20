@@ -4,9 +4,9 @@
 // reported in `out.notes`.
 // Written from the field-by-field analysis of the two real files of the format that were available (a plain terrain and
 // the same terrain with an embedded skin) and from the layout those files share with the Quake / GameStudio model header
-// (docs/content/model_readers/own_hmp_reader.md says what was derived from what, and what is guessed). No other project's importer source was read.
+// (docs/content/model_readers.md says what was derived from what, and what is guessed). No other project's importer source was read.
 // Only the HMP7 flavour of the format is read. Bounds-checked, per-file budgets, no recursion.
-// See okay/Render/ModelData.hpp and docs/content/model_readers/own_hmp_reader.md.
+// See okay/Render/ModelData.hpp and docs/content/model_readers.md.
 #include "BinReader.hpp"
 #include "ReaderCommon.hpp"
 #include "TextReaderUtil.hpp"

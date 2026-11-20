@@ -33,7 +33,7 @@ inline constexpr const char* kLimitationsText =
     "3D scene, scripts, physics and gamepad; the 2D / UI layer is software-painted over the 3D view (EXPERIMENTAL, never run), and the engine has never been compiled with Microsoft's UWP compiler. The triangle test package was built and run on a Windows 11 PC (2026-11-18) but nothing has run on a console, so compatibility with "
     "any console is unknown. The package is made unsigned by our own packer and signed on your PC with a test certificate.";
 
-// Which of OUR OWN code stands in for third-party libraries in the Xbox UWP build, and the crypto statement (docs/platform/xbox_uwp_thirdparty.md). Written into README_XBOX.txt.
+// Which of OUR OWN code stands in for third-party libraries in the Xbox UWP build, and the crypto statement (docs/platform/xbox_uwp.md). Written into README_XBOX.txt.
 inline constexpr const char* kThirdPartyText =
     "Third-party code in this build: none is linked. SDL, Dear ImGui, Assimp, ufbx and libsodium are NOT part of the Xbox build; the engine's own code does "
     "their job (our own window/input/audio backend, software 2D painter, model readers, WAV/OGG/MP3/FLAC decoders, image and font code). "

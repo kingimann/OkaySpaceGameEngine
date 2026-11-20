@@ -26,7 +26,7 @@ small rasteriser (the detail pictures show triangle edges), not editor screensho
 4c. **Fine detail**: set Detail to High or Ultra on a car. Under **Parts and materials** the new **Fine fittings** (door handles, seams, window rubber,
    wipers, grille bars, lamp lenses, mirror glass, plate, exhaust tips, underbody, brake discs, tyre ridges) appear and can be switched off. A building has
    **Tiles and gutters** (rows of roof tiles, gutters, a down pipe); a human with a top has **Fine fittings** (buttons, placket, pockets). Ultra is about 100k
-   triangles for a car, 30k to 115k for a building and 115k to 125k for a human (table in docs/editor/guided_detail.md).
+   triangles for a car, 30k to 115k for a building and 115k to 125k for a human (table in docs/editor/guided_modeling.md).
 4a. **Car styles side by side**: File > Examples > Guided modeling > `guided_car_styles` (sedan, hatchback, coupe, SUV, pickup, sports, van at the
    same size; only the shape differs). Wheels sit in round arches on axles; the mirrors and bumpers are joined to the body.
 4b. Open **Variation and check**: it shows whether the model is one connected object with no bad faces. Under **Each part**, **Remove** takes a part off;

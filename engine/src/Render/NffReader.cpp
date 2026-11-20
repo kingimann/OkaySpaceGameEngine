@@ -3,7 +3,7 @@
 // tet / hex / oct / dod / ico, `tess`), and the "nff" object files of the Sense8 WorldToolKit (a vertex list, polygons by
 // index with `matid`, a `.mat` material table). Written from the public descriptions of both; no code from any other
 // importer. Spheres are subdivided icosahedra, cones and cylinders are tubes with caps; `tess` sets how fine. Bounds-checked,
-// capped, no recursion. See okay/Render/ModelData.hpp and docs/content/model_readers/own_nff_reader.md.
+// capped, no recursion. See okay/Render/ModelData.hpp and docs/content/model_readers.md.
 #include "PolygonTriangulate.hpp"
 #include "ReaderCommon.hpp"
 #include "SceneRefPath.hpp"

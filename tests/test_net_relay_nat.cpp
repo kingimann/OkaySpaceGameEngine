@@ -13,7 +13,7 @@
 using namespace okay;
 
 // A peer's address changing in the middle of a relayed session (a NAT rebinding, or a phone moving
-// from Wi-Fi to mobile data), with and without a lossy link (docs/online/multiplayer_audit.md):
+// from Wi-Fi to mobile data), with and without a lossy link (docs/online/multiplayer.md):
 //   * the host moves: the relay keeps its slot (its host key proves who it is), clients notice nothing;
 //   * a client moves: the relay gives it a new slot (the host's old one leads nowhere), the client
 //     sees that in the next welcome, a second or two later, and says the connection is lost at once

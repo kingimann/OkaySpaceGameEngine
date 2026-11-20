@@ -19,7 +19,7 @@ Two OkayScript languages exist side by side: id `okayscript` (old VM, the defaul
 - **Code:** `Scripting/OkayScriptVM`, `Scripting/ScriptVM`
 - **API:** `okay::OkayScriptVM`, `CreateScriptVM("okayscript")`, `IScriptVM::Load/Validate/ValidateAll/CallStart/CallUpdate/CallEvent/HasEvent/GetGlobal/SetGlobal`, `OkayScriptVM::AddBuiltin`
 - **Editor:** Script Editor (13.5); Inspector header "Script (name)" with the script's public fields; Console shows runtime errors
-- **Docs:** `docs/scripting/scripting.md`, `docs/scripting/scripting_reference.md` (the old `SCRIPTING.md` named in the earlier map no longer exists)
+- **Docs:** `docs/scripting/scripting.md`, `docs/scripting/scripting.md` (the old `SCRIPTING.md` named in the earlier map no longer exists)
 - **Tests:** `scripting`, `scriptapi`, `script_semantics`, `script_lang2`, `script_lang3`, `script_events`, `script_arrays`, `script_maps`, `script_debug`, `script_paths`, `okayscript_csharp`, `csharp_style_script`
 - **Status:** Works - default language, used by every sample and by editor plugins; broad test coverage across syntax and builtins
 - **Open:** possible doc conflict: `docs/scripting/scripting.md` line ~144 says own classes are not supported, while the "Classes and new" section documents them; one 10.5k-line file (splitting is listed in 19.4); the earlier map named a "scripting bug list 1-15": ask before assuming any of it is still open
@@ -129,7 +129,7 @@ Two OkayScript languages exist side by side: id `okayscript` (old VM, the defaul
 - **Ask me like:** "work on 13.6.1, add Camera shake to the typed API"; "regenerate engine_api.md"
 
 ### 13.7 Built-in function library
-- **What:** The several hundred built-in functions of the old VM, grouped as in `docs/scripting/scripting_reference.md`: movement one-liners, transforms, rigidbody, input, objects and scene, UI, tweens, saves, scene manager, networking, character animation, Steam, collections, JSON, timers, spawning and physics queries.
+- **What:** The several hundred built-in functions of the old VM, grouped as in `docs/scripting/scripting.md`: movement one-liners, transforms, rigidbody, input, objects and scene, UI, tweens, saves, scene manager, networking, character animation, Steam, collections, JSON, timers, spawning and physics queries.
 - **Parts:**
   - 13.7.1 Movement, transform and rigidbody - `Scripting/OkayScriptVM` - dt-scaled one-liners (walk, spin, follow, patrol, orbit, platformer, smooth_follow)
   - 13.7.2 Input, objects, scene and spawning - `Scripting/OkayScriptVM` - key and axis, find and spawn objects, hierarchy queries, Stats and survival access
@@ -141,9 +141,9 @@ Two OkayScript languages exist side by side: id `okayscript` (old VM, the defaul
   - 13.7.8 Multiplayer, Steam and accounts - `Scripting/OkayScriptVM` - net_* messaging, steam_* achievements and stats, account_* sign-in
   - 13.7.9 Character animation - `Scripting/OkayScriptVM`, `Script/AnimIkTools` - play and query clips on a Character or Model Animator (Grok area)
 - **Code:** `Scripting/OkayScriptVM`, `Script/AnimIkTools`
-- **API:** `BuiltinNames()` lists every function; reference tables in `docs/scripting/scripting_reference.md`
+- **API:** `BuiltinNames()` lists every function; reference tables in `docs/scripting/scripting.md`
 - **Editor:** Help > Scripting Reference; Script Editor autocomplete; Insert > API Command
-- **Docs:** `docs/scripting/scripting_reference.md`, `docs/scripting/scripting.md`
+- **Docs:** `docs/scripting/scripting.md`, `docs/scripting/scripting.md`
 - **Tests:** `script_spawn`, `script_physics`, `script_events`, `script_util`, `script_lib`, `script_camera`, `script_fx`, `script_objects`, `script_tilemap`, `script_net`, `script_anim`, `script_batch1`, `script_nav`, `script_paths`, `steam_script`, `account_script`, `anim_script_control`, `inventory_script`
 - **Status:** Works - large and tested by area; each test file maps to one slice of the table
 - **Open:** the same calls are re-implemented for the typed language in `EngineApi.cpp`: the two tables can drift (possible duplicated system, see 13.2)

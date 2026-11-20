@@ -11,7 +11,7 @@
 using namespace okay;
 using namespace lightscene;
 
-// Lighting upgrade (docs/rendering/lighting_upgrade.md): shadow maths (stable cascades, slope bias, soft penumbra, distance fade),
+// Lighting upgrade (docs/rendering/lighting.md): shadow maths (stable cascades, slope bias, soft penumbra, distance fade),
 // light shapes and masks (smooth spot, real rectangle area light, cookies), the light roll-off, real-world units, glow
 // lights, save/load of the new settings, and deterministic software renders with a tolerance.
 namespace {

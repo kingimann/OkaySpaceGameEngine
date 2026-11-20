@@ -18,7 +18,7 @@ on:
         type: choice
         options: [latest, lts]
         default: latest
-  # Called by fast-release.yml (docs/release/fast_release.md). stamp_version is the version to build; it is empty on every other kind of run,
+  # Called by fast-release.yml (docs/release/releasing.md). stamp_version is the version to build; it is empty on every other kind of run,
   # and every step marked "fast release" below is skipped then, so the old path is exactly what it was.
   workflow_call:
     inputs:

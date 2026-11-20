@@ -1,6 +1,122 @@
 # Anti-cheat
 
-**New here?** Start with [Add anti-cheat to your game in 5 minutes](anticheat_quickstart.md): presets, a checklist and no hand-written files.
+> **What this is:** Server-side, opt-in anti-cheat: the quick start, the full reference, and what hardening is done and not done.
+> **Status:** combined on 2026-11-20 from 3 older pages, one section each (listed below). Every fact was kept; text marked **Outdated** is kept for history.
+> **Last checked:** 2026-11-20, paths and links against main.
+
+## Contents
+
+- [Add anti-cheat to your game in 5 minutes](#add-anti-cheat-to-your-game-in-5-minutes) (was `docs/anticheat_quickstart.md`)
+- [Anti-cheat](#anti-cheat-1) (was `docs/anticheat.md`)
+- [Anti-cheat hardening: what is done and what is not](#anti-cheat-hardening-what-is-done-and-what-is-not) (was `docs/anticheat_hardening_status.md`)
+
+## Add anti-cheat to your game in 5 minutes
+
+*Was `docs/anticheat_quickstart.md` until 2026-11-20.*
+
+This is the short way. You do not write any file by hand. For every setting and what it does, see
+[anticheat.md](anticheat.md#anti-cheat-1).
+
+Anti-cheat is **opt-in**. A project that never clicks any of this behaves exactly as before.
+
+### What it does
+
+The **server** checks what players send. It refuses what a player may not do:
+
+- move or delete another player's object;
+- spawn something that is not on your list;
+- write a variable only the server may write (score, money);
+- move faster than you allow;
+- flood the server with messages.
+
+A player who keeps doing it is kicked. You can also turn on a **detection engine**
+that watches for cheats that look like normal play and keeps evidence for you to read.
+
+### The steps
+
+1. **Open your multiplayer scene.** It needs a **Network Manager** component.
+   If you have none, add one (Add Component > Network Manager).
+2. **Click Add Anti-Cheat.** Two ways, same result:
+   - On the Network Manager in the Inspector, pick a preset and press **Add Anti-Cheat**.
+   - Or Add Component > **Anti-Cheat (one click, safe preset)**.
+3. **Pick the preset that fits your game.** You can change it later in the Anti-Cheat Config.
+
+   | Preset | Use it for | Main numbers |
+   |---|---|---|
+   | Casual co-op | Friends playing together | max speed 20, kick after 10 refusals a minute |
+   | Competitive | Players race or fight | max speed 12, kick after 5, clock check 5% |
+   | Economy game | Money, items, a shop | server owns money, gold, coins, gems, inventory |
+
+   Every preset also: requires encryption, fills **Prefabs clients may spawn** from your
+   networked prefabs, and turns on the detection engine in **observe mode**.
+4. **Trim the spawn list.** The preset lists every prefab with a Network Sync.
+   Remove any that a player should never spawn (a boss, a pickup the server places).
+5. **Open the checklist.** It is in the Anti-Cheat Config, and in File > Build Settings
+   under the **Anti-cheat** box. It shows what is on and what is missing.
+   Where a safe fix exists, there is a button. Click through the list until nothing says
+   `[missing]`.
+6. **Set Build Settings > Anti-cheat to Report.** The built game then checks its own files
+   against a signed list and reports changes. **Report** never blocks a player.
+   Move to **Enforce** later, when you trust it.
+7. **Play with friends.** Host a game and join it. Watch the log for lines like
+   "forged syncvar" or "rpc rejected". If an honest move is refused, raise the number in
+   the Anti-Cheat Config.
+8. **Export.** Build Game, or a dedicated server. The rules travel inside the scene file,
+   so the exported server has them. A rules file (`.okayac`) you pointed at is shipped too.
+
+### Observe mode: read before you kick
+
+The detection engine starts in **observe mode**. It scores players and keeps evidence, but it
+never kicks, restricts or reports anyone for a ban. Run real matches this way first. Read the
+evidence. If an honest player scored high, raise that detector's limit. Only then untick
+**Observe mode** in the Detection engine section.
+
+### Things the checklist asks about
+
+- **Server authority.** Variables are owner-only, and movement has a speed limit.
+- **Encryption required.** Only encrypted clients join. Needs a build with libsodium.
+- **Session tickets.** Optional. Players show a signed pass when they join. You need a ticket
+  service (see below) and its public key in your `.okayac` rules.
+- **Client file check.** The Build Settings box: Off, Report, Enforce.
+- **Detection engine.** Off, or on in observe mode, or on with kicks.
+- **Objects nobody owns.** A Network Sync object that a player might drive (its authority is not
+  Host) but that nobody owns and nobody may claim belongs to the server. Players cannot move it or
+  write its variables. That is right for a door. A ball or a pickup that players should push or grab
+  needs **Players can claim it** ticked on its Network Sync. The checklist lists these objects with a
+  **Select** button. It never ticks the box for you, because it cannot know which is a door and which
+  is a ball. Players made by the Network Player Spawner are fine.
+
+### What anti-cheat does NOT do
+
+Be honest with your players and yourself.
+
+- **No kernel driver.** Nothing runs at the deepest level of the player's computer.
+- **No memory scanning.** It does not look inside the game's memory for cheat tools.
+- **Client checks run only on Windows.** The debugger, loaded-module and clock probes exist
+  for Windows players. Linux and macOS players are protected only by the server's checks.
+- **The server is the real defence.** A client check can be removed by a determined cheater.
+  The server checks cannot, because the server is yours.
+- **Tickets need a service you deploy.** The ticket function and its key pair are the
+  owner's deployment. Until you have one, anyone can join.
+- **Not a promise.** It makes cheating harder and visible. It does not make it impossible.
+  Cheats that only change what one player sees (a wallhack) cannot be seen by the server.
+- **Encryption deters casual tampering.** The game's data encryption in Build Settings is the
+  same: it keeps players out of your scene files, it does not stop a determined attacker.
+
+### If something goes wrong
+
+- **Every join is refused, "server misconfigured".** The rules file did not load. The
+  checklist line **Rules file loads** says why.
+- **Honest players are kicked.** Raise *Max speed*, or raise *Kick after*. Watch the
+  log to see which refusal fired.
+- **Players cannot move the ball.** Tick **Players can claim it** on the ball's Network Sync.
+- **The preset did nothing.** The scene has no Network Manager. Add one.
+
+## Anti-cheat
+
+*Was `docs/anticheat.md` until 2026-11-20.*
+
+**New here?** Start with [Add anti-cheat to your game in 5 minutes](anticheat.md#add-anti-cheat-to-your-game-in-5-minutes): presets, a checklist and no hand-written files.
 
 OkaySpace's anti-cheat runs on the **server** and is **opt-in**. With it off,
 nothing is checked and nothing is sent differently from before.
@@ -37,10 +153,10 @@ nothing is checked and nothing is sent differently from before.
   debugger / loaded-module / clock-drift checks. See
   [P3: client integrity](#p3-client-integrity-opt-in) below.
 
-## Turning it on
+### Turning it on
 
 The quick way: on the Network Manager, pick a preset and press **Add Anti-Cheat** (or Add Component > *Anti-Cheat (one click, safe preset)*), then
-work through the **Anti-cheat checklist** in the Anti-Cheat Config or in Build Settings. See [anticheat_quickstart.md](anticheat_quickstart.md).
+work through the **Anti-cheat checklist** in the Anti-Cheat Config or in Build Settings. See [anticheat_quickstart.md](anticheat.md#add-anti-cheat-to-your-game-in-5-minutes).
 The presets are in `editor/AntiCheatSetup.hpp`.
 
 By hand: add an **Anti-Cheat Config** component to the scene (with a Network Manager), or
@@ -110,7 +226,7 @@ It also fails closed:
 On its first tick a server logs one line naming the protections that are off
 (anti-cheat, encryption, move check, message rate limit).
 
-## Exporting a game with anti-cheat
+### Exporting a game with anti-cheat
 
 Build Game and the dedicated server export carry what you chose in the editor:
 
@@ -125,7 +241,7 @@ Build Game and the dedicated server export carry what you chose in the editor:
   writes the signed `Data/manifest.json` and tells the player which mode to use.
 - Nothing turns on by itself: a project with no Anti-Cheat Config and Anti-cheat Off exports exactly as before.
 
-## P2: encryption required and replay protection
+### P2: encryption required and replay protection
 
 With `requireEncryption true`:
 
@@ -142,7 +258,7 @@ With `requireEncryption true`:
   they can only be someone else's. Join and server-browser queries stay
   plaintext.
 
-## P2: session tickets
+### P2: session tickets
 
 A ticket is a short-lived pass that says *this account may join this server*.
 
@@ -173,7 +289,7 @@ check takes the place of `SetTokenVerifier` / `SetJoinCheck`.
 The format is implemented in `engine/include/okay/Net/SessionTicket.hpp`.
 `SessionTicket::Sign` exists for tests and tools only.
 
-### The ticket service (not deployed; you run these steps)
+#### The ticket service (not deployed; you run these steps)
 
 The source is in `supabase/functions/session-ticket/`:
 
@@ -218,7 +334,7 @@ Nothing is deployed. To go live:
    put an `okay_tickets.cfg` next to the game with `mode required` and the
    server's id.
 
-#### Joining a server that needs a ticket
+##### Joining a server that needs a ticket
 
 The player installs a join gate (`NetworkManager::SetJoinGate`, `shared/TicketJoin.hpp`) when
 `okay_tickets.cfg` is next to the game (one `key value` per line, `#` comments):
@@ -265,7 +381,7 @@ To rotate the key, run step 1 again, update the secrets and every server's
 `ticketKey` together, and redeploy. Tickets signed with the old key stop working
 when the servers switch.
 
-## Network hardening
+### Network hardening
 
 These hold whether or not the anti-cheat is on, unless a setting is named:
 
@@ -344,9 +460,9 @@ These hold whether or not the anti-cheat is on, unless a setting is named:
 
 This section adds the rest: every mode, and the Join itself.
 
-## Bans, the audit log and the packet ceiling
+### Bans, the audit log and the packet ceiling
 
-Added 2026-11-16 (hardening follow-up, `docs/online/anticheat_hardening_status.md`). All of it needs `enabled true` and
+Added 2026-11-16 (hardening follow-up, `docs/online/anticheat.md`). All of it needs `enabled true` and
 lives on the server; nothing here is sent to any outside service.
 
 - **The ban list file** (`banFile`). A kick used to be forgotten when the server stopped, and a detection-engine "ban
@@ -380,7 +496,7 @@ lives on the server; nothing here is sent to any outside service.
 - **Bot and macro check** (`input_regularity`, in the detection engine table). Needs `detect.enabled` and the
   server-authoritative input path.
 
-## The cheat simulator
+### The cheat simulator
 
 To see all of this work without a cheater, run the simulator. It starts a server on your own machine (loopback; nothing
 goes on the network) with the anti-cheat on and points a "rogue client" at it. The rogue is raw packets, so it can do
@@ -412,7 +528,7 @@ It uses the built-in rules (`enabled true`, `maxSyncSpeed 8`, `maxRpcsPerSecond 
 pass `--anticheat FILE`. The simulator sends plain (not encrypted) packets, so it tests the server's rules, not the
 encryption. It is also run by the test `anticheat_hard`.
 
-## Gameplay validation
+### Gameplay validation
 
 The engine doesn't network gameplay: games do damage, ammo and scores through
 RPCs and SyncVars, which the server used to take on trust. These let the server
@@ -495,7 +611,7 @@ check them.
   - In C++, `NetworkManager::SetAntiCheatKickHandler` gets every anti-cheat
     kick with the player's account and last refusals.
 
-## Detection engine (opt-in, server side)
+### Detection engine (opt-in, server side)
 
 The checks above refuse a message that is **impossible** (not yours, not allowed, too fast). The detection engine
 is for the cheats that send **possible-looking** messages: a client that moves 30% faster than it should, never
@@ -510,7 +626,7 @@ stays off until you give it the number it needs.
 > inside the tolerances (see [Limits](#detection-limits)) is not caught. The engine also cannot see anything the
 > server never receives (a read-only wall-hack that only shows the player enemies is invisible to a server).
 
-### How it works
+#### How it works
 
 1. **Detectors** turn what clients send into *evidence*: a record with the kind of cheat, the measured value, the
    threshold it broke, the server tick, a short ring of the player's recent states (position, view, ping) and a
@@ -541,7 +657,7 @@ stays off until you give it the number it needs.
 Everything takes the time as an argument (`double`, seconds), so the same input always gives the same result and
 tests run in fake time. In a running server the time is the anti-cheat's own clock (`anticheat.Clock()`).
 
-### What each detector checks
+#### What each detector checks
 
 | detector (`detect.weight.<name>`) | checks | needs |
 |---|---|---|
@@ -570,7 +686,7 @@ tests run in fake time. In a running server the time is the anti-cheat's own clo
 | `time_manipulation` | its game clock off the server's by more than `clockDrift` for three `clockWindow`s in a row (ping jitter is allowed for) | `OnClock` (the existing `maxClockDrift` heartbeat still works as before) |
 | `violation` | every refusal the checks above make (forged transform / despawn / sync var / spawn id weigh double) | automatic |
 
-### False-positive protection
+#### False-positive protection
 
 - **Grace** for `graceTeleport` (1 s), `graceRespawn` (2 s, also clears the shot window and aim state), `graceMigration` (6 s, everyone) and `graceJoin` (3 s warm-up): positions are re-anchored and nothing is judged. Tell the engine from game code:
   `NoteTeleport`, `NoteRespawn`, `NoteHostMigration`. The engine calls the first two itself for `ServerTeleport` and `NoteRespawn`.
@@ -581,7 +697,7 @@ tests run in fake time. In a running server the time is the anti-cheat's own clo
 - **Confirmations**: soft detectors need several hits (above). A single flick shot, a single odd packet or one bumped wall does not score.
 - **Parameter-gated**: a detector whose threshold is 0 / unset does nothing, so a game never gets a check it did not configure.
 
-### Config keys
+#### Config keys
 
 All are `.okayac` lines starting `detect.` (and live in `AntiCheatSettings::detect`, so the Anti-Cheat Config
 component's inline rules and its `.okayac` file both carry them). Unknown keys and bad numbers fail the whole file
@@ -625,7 +741,7 @@ detect.evidenceCap 48               # also snapshotSeconds, snapshotCap, evidenc
 detect.graceTeleport 1              # also graceRespawn, graceMigration, graceJoin, lagSpikeGap, graceLag, maxLagGracesPerMinute, pingTolerance, maxToleratedRtt
 ```
 
-### The editor inspector
+#### The editor inspector
 
 Anti-Cheat Config > **Detection engine** (editor) shows the `detect.*` settings of the component's inline rules: the master switch, an
 **Observe mode** checkbox, about thirty numbers grouped as Movement, Combat, Economy, Network, Risk, Responses and False positives (each with
@@ -639,7 +755,7 @@ lines (`anticheatdetect`), so nothing is lost on save and load.
 - The logic (field table, tooltips, observe mode, text round trip) is `okay/Net/DetectInspector.hpp`, unit tested in `anticheat_wiring`.
   A rules file (`file`) replaces the inline settings when it loads, so edit the file instead when one is set.
 
-### Tuning
+#### Tuning
 
 - **Start in observe mode**: set `kickAt 0` and `banAt 0` (and `shadowAt 0`, `rateLimitAt 0`), run real matches, and read the evidence
   (`onDetectResponse`, the kick handler, or `detector.Bundle`). Raise a threshold, or lower a weight, for any detector that scored an honest player.
@@ -661,7 +777,7 @@ lines (`anticheatdetect`), so nothing is lost on save and load.
 - **Games that do not use +Y as up** or have no gravity (top-down): leave `gravity` / `maxJumpHeight` at 0 and the vertical checks stay off; the
   speed checks use X and Z.
 
-### Evidence bundles
+#### Evidence bundles
 
 `EvidenceBundle` (okay/Net/CheatDetect.hpp) is what a server attaches to a report. It is a single compact JSON object:
 
@@ -690,7 +806,7 @@ lines (`anticheatdetect`), so nothing is lost on save and load.
   refused), unchangeable by a review, and readable through the existing "admins read reports" policy only (no other policy on the table lets
   anyone select). The launcher's Reports list does not fetch it; "Evidence" on a selected `server_kick` report loads that one bundle.
 
-### Simulation harness: what was measured
+#### Simulation harness: what was measured
 
 **Part 1 - scripted players against the detection engine** (`anticheat_sim`; 20 Hz position samples over a modelled network of latency, jitter, loss and lag spikes, fake time, 40 seeded trials per profile; the numbers are produced by the test and are the same on every run). "Flagged" means risk reached the `flag` rung (25); "time" is seconds from the cheat starting to the flag, median and worst.
 
@@ -758,7 +874,7 @@ Not covered by Part 2 (engine-level only, Part 1): aim snaps, accuracy / headsho
 and time manipulation, because those need input commands, headshot flags or a game's own events that the in-process clients here do not produce.
 
 
-### Detection limits
+#### Detection limits
 
 - A cheat that stays inside the tolerances is invisible: a 1.2x speed hack at `maxSpeed 8` walks at 9.6 u/s, which is inside the 6 s window's
   tolerance plus slack. A perfect-looking triggerbot with human accuracy is not a number the server can separate from a good player.
@@ -773,7 +889,7 @@ and time manipulation, because those need input commands, headshot flags or a ga
 - A banned player can make a new account. Risk follows an account (or, for anonymous players, an address) for five minutes after it leaves; the
   backend's ban list is what persists.
 
-## P3: client integrity (opt-in)
+### P3: client integrity (opt-in)
 
 OkaySpace has a small, opt-in anti-cheat layer. **It is off by default**: with it
 off, builds and launches behave exactly as without it (the one visible change is
@@ -786,7 +902,7 @@ catch off-the-shelf tools, to stop casual file edits, and to give you reports to
 act on. What actually stops cheating in multiplayer is a server that doesn't
 trust the client.
 
-### What it does
+#### What it does
 
 | Piece | Where | Platforms |
 |---|---|---|
@@ -801,7 +917,7 @@ Windows-only checks are compiled out on other platforms; the logic behind them
 (what counts as drift, which modules are allowed) is plain code that is unit
 tested everywhere.
 
-#### Modes
+##### Modes
 
 Each place that runs checks has one setting:
 
@@ -837,7 +953,7 @@ The launcher in **Enforce** mode refuses to start the game. In **Report** mode i
 starts the game and shows the problem:
 
 
-### The manifest
+#### The manifest
 
 ```json
 {
@@ -874,7 +990,7 @@ A launch check fails when:
 
 Extra files that aren't programs, such as saves and logs, are ignored.
 
-### Keys: setup for the owner
+#### Keys: setup for the owner
 
 Signing proves a manifest came from you, so nobody can edit a file and then
 "fix" the manifest. **No key is in this repository and none is made by the
@@ -957,7 +1073,7 @@ You need two ed25519 keypairs:
 If you rotate a key, ship a player and launcher that trust both the old and the
 new key, re-sign your builds with the new one, and then drop the old one.
 
-### The backend: reports, bans, appeals
+#### The backend: reports, bans, appeals
 
 `docs/sql/anticheat.sql` adds three tables to your Supabase project.
 
@@ -977,7 +1093,7 @@ an appeal decision, and deleting a report, ban or appeal (`ac_report_delete`,
 `ac_ban_delete`, `ac_appeal_delete`). `ac_purge_old()` logs one summary line
 (`ac_purge`) instead of a line per row.
 
-#### Admin views: linked accounts and ban with devices
+##### Admin views: linked accounts and ban with devices
 
 Launcher > Admin > Anti-cheat uses the two device helpers of `anticheat.sql`:
 
@@ -1031,7 +1147,7 @@ machine is kept, with `user_id` set to null, so deleting the account and
 signing up again doesn't clear a machine ban: the new account still sees it
 (and can appeal it) through `ac_my_bans`, and admins still see it under Bans.
 
-#### In the launcher
+##### In the launcher
 
 - **Admin > Anti-cheat** (admins only):
   - **Reports**: filter by status, open a report to see its details and machine hash, then mark it reviewing, dismiss it, or **Ban...** (prefilled from the report).
@@ -1060,7 +1176,7 @@ plus `OKAY_UI_DEMO_ACVIEW` / `OKAY_UI_DEMO_ACPOPUP` / `OKAY_UI_DEMO_ACBAN` /
   `C:\Users\<name>\...\hook.dll`), so the report doesn't carry the player's OS
   user name. The local `anticheat.log` keeps the full paths.
 
-#### Hardware hash
+##### Hardware hash
 
 `shared/AntiCheatHardware.hpp`. A ban can name a machine, so a cheater can't
 come back on a new account. Only this leaves the machine:
@@ -1091,7 +1207,7 @@ one `name=value` line each (any part the machine doesn't have is left out):
   or the CPU is swapped. Machines cloned from one image can share a GUID. Treat
   a hash match as a lead, not proof.
 
-#### Retention
+##### Retention
 
 `public.ac_purge_old()` deletes:
 
@@ -1103,7 +1219,7 @@ Active bans are kept. If the `pg_cron` extension is enabled, the SQL file
 schedules it nightly (job `okay-ac-retention`). Otherwise run
 `select public.ac_purge_old();` yourself, or from a scheduled Edge Function.
 
-#### Setting it up
+##### Setting it up
 
 1. Run `docs/sql/admin.sql` first if you haven't already.
 2. Then run `docs/sql/anticheat.sql` once in the Supabase SQL editor. It is
@@ -1119,7 +1235,7 @@ schedules it nightly (job `okay-ac-retention`). Otherwise run
 roles). Point it at one with `OKAY_SQL_TEST_PGHOST` (a socket directory or
 localhost); ctest skips it otherwise. Never point it at a live database.
 
-### Crypto
+#### Crypto
 
 - ed25519 comes from libsodium when the build has it (`OKAY_USE_SODIUM`, which
   the engine finds through pkg-config or `OKAY_SODIUM_PREFIX` for MinGW).
@@ -1139,7 +1255,7 @@ localhost); ctest skips it otherwise. Never point it at a live database.
 - SHA-256 is the engine's bundled implementation, the same one the official-game
   updater uses.
 
-### The runtime checks (Windows)
+#### The runtime checks (Windows)
 
 `shared/AntiCheatChecks.hpp`, run from the player's frame loop. Each check runs
 every few seconds:
@@ -1171,7 +1287,7 @@ every few seconds:
   of the cheater's reach. Wiring that into the network layer is not part of
   this change.
 
-### Limits
+#### Limits
 
 Be clear-eyed about what this is.
 
@@ -1207,3 +1323,79 @@ Be clear-eyed about what this is.
 The real defence for multiplayer is server authority: the server owns positions,
 hits and inventory, and rejects what isn't possible. Anti-cheat reports are a
 signal to review, not a verdict.
+
+## Anti-cheat hardening: what is done and what is not
+
+*Was `docs/anticheat_hardening_status.md` until 2026-11-20.*
+
+Written 2026-11-16 for the anti-cheat hardening task (branch `claude/anticheat-1`). It lists every item of the
+2026-10-26 audit (`ROADMAP.md`, "Anti-cheat hardening, from the 2026-10-26 audit") and every server-side hardening
+topic the owner named, says whether each is done on main, on this branch or not done, and points at the proof.
+Nothing here ran on Windows or on a real network; "tested" means a headless test on Linux over loopback.
+
+How the status was found: the code and the tests on `origin/main` (de36f7f1) were read. The git history on this
+machine is shallow (56 commits), so the PR numbers (#350 to #394) could not be checked with `git log`; the code
+symbols below were checked instead.
+
+### Part 1. The 14 audit items
+
+| # | Item | Status | Evidence on main |
+|---|---|---|---|
+| 1 | Only safe, registered prefabs can be network-spawned | Done on main | `AntiCheat::SpawnAllowed`, `ParseSpawnMessage`, spawn allowlist; `net_anticheat` (`SpawnNotAllowed`) |
+| 2 | Host-key pinning can't be skipped by a plaintext Welcome, Reject or Kicked | Done on main | `pinnedHostKey` handling in `NetworkManager`; `net_anticheat_ph3` |
+| 3 | Hit claims need a known weapon and are rate-limited | Done on main | `HandleHitClaim`, `kHitClaimsPerSecond`, `weapon` rules; `net_anticheat_ph4`, `anticheat_sim` |
+| 4 | Hit origin isn't taken from positions the client can bank | Done on main | `hitOriginTolerance`, quarter-second move cap; `net_anticheat_ph4` |
+| 5 | Bans enforced when a join ticket is issued; no service_role key on game servers | Code on main, not deployed | `supabase/functions/session-ticket/index.ts` calls `ac_is_banned`; `anticheat_sql` (local Postgres). The Edge function has never run on the real Supabase project: the owner's step (ROADMAP "Waiting on Iman") |
+| 6 | Tickets bound to one server, one client key and one connection | Code on main, not deployed | `SessionTicket` claims `aud` and `cnf` (`KeyBinding`), checked at the join; `ticket_client`, `net_anticheat_p2`. Same deploy wait as 5 |
+| 7 | Relay hellos need a cookie; caps per destination | Done on main (live relay needs redeploying) | `RelayHello`, `kRelayCookieBytes`; `net_relay_hardening`, `relay_security` |
+| 8 | Budgets and strikes survive a reconnect; rejoin cooldown after a kick | Done on main; cooldown test added here | `AntiCheat::ParkPeer` / `RestorePeer`, `m_kickBans` (60 s doubling to 1 h); parking tested in `cheat_detect`; the kick cooldown had no test, `anticheat_hard` adds one |
+| 9 | Join checks: encryption first, rate-limited password and sign-in checks | Done on main | `CountJoinAttempt`, the join gate order in `NetworkManager`; `net_anticheat_p2` |
+| 10 | SyncVar, message and spawn limits | Done on main; SyncVar key limits test added here | `kMaxVarKey`, `kMaxVarValue`, `kMaxClientVars`, `maxSpawnsPerSecond`, `maxLiveSpawnsPerPeer`; `anticheat_setup`; `anticheat_hard` adds a key-flood test |
+| 11 | Unowned world objects belong to the server | Done on main | `AntiCheat::MayDrive`, `serverOwns`; `net_authority` |
+| 12 | Lag-compensation inputs the client can't stretch | Done on main | `maxRewindRtt`, ping floor; `net_lagcomp` |
+| 13 | Safer defaults and a config that fails closed | Done on main; fail-closed test added here | `AntiCheatConfig` defaults, `configError` refuses every join; `anticheat_setup`, `anticheat_hard` adds the refusal test |
+| 14 | Small fixes (self-unban, trusted server reports, pings, press intervals, CI key check) | Done on main | SQL `ac_report_servers`, "pings only from players", `minPressInterval`; `anticheat_sql` |
+
+`ROADMAP.md` still showed items 5, 6, 8 to 14 unchecked although the code is on main (the feature map says so too).
+This change ticks them and keeps the deploy wait on 5 and 6.
+
+### Part 2. The server-side hardening topics
+
+| Topic | Status before | What this change did | Proof |
+|---|---|---|---|
+| Authoritative movement with speed / teleport / fly checks using the controller step | Done on main: `ServerMovementTick`, `maxMoveSpeed`, detector speed, teleport, fly, hover, no-clip | nothing | `net_auth_move`, `net_predict`, `mp_controllers`, `cheat_detect`, `anticheat_sim` |
+| Rate limits on every client message type | Partial: custom messages, RPCs, SyncVars and hit claims had limits; State, input, ping, clock and ack packets had none | New packet ceiling `maxPacketsPerSecond` (unset = 600 on a dedicated server, unlimited elsewhere): any packet type from a joined client counts, extras are dropped, a flood is reported and kicked by the normal rules | `anticheat_hard` ("the packet ceiling") |
+| Bounds and sanity on every numeric / string field | Mostly done: finite checks on State and inputs, `PlayerInput::Clamp`, SyncVar and message size limits, blind byte fuzz (`net_fuzz`) | A typed hostile-field fuzz: every message type with NaN, infinity, huge, negative, empty, 70 KB and odd strings against a live anti-cheat server; asserts it survives, stays bounded and serves the honest client | `anticheat_hard` ("a hostile client") |
+| Replay / sequence protection and ordering | Done on main: sealed packets carry a sequence number and a 64-packet window (`requireEncryption`), reliable de-dup window, input `seq` ordering and tick window | nothing (plaintext sessions have only the cookie, documented) | `net_anticheat_p2`, `net_reconnect`, `net_resume_resend`, `anticheat_sim` (replay) |
+| Join / identity binding (no impersonating another player id) | Done on main: the sender id inside a packet is ignored, the server uses the id it gave that address; tickets name the account; one connection per account | A test that forges another player's id in a message and a position packet | `anticheat_hard` ("identity binding"), `net_anticheat_p2` |
+| Inventory / score / currency only through server commands | Done on main: `serverVar`, `clientVar`, `srv.` keys, detector economy ledger | nothing | `net_anticheat_ph4`, `cheat_detect`, `anticheat_sim` (`servervar`) |
+| Damage / hit validation (range, line of sight, fire rate, ammo) | Done on main: six checks in `HandleHitClaim`, Net Validator cooldown and budget | nothing | `net_anticheat_ph4`, `net_lagcomp`, `cheat_detect` |
+| Cheat-flag reporting with escalating responses (warn, kick, ban list file) | Partial: refusals count, kick after N, rejoin cooldown doubling, the detector ladder (log, flag, rate limit, shadow, kick, ban request), kick reports to the backend. A ban request only kicked: no ban list | New **ban list file** (`banFile`): a ban request, or `banAfterKicks` kicks, writes a ban; the join refuses banned identities, also after a restart; an admin can edit the file | `anticheat_hard` ("ban list", "cheat simulator") |
+| Audit log without personal data in outside services | Missing (the backend `ac_audit` is for backend bans and needs Supabase) | New **audit log** (`auditLog`): a local file, players as a salted one-way tag, never a name, address or account id; rotates at 4 MiB; nothing is sent anywhere | `anticheat_hard` ("audit log") |
+| Cheap bot / macro heuristics | Missing (jump rate and aim snap exist; nothing for inhuman regularity) | New detector `input_regularity`: the same button pressed at one steady gap (spread under 4%) 20 times in a row, timed on the player's own tick clock | `anticheat_hard` ("input regularity") |
+| Time speed / clock skew | Done on main: `ClockCheck`, `maxClockDrift`, detector `TimeManipulation` | nothing | `net_anticheat_ph3`, `anticheat_sim` |
+| Malicious-client fuzzer test (headless) | Partial: random bytes at a live host (`net_fuzz`), malformed channels (`anticheat_sim`) | The typed fuzz above, plus the cheat simulator (a rogue raw-packet client with eight cheats) | `anticheat_hard` |
+| Configurable per game, defaults on for dedicated servers | Partial: every rule is in `.okayac`; a dedicated server runs the rules only when `--anticheat FILE` is given | With the anti-cheat on, a dedicated server now also keeps `okay_bans.txt` and `okay_anticheat_audit.log` (`--no-ban-file`, `--no-audit-log` to turn off); new keys `banFile`, `auditLog`, `banAfterKicks`, `banHours`, `banOnRequest`, `maxPacketsPerSecond`, `detect.regularity*` | `anticheat_hard` (settings) |
+| The owner can try it (CLAUDE.md rule 4a) | Missing | `OkaySpacePlayer.exe --server --cheat-sim`, see `docs/try_it.md` | `anticheat_hard` runs the same code |
+
+### A bug found while writing the tests
+
+The detection engine's kick (risk past `detect.kickAt`) was acted on only by some message paths (inputs, RPCs, hit
+claims, SyncVars). A player who sent only position (State) packets could reach the kick rung and stay in the game; the
+server corrected its position but kicked only when `NetworkManager::kickAfterViolations` was set (default 0). The server
+now checks every player once a tick and acts on a kick or ban request whatever the player sent. Test: `anticheat_hard`
+("the detection engine's kick is acted on"); it failed before the change (the cheat simulator's `ban` step failed the same way).
+
+### What is not done
+
+* Items 5 and 6 are on main but the Edge function and SQL were never deployed or run on the real Supabase project.
+* The bot heuristic judges button presses only. It is fed from the server-authoritative input path (the player's
+  `InputCmd` packets); a game that does not use authoritative movement has no per-press data. The "macro" step of the
+  simulator feeds the detector directly instead of sending real input packets, because real input needs a player pawn.
+* A ban is keyed by account (`u:<id>`) when the player signed in, else by address (`a:<number>`). An anonymous cheater
+  changes address to get around it; this is the same limit as the existing kick cooldown. Bans by machine hash exist
+  only in the backend (`ac_ban_with_devices`).
+* The ban list is a local file read at the first join; changing it by hand while the server runs is picked up only after
+  a restart.
+* Not run on Windows, not run against a real network, no outside review. `okay::crypto` is unchanged and libsodium stays
+  the default (CLAUDE.md rule 18); nothing here adds cryptography beyond one SHA-256 call (the engine's own) for the log tag.

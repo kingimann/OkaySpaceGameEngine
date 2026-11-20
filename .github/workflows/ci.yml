@@ -393,7 +393,7 @@ jobs:
           path: .ccache
           key: ccache-assimp-${{ github.sha }}
 
-  # Our own HTTP client (docs/platform/own_http_client.md) with the CMake option on. NOT required for merging and the
+  # Our own HTTP client (docs/platform/own_http.md) with the CMake option on. NOT required for merging and the
   # option stays OFF by default everywhere else. Only the two header-only test targets are built (the client
   # does not link the engine). OKAY_REQUIRE_TLS_TESTS=1 makes a skipped TLS case (no libssl, no openssl program)
   # a failure, so the certificate checks cannot silently go missing. The sanitizer script then runs both tests

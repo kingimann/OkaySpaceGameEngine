@@ -24,7 +24,7 @@ Area 40 (OkayUI) is a different, immediate-mode toolkit; read it first if the qu
 - **Code:** `Components/Canvas`, `Components/UIAnchor`, `Components/UIFrame`, `Components/UIElement`, `Components/UILayoutGroup`, `Components/UIFlexItem`, `Components/UIMask`, `Components/UISafeArea`, `Components/UIWorldContext`, `UI/UILayoutUpdate`, `Scene/UILayoutTools`, `editor/UIInspectorLayout.*`
 - **API:** `Canvas::ScaleFactor(w, h)`, `ResolveAnchorRect`, `GetUIRect`, `UpdateUILayouts`, `ConvertToUIFrame`, `UIFrameCorners`; script: `ui_set_*` by widget name, plus `ui_get_rotation` / `ui_set_rotation` / `ui_get_scale` / `ui_set_scale` (see 12.13)
 - **Editor:** Inspector cards for Canvas, Layout Group, Scroll View, UI Frame, UI Flex Item, UI Mask; UI view toolbar (Align, Match size, Stack, Wrap in Panel, Fit to Children)
-- **Docs:** `docs/ui/game_ui.md` (Styling and layout tools, Phones and tablets), `docs/engine_api.md`
+- **Docs:** `docs/ui/in_game_ui.md` (Styling and layout tools, Phones and tablets), `docs/engine_api.md`
 - **Tests:** `ui_frame`, `ui_layout_containers`, `ui_system`, `ui_layer_table`, `ui_layering`, `ui_library`
 - **Status:** Works - the components are implemented and the tests above cover anchor math, frame conversion, flex, mask clipping and the layer table
 - **Open:** the aspect-ratio container is `UIAspectRatio` (12.1.11; it does not yet follow a world-space Canvas). UI Frame rotation and scale are in (children inherit them; old scenes load with no turn and a scale of 1)
@@ -59,10 +59,10 @@ Area 40 (OkayUI) is a different, immediate-mode toolkit; read it first if the qu
 - **Code:** `Components/UIButton`, `Components/NativeUIActions`, `Components/TextRenderer`, `Components/UIPanel`, `UI/UIShape`, `Components/UIImage`, `Components/UIRawImage`, `Components/UIProgressBar`, `Components/UIRadialProgress`, `Components/UIRating`, `Components/Crosshair`, `Components/UIGameHud`, `UI/UIGameHudDraw`
 - **API:** `UIButton`, `UIPanel`, `TextRenderer`, `UIImage`, `UIRawImage`, `UIProgressBar`, `UIRadialProgress`, `UIRating`, `Crosshair`, `UIRadialMenu` (Open, Close, Choose, Chosen), `UIKillFeed` (Push, Clear), `UIAmmoCounter` (SetAmmo, Text), `UIInteractionPrompt`, `UICompass` (Heading), `UIItemTooltipCard` (Show, Hide), `UIAbilityIcon` (Use, Reset, IsReady, SecondsLeft); script: `ui_set_text`, `ui_get_text`, `ui_clicked`, `ui_set_progress`, `ui_set_fill`, `ui_set_interactable`
 - **Editor:** GameObject > UI (and the UI view's + Add menu); Inspector headers UI Button, UI Panel, UI Image, UI Raw Image, Text, UI Progress Bar, UI Radial Progress, UI Rating, Crosshair; GameObject > UI > Game HUD (Radial Menu, Kill Feed, Ammo Counter, Interaction Prompt, Objective Tracker, Compass, Item Tooltip Card, Ability Icon); Inspector headers of those
-- **Docs:** `docs/ui/game_ui.md` (Images, Building blocks), `docs/engine_api.md`
+- **Docs:** `docs/ui/in_game_ui.md` (Images, Building blocks), `docs/engine_api.md`
 - **Tests:** `ui` (tests/test_ui.cpp), `ui_extra`, `uiwidgets`, `uishape`, `text`, `minimap`, `ui_renderer_golden`, `world_text_rich` (rich text on world text, `[size=N]`, line heights), `ui_library2`, `ui_library2_example`, `ui_library2_shots`
 - **Status:** Works - implemented per the headers; tests cover hit testing, serialization of every style field, nine-slice, fill, shapes, text options
-- **Open:** rich text (`TextRenderer::richText`, tags parsed by `UI/RichText.hpp`, including `[size=N]`; see `docs/ui/ui_runtime.md`) works on screen-space and world text (`ui2d::DrawWorldText`, test `world_text_rich`); `[url=...]` links and `[icon=...]` pictures draw on screen-space text only (12.2.20; icons in the pixel font, not measured for a TTF font); a line is as tall as its largest size, but a line's width is not measured with `[size]` (wrapping and centring ignore it); world text is drawn in flat (2D) scenes only; no rating or progress "data source" beyond the Bar Bind (12.13)
+- **Open:** rich text (`TextRenderer::richText`, tags parsed by `UI/RichText.hpp`, including `[size=N]`; see `docs/ui/in_game_ui.md`) works on screen-space and world text (`ui2d::DrawWorldText`, test `world_text_rich`); `[url=...]` links and `[icon=...]` pictures draw on screen-space text only (12.2.20; icons in the pixel font, not measured for a TTF font); a line is as tall as its largest size, but a line's width is not measured with `[size]` (wrapping and centring ignore it); world text is drawn in flat (2D) scenes only; no rating or progress "data source" beyond the Bar Bind (12.13)
 - **Related:** 12.3, 12.7, 12.11, 2.9, 1.8
 - **Words:** button, panel, label, text, TextRenderer, image, UIImage, raw image, nine-slice, 9-slice, progress bar, health bar, radial, cooldown, rating, stars, crosshair, reticle, shape, rounded corners, pill, shadow, gradient
 - **Seen as:** a button does nothing on click; text is blurry or too small; an image shows a red box or "can't load"; a bar does not fill; corners are square when they should be round; text does not update when the language changes
@@ -83,10 +83,10 @@ Area 40 (OkayUI) is a different, immediate-mode toolkit; read it first if the qu
 - **Code:** `Components/UISlider`, `Components/UIToggle`, `Components/UIInputField`, `Components/UIDropdown`, `Components/UIStepper`, `Components/UIKeybindField`, `Components/UIColorPicker`, `Components/UIRangeSlider`, `Components/UIInputValidator`, `editor/UIInspectorOverlay.*`, `editor/UIInspectorWidgetsMore.*`
 - **API:** `UISlider`, `UIToggle`, `UIInputField`, `UIDropdown`, `UIStepper`, `UIKeybindField`, `UIColorPicker`, `UIRangeSlider` (SetRange, SetLow, SetHigh, Low, High), `UIInputValidator` (Check, IsValid, Error); script handlers `on_change`, `on_toggle`, `on_submit`, `on_keybind_change`; `ui_slider_value`, `ui_set_slider`, `ui_toggle_value`, `ui_dropdown_value`
 - **Editor:** Inspector headers for each (UI Slider, UI Toggle, UI Input Field, UI Dropdown, UI Stepper, UI Color Picker); Create > UI > Controls
-- **Docs:** `docs/ui/game_ui.md`, `docs/engine_api.md`
+- **Docs:** `docs/ui/in_game_ui.md`, `docs/engine_api.md`
 - **Tests:** `ui` (tests/test_ui.cpp), `ui_extra`, `uiwidgets`, `ui_overlays`, `ui_input_guard`, `uishape`, `ui_library`, `ui_library_example`, `ui_library_shots`
 - **Status:** Works - implemented and tested except the colour picker, which has no test of its own
-- **Open:** radio buttons exist: `UIToggle` with Style = Radio and a group name (`radioGroup`; picking one clears the others in its group, see `docs/ui/ui_runtime.md`). Virtual joystick, D-pad, touch button, and tap, double tap, long press, swipe, pinch and two-finger rotate are in (`docs/engine/input.md`). Search bar, date and time picker and sandboxed file picker are `UISearchBar`, `UIDateTimePicker` and `UIFilePicker`
+- **Open:** radio buttons exist: `UIToggle` with Style = Radio and a group name (`radioGroup`; picking one clears the others in its group, see `docs/ui/in_game_ui.md`). Virtual joystick, D-pad, touch button, and tap, double tap, long press, swipe, pinch and two-finger rotate are in (`docs/engine/input.md`). Search bar, date and time picker and sandboxed file picker are `UISearchBar`, `UIDateTimePicker` and `UIFilePicker`
 - **Related:** 12.2, 12.4, 12.12, 8.3
 - **Words:** slider, volume slider, checkbox, toggle, switch, input field, text box, password, dropdown, combo, option list, stepper, keybind, rebind button, colour picker, swatch
 - **Seen as:** a slider will not drag or jumps; typing does nothing or opens game input; Enter does not submit; a dropdown list draws under other widgets or lets clicks through; the bind field does not remember its key
@@ -120,10 +120,10 @@ Area 40 (OkayUI) is a different, immediate-mode toolkit; read it first if the qu
 - **Code:** `Components/UIListView`, `Components/UITabs`, `Components/UIModal`, `Components/UIContextMenu`, `Components/UITooltip`, `UI/TooltipPlace`, `Components/UIScrollView`, `Components/UIToast`, `Components/UISlotGrid`, `Components/UIDraggable`, `Components/Draggable`, `engine/src/UI/InventoryInput.cpp`, `editor/UIInspectorOverlay.*`
 - **API:** `UIListView`, `UITabs` (Select, Layout), `UIModal::Open/Close`, `UIContextMenu`, `UITooltip`, `PlaceTooltip`, `UIScrollView`, `UIToast`; script `ui_set_tab`, `ui_tab_value`, `ui_set_tab_badge`, `ui_drop_source`, `ui_drop_target`
 - **Editor:** Inspector headers (UI Tabs with Generate Pages, UI Scroll View, UI List View, UI Modal, UI Context Menu, UI Tooltip, UI Draggable, UI Drop Target, UI Slot Grid); Create > UI > Controls and Layout
-- **Docs:** `docs/ui/game_ui.md` (Tabs section), `docs/engine_api.md`
+- **Docs:** `docs/ui/in_game_ui.md` (Tabs section), `docs/engine_api.md`
 - **Tests:** `ui_tabs`, `ui_overlays`, `ui_layout_containers`, `ui_extra`, `ui_nav_touch`, `ui_input_guard`, `item_dragdrop` (world drag and drop), `ui_library3`, `ui_library3_example`, `ui_library3_shots` (menu bar, toolbar, tree view, data table, wizard, form group, colour picker), `ui_library4`, `ui_library4_example`, `ui_library4_shots` (styles, themes, icons, screens, gallery), `menu_bar_model`
 - **Status:** Works - modals, context menu, keybind, virtual list, horizontal scroll and the new tabs came with the UI plan P1 PRs (ROADMAP: #381, #386, #391); toast and slot grid have no tests of their own
-- **Open:** the old row listed "2-D navigation (UI plan P0-P4)": navigation, touch and modals are on main (see 12.12), so only the later plan phases remain (12.7, 12.10, 12.13); accordion, breadcrumbs, pagination, skeleton and bottom sheet are `UIAccordion`, `UIBreadcrumbs`, `UIPagination`, `UISkeleton` and `UIBottomSheet`. Slice 3 of the library added the menu bar, toolbar, tree view, data table, wizard, form group and the colour picker's advanced mode (12.4.11 to 12.4.17; gamepad focus, scroll-bar dragging, sub-menus and table column resize are open, see `docs/ui/ui_library.md`). Still missing from the library request: carousel
+- **Open:** the old row listed "2-D navigation (UI plan P0-P4)": navigation, touch and modals are on main (see 12.12), so only the later plan phases remain (12.7, 12.10, 12.13); accordion, breadcrumbs, pagination, skeleton and bottom sheet are `UIAccordion`, `UIBreadcrumbs`, `UIPagination`, `UISkeleton` and `UIBottomSheet`. Slice 3 of the library added the menu bar, toolbar, tree view, data table, wizard, form group and the colour picker's advanced mode (12.4.11 to 12.4.17; gamepad focus, scroll-bar dragging, sub-menus and table column resize are open, see `docs/ui/in_game_ui.md`). Still missing from the library request: carousel
 - **Related:** 12.12, 12.5, 11.1, 12.7
 - **Words:** list view, scroll view, scroll, tabs, tab bar, modal, dialog, popup, context menu, right-click menu, tooltip, toast, notification, slot grid, drag and drop, drop target
 - **Seen as:** a long list is slow or drops rows; tabs do not switch pages or overflow; a dialog lets clicks through to widgets behind it; Escape does not close a modal; a tooltip runs off the screen or never shows; scrolling with a finger does not work
@@ -138,10 +138,10 @@ Area 40 (OkayUI) is a different, immediate-mode toolkit; read it first if the qu
 - **Code:** `Components/UIDocument`, `editor/main.cpp` (UI Document inspector, ~34885-34936)
 - **API:** `UIDocument::markup`, `UIDocument::Rebuild`; script handlers written inline as OkayScript
 - **Editor:** Inspector header "UI Document" (markup editor and Rebuild)
-- **Docs:** `docs/ui/ui_html.md`
+- **Docs:** `docs/ui/in_game_ui.md`
 - **Tests:** `uidocument`
 - **Status:** Works - parser and builder are in the engine and covered by `uidocument` (markup, CSS, defines, binding, round trip)
-- **Open:** no flexbox or grid, no media queries, no external CSS/JS files (per `docs/ui/ui_html.md`); possible naming clash: the markup is called "OkayUI markup" but builds scene widgets, not the OkayUI toolkit of area 40; the UI plan asked for a UIDocument-to-hierarchy round trip in the editor (not found)
+- **Open:** no flexbox or grid, no media queries, no external CSS/JS files (per `docs/ui/in_game_ui.md`); possible naming clash: the markup is called "OkayUI markup" but builds scene widgets, not the OkayUI toolkit of area 40; the UI plan asked for a UIDocument-to-hierarchy round trip in the editor (not found)
 - **Related:** 12.7, 12.13, 40.5
 - **Words:** UIDocument, HTML UI, CSS, UXML, USS, markup, UI toolkit, define, style, onclick, template
 - **Seen as:** a menu written as text looks different from the HTML; a CSS rule does nothing; a custom widget does not repeat; the document rebuilds and loses hand edits
@@ -156,10 +156,10 @@ Area 40 (OkayUI) is a different, immediate-mode toolkit; read it first if the qu
 - **Code:** `Components/WorldUI`, `Components/WorldSpaceUI`, `Components/UIWorldContext`, `Components/Canvas`
 - **API:** `WorldUI`, `WorldSpaceUI`, `UIWorldCtx`, `GetUIScreenRect`
 - **Editor:** Create > UI > 3D UI (in-world); Inspector headers World UI (3D label), World Space UI (3D), Canvas > World Space
-- **Docs:** `docs/ui/ui_world_space.md`
+- **Docs:** `docs/ui/in_game_ui.md`
 - **Tests:** `worldcanvas`, `worldtoscreen`, `ui_renderer_options`, `ui_nameplate_bound` (what is drawn: card, pill, bar and texts at five sizes and two fonts), `ui_text_example` (the shipped sample), `ui_text_shots` (headless pictures)
 - **Status:** Works - implemented; `worldcanvas` checks widgets projecting through the camera context
-- **Open:** per `docs/ui/ui_world_space.md`: steeply tilted panels draw as axis-aligned rects (approximate); the Scene view shows world labels but not full world canvases (use the Game view); panels, progress bars and text scale with the projection and text honours its alignment (the other widget kinds in world space were not checked: they may still draw at design size)
+- **Open:** per `docs/ui/in_game_ui.md`: steeply tilted panels draw as axis-aligned rects (approximate); the Scene view shows world labels but not full world canvases (use the Game view); panels, progress bars and text scale with the projection and text honours its alignment (the other widget kinds in world space were not checked: they may still draw at design size)
 - **Related:** 12.1, 12.11, 4.8
 - **Words:** world space UI, 3D UI, nameplate, health bar over head, floating text, damage numbers, billboard, world canvas, in-world menu, terminal
 - **Seen as:** a nameplate does not follow its object; in-world text is mirrored or too big far away; a button in a world panel cannot be clicked; the panel does not show in the Scene view
@@ -171,13 +171,13 @@ Area 40 (OkayUI) is a different, immediate-mode toolkit; read it first if the qu
   - 12.7.1 Slate palette and kit - `Scene/UITemplates` - Card, Heading, List Row, Badge, Avatar, Divider, button kinds, Switch, Spinner, Notification
   - 12.7.2 Prebuilt screens - `Scene/UITemplates` - Main Menu, Pause, Settings, Confirm Dialog, HUD, Health Bar, Dialog Box, Shop, Game Over, Lobby, Scoreboard, Leaderboard, Matchmaking, five loading screens; each lands on one shared Canvas
   - 12.7.3 Style presets and copy/paste style - `Scene/UIStyles` - per-component preset chips, Copy style / Paste style
-  - 12.7.4 UI Theme component - `Components/UITheme` - twelve built-in looks (Dark, Light, Sci-fi, Fantasy, Modern Flat and seven more, see `docs/ui/ui_runtime.md`) plus a custom palette, baked onto child widgets on request; looks can be saved as `.okaytheme` files in the project and loaded again; the companion `UIStyleVariant` component gives a widget one of seven roles (Default, Primary, Secondary, Danger, Ghost, Outline, Pill)
+  - 12.7.4 UI Theme component - `Components/UITheme` - twelve built-in looks (Dark, Light, Sci-fi, Fantasy, Modern Flat and seven more, see `docs/ui/in_game_ui.md`) plus a custom palette, baked onto child widgets on request; looks can be saved as `.okaytheme` files in the project and loaded again; the companion `UIStyleVariant` component gives a widget one of seven roles (Default, Primary, Secondary, Danger, Ghost, Outline, Pill)
   - 12.7.5 UI font - `Components/TextRenderer`, `editor/main.cpp` (Lighting window, UI Font) - launcher Roboto by default, scene-chosen TTF/OTF, or classic pixel font
   - 12.7.6 UI Theme window - `editor/main.cpp` (~42418-42667) - reusable styles applied across widgets, "Apply to All UI"
 - **Code:** `Scene/UITemplates`, `Scene/UIStyles`, `Components/UITheme`, `editor/main.cpp` (`DrawUIThemer`, `DrawUIWidgetItems`)
 - **API:** `UITemplates::AddMainMenu/AddPauseMenu/AddSettings/AddHUD/AddShop...`, `UIStyles::ApplyButton/ApplyPanel...`, `UITheme::Apply`; script `apply_ui_theme`, `set_ui_theme`, `ui_style("classic")`
 - **Editor:** GameObject > UI (Kit, Prebuilt Screens), View > Editors & Tools > UI Theme, "Look" chips at the top of each UI inspector, Save Selected as UI
-- **Docs:** `docs/ui/game_ui.md` (Adding UI in the editor, Theming)
+- **Docs:** `docs/ui/in_game_ui.md` (Adding UI in the editor, Theming)
 - **Tests:** `ui_templates`, `ui_tabs`, `uicapture_look`, `runtime_ui` (UITheme looks, roles and saved `.okaytheme` files)
 - **Status:** Partial - kit, screens and presets are implemented and tested; UITheme (12 looks, roles, saved `.okaytheme` files) is tested in `test_runtime_ui` but is still a one-shot skin baked onto widgets, not the stylesheet system the UI plan describes
 - **Open:** "full component library" (see the missing list in 12.3 and 12.4); stylesheet assets with selectors, hover/pressed/focused/disabled states and transitions (UI plan P2; this part is still open); a real blur behind panels is not possible with the painter (per the `UITheme` header)
@@ -196,7 +196,7 @@ Area 40 (OkayUI) is a different, immediate-mode toolkit; read it first if the qu
 - **Code:** `Components/LoadingScreen`, `Components/LoadingScreenLayout`, `Components/PauseMenu`, `Components/SettingsScreen`, `editor/main.cpp` (Loading Screen and Pause Menu inspectors ~31719, ~29517)
 - **API:** `LoadingScreen::Begin("Scene")`, `PauseMenu`, `SettingsScreen::AnyOpen`, `GameInputBlocked`
 - **Editor:** Inspector headers Loading Screen (live animated preview, Look buttons) and Pause Menu; Create > UI > Prebuilt Screens > Menus and Loading Screens; Localized switch (Localization window)
-- **Docs:** `docs/ui/game_ui.md` (Loading screens)
+- **Docs:** `docs/ui/in_game_ui.md` (Loading screens)
 - **Tests:** `loading_screen`, `loading_screen_layout`, `pausemenu`, `pause_menu`, `ui_input_guard`, `ui_templates`, `accessibility_wired`
 - **Status:** Works - implemented and tested (headless loading logic, pause freeze and quit flag, pause card at three aspects)
 - **Open:** no known gaps; save-slot UI components (area 35) are not here
@@ -215,7 +215,7 @@ Area 40 (OkayUI) is a different, immediate-mode toolkit; read it first if the qu
 - **Code:** `Components/Canvas`, `Components/UISafeArea`, `Components/UITouchScroll`, `UI/UILayoutUpdate`, `editor/main.cpp`
 - **API:** `UISafeInsets()`, `Canvas::screenMatch`, `UITouchScroll::Step`
 - **Editor:** Game view resolution/device menu, Portrait/Landscape, Safe area toggle; Canvas "Add Safe Area"
-- **Docs:** `docs/ui/game_ui.md` (Phones and tablets), `docs/platform/web_mobile.md`
+- **Docs:** `docs/ui/in_game_ui.md` (Phones and tablets), `docs/platform/web_mobile.md`
 - **Tests:** `ui_nav_touch`, `ui_frame`, `ui_input_guard`
 - **Status:** Works - match modes, safe area and touch scroll are implemented; touch tap and fling are covered by `ui_nav_touch`
 - **Open:** `UITouchScroll` is covered by `ui_touch_scroll`. On-screen controls are in: virtual joystick, D-pad and touch button (`Components/TouchControls`, `docs/engine/input.md`)
@@ -238,7 +238,7 @@ Area 40 (OkayUI) is a different, immediate-mode toolkit; read it first if the qu
 - **Code:** `editor/UIPreviewPainter.*`, `editor/UIInspectorLayout.*`, `editor/UIInspectorOverlay.*`, `editor/main.cpp`, `Scene/UILayoutTools`, `Scene/UIStyles`
 - **API:** menu items GameObject > UI, View > Editors & Tools > UI Editing Mode, UI Editor (separate tab), UI Theme
 - **Editor:** Scene view (UI button, "..." menu toggle for the overlay), UI tab, Inspector
-- **Docs:** `docs/editor/editor.md` (UI editing), `docs/ui/game_ui.md`
+- **Docs:** `docs/editor/editor.md` (UI editing), `docs/ui/in_game_ui.md`
 - **Tests:** `ui_frame` (undo through `editor/EditorState.cpp`), `ui_renderer_options`, `editor` (selftest)
 - **Status:** Partial - the UI view, handles, tools and inspectors exist; items the UI plan P4 asked for are not all there
 - **Open:** UI plan P4: anchor preset picker and pivot handles, UI prefabs with variants, UIDocument-to-hierarchy round trip, a `--selftest` that creates and saves a UI prefab (none found); the editor's Scene view shows no full world-space canvases
@@ -256,12 +256,12 @@ Area 40 (OkayUI) is a different, immediate-mode toolkit; read it first if the qu
   - 12.11.4 Batch painter - `UI/UIBatcher` - one vertex buffer and atlas, few draw calls (target: 500 widgets under 1 ms and 20 calls)
   - 12.11.5 Drawing helpers - `UI/UIRenderer` - FillUIShape, rings, shadows, TTF text, minimap raster helpers shared with inventory and loading overlays
   - 12.11.6 Golden scenes - `tests/ui_golden_scenes.hpp` - scenes drawn and compared with `tests/golden/ui/*.png`
-  - 12.11.7 Crisp at any size - `UI/UIRenderer`, `UI/UIBatcher`, `UI/UIFontPolicy` - circles, rings, triangles, thick lines, round pictures and the crosshair ring are rasterised on the device pixel grid with analytic coverage; pictures sample linearly (nearest in the pixel-art look) through `Painter::SetImageFilter`; baked glyph sizes step by about 6% above 32 px so the cache stays bounded; "UI filtering": Smooth by default, Pixel-art with the scene UI font "pixel", `OKAY_UI_FILTER=pixel|smooth` overrides (`docs/ui/game_ui.md` "Crisp at any size", try it `docs/try_it.md` crisp1)
-  - 12.11.8 UI quality (Fast / Good / Best / Old look) - `UI/UIRenderer`, `UI/UIImageScale`, `UI/UIFontPolicy`, `Graphics/TtfFont`, `Graphics/TtfRaster` - exact edge coverage from sub-scan-lines, device-pixel snapping of shapes and borders, text on the pixel grid (quarter-pixel faces, sub-pixel glyph phases in Best), stem darkening, kerning from `kern`/`GPOS`, soft shadow mesh, dithered gradients (Best), filtered picture downscale (`Painter::LoadTextureSized`); scene setting `uiQuality` (Lighting > UI Font > UI Quality), `OKAY_CLASSIC_UI=1` and `OKAY_UI_QUALITY` override; example scene `examples/ui_quality` (`docs/ui/in_game_ui_quality.md`, try it `docs/try_it.md` ui-quality-1)
+  - 12.11.7 Crisp at any size - `UI/UIRenderer`, `UI/UIBatcher`, `UI/UIFontPolicy` - circles, rings, triangles, thick lines, round pictures and the crosshair ring are rasterised on the device pixel grid with analytic coverage; pictures sample linearly (nearest in the pixel-art look) through `Painter::SetImageFilter`; baked glyph sizes step by about 6% above 32 px so the cache stays bounded; "UI filtering": Smooth by default, Pixel-art with the scene UI font "pixel", `OKAY_UI_FILTER=pixel|smooth` overrides (`docs/ui/in_game_ui.md` "Crisp at any size", try it `docs/try_it.md` crisp1)
+  - 12.11.8 UI quality (Fast / Good / Best / Old look) - `UI/UIRenderer`, `UI/UIImageScale`, `UI/UIFontPolicy`, `Graphics/TtfFont`, `Graphics/TtfRaster` - exact edge coverage from sub-scan-lines, device-pixel snapping of shapes and borders, text on the pixel grid (quarter-pixel faces, sub-pixel glyph phases in Best), stem darkening, kerning from `kern`/`GPOS`, soft shadow mesh, dithered gradients (Best), filtered picture downscale (`Painter::LoadTextureSized`); scene setting `uiQuality` (Lighting > UI Font > UI Quality), `OKAY_CLASSIC_UI=1` and `OKAY_UI_QUALITY` override; example scene `examples/ui_quality` (`docs/ui/in_game_ui.md`, try it `docs/try_it.md` ui-quality-1)
 - **Code:** `UI/UIRenderer`, `UI/UIPainter`, `UI/UIPainterSDL`, `UI/UIBatcher`, `UI/UIShape`, `UI/UIImageScale`, `tests/ui_golden_scenes.hpp`, `tests/ui_quality_scene.hpp`, `editor/UIPreviewPainter.*`
 - **API:** `okay::ui2d::RenderSceneUI`, `ui2d::Painter`, `ui2d::SDLPainter`, `ui2d::BatchPainter::Flush`, `UIRenderOptions`
 - **Editor:** Game view and Scene UI preview draw through it (via `UIPreviewPainter`)
-- **Docs:** `docs/ui/game_ui.md` (Crisp at any size), `docs/ui/in_game_ui_quality.md`
+- **Docs:** `docs/ui/in_game_ui.md` (Crisp at any size), `docs/ui/in_game_ui.md`
 - **Tests:** `ui_renderer_golden`, `ui_render_bench`, `ui_renderer_options`, `ui_layering`, `ui_layer_table`, `uishape`, `ui_crisp`, `ui_quality`
 - **Status:** Works - UI plan P0 (shared layer table, renderer moved out of the player, batching) is on main per ROADMAP #361; benchmark and golden tests exist
 - **Open:** UI quality was only run on SDL's software renderer (not on Windows, the GL / Direct3D 11 drivers or high-DPI); turned or scaled (UI Frame) widgets keep a hard outer edge; no linear-light blending, no project-wide quality default; the player (`player/main.cpp`) still draws other overlays itself (inventory, crafting, F1 panel); no GPU blur; `UIPainterSDL` is header-only so only SDL hosts link it
@@ -308,7 +308,7 @@ Area 40 (OkayUI) is a different, immediate-mode toolkit; read it first if the qu
 - **Code:** `Components/UIBarBind`, `Components/UITextBind`, `Components/UIAnimation`, `Components/UIDataGlue`, `Components/UIVars`, `Scripting/OkayScriptVM`, `Script/EngineApi`
 - **API:** `UIBarBind`, `UITextBind`, `UIBind`, `UIVisibleIf`, `UIListBind`, `UIHotReload` (ReloadNow), `UIAnimation::Play/PlayOut/Stop`, script `ui_*`, `tween_ui_*`
 - **Editor:** Inspector headers UI Text Bind, UI Bar Bind, UI Animation; the prebuilt HUD wires hp, score and loading variables
-- **Docs:** `docs/ui/game_ui.md`, `docs/scripting/scripting_reference.md` (UI section), `docs/engine_api.md`
+- **Docs:** `docs/ui/in_game_ui.md`, `docs/scripting/scripting.md` (UI section), `docs/engine_api.md`
 - **Tests:** `ui_animation`, `ui` (bar bind, text bind), `uidocument` (binding), `ui_extra` (UI script API, tweens), `ui_nameplate_bound` (owner keys), `ui_library2` (bind, visible-if, list bind, hot reload), `ui_library2_example`
 - **Status:** Partial - bindings, animation and name-based script calls work; the generic script API from the UI plan (P3) is not there
 - **Open:** UI plan P3 not found: `ui_create`, `ui_destroy`, `ui_find`, generic `ui_get/ui_set(prop)`, events `on_hover_enter`, `on_hover_exit`, `on_value_changed`, two-way binding to SyncVars (UI Bind covers variables and the Actions pools, 12.13.7; networked SyncVars are not bound), visual nodes On Value Changed, Set Progress, Focus, Create Widget; a settings menu built purely from nodes; UI Bind writes the number the widget holds (a dropdown also writes its words to `<var>_text`) but not a stat or a networked value; the list bind reads arrays of numbers and visual-script lists, not a database

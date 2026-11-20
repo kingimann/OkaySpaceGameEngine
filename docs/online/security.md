@@ -4,7 +4,7 @@ Four protections, one section each: what was wrong, what changed, how you see it
 about a result says what was run. Nothing here ran on Windows, and nothing ran against the real Supabase project: those
 two are unverified and are listed under "Your steps" and at the end.
 
-Related pages: [relay](relay.md), [updater](../release/updater.md), [anticheat](anticheat.md), [crypto](../platform/crypto.md).
+Related pages: [relay](relay.md), [updater](../release/updater.md), [anticheat](anticheat.md#anti-cheat-1), [crypto](../platform/crypto.md).
 
 ## 1. Relay isolation
 

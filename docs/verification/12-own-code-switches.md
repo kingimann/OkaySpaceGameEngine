@@ -33,7 +33,7 @@ Areas: 40. Rows ids start `V-OC-`. `V-OC-S<area>` rows are smoke tests built fro
     3. Close the editor, start it again with no variable and import the same file.
   - **You should see (expected, not yet seen on Windows):** a white unit cube both times; only the About line shows which reader ran.
   - **Known partial:** no Console line says which reader read the file. A variable set to `0` wins over `OKAY_OWN_STACK=1`.
-  - **More:** [../../own_off_reader.md](../../content/model_readers/own_off_reader.md)
+  - **More:** [../../own_off_reader.md](../../content/model_readers.md#our-own-off-reader-off)
 
 - [ ] **V-OC-004** Other own readers
   - **Map:** 3. **Where:** Command Prompt, then editor
@@ -61,7 +61,7 @@ Areas: 40. Rows ids start `V-OC-`. `V-OC-S<area>` rows are smoke tests built fro
     1. Nothing to try: Windows uses WinHTTP, `OKAY_OWN_HTTP=1` does nothing there. Check that the stack line says `http=winhttp`.
   - **You should see (expected, not yet seen on Windows):** `http=winhttp` in the About popup.
   - **Known partial:** the own client exists for Linux builds only and is tested on Linux.
-  - **More:** [../../own_http_client.md](../../platform/own_http_client.md)
+  - **More:** [../../own_http_client.md](../../platform/own_http.md#our-own-http-client-okayownhttp)
 
 - [ ] **V-OC-007** Own platform layer
   - **Map:** 37. **Where:** Command Prompt, then the player

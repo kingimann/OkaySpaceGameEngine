@@ -18,7 +18,7 @@
 //    to the cubic B-spline curve limit (a + 4 S + b) / 6; a corner stays.
 //  - UV smoothing modes and "keep corners" boundaries: the general description of face-varying and boundary
 //    interpolation choices for subdivision surfaces (which UV vertices are held linear: corners, junctions,
-//    concave corners, whole boundaries, or none); see docs/content/model_readers/own_blend_reader.md for how each is defined here.
+//    concave corners, whole boundaries, or none); see docs/content/model_readers.md for how each is defined here.
 //  - Mirror: the public description of Blender's Mirror modifier (mirror axes in the object's space or in the space
 //    of a mirror object, merge of vertices that lie within the merge distance of their mirror image, U / V flips of
 //    the mirrored copy's texture coordinates, vertex group names swapped between left and right).

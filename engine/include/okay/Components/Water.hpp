@@ -73,7 +73,7 @@ public:
     int   waveSeed = 7;           ///< the same seed always gives the same sea
     Vec2  current{0.0f, 0.0f};    ///< a steady stream in the water, metres per second along the object's X and Z
 
-    // ---- How it LOOKS (docs/rendering/water_visuals.md). Each is off or neutral in an old scene, so old scenes look the same. ----
+    // ---- How it LOOKS (docs/rendering/terrain_water.md). Each is off or neutral in an old scene, so old scenes look the same. ----
     /// Sea state shortcut: 0 Custom (your own wave numbers), 1 Calm, 2 Light, 3 Rough, 4 Storm. SetSeaState() writes the
     /// wave numbers; this only remembers which one was picked.
     int   seaState = 0;
@@ -432,7 +432,7 @@ private:
         mr->mesh = std::move(m);
     }
 
-    // ===== the look (docs/rendering/water_visuals.md) ===========================================================================
+    // ===== the look (docs/rendering/terrain_water.md) ===========================================================================
     std::vector<watershade::Ring> m_rings;          ///< splash rings alive (water-local)
     std::unordered_map<int, float> m_wakeSeen;      ///< water time each emitter was last fed through AddWake
     std::unordered_map<int, float> m_wakeAcc;       ///< distance travelled since the last wake ring, per emitter id

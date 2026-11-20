@@ -1,7 +1,7 @@
 #pragma once
 // The Guided page of the Modeling window (GuidedPanel.cpp): pick a category and a starting design, get an ordinary
 // editable mesh, then change its settings, swap parts, keep editing by hand. The rules that keep hand edits safe are in
-// engine/include/okay/Modeling/Guided.hpp and docs/editor/guided_modeling_design.md. It is a page of the existing Modeling
+// engine/include/okay/Modeling/Guided.hpp and docs/editor/guided_modeling.md. It is a page of the existing Modeling
 // window, not a new window; the host (main.cpp) lends it the mesh edit mode's selection and the thumbnail renderer.
 #include "EditorState.hpp"
 #include "okay/Render/Mesh.hpp"

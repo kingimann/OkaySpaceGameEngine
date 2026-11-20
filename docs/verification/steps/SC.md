@@ -29,7 +29,7 @@
   3. Right-click it again and choose **Create Variant**, then **Validate Prefab**.
 - **See:** a second copy appears in the scene; a variant file is created; Validate reports no problems or lists them.
 - **Partial:** map area 21 is marked planned in parts: expect gaps (nested prefab overrides, for example).
-- **Link:** [prefabs.md](../../engine/prefabs.md)
+- **Link:** [prefabs.md](../../engine/prefabs.md#prefabs-and-overrides)
 
 ### V-SC-004 Merge another scene into this one
 - **Map:** 1, 20

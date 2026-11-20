@@ -1,5 +1,5 @@
 #pragma once
-// Localization tools: checking a string table before it ships (docs/engine/localization_tools.md).
+// Localization tools: checking a string table before it ships (docs/engine/localization.md).
 //
 //  * Messages: LocParseMessage splits a text into literal runs, {0} / {name}
 //    placeholders and {n, plural, ...} blocks, the same grammar Localization::Format reads.

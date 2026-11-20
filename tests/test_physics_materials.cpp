@@ -1,6 +1,6 @@
 // Physics Material asset: the .okayphysmat file, the built-in presets, a PhysicsSurface on an object, and what the solver
 // does with it (ice slides, rubber holds, bounce height follows bounciness, density gives mass, a change at run time works,
-// a contact tells scripts which two materials met). The numbers are in docs/physics/physics_materials.md.
+// a contact tells scripts which two materials met). The numbers are in docs/physics/physics.md.
 #include "test_framework.hpp"
 #include <Okay.hpp>
 #include "okay/Components/PhysicsSurface.hpp"

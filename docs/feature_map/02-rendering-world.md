@@ -56,11 +56,11 @@ Mostly on main and tested. Nothing is open: #574 added the optimization tools (L
   - 2.3.4 Lightmap bake - `Render/Lightmap` - `BakeFaceLighting` writes lighting, shadows and ambient occlusion into a static mesh's per-face colours; editor Bake Lighting button
   - 2.3.5 Day and night - `Components/DayNightCycle` - 24 h clock rotates the sun, tints and dims it, eases ambient, blends the camera sky; publishes `hour`; `SetTime`, `AddHours`
   - 2.3.6 Flashlight - `Components/Flashlight` - toggleable spot light that shines where the camera looks (key F by default) for caves and dark rooms; spawns a child Light and saves with the scene (tested inside `terrain`)
-  - 2.3.7 Lighting upgrade - `Render/ShadowMath`, `Render/Lighting`, `Render/LightingPresets` - stable cascades (grid tied to the world), slope bias, soft penumbra and distance fade (software), smooth spot cone (all renderers), soft light roll-off, rectangle Area light, light masks (cookies), real-world lux/lumens with Auto brightness, glow lights from emissive meshes, five lighting presets, baked light probes, scene SSAO in the software renderer; `docs/rendering/lighting_upgrade.md`
+  - 2.3.7 Lighting upgrade - `Render/ShadowMath`, `Render/Lighting`, `Render/LightingPresets` - stable cascades (grid tied to the world), slope bias, soft penumbra and distance fade (software), smooth spot cone (all renderers), soft light roll-off, rectangle Area light, light masks (cookies), real-world lux/lumens with Auto brightness, glow lights from emissive meshes, five lighting presets, baked light probes, scene SSAO in the software renderer; `docs/rendering/lighting.md`
 - **Code:** `Render/Lighting`, `Render/ShadowSetup`, `Render/ShadowMath`, `Render/LightingPresets`, `Render/Lightmap`, `Components/Light`, `Components/DayNightCycle`, `Components/Flashlight`
 - **API:** `Light`, `Light::Type`, `ApplySceneLight`, `SceneLights`, `PlanShadows`, `BakeFaceLighting`, `DayNightCycle::SetTime`, script `set_light`, `set_ambient`
 - **Editor:** View > Lighting panel (Environment, Bake Lighting, Rendering with shadow resolution); GameObject > Light menu; Light and Day/Night inspectors (editor/main.cpp)
-- **Docs:** `docs/rendering/lighting.md`, `docs/rendering/lighting_upgrade.md`, `docs/rendering/day_night_cycle.md`
+- **Docs:** `docs/rendering/lighting.md`, `docs/rendering/lighting.md`, `docs/rendering/lighting.md`
 - **Tests:** `lighting`, `light_shadows`, `lighting_upgrade`, `shadows`, `daynight`, `terrain`, `lightmap`
 - **Status:** Works - read `Lighting.hpp`, `ShadowSetup.hpp`, `Light.hpp`; tests cover the GPU shadow plan, flicker, save/reload and the software renderer's switches
 - **Open:** one Directional light casts sun shadows (the first one with Cast Shadows on; the Inspector warns when more than one asks); at most 16 lights shaded per frame on the GPU; Soft Edges, light masks and rectangle panels run in the software renderer and are written but never run in the Direct3D 11 and OpenGL shaders (OpenGL softens by an approximation); light probes (`Render/LightProbes`, `LightProbeBake`, Lighting window > Light Probes) are software only; no reflection probes; the Direct3D 12 backend has one sun map, no cascades or local shadows (all docs/rendering/lighting.md); lightmap bake stores per-face colours, not UV lightmap textures (Lightmap.hpp)
@@ -132,7 +132,7 @@ Mostly on main and tested. Nothing is open: #574 added the optimization tools (L
 - **Code:** `Components/Terrain`, `Components/TerrainDigger`, `Components/VoxelTerrain`, `Components/VoxelDigger`, `Components/Water`, `Environment/WaterWaves`, `Components/Buoyancy`, `Components/WorldStreamer`, `Components/Tilemap`, `Components/TilemapCollider2D`
 - **API:** `Terrain::RaiseAt`, `Terrain::Erode`, `VoxelTerrain::Dig`, `TerrainDigger`, `Water`, `WorldStreamer`, `Tilemap`, `TilemapCollider2D`
 - **Editor:** GameObject > 3D Object > Terrain, Voxel Terrain (caves), Water and GameObject > 2D Object > Tilemap; their Inspector sections and the Terrain sculpt tools (editor/main.cpp)
-- **Docs:** `docs/rendering/terrain_water.md`, `docs/rendering/water_boat.md`
+- **Docs:** `docs/rendering/terrain_water.md`, `docs/rendering/terrain_water.md`
 - **Tests:** `boat`, `terrain`, `terrain_ops`, `voxel`, `voxel_dig`, `worldstreamer`, `tilemap_collision`, `particles_tilemap`
 - **Status:** Works - read the headers of every component above; `terrain` also covers water, flashlight and the sandbox template
 - **Open:** vegetation and detail painting, procedural scatter and a proper sculpting UI are area 29; streaming is by prefab cell files baked by hand, not by the `Optimize/StreamingGrid` planner of #574 (area 27)
@@ -213,7 +213,7 @@ Mostly on main and tested. Nothing is open: #574 added the optimization tools (L
 - **Code:** `Components/Camera`, `Scene/EnsureCamera`
 - **API:** `Camera`, `Camera::ScreenPointToRay`, `Camera::Shake`, `Scene::CameraStack`, `Scene::ResolveMainCamera`, `PickRenderCamera`, `EnsureSceneCamera`
 - **Editor:** Camera inspector, Camera Preview window and the Game view (editor/main.cpp, 15.3)
-- **Docs:** `docs/gameplay/layers_tags_cameras.md`
+- **Docs:** `docs/gameplay/cameras.md`
 - **Tests:** `camera_cine`, `worldtoscreen`, `scene_cameras`, `layers_tags_cameras`, `camera_stack`, `core_audit`
 - **Status:** Works - one camera still renders exactly as before; two or more are drawn lowest depth first into their rectangles in the Game view, Play mode and the player. Depth Only and Don't Clear overlay the cameras underneath. The Inspector lists all four clear flags and can add an overlay camera
 - **Open:** a 2D orthographic scene still draws sprites from the main camera only; overlay cameras do not depth-test against the cameras under them (they draw on top inside their rectangle)

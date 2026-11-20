@@ -4,7 +4,7 @@
 // read. Reads the vertices (four weight types, QDEF as four weights), the faces, the materials as one part each, the
 // texture table, and the bones as a skeleton. Morphs are walked and checked, not imported (the engine has no morph type).
 // Every count and index comes from the file and is checked before use; nothing is allocated from a count that the file
-// is too short to hold. Bounds-checked, capped, no recursion. See okay/Render/ModelData.hpp and docs/content/model_readers/own_pmx_reader.md.
+// is too short to hold. Bounds-checked, capped, no recursion. See okay/Render/ModelData.hpp and docs/content/model_readers.md.
 #include "BinReader.hpp"
 #include "SceneRefPath.hpp"
 #include "TextReaderUtil.hpp"

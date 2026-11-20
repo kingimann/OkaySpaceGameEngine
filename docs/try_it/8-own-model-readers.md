@@ -52,15 +52,15 @@ row: | 8 | Own model readers: **the default** since 2026-11-17 (`OKAY_THIRD_PART
   a cube in `examples\own_readers`, written by our own `scripts/gen_gap_fixtures.py` (no outside source):
   * **OGRE binary `.mesh`**: `set OKAY_OWN_OGREBIN=1`, start the editor, **File > Import Model...**, choose
     `examples\own_readers\cube.mesh`. A unit cube appears (12 triangles, material `Cube/White`; no `.material` file ships, so
-    it is the default white). `docs/content/model_readers/own_ogre_reader.md`.
+    it is the default white). `docs/content/model_readers.md`.
   * **ZAE (COLLADA in a ZIP)**: `set OKAY_OWN_ZAE=1`, import `examples\own_readers\cube.zae`. A red unit cube appears.
-    For a ZAE with textures inside, ours writes each image next to the `.zae` as `<name>_zae_<file>`. `docs/content/model_readers/own_zae_reader.md`.
+    For a ZAE with textures inside, ours writes each image next to the `.zae` as `<name>_zae_<file>`. `docs/content/model_readers.md`.
   * **`.xml` (Irrlicht scene or mesh, COLLADA, XGL, OGRE XML by the root element)**: `set OKAY_OWN_XML=1`, import
-    `examples\own_readers\cube_irrmesh.xml`. A green unit cube appears. `docs/content/model_readers/own_xml_reader.md`.
+    `examples\own_readers\cube_irrmesh.xml`. A green unit cube appears. `docs/content/model_readers.md`.
   * **Modo `.lxo`** (added on branch `claude2/own-readers-gap-2`, not in a release yet): `set OKAY_OWN_LXO=1`, import
     `examples\own_readers\cube.lxo`. A **blue** unit cube appears (material `Blue`, colour 0.2 / 0.4 / 0.9, from the file's
     material item). The Console line says `read by the own LXO reader`. Without the variable Assimp reads it: the same cube,
-    but **grey** (Assimp does not read Modo's material items) and the line says `read by Assimp`. `docs/content/model_readers/own_lwo_reader.md`,
+    but **grey** (Assimp does not read Modo's material items) and the line says `read by Assimp`. `docs/content/model_readers.md`,
     section LXO.
   * Without the variable the same files are read by Assimp (the Windows release has it), so you see the same cube (grey for
     `.lxo`); the Console line on each import names the reader (see above). Checked on Linux by the `own_dispatch_gap` test (all

@@ -1,4 +1,4 @@
-// Second batch from the physics audit (docs/physics/physics_plan.md): the joint partner is remembered (not searched by name every step),
+// Second batch from the physics audit (docs/physics/physics.md): the joint partner is remembered (not searched by name every step),
 // ropes stay near their length with the Improved solver, a Slider joint, exit callbacks in scene order, the debug view's bodies
 // and joints, and the pooled debris helper.
 #include "test_framework.hpp"
@@ -104,7 +104,7 @@ int main() {
         const float improved = RopeLength(PhysicsQuality::Improved, 8, endMass);
         std::cout << "  rope of 8, end mass " << endMass << ": hangs " << classic << " m (Classic), " << improved << " m (Improved), rest 8 m\n";
         CHECK(improved < classic);
-        CHECK(improved < (endMass > 10.0f ? 14.0f : 8.2f));   // (a 50 kg weight on 1 kg links is still 5 m too long: see docs/physics/physics_plan.md)
+        CHECK(improved < (endMass > 10.0f ? 14.0f : 8.2f));   // (a 50 kg weight on 1 kg links is still 5 m too long: see docs/physics/physics.md)
     }
 
     // ---- Slider: moves along its axis only, stops at its limits, a motor drives it, it cannot turn.

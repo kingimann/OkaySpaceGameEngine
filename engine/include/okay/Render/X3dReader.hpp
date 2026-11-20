@@ -1,5 +1,5 @@
 #pragma once
-// Our own X3D (.x3d, XML encoding) reader. See docs/content/model_readers/own_x3d_reader.md.
+// Our own X3D (.x3d, XML encoding) reader. See docs/content/model_readers.md.
 //
 // Reads the scene graph's static geometry: Group / Transform / Collision / Anchor / Billboard / StaticGroup / Switch / LOD
 // (the first level) with DEF / USE reuse, Shape with Appearance > Material (diffuse colour, transparency as alpha, emissive,

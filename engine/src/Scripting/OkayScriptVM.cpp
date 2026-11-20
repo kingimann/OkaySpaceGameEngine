@@ -5075,7 +5075,7 @@ struct OkayScriptVM::Impl {
             }
             return Value{};
         };
-        // ---- Camera rigs and effects (docs/gameplay/camera_upgrade.md): Camera.* ----
+        // ---- Camera rigs and effects (docs/gameplay/cameras.md): Camera.* ----
         // The live shot: the virtual camera the brain is showing, else the first enabled one.
         auto liveVcam = [sceneOf]() -> VirtualCamera* {
             Scene* s = sceneOf();
@@ -6249,7 +6249,7 @@ struct OkayScriptVM::Impl {
             const SaveSlotInfo i = SaveGame::Info(slotArg(a));
             return Value{i.exists && i.savedAt > 0 ? SaveMenuModel::FormatAgo((long long)Time::UnixSeconds() - i.savedAt) : std::string()};
         };
-        // Save slots with no code to write (docs/engine/save_framework.md): objects marked with a Saveable
+        // Save slots with no code to write (docs/engine/save_games.md): objects marked with a Saveable
         // component are stored; game_save("slot_1" [, "label"]), game_load("slot_1") (at the start
         // of the next frame), game_delete_slot, game_slot_exists, game_slot_age (seconds since it was saved, -1 = none),
         // game_slot_text ("2026-11-08 14:03"), game_slot_label, game_continue, game_can_continue,
@@ -10911,7 +10911,7 @@ struct OkayScriptVM::Impl {
         alias("String.Format", "format");
         // Quaternion.Euler(x, y, z) -> a Vec3 of euler angles (assignable to
         // transform.rotation, which uses the Z component for 2D).
-        // ---- Vehicles (docs/gameplay/vehicle_controls.md): Vehicle.* ----
+        // ---- Vehicles (docs/gameplay/vehicles.md): Vehicle.* ----
         // The first argument is the vehicle (an object or its name); leave it as "" to mean the object this script is on.
         auto carOf = [sceneOf, this](std::vector<Value>& a) -> VehicleController* {
             Scene* s = sceneOf(); if (!s) return nullptr;

@@ -6,7 +6,7 @@ row: | ac-cheat-sim | Anti-cheat: watch the server catch a cheater (cheat simula
 
 What this is: a self-test of the server's anti-cheat. It starts a server on your own machine (nothing goes on the
 network) and a fake "cheating" client, and the cheating client does eight things a modified game would do. You read what
-the server did. Details: `docs/online/anticheat.md` ("The cheat simulator"), the status table: `docs/online/anticheat_hardening_status.md`.
+the server did. Details: `docs/online/anticheat.md` ("The cheat simulator"), the status table: `docs/online/anticheat.md`.
 
 **How to try it (Windows release).**
 

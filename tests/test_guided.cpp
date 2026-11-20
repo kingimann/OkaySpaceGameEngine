@@ -14,7 +14,7 @@ using namespace okay;
 using namespace okay::modeling;
 using namespace okay::modeling::guided;
 
-// Guided modeling (docs/editor/guided_modeling_design.md): the fence template, the regeneration contract, user parts and
+// Guided modeling (docs/editor/guided_modeling.md): the fence template, the regeneration contract, user parts and
 // templates, files and undo. Test names in the output start with "guided_".
 namespace {
 

@@ -44,7 +44,7 @@ objects with the same GUIDs, components, children and sibling order, and the sam
   leaves the history as it was. Moving or renaming an asset the open scene uses rewrites its asset paths
   and ends the scene's Undo history (the stored pieces still name the old path); the Console says so.
   Undo of the move itself is the Project panel's own Undo.
-- **Prefab mode.** Opening a prefab ([prefab_mode.md](../engine/prefab_mode.md)) puts the scene's history aside
+- **Prefab mode.** Opening a prefab ([prefab_mode.md](../engine/prefabs.md#prefab-mode)) puts the scene's history aside
   (whole `UndoStack`, unsaved mark and all) and starts an empty one for the prefab; going Back brings the scene's
   history back untouched. Rebuilding the scene's prefab instances after a saved prefab, and recording their overrides
   before the scene is put aside, are each one named step in the scene's history. Revert Prefab is one step.

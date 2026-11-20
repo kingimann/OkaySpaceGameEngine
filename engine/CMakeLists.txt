@@ -252,7 +252,7 @@ add_library(okay_engine
     src/UI/UIImageScale.cpp
     src/UI/UILayoutUpdate.cpp
     src/UI/UIFrameTransform.cpp
-    # Localization tools (docs/engine/localization_tools.md)
+    # Localization tools (docs/engine/localization.md)
     src/Core/LocCheck.cpp
     src/Core/LocTable.cpp
     src/Core/LocScan.cpp
@@ -710,7 +710,7 @@ if(OKAY_OWN_ASE)
     set_property(SOURCE src/Render/ModelImport.cpp APPEND PROPERTY COMPILE_DEFINITIONS OKAY_OWN_ASE_DEFAULT)
     message(STATUS "OkaySpace: model import reads .ase with the built-in ASE reader")
 endif()
-# Our own Blender (.blend) reader (docs/content/model_readers/own_blend_reader.md): same opt-in rules, default OFF.
+# Our own Blender (.blend) reader (docs/content/model_readers.md): same opt-in rules, default OFF.
 if(OKAY_OWN_BLEND)
     set_property(SOURCE src/Render/ModelImport.cpp APPEND PROPERTY COMPILE_DEFINITIONS OKAY_OWN_BLEND_DEFAULT)
     message(STATUS "OkaySpace: model import reads .blend with the built-in Blender reader first")
@@ -762,10 +762,10 @@ target_sources(okay_engine PRIVATE
     src/Core/GameLoop.cpp
     src/Core/RandomExtras.cpp
 )
-# ---- Prefab system wave 2 (docs/engine/prefab_system.md): nested prefabs, variants, unpack,
+# ---- Prefab system wave 2 (docs/engine/prefabs.md): nested prefabs, variants, unpack,
 # per-record / per-field apply and revert, prefab queries and the asset validator.
 target_sources(okay_engine PRIVATE src/Scene/PrefabTools.cpp)
-# Project tag list and layer names in the project settings file (docs/gameplay/layers_tags_cameras.md).
+# Project tag list and layer names in the project settings file (docs/gameplay/cameras.md).
 target_sources(okay_engine PRIVATE src/Scene/ProjectLists.cpp)
 # ---- Property reflection (docs/engine/properties.md) ----
 # PropertyValue / PropertyDesc, the registry with path access and change hook,

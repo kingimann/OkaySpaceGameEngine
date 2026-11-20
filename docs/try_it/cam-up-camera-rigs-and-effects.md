@@ -6,7 +6,7 @@ row: | cam-up | Camera rigs and effects (Follow, Orbit, Look At, Group, walls, b
 
 **What it is.** A camera rig is a shot that follows, circles or watches something for you, smoothly. It can look a little ahead of a
 moving target, frame several things at once, stay out of walls, fade things in the way, blend to other shots and shake on hits. A 2D
-camera can be held inside rooms and slide from room to room. Details: `docs/gameplay/camera_upgrade.md`.
+camera can be held inside rooms and slide from room to room. Details: `docs/gameplay/cameras.md`.
 
 **Steps (3D example).**
 1. Open the editor. File > Open, pick `examples\camera\camera_rigs.okayscene`, press Play.

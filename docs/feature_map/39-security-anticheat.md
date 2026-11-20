@@ -23,7 +23,7 @@ hardening items are merged. The opt-in detection engine (39.12) was added afterw
 - **Code:** `Net/AntiCheat`, `Net/AntiCheatLog`, `Components/AntiCheatConfig`, `Components/NetValidator`, `Net/NetworkManager`, `Net/DedicatedServer`
 - **API:** `BanList`, `AuditLog`, `.okayac` keys `banFile`, `auditLog`, `banAfterKicks`, `banHours`, `banOnRequest`, `maxPacketsPerSecond`, flags `--no-ban-file`, `--no-audit-log`, `AntiCheatSettings`, `NetworkManager::anticheat`, `SetCheatHandler`, `ClaimHit`, `ValidateHit`, `NetValidator`, scripts `net_anticheat`, `net_anticheat_load`, `net_violations`, `net_hit`, `net_budget`, server flags `--anticheat`, `--report-kicks`
 - **Editor:** Inspector: Anti-Cheat Config (preset picker, checklist) and Net Validator; Add Component > Anti-Cheat (one click); Network Manager > Add Anti-Cheat; File > Build Settings > Anti-cheat checklist; File > Build Settings > Server page
-- **Docs:** `docs/online/anticheat_quickstart.md`, `docs/online/anticheat.md` (P1, Network hardening, Bans and the audit log, Gameplay validation, Exporting), `docs/online/anticheat_hardening_status.md` (audit table), `docs/online/launcher-multiplayer.md`
+- **Docs:** `docs/online/anticheat.md`, `docs/online/anticheat.md` (P1, Network hardening, Bans and the audit log, Gameplay validation, Exporting), `docs/online/anticheat.md` (audit table), `docs/online/multiplayer.md`
 - **Tests:** `net_anticheat`, `net_anticheat_ph1`, `net_anticheat_ph4`, `net_anticheat_components`, `net_authority`, `net_lagcomp`, `anticheat_setup` (presets, checklist, export round trip), `anticheat_hard` (ban list, audit log, packet ceiling, identity binding, hostile-field fuzz)
 - **Status:** Works - one test file per plan phase; every item of the 2026-10-26 hardening audit is on main (#351 to #394 per `git log`)
 - **Open:** respawns are not replicated; checks only apply when `enabled`; defaults for scenes saved before the safe defaults keep encryption off; the easy-setup windows (presets, checklist) have unit tests but have not been run in the real editor; behavioural detection (speed over time, fly, accuracy, economy) is the opt-in detection engine in 39.12
@@ -267,15 +267,15 @@ hardening items are merged. The opt-in detection engine (39.12) was added afterw
 - **Ask me like:** "turn on behavioural anti-cheat for my shooter", "why was this player flagged?", "export the evidence for a report", "what is the false-positive rate?"
 
 ### 39.13 Cheat simulator and hardening audit
-- **What:** A self-test the owner can run: a server on the same machine with the anti-cheat on, and a rogue client made of raw packets that cheats on purpose (speed, teleport, NaN and huge numbers, a server-only variable, a message flood, a fake weapon, a perfectly timed button, a ban that survives a restart), next to a normal client that must be left alone. It prints what was caught, the ban list and the audit log it wrote. The audit of the 2026-10-26 hardening list and the server-side topics is `docs/online/anticheat_hardening_status.md`.
+- **What:** A self-test the owner can run: a server on the same machine with the anti-cheat on, and a rogue client made of raw packets that cheats on purpose (speed, teleport, NaN and huge numbers, a server-only variable, a message flood, a fake weapon, a perfectly timed button, a ban that survives a restart), next to a normal client that must be left alone. It prints what was caught, the ban list and the audit log it wrote. The audit of the 2026-10-26 hardening list and the server-side topics is `docs/online/anticheat.md`.
 - **Parts:**
   - 39.13.1 The simulator - `Net/CheatSim` - `RunCheatSim`, eight steps, a fresh server each, the rogue is raw UDP, the normal client is a real `NetworkManager`; plain (not encrypted) packets
   - 39.13.2 Where to run it - `Net/DedicatedServer`, `player/main.cpp` - `OkaySpacePlayer.exe --server --cheat-sim [--log FILE]`, `--cheat-sim-only LIST`, env `OKAY_CHEAT_SIM`; needs no game, window or scene; exit code 0 when everything was caught
-  - 39.13.3 Status table - `docs/online/anticheat_hardening_status.md` - every audit item and topic with its status and proof
+  - 39.13.3 Status table - `docs/online/anticheat.md` - every audit item and topic with its status and proof
 - **Code:** `Net/CheatSim`, `Net/DedicatedServer`, `player/main.cpp`
 - **API:** `okay::RunCheatSim`, `CheatSimOptions`, `CheatSimReport`, flags `--cheat-sim`, `--cheat-sim-only`, env `OKAY_CHEAT_SIM`
 - **Editor:** none
-- **Docs:** `docs/online/anticheat.md` (The cheat simulator), `docs/online/anticheat_hardening_status.md`, `docs/try_it.md`
+- **Docs:** `docs/online/anticheat.md` (The cheat simulator), `docs/online/anticheat.md`, `docs/try_it.md`
 - **Tests:** `anticheat_hard` (runs all eight steps and checks the files)
 - **Status:** Partial - works headless on Linux over loopback; never run on Windows or a real network
 - **Open:** the `macro` step feeds the detector directly (a real macro needs a player pawn); the packets are not encrypted, so the encryption path is not exercised; the thresholds of the new checks are tuned only on the simulator

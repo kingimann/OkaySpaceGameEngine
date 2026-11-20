@@ -21,9 +21,9 @@ networking pull requests (net plan 5a to 5e, anti-cheat phases 1 to 5, hardening
 - **Code:** `Net/UdpSocket`, `Net/Packet`, `Net/SecureChannel`, `Net/NetChannels`, `Net/NetTransport`, `Net/NetworkManager`, `Net/NetCrypto`, `Crypto/Crypto` (sources `engine/src/Crypto/*.cpp`), CMake option `OKAY_OWN_CRYPTO`
 - **API:** `NetworkManager::StartServer`, `StartClient`, `Stop`, `encryption`, `SendOrdered`, `SendSequenced`, `SecureChannel::Available`, `INetTransport`, `NetTransport::Get`, `okay::crypto::XChaCha20Poly1305Seal`, `Ed25519Sign`, `X25519`, `RandomBytes`
 - **Editor:** Inspector: Network Manager has no encryption field (set `encryption` in code or script; Anti-Cheat Config has Require encryption); View > Panels > Services has Host Game, Join and Disconnect for a quick test
-- **Docs:** `docs/online/relay.md`, `docs/online/anticheat.md` (Network hardening), `docs/online/launcher-multiplayer.md`, `docs/platform/crypto.md` (own crypto: status, tests, what is not done)
+- **Docs:** `docs/online/relay.md`, `docs/online/anticheat.md` (Network hardening), `docs/online/multiplayer.md`, `docs/platform/crypto.md` (own crypto: status, tests, what is not done)
 - **Tests:** `net`, `net_crypto`, `net_crypto_own`, `net_crypto_sodium`, `crypto`, `crypto_sodium_xcheck`, `crypto_python_xcheck`, `crypto_fuzz_smoke`, `net_auth`, `net_hardening`, `net_races`, `net_anticheat_p2`, `net_anticheat_ph3`, `net_backend`, `net_reconnect`, `net_rejoin`, `net_lossy`, `net_fuzz`; sources `tests/test_net.cpp`, `tests/test_net_crypto.cpp`, `tests/test_crypto.cpp`, `tests/crypto_rfc_vectors.hpp`, `tests/test_crypto_sodium_xcheck.cpp`, `tests/scripts/crypto_xcheck.py`, `tests/fuzz_crypto.cpp`
-- **Connection loss:** a joined client leaves the session when the host sends nothing for `serverTimeoutSeconds` (10; `ConnectionLost()` says why), and a direct join the host never answers gives up after `joinTimeoutSeconds` (15; `JoinRejected()`); 0 turns either off. `SendOrdered` keeps messages past its 32-message window in a per-channel backlog (4096 messages / 8 MiB) instead of dropping them. Tests: `net_multiplayer_fixes`; see `docs/online/multiplayer_audit.md`
+- **Connection loss:** a joined client leaves the session when the host sends nothing for `serverTimeoutSeconds` (10; `ConnectionLost()` says why), and a direct join the host never answers gives up after `joinTimeoutSeconds` (15; `JoinRejected()`); 0 turns either off. `SendOrdered` keeps messages past its 32-message window in a per-channel backlog (4096 messages / 8 MiB) instead of dropping them. Tests: `net_multiplayer_fixes`; see `docs/online/multiplayer.md`
 - **Reconnect and resume:** `autoReconnect` (off by default) makes a client that lost its host rejoin by itself: `reconnectMaxAttempts` tries (5), waiting `reconnectDelaySeconds` (1) then doubling up to `reconnectMaxDelaySeconds` (15); a refusal that cannot change ("wrong password", "authentication failed", a kick) ends it at once. `Reconnecting()`, `ReconnectAttempt()`, `ReconnectGaveUp()`, `Reconnects()`, `Resumed()` and `SetReconnectHandler` report it; direct, relay and join-link sessions are remembered. The host keeps a dropped client's state for `resumeGraceSeconds` (30; at most 64) under a secret token its Welcome gave it, and a rejoin with that token gets the same peer id, score, ready flag and last position back (`SetPeerResumedHandler` on the host); objects the player made with `SpawnOwned` are announced again. Tests: `net_reconnect`
 - **Status:** Works - client and server talk over loopback in `net`; sealing, replay and malformed-packet cases have tests. NetChannels (#423) is wired into NetworkManager but no test names it. Our own crypto (16.1.6) passes every RFC vector and agrees with libsodium and Python on random inputs, but it is unreviewed and off by default
 - **Open:** possible gap: the Ubuntu CI job installs no libsodium-dev, so `net_crypto` and `net_anticheat_p2` may only run their "no libsodium" branch there (unverified: depends on the runner image); `net_races` says it is meant for ThreadSanitizer but CI runs it only under ASan/UBSan; no test names `NetChannels` or `UdpSocket` directly; own crypto (16.1.6): no outside review, no timing measurement of the built code, no Windows or macOS run yet, no libFuzzer run in CI, X25519/Ed25519 are slower than libsodium's
@@ -46,7 +46,7 @@ networking pull requests (net plan 5a to 5e, anti-cheat phases 1 to 5, hardening
 - **Code:** `Net/NetworkManager`, `Net/PlayerInput`, `Net/NetOwnership`, `Components/NetInventory`
 - **API:** `NetworkManager::authoritativeMovement`, `netTickRate`, `maxMoveSpeed`, `interpolationRate`, `ServerTeleport`, `IPlayerSim`, `PlayerInput`, `IsLocallyControlled`, scripts `net_tick_rate`, `net_authoritative`, `net_set_pawn`, `net_max_speed`, `net_teleport`
 - **Editor:** Inspector: Network Manager (Fixed Net Tick, Authoritative movement, Correction easing, Snap distance, Smoothing); max move speed has no field (script `net_max_speed`); Net panel to simulate lag (16.13)
-- **Docs:** `docs/online/launcher-multiplayer.md` (Fixed network tick, Server-authoritative movement, Lag compensation, Server authority), `docs/online/dedicated-server.md`
+- **Docs:** `docs/online/multiplayer.md` (Fixed network tick, Server-authoritative movement, Lag compensation, Server authority), `docs/online/dedicated-server.md`
 - **Tests:** `net_authority`, `net_tick`, `net_auth_move`, `net_predict`, `net_interp`, `net_lagcomp`, `mp_controllers`
 - **Status:** Works - one test per stage (5a tick, 5b authoritative moves, 5c prediction, 5d interpolation, 5e lag compensation), each through a proxy that delays packets; shipped in releases 2.825 to 2.836 per ROADMAP
 - **Open:** no replay or demo recording exists (only packet "replay protection"); `NetInventory` has no test that names it; the old map's "Anti-cheat items 12-13" are merged (#376, #384), so that note is stale; `NetworkManager.cpp` is 3,522 lines (split candidate, see 19.4)
@@ -66,7 +66,7 @@ networking pull requests (net plan 5a to 5e, anti-cheat phases 1 to 5, hardening
 - **Code:** `Components/NetworkSync`, `Components/NetworkObject`, `Net/NetDelta`, `ECS/NetWorld`, `ECS/NetWorldSync`
 - **API:** `NetworkSync` (component), `NetworkObject`, `NetworkTransform`, `SyncVar`, `NetworkManager::RegisterSync`, `syncRate`, `binarySnapshots`, `interestRadius`, `ecs::NetWorld`, `WorldReplicator`
 - **Editor:** Inspector: Network Sync (authority, id, claimable), Add Component menu; Net panel shows bytes per object (16.13); `interestRadius` has no inspector field
-- **Docs:** `docs/online/launcher-multiplayer.md`
+- **Docs:** `docs/online/multiplayer.md`
 - **Tests:** `net_sync`, `net_aoi`, `net_interp`, `net_anim_actions`, `ecs`, `ecs_commands`
 - **Status:** Works - transform replication, interest culling and the delta path are exercised by `net_sync`, `net_aoi`, `net_interp`; read `SendSnap` and `OnSnapDelta` in NetworkManager.cpp
 - **Open:** the old map listed "Delta snapshots" as open, but they exist and are on by default; no test names `NetDelta` or `QPose` directly; PR #571 (merged after this map was started) gave `ECS/NetWorld.hpp` delta snapshots against the newest acknowledged tick, a command buffer and `docs/engine/ecs.md`; the header's top comment still says "full-state snapshots", and the `ecs_commands` test covers the new code
@@ -87,7 +87,7 @@ networking pull requests (net plan 5a to 5e, anti-cheat phases 1 to 5, hardening
 - **Code:** `Net/JoinLink`, `Net/ServerQuery`, `Net/ServerBrowser`, `Net/Matchmaking`, `Net/Matchmaker`, `Net/SessionPresence`, `player/main.cpp`
 - **API:** `JoinLink`, `NetworkManager::JoinByLink`, `QueryServers`, `ServerBrowser::Shared`, `Matchmaker`, `DescribeSession`, scripts `net_browser_open`, `net_browser_refresh`, `net_browser_join`, `net_queue_join`, `net_queue_state`, `net_join_link`, action Open Server Browser
 - **Editor:** none; the player draws the "Find a server" window and a "Finding a match" banner (`player/main.cpp`)
-- **Docs:** `docs/online/launcher-multiplayer.md` (In-game server browser, Public servers, Matchmaking), `docs/online/supabase-backend.md`
+- **Docs:** `docs/online/multiplayer.md` (In-game server browser, Public servers, Matchmaking), `docs/online/supabase-backend.md`
 - **Tests:** `launcher_join`, `matchmaker`, `matchmaking`, `net_token_policy`
 - **Status:** Works - join links, queries, LAN scan, presence and a joining game are in `launcher_join`; the queue uses an in-memory stand-in for the SQL in `matchmaker`
 - **Open:** the live Supabase queue and `game_sessions` listing are only checked by hand per the test comments; an `allocate_match` Edge Function (start a server per match) is not written (docs/online/dedicated-server.md)
@@ -129,10 +129,10 @@ networking pull requests (net plan 5a to 5e, anti-cheat phases 1 to 5, hardening
 - **Code:** `Net/AntiCheat`, `Net/ClockCheck`, `Net/SessionTicket`, `Components/AntiCheatConfig`, `Components/NetValidator`
 - **API:** `AntiCheat`, `AntiCheatSettings`, `NetworkManager::anticheat`, `SetCheatHandler`, `SetAntiCheatKickHandler`, `ClaimHit`, `ValidateHit`, `NetValidator::TopUp`, scripts `net_anticheat`, `net_anticheat_load`, `net_violations`, `net_hit`, `net_budget`, `on_cheat_detected`, `on_validate_rpc`, nodes On Cheat Detected, On Validate Rpc, Reject Rpc, Server Budget
 - **Editor:** Inspector: Anti-Cheat Config and Net Validator (Add Component menu); File > Build Settings > Server page for the basics
-- **Docs:** `docs/online/anticheat.md`, `docs/online/launcher-multiplayer.md` (Server authority, Anti-cheat)
+- **Docs:** `docs/online/anticheat.md`, `docs/online/multiplayer.md` (Server authority, Anti-cheat)
 - **Tests:** `net_anticheat`, `net_anticheat_ph1`, `net_anticheat_ph2`, `net_anticheat_ph3`, `net_anticheat_ph4`, `net_anticheat_components`, `net_anticheat_p2`, `net_token_policy`, `net_lagcomp`
 - **Status:** Works - nine test files cover each phase; all 14 hardening items are on main per `git log` (#350, #357, #360, #363, #365, #368, #372, #376, #384, #392, #394)
-- **Open:** the audit table is `docs/online/anticheat_hardening_status.md` (items 5 and 6 are code on main but not deployed); respawns are not replicated (docs: the server's Health respawns on its own); `maxClockDrift` needs every player updated (older clients never answer)
+- **Open:** the audit table is `docs/online/anticheat.md` (items 5 and 6 are code on main but not deployed); respawns are not replicated (docs: the server's Health respawns on its own); `maxClockDrift` needs every player updated (older clients never answer)
 - **Related:** 39.1, 39.3, 39.5, 16.2, 17.9
 - **Words:** anti-cheat, cheat, speed hack, kick, violation, refusal, hit claim, ClaimHit, NetValidator, AntiCheatConfig, .okayac, allowlist, forged syncvar, rpc rejected, hit rejected, clock drift, budget, cooldown
 - **Seen as:** a player is kicked for "speed hack"; "forged syncvar" or "rpc rejected" in the log; players can't shoot (no known weapon); a shared ball kicks players; a kicked player can't rejoin for a minute
@@ -168,7 +168,7 @@ networking pull requests (net plan 5a to 5e, anti-cheat phases 1 to 5, hardening
 - **Code:** `Components/NetworkPlayerSpawner`, `Components/NetworkAvatarMotion`
 - **API:** `NetworkPlayerSpawner`, `NetworkAvatarMotion`, `NetworkManager::SpawnOwned`, `Despawn`, scripts `net_spawn`, `net_spawn_owned`, `net_despawn`
 - **Editor:** Inspector: Network Player Spawner (Add Component menu)
-- **Docs:** `docs/online/launcher-multiplayer.md` ("For game makers")
+- **Docs:** `docs/online/multiplayer.md` ("For game makers")
 - **Tests:** `net_player_spawn`, `net_proxy_gait`, `net_anim_actions`, `net_spawn`, `mp_controllers`, `net_respawn_anim`
 - **Status:** Works - five tests cover local versus proxy setup, gait, death and look sync, and replicated spawns
 - **Open:** object holding in multiplayer was PR 4 of the holding plan (branch claude/holding-net, an older branch; not checked against main); a death that no replicated hit caused (a kill volume, a script) is not sent to other players, only the respawn is; two one-shot animations inside one sync interval play only the newest
@@ -187,7 +187,7 @@ networking pull requests (net plan 5a to 5e, anti-cheat phases 1 to 5, hardening
 - **Code:** `Net/MatchResults`, `docs/sql/matches.sql`
 - **API:** `MatchPlayer`, `NetworkManager::BeginMatch`, `EndMatch`, `MatchSeconds`, scripts `net_match_start`, `net_match_end`, `net_match_seconds`, `net_stats_top`, `net_stats_mine`
 - **Editor:** none (launcher: Multiplayer > Recent players, Leaderboards)
-- **Docs:** `docs/online/launcher-multiplayer.md` (Match results, stats and leaderboards)
+- **Docs:** `docs/online/multiplayer.md` (Match results, stats and leaderboards)
 - **Tests:** `match_results`
 - **Status:** Works - `match_results` covers the report built from a roster, its JSON, the match clock and the stats rows read back
 - **Open:** the SQL itself has no local test (only `anticheat.sql` has one, see 39.6)
@@ -224,7 +224,7 @@ networking pull requests (net plan 5a to 5e, anti-cheat phases 1 to 5, hardening
 - **Code:** `Net/NetworkManager`
 - **API:** `NetworkManager::Send`, `SendTo`, `SendReliable`, `Rpc`, `OnRpc`, `SetVar`, `GetVar`, `Chat`, `Kick`, scripts `net_send`, `net_rpc`, `net_poll`, `net_set`, `net_get`, `net_chat`, `net_kick`, `net_syncvar_set`, `net_obj_rpc`
 - **Editor:** Inspector: Network Manager; View > Panels > Services (Multiplayer section: host, join, a chat box); visual-script net nodes
-- **Docs:** `docs/scripting/scripting_reference.md` (networking), `docs/online/launcher-multiplayer.md`
+- **Docs:** `docs/scripting/scripting.md` (networking), `docs/online/multiplayer.md`
 - **Tests:** `net_rpc`, `script_net`, `net_sync`, `net_spawn`
 - **Status:** Works - `net_rpc` covers RPC dispatch and chat fan-out; `script_net` drives a host and a client from two scripts
 - **Open:** `NetworkManager.hpp` is 1,101 lines with all of 16.1 to 16.12 in one class (split candidate)
@@ -243,7 +243,7 @@ networking pull requests (net plan 5a to 5e, anti-cheat phases 1 to 5, hardening
 - **Code:** `Net/NetworkManager`
 - **API:** `SetRoom`, `SetReady`, `AllReady`, `StartMatch`, `MatchStarted`, scripts `net_room`, `net_ready`, `net_all_ready`, `net_start_match`, `net_set_score`, `net_score`, `net_roster_count`, `net_roster_id`
 - **Editor:** Inspector: Network Manager (Auto Start, Room (lobby), Max Players, Server Name, Password)
-- **Docs:** `docs/online/launcher-multiplayer.md`, `docs/online/dedicated-server.md`
+- **Docs:** `docs/online/multiplayer.md`, `docs/online/dedicated-server.md`
 - **Tests:** `net_rooms`, `net_authority`
 - **Status:** Works - `net_rooms` proves two clients in different rooms do not see each other
 - **Open:** none known

@@ -58,7 +58,7 @@
   3. Try Ctrl+F (**Find / Replace**), Ctrl+/ (**Toggle Comment**) and Ctrl+Alt+L (**Format Document**).
 - **See:** syntax colours, find and replace work, and the file is saved.
 - **Partial:** this is the Dear ImGui text editor; our own OkayUI editor widget is built but not used (see V-OC-010).
-- **Link:** [../../scripting.md](../../scripting/scripting.md)
+- **Link:** [../../scripting.md](../../scripting/scripting.md#okayscript-1)
 
 ### V-UI-007 Run a script in Play
 - **Map:** 13

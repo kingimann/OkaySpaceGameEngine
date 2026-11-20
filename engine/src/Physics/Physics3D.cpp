@@ -1357,7 +1357,7 @@ void Physics3D::StepSlice(Scene& scene, float dt) {
     // near its length. A spring is a force and is applied once; a motor's limit is shared out over the passes.)
     // A long chain needs about two passes per link for a push to cross it both ways; every other pass runs the joints in
     // reverse order so the weight at one end reaches the hook at the other end (a 50 kg ball on 1 kg links held 13 m long
-    // for a rope of 8 m with a fixed order; see docs/physics/physics_upgrade.md).
+    // for a rope of 8 m with a fixed order; see docs/physics/physics.md).
     // (The extra passes are capped so that passes x joints stays under 6000: a scene with hundreds of joints does not pay for them.)
     const int basePasses = std::max(4, solverIterations);
     const int jointPasses = (improved && allJoints.size() > 0)

@@ -42,12 +42,12 @@ run one. Since 2.848.0 the suite grew by about 65 `add_test` lines and 13 docs p
 | `docs/process/automated_testing.md` | play-test runner, scene validator, golden files, scene digest and golden images | 33 |
 | `docs/gameplay/behavior_trees.md` | NPC behavior trees, blackboard, runner | 9.4 |
 | `docs/gameplay/build_mode.md` | player build mode and logic links, saving creations | 11.5 |
-| `docs/engine/core_audit_notes.md` | bug-hunt notes for area 1 (ECS, math, camera, layers, DataAsset, input) | 1 |
+| `docs/engine/core_runtime.md` | bug-hunt notes for area 1 (ECS, math, camera, layers, DataAsset, input) | 1 |
 | `docs/engine/core_tools.md` | core helpers: quit handling, CommandLine, Paths, EventBus extras, Cvars and Console, Stopwatch, StateMachine | 1 |
 | `docs/engine/core_logging_profiling.md` | Log categories and file sink, frame profiler, trace and CSV export | 1.10 |
 | `docs/engine/core_runtime.md` | job system, arenas and pools, slot map handles, string ids, frame pacing | 1.18 |
 | `docs/gameplay/cutscenes.md` | sequences (`.okayseq`) and the Timeline window | 10.1 |
-| `docs/rendering/day_night_cycle.md` | the DayNightCycle component | 2.3 |
+| `docs/rendering/lighting.md` | the DayNightCycle component | 2.3 |
 | `docs/engine/debug_tools.md` | profiling and debugging data layers: frame history, GPU timer, memory tracker, draw call recorder, console model | 23 |
 | `docs/online/dedicated-server.md` | running and exporting dedicated servers, server.cfg, flags | 16.5 |
 | `docs/gameplay/dialogue_quests.md` | dialogue graphs, story state, quests | 10.2 |
@@ -56,15 +56,15 @@ run one. Since 2.848.0 the suite grew by about 65 `add_test` lines and 13 docs p
 | `docs/editor/editor.md` | the editor, its panels and Build Game | 15 |
 | `docs/editor/editor_undo.md` | the editor's scene undo on `UndoStack`, audit of which edits are covered | 15.9, 22.1 |
 | `docs/engine_api.md` | generated engine API reference (do not edit by hand) | 13.6 |
-| `docs/ui/game_ui.md` | game UI drawn in the launcher's look | 12.7 |
+| `docs/ui/in_game_ui.md` | game UI drawn in the launcher's look | 12.7 |
 | `docs/gameplay/ik.md` | inverse kinematics: feet, hands, look-at, full body | 5.6 |
 | `docs/engine/input.md` | input actions, keys, contexts, controllers (dead zones and curves), rebinding | 8.3 |
-| `docs/online/launcher-multiplayer.md` | multiplayer from the launcher: join, invites, browser, matchmaking, tick, authority | 16, 17.15 |
-| `docs/gameplay/layers_tags_cameras.md` | layer collision matrix and presets, tags, project tag list and layer names (`ProjectLists`, the editor hook), camera stack | 1.3 |
+| `docs/online/multiplayer.md` | multiplayer from the launcher: join, invites, browser, matchmaking, tick, authority | 16, 17.15 |
+| `docs/gameplay/cameras.md` | layer collision matrix and presets, tags, project tag list and layer names (`ProjectLists`, the editor hook), camera stack | 1.3 |
 | `docs/rendering/lighting.md` | lights, shadows, lightmaps | 2.3 |
 | `docs/engine/localization.md` | string tables, translators, fonts | 1.8 |
-| `docs/engine/localization_prefs_time.md` | plural rules, number formats, typed Prefs, fixed timestep | 1.8 |
-| `docs/engine/localization_tools.md` | translation table model, checker, key scanner, previews | 31 |
+| `docs/engine/localization.md` | plural rules, number formats, typed Prefs, fixed timestep | 1.8 |
+| `docs/engine/localization.md` | translation table model, checker, key scanner, previews | 31 |
 | `docs/engine/loop_and_time.md` | GameLoop, clocks, hit stop, pause and quit reasons, random extras, frame stepping, recording, capture, frame statistics, Countdown and Cooldown, time snapshot, loop console, adopting GameLoop in the editor (three passes) | 1.1 |
 | `docs/engine/math_geometry.md` | math additions: Mat3, bounds and shape tests, noise, curves, colour spaces, Rng | 1 |
 | `docs/gameplay/making_a_game.md` | first game from an empty editor to a shipped one | 15 |
@@ -74,32 +74,32 @@ run one. Since 2.848.0 the suite grew by about 65 `add_test` lines and 13 docs p
 | `docs/engine/optimization_tools.md` | mesh simplifier, LOD selection, occlusion buffer, portal cells, batch planner, streaming grid, optimization report | 27 |
 | `docs/release/packaging.md` | distribution layout of the Windows build | 18.1 |
 | `docs/online/photon.md` | the opt-in Photon Realtime transport | 16.10 |
-| `docs/engine/prefab_system.md` | nested prefabs, variants, per-field apply and revert, unpack (`PrefabTools`) | 21 |
+| `docs/engine/prefabs.md` | nested prefabs, variants, per-field apply and revert, unpack (`PrefabTools`) | 21 |
 | `docs/engine/prefabs.md` | prefab instances, overrides, persistent object ids | 1.6 |
 | `docs/engine/properties.md` | the property registry: values, paths, change hook, snapshots, builder | 1.19 |
 | `docs/process/qa_workflow.md` | developer and QA sessions working together | 19.3 |
-| `docs/physics/ragdolls.md` | ragdoll death and hit reactions | 5.8 |
+| `docs/physics/physics.md` | ragdoll death and hit reactions | 5.8 |
 | `docs/online/relay.md` | the relay, NAT traversal, what it enforces | 16.14 |
 | `docs/release/releasing.md` | publishing updates (Supabase, GitHub) and the official game | 18.4 |
 | `docs/rendering/rendering.md` | post-processing, sky, fog, weather | 2.4 |
-| `docs/engine/save_framework.md` | saveable objects, checkpoints, slot headers, migrations, sync hooks | 35 |
+| `docs/engine/save_games.md` | saveable objects, checkpoints, slot headers, migrations, sync hooks | 35 |
 | `docs/engine/save_games.md` | save slots, durable saves, what a save keeps | 1.7 |
 | `docs/engine/scene_diff_merge.md` | scene canonical form, diff, three-way merge and migration libraries | 1.5, 28 |
 | `docs/engine/scene_hierarchy_search.md` | hierarchy-aware active, FindByPath, validation, FixedUpdate, load errors; the scene graph audit (deep hierarchies, Transform and spawn API, Mover, Spinner, Lifetime) | 1.17, 1.3 |
 | `docs/engine/scene_management.md` | loading scenes, spawning and destroying, pooling, RequireComponent | 1.4 |
 | `docs/engine/scene_serializer.md` | what a scene round trip keeps (transient objects, NaN, layers, optional trailing fields), why component order is not saved, the component serializer registry | 1.5 |
 | `docs/scripting/scripting.md` | the OkayScript language guide | 13.1 |
-| `docs/scripting/scripting_reference.md` | built-in functions area by area | 13.6 |
+| `docs/scripting/scripting.md` | built-in functions area by area | 13.6 |
 | `docs/gameplay/shooter_and_25d_controllers.md` | top-down shooter and 2.5D platformer controllers | 4.3 |
 | `docs/engine/splines.md` | splines, followers, lines, trails | 2.7 |
 | `docs/release/steam_release.md` | releasing on Steam, the Steam service | 17.10 |
 | `docs/online/supabase-backend.md` | the Supabase tables and calls behind accounts, cloud saves, leaderboards, matchmaking | 17 |
 | `docs/gameplay/survival_kit.md` | health, hunger, thirst, stamina, oxygen, temperature components | 11.4 |
 | `docs/engine/timers_and_tweens.md` | Scheduler and TweenManager: clock channels, task owners, ease curves, tweening any property, springs, debug view | 1.2 |
-| `docs/ui/ui_html.md` | menus and HUDs in an HTML and CSS subset | 12.5 |
-| `docs/ui/ui_world_space.md` | in-world (3D) UI canvases and labels | 12.6 |
+| `docs/ui/in_game_ui.md` | menus and HUDs in an HTML and CSS subset | 12.5 |
+| `docs/ui/in_game_ui.md` | in-world (3D) UI canvases and labels | 12.6 |
 | `docs/editor/undo_recovery.md` | command undo stack, autosave and crash recovery, backups (engine side) | 22 |
-| `docs/gameplay/vehicle_controller.md` | the arcade vehicle controller | 4.5 |
+| `docs/gameplay/vehicles.md` | the arcade vehicle controller | 4.5 |
 | `docs/scripting/visual_scripting.md` | the OkayVS text format and Action Lists | 14 |
 | `docs/audio/voice-server.md` | running the voice server (the relay) | 16.7 |
 | `docs/platform/web_mobile.md` | web (WASM) and mobile builds | 18.2 |
@@ -213,7 +213,7 @@ run one. Since 2.848.0 the suite grew by about 65 `add_test` lines and 13 docs p
 - **Docs:** `ROADMAP.md`
 - **Tests:** -
 - **Status:** Partial - kept current by the coordinating session, but parts are stale
-- **Open:** the anti-cheat hardening list is now ticked from the code (`docs/online/anticheat_hardening_status.md`); the "Now" table is dated 2026-10-26; rows up to 2.851.0 are in (each merged with its release PR); 2.852.0 (draft PR #588) will add its own
+- **Open:** the anti-cheat hardening list is now ticked from the code (`docs/online/anticheat.md`); the "Now" table is dated 2026-10-26; rows up to 2.851.0 are in (each merged with its release PR); 2.852.0 (draft PR #588) will add its own
 - **Related:** 18.4, 19.1
 - **Words:** roadmap, ROADMAP.md, plan, release notes, pull request template, what is next
 - **Seen as:** the roadmap disagrees with what is merged

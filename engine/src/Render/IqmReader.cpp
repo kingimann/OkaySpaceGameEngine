@@ -4,7 +4,7 @@
 // iqmpose / iqmanim / iqmvertexarray records and the frame-channel packing rule; it was not fetched during the work), with every layout detail
 // checked against a hex dump of one real file; no code from any other importer was read. Bounds-checked, every count is checked
 // against the file size and a per-file budget before anything is allocated, no recursion, no unbounded allocation.
-// See okay/Render/ModelData.hpp and docs/content/model_readers/own_iqm_reader.md.
+// See okay/Render/ModelData.hpp and docs/content/model_readers.md.
 #include "BinReader.hpp"
 #include "ReaderCommon.hpp"
 #include "SceneRefPath.hpp"

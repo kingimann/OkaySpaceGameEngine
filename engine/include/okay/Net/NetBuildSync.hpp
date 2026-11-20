@@ -1,5 +1,5 @@
 #pragma once
-// Build mode over the network (docs/gameplay/build_mode.md "Multiplayer", docs/online/multiplayer_audit.md).
+// Build mode over the network (docs/gameplay/build_mode.md "Multiplayer", docs/online/multiplayer.md).
 //
 // The server is the only one that changes what players built. A client's BuildMode sends its place,
 // remove, move, link, unlink and undo as requests ("__req/build"); the server checks each one and, if it

@@ -11,7 +11,7 @@
 using namespace okay;
 
 // A client that joins while an object is dead (or hurt) must see it dead (or hurt), not alive
-// (docs/online/multiplayer_audit.md round 4, item 3). A respawn that follows a death can never be applied
+// (docs/online/multiplayer.md round 4, item 3). A respawn that follows a death can never be applied
 // before it (one ordered stream).
 
 namespace {

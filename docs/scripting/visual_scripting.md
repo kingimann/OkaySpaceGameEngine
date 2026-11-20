@@ -165,7 +165,7 @@ see exactly where it points before you press Play.
   (`set_prefs`, `add_prefs`, `save_prefs`), **save slots** (`game_save`, `game_load`,
   `game_continue`, `game_autosave`, `game_delete_slot`, `game_slot_exists`,
   `game_can_continue`, `game_slot_age`, `game_slot_text`; see
-  `docs/engine/save_framework.md`, "Saving without code"), **scenes** (`load_scene`,
+  `docs/engine/save_games.md`, "Saving without code"), **scenes** (`load_scene`,
   `load_scene_index`, `load_next_scene`), **raycasting** (`raycast` — store the
   hit in variables, see below), **multiplayer** (`net_host`,
   `net_join`, `net_send`, `net_set` synced vars, `net_spawn` replicated spawn,
@@ -264,7 +264,7 @@ Text (a Text object), Load Scene.
 
 **Look:** Set Weather (none / rain / snow / storm, Intensity), Set Fog (On,
 Start, End) and Set Post Effect (a post-processing value by name) change the
-scene's weather, fog and post-processing; see [rendering.md](../rendering/rendering.md).
+scene's weather, fog and post-processing; see [rendering.md](../rendering/rendering.md#rendering-post-processing-sky-fog-and-weather).
 
 ## Third wave of nodes
 
@@ -463,7 +463,7 @@ to *start Y / ignore / only*: **radius** (above 0 it's a sphere cast), **layers*
 return the first hit the same way a raycast does. **Overlap Rectangle** and
 **Overlap Capsule** name what is already inside. **Add Explosion Force** shoves
 this object's 2D body away from a point; the push fades to nothing at the
-radius, and a kinematic or static body is left alone. See [physics](../physics/physics.md).
+radius, and a kinematic or static body is left alone. See [physics](../physics/physics.md#physics-quality-materials-joints-debris-hinges-mesh-colliders-2d-casts-and-step-rate).
 
 **Physics debug view.** *View ▸ Scene Overlays ▸ Physics Debug* (or the **Physics**
 checkbox on the Game view toolbar) draws colliders (green solid, blue trigger,
@@ -981,7 +981,7 @@ values are written back to the graph file.
   map, a wrong value into a struct field, and says when a declaration doesn't load. A declared variable counts as set (it has a default).
 - At a breakpoint the watch panel shows every variable in one line each, whatever its type: `route = list(2) [(0, 0, 0), (4, 0, 2)]`,
   `boss = map(3) {hp: 100, pos: (1, 2, 3), tint: #ff0000ff}`, a colour with a swatch.
-- A save slot (see `docs/engine/save_framework.md`) keeps lists, maps and colours in variables (nested, as literals). Objects held in a list come
+- A save slot (see `docs/engine/save_games.md`) keeps lists, maps and colours in variables (nested, as literals). Objects held in a list come
   back as their names (text), because an object's id doesn't outlive the run.
 
 ### Known limits

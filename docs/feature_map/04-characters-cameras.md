@@ -103,7 +103,7 @@ Pull request #554 ("Integrate owned animation and IK work", landed 2026-11-10) b
 - **Code:** `Components/VehicleController`, `Components/VehicleController2D`, `Components/VehicleSeat`, `Components/BoatController`, `Components/Buoyancy`
 - **API:** `VehicleController`, `VehicleController2D`, `VehicleSeat`, `Speed()`, `IsGrounded()`, `Driver()`, `Enter()`, `Exit()`
 - **Editor:** Add Component > Gameplay > Vehicle Controller (Car) / Vehicle Controller 2D / Vehicle Seat / Boat Controller; GameObject > Vehicles > Boat; File > Open examples/vehicle/vehicle_test.okayscene or examples/boat/boat_lake.okayscene
-- **Docs:** `docs/gameplay/vehicle_controller.md`, `docs/rendering/water_boat.md`
+- **Docs:** `docs/gameplay/vehicles.md`, `docs/rendering/terrain_water.md`
 - **Tests:** `vehicle`, `vehicle_seat`, `boat`
 - **Status:** Works - vehicle test covers throttle, steering, grip and serialization; suspension is opt-in; the seat test covers get in and out, sitting pose set and cleared, ride camera, rolling and steering wheels, one driver, exit fallback, destroy and save
 - **Open:** a person cannot press E to board a boat yet (the seat only knows VehicleController); no script or visual-script access to seats; seat state is not replicated over the network; no sit animation; torque-based body dynamics are a roadmap item in the doc
@@ -165,10 +165,10 @@ Pull request #554 ("Integrate owned animation and IK work", landed 2026-11-10) b
 - **Code:** `Components/VirtualCamera`, `Components/CinemachineBrain`, `Components/CameraMath`, `Components/CameraCollision`, `Components/CameraRoom`, `Components/DollyPath`, `Components/Camera`, `Scene/EnsureCamera`
 - **API:** `VirtualCamera::priority`, `BindingMode`, `AddImpulse`, `CinemachineBrain::blendTime`, `LiveCamera()`, `DollyPath`, `DollyCart`, `Scene::CameraStack()`, `Camera::ClearPlan`, `VirtualCamera::ApplyStyle`, `DampingMode`, `groupTargets`, `CameraRoom`, `cam::BlendStyle`, `CinemachineBrain::ForceLive`; scripts `Camera.BlendTo`, `Camera.SetTarget`, `Camera.AddToGroup`, `Camera.RemoveFromGroup`
 - **Editor:** Inspector panels for Virtual Camera (Camera Rig, Framing, Group, 2D camera, Walls sections), Cinemachine Brain (blend style and curve), Camera Room, Dolly Path, Dolly Cart; Add Component "Camera Rig" and "Camera Room"; GameObject > Camera > Camera Rig: Follow / Orbit / Look At and Camera Room; Scene view gizmo (frustum, dead and soft zone, wall probe, group circle, room boxes); Camera Preview for a selected rig
-- **Docs:** `docs/gameplay/camera_upgrade.md`, `docs/gameplay/layers_tags_cameras.md` (Cameras), `docs/engine/splines.md`, `docs/gameplay/cutscenes.md`
+- **Docs:** `docs/gameplay/cameras.md`, `docs/gameplay/cameras.md` (Cameras), `docs/engine/splines.md`, `docs/gameplay/cutscenes.md`
 - **Tests:** `cinemachine`, `layers_tags_cameras`, `scene_cameras`, `camera_cine`, `camera_math`, `camera_rig`
 - **Status:** Works - cinemachine, scene_cameras and layers_tags_cameras tests exist; the depth rule for the main camera landed in #570
-- **Open:** the shot now really faces its Look At target (before the camera upgrade it aimed the opposite way: the vcam rotated +Z to the target but a camera looks down -Z); no dialogue hook exists, scripts call `Camera.BlendTo` from a dialogue event; the camera upgrade was checked headless only (`docs/gameplay/camera_upgrade.md`); the player and editor still draw only the main camera; looping their render path over `CameraStack()` with ClearPlan, viewport rect and culling mask is not done (per docs/gameplay/layers_tags_cameras.md)
+- **Open:** the shot now really faces its Look At target (before the camera upgrade it aimed the opposite way: the vcam rotated +Z to the target but a camera looks down -Z); no dialogue hook exists, scripts call `Camera.BlendTo` from a dialogue event; the camera upgrade was checked headless only (`docs/gameplay/cameras.md`); the player and editor still draw only the main camera; looping their render path over `CameraStack()` with ClearPlan, viewport rect and culling mask is not done (per docs/gameplay/cameras.md)
 - **Related:** 4.10, 10.1, 2.7, 1.3
 - **Words:** virtual camera, vcam, Cinemachine, brain, priority, dolly, track, rail, Follow, LookAt, confiner, Dutch, camera stack, depth, main camera, shot
 - **Seen as:** camera cuts instead of blending; the wrong camera is live; two cameras fight for main; a scene has no camera and renders black; the camera leaves the level
@@ -206,7 +206,7 @@ Pull request #554 ("Integrate owned animation and IK work", landed 2026-11-10) b
 - **Code:** `Components/Camera`
 - **API:** `Camera`, `Camera::Shake`, `ShakePreset`, `AddShake`, `SetHandheld`, `KickFov`, `SetFovOffset`, `HitPulse`, `cam::CameraShaker`, `ZoomTo`, `WorldToScreen`, `ScreenPointToRay`, `ViewMatrix`, `ProjectionMatrix`; scripts such as `look_at`, camera builtins, `Camera.Shake("impact", 1)`, `Camera.FovKick`, `Camera.SetFovOffset`, `Camera.HitPulse`, `Camera.SetHandheld`; visual-script Camera Shake node and a node for every one of those builtins
 - **Editor:** Camera inspector (with Camera Effects buttons for Play); GameObject > Camera > Camera
-- **Docs:** `docs/gameplay/camera_upgrade.md`, `docs/gameplay/layers_tags_cameras.md`
+- **Docs:** `docs/gameplay/cameras.md`, `docs/gameplay/cameras.md`
 - **Tests:** `camera_cine`, `script_camera`, `scene_cameras`, `camera_math`, `camera_rig`
 - **Status:** Works - camera_cine checks projection and visibility maths; script_camera covers script control
 - **Open:** none recorded; GPU culling uses the camera frustum (2.8)

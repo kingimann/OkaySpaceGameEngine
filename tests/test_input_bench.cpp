@@ -1,4 +1,4 @@
-// How much the per-frame input work costs: 100 actions, 4 controllers, a context pushed (docs/engine/input_audit.md).
+// How much the per-frame input work costs: 100 actions, 4 controllers, a context pushed (docs/engine/input.md).
 // Prints microseconds per frame and allocations per frame for the fast path and the old one (OKAY_OLD_INPUT).
 // Only the allocation count is checked (it must be 0); the times are printed, not asserted, because a busy
 // machine makes them jump around.

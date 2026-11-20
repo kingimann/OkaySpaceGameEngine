@@ -14,7 +14,7 @@
 //   * cubic Bezier easing: x(s) = t solved with Newton steps and a bisection
 //     fallback (a Bezier curve is a cubic polynomial);
 //   * bounding sphere of a few points: box centre and the furthest point;
-//   * dead zone / soft zone: a per-axis rule defined in docs/gameplay/camera_upgrade.md.
+//   * dead zone / soft zone: a per-axis rule defined in docs/gameplay/cameras.md.
 // No code, shader text or tests were copied from any other project.
 // ---------------------------------------------------------------------------
 #include "okay/Math/Quat.hpp"

@@ -9,7 +9,7 @@
 The owner's rule for switching a format from Assimp to our own reader: "we only switch when it's faster and up to par". That
 means, on the same real files: **at least as fast, no more peak memory, and at least as good**. This page measures the first
 two for every reader that sits behind the `ImportModelData` seam, and lists where ours and Assimp disagree. FBX has its own
-page (`docs/content/model_readers/own_fbx_reader.md`, its other side is ufbx); glTF does not go through this seam.
+page (`docs/content/model_readers.md`, its other side is ufbx); glTF does not go through this seam.
 
 No default was changed. Every reader here is still off by default (`OKAY_OWN_*`), except OBJ, STL and PLY, which were ours
 already.
@@ -47,7 +47,7 @@ Assimp crashed on two corpus files (`RAW/WithColor.raw`, `RAW/WithTexture.raw`: 
 Assimp 5.4.3's RAW importer; since the third round the seam never hands such a file to Assimp, see below) and dies (killed by a signal) on `invalid/OutOfMemory.off`, a file that claims 353 billion vertices. The bench therefore reads every
 file with Assimp in a child process first and reports such a file as "crash" instead of dying. The shipped Windows build
 reads `.raw` through Assimp, so importing those two files there crashed (not tried on Windows); now our RAW reader reads
-them (`docs/content/model_readers/own_raw_reader.md`, "Files Assimp is not given").
+them (`docs/content/model_readers.md`, "Files Assimp is not given").
 
 The machine was a shared 4-core Linux container with other builds running, so a small file's time can move by 20% from run
 to run; the instruction counts quoted below (callgrind) do not move.
@@ -217,9 +217,9 @@ purpose: its motion, see below).
 
 | Step | What it does | Effect |
 |---|---|---|
-| OGRE memory | `XmlLite` gets a `keepText` switch (default on, the other XML readers unchanged); OGRE turns it off, so the white space between elements is checked but not stored, and the reader frees the file's bytes once the document is parsed. | Peak ours / Assimp MB: `fish` 1.79 -> 1.35 / 1.73, `ninja` 2.47 -> 1.89 / 4.20, `razor` 1.17 -> 0.91 / 1.02, `TheThing` 3.49 -> 2.78 / 3.37: no OGRE file is heavier than Assimp now (`docs/content/model_readers/own_ogre_reader.md`) |
+| OGRE memory | `XmlLite` gets a `keepText` switch (default on, the other XML readers unchanged); OGRE turns it off, so the white space between elements is checked but not stored, and the reader frees the file's bytes once the document is parsed. | Peak ours / Assimp MB: `fish` 1.79 -> 1.35 / 1.73, `ninja` 2.47 -> 1.89 / 4.20, `razor` 1.17 -> 0.91 / 1.02, `TheThing` 3.49 -> 2.78 / 3.37: no OGRE file is heavier than Assimp now (`docs/content/model_readers.md`) |
 | RAW files Assimp breaks on | `RawFileUnsafeForAssimp`: a file with two or more groups of triangles goes to our RAW reader even when `.raw` is set to Assimp; an explicit Assimp request is refused with a message. The Assimp scene walk skips null children. | `own_dispatch_e2` no longer crashes; `WithColor.raw` and `WithTexture.raw` import |
-| LWS older motion layout | Scene versions 1 and 2 keep motion as a channel count, then per channel a key count and lines of value, time and span, with angles in degrees; ours read none of it. | `move_x_oldformat_56.lws`: clip 0 -> 1 and box as Assimp's; it now gives exactly what `move_x.lws` gives (`docs/content/model_readers/own_lws_reader.md`) |
+| LWS older motion layout | Scene versions 1 and 2 keep motion as a channel count, then per channel a key count and lines of value, time and span, with angles in degrees; ours read none of it. | `move_x_oldformat_56.lws`: clip 0 -> 1 and box as Assimp's; it now gives exactly what `move_x.lws` gives (`docs/content/model_readers.md`) |
 | Number scanner switch | `OKAY_NUMPARSE_NO_FOUR_DIGITS` forces the digit-by-digit path (what a big-endian machine runs); `reader_numparse` and `reader_numparse_portable` run the same checks both ways. | Both: 3,865,709 corpus tokens and 340,000 others, 0 differ from FastDecimal |
 
 `move_x.lws` (an older note said Assimp makes 36 triangles there, ours 12): not reproduced in 12 runs, both make 12, and 12 is
@@ -247,15 +247,15 @@ Differences that are not by design, or that are worth a second look (counts are 
   holds a texture coordinate count (the reader left it out when the header names no texture), a material ends with a
   texture index (not read), and the `.q3s` file says `quick3Do` but has a scene chunk. All four read now, with Assimp's
   triangle and material counts and boxes (the `.q3s` box differs: Assimp applies the scene chunk's placement, ours does not
-  read it); one part per mesh and material, as before. Q3D is in the `model_corpus` manifest now (`docs/content/model_readers/own_q3d_reader.md`).
+  read it); one part per mesh and material, as before. Q3D is in the `model_corpus` manifest now (`docs/content/model_readers.md`).
 - **LWS: fixed (2026-11-16).** `QuickDraw v.2.2.lws` was refused: its objects are `../LWO/LWO2/LWSReferences/*.lwo` and the
   scene-folder rule refused every `..`. LightWave objects with exactly one leading `../` are now looked up in the folder
   above the scene (LightWave's content directory), and `PivotPosition` is applied, which the file needs (without it the
   parts sat twice as far out). It reads with Assimp's box and 22,144 / 22,073 triangles (the LWO concave-polygon
-  differences below). In the manifest now (`docs/content/model_readers/own_lws_reader.md`).
+  differences below). In the manifest now (`docs/content/model_readers.md`).
 - **X3D `ComputerKeyboard.x3d`: ours is right.** 98 keys are `USE`s of one `DEF`ed key (some inside a group that is itself
   used three times); X3D draws a `USE` wherever it is used, so 100 shapes and 2,020 triangles. Assimp builds 4 meshes and 100
-  triangles: it drops 96 keys (`docs/content/model_readers/own_x3d_reader.md`).
+  triangles: it drops 96 keys (`docs/content/model_readers.md`).
 - **LWS `move_x_oldformat_56.lws`: fixed (third round).** Ours read no motion from the version 2 layout; it does now and agrees
   with Assimp (clip and box).
 - **Assimp's OGRE importer is not repeatable**: in one run it fails on `ninja.mesh.xml`, in another on `fish.mesh.xml`.
@@ -265,7 +265,7 @@ Differences that are not by design, or that are worth a second look (counts are 
   by ours and refused by Assimp. PLY `ant-half.ply` (truncated), OFF `invalid.off`, X3D `IndexedLineSet.x3d` and the three
   line-only AC3D files are refused by ours and read by Assimp (as meshes without triangles); all known and documented.
 - **Blender: modifiers (closed for the triangle counts).** Ours now applies Mirror and Subdivision Surface like Assimp
-  (`docs/content/model_readers/own_blend_reader.md`, section Modifiers): `SuzanneSubdiv_252` 251,904 / 251,904 triangles, `yxa_1` 115,712 /
+  (`docs/content/model_readers.md`, section Modifiers): `SuzanneSubdiv_252` 251,904 / 251,904 triangles, `yxa_1` 115,712 /
   115,712, `HUMAN` 8,560 / 8,560, boxes equal. Left: `MirroredCube_252` 108 / 36 (the file mirrors on all three axes around
   a mirror object; ours makes the eight copies, Assimp one copy that stays inside the original box), the Suzanne's open
   boundaries (Assimp does not use the Catmull-Clark boundary rule; 85 of 2,010 points at level 1 differ by up to 0.02), and
@@ -275,7 +275,7 @@ Differences that are not by design, or that are worth a second look (counts are 
   0.24x and its largest peak from 4.0 to 33.2 MB because ours now makes the 251,904-triangle Suzanne too (Assimp: 84 MB);
   both still met. Digests of the other 351 corpus files (24 of them `.blend`) are unchanged.
 - **Blender: Subdivision Surface options of 2.9+ (2026-11-16).** The subdivision now also reads UV Smooth, Boundary
-  Smooth, the limit surface and DeRose's crease rules (`docs/content/model_readers/own_blend_reader.md`). No corpus file has these options (the
+  Smooth, the limit surface and DeRose's crease rules (`docs/content/model_readers.md`). No corpus file has these options (the
   corpus is Blender 2.41 to 2.93; its Subsurf files are 2.5x), so all 355 corpus digests are unchanged, the `.blend`
   ones included. Speed rerun (`bench_model_readers`, 15 runs, median; the machine was shared with other builds, load
   about 6 on 4 cores, so all times are higher than the quiet run above): `SuzanneSubdiv_252` 73 / 404 ms (0.18x),

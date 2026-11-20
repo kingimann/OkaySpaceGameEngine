@@ -1,4 +1,4 @@
-<!-- (world-space UI is documented in docs/ui/ui_world_space.md) -->
+<!-- (world-space UI is documented in docs/ui/in_game_ui.md) -->
 # Custom character animations (keyframe clips)
 
 Besides the built-in animations (idle / walk / run / wave / jump / crouch /

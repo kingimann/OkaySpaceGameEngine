@@ -16,7 +16,7 @@
 using namespace okay;
 using namespace okay::net;
 
-// Regression tests for the multiplayer audit (docs/online/multiplayer_audit.md):
+// Regression tests for the multiplayer audit (docs/online/multiplayer.md):
 //   * reliable-ordered sends past the 32-message window are queued, not dropped
 //   * delta snapshots stay correct at the ends of the position range
 //   * the relay does not treat a spoofed re-hello as proof of life

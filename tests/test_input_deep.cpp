@@ -1,4 +1,4 @@
-// The input system, end to end, headless. Each block is one audit case (docs/engine/input_audit.md):
+// The input system, end to end, headless. Each block is one audit case (docs/engine/input.md):
 // "audit_*" blocks pin behaviour that was already right; "input_deep_*" blocks are the bugs and gaps
 // found, each of which failed before its fix; "upgrade_*" blocks cover the new features.
 // Input is fed the way the player and the editor feed it (FeedKeys / FeedMouse / FeedGamepadRaw /

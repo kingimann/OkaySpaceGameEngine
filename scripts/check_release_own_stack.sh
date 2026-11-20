@@ -17,7 +17,7 @@
 # in the build.ninja or compile_commands.json (a toolchain file `set(OKAY_OWN_CRYPTO ON)` leaves no cache entry but does
 # reach the compiler as -DOKAY_OWN_CRYPTO).
 #
-# OKAY_XBOX_OWN_CRYPTO is the Xbox UWP experiment's own-crypto switch (platform/xbox_uwp/engine/CMakeLists.txt, docs/platform/xbox_uwp_thirdparty.md): it is refused
+# OKAY_XBOX_OWN_CRYPTO is the Xbox UWP experiment's own-crypto switch (platform/xbox_uwp/engine/CMakeLists.txt, docs/platform/xbox_uwp.md): it is refused
 # in a release exactly like OKAY_OWN_CRYPTO, in the environment, a cache and a -D argument.
 # Refused: the environment variables OKAY_OWN_CRYPTO, OKAY_OWN_STACK_CRYPTO_TEST, OKAY_OWN_STACK and OKAY_XBOX_OWN_CRYPTO set to anything
 # that is not empty, 0, OFF or NO; and the same names set ON/1/TRUE/YES in a cmake cache or on a -D argument.

@@ -1,4 +1,4 @@
-// Water surface, buoyancy and the boat (docs/rendering/water_boat.md). Everything here is deterministic: the waves are seeded, the
+// Water surface, buoyancy and the boat (docs/rendering/terrain_water.md). Everything here is deterministic: the waves are seeded, the
 // physics runs in fixed steps, and each check says what it proves. Frame-rate checks run the same scene at 30, 60 and
 // 144 frames per second and compare.
 #include "test_framework.hpp"

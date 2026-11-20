@@ -7,7 +7,7 @@ row: | pu1 | Physics upgrade: steady towers at any step rate, fast bodies, heavy
 **What it is.** The Improved physics now keeps a tower of ten crates standing at 30, 50, 60 and 144 steps a second (it fell over at 30 and
 leaned at 50), a fast ball can no longer jump over a thin plate that can move, a 50 kg ball on a chain of light links hangs close to the chain's real
 length, a breakable joint snaps without first stopping the body, and a speed set inside `OnCollisionEnter3D` (a jump pad, a blast) is kept. The
-numbers before and after are in [physics_upgrade.md](../physics/physics_upgrade.md).
+numbers before and after are in [physics_upgrade.md](../physics/physics.md#physics-upgrade-what-exists-what-was-missing-what-changed).
 
 **Steps.**
 1. Open `Tools\OkayEngine.exe` (or the launcher), **File > Open Scene**, pick `examples\physics\physics_upgrade.okayscene` (it ships in the zip and the installer).

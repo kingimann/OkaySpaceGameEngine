@@ -58,7 +58,7 @@ function on_trigger() {                            // touched a trigger collider
 OkayScript has loops, functions, strings, math, input (keyboard + mouse),
 `spawn`/`destroy`, `load_scene`, physics `raycast_hit`/`overlap`, component
 control (`set_text`/`set_color`/`set_texture`/`flip_x`), and `prefs_*` save data.
-Full reference: [`scripting.md`](../scripting/scripting.md).
+Full reference: [`scripting.md`](../scripting/scripting.md#okayscript-1).
 
 ## 5. Play, then ship
 
@@ -90,7 +90,7 @@ See [`loop_and_time.md`](../engine/loop_and_time.md) for every call, the clocks 
 ## Where to go next
 
 - [`editor.md`](../editor/editor.md) — every panel and the Build pipeline.
-- [`scripting.md`](../scripting/scripting.md) — the full OkayScript language + builtins.
+- [`scripting.md`](../scripting/scripting.md#okayscript-1) — the full OkayScript language + builtins.
 - [`visual_scripting.md`](../scripting/visual_scripting.md) — node-graph scripting.
 - [`steam_release.md`](../release/steam_release.md) — shipping on Steam.
 

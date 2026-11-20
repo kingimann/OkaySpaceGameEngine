@@ -10,8 +10,8 @@
   3. Drive with W and S (gas and brake), A and D (steer), Space (handbrake). Press E again to get out.
   4. Walk to the right door (prompt says Ride) and press E.
 - **See:** the car ignores keys until you press E at the driver door; you get out at the driver side; at the passenger door you are carried but cannot drive.
-- **Partial:** wheels are for looks only and do not spin; no sitting animation; seats are not replicated in multiplayer; no script node to enter or exit yet (docs/gameplay/vehicle_controller.md).
-- **Link:** [vehicle_controller.md](../../gameplay/vehicle_controller.md)
+- **Partial:** wheels are for looks only and do not spin; no sitting animation; seats are not replicated in multiplayer; no script node to enter or exit yet (docs/gameplay/vehicles.md).
+- **Link:** [vehicle_controller.md](../../gameplay/vehicles.md#vehicle-controller-arcade)
 - **Grounded:** no
 
 ### V-PH-002 Vehicle seats example scene
@@ -31,8 +31,8 @@
   1. Choose **File > New Project...** and the **Vehicle (3D)** template.
   2. Press Play and drive with W A S D.
 - **See:** a car with suspension that drives on the road.
-- **Partial:** see docs/gameplay/vehicle_controller.md for known rough edges.
-- **Link:** [vehicle_controller.md](../../gameplay/vehicle_controller.md)
+- **Partial:** see docs/gameplay/vehicles.md for known rough edges.
+- **Link:** [vehicle_controller.md](../../gameplay/vehicles.md#vehicle-controller-arcade)
 
 ### V-PH-004 Navmesh bake
 - **Map:** 9

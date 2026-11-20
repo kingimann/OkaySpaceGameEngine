@@ -57,7 +57,7 @@ Areas: 12, 13, 14, 31, 32. Rows ids start `V-UI-`. `V-UI-S<area>` rows are smoke
     3. Try Ctrl+F (**Find / Replace**), Ctrl+/ (**Toggle Comment**) and Ctrl+Alt+L (**Format Document**).
   - **You should see (expected, not yet seen on Windows):** syntax colours, find and replace work, and the file is saved.
   - **Known partial:** this is the Dear ImGui text editor; our own OkayUI editor widget is built but not used (see V-OC-010).
-  - **More:** [../../scripting.md](../../scripting/scripting.md)
+  - **More:** [../../scripting.md](../../scripting/scripting.md#okayscript-1)
 
 - [ ] **V-UI-007** Run a script in Play (steps unverified)
   - **Map:** 13. **Where:** editor

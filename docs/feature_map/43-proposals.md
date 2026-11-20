@@ -202,7 +202,7 @@ Things that turned out to exist already (world streaming, crash reports, Steam a
 - **Code:** `Math/Vec3`, `Scene/Transform`
 - **API:** none
 - **Editor:** none
-- **Docs:** `docs/engine/core_audit_notes.md` (lists double-precision variants for large worlds as a recommendation; header search only)
+- **Docs:** `docs/engine/core_runtime.md` (lists double-precision variants for large worlds as a recommendation; header search only)
 - **Tests:** none
 - **Status:** Planned - no floating origin or large-world mode found.
 - **Exists today:** Float positions everywhere in Math. Searched the engine, editor and docs for "floating origin" and found nothing.
@@ -342,9 +342,9 @@ Things that turned out to exist already (world streaming, crash reports, Steam a
   - 47.2.1 Script languages - `Scripting/OkayScriptVM` - scripts have builtins for files and networking
   - 47.2.2 No permission model - `-` - the script hosts have no capability list
 - **Code:** `Scripting/OkayScriptVM`
-- **API:** script built-ins (`docs/scripting/scripting_reference.md`)
+- **API:** script built-ins (`docs/scripting/scripting.md`)
 - **Editor:** none
-- **Docs:** `docs/scripting/scripting_reference.md`
+- **Docs:** `docs/scripting/scripting.md`
 - **Tests:** `scripting`, `script_semantics`
 - **Status:** Planned - scripts run with the full builtin set (`docs/editor/editor-plugins.md` lists files among the builtins).
 - **Exists today:** Full-access scripts.
@@ -387,7 +387,7 @@ Things that turned out to exist already (world streaming, crash reports, Steam a
 - **Code:** `editor/main.cpp`, `shared/CrashHandler.hpp`, `shared/CrashContext.hpp`, `shared/CrashReports.hpp`, `shared/CrashScrub.hpp`, `shared/CrashUpload.hpp`, `launcher/main.cpp`, `scripts/crash_to_issue.py`, `player/main.cpp`
 - **API:** `OKAY_BREADCRUMB("step")`, `okaycrash::handler::Install`, `okaycrash::ParseLog`, `okaycrash::Load`, `okaycrash::ExceptionName`, `okaycrash::Signature`, `okaycrash::Scrub`, `okaycrash::upload::Run`
 - **Editor:** View > Crash Log
-- **Docs:** `docs/online/crash_reports.md`, `docs/editor/editor.md`, `docs/online/launcher-multiplayer.md`
+- **Docs:** `docs/online/crash_reports.md`, `docs/editor/editor.md`, `docs/online/multiplayer.md`
 - **Tests:** `crash_reports`; `crash_context`; `crash_handler`; `crash_scrub`; `crash_upload`
 - **Status:** Partial - the editor records detailed crashes and the launcher can send them (default on, scrubbed, after a one-time notice) and make GitHub issues from them once the owner has run the table SQL and set the repository variable; the shipped player records nothing.
 - **Exists today:** All Parts except the player handler. The server half needs the two one-time steps in docs/online/crash_reports.md; none of it has run on real Windows or against the real project. An independent security review (2026-11-15) was answered in code and tests.
@@ -427,7 +427,7 @@ Things that turned out to exist already (world streaming, crash reports, Steam a
 - **Code:** `Core/Prefs`, `Components/SettingsScreen`, `launcher/main.cpp`, `shared/CrashUpload.hpp`
 - **API:** `Prefs::SetBool`
 - **Editor:** none
-- **Docs:** `docs/ui/game_ui.md`
+- **Docs:** `docs/ui/in_game_ui.md`
 - **Tests:** `prefs`, `pausemenu`
 - **Status:** Partial - the launcher has a consent switch for crash reports (on by default, with a disclosure, a one-time notice before the first send and a preview); there is no general consent dialog component and no switch for analytics events.
 - **Exists today:** A settings screen and typed Prefs, and the crash report switch.
@@ -470,7 +470,7 @@ Things that turned out to exist already (world streaming, crash reports, Steam a
 - **Code:** `Platform/Steam/SteamService`, `Platform/PlayFab/PlayFab`, `Core/SaveFrameworkSync`, `Scripting/OkayScriptVM`
 - **API:** `Steam::Get().CloudWrite`, `PlayFab::Get().SetUserData`, `ISaveSync`
 - **Editor:** none
-- **Docs:** `docs/scripting/scripting_reference.md` (Steam), `docs/release/steam_release.md`; `docs/engine/save_framework.md`
+- **Docs:** `docs/scripting/scripting.md` (Steam), `docs/release/steam_release.md`; `docs/engine/save_games.md`
 - **Tests:** `steam`, `steam_script`; `save_framework`
 - **Status:** Partial - the service calls exist and are scriptable; nothing syncs a save slot to them.
 - **Exists today:** Raw per-service calls. A game must write its own copy logic.
@@ -490,7 +490,7 @@ Things that turned out to exist already (world streaming, crash reports, Steam a
 - **Code:** `Platform/Steam/SteamService`, `Platform/PlayFab/PlayFab`, `Net/MatchResults`
 - **API:** `PlayFab::GetLeaderboard`, `MatchResults`
 - **Editor:** none (visual-script playfab and steam instructions)
-- **Docs:** `docs/scripting/scripting_reference.md`, `docs/online/launcher-multiplayer.md`
+- **Docs:** `docs/scripting/scripting.md`, `docs/online/multiplayer.md`
 - **Tests:** `steam`, `match_results`
 - **Status:** Partial - three separate implementations; no single API a game uses regardless of platform.
 - **Exists today:** All Parts, each with its own calls.
@@ -510,7 +510,7 @@ Things that turned out to exist already (world streaming, crash reports, Steam a
 - **Code:** `Platform/Achievements`, `Platform/Steam/SteamService`
 - **API:** `Achievements`, `Steam::Get().UnlockAchievement`
 - **Editor:** none
-- **Docs:** `docs/scripting/scripting_reference.md`
+- **Docs:** `docs/scripting/scripting.md`
 - **Tests:** `steam`
 - **Status:** Partial - local and Steam achievements work; they are not linked and not synced.
 - **Exists today:** Both stores, separately.
@@ -715,7 +715,7 @@ Things that turned out to exist already (world streaming, crash reports, Steam a
 - **Code:** `Components/Ragdoll`, `Components/Joint3D`
 - **API:** none for cloth
 - **Editor:** none
-- **Docs:** `docs/physics/ragdolls.md`
+- **Docs:** `docs/physics/physics.md`
 - **Tests:** `ragdoll`, `physics_joints`
 - **Status:** Planned - no cloth, rope or hair code exists; only the ragdoll's particle chain.
 - **Exists today:** A particle chain solver inside the ragdoll; no mesh cloth.
@@ -813,7 +813,7 @@ Things that turned out to exist already (world streaming, crash reports, Steam a
 - **Code:** `Components/DayNightCycle`, `Scripting/OkayScriptVM`
 - **API:** `DayNightCycle::Hour`, `IsNight`, `SetTime`; script `time_of_day`
 - **Editor:** DayNightCycle Inspector section
-- **Docs:** `docs/rendering/day_night_cycle.md`
+- **Docs:** `docs/rendering/lighting.md`
 - **Tests:** `daynight`
 - **Status:** Partial - the clock and visuals work; gameplay cannot subscribe to it.
 - **Exists today:** Parts 53.1.1 and 53.1.2.
@@ -852,7 +852,7 @@ Things that turned out to exist already (world streaming, crash reports, Steam a
 - **Code:** `editor/main.cpp`, `Environment/Weather`
 - **API:** none
 - **Editor:** Scene settings
-- **Docs:** `docs/rendering/day_night_cycle.md`
+- **Docs:** `docs/rendering/lighting.md`
 - **Tests:** none
 - **Status:** Basic - weather previews in edit mode; no time scrubber.
 - **Exists today:** Weather preview in edit mode; no time slider found.
@@ -1111,12 +1111,12 @@ Things that turned out to exist already (world streaming, crash reports, Steam a
 - **What:** Reference pages for C++ and script APIs that are always in step with the code.
 - **Parts:**
   - 57.2.1 Engine API from the binding table - `Script/EngineApi`, `docs/engine_api.md` - one entry per script property and method
-  - 57.2.2 Script builtins - `docs/scripting/scripting_reference.md` - written by hand, area by area; the editor also lists builtins
+  - 57.2.2 Script builtins - `docs/scripting/scripting.md` - written by hand, area by area; the editor also lists builtins
   - 57.2.3 C++ headers - `-` - not generated (no Doxygen or similar)
 - **Code:** `Script/EngineApi`
 - **API:** `OKAY_WRITE_API_DOCS=1 ./tests/test_vs_types`
 - **Editor:** Scripting Reference window
-- **Docs:** `docs/engine_api.md`, `docs/scripting/scripting_reference.md`
+- **Docs:** `docs/engine_api.md`, `docs/scripting/scripting.md`
 - **Tests:** `vs_types`
 - **Status:** Partial - one generated page and one hand-written list.
 - **Exists today:** Generated Engine API page; hand-written builtin list; editor docs window.
@@ -1135,7 +1135,7 @@ Things that turned out to exist already (world streaming, crash reports, Steam a
 - **Code:** `editor/main.cpp`
 - **API:** Help > Scripting Reference
 - **Editor:** Help menu
-- **Docs:** `docs/scripting/scripting_reference.md`
+- **Docs:** `docs/scripting/scripting.md`
 - **Tests:** none
 - **Status:** Basic - only scripts have an in-editor reference.
 - **Exists today:** Scripts only.

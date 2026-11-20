@@ -6,16 +6,16 @@ requires this announcement to be published **one release before** Assimp is remo
 numbers and the date; the text between the lines below is the announcement, with the two release numbers left to fill in.
 
 Update (own Blender reader): **`.blend` moves from "dropped" to "own reader in progress".** Our own `.blend` reader exists
-(`docs/content/model_readers/own_blend_reader.md`, `OKAY_OWN_BLEND`, off by default) and was checked on 28 real files from Blender 2.41 to 2.93, but it is
+(`docs/content/model_readers.md`, `OKAY_OWN_BLEND`, off by default) and was checked on 28 real files from Blender 2.41 to 2.93, but it is
 not yet something the owner has approved as a replacement: until that happens `.blend` stays on this note's "may stop importing"
 list in the sense that it is conditional on the flip criteria in `docs/content/model_corpus.md`. Not read by it (named at import time):
 modifiers (subdivision, mirror, ...), constraints, shape keys, vertex colours, lights, cameras, curves and text objects, pre-2.5
 Ipo animation, packed images; zstd compressed files (Blender 3.0+ "Compress File") and the Blender 5.0 container.
 
-Update (batch E): **MDC, HMP (HMP7 only) and CSM now have own readers** (`docs/content/model_readers/own_mdc_reader.md`, `own_hmp_reader.md`, `own_csm_reader.md`; off by default, written from format descriptions and sample files, read on the one or two real files of each, not compared with Assimp). Like `.blend` they are conditional on the owner's approval and the flip criteria; the lists below were not changed.
+Update (batch E): **MDC, HMP (HMP7 only) and CSM now have own readers** (`docs/content/model_readers.md`, `own_hmp_reader.md`, `own_csm_reader.md`; off by default, written from format descriptions and sample files, read on the one or two real files of each, not compared with Assimp). Like `.blend` they are conditional on the owner's approval and the flip criteria; the lists below were not changed.
 
 Decision made (owner delegated it): **`.3ds` and `.bvh` are covered, not dropped.** Our own 3DS reader and BVH reader exist
-(PR #795, `docs/content/model_readers/own_3ds_reader.md`, `docs/content/model_readers/own_bvh_reader.md`) and were checked on real files (15 of 16 and 3 of 3). Both
+(PR #795, `docs/content/model_readers.md`, `docs/content/model_readers.md`) and were checked on real files (15 of 16 and 3 of 3). Both
 are off by default until the release that makes our readers the default; the sequence is: this announcement in the next
 release, our readers as default in the release after, Assimp and ufbx deleted the release after that. The flip is
 conditional on `docs/content/model_corpus.md` ("flip readiness") saying the criteria are met.
@@ -76,8 +76,8 @@ Until `<REMOVAL RELEASE>`, nothing changes: every format above still imports in 
 | 3DS | Yes, **off by default** (`OKAY_OWN_3DS`) | Checked on 16 real files (15 read; the 16th is empty); meshes, triangles, bounding boxes and area match Assimp. |
 | BVH | Yes, **off by default** (`OKAY_OWN_BVH`) | Checked on 3 real files; animation only (skeleton and one clip, no mesh). |
 | Blender (`.blend`) | Own reader in progress, **off by default** (`OKAY_OWN_BLEND`) | Checked on 28 real files (Blender 2.41 to 2.93, all read) and compared with Assimp; modifiers, constraints, shape keys, vertex colours and zstd compression are not read and are named at import. No real Blender 3.x / 4.x file was available to test. |
-| OFF, SMD, MD5, MS3D, ASE, 3MF, AMF, X3D, DXF, LWO, MD2, MD3, Irrlicht mesh, B3D, DirectX `.x`, Terragen `.ter` | Yes, **off by default** (`OKAY_OWN_<FORMAT>`) | Each checked on every real file of its format in Assimp's test directory and compared with Assimp (`docs/content/model_corpus.md`); one page each (`docs/content/model_readers/own_off_reader.md` ... `docs/content/model_readers/own_x_reader.md`, `docs/content/model_readers/own_terragen_reader.md`). |
-| AC3D, OGRE XML, XGL / ZGL, Irrlicht scene, NFF, MDC, HMP, CSM, IQM, COB, Q3D, RAW, PMX, LWS / MOT | Yes, **off by default** (`OKAY_OWN_<FORMAT>`) | Written, tested and read on the real files of Assimp's test folder where such files exist (Q3D, RAW, PMX and LWS have none); MDC, HMP, CSM, IQM and COB were not compared with Assimp; OGRE XML and Irrlicht scenes read less than Assimp (no skeleton, no animators). One page each (`docs/content/model_readers/own_ac3d_reader.md` ... `docs/content/model_readers/own_lws_reader.md`). |
+| OFF, SMD, MD5, MS3D, ASE, 3MF, AMF, X3D, DXF, LWO, MD2, MD3, Irrlicht mesh, B3D, DirectX `.x`, Terragen `.ter` | Yes, **off by default** (`OKAY_OWN_<FORMAT>`) | Each checked on every real file of its format in Assimp's test directory and compared with Assimp (`docs/content/model_corpus.md`); one page each (`docs/content/model_readers.md` ... `docs/content/model_readers.md`, `docs/content/model_readers.md`). |
+| AC3D, OGRE XML, XGL / ZGL, Irrlicht scene, NFF, MDC, HMP, CSM, IQM, COB, Q3D, RAW, PMX, LWS / MOT | Yes, **off by default** (`OKAY_OWN_<FORMAT>`) | Written, tested and read on the real files of Assimp's test folder where such files exist (Q3D, RAW, PMX and LWS have none); MDC, HMP, CSM, IQM and COB were not compared with Assimp; OGRE XML and Irrlicht scenes read less than Assimp (no skeleton, no animators). One page each (`docs/content/model_readers.md` ... `docs/content/model_readers.md`). |
 | OGRE binary, OpenGEX, Q3BSP, MDL, SIB, Nendo, glTF 1.0 | **Not yet** | To be written, in the order of `docs/content/own_readers_remaining.md`. Until then they would stop importing with Assimp. Nendo is a seam that refuses every file. |
 
 Not part of the announcement, but a precondition (see `docs/third_party_removal_checklist.md`): the COLLADA and FBX

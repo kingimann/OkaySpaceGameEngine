@@ -296,7 +296,7 @@ public:
     /// on an unencrypted session anyone who can read the datagrams (same network, a router on the
     /// path) sees it and can take the player's place, and no keyed proof can fix that because
     /// there is no key. With this on, such a client gets no token and a rejoin is a new peer.
-    /// Off by default (LAN and tests without encryption keep resuming). See docs/online/multiplayer_audit.md.
+    /// Off by default (LAN and tests without encryption keep resuming). See docs/online/multiplayer.md.
     bool resumeRequiresEncryption = false;
     /// What a reconnecting client reports to its handler.
     enum class ReconnectEvent { Lost, Attempt, Restored, GaveUp };

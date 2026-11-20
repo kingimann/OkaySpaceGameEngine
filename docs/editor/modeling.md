@@ -1,5 +1,18 @@
 # Modeling
 
+> **What this is:** The Modeling window (built-in mesh editor) and its audit.
+> **Status:** combined on 2026-11-20 from 2 older pages, one section each (listed below). Every fact was kept; text marked **Outdated** is kept for history.
+> **Last checked:** 2026-11-20, paths and links against main.
+
+## Contents
+
+- [Modeling](#modeling-1) (was `docs/modeling.md`)
+- [Modeling audit (branch `claude/modeling-more`)](#modeling-audit-branch-claudemodeling-more) (was `docs/modeling_audit.md`)
+
+## Modeling
+
+*Was `docs/modeling.md` until 2026-11-20.*
+
 The **Modeling** window is OkaySpace's built-in mesh editor — enough of
 Blender to block out levels and props without leaving the engine. Everything
 operates on the selected object's Mesh Renderer, every destructive op is
@@ -8,7 +21,7 @@ mesh-edit step), and edited geometry is saved with the scene (including
 its texture coordinates). A typed value that is not a number (`nan`, `inf`)
 is ignored by the operation instead of wiping the mesh.
 
-## Add library
+### Add library
 
 The **Add** section at the top is an organized object library (Blender's Add
 menu + F3 search). Type in the filter box to narrow it, or expand a category:
@@ -36,14 +49,14 @@ Everything in Nature / Props / Structures is a normal editable mesh: tick
 existing mesh object — imported models included. The editing toolset is
 grouped into tabs:
 
-## Shape
+### Shape
 
 Swap the primitive, set the base color, toggle wireframe, and choose the
 collision mode: **Box (bounds)** is a fast fitted box, **Mesh (exact)**
 collides against the live triangles — the right choice after you extrude a
 floor or carve a doorway. Colliders auto-refit whenever the mesh changes.
 
-## Edit — whole-mesh operations
+### Edit — whole-mesh operations
 
 - **Subdivide** (whole mesh, or just the faces selected in Edit Mesh),
   **Subdiv + Smooth** (rounds without shrinking), **Smooth** (subdivide +
@@ -90,7 +103,7 @@ floor or carve a doorway. Colliders auto-refit whenever the mesh changes.
   - **A mesh crossing the mirror plane** is cut there first, keeping the + side, so a centred cube stays one closed cube.
   - **A closed half model** loses the faces lying on the plane before the copy is added, so no faces are left back to back inside the model.
 
-### UV Unwrap
+#### UV Unwrap
 
 Quick projections that give every face corner its own texture coordinate, so
 materials tile properly on modeled geometry:
@@ -110,7 +123,7 @@ UVs follow the engine's convention everywhere: **v = 0 is the top of the
 image** (as in glTF and on the GPU renderers), and a face seen from outside
 shows the texture the right way round, not mirrored.
 
-## Modifiers
+### Modifiers
 
 Blender-style one-shot modifiers (they change the mesh right away; for
 modifiers you can keep tweaking, see [Modifier stack](#modifier-stack-non-destructive)):
@@ -123,7 +136,7 @@ rock apart, cut doors from a wall), **Shrink/Fatten**, **Wireframe** (turn
 edges into beams), **Displace** (noise roughen), **Cast Cyl Y**, and
 **Stretch X/Y/Z**.
 
-## Modifier stack (non-destructive)
+### Modifier stack (non-destructive)
 
 Add **Modifiers (non-destructive)** to a mesh object (Inspector → Add
 Component → Rendering, or **Add Modifier** in its Modifiers section). The
@@ -162,7 +175,7 @@ The stack is saved with the scene (`modstack` / `mod` lines) and rebuilt on
 load; in a running game it refreshes in Update, so a script that moves a
 Boolean cutter sees the cut follow it.
 
-## Generate
+### Generate
 
 Profile-driven surfaces. Edit the 2D point list — each point is
 `(radius, height)`, bottom to top — or start from the **Vase**, **Goblet**,
@@ -177,7 +190,7 @@ or **Column** preset, then:
   Helix, S-Curve, Zigzag presets) with twist-free frames at bends: pipes,
   rails, cables, springs. Set the radius and ring segments.
 
-## Edit Mesh — vertex/face editing in the viewport
+### Edit Mesh — vertex/face editing in the viewport
 
 Press **Tab** with the mouse over the 3D view, or tick **Edit Mesh**, to enter edit mode.
 The mesh is auto-welded, so shared corners move together.
@@ -189,7 +202,7 @@ The mesh is auto-welded, so shared corners move together.
 - **Real polygons:** the wireframe shows the mesh's quads and n-gons, not the triangles they're drawn with. Clicking a face in Face mode selects the whole polygon.
 - **Moving:** drag the axis handles to move, and hold **V** to snap to nearby vertices.
 
-### Move, rotate and scale: G / R / S
+#### Move, rotate and scale: G / R / S
 
 With something selected, press **G** (move), **R** (rotate) or **S** (scale) with the mouse over the 3D view, then move the mouse.
 
@@ -209,24 +222,24 @@ With something selected, press **G** (move), **R** (rotate) or **S** (scale) wit
 - **Status line:** the line at the bottom of the view shows the tool, the lock, the current value and the keys.
 - **Undo:** you stay in edit mode after undo and redo.
 
-### Undo in edit mode
+#### Undo in edit mode
 
 While you're in edit mode, **Ctrl+Z** / **Ctrl+Y** (and Edit > Undo / Redo) step through your mesh edits one operation at a time.
 A move, an extrude or a sculpt or paint stroke is each one step, and so is every Modeling window or Mesh Renderer inspector button
 (Twist, Shear, Solidify, Mirror, Recenter, Ground, Fit 1u, UV Box ...): one Ctrl+Z takes back that button only.
 When you leave edit mode, the whole session becomes a single scene undo step. Undoing that step later puts the mesh back the way it was before you entered.
 
-### Polygon stats
+#### Polygon stats
 
 The Edit Mesh page shows what the mesh is made of: its vertices and faces, how many faces are quads, triangles and n-gons, and whether it's **closed**.
 If it isn't closed, the line says how many open or non-manifold edges it has.
 Faces are counted after merging flat triangle pairs back into quads.
 
-### Tools greyed out
+#### Tools greyed out
 
 A tool that needs a selection you don't have yet is greyed out; hover it to see what to select. Extrude Faces, for example, needs faces in Face mode.
 
-### Edge loops
+#### Edge loops
 
 These tools work on the mesh's polygons. Each one is a single undo step.
 
@@ -257,7 +270,7 @@ Limits:
 - **Bridge:** works on open borders only. It doesn't remove faces first.
 - **Edge slide:** UVs aren't adjusted, so a textured surface stretches with it.
 
-#### How the polygons are kept
+##### How the polygons are kept
 
 Each mesh can store which triangles make up each of its polygons.
 
@@ -306,7 +319,7 @@ to the first selected vertex (grab one island of a combined mesh), and
   average (level a rim, square a wall), and **Separate** splits the selected
   faces off into a new object with the material carried over.
 
-### UVs and seams
+#### UVs and seams
 
 In Edit Mesh, the **UVs & Seams** section flattens the surface into texture
 space so a texture lands on it without stretching:
@@ -340,7 +353,7 @@ edit mode, saving and reopening keeps seams and UVs exactly. (Tools that
 rebuild triangles outside the polygon core, such as the classic extrude, fall
 back to one UV per vertex where they touch.)
 
-### UV Editor
+#### UV Editor
 
 **View > Editors & Tools > UV Editor** (or **UV Editor** in the UVs & Seams section) shows
 the selected mesh's UV layout over its texture (a checker when it has none).
@@ -359,7 +372,7 @@ In mesh edit mode it edits:
 
 Each edit is one undo step (Ctrl+Z), and the viewport shows the change live.
 
-### Sculpt
+#### Sculpt
 
 Tick **Sculpt Brush** and drag directly on the mesh:
 
@@ -373,7 +386,7 @@ Tick **Sculpt Brush** and drag directly on the mesh:
 Radius and strength are adjustable; Symmetry X applies to sculpting too.
 Subdivide first if the mesh is too coarse for the detail you want.
 
-### Paint
+#### Paint
 
 Tick **Paint Brush** to color faces directly in the viewport — pick a
 color, radius, and blend, then drag over the mesh. **Fill Sel** bucket-fills
@@ -382,7 +395,7 @@ multiply with the material color, save with the scene, and work on
 primitives without turning them into custom geometry (Symmetry X mirrors
 paint strokes too).
 
-### Model faster: toolbar, right-click, Ctrl+K, repeat, recipes (Edit Mesh)
+#### Model faster: toolbar, right-click, Ctrl+K, repeat, recipes (Edit Mesh)
 
 All of these run the same tools as the buttons (one shared list of commands), so they cannot drift apart.
 
@@ -397,7 +410,7 @@ All of these run the same tools as the buttons (one shared list of commands), so
 
 Not built: box, lasso and circle select, X-ray select-through, hide / reveal / isolate, select-loop by double click, Shift+D (use Duplicate Faces then G), instances, join / separate / set pivot / align / distribute as commands (Recenter and Split in two objects exist), quick primitives at the cursor, mirror-edit for Y and Z (only X), "symmetry by default", live mouse-drag extrude / inset (Ctrl+B bevel has it).
 
-### Vertex colours, creases, shrinkwrap, reduce, library (Edit Mesh)
+#### Vertex colours, creases, shrinkwrap, reduce, library (Edit Mesh)
 
 - **Vertex colours (smooth painting).** Paint section > tick **Vertex colours (smooth)**: the brush paints colours onto the vertices (radius, blend and hardness shape it; Symmetry X mirrors it) and the colour blends smoothly across each face. Also **Fill Vertices** (selected vertices or the corners of selected faces), **Smooth Colours**, **Clear Vertex Colours**. They multiply with the face colour and material colour. They are saved in the scene (`meshvcolors`), in `.okaymesh` files (`vcolor i r g b a` lines, only for painted vertices), and survive Weld, Join, Separate, Hide/Reveal, the polygon tools, Subdivision (new points take the average colour of their neighbours), Array and Curve Array. Drawn by the software renderer (flat, smooth, textured and per-pixel paths), OpenGL, Direct3D 11 and Direct3D 12. A tool that adds vertices (extrude, inset) pads the list with white; tools that renumber vertices without going through the polygon mesh may drop the paint (Reduce Polygons does).
 - **Creases for subdivision.** Select edges, set **Crease sharpness** in Edit Mesh, then Ctrl+K > **Set Crease on Selected Edges** (**Clear Crease on Selected Edges** removes it). Creased edges are drawn pink and stay sharp when the Subdivision modifier (or Catmull-Clark) rounds the mesh: a sharpness of 2 stays sharp for two levels, a fraction blends. Saved in the scene (`meshcreases`) and `.okaymesh` (`crease a b w` lines).
@@ -405,7 +418,7 @@ Not built: box, lasso and circle select, X-ray select-through, hide / reveal / i
 - **Reduce Polygons (Quality).** Ctrl+K > `reduce`: cuts the triangle count to **Reduce to %** by collapsing the least visible edges (quadric error, keeps borders and UV seams; closed meshes stay closed). The older **Decimate** button merges vertices in cells and is rougher. Material slots and vertex colours are dropped by this tool (per-face colours stay).
 - **Mesh library** (Modeling > Import page): lists every `.okaymesh` under the project's `Assets` folder (with filter, vertex and face counts) and **Add** puts a linked copy in the scene.
 
-### Spin, Extrude Along Path, measuring, snapping (Edit Mesh)
+#### Spin, Extrude Along Path, measuring, snapping (Edit Mesh)
 
 - **Spin** (Edit Mesh, under the edge-loop tools): select edges (a profile you drew), pick the axis, the angle and the steps, press **Spin**. The edges are turned around the axis through the object's origin (or the **Spin centre** point) and every step is filled with faces: a lathe of whatever you selected. 360 deg closes into a ring; a vertex on the axis becomes one point (a cap). If the faces point inward, press **Flip Normals**.
 - **Extrude Along Path**: select faces, pick Straight, Arc, S-Curve or Spiral with a length, a bend and a number of steps, press **Extrude Along Path**. The faces are pushed along a curve that starts in the middle of the selection and heads along its average normal; the face turns with the curve (no twist), walls join each step, and the original faces become the end caps. Slots and colours carry over.
@@ -415,7 +428,7 @@ Not built: box, lasso and circle select, X-ray select-through, hide / reveal / i
 - **Material library** and **Palette** (under Material Slots): ready colours (wood, stone, metal, cloth, nature, paint, glass) for the chosen slot, and palettes (House, Castle, Barn, Workshop, Forest, Desert, Winter, Primary) that set several slots at once.
 - **Add to scene as object** (Modeling window, Import page): makes an independent copy of the object next to it with the collider you pick: none, a fitted box, or the exact mesh.
 
-### Material slots
+#### Material slots
 
 Under Paint, **Material Slots** gives a mesh several named-by-number
 materials (each is a colour) and lets you hand faces to them:
@@ -450,7 +463,7 @@ triangles without carrying slots; the colours they leave stay, and the faces
 fall back to no slot. Tools that go through the polygon mesh (loop cut,
 bevel, dissolve, bridge, subdivision, mirror) keep them.
 
-## Reference images, curves and bevel weights
+### Reference images, curves and bevel weights
 
 - **Reference images (blueprints)**: Import page, "Reference images". Pick a picture, a plane (front, side, top), size and flip; it draws as a textured quad in the Scene view. Session-only, not saved in the scene. Written from plain plane geometry (`Modeling/Reference.hpp`).
 - **Bezier curves**: Generate page, "Bezier curve". Click points, then make a Pipe, Ribbon or Swept profile mesh. Smooth Catmull-Rom handles, parallel-transport frames so the sweep does not twist (`Modeling/Curve.hpp`).
@@ -460,14 +473,14 @@ bevel, dissolve, bridge, subdivision, mirror) keep them.
 - **Quad Remesh** (`Modeling/Remesh.hpp`, written from the idea of pairing triangles into quads plus subdivide-and-snap): simplify to about half the target in triangles, pair neighbouring triangles into the best-shaped quads, optionally split every face into quads, relax, and snap back onto the original surface. Limits: no flow lines (eyes, fingers), poles where triangles did not pair, sharp edges soften a little, slots/colours/UVs are not kept.
 - **Reference images are saved in the scene** (`refimage` records: path, plane, centre, width, opacity, flip, visible).
 
-## Import
+### Import
 
 Load an `.obj` or `.okaymesh` file into the renderer by path (the **Mesh File** field), and one-click **Add Physics**
 (Rigidbody + fitted box). For FBX/GLB/DAE and other formats, drag the file
 into the viewport or use the Project panel — see `docs/gameplay/animation.md` for
 what animated imports bring in.
 
-## Mesh assets (.okaymesh)
+### Mesh assets (.okaymesh)
 
 **Save as Mesh Asset** (on the Edit Mesh and Import pages) writes the selected mesh to its own `.okaymesh` file and links the object to it.
 The file goes in the project's `Assets` folder, or next to the scene when there's no project.
@@ -493,7 +506,7 @@ f 4 6 7 4 5 uv ...     # optional: per-corner UVs, color r g b a, mat k
 - **What a face can carry:** per-corner UVs, a face color and a material slot.
 - **Slot colours:** `slot N r g b a` lines (after the faces) give slot N its colour; a face's `mat k` picks the slot. A file without `slot` lines is read as before.
 
-## How edits are saved
+### How edits are saved
 
 - **Primitive:** saves by name and regenerates on load.
 - **Mesh loaded from a file** (`.obj` or `.okaymesh`): saves the path.
@@ -503,11 +516,11 @@ f 4 6 7 4 5 uv ...     # optional: per-corner UVs, color r g b a, mat k
   - An `.obj` stays untouched, and the edited geometry is saved in the scene instead.
   - Before this, editing an `.obj`-backed mesh and reopening the scene lost the edit.
 
-## Guided creation (the Guided page)
+### Guided creation (the Guided page)
 
 The Modeling window has a **Guided** page (first in the list on the left). It helps you start something instead of modeling it from nothing, and it is part of the same modeler: what it makes is an ordinary mesh, so Edit Mesh, the modifiers, UVs, materials and the Project panel all work on it as before. Nothing about existing model files or workflows changes.
 
-How it works, in short (the full design with the reasons is in [guided_modeling_design.md](guided_modeling_design.md)):
+How it works, in short (the full design with the reasons is in [guided_modeling_design.md](guided_modeling.md#guided-procedural-modeling-inspection-and-design)):
 
 - **Pick, design, create.** Choose a category (Architecture, Vehicles, Characters, Environment, Props; a category with nothing in it says so), a thing (today: the **Fence**), a starting design (7 fence styles and any templates you saved) and press **Create**. You get a normal object with a mesh asset in `Assets/` and a small recipe file next to it (`Fence.okayguided`).
 - **Customise.** Select the object and open the Guided page: sliders for length, height, post spacing and size, rails, pickets or bars, an optional gate, a ground slope, a path of points, a design for each kind of part (posts, caps, rails, pickets, gate) and a colour for each. Changing a setting rebuilds the model.
@@ -530,6 +543,107 @@ Files: `.okayguided` (text, `okayguided 1`) holds the recipe: template and versi
 
 **Characters** (same page, same rules): Human (9 designs: average, athletic, heavy, child, tall and slim, adventurer, caped hero, casual, person in a dress), Robot (6: standard, heavy, scout drone, cyclops, android, rover) and Creature (11: dog, horse, bear, stag, eagle, duck, dragon, wyvern, beetle, ant, spider, on five body plans). Parts you can select and change one by one: head (4 to 6 shapes), face, hair (6), neck, torso (3 to 4), hips, arms and legs (round, boxy, thick, piston), hands (block, mitten, fist, fingers, claw, pincer), feet (block, boot, sneaker, round shoe, tread, hover disc), top (T-shirt, jacket, vest, plates), bottoms (shorts, trousers, skirt, greaves), hat (cap, top hat, helmet, beanie), glasses, backpack (small, large, jet pack), belt, cape (short, long), shoulder pads and an antenna (robots); creatures have body, head (snout, long muzzle, beak, dragon snout, mandibles), ears, horns (short, curved, antlers), tail (short, long, bushy, fan), wings (feathered, bat, insect), legs, antennae and an abdomen. Proportion sliders: height, shoulder width, chest depth, head size, leg and arm length, limb thickness, neck length, arm angle, elbow bend, leg spread. Characters are blocky and rough (see try_it 7zk).
 
-**Detail level** (every template, one setting): Low, Medium, High, Ultra, with the triangle count shown next to it; see [guided_detail.md](guided_detail.md).
+**Detail level** (every template, one setting): Low, Medium, High, Ultra, with the triangle count shown next to it; see [guided_detail.md](guided_modeling.md#guided-modeling-detail-levels).
 
 New categories are added by registering a template (its settings, kinds of part and a generate function) in `engine/src/Modeling/Guided*.cpp`; the page, the files and the rebuild rules need no change. Tests: `guided_modeling` (`tests/test_guided.cpp`).
+
+## Modeling audit (branch `claude/modeling-more`)
+
+*Was `docs/modeling_audit.md` until 2026-11-20.*
+
+Written from the code and from headless experiments (small programs that build meshes through the existing API, run a
+tool and check the result). Nothing here was tried in the real editor window or on Windows. Numbers are from a shared
+4-core Linux machine under load, one run each, so treat them as rough.
+
+### What the modeler can do today
+
+- **Add**: 23 primitives, nature props, props and structures (all editable meshes).
+- **Whole-mesh edit tools**: subdivide, smooth, relax, loop cut, fill holes, bridge, jitter, shear, symmetrize, snap grid,
+  shade smooth/flat, auto smooth by angle, weld, recenter, ground, fit, OBJ export, mirror, spherify, twist, solidify,
+  taper, bend, UV projections, remesh, decimate, boolean, convex hull, bisect, split, shrink/fatten, wireframe, displace.
+- **Edit Mesh** (vertex, edge, face modes): G / R / S modal edit, soft select (proportional editing), symmetry X,
+  snapping, extrude, inset, poke, individual extrude and inset, bevel, edge loops and rings, loop cut, edge slide,
+  dissolve, bridge, knife, fill, grid fill, merge, flip normals, recalculate outside, merge by distance, UV unwrap with
+  seams, UV editor, sculpt brushes, vertex paint (per-face colour), polygon stats.
+- **Modifier stack** (non-destructive): Mirror, Array, Subdivision Surface (Catmull-Clark on real polygons), Solidify,
+  Bevel, Boolean, Decimate, Displace; each can be enabled, moved, applied and removed.
+- **Files**: `.okaymesh` (text, quads and n-gons, UVs, per-face colour, per-face material number, seams), OBJ import and
+  export, scene save keeps edited geometry, UVs, polygons, seams, shading and face colours.
+- **Undo**: edit-mode undo with selection, 100 steps / 4 million vertices.
+
+So the long list in the brief (subdivision, boolean, decimate, solidify, bevel with profile, weld, auto smooth, soft
+selection, snapping, mirror, repair pieces, stats) already exists. This change does not build a second copy of any of them.
+
+### What was missing
+
+1. **Per-face materials (M5b).** `PolyFace::material` existed and was written to `.okaymesh`, but the triangle `Mesh` had
+   no per-triangle slot, so the number was lost the moment a mesh went `PolyMesh -> Mesh` (observed: a cube with slot
+   numbers 0,1,2,0,1,2 came back with a sum of 0, expected 6), and the editor had no way to set it. Fixed here as slots
+   with a colour each (see below); per-slot textures and shaders are **not** built.
+2. **One-click repair.** The pieces (merge by distance, flip, recalc outside, fill holes) were four buttons; nothing ran
+   them in the right order or said what changed. Added `Mesh::Repair()` and a **Repair Mesh** button.
+
+### Bugs found (each has a test in `tests/test_modeling_more.cpp`, which failed before the fix)
+
+| # | Observed | Cause | Fix |
+|---|---|---|---|
+| 1 | Dissolving 4 edges of a cube left **0 faces**. Dissolving every edge of any closed mesh left 0 or 1 faces. | The "remove vertices with two edges" clean-up ran on a two-face mesh and ate it; faces that collapse to nothing were kept as merges. | A merge that would leave a face with fewer than 3 corners is skipped; a clean-up never shrinks a face below 3 corners. |
+| 2 | `DissolveEdges` on every edge of a 240k-triangle sphere ran for **more than 3 minutes** (it scans every face for every edge, then rebuilds the topology for every end vertex). 19k triangles took 0.2 s, 100k+ is quadratic. | Whole-mesh scan per edge. | Directed-edge table kept up to date: 120k edges now take **1.35 s**. |
+| 3 | `Mesh::DeleteFaces({0,0,0})` deleted **three** faces (12 -> 9 triangles). | The list was not made unique. | Sorted and made unique. |
+| 4 | `Mesh::Decimate(NaN)` erased the whole mesh (0 triangles). | `cellSize <= eps` is false for NaN. | `!(cellSize > eps)` is the guard. |
+| 5 | `Mesh::WeldVertices(-1)` merged a cube into 4 vertices. | A negative distance was squared. | A negative or NaN distance means "exact repeats only". |
+| 6 | `WeldVertices` on a 240k-triangle sphere took about **6 s** (compares every vertex with every kept vertex). | All-pairs search. | Grid of cells as wide as the distance; same result (first match wins), tested against an all-pairs search; under 0.3 s. |
+| 7 | `Mesh::FillHoles` wiped **all painted face colours** (and would drop slots) whenever it filled a hole. | `triColors.clear()`. | Old faces keep colour and slot; the caps are white / slot 0. |
+| 8 | In edit mode the polygon cache key hashed all triangle bytes **one byte at a time**: about **4.1 ms per call** at 240k triangles, several calls a frame. | Byte-wise FNV. | Eight bytes at a time: **0.8 ms**. |
+
+Fixed later: `ExtrudeFaces`, `InsetFaces`, the Individual versions and `BevelEdges` given NaN produced NaN vertices; they now do nothing (Bevel says why).
+
+Not fixed, reported: `BevelEdges` leaves the 8 original corner vertices unused (by design: tools keep vertex numbers, the editor
+compacts them); `CatmullClark` has no cap on `levels` (the modifier and the UI cap it at 4; calling it with 50 asks for 6 * 4^50 faces).
+
+### Checked and fine
+
+Empty selections and out-of-range face numbers are ignored by extrude, inset, delete, subdivide, poke and individual
+extrude (no crash, mesh unchanged). Loop cut on a mesh without UVs adds none; on an unwrapped cube every new face keeps
+UVs (10 of 10). Subdivision of a cube: 24, 96, 384 faces, all closed, nothing non-finite. Bevel clamps a huge width
+(width 5 on a unit cube gives the same shape as 0.5). Poke with a repeated face number pokes it once.
+
+### High-poly timing (headless, 240k triangles, one run)
+
+| Step | Time |
+|---|---|
+| `PolyMesh::FromMesh` | 241 ms |
+| `PolyMesh::ToMesh` | 80 ms |
+| `PolyMesh::Edges` | 32 ms |
+| `PolyTopology` build | 45 ms |
+| Polygon cache key (per call, before / after) | 4.1 ms / 0.8 ms |
+| `WeldVertices` (before / after) | about 6 s / under 0.3 s |
+| `DissolveEdges`, every edge (before / after) | over 3 min / 1.35 s |
+
+Selection, G/R/S and the modifier stack were **not** measured here: they run in the editor window, which this machine
+cannot open. The modifier stack already hashes its input with an eight-byte hash.
+
+### 105k-triangle sphere, headless (one run, shared machine, load about 2.7)
+
+Header-only parts built at -O2: Bisect 139 ms, WeldVertices after the fix 95 ms (Mirror = bisect + copy + weld, so about 0.3 s).
+Engine parts, built at **-O0** (so only the order of size is meaningful): modifier-stack input hash 0.45 ms per frame, geometry hash
+3.9 ms, one undo copy 0.31 ms, `FromMesh` 338 ms, Solidify 8 ms, Displace 33 ms, Decimate 33 ms, Array 23 ms, smooth normals 14 ms.
+Nothing here measures the editor window itself (selection, drawing): unmeasured. Before/after exists only for the items in the table above.
+
+### New tools at 105k triangles (headless, -O2, one run each, median of 7, shared machine, load about 2.4)
+
+| Step | Before the tuning | After |
+|---|---|---|
+| Measure the whole mesh (size, area, volume) | 0.8 to 1.2 ms | same; the editor now recomputes it twice a second, not every frame |
+| Measure a selection of 50% of the faces | 11.4 ms | 7.5 ms (marks instead of sets); also only twice a second |
+| Grow Selection on 50% of the faces | 131 ms | 26 ms (hash table + marks) |
+| Select Similar (facing) / Select Up-Facing | 0.8 ms / 0.7 ms | - |
+| Snap to a vertex while moving (per frame) | 0.05 ms | - |
+| Snap to an edge / a face while moving (per frame) | 1.8 ms / 2.9 ms | - |
+
+Per-frame work that was removed before it shipped: the command list now guesses "are edges selected" from the selection counts instead
+of working out the real edges every frame (that took milliseconds on big meshes). Not measured: drawing, selection picking, G / R / S in the real window.
+
+### Operator fuzz test (tests/test_modeling_fuzz.cpp, `modeling_fuzz`)
+
+Every Mesh and polygon tool, the selection helpers, the recipes and every modifier are run on random meshes (cube, sphere, cylinder, torus, joined, open, degenerate, empty) with hostile selections (nothing, everything, out-of-range numbers, repeats) and hostile amounts (0, negative, 1e9, NaN, infinity). Nothing may crash or leave a non-finite vertex or a triangle outside the vertex list. At 3000 rounds per operator it found and I fixed: NaN or infinite amounts turning every vertex into NaN in Poke, Bevel Vertices, Snap Grid, Soft Move, Smooth, Spherify, Twist, Taper, Bend, Stretch, Solidify, Displace (also absurd amounts overflowing its noise), Loop Cut position, Edge Slide, Split Edge, Merge Verts, Extrude Along Path; modifiers loaded with a NaN setting (every modifier now refuses with "A setting is not a number"); and Fill, Grid Fill and Bridge accepting edges that name vertices that do not exist (a face with a bad index). Default run is 120 rounds; set OKAY_FUZZ_ROUNDS for more. Undo restoring is by whole-mesh copy, so it is not fuzzed separately.

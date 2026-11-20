@@ -1,6 +1,6 @@
 #pragma once
 // Previewing a language and pseudo-localization without changing anything that is saved
-// (docs/engine/localization_tools.md).
+// (docs/engine/localization.md).
 //
 // LocPreview looks texts up in a StringTable in the language you pick, optionally pseudo-
 // localized, and never touches the table or the Localization service: no language switch, no

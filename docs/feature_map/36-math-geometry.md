@@ -19,7 +19,7 @@ This area was split out of area 1 so maths can be targeted on its own; it is big
 - **Code:** `Math/Vec2`, `Math/Vec3`, `Math/Vec4`, `Render/Color`, `Math/VecInt`
 - **API:** `Vec2`, `Vec3`, `Vec4`, `Vec3::Cross`, `Vec3::Slerp`, `Vec3::SmoothDamp`, `Vec3::ClampMagnitude`, `Color::FromBytes`, `Color::Lerp`
 - **Editor:** vector and colour fields in the Inspector (15.2)
-- **Docs:** `docs/engine/core_audit_notes.md` (math fixes), `docs/engine/math_geometry.md`
+- **Docs:** `docs/engine/core_runtime.md` (math fixes), `docs/engine/math_geometry.md`
 - **Tests:** `math`, `math_extra`, `phys_math`, `2d_expand`, `core_audit`, `math_geometry`, `core_math_extra`
 - **Status:** Works - read the headers; opposite-vector `Vec3::Slerp` and `SmoothDamp` with zero dt fixed in #565, integer vectors and `Color::Parse` added in #571, all with tests
 - **Open:** Color lives in `Render/` although it is pure maths; `Quat::Normalized` of a NaN quaternion now gives identity (`core_math_extra`)
@@ -38,7 +38,7 @@ This area was split out of area 1 so maths can be targeted on its own; it is big
 - **Code:** `Math/Quat`, `Math/Mat4`, `Math/Mat3`
 - **API:** `Quat::Euler`, `Quat::LookRotation`, `Quat::Slerp`, `Mat4::TRS`, `Mat4::LookAt`, `Mat4::Perspective`, `Mat4::Inverse`
 - **Editor:** Transform rotation fields and gizmos (15.2, 15.3)
-- **Docs:** `docs/engine/core_audit_notes.md`
+- **Docs:** `docs/engine/core_runtime.md`
 - **Tests:** `math`, `3d`, `math_extra`, `phys_math`, `prefs_misc`, `core_audit`, `math_geometry`, `core_fixes`
 - **Status:** Works - read the headers; `LookRotation` zero forward, tiny-matrix `Inverse` and Euler gimbal cases fixed with tests (#565); `Mat3`, `Decompose` and `ToAngleAxis` exist (read `Mat4.hpp`, `Quat.hpp`)
 - **Open:** `Quat::ToEuler` treats only about 0.08 degrees around straight up or down as gimbal lock, so roll survives at 89 degrees (`core_fixes`); no double-precision variants for large worlds (core_audit_notes)

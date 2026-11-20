@@ -4,7 +4,7 @@
 
 using namespace okay;
 
-// Bugs the terrain audit (docs/rendering/terrain_audit.md) proved. Each block fails on the code before the fix.
+// Bugs the terrain audit (docs/rendering/terrain_water.md) proved. Each block fails on the code before the fix.
 namespace {
 GameObject* AimCamera(Scene& s, const char* name, bool main, Vec3 pos, Vec3 aim) {
     GameObject* c = s.CreateGameObject(name);

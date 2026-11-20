@@ -32,7 +32,7 @@ How to set a variable (Windows Command Prompt): `cd %LOCALAPPDATA%\OkaySpace`, `
   3. Close the editor, start it again with no variable and import the same file.
 - **See:** a white unit cube both times; only the About line shows which reader ran.
 - **Partial:** no Console line says which reader read the file. A variable set to `0` wins over `OKAY_OWN_STACK=1`.
-- **Link:** [../../own_off_reader.md](../../content/model_readers/own_off_reader.md)
+- **Link:** [../../own_off_reader.md](../../content/model_readers.md#our-own-off-reader-off)
 
 ### V-OC-004 Other own readers
 - **Map:** 3
@@ -63,7 +63,7 @@ How to set a variable (Windows Command Prompt): `cd %LOCALAPPDATA%\OkaySpace`, `
   1. Nothing to try: Windows uses WinHTTP, `OKAY_OWN_HTTP=1` does nothing there. Check that the stack line says `http=winhttp`.
 - **See:** `http=winhttp` in the About popup.
 - **Partial:** the own client exists for Linux builds only and is tested on Linux.
-- **Link:** [../../own_http_client.md](../../platform/own_http_client.md)
+- **Link:** [../../own_http_client.md](../../platform/own_http.md#our-own-http-client-okayownhttp)
 
 ### V-OC-007 Own platform layer
 - **Map:** 37

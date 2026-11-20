@@ -1,7 +1,7 @@
 #pragma once
 // Guided procedural modeling: templates ("Fence") that generate an ordinary editable PolyMesh from a small recipe,
 // and a regeneration step that never silently destroys what the user did by hand afterwards.
-// See docs/editor/guided_modeling_design.md. Written from general parametric modeling (points along a path, boxes and
+// See docs/editor/guided_modeling.md. Written from general parametric modeling (points along a path, boxes and
 // extruded profiles); it uses no code from any other project.
 //
 //   Recipe   what was asked for: template, parameters, a design per slot, colours, an optional ground path,

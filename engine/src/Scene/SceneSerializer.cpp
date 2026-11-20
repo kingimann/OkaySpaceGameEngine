@@ -848,7 +848,7 @@ void WriteComponentRecords(std::ostream& out, GameObject* go) {
         if (!cam->renderTarget.empty()) out << " " << Quote(cam->renderTarget);
         out << "\n";
     }
-    for (auto* cam : go->GetComponents<Camera>()) {   // keyed extension (docs/gameplay/camera_upgrade.md); older readers skip the line
+    for (auto* cam : go->GetComponents<Camera>()) {   // keyed extension (docs/gameplay/cameras.md); older readers skip the line
         if (cam->hitPulseVignette != 0.5f) {   // only when changed, so scenes that never touch it save exactly as before
             out << "  camerax";
             KvOut k{out};
@@ -9905,7 +9905,7 @@ void RegisterBuiltinComponentSerializers() {
     ComponentSerializerRegistry::Register(std::move(waterwaves));
 
     // How the water looks (sea state, depth colours, foam, ripples, rings, splashes, underwater). A scene without this record
-    // loads with every look setting off, so old scenes look as they did. docs/rendering/water_visuals.md.
+    // loads with every look setting off, so old scenes look as they did. docs/rendering/terrain_water.md.
     ComponentSerializerRegistry::Entry watervis;
     watervis.name = "watervis";
     watervis.write = [](const GameObject& go, std::ostream& out) {

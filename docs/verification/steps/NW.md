@@ -19,7 +19,7 @@
   2. Press **Connect to server...** and type the address, or use the **LAN** tab.
 - **See:** the game starts and joins; the **LAN** tab lists games on your network by itself.
 - **Partial:** the Internet list needs the live Supabase server (map 17.15).
-- **Link:** [launcher-multiplayer.md](../../online/launcher-multiplayer.md)
+- **Link:** [launcher-multiplayer.md](../../online/multiplayer.md#multiplayer-in-the-launcher-steam-style)
 
 ### V-NW-003 Quick Play and invites
 - **Map:** 17.15, 16
@@ -29,7 +29,7 @@
   2. Press **Quick Play** to join the best open server.
 - **See:** an invite card with a Join game button goes to a friend; Quick Play skips full and password servers.
 - **Partial:** needs two accounts that are friends; it is only a smoke test without them.
-- **Link:** [launcher-multiplayer.md](../../online/launcher-multiplayer.md)
+- **Link:** [launcher-multiplayer.md](../../online/multiplayer.md#multiplayer-in-the-launcher-steam-style)
 
 ### V-NW-004 Anti-cheat in one click
 - **Map:** 39
@@ -41,7 +41,7 @@
   4. Set **Anti-cheat** to **Report**.
 - **See:** an anti-cheat config is added with the preset numbers; the checklist shows what is on and what is `[missing]`, with fix buttons.
 - **Partial:** a detection engine starts in observe mode and never kicks; the libsodium-dependent parts run in a separate CI job; not independently reviewed (CLAUDE.md rule 18).
-- **Link:** [anticheat_quickstart.md](../../online/anticheat_quickstart.md)
+- **Link:** [anticheat_quickstart.md](../../online/anticheat.md#add-anti-cheat-to-your-game-in-5-minutes)
 
 ### V-NW-005 Dedicated server export
 - **Map:** 16, 18

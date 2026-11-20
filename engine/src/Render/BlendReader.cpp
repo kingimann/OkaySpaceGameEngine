@@ -12,7 +12,7 @@
 // and image textures, node based Principled colours and image textures), armatures and vertex group
 // skin weights, and action F-Curves (location, rotation, scale of objects and pose bones).
 // Mirror and Subdivision Surface modifiers are applied in stack order (BlendModifiers.cpp); other modifiers are named.
-// Everything it did not read is listed in ImportedModel::notes. See docs/content/model_readers/own_blend_reader.md.
+// Everything it did not read is listed in ImportedModel::notes. See docs/content/model_readers.md.
 #include "FileOpen.hpp"
 #include "okay/Render/ModelData.hpp"
 #include "okay/Core/ImageDecode.hpp"
@@ -1644,7 +1644,7 @@ std::shared_ptr<MeshData> Reader::EvaluateModifiers(ObjRec& o, const std::shared
             const int flags = md.Int("flags");
             // Every option is found by its field name in the file's own SubsurfModifierData. The SDNA names fields but
             // holds no enum or flag values, so the meanings of the numbers below are from memory of Blender's DNA
-            // headers (unverified; docs/content/model_readers/own_blend_reader.md "Subdivision Surface options").
+            // headers (unverified; docs/content/model_readers.md "Subdivision Surface options").
             if (md.Has("uv_smooth")) {   // 2.8+: 0 none, 1 keep corners, 2 + junctions, 3 + concave, 4 keep boundaries, 5 all
                 static const blendmod::UvSmooth kUv[] = {blendmod::UvSmooth::Linear, blendmod::UvSmooth::KeepCorners,
                                                          blendmod::UvSmooth::KeepCornersJunctions, blendmod::UvSmooth::KeepCornersJunctionsConcave,

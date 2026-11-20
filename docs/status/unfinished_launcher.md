@@ -63,7 +63,7 @@ How to apply the chat receipts SQL (owner): Supabase dashboard > SQL Editor > Ne
 
 | Item | Where | What is missing (plain English) | Impact | Size |
 |---|---|---|---|---|
-| 18 SQL files must be run by hand with no run-order list or version check | `docs/sql/*.sql` (18 files); `docs/online/supabase-backend.md`; per-feature docs say "run once" (`docs/online/launcher-multiplayer.md:72,161,209,235`) | There is no single "set up a new project" script, no order (admin before anticheat is only in `docs/online/anticheat.md:680`), and the launcher cannot tell the owner which files are missing; features quietly hide. | Medium | Medium |
+| 18 SQL files must be run by hand with no run-order list or version check | `docs/sql/*.sql` (18 files); `docs/online/supabase-backend.md`; per-feature docs say "run once" (`docs/online/multiplayer.md:72,161,209,235`) | There is no single "set up a new project" script, no order (admin before anticheat is only in `docs/online/anticheat.md:680`), and the launcher cannot tell the owner which files are missing; features quietly hide. | Medium | Medium |
 | `cloud_saves` and `leaderboards` SQL exists only inside a Markdown page | `docs/online/supabase-backend.md:28-60` (not in `docs/sql/`) | Easy to miss and not covered by the SQL test harness; `tests/scripts/test_anticheat_sql.sh` tests anti-cheat SQL only. The other 15 files have no automated check. | Low | Small |
 | `supabase/` holds one Edge Function only | `supabase/functions/session-ticket/` | There is no `config.toml`, migrations folder or deploy script for the schema; everything else is copy-paste SQL. | Low | Medium |
 

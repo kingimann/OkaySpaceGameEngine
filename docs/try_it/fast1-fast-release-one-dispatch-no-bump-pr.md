@@ -7,7 +7,7 @@ row: | fast1 | Fast release: one workflow dispatch, no version-bump PR | GitHub:
 **What it is.** A release without the version-bump PR and its extra hour of CI. One click on "Fast release" works out the next version,
 refuses a commit that has no fully green CI run on main, builds exactly that commit, publishes, and then checks the release itself.
 The release notes come from small files, one per change (`dist/changelog.d/<id>.txt`), so they never clash. The old way (a bump PR,
-then "Release Windows build") still works. Everything: `docs/release/fast_release.md`.
+then "Release Windows build") still works. Everything: `docs/release/releasing.md`.
 
 **Steps (the dry run, safe: builds and publishes nothing).**
 1. On GitHub open Actions > **Fast release** > Run workflow. Branch `main`. Tick **dry_run**. Run.

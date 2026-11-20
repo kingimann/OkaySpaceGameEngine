@@ -149,14 +149,14 @@ About 61 sub-areas. Work packages use S (a day or less), M (a few days), L (a we
 - **Code:** `Scene/SceneSerializer`, `Scene/ObjectPool`, `Scene/SceneTemplates`, `Scene/UITemplates`, `editor/main.cpp`
 - **API:** `SceneSerializer::InstantiateFromFile`, `SaveObjectToFile`, `GameObject::prefabSource`, `ObjectPool`, script `spawn`, `spawn3`, `net_spawn`
 - **Editor:** Hierarchy right-click > Save As Prefab and the Prefab submenu (Open enters prefab mode), Project panel (drag in and out, double-click or right-click > Open Prefab, Place in Scene), Inspector prefab header (21.4; Open enters prefab mode), the prefab mode bar above the Scene view
-- **Docs:** `docs/engine/prefabs.md`, `docs/engine/prefab_mode.md`, `docs/engine/scene_serializer.md`, `docs/engine/scene_management.md`
+- **Docs:** `docs/engine/prefabs.md`, `docs/engine/prefabs.md`, `docs/engine/scene_serializer.md`, `docs/engine/scene_management.md`
 - **Tests:** `instantiate`, `scene_ids_prefabs`, `scene_load_pool`, `templates`, `ui_templates`, `prefab_mode`
 - **Status:** Works - save, place and spawn are in daily use and covered by tests.
 - **Exists today:** Everything in the Parts list on main. #575 added a cache of the last 32 decoded prefab files (`SceneSerializer::ClearPrefabCache` drops it) so repeated spawns skip the file read; #578's `PrefabTools` is reached through `InstantiateFromFile` for nested and variant files.
 - **Work packages:**
   1. S - Prefab asset thumbnail already exists; add "Used in N scenes" via `UsedBy`. Depends on: 20.2.
   2. M - Spawn presets (a prefab list on a Spawner that validates files at load). Depends on: 33.2.
-- **Open:** a prefab file stores one object tree, not a set; no "create prefab from selection of several roots"; prefab mode does not open variants, saves only the prefab's root tree and keeps no crash-recovery copy of a prefab being edited (`docs/engine/prefab_mode.md`).
+- **Open:** a prefab file stores one object tree, not a set; no "create prefab from selection of several roots"; prefab mode does not open variants, saves only the prefab's root tree and keeps no crash-recovery copy of a prefab being edited (`docs/engine/prefabs.md`).
 - **Related:** 1.6, 15.1, 15.4, 11.6, 21.2, 21.4
 - **Words:** prefab, okayprefab, instantiate, spawn, template, Save As Prefab, prefab instance, ObjectPool, prefabSource
 - **Seen as:** I changed the prefab but my placed copies did not change; dragging an object into Project does not create what I expected; spawned bullets stutter (pooling)
@@ -174,10 +174,10 @@ About 61 sub-areas. Work packages use S (a day or less), M (a few days), L (a we
 - **Code:** `Scene/PrefabTools`, `Scene/SceneSerializer`
 - **API:** `PrefabTools::SavePrefab`, `NestedInstances`, `ValidateAsset`; `SceneSerializer::InstantiateFromFile` routes nested files to `PrefabTools`
 - **Editor:** Hierarchy marks nested prefab instances (a square in a square) and variants (violet), the Inspector header names the kind ("nested in Car.okayprefab") with Select Asset, Save As Prefab keeps nested links, Project panel > Validate Prefab
-- **Docs:** `docs/engine/prefab_system.md`; `docs/engine/prefabs.md`
+- **Docs:** `docs/engine/prefabs.md`; `docs/engine/prefabs.md`
 - **Tests:** `prefab_nested`; `prefab_editor`
 - **Status:** Partial - the data layer (#578) and the editor side are on main: nested instances are marked in the Hierarchy, named in the Inspector, saved without losing their links and checked by Validate Prefab (tests `prefab_nested`, `prefab_editor`); a Console list of nesting errors with the file chain and the "Used in N scenes" dependency are not built.
-- **Exists today:** The whole data layer above, with about 700 lines of tests, plus the flat model (one source file and a list of overrides) for plain prefabs, and the editor side in 21.2.6 (`docs/engine/prefab_system.md`, "In the editor").
+- **Exists today:** The whole data layer above, with about 700 lines of tests, plus the flat model (one source file and a list of overrides) for plain prefabs, and the editor side in 21.2.6 (`docs/engine/prefabs.md`, "In the editor").
 - **Work packages:**
   1. S - Validate Prefab on Build (33.2); the Project panel entry exists (`ValidateAsset` result in the Console). Depends on: 21.2.6.
   2. S - Prefab nesting depth and cycle errors shown in the Console with the file chain when a scene loads. Depends on: 21.2.6.
@@ -198,7 +198,7 @@ About 61 sub-areas. Work packages use S (a day or less), M (a few days), L (a we
 - **Code:** `Scene/PrefabTools`
 - **API:** `PrefabTools::SaveVariant`, `Instantiate`, `FileUsesPrefabStructure`; `oked::PrefabCreateVariant`, `PrefabNewVariantFile`, `PrefabKindOfFile`, `ResolveVariantBase`
 - **Editor:** Inspector prefab header > Create Variant / Select Base, Hierarchy row menu > Prefab > Create Variant..., Project panel right-click > Create Variant
-- **Docs:** `docs/engine/prefab_system.md`
+- **Docs:** `docs/engine/prefabs.md`
 - **Tests:** `prefab_variants`; `prefab_editor`
 - **Status:** Partial - variants can be created, shown and applied into from the editor (`prefab_editor`); a variant badge in the Project panel and "changing the base shows its effect on variants" feedback are not built.
 - **Exists today:** Variant files, chains with cycle and depth checks, `SaveVariant`, compatibility (an older build loads only the added objects with warnings), and the editor side in 21.3.3 and 21.3.4. Editing the base and pressing Apply or Update All rebuilds the variants' placed instances (each keeps its own overrides).
@@ -224,10 +224,10 @@ About 61 sub-areas. Work packages use S (a day or less), M (a few days), L (a we
 - **Code:** `Scene/SceneSerializer`, `Scene/GameObject`, `Scene/PrefabTools`, `editor/main.cpp`
 - **API:** `SceneSerializer::CapturePrefabOverrides`, `ReapplyPrefab`, `InstantiatePrefab`; `GameObject::prefabOverrides`; `PrefabTools::Diff`, `RevertOverride`, `ApplyToSource`, `Unpack`
 - **Editor:** Inspector prefab header and Changed from the prefab list, right-click a marked property, component `...` menu, Hierarchy row menu > Prefab
-- **Docs:** `docs/engine/prefabs.md`; `docs/engine/prefab_system.md`
+- **Docs:** `docs/engine/prefabs.md`; `docs/engine/prefabs.md`
 - **Tests:** `scene_ids_prefabs`; `prefab_apply_revert`; `prefab_editor`; `inspector_model`
 - **Status:** Works - the editor reads, shows, reverts and applies overrides per property, component, child object and instance through `PrefabTools`, with undo and with the other instances updated (tests `prefab_editor`, `prefab_apply_revert`); the registry-based field list (21.4.5) and an "are you sure" before Apply All are not built.
-- **Exists today:** The data layer for overrides, per-field diff, revert and apply, unpack and the validator, all called from the editor (21.4.2 to 21.4.8). Undo of an Apply restores the prefab file text together with the scene: the file edits are a command in the same `UndoStack` group as the scene change (`docs/engine/prefab_system.md`, "In the editor").
+- **Exists today:** The data layer for overrides, per-field diff, revert and apply, unpack and the validator, all called from the editor (21.4.2 to 21.4.8). Undo of an Apply restores the prefab file text together with the scene: the file edits are a command in the same `UndoStack` group as the scene change (`docs/engine/prefabs.md`, "In the editor").
 - **Work packages:**
   1. M - Per-field apply for any registered property through the property registry (names like `Light.intensity`, 1.19) instead of the fixed field list. Depends on: #578 (on main).
   2. S - Apply All asks before overwriting the prefab file. Depends on: 21.4.8.
@@ -302,7 +302,7 @@ About 61 sub-areas. Work packages use S (a day or less), M (a few days), L (a we
 - **Code:** `editor/main.cpp`, `shared/CrashHandler.hpp`, `shared/CrashContext.hpp`, `shared/CrashReports.hpp`, `launcher/main.cpp`, `Core/Recovery`
 - **API:** `OKAY_BREADCRUMB`, `okaycrash::handler::Install`, `okaycrash::ctx::Breadcrumb`, `okaycrash::ParseLog`, `okaycrash::Load`; `RecoveryManager::FindRecoverable`, `Restore`, `Discard`
 - **Editor:** "Recover Autosave" dialog, View > Crash Log
-- **Docs:** `docs/online/crash_reports.md`, `docs/editor/editor.md`, `docs/online/launcher-multiplayer.md`
+- **Docs:** `docs/online/crash_reports.md`, `docs/editor/editor.md`, `docs/online/multiplayer.md`
 - **Tests:** `crash_reports`; `crash_context`; `crash_handler`; `recovery`
 - **Status:** Partial - the editor offers recovered graphs, scripts and the scene after a kill (`DrawDocRecoveryPopup`) and writes detailed crash reports that the launcher can send (17.16); the player still has no crash handler of its own.
 - **Exists today:** All of Parts 22.3.1-22.3.3 are used by the editor; 22.3.4 exists only as engine code. The recover popup compares the autosave with the scene; the reports are plain text with version, build, last step, exception, system and graphics details, the trail of steps, the Console and a backtrace.
@@ -665,7 +665,7 @@ About 61 sub-areas. Work packages use S (a day or less), M (a few days), L (a we
   3. L - Generate GLSL and HLSL snippets inserted into the standard shaders (GL, D3D11). Depends on: package 2.
   4. M - Editor window reusing the node canvas, with a live preview. Depends on: package 1, 26.2 package 2.
   5. M - A material can point at a shader graph asset. Depends on: package 1, 26.2.
-- **Open:** four renderers (software, GL, D3D11, D3D12) must stay consistent; D3D12 has no normal, gloss or AO maps today.
+- **Open:** four renderers (software, GL, D3D11, D3D12) must stay consistent; D3D12 has normal, gloss and AO maps too (corrected 2026-11-20: older text here said it had none, which is **outdated**; `engine/src/Render/D3D12Renderer.cpp` binds `normalMap`, `specularMap` as gloss and `aoMap`, see docs/rendering/rendering.md).
 - **Related:** 2.1, 2.2, 14.1, 26.3
 - **Words:** shader graph, visual shader, node shader, material graph, shader nodes, procedural material
 - **Seen as:** cannot make a custom effect without editing engine code
@@ -725,7 +725,7 @@ About 61 sub-areas. Work packages use S (a day or less), M (a few days), L (a we
 - **What:** A physically based lighting model (base colour, metallic, roughness, normal, ambient occlusion) so materials look right under any light.
 - **Parts:**
   - 26.4.1 Surface fields - `Components/MeshRenderer` - metallic, reflectivity (sky reflection, Fresnel weighted), specular and shininess (Blinn-Phong), normal map and strength, specular/gloss map, AO map and strength, emissive, matcap
-  - 26.4.2 Per-renderer support - `Render/SoftwareRenderer`, `Render/GLRenderer`, `Render/D3D11Renderer`, `Render/D3D12Renderer` - D3D12 skips normal, gloss and AO maps and PBR reflections (header says "v1")
+  - 26.4.2 Per-renderer support - `Render/SoftwareRenderer`, `Render/GLRenderer`, `Render/D3D11Renderer`, `Render/D3D12Renderer` - D3D12 has normal, gloss and AO maps and sky reflections weighted by gloss (header says "v1"; corrected 2026-11-20, older text said D3D12 skips them, now **outdated**: `D3D12Renderer.cpp` sets `hasNormal`, the specular/gloss and AO flags and `reflK`)
   - 26.4.3 glTF import mapping - `Render/Gltf` - metallic-roughness factors become a Blinn-Phong glint
   - 26.4.4 Lighting and shadows - `Render/Lighting`, `Render/ShadowSetup`, `Render/Lightmap` - directional, point and spot lights, shadows (see 2.3)
 - **Code:** `Components/MeshRenderer`, `Render/Lighting`, `Render/Gltf`, `Render/Lightmap`, `Render/ShadowSetup`, `Render/D3D12Renderer`
@@ -1168,7 +1168,7 @@ About 61 sub-areas. Work packages use S (a day or less), M (a few days), L (a we
 - **Code:** `Core/Localization`, `Scene/SceneLocalization`, `editor/LocalizationWindow.*`, `Core/LocTable`, `Core/LocCheck`, `Core/LocScan`
 - **API:** `Localization::Get`, `Localize`, `PluralText`, `FormatNumber`, `FormatDate`; script `loc`, `set_language`; `LocTable`, `LocGrid`, `LocCheck`, `LocScanProject`
 - **Editor:** View > Editors & Tools > Localization; Inspector "Localized" checkbox on text fields
-- **Docs:** `docs/engine/localization.md`, `docs/engine/localization_prefs_time.md`; `docs/engine/localization_tools.md`
+- **Docs:** `docs/engine/localization.md`, `docs/engine/localization.md`; `docs/engine/localization.md`
 - **Tests:** `localization`, `loc_prefs_time`; `loc_tools`, `loc_window`
 - **Status:** Partial - the window uses `LocTable` for the grid and cell states, `LocCheck` and `LocMissingReport` for the report, and `LocScanProject` for unused and undefined keys. JSON in the window and a confirm step before CSV import are still out.
 - **Exists today:** The window and file format (`docs/engine/localization.md`). The grid, the missing-key and placeholder report, and the project scan go through `editor/LocalizationTools`. CSV import reports the `LocDiffTables` summary. JSON exchange and a confirm-before-import step are engine-only.
@@ -1219,7 +1219,7 @@ About 61 sub-areas. Work packages use S (a day or less), M (a few days), L (a we
 - **Code:** `editor/LocalizationWindow.*`, `Core/LocPreview`, `Scene/SceneLocalization`
 - **API:** `OKAY_UI_LANG` dev hook; `LocPreview`, `LocPseudoText`, `LocMirrorText`
 - **Editor:** toolbar language menu, Localization window "Pseudo-localize"
-- **Docs:** `docs/engine/localization.md`; `docs/engine/localization_tools.md`
+- **Docs:** `docs/engine/localization.md`; `docs/engine/localization.md`
 - **Tests:** `localization`; `loc_tools`, `loc_window`
 - **Status:** Partial - the toolbar language and the Scene-view pseudo language work as before. The selected key's line in the Localization window is `LocPreview` (pseudo-locale markers, and mirrored text for a right-to-left language) and does not change the table.
 - **Exists today:** The Scene view follows the toolbar language, including pseudo-localization. The window's preview line is `LocPreview`. Layout does not mirror.
@@ -1246,7 +1246,7 @@ About 61 sub-areas. Work packages use S (a day or less), M (a few days), L (a we
 - **Code:** `Components/UINavigation`, `Input/PlatformGamepad`, `Input/InputActions`, `UI/FocusGraph`
 - **API:** `NavigateUI(scene)`, widget `IsFocused()`; `FocusGraph`, `BuildFocusGraph`
 - **Editor:** none (the editor itself is not controller-navigable)
-- **Docs:** `docs/engine/input.md`, `docs/ui/game_ui.md`; `docs/engine/accessibility.md`
+- **Docs:** `docs/engine/input.md`, `docs/ui/in_game_ui.md`; `docs/engine/accessibility.md`
 - **Tests:** `ui_nav_touch`, `input_actions`, `input_keys_gamepad`; `focus_remap`, `ui_focus`, `ui_focus_render`
 - **Status:** Partial - directional navigation works (per code and `ui_nav_touch`); `FocusGraph` and `BuildFocusGraph` (tab order, links, traps, #574, test `focus_remap`) are on main but `NavigateUI` does not use the graph; keys are fixed.
 - **Exists today:** `NavigateUI` as described, called by the player every frame. The navigation keys are fixed in code (`docs/engine/accessibility.md`: "WASD, Enter, Space, the D-pad and A").
@@ -1514,7 +1514,7 @@ About 61 sub-areas. Work packages use S (a day or less), M (a few days), L (a we
 - **Code:** `Core/SaveGame`, `Core/SaveData`, `Core/SaveFramework`, `Core/SaveFrameworkScene`, `Core/SaveFrameworkSync`, `Core/GameSaves`, `Scene/UITemplates`, `Platform/PlayFab/PlayFab`, `Platform/Steam/SteamService`
 - **API:** `SaveGame::Save/Load/List`, `Save::SetInt`; `SaveManager`, `SaveRequest`, `SaveMenuModel`, `ISaveSync`; `GameSaves`
 - **Editor:** UI > Prebuilt Screens > Menus > Save Slots (Save / Load / Delete / Continue per slot); Add Component > Saveable and Save Settings
-- **Docs:** `docs/engine/save_games.md`; `docs/engine/save_framework.md`
+- **Docs:** `docs/engine/save_games.md`; `docs/engine/save_games.md`
 - **Tests:** `save_game`, `durable_saves`, `savedata`; `save_framework`, `save_scene`, `save_nocode`, `ui_templates`
 - **Status:** Works - `SaveGame` slots are in use and tested; the framework (`SaveManager`, tests `save_framework`, `save_scene`) is now reachable without code through `GameSaves`, script builtins, visual-script nodes, Action List actions and the Save Slots screen (test `save_nocode`).
 - **Exists today:** SaveGame slots with durable writes. The framework's slots are used by the no-code route (`game_*` calls and the Save Slots screen, which shows the slot label and saved time, not a thumbnail). The screen does not use `SaveMenuModel` and has three fixed slots; rename and thumbnails are not in it. Sync hooks are library code only.
@@ -1524,7 +1524,7 @@ About 61 sub-areas. Work packages use S (a day or less), M (a few days), L (a we
   3. M - Choose one system: either move SaveGame callers to the framework or keep both with clear names (two slot formats). Depends on: #572 (on main).
   4. M - Cloud sync: `ISaveSync` backends for Steam Cloud and PlayFab user data. Depends on: package 3, 49.1.
   5. S - Editor window listing saves in the project's save folder with open-folder and delete. Depends on: package 3.
-- **Open:** possible duplicate: `SaveGame` (`.okaygame`) and the framework (`.okayslot`) are separate formats and separate lists; nothing converts between them (stated in `docs/engine/save_framework.md`).
+- **Open:** possible duplicate: `SaveGame` (`.okaygame`) and the framework (`.okayslot`) are separate formats and separate lists; nothing converts between them (stated in `docs/engine/save_games.md`).
 - **Related:** 1.7, 12.8, 17.10, 35.2, 49.1
 - **Words:** save slot, save game, load game, Continue, SaveGame, SaveManager, slot list, load screen, cloud save, save folder
 - **Seen as:** Load screen is empty; save corrupted after a crash (handled by .bak); two kinds of saves in the folder
@@ -1540,7 +1540,7 @@ About 61 sub-areas. Work packages use S (a day or less), M (a few days), L (a we
 - **Code:** `Components/AutoSave`, `Core/SaveFramework`, `Core/GameSaves`
 - **API:** `AutoSave` fields (`interval`, `slot`, `label`, `saveOnStart`), `SaveNow()`; `SaveConfig` fields (`autosaveInterval`, `autosaveOnSceneStart`, `autosaveSlots`); `SaveManager::QuickSave`, `AutoSave`, `CheckpointManager::Reach`, `RestoreLast`, `CheckpointTrigger`
 - **Editor:** Add Component > Auto Save, Save Settings (autosave)
-- **Docs:** `docs/engine/save_games.md`; `docs/engine/save_framework.md`
+- **Docs:** `docs/engine/save_games.md`; `docs/engine/save_games.md`
 - **Tests:** `save_game`; `save_framework`; `save_nocode`
 - **Status:** Partial - `AutoSave` and the framework's autosave ring (set up with Save Settings) work without code; quick save and checkpoints are on main (#572) but a `CheckpointTrigger` cannot be saved in a scene file yet.
 - **Exists today:** `AutoSave` (interval 120 s by default) saving through `SaveGame`, and `SaveConfig` saving through the framework's ring. `CheckpointTrigger` still has to be attached from code (`Saveable` now has a scene-file record).
@@ -1568,7 +1568,7 @@ About 61 sub-areas. Work packages use S (a day or less), M (a few days), L (a we
 - **Code:** `Core/SaveGame`, `Inventory/InventoryPersistence`, `Core/SaveFrameworkScene`, `Core/SaveFramework`, `Core/TimeSnapshot`, `Core/Countdown`, `Scene/SceneSerializer`
 - **API:** `SaveGame::Save`; `Saveable` (`saveId`, `properties`, `saveVariables`, `saveSceneVariables`), `SaveSystem::CaptureScene`, `ApplyScene`
 - **Editor:** Add Component > Saveable (keep when saving); Inspector: save id, New id, what to save, property picker
-- **Docs:** `docs/engine/save_games.md`; `docs/engine/save_framework.md`
+- **Docs:** `docs/engine/save_games.md`; `docs/engine/save_games.md`
 - **Tests:** `save_game`, `inventory_persist_craft`; `save_scene`, `save_nocode`, `time_snapshot`, `countdown`
 - **Status:** Works - whole-scene saves are shipped and tested; the selective saveable-objects model has a scene-file record, an Inspector and a no-code route (tests `save_scene`, `save_nocode`).
 - **Exists today:** Whole-scene save replaces the scene on load, so scripts restart and saves tie to one scene layout. Streamed worlds (27.4) are not covered.
@@ -1593,7 +1593,7 @@ About 61 sub-areas. Work packages use S (a day or less), M (a few days), L (a we
 - **Code:** `Core/SaveGame`, `Core/SaveData`, `Core/SaveFramework`
 - **API:** `SaveGame::SetMigration`; `SaveStore::SetDataVersion`, `RegisterMigration`, `MigrationPath`, `SaveSlotInfo::incompatible`
 - **Editor:** none
-- **Docs:** `docs/engine/save_games.md`; `docs/engine/save_framework.md`
+- **Docs:** `docs/engine/save_games.md`; `docs/engine/save_games.md`
 - **Tests:** `durable_saves`, `save_game`; `save_framework`; `save_nocode`
 - **Status:** Works - header, checksum, newer-version refusal and migration hook are in the shipped code and tested; the no-code calls (`game_load`, Continue) report a newer-version, damaged or missing slot as a `[save]` Console error.
 - **Exists today:** Everything in Parts 35.4.1-35.4.3.

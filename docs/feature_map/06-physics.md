@@ -2,7 +2,7 @@
 
 Rigid bodies, colliders, joints, scene queries and the debug view in 2D and 3D, plus destructibles and projectiles. Code is
 `engine/include/okay/Physics/*` (11 headers, about 2.7k lines in `engine/src/Physics`) and two joint headers in `Components/`.
-No dedicated physics doc exists (only the layer matrix in `docs/gameplay/layers_tags_cameras.md`). Ragdolls are 5.8, controllers are area 4.
+No dedicated physics doc exists (only the layer matrix in `docs/gameplay/cameras.md`). Ragdolls are 5.8, controllers are area 4.
 Since #575 (scene hierarchy) both step functions skip bodies under an inactive parent (`ActiveInHierarchy`, 1.17).
 
 ## 6. Physics
@@ -36,13 +36,13 @@ Since #575 (scene hierarchy) both step functions skip bodies under an inactive p
   - 6.2.6 Improved solver - `Physics/Physics3DImproved.inl`, `Physics/ContactSolver`, `Physics/BoxManifold`, `Physics/PhysicsQuality` - the scene's Physics quality (Classic = the old single-pass step, Improved = iterated contacts with warm starting, box face contacts, group sleeping, swept fast bodies, rolling resistance, real inertia, compound bodies); saved as `physicsquality`; 3D only (the 2D step has no Improved solver yet)
   - 6.2.7 Physics materials - `Physics/PhysicsMaterial`, `Physics/Collider3D`, `Physics/Collider2D` - per-collider friction and bounciness (-1 = use the Rigidbody's) with a combine rule (Default, Average, Minimum, Multiply, Maximum); saved as `physmat3d` / `physmat2d`
   - 6.2.8 Debris - `Physics/DebrisPool`, `Components/DebrisEmitter` - capped, pooled, self-expiring small rigid chunks for digging and breaking games; `DebrisEmitter` is the Add Component version that throws bursts
-  - 6.2.9 Physics Material asset - `Physics/PhysicsMaterialAsset`, `Components/PhysicsSurface` - a named material (still and sliding grip, bounciness, combine modes, density, rolling, damping, slope grip, sound and effect names, surface name): 14 built-in presets, `.okayphysmat` text files, a Physics Surface component that applies it to the colliders on an object (and children), mass from density, change at run time, the material pair on every contact (`Collision3D::surface`); see `docs/physics/physics_materials.md`
-  - 6.2.10 Physics toys - `Components/PhysicsToys`, `Components/PhysicsToyPresets`, `Physics/PhysicsToys.cpp` - Conveyor Belt, Force Field (attract, repel, well, whirlpool), Gravity Zone, Turntable, Moving Platform, Explosion, Breakable and code presets (pendulum, rope, wrecking ball, dominoes, door, surface patches); GameObject > 3D Object > Physics Toys; see `docs/physics/physics_toys.md`
+  - 6.2.9 Physics Material asset - `Physics/PhysicsMaterialAsset`, `Components/PhysicsSurface` - a named material (still and sliding grip, bounciness, combine modes, density, rolling, damping, slope grip, sound and effect names, surface name): 14 built-in presets, `.okayphysmat` text files, a Physics Surface component that applies it to the colliders on an object (and children), mass from density, change at run time, the material pair on every contact (`Collision3D::surface`); see `docs/physics/physics.md`
+  - 6.2.10 Physics toys - `Components/PhysicsToys`, `Components/PhysicsToyPresets`, `Physics/PhysicsToys.cpp` - Conveyor Belt, Force Field (attract, repel, well, whirlpool), Gravity Zone, Turntable, Moving Platform, Explosion, Breakable and code presets (pendulum, rope, wrecking ball, dominoes, door, surface patches); GameObject > 3D Object > Physics Toys; see `docs/physics/physics.md`
   - 6.2.4 Fit to object - `Physics/ColliderFit` - `FitColliders` sizes colliders to the SpriteRenderer or MeshRenderer bounds; `autoFit` refits each frame
 - **Code:** `Physics/Physics3D`, `Physics/Physics3DImproved.inl`, `Physics/ContactSolver`, `Physics/BoxManifold`, `Physics/PhysicsMaterial`, `Physics/PhysicsQuality`, `Physics/DebrisPool`, `Components/DebrisEmitter`, `Physics/Rigidbody3D`, `Physics/Collider3D`, `Physics/MeshCollider3D`, `Physics/TriMesh`, `Physics/ConvexContact`, `Physics/ColliderFit`, `editor/main.cpp` (Add Component and Inspector sections)
 - **API:** `Rigidbody3D`, `BoxCollider3D`, `SphereCollider3D`, `CapsuleCollider3D`, `CylinderCollider3D`, `MeshCollider3D`, `FitColliders`, `scene.physics3D()`, `OnCollisionEnter3D`, `OnTriggerEnter3D`, `Collision3D`
 - **Editor:** Add Component > Physics 3D rows (and DebrisEmitter), Project Settings > Physics > Physics quality (Classic / Improved, solver iterations, catch fast bodies), a Physics Material section on every collider, Rolling Resistance and Use Child Colliders on the Rigidbody 3D, collider inspectors with a Fit to Object button, Mesh Collider inspector (triangle and BVH counts, convex-hull line when the body is dynamic, Rebuild), Scene view collider gizmos (the mesh collider draws its triangle edges, or the hull while the body is dynamic)
-- **Docs:** `docs/physics/physics.md`, `docs/physics/physics_plan.md`, `docs/physics/physics_upgrade.md`, `docs/physics/physics_materials.md`, `docs/physics/physics_toys.md`, `docs/try_it.md` (7u, pu1, pm1, pt1)
+- **Docs:** `docs/physics/physics.md`, `docs/physics/physics.md`, `docs/physics/physics.md`, `docs/physics/physics.md`, `docs/physics/physics.md`, `docs/try_it.md` (7u, pu1, pm1, pt1)
 - **Tests:** `physics3d`, `meshcollider3d`, `angular3d`, `collider_fit`, `physics_nan`, `physics_callback_removal`, `physics_dispatch_removal`, `physics_deep_manifold`, `physics_deep_solver`, `physics_deep_bugs`, `physics_deep_improved`, `physics_deep_save`, `physics_deep_more`, `physics_upgrade`, `physics_materials`, `physics_toys`, `physics_examples`
 - **Status:** Works - Physics3D::Step, Rigidbody3D and the collider headers read; sleeping, terrain follow and spin covered by the tests above
 - **Open:** the header says bodies must be top-level (un-parented) Transforms; the navmesh bake still treats a MeshCollider3D as its bounds box; Improved is 3D only and off for old scenes; a dense sleeping pile still costs the contact test each step
@@ -134,7 +134,7 @@ Since #575 (scene hierarchy) both step functions skip bodies under an inactive p
 - **Code:** `Physics/Physics2D`, `Physics/Physics3D`, `Physics/Collider2D`, `Physics/Collider3D`, `Scene/Layers`
 - **API:** `scene.SetLayerCollision`, `scene.LayerCollisionMask`, `scene.ResetLayerCollisions`, `Collider3D::layer`, `triggerTag`, `triggerLayers`
 - **Editor:** collider inspectors (layer, trigger tag); layer matrix editing is in the scene settings (area 1.3)
-- **Docs:** `docs/gameplay/layers_tags_cameras.md`
+- **Docs:** `docs/gameplay/cameras.md`
 - **Tests:** `layers`, `physics_queries_ext`
 - **Status:** Works - matrix code in both Step functions and the collider fields read; covered by `layers` and the trigger tag tests in `physics_queries_ext`
 - **Open:** the matrix itself, its presets and its scene-file record are owned by area 1.3 (#570, #586); this page only covers how the solvers use it

@@ -5,7 +5,7 @@ row: | 1 | Vehicle: get in a car and drive | New Project template **Vehicle (get
 ## 1. Vehicle: get in and drive
 
 **What it is.** A car with a driver seat and a passenger seat. You walk up, press E, and the car listens to your keys.
-Code: `VehicleSeat` and `VehicleController` (`docs/gameplay/vehicle_controller.md`).
+Code: `VehicleSeat` and `VehicleController` (`docs/gameplay/vehicles.md`).
 
 **Steps (template).**
 1. Open the editor (`Tools\OkayEngine.exe`) or the launcher's Create page. Choose **New Project**, pick the template
@@ -28,7 +28,7 @@ Code: `VehicleSeat` and `VehicleController` (`docs/gameplay/vehicle_controller.m
 * Walk to the other door (+X side), the prompt says **Ride**. Press **E**: you sit in the passenger seat and are carried
   along, but the car does not drive.
 * **First person:** press **V** before getting in. After **E** the camera sits at your eyes in the car.
-* **Moving a seat to another car** (a bug fix, see `docs/gameplay/vehicle_controller.md`): add a second car, press Play, sit in
+* **Moving a seat to another car** (a bug fix, see `docs/gameplay/vehicles.md`): add a second car, press Play, sit in
   the car, drag the seat object onto the other car in the Hierarchy, press **E**. The first car must not drive by itself.
 
 **How you know it worked.** Before you press E the car does not move when you press W. After E, W moves the car and
@@ -38,7 +38,7 @@ the prompt is gone. After the second E you are standing outside again and W move
 a player with a first or third person controller). To try it, select `Player`, remove the Third Person Controller and
 add a First Person Controller in the Inspector. Unverified in the editor.
 
-**Known rough.** From `docs/gameplay/vehicle_controller.md`: hands do not hold the wheel (generic chair sit); the car is a stack
+**Known rough.** From `docs/gameplay/vehicles.md`: hands do not hold the wheel (generic chair sit); the car is a stack
 of boxes; first person has no mouse look from the seat; the look was only checked in software-renderer screenshots; multiplayer does not replicate seats; no script or visual
 script node for enter and exit yet; a scene saved while someone sits stores the person standing free.
 

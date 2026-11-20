@@ -344,7 +344,7 @@ Rendering defaults to the modern look — tweak everything in the
   shadows (walls block lamps), soft-filtered with rotated Poisson taps. Per
   light: Cast Shadows / Strength / Bias; per mesh: Cast / Receive Shadows. Tune
   softness, distance, cascades and resolution, or bake lighting for zero
-  runtime cost. See [lighting.md](../rendering/lighting.md).
+  runtime cost. See [lighting.md](../rendering/lighting.md#lighting-and-shadows).
 - **Bloom** — bright pixels glow: threshold + intensity sliders; drive it
   with emissive materials (a lamp, neon strip, laser). Works on the GPU
   renderer and the software fallback.
@@ -934,7 +934,7 @@ step, a press that changes nothing is none, and a field that already made its ow
 ### Prefab instances in the Inspector and Hierarchy
 
 Everything below is wired to `PrefabTools` (nothing is a second prefab system); the full list is in
-[prefab_system.md](../engine/prefab_system.md#in-the-editor).
+[prefab_system.md](../engine/prefabs.md#in-the-editor).
 - **Header.** An object in a prefab instance shows **Prefab: <name>** with **Open**, **Select Asset**, **Revert All**,
   **Apply All**, **Create Variant**, **Update All** and **Unpack** (an object inside the instance also has **Select Instance
   Root**). Revert All and Apply All are off, with a tooltip, when nothing differs.

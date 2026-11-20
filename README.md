@@ -37,8 +37,8 @@ Details: [docs/platform/platform_layer.md](docs/platform/platform_layer.md) and
 - **Editor:** dockable panels, prefabs, materials, undo, autosave recovery and
   plugins. [editor](docs/editor/editor.md)
 - **Rendering:** 2D sprites, 3D meshes, lighting and shadows, post-processing,
-  sky, fog and weather, terrain and water. [rendering](docs/rendering/rendering.md),
-  [lighting](docs/rendering/lighting.md)
+  sky, fog and weather, terrain and water. [rendering](docs/rendering/rendering.md#rendering-post-processing-sky-fog-and-weather),
+  [lighting](docs/rendering/lighting.md#lighting-and-shadows)
 - **Models:** glTF and OBJ are read by our own code. Our own STL, PLY, FBX,
   COLLADA, 3DS, BVH and Blender readers exist but are off by default until they
   are verified; outside libraries read those formats for now.
@@ -47,7 +47,7 @@ Details: [docs/platform/platform_layer.md](docs/platform/platform_layer.md) and
   person, an Animator with state machines, inverse kinematics and ragdolls.
   [animation](docs/gameplay/animation.md), [ik](docs/gameplay/ik.md)
 - **Scripting:** OkayScript, a small C#-style language, and a visual scripting
-  graph. [scripting](docs/scripting/scripting.md),
+  graph. [scripting](docs/scripting/scripting.md#okayscript-1),
   [visual scripting](docs/scripting/visual_scripting.md)
 - **Gameplay:** navigation, behavior trees, dialogue and quests, cutscenes,
   save games, inventory, crafting, build mode, hinge limits, and an editor for
@@ -55,14 +55,14 @@ Details: [docs/platform/platform_layer.md](docs/platform/platform_layer.md) and
   [all systems](docs/README.md#gameplay-systems)
 - **UI:** a canvas with the usual widgets, frames that turn and scale, a
   keyboard and gamepad focus ring, on-screen touch controls, HTML/CSS-style
-  documents, in-world UI and localization. [game UI](docs/ui/game_ui.md)
+  documents, in-world UI and localization. [game UI](docs/ui/in_game_ui.md#game-ui-that-looks-like-the-launcher)
 - **Audio:** a mixer, WAV, OGG and MP3, a music player, and optional 3D echo,
   pitch that follows speed, and muffling with walls and distance.
   [audio](docs/audio/audio.md)
 - **Multiplayer:** host or join over UDP with optional encryption, a relay for
   players behind routers, dedicated servers, voice, accounts, cloud saves and
-  anti-cheat. [multiplayer](docs/online/launcher-multiplayer.md),
-  [anti-cheat](docs/online/anticheat.md), [accounts](docs/online/accounts.md)
+  anti-cheat. [multiplayer](docs/online/multiplayer.md#multiplayer-in-the-launcher-steam-style),
+  [anti-cheat](docs/online/anticheat.md#anti-cheat-1), [accounts](docs/online/accounts.md)
 
 The complete list is in [docs/README.md](docs/README.md).
 
@@ -126,7 +126,7 @@ cmake --build build -j
 
 **Windows builds** are cross-compiled from Linux with MinGW-w64:
 `./scripts/build-windows-dist.sh`. How a release is built and published is in
-[docs/release/releasing.md](docs/release/releasing.md) and [docs/release/packaging.md](docs/release/packaging.md).
+[docs/release/releasing.md](docs/release/releasing.md#releasing-an-update) and [docs/release/packaging.md](docs/release/packaging.md).
 
 Packet encryption (libsodium) is on by default. Turn it off with
 `-DOKAY_USE_SODIUM=OFF`. Steam support is optional (`-DOKAY_WITH_STEAM=ON`).

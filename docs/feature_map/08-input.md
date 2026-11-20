@@ -137,7 +137,7 @@ dead zones, up to four controllers; in 2.849.0) and #574 (remap model for a Cont
 - **Code:** `Input/Input`, `Input/InputActions`, `Input/InputRecorder`, `Input/InputDebug`, `Input/Haptics`, `Input/PlatformKeys`, `engine/src/Input/*.cpp`, `editor/InputDebugger.hpp`, `player/main.cpp`, `editor/main.cpp`, `examples/input/input_playground.okayscene`
 - **API:** `Input::FeedKeyTap`, `Input::SetTextFocused`, `InputActions::SetResponse`, `InputActions::Buffered`, `InputActions::Consume`, `InputActions::SetPerPlayer`, `InputRecorder::StartRecording`, `InputDebug::Enable`, `InputHaptics::Play`, script `action_buffered`, `action_consume`, `action_double_tap`, `action_hold`, `set_response`, `action_label`, `input_device`, `input_record`
 - **Editor:** Window > Input (live keys, mouse, controllers, actions, last events, record and replay, response curves); `examples/input/input_playground.okayscene`
-- **Docs:** `docs/engine/input.md`, `docs/engine/input_audit.md`, `docs/try_it.md` row 7x
+- **Docs:** `docs/engine/input.md`, `docs/engine/input.md`, `docs/try_it.md` row 7x
 - **Tests:** `input_deep`, `input_playground`, `input_bench`, `input_actions`, `input_keys_gamepad`
 - **Status:** Works headless - 207 checks in `input_deep`, the shipped scene run by `input_playground`; not run in a real window, with a real controller or on a real keyboard layout
 - **Open:** AZERTY physical positions (ZQSD) are not an option; the vibration strength is not on a Settings screen; no gyro; recording does not yet tie frames to the scene file and the game's random seed (46.1); the Input panel was syntax-checked but not run; the old "pressed between polls" loss is fixed only where the host forwards key events (player and editor Play)

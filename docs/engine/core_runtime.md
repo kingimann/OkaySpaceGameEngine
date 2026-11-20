@@ -1,4 +1,17 @@
-# Core runtime foundations
+# Core runtime
+
+> **What this is:** The core runtime foundations and the core audit notes.
+> **Status:** combined on 2026-11-20 from 2 older pages, one section each (listed below). Every fact was kept; text marked **Outdated** is kept for history.
+> **Last checked:** 2026-11-20, paths and links against main.
+
+## Contents
+
+- [Core runtime foundations](#core-runtime-foundations) (was `docs/core_runtime.md`)
+- [Core audit notes](#core-audit-notes) (was `docs/core_audit_notes.md`)
+
+## Core runtime foundations
+
+*Was `docs/core_runtime.md` until 2026-11-20.*
 
 Small building blocks that game and engine code can use without pulling in the
 scene or the renderer: a job system, memory arenas and pools, generational
@@ -18,7 +31,7 @@ None of them is included by `Okay.hpp`; include the header you need.
 
 Tests: `test_jobs`, `test_arena_handles`, `test_frame_pacing`.
 
-## Job system
+### Job system
 
 ```cpp
 #include "okay/Core/Jobs.hpp"
@@ -37,7 +50,7 @@ float total = jobs.ParallelReduce<float>(0, n, 0, 0.0f,
     [](float a, float b) { return a + b; });
 ```
 
-### Workers and platforms
+#### Workers and platforms
 
 `JobSystem(workers)`: `kAuto` (the default) uses one thread fewer than the CPU has,
 a number gives exactly that many, and **0 runs everything inline on the calling
@@ -52,7 +65,7 @@ The threads and locks live in `Core/Jobs.cpp` behind the private shim
 `CreateThread` on Windows (the MinGW build uses the "win32" thread model), the standard
 library elsewhere. The public header only uses atomics, `std::function` and `shared_ptr`.
 
-### Jobs, handles, errors
+#### Jobs, handles, errors
 
 `Submit` returns a `JobHandle`: `Status()` (`Pending`, `Running`, `Completed`, `Failed`,
 `Cancelled`), `IsDone()`, `Error()` (the exception message) and `Exception()`. An empty handle counts
@@ -64,14 +77,14 @@ An exception that escapes a job never ends the process: it is captured, the job 
 call it). `WaitAll` waits for every job first, then rethrows the first failure. `WaitFor(handle,
 seconds)` and `WaitIdleFor(seconds)` are the versions with a time limit; they never throw.
 
-### Dependencies
+#### Dependencies
 
 `Submit(fn, {a, b})` (or a `std::vector<JobHandle>`) starts `fn` after every dependency completed.
 A dependency that **failed or was cancelled** cancels the job too, transitively, and hands it the
 exception: `Wait` on the last job of a chain tells you what broke. Dependencies must come from the same
 system; a pending handle from another system throws `std::invalid_argument`.
 
-### Waiting helps
+#### Waiting helps
 
 `Wait`, `WaitAll`, `WaitIdle` and the end of a `ParallelFor` run other queued jobs on the waiting thread
 instead of sleeping, so a job can wait for jobs it submitted even when the pool has one thread:
@@ -86,7 +99,7 @@ jobs.Submit([&] {
 Waiting for yourself throws `std::logic_error` (it would never finish). Do not call `WaitIdle` or
 `Shutdown` from inside a job.
 
-### ParallelFor and ParallelReduce
+#### ParallelFor and ParallelReduce
 
 `ParallelFor(begin, end, grain, fn)` splits the range into chunks of `grain` indices (0 = pick from the
 range and the pool size), the calling thread works too, and the call returns when every index is
@@ -99,7 +112,7 @@ With 0 workers it is a plain serial loop with the same chunk boundaries.
 so the answer does not depend on scheduling and `reduce` only has to be associative (string
 concatenation works).
 
-### Main-thread queue
+#### Main-thread queue
 
 ```cpp
 jobs.Submit([&] {
@@ -116,7 +129,7 @@ runs the jobs that were queued when it started, so a job that posts another cann
 forever. A main-thread job that throws is recorded; the rest still run. When the main thread waits in
 `Wait`, it also runs main-thread jobs, so a worker waiting on one cannot deadlock the main thread.
 
-### Cancelling and shutting down
+#### Cancelling and shutting down
 
 `Cancel(handle)` stops a job that has not started (and everything that depends on it); it returns false once
 the job started. `CancelPending()` cancels everything not started. `Shutdown(cancelPending = false)` finishes
@@ -124,7 +137,7 @@ the job started. `CancelPending()` cancels everything not started. `Shutdown(can
 (`SetDrainOnDestroy(false)` cancels instead, which `Global()` uses at exit). A job submitted while a cancelling
 shutdown runs comes back already cancelled. What a cancelled job captured is destroyed right away.
 
-### Counters
+#### Counters
 
 ```cpp
 JobStats s = jobs.Stats();
@@ -137,7 +150,7 @@ std::string line = FormatJobStats(s);
 `JobStats` is a plain struct for the Profiler window or a debug overlay to copy; the job system does not
 write to the Profiler itself. `busyMs` is time inside job bodies summed over all threads.
 
-### Limits
+#### Limits
 
 - One shared queue protected by one lock (three priorities, plus the main-thread queue). There are no
   per-worker deques, so no work stealing; `ranHelping` is the counter to watch instead. Fine for jobs of
@@ -149,9 +162,9 @@ write to the Profiler itself. `busyMs` is time inside job bodies summed over all
   that caught its exception, TSan can print a rare report about a `delete` against a read of `what()`. It is a false
   positive of that kind; `ParallelFor` moves its exception out of the shared state to stay clear of it.
 
-## Memory
+### Memory
 
-### FrameArena
+#### FrameArena
 
 A linear allocator for per-frame scratch data: allocate freely, `Reset()` at the start of the next frame.
 
@@ -179,7 +192,7 @@ frame.Reset();                                       // everything above is gone
 
 Not thread safe; use one arena per thread.
 
-### PoolAllocator
+#### PoolAllocator
 
 ```cpp
 PoolAllocator<Bullet> bullets(/*block*/ 256, /*max live*/ 4096);
@@ -195,7 +208,7 @@ constructor that throws gives the slot back.
 
 `AllocStats` (`used`, `reserved`, `limit`, `highWater`, `live`, `allocations`, `failures`, `resets`) is shared by both.
 
-## Handles: SlotMap
+### Handles: SlotMap
 
 ```cpp
 SlotMap<Enemy> enemies;
@@ -213,7 +226,7 @@ are O(1). Erasing moves the last value into the hole, so addresses and iteration
 do not insert or erase while iterating (`EraseIf` is the safe bulk version). `Handle::Raw()` / `FromRaw()` pack it into
 a `uint64_t`, and `std::hash<Handle<T>>` exists. `SlotMap<T, Tag>` makes handles of two maps of the same `T` different types.
 
-## StringId
+### StringId
 
 ```cpp
 constexpr StringId kJump = "player.jump"_sid;          // hashed at compile time
@@ -228,7 +241,7 @@ only. When two different strings share a hash, `Intern` keeps the first, counts 
 handler set with `SetCollisionHandler` (in debug builds it prints one line when there is none). That check is on in debug
 builds and off in release builds; `SetCollisionCheck` changes it. `InternWithHash` exists to test it.
 
-## Console variables
+### Console variables
 
 Console variables already exist: see `okay/Core/Cvar.hpp` (`Cvars`, `Cvar`) and the console in
 `okay/Core/Console.hpp`. They have ranges, change callbacks, a command-line override and file persistence. A
@@ -236,7 +249,7 @@ first version of this runtime work also had a second registry with read-only, ch
 it was left out so there is one system. The flags (`Cvar::kReadOnly`, `kCheat`, `kRestartRequired`) were added to `Cvar` itself
 in core wave 6: see [core_tools.md](core_tools.md).
 
-## Frame pacing
+### Frame pacing
 
 ```cpp
 FrameTimer timer(0.1f);              // never report a frame longer than 0.1 s
@@ -258,13 +271,13 @@ while (running) {
   next one) and starts over after being more than a frame behind. `Plan(now)` is the decision without the sleep.
   In a WebGL build nothing sleeps: the browser paces the frames.
 
-## Not covered
+### Not covered
 
 - `Application` can use the limiter (`Application::Config::pacing = Pacing::Limiter`, see [loop_and_time.md](loop_and_time.md); the default is still its own sleep). No hook into the Profiler window yet: call `Time::Step`, `PumpMainThread`, `Reset` and the stats yourself.
 - Work stealing and per-worker queues (see Limits above).
 - `SlotMap` and `FrameArena` are not thread safe by design.
 
-## Audit notes (core wave 6)
+### Audit notes (core wave 6)
 
 The job system, `FrameArena`, `PoolAllocator`, `SlotMap`, `StringId`, `FrameTimer` and `FrameLimiter` were read again for crashes,
 undefined behaviour and races, and the job system's own suite (`jobs`, 9199 checks including the allocation-failure runs) was run
@@ -272,3 +285,86 @@ under ThreadSanitizer: no report, no change needed. Fixed in the neighbouring fi
 command line and state machine (see [core_tools.md](core_tools.md), "What changed (core wave 6)"). To hand an event or an
 ECS change from a worker to the main thread, use `RunOnMainThread` and `PumpMainThread`; `EventBus`, `ecs::World`,
 `SystemScheduler`, `SceneBridge`, `DataAsset::Cached`, `Cvars` and `Console` are not thread safe.
+
+## Core audit notes
+
+*Was `docs/core_audit_notes.md` until 2026-11-20.*
+
+A bug-hunting pass over the "Core & scene" area (see `FEATURE_MAP.md`, area 1):
+the ECS, the math types, Camera projection, Layers, `DataAsset`, and the input
+plumbing. Scene lifecycle, serialization, SaveGame / Prefs / Localization,
+Random / EventBus / Time / Log / Profiler and Scheduler / Tween were out of scope
+(other work was changing them).
+
+Every fix below has a failing-first test in `tests/test_core_audit.cpp` (or
+`tests/test_core_audit_input.cpp`, POSIX only: it drives a pty).
+
+### Bugs fixed
+
+| Area | Bug | Fix | Test section |
+| --- | --- | --- | --- |
+| `Quat::LookRotation` | A zero forward vector gave a bogus 180 degree rotation instead of "no turn". | Return `Identity` when forward is (almost) zero. | LookRotation |
+| `Mathf::SmoothDamp` | `dt == 0` (a paused frame) with the value already at the target set `velocity = 0 / 0` = NaN, which then poisons every later frame. Same hazard in the `Vec2` / `Vec3` overloads. | Guard the divide. | Mathf edge cases |
+| `Mathf::Repeat` / `PingPong` | `length == 0` returned NaN. | An empty range returns 0. | Mathf edge cases |
+| `Vec3::Slerp` | Opposite vectors: `sin(theta) ~ 0` made the result explode (magnitude 1e7 or NaN). | Swing through a perpendicular axis near 180 degrees. | Vec3::Slerp |
+| `ecs::World::add` | Adding to a destroyed entity or to `Null` stored a component for a dead id; every query then visited the zombie. | `add` on a non-live entity stores nothing (returns a scratch copy). | ECS |
+| `ecs::World::ensure` | `ensure(Null)` made the null id alive; `ensure(0xFFFFFFFF)` wrapped the id counter so the next `create()` returned `Null`. Both ids can come off the network. | Reject `Null` and the top id. | ECS |
+| `ecs::World::each` | Destroying / removing the entity a callback was given swapped the last entry into the slot and the loop skipped it. | Re-visit the slot when the entity under it changed. (Removing an earlier-visited entity is still unsupported; see below.) | ECS |
+| `ecs::NetWorld::apply` | A damaged or hostile snapshot could claim billions of entities / components: the count drove a `reserve` of gigabytes and a multi-billion iteration loop, and the truncated tail created default-constructed components on entity 0 (`Null`). | Validate every count against the bytes left before touching the world; stop on a bad block; never apply `Null`. | NetWorld::apply |
+| `Camera::ProjectionMatrix` | Aspect 0 (a minimised window), a negative or NaN aspect gave an inf / NaN matrix; `WorldToScreen`, `ScreenPointToRay` and the renderers then produced NaN. Clip planes with `near <= 0` or `far <= near` were passed straight into the matrix. | Fall back to the last good aspect; clamp near > 0 and far > near. | Camera |
+| `Layers::MaskFromList` | Layer names were case sensitive, so `"default"` or `"water, ui"` silently matched nothing and the mask became "every layer". | Case-insensitive match. | Layers |
+| `DataAsset::Load` | A failed load (missing file) had already cleared the fields. The base-dir fallback concatenated without a separator (`"assets" + "x.okaydata"`). | Clear only after the file opens; join with `/`. | DataAsset |
+| `Input::EndSession` | `fcntl(STDIN_FILENO, g_savedFlags, 0)` had its arguments in the wrong order, so the terminal stayed `O_NONBLOCK` after the game exited (the shell then misbehaved). | `fcntl(fd, F_SETFL, flags)`. | `test_core_audit_input` |
+| `Input::MouseDelta` | The first `FeedMouse` reported the cursor's absolute position as a delta, so a mouse-look camera jumped on frame one. | The first sample has no delta. | `test_core_audit_input` |
+| `InputActions` persistence | Bindings are saved as `a;b;c` and four-key directions as `keys:w,s,a,d`. A player who rebound an action to `;` or `,` (or `%`) got a corrupt string: the binding was dropped on the next load. | Escape those three keys as `%3b` `%2c` `%25` when writing, decode when parsing (the old raw form still parses). | Input bindings |
+
+Looked at and found fine (tests added where cheap): `Quat::LookRotation` for
+straight up / down, the Euler <-> quaternion round trip including gimbal lock,
+`Quat::Slerp` unit length, every `Easing` endpoint, `Mat4::Inverse`, `Camera`
+ray / unproject math, `DataPack` encode / decode.
+
+### Not fixed (seen, not demonstrated or out of scope)
+
+- (Fixed, see `docs/engine/ecs.md`: `each` under mutation, command buffer, O(n) `NetWorld::apply`, delta snapshots.)
+- `Application::Run` has no RAII around the terminal session: an exception from a script leaves the terminal in raw mode. It also ignores `Game::QuitRequested()`.
+- `Camera::Awake` makes any `main` camera the scene's main camera regardless of `depth`; the doc says the highest depth wins, which `Scene::ResolveMainCamera` does later (Scene.cpp was out of scope here).
+- `DataAsset::Cached` keeps a failed load forever (a file created later is never picked up), and `Save` writes multi-line values that `Load` reads back as extra fields.
+- `Input::KeyFromName("F1")` falls back to `'f'`; there are no function keys, arrows have synthetic codes below 5, and the key space is a single `char` (no keypad, no non-Latin keys, no left / right modifiers).
+- `Bounds::Encapsulate` on a default `Bounds` grows from the origin, not from the first point.
+- `SceneBridge` keeps raw `GameObject*`; if something else destroys the object the bridge still dereferences it on the next `sync`.
+
+### Missing engine features, most useful first
+
+1. **Physical key codes and rebindable function / modifier keys.** The key layer is one `char`: no F1-F12, no left / right Shift / Ctrl / Alt, no keypad, no keyboard-layout-independent (scancode) bindings. Rebinding UIs need them.
+2. **Input contexts / action maps** (gameplay, menu, vehicle) with a stack, and consume-on-use so a menu eats "Jump". `GameInput` blocks are a coarse substitute.
+3. **Gamepad dead zones and response curves** per stick in the Input layer, plus device ids for local multiplayer: `Input` exposes one pad and passes the raw axis through (the runtime may filter before `FeedGamepad`; not checked).
+4. **ECS command buffer** (deferred create / destroy / add / remove during iteration), plus queries with `Without<>` and change detection. Needed to make systems safe.
+5. **ECS delta snapshots** for `NetWorld` (only changed components, with a sequence number and ack), and a checksum on packets.
+6. **Resource / asset manager with handles**: a single `Assets::Load<T>(path)` with reference counting, async load, hot reload, and a normalized virtual path (`assets://`) instead of `DataAsset::BaseDir` plus ad-hoc string joins. The engine has no central asset registry; paths are resolved in each loader.
+7. **Camera**: a camera stack with per-camera render targets and priorities, and a multi-camera `ResolveMainCamera` that honours `depth` live.
+8. **Math**: a public `Mat4::Decompose` (TRS), `Quat::ToAngleAxis`, `Vec3::OrthoNormalize`, general `Plane` / `Ray` types with `Bounds::IntersectRay` in the Math headers (a frustum lives in `Render/Culling.hpp`), and double-precision variants for large worlds. (Checked by header search only.)
+9. **Layers**: a layer collision matrix as a project setting (today a mask is built per query) and named tags with an editor list (tags are free strings). (Engine side done in the scene graph wave: matrix presets, layer names and the tag list persisted by `ProjectLists`; see `layers_tags_cameras.md`. The editor is not wired yet.)
+
+### Scene graph audit (feature map 1.3)
+
+The scene, hierarchy and transform code were read again for crashes, wrong answers and save / load
+gaps. Every fix has a test (`deep_hierarchy`, `transform_graph`, `scene_graph_audit`, `scene_spawn`,
+`mover_spinner_lifetime`, `layers_tags_project`). The table with what was fixed and what was added is
+at the end of `scene_hierarchy_search.md` ("What changed: scene graph audit").
+
+Looked at and found fine: the world-matrix cache (it follows reparenting at any depth, and
+`WorldVersion` moves with the pose only), `SetParent` keeping position and rotation exactly under
+rotated, non-uniformly scaled parents, instance ids (never reused, unique across clones and loads),
+guid repair on load, delayed destroy, add / remove of components while `Update` iterates (slots are
+nulled, never erased), mass `Destroy` of 60000 children (0.7 s).
+
+Not fixed (seen):
+
+- (Fixed in the fourth pass, see `scene_hierarchy_search.md` "What changed: scene graph, fourth pass":
+  `Clear()` / `LoadFromFile` / `Deserialize` from inside a callback are queued to the end of the frame;
+  destroying a huge parent or a deep chain is linear; component order that was arranged on purpose is saved in
+  an optional `comporder` record. In the fifth pass the order of plain `AddComponent` calls is saved too, for the objects
+  whose order the loader would not reproduce; see `scene_serializer.md`.)
+- `Instantiate` copies only what the serializer writes: a plain C++ `Behaviour` subclass without a
+  serializer entry is not cloned. Every saved component type keeps each instance.
+- `FindByGuid` scans the objects; fine for a handful of lookups, not for one per object.

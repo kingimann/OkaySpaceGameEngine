@@ -530,7 +530,7 @@ static void CompareWithUfbx() {
                 CHECK(x.tex == y.tex && x.nrm == y.nrm);
             }
         }
-        if (!clipsMayDiffer) CompareClips(su, ru, so, ro, what, isReal ? 1.5e-2 : 2e-3);   // real files: custom tangent weights are ignored (docs/content/model_readers/own_fbx_reader.md)
+        if (!clipsMayDiffer) CompareClips(su, ru, so, ro, what, isReal ? 1.5e-2 : 2e-3);   // real files: custom tangent weights are ignored (docs/content/model_readers.md)
 
         // skinned vertex data: weights and inverse binds
         for (const auto& up : su.Objects()) {

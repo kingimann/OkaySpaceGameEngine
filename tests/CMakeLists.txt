@@ -1166,7 +1166,7 @@ add_executable(test_vehicle_world test_vehicle_world.cpp)
 target_link_libraries(test_vehicle_world PRIVATE okay::engine)
 target_compile_definitions(test_vehicle_world PRIVATE OKAY_SOURCE_DIR="${PROJECT_SOURCE_DIR}")
 add_test(NAME vehicle_world COMMAND test_vehicle_world)
-# Water surface (Gerstner-style waves), buoyancy, the boat and the Boat Lake example (docs/rendering/water_boat.md).
+# Water surface (Gerstner-style waves), buoyancy, the boat and the Boat Lake example (docs/rendering/terrain_water.md).
 add_executable(test_boat test_boat.cpp)
 target_link_libraries(test_boat PRIVATE okay::engine)
 target_compile_definitions(test_boat PRIVATE OKAY_SOURCE_DIR="${PROJECT_SOURCE_DIR}")
@@ -1291,7 +1291,7 @@ add_executable(test_voxel_dig test_voxel_dig.cpp)
 target_link_libraries(test_voxel_dig PRIVATE okay::engine)
 add_test(NAME voxel_dig COMMAND test_voxel_dig)
 
-# Voxel terrain edit path (docs/rendering/voxel_edit_perf.md): the surface after any edit equals a full rebuild, the faster marching-cubes
+# Voxel terrain edit path (docs/rendering/terrain_water.md): the surface after any edit equals a full rebuild, the faster marching-cubes
 # loop equals the original bit for bit, the running game draws the terrain in chunk objects that look like one big mesh, the
 # brushes and the local floater cleanup do what they always did, and bad brush numbers no longer write NaN into the field.
 add_executable(test_voxel_edit test_voxel_edit.cpp)
@@ -1325,7 +1325,7 @@ add_test(NAME voxel_chunks COMMAND test_voxel_chunks)
 add_executable(test_mesh_hash test_mesh_hash.cpp)
 target_link_libraries(test_mesh_hash PRIVATE okay::engine)
 add_test(NAME mesh_hash COMMAND test_mesh_hash)
-# Terrain and Water rebuilt every vertex normal through a std::map weld (docs/rendering/terrain_audit.md): same normals, far faster.
+# Terrain and Water rebuilt every vertex normal through a std::map weld (docs/rendering/terrain_water.md): same normals, far faster.
 add_executable(test_terrain_water_speed test_terrain_water_speed.cpp)
 target_link_libraries(test_terrain_water_speed PRIVATE okay::engine)
 add_test(NAME terrain_water_speed COMMAND test_terrain_water_speed)
@@ -1334,12 +1334,12 @@ add_executable(test_voxel_examples test_voxel_examples.cpp)
 target_link_libraries(test_voxel_examples PRIVATE okay::engine)
 target_compile_definitions(test_voxel_examples PRIVATE OKAY_SOURCE_DIR="${PROJECT_SOURCE_DIR}")
 add_test(NAME voxel_examples COMMAND test_voxel_examples)
-# Bugs the terrain audit proved (docs/rendering/terrain_audit.md): the heightmap digger ignored open bags and the main camera, and a
+# Bugs the terrain audit proved (docs/rendering/terrain_water.md): the heightmap digger ignored open bags and the main camera, and a
 # World Streamer threw away a dug voxel cell when it unloaded it.
 add_executable(test_terrain_audit test_terrain_audit.cpp)
 target_link_libraries(test_terrain_audit PRIVATE okay::engine)
 add_test(NAME terrain_audit COMMAND test_terrain_audit)
-# Not a test: prints per-frame numbers for digging in a voxel terrain (docs/rendering/voxel_edit_perf.md). Built, never run by ctest.
+# Not a test: prints per-frame numbers for digging in a voxel terrain (docs/rendering/terrain_water.md). Built, never run by ctest.
 add_executable(bench_voxel_edit bench_voxel_edit.cpp)
 target_link_libraries(bench_voxel_edit PRIVATE okay::engine)
 add_executable(bench_voxel_real bench_voxel_real.cpp)
@@ -1448,7 +1448,7 @@ add_executable(test_physics_joints test_physics_joints.cpp)
 target_link_libraries(test_physics_joints PRIVATE okay::engine)
 add_test(NAME physics_joints COMMAND test_physics_joints)
 
-# Physics audit (docs/physics/physics_plan.md): box contact points, the iterated solver on its own, the bugs the audit found
+# Physics audit (docs/physics/physics.md): box contact points, the iterated solver on its own, the bugs the audit found
 # (both physics qualities), the Improved quality, and how its settings are saved.
 add_executable(test_physics_deep_manifold test_physics_deep_manifold.cpp)
 target_link_libraries(test_physics_deep_manifold PRIVATE okay::engine)
@@ -2166,7 +2166,7 @@ target_include_directories(test_launcher_versions PRIVATE ${PROJECT_SOURCE_DIR}/
 target_link_libraries(test_launcher_versions PRIVATE Threads::Threads okay::crypto)   # okay::crypto: shared/AntiCheatCrypto.hpp (signed versions.json)
 add_test(NAME launcher_versions COMMAND test_launcher_versions)
 
-# The same download through our own HTTP client (docs/platform/own_http_readiness.md): only with -DOKAY_OWN_HTTP=ON, loopback server, no network.
+# The same download through our own HTTP client (docs/platform/own_http.md): only with -DOKAY_OWN_HTTP=ON, loopback server, no network.
 if(OKAY_OWN_HTTP AND UNIX AND NOT APPLE)
     add_executable(test_launcher_download_own test_launcher_download_own.cpp
         ${PROJECT_SOURCE_DIR}/launcher/VersionsManager.cpp ${PROJECT_SOURCE_DIR}/launcher/VersionsNet.cpp)
@@ -2529,7 +2529,7 @@ add_executable(test_guided_environment test_guided_environment.cpp)
 target_link_libraries(test_guided_environment PRIVATE okay::engine)
 add_test(NAME guided_environment COMMAND test_guided_environment)
 
-# Modeling "more": per-face material slots, dissolve fixes (docs/editor/modeling_audit.md)
+# Modeling "more": per-face material slots, dissolve fixes (docs/editor/modeling.md)
 add_executable(test_modeling_more test_modeling_more.cpp)
 target_link_libraries(test_modeling_more PRIVATE okay::engine)
 add_test(NAME modeling_more COMMAND test_modeling_more)
@@ -2736,7 +2736,7 @@ add_test(NAME input_keys_gamepad COMMAND test_input_keys_gamepad)
 
 # Input audit, end to end and headless: the bugs found (fast taps, typing moving the player, layouts without Latin letters,
 # rebinding Move), chords, wheel bindings, response curves, buffering, per-player actions, glyph families, recording and replay,
-# the debugger model, and the fast evaluation path against the old one (docs/engine/input_audit.md)
+# the debugger model, and the fast evaluation path against the old one (docs/engine/input.md)
 add_executable(test_input_deep test_input_deep.cpp)
 target_link_libraries(test_input_deep PRIVATE okay::engine)
 add_test(NAME input_deep COMMAND test_input_deep)
@@ -2947,7 +2947,7 @@ add_test(NAME core_console COMMAND test_core_console)
 add_executable(test_core_utils_audit test_core_utils_audit.cpp)
 target_link_libraries(test_core_utils_audit PRIVATE okay::engine)
 add_test(NAME core_utils_audit COMMAND test_core_utils_audit)
-# Localization formatting + plural rules, typed Prefs, FixedTimestep (docs/engine/localization_prefs_time.md)
+# Localization formatting + plural rules, typed Prefs, FixedTimestep (docs/engine/localization.md)
 add_executable(test_loc_prefs_time test_loc_prefs_time.cpp)
 target_link_libraries(test_loc_prefs_time PRIVATE okay::engine)
 add_test(NAME loc_prefs_time COMMAND test_loc_prefs_time)
@@ -3172,7 +3172,7 @@ add_test(NAME random_threads COMMAND test_random_threads)
 add_executable(test_application_loop test_application_loop.cpp)
 target_link_libraries(test_application_loop PRIVATE okay::engine)
 add_test(NAME application_loop COMMAND test_application_loop)
-# ---- Prefab system wave 2 (docs/engine/prefab_system.md): nested prefabs, variants, per-field apply / revert
+# ---- Prefab system wave 2 (docs/engine/prefabs.md): nested prefabs, variants, per-field apply / revert
 add_executable(test_prefab_nested test_prefab_nested.cpp)
 target_link_libraries(test_prefab_nested PRIVATE okay::engine)
 add_test(NAME prefab_nested COMMAND test_prefab_nested)
@@ -3839,7 +3839,7 @@ target_include_directories(test_ase_hostile PRIVATE ${PROJECT_SOURCE_DIR}/engine
 target_compile_definitions(test_ase_hostile PRIVATE OKAY_SOURCE_DIR="${PROJECT_SOURCE_DIR}")
 add_test(NAME ase_hostile COMMAND test_ase_hostile WORKING_DIRECTORY ${CMAKE_CURRENT_BINARY_DIR})
 set_tests_properties(ase_hostile PROPERTIES TIMEOUT 300)
-# Our own Blender (.blend) reader (docs/content/model_readers/own_blend_reader.md): synthetic fixtures from scripts/gen_blend_fixtures.py, checked by
+# Our own Blender (.blend) reader (docs/content/model_readers.md): synthetic fixtures from scripts/gen_blend_fixtures.py, checked by
 # hand-computed values and through the import seam; the hostile test is standalone (reader + the in-tree inflate) so it can also be
 # built by hand under -fsanitize=address,undefined,float-cast-overflow; OKAY_BLEND_FUZZ_ITERS raises the sweep.
 add_executable(test_blend_reader test_blend_reader.cpp)
@@ -4151,7 +4151,7 @@ target_include_directories(test_clipboard PRIVATE ${CMAKE_SOURCE_DIR}/editor)
 target_compile_definitions(test_clipboard PRIVATE OKAY_SOURCE_DIR="${PROJECT_SOURCE_DIR}")
 add_test(NAME clipboard COMMAND test_clipboard)
 
-# Our own HTTP/1.1 client (docs/platform/own_http_client.md). The pure layer (parser, builder, redirects) is tested and
+# Our own HTTP/1.1 client (docs/platform/own_http.md). The pure layer (parser, builder, redirects) is tested and
 # fuzzed over in-memory streams; the transports (TCP, CONNECT proxy, OpenSSL loaded with dlopen) are tested against
 # local servers, `openssl s_server` and throw-away certificates from tests/scripts/gen_http_test_certs.sh.
 # Header-only: neither links the engine. The TLS cases skip (and say so) when libssl or the openssl program is missing.
@@ -4234,7 +4234,7 @@ add_executable(test_turn_interpolation test_turn_interpolation.cpp)
 target_link_libraries(test_turn_interpolation PRIVATE okay::engine)
 add_test(NAME turn_interpolation COMMAND test_turn_interpolation)
 
-# Our own Terragen (.ter) reader (docs/content/model_readers/own_terragen_reader.md): synthetic files built in memory, values worked out by hand
+# Our own Terragen (.ter) reader (docs/content/model_readers.md): synthetic files built in memory, values worked out by hand
 # from the specification, the import seam; and the hostile-input test, which builds without the engine library.
 add_executable(test_terragen_reader test_terragen_reader.cpp)
 target_link_libraries(test_terragen_reader PRIVATE okay::engine)
@@ -4257,7 +4257,7 @@ add_executable(test_obj_texture_roots test_obj_texture_roots.cpp)
 target_link_libraries(test_obj_texture_roots PRIVATE okay::engine)
 add_test(NAME obj_texture_roots COMMAND test_obj_texture_roots WORKING_DIRECTORY ${CMAKE_CURRENT_BINARY_DIR})
 
-# Batch E own readers (Q3D, RAW; SIB is not written yet, see docs/content/model_readers/own_sib_reader.md): one test per reader on SYNTHETIC hand-built fixtures
+# Batch E own readers (Q3D, RAW; SIB is not written yet, see docs/content/model_readers.md): one test per reader on SYNTHETIC hand-built fixtures
 # (tests/batche2_fixtures.hpp), a hostile-input / bit-flip test, a budget + memory test (counting operator new), and the dispatch test.
 # The reader tests build on their own from the reader sources (no engine library).
 foreach(_e_t IN ITEMS q3d_reader:Q3dReader.cpp raw_reader:RawReader.cpp)
@@ -4509,18 +4509,18 @@ foreach(vs_usage_test vs_easy_ops vs_start vs_hints vs_plain_words vs_what_happe
     endif()
 endforeach()
 
-# Camera upgrade (docs/gameplay/camera_upgrade.md): the pure camera maths over simulated frames at 30, 60 and 144 fps.
+# Camera upgrade (docs/gameplay/cameras.md): the pure camera maths over simulated frames at 30, 60 and 144 fps.
 add_executable(test_camera_math test_camera_math.cpp)
 target_link_libraries(test_camera_math PRIVATE okay::engine)
 add_test(NAME camera_math COMMAND test_camera_math)
 
-# Camera rigs over simulated frames (docs/gameplay/camera_upgrade.md): follow, zones, look ahead, groups, collision, blends, effects, 2D, saves.
+# Camera rigs over simulated frames (docs/gameplay/cameras.md): follow, zones, look ahead, groups, collision, blends, effects, 2D, saves.
 add_executable(test_camera_rig test_camera_rig.cpp)
 target_link_libraries(test_camera_rig PRIVATE okay::engine)
 target_compile_definitions(test_camera_rig PRIVATE OKAY_SOURCE_DIR="${PROJECT_SOURCE_DIR}")
 add_test(NAME camera_rig COMMAND test_camera_rig)
 
-# Water visuals: shading maths, ring grid, depth colour, foam, ripples, splashes, underwater, presets, pictures (docs/rendering/water_visuals.md).
+# Water visuals: shading maths, ring grid, depth colour, foam, ripples, splashes, underwater, presets, pictures (docs/rendering/terrain_water.md).
 add_executable(test_water_visuals test_water_visuals.cpp)
 target_link_libraries(test_water_visuals PRIVATE okay::engine)
 target_include_directories(test_water_visuals PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})
@@ -4531,7 +4531,7 @@ add_executable(water_shot water_shot.cpp)
 target_link_libraries(water_shot PRIVATE okay::engine)
 target_include_directories(water_shot PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})
 
-# Headless pictures of the lighting test scenes (a tool, not a test). docs/rendering/lighting_upgrade.md
+# Headless pictures of the lighting test scenes (a tool, not a test). docs/rendering/lighting.md
 add_executable(lighting_shot lighting_shot.cpp)
 target_link_libraries(lighting_shot PRIVATE okay::engine)
 

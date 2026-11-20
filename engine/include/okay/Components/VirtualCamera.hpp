@@ -105,7 +105,7 @@ public:
     float dollyPosition = 0.0f;  ///< normalized position along the path (0..1)
     bool  autoDolly = false;     ///< track the Follow target's nearest path point
 
-    // ---- Camera rig layer (docs/gameplay/camera_upgrade.md) ------------------------------------
+    // ---- Camera rig layer (docs/gameplay/cameras.md) ------------------------------------
     // Everything below is off or "classic" by default, so a scene saved before it
     // plays exactly as it did. The "Camera Rig" entries in Add Component turn on a
     // good set for each style.

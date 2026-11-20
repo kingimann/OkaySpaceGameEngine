@@ -1530,7 +1530,7 @@ v2.847.0
   - New docs/README.md indexes every guide by what you want to do. The README
     is shorter and its claims were checked against the code (a few wrong
     ones were fixed), and the scripting function reference is now
-    docs/scripting/scripting_reference.md (#544).
+    docs/scripting/scripting.md (#544).
   - New docs/FEATURE_MAP.md splits the engine into 19 areas, with the code,
     docs and editor window for each and what is still open (#546).
 
@@ -1656,7 +1656,7 @@ v2.840.0
   - Ragdolls: a character goes limp when it dies, pushed away from the hit,
     and hits shove the struck part and spring back. Works on the blocky
     Character and on imported humanoid rigs; revive restores the pose.
-    Scripts: ragdoll, ragdoll_push, is_ragdoll (#501; see docs/physics/ragdolls.md).
+    Scripts: ragdoll, ragdoll_push, is_ragdoll (#501; see docs/physics/physics.md).
   - Animation window: a Character clip's keys are a lane of diamonds you
     click, box-select, drag and nudge, with per-key easing, retime,
     amplify and offset, copy / paste / mirror of a pose or the clip, and

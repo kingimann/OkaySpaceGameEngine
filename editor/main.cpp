@@ -2839,7 +2839,7 @@ static bool SaveSceneTo(EditorState& ed, std::string p);              // save un
 // Run `action` now, or once the person has answered "Save changes to <scene> before <doing>?" (Save / Don't Save /
 // Cancel) when the open scene has unsaved changes. Every way of replacing the open scene goes through this.
 void RunAfterSavePrompt(EditorState& ed, const std::string& doing, std::function<void()> action, std::function<void()> onCancel = {});
-// Prefab mode (docs/engine/prefab_mode.md): open a prefab on its own, the bar above the Scene view, Save / Revert / Back.
+// Prefab mode (docs/engine/prefabs.md): open a prefab on its own, the bar above the Scene view, Save / Revert / Back.
 static void OpenPrefabMode(EditorState& ed, const std::string& path);
 static void OpenPrefabModeOf(EditorState& ed, GameObject* go);
 static void RequestLeavePrefab(EditorState& ed, int depth);
@@ -7497,7 +7497,7 @@ static GameObject* AddTilemapObject(EditorState& ed) {
     ConsoleLog("Created Tilemap");
     return go;
 }
-// Camera Rig (docs/gameplay/camera_upgrade.md): one shot with a ready-made style (0 Follow, 1 Orbit, 2 Look At) and the brain on the
+// Camera Rig (docs/gameplay/cameras.md): one shot with a ready-made style (0 Follow, 1 Orbit, 2 Look At) and the brain on the
 // main camera so the shot shows. The selected object (if it is not a camera) becomes what the rig follows or looks at.
 static GameObject* AddCameraRigObject(EditorState& ed, int style) {
     static const char* kNames[3] = {"Camera Rig (Follow)", "Camera Rig (Orbit)", "Camera Rig (Look At)"};
@@ -14048,7 +14048,7 @@ void DrawScriptDocs() {
         fapi("seq_interval(s, t) / seq_callback(s, \"fn\") / seq_insert(s, t, id)", "pauses, calls, timing");
         fapi("seq_prepend(s, id) / seq_join_callback(s, \"fn\")", "play before everything / call when the last tween starts");
         fapi("save_game([slot], [label]) / load_game([slot])", "save / load the whole game");
-        fapi("game_save(slot[, label]) / game_load(slot) / game_continue()", "save slots for Saveable objects (docs/engine/save_framework.md); load happens next frame");
+        fapi("game_save(slot[, label]) / game_load(slot) / game_continue()", "save slots for Saveable objects (docs/engine/save_games.md); load happens next frame");
         fapi("game_delete_slot(slot) / game_slot_exists(slot) / game_can_continue()", "manage and ask about save slots");
         fapi("game_slot_text(slot) / game_slot_age(slot) / game_slot_label(slot) / game_autosave()", "when a slot was saved (UTC text, seconds ago), its label, autosave ring");
         fapi("save_exists([slot]) / delete_save([slot])", "manage save slots");
@@ -14295,7 +14295,7 @@ void DrawScriptDocs() {
     }
 
     ImGui::Spacing();
-    ImGui::TextDisabled("Complete reference — mirrors docs/scripting/scripting_reference.md. Hover a name in the Script Editor for its doc.");
+    ImGui::TextDisabled("Complete reference — mirrors docs/scripting/scripting.md. Hover a name in the Script Editor for its doc.");
     if (ImGui::Button("Close")) g_showScriptDocs = false;
     ImGui::End();
 }
@@ -46013,7 +46013,7 @@ void DrawScene3D(EditorState& ed, ImDrawList* dl, ImVec2 canvasPos, ImVec2 canva
                 if (project(p, sp)) { cameraIcon(sp, col, up.get() == ed.selected()); if (up.get() != ed.selected()) iconLabel(sp, up->name.c_str(), col); }   // the selected one has its name chip
             }
 
-            // Camera Rig gizmo (docs/gameplay/camera_upgrade.md): the shot's frustum, and for the selected rig its dead zone (green) and
+            // Camera Rig gizmo (docs/gameplay/cameras.md): the shot's frustum, and for the selected rig its dead zone (green) and
             // soft zone (orange) on the picture, the wall probe from the target to the camera (green line, red where a wall
             // pulls it in), the circle round a group of targets, and the confine box. A Camera Room is a yellow box.
             if (auto* vcg = up->GetComponent<VirtualCamera>()) {

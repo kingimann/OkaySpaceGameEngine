@@ -168,7 +168,7 @@ Grok's sessions own the open animation work: PR #554 (animation integration, in 
 - **Code:** `Components/Ragdoll`
 - **API:** `Ragdoll`; scripts `ragdoll()`, `ragdoll_push(...)`, `is_ragdoll()`
 - **Editor:** Add Component > Ragdoll (death + hit reactions); Ragdoll inspector
-- **Docs:** `docs/physics/ragdolls.md`
+- **Docs:** `docs/physics/physics.md`
 - **Tests:** `ragdoll`
 - **Status:** Works - ragdoll test covers limp, landing in one piece, standing up, falling away from a hit and flinching
 - **Open:** no cloth, spring-bone or secondary motion exists (searched for cloth, jiggle, spring bone); animated hit and death clips are separate, see 5.12

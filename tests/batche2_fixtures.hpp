@@ -1,6 +1,6 @@
 #pragma once
 // SYNTHETIC fixtures for the batch-E own readers (Q3D, RAW), written by hand from the format descriptions (no real file, no
-// importer output; the Q3D layout follows the corpus files where the description is open, docs/content/model_readers/own_q3d_reader.md). Expected numbers in the tests are computed by hand from these.
+// importer output; the Q3D layout follows the corpus files where the description is open, docs/content/model_readers.md). Expected numbers in the tests are computed by hand from these.
 #include <cstdint>
 #include <cstring>
 #include <string>

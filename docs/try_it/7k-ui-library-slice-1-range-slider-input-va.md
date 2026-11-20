@@ -5,7 +5,7 @@ row: | 7k | UI library slice 1: range slider, input validation, aspect-ratio box
 ## 7k. UI library slice 1: range slider, input validation, aspect-ratio box
 
 **What it is.** A UI screen with three cards that show the parts added in slice 1 of the in-game UI component library
-([ui_library.md](ui/ui_library.md); [ui_component_audit.md](ui/ui_component_audit.md) says what already existed): a range slider
+([ui_library.md](ui/in_game_ui.md#ui-component-library); [ui_component_audit.md](ui/in_game_ui.md#in-game-ui-component-library-audit-what-exists-what-is-missing) says what already existed): a range slider
 with two handles, input boxes with rules (email, number range, password and repeat) and a 16:9 frame that keeps its shape.
 
 **Steps.**

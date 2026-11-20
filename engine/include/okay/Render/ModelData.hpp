@@ -289,7 +289,7 @@ bool ReadIqmBuffer(const std::string& bytes, const std::string& baseDir, Importe
 bool ReadCobBuffer(const std::string& bytes, const std::string& baseDir, ImportedModel& out, std::string* err = nullptr);
 /// NDO (Nendo, Izware's modeler, binary): SEAM ONLY. The header ("nendo 1.x") is recognised; the body is not read, because no
 /// public description of it exists that our rules let us follow and no real file was available. Always returns false, with a message
-/// that says which it is (not a Nendo file / Nendo file not read). See docs/content/model_readers/own_ndo_reader.md.
+/// that says which it is (not a Nendo file / Nendo file not read). See docs/content/model_readers.md.
 bool ReadNdoBuffer(const std::string& bytes, const std::string& baseDir, ImportedModel& out, std::string* err = nullptr);
 /// Terragen terrain (.ter, binary): one mesh part, a regular grid of the file's XPTS by YPTS points (SIZE + 1 on a side when
 /// those are missing), in metres (SCAL, 30 m per terrain unit by default), heights BaseHeight + Elevation * HeightScale / 65536

@@ -1,6 +1,6 @@
 #pragma once
 // SYNTHETIC fixtures for the own readers of the "Assimp gap" batch: the OGRE binary mesh (.mesh), ZAE (.zae) and the .xml
-// dispatch. Every byte is written here from the format descriptions (docs/content/model_readers/own_ogre_reader.md, docs/content/model_readers/own_zae_reader.md); no
+// dispatch. Every byte is written here from the format descriptions (docs/content/model_readers.md, docs/content/model_readers.md); no
 // file of any other project is copied.
 #include "model_fixture_util.hpp"
 #include <cstdint>

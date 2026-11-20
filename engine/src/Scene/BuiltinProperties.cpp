@@ -148,7 +148,7 @@ void RegisterCamera() {
     b.Commit();
 }
 
-// ---- Camera rigs (docs/gameplay/camera_upgrade.md) ---------------------------------------------------------
+// ---- Camera rigs (docs/gameplay/cameras.md) ---------------------------------------------------------
 
 void RegisterCameraRigs() {
     {

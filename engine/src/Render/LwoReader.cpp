@@ -1,7 +1,7 @@
 // Our own LightWave object reader (LWO2 and LWO1 / LWOB) and Modo object reader (LXOB, .lxo). Written from the public
 // LWO2 / LWOB format description and the public description of Modo's LXO format (an IFF FORM of type LXOB whose
 // geometry chunks, TAGS / LAYR / PNTS / POLS / PTAG / VMAP / VMAD, are LWO2's), no code from any other importer.
-// See docs/content/model_readers/own_lwo_reader.md.
+// See docs/content/model_readers.md.
 #include "FileOpen.hpp"
 #include "PolygonTriangulate.hpp"
 #include "ReaderCommon.hpp"
@@ -115,7 +115,7 @@ struct Layer {
 //
 // Reimplemented (rule 19a): the three projections are standard maths, but the turn start and pole rules were fitted to the old output, not derived from geometry alone (see docs/status/provenance_audit.md). The projection is placed on the
 // surface's own bounding box, which is how this reader has always placed it (the map's own TMAP centre, size and
-// rotation are not read yet; see docs/content/model_readers/own_lwo_reader.md):
+// rotation are not read yet; see docs/content/model_readers.md):
 //   - each main axis A has a fixed pair of other axes (P, Q): X -> (Z, Y), Y -> (X, Z), Z -> (X, Y);
 //   - planar: u and v are where the point sits across the box along P and along Q (0 at the low side, 1 at the high side);
 //   - cylindrical: u is the angle around A, seen from the box centre, as a fraction of a turn (where the turn starts is

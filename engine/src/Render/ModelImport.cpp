@@ -1747,7 +1747,7 @@ static GameObject* ImportFbxSceneGraph(Scene& scene, const std::string& path, bo
 }
 
 #else   // OKAY_XBOX_UWP: no ufbx in the UWP build (it is a third-party library that is being replaced). FBX is read ONLY by our own reader (okay::fbx); a file it
-        // refuses fails with a plain message instead of falling back to a library that is not there. docs/platform/xbox_uwp_thirdparty.md
+        // refuses fails with a plain message instead of falling back to a library that is not there. docs/platform/xbox_uwp.md
 namespace {   // the two helpers our own reader's code below shares with the ufbx block (which is compiled out here)
 struct FbxVert {
     float px, py, pz, nx, ny, nz, u, v;

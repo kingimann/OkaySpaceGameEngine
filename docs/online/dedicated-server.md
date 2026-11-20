@@ -97,8 +97,8 @@ okay-player --server --scene arena.okayscene --port 45000 --max-players 16 --aut
 | `--advertise` | list it in the launcher's server browser (sign in on this machine; run `docs/sql/game_servers.sql` once) |
 | `--public-addr HOST` | the address players connect to (required with `--advertise`) |
 | `--region TEXT` | region shown in the browser |
-| `--max-speed N`, `--rate-limit N`, `--kick-after N` | anti-cheat basics (see [launcher-multiplayer.md](launcher-multiplayer.md)) |
-| `--fixed-tick` | run the network on a fixed tick at `--tick`: snapshots carry the tick number and clients send their state once a tick instead of once a frame ([launcher-multiplayer.md](launcher-multiplayer.md#fixed-network-tick)) |
+| `--max-speed N`, `--rate-limit N`, `--kick-after N` | anti-cheat basics (see [launcher-multiplayer.md](multiplayer.md#multiplayer-in-the-launcher-steam-style)) |
+| `--fixed-tick` | run the network on a fixed tick at `--tick`: snapshots carry the tick number and clients send their state once a tick instead of once a frame ([launcher-multiplayer.md](multiplayer.md#fixed-network-tick)) |
 | `--authoritative` | the server moves players from their inputs, even if the scene doesn't (same as `authoritative = true` in server.cfg). The startup line says `tick 30 Hz (fixed), authoritative movement` when both are on |
 | `--report-kicks` | file every anti-cheat kick of a signed-in player for admin review, as this machine's signed-in account; nothing is banned automatically ([anticheat.md](anticheat.md#gameplay-validation)) |
 | `--host-key FILE` | sign the join key exchange with the ed25519 seed in FILE (base64url); prints the public key clients can pin ([anticheat.md](anticheat.md#network-hardening)) |
@@ -150,7 +150,7 @@ Hathora can start servers per match on demand.
 
 1. ✅ Headless server mode with Supabase sign-in on join
    - ✅ Launcher integration: join friends, invites, server browser
-     ([launcher-multiplayer.md](launcher-multiplayer.md))
+     ([launcher-multiplayer.md](multiplayer.md#multiplayer-in-the-launcher-steam-style))
 2. ✅ Server-side validation of player movement and important actions
 3. ✅ `game_servers` listing (`docs/sql/game_servers.sql`). Still to come: an `allocate_match` Edge Function (the `matches` tables are in `docs/sql/matches.sql`)
 4. ✅ Matchmaking queues: "Find match", skill/region grouping, a listed server or a player host (`docs/sql/matchmaking.sql`)

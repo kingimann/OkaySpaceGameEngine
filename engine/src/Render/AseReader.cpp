@@ -1,6 +1,6 @@
 // Our own ASE (3ds Max ASCII Scene Export) reader: meshes with materials, the node hierarchy and keyframed node
 // animation. Written from the public description of the format and from files that 3ds Max wrote. Bounds-checked, capped,
-// no recursion (blocks are tracked on a stack). See okay/Render/ModelData.hpp and docs/content/model_readers/own_ase_reader.md.
+// no recursion (blocks are tracked on a stack). See okay/Render/ModelData.hpp and docs/content/model_readers.md.
 #include "TextReaderUtil.hpp"
 #include "okay/Render/ModelData.hpp"
 #include <algorithm>

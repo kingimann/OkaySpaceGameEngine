@@ -1,5 +1,5 @@
 // okay::fbx layer 2: element tree -> Scene (nodes, meshes, skins, blend shapes,
-// materials, baked animation). See FbxReader.hpp and docs/content/model_readers/own_fbx_reader.md.
+// materials, baked animation). See FbxReader.hpp and docs/content/model_readers.md.
 // Written from the public description of the FBX object model; no third-party code.
 #include "okay/Core/SafeCast.hpp"
 #include "okay/Render/FbxReader.hpp"

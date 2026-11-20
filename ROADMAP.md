@@ -152,7 +152,7 @@ _Last updated: 2026-11-13 17:55 UTC_
 13. [x] Safer defaults and a config that fails closed.
 14. [x] Small fixes (self-unban, trusted server reports, pings, press intervals, CI key check).
 
-Follow-up on `claude/anticheat-1` (status table: `docs/online/anticheat_hardening_status.md`): a ban list file, a local audit log, a packet ceiling for every message type, a bot / macro (input regularity) detector, a cheat simulator (`--server --cheat-sim`) and a typed hostile-field fuzz test.
+Follow-up on `claude/anticheat-1` (status table: `docs/online/anticheat.md`): a ban list file, a local audit log, a packet ceiling for every message type, a bot / macro (input regularity) detector, a cheat simulator (`--server --cheat-sim`) and a typed hostile-field fuzz test.
 
 ## Waiting on Iman
 

@@ -19,7 +19,7 @@ OkayUI is the one own UI toolkit that is meant to replace Dear ImGui over time (
 - **Code:** `okayui/include/okay/UI/OkayUI.hpp`, `okayui/src/OkayUI.cpp`
 - **API:** namespace `OkayUI`: `BeginFrame(Input)`, widgets above, `Style()`, `Input` struct (mouse, buttons, typed text, key edges for Backspace, Delete, arrows, Home, End, Enter, Escape, select-all, shift, wheel, `blocked`), `GetItemRect`, `IsItemHovered`, `IsItemEdited`, `IsItemDeactivatedAfterEdit`, `CalcItemWidth`, `BeginPopupContextWindow`, `WantsTextInput`, `ResetState`, `ResizableNextWindow`, `InputText` flags
 - **Editor:** View > Rendering & Performance > Test UI draws the sample panel over the editor; Game view overlays
-- **Docs:** `docs/ui/game_ui.md` (Building blocks, Theming), `docs/scripting/scripting_reference.md` (OkayUI section)
+- **Docs:** `docs/ui/in_game_ui.md` (Building blocks, Theming), `docs/scripting/scripting.md` (OkayUI section)
 - **Tests:** `okayui` (SDL software renderer, reads pixels back: widgets, windows, launcher look), `okayui_behaviour` (synthetic mouse, keys and text: button, checkbox, sliders, input text, combo, tree, scrolling child, layout, windows, popups), `okayui_fuzz`, `okayui_itemedit` (edit tracking, item width, window context popup)
 - **Status:** Works - implemented (about 2.8k-line .cpp) and used by the player and editor; text field edits whole UTF-8 characters with caret and selection; open combos and popups block the mouse below them
 - **Open:** see "Not done" in `docs/ui/own_ui_toolkit.md` (no window z-order, no `BeginGroup`, no `##` label hiding, no public draw-list API, no cursor and content-region queries, no docking); stale header comment says "v1 scope: OkayUI::Button" while the file has about 70 widgets; header says "no STL" but the .cpp includes `<algorithm>`
@@ -38,7 +38,7 @@ OkayUI is the one own UI toolkit that is meant to replace Dear ImGui over time (
 - **Code:** `okayui/src/OkayUI.cpp`, `okayui/src/OkayUI_FontAtlas.cpp`, `okayui/src/OkayUI_FontAtlas.hpp`, `okayui/include/okay/UI/OkayUI.hpp`, `shared/OkayTheme.hpp` (the ImGui twin of the palette, editor and launcher)
 - **API:** `OkayUI::UseLauncherLook`, `SlateTheme`, `Style`, script `ui_style("launcher" | "classic")`, `ui_heading`, `ui_card_begin`, `ui_list_item`, `ui_toast`
 - **Editor:** View > Panels > Lighting > UI Font (scene UI font, not OkayUI's); the editor Game view shows the launcher look
-- **Docs:** `docs/ui/game_ui.md` (top section, Building blocks, Theming)
+- **Docs:** `docs/ui/in_game_ui.md` (top section, Building blocks, Theming)
 - **Tests:** `okayui`, `script_ui`
 - **Status:** Works - implemented; fonts need the SDL_Renderer path (the launcher look is not available on the D3D11 path)
 - **Open:** possible duplication: the Slate palette lives in three places (`OkayUI::SlateTheme`, `UITemplates::slate` for scene UI, `shared/OkayTheme.hpp` for ImGui) and must be kept in step by hand
@@ -79,7 +79,7 @@ OkayUI is the one own UI toolkit that is meant to replace Dear ImGui over time (
 - **Code:** `Scripting/ScriptUI`, `shared/OkayScriptUIBridge.hpp`, `shared/OkayTestPanel.hpp`, `player/main.cpp`, `editor/main.cpp`, `Components/DialogueRunner`
 - **API:** `okay::SetScriptUI`, `okay::ScriptUIBridge`, `okay::OkayUIScriptBridge`, `okay_testui::Panel`; script `ui_begin`, `ui_end`, `ui_button`, `ui_slider`, `ui_checkbox`, `ui_switch`, `ui_progress`, `ui_text`
 - **Editor:** View > Rendering & Performance > Test UI; plugin panels use the same `ui_*` calls (15.8)
-- **Docs:** `docs/scripting/scripting_reference.md` (OkayUI section), `docs/ui/game_ui.md`, `docs/gameplay/dialogue_quests.md`, `docs/editor/editor-plugins.md`
+- **Docs:** `docs/scripting/scripting.md` (OkayUI section), `docs/ui/in_game_ui.md`, `docs/gameplay/dialogue_quests.md`, `docs/editor/editor-plugins.md`
 - **Tests:** `script_ui` (mock bridge), `okayui`
 - **Status:** Works - bridge and panels are implemented and shared by the editor and player; only the mock-bridge path has a test
 - **Open:** the web player links only the engine per the CMake comment, so `ui_*` calls there need a bridge from somewhere else (not verified); `ui_*` calls do nothing in a host that installs no bridge; the editor's plugin windows are a third use of the same bridge (15.8)
@@ -98,7 +98,7 @@ OkayUI is the one own UI toolkit that is meant to replace Dear ImGui over time (
 - **Code:** `UI/UIRenderer`, `UI/UIPainter`, `UI/UIBatcher`, `Components/Canvas`, `Components/UIDocument`, `Scene/UITemplates`, `Scripting/ScriptUI`, `okayui/include/okay/UI/OkayUI.hpp`
 - **API:** `OkayUI::*` against `okay::ui2d::RenderSceneUI`
 - **Editor:** scene UI is edited in the UI view (12.10); OkayUI has no editor, only code
-- **Docs:** `docs/ui/game_ui.md` (the page mixes both: the launcher look and Building blocks are OkayUI, Adding UI in the editor is scene UI)
+- **Docs:** `docs/ui/in_game_ui.md` (the page mixes both: the launcher look and Building blocks are OkayUI, Adding UI in the editor is scene UI)
 - **Tests:** `okayui`, `ui_system`, `ui_renderer_golden`
 - **Status:** Works - a map of how the two relate, read from the code and docs, not a feature
 - **Open:** confusing names: header path `okay/UI/` holds both `okayui/include/okay/UI/OkayUI.hpp` and the engine's `UI/*` headers; "OkayUI markup" in `UIDocument` is not the OkayUI library; two UI systems each have a toast, tabs, tooltip, list and theme

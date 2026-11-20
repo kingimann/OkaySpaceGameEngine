@@ -34,7 +34,7 @@ player is the real runtime, with about 2,670 lines of its own. Nobody is touchin
 - **Code:** `examples/netdemo/main.cpp`, `examples/CMakeLists.txt`
 - **API:** `./build/bin/netdemo server`, `./build/bin/netdemo client 127.0.0.1`, `NetworkManager::StartServer`, `StartClient`
 - **Editor:** none
-- **Docs:** `docs/online/launcher-multiplayer.md`
+- **Docs:** `docs/online/multiplayer.md`
 - **Tests:** none (the networking tests of area 16 cover the same calls)
 - **Status:** Works - source read; same API the `net` test drives
 - **Open:** uses the avatar API rather than NetworkSync or authoritative movement, so it doesn't show prediction or lag compensation (16.2)

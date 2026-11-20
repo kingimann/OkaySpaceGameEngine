@@ -2,7 +2,7 @@
 // four items and BuildMot one envelope set; every number is checked by hand below), read through a fake object loader that records
 // the paths it is asked for. Then: parent loops, a scene that names itself or another scene, every path that climbs out of the scene's
 // folder, truncated and flipped files. No real .lws / .mot file is in this repository: the reader is unverified against real files
-// (and the radians / bank-first conventions are an assumption, docs/content/model_readers/own_lws_reader.md). Builds on its own with -DOKAY_STANDALONE_TEST.
+// (and the radians / bank-first conventions are an assumption, docs/content/model_readers.md). Builds on its own with -DOKAY_STANDALONE_TEST.
 #include "test_framework.hpp"
 #include "pmxlws_fixtures.hpp"
 #include "okay/Render/ModelData.hpp"

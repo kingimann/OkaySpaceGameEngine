@@ -811,6 +811,6 @@ It was a plain generator: two threads that drew from it raced on its two state w
 ### What changed (fifth pass)
 
 - New: `Core/TimeBudget.hpp`, `Time::FixedAlpha` / `SetFixedAlpha` / `RampSecondsLeft`, `GameLoop::Current()` / `kReplayPause` / `Options::replayPauses` / `replayRandom`, `FrameStats::AverageFps`, `FrameOverlay::FpsLabel`, `FrameRecording::HasRandom` / `RandomState` / `SetRandom` / `ClearRandom`, `FrameRecorder::SetRecordRandom` / `RecordRandom`, `TimeSnapshot::timeRamping` / `timeRampTarget` / `timeRampSecondsLeft`, `FrameLimiter::kMaxFrameSeconds`.
-- Script surface: the `Time` members and builtins above (`Script/EngineApi.cpp`, `Scripting/OkayScriptVM.cpp`), `docs/engine_api.md` regenerated, rows in `docs/scripting/scripting.md` and `docs/scripting/scripting_reference.md`.
+- Script surface: the `Time` members and builtins above (`Script/EngineApi.cpp`, `Scripting/OkayScriptVM.cpp`), `docs/engine_api.md` regenerated, rows in `docs/scripting/scripting.md` and `docs/scripting/scripting.md`.
 - Changed: `Countdown` / `Cooldown` keep their time in double, `Random` (locked `Shared()`, copy constructor and assignment that never copy the lock), `Application::Run` marks the session start, `LoopConsole` number handling, `Cooldown::Save` / `Load`, `FrameTimer::Tick`, `FrameLimiter::SetTargetFps`, `player/main.cpp` (`show_fps`).
 - Not done: Cvars for the scales, per-system random streams in `TimeSnapshot` for `ThreadLocal()` (there is no name to save them under), a frame-time overlay in the editor (hook 1).

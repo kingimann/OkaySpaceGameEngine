@@ -106,7 +106,7 @@ public:
     void SetCutsceneShake(const Vec3& pos, const Vec3& rotDeg);
     void ClearCutsceneShake();
     float ShakeTrauma() const { return m_trauma; }
-    /// Shake presets from deterministic noise (docs/gameplay/camera_upgrade.md): Impact,
+    /// Shake presets from deterministic noise (docs/gameplay/cameras.md): Impact,
     /// Explosion, Footstep or Handheld. They stack with each other and with Shake().
     /// `strength` is 0..1. Switched off for players who turned screen shake off.
     void ShakePreset(cam::ShakePreset preset, float strength = 1.0f);

@@ -78,7 +78,7 @@ Release 2.851.0 is live (tag `v2.851.0`, 2026-11-09); the 2.852.0 release PR (#5
   - 18.4.4 GitHub Release - `windows-exe` - `softprops/action-gh-release` uploads the zip, installer and the individual files the in-app updater downloads by name (`OkaySpace.exe`, `OkayEngine.exe`, `OkaySpacePlayer.exe`, `SDL2.dll`, `VERSION.txt`, symbols, `dist/CHANGELOG.txt`); tags the commit the run built
   - 18.4.5 Supabase publish step - `windows-exe` - runs `scripts/publish-supabase.sh` only when the secret `SUPABASE_SERVICE_KEY` exists (18.5)
   - 18.4.6 Linux game server job - `linux-server` - Ubuntu 22.04, libsodium on, builds `okay-player`, strips it and attaches `okay-server-linux-x64` to the release (what the editor's Server export downloads, 18.7)
-  - 18.4.7 Fast release (one dispatch, off until the owner sets `FAST_RELEASE_ENABLED=1`) - `.github/workflows/fast-release.yml`, `scripts/fast_release.py` - plans the next version from what is published (rule 12), refuses a commit without a fully green CI run on main (rule 6), assembles the notes from `dist/changelog.d/<id>.txt`, calls `release.yml` with the version stamped into the runner's `CMakeLists.txt`, then checks the release, tag, latest and the three SHA-256 in `versions.json`; `dry_run=true` only prints the plan; built and tested offline, never run on GitHub (`docs/release/fast_release.md`)
+  - 18.4.7 Fast release (one dispatch, off until the owner sets `FAST_RELEASE_ENABLED=1`) - `.github/workflows/fast-release.yml`, `scripts/fast_release.py` - plans the next version from what is published (rule 12), refuses a commit without a fully green CI run on main (rule 6), assembles the notes from `dist/changelog.d/<id>.txt`, calls `release.yml` with the version stamped into the runner's `CMakeLists.txt`, then checks the release, tag, latest and the three SHA-256 in `versions.json`; `dry_run=true` only prints the plan; built and tested offline, never run on GitHub (`docs/release/releasing.md`)
 - **Code:** `.github/workflows/release.yml`, `dist/CHANGELOG.txt`, `ROADMAP.md`
 - **API:** tags `v<major>.<minor>.<patch>`, assets `OkaySpace-Setup.exe`, `okay-server-linux-x64`, secret `SUPABASE_SERVICE_KEY`, variable `OKAY_AC_TRUSTED_KEYS`
 - **Editor:** none
@@ -203,7 +203,7 @@ Release 2.851.0 is live (tag `v2.851.0`, 2026-11-09); the 2.852.0 release PR (#5
 - **Code:** `platform/xbox_uwp/`, `scripts/xbox-check-sdk.ps1`, `scripts/build-xbox-uwp.ps1`, `editor/main.cpp`, `CMakeLists.txt` (`OKAY_BUILD_XBOX_UWP`, OFF)
 - **API:** `okay::xbox::EvaluateSdk`, `okay::xbox::GenerateManifest`, `okay::xbox::WritePackage`, `okay::xbox::appx::Pack`, `okay::xbox::appx::Verify`, `okay-appx pack|verify`
 - **Editor:** File > Build Settings > Xbox (exp.)
-- **Docs:** `docs/platform/xbox_uwp.md`, `docs/platform/xbox_uwp_audit.md`, `docs/try_it.md` (xbox-uwp)
+- **Docs:** `docs/platform/xbox_uwp.md`, `docs/platform/xbox_uwp.md`, `docs/try_it.md` (xbox-uwp)
 - **Tests:** `xbox_uwp`
 - **Status:** Basic - pure parts tested on Linux (and the package cross-checked with `unzip` and Python); everything needing Windows, UWP, signing or hardware is unverified
 - **Open:** never built or run on Windows; the packer's Windows rules (entry order, stored files and block Size, name encoding, LfhSize) unchecked; no signing code of ours by design (rule 18; SignTool signs); the app shell does not load the engine (no offline shaders in the engine, no swap-chain present path, no UWP audio, saves or window backend); okay-ms cannot compile it yet

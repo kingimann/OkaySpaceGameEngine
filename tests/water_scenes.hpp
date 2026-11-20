@@ -1,7 +1,7 @@
 #pragma once
 // The water example scenes (examples/water/) and the test scenes use the same builders, so what the owner opens is what the
 // tests rendered. Everything is made from our own blocks (cubes, spheres) and the Terrain and Water components.
-// docs/rendering/water_visuals.md.
+// docs/rendering/terrain_water.md.
 #include <Okay.hpp>
 #include "okay/Components/Water.hpp"
 #include "okay/Components/Terrain.hpp"

@@ -4573,3 +4573,9 @@ add_test(NAME save_shortcut_model COMMAND test_save_shortcut_model)
 add_executable(test_vs_pan_model test_vs_pan_model.cpp)
 target_include_directories(test_vs_pan_model PRIVATE ${CMAKE_SOURCE_DIR}/editor)
 add_test(NAME vs_pan_model COMMAND test_vs_pan_model)
+
+# The Vehicle Controller Inspector pure decisions (editor/VehicleEditorModel.hpp, UI-library free).
+add_executable(test_vehicle_editor_model test_vehicle_editor_model.cpp)
+target_include_directories(test_vehicle_editor_model PRIVATE ${CMAKE_SOURCE_DIR}/editor)
+target_link_libraries(test_vehicle_editor_model PRIVATE okay::engine)
+add_test(NAME vehicle_editor_model COMMAND test_vehicle_editor_model)

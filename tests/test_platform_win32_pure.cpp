@@ -7,6 +7,7 @@
 #include "Win32Hid.hpp"
 #include "Win32Icon.hpp"
 #include "Win32Ime.hpp"
+#include "okay/Platform/Platform.hpp"
 #include "okay/Platform/WindowLogic.hpp"
 #include <cstdio>
 #include <cstdlib>
@@ -221,6 +222,11 @@ static void Ime() {
         // Bad offsets (past the end, going backwards) are clamped and kept in order.
         CHECK(ClausesFromUtf16(u"abc", {0, 9, 2}) == std::vector<int>({0, 3, 3}));
         CHECK(ClausesFromUtf16(u"abc", {}).empty());
+        // The clause boundaries reach the application through Event::clauses (empty by default).
+        okay::platform::Event ev;
+        CHECK(ev.clauses.empty());
+        ev.type = okay::platform::EventType::TextEditing; ev.clauses = ClausesFromUtf16(u"abc", {0, 1, 3});
+        CHECK(ev.clauses == std::vector<int>({0, 1, 3}));
     }
     // Cancel: Escape in the IME ends the composition with an empty string and no result -> cleared once.
     {

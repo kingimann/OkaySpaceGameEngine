@@ -13137,6 +13137,10 @@ void DrawSceneSettings(EditorState& ed) {
         else if (pixel)             ImGui::TextDisabled("Built-in 8x8 bitmap font.");
         else if (okay::GetFont(uf)) ImGui::TextColored(ImVec4(0.5f,0.85f,0.5f,1.0f), "TTF font loaded.");
         else                        ImGui::TextColored(ImVec4(0.9f,0.5f,0.4f,1.0f), "Font not found / failed to load.");
+        static const char* kQ[] = {"Fast", "Good (default)", "Best", "Old look (for comparison)"};
+        ImGui::AlignTextToFramePadding(); ImGui::TextUnformatted("UI Quality"); ImGui::SameLine();
+        if (ImGui::Combo("##uiquality", &ed.scene().uiQuality, kQ, 4)) ed.dirty = true;
+        if (ImGui::IsItemHovered()) ImGui::SetTooltip("How carefully the in-game UI is drawn: sharper text, smooth shadows and filtered pictures. Saved with the scene; the built game matches.");
     }
 
     // Lighting presets: one click sets the sky, ambient, fog, post look and the lights (sun / moon, lamps, panel, lantern).

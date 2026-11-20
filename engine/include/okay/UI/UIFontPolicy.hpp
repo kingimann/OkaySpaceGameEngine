@@ -75,6 +75,31 @@ inline bool UISmoothFilteringFor(const std::string& uiFont) {
     return uiFont != "pixel";
 }
 
+/// How carefully the in-game UI is drawn. Fast: text snapped to whole device pixels. Good (default): plus a
+/// small-text weight correction, smooth soft shadows and mip-filtered image downscaling. Best: plus quarter-pixel
+/// text positions and dithered gradients. Old: the drawing from before the UI quality work, for comparison.
+enum class UIQuality { Fast = 0, Good = 1, Best = 2, Old = 3 };
+
+/// The quality a scene draws with: OKAY_CLASSIC_UI=1 (or OKAY_UI_QUALITY=old|fast|good|best) wins over the
+/// scene's own setting (`Scene::uiQuality`, 0..3).
+inline UIQuality UIQualityFor(int sceneQuality) {
+    static const int env = [] {
+        const char* c = std::getenv("OKAY_CLASSIC_UI");
+        if (c && c[0] && std::strcmp(c, "0") != 0) return 3;
+        const char* v = std::getenv("OKAY_UI_QUALITY");
+        if (!v) return -1;
+        if (!std::strcmp(v, "fast")) return 0;
+        if (!std::strcmp(v, "good")) return 1;
+        if (!std::strcmp(v, "best")) return 2;
+        if (!std::strcmp(v, "old") || !std::strcmp(v, "classic")) return 3;
+        return -1;
+    }();
+    int q = env >= 0 ? env : sceneQuality;
+    if (q < 0) q = 0;
+    if (q > 3) q = 3;
+    return (UIQuality)q;
+}
+
 /// Glyph atlases (TrueType) are uploaded with linear sampling. The bitmap font
 /// does not use an atlas; pixel-art mode selects nearest at the policy above.
 inline bool UIGlyphAtlasLinearSampling() { return true; }

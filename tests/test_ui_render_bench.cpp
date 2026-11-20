@@ -157,6 +157,26 @@ int main() {
     std::printf("  SKIP UI CPU < 1 ms per frame (unoptimized or sanitized build; %s)\n", d);
 #endif
 
+    // ---- UI quality levels (okay/UI/UIFontPolicy.hpp): the same screen drawn at each; printed for the before/after comparison in
+    // docs/in_game_ui_quality.md. The Old look is the drawing from before the UI quality work. Only the default (Good) is asserted above. ----
+    {
+        static const char* const names[] = {"Fast", "Good (default)", "Best", "Old look"};
+        for (int q : {3, 0, 1, 2}) {
+            s.uiQuality = q;
+            for (int i = 0; i < 5; ++i) frame();
+            std::vector<double> m;
+            for (int i = 0; i < 100; ++i) {
+                auto t0 = std::chrono::steady_clock::now();
+                frame();
+                m.push_back(std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - t0).count());
+            }
+            std::sort(m.begin(), m.end());
+            std::printf("  INFO UI quality %-14s: median %.3f ms per frame, %d draw calls, %d triangles\n", names[q], m[m.size() / 2], backend.drawCalls, backend.triangles);
+        }
+        s.uiQuality = 1;
+        frame();
+    }
+
     // ---- The caches follow the scene: a new widget shows up, a removed one goes ----
     {
         frame();

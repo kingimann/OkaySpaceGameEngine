@@ -102,6 +102,11 @@ add_executable(test_flac_import test_flac_import.cpp)
 target_link_libraries(test_flac_import PRIVATE okay::engine)
 target_compile_definitions(test_flac_import PRIVATE OKAY_SOURCE_DIR="${PROJECT_SOURCE_DIR}")
 add_test(NAME flac_import COMMAND test_flac_import)
+# Hostile FLAC files: every truncation, bit flips (checksums repaired), lying headers, garbage; whole vs streamed decode.
+add_executable(test_flac_hostile test_flac_hostile.cpp)
+target_link_libraries(test_flac_hostile PRIVATE okay::engine)
+target_compile_definitions(test_flac_hostile PRIVATE OKAY_SOURCE_DIR="${PROJECT_SOURCE_DIR}")
+add_test(NAME flac_hostile COMMAND test_flac_hostile)
 
 # Stereo clips and placement (balance for 2D, mono-then-pan for 3D).
 add_executable(test_audio_stereo test_audio_stereo.cpp)

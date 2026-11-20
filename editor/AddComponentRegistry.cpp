@@ -27,11 +27,13 @@ std::vector<RegItem> RegistryItems(const okay::GameObject& go) {
 
 bool AddRegistered(okay::GameObject& go, const okay::ComponentTypeInfo& info) { return info.add && info.add(go) != nullptr; }
 
-std::vector<Entry> EntriesFromRegistry(const okay::GameObject& go) {
+std::vector<Entry> EntriesFromRegistry(const okay::GameObject& go, std::vector<std::shared_ptr<const okay::ComponentTypeInfo>>* infos) {
     std::vector<Entry> out;
+    if (infos) infos->clear();
     for (const RegItem& r : RegistryItems(go)) {
         Entry e = MakeEntry(r.info->category, r.label, !r.present);
         out.push_back(std::move(e));
+        if (infos) infos->push_back(r.info);
     }
     ApplyPrereqs(out);
     return out;

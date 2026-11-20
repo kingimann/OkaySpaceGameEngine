@@ -27,7 +27,8 @@ bool AddRegistered(okay::GameObject& go, const okay::ComponentTypeInfo& info);
 /// The text of the hover preview: what it is, what else it adds, a few settings you can change.
 std::string PreviewText(const Entry& e);
 /// Entries for a whole object straight from the registry (the OkayUI popup, tests): same model rows the other window uses.
-std::vector<Entry> EntriesFromRegistry(const okay::GameObject& go);
+/// `infos` (optional) gets the registry entry of each returned row, same order, so the host can add the one that was picked.
+std::vector<Entry> EntriesFromRegistry(const okay::GameObject& go, std::vector<std::shared_ptr<const okay::ComponentTypeInfo>>* infos = nullptr);
 
 }  // namespace addcomp
 }  // namespace oked

@@ -52,6 +52,7 @@
 #include "ConsolePanel.hpp"
 #include "InspectorModel.hpp"
 #include "PrefabEdit.hpp"
+#include "AddComponentRegistry.hpp"   // the Add Component browser's model, shared with the Dear ImGui window
 #include "okay/UI/OkayUI.hpp"
 #include "okay/UI/OkayUIDock.hpp"
 #include "okay/UI/OkayUIImGuiNames.hpp"
@@ -323,27 +324,77 @@ void DrawInspectorWindow(okay::editor::EditorState& ed, HostModeState* st) {
         } else { ed.PushUndo("Remove Component"); go->RemoveComponent(toRemove); ed.dirty = true; }
     }
     Separator();
-    if (Button("Add Component")) OpenPopup("##addcomp");
+    static oked::addcomp::State acState; static oked::addcomp::Prefs acPrefs; static bool acLoaded = false; static char acQuery[64] = "";
+    if (Button("Add Component")) { OpenPopup("##addcomp"); acState = oked::addcomp::State(); acQuery[0] = '\0'; }
     g_probe.addComponentButton = GetItemRect();
-    if (BeginPopup("##addcomp")) {   // by category; every registered component type with an `add` (the registry's, as the Dear ImGui Add Component list)
+    if (BeginPopup("##addcomp")) {   // the same browser model as the Dear ImGui window: search, plain groups, Recent / Favourites, suggestions, greyed reasons
+        using namespace oked::addcomp;
+        if (!acLoaded) { acLoaded = true; LoadPrefs("okay_addcomponent.txt", acPrefs); }
         g_probe.addMenuItems = 0; g_probe.firstCategory = OkayUI::Rect{}; g_probe.firstAddItem = OkayUI::Rect{};
-        std::vector<std::string> cats;
-        const auto all = okay::PropertyRegistry::All();
-        for (const auto& info : all) if (info->add && !info->objectLevel && info->name != "Transform") { const std::string c = info->category.empty() ? std::string("Other") : info->category; if (std::find(cats.begin(), cats.end(), c) == cats.end()) cats.push_back(c); }
-        std::sort(cats.begin(), cats.end());
-        for (const std::string& c : cats) {
-            const bool catOpen = BeginMenu(c.c_str());
-            if (!g_probe.firstCategory.w) g_probe.firstCategory = GetItemRect();
-            if (!catOpen) continue;
-            for (const auto& info : all) {
-                if (!info->add || info->objectLevel || info->name == "Transform") continue;
-                if ((info->category.empty() ? std::string("Other") : info->category) != c) continue;
-                ++g_probe.addMenuItems;
-                const bool pick = MenuItem(PrettyName_WO_(info->name).c_str());
-                if (!g_probe.firstAddItem.w) g_probe.firstAddItem = GetItemRect();
-                if (pick) { ed.PushUndo("Add Component"); info->add(*go); ed.dirty = true; CloseCurrentPopup(); }
+        std::vector<std::shared_ptr<const okay::ComponentTypeInfo>> infos;
+        const std::vector<Entry> entries = EntriesFromRegistry(*go, &infos);
+        if (acState.category.empty()) acState.category = DefaultCategory(entries, acPrefs);
+        if (IsWindowAppearing()) SetKeyboardFocusHere();
+        SetNextItemWidth(-1.0f);
+        InputTextWithHint("##acq", "Search  (try: jump, light, sound)", acQuery, (int)sizeof(acQuery));
+        acState.SetQuery(acQuery);
+        View v = Build(entries, acState, acPrefs);
+        ClampCursor(acState, v);
+        int pick = -1;
+        struct K { OkayUI::KeyId id; Key key; };
+        static const K keys[] = {{OkayUI::KeyId_Up, Key::Up}, {OkayUI::KeyId_Down, Key::Down}, {OkayUI::KeyId_PageUp, Key::PageUp}, {OkayUI::KeyId_PageDown, Key::PageDown},
+                                 {OkayUI::KeyId_Tab, Key::Tab}, {OkayUI::KeyId_Enter, Key::Enter}, {OkayUI::KeyId_Escape, Key::Escape}};
+        for (const K& k : keys) {
+            if (!IsKeyPressed(k.id, k.key != Key::Tab && k.key != Key::Enter && k.key != Key::Escape)) continue;
+            Outcome o = HandleKey(acState, v, entries, k.key);
+            if (o.close) CloseCurrentPopup();
+            if (o.activate >= 0) pick = o.activate;
+            if (acState.query != acQuery) std::snprintf(acQuery, sizeof(acQuery), "%s", acState.query.c_str());
+            if (o.rebuild) { v = Build(entries, acState, acPrefs); ClampCursor(acState, v); }
+        }
+        const float colH = 300.0f;
+        if (BeginChild("##acc", 150.0f, colH, true)) {   // the groups, with how many can still be added
+            for (std::size_t i = 0; i < v.cats.size(); ++i) {
+                const CatCount& c = v.cats[i];
+                PushID((int)i);
+                const std::string lbl = c.name + "  (" + std::to_string(c.count) + ")";
+                if (Selectable(lbl.c_str(), !v.searching && acState.category == c.name)) { acState.SelectCategory(c.name); acQuery[0] = '\0'; }
+                if (!g_probe.firstCategory.w) g_probe.firstCategory = GetItemRect();
+                PopID();
             }
-            OkayUI::EndMenu();
+            EndChild();
+        }
+        SameLine();
+        if (BeginChild("##acr", 0.0f, colH, true)) {   // the components: name, a grey group tag when searching, one plain line under it
+            const bool tag = v.searching || acState.category == kCatForObject || acState.category == kCatRecent || acState.category == kCatFavorites;
+            for (int i = 0; i < (int)v.rows.size(); ++i) {
+                const Row& r = v.rows[i]; const Entry& e = entries[r.entry];
+                if (r.groupStart) SeparatorText(r.group.c_str());
+                PushID(i);
+                const std::string lbl = e.name + (tag ? "     " + e.category : std::string());
+                const bool hit = Selectable(lbl.c_str(), i == acState.cursor);
+                if (!g_probe.firstAddItem.w) g_probe.firstAddItem = GetItemRect();
+                ++g_probe.addMenuItems;
+                TextDisabled(("    " + (e.available ? (r.note.empty() ? e.description : r.note) : e.reason)).c_str());
+                PopID();
+                if (hit) { acState.cursor = i; Outcome o = Choose(acState, entries, r.entry); if (o.activate >= 0) pick = o.activate; }
+            }
+            if (v.rows.empty()) {
+                if (v.searching) { TextDisabled(("Nothing matches \"" + acState.query + "\".").c_str());
+                    for (const std::string& d : v.didYouMean) if (SmallButton(("Did you mean " + d + "?").c_str())) { std::snprintf(acQuery, sizeof(acQuery), "%s", d.c_str()); acState.SetQuery(acQuery); } }
+                else TextDisabled("Nothing in this group.");
+            }
+            EndChild();
+        }
+        if (!acState.notice.empty()) TextDisabled(acState.notice.c_str());
+        if (pick >= 0 && pick < (int)infos.size() && infos[pick]) {
+            ed.PushUndo("Add Component");
+            const std::size_t before = go->Components().size();
+            AddRegistered(*go, *infos[pick]);
+            ed.dirty = true;
+            acPrefs.NoteUsed(entries[pick].nkey); SavePrefs("okay_addcomponent.txt", acPrefs);
+            if (go->Components().size() > before + 1) ConsoleLog("Added " + entries[pick].name + ". It also added " + std::to_string(go->Components().size() - before - 1) + " more it needs.");
+            CloseCurrentPopup();
         }
         EndPopup();
     }

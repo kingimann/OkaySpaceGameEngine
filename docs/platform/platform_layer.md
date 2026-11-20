@@ -458,6 +458,18 @@ Xvfb with a second X connection acting as the drag source); `OwnWin32.cpp` with 
 the sdl2 Windows hook trampoline, which no compiler here has the SDL headers for), a real file manager drag on Linux (the test source is
 written from the protocol text, so a real source may differ in detail), a window manager, Wayland, the launcher and editor with a window.
 
+### Tray-icon callback protocol model (Round 11, partial)
+
+* `engine/src/Platform/TrayProtocol.hpp` (header only, no Win32 includes): decodes the tray callback message (`lParam` low word = event,
+  version 4 adds icon id and `wParam` position), names the events (left click, double click, right click, context menu, select, key
+  select, balloon shown/hidden/timeout/clicked, popup open/close), `NeedsReAdd` for the registered "TaskbarCreated" message, and
+  `ActionFor` (the launcher's rule: left/double click open, right click/context menu raise the menu). Written from the public
+  Shell_NotifyIcon / WinUser.h documentation; the constants are listed in the header's top comment.
+* Test: `platform_tray` (`tests/test_platform_tray.cpp`), 54 checks with hand-written message values. Runs on Linux.
+* The launcher's `OkayMsgHook` (launcher/main.cpp) is NOT switched to the model yet: it is Windows-only code that no build here compiles,
+  so identical behaviour could only be argued from the test, not verified. The tray-hook gap (the Windows `Shell_NotifyIcon` call itself
+  and the hook trampoline) stays as before; only the decoding is now modelled and tested.
+
 ### The biggest block left: `SDL_Renderer` drawing (plan)
 
 Measured by `docs/sdl_inventory.md` after this round: editor 126 calls, launcher 39 (of 722 / 220 reachable), plus Dear ImGui's two SDL

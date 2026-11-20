@@ -223,6 +223,11 @@ add_executable(test_inventory_ops test_inventory_ops.cpp)
 target_link_libraries(test_inventory_ops PRIVATE okay::engine)
 add_test(NAME inventory_ops COMMAND test_inventory_ops)
 
+# Item names cut to a measured width (pure text-fit logic)
+add_executable(test_inventory_textfit test_inventory_textfit.cpp)
+target_link_libraries(test_inventory_textfit PRIVATE okay::engine)
+add_test(NAME inventory_textfit COMMAND test_inventory_textfit)
+
 # Moving items between bags: hostile inputs, stack/weight limits, slot<->grid moves, old saves
 add_executable(test_inventory_moves test_inventory_moves.cpp)
 target_link_libraries(test_inventory_moves PRIVATE okay::engine)

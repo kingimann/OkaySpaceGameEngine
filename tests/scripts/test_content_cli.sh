@@ -39,8 +39,12 @@ printf 'x' > "$T/pub/notes.xyz"
 OKAY_CONTENT_SIGNING_SEED="$seed" "$TOOL" make-manifest "$T/pub" --game cli --version 2 >/dev/null 2>&1 && bad "make-manifest accepted an unknown file type"
 rm "$T/pub/notes.xyz"
 
-# tampered file after signing
+# tampered file after signing. The dd's stderr is thrown away on purpose (it is expected to succeed quietly), but
+# that means a silent dd failure (disk full, odd sandbox, a seek it refuses) would leave the file untouched and
+# make every assertion below pass for the wrong reason: "tamper accepted" would really mean "nothing was tampered".
+# So check the byte actually changed before trusting the rest of this section.
 cp -r "$T/pub" "$T/tam"; printf 'Z' | dd of="$T/tam/models/ship.glb" bs=1 seek=10 conv=notrunc 2>/dev/null
+cmp -s "$T/pub/models/ship.glb" "$T/tam/models/ship.glb" && bad "tamper step did not modify the file (dd no-op?); the tamper checks below would be meaningless"
 "$TOOL" verify "$T/tam" --keys "$pub" >/dev/null 2>&1 && bad "verify accepted a tampered file"
 
 # sync from a folder (file://)

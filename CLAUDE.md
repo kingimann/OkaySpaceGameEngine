@@ -189,6 +189,16 @@ then this file gets updated. Keep this file short and true.
     other SDK or library, and rule 19a still holds for everything else. Lua is written by us from the Lua manual (no Lua
     code). Our own OkayScript is deleted only after the replacements work and the owner confirms (plan:
     `docs/scripting_migration.md`).
+24d. **Exception: Microsoft's public Windows SDK and Visual Studio build tools for Windows work (owner 2026-11-20: "Yes",
+    after "I'm gonna have other guy start working on windows sdk"; widens rule 24b beyond Xbox).** They may be used as build,
+    test and debugging tools on Windows machines and CI runners: building and testing Windows programs (including an MSVC
+    build job), the Direct3D debug layer, PIX and other SDK debugging tools, and SignTool for code signing (the certificate
+    goes in GitHub secrets, never in chat or the repo, rule 15). Nothing from the SDK or Visual Studio is copied into the
+    repository or shipped, apart from files Microsoft marks as redistributable and only with the owner's approval. The
+    release build stays the MinGW cross-compile until the owner approves a switch. A feature that only works with the SDK
+    sits behind a CMake option that is OFF by default, and code must keep compiling with the MinGW release compiler (rule
+    21a). Only the public SDK: no GDK, GDKX or other restricted or separately licensed Microsoft SDKs without asking. Say
+    "unverified" for anything not built and run on Windows. Rule 19a still holds for everything else.
 25. **Claude 2 reports its usage.** With each result Claude 2 posts `Usage: about N% left` on issue #422, and
     `HANDOFF SOON` at about 20% and `HANDOFF NOW` at about 5%, naming its branches and what is unfinished, so the
     coordinator can take its branches over. Claude 2 pushes only `claude2/*` branches, opens no PRs, and starts a
